@@ -27,7 +27,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from statik3d.model import Model, DofBehaviour, Material             # noqa: E402
+from statik3d.model import Model, DofBehaviour, Material, Volumenkoerper   # noqa: E402
 from statik3d import mesher, sweep, diagnose, netzguete, solver       # noqa: E402
 from statik3d import mesher3d                                        # noqa: E402
 from statik3d.elements.solid import solid_volume, hex8_N_dN, pent6_N_dN  # noqa: E402
@@ -510,11 +510,12 @@ def test_platte_mit_nabe_zerlegt():
     knotenkonform an der Schnittflaeche, alles Hexaeder und Keile."""
     m, k = _platte_mit_nabe()
     check("als Ganzes nicht sweepbar", sweep.erkennen(m, k) is None)
-    bl, schnitte = sweep.zerlegen(m, k)
+    bl, werk = sweep.zerlegen(m, k)
+    schnitte = list(werk.flaechen)
     check("das Zerlegen findet zwei sweepbare Bloecke an einem Schnitt",
           bl is not None and len(bl) == 2 and all(e is not None for _n, e in bl) and len(schnitte) == 1,
           f"{None if bl is None else [(len(n), e is not None) for n, e in bl]}, {len(schnitte)} Schnitt(e)")
-    sweep.schnitte_entfernen(m, schnitte)
+    sweep.schnitte_entfernen(m, werk)
     check("die Schnittflaeche ist danach wieder aus dem Modell", not any(x.startswith("V1§") for x in m.flaechen))
     check("sweepbar() sagt ja - der Koerper laeuft im Hauptprozess vor den freien", sweep.sweepbar(m, k))
     log = []
@@ -919,6 +920,205 @@ def test_krummer_quader_nicht_abgebildet():
           bool(order2) and mesher._gerade_kanten(m2, k2, order2))
 
 
+def _platte_mit_randrippe(a=0.2, b=0.1, t=0.02, x0=0.05, by=0.02, hr=0.06, h=0.025):
+    """Platte a x b x t, darauf eine Rippe von x0 bis an den **Rand** x = a.
+
+    Der Fussabdruck der Rippe beruehrt den Aussenrand der Deckflaeche - sie
+    haengt also nicht ueber einer Oeffnung, und genau das schliesst
+    ``_fussabdruecke`` aus. Nur der Ebenenschnitt trennt sie.
+    """
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    y1, y2 = (b - by) / 2.0, (b + by) / 2.0
+    N, L = {}, {}
+
+    def kn(x, y, z):
+        key = (round(x, 9), round(y, 9), round(z, 9))
+        if key not in N:
+            N[key] = m.add_node(x, y, z)
+        return N[key]
+
+    def li(p_, q_):
+        key = (p_, q_) if p_ < q_ else (q_, p_)
+        if key not in L:
+            L[key] = f"L{len(L) + 1}"
+            m.add_line(L[key], [key[0], key[1]])
+        return L[key]
+
+    def fl(name, punkte):
+        ks = [kn(*pp) for pp in punkte]
+        m.add_flaeche(name, [li(ks[i], ks[(i + 1) % len(ks)]) for i in range(len(ks))],
+                      material="S235")
+        return name
+    namen = [
+        fl("Boden", [(0, 0, 0), (a, 0, 0), (a, b, 0), (0, b, 0)]),
+        fl("X0", [(0, 0, 0), (0, b, 0), (0, b, t), (0, 0, t)]),
+        fl("Y0", [(0, 0, 0), (a, 0, 0), (a, 0, t), (0, 0, t)]),
+        fl("Y1", [(0, b, 0), (a, b, 0), (a, b, t), (0, b, t)]),
+        # x = a: Platte plus Rippenstirn - T-foermig, die Ebene z = t teilt sie
+        fl("XA", [(a, 0, 0), (a, b, 0), (a, b, t), (a, y2, t), (a, y2, t + hr),
+                  (a, y1, t + hr), (a, y1, t), (a, 0, t)]),
+        # Deckflaeche der Platte, am Rand x = a eingekerbt
+        fl("Deckel", [(0, 0, t), (a, 0, t), (a, y1, t), (x0, y1, t), (x0, y2, t),
+                      (a, y2, t), (a, b, t), (0, b, t)]),
+        fl("RY1", [(x0, y1, t), (a, y1, t), (a, y1, t + hr), (x0, y1, t + hr)]),
+        fl("RY2", [(x0, y2, t), (a, y2, t), (a, y2, t + hr), (x0, y2, t + hr)]),
+        fl("RX0", [(x0, y1, t), (x0, y2, t), (x0, y2, t + hr), (x0, y1, t + hr)]),
+        fl("RDeckel", [(x0, y1, t + hr), (a, y1, t + hr), (a, y2, t + hr), (x0, y2, t + hr)]),
+    ]
+    k = m.add_koerper("V1", namen, material="S235")
+    m.netz.ziellaenge = h
+    m.netz.dichte = "eigene"
+    return m, k
+
+
+def test_rippe_am_rand_ueber_ebene_zerlegt():
+    """Zerlegen an einer **Ebene**: die Rippe laeuft bis an den Rand, ihr
+    Fussabdruck ist keine Oeffnung. Geschnitten wird an der Ebene der
+    Deckflaeche; beide Bloecke werden gesweept (22.09.2026)."""
+    m, k = _platte_mit_randrippe()
+    check("als Ganzes nicht sweepbar", sweep.erkennen(m, k) is None)
+    check("kein Fussabdruck: keine Randflaeche hat eine Oeffnung",
+          not any(m.flaechen[x].oeffnungen for x in k.flaechen))
+    ebenen = sweep.schnittebenen(m, k, 1e-7)
+    check("vier Randflaechen-Ebenen trennen den Koerper", len(ebenen) == 4, f"{len(ebenen)}")
+    bl, werk = sweep.zerlegen(m, k)
+    check("der Ebenenschnitt findet zwei Bloecke, **beide** sweepbar",
+          bl is not None and len(bl) == 2 and all(e is not None for _n, e in bl),
+          f"{None if bl is None else [(len(n), e is not None) for n, e in bl]}")
+    sweep.schnitte_entfernen(m, werk)
+    check("die Hilfsgeometrie ist danach wieder aus dem Modell",
+          not any("§" in x for x in m.flaechen) and not any("§" in x for x in m.lines)
+          and m.nn == 16, f"{m.nn} Knoten")
+    log = []
+    mesher.modell_vernetzen(m, log, workers=1)
+    typen = _typen(m)
+    check("nur Hexaeder und Keile, kein Tetraeder", set(typen) <= {"hex8", "pent6"} and typen,
+          str(typen))
+    check("kein Element ist umgestuelpt", _negativ(m) == 0)
+    V = sum(solid_volume(e.typ, m.nodes[e.nodes]) for e in m.elements)
+    V_soll = 0.2 * 0.1 * 0.02 + 0.15 * 0.02 * 0.06
+    check("Rauminhalt Platte + Rippe", abs(V / V_soll - 1.0) < 1e-6,
+          f"{V * 1e6:.1f} von {V_soll * 1e6:.1f} cm³ ({V / V_soll * 100:.2f} %)")
+    ebene = [n for n in range(m.nn) if abs(m.nodes[n][2] - 0.02) < 1e-9]
+    check("knotenkonform in der Schnittebene", _doppelte_knoten(m, ebene) == 0,
+          f"{len(ebene)} Knoten in der Ebene")
+    check("das Protokoll nennt den Ebenenschnitt",
+          any("an einer Ebene" in z for z in log), str([z[:90] for z in log if "Ebene" in z])[:120])
+    bef = diagnose.abnahme(m)
+    check("Abnahme ohne Befund", not bef, str([(b.pruefung, b.text[:40]) for b in bef])[:160])
+    # Das Erfolgsmass: dieselbe Last, weniger Knoten, groessere Verschiebung
+    def rechnen(sweep_an, hh):
+        mm, _kk = _platte_mit_randrippe(h=hh)
+        mm.add_load_case("LF1")
+        mm.case("LF1").gravity = [0.0, 0.0, 0.0]
+        mm.add_geometrielast("XA", 10e3 / (0.1 * 0.02), "flaeche",
+                             richtung=[0.0, 0.0, -1.0], case="LF1")
+        ss = mm.add_surface_support(name="E")
+        ss.flaechen = ["X0"]
+        for d in (0, 1, 2):
+            ss.behaviour[d] = DofBehaviour("rigid")
+        mm.netz.sweep = sweep_an
+        mm.active_case = "LF1"
+        mesher.modell_vernetzen(mm, [], workers=1)
+        r = solver.solve_static(mm, case="LF1", workers=1)
+        return float(np.abs(r.u[:, 2]).max()), int(mm.nn), len(mm.elements)
+    w_tet, nn_tet, ne_tet = rechnen(False, 0.025)
+    w_hex, nn_hex, ne_hex = rechnen(True, 0.025)
+    print(f"    tet4: {w_tet * 1e3:.4f} mm ({ne_tet} Elemente, {nn_tet} Knoten) | "
+          f"zerlegt+gesweept: {w_hex * 1e3:.4f} mm ({ne_hex} Elemente, {nn_hex} Knoten)")
+    # Zum Vergleich gemessen (22.09.2026): der Tetraeder braucht h = 6 mm,
+    # 39 891 Elemente und 7 459 Knoten fuer 1,9674 mm - der gesweepte Block
+    # steht mit 124 Elementen und 239 Knoten bei 2,0161 mm schon darueber.
+    check("der lineare Tetraeder ist hier dreimal zu steif", w_hex > 3.0 * w_tet,
+          f"{w_hex * 1e3:.4f} mm gegen {w_tet * 1e3:.4f} mm")
+    check("und das mit weniger Elementen", ne_hex < 0.25 * ne_tet, f"{ne_hex} gegen {ne_tet}")
+
+
+def _quader_mit_geteilter_kante(a=0.3, b=0.2, t=0.1, h=0.05):
+    """Ein Quader, dessen Deckel eine Kante in **zwei** Linien fuehrt - so
+    kommt er aus einem Modell, in dem dort ein Nachbar anstoesst."""
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    N, L = {}, {}
+
+    def kn(x, y, z):
+        key = (round(x, 9), round(y, 9), round(z, 9))
+        if key not in N:
+            N[key] = m.add_node(x, y, z)
+        return N[key]
+
+    def li(p_, q_):
+        key = (p_, q_) if p_ < q_ else (q_, p_)
+        if key not in L:
+            L[key] = f"L{len(L) + 1}"
+            m.add_line(L[key], [key[0], key[1]])
+        return L[key]
+
+    def fl(name, punkte):
+        ks = [kn(*pp) for pp in punkte]
+        m.add_flaeche(name, [li(ks[i], ks[(i + 1) % len(ks)]) for i in range(len(ks))],
+                      material="S235")
+        return name
+    namen = [
+        fl("U", [(0, 0, 0), (a, 0, 0), (a, b, 0), (0, b, 0)]),
+        fl("O", [(0, 0, t), (a, 0, t), (a, b, t), (a / 2, b, t), (0, b, t)]),
+        fl("X0", [(0, 0, 0), (0, b, 0), (0, b, t), (0, 0, t)]),
+        fl("XA", [(a, 0, 0), (a, 0, t), (a, b, t), (a, b, 0)]),
+        fl("Y0", [(0, 0, 0), (0, 0, t), (a, 0, t), (a, 0, 0)]),
+        fl("YB", [(0, b, 0), (a, b, 0), (a, b, t), (a / 2, b, t), (0, b, t)]),
+    ]
+    k = m.add_koerper("V1", namen, material="S235")
+    m.netz.ziellaenge = h
+    m.netz.dichte = "eigene"
+    return m, k
+
+
+def test_kappen_verschieden_geteilt():
+    """Grund und Deckel duerfen ihren Rand **verschieden** in Linien teilen.
+
+    Erst wird die Figur gemessen, nicht die Ecken (Flaechenschwerpunkt und
+    Abstand zur Kurve), dann werden die Linien angeglichen: die fehlende Ecke
+    wird auf die andere Schleife abgebildet, deren Linie dort geteilt und die
+    Wand dazwischen mit (22.09.2026)."""
+    P = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]])
+    Q = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0],
+                  [0.5, 1.0, 0.0], [0.0, 1.0, 0.0]])       # eine Ecke mehr, dieselbe Figur
+    check("der Mittelwert der Ecken wandert mit einer zusaetzlichen Ecke",
+          float(np.linalg.norm(P.mean(axis=0) - Q.mean(axis=0))) > 0.04,
+          f"{np.linalg.norm(P.mean(axis=0) - Q.mean(axis=0)):.4f} m")
+    check("der Flaechenschwerpunkt bleibt, wo er ist",
+          float(np.linalg.norm(sweep._umringmitte(P) - sweep._umringmitte(Q))) < 1e-12)
+    eins = ("v", np.zeros(3), 1.0, np.zeros(3))
+    check("und die Umringe gelten als deckungsgleich", sweep._deckungsgleich_abb(P, Q, eins, 1e-9))
+    m, k = _quader_mit_geteilter_kante()
+    check("so erkannt wird der Quader trotzdem nicht - die Wand hat fuenf Linien",
+          sweep.erkennen(m, k) is None
+          and "nicht aus vier Linien" in sweep.erkennen_warum_nicht(m, k),
+          sweep.erkennen_warum_nicht(m, k)[:110])
+    werk = sweep.Schnittwerk(m)
+    namen = sweep.kappenlinien_angleichen(m, list(k.flaechen), werk, 1e-9)
+    check("das Angleichen liefert eine Flaechenliste mit einer Wand mehr",
+          namen is not None and len(namen) == 7, "-" if namen is None else str(len(namen)))
+    pseudo = Volumenkoerper("V1", list(namen or []), material="S235", teilung=[4, 4, 4])
+    check("und dann ist er sweepbar", sweep.erkennen(m, pseudo) is not None)
+    werk.zuruecknehmen()
+    check("zuruecknehmen laesst nichts stehen",
+          not any("§" in x for x in m.flaechen) and not any("§" in x for x in m.lines)
+          and m.nn == 9, f"{m.nn} Knoten")
+    log = []
+    mesher.modell_vernetzen(m, log, workers=1)
+    typen = _typen(m)
+    check("vernetzt gibt das Hexaeder und Keile, keinen Tetraeder",
+          set(typen) <= {"hex8", "pent6"} and typen, str(typen))
+    V = sum(solid_volume(e.typ, m.nodes[e.nodes]) for e in m.elements)
+    check("Rauminhalt stimmt", abs(V / (0.3 * 0.2 * 0.1) - 1.0) < 1e-9,
+          f"{V * 1e3:.4f} von {0.3 * 0.2 * 0.1 * 1e3:.4f} dm³")
+    check("kein Element ist umgestuelpt", _negativ(m) == 0)
+    bef = diagnose.abnahme(m)
+    check("Abnahme ohne Befund", not bef, str([b.pruefung for b in bef])[:120])
+
+
 def test_umpaaren_spart_keile():
     """Ein Keil ist kein halber Sechsflächner: der hex8 trägt Biegung über
     inkompatible Moden, der pent6 nicht (Statik3D-Sitzung, 22.09.2026: am
@@ -1075,6 +1275,7 @@ def main():
               test_pyramiden_als_uebergang, test_zerlegen_sagt_warum_nicht,
               test_keile_am_feinen_rand, test_verjuengter_zug, test_drehkoerper,
               test_krummer_quader_nicht_abgebildet, test_umpaaren_spart_keile,
+              test_rippe_am_rand_ueber_ebene_zerlegt, test_kappen_verschieden_geteilt,
               test_kragplatte_tet4_gegen_hex8):
         print(f"\n--- {t.__name__} ---")
         try:

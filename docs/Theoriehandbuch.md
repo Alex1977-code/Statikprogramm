@@ -3599,6 +3599,66 @@ Erweiterungen, damit der Sweep über Platten hinauskommt:
    ändern sich nicht. Was nicht geht: eine Bohrung, die durch Aufsatz *und* Träger läuft
    — ihre Mantelfläche müsste geteilt werden, und Linien dafür gibt es nicht; dann bleibt
    der Körper ganz und geht an die Tetraeder.
+4. **Zerlegen an einer Ebene** (`sweep.zerlegen_ebene`, 22.09.2026): greift kein
+   Fußabdruck, wird an der **Ebene einer Randfläche** geschnitten. Warum gerade dort: an
+   einer einspringenden Kante liegt die Trennung zwischen zwei Blöcken immer in der Ebene
+   einer der beiden anliegenden Flächen — eine Rippe wird an der Ebene der Plattendecke
+   abgeschnitten, ein Absatz an der Ebene seiner Schulter. Andere Ebenen muss man nicht
+   raten. Kandidat ist jede ebene Randfläche, deren Ebene den Körper wirklich **trennt**
+   (Punkte auf beiden Seiten). Der Fall, den das löst und der Fußabdruck nicht: eine
+   Rippe, die bis an den **Rand** der Platte läuft. Sie hängt nicht über einer Öffnung —
+   ihr Fußabdruck berührt den Außenrand der Deckfläche, und genau das schließt
+   `_fussabdruecke` aus, sonst wäre der Schnitt keine geschlossene Fläche.
+
+   Drei Dinge daran sind nicht offensichtlich:
+
+   * **Eine Kante, die in der Schnittebene liegt, gehört nicht der Seite, von der man sie
+     anläuft.** An der T-förmigen Stirnfläche einer Rippe liegen zwei Kanten in der Ebene,
+     und *beide* gehören zur Platte darunter, obwohl die eine von unten, die andere von
+     oben erreicht wird. Nach den Vorzeichen der Ecken geteilt schlägt man eine davon der
+     Rippe zu und bekommt zwei Teile, die nicht aneinanderpassen. Entschieden wird darum
+     je **Kante** und geometrisch: einen kleinen Schritt von der Kantenmitte ins Innere
+     der Fläche, und die Seite dieses Punktes zählt (`sweep._kantenseiten`).
+   * **Eine Randfläche, die ganz in der Ebene liegt, gehört zu genau einem Block — und
+     welchem, sieht man ihr nicht an.** Die Deckfläche einer Platte mit Rippe liegt in der
+     Schnittebene und gehört zur Platte; ihre Nachbarn zeigen in beide Richtungen (die
+     Plattenseiten nach unten, die Rippenwände nach oben), und die Materialseite folgt aus
+     keiner lokalen Regel. Darum werden die Zuordnungen **durchprobiert** (bis drei solcher
+     Flächen, also acht Versuche), und es entscheidet die **geschlossene Hülle**: jede
+     Linie eines Blocks genau zweimal (`sweep._geschlossene_schale`). Diese Probe ist
+     scharf und fängt jede falsche Zuordnung ab, bevor daraus ein gültiger, aber
+     **anderer** Körper wird als der gemeinte.
+   * **Der Rand der Schnittfläche kommt aus zwei Quellen:** den Schnittstrecken der
+     geteilten Flächen *und* den Kanten der koplanaren Flächen, hinter denen die andere
+     Seite liegt. Am Prüfkörper sind das die drei Kanten des Rippenfußes in der
+     Deckfläche; ihr Außenrand gehört nicht dazu. Die Kanten werden zu einem Zug
+     verkettet; verzweigt er oder zerfällt er in mehrere Ringe, unterbleibt der Schnitt.
+
+   Nicht geschnitten werden Flächen mit Öffnungen, Flächen mit Bögen oder Polylinien und
+   Flächen, die einem **zweiten Körper** gehören — der Schnitt risse sonst die Fuge zum
+   Nachbarn auf.
+5. **Kappenlinien angleichen** (`sweep.kappenlinien_angleichen`, 22.09.2026): ein Schnitt
+   setzt zwei neue Ecken in die eine Kappenschleife; die andere hat sie nicht. Die Kappen
+   decken sich weiterhin, aber die Wandprüfung sucht zu **jeder** Grundlinie genau eine
+   Deckellinie und findet drei. Am Prüfkörper blieb der Plattenblock darum tetraedrisch,
+   obwohl er ein Quader ist. Zwei Schritte heilen das:
+
+   * Die Kappenerkennung misst jetzt die **Figur**, nicht die Ecken: die Verschiebung kommt
+     aus dem **Flächenschwerpunkt** des Umrings (`sweep._umringmitte`; der Mittelwert der
+     Ecken wandert, wenn eine Ecke mitten auf einer geraden Kante dazukommt), und die
+     Deckungsprobe misst den Abstand zur **Kurve** statt zu den Stützpunkten
+     (`sweep._abstand_zum_zug`). Damit ist eingelöst, was `_deckungsgleich` seit jeher
+     behauptet: zwei Kappen dürfen ihren Rand verschieden in Linien teilen. Die Prüfung
+     wird dadurch nur großzügiger — was vorher durchging, geht weiter durch.
+   * Danach werden die Linien angeglichen: die fehlende Ecke wird auf die andere Schleife
+     abgebildet, deren Linie dort geteilt, und die **Wand** dazwischen zerfällt mit — eine
+     Wand je Linienpaar, mit neuer Mantellinie dazwischen. Erst dadurch bleibt die
+     Wandprüfung so streng, wie sie ist: jede Wand aus genau vier Linien. Angefasst werden
+     nur Linien, die allein diesem Block gehören.
+
+   Das hilft auch ohne Schnitt: ein von Hand gebauter Körper, dessen Deckel eine Kante in
+   zwei Linien führt (weil dort ein Nachbar anstößt), war bisher nicht sweepbar. Er ist es
+   jetzt (`test_kappen_verschieden_geteilt`: 44 hex8 + 4 pent6 statt Tetraedern).
 
 Gemessen (21.09.2026, ein Prozess, `tests/test_sweep.py`):
 
@@ -3606,6 +3666,24 @@ Gemessen (21.09.2026, ein Prozess, `tests/test_sweep.py`):
 |---|---|---|---|---|
 | Platte 0,4 × 0,3 × 0,1 m mit Nabe r = 60 mm, h = 80 mm, Kantenlänge 30 mm | 7 595 tet4 | **441 hex8 + 108 pent6**, ein Schnitt, 174 Knoten in der Schnittebene, keiner doppelt | ohne Befund | 11,12 kN = 11,12 kN |
 | abgesetzte Welle r = 50/30 mm, l = 200/150 mm, Kantenlänge 25 mm | 2 349 tet4 (+ 66 des dünnen Teils) | **446 hex8 + 28 pent6**, ein Schnitt, 61 Knoten in der Schulterebene, keiner doppelt | ohne Befund | 2,78 kN = 2,78 kN |
+
+Und am Ebenenschnitt (22.09.2026, Platte 0,2 × 0,1 × 0,02 m mit einer Rippe 150 × 20 × 60 mm
+bis an den Rand, eingespannt bei x = 0, 10 kN auf die Stirnfläche, Kantenlänge 25 mm):
+
+| Netz | Elemente | Knoten | größte Verschiebung |
+|---|---|---|---|
+| tet4, Kantenlänge 25 mm | 685 | 219 | 0,5811 mm |
+| tet4, 12,5 mm | 5 403 | 1 129 | 1,3437 mm |
+| tet4, 8 mm | 18 510 | 3 549 | 1,7955 mm |
+| tet4, 6 mm | 39 891 | 7 459 | 1,9674 mm |
+| **zerlegt und gesweept, 25 mm** | **124** (96 hex8 + 28 pent6) | **239** | **2,0161 mm** |
+| zerlegt und gesweept, 12,5 mm | 340 | 599 | 2,1138 mm |
+
+Das grobe gesweepte Netz steht über dem Tetraedernetz mit **einunddreißigmal so vielen
+Knoten**. Rauminhalt 100,0 %, Formgüte 0,352, 54 Knoten in der Schnittebene und keiner
+doppelt, Abnahme ohne Befund. Das ist die schärfste Messung dieser Arbeit für den Satz,
+mit dem sie angefangen hat: der lineare Tetraeder sperrt, und kein Verfeinern holt das
+auf.
 
 Der **abgebildete Quader** (`mesher._hex_netz`, sechs Vierecke, acht Ecken) setzt seit
 21.09.2026 ebenfalls Randseiten, teilt seine Knoten mit Nachbarn über dieselben Schlüssel
