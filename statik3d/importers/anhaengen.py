@@ -20,10 +20,14 @@ Anzahl). ``tests.test_importers`` prueft, dass kein Schluessel fehlt - ein
 kuenftig ergaenztes Modellfeld faellt so nicht wieder still weg.
 
 Nummern: die Knoten der Quelle stehen hinter denen des Ziels (Versatz
-``base``), die Elemente ebenso (``e_base``); danach werden doppelte Knoten
-zusammengefuehrt (``_common.merge_duplicate_nodes``), das haengt die
-Verweise um. Namen: was es im Ziel schon gibt, bekommt einen eindeutigen
-neuen Namen (``S1`` -> ``S1_2``), und jeder Verweis der Quelle folgt ihm.
+``base``), die Elemente ebenso (``e_base``); danach werden Knoten der Quelle,
+die auf einem Knoten des Ziels liegen, mit ihm zusammengefuehrt
+(``_common.anschluss_zusammenfuehren``) - nur zwischen Ziel und Quelle, nie
+innerhalb eines Teils: dort liegen Knoten absichtlich aufeinander (die
+Seiten einer Kontaktfuge). Namen: was es im Ziel schon gibt, bekommt einen
+eindeutigen neuen Namen (``S1`` -> ``S1_2``), und jeder Verweis der Quelle
+folgt ihm - auch die Gruppe der Elemente (sie nennt den Koerper) und die
+Zustaende der Ermuedungslasten, soweit sie Kombinationen sind.
 Werkstoffe, Querschnitte, Dicken, Kombinationen und Ermuedungslasten mit
 gleichem Namen **und** gleichem Inhalt werden nicht doppelt angelegt.
 Lastfaelle gleichen Namens werden wie bisher zusammengelegt; weichen ihre
@@ -221,13 +225,6 @@ class _Anhang:
 
     # -- Ablauf -------------------------------------------------------------
     def ausfuehren(self, tol: float) -> None:
-        # Das Zusammenfuehren am Ende laeuft ueber das ganze Modell (wie
-        # bisher). Es erfasst auch Knoten, die in Ziel oder Quelle schon
-        # vorher aufeinanderlagen - etwa die beiden Seiten einer getrennten
-        # Kontaktfuge. Gemessen: ein Spaltelement (1, 2) des Ziels wurde
-        # (1, 1). Das Protokoll muss sagen, welche es waren.
-        doppelt_z = C.count_duplicate_nodes(self.z, tol)
-        doppelt_q = C.count_duplicate_nodes(self.q, tol)
         self._namen()
         self._eigenschaften()
         self._netz()
@@ -239,18 +236,29 @@ class _Anhang:
         self._uebrige()
         self._netzeinstellungen()
         self._melden()
-        n = C.merge_duplicate_nodes(self.z, tol)
-        anschluss = n - doppelt_z - doppelt_q
-        if anschluss:
-            C.say(self.log, f"{anschluss} Knoten der Quelle lagen auf Knoten des Ziels und "
+        # Bis zur Nachbesserung vom 23.09.2026 lief hier merge_duplicate_nodes
+        # ueber das ganze Modell (wie schon vor SV11). Es verschweisste auch,
+        # was in einem Teil absichtlich aufeinanderliegt. Gemessen: ein
+        # Spaltelement (1, 2) des Ziels wurde (1, 1); eine Quelle mit
+        # ausgefuehrter Fuge "Ausfall bei Zug" (24 Spaltelemente, 200 kN Zug)
+        # trug danach -198 152,7 N am Fundament statt 0,0 N, und die Fuge
+        # stand weiter auf "ausgefuehrt" - fugen.kontaktfuge_ausfuehren lehnt
+        # ein neues Trennen dann ab ("schon ausgeführt").
+        # Jetzt schliesst nur die Quelle an das Ziel an.
+        n, unklar = C.anschluss_zusammenfuehren(self.z, self.base, tol)
+        if n:
+            C.say(self.log, f"{n} Knoten der Quelle lagen auf Knoten des Ziels und "
                             "wurden zusammengeführt")
-        if doppelt_z or doppelt_q:
+        if unklar:
+            x, y, z = unklar[0]
             C.warn(self.log,
-                   f"{doppelt_z} Knoten des Ziels und {doppelt_q} der Quelle lagen schon "
-                   "vorher auf anderen Knoten desselben Modells und wurden mit "
-                   "zusammengeführt. Lagen sie an einer getrennten Kontaktfuge, ist die "
-                   "Fuge jetzt verschweißt - Kontaktbedingungen und Spaltelemente dort "
-                   "prüfen.")
+                   f"An {len(unklar)} Stelle{'' if len(unklar) == 1 else 'n'} liegen in "
+                   "Ziel oder Quelle schon mehrere Knoten aufeinander (etwa die beiden "
+                   "Seiten einer Kontaktfuge), und ein Knoten des anderen Teils liegt "
+                   "dazu. Dort wurde nichts "
+                   "zusammengeführt, weil nicht eindeutig ist, welcher Knoten anschließen "
+                   f"soll - die erste bei ({x:g}, {y:g}, {z:g}) m. Bitte dort prüfen, ob "
+                   "Ziel und Quelle verbunden sein sollen.")
 
     def _namen(self) -> None:
         z, q = self.z, self.q
@@ -273,14 +281,41 @@ class _Anhang:
             if str(c.name) not in fugen_q:
                 fugen_q.append(str(c.name))
         self.namen_vergeben("fugen", fugen_z, fugen_q)
-        self.namen_vergeben("fatigue_loads", z.fatigue_loads, list(q.fatigue_loads),
-                            lambda n: _inhalt(z.fatigue_loads[n]) == _inhalt(q.fatigue_loads[n]))
 
         def kombi_gleich(n):
             k = copy.deepcopy(q.combinations[n])
             k.situation = self.neu("situationen", k.situation)
             return _inhalt(z.combinations[n]) == _inhalt(k)
         self.namen_vergeben("combinations", z.combinations, list(q.combinations), kombi_gleich)
+        # Erst nach den Kombinationen: ein Zustand der Ermuedungslast darf eine
+        # Kombination sein, und verglichen wird mit dem Namen, den sie im Ziel
+        # bekommt - sonst galt FAT-Q der Quelle (auf ihre CO1) als gleich mit
+        # FAT-Q des Ziels (auf dessen andere CO1) und fiel weg (Gegenprobe
+        # 23.09.2026).
+        self.namen_vergeben("fatigue_loads", z.fatigue_loads, list(q.fatigue_loads),
+                            lambda n: _inhalt(z.fatigue_loads[n])
+                            == _inhalt(self._ermuedung(q.fatigue_loads[n])))
+
+    def zustand(self, name):
+        """Zustand einer Ermuedungslast: ein Lastfall behaelt seinen Namen
+        (gleichnamige werden zusammengelegt), eine Kombination der Quelle
+        folgt ihrer Umbenennung."""
+        if name and name not in self.q.load_cases and name in self.q.combinations:
+            return self.neu("combinations", name)
+        return name
+
+    def _ermuedung(self, f):
+        """Kopie einer Ermuedungslast der Quelle mit den Zustaenden, wie sie
+        im Ziel heissen. Gemessen vor dieser Zeile (23.09.2026): Quelle CO1 =
+        {LF1: 1,0; LF2: 1,0}, Ziel CO1 = {LF1: 1,0; LF2: 0,1}; die Kombination
+        der Quelle hiess danach CO1_2, ihre Ermuedungslast rechnete aber mit
+        'CO1' des Ziels - ohne Meldung, Model.check() fand nichts. Am CBG sind
+        20 von 20 Ermuedungslasten Kombinationszustaende."""
+        k = copy.deepcopy(f)
+        k.case_max = self.zustand(f.case_max)
+        k.case_min = self.zustand(f.case_min)
+        k.folge = [self.zustand(x) for x in (f.folge or [])]
+        return k
 
     def _eigenschaften(self) -> None:
         for art in ("materials", "sections", "shells", "federn", "grenzschichten"):
@@ -331,6 +366,14 @@ class _Anhang:
         base = self.base
         mat = self.umbenannt.get("materials", {})
         linien = self.umbenannt.get("lines", {})
+        # Die Gruppe eines Elements nennt seinen Volumenkoerper (mesher3d,
+        # sweep, rfem6_db: group=koerper.name) oder seine Flaeche (mesher,
+        # rfem6_db); fugen.py sucht den Koerper einer Kontaktbedingung ueber
+        # sie. Blieb sie beim Umbenennen stehen, trug der Koerper V1_2 der
+        # Quelle Elemente der Gruppe 'V1', und ihre Fuge loeste den Block des
+        # anderen Koerpers (gemessen 23.09.2026: allein unten geloest,
+        # angehaengt oben). Wie transformieren.kopieren: Koerper vor Flaeche.
+        gruppen = {**self.umbenannt.get("flaechen", {}), **self.umbenannt.get("koerper", {})}
         sec: dict = {}
         woelb = False
         for e in q.elements:
@@ -351,6 +394,8 @@ class _Anhang:
                 k.sec = s
             if e.line:
                 k.line = linien.get(e.line, e.line)
+            if gruppen and e.group in gruppen:
+                k.group = gruppen[e.group]
             woelb = woelb or bool(e.woelb)
             z.elements.append(k)
         if woelb:
@@ -537,7 +582,7 @@ class _Anhang:
         for name, f in q.fatigue_loads.items():
             if name in self.gleich["fatigue_loads"]:
                 continue
-            k = copy.deepcopy(f)
+            k = self._ermuedung(f)
             k.name = self.neu("fatigue_loads", name)
             z.fatigue_loads[k.name] = k
         for name, j in q.joints.items():

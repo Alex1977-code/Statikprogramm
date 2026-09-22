@@ -1084,7 +1084,15 @@ def _offene_verweise(m: Model) -> list:
         pruefe(f"Kombination {c.name}", list(c.factors), m.load_cases)
         pruefe(f"Kombination {c.name} Situation", [c.situation], m.situationen)
     for f in m.fatigue_loads.values():
-        pruefe(f"Ermuedung {f.name}", [f.case_max, f.case_min] + list(f.folge), m.load_cases)
+        # ein Zustand darf ein Lastfall oder eine Kombination sein (Model.check)
+        pruefe(f"Ermuedung {f.name}", [f.case_max, f.case_min] + list(f.folge),
+               set(m.load_cases) | set(m.combinations))
+    koerper_gruppen = {n: sorted({m.elements[e].group for e in k.elemente})
+                       for n, k in m.koerper.items() if k.elemente}
+    for n, gr in koerper_gruppen.items():
+        # die Gruppe eines Koerperelements nennt den Koerper (fugen.py sucht so)
+        if any(g in m.koerper and g != n for g in gr):
+            out.append(f"Koerper {n}: Elemente der Gruppe {gr}")
     for j in m.joints.values():
         pruefe(f"Anschluss {j.name}", j.ermuedung, m.fatigue_loads)
     for v in m.verformungsgrenzen.values():
@@ -1369,36 +1377,240 @@ def test_json_anhaengen_eigengewicht_und_gleiches():
            f"{list(z.materials)}")
 
 
-def test_json_anhaengen_doppelknoten_gemeldet():
-    """Das Zusammenfuehren nach dem Anhaengen laeuft ueber das ganze Modell
-    und erfasst auch Knoten, die im Ziel absichtlich aufeinanderliegen - die
-    beiden Seiten einer getrennten Fuge (gemessen: Spaltelement (1, 2) wird
-    (1, 1)). Das Protokoll sagt, dass es Knoten des Ziels waren, und
-    behauptet nicht, die Quelle habe dort angeschlossen."""
+def _zwei_staebe_mit_spalt(name: str, x0: float) -> Model:
+    """Zwei Staebe, deren Enden bei x0 + 1 aufeinanderliegen und nur ueber
+    ein Spaltelement verbunden sind - eine getrennte Fuge."""
     from statik3d.model import Material, Section
-    z = Model("Ziel")
-    z.add_material(Material("S235"))
-    z.add_section(Section.rectangle("R", 0.1, 0.2))
-    for p in [(0, 0, 0), (1, 0, 0), (1, 0, 0), (2, 0, 0)]:
-        z.add_node(*p)
-    z.add_element("beam", [0, 1], "S235", "R")
-    z.add_element("beam", [2, 3], "S235", "R")
-    z.add_gap_element(1, 2, direction=[1, 0, 0])
-    q = Model("Quelle")
-    q.add_material(Material("S235"))
-    q.add_section(Section.rectangle("R", 0.1, 0.2))
-    q.add_node(5, 0, 0); q.add_node(6, 0, 0)
-    q.add_element("beam", [0, 1], "S235", "R")
+    m = Model(name)
+    m.add_material(Material("S235"))
+    m.add_section(Section.rectangle("R", 0.1, 0.2))
+    for p in [(x0, 0, 0), (x0 + 1, 0, 0), (x0 + 1, 0, 0), (x0 + 2, 0, 0)]:
+        m.add_node(*p)
+    m.add_element("beam", [0, 1], "S235", "R")
+    m.add_element("beam", [2, 3], "S235", "R")
+    m.add_gap_element(1, 2, direction=[1, 0, 0])
+    return m
+
+
+def test_json_anhaengen_doppelknoten_bleiben():
+    """Nach dem Anhaengen schliesst nur die Quelle an das Ziel an; Knoten,
+    die in einem Teil schon aufeinanderliegen, bleiben getrennt.
+
+    Bis zur Nachbesserung vom 23.09.2026 lief merge_duplicate_nodes ueber
+    das ganze Modell: das Spaltelement (1, 2) des Ziels wurde (1, 1), das der
+    Quelle ebenso, und die Staebe hingen zusammen. Liegt ein Knoten des einen
+    Teils auf einer solchen Fuge des anderen, ist nicht eindeutig, woran er
+    anschliessen soll: dann bleibt er getrennt, und das Protokoll nennt die
+    Stelle."""
+    q = _zwei_staebe_mit_spalt("Quelle", 5.0)
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, "q.json")
         q.save(p)
         log = []
-        import_file(p, model=z, log=log)
-    ziel_zeilen = [x for x in log if x.startswith("WARNUNG") and "1 Knoten des Ziels" in x]
-    falsch = [x for x in log if "der Quelle lagen auf Knoten des Ziels" in x]
-    expect("Anhaengen: zusammengefuehrte Doppelknoten des Ziels stehen als Warnung im "
-           "Protokoll, nicht als Anschluss der Quelle",
-           len(ziel_zeilen) == 1 and not falsch, "\n".join(log))
+        z = import_file(p, model=_zwei_staebe_mit_spalt("Ziel", 0.0), log=log)
+        spalt = [(g.node_a, g.node_b) for g in z.gap_elements]
+        expect("Anhaengen: Spaltelemente von Ziel und Quelle verbinden weiter zwei Knoten",
+               spalt == [(1, 2), (5, 6)] and z.nn == 8,
+               f"{spalt}, {z.nn} Knoten")
+        expect("Anhaengen: ohne Anschluss keine Zeile ueber zusammengefuehrte Knoten",
+               not any("zusammengeführt" in x for x in log), "\n".join(log))
+        # Quelle beginnt genau auf der Fuge des Ziels bei x = 1: uneindeutig
+        from statik3d.model import Material, Section
+        q2 = Model("Quelle2")
+        q2.add_material(Material("S235"))
+        q2.add_section(Section.rectangle("R", 0.1, 0.2))
+        q2.add_node(1, 0, 0); q2.add_node(1, 1, 0); q2.add_node(0, 0, 0)
+        q2.add_element("beam", [0, 1], "S235", "R")
+        q2.add_element("beam", [1, 2], "S235", "R")
+        q2.save(p)
+        log = []
+        z = import_file(p, model=_zwei_staebe_mit_spalt("Ziel", 0.0), log=log)
+    unklar = [x for x in log if x.startswith("WARNUNG") and "An 1 Stelle " in x
+              and "(1, 0, 0)" in x]
+    expect("Anhaengen: eindeutiger Anschluss (0,0,0) zusammengefuehrt, die Fuge bei (1,0,0) "
+           "nicht, und das Protokoll nennt sie",
+           z.nn == 4 + 2 and [(g.node_a, g.node_b) for g in z.gap_elements] == [(1, 2)]
+           and z.elements[3].nodes == [5, 0] and len(unklar) == 1
+           and any("1 Knoten der Quelle lagen auf Knoten des Ziels" in x for x in log),
+           f"{z.nn} Knoten, Elemente {[e.nodes for e in z.elements]}\n" + "\n".join(log))
+
+
+def test_doppelte_knoten_verweise():
+    """``merge_duplicate_nodes`` (Nachbereitung jedes Nicht-JSON-Imports,
+    also auch jedes .rf6) haengt auch Flaechenecken, integrierte Knoten und
+    Punktmassen um. Am Drehlager_V15_4_export.rf6 lagen bis zum 22.09.2026
+    1444 von 3128 Ecken nicht auf den Knoten ihrer Randlinien."""
+    from statik3d.model import Material, Flaeche
+    from statik3d.importers import _common as C
+    m = Model("m")
+    m.add_material(Material("S235"))
+    for p in [(0, 0, 0), (1, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]:
+        m.add_node(*p)
+    m.add_line("L1", [0, 1]); m.add_line("L2", [2, 3]); m.add_line("L3", [3, 4])
+    m.add_line("L4", [4, 0])
+    # direkt angelegt wie in den Lesern: vor dem Zusammenfuehren ist der Rand
+    # bei (1, 0, 0) noch offen, add_flaeche lehnte das ab
+    m.flaechen["F1"] = Flaeche("F1", ["L1", "L2", "L3", "L4"], ecken=[0, 2, 3, 4],
+                               integrierte_knoten=[3])
+    m.add_punktmasse(4, 10.0)
+    weg = C.merge_duplicate_nodes(m)
+    f = m.flaechen["F1"]
+    expect("Doppelte Knoten: Ecken, integrierte Knoten und Punktmasse folgen der neuen Nummer",
+           weg == 1 and m.nn == 4 and f.ecken == [0, 1, 2, 3] and f.integrierte_knoten == [2]
+           and m.lines["L2"].nodes == [1, 2] and m.punktmassen[0].node == 3,
+           f"weg {weg}, Ecken {f.ecken}, integriert {f.integrierte_knoten}, "
+           f"Punktmasse {m.punktmassen[0].node}")
+
+
+def test_json_anhaengen_fuge_traegt_wie_allein():
+    """Eine Quelle mit ausgefuehrter Kontaktfuge ("Ausfall bei Zug") rechnet
+    angehaengt wie allein. Gemessen vor der Nachbesserung vom 23.09.2026
+    (zwei Bloecke aus tests.test_fugen, 200 kN Zug): allein 0,0 N am
+    Fundament, an ein leeres Ziel gehaengt -198 152,7 N - 24 von 24
+    Spaltelementen verbanden einen Knoten mit sich selbst, und die Fuge stand
+    weiter auf "ausgefuehrt"."""
+    from tests.test_fugen import zwei_bloecke, kontaktbedingung, _flaechenknoten
+    from statik3d import fugen, solver
+    from statik3d.model import Material, Section
+    q = zwei_bloecke("gemeinsam")
+    kontaktbedingung(q, "gemeinsam", failure="zug")
+    fugen.kontaktfugen_ausfuehren(q, [])
+    unten, oben = _flaechenknoten(q, 0.0), _flaechenknoten(q, 2.0)
+    for i in unten:
+        q.fix(i, [0, 1, 2])
+    k = 1e9 / len(oben)
+    for i in oben:
+        q.fix(i, [0, 1, 2], stiffness=[k, k, k])
+    lc = q.add_load_case("LZ", "Q", activate=False)
+    lc.gravity = [0, 0, 0]
+    q.add_geometrielast("Dach", -2e5, "flaeche", case="LZ")          # zieht nach oben
+    q.lasten_verteilen()
+    unten_xyz = np.array([q.nodes[i] for i in unten])
+
+    def fundament(m):
+        r = solver.solve_static(m, case="LZ", workers=1)
+        idx = [i for i in range(m.nn) if np.min(np.abs(unten_xyz - m.nodes[i]).sum(1)) < 1e-9]
+        return float(np.asarray(r.reactions)[idx, 2].sum())
+
+    fern = Model("Ziel")                          # ein Stab abseits, eingespannt
+    fern.add_material(Material("S235"))
+    fern.add_section(Section.rectangle("R", 0.1, 0.2))
+    fern.add_node(10, 0, 0); fern.add_node(11, 0, 0)
+    fern.add_element("beam", [0, 1], "S235", "R")
+    fern.fix(0, "all")
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "q.json")
+        q.save(p)
+        allein = fundament(Model.load(p))
+        for text, ziel in (("leeres Ziel", Model("leer")), ("Ziel mit Stab abseits", fern)):
+            z = import_file(p, model=ziel, log=[])
+            selbst = sum(1 for g in z.gap_elements if int(g.node_a) == int(g.node_b))
+            r = fundament(z)
+            expect(f"Anhaengen an {text}: Fuge bleibt getrennt, Fundament wie allein",
+                   selbst == 0 and len(z.gap_elements) == 24 and abs(r - allein) < 1.0,
+                   f"allein {allein:.1f} N, angehaengt {r:.1f} N, Spaltelemente mit sich "
+                   f"selbst {selbst} von {len(z.gap_elements)}")
+
+
+def test_json_anhaengen_ermuedung_auf_kombination():
+    """Ein Zustand einer Ermuedungslast darf eine Kombination sein (am CBG
+    alle 20). Wird die Kombination der Quelle umbenannt, folgt ihr die
+    Ermuedungslast. Gemessen vor der Nachbesserung vom 23.09.2026: Quelle
+    CO1 = {LF1: 1,0; LF2: 1,0}, Ziel CO1 = {LF1: 1,0; LF2: 0,1}; danach hiess
+    die der Quelle CO1_2, FAT-Q zeigte aber auf 'CO1' des Ziels. Hatte das
+    Ziel auch eine FAT-Q auf seine CO1, galten beide als gleich, und die der
+    Quelle fiel weg."""
+    from statik3d.model import Material, Section, FatigueLoad
+
+    def modell(name, x0, faktor, mit_fat):
+        m = Model(name)
+        m.add_material(Material("S235"))
+        m.add_section(Section.rectangle("R", 0.1, 0.2))
+        m.add_node(x0, 0, 0); m.add_node(x0 + 1, 0, 0)
+        m.add_element("beam", [0, 1], "S235", "R")
+        m.fix(0, "all")
+        m.load_node(1, Fz=-1e3, case="LF1")
+        m.add_load_case("LF2", "Q", activate=False)
+        m.load_node(1, Fz=-5e3, case="LF2")
+        m.add_combination("CO1", {"LF1": 1.0, "LF2": faktor}, typ="FAT")
+        if mit_fat:
+            m.add_fatigue_load("FAT-Q", "CO1")
+        return m
+
+    def anhaengen(ziel, quelle):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "q.json")
+            quelle.save(p)
+            return import_file(p, model=ziel, log=[])
+
+    q = modell("Quelle", 5.0, 1.0, True)
+    q.fatigue_loads["FAT-V"] = FatigueLoad("FAT-V", folge=["LF1", "CO1", "LF1"])
+    z = anhaengen(modell("Ziel", 0.0, 0.1, False), q)
+    fq, fv = z.fatigue_loads.get("FAT-Q"), z.fatigue_loads.get("FAT-V")
+    expect("Anhaengen: Ermuedungslast folgt der umbenannten Kombination (case_max, folge)",
+           fq is not None and fq.case_max == "CO1_2"
+           and z.combinations["CO1_2"].factors == {"LF1": 1.0, "LF2": 1.0}
+           and fv is not None and fv.folge == ["LF1", "CO1_2", "LF1"],
+           f"FAT-Q -> {None if fq is None else fq.case_max}, FAT-V -> "
+           f"{None if fv is None else fv.folge}")
+    z = anhaengen(modell("Ziel", 0.0, 0.1, True), modell("Quelle", 5.0, 1.0, True))
+    zustaende = {n: (f.case_max, z.combinations[f.case_max].factors["LF2"])
+                 for n, f in z.fatigue_loads.items()}
+    expect("Anhaengen: gleichnamige Ermuedungslast auf verschiedene Kombination bleibt erhalten",
+           zustaende == {"FAT-Q": ("CO1", 0.1), "FAT-Q_2": ("CO1_2", 1.0)}, f"{zustaende}")
+    z = anhaengen(modell("Ziel", 0.0, 1.0, True), modell("Quelle", 5.0, 1.0, True))
+    expect("Anhaengen: gleiche Kombination und gleiche Ermuedungslast werden nicht verdoppelt",
+           list(z.combinations) == ["CO1"] and list(z.fatigue_loads) == ["FAT-Q"],
+           f"{list(z.combinations)}, {list(z.fatigue_loads)}")
+
+
+def test_json_anhaengen_koerpergruppe():
+    """Die Gruppe eines Volumenelements nennt seinen Koerper, und
+    fugen.kontaktfuge_ausfuehren sucht den Koerper einer Kontaktbedingung
+    ueber sie. Gemessen vor der Nachbesserung vom 23.09.2026: zwei hex8 V1
+    (unten) und V2 (oben) mit Fuge KB1 auf V1 - allein wird der untere Block
+    geloest; an ein Ziel mit eigenen V1/V2 gehaengt hiess der Koerper V1_2,
+    seine Elemente trugen aber die Gruppe 'V1', und die Fuge loeste den
+    oberen Block."""
+    from statik3d.model import Material, Volumenkoerper, Flaeche
+    from statik3d import fugen
+
+    def bloecke(name, x0, mit_fuge):
+        m = Model(name)
+        m.add_material(Material("S235"))
+        for zz in (0.0, 1.0, 2.0):
+            for (x, y) in ((0, 0), (1, 0), (1, 1), (0, 1)):
+                m.add_node(x0 + x, y, zz)
+        u = m.add_element("hex8", [0, 1, 2, 3, 4, 5, 6, 7], "S235", group="V1")
+        o = m.add_element("hex8", [4, 5, 6, 7, 8, 9, 10, 11], "S235", group="V2")
+        m.koerper["V1"] = Volumenkoerper("V1", material="S235", elemente=[u])
+        m.koerper["V2"] = Volumenkoerper("V2", material="S235", elemente=[o])
+        for i in range(4):
+            m.fix(i, "all")
+        if mit_fuge:
+            m.flaechen["FF"] = Flaeche("FF", randseiten=[[u, 1], [o, 0]])
+            m.add_kontaktbedingung("KB1", flaechennamen=["FF"], koerpernamen=["V1"])
+        return m
+
+    def geloest(m, kb, unten, oben):
+        vorher = (list(m.elements[unten].nodes), list(m.elements[oben].nodes))
+        fugen.kontaktfuge_ausfuehren(m, m.kontaktbedingungen[kb], [])
+        return (m.elements[unten].nodes != vorher[0], m.elements[oben].nodes != vorher[1])
+
+    allein = geloest(bloecke("Quelle", 5.0, True), "KB1", 0, 1)
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "q.json")
+        bloecke("Quelle", 5.0, True).save(p)
+        z = import_file(p, model=bloecke("Ziel", 0.0, False), log=[])
+    gruppen = {n: sorted({z.elements[e].group for e in k.elemente}) for n, k in z.koerper.items()}
+    kb = next(iter(z.kontaktbedingungen))
+    angehaengt = geloest(z, kb, 2, 3)
+    expect("Anhaengen: Elemente der umbenannten Koerper tragen den neuen Koerpernamen",
+           gruppen == {"V1": ["V1"], "V2": ["V2"], "V1_2": ["V1_2"], "V2_2": ["V2_2"]},
+           f"{gruppen}")
+    expect("Anhaengen: die Fuge der Quelle loest denselben Block wie allein (unten)",
+           allein == (True, False) and angehaengt == allein,
+           f"allein (unten, oben) geloest {allein}, angehaengt {angehaengt}")
 
 
 def test_json_anhaengen_schluessel():
@@ -1434,7 +1646,10 @@ TESTS = [
          test_ifc, test_ifc2x3, test_ifc_physical_fallback, test_saf, test_rfem_xlsx,
          test_rfem_csv_folder, test_dispatcher, test_json_anhaengen_vollstaendig,
          test_json_anhaengen_hallenrahmen, test_json_anhaengen_eigengewicht_und_gleiches,
-         test_json_anhaengen_doppelknoten_gemeldet, test_json_anhaengen_schluessel]
+         test_json_anhaengen_doppelknoten_bleiben, test_doppelte_knoten_verweise,
+         test_json_anhaengen_fuge_traegt_wie_allein,
+         test_json_anhaengen_ermuedung_auf_kombination, test_json_anhaengen_koerpergruppe,
+         test_json_anhaengen_schluessel]
 
 
 def main() -> int:

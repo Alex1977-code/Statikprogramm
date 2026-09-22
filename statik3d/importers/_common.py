@@ -146,6 +146,63 @@ def merge_duplicate_nodes(model: Model, tol: float = DEFAULT_TOL) -> int:
         return 0
     new_nodes = np.zeros((len(first), 3))
     new_nodes[new_index] = model.nodes
+    _umnummerieren(model, new_index, new_nodes)
+    return n_removed
+
+
+def anschluss_zusammenfuehren(model: Model, n_ziel: int,
+                              tol: float = DEFAULT_TOL) -> tuple[int, list]:
+    """Angehaengte Knoten (ab ``n_ziel``) auf gleich liegende Knoten davor
+    legen - nur zwischen den beiden Teilen, nie innerhalb eines Teils.
+
+    ``merge_duplicate_nodes`` ueber das ganze Modell verschweisst auch, was in
+    einem Teil absichtlich aufeinanderliegt: die beiden Seiten einer
+    ausgefuehrten Kontaktfuge. Gemessen beim Anhaengen eines JSON-Modells
+    (Befund SV11, Nachbesserung 23.09.2026): zwei Bloecke mit Fuge "Ausfall
+    bei Zug" und 200 kN Zug - allein 0,0 N am Fundament, angehaengt an ein
+    leeres Ziel -198 152,7 N, weil 24 von 24 Spaltelementen danach einen
+    Knoten mit sich selbst verbanden; an Kopfplatte_HEA_200.json 117 von 117.
+
+    Zusammengefuehrt wird ein Knoten des angehaengten Teils nur, wenn an
+    seiner Stelle genau ein Knoten des Ziels und genau einer des Anhangs
+    liegt. Liegen dort in einem Teil mehrere (eine Fuge), ist nicht
+    eindeutig, welcher anschliessen soll: dann bleibt alles getrennt, und
+    die Stelle kommt zurueck. Die Knoten des Ziels behalten ihre Nummern.
+
+    Rueckgabe: (Anzahl zusammengefuehrter Knoten, Koordinaten der
+    uneindeutigen Stellen)."""
+    n_ziel = int(n_ziel)
+    if n_ziel <= 0 or model.nn <= n_ziel:
+        return 0, []
+    key = np.floor(model.nodes / tol + 0.5).astype(np.int64)
+    _, inverse = np.unique(key, axis=0, return_inverse=True)
+    inverse = np.asarray(inverse).reshape(-1)
+    inv_z, inv_q = inverse[:n_ziel], inverse[n_ziel:]
+    g = int(inverse.max()) + 1
+    cnt_z = np.bincount(inv_z, minlength=g)
+    cnt_q = np.bincount(inv_q, minlength=g)
+    erster_z = np.full(g, -1, dtype=np.int64)
+    erster_z[inv_z[::-1]] = np.arange(n_ziel - 1, -1, -1)      # erster Zielknoten je Stelle
+    eindeutig = (cnt_z[inv_q] == 1) & (cnt_q[inv_q] == 1)
+    unklar = np.unique(inv_q[(cnt_z[inv_q] > 0) & ~eindeutig])
+    stellen = [model.nodes[int(erster_z[s])].tolist() for s in unklar]
+    n_merge = int(eindeutig.sum())
+    if n_merge == 0:
+        return 0, stellen
+    new_index = np.arange(model.nn, dtype=np.int64)
+    bleibt = ~eindeutig
+    anhang = new_index[n_ziel:]                                 # Sicht, schreibt durch
+    anhang[bleibt] = n_ziel + np.arange(int(bleibt.sum()))
+    anhang[eindeutig] = erster_z[inv_q[eindeutig]]
+    new_nodes = np.vstack([model.nodes[:n_ziel], model.nodes[n_ziel:][bleibt]])
+    _umnummerieren(model, new_index, new_nodes)
+    return n_merge, stellen
+
+
+def _umnummerieren(model: Model, new_index, new_nodes) -> None:
+    """Neue Knotenliste setzen und jeden Knotenverweis umhaengen
+    (``new_index[alt] = neu``); gleich gewordene Knoten in Linien, Linien-
+    und Flaechenlagern einmal fuehren."""
     model.nodes = new_nodes
     for e in model.elements:
         e.nodes = [int(new_index[n]) for n in e.nodes]
@@ -194,7 +251,6 @@ def merge_duplicate_nodes(model: Model, tol: float = DEFAULT_TOL) -> int:
         ss.nodes = nodes
         ss.areas = areas if any(areas) else []
     _weitere_knotenverweise_umhaengen(model, new_index)
-    return n_removed
 
 
 def _zusammenfassen(knoten, flaechen) -> tuple[list, list]:
@@ -226,8 +282,22 @@ def _weitere_knotenverweise_umhaengen(model: Model, new_index) -> None:
     ohne diese Zeilen lag jeder dieser Verweise einen Knoten daneben - die
     Zwangsverformung auf (2, 0, 0) statt (0, 0, 0), die Punktmasse auf
     (3, 0, 0) statt (0, 1, 0), die vier Flaechenecken um eine Ecke verrutscht
-    und die letzte auf dem Quader nebenan. Dieselbe Funktion ruft auch der
-    RFEM-6-Leser (``merge_nodes=True``); dort gilt dasselbe.
+    und die letzte auf dem Quader nebenan.
+
+    **Das wirkt auf jeden Import, nicht nur auf das Anhaengen.**
+    ``merge_duplicate_nodes`` laeuft in der Nachbereitung von
+    ``importers.import_file`` nach jedem Nicht-JSON-Import, der Knoten
+    anlegt - also bei jedem .rf6 -, dazu im RFEM-Leser mit
+    ``merge_nodes=True`` und fuer die uebrigen RFEM-Behaelter. Gemessen am
+    Drehlager_V15_4_export.rf6 (23.09.2026, 617 Knoten zusammengefuehrt):
+    vorher lagen 1444 von 3128 Flaechenecken nicht auf den Knoten ihrer
+    Randlinien (bis 1815,9 mm daneben) und 10 von 168 integrierten Knoten
+    hinter dem Ende der Knotenliste; jetzt 0 und 0. Die Ecken liest
+    "Spiel geben" (``spiel._fremde_nutzung``): an den 73 zylindrischen
+    Koerpern bekommt ``spiel.trennen`` jetzt 359 statt 363 Knotenkopien
+    (V16 und V29 je 2 weniger - Knoten, die nur eine verrutschte Ecke als
+    fremd auswies), die 24 Linienkopien bleiben. Importzeit 1,1 s vorher,
+    1,2 s jetzt (je ein Lauf, geometrischer Import ohne Netz).
     """
     def k(n) -> int:
         return int(new_index[int(n)])

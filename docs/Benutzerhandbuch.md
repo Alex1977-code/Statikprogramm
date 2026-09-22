@@ -2732,7 +2732,14 @@ jetzt kommen alle an. Was das Protokoll dabei sagt:
 * **„Umbenannt …“** – ein Name, den es im Ziel schon gibt, bekommt eine
   Nummer (`S1` → `S1_2`, `F1` → `F1_2`), und alles in der Quelle, was ihn
   nennt – Lasten, Kontaktbedingungen, Kombinationen, Layer –, zeigt auf das
-  umbenannte Objekt. Werkstoffe, Querschnitte, Dicken, Kombinationen und
+  umbenannte Objekt. Das gilt auch für die Gruppe der Elemente eines
+  umbenannten Volumenkörpers (`V1` → `V1_2`); über sie findet eine
+  Kontaktbedingung ihren Körper. Bis zum 23.09.2026 behielten die Elemente
+  `V1`, und die Fuge der Quelle löste im Versuch den Block des anderen
+  Körpers. Ebenso folgen die Ermüdungslasten, deren Zustand eine Kombination
+  ist (am CBG alle 20), der umbenannten Kombination; bis dahin rechnete eine
+  solche Ermüdungslast ohne Meldung mit der gleichnamigen Kombination des
+  Ziels. Werkstoffe, Querschnitte, Dicken, Kombinationen und
   Ermüdungslasten mit gleichem Namen **und** gleichem Inhalt werden nicht
   doppelt angelegt; bei gleichem Namen und anderem Inhalt behält das
   angehängte Teil seinen eigenen (am Hallenrahmen: `S355` der Halle mit
@@ -2750,19 +2757,36 @@ jetzt kommen alle an. Was das Protokoll dabei sagt:
   bewegt das ganze System, also auch das Ziel). Einstellungen – Netz,
   Nachweise, Plastizität, Einheiten, Bericht – bleiben die des Ziels; weichen
   die der Quelle ab, steht es im Protokoll.
-* Knoten der Quelle, die auf Knoten des Ziels liegen, werden zusammengeführt
-  („1 Knoten der Quelle lagen auf Knoten des Ziels …“); jeder Verweis darauf –
-  auch Ecken und integrierte Knoten von Flächen, Punktmassen, Starrkörper,
-  Zwangsverformungen – folgt. Das Zusammenführen erfasst das ganze Modell,
-  also auch Knoten, die im Ziel oder in der Quelle schon vorher
-  aufeinanderlagen, etwa die beiden Seiten einer getrennten Kontaktfuge
-  (gemessen: ein Spaltelement zwischen den Knoten 1 und 2 verbindet danach
-  Knoten 1 mit sich selbst). Das meldet eine eigene Warnung mit der Anzahl je
-  Modell – dann die Fugen dort prüfen.
+* **Anschluss:** Ein Knoten der Quelle, der auf einem Knoten des Ziels
+  liegt, wird mit ihm zusammengeführt („1 Knoten der Quelle lagen auf Knoten
+  des Ziels …“); jeder Verweis darauf folgt, auch Ecken und integrierte
+  Knoten von Flächen, Punktmassen, Starrkörper und Zwangsverformungen.
+  Knoten, die innerhalb des Ziels oder innerhalb der Quelle schon
+  aufeinanderliegen, bleiben getrennt, etwa die beiden Seiten einer
+  ausgeführten Kontaktfuge. Bis zum 23.09.2026 wurde über das ganze Modell
+  zusammengeführt. Gemessen an zwei Blöcken mit der Fuge „Ausfall bei Zug“
+  unter 200 kN Zug: allein 0,0 N am Fundament, angehängt −198 152,7 N, weil
+  danach 24 von 24 Spaltelementen einen Knoten mit sich selbst verbanden
+  (an `Kopfplatte_HEA_200.json` 117 von 117). Im selben Versuch sind es
+  jetzt 0,0 N wie allein. Liegt ein Knoten des einen Teils auf einer solchen
+  Doppelstelle des anderen, ist nicht eindeutig, woran er anschließen soll.
+  Dann bleibt er getrennt, und die Warnung „An … Stellen liegen in Ziel oder
+  Quelle schon mehrere Knoten aufeinander …“ nennt die Zahl und die erste
+  Stelle. Dort ist zu prüfen, ob die Teile verbunden sein sollen.
 
-Gegenprobe: Rahmen mit angehängtem Hallenrahmen, alter gegen neuen Weg – in
-allen fünf Lastfällen dieselben Verschiebungen (Abweichung 0), dazu jetzt
-die 72 Kombinationen.
+Gegenprobe: Rahmen mit angehängtem Hallenrahmen, alter gegen neuen Weg (am
+23.09.2026 nach der Nachbesserung wiederholt): in allen fünf Lastfällen
+dieselben Verschiebungen (Abweichung 0), dazu jetzt die 72 Kombinationen.
+
+Die Nachbereitung der übrigen Importe (RFEM 6, DXF, IFC, …) führt
+aufeinanderliegende Knoten weiterhin über das ganze Modell zusammen. Seit dem
+22.09.2026 folgen dabei auch die Ecken und integrierten Knoten der Flächen.
+Am `Drehlager_V15_4_export.rf6` lagen vorher 1444 von 3128 Flächenecken
+nicht auf den Knoten ihrer Randlinien (bis 1,8 m daneben) und 10 von 168
+integrierten Knoten hinter dem Ende der Knotenliste, jetzt 0 und 0.
+„Spiel geben“ liest diese Ecken: an den 73 zylindrischen Körpern des
+Drehlagers entstehen beim Trennen von den Nachbarn jetzt 359 statt 363
+Knotenkopien (V16 und V29 je 2 weniger), die 24 Linienkopien bleiben.
 
 ## 8 Nachweise nach EC3
 
