@@ -17,10 +17,21 @@ Ausgabe besteht aus Bloecken::
     END KNOTEN
 
 Gelesen wird daraus das **Modell**: Knoten, Schalen- und Stabelemente,
-Werkstoffe, Schalendicken und die Layer. Ergebnisse (``REAK``, ``QUER``,
-``SREAK``, ``AUFLR``, ``DEFORM``) rechnet Statik3D selbst und liest sie
-nicht; Lager (``FESTH``) und Lasten fehlen, weil ihr Spaltenaufbau nicht
-belegt ist - beides wird **benannt** und nicht stillschweigend uebergangen.
+Werkstoffe, Schalendicken, die Layer und die **Lager** (``FESTH``).
+Ergebnisse (``REAK``, ``QUER``, ``SREAK``, ``AUFLR``, ``DEFORM``) rechnet
+Statik3D selbst und liest sie nicht; die **Lasten** fehlen, weil ihr
+Spaltenaufbau nicht belegt ist - das wird **benannt** und nicht
+stillschweigend uebergangen.
+
+**Zu den Lagern gehoert die gefaehrlichste Falle der Schnittstelle**, und
+sie ist der Grund, warum diese Tabelle nicht frueher gelesen wurde: im
+Export bedeutet ``-1`` **frei** und ``-2`` **fest**. In der ICX ist es
+umgekehrt - dort ist ``0.0`` frei und ``-1.0`` fest. Die Bedeutung kehrt
+sich zwischen Ein- und Ausgabe um. Wer den Export mit der ICX-Konvention
+liest, vertauscht frei und fest und bekommt ein Modell, das **rechnet und
+falsch ist**. Belegt an zwei unabhaengigen Dateien (Antwort der
+InfoCAD-Sitzung vom 22.09.2026): ICX-Punktwert ``0.0`` -> Export ``-1``;
+ICX ``-1.0`` -> Export ``-2``.
 
 Vier Eigenheiten des Formats, die den Leser bestimmen:
 
@@ -44,8 +55,10 @@ Vier Eigenheiten des Formats, die den Leser bestimmen:
 
 Quelle der Formatangaben ist die Uebergabe eines InfoCAD-Projekts vom
 21.09.2026 (4498 Zeilen, an 45 von 48 Angaben belegt). Was dort **nicht**
-steht, steht auch hier nicht: die Spalten von ``FESTH``, der Unterschied
-``MAT``/``MAT2`` und die Einheiten der meisten Spalten. Wo eine Einheit
+steht, steht auch hier nicht: der Spaltenaufbau der Lasttabellen, der
+Unterschied ``MAT``/``MAT2`` und die Einheiten der meisten Spalten. Die
+Spalten von ``FESTH`` sind seit dem 22.09.2026 belegt (Antwort der
+InfoCAD-Sitzung) und werden gelesen. Wo eine Einheit
 gedeutet werden muss (E-Modul, Wichte), sagt das Protokoll die gelesene Zahl
 **und** die Deutung, damit ein Anwender den Fehlgriff sieht.
 """
@@ -317,6 +330,72 @@ def _elemente(model: Model, bloecke: dict, knoten: dict, mat: dict, qs: dict,
     return n
 
 
+def _lager(model: Model, bloecke: dict, knoten: dict, log: list = None) -> tuple:
+    """FESTH -> Lager. Rueckgabe (gesetzt, mit_dreibein, elastisch).
+
+    Neun tabulatorgetrennte Spalten, die Kopfzeile traegt neun ``?``::
+
+        NR | Hilfsknoten1 | Hilfsknoten2 | cu | cv | cw | ur | vr | wr
+
+    **``-1`` ist frei, ``-2`` ist fest** - umgekehrt zur ICX (siehe
+    Modulkopf). Jeder andere Wert ist eine Federsteifigkeit.
+
+    Zwei Dinge werden **nicht** uebernommen, weil sie nicht belegt sind, und
+    beide werden gezaehlt und genannt:
+
+    * **Das lokale Dreibein.** Die Spalten 2 und 3 nennen zwei Hilfsknoten am
+      Ende der Knotentabelle, die die lokalen Achsen aufspannen; ``0/0``
+      heisst „lokal gleich global". Nur diese Zeilen werden gelesen. Welche
+      globale Achse ein lokales u sonst haelt, ist **nicht** aus dem Namen zu
+      schliessen: an einer senkrechten Lagerlinie hielt gemessen ``cu`` die
+      globale Z-Achse, ``cv`` die X- und ``cw`` die Y-Achse. Wer aus dem
+      Namen schliesst, vertauscht die Richtungen.
+    * **Die Federsteifigkeit.** Ihre Einheit im Export ist nicht belegt - und
+      an genau dieser Stelle lag der Erzeuger des Anwenders um den Faktor
+      1000 daneben (die ICX fuehrt Steifigkeiten in MN/m, der Export
+      moeglicherweise anders). Eine geratene Einheit waere schlimmer als
+      keine: ein elastisches Lager wird darum **nicht** angelegt, sondern
+      gezaehlt und gemeldet.
+    """
+    b = bloecke.get("FESTH")
+    if b is None:
+        return 0, 0, 0
+    gesetzt = dreibein = elastisch = 0
+    ohne_knoten = []
+    for z in b.zeilen:
+        if len(z) < 9:
+            continue
+        nr = _ganz(z[0], -1)
+        k = knoten.get(nr)
+        if k is None:
+            ohne_knoten.append(nr)
+            continue
+        if _ganz(z[1], 0) or _ganz(z[2], 0):
+            dreibein += 1
+            continue
+        fest, feder = [], 0
+        for i in range(6):
+            v = _zahl(z[3 + i])
+            if v is None:
+                continue
+            if abs(v + 2.0) < 1e-9:          # -2 = fest
+                fest.append(i)
+            elif abs(v + 1.0) < 1e-9:        # -1 = frei
+                continue
+            else:
+                feder += 1
+        if feder:
+            elastisch += 1
+        if fest:
+            model.fix(k, fest)
+            gesetzt += 1
+    if ohne_knoten:
+        C.warn(log, f"FESTH nennt {len(ohne_knoten)} Knoten, die die Tabelle "
+                    f"KNOTEN nicht fuehrt (z. B. {ohne_knoten[:5]}) - diese "
+                    "Lager fehlen")
+    return gesetzt, dreibein, elastisch
+
+
 def import_infocad_txt(path: str, model: Model = None, log: list = None,
                        z_nach_unten: bool = False, **options) -> Model:
     """Ein Modell aus der Textausgabe von InfoCADs ``/ExportTxt`` lesen.
@@ -342,12 +421,14 @@ def import_infocad_txt(path: str, model: Model = None, log: list = None,
     qs = _dicken(model, bloecke, log)
     knoten = _knoten(model, bloecke, z_nach_unten, log)
     n_el = _elemente(model, bloecke, knoten, mat, qs, log)
+    n_lager, n_dreibein, n_elastisch = _lager(model, bloecke, knoten, log)
 
     # Sich selbst abzaehlen - und benennen, was liegen blieb. InfoCAD
     # uebergeht unbekannte Tabellen still; dieser Leser tut es nicht.
-    gelesen = {"KNOTEN", "ELEMENTE", "QUERSW", "MAT", "MAT2"}
+    gelesen = {"KNOTEN", "ELEMENTE", "QUERSW", "MAT", "MAT2", "FESTH"}
     C.say(log, f"InfoCAD: {len(knoten)} Knoten, {n_el} Elemente, "
-               f"{len(mat)} Werkstoffe, {len(qs)} Schalendicken")
+               f"{len(mat)} Werkstoffe, {len(qs)} Schalendicken, "
+               f"{n_lager} Lager")
     for name, b in bloecke.items():
         kurz = name.split(".")[0].split("#")[0]
         if kurz in gelesen:
@@ -359,13 +440,23 @@ def import_infocad_txt(path: str, model: Model = None, log: list = None,
         else:
             C.warn(log, f"  {name}: {b.n_ist} Zeilen - diese Tabelle wird nicht "
                         "gelesen; ihr Spaltenaufbau ist nicht belegt")
-    if not any(k.split(".")[0] in ("FESTH", "FESTHLAYER") for k in bloecke):
-        C.warn(log, "Lager und Lasten stehen nicht in der Ausgabe und werden "
-                    "nicht uebernommen - sie sind in Statik3D anzulegen")
-    else:
-        C.warn(log, "Lager (FESTH) sind in der Ausgabe enthalten, werden aber "
-                    "nicht gelesen: der Spaltenaufbau der Tabelle ist nicht "
-                    "belegt. Sie sind in Statik3D anzulegen")
+    if n_dreibein:
+        C.warn(log, f"  {n_dreibein} Lager stehen in eigenen lokalen Achsen "
+                    "(Hilfsknoten in den Spalten 2 und 3) - sie sind **nicht** "
+                    "uebernommen: welche globale Achse ein lokales u haelt, "
+                    "geht aus der Ausgabe nicht hervor.")
+    if n_elastisch:
+        C.warn(log, f"  {n_elastisch} Lager sind elastisch (Federsteifigkeit "
+                    "statt -1/-2) - die Feder ist **nicht** uebernommen, weil "
+                    "die Einheit der Ausgabe nicht belegt ist. Was an diesen "
+                    "Knoten fest ist, wurde gesetzt.")
+    if "FESTH" not in bloecke:
+        C.warn(log, "Lager (FESTH) stehen nicht in der Ausgabe - die "
+                    "Befehlsdatei von /ExportTxt braucht die Zeile FESTH, "
+                    "sonst hat das Modell keine Lager.")
+    C.warn(log, "Lasten werden nicht uebernommen: der Spaltenaufbau der "
+                "Lasttabellen ist nicht belegt. Sie sind in Statik3D "
+                "anzulegen.")
     if not knoten:
         raise ImportError(
             f"{os.path.basename(path)}: keine Tabelle KNOTEN. Die Befehlsdatei "

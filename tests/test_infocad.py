@@ -227,24 +227,26 @@ def test_unbekannte_tabelle_wird_benannt():
     Ausgabe, sagt der Leser, dass er sie nicht liest; fehlt sie ganz, sagt er
     das auch.
     """
-    fremd = block("FESTH", [[1, 1, 1, 1, 1, 1, 1], [4, 1, 1, 1, 0, 0, 0]])
+    # BETTUNG ist ein Name, den die Befehlsdatei kennt und dieser Leser nicht -
+    # frueher stand hier FESTH, das inzwischen gelesen wird.
+    fremd = block("BETTUNG", [[1, "1,5", 0], [4, "2,0", 0]])
     pfad = schreibe("_infocad_fremd.txt", volle_datei(extra=fremd))
     log = []
     import_infocad_txt(pfad, log=log)
     check("die fremde Tabelle wird benannt",
-          any("FESTH" in z and "nicht gelesen" in z for z in log),
-          str([z for z in log if "FESTH" in z])[:90])
+          any("BETTUNG" in z and "nicht gelesen" in z for z in log),
+          str([z for z in log if "BETTUNG" in z])[:90])
     check("und die Zeilenzahl steht dabei",
-          any("FESTH" in z and "2 Zeilen" in z for z in log))
-    check("der Anwender erfährt, dass die Lager fehlen",
-          any("Lager" in z and "anzulegen" in z for z in log),
-          str([z for z in log if "Lager" in z])[:90])
+          any("BETTUNG" in z and "2 Zeilen" in z for z in log))
+    check("der Anwender erfährt, dass die Lasten fehlen",
+          any("Lasten werden nicht uebernommen" in z for z in log),
+          str([z for z in log if "Lasten" in z])[:90])
 
-    # ganz ohne FESTH muss es genauso deutlich sein
+    # ganz ohne FESTH hat das Modell keine Lager - auch das muss dastehen
     log2 = []
     import_infocad_txt(schreibe("_infocad_voll.txt", volle_datei()), log=log2)
-    check("auch ohne FESTH wird auf die fehlenden Lager hingewiesen",
-          any("Lager und Lasten" in z for z in log2),
+    check("ohne FESTH wird auf die fehlenden Lager hingewiesen",
+          any("keine Lager" in z for z in log2),
           str([z for z in log2 if "Lager" in z])[:90])
 
     # eine Ergebnistabelle ist kein Versehen, sondern Absicht
@@ -257,6 +259,57 @@ def test_unbekannte_tabelle_wird_benannt():
           str([z for z in log3 if "REAK" in z])[:90])
     check("und nicht als Fehler gemeldet",
           not any(z.startswith("WARN") and "REAK" in z for z in log3))
+
+
+def test_lager_kommen_an():
+    """FESTH: **-1 ist frei, -2 ist fest** - umgekehrt zur ICX.
+
+    Das ist die gefährlichste Falle der ganzen Schnittstelle, weil das
+    Ergebnis in beiden Deutungen plausibel aussieht: wer den Export mit der
+    ICX-Konvention liest (dort ist 0,0 frei und -1,0 fest), vertauscht frei
+    und fest und bekommt ein Modell, das rechnet und falsch ist. Die Probe
+    enthält darum beide Werte in derselben Zeile.
+
+    Zwei Dinge werden ausdrücklich **nicht** übernommen, und beide werden
+    gezählt: Lager in eigenen lokalen Achsen (Hilfsknoten in den Spalten 2
+    und 3) und die Federsteifigkeit eines elastischen Lagers, deren Einheit
+    im Export nicht belegt ist.
+    """
+    #  NR | Hilfsknoten1 | Hilfsknoten2 | cu | cv | cw | ur | vr | wr
+    festh = block("FESTH", [
+        [1, 0, 0, -2, -2, -2, -2, -2, -2],        # ganz fest
+        [2, 0, 0, -1, -1, -2, -1, -1, -1],        # nur z gehalten
+        [3, 0, 0, -1, "5,17737", "51,7738", -1, -1, -1],   # elastisch
+        [4, 9, 9, -2, -2, -2, -1, -1, -1],        # eigenes Dreibein
+        [99, 0, 0, -2, -2, -2, -2, -2, -2],       # Knoten gibt es nicht
+    ], kopf=["?"] * 9)
+    pfad = schreibe("_infocad_lager.txt", volle_datei(extra=festh))
+    log = []
+    m = import_infocad_txt(pfad, log=log)
+
+    fest = {}
+    for s in m.supports:
+        fest[int(s.node)] = sorted(int(d) for d in s.dofs)
+    check("der ganz feste Knoten hält alle sechs Freiheitsgrade",
+          fest.get(0) == [0, 1, 2, 3, 4, 5], str(fest.get(0)))
+    check("-2 ist fest, -1 ist frei: der zweite hält nur z",
+          fest.get(1) == [2], str(fest.get(1)))
+    check("die Probe ist scharf: mit der ICX-Deutung wäre es genau umgekehrt",
+          fest.get(1) != [0, 1, 3, 4, 5], str(fest.get(1)))
+    check("das elastische Lager wird gezählt und gemeldet",
+          any("elastisch" in z for z in log),
+          next((z for z in log if "elastisch" in z), "keine Zeile")[:100])
+    check("und seine Feder wird nicht erfunden",
+          2 not in fest or fest.get(2) == [], str(fest.get(2)))
+    check("das Lager mit eigenem Dreibein wird gezählt und nicht gesetzt",
+          any("lokalen Achsen" in z for z in log) and 3 not in fest,
+          next((z for z in log if "lokalen Achsen" in z), "keine Zeile")[:100])
+    check("ein Lagerknoten, den KNOTEN nicht führt, wird benannt",
+          any("die Tabelle KNOTEN nicht fuehrt" in z for z in log),
+          next((z for z in log if "KNOTEN nicht" in z), "keine Zeile")[:100])
+    check("die Zahl der Lager steht in der Zusammenfassung",
+          any("2 Lager" in z for z in log),
+          next((z for z in log if "Lager" in z and "InfoCAD:" in z), "-")[:100])
 
 
 def test_kodierungen_und_erkennung():
@@ -350,7 +403,7 @@ def main():
     for t in (test_bloecke_und_vollstaendigkeit, test_modell_kommt_an,
               test_typcode_kommt_aus_der_richtigen_tabelle,
               test_layercode_wird_ausgepackt,
-              test_unbekannte_tabelle_wird_benannt,
+              test_unbekannte_tabelle_wird_benannt, test_lager_kommen_an,
               test_kodierungen_und_erkennung,
               test_z_achse_bleibt_rechtshaendig,
               test_leere_und_falsche_dateien):

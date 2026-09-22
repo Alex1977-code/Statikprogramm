@@ -73,15 +73,45 @@ eine `.txt` ohne `BEGIN <TABELLE> N=…` wird mit Begründung abgewiesen.
 | `ELEMENTE` | 13 Spalten, auch bei Dreiecken | Elemente; Typ 11 = Viereckschale, 8 = Dreieckschale, 2 = Stab |
 | `MAT` / `MAT2` | `Nr Typ E G nu alpha_t gamma` | Werkstoffe |
 | `QUERSW` | `Nr Typ Wert …`, **Typ 2 = Schale**, Wert = Dicke [m] | Schalendicken |
+| `FESTH` | 9 Spalten: `NR`, zwei Hilfsknoten, `cu cv cw ur vr wr` | Lager — siehe die Falle unten |
 
 Die **Layernummer** steckt gepackt in der letzten Spalte von `ELEMENTE`
 (`Layer<<16 | FarbID<<8 | 1`, also 1377025 = Layer 21, rot) und wird die
 Elementgruppe — in InfoCAD ist der Layer die Auswertungseinheit.
 
-**Was nicht ankommt**, und warum: Lager (`FESTH`) und Lasten, weil ihr
-Spaltenaufbau nicht belegt ist; Ergebnisse (`REAK`, `QUER`, `SREAK`, `AUFLR`,
-`DEFORM`, `EXTREMA`), weil Statik3D selbst rechnet. Beides wird beim Import
-**benannt** — mit Tabellenname und Zeilenzahl.
+**⚠️ Die gefährlichste Falle der Schnittstelle: im Export bedeutet `-1`
+**frei** und `-2` **fest**.** In der ICX ist es umgekehrt — dort ist `0.0`
+frei und `-1.0` fest. Die Bedeutung kehrt sich zwischen Ein- und Ausgabe um.
+Wer den Export mit der ICX-Konvention liest, vertauscht frei und fest und
+bekommt ein Modell, das **rechnet und falsch ist**. Belegt an zwei
+unabhängigen Dateien: ICX-Punktwert `0.0` → Export `-1`; ICX `-1.0` →
+Export `-2`.
+
+Zwei Dinge aus `FESTH` werden ausdrücklich **nicht** übernommen, und beide
+werden beim Import gezählt und genannt:
+
+* **Lager in eigenen lokalen Achsen.** Die Spalten 2 und 3 nennen zwei
+  Hilfsknoten am Ende der Knotentabelle, die das lokale Dreibein aufspannen;
+  `0/0` heißt „lokal gleich global", und nur diese Zeilen werden gelesen.
+  Welche globale Achse ein lokales `u` sonst hält, ist **nicht aus dem Namen
+  zu schließen**: an einer senkrechten Lagerlinie hielt gemessen `cu` die
+  globale Z-Achse, `cv` die X- und `cw` die Y-Achse.
+* **Die Federsteifigkeit** eines elastischen Lagers. Ihre Einheit im Export
+  ist nicht belegt — und genau dort lag der Erzeuger des Anwenders um den
+  Faktor 1000 daneben. Eine geratene Einheit wäre schlimmer als keine: das
+  Lager wird gezählt und gemeldet, was daran fest ist, wird gesetzt.
+
+**Was nicht ankommt**, und warum: die **Lasten**, weil ihr Spaltenaufbau
+nicht belegt ist; Ergebnisse (`REAK`, `QUER`, `SREAK`, `AUFLR`, `DEFORM`,
+`EXTREMA`), weil Statik3D selbst rechnet. Beides wird beim Import **benannt**
+— mit Tabellenname und Zeilenzahl.
+
+Zwei Eigenheiten der Ergebnistabellen, die hier nur der Vollständigkeit halber
+stehen (gelesen werden sie nicht): Spalte 1 von `REAK` und `QUER` ist die
+**Element**nummer, nicht die Knotennummer — beide Tabellen führen mehrere
+Zeilen je Schlüsselwert, eine je Ecke. Und `AUFLR` trägt die Spaltennamen
+`RX RY RZ MX MY MZ`, liefert die Werte aber in den **lokalen** Lagerachsen:
+die Namen lügen.
 
 **Vier Eigenheiten, auf die der Leser eingerichtet ist**
 
@@ -108,16 +138,39 @@ und kehrte jede Flächennormale um — ein Fehler, den keine Kräftebilanz sieht
 
 **Export nach InfoCAD** ist noch nicht gebaut. Der Weg dorthin ist die
 **ICX**, eine STEP-artige Textdatei, die InfoCAD als Argument entgegennimmt.
-Der Katalog `Icx-03.exp` führt **190 Entitäten**; aus der vorliegenden
-Übergabe sind 25 davon namentlich bekannt und die Argumentliste von **genau
-einer** (`ICXRS`) abgedruckt. Ein Schreiber wäre also zu drei Vierteln
-geraten. Was fehlt, ist klein und liegt beim Anwender: die Datei `Icx-03.exp`
-aus der InfoCAD-Installation und ein von InfoCAD selbst geschriebenes
-ICX-Paar (`<name>_modell.icx` und `<name>.icx`) als Muster. Zwei Dinge sind
-dabei schon belegt und gelten für jeden künftigen Schreiber: Flächenmodell
-und Netz können **nicht** in einer ICX stehen (das Netz gewinnt, die Flächen
-fallen kommentarlos weg — es sind immer zwei Dateien), und ein Layername über
-**27 Zeichen** zerstört stillschweigend die Nachbarzelle der FEM-Layertabelle.
+Der Katalog `Icx-03.exp` (ein EXPRESS-Schema) führt **169 Entitäten** — dazu
+107 `TYPE`. Seine Argumentlisten sind vollständig, mit Typ, `OPTIONAL`,
+Feldgrenzen und Vererbung; die Reihenfolge ist damit ablesbar und nicht
+geraten: geerbte Attribute zuerst, von der Wurzel nach unten, dann die
+eigenen in Deklarationsreihenfolge. Auch die **Einheiten** stehen darin, an
+44 Stellen — `IcxForceMeasure` in kN, `IcxStiffnessMeasure` in **MN/m**,
+`IcxStiffnessPerLengthMeasure` in MN/m². Das ist kein Detail: genau dort lag
+der Generator des Anwenders um den Faktor 1000 daneben.
+
+Zwei Sätze, die in der Übergabe vom 21.09. standen und in einer früheren
+Fassung dieses Handbuchs, sind **berichtigt** (Antwort der InfoCAD-Sitzung
+vom 22.09.2026):
+
+* „Flächenmodell und Netz können nicht in einer ICX stehen" ist als Aussage
+  über das **Dateiformat falsch**: eine vorliegende Datei enthält 278
+  `ICXMODELFACE` **und** 10 739 `ICXSH46`, und das Schema kennt überhaupt
+  keine Konsistenzregel (`WHERE`, `UNIQUE`, `DERIVE`, `INVERSE` kommen in
+  `Icx-03.exp` je null mal vor). Gemeint sein kann nur das **Importverhalten**
+  von InfoCAD, und das hat niemand gemessen. Bis das geschehen ist, gilt der
+  Satz als unbelegt.
+* Die Grenze von **27 Zeichen** für einen Layernamen gilt **nicht im
+  ICX-Format** — dort erlaubt das Schema 36 (`TYPE IcxLayerName = STRING(36)`)
+  —, sondern erst nach dem Import in der FEM-Layertabelle. Und zerstört wird
+  nicht die Nachbarzelle, sondern **alles ab ihr**: der spaltenweise Leser
+  bricht dort ab. Ein Schreiber, der sich auf die Schemagrenze verlässt,
+  läuft genau in den Fehler.
+* Die Endung `_modell` ist die Konvention des Anwenders, **nicht die von
+  InfoCAD**: InfoCAD schreibt das Flächenmodell unter dem schlichten
+  Projektnamen. Wer nach `*_modell.icx` sucht, findet keine InfoCAD-Datei.
+
+Woran eine von InfoCAD selbst geschriebene ICX zu erkennen ist: an den
+**GlobalIds**. InfoCAD schreibt 22-stellige Base64-Kennungen
+(`2PqMarmomWCT9EOKeASO3K`), erzeugte Dateien oft nullgepolsterte Zähler.
 
 Geprüft in `tests/test_infocad.py`.
 
