@@ -3871,6 +3871,39 @@ Der Hexaeder mit inkompatiblen Moden trägt die Biegung mit zwei Lagen; der line
 Tetraeder bleibt bei zwei Lagen um fast ein Drittel zu steif — mit weniger als der
 Hälfte der Knoten.
 
+**Ein Keil ist kein halber Sechsflächner.** Der `hex8` trägt Biegung über inkompatible
+Moden (Taylor/Beresford/Wilson), der `pent6` hat sie nicht — er läuft über die reine
+isoparametrische Formulierung. Am **identischen Knotengitter** gemessen (Statik3D-Sitzung,
+22.09.2026, Kragarm 1,0 × 0,1 × 0,2 m gegen die Balkenlösung mit Schub; jeder Würfel
+wahlweise als ein `hex8` oder als zwei `pent6`):
+
+| Gitter | Knoten | `hex8` | `pent6` | der Keil ist steifer um |
+|---|---|---|---|---|
+| 4 × 1 × 1 | 20 | 95,9 % | **56,4 %** | Faktor 1,70 |
+| 8 × 1 × 2 | 54 | 96,8 % | **81,8 %** | Faktor 1,18 |
+| 16 × 2 × 4 | 255 | 98,2 % | **93,5 %** | Faktor 1,05 |
+
+Damit ist die Paarung der Dreiecke keine Kosmetik, sondern tragend: jedes Dreieck ohne
+Partner wird ein Keil und kostet am groben Netz zweistellig. Die gierige Auswahl allein
+lässt aber Dreiecke stehen, deren Nachbarn schon vergeben sind — und zwar **nicht** wegen
+der Gütegrenze (sie von 0,3 auf 10⁻⁶ zu senken änderte an der Kragplatte keine einzige
+Zahl). Darum wird nach dem gierigen Durchgang **umgepaart**: für jedes übrige Dreieck u
+wird ein Nachbar v gesucht, dessen Partner w seinerseits ein anderes übriges Dreieck x
+hat; dann wird (v, w) gelöst und (u, v) sowie (w, x) genommen — ein erweiternder Weg der
+Länge drei, wiederholt, solange es trägt. Gemessen an der Kragplatte 1 × 0,2 × 0,05 m mit
+Endlast (22.09.2026, gleiche Knotenzahl in beiden Zeilen):
+
+| | Elemente | Keilanteil | Endverschiebung |
+|---|---|---|---|
+| h = 50 mm, nur gierig | 406 hex8 + 96 pent6 | 19,1 % | 93,8 % |
+| h = 50 mm, **umgepaart** | 424 hex8 + 60 pent6 | **12,4 %** | **95,8 %** |
+| h = 25 mm, nur gierig | 818 hex8 + 128 pent6 | 13,5 % | 97,1 % |
+| h = 25 mm, **umgepaart** | 850 hex8 + 64 pent6 | **7,0 %** | **97,7 %** |
+
+Zwei Prozentpunkte Genauigkeit am groben Netz, ohne einen einzigen Knoten mehr. Der
+**Keilanteil je gesweeptem Körper** ist damit ein Abnahmemaß für sich; er steht im
+Protokoll jedes Körpers („n Hexaeder + m Keile (gesweept, L Lagen)").
+
 **Lagen bei Fließen.** Das gilt **elastisch**. Die Löser-Sitzung hat am Zweigstand
 a4a7d91 (21.09.2026) den Kragträger 200 × 200 mm, 1,0 m, unter dem Endmoment 1,20 · M_el
 gerechnet (fy = 235 N/mm², Verfestigung 2 %; die Randfaser trägt elastisch 282 N/mm² und
@@ -3912,6 +3945,62 @@ knotenkonform, mit einer anderen Interpolation auf der Vierecksdiagonale. Pyrami
 nächsten Schritte. Reine Quader (sechs Vierecke, acht Knoten) bleiben beim abgebildeten
 Hexaedernetz mit ihrer Teilung; `netz.sweep = False` schaltet den Sweep ab.
 
+**Verjüngter Zug (22.09.2026).** Die Erkennung verlangte, dass der Deckel die um einen
+Vektor **verschobene** Kopie des Grundes ist. Ein Kegelstumpf, eine konische Rippe, eine
+Nabe mit Anzug fielen darum an die Tetraeder. Jetzt genügt eine **Ähnlichkeit**: der
+Deckel ist die um k skalierte, um t verschobene Kopie (`sweep._abbildung_finden`,
+`_abbilden`); die reine Verschiebung ist der Sonderfall k = 1 und läuft Zeichen für
+Zeichen wie bisher. Die Lage k liegt bei s = k/L auf dem Maßstab 1 + (k−1)·s, die
+Mantellinien laufen entsprechend zusammen — die Wandprüfung verlangt darum nicht mehr
+„Vektor parallel zu t", sondern „die Mantellinie verbindet einen Grundknoten mit **seinem
+Bild**". Der Rauminhalt wird als Pyramidenstumpf geprüft, h/3·(A₁ + A₂ + √(A₁A₂)).
+Gemessen (Kegelstumpf l = 200 mm, h = 30 mm):
+
+| r₁ → r₂ | Elemente | Güte min | Rauminhalt |
+|---|---|---|---|
+| 50 → 30 mm | 91 hex8 | 0,307 | 98,4 % des Kegelstumpfs (Kreise als Vielecke) |
+| 50 → 50 mm (Zylinder) | 91 hex8 | 0,309 | 98,4 % |
+| 30 → 60 mm | 91 hex8 + 14 pent6 | 0,306 | 98,4 % |
+
+**Drehkörper (22.09.2026).** Rohrbogen, Ringsegment, Kegelrad-Ausschnitt: ein ebenes
+Profil, um eine Achse gedreht. Grund und Deckel sind eben, aber **nicht parallel** — sie
+stehen um denselben Winkel gegeneinander wie der Körper selbst, und **beide Kappenebenen
+enthalten die Achse**. Daraus folgt sie geschlossen: die Achsrichtung steht auf beiden
+Kappennormalen senkrecht (d = n_A × n_B), der Achspunkt liegt in beiden Ebenen (zwei
+Gleichungen, die dritte ist der Lotpunkt zum Schwerpunktmittel), der Winkel ist der
+zwischen den Normalen im Vorzeichen von d (`sweep._abbildung_drehung`). Die Lage k wird um
+den Anteil k/L des Winkels gedreht und liegt damit **auf dem Bogen**, nicht auf der Sehne.
+
+Die Mantellinien sind hier **Bögen**. Die Wandprüfung verlangt darum nicht mehr „gerade",
+sondern: jeder Punkt der Mantellinie hat denselben Abstand zur Achse und dieselbe Höhe
+längs ihr wie der Grundknoten — das ist der Kreisbogen um sie, ohne Annahme über die
+Abtastung (`sweep._mantel_auf_bahn`). Der Rauminhalt wird nach **Guldin** geprüft:
+Grundfläche mal Weg ihres Schwerpunkts, A · φ · r_s. Gemessen am Ringsegment
+r = 100 … 150 mm, Höhe 50 mm, h = 20 mm:
+
+| Winkel | Elemente | Güte min | Rauminhalt |
+|---|---|---|---|
+| 90° | 36 hex8 + 36 pent6 | 0,641 | 99,5 % des Ringsegments |
+| 45° | 20 hex8 + 20 pent6 | 0,641 | 99,6 % |
+
+**Und ein Fehler, den erst dieser Prüfkörper zeigte.** Ein Ringsegment hat sechs
+Vierseitflächen und acht Eckknoten — dieselbe Zählung wie ein Quader. Der abgebildete
+Quaderpfad (`mesher._hex_netz`) griff ihn deshalb ab und bildete **trilinear zwischen den
+acht Ecken** ab: der 90°-Bogen kam so auf **63,7 %** seines Rauminhalts, ohne eine einzige
+Meldung — Hülle, Randtreue und Formgüte sahen tadellos aus. Genau die Art stillen Fehlers,
+vor der die Statik3D-Sitzung in ihrem Vertrag gewarnt hat. Der Quaderpfad verlangt jetzt
+zusätzlich, dass **alle zwölf Kanten gerade** sind (`mesher._gerade_kanten`); krumme gehen
+an den Sweep, und das Protokoll sagt es.
+
+**Woran die Erkennung sonst scheitert, sagt sie jetzt selbst** (`erkennen_warum_nicht`,
+eine Zeile je Körper im Protokoll): zu wenige Randflächen, keine zwei ebenen Kappen,
+Kappen ohne gemeinsamen Weg, „decken sich weder verschoben (x mm daneben) noch skaliert
+(y mm, Maßstab k)", Wandzahl, Wände nicht aus vier Linien, Mantellinien nicht gerade. Am
+Drehlager sind 68 von 108 Körpern sweepbar, aber sie tragen nur 8,2 % der Elemente — die
+40 übrigen tragen 91,8 %. Welche Erweiterung sich lohnt, entscheidet diese Zeile und nicht
+die Vermutung; dasselbe Vorgehen hat beim Zerlegen und bei den Splittern den Ausschlag
+gegeben.
+
 **Kappen aus mehreren Flächen, Zylinder, Zerlegen an Fußabdrücken (21.09.2026).** Drei
 Erweiterungen, damit der Sweep über Platten hinauskommt:
 
@@ -3948,6 +4037,78 @@ Erweiterungen, damit der Sweep über Platten hinauskommt:
    ändern sich nicht. Was nicht geht: eine Bohrung, die durch Aufsatz *und* Träger läuft
    — ihre Mantelfläche müsste geteilt werden, und Linien dafür gibt es nicht; dann bleibt
    der Körper ganz und geht an die Tetraeder.
+4. **Zerlegen an einer Ebene** (`sweep.zerlegen_ebene`, 22.09.2026): greift kein
+   Fußabdruck, wird an der **Ebene einer Randfläche** geschnitten. Warum gerade dort: an
+   einer einspringenden Kante liegt die Trennung zwischen zwei Blöcken immer in der Ebene
+   einer der beiden anliegenden Flächen — eine Rippe wird an der Ebene der Plattendecke
+   abgeschnitten, ein Absatz an der Ebene seiner Schulter. Andere Ebenen muss man nicht
+   raten. Kandidat ist jede ebene Randfläche, deren Ebene den Körper wirklich **trennt**
+   (Punkte auf beiden Seiten). Der Fall, den das löst und der Fußabdruck nicht: eine
+   Rippe, die bis an den **Rand** der Platte läuft. Sie hängt nicht über einer Öffnung —
+   ihr Fußabdruck berührt den Außenrand der Deckfläche, und genau das schließt
+   `_fussabdruecke` aus, sonst wäre der Schnitt keine geschlossene Fläche.
+
+   Drei Dinge daran sind nicht offensichtlich:
+
+   * **Eine Kante, die in der Schnittebene liegt, gehört nicht der Seite, von der man sie
+     anläuft.** An der T-förmigen Stirnfläche einer Rippe liegen zwei Kanten in der Ebene,
+     und *beide* gehören zur Platte darunter, obwohl die eine von unten, die andere von
+     oben erreicht wird. Nach den Vorzeichen der Ecken geteilt schlägt man eine davon der
+     Rippe zu und bekommt zwei Teile, die nicht aneinanderpassen. Entschieden wird darum
+     je **Kante** und geometrisch: einen kleinen Schritt von der Kantenmitte ins Innere
+     der Fläche, und die Seite dieses Punktes zählt (`sweep._kantenseiten`).
+   * **Eine Randfläche, die ganz in der Ebene liegt, gehört zu genau einem Block — und
+     welchem, sieht man ihr nicht an.** Die Deckfläche einer Platte mit Rippe liegt in der
+     Schnittebene und gehört zur Platte; ihre Nachbarn zeigen in beide Richtungen (die
+     Plattenseiten nach unten, die Rippenwände nach oben), und die Materialseite folgt aus
+     keiner lokalen Regel. Darum werden die Zuordnungen **durchprobiert** (bis drei solcher
+     Flächen, also acht Versuche), und es entscheidet die **geschlossene Hülle**: jede
+     Linie eines Blocks genau zweimal (`sweep._geschlossene_schale`). Diese Probe ist
+     scharf und fängt jede falsche Zuordnung ab, bevor daraus ein gültiger, aber
+     **anderer** Körper wird als der gemeinte.
+   * **Der Rand der Schnittfläche kommt aus zwei Quellen:** den Schnittstrecken der
+     geteilten Flächen *und* den Kanten der koplanaren Flächen, hinter denen die andere
+     Seite liegt. Am Prüfkörper sind das die drei Kanten des Rippenfußes in der
+     Deckfläche; ihr Außenrand gehört nicht dazu. Die Kanten werden zu einem Zug
+     verkettet; verzweigt er oder zerfällt er in mehrere Ringe, unterbleibt der Schnitt.
+
+   Nicht geschnitten werden Flächen mit Öffnungen, Flächen mit Bögen oder Polylinien und
+   Flächen, die einem **zweiten Körper** gehören — der Schnitt risse sonst die Fuge zum
+   Nachbarn auf.
+5. **Kappenlinien angleichen** (`sweep.kappenlinien_angleichen`, 22.09.2026): ein Schnitt
+   setzt zwei neue Ecken in die eine Kappenschleife; die andere hat sie nicht. Die Kappen
+   decken sich weiterhin, aber die Wandprüfung sucht zu **jeder** Grundlinie genau eine
+   Deckellinie und findet drei. Am Prüfkörper blieb der Plattenblock darum tetraedrisch,
+   obwohl er ein Quader ist. Zwei Schritte heilen das:
+
+   * Die Kappenerkennung misst jetzt die **Figur**, nicht die Ecken: die Verschiebung kommt
+     aus dem **Flächenschwerpunkt** des Umrings (`sweep._umringmitte`; der Mittelwert der
+     Ecken wandert, wenn eine Ecke mitten auf einer geraden Kante dazukommt), und die
+     Deckungsprobe misst den Abstand zur **Kurve** statt zu den Stützpunkten
+     (`sweep._abstand_zum_zug`). Damit ist eingelöst, was `_deckungsgleich` seit jeher
+     behauptet: zwei Kappen dürfen ihren Rand verschieden in Linien teilen. Die Prüfung
+     wird dadurch nur großzügiger — was vorher durchging, geht weiter durch. Und sie
+     bleibt so schnell wie zuvor, denn sie läuft in `erkennen` über jedes Flächenpaar
+     eines Körpers (bis 144 × 144 am Drehlager): erst Stützpunkt auf Stützpunkt
+     (KD-Baum, der häufige Fall), dann der umschriebene Kasten als notwendige
+     Bedingung, und nur für die Punkte, die keinen Stützpunkt treffen, der Abstand zur
+     Kurve. Dicht gerechnet kostete die Kurve bei 500 Randpunkten 23 ms statt 0,4 ms je
+     Paar, bei 1 500 Punkten 196 ms statt 1,1 ms — gemessen am 22.09.2026, bevor die
+     Stufen kamen; mit ihnen 0,28 und 0,87 ms.
+   * Danach werden die Linien angeglichen: die fehlende Ecke wird auf die andere Schleife
+     abgebildet, deren Linie dort geteilt, und die **Wand** dazwischen zerfällt mit — eine
+     Wand je Linienpaar, mit neuer Mantellinie dazwischen. Erst dadurch bleibt die
+     Wandprüfung so streng, wie sie ist: jede Wand aus genau vier Linien. Angefasst werden
+     nur Linien, die allein diesem Block gehören: was einem **zweiten Körper** gehört,
+     bleibt unangetastet (`sweep._fremde_flaechen`) — sein Netz kennt die Stücke nicht, und
+     die Fuge risse auf. Der Weg wird dann quer dazu gesucht, und wenn es keinen gibt,
+     bleibt der Körper bei den Tetraedern (`test_angleichen_schont_den_nachbarn`: derselbe
+     Quader gleicht allein über seine Grundfläche an, mit Nachbar darunter über die
+     Seitenflächen — 144 hex8, Fuge knotenkonform).
+
+   Das hilft auch ohne Schnitt: ein von Hand gebauter Körper, dessen Deckel eine Kante in
+   zwei Linien führt (weil dort ein Nachbar anstößt), war bisher nicht sweepbar. Er ist es
+   jetzt (`test_kappen_verschieden_geteilt`: 44 hex8 + 4 pent6 statt Tetraedern).
 
 Gemessen (21.09.2026, ein Prozess, `tests/test_sweep.py`):
 
@@ -3955,6 +4116,28 @@ Gemessen (21.09.2026, ein Prozess, `tests/test_sweep.py`):
 |---|---|---|---|---|
 | Platte 0,4 × 0,3 × 0,1 m mit Nabe r = 60 mm, h = 80 mm, Kantenlänge 30 mm | 7 595 tet4 | **441 hex8 + 108 pent6**, ein Schnitt, 174 Knoten in der Schnittebene, keiner doppelt | ohne Befund | 11,12 kN = 11,12 kN |
 | abgesetzte Welle r = 50/30 mm, l = 200/150 mm, Kantenlänge 25 mm | 2 349 tet4 (+ 66 des dünnen Teils) | **446 hex8 + 28 pent6**, ein Schnitt, 61 Knoten in der Schulterebene, keiner doppelt | ohne Befund | 2,78 kN = 2,78 kN |
+
+Und am Ebenenschnitt (22.09.2026, Platte 0,2 × 0,1 × 0,02 m mit einer Rippe 150 × 20 × 60 mm
+bis an den Rand, eingespannt bei x = 0, 10 kN auf die Stirnfläche, Kantenlänge 25 mm):
+
+| Netz | Elemente | Knoten | größte Verschiebung |
+|---|---|---|---|
+| tet4, Kantenlänge 25 mm | 685 | 219 | 0,5811 mm |
+| tet4, 12,5 mm | 5 403 | 1 129 | 1,3437 mm |
+| tet4, 8 mm | 18 510 | 3 549 | 1,7955 mm |
+| tet4, 6 mm | 39 891 | 7 459 | 1,9674 mm |
+| **zerlegt und gesweept, 25 mm** | **124** (96 hex8 + 28 pent6) | **239** | **2,0161 mm** |
+| zerlegt und gesweept, 12,5 mm | 340 | 599 | 2,1138 mm |
+
+Das grobe gesweepte Netz steht über dem Tetraedernetz mit **einunddreißigmal so vielen
+Knoten**. Rauminhalt 100,0 %, Formgüte 0,352, 54 Knoten in der Schnittebene und keiner
+doppelt, Abnahme ohne Befund. Und die Last kommt durch beide Blöcke ins Lager: 1 MN/m² auf
+die geschnittene Stirnfläche (3,200 kN), auf den durch das Angleichen ersetzten Boden
+(20,000 kN) und auf die koplanare Deckfläche (17,000 kN) ergeben je genau diese
+Auflagerkraft — die Randseiten der Teilflächen liegen auf den Ausgangsflächen, über zwei
+Stufen (Schnitt, dann Angleichen) hinweg. Das ist die schärfste Messung dieser Arbeit für den Satz,
+mit dem sie angefangen hat: der lineare Tetraeder sperrt, und kein Verfeinern holt das
+auf.
 
 Der **abgebildete Quader** (`mesher._hex_netz`, sechs Vierecke, acht Ecken) setzt seit
 21.09.2026 ebenfalls Randseiten, teilt seine Knoten mit Nachbarn über dieselben Schlüssel

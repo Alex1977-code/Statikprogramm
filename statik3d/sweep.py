@@ -112,6 +112,235 @@ def _schleifenpunkte(model: Model, schleife: list, teilung: int = 24) -> np.ndar
     return np.asarray(_linienzug_punkte(model, list(schleife), teilung), float).reshape(-1, 3)
 
 
+def _abbildung_finden(A: np.ndarray, B: np.ndarray, tol: float) -> "tuple | None":
+    """Die Aehnlichkeit, die den Aussenrand des Grundes auf den des Deckels
+    legt: ``("v", Mittelpunkt c, Massstab k, Verschiebung t)`` mit
+    ``B = c + (A - c)*k + t``.
+
+    Reine Verschiebung ist der Fall k = 1 - der haeufige, und er wird zuerst
+    geprueft. Ein **verjuengter Zug** (Kegelstumpf, konische Rippe, Nabe mit
+    Anzug) hat k != 1: der Deckel ist dieselbe Figur, nur kleiner oder
+    groesser. Der Massstab folgt aus den mittleren Abstaenden zum Schwerpunkt;
+    weil beide Kappen eben und **parallel** sind, genuegt das. Stehen sie
+    schief zueinander, ist es ein Drehkoerper - siehe
+    :func:`_abbildung_drehung`.
+    """
+    if len(A) < 3 or len(B) < 3:
+        return None
+    cA, cB = A.mean(axis=0), B.mean(axis=0)
+    rA = float(np.linalg.norm(A - cA, axis=1).mean())
+    rB = float(np.linalg.norm(B - cB, axis=1).mean())
+    if rA <= tol:
+        return None
+    return ("v", cA, rB / rA, cB - cA)
+
+
+def _abbildung_drehung(A: np.ndarray, B: np.ndarray, nA: np.ndarray, nB: np.ndarray,
+                       tol: float) -> "tuple | None":
+    """Die Drehung, die den Grund auf den Deckel legt:
+    ``("d", Achspunkt a, Achsrichtung d, Winkel phi)``.
+
+    Ein **Drehkoerper** (Revolve) entsteht, indem ein ebenes Profil um eine
+    Achse gedreht wird: Rohrbogen, Ringsegment, Kegelrad-Ausschnitt. Seine
+    beiden Kappen sind eben - aber nicht parallel, sondern um denselben
+    Winkel gegeneinander verdreht wie der Koerper selbst. Beide Kappenebenen
+    **enthalten die Achse**; daraus folgt sie:
+
+    * die Achsrichtung steht auf beiden Kappennormalen senkrecht, also
+      ``d = nA x nB``,
+    * der Achspunkt liegt in beiden Kappenebenen - zwei Gleichungen, die
+      dritte ist die Wahl des Lotpunktes zum Schwerpunktmittel,
+    * der Winkel ist der zwischen den Normalen, im Vorzeichen von d.
+
+    Ist ``nA`` parallel zu ``nB``, gibt es keine Drehung (dann ist es eine
+    Verschiebung oder ein verjuengter Zug). None, wenn keine Drehung passt.
+    """
+    nA = np.asarray(nA, float) / max(float(np.linalg.norm(nA)), 1e-300)
+    nB = np.asarray(nB, float) / max(float(np.linalg.norm(nB)), 1e-300)
+    d = np.cross(nA, nB)
+    ld = float(np.linalg.norm(d))
+    if ld < 1e-9:                            # Kappen parallel - keine Drehung
+        return None
+    d = d / ld
+    cA, cB = A.mean(axis=0), B.mean(axis=0)
+    # Achspunkt: in beiden Kappenebenen, senkrecht unter dem Schwerpunktmittel
+    M = np.vstack([nA, nB, d])
+    rechts = np.array([float(nA @ cA), float(nB @ cB), float(d @ (0.5 * (cA + cB)))])
+    try:
+        a = np.linalg.solve(M, rechts)
+    except np.linalg.LinAlgError:
+        return None
+    # Winkel: die Normalen gegeneinander, im Vorzeichen der Achse
+    phi = float(np.arctan2(ld, float(nA @ nB)))
+    for vorz in (1.0, -1.0):
+        abb = ("d", a, d, vorz * phi)
+        if float(np.linalg.norm(_abbilden(A[:1], abb)[0] - _naechster(B, _abbilden(A[:1], abb)[0]))) <= tol:
+            return abb
+    return ("d", a, d, phi)
+
+
+def _naechster(B: np.ndarray, p: np.ndarray) -> np.ndarray:
+    """Der Punkt aus B, der p am naechsten liegt."""
+    i = int(np.argmin(np.linalg.norm(np.asarray(B, float) - np.asarray(p, float), axis=1)))
+    return np.asarray(B, float)[i]
+
+
+def _drehmatrix(d: np.ndarray, w: float) -> np.ndarray:
+    """Drehmatrix um die Einheitsachse ``d`` mit dem Winkel ``w`` (Rodrigues)."""
+    d = np.asarray(d, float)
+    K = np.array([[0.0, -d[2], d[1]], [d[2], 0.0, -d[0]], [-d[1], d[0], 0.0]])
+    return np.eye(3) + np.sin(w) * K + (1.0 - np.cos(w)) * (K @ K)
+
+
+def _abbilden(P: np.ndarray, abb: tuple, s: float = 1.0) -> np.ndarray:
+    """Die Punkte ``P`` unter der Abbildung, zum Anteil ``s`` des Weges
+    (s = 0 der Grund, s = 1 der Deckel).
+
+    ``("v", c, k, t)``: Massstab und Verschiebung gehen linear mit.
+    ``("d", a, d, phi)``: gedreht wird um den Anteil des Winkels - so liegen
+    die Zwischenlagen auf dem Bogen und nicht auf der Sehne.
+    """
+    P = np.asarray(P, float).reshape(-1, 3)
+    if abb[0] == "d":
+        _tag, a, d, phi = abb
+        R = _drehmatrix(d, float(phi) * float(s))
+        a = np.asarray(a, float)
+        return (P - a) @ R.T + a
+    _tag, c, k, t = abb
+    c = np.asarray(c, float)
+    ks = 1.0 + (float(k) - 1.0) * float(s)
+    return c + (P - c) * ks + np.asarray(t, float) * float(s)
+
+
+def abbildung_von(erk: dict) -> tuple:
+    """Die Abbildung des Erkennungsergebnisses - Rueckfall auf reine
+    Verschiebung, damit aelterer Code und gespeicherte Ergebnisse tragen."""
+    abb = erk.get("abb")
+    if abb is not None:
+        return abb
+    return ("v", np.zeros(3), 1.0, np.asarray(erk["t"], float))
+
+
+def massstab_von(abb: tuple) -> float:
+    """Der Massstab der Abbildung (1 bei Verschiebung und Drehung)."""
+    return float(abb[2]) if abb[0] == "v" else 1.0
+
+
+def richtung_von(P: np.ndarray, abb: tuple) -> np.ndarray:
+    """Die Richtung, in die der Sweep an der Grundflaeche losgeht - der
+    Anfangsvektor der Abbildung. Bei einer Drehung ist das die Tangente, nicht
+    die Sehne: fuer einen Halbkreis waere die Sehne null."""
+    P = np.asarray(P, float).reshape(-1, 3)
+    v = (_abbilden(P, abb, 1e-4) - P).mean(axis=0)
+    ln = float(np.linalg.norm(v))
+    if ln > 0:
+        return v / ln
+    return np.array([0.0, 0.0, 1.0])
+
+
+def _umringmitte(P: np.ndarray) -> np.ndarray:
+    """Der **Flaechenschwerpunkt** des geschlossenen Umrings.
+
+    Der Mittelwert der Ecken taugt dafuer nicht: eine zusaetzliche Ecke
+    mitten auf einer geraden Kante aendert ihn, obwohl sie die Figur nicht
+    aendert. Genau das passiert nach einem Schnitt - der Deckel einer Platte
+    traegt dann die zwei Ecken der Schnittlinie, der Grund nicht, und die
+    Kappen galten nicht mehr als deckungsgleich (22.09.2026).
+
+    Gerechnet als Faecher um den Eckenmittelwert mit vorzeichenbehafteten
+    Dreiecksflaechen laengs der Newell-Normalen - ohne Ausgleichsebene, denn
+    das hier laeuft in :func:`erkennen` ueber jedes Flaechenpaar.
+    """
+    P = np.asarray(P, float).reshape(-1, 3)
+    if len(P) < 3:
+        return P.mean(axis=0) if len(P) else np.zeros(3)
+    m = P.mean(axis=0)
+    Q = P - m
+    R = np.roll(Q, -1, axis=0)
+    kreuz = np.cross(Q, R)
+    N = kreuz.sum(axis=0)
+    laenge = float(np.linalg.norm(N))
+    if laenge <= 1e-30:
+        return m
+    a2 = kreuz @ (N / laenge)               # zweifache signierte Dreiecksflaechen
+    A2 = float(a2.sum())
+    if abs(A2) <= 1e-30:
+        return m
+    return m + ((Q + R) * a2[:, None]).sum(axis=0) / (3.0 * A2)
+
+
+def _abstand_zum_zug(P: np.ndarray, Q: np.ndarray, geschlossen: bool) -> np.ndarray:
+    """Abstand jedes Punktes von ``P`` zum Linienzug durch ``Q`` - zu den
+    **Strecken**, nicht zu den Stuetzpunkten."""
+    P = np.asarray(P, float).reshape(-1, 3)
+    Q = np.asarray(Q, float).reshape(-1, 3)
+    if len(Q) == 1:
+        return np.linalg.norm(P - Q[0], axis=1)
+    A = Q if geschlossen else Q[:-1]
+    B = np.roll(Q, -1, axis=0) if geschlossen else Q[1:]
+    d = B - A
+    l2 = np.einsum("ij,ij->i", d, d)
+    rel = P[:, None, :] - A[None, :, :]
+    with np.errstate(invalid="ignore", divide="ignore"):
+        s = np.einsum("nmj,mj->nm", rel, d) / np.where(l2 > 0.0, l2, 1.0)
+    s = np.clip(np.nan_to_num(s), 0.0, 1.0)
+    nah = A[None, :, :] + s[:, :, None] * d[None, :, :]
+    return np.linalg.norm(P[:, None, :] - nah, axis=2).min(axis=1)
+
+
+def _deckungsgleich_abb(A: np.ndarray, B: np.ndarray, abb: tuple, tol: float,
+                        geschlossen: bool = True) -> bool:
+    """Liegt jeder Punkt von ``A`` unter der Abbildung auf ``B`` und umgekehrt?
+
+    Gemessen wird gegen die **Kurve**, nicht gegen die Stuetzpunkte: zwei
+    Kappen duerfen ihren Rand in verschieden viele Linien teilen, solange sie
+    dieselbe Figur umschliessen. Das steht seit jeher in :func:`_deckungsgleich`
+    als Anspruch, war aber nicht eingeloest - gegen die Stuetzpunkte gemessen
+    faellt jede zusaetzliche Ecke durch (22.09.2026). Die Pruefung wird dadurch
+    nur **grosszuegiger**; was bisher durchging, geht weiter durch.
+
+    Drei Stufen, weil das hier ueber jedes Flaechenpaar eines Koerpers laeuft
+    (bis 144 x 144 am Drehlager): erst Stuetzpunkt auf Stuetzpunkt (KD-Baum,
+    der haeufige Fall und so schnell wie zuvor), dann der umschriebene Kasten
+    als notwendige Bedingung (schliesst fast jedes fremde Paar aus), und nur
+    fuer die Punkte, die keinen Stuetzpunkt treffen, der Abstand zur Kurve.
+    Dicht gerechnet kostete die Kurve bei 500 Randpunkten 23 ms statt 0,4 ms
+    je Paar - gemessen am 22.09.2026, bevor die Stufen kamen.
+    """
+    from scipy.spatial import cKDTree
+    if not len(A) or not len(B):
+        return False
+    Am = _abbilden(A, abb)
+    dA, _ = cKDTree(B).query(Am)
+    dB, _ = cKDTree(Am).query(B)
+    if dA.max() <= tol and dB.max() <= tol:
+        return True
+    if len(Am) < 2 or len(B) < 2:
+        return False
+    if ((np.abs(Am.min(axis=0) - B.min(axis=0)) > tol).any()
+            or (np.abs(Am.max(axis=0) - B.max(axis=0)) > tol).any()):
+        return False                        # verschiedene Kaesten: nie dieselbe Kurve
+    fern_a = Am[dA > tol]
+    if len(fern_a) and float(_abstand_zum_zug(fern_a, B, geschlossen).max()) > tol:
+        return False
+    fern_b = B[dB > tol]
+    if len(fern_b) and float(_abstand_zum_zug(fern_b, Am, geschlossen).max()) > tol:
+        return False
+    return True
+
+
+def _umkehr(abb: tuple) -> "tuple | None":
+    """Die Gegenabbildung - vom Deckel zurueck auf den Grund."""
+    if abb[0] == "d":
+        _tag, a, d, phi = abb
+        return ("d", a, d, -float(phi))
+    _tag, c, k, t = abb
+    k = float(k)
+    if abs(k) <= 1e-12:
+        return None
+    return ("v", c, 1.0 / k, -np.asarray(t, float) / k)
+
+
 def _deckungsgleich(A: np.ndarray, B: np.ndarray, t: np.ndarray, tol: float) -> bool:
     """Liegt jeder Punkt von A + t auf B und jeder Punkt von B auf A + t?
     Als Mengen, ohne gleiche Punktzahl - zwei Kappen duerfen ihren Rand in
@@ -301,40 +530,222 @@ def erkennen(model: Model, koerper) -> "dict | None":
     return None
 
 
-def _kappen_pruefen(model: Model, grund: tuple, deckel: tuple, tol: float, namen: dict) -> "dict | None":
-    """Ist der Deckel die um t verschobene Kopie des Grundes, Schleife fuer
-    Schleife, und sind alle uebrigen Flaechen Waende?"""
-    fl_g, schleifen_g, pts_g = grund
-    fl_d, schleifen_d, pts_d = deckel
+def erkennen_warum_nicht(model: Model, koerper) -> str:
+    """Woran die Sweep-Erkennung an diesem Koerper scheitert - in einem Satz,
+    mit Zahlen. Nur sinnvoll, wenn :func:`erkennen` None geliefert hat.
+
+    Warum es diese Zeile gibt: am Drehlager sind 68 von 108 Koerpern sweepbar,
+    aber sie tragen nur 8,2 % der Elemente - die 40 uebrigen tragen 91,8 %
+    (Lauf der Loeser-Sitzung, 21.09.2026). Welche Erweiterung der Erkennung
+    sich lohnt (Drehkoerper, verjuengter Zug, andere Richtung), haengt daran,
+    **woran** diese 40 scheitern. Ohne die Zeile ist jede Erweiterung geraten;
+    dieselbe Frage hat beim Zerlegen und bei den Splittern den Ausschlag
+    gegeben (sweep.zerlegen_warum_nicht, mesher3d._enge_huellkanten).
+
+    Die Gruende sind nach der Tiefe geordnet: genannt wird der **weiteste**,
+    den irgendein Kappenpaar erreicht hat.
+    """
+    flaechen = [model.flaechen.get(x) for x in (koerper.flaechen or [])]
+    if any(f is None for f in flaechen):
+        return "eine Randfläche fehlt"
+    if len(flaechen) < KAPPEN_MIN_FLAECHEN:
+        return f"nur {len(flaechen)} Randflächen (mindestens {KAPPEN_MIN_FLAECHEN})"
+    try:
+        alle = np.vstack([_schleifenpunkte(model, list(f.linien or [])) for f in flaechen])
+    except Exception:                       # noqa: BLE001
+        return "eine Randlinie lässt sich nicht abtasten"
+    gross = float(np.linalg.norm(alle.max(axis=0) - alle.min(axis=0)))
+    tol = max(TOL_REL * gross, 1e-12)
+    kand = _kappen_kandidaten(model, flaechen, tol)
+    eben = [k for k in kand if len(k[0]) == 1]
+    if len(kand) < 2:
+        return (f"keine zwei ebenen Kappen: {len(eben)} von {len(flaechen)} Randflächen sind eben "
+                "(Drehkörper oder gewölbte Kappe)")
+    einzeln = eben
+    namen = {f.name: f for f in flaechen}
+    # Der weiteste erreichte Grund, in dieser Reihenfolge
+    stufe, text = 0, ""
+    for grund in kand:
+        grund_namen = {f.name for f in grund[0]}
+        for deckel in einzeln:
+            if deckel[0][0].name in grund_namen:
+                continue
+            fl_g, schleifen_g, pts_g = grund
+            fl_d, schleifen_d, pts_d = deckel
+            if len(schleifen_g) != len(schleifen_d):
+                if stufe < 1:
+                    stufe, text = 1, ("kein Kappenpaar mit gleich vielen Rändern "
+                                      f"({len(schleifen_g)} gegen {len(schleifen_d)})")
+                continue
+            t = pts_d[0].mean(axis=0) - pts_g[0].mean(axis=0)
+            if float(np.linalg.norm(t)) <= tol:
+                continue
+            abb = ("v", pts_g[0].mean(axis=0), 1.0, t)
+            if not _deckungsgleich_abb(pts_g[0], pts_d[0], abb, tol):
+                for versuch in _abbildungen(pts_g, pts_d, tol):
+                    abb = versuch
+                    if _deckungsgleich_abb(pts_g[0], pts_d[0], versuch, tol):
+                        break
+            frei = list(range(len(schleifen_d)))
+            passt = _deckungsgleich_abb(pts_g[0], pts_d[0], abb, tol)
+            if passt:
+                for P in pts_g:
+                    treffer = None
+                    for j in frei:
+                        if _deckungsgleich_abb(P, pts_d[j], abb, tol):
+                            treffer = j
+                            break
+                    if treffer is None:
+                        passt = False
+                        break
+                    frei.remove(treffer)
+            if not passt:
+                if stufe < 2:
+                    # Wie weit ist es daneben - nach Verschiebung **und** nach
+                    # der besten Aehnlichkeit (verjuengter Zug ist seit dem
+                    # 22.09.2026 erfasst, ein Drehkoerper nicht).
+                    from scipy.spatial import cKDTree
+                    d_t = float(cKDTree(pts_d[0]).query(pts_g[0] + t)[0].max())
+                    d_a = float(cKDTree(pts_d[0]).query(_abbilden(pts_g[0], abb))[0].max())
+                    art = ("gedreht" if abb[0] == "d" else f"skaliert (Maßstab {abb[2]:.3f})")
+                    stufe, text = 2, (f"Kappen {fl_g[0].name} → {fl_d[0].name} decken sich weder "
+                                      f"verschoben ({d_t * 1e3:.1f} mm daneben) noch {art} "
+                                      f"({d_a * 1e3:.1f} mm) bei {np.linalg.norm(t) * 1e3:.1f} mm "
+                                      "Weg - verdreht, gewölbte Kappe oder keine Kappen")
+                continue
+            la = [x for sch in schleifen_g for x in sch]
+            lb = [x for sch in schleifen_d for x in sch]
+            rest = [f for f in namen.values() if f.name not in grund_namen and f.name != fl_d[0].name]
+            if len(rest) != len(la):
+                if stufe < 3:
+                    stufe, text = 3, (f"Kappen passen ({fl_g[0].name} → {fl_d[0].name}), aber "
+                                      f"{len(rest)} Wandflächen zu {len(la)} Randlinien")
+                continue
+            schlecht = [w.name for w in rest if len(list(w.linien or [])) != 4 or (w.oeffnungen or [])]
+            if schlecht:
+                if stufe < 4:
+                    stufe, text = 4, (f"Kappen passen ({fl_g[0].name} → {fl_d[0].name}), aber "
+                                      f"{len(schlecht)} Wand/Wände sind nicht aus vier Linien ohne "
+                                      f"Öffnung (z. B. {schlecht[0]})")
+                continue
+            if _waende_pruefen(model, la, lb, t, tol, rest) is None:
+                if stufe < 5:
+                    stufe, text = 5, (f"Kappen und Wandzahl passen ({fl_g[0].name} → {fl_d[0].name}), "
+                                      "aber die Mantellinien sind nicht gerade und parallel zum Weg")
+                continue
+            return "sweepbar - erkennen() hätte greifen müssen"
+    return text or "kein Kappenpaar mit einem Weg dazwischen"
+
+
+def _abbildungen(pts_g: list, pts_d: list, tol: float) -> list:
+    """Die Abbildungen, die zwischen Grund und Deckel in Frage kommen -
+    Aehnlichkeit (verjuengter Zug) und Drehung (Drehkoerper), in dieser
+    Reihenfolge."""
+    from .mesher3d import ausgleichsebene
+    aus = []
+    ab = _abbildung_finden(pts_g[0], pts_d[0], tol)
+    if ab is not None:
+        aus.append(ab)
+    try:
+        _c1, _e1, _e2, nA, _a1 = ausgleichsebene(pts_g[0])
+        _c2, _e3, _e4, nB, _a2 = ausgleichsebene(pts_d[0])
+    except Exception:                       # noqa: BLE001
+        return aus
+    dreh = _abbildung_drehung(pts_g[0], pts_d[0], nA, nB, tol)
+    if dreh is not None:
+        aus.append(dreh)
+        aus.append(("d", dreh[1], dreh[2], -float(dreh[3])))
+        aus.append(("d", dreh[1], dreh[2], float(dreh[3]) - 2.0 * np.pi))
+        aus.append(("d", dreh[1], dreh[2], 2.0 * np.pi - float(dreh[3])))
+    return aus
+
+
+def _kappen_abbildung(model: Model, grund: tuple, deckel: tuple, tol: float) -> "tuple | None":
+    """Die Abbildung, die den Grund auf den Deckel legt, und die Zuordnung
+    ihrer Schleifen - ``(abb, [(i, j), ...], t)`` oder None.
+
+    Ohne die Waende: so kann auch das **Angleichen** der Linienteilung danach
+    fragen, bevor es die Waende ueberhaupt geben kann.
+    """
+    _fl_g, schleifen_g, pts_g = grund
+    _fl_d, schleifen_d, pts_d = deckel
     if len(schleifen_g) != len(schleifen_d):
         return None
-    t = pts_d[0].mean(axis=0) - pts_g[0].mean(axis=0)
+    t = _umringmitte(pts_d[0]) - _umringmitte(pts_g[0])
     if float(np.linalg.norm(t)) <= tol:
         return None
-    frei = list(range(len(schleifen_d)))
-    for P in pts_g:
+    # Erst die reine Verschiebung (der haeufige Fall), dann die Aehnlichkeit
+    # (verjuengter Zug). Beides ueber dieselbe Abbildung, k = 1 ist die
+    # Verschiebung - so bleibt der alte Weg Zeichen fuer Zeichen derselbe.
+    abb = ("v", _umringmitte(pts_g[0]), 1.0, t)
+    if not _deckungsgleich_abb(pts_g[0], pts_d[0], abb, tol):
+        for versuch in _abbildungen(pts_g, pts_d, tol):
+            if _deckungsgleich_abb(pts_g[0], pts_d[0], versuch, tol):
+                abb = versuch
+                break
+        else:
+            return None
+    paarung, frei = [], list(range(len(schleifen_d)))
+    for i, P in enumerate(pts_g):
         treffer = None
         for j in frei:
-            if _deckungsgleich(P, pts_d[j], t, tol):
+            if _deckungsgleich_abb(P, pts_d[j], abb, tol):
                 treffer = j
                 break
         if treffer is None:
             return None
         frei.remove(treffer)
+        paarung.append((i, treffer))
+    return abb, paarung, t
+
+
+def _kappen_pruefen(model: Model, grund: tuple, deckel: tuple, tol: float, namen: dict) -> "dict | None":
+    """Ist der Deckel die um t verschobene Kopie des Grundes, Schleife fuer
+    Schleife, und sind alle uebrigen Flaechen Waende?"""
+    fl_g, schleifen_g, pts_g = grund
+    fl_d, schleifen_d, pts_d = deckel
+    erg_abb = _kappen_abbildung(model, grund, deckel, tol)
+    if erg_abb is None:
+        return None
+    abb, _paarung, t = erg_abb
     la = [x for sch in schleifen_g for x in sch]
     lb = [x for sch in schleifen_d for x in sch]
     grund_namen = {f.name for f in fl_g}
     rest = [f for f in namen.values() if f.name not in grund_namen and f.name != fl_d[0].name]
-    erg = _waende_pruefen(model, la, lb, t, tol, rest)
+    erg = _waende_pruefen(model, la, lb, abb, tol, rest)
     if erg is None:
         return None
     erg.update({"grund": fl_g[0], "grund_gruppe": list(fl_g),
                 "grund_ringe": [list(sch) for sch in schleifen_g],
-                "deckel": fl_d[0], "t": np.asarray(t, float), "tol": tol})
+                "deckel": fl_d[0], "t": np.asarray(t, float), "abb": abb, "tol": tol})
     return erg
 
 
-def _waende_pruefen(model: Model, la: list, lb: list, t: np.ndarray, tol: float, rest: list) -> "dict | None":
+def _mantel_auf_bahn(model: Model, name: str, unten: int, abb: tuple, tol: float) -> bool:
+    """Laeuft die Mantellinie auf der Bahn der Drehung? Geprueft wird, dass
+    jeder ihrer Punkte denselben Abstand zur Achse und dieselbe Hoehe laengs
+    der Achse hat wie der Grundknoten - das ist der Kreisbogen um sie, ohne
+    Annahme ueber die Abtastung der Linie."""
+    _tag, a, d, _phi = abb
+    a = np.asarray(a, float)
+    d = np.asarray(d, float)
+    try:
+        P = np.asarray(model.lines[name].punkte(model, 12), float).reshape(-1, 3)
+    except Exception:                       # noqa: BLE001
+        return False
+    if len(P) < 3:
+        return False
+    def zylinder(X):
+        rel = np.asarray(X, float).reshape(-1, 3) - a
+        hoehe = rel @ d
+        radius = np.linalg.norm(rel - np.outer(hoehe, d), axis=1)
+        return radius, hoehe
+    r0, h0 = zylinder(model.nodes[[unten]])
+    r, h = zylinder(P)
+    return bool(np.max(np.abs(r - r0[0])) <= tol and np.max(np.abs(h - h0[0])) <= tol)
+
+
+def _waende_pruefen(model: Model, la: list, lb: list, abb: tuple, tol: float, rest: list) -> "dict | None":
     """Jede uebrige Randflaeche muss eine Wand zwischen einer Grundlinie und
     ihrer Deckellinie sein, mit zwei geraden Mantellinien laengs t."""
     if len(la) != len(lb):
@@ -356,7 +767,7 @@ def _waende_pruefen(model: Model, la: list, lb: list, t: np.ndarray, tol: float,
         e = _linienenden(model, name)
         if e is None:
             return None
-        pa, pb = model.nodes[e[0]] + t, model.nodes[e[1]] + t
+        pa, pb = _abbilden(model.nodes[[e[0], e[1]]], abb)
         treffer = None
         Pa = None
         for nb, (c, d) in enden_b.items():
@@ -370,7 +781,7 @@ def _waende_pruefen(model: Model, la: list, lb: list, t: np.ndarray, tol: float,
                 if Pa is None:
                     Pa = abtasten(name)
                 Pb = abtasten(nb)
-                if Pa is None or Pb is None or _deckungsgleich(Pa, Pb, t, tol):
+                if Pa is None or Pb is None or _deckungsgleich_abb(Pa, Pb, abb, tol, False):
                     treffer = nb
                     break
         if treffer is None:
@@ -391,14 +802,24 @@ def _waende_pruefen(model: Model, la: list, lb: list, t: np.ndarray, tol: float,
         if len(grund) != 1 or len(deckel) != 1 or len(senk) != 2 or paare[grund[0]] != deckel[0]:
             return None
         for s_ in senk:
-            v = _gerade(model, s_)
-            if v is None:
-                return None
-            if not (np.linalg.norm(v - t) <= tol or np.linalg.norm(v + t) <= tol):
-                return None
+            # Die Mantellinie verbindet einen Grundknoten mit **seinem Bild**.
+            # Bei Verschiebung und verjuengtem Zug ist sie gerade; beim
+            # Drehkoerper ist sie ein **Bogen**, und dann muss ihr ganzer
+            # Verlauf auf der Bahn der Drehung liegen - sonst waere die Wand
+            # nicht die gedrehte Kante.
             e = _linienenden(model, s_)
+            if e is None:
+                return None
             unten = e[0] if e[0] in knoten_a else e[1]
+            oben = e[1] if unten == e[0] else e[0]
             if unten not in knoten_a:
+                return None
+            if float(np.linalg.norm(_abbilden(model.nodes[[unten]], abb)[0] - model.nodes[oben])) > tol:
+                return None
+            if abb[0] == "d":
+                if not _mantel_auf_bahn(model, s_, unten, abb, tol):
+                    return None
+            elif _gerade(model, s_) is None:
                 return None
             if mantel.get(unten, s_) != s_:
                 return None
@@ -442,13 +863,35 @@ def _viereckguete(Q: np.ndarray) -> np.ndarray:
 
 
 def paaren(P2: np.ndarray, T: np.ndarray, guete_min: float = VIERECK_GUETE_MIN) -> tuple:
-    """Dreiecke zu Vierecken paaren - gierig nach der Guete des Vierecks.
+    """Dreiecke zu Vierecken paaren - gierig nach der Guete des Vierecks, dann
+    **umgepaart**, bis kein Dreieck mehr uebrig ist, das noch koennte.
 
     ``T`` sind Dreiecke mit gleichem Umlauf (gegen den Uhrzeiger in ``P2``).
     Zwei Dreiecke, die eine Kante teilen, geben das Viereck ueber die andere
     Diagonale; es wird genommen, wenn seine Guete mindestens ``guete_min``
     ist und beide Dreiecke noch frei sind. Rueckgabe (Vierecke (q, 4),
     uebrige Dreiecke (r, 3)), beide gegen den Uhrzeiger.
+
+    Warum das Umpaaren sein muss: **ein Keil ist kein halber Sechsflaechner.**
+    Der hex8 traegt Biegung ueber inkompatible Moden, der pent6 nicht - am
+    identischen Knotengitter gemessen (Statik3D-Sitzung, 22.09.2026,
+    Kragarm 1,0 x 0,1 x 0,2 m gegen die Balkenloesung mit Schub):
+
+        Gitter    hex8     pent6    der Keil ist steifer um
+        4x1x1     95,9 %   56,4 %   Faktor 1,70
+        8x1x2     96,8 %   81,8 %   Faktor 1,18
+        16x2x4    98,2 %   93,5 %   Faktor 1,05
+
+    Jedes Dreieck, das keinen Partner findet, kostet also am groben Netz
+    richtig. Und es liegt **nicht** an der Guetegrenze: sie von 0,3 auf 10^-6
+    zu senken aenderte an der Kragplatte keine einzige Zahl (96 Keile bei
+    h = 50 mm, 128 bei 25 mm, 22.09.2026). Es liegt an der gierigen Auswahl -
+    sie laesst Dreiecke stehen, deren Nachbarn schon vergeben sind, obwohl
+    ein Tausch beide unterbraechte. Genau das holt der zweite Schritt: fuer
+    jedes uebrige Dreieck u wird ein Nachbar v gesucht, dessen Partner w
+    seinerseits ein **anderes** uebriges Dreieck x hat; dann werden (v, w)
+    geloest und (u, v) und (w, x) genommen - ein erweiternder Weg der Laenge
+    drei. Das wiederholt sich, solange es traegt.
     """
     T = np.asarray(T, int)
     if not len(T):
@@ -467,7 +910,6 @@ def paaren(P2: np.ndarray, T: np.ndarray, guete_min: float = VIERECK_GUETE_MIN) 
         # (gegenueber der Kante) ueber die Kante zur Spitze des zweiten
         s1 = [v for v in t1 if v not in (x, y)][0]
         s2 = [v for v in t2 if v not in (x, y)][0]
-        # Reihenfolge der Kante im ersten Dreieck: i -> j
         i1 = t1.index(s1)
         i, j = t1[(i1 + 1) % 3], t1[(i1 + 2) % 3]      # Kante in Umlaufrichtung von t1
         viereck = (s1, i, s2, j)
@@ -475,19 +917,51 @@ def paaren(P2: np.ndarray, T: np.ndarray, guete_min: float = VIERECK_GUETE_MIN) 
     if not kandidaten:
         return np.zeros((0, 4), int), T
     Q = np.array([v for _, _, v in kandidaten], int)
-    q = _viereckguete(P2[Q])
+    q = _viereckguete(Q if Q.ndim == 3 else P2[Q])
+    # ---- 1) gierig, das Beste zuerst --------------------------------------
     reihenfolge = np.argsort(-q, kind="stable")
-    benutzt = np.zeros(len(T), bool)
-    vierecke = []
+    partner = np.full(len(T), -1, int)              # Dreieck -> Dreieck
+    paar_von = {}                                   # Dreieck -> Kandidatennummer
     for r in reihenfolge:
         if q[r] < guete_min:
             break
-        k1, k2, v = kandidaten[r]
-        if benutzt[k1] or benutzt[k2]:
+        k1, k2, _v = kandidaten[r]
+        if partner[k1] >= 0 or partner[k2] >= 0:
             continue
-        benutzt[k1] = benutzt[k2] = True
-        vierecke.append(v)
-    rest = T[~benutzt]
+        partner[k1], partner[k2] = k2, k1
+        paar_von[k1] = paar_von[k2] = int(r)
+    # ---- 2) umpaaren: erweiternde Wege der Laenge drei ---------------------
+    moeglich: dict = {}                             # Dreieck -> [(Nachbar, Kandidatennummer)]
+    for r, (k1, k2, _v) in enumerate(kandidaten):
+        if q[r] < guete_min:
+            continue
+        moeglich.setdefault(k1, []).append((k2, r))
+        moeglich.setdefault(k2, []).append((k1, r))
+    geaendert = True
+    while geaendert:
+        geaendert = False
+        for u in np.nonzero(partner < 0)[0]:
+            if partner[u] >= 0:
+                continue
+            for v, r_uv in moeglich.get(int(u), ()):
+                w = partner[v]
+                if w < 0:                           # haette die Gier schon genommen
+                    continue
+                for x, r_wx in moeglich.get(int(w), ()):
+                    if x == v or partner[x] >= 0:
+                        continue
+                    # (v, w) loesen, (u, v) und (w, x) nehmen
+                    partner[u], partner[v] = v, u
+                    partner[w], partner[x] = x, w
+                    paar_von[u] = paar_von[v] = int(r_uv)
+                    paar_von[w] = paar_von[x] = int(r_wx)
+                    geaendert = True
+                    break
+                if partner[u] >= 0:
+                    break
+    vierecke = [kandidaten[paar_von[k]][2] for k in range(len(T))
+                if partner[k] > k]
+    rest = T[partner < 0]
     return (np.asarray(vierecke, int).reshape(-1, 4), rest)
 
 
@@ -520,13 +994,22 @@ def _lagen_aus_weg(model: Model, erk: dict, h: float) -> int:
     adaptiven Runde von 3 auf 2 (441 -> 482 Elemente, Fehler 13,7 -> 12,8 %),
     mit ihr siehe KALIBRIERUNG_HEX in netzfehler.
     """
+    # Der Weg ist die Laenge der Mantellinie, nicht nur die Verschiebung des
+    # Schwerpunkts: bei einem verjuengten Zug laufen die Mantellinien schraeg.
+    abb = abbildung_von(erk)
     weg = float(np.linalg.norm(erk["t"]))
+    if erk.get("grund_ringe"):
+        try:
+            P0 = _schleifenpunkte(model, erk["grund_ringe"][0], 12)
+            weg = max(weg, float(np.linalg.norm(_abbilden(P0, abb) - P0, axis=1).mean()))
+        except Exception:                   # noqa: BLE001
+            pass
     h_eff = max(float(h), 1e-12)
     feld = getattr(model, "groessenfeld", None)
     if feld is not None and erk.get("grund_ringe") is not None:
         try:
             P = np.vstack([_schleifenpunkte(model, sch, 12) for sch in erk["grund_ringe"]])
-            P = np.vstack([P, P + 0.5 * erk["t"], P + erk["t"]])
+            P = np.vstack([P, _abbilden(P, abb, 0.5), _abbilden(P, abb, 1.0)])
             h_feld = float(np.min(np.asarray(feld(P), float)))
             if h_feld > 0:
                 h_eff = min(h_eff, h_feld)
@@ -721,7 +1204,7 @@ def _deckel_kennung(model: Model, erk: dict, kenn, teilung) -> tuple:
     # Laufen beide Linien in derselben Richtung? (erster Punkt der Teilung)
     pa = teilung.punkte(name)
     pb = teilung.punkte(name_b)
-    if len(pa) and len(pb) and np.linalg.norm(pb[0] - (pa[0] + erk["t"])) <= erk["tol"]:
+    if len(pa) and len(pb) and np.linalg.norm(pb[0] - _abbilden(pa[:1], abbildung_von(erk))[0]) <= erk["tol"]:
         return ("L", name_b, k)
     return ("L", name_b, len(pa) - 1 - k)
 
@@ -774,7 +1257,7 @@ def _grundnetz(model: Model, koerper, gruppe: list, teilung, erk: dict, log: lis
         Pf = np.asarray(Pf, float)
         Tf = np.asarray(Tf, int).reshape(-1, 3)
         kf = list(kf) + [None] * (len(Pf) - len(kf))
-        c, e1, e2, nf = _rahmen(Pf, erk["t"])
+        c, e1, e2, nf = _rahmen(Pf, richtung_von(Pf, abbildung_von(erk)))
         P2f = np.stack([(Pf - c) @ e1, (Pf - c) @ e2], axis=1)
         a_, b_, d_ = P2f[Tf[:, 0]], P2f[Tf[:, 1]], P2f[Tf[:, 2]]
         fl2 = (b_[:, 0] - a_[:, 0]) * (d_[:, 1] - a_[:, 1]) - (d_[:, 0] - a_[:, 0]) * (b_[:, 1] - a_[:, 1])
@@ -827,6 +1310,7 @@ def vernetzen(model: Model, koerper, erk: dict, h: float, log: list = None, cach
     from . import mesher3d as M3
     from scipy.spatial import cKDTree
     grund, deckel, t = erk["grund"], erk["deckel"], erk["t"]
+    abb = abbildung_von(erk)
     gruppe = list(erk.get("grund_gruppe") or [grund])
     ringe = [list(r) for r in (erk.get("grund_ringe")
                                or ([list(grund.linien or [])] + [list(loch) for loch in (grund.oeffnungen or [])]))]
@@ -853,7 +1337,7 @@ def vernetzen(model: Model, koerper, erk: dict, h: float, log: list = None, cach
     if basis is None:
         return []
     P, kenn, je_flaeche = basis["P"], basis["kenn"], basis["je_flaeche"]
-    c, e1, e2, n = _rahmen(P, t)
+    c, e1, e2, n = _rahmen(P, richtung_von(P, abb))
     P2 = np.stack([(P - c) @ e1, (P - c) @ e2], axis=1)
     vierecke = np.vstack([jf["vierecke"] for jf in je_flaeche]) if je_flaeche else np.zeros((0, 4), int)
     dreiecke = np.vstack([jf["dreiecke"] for jf in je_flaeche]) if je_flaeche else np.zeros((0, 3), int)
@@ -899,7 +1383,7 @@ def vernetzen(model: Model, koerper, erk: dict, h: float, log: list = None, cach
         return []
     # ---- Knoten je Lage ---------------------------------------------------
     mat = koerper.material or C.ensure_material(model, log=log)
-    schritt = t / float(L)
+    schritt = t / float(L)                   # nur noch fuer die Wandnetze der reinen Verschiebung
     knoten = np.zeros((L + 1, len(P)), int)
     zug_kenn = [[None] * len(P) for _ in range(L + 1)]
     for i in range(len(P)):
@@ -912,7 +1396,7 @@ def vernetzen(model: Model, koerper, erk: dict, h: float, log: list = None, cach
     for (i, j), lin in kante_wand.items():
         wand_von_punkt.setdefault(i, erk["waende"][lin].name)
     for k in range(L + 1):
-        X = P + k * schritt
+        X = _abbilden(P, abb, k / float(L))
         if k == 0:
             fl = list(basis["flaeche_von_punkt"])
         elif k == L:
@@ -973,14 +1457,28 @@ def vernetzen(model: Model, koerper, erk: dict, h: float, log: list = None, cach
         netze[jf["flaeche"].name] = (np.asarray(jf["P"], float).copy(), np.asarray(jf["T"], int).copy(),
                                      list(jf["kenn"]), np.asarray(jf["Q"], int).copy(), np.asarray(jf["D"], int).copy())
     T_voll = _dreiecke_aus(P2, vierecke, dreiecke)
-    netze[deckel.name] = (P + t, T_voll.copy(), list(zug_kenn[L]), vierecke.copy(), dreiecke.copy())
+    netze[deckel.name] = (_abbilden(P, abb, 1.0), T_voll.copy(), list(zug_kenn[L]),
+                          vierecke.copy(), dreiecke.copy())
     for lin, wand in erk["waende"].items():
         folge = _randfolge(wand_kanten[lin])
-        WP, WT, WK, WQ = _wandnetz(P, folge, schritt, L, zug_kenn)
+        WP, WT, WK, WQ = _wandnetz(P, folge, abb, L, zug_kenn)
         netze[wand.name] = (WP, WT, WK, WQ, np.zeros((0, 3), int))
     # ---- Rauminhalt: Grundflaeche mal Hoehe gegen die Elemente ---------------
     from .elements.solid import solid_volume
-    V_soll = A_grund * abs(float(n @ t))
+    # Rauminhalt: Grundflaeche mal Hoehe - beim verjuengten Zug der
+    # Pyramidenstumpf h/3 * (A1 + A2 + sqrt(A1*A2)) mit A2 = k^2 * A1.
+    if abb[0] == "d":
+        # Drehkoerper: die Guldinsche Regel - Grundflaeche mal Weg ihres
+        # Schwerpunkts, also A * phi * r_s mit r_s dem Achsabstand.
+        _tag, achse_p, achse_d, phi = abb
+        rel = P.mean(axis=0) - np.asarray(achse_p, float)
+        r_s = float(np.linalg.norm(rel - float(rel @ np.asarray(achse_d, float)) * np.asarray(achse_d, float)))
+        V_soll = A_grund * abs(float(phi)) * r_s
+    else:
+        k_ab = massstab_von(abb)
+        hoehe = abs(float(n @ t))
+        V_soll = (A_grund * hoehe if abs(k_ab - 1.0) < 1e-9
+                  else hoehe / 3.0 * A_grund * (1.0 + k_ab ** 2 + k_ab))
     V_ist = float(sum(solid_volume(model.elements[e].typ, model.nodes[model.elements[e].nodes]) for e in els))
     abw = abs(V_ist - V_soll) / V_soll if V_soll > 0 else 1.0
     # ---- Protokoll --------------------------------------------------------
@@ -1021,12 +1519,12 @@ def _randfolge(kanten: list) -> list:
     return folge
 
 
-def _wandnetz(P: np.ndarray, folge: list, schritt: np.ndarray, L: int, zug_kenn: list) -> tuple:
+def _wandnetz(P: np.ndarray, folge: list, abb: tuple, L: int, zug_kenn: list) -> tuple:
     """Das strukturierte Netz einer Wand: Randpunkte der Grundlinie x Lagen,
     Vierecke in zwei Dreiecke (kuerzere Diagonale) - fuer den Nachbarn; dazu
     die Vierecke selbst fuer einen gesweepten Nachbarn."""
     m = len(folge)
-    WP = np.vstack([P[folge] + k * schritt for k in range(L + 1)])
+    WP = np.vstack([_abbilden(P[folge], abb, k / float(L)) for k in range(L + 1)])
     WK = [zug_kenn[k][i] for k in range(L + 1) for i in folge]
     T, Q = [], []
     for k in range(L):
@@ -1153,13 +1651,755 @@ def _fussabdruecke(model: Model, koerper, namen: list, F, nr: int):
         yield list(komp), S
 
 
-def schnitte_entfernen(model: Model, schnitte: list) -> None:
-    """Die Schnittflaechen des Zerlegens wieder aus dem Modell nehmen - sie
-    sind Hilfsgeometrie fuer einen Vernetzungslauf, kein Teil des Modells."""
+def schnitte_entfernen(model: Model, werk, knoten_auch: bool = True) -> None:
+    """Die Hilfsgeometrie des Zerlegens wieder aus dem Modell nehmen - sie
+    gehoert zu einem Vernetzungslauf, nicht zum Modell."""
+    if werk is None:
+        return
+    if isinstance(werk, Schnittwerk):
+        werk.zuruecknehmen(knoten_auch)
+        return
     netze = getattr(model, "flaechennetze", None) or {}
-    for S in schnitte:
-        model.flaechen.pop(S.name, None)
-        netze.pop(S.name, None)
+    for S in werk:                          # aeltere Aufrufe mit einer Flaechenliste
+        name = S if isinstance(S, str) else S.name
+        model.flaechen.pop(name, None)
+        netze.pop(name, None)
+
+
+class Schnittwerk:
+    """Was ein Schnitt im Modell angelegt hat - und wie es wieder verschwindet.
+
+    Ein Schnitt an einer Ebene braucht neue Knoten, Linien und Flaechen. Sie
+    sind **Hilfsgeometrie fuer diesen Lauf**: nach dem Vernetzen gehen die
+    Linien und Flaechen wieder raus, die Knoten bleiben nur, wenn Elemente an
+    ihnen haengen (sonst werden sie zurueckgenommen - sie waeren sonst
+    „Knoten ohne Element" in der Abnahme).
+
+    ``ersatz`` haelt fest, welche Teilflaechen aus welcher Randflaeche
+    entstanden sind. Nach dem Vernetzen wandern deren **Randseiten** zurueck
+    auf die Ausgangsflaeche: eine Flaechenlast auf ihr muss ankommen, auch
+    wenn das Netz aus zwei Bloecken kam.
+    """
+
+    def __init__(self, model):
+        self.model = model
+        self.n0 = int(model.nn)
+        self.flaechen: list = []
+        self.linien: list = []
+        self.ersatz: dict = {}
+
+    def flaeche(self, f):
+        self.model.flaechen[f.name] = f
+        self.flaechen.append(f.name)
+        return f
+
+    def linie(self, name, knoten):
+        from .model import Line
+        self.model.lines[name] = Line(name, [int(x) for x in knoten])
+        self.linien.append(name)
+        return name
+
+    def stand(self) -> tuple:
+        """Merkzettel vor einem Versuch - siehe :meth:`zurueck_bis`."""
+        return (len(self.flaechen), len(self.linien), int(self.model.nn))
+
+    def zurueck_bis(self, stand: tuple) -> None:
+        """Alles zuruecknehmen, was seit ``stand`` entstanden ist.
+
+        Ein Schnittversuch, der nichts taugt, darf keine Spur hinterlassen:
+        sonst sammeln sich bei mehreren Ebenen Flaechen im Modell, die zu
+        keinem Koerper gehoeren, und der naechste Versuch findet sie als
+        vermeintliche Nachbarn wieder.
+        """
+        nf, nl, nn = stand
+        netze = getattr(self.model, "flaechennetze", None) or {}
+        for name in self.flaechen[nf:]:
+            self.model.flaechen.pop(name, None)
+            netze.pop(name, None)
+        for name in self.linien[nl:]:
+            self.model.lines.pop(name, None)
+        del self.flaechen[nf:]
+        del self.linien[nl:]
+        if int(self.model.nn) > nn:
+            self.model.nodes = self.model.nodes[:nn]
+        bleibt = set(self.flaechen)
+        for orig in list(self.ersatz):
+            rest = [t for t in self.ersatz[orig] if t in bleibt]
+            if rest:
+                self.ersatz[orig] = rest
+            else:
+                self.ersatz.pop(orig)
+
+    def zuruecknehmen(self, knoten_auch: bool = True) -> None:
+        """Die Hilfsgeometrie wieder aus dem Modell nehmen."""
+        netze = getattr(self.model, "flaechennetze", None) or {}
+        for name in self.flaechen:
+            self.model.flaechen.pop(name, None)
+            netze.pop(name, None)
+        for name in self.linien:
+            self.model.lines.pop(name, None)
+        if knoten_auch and int(self.model.nn) > self.n0:
+            # Nur, wenn seither nichts anderes Knoten angelegt hat - sonst
+            # verschoeben sich fremde Nummern. Genau das ist der Fall, wenn
+            # der Schnitt nichts gebracht hat und gar nicht vernetzt wurde.
+            self.model.nodes = self.model.nodes[:self.n0]
+        self.flaechen, self.linien = [], []
+
+    def randseiten_zurueck(self) -> int:
+        """Die Randseiten der Teilflaechen auf die Ausgangsflaechen legen.
+
+        Von hinten nach vorn, denn eine Teilflaeche kann selbst wieder geteilt
+        worden sein (erst der Schnitt, dann das Angleichen der Kappenlinien):
+        ihre Kinder sind spaeter eingetragen und muessen zuerst bei ihr
+        ankommen, bevor sie weitergibt.
+        """
+        n = 0
+        for orig, teile in reversed(list(self.ersatz.items())):
+            f = self.model.flaechen.get(orig)
+            if f is None:
+                continue
+            for t in teile:
+                tf = self.model.flaechen.get(t)
+                if tf is None:
+                    continue
+                f.randseiten = list(f.randseiten or []) + list(tf.randseiten or [])
+                n += len(tf.randseiten or [])
+        return n
+
+
+def _ebene_der_flaeche(model: Model, f) -> "tuple | None":
+    """(Punkt, Normale) einer **ebenen** Randflaeche - sonst None."""
+    from .mesher3d import ist_eben, ausgleichsebene
+    try:
+        P = _schleifenpunkte(model, list(f.linien or []))
+    except Exception:                       # noqa: BLE001
+        return None
+    if len(P) < 3 or not ist_eben(P):
+        return None
+    c, _e1, _e2, n, _abw = ausgleichsebene(P)
+    return (np.asarray(c, float), np.asarray(n, float))
+
+
+def schnittebenen(model: Model, koerper, tol: float) -> list:
+    """Die Ebenen von Randflaechen, die den Koerper wirklich **trennen** -
+    die Kandidaten fuer einen Schnitt.
+
+    Warum gerade sie: an einer einspringenden Kante liegt die Trennung
+    zwischen zwei Bloecken immer in der Ebene einer der beiden anliegenden
+    Flaechen. Eine Rippe auf einer Platte wird an der Ebene der Plattendecke
+    abgeschnitten, ein Absatz an der Ebene seiner Schulter. Andere Ebenen
+    muss man nicht raten.
+    """
+    flaechen = [model.flaechen.get(x) for x in (koerper.flaechen or [])]
+    if any(f is None for f in flaechen):
+        return []
+    try:
+        alle = np.vstack([_schleifenpunkte(model, list(f.linien or [])) for f in flaechen])
+    except Exception:                       # noqa: BLE001
+        return []
+    aus = []
+    for f in flaechen:
+        e = _ebene_der_flaeche(model, f)
+        if e is None:
+            continue
+        c, n = e
+        d = (alle - c) @ n
+        if float(d.max()) <= tol or float(d.min()) >= -tol:
+            continue                        # trennt nicht - der Koerper liegt auf einer Seite
+        if any(abs(float(n @ n2)) > 1.0 - 1e-9 and abs(float((c2 - c) @ n)) <= tol
+               for c2, n2 in aus):
+            continue                        # dieselbe Ebene schon dabei
+        aus.append((c, n))
+    return aus
+
+
+def _kantenseiten(P: np.ndarray, art: list, c: np.ndarray, n: np.ndarray) -> "list | None":
+    """Je **Kante** des Umlaufs die Seite der Schnittebene: +1 oder -1.
+
+    Die Zeichen der Ecken allein genuegen nicht. Eine Kante, die **in** der
+    Ebene liegt (beide Ecken darauf), kann zu jeder der beiden Seiten
+    gehoeren: an der T-foermigen Stirnflaeche einer Rippe liegen zwei solche
+    Kanten in der Ebene, und **beide** gehoeren zur Platte darunter, obwohl
+    die eine von unten, die andere von oben angelaufen wird. Wer nach den
+    Ecken geht, schlaegt eine davon der Rippe zu und bekommt zwei Teile, die
+    nicht aneinanderpassen (22.09.2026).
+
+    Entschieden wird darum an der Flaeche selbst: einen kleinen Schritt von
+    der Kantenmitte ins **Innere der Flaeche**, und die Seite dieses Punktes
+    zaehlt. Das ist dieselbe Frage wie „wo liegt das Material?", nur lokal
+    und ohne Strahlenzaehlung.
+    """
+    from .mesher3d import ausgleichsebene, _in_polygon_2d
+    m = len(P)
+    if m < 3 or len(art) != m:
+        return None
+    cf, e1, e2, _nf, _abw = ausgleichsebene(P)
+    Q = np.stack([(P - cf) @ e1, (P - cf) @ e2], axis=1)
+    gross = float(np.linalg.norm(Q.max(axis=0) - Q.min(axis=0)))
+    eps = 1e-4 * max(gross, 1e-12)
+    aus = []
+    for i in range(m):
+        j = (i + 1) % m
+        if art[i] != 0 or art[j] != 0:
+            aus.append(1 if max(art[i], art[j]) > 0 else -1)
+            continue
+        e = Q[j] - Q[i]
+        le = float(np.linalg.norm(e))
+        if le <= 0.0:
+            return None
+        w = np.array([-e[1], e[0]]) / le            # senkrecht dazu, in der Flaeche
+        mitte = 0.5 * (Q[i] + Q[j])
+        for vorz in (1.0, -1.0):
+            q2 = mitte + vorz * eps * w
+            if bool(_in_polygon_2d(q2[None, :], [Q])[0]):
+                q3 = cf + q2[0] * e1 + q2[1] * e2
+                aus.append(1 if float((q3 - c) @ n) > 0.0 else -1)
+                break
+        else:
+            return None                             # entartet - lieber nicht schneiden
+    return aus
+
+
+def _laeufe_aus_kanten(seiten: list) -> dict:
+    """Aus der Seite je Kante die Laeufe je Seite: ``{Seite: [[Ecken], ...]}``.
+
+    Ein Lauf endet, wo die Seite wechselt; geschlossen wird er durch die
+    **Schnittstrecke** von seiner letzten zu seiner ersten Ecke.
+    """
+    m = len(seiten)
+    if m < 3:
+        return {1: [], -1: []}
+    if len(set(seiten)) == 1:
+        return {seiten[0]: [list(range(m))], -seiten[0]: []}
+    start = next(i for i in range(m) if seiten[i] != seiten[(i - 1) % m])
+    aus = {1: [], -1: []}
+    lauf = []
+    for k in range(m):
+        i = (start + k) % m
+        lauf.append(i)
+        if seiten[(i + 1) % m] != seiten[i]:
+            aus[seiten[i]].append([lauf[0]] + [(x + 1) % m for x in lauf])
+            lauf = []
+    return aus
+
+
+def _randschleifen(f) -> list:
+    """Alle Randschleifen einer Flaeche - Aussenrand und Oeffnungen."""
+    return [list(f.linien or [])] + [list(o or []) for o in (f.oeffnungen or [])]
+
+
+def _geschlossene_schale(model: Model, namen: list) -> bool:
+    """Bilden diese Flaechen eine geschlossene Huelle?
+
+    Jede Linie genau zweimal - das ist die Bedingung, und sie ist scharf.
+    Sie ist der Pruefstein des Ebenenschnitts: sie faengt jede falsch
+    zugeordnete Flaeche ab, bevor daraus ein gueltiger, aber **anderer**
+    Koerper wird als der gemeinte. Genau diese Art Fehler hat der
+    Quaderpfad am Rohrbogen stumm gemacht (22.09.2026).
+    """
+    zahl: dict = {}
+    for x in namen:
+        f = model.flaechen.get(x)
+        if f is None:
+            return False
+        for schleife in _randschleifen(f):
+            for l in schleife:
+                zahl[l] = zahl.get(l, 0) + 1
+    return bool(zahl) and all(v == 2 for v in zahl.values())
+
+
+def _fremde_flaechen(model: Model, koerper) -> set:
+    """Die Randflaechen **anderer** Koerper - auch die, die dieser mitbenutzt.
+
+    Was ihnen gehoert, wird weder geschnitten noch neu geteilt: eine Linie,
+    die ein Nachbar fuehrt, hier in drei Stuecke zu zerlegen, risse die Fuge
+    auf - sein Netz kennt die Stuecke nicht.
+    """
+    return {x for kk in (getattr(model, "koerper", {}) or {}).values()
+            if kk is not koerper for x in (kk.flaechen or [])}
+
+
+def _kette(model: Model, linien: list) -> "list | None":
+    """Einen **offenen** Zug gerader Linien ordnen: [(Name, von, nach), ...]."""
+    enden, grad = {}, {}
+    for name in linien:
+        e = _linienenden(model, name)
+        if e is None:
+            return None
+        enden[name] = (int(e[0]), int(e[1]))
+        for k in enden[name]:
+            grad.setdefault(k, []).append(name)
+    spitzen = sorted(k for k, v in grad.items() if len(v) == 1)
+    if len(spitzen) != 2:
+        return None
+    jetzt, offen, aus = spitzen[0], set(linien), []
+    while offen:
+        naechste = [x for x in grad.get(jetzt, ()) if x in offen]
+        if len(naechste) != 1:
+            return None
+        name = naechste[0]
+        offen.discard(name)
+        a, b = enden[name]
+        if a != jetzt:
+            a, b = b, a
+        aus.append((name, a, b))
+        jetzt = b
+    return aus
+
+
+def _punkt_auf_linie(model: Model, name: str, p: np.ndarray, tol: float) -> "float | None":
+    """Liegt ``p`` **mitten** auf der geraden Linie? Parameter in (0, 1)."""
+    if _gerade(model, name) is None:
+        return None
+    a, b = _linienenden(model, name)
+    pa, pb = model.nodes[int(a)], model.nodes[int(b)]
+    e = pb - pa
+    l2 = float(e @ e)
+    if l2 <= 0.0:
+        return None
+    t = float((np.asarray(p, float) - pa) @ e) / l2
+    if not (0.0 < t < 1.0):
+        return None
+    if float(np.linalg.norm(pa + t * e - p)) > tol:
+        return None
+    if min(float(np.linalg.norm(p - pa)), float(np.linalg.norm(p - pb))) <= tol:
+        return None
+    return t
+
+
+def _wand_teilen(model: Model, linien: list, la: set, lb: set, abb: tuple,
+                 werk: "Schnittwerk", tol: float, marke: str, material) -> "list | None":
+    """Eine Wand, deren Grund- und Deckelseite in mehrere Linien zerfaellt, in
+    Vierecke zerlegen - eine Wand je Linienpaar, mit neuer Mantellinie
+    dazwischen. Erst dadurch bleibt die Wandpruefung so streng wie sie ist:
+    jede Wand aus genau vier Linien."""
+    grund = [x for x in linien if x in la]
+    deckel = [x for x in linien if x in lb]
+    senk = [x for x in linien if x not in la and x not in lb]
+    if len(senk) != 2 or len(grund) != len(deckel) or len(grund) < 2:
+        return None
+    ka, kb = _kette(model, grund), _kette(model, deckel)
+    if ka is None or kb is None:
+        return None
+    p0 = _abbilden(model.nodes[[ka[0][1]]], abb)[0]
+    if float(np.linalg.norm(p0 - model.nodes[kb[0][1]])) > tol:
+        kb = [(n_, b_, a_) for n_, a_, b_ in reversed(kb)]
+        if float(np.linalg.norm(p0 - model.nodes[kb[0][1]])) > tol:
+            return None
+    paare = {}
+    for name in senk:
+        e = _linienenden(model, name)
+        if e is None:
+            return None
+        paare[frozenset((int(e[0]), int(e[1])))] = name
+    m_a = paare.get(frozenset((ka[0][1], kb[0][1])))
+    m_e = paare.get(frozenset((ka[-1][2], kb[-1][2])))
+    if m_a is None or m_e is None or m_a == m_e:
+        return None
+    mantel = [m_a]
+    for i in range(len(ka) - 1):
+        unten, oben = ka[i][2], kb[i][2]
+        if float(np.linalg.norm(_abbilden(model.nodes[[unten]], abb)[0]
+                                - model.nodes[oben])) > tol:
+            return None
+        mantel.append(werk.linie(f"{marke}M{len(werk.linien) + 1}", [unten, oben]))
+    mantel.append(m_e)
+    aus = []
+    for i in range(len(ka)):
+        name = f"{marke}W{len(werk.flaechen) + 1}"
+        werk.flaeche(Flaeche(name, [ka[i][0], mantel[i + 1], kb[i][0], mantel[i]],
+                             material=material))
+        aus.append(name)
+    return aus
+
+
+def kappenlinien_angleichen(model: Model, namen: list, werk: "Schnittwerk",
+                            tol: float, fremd=()) -> "list | None":
+    """Grund und Deckel eines Blocks **gleich** teilen - Rueckgabe die neue
+    Flaechenliste oder None.
+
+    Warum das noetig ist: ein Schnitt teilt eine Randflaeche, und die
+    Schnittlinie setzt zwei neue Ecken in die eine Kappenschleife. Die andere
+    hat sie nicht. Die Kappen decken sich weiterhin (das misst
+    :func:`_deckungsgleich_abb` an der Kurve), aber die Wandpruefung sucht zu
+    **jeder** Grundlinie genau eine Deckellinie und findet drei. Am
+    Pruefkoerper „Platte mit Randrippe" blieb der Plattenblock darum
+    tetraedrisch, obwohl er ein Quader ist (22.09.2026).
+
+    Angeglichen wird, indem die fehlenden Ecken auf die andere Schleife
+    abgebildet und deren Linien dort geteilt werden; die Waende dazwischen
+    zerfallen mit. Angefasst werden nur Linien, die **allein diesem Block**
+    gehoeren - sonst risse der Schnitt die Fuge zum Nachbarn auf.
+    """
+    flaechen = [model.flaechen.get(x) for x in namen]
+    if any(f is None for f in flaechen):
+        return None
+    kand = _kappen_kandidaten(model, flaechen, tol)
+    for g in kand:
+        for d in kand:
+            if {f.name for f in g[0]} & {f.name for f in d[0]}:
+                continue
+            erg = _kappen_abbildung(model, g, d, tol)
+            if erg is None:
+                continue
+            stand = werk.stand()
+            neu = _angleichen_anwenden(model, namen, g, d, erg[0], erg[1],
+                                       werk, tol, set(fremd))
+            if neu is not None:
+                return neu
+            werk.zurueck_bis(stand)
+    return None
+
+
+def _angleichen_anwenden(model: Model, namen: list, grund: tuple, deckel: tuple,
+                         abb: tuple, paarung: list, werk: "Schnittwerk",
+                         tol: float, fremd: set) -> "list | None":
+    """Ein Versuch mit **einem** Kappenpaar."""
+    from .mesher3d import seiten_im_umlauf
+    zurueck = _umkehr(abb)
+    if zurueck is None:
+        return None
+    fl_g, schleifen_g, _p = grund
+    fl_d, schleifen_d, _q = deckel
+    marke = f"{namen[0]}§A{len(werk.flaechen) + len(werk.linien)}"
+    teilung: dict = {}
+
+    def suchen(sch_von, sch_nach, richtung):
+        kv, kn = seiten_im_umlauf(model, sch_von), seiten_im_umlauf(model, sch_nach)
+        if not kv or not kn:
+            return False
+        ziel = sorted({k for _n, ks in kn for k in ks})
+        Z = model.nodes[ziel]
+        for _n, ks in kv:
+            for k in ks:
+                q = _abbilden(model.nodes[[int(k)]], richtung)[0]
+                if float(np.min(np.linalg.norm(Z - q, axis=1))) <= tol:
+                    continue
+                for name, _ks2 in kn:
+                    t_ = _punkt_auf_linie(model, name, q, tol)
+                    if t_ is not None:
+                        teilung.setdefault(name, []).append((t_, q))
+                        break
+                else:
+                    return False            # das Bild liegt nirgends auf der Schleife
+        return True
+
+    for i, j in paarung:
+        if not suchen(schleifen_g[i], schleifen_d[j], abb):
+            return None
+        if not suchen(schleifen_d[j], schleifen_g[i], zurueck):
+            return None
+    if not teilung:
+        return None
+    # ---- die Linien teilen ---------------------------------------------------
+    for lin in teilung:
+        for f in model.flaechen.values():
+            if f.name in fremd and any(lin in sch for sch in _randschleifen(f)):
+                return None                 # gehoert auch dem Nachbarn
+    stuecke: dict = {}
+    for lin, punkte in teilung.items():
+        enden = _linienenden(model, lin)
+        if enden is None:
+            return None
+        rein = []
+        for t_, q in sorted(punkte, key=lambda x: x[0]):
+            if not rein or t_ - rein[-1][0] > 1e-9:
+                rein.append((t_, q))
+        folge = [int(enden[0])]
+        for _t, q in rein:
+            folge.append(int(model.add_node(*[float(x) for x in q])))
+        folge.append(int(enden[1]))
+        stuecke[lin] = [werk.linie(f"{marke}L{len(werk.linien) + 1}",
+                                   [folge[i], folge[i + 1]]) for i in range(len(folge) - 1)]
+    # ---- die Flaechen neu bauen ---------------------------------------------
+    la = {y for sch in schleifen_g for x in sch for y in (stuecke.get(x) or [x])}
+    lb = {y for sch in schleifen_d for x in sch for y in (stuecke.get(x) or [x])}
+    kappen = {f.name for f in fl_g} | {f.name for f in fl_d}
+    aus = []
+    for f in (model.flaechen[x] for x in namen):
+        alt = _randschleifen(f)
+        if not any(x in stuecke for sch in alt for x in sch):
+            aus.append(f.name)
+            continue
+        neu = [[y for x in sch for y in (stuecke.get(x) or [x])] for sch in alt]
+        if f.name in kappen:
+            name = f"{marke}K{len(werk.flaechen) + 1}"
+            werk.flaeche(Flaeche(name, neu[0], oeffnungen=[list(o) for o in neu[1:]],
+                                 material=f.material))
+            werk.ersatz.setdefault(f.name, []).append(name)
+            aus.append(name)
+            continue
+        if len(neu) != 1:
+            return None
+        teile = _wand_teilen(model, neu[0], la, lb, abb, werk, tol, marke, f.material)
+        if teile is None:
+            return None
+        werk.ersatz.setdefault(f.name, []).extend(teile)
+        aus.extend(teile)
+    return aus
+
+
+def zerlegen_ebene(model: Model, koerper, werk: "Schnittwerk", tol: float) -> "list | None":
+    """Den Koerper an einer Ebene in zwei Bloecke schneiden - der zweite Weg
+    neben dem Fussabdruck.
+
+    Rueckgabe ``[(Flaechennamen, Erkennung oder None), ...]`` fuer die erste
+    Ebene, die zwei geschlossene Bloecke ergibt, von denen **mindestens
+    einer** sweepbar ist; sonst None. Die dabei angelegte Hilfsgeometrie
+    steht in ``werk``.
+
+    Was der Fussabdruck nicht kann und das hier schon: eine Rippe, die bis an
+    den **Rand** der Platte laeuft, haengt nicht ueber einer Oeffnung - ihr
+    Fussabdruck beruehrt den Aussenrand der Deckflaeche, und genau das
+    schliesst :func:`_fussabdruecke` aus (sonst waere der Schnitt keine
+    geschlossene Flaeche). Der Ebenenschnitt trennt sie trotzdem.
+
+    Grenzen, mit Absicht: nur gerade Linien mit zwei Knoten in den
+    geschnittenen Flaechen, keine Oeffnung in ihnen, hoechstens eine
+    Schnittflaeche, und **keine Flaeche, die einem zweiten Koerper gehoert** -
+    sonst zerschnitte der Schnitt die Fuge zum Nachbarn.
+    """
+    from .mesher3d import gemeinsame_randflaechen
+    gem_f, _gem_l = gemeinsame_randflaechen(model)
+    flaechen = [model.flaechen.get(x) for x in (koerper.flaechen or [])]
+    if any(f is None for f in flaechen):
+        return None
+    schwer = {x for x in (koerper.flaechen or []) if x in gem_f}
+    for ebene in schnittebenen(model, koerper, tol):
+        aus = _an_ebene_teilen(model, koerper, flaechen, ebene, werk, tol, schwer)
+        if aus is not None:
+            return aus
+    return None
+
+
+def _an_ebene_teilen(model: Model, koerper, flaechen: list, ebene: tuple,
+                     werk: "Schnittwerk", tol: float, gemeinsam: set) -> "list | None":
+    """Ein Versuch mit **einer** Ebene; None, wenn sie nichts taugt.
+
+    Eine Randflaeche, die ganz **in** der Ebene liegt, gehoert zu genau einem
+    der beiden Bloecke - und welchem, sieht man ihr nicht an: die Deckflaeche
+    einer Platte mit Rippe liegt in der Schnittebene, gehoert zur Platte, und
+    ihre Nachbarn zeigen in beide Richtungen (die Plattenseiten nach unten,
+    die Rippenwaende nach oben). Darum werden die Zuordnungen **durchprobiert**
+    und die geschlossene Huelle entscheidet. Bei hoechstens drei solchen
+    Flaechen sind das acht Versuche; darueber hinaus wird nicht geraten.
+    """
+    import itertools
+    c, n = ebene
+    lage: dict = {}
+    for f in flaechen:
+        try:
+            d = np.concatenate([(_schleifenpunkte(model, sch) - c) @ n
+                                for sch in _randschleifen(f) if sch])
+        except Exception:                   # noqa: BLE001
+            return None
+        if len(d) < 3:
+            return None
+        if float(np.abs(d).max()) <= tol:
+            lage[f.name] = 0                # koplanar
+        elif float(d.min()) >= -tol:
+            lage[f.name] = 1
+        elif float(d.max()) <= tol:
+            lage[f.name] = -1
+        else:
+            lage[f.name] = None             # muss geschnitten werden
+    if not any(l is None for l in lage.values()):
+        return None                         # die Ebene schneidet keine Flaeche
+    eben = [f.name for f in flaechen if lage[f.name] == 0]
+    if len(eben) > 3:
+        return None
+    for wahl in itertools.product((-1, 1), repeat=len(eben)):
+        stand = werk.stand()
+        aus = _ebene_versuch(model, koerper, flaechen, ebene, werk, tol, gemeinsam,
+                             lage, dict(zip(eben, wahl)))
+        if aus is not None:
+            return aus
+        werk.zurueck_bis(stand)
+    return None
+
+
+def _ebene_versuch(model: Model, koerper, flaechen: list, ebene: tuple,
+                   werk: "Schnittwerk", tol: float, gemeinsam: set,
+                   lage: dict, wahl: dict) -> "list | None":
+    """Eine Ebene und **eine** Zuordnung der koplanaren Flaechen."""
+    from .mesher3d import seiten_im_umlauf
+    c, n = ebene
+    marke = f"{koerper.name}§E{len(werk.flaechen) + len(werk.linien)}"
+    knoten_cache: dict = {}
+    linien_cache: dict = {}
+    vorhandene_linien: dict = {}
+    for f in flaechen:
+        for schleife in _randschleifen(f):
+            for name in schleife:
+                ln = model.lines.get(name)
+                if ln is not None and len(ln.nodes) == 2:
+                    vorhandene_linien[frozenset((int(ln.nodes[0]), int(ln.nodes[1])))] = name
+
+    def knoten(p):
+        # Derselbe Kreuzungspunkt wird von beiden Flaechen an der Kante
+        # berechnet, in Gleitkommazahlen um Bits verschieden. Gesucht wird
+        # darum mit Toleranz, nicht ueber ein Rundungsgitter - auf dessen
+        # Kante laegen sonst zwei Knoten, und die Huelle schloesse nicht.
+        p = np.asarray(p, float)
+        for k, q in knoten_cache.items():
+            if float(np.linalg.norm(q - p)) <= tol:
+                return k
+        k = int(model.add_node(*[float(x) for x in p]))
+        knoten_cache[k] = p
+        return k
+
+    def linie(a, b):
+        key = frozenset((int(a), int(b)))
+        if len(key) != 2:
+            return None
+        name = vorhandene_linien.get(key) or linien_cache.get(key)
+        if name is None:
+            name = f"{marke}L{len(linien_cache) + 1}"
+            werk.linie(name, [a, b])
+            linien_cache[key] = name
+        return name
+
+    fremd = _fremde_flaechen(model, koerper)
+    seiten = {1: [], -1: []}
+    nutzer: dict = {}                       # Linie -> Flaechen, die sie benutzen
+    schnittkanten = set()                   # ungerichtet: die Raender der Schnittflaeche
+
+    def dazu(name, seite, schleifen):
+        seiten[seite].append(name)
+        for schleife in schleifen:
+            for l in schleife:
+                nutzer.setdefault(l, []).append(name)
+
+    for f in flaechen:
+        l = lage[f.name]
+        if l is not None:
+            dazu(f.name, wahl[f.name] if l == 0 else l, _randschleifen(f))
+            continue
+        if f.name in gemeinsam or f.oeffnungen:
+            return None                     # gemeinsame Flaeche oder Oeffnung: nicht schneiden
+        stuecke = seiten_im_umlauf(model, list(f.linien or []))
+        if not stuecke or any(len(ks) != 2 for _nm, ks in stuecke):
+            return None                     # Bogen oder Polylinie
+        ecken = [int(ks[0]) for _nm, ks in stuecke]
+        d = (model.nodes[ecken] - c) @ n
+        art = [0 if abs(x) <= tol else (1 if x > 0 else -1) for x in d]
+        m_ = len(ecken)
+        umlauf, umlauf_art = [], []
+        for i in range(m_):
+            umlauf.append(ecken[i])
+            umlauf_art.append(art[i])
+            j = (i + 1) % m_
+            if art[i] * art[j] < 0:
+                fa = d[i] / (d[i] - d[j])
+                umlauf.append(knoten(model.nodes[ecken[i]]
+                                     + (model.nodes[ecken[j]] - model.nodes[ecken[i]]) * fa))
+                umlauf_art.append(0)
+        seiten_kante = _kantenseiten(model.nodes[umlauf], umlauf_art, c, n)
+        if seiten_kante is None:
+            return None
+        teile = _laeufe_aus_kanten(seiten_kante)
+        if not teile[1] or not teile[-1]:
+            return None
+        werk.ersatz.setdefault(f.name, [])
+        for vorz in (1, -1):
+            for lauf in teile[vorz]:
+                kn = []
+                for i in lauf:
+                    if not kn or umlauf[i] != kn[-1]:
+                        kn.append(umlauf[i])
+                if len(kn) > 2 and kn[0] == kn[-1]:
+                    kn = kn[:-1]
+                if len(kn) < 3:
+                    return None
+                linien = [linie(kn[i], kn[(i + 1) % len(kn)]) for i in range(len(kn))]
+                if None in linien or len(set(linien)) != len(linien):
+                    return None
+                name = f"{marke}F{len(werk.flaechen) + 1}"
+                werk.flaeche(Flaeche(name, linien, material=f.material or koerper.material))
+                werk.ersatz[f.name].append(name)
+                dazu(name, vorz, [linien])
+                schnittkanten.add(frozenset((kn[-1], kn[0])))
+    # ---- die Raender der Schnittflaeche, die aus koplanaren Flaechen kommen --
+    # Eine Kante einer koplanaren Flaeche begrenzt den Schnitt genau dann, wenn
+    # die Flaeche auf der **anderen** Seite dahinter liegt: an der Rippe sind das
+    # die drei Kanten des Fussabdrucks in der Deckflaeche, nicht ihr Aussenrand.
+    for name, sigma in wahl.items():
+        for schleife in _randschleifen(model.flaechen[name]):
+            for l in schleife:
+                andere = [y for y in nutzer.get(l, ()) if y != name]
+                if len(andere) != 1:
+                    return None
+                g = andere[0]
+                if (g in seiten[-sigma]) and not (g in seiten[sigma]):
+                    ln = model.lines.get(l)
+                    if ln is None or len(ln.nodes) != 2:
+                        return None
+                    schnittkanten.add(frozenset((int(ln.nodes[0]), int(ln.nodes[1]))))
+    if len(schnittkanten) < 3:
+        return None
+    # ---- die Schnittflaeche: ein Kantenzug, der sich schliesst ---------------
+    nachbar: dict = {}
+    for kante in schnittkanten:
+        a, b = tuple(kante)
+        nachbar.setdefault(a, []).append(b)
+        nachbar.setdefault(b, []).append(a)
+    if any(len(v) != 2 for v in nachbar.values()):
+        return None                         # Verzweigung: mehr als ein Schnitt
+    start = min(nachbar)
+    kette, vorher, jetzt = [start], None, start
+    while True:
+        folge = [x for x in nachbar[jetzt] if x != vorher]
+        if not folge:
+            return None
+        nx = folge[0]
+        if nx == start:
+            break
+        if len(kette) > len(schnittkanten):
+            return None
+        kette.append(nx)
+        vorher, jetzt = jetzt, nx
+    if len(kette) != len(schnittkanten) or len(kette) < 3:
+        return None                         # zwei getrennte Schnitte: hier nicht
+    linien = [linie(kette[i], kette[(i + 1) % len(kette)]) for i in range(len(kette))]
+    if None in linien or len(set(linien)) != len(linien):
+        return None
+    schnitt = f"{marke}S1"
+    werk.flaeche(Flaeche(schnitt, linien, material=koerper.material))
+    # ---- die beiden Bloecke -------------------------------------------------
+    bloecke = []
+    for vorz in (1, -1):
+        namen = seiten[vorz] + [schnitt]
+        if len(namen) < 4 or not _geschlossene_schale(model, namen):
+            return None                     # die Zuordnung war falsch
+        def bau(liste):
+            return Volumenkoerper(koerper.name, list(liste), material=koerper.material,
+                                  teilung=list(koerper.teilung or [4, 4, 4]))
+
+        try:
+            erk = erkennen(model, bau(namen))
+        except Exception:                   # noqa: BLE001
+            erk = None
+        if erk is None:
+            # Der Schnitt hat die eine Kappe feiner geteilt als die andere.
+            # Angleichen - und nur behalten, wenn es traegt.
+            # Fremd ist dabei auch die **Schnittflaeche**: sie gehoert beiden
+            # Bloecken, und der andere kennt die Stuecke nicht.
+            stand = werk.stand()
+            neu = kappenlinien_angleichen(model, namen, werk, tol,
+                                          set(seiten[-vorz]) | {schnitt} | fremd)
+            try:
+                erk2 = (None if neu is None or not _geschlossene_schale(model, neu)
+                        else erkennen(model, bau(neu)))
+            except Exception:               # noqa: BLE001
+                erk2 = None
+            if erk2 is not None:
+                namen, erk = neu, erk2
+            else:
+                werk.zurueck_bis(stand)
+        bloecke.append((list(namen), erk))
+    if not any(e is not None for _n, e in bloecke):
+        return None
+    return bloecke
 
 
 def zerlegen(model: Model, koerper, tiefe: int = ZERLEGEN_TIEFE) -> tuple:
@@ -1179,7 +2419,8 @@ def zerlegen(model: Model, koerper, tiefe: int = ZERLEGEN_TIEFE) -> tuple:
     Pruefkoerpern belegt: Platte mit Nabe und abgesetzte Welle werden zu je
     zwei gesweepten Bloecken (tests.test_sweep).
     """
-    schnitte: list = []
+    werk = Schnittwerk(model)
+    schnitte = werk.flaechen
 
     def block(namen):
         return Volumenkoerper(koerper.name, list(namen), material=koerper.material,
@@ -1199,29 +2440,59 @@ def zerlegen(model: Model, koerper, tiefe: int = ZERLEGEN_TIEFE) -> tuple:
             if F is None or not (F.oeffnungen or []):
                 continue
             for B_namen, S in _fussabdruecke(model, koerper, namen, F, len(schnitte)):
-                model.flaechen[S.name] = S
-                schnitte.append(S)
+                werk.flaeche(S)
                 A_namen = [x for x in namen if x not in B_namen] + [S.name]
                 bl = versuch(A_namen, tiefe - 1) + versuch(list(B_namen) + [S.name], tiefe - 1)
                 if any(e is not None for _n, e in bl):
                     return bl
                 # nichts gewonnen: Schnitt und alles, was darunter entstand, zuruecknehmen
-                for T_ in list(schnitte[schnitte.index(S):]):
-                    model.flaechen.pop(T_.name, None)
+                for T_ in list(schnitte[schnitte.index(S.name):]):
+                    model.flaechen.pop(T_, None)
                     schnitte.remove(T_)
         return [(list(namen), None)]
 
     bl = versuch(list(koerper.flaechen or []), tiefe)
-    if len(bl) <= 1 or not any(e is not None for _n, e in bl):
-        schnitte_entfernen(model, schnitte)
-        return None, []
-    return bl, schnitte
+    if len(bl) > 1 and any(e is not None for _n, e in bl):
+        return bl, werk
+    # Kein Fussabdruck - dann der Schnitt an einer Ebene (zerlegen_ebene):
+    # eine Rippe, die bis an den Rand laeuft, haengt nicht ueber eine Oeffnung
+    # am Rest, und genau das verlangt _fussabdruecke.
+    werk.zuruecknehmen()
+    try:
+        alle = np.vstack([_schleifenpunkte(model, list(model.flaechen[x].linien or []))
+                          for x in (koerper.flaechen or []) if x in model.flaechen])
+        gross = float(np.linalg.norm(alle.max(axis=0) - alle.min(axis=0)))
+    except Exception:                       # noqa: BLE001
+        gross = 1.0
+    tol = max(TOL_REL * gross, 1e-12)
+    bl = zerlegen_ebene(model, koerper, werk, tol)
+    if bl:
+        return bl, werk
+    werk.zuruecknehmen()
+    # Zuletzt: vielleicht ist er ganz sweepbar und nur seine beiden Kappen sind
+    # **verschieden geteilt** - eine Linie mehr im Deckel als im Grund reicht,
+    # damit die Wandpruefung zu einer Grundlinie zwei Deckellinien findet. Das
+    # ist Handarbeit im Modell, kein Fehler, und es kostet nichts, es zu heilen.
+    namen = list(koerper.flaechen or [])
+    neu_namen = kappenlinien_angleichen(model, namen, werk, tol,
+                                        _fremde_flaechen(model, koerper))
+    if neu_namen and _geschlossene_schale(model, neu_namen):
+        pseudo = Volumenkoerper(koerper.name, list(neu_namen), material=koerper.material,
+                                teilung=list(koerper.teilung or [4, 4, 4]))
+        try:
+            erk = erkennen(model, pseudo)
+        except Exception:                   # noqa: BLE001
+            erk = None
+        if erk is not None:
+            return [(list(neu_namen), erk)], werk
+    werk.zuruecknehmen()
+    return None, werk
 
 
 def zerlegbar(model: Model, koerper) -> bool:
     """Ergibt das Zerlegen wenigstens einen sweepbaren Block?"""
-    bl, schnitte = zerlegen(model, koerper)
-    schnitte_entfernen(model, schnitte)
+    bl, werk = zerlegen(model, koerper)
+    schnitte_entfernen(model, werk)
     return bool(bl)
 
 
@@ -1261,15 +2532,15 @@ def zerlegt_vernetzen(model: Model, koerper, h: float, log: list = None, cache: 
     Rueckgabe die Elementnummern; leer, wenn nichts zu zerlegen war."""
     from .importers import _common as C
     from . import mesher3d as M3
-    bl, schnitte = zerlegen(model, koerper)
+    bl, werk = zerlegen(model, koerper)
     if not bl:
         from .importers import _common as C
         C.say(log, f"Volumen {koerper.name}: nicht zerlegt - {zerlegen_warum_nicht(model, koerper)}.")
         return []
     try:
-        C.say(log, f"Volumen {koerper.name}: nicht als Ganzes sweepbar - an "
-                   f"{len(schnitte)} Fußabdruck(en) in {len(bl)} Blöcke zerlegt "
-                   f"({sum(1 for _n, e in bl if e is not None)} davon sweepbar)")
+        art = "an Fußabdrücken" if not werk.ersatz else "an einer Ebene"
+        C.say(log, f"Volumen {koerper.name}: nicht als Ganzes sweepbar - {art} in {len(bl)} Blöcke "
+                   f"zerlegt ({sum(1 for _n, e in bl if e is not None)} davon sweepbar)")
         els: list = []
         n_frei = 0
         randtreue = 1.0
@@ -1297,9 +2568,14 @@ def zerlegt_vernetzen(model: Model, koerper, h: float, log: list = None, cache: 
         koerper.netzkanten = []
         C.say(log, f"Volumen {koerper.name}: {len(els)} Elemente aus {len(bl)} Blöcken "
                    f"({len(bl) - n_frei} gesweept, {n_frei} frei) - {koerper.kommentar}")
+        n_rs = werk.randseiten_zurueck()
+        if n_rs:
+            C.say(log, f"  {n_rs} Randseiten der Teilflächen auf die Randflächen zurückgelegt")
         return els
     finally:
-        schnitte_entfernen(model, schnitte)
+        # Die Knoten bleiben: an ihnen haengen Elemente. Linien und Flaechen
+        # des Schnitts gehen raus.
+        schnitte_entfernen(model, werk, knoten_auch=False)
 
 
 def hexaederanteil(model: Model, koerper=None) -> dict:
