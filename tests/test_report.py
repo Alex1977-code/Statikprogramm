@@ -291,6 +291,59 @@ def test_kontaktbedingungen_im_bericht():
     _assert_since(n0)
 
 
+def test_kontaktwarnungen_der_uebrigen_ergebnisse():
+    """Im Vorgabeumfang bekommt nur eine Handvoll Ergebnisse eine eigene
+    Kontakttabelle - ihre **Warnungen** dürfen deshalb nicht mit wegfallen.
+
+    `max_contact_results` begrenzt die Einzeltabellen; die Warnung und der
+    Grund der Nichtkonvergenz hingen bis zum 22.09.2026 an derselben
+    Schleife. Bei 1931 Kontaktergebnissen nannte der Bericht den Grund für
+    höchstens fünf (0,26 %) - 1911 standen ohne jedes Kennzeichen im
+    Statikdokument. Und die Auswahl ist nicht die gefährlichste, sondern
+    schlicht die erste: `je_ergebnis` folgt der Reihenfolge von
+    `all_results()` ohne jede Sortierung.
+
+    Gebündelt statt je Ergebnis: die Warnungsliste wächst um höchstens die
+    Zahl der verschiedenen Protokolltexte plus eins.
+    """
+    n0 = len(RESULTS)
+    from statik3d import examples_lib as _ex
+    m = _ex.build_example("friction")
+    an = solver.solve_all(m)
+    # Mehrere Kontaktergebnisse: dasselbe Ergebnis unter weiteren Namen, jedes
+    # mit eigenem info-Wörterbuch. Es geht um die Auswahl im Bericht, nicht um
+    # die Mechanik - darum genügt die Kopie.
+    import copy as _copy
+    grund = next(n for n, r in an.cases.items() if getattr(r, "contact", None))
+    for _k in (2, 3, 4):
+        kopie = _copy.copy(an.cases[grund])
+        kopie.info = dict(getattr(an.cases[grund], "info", {}) or {})
+        an.cases[f"{grund} ({_k})"] = kopie
+    ergebnisse = list(an.all_results().items())
+    check("die Probe braucht mehrere Kontaktergebnisse",
+          len(ergebnisse) >= 2 and any(getattr(r, "contact", None)
+                                       for _n, r in ergebnisse),
+          f"{len(ergebnisse)} Ergebnisse")
+    # Das zweite und jedes weitere Ergebnis bekommt eine Warnung und gilt als
+    # nicht konvergiert - genau die Ergebnisse, die keine eigene Tabelle mehr
+    # bekommen, wenn nur eines gezeigt wird.
+    for _i, (_name, r) in enumerate(ergebnisse):
+        if _i:
+            r.info["contact_log"] = ["Reibiteration am Deckel abgebrochen"]
+            r.info["contact_converged"] = False
+    rep = Report(m, an, options={"max_contact_results": 1})
+    html = rep.html()
+    warn = "\n".join(getattr(rep, "_warnings", []) or [])
+    check("die Warnung der übrigen Ergebnisse steht im Bericht",
+          "Reibiteration am Deckel abgebrochen" in warn, warn[:120] or "keine")
+    check("und die Zahl der nicht konvergierten wird genannt",
+          "nicht konvergiert" in warn, warn[:160] or "keine")
+    check("der Hinweis unter der Tabelle nennt sie ebenfalls",
+          "davon sind nicht konvergiert" in html,
+          "steht im Dokument" if "davon sind nicht" in html else "fehlt")
+    _assert_since(n0)
+
+
 def test_pdf():
     n0 = len(RESULTS)
     m = build_beam_model()
@@ -581,7 +634,8 @@ def main():
     print("=" * 96)
     print("STATIK3D - Test statischer Bericht (HTML / Markdown / PDF / SVG)")
     print("=" * 96)
-    tests = [test_beam_report, test_frame_report, test_contact_report, test_plate_and_solid,
+    tests = [test_kontaktwarnungen_der_uebrigen_ergebnisse,
+             test_beam_report, test_frame_report, test_contact_report, test_plate_and_solid,
              test_svg_helpers, test_kontaktbedingungen_im_bericht, test_pdf, test_fortschritt,
              test_gliederung_und_rahmen, test_grosses_netz,
              test_nicht_gefuehrt_ist_nicht_erfuellt]

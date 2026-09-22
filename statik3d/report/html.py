@@ -2333,9 +2333,34 @@ class Report:
                         self._warnings.extend(f"Kontakt {name}: {s}" for s in log)
                     if res.info.get("contact_converged") is False:
                         self._warnings.append(f"Kontakt {name}: Iteration nicht konvergiert")
+                # Die uebrigen Ergebnisse bekommen im Vorgabeumfang keine
+                # Einzeltabelle - ihre WARNUNGEN duerfen deshalb nicht mit
+                # wegfallen. Bei 1931 Kontaktergebnissen nannte der Bericht den
+                # Grund der Nichtkonvergenz fuer hoechstens 5 (0,26 %); 1911
+                # standen ohne jedes Kennzeichen im Statikdokument. Gebuendelt
+                # statt je Ergebnis: die Warnungsliste waechst dadurch um
+                # hoechstens (Zahl der verschiedenen Texte + 1) Zeilen.
+                rest = je_ergebnis[lim:]
+                weitere: dict = {}
+                for _name, _res, _kk in rest:
+                    for s in _res.info.get("contact_log", []):
+                        if "zugeordnet" not in s:
+                            weitere.setdefault(s, []).append(_name)
+                nicht_konv = [_name for _name, _res, _kk in rest
+                              if _res.info.get("contact_converged") is False]
+                for s, namen in weitere.items():
+                    self._warnings.append(
+                        f"Kontakt ({len(namen)} weitere Ergebnisse, "
+                        f"z. B. {namen[0]}): {s}")
+                if nicht_konv:
+                    self._warnings.append(
+                        f"Kontakt: {len(nicht_konv)} weitere Ergebnisse nicht "
+                        f"konvergiert (z. B. {', '.join(nicht_konv[:5])})")
                 if len(je_ergebnis) > lim:
                     b.append(("note", f"Kontaktkräfte der übrigen {len(je_ergebnis) - lim} Ergebnisse: "
-                                      "siehe die Übersicht oben; die Langform nennt alle."))
+                                      "siehe die Übersicht oben; die Langform nennt alle."
+                                      + (f" {len(nicht_konv)} davon sind nicht "
+                                         "konvergiert." if nicht_konv else "")))
         # ---- Freie Bewegungen (Singularitaeten)
         # Sie gehoeren in den Bericht, weil sie den Geltungsbereich des
         # Ergebnisses begrenzen: fuer ein Bauteil, an dem Last ins Nichts

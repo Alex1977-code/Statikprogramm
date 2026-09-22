@@ -1150,7 +1150,18 @@ def check_lasteinleitungen(model, analysis, combos: list = None,
         for kname, res in ergebnisse.items():
             if le.quelle == "auflager":
                 R = getattr(res, "reactions", None)
-                F = abs(float(R[le.knoten][le.richtung])) if R is not None and le.knoten in R else 0.0
+                # ``le.knoten in R`` fragt ein numpy-Feld nach einem KRAFTWERT,
+                # nicht nach einer Knotennummer: ``in`` prueft bei ndarray die
+                # Elemente, nicht die Zeilenindizes. Fuer jeden Knoten ausser 0
+                # war das praktisch immer falsch - der Nachweis der
+                # Lasteinleitung lief dann ueber 0 von 42 Kombinationen mit
+                # F_Ed = 0,0 kN, und Stegkrueppeln unter dem Auflager blieb
+                # ungeprueft. Traefe ein Kraftwert zufaellig die Knotennummer,
+                # liefe er ueber die zufaellig getroffene Teilmenge.
+                R = None if R is None else np.asarray(R, dtype=float)
+                F = (abs(float(R[int(le.knoten)][int(le.richtung)]))
+                     if R is not None and R.ndim == 2 and int(le.knoten) < len(R)
+                     else 0.0)
             else:
                 F = abs(_knotenlast(model, kname, le.knoten, le.richtung))
             if F <= 0:
