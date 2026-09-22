@@ -3654,7 +3654,12 @@ Erweiterungen, damit der Sweep über Platten hinauskommt:
      abgebildet, deren Linie dort geteilt, und die **Wand** dazwischen zerfällt mit — eine
      Wand je Linienpaar, mit neuer Mantellinie dazwischen. Erst dadurch bleibt die
      Wandprüfung so streng, wie sie ist: jede Wand aus genau vier Linien. Angefasst werden
-     nur Linien, die allein diesem Block gehören.
+     nur Linien, die allein diesem Block gehören: was einem **zweiten Körper** gehört,
+     bleibt unangetastet (`sweep._fremde_flaechen`) — sein Netz kennt die Stücke nicht, und
+     die Fuge risse auf. Der Weg wird dann quer dazu gesucht, und wenn es keinen gibt,
+     bleibt der Körper bei den Tetraedern (`test_angleichen_schont_den_nachbarn`: derselbe
+     Quader gleicht allein über seine Grundfläche an, mit Nachbar darunter über die
+     Seitenflächen — 144 hex8, Fuge knotenkonform).
 
    Das hilft auch ohne Schnitt: ein von Hand gebauter Körper, dessen Deckel eine Kante in
    zwei Linien führt (weil dort ein Nachbar anstößt), war bisher nicht sweepbar. Er ist es

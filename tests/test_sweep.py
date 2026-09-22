@@ -1119,6 +1119,71 @@ def test_kappen_verschieden_geteilt():
     check("Abnahme ohne Befund", not bef, str([b.pruefung for b in bef])[:120])
 
 
+def _nachbar_darunter(m, a=0.3, b=0.2, t=0.1):
+    """Ein zweiter Quader unter dem ersten - er **teilt sich die Grundflaeche**
+    ``U`` mit ihm. Ihre Linien gehoeren damit auch ihm."""
+    def kn(x, y, z):
+        for i in range(m.nn):
+            if abs(m.nodes[i][0] - x) < 1e-12 and abs(m.nodes[i][1] - y) < 1e-12 \
+                    and abs(m.nodes[i][2] - z) < 1e-12:
+                return i
+        return m.add_node(x, y, z)
+
+    def li(p_, q_):
+        for name, ln in m.lines.items():
+            if len(ln.nodes) == 2 and {int(ln.nodes[0]), int(ln.nodes[1])} == {p_, q_}:
+                return name
+        name = f"NL{len(m.lines) + 1}"
+        m.add_line(name, [p_, q_])
+        return name
+
+    def fl(name, punkte):
+        ks = [kn(*pp) for pp in punkte]
+        m.add_flaeche(name, [li(ks[i], ks[(i + 1) % len(ks)]) for i in range(len(ks))],
+                      material="S235")
+        return name
+    namen = ["U",
+             fl("NU", [(0, 0, -t), (a, 0, -t), (a, b, -t), (0, b, -t)]),
+             fl("NX0", [(0, 0, -t), (0, b, -t), (0, b, 0), (0, 0, 0)]),
+             fl("NXA", [(a, 0, -t), (a, 0, 0), (a, b, 0), (a, b, -t)]),
+             fl("NY0", [(0, 0, -t), (0, 0, 0), (a, 0, 0), (a, 0, -t)]),
+             fl("NYB", [(0, b, -t), (a, b, -t), (a, b, 0), (0, b, 0)])]
+    return m.add_koerper("V2", namen, material="S235")
+
+
+def test_angleichen_schont_den_nachbarn():
+    """Eine Linie, die ein **zweiter Koerper** fuehrt, wird nicht geteilt -
+    sein Netz kennt die Stuecke nicht, und die Fuge risse auf. Der Weg wird
+    dann anderswo gesucht (22.09.2026)."""
+    m, k = _quader_mit_geteilter_kante()
+    werk = sweep.Schnittwerk(m)
+    allein = sweep.kappenlinien_angleichen(m, list(k.flaechen), werk, 1e-9)
+    check("allein geht das Angleichen ueber die Grundflaeche U",
+          allein is not None and "U" not in allein, str(allein))
+    werk.zuruecknehmen()
+    m, k = _quader_mit_geteilter_kante()
+    k2 = _nachbar_darunter(m)
+    fremd = sweep._fremde_flaechen(m, k)
+    check("die Grundflaeche gehoert jetzt auch dem Nachbarn", "U" in fremd, str(sorted(fremd)))
+    werk = sweep.Schnittwerk(m)
+    mit = sweep.kappenlinien_angleichen(m, list(k.flaechen), werk, 1e-9, fremd)
+    check("mit Nachbar bleibt U unangetastet - angeglichen wird quer dazu",
+          mit is not None and "U" in mit, str(mit))
+    werk.zuruecknehmen()
+    check("beide Koerper sind sweepbar", sweep.sweepbar(m, k) and sweep.sweepbar(m, k2))
+    log = []
+    mesher.modell_vernetzen(m, log, workers=1)
+    typen = _typen(m)
+    check("und das Netz ist reiner Hexaeder", set(typen) == {"hex8"}, str(typen))
+    V = sum(solid_volume(e.typ, m.nodes[e.nodes]) for e in m.elements)
+    check("Rauminhalt beider Quader", abs(V / (2 * 0.3 * 0.2 * 0.1) - 1.0) < 1e-9,
+          f"{V * 1e3:.4f} dm³")
+    fuge = [n for n in range(m.nn) if abs(m.nodes[n][2]) < 1e-12]
+    check("knotenkonform in der Fuge", _doppelte_knoten(m, fuge) == 0, f"{len(fuge)} Knoten")
+    bef = diagnose.abnahme(m)
+    check("Abnahme ohne Befund", not bef, str([b.pruefung for b in bef])[:120])
+
+
 def test_umpaaren_spart_keile():
     """Ein Keil ist kein halber Sechsflächner: der hex8 trägt Biegung über
     inkompatible Moden, der pent6 nicht (Statik3D-Sitzung, 22.09.2026: am
@@ -1276,6 +1341,7 @@ def main():
               test_keile_am_feinen_rand, test_verjuengter_zug, test_drehkoerper,
               test_krummer_quader_nicht_abgebildet, test_umpaaren_spart_keile,
               test_rippe_am_rand_ueber_ebene_zerlegt, test_kappen_verschieden_geteilt,
+              test_angleichen_schont_den_nachbarn,
               test_kragplatte_tet4_gegen_hex8):
         print(f"\n--- {t.__name__} ---")
         try:

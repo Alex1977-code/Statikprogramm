@@ -1887,6 +1887,17 @@ def _geschlossene_schale(model: Model, namen: list) -> bool:
     return bool(zahl) and all(v == 2 for v in zahl.values())
 
 
+def _fremde_flaechen(model: Model, koerper) -> set:
+    """Die Randflaechen **anderer** Koerper - auch die, die dieser mitbenutzt.
+
+    Was ihnen gehoert, wird weder geschnitten noch neu geteilt: eine Linie,
+    die ein Nachbar fuehrt, hier in drei Stuecke zu zerlegen, risse die Fuge
+    auf - sein Netz kennt die Stuecke nicht.
+    """
+    return {x for kk in (getattr(model, "koerper", {}) or {}).values()
+            if kk is not koerper for x in (kk.flaechen or [])}
+
+
 def _kette(model: Model, linien: list) -> "list | None":
     """Einen **offenen** Zug gerader Linien ordnen: [(Name, von, nach), ...]."""
     enden, grad = {}, {}
@@ -2222,8 +2233,7 @@ def _ebene_versuch(model: Model, koerper, flaechen: list, ebene: tuple,
             linien_cache[key] = name
         return name
 
-    fremd = {x for kk in (getattr(model, "koerper", {}) or {}).values()
-             if kk is not koerper for x in (kk.flaechen or [])} - set(koerper.flaechen or [])
+    fremd = _fremde_flaechen(model, koerper)
     seiten = {1: [], -1: []}
     nutzer: dict = {}                       # Linie -> Flaechen, die sie benutzen
     schnittkanten = set()                   # ungerichtet: die Raender der Schnittflaeche
@@ -2435,7 +2445,8 @@ def zerlegen(model: Model, koerper, tiefe: int = ZERLEGEN_TIEFE) -> tuple:
     # damit die Wandpruefung zu einer Grundlinie zwei Deckellinien findet. Das
     # ist Handarbeit im Modell, kein Fehler, und es kostet nichts, es zu heilen.
     namen = list(koerper.flaechen or [])
-    neu_namen = kappenlinien_angleichen(model, namen, werk, tol)
+    neu_namen = kappenlinien_angleichen(model, namen, werk, tol,
+                                        _fremde_flaechen(model, koerper))
     if neu_namen:
         pseudo = Volumenkoerper(koerper.name, list(neu_namen), material=koerper.material,
                                 teilung=list(koerper.teilung or [4, 4, 4]))
