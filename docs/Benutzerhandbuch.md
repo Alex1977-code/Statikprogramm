@@ -2410,6 +2410,31 @@ dabei ins Nichts geht.
 dem Beiwert seines Lastfalls ein. Wer das nicht will, legt es in einen
 ständigen Lastfall mit γ = 1,0.
 
+#### Übermaß wirkt nur an der Fuge mit genau diesem Namen (22.09.2026)
+
+Ein Übermaß gehört genau der Fuge, deren Namen es trägt. Bis zum 22.09.2026
+galt es auch an jeder Fuge, deren Name mit diesem Namen **beginnt** - ohne
+Meldung. Das Programm vergibt solche Namen selbst: die zweite Fuge zwischen
+denselben Körpern heißt „Fuge (2)“, eine Kopie „Deckel_2“, der RFEM-Import
+teilt eine Freigabe in „⟨Name⟩ (Typ 1)“, „⟨Name⟩ (Typ 2)“ auf, und
+„Kontaktbedingung 1“ ist der Anfang von „Kontaktbedingung 10“. Gemessen an
+zwei getrennten Würfelpaaren mit 100 µm Übermaß nur auf „Fuge“: die Fuge
+„Fuge (2)“ ohne jedes Übermaß stand unter derselben Pressung von
+10 499 371 N wie „Fuge“. Passten zwei Einträge („Deckel“ 100 µm, „Deckel_2“
+20 µm an der Fuge „Deckel_2 (Typ 1)“), entschied die Reihenfolge der
+Eingabe - 10 499 371 N oder 2 099 874 N, Faktor 5.
+
+Jetzt wirkt an einer solchen Fuge **kein** Übermaß, und das Protokoll (und
+damit die Warnungen des Berichts) sagt es:
+
+    Kontaktpaar 'Fuge (2)': kein eigenes Übermaß eingetragen - die Einträge
+    „Fuge“ gehören zu einer anderen Fuge und wirken hier NICHT.
+
+Wer an einer aufgeteilten Fuge Übermaß will, trägt es für jede Teilfuge ein -
+die Maske bietet genau diese Namen an. Ein Modell, das ein Übermaß noch auf
+den Namen vor der Aufteilung führt, rechnet diese Teilfugen jetzt ohne
+Übermaß; die Protokollzeile nennt sie (`tests/test_uebermass.py`).
+
 ### Lastgenerierer Wasserdruck (Stahlwasserbau)
 
 *Lasten → Generierer → Wasserdruck* (oder Modellbaum → Einwirkungen →

@@ -767,9 +767,19 @@ class ContactSystem:
         name = str(cp.name or "")
         u = self.uebermass.get(name)
         if u is None:
-            # Eine Fuge kann in mehrere Kontaktpaare aufgeteilt sein (ein Paar
-            # je Freigabetyp); die tragen den Namen der Fuge als Vorsatz.
-            u = next((v for k, v in self.uebermass.items() if name.startswith(k)), 0.0)
+            # Ein Kontaktpaar traegt immer genau den Namen seiner Bedingung
+            # (fugen.py: ContactPair(name=kb.name, ...)), und die Maske bietet
+            # genau diese Namen an. Ein blosser Praefixtreffer waere deshalb
+            # nie das gemeinte Paar, sondern ein fremdes - "Deckel" schluege
+            # auf "Deckel_2 (Typ 1)" durch, und bei zwei Treffern entschiede
+            # die Eingabereihenfolge (gemessen: Faktor 5).
+            fremd = [k for k in self.uebermass if name.startswith(k)]
+            if fremd:
+                self.log.append(
+                    f"Kontaktpaar '{name}': kein eigenes Übermaß eingetragen - die "
+                    "Einträge " + ", ".join(f"„{k}“" for k in fremd)
+                    + " gehören zu einer anderen Fuge und wirken hier NICHT.")
+            u = 0.0
         u = float(u or 0.0)
         if not u:
             return 0.0
