@@ -2345,7 +2345,11 @@ class Report:
                 for _name, _res, _kk in rest:
                     for s in _res.info.get("contact_log", []):
                         if "zugeordnet" not in s:
-                            weitere.setdefault(s, []).append(_name)
+                            # Die Laufnummer ("(Kontaktlauf 7)") gehoert zum
+                            # Ergebnis, nicht zur Art der Meldung - sonst
+                            # zerfiele eine Meldung in bis zu zwoelf Zeilen.
+                            art = re.sub(r" \(Kontaktlauf \d+\)$", "", s)
+                            weitere.setdefault(art, []).append(_name)
                 nicht_konv = [_name for _name, _res, _kk in rest
                               if _res.info.get("contact_converged") is False]
                 for s, namen in weitere.items():

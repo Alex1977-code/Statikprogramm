@@ -329,13 +329,20 @@ def test_kontaktwarnungen_der_uebrigen_ergebnisse():
     # bekommen, wenn nur eines gezeigt wird.
     for _i, (_name, r) in enumerate(ergebnisse):
         if _i:
-            r.info["contact_log"] = ["Reibiteration am Deckel abgebrochen"]
+            # mit Laufnummer, wie sie der Loeser seit dem 22.09.2026 anhaengt -
+            # die Buendelung muss sie uebergehen, sonst zerfiele die Meldung
+            r.info["contact_log"] = [f"Reibiteration am Deckel abgebrochen (Kontaktlauf {_i + 2})"]
             r.info["contact_converged"] = False
     rep = Report(m, an, options={"max_contact_results": 1})
     html = rep.html()
     warn = "\n".join(getattr(rep, "_warnings", []) or [])
     check("die Warnung der übrigen Ergebnisse steht im Bericht",
           "Reibiteration am Deckel abgebrochen" in warn, warn[:120] or "keine")
+    check("verschiedene Laufnummern ergeben EINE Warnzeile",
+          sum(1 for z in (getattr(rep, "_warnings", []) or [])
+              if "Reibiteration am Deckel" in z) == 1,
+          str([z[:60] for z in (getattr(rep, "_warnings", []) or [])
+               if "Reibiteration" in z]))
     check("und die Zahl der nicht konvergierten wird genannt",
           "nicht konvergiert" in warn, warn[:160] or "keine")
     check("der Hinweis unter der Tabelle nennt sie ebenfalls",

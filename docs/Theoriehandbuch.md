@@ -1333,27 +1333,54 @@ Grund statt der Schrittzahl. `tests/test_kontakthalt.py` setzt den Deckel
 künstlich auf 1 und prüft, dass `contact_converged` dann **falsch** meldet;
 mit dem alten Stand meldet dieselbe Prüfung wahr.
 
-> **Und am Drehlager zieht der Deckel.** Im `contact_log` von LF1 steht in
-> zwei unabhängigen Läufen wörtlich „Kontakt: Nachprüfung der Reibung nach 40
-> Zustandswechseln abgebrochen" — und daneben, mit der alten Meldung,
-> „konvergiert True". **LF1 am Drehlager konvergiert im Reibzustand nicht.**
-> Die dort genannten 388,0 N/mm² und 1,2713 mm sind der Wert, bei dem die
-> Nachprüfung aufgegeben hat, nicht der auskonvergierte. Jede Zusage „ändert
-> das Ergebnis nicht", die gegen diese Zahlen geprüft wurde, ist damit eine
-> Aussage über **Reproduzierbarkeit**, nicht über Richtigkeit — auch die
-> Gleichheit der symmetrischen Faktorisierung (0,0004 N/mm² größte
-> Abweichung) und die des Sechsflächner-Stapels. Sie bleiben gültig als das,
-> was sie sind: dieselbe Rechnung gibt dasselbe Ergebnis.
+> **Und am Drehlager zieht der Deckel — in mindestens einem Lauf.** Im
+> gesammelten `contact_log` von LF1 steht in zwei Läufen wörtlich „Kontakt:
+> Nachprüfung der Reibung nach 40 Zustandswechseln abgebrochen" — und daneben,
+> mit der alten Meldung, „konvergiert True". LF1 besteht mit Fließen aber aus
+> **zwölf** Kontaktläufen, und gleichlautende Zeilen wurden über alle zwölf
+> zu einer zusammengefasst. Belegt ist darum nur: **in mindestens einem der
+> zwölf Kontaktläufe hat die Nachprüfung der Reibung nach 40
+> Zustandswechseln aufgegeben.** Ob der letzte betroffen ist — aus ihm
+> stammen u und σ, die 1,2713 mm und 388,0 N/mm² —, ist nicht belegt. Die
+> einzige Reibstelle ist das Flächenlager „Starr" mit μ = 0,1; alle zwölf
+> Kontaktpaare haben μ = 0. Seit dem 22.09.2026 trägt die Abbruchzeile ihren
+> Kontaktlauf und wird nicht mehr zusammengefasst, und `res.info` führt
+> `contact_letzter_lauf_konvergiert` und `contact_laeufe_nicht_konvergiert` —
+> die Frage lässt sich beim nächsten Lauf ablesen, statt sie zu vermuten.
+> (Eine frühere Fassung sagte „LF1 am Drehlager konvergiert im Reibzustand
+> nicht"; das war zu scharf. Nachprüfung der Lösersitzung vom 22.09.2026.)
 >
-> **Woran es liegt, ist offen — und ein naheliegender Verdacht ist
-> gefallen.** Die automatische Kontaktsteifigkeit ist `PENALTY_FACTOR = 1e4`
-> mal die örtliche Diagonalsteifigkeit; am Drehlager steht die Matrix damit
-> bei max |K| ≈ 1,05·10¹⁷ gegen 1,9·10¹³ ohne Kontakt. Dass zwei rechnerisch
-> gleichwertige Faktorisierungen derselben abgelegten Matrix Lösungen
-> liefern, die um 269 % auseinanderliegen, während beide Residuen bei 10⁻¹⁵
-> stehen, sah nach genau dieser Kondition aus.
+> **Wiederholbar — auf demselben Weg.** Das ausgelieferte Programm (unsymmetrische Zerlegung) hat am Drehlager in **drei** Läufen von LF1 denselben Kontaktweg genommen — 150 Schritte, 145 Faktorisierungen —, und die Spannungen lagen höchstens **0,0004 N/mm²** auseinander (Verschiebungen relativ 4,3·10⁻⁷): nicht bitgleich, aber derselbe Weg.
+> Die frühere Fassung schloss hier „dieselbe Rechnung gibt dasselbe
+> Ergebnis" — bitgleich ist das nicht, aber im Weg traf es zu. Auseinander
+> lief nur das Paar B/C einer **Versuchsfassung mit symmetrischer Zerlegung**
+> (`mtype -2`; pypardiso nullt dabei `iparm`, laut MKL-Dokumentation gelten
+> dann andere Vorgaben: Pivotstörung 10⁻⁸ statt 10⁻¹³, keine Skalierung,
+> kein Matching). Zwei ihrer Läufe (C nur mit einem Merker für das
+> Symmetrieurteil) wichen in der Vergleichsspannung um bis zu
+> **273,08 N/mm²** voneinander ab (Element 623 980: 79,15 gegen
+> 352,23 N/mm²), 23 390 Elemente um mehr als 1 N/mm²; C lief zu rund 70 %
+> neben einem Gesamttestlauf der Statik3D-Sitzung. Der Verdacht fällt auf die
+> ungesetzten Vorgaben der symmetrischen Zerlegung — bewiesen ist er nicht.
+> **Diese Fassung ist nicht eingebaut**; die Lösersitzung misst sie mit
+> gesetzten `iparm`-Werten und einer Wegeprüfung nach, bevor sie es wird. Die
+> 0,0004 N/mm² zwischen A (unsymmetrisch) und B (symmetrisch) zeigen nur,
+> dass diese beiden denselben Weg nahmen — über die Wirkung der symmetrischen
+> Zerlegung sagen sie nichts.
 >
-> Gemessen am echten Modell (LF1, sonst unverändert, 22.09.2026):
+> **Woran es liegt, ist offen.** Die automatische Kontaktsteifigkeit ist
+> `PENALTY_FACTOR = 1e4` mal die örtliche Diagonalsteifigkeit; am Drehlager
+> steht der **größte Eintrag** der Matrix damit bei 1,05·10¹⁷ gegen 1,9·10¹³
+> ohne Kontakt. Das ist nicht die Konditionszahl — die ist in keinem Lauf
+> gemessen; für die abgelegte Testmatrix vom 19.09. folgt aus den
+> Protokollzahlen nur κ₂ ≥ 1,1·10¹⁵. Dass zwei rechnerisch gleichwertige
+> Faktorisierungen dieser Matrix Lösungen liefern, die um 269 %
+> auseinanderliegen, während beide Residuen bei 10⁻¹⁵ stehen, heißt: sie ist
+> für eine künstliche rechte Seite, die alle Richtungen anregt, numerisch
+> fast singulär. Dass die Strafsteifigkeit das verursacht, ist nicht gezeigt.
+>
+> Gemessen am echten Modell (LF1, sonst unverändert, **je ein Lauf**,
+> 22.09.2026):
 >
 > | `PENALTY_FACTOR` | Zeit | Kontaktschritte | max \|u\| | σ_v | Deckel |
 > |---|---|---|---|---|---|
@@ -1364,18 +1391,22 @@ mit dem alten Stand meldet dieselbe Prüfung wahr.
 > Vergleichsspannung **0,1324 N/mm²**, vier Elemente über 0,1, keines über
 > 1,0; größte Knotenabweichung 0,00002 mm.
 >
-> Daraus folgen zwei Dinge. **Die Strafsteifigkeit ist nicht die Ursache der
-> nicht konvergierenden Reibung** — der Abbruch kommt mit einem Zehntel
-> genauso. Und die Kondition schlägt nicht so durch, wie ihre größte Zahl
-> vermuten lässt: 10¹⁷ gegen eine Maschinengenauigkeit von 2,2·10⁻¹⁶ heißt
-> als Schranke „keine gesicherte Stelle", tatsächlich sind es 0,13 N/mm²
-> auf 388. Vermutlich, weil die Straffedern nur wenige Zeilen betreffen und
-> der tragende Teil davon unberührt bleibt — das ist ungemessen und steht
-> hier als Vermutung, nicht als Grund.
+> Daraus folgt weniger, als hier früher stand. **Belegt** ist: auch mit
+> einem Zehntel der Strafsteifigkeit steht die Abbruchmeldung im Protokoll.
+> **Nicht belegt** ist, dass die Strafsteifigkeit nicht die Ursache sei —
+> die Kondition wurde in keinem Lauf gemessen, und 10³ verändert zugleich
+> das Modell (zehnfache Eindringung), nicht nur die Kondition. Die
+> 0,13 N/mm² sind der Unterschied zweier **Modelle** mit verschiedenem
+> Kontaktweg (155 gegen 150 Schritte) — kein Maß für Rundungsfehler und
+> keine Schranke: dass eine Versuchsfassung mit symmetrischer Zerlegung um
+> 273 N/mm² streuen konnte, zeigt der Lauf C oben. Aus max |K| folgt auch keine Schranke; dafür bräuchte es
+> die Konditionszahl, bei PARDISO mit Skalierung die der skalierten Matrix.
 >
-> `PENALTY_FACTOR` bleibt darum bei 10⁴: 8,6 % mehr Zeit für 0,13 N/mm² bei
-> einer Zusage von 1 N/mm² ist kein guter Handel, und die Konvergenz kauft
-> man sich damit nicht. Die Konstante hat jetzt Zahlen hinter sich.
+> `PENALTY_FACTOR` bleibt bei 10⁴ — nicht, weil 10³ nachweislich schlechter
+> wäre: die 8,6 % mehr Zeit des einen Laufs liegen in der Streuung dieses
+> Abends (gleichwertige Läufe 3 bis 17 %), und er lief unter Fremdlast. Es
+> gibt schlicht keinen belegten Grund zu wechseln. (Eine frühere Fassung
+> sagte, die Konstante habe „jetzt Zahlen hinter sich"; Nachprüfung der Lösersitzung vom 22.09.2026.)
 
 **Zwei Posten daneben, die nichts mit dem Schlüssel zu tun haben, aber mit
 derselben Messung gefunden wurden** (21.09.2026, an einer Matrix von
@@ -1383,11 +1414,17 @@ Drehlagergröße: 475 935 Zeilen, 17,6 Mio. Nichtnullen):
 
 | | je Aufruf | je Lastfall | über 422 Lastfälle |
 |---|---|---|---|
-| doppeltes `tocsr()` im `LinearSolver` | 0,280 s | 40,6 s (145 Faktorisierungen) | **4,75 h** |
+| doppeltes `tocsr()` im `LinearSolver` | 0,280 s | 40,6 s (145 Faktorisierungen) | **rund 3,0 h** |
 | `Kt` und `Ktff` bedingungslos gebaut | 0,577 s | 2,88 s (5 von 150 Schritten) | 0,34 h |
 
 Der erste wandelte dieselbe Matrix zweimal nach CSR um — `self._K` steht
-bereits da. Der zweite baute die Tangente und ihren Zuschnitt in **jedem**
+bereits da. (Die 0,280 s sind an einer **Ersatzmatrix** gemessen, am
+Drehlager selbst nicht. Eine frühere Fassung der Tabelle schrieb 4,75 h; sie
+setzte für alle 422 Lastfälle die 145 Faktorisierungen des kalten LF1 an.
+Mit den gemessenen Zahlen — 145 im kalten, im Mittel 91 in den warmen
+Lastfällen — sind es 145 + 421 × 91 = 38 456 Umwandlungen, rund 3,0 h;
+Nachprüfung der Lösersitzung vom 22.09.2026. Seit demselben Tag wandeln auch die Wege MUMPS und ama nicht mehr
+ein zweites Mal um.) Der zweite baute die Tangente und ihren Zuschnitt in **jedem**
 Schritt, obwohl `Ktff` nur beim Neufaktorisieren gelesen wird und `Kt` sonst
 nur bei einer Verformungsvorgabe; weder der Schlüssel noch der
 zwischengespeicherte Löser hängen daran, die Reihenfolge ließ sich also
@@ -4761,8 +4798,13 @@ Prüfung, die die **Wirkung** misst statt die Anwesenheit.
 
 ### 7.4 Rechenketten trotz eingefrorener Zustände (22.09.2026)
 
-Am Drehlager liefen **alle 422 Lastfälle hintereinander in einem Prozess**.
-Nicht, weil die Rechnung es verlangte, sondern wegen einer Zeile:
+Am Drehlager liefen **alle 422 Lastfälle hintereinander in einem Prozess** —
+die Elementschleifen parallel im Pool, die Lastfälle nacheinander. Der erste
+Grund dafür ist die Vorgabe `ketten = 1` (`parallel.py`, „nacheinander");
+beim Anwender ist nichts anderes eingestellt. Wären die Ketten
+eingeschaltet gewesen, hätte eine zweite Zeile sie gesperrt (eine frühere
+Fassung nannte nur diese und sagte „nicht, weil die Rechnung es verlangte,
+sondern wegen einer Zeile"; Nachprüfung der Lösersitzung vom 22.09.2026):
 
 ```python
 if system is None and not referenzen and len(names) > 1:
@@ -4771,8 +4813,12 @@ if system is None and not referenzen and len(names) > 1:
 `referenzen` sind die eingefrorenen Zustände der Ermüdungslasten
 (`ermuedungsreferenzen`): der erste Zustand jeder Ermüdungslast wird
 nichtlinear gerechnet, die weiteren mit seinem eingefrorenen Kontaktzustand
-linear. Am Drehlager sind das **117 von 164 Zuständen** — `referenzen` war
-also nie leer, und die Sperre griff immer.
+linear. Am Drehlager sind das **161 von 164 Zuständen** (Programmprotokoll
+vom 19.09.2026: „161 Zustände werden mit dem eingefrorenen Kontaktzustand
+des ersten Zustands ihrer Ermüdungslast linear gelöst"); 261 der 422
+Lastfälle rechnen nichtlinear. `referenzen` war also nie leer, und die
+Sperre hätte immer gegriffen. (Eine frühere Fassung schrieb 117 — ebenso der
+Kommentar im Löser und die Nachricht zu 7d03525; Nachprüfung der Lösersitzung vom 22.09.2026.)
 
 **Der Grund für die Sperre war echt.** `_einfrieren` findet den eingefrorenen
 Zustand nur, wenn seine Referenz **in demselben Lauf** schon gerechnet wurde;
@@ -4795,11 +4841,28 @@ Der zweite Teil der Sperre saß im Auftrag: `jobs._job_solve_kette` gab
 `referenzen` nicht weiter. Ohne das hätte die neue Aufteilung nichts genützt —
 in der Kette wäre jeder Zustand voll gerechnet worden, und zwar still.
 
-**Wo der Hebel wirklich sitzt.** Die Zustände **einer** Ermüdungslast hängen
-alle an derselben Referenz und bilden damit eine einzige Gruppe — da gibt es
-nichts zu teilen. Der Gewinn entsteht **zwischen** den Lasten. Am Drehlager
-sind es 50 Ermüdungslasten mit 2 bis 82 Zuständen; die Aufteilung ist also
-grob und ungleich, aber sie ist möglich.
+**Wo der Hebel wirklich sitzt — und wie klein er am Drehlager ist.** Die
+Zustände **einer** Ermüdungslast hängen alle an derselben Referenz und bilden
+damit eine einzige Gruppe — da gibt es nichts zu teilen. Der Gewinn entstünde
+**zwischen** den Lasten. Am Drehlager sind es zwar 50 Ermüdungslasten, sie
+fallen aber zu nur **drei** Referenzgruppen zusammen (LF401 mit 79, LF601 mit
+81 und LF402 mit 1 eingefrorenen Zustand), weil spätere Lasten den schon
+eingefrorenen ersten Zustand weiterreichen. Bei sechs Ketten ergibt
+`_ketten_teilen` — nur über die Namen nachgebildet, ohne Löser — Ketten mit
+80/2/82/71/71/116 Lastfällen, davon nichtlinear 1/1/1/71/71/116: drei Ketten
+haben kaum etwas zu tun, die längste trägt 116 der 261 nichtlinearen. Ein
+Gewinn durch Ketten ist am Drehlager **nicht gemessen**; nach der Kernlast
+auf 16 physischen Kernen ist er auf höchstens rund Faktor 1,4 geschätzt
+(eine frühere Nachricht nannte „Faktor 2,6, 81 h → 30 h" und rechnete dabei
+mit 32 statt 16 Kernen).
+
+**Die Threads der Ketten.** Bis zum 22.09.2026 bekam jede Kette die volle
+eingestellte Threadzahl: beim Anwender stehen 31 in `einstellungen.json`,
+sechs Ketten forderten damit je 31 Löser-Threads — MKL kappt nur innerhalb
+eines Prozesses auf die 16 physischen Kerne, also bis zu 96 Threads auf 16
+Kernen. Jetzt ist die Einstellung das Budget des Rechners und wird geteilt
+(`threads_je_kette`: 31 bei sechs Ketten → je 5), wie es ohne Einstellung
+schon immer war.
 
 **Und sie ändert die Zahlen.** Das ist der Punkt, der dazugehört:
 
@@ -4883,21 +4946,33 @@ numerical reproducibility* — und `AUTO` ist der richtige Schalter, wenn zwei
 Läufe **auf derselben Maschine** vergleichbar sein müssen: er bindet an deren
 Befehlssatzbranche, statt wie `COMPATIBLE` auf SSE2 zurückzufallen.
 
-**Das Aufstellen ist davon nicht betroffen** — bei gleicher Prozesszahl.
-`parallel.Arbeiter.map` benutzt `pool.map` (reihenfolgetreu), und
-`_assemble_triplets` hängt die Tripel in Elementreihenfolge aneinander; die
-Summation von `coo` nach `csr` ist damit festgelegt. Bei **verschiedener**
-Prozesszahl nicht: die Blockgröße ist `max(chunk_elements, n // (4·w) + 1)`,
-andere Blöcke heißen andere Summationsreihenfolge. Zwei Läufe mit 16 und 31
-Prozessen sind also in der Zeit vergleichbar und in den letzten Stellen nicht.
+**Das Aufstellen ist davon nicht betroffen — auch nicht bei verschiedener
+Prozesszahl.** `parallel.Arbeiter.map` benutzt `pool.map` (reihenfolgetreu),
+jeder Block legt seine Elementmatrizen an ihrer **Position** ab
+(`_matrix_chunk`: `out[pos] = …`), und die Blöcke werden der Reihe nach
+aneinandergehängt. Die Tripel stehen damit bei jeder Blockgröße in derselben
+Elementreihenfolge, und die Summation von `coo` nach `csr` ist festgelegt.
+Abweichen kann nur, **ob ein Sechsflächner im Stapel oder einzeln**
+gerechnet wird: gestapelt wird ab acht Sechsflächnern gleichen Werkstoffs in
+einem Block, und das hängt an den Blockgrenzen; beide Wege unterscheiden sich
+um bis zu 6·10⁻¹⁶. (Eine frühere Fassung sagte, andere Blöcke hießen andere
+Summationsreihenfolge — das ist falsch; Nachprüfung der Lösersitzung vom 22.09.2026.)
 
 **Warum das mehr ist als eine Fußnote.** 4,9·10⁻¹⁶ ändern keine Spannung —
-solange nichts an einer Schwelle steht. Steht etwas dort, genügen sie: am
-Drehlager brauchte derselbe Lauf einmal 150 und einmal 162 Kontaktschritte und
-wich in der vierten Stelle der Verformung ab. Ein Lauf, der als „ergebnisgleich"
-abgenommen wird, ohne dass diese Streuung ausgeschlossen wurde, sagt damit
-nichts über die Änderung aus, die er belegen sollte — sondern nur, dass zwei
-Läufe zufällig denselben Weg genommen haben.
+solange nichts an einer Schwelle steht. Ob sie am Drehlager genügen, um den
+Kontaktweg zu verzweigen, ist **nicht belegt**. Gemessen ist: das
+ausgelieferte Programm nahm dort in drei Läufen denselben Weg (höchstens
+0,0004 N/mm² auseinander); zwei Läufe einer Versuchsfassung mit symmetrischer
+Zerlegung nahmen verschiedene Wege und lagen um bis zu 273 N/mm² auseinander
+(§ 3, Deckel). Eine frühere Fassung sprach hier von
+„derselbe Lauf, 150 und 162 Kontaktschritte, vierte Stelle der Verformung":
+die beiden Läufe stammten aus zwei verschiedenen Programmständen, einen
+wiederholten Lauf gab es nicht, und die Abweichung lag in den Spannungen weit
+über der vierten Stelle (Nachprüfung der Lösersitzung vom 22.09.2026). Ein Lauf, der als „ergebnisgleich"
+abgenommen wird, ohne dass diese Streuung ausgeschlossen wurde, sagt nichts
+über die Änderung aus, die er belegen sollte — sondern nur, dass zwei Läufe
+zufällig denselben Weg genommen haben. Ob `MKL_CBWR=AUTO` die Wege am
+Drehlager gleich macht, misst die Lösersitzung gerade.
 
 Für die Praxis heißt das: **jede Gleichheitszusage an einem Kontaktmodell
 gehört mit `MKL_CBWR=AUTO` gemessen**, und wenn sie es nicht wurde, gehört das

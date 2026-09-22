@@ -423,11 +423,17 @@ def ist_symmetrisch(K, tol: float = None, proben: int = 4) -> bool:
     **Warum das nicht immer so war.** Bis zum 22.09.2026 lief hier ein
     blockweiser Durchlauf ueber ``K[a:b, :] - K[:, a:b].T``, und der
     Docstring behauptete, die Zeit falle "neben der Faktorisierung nicht ins
-    Gewicht". Die Loesersitzung hat das am Drehlager widerlegt: **1,12 s je
-    Aufruf, 162,9 s je Lastfall, ueber 422 Lastfaelle 19 Stunden** - bei
-    145 Faktorisierungen je Lastfall, deren Symmetrie sich zwischen zwei
-    Kontaktschritten nicht aendert. Gemessen an einer Matrix von
-    Drehlagergroesse (475.935 Zeilen, 35,2 Mio. Eintraege):
+    Gewicht". Die Loesersitzung hat am Drehlager ein Zeitfenster von **1,12 s
+    je Aufruf, 162,9 s im kalten LF1** gemessen - bei 145 Faktorisierungen,
+    deren Symmetrie sich zwischen zwei Kontaktschritten nicht aendert. Das
+    Fenster umfasste neben der Pruefung auch triu, sort_indices und die
+    Diagonalpruefung; welcher Teil auf die Pruefung entfaellt, ist nicht
+    gemessen. Ueber 422 Lastfaelle hochgerechnet mit den gemessenen
+    Faktorisierungszahlen (145 kalt, im Mittel 91 warm) sind es rund 12 h fuer
+    das ganze Fenster (eine fruehere Fassung schrieb 19 h fuer die Pruefung
+    allein; Nachpruefung der Loesersitzung vom 22.09.2026). Die Sonde unten
+    ist an einer Ersatzmatrix mit 475.935 Zeilen und 35,2 Mio. Eintraegen
+    gemessen - doppelt so vielen wie am Drehlager (17,68 Mio.):
 
         Durchlauf   5,206 s
         Sonde       0,419 s        Faktor 12,4
@@ -503,6 +509,46 @@ def ist_symmetrisch(K, tol: float = None, proben: int = 4) -> bool:
 #: Schon gemeldete Hinweise - eine Faktorisierung laeuft in der
 #: Kontakt-Iteration Dutzende Male, die Meldung soll einmal kommen.
 _GEMELDET: set = set()
+
+
+class LoeserAusfall(Exception):
+    """Kein Gleichungsloeser konnte faktorisieren.
+
+    **Bewusst keine RuntimeError**: ein RuntimeError beim Aufbau wird vom
+    Aufrufer als singulaere Matrix gedeutet und mit „Lagerung pruefen"
+    beantwortet (StaticSystem, diagnose.singulaer_text). Scheitern PARDISO
+    und der Ausweichweg aus einem anderen Grund - Speicher, 32-Bit-Ueberlauf
+    in SuperLU -, waere das eine falsche Diagnose.
+    """
+
+
+#: Einstellungen, die das Ergebnis oder den Rechenweg einer Kette bestimmen
+#: und darum aus dem Hauptprozess mitgehen (siehe _cases_in_ketten).
+KETTEN_EINSTELLUNGEN = ("solver_backend", "solver_residuum", "solver_nachiterationen",
+                        "min_elements", "chunk_elements", "mumps_nachladen")
+
+
+def kettenauftrag_einstellungen(st) -> dict:
+    """Die Einstellungen, die eine Kette braucht - nur die, die von der
+    Vorgabe abweichen."""
+    vorgabe = parallel.Settings()
+    return {k: getattr(st, k) for k in KETTEN_EINSTELLUNGEN
+            if hasattr(st, k) and getattr(st, k) != getattr(vorgabe, k)}
+
+
+def threads_je_kette(eingestellt: int, ketten: int) -> int:
+    """Loeser-Threads je Rechenkette.
+
+    Die eingestellte Threadzahl (``solver_threads``, 0 = alle Kerne bis auf
+    einen) ist das **Budget des Rechners**, nicht das einer Kette. Bis zum
+    22.09.2026 bekam jede Kette die volle Einstellung: beim Anwender stehen
+    31 Threads in einstellungen.json, sechs Ketten forderten damit je 31 -
+    MKL kappt nur innerhalb eines Prozesses auf die 16 physischen Kerne, also
+    bis zu 96 Threads auf 16 Kernen (Nachpruefung der Loesersitzung). Ohne
+    Einstellung wurde schon immer geteilt; jetzt auch mit.
+    """
+    budget = int(eingestellt or 0) or (parallel.cpu_count() - 1)
+    return max(1, budget // max(1, int(ketten)))
 
 
 def _log_einmal(text: str) -> None:
@@ -619,12 +665,23 @@ class LinearSolver:
         self._vorgabe = None         # nur ama: wonach faktorisiert wurde (fuer den Nachweis)
         self.nachiterationen = 0
         self.residuum = 0.0
+        #: Warum der gewaehlte Loeser nicht rechnete, wenn auf einen anderen
+        #: ausgewichen wurde - leer, wenn nicht. Steht in beschreibung() und
+        #: damit im Fortschrittsstrom und im Protokoll.
+        self.ausweichgrund = ""
         if self.n == 0:
             self._solve = lambda b: np.zeros_like(b)
             return
         K = K.tocsc()
         self._K = K.tocsr()
-        if be in ("auto", "pardiso") and self._passt_in_int32(K, be == "pardiso"):
+        passt = be in ("auto", "pardiso") and self._passt_in_int32(K, be == "pardiso")
+        if be == "auto" and not passt:
+            # Die 32-Bit-Grenze ist ebenso ein Ausweichgrund wie eine Ausnahme -
+            # scheitert danach SuperLU, muss er in der Meldung stehen.
+            self.ausweichgrund = (f"PARDISO: Gleichungssystem zu groß für die "
+                                  f"32-Bit-Indizes ({self.n} Zeilen, "
+                                  f"{int(getattr(K, 'nnz', 0) or 0)} Einträge)")
+        if passt:
             try:
                 _find_mkl()
                 import pypardiso
@@ -642,18 +699,33 @@ class LinearSolver:
                 self._ps = ps
                 self._solve = lambda b: ps.solve(Kcsr, b)
                 self.backend = "pardiso"
-            except Exception:
+            except Exception as ex:
                 if be == "pardiso":
                     raise
+                # **Nicht still verwerfen.** Bis zum 22.09.2026 fiel hier jede
+                # PARDISO-Ausnahme ohne eine Zeile weg, und es ging ueber
+                # CHOLMOD (meist nicht installiert) nach SuperLU. Am Drehlager
+                # scheitert SuperLU dann selbst ("Can't expand MemType 0",
+                # SystemError, gemessen von der Loesersitzung) - und der
+                # eigentliche Grund, warum PARDISO nicht rechnete, war weg.
+                self.ausweichgrund = f"PARDISO: {type(ex).__name__}: {str(ex)[:160]}"
+                _log_einmal(f"PARDISO rechnete nicht ({self.ausweichgrund}) - "
+                            "es wird auf einen anderen Löser ausgewichen.")
         if self._solve is None and be in ("auto", "cholmod"):
             try:
                 from sksparse.cholmod import cholesky
                 f = cholesky(K)
                 self._solve = lambda b: f(b)
                 self.backend = "cholmod"
-            except Exception:
+            except ImportError:
+                # CHOLMOD nicht installiert - der Regelfall, kein Ausweichgrund
                 if be == "cholmod":
                     raise
+            except Exception as ex:
+                if be == "cholmod":
+                    raise
+                self.ausweichgrund = ((self.ausweichgrund + "; ") if self.ausweichgrund
+                                      else "") + f"CHOLMOD: {type(ex).__name__}: {str(ex)[:120]}"
         if self._solve is None and be == "umfpack":
             # GPL - nur aus der eigenen Python-Umgebung des Anwenders
             from scikits.umfpack import splu as _umf_splu
@@ -671,7 +743,10 @@ class LinearSolver:
                 raise RuntimeError("MUMPS ist nicht installiert - Extras → Vernetzer installieren… lädt es "
                                    "nach (oder beim Programmstart, Kästchen im selben Dialog)") from ex
             mumps.set_threads(threads_vorgabe("mumps"))
-            self._solve = self._mumps(K)
+            # self._K ist schon CSR; _mumps wandelte die CSC sonst ein zweites
+            # Mal um (bei Drehlagergroesse 0,280 s je Faktorisierung, gemessen
+            # 21.09.2026 an einer Ersatzmatrix). tocsr() auf CSR kostet nichts.
+            self._solve = self._mumps(self._K)
             self.backend = "mumps"
             self.threads = mumps.threads()
         if self._solve is None and be == "ama":
@@ -686,7 +761,7 @@ class LinearSolver:
                 raise RuntimeError("ama ist nicht installiert oder zu alt - pip install <ama-Wheel> "
                                    "in diese Python-Umgebung (Gleichungsloeser-Projekt, "
                                    "maturin build)") from ex
-            Kc = K.tocsr()
+            Kc = self._K             # schon CSR - keine zweite Umwandlung
             skala = float(abs(Kc).max()) if Kc.nnz else 1.0
             if not ist_symmetrisch(Kc, 1e-12 * skala):
                 raise RuntimeError("ama braucht eine symmetrische Matrix - fuer unsymmetrische "
@@ -731,7 +806,24 @@ class LinearSolver:
             if be not in ("auto", "superlu", "pardiso", "cholmod"):
                 raise RuntimeError(f"Gleichungslöser '{be}' unbekannt - möglich: "
                                    + ", ".join(LOESER))
-            lu = splu(K, permc_spec="MMD_AT_PLUS_A")
+            try:
+                lu = splu(K, permc_spec="MMD_AT_PLUS_A")
+            except (RuntimeError, ValueError) as ex:
+                # SuperLU meldet eine singulaere Matrix als RuntimeError - die
+                # Deutung "Lagerung pruefen" des Aufrufers bleibt richtig; der
+                # Grund des Ausweichens wird nur angehaengt.
+                if self.ausweichgrund:
+                    raise type(ex)(f"{ex} (vorher: {self.ausweichgrund})") from ex
+                raise
+            except Exception as ex:
+                if not self.ausweichgrund:
+                    raise
+                raise LoeserAusfall(
+                    f"Kein Gleichungslöser konnte die Matrix zerlegen: "
+                    f"{self.ausweichgrund}; danach SuperLU: {type(ex).__name__}: "
+                    f"{str(ex)[:160]}. SuperLU rechnet mit 32-Bit-Arbeitsfeldern "
+                    "und reicht für große Modelle nicht - Berechnung → "
+                    "Einstellungen → Gleichungslöser: MUMPS oder ama.") from ex
             self._solve = lu.solve
             self.backend = "superlu"
 
@@ -863,6 +955,7 @@ class LinearSolver:
         nach = self._nachweis
         zusatz = "" if nach is None else f"; erreicht {nach.erreicht:.1e} (Ziel {nach.ziel:.0e})"
         return NAMEN.get(self.backend, self.backend) + (
+            f" (ausgewichen - {self.ausweichgrund})" if self.ausweichgrund else "") + (
             f", {self.threads} Threads" if self.threads > 1 else ", einkernig") + (
             f", Genauigkeit {grenze:g}" + (f" mit bis zu {n_max} Nachiterationen" if n_max else "")) + (
             f"; {frei} Freiheitsgrade ohne Halt (Ergebnis dort nicht eindeutig - Lagerung pruefen)"
@@ -1333,6 +1426,16 @@ class StaticSystem:
         self.zeit_faktorisierung += getattr(ls, "zeit_faktorisierung", 0.0)
         self.nnz_matrix = getattr(ls, "nnz_matrix", 0) or self.nnz_matrix
         self.nnz_faktor = getattr(ls, "nnz_faktor", 0) or self.nnz_faktor
+        # Ist ein Loeser ausgewichen, gehoert das in den Fortschritt - und zwar
+        # auch bei den Faktorisierungen der Kontaktschritte, nicht nur bei der
+        # Grundfaktorisierung, deren Zeile "Faktorisiert (...)" ihn schon
+        # nennt. Einmal je System, nicht je Faktorisierung.
+        grund = getattr(ls, "ausweichgrund", "")
+        if grund and not getattr(self, "ausweichgrund", ""):
+            self.ausweichgrund = grund
+            fortschritt = getattr(self, "_progress", None)
+            if fortschritt:
+                _melde(fortschritt, f"Gleichungslöser ausgewichen - {grund}")
 
     def gerandet(self, Kff):
         """Kff mit dem Lagrange-Rand der Hilfsfesselung.
@@ -1940,11 +2043,26 @@ def _kontakt_info_sammeln(res, cinfo: dict) -> dict:
     for k in ("contact_iterations", "contact_factorisations"):
         if k in cinfo:
             cinfo[k] = int(res.info.get(k, 0) or 0) + int(cinfo[k] or 0)
-    cinfo["contact_laeufe"] = int(res.info.get("contact_laeufe", 0) or 0) + 1
-    cinfo["contact_converged"] = bool(res.info.get("contact_converged", True)) \
-        and bool(cinfo.get("contact_converged", True))
+    lauf = int(res.info.get("contact_laeufe", 0) or 0) + 1
+    cinfo["contact_laeufe"] = lauf
+    dieser = bool(cinfo.get("contact_converged", True))
+    cinfo["contact_converged"] = bool(res.info.get("contact_converged", True)) and dieser
+    # **Welcher Lauf, und war es der letzte?** Die Meldung "Nachpruefung der
+    # Reibung ... abgebrochen" nannte keinen Lauf und wurde unten mit den
+    # gleichlautenden der anderen Laeufe zu EINER Zeile zusammengefasst. Eine
+    # Zeile konnte fuer 1 bis 12 gekappte Laeufe stehen, und ob der letzte
+    # dabei war - aus dem u und sigma stammen -, liess sich hinterher nicht
+    # mehr sagen (am Drehlager genau so geschehen; Nachpruefung der
+    # Loesersitzung vom 22.09.2026). Die Abbruchzeile traegt jetzt ihren
+    # Lauf und wird nicht zusammengefasst.
+    cinfo["contact_letzter_lauf_konvergiert"] = dieser
+    cinfo["contact_laeufe_nicht_konvergiert"] = (
+        int(res.info.get("contact_laeufe_nicht_konvergiert", 0) or 0) + (0 if dieser else 1))
+    abbruch = cinfo.get("contact_abbruch")
+    eigene = [f"{z} (Kontaktlauf {lauf})" if abbruch and z == abbruch else z
+              for z in (cinfo.get("contact_log") or [])]
     alt_log = list(res.info.get("contact_log", []) or [])
-    neu_log = [z for z in (cinfo.get("contact_log") or []) if z not in alt_log]
+    neu_log = [z for z in eigene if z not in alt_log]
     cinfo["contact_log"] = alt_log + neu_log
     return cinfo
 
@@ -2415,12 +2533,13 @@ def _solve_cases_innen(model: Model, cases: list = None, workers: int = None,
     #
     # Eingefrorene Zustaende sperrten die Ketten bis zum 22.09.2026 ganz, weil
     # sie ihren Referenzzustand aus demselben Lauf brauchen. Am Drehlager
-    # liefen damit **alle 422 Lastfaelle hintereinander in einem Prozess**:
-    # ermuedungsreferenzen liefert dort 117 eingefrorene Zustaende, also war
-    # referenzen nie leer, und die Sperre griff immer. Sie war keine
-    # Eigenschaft der Rechnung, sondern die Folge davon, dass
-    # _ketten_teilen an festen Bloecken schnitt. Jetzt schneidet es an
-    # Gruppengrenzen, und Referenz und Zustand landen in derselben Kette.
+    # liefert ermuedungsreferenzen 161 eingefrorene Zustaende (Protokoll vom
+    # 19.09.2026; eine fruehere Fassung dieses Kommentars schrieb 117), also
+    # war referenzen nie leer, und die Sperre haette immer gegriffen - sobald
+    # die Ketten ueberhaupt eingeschaltet sind; die Vorgabe ist ketten = 1.
+    # Jetzt schneidet _ketten_teilen an Gruppengrenzen, und Referenz und
+    # Zustand landen in derselben Kette. Am Drehlager sind es nur drei
+    # Gruppen (LF401: 79, LF601: 81, LF402: 1), die Aufteilung ist dort grob.
     if system is None and len(names) > 1:
         k = ketten_zahl(len(names))
         if k > 1:
@@ -2536,9 +2655,14 @@ def _cases_in_ketten(model: Model, names: list, k: int, progress=None,
     """Mehrere Lastfaelle gleichzeitig: je Kette ein Prozess, in sich warm.
 
     Gemessen am Drehlager (20.09.2026): ein warmer Lastfall braucht 235 s,
-    davon 87 s Faktorisierung; der Rechner hatte dabei im Mittel 12 von 32
-    Kernen belegt. Der Speicher ist die Grenze, nicht die Kernzahl - eine
-    Kette mit vollem Pool belegt 36 GB, davon 32,7 GB die Arbeiter.
+    davon 87 s Faktorisierung. Die Kernlast (Loesersitzung, 22.09.2026, 31
+    Prozesse): im Mittel rund 12,5 von 32 **logischen** Prozessoren belegt -
+    der Rechner hat aber nur 16 physische Kerne, und die Last kommt in
+    Schueben: etwa 60 % der Zeit sind alle physischen Kerne besetzt, etwa ein
+    Drittel der Zeit weniger als acht. Im Mittel stehen geschaetzt 4 bis 5
+    physische Kerne still, nicht 20; ein Gewinn durch Ketten ist am Drehlager
+    nicht gemessen. Der Speicher ist die Grenze - eine Kette mit vollem Pool
+    belegt 36 GB, davon 32,7 GB die Arbeiter.
     """
     import pickle
     import tempfile
@@ -2548,7 +2672,7 @@ def _cases_in_ketten(model: Model, names: list, k: int, progress=None,
         return {}
     st = parallel.settings()
     je = int(getattr(st, "ketten_arbeiter", 0) or 0) or max(2, st.workers // len(bloecke))
-    threads = st.solver_threads or max(1, (parallel.cpu_count() - 1) // len(bloecke))
+    threads = threads_je_kette(st.solver_threads, len(bloecke))
     _melde(progress, f"{len(names)} Lastfälle in {len(bloecke)} Ketten "
                      f"({je} Arbeiter und {threads} Löser-Threads je Kette)")
     pfad = None
@@ -2575,6 +2699,16 @@ def _cases_in_ketten(model: Model, names: list, k: int, progress=None,
             # kennt den Schluessel nicht und faellt mit TypeError aus. Ohne
             # Ermuedungsreferenzen - also in fast jedem Modell - aendert sich
             # damit nichts an seinem Auftrag.
+            # Die Einstellungen des Loesers muessen mit: unter spawn beginnt
+            # jeder Kettenprozess mit den Vorgaben. Bis zum 22.09.2026 rechnete
+            # eine Kette darum mit solver_backend "auto" statt dem
+            # gespeicherten "pardiso" und mit der Vorgabegenauigkeit - und wich
+            # still aus, wo der Hauptprozess abgebrochen haette (gefunden von der
+            # Loesersitzung). Nur die, die von der Vorgabe abweichen: ein
+            # Arbeiter aelteren Stands kennt den Schluessel nicht.
+            ein = kettenauftrag_einstellungen(st)
+            if ein:
+                a["einstellungen"] = ein
             tr = _teilreferenzen(b)
             if tr:
                 a["referenzen"] = tr
@@ -3132,7 +3266,16 @@ def _teilergebnis_anhaengen(model, system, res, ex, F, feq=None, q=None, temp=No
         u = system.ohne_starrkoerper(np.asarray(u, float))
         verschiebungen_eintragen(model, res, u, np.zeros_like(u))
         res.contact = list(getattr(ex, "kontakt", None) or [])
+        # Auch die Laufzaehlung: ohne diese Zeilen blieben
+        # contact_letzter_lauf_konvergiert und contact_laeufe_nicht_konvergiert
+        # auf dem Stand des VORIGEN, konvergierten Laufs, und ein abgebrochener
+        # Lastfall meldete "letzter Lauf konvergiert" (gefunden von der
+        # Loesersitzung am Quelltext, 22.09.2026).
+        _laeufe = int(res.info.get("contact_laeufe", 0) or 0) + 1
+        _nicht = int(res.info.get("contact_laeufe_nicht_konvergiert", 0) or 0) + 1
         res.info.update({"abbruch": str(ex).splitlines()[0], "abbruch_iteration": int(ex.iteration),
+                         "contact_laeufe": _laeufe, "contact_letzter_lauf_konvergiert": False,
+                         "contact_laeufe_nicht_konvergiert": _nicht,
                          "contact_iterations": int(ex.iteration), "contact_converged": False,
                          "contact_log": list(getattr(ex, "log", None) or []),
                          "ndof": model.ndof, "nfree": len(system.fi), "solver": system.backend})
@@ -3528,6 +3671,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         _melde(progress, text)
     log.extend(cs.warnings())
     return u, R, cs.results(), cs.nodal_forces(model.nn), {
+        "contact_abbruch": (text if not converged else ""),
         "contact_iterations": it, "contact_converged": converged, "contact_log": log,
         "contact_warm": warm,
         "contact_factorisations": getattr(system, "faktorisierungen", 0) - f0,
@@ -3887,9 +4031,12 @@ def ermuedungsreferenzen(model: Model) -> dict:
     Der erste Zustand jeder Ermuedungslast wird nichtlinear geloest, die
     weiteren mit seinem eingefrorenen Kontaktzustand linear. Ein Zustand, der
     schon eingefroren ist, gibt seine Referenz weiter; ein Zustand, der selbst
-    Referenz ist, bleibt nichtlinear. Am Drehlager: 50 Ermuedungslasten mit 2
-    bis 82 Zustaenden, 164 Zustaende - statt 164 x 18 min etwa 47 x 18 min
-    und 117 Rueckwaertseinsetzungen.
+    Referenz ist, bleibt nichtlinear. Am Drehlager: 50 Ermuedungslasten, 164
+    Zustaende; weil spaetere Lasten den schon eingefrorenen ersten Zustand
+    weiterreichen, bleiben drei Referenzen (LF401, LF601, LF402) nichtlinear
+    und 161 Zustaende werden linear geloest (Programmprotokoll vom
+    19.09.2026). Eine fruehere Fassung schrieb "47 x 18 min und 117
+    Rueckwaertseinsetzungen" - das war falsch.
     """
     if not model.has_contact or not getattr(model.design, "ermuedung_kontakt_einfrieren", True):
         return {}

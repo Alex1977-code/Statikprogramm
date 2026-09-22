@@ -949,9 +949,10 @@ def test_die_symmetriesonde_hat_keine_luecke():
     """Ein Muster, das eine ungestimmte Sonde sicher verschluckt.
 
     ``ist_symmetrisch`` sondiert seit dem 22.09.2026 mit ``K r`` gegen
-    ``K^T r`` statt die Struktur zu durchlaufen (5,206 -> 0,419 s bei
-    Drehlagergroesse; am Drehlager 162,9 s je Lastfall, 19 Stunden ueber
-    422 Lastfaelle). ``r`` darf dafuer **nicht** aus plus/minus eins
+    ``K^T r`` statt die Struktur zu durchlaufen (5,206 -> 0,419 s an einer
+    Ersatzmatrix mit 35,2 Mio. Eintraegen; das Zeitfenster am Drehlager,
+    162,9 s im kalten LF1, umfasste auch triu, sort_indices und die
+    Diagonalpruefung). ``r`` darf dafuer **nicht** aus plus/minus eins
     bestehen.
 
     ``D = K - K^T`` ist antisymmetrisch. Vier Stellen loeschen sich in
@@ -1032,8 +1033,285 @@ def test_die_symmetriesonde_hat_keine_luecke():
           ist_symmetrisch(M3.tocsr()), "nicht angeschlagen")
 
 
+def test_pardiso_faellt_nicht_still_aus():
+    """Scheitert PARDISO bei "automatisch", steht der Grund da.
+
+    Bis zum 22.09.2026 wurde bei der Wahl "automatisch" jede Ausnahme von
+    PARDISO verworfen (``except Exception: if be == "pardiso": raise``),
+    und es ging ohne eine Zeile ueber CHOLMOD nach SuperLU. Am Drehlager
+    scheitert SuperLU dann selbst - gemessen von der Loesersitzung:
+    "Can't expand MemType 0: jcol 412895", SystemError -, und warum PARDISO
+    nicht gerechnet hatte, war nicht mehr festzustellen.
+
+    Zweite Falle, die die Kur nicht einbauen darf: ein RuntimeError beim
+    Aufbau wird als singulaere Matrix gedeutet ("Lagerung pruefen"). Scheitern
+    beide Loeser aus einem anderen Grund, ist das die falsche Diagnose - darum
+    eine eigene Ausnahmeart.
+    """
+    import pypardiso
+    from scipy import sparse as _sp
+    from statik3d import solver as S
+
+    n = 12
+    K = _sp.diags([np.full(n - 1, -1.0), np.full(n, 4.0), np.full(n - 1, -1.0)],
+                  [-1, 0, 1], format="csc")
+    b = np.ones(n)
+    echt_fak = pypardiso.PyPardisoSolver.factorize
+    echt_splu = S.splu
+
+    def wirft(self, A):
+        raise RuntimeError("Probe: PARDISO verweigert")
+
+    pypardiso.PyPardisoSolver.factorize = wirft
+    try:
+        ls = S.LinearSolver(K, backend="auto")
+        check("PARDISO faellt aus, es wird ausgewichen", ls.backend == "superlu",
+              ls.backend)
+        check("und der Grund steht am Loeser",
+              "PARDISO" in ls.ausweichgrund and "verweigert" in ls.ausweichgrund,
+              ls.ausweichgrund)
+        check("die Beschreibung im Fortschritt nennt ihn",
+              "ausgewichen" in ls.beschreibung(), ls.beschreibung()[:90])
+        x = ls.solve(b)
+        close("die Loesung stimmt trotzdem",
+              float(np.abs(K @ x - b).max()), 0.0, 1e-12)
+
+        # beide scheitern, nicht an Singularitaet
+        def speicher(*a, **kw):
+            raise SystemError("Can't expand MemType 0: jcol 412895")
+
+        S.splu = speicher
+        try:
+            S.LinearSolver(K, backend="auto")
+            check("scheitern beide, bricht es mit beiden Gruenden ab", False,
+                  "lief durch")
+        except S.LoeserAusfall as ex:
+            check("scheitern beide, bricht es mit beiden Gruenden ab",
+                  "PARDISO" in str(ex) and "MemType" in str(ex), str(ex)[:100])
+        except Exception as ex:          # noqa: BLE001
+            check("scheitern beide, bricht es mit beiden Gruenden ab", False,
+                  f"{type(ex).__name__}: {ex}"[:100])
+        check("und nicht als RuntimeError - der hiesse 'Lagerung pruefen'",
+              not issubclass(S.LoeserAusfall, RuntimeError))
+
+        # singulaer bleibt singulaer - nur mit Zusatz
+        def singulaer(*a, **kw):
+            raise RuntimeError("Factor is exactly singular")
+
+        S.splu = singulaer
+        try:
+            S.LinearSolver(K, backend="auto")
+            check("eine singulaere Matrix bleibt ein RuntimeError", False, "lief durch")
+        except S.LoeserAusfall as ex:
+            check("eine singulaere Matrix bleibt ein RuntimeError", False,
+                  f"LoeserAusfall: {ex}"[:90])
+        except RuntimeError as ex:
+            check("eine singulaere Matrix bleibt ein RuntimeError",
+                  "singular" in str(ex) and "PARDISO" in str(ex), str(ex)[:100])
+    finally:
+        pypardiso.PyPardisoSolver.factorize = echt_fak
+        S.splu = echt_splu
+
+    # Die 32-Bit-Grenze ist ebenso ein Ausweichgrund: scheitert danach
+    # SuperLU, muss sie in der Meldung stehen - sonst kaeme die rohe Ausnahme.
+    echt_passt = S.LinearSolver._passt_in_int32
+    S.LinearSolver._passt_in_int32 = lambda self, K, verlangt: False
+    S.splu = speicher
+    try:
+        S.LinearSolver(K, backend="auto")
+        check("auch die 32-Bit-Grenze steht im Abbruch", False, "lief durch")
+    except S.LoeserAusfall as ex:
+        check("auch die 32-Bit-Grenze steht im Abbruch", "32-Bit" in str(ex), str(ex)[:100])
+    except Exception as ex:              # noqa: BLE001
+        check("auch die 32-Bit-Grenze steht im Abbruch", False,
+              f"{type(ex).__name__}: {ex}"[:100])
+    finally:
+        S.LinearSolver._passt_in_int32 = echt_passt
+        S.splu = echt_splu
+
+    # Ein installiertes, aber scheiterndes CHOLMOD ist ein Grund; ein fehlendes
+    # (der Regelfall) nicht.
+    import sys as _sys
+    import types as _types
+    falsch = _types.ModuleType("sksparse.cholmod")
+
+    def _chol(A):
+        raise ValueError("Probe: nicht positiv definit")
+
+    falsch.cholesky = _chol
+    alt_mod = {k: _sys.modules.get(k) for k in ("sksparse", "sksparse.cholmod")}
+    _sys.modules["sksparse"] = _types.ModuleType("sksparse")
+    _sys.modules["sksparse.cholmod"] = falsch
+    pypardiso.PyPardisoSolver.factorize = wirft
+    try:
+        ls3 = S.LinearSolver(K, backend="auto")
+        check("ein scheiterndes CHOLMOD steht mit im Grund",
+              "PARDISO" in ls3.ausweichgrund and "CHOLMOD" in ls3.ausweichgrund,
+              ls3.ausweichgrund[:100])
+    finally:
+        pypardiso.PyPardisoSolver.factorize = echt_fak
+        for k, v in alt_mod.items():
+            if v is None:
+                _sys.modules.pop(k, None)
+            else:
+                _sys.modules[k] = v
+
+    # Gegenprobe: ohne Ausfall kein Grund und keine Zusatzangabe
+    ls2 = S.LinearSolver(K, backend="auto")
+    check("ohne Ausfall bleibt der Grund leer", ls2.ausweichgrund == "",
+          repr(ls2.ausweichgrund))
+
+
+def test_ausweichen_erreicht_den_fortschritt_auch_im_kontakt():
+    """Der Ausweichgrund steht im Fortschritt - auch bei den
+    Faktorisierungen der Kontaktschritte.
+
+    Die Zeile "Faktorisiert (...)" gibt es nur fuer die Grundfaktorisierung.
+    Ein Kontaktmodell faktorisiert aber in jedem Schritt neu (am Drehlager
+    145-mal je Lastfall), und dort meldete das Ausweichen nichts - es ging
+    nur ueber warnings.warn, und das erreicht das Protokollfenster nicht.
+    """
+    import pypardiso
+    from statik3d import solver as S
+    from statik3d.examples_lib import block_friction_example
+    m = block_friction_example()
+    zeilen = []
+    echt = pypardiso.PyPardisoSolver.factorize
+
+    def wirft(self, A):
+        raise RuntimeError("Probe: PARDISO verweigert")
+
+    pypardiso.PyPardisoSolver.factorize = wirft
+    try:
+        S.solve_static(m, progress=lambda *a: zeilen.append(" ".join(str(x) for x in a)))
+    finally:
+        pypardiso.PyPardisoSolver.factorize = echt
+    check("der Fortschritt nennt das Ausweichen",
+          any("ausgewichen" in z for z in zeilen),
+          next((z for z in zeilen if "ausgewichen" in z), "keine Zeile")[:100])
+    check("und zwar einmal je System, nicht je Faktorisierung",
+          sum(1 for z in zeilen if "Gleichungslöser ausgewichen" in z) <= 1,
+          str(sum(1 for z in zeilen if "Gleichungslöser ausgewichen" in z)))
+
+
+def test_ketten_rechnen_mit_den_einstellungen_des_hauptprozesses():
+    """Unter spawn beginnt jeder Kettenprozess mit den Vorgaben.
+
+    Bis zum 22.09.2026 rechnete eine Kette darum mit solver_backend "auto"
+    statt dem gespeicherten "pardiso" und mit der Vorgabegenauigkeit - und
+    wich still aus, wo der Hauptprozess abgebrochen haette.
+    """
+    from statik3d import jobs, parallel, solver as S
+    from statik3d.model import Material, Model, Section
+    st = parallel.settings()
+    alt = {k: getattr(st, k) for k in S.KETTEN_EINSTELLUNGEN}
+    try:
+        for k, v in alt.items():
+            parallel.configure(**{k: getattr(parallel.Settings(), k)})
+        check("mit Vorgaben geht nichts mit (aeltere Arbeiter bleiben brauchbar)",
+              S.kettenauftrag_einstellungen(st) == {},
+              str(S.kettenauftrag_einstellungen(st)))
+        parallel.configure(solver_backend="pardiso", solver_residuum=1e-9)
+        ein = S.kettenauftrag_einstellungen(st)
+        check("abweichende Einstellungen gehen mit",
+              ein == {"solver_backend": "pardiso", "solver_residuum": 1e-9}, str(ein))
+
+        # Der Auftrag wendet sie an - und uebergeht, was er nicht kennt
+        parallel.configure(solver_backend="auto", solver_residuum=1e-6)
+        m = Model("kette")
+        m.add_material(Material.steel("S235"))
+        m.add_section(Section.rectangle("R", 0.1, 0.2))
+        a, b = m.add_node(0, 0, 0), m.add_node(2, 0, 0)
+        m.add_element("beam", [a, b], "S235", "R")
+        m.fix(a, "all")
+        m.load_node(b, Fz=-1000.0)
+        jobs._job_solve_kette(model=m.to_dict(), cases=[m.active_case or "LF1"],
+                              einstellungen={"solver_backend": "superlu",
+                                             "gibt_es_nicht": 1})
+        check("der Kettenauftrag rechnet mit der Einstellung des Hauptprozesses",
+              parallel.settings().solver_backend == "superlu",
+              parallel.settings().solver_backend)
+    finally:
+        parallel.configure(**alt)
+
+
+def test_ketten_teilen_sich_die_threads():
+    """Die eingestellte Threadzahl ist das Budget des Rechners, nicht einer
+    Kette.
+
+    Bis zum 22.09.2026 bekam jede Rechenkette die volle Einstellung. Beim
+    Anwender stehen 31 in einstellungen.json - sechs Ketten forderten damit je
+    31 Loeser-Threads; MKL kappt nur innerhalb eines Prozesses auf die 16
+    physischen Kerne, also bis zu 96 auf 16 Kernen. Ohne Einstellung wurde
+    schon immer geteilt.
+    """
+    from statik3d import solver as S, parallel as P
+    check("31 eingestellt, sechs Ketten: je 5", S.threads_je_kette(31, 6) == 5,
+          str(S.threads_je_kette(31, 6)))
+    check("nie weniger als einer", S.threads_je_kette(4, 8) == 1,
+          str(S.threads_je_kette(4, 8)))
+    check("ohne Einstellung wie bisher: Kerne minus eins, geteilt",
+          S.threads_je_kette(0, 3) == max(1, (P.cpu_count() - 1) // 3),
+          str(S.threads_je_kette(0, 3)))
+    check("die Probe ist scharf: die alte Regel gaebe 31",
+          (31 or 0) == 31 and S.threads_je_kette(31, 6) != 31)
+
+
+def test_abbruchmeldung_nennt_ihren_lauf():
+    """Welcher Kontaktlauf hat aufgegeben - und war es der letzte?
+
+    Mit Plastizitaet rechnet derselbe Lastfall viele Kontaktlaeufe (am
+    Drehlager zwoelf). Die Meldung "Nachpruefung der Reibung ... abgebrochen"
+    nannte keinen Lauf, und gleichlautende Zeilen wurden zu einer
+    zusammengefasst: eine Zeile konnte fuer 1 bis 12 gekappte Laeufe stehen,
+    und ob der letzte dabei war - aus dem u und sigma stammen -, war nicht
+    festzustellen (Nachpruefung der Loesersitzung, 22.09.2026).
+    """
+    from statik3d.solver import _kontakt_info_sammeln
+
+    class Erg:
+        def __init__(self):
+            self.info = {}
+
+    text = ("Kontakt: Nachprüfung der Reibung nach 40 Zustandswechseln "
+            "abgebrochen - das Ergebnis ist nicht auskonvergiert")
+
+    def lauf(ok):
+        return {"contact_iterations": 5, "contact_converged": ok,
+                "contact_abbruch": "" if ok else text,
+                "contact_log": [] if ok else [text]}
+
+    r = Erg()
+    for ok in (True, False, False, True):
+        r.info.update(_kontakt_info_sammeln(r, lauf(ok)))
+    log = r.info["contact_log"]
+    check("jeder gekappte Lauf steht einzeln da",
+          sum(1 for z in log if "abgebrochen" in z) == 2, str(log)[:120])
+    check("mit seiner Nummer",
+          any("(Kontaktlauf 2)" in z for z in log)
+          and any("(Kontaktlauf 3)" in z for z in log), str(log)[:120])
+    check("der Lastfall gilt als nicht konvergiert",
+          r.info["contact_converged"] is False)
+    check("und es steht da, dass der letzte Lauf konvergiert ist",
+          r.info["contact_letzter_lauf_konvergiert"] is True)
+    check("zwei von vier Laeufen gekappt",
+          r.info["contact_laeufe_nicht_konvergiert"] == 2
+          and r.info["contact_laeufe"] == 4,
+          f"{r.info['contact_laeufe_nicht_konvergiert']} von {r.info['contact_laeufe']}")
+
+    r2 = Erg()
+    for ok in (True, True, False):
+        r2.info.update(_kontakt_info_sammeln(r2, lauf(ok)))
+    check("war der letzte gekappt, steht das ebenso da",
+          r2.info["contact_letzter_lauf_konvergiert"] is False)
+
+
 def main():
-    for f in (test_speicherfehler_nennt_zahlen, test_symmetriepruefung, test_loeser_treffen_die_geschlossene_loesung,
+    for f in (test_pardiso_faellt_nicht_still_aus, test_ketten_teilen_sich_die_threads,
+              test_abbruchmeldung_nennt_ihren_lauf,
+              test_ausweichen_erreicht_den_fortschritt_auch_im_kontakt,
+              test_ketten_rechnen_mit_den_einstellungen_des_hauptprozesses,
+              test_speicherfehler_nennt_zahlen, test_symmetriepruefung, test_loeser_treffen_die_geschlossene_loesung,
               test_jeder_loeser_sagt_woher_er_kommt, test_ama_liegt_der_exe_bei,
               test_pardiso_grenze_der_32_bit_indizes,
               test_superlu_nennt_sich_einkernig,

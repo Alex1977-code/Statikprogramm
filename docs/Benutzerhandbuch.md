@@ -2569,16 +2569,33 @@ als **Drehfeder**. Eine Drehfeder wirkt nur, wenn der Knoten selbst gehalten ist
 > nach 40 Zustandswechseln abgebrochen", und der Lastfall gilt als **nicht
 > konvergiert**.
 >
-> Was das heißt: die Verformung und die Spannungen sind der Zustand, bei dem
-> die Nachprüfung aufgegeben hat. Sie sind **wiederholbar** — derselbe Lauf
-> gibt dasselbe Ergebnis —, aber sie sind kein Nachweis. Am
-> Drehlagerbeispiel zieht dieser Abbruch im ersten Lastfall.
+> Was das heißt: war es der **letzte** Kontaktlauf des Lastfalls, sind
+> Verformung und Spannungen der Zustand, bei dem die Nachprüfung aufgegeben
+> hat — kein Nachweis. Mit Fließen rechnet ein Lastfall viele Kontaktläufe
+> (am Drehlager zwölf); seit dem 22.09.2026 trägt die Meldung darum ihren
+> Lauf („… abgebrochen (Kontaktlauf 7)"), und das Ergebnis sagt, ob der
+> letzte Lauf konvergiert ist — auch nach einem Abbruch der Kontaktiteration.
+> Vorher wurden gleichlautende Meldungen zu einer zusammengefasst, und das
+> ließ sich nicht mehr entscheiden. In den Warnungen des Berichts werden sie
+> weiterhin gebündelt: die Laufnummer gehört zum Ergebnis, nicht zur Art der
+> Meldung.
 >
-> Was hilft, ist offen. Was **nicht** hilft, ist gemessen: eine zehnfach
-> kleinere automatische Kontaktsteifigkeit ändert daran nichts. Am
-> Drehlager zieht der Abbruch mit ihr genauso, bei 8,6 % mehr Rechenzeit und
-> 0,13 N/mm² Unterschied in der Spannung (22.09.2026). Dieser Rat stand hier
-> bis dahin und ist damit zurückgenommen. Zu versuchen bleiben ein kleinerer
+> Am Drehlagerbeispiel hat die Nachprüfung der Reibung im ersten Lastfall in
+> **mindestens einem** der zwölf Kontaktläufe nach 40 Zustandswechseln
+> aufgegeben. Ob der letzte betroffen ist, aus dem Verformung und Spannung
+> stammen, ist nicht belegt. Die einzige Reibstelle dort ist das
+> Flächenlager „Starr" mit μ = 0,1; alle zwölf Kontaktpaare haben μ = 0.
+> (Eine frühere Fassung sagte hier „derselbe Lauf gibt dasselbe Ergebnis".
+> Bitgleich ist er nicht; am Drehlager nahm das ausgelieferte Programm aber in
+> drei Läufen denselben Weg, höchstens 0,0004 N/mm² auseinander — siehe „Zwei
+> Läufe desselben Modells" weiter unten; Nachprüfung der Lösersitzung vom 22.09.2026.)
+>
+> Was hilft, ist offen. Mit einer zehnfach kleineren automatischen
+> Kontaktsteifigkeit steht die Abbruchmeldung am Drehlager genauso im
+> Protokoll (ein Lauf, 22.09.2026). Ob sie Zeit kostet, ist nicht belegt:
+> der eine Lauf brauchte 8,6 % länger, lief aber unter Fremdlast, und
+> gleichwertige Läufe streuten an diesem Abend um 3 bis 17 %. Der Rat, die
+> Kontaktsteifigkeit zu senken, stand hier bis dahin und ist zurückgenommen. Zu versuchen bleiben ein kleinerer
 > Reibbeiwert und ein feineres Netz in der Fuge — beides ungemessen.
 
 * **Einseitiges Lager**: Knoten auswählen, Stützrichtung (z. B. 0 0 1 =
@@ -3201,27 +3218,47 @@ Nachweis mit seiner Verformung je Kombination.
 > mit **einem** Kern kommen dreimal bitgleiche Ergebnisse heraus, mit
 > sechzehn nicht (Abweichung rund 5·10⁻¹⁶ vom Betrag).
 >
-> Normalerweise sieht man davon nichts — fünf Stellen hinter der sechzehnten
-> ändern keine Spannung. Sichtbar wird es dort, wo eine Iteration an einer
-> Schwelle steht: bei Reibung kann derselbe Lauf dann 150 oder 162
-> Kontaktschritte brauchen und in der vierten Stelle der Verformung
-> abweichen. Wer zweimal rechnet und zwei Zahlen bekommt, hat also keinen
-> Fehler gefunden, sondern eine Iteration, die nicht zur Ruhe kommt — im
-> Bericht steht das seit dem 22.09.2026 als **nicht konvergiert** (§ 6).
+> **Am Drehlager, gemessen:** Das ausgelieferte Programm (unsymmetrische Zerlegung) hat am Drehlager in **drei** Läufen von LF1 denselben Kontaktweg genommen — 150 Schritte, 145 Faktorisierungen —, und die Spannungen lagen höchstens **0,0004 N/mm²** auseinander (Verschiebungen relativ 4,3·10⁻⁷): nicht bitgleich, aber derselbe Weg.
+> Auseinandergelaufen sind nur zwei Läufe einer **Versuchsfassung mit
+> symmetrischer Zerlegung**, die nicht ausgeliefert wird: sie nahmen
+> verschiedene Kontaktwege und wichen um bis zu 273 N/mm² voneinander ab. Der
+> Verdacht fällt auf die ungesetzten Vorgaben dieser Zerlegung (einer der
+> beiden lief außerdem unter starker Fremdlast) — bewiesen ist das mit zwei
+> Läufen nicht. (Eine frühere Fassung sprach hier von „derselbe Lauf, 150
+> oder 162 Kontaktschritte, vierte Stelle der Verformung"; die beiden Läufe
+> stammten aus zwei verschiedenen Programmständen. Nachprüfung der Lösersitzung vom 22.09.2026.)
 >
 > **Wenn zwei Läufe streng vergleichbar sein müssen** — etwa um zu belegen,
 > dass eine Änderung am Modell nichts am Ergebnis ändert —, setzen Sie vor
-> dem Start die Umgebungsvariable `MKL_CBWR=AUTO`. Dann rechnet der Löser
-> bitgleich, auf **dieser** Maschine, und kostet dafür rund 13 % mehr Zeit.
-> In der Auslieferung steht sie nicht, weil man 13 % nicht dauernd zahlen
-> will.
+> dem Start die Umgebungsvariable `MKL_CBWR=AUTO`. An einem Prüfgitter rechnet
+> der Löser damit bitgleich, auf **dieser** Maschine, und kostet rund 13 %
+> mehr Zeit. Ob das am Drehlager die Kontaktwege gleich macht, ist nicht
+> gemessen; die Lösersitzung misst es gerade. In der Auslieferung steht die
+> Variable nicht.
 
 * **Alle Lastfälle + Kombinationen**: Standard. Eine Faktorisierung, alle
   Lastfälle, Superposition, Umhüllende, optional Nachweise.
 * **Nur aktiver Lastfall**, **Eigenschwingungen**, **Knicken** (Grundzustand
   = aktiver Lastfall).
 * **Gleichungslöser** (Auswahl in *Berechnung → Einstellungen*): Vorgabe
-  **automatisch** = MKL PARDISO, sonst CHOLMOD, sonst SuperLU. Zur Wahl
+  **automatisch** = MKL PARDISO, sonst CHOLMOD, sonst SuperLU. **Weicht
+  „automatisch“ aus, steht der Grund im Protokoll** — bei der Grundfaktorisierung
+  in der Zeile „Faktorisiert (SuperLU (ausgewichen - PARDISO: …), …)“, bei den
+  Faktorisierungen der Kontaktschritte als eigene Zeile „Gleichungslöser
+  ausgewichen - …“, einmal je Lastfall. Ein Grund ist dabei jeder Weg vorbei an
+  PARDISO: eine Ausnahme, die 32-Bit-Grenze der Schnittstelle, ein installiertes,
+  aber scheiterndes CHOLMOD. **Noch nicht** zurück kommt die Meldung aus
+  Lastfällen, die in Rechenketten laufen; die rechnen seit dem 22.09.2026 aber
+  mit denselben Einstellungen wie der Hauptprozess (vorher begann jede Kette mit
+  „automatisch“, auch wenn „MKL PARDISO“ eingestellt war, und wich still aus,
+  wo die Rechnung sonst abgebrochen hätte). Bis zum 22.09.2026 wurde ein
+  Fehler von PARDISO bei „automatisch“ ohne eine Zeile verworfen; am Drehlager
+  scheiterte danach SuperLU selbst („Can't expand MemType 0“), und warum PARDISO
+  nicht gerechnet hatte, war nicht mehr festzustellen. Scheitern beide aus einem
+  anderen Grund als einer singulären Matrix, bricht die Rechnung mit **beiden**
+  Gründen ab und nennt MUMPS oder ama als Ausweg — SuperLU reicht für große
+  Modelle nicht. Eine singuläre Matrix wird weiter als solche gemeldet
+  („Lagerung prüfen“). Zur Wahl
   stehen **MKL PARDISO** (direkt, mehrkernig — angefordert werden alle Kerne
   bis auf einen, MKL selbst kappt auf die physischen Kerne: 16 auf einem
   Rechner mit 16 Kernen / 32 Threads),
