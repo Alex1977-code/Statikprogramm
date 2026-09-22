@@ -234,6 +234,21 @@ CREATE TABLE MemberTypeLoadImplInitialPrestress (id INTEGER PRIMARY KEY, version
                    parent_id bigint, parent_table TEXT, magnitude double precision);
 CREATE TABLE MemberTypeLoadImplInitialPrestress_assignedTo (id INTEGER,
                    container_order INTEGER, value_id bigint);
+CREATE TABLE LineTypeLoadImplForce (id INTEGER PRIMARY KEY, version INTEGER,
+                   parent_id bigint, parent_table TEXT, loadDistribution INTEGER,
+                   loadDirection INTEGER, varyingLoadParameters_id bigint);
+CREATE TABLE LineTypeLoadImplForce_assignedTo (id INTEGER, container_order INTEGER,
+                   reference_id bigint, reference_table TEXT);
+CREATE TABLE LineTypeLoadImplForce_magnitudes (id INTEGER, container_order INTEGER,
+                   temperaturesOrMagnitudeFirstMagnitude double precision,
+                   temperaturesOrMagnitudeSecondMagnitude double precision);
+CREATE TABLE NodalLoadImplComponents (id INTEGER PRIMARY KEY, version INTEGER,
+                   parent_id bigint, parent_table TEXT,
+                   force_x double precision, force_y double precision,
+                   force_z double precision, moment_x double precision,
+                   moment_y double precision, moment_z double precision);
+CREATE TABLE NodalLoadImplComponents_nodes (id INTEGER, container_order INTEGER,
+                   reference_id bigint, reference_table TEXT);
 CREATE TABLE ResultCombination (id INTEGER PRIMARY KEY, version INTEGER, userID INTEGER,
                    impl_id bigint, impl_table TEXT);
 CREATE TABLE ResultCombinationImpl (id INTEGER PRIMARY KEY, version INTEGER, name TEXT,
@@ -319,6 +334,7 @@ def build_db(path, nodes, lines, members, supports, line_supports=(),
              solids=(), releases=(), typen_je_objekt=None, typ_userid_versatz=0,
              surface_loads=(), load_cases=(),
              free_loads=0, openings=(), nodal_loads=(), prestress=(),
+             member_loads=(), nodal_loads_neu=(),
              combinations=(), boundary_lines=None, stiffness_reverse=False,
              rigid_surfaces=(), strukturmodifikation=None, liniengelenk=None,
              bemessungssituationen=()):
@@ -634,6 +650,31 @@ def build_db(path, nodes, lines, members, supports, line_supports=(),
                     "'StructureModificationImpl')")
         con.execute("INSERT INTO StructureModificationImpl VALUES "
                     "(1,1,?,1,1,1,'ObjectSelection',1,2,'ObjectSelection')", (smname,))
+    # Stablasten der Art Kraft: (Lastfall, [Staebe], Verteilung, Richtung, p1, p2)
+    # Dieselbe Umsetzungstabelle bedient Linien- und Stablasten; die Betraege
+    # stehen nicht in der Zeile, sondern in <Tabelle>_magnitudes.
+    for i, (lc, staebe, vert, rd, p1, p2) in enumerate(member_loads, 1):
+        mid = 1000 + i
+        con.execute("INSERT INTO MemberLoad VALUES (?,1,?,'LoadCase',?,?,"
+                    "'LineTypeLoadImplForce')", (mid, lc, mid, mid))
+        con.execute("INSERT INTO LineTypeLoadImplForce VALUES "
+                    "(?,1,?,'MemberLoad',?,?,?)", (mid, mid, vert, rd, mid))
+        con.execute("INSERT INTO LineTypeLoadImplForce_magnitudes VALUES (?,0,?,?)",
+                    (mid, p1, p2 if p2 is not None else float("-inf")))
+        for j, nr in enumerate(staebe):
+            con.execute("INSERT INTO LineTypeLoadImplForce_assignedTo "
+                        "VALUES (?,?,?,'Member')", (mid, j, nr))
+    # Knotenlasten der neueren Fassung: Spalten force_*, Ziele in <Tabelle>_nodes
+    for i, (lc, knoten, F, M) in enumerate(nodal_loads_neu, 1):
+        nid = 2000 + i
+        con.execute("INSERT INTO NodalLoad VALUES (?,1,?,'LoadCase',?,?,"
+                    "'NodalLoadImplComponents')", (nid, lc, nid, nid))
+        con.execute("INSERT INTO NodalLoadImplComponents VALUES "
+                    "(?,1,?,'NodalLoad',?,?,?,?,?,?)",
+                    (nid, nid, F[0], F[1], F[2], M[0], M[1], M[2]))
+        for j, nr in enumerate(knoten):
+            con.execute("INSERT INTO NodalLoadImplComponents_nodes "
+                        "VALUES (?,?,?,'Node')", (nid, j, nr))
     if liniengelenk:
         # (Federkonstanten, {SurfaceImplPlane-id: [Linien-id, ...]})
         federn, zuordnung = liniengelenk
@@ -2148,8 +2189,76 @@ def test_deaktivierte_staebe():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_stab_und_knotenlasten():
+    """Stablasten und Knotenlasten der neueren Schemafassung kommen an.
+
+    Zwei Löcher, beide am 22.09.2026 an `CBG_Trolley_V16_export.rf6`
+    nachgezählt:
+
+    * **Stablasten**: die Bedingung ließ nur durch, was „Prestress" hieß.
+      Von 198 Stablasten der Datei kamen **null** an - keine einzige ist eine
+      Vorspannung. Ohne Zähler, ohne Meldung.
+    * **Knotenlasten**: der Importer suchte die Spalten `forceMagnitude_*` und
+      die Zuordnung in `<Tabelle>_assignedTo`. Die Datei führt `force_*` und
+      `<Tabelle>_nodes`. Von 184 Knotenlasten kamen **null** an - gemeldet
+      zwar („ohne Ziel oder ohne Betrag"), aber vollständig.
+
+    Nach der Behebung: **944 Stablasten und 641 Knotenlasten** aus derselben
+    Datei.
+
+    Geprüft wird hier an einer kleinen Datenbank mit denselben Schemanamen -
+    und an der **Wirkung** (Betrag und Richtung der Last), nicht an einer
+    Anzahl.
+    """
+    tmp = tempfile.mkdtemp()
+    pfad = make_rf6(os.path.join(tmp, "stablasten.rf6"), nodes=[(0, 0, 0), (4, 0, 0), (8, 0, 0)],
+                lines=[[1, 2], [2, 3]],
+                members=[(1, None, None), (2, None, None)],
+                supports=[("Fest", (INF,) * 6, (0,) * 6, None, [1]),
+                          ("Gleitlager", (0.0, INF, INF, 0.0, 0.0, 0.0),
+                           (0,) * 6, None, [3])],
+                load_cases=[("LF1", 1, 0.0)],
+                member_loads=[
+                    # Gleichlast 1003 N/m in globaler Z-Richtung (Kennzahl 13)
+                    (1, [1], 0, 13, -1003.0, None),
+                    # Gleichlast 1001 N/m in globaler X-Richtung (Kennzahl 11)
+                    (1, [2], 0, 11, 1001.0, None),
+                    # Einzellast (Verteilung 2) - wird nicht uebernommen
+                    (1, [1], 2, 13, -5000.0, None),
+                ],
+                nodal_loads_neu=[(1, [2], (0.0, 0.0, -7000.0), (0.0, 0.0, 0.0))])
+    log = []
+    m = R6.read_rf6(pfad, log=log)
+    txt = " | ".join(str(z) for z in log)
+
+    lasten = [x for lc in m.load_cases.values() for x in lc.linienlasten
+              if x.art == "stab"]
+    check("zwei Stabgleichlasten kommen an", len(lasten) == 2, f"{len(lasten)}")
+    if len(lasten) == 2:
+        qz = [x.q[2] for x in lasten]
+        qx = [x.q[0] for x in lasten]
+        check("die Z-Last steht in Z und nirgends sonst",
+              any(abs(v + 1003.0) < 1e-6 for v in qz)
+              and all(abs(v) < 1e-9 for v in qx if abs(v) != 1001.0),
+              f"q_z = {qz}")
+        check("die X-Last steht in X - die Kennzahl 11 ist also global X",
+              any(abs(v - 1001.0) < 1e-6 for v in qx), f"q_x = {qx}")
+    check("die Einzellast wird genannt statt still weggelassen",
+          "Verteilung 2" in txt, "Protokoll nennt die Verteilung")
+    check("die abgeleitete Deutung der Lastrichtung steht im Protokoll",
+          "abgeleitet" in txt and "nachpruefen" in txt,
+          "Protokoll nennt sie als abgeleitet")
+
+    kl = [x for lc in m.load_cases.values() for x in lc.nodal_loads]
+    check("die Knotenlast der neueren Fassung kommt an", len(kl) == 1,
+          f"{len(kl)} Knotenlasten")
+    if kl:
+        check("mit ihrem Betrag", abs(float(kl[0].F[2]) + 7000.0) < 1e-6,
+              f"Fz = {float(kl[0].F[2]):.1f} N")
+
+
 def main():
-    for t in (test_deaktivierte_staebe, test_grundmodell, test_nichtlineare_lager, test_abheben,
+    for t in (test_stab_und_knotenlasten, test_deaktivierte_staebe, test_grundmodell, test_nichtlineare_lager, test_abheben,
               test_linien_flaechenlager, test_flaechen_mit_dicke,
               test_volumenkoerper, test_stabtypen, test_kontaktbedingungen,
               test_freigabetyp_je_objekt,
