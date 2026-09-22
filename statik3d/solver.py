@@ -1900,10 +1900,30 @@ def _plastisch(model) -> bool:
     return bool(pz is not None and getattr(pz, "an", False))
 
 
-def _nichtlinear(model) -> bool:
-    """Kombinationen direkt rechnen statt ueberlagern: bei Kontakt - und bei
-    Fliessen, denn plastische Dehnungen ueberlagern sich nicht (17.09.2026)."""
-    return bool(model.has_contact or _plastisch(model))
+def _nichtlinear(model, ausfall: bool = None) -> bool:
+    """Kombinationen direkt rechnen statt ueberlagern: bei Kontakt, bei
+    Fliessen (plastische Dehnungen ueberlagern sich nicht, 17.09.2026) - und
+    bei **Ausfallstaeben und Seilen**.
+
+    Der dritte Fall fehlte bis zum 22.09.2026, obwohl das Modell ihn seit
+    jeher kennt (``Model.hat_ausfallstaebe``) und der Loeser ihn an zwei
+    anderen Stellen abfragt. Ein Zug- oder Druckstab, ein Seil oder eine
+    ausfallende Feder aendert seine Aktivmenge mit der Last: jeder Lastfall
+    wurde mit einer **anderen** Menge tragender Staebe gerechnet, und die
+    Summe solcher Ergebnisse steht in keinem Gleichgewicht eines wirklichen
+    Zustands. Schnittgroessen, Verformungen und Auflagerkraefte jeder
+    Kombination waren damit falsch - ohne jede Meldung.
+
+    ``ausfall`` nimmt die Antwort entgegen, wenn sie schon bekannt ist:
+    ``hat_ausfallstaebe`` laeuft ueber alle Elemente (4,5 ms bei 67.500,
+    gemessen 22.09.2026), und diese Funktion wird je Kombination gerufen. Bei
+    Kontakt oder Fliessen faellt der Durchlauf ohnehin weg, weil ``or``
+    kurzschliesst - teuer waere nur das lineare Modell, und genau dort gibt
+    ``solve_combinations`` die Antwort einmal mit.
+    """
+    if model.has_contact or _plastisch(model):
+        return True
+    return bool(model.hat_ausfallstaebe() if ausfall is None else ausfall)
 
 
 def _kontakt_info_sammeln(res, cinfo: dict) -> dict:
@@ -2627,11 +2647,16 @@ def _kombination_pruefen(model: Model, combo: Combination) -> str:
 
 def solve_combination(model: Model, combo: Combination, case_results: dict = None,
                       system: StaticSystem = None, workers: int = None,
-                      progress=None, systeme: dict = None, start=None) -> Results:
+                      progress=None, systeme: dict = None, start=None,
+                      nichtlinear: bool = None) -> Results:
     """Eine Kombination: Superposition (linear) oder direkte Loesung (Kontakt) -
-    in der Situation der Kombination."""
+    in der Situation der Kombination.
+
+    ``nichtlinear`` nimmt die Antwort von :func:`_nichtlinear` entgegen, wenn
+    der Aufrufer sie schon kennt - siehe dort, warum das lohnt."""
     sit = _kombination_pruefen(model, combo)
-    if not _nichtlinear(model) and case_results is not None \
+    nl = _nichtlinear(model) if nichtlinear is None else bool(nichtlinear)
+    if not nl and case_results is not None \
             and all(k in case_results for k, f in combo.factors.items() if f):
         teile = [(case_results[k], f) for k, f in combo.factors.items() if f]
         basis = next((r.model for r, _f in teile if getattr(r, "model", None) is not None), model)
@@ -2728,14 +2753,15 @@ def solve_combinations(model: Model, combos: list = None, case_results: dict = N
     out = {}
     if not names:
         return out
-    if not _nichtlinear(model):
+    nl = _nichtlinear(model)
+    if not nl:
         if case_results is None:
             case_results = solve_cases(model, workers=workers, progress=progress,
                                        system=system, systeme=systeme)
         try:
             for k, n in enumerate(names):
                 out[n] = solve_combination(model, model.combinations[n], case_results,
-                                           systeme=systeme)
+                                           systeme=systeme, nichtlinear=nl)
                 # Auch der lineare Weg meldet sich: er ueberlagert nur, aber
                 # bei 422 Kombinationen stand der Balken sonst minutenlang
                 # still, und ein Abbruch hatte hier keinen Haltepunkt

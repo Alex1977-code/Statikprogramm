@@ -776,6 +776,75 @@ def test_der_kettenauftrag_traegt_referenzen_nur_wenn_es_welche_gibt():
         parallel.configure(ketten=alt_k)
 
 
+def test_ausfallstaebe_duerfen_nicht_ueberlagert_werden():
+    """Ein Zugstab, der in einem Lastfall ausfällt, verbietet die Überlagerung.
+
+    `_nichtlinear()` kannte bis zum 22.09.2026 nur Kontakt und Fließen -
+    **nicht** Ausfallstäbe und Seile, obwohl das Modell sie seit jeher kennt
+    (`Model.hat_ausfallstaebe`) und der Löser sie an zwei anderen Stellen
+    abfragt. Jeder Lastfall wurde mit einer **anderen** Menge tragender Stäbe
+    gerechnet; die Summe solcher Ergebnisse steht in keinem Gleichgewicht
+    eines wirklichen Zustands.
+
+    Der Prüfkörper ist ein Balken an zwei nur-Zug-Hängern: Lastfall A drückt
+    nach unten (die Hänger ziehen), Lastfall B hebt an (sie fallen aus). Die
+    Überlagerung mischt damit zwei unvereinbare Zustände.
+    """
+    import numpy as np
+    from statik3d.model import Model, Material, Section
+
+    m = Model("seilzug")
+    m.add_material(Material.steel("S235"))
+    m.add_section(Section.rectangle("R", 0.1, 0.2))
+    m.add_section(Section.rectangle("Z", 0.02, 0.02))
+    k = [m.add_node(x, 0.0, 0.0) for x in (0.0, 1.0, 2.0, 3.0, 4.0)]
+    oben = [m.add_node(1.0, 0.0, 2.0), m.add_node(3.0, 0.0, 2.0)]
+    for i in range(4):
+        m.add_element("beam", [k[i], k[i + 1]], "S235", "R")
+    for a, b in ((k[1], oben[0]), (k[3], oben[1])):
+        e = m.add_element("truss", [a, b], "S235", "Z")
+        m.elements[e].nur = "zug"
+    m.fix(k[0], [0, 1, 2, 3, 4, 5])
+    m.fix(k[4], [1, 2, 3])
+    for o in oben:
+        m.fix(o, "all")
+    m.add_load_case("A", "Q")
+    for kk in (k[1], k[2], k[3]):
+        m.load_node(kk, Fz=-2.0e4, case="A")
+    m.add_load_case("B", "Q")
+    for kk in (k[1], k[2], k[3]):
+        m.load_node(kk, Fz=+3.0e4, case="B")
+    m.add_combination("K1", {"A": 1.0, "B": 1.0})
+
+    pruefe("das Modell hat Ausfallstäbe", m.hat_ausfallstaebe())
+    pruefe("und gilt darum als nichtlinear", solver._nichtlinear(m),
+           "sonst würde überlagert")
+
+    faelle = solver.solve_cases(m, cases=["A", "B"])
+    aus_a = list(faelle["A"].info.get("ausfall") or [])
+    aus_b = list(faelle["B"].info.get("ausfall") or [])
+    pruefe("die beiden Lastfälle haben verschiedene Aktivmengen",
+           aus_a != aus_b, f"A: {aus_a}, B: {aus_b}")
+
+    direkt = solver.solve_combination(m, m.combinations["K1"], None)
+    ueberlagert = solver.Results.combine(
+        m, [(faelle["A"], 1.0), (faelle["B"], 1.0)], "K1")
+    ud = float(np.abs(np.asarray(direkt.u, float)).max())
+    uu = float(np.abs(np.asarray(ueberlagert.u, float)).max())
+    pruefe("die Überlagerung liegt deutlich daneben - sie ist kein "
+           "Gleichgewichtszustand", abs(uu - ud) > 0.2 * max(ud, 1e-30),
+           f"direkt {ud*1e3:.4f} mm, überlagert {uu*1e3:.4f} mm "
+           f"({abs(uu-ud)/max(ud,1e-30)*100:.1f} %)")
+
+    # Und der Weg, den das Programm wirklich nimmt: solve_combinations darf
+    # hier nicht überlagern.
+    out = solver.solve_combinations(m, ["K1"], case_results=faelle)
+    ur = float(np.abs(np.asarray(out["K1"].u, float)).max())
+    pruefe("solve_combinations rechnet die Kombination direkt",
+           abs(ur - ud) <= 1e-9 * max(ud, 1e-30),
+           f"{ur*1e3:.4f} mm gegen {ud*1e3:.4f} mm direkt")
+
+
 def test_probelauf_und_kennzahlen():
     """Probelauf: ein Kontaktschritt, keine Plastizitaet - und die Kennzahlen
     der Faktorisierung in Results.info.
@@ -932,6 +1001,7 @@ def main():
     test_ketten_zerreissen_die_situationen_nicht()
     test_kettenabbruch_behaelt_die_fertigen_ketten()
     test_der_kettenauftrag_traegt_referenzen_nur_wenn_es_welche_gibt()
+    test_ausfallstaebe_duerfen_nicht_ueberlagert_werden()
     test_probelauf_und_kennzahlen()
     test_farm()
     nok = sum(1 for r in RESULTS if r[4])

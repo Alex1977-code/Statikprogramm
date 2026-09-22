@@ -4646,6 +4646,97 @@ gehört mit `MKL_CBWR=AUTO` gemessen**, und wenn sie es nicht wurde, gehört das
 dazugesagt. In der Auslieferung steht der Schalter nicht — 13 % zahlt man nicht
 dauernd für eine Eigenschaft, die man nur beim Vergleichen braucht.
 
+### 7.6 Ein nicht geführter Nachweis ist kein erfüllter (22.09.2026)
+
+Nach dem Lastverlust (§ 7.3) und seinen sechs Geschwistern (§ 7.3a) wurde das
+ganze Programm nach **derselben Art Fehler** durchgesehen: solchen, die still
+sind. Kein Absturz, keine Meldung, eine plausible Zahl. Zehn Blickrichtungen
+lasen den Quelltext, **jeder** Befund ging an einen Gegenprüfer, dessen Auftrag
+das Widerlegen war: **44 geprüft, 36 gehalten, 8 widerlegt.**
+
+Fünf davon sind hier behoben — die, bei denen ein Statikdokument etwas
+behauptet, das nicht stimmt.
+
+**Ein Stab ohne Streckgrenze stand als „erfüllt" im Bericht.**
+`MemberCheck.status()` kannte zwei Fälle. Ein übersprungener Stab bekam
+Ausnutzung 0,000 und damit „erfüllt"; seine Null berührte weder die größte
+Ausnutzung noch die Liste der nicht erfüllten. Der Nachbarnachweis Volumen
+(`VolumenCheck`) unterscheidet an derselben Stelle seit jeher **drei** Fälle —
+hier waren es zwei. Jetzt gibt es `MemberCheck.fehler` und den Zustand „nicht
+geführt".
+
+**„Alle Nachweise erfüllt." galt auch bei gerissenem Volumennachweis.**
+`self.volumen` fehlte im Gesamturteil **doppelt**: in der Statusprüfung und in
+der Liste der geführten Nachweise. Ein Modell, das nur aus Volumen besteht — am
+Drehlager der Regelfall —, bekam entweder „Es wurden keine Nachweise geführt"
+oder „Alle Nachweise erfüllt", während der geführte Nachweis riss. Die eine
+Zeile, die ein Prüfer als Gesamturteil liest, sagt jetzt:
+*„Alle **geführten** Nachweise erfüllt – nicht geführt wurden: …"*
+
+**Theorie II./III. Ordnung scheiterte still.** Der `ValueError` landete in
+`an.info["warnungen"]` — einem Schlüssel, der im ganzen Programm **einmal
+geschrieben und nirgends gelesen** wird. Das **lineare** Ergebnis blieb unter
+demselben Namen stehen, und die Lastfalltabelle druckte weiter die
+*eingestellte* Theorie. Zusatzmomente aus der Verformung und die
+Vorkrümmungen fehlten vollständig; alle darauf aufbauenden Nachweise rechneten
+mit zu kleinen Momenten. Der Kombinationszweig macht es seit jeher richtig
+(`Th3Info(fehler=…)`) — nur der Lastfallzweig nicht. Jetzt trägt das Ergebnis
+`info["theorie"]`, `info["theorie_gewuenscht"]` und `info["theorie_fehler"]`,
+das Theoriekapitel bekommt einen Eintrag, und die Tabellenspalte zeigt
+*„I (statt III: nicht gerechnet)"*.
+
+**Ermüdung: ein fehlender Mindestzustand wurde still zu null.** `case_min`
+angegeben, aber nicht gerechnet, fiel in denselben Zweig wie „kein
+Mindestzustand angegeben". Gemessen an einem Kragarm:
+
+| | Schädigung D |
+|---|---|
+| beide Zustände gerechnet | **14,0785** |
+| alter Stand (still genullt) | **2,4140** |
+
+**Faktor 5,8 zu klein, auf der unsicheren Seite** — und mit m = 5 wäre es mehr.
+Der fehlende **Höchst**zustand wurde immer gemeldet, der Mindestzustand nicht;
+diese Unsymmetrie war der Fehler.
+
+**Ausfallstäbe und Seile machen das System nichtlinear.** `_nichtlinear()`
+kannte nur Kontakt und Fließen, obwohl das Modell `hat_ausfallstaebe()` seit
+jeher hat und der Löser es an zwei anderen Stellen abfragt. Jeder Lastfall
+wurde mit einer **anderen** Menge tragender Stäbe gerechnet, und die Summe
+solcher Ergebnisse steht in keinem Gleichgewicht eines wirklichen Zustands. An
+einem Balken auf zwei Nur-Zug-Hängern gemessen:
+
+| | max \|u\| |
+|---|---|
+| direkt gerechnet | **0,9401 mm** |
+| überlagert | **2,0794 mm** |
+
+**121 % daneben.** In Lastfall A fällt kein Hänger aus, in B fallen beide aus —
+die Überlagerung mischt zwei unvereinbare Zustände. Die Abfrage läuft über alle
+Elemente (4,5 ms bei 67 500); bei Kontakt oder Fließen schließt `or` kurz, und
+im linearen Fall gibt `solve_combinations` die Antwort einmal mit, statt sie je
+Kombination neu zu suchen.
+
+**Drei eigene Fehler beim Beheben**, hier aufgeschrieben, weil sie die Art
+zeigen, die auch ohne Absicht entsteht:
+
+* Eine erste Prüfung rief eine Funktion auf, **die es nicht gibt** — der Zweig
+  lief leer durch und bestand vakuum. Genau die Art Prüfung, gegen die dieser
+  ganze Abschnitt geschrieben ist.
+* Eine erste Kur ließ den Stab samt Warnung **ganz aus dem Nachweis fallen**
+  (`if not sammlung: continue`) — ein stiller Fehler gegen einen anderen
+  getauscht. Jetzt bleibt er als „nicht geführt" stehen, im Stab- und im
+  Volumenzweig.
+* Im Volumenzweig stand `name` statt `k.name` — ein `NameError`, den **kein
+  Test gefunden hätte**, weil der Zweig nicht durchlaufen wird. Gefunden durch
+  Lesen.
+
+**Die übrigen 31 Befunde sind nicht behoben**, aber aufgeschrieben (mit Datei,
+Zeile und der Gegenprüfung, die sie nicht widerlegen konnte). Darunter: die
+Netzabnahme meldet „bestanden", obwohl Prüfungen ausgefallen sind; der
+RFEM-6-Import lässt Stablasten still weg und wirft die Lastrichtung von
+Flächenlasten weg; eine Viereckfuge wird nur zur Hälfte gezählt; der
+Volumennachweis rechnet ohne Dickenabminderung.
+
 ## 7a Entartete Elemente
 
 Ein Element ohne Ausdehnung hat keine Steifigkeit; seine Jacobi-Matrix ist
