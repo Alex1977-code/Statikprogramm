@@ -111,11 +111,13 @@ KALIBRIERUNG = 5.0
 SPANNUNGSSCHUTZ = 0.5
 KONZENTRATION = 2.0
 #: Elementansatz -> Konvergenzordnung p der Spannung
-ORDNUNG = {"tet4": 1, "tet10": 2, "hex8": 1, "hex20": 2, "pent6": 1, "pent15": 2, "pyr5": 1}
+ORDNUNG = {"tet4": 1, "tet10": 2, "hex8": 1, "hex20": 2, "pent6": 1, "pent15": 2, "pyr5": 1,
+           "tetp2": 2, "tetp3": 3, "tetp4": 4}
 #: Eckknoten je Typ - das Knotenmittel wird linear ueber die Ecken
 #: interpoliert, auch bei den quadratischen Typen (tet10 ueber seine vier
 #: Ecken, wie bisher).
-ECKEN = {"tet4": 4, "tet10": 4, "hex8": 8, "hex20": 8, "pent6": 6, "pent15": 6, "pyr5": 5}
+ECKEN = {"tet4": 4, "tet10": 4, "hex8": 8, "hex20": 8, "pent6": 6, "pent15": 6, "pyr5": 5,
+         "tetp2": 4, "tetp3": 4, "tetp4": 4}
 #: Kanten je Typ (Eckknoten) fuer die mittlere Kantenlaenge
 KANTEN = {4: [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)],
           8: [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4), (0, 4), (1, 5), (2, 6), (3, 7)],
@@ -212,7 +214,10 @@ def _energienorm_quadrat(typ: str, X: np.ndarray, E: np.ndarray, C: np.ndarray) 
     Richtung vom Grad 2, zwei Punkte je Richtung integrieren es genau."""
     from .elements.solid import _ISO
     n = len(X)
-    if typ == "tet4":
+    if typ in ("tet4", "tetp2", "tetp3", "tetp4"):
+        # Tetraeder mit Ordnung p: der Eckfehler linear ueber die vier Ecken
+        # wie beim tet4 - ein Schaetzer fuer hoehere Ordnung (der naechste
+        # hierarchische Ansatz) ist noch nicht gebaut
         V = np.abs(np.einsum("ij,ij->i", X[:, 1] - X[:, 0],
                              np.cross(X[:, 2] - X[:, 0], X[:, 3] - X[:, 0]))) / 6.0
         summe = E.sum(axis=1)

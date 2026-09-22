@@ -1072,6 +1072,10 @@ def punkt_und_normale(P, a, b, innen=None):
 # --------------------------------------------------------------------------
 def solid_volume(typ, X) -> float:
     X = np.asarray(X, float)
+    if typ in ("tetp2", "tetp3", "tetp4"):
+        # gerade gerechnet: gekruemmte Kanten kennt nur das Modell
+        # (tetp.kantenmitten); fuer Volumenbilanzen genuegt die Sehne
+        return tet4_shape_grad(X[:4])[1]
     if typ == "tet4":
         return tet4_shape_grad(X)[1]
     if typ == "tet10":
@@ -1161,6 +1165,11 @@ def jacobi_pruefung(model, elemente=None) -> list:
         if typ in _ISO:
             je_typ.setdefault(typ, []).append(int(i))
     schlecht = []
+    p_el = [int(i) for i in idx if model.elements[int(i)].typ in ("tetp2", "tetp3", "tetp4")]
+    if p_el:
+        # Tetraeder mit Ordnung p: gekruemmt ueber die Kantenmitten des Modells
+        from . import tetp as _tp
+        schlecht.extend(_tp.jacobi_pruefung(model, p_el))
     for typ, liste in je_typ.items():
         k = _KNOTENZAHL[typ]
         for a0 in range(0, len(liste), 50_000):
@@ -1745,3 +1754,35 @@ def dehnung_mit_moden(op: Dehnungsoperator, p: int, ue, alpha=None) -> np.ndarra
 
 for _t in _QUADRATISCH:
     ZUSATZSCHLUESSEL[_t] = _mittelknoten_zusatz
+
+
+# --------------------------------------------------------------------------
+# Tetraeder mit Ordnung p (elements/tetp.py, zweite Element-Sitzung)
+# --------------------------------------------------------------------------
+# Vier Eckknoten, Seiten wie der tet4 (Kontakt, Fugen, Lasten sehen nur
+# Ecken); Auswertung an Mitte und Ecken wie der tet10. Steifigkeit,
+# Spannung und Plastizitaet lesen den Operator aus elements/tetp.py - der
+# kennt die Zusatz-FHG hinter den Knoten-FHG (Dehnungsoperator.fhg).
+def _tetp_registrieren():
+    """Idempotent und von beiden Seiten aufrufbar: solid ruft es am Ende
+    seines Imports, tetp am Ende des seinen. Ist tetp noch nicht fertig
+    geladen, holt tetp die Anmeldung selbst nach."""
+    try:
+        from . import tetp as _tp
+        typen = _tp.TYPEN
+        operatoren, auswerter, zusatz = _tp.operatoren, _tp.auswerter, _tp.zusatzschluessel
+        punkte = _tp.AUSWERTEPUNKTE
+    except (ImportError, AttributeError):
+        return
+    for _t in typen:
+        FLAECHEN[_t] = list(FLAECHEN["tet4"])
+        FLAECHEN_ECKEN[_t] = list(FLAECHEN_ECKEN["tet4"])
+        AUSWERTEPUNKTE[_t] = list(punkte)
+        ECKEN_NATUERLICH[_t] = list(ECKEN_NATUERLICH["tet4"])
+        _KNOTENZAHL[_t] = 4
+        OPERATOREN[_t] = operatoren
+        AUSWERTER[_t] = auswerter
+        ZUSATZSCHLUESSEL[_t] = zusatz
+
+
+_tetp_registrieren()

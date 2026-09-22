@@ -4990,7 +4990,28 @@ class Model:
     def ndof(self) -> int:
         """6 FHG je Knoten, dahinter je ein Woelb-FHG fuer die Knoten der
         Staebe mit Woelbkrafttorsion."""
-        return self.nn * NDOF + len(self.woelb_knoten())
+        n = self.nn * NDOF + len(self.woelb_knoten())
+        if self.hat_tetp():
+            # Tetraeder mit Ordnung p: Zusatz-FHG hinter Knoten- und Woelb-FHG
+            from .elements import tetp as _tp
+            n += _tp.anzahl_fhg(self)
+        return n
+
+    def hat_tetp(self) -> bool:
+        """Steckt ein Tetraeder mit Ordnung p (tetp2/3/4) im Modell?
+
+        Zwischengespeichert ueber (Elementzahl, _tetp_version): ndof wird
+        oft gefragt, und eine Schleife ueber alle Elemente je Aufruf kostete
+        am Drehlager (645.934 Volumenelemente) bei jedem Modell - auch ohne
+        tetp. Wer Elementtypen an Ort und Stelle aendert, ohne die Zahl der
+        Elemente zu aendern, erhoeht _tetp_version (wie _woelb_version)."""
+        stand = (len(self.elements), getattr(self, "_tetp_version", 0))
+        zw = getattr(self, "_tetp_hat", None)
+        if zw is not None and zw[0] == stand:
+            return zw[1]
+        hat = any(e.typ in ("tetp2", "tetp3", "tetp4") for e in self.elements)
+        self._tetp_hat = (stand, hat)
+        return hat
 
     def element_nodes(self, e: Element) -> np.ndarray:
         return self.nodes[e.nodes]

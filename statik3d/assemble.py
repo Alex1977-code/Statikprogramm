@@ -24,6 +24,8 @@ LINE_TYPES = EL.STAB_TYPEN                  # beam, truss, seil
 PLANE_TYPES = EL.EBENE_TYPEN                # ebene3 .. ebene8
 GRENZSCHICHT_TYPES = ("grenzschicht6", "grenzschicht8")
 TRANSLATION_TYPES = EL.VERSCHIEBUNGS_TYPEN  # nur ux, uy, uz je Knoten
+#: Tetraeder mit Ordnung p: Zusatz-FHG hinter den Knoten-FHG (elements/tetp.py)
+TETP_TYPES = ("tetp2", "tetp3", "tetp4")
 
 
 # --------------------------------------------------------------------------
@@ -36,6 +38,13 @@ def element_dofs(e, model: Model = None) -> np.ndarray:
     seiner Knoten an (sie stehen im Modell hinter den 6·nn Knoten-FHG) -
     dafuer braucht die Funktion das Modell.
     """
+    if e.typ in TETP_TYPES:
+        # Tetraeder mit Ordnung p: Ecken und Zusatz-FHG (elements/tetp.py)
+        if model is None:
+            raise ValueError(f"{e.typ}: die FHG haengen am Modell (Zusatz-FHG) - "
+                             "element_dofs(e, model) aufrufen")
+        from .elements import tetp as _tp
+        return np.asarray(_tp.element_fhg_objekt(model, e), dtype=int)
     if e.typ in TRANSLATION_TYPES:
         d = []
         for n in e.nodes:
@@ -219,6 +228,10 @@ def element_matrix(model: Model, e):
     """Elementsteifigkeitsmatrix im globalen System."""
     mat = model.materials[e.mat]
     X = model.nodes[e.nodes]
+    if e.typ in TETP_TYPES:
+        from .elements import tetp as _tp
+        i = _tp.index_von(model, e)
+        return _tp.matrizen(model, [i])[i][1]
 
     if e.typ in LINE_TYPES:
         if model.stab_woelbt(e):
@@ -384,7 +397,7 @@ HEX8_STAPEL = 4096
 #: (Pflicht 5). Die Reihenfolge der Elemente je Stapel ist die des Blocks;
 #: je Element rechnet der Stapel dieselben Zahlen wie der Einzelweg
 #: (tests/test_elemente_volumen.py haelt das auf 1e-12 fest).
-STAPEL_TYPEN = ("hex8", "tet10", "hex20", "pent6", "pent15", "pyr5")
+STAPEL_TYPEN = ("hex8", "tet10", "hex20", "pent6", "pent15", "pyr5") + TETP_TYPES
 
 
 def _matrix_chunk(model: Model, idx: list[int]) -> list[tuple]:
@@ -446,8 +459,17 @@ def _matrix_chunk(model: Model, idx: list[int]) -> list[tuple]:
 
 def _mass_chunk(model: Model, idx: list[int]) -> list[tuple]:
     out = []
+    p_el = [i for i in idx if model.elements[i].typ in TETP_TYPES]
+    if p_el:
+        # konsistente Masse: hierarchische Funktionen sind an den Ecken null,
+        # eine Zeilensummen-Masse gaebe ihnen keine
+        from .elements import tetp as _tp
+        for d, me in _tp.massen_modell(model, p_el).values():
+            out.append((np.asarray(d, dtype=int), me))
     for i in idx:
         e = model.elements[i]
+        if e.typ in TETP_TYPES:
+            continue
         try:
             me = np.asarray(element_mass(model, e), float)
         except Exception as ex:      # noqa: BLE001
@@ -618,6 +640,25 @@ def knotendilatation_je_element(model: Model, u: np.ndarray, aktiv=None) -> dict
 def stiffness(model: Model, workers=None, aktiv=None) -> sparse.csr_matrix:
     """Gesamtsteifigkeit; ``aktiv`` (Maske je Element) laesst abgeschaltete
     Elemente einer Situation weg."""
+    # Einmal je Aufstellen voll nachzaehlen, ob Tetraeder mit Ordnung p im
+    # Modell stecken: Model.ndof fragt nur einen Zwischenspeicher (hat_tetp,
+    # Schluessel Elementzahl und _tetp_version). Wurde ein Element an Ort und
+    # Stelle zu tetp, ohne den Zaehler zu erhoehen, stimmte die FHG-Zahl nicht
+    # - dann laut abbrechen statt mit falscher Groesse weiterrechnen.
+    hat = any(e.typ in TETP_TYPES for e in model.elements)
+    if hat != model.hat_tetp():
+        raise ValueError("Elementtypen wurden an Ort und Stelle geaendert (Tetraeder mit "
+                         "Ordnung p hinzu oder weg), ohne model._tetp_version zu erhoehen - "
+                         "die Zahl der Freiheitsgrade (Model.ndof) ist veraltet")
+    if hat:
+        from .elements import tetp as _tp
+        vorher = model.ndof                     # was der billige Schluessel sagt
+        an = _tp.anreicherung(model, streng=True)
+        soll = model.nn * NDOF + len(model.woelb_knoten()) + (0 if an is None else an.anzahl)
+        if vorher != soll:
+            raise ValueError(f"Model.ndof = {vorher}, nachgezaehlt {soll}: die Zusatz-FHG "
+                             "der Tetraeder mit Ordnung p haben sich geaendert, ohne dass "
+                             "model._tetp_version erhoeht wurde")
     K = _assemble_triplets(model, _matrix_chunk, workers, aktive_indizes(model, aktiv))
     if getattr(model, "knotendilatation", False):
         Kv = knotendilatation(model, aktiv)
@@ -1243,7 +1284,11 @@ def load_vector(model: Model, case: LoadCase = None, aktiv=None) -> np.ndarray:
         if l.direction is not None and not any(float(x) for x in l.direction):
             raise ValueError(f"Flaechenlast auf Element {l.elem}: richtung darf "
                              "nicht der Nullvektor sein")
-        if e.typ in SHELL_TYPES:
+        if e.typ in TETP_TYPES:
+            from .elements import tetp as _tp
+            d, fe = _tp.seitenlast_modell(model, l.elem, int(l.face), l.p, l.direction)
+            np.add.at(F, d, fe)
+        elif e.typ in SHELL_TYPES:
             F[element_dofs(e)] += shell_face_load(model, e, l.p, l.direction)
         elif e.typ in SOLID_TYPES:
             F[element_dofs(e)] += solid_face_pressure(model, e, l.p, l.face, l.direction)
@@ -1257,7 +1302,13 @@ def load_vector(model: Model, case: LoadCase = None, aktiv=None) -> np.ndarray:
         if not _wirkt(aktiv, tl.elem):
             continue
         e = model.elements[tl.elem]
-        if e.typ in SHELL_TYPES:
+        if e.typ in TETP_TYPES:
+            from .elements import tetp as _tp
+            mat = model.materials[e.mat]
+            s0 = sl.D_matrix(mat.E, mat.nu) @ (mat.alpha * tl.dT * np.array([1.0, 1.0, 1.0, 0, 0, 0]))
+            d, fe = _tp.anfangsspannung_modell(model, tl.elem, s0)
+            np.add.at(F, d, fe)
+        elif e.typ in SHELL_TYPES:
             F[element_dofs(e)] += shell_thermal_loads(model, e, tl.dT)
         elif e.typ in SOLID_TYPES:
             F[element_dofs(e)] += solid_thermal_loads(model, e, tl.dT)
@@ -1269,16 +1320,30 @@ def load_vector(model: Model, case: LoadCase = None, aktiv=None) -> np.ndarray:
         if getattr(v, "art", "stab") != "koerper":
             continue
         for i, s0 in solid_prestress(model, v).items():
-            if _wirkt(aktiv, i):
-                F[element_dofs(model.elements[i])] += solid_initial_stress_loads(model, model.elements[i], s0)
+            if not _wirkt(aktiv, i):
+                continue
+            if model.elements[i].typ in TETP_TYPES:
+                from .elements import tetp as _tp
+                d, fe = _tp.anfangsspannung_modell(model, i, s0)
+                np.add.at(F, d, fe)
+                continue
+            F[element_dofs(model.elements[i])] += solid_initial_stress_loads(model, model.elements[i], s0)
 
     # Eigengewicht Schalen, Volumen und ebene Elemente (Staebe: siehe oben)
     # ueber die konzentrierten Knotenmassen; dazu die Punktmassen
     g = np.asarray(case.gravity, float)
     if np.any(g):
+        p_el = ([i for i, e in enumerate(model.elements) if e.typ in TETP_TYPES and _wirkt(aktiv, i)]
+                if model.hat_tetp() else [])
+        if p_el:
+            # konsistent: int N rho g dV, auch auf die Zusatz-FHG
+            from .elements import tetp as _tp
+            dichte = lambda e: float(model.materials[e.mat].rho) * g
+            for d, fe in _tp.volumenlasten_modell(model, p_el, dichte).values():
+                np.add.at(F, d, fe)
         for i, e in enumerate(model.elements):
             if not _wirkt(aktiv, i) or e.typ in LINE_TYPES or e.typ == "feder" \
-                    or e.typ in GRENZSCHICHT_TYPES:
+                    or e.typ in GRENZSCHICHT_TYPES or e.typ in TETP_TYPES:
                 continue
             m = element_masse_knoten(model, e)
             for k, n in enumerate(e.nodes):
@@ -1406,6 +1471,14 @@ def constrained_dofs(model: Model, K: sparse.csr_matrix):
         if e.typ == "rigid":
             fixed[e.index] = True
             vals[e.index] = e.value
+    # Tetraeder mit Ordnung p: an einer starr gelagerten Randseite sind die
+    # Zusatz-FHG in der gelagerten Richtung null (tetp.gesperrte_fhg)
+    if model.hat_tetp():
+        from .elements import tetp as _tp
+        gs = _tp.gesperrte_fhg(model)
+        if len(gs):
+            fixed[gs] = True
+            vals[gs] = 0.0
     # Woelbeinspannung: die Verwoelbung ist am Knoten behindert
     wi = model.woelb_index() if model.ndof > model.nn * NDOF else {}
     if wi:

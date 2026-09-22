@@ -7133,3 +7133,135 @@ die Meldung für einen Freibrief hält.
 | `tests/test_ec3.py` | Klassifizierung, Querschnittsnachweise, Knicken (χ), M_cr, χ_LT, C1/C_m, Interaktion, Wöhlerlinien, Nachweisführung |
 | `tests/test_importers.py` | Import DXF, IFC, SAF, RFEM-Tabellen, INP, BDF |
 | `tests/test_report.py` | Berichtserzeugung |
+| `tests/test_tetp.py` | Tetraeder mit Ordnung p: Integrationsregeln gegen alle Monome, Vollständigkeit bis p = 4, sechs Starrkörpermoden, Patch-Test (verzerrt, gemischte Ordnung, lineare Pflichtseite, gekrümmt), Stapel gegen Einzelweg, Masse und Lasten, Kragarm auf 1 N/mm², umgeklapptes Element; am Modell Übergang zu tet4, Kontakt- und Lagerseiten, getrennte Fuge, laute Pflichtprüfung, Importreihenfolge, tet10-Nachbar, Jacobi-Prüfung gekrümmter Elemente |
+| `tests/test_tetp_rechnung.py` | dasselbe Element durch den Löser: Model.ndof mit und ohne tetp (ohne Lauf über die Elemente), laute Abweisung veralteter FHG-Zahlen, Kragarm-Knotenmittel auf 1 N/mm², Lastsummen, Patch-Test tet4/tetp3 gemischt, Symmetrieebenen, Temperatur; je Lastart tetp2/3/4 gegen geschlossene Lösung und tet10; Linienlager starr und federnd |
+
+## 10 Tetraeder mit Ordnung p (`elements/tetp.py`, 22./23.09.2026)
+
+Der Anwender will ein eigenes Element, „schnell und im Toleranzbereich von
+1 N/mm²“ Vergleichsspannung an den Nachweisstellen. Gütemaß ist, mit wie vielen
+Unbekannten und welcher Rechenzeit ein Element die 1 N/mm² erreicht. Die
+Formulierung war frei und ist per Messung gewählt worden.
+
+**Was es ist.** Ein Tetraeder mit vier Eckknoten. Die höheren Ansätze sind
+**hierarchische** Funktionen an Kanten (p − 1 je Kante), Flächen
+((p − 1)(p − 2)/2) und im Inneren ((p − 1)(p − 2)(p − 3)/6), für p = 2 bis 4.
+Ihre Freiheitsgrade hängen an keinem Knoten, sondern liegen wie die
+Wölb-Freiheitsgrade hinter den Knotenfreiheitsgraden. p = 2 ist genau der Raum
+des tet10, p = 1 der des tet4. Die Geometrie ist quadratisch: Kantenmitten auf
+der wahren Fläche machen das Element gekrümmt.
+
+**Was davon aus der Literatur stammt, und was nicht.** Die Ansätze der
+p-Version (Szabó/Babuška, *Finite Element Analysis*, 1991; Zienkiewicz, Gago,
+Kelly 1983), die quadratische Geometrie wie beim isoparametrischen tet10 und die
+Integrationsregeln mit 14 und 24 Punkten (Walkington bzw. Keast) sind bekannt.
+Die Regeln sind hier aus den Momentengleichungen neu bestimmt und gegen alle
+Monome geprüft. Neu ist nur der Einbau: Ordnung je Element, Übergang zu
+tet4-Nachbarn und Kontaktflächen ohne Kopplung. Eine Seite, die ein Nachbar
+ohne Anreicherung mitbenutzt oder an der Kontakt, Fuge oder Kopplung hängt,
+bleibt linear. Ihre Spur ist dann dieselbe wie beim tet4, und der Kontakt sieht
+nur Ecken.
+
+**Warum nicht der lineare, geglättete Tetraeder.** Jeder lineare Tetraeder
+(tet4, tet4 mit Knotendilatation, FS/NS-geglättet) konvergiert in der Spannung
+mit O(h). Am Kragarm lag der tet4 bei 2.295 Unbekannten noch 70 N/mm² daneben
+(gemessen, erste Element-Sitzung). 1 N/mm² ist so nicht erreichbar.
+
+**Messungen** (Labor, einkernig, unter Fremdlast: Die Genauigkeit gilt, Zeiten
+sind nicht gemessen. Faktorgröße und Faktorisierungsarbeit sind die Angaben
+von PARDISO, iparm(18) und iparm(19)):
+
+* **Kragarm** 1,0 × 0,1 × 0,2 m, σ_v an der Oberkante bei x = L/2 auf
+  355 N/mm² (Saint-Venant): p = 3 auf 5 × 1 × 1 Kuhn-Zellen (30 Tetraeder,
+  720 freie FHG) liegt jedes Element an der Stelle höchstens 0,18 N/mm²
+  daneben. Der tet10 braucht für +1,0 N/mm² im Mittel 14.688 FHG. Der Fall ist
+  für p = 3 günstig, denn die Balkenlösung ist fast ein kubisches Polynom.
+* **Lamé-Hohlzylinder** (ebener Dehnungszustand, Innendruck, exakte Lösung;
+  Netz aus dem Statik3D-Vernetzer, unstrukturiert; Knotenmittel am Innenrand):
+
+  | Ordnung | FHG | Faktorisierung [MFlop] | Fehler |
+  |---|---|---|---|
+  | p = 2 überall (tet10-Raum), h = 0,018 m | 103.732 | 191.028 | 5,06 N/mm² |
+  | p = 2 überall, h = 0,013 m | 260.421 | 1.352.107 | 2,71 N/mm² |
+  | p = 4 überall, h = 0,05 m | 48.129 | 38.053 | 0,40 N/mm² |
+  | p = 4 in einer Lage am Innenrand, sonst p = 2, h = 0,05 m | 22.131 | 6.855 | 0,94 N/mm² |
+  | p = 4 in einer Lage, sonst p = 1 | 15.096 | 2.259 | 15,0 N/mm² |
+
+  Hohe Ordnung an der Nachweisstelle genügt also, der Rest braucht aber
+  mindestens p = 2: Ein tet4-Rest verdirbt die Spannung dort.
+
+**Drei Bedingungen, gemessen:**
+
+1. **Gekrümmte Geometrie.** Mit geraden Elementflächen ist die Bohrung ein
+   Vieleck. Jede Ecke ist eine leicht einspringende Kante mit schwacher
+   Singularität, und höhere Ordnung löst genau diese auf. Am Hohlzylinder mit
+   gerader Bohrung (40 Abschnitte) wurde p = 2 25 bis 47 N/mm², p = 3 61 bis
+   93 N/mm² und p = 4 97 bis 114 N/mm² daneben gemessen, ohne Konvergenz.
+   Das gilt für jedes Element, auch für den tet10.
+2. **Lückenlose Krümmung.** Musste eine einzige Kante an der Bohrung gerade
+   bleiben, weil ihr Element sonst umgeklappt wäre, lag der Eckwert dort bis
+   153 N/mm² daneben (p = 2, h = 0,035 m). Das Element prüft det J an Ecken
+   und Kantenmitten und wirft sonst einen Fehler mit Elementnummer. An den
+   Integrationspunkten allein fiele ein umgeklapptes Element nicht auf:
+   gemessen mit einer Kantenmitte zwischen Viertelpunkt und Ecke, dort ist
+   det J an allen 14 Punkten ≥ 0,245, an der Ecke −0,200.
+3. **Knotenmittel.** Die Eckwerte einzelner Elemente streuen mehr als ihr
+   Mittel über die Elemente am Knoten (p = 4: je Element bis 1,22 N/mm²,
+   Knotenmittel 0,40 N/mm²). Gemittelt wird nur innerhalb eines Werkstoffs.
+
+**Ordnung an Kante und Fläche: die Mindestregel.** Eine Kante bzw. Fläche
+bekommt die kleinste Ordnung der Elemente, die sie berühren. Damit hat jedes
+Element höchstens seine eigene Ordnung, und alle Elemente eines Typs `tetpN`
+haben gleich viele Ansatzfunktionen. Die gestapelten Leser (Steifigkeit,
+Spannung, Plastizität) schneiden ihre Felder je Typ gleich breit; mit der
+Höchstregel hätte ein `tetp2` neben einem `tetp4` 35 statt 10 Funktionen
+gehabt, und der Stapel wäre zerfallen. Die Mischmessung am Hohlzylinder oben
+lief noch mit der Höchstregel und wird wiederholt.
+
+**Anbindung (23.09.2026).** Die Typen `tetp2`, `tetp3` und `tetp4` stehen im
+Elementverzeichnis mit vier Knoten. `Model.ndof` zählt die Zusatz-FHG mit;
+`res.u` bleibt (Knoten, 6). Steifigkeit, Spannung und Plastizität lesen den
+gemeinsamen Dehnungsoperator, der die Zusatz-FHG über `Dehnungsoperator.fhg`
+adressiert. Seitendruck, Eigengewicht (konsistent, ∫ N ρ g dV) und
+Temperatur und die Vorspannung eines Körpers sind angebunden, ebenso die
+Masse (konsistent, denn eine Zeilensummenmasse gäbe den hierarchischen
+Funktionen keine). Je Lastart geben `tetp2`, `tetp3`, `tetp4` und der tet10
+am Würfel dieselben Zahlen wie die geschlossene Lösung (gemessen 23.09.2026:
+Eigengewicht ρ g V, Seitendruck normal und schräg, Temperatur allseitig
+behindert −E α ΔT/(1 − 2ν) = −189,000 MPa, Vorspannung 1 MN auf 1 m²
+behindert +1,0000 MPa, frei 0).
+
+**Lager.** Bei einem starren Lager sind an einer gelagerten Randseite oder
+Randkante die Zusatz-FHG in der gelagerten Richtung null. An einer
+Symmetrieebene bleiben sie in der Ebene frei, denn dort liegen oft
+Nachweisstellen. Federnde, einseitige und nichtlineare Lager wirken je Knoten
+wie beim tet4: Seiten und Kanten zwischen solchen Knoten bleiben linear, denn
+zwischen den Ecken hält dort nichts. Ebenso bleiben Kontakt-, Fugen- und
+Kopplungsseiten linear. Trägt eine solche Seite oder Kante doch einen
+Zusatzansatz, bricht die Rechnung mit Knotennummern ab. Teilt ein
+quadratisches Element mit Mittenknoten (tet10, hex20, pent15) eine Kante mit
+einem `tetp`, wird das Netz abgewiesen, denn der Mittenknoten hätte dort kein
+Gegenüber.
+
+**Freiheitsgrade.** `Model.ndof` fragt einen Zwischenspeicher (Elementzahl
+und `_tetp_version`). Ohne `tetp` ist es wörtlich 6·nn + Wölb-FHG und läuft
+nicht über die Elemente. Wer Elementtypen an Ort und Stelle ändert, erhöht
+`_tetp_version`. `assemble.stiffness` zählt einmal je Aufstellen voll nach und
+bricht ab, wenn das vergessen wurde.
+
+**Fehlerschätzer.** `netzfehler` behandelt `tetp` vorerst **wie einen tet4**
+(Eckfehler linear über die vier Ecken); die Ordnung ist darin nicht
+berücksichtigt. Ein Schätzer für die nächste Ordnung ist im Bau
+(`tetp.naechste_ordnung`). Durch den Löser gemessen (tests/test_tetp_rechnung.py):
+Kragarm 10 × 2 × 2 Kuhn-Zellen, Knotenmittel an der Nachweisstelle tet4
+127,2 N/mm², `tetp2` 361,1 N/mm², `tetp3` 355,0002 N/mm² (Soll 355).
+Lastsummen und Patch-Test (auch mit tet4 und `tetp3` gemischt) stimmen auf
+Rundung.
+
+**Offen.** Kantenmitten auf der wahren Geometrie vom Vernetzer (heute ist
+das Element gerade, siehe Bedingung 1), die Wahl der Ordnung je Element in der
+Oberfläche und automatisch, ein Fehlerschätzer für höhere Ordnung
+(`netzfehler` behandelt das Element vorerst wie einen tet4), die Plastizität
+am Prüfkörper und die Messung der Rechenzeit am Drehlager. Der Anwender hat
+festgelegt, dass die Rechnung dort nicht länger werden darf als heute. Ob das
+Element das schafft, zeigt erst die Messung M3.

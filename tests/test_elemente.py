@@ -128,9 +128,11 @@ def _volumen_modell(typ: str):
             if float(n @ (spitze - P4.mean(axis=0))) < 0:
                 sd = sd[::-1]
             m.add_element("pyr5", [ids[sd[0]], ids[sd[1]], ids[sd[2]], ids[sd[3]], c], mat)
-    elif typ == "tet4":
+    elif typ in ("tet4", "tetp2", "tetp3", "tetp4"):
+        # tetpN: dieselben fuenf Ecken-Tetraeder, die Ordnung steckt in den
+        # Zusatz-FHG hinter den Knoten (elements/tetp.py)
         for e in ((0, 1, 3, 4), (1, 2, 3, 6), (1, 3, 4, 6), (1, 4, 5, 6), (3, 4, 6, 7)):
-            m.add_element("tet4", [ids[i] for i in e], mat)
+            m.add_element(typ, [ids[i] for i in e], mat)
     elif typ == "tet10":
         for e in ((0, 1, 3, 4), (1, 2, 3, 6), (1, 3, 4, 6), (1, 4, 5, 6), (3, 4, 6, 7)):
             a = [ids[i] for i in e]
