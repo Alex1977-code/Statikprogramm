@@ -5127,9 +5127,31 @@ class Model:
                            "Linie oder in einem Punkt, oder die beiden Dreiecke des "
                            "Vierecks heben sich auf) - die Last wirkt mit 0 N")
                 else:
-                    was = (f"Seite {seite} hat praktisch keine Fläche (schmaler als ein "
-                           "Zehnmillionstel des Elements) - die Last wirkt mit nur "
-                           f"{_dezimal(abs(float(l.p)) * float(A[k]))} N")
+                    # Die Kraft so, wie der Lastvektor sie aufstellt, nicht als
+                    # p*A: solid_face_pressure integriert |dA| ueber die Seite.
+                    # Beim schmalen Deckel ist das p*A (1e-9 breit: 0,001 N),
+                    # beim fast verschlungenen (6/7 getauscht, eine Ecke 1e-9
+                    # versetzt) heben sich nur die Flaechenvektoren auf, die
+                    # Last wirkt mit gemessen 577 350 N - p*A nannte 0,001 N.
+                    from .assemble import solid_face_pressure
+                    el = self.elements[int(l.elem)]
+                    fk = solid_face_pressure(self, el, l.p, seite, l.direction)
+                    kraft = float(np.linalg.norm(fk.reshape(-1, 3).sum(axis=0)))
+                    if kraft <= 2.0 * abs(float(l.p)) * float(A[k]):
+                        was = (f"Seite {seite} hat praktisch keine Fläche (schmaler als "
+                               "ein Zehnmillionstel des Elements) - die Last wirkt mit "
+                               f"nur {_dezimal(kraft)} N")
+                    else:
+                        # Quadratische Seiten (6 und 8 Knoten) koennen auch ueber
+                        # die Kantenmitten gewoelbt sein - dort nicht
+                        # „verschlungen" behaupten
+                        grund = ("in sich verschlungen (die beiden Dreiecke des "
+                                 "Vierecks zeigen gegeneinander, Knoten vertauscht)"
+                                 if len(fn) == 4 else
+                                 "verschlungen oder über die Kantenmitten gewölbt")
+                        was = (f"die Ecken von Seite {seite} spannen fast keine Fläche "
+                               f"auf, die Seite ist aber {grund} - die Last wirkt mit "
+                               f"{_dezimal(kraft)} N")
                 aus.append(f"WARNUNG: Lastfall '{lc.name}': Flächenlast auf Element "
                            f"{l.elem} ({typ}): {was}, steht aber mit p = "
                            f"{_dezimal(float(l.p) / 1e3)} kN/m² im Bericht. Die Knoten "

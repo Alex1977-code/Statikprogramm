@@ -545,7 +545,15 @@ ergab gemessen 0 N ohne eine Zeile in der Prüfung. Seit dem 22.09.2026 nennt
 Die Fläche wird wie in `solid_face_pressure` aus den Ecken gebildet (Viereck:
 beide Dreiecke); die Grenze ist A ≤ 10⁻⁷ · d² mit d der Diagonale der Hüllbox
 des Elements (`diagnose.ENTARTET_REL`). Gerechnet wird je (Elementart, Seite)
-im Block: 64 000 Seitenlasten 0,43–0,48 s (zweimal gemessen).
+im Block: 64 000 Seitenlasten 0,34–0,48 s (fünfmal gemessen in zwei
+Durchgängen auf der geteilten Maschine). Liegt A knapp über null, nennt die
+Zeile die Kraft so, wie der Lastvektor sie aufstellt, und nicht p · A: `solid_face_pressure` integriert |dA| über die Seite. Beim 10⁻⁹
+breiten Deckel ist das p · A = 0,001 N. Beim fast verschlungenen Deckel
+(Knoten 6 und 7 getauscht, eine Ecke 10⁻⁹ versetzt) heben sich nur die
+Flächenvektoren der beiden Dreiecke auf; die Last wirkt gemessen mit
+577 350 N, und die Zeile heißt „in sich verschlungen" (p · A hätte 0,001 N
+genannt). Die Steifigkeit dieses Elements bricht ohnehin mit „negativer
+Jacobi-Determinante" ab.
 * Temperatur: gleichmäßige Änderung ΔT (Stäbe, Schalen, Volumen) und
   Temperaturdifferenz über die Stabhöhe ΔT_z (Krümmung α ΔT_z / h). Die
   Anfangsdehnung wird bei der Spannungsrückrechnung abgezogen.
@@ -5266,12 +5274,12 @@ verschieden geteilt, 8 Seiten, Netzvolumen gleich Hüllvolumen auf 3 · 10⁻¹�
 Freie Seiten werden über die sortierten Eckennummern gefunden, in
 zwei int64 gepackt und mit `np.lexsort` sortiert.
 
-Laufzeit an einem Körper aus 64 000 hex8 (zwei Threads, viermal gemessen auf
-der geteilten Maschine): die ganze Prüfung 0,16–0,24 s (vor dem Packen der
-Schlüssel und dem gemeinsamen Knotenfeld 0,97–1,10 s). Für 1 Mio Elemente
-**nicht gemessen**; linear hochgerechnet 2,5–4 s. Ein Körper mit krummen
-Randlinien wird an der ersten krummen Linie verlassen, bevor ein Element
-angefasst wird.
+Laufzeit an einem Körper aus 64 000 hex8 (zwei Threads, siebenmal gemessen in
+zwei Durchgängen auf der geteilten Maschine): die ganze Prüfung 0,16–0,26 s
+(vor dem Packen der Schlüssel und dem gemeinsamen Knotenfeld 0,97–1,10 s). Für
+1 Mio Elemente **nicht gemessen**; linear hochgerechnet 2,5–4,1 s. Ein Körper
+mit krummen Randlinien wird an der ersten krummen Linie verlassen, bevor ein
+Element angefasst wird.
 
 **Elemente, die eine Fuge überspannen.** Beim Ausführen einer Fuge werden die
 gemeinsamen Randknoten verdoppelt und die Elemente der gelösten Seite auf die

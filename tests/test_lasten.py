@@ -720,6 +720,31 @@ def test_flaechenlast_auf_seite_ohne_flaeche():
           and "die Last wirkt mit 0 N" in zeilen[0],
           (zeilen[0] if zeilen else "keine Zeile")[:110])
 
+    # Die Zahl in der Zeile ist die, mit der die Last wirklich wirkt. Ein
+    # Deckel von 1e-9 Breite traegt p*A = 0,001 N. Ein fast verschlungener
+    # Deckel (6/7 getauscht, eine Ecke 1e-9 versetzt) hat fast keinen
+    # Flaechenvektor, die Last wirkt aber ueber die ganze verschlungene Flaeche
+    # (gemessen |Summe F| = 577 350 N) - die Zeile nannte dort 0,001 N.
+    import re
+
+    def zahl_und_kraft(knoten):
+        mm = wuerfel(knoten)
+        FF = np.asarray(assemble.load_vector(mm, mm.case()), float)
+        res = float(np.linalg.norm([FF[i::6].sum() for i in range(3)]))
+        zz = [z for z in mm.check() if "Seite 1" in z]
+        t = re.search(r"wirkt mit (?:nur )?([0-9.,]+) N", zz[0]) if len(zz) == 1 else None
+        return (float(t.group(1).replace(",", ".")) if t else None), res, zz
+
+    schmal = [list(p) for p in W]
+    schmal[4], schmal[5], schmal[6], schmal[7] = [0, .5, 1], [1, .5, 1], [1, .5 + 1e-9, 1], [0, .5 + 1e-9, 1]
+    schleife = [list(p) for p in W]
+    schleife[6], schleife[7] = [0, 1, 1], [1, 1, 1 + 1e-9]
+    for name, kn in (("schmaler Deckel", schmal), ("fast verschlungener Deckel", schleife)):
+        z, res, zz = zahl_und_kraft(kn)
+        check(f"{name}: die Zeile nennt die Kraft, mit der die Last wirkt",
+              z is not None and abs(z - res) <= 0.01 * res + 1e-9,
+              f"Zeile {z} N, Lastvektor {res:.6f} N; " + (zz[0][60:150] if zz else "keine Zeile"))
+
     # Gegenprobe: der gueltige Deckel traegt und wird nicht beanstandet
     m2 = wuerfel(W)
     F2 = np.asarray(assemble.load_vector(m2, m2.case()), float)

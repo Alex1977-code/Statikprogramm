@@ -2304,7 +2304,12 @@ Modellprüfung: „WARNUNG: Lastfall 'LF1': Flächenlast auf Element 0 (hex8):
 Seite 1 hat keine Fläche … - die Last wirkt mit 0 N, steht aber mit p = …
 kN/m² im Bericht“. Vorher stand die Last mit vollem p im Bericht, und die
 Prüfung schwieg (gemessen an einem Sechsflächner mit zur Linie
-zusammengelegtem Deckel: 0 N, keine Zeile). Abhilfe: die Knoten der Seite
+zusammengelegtem Deckel: 0 N, keine Zeile). Hat die Seite nur fast keine
+Fläche, nennt die Zeile die Kraft, mit der die Last wirklich wirkt. Ist ein
+Viereck in sich verschlungen (vertauschte Knoten, eine Ecke leicht versetzt),
+heißt es „die Ecken von Seite 1 spannen fast keine Fläche auf, die Seite ist
+aber in sich verschlungen … - die Last wirkt mit … N“ (gemessen am
+1 × 1-m-Deckel mit 1000 kN/m²: 577350 N). Abhilfe: die Knoten der Seite
 prüfen oder die Last auf eine Seite mit Fläche legen.
 
 **Im Bild**: Kräfte und Streckenlasten rot (Pfeile), Temperatur als Punkte
