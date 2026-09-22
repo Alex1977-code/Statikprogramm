@@ -28,6 +28,7 @@ from statik3d import solver  # noqa: E402
 from statik3d.model import Model  # noqa: E402
 from statik3d.importers import import_file  # noqa: E402
 from statik3d.importers import rfem6_db as R6  # noqa: E402
+from statik3d.importers import _common as _C  # noqa: E402
 
 RESULTS = []
 
@@ -1683,6 +1684,212 @@ def test_ermuedungslasten_aus_fat():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_flaechenlast_richtung():
+    """Eine Flaechenlast mit globaler Richtung wirkt global, nicht normal.
+
+    RFEM fuehrt zu jeder Flaechenlast eine `loadDirection`. Bis zum 22.09.2026
+    wurde sie **gelesen, ins Protokoll geschrieben und weggeworfen**: ohne
+    `direction` setzt `load_face` einen Druck senkrecht zur Flaeche an. Am
+    Drehlagermodell traf das 396 von 711 Flaechenlasten.
+
+    Geprueft wird an drei Stellen, und keine davon sieht die vorhandene
+    Pruefung `test_lastfaelle_und_lasten`, weil dort beide Flaechen in z = 0
+    liegen und lokal z mit global Z zusammenfaellt:
+
+    * eine **senkrechte** Flaeche: die Kraft muss in Z stehen, nicht in Y;
+    * eine **waagerechte** Flaeche mit umgekehrtem Umlauf des Randpolygons -
+      ohne die Kur haengt schon hier das Vorzeichen am Umlaufsinn;
+    * der Zweig fuer Flaechen ohne Netz, der die Last als Geometrielast
+      anhaengt: auch sie muss ihre Richtung tragen.
+    """
+    tmp = tempfile.mkdtemp()
+    try:
+        # (1) senkrechte Flaeche in der Ebene y = 0, Last global Z
+        f = make_rf6(
+            os.path.join(tmp, "senkrecht.rf6"),
+            nodes=[(0, 0, 0), (2, 0, 0), (2, 0, 2), (0, 0, 2)],
+            lines=[], members=[], supports=[],
+            surfaces=[([1, 2, 3, 4], 0.010)],
+            load_cases=[("Last", 12, 0.0)],
+            surface_loads=[(1, [1], -3000.0, 1)],       # 1 = global Z
+        )
+        m = R6.read_rf6(f, log=[])
+        for nd in range(m.nn):
+            m.support(nd, [0, 1, 2, 3, 4, 5])
+        r = solver.solve_static(m, case="LF1")
+        R = np.asarray(r.reactions, float)
+        # close misst hier RELATIV (err <= tol * |soll|): eine Schranke von
+        # 1.0 waere 100 % und damit keine Probe.
+        close("senkrechte Flaeche: die Kraft steht in Z",
+              float(R[:, 2].sum()), 3000.0 * 4.0, 1e-6, " N")
+        check("und nicht in der Flaechennormalen (Y)",
+              abs(float(R[:, 1].sum())) < 1.0,
+              f"Ry = {float(R[:, 1].sum()):.1f} N")
+
+        # (2) waagerechte Flaeche, einmal in jedem Umlaufsinn
+        werte = {}
+        for kennung, umlauf in (("1-2-3-4", [1, 2, 3, 4]), ("4-3-2-1", [4, 3, 2, 1])):
+            g = make_rf6(
+                os.path.join(tmp, f"waagerecht_{kennung}.rf6"),
+                nodes=[(0, 0, 0), (2, 0, 0), (2, 2, 0), (0, 2, 0)],
+                lines=[], members=[], supports=[],
+                surfaces=[(umlauf, 0.010)],
+                load_cases=[("Last", 12, 0.0)],
+                surface_loads=[(1, [1], -2000.0, 1)],
+                boundary_lines=None,
+            )
+            m2 = R6.read_rf6(g, log=[])
+            for nd in range(m2.nn):
+                m2.support(nd, [0, 1, 2, 3, 4, 5])
+            r2 = solver.solve_static(m2, case="LF1")
+            werte[kennung] = float(np.asarray(r2.reactions, float)[:, 2].sum())
+        check("waagerechte Flaeche: der Umlaufsinn des Randes aendert nichts",
+              abs(werte["1-2-3-4"] - werte["4-3-2-1"]) < 1.0,
+              f"{werte['1-2-3-4']:.1f} N gegen {werte['4-3-2-1']:.1f} N")
+        close("und der Betrag stimmt", werte["1-2-3-4"], 2000.0 * 4.0, 1e-6, " N")
+
+        # (3) Flaeche ohne Dicke: die Last haengt als Geometrielast an ihr
+        h = make_rf6(
+            os.path.join(tmp, "ohne_netz.rf6"),
+            nodes=[(0, 0, 0), (2, 0, 0), (2, 0, 2), (0, 0, 2)],
+            lines=[], members=[], supports=[],
+            surfaces=[[1, 2, 3, 4]],
+            load_cases=[("Last", 12, 0.0)],
+            surface_loads=[(1, [1], -3000.0, 1)],
+        )
+        m3 = R6.read_rf6(h, log=[])
+        geo = [g for lc in m3.load_cases.values() for g in lc.geometrielasten]
+        check("die angehaengte Geometrielast traegt ihre Richtung",
+              len(geo) == 1 and geo[0].richtung is not None
+              and abs(float(geo[0].richtung[2]) - 1.0) < 1e-12,
+              str(geo[0].richtung) if geo else "keine Geometrielast")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_flaechenlasten_werden_abgezaehlt():
+    """Jede Flaechenlast der Datei taucht im Protokoll auf - auch die, die
+    nicht uebernommen wird.
+
+    Bis zum 22.09.2026 sprang der Leser bei einer Last anderer Art
+    (Temperatur, Dehnung, Vorkruemmung, Masse) und bei einer ohne lesbaren
+    Betrag **wortlos** weiter. Bei Linien- und Volumenlasten stand je eine
+    Zeile - der Anwender durfte daraus schliessen, bei den Flaechen sei
+    nichts weggefallen.
+    """
+    tmp = tempfile.mkdtemp()
+    try:
+        # build_db schreibt jede Flaechenlast als SurfaceTypeLoadImplForce;
+        # fuer die Probe wird eine davon nachtraeglich auf eine andere Art
+        # umgestellt - so, wie RFEM eine Temperaturlast fuehrt.
+        db = os.path.join(tmp, "model.db")
+        build_db(db,
+                 nodes=[(0, 0, 0), (2, 0, 0), (2, 2, 0), (0, 2, 0)],
+                 lines=[], members=[], supports=[],
+                 surfaces=[([1, 2, 3, 4], 0.010)],
+                 load_cases=[("Last", 12, 0.0)],
+                 surface_loads=[(1, [1], -2000.0, 0),      # normal
+                                (1, [1], -1000.0, 0),      # -> andere Art
+                                (1, [1], 0.0, 0),          # ohne Betrag
+                                (1, [1], -500.0, 0)])      # -> Tabelle fehlt
+        con = sqlite3.connect(db)
+        con.execute("UPDATE SurfaceLoad SET impl_table = "
+                    "'SurfaceTypeLoadImplTemperature' WHERE id = 2")
+        con.execute("CREATE TABLE SurfaceTypeLoadImplTemperature (id INTEGER "
+                    "PRIMARY KEY, version INTEGER, parentModelObject_id bigint, "
+                    "parentModelObject_table TEXT, loadDirection INTEGER)")
+        con.execute("INSERT INTO SurfaceTypeLoadImplTemperature VALUES "
+                    "(2,1,2,'SurfaceLoad',1)")
+        con.execute("UPDATE SurfaceLoad SET impl_table = 'GibtEsNicht' "
+                    "WHERE id = 4")
+        con.commit()
+        con.close()
+        f = os.path.join(tmp, "abzaehlen.rf6")
+        with zipfile.ZipFile(f, "w", zipfile.ZIP_DEFLATED) as z:
+            z.write(db, "model.db")
+            z.writestr("mesh.xml", MESH_XML)
+            z.writestr("format.txt", "RFEM\n6.11.0004\nRFEM6\n6.12.0010\n1\n")
+            z.writestr("general_data.xml",
+                       "<?xml version='1.0'?><property key='generalData'/>")
+        log = []
+        R6.read_rf6(f, log=log)
+        txt = "\n".join(log)
+        check("die Last anderer Art wird genannt",
+              "1 Flaechenlasten anderer Art" in txt,
+              next((x for x in log if "anderer Art" in x), "keine Zeile"))
+        check("die Last ohne Betrag wird genannt",
+              "1 Flaechenlasten ohne lesbaren Betrag" in txt,
+              next((x for x in log if "ohne lesbaren Betrag" in x), "keine Zeile"))
+        check("die Last, deren Umsetzungstabelle fehlt, wird genannt",
+              "nicht zu lesen" in txt,
+              next((x for x in log if "nicht zu lesen" in x), "keine Zeile"))
+        # Die Probe ist scharf: die Summe der genannten muss die Zahl der
+        # Lasten in der Datei treffen, sonst faellt weiter etwas lautlos weg.
+        genannt = 0
+        for z in log:
+            for wort in ("auf vernetzte Flaechen gelegt", "an ihre Flaeche gehaengt",
+                         "ohne vernetzte Zielflaeche", "anderer Art",
+                         "ohne lesbaren Betrag", "nicht zu lesen"):
+                if wort in z:
+                    # Eine Warnung traegt den Vorsatz "WARNUNG:" -
+                    # die Zahl steht dahinter.
+                    teile = z.replace("WARNUNG:", " ").strip().split()
+                    genannt += int(teile[0])
+                    break
+        check("die Summe der genannten trifft die Zahl in der Datei",
+              genannt == 4, f"{genannt} von 4")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_einwirkungskategorie_wird_genannt():
+    """Was als „Q“ endet, steht im Protokoll - und der Name verbessert nur,
+    was die Kennzahl nicht hergibt.
+
+    `ACTION_CATEGORY` fuehrt nur wenige Kennzahlen; alles Uebrige wurde still
+    zu „Q“ (veraenderlich, allgemein, psi0 = 0,80) und das Protokoll meldete
+    „Einwirkungskategorie uebernommen“. Schnee, Wind und Vorspannung rechnen
+    aber mit anderen Beiwerten.
+
+    Die Namensdeutung greift **nur innerhalb von Q**: ein „G“ aus der
+    Kennzahl darf der Freitext nicht umstossen, sonst wuerde ein Lastfall
+    „Windverband Eigenlast“ mit der Kennzahl 1 zu W und damit veraenderlich.
+    Genau das ist die Gegenprobe unten.
+    """
+    tmp = tempfile.mkdtemp()
+    try:
+        f = make_rf6(
+            os.path.join(tmp, "kategorien.rf6"),
+            nodes=[(0, 0, 0), (2, 0, 0)],
+            lines=[], members=[], supports=[],
+            load_cases=[("Eigengewicht", 1, 1.0),
+                        ("Schnee auf dem Dach", 91, 0.0),
+                        ("Wind quer", 92, 0.0),
+                        ("Windverband Eigenlast", 1, 0.0)],
+        )
+        log = []
+        m = R6.read_rf6(f, log=log)
+        txt = "\n".join(log)
+        check("die Kennzahl ohne Eintrag wird genannt",
+              "unbekannter Kennzahl" in txt and "91" in txt and "92" in txt,
+              next((x for x in log if "unbekannter Kennzahl" in x), "keine Zeile"))
+        check("die Verteilung der Kategorien steht im Protokoll",
+              "Einwirkungskategorie:" in txt,
+              next((x for x in log if "Einwirkungskategorie:" in x), "keine Zeile"))
+        check("der Name verbessert das Rueckfall-Q: Schnee wird S",
+              m.load_cases["LF2"].category == "S", m.load_cases["LF2"].category)
+        check("und Wind wird W", m.load_cases["LF3"].category == "W",
+              m.load_cases["LF3"].category)
+        # Gegenprobe: die Namensdeutung darf ein G aus der Datei nicht kippen
+        check("„Windverband Eigenlast“ mit Kennzahl 1 bleibt staendig",
+              m.load_cases["LF4"].category == "G", m.load_cases["LF4"].category)
+        check("die Probe ist scharf: ohne die Kennzahlschranke waere es W",
+              _C.category_from_text("Windverband Eigenlast", "Q") == "W",
+              _C.category_from_text("Windverband Eigenlast", "Q"))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_lastfaelle_und_lasten():
     tmp = tempfile.mkdtemp()
     try:
@@ -2258,7 +2465,8 @@ def test_stab_und_knotenlasten():
 
 
 def main():
-    for t in (test_stab_und_knotenlasten, test_deaktivierte_staebe, test_grundmodell, test_nichtlineare_lager, test_abheben,
+    for t in (test_flaechenlast_richtung, test_flaechenlasten_werden_abgezaehlt,
+              test_einwirkungskategorie_wird_genannt, test_stab_und_knotenlasten, test_deaktivierte_staebe, test_grundmodell, test_nichtlineare_lager, test_abheben,
               test_linien_flaechenlager, test_flaechen_mit_dicke,
               test_volumenkoerper, test_stabtypen, test_kontaktbedingungen,
               test_freigabetyp_je_objekt,

@@ -847,7 +847,59 @@ def test_dispatcher():
 
 
 # --------------------------------------------------------------------------
-TESTS = [test_xlsx_roundtrip, test_dxf, test_abaqus_inp, test_nastran_bdf, test_ifc_parser,
+def test_dicke_wird_nicht_still_geerbt():
+    """Eine Schale ohne eigene Dicke erbt - aber sie sagt es.
+
+    `_common.ensure_shell_prop` gibt ohne Namen und ohne Dicke die **zuerst
+    gelesene** Dicke zurueck. Bis zum 22.09.2026 geschah das wortlos: eine
+    Flaeche, deren Dickenangabe in der Datei fehlte, trug damit eine Dicke,
+    die nirgends steht - gemessen 20 mm statt der 10 mm des Rueckfalls, also
+    Biegesteifigkeit (20/10)^3 = 8fach und die Spannung aus Moment um den
+    Faktor 4 zu klein. Welcher Wert es wird, haengt allein daran, welche
+    Flaeche zuerst in der Datei stand.
+
+    Gemeldet wird **einmal je Protokoll** und nicht je Aufruf: die Funktion
+    wird auch je Element gerufen (InfoCAD-Leser), eine Zeile je Aufruf waere
+    eine Flut.
+    """
+    from statik3d.importers import _common as C
+    from statik3d.model import ShellProp
+
+    m = Model("erbe")
+    m.add_shell_prop(ShellProp("t20", 0.020))
+    log = []
+    name = C.ensure_shell_prop(m, None, None, log)
+    expect("die geerbte Dicke ist die zuerst gelesene",
+           name == "t20" and abs(m.shells[name].t - 0.020) < 1e-12,
+           f"{name} = {m.shells[name].t * 1e3:g} mm")
+    zeilen = [z for z in log if "erben" in z]
+    expect("und das Erben steht im Protokoll", len(zeilen) == 1,
+           zeilen[0] if zeilen else "keine Zeile")
+    expect("die Zeile nennt den Wert, der wirklich angesetzt wird",
+           "20 mm" in zeilen[0], zeilen[0] if zeilen else "-")
+
+    # Zehn weitere Schalen duerfen das Protokoll nicht fluten
+    for _ in range(10):
+        C.ensure_shell_prop(m, None, None, log)
+    expect("auch nach elf Schalen steht die Meldung genau einmal",
+           len([z for z in log if "erben" in z]) == 1,
+           f"{len([z for z in log if 'erben' in z])} Zeilen")
+
+    # Gegenprobe: ohne vorhandene Dicke greift der 10-mm-Rueckfall mit
+    # seiner eigenen, schon vorhandenen Warnung
+    m2 = Model("leer")
+    log2 = []
+    n2 = C.ensure_shell_prop(m2, None, None, log2)
+    expect("ohne jede vorhandene Dicke gilt der 10-mm-Rueckfall",
+           abs(m2.shells[n2].t - 0.010) < 1e-12,
+           f"{m2.shells[n2].t * 1e3:g} mm")
+    expect("und auch der wird genannt",
+           any("10 mm angenommen" in z for z in log2),
+           next((z for z in log2), "keine Zeile"))
+
+
+TESTS = [
+    test_dicke_wird_nicht_still_geerbt, test_xlsx_roundtrip, test_dxf, test_abaqus_inp, test_nastran_bdf, test_ifc_parser,
          test_ifc, test_ifc2x3, test_ifc_physical_fallback, test_saf, test_rfem_xlsx,
          test_rfem_csv_folder, test_dispatcher]
 

@@ -349,6 +349,14 @@ zu tun hat. Übernommen werden:
 
 Fehlt die Datei, gilt die Programmvorgabe — und das Protokoll sagt es.
 
+**Fläche ohne Dickenangabe.** Trägt eine Fläche keine eigene Dicke, erbt sie
+die **zuerst gelesene** — und das geschah bis zum 22.09.2026 wortlos. Gemessen
+wurden 20 mm statt der 10 mm des Rückfalls: Biegesteifigkeit (20/10)³ = 8fach,
+die Spannung aus Moment um den Faktor 4 zu klein, und welcher Wert es wird,
+hängt allein daran, welche Fläche zuerst in der Datei stand. Geerbt wird
+weiterhin — aber es steht jetzt als Warnung im Protokoll, mit dem Namen und
+dem Wert, und zwar einmal je Protokoll statt einmal je Aufruf.
+
 ### Materialien: Streckgrenze und Zugfestigkeit nach Erzeugnisdicke
 
 RFEM 6 führt **f_y und f_u nicht als Zahl**, sondern als Dickenbereiche
@@ -562,6 +570,43 @@ Jeder Lastfall kommt mit Name (als Beschreibung), Einwirkungskategorie
 | **Freie Rechtecklast** (`FreeRectangularLoad`) | als Geometrielast mit Fenster und Richtung – siehe unten |
 | **Stabvorspannung** (`MemberTypeLoadImplInitialPrestress`) | als gleichwertige Temperaturlast (siehe unten) |
 | Linienlast, Volumenlast | gemeldet – sie brauchen das Linien- bzw. Volumennetz |
+
+**Die Lastrichtung einer Flächenlast wird angesetzt.** RFEM führt zu jeder
+Flächenlast eine `loadDirection`. Bis zum 22.09.2026 wurde sie gelesen, ins
+Protokoll geschrieben und dann **weggeworfen**: ohne Richtungsangabe setzt
+Statik3D einen Druck senkrecht zur Fläche an. Eine Last, die in der Datei
+global Z steht, zeigte damit in die Flächennormale. Am Drehlagermodell traf
+das **396 von 711** Flächenlasten; auf einem geschlossenen Körper hebt ein
+Normaldruck sich auf, und der Lastfall wäre kräftefrei. Der Fehler blieb nicht
+auf geneigte Flächen beschränkt: schon bei einer waagerechten hing das
+Vorzeichen am **Umlaufsinn des Randpolygons** (gemessen: Umlauf 1‑2‑3‑4 gab
+R_z = +8000 N, Umlauf 4‑3‑2‑1 gab −8000 N; mit Richtung in beiden Fällen
++8000 N). Umgerechnet wird mit derselben Tabelle wie bei Stab- und
+Linienlasten (`_richtung_aus_kennzahl`); Kennzahl 0 bleibt der Normaldruck,
+eine nicht geführte Kennzahl wird als Normaldruck angesetzt **und das steht
+im Protokoll**. Ob RFEM eine Flächenlast auf die wahre oder auf die
+projizierte Fläche bezieht, ist aus der Datei nicht lesbar — angesetzt wird
+die wahre Fläche, und auch das sagt das Protokoll.
+
+**Die Flächenlasten zählen sich ab.** Jede Zeile der Tabelle `SurfaceLoad`
+taucht im Protokoll auf — auch die, die nicht übernommen wird: Lasten anderer
+Art (Temperatur, Dehnung, Vorkrümmung, Masse), Lasten ohne lesbaren Betrag
+und solche, deren Umsetzungstabelle die Datei gar nicht führt. Die letzten
+verschwanden besonders leise, weil sie schon beim Auflösen der Umsetzung
+wegfielen, bevor die Leseschleife sie sah; gezählt wird deshalb gegen die
+Zahl der Rohzeilen. Vorher nannte das Protokoll bei Linien- und Volumenlasten
+je eine Zeile, bei den Flächen aber nichts — der Anwender durfte daraus
+schließen, dort sei nichts weggefallen.
+
+**Einwirkungskategorie.** `ACTION_CATEGORY` führt nur wenige Kennzahlen;
+alles Übrige wurde still zu „Q" (veränderlich, allgemein, ψ₀ = 0,80), und das
+Protokoll meldete nur „Einwirkungskategorie übernommen". Jetzt steht die
+Verteilung im Protokoll (`Einwirkungskategorie: 2x G, 1x S, 1x W`), jede
+nicht geführte Kennzahl wird mit ihrer Nummer genannt, und der **Name** des
+Lastfalls verbessert die Kategorie — aber nur dort, wo die Kennzahl nichts
+hergibt: ein „G" aus der Datei darf der Freitext nicht umstoßen, sonst würde
+ein Lastfall „Windverband Eigenlast" mit der Kennzahl 1 zu W und damit
+veränderlich.
 
 **Freie Rechtecklasten.** RFEM legt das Lastfenster in die uv-Ebene eines
 eigenen Koordinatensystems (`coordinateSystem_id` → `CoordinateSystem…
