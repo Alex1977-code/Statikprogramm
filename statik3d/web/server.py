@@ -779,6 +779,42 @@ def _nachweis_klasse(d) -> str:
     return "ok"
 
 
+def _stab_klasse(mc) -> str:
+    """Farbe eines einzelnen Stabnachweises EC3: 'warn' (nicht gefuehrt, etwa
+    Werkstoff ohne f_y), 'err' (Ausnutzung ueber 1) oder 'ok'.
+
+    Tabelle, Stabdetail und Stabverlauf im Browser faerbten bis zum 23.09.2026
+    nach der Ausnutzung allein; ein nicht gefuehrter Stab hat 0 und stand
+    gemessen gruen mit "0,00" da (ec6448c, Stab aus Werkstoff ohne f_y).
+    """
+    if getattr(mc, "fehler", ""):
+        return "warn"
+    return "err" if mc.util > 1.0 else "ok"
+
+
+def _ermuedung_klasse(f) -> str:
+    """Farbe der Zeile "Ermüdung: …" im Register Nachweise: 'err' (ein
+    gefuehrter Nachweis mit D > 1), 'warn' (ein Nachweis nicht gefuehrt oder
+    unvollstaendig, ein Stab/Volumen ohne wirksame Last oder gar kein Eintrag
+    mit Kerbfall) oder 'ok'.
+
+    Wie _nachweis_klasse: das Urteil kommt aus den Nachweisen, nicht aus der
+    Tabelle. app.js faerbte bis zum 23.09.2026 mit ``parseFloat(r[7]) > 1``;
+    ein nicht gefuehrter Stab hat dort "–" (NaN), ein unvollstaendiger sein D
+    aus den gerechneten Lasten. Gemessen an ec6448c: "Ermüdung: 2 Stäbe; nicht
+    geführt: Stab Traeger, Stab Ohne_fy" und "… D = 0.074 …; unvollständig
+    (Ergebnis einer Last fehlt): …" gruen.
+    """
+    alle = (list((getattr(f, "members", None) or {}).values())
+            + list((getattr(f, "volumen", None) or {}).values()))
+    if any(not getattr(x, "fehler", "") and x.util > 1.0 for x in alle):
+        return "err"
+    if (not alle or getattr(f, "ohne_wirksame_last", None)
+            or any(getattr(x, "fehler", "") or getattr(x, "fehlende_lasten", None) for x in alle)):
+        return "warn"
+    return "ok"
+
+
 def diagram_payload(st: State, which: str = None, quantity: str = "My", n: int = 9) -> dict:
     if quantity not in FORCE_KEYS:
         raise ApiError(f"Schnittgröße '{quantity}' unbekannt ({', '.join(FORCE_KEYS)})")
@@ -864,6 +900,7 @@ def member_payload(st: State, which: str = None, name: str = "", n: int = None) 
 def _member_check_dict(mc) -> dict:
     d = _clean(asdict(mc))
     d["status"] = mc.status()
+    d["klasse"] = _stab_klasse(mc)
     return d
 
 
@@ -880,7 +917,8 @@ def design_payload(st: State) -> dict:
                              "members": {k: _member_check_dict(v) for k, v in d.members.items()}}
         if an is not None and an.fatigue is not None:
             f = an.fatigue
-            out["fatigue"] = {"summary": f.summary(), "table": f.table(), "gamma_Ff": float(f.gamma_Ff),
+            out["fatigue"] = {"summary": f.summary(), "status": _ermuedung_klasse(f),
+                              "table": f.table(), "gamma_Ff": float(f.gamma_Ff),
                               "members": {k: _clean(asdict(v)) for k, v in f.members.items()}}
         return out
 

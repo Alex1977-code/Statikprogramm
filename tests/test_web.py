@@ -750,11 +750,186 @@ def test_nachweiszeile_nicht_gefuehrt_nicht_gruen():
     _assert_since(n0)
 
 
+def _nachweise_rendern(node: str, daten: dict) -> dict:
+    """Die Register Ergebnisse/Nachweise, die Tabellenzeilen, das Stabdetail und
+    den Stabverlauf mit tests/render_nachweiszeile.js rendern (Ausgabe als dict,
+    bei einem Fehler {"fehler": Ausgabe von node})."""
+    import subprocess
+    import tempfile
+    hier = os.path.dirname(os.path.abspath(__file__))
+    app_js = os.path.join(os.path.dirname(hier), "statik3d", "web", "static", "app.js")
+    with tempfile.TemporaryDirectory() as tmp:
+        pfad = os.path.join(tmp, "daten.json")
+        with open(pfad, "w", encoding="utf-8") as f:
+            json.dump(daten, f)
+        p = subprocess.run([node, os.path.join(hier, "render_nachweiszeile.js"), app_js, pfad],
+                           capture_output=True, text=True, timeout=120, encoding="utf-8")
+    try:
+        return json.loads(p.stdout.strip().splitlines()[-1])
+    except Exception:        # noqa: BLE001
+        return {"fehler": (p.stderr or p.stdout)[-300:]}
+
+
+def test_nicht_gefuehrter_stab_tabelle_detail_verlauf():
+    """Ein nicht gefuehrter Stab steht in Tabelle, Stabdetail und Stabverlauf nicht gruen da.
+
+    Die Nachweiszeile wurde am 23.09.2026 umgestellt (Klasse vom Server), die
+    Stellen je Stab nicht: Gemessen 23.09.2026 an ec6448c (Traeger 0,633 und
+    Stab Ohne_fy aus einem Werkstoff ohne f_y, Status "nicht geführt"):
+    Tabellenzeile im Register Nachweise ``<span class="util"
+    style="background:#2e8b3a">0,00</span>`` (app.js nahm die Ausnutzung
+    r[5], nicht den Status r[9]), Stabdetail ``<span class="status-ok">nicht
+    geführt</span>`` mit gruenem 0,00 (Farbe aus ``m.util > 1``), Stabverlauf
+    ``<div class="msg ok">Nachweis: Ausnutzung 0,000 –  (, x = – m) · Klasse
+    1</div>`` (Farbe aus ``d.design.util > 1``). Der Server liefert jetzt je
+    Stab die Klasse (err/warn/ok) mit, die Oberflaeche faerbt danach.
+    """
+    n0 = len(RESULTS)
+    node = _node()
+    m = _nachweismodell(-10000.0)
+    server, thread, state = start_server_thread(m, host="127.0.0.1", port=0, key=KEY)
+    c = Client(server.local_url.rstrip("/"))
+    try:
+        c.post("/api/solve", {"kind": "all", "design": True, "workers": 1})
+        job = c.wait_job()
+        st, dp, _ = c.get("/api/design")
+        stabverlauf = {}
+        for name in ("Traeger", "Ohne_fy"):
+            st2, stabverlauf[name], _ = c.get(f"/api/member?which=combo:K1&name={name}")
+        st3, zustand, _ = c.get("/api/state")
+        st4, r, _ = c.get("/api/results")
+        st5, entries, _ = c.get("/api/entries")
+    finally:
+        server.shutdown()
+        server.server_close()
+    stabe = (dp.get("design") or {}).get("members") or {}
+    ohne, traeger = stabe.get("Ohne_fy") or {}, stabe.get("Traeger") or {}
+    check("Stab ohne f_y: gerechnet, Status 'nicht geführt'",
+          job["status"] == "fertig" and ohne.get("status") == "nicht geführt"
+          and traeger.get("status") == "erfüllt",
+          job.get("error", "") or f"{ohne.get('status')}, {traeger.get('status')}")
+    check("/api/design: Klasse je Stab (Ohne_fy warn, Traeger ok)",
+          ohne.get("klasse") == "warn" and traeger.get("klasse") == "ok",
+          f"{ohne.get('klasse')}, {traeger.get('klasse')}")
+    check("/api/member: Klasse des Stabnachweises (Ohne_fy warn, Traeger ok)",
+          (stabverlauf["Ohne_fy"].get("design") or {}).get("klasse") == "warn"
+          and (stabverlauf["Traeger"].get("design") or {}).get("klasse") == "ok",
+          str([(stabverlauf[k].get("design") or {}).get("klasse") for k in stabverlauf]))
+    if not node:
+        check("node nicht vorhanden - Renderpruefung je Stab entfaellt", True)
+        _assert_since(n0)
+        return
+    aus = _nachweise_rendern(node, {"state": zustand, "entries": entries, "result": r,
+                                    "design": dp, "member": stabverlauf})
+    zeilen = aus.get("stabzeilen") or {}
+    z = zeilen.get("Ohne_fy", "")
+    check("Tabelle: Ohne_fy ohne gruenes 0,00, Ausnutzung '–' in Warnfarbe, 'nicht geführt'",
+          z and "#2e8b3a" not in z and "0,00" not in z
+          and 'style="background:var(--warn)"' in z and "nicht geführt" in z,
+          z[:300] or str(aus.get("fehler") or aus.get("stabfehler")))
+    check("Gegenprobe Tabelle: Traeger weiter mit Ausnutzung 0,63",
+          '<span class="util" style="background:#d4b000">0,63</span>' in zeilen.get("Traeger", ""),
+          zeilen.get("Traeger", "")[:300])
+    detail = aus.get("stabdetail") or {}
+    d_ohne, d_tr = detail.get("Ohne_fy") or {}, detail.get("Traeger") or {}
+    check("Stabdetail: Ohne_fy 'nicht geführt' in Warnfarbe, Ausnutzung '–'",
+          '<span class="status-warn">nicht geführt</span>' in d_ohne.get("kopf", "")
+          and "0,00" not in d_ohne.get("ausnutzung", "")
+          and "#2e8b3a" not in d_ohne.get("ausnutzung", ""), str(d_ohne))
+    check("Gegenprobe Stabdetail: Traeger 'erfüllt' gruen mit 0,63",
+          '<span class="status-ok">erfüllt</span>' in d_tr.get("kopf", "")
+          and "0,63" in d_tr.get("ausnutzung", ""), str(d_tr))
+    verlauf = aus.get("stabverlauf") or {}
+    v_ohne = [x for x in verlauf.get("Ohne_fy") or [] if x.get("text", "").startswith("Nachweis")]
+    check("Stabverlauf: Ohne_fy 'Nachweis nicht geführt' als warn, ohne Ausnutzung 0,000",
+          len(v_ohne) == 1 and v_ohne[0]["klasse"] == "warn"
+          and "nicht geführt" in v_ohne[0]["text"] and "0,000" not in v_ohne[0]["text"],
+          str(v_ohne))
+    v_tr = [x for x in verlauf.get("Traeger") or [] if x.get("text", "").startswith("Nachweis")]
+    check("Gegenprobe Stabverlauf: Traeger 'Ausnutzung 0,633' als ok",
+          len(v_tr) == 1 and v_tr[0]["klasse"] == "ok" and "Ausnutzung 0,633" in v_tr[0]["text"],
+          str(v_tr))
+    _assert_since(n0)
+
+
+def _ermuedungsmodell(lasten, kerbfall: bool = True) -> Model:
+    """_nachweismodell(-10000) mit einem zweiten Lastfall Q (qz = -5 kN/m auf
+    dem Traeger), Kerbfall 71 an beiden Staeben (kerbfall) und den
+    Ermuedungslasten *lasten* = [(Name, Lastfall, Lastspiele)]."""
+    m = _nachweismodell(-10000.0)
+    m.add_load_case("Q", "Q", activate=False)
+    for e in range(6):
+        m.load_beam(e, qz=-5000.0, case="Q")
+    if kerbfall:
+        for mem in m.members.values():
+            mem.detail_category = 71e6
+    for name, fall, n in lasten:
+        m.add_fatigue_load(name, fall, None, n, 1.0)
+    return m
+
+
+def test_ermuedungszeile_nicht_gefuehrt_nicht_gruen():
+    """Die Zeile "Ermüdung: …" im Register Nachweise ist nur gruen, wenn jeder
+    Ermuedungsnachweis gefuehrt, vollstaendig und erfuellt ist.
+
+    app.js faerbte sie mit ``rows.some(r => parseFloat(r[7]) > 1)``; ein nicht
+    gefuehrter Stab hat in der Spalte Ausnutzung "–", parseFloat gibt NaN.
+    Gemessen 23.09.2026 an ec6448c: ``<div class="msg ok">Ermüdung: 2 Stäbe;
+    nicht geführt: Stab Traeger, Stab Ohne_fy</div>``. Der Weg ist der aus dem
+    Browser: nur den Lastfall LF1 rechnen, dann den Ermuedungsnachweis mit
+    einer Last auf dem nicht gerechneten Lastfall Q.
+    """
+    n0 = len(RESULTS)
+    node = _node()
+    faelle = (("nicht geführt (Q nicht gerechnet)", _ermuedungsmodell([("E_Q", "Q", 2e6)]), "warn"),
+              ("unvollständig (Q fehlt, LF1 D < 1)",
+               _ermuedungsmodell([("E_Q", "Q", 2e6), ("E_LF1", "LF1", 1e5)]), "warn"),
+              ("keine Staebe mit Kerbfall",
+               _ermuedungsmodell([("E_LF1", "LF1", 1e5)], kerbfall=False), "warn"),
+              ("NICHT erfüllt (LF1 D > 1, Q fehlt)",
+               _ermuedungsmodell([("E_Q", "Q", 2e6), ("E_LF1", "LF1", 2e6)]), "err"),
+              ("Gegenprobe erfüllt (nur LF1, D < 1)",
+               _ermuedungsmodell([("E_LF1", "LF1", 1e5)]), "ok"))
+    for name, m, soll in faelle:
+        server, thread, state = start_server_thread(m, host="127.0.0.1", port=0, key=KEY)
+        c = Client(server.local_url.rstrip("/"))
+        try:
+            c.post("/api/solve", {"kind": "case", "case": "LF1", "workers": 1})
+            job = c.wait_job()
+            c.post("/api/fatigue")
+            job2 = c.wait_job()
+            st, dp, _ = c.get("/api/design")
+            st2, zustand, _ = c.get("/api/state")
+        finally:
+            server.shutdown()
+            server.server_close()
+        f = dp.get("fatigue") or {}
+        check(f"Ermuedung {name}: gerechnet",
+              job["status"] == "fertig" and job2["status"] == "fertig" and f.get("summary"),
+              job.get("error", "") or job2.get("error", "") or str(f.get("summary")))
+        check(f"Ermuedung {name}: /api/design fatigue.status = {soll}",
+              f.get("status") == soll, f"{f.get('status')} - {f.get('summary')}")
+        if not node:
+            continue
+        aus = _nachweise_rendern(node, {"state": zustand, "entries": [], "result": {},
+                                        "design": dp})
+        zeilen = [z for z in (aus.get("nachweise") or []) if isinstance(z, dict)
+                  and z.get("text", "").startswith("Ermüdung")]
+        check(f"Ermuedung {name}: Register Nachweise zeigt die Zeile als {soll}",
+              len(zeilen) == 1 and zeilen[0]["klasse"] == soll,
+              str(zeilen) if zeilen else str(aus.get("fehler") or aus)[:300])
+    if not node:
+        check("node nicht vorhanden - Renderpruefung der Ermuedungszeile entfaellt", True)
+    _assert_since(n0)
+
+
 def main():
     for t in (test_static_and_auth, test_model_editing, test_solve_results_report,
               test_contact_and_import, test_nichtlineare_lager_und_profile,
               test_stellungen_din19704_export, test_oberflaeche_rendert,
               test_nachweiszeile_nicht_gefuehrt_nicht_gruen,
+              test_nicht_gefuehrter_stab_tabelle_detail_verlauf,
+              test_ermuedungszeile_nicht_gefuehrt_nicht_gruen,
               test_bound_state):
         print(f"\n--- {t.__name__} ---")
         try:

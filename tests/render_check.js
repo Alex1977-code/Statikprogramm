@@ -122,6 +122,19 @@ pruefe('Umhüllende nicht grün, wenn eine Stellung nicht nachgewiesen ist',
 pruefe('Umhüllende ohne jeden Nachweis: "η nicht bestimmt" statt eines Werts',
        !B.gerechnet || !nichtBestimmt
        || (zeileUmh.includes('η nicht bestimmt') && !/η = \d/.test(zeileUmh)), zeileUmh);
+// "· maßgebende Stellung" in der Meldung der gewählten Stellung nur an der
+// Stellung, die das η der Umhüllenden bestimmt ("fuehrt"), wie auf der Karte.
+// Gemessen 23.09.2026 an ec6448c (Stauwand, 3 Stellungen mit Kombinationen):
+// alle drei Meldungen endeten auf "maßgebende Stellung" - app.js las das Feld
+// "massgebend", den Text des maßgebenden Stabnachweises ("Riegel 2:
+// Interaktion Gl. 6.62"), nicht das Kennzeichen "fuehrt".
+const meldungVon = x => ev(`stellungMeldung(S.state.stellungen.liste[${B.liste.indexOf(x)}].ergebnis)`);
+const nennenMassgebend = gerechnet.filter(x => meldungVon(x).includes('maßgebende Stellung')).map(x => x.name);
+const sollMassgebend = gerechnet.filter(x => x.ergebnis.fuehrt && !ohne.includes(x)).map(x => x.name);
+pruefe('Meldung "maßgebende Stellung" nur an der Stellung, die η bestimmt',
+       JSON.stringify(nennenMassgebend) === JSON.stringify(sollMassgebend)
+       && (!bestimmt.length || sollMassgebend.length === 1),
+       `nennen: ${nennenMassgebend.join(', ') || '–'}; soll: ${sollMassgebend.join(', ') || '–'}`);
 if (offen.length) {
   ev(`S.stellung = ${JSON.stringify(offen[0].name)}`);
   const hs = ev('renderBruecke()');
