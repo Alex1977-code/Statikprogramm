@@ -492,6 +492,84 @@ def test_nachweisauftrag_traegt_kein_modell():
           float(all(j.payload.get("paket") for j in gefangen)), 1.0, 0)
 
 
+def test_nachweisetikett_folgt_dem_ergebnis():
+    """Das Etikett der Maske Nachweise (Gruppe „Nachweise führen“) zeigt,
+    was das **gezeigte** Ergebnis an Nachweisen hat - nicht, was eine
+    fruehere Rechnung hatte.
+
+    MainWindow.show_results setzte das Etikett bis zum 23.09.2026 nur, wenn
+    ein EC3- oder Ermuedungsergebnis vorlag. Nach einer Rechnung mit EC3 und
+    einer zweiten ohne Nachweise blieb die alte Zeile „Nachweise EC3: …
+    max. Ausnutzung …“ stehen (Nebenbefund NB1, Probe np_6/p68: am
+    Hallenrahmen 0 setText-Aufrufe bei der zweiten Rechnung); mit nur
+    Ermuedung wurde es geleert (B069).
+    Ohne Fenster: echte Methode, self als Attrappe, das Etikett merkt sich
+    seinen Text wie das QLabel.
+    """
+    from unittest import mock
+    from statik3d.gui.main import MainWindow
+
+    class Etikett:
+        def __init__(self):
+            self.text = "noch keine Nachweise"      # wie beim Anlegen der Maske
+
+        def setText(self, t):
+            self.text = str(t)
+
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    m.add_section(make_section("IPE 300"))
+    ids = mesher.line_of_beams(m, "S235", "IPE 300", (0, 0, 0), (6, 0, 0), 6)
+    m.fix(ids[0], [0, 1, 2, 3]); m.fix(ids[-1], [1, 2, 3])
+    m.case().category = "G"
+    for e in range(6):
+        m.load_beam(e, qz=-10000.0)
+    m.add_member("Traeger", list(range(6)), detail_category=71e6)
+    m.add_combination("K1", {"LF1": 1.0}, "ULS")
+    m.add_fatigue_load("Ermuedung", "LF1", None, 2e6)
+    an_ec3 = solver.solve_all(m, design=True, fatigue=False)
+    an_fat = solver.solve_all(m, design=False, fatigue=True)
+    an_beide = solver.solve_all(m, design=True, fatigue=True)
+    an_ohne = solver.solve_all(m, design=False, fatigue=False)
+
+    fenster = mock.MagicMock()
+    fenster.model = m
+    fenster.results = None
+    fenster.lbl_design = Etikett()
+
+    def zeige(an):
+        fenster.analysis = an
+        fenster.current_result.return_value = (
+            None if an is None else next(iter(an.combinations.values())))
+        try:
+            MainWindow.show_results(fenster)
+        except Exception as ex:      # noqa: BLE001 - als Fehlschlag zaehlen
+            print(f"     show_results: {type(ex).__name__}: {ex}")
+            return f"(Ausnahme {type(ex).__name__})"
+        return fenster.lbl_design.text
+
+    t = zeige(an_ec3)
+    print("     mit EC3:", t)
+    check("Etikett: mit EC3 steht die Zeile der Nachweise EC3",
+          float(t == an_ec3.design.summary()), 1.0, 0)
+    t = zeige(an_ohne)
+    print("     danach ohne Nachweise:", t)
+    check("Etikett: danach ohne Nachweise keine EC3-Zeile mehr",
+          float("Nachweise EC3" not in t), 1.0, 0)
+    check("Etikett: ohne Nachweise 'noch keine Nachweise'",
+          float(t == "noch keine Nachweise"), 1.0, 0)
+    t = zeige(an_fat)
+    print("     nur Ermuedung:", t)
+    check("Etikett: nur Ermuedung zeigt die Zeile der Ermuedung",
+          float(t == an_fat.fatigue.summary() and "Nachweise EC3" not in t), 1.0, 0)
+    t = zeige(an_beide)
+    check("Etikett: EC3 und Ermuedung untereinander",
+          float(t == an_beide.design.summary() + "\n" + an_beide.fatigue.summary()), 1.0, 0)
+    t = zeige(None)
+    check("Etikett: ohne Ergebnis 'noch keine Nachweise'",
+          float(t == "noch keine Nachweise"), 1.0, 0)
+
+
 def main():
     print("=" * 100)
     print("STATIK3D - Verifikation EC3 (Klassifizierung, Querschnitt, Stabilitaet, Ermuedung)")
@@ -509,7 +587,8 @@ def main():
     test_stab_ohne_streckgrenze_nicht_gefuehrt()
     test_frame_parallel_design()
     test_nachweisauftrag_traegt_kein_modell()
-    nok = sum(1 for r in RESULTS if r[4])
+    test_nachweisetikett_folgt_dem_ergebnis()
+    nok =sum(1 for r in RESULTS if r[4])
     print("=" * 100)
     print(f"Ergebnis: {nok}/{len(RESULTS)} Tests bestanden")
     return 0 if nok == len(RESULTS) else 1

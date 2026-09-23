@@ -416,6 +416,122 @@ def test_fehlender_mindestzustand_wird_gemeldet():
           f"D = {getattr(fm3, 'util', 0.0):.4f}, keine Warnung")
 
 
+def test_lastfall_umbenennen_zieht_ermuedungslasten_nach():
+    """Nebenbefund NB3 (22./23.09.2026): ein umbenannter Lastfall hiess in
+    den Ermuedungslasten weiter wie vorher.
+
+    Die Oberflaeche (Register Lastfaelle, Modellbaum, Objektmaske) benannte
+    ihn nur in den Kombinationen um, nicht in case_max, case_min und den
+    Gliedern eines Verlaufs; der Webserver (Operation edit_case) zog
+    case_max/case_min nach, den Verlauf nicht. Danach meldete die
+    Modellpruefung den alten Namen als „unbekannt“, und dem Nachweis fehlte
+    die Last: gemessen am Stand ec6448c D = 0,018426 (Oberflaeche) bzw.
+    1,236980 (Web) statt 2,437110, beide als unvollstaendig markiert.
+    Geprueft werden alle vier Wege, die Oberflaeche mit ihren echten
+    Methoden (self und Lastfallmaske als Attrappe). Richtig ist: dieselbe
+    Schaedigung wie vor dem Umbenennen.
+    """
+    import importlib
+    from unittest import mock
+    # statik3d.gui.main als Modul - der Paketname "main" ist die Startfunktion
+    G = importlib.import_module("statik3d.gui.main")
+    from statik3d.web import OPS
+
+    def bau():
+        m = _kragarm()
+        m.add_fatigue_load("Paar", "LF2", "LF3", cycles=1e5)
+        m.fatigue_loads["Verlauf"] = FatigueLoad("Verlauf", folge=["LF1", "LF2", "LF3"],
+                                                 wiederholungen=1e5)
+        return m
+
+    def schaedigung(m):
+        an = solver.solve_all(m, design=False, fatigue=True)
+        fm = an.fatigue.members["Kragarm"]
+        return fm.util, list(getattr(fm, "fehlende_lasten", None) or [])
+
+    D0, fehlt0 = schaedigung(bau())
+    check("vor dem Umbenennen: Nachweis vollständig", D0 > 0 and not fehlt0,
+          f"D = {D0:.6f}, fehlend {fehlt0}")
+
+    class Lastfallmaske:
+        """Attrappe der Maske Lastfall: LF2 heisst jetzt 'Nutzlast'."""
+        def __init__(self, _fenster, lc, *_a, **_k):
+            self.lc = lc
+
+        def exec(self):
+            return True
+
+        def values(self):
+            return ("Nutzlast", self.lc.category, self.lc.description,
+                    self.lc.exclusive_group)
+
+        def situation_name(self):
+            return self.lc.situation
+
+        def theorie_name(self):
+            return self.lc.theorie
+
+    def pruefen(weg, m):
+        fl, vl = m.fatigue_loads["Paar"], m.fatigue_loads["Verlauf"]
+        check(f"{weg}: der Lastfall heißt jetzt 'Nutzlast'",
+              list(m.load_cases) == ["LF1", "Nutzlast", "LF3"], str(list(m.load_cases)))
+        check(f"{weg}: oberer Zustand der Ermüdungslast umbenannt",
+              fl.case_max == "Nutzlast" and fl.case_min == "LF3",
+              f"{fl.case_max} gegen {fl.case_min}")
+        check(f"{weg}: der Verlauf nennt den neuen Namen",
+              vl.folge == ["LF1", "Nutzlast", "LF3"], str(vl.folge))
+        unbekannt = [x for x in m.check() if "unbekannt" in x]
+        check(f"{weg}: Modellprüfung meldet nichts „unbekannt“", not unbekannt,
+              "; ".join(unbekannt)[:90])
+        D, fehlt = schaedigung(m)
+        check(f"{weg}: dieselbe Schädigung wie vor dem Umbenennen",
+              not fehlt and abs(D - D0) <= 1e-12 * D0,
+              f"D = {D:.6f} gegen {D0:.6f}, fehlend {fehlt}")
+
+    # Drei Wege der Oberflaeche: Register Lastfaelle (edit_case), Doppelklick
+    # im Modellbaum (lastfall_bearbeiten) und die Objektmaske rechts
+    # („Übernehmen“, _eigenschaften_uebernehmen)
+    m = bau()
+    m.active_case = "LF2"
+    fenster = mock.MagicMock()
+    fenster.model = m
+    with mock.patch.object(G, "LoadCaseDialog", Lastfallmaske):
+        G.MainWindow.edit_case(fenster)
+    pruefen("Oberfläche, Register Lastfälle", m)
+    check("Oberfläche: aktiver Lastfall folgt", m.active_case == "Nutzlast", m.active_case)
+
+    m = bau()
+    fenster = mock.MagicMock()
+    fenster.model = m
+    with mock.patch.object(G.dg, "LoadCaseDialog", Lastfallmaske):
+        G.MainWindow.lastfall_bearbeiten(fenster, "LF2")
+    pruefen("Oberfläche, Modellbaum", m)
+
+    m = bau()
+    lc = m.load_cases["LF2"]
+    fenster = mock.MagicMock()
+    fenster.model = m
+    G.MainWindow._eigenschaften_uebernehmen(
+        fenster, "lastfall", "LF2",
+        {"name": "Nutzlast", "kategorie": lc.category, "beschreibung": lc.description,
+         "gruppe": lc.exclusive_group, "situation": "", "theorie": "", "grundlast": False,
+         "nummer": lc.nummer, "g_z": str(lc.gravity[2] if len(lc.gravity) > 2 else 0.0),
+         "psi": ""}, False)
+    pruefen("Oberfläche, Objektmaske", m)
+
+    m = bau()
+    OPS["edit_case"](None, m, {"name": "LF2", "fields": {"new_name": "Nutzlast"}})
+    pruefen("Web", m)
+
+    # Der untere Zustand zieht ebenso nach
+    m = bau()
+    OPS["edit_case"](None, m, {"name": "LF3", "fields": {"new_name": "Wind"}})
+    fl = m.fatigue_loads["Paar"]
+    check("Web: unterer Zustand umbenannt, Verlauf auch",
+          fl.case_min == "Wind" and m.fatigue_loads["Verlauf"].folge == ["LF1", "LF2", "Wind"],
+          f"{fl.case_min}, {m.fatigue_loads['Verlauf'].folge}")
+
+
 def _oder_ek(m, name="EK_oder"):
     """Eine oder-verknuepfte Ergebniskombination, wie sie der RFEM-Import fuer
     die FAT-Kombinationen anlegt: ``factors`` leer, je Alternative ein
@@ -747,6 +863,7 @@ def main():
     for t in (test_spanne, test_hauptspannungen, test_volumen, test_naht_beruehrung,
               test_kerbfall_vorschlaege,
               test_fehlender_mindestzustand_wird_gemeldet,
+              test_lastfall_umbenennen_zieht_ermuedungslasten_nach,
               test_mindestzustand_volumen_und_oder_ek,
               test_volumen_ohne_beitrag_und_unvollstaendig,
               test_unvollstaendig_je_weg):
