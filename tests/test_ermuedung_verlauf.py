@@ -743,13 +743,171 @@ def test_unvollstaendig_je_weg():
               "kein Eintrag" if x is None else f"{x.status()} D = {x.util:.3f} {x.fehlende_lasten}")
 
 
+def _kragarm_volumen(netz):
+    """Kragarm-Pruefkoerper (tests/pruefkoerper.Kragarm, hex8): Oberkante bei
+    L/2, Breitenmitte, nach Saint-Venant 355 N/mm2. Der Koerper mit Kerbfall
+    sind die Elemente mit x >= L/2 - das Moment faellt von dort zur Last hin,
+    seine groesste Schwingbreite liegt also am Schnitt x = L/2. Eine
+    Ermuedungslast 0 -> F (kein Mindestzustand): ihre Schwingbreite ist der
+    statische Wert."""
+    from statik3d.model import Volumenkoerper
+    from tests import pruefkoerper as pk
+    kr = pk.Kragarm()
+    m, ids = kr.modell("hex8", *netz)
+    rechts = [i for i, e in enumerate(m.elements) if m.nodes[e.nodes, 0].min() >= kr.x_nw - 1e-9]
+    m.koerper["R"] = Volumenkoerper("R", [], material="S", elemente=rechts, kerbfall=160e6)
+    lf = list(m.load_cases)[0]
+    m.add_fatigue_load("0-F", lf, None, 1e5)
+    nx, ny, nz = netz
+    return m, kr, lf, rechts, ids[(nx // 2, ny // 2, nz)]
+
+
+def test_volumen_randspannung_kragarm():
+    """Befund der ersten Element-Sitzung (23.09.2026): die Volumen-Ermuedung
+    las den Elementwert (res.solid_res), der statische Nachweis seit dem
+    22./23.09.2026 die geglaettete Randspannung (res.solid_knoten, an freien
+    Oberflaechen sigma n = 0). Am Kragarm (Schwingbreite 0 -> F, Koerper
+    x >= L/2) lag die groesste Schwingbreite nach der Elementregel bei
+    314,35 N/mm2 (hex8 8x2x4) bzw. 333,31 (16x4x8) gegen 355 - 40,65 bzw.
+    21,69 N/mm2 auf der unsicheren Seite (gemessen am Stand ec6448c,
+    23.09.2026). Jetzt: je Knoten die Schwingbreite aus den geglaetteten
+    Tensoren, auf 1 N/mm2 wie der statische Nachweis; die alte Regel bleibt
+    waehlbar (DesignSettings.ermuedung_volumen = "element") und liefert die
+    alten Zahlen; der Bericht nennt die gerechnete Regel.
+    """
+    from statik3d.elements import solid as sl
+    for netz in ((8, 2, 4), (16, 4, 8)):
+        m, kr, lf, rechts, n = _kragarm_volumen(netz)
+        an = solver.solve_all(m, design=False, fatigue=True)
+        res = an.cases[lf]
+        fv = an.fatigue.volumen["R"]
+        g = m.design.gamma_Ff
+        name = "hex8 %dx%dx%d" % netz
+        # statisch: die geglaettete Knotenspannung des Loesers am Nachweispunkt
+        sk = res.solid_knoten
+        j = np.flatnonzero(np.asarray(sk["knoten"]) == n)
+        S = np.asarray(sk["spannung"])[j[:1]]
+        s_stat = float(F.signalspannung(S)[0]) if len(j) == 1 else float("nan")
+        check(f"{name}: statisch am Nachweispunkt auf 1 N/mm2 (Hauptspannung, von Mises)",
+              abs(s_stat - kr.sigma) < 1e6 and abs(sl.von_mises(S[0]) - kr.sigma) < 1e6,
+              f"{s_stat / 1e6:.2f} / {sl.von_mises(S[0]) / 1e6:.2f} gegen {kr.sigma / 1e6:.1f} N/mm2")
+        # Schwingbreite 0 -> F am selben Knoten: gleich dem statischen Wert
+        orte = getattr(fv, "orte", None)
+        d_je = getattr(fv, "dsig_je_ort", None)
+        k = np.flatnonzero(np.asarray(orte) == n) if orte is not None else []
+        d_n = float(np.asarray(d_je)[k[0]]) if len(k) == 1 else float("nan")
+        check(f"{name}: Schwingbreite 0 -> F am Nachweispunkt = statischer Wert, auf 1 N/mm2",
+              abs(d_n - g * s_stat) < 1e-9 * kr.sigma and abs(d_n - g * kr.sigma) < 1e6,
+              f"{d_n / 1e6:.2f} N/mm2")
+        check(f"{name}: groesste Schwingbreite des Koerpers auf 1 N/mm2 an der Balkenloesung",
+              abs(fv.dsig_max - g * kr.sigma) < 1e6,
+              f"{fv.dsig_max / 1e6:.2f} gegen {g * kr.sigma / 1e6:.1f} N/mm2")
+        check(f"{name}: Regel 'knoten' gerechnet, massgebender Knoten benannt, D = n / N_R",
+              getattr(fv, "regel", "") == "knoten" and getattr(fv, "knoten", -1) >= 0
+              and fv.element in rechts
+              and abs(fv.D - 1e5 / F.sn_life(fv.dsig_max, 160e6, fv.gamma_Mf)) < 1e-12 * fv.D,
+              f"{getattr(fv, 'regel', None)} Knoten {getattr(fv, 'knoten', None)} D = {fv.D:.5f}")
+        # Die alte Regel bleibt waehlbar - mit den alten Zahlen (Elementwert)
+        alt = max(abs(float(F.signalspannung(np.asarray(res.solid_res[i])[None])[0])) for i in rechts) * g
+        m.design.ermuedung_volumen = "element"
+        fa = F.check_fatigue(m, an).volumen["R"]
+        check(f"{name}: Regel 'element' liefert den Elementwert wie bisher",
+              getattr(fa, "regel", "") == "element" and abs(fa.dsig_max - alt) < 1e-9 * alt
+              and abs(fa.D - 1e5 / F.sn_life(alt, 160e6, fa.gamma_Mf)) < 1e-12 * fa.D
+              and abs(alt - kr.sigma) > 20e6,
+              f"{fa.dsig_max / 1e6:.2f} N/mm2 ({(fa.dsig_max - kr.sigma) / 1e6:+.2f})")
+        if netz != (8, 2, 4):
+            continue
+        # Der Bericht nennt die gerechnete Regel
+        from statik3d.report.html import Report
+        import tempfile
+        texte = {}
+        for regel in ("knoten", "element"):
+            m.design.ermuedung_volumen = regel
+            an.fatigue = F.check_fatigue(m, an)
+            pfad_ = os.path.join(tempfile.mkdtemp(), f"kragarm_{regel}.html")
+            Report(m, an).to_html(pfad_)
+            texte[regel] = open(pfad_, encoding="utf-8").read()
+        check("Bericht nennt die Regel: geglättete Knotenspannung bzw. Elementwert",
+              "geglättete Knotenspannung" in texte["knoten"] and "Regel „knoten“" in texte["knoten"]
+              and "Regel „element“" in texte["element"] and "Regel „knoten“" not in texte["element"])
+
+
+def test_volumen_regel_rueckfall_und_fliessen():
+    """Die Grenzen der Regel "knoten": Ergebnisse ohne Knotenwerte (Dateien
+    vor dem 22.09.2026) rechnen nach der alten Regel **mit Hinweis**; eine
+    unbekannte Einstellung fuehrt den Nachweis nicht; fliessende Elemente
+    bleiben wie im statischen Nachweis von sigma n = 0 ausgenommen, und der
+    Nachweis sagt es."""
+    m, kr, lf, rechts, n = _kragarm_volumen((8, 2, 4))
+    an = solver.solve_all(m, design=False, fatigue=True)
+    alt = max(abs(float(F.signalspannung(np.asarray(an.cases[lf].solid_res[i])[None])[0]))
+              for i in rechts) * m.design.gamma_Ff
+    # (1) aeltere Ergebnisdatei: kein solid_knoten
+    an.cases[lf].solid_knoten = {}
+    fv = F.check_fatigue(m, an).volumen["R"]
+    check("ohne Knotenwerte: alte Regel (Elementwert), gerechnet, mit Hinweis",
+          getattr(fv, "regel", "") == "element" and not fv.fehler and abs(fv.dsig_max - alt) < 1e-9 * alt
+          and any("Knotenwerte" in w and lf in w for w in fv.warnings),
+          f"{getattr(fv, 'regel', None)} {fv.warnings}")
+    # (2) Kombination verschiedener Situationen (Results.combine: verworfen)
+    an.cases[lf].solid_knoten = {"verworfen": True}
+    fv = F.check_fatigue(m, an).volumen["R"]
+    check("verworfene Knotenwerte: ebenso alte Regel mit Hinweis",
+          getattr(fv, "regel", "") == "element" and any("Knotenwerte" in w for w in fv.warnings),
+          str(fv.warnings))
+    # (3) unbekannte Einstellung: nicht geführt, Grund nennt die erlaubten Werte
+    m.design.ermuedung_volumen = "irgendwas"
+    fv = F.check_fatigue(m, an).volumen.get("R")
+    check("unbekannte Einstellung: nicht geführt, keine stille Ersatzregel",
+          fv is not None and fv.status() == "nicht geführt" and "irgendwas" in fv.fehler
+          and "knoten" in fv.fehler and "element" in fv.fehler,
+          repr(getattr(fv, "fehler", None)))
+    # (4) fliessende Elemente: Balken aus einer hex8-Lage, reine Biegung
+    # 1,20 M_el (wie tests/test_volumen.py, test_randspannung_fliessend)
+    from statik3d import plastizitaet as pl
+    from statik3d.model import Volumenkoerper
+    from tests import pruefkoerper as pk
+    fy, b, h, L = 235e6, 0.2, 0.2, 1.0
+    M = 1.2 * fy * b * h ** 2 / 6.0
+    mp, _ids = pk.quader("hex8", 5, 1, 1, L, b, h, fy=fy)
+    for k in [x for x in range(mp.nn) if abs(mp.nodes[x, 0]) < 1e-9]:
+        mp.fix(int(k), "all")
+    seiten = pk.randseiten(mp, lambda X: bool(np.all(np.abs(X[:, 0] - L) < 1e-9)))
+    pk.spannung_auf_seiten(mp, seiten, lambda x: (M * (x[2] - h / 2) / (b * h ** 3 / 12), 0.0, 0.0))
+    mp.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.02, laststufen=1, iterationen=30,
+                                      toleranz=1e-9)
+    mp.koerper["B"] = Volumenkoerper("B", [], material="S", elemente=list(range(len(mp.elements))),
+                                     kerbfall=160e6)
+    lfp = list(mp.load_cases)[0]
+    mp.add_fatigue_load("0-M", lfp, None, 1e5)
+    anp = solver.solve_all(mp, design=False, fatigue=True)
+    fliessend = len(anp.cases[lfp].info.get("plastisch") or {})
+    fv = anp.fatigue.volumen["B"]
+    check("fließende Elemente: Meldung nennt Zustand und Zahl, Nachweis gerechnet",
+          fliessend > 0 and getattr(fv, "regel", "") == "knoten" and not fv.fehler
+          and any("fließen" in w and lfp in w and f"{fliessend} " in w for w in fv.warnings),
+          f"{fliessend} fließend, {fv.warnings}")
+    sk = anp.cases[lfp].solid_knoten
+    kn = np.asarray(sk["knoten"])
+    orte = getattr(fv, "orte", None)
+    d_je = getattr(fv, "dsig_je_ort", None)
+    soll = np.abs(F.signalspannung(np.asarray(sk["spannung"]))) * mp.design.gamma_Ff
+    gleich = (orte is not None and d_je is not None and np.array_equal(np.asarray(orte), kn)
+              and np.allclose(np.asarray(d_je), soll, rtol=1e-12, atol=1e-3))
+    check("fließend: die Schwingbreite ist die Knotenspannung des Lösers (dort ohne σ·n = 0)", gleich,
+          f"{0 if orte is None else len(orte)} Orte / {len(kn)} Knoten")
+
+
 def main():
     for t in (test_spanne, test_hauptspannungen, test_volumen, test_naht_beruehrung,
               test_kerbfall_vorschlaege,
               test_fehlender_mindestzustand_wird_gemeldet,
               test_mindestzustand_volumen_und_oder_ek,
               test_volumen_ohne_beitrag_und_unvollstaendig,
-              test_unvollstaendig_je_weg):
+              test_unvollstaendig_je_weg,
+              test_volumen_randspannung_kragarm,
+              test_volumen_regel_rueckfall_und_fliessen):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

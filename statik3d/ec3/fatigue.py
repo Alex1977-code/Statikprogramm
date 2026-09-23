@@ -300,17 +300,30 @@ class FatigueMember:
 class FatigueVolumen:
     """Ermuedungsnachweis eines Volumenkoerpers.
 
-    Je Element die Schaedigung aus der vorzeichenbehafteten Hauptspannung mit
-    dem groessten Betrag; massgebend das Element mit dem groessten D.
+    Je Auswerteort die Schaedigung aus der vorzeichenbehafteten Hauptspannung
+    mit dem groessten Betrag; massgebend der Ort mit dem groessten D. Der Ort
+    ist nach der Regel "knoten" ein Knoten (geglaettete Knotenspannung), nach
+    der Regel "element" ein Element (Elementwert) - siehe VOLUMEN_REGELN.
     """
     name: str
-    category: float                                  # am massgebenden Element
+    category: float                                  # am massgebenden Ort
     gamma_Mf: float
     konzept: str = ""
     category_grund: float = 0.0                      # Kerbfall des Koerpers
     category_naht: float = 0.0                       # an verschweissten Beruehrungsstellen
     n_naht: int = 0                                  # Elemente an Beruehrungsstellen
-    naht: bool = False                               # das massgebende Element liegt dort
+    naht: bool = False                               # der massgebende Ort liegt dort
+    #: Gerechnete Regel (VOLUMEN_REGELN). Ergebnisse aus der Zeit davor
+    #: (Dateien vor dem 23.09.2026) kennen das Feld nicht - sie sind nach der
+    #: Elementregel gerechnet, darum ist das die Vorgabe des Feldes.
+    regel: str = "element"
+    #: Regel "knoten": der massgebende Knoten (sonst -1); ``element`` ist dann
+    #: ein Element des Koerpers an diesem Knoten
+    knoten: int = -1
+    #: Regel "knoten": die Knoten der Auswerteorte (je Knoten, Koerpergruppe
+    #: und Werkstoff eine Zeile) und ihre groesste Schwingbreite [Pa]
+    orte: object = None
+    dsig_je_ort: object = None
     D: float = 0.0
     dsig_max: float = 0.0
     dsig_E2: float = 0.0
@@ -321,13 +334,16 @@ class FatigueVolumen:
     #: Siehe FatigueMember.fehler; der Volumenzweig verlor seinen Koerper an
     #: derselben Stelle (``if not beitrag: continue``).
     fehler: str = ""
-    ranges: list = field(default_factory=list)       # (Delta_sigma, n, Name, Element)
-    #: Kollektiv am massgebenden Element: [(Delta_sigma, n)], absteigend
+    #: (Delta_sigma, n, Name, Element) - nach der Regel "knoten" mit dem
+    #: Knoten als fuenftem Eintrag
+    ranges: list = field(default_factory=list)
+    #: Kollektiv am massgebenden Ort: [(Delta_sigma, n)], absteigend
     kollektiv: list = field(default_factory=list)
     jahre: float = float("inf")
     bezugsjahre: float = 0.0
     warnings: list = field(default_factory=list)
-    #: Elemente des Koerpers und ihre Schaedigung (float32) - fuer die Faerbung
+    #: Elemente des Koerpers und ihre Schaedigung (float32) - fuer die
+    #: Faerbung; nach der Regel "knoten" das groesste D an den Ecken des Elements
     elemente: list = field(default_factory=list)
     D_je_element: object = None
     #: Siehe FatigueMember.fehlende_lasten
@@ -465,7 +481,9 @@ class FatigueResults:
             rows.append([f"Volumen {v.name}", kf, f"{v.gamma_Mf:.2f}",
                          f"{v.dsig_max/1e6:.1f}", f"{v.dsig_E2/1e6:.1f}", f"{v.D:.3f}",
                          "0.000", f"{v.util:.3f}",
-                         ort(v, f"Element {v.element}" + (" (Naht)" if v.naht else ""))])
+                         ort(v, (f"Knoten {v.knoten + 1}" if getattr(v, "regel", "element") == "knoten"
+                                 and getattr(v, "knoten", -1) >= 0 else f"Element {v.element}")
+                             + (" (Naht)" if v.naht else ""))])
         return rows
 
     def util_by_element(self, model: Model) -> dict:
@@ -672,24 +690,137 @@ def _spiele(fl, ds) -> float:
     return float(c or 0.0)
 
 
+#: Die Spannung der Volumen-Ermuedung (DesignSettings.ermuedung_volumen).
+#:
+#: "knoten" (Vorgabe seit 23.09.2026): je Knoten die geglaettete
+#: Knotenspannung des Loesers (res.solid_knoten: das Mittel der Elementwerte
+#: gleichen Koerpers und Werkstoffs, an freien Oberflaechen auf sigma n = 0
+#: gezogen, Model.randspannung) - dieselbe Spannung, die der statische
+#: Volumennachweis liest (ec3/volumen.py, res.solid_rand). Sie ist linear in
+#: u; Kombinationen tragen sie ueberlagert (Results.combine).
+#: "element": der Elementwert (res.solid_res, das Element an seinem
+#: Auswertepunkt mit der groessten Vergleichsspannung) - die Regel bis zum
+#: 23.09.2026, waehlbar fuer den Vergleich mit aelteren Rechnungen.
+#:
+#: Warum (gemessen 23.09.2026, tests/test_ermuedung_verlauf.py,
+#: test_volumen_randspannung_kragarm): am Kragarm-Pruefkoerper (Schwingbreite
+#: 0 -> F, Koerper x >= L/2, Soll 355 N/mm2 nach Saint-Venant) lag die
+#: groesste Schwingbreite nach der Elementregel bei 314,35 N/mm2 (hex8
+#: 8x2x4) bzw. 333,31 (16x4x8), also 40,65 bzw. 21,69 N/mm2 auf der
+#: unsicheren Seite.
+VOLUMEN_REGELN = ("knoten", "element")
+
+
+def _knotenorte(model: Model, idx: list):
+    """Die Auswerteorte der Regel "knoten" fuer die Elemente ``idx`` eines
+    Koerpers: je Eckknoten, Koerpergruppe (Element.group) und Werkstoff eine
+    Zeile - so, wie solver.randspannung_knoten die Knotentabelle bildet.
+
+    Rueckgabe {"knoten": (m,), "gruppe": (m,), "gruppen": [(Gruppe, Werkstoff)],
+    "zeile_ort": (z,), "zeile_element": (z,), "element_je_ort": (m,)} - je
+    Zeile z (Element, Ecke) der Ort und die Position des Elements in ``idx``;
+    ``element_je_ort`` das erste Element an jedem Ort. None, wenn ein Element
+    keine Eckknoten-Zuordnung hat (solid.ECKEN_NATUERLICH).
+    """
+    from ..elements import solid as sl
+    kn_l, g_l, el_l = [], [], []
+    gruppen: dict = {}
+    for r, i in enumerate(idx):
+        e = model.elements[i]
+        ecken = sl.ECKEN_NATUERLICH.get(e.typ)
+        if not ecken:
+            return None
+        nk = len(ecken)
+        g = gruppen.setdefault((str(getattr(e, "group", "")), str(e.mat)), len(gruppen))
+        kn_l.append(np.asarray(e.nodes[:nk], np.int64))
+        g_l.append(np.full(nk, g, np.int64))
+        el_l.append(np.full(nk, r, np.int64))
+    if not kn_l:
+        return None
+    ng = max(1, len(gruppen))
+    kn = np.concatenate(kn_l)
+    el = np.concatenate(el_l)
+    orte, erst, inv = np.unique(kn * ng + np.concatenate(g_l), return_index=True,
+                                return_inverse=True)
+    return {"knoten": orte // ng, "gruppe": orte % ng,
+            "gruppen": [x for x, _j in sorted(gruppen.items(), key=lambda kv: kv[1])],
+            "zeile_ort": inv.ravel(), "zeile_element": el, "element_je_ort": el[erst]}
+
+
+def _knotenspannung(res, orte: dict):
+    """Die geglaettete Spannung (m, 6) an den Orten ``orte`` aus
+    res.solid_knoten - oder None, wenn das Ergebnis sie nicht fuehrt
+    (Ergebnisdatei vor dem 22.09.2026, Kombination verschiedener Situationen:
+    Results.combine setzt dann {"verworfen": True}) oder ihm ein Ort fehlt."""
+    sk = getattr(res, "solid_knoten", None) or {}
+    if "spannung" not in sk or "knoten" not in sk or "gruppe" not in sk:
+        return None
+    gruppen = [tuple(g) for g in (sk.get("gruppen") or [])]
+    ng = max(1, len(gruppen))
+    wo = {g: j for j, g in enumerate(gruppen)}
+    abb = np.array([wo.get(tuple(g), -1) for g in orte["gruppen"]], np.int64)
+    if abb.size == 0 or np.any(abb < 0):
+        return None
+    schl = np.asarray(sk["knoten"], np.int64) * ng + np.asarray(sk["gruppe"], np.int64)
+    ziel = orte["knoten"] * ng + abb[orte["gruppe"]]
+    ordnung = None
+    if len(schl) > 1 and np.any(np.diff(schl) <= 0):
+        ordnung = np.argsort(schl, kind="stable")
+        schl = schl[ordnung]
+    pos = np.searchsorted(schl, ziel)
+    ok = pos < len(schl)
+    ok[ok] = schl[pos[ok]] == ziel[ok]
+    if not ok.all():
+        return None
+    if ordnung is not None:
+        pos = ordnung[pos]
+    return np.asarray(sk["spannung"], float)[pos]
+
+
+def _benutzte_zustaende(model: Model, all_res: dict, ds) -> list:
+    """Die Ergebnisse, deren Spannung der Volumennachweis wirklich liest - in
+    der Reihenfolge der Lasten, jedes einmal (dieselben Bedingungen wie die
+    Schleife in _volumen_nachweisen)."""
+    namen: list = []
+    for fl in model.fatigue_loads.values():
+        if getattr(fl, "folge", None):
+            teil = [f for f in fl.folge if f in all_res]
+            if len(teil) >= 2 and _wiederholungen(fl, ds) > 0:
+                namen.extend(teil)
+            continue
+        if (fl.case_max in all_res and _spiele(fl, ds) > 0
+                and not (fl.case_min and fl.case_min not in all_res)):
+            namen.extend([fl.case_max] + ([fl.case_min] if fl.case_min else []))
+    return list(dict.fromkeys(namen))
+
+
 def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
                         bezug: float, progress=None) -> None:
     """Ermuedungsnachweis der Volumenkoerper mit Kerbfall.
 
-    Spannungsgroesse je Element und Zustand ist die vorzeichenbehaftete
-    Hauptspannung mit dem groessten Betrag aus dem Elementspannungstensor
-    (Elementmitte). Aus ihrem Verlauf entsteht je Element das Kollektiv wie
-    beim Stab (spanne / rainflow / reservoir), die Schaedigung nach
-    Palmgren-Miner mit der Woehlerlinie fuer Normalspannungen; massgebend je
-    Koerper das Element mit dem groessten D. Gerechnet wird je Koerper und
-    Last vektorisiert ueber die Elemente; Rainflow und Reservoir zaehlen je
-    Element einzeln und sind bei grossen Koerpern langsam.
+    Spannungsgroesse je Ort und Zustand ist die vorzeichenbehaftete
+    Hauptspannung mit dem groessten Betrag (signalspannung). Der Ort ist nach
+    der Regel "knoten" (Vorgabe, VOLUMEN_REGELN) ein Knoten mit der
+    geglaetteten Knotenspannung des Loesers, nach der Regel "element" ein
+    Element mit seinem Elementwert (res.solid_res). Aus dem Verlauf entsteht
+    je Ort das Kollektiv wie beim Stab (spanne / rainflow / reservoir), die
+    Schaedigung nach Palmgren-Miner mit der Woehlerlinie fuer
+    Normalspannungen; massgebend je Koerper der Ort mit dem groessten D.
+    Gerechnet wird je Koerper und Last vektorisiert ueber die Orte; Rainflow
+    und Reservoir zaehlen je Ort einzeln und sind bei grossen Koerpern
+    langsam.
+
+    Fuehrt ein benutztes Ergebnis keine Knotenwerte, rechnet der Koerper nach
+    der Elementregel und sagt es (Hinweis) - so bleiben aeltere
+    Ergebnisdateien lesbar, ohne dass eine andere Regel still gilt.
     """
     koerper = [k for k in (getattr(model, "koerper", {}) or {}).values()
                if float(getattr(k, "kerbfall", 0.0) or 0.0) > 0 and k.elemente]
     if not koerper:
         return
+    regel = str(getattr(ds, "ermuedung_volumen", "knoten") or "knoten")
     n_el = len(model.elements)
+    benutzt = _benutzte_zustaende(model, all_res, ds)
     # Knoten an verschweissten Beruehrungsstellen - nur gebraucht, wenn ein
     # Koerper dort einen eigenen Kerbfall traegt
     knoten = nahtknoten(model) if any(float(getattr(k, "kerbfall_naht", 0.0) or 0.0) > 0
@@ -707,6 +838,14 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
                             category_naht=float(getattr(k, "kerbfall_naht", 0.0) or 0.0))
         fv.bezugsjahre = bezug
         fv.n_elemente = len(idx)
+        if regel not in VOLUMEN_REGELN:
+            # Keine stille Ersatzregel: der Nachweis bleibt als "nicht
+            # gefuehrt" mit dem Grund stehen
+            fv.regel = regel
+            fv.fehler = (f"Einstellung ermuedung_volumen '{regel}' unbekannt - erlaubt sind "
+                         "'knoten' (geglättete Knotenspannung) und 'element' (Elementwert)")
+            out.volumen[k.name] = fv
+            continue
         # Kerbfall je Element: der des Koerpers, an der Naht der der Naht
         cat = np.full(len(idx), float(k.kerbfall))
         an_naht = np.zeros(len(idx), bool)
@@ -717,10 +856,80 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
                 cat[an_naht] = fv.category_naht
         fv.n_naht = int(an_naht.sum())
         signale: dict = {}
+        hinweise: list = []          # kommen erst nach der Rechnung an den Nachweis
+        orte = None
+        if regel == "knoten" and benutzt:
+            orte = _knotenorte(model, idx)
+            if orte is None:
+                hinweise.append("Volumenelemente ohne Eckknoten-Zuordnung - der Körper ist nach "
+                                "der Regel „element“ mit dem Elementwert gerechnet.")
+            else:
+                for name in benutzt:
+                    S = _knotenspannung(all_res[name], orte)
+                    if S is None:
+                        hinweise.append(
+                            f"Knotenwerte fehlen im Ergebnis '{name}' (Ergebnisdatei vor dem "
+                            "22.09.2026 oder Kombination verschiedener Situationen) - der Körper "
+                            "ist nach der Regel „element“ mit dem Elementwert gerechnet. Neu "
+                            "rechnen, dann gilt die geglättete Knotenspannung wie im statischen "
+                            "Nachweis.")
+                        orte = None
+                        signale.clear()
+                        break
+                    signale[name] = signalspannung(S)
+        if orte is not None:
+            # Regel "knoten": die Orte sind die Knoten; Kerbfall "Naht" an den
+            # Nahtknoten selbst (dort sitzt die Naht)
+            n_ort = len(orte["knoten"])
+            element_je_ort = np.asarray(idx, np.int64)[orte["element_je_ort"]]
+            cat_ort = np.full(n_ort, float(k.kerbfall))
+            naht_ort = np.zeros(n_ort, bool)
+            if kn:
+                naht_ort = np.isin(orte["knoten"], np.fromiter((int(x) for x in kn), np.int64))
+                if fv.category_naht > 0:
+                    cat_ort[naht_ort] = fv.category_naht
+            cat, an_naht = cat_ort, naht_ort
+            # Fliessende Elemente: wie im statischen Nachweis von sigma n = 0
+            # ausgenommen (solver.rand_projizieren, fliessend) - hier nur gesagt
+            im_koerper = set(idx)
+            fliessen = []
+            for name in benutzt:
+                pl = (getattr(all_res[name], "info", None) or {}).get("plastisch") or {}
+                n_fl = sum(1 for i in pl if int(i) in im_koerper)
+                if n_fl:
+                    fliessen.append((name, n_fl))
+            if fliessen:
+                if len(fliessen) == 1:
+                    wo = f"Im Zustand {fliessen[0][0]} fließen {fliessen[0][1]} Elemente des Körpers"
+                else:
+                    wo = (f"In {len(fliessen)} Zuständen fließen Elemente des Körpers ("
+                          + _aufzaehlen([f"{a}: {b}" for a, b in fliessen]) + ")")
+                hinweise.append(
+                    wo + ". Ihre Knoten tragen die Spannung des nächsten Integrationspunkts und "
+                    "sind wie im statischen Nachweis nicht auf σ·n = 0 gezogen; die "
+                    "Schwingbreite dort ist aus plastisch gerechneten Zuständen gebildet.")
+
+            def ort(j):
+                return (int(element_je_ort[j]), int(orte["knoten"][j]))
+        else:
+            n_ort = len(idx)
+
+            def ort(j):
+                return (idx[j],)
 
         def signal(name):
             s = signale.get(name)
             if s is None:
+                if orte is not None:
+                    # Unerreichbar, solange _benutzte_zustaende dieselben
+                    # Bedingungen prueft wie die Schleife - sonst laut statt
+                    # still mit einer anderen Regel
+                    S = _knotenspannung(all_res[name], orte)
+                    if S is None:
+                        raise RuntimeError(f"Ermüdung Volumen {k.name}: Knotenwerte fehlen im "
+                                           f"Ergebnis '{name}'")
+                    s = signale[name] = signalspannung(S)
+                    return s
                 sr = all_res[name].solid_res
                 S = np.zeros((len(idx), 6))
                 for r, i in enumerate(idx):
@@ -730,10 +939,10 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
                 s = signale[name] = signalspannung(S)
             return s
 
-        D = np.zeros(len(idx))
-        dsig = np.zeros(len(idx))
-        stufen: list = []            # (Delta je Element, n) der vektorisierten Lasten
-        extra: dict = {}             # Element -> [(Delta, n)] aus Rainflow/Reservoir
+        D = np.zeros(n_ort)
+        dsig = np.zeros(n_ort)
+        stufen: list = []            # (Delta je Ort, n) der vektorisierten Lasten
+        extra: dict = {}             # Ort -> [(Delta, n)] aus Rainflow/Reservoir
         beitrag = False
         for fl in model.fatigue_loads.values():
             faktor = fl.factor * ds.gamma_Ff
@@ -754,10 +963,10 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
                     dsig = np.maximum(dsig, d)
                     stufen.append((d, wdh))
                     j = int(np.argmax(d))
-                    fv.ranges.append((float(d[j]), wdh, fl.name, idx[j]))
+                    fv.ranges.append((float(d[j]), wdh, fl.name) + ort(j))
                 else:
                     gross, jg = 0.0, 0
-                    for r in range(len(idx)):
+                    for r in range(n_ort):
                         for h, z in _zaehlen(V[r], verfahren):
                             D[r] += z * wdh / sn_life(h, float(cat[r]), gMf)
                             extra.setdefault(r, []).append((h, z * wdh))
@@ -766,7 +975,7 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
                             if h > gross:
                                 gross, jg = h, r
                     n_g = sum(z for h, z in extra.get(jg, []) if h == gross)
-                    fv.ranges.append((float(gross), float(n_g), fl.name, idx[jg]))
+                    fv.ranges.append((float(gross), float(n_g), fl.name) + ort(jg))
                 beitrag = True
                 continue
             if fl.case_max not in all_res:
@@ -790,8 +999,9 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
             dsig = np.maximum(dsig, d)
             stufen.append((d, spiele))
             j = int(np.argmax(d))
-            fv.ranges.append((float(d[j]), spiele, fl.name, idx[j]))
+            fv.ranges.append((float(d[j]), spiele, fl.name) + ort(j))
             beitrag = True
+        fv.regel = "knoten" if orte is not None else "element"
         if not beitrag:
             # Siehe den Stabzweig: ein Koerper mit Kerbfall, zu dem keine
             # Ermuedungslast beitraegt, gehoert als "nicht gefuehrt" in den
@@ -807,7 +1017,6 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
             continue
         j = int(np.argmax(D))
         fv.D = float(D[j])
-        fv.element = idx[j]
         fv.category = float(cat[j])
         fv.naht = bool(an_naht[j])
         fv.dsig_max = float(dsig.max())
@@ -816,7 +1025,18 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
         fv.util = fv.D
         fv.jahre = lebensdauer(fv.util, bezug) if bezug > 0 else float("inf")
         fv.elemente = idx
-        fv.D_je_element = D.astype(np.float32)
+        if orte is not None:
+            fv.element, fv.knoten = ort(j)
+            # Faerbung je Element: das groesste D an seinen Ecken
+            De = np.zeros(len(idx))
+            np.maximum.at(De, orte["zeile_element"], D[orte["zeile_ort"]])
+            fv.D_je_element = De.astype(np.float32)
+            fv.orte = np.asarray(orte["knoten"], np.int64)
+            fv.dsig_je_ort = dsig.copy()
+        else:
+            fv.element = idx[j]
+            fv.D_je_element = D.astype(np.float32)
+        fv.warnings.extend(hinweise)
         out.volumen[k.name] = fv
         if progress:
             progress(f"Ermuedung Volumen {k.name}: D = {fv.util:.3f}")

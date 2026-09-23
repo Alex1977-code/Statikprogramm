@@ -2684,6 +2684,12 @@ class DesignSettings:
     #: Kontaktzustand linear (eine Rueckwaertseinsetzung je Zustand statt
     #: 30 bis 40 Kontaktschritten - am Drehlager 18 min je Zustand).
     ermuedung_kontakt_einfrieren: bool = True
+    #: Spannung der Volumen-Ermuedung (ec3.fatigue.VOLUMEN_REGELN, 23.09.2026):
+    #: "knoten" (Vorgabe) nimmt je Knoten die geglaettete Knotenspannung des
+    #: Loesers (res.solid_knoten, an freien Oberflaechen sigma n = 0 nach
+    #: Model.randspannung) - dieselbe wie der statische Volumennachweis;
+    #: "element" den Elementwert (res.solid_res) wie bis zum 23.09.2026.
+    ermuedung_volumen: str = "knoten"
     # --- Theorie II. Ordnung und Imperfektionen (EN 1993-1-1, 5.2 und 5.3)
     theorie2: str = "aus"              # aus | auto (nach 5.2.1(3)) | ein
     imperfektionen: bool = True        # Ersatzimperfektionen nach 5.3.2 ansetzen

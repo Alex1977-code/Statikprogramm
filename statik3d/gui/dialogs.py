@@ -963,7 +963,7 @@ class KoerperDialog(QtWidgets.QDialog):
             f"{koerper.kerbfall / 1e6:g}" if getattr(koerper, "kerbfall", 0.0) else "")
         self.kerbfall.setPlaceholderText("leer = kein Ermüdungsnachweis")
         self.kerbfall.setToolTip("Kerbfall Δσ_C [N/mm²] für den Ermüdungsnachweis des Volumens "
-                                 "(Hauptspannung im Element, EN 1993-1-9)"
+                                 "(Hauptspannung je Knoten, EN 1993-1-9)"
                                  + (" - Vorschlag des Programms, zu prüfen"
                                     if getattr(koerper, "kerbfall_vorschlag", False) else ""))
         self.kerbfall_naht = QtWidgets.QLineEdit(
