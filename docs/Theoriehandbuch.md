@@ -5018,6 +5018,21 @@ mit zu kleinen Momenten. Der Kombinationszweig macht es seit jeher richtig
 das Theoriekapitel bekommt einen Eintrag, und die Tabellenspalte zeigt
 *„I (statt III: nicht gerechnet)"*.
 
+**Nachbesserung derselben Kur.** Die Spalte verglich den Text aus
+`info["theorie"]` unmittelbar mit der Einstellung. Die Löser für II. und
+III. Ordnung schreiben dort aber „II. Ordnung" bzw. „III. Ordnung", die
+Einstellung heißt „II"/„III" — damit stand jeder **gelungen** gerechnete
+Lastfall als *„II. Ordnung (statt II: nicht gerechnet)"* im Bericht. Jetzt
+werden nur die römischen Zahlen verglichen. Zweitens markierte der Löser das
+stehenbleibende lineare Ergebnis nur beim `ValueError`, nicht aber, wenn die
+Rechnung mit `info.fehler` endet (II. Ordnung: Gleichungssystem singulär;
+III. Ordnung: keine Konvergenz oder singulär). Dort wird das nichtlineare
+Ergebnis zu Recht verworfen; die Spalte zeigte aber weiter „II"/„III", obwohl
+nach I. Ordnung gerechnet war. Beide Zweige markieren jetzt gleich.
+Geprüft in `tests/test_theorie3.py` am Kragarm aus zwei Stäben (gelungen: II
+und III; gescheitert: erzwungenes `info.fehler`); an einem großen Modell nicht
+gemessen.
+
 **Ermüdung: ein fehlender Mindestzustand wurde still zu null.** `case_min`
 angegeben, aber nicht gerechnet, fiel in denselben Zweig wie „kein
 Mindestzustand angegeben". Gemessen an einem Kragarm:
