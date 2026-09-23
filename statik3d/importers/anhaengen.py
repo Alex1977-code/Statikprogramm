@@ -93,9 +93,15 @@ NICHT_UEBERTRAGEN: dict[str, tuple[str, str]] = {
     "bericht": ("Berichtseinträge",
                 "sie zeigen Ergebnisse und Ansichten des Quellmodells - im Ziel nach "
                 "der Rechnung neu aus der Ansicht übernehmen"),
+    # Was eine Stellung bewegt, so wie positions.Stellung._bewegte_knoten es
+    # tut. Bis zum 23.09.2026 stand hier "bewegt das ganze System"; am
+    # Beispiel 'frame' (17 Knoten) bewegt eine Gruppe aus 6 Elementen 7
+    # Knoten, eine Stellung, die nur ein Lager abschaltet, keinen, und ohne
+    # Gruppe auch die Knoten auf einem Linienlager (nur Knotenlager halten).
     "stellungen": ("Stellungen",
-                   "eine Stellung bewegt das ganze System (ohne Gruppenangabe alle "
-                   "ungelagerten Knoten, also auch die des Ziels) - im Ziel neu anlegen; "
+                   "eine Stellung, die verschiebt oder dreht, bewegt ohne Gruppenangabe "
+                   "alle Knoten ohne Knotenlager, also auch die des Ziels (mit "
+                   "Gruppenangabe die Knoten dieser Elementgruppen) - im Ziel neu anlegen; "
                    "Situationen, die eine Stellung nennen, meldet die Modellprüfung"),
 }
 

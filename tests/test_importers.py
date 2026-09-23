@@ -1683,6 +1683,21 @@ def test_json_anhaengen_stellung_des_ziels():
         fehler = str(ex)
     expect("Anhaengen: Rechnung in der Situation der Quelle bricht mit Meldung ab",
            "Offen_2" in fehler and "unbekannt" in fehler, fehler or "rechnet ohne Meldung")
+    # Abgebrochen wird nicht nur diese Situation: solve_all baut alle
+    # Situationssysteme, bevor der erste Lastfall rechnet
+    # (solver.systeme_je_situation), und die Ausnahme traegt kein
+    # Teilergebnis - auch LF1 des Ziels in der Grundstellung bekommt keines.
+    # So steht es seit dem 23.09.2026 im Handbuch; vorher hiess es, die
+    # Rechnung "dieser Situation" breche ab. LF1 allein rechnet.
+    try:
+        solver.solve_all(z, workers=1)
+        fehler = ""
+    except ValueError as ex:
+        fehler = f"{ex} | Attribute {sorted(vars(ex))}"
+    nur_lf1 = sorted(solver.solve_cases(z, ["LF1"], workers=1))
+    expect("Anhaengen: alle Lastfaelle rechnen bricht ganz ab, LF1 allein rechnet",
+           "Offen_2" in fehler and "unbekannt" in fehler and nur_lf1 == ["LF1"],
+           f"solve_all: {fehler or 'fertig'}; solve_cases(['LF1']): {nur_lf1}")
     # Legt der Anwender die Stellung der Quelle unter dem neuen Namen an,
     # rechnet der Lastfall der Quelle wie allein
     z.stellungen.append(Stellung("Offen_2", verschiebung=(0.0, 0.0, 1.0)))
@@ -1690,6 +1705,62 @@ def test_json_anhaengen_stellung_des_ziels():
     expect("Anhaengen: mit der Stellung der Quelle unter neuem Namen rechnet LF-S wie allein",
            abs(angehaengt - allein) <= 1e-9 * max(allein, 1e-12) + 1e-15,
            f"allein {allein * 1e3:.4f} mm, angehaengt {angehaengt * 1e3:.4f} mm")
+
+
+def test_json_anhaengen_stellung_protokoll():
+    """Das Protokoll sagt, was eine nicht uebertragene Stellung bewegt, so wie
+    Stellung._bewegte_knoten es tut: mit Gruppenangabe nur die Knoten der
+    Gruppe, ohne sie alle Knoten ohne Knotenlager - auch die auf einem
+    Linienlager -, und nur, wenn sie verschiebt oder dreht. Bis zum
+    23.09.2026 stand dort "eine Stellung bewegt das ganze System"; gemessen
+    am Beispiel 'frame' (17 Knoten, Knotenlager an 0 und 5): Gruppe 'Klappe'
+    aus den Elementen 10 bis 15 bewegt 7 Knoten, eine Stellung, die nur ein
+    Lager abschaltet, keinen."""
+    from statik3d import examples_lib
+    from statik3d.model import Situation, LineSupport, DofBehaviour
+    from statik3d.bridges.positions import Stellung
+    from statik3d.situationen import situationsmodell
+
+    def bewegt(m, st):
+        m.stellungen = [st]
+        m.situationen["S"] = Situation("S", stellung=st.name)
+        ms, _a, _log = situationsmodell(m, "S")
+        return np.abs(np.asarray(ms.nodes) - np.asarray(m.nodes)).max(axis=1) > 1e-12
+
+    m = examples_lib.build_example("frame")
+    for i in range(10, 16):
+        m.elements[i].group = "Klappe"
+    gruppe = int(bewegt(m, Stellung("Klappe", verschiebung=(0.0, 0.0, 1.0),
+                                    dreh_gruppen=["Klappe"])).sum())
+    m = examples_lib.build_example("frame")
+    nur_lager = int(bewegt(m, Stellung("Riegel", lager_aus=["0"])).sum())
+    m = examples_lib.build_example("frame")
+    fest = {s.node for s in m.supports}
+    auf_linienlager = [i for i in range(m.nn) if i not in fest][:2]
+    m.line_supports.append(LineSupport("LL", nodes=auf_linienlager, behaviour={
+        k: DofBehaviour("rigid") for k in range(3)}))
+    ohne = bewegt(m, Stellung("Offen", verschiebung=(0.0, 0.0, 1.0)))
+    expect("Stellung bewegt: Gruppe nur ihre Knoten, nur Lager aus keinen, sonst alle ohne "
+           "Knotenlager",
+           gruppe == 7 and nur_lager == 0 and int(ohne.sum()) == m.nn - len(fest)
+           and bool(ohne[auf_linienlager].all()),
+           f"Gruppe {gruppe}, nur Lager aus {nur_lager}, ohne Gruppe {int(ohne.sum())} von "
+           f"{m.nn} (Knotenlager an {sorted(fest)}), auf Linienlager bewegt "
+           f"{ohne[auf_linienlager].tolist()}")
+
+    q = examples_lib.build_example("frame")
+    q.nodes = np.asarray(q.nodes, float) + np.array([50.0, 0.0, 0.0])
+    q.stellungen = [Stellung("Offen", verschiebung=(0.0, 0.0, 1.0))]
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "q.json")
+        q.save(p)
+        log = []
+        import_file(p, model=examples_lib.build_example("frame"), log=log)
+    zeile = [x for x in log if x.startswith("WARNUNG: Stellungen:")]
+    expect("Anhaengen: Protokoll sagt, was eine Stellung bewegt, nicht 'das ganze System'",
+           len(zeile) == 1 and "ganze System" not in zeile[0]
+           and "ohne Gruppenangabe" in zeile[0] and "ohne Knotenlager" in zeile[0],
+           "\n".join(zeile) or "keine Zeile")
 
 
 def test_json_anhaengen_schluessel():
@@ -1728,7 +1799,8 @@ TESTS = [
          test_json_anhaengen_doppelknoten_bleiben, test_doppelte_knoten_verweise,
          test_json_anhaengen_fuge_traegt_wie_allein,
          test_json_anhaengen_ermuedung_auf_kombination, test_json_anhaengen_koerpergruppe,
-         test_json_anhaengen_stellung_des_ziels, test_json_anhaengen_schluessel]
+         test_json_anhaengen_stellung_des_ziels, test_json_anhaengen_stellung_protokoll,
+         test_json_anhaengen_schluessel]
 
 
 def main() -> int:

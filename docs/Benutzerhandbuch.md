@@ -2753,11 +2753,11 @@ jetzt kommen alle an. Was das Protokoll dabei sagt:
   in einem Lastfall verschiedenes, warnt das Protokoll: es erfasst jetzt auch
   die Elemente des anderen Teils oder fehlt ihnen.
 * **Nicht übertragen** und mit Anzahl gemeldet werden die Berichtseinträge
-  (sie zeigen Ergebnisse des Quellmodells) und die Stellungen (ohne
-  Gruppenangabe bewegt eine Stellung alle nicht gelagerten Knoten, also auch
-  die des Ziels). Einstellungen – Netz, Nachweise, Plastizität, Einheiten,
-  Bericht – bleiben die des Ziels; weichen die der Quelle ab, steht es im
-  Protokoll.
+  (sie zeigen Ergebnisse des Quellmodells) und die Stellungen (eine
+  Stellung, die verschiebt oder dreht, bewegt ohne Gruppenangabe alle Knoten
+  ohne Knotenlager – auch die auf Linienlagern –, also auch die des Ziels).
+  Einstellungen – Netz, Nachweise, Plastizität, Einheiten, Bericht – bleiben
+  die des Ziels; weichen die der Quelle ab, steht es im Protokoll.
 * **Situationen mit Stellung:** Eine Situation der Quelle behält den Namen
   ihrer Stellung, und die Modellprüfung meldet „Stellung … unbekannt“, bis die
   Stellung im Ziel angelegt ist. Hat das Ziel eine Stellung desselben Namens,
@@ -2767,8 +2767,12 @@ jetzt kommen alle an. Was das Protokoll dabei sagt:
   23.09.2026 rechnete sie still in der Stellung des Ziels. Im Versuch hob die
   Stellung `Offen` der Quelle die Knoten eines Rahmens um 1,0 m, die
   gleichnamige des Ziels bewegte nichts; am Lastknoten der Quelle ergaben
-  sich allein 4,7572 mm, angehängt 1,7876 mm, ohne Meldung. Jetzt bricht die
-  Rechnung dieser Situation mit „Stellung 'Offen_2' unbekannt“ ab. Legt man
+  sich allein 4,7572 mm, angehängt 1,7876 mm, ohne Meldung. Solange die
+  Modellprüfung „Stellung … unbekannt“ meldet, ist das ein Fehler: Die
+  Oberfläche rechnet dann gar nicht, in keiner Rechenart und auch nicht die
+  Lastfälle des Ziels, die Kommandozeile ebenso wenig. Ruft ein Skript
+  `solver.solve_all` trotzdem auf, bricht die ganze Rechnung mit „Situation
+  'S-offen_2': Stellung 'Offen_2' unbekannt“ ab, ohne Teilergebnis. Legt man
   die Stellung der Quelle unter dem neuen Namen im Ziel an, rechnet der
   Lastfall im selben Versuch wie allein (4,7572 mm).
 * **Anschluss:** Ein Knoten der Quelle, der auf einem Knoten des Ziels
