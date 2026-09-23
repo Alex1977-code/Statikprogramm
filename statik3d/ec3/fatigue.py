@@ -477,10 +477,12 @@ class FatigueResults:
                 # "Ausnutzung Ermüdung" wie ein unbeanspruchter gefaerbt
                 # (gemessen: M1 mit oder-EK als Mindestzustand -> {0: 0.0,
                 # 1: 0.0}). Ohne Eintrag hat er keinen Wert, wie ein nicht
-                # gefuehrtes Volumen (D_je_element None). Bleibt die Karte
-                # ganz leer, zeigt viewport.result_field die elastische
-                # Ausnutzung mit der Skala "Ausnutzung elastisch [-]"
-                # (gemessen 23.09.2026) - das regelt die Ansicht, nicht hier.
+                # gefuehrtes Volumen (D_je_element None). Nicht gefuehrt ist
+                # ein Stab, wenn keine Last beitraegt; das haengt an Lasten
+                # und Ergebnissen, trifft also alle Staebe zugleich, und die
+                # Karte ist leer. Dann faerbt viewport.result_field nichts
+                # (seit 24.09.2026; vorher fiel es auf die elastische
+                # Ausnutzung zurueck, gemessen am Stand dc90b5e).
                 continue
             for e in model.members[m.member].elements:
                 out[e] = max(out.get(e, 0.0), m.util)

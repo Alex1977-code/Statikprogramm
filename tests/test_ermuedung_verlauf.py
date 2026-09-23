@@ -755,9 +755,8 @@ def test_nicht_gefuehrt_nicht_gefaerbt():
     ihn damit wie einen unbeanspruchten Stab. Volumen mit ``fehler`` fielen
     schon heraus (D_je_element None). Erwartet: seine Elemente fehlen in der
     Karte, haben also keinen Wert. Ist die Karte dadurch ganz leer - an
-    diesem Modell der Fall -, zeigt viewport.result_field die elastische
-    Ausnutzung mit der Skala "Ausnutzung elastisch [-]" (gemessen
-    23.09.2026); das ist Sache der Ansicht und hier nicht geprueft.
+    diesem Modell der Fall -, prueft die Ansicht
+    test_ansicht_ohne_wert_ungefaerbt.
     """
     ms = _stab_oben_unten()
     ek = ms.add_combination("EK_oder", {}, "FAT")
@@ -782,6 +781,121 @@ def test_nicht_gefuehrt_nicht_gefaerbt():
           not fm.fehler and fm.util > 0
           and all(karte.get(e) == fm.util for e in ms.members["M1"].elements),
           f"D = {fm.util:.4f}, Karte {karte}")
+
+
+def _zwei_staebe(szenario: str):
+    """Durchlauftraeger aus vier Balken (Rechteck 0,1 x 0,1), Stab A (El. 0, 1)
+    mit Kerbfall 71, Stab B (El. 2, 3) ohne Kerbfall, Lastfaelle L1 und L2."""
+    from statik3d.model import Section
+    m = Model("zwei_staebe")
+    m.add_material(Material.steel("S235"))
+    m.add_section(Section.rectangle("R", 0.1, 0.1))
+    k = [m.add_node(i * 1.0, 0.0, 0.0) for i in range(5)]
+    for i in range(4):
+        m.add_element("beam", [k[i], k[i + 1]], "S235", "R")
+    m.fix(k[0], "all")
+    m.fix(k[4], [0, 1, 2])
+    m.add_member("A", [0, 1], detail_category=71e6)
+    m.add_member("B", [2, 3])
+    m.add_load_case("L1", "Q")
+    m.load_node(k[1], Fz=-2.0e4, case="L1")
+    m.add_load_case("L2", "Q")
+    m.load_node(k[3], Fz=-1.0e4, case="L2")
+    if szenario == "nicht_gefuehrt":
+        m.add_fatigue_load("F", "L1", "UNBEKANNT", cycles=1e6)
+    elif szenario == "null_spiele":
+        m.add_fatigue_load("F", "L1", "L2", cycles=0.0)
+    else:
+        m.add_fatigue_load("F", "L1", "L2", cycles=1e6)
+    return m
+
+
+def test_ansicht_ohne_wert_ungefaerbt():
+    """Mangel 1 der Gegenpruefung zu B056 (24.09.2026): leere Karte in der
+    Desktop-Ansicht.
+
+    Nicht gefuehrt ist ein Eintrag nur, wenn keine Last beitraegt - das haengt
+    an den Lasten und Ergebnissen, nicht am Stab; die Karte ist dann ganz
+    leer. viewport.result_field ("... and util:") und viewport.kennwerte
+    ("if not werte") wichen bei leerer Karte auf die elastische Ausnutzung
+    aus. Gemessen am Stand dc90b5e an diesem Modell: Feld "Ausnutzung
+    elastisch [-]" [0.3349, 0.1318, 0.0878, 0.0439], Kennwert "max.
+    Ausnutzung 0.335 an A" - auch fuer Stab B ohne Kerbfall, der bei ec6448c
+    ohne Wert blieb. Mit 0 Lastspielen stand es schon bei ec6448c so da.
+    Erwartet: ist ein Nachweis da (Karte nicht None), bleibt es bei seinen
+    Werten, eine leere Karte ergibt keine Zelle mit Wert und keinen Kennwert.
+    Ohne Nachweis (None) bleibt die elastische Ausnutzung.
+    """
+    from statik3d.gui import viewport as vp
+    FELD = "Ausnutzung Ermüdung"
+
+    def ansicht(m, an, karte, feld=FELD):
+        r = an.cases["L1"]
+        _ps, cs, name = vp.result_field(m, r, feld, karte)
+        kw = [z for z in vp.kennwerte(m, r, karte, feld=feld) if "Ausnutzung" in z]
+        return cs, name, kw
+
+    def mit_wert(cs):
+        return [] if cs is None else [i for i, v in enumerate(cs) if np.isfinite(v)]
+
+    for sz, text in (("nicht_gefuehrt", "nicht geführter Stab"),
+                     ("null_spiele", "ohne wirksame Last (0 Lastspiele)")):
+        m = _zwei_staebe(sz)
+        an = solver.solve_all(m, design=True, fatigue=True)
+        karte = an.fatigue.util_by_element(m)
+        cs, name, kw = ansicht(m, an, karte)
+        check(f"{text}: Vorbedingung leere Karte",
+              karte == {} and (sz != "nicht_gefuehrt"
+                               or an.fatigue.members["A"].status() == "nicht geführt"),
+              str(karte))
+        check(f"{text}: keine Zelle mit Wert, keine elastische Ausnutzung",
+              cs is not None and not mit_wert(cs) and "elastisch" not in name,
+              f"{name!r} Zellen mit Wert {mit_wert(cs)}")
+        check(f"{text}: kein Kennwert 'max. Ausnutzung'", not kw, str(kw))
+
+    # Gegenprobe: gefuehrt -> Stab A mit seinem Wert, Stab B ohne Kerbfall ohne
+    m = _zwei_staebe("gefuehrt")
+    an = solver.solve_all(m, design=True, fatigue=True)
+    karte = an.fatigue.util_by_element(m)
+    util = an.fatigue.members["A"].util
+    cs, name, kw = ansicht(m, an, karte)
+    check("Gegenprobe geführt: A mit D, B ohne Kerbfall ohne Wert",
+          mit_wert(cs) == [0, 1] and all(abs(cs[i] - util) < 1e-12 for i in (0, 1)),
+          f"{name!r} D = {util:.4f}, Zellen {[round(float(v), 4) for v in cs]}")
+    check("Gegenprobe geführt: Kennwert nennt D am Stab A",
+          kw == [f"max. Ausnutzung {util:.3f} an A"], str(kw))
+    # ohne Nachweis (Karte None): elastische Ausnutzung wie bisher
+    r = an.cases["L1"]
+    elast = {i: d["util"] for i, d in r.beam_forces.items() if d["util"] is not None}
+    for feld, karte_ in ((FELD, None), ("Ausnutzung elastisch", None)):
+        cs, name, kw = ansicht(m, an, karte_, feld)
+        check(f"ohne Nachweis, Feld {feld!r}: elastische Ausnutzung",
+              name == "Ausnutzung elastisch [-]" and mit_wert(cs) == sorted(elast)
+              and all(abs(cs[i] - elast[i]) < 1e-12 for i in elast) and len(kw) == 1,
+              f"{name!r} {kw}")
+    # EC3: Nachweis gerechnet, aber kein Stab darin -> leere Karte
+    m = _zwei_staebe("gefuehrt")
+    for mem in m.members.values():
+        mem.design = False
+    an = solver.solve_all(m, design=True, fatigue=False)
+    karte = an.design.util_by_element() if an.design is not None else None
+    cs, name, kw = ansicht(m, an, karte, "Ausnutzung EC3")
+    check("Ausnutzung EC3 mit leerer Karte: keine Zelle mit Wert, kein Kennwert",
+          karte == {} and cs is not None and not mit_wert(cs) and not kw,
+          f"Karte {karte} {name!r} {mit_wert(cs)} {kw}")
+    # reines Volumenmodell, nicht gefuehrt: ohne Stab gibt es keine elastische
+    # Ausnutzung, es blieb schon vorher ohne Wert (Gegenpruefung 23.09.2026)
+    mv = _zugstab_volumen(1000e3, -400e3)
+    mv.add_fatigue_load("EL", "FEHLT", "LF2", 1e5)
+    an = solver.solve_all(mv, fatigue=True)
+    karte = an.fatigue.util_by_element(mv)
+    r = an.cases["LF1"]
+    _ps, cs, name = vp.result_field(mv, r, FELD, karte)
+    kw = [z for z in vp.kennwerte(mv, r, karte, feld=FELD) if "Ausnutzung" in z]
+    check("Volumen nicht geführt: keine Zelle mit Wert, kein Kennwert",
+          an.fatigue.volumen["V1"].status() == "nicht geführt" and karte == {}
+          and cs is not None and not mit_wert(cs) and not kw,
+          f"{name!r} {mit_wert(cs)} {kw}")
 
 
 def test_warntexte_mit_umlaut():
@@ -845,6 +959,7 @@ def main():
               test_volumen_ohne_beitrag_und_unvollstaendig,
               test_unvollstaendig_je_weg,
               test_nicht_gefuehrt_nicht_gefaerbt,
+              test_ansicht_ohne_wert_ungefaerbt,
               test_warntexte_mit_umlaut):
         print(f"\n--- {t.__name__} ---")
         try:
