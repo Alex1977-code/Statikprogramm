@@ -74,14 +74,39 @@ class DesignResults:
     def summary(self) -> str:
         if not self.members:
             return "Nachweise EC3: keine Staebe" + warnzeilen(self)
-        worst = max(self.members.values(), key=lambda m: m.util)
-        nf = sum(1 for m in self.members.values() if m.util > 1.0)
-        g = worst.governing
-        return (f"Nachweise EC3: {len(self.members)} Staebe, {len(self.combinations)} Kombinationen, "
-                f"max. Ausnutzung {worst.util:.3f} ({worst.member}: {g.get('name', '')}, "
-                f"{g.get('combo', '')}, x = {g.get('x', 0):.2f} m)"
-                + (f" - {nf} Staebe NICHT erfuellt" if nf else " - alle erfuellt")
-                + warnzeilen(self))
+        # Nicht gefuehrte Staebe (``fehler``, etwa Werkstoff ohne
+        # Streckgrenze) zaehlen weder als erfuellt noch fuer die groesste
+        # Ausnutzung. Bis zum 22.09.2026 stand hier nur ``util > 1``: ein
+        # Traeger mit 0,633 und ein Stab ohne f_y ergaben "max. Ausnutzung
+        # 0.633 ... - alle erfuellt" - in der Oberflaeche nach "Nachweise EC3",
+        # im Etikett der Maske Nachweise (Gruppe "Nachweise fuehren", nicht
+        # unter der Ergebnistabelle) und in Analysis.summary().
+        # Wie VolumenResults.summary(): "alle erfuellt" nur, wenn nichts offen
+        # blieb.
+        gefuehrt = [m for m in self.members.values() if not m.fehler]
+        ohne = [m for m in self.members.values() if m.fehler]
+        nf = sum(1 for m in gefuehrt if m.util > 1.0)
+        s = f"Nachweise EC3: {len(self.members)} Staebe, {len(self.combinations)} Kombinationen"
+        if gefuehrt:
+            worst = max(gefuehrt, key=lambda m: m.util)
+            g = worst.governing
+            s += (f", max. Ausnutzung {worst.util:.3f} ({worst.member}: {g.get('name', '')}, "
+                  f"{g.get('combo', '')}, x = {g.get('x', 0):.2f} m)")
+        if nf:
+            s += f" - {nf} Staebe NICHT erfuellt"
+        elif gefuehrt and not ohne:
+            s += " - alle erfuellt"
+        if ohne:
+            # Namen und Grund, damit man weiss, wo man nachtragen muss; ein
+            # Import kann Hunderte Staebe ohne f_y bringen - die Zeile steht
+            # auch im Etikett der Maske Nachweise, darum hoechstens zehn Namen.
+            namen = ", ".join(m.member for m in ohne[:10])
+            if len(ohne) > 10:
+                namen += f" und {len(ohne) - 10} weitere"
+            gruende = list(dict.fromkeys(m.fehler for m in ohne))
+            s += (f" - {len(ohne)} nicht geführt: {namen} ("
+                  + "; ".join(gruende[:3]) + (" …" if len(gruende) > 3 else "") + ")")
+        return s + warnzeilen(self)
 
     def table(self) -> list[list]:
         rows = [["Stab", "Querschnitt", "Material", "L [m]", "Klasse", "Ausnutzung",
@@ -115,7 +140,11 @@ def check_member(model: Model, member: Member, results: dict, n: int = None) -> 
     fy = mat.yield_strength(sec.t_max)
     if not fy:
         mc.fehler = f"Werkstoff {mat.name} ohne Streckgrenze"
-        mc.warnings.append(f"Material {mat.name} ohne Streckgrenze - kein Nachweis")
+        # Der Hinweis sagt, was zu tun ist: er steht im Bericht in jedem Umfang
+        # unter "Offene Hinweise und Warnungen" (report.html chapter_summary)
+        # und ist oft die einzige Stelle, an der der Grund steht.
+        mc.warnings.append(f"{mc.fehler} – Nachweis nicht geführt; Streckgrenze f_y am "
+                           "Werkstoff eintragen oder am Stab „Nachweis nach EC3“ ausschalten")
         return mc
     Lcr_y = member.Lcr_y if member.Lcr_y else member.beta_y * L
     Lcr_z = member.Lcr_z if member.Lcr_z else member.beta_z * L

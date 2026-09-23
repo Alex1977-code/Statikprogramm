@@ -2132,51 +2132,53 @@ def test_viereckfuge_zaehlt_ganz():
     Unterschied beim Netzvergleich wie ein Netzeinfluss aus (22.09.2026).
 
     Geprüft wird die Federsteifigkeit, die am Ende herauskommt - nicht die
-    Zwischengröße A.
+    Zwischengröße A - und zwar **auf dem echten Weg** durch
+    `fugen.kontaktfuge_ausfuehren`. Die frühere Fassung dieser Prüfung rief
+    die Fugenroutine nie auf, sondern rechnete die Formel im Test selbst nach;
+    mit dem alten ``nd[:3]`` im Speicher bestand sie weiter (gemessen
+    22.09.2026). So misst sie das Programm:
+
+    * zwei hex8 übereinander, gemeinsame Fugenfläche 2,0 x 1,0 m (eine
+      Viereckfacette, vier gemeinsame Knoten - passende Netze),
+    * Federfuge c_n = 1e9 N/m³ normal, c_t = 1e8 N/m³ in beiden Tangenten.
+
+    Soll: Σ k_n = c_n · 2,0 m² = 2,000e9 N/m, Σ k_t = 2 · c_t · 2,0 m²
+    = 4,000e8 N/m. Mit dem alten ``nd[:3]`` kommt gemessen genau die Hälfte
+    heraus (Σ k_n = 1,000e9 N/m, Verhältnis 0,5000).
     """
-    import numpy as np
-    from statik3d.model import Model, Material, Kontaktbedingung, DofBehaviour
-    from statik3d import fugen
-
-    def bau(typ):
-        """Zwei Würfel übereinander, Fuge dazwischen - als Hexaeder oder
-        Tetraeder vernetzt. Dieselbe Fugenfläche, dasselbe Modell."""
-        m = Model(f"fuge_{typ}")
-        m.add_material(Material.steel("S235"))
-        from statik3d import mesher
-        g1 = mesher.grid_box(m, "S235", 1.0, 1.0, 1.0, 1, 1, 1, typ=typ)
-        return m, g1
-
-    # Die Flaeche einer Facette unmittelbar: ein ebenes Viereck 2 x 1 m
-    X = np.array([[0.0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0]])
-    nd = [0, 1, 2, 3]
-    nur_erstes = 0.5 * float(np.linalg.norm(np.cross(X[1] - X[0], X[2] - X[0])))
-    ganz = 0.0
-    for i in range(1, len(nd) - 1):
-        ganz += 0.5 * float(np.linalg.norm(np.cross(X[i] - X[0], X[i + 1] - X[0])))
-    check("die Probe ist scharf: das erste Dreieck ist die halbe Fläche",
-          abs(nur_erstes - 1.0) < 1e-12 and abs(ganz - 2.0) < 1e-12,
-          f"{nur_erstes:.4f} gegen {ganz:.4f} m²")
-
-    # Und dasselbe durch die Fugenroutine: ein Modell mit einer Viereckfacette
-    m = Model("viereck")
+    c_n, c_t = 1.0e9, 1.0e8         # N/m^3 - Bettung normal / tangential
+    A_fuge = 2.0 * 1.0              # m^2   - die gemeinsame Viereckflaeche
+    m = Model("viereckfuge")
     m.add_material(Material.steel("S235"))
     for p in ([0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0],
-              [0, 0, 1], [2, 0, 1], [2, 1, 1], [0, 1, 1.]):
+              [0, 0, 1], [2, 0, 1], [2, 1, 1], [0, 1, 1],
+              [0, 0, 2], [2, 0, 2], [2, 1, 2], [0, 1, 2.]):
         m.add_node(*p)
-    m.add_element("hex8", list(range(8)), "S235")
-    seite_b = [(0, [0, 1, 2, 3], np.array([0.0, 0.0, -1.0]))]
-    flaeche = {}
-    for _e, nds, _n in seite_b:
-        P = np.asarray(m.nodes, float)[nds]
-        A = 0.0
-        for i in range(1, len(nds) - 1):
-            A += 0.5 * float(np.linalg.norm(np.cross(P[i] - P[0], P[i + 1] - P[0])))
-        for k in nds:
-            flaeche[k] = flaeche.get(k, 0.0) + A / len(nds)
-    check("die Einflussfläche je Knoten ist ein Viertel der ganzen Facette",
-          all(abs(v - 0.5) < 1e-12 for v in flaeche.values()),
-          f"{sorted(set(round(v, 6) for v in flaeche.values()))} m² je Knoten")
+    e0 = m.add_element("hex8", [0, 1, 2, 3, 4, 5, 6, 7], "S235", group="Unten")
+    e1 = m.add_element("hex8", [4, 5, 6, 7, 8, 9, 10, 11], "S235", group="Oben")
+    for i, (a, b) in enumerate(((4, 5), (5, 6), (6, 7), (7, 4))):
+        m.add_line(f"L{i}", [a, b], "polyline")
+    f = m.add_flaeche("Fuge", ["L0", "L1", "L2", "L3"], material="S235")
+    # Deckel des unteren (Seite 1) und Grund des oberen Hexaeders (Seite 0):
+    # beides dieselbe Viereckseite z = 1 - so traegt der Sweep sie ein.
+    f.randseiten = [[e0, 1], [e1, 0]]
+    kb = m.add_kontaktbedingung(
+        "Fuge", flaechennamen=["Fuge"], gegenflaechen=[], koerpernamen=["Oben"],
+        behaviour={0: DofBehaviour("spring", c_t), 1: DofBehaviour("spring", c_t),
+                   2: DofBehaviour("spring", c_n)})
+    log = []
+    ber = fugen.kontaktfuge_ausfuehren(m, kb, log=log)
+    check("die Fuge läuft Knoten gegen Knoten (4 Knoten verdoppelt, kein Kontaktpaar)",
+          kb.ausgefuehrt and ber.get("knoten") == 4 and not ber.get("kontaktpaar"),
+          str(ber))
+    kn = [k.steifigkeiten[0] for k in m.kopplungen if len(k.richtungen) == 1]
+    kt = [s for k in m.kopplungen if len(k.richtungen) == 2 for s in k.steifigkeiten]
+    check("je Knoten eine Normal- und eine Tangentialkopplung",
+          len(kn) == 4 and len(kt) == 8, f"{len(kn)} normal, {len(kt)} tangential")
+    close("Σ Normalfedern = c_n · A (ganze Viereckfläche)", sum(kn), c_n * A_fuge,
+          1e-9 * c_n * A_fuge, " N/m")
+    close("Σ Tangentialfedern = 2 · c_t · A", sum(kt), 2.0 * c_t * A_fuge,
+          1e-9 * c_t * A_fuge, " N/m")
 
 
 # --------------------------------------------------------------------------

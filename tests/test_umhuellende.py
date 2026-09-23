@@ -331,7 +331,7 @@ def test_rueckfall_nur_ohne_kombinationen():
     html = Report(m1, an1).html()
     check("der Bericht nennt sie im Kapitel und im Gesamturteil",
           "Kombination K2 nicht nachgewiesen" in html
-          and "Es wurden keine Nachweise geführt – nicht nachgewiesen" in html)
+          and "Kein Nachweis geführt – nicht geführt wurden" in html)
 
 
 def test_gzg_sieht_die_alternativen():

@@ -348,6 +348,72 @@ def test_design_driver():
     check("Tabelle Nachweise", float(len(an.design.table()) == 2), 1.0, 0)
 
 
+def _traeger_und_stab_ohne_fy():
+    """Einfeldtraeger IPE 300 S235 wie in test_design_driver, daneben ein
+    zweiter Stab aus einem Werkstoff **ohne Streckgrenze** - so kommt er aus
+    einem Import (rfem_tables, nastran, abaqus, saf ohne erkannte Sorte)."""
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    m.add_material(Material("Frei", 210e9, 0.3, 7850.0))        # fy = None
+    m.add_section(make_section("IPE 300"))
+    ids = mesher.line_of_beams(m, "S235", "IPE 300", (0, 0, 0), (6, 0, 0), 6)
+    m.fix(ids[0], [0, 1, 2, 3]); m.fix(ids[-1], [1, 2, 3])
+    ids2 = mesher.line_of_beams(m, "Frei", "IPE 300", (0, 2, 0), (6, 2, 0), 6)
+    m.fix(ids2[0], [0, 1, 2, 3]); m.fix(ids2[-1], [1, 2, 3])
+    m.case().category = "G"
+    for e in range(len(m.elements)):
+        m.load_beam(e, qz=-10000.0)
+    m.add_member("Traeger", list(range(6)))
+    m.add_member("Ohne_fy", list(range(6, 12)))
+    m.add_combination("K1", {"LF1": 1.0}, "ULS")
+    return m
+
+
+def test_stab_ohne_streckgrenze_nicht_gefuehrt():
+    """Ein Stab ohne Streckgrenze ist **nicht gefuehrt**, nicht erfuellt.
+
+    check_member bricht bei f_y = 0 ab; der MemberCheck behaelt Ausnutzung
+    0,000. Seit efcf3d6 traegt er ``fehler`` und status() sagt "nicht
+    geführt" - aber DesignResults.summary() zaehlte weiter nur util > 1 und
+    schrieb "... max. Ausnutzung 0.633 ... - alle erfuellt" (gemessen
+    22.09.2026). Genau diese Zeile steht in der Oberflaeche nach "Nachweise
+    EC3", im Etikett der Maske Nachweise (Gruppe "Nachweise führen") und in
+    Analysis.summary().
+    Geprueft wird am echten Weg solve_all(design=True).
+    """
+    m = _traeger_und_stab_ohne_fy()
+    an = solver.solve_all(m, design=True)
+    d = an.design
+    mc = d.members["Ohne_fy"]
+    check("ohne f_y: check_member setzt mc.fehler",
+          float("ohne Streckgrenze" in mc.fehler), 1.0, 0)
+    check("ohne f_y: status() = 'nicht geführt'", float(mc.status() == "nicht geführt"), 1.0, 0)
+    zeile = [r for r in d.table()[1:] if r[0] == "Ohne_fy"]
+    check("ohne f_y: table() zeigt 'nicht geführt'",
+          float(bool(zeile) and zeile[0][-1] == "nicht geführt"), 1.0, 0)
+    s = d.summary()
+    print("     summary():", s)
+    check("ohne f_y: summary() sagt nicht 'alle erfuellt'", float("alle erfuellt" not in s), 1.0, 0)
+    check("ohne f_y: summary() nennt den Stab als nicht geführt",
+          float("1 nicht geführt" in s and "Ohne_fy" in s), 1.0, 0)
+    check("ohne f_y: max. Ausnutzung kommt vom gefuehrten Stab",
+          float("max. Ausnutzung" in s and "(Traeger:" in s), 1.0, 0)
+    zeilen = [z for z in an.summary().splitlines() if z.startswith("Nachweise EC3")]
+    check("ohne f_y: auch Analysis.summary() sagt nicht 'alle erfuellt'",
+          float(bool(zeilen) and "alle erfuellt" not in zeilen[0]), 1.0, 0)
+    # Nur der Stab ohne f_y: keine Ausnutzung behaupten, die es nicht gibt
+    d1 = check_members(m, an, members=["Ohne_fy"], use_jobs=False)
+    s1 = d1.summary()
+    print("     summary() nur Ohne_fy:", s1)
+    check("nur ein nicht gefuehrter Stab: keine 'max. Ausnutzung', nicht 'alle erfuellt'",
+          float("max. Ausnutzung" not in s1 and "alle erfuellt" not in s1
+                and "nicht geführt" in s1), 1.0, 0)
+    # Gegenprobe: nur der gefuehrte Stab - dort bleibt es bei "alle erfuellt"
+    d2 = check_members(m, an, members=["Traeger"], use_jobs=False)
+    check("Gegenprobe nur Traeger: summary() 'alle erfuellt'",
+          float(d2.summary().endswith(" - alle erfuellt")), 1.0, 0)
+
+
 def test_frame_parallel_design():
     """Rahmen mit vielen Staeben: Nachweise seriell == parallel (Auftraege)."""
     from statik3d.examples_lib import frame_example
@@ -440,6 +506,7 @@ def main():
     test_zaehlverfahren()
     test_schadensakkumulation()
     test_design_driver()
+    test_stab_ohne_streckgrenze_nicht_gefuehrt()
     test_frame_parallel_design()
     test_nachweisauftrag_traegt_kein_modell()
     nok = sum(1 for r in RESULTS if r[4])

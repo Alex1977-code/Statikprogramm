@@ -2704,6 +2704,10 @@ class Report:
         else:
             b.append(("note", "Kurzform: die Nachweise stehen in der Übersicht; Zwischenwerte je "
                               "Stab liefert der Bericht im Umfang „mittel“ oder „lang“."))
+        # Den Hinweis, warum ein Stab **nicht gefuehrt** ist, legt
+        # chapter_summary an - dort, wo die Statuszeile die Staebe zaehlt. Hier
+        # stand er bis zum 23.09.2026 und fehlte darum, sobald die Berichts-
+        # option "Nachweise EC3" aus ist (fruehe Rueckkehr oben).
         nf = [mc.member for mc in d.members.values() if mc.util > 1.0]
         if nf:
             self._warnings.append("Nachweise NICHT erfüllt für: " + ", ".join(nf))
@@ -3910,21 +3914,42 @@ class Report:
         d = self.design
         status_ok = True
         nicht_gefuehrt: list = []
+        stab_gefuehrt = False
         if d is not None and getattr(d, "members", None):
-            worst = max(d.members.values(), key=lambda mc: mc.util)
-            g = worst.governing
-            kv.append(("max. Ausnutzung Nachweise EC3", Util(worst.util)))
-            kv.append(("maßgebend", f"Stab {worst.member}: {g.get('name', '')}, Kombination "
-                                    f"{g.get('combo', '')}, x = {fmt(g.get('x', 0.0), 2)} m"))
+            # Die groesste Ausnutzung nur ueber **gefuehrte** Staebe. Bis zum
+            # 23.09.2026 lief ``worst`` ueber alle: war kein Stab gefuehrt,
+            # stand hier "max. Ausnutzung Nachweise EC3 0.000" und "maßgebend
+            # Stab Riegel_ohne_fy: , Kombination , x = 0.00 m" - eine
+            # Ausnutzung, die es nicht gibt (gemessen, ein Riegel ohne f_y).
+            gefuehrte_staebe = [mc for mc in d.members.values() if not mc.fehler]
+            stab_gefuehrt = bool(gefuehrte_staebe)
+            if gefuehrte_staebe:
+                worst = max(gefuehrte_staebe, key=lambda mc: mc.util)
+                g = worst.governing
+                kv.append(("max. Ausnutzung Nachweise EC3", Util(worst.util)))
+                kv.append(("maßgebend", f"Stab {worst.member}: {g.get('name', '')}, Kombination "
+                                        f"{g.get('combo', '')}, x = {fmt(g.get('x', 0.0), 2)} m"))
             nf = [mc.member for mc in d.members.values() if mc.util > 1.0]
             if nf:
                 status_ok = False
             # Ein nicht gefuehrter Nachweis ist kein erfuellter. Seine
             # Ausnutzung ist 0,000 und faellt darum weder bei ``worst`` noch
             # bei ``nf`` auf - er ging bis zum 22.09.2026 als bestanden durch.
-            ohne = [mc.member for mc in d.members.values() if mc.fehler]
+            ohne = [mc for mc in d.members.values() if mc.fehler]
             if ohne:
                 nicht_gefuehrt.append(f"{len(ohne)} Stäbe (EC3)")
+                # Der Grund gehoert in die Hinweise, auf die die Statuszeile
+                # verweist - hier, aus derselben Quelle wie die Zaehlung, damit
+                # beides nie auseinanderlaeuft. Er stand erst im Nachweiskapitel
+                # (nur Detailblock, dann chapter_design) und fehlte gemessen im
+                # Umfang "kurz", in "mittel" mit 22 Staeben und bei
+                # ausgeschalteter Option "Nachweise EC3" - jedes Mal mit "Es
+                # liegen keine offenen Hinweise oder Warnungen vor" unter der
+                # Statuszeile. Derselbe Text wie im Detailblock, damit
+                # dict.fromkeys unten ihn nur einmal fuehrt.
+                for mc in ohne:
+                    self._warnings.extend(f"Stab {mc.member}: {w}"
+                                          for w in (mc.warnings or [mc.fehler]))
         f = self.fatigue
         # Ermuedung: ein Eintrag, dem von mehreren Lasten eine fehlt, ist weder
         # erfuellt noch nicht gefuehrt, sondern unvollstaendig. Bis zum
@@ -4019,7 +4044,10 @@ class Report:
             if n_w:
                 nicht_gefuehrt.append(f"{titel} ({n_w} Warnung{'en' if n_w > 1 else ''})")
         b.append(("kv", kv, "Wesentliche Ergebnisse"))
-        gefuehrt = ((d is not None and getattr(d, "members", None))
+        # EC3 zaehlt nur als gefuehrt, wenn mindestens ein Stab gefuehrt ist -
+        # sonst hiess es bei lauter Staeben ohne f_y "Alle **geführten**
+        # Nachweise erfüllt", obwohl keiner gefuehrt war (gemessen 23.09.2026).
+        gefuehrt = (stab_gefuehrt
                     or (f is not None and getattr(f, "members", None))
                     or (f is not None and getattr(f, "volumen", None))
                     or (aj is not None and getattr(aj, "joints", None))
@@ -4047,7 +4075,9 @@ class Report:
             else:
                 b.append(("status", "Alle Nachweise erfüllt.", True))
         elif nicht_gefuehrt:
-            b.append(("status", "Es wurden keine Nachweise geführt – nicht nachgewiesen: "
+            # Nachweise waren verlangt, aber keiner liess sich fuehren - das
+            # ist weder "erfüllt" noch "keine Nachweise" (gruen).
+            b.append(("status", "Kein Nachweis geführt – nicht geführt wurden: "
                                 + ", ".join(nicht_gefuehrt) + " (siehe die Hinweise unten).",
                       False))
         else:

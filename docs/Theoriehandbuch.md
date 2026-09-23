@@ -1384,6 +1384,16 @@ Dreieck derselbe eine Term wie vorher, für ein ebenes Viereck exakt, für ein
 leicht windschiefes die Summe seiner beiden Dreiecke (Test
 `test_viereckfuge_zaehlt_ganz`).
 
+Die Prüfung dazu geht den Weg des Programms, nicht den der Formel: zwei hex8
+übereinander mit gemeinsamer Fugenfläche 2,0 × 1,0 m, Federfuge
+c_n = 1 · 10⁹ N/m³ normal und c_t = 1 · 10⁸ N/m³ in beiden Tangenten,
+ausgeführt durch `fugen.kontaktfuge_ausfuehren`. Gemessen:
+Σ k_n = 2,000 · 10⁹ N/m = c_n · A und Σ k_t = 4,000 · 10⁸ N/m = 2 · c_t · A
+(Verhältnis je 1,0000). Mit dem alten Stand (nur die ersten drei Knoten)
+kommt an derselben Fuge Σ k_n = 1,000 · 10⁹ N/m heraus, Verhältnis 0,5000 –
+die Prüfung fällt dann. Ihre erste Fassung rechnete die Formel im Test nach
+und rief die Fugenroutine nie auf; sie bestand auch mit dem alten Stand.
+
 **Zum Vorzeichen des Ausfalls.** RFEM schreibt den Ausfall als „bei negativer"
 oder „bei positiver" Kraft – bezogen auf die lokale z-Achse der freigegebenen
 Fläche, die in der Datei nicht mitgeliefert wird. Dieselbe Fuge steht darum je
@@ -5145,6 +5155,61 @@ Ausnutzung noch die Liste der nicht erfüllten. Der Nachbarnachweis Volumen
 hier waren es zwei. Jetzt gibt es `MemberCheck.fehler` und den Zustand „nicht
 geführt".
 
+Zwei Stellen hatte diese erste Kur nicht erreicht (nachgemessen am selben Tag,
+Einfeldträger IPE 300 S235 mit Ausnutzung 0,633 und daneben ein Stab aus einem
+Werkstoff ohne f_y):
+
+* `DesignResults.summary()` zählte weiter nur Ausnutzung > 1 und schrieb
+  „… max. Ausnutzung 0.633 … - alle erfuellt". Diese Zeile steht in der
+  Oberfläche nach *Nachweise EC3*, im Etikett der Maske *Nachweise* (Gruppe
+  „Nachweise führen (nach der Berechnung)“) und in der Zusammenfassung der
+  Berechnung. Jetzt zählen nicht geführte Stäbe weder
+  für „alle erfuellt" noch für die größte Ausnutzung; die Zeile endet mit
+  „- 1 nicht geführt: *Stab* (Werkstoff … ohne Streckgrenze)", höchstens zehn
+  Namen. Ist kein Stab geführt, nennt sie keine Ausnutzung.
+* Der Grund stand nur in `mc.warnings`, und die kamen allein über den
+  Detailblock je Stab in die Hinweisliste des Berichts. Den gibt es im Umfang
+  „kurz" (der Vorgabe) nicht, in „mittel" nur für die 20 am höchsten
+  ausgenutzten Stäbe — ein Stab mit 0,000 fällt zuerst heraus. Gemessen:
+  „kurz" mit 2 Stäben und „mittel" mit 22 Stäben ergaben **0 Hinweise**, und
+  unter der Statuszeile, die auf „die Hinweise unten" verweist, stand „Es
+  liegen keine offenen Hinweise oder Warnungen vor." Seitdem gibt es für jeden
+  nicht geführten Stab einen Hinweis, unabhängig vom Umfang, mit demselben
+  Text wie der Detailblock (er steht darum nur einmal in der Liste) und mit
+  dem, was zu tun ist: Streckgrenze am Werkstoff eintragen oder am Stab
+  „Nachweis nach EC3" ausschalten.
+
+Die Gegenprüfung dieser Kur (23.09.2026) fand denselben Fehler auf drei
+weiteren Wegen, jeweils gemessen am Stand 97df705:
+
+* **Berichtsoption „Nachweise EC3" aus.** Der Hinweis entstand im
+  Nachweiskapitel, und das kehrt bei ausgeschalteter Option früh zurück. Die
+  Zusammenfassung liest die Nachweisergebnisse aber unabhängig von der Option.
+  Stütze S355 und Riegel ohne f_y, Umfang „kurz" und ebenso „lang": Statuszeile
+  „… nicht geführt wurden: 1 Stäbe (EC3) (siehe die Hinweise unten).",
+  darunter „Es liegen keine offenen Hinweise oder Warnungen vor." Jetzt legt
+  die Zusammenfassung den Hinweis an, an der Stelle, an der sie die nicht
+  geführten Stäbe für die Statuszeile zählt — beides kommt aus derselben
+  Liste.
+* **Kein einziger Stab geführt.** Die Wesentlichen Ergebnisse bildeten die
+  größte Ausnutzung über alle Stäbe, auch über die nicht geführten. Mit einem
+  einzigen Riegel ohne f_y standen dort „max. Ausnutzung Nachweise EC3" mit
+  0.000 und „maßgebend" mit „Stab Riegel_ohne_fy: , Kombination , x = 0.00 m", die
+  Statuszeile sagte „Alle **geführten** Nachweise erfüllt – nicht geführt
+  wurden: 1 Stäbe (EC3)", obwohl kein Nachweis geführt war. Jetzt zählt nur
+  ein geführter Stab für Ausnutzung und maßgebende Stelle; ist keiner geführt
+  und auch sonst kein Nachweis, fehlen beide Zeilen, und die Statuszeile heißt
+  „Kein Nachweis geführt – nicht geführt wurden: …" (rot, nicht grün wie „Es
+  wurden keine Nachweise geführt").
+* **Bedienung im Browser.** Die Oberfläche färbte die Nachweiszeile im
+  Register *Ergebnisse* über `/NICHT/.test(...)` am Text und im Register
+  *Nachweise* über `util_max > 1`. „nicht geführt" ist klein geschrieben, ein
+  nicht geführter Stab hat Ausnutzung 0 — beide Zeilen waren grün (ohne
+  Browser gerendert, `tests/render_nachweiszeile.js`). Jetzt liefert der
+  Server das Urteil aus den Stabnachweisen mit (`err` bei Ausnutzung über 1,
+  `warn` bei einem nicht geführten Stab, sonst `ok`), und die Oberfläche liest
+  den Text nicht mehr aus (`test_nachweiszeile_nicht_gefuehrt_nicht_gruen`).
+
 **„Alle Nachweise erfüllt." galt auch bei gerissenem Volumennachweis.**
 `self.volumen` fehlte im Gesamturteil **doppelt**: in der Statusprüfung und in
 der Liste der geführten Nachweise. Ein Modell, das nur aus Volumen besteht — am
@@ -5152,6 +5217,15 @@ Drehlager der Regelfall —, bekam entweder „Es wurden keine Nachweise geführ
 oder „Alle Nachweise erfüllt", während der geführte Nachweis riss. Die eine
 Zeile, die ein Prüfer als Gesamturteil liest, sagt jetzt:
 *„Alle **geführten** Nachweise erfüllt – nicht geführt wurden: …"*
+
+Geprüft wird das am reinen Volumenmodell selbst, nicht nur am Balken mit Stab:
+dort fällt ein fehlender Eintrag „Volumen" in der Liste der geführten
+Nachweise nicht auf, weil der Stab den Nachweis schon als geführt zählt.
+Zugkörper 100 × 100 mm aus S355 ohne Stäbe: bei N = 4000 kN ist die
+Ausnutzung 1,194 und die Statuszeile „Nachweise NICHT erfüllt", bei
+N = 2500 kN 0,746 und „Alle Nachweise erfüllt.". Mit dem alten Stand stand in
+beiden Fällen „Es wurden keine Nachweise geführt; …" mit grüner Kennung
+(`test_gesamturteil_reines_volumenmodell`).
 
 **Theorie II./III. Ordnung scheiterte still.** Der `ValueError` landete in
 `an.info["warnungen"]` — einem Schlüssel, der im ganzen Programm **einmal

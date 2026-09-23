@@ -2934,6 +2934,25 @@ Ergebnis: Tabelle „Nachweise EC3“ mit Ausnutzung, maßgebendem Nachweis,
 Kombination und Stelle; Färbung „Ausnutzung EC3“ im Viewport; alle Details
 im Bericht.
 
+**Stab ohne Streckgrenze.** Hat der Werkstoff eines Stabes keine
+Streckgrenze f_y — das kommt bei Importen vor, wenn die Stahlsorte nicht
+erkannt wird —, wird sein Nachweis **nicht geführt**. Die Tabelle zeigt dann
+Ausnutzung 0.000 mit Status „nicht geführt“, die Zeile nach *Nachweise EC3*
+(sie steht auch im Etikett der Maske *Nachweise*, Gruppe „Nachweise führen
+(nach der Berechnung)“) endet mit „- 1 nicht geführt: *Stab*
+(Werkstoff … ohne Streckgrenze)“ statt „- alle erfuellt“, und die größte
+Ausnutzung dort stammt nur von geführten Stäben. Im Bericht steht der Stab in
+jedem Umfang unter „Offene Hinweise und Warnungen“, auch wenn die
+Berichtsoption „Nachweise EC3“ ausgeschaltet ist. Sind die übrigen Nachweise
+erfüllt, sagt die Statuszeile „Alle geführten Nachweise erfüllt – nicht
+geführt wurden: …“. Ist gar kein Stab geführt (und kein anderer Nachweis),
+heißt sie „Kein Nachweis geführt – nicht geführt wurden: …“, und die
+Wesentlichen Ergebnisse nennen dann keine größte Ausnutzung EC3. In der
+Bedienung im Browser (Kap. 12) ist die Nachweiszeile in diesem Fall gelb
+hinterlegt statt grün, bei einer Ausnutzung über 1 rot. Abhilfe:
+Streckgrenze am Werkstoff eintragen (Tabelle *Eigenschaften → Werkstoffe*) oder am
+Stab den Haken „Nachweis nach EC3“ herausnehmen.
+
 ### Schwingungsnachweis des Verschlusses
 
 *Nachweise → Schwingung → Verschluss* (Ergebnis unten in der Tabelle
