@@ -295,6 +295,68 @@ def test_nastran_bdf():
         _check_bdf("BDF (free field)", m2)
 
 
+BDF_KEIL_ALS_HEXA = textwrap.dedent("""    $ Keil als entarteter CHEXA (G3 = G4, G7 = G8) - so schreiben ihn
+    $ Nastran-Netze; dazu ein zweiter, dessen Doppelknoten erst durch das
+    $ Zusammenfuehren gleich liegender GRIDs entsteht
+    BEGIN BULK
+    GRID,1,,0.0,0.0,0.0
+    GRID,2,,1.0,0.0,0.0
+    GRID,3,,0.0,1.0,0.0
+    GRID,4,,0.0,0.0,1.0
+    GRID,5,,1.0,0.0,1.0
+    GRID,6,,0.0,1.0,1.0
+    GRID,13,,0.0,1.0,0.0
+    GRID,16,,0.0,1.0,1.0
+    GRID,21,,1.0,0.0,0.0
+    GRID,22,,1.0,1.0,0.0
+    GRID,23,,0.0,1.0,0.0
+    GRID,25,,1.0,0.0,1.0
+    GRID,26,,1.0,1.0,1.0
+    GRID,27,,0.0,1.0,1.0
+    CHEXA,1,1,1,2,3,3,4,5
+    ,6,6
+    CHEXA,2,1,21,22,23,13,25,26
+    ,27,16
+    PSOLID,1,1
+    MAT1,1,2.1+11,,0.3,7850.0
+    ENDDATA
+    """)
+
+
+def test_entarteter_sechsflaechner_beim_import():
+    """Ein zum Keil entarteter Sechsflaechner wird schon beim Import
+    umgewandelt und im Protokoll genannt (23.09.2026).
+
+    Bis dahin stand er als hex8 mit doppelten Knoten im Modell; die
+    Modellpruefung hielt ihn fuer ein Element ohne Ausdehnung, und die
+    Rechnung liess ihn weg (am Kragarm aus solchen Elementen: Durchbiegung
+    0,0). Seit element/entartete-elemente wandelt die Rechnung ihn um - der
+    Import soll es aber schon sagen, denn dort entstehen solche Elemente:
+    in der Datei (Nastran/Abaqus) oder beim Zusammenfuehren gleich liegender
+    Knoten.
+    """
+    from statik3d.elements import solid as SO
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "keil.bdf")
+        with open(p, "w") as f:
+            f.write(BDF_KEIL_ALS_HEXA)
+        log = []
+        m = import_file(p, log=log)
+    typen = [e.typ for e in m.elements]
+    expect("Keil aus der Datei (G3 = G4) ist nach dem Import ein pent6",
+           len(typen) == 2 and typen[0] == "pent6", str(typen))
+    expect("Keil, der erst durch zusammengefuehrte Knoten entsteht, ebenso",
+           len(typen) == 2 and typen[1] == "pent6", str(typen))
+    vol = [abs(SO.solid_volume(e.typ, m.nodes[[int(x) for x in e.nodes]])) for e in m.elements]
+    expect("beide behalten ihr Volumen (0,5 m³)",
+           all(abs(v - 0.5) < 1e-12 for v in vol), str(vol))
+    zeile = [z for z in log if "umgewandelt" in z]
+    expect("das Importprotokoll nennt die Umwandlung mit Anzahl",
+           len(zeile) == 1 and "hex8→pent6: 2" in zeile[0], str(zeile))
+    expect("… und was sie an Genauigkeit kostet",
+           bool(zeile) and "Keils" in zeile[0], zeile[0][:120] if zeile else "–")
+
+
 # --------------------------------------------------------------------------
 # IFC4 Structural Analysis View
 # --------------------------------------------------------------------------
@@ -1825,7 +1887,8 @@ TESTS = [
          test_json_anhaengen_fuge_traegt_wie_allein,
          test_json_anhaengen_ermuedung_auf_kombination, test_json_anhaengen_koerpergruppe,
          test_json_anhaengen_stellung_des_ziels, test_json_anhaengen_stellung_protokoll,
-         test_json_anhaengen_schluessel]
+         test_json_anhaengen_schluessel,
+         test_entarteter_sechsflaechner_beim_import]
 
 
 def main() -> int:

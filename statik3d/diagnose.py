@@ -177,6 +177,16 @@ def entartete_elemente(model, hoechstens: int = 0) -> list:
         sortiert = _np.sort(K, axis=1)
         doppelt = (sortiert[:, 1:] == sortiert[:, :-1]).any(axis=1)
         for i in idx[doppelt & gueltig]:
+            # Ein Volumenelement mit doppeltem Knoten kann Volumen haben (der
+            # zum Keil entartete Sechsflaechner) - weggelassen wird nur, was
+            # wirklich keines hat; der Rest wird umgewandelt oder ist ein
+            # FEHLER (entartete_einordnen). Bis zum 23.09.2026 fiel hier jedes
+            # solche Element aus der Rechnung.
+            if familie == "volumen" and typ in ("hex8", "pent6", "pyr5", "tet4", "tet10",
+                                                "hex20", "pent15"):
+                art = _entartung(model, int(i))[0]
+                if art != "null":
+                    continue
             treffer.append((int(i), typ, "zwei Knoten des Elements sind derselbe"))
         # 2) Mass des Elements
         pruef = gueltig & ~doppelt
@@ -259,6 +269,69 @@ def entartetes_volumen(V: float, d: float) -> bool:
     return abs(float(V)) <= ENTARTET_VOL_REL * max(float(d), 0.0) ** 3
 
 
+#: Grund des Hinweises im Bericht: was die Umwandlung an Genauigkeit kostet
+#: (Kragarm-Pruefkoerper, Oberkante bei L/2 gegen 355 N/mm2, 23.09.2026)
+ENTARTUNG_GENAUIGKEIT = ("ihre Genauigkeit ist die des Keils bzw. der Pyramide oder des "
+                         "Tetraeders - am Kragarm liegt der Keil bei 90 / 405 / 2 295 FHG "
+                         "−64,6 / −15,8 / −4,3 N/mm² daneben, der Sechsflächner −1,6 / +0,2 / −0,03")
+
+
+def _entartung(model, i: int) -> tuple:
+    """solid.entartung_aufloesen fuer Element i (Volumen, doppelte Knoten)."""
+    from .elements import solid as _sl
+    e = model.elements[i]
+    kn = [int(x) for x in e.nodes]
+    return _sl.entartung_aufloesen(e.typ, kn, model.nodes[kn], GRENZE_VOLUMEN)
+
+
+def entartete_einordnen(model) -> dict:
+    """Volumenelemente mit zusammenfallenden Knoten: {"umwandeln": [(i, alt,
+    neu, knoten)], "fehler": [(i, typ, grund)]} - die "null"-Faelle (kein
+    Volumen) stehen in entartete_elemente und fallen weg."""
+    import numpy as _np
+    aus = {"umwandeln": [], "fehler": []}
+    for i, e in enumerate(model.elements):
+        if e.typ not in ("hex8", "pent6", "pyr5", "tet4", "tet10", "hex20", "pent15"):
+            continue
+        kn = e.nodes
+        if len(set(int(x) for x in kn)) == len(kn):
+            continue
+        if not all(0 <= int(x) < model.nn for x in kn):
+            continue
+        art, neu_typ, neu, grund = _entartung(model, i)
+        if art == "umwandeln":
+            aus["umwandeln"].append((i, e.typ, neu_typ, neu))
+        elif art == "fehler":
+            aus["fehler"].append((i, e.typ, grund))
+    del _np
+    return aus
+
+
+def entartete_umwandeln(model) -> dict:
+    """Die eindeutig umwandelbaren Elemente mit zusammenfallenden Knoten an
+    Ort und Stelle umwandeln (Typ und Knoten; die Elementnummer bleibt).
+    Rueckgabe {"hex8→pent6": n, ...}; die Zaehlung sammelt sich auch in
+    ``model._entartung_umgewandelt`` fuer Pruefung und Bericht. Die Geometrie
+    aendert sich nicht - dasselbe Volumen, dieselben Knoten."""
+    ein = entartete_einordnen(model)
+    zahl: dict = {}
+    for i, alt, neu_typ, neu in ein["umwandeln"]:
+        model.elements[i].typ = neu_typ
+        model.elements[i].nodes = list(neu)
+        k = f"{alt}→{neu_typ}"
+        zahl[k] = zahl.get(k, 0) + 1
+    if zahl:
+        gesamt = dict(getattr(model, "_entartung_umgewandelt", None) or {})
+        for k, v in zahl.items():
+            gesamt[k] = gesamt.get(k, 0) + v
+        try:
+            model._entartung_umgewandelt = gesamt
+            model._mittelknoten = None
+        except Exception:                   # noqa: BLE001
+            pass
+    return zahl
+
+
 def entartete_menge(model) -> frozenset:
     """Die Indizes der entarteten Elemente - je Modellstand einmal ermittelt.
 
@@ -276,6 +349,17 @@ def entartete_menge(model) -> frozenset:
     zw = getattr(model, "_entartet_zwischen", None)
     if zw is not None and zw[0] == stand:
         return zw[1]
+    # Vor dem Weglassen: was eindeutig ein Keil, eine Pyramide oder ein
+    # Tetraeder ist, wird es; was Volumen hat und sich nicht eindeutig
+    # umwandeln laesst, haelt die Rechnung an - weglassen waere still falsch
+    entartete_umwandeln(model)
+    fehler = entartete_einordnen(model)["fehler"]
+    if fehler:
+        beispiel = "; ".join(f"Element {i + 1} ({t}): {g}" for i, t, g in fehler[:3])
+        raise ValueError(f"{len(fehler)} Volumenelement(e) mit zusammenfallenden Knoten haben "
+                         f"Volumen und lassen sich nicht eindeutig umwandeln ({beispiel}"
+                         + (" …" if len(fehler) > 3 else "") + ") - dort das Netz neu erzeugen "
+                         "oder die Elemente als Keil, Pyramide oder Tetraeder angeben")
     res = frozenset(i for i, _t, _g in entartete_elemente(model))
     try:
         model._entartet_zwischen = (stand, res)
@@ -315,8 +399,12 @@ def diagnose(model) -> dict:
     nur_kontakt = [g for g in teile if not (set(g) & fest) and (set(g) & kontakt)]
     belegt = set(k for g in teile for k in g)
     entartet = entartete_elemente(model)
+    einordnung = entartete_einordnen(model)
     return {"koerper_gescheitert": gescheitert,
             "entartete_elemente": entartet,
+            "entartet_umwandeln": einordnung["umwandeln"],
+            "entartet_fehler": einordnung["fehler"],
+            "entartet_umgewandelt": dict(getattr(model, "_entartung_umgewandelt", None) or {}),
             "unvernetzte_flaechen": flaechen, "unvernetzte_koerper": koerper,
             "koerper_ohne_volumen": ohne_volumen,
             "teile": len(teile), "groesstes_teil": max((len(g) for g in teile), default=0),
@@ -2134,6 +2222,24 @@ def meldungen(model, d: dict = None) -> list:
                  + (" …" if len(ent) > 3 else "") + "). Wo sie stören, das Netz "
                  "dort neu erzeugen (Netz → Vernetzen); bei importierten Netzen "
                  "die doppelten Knoten zusammenlegen")
+    fe = d.get("entartet_fehler") or []
+    if fe:
+        beispiel = "; ".join(f"Element {i + 1} ({t}): {g}" for i, t, g in fe[:3])
+        z.append(f"FEHLER: {len(fe)} Volumenelement(e) mit zusammenfallenden Knoten haben Volumen "
+                 f"und lassen sich nicht eindeutig umwandeln ({beispiel}"
+                 + (" …" if len(fe) > 3 else "") + ") - die Rechnung hält dort an; das Netz "
+                 "neu erzeugen oder die Elemente als Keil, Pyramide oder Tetraeder angeben")
+    wa = d.get("entartet_umwandeln") or []
+    ge = d.get("entartet_umgewandelt") or {}
+    if wa or ge:
+        zahl: dict = dict(ge)
+        for _i, alt, neu, _k in wa:
+            zahl[f"{alt}→{neu}"] = zahl.get(f"{alt}→{neu}", 0) + 1
+        n = sum(zahl.values())
+        teile = ", ".join(f"{k}: {v}" for k, v in sorted(zahl.items()))
+        wann = "werden beim Rechnen" if wa else "wurden"
+        z.append(f"Hinweis: {n} Elemente aus entarteten Volumenelementen (zusammenfallende "
+                 f"Knoten) {wann} umgewandelt ({teile}) - {ENTARTUNG_GENAUIGKEIT}")
     nf, nk = len(d["unvernetzte_flaechen"]), len(d["unvernetzte_koerper"])
     if nf or nk:
         z.append("WARNUNG: " + " und ".join(x for x in (f"{nf} Flächen" if nf else "", f"{nk} Volumen" if nk else "") if x)

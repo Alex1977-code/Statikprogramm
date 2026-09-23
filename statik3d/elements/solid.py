@@ -1187,6 +1187,115 @@ def jacobi_volumen(typ, X) -> dict:
     return {k: float(v[0]) for k, v in d.items()}
 
 
+# --------------------------------------------------------------------------
+# Entartete Elemente: zusammenfallende Knoten (23.09.2026)
+# --------------------------------------------------------------------------
+#: Gegenueberliegende Seiten des hex8 (Index in FLAECHEN["hex8"]) und die
+#: Zuordnung ihrer Knoten ueber die verbindenden Kanten.
+_HEX8_GEGENSEITEN = ((0, 1, {0: 4, 1: 5, 2: 6, 3: 7}),
+                     (2, 4, {0: 3, 1: 2, 5: 6, 4: 7}),
+                     (3, 5, {1: 0, 2: 3, 6: 7, 5: 4}))
+
+
+def _kreis_ohne_doppelte(folge, kn):
+    """Lokale Indizes einer Seite in Umlaufrichtung, aufeinanderfolgend gleiche
+    Knoten (auch ueber das Ende hinweg) nur einmal."""
+    aus = []
+    for a in folge:
+        if not aus or kn[a] != kn[aus[-1]]:
+            aus.append(a)
+    while len(aus) > 1 and kn[aus[0]] == kn[aus[-1]]:
+        aus.pop()
+    return aus
+
+
+def entartung_aufloesen(typ, knoten, X, grenze_volumen: float = 1e-15) -> tuple:
+    """Ein Volumenelement mit zusammenfallenden Knoten einordnen:
+    (art, neuer_typ, neue_knoten, grund) mit art
+
+    * "gut"       - keine doppelten Knoten;
+    * "umwandeln" - es ist eindeutig ein Element niedrigerer Art: hex8 mit
+      einer Seite auf einen Punkt -> pyr5; hex8 mit zwei gegenueberliegenden
+      Seiten zu Dreiecken, deren Spitzen einander ueber Kanten gegenueber
+      liegen -> pent6; pent6 mit einer zusammengezogenen Laengskante -> pyr5;
+      vier verschiedene Knoten -> tet4 (auch aus pent6 und pyr5). Die neue
+      Knotenfolge ist so ausgerichtet, dass das Volumen positiv ist;
+    * "null"      - kein Volumen (hoechstens drei verschiedene Knoten, oder
+      das Volumen liegt unter ``grenze_volumen``): Weglassen ist exakt;
+    * "fehler"    - Volumen > 0, aber keine eindeutige Umwandlung (etwa ein
+      hex8 mit nur einer zusammengezogenen Kante, oder ein quadratisches
+      Element).
+
+    Warum: bis zum 23.09.2026 galt jedes Element mit doppeltem Knoten als
+    "ohne Ausdehnung" und fiel aus der Rechnung. Ein zum Keil entarteter
+    Sechsflaechner hat aber Volumen - am Kragarm aus solchen Keilen (128
+    Elemente, 408 FHG) lief die Rechnung mit 0,0 mm Durchbiegung durch, nur
+    mit einer WARNUNG (tests/test_entartung.py)."""
+    kn = [int(k) for k in knoten]
+    X = np.asarray(X, float)
+    einzeln = list(dict.fromkeys(kn))
+    if len(einzeln) == len(kn):
+        return "gut", typ, kn, ""
+    try:
+        V0 = abs(jacobi_volumen(typ, X)["V"])
+    except Exception:                        # noqa: BLE001 - dann aus den Ecken
+        V0 = float("inf")
+    if len(einzeln) <= 3 or V0 <= grenze_volumen:
+        return "null", typ, kn, "zwei Knoten des Elements sind derselbe, kein Volumen"
+    lage = {k: X[i] for i, k in enumerate(kn)}
+    kandidaten = []
+    if typ in ("hex8", "pent6", "pyr5") and len(einzeln) == 4:
+        kandidaten.append(("tet4", einzeln))
+    elif typ == "hex8" and len(einzeln) == 5:
+        for f, g, _m in _HEX8_GEGENSEITEN:
+            for a, b in ((f, g), (g, f)):
+                spitze = {kn[i] for i in FLAECHEN["hex8"][a]}
+                basis = [kn[i] for i in FLAECHEN["hex8"][b]]
+                if len(spitze) == 1 and len(set(basis)) == 4:
+                    kandidaten.append(("pyr5", basis + [spitze.pop()]))
+    elif typ == "hex8" and len(einzeln) == 6:
+        for f, g, m in _HEX8_GEGENSEITEN:
+            tf = _kreis_ohne_doppelte(FLAECHEN["hex8"][f], kn)
+            if len(tf) != 3:
+                continue
+            unten = [kn[a] for a in tf]
+            oben = [kn[m[a]] for a in tf]
+            # die Gegenseite muss an denselben Kanten zusammengezogen sein
+            if len(set(oben)) == 3 and len(set(unten + oben)) == 6 \
+                    and len(_kreis_ohne_doppelte(FLAECHEN["hex8"][g], kn)) == 3:
+                kandidaten.append(("pent6", unten + oben))
+    elif typ == "pent6" and len(einzeln) == 5:
+        for i in range(3):
+            if kn[i] == kn[i + 3]:
+                for q in FLAECHEN["pent6"][2:]:
+                    if i not in q and i + 3 not in q:
+                        kandidaten.append(("pyr5", [kn[a] for a in q] + [kn[i]]))
+    # eindeutig heisst: genau eine Deutung (dieselbe Knotenmenge zaehlt einmal)
+    deutungen = {(t, frozenset(k)): (t, k) for t, k in kandidaten}
+    if len(deutungen) != 1:
+        grund = ("zusammenfallende Knoten, aber keine eindeutige Umwandlung"
+                 if not deutungen else "zusammenfallende Knoten, mehrdeutig")
+        return "fehler", typ, kn, f"{grund} (Volumen {V0:.3g} m³)"
+    neu_typ, neu = next(iter(deutungen.values()))
+    neu = list(neu)
+    for _versuch in range(2):
+        d = jacobi_volumen(neu_typ, np.array([lage[k] for k in neu]))
+        if d["V"] > 0.0:
+            break
+        # Umlaufsinn drehen: die Folge spiegeln
+        if neu_typ == "tet4":
+            neu = [neu[0], neu[2], neu[1], neu[3]]
+        elif neu_typ == "pyr5":
+            neu = [neu[0], neu[3], neu[2], neu[1], neu[4]]
+        else:
+            neu = [neu[0], neu[2], neu[1], neu[3], neu[5], neu[4]]
+    if d["V"] <= 0.0 or d["det_min"] < -1e-12 * max(abs(d["det_max"]), 1e-300) \
+            or abs(d["V"] - V0) > 1e-9 * max(V0, 1e-300) + 1e-6 * V0:
+        return "fehler", typ, kn, (f"zusammenfallende Knoten, die Umwandlung in {neu_typ} "
+                                   f"trifft das Volumen nicht ({d['V']:.3g} statt {V0:.3g} m³)")
+    return "umwandeln", neu_typ, neu, f"{typ} mit zusammenfallenden Knoten ist ein {neu_typ}"
+
+
 def _hrz_gewichte(typ, X) -> np.ndarray:
     """Massenanteile je Knoten nach Hinton-Rock-Zienkiewicz: m_i ∝ ∫ N_i² dV,
     auf Summe 1 skaliert.  Reine Zeilensummen gaeben bei quadratischen

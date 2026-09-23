@@ -370,6 +370,17 @@ def import_file(path: str, model: Model = None, log: list = None, **options) -> 
         C.say(log, f"{n_merged} doppelte Knoten zusammengefuehrt"
                    + (f" - die Flaechen der {len(kb)} Kontaktbedingungen werden beim "
                       "Vernetzen wieder getrennt" if kb else ""))
+    # Zum Keil entartete Sechsflaechner (doppelte Knoten aus der Datei oder
+    # aus dem Zusammenfuehren eben) wandelt die Rechnung ohnehin um
+    # (diagnose.entartete_menge). Hier schon, damit das Protokoll des Imports
+    # es sagt - dort entstehen sie. Bis zum 23.09.2026 blieben sie hex8 mit
+    # doppelten Knoten und fielen beim Rechnen still weg.
+    from .. import diagnose as _dg
+    umgewandelt = _dg.entartete_umwandeln(model)
+    if umgewandelt:
+        C.say(log, "Entartete Volumenelemente umgewandelt ("
+                   + ", ".join(f"{k}: {v}" for k, v in umgewandelt.items())
+                   + ") - " + _dg.ENTARTUNG_GENAUIGKEIT)
     ext = os.path.splitext(path)[1].lower()
     if ext in _NO_MEMBER_INFO or kind == "cad":
         members = model.auto_members()

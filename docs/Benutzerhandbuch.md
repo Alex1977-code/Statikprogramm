@@ -4314,6 +4314,21 @@ davon nicht betroffen.
   nicht genähert, denn sie tragen ohnehin nichts - und die Modellprüfung
   nennt sie als **Warnung** mit Elementnummer, Art und Grund. Früher brach
   die ganze Rechnung an ihnen mit „entartetes Tet4“ ab, ohne zu sagen, wo.
+  **Doppelte Knoten heißen aber nicht immer „leer“** (seit 23.09.2026): ein
+  Sechsflächner mit zusammenfallenden Knoten ist oft ein Keil, eine Pyramide
+  oder ein Tetraeder (so entartet z. B. der VQ83 von InfoGraph). Solche Elemente
+  wandelt das Programm vor der Rechnung in den passenden Typ um und nennt das als
+  Hinweis mit Anzahl je Art („hex8→pent6: 128“) — ihre Genauigkeit ist dann die des
+  Keils, am Kragarm mit 405 Unbekannten 15,8 statt 0,2 N/mm² daneben. Hat ein
+  solches Element Volumen, lässt sich aber nicht eindeutig deuten (etwa nur eine
+  Kante zusammengezogen), ist das ein **FEHLER** mit Elementnummer, und die
+  Rechnung hält an. Bis zum 23.09.2026 fielen auch diese Elemente still weg — ein
+  Kragarm aus Keil-Sechsflächnern rechnete mit 0,0 mm Durchbiegung.
+  Beim **Import** geschieht die Umwandlung schon im Anschluss an das
+  Zusammenführen doppelter Knoten, und das Importprotokoll nennt sie
+  („Entartete Volumenelemente umgewandelt (hex8→pent6: 2) …“) – dort, wo
+  solche Elemente entstehen: in der Datei selbst oder durch gleich liegende
+  Knoten, die zusammengeführt werden.
   Der Vernetzer legt sie gar nicht erst an: ein Volumenkörper, dessen
   Eckknoten in einer Ebene liegen, bekommt kein Element und eine Warnung mit
   seinem Namen (in Dateien aus RFEM stehen solche Null-Volumen als
