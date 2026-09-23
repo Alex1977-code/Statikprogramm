@@ -3116,15 +3116,20 @@ jetzt kommen alle an. Was das Protokoll dabei sagt:
   'S-offen_2': …“) trägt die Lastfälle der übrigen Ketten als Teilergebnis –
   im Versuch mit zwei Ketten LF1 des Ziels. Legt man die Stellung der Quelle
   unter dem neuen Namen im Ziel an, rechnet der Lastfall im selben Versuch
-  wie allein (4,7572 mm). Ausgenommen ist eine Stellung namens
-  `Grundstellung`: beim Rechnen wird sie übergangen, die Situation rechnet
-  unbewegt, allein wie angehängt, und der Verweis bleibt stehen. Bis zum
-  23.09.2026 zeigte er auch dann auf einen neuen Namen (`Grundstellung_2`).
-  Im Versuch schaltete die Stellung `Grundstellung` der Quelle das Lager
-  unter der belasteten Spitze eines Winkels ab; allein ergab sich dort
-  0,0 mm. Angehängt meldete die Modellprüfung einen Fehler, und wer die
-  Stellung wie empfohlen unter dem neuen Namen anlegte, bekam −16,264 mm.
-  Jetzt sind es im selben Versuch 0,0 mm wie allein.
+  wie allein (4,7572 mm). Heißt die Stellung `Grundstellung`, zeigt die
+  Situation ebenso auf einen neuen Namen (`Grundstellung_2`), darunter ist
+  aber nur ein Teil der Stellung anzulegen. Von einer Stellung dieses Namens
+  wirken in einer Situation nur die abgeschalteten Stäbe, Flächen und
+  Volumen, nicht ihre Lage (Ausgangsstellung, Verschiebung, Drehung), Lager
+  und Gelenke. Die Warnung sagt das; bis zum 24.09.2026 empfahl sie auch
+  hier, die Stellung unter dem neuen Namen anzulegen. Im Versuch schaltete
+  die Stellung `Grundstellung` eines Winkels das Lager unter der belasteten
+  Spitze ab: allein ergab sich dort 0,0 mm, mit der ganzen Stellung unter
+  dem neuen Namen −16,264 mm, mit einer Stellung `Grundstellung_2` ohne
+  Inhalt (die Stellung schaltete nichts ab) 0,0 mm wie allein. Schaltet sie
+  dagegen einen Stab ab, gehört genau das unter den neuen Namen: an einem
+  Kragarm mit Stützstab ergab sich allein −4,1412 mm und mit dem
+  abgeschalteten Stützstab unter `Grundstellung_2` ebenso.
 * **Anschluss:** Ein Knoten der Quelle, der auf einem Knoten des Ziels
   liegt, wird mit ihm zusammengeführt („1 Knoten der Quelle lag auf einem
   Knoten des Ziels …“); jeder Verweis darauf folgt, auch Ecken und integrierte

@@ -32,8 +32,9 @@ Flaechennamen gelten auch dann als vergeben, wenn im Ziel nur eine
 Elementgruppe so heisst. Stellungen
 gehen nicht mit; nennt eine Situation der Quelle eine, die das Ziel unter
 demselben Namen hat, zeigt sie auf einen neuen Namen, den die
-Modellpruefung als unbekannt meldet (``_stellungsverweise``; nicht bei
-einer Stellung namens 'Grundstellung', die das Rechnen uebergeht).
+Modellpruefung als unbekannt meldet (``_stellungsverweise``, auch bei einer
+Stellung namens 'Grundstellung': von ihr wirken in einer Situation die
+Abschaltungen, und die Warnung sagt, dass nur diese anzulegen sind).
 Werkstoffe, Querschnitte, Dicken, Kombinationen und Ermuedungslasten mit
 gleichem Namen **und** gleichem Inhalt werden nicht doppelt angelegt.
 Lastfaelle gleichen Namens werden wie bisher zusammengelegt; weichen ihre
@@ -108,6 +109,20 @@ NICHT_UEBERTRAGEN: dict[str, tuple[str, str]] = {
                    "Gruppenangabe die Knoten dieser Elementgruppen) - im Ziel neu anlegen; "
                    "Situationen, die eine Stellung nennen, meldet die Modellprüfung"),
 }
+
+#: Zusatz zur Warnung ueber umbenannte Stellungsverweise, wenn die Stellung
+#: 'Grundstellung' heisst. Von ihr wirken in einer Situation nur die
+#: Abschaltungen (Model.aktive_elemente); Lage, Lager und Gelenke uebergeht
+#: situationen.situationsmodell. Wer sie ganz unter dem neuen Namen anlegt,
+#: rechnet anders als in der Quelle. Gemessen am 24.09.2026 (Rahmen 'frame',
+#: Stellung hebt um 1,0 m und schaltet den rechten Stiel ab, 10 kN
+#: waagerecht): allein |u| = 3,8300 mm, ganz angelegt 12,5294 mm, nur die
+#: Abschaltung angelegt 3,8300 mm.
+_GRUNDSTELLUNG_HINWEIS = (
+    f" Von einer Stellung namens '{GRUNDSTELLUNG}' wirken in einer Situation nur die "
+    "abgeschalteten Stäbe, Flächen und Volumen, nicht ihre Lage (Ausgangsstellung, "
+    "Verschiebung, Drehung), Lager und Gelenke - unter dem neuen Namen also nur die "
+    "Abschaltungen anlegen, sonst rechnet die Situation anders als in der Quelle.")
 
 #: Die Lastlisten eines Lastfalls (Schluessel von LoadCase.to_dict())
 LASTLISTEN = ("nodal_loads", "beam_loads", "face_loads", "temp_loads", "geometrielasten",
@@ -331,7 +346,7 @@ class _Anhang:
         """Stellungen gehen nicht mit (:data:`NICHT_UEBERTRAGEN`). Nennt eine
         Situation der Quelle eine Stellung, die das Ziel unter demselben Namen
         hat, bekommt der Verweis einen neuen Namen, den es im Ziel nicht gibt -
-        ausser dem Namen GRUNDSTELLUNG, den das Rechnen uebergeht.
+        auch der Name GRUNDSTELLUNG (siehe den Kommentar in der Schleife).
 
         Warum: sonst loeste ``Model.stellung`` ihn still auf die Stellung des
         Ziels auf, und ``Model.check`` meldete nichts (es prueft nur, ob der
@@ -363,18 +378,18 @@ class _Anhang:
                   | {str(getattr(s, "name", "")) for s in (q.stellungen or [])}
                   | set(genannt))
         for n in genannt:
-            # Wie beim Rechnen: situationen.situationsmodell uebergeht eine
-            # Stellung namens GRUNDSTELLUNG, die Situation rechnet unbewegt -
-            # allein wie angehaengt, der Verweis bleibt also stehen. Bis zum
-            # 23.09.2026 wurde auch er umbenannt. Gemessen an einem Winkel aus
-            # HEB 300, dessen Stellung 'Grundstellung' das Lager unter der
-            # belasteten Spitze abschaltet (allein uz = 0,0 mm): der Verweis
-            # hiess danach 'Grundstellung_2', die Modellpruefung meldete
-            # FEHLER, und mit der Stellung der Quelle unter diesem Namen ergab
-            # sich uz = -16,264 mm. Sonst dieselbe Aufloesung wie
-            # Model.stellung.
-            if n == GRUNDSTELLUNG:
-                continue
+            # Aufgeloest wird wie in Model.aktive_elemente (Model.stellung),
+            # ohne Ausnahme fuer GRUNDSTELLUNG. situationen.situationsmodell
+            # uebergeht bei diesem Namen nur Lage, Lager und Gelenke
+            # (st.anwenden); die Abschaltung ihrer Staebe, Flaechen und
+            # Volumen holt Model.aktive_elemente ueber den Namen. Bliebe der
+            # Verweis stehen, rechnete die Situation still mit der Abschaltung
+            # der gleichnamigen Stellung des Ziels. Gemessen am 24.09.2026 am
+            # Stand 159edab, der den Namen ausnahm: Kragarm aus HEB 300 mit
+            # Stuetzstab, die Stellung 'Grundstellung' der Quelle schaltet den
+            # Stuetzstab ab, das Ziel hat eine leere 'Grundstellung'; allein
+            # uz = -4,1412 mm, angehaengt -0,0064 mm, ohne Meldung. Was unter
+            # dem neuen Namen anzulegen ist, sagt die Warnung in _melden.
             if z.stellung(n) is not None:
                 neu = C.unique_name(belegt, n)
                 belegt.add(neu)
@@ -878,7 +893,9 @@ class _Anhang:
                         "Situationen nicht still in der Stellung des Ziels rechnen, zeigen sie "
                         "auf einen neuen Namen: " + "; ".join(teile) + ". Die Modellprüfung "
                         "meldet sie, bis die Stellung unter diesem Namen im Ziel angelegt oder "
-                        "die Situation auf eine Stellung des Ziels umgestellt ist.")
+                        "die Situation auf eine Stellung des Ziels umgestellt ist."
+                        + (_GRUNDSTELLUNG_HINWEIS if GRUNDSTELLUNG in self.stellungsverweis
+                           else ""))
         abw = [ZIEL_BEHAELT[k].split(" (")[0] for k in ZIEL_BEHAELT
                if k not in _OHNE_VERGLEICH and _einstellung(z, k) != _einstellung(q, k)]
         if abw:

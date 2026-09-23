@@ -1852,26 +1852,36 @@ def test_json_anhaengen_stellung_protokoll():
 
 def test_json_anhaengen_stellung_grundstellung():
     """Eine Stellung darf 'Grundstellung' heissen (gui/main.py prueft den
-    Namen nur auf leer und doppelt), beim Rechnen wird sie aber uebergangen
-    (situationen.situationsmodell: ``sit.stellung != GRUNDSTELLUNG``) - die
-    Situation rechnet unbewegt. Das Anhaengen behandelt den Namen jetzt
-    ebenso und laesst den Verweis stehen. Gemessen am Stand ec6448c
-    (23.09.2026, p8_grundstellung.py: Winkel aus HEB 300, die Stellung
-    'Grundstellung' schaltet das Lager unter der belasteten Spitze ab): die
-    Situation der Quelle zeigte nach dem Anhaengen auf 'Grundstellung_2',
-    die Modellpruefung meldete FEHLER, und wer die Stellung der Quelle wie
-    empfohlen unter diesem Namen anlegte, bekam uz = -16,264 mm statt 0,0 mm
-    wie allein. Hier am Rahmen mit einer Stellung, die um 1,0 m hebt."""
+    Namen nur auf leer und doppelt). Beim Rechnen wirkt von ihr nur ein Teil:
+    situationen.situationsmodell uebergeht Lage, Lager und Gelenke
+    (``sit.stellung != GRUNDSTELLUNG``), Model.aktive_elemente loest den
+    Namen aber mit Model.stellung auf und schaltet ihre Staebe, Flaechen und
+    Volumen ab. Der Verweis bekommt deshalb wie jeder andere einen neuen
+    Namen, und die Warnung sagt, dass unter ihm nur die Abschaltungen
+    anzulegen sind.
+
+    Gemessen am 24.09.2026 an diesem Aufbau (Rahmen 'frame' als Quelle bei
+    x = 50 m, 'Stiel rechts' = Elemente 4 bis 7; die Stellung 'Grundstellung'
+    hebt um 1,0 m und schaltet 'Stiel rechts' ab; 10 kN waagerecht an
+    Knoten 2; das Ziel hat eine leere Stellung 'Grundstellung'): allein
+    |u| = 3,8300 mm. Stand 159edab liess den Verweis stehen: keine Meldung,
+    angehaengt 1,7876 mm, gerechnet mit der leeren Maske des Ziels. Stand
+    ec6448c benannte um und meldete FEHLER, empfahl aber, die Stellung unter
+    dem neuen Namen anzulegen; ganz angelegt ergab das 12,5294 mm, nur mit
+    der Abschaltung 3,8300 mm wie allein."""
     from statik3d import examples_lib
     from statik3d.model import Situation
     from statik3d.bridges.positions import Stellung
+    from statik3d.situationen import situationsmodell
 
-    def quelle(stellung):
+    def quelle(maske=True):
         m = examples_lib.build_example("frame")
         m.nodes = np.asarray(m.nodes, float) + np.array([50.0, 0.0, 0.0])
-        m.stellungen = [Stellung(stellung, verschiebung=(0.0, 0.0, 1.0))]
-        m.situationen["S-offen"] = Situation("S-offen", stellung=stellung)
-        lc = m.add_load_case("LF-S", "Q", activate=False, situation="S-offen")
+        m.add_member("Stiel rechts", [4, 5, 6, 7])
+        m.stellungen = [Stellung("Grundstellung", verschiebung=(0.0, 0.0, 1.0),
+                                 staebe_aus=["Stiel rechts"] if maske else [])]
+        m.situationen["S-g"] = Situation("S-g", stellung="Grundstellung")
+        lc = m.add_load_case("LF-S", "Q", activate=False, situation="S-g")
         lc.gravity = [0.0, 0.0, 0.0]
         m.load_node(2, Fx=1e4, case="LF-S")
         return m
@@ -1883,33 +1893,53 @@ def test_json_anhaengen_stellung_grundstellung():
         r = solver.solve_cases(m, ["LF-S"], workers=1)["LF-S"]
         return float(np.linalg.norm(np.asarray(r.u).reshape(-1, 6)[i, :3]))
 
-    # Dieselbe Stellung unter anderem Namen wirkt: sonst saehe "wie allein"
-    # auch dann gleich aus, wenn die Stellung doch angewandt wuerde
-    bewegt = verschiebung(quelle("Offen"))
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, "q.json")
-        quelle("Grundstellung").save(p)
+        quelle(maske=False).save(p)
+        ohne_maske = verschiebung(Model.load(p))
+        quelle().save(p)
         allein = verschiebung(Model.load(p))
         z = examples_lib.build_example("frame")
         z.stellungen = [Stellung("Grundstellung")]
         log = []
         z = import_file(p, model=z, log=log)
-    verweis = z.situationen["S-offen"].stellung
+    # Allein wirkt die Abschaltung, die Lage nicht - sonst pruefte "wie
+    # allein" unten nichts
+    expect("Stellung 'Grundstellung' allein: ihre Abschaltung wirkt",
+           abs(allein - ohne_maske) > 1e-4,
+           f"mit Abschaltung {allein * 1e3:.4f} mm, ohne {ohne_maske * 1e3:.4f} mm")
+    verweis = z.situationen["S-g"].stellung
     chk = [c for c in z.check() if c.startswith("FEHLER") and "Stellung" in c]
-    neuer_name = [x for x in log if "zeigen sie auf einen neuen Namen" in x]
-    expect("Anhaengen: Verweis auf 'Grundstellung' bleibt, keine Meldung",
-           verweis == "Grundstellung" and not chk and not neuer_name,
-           f"Verweis {verweis!r}, Modellpruefung {chk}, Protokoll {neuer_name}")
+    zeile = [x for x in log
+             if x.startswith("WARNUNG") and "zeigen sie auf einen neuen Namen" in x]
+    expect("Anhaengen: auch der Verweis auf 'Grundstellung' bekommt einen neuen Namen, "
+           "die Modellpruefung meldet ihn",
+           verweis == "Grundstellung_2" and len(chk) == 1
+           and "'Grundstellung_2' unbekannt" in chk[0]
+           and len(zeile) == 1 and "'Grundstellung' → 'Grundstellung_2'" in zeile[0],
+           f"Verweis {verweis!r}, Modellpruefung {chk}, Protokoll {zeile}")
+    expect("Anhaengen: Warnung sagt, dass von 'Grundstellung' nur die Abschaltungen wirken",
+           len(zeile) == 1 and "nur die abgeschalteten Stäbe, Flächen und Volumen" in zeile[0],
+           "\n".join(zeile) or "keine Zeile")
     try:
-        angehaengt = verschiebung(z)
-    except (ValueError, RuntimeError) as ex:
-        angehaengt = f"{type(ex).__name__}: {ex}"
-    expect("Anhaengen: Situation auf 'Grundstellung' rechnet unbewegt wie allein",
-           isinstance(angehaengt, float) and abs(bewegt - allein) > 1e-4
-           and abs(angehaengt - allein) <= 1e-9 * allein,
-           f"allein {allein * 1e3:.4f} mm, angehaengt "
-           + (f"{angehaengt * 1e3:.4f} mm" if isinstance(angehaengt, float) else angehaengt)
-           + f", in bewegter Stellung {bewegt * 1e3:.4f} mm")
+        situationsmodell(z, "S-g")
+        fehler = ""
+    except ValueError as ex:
+        fehler = str(ex)
+    expect("Anhaengen: Rechnung in der Situation der Quelle bricht mit Meldung ab",
+           "Grundstellung_2" in fehler and "unbekannt" in fehler, fehler or "rechnet ohne Meldung")
+    # Wie die Warnung sagt: nur die Abschaltung unter dem neuen Namen anlegen
+    z.stellungen.append(Stellung("Grundstellung_2", staebe_aus=["Stiel rechts"]))
+    nur_abschaltung = verschiebung(z)
+    # Gegenprobe: die ganze Stellung unter dem neuen Namen hebt den Rahmen
+    z.stellungen[-1] = Stellung("Grundstellung_2", verschiebung=(0.0, 0.0, 1.0),
+                                staebe_aus=["Stiel rechts"])
+    ganz = verschiebung(z)
+    expect("Anhaengen: nur mit der Abschaltung angelegt rechnet die Situation wie allein, "
+           "ganz angelegt nicht",
+           abs(nur_abschaltung - allein) <= 1e-9 * allein and abs(ganz - allein) > 1e-4,
+           f"allein {allein * 1e3:.4f} mm, nur Abschaltung {nur_abschaltung * 1e3:.4f} mm, "
+           f"ganz {ganz * 1e3:.4f} mm")
 
 
 def test_json_anhaengen_koerper_gegen_zielgruppe():
