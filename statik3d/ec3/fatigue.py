@@ -313,9 +313,11 @@ class FatigueVolumen:
     category_naht: float = 0.0                       # an verschweissten Beruehrungsstellen
     n_naht: int = 0                                  # Elemente an Beruehrungsstellen
     naht: bool = False                               # der massgebende Ort liegt dort
-    #: Gerechnete Regel (VOLUMEN_REGELN). Ergebnisse aus der Zeit davor
-    #: (Dateien vor dem 23.09.2026) kennen das Feld nicht - sie sind nach der
-    #: Elementregel gerechnet, darum ist das die Vorgabe des Feldes.
+    #: Gerechnete Regel (VOLUMEN_REGELN). Ergebnisse aus Programmfassungen
+    #: vor a4ec83f (auch solchen vom 23.09.2026, etwa ec6448c) kennen das Feld
+    #: nicht - sie sind nach der Elementregel gerechnet, darum ist das die
+    #: Vorgabe des Feldes; erkennen laesst sich ein solches Ergebnis mit
+    #: volumen_regel_unbekannt.
     regel: str = "element"
     #: Regel "knoten": der massgebende Knoten (sonst -1); ``element`` ist dann
     #: ein Element des Koerpers an diesem Knoten
@@ -354,6 +356,22 @@ class FatigueVolumen:
 
     def tabelle(self) -> list:
         return schaedigungstabelle(self.kollektiv, self.category, self.gamma_Mf)
+
+
+def volumen_regel_unbekannt(fv) -> bool:
+    """True, wenn der Volumennachweis ``fv`` aus einer Ergebnisdatei einer
+    Programmfassung ohne die Einstellung ermuedung_volumen stammt (vor
+    a4ec83f): Pickle stellt nur das __dict__ her, darin fehlt ``regel``, und
+    getattr liest die Klassenvorgabe "element".
+
+    Warum eigens (Gegenpruefung 24.09.2026, Runde 4): mit einer Ergebnisdatei
+    von ec6448c (Kragarm 8x2x4, Koerper x >= L/2, 0 -> F), ohne Neurechnung
+    gelesen wie beim Oeffnen, stand die Einstellung des Modells auf
+    "knoten", der Nachweis trug keinen Hinweis - und der Bericht nannte als
+    Grund der Elementregel die Einstellung "element" oder fehlende
+    Knotenwerte. Beides stimmte nicht."""
+    d = getattr(fv, "__dict__", None)
+    return d is not None and "regel" not in d
 
 
 def _status(n) -> str:

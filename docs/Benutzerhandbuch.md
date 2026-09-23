@@ -3301,19 +3301,25 @@ geglättete Knotenspannung — dieselbe, die der statische Volumennachweis liest
 an freien Oberflächen mit σ·n = 0 (Vorgabe von `randspannung`). Am
 Kragarm-Prüfkörper (hex8, Schwingbreite 0 → F, Soll 355 N/mm² an der
 Oberkante bei L/2) traf sie mit 405 und 2 295 Freiheitsgraden auf 0,22 N/mm²
-genau. Der bis dahin gerechnete Elementwert hängt dort daran, wo der Körper
-endet: besteht er aus den Elementen mit x ≥ L/2 (der Prüfaufbau), lag der
-Elementwert 40,65 bzw. 21,69 N/mm² unter dem Soll; das Element auf der
-Einspannseite des Schnitts zeigt dagegen 46,94 bzw. 22,61 N/mm² zu viel
-(gemessen 23.09.2026, Theoriehandbuch 5.5-3). Wer den Elementwert wie bis zum
-23.09.2026 will, setzt die Nachweiseinstellung `ermuedung_volumen` auf
-„element“ (Modelldatei, Abschnitt „design“); der Bericht nennt je Körper die
-gerechnete Regel. Ein Knoten, an dem in einer Situation nur abgeschaltete
-Elemente des Körpers liegen, trägt in diesem Zustand die Spannung 0 — wie das
-abgeschaltete Element nach der Elementregel. Fehlen einem Ergebnis sonst
-Knotenwerte (etwa eine Ergebnisdatei aus einer Programmfassung vor dem
-23.09.2026), rechnet der Körper mit dem Elementwert und nennt die Ursache als
-Hinweis; fließen Elemente des Körpers, nennt der Nachweis Zustand und Zahl.
+genau. Der bis dahin gerechnete Elementwert lag bei diesem Körper (die
+Elemente mit x ≥ L/2, der Prüfaufbau) 40,65 bzw. 21,69 N/mm² darunter und
+mit dem Körperende bei 3L/8 oder L/4 ebenfalls, um 19,16 bis 41,81 N/mm²
+(gemessen 24.09.2026, Theoriehandbuch 5.5-3). Der Elementwert ist die
+Spannung an einem Auswertepunkt des Elements; am Kragarm zeigt der hex8 die
+Biegespannung über seine Länge fast gleich und erreicht den größeren Wert am
+Körperende nicht. Wer den Elementwert wie bis zum 23.09.2026 will, setzt die
+Nachweiseinstellung `ermuedung_volumen` auf „element“ (Modelldatei, Abschnitt
+„design“); der Bericht nennt je Körper die gerechnete Regel. Ein Knoten, an
+dem in einer Situation nur abgeschaltete Elemente des Körpers liegen, trägt in
+diesem Zustand die Spannung 0 — wie das abgeschaltete Element nach der
+Elementregel. Fehlen einem Ergebnis sonst Knotenwerte (etwa eine
+Ergebnisdatei aus einer Programmfassung vor dem 23.09.2026), rechnet der
+Körper mit dem Elementwert und nennt die Ursache als Hinweis; fließen
+Elemente des Körpers, nennt der Nachweis Zustand und Zahl. Ein
+Ermüdungsergebnis, das eine ältere Programmfassung ohne die Einstellung
+`ermuedung_volumen` gerechnet und in die Ergebnisdatei geschrieben hat, zeigt
+der Bericht nach dem Öffnen so, wie es gerechnet wurde — mit dem Elementwert
+—, und sagt das als Hinweis; neu gerechnet gilt die Einstellung.
 Das Ergebnis steht in der Tabelle Ermüdung
 („Volumen V1", ein Klick wählt den Körper), in der Färbung „Ausnutzung
 Ermüdung" je Element (das größte D an seinen Ecken) und im Bericht (Block

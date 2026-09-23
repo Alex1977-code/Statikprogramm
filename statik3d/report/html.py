@@ -3506,17 +3506,31 @@ class Report:
         """Ermuedungsnachweis der Volumenkoerper: Hauptspannung je Knoten
         (Regel "knoten") bzw. je Element (Regel "element") - welche gerechnet
         wurde, steht im Text und je Koerper (ec3.fatigue.VOLUMEN_REGELN)."""
-        from ..ec3.fatigue import sn_life
+        from ..ec3.fatigue import sn_life, volumen_regel_unbekannt
 
         def knotenregel(fv) -> bool:
-            # Ergebnisse vor dem 23.09.2026 kennen das Feld nicht: Elementregel
+            # Ergebnisse vor a4ec83f kennen das Feld nicht: Elementregel
             return getattr(fv, "regel", "element") == "knoten" and getattr(fv, "knoten", -1) >= 0
 
         def stelle(fv) -> str:
             return f"Knoten {fv.knoten + 1}" if knotenregel(fv) else f"Element {fv.element}"
 
-        regeln = {getattr(fv, "regel", "element") for fv in f.volumen.values()
-                  if not getattr(fv, "fehler", "")}
+        def art(fv) -> str:
+            # "alt": aus der Ergebnisdatei einer Fassung ohne ermuedung_volumen.
+            # Bis zum 24.09.2026 lief sie unter "element", und der Bericht
+            # nannte als Grund die Einstellung oder fehlende Knotenwerte -
+            # gemessen mit einer Ergebnisdatei von ec6448c: beides falsch.
+            return "alt" if volumen_regel_unbekannt(fv) else getattr(fv, "regel", "element")
+
+        # Die Einstellung, die beim Neurechnen gilt (DesignSettings)
+        einstellung = str(getattr(getattr(self.model, "design", None), "ermuedung_volumen",
+                                  "knoten") or "knoten")
+        alt_kopf = ("Ergebnis einer älteren Programmfassung, aus der Ergebnisdatei gelesen und "
+                    "nicht neu gerechnet: mit dem Elementwert gerechnet, den jene Fassung führte "
+                    "(sie kannte die Einstellung ermuedung_volumen noch nicht)")
+        alt_neu = f"Neu gerechnet gilt ermuedung_volumen = „{einstellung}“."
+        alt_hinweis = f"{alt_kopf}. {alt_neu}"
+        regeln = {art(fv) for fv in f.volumen.values() if not getattr(fv, "fehler", "")}
         b = [self._h(2, "Ermüdungsnachweis Volumen")]
         punkte = []
         if "knoten" in regeln:
@@ -3538,6 +3552,10 @@ class Report:
                 "Element das Kollektiv wie beim Stab; maßgebend je Körper das Element mit dem "
                 "größten D. Gerechnet mit der Einstellung ermuedung_volumen = „element“ oder – mit "
                 "Hinweis am Körper – weil dem Ergebnis die Knotenwerte fehlen.")
+        if "alt" in regeln:
+            punkte.append(
+                f"{alt_kopf} – Spannungsgröße je Element die vorzeichenbehaftete Hauptspannung mit "
+                f"dem größten Betrag, maßgebend je Körper das Element mit dem größten D. {alt_neu}")
         punkte.append(
             "Das ist die Spannung im Volumenmodell – bei feinem Netz an der Kerbe eine "
             "Kerbspannung, sonst eine Strukturspannung –, keine Nennspannung. Der Kerbfall muss zu "
@@ -3546,9 +3564,10 @@ class Report:
         wer = []
         if "knoten" in regeln:
             wer.append("Knoten, die ein anderer Körper teilt (Regel „knoten“)")
-        if "element" in regeln or not regeln:
+        if "element" in regeln or "alt" in regeln or not regeln:
             wer.append("Elemente mit einem Knoten, den ein anderer Körper teilt"
-                       + (" (Regel „element“)" if regeln else ""))
+                       + ((" (Regel „element“)" if "element" in regeln else " (ältere Programmfassung)")
+                          if regeln else ""))
         punkte.append(
             "Verschweißte Berührungsstellen: " + " bzw. ".join(wer) + ", ohne Kontaktbedingung "
             "zwischen beiden Körpern, tragen den Kerbfall „Naht“ des Körpers (Vorschlag 90 N/mm², "
@@ -3598,7 +3617,9 @@ class Report:
                 continue
             kv += [("Spannung im Nachweis",
                     "geglättete Knotenspannung wie im statischen Nachweis (Regel „knoten“)"
-                    if knotenregel(fv) else "Elementwert (Regel „element“)"),
+                    if knotenregel(fv) else
+                    "Elementwert (ältere Programmfassung, nicht neu gerechnet)" if art(fv) == "alt"
+                    else "Elementwert (Regel „element“)"),
                    ("Kerbfall an der maßgebenden Stelle", f"{fv.category / 1e6:.0f} MPa"
                     + (" (Naht)" if fv.naht else "")),
                    ("γ_Mf", fmt(fv.gamma_Mf, 2)),
@@ -3630,9 +3651,10 @@ class Report:
                              f"Knoten {r[4] + 1}" if len(r) > 4 else f"Element {r[3]}"])
             b.append(("table", rows, "Größte Schwingbreite je Ermüdungslast – zur Übersicht; sie "
                                      "liegen im Allgemeinen an verschiedenen Stellen.", None, ""))
-            if fv.warnings:
-                b.append(("list", [f"Hinweis: {w}" for w in fv.warnings]))
-                self._warnings.extend(f"Ermüdung Volumen {fv.name}: {w}" for w in fv.warnings)
+            hinweise = list(fv.warnings) + ([alt_hinweis] if art(fv) == "alt" else [])
+            if hinweise:
+                b.append(("list", [f"Hinweis: {w}" for w in hinweise]))
+                self._warnings.extend(f"Ermüdung Volumen {fv.name}: {w}" for w in hinweise)
         return b
 
     # ============================================================ Kapitel 7

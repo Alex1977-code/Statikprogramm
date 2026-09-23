@@ -3204,7 +3204,11 @@ Ecken. Mit „element“ rechnet der Nachweis wie bis dahin mit dem Elementwert
 `res.solid_res` (dem Element an seinem Auswertepunkt mit der größten
 Vergleichsspannung); die Zahlen sind dann bitgleich mit dem Stand vor der
 Umstellung (gemessen am Kragarm unten und am Zugstab mit Rainflow). Der
-Bericht nennt je Körper die gerechnete Regel.
+Bericht nennt je Körper die gerechnete Regel. Ein Ergebnis aus der
+Ergebnisdatei einer Programmfassung ohne diese Einstellung (vor a4ec83f)
+kennt das Feld `regel` nicht (`volumen_regel_unbekannt`); der Bericht nennt
+es als Ergebnis einer älteren Programmfassung mit dem Elementwert, nicht neu
+gerechnet, und sagt, welche Einstellung beim Neurechnen gilt.
 
 Gemessen 23.09.2026 am Kragarm-Prüfkörper (`tests/pruefkoerper.Kragarm`,
 hex8, Endquerkraft; Körper mit Kerbfall sind die Elemente mit x ≥ L/2,
@@ -3219,10 +3223,35 @@ größte Schwingbreite des Körpers in N/mm²:
 
 Die Schwingbreite 0 → F am Nachweispunkt ist gleich dem statischen Wert der
 geglätteten Knotenspannung dort. Die Elementregel lag an diesem Körper auf der
-unsicheren Seite: das Element rechts des Schnitts zeigt an seinem
-maßgebenden Punkt weniger als der Knoten am Schnitt. Das Element links des
-Schnitts, zur Einspannung hin, zeigt dagegen mehr (401,94 bzw. 377,61 N/mm²);
-auf welche Seite die Elementregel fällt, hängt also daran, wo der Körper endet.
+unsicheren Seite. Der Elementwert ist der Tensor an einem Auswertepunkt des
+Elements, und der hex8 zeigt σxx hier über seine Länge fast gleich. Am
+Nachweisknoten (8 × 2 × 4) hat das Element rechts des Schnitts 314,35 N/mm²
+an seinem Auswertepunkt bei x = L/2, wo die Balkenlösung 355,00 gibt; das
+Element links des Schnitts, zur Einspannung hin, hat 401,94 an seinem
+Auswertepunkt bei x = 3L/8 und 400,07 bei x = L/2 — die Balkenlösung dort
+443,75 bzw. 355,00. Bei 16 × 4 × 8 sind es 333,26 gegen 355,00 und 377,61
+bei x = 7L/16 gegen 399,38. Gegen das Soll bei L/2 gehalten scheint das
+Element links des Schnitts zu viel zu zeigen; an seinem eigenen
+Auswertepunkt zeigt es weniger als die Balkenlösung.
+
+Andere Körperenden (gemessen 24.09.2026, zwei Läufe bitgleich; Körper = die
+Elemente mit x ≥ x₀, Ermüdungslast 0 → F, Soll die Balkenlösung an der
+Oberkante bei x₀; ein Netz 32 × 8 × 16 trifft sie dort mit dem Knotenwert
+355,00 / 443,75 / 532,48), größte Schwingbreite des Körpers in N/mm²:
+
+| Netz | Körper ab x₀ | Balkenlösung bei x₀ | Elementwert (Regel „element“) | Knoten (Regel „knoten“) |
+|---|---|---|---|---|
+| 8 × 2 × 4 | L/2 | 355,00 | 314,35 (−40,65) | 355,22 (+0,22) |
+| 8 × 2 × 4 | 3L/8 | 443,75 | 401,94 (−41,81) | 447,70 (+3,95) |
+| 8 × 2 × 4 | L/4 | 532,50 | 501,25 (−31,25) | 530,78 (−1,72) |
+| 16 × 4 × 8 | L/2 | 355,00 | 333,31 (−21,69) | 355,02 (+0,02) |
+| 16 × 4 × 8 | 3L/8 | 443,75 | 422,27 (−21,48) | 443,81 (+0,06) |
+| 16 × 4 × 8 | L/4 | 532,50 | 513,34 (−19,16) | 532,62 (+0,12) |
+
+An jedem dieser Körperenden lag die Elementregel unter der Balkenlösung. Die
+Knotenregel traf sie mit 16 × 4 × 8 auf 0,12 N/mm², mit 8 × 2 × 4 abseits
+von L/2 auf 3,95 bzw. 1,72 N/mm² (`test_volumen_randspannung_kragarm` prüft
+die Tabelle gegen die Rechnung).
 
 **Abgeschaltete Elemente** (Situationen): Die Knotentabelle eines Zustands
 mittelt nur über die wirkenden Elemente; ein Knoten, an dem nur abgeschaltete
