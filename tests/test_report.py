@@ -775,7 +775,7 @@ def test_ermuedung_nicht_gefuehrt_im_bericht():
     check("Stab, eine von zwei Lasten fällt aus: nicht „Alle Nachweise erfüllt.“, "
           "sondern „nicht vollständig geführt“",
           "Alle Nachweise erfüllt." not in html
-          and "nicht vollständig geführt wurden: 1 Stäbe (Ermüdung)" in html, "")
+          and "nicht vollständig geführt wurden: 1 Stab (Ermüdung)" in html, "")
     st = _kv_status(html, "Ermüdung Stab M1")
     check("der Stabeintrag heißt „unvollständig“ und nennt die Last",
           st is not None and "unvollständig" in st and "Schlecht" in st, repr(st))
@@ -887,7 +887,8 @@ def test_kein_stab_gefuehrt_keine_ausnutzung():
     f_y, Umfang „kurz": „max. Ausnutzung Nachweise EC3 | 0.000", „maßgebend
     | Stab Riegel_ohne_fy: , Kombination , x = 0.00 m" und die Statuszeile
     „Alle **geführten** Nachweise erfüllt – nicht geführt wurden: 1 Stäbe
-    (EC3)", obwohl kein Nachweis geführt war. ``DesignResults.summary()``
+    (EC3)" (Wortlaut jenes Stands; die Sternchen standen wörtlich im Bericht),
+    obwohl kein Nachweis geführt war. ``DesignResults.summary()``
     nennt in diesem Fall schon keine Ausnutzung mehr, der Bericht tat es.
     """
     n0 = len(RESULTS)
@@ -917,7 +918,7 @@ def test_kein_stab_gefuehrt_keine_ausnutzung():
         st = _statuszeilen(html)
         check(f"nur nicht geführt, {umfang}: Statuszeile nok, nicht 'geführten … erfüllt'",
               len(st) == 1 and st[0][0] == "nok" and "erfüllt" not in st[0][1]
-              and "nicht geführt wurden: 1 Stäbe (EC3)" in st[0][1], str(st))
+              and "nicht geführt wurden: 1 Stab (EC3)" in st[0][1], str(st))
         check(f"nur nicht geführt, {umfang}: der Stab steht in den Hinweisen",
               any("Ohne_fy" in h and "ohne Streckgrenze" in h for h in _hinweisliste(html)), "")
 
@@ -943,7 +944,296 @@ def test_kein_stab_gefuehrt_keine_ausnutzung():
     st = _statuszeilen(html)
     check("Gegenprobe: 'Alle geführten … erfüllt – nicht geführt wurden'",
           len(st) == 1 and st[0][0] == "nok" and "geführten" in st[0][1]
-          and "nicht geführt wurden: 1 Stäbe (EC3)" in st[0][1], str(st))
+          and "nicht geführt wurden: 1 Stab (EC3)" in st[0][1], str(st))
+    _assert_since(n0)
+
+
+def _alle_nachweise_reissen():
+    """Einfeldträger, an dem jede Nachweisart reißt - für die Frage, ob der
+    Hinweis „… NICHT erfüllt für“ auch bei ausgeschaltetem Kapitel dasteht.
+
+    EC3, Ermüdung und Verformung werden gerechnet (q = 150 kN/m, eine
+    Durchbiegungsgrenze von 0,1 mm gegen eine charakteristische
+    GZG-Kombination). Beulen, Anschlüsse und Volumen hängen
+    als Ergebnisobjekte von Hand daran: ein Modell zu rechnen, an dem sie
+    reißen, wäre für diese Frage der Umweg - gelesen wird im Bericht nur die
+    Ausnutzung (wie in test_nicht_gefuehrt_ist_nicht_erfuellt).
+    """
+    from statik3d.ec3.beulen import BeulCheck, BeulResults
+    from statik3d.joints.anschluss import AnschlussCheck, AnschlussResults
+    from statik3d.ec3.volumen import VolumenCheck, VolumenResults
+    m = build_beam_model()
+    for e in range(6):
+        m.load_beam(e, qz=-140000.0)            # zusammen mit den 10 kN/m: 150 kN/m
+    m.add_combination("S1", {"LF1": 1.0}, "SLS_CH")
+    m.add_verformungsgrenze("Durchbiegung", "stab", stab="Traeger", groesse="uz",
+                            grenzart="absolut", wert=1e-4, situation="")
+    an = solver.solve_all(m, design=True, fatigue=True)
+    an.beulen = BeulResults(felder={"Blech": BeulCheck(name="Blech", a=1.0, b=0.5,
+                                                       t=0.01, fy=235e6, util=1.3,
+                                                       kombination="K1")},
+                            kombinationen=["K1"])
+    an.joints = AnschlussResults(joints={"Stoss": AnschlussCheck(
+        name="Stoss", elem=0, ort="Anfang", util=1.2, kombination="K1",
+        massgebend="Abscheren")}, combinations=["K1"])
+    an.volumen = VolumenResults(bereiche={"Lagerblock": VolumenCheck(
+        name="Lagerblock", n_elemente=10, material="S355", fy=355e6, util=1.42,
+        kombination="K1", element=7)}, kombinationen=["K1"])
+    return m, an
+
+
+def test_nicht_erfuellt_auch_bei_ausgeschaltetem_kapitel():
+    """Der Hinweis „… NICHT erfüllt für“ steht in den Hinweisen, auch wenn die
+    Berichtsoption des Nachweiskapitels ausgeschaltet ist.
+
+    Er entstand im Nachweiskapitel, und das kehrt bei ausgeschalteter Option
+    früh zurück; die Zusammenfassung liest die Ergebnisse aber unabhängig von
+    der Option und schrieb „Nachweise NICHT erfüllt – siehe die
+    Nachweiskapitel.“ Gemessen 23.09.2026 an ec6448c: IPE 300 mit Ausnutzung
+    9,5 und „Nachweise EC3“ aus - Hinweisliste leer, darunter „Es liegen
+    keine offenen Hinweise oder Warnungen vor.“, und das Kapitel, auf das die
+    Statuszeile verweist, sagt nur „Die Ausgabe der Nachweise ist
+    deaktiviert.“ Ebenso gemessen mit „Ermüdung“ aus (Kragarm, D = 12185);
+    Volumen, Beulen, Anschlüsse und Verformung folgten demselben Muster
+    (gelesen).
+    """
+    n0 = len(RESULTS)
+    m, an = _alle_nachweise_reissen()
+    faelle = (("design", "Nachweise NICHT erfüllt für:", "Traeger",
+               "Die Ausgabe der Nachweise ist deaktiviert."),
+              ("fatigue", "Ermüdungsnachweis NICHT erfüllt für:", "Traeger",
+               "Die Ausgabe des Ermüdungsnachweises ist deaktiviert."),
+              ("gzg", "Verformungsnachweis NICHT erfüllt für:", "Durchbiegung",
+               "Die Ausgabe der Verformungsnachweise ist deaktiviert."),
+              ("beulen", "Beulnachweis NICHT erfüllt für:", "Blech",
+               "Die Ausgabe der Beulnachweise ist deaktiviert."),
+              ("joints", "Anschlussnachweis NICHT erfüllt für:", "Stoss",
+               "Die Ausgabe der Anschlussnachweise ist deaktiviert."),
+              ("volumen", "Volumennachweis NICHT erfüllt für:", "Lagerblock", None))
+    check("Aufbau: jede Nachweisart reißt",
+          an.design.members["Traeger"].util > 1.0
+          and an.fatigue.members["Traeger"].util > 1.0
+          and an.gzg.checks["Durchbiegung"].util > 1.0,
+          f"EC3 {an.design.members['Traeger'].util:.2f}, "
+          f"Ermüdung {an.fatigue.members['Traeger'].util:.0f}, "
+          f"GZG {an.gzg.checks['Durchbiegung'].util:.1f}")
+
+    # Gegenprobe: alle Kapitel an - jeder Hinweis genau einmal, die
+    # Statuszeile verweist auf die Nachweiskapitel
+    html = Report(m, an, options={"umfang": "kurz"}).html()
+    hin = _hinweisliste(html)
+    for _key, kopf, name, _aus in faelle:
+        treffer = [h for h in hin if h.startswith(kopf)]
+        check(f"alle Kapitel an: „{kopf} {name}“ genau einmal",
+              len(treffer) == 1 and name in treffer[0], str(treffer))
+    st = _statuszeilen(html)
+    check("alle Kapitel an: Statuszeile verweist auf die Nachweiskapitel",
+          st == [("nok", "Nachweise NICHT erfüllt – siehe die Nachweiskapitel.")], str(st))
+
+    for key, kopf, name, aus in faelle:
+        html = Report(m, an, options={"umfang": "kurz", key: False}).html()
+        if aus is not None:
+            check(f"{key} aus: das Kapitel ist wirklich aus", aus in html, "")
+        else:
+            check(f"{key} aus: das Kapitel ist wirklich aus",
+                  "Spannungsnachweise der Volumenbereiche" not in html, "")
+        hin = _hinweisliste(html)
+        treffer = [h for h in hin if h.startswith(kopf)]
+        check(f"{key} aus: die Hinweise nennen „{kopf} {name}“",
+              len(treffer) == 1 and name in treffer[0], f"{len(hin)} Hinweise: {treffer}")
+        check(f"{key} aus: nicht 'keine offenen Hinweise'",
+              "keine offenen Hinweise" not in html, "")
+        st = _statuszeilen(html)
+        check(f"{key} aus: Statuszeile verweist auf die Hinweise, nicht auf das Kapitel",
+              st == [("nok", "Nachweise NICHT erfüllt – siehe die Hinweise unten.")], str(st))
+    _assert_since(n0)
+
+
+def test_ermuedung_nur_nicht_gefuehrt_ist_kein_nachweis():
+    """Ist jeder Ermüdungseintrag (Stab oder Volumen) bzw. jeder
+    Volumenbereich nicht geführt, ist **kein** Nachweis geführt.
+
+    ``gefuehrt`` in chapter_summary war wahr, sobald ``f.members``,
+    ``f.volumen`` oder ``vo.bereiche`` nicht leer waren - auch wenn jeder
+    Eintrag ``fehler`` trug. Gemessen 23.09.2026 an ec6448c mit der einzigen
+    Ermüdungslast auf dem nicht gerechneten Höchstzustand „FEHLT“: am Kragarm
+    „Alle **geführten** Nachweise erfüllt – nicht geführt wurden: 1 Stäbe
+    (Ermüdung) …“, am Zugstab-Volumen dieselbe Zeile mit „1 Volumenkörper
+    (Ermüdung)“, obwohl in beiden Fällen kein Nachweis geführt war.
+    """
+    n0 = len(RESULTS)
+    from statik3d.model import FatigueLoad
+    from statik3d.ec3.volumen import VolumenCheck, VolumenResults
+    from tests.test_ermuedung_verlauf import _kragarm, _zugstab_volumen
+    for titel, m, teil in (("Stab", _kragarm(), "(Ermüdung)"),
+                           ("Volumen", _zugstab_volumen(1000e3, -400e3),
+                            "Volumenkörper (Ermüdung)")):
+        m.fatigue_loads.clear()
+        m.fatigue_loads["N"] = FatigueLoad("N", case_max="FEHLT", case_min="LF2", cycles=1e5)
+        an = solver.solve_all(m, design=False, fatigue=True)
+        eintraege = list(an.fatigue.members.values()) + list(an.fatigue.volumen.values())
+        check(f"Ermüdung {titel}: Aufbau, ein Eintrag, nicht geführt",
+              len(eintraege) == 1 and bool(eintraege[0].fehler)
+              and an.design is None and an.volumen is None and an.gzg is None,
+              str([e.fehler for e in eintraege]))
+        html = Report(m, an).html()
+        st = _statuszeilen(html)
+        check(f"Ermüdung {titel}: Statuszeile 'Kein Nachweis geführt – …'",
+              len(st) == 1 and st[0][0] == "nok"
+              and st[0][1].startswith("Kein Nachweis geführt – nicht geführt wurden: ")
+              and teil in st[0][1], str(st))
+        check(f"Ermüdung {titel}: und keine 'max. Schädigung Ermüdung'",
+              _kennwert(html, "max. Schädigung Ermüdung") is None, "")
+
+    # Volumenbereiche: nur nicht geführte bzw. nur berichtete (singuläre)
+    m = build_beam_model()
+    an = solver.solve_all(m)                    # ohne Nachweise
+    an.volumen = VolumenResults(bereiche={"Achse": VolumenCheck(
+        name="Achse", n_elemente=5, material="S355", fehler="erzwungen")})
+    st = _statuszeilen(Report(m, an).html())
+    check("nur ein nicht geführter Volumenbereich: 'Kein Nachweis geführt – …'",
+          len(st) == 1 and st[0][0] == "nok"
+          and st[0][1].startswith("Kein Nachweis geführt – nicht geführt wurden: "), str(st))
+    an.volumen = VolumenResults(bereiche={"Ecke": VolumenCheck(
+        name="Ecke", n_elemente=5, material="S355", fy=355e6, util=0.5, singular=True)})
+    st = _statuszeilen(Report(m, an).html())
+    check("nur ein singulärer (nur berichteter) Bereich: nicht 'Alle Nachweise erfüllt.'",
+          len(st) == 1 and st[0][1].startswith("Es wurden keine Nachweise geführt"), str(st))
+    # Gegenprobe: ein geführter Bereich daneben zählt
+    an.volumen = VolumenResults(bereiche={
+        "Achse": VolumenCheck(name="Achse", n_elemente=5, material="S355", fehler="erzwungen"),
+        "Block": VolumenCheck(name="Block", n_elemente=5, material="S355", fy=355e6,
+                              util=0.5, kombination="K1", element=1)})
+    st = _statuszeilen(Report(m, an).html())
+    check("Gegenprobe mit geführtem Bereich: 'Alle geführten Nachweise erfüllt – …'",
+          len(st) == 1 and st[0][1].startswith("Alle geführten Nachweise erfüllt – "), str(st))
+    _assert_since(n0)
+
+
+def test_gesamturteil_einzahl_und_mehrzahl():
+    """„1 Stab“, „2 Stäbe“ - das Gesamturteil schrieb bei einem Eintrag
+    „1 Stäbe (EC3)“ und „1 Stäbe (Ermüdung)“ (gemessen 23.09.2026 an
+    ec6448c)."""
+    n0 = len(RESULTS)
+    from statik3d.ec3.volumen import VolumenCheck, VolumenResults
+    m = build_beam_model()
+    m.add_material(Material("Frei", 210e9, 0.3, 7850.0))       # fy = None
+    for k, y in enumerate((2.0, 4.0)):
+        ids = mesher.line_of_beams(m, "Frei", "IPE 300", (0, y, 0), (6, y, 0), 2)
+        m.fix(ids[0], [0, 1, 2, 3])
+        m.fix(ids[-1], [1, 2, 3])
+        neu = [len(m.elements) - 2, len(m.elements) - 1]
+        for e in neu:
+            m.load_beam(e, qz=-10000.0)
+        m.add_member(f"Ohne_fy{k + 1}", neu)
+    an = solver.solve_all(m, design=True)
+    st = _statuszeilen(Report(m, an, options={"umfang": "kurz"}).html())
+    check("zwei Stäbe ohne f_y: '2 Stäbe (EC3)'",
+          len(st) == 1 and "nicht geführt wurden: 2 Stäbe (EC3)" in st[0][1], str(st))
+    m2 = build_beam_model()
+    an2 = solver.solve_all(m2)
+    for n, soll in ((1, "1 Volumenbereich (siehe"), (2, "2 Volumenbereiche (siehe")):
+        an2.volumen = VolumenResults(bereiche={
+            f"B{i}": VolumenCheck(name=f"B{i}", n_elemente=5, material="S355",
+                                  fehler="erzwungen") for i in range(n)})
+        st = _statuszeilen(Report(m2, an2).html())
+        check(f"{n} nicht geführte Volumenbereiche: '{soll}'",
+              len(st) == 1 and soll in st[0][1], str(st))
+    _assert_since(n0)
+
+
+def test_statuszeile_ohne_sternchen():
+    """Die Statuszeile „Alle geführten Nachweise erfüllt – …“ trug Sternchen
+    („Alle **geführten** …“). HTML maskiert sie, sie standen wörtlich im
+    Bericht; Markdown setzt die Statuszeile selbst fett, daraus wurde
+    verschachteltes Fett „> **Alle **geführten** … unten).**“ (gemessen
+    23.09.2026 an ec6448c, Einfeldträger mit einem Stab ohne f_y)."""
+    n0 = len(RESULTS)
+    m = build_beam_model()
+    m.add_material(Material("Frei", 210e9, 0.3, 7850.0))
+    ids = mesher.line_of_beams(m, "Frei", "IPE 300", (0, 2, 0), (6, 2, 0), 6)
+    m.fix(ids[0], [0, 1, 2, 3])
+    m.fix(ids[-1], [1, 2, 3])
+    els = [i for i, e in enumerate(m.elements) if e.mat == "Frei"]
+    for e in els:
+        m.load_beam(e, qz=-10000.0)
+    m.add_member("Ohne_fy", els)
+    rep = Report(m, solver.solve_all(m, design=True), options={"umfang": "kurz"})
+    st = _statuszeilen(rep.html())
+    check("HTML: Statuszeile 'Alle geführten Nachweise erfüllt – …' ohne '**'",
+          len(st) == 1 and st[0][1].startswith("Alle geführten Nachweise erfüllt – ")
+          and "*" not in st[0][1], str(st))
+    md = [z for z in rep.to_markdown().splitlines() if z.startswith("> ")]
+    check("Markdown: eine Statuszeile mit genau einem Fettpaar",
+          len(md) == 1 and md[0].startswith("> **Alle geführten Nachweise erfüllt – ")
+          and md[0].endswith("**") and md[0].count("**") == 2, str(md))
+    _assert_since(n0)
+
+
+def test_keine_sternchen_im_berichtstext():
+    """Absätze und Listenpunkte gehen durch esc() - Markdown-Sternchen darin
+    stehen wörtlich im HTML und im PDF. Gemessen 23.09.2026 an ec6448c:
+    „Die Schädigung wird **am Ort** aufsummiert“ (Ermüdung, Grundlagen) und
+    „w bezogen auf die **Sehne**“ (Verformung, Grundlagen)."""
+    n0 = len(RESULTS)
+    m = build_beam_model()
+    m.add_verformungsgrenze("Durchbiegung", "stab", stab="Traeger", groesse="uz",
+                            grenzart="L/x", wert=300, situation="")
+    html = Report(m, solver.solve_all(m, design=True, fatigue=True)).html()
+    ohne_svg = _SVG_RE.sub("", html)
+    texte = re.findall(r"<(?:li|p)>(.*?)</(?:li|p)>", ohne_svg, re.S)
+    texte += [t for _k, t in _statuszeilen(ohne_svg)]
+    mit = [t[:70] for t in texte if "**" in t]
+    check("Aufbau: Ermüdung und Verformung stehen im Bericht",
+          "Die Schädigung wird am Ort aufsummiert" in html.replace("**", "")
+          and "bezogen auf die" in html, "")
+    check("kein Absatz, Listenpunkt oder Statustext mit '**'", not mit, str(mit))
+    _assert_since(n0)
+
+
+def _ergebniszeile(html: str, name: str):
+    """Zellen der Zeile *name* der Tabelle „Rechenzeiten je Ergebnis“."""
+    i = html.find("Rechenzeiten je Ergebnis")
+    if i < 0:
+        return None
+    k = html.find("</table>", i)
+    for z in re.findall(r"<tr>(.*?)</tr>", html[i:k], re.S):
+        zellen = [re.sub(r"<[^>]+>", "", c) for c in re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", z, re.S)]
+        if zellen and zellen[0] == name:
+            return zellen
+    return None
+
+
+def test_loeserspalte_nennt_ausweichen():
+    """Die Spalte „Löser“ der Tabelle „Rechenzeiten je Ergebnis“ zeigte nur
+    ``info["solver"]``, den Löser der letzten Faktorisierung. Scheitert
+    PARDISO nur in einem Teil der Faktorisierungen, steht dort wieder
+    „pardiso“ (solver.ausweich_info, 23.09.2026). Gemessen an ec6448c mit so
+    gesetztem ``info``: Zeile „LF1 | Lastfall | … | pardiso | –“, während
+    Anhang und Hinweise das Ausweichen auf SuperLU nannten."""
+    n0 = len(RESULTS)
+    m = build_beam_model()
+    an = solver.solve_all(m)
+    res = an.cases["LF1"]
+    vorher = _ergebniszeile(Report(m, an).html(), "LF1")
+    check("ohne Ausweichen: Spalte 'Löser' ist der Löser selbst",
+          vorher is not None and vorher[3] == str(res.info.get("solver"))
+          and "ausgewichen" not in vorher[3], str(vorher))
+    res.info["solver"] = "pardiso"
+    res.info["ausweichen"] = [("PARDISO: erzwungen für die Prüfung", "superlu")]
+    html = Report(m, an).html()
+    zeile = _ergebniszeile(html, "LF1")
+    check("teilweise ausgewichen: 'pardiso – ausgewichen auf SuperLU …'",
+          zeile is not None and zeile[3].startswith("pardiso – ausgewichen auf SuperLU"),
+          str(zeile))
+    k1 = _ergebniszeile(html, "K1")
+    check("die überlagerte Kombination ohne eigenes Ausweichen bleibt unverändert",
+          k1 is not None and "ausgewichen" not in k1[3], str(k1))
+    # ganz ausgewichen: der Löser heißt schon so - kein „auf SuperLU“ doppelt
+    res.info["solver"] = "superlu"
+    zeile = _ergebniszeile(Report(m, an).html(), "LF1")
+    check("ganz ausgewichen: 'superlu – ausgewichen'",
+          zeile is not None and zeile[3] == "superlu – ausgewichen", str(zeile))
     _assert_since(n0)
 
 
@@ -959,7 +1249,13 @@ def main():
              test_nicht_gefuehrt_ist_nicht_erfuellt,
              test_ermuedung_nicht_gefuehrt_im_bericht,
              test_stab_ohne_streckgrenze_in_den_hinweisen,
-             test_kein_stab_gefuehrt_keine_ausnutzung]
+             test_kein_stab_gefuehrt_keine_ausnutzung,
+             test_nicht_erfuellt_auch_bei_ausgeschaltetem_kapitel,
+             test_ermuedung_nur_nicht_gefuehrt_ist_kein_nachweis,
+             test_gesamturteil_einzahl_und_mehrzahl,
+             test_statuszeile_ohne_sternchen,
+             test_keine_sternchen_im_berichtstext,
+             test_loeserspalte_nennt_ausweichen]
     for t in tests:
         try:
             t()

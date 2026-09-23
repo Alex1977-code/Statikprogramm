@@ -3336,7 +3336,13 @@ dann, was gilt:
 
 * **nicht geführt** — keine Last hat beigetragen. Statt D = 0,000 und
   „Element -1“ steht der Grund, z. B. „Ergebnis 'EK7' des Mindestzustands
-  fehlt“.
+  fehlt“. Ein solcher Eintrag zählt im Gesamturteil nicht als geführter
+  Nachweis: Ist jeder Ermüdungseintrag nicht geführt und sonst kein Nachweis
+  geführt, heißt die Statuszeile „Kein Nachweis geführt – nicht geführt
+  wurden: 1 Stab (Ermüdung) …“ (bis zum 23.09.2026 „Alle geführten Nachweise
+  erfüllt – …“, obwohl keiner geführt war; gemessen am Kragarm und am
+  Zugstab-Volumen mit der einzigen Ermüdungslast auf einem nicht gerechneten
+  Zustand).
 * **unvollständig** — mindestens eine Last fehlt in D; der Status nennt sie.
   Das gilt am Stab wie am Volumen und für jeden Weg, auf dem eine Last
   ausfällt: fehlender oberer oder unterer Zustand, eine oder-verknüpfte
@@ -3795,7 +3801,10 @@ Lagerverschiebung enthält —, bleibt das lineare Ergebnis stehen, und die
 Spalte zeigt zum Beispiel „I (statt III: nicht gerechnet)". Den Grund nennt
 bei III. Ordnung die Spalte „Hinweis" im Kapitel zur Theorie III. Ordnung,
 bei II. Ordnung die Hinweisliste am Ende des Kapitels zur Theorie II. Ordnung
-und die offenen Warnungen der Zusammenfassung. Was tun: die Ursache beheben
+— und bei beiden die offenen Warnungen der Zusammenfassung („Theorie III.
+Ordnung LF1: …“). Bei III. Ordnung fehlte er dort bis zum 23.09.2026, und die
+Zusammenfassung sagte „Es liegen keine offenen Hinweise oder Warnungen vor“
+(gemessen am Kragarm aus zwei Stäben mit erzwungenem Scheitern). Was tun: die Ursache beheben
 (etwa mehr Laststufen wählen oder den Kontakt entfernen) oder den Lastfall
 bewusst auf I. Ordnung stellen — die Nachweise dieses Lastfalls rechnen sonst
 ohne die Zusatzmomente aus der Verformung.
@@ -3898,6 +3907,13 @@ davon nicht betroffen.
   der in den Schritten rechnete, an denen PARDISO scheiterte (geprüft am Block
   mit Reibung, PARDISO beim ersten von sieben Versuchen zum Scheitern gebracht:
   „pardiso“ im Ergebnis, „stattdessen rechnete SuperLU“ in der Hinweiszeile).
+  Die Spalte „Löser“ der Tabelle „Rechenzeiten je Ergebnis“ im Anhang sagt
+  das seit dem 23.09.2026 je Ergebnis: „pardiso – ausgewichen auf SuperLU
+  (direkt, einkernig)“, bei einem Ergebnis, das ganz mit dem Ausweichlöser
+  rechnete, „superlu – ausgewichen“; ein Ergebnis ohne Ausweichen zeigt den
+  Löser wie bisher. Vorher stand dort schlicht „pardiso“ (geprüft in
+  `tests/test_report.py` mit so gesetzten Angaben am Ergebnis, nicht an einer
+  echten Rechnung).
   Überlagerte Kombinationen tragen den Grund ihrer Lastfälle, Ergebnisse nach
   Theorie II. Ordnung ihren eigenen. Die Eigenschwingungen melden ein Ausweichen
   ebenso im Protokoll und in ihrer Zusammenfassung. Ein Ergebnis trägt den Grund
@@ -4971,6 +4987,24 @@ Nachweisdetails der zwanzig am höchsten ausgenutzten Stäbe hinzu;
 **Langform** ist alles. Die Haken darunter zeigen, was der Umfang enthält;
 ein von Hand gesetzter Haken macht daraus eine **eigene Auswahl**. Der
 gewählte Umfang bleibt am Modell.
+
+**Nachweiskapitel ausgeschaltet.** Ein ausgeschalteter Haken (Nachweise EC3,
+Ermüdung, Volumen, Beulen, Anschlüsse, Verformungen) nimmt nur das Kapitel
+heraus — das Gesamturteil der Zusammenfassung bewertet weiter alle
+gerechneten Nachweise. Ist einer davon nicht erfüllt, steht unter „Offene
+Hinweise und Warnungen“ in jedem Fall die Zeile „… NICHT erfüllt für: *Namen*“,
+und die Statuszeile heißt „Nachweise NICHT erfüllt – siehe die Hinweise
+unten.“ statt „… siehe die Nachweiskapitel.“, sobald das Kapitel eines nicht
+erfüllten Nachweises ausgeschaltet ist. Bis zum 23.09.2026 entstand die Zeile
+nur im Kapitel: mit „Nachweise EC3“ aus (Einfeldträger IPE 300, Ausnutzung
+9,5) verwies die Statuszeile auf ein Kapitel, das nur „Die Ausgabe der
+Nachweise ist deaktiviert.“ enthielt, und darunter stand „Es liegen keine
+offenen Hinweise oder Warnungen vor.“; ebenso mit „Ermüdung“ aus (Kragarm,
+D = 12 185). Die Statuszeile zählt nicht geführte Einträge in Einzahl und
+Mehrzahl („1 Stab (EC3)“, „2 Stäbe (EC3)“, „1 Volumenbereich“). Ein
+Volumenbereich, der nur berichtet wird (Spannungssingularität), zählt nicht
+als geführter Nachweis: gibt es sonst keinen, heißt die Statuszeile „Es
+wurden keine Nachweise geführt; …“ statt „Alle Nachweise erfüllt.“
 
 **Große Netze.** Ab 200 000 Elementen zeichnet der Bericht in den
 Systemdarstellungen die **Umrisse der Volumenkörper** statt der Außenflächen
