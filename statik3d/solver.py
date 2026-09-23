@@ -5638,12 +5638,17 @@ def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progres
     # ein, die flache Kopie behaelt die linearen). Aus ihnen - wie oben jede
     # gewoehnliche Kombination - ueberlagert die Umhuellende einer EK nach
     # II./III. Ordnung jede Alternative, die bei I. Ordnung bleibt (theorie2
-    # "auto" mit alpha_cr >= Grenze, Fehler der Rechnung). Vorher kam dort
+    # "auto" mit alpha_cr >= Grenze, Fehler der Rechnung). In der ersten
+    # Fassung der Kur (fb59de1 und 9337a3c, nur auf dem Zweig) kam dort
     # an.cases nach dem Ersetzen hinein: 1,35·G linear + 1,5·W nach II.
     # Ordnung, ein Gemisch, weder I. noch II. Ordnung, abgelegt und
     # nachgewiesen (Gegenpruefung 23.09.2026, W mit theorie "II", auto:
     # Rahmen Stielkopf 102,4519 statt 102,1415 mm wie K2; Druckkragarm
-    # des Tests EK1 [2] 3,374407 statt 3,320749 mm).
+    # des Tests EK1 [2] 3,374407 statt 3,320749 mm). Am Stand bis
+    # 22.09.2026 (54b6f9a) wurde die EK vor _lastfaelle_hoeherer_ordnung
+    # aus den linearen Lastfaellen gefaltet (Druckkragarm 3,320749 mm wie
+    # K2), die Alternativen wurden weder abgelegt noch einzeln nachgewiesen
+    # (gemessen 23.09.2026).
     lineare_cases = dict(an.cases) if (ek_rechnen and ek_hoeher) else None
     # Theorie je Lastfall: II. oder III. Ordnung ersetzt das lineare Ergebnis
     _lastfaelle_hoeherer_ordnung(model, an, systeme, progress)
