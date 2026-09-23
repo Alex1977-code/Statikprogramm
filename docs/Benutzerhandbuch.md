@@ -2977,11 +2977,14 @@ Tabellenimport nennt die Schlusszeile „n von m Lastkombinationen“; eine
 Kombination, die auf eine andere verweist („LF1 + CO1“), wird mit deren
 Faktoren aufgelöst — ein Minus ohne Zahl („LF2 - CO1“) zieht dabei ab, und
 das Protokoll nennt das Ergebnis samt Vorzeichen —, und eine, die sich
-nicht vollständig auflösen lässt (Verweis auf eine Ergebniskombination
-„EK1“ oder „RC1“ oder auf eine Kombination, die selbst nicht angelegt
-wird) oder deren Formel einen nicht erkannten Teil enthält
-(„1.35*LF1 + 1.5*Schnee“), wird **nicht** angelegt, sondern mit Formel und Grund gewarnt — legen Sie sie dann in der
-Kombinationsmaske von Hand an. Die **Einwirkungskategorie** eines
+nicht vollständig auflösen lässt (ein Verweis auf eine Ergebniskombination
+„EK1“ oder „RC1“, auf eine Nummer, die die Tabelle nicht führt, oder auf
+eine Kombination, die selbst nicht angelegt wird, sowie ein Kreis von
+Verweisen, auch der Verweis einer Kombination auf sich selbst; Einzelheiten
+im Schnittstellenhandbuch) oder deren Formel einen nicht erkannten Teil
+enthält („1.35*LF1 + 1.5*Schnee“), wird **nicht** angelegt, sondern mit
+Formel und Grund gewarnt; wie Sie sie von Hand anlegen, steht im nächsten
+Absatz. Die **Einwirkungskategorie** eines
 RFEM-6-Lastfalls ist aus einer Kennzahl angenommen, die an keiner Datei
 belegt ist: das Protokoll nennt je Kennzahl die angenommene Kategorie und
 die Lastfälle, deren Name sie umgestellt hat, und warnt; prüfen Sie ψ und γ
@@ -2989,6 +2992,25 @@ in der Lastfallmaske. Ein Volumenkörper aus sechs Vierecken wird als
 Sechsflächner nur dann unmittelbar vernetzt, wenn seine Knotenfolge genau
 die sechs Randflächen ergibt; sonst geht er an den freien Vernetzer (Einzelheiten im
 Schnittstellenhandbuch).
+
+**Eine nicht übernommene Kombination von Hand anlegen.** Beide Wege, eine
+Kombination anzulegen – die Maske mit dem Feld „Faktoren (Lastfall:
+Faktor, …)“ und der Dialog *Kombination* mit einem Faktorfeld je Lastfall –,
+kennen nur die Lastfälle des Modells. Nennt der nicht erkannte Teil einen
+Lastfall, den der Import nicht angelegt hat („Schnee“ in
+„1.35*LF1 + 1.5*Schnee“), legen Sie diesen Lastfall samt seinen Lasten
+zuerst an; vorher bietet der Dialog kein Feld für ihn, und die Maske weist
+ihn ab („Lastfall „Schnee“ gibt es nicht“). Einen Verweis auf eine
+**Ergebniskombination** („1.35*LF1 + EK1“) kann keiner der beiden Wege
+nachbilden: beide legen eine Summe aus Lastfällen an, keine Umhüllende. Als
+eine Kombination lässt sich eine solche Zeile darum nicht anlegen. Sehen Sie
+in RFEM nach, aus welchen Alternativen die Ergebniskombination besteht, und
+legen Sie je Alternative eine eigene Kombination aus den übrigen Anteilen
+der Zeile und dieser Alternative an – bei EK1 = LF2 oder LF3 also
+1,35·LF1 + LF2 und 1,35·LF1 + LF3. Die Nachweise EC3 führen jede
+GZT-Kombination des Modells, also jede dieser Kombinationen. Diesen Weg
+nennt auch die Warnung des Imports (seit 23.09.2026; vorher riet sie auch
+hier, die Kombination von Hand anzulegen).
 
 Aus HiCAD übernommene Stäbe enden an der **Außenkante** des angeschlossenen
 Bauteils – ihre Achsen laufen um die halbe Profilhöhe daneben vorbei, das Modell
@@ -3085,10 +3107,12 @@ jetzt kommen alle an. Was das Protokoll dabei sagt:
   zeigt die Situation stattdessen auf einen neuen Namen (`Offen` → `Offen_2`),
   und die Warnung „Situationen der Quelle nennen eine Stellung, die es im
   Ziel unter demselben Namen gibt …“ nennt jede solche Situation. Bis zum
-  23.09.2026 rechnete sie still in der Stellung des Ziels. Im Versuch hob die
-  Stellung `Offen` der Quelle die Knoten eines Rahmens um 1,0 m, die
-  gleichnamige des Ziels bewegte nichts; am Lastknoten der Quelle ergaben
-  sich allein 4,7572 mm, angehängt 1,7876 mm, ohne Meldung. Solange die
+  23.09.2026 kam die Situation beim Anhängen gar nicht mit, und der Lastfall
+  der Quelle rechnete ohne Meldung in der Grundstellung. Im Versuch hob die
+  Stellung `Offen` der Quelle die ungelagerten Knoten eines Rahmens um 1,0 m
+  (15 von 17; die beiden Lagerknoten blieben liegen), die gleichnamige des
+  Ziels bewegte nichts; am Lastknoten der Quelle ergaben sich allein
+  4,7572 mm, angehängt 1,7876 mm. Solange die
   Modellprüfung „Stellung … unbekannt“ meldet, ist das ein Fehler:
   **Berechnen** weist dann in allen vier Rechenarten ab, auch für die
   Lastfälle des Ziels; **▶ Alle Stellungen rechnen** meldet den Fehler bei
@@ -3099,15 +3123,28 @@ jetzt kommen alle an. Was das Protokoll dabei sagt:
   Eigenfrequenzen in Luft und Wasser und den Lastfall der Druckschwankung.
   Ruft ein Skript `solver.solve_all` trotzdem auf, kommt es auf „Lastfälle
   gleichzeitig (Ketten)“ an. Mit der Vorgabe nacheinander – in einem Skript
-  gilt sie, solange es weder `parallel.einstellungen_laden()` noch
-  `parallel.configure(ketten=…)` aufruft – bricht die ganze Rechnung mit
+  gilt sie, solange es die Einstellung `ketten` nicht ändert: mit
+  `parallel.configure(ketten=…)`, durch Zuweisen an
+  `parallel.settings().ketten` oder mit `parallel.einstellungen_laden()`, das
+  die gespeicherten Einstellungen liest und etwa beim Erzeugen des
+  Hauptfensters läuft – bricht die ganze Rechnung mit
   „Situation 'S-offen_2': Stellung 'Offen_2' unbekannt“ ab, ohne
   Teilergebnis. Mit mehreren Ketten scheitert jede Kette ganz, die einen
   Lastfall dieser Situation enthält, und die Ausnahme („Kette …: Situation
   'S-offen_2': …“) trägt die Lastfälle der übrigen Ketten als Teilergebnis –
   im Versuch mit zwei Ketten LF1 des Ziels. Legt man die Stellung der Quelle
   unter dem neuen Namen im Ziel an, rechnet der Lastfall im selben Versuch
-  wie allein (4,7572 mm).
+  wie allein (4,7572 mm). Ohne Gruppenangabe hebt diese Stellung dabei auch
+  die ungelagerten Knoten des Ziels, siehe „Nicht übertragen“: im Versuch
+  30 von 34 Knoten, 15 davon im Ziel. Am Lastfall der Quelle änderte das im
+  Versuch nichts (ohne Eigengewicht); hat er Eigengewicht, das auch die
+  Elemente des Ziels erfasst, ist die Wirkung nicht gemessen. Eine
+  Gruppenangabe beschränkt die Stellung nur dann auf die Quelle, wenn deren
+  Elemente eine Gruppe tragen, die es im Ziel nicht gibt: Elementgruppen
+  behalten beim Anhängen ihren Namen, außer sie heißen wie ein umbenannter
+  Körper oder eine umbenannte Fläche. Im Versuch trugen beide Rahmen die
+  Gruppe `default`, und eine Stellung mit dieser Gruppe hob alle 34 Knoten
+  samt den Lagerknoten.
 * **Anschluss:** Ein Knoten der Quelle, der auf einem Knoten des Ziels
   liegt, wird mit ihm zusammengeführt („1 Knoten der Quelle lagen auf Knoten
   des Ziels …“); jeder Verweis darauf folgt, auch Ecken und integrierte
@@ -3382,8 +3419,10 @@ erfüllt, sagt die Statuszeile „Alle geführten Nachweise erfüllt – nicht
 geführt wurden: …“. Ist gar kein Stab geführt (und kein anderer Nachweis),
 heißt sie „Kein Nachweis geführt – nicht geführt wurden: …“, und die
 Wesentlichen Ergebnisse nennen dann keine größte Ausnutzung EC3. In der
-Bedienung im Browser (Kap. 12) ist die Nachweiszeile in diesem Fall gelb
-hinterlegt statt grün, bei einer Ausnutzung über 1 rot. Abhilfe:
+Bedienung im Browser (Kap. 12) ist die Nachweiszeile gelb hinterlegt statt
+grün, sobald ein Stab nicht geführt ist, auch wenn die übrigen Stäbe geführt
+und erfüllt sind; rot ist sie, sobald ein Stab eine Ausnutzung über 1 hat,
+auch neben einem nicht geführten. Abhilfe:
 Streckgrenze am Werkstoff eintragen (Tabelle *Eigenschaften → Werkstoffe*) oder am
 Stab den Haken „Nachweis nach EC3“ herausnehmen.
 

@@ -565,12 +565,90 @@ def test_kombination_ohne_nummer_name():
     check("B: alle drei Zeilen angelegt", "3 von 3 Lastkombinationen" in "\n".join(log))
 
 
+def test_kombination_abhilfe():
+    """Die Abhilfe, die Warnung und Handbuch zu einer nicht uebernommenen Kombination nennen, geht.
+
+    Am Stand ec6448c endete die Warnung fuer jeden Grund mit „Bitte in RFEM
+    nachsehen und die Kombination von Hand anlegen.“, und das Handbuch sagte
+    „legen Sie sie dann in der Kombinationsmaske von Hand an“. Fuer einen
+    Verweis auf eine Ergebniskombination geht das nicht: der Dialog
+    (dialogs.CombinationDialog) uebernimmt Alternativen nur aus einer
+    bestehenden Kombination, die Maske (gui/main.py, Art „kombination“) baut
+    Combination ohne alternativen; kein anderer Weg der Oberflaeche legt
+    welche an. Es bleibt, je Alternative eine eigene Kombination anzulegen.
+    Nennt der nicht erkannte Teil einen Lastfall, den der Import nicht
+    angelegt hat („Schnee“), bietet der Dialog nur die Felder LF1 und LF2 an
+    (offscreen gemessen am 23.09.2026), und die Maske weist „Schnee: 1,5“ ab -
+    dass er erst angelegt werden muss, sagte das Handbuch nicht. Die Klammer
+    der nicht aufloesbaren Verweise nannte nur EK/RC und „eine Kombination,
+    die selbst nicht angelegt wird“; Kreis und fehlende Nummer fehlten
+    (Nebenbefunde der Fehlerrunden 22./23.09.2026, am Stand ec6448c
+    nachgeprueft).
+    """
+    from tests import handbuch
+    hb = handbuch.absatz("**Das Importprotokoll zählt ab")
+    abhilfe = handbuch.absatz("**Eine nicht übernommene Kombination von Hand anlegen.**")
+
+    def warnung(log, nr):
+        return next((z for z in log if z.startswith("WARNUNG")
+                     and (f"LK{nr} " in z or f"LK{nr}:" in z)), "keine Zeile")
+
+    # (1) Verweis auf eine Ergebniskombination: eine Umhuellende, keine
+    # Summe - als eine Kombination nicht anlegbar
+    m, log = _kombinationstabelle("s3d_ka_", ["1;GZT;1.35*LF1 + EK1", "2;GZT;LF2 + RC1"],
+                                  lastfaelle=2)
+    for nr, ref in ((1, "EK1"), (2, "RC1")):
+        z = warnung(log, nr)
+        check(f"(1) {ref}: Warnung nennt je Alternative eine eigene Kombination",
+              "je Alternative eine eigene Kombination" in z
+              and "die Kombination von Hand anlegen" not in z, z)
+    check("(1) keine der beiden Zeilen angelegt", not m.combinations, str(sorted(m.combinations)))
+    check("(1) Handbuch: keine Umhüllende in der Maske, je Alternative eine Kombination",
+          "keine Umhüllende" in abhilfe and "je Alternative eine eigene Kombination" in abhilfe
+          and "legen Sie sie dann in der Kombinationsmaske von Hand an" not in hb,
+          abhilfe[:200] or "Absatz fehlt")
+
+    # (2) nicht erkannter Teil, der einen Lastfall nennt, den es nicht gibt
+    m, log = _kombinationstabelle("s3d_ka_", ["1;GZT;1.35*LF1 + 1.5*Schnee", "2;GZT;CO1 + LF2"],
+                                  lastfaelle=2)
+    z = warnung(log, 1)
+    check("(2) Gegenprobe: ohne EK/RC bleibt „die Kombination von Hand anlegen“",
+          "die Kombination von Hand anlegen" in z and "je Alternative" not in z, z)
+    check("(2) „Schnee“ steht im nicht erkannten Teil und ist kein Lastfall des Modells",
+          "nicht erkannter Teil ['+ 1.5*Schnee']" in z and sorted(m.load_cases) == ["LF1", "LF2"],
+          f"{sorted(m.load_cases)} / {z}")
+    check("(2) Handbuch: diesen Lastfall zuerst anlegen",
+          "„Schnee“" in abhilfe and "samt seinen Lasten zuerst an" in abhilfe,
+          abhilfe[:200] or "Absatz fehlt")
+
+    # (3) Jeder Grund, den der Import nennt (EK/RC und je CO/LK-Verweis der
+    # aus _kombinationen_aufloesen), steht in der Klammer des Handbuchs.
+    faelle = (
+        (["1;GZT;LF1 + EK1"], "EK/RC ist eine Ergebniskombination",
+         "Verweis auf eine Ergebniskombination"),
+        (["1;GZT;LF1 + CO7"], "CO7: die Tabelle führt keine Nummer 7",
+         "auf eine Nummer, die die Tabelle nicht führt"),
+        (["1;GZT;1.35*LF1 + x", "2;GZT;CO1 + LF2"], "CO1: wird selbst nicht angelegt",
+         "auf eine Kombination, die selbst nicht angelegt wird"),
+        (["1;GZT;LF1 + CO2", "2;GZT;LF2 + CO1"],
+         "CO2: Kreis, führt über Verweise auf diese Kombination zurück", "ein Kreis von Verweisen"),
+        (["1;GZT;LF1 + CO1"], "CO1: Kreis, verweist auf diese Kombination selbst",
+         "der Verweis einer Kombination auf sich selbst"),
+    )
+    for zeilen, grund, satz in faelle:
+        m, log = _kombinationstabelle("s3d_ka_", zeilen, lastfaelle=2)
+        txt = "\n".join(z for z in log if z.startswith("WARNUNG"))
+        check(f"(3) gemessen „{grund[:34]}…“ steht im Handbuch",
+              grund in txt and satz in hb,
+              f"im Protokoll {grund in txt}, im Handbuch „{satz}“ {satz in hb}")
+
+
 def main():
     for t in (test_native_sqlite, test_native_zip_und_json, test_native_unbekannt,
               test_tabellen_erweitert, test_kombinationen_abgezaehlt,
               test_kombination_minus_vor_verweis, test_kombination_unerkannter_teil,
               test_kombination_verweis_auf_rest, test_kombination_verweis_grund,
-              test_kombination_ohne_nummer_name):
+              test_kombination_ohne_nummer_name, test_kombination_abhilfe):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
