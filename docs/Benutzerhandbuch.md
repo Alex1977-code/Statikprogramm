@@ -4475,7 +4475,11 @@ bleiben, wenn der freie Vernetzer flache Tetraeder aussortiert (Platte
 0,056 mm³), oder wenn beiderseits einer Fläche dieselben Knoten verschieden in
 Dreiecke geteilt sind. Die 30 geschlossenen Gruppen in den Modellen der
 Prüfsuiten lagen bei höchstens 3,55 % der längsten Kante und waren höchstens
-0,48-mal so dick wie die Elemente daneben. Der Körper stimmt bis auf diese
+0,48-mal so dick wie die Elemente daneben. Stoßen mehrere Hohlräume an einer
+Kante zusammen, beurteilt die Abnahme jeden für sich; an der Platte mit
+Bohrung (ohne „intelligent“ vernetzt, 12 925 Tetraeder) war der dickste
+dieser Hohlräume 0,58-mal so dick wie seine Nachbarn (gemessen 23.09.2026).
+Der Körper stimmt bis auf diese
 Hohlräume, die Verschiebungen passen dort aber nur an Knoten und Kanten
 zusammen. Bis zum 23.09.2026 meldete die Abnahme die Hohlräume des Vernetzers
 als FEHLER „Seiten im Inneren“, vor jeder Rechnung mit der Rückfrage „Trotzdem
@@ -4548,7 +4552,14 @@ aber nichts. Gemessen: FEHLER „Seiten im Inneren 6“. Ebenfalls
 FEHLER bleiben Hohlräume, die ringsum von Nachbarseiten eingeschlossen sind,
 auch wenn sie die Oberfläche an einer Kante berühren. Gemessen an einem
 Würfel mit angehobener Ecke, frei mit Netzweite 0,1 m vernetzt: FEHLER
-„Seiten im Inneren 4“. Eine Abhilfe ist dafür nicht gemessen.
+„Seiten im Inneren 4“. Eine Abhilfe ist dafür nicht gemessen. Ein FEHLER
+bleibt auch eine Kerbe durch die ganze Dicke am Rand einer Platte: Ihr Rand
+läuft über Deckel, Boden und Seitenfläche, und von einem Punkt aus lässt sich
+das fehlende Stück nicht ausmessen. Gemessen am 23.09.2026 an einer Platte
+1 × 1 × 0,125 m aus 16 × 16 × 2 Sechsflächnern mit zwei entfernten Zellen am
+Rand: FEHLER „Seiten im Inneren 6“. Fehlen dieselben zwei Zellen mitten in
+der Platte, ist das Loch durch die ganze Dicke eine Lücke mit ihrem Volumen
+(488 cm³).
 
 **Windschiefe Randflächen.** Ein Tetraedernetz liegt auf einer windschiefen
 (bilinearen) Fläche auf Sehnen, und der freie Vernetzer setzt Knoten auf Sehnen

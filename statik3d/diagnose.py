@@ -1354,14 +1354,20 @@ ABNAHME_RISS_DICKE = 0.05
 #:
 #:   - Luecken des freien Vernetzers (die 30 geschlossenen Gruppen der
 #:     Modelle von test_mesher3d und test_sweep, Platte mit Bohrung und
-#:     Keile eingeschlossen): 0,000 bis 0,482;
+#:     Keile eingeschlossen): 0,000 bis 0,482; einzeln beurteilte Stuecke
+#:     eines Haufens (siehe die Trennung in _gruppen_im_inneren) an der
+#:     Platte mit Bohrung ohne „intelligent“ (12 925 tet4): 0,570 und 0,579;
 #:   - fehlender Sechsflaechner (gleichmaessig 100 x 100 x 100 bis 500 mm und
 #:     abgestuft 5:1, 20:1, 50:1, je 512 innere Zellen): 1,00 bis 1,01;
 #:   - fehlender Kuhn-Tetraeder (gleichmaessig 100 x 100 x 100 bis 300 mm,
 #:     abgestuft 5:1, 20:1, 50:1): 0,865 bis 1,07.
 #:
-#:   Die Grenze liegt dazwischen, Abstand Faktor 1,35 nach unten und 1,33
-#:   nach oben. Allein traegt auch dieses Mass nicht: an der Platte mit
+#:   Die Grenze liegt dazwischen, Abstand Faktor 1,12 nach unten und 1,33
+#:   nach oben (bis zum 23.09.2026 stand hier 1,35 nach unten, gemessen an
+#:   den ganzen Gruppen statt an den Stuecken). Beide Enden legt
+#:   test_diagnose fest: mit 0,57 wird die Platte mit Bohrung ein FEHLER, mit
+#:   0,87 der fehlende Kuhn-Tetraeder mit 0,865 ein Riss (gemessen
+#:   23.09.2026). Allein traegt auch dieses Mass nicht: an der Platte mit
 #:   Bohrung sind die kleinsten fehlenden Tetraeder kleiner als ihre
 #:   Nachbarn (Median 0,55 bis 1,34) - dort trennt t/L.
 ABNAHME_RISS_NACHBAR = 0.65

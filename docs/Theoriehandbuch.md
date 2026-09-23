@@ -6627,13 +6627,21 @@ Gemessen, t durch den Median der Nachbardicke:
 | Hohlraum | t / Dicke der Nachbarn |
 |---|---|
 | Lücken des freien Vernetzers (dieselben 30 Gruppen) | 0 bis 0,482 |
+| … davon einzeln beurteilte Stücke eines Haufens (Platte mit Bohrung ohne „intelligent“, 12 925 tet4, zwei Stücke aus je 4 Seiten) | 0,570 und 0,579 |
 | fehlender Sechsflächner, gleichmäßig 100 × 100 × 100 bis 500 mm und abgestuft wie oben | 1,00 bis 1,01 |
 | fehlender Kuhn-Tetraeder, gleichmäßig und abgestuft wie oben | 0,865 bis 1,07 |
 | verdrehter Sechsflächner, gleichmäßig und abgestuft wie oben | 0,21 bis 2,7 |
 | fehlender Tetraeder der Platte mit Bohrung, die 40 kleinsten mit V/L³ über 0,04 | 0,55 bis 1,34 |
 | fehlender flacher Tetraeder derselben Platte, Elemente 22584 / 2514 / 28444 (eigenes t/L 0,90 / 2,92 / 4,96 %) | 0,100 / 0,390 / 0,529 |
 
-Die Grenze 0,65 liegt zwischen 0,482 und 0,865 (Faktor 1,35 und 1,33). Die
+Die Grenze 0,65 liegt zwischen 0,579 und 0,865 (Faktor 1,12 und 1,33). Bis
+zum 23.09.2026 stand hier 0,482 und Faktor 1,35: gemessen an den ganzen
+Gruppen, nicht an den Stücken, in die die Abnahme einen Haufen teilt (siehe
+unten). Beide Enden legt `test_diagnose` fest: die Platte mit Bohrung ohne
+„intelligent“ als WARNUNG Riss (mit der Grenze 0,58 noch so, mit 0,57 dazu
+„FEHLER Seiten im Inneren 8“) und der fehlende Kuhn-Tetraeder mit 0,865
+(abgestuft 50:1, Element 710, t/L 0,79 %) als FEHLER. Ebenso, dass der Median
+zählt und nicht der dickste oder dünnste Nachbar. Die
 drei flachen Tetraeder der letzten Zeile liegen unter 0,65 und unter 5 % t/L;
 einzeln entfernt war jeder ein Riss (siehe die Kehrseite unten). Allein
 trägt auch Bedingung 3 nicht: An der Platte mit Bohrung sind die kleinsten
@@ -6738,6 +6746,33 @@ die Aussparung; die Bilanz sind 1,17e-5 m³. Keine Lücke ist die Gruppe,
   Ufer, dessen Rand auf der Hülle liegt, ist ein Schnitt;
 * wenn sich kein p₀ findet: Die Schleife um einen Körper, den doppelte Knoten
   zerschneiden, läuft über gegenüberliegende Flächen.
+
+Jede dieser Regeln entscheidet in `test_diagnose` mindestens einen Fall
+allein (seit 23.09.2026; vorher bestand die Suite ganz, wenn eine von ihnen
+fehlte, gemessen mit Verfälschungen an ec6448c). Gemessen am 23.09.2026:
+
+* Eine Kerbe durch die ganze Dicke am Rand einer Platte (1 × 1 × 0,125 m,
+  16 × 16 × 2 Sechsflächner, zwei Zellen entfernt) hat eine Schleife über
+  Deckel, Boden und Seitenfläche, deren Ebenen keinen gemeinsamen Punkt
+  haben: FEHLER „Seiten im Inneren 6“. Ohne die beiden Abweisungen „kein
+  gemeinsamer Punkt“ und „Fächer nicht auf der Hülle“ wäre sie eine Lücke
+  von 3,255e-4 m³, zwei Drittel der fehlenden 4,883e-4 m³, weil der Fächer
+  von p₀ in halber Höhe durch den Körper läuft. Jede der beiden
+  Abweisungen allein fängt diesen Fall.
+* Ein Loch durch die ganze Dicke mitten in derselben Platte hat zwei
+  Schleifen, im Deckel und im Boden: Lücke 4,883e-4 m³, das Volumen der
+  zwei Zellen. Ohne den Fächer der zweiten Schleife wären es 3,255e-4 m³.
+* Eine Schleife im Deckel des L-Prismas, deren eine Kante über die
+  Aussparung läuft (Kantenmitte 50 mm neben dem Deckel), hat keinen
+  Schließpunkt, obwohl ihr Fächer ganz auf dem Deckel liegt.
+* Den verdrehten Sechsflächner am Rand (abgestuft 5:1, Element 55) hält
+  jede der beiden Regeln allein: die Erkennung des verdrehten Elements auch
+  mit der Dickengrenze 0,02, die Dünnregel ohne die Erkennung. Diese knapp:
+  Das Ufer hat t/L 4,845 %, mit einer Dickengrenze bis 0,04845 wäre es eine
+  Lücke von 1,212e-4 m³.
+* Doppelt sind Knoten bis `ABNAHME_FUGENNAEHE` = 10⁻⁶ m Abstand, nicht nur
+  deckungsgleiche: Ein innerer Kuhn-Tetraeder des 8 × 8 × 8-Netzes, an einem
+  Knoten 5 · 10⁻⁷ m daneben losgelöst, bleibt FEHLER „Seiten im Inneren 6“.
 
 Die Lücken eines Körpers sind eine WARNUNG mit Ort (Mitte der größten
 Schleife), Volumen und Anteil am Körper. Ein FEHLER werden sie, wenn sie
