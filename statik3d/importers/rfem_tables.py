@@ -430,7 +430,8 @@ def _kombinationen_aufloesen(zeilen: list) -> list:
     """Verweise auf andere Lastkombinationen derselben Tabelle aufloesen.
 
     ``zeilen`` [(Nummer oder None, LF-Faktoren, Verweise, nicht erkannter
-    Rest)] -> je Zeile (Faktoren, nicht aufgeloeste Verweise). „CO n“ und
+    Rest)] -> je Zeile (Faktoren, nicht aufgeloeste Verweise, Grund je
+    offenem CO/LK-Verweis; den Grund fuer EK/RC nennt der Aufrufer). „CO n“ und
     „LK n“ sind die Lastkombination Nummer n dieser Tabelle; sie geht mit
     ihren Faktoren mal dem Vorfaktor ein - auch wenn sie weiter unten steht.
     „EK n“ (englisch „RC n“) ist eine
@@ -445,6 +446,13 @@ def _kombinationen_aufloesen(zeilen: list) -> list:
     '2: CO1 + LF2'] ergab LK2 = LF2 + 1,35·LF1 mit nur einer Infozeile,
     ['1: 1.35*(LF1 + LF2)', '2: LF3 + CO1'] ergab LK2 = LF1 + LF2 + LF3
     (Gegenpruefung zu Befund SV10).
+
+    Der Grund eines offenen CO/LK-Verweises wird aus dem Aufbau der Tabelle
+    bestimmt, nicht aus dem Weg der Rekursion: die Tabelle fuehrt die Nummer
+    nicht; der Verweis fuehrt ueber CO/LK-Verweise auf die eigene Zeile
+    zurueck (Kreis); sonst wird die verwiesene Zeile selbst nicht angelegt
+    (offener Verweis, kein Lastfall oder nicht erkannter Teil - ihre eigene
+    Warnung nennt den Grund).
     """
     nach_nummer: dict[int, int] = {}
     for i, (no, _f, _v, _r) in enumerate(zeilen):
@@ -472,7 +480,49 @@ def _kombinationen_aufloesen(zeilen: list) -> list:
         fertig[i] = (f, offen)
         return fertig[i]
 
-    return [aufloesen(i, frozenset()) for i in range(len(zeilen))]
+    def ziel(art: str, nr: int):
+        return nach_nummer.get(nr) if art in ("CO", "LK") else None
+
+    def fuehrt_zurueck(j: int, i: int) -> bool:
+        """Erreicht Zeile j ueber CO/LK-Verweise die Zeile i?"""
+        gesehen: set[int] = set()
+        stapel = [j]
+        while stapel:
+            a = stapel.pop()
+            if a == i:
+                return True
+            if a in gesehen:
+                continue
+            gesehen.add(a)
+            for _vf, art, nr in zeilen[a][2]:
+                b = ziel(art, nr)
+                if b is not None:
+                    stapel.append(b)
+        return False
+
+    def grund(i: int, art: str, nr: int) -> str:
+        ref = f"{art}{nr}"
+        j = ziel(art, nr)
+        if j is None:
+            return f"{ref}: die Tabelle führt keine Nummer {nr}"
+        if j == i:
+            return f"{ref}: Kreis, verweist auf diese Kombination selbst"
+        if fuehrt_zurueck(j, i):
+            return f"{ref}: Kreis, führt über Verweise auf diese Kombination zurück"
+        # Kein Kreis: dann blieb der Verweis in aufloesen offen, weil Zeile j
+        # selbst offen ist, keinen Lastfall hat oder einen nicht erkannten
+        # Teil (j im Pfad der Rekursion ist oben als Kreis erfasst, der Pfad
+        # fuehrt ja zu i zurueck) - genau dann legt die Schleife in
+        # import_rfem_tables Zeile j nicht an und warnt unter LK{nr}.
+        return f"{ref}: wird selbst nicht angelegt, siehe Warnung zu LK{nr}"
+
+    aus = []
+    for i in range(len(zeilen)):
+        f, offen = aufloesen(i, frozenset())
+        warum = {f"{a}{n}": grund(i, a, n) for _vf, a, n in zeilen[i][2]
+                 if a in ("CO", "LK") and f"{a}{n}" in offen}
+        aus.append((f, offen, warum))
+    return aus
 
 
 # --------------------------------------------------------------------------
@@ -970,7 +1020,7 @@ def import_rfem_tables(path: str, model: Model = None, log: list = None,
         # aufgeloeste Kombination hiess aber LK1_2 (Gegenpruefung zu SV10).
         naechste = max((int(z[2]) for z in roh if z[2] is not None), default=0) + 1
         n_co = 0
-        for k, ((row, formula, no, _f0, verweise, rest), (factors, offen)) in \
+        for k, ((row, formula, no, _f0, verweise, rest), (factors, offen, warum)) in \
                 enumerate(zip(roh, aufgeloest), 1):
             wer = f"LK{int(no)}" if no is not None else f"in Tabellenzeile {k} ohne Nummer"
             if not _f0 and not verweise:
@@ -986,9 +1036,9 @@ def import_rfem_tables(path: str, model: Model = None, log: list = None,
                 if any(x.startswith(("EK", "RC")) for x in offen):
                     gruende.append("EK/RC ist eine Ergebniskombination (Umhuellende), "
                                    "als Summand nicht darstellbar")
-                if any(not x.startswith(("EK", "RC")) for x in offen):
-                    gruende.append("CO/LK: die Tabelle fuehrt diese Kombination "
-                                   "nicht oder nicht vollstaendig")
+                # CO/LK: je Verweis sein Grund (keine solche Nummer, Kreis,
+                # oder die verwiesene Zeile wird selbst nicht angelegt).
+                gruende += [warum[x] for x in dict.fromkeys(offen) if x in warum]
                 if rest:
                     gruende.append(f"nicht erkannter Teil {rest}")
                 alle = [f"{a}{n}" for _v, a, n in verweise]

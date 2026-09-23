@@ -194,9 +194,10 @@ Geprüft in `tests/test_infocad.py`.
 **Lastkombinationen aus der Tabelle zählen sich ab** (seit 22.09.2026). Die
 Schlusszeile „n von m Lastkombinationen“ zählt jede Zeile von
 „2.5 Lastkombinationen“. Eine eigene Protokollzeile bekommt jede nicht
-übernommene Zeile (mit Grund), jede aufgelöste und jede ohne Nummer (mit
-ihrem Ergebnis); eine Zeile, die nur aus eigenen Lastfall-Anteilen besteht und
-eine Nummer trägt, steht nur in dieser Zählung. Ein Verweis auf eine andere Lastkombination
+übernommene Zeile (mit Grund), jede aufgelöste, jede ohne Nummer und jede,
+die einen Ausweichnamen bekommt, weil ihr Name schon vergeben ist (mit ihrem
+Ergebnis); eine Zeile, die nur aus eigenen Lastfall-Anteilen besteht und
+unter ihrer Tabellennummer angelegt wird, steht nur in dieser Zählung. Ein Verweis auf eine andere Lastkombination
 derselben Tabelle („CO3“ oder „LK3“, auch wenn sie weiter unten steht) wird
 mit deren Faktoren mal dem Vorfaktor aufgelöst: „LF1 + CO1“ mit
 CO1 = 1,35·LF1 + 1,5·LF2 ergibt 2,35·LF1 + 1,5·LF2, und das Protokoll sagt
@@ -206,7 +207,12 @@ Nummer, die die Tabelle nicht führt, und ein Verweis auf eine Kombination,
 die selbst nicht angelegt wird. Eine solche Kombination wird **nicht
 angelegt**, auch nicht mit ihren übrigen Anteilen — sie wäre zu klein und sähe
 im Nachweis vollständig aus —, sondern mit Formel und Grund als Warnung
-genannt; ebenso eine Formel ohne erkennbaren Lastfall. Bis dahin fiel eine
+genannt; ebenso eine Formel ohne erkennbaren Lastfall. Der Grund steht je
+Verweis da: „CO9: die Tabelle führt keine Nummer 9“, „CO2: Kreis, führt über
+Verweise auf diese Kombination zurück“ (auf sich selbst: „CO1: Kreis,
+verweist auf diese Kombination selbst“) oder „CO1: wird selbst nicht
+angelegt, siehe Warnung zu LK1“ — dann nennt die Warnung zu LK1 den
+eigentlichen Grund. Bis zum 22.09.2026 fiel eine
 Zeile ohne eigenen LF-Faktor **vor** der Warnung weg: an den vier Zeilen
 „1.35*LF1 + 1.5*LF2“, „CO1 + CO3“, „1.0*EK1“, „LF1 + CO1“ meldete das
 Protokoll „2 Lastkombinationen“ und eine Warnung zu LK4, LK2 und LK3

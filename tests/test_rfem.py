@@ -197,10 +197,15 @@ def test_tabellen_erweitert():
 def test_kombinationen_abgezaehlt():
     """Jede Zeile der Tabelle „2.5 Lastkombinationen“ hat einen gezählten Ausgang.
 
-    Eine eigene Protokollzeile haben nur die nicht übernommenen Zeilen (hier
-    LK2 und LK3, je eine WARNUNG) und die aufgelösten (LK4); LK1 und LK5
-    bestehen nur aus eigenen Lastfall-Anteilen und stehen nur in der
-    Schlusszeile „3 von 5 Lastkombinationen“ (gemessen am Stand 0ad95bb).
+    In dieser Tabelle haben eine eigene Protokollzeile nur die nicht
+    übernommenen Zeilen LK2 und LK3 (je eine WARNUNG) und die aufgelöste LK4;
+    LK1 und LK5 stehen nur in der Schlusszeile „3 von 5 Lastkombinationen“
+    (gemessen an den Ständen 0ad95bb und aa22f5d). Das ist keine Regel für
+    jede Zeile aus eigenen Lastfall-Anteilen: eine Zeile ohne Nummer oder mit
+    Ausweichnamen bekommt auch dann eine eigene Zeile, z. B. bei
+    ['1;GZT;1.35*LF1', ';GZT;1.5*LF2', '1;GZT;LF2'] „Kombination LK2
+    (Tabellenzeile 2 ohne Nummer): 1.5*LF2“ und „Kombination LK1_2
+    (Tabellennummer 1; LK1 gab es schon): 1*LF2“ (gemessen am Stand aa22f5d).
 
     Bis zum 22.09.2026 verwarf die Schleife eine Zeile ohne LF-Faktor
     (``if not factors: continue``) **vor** der Warnung über nicht aufgelöste
@@ -446,6 +451,85 @@ def test_kombination_verweis_auf_rest():
           next((z for z in log if z.strip().endswith("Lastkombinationen")), "keine Zeile"))
 
 
+def test_kombination_verweis_grund():
+    """Die Warnung zu einem offenen CO/LK-Verweis nennt den Grund dieses Verweises.
+
+    Je Verweis einer von drei Gruenden: die Tabelle fuehrt die Nummer nicht;
+    Kreis; oder die verwiesene Zeile wird selbst nicht angelegt, mit dem Namen
+    ihrer Warnung. Geprueft an Tabellen, die CO1 vollstaendig fuehren, CO1
+    aber nicht anlegen (nicht erkannter Teil, kein Lastfall), an einer Kette,
+    an zwei Kreisen (einer mit einer Zeile, die nur hineinverweist), am
+    Verweis auf sich selbst und an einer fehlenden Nummer neben EK
+    (Gegenpruefung vom 23.09.2026 zu Befund SV10). Alle Formeln selbst gebaut;
+    ob RFEM so etwas schreibt, ist an keiner echten Datei gemessen.
+    """
+    alt = "fuehrt diese Kombination nicht oder nicht vollstaendig"
+    alle = []
+
+    def tabelle(zeilen, lastfaelle):
+        m, log = _kombinationstabelle("s3d_kg_", zeilen, lastfaelle=lastfaelle)
+        alle.extend(log)
+        return m, log
+
+    def warnung(log, nr):
+        return next((z for z in log if z.startswith("WARNUNG")
+                     and (f"LK{nr} " in z or f"LK{nr}:" in z)), "keine Zeile")
+
+    # (1) die verwiesene Zeile hat einen nicht erkannten Teil
+    m, log = tabelle(["1;GZT;1.35*LF1 + 1.5*Schnee", "2;GZT;CO1 + LF2"], 2)
+    z = warnung(log, 2)
+    check("(1) CO1: wird selbst nicht angelegt, siehe LK1",
+          "(CO1: wird selbst nicht angelegt, siehe Warnung zu LK1)" in z, z)
+    check("(1) die Warnung zu LK1, auf die verwiesen wird, gibt es",
+          warnung(log, 1) != "keine Zeile", warnung(log, 1))
+
+    # (2) die verwiesene Zeile hat keinen erkennbaren Lastfall
+    m, log = tabelle(["1;GZT;Schnee", "2;GZT;CO1 + LF2"], 2)
+    z = warnung(log, 2)
+    check("(2) Formel ohne Lastfall: CO1 wird selbst nicht angelegt",
+          "(CO1: wird selbst nicht angelegt, siehe Warnung zu LK1)" in z, z)
+
+    # (3) Kette mit eigenem LF in der Mitte: LK2 ist offen, LK3 verweist auf LK2
+    m, log = tabelle(["1;GZT;1.35*LF1 + x", "2;GZT;CO1 + LF2", "3;GZT;CO2 + LF3"], 3)
+    z = warnung(log, 3)
+    check("(3) Kette: CO2 wird selbst nicht angelegt, siehe LK2",
+          "(CO2: wird selbst nicht angelegt, siehe Warnung zu LK2)" in z, z)
+    check("(3) Kette: LK3 nicht ohne den offenen Anteil von LK2 angelegt",
+          "LK3" not in m.combinations,
+          str(dict(m.combinations["LK3"].factors)) if "LK3" in m.combinations
+          else "nicht angelegt")
+
+    # (4) Kreis ueber zwei Zeilen
+    m, log = tabelle(["1;GZT;LF1 + CO2", "2;GZT;LF2 + CO1"], 2)
+    for nr, ref in ((1, "CO2"), (2, "CO1")):
+        z = warnung(log, nr)
+        check(f"(4) Kreis: LK{nr} nennt {ref} als Kreis",
+              f"({ref}: Kreis, führt über Verweise auf diese Kombination zurück)" in z, z)
+
+    # (5) Kreis zwischen 2 und 3; Zeile 1 verweist nur hinein und liegt nicht darin
+    m, log = tabelle(["1;GZT;LF1 + CO2", "2;GZT;LF2 + CO3", "3;GZT;LF3 + CO2"], 3)
+    z = warnung(log, 1)
+    check("(5) LK1 liegt nicht im Kreis: CO2 wird selbst nicht angelegt",
+          "(CO2: wird selbst nicht angelegt, siehe Warnung zu LK2)" in z, z)
+    for nr, ref in ((2, "CO3"), (3, "CO2")):
+        z = warnung(log, nr)
+        check(f"(5) LK{nr} nennt {ref} als Kreis", f"({ref}: Kreis, führt über" in z, z)
+
+    # (6) Verweis auf sich selbst; (7) EK, Verweis auf eine Zeile mit Rest und eine
+    # Nummer, die die Tabelle nicht fuehrt, in einer Formel
+    m, log = tabelle(["1;GZT;LF1 + CO1", "2;GZT;LF2 + x", "3;GZT;LF3 + CO2 + EK1 + CO9"], 3)
+    z = warnung(log, 1)
+    check("(6) CO1 in LK1: Kreis auf sich selbst",
+          "(CO1: Kreis, verweist auf diese Kombination selbst)" in z, z)
+    z = warnung(log, 3)
+    check("(7) je Verweis ein Grund: EK, CO2 nicht angelegt, CO9 fehlt",
+          "(EK/RC ist eine Ergebniskombination (Umhuellende), als Summand nicht "
+          "darstellbar; CO2: wird selbst nicht angelegt, siehe Warnung zu LK2; "
+          "CO9: die Tabelle führt keine Nummer 9)" in z, z)
+    check("(1)-(7) der alte Sammelgrund steht in keiner Zeile",
+          not any(alt in x for x in alle), next((x for x in alle if alt in x), ""))
+
+
 def test_kombination_ohne_nummer_name():
     """Eine Zeile ohne Nummer belegt keinen Namen, den die Tabelle vergibt.
 
@@ -485,7 +569,8 @@ def main():
     for t in (test_native_sqlite, test_native_zip_und_json, test_native_unbekannt,
               test_tabellen_erweitert, test_kombinationen_abgezaehlt,
               test_kombination_minus_vor_verweis, test_kombination_unerkannter_teil,
-              test_kombination_verweis_auf_rest, test_kombination_ohne_nummer_name):
+              test_kombination_verweis_auf_rest, test_kombination_verweis_grund,
+              test_kombination_ohne_nummer_name):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
