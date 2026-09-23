@@ -4105,7 +4105,11 @@ class Report:
         # Der Schwingungsnachweis rechnet seine Modalanalysen und den
         # Druckschwankungs-Lastfall selbst; sein Ausweichen steht in
         # schwingung.info. Ohne diese Zeilen nannte der Bericht es nicht
-        # (Befund B121, gemessen 23.09.2026: 0-mal "ausgewichen").
+        # (Befund B121, gemessen 23.09.2026: 0-mal "ausgewichen"). Er steht
+        # hinter den Lastfaellen und Kombinationen: bei gleichem Grund zaehlt
+        # er in ihrer Zeile mit, beim Namen genannt nur unter den ersten drei
+        # (ausweichen_gebuendelt; mit drei Lastfaellen gemessen 24.09.2026
+        # "bei 4 Ergebnissen (LF1, Wasser S, Wasser S dyn …)").
         sw_ = getattr(self, "schwingung", None)
         if sw_ is not None:
             ergebnisse = ergebnisse + [(f"Schwingungsnachweis {sw_.name}", sw_)]

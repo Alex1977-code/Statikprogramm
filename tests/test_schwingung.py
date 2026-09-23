@@ -273,16 +273,27 @@ def test_ausweichen_erreicht_bericht():
     html = Report(m, an).html()
     punkte = [re.sub("<[^>]+>", "", p) for p in re.findall(r"<li>(.*?)</li>", html, re.S)
               if "ausgewichen" in p]
+    # Rechnet nur der Nachweis (die Analyse ist leer), steht er allein in der
+    # Zeile und damit beim Namen
     check("der Bericht nennt es unter den Hinweisen - genau eine Zeile mit Grund",
           len(punkte) == 1 and "Probe: PARDISO verweigert" in punkte[0]
-          and "Schwingungsnachweis N1" in punkte[0],
+          and "bei 1 Ergebnis (Schwingungsnachweis N1)" in punkte[0],
           f"{len(punkte)} Zeilen: " + (punkte[0][:110] if punkte else ""))
     check("der Grund steht einmal im Bericht",
           html.count("Probe: PARDISO verweigert") == 1,
           f"{html.count('Probe: PARDISO verweigert')} mal")
-    # Kommt der Lastfall aus der Analyse, steht er dort unter seinem Namen;
-    # der Nachweis zaehlt ihn nicht noch einmal, der Bericht bleibt bei einer
-    # Zeile (LF1, Wasser S, Wasser S dyn und der Nachweis)
+    # Kommt der Lastfall aus der Analyse, zaehlt er im Bericht bei den
+    # Lastfaellen und im Nachweis nicht noch einmal. Der Bericht bleibt bei
+    # einer Zeile fuer LF1, Wasser S, Wasser S dyn und den Nachweis. Sie nennt
+    # nur die ersten drei Namen (solver.ausweichen_gebuendelt); der Nachweis
+    # steht hinter den Lastfaellen und Kombinationen und wird dort nur
+    # mitgezaehlt. Das Handbuch sagte am Stand 802ff71, der Bericht nenne ihn
+    # mit "(Schwingungsnachweis Name)" in der Zeile der Lastfaelle und den
+    # Lastfall "unter seinem eigenen Namen" - sobald drei Lastfaelle denselben
+    # Grund tragen, stimmt das fuer den Nachweis nicht, fuer den Lastfall
+    # nicht, wenn er hinter den ersten drei steht (gemessen 24.09.2026 mit drei
+    # weiteren Lastfaellen: "bei 7 Ergebnissen (LF1, Zus1, Zus2 …)"). Die
+    # Pruefung hielt hier bis dahin nur "bei 4 Ergebnissen" fest.
     zeilen_a = [z for z in an_a.schwingung.log if "ausgewichen" in z]
     check("Lastfall aus der Analyse: erg.log nennt nur Luft und Wasser",
           len(zeilen_a) == 1 and "bei 2 Ergebnissen" in zeilen_a[0]
@@ -290,10 +301,18 @@ def test_ausweichen_erreicht_bericht():
     html_a = Report(m_a, an_a).html()
     punkte_a = [re.sub("<[^>]+>", "", p) for p in re.findall(r"<li>(.*?)</li>", html_a, re.S)
                 if "ausgewichen" in p]
-    check("Lastfall aus der Analyse: eine Hinweiszeile für Lastfälle und Nachweis",
+    namen_a = [n for n, r in list(an_a.cases.items()) + list((getattr(an_a, "combinations", None) or {}).items())
+               if "verweigert" in str((getattr(r, "info", None) or {}).get("ausweichgrund", ""))]
+    check("Vorbedingung: drei Lastfälle der Analyse tragen denselben Grund",
+          namen_a == ["LF1", "Wasser S", wd_a.lastfall_dyn], str(namen_a))
+    check("Lastfall aus der Analyse: eine Hinweiszeile, der Nachweis zählt dort mit",
           len(punkte_a) == 1 and "bei 4 Ergebnissen" in punkte_a[0]
           and html_a.count("Probe: PARDISO verweigert") == 1,
           f"{len(punkte_a)} Zeilen: " + (punkte_a[0][:110] if punkte_a else ""))
+    check("… sie nennt nur die ersten drei beim Namen, den Nachweis dahinter nicht",
+          bool(punkte_a) and f"({', '.join(namen_a)} …)" in punkte_a[0]
+          and "Schwingungsnachweis" not in punkte_a[0],
+          punkte_a[0][:90] if punkte_a else "keine Zeile")
 
     # Gegenprobe: ohne Ausfall steht nichts da
     m0, _wd0, an0 = aufbau()
