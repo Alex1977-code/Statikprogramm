@@ -1613,6 +1613,85 @@ def test_json_anhaengen_koerpergruppe():
            f"allein (unten, oben) geloest {allein}, angehaengt {angehaengt}")
 
 
+def test_json_anhaengen_stellung_des_ziels():
+    """Stellungen werden nicht uebertragen; eine Situation der Quelle, die
+    eine nennt, darf dann nicht still die gleichnamige Stellung des Ziels
+    benutzen. Gemessen vor der Nachbesserung vom 23.09.2026: Rahmen als
+    Quelle bei x = 50 m, Stellung 'Offen' hebt die ungelagerten Knoten um
+    1,0 m, Lastfall LF-S (10 kN waagerecht) in Situation 'S-offen'; das Ziel
+    ist der Rahmen bei x = 0 mit eigener Stellung 'Offen' ohne Verschiebung.
+    Allein |u| = 4,7572 mm am Lastknoten, angehaengt 1,7876 mm - die
+    Situation S-offen_2 nannte 'Offen' des Ziels, und weder Modellpruefung
+    noch Protokoll sagten etwas (das Protokoll versprach es sogar)."""
+    from statik3d import examples_lib
+    from statik3d.model import Situation
+    from statik3d.bridges.positions import Stellung
+    from statik3d.situationen import situationsmodell
+
+    def rahmen(dz, x0, mit_last):
+        m = examples_lib.build_example("frame")
+        m.nodes = np.asarray(m.nodes, float) + np.array([x0, 0.0, 0.0])
+        m.stellungen = [Stellung("Offen", verschiebung=(0.0, 0.0, dz))]
+        m.situationen["S-offen"] = Situation("S-offen", stellung="Offen")
+        if mit_last:
+            m.situationen["S-wind"] = Situation("S-wind", stellung="Offen")
+            lc = m.add_load_case("LF-S", "Q", activate=False, situation="S-offen")
+            lc.gravity = [0.0, 0.0, 0.0]
+            m.load_node(2, Fx=1e4, case="LF-S")
+        return m
+
+    def verschiebung(m):
+        """|u| am Lastknoten der Quelle (bei x = 50 m, ueber die Lage gesucht)."""
+        p = np.asarray(examples_lib.build_example("frame").nodes[2], float) + [50.0, 0, 0]
+        i = int(np.argmin(np.abs(np.asarray(m.nodes) - p).max(axis=1)))
+        r = solver.solve_cases(m, ["LF-S"], workers=1)["LF-S"]
+        return float(np.linalg.norm(np.asarray(r.u).reshape(-1, 6)[i, :3]))
+
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "q.json")
+        rahmen(1.0, 50.0, True).save(p)
+        allein = verschiebung(Model.load(p))
+        # Ziel ohne Stellung: die Situation behaelt ihren Verweis, die
+        # Modellpruefung meldet ihn (so, wie das Protokoll es sagt)
+        z = examples_lib.build_example("frame")
+        z = import_file(p, model=z, log=[])
+        chk = [c for c in z.check() if "Stellung" in c]
+        expect("Anhaengen an Ziel ohne Stellung: Verweis bleibt, Modellpruefung meldet ihn",
+               z.situationen["S-offen"].stellung == "Offen" and len(chk) == 2, f"{chk}")
+        # Ziel mit eigener Stellung 'Offen'
+        log = []
+        z = import_file(p, model=rahmen(0.0, 0.0, False), log=log)
+    sit = z.load_cases["LF-S"].situation
+    verweise = {n: s.stellung for n, s in z.situationen.items()}
+    chk = [c for c in z.check() if "Stellung" in c]
+    expect("Anhaengen: Situationen der Quelle nennen nicht die gleichnamige Stellung des Ziels",
+           sit == "S-offen_2" and verweise == {"S-offen": "Offen", "S-offen_2": "Offen_2",
+                                               "S-wind": "Offen_2"},
+           f"{verweise}")
+    expect("Anhaengen: Modellpruefung meldet beide Situationen der Quelle",
+           len(chk) == 2 and all("Offen_2" in c for c in chk)
+           and any("'S-offen_2'" in c for c in chk) and any("'S-wind'" in c for c in chk),
+           f"{chk}")
+    zeilen = [x for x in log if x.startswith("WARNUNG") and "S-offen_2" in x
+              and "S-wind" in x and "'Offen_2'" in x]
+    expect("Anhaengen: Protokoll nennt die Situationen und den neuen Verweis",
+           len(zeilen) == 1, "\n".join(x for x in log if "Stellung" in x))
+    try:
+        situationsmodell(z, sit)
+        fehler = ""
+    except ValueError as ex:
+        fehler = str(ex)
+    expect("Anhaengen: Rechnung in der Situation der Quelle bricht mit Meldung ab",
+           "Offen_2" in fehler and "unbekannt" in fehler, fehler or "rechnet ohne Meldung")
+    # Legt der Anwender die Stellung der Quelle unter dem neuen Namen an,
+    # rechnet der Lastfall der Quelle wie allein
+    z.stellungen.append(Stellung("Offen_2", verschiebung=(0.0, 0.0, 1.0)))
+    angehaengt = verschiebung(z)
+    expect("Anhaengen: mit der Stellung der Quelle unter neuem Namen rechnet LF-S wie allein",
+           abs(angehaengt - allein) <= 1e-9 * max(allein, 1e-12) + 1e-15,
+           f"allein {allein * 1e3:.4f} mm, angehaengt {angehaengt * 1e3:.4f} mm")
+
+
 def test_json_anhaengen_schluessel():
     """Jeder Schluessel von Model.to_dict() und LoadCase.to_dict() ist beim
     Anhaengen eingeordnet: uebertragen, als Einstellung des Ziels behalten
@@ -1649,7 +1728,7 @@ TESTS = [
          test_json_anhaengen_doppelknoten_bleiben, test_doppelte_knoten_verweise,
          test_json_anhaengen_fuge_traegt_wie_allein,
          test_json_anhaengen_ermuedung_auf_kombination, test_json_anhaengen_koerpergruppe,
-         test_json_anhaengen_schluessel]
+         test_json_anhaengen_stellung_des_ziels, test_json_anhaengen_schluessel]
 
 
 def main() -> int:

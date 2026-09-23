@@ -27,7 +27,10 @@ innerhalb eines Teils: dort liegen Knoten absichtlich aufeinander (die
 Seiten einer Kontaktfuge). Namen: was es im Ziel schon gibt, bekommt einen
 eindeutigen neuen Namen (``S1`` -> ``S1_2``), und jeder Verweis der Quelle
 folgt ihm - auch die Gruppe der Elemente (sie nennt den Koerper) und die
-Zustaende der Ermuedungslasten, soweit sie Kombinationen sind.
+Zustaende der Ermuedungslasten, soweit sie Kombinationen sind. Stellungen
+gehen nicht mit; nennt eine Situation der Quelle eine, die das Ziel unter
+demselben Namen hat, zeigt sie auf einen neuen Namen, den die
+Modellpruefung als unbekannt meldet (``_stellungsverweise``).
 Werkstoffe, Querschnitte, Dicken, Kombinationen und Ermuedungslasten mit
 gleichem Namen **und** gleichem Inhalt werden nicht doppelt angelegt.
 Lastfaelle gleichen Namens werden wie bisher zusammengelegt; weichen ihre
@@ -181,6 +184,8 @@ class _Anhang:
         self.umbenannt: dict[str, dict] = {}     # Art -> {alt: neu}
         self.gleich: dict[str, list] = {}        # Art -> gleich vorhandene Namen
         self.zusammengelegt: list = []           # Lastfaelle, die es im Ziel schon gab
+        # Stellungsname in Situationen der Quelle -> neuer Name (siehe _stellungsverweise)
+        self.stellungsverweis: dict[str, str] = {}
 
     # -- Nummern und Namen --------------------------------------------------
     def kn(self, n) -> int:
@@ -281,6 +286,7 @@ class _Anhang:
             if str(c.name) not in fugen_q:
                 fugen_q.append(str(c.name))
         self.namen_vergeben("fugen", fugen_z, fugen_q)
+        self._stellungsverweise()
 
         def kombi_gleich(n):
             k = copy.deepcopy(q.combinations[n])
@@ -295,6 +301,47 @@ class _Anhang:
         self.namen_vergeben("fatigue_loads", z.fatigue_loads, list(q.fatigue_loads),
                             lambda n: _inhalt(z.fatigue_loads[n])
                             == _inhalt(self._ermuedung(q.fatigue_loads[n])))
+
+    def _stellungsverweise(self) -> None:
+        """Stellungen gehen nicht mit (:data:`NICHT_UEBERTRAGEN`). Nennt eine
+        Situation der Quelle eine Stellung, die das Ziel unter demselben Namen
+        hat, bekommt der Verweis einen neuen Namen, den es im Ziel nicht gibt.
+
+        Warum: sonst loeste ``Model.stellung`` ihn still auf die Stellung des
+        Ziels auf, und ``Model.check`` meldete nichts (es prueft nur, ob der
+        Name existiert). Gemessen vor dieser Zeile (23.09.2026): Rahmen als
+        Quelle, Stellung 'Offen' hebt die ungelagerten Knoten um 1,0 m,
+        10 kN waagerecht in Situation 'S-offen'; das Ziel hat eine Stellung
+        'Offen' ohne Verschiebung. Allein |u| = 4,7572 mm am Lastknoten,
+        angehaengt 1,7876 mm - gerechnet in der Stellung des Ziels. Mit dem
+        neuen Namen meldet die Modellpruefung die Situation ("Stellung ...
+        unbekannt"), und die Rechnung bricht in ``situationsmodell`` mit
+        derselben Meldung ab, bis der Anwender die Stellung unter diesem Namen
+        anlegt oder die Situation umstellt.
+
+        Auch eine inhaltlich gleiche Stellung des Ziels wird nicht benutzt:
+        was sie trifft, haengt an Namen (Drehgruppen, abgeschaltete Staebe,
+        Flaechen, Volumen), und gleichnamige Objekte der Quelle sind
+        umbenannt. Ob sie im Gesamtmodell auf die Quelle wirkt wie allein,
+        laesst sich am Inhalt nicht ablesen.
+
+        Belegt sind fuer den neuen Namen auch die Stellungsnamen der Quelle
+        selbst, damit zwei verschiedene Stellungen der Quelle nicht auf
+        denselben Namen fallen."""
+        z, q = self.z, self.q
+        genannt = []
+        for s in q.situationen.values():
+            if s.stellung and s.stellung not in genannt:
+                genannt.append(s.stellung)
+        belegt = ({str(getattr(s, "name", "")) for s in (z.stellungen or [])}
+                  | {str(getattr(s, "name", "")) for s in (q.stellungen or [])}
+                  | set(genannt))
+        for n in genannt:
+            # dieselbe Aufloesung wie beim Rechnen (Model.stellung)
+            if z.stellung(n) is not None:
+                neu = C.unique_name(belegt, n)
+                belegt.add(neu)
+                self.stellungsverweis[n] = neu
 
     def zustand(self, name):
         """Zustand einer Ermuedungslast: ein Lastfall behaelt seinen Namen
@@ -465,6 +512,7 @@ class _Anhang:
             k = copy.deepcopy(s)
             k.name = self.neu("situationen", name)
             k.deaktiviert = self.els(s.deaktiviert)
+            k.stellung = self.stellungsverweis.get(s.stellung, s.stellung)
             z.situationen[k.name] = k
 
     # -- Lastfaelle ---------------------------------------------------------
@@ -780,6 +828,19 @@ class _Anhang:
             n = _anzahl(getattr(q, key, None))
             if n:
                 C.warn(log, f"{text}: {n} der Quelle nicht übertragen - {grund}.")
+        if self.stellungsverweis:
+            je: dict[str, list] = {}
+            for name, s in q.situationen.items():
+                if s.stellung in self.stellungsverweis:
+                    je.setdefault(s.stellung, []).append(self.neu("situationen", name))
+            teile = [f"Situation {', '.join(repr(x) for x in sits)}: Stellung '{alt}' → "
+                     f"'{self.stellungsverweis[alt]}'" for alt, sits in je.items()]
+            C.warn(log, "Situationen der Quelle nennen eine Stellung, die es im Ziel unter "
+                        "demselben Namen gibt. Stellungen werden nicht übertragen; damit diese "
+                        "Situationen nicht still in der Stellung des Ziels rechnen, zeigen sie "
+                        "auf einen neuen Namen: " + "; ".join(teile) + ". Die Modellprüfung "
+                        "meldet sie, bis die Stellung unter diesem Namen im Ziel angelegt oder "
+                        "die Situation auf eine Stellung des Ziels umgestellt ist.")
         abw = [ZIEL_BEHAELT[k].split(" (")[0] for k in ZIEL_BEHAELT
                if k not in _OHNE_VERGLEICH and _einstellung(z, k) != _einstellung(q, k)]
         if abw:

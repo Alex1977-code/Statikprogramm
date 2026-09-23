@@ -2737,8 +2737,8 @@ jetzt kommen alle an. Was das Protokoll dabei sagt:
   Kontaktbedingung ihren Körper. Bis zum 23.09.2026 behielten die Elemente
   `V1`, und die Fuge der Quelle löste im Versuch den Block des anderen
   Körpers. Ebenso folgen die Ermüdungslasten, deren Zustand eine Kombination
-  ist (am CBG alle 20), der umbenannten Kombination; bis dahin rechnete eine
-  solche Ermüdungslast ohne Meldung mit der gleichnamigen Kombination des
+  ist (am CBG alle 20), der umbenannten Kombination; bis dahin zeigte eine
+  solche Ermüdungslast ohne Meldung auf die gleichnamige Kombination des
   Ziels. Werkstoffe, Querschnitte, Dicken, Kombinationen und
   Ermüdungslasten mit gleichem Namen **und** gleichem Inhalt werden nicht
   doppelt angelegt; bei gleichem Namen und anderem Inhalt behält das
@@ -2753,10 +2753,24 @@ jetzt kommen alle an. Was das Protokoll dabei sagt:
   in einem Lastfall verschiedenes, warnt das Protokoll: es erfasst jetzt auch
   die Elemente des anderen Teils oder fehlt ihnen.
 * **Nicht übertragen** und mit Anzahl gemeldet werden die Berichtseinträge
-  (sie zeigen Ergebnisse des Quellmodells) und die Stellungen (eine Stellung
-  bewegt das ganze System, also auch das Ziel). Einstellungen – Netz,
-  Nachweise, Plastizität, Einheiten, Bericht – bleiben die des Ziels; weichen
-  die der Quelle ab, steht es im Protokoll.
+  (sie zeigen Ergebnisse des Quellmodells) und die Stellungen (ohne
+  Gruppenangabe bewegt eine Stellung alle nicht gelagerten Knoten, also auch
+  die des Ziels). Einstellungen – Netz, Nachweise, Plastizität, Einheiten,
+  Bericht – bleiben die des Ziels; weichen die der Quelle ab, steht es im
+  Protokoll.
+* **Situationen mit Stellung:** Eine Situation der Quelle behält den Namen
+  ihrer Stellung, und die Modellprüfung meldet „Stellung … unbekannt“, bis die
+  Stellung im Ziel angelegt ist. Hat das Ziel eine Stellung desselben Namens,
+  zeigt die Situation stattdessen auf einen neuen Namen (`Offen` → `Offen_2`),
+  und die Warnung „Situationen der Quelle nennen eine Stellung, die es im
+  Ziel unter demselben Namen gibt …“ nennt jede solche Situation. Bis zum
+  23.09.2026 rechnete sie still in der Stellung des Ziels. Im Versuch hob die
+  Stellung `Offen` der Quelle die Knoten eines Rahmens um 1,0 m, die
+  gleichnamige des Ziels bewegte nichts; am Lastknoten der Quelle ergaben
+  sich allein 4,7572 mm, angehängt 1,7876 mm, ohne Meldung. Jetzt bricht die
+  Rechnung dieser Situation mit „Stellung 'Offen_2' unbekannt“ ab. Legt man
+  die Stellung der Quelle unter dem neuen Namen im Ziel an, rechnet der
+  Lastfall im selben Versuch wie allein (4,7572 mm).
 * **Anschluss:** Ein Knoten der Quelle, der auf einem Knoten des Ziels
   liegt, wird mit ihm zusammengeführt („1 Knoten der Quelle lagen auf Knoten
   des Ziels …“); jeder Verweis darauf folgt, auch Ecken und integrierte
@@ -2781,9 +2795,10 @@ dieselben Verschiebungen (Abweichung 0), dazu jetzt die 72 Kombinationen.
 Die Nachbereitung der übrigen Importe (RFEM 6, DXF, IFC, …) führt
 aufeinanderliegende Knoten weiterhin über das ganze Modell zusammen. Seit dem
 22.09.2026 folgen dabei auch die Ecken und integrierten Knoten der Flächen.
-Am `Drehlager_V15_4_export.rf6` lagen vorher 1444 von 3128 Flächenecken
-nicht auf den Knoten ihrer Randlinien (bis 1,8 m daneben) und 10 von 168
-integrierten Knoten hinter dem Ende der Knotenliste, jetzt 0 und 0.
+Am `Drehlager_V15_4_export.rf6` lagen vorher 64 von 3128 Flächenecken
+neben den Knoten ihrer Randlinien (bis 1,8 m), weitere 1380 zeigten hinter
+das Ende der Knotenliste, ebenso 10 von 168 integrierten Knoten; jetzt
+jeweils 0.
 „Spiel geben“ liest diese Ecken: an den 73 zylindrischen Körpern des
 Drehlagers entstehen beim Trennen von den Nachbarn jetzt 359 statt 363
 Knotenkopien (V16 und V29 je 2 weniger), die 24 Linienkopien bleiben.

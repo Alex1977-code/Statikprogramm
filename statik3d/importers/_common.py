@@ -290,9 +290,10 @@ def _weitere_knotenverweise_umhaengen(model: Model, new_index) -> None:
     anlegt - also bei jedem .rf6 -, dazu im RFEM-Leser mit
     ``merge_nodes=True`` und fuer die uebrigen RFEM-Behaelter. Gemessen am
     Drehlager_V15_4_export.rf6 (23.09.2026, 617 Knoten zusammengefuehrt):
-    vorher lagen 1444 von 3128 Flaechenecken nicht auf den Knoten ihrer
-    Randlinien (bis 1815,9 mm daneben) und 10 von 168 integrierten Knoten
-    hinter dem Ende der Knotenliste; jetzt 0 und 0. Die Ecken liest
+    vorher lagen 64 von 3128 Flaechenecken neben den Knoten ihrer Randlinien
+    (bis 1815,9 mm), weitere 1380 zeigten hinter das Ende der Knotenliste,
+    ebenso 10 von 168 integrierten Knoten; jetzt jeweils 0 (zweite Messung
+    mit Aufteilung am 23.09.2026). Die Ecken liest
     "Spiel geben" (``spiel._fremde_nutzung``): an den 73 zylindrischen
     Koerpern bekommt ``spiel.trennen`` jetzt 359 statt 363 Knotenkopien
     (V16 und V29 je 2 weniger - Knoten, die nur eine verrutschte Ecke als
