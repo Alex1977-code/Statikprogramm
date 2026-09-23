@@ -4752,6 +4752,12 @@ Findet die Suche gar nichts und ist das System dennoch singulär, greift die
 **Matrixdiagnose**: sie nennt das Bauteil, dessen Bewegung fast keine Energie
 kostet. Das ist der Fall, den die Topologie nicht sehen kann - zwei Körper,
 die nur einen Knoten teilen, hängen zusammen und sind trotzdem beweglich.
+Die Matrixdiagnose zerlegt das Gleichungssystem ein zweites Mal. Weicht der
+Gleichungslöser dabei aus, steht unter dem Befund der Hinweis
+„Diagnose-Faktorisierung: Gleichungslöser ausgewichen - …“ mit dem Grund,
+auch bei Rechnungen ohne Fortschrittsanzeige. Kann sie gar nicht rechnen,
+heißt es „Matrixdiagnose nicht möglich: …“; ob ein Bauteil fast ohne
+Steifigkeit ist, bleibt dann offen und ist von Hand zu prüfen.
 
 **Statt abzubrechen wird gerechnet.** Jede freie Bewegung wird mit einer
 Hilfsfesselung festgehalten. Die verfälscht die Spannungen nicht (sie wirkt

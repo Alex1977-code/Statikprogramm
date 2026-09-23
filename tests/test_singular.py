@@ -33,7 +33,9 @@ Geprueft wird gegen geschlossene Werte, nicht gegen „ungefaehr":
 * **Stufe 2.** Zwei Wuerfel, die sich nur **einen** Knoten teilen, haengen
   topologisch zusammen - die Teiltragwerkssuche sieht nichts. Beweglich ist
   der zweite trotzdem: er dreht sich um den gemeinsamen Knoten. Hier muss die
-  Matrixdiagnose das Bauteil beim Namen nennen.
+  Matrixdiagnose das Bauteil beim Namen nennen - und sagen, wenn ihre eigene
+  Faktorisierung ausgewichen ist oder sie gar nicht rechnen konnte, statt
+  dann „kein weicher Modus“ zu behaupten.
 
 Aufruf:  python -m tests.test_singular
 """
@@ -524,7 +526,7 @@ def test_lagerausfall_kennt_die_richtung():
 # --------------------------------------------------------------------------
 # 4) Stufe 2: was die Topologie nicht sieht
 # --------------------------------------------------------------------------
-def test_stufe2_nennt_das_bauteil():
+def wuerfelpaar() -> Model:
     """Zwei Würfel an **einem** gemeinsamen Knoten: topologisch ein Teil."""
     m = Model()
     m.add_material(Material.steel("S235"))
@@ -541,6 +543,12 @@ def test_stufe2_nennt_das_bauteil():
     lc = m.add_load_case("LF1")
     lc.gravity = [0, 0, 0]
     m.load_node(13, Fz=-1000.0)
+    return m
+
+
+def test_stufe2_nennt_das_bauteil():
+    """Zwei Würfel an **einem** gemeinsamen Knoten: topologisch ein Teil."""
+    m = wuerfelpaar()
     from statik3d import diagnose as dg
     d = dg.diagnose(m)
     check("die Topologie sieht ein einziges, gelagertes Teiltragwerk",
@@ -581,6 +589,169 @@ def test_stufe2_nennt_das_bauteil():
         check("und die Formänderungsarbeit dieses Elements steht daneben",
               moden[0].energie >= 0.0 and moden[0].anteil < 1e-3,
               f"{moden[0].energie:.3g} Nm, {moden[0].anteil:.1e} der mittleren Steifigkeit")
+
+
+def _singulaer_meldung(m: Model) -> str:
+    """Die Meldung von solve_static - ohne Fortschrittsempfaenger, wie in
+    Rechenketten, Pool, Skripten und Auftraegen."""
+    try:
+        solver.solve_static(m, case="LF1")
+    except RuntimeError as ex:
+        return str(ex)
+    return ""
+
+
+BEFUND_B = r"FEHLER: B, Element \d+ \(\w+\): Bewegung fast ohne Steifigkeit"
+
+
+def test_stufe2_nennt_das_ausweichen():
+    """Weicht die **Diagnose**-Faktorisierung aus, steht das in der Meldung.
+
+    Stufe 2 faktorisiert K + eps·I ein zweites Mal. Ein Ausweichen dabei
+    nannte sie bis zum 23.09.2026 nur ueber ``melden`` - den Fortschritt, den
+    es in Rechenketten, Pool und Skripten nicht gibt - und sonst nur ueber
+    warnings.warn, das weder Protokollfenster noch exe erreicht. Hier rechnet
+    die Hauptfaktorisierung echt ueber PARDISO, nur die zweite wird
+    verweigert; SuperLU rechnet die Diagnose dann richtig, und genau das
+    Ausweichen fehlte in der Meldung.
+    """
+    import pypardiso
+    from statik3d import parallel
+    echt = pypardiso.PyPardisoSolver.factorize
+    vorher = parallel.settings().solver_backend
+    aufrufe = {"n": 0}
+
+    def erst_echt(self, A):
+        aufrufe["n"] += 1
+        if aufrufe["n"] == 1:
+            return echt(self, A)
+        raise RuntimeError("Probe: PARDISO verweigert (nur Diagnose)")
+
+    def wirft(self, A):
+        raise RuntimeError("Probe: PARDISO verweigert")
+
+    parallel.configure(solver_backend="auto")
+    try:
+        # Gegenprobe: ohne Ausweichen keine solche Zeile
+        text = _singulaer_meldung(wuerfelpaar())
+        check("ohne Ausweichen nennt die Meldung keines",
+              text and "ausgewichen" not in text, text[-160:])
+        pypardiso.PyPardisoSolver.factorize = erst_echt
+        text = _singulaer_meldung(wuerfelpaar())
+        pypardiso.PyPardisoSolver.factorize = echt
+        check("Vorbedingung: nur die Diagnose-Faktorisierung weicht aus",
+              aufrufe["n"] == 2, f"{aufrufe['n']} Faktorisierungen ueber PARDISO")
+        check("die Meldung ohne Fortschritt nennt das Ausweichen samt Grund",
+              "Diagnose-Faktorisierung: Gleichungslöser ausgewichen - PARDISO: "
+              "RuntimeError: Probe: PARDISO verweigert (nur Diagnose)" in text,
+              text[-200:])
+        check("und der Befund selbst bleibt (SuperLU rechnet ihn)",
+              re.search(BEFUND_B, text) is not None, text[:200])
+        # Der Grund gehoert an das Ergebnis, nicht nur in den Text: auch wer
+        # weichster_modus direkt ruft, ohne melden, erfaehrt ihn.
+        m = wuerfelpaar()
+        st = solver.StaticSystem(m)            # echt faktorisiert
+        pypardiso.PyPardisoSolver.factorize = wirft
+        moden = sg.weichster_modus(st.K, m, st.fi)
+        grund = getattr(moden[0], "ausweichgrund", "") if moden else ""
+        check("der Modus traegt den Ausweichgrund der Diagnose-Faktorisierung",
+              "PARDISO: RuntimeError: Probe: PARDISO verweigert" in grund,
+              grund or f"{len(moden)} Moden, kein Grund")
+    finally:
+        pypardiso.PyPardisoSolver.factorize = echt
+        parallel.configure(solver_backend=vorher)
+
+
+def test_stufe2_ohne_rechnung_behauptet_nichts():
+    """Kann Stufe 2 nicht rechnen, heisst es „nicht möglich“ - nicht „kein
+    weicher Modus“.
+
+    Bis zum 23.09.2026 gab weichster_modus bei gescheiterter Faktorisierung
+    von K + eps·I - und ebenso bei einem gescheiterten Schritt der inversen
+    Iteration - still eine leere Liste zurueck. singulaer_text las daraus
+    „keinen auffällig weichen Modus“: eine Aussage ueber eine Rechnung, die
+    nie lief. Die Hauptfaktorisierung rechnet hier jeweils echt.
+    """
+    import pypardiso
+    from statik3d import parallel
+    echt = pypardiso.PyPardisoSolver.factorize
+    echt_splu = solver.splu
+    echt_solve = solver.LinearSolver.solve
+    vorher = parallel.settings().solver_backend
+    aufrufe = {"n": 0}
+
+    def erst_echt(self, A):
+        aufrufe["n"] += 1
+        if aufrufe["n"] == 1:
+            return echt(self, A)
+        raise RuntimeError("Probe: PARDISO verweigert (nur Diagnose)")
+
+    def wirft(self, A):
+        raise RuntimeError("Probe: PARDISO verweigert")
+
+    def splu_wirft(*a, **kw):
+        raise SystemError("Probe: Can't expand MemType 0")
+
+    def falsch(text: str) -> bool:
+        return "keinen auffällig weichen Modus" in text
+
+    parallel.configure(solver_backend="auto")
+    try:
+        # a) die Diagnose-Faktorisierung scheitert ganz
+        pypardiso.PyPardisoSolver.factorize = erst_echt
+        solver.splu = splu_wirft
+        text = _singulaer_meldung(wuerfelpaar())
+        pypardiso.PyPardisoSolver.factorize = echt
+        solver.splu = echt_splu
+        check("Vorbedingung: die Hauptfaktorisierung rechnet, die Diagnose nicht",
+              aufrufe["n"] == 2 and text.startswith("Gleichungssystem singulär"),
+              f"{aufrufe['n']} Faktorisierungen ueber PARDISO")
+        check("ohne Diagnose-Faktorisierung: kein „kein weicher Modus“",
+              not falsch(text), text[-200:])
+        check("sondern „Matrixdiagnose nicht möglich“ mit beiden Gruenden",
+              "Matrixdiagnose nicht möglich" in text and "verweigert (nur Diagnose)" in text
+              and "MemType" in text, text[-240:])
+        # und wer weichster_modus direkt ruft, bekommt keine leere Liste
+        m = wuerfelpaar()
+        st = solver.StaticSystem(m)
+        pypardiso.PyPardisoSolver.factorize = wirft
+        solver.splu = splu_wirft
+        try:
+            moden = sg.weichster_modus(st.K, m, st.fi)
+            check("weichster_modus meldet das Scheitern statt einer leeren Liste",
+                  False, f"{len(moden)} Moden")
+        except Exception as ex:          # noqa: BLE001
+            check("weichster_modus meldet das Scheitern statt einer leeren Liste",
+                  type(ex).__name__ == "MatrixdiagnoseUnmoeglich" and "MemType" in str(ex),
+                  f"{type(ex).__name__}: {ex}"[:160])
+        finally:
+            pypardiso.PyPardisoSolver.factorize = echt
+            solver.splu = echt_splu
+
+        # b) und c) ein Schritt der inversen Iteration scheitert: Ausnahme
+        # bzw. kein endlicher Vektor. Nur die Iteration loest ohne Pruefung.
+        for art, erwartet in (("wirft", "Probe: Lösen verweigert"),
+                              ("nan", "keinen endlichen Vektor")):
+            def solve(self, b, check=True, _art=art):
+                if check is False:
+                    if _art == "wirft":
+                        raise ValueError("Probe: Lösen verweigert")
+                    return np.full_like(b, np.nan)
+                return echt_solve(self, b, check=check)
+
+            solver.LinearSolver.solve = solve
+            try:
+                text = _singulaer_meldung(wuerfelpaar())
+            finally:
+                solver.LinearSolver.solve = echt_solve
+            check(f"Iteration {art}: kein „kein weicher Modus“, sondern „nicht möglich“",
+                  not falsch(text) and "Matrixdiagnose nicht möglich" in text
+                  and erwartet in text, text[-200:])
+    finally:
+        pypardiso.PyPardisoSolver.factorize = echt
+        solver.splu = echt_splu
+        solver.LinearSolver.solve = echt_solve
+        parallel.configure(solver_backend=vorher)
 
 
 def test_hilfsfesselung_bleibt_klein():
@@ -791,7 +962,8 @@ def main():
               test_neben_der_gegenflaeche_haelt_nichts,
               test_reibung_und_einseitige_lager,
               test_lagerausfall_kennt_die_richtung,
-              test_stufe2_nennt_das_bauteil, test_halteguete):
+              test_stufe2_nennt_das_bauteil, test_stufe2_nennt_das_ausweichen,
+              test_stufe2_ohne_rechnung_behauptet_nichts, test_halteguete):
         print(f"\n--- {f.__name__} ---")
         try:
             f()
