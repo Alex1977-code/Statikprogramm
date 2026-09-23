@@ -6414,6 +6414,36 @@ Entstehen können sie an drei Stellen, alle drei prüfen jetzt vorher:
   fallen (`mesher3d._entartete_weglassen`).
 * Importierte Netze mit doppelten Knoten.
 
+**Doppelte Knoten mit Volumen (23.09.2026).** Nicht jedes Element mit doppeltem
+Knoten ist leer. Ein Sechsflächner, bei dem zwei gegenüberliegende Seiten zu
+Dreiecken zusammenfallen, ist ein Keil; einer, dessen eine Seite auf einen Punkt
+fällt, eine Pyramide; mit vier verschiedenen Knoten ein Tetraeder. So entarten der
+VQ83 von InfoGraph und Nastran-CHEXA oder Abaqus-C3D8 mit wiederholten Knoten, und
+das Zusammenlegen doppelter Knoten beim Import kann sie erzeugen. Bis zum
+23.09.2026 galten auch sie als „ohne Ausdehnung“ und fielen weg: ein Kragarm aus
+128 Keil-Sechsflächnern (408 FHG) rechnete mit **0,0 mm** Durchbiegung, gemeldet nur
+als Warnung. Seitdem ordnet `solid.entartung_aufloesen` jedes Volumenelement mit
+doppeltem Knoten nach seiner Topologie ein, und `diagnose.entartete_menge` wandelt
+vor der Rechnung um (Typ und Knoten, die Elementnummer bleibt; Umlauf so, dass das
+Volumen positiv ist, geprüft gegen das Volumen des entarteten Elements):
+
+| entartet | wird |
+|---|---|
+| hex8, zwei gegenüberliegende Seiten zu Dreiecken, an denselben Kanten | pent6 |
+| hex8, eine Seite auf einen Punkt, die Gegenseite ein Viereck | pyr5 |
+| pent6, eine Längskante zusammengezogen | pyr5 |
+| hex8, pent6 oder pyr5 mit vier verschiedenen Knoten | tet4 |
+
+Weggelassen wird nur noch, was danach wirklich kein Volumen hat (höchstens drei
+verschiedene Knoten oder unter 10⁻¹⁵ m³). Hat ein Element Volumen und keine
+eindeutige Deutung — etwa ein Sechsflächner mit nur **einer** zusammengezogenen
+Kante (sieben Knoten), oder ein quadratisches Element —, ist das ein FEHLER mit
+Elementnummer, und die Rechnung hält dort an. Die Modellprüfung nennt die
+Umwandlung mit Anzahl je Art („hex8→pent6: 128“) und den Preis: der Kragarm aus
+Keilen liegt bei 90 / 405 / 2 295 FHG −64,6 / −15,8 / −4,3 N/mm² daneben, der aus
+Sechsflächnern −1,6 / +0,2 / −0,03. Nach der Umwandlung rechnet der Keil-Kragarm
+bitgleich wie das pent6-Netz (`tests/test_entartung.py`).
+
 Ein Volumenkörper, der so nie ein Netz bekommen kann, gilt auch nicht als
 **unvernetzt** (`Model.koerper_traegt`). Sonst forderte die
 Rechenbarkeitsprüfung vor jeder Rechnung ein Netz, das nicht entstehen kann.
