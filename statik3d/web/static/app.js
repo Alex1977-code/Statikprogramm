@@ -614,6 +614,14 @@ function matOpts(s) { return Object.keys(s.materials).map(k => [k, k]); }
 function secOpts(s) { return Object.keys(s.sections).map(k => [k, `${k} (${s.sections[k].describe})`]); }
 function shellOpts(s) { return Object.keys(s.shells).map(k => [k, `${k} (t = ${g(s.shells[k].t * 1000, 3)} mm)`]); }
 function caseOpts(s, extra = []) { return extra.concat(s.load_cases.map(c => [c.name, `${c.name} (${c.category})`])); }
+// Zustaende einer Ermuedungslast: Lastfaelle und Kombinationen ohne
+// Alternativen, wie sie der Server nennt (Model.ermuedungszustaende) - das
+// Formular bot bis zum 23.09.2026 nur Lastfaelle an (Befund B134)
+function fatOpts(s, extra = []) {
+  const lf = new Map(s.load_cases.map(c => [c.name, `${c.name} (${c.category})`]));
+  const ko = new Map(s.combinations.map(c => [c.name, `${c.name} (Kombination ${c.typ})`]));
+  return extra.concat((s.ermuedungszustaende || []).map(n => [n, lf.get(n) || ko.get(n) || n]));
+}
 function opBtn(payload, label, cls = 'btn small', confirm = '') {
   return `<button class="${cls}" data-action="op" data-payload="${esc(JSON.stringify(payload))}" ${confirm ? `data-confirm="${esc(confirm)}"` : ''}>${label}</button>`;
 }
@@ -835,7 +843,7 @@ function renderLasten() {
 
 <details><summary>Ermüdungslasten <span class="n">${s.fatigue_loads.length}</span></summary><div class="body">
   <ul class="list">${s.fatigue_loads.map(f => `<li><span class="txt">${esc(f.name)}<span class="sub">${f.folge && f.folge.length ? 'Verlauf über ' + f.folge.length + ' Lastfälle (' + esc(f.zaehlung || 'spanne') + ')' : esc(f.case_max) + ' ↔ ' + esc(f.case_min || 'Null')} · ${(f.folge && f.folge.length ? f.wiederholungen : f.cycles) == null ? 'Lastspiele global' : g(f.folge && f.folge.length ? f.wiederholungen : f.cycles) + ' Lastspiele'} · Faktor ${g(f.factor)}</span></span>${opBtn({op: 'remove_fatigue_load', name: f.name}, '✕', 'btn small danger')}</li>`).join('') || '<li class="muted">keine</li>'}</ul>
-  <form data-op="add_fatigue_load" data-reset><div class="row">${inp('name', 'Name', '')}${sel('case_max', 'Lastfall max', caseOpts(s))}${sel('case_min', 'Lastfall min', caseOpts(s, [['', 'Nullzustand']]))}${num('cycles', 'Lastspiele', 2e6)}${num('factor', 'Faktor', 1)}<button class="btn small primary">+ Ermüdungslast</button></div></form>
+  <form data-op="add_fatigue_load" data-reset><div class="row">${inp('name', 'Name', '')}${sel('case_max', 'Oberer Zustand (Lastfall/Kombination)', fatOpts(s))}${sel('case_min', 'Unterer Zustand', fatOpts(s, [['', 'Nullzustand']]))}${num('cycles', 'Lastspiele', 2e6)}${num('factor', 'Faktor', 1)}<button class="btn small primary">+ Ermüdungslast</button></div></form>
   <div class="muted">Kerbfälle je Stab unter Modell → Stäbe.</div>
 </div></details>`;
 }
