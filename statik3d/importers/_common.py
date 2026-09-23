@@ -388,65 +388,109 @@ def _kantenmitten_umhaengen(model: Model, new_index, new_nodes,
     jetzt bitgleich (tests.test_importers,
     test_json_anhaengen_tetp_kantenmitten).
 
-    Mitgenommen wird nur, was ein tetp-Element liest: die Kantenmitte einer
-    Kante (a, b), a < b, die in den alten Nummern Kante eines tetp-Elements
-    ist. Die uebrigen wirken nirgends und fallen weg. Solche verwaisten
-    Schluessel laesst ``Model.netzknoten_loeschen`` stehen (es fuehrt die
-    Kantenmitten nicht mit), mit Knotennummern bis hinter das Ende der
-    Liste. Bis zur Nachbesserung vom 23.09.2026 wurden sie hier indiziert:
-    Anhaengen eines JSON-Modells an ein gespeichertes Modell, dessen
-    tetp-Netz danach entfernt war (Hohlkugel 2 x 2, p = 3, und ein Stab;
-    danach 38 Knoten, 126 Kantenmitten), brach mit IndexError ab - vor der
-    Speicher-Kur (ec6448c) lief es durch (je zweimal gemessen; Pruefung
-    tests.test_importers, test_json_anhaengen_nach_netz_entfernen). Nur die
-    Schluessel hinter dem Ende zu verwerfen genuegt nicht: einer mit
+    Mitgenommen wird nur die Kantenmitte einer Kante (a, b), a < b, die in
+    den alten Nummern Kante eines tetp-Elements ist; die uebrigen fallen
+    weg. Solche verwaisten Schluessel laesst ``Model.netzknoten_loeschen``
+    stehen (es fuehrt die Kantenmitten nicht mit), mit Knotennummern bis
+    hinter das Ende der Liste. Bis zur Nachbesserung vom 23.09.2026 wurden
+    sie hier indiziert: Anhaengen eines JSON-Modells an ein gespeichertes
+    Modell, dessen tetp-Netz danach entfernt war (Hohlkugel 2 x 2, p = 3,
+    und ein Stab; danach 38 Knoten, 126 Kantenmitten), brach mit IndexError
+    ab - vor der Speicher-Kur (ec6448c) lief es durch (je zweimal gemessen;
+    Pruefung tests.test_importers, test_json_anhaengen_nach_netz_entfernen).
+    Nur die Schluessel hinter dem Ende zu verwerfen genuegt nicht: einer mit
     gueltiger Nummer wird beim Zusammenfuehren zur Kante eines
     tetp-Elements, sobald ein neuer Knoten auf deren Ecke faellt, und
     kruemmt sie still - mit dieser Variante gemessen (zweimal, 23.09.2026)
     nach netzknoten_loeschen und 7 hinzugefuegten Knoten, der letzte auf
     einer Ecke: eine gerade Kante 45,79 mm daneben, ohne Warnung (Pruefung
     tests.test_importers, test_zusammenfuehren_kantenmitte_ohne_element).
+    Der Filter hier sieht nur die alten Nummern: ein verwaister Eintrag des
+    Ziels, der mit ihnen schon Kante eines angehaengten Elements ist, kaeme
+    durch, und ohne zusammenfallende Knoten laeuft diese Funktion gar nicht.
+    Darum nimmt das Anhaengen vorher nur mit, was ein tetp-Element des
+    Ziels bzw. der Quelle liest (anhaengen._Anhang._netz,
+    model.tetp_kantenmitten_gelesen; an bc1dfe0 sonst bis 5555 mm,
+    Pruefung test_json_anhaengen_verwaiste_kantenmitten).
 
-    Fallen zwei Kanten auf eine, gilt die zuerst eingetragene Kantenmitte -
-    beim Anhaengen die des Ziels, dessen Eintraege vor denen der Quelle
-    stehen. Liegen die beiden weiter auseinander als 1e-9 der Kantenlaenge
-    (die Grenze, mit der tetp.aus_tet10 gekruemmt von gerade trennt), sagt
-    es das Protokoll: die Elemente der anderen Seite rechnen dort mit einer
-    anderen Geometrie als zuvor."""
+    Fallen zwei Kanten auf eine, gilt die Kante des Elements, das im Modell
+    zuerst steht - beim Anhaengen die des Ziels, dessen Elemente vor denen
+    der Quelle stehen -, und zwar gerade oder gekruemmt: eine gerade Kante
+    hat keinen Eintrag, ihre Kantenmitte ist die Sehnenmitte. Bis zur
+    Nachbesserung vom 24.09.2026 galt der zuerst eingetragene Eintrag, und
+    ein fehlender zaehlte nicht: war eine Seite gerade und die andere
+    gekruemmt, galt still die gekruemmte (gemessen an bc1dfe0, Hohlkugel an
+    sich selbst gehaengt, eine Kante in einer der Dateien gerade: 1,885 mm,
+    keine Warnung; Pruefung test_json_anhaengen_gerade_gegen_gekruemmt).
+    Liegen die beiden Kantenmitten weiter auseinander als 1e-9 der
+    Kantenlaenge (die Grenze, mit der tetp.aus_tet10 gekruemmt von gerade
+    trennt), sagt es das Protokoll: die Elemente der anderen Seite rechnen
+    dort mit einer anderen Geometrie als zuvor."""
     km = getattr(model, "tetp_kantenmitten", None)
     if not km:
         return
-    from ..elements import tetp as _tp
-    ecken = [e.nodes[:4] for e in model.elements if _tp.ist_tetp(e.typ)]
-    wirkt: set = set()
-    if ecken:
-        kanten = np.asarray(ecken, dtype=np.int64).reshape(-1, 4)[:, np.asarray(_tp.TET10_KANTEN)]
-        kanten.sort(axis=2)
-        wirkt = set(map(tuple, kanten.reshape(-1, 2).tolist()))
+    from ..model import tetp_kanten
+    alt = tetp_kanten(model.elements)            # alte Nummern, in Elementreihenfolge
+    if not len(alt):
+        model.tetp_kantenmitten = {}
+        return
+    ni = np.asarray(new_index, dtype=np.int64).reshape(-1)
     X = np.asarray(new_nodes, float)
+    n_alt, n_neu = len(ni), len(X)
+    # jede alte Kante einmal; erst = ihr erstes Auftreten in Elementreihenfolge
+    code_alt, erst = np.unique(alt[:, 0] * n_alt + alt[:, 1], return_index=True)
+    A = alt[erst]
+    B = np.sort(ni[A], axis=1)                   # dieselben Kanten in den neuen Nummern
+    _, gruppe, anzahl = np.unique(B[:, 0] * n_neu + B[:, 1], return_inverse=True,
+                                  return_counts=True)
+    gruppe = np.asarray(gruppe).reshape(-1)
+    # der Eintrag je alter Kante (None: gerade); verwaiste Schluessel treffen keine
+    schl = np.asarray(list(km), dtype=np.int64).reshape(-1, 2)
+    im_netz = ((schl >= 0) & (schl < n_alt)).all(axis=1)
+    code = np.where(im_netz, schl[:, 0] * n_alt + schl[:, 1], -1)
+    pos = np.minimum(np.searchsorted(code_alt, code), len(code_alt) - 1)
+    trifft = im_netz & (code_alt[pos] == code)
+    eintrag: list = [None] * len(A)
     neu: dict = {}
-    abweichend, weiteste = 0, 0.0
-    for (a, b), p in km.items():
-        if (int(a), int(b)) not in wirkt:       # verwaist: liest kein Element
-            continue
-        ka, kb = int(new_index[int(a)]), int(new_index[int(b)])
-        schl = (min(ka, kb), max(ka, kb))
-        da = neu.get(schl)
-        if da is None:
-            neu[schl] = p
-            continue
-        abstand = float(np.linalg.norm(np.asarray(p, float) - np.asarray(da, float)))
-        if abstand > 1e-9 * max(float(np.linalg.norm(X[schl[1]] - X[schl[0]])), 1e-300):
-            abweichend += 1
-            weiteste = max(weiteste, abstand)
+    einfach = anzahl[gruppe] == 1
+    for p, j, t in zip(km.values(), pos.tolist(), trifft.tolist()):
+        if t:
+            eintrag[j] = p
+            if einfach[j]:                       # die neue Kante hat nur diese alte
+                neu[(int(B[j, 0]), int(B[j, 1]))] = p
+    abweichend, gerade_krumm, weiteste = 0, 0, 0.0
+    mehr = np.flatnonzero(~einfach)
+    if len(mehr):
+        mehr = mehr[np.lexsort((erst[mehr], gruppe[mehr]))]
+        for glieder in np.split(mehr, np.flatnonzero(np.diff(gruppe[mehr])) + 1):
+            j0 = int(glieder[0])                 # die Kante des zuerst stehenden Elements
+            a, b = int(B[j0, 0]), int(B[j0, 1])
+            sehne = 0.5 * (X[a] + X[b])
+            if eintrag[j0] is not None:
+                neu[(a, b)] = eintrag[j0]
+            gilt = sehne if eintrag[j0] is None else np.asarray(eintrag[j0], float)
+            grenze = 1e-9 * max(float(np.linalg.norm(X[b] - X[a])), 1e-300)
+            weit, mit_gerade = 0.0, False
+            for j in glieder[1:].tolist():
+                andere = sehne if eintrag[j] is None else np.asarray(eintrag[j], float)
+                d = float(np.linalg.norm(andere - gilt))
+                if d > grenze:
+                    weit = max(weit, d)
+                    mit_gerade = mit_gerade or ((eintrag[j] is None) != (eintrag[j0] is None))
+            if weit > 0.0:
+                abweichend += 1
+                gerade_krumm += int(mit_gerade)
+                weiteste = max(weiteste, weit)
     model.tetp_kantenmitten = neu
     if abweichend:
+        gk = (f"; bei {gerade_krumm} davon war die Kante auf einer Seite gerade und auf der "
+              "anderen gekrümmt" if gerade_krumm else "")
         warn(log, f"An {abweichend} Kante{'' if abweichend == 1 else 'n'} trafen beim "
-                  "Zusammenführen der Knoten zwei verschiedene gekrümmte Kantenmitten "
-                  "(Tetraeder mit Ordnung p) aufeinander. Es gilt die zuerst eingetragene "
-                  "- beim Anhängen die des Ziels -, die andere lag bis "
-                  f"{weiteste * 1e3:.3g} mm daneben; die Elemente der anderen Seite "
-                  "rechnen dort mit dieser Kante. Bitte die Geometrie an der Anschlussfläche "
+                  "Zusammenführen der Knoten zwei verschiedene Kantenmitten (Tetraeder mit "
+                  f"Ordnung p) aufeinander{gk}. Es gilt die Kante des Elements, das im Modell "
+                  "zuerst steht - beim Anhängen die des Ziels -; die andere lag bis "
+                  f"{weiteste * 1e3:.3g} mm daneben, und die Elemente der anderen Seite rechnen "
+                  "dort mit der geltenden Kante. Bitte die Geometrie an der Anschlussfläche "
                   "prüfen.")
 
 

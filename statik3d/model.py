@@ -5404,7 +5404,12 @@ class Model:
             "meta": dict(self.meta),
             "nodes": knoten,
             "elements": elemente,
-            "tetp_kantenmitten": _kantenmitten_liste(getattr(self, "tetp_kantenmitten", None)),
+            # nur, was ein tetp-Element liest: verwaiste Eintraege (etwa nach
+            # netzknoten_loeschen, das die Kantenmitten nicht mitfuehrt)
+            # ueberstanden sonst Speichern und Laden - siehe
+            # tetp_kantenmitten_gelesen
+            "tetp_kantenmitten": _kantenmitten_liste(tetp_kantenmitten_gelesen(
+                getattr(self, "tetp_kantenmitten", None), self.elements)),
             "materials": {k: asdict(v) for k, v in self.materials.items()},
             "sections": {k: asdict(v) for k, v in self.sections.items()},
             "shells": {k: asdict(v) for k, v in self.shells.items()},
@@ -5508,8 +5513,10 @@ class Model:
                 _melde(fortschritt, 0.15 + 0.60 * i / max(1, n_el),
                        f"Element {i} von {n_el} aufbauen")
         # Dateien vor dem 23.09.2026 kennen den Schluessel nicht: gerade
-        # Kanten, wie sie bis dahin geladen wurden
-        m.tetp_kantenmitten = _kantenmitten_aus(d.get("tetp_kantenmitten"))
+        # Kanten, wie sie bis dahin geladen wurden. Ein Eintrag, den kein
+        # tetp-Element liest, faellt weg (wie beim Schreiben, siehe to_dict)
+        m.tetp_kantenmitten = tetp_kantenmitten_gelesen(
+            _kantenmitten_aus(d.get("tetp_kantenmitten")), m.elements)
         _melde(fortschritt, 0.78, "übriges Modell aufbauen")
         m.materials = {k: _dc(Material, v) for k, v in d["materials"].items()}
         m.sections = {k: _dc(Section, v) for k, v in d["sections"].items()}
@@ -5735,6 +5742,48 @@ def _support_from(d: dict) -> Support:
     return _beh_from(Support, d)
 
 
+def tetp_kanten(elemente) -> np.ndarray:
+    """Die Kanten der Tetraeder mit Ordnung p in ``elemente``, so wie
+    ``tetp.geometrie_modell`` die Kantenmitten nachschlaegt: (6 n, 2) int64,
+    je Zeile (a, b) mit a < b aus den vier Ecken, je Element die sechs
+    Kanten in der Reihenfolge von ``tetp.TET10_KANTEN``, die Elemente in
+    ihrer Reihenfolge - eine gemeinsame Kante steht mehrfach."""
+    from .elements import tetp as _tp
+    ecken = [e.nodes[:4] for e in elemente if _tp.ist_tetp(e.typ)]
+    if not ecken:
+        return np.zeros((0, 2), dtype=np.int64)
+    k = np.asarray(ecken, dtype=np.int64).reshape(-1, 4)[:, np.asarray(_tp.TET10_KANTEN)]
+    k.sort(axis=2)
+    return k.reshape(-1, 2)
+
+
+def tetp_kantenmitten_gelesen(km, elemente) -> dict:
+    """Die Eintraege von ``km`` ({(a, b): Kantenmitte}), die ein Tetraeder mit
+    Ordnung p in ``elemente`` liest, in der Reihenfolge von ``km``.
+
+    Die uebrigen wirken im Augenblick nirgends, koennen aber spaeter wirken:
+    faellt ihre Kante auf die eines neuen tetp-Elements, kruemmt sie es.
+    ``Model.netzknoten_loeschen`` fuehrt die Kantenmitten nicht mit und
+    laesst solche verwaisten Eintraege stehen. Gemessen an bc1dfe0 (zweimal
+    am 23.09., einmal am 24.09.2026, tests.test_importers
+    test_json_anhaengen_verwaiste_kantenmitten): an eine Hohlkugel, deren
+    tetp-Netz so entfernt war, einen Kragarm aus geraden tetp3 gehaengt -
+    8 Elemente bis 5555 mm neben der Quelle, 7 davon umgeklappt, ohne
+    Warnung. Darum schreibt ``to_dict`` nur diese Eintraege, ``from_dict``
+    liest nur sie, und das Anhaengen nimmt nur sie mit."""
+    if not km:
+        return {}
+    k = tetp_kanten(elemente)
+    if not len(k):
+        return {}
+    n = int(k.max()) + 1
+    schl = np.asarray(list(km), dtype=np.int64).reshape(-1, 2)
+    im_netz = ((schl >= 0) & (schl < n)).all(axis=1)
+    code = np.where(im_netz, schl[:, 0] * n + schl[:, 1], -1)
+    liest = im_netz & np.isin(code, k[:, 0] * n + k[:, 1])
+    return {s: p for (s, p), ja in zip(km.items(), liest.tolist()) if ja}
+
+
 def _kantenmitten_liste(km) -> list:
     """``Model.tetp_kantenmitten`` {(a, b): Punkt} fuer die Datei:
     [[a, b, x, y, z], ...] in der Reihenfolge des Woerterbuchs.
@@ -5742,7 +5791,8 @@ def _kantenmitten_liste(km) -> list:
     Die Koordinaten gehen als Python-float in JSON; json schreibt die
     kuerzeste Darstellung, die beim Lesen denselben Wert ergibt - der
     Umlauf ist bitgleich (tests.test_tetp_rechnung). Die Schluessel werden
-    nicht geordnet oder umgedreht: was im Speicher steht, kommt zurueck."""
+    nicht geordnet oder umgedreht: was hier ankommt, kommt zurueck
+    (``to_dict`` gibt nur, was ein tetp-Element liest)."""
     aus = []
     for (a, b), p in (km or {}).items():
         x, y, z = np.asarray(p, dtype=float).reshape(3).tolist()

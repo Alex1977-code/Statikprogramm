@@ -3077,11 +3077,13 @@ jetzt kommen alle an. Was das Protokoll dabei sagt:
   übernommene gekrümmte Geometrie steht seit dem 23.09.2026 in der
   Modelldatei und kommt beim Anhängen mit (vorher ging sie schon beim
   Speichern verloren, und das Modell rechnete nach dem Öffnen still mit
-  geraden Kanten). Schließen Ziel und Quelle an einer Kante an, deren
-  Kantenmitte in beiden verschieden liegt, gilt die des Ziels, und die
-  Warnung „… zwei verschiedene gekrümmte Kantenmitten …“ nennt die Zahl der
-  Kanten und den größten Abstand – dann die Geometrie an der Anschlussfläche
-  prüfen.
+  geraden Kanten). Schließen Ziel und Quelle an einer Kante an, die in
+  beiden verschieden verläuft – zwei verschiedene Kantenmitten, oder auf
+  einer Seite gerade und auf der anderen gekrümmt –, gilt die Kante des
+  Ziels, gerade oder gekrümmt, und die Warnung „… zwei verschiedene
+  Kantenmitten …“ nennt die Zahl der Kanten (davon die auf einer Seite
+  geraden) und den größten Abstand – dann die Geometrie an der
+  Anschlussfläche prüfen.
 * **Nicht übertragen** und mit Anzahl gemeldet werden die Berichtseinträge
   (sie zeigen Ergebnisse des Quellmodells) und die Stellungen (eine
   Stellung, die verschiebt oder dreht, bewegt ohne Gruppenangabe alle Knoten
