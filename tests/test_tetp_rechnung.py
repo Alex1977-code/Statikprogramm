@@ -12,6 +12,8 @@ Der Tetraeder mit Ordnung p in der Rechnung von Statik3D (solver.solve_static).
   * Fehlerschaetzer (Zeile "wie tet4"), Indikator der naechsten Ordnung
   * Plastizitaet: Tangente, Zugstab, Newton quadratisch
   * aus_tet10: gekruemmte Kantenmitten aus einem tet10-Netz
+  * Speichern und Laden: die gekruemmte Geometrie steht in der Datei, die
+    Rechnung danach ist bitgleich (auch ueber den Auftragsweg to_dict)
 
 Aufruf:  python -m tests.test_tetp_rechnung
 """
@@ -523,6 +525,71 @@ def test_aus_tet10():
           f"Abweichung {f.min():+.2f}..{f.max():+.2f} gegen {f2.min():+.2f}..{f2.max():+.2f} N/mm2")
 
 
+def test_speichern_laden_gekruemmt():
+    """Die gekruemmte Geometrie (model.tetp_kantenmitten aus aus_tet10) geht
+    beim Speichern nicht verloren (Befund der zweiten Element-Sitzung,
+    23.09.2026). Bis dahin stand sie nicht in Model.to_dict: die Hohlkugel
+    (p = 3, 2 x 2, 126 gekruemmte Kanten) kam mit 0 zurueck und rechnete
+    still mit geraden Kanten - gemessen max|du| 4,87 um bei max|u| 79,4 um,
+    Knotenspannung bis 45,3 N/mm2 anders. Denselben Weg (to_dict/from_dict)
+    nehmen die Auftraege an Prozess-Pool und Rechnerfarm (jobs.py).
+
+    Geprueft: Kantenmitten nach dem Umlauf ueber die Datei Eintrag fuer
+    Eintrag bitgleich; Rechnung vor und nach Speichern+Laden bitgleich; der
+    Auftrag solve_case aus to_dict bitgleich; eine Datei ohne das Feld (vor
+    dem 23.09.2026 geschrieben) laedt wie bisher mit geraden Kanten."""
+    import json
+    import tempfile
+    from statik3d import jobs
+    from tests import pruefkoerper as pk
+    hk = pk.Hohlkugel()
+    m = hk.modell("tet10", 2, 2)
+    m.case().nodal_loads.clear()
+    tp.aus_tet10(m, ordnung=3)
+    X = np.asarray(m.nodes, float)
+    innen = np.abs(np.linalg.norm(X, axis=1) - hk.a) < 1e-9 * hk.b
+    for i, e in enumerate(m.elements):
+        for s, ecken in enumerate(tp.SEITEN):
+            if innen[[e.nodes[a] for a in ecken]].all():
+                m.load_face(i, hk.p, s)
+    fall = m.active_case
+    r1 = solver.solve_static(m, case=fall)
+    km1 = m.tetp_kantenmitten
+    with tempfile.TemporaryDirectory() as d:
+        pfad = os.path.join(d, "hohlkugel.json")
+        m.save(pfad)
+        m2 = Model.load(pfad)
+        with open(pfad, encoding="utf-8") as f:
+            roh = json.load(f)
+    km2 = getattr(m2, "tetp_kantenmitten", None) or {}
+    gleich = (list(km2) == list(km1)
+              and all(np.array_equal(np.asarray(km2[k], float), np.asarray(km1[k], float))
+                      for k in km1))
+    check("Speichern+Laden: gekruemmte Kantenmitten bitgleich zurueck",
+          len(km1) > 0 and gleich, f"{len(km2)} von {len(km1)} Kanten")
+    r2 = solver.solve_static(m2, case=fall)
+    du = float(np.abs(np.asarray(r2.u) - np.asarray(r1.u)).max())
+    S1 = np.asarray(r1.solid_knoten["spannung"])
+    S2 = np.asarray(r2.solid_knoten["spannung"])
+    dS = float(np.abs(S2 - S1).max()) / 1e6 if S1.shape == S2.shape else float("inf")
+    check("Speichern+Laden: gekruemmtes tetp3-Modell rechnet bitgleich",
+          np.array_equal(r1.u, r2.u) and np.array_equal(S1, S2),
+          f"max|du| {du:.3e} m bei max|u| {float(np.abs(r1.u).max()):.3e} m, "
+          f"max|dS| {dS:.3g} N/mm2")
+    r3 = jobs._job_solve_case(m.to_dict(), fall)
+    check("Auftrag (to_dict -> from_dict, Pool/Farm): rechnet bitgleich",
+          np.array_equal(r1.u, r3.u),
+          f"max|du| {float(np.abs(np.asarray(r3.u) - np.asarray(r1.u)).max()):.3e} m")
+    roh.pop("tetp_kantenmitten", None)
+    m3 = Model.from_dict(roh)
+    r4 = solver.solve_static(m3, case=fall)
+    check("Datei ohne das Feld (vor dem 23.09.2026): laedt mit geraden Kanten wie bisher",
+          not (getattr(m3, "tetp_kantenmitten", None) or {}) and bool(np.isfinite(r4.u).all())
+          and not np.array_equal(r4.u, r1.u),
+          f"{len(getattr(m3, 'tetp_kantenmitten', None) or {})} Kantenmitten, "
+          f"max|du| gegen gekruemmt {float(np.abs(np.asarray(r4.u) - np.asarray(r1.u)).max()):.3e} m")
+
+
 def test_grenzkante_gerade():
     """Eine Kante, die ein tetp mit einem tet4 teilt, ist auch geometrisch
     gerade (sonst klafft die Geometrie); eine gekruemmte Kante im Inneren
@@ -645,6 +712,7 @@ def main():
     test_plastisch_zugstab()
     test_plastisch_newton()
     test_aus_tet10()
+    test_speichern_laden_gekruemmt()
     test_grenzkante_gerade()
     test_flaechenschnittstelle()
     n_fail = sum(1 for _n, ok in RESULTS if not ok)

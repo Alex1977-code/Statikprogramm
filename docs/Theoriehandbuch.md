@@ -7182,7 +7182,7 @@ die Meldung für einen Freibrief hält.
 | `tests/test_importers.py` | Import DXF, IFC, SAF, RFEM-Tabellen, INP, BDF |
 | `tests/test_report.py` | Berichtserzeugung |
 | `tests/test_tetp.py` | Tetraeder mit Ordnung p: Integrationsregeln gegen alle Monome, Vollständigkeit bis p = 4, sechs Starrkörpermoden, Patch-Test (verzerrt, gemischte Ordnung, lineare Pflichtseite, gekrümmt), Stapel gegen Einzelweg, Masse und Lasten, Kragarm auf 1 N/mm², umgeklapptes Element; am Modell Übergang zu tet4, Kontakt- und Lagerseiten, getrennte Fuge, laute Pflichtprüfung, Importreihenfolge, tet10-Nachbar, Jacobi-Prüfung gekrümmter Elemente, Pflichtprüfung ohne Suche je Seite (16.464 Elemente unter 0,5 s, vorher 3,1 s) |
-| `tests/test_tetp_rechnung.py` | dasselbe Element durch den Löser: Model.ndof mit und ohne tetp (ohne Lauf über die Elemente), laute Abweisung veralteter FHG-Zahlen, Kragarm-Knotenmittel auf 1 N/mm², Lastsummen, Patch-Test tet4/tetp3 gemischt, Symmetrieebenen, Temperatur; je Lastart tetp2/3/4 gegen geschlossene Lösung und tet10; Linienlager starr und federnd |
+| `tests/test_tetp_rechnung.py` | dasselbe Element durch den Löser: Model.ndof mit und ohne tetp (ohne Lauf über die Elemente), laute Abweisung veralteter FHG-Zahlen, Kragarm-Knotenmittel auf 1 N/mm², Lastsummen, Patch-Test tet4/tetp3 gemischt, Symmetrieebenen, Temperatur; je Lastart tetp2/3/4 gegen geschlossene Lösung und tet10; Linienlager starr und federnd; gekrümmte Geometrie (Hohlkugel aus tet10) über Speichern und Laden und als Auftrag bitgleich |
 
 ## 10 Tetraeder mit Ordnung p (`elements/tetp.py`, 22./23.09.2026)
 
@@ -7358,6 +7358,35 @@ Seite. Gemessen 23.09.2026 an der Hohlkugel der ersten Element-Sitzung
 (tet10 mit Kantenmitten auf der Kugel, 2 × 2, p = 3): 144 Elemente, 126
 gekrümmte Kanten, dieselbe Abweichung (−4,09 bis +8,17 N/mm²) wie der direkte
 Aufbau.
+
+**Gekrümmte Geometrie in der Modelldatei (23.09.2026).** Die Kantenmitten
+stehen in der Modelldatei unter `tetp_kantenmitten`: je gekrümmter Kante
+`[Knoten a, Knoten b, x, y, z]` (Knotennummern ab 0, Koordinaten in m) in der
+Reihenfolge des Modells. JSON schreibt jede Koordinate in der kürzesten
+Darstellung, die beim Lesen denselben Wert ergibt; der Umlauf ist bitgleich.
+Bis dahin lebte die Geometrie nur zur Laufzeit: Ein gespeichertes und wieder
+geladenes Modell rechnete still mit geraden Kanten, ebenso jeder Auftrag an
+Prozess-Pool oder Rechnerfarm, der das Modell auf demselben Weg verschickt
+(`to_dict`/`from_dict`, `jobs.py`). Gemessen an der Hohlkugel oben (zweimal,
+23.09.2026): nach dem Laden 0 statt 126 gekrümmte Kanten, Verschiebung bis
+4,87 µm anders bei größter Verschiebung 79,4 µm, Knotenspannung bis
+45,3 N/mm² anders. Jetzt sind Kantenmitten, Verschiebungen und
+Knotenspannungen vor und nach Speichern und Laden bitgleich, ebenso der
+Auftrag `solve_case` (`tests/test_tetp_rechnung.py`). Eine Datei ohne den
+Schlüssel lädt wie bisher mit geraden Kanten. Die Ergebnisdatei
+(`.ergebnisse`) trägt das Modell nicht – es steht dort nur als Marke – und
+bleibt, wie sie ist.
+
+Beim Anhängen einer Modelldatei kommen die gekrümmten Kanten mit dem
+Knotenversatz der Quelle mit; das Zusammenführen mit dem Ziel hängt sie auf
+die neuen Knotennummern um (`importers/_common._kantenmitten_umhaengen`,
+ebenso in `merge_duplicate_nodes`). Fallen dabei zwei Kantenmitten auf eine
+Kante, gilt die zuerst eingetragene – beim Anhängen die des Ziels –, und
+liegen sie weiter als 10⁻⁹ der Kantenlänge auseinander (die Grenze, mit der
+`aus_tet10` gekrümmt von gerade trennt), warnt das Protokoll. Geprüft an der
+Hohlkugel mit einem Zielknoten auf einer Ecke einer gekrümmten Kante: die
+Geometrie jedes angehängten Elements ist bitgleich die der Quelle
+(`tests/test_importers.py`).
 
 **Nachweisstellen auf Kontaktflächen.** Gemessen 23.09.2026 (Labor,
 Hohlzylinder h = 0,05 m, Bohrungsfläche als Kontaktseite, dort nur linearer

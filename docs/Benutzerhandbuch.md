@@ -3073,6 +3073,15 @@ jetzt kommen alle an. Was das Protokoll dabei sagt:
 * **Eigengewicht** gilt je Lastfall für alle Elemente. Hatten Ziel und Quelle
   in einem Lastfall verschiedenes, warnt das Protokoll: es erfasst jetzt auch
   die Elemente des anderen Teils oder fehlt ihnen.
+* **Gekrümmte Kanten (Tetraeder mit Ordnung p)** – die aus einem tet10-Netz
+  übernommene gekrümmte Geometrie steht seit dem 23.09.2026 in der
+  Modelldatei und kommt beim Anhängen mit (vorher ging sie schon beim
+  Speichern verloren, und das Modell rechnete nach dem Öffnen still mit
+  geraden Kanten). Schließen Ziel und Quelle an einer Kante an, deren
+  Kantenmitte in beiden verschieden liegt, gilt die des Ziels, und die
+  Warnung „… zwei verschiedene gekrümmte Kantenmitten …“ nennt die Zahl der
+  Kanten und den größten Abstand – dann die Geometrie an der Anschlussfläche
+  prüfen.
 * **Nicht übertragen** und mit Anzahl gemeldet werden die Berichtseinträge
   (sie zeigen Ergebnisse des Quellmodells) und die Stellungen (eine
   Stellung, die verschiebt oder dreht, bewegt ohne Gruppenangabe alle Knoten

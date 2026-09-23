@@ -364,7 +364,7 @@ def import_file(path: str, model: Model = None, log: list = None, **options) -> 
         n_gedreht = model.um_x_drehen()
         C.say(log, f"Modell um die x-Achse gedreht ({n_gedreht} Knoten): die Z-Achse der "
                    "Datei zeigte nach unten, hier zeigt z nach oben (y gespiegelt).")
-    n_merged = C.merge_duplicate_nodes(model, tol) if model.nn > n_nodes0 else 0
+    n_merged = C.merge_duplicate_nodes(model, tol, log=log) if model.nn > n_nodes0 else 0
     if n_merged:
         kb = getattr(model, "kontaktbedingungen", None) or {}
         C.say(log, f"{n_merged} doppelte Knoten zusammengefuehrt"

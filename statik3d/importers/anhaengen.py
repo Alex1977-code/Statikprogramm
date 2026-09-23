@@ -51,6 +51,7 @@ from . import _common as C
 #: Uebertragene Schluessel von Model.to_dict() -> Bezeichnung im Protokoll
 UEBERTRAGEN: dict[str, str] = {
     "nodes": "Knoten", "elements": "Elemente",
+    "tetp_kantenmitten": "gekrümmte Kanten (Tetraeder mit Ordnung p)",
     "materials": "Werkstoffe", "sections": "Querschnitte", "shells": "Flächendicken",
     "federn": "Federeigenschaften", "grenzschichten": "Grenzschichteigenschaften",
     "supports": "Knotenlager", "line_supports": "Linienlager",
@@ -257,7 +258,9 @@ class _Anhang:
         # stand weiter auf "ausgefuehrt" - fugen.kontaktfuge_ausfuehren lehnt
         # ein neues Trennen dann ab ("schon ausgeführt").
         # Jetzt schliesst nur die Quelle an das Ziel an.
-        n, unklar = C.anschluss_zusammenfuehren(self.z, self.base, tol)
+        # log: treffen zwei verschiedene gekruemmte Kantenmitten auf eine
+        # Kante, gilt die des Ziels - und das Protokoll sagt es
+        n, unklar = C.anschluss_zusammenfuehren(self.z, self.base, tol, log=self.log)
         if n:
             C.say(self.log, f"{n} Knoten der Quelle lagen auf Knoten des Ziels und "
                             "wurden zusammengeführt")
@@ -455,6 +458,16 @@ class _Anhang:
         if woelb:
             # wie add_element: der Zwischenspeicher der Woelbknoten gilt nicht mehr
             z._woelb_version = getattr(z, "_woelb_version", 0) + 1
+        # Die gekruemmte Geometrie der tetp-Elemente haengt an Knotennummern:
+        # mit demselben Versatz wie die Elemente. Das Zusammenfuehren danach
+        # haengt sie um (_common._kantenmitten_umhaengen).
+        km_q = getattr(q, "tetp_kantenmitten", None) or {}
+        if km_q:
+            km_z = getattr(z, "tetp_kantenmitten", None)
+            if km_z is None:
+                km_z = z.tetp_kantenmitten = {}
+            for (a, b), p in km_q.items():
+                km_z[(int(a) + base, int(b) + base)] = np.array(p, dtype=float)
 
     def _lager(self) -> None:
         z, q = self.z, self.q

@@ -3033,6 +3033,17 @@ class Model:
         self.name = name
         self.nodes: np.ndarray = np.zeros((0, 3))
         self.elements: list[Element] = []
+        #: Gekruemmte Geometrie der Tetraeder mit Ordnung p (elements.tetp):
+        #: {(a, b) mit a < b: Kantenmitte (3,)}, aus einem tet10-Netz
+        #: uebernommen (tetp.aus_tet10); eine Kante ohne Eintrag ist gerade.
+        #: Gehoert zum Modell und steht darum in der Datei (to_dict
+        #: "tetp_kantenmitten"). Bis zum 23.09.2026 lebte sie nur zur
+        #: Laufzeit: gespeichert, geladen - oder als Auftrag an Pool und Farm
+        #: geschickt (jobs.py, auch to_dict) - rechnete das Modell still mit
+        #: geraden Kanten. Hohlkugel p = 3, 2 x 2 (126 gekruemmte Kanten):
+        #: max|du| 4,87 um bei max|u| 79,4 um, Knotenspannung bis 45,3 N/mm2
+        #: anders (zweimal gemessen am 23.09.2026).
+        self.tetp_kantenmitten: dict = {}
         self.materials: dict[str, Material] = {}
         self.sections: dict[str, Section] = {}
         self.shells: dict[str, ShellProp] = {}
@@ -5393,6 +5404,7 @@ class Model:
             "meta": dict(self.meta),
             "nodes": knoten,
             "elements": elemente,
+            "tetp_kantenmitten": _kantenmitten_liste(getattr(self, "tetp_kantenmitten", None)),
             "materials": {k: asdict(v) for k, v in self.materials.items()},
             "sections": {k: asdict(v) for k, v in self.sections.items()},
             "shells": {k: asdict(v) for k, v in self.shells.items()},
@@ -5495,6 +5507,9 @@ class Model:
             if fortschritt is not None and (i & 8191) == 0 and i:
                 _melde(fortschritt, 0.15 + 0.60 * i / max(1, n_el),
                        f"Element {i} von {n_el} aufbauen")
+        # Dateien vor dem 23.09.2026 kennen den Schluessel nicht: gerade
+        # Kanten, wie sie bis dahin geladen wurden
+        m.tetp_kantenmitten = _kantenmitten_aus(d.get("tetp_kantenmitten"))
         _melde(fortschritt, 0.78, "übriges Modell aufbauen")
         m.materials = {k: _dc(Material, v) for k, v in d["materials"].items()}
         m.sections = {k: _dc(Section, v) for k, v in d["sections"].items()}
@@ -5718,6 +5733,47 @@ def _support_dict(s: Support) -> dict:
 
 def _support_from(d: dict) -> Support:
     return _beh_from(Support, d)
+
+
+def _kantenmitten_liste(km) -> list:
+    """``Model.tetp_kantenmitten`` {(a, b): Punkt} fuer die Datei:
+    [[a, b, x, y, z], ...] in der Reihenfolge des Woerterbuchs.
+
+    Die Koordinaten gehen als Python-float in JSON; json schreibt die
+    kuerzeste Darstellung, die beim Lesen denselben Wert ergibt - der
+    Umlauf ist bitgleich (tests.test_tetp_rechnung). Die Schluessel werden
+    nicht geordnet oder umgedreht: was im Speicher steht, kommt zurueck."""
+    aus = []
+    for (a, b), p in (km or {}).items():
+        x, y, z = np.asarray(p, dtype=float).reshape(3).tolist()
+        aus.append([int(a), int(b), x, y, z])
+    return aus
+
+
+def _kantenmitten_aus(liste) -> dict:
+    """Gegenstueck zu :func:`_kantenmitten_liste`. Eine Datei ohne den
+    Schluessel (vor dem 23.09.2026) ergibt {} - gerade Kanten wie bisher.
+    Was der Schreiber nie erzeugt (keine fuenf Zahlen je Eintrag,
+    gebrochene Knotennummer), bricht mit Klartext ab, statt still eine
+    gekruemmte Kante zu verlieren oder an die falsche Stelle zu setzen."""
+    if not liste:
+        return {}
+    try:
+        feld = np.asarray(liste, dtype=float)
+    except (TypeError, ValueError) as ex:
+        raise ValueError("Modelldatei: 'tetp_kantenmitten' ist beschädigt - erwartet "
+                         "sind je gekrümmter Kante fünf Zahlen [Knoten a, Knoten b, x, y, z]"
+                         ) from ex
+    if feld.ndim != 2 or feld.shape[1] != 5:
+        raise ValueError("Modelldatei: 'tetp_kantenmitten' ist beschädigt - erwartet sind "
+                         "je gekrümmter Kante fünf Zahlen [Knoten a, Knoten b, x, y, z], "
+                         f"gelesen Form {feld.shape}")
+    kn = feld[:, :2]
+    if not np.array_equal(kn, np.round(kn)) or (kn < 0).any():
+        raise ValueError("Modelldatei: 'tetp_kantenmitten' ist beschädigt - eine "
+                         "Knotennummer ist keine natürliche Zahl")
+    punkte = feld[:, 2:].copy()
+    return dict(zip(map(tuple, kn.astype(np.int64).tolist()), punkte))
 
 
 def _dc(cls, d: dict):

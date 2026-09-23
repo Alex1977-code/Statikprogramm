@@ -1850,6 +1850,71 @@ def test_json_anhaengen_stellung_protokoll():
            "\n".join(zeile) or "keine Zeile")
 
 
+def test_json_anhaengen_tetp_kantenmitten():
+    """Die gekruemmte Geometrie der Tetraeder mit Ordnung p (Modellschluessel
+    ``tetp_kantenmitten``, seit dem 23.09.2026 in der Datei) kommt beim
+    Anhaengen mit: die Knotennummern ihrer Kanten folgen dem Versatz und dem
+    Zusammenfuehren mit dem Ziel. Geprueft an der Geometrie jedes
+    angehaengten Elements (tetp.geometrie_modell) gegen die der Quelle -
+    bitgleich. Ein Zielknoten liegt auf einer Ecke einer gekruemmten Kante
+    der Quelle; das Zusammenfuehren nummeriert damit jeden spaeteren Knoten
+    der Quelle um.
+
+    Treffen beim Zusammenfuehren zwei verschiedene Kantenmitten auf dieselbe
+    Kante (die Quelle an sich selbst gehaengt, eine Kantenmitte um 1 mm
+    verschoben), gilt die des Ziels, und das Protokoll nennt die Kante."""
+    from statik3d.elements import tetp as tp
+    from tests import pruefkoerper as pk
+    hk = pk.Hohlkugel()
+    q0 = hk.modell("tet10", 2, 2)
+    q0.case().nodal_loads.clear()
+    tp.aus_tet10(q0, ordnung=3)
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "hohlkugel.json")
+        q0.save(p)
+        quelle = Model.load(p)                 # so, wie sie beim Anhaengen gelesen wird
+        km_q = getattr(quelle, "tetp_kantenmitten", None) or {}
+        a = next(iter(km_q))[0] if km_q else 0
+        ziel = Model("ziel")
+        ziel.add_node(5.0, 5.0, 5.0)
+        ziel.add_node(*[float(x) for x in quelle.nodes[a]])
+        log = []
+        ziel = import_file(p, model=ziel, log=log)
+
+        idx_q = [i for i, e in enumerate(quelle.elements) if tp.ist_tetp(e.typ)]
+        G_q = tp.geometrie_modell(quelle, idx_q)
+        G_z = tp.geometrie_modell(ziel, idx_q)       # das Ziel hatte keine Elemente
+        km_z = getattr(ziel, "tetp_kantenmitten", None) or {}
+        text = "\n".join(log)
+        expect("Anhaengen: gekruemmte Kanten der Quelle kommen an, Geometrie bitgleich",
+               len(km_q) > 0 and len(km_z) == len(km_q) and ziel.nn == 2 + quelle.nn - 1
+               and np.array_equal(G_q, G_z),
+               f"{len(km_z)} von {len(km_q)} Kanten, {ziel.nn} Knoten, "
+               f"max|dG| {float(np.abs(G_z - G_q).max()):.3e} m")
+        expect("Anhaengen: Protokoll nennt die gekruemmten Kanten, keine Warnung zum Feld",
+               "tetp_kantenmitten" not in text and "gekrümmte Kanten" in text, text[-400:])
+
+        # Konflikt: die Quelle an sich selbst, eine Kantenmitte um 1 mm verschoben
+        schl = next(iter(km_q))
+        q2 = Model.load(p)
+        q2.tetp_kantenmitten[schl] = np.asarray(q2.tetp_kantenmitten[schl], float) \
+            + np.array([0.0, 0.0, 1e-3])
+        p2 = os.path.join(d, "verschoben.json")
+        q2.save(p2)
+        ziel2 = Model.load(p)
+        log2 = []
+        ziel2 = import_file(p2, model=ziel2, log=log2)
+    km2 = ziel2.tetp_kantenmitten
+    zeile = [x for x in log2 if "Kantenmitte" in x]
+    expect("Anhaengen: zwei verschiedene Kantenmitten auf einer Kante - die des Ziels "
+           "gilt, das Protokoll nennt sie",
+           ziel2.nn == quelle.nn and len(km2) == len(km_q)
+           and np.array_equal(km2[schl], km_q[schl]) and len(zeile) == 1
+           and zeile[0].startswith("WARNUNG") and "1 Kante " in zeile[0]
+           and "1 mm" in zeile[0],
+           f"{ziel2.nn} Knoten, {len(km2)} Kanten; " + ("\n".join(zeile) or "keine Zeile"))
+
+
 def test_json_anhaengen_schluessel():
     """Jeder Schluessel von Model.to_dict() und LoadCase.to_dict() ist beim
     Anhaengen eingeordnet: uebertragen, als Einstellung des Ziels behalten
@@ -1887,7 +1952,7 @@ TESTS = [
          test_json_anhaengen_fuge_traegt_wie_allein,
          test_json_anhaengen_ermuedung_auf_kombination, test_json_anhaengen_koerpergruppe,
          test_json_anhaengen_stellung_des_ziels, test_json_anhaengen_stellung_protokoll,
-         test_json_anhaengen_schluessel,
+         test_json_anhaengen_tetp_kantenmitten, test_json_anhaengen_schluessel,
          test_entarteter_sechsflaechner_beim_import]
 
 
