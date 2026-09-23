@@ -3284,9 +3284,21 @@ Wichtig für den Kragarm: die Durchbiegung eines Stabes bezieht sich auf die
 **Sehne** — dreht der ganze Stab mit, fällt das heraus. Für eine Kragarmspitze
 ist der Bezug „Knoten“ der richtige.
 
-Ergebnis: Tabelle „Verformungen“ mit Wert, Grenzwert, Ausnutzung,
-maßgebender Kombination und Stelle; Kapitel 8 des Berichts führt jeden
-Nachweis mit seiner Verformung je Kombination.
+Ergebnis: Tabelle „Verformungen“ mit Wert beziehungsweise Verdrehung,
+Grenzwert, Ausnutzung, maßgebender Kombination und Stelle; Kapitel 8 des
+Berichts führt jeden Nachweis mit seiner Verformung je Kombination.
+
+Die größte Verformung steht je nach Größe in einer von zwei Spalten:
+Verschiebungen und Durchbiegungen (u_x, u_y, u_z, Betrag u) in **„Wert [mm]“** — diese
+Spalte folgt der Einheit „Verformung“ aus *Ansicht → Einheiten* —,
+Verdrehungen (φ_x, φ_y, φ_z) in **„Verdrehung [mrad]“**. Die Verdrehung rechnet
+die Einheitenwahl nicht um, auch nicht in Zwischenablage, CSV und Excel; die
+jeweils andere Spalte bleibt leer. Gemessen in der Prüfung (tests/test_gzg.py,
+Einfeldträger IPE 400, L = 8 m, q = 20 kN/m) bei Verformung in cm: die
+Durchbiegung steht als 2,20 cm unter „Wert [cm]“, die Endverdrehung weiter als
+8,78 mrad unter „Verdrehung [mrad]“. Vor dem 22.09.2026 stand eine Verdrehung in
+mrad unter „Wert [mm]“ und wurde bei cm mit 0,1 malgenommen; der Bericht war
+davon nicht betroffen.
 
 ## 9 Berechnung und Parallelisierung
 
