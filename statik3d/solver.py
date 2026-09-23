@@ -43,9 +43,12 @@ def mkl_threads() -> int:
     Vorrang; wer die Zahl von Hand vorgibt, meint es so.
 
     Muss **vor** dem ersten Laden von mkl_rt laufen: MKL liest die Umgebung
-    beim Initialisieren, spaeteres Setzen bleibt wirkungslos.
+    beim Initialisieren, spaeteres Setzen bleibt wirkungslos. Setzt auch die
+    Vorgabe MKL_CBWR=AUTO (siehe statik3d/__init__.py) - fuer den Fall, dass
+    solver ohne das Paket geladen wurde; ein gesetzter Wert hat Vorrang.
     """
     import os
+    os.environ.setdefault("MKL_CBWR", "AUTO")
     for name in ("MKL_NUM_THREADS", "OMP_NUM_THREADS"):
         wert = os.environ.get(name, "").strip()
         if wert.isdigit() and int(wert) > 0:

@@ -10,6 +10,9 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Vor allem anderen, auch vor numpy/Qt: MKL liest MKL_CBWR nur beim ersten
+# Laden (Vorgabe AUTO, siehe statik3d/__init__.py; ein gesetzter Wert hat Vorrang)
+os.environ.setdefault("MKL_CBWR", "AUTO")
 
 
 def _absturzspur():
@@ -74,6 +77,17 @@ def _selftest() -> int:
         lines.append(f"Beispiel Rahmen: umax = {r.umag.max() * 1000:.3f} mm")
         if not loeser.startswith("MKL PARDISO"):
             lines.append("FEHLER: kein Mehrkern-Loeser im Programm - MKL fehlt im Bundle")
+            code = 1
+        # Bitgleich wiederholbar nur mit MKL_CBWR=AUTO beim ersten Laden von
+        # MKL (Vorgabe seit 23.09.2026). Was MKL selbst meldet, steht hier;
+        # meldet es nicht AUTO, obwohl niemand etwas anderes vorgegeben hat,
+        # ist die Vorgabe in dieser exe wirkungslos - ein Fehler des Baus.
+        cbwr = solver.mkl_cbwr()
+        lines.append(f"MKL_CBWR: {cbwr}")
+        vorgabe = str(os.environ.get("MKL_CBWR", "AUTO")).strip().upper() == "AUTO"
+        if loeser.startswith("MKL PARDISO") and vorgabe and (
+                not cbwr or cbwr.get("zweig") != "AUTO"):
+            lines.append("FEHLER: MKL rechnet nicht mit MKL_CBWR=AUTO - Ergebnisse nicht bitgleich wiederholbar")
             code = 1
         # Die mitgelieferten Loeser der Auswahl: MKL PARDISO, PyAMG (MIT) und
         # SuperLU muessen in der exe stecken und rechnen ("Gleichungsloeser

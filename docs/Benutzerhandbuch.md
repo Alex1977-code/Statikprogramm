@@ -3858,13 +3858,18 @@ davon nicht betroffen.
 > oder 162 Kontaktschritte, vierte Stelle der Verformung"; die beiden Läufe
 > stammten aus zwei verschiedenen Programmständen. Nachprüfung der Lösersitzung vom 22.09.2026.)
 >
-> **Wenn zwei Läufe streng vergleichbar sein müssen** — etwa um zu belegen,
-> dass eine Änderung am Modell nichts am Ergebnis ändert —, setzen Sie vor
-> dem Start die Umgebungsvariable `MKL_CBWR=AUTO`. An einem Prüfgitter rechnet
-> der Löser damit bitgleich, auf **dieser** Maschine, und kostet rund 13 %
-> mehr Zeit. Ob das am Drehlager die Kontaktwege gleich macht, ist nicht
-> gemessen; die Lösersitzung misst es gerade. In der Auslieferung steht die
-> Variable nicht.
+> **Zwei Läufe sind seit dem 23.09.2026 streng vergleichbar.** Das Programm
+> setzt beim Start `MKL_CBWR=AUTO`, bevor MKL geladen wird — in der
+> Oberfläche, in der exe und in den Rechenketten. Damit rechnet der Löser auf
+> **dieser** Maschine bitgleich. Gemessen am Drehlager LF1 (22.09.2026): mit
+> `AUTO` zwei Läufe bitgleich, ohne lagen sie bis 0,0004 N/mm² auseinander;
+> der Preis sind rund 11 % mehr Rechenzeit (am Prüfgitter rund 13 %). Wer die
+> Zeit lieber spart, setzt vor dem Start selbst einen anderen Wert, etwa
+> `MKL_CBWR=COMPATIBLE`; ein gesetzter Wert hat Vorrang. Welcher Wert gewirkt
+> hat, steht im Löser-Nachweis jedes Lastfalls, und der Selbsttest der exe
+> bricht ab, wenn MKL nicht mit `AUTO` rechnet, obwohl nichts anderes
+> vorgegeben ist. Bitgleich gilt nur auf derselben Maschine mit derselben
+> Zahl von Rechenketten (siehe unten).
 
 * **Alle Lastfälle + Kombinationen**: Standard. Eine Faktorisierung, alle
   Lastfälle, Superposition, Umhüllende, optional Nachweise.
