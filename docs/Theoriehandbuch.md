@@ -971,11 +971,12 @@ Kombination hat; fehlt das Ergebnis einer Kombination oder Alternative, wird
 sie als „nicht nachgewiesen" gemeldet (Protokoll, Nachweiszeile, Bericht,
 Gesamturteil) und nicht ersetzt. Bis zum 22.09.2026 lasen die Nachweise nur
 `Analysis.combinations` und wichen bei leerem `combinations` auf die
-Lastfälle aus. Eine Ergebniskombination stand darin nur, wenn sie nach II.
-oder III. Ordnung zu rechnen war und das Modell daneben eine gewöhnliche
-Kombination hatte (nur dann liefen `check_theorie2`/`check_theorie3`), und
-dann als Nullergebnis (siehe „Theorie II./III. Ordnung einer
-Ergebniskombination" unten). Gemessen am Kragarm
+Lastfälle aus. Eine Ergebniskombination stand darin nur, wenn das Modell
+daneben eine gewöhnliche Kombination hatte (nur dann liefen
+`check_theorie2`/`check_theorie3`) und sie dort nach II. oder III. Ordnung
+gerechnet wurde, und dann als Nullergebnis (siehe „Theorie II./III. Ordnung
+einer Ergebniskombination" unten). Bei „automatisch" entschied darüber das
+α_cr ihrer leeren Faktoren. Gemessen am Kragarm
 (LF1 Fz = 10 kN, LF2 Fz = 20 kN an der Spitze), nur mit der
 Ergebniskombination {1,35·LF1} oder {1,35·LF1 + 1,5·LF2}: Ausnutzung des
 Stabes vorher 0,170 (nachgewiesen gegen LF1 und LF2 mit Faktor 1), jetzt
@@ -984,17 +985,22 @@ Stabes vorher 0,170 (nachgewiesen gegen LF1 und LF2 mit Faktor 1), jetzt
 (0,3619, Hexaederstab) stimmen ebenso mit der gewöhnlichen Kombination
 überein (`test_umhuellende`). Gemessen an der Halle (alle 42
 GZT-Kombinationen als eine Ergebniskombination „EK") an einer Kopie des
-Standes 54b6f9a (23.09.2026): Mit den 30 GZG-Kombinationen daneben stand
-„EK" bei „ein" und „automatisch" in `Analysis.combinations`, ebenso bei „aus"
-mit „EK" ausdrücklich nach III. Ordnung; alle drei Stäbe hatten η = 0,0000,
-maßgebend „EK", ohne Warnung, und bei „ein" und „automatisch" lautete das
-Gesamturteil des Berichts „Alle Nachweise erfüllt.". Bei „aus" wurde kein
-Stab nachgewiesen („Nachweise EC3: keine Staebe"), weil keine
-GZT-Kombination in `Analysis.combinations` stand. Ohne die
-GZG-Kombinationen blieb `Analysis.combinations` in allen vier Fällen leer,
-und die Stäbe wurden gegen die Lastfälle mit Faktor 1 nachgewiesen (Riegel
-0,2776 aus LF1). Am jetzigen Stand: Riegel 0,9734 bei „ein" und
-„automatisch", 0,9654 bei „aus", mit und ohne die GZG-Kombinationen.
+Standes 54b6f9a (24.09.2026): Mit den 30 GZG-Kombinationen daneben stand
+„EK" bei „ein" in `Analysis.combinations`, ebenso bei „aus" mit „EK"
+ausdrücklich nach III. Ordnung; in beiden Fällen hatten alle drei Stäbe
+η = 0,0000, maßgebend „EK", ohne Warnung, und das Gesamturteil des Berichts
+lautete „Alle Nachweise erfüllt.". Bei „automatisch" war α_cr der „EK"
+unendlich; sie wurde nicht nach II. Ordnung gerechnet und stand nicht in
+`Analysis.combinations`, wie bei „aus". Bei „automatisch" und „aus" wurde
+darum kein Stab nachgewiesen („Nachweise EC3: keine Staebe"), weil keine
+GZT-Kombination in `Analysis.combinations` stand, und das Gesamturteil
+lautete „Es wurden keine Nachweise geführt; die Ergebnisse dienen der
+Schnittgrößen- und Verformungsermittlung.". Ohne die GZG-Kombinationen
+blieb `Analysis.combinations` in allen vier Fällen leer, und die Stäbe
+wurden gegen die Lastfälle mit Faktor 1 nachgewiesen (Riegel 0,2776 aus
+LF1, „Alle Nachweise erfüllt."). Am jetzigen Stand, mit und ohne die
+GZG-Kombinationen: Riegel 0,9734 bei „ein", 0,9749 mit „EK" nach III.
+Ordnung, 0,9654 bei „aus" und „automatisch".
 
 Neu überlagert wird eine Alternative nur, wenn die volle Rechnung es genauso
 täte. Ist sie nach der Theorie der Ergebniskombination nach II. oder III.
@@ -6777,10 +6783,11 @@ die Aussparung; die Bilanz sind 1,17e-5 m³. Keine Lücke ist die Gruppe,
   FEHLER „Seiten im Inneren". Gemessen am 23.09.2026 am verdrehten
   Sechsflächner am Rand des abgestuften Netzes 5:1 (Element 55, Zelle
   3,64e-4 m³), mit abgeschalteter Regel „verdreht", die im Programm bei ihm
-  vorher greift: t/L der Gruppe 4,85 % bei 1,21e-4 m³, einem Drittel der
-  Zelle – FEHLER „Seiten im Inneren 7"; erst mit der Grenze 0 statt 5 % wäre
-  es eine WARNUNG „Lücke im Netzrand" mit 1,21e-4 m³
-  (`test_abnahme_luecke_duenn_mit_volumen`);
+  vorher greift: t/L der Gruppe 4,845 % bei 1,21e-4 m³, einem Drittel der
+  Zelle – FEHLER „Seiten im Inneren 7". Mit einer Grenze unter 4,845 % statt
+  5 % wäre es eine WARNUNG „Lücke im Netzrand" mit 1,21e-4 m³ (gemessen am
+  24.09.2026 mit 4,844 %, 4 %, 3 %, 1 % und 0; mit 4,846 % und 4,85 % noch
+  der FEHLER; `test_abnahme_luecke_duenn_mit_volumen`);
 * wenn sich kein p₀ findet: Die Schleife um einen Körper, den doppelte Knoten
   zerschneiden, läuft über gegenüberliegende Flächen.
 

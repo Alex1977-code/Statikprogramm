@@ -3740,13 +3740,16 @@ Ergebniskombination selbst nicht. Ihre Umhüllende und die Nachweise nehmen
 diese Ergebnisse. Bis zum 22.09.2026 stand dort eine Zeile „EK1" mit
 u_I = u_II = 0,00 mm, als „am verformten System gerechnet" gezählt, und die
 Umhüllende blieb linear – am Druckkragarm 3,321 statt 9,705 mm. Hatte das
-Modell daneben eine gewöhnliche Kombination, nahmen auch die Nachweise
-dieses Nullergebnis: an der Halle (alle GZT-Kombinationen als eine
-Ergebniskombination, die GZG-Kombinationen daneben, „ein" oder
-„automatisch") Ausnutzung 0 an allen drei Stäben, maßgebend die
-Ergebniskombination, ohne Warnung, und im Bericht „Alle Nachweise
-erfüllt.". Dasselbe gilt für eine Ergebniskombination mit Theorie III.
-Ordnung. Viele Alternativen
+Modell daneben eine gewöhnliche Kombination, nahmen bei „ein" auch die
+Nachweise dieses Nullergebnis: an der Halle (alle GZT-Kombinationen als
+eine Ergebniskombination, die GZG-Kombinationen daneben) Ausnutzung 0 an
+allen drei Stäben, maßgebend die Ergebniskombination, ohne Warnung, und im
+Bericht „Alle Nachweise erfüllt.". Dasselbe gilt für eine
+Ergebniskombination mit Theorie III. Ordnung. Bei „automatisch" wurde die
+Ergebniskombination der Halle nicht nach II. Ordnung gerechnet (α_cr
+unendlich), und kein Stab wurde nachgewiesen: im Bericht „Es wurden keine
+Nachweise geführt; die Ergebnisse dienen der Schnittgrößen- und
+Verformungsermittlung.". Viele Alternativen
 kosten entsprechend Rechenzeit; nach II. Ordnung werden gleiche Alternativen
 mehrerer Ergebniskombinationen nur einmal gerechnet.
 
