@@ -153,8 +153,10 @@ def knotenzahl_falsch(e, soll: dict = None) -> bool:
     So ein Element kommt nur ueber JSON oder Import herein (add_element weist
     es ab) und steht in Model.check als eigener FEHLER. Die Pruefungen hier
     lassen es aus: ein tet4 mit drei Knoten liess entartete_elemente mit
-    IndexError abbrechen, ein hex8 mit neun Knoten gab einen falschen FEHLER
-    "zusammenfallende Knoten" (Befund B106, 23.09.2026). ``soll`` aus
+    IndexError abbrechen, ein hex8 mit neun Knoten, deren neunter einen der
+    acht wiederholte, gab einen falschen FEHLER "zusammenfallende Knoten"
+    (Befund B106, 23.09.2026); mit einem neunten, eigenen Knoten kam keiner
+    (gemessen 24.09.2026 am Stand ec6448c, Netz aus zwei hex8). ``soll`` aus
     :func:`_soll_knoten`, einmal je Durchgang statt je Element."""
     k = (soll if soll is not None else _soll_knoten()).get(e.typ)
     return k is not None and len(e.nodes) != k

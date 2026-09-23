@@ -3230,10 +3230,10 @@ LF2 war dagegen ein FEHLER, obwohl die Rechnung D = 0,3833355 „erfüllt“ erg
 abgewiesen.
 
 **Einen Lastfall löschen** (Knopf „Löschen“ unter den Lastfällen, Modellbaum, Web-API)
-nimmt ihn seit dem 23.09.2026 aus allem, was ihn nennt: aus den Faktoren
-**und den Alternativen** jeder Kombination und aus jedem Verlauf einer
-Ermüdungslast. Eine Ermüdungslast aus zwei Zuständen, deren oberer oder
-unterer Zustand er war, entfällt ganz — der fehlende Zustand wird nicht
+nimmt ihn seit dem 23.09.2026 aus den Kombinationen und den
+Ermüdungslasten: aus den Faktoren **und den Alternativen** jeder Kombination
+und aus jedem Verlauf einer Ermüdungslast. Eine Ermüdungslast aus zwei
+Zuständen, deren oberer oder unterer Zustand er war, entfällt ganz — der fehlende Zustand wird nicht
 still durch den Nullzustand ersetzt, das änderte die Schwingbreite; ebenso
 ein Verlauf, dem kein Glied bleibt. Statuszeile und Protokoll (in der
 Web-API die Antwort) nennen, was mitging („Ermüdungslast 'Z' entfällt: ihr
@@ -3241,7 +3241,12 @@ oberer Zustand war Lastfall 'LF2'“). Vorher
 nahm der Knopf nur die Faktoren mit: am Zugstab-Volumen mit einer oder-EK über
 LF1, LF2, LF3 standen nach dem Löschen von LF2 die Alternativen und die
 Ermüdungslasten weiter auf LF2, die Modellprüfung meldete FEHLER, und die
-Rechnung brach mit „Lastfall 'LF2' existiert nicht“ ab. Eine Stellung mit
+Rechnung brach mit „Lastfall 'LF2' existiert nicht“ ab. Andere Verweise auf
+den Namen fasst das Löschen nicht an, so die **Lastfallliste einer Stellung**:
+stand dort „LF1, LF2“, bleibt LF2 nach dem Löschen stehen, die Modellprüfung
+meldet nichts, und erst die Rechnung der Stellungen lässt diese Stellung ohne
+Ergebnis („Stellung 'S1': Lastfall 'LF2' gibt es im Modell nicht“, gemessen
+24.09.2026). Dann den Lastfall in der Stellung herausnehmen. Eine Stellung mit
 eigener Lastfallliste nennt im Protokoll jede Ermüdungslast, die so entfällt
 oder deren Verlauf kürzer wird.
 
@@ -3435,10 +3440,14 @@ Werkstoffe*) oder am Stab den Haken „Nachweis nach EC3“ herausnehmen.
 Stahlsorte“) und ist eine Sorte S235 … S460 eingetragen, nehmen die Nachweise
 die Werte der Sorte nach EN 10025-2: bis 40 mm Erzeugnisdicke die obere Stufe
 (S235: f_y = 235 N/mm²), darüber die untere (S235: 215 N/mm²). Ist auch f_u
-leer, kommt f_u ebenso aus der Sorte (S235 bis 40 mm: 360 N/mm²); mit
-eingetragenem f_y und leerem f_u bleibt es bei f_u = 1,3 · f_y. Ein
-eingetragenes f_y geht der Sorte immer vor. Bis zum 23.09.2026 galt die Sorte
-nur über 40 mm, darunter war f_y null: ein IPE 300 aus einem Werkstoff mit
+leer, kommt f_u ebenso aus der Sorte (S235 bis 40 mm: 360 N/mm²). Ein
+eingetragenes f_y geht der Sorte nur **bis 40 mm** vor, mit leerem f_u gilt
+dort f_u = 1,3 · f_y. Über 40 mm gilt die untere Stufe der Sorte für f_y und
+f_u, auch wenn f_y eingetragen ist: ein Werkstoff mit f_y = 300 N/mm², leerem
+f_u und Sorte S235 ergibt bei 10,7 und 40 mm Erzeugnisdicke f_y = 300 und
+f_u = 390 N/mm², bei 41 mm f_y = 215 und f_u = 360 N/mm² (gemessen
+24.09.2026). Eine Tabelle „nach Dicke“ aus RFEM 6 geht beidem vor. Bis zum
+23.09.2026 galt die Sorte nur über 40 mm, darunter war f_y null: ein IPE 300 aus einem Werkstoff mit
 Sorte S235 und leerem f_y war „nicht geführt“; jetzt hat er dieselbe
 Ausnutzung wie derselbe Träger aus S235 (0,633 am Einfeldträger der
 EC3-Prüfung).
@@ -4402,9 +4411,11 @@ davon nicht betroffen.
   aus einer Modelldatei, meldet die Modellprüfung „FEHLER: Element 2 (hex8):
   7 Knoten, erwartet 8“, und die übrigen Prüfungen lassen es aus. Vorher
   meldete die Prüfung dazu nichts, und erst die Rechnung brach mit „operands
-  could not be broadcast together“ ab; mit neun Knoten kam ein falscher FEHLER
-  „zusammenfallende Knoten“, und ein tet4 mit drei Knoten ließ die Prüfung
-  selbst abbrechen.
+  could not be broadcast together“ ab. Ein hex8 mit neun Knoten, deren
+  neunter einen der acht wiederholte, gab einen falschen FEHLER
+  „zusammenfallende Knoten“; mit einem neunten, eigenen Knoten meldete die
+  Prüfung nichts (gemessen 24.09.2026 an einem Netz aus zwei hex8). Ein tet4
+  mit drei Knoten ließ die Prüfung selbst abbrechen.
 * **Volumen ohne Rauminhalt** gelten nicht als „unvernetzt“. Sie können gar
   kein Netz bekommen, und so fragte das Programm sonst vor jeder Rechnung
   nach einem Netz, das es nie geben kann. Statt der Warnung „ohne Netz“

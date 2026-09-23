@@ -3159,7 +3159,8 @@ class Model:
         return lc
 
     def remove_load_case(self, name: str) -> list[str]:
-        """Einen Lastfall loeschen - samt jedem Verweis darauf.
+        """Einen Lastfall loeschen - samt seinen Verweisen in den Kombinationen
+        und den Ermuedungslasten.
 
         Der Name faellt aus den Faktoren **und** aus jeder Alternative einer
         Kombination (Combination.lastfall_entfernen) und aus jedem Verlauf
@@ -3169,6 +3170,13 @@ class Model:
         Schwingbreite, ohne dass es jemand entschieden haette - die Stellung
         (bridges.positions) laesst solche Lasten ebenso entfallen. Ein
         Verlauf, dem kein Glied bleibt, entfaellt auch.
+
+        Andere Verweise auf den Namen bleiben stehen, etwa die Lastfallliste
+        einer Stellung (bridges.positions.Stellung.faelle): gemessen
+        24.09.2026 mit faelle ['LF1', 'LF2'] nach remove_load_case('LF2')
+        Rueckgabe [], faelle unveraendert, check() ohne FEHLER oder WARNUNG, und
+        Stellungsreihe.rechnen laesst die Stellung mit "Lastfall 'LF2' gibt
+        es im Modell nicht" ohne Ergebnis.
 
         Bis zum 23.09.2026 gingen nur die Faktoren mit (Befund B105): die
         Alternativen einer oder-EK und die Ermuedungslasten zeigten danach

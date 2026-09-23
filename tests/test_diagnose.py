@@ -1595,13 +1595,16 @@ def test_falsche_knotenzahl():
 
     Am Stand ec6448c (23.09.2026) nahm add_element ein hex8 mit sieben
     Knoten an, check() gab dafuer keine Zeile aus, und erst solve_all brach
-    mit "operands could not be broadcast together" ab. Mit neun Knoten
-    meldete check() einen falschen FEHLER ("zusammenfallende Knoten ...
-    Volumen inf m³"), und ein tet4 mit drei Knoten liess check() selbst mit
-    IndexError abbrechen (diagnose.entartete_elemente), statt eine Liste zu
-    liefern. Richtig: add_element weist die falsche Knotenzahl ab; ein so
-    geladenes Element (JSON, Import) nennt check() als FEHLER mit Soll und
-    Ist, und die Diagnose laesst es aus.
+    mit "operands could not be broadcast together" ab. Mit neun Knoten,
+    deren neunter einen der acht wiederholte, meldete check() einen falschen
+    FEHLER ("zusammenfallende Knoten ... Volumen inf m³"); mit einem
+    neunten, eigenen Knoten meldete es nichts (gemessen 24.09.2026 an diesem
+    Netz am Stand ec6448c: jede der acht Wiederholungen gab den FEHLER, jeder
+    der vier uebrigen Knoten keinen). Ein tet4 mit drei Knoten liess check()
+    selbst mit IndexError abbrechen (diagnose.entartete_elemente), statt eine
+    Liste zu liefern. Richtig: add_element weist die falsche Knotenzahl ab;
+    ein so geladenes Element (JSON, Import) nennt check() als FEHLER mit Soll
+    und Ist, und die Diagnose laesst es aus - beide Arten von neun Knoten.
     """
     from statik3d import mesher
     from statik3d.model import Model as _M
@@ -1618,19 +1621,24 @@ def test_falsche_knotenzahl():
 
     m = netz()
     e8 = [int(n) for n in m.elements[1].nodes]
-    for typ, kn, soll in (("hex8", e8[:7], 8), ("hex8", e8 + [e8[0]], 8), ("tet4", e8[:3], 4)):
+    fremd = next(n for n in range(m.nn) if n not in e8)
+    faelle = (("hex8", e8[:7], 8, "7 Knoten"),
+              ("hex8", e8 + [e8[0]], 8, "9 Knoten, der neunte wiederholt den ersten"),
+              ("hex8", e8 + [fremd], 8, "9 Knoten, der neunte ist ein eigener"),
+              ("tet4", e8[:3], 4, "3 Knoten"))
+    for typ, kn, soll, titel in faelle:
         try:
             m.add_element(typ, kn, "S235")
             ergebnis = "angenommen"
         except ValueError as ex:
             ergebnis = str(ex)
-        check(f"add_element weist {typ} mit {len(kn)} Knoten ab",
+        check(f"add_element weist {typ} mit {titel} ab",
               ergebnis != "angenommen" and f"{len(kn)}" in ergebnis and f"{soll}" in ergebnis,
               ergebnis[:80])
     check("… und das Modell bleibt bei zwei Elementen", len(m.elements) == 2, str(len(m.elements)))
 
     # Geladen wie aus einer JSON-Datei: dort geht nichts ueber add_element
-    for typ, kn, soll in (("hex8", e8[:7], 8), ("hex8", e8 + [e8[0]], 8), ("tet4", e8[:3], 4)):
+    for typ, kn, soll, titel in faelle:
         d = netz().to_dict()
         neu = dict(d["elements"][1])
         neu["typ"], neu["nodes"] = typ, list(kn)
@@ -1644,7 +1652,7 @@ def test_falsche_knotenzahl():
             detail = "; ".join(fehler)[:110]
         except Exception as ex:      # noqa: BLE001
             ok, detail = False, f"check() warf {type(ex).__name__}: {ex}"
-        check(f"geladen {typ} mit {len(kn)} Knoten: check() nennt Soll und Ist, nichts anderes",
+        check(f"geladen {typ} mit {titel}: check() nennt Soll und Ist, nichts anderes",
               ok, detail)
     # Gegenprobe: das unveraenderte Netz hat keine solche Zeile
     zeilen = [z for z in netz().check() if "erwartet" in z]

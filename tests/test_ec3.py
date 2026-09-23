@@ -434,10 +434,19 @@ def test_sorte_ohne_streckgrenze():
     check("Sorte S235, f_y leer: f_y bei t = 41 mm = 215 N/mm² (wie bisher)",
           mt.yield_strength(0.041), 215e6, 0)
     check("Sorte S235, f_u leer: f_u bei t = 10,7 mm = 360 N/mm²", mt.ultimate_strength(0.0107), 360e6, 0)
-    # Ein ausdrueckliches f_y bleibt vorn - die Sorte ersetzt nur das leere Feld
+    # Ein ausdrueckliches f_y bleibt bis 40 mm vorn - die Sorte ersetzt dort
+    # nur das leere Feld. Ueber 40 mm gilt die untere Stufe der Sorte auch
+    # gegen ein eingetragenes f_y (yield_strength fragt t > 0,040 m zuerst ab).
+    # Das Benutzerhandbuch sagte am 23.09.2026 "geht der Sorte immer vor";
+    # gemessen 24.09.2026: bei 41 mm 215 statt 300 N/mm², f_u 360 statt 390
     mx = Material("Eigen", fy=300e6, grade="S235")
     check("f_y 300 mit Sorte S235: f_y bei 10,7 mm bleibt 300 N/mm²", mx.yield_strength(0.0107), 300e6, 0)
+    check("f_y 300 mit Sorte S235: f_y bei 40 mm bleibt 300 N/mm²", mx.yield_strength(0.040), 300e6, 0)
     check("f_y 300 ohne f_u: f_u bleibt 1,3 f_y = 390 N/mm²", mx.ultimate_strength(0.0107), 390e6, 1e-12)
+    check("f_y 300 mit Sorte S235: über 40 mm gilt die untere Stufe der Sorte, 215 N/mm²",
+          mx.yield_strength(0.041), 215e6, 0)
+    check("f_y 300 ohne f_u: über 40 mm f_u der Sorte, 360 N/mm² (nicht 1,3 f_y)",
+          mx.ultimate_strength(0.041), 360e6, 0)
 
     # Am echten Weg: derselbe Traeger zweimal, einmal aus Material.steel("S235"),
     # einmal aus dem Werkstoff mit Sorte S235 und leerem f_y
