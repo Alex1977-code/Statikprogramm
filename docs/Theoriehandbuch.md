@@ -6286,7 +6286,12 @@ ec6448c (23.09.2026), geprüft in `tests/test_report.py` und
   („pardiso", während Anhangzeile und Hinweis „ausgewichen auf SuperLU"
   nannten; Angaben am Ergebnis von Hand gesetzt, wie sie `ausweich_info` bei
   einem Teilausfall hinterlässt). Jetzt: „pardiso – ausgewichen auf SuperLU
-  (direkt, einkernig)".
+  (direkt, einkernig)". Eine überlagerte Kombination hat keinen eigenen
+  Löser, trägt aber das Ausweichen ihrer Lastfälle; die erste Fassung der
+  Kur schrieb dort „– – ausgewichen auf SuperLU (direkt, einkernig)"
+  (gemessen 24.09.2026 an einer echten Rechnung mit werfendem
+  `factorize`). Jetzt steht dort nur „ausgewichen auf SuperLU (direkt,
+  einkernig)".
 
 **„Alle Nachweise erfüllt." galt auch bei gerissenem Volumennachweis.**
 `self.volumen` fehlte im Gesamturteil **doppelt**: in der Statusprüfung und in

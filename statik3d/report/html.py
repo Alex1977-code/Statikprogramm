@@ -4257,12 +4257,17 @@ class Report:
             # einem Teil davon, stand hier bis zum 23.09.2026 schlicht
             # "pardiso", waehrend Anhang und Hinweise das Ausweichen auf
             # SuperLU nannten (gemessen an ec6448c mit so gesetztem info).
+            # Eine Ueberlagerung hat keinen eigenen Loeser, traegt aber das
+            # Ausweichen ihrer Lastfaelle (Results.combine). Dann steht nur
+            # "ausgewichen auf ..." da - gemessen 24.09.2026 an 0b7d95b mit
+            # werfendem factorize stand sonst "– – ausgewichen auf SuperLU".
             loeser = str(inf.get("solver", "–"))
             paare = ausweich_paare(inf)
             if paare:
                 mit = ausweichloeser_text(dict.fromkeys(
                     lo for _g, lo in paare if lo and lo != loeser))
-                loeser += " – ausgewichen" + (f" auf {mit}" if mit else "")
+                ausw = "ausgewichen" + (f" auf {mit}" if mit else "")
+                loeser = f"{loeser} – {ausw}" if inf.get("solver") else ausw
             rows.append([name, "Überlagerung" if inf.get("superposition") else
                          {"case": "Lastfall", "combination": "Kombination"}.get(
                              getattr(res, "kind", ""), getattr(res, "kind", "")),

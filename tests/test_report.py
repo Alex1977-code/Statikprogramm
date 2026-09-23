@@ -1226,14 +1226,61 @@ def test_loeserspalte_nennt_ausweichen():
     check("teilweise ausgewichen: 'pardiso – ausgewichen auf SuperLU …'",
           zeile is not None and zeile[3].startswith("pardiso – ausgewichen auf SuperLU"),
           str(zeile))
+    # Nur hier von Hand: K1 wurde vor dem Setzen überlagert und trägt darum
+    # keinen Ausweich-Eintrag. In einer echten Rechnung trägt sie den ihrer
+    # Lastfälle - das prüft test_loeserspalte_ausweichen_echte_rechnung.
     k1 = _ergebniszeile(html, "K1")
-    check("die überlagerte Kombination ohne eigenes Ausweichen bleibt unverändert",
-          k1 is not None and "ausgewichen" not in k1[3], str(k1))
+    check("Überlagerung ohne Ausweich-Eintrag: Spalte 'Löser' bleibt '–'",
+          k1 is not None and k1[3] == "–", str(k1))
     # ganz ausgewichen: der Löser heißt schon so - kein „auf SuperLU“ doppelt
     res.info["solver"] = "superlu"
     zeile = _ergebniszeile(Report(m, an).html(), "LF1")
     check("ganz ausgewichen: 'superlu – ausgewichen'",
           zeile is not None and zeile[3] == "superlu – ausgewichen", str(zeile))
+    _assert_since(n0)
+
+
+def test_loeserspalte_ausweichen_echte_rechnung():
+    """Spalte „Löser“ an einer echten Rechnung, in der PARDISO beim
+    Faktorisieren scheitert (Aufbau wie
+    test_loeser.test_ausweichgrund_erreicht_ergebnis_bericht_und_modalanalyse).
+    Eine überlagerte Kombination hat kein eigenes ``info["solver"]``, trägt
+    aber das Ausweichen ihrer Lastfälle (Results.combine). Gemessen
+    24.09.2026 an 0b7d95b: Spalte der K1 „– – ausgewichen auf SuperLU
+    (direkt, einkernig)“, LF1 und LF2 „superlu – ausgewichen“."""
+    n0 = len(RESULTS)
+    import pypardiso
+    from statik3d import parallel
+    from statik3d.solver import ausweich_paare
+    from tests.test_loeser import _k2_modell
+    alt_backend = parallel.settings().solver_backend
+    parallel.configure(solver_backend="auto")
+    echt = pypardiso.PyPardisoSolver.factorize
+
+    def wirft(self, A):
+        raise RuntimeError("Probe: PARDISO verweigert")
+
+    pypardiso.PyPardisoSolver.factorize = wirft
+    try:
+        m = _k2_modell()
+        an = solver.solve_all(m)
+    finally:
+        pypardiso.PyPardisoSolver.factorize = echt
+        parallel.configure(solver_backend=alt_backend)
+    k1 = an.all_results()["K1"]
+    check("Aufbau: K1 ist eine Überlagerung ohne eigenen Löser und trägt das Ausweichen",
+          k1.info.get("superposition") and not k1.info.get("solver")
+          and ausweich_paare(k1.info), str({k: k1.info.get(k) for k in
+                                           ("superposition", "solver", "ausweichen")}))
+    html = Report(m, an).html()
+    for n in ("LF1", "LF2"):
+        z = _ergebniszeile(html, n)
+        check(f"{n}: Spalte 'Löser' 'superlu – ausgewichen'",
+              z is not None and z[3] == "superlu – ausgewichen", str(z))
+    z = _ergebniszeile(html, "K1")
+    check("K1: 'ausgewichen auf SuperLU …' ohne vorangestellten Strich",
+          z is not None and z[3].startswith("ausgewichen auf SuperLU") and "–" not in z[3],
+          str(z))
     _assert_since(n0)
 
 
@@ -1255,7 +1302,8 @@ def main():
              test_gesamturteil_einzahl_und_mehrzahl,
              test_statuszeile_ohne_sternchen,
              test_keine_sternchen_im_berichtstext,
-             test_loeserspalte_nennt_ausweichen]
+             test_loeserspalte_nennt_ausweichen,
+             test_loeserspalte_ausweichen_echte_rechnung]
     for t in tests:
         try:
             t()

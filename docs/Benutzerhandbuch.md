@@ -3910,10 +3910,14 @@ davon nicht betroffen.
   Die Spalte „Löser“ der Tabelle „Rechenzeiten je Ergebnis“ im Anhang sagt
   das seit dem 23.09.2026 je Ergebnis: „pardiso – ausgewichen auf SuperLU
   (direkt, einkernig)“, bei einem Ergebnis, das ganz mit dem Ausweichlöser
-  rechnete, „superlu – ausgewichen“; ein Ergebnis ohne Ausweichen zeigt den
-  Löser wie bisher. Vorher stand dort schlicht „pardiso“ (geprüft in
-  `tests/test_report.py` mit so gesetzten Angaben am Ergebnis, nicht an einer
-  echten Rechnung).
+  rechnete, „superlu – ausgewichen“; eine überlagerte Kombination hat keinen
+  eigenen Löser und zeigt nur „ausgewichen auf SuperLU (direkt, einkernig)“;
+  ein Ergebnis ohne Ausweichen zeigt den Löser wie bisher. Vorher stand dort
+  schlicht „pardiso“. Geprüft in `tests/test_report.py`: der Teilausfall mit
+  so gesetzten Angaben am Ergebnis, der ganze Ausfall an einer echten
+  Rechnung (Kragarm aus sechs Stäben, PARDISO scheitert beim Faktorisieren:
+  LF1 und LF2 „superlu – ausgewichen“, die überlagerte K1 „ausgewichen auf
+  SuperLU (direkt, einkernig)“).
   Überlagerte Kombinationen tragen den Grund ihrer Lastfälle, Ergebnisse nach
   Theorie II. Ordnung ihren eigenen. Die Eigenschwingungen melden ein Ausweichen
   ebenso im Protokoll und in ihrer Zusammenfassung. Ein Ergebnis trägt den Grund
@@ -4988,10 +4992,13 @@ Nachweisdetails der zwanzig am höchsten ausgenutzten Stäbe hinzu;
 ein von Hand gesetzter Haken macht daraus eine **eigene Auswahl**. Der
 gewählte Umfang bleibt am Modell.
 
-**Nachweiskapitel ausgeschaltet.** Ein ausgeschalteter Haken (Nachweise EC3,
-Ermüdung, Volumen, Beulen, Anschlüsse, Verformungen) nimmt nur das Kapitel
-heraus — das Gesamturteil der Zusammenfassung bewertet weiter alle
-gerechneten Nachweise. Ist einer davon nicht erfüllt, steht unter „Offene
+**Nachweiskapitel ausgeschaltet.** Ein ausgeschalteter Haken „Nachweise EC3“
+oder „Ermüdung“ nimmt nur das Kapitel heraus. Dasselbe gilt für die Kapitel
+Volumen, Beulen, Anschlüsse und Verformungen; für sie gibt es im Dialog keinen
+Haken, nur die Berichtsoptionen `volumen`, `beulen`, `joints` und `gzg` der
+Programmschnittstelle (z. B. `write_report(…, beulen=False)`). Das
+Gesamturteil der Zusammenfassung bewertet weiter alle gerechneten
+Nachweise. Ist einer davon nicht erfüllt, steht unter „Offene
 Hinweise und Warnungen“ in jedem Fall die Zeile „… NICHT erfüllt für: *Namen*“,
 und die Statuszeile heißt „Nachweise NICHT erfüllt – siehe die Hinweise
 unten.“ statt „… siehe die Nachweiskapitel.“, sobald das Kapitel eines nicht
