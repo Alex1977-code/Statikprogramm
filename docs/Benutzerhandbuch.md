@@ -883,6 +883,21 @@ quadratische mit demselben Netz auf 99 %. Er kostet dafür mehr Knoten. Für
 Spannungsnachweise an Kerben, Augen und Bohrungen gehören die quadratischen
 genommen.
 
+**Quadratische Elemente an Fugen, Kontakten und Flächenlagern: noch gesperrt.**
+Kontakt, Fugen und Flächenlager nehmen von einer Elementseite heute nur die
+Eckknoten. Die Seitenmitten eines tet10, hex20, pent15, shell6 oder shell8
+werden dabei übergangen. Beim Trennen einer Fuge blieben sie beiden Körpern
+gemeinsam, bei einem Flächenlager ungelagert, und das Ergebnis wäre still falsch.
+Gemessen an zwei Würfeln mit 0,5 m Netz: Eine Fuge ohne Zugfestigkeit trug 53 %
+des Zuges (bei eigenen Fugenflächen 37 %), ein starres Flächenlager ließ 41 % mehr
+Setzung zu als festgehaltene Bodenknoten. Mit linearen Elementen stimmt beides
+exakt. Deshalb bricht das Programm ab, sobald eine Kontaktbedingung, ein
+Kontaktpaar oder ein Flächenlager an einem quadratischen Element liegt. Die
+Meldung nennt Bedingung, Elementtyp und Elementnummern. Abhilfe: diese Körper
+linear vernetzen (*Netzeinstellungen → Elementansatz linear*). Erlaubt bleibt
+eine verschweißte Fuge (starr in allen Richtungen, passende Netze), denn sie
+trennt nichts. Der Kontakt über quadratische Seiten ist in Arbeit.
+
 **Splitter** — fast flache Elemente — werden herausgeglättet: die *freien*
 Knoten wandern so, dass die schlechteste Güte steigt; die Randknoten bleiben,
 wo sie sind, damit sich das Volumen nicht ändert. Die Schwelle steht ebenfalls
