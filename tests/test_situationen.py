@@ -143,6 +143,100 @@ def test_stellung():
     check("unbekannte Stellung ist ein FEHLER", any("gibt es nicht" in x for x in m.check()))
 
 
+class _Maskenrekorder:
+    """Statt masken.Maske (ein QFrame): merkt Titel und Felder; ok() ruft die
+    angeschlossenen Rueckrufe mit den Werten, wie „Übernehmen“."""
+    zuletzt = None
+
+    def __init__(self, titel, felder, **_kw):
+        import types
+        self.titel, self.felder = titel, felder
+        self._rueckrufe = {"angewendet": [], "abgebrochen": [], "geschlossen": []}
+        for n, liste in self._rueckrufe.items():
+            setattr(self, n, types.SimpleNamespace(connect=liste.append))
+        _Maskenrekorder.zuletzt = self
+
+    def feld(self, name):
+        return next((f for f in self.felder if f.name == name), None)
+
+    def werte(self) -> dict:
+        return {f.name: f.wert for f in self.felder}
+
+    def ok(self, w=None):
+        for cb in self._rueckrufe["angewendet"]:
+            cb(self.werte() if w is None else w)
+
+
+def test_situationsmaske_unbekannte_stellung():
+    """Befund B061 (23.09.2026): Nannte eine Situation eine Stellung, die es
+    nicht gibt (etwa nach dem Anhaengen eines Modells: 'Offen_2'), zeigte
+    ihre Maske „– (unbewegt)“, und „Übernehmen“ ohne jede Aenderung setzte
+    stellung = ''. Die Meldung der Modellpruefung verschwand, und die
+    Situation rechnete unbewegt - gemessen am angehaengten Rahmen 1,7876
+    statt 4,7572 mm am Lastknoten. Hier: die echte Maske (_situationsmaske)
+    und das echte Übernehmen, die Maske als Rekorder statt des QFrame."""
+    import importlib
+    from unittest import mock
+    G = importlib.import_module("statik3d.gui.main")      # gui.main() verdeckt das Modul
+    m, ids, _sec = _balken(2, L)
+    m.stellungen.append(Stellung("Offen", verschiebung=(0.0, 0.0, 1.0)))
+    m.situationen["S"] = Situation("S", "Offen_2", [], "angehaengt")
+    m.add_load_case("LF-S", "Q", activate=False, situation="S")
+    m.load_node(ids[-1], Fz=-F, case="LF-S")
+    meldung = "Situation 'S': Stellung 'Offen_2' unbekannt"
+
+    def fenster():
+        s = mock.MagicMock()
+        s.model = m
+        for n in ("_situationsmaske", "_situation_uebernehmen"):
+            setattr(s, n, getattr(G.MainWindow, n).__get__(s))
+        s._namensliste = G.MainWindow._namensliste
+        return s
+
+    def texte(aufrufe):
+        return [str(c.args[0]) for c in aufrufe.call_args_list if c.args]
+
+    check("vorher: die Modellprüfung meldet die unbekannte Stellung",
+          any(meldung in x for x in m.check()), str(m.check()))
+    with mock.patch.object(G.msk, "Maske", _Maskenrekorder):
+        s = fenster()
+        s._situationsmaske(m.situationen["S"], False)
+        mk = _Maskenrekorder.zuletzt
+        f = mk.feld("stellung")
+        check("die Maske zeigt die fehlende Stellung als eigenen Eintrag, nicht „unbewegt“",
+              f is not None and "Offen_2" in str(f.wert) and "fehlt" in str(f.wert)
+              and f.wert in f.werte and not str(f.wert).startswith("–"),
+              "" if f is None else f"zeigt {f.wert!r}, Auswahl {f.werte}")
+        mk.ok()                         # Übernehmen, ohne etwas zu aendern
+        sit = m.situationen.get("S")
+        check("Übernehmen ohne Änderung: die Stellung bleibt 'Offen_2'",
+              sit is not None and sit.stellung == "Offen_2",
+              f"stellung {getattr(sit, 'stellung', None)!r}, error {texte(s.error)}")
+        check("… die Modellprüfung meldet sie weiter",
+              any(meldung in x for x in m.check()), str([x for x in m.check() if "FEHLER" in x]))
+        check("… und die Rückmeldung sagt, dass die Stellung fehlt",
+              any("Offen_2" in t and "gibt es nicht" in t for t in texte(s.info) + texte(s.error)),
+              str(texte(s.info) + texte(s.error)))
+        try:
+            solver.solve_cases(m, ["LF-S"], workers=1)
+            gerechnet = "gerechnet (unbewegt)"
+        except ValueError as ex:
+            gerechnet = str(ex)
+        check("… der Lastfall rechnet nicht still unbewegt, er bricht mit der Meldung ab",
+              "Offen_2" in gerechnet and "unbekannt" in gerechnet, gerechnet)
+
+        # Wer ausdruecklich „unbewegt“ waehlt, bekommt es
+        s = fenster()
+        s._situationsmaske(m.situationen["S"], False)
+        mk = _Maskenrekorder.zuletzt
+        w = mk.werte()
+        w["stellung"] = mk.feld("stellung").werte[0]
+        mk.ok(w)
+        check("ausdrücklich „– (unbewegt)“ gewählt: Stellung leer, keine Meldung mehr",
+              m.situationen["S"].stellung == "" and not any(meldung in x for x in m.check()),
+              f"stellung {m.situationen['S'].stellung!r}, error {texte(s.error)}")
+
+
 def test_stellung_lage_und_wirkung():
     """Ausgangsstellung, Verschiebung, abgeschaltete Staebe, biegesteife
     Gelenke und Lager je Stellung - gegen geschlossene Loesungen."""
@@ -349,7 +443,8 @@ def test_abgeschalteter_stab_in_jeder_situation():
 
 
 def main():
-    for t in (test_abgeschalteter_stab_in_jeder_situation, test_abgeschaltete_elemente, test_stellung, test_stellung_lage_und_wirkung,
+    for t in (test_abgeschalteter_stab_in_jeder_situation, test_abgeschaltete_elemente, test_stellung,
+              test_situationsmaske_unbekannte_stellung, test_stellung_lage_und_wirkung,
               test_speichern, test_subsystem, test_kombinationen_je_situation):
         print(f"\n--- {t.__name__} ---")
         try:

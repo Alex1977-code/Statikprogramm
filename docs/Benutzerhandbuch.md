@@ -742,6 +742,19 @@ Fließen mitrechnet; lässt er es aus, rechnet die Schleife das fließende Model
 schreibt es ins Protokoll — ein elastischer Probelauf verfeinerte am Drehlager an den
 falschen Stellen (54 von 100 Spitzenelementen, 21.09.2026). `--probelauf ja` erzwingt den
 Probelauf, `--probelauf nein` den vollen Lauf.
+Vor jeder Rechnung prüft die Schleife das Modell wie **Berechnen** — nach dem Vernetzen,
+denn vorher meldet die Prüfung auch „keine Elemente definiert“. Meldet sie einen FEHLER,
+hält die Schleife an, ohne zu rechnen: die Oberfläche zeigt den Fehler (bei Teiltragwerken
+ohne Lager fragt sie wie Berechnen), das zuletzt erzeugte Netz bleibt stehen; die
+Befehlszeile schreibt den Fehler, speichert nichts und gibt 2 zurück. Bis zum 23.09.2026
+rechnete sie trotzdem — an der Platte mit Bohrung mit einer Kombination, die einen
+unbekannten Lastfall nennt, zwei Durchgänge; die Befehlszeile speicherte das Modell und
+nannte den Fehler erst danach. Die Modellprüfung zählt als Lagerung nur Knotenlager (und
+einseitige Lager): dieselbe Platte, allein über ihr Flächenlager gehalten, meldet sie auch
+vernetzt als „keine Lagerung definiert (System kinematisch)“, und die adaptive Schleife hält
+dort an (gemessen 23.09.2026). *Berechnen* weist sie laut Quelltext genauso ab, obwohl
+der Löser selbst die Platte rechnet (Summe der Auflagerkräfte 1920 kN, gleich der
+Zuglast).
 `--vernetzen` allein vernetzt ohne Oberfläche, in derselben Folge wie *Netz →
 Vernetzen*. Was die Schleife setzt (Kantenlänge je Körper, Feldpunkte), steht danach in
 den Netzeinstellungen des gespeicherten Modells. Ein Befehl in der Oberfläche ist mit
@@ -3092,12 +3105,21 @@ jetzt kommen alle an. Was das Protokoll dabei sagt:
   Modellprüfung „Stellung … unbekannt“ meldet, ist das ein Fehler:
   **Berechnen** weist dann in allen vier Rechenarten ab, auch für die
   Lastfälle des Ziels; **▶ Alle Stellungen rechnen** meldet den Fehler bei
-  jeder Stellung und rechnet keine; die Kommandozeile gibt 2 zurück. Nicht
-  gesperrt ist der Schwingungsnachweis des Verschlusses: *Nachweis führen*
-  prüft das Modell vorher nicht. Im Versuch (Schützhaut mit Wasserdruck,
-  daran der Rahmen angehängt) rechnete er trotz des Fehlers die
-  Eigenfrequenzen in Luft und Wasser und den Lastfall der Druckschwankung.
-  Ruft ein Skript `solver.solve_all` trotzdem auf, kommt es auf „Lastfälle
+  jeder Stellung, rechnet keine und schließt mit „Keine Stellung gerechnet
+  – 2 von 2 mit FEHLER“ (bis zum 23.09.2026 stand dort „2 Stellungen
+  gerechnet: eta = 0.000“); die Kommandozeile gibt 2 zurück. Seit dem
+  23.09.2026 prüft auch der Schwingungsnachweis des Verschlusses
+  (*Nachweis führen*) das Modell vorher und weist ab; bis dahin rechnete er
+  im Versuch (Schützhaut mit Wasserdruck, daran der Rahmen angehängt) trotz
+  des Fehlers die Eigenfrequenzen in Luft und Wasser und den Lastfall der
+  Druckschwankung. Die Maske der Situation zeigt die fehlende Stellung als
+  eigenen Eintrag („Offen_2 (fehlt)“), und **Übernehmen** lässt sie stehen,
+  mit einer Warnung im Protokoll; leer wird sie nur, wenn man ausdrücklich
+  „– (unbewegt)“ wählt. Bis zum 23.09.2026 zeigte die Maske „– (unbewegt)“,
+  und Übernehmen ohne jede Änderung setzte die Stellung leer: die Meldung
+  der Modellprüfung verschwand, und der Lastfall rechnete unbewegt (im
+  Versuch 1,7876 statt 4,7572 mm am Lastknoten). Ruft ein Skript
+  `solver.solve_all` trotzdem auf, kommt es auf „Lastfälle
   gleichzeitig (Ketten)“ an. Mit der Vorgabe nacheinander – in einem Skript
   gilt sie, solange es weder `parallel.einstellungen_laden()` noch
   `parallel.configure(ketten=…)` aufruft – bricht die ganze Rechnung mit
@@ -3194,7 +3216,10 @@ als Umhüllende gerechnet und hat kein Einzelergebnis, aus dem sich σ_max oder
 σ_min lesen ließe. Die Maske der Ermüdungslast bietet sie darum nicht mehr als
 oberen oder unteren Zustand an, und die Modellprüfung meldet sie vor der
 Rechnung als FEHLER („Zustand '…' ist eine oder-verknüpfte
-Ergebniskombination“). Beschreiben Sie eine solche Last als Verlauf über die
+Ergebniskombination“). Nennt der Verlauf eine, weist die Maske ihn schon bei
+der Eingabe ab („Der Verlauf nennt oder-verknüpfte Ergebniskombinationen: …“)
+und legt keine Last an; bis zum 23.09.2026 nahm sie ihn an, und erst die
+Modellprüfung meldete es. Beschreiben Sie eine solche Last als Verlauf über die
 Lastfälle ihrer Alternativen — so legt sie auch der RFEM-Import an. Bei einer
 Last mit Verlauf prüft die Modellprüfung nur die Glieder des Verlaufs, denn
 nur sie gehen in den Nachweis ein; einen oberen oder unteren Zustand, den eine
@@ -3366,7 +3391,11 @@ beitrüge.
 
 Ergebnis: Tabelle „Nachweise EC3“ mit Ausnutzung, maßgebendem Nachweis,
 Kombination und Stelle; Färbung „Ausnutzung EC3“ im Viewport; alle Details
-im Bericht.
+im Bericht. Das Etikett der Maske *Nachweise* (Gruppe „Nachweise führen (nach
+der Berechnung)“) zeigt die Zeile der EC3-Nachweise und die der Ermüdung,
+soweit sie gerechnet sind, sonst „noch keine Nachweise“. Bis zum 23.09.2026
+stand es leer, wenn nur die Ermüdung gerechnet war, und nach einer Rechnung
+ohne Nachweise blieb die Zeile der vorigen stehen.
 
 **Stab ohne Streckgrenze.** Hat der Werkstoff eines Stabes keine
 Streckgrenze f_y — das kommt bei Importen vor, wenn die Stahlsorte nicht
@@ -3414,7 +3443,12 @@ Beurteilung (unkritisch, Hinweis V_r, Resonanz). Der Bericht (Kapitel
 Antwort auf die Druckschwankung mit Ermüdung, die Erläuterung und das
 **Frequenzbild** (Eigenfrequenzen nass und trocken, Band der Wirbelablösung,
 Grenze V_r) samt der Westergaard-Verteilung über die Höhe. Die Angaben
-bleiben im Modell und werden mit der Datei gespeichert.
+bleiben im Modell und werden mit der Datei gespeichert. *Nachweis führen*
+prüft vorher das Modell wie **Berechnen**: meldet die Modellprüfung einen
+FEHLER, kommt die Meldung, und es wird nichts gerechnet, auch nicht der
+Lastfall der Druckschwankung (bei Teiltragwerken ohne Lager wird gefragt);
+die Angaben der Maske bleiben trotzdem im Modell. Bis zum 23.09.2026 rechnete
+der Nachweis ohne diese Prüfung.
 
 ### Knicklängen aus der Knickfigur
 
@@ -4527,11 +4561,18 @@ entfernt, gemeldet als „Lücke im Netzrand“ mit 115 cm³. Neu vernetzt mit
 denselben Einstellungen waren es wieder 6173 Tetraeder ohne Befund -
 gemessen ohne Oberfläche mit der Funktion hinter `statik3d --vernetzen` und
 der adaptiven Vernetzung (`mesher.modell_vernetzen`), die auch die Knoten des
-alten Netzes entfernt. „Netz → Vernetzen“ in der Oberfläche entfernt sie
-nicht (am Quelltext: `_vernetzen` löscht nur die Elemente). Diesen Weg ohne
+alten Netzes entfernt. „Netz → Vernetzen“ in der Oberfläche entfernte sie bis
+zum 23.09.2026 nicht (`_vernetzen` löschte nur die Elemente): diesen Weg ohne
 Oberfläche nachgestellt, verschwand die Lücke ebenso (6173 Tetraeder), aber
-1229 Knoten des alten Netzes blieben ohne Element stehen: FEHLER „Knoten ohne
-Element“. In der laufenden Oberfläche ist das nicht gemessen. Der Text der
+1229 Knoten des alten Netzes blieben ohne Element stehen, FEHLER „Knoten ohne
+Element“. Seither entfernt auch dieser Weg sie; am selben L-Prisma zweimal mit
+denselben Einstellungen vernetzt, hat das zweite Netz wie das erste 1241
+Knoten, ohne „Knoten ohne Element“, und das Protokoll nennt „1229 Knoten des
+alten Netzes entfernt“. Entfernt werden nur Knoten der gelöschten Elemente,
+an denen nichts mehr hängt; ein gesetzter Knoten, an dem noch nichts hängt
+(etwa für eine spätere Linie), bleibt stehen. Gemessen ist beides ohne
+Oberfläche, mit der Funktion hinter „Netz → Vernetzen“, nicht in der
+laufenden Oberfläche. Der Text der
 Warnung nennt beide Fälle; bis zum 23.09.2026 sagte er nur „Neu vernetzen mit
 denselben Einstellungen ergibt dasselbe Netz“, ebenso der Text des Risses. Ein
 FEHLER ist die Lücke, wenn alle Lücken eines Körpers zusammen mehr als 0,5 % seines Volumens
@@ -4587,9 +4628,10 @@ sind oder Vierecke; Körper mit Bögen, Kreisen oder Splines prüft der freie
 Vernetzer schon beim Vernetzen selbst (Volumen gegen Hülle, Randtreue). Was
 tun: Stammt das Netz aus einem Import oder ist es von Hand geändert, den Körper
 neu vernetzen (Netz → Vernetzen). Am abgestuften Netz mit verdrehtem Element
-verschwand damit der Befund „Seiten im Inneren“. Im nachgestellten Fall blieben
-die Knoten des alten Netzes ohne Element stehen und meldeten sich als „Knoten
-ohne Element“. Der eigene Vernetzer ergibt mit denselben Einstellungen
+verschwand damit der Befund „Seiten im Inneren“. Bis zum 23.09.2026 blieben
+dabei die Knoten des alten Netzes ohne Element stehen und meldeten sich als
+„Knoten ohne Element“; seither entfernt Netz → Vernetzen sie (siehe oben bei
+der Lücke im Netzrand). Der eigene Vernetzer ergibt mit denselben Einstellungen
 dasselbe Netz, an fünf Prismen nachgemessen. Bei Befunden an seinen Netzen
 hilft neu vernetzen allein also nicht; was bei einer Lücke im Netzrand
 geholfen hat, steht oben.
@@ -4881,7 +4923,15 @@ eigenen Skala: Bauteil wählen, *Selektion anzeigen*, ablesen. Geprüft in
   Ergebnismaske, Bericht und Browser als „Umhüllende *Name*" neben den
   Umhüllenden je Art (GZT, GZG, Ermüdung), die sie mit enthalten. Im
   Kombinationsdialog zeigt sie ihre Alternativen; die Faktorfelder sind dort
-  gesperrt, denn die Alternativen kommen aus der Quelldatei. Ein umbenannter
+  gesperrt, denn die Alternativen kommen aus der Quelldatei. Ebenso in der
+  Objektmaske rechts: dort steht unter *Faktoren* „Umhüllende über n
+  Alternativen (aus der Quelldatei) – hier nicht änderbar“, und
+  **Übernehmen** schreibt Name, Typ, Beschreibung, Situation und Theorie,
+  die Alternativen und die Bemessungssituation bleiben. Bis zum 23.09.2026
+  stand dort die Formel als Eingabefeld: schon eine geänderte Beschreibung
+  endete mit „Faktor … bitte als „Lastfall: Faktor“ schreiben“, und
+  hineingeschriebene Faktoren („LF1: 1,35“) machten aus der Umhüllenden
+  eine gewöhnliche Kombination ohne Alternativen. Ein umbenannter
   oder gelöschter Lastfall zieht durch alle Alternativen.
   **Nachgewiesen** wird nicht die Umhüllende, sondern jede Alternative für
   sich: in den Nachweistabellen (Stäbe, Volumen, Beulen, Lasteinleitung,
@@ -5311,7 +5361,13 @@ Systems“ in Kapitel 2); „Entfernen" arbeitet auf der gewählten Zeile.
 Lastfälle je Stellung und Antriebsmoment kommen aus der Python-Schnittstelle
 (`Stellung(faelle=…, antrieb=…)`). **▶ Alle Stellungen rechnen** rechnet jede Stellung einzeln
 und schreibt die Umhüllende darunter; der Filmstreifen unter der 3D-Ansicht
-zeigt danach je Karte das η, die maßgebende mit ★.
+zeigt danach je Karte das η, die maßgebende mit ★. Die Schlusszeile zählt,
+was gerechnet ist: „1 von 2 Stellungen gerechnet (1 mit FEHLER, siehe
+Protokoll): eta = …“, wenn eine scheitert; scheitern alle, meldet die
+Oberfläche „Keine Stellung gerechnet – 2 von 2 mit FEHLER“, und η gilt als
+nicht bestimmt (auch im Bericht: „eta nicht bestimmt – keine Stellung
+gerechnet“). Bis zum 23.09.2026 stand dort immer „2 Stellungen gerechnet“,
+bei null Ergebnissen mit „eta = 0.000“.
 
 „Kombinationen nach DIN 19704 bilden" legt die Kombinationen der drei
 Lastfallklassen an und schreibt darunter **jeden Beiwert mit seinem Zustand**

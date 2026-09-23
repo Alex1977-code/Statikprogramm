@@ -335,11 +335,86 @@ def test_probelauf_nur_mit_fliessen():
         solver.solve_static = echt
 
 
+def test_adaptiv_prueft_das_modell():
+    """Befund B063 (23.09.2026): Oberflaeche (Netz → Adaptiv vernetzen) und
+    Kommandozeile (--adaptiv) riefen adaptiv_vernetzen, also je Durchgang
+    solve_static, ohne vorher Model.check. Gemessen am L-Prisma mit dem
+    FEHLER „Kombination 'K9': Lastfall 'LF-X' unbekannt“: die Kommandozeile
+    rechnete zwei Durchgaenge (1493 → 1918 Elemente), speicherte das Modell
+    und nannte den FEHLER erst danach (rc 2); die Oberflaeche meldete ihn
+    nie, sondern „Adaptiv vernetzt: 2 Durchgänge …“. Geprueft wird wie vor
+    jeder Rechnung - nach dem Vernetzen, denn vorher meldet die Pruefung auch
+    „keine Elemente definiert“, was erst das Netz behebt."""
+    import contextlib
+    import importlib
+    import io
+    import tempfile
+    from unittest import mock
+    from statik3d import cli
+    from statik3d.model import Combination
+    G = importlib.import_module("statik3d.gui.main")      # gui.main() verdeckt das Modul
+    meldung = "Kombination 'K9': Lastfall 'LF-X' unbekannt"
+
+    def modell(mit_fehler=True):
+        m, _k = _kleine_platte(0.06)
+        # Die Ecken der eingespannten Flaeche (x = 0) zusaetzlich als
+        # Knotenlager: Model.check zaehlt das Flaechenlager allein nicht und
+        # meldet sonst „keine Lagerung definiert“ (am Stand ec6448c gemessen,
+        # obwohl solve_static die Platte rechnet) - die Gegenprobe braeche
+        # daran ab statt am FEHLER, um den es geht.
+        for kn in [i for i in range(m.nn) if abs(float(m.nodes[i][0])) < 1e-12]:
+            m.fix(kn, "all")
+        if mit_fehler:
+            m.combinations["K9"] = Combination("K9", {"LF-X": 1.0}, "ULS")
+        return m
+
+    def texte(aufrufe):
+        return [str(c.args[0]) for c in aufrufe.call_args_list if c.args]
+
+    with tempfile.TemporaryDirectory() as d:
+        p, p2 = os.path.join(d, "platte.json"), os.path.join(d, "platte_adaptiv.json")
+        modell().save(p)
+        aus, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(aus), contextlib.redirect_stderr(err):
+            rc = cli.main([p, "--adaptiv", "1", "--speichern", p2])
+        check("Kommandozeile --adaptiv mit FEHLER: Rückgabe 2", rc == 2, f"rc {rc}")
+        check("… ohne einen Durchgang",
+              "Adaptiv Durchgang" not in aus.getvalue(),
+              str([z.strip()[:60] for z in aus.getvalue().splitlines() if "Adaptiv Durchgang" in z]))
+        check("… ohne gespeicherte Datei", not os.path.exists(p2))
+        check("… mit dem FEHLER auf stderr", meldung in err.getvalue(), err.getvalue().strip()[:120])
+
+    def oberflaeche(m):
+        s = mock.MagicMock()
+        s.model = m
+        s._netzaenderung_bestaetigen.return_value = True
+        s._fortschritt.return_value = True
+        s._trotzdem_rechnen = G.MainWindow._trotzdem_rechnen.__get__(s)
+        with mock.patch.object(G, "QtWidgets") as qw:
+            qw.QInputDialog.getInt.return_value = (1, True)          # eine Runde
+            qw.QInputDialog.getDouble.return_value = (10.0, True)    # Ziel 10 %
+            with contextlib.redirect_stdout(io.StringIO()):
+                G.MainWindow.geometrie_adaptiv_vernetzen(s)
+        return s, texte(s.log.appendPlainText)
+
+    s, log = oberflaeche(modell())
+    check("Oberfläche mit FEHLER: die Meldung kommt",
+          any(meldung in t for t in texte(s.error)), str(texte(s.error))[:160])
+    check("… kein Durchgang gerechnet", not any("Adaptiv Durchgang" in z for z in log),
+          str([z[:60] for z in log if "Adaptiv Durchgang" in z]))
+    check("… und keine Erfolgsmeldung", not any("Adaptiv vernetzt" in t for t in texte(s.info)),
+          str(texte(s.info))[:160])
+    s, log = oberflaeche(modell(mit_fehler=False))
+    check("Gegenprobe ohne FEHLER: die Schleife rechnet ihre zwei Durchgänge",
+          sum(1 for z in log if "Adaptiv Durchgang" in z) == 2 and not texte(s.error),
+          f"{sum(1 for z in log if 'Adaptiv Durchgang' in z)} Durchgänge, error {texte(s.error)}")
+
+
 def main():
     for t in (test_gleichfoermige_spannung_hat_fehler_null, test_integral_ueber_den_tetraeder,
               test_feiner_ist_besser, test_neue_kantenlaengen_und_budget, test_adaptive_runde,
               test_hexaeder_und_keile_im_schaetzer, test_mittelfeld_wird_bevorzugt,
-              test_probelauf_nur_mit_fliessen):
+              test_probelauf_nur_mit_fliessen, test_adaptiv_prueft_das_modell):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

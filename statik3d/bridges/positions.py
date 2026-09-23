@@ -479,8 +479,13 @@ class Umhuellende:
 
     @property
     def eta_bestimmt(self) -> bool:
-        """False, wenn Nachweise verlangt waren, aber in keiner Stellung
-        einer gefuehrt wurde - dann ist eta = 0 keine Ausnutzung."""
+        """False, wenn keine Stellung gerechnet ist oder Nachweise verlangt
+        waren, aber in keiner Stellung einer gefuehrt wurde - dann ist
+        eta = 0 keine Ausnutzung. Ohne jedes Ergebnis galt eta bis zum
+        23.09.2026 als bestimmt: „eta = 0.000“ nach zwei am FEHLER
+        gescheiterten Stellungen (Befund B064)."""
+        if not self.ergebnisse:
+            return False
         return not self.unvollstaendig or any(e.nachgewiesen for e in self.ergebnisse)
 
     def warnhinweis(self) -> str:
@@ -498,7 +503,11 @@ class Umhuellende:
 
     def kurztext(self) -> str:
         """Die eine Zeile nach dem Rechnen: eta mit maßgebender Stellung und
-        dem Warnhinweis - oder, wenn nichts nachgewiesen wurde, genau das."""
+        dem Warnhinweis - oder, wenn nichts gerechnet oder nachgewiesen
+        wurde, genau das."""
+        if not self.ergebnisse:
+            return ("eta nicht bestimmt – keine Stellung gerechnet"
+                    + (f" ({len(self.fehlerhaft)} mit FEHLER, siehe Protokoll)" if self.fehlerhaft else ""))
         if not self.eta_bestimmt:
             return "eta nicht bestimmt – kein Nachweis geführt" + self.warnhinweis()
         return (f"eta = {self.eta:.3f}"
@@ -547,7 +556,10 @@ class Umhuellende:
                          f"{eta}  {st.beschreibung}"
                          + ("  (NICHT VOLLSTÄNDIG NACHGEWIESEN)" if e.warnungen else ""))
         z.append("-" * 78)
-        if not self.eta_bestimmt:
+        if not self.ergebnisse:
+            z.append("Umhüllende: eta nicht bestimmt – keine Stellung gerechnet"
+                     + (" (siehe „Nicht gerechnet“)" if self.fehlerhaft else ""))
+        elif not self.eta_bestimmt:
             z.append("Umhüllende: eta nicht bestimmt – in keiner Stellung wurde ein "
                      "Nachweis geführt (siehe „Nicht nachgewiesen“)")
         else:

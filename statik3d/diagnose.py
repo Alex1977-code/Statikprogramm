@@ -2100,10 +2100,12 @@ def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
     # Satz in jedem Befund, der ein neues Netz nahelegt - bis zum 23.09.2026
     # sagten Luecke und Riss nur „Neu vernetzen mit denselben Einstellungen
     # ergibt dasselbe Netz". Der Weg „Netz → Vernetzen" der Oberflaeche
-    # (gui.main._vernetzen) loescht aber nur die Elemente, nicht die Knoten
-    # des alten Netzes (netzknoten_loeschen ruft nur modell_vernetzen); ohne
-    # Qt nachgestellt: 6173 tet4, aber FEHLER „Knoten ohne Element" 1229
-    # (dritte Gegenpruefung).
+    # (gui.main._vernetzen) loeschte bis zum 23.09.2026 nur die Elemente,
+    # nicht die Knoten des alten Netzes; ohne Qt nachgestellt: 6173 tet4,
+    # aber FEHLER „Knoten ohne Element" 1229 (dritte Gegenpruefung, Befund
+    # B062). Seither entfernt er die Knoten der geloeschten Elemente, an
+    # denen nichts mehr haengt: zweites Netz 1241 Knoten, keine „Knoten
+    # ohne Element".
     neu_vernetzen = ("Stammt das Netz aus einem Import oder ist es von Hand geändert, den "
                      "Körper neu vernetzen (Netz → Vernetzen); der eigene Vernetzer ergibt mit "
                      "denselben Einstellungen dasselbe Netz.")

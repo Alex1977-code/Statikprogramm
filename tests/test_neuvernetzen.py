@@ -292,13 +292,92 @@ def test_master_facetten_folgen_dem_knotenloeschen():
           ist_f != vor_f, f"{len(vor_f)} Facetten, alle verschoben")
 
 
+def test_oberflaeche_entfernt_die_alten_knoten():
+    """Befund B062 (23.09.2026): „Netz → Vernetzen“ der Oberflaeche
+    (gui.main._vernetzen) loeschte je Objekt nur die Elemente des alten
+    Netzes (_netz_loeschen), die Knoten blieben stehen. Am L-Prisma h 0,12
+    ohne Qt nachgestellt: beim zweiten Vernetzen 2470 statt 1241 Knoten,
+    Abnahme FEHLER „Knoten ohne Element“ 1229, und vor jeder Rechnung fragte
+    die Abnahme nach. ``mesher.modell_vernetzen`` entfernt sie
+    (Model.netzknoten_loeschen). Hier der echte Oberflaechenweg, self als
+    Attrappe, zweimal mit denselben Einstellungen - verglichen mit
+    ``modell_vernetzen``."""
+    import importlib
+    import time
+    from unittest import mock
+    from statik3d import diagnose as dg
+    G = importlib.import_module("statik3d.gui.main")      # gui.main() verdeckt das Modul
+
+    def gui_vernetzen(m):
+        s = mock.MagicMock()
+        s.model = m
+        s._fortschritt_t0 = time.time()
+        s._netz_loeschen = G.MainWindow._netz_loeschen.__get__(s)
+        with mock.patch.object(G, "QtWidgets"):       # nur processEvents im Weg
+            G.MainWindow._vernetzen(s, list(m.flaechen.values()), list(m.koerper.values()))
+        return [str(c.args[0]) for c in s.log.appendPlainText.call_args_list if c.args]
+
+    def verwaist(m):
+        return sum(int(b.wert) for b in dg.abnahme(m) if b.pruefung == "Knoten ohne Element")
+
+    def hat_knoten(m, p):
+        return bool(np.any(np.all(np.abs(np.asarray(m.nodes) - np.asarray(p)) < 1e-12, axis=1)))
+
+    def grob():
+        # Grober als die Netzdichte (dort 108 mm, 22 551 tet4): vier
+        # Vernetzungen sollen Sekunden dauern, nicht Minuten
+        pk = pruefkoerper()
+        pk.netz.koerper_h = {"Unten": 0.25, "Oben": 0.25}
+        return pk
+
+    ref = grob()
+    _vernetzen(ref)
+    _vernetzen(ref)
+    m = grob()
+    # Ein gesetzter Knoten, an dem noch nichts haengt (etwa fuer eine
+    # spaetere Linie), gehoert zu keinem Netz: er muss das Neuvernetzen
+    # ueberleben - netzknoten_loeschen() ohne Kandidaten naehme ihn mit.
+    konstruktion = (5.0, 5.0, 5.0)
+    m.add_node(*konstruktion)
+    gui_vernetzen(m)
+    n1, e1, v1 = m.nn, len(m.elements), verwaist(m)
+    check("Oberfläche, erstes Netz: so viele Knoten wie modell_vernetzen, dazu der gesetzte",
+          n1 == ref.nn + 1 and e1 == len(ref.elements) and v1 <= 1,
+          f"{e1} Elemente, {n1} Knoten (modell_vernetzen {len(ref.elements)}, {ref.nn}), "
+          f"ohne Element {v1}")
+    log = gui_vernetzen(m)
+    check("**Oberfläche, zweites Netz: die Knoten des alten Netzes sind weg**",
+          m.nn == n1 and len(m.elements) == e1,
+          f"{len(m.elements)} Elemente, {m.nn} Knoten (erstes Netz {n1})")
+    check("… keine weiteren „Knoten ohne Element“ in der Abnahme", verwaist(m) == v1,
+          f"{verwaist(m)} (erstes Netz {v1})")
+    check("… der gesetzte Knoten ohne Element bleibt", hat_knoten(m, konstruktion))
+    check("… und das Protokoll nennt die entfernten",
+          any("Knoten des alten Netzes entfernt" in z for z in log),
+          str([z for z in log if "Knoten" in z][:3]))
+    # Lager und Fuge zeigen nach dem Umnummerieren auf Knoten des neuen
+    # Netzes. (Gerechnet wird hier nicht: die Kontaktrechnung dieses Modells
+    # braucht Minuten; dass es nach dem Neuvernetzen rechnet, pruefen die
+    # Faelle oben.)
+    am_netz = np.zeros(m.nn, bool)
+    am_netz[[int(x) for e in m.elements for x in e.nodes]] = True
+    lager = [int(k) for x in m.surface_supports for k in (x.nodes or [])]
+    fuge = [int(k) for p in m.contact_pairs for k in (p.slave_nodes or [])] + \
+           [int(k) for p in m.contact_pairs for f in (p.master_faces or []) for k in f]
+    check("… Lager und Fuge hängen an Knoten des neuen Netzes",
+          lager and fuge and all(0 <= k < m.nn and am_netz[k] for k in lager + fuge),
+          f"{len(lager)} Lagerknoten, {len(fuge)} Fugenverweise, "
+          f"{sum(1 for k in lager + fuge if not (0 <= k < m.nn and am_netz[k]))} daneben")
+
+
 def main():
     print("=" * 92)
     print("STATIK3D - ein neu vernetztes Modell muss dasselbe rechnen")
     print("=" * 92)
     for t in (test_neuvernetzen_rechnet_dasselbe,
               test_fuge_und_lager_ueberleben_das_neuvernetzen,
-              test_master_facetten_folgen_dem_knotenloeschen):
+              test_master_facetten_folgen_dem_knotenloeschen,
+              test_oberflaeche_entfernt_die_alten_knoten):
         try:
             t()
         except Exception as ex:               # noqa: BLE001

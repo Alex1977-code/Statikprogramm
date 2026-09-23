@@ -3721,8 +3721,14 @@ class Model:
         self._knotenverweise_abbilden({n: n - 1 for n in range(i + 1, self.nn + 1)})
         return ""
 
-    def netzknoten_loeschen(self) -> int:
+    def netzknoten_loeschen(self, kandidaten=None) -> int:
         """Alle Knoten entfernen, an denen **nichts mehr haengt** - in einem Zug.
+
+        ``kandidaten``: nur diese Knoten duerfen weg - die Knoten der eben
+        geloeschten Elemente; None = jeder Knoten, an dem nichts haengt. Die
+        Oberflaeche (gui.main._vernetzen) gibt sie an, denn ein gesetzter
+        Konstruktionsknoten, an dem noch nichts haengt, gehoert zu keinem
+        Netz und bleibt stehen (Befund B062, 23.09.2026).
 
         Das sind die Knoten eines geloeschten Netzes: :meth:`elemente_loeschen`
         nimmt die Elemente, die Knoten blieben. Nach einem Neuvernetzen
@@ -3794,6 +3800,12 @@ class Model:
         for f in self.flaechen.values():
             merke(f.ecken or [])
             merke(getattr(f, "integrierte_knoten", None) or [])
+        if kandidaten is not None:
+            # Wer kein Kandidat ist, bleibt - wie ein benutzter Knoten
+            frei = np.ones(nn, bool)
+            idx = [int(k) for k in kandidaten if 0 <= int(k) < nn]
+            frei[idx] = False
+            benutzt |= frei
         weg = np.flatnonzero(~benutzt)
         if not len(weg):
             return 0
