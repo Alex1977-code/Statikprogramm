@@ -878,8 +878,11 @@ def test_abnahme_ohne_fehlalarm_am_freien_netz():
             L_t = max(np.linalg.norm(P[a] - P[b]) for a in range(4) for b in range(a + 1, 4))
             k.elemente = [i for i in els if i != 765]
             bef = dg._abnahme_volumenbilanz(m, "K", k, k.elemente)
-            check("  ein fehlender kleiner Tetraeder, der nicht flach ist (t/L 6,2 %): FEHLER",
-                  len(els) == 1483 and 0.06 < 2 * V_t / A_t / L_t < 0.065
+            # Seit 23.09.2026 hat der Wuerfel 1085 statt 1483 Tetraeder (die
+            # Startpunkte des Vernetzers halten Abstand zur Huelle); Element 765
+            # ist wieder ein kleiner, nicht flacher Tetraeder, t/L 6,75 %.
+            check("  ein fehlender kleiner Tetraeder, der nicht flach ist (t/L 6,8 %): FEHLER",
+                  len(els) == 1085 and 0.06 < 2 * V_t / A_t / L_t < 0.07
                   and [(b.stufe, b.pruefung, b.wert) for b in bef]
                   == [("FEHLER", "Seiten im Inneren", 4.0)],
                   f"{len(els)} tet4, t/L {2 * V_t / A_t / L_t * 100:.2f} %: "
@@ -1457,16 +1460,14 @@ def test_abnahme_luecke_im_netzrand():
         ergebnisse.append((len(k.elemente), bef, dg.abnahme(m)))
     n_el, bef, fehler = ergebnisse[0]
     lu = [b for b in bef if b.pruefung == "Lücke im Netzrand"]
-    check("L-Prisma h = 0,25, Standardweg: eine WARNUNG „Lücke im Netzrand“, kein FEHLER",
-          n_el == 821 and len(bef) == 1 and len(lu) == 1 and lu[0].stufe == "WARNUNG"
-          and not fehler,
+    # Seit 23.09.2026 (Vernetzer-Sitzung, Antwort auf diesen Befund) ist die
+    # Luecke geschlossen: innen() zaehlt die Kante einmal, die Startpunkte
+    # halten Abstand zur Huelle, tetraedern_treu verlangt den Rauminhalt.
+    # 634 statt 821 Tetraeder, Rauminhalt auf Rundung gleich der Huelle.
+    check("L-Prisma h = 0,25, Standardweg: keine „Lücke im Netzrand“ mehr, kein Befund",
+          n_el == 634 and not bef and not lu and not fehler,
           f"{n_el} Elemente; " + "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g}" for b in bef)
           + " | FEHLER: " + "; ".join(b.pruefung for b in fehler))
-    text = lu[0].text if lu else ""
-    check("  mit Volumen, Ort und einer Abhilfe, die nicht „neu vernetzen“ heißt",
-          bool(lu) and abs(lu[0].wert - 5.5155e-4) < 2e-7 and "0.921" in text
-          and "0.412" in text and "dasselbe Netz" in text and "sweepen" in text,
-          text[:400])
     check("  neu vernetzen ergibt dasselbe Netz und denselben Befund",
           ergebnisse[1][0] == n_el and [(b.pruefung, round(b.wert, 9)) for b in ergebnisse[1][1]]
           == [(b.pruefung, round(b.wert, 9)) for b in bef],
@@ -1477,8 +1478,6 @@ def test_abnahme_luecke_im_netzrand():
     # Seite im Deckel geloescht wie mit „Elemente löschen" in der Oberflaeche
     # (Model.elemente_loeschen): eine Luecke. Der Text sagte „Neu vernetzen
     # mit denselben Einstellungen ergibt dasselbe Netz" ohne Einschraenkung.
-    check("  der Text nennt neu vernetzen für importierte oder von Hand geänderte Netze",
-          "von Hand geändert" in text and "Neu vernetzen mit denselben" not in text, text[-420:])
     m = Model("L")
     m.add_material(Material.steel("S235"))
     k = _extrudiert(m, L, 0.0, 0.4)
@@ -1498,15 +1497,19 @@ def test_abnahme_luecke_im_netzrand():
     nachher = [b for b in dg.abnahme(m, warnungen=True) if b.pruefung in _NETZ_BEFUNDE
                or b.pruefung == "Lücke im Netzrand"]
     check("  von Hand gelöschtes Element: Lücke, und neu vernetzen stellt das Netz wieder her",
-          n_frei == 6173 and not vorher and len(lu) == 1 and "von Hand geändert" in lu[0].text
+          n_frei == 6155 and not vorher and len(lu) == 1 and "von Hand geändert" in lu[0].text
           and len(k.elemente) == n_frei and not nachher,
           f"{n_frei} tet4, vorher {len(vorher)} Befunde, Lücke {[round(b.wert, 7) for b in lu]}, "
           f"neu vernetzt {len(k.elemente)} tet4, {len(nachher)} Befunde")
 
-    # T-Prisma, h = 0,1: die Luecke liegt an der einspringenden Kante
-    # (1,2 | 0,4). Zwei Seiten liegen im Inneren, zwei stehen in die
-    # Aussparung hinaus (bis 29,2 mm) - erst mit ihnen liegt der Rand der
-    # Gruppe auf der Huelle. Es fehlen 2,43e-5 m^3 (Bilanz 1,17e-5 m^3).
+    text = lu[0].text if lu else ""
+    check("  der Text nennt neu vernetzen für importierte oder von Hand geänderte Netze",
+          "von Hand geändert" in text and "Neu vernetzen mit denselben" not in text, text[-420:])
+    # T-Prisma, h = 0,1: bis zum 23.09.2026 lag hier die Luecke an der
+    # einspringenden Kante (1,2 | 0,4): zwei Seiten im Inneren, zwei in die
+    # Aussparung hinaus (bis 29,2 mm), 2,43e-5 m^3 fehlten (Bilanz 1,17e-5).
+    # Seit der Kur im Vernetzer (tetraedern_treu verlangt den Rauminhalt und
+    # fuehrt die Huelle an echten Dellen nach) ist sie geschlossen.
     T = [(0, 0), (2, 0), (2, 0.4), (1.2, 0.4), (1.2, 1.5), (0.8, 1.5), (0.8, 0.4), (0, 0.4)]
     m = Model("T")
     m.add_material(Material.steel("S235"))
@@ -1515,9 +1518,8 @@ def test_abnahme_luecke_im_netzrand():
         mesher.modell_vernetzen(m, [], workers=1, hs={"K": 0.1})
     bef = [b for b in dg.abnahme(m, warnungen=True) if b.pruefung in _NETZ_BEFUNDE
            or b.pruefung == "Lücke im Netzrand"]
-    check("T-Prisma h = 0,1, Standardweg: Lücke an der einspringenden Kante, kein FEHLER",
-          len(k.elemente) == 5997 and len(bef) == 1 and bef[0].pruefung == "Lücke im Netzrand"
-          and bef[0].stufe == "WARNUNG" and abs(bef[0].wert - 2.434e-5) < 1e-8,
+    check("T-Prisma h = 0,1, Standardweg: keine Lücke mehr an der einspringenden Kante, kein Befund",
+          len(k.elemente) == 5825 and not bef,
           f"{len(k.elemente)} Elemente; "
           + "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g}" for b in bef))
 

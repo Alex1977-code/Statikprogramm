@@ -4612,6 +4612,107 @@ Zum Schluss wird **gerechnet, nicht gehofft**. Im Protokoll steht je Körper:
   liegt, und ihr größter Abstand dazu. Verglichen wird geometrisch, nicht
   Dreieck gegen Dreieck: ein ebenes Viereck lässt sich über beide Diagonalen
   teilen, ohne dass eine der beiden falsch wäre.
+  Misslingt die Messung, steht seit 23.09.2026 **0,0** im Bericht („nicht
+  gemessen", wie überall im Programm) und der Grund daneben; vorher stand 1,0 —
+  die Zusage, der Rand liege auf der Hülle. Aus 83,3 % wurden so 100,0 %, der
+  Eintrag „Randtreue unter der Grenze" fiel aus `netzguete()["gerissen"]`, und der
+  zweite Anlauf unterblieb (Statik3D-Sitzung, gemessen 22.09.2026).
+
+**Die Lücke im Netzrand (23.09.2026).** Die Statik3D-Sitzung fand an fünf von neun
+L-, T- und U-Prismen einen fehlenden Tetraeder an der Oberfläche (0,003 bis 0,113 %
+des Körpers) und am Würfel mit angehobener Deckelecke einen ganz eingeschlossenen.
+Drei Ursachen, jede gemessen:
+
+1. **Die Strahlenzählung zählte eine Kante doppelt.** Trifft der Strahl vom
+   Schwerpunkt genau die gemeinsame Kante zweier Hülldreiecke, zählten beide
+   (`l >= 0`): aus einem Durchgang wurden zwei, die Parität kippte, `_innere` warf den
+   Tetraeder hinaus. Am L-Prisma lag der Schwerpunkt genau über der Kantenmitte,
+   weil die beiden übrigen Ecken im Grundriss denselben Mittelpunkt hatten — kein
+   Zufall, sondern Geometrie. Jetzt entscheidet die Kante wie für einen um (ε, ε²)
+   verschobenen Punkt: eine baryzentrische Koordinate auf null zählt nach dem
+   Vorzeichen ihrer Ableitung nach x, bei null nach y (Simulation of Simplicity,
+   `_seite_mit_ausweichung`). Das ist für alle Dreiecke derselbe verschobene Punkt,
+   darum stimmt die Parität auch an Ecken und an Faltkanten der Projektion.
+2. **Ein Startpunkt stand vor der Hülle.** Die Gitterpunkte hielten Abstand zu den
+   Hüll**punkten** (0,65 h), nicht zur Hüllfläche: mitten in einer Facette kann ein
+   Punkt 0,85 mm vor der Hülle stehen (Buchse, h = 15 mm). Der flache Tetraeder
+   zwischen ihm und der Facette hat eine riesige Umkugel und ist nie Delaunay — das
+   Hülldreieck wird nicht zurückgewonnen, im Netz bleibt eine Pyramide über dem
+   Hüllviereck (0,0015 %). Jetzt `RANDABSTAND_FLAECHE` = 0,4 h zur Hüllfläche, derselbe
+   Abstand, den die Verfeinerung für ihre Umkugelmittelpunkte hält. Nebenwirkung:
+   weniger Elemente (L-Prisma h = 0,25: 821 → 634, Würfel 16 461 → 15 995).
+3. **Die Nachführung gab zu früh auf.** `tetraedern_treu` hörte bei 0,01 % Fehlbetrag
+   und 99,9 % Randtreue auf, nach höchstens drei Runden — genau die Lücken, die die
+   Abnahme dann fand. Jetzt gilt der **Rauminhalt** (`TREU_VOLUMEN` = 10⁻⁶: über dem
+   Rauschen der aussortierten flachen Tetraeder, 3,6·10⁻⁷ an der Platte mit Bohrung,
+   und dreißigfach unter der kleinsten echten Lücke), bis zu acht Runden
+   (`TREU_RUNDEN`), Abbruch nach vier Runden ohne Verbesserung (`TREU_STILLSTAND`; die
+   Konvergenz ist nicht monoton: 1,37 → 0,12 → 0,12 → 0,03 → 0,06 → 0,0076 %). Und es
+   werden nur **echte Dellen** nachgeführt (`echte_dellen`): eine freie Seite, die
+   kein Hülldreieck ist und eine Ecke mit Abstand zur Hülle hat oder deren Ecken
+   keinen gemeinsamen glatten Fleck haben (`_glatte_flecken`: Herkunftsflächen, die
+   an ihren gemeinsamen Hüllkanten unter 30° aneinanderstoßen, sind ein Fleck — RFEM
+   legt einen Zylindermantel als zwei Halbzylinder an). Der Diagonaltausch eines
+   windschiefen Hüllvierecks ist keine Delle; mit dem Rauminhalt allein als
+   Kriterium trieb er den Würfel in acht Runden und 7 % mehr Elemente.
+
+Abnahme (`test_luecke_im_netzrand_geschlossen`): an allen neun Prismen und am Würfel
+ist die Summe der Elementvolumina gleich dem Hüllvolumen auf Rundung, die Abnahme
+meldet keine „Lücke im Netzrand" mehr. Rücknahmeprobe: alle drei Kuren zurück, und
+die Zahlen der Statik3D-Sitzung sind wieder da (821 Tetraeder und 0,079 %,
+663 und 0,113 %) — jede allein lässt sich nicht zurücknehmen, die anderen ändern die
+Punktmenge, und der Gleichstand tritt nicht ein.
+
+**Was bleibt, und warum.** An einer **rechtwinkligen einspringenden Kante** liegt der
+Kantenpunkt nach Thales auf *jeder* Umkugel einer Netzkante quer durch die Aussparung;
+die Zerlegung entscheidet den Gleichstand nach den übrigen Punkten, und kein Punkt
+auf der Hülle kann ihn brechen. Das Halbieren der Hülldreiecke an der Delle hilft oft
+(einer Stichprobe über 69 Ziellängen an drei Prismen blieben 11 statt 18 mit
+Fehlbetrag), divergiert aber auch (nach 14 Runden 1 417 Dellen statt 3). Schutzpunkte
+außerhalb der Kante wurden gebaut und **verworfen**: 0,2 L vor der Wand liegen sie in
+den Umkugeln der Wanddreiecke, und die Wand geht verloren (34 → 237 Dellen). Der
+Neustart mit anderer Gitterphase ebenso (0,99 und 1,75 % statt 0,0076 %). Was bleibt,
+wird **gemeldet** („Lücke im Netzrand bleibt nach N Durchgängen — x % des Rauminhalts,
+k freie Seiten neben der Hülle"), nicht still gelassen. Das Heilmittel ist eine
+bedingte Zerlegung: Steiner-Punkte **auf** der Hülle, wo Netzkanten sie kreuzen
+(Segment- und Facettenrückgewinnung wie in TetGen) — offen.
+
+**Einbaufolge (23.09.2026).** Die Körper werden parallel vernetzt, eingebaut aber in
+der **festen** Folge der Körperliste, nicht in der des Fertigwerdens: die Knoten- und
+Elementnummern entstehen beim Einbau, und zwei Läufe derselben Datei — oder zwei
+Maschinen mit verschiedener Kernzahl — müssen dieselben Nummern ergeben. Am Drehlager
+behielten vorher 18 von 3 731 Knoten ihre Nummer zwischen zwei Läufen (Statik3D-
+Sitzung). Geprüft mit zwei verschieden feinen Körpern Knoten für Knoten
+(`test_nummern_haengen_nicht_am_prozess`); die Stückzahl allein stimmte auch vorher.
+
+**Randknoten und Seitenmitten auf der wahren Fläche (V2, 23.09.2026).** Die Hülle sind
+Facetten; ein Punkt mitten auf einer Facette liegt um den Sehnenpfeil neben der Geometrie
+(18° je Bogenabschnitt: r·(1 − cos 9°) = 1,23 % des Halbmessers). Für tet4 ist das die
+übliche Facettierung. Für gekrümmte Elemente nicht: eine einzige gerade gebliebene
+Bohrungskante ließ das Element höchster Ordnung an der Nachweisstelle 23 N/mm² danebenliegen
+(Element-Sitzung, gemessen 23.09.2026). Darum gibt es je Randfläche eine Abbildung auf ihre
+wahre Fläche (`flaechenprojektoren`, heute der Zylinder aus `zylinderpassung`, radial), und
+sie wirkt an zwei Stellen: die **neuen Hüllpunkte** der Nachführung (`huelle_verfeinern`:
+Kantenmitte und Schwerpunkt) landen auf dem Zylinder statt auf der Sehne, und die
+**Seitenmitten der tet10** auf Randkanten (`_seitenmitten_auf_flaeche`) ebenso — die
+Randkanten kommen dabei aus dem Netzrand selbst, nicht aus den Hülldreiecken, weil die
+Zerlegung ein Hüllviereck über die andere Diagonale teilen darf. Danach wird jedes berührte
+Element geprüft: die Jacobi-Determinante muss an allen Integrationspunkten positiv bleiben
+(`solid.jacobi_volumen`); wo nicht, bleibt die Kante gerade, und das Protokoll nennt die
+Elemente („4 tet10 behalten gerade Kanten … Elemente [5059, 5061, 5062, 5063]; dort feiner
+vernetzen"). Gemessen am Hohlzylinder r = 50/100 mm der Element-Sitzung: h = 35 mm — alle
+1 042 Randkanten-Mitten auf dem Zylinder (vorher bis 1,231 mm daneben), kleinste bezogene
+Jacobi-Determinante 0,162, kein Rückfall; h = 20 mm — 727 gesetzt, 4 Rückfälle an Splittern
+der Bohrung. Der Nachtrag verlangt dort örtliche Verfeinerung statt der geraden Kante; das
+steht noch aus, der Rückfall ist laut.
+
+**Ordnung je Körper (V1, 23.09.2026).** `Volumenkoerper.ordnung` (1 oder 2) geht vor
+der Netzeinstellung (`mesher.koerper_ordnung`). Ein Körper mit Ordnung 2 bekommt
+tet10 und geht dafür an den freien Vernetzer, auch wenn er sonst abgebildet oder
+gesweept würde — Sechsflächner zweiter Ordnung neben tet4-Nachbarn koppelt heute
+niemand. An der gemeinsamen Fläche stimmen die Eckknoten überein; die Mittenknoten
+koppelt `assemble.mittelknoten_bindungen` (Element-Sitzung). Umlauf geprüft:
+speichern, laden, dieselbe Elementliste (`test_ordnung_je_koerper`).
 
 **Randseiten je Fläche.** Auf der Randfläche eines Volumenkörpers gibt es
 keine Schalenelemente; Flächenlasten, Kontaktfugen und Flächenlager brauchen
@@ -5165,6 +5266,27 @@ Erweiterungen, damit der Sweep über Platten hinauskommt:
    Nicht geschnitten werden Flächen mit Öffnungen, Flächen mit Bögen oder Polylinien und
    Flächen, die einem **zweiten Körper** gehören — der Schnitt risse sonst die Fuge zum
    Nachbarn auf.
+4a. **Zerlegen an einer vorhandenen Schleife** (`sweep._an_schleife_teilen`, 23.09.2026):
+   ein Zylinder, dessen Mantel axial in zwei Ringe geteilt ist — an der
+   Zwischenkreislinie liegt ein Nachbar an, eine Fläche gibt es dort nicht. Die Kappen
+   passen, aber je Randlinie stehen **zwei** Wände übereinander („4 Wandflächen zu
+   2 Randlinien"); so scheitern **23 der 40** nicht sweepbaren Drehlagerkörper. Die
+   Ebene des Bogens ist Kandidat (`schnittebenen` nimmt jetzt auch die Ebenen der
+   Bögen), sie schneidet keine Fläche, aber die Linien in ihr, deren zwei Flächen auf
+   verschiedenen Seiten liegen, schließen sich zu Schleifen: die Schnittfläche besteht
+   aus **vorhandenen** Linien, mehrere Schleifen werden Außenrand und Öffnungen.
+   Prüfkörper: gestapelter Zylinder → 2 Blöcke in 0,01 s, 120 hex8, Güte 0,309.
+4b. **Budget.** Die Fußabdrücke suchen kombinatorisch; an V30 des Drehlagers (144 Flächen,
+   12 Öffnungen je Kappe) probierten sie 255 s lang, an V34 217 s — und fanden nichts
+   (gemessen 23.09.2026). Jetzt zuerst die billigen Schnitte (Ebene, Schleife), dann die
+   Fußabdrücke mit dem Rest von `ZERLEGEN_ZEIT_S` = 20 s und `ZERLEGEN_VERSUCHE` = 40; der
+   Abbruch steht im Protokoll („Zerlegen nach Zeit (20 s) abgebrochen"), und
+   `zerlegbar()` merkt sich sein Ergebnis je Körper, weil `sweepbar()` vor dem Vernetzen
+   dieselbe Frage stellt. Dabei fiel ein Fehler auf: der Fußabdruck hieß nach der Zahl
+   der Schnitte, nach einem verworfenen Versuch bekam der nächste denselben Namen, und
+   das Zurücknehmen räumte den gültigen mit weg (`KeyError 'V30§2'` an fünf der sechs
+   dicken Körper). Die Namen zählt jetzt `Schnittwerk.marke` durch und vergibt keinen
+   zweimal.
 5. **Kappenlinien angleichen** (`sweep.kappenlinien_angleichen`, 22.09.2026): ein Schnitt
    setzt zwei neue Ecken in die eine Kappenschleife; die andere hat sie nicht. Die Kappen
    decken sich weiterhin, aber die Wandprüfung sucht zu **jeder** Grundlinie genau eine
