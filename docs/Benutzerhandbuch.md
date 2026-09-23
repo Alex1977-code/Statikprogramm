@@ -2761,6 +2761,112 @@ nachgeholt (Protokoll unten). Die integrierten Linien stehen an der Fläche
 ist das ohne Folge, ihre Kopplung nimmt die Netzknoten innerhalb des
 Kreises.
 
+**Ein Statik3D-Modell (`.json`) an ein vorhandenes anhängen** (Haken „an
+vorhandenes Modell anhängen“ im Importdialog). Übertragen wird das ganze
+Modell: Knoten, Elemente mit allen Angaben (nur Zug/Druck, Exzentrizität,
+Gelenkfedern), Knoten-, Linien- und Flächenlager samt Nichtlinearität,
+Linien, Flächen, Volumenkörper, Stäbe mit ihren Nachweisangaben, Gelenke,
+Kombinationen, Ermüdungslasten, Kontaktbedingungen, Kontaktpaare,
+Spaltelemente, Kopplungen, Punktmassen, Federn, Starrkörper, Situationen,
+Anschlüsse, Beul- und Volumenbereiche, Layer, Unterlagen, die Wasserdruck-
+und Windgeneratoren und je Lastfall alle Lastarten einschließlich Flächen-
+und Linienlasten an Objekten, Zwangsverformungen, Vorspannung und Übermaß.
+Bis zum 22.09.2026 kamen nur Knoten, Elemente, Knotenlager, vier Lastarten
+und die Stäbe an – am Hallenrahmen fielen 72 Kombinationen, ein Linienlager,
+ein Flächenlager, zwei Ermüdungslasten und eine Linienlast ohne Meldung weg;
+jetzt kommen alle an. Was das Protokoll dabei sagt:
+
+* **„Aus der Quelle übertragen:“** – die Anzahl je Objektart.
+* **„Umbenannt …“** – ein Name, den es im Ziel schon gibt, bekommt eine
+  Nummer (`S1` → `S1_2`, `F1` → `F1_2`), und alles in der Quelle, was ihn
+  nennt – Lasten, Kontaktbedingungen, Kombinationen, Layer –, zeigt auf das
+  umbenannte Objekt. Das gilt auch für die Gruppe der Elemente eines
+  umbenannten Volumenkörpers (`V1` → `V1_2`); über sie findet eine
+  Kontaktbedingung ihren Körper. Bis zum 23.09.2026 behielten die Elemente
+  `V1`, und die Fuge der Quelle löste im Versuch den Block des anderen
+  Körpers. Ebenso folgen die Ermüdungslasten, deren Zustand eine Kombination
+  ist (am CBG alle 20), der umbenannten Kombination; bis dahin zeigte eine
+  solche Ermüdungslast ohne Meldung auf die gleichnamige Kombination des
+  Ziels. Werkstoffe, Querschnitte, Dicken, Kombinationen und
+  Ermüdungslasten mit gleichem Namen **und** gleichem Inhalt werden nicht
+  doppelt angelegt; bei gleichem Namen und anderem Inhalt behält das
+  angehängte Teil seinen eigenen (am Hallenrahmen: `S355` der Halle mit
+  Sorte und f_u, `S355` des Rahmens ohne – die Halle rechnet mit `S355_2`).
+* **Lastfall gibt es im Ziel schon** – die Lasten kommen in denselben
+  Lastfall; es gelten dessen Eigenschaften (Einwirkung, ψ, γ, Grundlast,
+  Situation, Theorie). Weichen die der Quelle ab, nennt die Warnung jede
+  Abweichung mit beiden Werten – dann im Lastfall prüfen. Ein neuer Lastfall
+  bringt alle seine Eigenschaften mit.
+* **Eigengewicht** gilt je Lastfall für alle Elemente. Hatten Ziel und Quelle
+  in einem Lastfall verschiedenes, warnt das Protokoll: es erfasst jetzt auch
+  die Elemente des anderen Teils oder fehlt ihnen.
+* **Nicht übertragen** und mit Anzahl gemeldet werden die Berichtseinträge
+  (sie zeigen Ergebnisse des Quellmodells) und die Stellungen (eine
+  Stellung, die verschiebt oder dreht, bewegt ohne Gruppenangabe alle Knoten
+  ohne Knotenlager – auch die auf Linienlagern –, also auch die des Ziels).
+  Einstellungen – Netz, Nachweise, Plastizität, Einheiten, Bericht – bleiben
+  die des Ziels; weichen die der Quelle ab, steht es im Protokoll.
+* **Situationen mit Stellung:** Eine Situation der Quelle behält den Namen
+  ihrer Stellung, und die Modellprüfung meldet „Stellung … unbekannt“, bis die
+  Stellung im Ziel angelegt ist. Hat das Ziel eine Stellung desselben Namens,
+  zeigt die Situation stattdessen auf einen neuen Namen (`Offen` → `Offen_2`),
+  und die Warnung „Situationen der Quelle nennen eine Stellung, die es im
+  Ziel unter demselben Namen gibt …“ nennt jede solche Situation. Bis zum
+  23.09.2026 rechnete sie still in der Stellung des Ziels. Im Versuch hob die
+  Stellung `Offen` der Quelle die Knoten eines Rahmens um 1,0 m, die
+  gleichnamige des Ziels bewegte nichts; am Lastknoten der Quelle ergaben
+  sich allein 4,7572 mm, angehängt 1,7876 mm, ohne Meldung. Solange die
+  Modellprüfung „Stellung … unbekannt“ meldet, ist das ein Fehler:
+  **Berechnen** weist dann in allen vier Rechenarten ab, auch für die
+  Lastfälle des Ziels; **▶ Alle Stellungen rechnen** meldet den Fehler bei
+  jeder Stellung und rechnet keine; die Kommandozeile gibt 2 zurück. Nicht
+  gesperrt ist der Schwingungsnachweis des Verschlusses: *Nachweis führen*
+  prüft das Modell vorher nicht. Im Versuch (Schützhaut mit Wasserdruck,
+  daran der Rahmen angehängt) rechnete er trotz des Fehlers die
+  Eigenfrequenzen in Luft und Wasser und den Lastfall der Druckschwankung.
+  Ruft ein Skript `solver.solve_all` trotzdem auf, kommt es auf „Lastfälle
+  gleichzeitig (Ketten)“ an. Mit der Vorgabe nacheinander – in einem Skript
+  gilt sie, solange es weder `parallel.einstellungen_laden()` noch
+  `parallel.configure(ketten=…)` aufruft – bricht die ganze Rechnung mit
+  „Situation 'S-offen_2': Stellung 'Offen_2' unbekannt“ ab, ohne
+  Teilergebnis. Mit mehreren Ketten scheitert jede Kette ganz, die einen
+  Lastfall dieser Situation enthält, und die Ausnahme („Kette …: Situation
+  'S-offen_2': …“) trägt die Lastfälle der übrigen Ketten als Teilergebnis –
+  im Versuch mit zwei Ketten LF1 des Ziels. Legt man die Stellung der Quelle
+  unter dem neuen Namen im Ziel an, rechnet der Lastfall im selben Versuch
+  wie allein (4,7572 mm).
+* **Anschluss:** Ein Knoten der Quelle, der auf einem Knoten des Ziels
+  liegt, wird mit ihm zusammengeführt („1 Knoten der Quelle lagen auf Knoten
+  des Ziels …“); jeder Verweis darauf folgt, auch Ecken und integrierte
+  Knoten von Flächen, Punktmassen, Starrkörper und Zwangsverformungen.
+  Knoten, die innerhalb des Ziels oder innerhalb der Quelle schon
+  aufeinanderliegen, bleiben getrennt, etwa die beiden Seiten einer
+  ausgeführten Kontaktfuge. Bis zum 23.09.2026 wurde über das ganze Modell
+  zusammengeführt. Gemessen an zwei Blöcken mit der Fuge „Ausfall bei Zug“
+  unter 200 kN Zug: allein 0,0 N am Fundament, angehängt −198 152,7 N, weil
+  danach 24 von 24 Spaltelementen einen Knoten mit sich selbst verbanden
+  (an `Kopfplatte_HEA_200.json` 117 von 117). Im selben Versuch sind es
+  jetzt 0,0 N wie allein. Liegt ein Knoten des einen Teils auf einer solchen
+  Doppelstelle des anderen, ist nicht eindeutig, woran er anschließen soll.
+  Dann bleibt er getrennt, und die Warnung „An … Stellen liegen in Ziel oder
+  Quelle schon mehrere Knoten aufeinander …“ nennt die Zahl und die erste
+  Stelle. Dort ist zu prüfen, ob die Teile verbunden sein sollen.
+
+Gegenprobe: Rahmen mit angehängtem Hallenrahmen, alter gegen neuen Weg (am
+23.09.2026 nach der Nachbesserung wiederholt): in allen fünf Lastfällen
+dieselben Verschiebungen (Abweichung 0), dazu jetzt die 72 Kombinationen.
+
+Die Nachbereitung der übrigen Importe (RFEM 6, DXF, IFC, …) führt
+aufeinanderliegende Knoten weiterhin über das ganze Modell zusammen. Seit dem
+22.09.2026 folgen dabei auch die Ecken und integrierten Knoten der Flächen.
+Am `Drehlager_V15_4_export.rf6` lagen vorher 64 von 3128 Flächenecken
+neben den Knoten ihrer Randlinien (bis 1,8 m), weitere 1380 zeigten hinter
+das Ende der Knotenliste, ebenso 10 von 168 integrierten Knoten; jetzt
+jeweils 0.
+„Spiel geben“ liest diese Ecken: an den 73 zylindrischen Körpern des
+Drehlagers entstehen beim Trennen von den Nachbarn jetzt 359 statt 363
+Knotenkopien (V16 und V29 je 2 weniger), die 24 Linienkopien bleiben.
+
 ## 8 Nachweise nach EC3
 
 Stäbe (Kette von Stabelementen) werden beim Erzeugen von Stabzügen und beim
