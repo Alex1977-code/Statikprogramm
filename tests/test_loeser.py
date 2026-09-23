@@ -1787,6 +1787,105 @@ def test_loeser_nachweis_haelt_mkl_cbwr_fest():
           b.get("umgebung") == "AUTO" and b.get("code") == 2, str(b))
 
 
+_CBWR_VORGABE = r"""
+import json, os, sys
+sys.path.insert(0, os.getcwd())
+vorher = os.environ.get("MKL_CBWR")
+from tests.test_loeser import _zugstab
+from statik3d import parallel
+from statik3d.solver import solve_static
+parallel.configure(solver_backend="auto")
+m, _L, _A = _zugstab()
+n = solve_static(m).info["loeser_nachweis"]
+print("ERGEBNIS " + json.dumps({"vorher": vorher, "cbwr": n.get("mkl_cbwr"),
+                                 "loeser": n.get("loesungen")}))
+"""
+
+_CBWR_KETTEN = r"""
+import json, os, sys
+sys.path.insert(0, os.getcwd())
+if __name__ == "__main__":
+    from statik3d import parallel, solver
+    from statik3d.examples_lib import hall_frame_example
+    parallel.configure(solver_backend="auto", ketten=2)
+    m = hall_frame_example()
+    namen = list(m.load_cases)
+    gerufen = {"n": 0}
+    echt = solver._cases_in_ketten
+    def merken(*a, **kw):
+        gerufen["n"] += 1
+        return echt(*a, **kw)
+    solver._cases_in_ketten = merken
+    erg = solver.solve_cases(m, cases=namen)
+    print("ERGEBNIS " + json.dumps({"ketten": gerufen["n"], "cbwr": {
+        k: (r.info.get("loeser_nachweis") or {}).get("mkl_cbwr") for k, r in erg.items()}}))
+"""
+
+
+def _probe(code: str, env: dict):
+    """Einen Probeprozess rechnen lassen; Rueckgabe (dict oder None, Text)."""
+    import json
+    import subprocess
+    wurzel = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    p = subprocess.run([sys.executable, "-c", code], cwd=wurzel, env=env,
+                       capture_output=True, text=True, timeout=600)
+    zeile = next((z for z in p.stdout.splitlines() if z.startswith("ERGEBNIS ")), "")
+    if p.returncode != 0 or not zeile:
+        return None, (p.stderr or p.stdout)[-200:]
+    return json.loads(zeile[len("ERGEBNIS "):]), ""
+
+
+def test_mkl_cbwr_auto_ist_vorgabe():
+    """MKL_CBWR=AUTO ist seit dem 23.09.2026 die Vorgabe (Entscheidung des
+    Anwenders): bitgleich wiederholbar, am Drehlager LF1 gemessen rund +11 %
+    Zeit. Ohne Variable rechnet MKL darum mit AUTO (MKL_CBWR_Get: Code 2);
+    ein vom Anwender gesetzter Wert hat Vorrang (COMPATIBLE: Code 3). Eigene
+    Prozesse, denn MKL liest die Variable nur beim ersten Laden - und der
+    Testprozess hat sie beim Import des Pakets selbst schon gesetzt."""
+    try:
+        import pypardiso                                        # noqa: F401
+    except Exception:                                           # noqa: BLE001
+        check("Pardiso fehlt - MKL_CBWR-Vorgabe uebersprungen", True)
+        return
+    basis = {k: v for k, v in os.environ.items() if k != "MKL_CBWR"}
+    basis.update(OMP_NUM_THREADS="1", MKL_NUM_THREADS="1", PYTHONUTF8="1")
+    d, fehler = _probe(_CBWR_VORGABE, basis)
+    if not check("Probeprozess ohne MKL_CBWR laeuft durch", d is not None, fehler):
+        return
+    cb = d.get("cbwr") or {}
+    check("vor dem Import war MKL_CBWR nicht gesetzt", d.get("vorher") is None, str(d.get("vorher")))
+    check("PARDISO hat geloest", d.get("loeser") == {"pardiso": 1}, str(d.get("loeser")))
+    check("ohne Variable rechnet MKL mit AUTO (Umgebung AUTO, Code 2)",
+          cb.get("umgebung") == "AUTO" and cb.get("code") == 2 and cb.get("zweig") == "AUTO", str(cb))
+    d2, fehler2 = _probe(_CBWR_VORGABE, dict(basis, MKL_CBWR="COMPATIBLE"))
+    if not check("Probeprozess mit MKL_CBWR=COMPATIBLE laeuft durch", d2 is not None, fehler2):
+        return
+    cb2 = d2.get("cbwr") or {}
+    check("ein gesetzter Wert hat Vorrang (COMPATIBLE, Code 3)",
+          cb2.get("umgebung") == "COMPATIBLE" and cb2.get("code") == 3, str(cb2))
+
+
+def test_mkl_cbwr_in_kettenprozessen():
+    """Die Kettenprozesse (spawn) laden MKL selbst - auch dort muss AUTO
+    gelten, ohne dass der Anwender etwas setzt. Geprueft am Loeser-Nachweis
+    jedes Lastfalls, den die Ketten zurueckgeben."""
+    try:
+        import pypardiso                                        # noqa: F401
+    except Exception:                                           # noqa: BLE001
+        check("Pardiso fehlt - MKL_CBWR in Ketten uebersprungen", True)
+        return
+    basis = {k: v for k, v in os.environ.items() if k != "MKL_CBWR"}
+    basis.update(OMP_NUM_THREADS="1", MKL_NUM_THREADS="1", PYTHONUTF8="1")
+    d, fehler = _probe(_CBWR_KETTEN, basis)
+    if not check("Probeprozess mit zwei Ketten laeuft durch", d is not None, fehler):
+        return
+    check("es wurde wirklich in Ketten gerechnet", d.get("ketten") == 1, str(d.get("ketten")))
+    cb = d.get("cbwr") or {}
+    check("jeder Lastfall aus den Kettenprozessen rechnete mit AUTO (Code 2)",
+          bool(cb) and all((v or {}).get("code") == 2 for v in cb.values()),
+          ", ".join(f"{k}: {(v or {}).get('code')}" for k, v in cb.items()))
+
+
 def main():
     for f in (test_pardiso_faellt_nicht_still_aus, test_ketten_teilen_sich_die_threads,
               test_pardiso_zaehlt_gestoerte_pivots, test_residuum_gehoert_zur_loesung,
@@ -1794,6 +1893,7 @@ def main():
               test_loeser_nachweis_nennt_das_ausweichen,
               test_zusammenfassung_nennt_gestoerte_pivots,
               test_loeser_nachweis_haelt_mkl_cbwr_fest,
+              test_mkl_cbwr_auto_ist_vorgabe, test_mkl_cbwr_in_kettenprozessen,
               test_abbruchmeldung_nennt_ihren_lauf,
               test_ausweichen_erreicht_den_fortschritt_auch_im_kontakt,
               test_ausweichgrund_erreicht_ergebnis_bericht_und_modalanalyse,

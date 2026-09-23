@@ -504,6 +504,19 @@ die Funktion hat, sonst „unbekannt“. Die Namen der Codes stammen aus
 Kopie in Intels Repository `intel/mklnn`, `src/mkl_cat.h`). Gemessen passt
 das: ohne Variable 1 (BRANCH_OFF), `AUTO` 2, `COMPATIBLE` 3.
 
+**`AUTO` ist seit dem 23.09.2026 die Vorgabe** (Entscheidung des Anwenders).
+`os.environ.setdefault("MKL_CBWR", "AUTO")` steht an drei Stellen, die alle
+vor dem ersten Laden von MKL liegen: ganz oben in `run_gui.py` (Start der
+Oberfläche und der exe), beim Import des Pakets (`statik3d/__init__.py`, das
+auch jeder Kettenprozess zuerst lädt) und in `solver.mkl_threads`. Ein
+gesetzter Wert hat Vorrang. Belegt in `tests/test_loeser.py`: ohne Variable
+meldet MKL im eigenen Prozess Code 2, mit `COMPATIBLE` Code 3
+(`test_mkl_cbwr_auto_ist_vorgabe`); in zwei Rechenketten meldet jeder der fünf
+Lastfälle der Halle Code 2 (`test_mkl_cbwr_in_kettenprozessen`). Gegen den
+Stand davor gefahren, scheitern beide mit Code 1. Der Selbsttest der exe
+schreibt `MKL_CBWR` ins Protokoll und endet mit Fehler, wenn MKL nicht mit
+`AUTO` rechnet, obwohl nichts anderes vorgegeben ist.
+
 **Das Residuum gehört zur Lösung.** `LinearSolver.solve` setzt `residuum` bei
 jedem Aufruf auf nan und erst nach der Prüfung auf den gemessenen Wert. Ohne
 Prüfung (keine verlangt, mehrere rechte Seiten, b = 0) bliebe sonst die Zahl
