@@ -5205,6 +5205,34 @@ auftritt**. `umh.kurve()` liefert `(Winkel, η, u_max)` für die Kurve über den
 Stellungswinkel. Eine Stellung ohne ausreichende Lagerung wird als Fehler
 ausgewiesen, nicht stillschweigend übergangen.
 
+**Lastfälle einer Stellung.** Mit `faelle` fallen die übrigen Lastfälle aus
+dem Stellungsmodell heraus, auch aus den Kombinationen. Eine gewöhnliche
+Kombination behält ihre übrigen Summanden. Eine oder-verknüpfte
+Ergebniskombination behält ihre Alternativen, jede ohne die fehlenden
+Lastfälle. Eine Alternative oder Kombination, der danach kein Lastfall
+bleibt, entfällt, und das Protokoll nennt sie („Kombinationen ohne Lastfall
+entfallen: …", „Alternativen ohne Lastfall entfallen: EK2 [2]"). Bis zum
+23.09.2026 fiel jede Ergebniskombination in einer Stellung mit `faelle` ohne
+Meldung weg, und der Stabnachweis wich auf die Lastfälle aus. Gemessen an
+einem Kragarm mit EK1 = 1,35·LF1 oder 1,35·LF1 + 1,5·LF2: in der Stellung mit
+`faelle=["LF1", "LF2"]`, also allen Lastfällen, kam η = 0,1702 statt 0,3702
+heraus. Jetzt liefert sie 0,3702 wie die Stellung ohne `faelle`.
+
+Das Antriebsmoment (`antrieb`) kommt mit dem Faktor 1,0 in jede Kombination
+und in jede Alternative, die einen positiven Faktor hat. Bis zum 23.09.2026
+fehlte es in den Alternativen. Am selben Kragarm mit Mz = 50 kNm an der
+Spitze ergab die Ergebniskombination η = 0,3702 wie ohne Antrieb. Mit der
+gleichwertigen gewöhnlichen Kombination waren es 0,4255, und diesen Wert
+liefern jetzt beide.
+
+Ermüdungslasten, deren Zustand in der Stellung fehlt, entfallen mit und
+stehen im Protokoll („Ermüdungslasten ohne Lastfall entfallen: …"). Bei
+einem Verlauf entscheiden seine Lastfälle (`folge`) und nicht `case_max`.
+Bis zum 23.09.2026 entschied `case_max`, das der Nachweis bei einem Verlauf
+nicht liest. Die Verläufe aus einer RFEM-6-Datei (.rf6) haben kein
+`case_max` und entfielen deshalb in jeder Stellung mit `faelle`. Ein Verlauf
+mit Lastfällen außerhalb der Stellung blieb dagegen stehen.
+
 Die Nachweise einer Stellung brauchen die Ergebnisse ihrer Kombinationen.
 Mit `reihe.rechnen(kombinationen=False, nachweise=True)` fehlen sie – im
 Browser über die Operation `stellungen_rechnen` mit `"kombinationen":
@@ -5214,6 +5242,17 @@ GZG-Kombinationen hat, keinen Stabnachweis. Dann ist die Stellung nicht
 `ok`, und der Bericht schreibt „Umhüllende: eta nicht bestimmt" oder „NICHT
 VOLLSTÄNDIG NACHGEWIESEN". Unter „Nicht nachgewiesen" stehen die Warnungen.
 Die Meldung nach dem Rechnen (`umh.kurztext()`) sagt es ebenso.
+
+Auch ohne jede Warnung ist η nur bestimmt, wenn ein Stabnachweis geführt
+wurde. Das ist nicht der Fall mit `reihe.rechnen(nachweise=False)` (im
+Browser `"nachweise": false`) und in einem Modell ohne Stab mit Nachweis.
+Dann ist keine Stellung `ok`, der Bericht zeigt je Stellung „-" statt eines
+η und schreibt „Umhüllende: eta nicht bestimmt", und `umh.kurztext()` lautet
+„eta nicht bestimmt – kein Stabnachweis geführt". Bis zum 23.09.2026 kam in
+diesen Fällen „eta = 0.000", und jede Stellung galt als erfüllt: gemessen an
+der Klappbrücke mit zwei Stellungen, mit `nachweise=False` und ohne Stab. An
+der Stauwand mit drei Stellungen und `"nachweise": false` zeigte der Browser
+auf jeder Karte „η 0,00" grün.
 
 Im Browser zeigt eine Stellung ohne jeden geführten Nachweis auf der Karte
 „η –" und „nicht geführt", in der Tabelle „nicht geführt" und keinen Punkt in

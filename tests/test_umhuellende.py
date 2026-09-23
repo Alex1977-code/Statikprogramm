@@ -691,6 +691,81 @@ def test_stellungsreihe_ohne_kombinationen():
           f"eta {e2.eta:.4f} soll {soll:.4f}, {hinweis}")
 
 
+def _stellungen_eta(kombi: str, *stellungen) -> tuple:
+    """Kragarm (_kragarm_nachweis) in den gegebenen Stellungen gerechnet, mit
+    Nachweisen: ({Stellung: StellungsErgebnis}, Protokoll)."""
+    from statik3d.bridges.positions import Stellungsreihe
+    m, ids = _kragarm_nachweis(kombi)
+    r = Stellungsreihe(m, "Kragarm")
+    for st in stellungen:
+        r.add(st(ids) if callable(st) else st)
+    r.rechnen(kombinationen=True, nachweise=True)
+    return {e.stellung.name: e for e in r.ergebnisse}, r.log
+
+
+def test_stellung_behaelt_ergebniskombination():
+    """Eine Stellung mit einer Liste 'faelle' behaelt die Ergebniskombination
+    und nimmt nur die fehlenden Lastfaelle aus ihren Alternativen. Vorher
+    (bis ec6448c) loeschte _faelle jede Kombination mit leeren factors, also
+    jede Ergebniskombination, ohne Meldung: in der Stellung mit allen
+    Lastfaellen eta 0,1702 statt 0,3702, weil der Nachweis auf die
+    Lastfaelle zurueckfiel (gemessen 23.09.2026)."""
+    from statik3d.bridges.positions import Stellung
+    stellungen = (Stellung("alle", 0.0), Stellung("faelle", 0.0, faelle=["LF1", "LF2"]),
+                  Stellung("nur_LF1", 0.0, faelle=["LF1"]))
+    ek, _ = _stellungen_eta("EK", *stellungen)
+    k, _ = _stellungen_eta("K", *stellungen)
+    e = ek["faelle"]
+    check("faelle mit allen Lastfaellen: EK1 bleibt, eta wie ohne faelle",
+          "EK1" in e.modell.combinations and abs(e.eta - ek["alle"].eta) < 1e-9
+          and ek["alle"].eta > 0.3 and not e.warnungen,
+          f"eta {e.eta:.4f} / ohne faelle {ek['alle'].eta:.4f}, {sorted(e.modell.combinations)}")
+    e1 = ek["nur_LF1"]
+    alt = e1.modell.combinations["EK1"].alternativen if "EK1" in e1.modell.combinations else None
+    check("nur LF1: die Alternativen verlieren LF2, eta wie K2 ohne LF2",
+          alt == [{"LF1": 1.35}, {"LF1": 1.35}] and abs(e1.eta - k["nur_LF1"].eta) < 1e-9,
+          f"{alt}, eta {e1.eta:.4f} / K {k['nur_LF1'].eta:.4f}")
+    # eine Alternative und eine Kombination ganz aus dem fehlenden Lastfall
+    # entfallen - das Protokoll nennt beide
+    from statik3d.bridges.positions import Stellungsreihe
+    m, _ids = _kragarm_nachweis("EK")
+    m.combinations["EK2"] = Combination("EK2", {}, "ULS",
+                                        alternativen=[{"LF1": 1.0}, {"LF2": 1.5}])
+    m.combinations["EK3"] = Combination("EK3", {}, "ULS", alternativen=[{"LF2": 1.5}])
+    m.add_combination("K3", {"LF2": 1.5})
+    r = Stellungsreihe(m, "Kragarm")
+    r.add(Stellung("nur_LF1", 0.0, faelle=["LF1"]))
+    m1 = r.stellungen[0].modell(m, r.log)
+    check("die leer gewordene Alternative entfaellt, die Kombination bleibt",
+          m1.combinations.get("EK2") is not None
+          and m1.combinations["EK2"].alternativen == [{"LF1": 1.0}],
+          str(getattr(m1.combinations.get("EK2"), "alternativen", None)))
+    check("ohne jeden Lastfall entfallen EK3 und K3",
+          "EK3" not in m1.combinations and "K3" not in m1.combinations, str(sorted(m1.combinations)))
+    zeilen = [z for z in r.log if "entfallen" in z]
+    check("das Protokoll nennt die entfallene Alternative und die Kombinationen",
+          any("EK2 [2]" in z for z in zeilen) and any("EK3" in z and "K3" in z for z in zeilen),
+          str(zeilen))
+
+
+def test_antrieb_in_den_alternativen():
+    """Der Antriebslastfall einer Stellung kommt auch in die Alternativen einer
+    Ergebniskombination, nicht nur in factors. Vorher (bis ec6448c) blieb
+    die EK ohne Antrieb: eta 0,3702 wie ohne Antrieb, mit der gleichwertigen
+    K2 0,4255 (Mz 50 kNm an der Spitze, gemessen 23.09.2026)."""
+    from statik3d.bridges.positions import Stellung
+    antrieb = (lambda ids: Stellung("antrieb", 0.0, antrieb=(ids[-1], (0.0, 0.0, 5.0e4))))
+    ek, _ = _stellungen_eta("EK", Stellung("ohne", 0.0), antrieb)
+    k, _ = _stellungen_eta("K", Stellung("ohne", 0.0), antrieb)
+    e = ek["antrieb"]
+    alt = e.modell.combinations["EK1"].alternativen
+    check("jede Alternative traegt den Antrieb mit 1,0",
+          all(a.get("Antrieb antrieb") == 1.0 for a in alt) and len(alt) == 2, str(alt))
+    check("EK und gleichwertige K2 liefern mit Antrieb dasselbe eta",
+          abs(e.eta - k["antrieb"].eta) < 1e-9 and k["antrieb"].eta > k["ohne"].eta + 0.01,
+          f"EK {e.eta:.4f} / K {k['antrieb'].eta:.4f} / ohne Antrieb {k['ohne'].eta:.4f}")
+
+
 def test_keine_warnung_ohne_verlangten_nachweis():
     """Verlangt kein Stab (Bereich, Beulfeld, Anschluss) einen Nachweis, darf
     keine fehlende GZT-Kombination gemeldet werden. Vorher kippte ein Modell
@@ -744,6 +819,8 @@ def main():
               test_lastfall_hoeherer_ordnung_ohne_abgelegtes_ergebnis,
               test_alternative_bei_theorie_I_aus_linearen_lastfaellen,
               test_stellungsreihe_ohne_kombinationen,
+              test_stellung_behaelt_ergebniskombination,
+              test_antrieb_in_den_alternativen,
               test_keine_warnung_ohne_verlangten_nachweis):
         print(f"\n--- {t.__name__} ---")
         try:

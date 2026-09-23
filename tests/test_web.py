@@ -653,6 +653,22 @@ def test_oberflaeche_rendert():
               and all(e.get("warnungen") and e.get("nachgewiesen") is False for e in erg),
               f"eta_bestimmt {B.get('eta_bestimmt')}, unvollstaendig {B.get('unvollstaendig')}, "
               f"{[(len(e.get('warnungen') or []), e.get('nachgewiesen')) for e in erg]}")
+        # Mit Kombinationen, aber ohne verlangten Nachweis: keine Warnung und
+        # trotzdem kein Nachweis. Bis ec6448c kam "eta = 0.000" zurueck, und
+        # jede Karte zeigte "η 0,00" gruen (gemessen 23.09.2026).
+        st, j, _ = c.op(op="stellungen_rechnen", kombinationen=True, nachweise=False)
+        meldung = j.get("message", "")
+        check("ohne verlangten Nachweis: die Meldung nennt kein eta = 0.000",
+              st == 200 and "eta = 0.000" not in meldung and "nicht bestimmt" in meldung, meldung)
+        zustand = rendern("ohne verlangten Nachweis: ")
+        B = zustand.get("stellungen") or {}
+        erg = [x.get("ergebnis") or {} for x in B.get("liste", [])]
+        check("ohne verlangten Nachweis: Uebersicht sagt 'eta nicht bestimmt', "
+              "keine Warnung, nichts nachgewiesen",
+              B.get("eta_bestimmt") is False and len(erg) == 3
+              and all(not e.get("warnungen") and e.get("nachgewiesen") is False for e in erg),
+              f"eta_bestimmt {B.get('eta_bestimmt')}, "
+              f"{[(len(e.get('warnungen') or []), e.get('nachgewiesen')) for e in erg]}")
     finally:
         server.shutdown()
         server.server_close()

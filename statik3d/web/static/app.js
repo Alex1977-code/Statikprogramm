@@ -1073,16 +1073,15 @@ function renderMehr() {
 function etaFarbe(e) { return e > 1 ? 'var(--bad)' : e > 0.85 ? 'var(--warn)' : 'var(--ok)'; }
 
 // Nachweisstand einer gerechneten Stellung aus der Übersicht des Servers:
-// '' (nicht gerechnet oder Fehler), 'ok', 'teil' (Warnungen, aber Stäbe
-// nachgewiesen: η ist keine vollständige Ausnutzung) oder 'ohne' (Warnungen
-// und kein Stab nachgewiesen: η = 0 ist gar keine Ausnutzung). Vorher wurde
-// nur nach η > 1 gefärbt - ohne Kombinationen stand "η = 0,000" grün als
-// erfüllt da (Gegenprüfung 23.09.2026, Beispiel „Stauwand“: 3 Stellungen
-// mit je 13 Warnungen).
+// '' (nicht gerechnet oder Fehler), 'ohne' (kein Stab nachgewiesen, mit oder
+// ohne Warnungen: η = 0 ist gar keine Ausnutzung), 'teil' (Warnungen, aber
+// Stäbe nachgewiesen: η ist keine vollständige Ausnutzung) oder 'ok'. Bis
+// ec6448c galt eine Stellung ohne Warnung als 'ok', auch ohne Nachweis:
+// Stauwand mit "nachweise": false, dreimal „η 0,00“ grün (gemessen 23.09.2026).
 function stellungStand(e) {
   if (!e || e.fehler) return '';
-  if (!(e.warnungen || []).length) return 'ok';
-  return e.nachgewiesen ? 'teil' : 'ohne';
+  if (!e.nachgewiesen) return 'ohne';
+  return (e.warnungen || []).length ? 'teil' : 'ok';
 }
 function anzahlWarnungen(n) { return `${n} Warnung${n === 1 ? '' : 'en'}`; }
 
@@ -1090,7 +1089,7 @@ function anzahlWarnungen(n) { return `${n} Warnung${n === 1 ? '' : 'en'}`; }
 function umhuellendeEta(B) {
   const unvoll = B.unvollstaendig || [];
   if (B.eta_bestimmt === false) {
-    return {kl: 'warn', text: `η nicht bestimmt – in keiner Stellung wurde ein Nachweis geführt (${unvoll.map(esc).join(', ')})`};
+    return {kl: 'warn', text: `η nicht bestimmt – in keiner Stellung wurde ein Nachweis geführt${unvoll.length ? ` (${unvoll.map(esc).join(', ')})` : ''}`};
   }
   return {kl: B.eta > 1 ? 'err' : unvoll.length ? 'warn' : 'ok',
           text: `η = ${fmt(B.eta, 3)}${B.massgebende_stellung ? ` – maßgebend ${esc(B.massgebende_stellung)}` : ''}`
@@ -1110,7 +1109,7 @@ function stellungMeldung(e) {
   const stand = stellungStand(e), w = e.warnungen || [];
   const u = `u max = ${fmt(e.u_max * 1e3, 3)} mm`;
   let h = stand === 'ohne'
-    ? `<div class="msg warn">η nicht bestimmt – kein Nachweis geführt (${anzahlWarnungen(w.length)}) · ${u}</div>`
+    ? `<div class="msg warn">η nicht bestimmt – kein Nachweis geführt${w.length ? ` (${anzahlWarnungen(w.length)})` : ''} · ${u}</div>`
     : `<div class="msg ${e.eta > 1 ? 'err' : stand === 'teil' ? 'warn' : 'ok'}">η = ${fmt(e.eta, 3)}`
       + `${stand === 'teil' ? ` – nicht vollständig nachgewiesen (${anzahlWarnungen(w.length)})` : ''}`
       + ` · ${u}${e.massgebend ? ' · maßgebende Stellung' : ''}</div>`;
