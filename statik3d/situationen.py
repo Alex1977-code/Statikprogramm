@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .model import Model, GRUNDSTELLUNG
+from .model import Model, stellung_unbewegt
 
 
 def situationsmodell(model: Model, name: str = "") -> tuple:
@@ -27,7 +27,7 @@ def situationsmodell(model: Model, name: str = "") -> tuple:
     sit = model.situation(name)
     log: list[str] = []
     m = model
-    if sit.stellung and sit.stellung != GRUNDSTELLUNG:
+    if not stellung_unbewegt(sit.stellung):
         st = model.stellung(sit.stellung)
         if st is None:
             raise ValueError(f"Situation '{sit.name}': Stellung '{sit.stellung}' unbekannt")

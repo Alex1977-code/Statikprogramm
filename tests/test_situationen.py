@@ -348,9 +348,55 @@ def test_abgeschalteter_stab_in_jeder_situation():
           np.allclose(r.u[k0], 0.0) and np.allclose(r.u[k1], 0.0) and r.info.get("inaktiv") == [e_los])
 
 
+def test_stellung_grundstellung_ist_unbewegt():
+    """Befund B108: eine Situation mit stellung = GRUNDSTELLUNG.
+
+    situationsmodell und aktive_elemente rechnen sie als unbewegt mit allen
+    Elementen. Model.check meldete sie am Stand ec6448c (23.09.2026) aber als
+    "FEHLER: Situation 'grund': Stellung 'Grundstellung' unbekannt" - und
+    dieser FEHLER haelt die Kommandozeile mit Exit 2 und den Web-Rechenstart
+    an, obwohl die Rechnung LF1 und LF2 liefert. Die Maske laesst den Wert
+    nicht zu; er kommt ueber JSON, Anhaengen oder die Web-API herein.
+    """
+    import tempfile
+    from statik3d.cli import main as cli_main
+    from statik3d.situationen import situationsmodell
+    m, ids, sec = _balken(2)
+    n0, n1, n2 = ids
+    EI = E * sec.Iy
+    m.add_load_case("LF1", "G")
+    m.load_node(n2, Fz=-F, case="LF1")
+    m.add_load_case("LF2", "G")
+    m.load_node(n2, Fz=-F, case="LF2")
+    m.situationen["grund"] = Situation("grund", stellung=GRUNDSTELLUNG)
+    m.load_cases["LF2"].situation = "grund"
+    zeilen = [z for z in m.check() if "Stellung" in z or "Situation" in z]
+    check("Stellung 'Grundstellung': kein FEHLER in der Modellpruefung", not zeilen, "; ".join(zeilen))
+    ms, aktiv, log = situationsmodell(m, "grund")
+    check("… situationsmodell: das Original, alle Elemente aktiv", ms is m and aktiv is None, str(log))
+    an = solver.solve_all(m)
+    close("LF2 in 'grund' rechnet wie unbewegt: w = PL³/3EI", an.cases["LF2"].u[n2, 2],
+          -F * (2 * L) ** 3 / (3 * EI), 1e-9, "m")
+    tmp = tempfile.mkdtemp()
+    try:
+        quelle = os.path.join(tmp, "grund.json")
+        m.save(quelle)
+        rc = cli_main([quelle, "--still"])
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+    check("Kommandozeile rechnet (kein Exit 2)", rc == 0, f"rc = {rc}")
+    # Gegenprobe: eine wirklich unbekannte Stellung bleibt ein FEHLER
+    m.situationen["grund"].stellung = "gibt es nicht"
+    zeilen = [z for z in m.check() if "Stellung" in z]
+    check("Gegenprobe: unbekannte Stellung bleibt FEHLER",
+          any(z.startswith("FEHLER") and "gibt es nicht" in z for z in zeilen), "; ".join(zeilen))
+
+
 def main():
     for t in (test_abgeschalteter_stab_in_jeder_situation, test_abgeschaltete_elemente, test_stellung, test_stellung_lage_und_wirkung,
-              test_speichern, test_subsystem, test_kombinationen_je_situation):
+              test_speichern, test_subsystem, test_kombinationen_je_situation,
+              test_stellung_grundstellung_ist_unbewegt):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

@@ -275,6 +275,11 @@ class Stellung:
                              + ", ".join(f"'{x}'" for x in unbekannt)
                              + " gibt es im Modell nicht. Vorhanden: "
                              + ", ".join(sorted(m.load_cases)))
+        # remove_load_case nimmt seit dem 23.09.2026 die Ermuedungslasten
+        # schon selbst mit (Befund B105): entfallene und Verlaeufe ohne die
+        # Lastfaelle dieser Stellung. Fuer das Protokoll unten zaehlen sie
+        # trotzdem, darum der Stand davor
+        erm_vorher = {n: list(f.folge or []) for n, f in m.fatigue_loads.items()}
         for name in list(m.load_cases):
             if name not in behalten:
                 m.remove_load_case(name)
@@ -289,11 +294,17 @@ class Stellung:
                or (f.case_min is not None and f.case_min not in behalten)]
         for name in weg:
             del m.fatigue_loads[name]
+        weg = [n for n in erm_vorher if n not in m.fatigue_loads]
+        gekuerzt = [n for n, folge in erm_vorher.items()
+                    if n in m.fatigue_loads and list(m.fatigue_loads[n].folge or []) != folge]
         if log is not None:
             log.append(f"  {self.name}: Lastfälle {', '.join(sorted(behalten))}")
             if weg:
                 log.append(f"  {self.name}: Ermüdungslasten ohne Lastfall entfallen: "
                            + ", ".join(sorted(weg)))
+            if gekuerzt:
+                log.append(f"  {self.name}: Ermüdungslasten mit gekürztem Verlauf (nur die "
+                           "Lastfälle dieser Stellung): " + ", ".join(sorted(gekuerzt)))
 
     def _antrieb(self, m: Model, log: list = None):
         knoten, moment = self.antrieb

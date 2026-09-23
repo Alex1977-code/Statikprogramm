@@ -1590,8 +1590,70 @@ def test_abnahme_luecke_im_netzrand():
           "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g}" for b in bef))
 
 
+def test_falsche_knotenzahl():
+    """Befund B106: ein Element, dessen Knotenzahl nicht zu seinem Typ passt.
+
+    Am Stand ec6448c (23.09.2026) nahm add_element ein hex8 mit sieben
+    Knoten an, check() gab dafuer keine Zeile aus, und erst solve_all brach
+    mit "operands could not be broadcast together" ab. Mit neun Knoten
+    meldete check() einen falschen FEHLER ("zusammenfallende Knoten ...
+    Volumen inf m³"), und ein tet4 mit drei Knoten liess check() selbst mit
+    IndexError abbrechen (diagnose.entartete_elemente), statt eine Liste zu
+    liefern. Richtig: add_element weist die falsche Knotenzahl ab; ein so
+    geladenes Element (JSON, Import) nennt check() als FEHLER mit Soll und
+    Ist, und die Diagnose laesst es aus.
+    """
+    from statik3d import mesher
+    from statik3d.model import Model as _M
+
+    def netz():
+        m = Model()
+        m.add_material(Material.steel("S235"))
+        ids = mesher.grid_box(m, "S235", 1.0, 0.1, 0.1, 2, 1, 1, typ="hex8")
+        for j in range(2):
+            for k in range(2):
+                m.fix(int(ids[0, j, k]), "all")
+        m.load_node(int(ids[2, 1, 1]), Fz=-1000.0)
+        return m
+
+    m = netz()
+    e8 = [int(n) for n in m.elements[1].nodes]
+    for typ, kn, soll in (("hex8", e8[:7], 8), ("hex8", e8 + [e8[0]], 8), ("tet4", e8[:3], 4)):
+        try:
+            m.add_element(typ, kn, "S235")
+            ergebnis = "angenommen"
+        except ValueError as ex:
+            ergebnis = str(ex)
+        check(f"add_element weist {typ} mit {len(kn)} Knoten ab",
+              ergebnis != "angenommen" and f"{len(kn)}" in ergebnis and f"{soll}" in ergebnis,
+              ergebnis[:80])
+    check("… und das Modell bleibt bei zwei Elementen", len(m.elements) == 2, str(len(m.elements)))
+
+    # Geladen wie aus einer JSON-Datei: dort geht nichts ueber add_element
+    for typ, kn, soll in (("hex8", e8[:7], 8), ("hex8", e8 + [e8[0]], 8), ("tet4", e8[:3], 4)):
+        d = netz().to_dict()
+        neu = dict(d["elements"][1])
+        neu["typ"], neu["nodes"] = typ, list(kn)
+        d["elements"].append(neu)
+        mg = _M.from_dict(d)
+        try:
+            zeilen = mg.check()
+            fehler = [z for z in zeilen if z.startswith("FEHLER")]
+            ok = (f"FEHLER: Element 2 ({typ}): {len(kn)} Knoten, erwartet {soll}" in fehler
+                  and not any("zusammenfallenden Knoten" in z for z in fehler))
+            detail = "; ".join(fehler)[:110]
+        except Exception as ex:      # noqa: BLE001
+            ok, detail = False, f"check() warf {type(ex).__name__}: {ex}"
+        check(f"geladen {typ} mit {len(kn)} Knoten: check() nennt Soll und Ist, nichts anderes",
+              ok, detail)
+    # Gegenprobe: das unveraenderte Netz hat keine solche Zeile
+    zeilen = [z for z in netz().check() if "erwartet" in z]
+    check("Gegenprobe: richtiges Netz ohne Knotenzahl-FEHLER", not zeilen, "; ".join(zeilen))
+
+
 def main():
-    for f in (test_abnahme_findet_verdrehten_sechsflaechner,
+    for f in (test_falsche_knotenzahl,
+              test_abnahme_findet_verdrehten_sechsflaechner,
               test_abnahme_ohne_fehlalarm_am_freien_netz,
               test_abnahme_luecken_des_vernetzers_sind_risse,
               test_abnahme_offene_gruppen_sind_kein_riss,

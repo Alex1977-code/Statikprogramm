@@ -1878,6 +1878,38 @@ def test_json_anhaengen_schluessel():
            not ohne_grund, ", ".join(ohne_grund))
 
 
+def test_leerer_standardlastfall_bleibt_wenn_benutzt():
+    """drop_empty_default_case entfernt den leeren LF1 nur, wenn ihn nichts
+    nennt - auch keine Alternative einer oder-EK und kein Verlauf einer
+    Ermuedungslast. Seit dem 23.09.2026 nimmt remove_load_case den Namen dort
+    heraus (Befund B105); ohne diese Schranke fiele ein benutzter Lastfall der
+    Quelldatei samt seinen Verweisen still weg."""
+    from statik3d.importers import _common as C
+    from statik3d.model import FatigueLoad
+
+    def modell():
+        m = Model()
+        m.add_node(0, 0, 0)
+        m.add_load_case("LF-A", "Q")
+        m.load_node(0, Fz=-1.0, case="LF-A")
+        return m
+
+    m = modell()
+    ek = m.add_combination("EK", {}, "FAT")
+    ek.alternativen = [{"LF1": 1.0}, {"LF-A": 1.0}]
+    expect("leerer LF1 als Alternative einer oder-EK bleibt",
+           not C.drop_empty_default_case(m) and "LF1" in m.load_cases
+           and ek.alternativen == [{"LF1": 1.0}, {"LF-A": 1.0}], str(list(m.load_cases)))
+    m = modell()
+    m.fatigue_loads["V"] = FatigueLoad("V", folge=["LF1", "LF-A"], wiederholungen=1e5)
+    expect("leerer LF1 als Glied eines Verlaufs bleibt",
+           not C.drop_empty_default_case(m) and "LF1" in m.load_cases
+           and m.fatigue_loads["V"].folge == ["LF1", "LF-A"], str(list(m.load_cases)))
+    m = modell()
+    expect("Gegenprobe: unbenutzter leerer LF1 entfaellt",
+           C.drop_empty_default_case(m) and "LF1" not in m.load_cases, str(list(m.load_cases)))
+
+
 TESTS = [
     test_dicke_wird_nicht_still_geerbt, test_xlsx_roundtrip, test_dxf, test_abaqus_inp, test_nastran_bdf, test_ifc_parser,
          test_ifc, test_ifc2x3, test_ifc_physical_fallback, test_saf, test_rfem_xlsx,
@@ -1888,7 +1920,8 @@ TESTS = [
          test_json_anhaengen_ermuedung_auf_kombination, test_json_anhaengen_koerpergruppe,
          test_json_anhaengen_stellung_des_ziels, test_json_anhaengen_stellung_protokoll,
          test_json_anhaengen_schluessel,
-         test_entarteter_sechsflaechner_beim_import]
+         test_entarteter_sechsflaechner_beim_import,
+         test_leerer_standardlastfall_bleibt_wenn_benutzt]
 
 
 def main() -> int:

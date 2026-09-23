@@ -7866,7 +7866,8 @@ class MainWindow(QtWidgets.QMainWindow):
                "wind": f"Wind {name} samt seinen Lasten",
                "schweissnaht": f"Schweißnaht {name}",
                "bemassung": f"Bemaßung {name}",
-               "lastfall": f"Lastfall {name} samt seinen Lasten (Kombinationen verlieren ihn)",
+               "lastfall": f"Lastfall {name} samt seinen Lasten (Kombinationen und "
+                           "Ermüdungslasten verlieren ihn)",
                "kombination": f"Kombination {name}",
                "werkstoff": f"Werkstoff {name}", "dicke": f"Dicke {name}"}.get(art)
         if was is None:
@@ -7901,11 +7902,11 @@ class MainWindow(QtWidgets.QMainWindow):
             if name not in m.load_cases:
                 grund = "gibt es nicht"
             else:
-                del m.load_cases[name]
-                for c in m.combinations.values():
-                    c.lastfall_entfernen(name)
-                if m.active_case == name:
-                    m.active_case = next(iter(m.load_cases), "")
+                # Derselbe Weg wie der Knopf "Löschen" unter den Lastfaellen:
+                # auch die Ermuedungslasten verlieren ihn (Befund B105, 23.09.2026)
+                mit = m.remove_load_case(name)
+                if mit:
+                    self.info(f"Lastfall {name} gelöscht - " + "; ".join(mit))
         elif art == "kombination":
             if name not in m.combinations:
                 grund = "gibt es nicht"
@@ -16240,9 +16241,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_all()
 
     def remove_case(self):
-        self.merken(f"Lastfall {self.model.active_case} gelöscht")
-        self.model.remove_load_case(self.model.active_case)
+        name = self.model.active_case
+        self.merken(f"Lastfall {name} gelöscht")
+        mit = self.model.remove_load_case(name)
         self.refresh_all()
+        if mit:
+            self.info(f"Lastfall {name} gelöscht - " + "; ".join(mit))
 
     def auto_combinations(self):
         d = AutoCombinationDialog(self, self.model.design)

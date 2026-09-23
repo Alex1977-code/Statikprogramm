@@ -292,13 +292,95 @@ def test_master_facetten_folgen_dem_knotenloeschen():
           ist_f != vor_f, f"{len(vor_f)} Facetten, alle verschoben")
 
 
+def _passung_und_lagergruppen():
+    """Freier Knoten 0 vor einem Netz aus zwei hex8; ein Kontaktpaar mit
+    Passungsdaten (Einflussflaeche je Slave-Knoten, Randknoten,
+    Lochleibungsgrenze) und ein lokales Flaechenlager mit Normalengruppe auf
+    denselben vier Knoten der Stirnseite."""
+    from statik3d.model import ContactPair, SurfaceSupport
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    frei = m.add_node(-5.0, 0.0, 0.0)
+    ids = mesher.grid_box(m, "S235", 1.0, 0.1, 0.1, 2, 1, 1, typ="hex8")
+    s = [int(ids[2, 0, 0]), int(ids[2, 1, 0]), int(ids[2, 0, 1]), int(ids[2, 1, 1])]
+    cp = ContactPair("F1", slave_nodes=list(s),
+                     master_faces=[[int(ids[0, 0, 0]), int(ids[0, 1, 0]), int(ids[0, 1, 1])]],
+                     grenzpressung=200e6, knotenflaechen={n: 0.0025 for n in s},
+                     rand_knoten=[s[0]])
+    m.contact_pairs.append(cp)
+    ss = SurfaceSupport("SL", nodes=list(s), areas=[0.0025] * 4, lokal=True,
+                        gruppen=[[0, 1, list(s), [0.0025] * 4]])
+    m.surface_supports.append(ss)
+    return m, frei, s, cp, ss
+
+
+def test_passung_und_lagergruppen_folgen_dem_knotenloeschen():
+    """Befund B107: ``_knotenverweise_abbilden`` zog ContactPair.knotenflaechen
+    (Schluessel), ContactPair.rand_knoten und SurfaceSupport.gruppen nicht mit.
+
+    Gemessen am Stand ec6448c (23.09.2026): nach knoten_loeschen(0) waren
+    die Slave-Knoten [8, 10, 9, 11], die Schluessel der Einflussflaechen aber
+    weiter [9, 10, 11, 12] (Knoten 12 gab es nicht mehr), der Randknoten 9
+    und die Gruppenknoten [9, 11, 10, 12]. Slave-Knoten 8 hatte damit keine
+    Einflussflaeche - seine Lochleibungsgrenze wurde 0, also keine -, und
+    der Randknoten, der nicht haften soll, war ein anderer Knoten.
+    """
+    m, frei, s, cp, ss = _passung_und_lagergruppen()
+    grund = m.knoten_loeschen(frei)
+    check("knoten_loeschen(0) gelingt", grund == "", grund)
+    soll = [n - 1 for n in s]
+    check("die Slave-Knoten ruecken auf (das war schon vorher richtig)", cp.slave_nodes == soll,
+          str(cp.slave_nodes))
+    check("**die Einflussflaechen gehoeren zu denselben Slave-Knoten**",
+          sorted(cp.knotenflaechen) == sorted(cp.slave_nodes)
+          and all(abs(a - 0.0025) < 1e-15 for a in cp.knotenflaechen.values()),
+          f"{sorted(cp.knotenflaechen)} gegen {sorted(cp.slave_nodes)}")
+    check("**der Randknoten ist derselbe Knoten wie vorher**", cp.rand_knoten == [soll[0]],
+          f"{cp.rand_knoten} statt {[soll[0]]}")
+    check("**die Knoten der Normalengruppe sind die des Lagers**",
+          ss.gruppen[0][2] == ss.nodes == soll and ss.gruppen[0][3] == [0.0025] * 4,
+          f"{ss.gruppen[0][2]} gegen {ss.nodes}")
+
+    # Tauschen zweier Knotennummern: jeder Verweis folgt dem Knoten
+    m, frei, s, cp, ss = _passung_und_lagergruppen()
+    a, b = s[0], s[3]
+    m.knoten_tauschen(a, b)
+    check("knoten_tauschen: Einflussflaechen, Randknoten und Gruppe folgen",
+          sorted(cp.knotenflaechen) == sorted(cp.slave_nodes) and cp.rand_knoten == [b]
+          and ss.gruppen[0][2] == ss.nodes,
+          f"kf {sorted(cp.knotenflaechen)}, rand {cp.rand_knoten}, gruppe {ss.gruppen[0][2]}")
+
+    # Ein geloeschter Knoten, der in der Normalengruppe steht, faellt samt
+    # seiner Einflussflaeche heraus (die Listen bleiben gleich lang)
+    m, frei, s, cp, ss = _passung_und_lagergruppen()
+    k_los = m.add_node(-6.0, 0.0, 0.0)
+    ss.nodes.append(k_los)
+    ss.areas.append(0.001)
+    ss.gruppen[0][2].append(k_los)
+    ss.gruppen[0][3].append(0.001)
+    m.knoten_loeschen(k_los)
+    check("geloeschter Gruppenknoten faellt mit seiner Flaeche heraus",
+          ss.gruppen[0][2] == s and ss.gruppen[0][3] == [0.0025] * 4 and ss.nodes == s,
+          f"{ss.gruppen[0][2]} / {ss.gruppen[0][3]}")
+
+    # netzknoten_loeschen: der freie Knoten 0 geht, die Verweise folgen
+    m, frei, s, cp, ss = _passung_und_lagergruppen()
+    weg = m.netzknoten_loeschen()
+    check("netzknoten_loeschen: Einflussflaechen, Randknoten und Gruppe folgen",
+          weg == 1 and sorted(cp.knotenflaechen) == sorted(cp.slave_nodes)
+          and cp.rand_knoten == [s[0] - 1] and ss.gruppen[0][2] == ss.nodes,
+          f"weg {weg}, kf {sorted(cp.knotenflaechen)}, rand {cp.rand_knoten}, "
+          f"gruppe {ss.gruppen[0][2]} / {ss.nodes}")
+
+
 def main():
     print("=" * 92)
     print("STATIK3D - ein neu vernetztes Modell muss dasselbe rechnen")
     print("=" * 92)
     for t in (test_neuvernetzen_rechnet_dasselbe,
               test_fuge_und_lager_ueberleben_das_neuvernetzen,
-              test_master_facetten_folgen_dem_knotenloeschen):
+              test_master_facetten_folgen_dem_knotenloeschen,
+              test_passung_und_lagergruppen_folgen_dem_knotenloeschen):
         try:
             t()
         except Exception as ex:               # noqa: BLE001

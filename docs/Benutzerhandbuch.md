@@ -657,6 +657,16 @@ Linie noch braucht, bleiben und werden genannt. Beim Löschen eines Elements
 oder Knotens werden Stabzüge, Flächen, Volumen, Lager, Lasten, Anschlüsse und
 Beulfelder mitgeführt, die Nummern dahinter rücken auf — und alles ist mit
 Rückgängig zurückzunehmen.
+Mit den Nummern wandern seit dem 23.09.2026 auch die **Passungsangaben einer
+Kontaktfuge** (Einflussfläche je Knoten, Randknoten, die nicht haften) und die
+**Normalengruppen eines Flächenlagers** mit; ein gelöschter Knoten fällt dort
+samt seiner Einflussfläche heraus. Vorher blieben sie stehen: im Versuch
+(ein freier Knoten 0 vor einem Netz aus zwei Sechsflächnern gelöscht) hatte
+danach ein Knoten der Fuge keine Einflussfläche mehr — seine
+Lochleibungsgrenze wirkte nicht —, und als Randknoten galt ein anderer
+Knoten als vorher. Nach einem neuen Vernetzen baut das Programm diese Angaben
+ohnehin neu auf; betroffen war das Löschen und Umnummerieren von Knoten im
+fertig vernetzten Modell.
 
 ### Die Geometriekette: Knoten → Linien → Flächen → Volumen
 
@@ -2260,6 +2270,12 @@ an), nicht mehr als getippte Namen.
 Kombinationen zu; nicht mehr genannte fallen in die Grundstellung zurück.
 Was in der Stellung nicht wirkt (Stäbe, Flächen, Volumen, Gelenke, Lager),
 steht in der Stellung selbst — die Maske der Situation zeigt es nur an.
+Nennt eine Situation als Stellung „Grundstellung“ (die Maske lässt das nicht
+zu; es kommt aus einer Modelldatei, beim Anhängen oder über die Web-API
+herein), ist sie unbewegt mit allen Elementen — so rechnet das Programm sie,
+und seit dem 23.09.2026 sagt die Modellprüfung dasselbe. Vorher meldete sie
+„FEHLER: Situation '…': Stellung 'Grundstellung' unbekannt“, und die
+Kommandozeile gab 2 zurück, obwohl die Rechnung durchlief.
 
 **Aus RFEM kommen Situationen von selbst mit.** Eine Strukturmodifikation in
 der Quelldatei ist ein Ausfallszenario: sie schaltet genannte Stäbe und Lager
@@ -3201,6 +3217,34 @@ nur sie gehen in den Nachweis ein; einen oberen oder unteren Zustand, den eine
 solche Last aus einer älteren Datei noch mitführt, liest der Nachweis nicht,
 und die Prüfung meldet ihn nicht.
 
+Dasselbe gilt seit dem 23.09.2026 für **Namen, die es nicht gibt**: ein Glied
+des Verlaufs, das weder Lastfall noch Kombination ist, meldet die
+Modellprüfung vor der Rechnung als FEHLER („Ermuedungslast 'V': Lastfall oder
+Kombination 'WEG' unbekannt“); bei zwei Zuständen gilt das für den oberen und
+den unteren Zustand. Vorher prüfte sie nur diese beiden, auch bei einer Last
+mit Verlauf: am Zugstab-Volumen blieb ein Verlauf LF1, LF2, WEG ohne Meldung
+und kam erst aus der Rechnung als „unvollständig“ (D = 0,3833355, „Ergebnis
+'WEG' fehlt“); ein nie gelesener oberer Zustand 'WEG' neben dem Verlauf LF1,
+LF2 war dagegen ein FEHLER, obwohl die Rechnung D = 0,3833355 „erfüllt“ ergab
+— die Kommandozeile gab 2 zurück, und der Rechenstart im Browser wurde
+abgewiesen.
+
+**Einen Lastfall löschen** (Knopf „Löschen“ unter den Lastfällen, Modellbaum, Web-API)
+nimmt ihn seit dem 23.09.2026 aus allem, was ihn nennt: aus den Faktoren
+**und den Alternativen** jeder Kombination und aus jedem Verlauf einer
+Ermüdungslast. Eine Ermüdungslast aus zwei Zuständen, deren oberer oder
+unterer Zustand er war, entfällt ganz — der fehlende Zustand wird nicht
+still durch den Nullzustand ersetzt, das änderte die Schwingbreite; ebenso
+ein Verlauf, dem kein Glied bleibt. Statuszeile und Protokoll (in der
+Web-API die Antwort) nennen, was mitging („Ermüdungslast 'Z' entfällt: ihr
+oberer Zustand war Lastfall 'LF2'“). Vorher
+nahm der Knopf nur die Faktoren mit: am Zugstab-Volumen mit einer oder-EK über
+LF1, LF2, LF3 standen nach dem Löschen von LF2 die Alternativen und die
+Ermüdungslasten weiter auf LF2, die Modellprüfung meldete FEHLER, und die
+Rechnung brach mit „Lastfall 'LF2' existiert nicht“ ab. Eine Stellung mit
+eigener Lastfallliste nennt im Protokoll jede Ermüdungslast, die so entfällt
+oder deren Verlauf kürzer wird.
+
 **Grundlast.** Ein Lastfall mit dem Haken „Grundlast“ (Maske Lastfall) wirkt
 in jeder direkt gelösten Rechnung mit: in Modellen mit Kontakt oder
 Ausfallstäben bei jedem Lastfall, jeder Kombination und jedem Zustand einer
@@ -3384,8 +3428,20 @@ heißt sie „Kein Nachweis geführt – nicht geführt wurden: …“, und die
 Wesentlichen Ergebnisse nennen dann keine größte Ausnutzung EC3. In der
 Bedienung im Browser (Kap. 12) ist die Nachweiszeile in diesem Fall gelb
 hinterlegt statt grün, bei einer Ausnutzung über 1 rot. Abhilfe:
-Streckgrenze am Werkstoff eintragen (Tabelle *Eigenschaften → Werkstoffe*) oder am
-Stab den Haken „Nachweis nach EC3“ herausnehmen.
+Streckgrenze oder Stahlsorte am Werkstoff eintragen (Tabelle *Eigenschaften →
+Werkstoffe*) oder am Stab den Haken „Nachweis nach EC3“ herausnehmen.
+
+**Stahlsorte ohne f_y.** Bleibt im Werkstoffdialog f_y leer („leer = aus der
+Stahlsorte“) und ist eine Sorte S235 … S460 eingetragen, nehmen die Nachweise
+die Werte der Sorte nach EN 10025-2: bis 40 mm Erzeugnisdicke die obere Stufe
+(S235: f_y = 235 N/mm²), darüber die untere (S235: 215 N/mm²). Ist auch f_u
+leer, kommt f_u ebenso aus der Sorte (S235 bis 40 mm: 360 N/mm²); mit
+eingetragenem f_y und leerem f_u bleibt es bei f_u = 1,3 · f_y. Ein
+eingetragenes f_y geht der Sorte immer vor. Bis zum 23.09.2026 galt die Sorte
+nur über 40 mm, darunter war f_y null: ein IPE 300 aus einem Werkstoff mit
+Sorte S235 und leerem f_y war „nicht geführt“; jetzt hat er dieselbe
+Ausnutzung wie derselbe Träger aus S235 (0,633 am Einfeldträger der
+EC3-Prüfung).
 
 ### Schwingungsnachweis des Verschlusses
 
@@ -4340,6 +4396,15 @@ davon nicht betroffen.
   Hilfsobjekte); und beim Zusammenlegen der Knoten auf gemeinsamen Flächen
   fallen flach gewordene Tetraeder heraus. Scheitert doch ein Element in der
   Elementschleife, nennt die Meldung Nummer, Art, Volumenkörper und Knoten.
+* **Falsche Knotenzahl** (seit 23.09.2026): Ein Element, dessen Knotenzahl
+  nicht zu seinem Typ passt (ein hex8 mit sieben Knoten), nimmt das Programm
+  beim Anlegen nicht an („hex8 braucht 8 Knoten, angegeben sind 7“). Kommt es
+  aus einer Modelldatei, meldet die Modellprüfung „FEHLER: Element 2 (hex8):
+  7 Knoten, erwartet 8“, und die übrigen Prüfungen lassen es aus. Vorher
+  meldete die Prüfung dazu nichts, und erst die Rechnung brach mit „operands
+  could not be broadcast together“ ab; mit neun Knoten kam ein falscher FEHLER
+  „zusammenfallende Knoten“, und ein tet4 mit drei Knoten ließ die Prüfung
+  selbst abbrechen.
 * **Volumen ohne Rauminhalt** gelten nicht als „unvernetzt“. Sie können gar
   kein Netz bekommen, und so fragte das Programm sonst vor jeder Rechnung
   nach einem Netz, das es nie geben kann. Statt der Warnung „ohne Netz“

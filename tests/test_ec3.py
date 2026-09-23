@@ -414,6 +414,44 @@ def test_stab_ohne_streckgrenze_nicht_gefuehrt():
           float(d2.summary().endswith(" - alle erfuellt")), 1.0, 0)
 
 
+def test_sorte_ohne_streckgrenze():
+    """Befund B060: Werkstoff mit Stahlsorte, aber leerem f_y.
+
+    Der Werkstoffdialog sagt bei f_y "leer = aus der Stahlsorte" und
+    speichert dann fy = None. Material.yield_strength nahm die Sorte aber nur
+    fuer t > 40 mm und gab darunter ``fy or 0.0`` zurueck: gemessen am Stand
+    ec6448c (23.09.2026) mit Sorte S235 und leerem f_y 0 N/mm² bei 0 / 10,7 /
+    40 mm und 215 N/mm² bei 41 / 80 mm; ein IPE 300 aus diesem Werkstoff war
+    "nicht geführt" ("Werkstoff Frei ohne Streckgrenze"), obwohl die Sorte
+    eingetragen ist. Richtig ist EN 10025-2 bis 40 mm: 235 / 360 N/mm².
+    Ohne Sorte und ohne f_y bleibt der Stab nicht gefuehrt
+    (test_stab_ohne_streckgrenze_nicht_gefuehrt).
+    """
+    mt = Material("Frei", 210e9, 0.3, 7850.0, 12e-6, None, None, "S235")
+    check("Sorte S235, f_y leer: f_y bei t = 10,7 mm = 235 N/mm²", mt.yield_strength(0.0107), 235e6, 0)
+    check("Sorte S235, f_y leer: f_y bei t = 0 (ohne Dicke) = 235 N/mm²", mt.yield_strength(0.0), 235e6, 0)
+    check("Sorte S235, f_y leer: f_y bei t = 40 mm = 235 N/mm²", mt.yield_strength(0.040), 235e6, 0)
+    check("Sorte S235, f_y leer: f_y bei t = 41 mm = 215 N/mm² (wie bisher)",
+          mt.yield_strength(0.041), 215e6, 0)
+    check("Sorte S235, f_u leer: f_u bei t = 10,7 mm = 360 N/mm²", mt.ultimate_strength(0.0107), 360e6, 0)
+    # Ein ausdrueckliches f_y bleibt vorn - die Sorte ersetzt nur das leere Feld
+    mx = Material("Eigen", fy=300e6, grade="S235")
+    check("f_y 300 mit Sorte S235: f_y bei 10,7 mm bleibt 300 N/mm²", mx.yield_strength(0.0107), 300e6, 0)
+    check("f_y 300 ohne f_u: f_u bleibt 1,3 f_y = 390 N/mm²", mx.ultimate_strength(0.0107), 390e6, 1e-12)
+
+    # Am echten Weg: derselbe Traeger zweimal, einmal aus Material.steel("S235"),
+    # einmal aus dem Werkstoff mit Sorte S235 und leerem f_y
+    m = _traeger_und_stab_ohne_fy()
+    m.materials["Frei"].grade = "S235"
+    an = solver.solve_all(m, design=True)
+    mc, mt_ = an.design.members["Ohne_fy"], an.design.members["Traeger"]
+    print("     Ohne_fy:", mc.status(), repr(mc.fehler), f"util {mc.util:.4f}",
+          "| Traeger:", mt_.status(), f"util {mt_.util:.4f}")
+    check("Stab aus Sorte S235 mit leerem f_y ist geführt (kein fehler)",
+          float(not mc.fehler and mc.status() != "nicht geführt"), 1.0, 0)
+    check("… mit derselben Ausnutzung wie der Träger aus S235", mc.util, mt_.util, 1e-9)
+
+
 def test_frame_parallel_design():
     """Rahmen mit vielen Staeben: Nachweise seriell == parallel (Auftraege)."""
     from statik3d.examples_lib import frame_example
@@ -507,6 +545,7 @@ def main():
     test_schadensakkumulation()
     test_design_driver()
     test_stab_ohne_streckgrenze_nicht_gefuehrt()
+    test_sorte_ohne_streckgrenze()
     test_frame_parallel_design()
     test_nachweisauftrag_traegt_kein_modell()
     nok = sum(1 for r in RESULTS if r[4])

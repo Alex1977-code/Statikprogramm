@@ -759,11 +759,14 @@ def drop_empty_default_case(model: Model, name: str = "LF1") -> bool:
     lc = model.load_cases.get(name)
     if lc is None or len(model.load_cases) < 2 or lc.n_loads:
         return False
+    # Benutzt heisst auch: Glied einer Alternative (oder-EK) oder eines
+    # Verlaufs. remove_load_case nimmt ihn dort seit dem 23.09.2026 heraus
+    # (Befund B105) - ein benutzter Lastfall der Quelldatei bleibt darum hier
     for c in model.combinations.values():
-        if name in c.factors:
+        if name in c.factors or any(name in a for a in c.alternativen):
             return False
     for f in model.fatigue_loads.values():
-        if name in (f.case_max, f.case_min):
+        if name in (f.case_max, f.case_min) or name in (f.folge or []):
             return False
     model.remove_load_case(name)
     return True
