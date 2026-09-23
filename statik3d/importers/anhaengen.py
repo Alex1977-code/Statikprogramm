@@ -27,10 +27,13 @@ innerhalb eines Teils: dort liegen Knoten absichtlich aufeinander (die
 Seiten einer Kontaktfuge). Namen: was es im Ziel schon gibt, bekommt einen
 eindeutigen neuen Namen (``S1`` -> ``S1_2``), und jeder Verweis der Quelle
 folgt ihm - auch die Gruppe der Elemente (sie nennt den Koerper) und die
-Zustaende der Ermuedungslasten, soweit sie Kombinationen sind. Stellungen
+Zustaende der Ermuedungslasten, soweit sie Kombinationen sind. Koerper- und
+Flaechennamen gelten auch dann als vergeben, wenn im Ziel nur eine
+Elementgruppe so heisst. Stellungen
 gehen nicht mit; nennt eine Situation der Quelle eine, die das Ziel unter
 demselben Namen hat, zeigt sie auf einen neuen Namen, den die
-Modellpruefung als unbekannt meldet (``_stellungsverweise``).
+Modellpruefung als unbekannt meldet (``_stellungsverweise``; nicht bei
+einer Stellung namens 'Grundstellung', die das Rechnen uebergeht).
 Werkstoffe, Querschnitte, Dicken, Kombinationen und Ermuedungslasten mit
 gleichem Namen **und** gleichem Inhalt werden nicht doppelt angelegt.
 Lastfaelle gleichen Namens werden wie bisher zusammengelegt; weichen ihre
@@ -45,7 +48,7 @@ from dataclasses import asdict, is_dataclass
 
 import numpy as np
 
-from ..model import Model, ACTION_CATEGORIES
+from ..model import Model, ACTION_CATEGORIES, GRUNDSTELLUNG
 from . import _common as C
 
 #: Uebertragene Schluessel von Model.to_dict() -> Bezeichnung im Protokoll
@@ -258,7 +261,10 @@ class _Anhang:
         # ein neues Trennen dann ab ("schon ausgeführt").
         # Jetzt schliesst nur die Quelle an das Ziel an.
         n, unklar = C.anschluss_zusammenfuehren(self.z, self.base, tol)
-        if n:
+        if n == 1:
+            C.say(self.log, "1 Knoten der Quelle lag auf einem Knoten des Ziels und "
+                            "wurde zusammengeführt")
+        elif n:
             C.say(self.log, f"{n} Knoten der Quelle lagen auf Knoten des Ziels und "
                             "wurden zusammengeführt")
         if unklar:
@@ -278,12 +284,24 @@ class _Anhang:
             zd, qd = getattr(z, art), getattr(q, art)
             self.namen_vergeben(art, zd, list(qd),
                                 lambda n, zd=zd, qd=qd: _inhalt(zd[n]) == _inhalt(qd[n]))
+        # Die Elemente eines Koerpers oder einer Flaeche tragen deren Namen als
+        # Gruppe (_netz), und fugen.py loest ueber die Gruppe. Also gilt ein
+        # Name auch dann als vergeben, wenn im Ziel nur eine Elementgruppe so
+        # heisst, ohne Koerper oder Flaeche (etwa ein DXF-Layer). Gemessen vor
+        # dieser Zeile (23.09.2026): Zielbloecke mit der Gruppe 'V1' links an
+        # einer Quelle mit Koerpern V1/V2 und Fuge KB1 auf V1 - KB1 haengte
+        # auch den Zielblock um (Elemente [0, 2] statt [2]), und die beiden
+        # Zielbloecke teilten danach 2 statt 4 Knoten, ohne Meldung.
+        gruppen_z = {str(e.group) for e in z.elements if e.group}
         for art in ("lines", "flaechen", "koerper", "members", "hinges", "situationen",
                     "joints", "verformungsgrenzen", "beulfelder", "volumenbereiche",
                     "lasteinleitungen", "subsysteme", "layer", "unterlagen",
                     "wasserdruecke", "winde", "schwingungen", "schweissnaehte",
                     "bemassungen"):
-            self.namen_vergeben(art, getattr(z, art) or {}, list(getattr(q, art) or {}))
+            vorhanden = set(getattr(z, art) or {})
+            if art in ("flaechen", "koerper"):
+                vorhanden |= gruppen_z
+            self.namen_vergeben(art, vorhanden, list(getattr(q, art) or {}))
         # Fugen: Kontaktbedingungen und Kontaktpaare teilen sich die Namen -
         # ein Uebermass, ein Spaltelement und eine Kopplung nennen die Fuge
         # beim Namen, gleich ob es eine Bedingung dazu gibt.
@@ -312,7 +330,8 @@ class _Anhang:
     def _stellungsverweise(self) -> None:
         """Stellungen gehen nicht mit (:data:`NICHT_UEBERTRAGEN`). Nennt eine
         Situation der Quelle eine Stellung, die das Ziel unter demselben Namen
-        hat, bekommt der Verweis einen neuen Namen, den es im Ziel nicht gibt.
+        hat, bekommt der Verweis einen neuen Namen, den es im Ziel nicht gibt -
+        ausser dem Namen GRUNDSTELLUNG, den das Rechnen uebergeht.
 
         Warum: sonst loeste ``Model.stellung`` ihn still auf die Stellung des
         Ziels auf, und ``Model.check`` meldete nichts (es prueft nur, ob der
@@ -344,7 +363,18 @@ class _Anhang:
                   | {str(getattr(s, "name", "")) for s in (q.stellungen or [])}
                   | set(genannt))
         for n in genannt:
-            # dieselbe Aufloesung wie beim Rechnen (Model.stellung)
+            # Wie beim Rechnen: situationen.situationsmodell uebergeht eine
+            # Stellung namens GRUNDSTELLUNG, die Situation rechnet unbewegt -
+            # allein wie angehaengt, der Verweis bleibt also stehen. Bis zum
+            # 23.09.2026 wurde auch er umbenannt. Gemessen an einem Winkel aus
+            # HEB 300, dessen Stellung 'Grundstellung' das Lager unter der
+            # belasteten Spitze abschaltet (allein uz = 0,0 mm): der Verweis
+            # hiess danach 'Grundstellung_2', die Modellpruefung meldete
+            # FEHLER, und mit der Stellung der Quelle unter diesem Namen ergab
+            # sich uz = -16,264 mm. Sonst dieselbe Aufloesung wie
+            # Model.stellung.
+            if n == GRUNDSTELLUNG:
+                continue
             if z.stellung(n) is not None:
                 neu = C.unique_name(belegt, n)
                 belegt.add(neu)
@@ -840,7 +870,8 @@ class _Anhang:
             for name, s in q.situationen.items():
                 if s.stellung in self.stellungsverweis:
                     je.setdefault(s.stellung, []).append(self.neu("situationen", name))
-            teile = [f"Situation {', '.join(repr(x) for x in sits)}: Stellung '{alt}' → "
+            teile = [f"Situation{'en' if len(sits) > 1 else ''} "
+                     f"{', '.join(repr(x) for x in sits)}: Stellung '{alt}' → "
                      f"'{self.stellungsverweis[alt]}'" for alt, sits in je.items()]
             C.warn(log, "Situationen der Quelle nennen eine Stellung, die es im Ziel unter "
                         "demselben Namen gibt. Stellungen werden nicht übertragen; damit diese "

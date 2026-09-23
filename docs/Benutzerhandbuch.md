@@ -3057,7 +3057,16 @@ jetzt kommen alle an. Was das Protokoll dabei sagt:
   umbenannten Volumenkörpers (`V1` → `V1_2`); über sie findet eine
   Kontaktbedingung ihren Körper. Bis zum 23.09.2026 behielten die Elemente
   `V1`, und die Fuge der Quelle löste im Versuch den Block des anderen
-  Körpers. Ebenso folgen die Ermüdungslasten, deren Zustand eine Kombination
+  Körpers. Ein Volumenkörper oder eine Fläche der Quelle wird auch dann
+  umbenannt, wenn im Ziel nur eine Elementgruppe so heißt, ohne Körper oder
+  Fläche – etwa ein DXF-Layer. Bis zum 23.09.2026 trugen dann Elemente beider
+  Teile dieselbe Gruppe. Im Versuch lagen zwei Blöcke des Ziels, der untere
+  mit der Gruppe `V1`, an einer Quelle mit den Körpern `V1`/`V2` und einer
+  Fuge auf `V1`: die Fuge hängte auch den unteren Block des Ziels um, und er
+  teilte danach mit dem oberen nur noch 2 statt 4 Knoten, ohne Meldung.
+  Jetzt heißt der Körper der Quelle `V1_2`, die Fuge hängt nur ihn um, und
+  die Blöcke des Ziels teilen weiter 4 Knoten.
+  Ebenso folgen die Ermüdungslasten, deren Zustand eine Kombination
   ist (am CBG alle 20), der umbenannten Kombination; bis dahin zeigte eine
   solche Ermüdungslast ohne Meldung auf die gleichnamige Kombination des
   Ziels. Werkstoffe, Querschnitte, Dicken, Kombinationen und
@@ -3107,10 +3116,18 @@ jetzt kommen alle an. Was das Protokoll dabei sagt:
   'S-offen_2': …“) trägt die Lastfälle der übrigen Ketten als Teilergebnis –
   im Versuch mit zwei Ketten LF1 des Ziels. Legt man die Stellung der Quelle
   unter dem neuen Namen im Ziel an, rechnet der Lastfall im selben Versuch
-  wie allein (4,7572 mm).
+  wie allein (4,7572 mm). Ausgenommen ist eine Stellung namens
+  `Grundstellung`: beim Rechnen wird sie übergangen, die Situation rechnet
+  unbewegt, allein wie angehängt, und der Verweis bleibt stehen. Bis zum
+  23.09.2026 zeigte er auch dann auf einen neuen Namen (`Grundstellung_2`).
+  Im Versuch schaltete die Stellung `Grundstellung` der Quelle das Lager
+  unter der belasteten Spitze eines Winkels ab; allein ergab sich dort
+  0,0 mm. Angehängt meldete die Modellprüfung einen Fehler, und wer die
+  Stellung wie empfohlen unter dem neuen Namen anlegte, bekam −16,264 mm.
+  Jetzt sind es im selben Versuch 0,0 mm wie allein.
 * **Anschluss:** Ein Knoten der Quelle, der auf einem Knoten des Ziels
-  liegt, wird mit ihm zusammengeführt („1 Knoten der Quelle lagen auf Knoten
-  des Ziels …“); jeder Verweis darauf folgt, auch Ecken und integrierte
+  liegt, wird mit ihm zusammengeführt („1 Knoten der Quelle lag auf einem
+  Knoten des Ziels …“); jeder Verweis darauf folgt, auch Ecken und integrierte
   Knoten von Flächen, Punktmassen, Starrkörper und Zwangsverformungen.
   Knoten, die innerhalb des Ziels oder innerhalb der Quelle schon
   aufeinanderliegen, bleiben getrennt, etwa die beiden Seiten einer

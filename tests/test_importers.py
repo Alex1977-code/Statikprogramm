@@ -1493,7 +1493,7 @@ def test_json_anhaengen_doppelknoten_bleiben():
            "nicht, und das Protokoll nennt sie",
            z.nn == 4 + 2 and [(g.node_a, g.node_b) for g in z.gap_elements] == [(1, 2)]
            and z.elements[3].nodes == [5, 0] and len(unklar) == 1
-           and any("1 Knoten der Quelle lagen auf Knoten des Ziels" in x for x in log),
+           and any("1 Knoten der Quelle lag auf einem Knoten des Ziels" in x for x in log),
            f"{z.nn} Knoten, Elemente {[e.nodes for e in z.elements]}\n" + "\n".join(log))
 
 
@@ -1850,6 +1850,207 @@ def test_json_anhaengen_stellung_protokoll():
            "\n".join(zeile) or "keine Zeile")
 
 
+def test_json_anhaengen_stellung_grundstellung():
+    """Eine Stellung darf 'Grundstellung' heissen (gui/main.py prueft den
+    Namen nur auf leer und doppelt), beim Rechnen wird sie aber uebergangen
+    (situationen.situationsmodell: ``sit.stellung != GRUNDSTELLUNG``) - die
+    Situation rechnet unbewegt. Das Anhaengen behandelt den Namen jetzt
+    ebenso und laesst den Verweis stehen. Gemessen am Stand ec6448c
+    (23.09.2026, p8_grundstellung.py: Winkel aus HEB 300, die Stellung
+    'Grundstellung' schaltet das Lager unter der belasteten Spitze ab): die
+    Situation der Quelle zeigte nach dem Anhaengen auf 'Grundstellung_2',
+    die Modellpruefung meldete FEHLER, und wer die Stellung der Quelle wie
+    empfohlen unter diesem Namen anlegte, bekam uz = -16,264 mm statt 0,0 mm
+    wie allein. Hier am Rahmen mit einer Stellung, die um 1,0 m hebt."""
+    from statik3d import examples_lib
+    from statik3d.model import Situation
+    from statik3d.bridges.positions import Stellung
+
+    def quelle(stellung):
+        m = examples_lib.build_example("frame")
+        m.nodes = np.asarray(m.nodes, float) + np.array([50.0, 0.0, 0.0])
+        m.stellungen = [Stellung(stellung, verschiebung=(0.0, 0.0, 1.0))]
+        m.situationen["S-offen"] = Situation("S-offen", stellung=stellung)
+        lc = m.add_load_case("LF-S", "Q", activate=False, situation="S-offen")
+        lc.gravity = [0.0, 0.0, 0.0]
+        m.load_node(2, Fx=1e4, case="LF-S")
+        return m
+
+    def verschiebung(m):
+        """|u| am Lastknoten der Quelle (bei x = 50 m, ueber die Lage gesucht)."""
+        p = np.asarray(examples_lib.build_example("frame").nodes[2], float) + [50.0, 0, 0]
+        i = int(np.argmin(np.abs(np.asarray(m.nodes) - p).max(axis=1)))
+        r = solver.solve_cases(m, ["LF-S"], workers=1)["LF-S"]
+        return float(np.linalg.norm(np.asarray(r.u).reshape(-1, 6)[i, :3]))
+
+    # Dieselbe Stellung unter anderem Namen wirkt: sonst saehe "wie allein"
+    # auch dann gleich aus, wenn die Stellung doch angewandt wuerde
+    bewegt = verschiebung(quelle("Offen"))
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "q.json")
+        quelle("Grundstellung").save(p)
+        allein = verschiebung(Model.load(p))
+        z = examples_lib.build_example("frame")
+        z.stellungen = [Stellung("Grundstellung")]
+        log = []
+        z = import_file(p, model=z, log=log)
+    verweis = z.situationen["S-offen"].stellung
+    chk = [c for c in z.check() if c.startswith("FEHLER") and "Stellung" in c]
+    neuer_name = [x for x in log if "zeigen sie auf einen neuen Namen" in x]
+    expect("Anhaengen: Verweis auf 'Grundstellung' bleibt, keine Meldung",
+           verweis == "Grundstellung" and not chk and not neuer_name,
+           f"Verweis {verweis!r}, Modellpruefung {chk}, Protokoll {neuer_name}")
+    try:
+        angehaengt = verschiebung(z)
+    except (ValueError, RuntimeError) as ex:
+        angehaengt = f"{type(ex).__name__}: {ex}"
+    expect("Anhaengen: Situation auf 'Grundstellung' rechnet unbewegt wie allein",
+           isinstance(angehaengt, float) and abs(bewegt - allein) > 1e-4
+           and abs(angehaengt - allein) <= 1e-9 * allein,
+           f"allein {allein * 1e3:.4f} mm, angehaengt "
+           + (f"{angehaengt * 1e3:.4f} mm" if isinstance(angehaengt, float) else angehaengt)
+           + f", in bewegter Stellung {bewegt * 1e3:.4f} mm")
+
+
+def test_json_anhaengen_koerper_gegen_zielgruppe():
+    """Ein Volumenkoerper oder eine Flaeche der Quelle bekommt auch dann einen
+    neuen Namen, wenn im Ziel nur eine Elementgruppe so heisst, ohne Koerper
+    oder Flaeche - etwa ein DXF-Layer (dxf.py: Element.group = Layer). Sonst
+    tragen Elemente beider Teile dieselbe Gruppe, und
+    fugen.kontaktfuge_ausfuehren haengt alle Elemente der geloesten Gruppe um.
+    Gemessen am Stand ec6448c (23.09.2026, b078_beruehrend.py): Zielbloecke
+    links an der Quelle, der untere mit der Gruppe 'V1'; die Fuge KB1 der
+    Quelle (V1 von V2 loesen) haengte die Elemente [0, 2] um statt nur [2],
+    und die beiden Zielbloecke teilten danach 2 statt 4 Knoten - ohne
+    Meldung. Heisst der untere Zielblock 'L1', wird nur [2] umgehaengt."""
+    from statik3d.model import Material, Volumenkoerper, Flaeche, ShellProp
+    from statik3d import fugen
+
+    def quelle():
+        m = Model("Quelle")
+        m.add_material(Material("S235"))
+        for zz in (0.0, 1.0, 2.0):
+            for (x, y) in ((0, 0), (1, 0), (1, 1), (0, 1)):
+                m.add_node(x, y, zz)
+        u = m.add_element("hex8", [0, 1, 2, 3, 4, 5, 6, 7], "S235", group="V1")
+        o = m.add_element("hex8", [4, 5, 6, 7, 8, 9, 10, 11], "S235", group="V2")
+        m.koerper["V1"] = Volumenkoerper("V1", material="S235", elemente=[u])
+        m.koerper["V2"] = Volumenkoerper("V2", material="S235", elemente=[o])
+        m.flaechen["FF"] = Flaeche("FF", randseiten=[[u, 1], [o, 0]])
+        m.add_kontaktbedingung("KB1", flaechennamen=["FF"], koerpernamen=["V1"])
+        return m
+
+    def ziel(gruppe_unten):
+        """Zwei Bloecke ohne Volumenkoerper links an der Quelle (x = -1 .. 0)."""
+        m = Model("Ziel")
+        m.add_material(Material("S235"))
+        for zz in (0.0, 1.0, 2.0):
+            for (x, y) in ((-1, 0), (0, 0), (0, 1), (-1, 1)):
+                m.add_node(x, y, zz)
+        m.add_element("hex8", [0, 1, 2, 3, 4, 5, 6, 7], "S235", group=gruppe_unten)
+        m.add_element("hex8", [4, 5, 6, 7, 8, 9, 10, 11], "S235", group="X")
+        return m
+
+    def anhaengen(q, z):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "q.json")
+            q.save(p)
+            return import_file(p, model=z, log=[])
+
+    def loesen(gruppe_unten):
+        z = anhaengen(quelle(), ziel(gruppe_unten))
+        gruppen = [e.group for e in z.elements]
+        koerper = {n: [int(e) for e in k.elemente] for n, k in z.koerper.items()}
+        vorher = [list(e.nodes) for e in z.elements]
+        fugen.kontaktfuge_ausfuehren(z, z.kontaktbedingungen["KB1"], [])
+        umgehaengt = [i for i, e in enumerate(z.elements) if list(e.nodes) != vorher[i]]
+        gemeinsam = len(set(z.elements[0].nodes) & set(z.elements[1].nodes))
+        return gruppen, koerper, umgehaengt, gemeinsam
+
+    _g, _k, umg_l1, gem_l1 = loesen("L1")
+    gruppen, koerper, umg_v1, gem_v1 = loesen("V1")
+    expect("Anhaengen: Koerper der Quelle weicht einer gleichnamigen Elementgruppe des Ziels aus",
+           gruppen == ["V1", "X", "V1_2", "V2"] and koerper == {"V1_2": [2], "V2": [3]},
+           f"Gruppen {gruppen}, Koerper {koerper}")
+    expect("Anhaengen: Fuge der Quelle loest nur ihren Block, die Zielbloecke bleiben verbunden",
+           umg_v1 == [2] and gem_v1 == 4 and (umg_l1, gem_l1) == ([2], 4),
+           f"Zielgruppe 'V1': umgehaengt {umg_v1}, gemeinsame Knoten {gem_v1}; "
+           f"Zielgruppe 'L1': umgehaengt {umg_l1}, gemeinsame Knoten {gem_l1}")
+
+    # Flaeche: ihre Schalenelemente tragen den Flaechennamen als Gruppe
+    def schale(name, x0, mit_flaeche):
+        m = Model(name)
+        m.add_material(Material("S235"))
+        m.add_shell_prop(ShellProp("t10", 0.010))
+        for (x, y) in ((0, 0), (1, 0), (1, 1), (0, 1)):
+            m.add_node(x0 + x, y, 0.0)
+        e = m.add_element("shell4", [0, 1, 2, 3], "S235", "t10", group="F1")
+        if mit_flaeche:
+            m.flaechen["F1"] = Flaeche("F1", elemente=[e])
+        return m
+
+    z = anhaengen(schale("Quelle", 5.0, True), schale("Ziel", 0.0, False))
+    gruppen = [e.group for e in z.elements]
+    flaechen = {n: [int(e) for e in f.elemente] for n, f in z.flaechen.items()}
+    expect("Anhaengen: Flaeche der Quelle weicht einer gleichnamigen Elementgruppe des Ziels aus",
+           gruppen == ["F1", "F1_2"] and flaechen == {"F1_2": [1]},
+           f"Gruppen {gruppen}, Flaechen {flaechen}")
+
+
+def test_json_anhaengen_einzahl_mehrzahl():
+    """Protokollzeilen des Anhaengens in Einzahl und Mehrzahl. Gemessen am
+    Stand ec6448c (23.09.2026, b075_b077_texte.py): "1 Knoten der Quelle
+    lagen auf Knoten des Ziels und wurden zusammengeführt", und die Warnung
+    zu den neuen Stellungsverweisen schrieb fuer zwei Namen "Situation
+    'S-offen', 'S-wind': ..."."""
+    from statik3d.model import Material, Section, Situation
+    from statik3d.bridges.positions import Stellung
+
+    def stab(name, punkte, sits=()):
+        m = Model(name)
+        m.add_material(Material("S235"))
+        m.add_section(Section.rectangle("R", 0.1, 0.2))
+        for p in punkte:
+            m.add_node(*p)
+        for i in range(len(punkte) - 1):
+            m.add_element("beam", [i, i + 1], "S235", "R")
+        m.stellungen = [Stellung("Offen")]
+        for s in sits:
+            m.situationen[s] = Situation(s, stellung="Offen")
+        return m
+
+    def protokoll(quelle):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "q.json")
+            quelle.save(p)
+            log = []
+            import_file(p, model=stab("Ziel", [(0, 0, 0), (1, 0, 0)]), log=log)
+        return log
+
+    # Quelle beginnt am Endknoten des Ziels: 1 Knoten schliesst an; zwei
+    # Situationen nennen die Stellung 'Offen', die das Ziel auch hat
+    log1 = protokoll(stab("Q", [(1, 0, 0), (2, 0, 0)], ["S-offen", "S-wind"]))
+    # Quelle verbindet beide Knoten des Ziels: 2 Knoten; eine Situation
+    log2 = protokoll(stab("Q", [(0, 0, 0), (0, 1, 0), (1, 0, 0)], ["S-offen"]))
+    kn1 = [x for x in log1 if "Knoten der Quelle" in x]
+    kn2 = [x for x in log2 if "Knoten der Quelle" in x]
+    expect("Anhaengen: ein zusammengefuehrter Knoten in der Einzahl",
+           kn1 == ["1 Knoten der Quelle lag auf einem Knoten des Ziels und wurde "
+                   "zusammengeführt"], "\n".join(kn1))
+    expect("Anhaengen: zwei zusammengefuehrte Knoten in der Mehrzahl",
+           kn2 == ["2 Knoten der Quelle lagen auf Knoten des Ziels und wurden "
+                   "zusammengeführt"], "\n".join(kn2))
+    st1 = [x for x in log1 if "Stellung 'Offen' →" in x]
+    st2 = [x for x in log2 if "Stellung 'Offen' →" in x]
+    expect("Anhaengen: zwei Situationen mit neuem Stellungsverweis in der Mehrzahl",
+           len(st1) == 1
+           and "Situationen 'S-offen', 'S-wind': Stellung 'Offen' → 'Offen_2'" in st1[0],
+           "\n".join(st1))
+    expect("Anhaengen: eine Situation mit neuem Stellungsverweis in der Einzahl",
+           len(st2) == 1 and "Situation 'S-offen': Stellung 'Offen' → 'Offen_2'" in st2[0]
+           and "Situationen 'S-offen'" not in st2[0], "\n".join(st2))
+
+
 def test_json_anhaengen_schluessel():
     """Jeder Schluessel von Model.to_dict() und LoadCase.to_dict() ist beim
     Anhaengen eingeordnet: uebertragen, als Einstellung des Ziels behalten
@@ -1887,6 +2088,8 @@ TESTS = [
          test_json_anhaengen_fuge_traegt_wie_allein,
          test_json_anhaengen_ermuedung_auf_kombination, test_json_anhaengen_koerpergruppe,
          test_json_anhaengen_stellung_des_ziels, test_json_anhaengen_stellung_protokoll,
+         test_json_anhaengen_stellung_grundstellung, test_json_anhaengen_koerper_gegen_zielgruppe,
+         test_json_anhaengen_einzahl_mehrzahl,
          test_json_anhaengen_schluessel,
          test_entarteter_sechsflaechner_beim_import]
 
