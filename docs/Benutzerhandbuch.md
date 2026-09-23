@@ -3739,8 +3739,14 @@ Theoriekapitels steht je Alternative eine Zeile „EK1 [1]", „EK1 [2]" …, di
 Ergebniskombination selbst nicht. Ihre Umhüllende und die Nachweise nehmen
 diese Ergebnisse. Bis zum 22.09.2026 stand dort eine Zeile „EK1" mit
 u_I = u_II = 0,00 mm, als „am verformten System gerechnet" gezählt, und die
-Umhüllende blieb linear – am Druckkragarm 3,321 statt 9,705 mm. Dasselbe gilt
-für eine Ergebniskombination mit Theorie III. Ordnung. Viele Alternativen
+Umhüllende blieb linear – am Druckkragarm 3,321 statt 9,705 mm. Hatte das
+Modell daneben eine gewöhnliche Kombination, nahmen auch die Nachweise
+dieses Nullergebnis: an der Halle (alle GZT-Kombinationen als eine
+Ergebniskombination, die GZG-Kombinationen daneben, „ein" oder
+„automatisch") Ausnutzung 0 an allen drei Stäben, maßgebend die
+Ergebniskombination, ohne Warnung, und im Bericht „Alle Nachweise
+erfüllt.". Dasselbe gilt für eine Ergebniskombination mit Theorie III.
+Ordnung. Viele Alternativen
 kosten entsprechend Rechenzeit; nach II. Ordnung werden gleiche Alternativen
 mehrerer Ergebniskombinationen nur einmal gerechnet.
 
