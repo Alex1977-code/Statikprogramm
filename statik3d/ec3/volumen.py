@@ -357,7 +357,12 @@ def check_volumen(model, analysis, combos: list = None, progress=None) -> Volume
     """Alle Volumenbereiche des Modells ueber alle GZT-Kombinationen nachweisen."""
     from .design import _uls_results
     warnungen: list = []
-    ergebnisse = _uls_results(model, analysis, combos, warnungen=warnungen)
+    # Nur wenn ein Bereich einen Nachweis verlangt: sonst meldete
+    # _uls_results fehlende Kombinationen fuer einen Nachweis, der gar nicht
+    # gefuehrt wird (wie check_members, Gegenpruefung 23.09.2026)
+    zu_pruefen = any(vb.design for vb in model.volumenbereiche.values())
+    ergebnisse = (_uls_results(model, analysis, combos, warnungen=warnungen)
+                  if zu_pruefen else {})
     ds = model.design
     out = VolumenResults(kombinationen=list(ergebnisse), settings={
         "gamma_M0": ds.gamma_M0,

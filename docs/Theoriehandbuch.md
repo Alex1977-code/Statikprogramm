@@ -766,6 +766,35 @@ Stabes vorher 0,170 (nachgewiesen gegen LF1 und LF2 mit Faktor 1), jetzt
 (0,3619, Hexaederstab) stimmen ebenso mit der gewöhnlichen Kombination
 überein (`test_umhuellende`).
 
+Neu überlagert wird eine Alternative nur, wenn die volle Rechnung es genauso
+täte. Ist sie nach Theorie II. oder III. Ordnung zu rechnen – nach der
+Theorie der Ergebniskombination oder weil einer ihrer Lastfälle so gerechnet
+wird –, kommt ihr Ergebnis aus `Analysis.alternativen`. Überlagert wird sie
+dann nur, wenn das Theoriekapitel eine Zeile für sie hat, die beim linearen
+Ergebnis blieb: α_cr an oder über der Grenze bei „automatisch", oder ein
+Fehler der Rechnung, den die Zeile nennt. So bleibt auch bei einer
+gewöhnlichen Kombination das lineare Ergebnis stehen
+(`_bei_theorie_I_geblieben`). Sonst wird sie als „nicht nachgewiesen"
+gemeldet, etwa nach `solve_all(combinations=False)` oder mit einer
+Ergebnisdatei von vor dem 22.09.2026. In der ersten Fassung der Kur wurde sie
+dort still linear überlagert (Gegenprüfung 23.09.2026). Am Druckkragarm stand
+EK1 [2] mit 3,321 statt 9,705 mm. An der Halle (theorie2 „ein", alle 42
+GZT-Kombinationen als eine Ergebniskombination) kamen Riegel 0,9654 statt
+0,9734 und Stiel links 0,6325 statt 0,6454 heraus, ohne Warnung. Die
+gewöhnlichen Kombinationen derselben Rechnung meldeten dagegen 42 Warnungen.
+Jetzt melden beide Fassungen 42 Warnungen. Die volle Rechnung ist davon
+unberührt. An der Halle mit Kranlast gleichen Ergebniskombination und
+gewöhnliche Kombinationen einander bei „aus", „automatisch" (26 von 42
+Alternativen nach II. Ordnung) und „ein" in den Stab- und
+Lasteinleitungsnachweisen auf 1e-9, ohne Warnung.
+
+Gemeldet wird nur, was ein Bauteil verlangt. Hat kein Stab, Volumenbereich
+oder Anschluss einen Nachweis und gibt es kein Beulfeld und keine
+Lasteinleitungsstelle, wird `_uls_results` gar nicht gefragt. Vorher kippte
+ein Modell nur mit GZG-Kombinationen und Stäben ohne Nachweis im Gesamturteil
+von „Alle Nachweise erfüllt." auf „nicht geführt: EC3 (1 Warnung)" (Kragarm
+und Halle, Gegenprüfung 23.09.2026).
+
 **Theorie II./III. Ordnung einer Ergebniskombination.** Nach II. Ordnung gilt
 keine Superposition (EN 1993-1-1, 5.2); das gilt auch innerhalb einer
 Ergebniskombination. Ist sie nach II. Ordnung (Einstellung „ein" oder

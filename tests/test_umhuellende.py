@@ -443,20 +443,22 @@ def test_kontaktmodell_alternativen_fuer_nachweise():
 # --------------------------------------------------------------------------
 # Theorie II./III. Ordnung einer Ergebniskombination (Befund FE12, 22.09.2026)
 # --------------------------------------------------------------------------
-def _druckkragarm(theorie2: str = "ein", theorie_ek: str = "") -> tuple:
+def _druckkragarm(theorie2: str = "ein", theorie_ek: str = "", druck: float = 5.0e5) -> tuple:
     """Kragarm unter Druck mit Querlast in y (schwache Achse): 1,35·LF1 +
     1,5·LF2 gibt N = 1,425e6 N gegen N_cr = pi^2 E I_z/(2L)^2 = 2,16e6 N -
     nach II. Ordnung waechst die Querverschiebung deutlich. Ohne
-    Imperfektionen, damit K2 und die gleiche Alternative dasselbe rechnen."""
+    Imperfektionen, damit K2 und die gleiche Alternative dasselbe rechnen.
+    ``druck`` = 5e4 statt 5e5 N gibt alpha_cr 31,94 (EK1 [1]) und 15,13
+    (EK1 [2], K2), gemessen 23.09.2026 - dann bleibt "auto" bei I. Ordnung."""
     m = Model("Druck")
     m.add_material(Material("S", E=E, rho=0.0))
     m.add_section(Section.rectangle("R", 0.1, 0.2))
     ids = mesher.line_of_beams(m, "S", "R", (0, 0, 0), (L, 0, 0), 4)
     m.fix(ids[0], "all")
     m.add_load_case("LF1", "G")
-    m.load_node(ids[-1], Fx=-5.0e5, Fy=1.0e3, case="LF1")
+    m.load_node(ids[-1], Fx=-druck, Fy=1.0e3, case="LF1")
     m.add_load_case("LF2", "Q")
-    m.load_node(ids[-1], Fx=-5.0e5, Fy=2.0e3, case="LF2")
+    m.load_node(ids[-1], Fx=-druck, Fy=2.0e3, case="LF2")
     m.design.theorie2 = theorie2
     m.design.imperfektionen = False
     m.combinations["EK1"] = Combination(
@@ -540,6 +542,142 @@ def test_theorie3_der_ergebniskombination():
           f"EK {w_ek * 1e3:.3f} mm, K2 (III) {w_k2 * 1e3:.3f} mm")
 
 
+# --------------------------------------------------------------------------
+# Nachbesserung nach der Gegenpruefung vom 23.09.2026
+# --------------------------------------------------------------------------
+def test_hoehere_theorie_ohne_abgelegtes_ergebnis():
+    """Eine Alternative, die nach Theorie II./III. Ordnung zu rechnen ist und
+    deren Ergebnis nicht abgelegt wurde (Rechnung ohne Kombinationen,
+    Ergebnisdatei von vor der Kur), wird gemeldet - vorher wurde sie still
+    linear ueberlagert: EK1 [2] 3,321 statt 9,705 mm."""
+    from statik3d.ec3.design import _uls_results
+    m, _ids = _druckkragarm("ein")
+    an0 = solver.solve_all(m, combinations=False)
+    w0: list = []
+    uls0 = _uls_results(m, an0, warnungen=w0)
+    check("Th2 ohne Kombinationen: die Alternativen nicht linear nachgewiesen",
+          not any(k.startswith("EK1") for k in uls0), str(list(uls0)))
+    check("sondern gemeldet, mit Theorie II. Ordnung als Grund",
+          all(any(f"EK1 [{k}]" in w and "Theorie II. Ordnung" in w for w in w0)
+              for k in (1, 2)), str([w[:90] for w in w0]))
+    an = solver.solve_all(m)
+    an.alternativen = {}
+    w1: list = []
+    uls1 = _uls_results(m, an, warnungen=w1)
+    check("Th2 ohne abgelegte Alternativen (alte Ergebnisdatei): ebenso",
+          list(uls1) == ["K2"] and len(w1) == 2, f"{list(uls1)} {len(w1)} Warnungen")
+    # theorie2 "auto" mit alpha_cr >= 10: die Rechnung bleibt fuer jede
+    # Alternative bei I. Ordnung (Th2-Zeile ohne "gerechnet"), die
+    # Ueberlagerung ist dann das Ergebnis - keine Warnung
+    m2, _ = _druckkragarm("auto", druck=5.0e4)
+    an2 = solver.solve_all(m2)
+    w2: list = []
+    uls2 = _uls_results(m2, an2, warnungen=w2)
+    t2 = an2.theorie2.kombinationen
+    check("Th2 auto, alpha_cr >= 10: linear wie K2, keine Warnung",
+          not w2 and "EK1 [2]" in uls2 and not t2["EK1 [2]"].gerechnet
+          and np.allclose(uls2["EK1 [2]"].u, an2.combinations["K2"].u),
+          f"{w2[:1]} {({k: round(i.alpha_cr, 2) for k, i in t2.items()})}")
+    m3, _ = _druckkragarm("aus", theorie_ek="III")
+    an3 = solver.solve_all(m3, combinations=False)
+    w3: list = []
+    uls3 = _uls_results(m3, an3, warnungen=w3)
+    check("Th3 ohne Kombinationen: gemeldet statt linear",
+          not any(k.startswith("EK1") for k in uls3)
+          and any("EK1 [2]" in w and "Theorie III. Ordnung" in w for w in w3),
+          f"{list(uls3)} {[w[:90] for w in w3]}")
+
+
+def test_lastfall_hoeherer_ordnung_ohne_abgelegtes_ergebnis():
+    """Eine Alternative mit einem Lastfall nach Theorie II. Ordnung laesst
+    sich nicht aus den Lastfaellen ueberlagern: die volle Rechnung legt sie
+    ab, fehlt sie, wird sie gemeldet."""
+    from statik3d.ec3.design import _uls_results
+    m, _ = _kragarm_nachweis("EK")
+    m.load_cases["LF2"].theorie = "II"
+    an = solver.solve_all(m, design=True)
+    check("Lastfall nach II. Ordnung: volle Rechnung ohne Warnung, Alternative abgelegt",
+          not an.design.warnungen and "EK1 [2]" in an.alternativen,
+          f"{an.design.warnungen} {list(an.alternativen)}")
+    an.alternativen = {}
+    w: list = []
+    uls = _uls_results(m, an, warnungen=w)
+    check("fehlt sie, wird sie mit dem Lastfall gemeldet",
+          list(uls) == ["EK1 [1]"] and any("EK1 [2]" in x and "Lastfall LF2" in x for x in w),
+          f"{list(uls)} {[x[:100] for x in w]}")
+
+
+def test_stellungsreihe_ohne_kombinationen():
+    """Eine Stellungsreihe, die ohne Kombinationen rechnet, aber Nachweise
+    fuehren soll, weist nichts nach - das muss beim eta stehen. Vorher:
+    eta = 0.000, ok = True und im Bericht 'Umhüllende: eta = 0.000'."""
+    from statik3d.bridges.positions import Stellungsreihe, Stellung
+    m, _ = _kragarm_nachweis("K")
+    r = Stellungsreihe(m, "Kragarm")
+    r.add(Stellung("S1", 0.0, "geschlossen"))
+    u = r.rechnen(kombinationen=False, nachweise=True)
+    e = r.ergebnis("S1")
+    # getattr: so zeigt die Ruecknahmeprobe den alten Zustand als FAIL mit
+    # Zahlen statt als Ausnahme
+    w = list(getattr(e, "warnungen", None) or [])
+    check("ohne Kombinationen: die Stellung ist nicht ok",
+          not e.ok and any("K2" in x for x in w), f"ok {e.ok}, eta {e.eta:.3f}, {w[:1]}")
+    b = u.bericht()
+    check("Bericht: kein 'eta = 0.000' als Ergebnis, sondern der Hinweis",
+          "Umhüllende: eta =" not in b and "eta nicht bestimmt" in b
+          and "Kombination K2 nicht nachgewiesen" in b,
+          [z for z in b.splitlines() if "Umhüllende" in z or "WARNUNG" in z][:2])
+    kurz = u.kurztext() if hasattr(u, "kurztext") else f"eta = {u.eta:.3f}"
+    check("die Zeile nach dem Rechnen sagt es ebenso",
+          "nicht bestimmt" in kurz and "NICHT VOLLSTÄNDIG" in kurz, kurz)
+    soll = solver.solve_all(m, design=True).design.members["S1"].util
+    u2 = r.rechnen(kombinationen=True, nachweise=True)
+    e2 = r.ergebnis("S1")
+    hinweis = u2.warnhinweis() if hasattr(u2, "warnhinweis") else ""
+    check("mit Kombinationen: ok, eta wie der Stabnachweis, kein Hinweis",
+          e2.ok and abs(e2.eta - soll) < 1e-9 and hinweis == ""
+          and f"Umhüllende: eta = {soll:.3f}" in u2.bericht(),
+          f"eta {e2.eta:.4f} soll {soll:.4f}, {hinweis}")
+
+
+def test_keine_warnung_ohne_verlangten_nachweis():
+    """Verlangt kein Stab (Bereich, Beulfeld, Anschluss) einen Nachweis, darf
+    keine fehlende GZT-Kombination gemeldet werden. Vorher kippte ein Modell
+    nur mit GZG-Kombinationen und Staeben ohne Nachweis im Gesamturteil von
+    'Alle Nachweise erfüllt.' auf 'nicht geführt: EC3 (1 Warnung)'."""
+    from statik3d.report import Report
+    from statik3d.ec3.volumen import check_volumen
+    from statik3d.ec3.beulen import check_beulen, check_lasteinleitungen
+    from statik3d.joints.anschluss import check_joints
+    m, ids = _kragarm_nachweis("K", "SLS_CH")
+    m.members["S1"].design = False
+    m.add_verformungsgrenze("Spitze", "knoten", knoten=[ids[-1]], groesse="uz",
+                            grenzart="absolut", wert=0.05, situation="SLS_CH")
+    an = solver.solve_all(m, design=True)
+    check("nur GZG, Stab ohne Nachweis: keine EC3-Warnung",
+          not an.design.warnungen, str(an.design.warnungen))
+    html = Report(m, an).html()
+    check("das Gesamturteil bleibt 'Alle Nachweise erfüllt.'",
+          "Alle Nachweise erfüllt." in html and "nicht geführt wurden" not in html)
+    leer = [f(m, an) for f in (check_beulen, check_lasteinleitungen, check_joints)]
+    check("ohne Beulfeld, Stelle und Anschluss: keine Warnung",
+          all(not x.warnungen for x in leer), str([x.warnungen for x in leer]))
+    m2, _ = _kragarm_nachweis("K", "SLS_CH")
+    an2 = solver.solve_all(m2, design=True)
+    check("Gegenprobe: verlangt der Stab einen Nachweis, bleibt die Warnung",
+          any("keine des Grenzzustands der Tragfähigkeit" in w for w in an2.design.warnungen),
+          str(an2.design.warnungen))
+    mb = _block()
+    mb.add_combination("C1", {"LF1": 1.0}, "SLS_CH")
+    mb.volumenbereiche["Schaft"].design = False
+    anb = solver.solve_all(mb)
+    vb = check_volumen(mb, anb)
+    mb.volumenbereiche["Schaft"].design = True
+    vb2 = check_volumen(mb, anb)
+    check("Volumen: Warnung nur, wenn der Bereich einen Nachweis verlangt",
+          not vb.warnungen and bool(vb2.warnungen), f"{vb.warnungen} / {vb2.warnungen}")
+
+
 def main():
     for t in (test_kombination_mit_alternativen, test_speichern_und_laden,
               test_umbenennen_und_entfernen, test_modellpruefung_sieht_alternativen,
@@ -550,7 +688,11 @@ def main():
               test_kontaktmodell_alternativen_fuer_nachweise,
               test_theorie2_der_ergebniskombination,
               test_theorie2_leere_kombination_schreibt_nichts,
-              test_theorie3_der_ergebniskombination):
+              test_theorie3_der_ergebniskombination,
+              test_hoehere_theorie_ohne_abgelegtes_ergebnis,
+              test_lastfall_hoeherer_ordnung_ohne_abgelegtes_ergebnis,
+              test_stellungsreihe_ohne_kombinationen,
+              test_keine_warnung_ohne_verlangten_nachweis):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

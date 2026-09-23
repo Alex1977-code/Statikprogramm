@@ -3175,6 +3175,18 @@ für eine Ergebniskombination mit Theorie III. Ordnung. Viele Alternativen
 kosten entsprechend Rechenzeit; nach II. Ordnung werden gleiche Alternativen
 mehrerer Ergebniskombinationen nur einmal gerechnet.
 
+Die Ergebnisse dieser Alternativen entstehen nur mit **„Alle Lastfälle +
+Kombinationen"**. Wurden nur die Lastfälle gerechnet oder stammen die
+Ergebnisse aus einer Datei von vor dem 22.09.2026, fehlen sie. Die Nachweise
+melden solche Alternativen dann als „nicht nachgewiesen" und überlagern sie
+nicht linear. Das gilt auch für eine Alternative mit einem Lastfall, der nach
+II. oder III. Ordnung gerechnet wird. Vorher kam dort still das lineare
+Ergebnis heraus: am Druckkragarm 3,321 statt 9,705 mm, an der Halle
+(„ein", alle Kombinationen als eine Ergebniskombination) Riegel 0,9654 statt
+0,9734. Bei „automatisch" mit α_cr an oder über der Grenze bleibt die
+Alternative bei I. Ordnung; dann ist die Überlagerung richtig und es kommt
+keine Warnung.
+
 ### Theorie je Lastfall und Kombination: I., II., III. Ordnung
 
 Im Lastfall- und im Kombinationsdialog steht das Feld **Theorie**:
@@ -4007,7 +4019,11 @@ eigenen Skala: Bauteil wählen, *Selektion anzeigen*, ablesen. Geprüft in
   Ergebnis einer Kombination (etwa weil nur die Lastfälle gerechnet wurden),
   steht in Protokoll, Nachweiszeile und Bericht „WARNUNG: Kombination …
   nicht nachgewiesen" und das Gesamturteil sagt „nicht nachgewiesen" – dann
-  „Alle Lastfälle + Kombinationen" rechnen.
+  „Alle Lastfälle + Kombinationen" rechnen. Gemeldet wird nur, was ein
+  Bauteil verlangt: Sind alle Stäbe, Volumenbereiche und Anschlüsse ohne
+  Nachweis und gibt es kein Beulfeld und keine Lasteinleitungsstelle, meldet
+  auch keine fehlende GZT-Kombination etwas. Ein Modell nur mit
+  GZG-Kombinationen behält dann sein „Alle Nachweise erfüllt."
 * Schnittgrößenverläufe N, Vy, Vz, Mt, My, Mz an den Stäben (bei Umhüllenden
   der betragsmäßig größere Extremwert), auswählbar im Modellbaum unter
   „Ergebnisse → Schnittgrößen".
@@ -4313,6 +4329,15 @@ größte Auflagerkraft je Knoten — **jeweils mit der Stellung, in der sie
 auftritt**. `umh.kurve()` liefert `(Winkel, η, u_max)` für die Kurve über den
 Stellungswinkel. Eine Stellung ohne ausreichende Lagerung wird als Fehler
 ausgewiesen, nicht stillschweigend übergangen.
+
+Die Nachweise einer Stellung brauchen die Ergebnisse ihrer Kombinationen.
+Mit `reihe.rechnen(kombinationen=False, nachweise=True)` (im Browser
+`{"kombinationen": false}`) fehlen sie. Dann ist die Stellung nicht `ok`,
+und der Bericht schreibt „Umhüllende: eta nicht bestimmt" oder „NICHT
+VOLLSTÄNDIG NACHGEWIESEN". Unter „Nicht nachgewiesen" stehen die Warnungen.
+Die Meldung nach dem Rechnen (`umh.kurztext()`) sagt es ebenso. Vorher stand
+dort „eta = 0.000" und die Stellung galt als erfüllt; die Warnungen standen
+nur im Protokoll.
 
 ### Lastfälle nach DIN 19704 anlegen und das Lastenheft
 

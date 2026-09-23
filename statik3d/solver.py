@@ -2926,9 +2926,17 @@ def ergebnisse_der_alternativen(model: Model, analysis, combo: Combination) -> t
     * ein Lastfall mit Faktor 1: das Lastfallergebnis;
     * sonst im linearen Modell die Ueberlagerung der Lastfaelle.
 
-    Was so nicht zu haben ist (Kontaktmodell ohne abgelegtes Ergebnis, etwa
-    aus einer aelteren Ergebnisdatei), wird als Warnung benannt und nicht
-    still durch etwas anderes ersetzt.
+    Was so nicht zu haben ist, wird als Warnung benannt und nicht still
+    durch etwas anderes ersetzt: das Kontaktmodell ohne abgelegtes Ergebnis
+    und jede Alternative, die nach Theorie II./III. Ordnung zu rechnen ist
+    (Theorie der EK oder eines ihrer Lastfaelle) und nicht abgelegt wurde -
+    etwa nach ``solve_all(combinations=False)`` oder aus einer
+    Ergebnisdatei von vor dem 22.09.2026. Ueberlagert kaeme dort still das
+    lineare Ergebnis heraus: am Druckkragarm EK1 [2] 3,321 statt 9,705 mm,
+    an der Halle (theorie2 "ein", alle GZT-Kombinationen als eine EK) Riegel
+    0,9654 statt 0,9734 - ohne Warnung, waehrend die gewoehnlichen
+    Kombinationen derselben Rechnung als "nicht nachgewiesen" gemeldet
+    wurden (Gegenpruefung 23.09.2026).
     """
     from dataclasses import replace
     aus: dict = {}
@@ -2936,10 +2944,29 @@ def ergebnisse_der_alternativen(model: Model, analysis, combo: Combination) -> t
     abgelegt = getattr(analysis, "alternativen", None) or {}
     cases = getattr(analysis, "cases", None) or {}
     nl = None
+    theorie = model.theorie_von(combo)
+    # Lastfaelle, deren Ergebnis II./III. Ordnung ist oder war: ueberlagern
+    # ist dann nicht zulaessig, und die volle Rechnung legt jede Alternative
+    # mit ihnen ab (umhuellende_der_kombination, ``wechselt``)
+    hoeher = {k for k, lf in model.load_cases.items()
+              if model.theorie_von(lf) in ("II", "III")}
     for name, teile in alternativen_der_kombination(combo):
         lc = _lastfall_alternative(teile)
         if name in abgelegt:
             aus[name] = abgelegt[name]
+            continue
+        grund = None
+        if theorie in ("II", "III") and not _bei_theorie_I_geblieben(analysis, theorie, name):
+            grund = (f"sie ist nach Theorie {theorie}. Ordnung zu rechnen, ihr Ergebnis "
+                     "liegt nicht vor (Überlagerung wäre linear)")
+        elif hoeher & set(teile):
+            grund = (f"Lastfall {', '.join(sorted(hoeher & set(teile)))} wird nach Theorie "
+                     "II./III. Ordnung gerechnet, ihr Ergebnis liegt nicht vor "
+                     "(Überlagerung nicht zulässig)")
+        if grund is not None:
+            warn.append(f"Kombination {name} (Alternative der Ergebniskombination "
+                        f"{combo.name}) nicht nachgewiesen: {grund} – „Alle Lastfälle + "
+                        "Kombinationen“ neu rechnen")
             continue
         if lc is not None and lc in cases:
             aus[name] = cases[lc]
@@ -2962,6 +2989,23 @@ def ergebnisse_der_alternativen(model: Model, analysis, combo: Combination) -> t
                     f"nicht nachgewiesen: {grund} – „Alle Lastfälle + Kombinationen“ "
                     "neu rechnen")
     return aus, warn
+
+
+def _bei_theorie_I_geblieben(analysis, theorie: str, name: str) -> bool:
+    """Ob die Rechnung nach Theorie II. bzw. III. Ordnung die Alternative
+    ``name`` gesehen hat und bei ihrem linearen Ergebnis geblieben ist -
+    dann darf ergebnisse_der_alternativen es ueberlagern.
+
+    Das trifft zu bei alpha_cr >= Grenze nach 5.2.1(3) (theorie2 "auto")
+    und bei einem Fehler der Rechnung, den das Theoriekapitel nennt ("nicht
+    geführt"); beides behandelt check_theorie2/check_theorie3 bei einer
+    gewoehnlichen Kombination genauso - deren lineares Ergebnis bleibt
+    stehen. Keine Zeile fuer die Alternative heisst: nicht nach dieser
+    Theorie gerechnet, das lineare Ergebnis waere geraten.
+    """
+    t = getattr(analysis, "theorie2" if theorie == "II" else "theorie3", None)
+    info = (getattr(t, "kombinationen", None) or {}).get(name)
+    return info is not None and not getattr(info, "gerechnet", False)
 
 
 def _teil_merken(ex, name: str, wert: dict):

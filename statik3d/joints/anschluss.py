@@ -466,13 +466,15 @@ def check_joints(model: Model, analysis, combos: list = None, progress=None,
     """Alle Anschluesse des Modells nachweisen."""
     from ..ec3.design import _uls_results
     warnungen: list = []
-    results = _uls_results(model, analysis, combos, warnungen=warnungen)
+    namen = [n for n, j in model.joints.items() if j.design]
+    # ohne Anschluss mit Nachweis keine Warnung ueber fehlende Kombinationen
+    # (wie ec3.design.check_members, Gegenpruefung 23.09.2026)
+    results = _uls_results(model, analysis, combos, warnungen=warnungen) if namen else {}
     out = AnschlussResults(combinations=list(results), settings={
         "gamma_M0": model.design.gamma_M0, "gamma_M2": model.design.gamma_M2,
         "gamma_Ff": model.design.gamma_Ff,
         "Norm": "DIN EN 1993-1-8 (Tragfähigkeit), DIN EN 1993-1-9 (Ermüdung)"},
         warnungen=warnungen)
-    namen = [n for n, j in model.joints.items() if j.design]
     for i, n in enumerate(namen):
         out.joints[n] = check_joint(model, model.joints[n], results, analysis,
                                     ermuedung=ermuedung)

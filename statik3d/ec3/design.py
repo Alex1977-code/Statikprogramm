@@ -319,8 +319,14 @@ def check_members(model: Model, analysis, combos: list = None, members: list = N
     """
     from .. import parallel
     warnungen: list = []
-    results = _uls_results(model, analysis, combos, warnungen=warnungen)
     names = members if members is not None else [k for k, m in model.members.items() if m.design]
+    # Ohne einen Stab mit Nachweis wird nichts nachgewiesen - dann darf auch
+    # keine Kombination als "nicht nachgewiesen" gemeldet werden. Sonst kam
+    # hier mit nur GZG-Kombinationen und allen Staeben auf design = False die
+    # Warnung "keine GZT-Kombination", und das Gesamturteil des Berichts
+    # kippte von "Alle Nachweise erfüllt." auf "nicht geführt: EC3"
+    # (Gegenpruefung 23.09.2026, Kragarm und Halle).
+    results = _uls_results(model, analysis, combos, warnungen=warnungen) if names else {}
     out = DesignResults(combinations=list(results), settings={
         "gamma_M0": model.design.gamma_M0, "gamma_M1": model.design.gamma_M1,
         "Methode": f"Anhang {model.design.interaction_method}",

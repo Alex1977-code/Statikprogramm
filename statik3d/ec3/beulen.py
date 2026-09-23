@@ -1160,7 +1160,10 @@ def check_lasteinleitungen(model, analysis, combos: list = None,
     """Alle Lasteinleitungsstellen ueber alle GZT-Kombinationen nachweisen."""
     from .design import _uls_results
     warnungen: list = []
-    ergebnisse = _uls_results(model, analysis, combos, warnungen=warnungen)
+    # ohne Stelle kein Nachweis - und keine Warnung ueber fehlende
+    # Kombinationen (wie check_members, Gegenpruefung 23.09.2026)
+    ergebnisse = (_uls_results(model, analysis, combos, warnungen=warnungen)
+                  if model.lasteinleitungen else {})
     ds = model.design
     out = EinleitungResults(kombinationen=list(ergebnisse), warnungen=warnungen)
     for i, (name, le) in enumerate(model.lasteinleitungen.items()):
@@ -1224,7 +1227,10 @@ def check_beulen(model, analysis, combos: list = None, progress=None) -> BeulRes
     """Alle Beulfelder des Modells ueber alle GZT-Kombinationen nachweisen."""
     from .design import _uls_results
     warnungen: list = []
-    ergebnisse = _uls_results(model, analysis, combos, warnungen=warnungen)
+    # ohne Beulfeld kein Nachweis - und keine Warnung ueber fehlende
+    # Kombinationen (wie check_members, Gegenpruefung 23.09.2026)
+    ergebnisse = (_uls_results(model, analysis, combos, warnungen=warnungen)
+                  if model.beulfelder else {})
     ds = model.design
     out = BeulResults(kombinationen=list(ergebnisse), settings={
         "gamma_M1": ds.gamma_M1, "eta": ETA_SCHUB,

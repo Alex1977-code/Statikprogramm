@@ -326,8 +326,23 @@ class StellungsErgebnis:
     fehler: str = ""
 
     @property
+    def warnungen(self) -> list:
+        """Was der Stabnachweis dieser Stellung nicht fuehren konnte
+        (Kombination ohne Ergebnis, etwa mit ``kombinationen=False``) - leer,
+        wenn alles nachgewiesen ist oder keine Nachweise verlangt waren."""
+        return list(getattr(self.nachweise, "warnungen", None) or [])
+
+    @property
+    def nachgewiesen(self) -> bool:
+        """Ob der Stabnachweis ueberhaupt etwas nachgewiesen hat."""
+        return bool(getattr(self.nachweise, "members", None))
+
+    @property
     def ok(self) -> bool:
-        return not self.fehler and self.eta <= 1.0 + 1e-9
+        # Nicht nachgewiesen ist nicht erfuellt: mit kombinationen=False kam
+        # hier eta = 0 und ok = True heraus, obwohl kein Nachweis gefuehrt
+        # war (Halle: 42 Kombinationen ohne Ergebnis, Gegenpruefung 23.09.2026)
+        return not self.fehler and not self.warnungen and self.eta <= 1.0 + 1e-9
 
 
 class Stellungsreihe:
@@ -406,9 +421,10 @@ class Stellungsreihe:
                 self.log.append(f"  {st.name}: u_max = {e.u_max * 1e3:.3f} mm"
                                 + (f", eta = {e.eta:.3f}" if nachweise else ""))
                 # Kombinationen ohne Ergebnis (etwa mit kombinationen=False)
-                # werden nicht mehr still durch die Lastfaelle ersetzt - dann
-                # muss das Protokoll es sagen, sonst stuende eta = 0 da
-                for w in (getattr(e.nachweise, "warnungen", None) or []):
+                # werden nicht mehr still durch die Lastfaelle ersetzt - das
+                # Protokoll nennt jede, StellungsErgebnis.ok ist dann False,
+                # und Umhuellende.bericht/warnhinweis sagen es beim eta
+                for w in e.warnungen:
                     self.log.append(f"  {st.name}: WARNUNG {w}")
             except Exception as ex:      # noqa: BLE001
                 e.fehler = f"{type(ex).__name__}: {ex}" if str(ex).strip() else type(ex).__name__
@@ -455,6 +471,41 @@ class Umhuellende:
             return ""
         return max(self.ergebnisse, key=lambda x: x.u_max).stellung.beschriftung()
 
+    @property
+    def unvollstaendig(self) -> list:
+        """Die gerechneten Stellungen, deren Stabnachweis nicht alles
+        nachweisen konnte (StellungsErgebnis.warnungen)."""
+        return [e for e in self.ergebnisse if e.warnungen]
+
+    @property
+    def eta_bestimmt(self) -> bool:
+        """False, wenn Nachweise verlangt waren, aber in keiner Stellung
+        einer gefuehrt wurde - dann ist eta = 0 keine Ausnutzung."""
+        return not self.unvollstaendig or any(e.nachgewiesen for e in self.ergebnisse)
+
+    def warnhinweis(self) -> str:
+        """Leer, wenn alles nachgewiesen ist - sonst der Zusatz, der hinter
+        jedes eta gehoert. Vorher stand nach ``rechnen(kombinationen=False,
+        nachweise=True)`` "eta = 0.000" ohne jeden Hinweis in Bericht und
+        Rueckgabetext; die Warnungen standen nur im Protokoll (Gegenpruefung
+        23.09.2026)."""
+        unvoll = self.unvollstaendig
+        if not unvoll:
+            return ""
+        n = sum(len(e.warnungen) for e in unvoll)
+        return (f" – NICHT VOLLSTÄNDIG NACHGEWIESEN: {n} Warnung{'en' if n > 1 else ''} in "
+                + ", ".join(e.stellung.name for e in unvoll) + " (siehe Protokoll)")
+
+    def kurztext(self) -> str:
+        """Die eine Zeile nach dem Rechnen: eta mit maßgebender Stellung und
+        dem Warnhinweis - oder, wenn nichts nachgewiesen wurde, genau das."""
+        if not self.eta_bestimmt:
+            return "eta nicht bestimmt – kein Nachweis geführt" + self.warnhinweis()
+        return (f"eta = {self.eta:.3f}"
+                + (f", maßgebend {self.massgebende_stellung}" if self.massgebende_stellung
+                   else "")
+                + self.warnhinweis())
+
     def reaktionen(self) -> dict:
         """Größte Auflagerkraft je Knoten und Richtung über alle Stellungen.
 
@@ -489,12 +540,22 @@ class Umhuellende:
                 z.append(f"{st.name:<10s}{st.winkel:>8.1f}°{'-':>12s}{'-':>9s}  "
                          f"FEHLER: {e.fehler[:40]}")
             else:
+                # ohne jeden gefuehrten Nachweis ist eta = 0 keine Zahl
+                eta = (f"{e.eta:>9.3f}" if e.nachgewiesen or not e.warnungen
+                       else f"{'-':>9s}")
                 z.append(f"{st.name:<10s}{st.winkel:>8.1f}°{e.u_max * 1e3:>10.3f} mm"
-                         f"{e.eta:>9.3f}  {st.beschreibung}")
+                         f"{eta}  {st.beschreibung}"
+                         + ("  (NICHT VOLLSTÄNDIG NACHGEWIESEN)" if e.warnungen else ""))
         z.append("-" * 78)
-        z.append(f"Umhüllende: eta = {self.eta:.3f}"
-                 + (f", maßgebend in {self.massgebende_stellung}"
-                    if self.massgebende_stellung else ""))
+        if not self.eta_bestimmt:
+            z.append("Umhüllende: eta nicht bestimmt – in keiner Stellung wurde ein "
+                     "Nachweis geführt (siehe „Nicht nachgewiesen“)")
+        else:
+            z.append(f"Umhüllende: eta = {self.eta:.3f}"
+                     + (f", maßgebend in {self.massgebende_stellung}"
+                        if self.massgebende_stellung else "")
+                     + (" – NICHT VOLLSTÄNDIG NACHGEWIESEN (siehe „Nicht nachgewiesen“)"
+                        if self.unvollstaendig else ""))
         z.append(f"größte Verformung {self.u_max * 1e3:.3f} mm"
                  + (f" in {self.stellung_mit_groesstem_u()}" if self.ergebnisse else ""))
         r = self.reaktionen()
@@ -505,6 +566,16 @@ class Umhuellende:
             for n in sorted(r):
                 v, st = r[n].get("Fz", (0.0, ""))
                 z.append(f"{n + 1:>8d}{v / 1e3:>12.2f}  {st}")
+        if self.unvollstaendig:
+            z.append("")
+            z.append("Nicht nachgewiesen:")
+            for e in self.unvollstaendig:
+                w = e.warnungen
+                z.append(f"  {e.stellung.beschriftung()}: {len(w)} "
+                         f"Warnung{'en' if len(w) > 1 else ''}")
+                z += [f"    WARNUNG: {x}" for x in w[:5]]
+                if len(w) > 5:
+                    z.append(f"    … und {len(w) - 5} weitere (siehe Protokoll)")
         if self.fehlerhaft:
             z.append("")
             z.append("Nicht gerechnet:")
