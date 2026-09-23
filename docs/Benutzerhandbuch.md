@@ -4476,10 +4476,14 @@ bleiben, wenn der freie Vernetzer flache Tetraeder aussortiert (Platte
 Dreiecke geteilt sind. Die 30 geschlossenen Gruppen in den Modellen der
 Prüfsuiten lagen bei höchstens 3,55 % der längsten Kante und waren höchstens
 0,48-mal so dick wie die Elemente daneben. Stoßen mehrere Hohlräume an einer
-Kante zusammen, beurteilt die Abnahme jeden für sich; an der Platte mit
-Bohrung (ohne „intelligent“ vernetzt, 12 925 Tetraeder) war der dickste
-dieser Hohlräume 0,58-mal so dick wie seine Nachbarn (gemessen 23.09.2026).
-Der Körper stimmt bis auf diese
+Kante zusammen, beurteilt die Abnahme jeden für sich, aber nur, wenn der
+ganze Haufen ein Riss wäre und jeder Hohlraum darin für sich geschlossen ist;
+sonst beurteilt sie den Haufen als Ganzes. An der Platte mit Bohrung (ohne
+„intelligent“ vernetzt, 12 925 Tetraeder) teilte sie so sechs Haufen in zwölf
+Hohlräume, der dickste davon war 0,58-mal so dick wie seine Nachbarn. Ein
+Haufen, in dem auch offene Stücke lagen, blieb ganz (0,42-mal so dick),
+obwohl zwei seiner Hohlräume für sich 0,59- und 0,60-mal so dick waren
+(gemessen 24.09.2026). Der Körper stimmt bis auf diese
 Hohlräume, die Verschiebungen passen dort aber nur an Knoten und Kanten
 zusammen. Bis zum 23.09.2026 meldete die Abnahme die Hohlräume des Vernetzers
 als FEHLER „Seiten im Inneren“, vor jeder Rechnung mit der Rückfrage „Trotzdem
@@ -4553,13 +4557,23 @@ FEHLER bleiben Hohlräume, die ringsum von Nachbarseiten eingeschlossen sind,
 auch wenn sie die Oberfläche an einer Kante berühren. Gemessen an einem
 Würfel mit angehobener Ecke, frei mit Netzweite 0,1 m vernetzt: FEHLER
 „Seiten im Inneren 4“. Eine Abhilfe ist dafür nicht gemessen. Ein FEHLER
-bleibt auch eine Kerbe durch die ganze Dicke am Rand einer Platte: Ihr Rand
-läuft über Deckel, Boden und Seitenfläche, und von einem Punkt aus lässt sich
-das fehlende Stück nicht ausmessen. Gemessen am 23.09.2026 an einer Platte
-1 × 1 × 0,125 m aus 16 × 16 × 2 Sechsflächnern mit zwei entfernten Zellen am
-Rand: FEHLER „Seiten im Inneren 6“. Fehlen dieselben zwei Zellen mitten in
-der Platte, ist das Loch durch die ganze Dicke eine Lücke mit ihrem Volumen
-(488 cm³).
+blieb auch eine Kerbe durch die ganze Dicke am Rand einer Platte
+1 × 1 × 0,125 m aus 16 × 16 × 2 Sechsflächnern, zwei Zellen groß:
+„Seiten im Inneren 6“ (gemessen 23.09.2026). Ihr Rand läuft über Deckel,
+Boden und Seitenfläche, und von einem Punkt aus lässt sich das fehlende
+Stück dort nicht ausmessen. Das gilt nicht für jede Platte. Ist die halbe
+Dicke höchstens 1 % der Raumdiagonale der Kerbe, misst die Abnahme von der
+Mitte der Dicke aus. Gemessen am 24.09.2026 an Platten aus einer
+Elementlage: Blech 4 × 4 × 0,005 m mit einer Kerbe 0,2 × 0,2 m (200 cm³):
+WARNUNG „Lücke im Netzrand“ mit 133 cm³, also zwei Dritteln; dieselbe Kerbe
+im Blech 2 × 2 × 0,005 m: FEHLER „Volumenbilanz“ und FEHLER „Lücke im
+Netzrand“ 133 cm³. Eine Kerbe 0,1 × 0,1 m im Blech 2 × 2 × 0,005 m, bei der
+die halbe Dicke über dieser Grenze liegt, blieb FEHLER „Seiten im Inneren
+6“. An einer Platte 10 × 10 × 0,01 m mit zwei Elementlagen über die Dicke
+meldete die Abnahme eine Kerbe 0,5 × 0,5 m (2 500 cm³, 0,25 % des Körpers)
+gar nicht. Fehlen die zwei Zellen der Platte 1 × 1 × 0,125 m dagegen mitten
+in der Platte, ist das Loch durch die ganze Dicke eine Lücke mit ihrem
+Volumen (488 cm³).
 
 **Windschiefe Randflächen.** Ein Tetraedernetz liegt auf einer windschiefen
 (bilinearen) Fläche auf Sehnen, und der freie Vernetzer setzt Knoten auf Sehnen

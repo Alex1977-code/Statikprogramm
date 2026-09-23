@@ -6627,7 +6627,7 @@ Gemessen, t durch den Median der Nachbardicke:
 | Hohlraum | t / Dicke der Nachbarn |
 |---|---|
 | Lücken des freien Vernetzers (dieselben 30 Gruppen) | 0 bis 0,482 |
-| … davon einzeln beurteilte Stücke eines Haufens (Platte mit Bohrung ohne „intelligent“, 12 925 tet4, zwei Stücke aus je 4 Seiten) | 0,570 und 0,579 |
+| … davon einzeln beurteilte Stücke (Platte mit Bohrung ohne „intelligent“, 12 925 tet4: sechs Haufen, geteilt in 12 Stücke; die beiden dicksten aus zwei verschiedenen Haufen, je 4 Seiten, 0,579 und 0,570) | 0,074 bis 0,579 |
 | fehlender Sechsflächner, gleichmäßig 100 × 100 × 100 bis 500 mm und abgestuft wie oben | 1,00 bis 1,01 |
 | fehlender Kuhn-Tetraeder, gleichmäßig und abgestuft wie oben | 0,865 bis 1,07 |
 | verdrehter Sechsflächner, gleichmäßig und abgestuft wie oben | 0,21 bis 2,7 |
@@ -6748,8 +6748,16 @@ die Aussparung; die Bilanz sind 1,17e-5 m³. Keine Lücke ist die Gruppe,
   zerschneiden, läuft über gegenüberliegende Flächen.
 
 Jede dieser Regeln entscheidet in `test_diagnose` mindestens einen Fall
-allein (seit 23.09.2026; vorher bestand die Suite ganz, wenn eine von ihnen
-fehlte, gemessen mit Verfälschungen an ec6448c). Gemessen am 23.09.2026:
+allein. Gemessen mit Verfälschungen in `luecke()` bzw. `_schliesspunkt` am
+Stand 84b41ea (121 Prüfungen, 24.09.2026): ohne „verdreht“ bestehen 117,
+ohne „doppelte Knoten“ 120, ohne „kein Volumen“ 120 und ohne „kein p₀“ 120.
+„Kein p₀“ ist dabei nur als Ganzes festgelegt: Von ihren zwei Abweisungen,
+„kein gemeinsamer Punkt“ und „Fächer nicht auf der Hülle“, fängt jede die
+Kerbe unten auch allein, und fehlt nur eine von beiden, besteht die Suite
+ganz (121). Die alte Suite (ec6448c, 112 Prüfungen) legte nur die ersten
+beiden Regeln fest: ohne „verdreht“ bestanden 109, ohne „doppelte Knoten“
+111; ohne „kein Volumen“ oder ohne „kein p₀“ bestand sie ganz. Gemessen am
+23.09.2026:
 
 * Eine Kerbe durch die ganze Dicke am Rand einer Platte (1 × 1 × 0,125 m,
   16 × 16 × 2 Sechsflächner, zwei Zellen entfernt) hat eine Schleife über
@@ -6758,13 +6766,34 @@ fehlte, gemessen mit Verfälschungen an ec6448c). Gemessen am 23.09.2026:
   gemeinsamer Punkt“ und „Fächer nicht auf der Hülle“ wäre sie eine Lücke
   von 3,255e-4 m³, zwei Drittel der fehlenden 4,883e-4 m³, weil der Fächer
   von p₀ in halber Höhe durch den Körper läuft. Jede der beiden
-  Abweisungen allein fängt diesen Fall.
+  Abweisungen allein fängt diesen Fall. An dünnen Platten gilt das nicht:
+  Ist die halbe Dicke höchstens so groß wie die Toleranz (am Quelltext:
+  `ABNAHME_HUELLABSTAND` = 1 % des Größeren aus der Raumdiagonale des
+  Quaders um die Schleife und der längsten Seitenkante der Gruppe), gilt p₀
+  in halber Dicke als Punkt auf allen Ebenen. Gemessen am 24.09.2026 an
+  Platten aus einer Lage Sechsflächner, Kerbe am Rand: Blech
+  4 × 4 × 0,005 m, Kerbe 0,2 × 0,2 m (2,0e-4 m³): „WARNUNG Lücke im
+  Netzrand 1,333e-4 m³“; Platte 10 × 10 × 0,01 m, Kerbe 0,5 × 0,5 m
+  (2,5e-3 m³): Lücke 1,667e-3 m³, beide Male zwei Drittel des fehlenden
+  Volumens. Gegenproben mit halber Dicke über der Toleranz, beide FEHLER:
+  Blech 2 × 2 × 0,005 m, Kerbe 0,1 × 0,1 m („Seiten im Inneren 6“);
+  Platte 10 × 10 × 0,01 m, Kerbe 0,25 × 0,25 m („Seiten im Inneren 3“).
+  Dieselbe Kerbe 0,5 × 0,5 m ergab mit zwei Lagen über die Dicke keinen
+  Befund, mit drei Lagen eine Lücke von 5,556e-4 m³; mit
+  `ABNAHME_HUELLABSTAND` 0,001 statt 0,01 waren es bei einer, zwei und
+  drei Lagen FEHLER „Seiten im Inneren“ (6, 12, 18).
 * Ein Loch durch die ganze Dicke mitten in derselben Platte hat zwei
   Schleifen, im Deckel und im Boden: Lücke 4,883e-4 m³, das Volumen der
   zwei Zellen. Ohne den Fächer der zweiten Schleife wären es 3,255e-4 m³.
 * Eine Schleife im Deckel des L-Prismas, deren eine Kante über die
   Aussparung läuft (Kantenmitte 50 mm neben dem Deckel), hat keinen
-  Schließpunkt, obwohl ihr Fächer ganz auf dem Deckel liegt.
+  Schließpunkt. Das entscheidet allein die Regel „jede Kante in einer
+  Randfläche“: Ohne sie läge p₀ bei (0,34 | 1,04 | 0,4) auf dem Deckel, und
+  die Schwerpunkte der fünf Fächerdreiecke lägen auf dem Deckel (Abstand 0).
+  Nur diese Schwerpunkte misst die Abweisung „Fächer nicht auf der Hülle“,
+  sie ließe die Schleife also durch. Der Fächer selbst liegt nicht ganz auf
+  dem Deckel: Zwei seiner Dreiecke reichen über die Aussparung, bis 50 mm
+  neben die Hülle bei einer Toleranz von 16,9 mm (gemessen 24.09.2026).
 * Den verdrehten Sechsflächner am Rand (abgestuft 5:1, Element 55) hält
   jede der beiden Regeln allein: die Erkennung des verdrehten Elements auch
   mit der Dickengrenze 0,02, die Dünnregel ohne die Erkennung. Diese knapp:

@@ -1026,9 +1026,10 @@ def test_abnahme_luecken_des_vernetzers_sind_risse():
     # jede Grenze ab 0,25; mit 0,50, 0,85 oder 1,0 bestand die Suite ganz
     # (Nebenbefund B145). Von unten begrenzt die Grenze die Platte mit Bohrung
     # aus test_mesher3d.test_mantellinie_der_bohrung ohne „intelligent“
-    # (12 925 tet4): Dort teilt die Abnahme einen Haufen an Kanten mit mehr
-    # als zwei Seiten in Stuecke, und zwei davon aus je 4 Seiten sind
-    # 0,579- und 0,570-mal so dick wie ihre Nachbarn (t/L 3,69 und 3,24 %).
+    # (12 925 tet4): Dort teilt die Abnahme sechs Haufen an Kanten mit mehr
+    # als zwei Seiten in 12 Stuecke (t/Nachbar 0,074 bis 0,579). Die beiden
+    # dicksten stammen aus zwei verschiedenen Haufen, je 4 Seiten: 0,579
+    # (t/L 3,69 %) und 0,570 (t/L 3,24 %), gemessen 24.09.2026.
     # Gemessen 23.09.2026: mit ABNAHME_RISS_NACHBAR 0,58 „WARNUNG Riss im
     # Netz 133“, mit 0,57 dazu „FEHLER Seiten im Inneren 8“ - eine Rueckfrage
     # vor jeder Rechnung an einem Netz des eigenen Vernetzers.
@@ -1808,10 +1809,14 @@ def test_abnahme_luecke_je_regel():
 
     # Jede Kante der Schleife liegt in einer Randflaeche: eine Schleife im
     # Deckel des L-Prismas, deren eine Kante ueber die Aussparung laeuft
-    # (Mitte 50 mm neben dem Deckel, Toleranz 16,9 mm). Ihr Faecher liegt
-    # ganz auf dem Deckel - nur diese Regel weist sie ab. Gemessen am
-    # 23.09.2026: ohne sie p0 = (0,34 | 1,04 | 0,4). Gegenprobe: dieselbe
-    # Schleife um die Ecke (0,45 | 0,45) herum liegt auf der Huelle.
+    # (Mitte 50 mm neben dem Deckel, Toleranz 16,9 mm). Nur diese Regel
+    # weist sie ab. Gemessen am 23.09.2026: ohne sie p0 = (0,34 | 1,04 | 0,4).
+    # Die Schwerpunkte der fuenf Faecherdreiecke liegen dann auf dem Deckel
+    # (Abstand 0), und nur die misst die Abweisung „Faecher nicht auf der
+    # Huelle“. Der Faecher selbst liegt nicht ganz auf dem Deckel: zwei
+    # seiner Dreiecke reichen ueber die Aussparung, bis 50 mm neben die
+    # Huelle (gemessen 24.09.2026). Gegenprobe: dieselbe Schleife um die
+    # Ecke (0,45 | 0,45) herum liegt auf der Huelle.
     m = Model("L")
     m.add_material(Material.steel("S235"))
     k = _extrudiert(m, [(0, 0), (2, 0), (2, 0.5), (0.5, 0.5), (0.5, 2), (0, 2)], 0.0, 0.4)

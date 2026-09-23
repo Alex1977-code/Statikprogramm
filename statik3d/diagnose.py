@@ -1355,8 +1355,10 @@ ABNAHME_RISS_DICKE = 0.05
 #:   - Luecken des freien Vernetzers (die 30 geschlossenen Gruppen der
 #:     Modelle von test_mesher3d und test_sweep, Platte mit Bohrung und
 #:     Keile eingeschlossen): 0,000 bis 0,482; einzeln beurteilte Stuecke
-#:     eines Haufens (siehe die Trennung in _gruppen_im_inneren) an der
-#:     Platte mit Bohrung ohne „intelligent“ (12 925 tet4): 0,570 und 0,579;
+#:     (siehe die Trennung in _gruppen_im_inneren) an der Platte mit Bohrung
+#:     ohne „intelligent“ (12 925 tet4, sechs Haufen in 12 Stuecke geteilt):
+#:     0,074 bis 0,579, die beiden dicksten (0,579 und 0,570) aus zwei
+#:     verschiedenen Haufen (gemessen 24.09.2026);
 #:   - fehlender Sechsflaechner (gleichmaessig 100 x 100 x 100 bis 500 mm und
 #:     abgestuft 5:1, 20:1, 50:1, je 512 innere Zellen): 1,00 bis 1,01;
 #:   - fehlender Kuhn-Tetraeder (gleichmaessig 100 x 100 x 100 bis 300 mm,
