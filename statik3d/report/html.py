@@ -3661,8 +3661,10 @@ class Report:
                          fmt(g.M_j_Rd / 1e3, 1) if g and g.M_j_Rd else "-",
                          Util(c.util), _pretty(c.massgebend or c.fehler), c.kombination,
                          Util(c.D) if c.D else "-",
-                         "erfüllt" if c.eta <= 1.0 and not c.fehler
-                         else ("nicht geführt" if c.fehler else "NICHT erfüllt")])
+                         # aus AnschlussCheck.status(): dort steht auch
+                         # "unvollständig" (einer Ermuedungslast fehlt ein
+                         # Ergebnis - ein Zustand oder ein Glied im Verlauf)
+                         c.status()])
         b.append(("table", rows, "Anschlüsse: Steifigkeit, Tragfähigkeit, Ausnutzung",
                   None, ""))
         if self.opt("figures"):
@@ -3698,8 +3700,17 @@ class Report:
                    ("Ausnutzung (Tragfähigkeit)", Util(c.util))]
             if c.ermuedung:
                 kv.append(("Schädigung (Ermüdung)", Util(c.D)))
-            kv.append(("Status", "Nachweis erfüllt" if c.eta <= 1.0
-                       else "Nachweis NICHT erfüllt"))
+            # "unvollständig" heisst: einer Ermuedungslast fehlt ein Ergebnis.
+            # Fehlt ein Zustand, ist die Last nicht gerechnet; fehlt einem
+            # Verlauf ein Glied, zaehlen seine uebrigen Glieder (Hallenrahmen,
+            # K1, [Kran, FEHLT, LF1] mit 1e5: D = 0,304835 wie [Kran, LF1],
+            # gemessen 24.09.2026). Daher nennt die Zeile das fehlende
+            # Ergebnis und nicht "nicht gerechnet".
+            st = c.status()
+            kv.append(("Status", "Nachweis erfüllt" if st == "erfüllt"
+                       else "Nachweis NICHT erfüllt" if st == "NICHT erfüllt"
+                       else "Nachweis unvollständig – Ergebnis fehlt für Ermüdungslast: "
+                       + ", ".join(getattr(c, "fehlende_lasten", None) or [])))
             b.append(("kv", kv, f"Anschluss {c.name}"))
 
             g = c.gelenk
@@ -3793,6 +3804,10 @@ class Report:
         nf = [c.name for c in j.joints.values() if c.eta > 1.0]
         if nf:
             self._warnings.append("Anschlussnachweis NICHT erfüllt für: " + ", ".join(nf))
+        offen = [c.name for c in j.joints.values() if c.status() == "unvollständig"]
+        if offen:
+            self._warnings.append("Anschlussnachweis unvollständig (Ergebnis einer "
+                                  "Ermüdungslast fehlt) für: " + ", ".join(offen))
         return b
 
     # ============================================================ Kapitel 8
@@ -4027,6 +4042,9 @@ class Report:
                           else f"{_pretty(worst.massgebend)}, Kombination {worst.kombination}")))
             if any(c.eta > 1.0 or c.fehler for c in aj.joints.values()):
                 status_ok = False
+            teil_j = [c.name for c in aj.joints.values() if c.status() == "unvollständig"]
+            if teil_j:
+                unvollstaendig.append(f"{len(teil_j)} Anschlüsse (Ermüdung)")
         # Der Volumennachweis fehlte hier bis zum 22.09.2026 **doppelt**: in der
         # Statuspruefung und in der Liste der gefuehrten Nachweise. Ein Modell,
         # das nur aus Volumen besteht - am Drehlager der Regelfall -, bekam

@@ -5279,8 +5279,12 @@ class Model:
             # Ein Zustand darf ein Lastfall oder eine Kombination sein - die
             # FAT-Kombinationen aus RFEM (CBG-Trolley: 20 Ermuedungslasten je
             # ein Zustand gegen den Nullzustand) sind Kombinationen, und der
-            # Nachweis liest beide aus den Ergebnissen (ec3.fatigue, all_res)
-            for k in (f.case_max, f.case_min):
+            # Nachweis liest beide aus den Ergebnissen (ec3.fatigue, all_res).
+            # Ein Verlauf liest case_max/case_min nicht (ec3.fatigue und seit
+            # 23.09.2026 auch der Anschluss): ein aus der alten Maske
+            # mitgefuehrtes case_max ergab nach dem Loeschen dieses Lastfalls
+            # einen FEHLER fuer eine Last, die ihn gar nicht nennt (Befund B067).
+            for k in (() if getattr(f, "folge", None) else (f.case_max, f.case_min)):
                 if k and k not in self.load_cases and k not in self.combinations:
                     msgs.append(f"FEHLER: Ermuedungslast '{f.name}': Lastfall oder Kombination '{k}' unbekannt")
             # ... aber keine oder-verknuepfte Ergebniskombination: sie hat nur

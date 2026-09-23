@@ -743,13 +743,129 @@ def test_unvollstaendig_je_weg():
               "kein Eintrag" if x is None else f"{x.status()} D = {x.util:.3f} {x.fehlende_lasten}")
 
 
+def test_maske_verlauf_ohne_zustaende():
+    """Befund B067 (Nebenbefund 22./23.09.2026, am Stand ec6448c gemessen):
+    Die Maske uebergab im Modus Verlauf den ersten Eintrag der gesperrten
+    Auswahl „Oberer Zustand“ (im Hallenrahmen 'Kran') als case_max. Der
+    Anschlussnachweis las ihn: der Verlauf Null -> S -> Null ergab an der
+    Kopfplatte K1 D = 3,04294 (Kran gegen null) statt 7,12871 (S gegen null).
+    Und nach dem Loeschen von 'Kran' meldete die Modellpruefung einen FEHLER
+    fuer eine Last, die 'Kran' gar nicht nennt. Geprueft ueber den echten
+    MainWindow.add_fatigue_load mit der echten Maske (offscreen, exec ersetzt).
+    """
+    import importlib
+    import types
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6 import QtWidgets
+    from statik3d import examples_lib
+    # das Modul, nicht die gleichnamige Startfunktion aus statik3d.gui
+    G = importlib.import_module("statik3d.gui.main")
+    from statik3d.gui.dialogs import FatigueLoadDialog
+    from statik3d.joints import anschluss as A
+    from statik3d.joints.templates import propose
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    class Maske(FatigueLoadDialog):
+        """Die echte Maske im Modus Verlauf, eigene Wiederholungen 5e5."""
+        text = ""
+
+        def __init__(self, _parent, model):
+            super().__init__(None, model)
+            self.art.setCurrentIndex(1)
+            self.folge.setText(Maske.text)
+            self.global_n.setChecked(False)
+            self.wdh.set(5e5)
+
+        def exec(self):
+            return True
+
+    meldungen = []
+
+    def neu(m, text):
+        Maske.text = text
+        vorher = set(m.fatigue_loads)
+        s = types.SimpleNamespace(model=m, error=meldungen.append,
+                                  merken=lambda _was: None, refresh_all=lambda: None)
+        alt = G.FatigueLoadDialog
+        G.FatigueLoadDialog = Maske
+        try:
+            G.MainWindow.add_fatigue_load(s)
+        finally:
+            G.FatigueLoadDialog = alt
+        app.processEvents()
+        neue = [n for n in m.fatigue_loads if n not in vorher]
+        return m.fatigue_loads[neue[0]] if neue else None
+
+    def fehler(m):
+        return [z for z in m.check() if z.startswith("FEHLER")]
+
+    def hall():
+        m = examples_lib.build_example("hall")
+        m.fatigue_loads.clear()
+        return m
+
+    # (1) Im Modus Verlauf stehen die Zustaende nur in der Folge
+    m = hall()
+    fl = neu(m, "LF1, S, LF1")
+    check("Maske, Modus Verlauf: Folge übernommen, case_max leer, case_min None",
+          fl is not None and fl.folge == ["LF1", "S", "LF1"] and fl.case_max == ""
+          and fl.case_min is None and fl.wiederholungen == 5e5,
+          "keine Last" if fl is None else f"case_max {fl.case_max!r}, case_min {fl.case_min!r}")
+    m.remove_load_case("Kran")
+    check("... Lastfall 'Kran' gelöscht: kein FEHLER für den Verlauf ohne 'Kran'",
+          not fehler(m), "; ".join(fehler(m))[:100])
+
+    # (2) Dateien aus der alten Maske tragen das case_max weiter: die
+    # Modellpruefung liest es bei einem Verlauf nicht mehr - eine Last aus
+    # zwei Zustaenden mit geloeschtem Zustand bleibt ein FEHLER
+    m = hall()
+    m.fatigue_loads["Alt"] = FatigueLoad("Alt", case_max="Kran", folge=["LF1", "S", "LF1"],
+                                         wiederholungen=5e5)
+    m.add_fatigue_load("Zwei", "Kran", None, 5e5)
+    m.remove_load_case("Kran")
+    zeilen = fehler(m)
+    check("alter Verlauf mit case_max 'Kran': kein FEHLER, zwei Zustände: FEHLER",
+          not [z for z in zeilen if "'Alt'" in z] and [z for z in zeilen if "'Zwei'" in z],
+          "; ".join(zeilen)[:110])
+
+    # (3) Modus Verlauf mit leerem Feld: frueher entstand still die Last
+    # „Kran gegen Nullzustand“ aus der gesperrten Auswahl
+    m = hall()
+    meldungen.clear()
+    fl = neu(m, "")
+    check("Modus Verlauf ohne Lastfälle: Meldung, keine Last",
+          fl is None and not m.fatigue_loads and meldungen,
+          "angelegt: " + (fl.bezug() if fl is not None else "-") + f"; {meldungen}")
+
+    # (4) Anschluss K1: der Verlauf Null -> S -> Null ueber die Maske wie S gegen null
+    m = hall()
+    lc = m.add_load_case("Null", "Q", activate=False)
+    lc.gravity = [0.0, 0.0, 0.0]
+    e_kopf = m.members["Riegel"].elements[0]
+    m.joints["K1"] = A.als_joint(propose("kopfplatte", m, e_kopf, end=0, N=-50e3,
+                                         Vz=150e3, My=300e3), "K1")
+    verlauf = neu(m, "Null, S, Null")
+    m.add_fatigue_load("S-Null", "S", None, 5e5)
+    m.add_fatigue_load("Kran-Null", "Kran", None, 5e5)
+    an = solver.solve_all(m, design=True, fatigue=False)
+    D = {}
+    for name in (verlauf.name if verlauf is not None else "?", "S-Null", "Kran-Null"):
+        m.joints["K1"].ermuedung = [name]
+        D[name] = A.check_joints(m, an).joints["K1"].D
+    dv = D.get(verlauf.name if verlauf is not None else "?", 0.0)
+    check("Anschluss K1: Verlauf Null-S-Null über die Maske wie S gegen null",
+          D["S-Null"] > 0 and abs(dv - D["S-Null"]) <= 1e-9 * D["S-Null"]
+          and D["Kran-Null"] != D["S-Null"],
+          f"D = {dv:.6g}, S gegen null {D['S-Null']:.6g}, Kran gegen null {D['Kran-Null']:.6g}")
+
+
 def main():
     for t in (test_spanne, test_hauptspannungen, test_volumen, test_naht_beruehrung,
               test_kerbfall_vorschlaege,
               test_fehlender_mindestzustand_wird_gemeldet,
               test_mindestzustand_volumen_und_oder_ek,
               test_volumen_ohne_beitrag_und_unvollstaendig,
-              test_unvollstaendig_je_weg):
+              test_unvollstaendig_je_weg, test_maske_verlauf_ohne_zustaende):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

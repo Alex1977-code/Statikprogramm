@@ -887,11 +887,174 @@ def test_gelenk_im_modell_und_bericht():
           "Momenten-Rotations-Kennlinien nach 6.3 sind nicht enthalten" not in html)
 
 
+# --------------------------------------------------------------------------
+# Ermuedung am Anschluss: Verlauf, Mindestzustand, Lastspielzahl, gamma_Ff
+# --------------------------------------------------------------------------
+def test_anschluss_ermuedungslasten():
+    """Befunde B094, B095, NB1, NB2 (Nebenbefunde vom 22./23.09.2026, am Stand
+    ec6448c gemessen am Hallenrahmen mit der Kopfplatte K1, Kran gegen LF1):
+
+    * B094: ein Verlauf (``folge``) wurde am Anschluss nicht gezaehlt, gelesen
+      wurde nur case_max - mit dem case_max der Maske D = 12,1718 (Kran gegen
+      null statt der Spanne, 6,0967), mit leerem case_max wie aus dem
+      RFEM-Import D = 0 und nur ein Hinweis; der Status urteilte allein nach eta;
+    * B095: ein benannter, aber nicht gerechneter Mindestzustand wurde still
+      zur Null (D = 12,1718 ohne Hinweis);
+    * NB1: cycles=None (globale Lastspielzahl, Vorgabe der Maske und des
+      Imports) ergab D = 0 ohne Hinweis;
+    * NB2: gamma_Ff wirkte nicht (D = 6,0967 bei 1,0 und bei 1,5).
+    Vorbild ist der Stabnachweis ec3.fatigue.check_fatigue.
+    """
+    from statik3d import examples_lib
+    from statik3d.model import FatigueLoad
+    from statik3d.joints import anschluss as A
+    from statik3d.joints.templates import propose
+
+    m = examples_lib.build_example("hall")
+    e_kopf = m.members["Riegel"].elements[0]
+    m.joints["K1"] = A.als_joint(propose("kopfplatte", m, e_kopf, end=0, N=-50e3,
+                                         Vz=150e3, My=300e3), "K1")
+    an = solver.solve_all(m, design=True, fatigue=False)
+    m.design.ermuedung_lastspiele = 2e6
+    m.design.gamma_Ff = 1.0
+    # kleine feste Schnittgroessen: Tragfaehigkeit < 1, damit der Status der
+    # Ermuedung sichtbar wird (mit den Kombinationen ist util = 1,0096)
+    klein = {"N": 0.0, "Vz": 10e3, "My": 20e3}
+
+    def nachweis(*lasten, fest=None):
+        m.fatigue_loads.clear()
+        for fl in lasten:
+            m.fatigue_loads[fl.name] = fl
+        m.joints["K1"].ermuedung = [fl.name for fl in lasten]
+        m.joints["K1"].kraefte = dict(fest or {})
+        return A.check_joints(m, an).joints["K1"]
+
+    def fehlend(c):
+        return list(getattr(c, "fehlende_lasten", None) or [])
+
+    def gleich(a, b):
+        return b > 0 and abs(a - b) <= 1e-9 * b
+
+    zwei = nachweis(FatigueLoad("E", case_max="Kran", case_min="LF1", cycles=2e6))
+    check("zwei Zustände Kran gegen LF1: Schädigung am Anschluss", zwei.D > 1.0,
+          f"D = {zwei.D:.6g}")
+
+    # -- B094: der Verlauf wird gezaehlt -------------------------------------
+    faelle = [
+        ("wie der RFEM-Import (case_max leer, Wiederholungen global)",
+         FatigueLoad("E", folge=["Kran", "LF1"], zaehlung="spanne", wiederholungen=None)),
+        ("wie die Maske (case_max Kran, cycles 2e6)",
+         FatigueLoad("E", case_max="Kran", cycles=2e6, folge=["Kran", "LF1"],
+                     wiederholungen=2e6)),
+    ]
+    for text, fl in faelle:
+        v = nachweis(fl)
+        check(f"Verlauf {text}: D wie zwei Zustände",
+              gleich(v.D, zwei.D) and not fehlend(v)
+              and not [h for h in v.hinweise if "fehlt" in h],
+              f"D = {v.D:.6g} / {zwei.D:.6g}, {[h for h in v.hinweise if 'fehlt' in h]}")
+
+    # Das Zaehlverfahren der Last wirkt. LF1-Kran-LF1 unterscheidet die
+    # Verfahren nicht (Spanne, Rainflow und Reservoir je D = 6,0967, gemessen
+    # 24.09.2026) - eine Pruefung damit bestand auch, wenn der Anschluss
+    # immer "spanne" zaehlte. Mit drei verschiedenen Stufen (M_y am Anschluss
+    # LF1 85,1, Kran 47,4, S 63,0 kNm) zaehlt die Spanne nur ein Spiel
+    # Kran gegen LF1, Rainflow und Reservoir je ein volles Spiel Kran gegen
+    # LF1 und S gegen LF1 - wie zwei Lasten aus zwei Zustaenden (7,32878).
+    beide = nachweis(FatigueLoad("E1", case_max="Kran", case_min="LF1", cycles=2e6),
+                     FatigueLoad("E2", case_max="S", case_min="LF1", cycles=2e6))
+    for z, soll, text in (("spanne", zwei.D, "Kran gegen LF1"),
+                          ("rainflow", beide.D, "Kran gegen LF1 plus S gegen LF1"),
+                          ("reservoir", beide.D, "Kran gegen LF1 plus S gegen LF1")):
+        v = nachweis(FatigueLoad("E", folge=["LF1", "Kran", "LF1", "S", "LF1"],
+                                 wiederholungen=2e6, zaehlung=z))
+        check(f"Verlauf LF1-Kran-LF1-S-LF1, {z}: D wie {text}",
+              beide.D > 1.1 * zwei.D and gleich(v.D, soll) and not fehlend(v),
+              f"D = {v.D:.6g} / {soll:.6g} (Spanne {zwei.D:.6g}, beide {beide.D:.6g})")
+
+    # Ein fehlendes Glied: die uebrigen Glieder zaehlen (wie im Stabnachweis,
+    # ec3.fatigue._verlauf), die Last steht nur teilweise in D - unvollstaendig
+    ohne = nachweis(FatigueLoad("E", folge=["Kran", "LF1"], wiederholungen=1e5), fest=klein)
+    v = nachweis(FatigueLoad("E", folge=["Kran", "FEHLT", "LF1"], wiederholungen=1e5),
+                 fest=klein)
+    check("Verlauf mit fehlendem Glied: übrige Glieder zählen, Hinweis, unvollständig",
+          any("'FEHLT'" in h for h in v.hinweise) and fehlend(v) == ["E"]
+          and v.util < 1.0 and 0.0 < v.D < 1.0 and gleich(v.D, ohne.D)
+          and v.status() == "unvollständig",
+          f"{v.status()}, D = {v.D:.6g} / {ohne.D:.6g} ohne das Glied, "
+          f"util = {v.util:.3f}, fehlend {fehlend(v)}")
+    from statik3d.report import Report
+    an.joints = A.check_joints(m, an)
+    kap = Report(m, an).html().split("Anschlüsse nach DIN EN 1993-1-8")[-1]
+    kap = kap.split("Verformungsnachweise (Grenzzustand")[0]
+    check("Bericht, Verlauf mit fehlendem Glied: Status nennt das fehlende Ergebnis, "
+          "nicht „nicht gerechnet“",
+          "Nachweis unvollständig – Ergebnis fehlt für Ermüdungslast: E" in kap
+          and "nicht gerechnet" not in kap and "Schädigung (Ermüdung)" in kap)
+    v = nachweis(FatigueLoad("E", case_max="FEHLT", cycles=1e5), fest=klein)
+    check("fehlender Höchstzustand: nicht „erfüllt“, sondern unvollständig",
+          any("'FEHLT'" in h for h in v.hinweise) and v.status() == "unvollständig",
+          f"{v.status()}, D = {v.D:.4g}")
+    v = nachweis(FatigueLoad("E", folge=["Kran", "FEHLT"], wiederholungen=0.0), fest=klein)
+    check("unwirksame Sammlung (0 Wiederholungen) mit fehlendem Glied bleibt erfüllt",
+          v.status() == "erfüllt" and not fehlend(v) and v.D == 0.0,
+          f"{v.status()}, fehlend {fehlend(v)}")
+
+    # -- B095: benannter, nicht gerechneter Mindestzustand ---------------------
+    b = nachweis(FatigueLoad("E", case_max="Kran", case_min="GIBT_ES_NICHT", cycles=2e6))
+    check("fehlender Mindestzustand: Hinweis statt „Kran gegen null“",
+          any("GIBT_ES_NICHT" in h and "Mindestzustand" in h for h in b.hinweise)
+          and b.D == 0.0 and fehlend(b) == ["E"],
+          f"D = {b.D:.6g}, {[h for h in b.hinweise if 'GIBT' in h]}")
+    b = nachweis(FatigueLoad("E", case_max="Kran", case_min="GIBT_ES_NICHT", cycles=1e5),
+                 fest=klein)
+    check("... und der Anschluss heißt unvollständig, nicht erfüllt",
+          b.status() == "unvollständig", b.status())
+    b = nachweis(FatigueLoad("E", case_max="Kran", case_min="GIBT_ES_NICHT", cycles=0.0),
+                 fest=klein)
+    check("... außer bei 0 Lastspielen (die Last wäre unwirksam)",
+          b.status() == "erfüllt" and not fehlend(b), b.status())
+
+    # -- NB1: globale Lastspielzahl ------------------------------------------
+    g = nachweis(FatigueLoad("E", case_max="Kran", case_min="LF1", cycles=None))
+    check("cycles=None: globale Lastspielzahl 2e6, D wie mit 2e6",
+          gleich(g.D, zwei.D), f"D = {g.D:.6g} / {zwei.D:.6g}")
+
+    # -- NB2: gamma_Ff ---------------------------------------------------------
+    m.design.gamma_Ff = 1.5
+    try:
+        f15 = nachweis(FatigueLoad("E", case_max="Kran", case_min="LF1", cycles=2e6))
+    finally:
+        m.design.gamma_Ff = 1.0
+    check("γ_Ff = 1,5 vergrößert D am Anschluss um 1,5³",
+          {e["steigung"] for e in f15.ermuedung} == {3}
+          and gleich(f15.D, 1.5 ** 3 * zwei.D),
+          f"D = {f15.D:.6g} / {1.5 ** 3 * zwei.D:.6g}")
+
+    # -- Zusammenfassung und Bericht nennen den unvollstaendigen Anschluss -------
+    nachweis(FatigueLoad("E", case_max="Kran", case_min="GIBT_ES_NICHT", cycles=1e5),
+             fest=klein)
+    erg = A.check_joints(m, an)
+    check("Zusammenfassung: unvollständig statt „alle erfüllt“",
+          "unvollständig" in erg.summary() and "alle erfüllt" not in erg.summary(),
+          erg.summary()[:110])
+    an.joints = erg
+    html = Report(m, an).html()
+    kap = html.split("Anschlüsse nach DIN EN 1993-1-8")[-1]
+    kap = kap.split("Verformungsnachweise (Grenzzustand")[0]
+    check("Bericht: Anschluss unvollständig, nicht „Nachweis erfüllt“",
+          "Nachweis unvollständig" in kap and "Nachweis erfüllt" not in kap)
+    check("Bericht, Gesamturteil: der Anschluss ist nicht vollständig geführt",
+          "nicht vollständig geführt wurden: 1 Anschlüsse (Ermüdung)" in html
+          and "Alle Nachweise erfüllt." not in html)
+    m.joints["K1"].kraefte = {}
+
+
 def main():
     for t in (test_schrauben, test_naehte, test_tstub, test_fe_schraube,
               test_bleche, test_nachweise, test_vorlagen, test_anschluss_im_modell,
               test_momenten_rotation, test_gelenk_in_der_rechnung,
-              test_gelenk_im_modell_und_bericht):
+              test_gelenk_im_modell_und_bericht, test_anschluss_ermuedungslasten):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
