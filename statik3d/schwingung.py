@@ -119,6 +119,11 @@ class SchwingungsErgebnis:
     log: list = field(default_factory=list)
     res_luft: object = None
     res_wasser: object = None
+    #: Ausweichen des Gleichungsloesers in den Rechnungen dieses Nachweises
+    #: (solver._ausweich_eintraege: "ausweichgrund", "ausweichen"), leer ohne.
+    #: Der Nachweis rechnet ohne Fortschritt; der Bericht liest es von hier
+    #: ueber solver.ausweichen_gebuendelt (Befund B121, 23.09.2026).
+    info: dict = field(default_factory=dict)
 
     KOPF = ["Mode", "f_Luft [Hz]", "f_Wasser [Hz]", "m_h/m", "V_r", "f_s/f", "V", "Beurteilung"]
 
@@ -378,6 +383,7 @@ def nachweis(model, sn: Schwingungsnachweis, analysis=None, progress=None,
         erg.moden.append(mo)
     # Dynamische Antwort auf die Druckschwankung
     dyn = {}
+    res_d_hier = None                  # hier gerechnet (nicht aus der Analyse)
     if wd.lastfall_dyn and kw.get("dp_dyn", 0.0) > 0 and wd.lastfall_dyn in model.load_cases:
         res_d = None
         if analysis is not None:
@@ -387,6 +393,7 @@ def nachweis(model, sn: Schwingungsnachweis, analysis=None, progress=None,
                 progress(f"Lastfall {wd.lastfall_dyn} (Druckschwankung)")
             try:
                 res_d = solver.solve_cases(model, [wd.lastfall_dyn], workers)[wd.lastfall_dyn]
+                res_d_hier = res_d
             except Exception as ex:        # noqa: BLE001
                 erg.log.append(f"Druckschwankung nicht gerechnet: {ex}")
         if res_d is not None and erg.moden:
@@ -414,6 +421,24 @@ def nachweis(model, sn: Schwingungsnachweis, analysis=None, progress=None,
                             "kerbfall": kf, "gamma_Mf": float(sn.gamma_Mf),
                             "gamma_Ff": float(sn.gamma_Ff)})
     erg.dyn = dyn
+    # Ausweichen des Gleichungsloesers. Beide Modalanalysen und der
+    # Druckschwankungs-Lastfall rechnen hier ohne Fortschritt; der Grund stand
+    # nur in res_luft.info/res_wasser.info, der des Lastfalls ging ganz
+    # verloren (res_d wird nicht abgelegt), und Protokoll und Bericht nannten
+    # ihn nicht - mit PARDISO im Prozess zum Scheitern gebracht 0-mal
+    # "ausgewichen" im ganzen Bericht (Befund B121, gemessen 23.09.2026).
+    # Ein Lastfall aus der Analyse fehlt hier mit Absicht: er steht mit ihren
+    # Ergebnissen schon in Zusammenfassung und Bericht (gemessen 23.09.2026
+    # nach solve_all mit werfendem PARDISO: eine Hinweiszeile "bei 4
+    # Ergebnissen (LF1, Wasser S, Wasser S dyn …)", Grund einmal im Bericht).
+    teile = [("Eigenfrequenzen in Luft", res_l)]
+    if res_w is not res_l:
+        teile.append(("Eigenfrequenzen im Wasser", res_w))
+    if res_d_hier is not None:
+        teile.append((f"Lastfall {wd.lastfall_dyn}", res_d_hier))
+    erg.info = solver._ausweich_eintraege(
+        [p for _n, r in teile for p in solver.ausweich_paare(getattr(r, "info", None) or {})])
+    erg.log += solver.ausweichen_gebuendelt(teile)
     # Status
     if erg.v <= 0:
         erg.status = "erfüllt (keine Durchströmung, keine Anregung)"

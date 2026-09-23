@@ -3416,6 +3416,23 @@ Antwort auf die Druckschwankung mit Ermüdung, die Erläuterung und das
 Grenze V_r) samt der Westergaard-Verteilung über die Höhe. Die Angaben
 bleiben im Modell und werden mit der Datei gespeichert.
 
+**Ausweichen des Gleichungslösers.** Der Nachweis rechnet die Eigenfrequenzen
+in Luft und im Wasser und – wenn die Berechnung ihn nicht schon enthält – den
+Lastfall der Druckschwankung selbst. Weicht dabei „automatisch“ aus (siehe
+*Gleichungslöser* in Kapitel 9), steht im Protokoll des Nachweises vor der
+Erläuterung eine Zeile „Gleichungslöser ausgewichen bei *n* Ergebnissen
+(Eigenfrequenzen in Luft, Eigenfrequenzen im Wasser, Lastfall …): *Grund* –
+stattdessen rechnete …“, und der Bericht nennt es unter „Offene Hinweise und
+Warnungen“ mit „(Schwingungsnachweis *Name*)“ – bei gleichem Grund in derselben
+Zeile wie die Lastfälle und Kombinationen. Ein Druckschwankungs-Lastfall aus
+der Berechnung „Alle Lastfälle“ steht dort unter seinem eigenen Namen und wird
+im Nachweis nicht noch einmal gezählt. Bis zum 23.09.2026 nannten weder das
+Protokoll des Nachweises noch der Bericht ein Ausweichen; zu sehen war es nur
+in der Zusammenfassung der Modalanalyse im Wasser, das des selbst gerechneten
+Druckschwankungs-Lastfalls nirgends (geprüft mit PARDISO im Prozess zum
+Scheitern gebracht: `test_ausweichen_erreicht_bericht` in
+`tests/test_schwingung.py`).
+
 ### Knicklängen aus der Knickfigur
 
 *Nachweise → Knicklängen → Aus Knickfigur* (oder die Tabelle „Knicklängen“
@@ -3900,7 +3917,9 @@ davon nicht betroffen.
   „pardiso“ im Ergebnis, „stattdessen rechnete SuperLU“ in der Hinweiszeile).
   Überlagerte Kombinationen tragen den Grund ihrer Lastfälle, Ergebnisse nach
   Theorie II. Ordnung ihren eigenen. Die Eigenschwingungen melden ein Ausweichen
-  ebenso im Protokoll und in ihrer Zusammenfassung. Ein Ergebnis trägt den Grund
+  ebenso im Protokoll und in ihrer Zusammenfassung, der Schwingungsnachweis des
+  Verschlusses in seinem Protokoll und in den Hinweisen des Berichts (siehe
+  dort). Ein Ergebnis trägt den Grund
   nur, wenn es selbst mit dem Ausweichlöser gelöst wurde: fällt PARDISO bei einem
   Kontaktmodell erst in einem späteren Lastfall aus, bleiben die davor gerechneten
   ohne Vermerk (geprüft am Block mit Reibung, drei Läufe auf demselben System:

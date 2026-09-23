@@ -4101,7 +4101,15 @@ class Report:
         # es nirgends im Bericht; der Anhang nannte nur den Loeser, der am Ende
         # gerechnet hat (Befund K2).
         from ..solver import ausweichen_gebuendelt
-        self._warnings.extend(ausweichen_gebuendelt(self.all_results()))
+        ergebnisse = self.all_results()
+        # Der Schwingungsnachweis rechnet seine Modalanalysen und den
+        # Druckschwankungs-Lastfall selbst; sein Ausweichen steht in
+        # schwingung.info. Ohne diese Zeilen nannte der Bericht es nicht
+        # (Befund B121, gemessen 23.09.2026: 0-mal "ausgewichen").
+        sw_ = getattr(self, "schwingung", None)
+        if sw_ is not None:
+            ergebnisse = ergebnisse + [(f"Schwingungsnachweis {sw_.name}", sw_)]
+        self._warnings.extend(ausweichen_gebuendelt(ergebnisse))
         warn = list(dict.fromkeys(self._warnings))
         chk = [s for s in self._modellpruefung() if s.startswith("FEHLER") or s.startswith("WARNUNG")]
         warn += [f"Modellprüfung: {s}" for s in chk]

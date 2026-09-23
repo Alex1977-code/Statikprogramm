@@ -212,8 +212,103 @@ def test_bericht():
     check("Kapitel im Gesamtbericht", (not html) or "Schwingungsnachweis des Verschlusses" in html)
 
 
+def test_ausweichen_erreicht_bericht():
+    """Ein Ausweichen des Gleichungsloesers gehoert in Protokoll und Bericht.
+
+    Befund B121 (23.09.2026): sw.nachweis ruft solve_modal ohne Fortschritt
+    und den Druckschwankungs-Lastfall ueber solve_cases ohne Fortschritt. Der
+    Grund stand nur in res_luft.info/res_wasser.info (die Oberflaeche zeigt
+    ihn ueber _solve_done der Wasser-Modalanalyse); erg.log, das Kapitel und
+    die Hinweise des Berichts nannten ihn nicht - im ganzen Bericht 0-mal
+    "ausgewichen", mit PARDISO im Prozess zum Scheitern gebracht wie in
+    tests/test_loeser.py. Das Ausweichen des Druckschwankungs-Lastfalls ging
+    ganz verloren (res_d wird nirgends abgelegt).
+    """
+    import re
+    import pypardiso
+    from statik3d import parallel
+    from statik3d.report.html import Report
+
+    def aufbau():
+        m = _haut(nz=20)
+        wd = Wasserdruck("S", flaechen=["Haut"], h_ow=4.0, richtung=[1.0, 0, 0], unterstroemt=True,
+                         spalt=0.3, cp_dyn=0.1)
+        wdm.lasten_erzeugen(m, wd)
+        m.wasserdruecke["S"] = wd
+        return m, wd, solver.Analysis(m)
+
+    sn = sw.Schwingungsnachweis("N1", wasserdruck="S", n_moden=2, d_kante=0.2, betriebsstunden=100.0)
+    alt_backend = parallel.settings().solver_backend
+    parallel.configure(solver_backend="auto")
+    echt = pypardiso.PyPardisoSolver.factorize
+
+    def wirft(self, A):
+        raise RuntimeError("Probe: PARDISO verweigert")
+
+    pypardiso.PyPardisoSolver.factorize = wirft
+    try:
+        m, wd, an = aufbau()
+        # ohne Fortschritt - wie ein Aufruf ohne Oberflaeche
+        an.schwingung = sw.nachweis(m, sn, an)
+        # Druckschwankungs-Lastfall aus der Berechnung "Alle Lastfaelle"
+        m_a, wd_a, _an = aufbau()
+        an_a = solver.solve_all(m_a)
+        an_a.schwingung = sw.nachweis(m_a, sn, an_a)
+    finally:
+        pypardiso.PyPardisoSolver.factorize = echt
+        parallel.configure(solver_backend=alt_backend)
+    erg = an.schwingung
+    check("Vorbedingung: die Modalanalyse ist ausgewichen",
+          "verweigert" in str(erg.res_luft.info.get("ausweichgrund", "")),
+          repr(erg.res_luft.info.get("ausweichgrund"))[:80])
+    check("Vorbedingung: Antwort auf die Druckschwankung gerechnet",
+          bool(erg.dyn) and erg.dyn.get("lastfall") == wd.lastfall_dyn, str(erg.dyn.get("lastfall")))
+    zeilen = [z for z in erg.log if "ausgewichen" in z]
+    check("erg.log nennt das Ausweichen mit Grund, eine Zeile",
+          len(zeilen) == 1 and "Probe: PARDISO verweigert" in zeilen[0],
+          f"{len(zeilen)} Zeilen: " + (zeilen[0][:90] if zeilen else ""))
+    check("… mit Luft, Wasser und dem Druckschwankungs-Lastfall",
+          bool(zeilen) and "in Luft" in zeilen[0] and "im Wasser" in zeilen[0]
+          and wd.lastfall_dyn in zeilen[0], zeilen[0][:160] if zeilen else "")
+    html = Report(m, an).html()
+    punkte = [re.sub("<[^>]+>", "", p) for p in re.findall(r"<li>(.*?)</li>", html, re.S)
+              if "ausgewichen" in p]
+    check("der Bericht nennt es unter den Hinweisen - genau eine Zeile mit Grund",
+          len(punkte) == 1 and "Probe: PARDISO verweigert" in punkte[0]
+          and "Schwingungsnachweis N1" in punkte[0],
+          f"{len(punkte)} Zeilen: " + (punkte[0][:110] if punkte else ""))
+    check("der Grund steht einmal im Bericht",
+          html.count("Probe: PARDISO verweigert") == 1,
+          f"{html.count('Probe: PARDISO verweigert')} mal")
+    # Kommt der Lastfall aus der Analyse, steht er dort unter seinem Namen;
+    # der Nachweis zaehlt ihn nicht noch einmal, der Bericht bleibt bei einer
+    # Zeile (LF1, Wasser S, Wasser S dyn und der Nachweis)
+    zeilen_a = [z for z in an_a.schwingung.log if "ausgewichen" in z]
+    check("Lastfall aus der Analyse: erg.log nennt nur Luft und Wasser",
+          len(zeilen_a) == 1 and "bei 2 Ergebnissen" in zeilen_a[0]
+          and wd_a.lastfall_dyn not in zeilen_a[0], zeilen_a[0][:110] if zeilen_a else "keine Zeile")
+    html_a = Report(m_a, an_a).html()
+    punkte_a = [re.sub("<[^>]+>", "", p) for p in re.findall(r"<li>(.*?)</li>", html_a, re.S)
+                if "ausgewichen" in p]
+    check("Lastfall aus der Analyse: eine Hinweiszeile für Lastfälle und Nachweis",
+          len(punkte_a) == 1 and "bei 4 Ergebnissen" in punkte_a[0]
+          and html_a.count("Probe: PARDISO verweigert") == 1,
+          f"{len(punkte_a)} Zeilen: " + (punkte_a[0][:110] if punkte_a else ""))
+
+    # Gegenprobe: ohne Ausfall steht nichts da
+    m0, _wd0, an0 = aufbau()
+    an0.schwingung = sw.nachweis(m0, sn, an0)
+    info0 = getattr(an0.schwingung, "info", None)
+    check("ohne Ausfall: kein Ausweichen am Ergebnis und im Protokoll",
+          info0 == {} and not any("ausgewichen" in z for z in an0.schwingung.log), repr(info0)[:80])
+    html0 = Report(m0, an0).html()
+    check("ohne Ausfall: der Bericht nennt kein Ausweichen",
+          "ausgewichen" not in html0, f"{html0.count('ausgewichen')} mal")
+
+
 def main():
-    for f in (test_formeln, test_zusatzmasse_auf_dem_netz, test_eigenfrequenzen, test_nachweis, test_bericht):
+    for f in (test_formeln, test_zusatzmasse_auf_dem_netz, test_eigenfrequenzen, test_nachweis, test_bericht,
+              test_ausweichen_erreicht_bericht):
         print(f"\n--- {f.__name__} ---")
         try:
             f()
