@@ -3962,29 +3962,59 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         return s if kz_kenn is None else s + (kz_kenn,)
 
     f0 = getattr(system, "faktorisierungen", 0)
+    eingefroren_verworfen = None     # Verstoesse, wenn der eingefrorene Zustand nicht passte
     if einfrieren is not None and cs.cons and cs.zustand_setzen(einfrieren):
         Kc, Fc = cs.matrices(model.ndof)
         if K_zusatz is not None:
             Kc = Kc + K_zusatz
         u = system.solve(F, Kc, Fc, us=us, signatur=signatur())
-        cs._update_states(u)                 # nur zur Auswertung: g, Fn, Ft je Bedingung
-        R = system.reactions(u, F + Fc, Kc)
-        Rsup = cs.support_reactions(model.nn)
-        n6 = model.nn * NDOF
-        Rk = R[:n6].reshape(-1, NDOF)
-        Rk[:, :3] += Rsup
-        R[:n6] = Rk.ravel()
-        log.append("Kontaktzustand eingefroren: Kontaktsteifigkeit und -kräfte des "
-                   "Referenzzustands, lineare Lösung ohne Iteration")
-        log.extend(cs.warnings())
-        return u, R, cs.results(), cs.nodal_forces(model.nn), {
-            "contact_iterations": 1, "contact_converged": True, "contact_log": log,
-            "contact_warm": False, "contact_frozen": True,
-            "contact_factorisations": getattr(system, "faktorisierungen", 0) - f0,
-            "contact_state": None,
-            # konvergiert bleibt wahr wie bisher gemeldet; der Grund sagt, dass
-            # dieser Lauf nicht iteriert hat (die eine Runde ist die Auswertung)
-            "contact_lauf": _kontaktlauf_angaben(cs, u, model, "eingefroren")}
+        # Vor _update_states (das setzt Zustaende um): passt der eingefrorene
+        # Zustand zu dieser Last? Bis zum 22.09.2026 hiess der Lauf immer
+        # "konvergiert", auch wenn eine geschlossene Bedingung Zug trug (FE4).
+        # Gemessen am Block mit Reibung, Referenz H1: 1,0 H1 passt (0,00 %
+        # gegen die nichtlineare Loesung), 1,1 H1 vier Knoten ueber dem
+        # Reibkegel (7,0 %), 0,5 H1 Durchdringung und Gleiten gegen die
+        # Richtung (18,8 %), -1,0 H1 Zug an sechs geschlossenen (70,0 %).
+        verst = cs.zustand_verstoesse(u)
+        passt = not (verst["zug"] or verst["durchdringung"] or verst["kegel"] or verst["gegen"])
+        if passt:
+            cs._update_states(u)             # nur zur Auswertung: g, Fn, Ft je Bedingung
+            R = system.reactions(u, F + Fc, Kc)
+            Rsup = cs.support_reactions(model.nn)
+            n6 = model.nn * NDOF
+            Rk = R[:n6].reshape(-1, NDOF)
+            Rk[:, :3] += Rsup
+            R[:n6] = Rk.ravel()
+            log.append("Kontaktzustand eingefroren: Kontaktsteifigkeit und -kräfte des "
+                       "Referenzzustands, lineare Lösung ohne Iteration")
+            log.extend(cs.warnings())
+            return u, R, cs.results(), cs.nodal_forces(model.nn), {
+                "contact_iterations": 1, "contact_converged": True, "contact_log": log,
+                "contact_warm": False, "contact_frozen": True,
+                "contact_factorisations": getattr(system, "faktorisierungen", 0) - f0,
+                "contact_state": None,
+                # konvergiert: der Zustand erfuellt alle Bedingungen unter dieser
+                # Last; der Grund sagt, dass dieser Lauf nicht iteriert hat
+                "contact_lauf": _kontaktlauf_angaben(cs, u, model, "eingefroren")}
+        # Passt nicht: nichtlinear nachrechnen, vom eingefrorenen Zustand aus
+        teile = []
+        if verst["zug"]:
+            teile.append(f"{verst['zug']} geschlossene Bedingungen unter Zug "
+                         f"(größter {verst['zug_max'] / 1e3:.3g} kN)")
+        if verst["durchdringung"]:
+            teile.append(f"{verst['durchdringung']} offene durchdrungen "
+                         f"(größte {verst['durchdringung_max'] * 1e3:.3g} mm)")
+        if verst["kegel"]:
+            teile.append(f"{verst['kegel']} haftende über dem Reibkegel "
+                         f"(bis {verst['kegel_max']:.3g}-fach)")
+        if verst["gegen"]:
+            teile.append(f"{verst['gegen']} gleitende gegen ihre Gleitrichtung")
+        zeile = ("Kontaktzustand eingefroren, passt aber nicht zu dieser Last: "
+                 + ", ".join(teile) + " - wird nichtlinear nachgerechnet, Start: der eingefrorene Zustand")
+        log.append(zeile)
+        _melde(progress, zeile)
+        eingefroren_verworfen = verst
+        start = einfrieren
     warm = bool(start) and cs.zustand_setzen(start)
     if warm:
         log.append("Warmstart aus dem Kontaktzustand des vorigen Lastfalls")
@@ -4035,6 +4065,8 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 cinfo2["contact_warm"] = False
                 cinfo2["contact_factorisations"] = getattr(system, "faktorisierungen", 0) - f0
                 _neustart_vermerken(cinfo2, runden_vorher)
+                if eingefroren_verworfen is not None:     # der Neustart kennt ihn nicht
+                    cinfo2["contact_frozen_verworfen"] = eingefroren_verworfen
                 return u2, R2, cons2, cf2, cinfo2
             if it == 1 and not forced and cs.stabilise():
                 # Im ersten Schritt haelt keine Bedingung - etwa eine Schraube,
@@ -4187,6 +4219,8 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             cinfo2["contact_iterations"] = it + cinfo2.get("contact_iterations", 0)
             cinfo2["contact_factorisations"] = getattr(system, "faktorisierungen", 0) - f0
             _neustart_vermerken(cinfo2, runden_vorher)
+            if eingefroren_verworfen is not None:         # der Neustart kennt ihn nicht
+                cinfo2["contact_frozen_verworfen"] = eingefroren_verworfen
             return u2, R2, cons2, cf2, cinfo2
     R = system.reactions(u, F + (Fc if Fc is not None else 0.0), Kc)
     # Einseitige Lager als Auflagerreaktionen ausweisen
@@ -4219,6 +4253,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         "contact_warm": warm,
         "contact_factorisations": getattr(system, "faktorisierungen", 0) - f0,
         "contact_state": cs.zustand(),
+        "contact_frozen_verworfen": eingefroren_verworfen,
         "contact_lauf": _kontaktlauf_angaben(cs, u, model, grund)}
 
 

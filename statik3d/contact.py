@@ -1259,6 +1259,49 @@ class ContactSystem:
                         c.Ft = np.zeros(2)
         return n
 
+    def zustand_verstoesse(self, u: np.ndarray) -> dict:
+        """Passt der gesetzte Zustand zur Loesung ``u``? Nur lesen, nichts setzen.
+
+        Ein eingefrorener Zustand (Ermuedungsreferenz, solve_with_contact mit
+        ``einfrieren``) wird linear geloest, ohne Iteration. Bis zum 22.09.2026
+        hiess das Ergebnis dann immer "konvergiert" - auch wenn eine geschlossene
+        Bedingung unter der neuen Last Zug trug oder eine offene durchdrungen
+        wurde. Gezaehlt wird mit denselben Grenzen wie in ``_update_states``:
+        Zug ueber ``f_tol`` an einer geschlossenen Bedingung (nicht im Verbund,
+        nicht fliessend; auch an einer wegen Oszillation festgehaltenen),
+        Durchdringung ueber ``tol`` an einer offenen, Haften ueber dem Reibkegel
+        (Faktor 1 + 1e-6) und Gleiten gegen die festgehaltene Gleitrichtung.
+        Rueckgabe: Anzahl und groesster Wert je Art (Zug in N, Durchdringung in m,
+        Kegel als Verhaeltnis |Ft|/(mu Fn))."""
+        v = {"zug": 0, "zug_max": 0.0, "durchdringung": 0, "durchdringung_max": 0.0,
+             "kegel": 0, "kegel_max": 0.0, "gegen": 0}
+        for c in self.cons:
+            ue = u[c.dofs]
+            g = float(c.g0 + c.cn @ ue)
+            if not c.active:
+                if g < -self.tol:
+                    v["durchdringung"] += 1
+                    v["durchdringung_max"] = max(v["durchdringung_max"], -g)
+                continue
+            Fn = c.limit if c.yielding else -c.kn * g
+            if not (c.zug or c.yielding) and Fn < -self.f_tol:
+                v["zug"] += 1
+                v["zug_max"] = max(v["zug_max"], -Fn)
+            if c.ct is None or c.haften or c.mu <= 0:
+                continue
+            dt = np.array([c.ct[0] @ ue, c.ct[1] @ ue])
+            if c.slip:
+                nrm = float(np.linalg.norm(dt))
+                if c.slip_dir is not None and nrm > 0 and float(dt @ c.slip_dir) < -1e-9 * nrm:
+                    v["gegen"] += 1
+                continue
+            limit = c.mu * max(Fn, 0.0)
+            ft = float(np.linalg.norm(c.kt * dt))
+            if ft > limit * (1 + 1e-6) and ft > self.f_tol:
+                v["kegel"] += 1
+                v["kegel_max"] = max(v["kegel_max"], ft / limit if limit > 0 else np.inf)
+        return v
+
     @property
     def n_slip(self) -> int:
         return sum(1 for c in self.cons if c.active and c.slip)

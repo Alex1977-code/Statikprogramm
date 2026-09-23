@@ -2778,8 +2778,10 @@ Was ein Eintrag sagt:
   `grund` — leer, oder `deckel` (die Nachprüfung der Reibung hat nach 40
   Runden aufgegeben), `max_iter` (Schrittgrenze), `probelauf`, `abbruch`
   (kein Gleichgewicht). `eingefroren` heißt: kein eigener Lauf, sondern der
-  eingefrorene Kontaktzustand der Referenz — gemeldet wird er wie bisher als
-  konvergiert.
+  eingefrorene Kontaktzustand der Referenz. Konvergiert heißt er nur, weil
+  geprüft ist, dass der Zustand zur Last passt. Passt er nicht, wird der
+  Zustand nachgerechnet, und der Lauf ist ein gewöhnlicher (siehe
+  „Kontaktzustand der Ermüdungszustände“).
 * **Womit er begann**: `warm` (aus einem gesicherten Kontaktzustand),
   `neustart` (Warmstart verworfen oder korrigiert), `start_von_lauf` (der Lauf,
   dessen Zustand der Start war; 0 = der Start, den der Lastfall mitbekam;
@@ -3035,6 +3037,38 @@ davon 15 s die Lösung (eine Rückwärtseinsetzung ohne Faktorisierung) und
 gleich trifft; Verschiebungen auf 0,16 % gleich, Spannungen im Median
 gleich, 99 % der Elemente innerhalb 0,1 N/mm² — nur an einer
 Spannungsspitze (4656 N/mm², Kopplung) weichen 216 N/mm² ab.
+
+**Eingefroren nur, wenn der Zustand passt (seit 22.09.2026).** Bis dahin hieß
+ein eingefrorener Zustand immer „konvergiert“, auch wenn der übernommene
+Kontaktzustand zur Last gar nicht passte. Jetzt prüft das Programm nach der
+linearen Lösung jede Bedingung:
+- Trägt eine geschlossene Stelle Zug (außer im Verbund)?
+- Ist eine offene durchdrungen?
+- Haftet ein Knoten über dem Reibkegel?
+- Gleitet ein Knoten gegen seine Gleitrichtung?
+
+Trifft eines davon zu, verwirft das Programm den eingefrorenen Zustand und
+rechnet den Zustand nichtlinear nach. Als Start dient der eingefrorene Zustand.
+Das Protokoll nennt die Verstöße, etwa „Kontaktzustand eingefroren, passt aber
+nicht zu dieser Last: 4 haftende über dem Reibkegel (bis 1,29-fach) – wird
+nichtlinear nachgerechnet“. Das Ergebnis trägt sie unter
+`contact_frozen_verworfen`.
+
+Gemessen am Block mit Reibung, Referenz H1. Die Prozentwerte sind die
+Abweichung des eingefrorenen Ergebnisses von der nichtlinearen Lösung, so wie
+es bis dahin als konvergiert galt:
+
+| Zustand | Befund der Prüfung | Abweichung bisher |
+|---|---|---|
+| 1,0 H1 | passt, bleibt eingefroren | 0 % |
+| 1,1 H1 | 4 Knoten haften über dem Kegel | 7,0 % |
+| 0,5 H1 | Durchdringung, Gleiten gegen die Richtung | 18,8 % |
+| −1,0 H1 | 6 geschlossene Stellen unter Zug | 70,0 % |
+
+Nachgerechnet stimmen alle drei nicht passenden Zustände mit der
+nichtlinearen Lösung überein (0,0000 N/mm²). Wo der Zustand passt, bleibt der
+schnelle Weg ohne Faktorisierung. Wie viele der eingefrorenen Zustände am
+Drehlager nachgerechnet werden müssen, ist noch nicht gemessen.
 
 **Lastspielzahl.** Die Lastspiele bzw. Wiederholungen jeder Ermüdungslast
 sind entweder eigene Werte oder — Haken „globale Lastspielzahl" im Dialog —

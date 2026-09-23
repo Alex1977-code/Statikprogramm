@@ -245,11 +245,9 @@ def test_grundlast():
           and liste[0].get("grundlast") is False and m2.load_cases[lf1].grundlast is False)
 
 
-def test_einfrieren():
-    """Die Zustaende einer Ermuedungslast: der erste nichtlinear, die weiteren
-    mit seinem eingefrorenen Kontaktzustand linear - eine Rueckwaerts-
-    einsetzung je Zustand, keine Faktorisierung. Am Block mit Reibung
-    (Auflast als Grundlast): Zustand H2 = 1,1 H1."""
+def _ermuedungsblock(faktoren):
+    """Block mit Reibung, Auflast als Grundlast, je Zustand eine Horizontallast
+    (Faktor auf die des Beispiels) - alle Zustaende einer Ermuedungslast."""
     from statik3d.model import FatigueLoad
     m = examples_lib.build_example("friction")
     lf1 = list(m.load_cases)[0]
@@ -258,40 +256,152 @@ def test_einfrieren():
     for n, F in lasten:
         m.load_node(n, Fz=F[2])
     m.load_cases[lf1].grundlast = True
-    for name, f in (("H1", 1.0), ("H2", 1.1)):
+    for name, f in faktoren:
         m.add_load_case(name, "Q")
         for n, F in lasten:
             m.load_node(n, Fx=F[0] * f)
-    m.fatigue_loads["E"] = FatigueLoad("E", folge=["H1", "H2"], wiederholungen=1e5)
-    check("Referenzen: H2 friert den Zustand von H1 ein, H1 bleibt nichtlinear",
-          solver.ermuedungsreferenzen(m) == {"H2": "H1"}, str(solver.ermuedungsreferenzen(m)))
+    m.fatigue_loads["E"] = FatigueLoad("E", folge=[x for x, _ in faktoren], wiederholungen=1e5)
+    return m, lf1, lasten
+
+
+def _abweichung(a, b):
+    """(max |du| / max |u|, max |d sigma_v| in Pa) zweier Ergebnisse."""
+    from statik3d.elements import solid as _sl
+    u_ref = float(np.abs(b.u).max())
+    du = float(np.abs(np.asarray(a.u) - np.asarray(b.u)).max()) / u_ref
+    dsv = max((abs(_sl.von_mises(np.asarray(a.solid_res[i])) - _sl.von_mises(np.asarray(b.solid_res[i])))
+               for i in b.solid_res), default=0.0)
+    return du, float(dsv)
+
+
+def test_einfrieren():
+    """Die Zustaende einer Ermuedungslast: der erste nichtlinear, die weiteren
+    mit seinem eingefrorenen Kontaktzustand linear - eine Rueckwaerts-
+    einsetzung je Zustand, keine Faktorisierung, **wenn der Zustand passt**.
+    Am Block mit Reibung (Auflast als Grundlast): H2 = H1 passt und bleibt
+    eingefroren; H3 = 1,1 H1 hebt vier haftende Knoten ueber den Reibkegel -
+    bis zum 22.09.2026 hiess das trotzdem "konvergiert" und lag 7,0 % neben
+    der nichtlinearen Loesung, jetzt wird es nachgerechnet."""
+    m, lf1, lasten = _ermuedungsblock((("H1", 1.0), ("H2", 1.0), ("H3", 1.1)))
+    check("Referenzen: H2 und H3 frieren den Zustand von H1 ein, H1 bleibt nichtlinear",
+          solver.ermuedungsreferenzen(m) == {"H2": "H1", "H3": "H1"}, str(solver.ermuedungsreferenzen(m)))
     an = solver.solve_all(m, combinations=False, envelopes=False, fatigue=True)
-    h1, h2 = an.cases["H1"], an.cases["H2"]
+    h1, h2, h3 = an.cases["H1"], an.cases["H2"], an.cases["H3"]
     folge = list(an.cases)
     check("Reihenfolge: H2 unmittelbar nach seiner Referenz H1 (die Faktorisierung bleibt), "
           "der Grundlastfall danach",
-          folge.index("H2") == folge.index("H1") + 1 and folge.index(lf1) > folge.index("H2"), str(folge))
+          folge.index("H2") == folge.index("H1") + 1 and folge.index(lf1) > folge.index("H3"), str(folge))
     check("_mit_referenzen_zuerst: Referenz, ihre Zustaende, dann der Rest",
           solver._mit_referenzen_zuerst(["A", "B", "C", "D", "E"], {"C": "B", "E": "B", "D": "A"})
           == ["A", "D", "B", "C", "E"])
     check("H1 nichtlinear (Kontakt-Iteration), H2 eingefroren: 1 Schritt, 0 Faktorisierungen",
           not h1.info.get("contact_frozen") and h1.info.get("contact_iterations", 0) > 1
           and h2.info.get("contact_frozen") and h2.info.get("contact_frozen_from") == "H1"
-          and h2.info.get("contact_iterations") == 1 and h2.info.get("contact_factorisations") == 0,
+          and h2.info.get("contact_iterations") == 1 and h2.info.get("contact_factorisations") == 0
+          and not h2.info.get("contact_frozen_verworfen"),
           f"H1 {h1.info.get('contact_iterations')} Schritte, H2 {h2.info.get('contact_iterations')} / "
           f"{h2.info.get('contact_factorisations')}")
+    last = sum(F[0] for _n, F in lasten)
     check("eingefroren: Gleichgewicht (Auflager = Last)",
-          abs(h2.reactions[:, 0].sum() + 1.1 * sum(F[0] for _n, F in lasten)) < 1e-6 * abs(sum(F[0] for _n, F in lasten)),
-          f"Rx = {h2.reactions[:, 0].sum():.1f} N")
+          abs(h2.reactions[:, 0].sum() + last) < 1e-6 * abs(last), f"Rx = {h2.reactions[:, 0].sum():.1f} N")
+    v3 = h3.info.get("contact_frozen_verworfen") or {}
+    check("H3 = 1,1 H1: der eingefrorene Zustand passt nicht (haftende Knoten ueber dem Reibkegel) "
+          "und wird verworfen",
+          v3.get("kegel", 0) > 0 and not h3.info.get("contact_frozen")
+          and h3.info.get("contact_frozen_from") == "H1", str(v3))
+    check("H3 nichtlinear nachgerechnet und konvergiert",
+          h3.info.get("contact_iterations", 0) > 1 and h3.info.get("contact_converged"),
+          f"{h3.info.get('contact_iterations')} Schritte")
+    check("die Meldung nennt den Grund und das Nachrechnen",
+          any("passt aber nicht zu dieser Last" in z and "nachgerechnet" in z
+              for z in h3.info.get("contact_log", [])))
     m.design.ermuedung_kontakt_einfrieren = False
     check("ausgeschaltet: keine Referenzen", solver.ermuedungsreferenzen(m) == {})
-    voll = solver.solve_cases(m, ["H2"])["H2"]
-    u_ref = float(np.abs(voll.u).max())
-    abw = float(np.abs(h2.u - voll.u).max()) / u_ref
-    check("eingefroren gegen nichtlinear (H2 = 1,1 H1): Verschiebungen auf 10 % gleich",
-          abw < 0.10 and not voll.info.get("contact_frozen"), f"Abweichung {abw:.1%}")
+    voll = solver.solve_cases(m, ["H2", "H3"])
+    du2, dsv2 = _abweichung(h2, voll["H2"])
+    # gemessen 22.09.2026: du 2,1e-6 (Genauigkeit der Iteration), d sigma_v 0,0000 N/mm2
+    check("H2 eingefroren gegen nichtlinear: gleich (u auf 1e-4, sigma_v auf 1 N/mm2)",
+          du2 < 1e-4 and dsv2 <= 1e6 and not voll["H2"].info.get("contact_frozen"),
+          f"du {du2:.1e}, d sigma_v {dsv2 / 1e6:.4f} N/mm2")
+    du3, dsv3 = _abweichung(h3, voll["H3"])
+    check("H3 nachgerechnet gegen nichtlinear: sigma_v auf 1 N/mm2, u auf 1e-3",
+          du3 < 1e-3 and dsv3 <= 1e6, f"du {du3:.1e}, d sigma_v {dsv3 / 1e6:.4f} N/mm2")
     check("Analyse nennt die eingefrorenen Zustaende, Ermuedung wurde gefuehrt",
-          an.info.get("kontakt_eingefroren") == {"H2": "H1"} and an.fatigue is not None)
+          an.info.get("kontakt_eingefroren") == {"H2": "H1", "H3": "H1"} and an.fatigue is not None,
+          str(an.info.get("kontakt_eingefroren")))
+
+
+def test_eingefroren_nur_wenn_der_zustand_passt():
+    """Jede Art, auf die ein eingefrorener Zustand nicht passt, wird erkannt
+    und nachgerechnet. Gemessen am 22.09.2026 (Block mit Reibung, Referenz H1),
+    Abweichung des eingefrorenen Ergebnisses zur nichtlinearen Loesung, das
+    bis dahin "konvergiert" hiess: 0,5 H1 18,8 % (Durchdringung, Gleiten gegen
+    die Richtung), -1,0 H1 70,0 % (Zug an geschlossenen Bedingungen).
+    Ruecknahmeprobe ohne die Pruefung: dann bliebe -1,0 H1 eingefroren und falsch."""
+    faktoren = (("H1", 1.0), ("H4", 0.5), ("H5", -1.0))
+    m, _lf1, _l = _ermuedungsblock(faktoren)
+    an = solver.solve_all(m, combinations=False, envelopes=False, fatigue=True)
+    m.design.ermuedung_kontakt_einfrieren = False
+    voll = solver.solve_cases(m, ["H4", "H5"])
+    erwartet = {"H4": ("durchdringung", "gegen"), "H5": ("zug",)}
+    for name, arten in erwartet.items():
+        v = an.cases[name].info.get("contact_frozen_verworfen") or {}
+        check(f"{name}: verworfen wegen {', '.join(arten)}",
+              all(v.get(a, 0) > 0 for a in arten), str(v))
+        du, dsv = _abweichung(an.cases[name], voll[name])
+        check(f"{name}: nachgerechnet wie nichtlinear (sigma_v auf 1 N/mm2, u auf 1e-3)",
+              an.cases[name].info.get("contact_converged") and du < 1e-3 and dsv <= 1e6,
+              f"du {du:.1e}, d sigma_v {dsv / 1e6:.4f} N/mm2")
+    # Ruecknahmeprobe: ohne die Pruefung bliebe H5 eingefroren - und falsch
+    alt = ContactSystem.zustand_verstoesse
+    ContactSystem.zustand_verstoesse = lambda self, u: {"zug": 0, "zug_max": 0.0, "durchdringung": 0,
+                                                        "durchdringung_max": 0.0, "kegel": 0,
+                                                        "kegel_max": 0.0, "gegen": 0}
+    try:
+        m2, _a, _b = _ermuedungsblock(faktoren)
+        an2 = solver.solve_all(m2, combinations=False, envelopes=False, fatigue=True)
+    finally:
+        ContactSystem.zustand_verstoesse = alt
+    du, _dsv = _abweichung(an2.cases["H5"], voll["H5"])
+    check("Ruecknahme: ohne die Pruefung hiesse -1,0 H1 eingefroren und konvergiert, "
+          "laege aber weit daneben",
+          an2.cases["H5"].info.get("contact_frozen") and an2.cases["H5"].info.get("contact_converged")
+          and du > 0.3, f"du {du:.1%}")
+
+
+def test_zustand_verstoesse_je_art():
+    """ContactSystem.zustand_verstoesse liest nur: Zug an einer geschlossenen,
+    Durchdringung an einer offenen, Haften ueber dem Kegel, Gleiten gegen die
+    Richtung - und ein Verbund darf Zug tragen."""
+    from statik3d.contact import Constraint
+    cs = object.__new__(ContactSystem)
+    cs.f_tol, cs.tol, cs.log = 1.0, 1e-12, []
+
+    def bed(**k):
+        c = Constraint(kind="surface", dofs=np.array([0, 1, 2]), cn=np.array([0.0, 0.0, 1.0]),
+                       ct=np.vstack([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]), g0=0.0, kn=1e9, kt=1e9,
+                       mu=k.pop("mu", 0.3), node=0, normal=np.array([0.0, 0.0, 1.0]), label="Fuge:0")
+        for key, val in k.items():
+            setattr(c, key, val)
+        return c
+
+    # u = (ux, uy, uz); g = uz, Fn = -kn g; |Ft| = kt |ux|; mu Fn = 0,3 * 1000 N
+    faelle = [
+        ("geschlossen unter Druck, haftend im Kegel", dict(active=True, slip=False), [1e-7, 0, -1e-6], {}),
+        ("geschlossen unter Zug", dict(active=True, slip=False), [0, 0, 1e-6], {"zug": 1}),
+        ("Verbund unter Zug", dict(active=True, slip=False, zug=True, mu=0.0), [0, 0, 1e-6], {}),
+        ("offen, durchdrungen", dict(active=False), [0, 0, -1e-6], {"durchdringung": 1}),
+        ("offen mit Spalt", dict(active=False), [0, 0, 1e-6], {}),
+        ("haftend ueber dem Kegel", dict(active=True, slip=False), [1e-6, 0, -1e-6], {"kegel": 1}),
+        ("gleitend gegen die Richtung", dict(active=True, slip=True, slip_dir=np.array([1.0, 0.0])),
+         [-1e-6, 0, -1e-6], {"gegen": 1}),
+    ]
+    for name, zust, u, soll in faelle:
+        cs.cons = [bed(**zust)]
+        v = cs.zustand_verstoesse(np.array(u, float))
+        ist = {k: v[k] for k in ("zug", "durchdringung", "kegel", "gegen") if v[k]}
+        check(f"zustand_verstoesse: {name}", ist == soll, str(ist))
+    check("zustand_verstoesse setzt nichts um", cs.cons[0].active and cs.cons[0].slip)
 
 
 
@@ -577,7 +687,10 @@ def test_start_beim_einfrieren_und_im_ausfallweg():
     for n, F in lasten:
         m.load_node(n, Fz=F[2])
     m.load_cases[lf1].grundlast = True
-    for name, f in (("H1", 1.0), ("H2", 1.1)):
+    # H2 = H1: der eingefrorene Zustand passt und bleibt eingefroren (seit dem
+    # 22.09.2026 wird ein Zustand, der nicht passt, nachgerechnet - dann waere
+    # H2 kein eingefrorener Lauf mehr; siehe test_eingefroren_nur_wenn_der_zustand_passt)
+    for name, f in (("H1", 1.0), ("H2", 1.0)):
         m.add_load_case(name, "Q")
         for n, F in lasten:
             m.load_node(n, Fx=F[0] * f)
@@ -660,7 +773,8 @@ def test_kette_und_auftrag_stehen_im_ergebnis():
 
 def main():
     for t in (test_sicherung, test_warmstart, test_warmstart_ohne_halt, test_fortschritt_kontakt,
-              test_grundlast, test_einfrieren,
+              test_grundlast, test_einfrieren, test_eingefroren_nur_wenn_der_zustand_passt,
+              test_zustand_verstoesse_je_art,
               test_phase2_loest_mehrere_haftende_auf_einmal,
               test_gleitanteil_passt_sich_dem_guetemass_an,
               test_runden_zaehlen_die_wechselarten,
