@@ -344,6 +344,10 @@ def _stellungen_summary(st: State) -> dict:
                                     # nicht nachgewiesene Kombinationen: eta
                                     # ist dann keine vollstaendige Ausnutzung
                                     "warnungen": list(e.warnungen),
+                                    # False: kein Stab nachgewiesen - mit
+                                    # Warnungen ist eta = 0 dann gar keine
+                                    # Ausnutzung (app.js: "nicht geführt")
+                                    "nachgewiesen": bool(e.nachgewiesen),
                                     "fuehrt": bool(fuehrend is not None
                                                    and e is fuehrend and not e.fehler)}
     out = {
@@ -362,6 +366,11 @@ def _stellungen_summary(st: State) -> dict:
                     "kurve": [[float(w), float(e), float(u), n] for w, e, u, n in umh.kurve()],
                     "fehlerhaft": [x.stellung.name for x in umh.fehlerhaft],
                     "unvollstaendig": [x.stellung.name for x in umh.unvollstaendig],
+                    # False: in keiner Stellung ein Nachweis gefuehrt - das
+                    # eta der Umhuellenden ist dann keine Zahl (Umhuellende.
+                    # eta_bestimmt); vorher zeigte der Browser "η = 0,000"
+                    # gruen (Gegenpruefung 23.09.2026)
+                    "eta_bestimmt": bool(umh.eta_bestimmt),
                     "bericht": umh.bericht()})
     rw = getattr(st, "regelwerk", None)
     if rw is not None:

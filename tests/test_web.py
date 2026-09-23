@@ -605,21 +605,54 @@ def test_oberflaeche_rendert():
             c.op(op="stellung", name=name, winkel=winkel, beschreibung=f"{winkel:g} Grad")
         c.op(op="din19704")
         c.op(op="stellungen_rechnen")
-        st, zustand, _ = c.get("/api/state")
         import subprocess
         import tempfile
-        with tempfile.TemporaryDirectory() as tmp:
-            pfad = os.path.join(tmp, "zustand.json")
-            with open(pfad, "w", encoding="utf-8") as f:
-                json.dump(zustand, f)
-            r = subprocess.run([node, os.path.join(hier, "render_check.js"),
-                                os.path.join(stat, "app.js"), pfad],
-                               capture_output=True, text=True, timeout=120)
-        for zeile in r.stdout.splitlines():
-            if zeile.startswith(("OK ", "FAIL")):
-                RESULTS.append((zeile[4:].strip().split("  ")[0], zeile.startswith("OK")))
-        check("Oberflaeche rendert vollstaendig", r.returncode == 0,
-              (r.stderr or r.stdout)[-300:] if r.returncode else "")
+
+        def rendern(vorsatz: str = "", zustand: dict = None):
+            if zustand is None:
+                st, zustand, _ = c.get("/api/state")
+            with tempfile.TemporaryDirectory() as tmp:
+                pfad = os.path.join(tmp, "zustand.json")
+                with open(pfad, "w", encoding="utf-8") as f:
+                    json.dump(zustand, f)
+                r = subprocess.run([node, os.path.join(hier, "render_check.js"),
+                                    os.path.join(stat, "app.js"), pfad, vorsatz],
+                                   capture_output=True, text=True, timeout=120)
+            for zeile in r.stdout.splitlines():
+                if zeile.startswith(("OK ", "FAIL")):
+                    RESULTS.append((zeile[4:].strip().split("  ")[0], zeile.startswith("OK")))
+                    if zeile.startswith("FAIL"):
+                        print(zeile)
+            check(f"{vorsatz}Oberflaeche rendert vollstaendig", r.returncode == 0,
+                  (r.stderr or r.stdout)[-300:] if r.returncode else "")
+            return zustand
+
+        voll = rendern()
+        # Teilweise nachgewiesen: eine Warnung kuenstlich in die erste
+        # Stellung des echten Zustands gesetzt (Staebe nachgewiesen) - ihr eta
+        # ist dann keine vollstaendige Ausnutzung und darf nicht gruen sein.
+        # Die Uebersicht kennt den Fall (Warnungen bei nachgewiesen = True);
+        # ein Modell, das ihn in einer Stellung wirklich erzeugt, ist hier
+        # nicht gebaut.
+        teil = json.loads(json.dumps(voll))
+        e0 = teil["stellungen"]["liste"][0]["ergebnis"]
+        e0["warnungen"] = ["Kombination K9 nicht nachgewiesen: künstlich gesetzt"]
+        teil["stellungen"]["unvollstaendig"] = [teil["stellungen"]["liste"][0]["name"]]
+        rendern("teilweise: ", teil)
+        # Dieselben Stellungen ohne Kombinationen, aber mit Nachweisen: kein
+        # Nachweis kann gefuehrt werden. Der Browser zeigte dann "η = 0,000"
+        # gruen als erfuellt (Gegenpruefung 23.09.2026); die Uebersicht muss
+        # sagen, dass nichts nachgewiesen ist, und app.js muss es zeigen.
+        st, j, _ = c.op(op="stellungen_rechnen", kombinationen=False, nachweise=True)
+        zustand = rendern("ohne Nachweis: ")
+        B = zustand.get("stellungen") or {}
+        erg = [x.get("ergebnis") or {} for x in B.get("liste", [])]
+        check("ohne Nachweis: Uebersicht sagt 'eta nicht bestimmt' und je Stellung "
+              "'nicht nachgewiesen'",
+              B.get("eta_bestimmt") is False and len(B.get("unvollstaendig") or []) == 3
+              and all(e.get("warnungen") and e.get("nachgewiesen") is False for e in erg),
+              f"eta_bestimmt {B.get('eta_bestimmt')}, unvollstaendig {B.get('unvollstaendig')}, "
+              f"{[(len(e.get('warnungen') or []), e.get('nachgewiesen')) for e in erg]}")
     finally:
         server.shutdown()
         server.server_close()

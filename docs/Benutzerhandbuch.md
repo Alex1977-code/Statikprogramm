@@ -3183,9 +3183,18 @@ nicht linear. Das gilt auch für eine Alternative mit einem Lastfall, der nach
 II. oder III. Ordnung gerechnet wird. Vorher kam dort still das lineare
 Ergebnis heraus: am Druckkragarm 3,321 statt 9,705 mm, an der Halle
 („ein", alle Kombinationen als eine Ergebniskombination) Riegel 0,9654 statt
-0,9734. Bei „automatisch" mit α_cr an oder über der Grenze bleibt die
-Alternative bei I. Ordnung; dann ist die Überlagerung richtig und es kommt
-keine Warnung.
+0,9734.
+
+Bei „automatisch" mit α_cr an oder über der Grenze bleibt eine Alternative
+in der vollen Rechnung bei I. Ordnung, wie eine gewöhnliche Kombination, und
+es kommt keine Warnung. Ihr Ergebnis ist dann die Überlagerung der
+**linearen** Lastfallergebnisse, auch wenn einer ihrer Lastfälle selbst auf
+Theorie II. Ordnung steht – genau wie bei der gewöhnlichen Kombination. Bis
+zum 23.09.2026 wurde dort mit dem schon nach II. Ordnung gerechneten
+Lastfall überlagert, ein Gemisch aus I. und II. Ordnung. Gemessen an einem
+Zweigelenkrahmen mit dem Windlastfall auf II. Ordnung: Stielkopf 102,45 statt
+102,14 mm, Ausnutzung Stiel links 0,5485 statt 0,5423. Jetzt gleicht die
+Ergebniskombination dort der gewöhnlichen Kombination.
 
 ### Theorie je Lastfall und Kombination: I., II., III. Ordnung
 
@@ -4331,13 +4340,24 @@ Stellungswinkel. Eine Stellung ohne ausreichende Lagerung wird als Fehler
 ausgewiesen, nicht stillschweigend übergangen.
 
 Die Nachweise einer Stellung brauchen die Ergebnisse ihrer Kombinationen.
-Mit `reihe.rechnen(kombinationen=False, nachweise=True)` (im Browser
-`{"kombinationen": false}`) fehlen sie. Dann ist die Stellung nicht `ok`,
-und der Bericht schreibt „Umhüllende: eta nicht bestimmt" oder „NICHT
+Mit `reihe.rechnen(kombinationen=False, nachweise=True)` fehlen sie – im
+Browser über die Operation `stellungen_rechnen` mit `"kombinationen":
+false`; der Knopf „Alle Stellungen rechnen" sendet `true`. Ebenso führt ein
+Modell, dessen Stäbe einen Nachweis verlangen, das aber nur
+GZG-Kombinationen hat, keinen Stabnachweis. Dann ist die Stellung nicht
+`ok`, und der Bericht schreibt „Umhüllende: eta nicht bestimmt" oder „NICHT
 VOLLSTÄNDIG NACHGEWIESEN". Unter „Nicht nachgewiesen" stehen die Warnungen.
-Die Meldung nach dem Rechnen (`umh.kurztext()`) sagt es ebenso. Vorher stand
-dort „eta = 0.000" und die Stellung galt als erfüllt; die Warnungen standen
-nur im Protokoll.
+Die Meldung nach dem Rechnen (`umh.kurztext()`) sagt es ebenso.
+
+Im Browser zeigt eine Stellung ohne jeden geführten Nachweis auf der Karte
+„η –" und „nicht geführt", in der Tabelle „nicht geführt" und keinen Punkt in
+der η-Kurve; die Zeile der Umhüllenden und der Filmstreifen sagen „η nicht
+bestimmt", wenn in keiner Stellung ein Nachweis geführt wurde. Fehlt nur ein
+Teil der Nachweise, steht η in Warnfarbe mit „nicht vollständig
+nachgewiesen". Unter der gewählten Stellung lassen sich die Warnungen
+aufklappen („Nicht nachgewiesen"). Vorher stand „eta = 0.000" im Bericht,
+die Stellung galt als erfüllt, und der Browser zeigte „η = 0,000" grün; die
+Warnungen standen nur im Protokoll und im zugeklappten Bericht.
 
 ### Lastfälle nach DIN 19704 anlegen und das Lastenheft
 

@@ -607,6 +607,57 @@ def test_lastfall_hoeherer_ordnung_ohne_abgelegtes_ergebnis():
           f"{list(uls)} {[x[:100] for x in w]}")
 
 
+def test_alternative_bei_theorie_I_aus_linearen_lastfaellen():
+    """Eine Alternative einer EK nach II. Ordnung, die bei I. Ordnung bleibt
+    (theorie2 "auto", alpha_cr >= 10), ist die Ueberlagerung der LINEAREN
+    Lastfaelle - wie die gewoehnliche Kombination. Vorher faltete solve_all
+    die EK erst nach _lastfaelle_hoeherer_ordnung: mit LF2 auf theorie "II"
+    kam ein Gemisch heraus (1,35·LF1 linear + 1,5·LF2 nach II. Ordnung),
+    wurde abgelegt und nachgewiesen - gemessen 23.09.2026 an diesem Modell
+    EK1 [2] 3,374407 statt 3,320749 mm, EK1 [3] 1,562553 statt 1,526781 mm."""
+    from statik3d.ec3.design import _uls_results
+    from statik3d.solver import Results
+    m, ids = _druckkragarm("auto", druck=5.0e4)
+    m.load_cases["LF2"].theorie = "II"
+    m.combinations["EK1"].alternativen.append({"LF2": 1.0})
+    m.combinations["K3"] = Combination("K3", {"LF2": 1.0}, "ULS")
+    an = solver.solve_all(m)
+    spitze = ids[-1]
+    lin = solver.solve_cases(m)                   # rein linear, ohne Theorie je Lastfall
+    t2 = an.theorie2.kombinationen
+    lf2 = an.cases["LF2"]
+    check("Voraussetzung: LF2 nach II. Ordnung, sichtbar groesser als linear",
+          lf2.info.get("theorie") == "II. Ordnung"
+          and lf2.u[spitze, 1] > 1.01 * lin["LF2"].u[spitze, 1],
+          f"{lf2.u[spitze, 1] * 1e3:.6f} gegen {lin['LF2'].u[spitze, 1] * 1e3:.6f} mm")
+    check("Voraussetzung: alle Kombinationen und Alternativen bleiben bei I. Ordnung",
+          all(not t2[n].gerechnet for n in ("K2", "K3", "EK1 [1]", "EK1 [2]", "EK1 [3]")),
+          str({k: (i.gerechnet, round(i.alpha_cr, 2)) for k, i in t2.items()}))
+    soll2 = Results.combine(m, [(lin["LF1"], 1.35), (lin["LF2"], 1.5)], "soll2")
+    k2, k3 = an.combinations["K2"], an.combinations["K3"]
+    check("gewoehnliche Kombination: Ueberlagerung der linearen Lastfaelle (Schutz)",
+          np.allclose(k2.u, soll2.u, rtol=1e-12, atol=0)
+          and np.allclose(k3.u, lin["LF2"].u, rtol=1e-12, atol=0),
+          f"K2 {k2.u[spitze, 1] * 1e3:.6f} mm, K3 {k3.u[spitze, 1] * 1e3:.6f} mm")
+    w: list = []
+    uls = _uls_results(m, an, warnungen=w)
+    a2, a3 = uls.get("EK1 [2]"), uls.get("EK1 [3]")
+    check("EK1 [2] im Nachweis gleich K2, kein Gemisch mit LF2 nach II. Ordnung",
+          a2 is not None and np.allclose(a2.u, k2.u, rtol=1e-12, atol=0),
+          "fehlt" if a2 is None else f"{a2.u[spitze, 1] * 1e3:.6f} gegen K2 "
+                                     f"{k2.u[spitze, 1] * 1e3:.6f} mm")
+    check("EK1 [3] = 1,0·LF2 im Nachweis gleich K3 (LF2 linear)",
+          a3 is not None and np.allclose(a3.u, k3.u, rtol=1e-12, atol=0),
+          "fehlt" if a3 is None else f"{a3.u[spitze, 1] * 1e3:.6f} gegen K3 "
+                                     f"{k3.u[spitze, 1] * 1e3:.6f} mm")
+    env = an.envelopes["EK1"]
+    check("EK-Umhuellende gleich der Umhuellenden ueber K2 und K3, keine Warnung",
+          abs(float(env.u_max[spitze, 1]) - float(k2.u[spitze, 1]))
+          <= 1e-12 * abs(float(k2.u[spitze, 1])) and not w,
+          f"{float(env.u_max[spitze, 1]) * 1e3:.6f} gegen {float(k2.u[spitze, 1]) * 1e3:.6f} mm"
+          f", {w[:1]}")
+
+
 def test_stellungsreihe_ohne_kombinationen():
     """Eine Stellungsreihe, die ohne Kombinationen rechnet, aber Nachweise
     fuehren soll, weist nichts nach - das muss beim eta stehen. Vorher:
@@ -691,6 +742,7 @@ def main():
               test_theorie3_der_ergebniskombination,
               test_hoehere_theorie_ohne_abgelegtes_ergebnis,
               test_lastfall_hoeherer_ordnung_ohne_abgelegtes_ergebnis,
+              test_alternative_bei_theorie_I_aus_linearen_lastfaellen,
               test_stellungsreihe_ohne_kombinationen,
               test_keine_warnung_ohne_verlangten_nachweis):
         print(f"\n--- {t.__name__} ---")

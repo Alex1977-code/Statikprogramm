@@ -2869,6 +2869,12 @@ def umhuellende_der_kombination(model: Model, combo: Combination, case_results: 
     der Alternativen ab; die Nachweise ueberlagern sie bei Bedarf neu
     (:func:`ergebnisse_der_alternativen`).
 
+    ``case_results`` muessen die **linearen** Lastfallergebnisse sein, auch
+    wenn ein Lastfall auf theorie "II"/"III" steht: eine Alternative ist
+    entweder die Ueberlagerung linearer Lastfaelle (sie gilt nach I.
+    Ordnung) oder als Ganzes nach II./III. Ordnung gerechnet (dann liegt sie
+    in ``ablage``) - nie ein Gemisch (solve_all, ``lineare_cases``).
+
     ``ablage`` (``Analysis.alternativen``) nimmt die Ergebnisse auf, die sich
     spaeter **nicht** aus den Lastfaellen wiedergewinnen lassen, und liefert
     die schon gerechneten: Alternativen nach Theorie II./III. Ordnung (legt
@@ -2882,7 +2888,9 @@ def umhuellende_der_kombination(model: Model, combo: Combination, case_results: 
     env = Envelope(model, {}, combo.name)
     geloest = 0
     nl = None
-    # Lastfaelle, deren Ergebnis _lastfaelle_hoeherer_ordnung spaeter ersetzt
+    # Lastfaelle, deren Ergebnis _lastfaelle_hoeherer_ordnung in an.cases
+    # ersetzt (hat): eine Alternative mit ihnen laesst sich spaeter nicht
+    # mehr aus an.cases ueberlagern und wird darum abgelegt
     wechselt = {k for k, lc in model.load_cases.items()
                 if model.theorie_von(lc) in ("II", "III")}
     liste = alternativen_der_kombination(combo)
@@ -4303,10 +4311,10 @@ def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progres
     ek_rechnen = bool(combinations and model.combinations)
     umhuellende_ek: dict = {}
 
-    def _ek_umhuellende(namen) -> None:
+    def _ek_umhuellende(namen, lineare_cases: dict) -> None:
         for n in namen:
             c = model.combinations[n]
-            env, geloest = umhuellende_der_kombination(model, c, an.cases, systeme,
+            env, geloest = umhuellende_der_kombination(model, c, lineare_cases, systeme,
                                                        workers, progress,
                                                        ablage=an.alternativen)
             umhuellende_ek[n] = env
@@ -4327,7 +4335,19 @@ def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progres
         # Kombinationen mit Alternativen: je eine Umhuellende, keine Ergebnisse
         # in an.combinations. Sie stehen hinter den Art-Umhuellenden (unten).
         _ek_umhuellende([n for n, c in model.combinations.items()
-                         if c.ist_umhuellende and n not in ek_hoeher])
+                         if c.ist_umhuellende and n not in ek_hoeher], an.cases)
+    # Die linearen Lastfallergebnisse, bevor _lastfaelle_hoeherer_ordnung die
+    # mit theorie "II"/"III" ersetzt (es setzt je Lastfall ein neues Objekt
+    # ein, die flache Kopie behaelt die linearen). Aus ihnen - wie oben jede
+    # gewoehnliche Kombination - ueberlagert die Umhuellende einer EK nach
+    # II./III. Ordnung jede Alternative, die bei I. Ordnung bleibt (theorie2
+    # "auto" mit alpha_cr >= Grenze, Fehler der Rechnung). Vorher kam dort
+    # an.cases nach dem Ersetzen hinein: 1,35·G linear + 1,5·W nach II.
+    # Ordnung, ein Gemisch, weder I. noch II. Ordnung, abgelegt und
+    # nachgewiesen (Gegenpruefung 23.09.2026, W mit theorie "II", auto:
+    # Rahmen Stielkopf 102,4519 statt 102,1415 mm wie K2; Druckkragarm
+    # des Tests EK1 [2] 3,374407 statt 3,320749 mm).
+    lineare_cases = dict(an.cases) if (ek_rechnen and ek_hoeher) else None
     # Theorie je Lastfall: II. oder III. Ordnung ersetzt das lineare Ergebnis
     _lastfaelle_hoeherer_ordnung(model, an, systeme, progress)
     # Eine Ergebniskombination kommt nur mit ihren Alternativen hinein
@@ -4361,7 +4381,10 @@ def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progres
             an.theorie3.kombinationen.update(t3.kombinationen)
             an.theorie3.settings.update(t3.settings)
     if ek_rechnen and ek_hoeher:
-        _ek_umhuellende(ek_hoeher)
+        # Nach II./III. Ordnung Gerechnetes kommt aus an.alternativen, alles
+        # andere aus den linearen Lastfaellen - nie aus einem Gemisch
+        _ek_umhuellende(ek_hoeher, lineare_cases)
+        lineare_cases = None        # die ersetzten linearen Ergebnisse freigeben
         # in der Reihenfolge des Modells, wie vorher
         umhuellende_ek = {n: umhuellende_ek[n] for n in model.combinations
                           if n in umhuellende_ek}

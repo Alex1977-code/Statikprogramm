@@ -767,9 +767,12 @@ Stabes vorher 0,170 (nachgewiesen gegen LF1 und LF2 mit Faktor 1), jetzt
 überein (`test_umhuellende`).
 
 Neu überlagert wird eine Alternative nur, wenn die volle Rechnung es genauso
-täte. Ist sie nach Theorie II. oder III. Ordnung zu rechnen – nach der
-Theorie der Ergebniskombination oder weil einer ihrer Lastfälle so gerechnet
-wird –, kommt ihr Ergebnis aus `Analysis.alternativen`. Überlagert wird sie
+täte. Ist sie nach der Theorie der Ergebniskombination nach II. oder III.
+Ordnung zu rechnen, kommt ihr Ergebnis aus `Analysis.alternativen`. Dorthin
+legt die volle Rechnung auch jede Alternative mit einem Lastfall, dessen
+Ergebnis in `Analysis.cases` durch II./III. Ordnung ersetzt wird: ihre
+Überlagerung der linearen Lastfälle lässt sich danach aus `Analysis.cases`
+nicht mehr bilden. Überlagert wird sie
 dann nur, wenn das Theoriekapitel eine Zeile für sie hat, die beim linearen
 Ergebnis blieb: α_cr an oder über der Grenze bei „automatisch", oder ein
 Fehler der Rechnung, den die Zeile nennt. So bleibt auch bei einer
@@ -814,6 +817,32 @@ Ordnung abgelegt. Gemessen am Druckkragarm (Querlast in y, α_cr = 1,51 für
 1,35·LF1 + 1,5·LF2): Querverschiebung der Umhüllenden 9,705 mm wie bei der
 gleichwertigen Kombination nach II. Ordnung, linear 3,321 mm (Zuwachs
 +192,3 %); nach III. Ordnung 9,468 mm.
+
+Bleibt eine Alternative bei I. Ordnung (α_cr an oder über der Grenze, oder
+ein Fehler der Rechnung, den ihre Zeile nennt), ist ihr Ergebnis die
+Überlagerung der **linearen** Lastfallergebnisse – wie bei der gewöhnlichen
+Kombination, die `solve_combinations` vor `_lastfaelle_hoeherer_ordnung` aus
+denselben linearen Ergebnissen bildet. `solve_all` hält dazu die linearen
+Lastfallergebnisse fest, bevor `_lastfaelle_hoeherer_ordnung` die Lastfälle
+mit Theorie II./III. ersetzt, und faltet die Umhüllende einer
+Ergebniskombination nach II./III. Ordnung damit (`lineare_cases`). Eine
+Alternative ist so entweder linear überlagert oder als Ganzes nach II./III.
+Ordnung gerechnet, nie ein Gemisch. Bis zum 23.09.2026 wurde diese Umhüllende
+erst nach dem Ersetzen aus `Analysis.cases` gefaltet: Mit einem Lastfall W
+auf Theorie II. Ordnung war eine linear gebliebene Alternative
+1,35·G (linear) + 1,5·W (II. Ordnung), und dieses Gemisch ging abgelegt in
+die Nachweise. Gemessen an einem Zweigelenkrahmen (Stiele HEB 200, 5 m,
+Riegel IPE 300, 8 m; G 8 kN/m und Q 0,5 kN/m auf dem Riegel, W 25 kN am
+linken Stielkopf; „automatisch", α_cr der Alternative 19,23): Stielkopf
+102,4519 statt 102,1415 mm wie die gewöhnliche Kombination, Ausnutzung
+Stiel links 0,548474 statt 0,542323, Riegel 1,717078 statt 1,715794, Stiel
+rechts 1,08153 statt 1,079967. Am Druckkragarm von `test_umhuellende`
+(Druck 50 kN je Lastfall, α_cr 15,13,
+LF2 auf II. Ordnung) EK1 [2] 3,374407 statt 3,320749 mm und die
+Lastfall-Alternative 1,0·LF2 1,562553 statt 1,526781 mm. Jetzt gleichen beide
+Modelle der gewöhnlichen Kombination. Die gewöhnlichen Kombinationen hatten
+das Gemisch nicht, sie entstehen vor dem Ersetzen (am Druckkragarm K2
+bitgleich 1,35·LF1 + 1,5·LF2 aus den linearen Lastfällen).
 
 ### 3.1 Situationen: Stellung und wirksame Elemente
 
