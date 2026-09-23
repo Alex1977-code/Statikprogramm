@@ -131,7 +131,17 @@ def mesh_box_gmsh(model: Model, mat: str, lx, ly, lz, size, order=2,
 def grid_box(model: Model, mat: str, lx, ly, lz, nx, ny, nz,
              origin=(0, 0, 0), typ="hex8") -> np.ndarray:
     """Strukturiertes Hexaeder- oder Tetraedernetz eines Quaders.
+    typ: "hex8" (ein Hexaeder je Zelle) oder "tet4" (fuenf Tetraeder je
+    Zelle); jeder andere Wert ergibt einen ValueError.
     Rueckgabe: Knoten-Index-Array der Form (nx+1, ny+1, nz+1)."""
+    # Pruefung vor dem ersten Knoten, damit ein abgewiesener Aufruf das Modell
+    # nicht halb fuellt. Bis 23.09.2026 fiel jeder typ ausser "hex8" still in
+    # die Fuenferzerlegung; die Web-Operation box reicht typ ungeprueft durch,
+    # gemessen am Stand ec6448c ergaben "hex20", "tet10", "HEX8" und "quatsch"
+    # bei 1x1x1 Zellen je 5 tet4 mit der Meldung „Quader erzeugt“.
+    if typ not in ("hex8", "tet4"):
+        raise ValueError(f"Elementtyp '{typ}' für den Quader nicht möglich: "
+                         "nur hex8 oder tet4")
     ox, oy, oz = origin
     ids = np.zeros((nx + 1, ny + 1, nz + 1), dtype=int)
     for i in range(nx + 1):
