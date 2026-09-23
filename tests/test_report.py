@@ -43,10 +43,26 @@ def _svgs_parse(html):
     return len(blocks)
 
 
+_TMPDIR = None
+
+
 def _tmpdir():
-    d = os.path.join(tempfile.gettempdir(), "statik3d_report_test")
-    os.makedirs(d, exist_ok=True)
-    return d
+    """Eigener Ordner je Prozess, einmal angelegt, beim Beenden weggeraeumt.
+
+    Frueher war es fest %TEMP%/statik3d_report_test: alle Suiten aller
+    Arbeitskopien des Rechners schrieben dort dieselben Dateinamen, und
+    test_fortschritt verglich dann eine Datei, die ein anderer Prozess gerade
+    neu schrieb (B151). Gemessen am 23.09.2026, zwei gleichzeitige Prozesse
+    im selben TEMP mit je 150 Laeufen von test_fortschritt: mit dem festen
+    Ordner 27 und 51, in der Wiederholung 13 und 8 FAIL; mit dem Ordner je
+    Prozess zweimal 0 und 0, danach war TEMP leer."""
+    global _TMPDIR
+    if _TMPDIR is None or not os.path.isdir(_TMPDIR):
+        import atexit
+        import shutil
+        _TMPDIR = tempfile.mkdtemp(prefix="statik3d_report_test_")
+        atexit.register(shutil.rmtree, _TMPDIR, ignore_errors=True)
+    return _TMPDIR
 
 
 # --------------------------------------------------------------------------
@@ -455,6 +471,42 @@ def test_fortschritt():
     write_report(m, an, os.path.join(_tmpdir(), "fortschritt.md"), fmt="md",
                  fortschritt=lambda a, t: schritte_md.append((a, t)))
     check("auch Markdown meldet die Kapitel", len(schritte_md) >= 18, f"{len(schritte_md)}")
+    _assert_since(n0)
+
+
+def test_eigener_ordner_je_prozess():
+    """Jeder Prozess schreibt seine Berichte in einen eigenen Ordner.
+
+    Befund B151 (23.09.2026): _tmpdir() gab allen Prozessen des Rechners
+    denselben Ordner %TEMP%/statik3d_report_test, die Dateinamen sind fest.
+    Liefen zwei Suiten gleichzeitig (mehrere Arbeitskopien), schrieb die eine
+    fortschritt.html neu, waehrend die andere sie zuruecklas. Gemessen am
+    23.09.2026 mit zwei gleichzeitigen Prozessen und je 150 Laeufen von
+    test_fortschritt: im selben TEMP 27 und 51, in der Wiederholung 13 und 8
+    von 150 FAIL 'ohne Rueckruf dieselbe Datei', mit getrenntem TEMP 0 und 0.
+    Der Wettlauf selbst tritt nur zufaellig auf; geprueft wird darum seine
+    Ursache: ein zweiter Prozess muss einen anderen Ordner bekommen und ihn
+    beim Beenden wieder wegraeumen."""
+    import subprocess
+    n0 = len(RESULTS)
+    eigen = _tmpdir()
+    wurzel = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = dict(os.environ, PYTHONIOENCODING="utf-8")
+    r = subprocess.run([sys.executable, "-c",
+                        "import tests.test_report as T; print(T._tmpdir())"],
+                       cwd=wurzel, env=env, capture_output=True, encoding="utf-8",
+                       timeout=300)
+    zeilen = r.stdout.strip().splitlines()
+    fremd = zeilen[-1].strip() if r.returncode == 0 and zeilen else ""
+    gleich = bool(fremd) and (os.path.normcase(os.path.abspath(fremd))
+                              == os.path.normcase(os.path.abspath(eigen)))
+    check("eigener Ordner: der zweite Prozess laeuft durch",
+          bool(fremd), r.stderr.strip()[-200:] if not fremd else "")
+    check("eigener Ordner: der zweite Prozess bekommt einen anderen Ordner",
+          bool(fremd) and not gleich, f"{eigen} | {fremd}")
+    check("eigener Ordner: der zweite Prozess raeumt seinen Ordner beim Beenden weg",
+          bool(fremd) and not os.path.exists(fremd), fremd)
+    check("eigener Ordner: der eigene Ordner besteht waehrend des Laufs", os.path.isdir(eigen), eigen)
     _assert_since(n0)
 
 
@@ -955,6 +1007,7 @@ def main():
              test_deckelzeilen_mit_rundenbilanz_werden_gebuendelt,
              test_beam_report, test_frame_report, test_contact_report, test_plate_and_solid,
              test_svg_helpers, test_kontaktbedingungen_im_bericht, test_pdf, test_fortschritt,
+             test_eigener_ordner_je_prozess,
              test_gliederung_und_rahmen, test_grosses_netz,
              test_nicht_gefuehrt_ist_nicht_erfuellt,
              test_ermuedung_nicht_gefuehrt_im_bericht,
