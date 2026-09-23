@@ -2795,6 +2795,61 @@ Dicke (§ 5e.1) trifft die geglättete Randspannung einer einzigen hex8-Lage unt
 1,20 M_el die Momenten-Krümmungs-Lösung auf 1 N/mm²
 (`tests/test_volumen.py`, `test_randspannung_fliessend`).
 
+**An freien Oberflächen σ·n = 0 (23.09.2026, Auftrag B6).** Das Knotenmittel am
+Rand mischt die Randelemente mit ihrem Inneren, auch in den Komponenten, die der Rand
+kennt: an einer freien Oberfläche ist σ·n = 0. Seitdem zieht `solver.rand_projizieren`
+die geglättete Knotenspannung dort auf σ·n = 0, mit der kleinsten Änderung im
+Frobenius-Maß:
+
+    σ' = σ − n⊗r − r⊗n + (n·r) n⊗n,   r = σ n
+
+— die Tangentialanteile bleiben. An einer konvexen Kante oder Ecke werden alle
+Normalen **zugleich** erfüllt (Ecke dreier freier Seiten: σ = 0). Die Normale am
+Knoten kommt aus der Geometrie der Seiten am Knoten (tet10/hex20: aus der gekrümmten
+Seite), flächengewichtet gemittelt, solange alle innerhalb 30° liegen; mehr ist eine
+Kante (die Facettierung eines Bogens ist 18°). **Frei** heißt streng: projiziert wird
+nur ein Knoten, der in genau einem Körper und Werkstoff liegt, an dem kein Stab-,
+Schalen-, Feder- oder Spaltelement hängt, der kein Lager, keinen Kontakt, keine
+Kopplung, keinen Starrkörper, keine Fuge, keine Punktmasse und keine Last des
+Lastfalls trägt, und dessen Randseiten alle frei sind (eine Seite mit einem nicht
+freien Knoten ist nicht frei). Nicht angefasst werden außerdem **einspringende**
+Kanten (die Spannung ist dort singulär, die Projektion würde den Kerbgrund schönen)
+und **fließende** Elemente (die Fließfläche begrenzt die Spannung; am Balken mit einer
+hex8-Lage unter 1,20 M_el schob die Projektion die Randfaser auf 251,6 N/mm², über die
+verfestigte Fließgrenze 236,3). Eigengewicht, Temperatur und Vorspannung wirken im
+Volumen und lassen σ·n = 0 stehen. In einer Kombination heißt ein Knoten nur „σ·n = 0“,
+wenn er es in jedem Lastfall war; die Summe bleibt linear.
+
+Gemessen 23.09.2026 (`tests/test_randspannung.py`), σ_v in N/mm², Knotenmittel →
+σ·n = 0:
+
+| Prüfkörper | Netz | Knotenmittel → σ·n = 0 |
+|---|---|---|
+| Kirsch-Loch, Zug, freier Lochrand bei 90° (halbe Dicke) | hex8 4 455 FHG | −14,68 → **−1,10** |
+| | hex8 16 575 FHG | −5,22 → +0,80 |
+| | tet10 8 019 FHG | −30,54 → −19,41 |
+| | tet10 29 835 FHG | −5,80 → −4,23 |
+| | tet4 16 575 FHG | −24,07 → −14,82 |
+| Kragarm, Oberkante bei L/2 (Biegung) | hex8 90 / 405 / 2 295 FHG | −9,48 / +0,77 / +0,22 → −1,62 / +0,21 / −0,03 |
+| | tet10 405 / 2 295 / 15 147 FHG | +5,39 / +4,03 / +1,02 → +4,72 / +4,07 / +1,05 |
+| | tet4 90 / 405 / 2 295 FHG | −259,9 / −165,6 / −69,9 → −278,0 / −167,3 / −69,5 |
+
+Beim Kragarm liegt bei den Netzen mit einem Element über die Breite (hex8 und tet4
+90 FHG, tet10 405 FHG) kein Knoten in Breitenmitte; dort ist der Kantenknoten
+y = 0 gemessen — eine konvexe Kante mit zwei freien Seiten, also mit beiden Normalen
+projiziert.
+
+Am freien Lochrand rückt der hex8 bei 4 455 FHG von −14,7 auf −1,1 N/mm², bei
+16 575 FHG von −5,2 auf +0,8 — das Knotenmittel braucht für 1 N/mm² ein feineres Netz
+als gemessen. Der tet10 bleibt dort bei den gemessenen Netzen über 1 N/mm². Unter Biegung an einer ebenen Seite ändert es beim
+tet10 weniger als 0,1 N/mm²; **schlechter** wird der grobe tet4 (90 FHG: 18 N/mm²),
+dessen Wert ohnehin 260 N/mm² daneben liegt. Kosten: die Randseiten einmal je Rechnung
+(0,32 s bei 196 608 Tetraedern), danach 0,03 s je Lastfall. Die Einstellung
+`Model.randspannung` = "gemittelt" stellt das Knotenmittel wieder her; das Ergebnis
+nennt die gerechnete Art (`res.info["randspannung"]`), der Nachweis an der Stelle
+(„Knoten 812 (geglättet, σ·n = 0)“). Die **Ermüdung** der Volumen liest nicht die
+Randspannung, sondern `res.solid_res` je Element — sie ändert sich dadurch nicht.
+
 `res.solid_res` bleibt je Element der maßgebende eigene Punkt (Anzeige, ältere
 Ergebnisse); der Fehlerschätzer liest das Elementmittel `res.solid_mittel` (§ 6c).
 Ohne Knotenwerte — eine ältere Ergebnisdatei, eine Überlagerung verschiedener

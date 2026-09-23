@@ -128,11 +128,44 @@ def test_vorschlag_und_kosten():
           v2["Zugstab"]["ordnung"] == 2 and "vorgegeben" in v2["Zugstab"]["grund"])
 
 
+def test_ordnung_im_modell():
+    """B1 (23.09.2026): Volumenkoerper.ordnung steht im Modell und im
+    Speicherformat. Vorgabe None (automatisch, wie netz.ordnung bzw.
+    elementwahl.vorschlag); eine aeltere Datei ohne das Feld laedt mit None;
+    Model.check lehnt alles ausser None, 1 und 2 im Klartext ab."""
+    from statik3d.model import Volumenkoerper
+    m = modell()[0]
+    for name in ("Balken", "Zugstab", "Klotz"):
+        m.koerper[name] = Volumenkoerper(name)
+    check("Vorgabe: keine Ordnung am Körper (automatisch)",
+          all(k.ordnung is None for k in m.koerper.values()))
+    m.koerper["Balken"].ordnung = 2
+    m.koerper["Zugstab"].ordnung = 1
+    d = m.to_dict()
+    m2 = Model.from_dict(d)
+    check("Umlauf to_dict/from_dict erhält die Ordnung je Körper",
+          m2.koerper["Balken"].ordnung == 2 and m2.koerper["Zugstab"].ordnung == 1
+          and m2.koerper["Klotz"].ordnung is None)
+    for x in d.get("koerper", []):
+        x.pop("ordnung", None)
+    m3 = Model.from_dict(d)
+    check("ältere Datei ohne das Feld lädt mit None", all(k.ordnung is None for k in m3.koerper.values()))
+    falsch = []
+    for wert, erlaubt in ((None, True), (1, True), (2, True), (3, False), (0, False), ("2", False),
+                          (True, False), (2.0, False)):
+        m.koerper["Klotz"].ordnung = wert
+        meldung = [x for x in m.check() if "Elementordnung" in x and "Klotz" in x]
+        if bool(meldung) == erlaubt:
+            falsch.append(wert)
+    check("Model.check: nur None, 1 und 2 erlaubt, sonst FEHLER im Klartext", not falsch,
+          f"falsch beurteilt: {falsch}")
+
+
 def main():
     print("=" * 100)
     print("STATIK3D - Elementwahl je Koerper (tet10 an den Nachweisstellen)")
     print("=" * 100)
-    for t in (test_vorschlag_und_kosten,):
+    for t in (test_vorschlag_und_kosten, test_ordnung_im_modell):
         try:
             t()
         except Exception as ex:                  # noqa: BLE001

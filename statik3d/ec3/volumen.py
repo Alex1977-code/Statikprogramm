@@ -213,14 +213,19 @@ def _elementspannungen(model, res, elemente) -> list:
     u = u.ravel()
     out = []
     rand = {}
+    frei: set = set()
     try:
         rand = getattr(res, "solid_rand", {}) or {}
+        frei = getattr(res, "solid_rand_frei", set()) or set()
     except Exception:          # noqa: BLE001 - dann der Elementwert, wie bisher
         rand = {}
     for i in elemente:
         if i in rand:
             S, knoten = rand[i]
-            out.append((i, np.asarray(S, float), f"Knoten {int(knoten) + 1} (geglättet)"))
+            # an einer freien Oberflaeche auf sigma n = 0 gezogen (solver.rand_projizieren) -
+            # der Bericht sagt, welche Randspannung gerechnet wurde
+            art = "geglättet, σ·n = 0" if i in frei else "geglättet"
+            out.append((i, np.asarray(S, float), f"Knoten {int(knoten) + 1} ({art})"))
             continue
         e = model.elements[i]
         mat = model.materials.get(e.mat)

@@ -883,6 +883,20 @@ quadratische mit demselben Netz auf 99 %. Er kostet dafür mehr Knoten. Für
 Spannungsnachweise an Kerben, Augen und Bohrungen gehören die quadratischen
 genommen.
 
+**Ordnung je Körper** (23.09.2026, im Aufbau): Jeder Volumenkörper trägt im Modell
+und in der Datei eine eigene Ordnung (`Volumenkoerper.ordnung`): leer heißt „wie das
+Netz bzw. automatisch“, 1 heißt tet4, 2 heißt tet10. Leer ist die Vorgabe, auch für
+ältere Dateien; andere Werte als 1 und 2 meldet die Modellprüfung als FEHLER. **Heute
+wirkt das Feld noch nicht auf das Netz** — der Vernetzer liest weiter nur die Ordnung
+der Netzeinstellungen, die Eingabe in der Oberfläche folgt. Fertig sind die Teile
+dahinter: `elementwahl.vorschlag` schlägt je Körper tet10 vor, wo ein Nachweis geführt
+wird und ein Vorlauf Biegung oder einen großen Fehler zeigt (eine gesetzte Ordnung
+gewinnt; Theoriehandbuch § 6b-2), und ein gemischtes Netz aus tet4- und tet10-Körpern
+rechnet, die Seitenmitten an der Grenze bindet das Programm selbst. **Vorsicht an
+Kontaktfugen:** Ein Körper mit Ordnung 2 an einer Kontaktfuge oder einem nichtlinearen
+Flächenlager wird von der tet10-Sperre angehalten (`fugen.quadratische_seiten_sperren`),
+bis der Kontakt für tet10 fertig ist; das Protokoll sagt es laut.
+
 **Splitter** — fast flache Elemente — werden herausgeglättet: die *freien*
 Knoten wandern so, dass die schlechteste Güte steigt; die Randknoten bleiben,
 wo sie sind, damit sich das Volumen nicht ändert. Die Schwelle steht ebenfalls
@@ -3134,6 +3148,19 @@ um rund ein Viertel unterschätzt. Fließende Elemente tragen den Wert ihres
 nächsten Integrationspunkts bei — dort liegt er auf der Fließfläche. Über eine
 Körper- oder Werkstoffgrenze wird nicht gemittelt. Eine Ergebnisdatei von vor
 dem 22.09.2026 hat keine Knotenwerte; dann gilt die alte Regel.
+
+**An freien Oberflächen** (seit 23.09.2026) zieht das Programm die geglättete
+Spannung zusätzlich auf σ·n = 0 — dort, wo nichts anliegt, trägt die Oberfläche
+keine Normal- und Schubspannung. Am freien Rand einer Bohrung unter Zug rückt der
+hex8 so bei 4 455 Unbekannten von −14,7 auf −1,1 N/mm² an die exakte Lösung, bei
+16 575 von −5,2 auf +0,8 N/mm². Nicht angefasst werden Knoten mit Lager, Last, Kontakt, Fuge,
+Kopplung, Starrkörper, angeschlossenem Stab oder Schale, Knoten an der Grenze zweier
+Körper oder Werkstoffe, einspringende Kanten und fließende Elemente. Der Bericht
+nennt die Stelle dann „Knoten 812 (geglättet, σ·n = 0)“. Wer das bisherige
+Knotenmittel will, setzt die Einstellung `randspannung` des Modells auf „gemittelt“.
+Einschränkung: beim sehr groben tet4 unter Biegung wird der Wert damit schlechter
+(Kragarm mit 90 Unbekannten 18 N/mm²), doch der liegt dort ohnehin 260 N/mm²
+daneben. Die Ermüdung ist davon nicht betroffen, sie rechnet mit den Elementwerten.
 
 Der Bericht führt je Bereich den vollen Spannungstensor, die Hauptspannungen,
 τ_max, die hydrostatische Spannung, die Mehrachsigkeit h = σ_m/σ_v, σ_v und

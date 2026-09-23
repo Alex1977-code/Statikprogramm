@@ -1124,6 +1124,7 @@ class Results:
         if "solid_rand" not in self._cache:
             sk = self.solid_knoten or {}
             aus = {}
+            frei: set = set()
             if sk and "spannung" in sk:
                 m = self.model
                 ng = max(1, len(sk["gruppen"]))
@@ -1147,8 +1148,19 @@ class Results:
                         continue
                     j = max(js, key=lambda jj: sv[jj])
                     aus[i] = (S[j], int(sk["knoten"][j]))
+                    if "frei" in sk and bool(sk["frei"][j]):
+                        frei.add(i)
             self._cache["solid_rand"] = aus
+            self._cache["solid_rand_frei"] = frei
         return self._cache["solid_rand"]
+
+    @property
+    def solid_rand_frei(self) -> set:
+        """Elemente, deren Randspannung (solid_rand) an einem freien Knoten auf
+        sigma n = 0 gezogen ist (rand_projizieren) - fuer die Beschriftung im
+        Nachweis."""
+        self.solid_rand
+        return self._cache.get("solid_rand_frei", set())
 
     @property
     def node_vm(self) -> np.ndarray:
@@ -1234,11 +1246,20 @@ class Results:
                     out.solid_knoten = {"knoten": sk["knoten"], "gruppe": sk["gruppe"],
                                         "gruppen": list(sk["gruppen"]),
                                         "spannung": f * np.asarray(sk["spannung"], float)}
+                    if "frei" in sk:
+                        out.solid_knoten["frei"] = np.asarray(sk["frei"], bool).copy()
                 elif (len(sk["knoten"]) == len(out.solid_knoten["knoten"])
                       and np.array_equal(sk["knoten"], out.solid_knoten["knoten"])
                       and np.array_equal(sk["gruppe"], out.solid_knoten["gruppe"])):
                     out.solid_knoten["spannung"] = (out.solid_knoten["spannung"]
                                                     + f * np.asarray(sk["spannung"], float))
+                    # Die freien Knoten haengen an den Lasten des Lastfalls
+                    # (rand_projizieren): jeder Anteil ist fuer sich die beste
+                    # Schaetzung, die Summe bleibt linear. "sigma n = 0" heisst
+                    # ein Knoten der Summe nur, wenn er es in jedem Anteil war.
+                    if "frei" in out.solid_knoten:
+                        out.solid_knoten["frei"] = (out.solid_knoten["frei"]
+                                                    & np.asarray(sk.get("frei", np.zeros(len(sk["knoten"]), bool)), bool))
                 else:
                     # verschiedene Schluessel (andere Situation): nicht
                     # ueberlagerbar - lieber keine Randspannung als eine falsche
@@ -2097,8 +2118,325 @@ def randspannung_knoten(model: Model, ecken: dict) -> dict:
             "gruppen": [k for k, _v in sorted(gruppen.items(), key=lambda kv: kv[1])]}
 
 
+# --------------------------------------------------------------------------
+# Randspannung an freien Oberflaechen (Auftrag B6, 23.09.2026)
+# --------------------------------------------------------------------------
+#: Die Wege der Randspannung (Model.randspannung): "frei" (Vorgabe) projiziert
+#: die geglaettete Knotenspannung an freien Oberflaechen auf sigma n = 0,
+#: "gemittelt" laesst das Knotenmittel wie bis zum 23.09.2026.
+RANDSPANNUNG_WEGE = ("frei", "gemittelt")
+#: Normalen eines Knotens, die weniger als diesen Winkel [Grad] auseinander
+#: liegen, gehoeren zu einer glatten Flaeche und werden gemittelt; mehr ist
+#: eine Kante. 30 Grad liegen ueber der Facettierung eines Bogens (BOGENWINKEL
+#: 18 Grad) und unter jeder gewollten Kante.
+KANTENWINKEL = 30.0
+
+
+def _nicht_freie_knoten(model: Model, faelle=None) -> np.ndarray:
+    """Knoten, an denen sigma n **nicht** bekannt ist (bool, nn) - streng:
+
+    * Lager aller Art, Kontaktlager, Spaltelemente, Kontaktpaare (Slave-Knoten,
+      Master-Facetten, alle Knoten der Master-Elemente), Kopplungen,
+      Starrkoerper, getrennte Fugenknoten, Lasteinleitungen, Punktmassen,
+      Daempfer;
+    * jede Last der wirkenden Lastfaelle ``faelle`` (None: aller): Knotenlasten,
+      Zwangsverformungen und alle Knoten einer belasteten Seite. Eigengewicht,
+      Temperatur und Vorspannung wirken im Volumen und lassen sigma n = 0 an
+      der freien Oberflaeche stehen.
+
+    Die Knoten der Nicht-Volumenelemente und die Grenzen zwischen Koerpern
+    kommen aus _randnormalen bzw. aus der Knotentabelle (rand_projizieren).
+    """
+    nn = model.nn
+    aus = np.zeros(nn, bool)
+
+    def setze(knoten):
+        k = np.asarray([int(x) for x in knoten if x is not None], np.int64)
+        k = k[(k >= 0) & (k < nn)]
+        if k.size:
+            aus[k] = True
+    for sp in model.supports:
+        setze([sp.node])
+    for grp in (model.line_supports, model.surface_supports):
+        for x in grp:
+            setze(x.nodes or [])
+    for cs in getattr(model, "contact_supports", None) or []:
+        setze([cs.node])
+    for gp in getattr(model, "gap_elements", None) or []:
+        setze([gp.node_a, gp.node_b])
+    for cp in getattr(model, "contact_pairs", None) or []:
+        setze(cp.slave_nodes or [])
+        for f in cp.master_faces or []:
+            setze(f or [])
+        for i in cp.master_elements or []:
+            if 0 <= int(i) < len(model.elements):
+                setze(model.elements[int(i)].nodes)
+    for kp in getattr(model, "kopplungen", None) or []:
+        setze([kp.node_a, kp.node_b])
+    for sk in getattr(model, "starrkoerper", None) or []:
+        setze([sk.master] + list(sk.slaves or []))
+    for paare in (getattr(model, "getrennte_knoten", None) or {}).values():
+        setze([n for p in paare for n in p])
+    for x in (getattr(model, "lasteinleitungen", None) or {}).values():
+        setze([x.knoten])
+    for pm in getattr(model, "punktmassen", None) or []:
+        setze([pm.node])
+    for dp in getattr(model, "daempfer", None) or []:
+        setze([dp.node_a] + ([dp.node_b] if int(dp.node_b) >= 0 else []))
+    namen = list(model.load_cases) if faelle is None else [f for f in faelle if f in model.load_cases]
+    for name in namen:
+        lc = model.load_cases[name]
+        setze([l.node for l in lc.nodal_loads])
+        setze([z.node for z in lc.zwangsverformungen])
+        for fl in lc.face_loads:
+            if not 0 <= int(fl.elem) < len(model.elements):
+                continue
+            e = model.elements[int(fl.elem)]
+            seiten = sl.FLAECHEN.get(e.typ)
+            if seiten is None or not 0 <= int(fl.face) < len(seiten):
+                setze(e.nodes)
+            else:
+                setze([e.nodes[a] for a in seiten[int(fl.face)]])
+    return aus
+
+
+def _randnormalen(model: Model, aktiv=None) -> dict:
+    """Die Randseiten der wirksamen Volumenelemente (Seiten, die genau einmal
+    vorkommen) mit den aeusseren Normalen an ihren Ecken: {"knoten": (m,),
+    "normale": (m,3), "flaeche": (m,), "element": (m,), "seite_knoten": (m,4)}
+    - eine Zeile je (Randseite, Ecke), dazu "nicht_volumen" (bool, nn): die
+    Knoten wirksamer Nicht-Volumenelemente (Stab, Schale, Feder, Spalt), an
+    denen ein anderes Element Kraft einleitet. Die Normale kommt aus der
+    Geometrie der Seite **an der Ecke** (tet10/hex20: aus der gekruemmten
+    Seite), nach aussen ueber den Elementschwerpunkt.
+
+    Vektorisiert je (Typ, Seite); rand_projizieren merkt sich das Ergebnis je
+    Rechnung am StaticSystem - das Netz aendert sich nicht, ohne dass das
+    System neu entsteht, und der Nachlauf laeuft je Lastfall."""
+    X = np.asarray(model.nodes, float)
+    nn = model.nn
+    nicht_volumen = np.zeros(nn, bool)
+    je_typ: dict = {}
+    for i, e in enumerate(model.elements):
+        if aktiv is not None and not aktiv[i]:
+            continue
+        if e.typ in sl.ECKEN_NATUERLICH:
+            je_typ.setdefault(e.typ, []).append(i)
+        else:
+            k = np.asarray(e.nodes, np.int64)
+            nicht_volumen[k[(k >= 0) & (k < nn)]] = True
+    schl, herkunft = [], []          # herkunft: (typ, seite, Elementfeld, Knotenfeld)
+    for typ, idx in je_typ.items():
+        idx = np.asarray(idx, np.int64)
+        conn = np.asarray([model.elements[i].nodes for i in idx], np.int64)
+        for s, f in enumerate(sl.FLAECHEN_ECKEN[typ]):
+            ecken = np.sort(conn[:, list(f)], axis=1)
+            if ecken.shape[1] < 4:
+                ecken = np.hstack([np.full((len(idx), 4 - ecken.shape[1]), -1, np.int64), ecken])
+            schl.append(ecken)
+            herkunft.append((typ, s, idx, conn))
+    leer = {"knoten": np.zeros(0, np.int64), "normale": np.zeros((0, 3)), "flaeche": np.zeros(0),
+            "element": np.zeros(0, np.int64), "seite_knoten": np.zeros((0, 4), np.int64),
+            "nicht_volumen": nicht_volumen}
+    if not schl:
+        return leer
+    # Zeilen als ein Void-Wert vergleichen: np.unique(axis=0) sortiert
+    # zeilenweise und war hier der groesste Posten
+    K = np.ascontiguousarray(np.vstack(schl))
+    _u, inv, zahl = np.unique(K.view(np.dtype((np.void, K.dtype.itemsize * K.shape[1]))).ravel(),
+                              return_inverse=True, return_counts=True)
+    einmal = zahl[inv.ravel()] == 1
+    kn_l, nv_l, fl_l, el_l, sk_l = [], [], [], [], []
+    a0 = 0
+    for (typ, s, idx, conn), ecken in zip(herkunft, schl):
+        sel = einmal[a0:a0 + len(idx)]
+        a0 += len(idx)
+        if not sel.any():
+            continue
+        seite = list(sl.FLAECHEN[typ][s])
+        k = len(seite)
+        cb = conn[sel]
+        P = X[cb[:, seite]]                                    # (m, k, 3)
+        nk = len(sl.ECKEN_NATUERLICH[typ])
+        mitte = X[cb[:, :nk]].mean(axis=1)                     # (m, 3)
+        GP, W = sl._SEITEN_GAUSS[k]
+        A = np.zeros(len(cb))
+        for (a, b), w in zip(GP, W):
+            _N, dN = sl.seite_N_dN(k, a, b)
+            t1 = np.einsum("mkd,k->md", P, dN[:, 0])
+            t2 = np.einsum("mkd,k->md", P, dN[:, 1])
+            A += w * np.linalg.norm(np.cross(t1, t2), axis=1)
+        eckzahl = 3 if k in (3, 6) else 4
+        for c in range(eckzahl):
+            a, b = ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))[c] if eckzahl == 3 else sl._QUAD_SIGNS[c]
+            N, dN = sl.seite_N_dN(k, a, b)
+            t1 = np.einsum("mkd,k->md", P, dN[:, 0])
+            t2 = np.einsum("mkd,k->md", P, dN[:, 1])
+            n = np.cross(t1, t2)
+            ln = np.linalg.norm(n, axis=1)
+            gut = ln > 0.0
+            n = n[gut] / ln[gut, None]
+            lage = np.einsum("mkd,k->md", P[gut], N) - mitte[gut]
+            n[np.einsum("md,md->m", n, lage) < 0.0] *= -1.0
+            kn_l.append(cb[gut][:, seite[c]])
+            nv_l.append(n)
+            fl_l.append(A[gut])
+            el_l.append(idx[sel][gut])
+            sk_l.append(ecken[sel][gut])
+    return {"knoten": np.concatenate(kn_l), "normale": np.vstack(nv_l), "flaeche": np.concatenate(fl_l),
+            "element": np.concatenate(el_l), "seite_knoten": np.vstack(sk_l),
+            "nicht_volumen": nicht_volumen}
+
+
+def _projektor_frei(normalen: list) -> np.ndarray:
+    """Die lineare Abbildung P (6,6) auf Voigt-Spannungen, die sigma auf
+    sigma n_i = 0 fuer alle Normalen n_i zieht, mit der kleinsten Aenderung im
+    Frobenius-Mass (Schubanteile zaehlen doppelt). Eine Normale ergibt
+    sigma' = sigma - n (x) r - r (x) n + (n . r) n (x) n mit r = sigma n; zwei
+    oder drei (Kante, Ecke) werden **gleichzeitig** erfuellt, nicht
+    nacheinander."""
+    C = []
+    for n in normalen:
+        x, y, z = n
+        # (sigma n) in Voigt xx, yy, zz, xy, yz, xz
+        C.append([x, 0, 0, y, 0, z])
+        C.append([0, y, 0, x, z, 0])
+        C.append([0, 0, z, 0, y, x])
+    C = np.asarray(C, float)
+    Wi = np.diag([1.0, 1.0, 1.0, 0.5, 0.5, 0.5])
+    M = C @ Wi @ C.T
+    return np.eye(6) - Wi @ C.T @ np.linalg.pinv(M, rcond=1e-10) @ C
+
+
+def _projiziere_glatt(S: np.ndarray, n: np.ndarray) -> np.ndarray:
+    """sigma' = sigma - n (x) r - r (x) n + (n . r) n (x) n, r = sigma n, fuer
+    einen Stapel Voigt-Spannungen S (m,6) und Normalen n (m,3)."""
+    T = np.empty((len(S), 3, 3))
+    T[:, 0, 0], T[:, 1, 1], T[:, 2, 2] = S[:, 0], S[:, 1], S[:, 2]
+    T[:, 0, 1] = T[:, 1, 0] = S[:, 3]
+    T[:, 1, 2] = T[:, 2, 1] = S[:, 4]
+    T[:, 0, 2] = T[:, 2, 0] = S[:, 5]
+    r = np.einsum("mij,mj->mi", T, n)
+    nr = np.einsum("mi,mi->m", n, r)
+    T = (T - np.einsum("mi,mj->mij", n, r) - np.einsum("mi,mj->mij", r, n)
+         + nr[:, None, None] * np.einsum("mi,mj->mij", n, n))
+    return np.column_stack([T[:, 0, 0], T[:, 1, 1], T[:, 2, 2], T[:, 0, 1], T[:, 1, 2], T[:, 0, 2]])
+
+
+def rand_projizieren(model: Model, sk: dict, aktiv=None, faelle=None, merker: dict = None,
+                     fliessend=None) -> dict:
+    """Die geglaettete Knotenspannung ``sk`` (randspannung_knoten) an freien
+    Oberflaechen auf sigma n = 0 ziehen; setzt sk["frei"] (bool je Zeile).
+    ``faelle``: die wirkenden Lastfaelle (deren Lasten sperren Knoten), None =
+    alle. ``merker``: ein dict, in dem die Randseiten fuer diese Rechnung
+    liegen bleiben (postprocess gibt das des StaticSystem). ``fliessend``:
+    Elemente mit plastischem Zustand - ihre Knoten bleiben, wie sie sind: dort
+    begrenzt die Fliessflaeche die Spannung, und die Projektion aendert den
+    Deviator. Am Balken mit einer hex8-Lage unter 1,20 M_el schob sie die
+    Randfaser auf 251,6 N/mm2, ueber die verfestigte Fliessgrenze 236,3
+    (tests/test_volumen.py, test_randspannung_fliessend, 23.09.2026).
+
+    Warum (gemessen 23.09.2026, tests/test_randspannung.py): das Knotenmittel
+    am Rand mischt die Spannung der Randelemente mit der ihres Inneren, auch
+    in den Komponenten, die der Rand kennt. Am Kirsch-Loch (Zug, freier
+    Lochrand, halbe Dicke bei 90 Grad) lag der hex8 bei 4 455 FHG 14,7 N/mm2
+    daneben, auf sigma n = 0 gezogen 1,1; der tet10 bei 29 835 FHG 5,8 statt
+    4,2, der tet4 bei 16 575 FHG 24 statt 15. Unter Biegung an der ebenen
+    freien Seite (Kragarm) aendert es fast nichts: dort sind die
+    Randkomponenten schon fast null.
+
+    Projiziert wird nur ein Knoten, der in genau einem Koerper liegt, selbst
+    frei ist und dessen Randseiten alle frei sind (eine Seite mit einem nicht
+    freien Knoten ist nicht frei; _nicht_freie_knoten, _randnormalen). Glatte
+    Flaeche (alle Normalen innerhalb KANTENWINKEL um ihr Mittel): eine
+    Normale, flaechengewichtet gemittelt. Kante oder Ecke: die Normalen
+    buendeln und alle gleichzeitig erfuellen, aber nur, wenn sie **konvex**
+    ist - an einer einspringenden Kante ist die Spannung singulaer, und die
+    Projektion wuerde den Kerbgrund schoenen. Linear in der Spannung: fuer
+    feste freie Knoten in Kombinationen exakt ueberlagerbar.
+    """
+    if not sk or "spannung" not in sk or not len(sk["knoten"]):
+        return sk
+    knoten = np.asarray(sk["knoten"], np.int64)
+    frei = np.zeros(len(knoten), bool)
+    sk["frei"] = frei
+    merker = {} if merker is None else merker
+    # je wirksamer Elementmenge (Ausfallstaebe schalten je Lastfall ab)
+    schluessel = None if aktiv is None else hash(np.asarray(aktiv, bool).tobytes())
+    alt = merker.get("randnormalen")
+    if alt is not None and alt[0] == schluessel:
+        rn = alt[1]
+    else:
+        rn = _randnormalen(model, aktiv)
+        merker["randnormalen"] = (schluessel, rn)
+    if not len(rn["knoten"]):
+        return sk
+    nicht = _nicht_freie_knoten(model, faelle) | rn["nicht_volumen"]
+    for i in (fliessend or ()):
+        if 0 <= int(i) < len(model.elements):
+            k = np.asarray(model.elements[int(i)].nodes, np.int64)
+            nicht[k[(k >= 0) & (k < model.nn)]] = True
+    # Grenze zweier Koerper oder Werkstoffe: der Knoten steht mehrfach in der Tabelle
+    u_kn, zahl = np.unique(knoten, return_counts=True)
+    nicht[u_kn[zahl > 1]] = True
+    # Eine Seite mit einem nicht freien Knoten ist nicht frei - alle ihre Knoten fallen raus
+    sk4 = rn["seite_knoten"]
+    schlecht_seite = np.any(np.where(sk4 >= 0, nicht[np.maximum(sk4, 0)], False), axis=1)
+    gesperrt = nicht.copy()
+    gesperrt[rn["knoten"][schlecht_seite]] = True
+    zeilen = np.flatnonzero(~gesperrt[rn["knoten"]])
+    if not len(zeilen):
+        return sk
+    kn = rn["knoten"][zeilen]
+    nv = rn["normale"][zeilen] * rn["flaeche"][zeilen, None]
+    einz, inv = np.unique(kn, return_inverse=True)
+    inv = inv.ravel()
+    mittel = np.zeros((len(einz), 3))
+    np.add.at(mittel, inv, nv)
+    ln = np.linalg.norm(mittel, axis=1)
+    ok = ln > 0.0
+    mittel[ok] /= ln[ok, None]
+    cos_zeile = np.einsum("md,md->m", rn["normale"][zeilen], mittel[inv])
+    cos_min = np.ones(len(einz))
+    np.minimum.at(cos_min, inv, cos_zeile)
+    glatt = ok & (cos_min >= np.cos(np.radians(KANTENWINKEL)))
+    S = np.asarray(sk["spannung"], float).copy()
+    j = np.searchsorted(knoten, einz)
+    da = (j < len(knoten))
+    da[da] = knoten[j[da]] == einz[da]
+    g = glatt & da
+    if g.any():
+        S[j[g]] = _projiziere_glatt(S[j[g]], mittel[g])
+        frei[j[g]] = True
+    # Kanten und Ecken einzeln: buendeln, Konvexitaet pruefen, gleichzeitig projizieren
+    X = np.asarray(model.nodes, float)
+    cos_kante = np.cos(np.radians(KANTENWINKEL))
+    for q in np.flatnonzero(~glatt & da & ok):
+        n = int(einz[q])
+        zs = zeilen[inv == q]
+        buendel: list = []
+        for z in zs[np.argsort(-rn["flaeche"][zs])]:
+            v = rn["normale"][z] * rn["flaeche"][z]
+            for b in buendel:
+                if np.dot(b / np.linalg.norm(b), rn["normale"][z]) >= cos_kante:
+                    b += v
+                    break
+            else:
+                buendel.append(v.copy())
+        normalen = [b / np.linalg.norm(b) for b in buendel]
+        els = {int(i) for i in rn["element"][zs]}
+        mitten = [X[list(model.elements[i].nodes)].mean(axis=0) - X[n] for i in els]
+        if any(np.dot(c, m) > 0.0 for c in normalen for m in mitten):
+            continue                    # einspringend: nicht anfassen
+        S[j[q]] = _projektor_frei(normalen) @ S[j[q]]
+        frei[j[q]] = True
+    sk["spannung"] = S
+    return sk
+
+
 def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
-                q: dict = None, temp: dict = None, workers: int = None, aktiv=None):
+                q: dict = None, temp: dict = None, workers: int = None, aktiv=None,
+                system=None):
     """Rohgroessen je Element aus dem Verschiebungsvektor u (ndof,).
     Abgeschaltete Elemente (``aktiv`` False) bekommen Nullen: sie wirken nicht."""
     feq = feq if feq is not None else {}
@@ -2147,6 +2485,25 @@ def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
         else:
             res.solid_res[i] = val
     res.solid_knoten = randspannung_knoten(model, ecken)
+    weg = str(getattr(model, "randspannung", "frei") or "frei")
+    if weg == "frei" and res.solid_knoten:
+        faktoren = res.info.get("factors")
+        faelle = [n for n, f in faktoren.items() if f] if isinstance(faktoren, dict) else None
+        merker = None
+        if system is not None:
+            merker = getattr(system, "_randspannung_merker", None)
+            if merker is None:
+                merker = {}
+                try:
+                    system._randspannung_merker = merker
+                except AttributeError:
+                    merker = None
+        fliessend = list((temp.get("plast_punkte") or {}).keys()) if isinstance(temp, dict) else None
+        rand_projizieren(model, res.solid_knoten, aktiv, faelle, merker, fliessend)
+        res.info["randspannung"] = (f"geglättet, an freien Oberflächen σ·n = 0 "
+                                    f"({int(np.sum(res.solid_knoten.get('frei', [])))} Knoten)")
+    elif res.solid_knoten:
+        res.info["randspannung"] = "geglättet (Knotenmittel)"
     res._cache.clear()
 
 
@@ -2392,7 +2749,7 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
                      "zeit_faktorisierung": float(getattr(system, "zeit_faktorisierung", 0.0))})
     if probelauf:
         res.info["probelauf"] = True
-    postprocess(model, u, res, feq, q, temp, workers, aktiv_eff)
+    postprocess(model, u, res, feq, q, temp, workers, aktiv_eff, system=system)
     res.info["time"] = time.time() - t0 + system.t_assemble
     return res
 
@@ -3493,7 +3850,7 @@ def _teilergebnis_anhaengen(model, system, res, ex, F, feq=None, q=None, temp=No
         res.info["singularitaeten"] = [singularitaet_info(x) for x in _sg.wichtigste(res.singular)]
         if feq is not None:
             try:
-                postprocess(model, u, res, feq, q, temp, workers, aktiv)
+                postprocess(model, u, res, feq, q, temp, workers, aktiv, system=system)
             except Exception as ex3:      # noqa: BLE001 - Spannungen sind Zugabe, die Verformung zaehlt
                 res.info["abbruch_nachlauf"] = str(ex3)
     except Exception as ex2:              # noqa: BLE001 - das Teilergebnis darf den Abbruch nicht verschlucken

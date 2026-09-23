@@ -2171,6 +2171,12 @@ class Volumenkoerper:
     #: Bemessungskonzept und Schadensfolge fuer gamma_Mf (wie beim Stab)
     assessment: str = "damage_tolerant"   # damage_tolerant | safe_life
     consequence: str = "low"              # low | high
+    #: Elementordnung dieses Koerpers (Auftrag B1, 23.09.2026): None = wie das
+    #: Netz (netz.ordnung) bzw. die automatische Wahl (elementwahl.vorschlag),
+    #: 1 = tet4, 2 = tet10. Vorgabe None und nicht 1: eine 1 uebersteuerte die
+    #: automatische Wahl, und eine aeltere Datei ohne das Feld soll rechnen wie
+    #: bisher. Model.check lehnt andere Werte ab.
+    ordnung: Optional[int] = None
 
     def bezug(self) -> str:
         t = f"{len(self.flaechen)} Flächen"
@@ -3072,6 +3078,12 @@ class Model:
         #: im Fliessbereich am staerksten wirkt, weil von-Mises-Fliessen
         #: volumentreu ist. Kostet einen breiteren Stern in der Matrix.
         self.knotendilatation = False
+        #: Randspannung der Volumen (Auftrag B6, 23.09.2026): "frei" zieht die
+        #: geglaettete Knotenspannung an freien Oberflaechen auf sigma n = 0
+        #: (solver.rand_projizieren), "gemittelt" laesst das Knotenmittel wie
+        #: bis zum 23.09.2026. Welche gerechnet wurde, steht in res.info und
+        #: an der Nachweisstelle.
+        self.randspannung = "frei"
         # Kontakt
         self.contact_supports: list[ContactSupport] = []
         self.gap_elements: list[GapElement] = []
@@ -5094,6 +5106,15 @@ class Model:
         free = np.where(~used)[0]
         if len(free):
             msgs.append(f"WARNUNG: {len(free)} Knoten ohne Elementanschluss")
+        if str(getattr(self, "randspannung", "frei") or "frei") not in ("frei", "gemittelt"):
+            msgs.append(f"FEHLER: Randspannung '{self.randspannung}' unbekannt - "
+                        f"erlaubt sind 'frei' und 'gemittelt'")
+        for kn, kb in (self.koerper or {}).items():
+            o = getattr(kb, "ordnung", None)
+            # bool ist in Python eine Zahl (True == 1) - ausdruecklich ausschliessen
+            if o is not None and (isinstance(o, bool) or not isinstance(o, int) or o not in (1, 2)):
+                msgs.append(f"FEHLER: Volumenkörper '{kn}': Elementordnung {o!r} unbekannt - "
+                            f"erlaubt sind 1 (tet4), 2 (tet10) oder leer (automatisch)")
         for c in self.combinations.values():
             for k in c.lastfaelle():
                 if k not in self.load_cases:
@@ -5237,6 +5258,7 @@ class Model:
             "design": asdict(self.design),
             "plastizitaet": asdict(self.plastizitaet),
             "knotendilatation": bool(self.knotendilatation),
+            "randspannung": str(getattr(self, "randspannung", "frei") or "frei"),
             "contact_supports": [asdict(c) for c in self.contact_supports],
             "gap_elements": [asdict(g) for g in self.gap_elements],
             "kopplungen": [asdict(k) for k in self.kopplungen],
@@ -5364,6 +5386,7 @@ class Model:
         if "plastizitaet" in d:
             m.plastizitaet = _dc(Plastizitaet, d["plastizitaet"])
         m.knotendilatation = bool(d.get("knotendilatation", False))
+        m.randspannung = str(d.get("randspannung", "frei") or "frei")
         m.contact_supports = [_dc(ContactSupport, c) for c in d.get("contact_supports", [])]
         m.gap_elements = [_dc(GapElement, g) for g in d.get("gap_elements", [])]
         m.kopplungen = [_dc(Kopplung, k) for k in d.get("kopplungen", [])]
