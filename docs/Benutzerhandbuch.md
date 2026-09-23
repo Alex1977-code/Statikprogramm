@@ -3728,6 +3728,32 @@ Verformungszuwachs gegenüber Theorie I. Ordnung, dann φ mit α_h, α_m und der
 Richtung, die Ersatzhorizontalkraft je Stiel und die Vorkrümmung je Stab mit
 Knicklinie, e_0, q und V.
 
+**α_cr ≤ 1 – die Last liegt über der Verzweigungslast.** Dann gibt es am
+verformten System kein Gleichgewicht, und Statik3D übernimmt für diese
+Kombination bzw. diesen Lastfall kein Ergebnis nach II. Ordnung. Die Zeile
+im Theoriekapitel heißt „nicht geführt“, der Grund steht darunter und unter
+den offenen Warnungen des Berichts („α_cr = 0.76 ≤ 1: die Last liegt über
+der Verzweigungslast …“), und die Zusammenfassung zählt sie unter „nicht
+geführt“. Stehen bleibt das lineare Ergebnis; bei einem Lastfall zeigt die
+Spalte Theorie der Lastfalltabelle „I (statt II: nicht gerechnet)“. Was
+tun: aussteifen, Querschnitte vergrößern oder die Lasten prüfen – die
+Nachweise rechnen sonst mit dem linearen Ergebnis. Bis zum 23.09.2026 wurde
+das Ergebnis übernommen: am Druckkragarm der Prüfungen (Druck 1000 kN je
+Lastfall, α_cr = 0,76) als „gerechnet“ mit u_y = −10,100 mm an der Spitze
+gegen linear +3,321 mm, also mit umgekehrtem Vorzeichen; die
+Zusammenfassung meldete nur „Verformungszuwachs +204.2 %“.
+
+**α_cr bei gezogenen und gedrückten Stäben zugleich.** Bis zum 23.09.2026
+war α_cr in diesem Fall Zufall – ein Eigenwertlöser, dessen Voraussetzung
+dann nicht erfüllt war. An einem Zweigelenkrahmen mit Wind am Stielkopf
+(ein Stiel gezogen, einer gedrückt) kam für den Windlastfall bei jedem
+Aufruf ein anderer Wert heraus, in zwei Läufen mit je 200 Aufrufen alle
+unter 3,6; richtig ist 77,33. Bei „automatisch“ wurde eine Kombination
+1,5·Wind nach II. Ordnung gerechnet, obwohl α_cr = 51,55 ist. Jetzt gibt
+dasselbe Modell immer denselben Wert, gleich dem dicht gerechneten.
+Kombinationen, in denen alle Stäbe gedrückt sind, hatten das nicht (an
+der Halle alle 42 GZT-Kombinationen unverändert).
+
 **Wichtig**: Nach Theorie II. Ordnung gilt keine Superposition mehr. Jede
 Kombination wird einzeln gerechnet — das dauert länger als eine lineare
 Überlagerung. Die Ergebnisse der einzelnen **Lastfälle** bleiben Ergebnisse

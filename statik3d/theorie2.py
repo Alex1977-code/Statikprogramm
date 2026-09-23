@@ -345,7 +345,10 @@ def ersatzlasten_vorkruemmung(model: Model, res, elastisch: bool = True,
 # ==========================================================================
 def alpha_cr(model: Model, system, u: np.ndarray, nmodes: int = 1) -> dict:
     """
-    Kleinster Verzweigungslastfaktor zum Verformungszustand ``u``.
+    Kleinster positiver Verzweigungslastfaktor zum Verformungszustand ``u``.
+
+    Geloest wird (K + alpha K_g) v = 0 in der Form -K_g v = mu K v mit
+    alpha = 1/mu; gesucht ist das groesste positive mu.
 
     Rueckgabe {"alpha_cr": ..., "modus": Eigenvektor, "fehler": ""}.
     """
@@ -356,22 +359,41 @@ def alpha_cr(model: Model, system, u: np.ndarray, nmodes: int = 1) -> dict:
     if Kgff.shape[0] < 3 or abs(Kgff).max() == 0:
         return {"alpha_cr": math.inf, "fehler": "keine Normalkräfte - "
                                                 "kein Verzweigungsproblem"}
+    # K ist das Skalarprodukt, nicht -K_g. Bis zum 23.09.2026 stand hier
+    # eigsh(K, M=-K_g, sigma=0): ARPACK setzt fuer M ein positiv
+    # (semi)definites Skalarprodukt voraus, mit gezogenen und gedrueckten
+    # Staeben zugleich ist -K_g aber indefinit. Am Zweigelenkrahmen
+    # (tests/test_theorie2.py, Lastfall W) gaben zwei Laeufe mit je 200
+    # Aufrufen je 200 verschiedene Werte, alle unter 3,6, statt 77,33 (dicht
+    # gerechnet); "auto" rechnete damit 1,5·W nach II. Ordnung, obwohl
+    # alpha_cr = 51,55 ist. Bei reinem Zug kam ein endlicher Wert statt
+    # "kein positiver". K ist nach dem Einbau der Lager positiv definit, die
+    # mu sind damit reell und der Loeser gilt. Die Nullraeume von K_g liegen
+    # K-orthogonal zum Krylovraum und kommen nicht als mu = 0 zurueck
+    # (Zugstab: dicht 12 von 71 mu mit |mu| < 1e-12, eigsh liefert die
+    # betragskleinsten negativen). Fester Startvektor: gleiches Modell,
+    # gleicher Wert. Vier Ritzwerte statt einem, weil die groessten mu oft
+    # mehrfach sind (Zweigelenkrahmen unter W: die sechs groessten gleich,
+    # dicht gerechnet 23.09.2026).
     try:
-        k = max(1, min(nmodes, Kgff.shape[0] - 2))
-        vals, vecs = eigsh(system.Kff, k=k, M=-Kgff, sigma=0.0, which="LM")
+        n = Kgff.shape[0]
+        k = max(1, min(max(nmodes, 4), n - 2))
+        v0 = np.random.default_rng(0).standard_normal(n)
+        mu, vecs = eigsh(-Kgff, k=k, M=system.Kff, which="LA", v0=v0)
     except Exception as exc:                       # pragma: no cover
         return {"alpha_cr": math.inf, "fehler": f"Eigenwertlöser: {exc}"}
-    pos = [v for v in np.atleast_1d(vals) if v > 1e-9]
-    if not pos:
+    mu = np.atleast_1d(mu)
+    j = int(np.argmax(mu))
+    # mu <= 1e-12 heisst alpha_cr >= 1e12: keine Verzweigung in Lastrichtung
+    if not mu[j] > 1e-12:
         return {"alpha_cr": math.inf,
                 "fehler": "kein positiver Verzweigungslastfaktor"}
-    j = int(np.argmin(np.abs(vals - min(pos))))
     modus = np.zeros(model.ndof)
     modus[fi] = vecs[:, j]
     mx = float(np.abs(modus).max())
     if mx > 0:
         modus /= mx
-    return {"alpha_cr": float(min(pos)), "modus": modus, "fehler": ""}
+    return {"alpha_cr": float(1.0 / mu[j]), "modus": modus, "fehler": ""}
 
 
 def erforderlich(a_cr: float, plastisch: bool = False) -> dict:
@@ -452,6 +474,21 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
     info.alpha_cr = ac["alpha_cr"]
     if ac.get("fehler"):
         info.hinweise.append(ac["fehler"])
+    if info.alpha_cr <= 1.0:
+        # Ueber der Verzweigungslast hat (K + K_g) u = F zwar eine Loesung,
+        # aber keine brauchbare: am Druckkragarm (tests/test_umhuellende.py,
+        # Druck 1e6 N, alpha_cr 0,756) kam u_y an der Spitze -10,100 mm gegen
+        # linear +3,321 mm heraus, als gerechnet uebernommen, ohne Fehler
+        # und Hinweis; die Zusammenfassung meldete "Verformungszuwachs
+        # +204.2 %" (gemessen 23.09.2026). Mit dem Fehler uebernehmen
+        # check_theorie2 und _lastfaelle_hoeherer_ordnung das Ergebnis nicht,
+        # und der Bericht nennt die Zeile "nicht geführt".
+        info.fehler = (f"α_cr = {info.alpha_cr:.2f} ≤ 1: die Last liegt über der "
+                       "Verzweigungslast, am verformten System gibt es kein "
+                       "Gleichgewicht – Aussteifung, Querschnitte oder Lasten prüfen")
+        if progress:
+            progress(f"{name}: α_cr = {info.alpha_cr:.2f} ≤ 1, nicht gerechnet")
+        return res1, info
 
     u = u1.copy()
     res = res1

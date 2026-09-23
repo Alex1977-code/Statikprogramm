@@ -2810,6 +2810,27 @@ Grundzustand. Die Einstellung `theorie2` kennt drei Werte: `aus`, `auto`
 (α_cr je Kombination bestimmen und nur bei Unterschreitung am verformten
 System rechnen) und `ein` (immer).
 
+**Wie α_cr gelöst wird.** Gerechnet wird −K_g v = μ K v mit α = 1/μ;
+α_cr ist der Kehrwert des größten positiven μ. K ist nach dem Einbau der
+Lager positiv definit und dient dem Eigenwertlöser (ARPACK über `eigsh`)
+als Skalarprodukt; gerechnet werden vier Eigenwerte mit festem Startvektor,
+damit dasselbe Modell denselben Wert gibt. −K_g taugt als Skalarprodukt
+nicht: Sind Stäbe gezogen und andere gedrückt, ist −K_g indefinit. Genau
+so stand es bis zum 23.09.2026 im Aufruf (`eigsh(K, M=−K_g, sigma=0)`).
+Gemessen an einem Zweigelenkrahmen (Stiele HEB 200, 5 m, Riegel IPE 300,
+8 m, Lastfall W = 25 kN am linken Stielkopf, ein Stiel gezogen, einer
+gedrückt): Das dicht gerechnete α_cr ist 77,33. Zwei Läufe mit je 200
+Aufrufen am alten Stand gaben je 200 verschiedene Werte, alle unter 3,6.
+Unter „automatisch“ wurde damit eine Kombination 1,5·W nach II. Ordnung
+gerechnet, obwohl α_cr = 51,55 ≥ 10 ist. Ein nur gezogener Stab gab einen
+endlichen Wert statt „kein positiver Verzweigungslastfaktor“. Nicht
+betroffen waren Zustände, in denen −K_g semidefinit ist: An der Halle
+(42 GZT-Kombinationen, keine mit indefinitem −K_g) liegen alter und neuer
+Aufruf höchstens 3·10⁻¹³ neben dem dichten Bezug; am Zweigelenkrahmen
+gaben 1,35·G + 1,5·Q und 1,35·G + 1,5·W (−K_g semidefinit) schon vorher
+200-mal den dichten Bezug 18,1837 bzw. 19,2341. Jetzt geben 200 Aufrufe
+für W 200-mal 77,3287, gleich dem dichten Bezug (`tests/test_theorie2.py`).
+
 **Gleichgewicht am verformten System.** Gelöst wird (K + K_g(N)) u = F.
 Weil K_g von den Normalkräften abhängt und diese von u, wird iteriert, bis
 sich die Verformungen nicht mehr ändern (Abbruch bei einer relativen Änderung
@@ -2821,6 +2842,23 @@ nach Engesser
 
 und liegt bei gedrungenen Profilen rund ein halbes Prozent unter der
 schubstarren Eulerlast — die Verifikation prüft genau das.
+
+**Über der Verzweigungslast (α_cr ≤ 1)** hat (K + K_g) u = F zwar eine
+Lösung, aber keine, die das Tragwerk unter wachsender Last erreicht: die
+Vergrößerung 1/(1 − 1/α_cr) ist dort negativ, die Verformung zeigt gegen
+die Last.
+`solve_theorie2` rechnet dann nicht weiter und setzt einen Fehler mit dem
+Klartext „α_cr = … ≤ 1: die Last liegt über der Verzweigungslast …“; die
+Kombination bzw. der Lastfall behält das lineare Ergebnis, und das
+Theoriekapitel führt die Zeile als „nicht geführt“. Bis zum 23.09.2026 wurde
+das Ergebnis übernommen. Am Druckkragarm von `test_umhuellende` (Druck
+1000 kN je Lastfall, „automatisch“) hatte K2 = 1,35·LF1 + 1,5·LF2 ein
+α_cr von 0,756 und galt als gerechnet, ohne Fehler und Hinweis: u_y an der
+Spitze −10,100 mm gegen linear +3,321 mm, also mit umgekehrtem Vorzeichen,
+in der Zusammenfassung als „Verformungszuwachs +204.2 %“. Ein Lastfall LF1
+mit Theorie II und 3000 kN Druck (α_cr 0,72) stand mit −1,907 mm gegen
+linear +0,763 mm im Ergebnis. Bei 500 kN (α_cr 1,51) bleibt es wie bisher
+bei 9,705 mm nach II. Ordnung.
 
 **Ersatzimperfektionen (5.3.2).** Statt die Geometrie zu verziehen werden
 nach 5.3.2(7) gleichwertige Lasten angesetzt:
@@ -7174,7 +7212,7 @@ die Meldung für einen Freibrief hält.
 | `tests/test_beulen.py` | Beulwerte k_σ und k_τ gegen Tab. 4.1/4.2 und A.3, σ_E = 190000 (t/b)², ρ und χ_w gegen 4.4(2) und Tab. 5.1, Schubbeulen, Methode der reduzierten Spannungen, Steifen nach A.1/A.2.2/A.3(2) und Abschnitt 9, Lasteinleitung nach Abschnitt 6, Schalenbeulen nach EN 1993-1-6, dazu der Patch-Test des Viereckelements |
 | `tests/test_joints.py` | Schrauben, Nähte, T-Stummel gegen EN-Zahlenwerte; Steifigkeitsbeiwerte Tab. 6.11, Klassifizierung 5.2.2.5, Drehfeder gegen die geschlossene Kragarmlösung |
 | `tests/test_volumen.py` | Vergleichsspannung, Hauptspannungen und Mehrachsigkeit gegen die geschlossenen Werte (einachsiger Zug, reiner Schub √3 τ, hydrostatischer Druck σ_v = 0, Tresca/Mises = 2/√3), σ_v = N/A am Zugkörper aus Hexaedern, Singularitäts- und Netzfeinheitshinweise |
-| `tests/test_theorie2.py` | α_cr der Kragstütze und des Pendelstabes gegen die Knicklast nach Engesser, Vergrößerung der Verformung gegen 1/(1−N/N_cr), φ und e_0 gegen 5.3.2 und Tabelle 5.1, Gleichgewicht der Ersatzlastbilder, Feldmoment aus der Vorkrümmung, Kriterium 5.3.2(6) |
+| `tests/test_theorie2.py` | α_cr der Kragstütze und des Pendelstabes gegen die Knicklast nach Engesser, α_cr bei Zug und Druck zugleich (Zweigelenkrahmen) und bei reinem Zug gegen das dicht gelöste Problem, wiederholbar, Vergrößerung der Verformung gegen 1/(1−N/N_cr), φ und e_0 gegen 5.3.2 und Tabelle 5.1, Gleichgewicht der Ersatzlastbilder, Feldmoment aus der Vorkrümmung, Kriterium 5.3.2(6) |
 | `tests/test_klasse4.py` | wirksame Querschnitte der Klasse 4: Beulwerte, Grenzschlankheiten und ρ nach 4.4(2), Aufteilung b_e1/b_e2, W_eff,y und A_eff eines geschweißten Blechträgers gegen eine unabhängige Handrechnung, Zusatzmoment aus e_N, Schalenbeulen schlanker Kreisrohre |
 | `tests/test_rfem.py` | native RFEM/RSTAB-Dateien (SQLite, ZIP, unbekanntes Binärformat) und erweiterter Tabellenimport |
 | `tests/test_solver_ext.py` | Gelenke, Trapezlasten, Temperatur, Zwischenstellen, Superposition, Umhüllende, Kombinationsgenerator, einseitige Lager, Spaltelement, Flächenkontakt mit Reibung, parallele Assemblierung, Rechnerfarm |

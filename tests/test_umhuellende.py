@@ -522,6 +522,69 @@ def test_theorie2_leere_kombination_schreibt_nichts():
           f"{list(an.combinations)} {None if i0 is None else (i0.gerechnet, i0.hinweise)}")
 
 
+def test_theorie2_ueber_der_verzweigungslast():
+    """Liegt die Last ueber der Verzweigungslast (alpha_cr <= 1), gibt es am
+    verformten System kein Gleichgewicht (Befund B131). Bis zum 23.09.2026
+    wurde das Ergebnis trotzdem uebernommen: am Druckkragarm mit Druck 1e6 N
+    und "auto" K2 mit alpha_cr 0,756 als gerechnet, fehler und hinweise leer,
+    u_y an der Spitze -10,100 mm gegen linear +3,321 mm, und die
+    Zusammenfassung meldete nur "Verformungszuwachs +204.2 %"."""
+    m, ids = _druckkragarm("auto", druck=1.0e6)
+    an = solver.solve_all(m)
+    sp = ids[-1]
+    t2 = an.theorie2
+    lin = solver.solve_combination(m, Combination("lin", {"LF1": 1.35, "LF2": 1.5}, "ULS"),
+                                   an.cases, nichtlinear=False)
+    for n in ("K2", "EK1 [2]"):
+        i = t2.kombinationen[n]
+        check(f"alpha_cr <= 1: {n} nicht gerechnet, der Fehler nennt die Verzweigungslast",
+              i.alpha_cr <= 1.0 and not i.gerechnet and "Verzweigungslast" in i.fehler,
+              f"alpha_cr {i.alpha_cr:.4f}, gerechnet {i.gerechnet}, fehler {i.fehler!r}")
+    i1 = t2.kombinationen["EK1 [1]"]
+    check("EK1 [1] (alpha_cr ueber 1) bleibt gerechnet",
+          i1.alpha_cr > 1.0 and i1.gerechnet and not i1.fehler,
+          f"alpha_cr {i1.alpha_cr:.4f} {i1.fehler!r}")
+    check("die Zusammenfassung nennt K2 und EK1 [2] als nicht gefuehrt",
+          "2 nicht geführt" in t2.summary() and "K2" in t2.summary().split("nicht geführt")[-1]
+          and "EK1 [2]" in t2.summary().split("nicht geführt")[-1], t2.summary())
+    k2 = an.combinations["K2"]
+    check("kein Ergebnis mit umgekehrtem Vorzeichen in an.combinations['K2']",
+          k2.info.get("theorie") != "II. Ordnung" and np.allclose(k2.u, lin.u)
+          and k2.u[sp, 1] > 0,
+          f"K2 u_y {k2.u[sp, 1] * 1e3:.3f} mm, linear {lin.u[sp, 1] * 1e3:.3f} mm, "
+          f"theorie {k2.info.get('theorie')}")
+    check("und keine Alternative EK1 [2] nach II. Ordnung abgelegt",
+          "EK1 [2]" not in (an.alternativen or {}), str(list(an.alternativen or {})))
+
+    # Gegenprobe: Druck 5e5 N, alpha_cr 1,51 - unveraendert gerechnet
+    m5, ids5 = _druckkragarm("auto", druck=5.0e5)
+    an5 = solver.solve_all(m5)
+    t5 = an5.theorie2.kombinationen
+    k5 = an5.combinations["K2"]
+    check("Druck 5e5: alle drei gerechnet, kein Fehler",
+          all(i.gerechnet and not i.fehler for i in t5.values()) and len(t5) == 3,
+          str({k: (round(i.alpha_cr, 4), i.gerechnet, i.fehler) for k, i in t5.items()}))
+    close("Druck 5e5: K2 u_y an der Spitze wie bisher (9,705 mm)",
+          k5.u[ids5[-1], 1] * 1e3, 9.705, 1e-3, "mm")
+
+    # Lastfall mit Theorie II ueber der Verzweigungslast (_lastfaelle_hoeherer_ordnung)
+    m3, ids3 = _druckkragarm("aus", druck=3.0e6)
+    m3.load_cases["LF1"].theorie = "II"
+    an3 = solver.solve_all(m3)
+    lin3 = solver.solve_cases(m3)                 # rein linear
+    i3 = an3.theorie2.kombinationen.get("LF1") if an3.theorie2 else None
+    r3 = an3.cases["LF1"]
+    check("Lastfall LF1 (Theorie II, alpha_cr <= 1): Fehler statt Ergebnis",
+          i3 is not None and i3.alpha_cr <= 1.0 and not i3.gerechnet and i3.fehler,
+          "keine Zeile" if i3 is None else f"alpha_cr {i3.alpha_cr:.4f} {i3.fehler!r}")
+    check("sein Ergebnis bleibt das lineare und sagt es",
+          np.allclose(r3.u, lin3["LF1"].u) and r3.info.get("theorie") == "I"
+          and r3.info.get("theorie_gewuenscht") == "II"
+          and any("Lastfall LF1" in w for w in an3.info.get("warnungen", [])),
+          f"u_y {r3.u[ids3[-1], 1] * 1e3:.3f} mm, linear {lin3['LF1'].u[ids3[-1], 1] * 1e3:.3f} mm, "
+          f"theorie {r3.info.get('theorie')!r}")
+
+
 def test_theorie3_der_ergebniskombination():
     """Dasselbe fuer eine EK mit theorie = 'III'."""
     m, ids = _druckkragarm("aus", theorie_ek="III")
@@ -739,6 +802,7 @@ def main():
               test_kontaktmodell_alternativen_fuer_nachweise,
               test_theorie2_der_ergebniskombination,
               test_theorie2_leere_kombination_schreibt_nichts,
+              test_theorie2_ueber_der_verzweigungslast,
               test_theorie3_der_ergebniskombination,
               test_hoehere_theorie_ohne_abgelegtes_ergebnis,
               test_lastfall_hoeherer_ordnung_ohne_abgelegtes_ergebnis,
