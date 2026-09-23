@@ -3716,7 +3716,7 @@ nichts stillschweigend Übergangenes:
 | **Seiten im Inneren**: freie Elementseiten, hinter denen der Körper weitergeht (verdrehtes Element, doppelte Knoten, Hohlraum) | 0 |
 | Lücke im Netzrand (Warnung, über 0,5 % des Körpers Fehler): an der Oberfläche fehlt dem Netz ein Stück | 0 |
 | Netzrand neben der Hülle (Warnung): freie Seiten neben den Randflächen, außen oder als Beule | 0 |
-| Riss im Netz (Warnung): geschlossener Hohlraum, dünn gegen seine eigenen Seiten | 0 |
+| Riss im Netz (Warnung): geschlossener Hohlraum, dünn gegen seine eigenen Seiten und gegen die Elemente daneben, kein verdrehtes Element, keine doppelten Knoten | 0 |
 
 **Der verdrehte Sechsflächner** (seit 22.09.2026). Stimmen die acht Knoten
 eines Sechsflächners, ist aber der Deckel um eine Ecke verdreht (4, 5, 6, 7 →
@@ -3740,24 +3740,43 @@ Hülle“, mit dem größten Abstand in mm): so schnitt der freie Vernetzer an e
 Prisma mit eckigem Loch eine einspringende Ecke ab (3 von 1024 Seiten,
 0,012 % mehr Volumen). Ebenfalls eine Warnung ist der **Riss ohne Weite**
 („Riss im Netz“): freie Seiten im Inneren, die zusammen einen geschlossenen,
-**dünnen** Hohlraum umschließen. Dünn heißt: seine mittlere Dicke (zweimal
-Volumen durch Seitenfläche) ist höchstens 5 % der längsten Kante seiner
-Seiten. Das misst der Hohlraum an sich selbst, gleich wie fein oder grob das
-Netz daneben ist. Solche Hohlräume bleiben, wenn der freie Vernetzer flache
-Tetraeder aussortiert (Platte 0,9 × 0,9 × 0,035 m mit Bohrung: 8 Seiten, zwei
-Hohlräume von zusammen 0,056 mm³), oder wenn beiderseits einer Fläche dieselben
-Knoten verschieden in Dreiecke geteilt sind. Die Hohlräume des Vernetzers
-lagen in den Modellen der Prüfsuiten bei höchstens 3,55 %. Der Körper stimmt,
-die Verschiebungen passen dort aber nur an Knoten und Kanten zusammen. Bis zum
-23.09.2026 meldete die Abnahme die Hohlräume des Vernetzers als FEHLER „Seiten
-im Inneren“, vor jeder Rechnung mit der Rückfrage „Trotzdem rechnen?“ — und
-neu vernetzen ergibt dasselbe Netz. Ein fehlendes Element, das nicht flach ist,
-bleibt ein FEHLER, ebenso ein verdrehtes Element und doppelte Knoten. Gemessen
-wurden der verdrehte Sechsflächner (6,9 %, in abgestuften Netzen von 1:1 bis
-100:1) und 40 fehlende Tetraeder an der Platte mit Bohrung (8,5 bis 12,8 %):
-alle FEHLER. Die erste Fassung dieser Regel vom selben Tag maß gegen das
-größte Element im ganzen Körper; in abgestuften Netzen ließ sie beides als
-Riss durchgehen.
+**dünnen** Hohlraum umschließen. Dünn heißt zweierlei. Seine mittlere Dicke
+(zweimal Volumen durch Seitenfläche) ist höchstens 5 % der längsten Kante
+seiner Seiten, und sie ist höchstens 0,65-mal so groß wie die Dicke der
+Elemente, an denen er liegt (Median, die Dicke eines Elements ebenso
+gerechnet). Das zweite Maß braucht es für längliche Elemente: Dort folgt die
+Dicke der kurzen Seite, die längste Kante aber der langen. Solche Hohlräume
+bleiben, wenn der freie Vernetzer flache Tetraeder aussortiert (Platte
+0,9 × 0,9 × 0,035 m mit Bohrung: 8 Seiten, zwei Hohlräume von zusammen
+0,056 mm³), oder wenn beiderseits einer Fläche dieselben Knoten verschieden in
+Dreiecke geteilt sind. Die 30 geschlossenen Gruppen in den Modellen der
+Prüfsuiten lagen bei höchstens 3,55 % der längsten Kante und waren höchstens
+0,48-mal so dick wie die Elemente daneben. Der Körper stimmt bis auf diese
+Hohlräume, die Verschiebungen passen dort aber nur an Knoten und Kanten
+zusammen. Bis zum 23.09.2026 meldete die Abnahme die Hohlräume des Vernetzers
+als FEHLER „Seiten im Inneren“, vor jeder Rechnung mit der Rückfrage „Trotzdem
+rechnen?“ — und neu vernetzen ergibt dasselbe Netz.
+
+**Nie ein Riss** sind ein verdrehtes Element und doppelte Knoten, gleich wie
+dünn der Hohlraum ist. Ein verdrehter Sechsflächner hat eine Seitenkante, die
+kein anderes Element hat, und doppelte Knoten sind zwei Nummern am selben Ort.
+Gemessen am 23.09.2026, alle FEHLER „Seiten im Inneren“: verdrehte
+Sechsflächner in gleichmäßigen Netzen mit Zellen von 100 × 100 × 100 bis
+100 × 100 × 300 mm und in abgestuften Netzen 5:1, 20:1 und 50:1 (je alle 512
+inneren Zellen einzeln); fehlende Sechsflächner und fehlende Tetraeder in
+denselben abgestuften Netzen; ein Element, das an einem, zwei oder vier Knoten
+losgelöst ist (Sechsflächner und Tetraeder). Die zwei Fassungen dieser Regel
+vom selben Tag maßen erst gegen das größte Element im ganzen Körper, dann nur
+gegen die längste Kante. Beide ließen solche Fehler in abgestuften oder
+länglichen Netzen als Riss durchgehen, die zweite zum Beispiel bei 50:1 357
+von 512 verdrehten Sechsflächnern und jedes losgelöste Element. Die Kehrseite:
+Fehlt ein Tetraeder, der selbst so flach ist wie die, die der Vernetzer
+aussortiert, ist auch das ein Riss. Einzeln entfernt war das am frei
+vernetzten Würfel mit angehobener Ecke (1483 Tetraeder) bei 20 von 541
+inneren Tetraedern so, an der Platte mit Keilen (2701 Tetraeder) bei 75 von
+947. Die Dicke dieser Tetraeder war höchstens 4,98 % ihrer längsten Kante.
+Jeder fehlende Tetraeder mit einer Dicke über 5 % seiner längsten Kante war in
+diesen Messungen ein FEHLER.
 
 **Lücke im Netzrand** (Warnung, seit 23.09.2026). Fehlt dem Netz an der
 Oberfläche ein Stück, liegen die freien Seiten der Nachbarn im Inneren, und
@@ -3773,7 +3792,15 @@ an diesen fünf Prismen, gemessen: in den Netzeinstellungen „Sechsflächner
 sweepen“ (nur für Körper aus Grundfläche mal Weg) oder der Vernetzer gmsh bzw.
 Netgen, jeweils an allen fünf. Der Sweep ist ab Werk aus; warum, steht bei
 den Netzeinstellungen. Eine um 5 bis 10 % andere Ziellänge half nur an drei
-oder vier, die Nachbesserung mit MMG3D an keinem. Ein FEHLER ist die
+oder vier, die Nachbesserung mit MMG3D an keinem. Das gilt für Netze, die
+unverändert vom eigenen Vernetzer stammen. Ist das Netz importiert oder von
+Hand geändert, hilft neu vernetzen: Am frei vernetzten L-Prisma (Netzweite
+0,12 m, 6173 Tetraeder, ohne Befund) wurde ein Tetraeder am Deckel mit
+„Elemente löschen“ entfernt, gemeldet als „Lücke im Netzrand“ mit 115 cm³.
+Neu vernetzt mit denselben Einstellungen waren es wieder 6173 Tetraeder ohne
+Befund. Der Text der Warnung nennt beide Fälle; bis zum 23.09.2026 sagte er
+nur „Neu vernetzen mit denselben Einstellungen ergibt dasselbe Netz“, ebenso
+der Text des Risses. Ein FEHLER ist die
 Lücke, wenn alle Lücken eines Körpers zusammen mehr als 0,5 % seines Volumens
 ausmachen. Das ist dieselbe Grenze wie bei der Volumenbilanz. Ein verdrehter
 Sechsflächner am Rand oder in der Ecke ist keine Lücke, sondern bleibt ein
@@ -3800,9 +3827,14 @@ Volumen zu, das der Netzrand dort erklären kann. Die erste Fassung vom selben
 Tag nahm den größten Seitendurchmesser der **ganzen** Fläche und keine
 Richtung. In einem abgestuften Netz (20:1, Deckel z = 1 + 0,5·x·y) lag die
 Grenze so bei rund 24 mm, und ein verdrehtes Element der obersten Lage blieb
-ohne Meldung. Heute ist es ein FEHLER „Seiten im Inneren“, gemessen an
-Elementen verschiedener Größe bei 20:1 und 50:1: Ihre Seiten stehen 81 bis
-90° gegen den Deckel. Ein verdrehtes Element in der groben Ecke, wo die
+ohne Meldung. Heute ist es ein FEHLER „Seiten im Inneren“: Seine Seiten
+stehen 81 bis 90° gegen den Deckel. Gemessen an 324 Fällen (Abstufung 1:1,
+5:1, 20:1 und 50:1, Ecke um 0,3, 0,5 und 1,0 m angehoben, neun Zellen der
+beiden obersten Lagen, Deckel um eine Ecke vor, zurück und um zwei versetzt)
+war jeder ein FEHLER. In der zweiten Fassung vom selben Tag waren 75 davon nur
+ein „Riss im Netz“, weil die Riss-Regel an länglichen Zellen versagte (siehe
+oben).
+Ein verdrehtes Element in der groben Ecke, wo die
 oberste Lage dünn ist gegen die Sehne, findet nur die Richtung: Seine Ecken
 liegen bei 20:1 17 bis 18 mm neben dem Deckel, seine Seiten stehen 57 bis 87°
 dagegen. Die Kehrseite: kleinere Abweichungen des Netzrands meldet

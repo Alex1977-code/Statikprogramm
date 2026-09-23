@@ -867,6 +867,23 @@ def test_abnahme_ohne_fehlalarm_am_freien_netz():
                   and not [b for b in bef if b.pruefung == "Riss im Netz"],
                   f"Element {mitte[0]}: "
                   + "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.0f}" for b in bef))
+            # Element 765 ist kleiner als seine Nachbarn: sein Hohlraum ist
+            # 0,62-mal so dick wie sie (unter ABNAHME_RISS_NACHBAR), aber nicht
+            # flach, t/L 6,17 %. Nur t/L macht ihn zum FEHLER (gemessen
+            # 23.09.2026; am freien Wuerfel 9 solche von 541 inneren Tetraedern)
+            P = m.nodes[m.elements[765].nodes]
+            V_t = abs(float(np.linalg.det(P[1:] - P[0]))) / 6.0
+            A_t = sum(0.5 * np.linalg.norm(np.cross(P[b] - P[a], P[c] - P[a]))
+                      for a, b, c in ((0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3)))
+            L_t = max(np.linalg.norm(P[a] - P[b]) for a in range(4) for b in range(a + 1, 4))
+            k.elemente = [i for i in els if i != 765]
+            bef = dg._abnahme_volumenbilanz(m, "K", k, k.elemente)
+            check("  ein fehlender kleiner Tetraeder, der nicht flach ist (t/L 6,2 %): FEHLER",
+                  len(els) == 1483 and 0.06 < 2 * V_t / A_t / L_t < 0.065
+                  and [(b.stufe, b.pruefung, b.wert) for b in bef]
+                  == [("FEHLER", "Seiten im Inneren", 4.0)],
+                  f"{len(els)} tet4, t/L {2 * V_t / A_t / L_t * 100:.2f} %: "
+                  + "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.0f}" for b in bef))
             k.elemente = els
 
     # Die feine Huelle: am abgebildeten 4 x 4 x 4-Netz (dz = 0,5) wird der
@@ -929,6 +946,14 @@ def test_abnahme_luecken_des_vernetzers_sind_risse():
           len(ri) == 1 and ri[0].stufe == "WARNUNG" and ri[0].wert == 4.0
           and not [b for b in bef if b.stufe == "FEHLER"],
           f"{len(els)} tet4; " + "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.0f}" for b in bef))
+    # Zweite Gegenpruefung, Mangel 3: der Text sagte „Neu vernetzen mit
+    # denselben Einstellungen ergibt dasselbe Netz" ohne Einschraenkung - an
+    # einem von Hand geaenderten Netz hilft neu vernetzen aber
+    text = ri[0].text if ri else ""
+    check("  der Text rät zu neu vernetzen nur bei importierten oder von Hand geänderten Netzen",
+          "von Hand geändert" in text and "dasselbe Netz" in text
+          and "Neu vernetzen mit denselben Einstellungen ergibt dasselbe Netz" not in text,
+          text[-300:])
     # Gegenprobe: fehlt ein Tetraeder, der nicht flach ist, ist es kein Riss -
     # die Regel winkt nicht jeden Hohlraum durch. Die Platte ist eine
     # Tetraederlage dick: der fehlende Tetraeder hinterlaesst eine Delle in
@@ -1174,10 +1199,143 @@ def test_abnahme_riss_misst_am_oertlichen_element():
             Xf.append([P[j] for j in t] + [P[t[0]]])
             S.append(s)
     F, Xf, S = np.array(F), np.array(Xf, float), np.array(S)
+    # Die Elemente daneben so dick wie der Tetraeder-Hohlraum selbst
+    t_a = 2.0 * abs(float(np.linalg.det(np.array(Pa[1:]) - Pa[0]))) / 6.0 / float(
+        np.linalg.norm(S[:4], axis=1).sum())
     riss, _V, _lu, _v = dg._gruppen_im_inneren(None, {}, [], F, Xf, S, np.zeros(8, int),
-                                              np.ones(8, bool), None)
+                                              np.ones(8, bool), None, np.full(8, t_a))
     check("  zwei Hohlräume an einer Kante: der Tetraeder kein Riss, der flache ein Riss",
           not riss[:4].any() and riss[4:].all(), str(riss.astype(int).tolist()))
+
+
+_KUHN = ((0, 1, 2, 6), (0, 2, 3, 6), (0, 3, 7, 6), (0, 7, 4, 6), (0, 4, 5, 6), (0, 5, 1, 6))
+
+
+def _in_kuhn(m, k):
+    """Jede hex8-Zelle in sechs Tetraeder um die Raumdiagonale 0-6 (konform);
+    Tetraeder j der Zelle c ist Element 6 c + j."""
+    hexe = [list(e.nodes) for e in m.elements]
+    m.elements.clear()
+    for c in hexe:
+        for t in _KUHN:
+            m.add_element("tet4", [int(c[x]) for x in t], "S235")
+    k.elemente = list(range(len(m.elements)))
+
+
+def _gleichmaessig(lx, ly, lz, n):
+    """hex8-Netz n x n x n über lx x ly x lz als Körper K1; Element
+    i·n² + j·n + k ist die Zelle (i, j, k)."""
+    from statik3d import mesher
+    m = Model("gleich")
+    m.add_material(Material.steel("S235"))
+    ids = mesher.grid_box(m, "S235", lx, ly, lz, n, n, n, typ="hex8")
+    k = _quaderkoerper(m, [ids[0, 0, 0], ids[n, 0, 0], ids[n, n, 0], ids[0, n, 0],
+                           ids[0, 0, n], ids[n, 0, n], ids[n, n, n], ids[0, n, n]])
+    k.elemente = list(range(len(m.elements)))
+    for kn in ids[:, :, 0].ravel():
+        m.fix(int(kn), "all")
+    return m, k
+
+
+def test_abnahme_riss_an_laenglichen_zellen():
+    """Zweite Gegenprüfung vom 23.09.2026, Mängel 1 und 2: die Riss-Regel der
+    zweiten Kur maß die Dicke eines Hohlraums nur an der längsten Kante
+    seiner Seiten (t/L ≤ 5 %). In länglichen Zellen folgt die Dicke der
+    kurzen Seite, L der langen - ein verdrehter Sechsflächner in einer Zelle
+    100 × 100 × 200 mm wurde so zur WARNUNG „Riss im Netz … Der Körper
+    stimmt", ohne Rückfrage vor dem Rechnen (t/L 4,37 %; bei 46af735 und
+    3f5ae87 FEHLER). Abgestuft 50:1 gingen von je 512 inneren Zellen 357
+    verdrehte, 72 fehlende Sechsflächner und 340 fehlende Kuhn-Tetraeder als
+    Riss durch. Und ein Element, das an vier Knoten losgelöst ist (doppelte
+    Knoten), umschließt einen Hohlraum ohne Volumen: WARNUNG „Riss im Netz 10".
+
+    Jetzt muss ein Riss auch dünn sein gegen die Elemente daneben
+    (ABNAHME_RISS_NACHBAR), und verdrehte Elemente und doppelte Knoten sind
+    nie ein Riss.
+    """
+    def kurz(bef):
+        return "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.0f}" for b in bef) or "kein Befund"
+
+    # Verdrehter Sechsflaechner, gleichmaessiges Netz, Zellen 100 x 100 x 200 mm
+    m, k = _gleichmaessig(1.0, 1.0, 2.0, 10)
+    _verdrehen(m, 444)
+    bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+    check("Zelle 100 × 100 × 200 mm, Element 444 verdreht: FEHLER Seiten im Inneren 8, kein Riss",
+          [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", 8.0)]
+          and bef[0].element == 444, kurz(bef))
+    check("  und abnahme() ohne Warnungen fragt vor dem Rechnen nach",
+          [b.pruefung for b in dg.abnahme(m)] == ["Seiten im Inneren"],
+          str([(b.stufe, b.pruefung) for b in dg.abnahme(m)]))
+
+    # Abgestuft: die Zellen (1, 1, k) werden nach oben immer laenglicher
+    # (20:1: 20,5 x 20,5 x 20,5 bis 20,5 x 20,5 x 210,5 mm, 50:1: 11 x 11 x 11
+    # bis 11 x 11 x 231 mm)
+    for verh in (20, 50):
+        m, k = _gestuft(verh)
+        still = []
+        for kk in range(1, 9):
+            e = 110 + kk
+            alt = _verdrehen(m, e)
+            bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+            m.elements[e].nodes = alt
+            if [(b.stufe, b.pruefung) for b in bef] != [("FEHLER", "Seiten im Inneren")]:
+                still.append(f"{e}: {kurz(bef)}")
+            k.elemente = [x for x in range(1000) if x != e]
+            bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+            k.elemente = list(range(1000))
+            if ([(b.stufe, b.pruefung, b.wert) for b in bef]
+                    != [("FEHLER", "Seiten im Inneren", 6.0)]):
+                still.append(f"{e} fehlt: {kurz(bef)}")
+        check(f"  abgestuft {verh}:1, Zellen 111 bis 118 verdreht oder fehlend: "
+              "je FEHLER, kein Riss", not still, "; ".join(still))
+
+    # Fehlender Kuhn-Tetraeder in denselben Zellen (50:1)
+    m, k = _gestuft(50)
+    _in_kuhn(m, k)
+    alle = list(k.elemente)
+    still = []
+    for kk in range(1, 9):
+        weg = (110 + kk) * 6
+        k.elemente = [x for x in alle if x != weg]
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        if [(b.stufe, b.pruefung, b.wert) for b in bef] != [("FEHLER", "Seiten im Inneren", 4.0)]:
+            still.append(f"{weg}: {kurz(bef)}")
+    check("  Kuhn 50:1, Tetraeder 0 der Zellen 111 bis 118 fehlt: je FEHLER, kein Riss",
+          not still, "; ".join(still))
+
+    # Doppelte Knoten: die vier Bodenknoten des inneren Elements 292 durch
+    # eigene am selben Ort ersetzt - das Element haengt nur noch am Deckel
+    m, k = _gleichmaessig(1.0, 1.0, 1.0, 8)
+    nd = list(m.elements[292].nodes)
+    m.elements[292].nodes = [int(m.add_node(*m.nodes[x])) for x in nd[:4]] + nd[4:]
+    bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+    check("Element 292 an vier Knoten losgelöst (doppelte Knoten): FEHLER 10, kein Riss",
+          [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", 10.0)]
+          and [b.pruefung for b in dg.abnahme(m)] == ["Seiten im Inneren"], kurz(bef))
+    # ... und im Tetraedernetz, wo keine Kante „verdreht" ist: ein Knoten
+    m, k = _gleichmaessig(1.0, 1.0, 1.0, 8)
+    _in_kuhn(m, k)
+    e = 292 * 6
+    nd = list(m.elements[e].nodes)
+    m.elements[e].nodes = [int(m.add_node(*m.nodes[nd[0]]))] + nd[1:]
+    bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+    check("  Kuhn-Tetraeder an einem Knoten losgelöst: FEHLER 6, kein Riss",
+          [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", 6.0)],
+          kurz(bef))
+
+    # Verdrehte Elemente der obersten Lage unter windschiefem Deckel
+    # (Gegenpruefung: 75 von 324 Faellen nur WARNUNG Riss 8)
+    still = []
+    for verh, dz, zellen in ((20, 0.5, (159, 519, 729, 289)), (1, 1.0, (729, 289, 889))):
+        m, k = _gestuft(verh, dz=dz, oben=True)
+        for e in zellen:
+            alt = _verdrehen(m, e)
+            bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+            m.elements[e].nodes = alt
+            if [(b.stufe, b.pruefung) for b in bef] != [("FEHLER", "Seiten im Inneren")]:
+                still.append(f"{verh}:1 dz {dz} Element {e}: {kurz(bef)}")
+    check("windschiefer Deckel (20:1 dz 0,5 und 1:1 dz 1,0), oberste Lage verdreht: je FEHLER",
+          not still, "; ".join(still))
 
 
 def test_abnahme_windschief_misst_am_oertlichen_element():
@@ -1313,6 +1471,37 @@ def test_abnahme_luecke_im_netzrand():
           == [(b.pruefung, round(b.wert, 9)) for b in bef],
           f"{ergebnisse[1][0]} Elemente")
 
+    # Zweite Gegenpruefung, Mangel 4: an einem von Hand geaenderten Netz hilft
+    # neu vernetzen. Richtiges freies Netz (h = 0,12), ein Tetraeder mit einer
+    # Seite im Deckel geloescht wie mit „Elemente löschen" in der Oberflaeche
+    # (Model.elemente_loeschen): eine Luecke. Der Text sagte „Neu vernetzen
+    # mit denselben Einstellungen ergibt dasselbe Netz" ohne Einschraenkung.
+    check("  der Text nennt neu vernetzen für importierte oder von Hand geänderte Netze",
+          "von Hand geändert" in text and "Neu vernetzen mit denselben" not in text, text[-420:])
+    m = Model("L")
+    m.add_material(Material.steel("S235"))
+    k = _extrudiert(m, L, 0.0, 0.4)
+    with contextlib.redirect_stdout(io.StringIO()):
+        mesher.modell_vernetzen(m, [], workers=1, hs={"K": 0.12})
+    n_frei = len(k.elemente)
+    vorher = [b for b in dg.abnahme(m, warnungen=True) if b.pruefung in _NETZ_BEFUNDE
+              or b.pruefung == "Lücke im Netzrand"]
+    deckel = [i for i in k.elemente
+              if (np.abs(m.nodes[m.elements[i].nodes][:, 2] - 0.4) < 1e-9).sum() == 3
+              and 0.1 < m.nodes[m.elements[i].nodes][:, 0].mean() < 0.4
+              and 0.8 < m.nodes[m.elements[i].nodes][:, 1].mean() < 1.6]
+    m.elemente_loeschen(deckel[:1])
+    lu = [b for b in dg.abnahme(m, warnungen=True) if b.pruefung == "Lücke im Netzrand"]
+    with contextlib.redirect_stdout(io.StringIO()):
+        mesher.modell_vernetzen(m, [], workers=1, hs={"K": 0.12})
+    nachher = [b for b in dg.abnahme(m, warnungen=True) if b.pruefung in _NETZ_BEFUNDE
+               or b.pruefung == "Lücke im Netzrand"]
+    check("  von Hand gelöschtes Element: Lücke, und neu vernetzen stellt das Netz wieder her",
+          n_frei == 6173 and not vorher and len(lu) == 1 and "von Hand geändert" in lu[0].text
+          and len(k.elemente) == n_frei and not nachher,
+          f"{n_frei} tet4, vorher {len(vorher)} Befunde, Lücke {[round(b.wert, 7) for b in lu]}, "
+          f"neu vernetzt {len(k.elemente)} tet4, {len(nachher)} Befunde")
+
     # T-Prisma, h = 0,1: die Luecke liegt an der einspringenden Kante
     # (1,2 | 0,4). Zwei Seiten liegen im Inneren, zwei stehen in die
     # Aussparung hinaus (bis 29,2 mm) - erst mit ihnen liegt der Rand der
@@ -1378,6 +1567,7 @@ def main():
               test_abnahme_luecken_des_vernetzers_sind_risse,
               test_abnahme_offene_gruppen_sind_kein_riss,
               test_abnahme_riss_misst_am_oertlichen_element,
+              test_abnahme_riss_an_laenglichen_zellen,
               test_abnahme_windschief_misst_am_oertlichen_element,
               test_abnahme_luecke_im_netzrand,
               test_windschiefe_randflaechen_ohne_dreiecksschleife,

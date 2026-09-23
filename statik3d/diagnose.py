@@ -1218,7 +1218,8 @@ def _freie_seiten_ecken(model, els, gruppen: dict = None):
 
 
 #: Wann eine Gruppe freier Seiten im Inneren ein **Riss ohne Weite** ist
-#: (WARNUNG) und kein fehlender Nachbar (FEHLER). Zwei Bedingungen:
+#: (WARNUNG) und kein fehlender Nachbar (FEHLER). Drei Masse und zwei
+#: Merkmale des Netzes, alle an der Stelle selbst gemessen:
 #:
 #: * **geschlossen**: die Seiten umschliessen etwas. Die gerichteten Kanten
 #:   der Seiten (umlaufend wie ihr Flaechenvektor, vom eigenen Element weg)
@@ -1226,41 +1227,63 @@ def _freie_seiten_ecken(model, els, gruppen: dict = None):
 #:   Schleifen duerfen zusammen hoechstens diesen Anteil der Seitenflaeche
 #:   aufspannen. Ein Riss mit Knoten nur auf einem Ufer (T-Stoss) hat
 #:   Randschleifen ohne Flaeche (drei Punkte auf einer Kante), ein Hohlraum
-#:   gar keinen Rand. Gemessen an den 29 Gruppen, die die Modelle der Suiten
-#:   test_mesher3d und test_sweep bilden (23.09.2026): Rand 0 bis 5,6 % der
-#:   Seitenflaeche. Die Seiten an doppelten Knoten sind dagegen ein Ufer ohne
-#:   Gegenueber (Rand 100 %), und die Gruppe um einen verdrehten Wuerfel in
-#:   einer Reihe ist vorn und hinten offen: 2,00 m2 Rand bei 4,83 m2
-#:   Seitenflaeche (41 %; verdrehter Boden 26 %, verdrehtes Eckelement 30 %).
-#:   Die Summe der Flaechenvektoren taugt dafuer nicht - in der Reihe heben
-#:   sich vorn und hinten auf (gemessen |Summe S| = 0, das scheinbare Volumen
-#:   ebenso 0, und die Gruppe galt im ersten Entwurf als Riss).
+#:   gar keinen Rand. Gemessen an den 30 geschlossenen Gruppen, die die
+#:   Modelle der Suiten test_mesher3d und test_sweep bilden (23.09.2026):
+#:   Rand 0 bis 5,6 % der Seitenflaeche. Offen ist dagegen eine Trennflaeche
+#:   aus doppelten Knoten, die bis an die Huelle geht (Rand 100 %), und die
+#:   Gruppe um einen verdrehten Wuerfel in einer Reihe ist vorn und hinten
+#:   offen: 2,00 m2 Rand bei 4,83 m2 Seitenflaeche (41 %; verdrehter Boden
+#:   26 %, verdrehtes Eckelement 30 %). Die Summe der Flaechenvektoren taugt
+#:   dafuer nicht - in der Reihe heben sich vorn und hinten auf (gemessen
+#:   |Summe S| = 0, das scheinbare Volumen ebenso 0, und die Gruppe galt im
+#:   ersten Entwurf als Riss).
 ABNAHME_RISS_UFER = 0.10
-#: * **duenn**: die mittlere Dicke des Hohlraums, 2 V / (Summe der
-#:   Seitenflaechen), hoechstens dieser Anteil der laengsten Kante der Gruppe.
-#:   Das Mass haengt nur an den Seiten der Gruppe selbst, nicht an der
-#:   Abstufung des Netzes. Bis zum 23.09.2026 stand hier die Zulage
-#:   n * FLACH * h_max^3 mit h_max, der groessten Elementdiagonale im ganzen
-#:   Koerper (Gegenpruefung, Mangel 1): in abgestuften Netzen war sie so gross,
-#:   dass ein verdrehter Sechsflaechner (50:1, Hohlraum 448 mm3) und ein
-#:   fehlender, nicht flacher Tetraeder an der Platte mit Bohrung (40 von 40
-#:   Proben) als Riss durchgingen. Gemessen am 23.09.2026, t/L = mittlere
-#:   Dicke durch laengste Kante:
-#:
-#:   - Luecken, die der freie Vernetzer hinterlaesst (Gruppen der Modelle von
-#:     test_mesher3d und test_sweep, Platte mit Bohrung, Keile): t/L bis
-#:     3,55 % (ein Haufen aus zehn Seiten), einzeln bis 3,31 %;
-#:   - verdrehter Sechsflaechner im Innern: 6,90 %, gleich fuer die
-#:     Abstufungen 1:1, 5:1, 20:1, 50:1 und 100:1;
-#:   - fehlender Tetraeder mit V/L^3 ueber 0,04 an der Platte mit Bohrung
-#:     (die 40 kleinsten): 8,5 bis 12,8 %; ein Kuhn-Tetraeder (sechs je
-#:     Wuerfel) 7,97 %.
-#:
-#:   Die Grenze liegt dazwischen. Ein Tetraeder, der so flach ist wie die,
-#:   die der Vernetzer aussortiert, hinterliesse auch einen Riss - an der
-#:   Platte mit Bohrung haben 310 von 11 373 inneren Tetraedern t/L unter
-#:   3,5 %.
+#: * **duenn gegen die eigenen Seiten**: die mittlere Dicke des Hohlraums,
+#:   t = 2 V / (Summe der Seitenflaechen), hoechstens dieser Anteil der
+#:   laengsten Kante der Gruppe (t/L). Das trennt an Netzen mit Elementen
+#:   aehnlicher Seitenlaengen: Luecken, die der freie Vernetzer hinterlaesst
+#:   (dieselben 30 Gruppen), t/L bis 3,55 % (ein Haufen aus zehn Seiten),
+#:   einzeln bis 3,31 %; die 40 kleinsten fehlenden Tetraeder mit V/L^3 ueber
+#:   0,04 an der Platte mit Bohrung 8,5 bis 12,8 %. An **laenglichen** Zellen
+#:   traegt t/L allein nicht (zweite Gegenpruefung vom 23.09.2026, Mangel 1):
+#:   die Dicke folgt der kurzen Seite, L der langen. Gemessen am 23.09.2026, abgestufte
+#:   hex8-Netze 10 x 10 x 10 (5:1, 20:1, 50:1), je innere Zelle einzeln: ein
+#:   verdrehter Sechsflaechner t/L 0,47 bis 9,75 % (6,90 % nur an der
+#:   Wuerfelzelle), ein fehlender Sechsflaechner 2,33 bis 33,3 %, ein
+#:   fehlender Tetraeder der Kuhn-Zerlegung 0,79 bis 7,97 %. Darum die
+#:   beiden folgenden Bedingungen.
 ABNAHME_RISS_DICKE = 0.05
+#: * **duenn gegen die Elemente daneben**: t hoechstens dieser Anteil der
+#:   Dicke der Elemente, deren Seiten die Gruppe bilden (Median je Seite,
+#:   Dicke eines Elements 2 V / Summe seiner Seitenflaechen). Die Dicke eines
+#:   laenglichen Elements folgt wie die seiner Luecke der kurzen Seite; ein
+#:   fehlendes Element hinterlaesst einen Hohlraum so dick wie seine
+#:   Nachbarn. Gemessen am 23.09.2026, t durch Median der Nachbardicke:
+#:
+#:   - Luecken des freien Vernetzers (die 30 geschlossenen Gruppen der
+#:     Modelle von test_mesher3d und test_sweep, Platte mit Bohrung und
+#:     Keile eingeschlossen): 0,000 bis 0,482;
+#:   - fehlender Sechsflaechner (gleichmaessig 100 x 100 x 100 bis 500 mm und
+#:     abgestuft 5:1, 20:1, 50:1, je 512 innere Zellen): 1,00 bis 1,01;
+#:   - fehlender Kuhn-Tetraeder (gleichmaessig 100 x 100 x 100 bis 300 mm,
+#:     abgestuft 5:1, 20:1, 50:1): 0,865 bis 1,07.
+#:
+#:   Die Grenze liegt dazwischen, Abstand Faktor 1,35 nach unten und 1,33
+#:   nach oben. Allein traegt auch dieses Mass nicht: an der Platte mit
+#:   Bohrung sind die kleinsten fehlenden Tetraeder kleiner als ihre
+#:   Nachbarn (Median 0,55 bis 1,34) - dort trennt t/L.
+ABNAHME_RISS_NACHBAR = 0.65
+#: * **kein verdrehtes Element**: kein Sechsflaechner, Keil oder keine
+#:   Pyramide der Gruppe mit einer Kante, die in keinem anderen Element
+#:   vorkommt und nicht auf der Huelle liegt (:func:`_verdrehte_elemente`,
+#:   dieselbe Pruefung wie bei der Luecke im Netzrand). Das haengt nicht an
+#:   Massen: der Hohlraum eines verdrehten Sechsflaechners ist gemessen 0,21-
+#:   bis 2,7-mal so dick wie seine Nachbarn (Median), je nach Abstufung.
+#: * **keine doppelten Knoten**: zwei Knoten der Seiten im Inneren mit
+#:   verschiedener Nummer am selben Ort (:data:`ABNAHME_FUGENNAEHE`). Ein
+#:   Element, das an vier Knoten losgeloest ist, umschliesst einen Hohlraum
+#:   ohne Volumen (zweite Gegenpruefung, Mangel 2: WARNUNG Riss 10), hat an
+#:   diesen Knoten aber keine Verbindung.
 #: Windschiefe Randflaechen: eine freie Seite liegt darauf, wenn ihre Ecken
 #: nicht weiter danebenliegen als eine Sehne der **oertlichen** Weite H, und
 #: wenn sie in die Richtung der Flaeche zeigt (siehe _abnahme_volumenbilanz).
@@ -1434,7 +1457,9 @@ def _verdrehte_elemente(model, gruppen, els, kandidaten, huelle) -> set:
     Ecke versetzt) laufen die Seitenkanten ueber die Diagonalen der
     Nachbarseiten. Tetraeder koennen nicht verdreht sein - jede Folge von vier
     Knoten ist derselbe Tetraeder -, und ein Tetraedernetz mit Luecken hat
-    Kanten, die nur noch ein Element traegt; sie bleiben darum aussen vor."""
+    Kanten, die nur noch ein Element traegt; sie bleiben darum aussen vor.
+    Gefragt fuer offene Gruppen (Luecke im Netzrand oder nicht) und fuer
+    geschlossene duenne (Riss oder nicht)."""
     from .elements import solid as sl
     kandidaten = [int(e) for e in kandidaten
                   if not str(model.elements[int(e)].typ).startswith("tet")]
@@ -1478,18 +1503,21 @@ def _verdrehte_elemente(model, gruppen, els, kandidaten, huelle) -> set:
     return aus
 
 
-def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle) -> tuple:
+def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T) -> tuple:
     """Die freien Seiten neben der Huelle (F, Xf, S ihr Flaechenvektor vom
-    eigenen Element weg, E ihre Elemente; ``innen``: der Koerper geht hinter
+    eigenen Element weg, E ihre Elemente, T die Dicke ihres Elements
+    2 V / Summe seiner Seitenflaechen; ``innen``: der Koerper geht hinter
     der Seite weiter), die im Inneren in Gruppen eingeteilt ->
     (Riss-Maske, Volumen der Risse, Luecken, verdrehte Elemente).
 
-    * **geschlossen und duenn** (:data:`ABNAHME_RISS_UFER`,
-      :data:`ABNAHME_RISS_DICKE`): ein Riss ohne Weite. Dazu gehoeren ein Riss
-      zwischen zwei verschieden in Dreiecke geteilten Haelften einer ebenen
-      Flaeche (Volumen 0), ein Riss mit Knoten nur auf einer Seite (am Modell
-      test_nachbar_mit_verschiedener_teilung 8 Seiten, 1e-19 m^3), die Luecke
-      eines aussortierten flachen Tetraeders (4 Seiten).
+    * **geschlossen und duenn**, gegen die eigenen Seiten und gegen die
+      Elemente daneben, **ohne verdrehtes Element und ohne doppelte Knoten**
+      (:data:`ABNAHME_RISS_UFER`, :data:`ABNAHME_RISS_DICKE`,
+      :data:`ABNAHME_RISS_NACHBAR`): ein Riss ohne Weite. Dazu gehoeren ein
+      Riss zwischen zwei verschieden in Dreiecke geteilten Haelften einer
+      ebenen Flaeche (Volumen 0), ein Riss mit Knoten nur auf einer Seite (am
+      Modell test_nachbar_mit_verschiedener_teilung 8 Seiten, 1e-19 m^3), die
+      Luecke eines aussortierten flachen Tetraeders (4 Seiten).
     * **offen zur Huelle**: jede Randschleife ist eine Oeffnung in der Huelle
       (:func:`_schliesspunkt`) und kein Element der Gruppe ist verdreht
       (:func:`_verdrehte_elemente`) - ein Stueck fehlt an der Oberflaeche.
@@ -1544,7 +1572,9 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle) -> tupl
     def duenn(idx):
         c = q[idx].mean(axis=0)
         V_g = abs(float(np.einsum("ij,ij->", q[idx] - c, S[idx]))) / 3.0
-        return 2.0 * V_g / float(A[idx].sum()) <= ABNAHME_RISS_DICKE * float(kante[idx].max()), V_g
+        t = 2.0 * V_g / float(A[idx].sum())
+        return (t <= ABNAHME_RISS_DICKE * float(kante[idx].max())
+                and t <= ABNAHME_RISS_NACHBAR * float(np.median(T[idx]))), V_g
 
     # Gruppen ueber gemeinsame Kanten. Beruehren sich zwei geschlossene
     # Hohlraeume nur an einer Kante, werden sie getrennt beurteilt: an der
@@ -1557,7 +1587,7 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle) -> tupl
     # und zwei offene aus 1 und 2 Seiten, und diese 3 Seiten wurden ein
     # FEHLER (gemessen 23.09.2026). Noetig ist das nur fuer eine Gruppe, die
     # im Ganzen ein Riss waere und eine Kante mit mehr als zwei Seiten hat.
-    V_riss = 0.0
+    kandidaten = []                         # [(Stellen, Volumen)] geschlossen und duenn
     offen = []
     for g in _seitengruppen(F[ii]):
         idx = ii[g]
@@ -1572,12 +1602,33 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle) -> tupl
                 for st in stuecke:
                     r_st, V_st = duenn(st)
                     if r_st:
-                        riss[st] = True
-                        V_riss += V_st
+                        kandidaten.append((st, V_st))
                 continue
         if ist_riss:
-            riss[idx] = True
-            V_riss += V_g
+            kandidaten.append((idx, V_g))
+    # Doppelte Knoten und verdrehte Elemente sind kein Riss, wie duenn der
+    # Hohlraum auch ist (Mass-unabhaengig, siehe ABNAHME_RISS_NACHBAR)
+    doppelt = np.zeros(m, bool)
+    if kandidaten:
+        kn = F[ii]
+        da = kn >= 0
+        nummern, erst = np.unique(kn[da], return_index=True)
+        if len(nummern) > 1:
+            from scipy.spatial import cKDTree
+            paare = cKDTree(Xf[ii][da][erst]).query_pairs(ABNAHME_FUGENNAEHE,
+                                                          output_type="ndarray")
+            if len(paare):
+                doppelt[ii] = np.isin(kn, nummern[np.unique(paare)]).any(axis=1)
+    verdreht_zu: set = set()
+    if kandidaten and model is not None:
+        verdreht_zu = _verdrehte_elemente(
+            model, gruppen, els, {int(e) for idx, _V in kandidaten for e in E[idx]}, huelle)
+    V_riss = 0.0
+    for idx, V_g in kandidaten:
+        if doppelt[idx].any() or verdreht_zu & {int(e) for e in E[idx]}:
+            continue
+        riss[idx] = True
+        V_riss += V_g
     luecken: list = []
     verdreht: set = set()
     if not offen:
@@ -1636,6 +1687,29 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle) -> tupl
     return riss, V_riss, luecken, verdreht
 
 
+def _elementdicke(model, gruppen, V_el, wahl) -> np.ndarray:
+    """Dicke 2 V / Summe der Seitenflaechen je Element (Stellen wie V_el, nan
+    wo ``wahl`` falsch ist) - daran wird ein Hohlraum daneben gemessen
+    (:data:`ABNAHME_RISS_NACHBAR`). Seitenflaeche wie beim Flaechenvektor:
+    Dreieck halbes Kreuzprodukt, Viereck halbes Kreuzprodukt der Diagonalen."""
+    from .elements import solid as sl
+    T = np.full(len(V_el), np.nan)
+    for typ, (pos, K) in gruppen.items():
+        w = wahl[pos]
+        if not w.any():
+            continue
+        X = model.nodes[K[w]]
+        A = np.zeros(int(w.sum()))
+        for s in sl.FLAECHEN_ECKEN.get(typ, ()):
+            if len(s) == 4:
+                n = np.cross(X[:, s[2]] - X[:, s[0]], X[:, s[3]] - X[:, s[1]])
+            else:
+                n = np.cross(X[:, s[1]] - X[:, s[0]], X[:, s[2]] - X[:, s[0]])
+            A += 0.5 * np.linalg.norm(n, axis=1)
+        T[pos[w]] = 2.0 * V_el[pos[w]] / np.maximum(A, 1e-300)
+    return T
+
+
 def _ringmax(F, werte, ringe: int) -> np.ndarray:
     """Groesster Wert unter den Seiten, die hoechstens ``ringe`` Ringe
     (Nachbarn ueber gemeinsame Knoten) entfernt sind - je Seite."""
@@ -1685,7 +1759,9 @@ def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
        1 % des Seitendurchmessers dahinter), liegt sie im Inneren. Die Seiten
        im Inneren werden zu Gruppen verbunden (:func:`_gruppen_im_inneren`):
 
-       * ein Riss ohne Weite (geschlossen und duenn): WARNUNG „Riss im Netz";
+       * ein Riss ohne Weite (geschlossen, duenn gegen die eigenen Seiten und
+         gegen die Elemente daneben, kein Element verdreht, keine doppelten
+         Knoten): WARNUNG „Riss im Netz";
        * eine Luecke im Netzrand (offen zur Huelle, kein Element verdreht):
          WARNUNG „Lücke im Netzrand" mit Ort und Volumen, solange alle Luecken
          des Koerpers zusammen unter der Grenze der Volumenbilanz bleiben
@@ -1710,6 +1786,12 @@ def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
        verdrehte Elemente (Gegenpruefung, Maengel 1 und 2); und die Luecke,
        die der eigene Vernetzer an L-, T- und U-Prismen laesst, war ein FEHLER
        mit der Abhilfe „neu vernetzen", die dasselbe Netz ergibt (Mangel 3).
+       Die zweite Kur (e188334) mass die Dicke eines Risses nur an der
+       laengsten Kante seiner Seiten: in laenglichen Zellen wurden ein
+       verdrehter Sechsflaechner, ein fehlender Sechsflaechner oder
+       Kuhn-Tetraeder zur WARNUNG „Riss" (abgestuft 50:1: 357, 72 und 340 von
+       je 512 inneren Zellen), ebenso ein Element, das an vier Knoten
+       losgeloest ist (zweite Gegenpruefung, Maengel 1 und 2).
 
     Geprueft wird nur, wo die Huelle ohne Naeherung feststeht (gerade Kanten,
     siehe :func:`_polyederhuelle`); fuer Koerper mit krummen Randlinien sagt
@@ -1866,8 +1948,13 @@ def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
         # Im Inneren: Riss ohne Weite, Luecke im Netzrand oder fehlender
         # Nachbar (verdrehtes Element, doppelte Knoten, Hohlraum)
         if drin.any():
+            stelle = np.full(len(model.elements), -1)
+            stelle[np.asarray(els, int)] = np.arange(len(els))
+            wahl = np.zeros(len(els), bool)
+            wahl[stelle[E[neben[drin]]]] = True
+            T_f = _elementdicke(model, gruppen, V_el, wahl)[stelle[E[neben]]]
             r, V_riss, luecken, _verdreht = _gruppen_im_inneren(
-                model, gruppen, els, F[neben], Xf[neben], S[neben], E[neben], drin, huelle)
+                model, gruppen, els, F[neben], Xf[neben], S[neben], E[neben], drin, huelle, T_f)
             riss[neben[r]] = True
             for lu in luecken:
                 lu["idx"] = neben[lu["idx"]]
@@ -1898,7 +1985,14 @@ def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
     # mesher3d.tetraedern) und ergibt mit denselben Einstellungen dasselbe
     # Netz - gemessen an den fuenf Prismen der Gegenpruefung vom 23.09.2026
     # (gleiche Elementzahl, derselbe Befund). „Neu vernetzen" allein hilft
-    # dort also nicht.
+    # dort also nicht. An einem von Hand geaenderten Netz hilft es: L-Prisma,
+    # h 0,12, 6173 tet4 ohne Befund, Element 649 mit Model.elemente_loeschen
+    # entfernt (wie „Elemente löschen" in der Oberflaeche) -> „Lücke im
+    # Netzrand" 115 cm3; neu vernetzt mit denselben Einstellungen wieder
+    # 6173 tet4 ohne Befund (zweite Gegenpruefung, Mangel 4, nachgemessen
+    # 23.09.2026). Darum steht dieser Satz in jedem Befund, der ein neues Netz
+    # nahelegt - bis zum 23.09.2026 sagten Luecke und Riss nur „Neu vernetzen
+    # mit denselben Einstellungen ergibt dasselbe Netz".
     neu_vernetzen = ("Stammt das Netz aus einem Import oder ist es von Hand geändert, den "
                      "Körper neu vernetzen (Netz → Vernetzen); der eigene Vernetzer ergibt mit "
                      "denselben Einstellungen dasselbe Netz.")
@@ -1965,11 +2059,11 @@ def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
                     f"Das ist mehr als die Grenze der Volumenbilanz "
                     f"({dezimal(ABNAHME_VOLUMENBILANZ * 100, 1)} % des Körpers) - gerechnet "
                     "würde ein anderer Körper als der gezeichnete. ")
-                 + "Neu vernetzen mit denselben Einstellungen ergibt dasselbe Netz. Beseitigt "
-                 "hat eine solche Lücke an L-, T- und U-Prismen (gemessen 23.09.2026): "
-                 "Netzeinstellungen → „Sechsflächner sweepen“ (für Körper aus Grundfläche "
-                 "mal Weg) oder der Vernetzer gmsh bzw. Netgen, je an allen fünf; eine andere "
-                 "Ziellänge nur an drei oder vier von fünf."))
+                 + neu_vernetzen + " Beseitigt hat eine Lücke des eigenen Vernetzers an L-, "
+                 "T- und U-Prismen (gemessen 23.09.2026): Netzeinstellungen → „Sechsflächner "
+                 "sweepen“ (für Körper aus Grundfläche mal Weg) oder der Vernetzer gmsh bzw. "
+                 "Netgen, je an allen fünf; eine andere Ziellänge nur an drei oder vier "
+                 "von fünf."))
     if len(riss_idx):
         schlimm, bsp = beispiele(riss_idx)
         aus.append(Befund(
@@ -1977,12 +2071,12 @@ def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
             knoten=[int(x) for x in model.elements[schlimm].nodes],
             wert=float(len(riss_idx)), grenze=0.0, stufe="WARNUNG",
             text=f"Volumen {name}: {len(riss_idx)} freie Elementseiten im Inneren "
-                 f"umschließen Hohlräume ohne nennenswertes Volumen (zusammen "
+                 f"umschließen dünne Hohlräume (zusammen "
                  f"{dezimal(V_riss * 1e9)} mm³; z. B. {bsp}) - Risse ohne Weite, wie sie "
                  "bleiben, wenn der Vernetzer flache Tetraeder aussortiert oder beiderseits "
-                 "einer Fläche verschieden in Dreiecke teilt. Der Körper stimmt, die "
-                 "Verschiebungen passen dort aber nur an Knoten und Kanten zusammen. Neu "
-                 "vernetzen mit denselben Einstellungen ergibt dasselbe Netz."))
+                 "einer Fläche verschieden in Dreiecke teilt. Der Körper stimmt bis auf diese "
+                 "Hohlräume, die Verschiebungen passen dort aber nur an Knoten und Kanten "
+                 "zusammen. " + neu_vernetzen))
     if len(rand_idx):
         schlimm, bsp = beispiele(rand_idx)
         aus.append(Befund(
