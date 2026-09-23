@@ -5716,7 +5716,15 @@ Vernetzer-Sitzung nicht vor.
   Drehlager mit 31 Prozessen wartete `Pool()` 25,8 s (31 × 0,83 s), bevor der
   erste Arbeiter antwortete. Mit einem Dateipfad steht der Pool nach 1,8 s,
   die Arbeit beginnt nach 4,3 s; die Datei wird nach dem Lauf gelöscht
-  (`test_arbeiter_laden_aus_datei`).
+  (`test_arbeiter_laden_aus_datei`). Die Prüfung sieht auf die Datei, die
+  der Lauf selbst angelegt hat (`statik3d_netz_*.pkl`), und nicht auf den
+  Inhalt des Temp-Ordners: den teilen sich alle Sitzungen des Anwenders. Der
+  frühere Vergleich des Ordners vor und nach dem Lauf fiel am 23.09.2026
+  über Dateien, die parallel laufende Prüfungen anderer Sitzungen
+  währenddessen dort anlegten, obwohl der Lauf seine eigene gelöscht hatte;
+  `test_arbeiterdatei_nur_dieses_laufs` stellt das mit einem zweiten Prozess
+  nach und verlangt umgekehrt, dass die Prüfung durchfällt, wenn der
+  Vernetzer nicht aufräumt.
 * **Bilanz am Drehlager** (108 Körper, 1.812.423 Elemente, 31 Prozesse,
   gleiche Netze in allen Läufen, gemessen am 10.09.2026):
 
