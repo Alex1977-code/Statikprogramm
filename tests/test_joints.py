@@ -546,6 +546,56 @@ def test_vorlagen():
           a_vor.bolt_range_factor() < 0.3, f"{a_vor.bolt_range_factor():.2f}")
 
 
+def test_kopfplatte_ohne_scheinrippen():
+    """Befund B096 (23.09.2026): der Vorschlag der Kopfplatte setzte 2 Rippen,
+    die weder design() noch build() ansetzt - aus propose bei |M_y| > 0,6 f_y
+    W_el,y („Rippen über und unter dem Zugflansch“), aus improve bei
+    maßgebendem Druckflansch („Eine Druckrippe verteilt sie“). Gemessen am
+    IPE 400 (V_z = 90 kN, N = 0): Rippen ab 250 kNm, bei 700 kNm eta = 2,099
+    mit und ohne Rippen.
+
+    Verlangt: hat propose Rippen gesetzt, rechnet design mit und ohne sie
+    verschieden - oder der Vorschlag enthält keine. Bleibt der Druckflansch
+    des Trägers maßgebend, nennt der Hinweis das Profil als Ursache.
+    """
+    import copy
+    from statik3d.joints.templates import EndPlate
+    m, e_tr, _e_di = _rahmen()
+
+    def nachweise(t, **f):
+        return [(c.name, c.E, c.R) for c in t.design(**f).checks]
+
+    # 250 kNm: Rippen kamen aus propose, 700 kNm zusaetzlich aus improve
+    for My in (250e3, 700e3):
+        f = dict(N=0.0, Vz=90e3, My=My)
+        a = EndPlate.propose(m, elem=e_tr, end=1, **f)
+        ohne = copy.copy(a)
+        ohne.stiffeners = 0
+        check(f"{My / 1e3:.0f} kNm: Rippen des Vorschlags wirken im Nachweis",
+              a.stiffeners == 0 or nachweise(a, **f) != nachweise(ohne, **f),
+              f"{a.stiffeners} Rippen, eta = {a.design(**f).eta:.3f}")
+
+    f7 = dict(N=0.0, Vz=90e3, My=700e3)
+    a7 = EndPlate.propose(m, elem=e_tr, end=1, **f7)
+    j7 = a7.design(**f7)
+    # Voraussetzung, sonst prueft der Hinweis unten nichts
+    check("700 kNm: Druckflansch des Trägers bleibt maßgebend",
+          "Druckflansch" in j7.massgebend and not j7.ok,
+          f"eta = {j7.eta:.3f}, maßgebend {j7.massgebend}")
+    check("Hinweis nennt das Profil als Ursache und die Abhilfe",
+          any("Druckflansch des Trägers" in h and "Voute" in h for h in a7.hinweise),
+          " | ".join(h[:50] for h in a7.hinweise))
+
+    # Rippen aus einer aelteren Datei: sichtbar als nicht angesetzt
+    a7.stiffeners = 2
+    zeile = next((z.strip() for z in a7.describe().splitlines() if "Rippen, t =" in z), "")
+    check("Rippen aus älteren Dateien: Beschreibung sagt „nicht angesetzt“",
+          "nicht angesetzt" in zeile, zeile)
+    check("Rippen aus älteren Dateien: Kennwerte sagen „nicht angesetzt“",
+          any(k == "Rippen" and "nicht angesetzt" in v for k, v in a7.kennwerte()),
+          str([v for k, v in a7.kennwerte() if k == "Rippen"]))
+
+
 # --------------------------------------------------------------------------
 # Anschluss als Teil des Modells: speichern, ueber alle Kombinationen
 # nachweisen, Ermuedung aus den Ermuedungslasten, Bericht
@@ -889,7 +939,8 @@ def test_gelenk_im_modell_und_bericht():
 
 def main():
     for t in (test_schrauben, test_naehte, test_tstub, test_fe_schraube,
-              test_bleche, test_nachweise, test_vorlagen, test_anschluss_im_modell,
+              test_bleche, test_nachweise, test_vorlagen,
+              test_kopfplatte_ohne_scheinrippen, test_anschluss_im_modell,
               test_momenten_rotation, test_gelenk_in_der_rechnung,
               test_gelenk_im_modell_und_bericht):
         print(f"\n--- {t.__name__} ---")

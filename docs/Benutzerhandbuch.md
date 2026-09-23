@@ -3483,7 +3483,7 @@ Es gibt drei Vorlagen:
 
 | Vorlage | Anwendung |
 |---|---|
-| **Kopfplatte** | geschraubte Stirnplatte am Stabende, mit Rippen |
+| **Kopfplatte** | geschraubte Stirnplatte am Stabende (ohne Rippen, siehe unten) |
 | **Laschenstoß** | Flansch- und Steglaschen, geschraubt |
 | **Knotenblech** | Diagonalanschluss (Gusset), geschraubt oder geschweißt |
 
@@ -3509,10 +3509,24 @@ dicker (18 → 20 mm, 20 → 23 mm). Diese Vorschläge erfüllen die Nachweise
 schon nicht mehr: Von 340 kNm an (N = 0) bzw. 330 kNm an (N = −100 kN) ist
 „Druckflansch auf die Platte“ maßgebend, die Flanschkraft gegen
 b·t_f·f_y/γ_M0 des Trägerflansches. Dort endet das Nachbessern mit η > 1,
-und der Vorschlag trägt den Hinweis, die Geometrie von Hand anzupassen.
+denn Blech, Schrauben und Nähte ändern diesen Nachweis nicht. Der Vorschlag
+sagt das im Hinweis — der Druckflansch des Trägers ist überlastet (bei
+340 kNm, N = 0: Flanschkraft 880 kN gegen 863 kN), Abhilfe Voute oder
+größeres Profil — und nennt η mit der Bitte, die Geometrie von Hand anzupassen.
 Der Vorschlag für 180 kNm (13 mm, M20, 4 Reihen) trägt
 320 kNm bei N = 0 nicht (η = 1,461, maßgebend der T-Stummel der Zugzone); der
 Vorschlag für 320 kNm mit 16 mm und M24 erfüllt die Nachweise mit η = 0,986.
+
+**Rippen** schlägt der Kopfplatten-Vorschlag nicht vor: weder die Nachweise
+noch das FE-Teilmodell setzen sie an. Bis zum 23.09.2026 setzte er zwei Rippen
+bei |M_y| > 0,6·f_y·W_el,y (am IPE 400 in 10-kNm-Schritten ab 250 kNm) und bei
+maßgebendem Druckflansch, und sie änderten an keinem Nachweis etwas — bei
+700 kNm war η = 2,099 mit und ohne Rippen. Blech, Schrauben, Reihen, Nähte und
+η der Vorschläge sind dadurch nicht anders geworden (verglichen an 244
+Vorschlägen: IPE 400 mit V_z = 90 kN und IPE 500 aus dem Beispiel „hall“ mit
+V_z = 100 kN, N = 0 und −100 kN, 100 bis 700 kNm in 10-kNm-Schritten). Steht in
+einer älteren Datei eine Rippenzahl, nennen Beschreibung und Bericht sie mit
+dem Zusatz „in Nachweis und FE-Teilmodell nicht angesetzt“.
 
 **Schnittgrößen**: standardmäßig aus der Berechnung. Der Anschluss wird über
 **alle GZT-Kombinationen** geführt; die ungünstigste ist maßgebend, und die
