@@ -1099,11 +1099,25 @@ in der ein Lastfall steht, wird ein eigenes Gleichungssystem aufgestellt:
   Situation (geometrische Steifigkeit ebenfalls nur aus wirksamen Elementen).
 * **Umhüllende** und Nachweise laufen wie bisher über alle Kombinationen –
   die Stablängen bleiben bei einer Drehung erhalten.
+* **Ein einzelner Lastfall** (`solve_static`: „Nur aktiver Lastfall“,
+  `--analyse lastfall`, Webserver, Aufträge, adaptive Vernetzung) und das
+  **Knicken** (`solve_buckling`, Grundzustand Lastfall oder Kombination)
+  bauen ihr System ebenso je Situation (`situationssystem`); die
+  geometrische Steifigkeit des Knickens nimmt nur die wirksamen Elemente.
+  Bis zum 23.09.2026 bauten beide `StaticSystem(model)` ohne Situation und
+  rechneten still in der Grundstellung. `solve_static(case="all")` über
+  Lastfälle verschiedener Situationen wird abgewiesen – ein gemeinsames
+  System gibt es nicht.
 
 `tests/test_situationen.py` prüft das gegen geschlossene Lösungen:
 eingespannt-gestützter Balken (7PL³/96EI) gegen den Kragarm nach Abschalten
 des zweiten Elements (PL³/3EI), Eigengewicht nur der wirksamen Elemente,
-Kragarm um 90° hochgeklappt unter Vertikallast (PL/EA statt PL³/3EI).
+Kragarm um 90° hochgeklappt unter Vertikallast (PL/EA statt PL³/3EI). Für
+den einzelnen Lastfall: Rolle am Ende in der Stellung abgebaut, PL³/3EI
+bitgleich mit `solve_cases` (vorher 7PL³/96EI, 1,406 statt 6,429 mm); für das
+Knicken: Kopfhalterung in der Stellung abgebaut, Kragstütze π²EI/(2L)²
+(vorher eingespannt-gelenkig, 7,853 statt 0,9595 MN), und eine abgeschaltete
+äußere Stabhälfte trägt nichts zur geometrischen Steifigkeit bei.
 
 **Subsysteme** sind eine Gliederung des Modells (Elemente, Knoten, Linien,
 Lager, Kontakte je Teil; Elemente an der Berührungsstelle gehören beiden);
@@ -4351,8 +4365,20 @@ gesagt — es wird nichts ersatzweise eingesetzt.
   Volumen), Shift-Invert-Lanczos (ARPACK).
 * Lineares Knicken: (K + λ K_g) φ = 0 mit der geometrischen Steifigkeit der
   Stäbe (Przemieniecki) aus dem Grundzustand eines Lastfalls oder einer
-  Kombination. Der Knicklastfaktor λ multipliziert die Lasten des
-  Grundzustands.
+  Kombination, im System seiner Situation (Abschnitt 3.1). Der
+  Knicklastfaktor λ multipliziert die Lasten des Grundzustands.
+  Gelöst wird mit K als Metrik: (−K_g) φ = μ K φ, λ = 1/μ, die
+  betragsgrößten μ (Lanczos, ARPACK) mit der Faktorisierung des
+  Grundzustands – auch mit dem Lagrange-Rand der Hilfsfesselung – und einem
+  festen Startvektor. Ausgegeben werden die betragskleinsten λ beider
+  Vorzeichen (negativ: Knicken unter umgekehrter Last), nach Betrag geordnet.
+  Bis zum 23.09.2026 stand dort eigsh(K, M = −K_g, σ = 0): ARPACK verlangt in
+  diesem Modus ein positiv semidefinites M, und mit Zug und Druck im
+  Grundzustand ist −K_g indefinit. Am Zweigelenkrahmen unter Wind
+  (`tests/test_knicklaengen.py`) kamen in sechs Läufen erste Faktoren
+  zwischen 1,00 und 4,77 heraus; das dichte Problem hat 77,3287, siebenfach.
+  Jetzt steht 77,3287 in jedem Lauf; die zweite und dritte Kopie des
+  mehrfachen Eigenwerts streuen von Lauf zu Lauf in der 14. Stelle.
 
 ## 6a Vernetzung von Volumenkörpern
 

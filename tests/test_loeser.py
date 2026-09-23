@@ -1295,6 +1295,73 @@ def test_ausweichgrund_erreicht_ergebnis_bericht_und_modalanalyse():
           "ausgewichen" not in Report(m0, an0).html())
 
 
+def _zwei_wuerfel():
+    """Zwei hex8-Wuerfel mit nur einem gemeinsamen Knoten (wie
+    tests/test_singular.py): B dreht fast ohne Steifigkeit um den Knoten,
+    SuperLU faktorisiert, das Residuum reisst die Schranke."""
+    m = Model("zwei")
+    m.add_material(Material.steel("S235"))
+    A = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+                  [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1.]])
+    B = np.array([[2, 1, 0], [2, 2, 0], [1, 2, 0],
+                  [1, 1, 1], [2, 1, 1], [2, 2, 1], [1, 2, 1.]])
+    m.add_nodes(np.vstack([A, B]))
+    m.add_element("hex8", [0, 1, 2, 3, 4, 5, 6, 7], "S235", group="A")
+    m.add_element("hex8", [2, 8, 9, 10, 11, 12, 13, 14], "S235", group="B")
+    for k in range(4):
+        m.fix(k, [0, 1, 2])
+    lc = m.add_load_case("LF1")
+    lc.gravity = [0, 0, 0]
+    m.load_node(13, Fz=-1000.0)
+    return m
+
+
+def test_singulaer_nach_ausweichen_nennt_den_grund():
+    """Reisst die Loesung eines ausgewichenen Loesers die Residuumsschranke,
+    gehoert der Grund des Ausweichens in die Meldung - so, wie ihn das
+    Scheitern der SuperLU-Faktorisierung schon anhaengt ("(vorher: ...)").
+    Bis zum 23.09.2026 fehlte er in "Gleichungssystem numerisch singulaer
+    (Residuum ...)": ohne Fortschritt (Ketten, Pool, Farm, Skripte) stand
+    nirgends, dass nicht der eingestellte Loeser gerechnet hatte
+    (Nebenbefund 2)."""
+    try:
+        import pypardiso
+    except Exception:                                           # noqa: BLE001
+        check("Pardiso fehlt - Ausweichen in der Singularitaetsmeldung uebersprungen", True)
+        return
+    from statik3d import solver as S
+    alt_backend = parallel.settings().solver_backend
+    parallel.configure(solver_backend="auto")
+    echt = pypardiso.PyPardisoSolver.factorize
+
+    def wirft(self, A):
+        raise RuntimeError("Probe: PARDISO verweigert")
+
+    pypardiso.PyPardisoSolver.factorize = wirft
+    try:
+        try:
+            S.solve_static(_zwei_wuerfel(), case="LF1", workers=1)
+            check("ausgewichen und singulaer: die Meldung nennt den Grund", False, "lief durch")
+        except RuntimeError as ex:
+            kopf = str(ex).splitlines()[0]
+            check("ausgewichen und singulaer: die Meldung nennt den Grund",
+                  "numerisch singulaer" in kopf and "ausgewichen" in kopf
+                  and "Probe: PARDISO verweigert" in kopf, kopf[:240])
+    finally:
+        pypardiso.PyPardisoSolver.factorize = echt
+    # Gegenprobe: rechnet PARDISO selbst, steht kein Ausweichen darin
+    try:
+        try:
+            S.solve_static(_zwei_wuerfel(), case="LF1", workers=1)
+            check("ohne Ausweichen: singulaer, aber ohne Zusatz", False, "lief durch")
+        except RuntimeError as ex:
+            kopf = str(ex).splitlines()[0]
+            check("ohne Ausweichen: singulaer, aber ohne Zusatz",
+                  "numerisch singulaer" in kopf and "ausgewichen" not in kopf, kopf[:240])
+    finally:
+        parallel.configure(solver_backend=alt_backend)
+
+
 def test_ausweichloeser_und_buendelung_je_art():
     """Die Hinweiszeile nennt den Loeser, auf den ausgewichen wurde, und
     buendelt Gruende derselben Art auch innerhalb eines Ergebnisses.
@@ -1897,6 +1964,7 @@ def main():
               test_abbruchmeldung_nennt_ihren_lauf,
               test_ausweichen_erreicht_den_fortschritt_auch_im_kontakt,
               test_ausweichgrund_erreicht_ergebnis_bericht_und_modalanalyse,
+              test_singulaer_nach_ausweichen_nennt_den_grund,
               test_ausweichloeser_und_buendelung_je_art,
               test_ketten_rechnen_mit_den_einstellungen_des_hauptprozesses,
               test_speicherfehler_nennt_zahlen, test_symmetriepruefung, test_loeser_treffen_die_geschlossene_loesung,

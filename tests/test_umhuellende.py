@@ -605,16 +605,27 @@ def test_lastfall_hoeherer_ordnung_ohne_abgelegtes_ergebnis():
     check("fehlt sie, wird sie mit dem Lastfall gemeldet",
           list(uls) == ["EK1 [1]"] and any("EK1 [2]" in x and "Lastfall LF2" in x for x in w),
           f"{list(uls)} {[x[:100] for x in w]}")
+    # Gesucht ist die lineare Ueberlagerung - sie ist zulaessig (EK1 hat
+    # Theorie I), laesst sich nur aus analysis.cases nicht mehr bilden. Bis zum
+    # 23.09.2026 hiess es "Ueberlagerung nicht zulaessig" (Nebenbefund 5).
+    text = next((x for x in w if "EK1 [2]" in x), "")
+    check("die Meldung sagt, was fehlt: die lineare Ueberlagerung, nicht mehr zu bilden",
+          "lineare Überlagerung" in text and "nicht mehr aus den Lastfallergebnissen" in text
+          and "nicht zulässig" not in text, text[:220])
 
 
 def test_alternative_bei_theorie_I_aus_linearen_lastfaellen():
     """Eine Alternative einer EK nach II. Ordnung, die bei I. Ordnung bleibt
     (theorie2 "auto", alpha_cr >= 10), ist die Ueberlagerung der LINEAREN
-    Lastfaelle - wie die gewoehnliche Kombination. Vorher faltete solve_all
-    die EK erst nach _lastfaelle_hoeherer_ordnung: mit LF2 auf theorie "II"
-    kam ein Gemisch heraus (1,35·LF1 linear + 1,5·LF2 nach II. Ordnung),
-    wurde abgelegt und nachgewiesen - gemessen 23.09.2026 an diesem Modell
-    EK1 [2] 3,374407 statt 3,320749 mm, EK1 [3] 1,562553 statt 1,526781 mm."""
+    Lastfaelle - wie die gewoehnliche Kombination. Eine Zwischenfassung
+    dieser Aenderung (Zweig fix/ek, nicht ausgeliefert) faltete die EK erst
+    nach _lastfaelle_hoeherer_ordnung: mit LF2 auf theorie "II" kam ein
+    Gemisch heraus (1,35·LF1 linear + 1,5·LF2 nach II. Ordnung), wurde
+    abgelegt und nachgewiesen - gemessen 23.09.2026 an diesem Modell
+    EK1 [2] 3,374407 statt 3,320749 mm, EK1 [3] 1,562553 statt 1,526781 mm.
+    Der Stand bis 22.09.2026 (54b6f9a) faltete die EK vor dem Ersetzen
+    linear (Umhuellende 3,320749 mm), legte aber keine Alternative ab und
+    wies keine nach - die Nachweise sahen nur K2 und K3."""
     from statik3d.ec3.design import _uls_results
     from statik3d.solver import Results
     m, ids = _druckkragarm("auto", druck=5.0e4)

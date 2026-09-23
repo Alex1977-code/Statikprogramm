@@ -173,8 +173,106 @@ def test_rahmen():
     check("Uebernehmen nur fuer beteiligte Staebe", geaendert == ["A"] and m.members["C"].beta_y == 1.0)
 
 
+def _zweigelenkrahmen_w():
+    """Zweigelenkrahmen (Stiele HEB 200, 5 m, Riegel IPE 300, 8 m, je Stiel
+    5 und im Riegel 8 Elemente), W = 25 kN am linken Stielkopf: ein Stiel
+    zieht, der andere drueckt (N = ±15,625 kN)."""
+    from statik3d import mesher
+    m = Model("Rahmen W")
+    m.add_material(Material.steel("S235"))
+    m.add_section(Section.from_profile("HEB 200"))
+    m.add_section(Section.from_profile("IPE 300"))
+    mesher.line_of_beams(m, "S235", "HEB 200", (0, 0, 0), (0, 0, 5.0), 5)
+    mesher.line_of_beams(m, "S235", "IPE 300", (0, 0, 5.0), (8.0, 0, 5.0), 8)
+    mesher.line_of_beams(m, "S235", "HEB 200", (8.0, 0, 5.0), (8.0, 0, 0), 5)
+    mesher.merge_nodes(m)
+    for i in range(m.nn):
+        if abs(m.nodes[i][2]) < 1e-9:
+            m.fix(i, [0, 1, 2, 3, 5])
+        elif abs(m.nodes[i][2] - 5.0) < 1e-9:
+            m.fix(i, [1])
+    m.add_load_case("W", "W")
+    kopf = min((i for i in range(m.nn) if abs(m.nodes[i][2] - 5.0) < 1e-9),
+               key=lambda i: m.nodes[i][0])
+    m.load_node(kopf, Fx=25e3, case="W")
+    return m
+
+
+def test_zug_und_druck_im_grundzustand():
+    """Mit Zug und Druck im Grundzustand ist -K_g indefinit. solve_buckling
+    loeste bis zum 23.09.2026 eigsh(K, M=-K_g, sigma=0) - ARPACK verlangt dort
+    ein positiv (semi)definites M, und die Faktoren wechselten von Lauf zu
+    Lauf (gemessen 23.09.2026 an diesem Rahmen, drei Laeufe in einem Prozess:
+    [4,2676, 4,3786, -4,4729], [3,0251, 3,1399, 3,1609], [2,4868, 2,6004,
+    -2,6068] gegen 77,3287).
+    Bezug: das dichte Problem mit K als Metrik (Cholesky), betragskleinste
+    Faktoren zuerst."""
+    from statik3d import assemble as asm
+    m = _zweigelenkrahmen_w()
+    faktoren = [np.asarray(solver.solve_buckling(m, 3, case="W").buckling_factors, float)
+                for _ in range(3)]
+    r = solver.solve_buckling(m, 3, case="W")
+    st = solver.StaticSystem(m)
+    Kg = asm.geometric_stiffness(m, np.asarray(r.u, float).ravel())
+    K = st.Kff.toarray()
+    G = -Kg[st.fi][:, st.fi].toarray()
+    Li = np.linalg.inv(np.linalg.cholesky(K))
+    S = Li @ G @ Li.T
+    mu = np.linalg.eigvalsh(0.5 * (S + S.T))
+    lam = 1.0 / mu[np.abs(mu) > 1e-12 * np.abs(mu).max()]
+    bezug = lam[np.argsort(np.abs(lam))][:3]
+    check("Voraussetzung: Zug und Druck im Grundzustand (-K_g indefinit)",
+          np.linalg.eigvalsh(G).min() < 0 < np.linalg.eigvalsh(G).max())
+    # Nicht bitgleich: 77,3287 ist ein siebenfacher Eigenwert, und seine
+    # zweite und dritte Kopie streuen von Lauf zu Lauf in der 14. Stelle
+    # (gemessen 23.09.2026: 77,32870527358273 bis ...361, auch mit einem
+    # Thread; die erste Kopie war in allen Laeufen bitgleich)
+    check("dreimal gerechnet: gleich auf 1e-12",
+          all(np.allclose(f, faktoren[0], rtol=1e-12, atol=0) for f in faktoren),
+          str([[round(float(x), 4) for x in f] for f in faktoren]))
+    close("kleinster Knickfaktor wie der dichte Bezug", faktoren[0][0], bezug[0], 1e-6)
+    check("alle drei wie die drei betragskleinsten des Bezugs",
+          np.allclose(faktoren[0], bezug, rtol=1e-6, atol=0),
+          f"{[round(float(x), 4) for x in faktoren[0]]} gegen "
+          f"{[round(float(x), 4) for x in bezug]}")
+
+
+def test_knicken_mit_freier_torsion():
+    """Ein Stab, dessen Torsion an keinem Knoten gehalten ist. Das
+    Verzweigungsproblem loest mit der Faktorisierung des Grundzustands:
+    PARDISO haelt die freie Drehung mit einem gestoerten Pivot, und mit
+    Hilfsfesselung ist es die geranderte Matrix (Lagrange-Rand) - beide
+    muessen die Eulerlast treffen. Vorher faktorisierte eigsh K selbst mit
+    SuperLU."""
+    from statik3d import assemble as asm
+    m, sec = _stuetze(L=4.0, ne=12)
+    m.fix(0, [0, 1, 2])
+    m.fix(12, [0, 1])
+    m.load_node(12, Fz=-1000.0)
+    euler = math.pi ** 2 * E * min(sec.Iy, sec.Iz) / 4.0 ** 2
+    try:
+        r = solver.solve_buckling(m, nmodes=2)
+        close("Torsion frei: beidseitig gelenkig, N_cr = π²EI/L²",
+              r.buckling_factors[0] * 1000.0, euler, 1e-3)
+    except Exception as ex:          # noqa: BLE001
+        check("Torsion frei: beidseitig gelenkig, N_cr = π²EI/L²", False,
+              f"{type(ex).__name__}: {ex}"[:100])
+    # Mit Hilfsfesselung: der Loeser des Systems ist die geranderte Matrix
+    if not hasattr(solver, "_verzweigung"):
+        check("mit Hilfsfesselung (Rand): Eulerlast", False, "kein _verzweigung")
+        return
+    st = solver.StaticSystem(m)
+    check("Voraussetzung: die freie Drehung wird mit Rand gefesselt",
+          st.hilfsfesselung() and st._rand == 1, f"Rand {st._rand}")
+    F = solver.case_loads(m, {m.active_case: 1.0}, None)[0]
+    Kg = asm.geometric_stiffness(m, st.solve(F))[st.fi][:, st.fi].tocsc()
+    lam, _v = solver._verzweigung(st, Kg, 2)
+    close("mit Hilfsfesselung (Rand): Eulerlast", lam[0] * 1000.0, euler, 1e-3)
+
+
 def main():
-    for t in (test_eulerfaelle, test_achse_und_uebernahme, test_rahmen):
+    for t in (test_eulerfaelle, test_achse_und_uebernahme, test_rahmen,
+              test_zug_und_druck_im_grundzustand, test_knicken_mit_freier_torsion):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

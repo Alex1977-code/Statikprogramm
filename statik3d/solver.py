@@ -1283,9 +1283,16 @@ class LinearSolver:
                         nachiterationen=self._nachweis.nachiterationen + schritte,
                         rueckfall=rueck)
                 if r > grenze:
+                    # Der Grund des Ausweichens gehoert dazu, wie beim Scheitern
+                    # der SuperLU-Faktorisierung ("(vorher: ...)"): ohne
+                    # Fortschritt (Ketten, Pool, Farm, Skripte) stand bis zum
+                    # 23.09.2026 nirgends, dass ein anderer Loeser gerechnet
+                    # hatte als der eingestellte (Nebenbefund 2)
                     raise RuntimeError(
                         f"Gleichungssystem numerisch singulaer (Residuum {r:.1e}, Schranke {grenze:g}"
-                        + (f", nach {schritte} Nachiterationen" if schritte else "") + ") - "
+                        + (f", nach {schritte} Nachiterationen" if schritte else "") + ")"
+                        + (f" (Löser ausgewichen - {self.ausweichgrund})" if self.ausweichgrund
+                           else "") + " - "
                         "Lagerung, freie Bauteile oder Kontaktdefinition pruefen; die Schranke steht "
                         "unter Berechnung → Einstellungen → Genauigkeit des Gleichungslösers.")
         return x
@@ -3566,8 +3573,16 @@ def _solve_static_innen(model: Model, progress=None, case: str = None,
                         workers: int = None, system: StaticSystem = None,
                         probelauf: bool = False) -> Results:
     """Ein Lastfall (default: aktiver Lastfall; case='all': alle Lastfaelle mit
-    Faktor 1 ueberlagert)."""
-    system = system or StaticSystem(model, workers, progress)
+    Faktor 1 ueberlagert).
+
+    Ohne uebergebenes ``system`` rechnet der Lastfall in **seiner Situation**
+    (Stellung, abgeschaltete Elemente) - wie in solve_cases. Bis zum
+    23.09.2026 baute diese Funktion StaticSystem(model) ohne Situation und
+    rechnete jeden Lastfall still in der Grundstellung: „Nur aktiver
+    Lastfall“, ``--analyse lastfall`` und der Webserver lieferten fuer einen
+    Lastfall mit abgebautem Lager das Ergebnis mit Lager (Befund B123,
+    Winkelrahmen: uz in Kragarmmitte -0,2470 statt -3,5971 mm wie
+    solve_cases). Ein uebergebenes System gilt, wie es ist."""
     if case == "all":
         factors = {k: 1.0 for k in model.load_cases}
         name = "alle Lastfaelle"
@@ -3575,10 +3590,34 @@ def _solve_static_innen(model: Model, progress=None, case: str = None,
         lc = model.case(case)
         factors = {lc.name: 1.0}
         name = lc.name
+    if system is None:
+        sit = _situation_der_faelle(model, list(factors))
+        if sit != GRUNDSTELLUNG:
+            model, system = situationssystem(model, sit, workers, progress)
+        else:
+            system = StaticSystem(model, workers, progress)
     res = _solve_loads(model, system, factors, name, "case", workers, progress,
                        probelauf=probelauf)
-    _melde(progress, "System gelöst", 1.0)
+    sit = getattr(system, "situation", "") or GRUNDSTELLUNG
+    _melde(progress, "System gelöst" + (f" – Situation {sit}" if sit != GRUNDSTELLUNG else ""),
+           1.0)
     return res
+
+
+def _situation_der_faelle(model: Model, namen: list) -> str:
+    """Die eine Situation der genannten Lastfaelle.
+
+    Stehen sie in verschiedenen Situationen, gibt es kein gemeinsames System
+    (andere Lager, andere wirksame Elemente) - ihre Summe laesst sich nicht
+    in einer Rechnung bilden, und stillschweigend eine der Situationen zu
+    nehmen, hiesse die anderen Lastfaelle falsch zu rechnen."""
+    je = model.lastfaelle_je_situation(namen)
+    if len(je) > 1:
+        raise ValueError("Die Lastfälle stehen in verschiedenen Situationen ("
+                         + "; ".join(f"{s}: {', '.join(n)}" for s, n in je.items())
+                         + ") - in einer Rechnung lassen sie sich nicht überlagern, "
+                           "jede Situation hat ihr eigenes System")
+    return next(iter(je), GRUNDSTELLUNG)
 
 
 def _mit_referenzen_zuerst(names: list, referenzen: dict) -> list:
@@ -4102,22 +4141,32 @@ def ergebnisse_der_alternativen(model: Model, analysis, combo: Combination) -> t
     taugt dafuer nicht. Darum sieht jeder Nachweis jede Alternative wie eine
     eigene Kombination, in derselben Reihenfolge wie die Umhuellende:
 
-    * abgelegt (``analysis.alternativen``): Theorie II./III. Ordnung,
-      Kontaktmodell - so, wie die Umhuellende sie gefaltet hat;
+    * abgelegt (``analysis.alternativen``): nach Theorie II./III. Ordnung
+      gerechnet, im Kontaktmodell direkt geloest, oder linear ueberlagert
+      aus einem Lastfall, dessen lineares Ergebnis danach durch II./III.
+      Ordnung ersetzt wurde - so, wie die Umhuellende sie gefaltet hat;
     * ein Lastfall mit Faktor 1: das Lastfallergebnis;
     * sonst im linearen Modell die Ueberlagerung der Lastfaelle.
 
     Was so nicht zu haben ist, wird als Warnung benannt und nicht still
-    durch etwas anderes ersetzt: das Kontaktmodell ohne abgelegtes Ergebnis
-    und jede Alternative, die nach Theorie II./III. Ordnung zu rechnen ist
-    (Theorie der EK oder eines ihrer Lastfaelle) und nicht abgelegt wurde -
-    etwa nach ``solve_all(combinations=False)`` oder aus einer
-    Ergebnisdatei von vor dem 22.09.2026. Ueberlagert kaeme dort still das
-    lineare Ergebnis heraus: am Druckkragarm EK1 [2] 3,321 statt 9,705 mm,
-    an der Halle (theorie2 "ein", alle GZT-Kombinationen als eine EK) Riegel
-    0,9654 statt 0,9734 - ohne Warnung, waehrend die gewoehnlichen
-    Kombinationen derselben Rechnung als "nicht nachgewiesen" gemeldet
-    wurden (Gegenpruefung 23.09.2026).
+    durch etwas anderes ersetzt - etwa nach ``solve_all(combinations=False)``
+    oder aus einer Ergebnisdatei von vor dem 22.09.2026:
+
+    * das Kontaktmodell ohne abgelegtes Ergebnis;
+    * jede Alternative, die nach der **Theorie der EK** nach II./III.
+      Ordnung zu rechnen ist und nicht abgelegt wurde. Ueberlagert kaeme dort
+      still das lineare Ergebnis heraus: am Druckkragarm EK1 [2] 3,321 statt
+      9,705 mm, an der Halle (theorie2 "ein", alle GZT-Kombinationen als eine
+      EK) Riegel 0,9654 statt 0,9734 - ohne Warnung, waehrend die
+      gewoehnlichen Kombinationen derselben Rechnung als "nicht
+      nachgewiesen" gemeldet wurden (Gegenpruefung 23.09.2026);
+    * sonst jede Alternative mit einem **Lastfall** auf Theorie II./III.
+      Ordnung, die nicht abgelegt wurde. Nach II./III. Ordnung zu rechnen ist
+      sie nicht - ihr Ergebnis ist die lineare Ueberlagerung
+      (umhuellende_der_kombination, ``wechselt``) -, aber
+      _lastfaelle_hoeherer_ordnung hat das lineare Ergebnis des Lastfalls in
+      ``analysis.cases`` ersetzt, und daraus laesst sie sich nicht mehr
+      bilden.
     """
     from dataclasses import replace
     aus: dict = {}
@@ -4126,9 +4175,11 @@ def ergebnisse_der_alternativen(model: Model, analysis, combo: Combination) -> t
     cases = getattr(analysis, "cases", None) or {}
     nl = None
     theorie = model.theorie_von(combo)
-    # Lastfaelle, deren Ergebnis II./III. Ordnung ist oder war: ueberlagern
-    # ist dann nicht zulaessig, und die volle Rechnung legt jede Alternative
-    # mit ihnen ab (umhuellende_der_kombination, ``wechselt``)
+    # Lastfaelle, deren Ergebnis II./III. Ordnung ist oder war: ihr lineares
+    # Ergebnis steht nicht mehr in analysis.cases, die (zulaessige) lineare
+    # Ueberlagerung einer Alternative mit ihnen laesst sich daraus nicht mehr
+    # bilden - darum legt die volle Rechnung jede solche Alternative ab
+    # (umhuellende_der_kombination, ``wechselt``)
     hoeher = {k for k, lf in model.load_cases.items()
               if model.theorie_von(lf) in ("II", "III")}
     for name, teile in alternativen_der_kombination(combo):
@@ -4141,9 +4192,12 @@ def ergebnisse_der_alternativen(model: Model, analysis, combo: Combination) -> t
             grund = (f"sie ist nach Theorie {theorie}. Ordnung zu rechnen, ihr Ergebnis "
                      "liegt nicht vor (Überlagerung wäre linear)")
         elif hoeher & set(teile):
+            # Bis zum 23.09.2026 hiess es hier "ihr Ergebnis liegt nicht vor
+            # (Überlagerung nicht zulässig)" - gesucht ist aber gerade die
+            # zulaessige lineare Ueberlagerung (Nebenbefund 5)
             grund = (f"Lastfall {', '.join(sorted(hoeher & set(teile)))} wird nach Theorie "
-                     "II./III. Ordnung gerechnet, ihr Ergebnis liegt nicht vor "
-                     "(Überlagerung nicht zulässig)")
+                     "II./III. Ordnung gerechnet, ihre lineare Überlagerung lässt sich "
+                     "nach dem Ersetzen nicht mehr aus den Lastfallergebnissen bilden")
         if grund is not None:
             warn.append(f"Kombination {name} (Alternative der Ergebniskombination "
                         f"{combo.name}) nicht nachgewiesen: {grund} – „Alle Lastfälle + "
@@ -5391,8 +5445,9 @@ class Analysis:
             s.append(self.lasteinleitung.summary())
         if self.volumen is not None:
             s.append(self.volumen.summary())
-        if self.theorie2 is not None and self.theorie2.kombinationen:
-            s.append(self.theorie2.summary())
+        # Die Zeile der Theorie II. Ordnung steht oben hinter den Umhuellenden.
+        # Bis zum 23.09.2026 wurde sie hier ein zweites Mal angehaengt, und
+        # Protokoll und Zusammenfassung zeigten sie doppelt (Befund B125).
         return "\n".join(s)
 
 
@@ -5634,16 +5689,27 @@ def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progres
         _ek_umhuellende([n for n, c in model.combinations.items()
                          if c.ist_umhuellende and n not in ek_hoeher], an.cases)
     # Die linearen Lastfallergebnisse, bevor _lastfaelle_hoeherer_ordnung die
-    # mit theorie "II"/"III" ersetzt (es setzt je Lastfall ein neues Objekt
-    # ein, die flache Kopie behaelt die linearen). Aus ihnen - wie oben jede
-    # gewoehnliche Kombination - ueberlagert die Umhuellende einer EK nach
-    # II./III. Ordnung jede Alternative, die bei I. Ordnung bleibt (theorie2
-    # "auto" mit alpha_cr >= Grenze, Fehler der Rechnung). Vorher kam dort
-    # an.cases nach dem Ersetzen hinein: 1,35·G linear + 1,5·W nach II.
-    # Ordnung, ein Gemisch, weder I. noch II. Ordnung, abgelegt und
-    # nachgewiesen (Gegenpruefung 23.09.2026, W mit theorie "II", auto:
-    # Rahmen Stielkopf 102,4519 statt 102,1415 mm wie K2; Druckkragarm
-    # des Tests EK1 [2] 3,374407 statt 3,320749 mm).
+    # mit theorie "II"/"III" ersetzt. Im Erfolgsfall setzt es je Lastfall ein
+    # neues Objekt ein (an.cases[name] = res), die flache Kopie behaelt das
+    # lineare. Scheitert die Rechnung (ValueError oder info.fehler), bleibt
+    # das lineare Objekt in an.cases stehen, und _lineares_ergebnis_markieren
+    # setzt an **demselben** Objekt die info-Marken theorie "I" und
+    # theorie_gewuenscht - lineare_cases sieht sie mit. Das ist harmlos: das
+    # Ergebnis ist ja linear, nur die Marken sind geteilt. Aus diesen
+    # linearen Ergebnissen - wie oben jede gewoehnliche Kombination -
+    # ueberlagert die Umhuellende einer EK nach II./III. Ordnung jede
+    # Alternative, die bei I. Ordnung bleibt (theorie2 "auto" mit alpha_cr
+    # >= Grenze, Fehler der Rechnung). Eine Zwischenfassung dieser Aenderung
+    # (Zweig fix/ek, nicht ausgeliefert) faltete dort an.cases nach dem
+    # Ersetzen: 1,35·G linear + 1,5·W nach II. Ordnung, ein Gemisch, weder
+    # I. noch II. Ordnung, abgelegt und nachgewiesen (Gegenpruefung
+    # 23.09.2026, W mit theorie "II", auto: Rahmen Stielkopf 102,4519 statt
+    # 102,1415 mm wie K2; Druckkragarm des Tests EK1 [2] 3,374407 statt
+    # 3,320749 mm). Der Stand bis 22.09.2026 (54b6f9a) hatte das Gemisch
+    # nicht: er faltete die Umhuellende vor _lastfaelle_hoeherer_ordnung
+    # linear, legte aber keine Alternative ab und wies keine nach
+    # (Druckkragarm: Umhuellende 3,320749 mm, die Nachweise sahen nur K2 und
+    # K3; nachgemessen 23.09.2026).
     lineare_cases = dict(an.cases) if (ek_rechnen and ek_hoeher) else None
     # Theorie je Lastfall: II. oder III. Ordnung ersetzt das lineare Ergebnis
     _lastfaelle_hoeherer_ordnung(model, an, systeme, progress)
@@ -5846,19 +5912,74 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
 # ==========================================================================
 # Lineares Knicken
 # ==========================================================================
+def _verzweigung(system: StaticSystem, Kgff, k: int) -> tuple:
+    """(lambda, Eigenvektoren) von K v = lambda (-K_g) v - die ``k``
+    betragskleinsten lambda, aufsteigend nach Betrag.
+
+    Geloest wird mit K als Metrik: (-K_g) v = mu K v, lambda = 1/mu, die
+    betragsgroessten mu. Bis zum 23.09.2026 stand hier
+    eigsh(K, M=-K_g, sigma=0): ARPACK verlangt im Shift-Invert-Modus ein
+    positiv (semi)definites M. Mit Zug und Druck im Grundzustand ist -K_g
+    indefinit, und die Faktoren wechselten von Lauf zu Lauf - gemessen
+    23.09.2026 am Zweigelenkrahmen unter Wind (tests/test_knicklaengen.py):
+    in sechs Laeufen erste Faktoren zwischen 1,00 und 4,77 statt 77,3287
+    (dichter Bezug).
+    K dagegen ist positiv definit, und seine Faktorisierung liegt aus dem
+    Grundzustand schon vor. Der Startvektor ist fest (Zufallszahlen mit
+    festem Keim, nicht Einsen: ein symmetrischer Vektor kann auf
+    antimetrische Formen senkrecht stehen). Bitgleich wird es damit nicht
+    ganz: am Rahmen ist 77,3287 ein siebenfacher Eigenwert, und seine
+    zweite und dritte Kopie streuen von Lauf zu Lauf in der 14. Stelle; die
+    erste war in allen Laeufen bitgleich (gemessen 23.09.2026)."""
+    from scipy.sparse.linalg import LinearOperator
+    ls = system.solver
+    n = Kgff.shape[0]
+    rand = system._rand
+
+    def k_inv(x):
+        x = np.asarray(x, float).ravel()
+        if rand:                    # Lagrange-Rand der Hilfsfesselung (gerandet)
+            y = ls.solve(np.concatenate([x, np.zeros(rand)]), check=False)
+            return np.asarray(y, float).ravel()[:n]
+        return ls.solve(x, check=False)
+
+    op = LinearOperator((n, n), dtype=float, matvec=k_inv)
+    v0 = np.random.default_rng(0).standard_normal(n)
+    mu, vecs = eigsh(-Kgff, k=k, M=system.Kff, Minv=op, which="LM", v0=v0)
+    lam = np.full(len(mu), np.inf)
+    np.divide(1.0, mu, out=lam, where=mu != 0.0)
+    order = np.argsort(np.abs(lam), kind="stable")
+    return lam[order], vecs[:, order]
+
+
 def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = None,
                    combination: str = None, workers: int = None) -> Results:
     """Lineares Verzweigungsproblem: (K + lambda*Kg) v = 0 (Stabtragwerke).
-    Grundzustand: Lastfall (default aktiver) oder Kombination."""
+    Grundzustand: Lastfall (default aktiver) oder Kombination.
+
+    Gerechnet wird in der **Situation** des Grundzustands: Steifigkeit,
+    Grundzustand und geometrische Steifigkeit (nur wirksame Elemente) aus
+    ihrem System. Bis zum 23.09.2026 kam alles aus der Grundstellung - ein
+    Lastfall mit abgebautem Lager knickte mit Lager.
+
+    Die Faktoren sind die ``nmodes`` betragskleinsten, beiderlei Vorzeichens
+    (negativ: Knicken bei umgekehrter Last), aufsteigend nach Betrag - siehe
+    :func:`_verzweigung`, warum mit K als Metrik geloest wird."""
     t0 = time.time()
-    system = StaticSystem(model, workers, progress)
+    if combination:
+        sit = _kombination_pruefen(model, model.combinations[combination])
+    else:
+        sit = _situation_der_faelle(model, [model.case(case).name])
+    if sit != GRUNDSTELLUNG:
+        model, system = situationssystem(model, sit, workers, progress)
+    else:
+        system = StaticSystem(model, workers, progress)
     if combination:
         static = solve_combination(model, model.combinations[combination], None, system, workers)
     else:
         static = solve_static(model, progress, case, workers, system)
     u = static.u.ravel()
-    K = system.K
-    Kg = asm.geometric_stiffness(model, u)
+    Kg = asm.geometric_stiffness(model, u, system.aktiv)
     fi = system.fi
     Kff = system.Kff
     Kgff = Kg[fi][:, fi].tocsc()
@@ -5868,10 +5989,7 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
         _melde(progress, "Verzweigungsproblem wird gelöst", 0.45)
 
     k = min(nmodes, Kff.shape[0] - 2)
-    vals_, vecs = eigsh(Kff, k=k, M=-Kgff, sigma=0.0, which="LM")
-    order = np.argsort(np.abs(vals_))
-    vals_ = vals_[order]
-    vecs = vecs[:, order]
+    vals_, vecs = _verzweigung(system, Kgff, k)
 
     modes = np.zeros((k, model.ndof))
     for i in range(k):
