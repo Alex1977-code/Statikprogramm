@@ -552,12 +552,146 @@ def threads_je_kette(eingestellt: int, ketten: int) -> int:
 
 
 def _log_einmal(text: str) -> None:
-    """Denselben Hinweis nur einmal je Programmlauf schreiben."""
+    """Denselben Hinweis nur einmal je Programmlauf schreiben - fuer die
+    Konsole.
+
+    warnings.warn erreicht weder das Protokollfenster der Oberflaeche noch
+    die exe (dort werden Python-Warnungen nicht angezeigt). Der Anwender
+    erfaehrt ein Ausweichen darum ueber das Ergebnis: ``res.info
+    ["ausweichgrund"]`` (:func:`ausweich_info`), das Zusammenfassung und
+    Bericht lesen (:func:`ausweichen_gebuendelt`), und ueber den Fortschritt
+    (StaticSystem._loeser_merken, solve_modal)."""
     if text in _GEMELDET:
         return
     _GEMELDET.add(text)
     import warnings
     warnings.warn(text, RuntimeWarning, stacklevel=2)
+
+
+def ausweichgruende_zaehlen(system) -> dict:
+    """Stand der Loesungen mit ausgewichenem Loeser:
+    (Grund, Ausweichloeser) -> Zahl.
+
+    Vor einer Rechnung genommen, sagt :func:`ausweich_info` danach, welche
+    Gruende genau diese Rechnung betrafen (StaticSystem._geloest zaehlt)."""
+    return dict(getattr(system, "_ausweich_genutzt", None) or {})
+
+
+def _ausweich_art(grund: str) -> str:
+    """Art eines Ausweichgrunds: der Text ohne seine Zahlen.
+
+    Der 32-Bit-Grund nennt Zeilen und Eintraege, und die aendern sich bei
+    Kontakt von Schritt zu Schritt (inaktive Fugenbedingungen fallen heraus):
+    am kippenden Block mit Reibung trug ein Lastfall "375 Zeilen, 19153
+    Eintraege" und "376 Zeilen, 19903 Eintraege" (gemessen 23.09.2026 mit auf
+    50 gesenkter Grenze). Das ist ein Grund, nicht zwei."""
+    import re
+    return re.sub(r"\d+", "#", grund)
+
+
+def _ausweich_eintraege(paare) -> dict:
+    """``res.info``-Eintraege aus (Grund, Ausweichloeser)-Paaren - je Art und
+    Ausweichloeser ein Paar, der erste Text bleibt.
+
+    ``ausweichen`` haelt die Paare fuer Zusammenfassung und Bericht,
+    ``ausweichgrund`` den lesbaren Text, je Art einmal. Leer ohne Paare."""
+    vereint: dict = {}
+    for g, lo in paare:
+        if g:
+            vereint.setdefault((_ausweich_art(g), lo or ""), (g, lo or ""))
+    if not vereint:
+        return {}
+    texte: dict = {}
+    for g, _lo in vereint.values():
+        texte.setdefault(_ausweich_art(g), g)
+    return {"ausweichgrund": "; ".join(texte.values()), "ausweichen": list(vereint.values())}
+
+
+def ausweich_paare(info: dict) -> list:
+    """(Grund, Ausweichloeser)-Paare eines Ergebnisses; der Loeser ist leer,
+    wenn nur der Text ``ausweichgrund`` vorliegt."""
+    info = info or {}
+    paare = info.get("ausweichen")
+    if paare:
+        return [(str(g), str(lo or "")) for g, lo in paare]
+    grund = str(info.get("ausweichgrund") or "")
+    return [(grund, "")] if grund else []
+
+
+def ausweich_info(system, vorher: dict) -> dict:
+    """``{"ausweichgrund": ..., "ausweichen": [...]}`` fuer ``Results.info`` -
+    leer, wenn seit ``vorher`` keine Loesung mit einem ausgewichenen Loeser
+    lief.
+
+    Gezaehlt wird je **Loesung**, nicht je System. Die Grundfaktorisierung
+    eines linearen Systems dient allen Lastfaellen - jeder, der mit ihr
+    rechnet, traegt den Grund. Ein Kontaktmodell faktorisiert dagegen in jedem
+    Schritt neu (am Drehlager 145-mal je Lastfall): scheitert PARDISO erst im
+    dritten Lastfall, betrifft das die beiden davor nicht, und eine Marke am
+    System hinge sie ihnen trotzdem an.
+
+    Der Ausweichloeser kommt aus der Loesung selbst, nicht aus
+    ``system.backend``: das ist der Loeser der **letzten** Faktorisierung.
+    Scheitert PARDISO nur beim ersten von sieben Faktorisierungsversuchen
+    eines Lastfalls, steht dort wieder "pardiso" (gemessen 23.09.2026 am Block
+    mit Reibung, Probe des Gegenpruefers am Stand 4a8c464), und die
+    Hinweiszeile nannte bis dahin PARDISO als den Loeser, der stattdessen
+    rechnete."""
+    jetzt = getattr(system, "_ausweich_genutzt", None) or {}
+    vorher = vorher or {}
+    return _ausweich_eintraege([k for k, n in jetzt.items() if n > vorher.get(k, 0)])
+
+
+def ausweich_arten(ergebnisse) -> list:
+    """Ausweichen ueber alle Ergebnisse, je Art des Grunds ein Eintrag
+    ``{"grund", "namen", "loeser"}`` - Grundlage fuer
+    :func:`ausweichen_gebuendelt` und den Anhang des Berichts.
+
+    ``ergebnisse``: (Name, Results)-Paare. ``loeser`` sind die Loeser, auf die
+    ausgewichen wurde. Zahlen im Grund zaehlen nicht zur Art
+    (:func:`_ausweich_art`) - auch nicht, wenn ein Ergebnis mehrere Faelle
+    derselben Art traegt."""
+    arten: dict = {}
+    for name, r in ergebnisse:
+        info = getattr(r, "info", None) or {}
+        for g, lo in ausweich_paare(info):
+            e = arten.setdefault(_ausweich_art(g), {"grund": g, "namen": [], "loeser": []})
+            # Die Paare eines Ergebnisses folgen aufeinander - derselbe Name
+            # kaeme nur doppelt, wenn eine Art mit zwei Loesern auftrat
+            if not e["namen"] or e["namen"][-1] != str(name):
+                e["namen"].append(str(name))
+            if lo and lo not in e["loeser"]:
+                e["loeser"].append(lo)
+    return list(arten.values())
+
+
+def ausweichloeser_text(loeser) -> str:
+    """Lesbare Namen der Loeser, auf die ausgewichen wurde."""
+    return ", ".join(NAMEN.get(k, k) + (f" ({LOESER[k][3]})" if k in LOESER else "")
+                     for k in loeser)
+
+
+def ausweichen_gebuendelt(ergebnisse) -> list:
+    """Je Art von Ausweichgrund **eine** Zeile ueber alle Ergebnisse - fuer
+    die Hinweise des Berichts und die Zusammenfassung der Oberflaeche.
+
+    ``ergebnisse``: (Name, Results)-Paare. Ohne Buendelung stuende derselbe
+    Grund einmal je Ergebnis da, am Drehlager 422-mal. Die Zeile nennt den
+    Loeser, auf den ausgewichen wurde (aus ``ausweichen``), nicht den der
+    letzten Faktorisierung.
+    """
+    zeilen = []
+    for e in ausweich_arten(ergebnisse):
+        n = len(e["namen"])
+        mit = ausweichloeser_text(e["loeser"])
+        zeilen.append(
+            f"Gleichungslöser ausgewichen bei {n} Ergebnis{'' if n == 1 else 'sen'} "
+            f"({', '.join(e['namen'][:3])}{' …' if n > 3 else ''}): {e['grund']}"
+            + (f" – stattdessen rechnete {mit}" if mit else "")
+            + ". Den Grund beheben oder unter Berechnung → Einstellungen → "
+              "Gleichungslöser einen Löser wählen; ein ausdrücklich gewählter Löser "
+              "bricht ab, statt auszuweichen.")
+    return zeilen
 
 
 #: Groesste Zeilenzahl und groesste Zahl von Eintraegen, die die
@@ -1186,6 +1320,11 @@ class Results:
                 out.solid_res[i] = out.solid_res.get(i, 0.0) + f * v
         out.info = {"ndof": model.ndof, "superposition": True,
                     "factors": {r.name: f for r, f in parts}}
+        # Eine Ueberlagerung besteht aus Loesungen - ist dort ausgewichen
+        # worden, gilt das auch fuer sie (sonst nennte die Zusammenfassung
+        # einer Kombination es nicht, obwohl jeder ihrer Lastfaelle es traegt).
+        out.info.update(_ausweich_eintraege(
+            [p for r, f in parts if f for p in ausweich_paare(r.info or {})]))
         return out
 
     def scaled(self, f: float, name: str = "") -> "Results":
@@ -1205,6 +1344,11 @@ class Results:
               f"Rechenzeit              : {self.info.get('time', 0):.3f} s"]
         if self.info.get("solver"):
             s.append(f"Gleichungsloeser        : {self.info['solver']}")
+        # "Gleichungsloeser" darueber ist der Loeser der letzten
+        # Faktorisierung - der Ausweichloeser steht darum hier dabei
+        for g, lo in ausweich_paare(self.info):
+            s.append(f"Löser ausgewichen       : {g}"
+                     + (f" – stattdessen rechnete {ausweichloeser_text([lo])}" if lo else ""))
         if self.u is not None and self.u.size:
             i = int(np.argmax(self.umag))
             s.append(f"max. Verschiebung       : {self.umag[i]*1000:.4f} mm (Knoten {i})")
@@ -1392,6 +1536,9 @@ class StaticSystem:
         self.zeit_faktorisierung = 0.0
         self.nnz_matrix = 0
         self.nnz_faktor = 0
+        #: Loesungen mit ausgewichenem Loeser, (Grund, Ausweichloeser) -> Zahl
+        #: (_geloest zaehlt, ausweich_info liest je Ergebnis)
+        self._ausweich_genutzt: dict = {}
         self.t_assemble = time.time() - t0
         if not model.has_contact:
             _ = self.solver          # sofort faktorisieren (bei Kontakt erst mit Kc)
@@ -1625,6 +1772,15 @@ class StaticSystem:
         Multiplikatoren am Ende der Loesung sind die Haltekraefte und gehen
         den Aufrufer nichts an.
         """
+        # Jede Loesung mit einem ausgewichenen Loeser zaehlen - daraus liest
+        # _solve_loads, ob **dieses** Ergebnis betroffen ist (ausweich_info).
+        # Vor dem Loesen: auch ein Abbruch danach rechnete mit dem Ausweichloeser.
+        # Mit dem Loeser dieser Loesung: self.backend ist nur der der letzten.
+        grund = getattr(ls, "ausweichgrund", "")
+        if grund:
+            genutzt = self.__dict__.setdefault("_ausweich_genutzt", {})
+            schluessel = (grund, str(getattr(ls, "backend", "") or ""))
+            genutzt[schluessel] = genutzt.get(schluessel, 0) + 1
         m = self._rand
         if not m:
             return ls.solve(rhs)
@@ -2108,6 +2264,11 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
                  einfrieren=None, fenster=None, probelauf: bool = False) -> Results:
     t0 = time.time()
     aktiv = getattr(system, "aktiv", None)
+    # Wie oft vorher mit einem ausgewichenen Loeser geloest wurde - am Ende
+    # steht in res.info, ob dieses Ergebnis betroffen ist. Ketten, Pool und
+    # Farm rechnen ohne Fortschritt; dort ist das Ergebnis der einzige Weg,
+    # auf dem der Grund den Anwender erreicht (Befund K2, 22.09.2026).
+    ausweich_vorher = ausweichgruende_zaehlen(system)
     # Grundlasten (LoadCase.grundlast) wirken in jeder direkt geloesten
     # Rechnung mit - dort gibt es keine Ueberlagerung, in die man sie spaeter
     # legen koennte. Linear bleibt der Lastfall, was er ist.
@@ -2177,6 +2338,7 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         # welche Last in der Bewegung ins Nichts geht - und entscheidet selbst.
         if not system.hilfsfesselung():
             _teilergebnis_anhaengen(model, system, res, ex, F, feq, q, temp, workers, aktiv)
+            res.info.update(ausweich_info(system, ausweich_vorher))
             raise
         n_sg = len(system.singular)
         _melde(progress, f"{n_sg} freie Bewegung{'' if n_sg == 1 else 'en'} gefunden - "
@@ -2187,6 +2349,7 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
             # Auch mit Hilfsfesselung kein Gleichgewicht: die Verformung der
             # letzten Iteration bleibt als Ergebnis "Abbruch" erhalten
             _teilergebnis_anhaengen(model, system, res, ex2, F, feq, q, temp, workers, aktiv)
+            res.info.update(ausweich_info(system, ausweich_vorher))
             raise
         hilfs = True
     if _plastisch(model):
@@ -2204,6 +2367,7 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
             u, R, aktiv_eff, temp = _plastizitaet_rechnen(model, res, F, _rechnen, aktiv, temp, progress, start)
         except RuntimeError as ex3:
             _teilergebnis_anhaengen(model, system, res, ex3, F, feq, q, temp, workers, aktiv)
+            res.info.update(ausweich_info(system, ausweich_vorher))
             raise
     if hilfs:
         u = system.ohne_starrkoerper(u)
@@ -2222,7 +2386,8 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
                      "solver": system.backend, "factors": dict(factors),
                      "nnz_matrix": int(getattr(system, "nnz_matrix", 0)),
                      "nnz_faktor": int(getattr(system, "nnz_faktor", 0)),
-                     "zeit_faktorisierung": float(getattr(system, "zeit_faktorisierung", 0.0))})
+                     "zeit_faktorisierung": float(getattr(system, "zeit_faktorisierung", 0.0)),
+                     **ausweich_info(system, ausweich_vorher)})
     if probelauf:
         res.info["probelauf"] = True
     postprocess(model, u, res, feq, q, temp, workers, aktiv_eff)
@@ -3926,6 +4091,9 @@ class Analysis:
     def summary(self) -> str:
         s = [f"Lastfaelle: {len(self.cases)}   Kombinationen: {len(self.combinations)}   "
              f"Rechenzeit: {self.info.get('time', 0):.2f} s ({self.info.get('parallel', '')})"]
+        # Ausweichen des Gleichungsloesers: eine Zeile je Grund ueber alle
+        # Ergebnisse - auch aus Ketten, Pool und Farm, die ohne Fortschritt rechnen
+        s += ausweichen_gebuendelt(self.all_results().items())
         for k, env in self.envelopes.items():
             s.append(env.summary())
         if self.theorie2 is not None and getattr(self.theorie2, "kombinationen", None):
@@ -4322,6 +4490,10 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
     sigma = -1e-6 * float(kd.mean() / max(float(mdf.mean()), 1e-300))
     A = (Kff - sigma * Mff).tocsc()
     loeser = LinearSolver(A)
+    # Die Modalanalyse faktorisiert selbst, ohne StaticSystem - das Ausweichen
+    # meldete hier bis zum 22.09.2026 nur warnings.warn (Befund K2).
+    if loeser.ausweichgrund:
+        _melde(progress, f"Gleichungslöser ausgewichen - {loeser.ausweichgrund}")
     try:
         op = LinearOperator(A.shape, dtype=float,
                             matvec=lambda x: loeser.solve(np.asarray(x, float).ravel(), check=False))
@@ -4350,6 +4522,7 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
                 "starrkoerper": int(np.sum(freqs < STARR_HZ)),
                 "kontakt": kontakt_text, "kontakt_aktiv": n_kontakt,
                 "loeser": loeser.backend}
+    res.info.update(_ausweich_eintraege([(loeser.ausweichgrund, loeser.backend)]))
     return res
 
 

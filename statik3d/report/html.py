@@ -3925,6 +3925,12 @@ class Report:
         else:
             b.append(("status", "Es wurden keine Nachweise geführt; die Ergebnisse dienen der "
                                 "Schnittgrößen- und Verformungsermittlung.", True))
+        # Ist der Gleichungsloeser ausgewichen, gehoert das in die Hinweise -
+        # eine Zeile je Grund ueber alle Ergebnisse. Bis zum 22.09.2026 stand
+        # es nirgends im Bericht; der Anhang nannte nur den Loeser, der am Ende
+        # gerechnet hat (Befund K2).
+        from ..solver import ausweichen_gebuendelt
+        self._warnings.extend(ausweichen_gebuendelt(self.all_results()))
         warn = list(dict.fromkeys(self._warnings))
         chk = [s for s in self._modellpruefung() if s.startswith("FEHLER") or s.startswith("WARNUNG")]
         warn += [f"Modellprüfung: {s}" for s in chk]
@@ -3986,7 +3992,18 @@ class Report:
         if info.get("parallel"):
             kv.append(("Parallelisierung", str(info["parallel"])))
         if info.get("solver"):
-            kv.append(("Gleichungslöser", str(info["solver"])))
+            # Der Grund selbst steht einmal in den Hinweisen der
+            # Zusammenfassung; hier nur, dass nicht der gewaehlte Loeser rechnete
+            # und auf welchen ausgewichen wurde. info["solver"] ist der Loeser
+            # der letzten Faktorisierung - scheitert PARDISO nur in einem Teil
+            # der Kontaktschritte, steht dort wieder "pardiso" (23.09.2026).
+            from ..solver import ausweich_arten, ausweichloeser_text
+            arten = ausweich_arten(self.all_results())
+            mit = ausweichloeser_text(dict.fromkeys(lo for e in arten for lo in e["loeser"]))
+            kv.append(("Gleichungslöser", str(info["solver"])
+                       + ((" – ausgewichen" + (f" auf {mit}" if mit else "")
+                           + ", Grund unter den Hinweisen der Zusammenfassung")
+                          if arten else "")))
         if info.get("ndof") is not None:
             kv.append(("Freiheitsgrade gesamt / aktiv",
                        f"{info.get('ndof')} / {info.get('nfree', '–')}"))
