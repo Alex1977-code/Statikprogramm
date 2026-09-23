@@ -3040,6 +3040,26 @@ Nachweise erfüllt sind; jeder Wert lässt sich danach ändern. Die Vorschläge
 folgen den Regeln der EN 1993-1-8 (Rand- und Lochabstände Tab. 3.3, Nahtdicken
 4.5.1, Blechdicke so, dass der T-Stummel nicht im Modus 1 versagt). Der
 Vorschlag ist **kein Nachweis** — maßgebend ist immer die Rechnung.
+Bei der Kopfplatte wählt der Vorschlag zuerst die Schraube: die kleinste der
+Leiter M12 bis M36, von der vier Schrauben die Zugkraft im Flansch tragen.
+Die Anfangsdicke des Blechs folgt aus Schraube und Profil, nicht aus dem
+Moment; danach wird das Blech in 2-mm-Schritten dicker, solange T-Stummel
+oder Durchstanzen maßgebend sind. Gemessen am IPE 400 (S355, V_z = 90 kN,
+N = 0, M_y in 10-kNm-Schritten bis 700 kNm): bei M_y = 170 kNm 15 mm mit M16,
+von 180 bis 210 kNm 13 mm mit M20; bei 270 kNm 19 mm mit M20, von 280 bis
+320 kNm 16 mm mit M24. Mit N = −100 kN ergeben sich bis 320 kNm dieselben
+Abmessungen. An diesen beiden Schraubenwechseln wird das Blech dünner, an den
+drei folgenden nicht: Zwischen 390 und 400 kNm (M24 → M27) bleibt es bei
+N = 0 mit 18 mm gleich und wird bei N = −100 kN von 16 auf 18 mm dicker,
+zwischen 510 und 520 kNm (M30) und zwischen 620 und 630 kNm (M36) wird es
+dicker (18 → 20 mm, 20 → 23 mm). Diese Vorschläge erfüllen die Nachweise
+schon nicht mehr: Von 340 kNm an (N = 0) bzw. 330 kNm an (N = −100 kN) ist
+„Druckflansch auf die Platte“ maßgebend, die Flanschkraft gegen
+b·t_f·f_y/γ_M0 des Trägerflansches. Dort endet das Nachbessern mit η > 1,
+und der Vorschlag trägt den Hinweis, die Geometrie von Hand anzupassen.
+Der Vorschlag für 180 kNm (13 mm, M20, 4 Reihen) trägt
+320 kNm bei N = 0 nicht (η = 1,461, maßgebend der T-Stummel der Zugzone); der
+Vorschlag für 320 kNm mit 16 mm und M24 erfüllt die Nachweise mit η = 0,986.
 
 **Schnittgrößen**: standardmäßig aus der Berechnung. Der Anschluss wird über
 **alle GZT-Kombinationen** geführt; die ungünstigste ist maßgebend, und die
