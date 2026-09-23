@@ -1947,13 +1947,15 @@ def test_bemessungssituation_ist_keine_einwirkungsart():
     dazu 4 „Ermuedungslast ... Temperatur“ zu T. Die Situation sagt nichts
     ueber die Einwirkung, und die Kategorie wirkt ueber is_permanent und
     is_accidental auf die erzeugten Kombinationen (gamma_G statt gamma_Q).
-    Eine Ermuedungslast ist FAT, was immer sie enthaelt.
+    Eine Ermuedungslast ist FAT, was immer sie enthaelt - sofern die
+    Kennzahl Q ergibt; nur dann fragt rfem6_db den Namen.
     """
     for name, soll in DREHLAGER_NAMEN:
         ist = _C.category_from_text(name, "Q")
         check(f"Drehlager: {name[:40]}… -> {soll}", ist == soll, ist)
-    # die anderen Schreibweisen der Situationen nach DIN EN 1990 (6.4.1)
+    # die anderen Schreibweisen der Situationen nach DIN EN 1990, 3.2 (2)P
     for name, soll in [("Nutzlast - ständige und vorübergehende Bemessungssituation", "Q"),
+                       ("Nutzlast - ständige u. vorübergehende Bemessungssituation", "Q"),
                        ("Nutzlast - accidental design situation", "Q"),
                        ("Verkehr - Bemessungssituation bei Erdbeben", "Q"),
                        ("Verkehr - Erdbeben-Bemessungssituation", "Q")]:
@@ -1967,6 +1969,22 @@ def test_bemessungssituation_ist_keine_einwirkungsart():
                        ("Erdbeben", "A"), ("Temperatur", "T")]:
         ist = _C.category_from_text(name, "Q")
         check(f"Gegenprobe: {name} -> {soll}", ist == soll, ist)
+    # Gegenproben, bei denen das Einwirkungswort selbst ein Wort der
+    # Situationsangabe ist oder mit ihm zusammengesetzt ist und direkt davor
+    # steht. Am Stand d5e565d verschluckte der Filter es mit (die Adjektiv-
+    # gruppe wiederholt, dazu \w* nach jedem Adjektiv), und es kam Q heraus;
+    # am Stand ec6448c und hier: A bzw. G (gemessen am 24.09.2026).
+    for name, soll in [("Erdbebenlast Bemessungssituation", "A"),
+                       ("Erdbebenlast Bemessungssituation 2", "A"),
+                       ("Erdbeben - Erdbeben-Bemessungssituation", "A"),
+                       ("Erdbeben - außergewöhnliche Bemessungssituation", "A"),
+                       ("Erdbebenlast - außergewöhnliche Bemessungssituation", "A"),
+                       ("Erdbebeneinwirkung - Erdbeben-Bemessungssituation", "A"),
+                       ("Accidental - accidental design situation", "A"),
+                       ("Seismic - seismic design situation", "A"),
+                       ("Ständig - ständige Bemessungssituation", "G")]:
+        ist = _C.category_from_text(name, "Q")
+        check(f"Gegenprobe: {name} -> {soll}", ist == soll, ist)
 
     # ueber den ganzen Import: Kennzahl 11 -> Q, der Name verfeinert
     tmp = tempfile.mkdtemp()
@@ -1976,7 +1994,9 @@ def test_bemessungssituation_ist_keine_einwirkungsart():
             nodes=[(0, 0, 0), (2, 0, 0)],
             lines=[], members=[], supports=[],
             load_cases=[(n, 11, 0.0) for n, _ in DREHLAGER_NAMEN]
-            + [("Eigengewicht", 11, 1.0)],
+            + [("Eigengewicht", 11, 1.0),
+               ("Erdbeben - Erdbeben-Bemessungssituation", 11, 0.0),
+               ("Ermüdungslast - Eigengewicht", 1, 1.0)],
         )
         log = []
         m = R6.read_rf6(f, log=log)
@@ -1990,9 +2010,23 @@ def test_bemessungssituation_ist_keine_einwirkungsart():
               not m.load_cases["LF3"].is_accidental, m.load_cases["LF3"].category)
         check("Gegenprobe: „Eigengewicht“ mit Kennzahl 11 wird G",
               m.load_cases["LF6"].category == "G", m.load_cases["LF6"].category)
+        # am Stand d5e565d wurde dieser Lastfall Q und stand mit 1,5 bzw. 1,2
+        # in 16 von 26 erzeugten ULS-Kombinationen statt mit 1,0 in 2 ACC,
+        # ohne dass das Protokoll ihn als umgestellt nannte (gemessen am
+        # 24.09.2026 an einem Modell aus 5 Lastfaellen: Eigengewicht, zwei
+        # Erdbeben-Namen, Nutzlast, Ermuedungslast mit Kennzahl 1)
+        check("Gegenprobe: „Erdbeben - Erdbeben-Bemessungssituation“ bleibt "
+              "aussergewoehnlich", m.load_cases["LF7"].is_accidental,
+              m.load_cases["LF7"].category)
+        # der Name verfeinert nur, wenn die Kennzahl Q ergibt: mit Kennzahl 1
+        # bleibt eine Ermuedungslast G (so steht es im Handbuch)
+        check("Kennzahl 1: „Ermüdungslast - Eigengewicht“ bleibt G",
+              m.load_cases["LF8"].category == "G", m.load_cases["LF8"].category)
         zeile = next((z for z in log if "Kennzahl 11" in z), "")
         check("das Protokoll nennt die Ermuedungslasten als umgestellt",
               "zu FAT: LF4, LF5" in zeile, zeile.strip())
+        check("das Protokoll nennt den Erdbeben-Lastfall als umgestellt",
+              "zu A: LF7" in zeile, zeile.strip())
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

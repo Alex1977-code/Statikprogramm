@@ -798,22 +798,54 @@ nicht mehr „Einwirkungskategorie übernommen“, sondern „aus der Kennzahl
 angenommen“.
 
 **Bemessungssituation und Ermüdung im Namen** (Befund B073).
-`category_from_text` nimmt Angaben zur Bemessungssituation nach DIN EN 1990,
-6.4.1 („ständige [und vorübergehende]“, „außergewöhnliche
-Bemessungssituation“, „Bemessungssituation bei Erdbeben“, englisch „…
-design situation“) aus dem Text, bevor es die Einwirkung sucht, und prüft
-„Ermüdung/fatigue“ vor allen anderen Wörtern. Gemessen am Drehlager am Stand
-ec6448c (23.09.2026): 96 Lastfälle wurden über „ständige
-Bemessungssituation“ zu G (48 „Bemessungslast im GZT …“, 48 „char.Last …“),
-16 über „außergewöhnliche Bemessungssituation“ zu A, und von den 164
-„Ermüdungslast …“ 160 über „Eigengewicht“ zu G und 4 über „Temperatur“ zu T.
-Mit der Kur: 256× Q, 164× FAT, 2× P; das Protokoll nennt die 164 unter „zu
-FAT“. Die zweite Drehlager-Datei (…_Netz_abgestimmt_Passstifte_Kopfbolzen22)
-wechselt genauso, der CBG-Trolley gar nicht (10× G, 45× Q, 3× P vorher wie
-nachher). Steht die Einwirkung selbst im Namen („Eigengewicht - ständige
-Bemessungssituation“, „Anprall - außergewöhnliche Bemessungssituation“),
+`category_from_text` nimmt Angaben zur Bemessungssituation (Einteilung nach
+DIN EN 1990, 3.2 (2)P) aus dem Text, bevor es die Einwirkung sucht, und
+prüft „Ermüdung/fatigue“ vor allen anderen Wörtern. `rfem6_db` fragt den
+Namen nur, wenn die Kennzahl Q ergibt; mit Kennzahl 1 oder 2 bleibt auch
+„Ermüdungslast - Eigengewicht“ G (gemessen am 24.09.2026).
+
+Erkannt werden nur diese Schreibweisen (`_BEMESSUNGSSITUATION`, angewandt
+auf den Text nach `norm_key`): „ständig“, „vorübergehend“,
+„außergewöhnlich“ mit Adjektivendung oder „Erdbeben“ ohne Anhang unmittelbar
+vor „Bemessungssituation(en)“, zwei davon mit „und“, „u.“ oder „oder“
+verbunden; „Bemessungssituation (bei) Erdbeben“; englisch „persistent“,
+„transient“, „accidental“, „seismic“ vor „design situation(s)“, zwei davon
+mit „and“ oder „or“ verbunden. Nicht erkannt und damit weiter G bzw. A (im
+Protokoll unter „umgestellt“): „ständige/vorübergehende
+Bemessungssituation“, „Bemessungssituation ständig“, „Ständig und
+vorübergehend“ ohne „Bemessungssituation“, „Bemessungssituation
+außergewöhnlich“ (gemessen am 24.09.2026).
+
+Gemessen am Drehlager am Stand ec6448c (23.09.2026): 96 Lastfälle wurden
+über „ständige Bemessungssituation“ zu G (48 „Bemessungslast im GZT …“,
+48 „char.Last …“), 16 über „außergewöhnliche Bemessungssituation“ zu A, und
+von den 164 „Ermüdungslast …“ 160 über „Eigengewicht“ zu G und 4 über
+„Temperatur“ zu T. Mit der Kur: 256× Q, 164× FAT, 2× P; das Protokoll
+nennt die 164 unter „zu FAT“. Die zweite Drehlager-Datei
+(…_Netz_abgestimmt_Passstifte_Kopfbolzen22) wechselt genauso, der
+CBG-Trolley gar nicht (10× G, 45× Q, 3× P vorher wie nachher). Mit der
+engeren Fassung vom 24.09.2026 an allen drei Dateien nachgemessen: dieselben
+Zahlen.
+
+Die erste Fassung vom 23.09.2026 (Stand d5e565d) wiederholte die
+Adjektivgruppe auch ohne Bindewort und ließ nach jedem Wort beliebige
+Buchstaben zu. Sie verschluckte dann ein Einwirkungswort direkt vor der
+Angabe, das selbst ein Situationswort ist oder damit beginnt: „Erdbeben -
+Erdbeben-Bemessungssituation“, „Erdbebenlast Bemessungssituation“ und
+„Accidental - accidental design situation“ wurden Q statt A, „Ständig -
+ständige Bemessungssituation“ Q statt G. In einem Modell aus fünf
+Lastfällen stand „Erdbeben - Erdbeben-Bemessungssituation“ (Kennzahl 11)
+damit in 16 von 26 erzeugten GZT-Kombinationen (Faktor 1,5 bzw. 1,2) statt
+in 2 außergewöhnlichen (Faktor 1,0), und das Protokoll nannte ihn nicht,
+weil Q der Kennzahl entspricht (gemessen am 23. und 24.09.2026). Seit dem
+24.09.2026 geben diese Namen wieder A bzw. G: steht die Einwirkung selbst
+im Namen („Eigengewicht - ständige Bemessungssituation“, „Anprall -
+außergewöhnliche Bemessungssituation“, „Erdbeben -
+Erdbeben-Bemessungssituation“, „Ständig - ständige Bemessungssituation“),
 bleibt sie erkannt (`tests.test_rfem6`,
-`test_bemessungssituation_ist_keine_einwirkungsart`).
+`test_bemessungssituation_ist_keine_einwirkungsart`). Ist sie dagegen mit
+„und“ oder „oder“ an die Angabe gebunden („Erdbeben und außergewöhnliche
+Bemessungssituation“), zählt sie als Teil der Angabe, und es bleibt Q.
 
 **Freie Rechtecklasten.** RFEM legt das Lastfenster in die uv-Ebene eines
 eigenen Koordinatensystems (`coordinateSystem_id` → `CoordinateSystem…

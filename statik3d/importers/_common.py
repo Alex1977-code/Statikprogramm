@@ -620,23 +620,35 @@ def expand_ranges(items: list[str]) -> list[str]:
     return out
 
 
-#: Angaben zur Bemessungssituation (DIN EN 1990, 6.4.1) im normierten Text.
-#: Sie sagen, in welcher Situation ein Lastfall nachgewiesen wird, nicht
-#: welche Einwirkung er traegt (Befund B073): am Drehlager machte
+#: Angaben zur Bemessungssituation (DIN EN 1990, 3.2 (2)P) im normierten
+#: Text. Sie sagen, in welcher Situation ein Lastfall nachgewiesen wird,
+#: nicht welche Einwirkung er traegt (Befund B073): am Drehlager machte
 #: „staendige Bemessungssituation“ 96 von 422 Lastfaellen zu G und
 #: „aussergewoehnliche Bemessungssituation“ 16 zu A (gemessen am Stand
 #: ec6448c, 23.09.2026). Darum faellt die Angabe vor der Deutung heraus.
+#: Eng gefasst: hoechstens zwei Situationswoerter, mit „und/u./oder“
+#: verbunden, deutsche nur mit Adjektivendung, „erdbeben“ ohne Anhang. Die
+#: erste Fassung (Stand d5e565d) wiederholte die Gruppe und liess \w* zu;
+#: sie verschluckte dann ein Einwirkungswort direkt davor, das selbst ein
+#: Situationswort ist oder damit beginnt: „Erdbeben - Erdbeben-
+#: Bemessungssituation“, „Erdbebenlast Bemessungssituation“ und „Staendig -
+#: staendige Bemessungssituation“ wurden Q statt A bzw. G (gemessen am
+#: 24.09.2026, tests.test_rfem6).
+_SITUATION_DE = (r"(?:(?:staendig|voruebergehend|aussergewoehnlich)(?:e|en|er|es|em)?"
+                 r"|erdbeben)")
+_SITUATION_EN = r"(?:persistent|transient|accidental|seismic)"
 _BEMESSUNGSSITUATION = re.compile(
-    r"\b(?:(?:staendig|voruebergehend|aussergewoehnlich|erdbeben"
-    r"|persistent|transient|accidental|seismic)\w*\s+(?:(?:und|oder|and|or)\s+)?)+"
-    r"(?:bemessungssituation|design situation)\w*"
-    r"|\bbemessungssituation\w*\s+(?:bei\s+)?erdbeben\w*")
+    rf"\b{_SITUATION_DE}(?:\s+(?:und|u|oder)\s+{_SITUATION_DE})?"
+    r"\s+bemessungssituation(?:en)?\b"
+    rf"|\b{_SITUATION_EN}(?:\s+(?:and|or)\s+{_SITUATION_EN})?\s+design\s+situations?\b"
+    r"|\bbemessungssituation(?:en)?\s+(?:bei\s+)?erdbeben\b")
 
 
 def category_from_text(text, default: str = "Q") -> str:
     """Einwirkungskategorie (Schluessel in ACTION_CATEGORIES) aus Freitext.
 
-    Eine Angabe zur Bemessungssituation zaehlt nicht als Einwirkung, und eine
+    Eine Angabe zur Bemessungssituation in den Schreibweisen von
+    _BEMESSUNGSSITUATION zaehlt nicht als Einwirkung, und eine
     Ermuedungslast ist FAT, was immer sie sonst nennt.
     """
     s = _BEMESSUNGSSITUATION.sub(" ", norm_key(text)).strip()

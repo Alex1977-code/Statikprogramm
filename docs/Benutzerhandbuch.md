@@ -2985,10 +2985,19 @@ Kombinationsmaske von Hand an. Die **Einwirkungskategorie** eines
 RFEM-6-Lastfalls ist aus einer Kennzahl angenommen, die an keiner Datei
 belegt ist: das Protokoll nennt je Kennzahl die angenommene Kategorie und
 die Lastfälle, deren Name sie umgestellt hat, und warnt; prüfen Sie ψ und γ
-in der Lastfallmaske. Der Name sagt dabei nur über die **Einwirkung**
-etwas: eine Angabe zur Bemessungssituation („ständige“, „vorübergehende“,
-„außergewöhnliche Bemessungssituation“, „Bemessungssituation bei
-Erdbeben“) zählt nicht, und ein Lastfall, dessen Name „Ermüdung“ enthält,
+in der Lastfallmaske. Den Namen fragt der Import nur, wenn die Kennzahl Q
+ergibt; ergibt sie G (Kennzahl 1 oder 2), bleibt der Lastfall G, auch wenn
+er „Ermüdungslast …“ heißt. Ergibt sie Q, gilt: eine Angabe zur
+Bemessungssituation zählt nicht als Einwirkung, wenn sie so geschrieben
+ist: „ständige“, „vorübergehende“, „außergewöhnliche“ oder „Erdbeben-“
+unmittelbar vor „Bemessungssituation“ (zwei davon mit „und“, „u.“ oder
+„oder“ verbunden), „Bemessungssituation (bei) Erdbeben“ oder englisch
+„persistent“, „transient“, „accidental“, „seismic design situation“. Andere
+Schreibweisen nimmt der Import nicht heraus; „ständige/vorübergehende
+Bemessungssituation“, „Bemessungssituation ständig“ oder „Ständig und
+vorübergehend“ ohne das Wort „Bemessungssituation“ machen einen Lastfall
+weiter zu G, „Bemessungssituation außergewöhnlich“ zu A, und das Protokoll
+nennt ihn unter „umgestellt“. Ein Lastfall, dessen Name „Ermüdung“ enthält,
 wird FAT (nur für den Ermüdungsnachweis, in keiner erzeugten Kombination),
 auch wenn der Name daneben „Eigengewicht“ oder „Temperatur“ nennt. Am
 Drehlager (422 Lastfälle, alle mit der Kennzahl 11) machte der Name bis zum
