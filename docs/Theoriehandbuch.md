@@ -553,7 +553,10 @@ breiten Deckel ist das p · A = 0,001 N. Beim fast verschlungenen Deckel
 Flächenvektoren der beiden Dreiecke auf; die Last wirkt gemessen mit
 577 350 N, und die Zeile heißt „in sich verschlungen" (p · A hätte 0,001 N
 genannt). Die Steifigkeit dieses Elements bricht ohnehin mit „negativer
-Jacobi-Determinante" ab.
+Jacobi-Determinante" ab. Elemente mit falscher Knotenzahl (`add_element` nimmt
+ein hex8 mit sieben Knoten an) übergeht die Prüfung; beim Stapeln der Knoten
+warfen sie `check()` in der ersten Fassung mit `ValueError` um, statt eine
+Liste zurückzugeben (Gegenprüfung, 23.09.2026).
 * Temperatur: gleichmäßige Änderung ΔT (Stäbe, Schalen, Volumen) und
   Temperaturdifferenz über die Stabhöhe ΔT_z (Krümmung α ΔT_z / h). Die
   Anfangsdehnung wird bei der Spannungsrückrechnung abgezogen.
@@ -5213,8 +5216,8 @@ nach neun Minuten. `diagnose.abnahme(model)` prüft:
 | Knoten im Rechennetz ohne Element | 0 | die Elementliste |
 | Formgüte des schlechtesten Elements je Körper | ≥ 0,05 (`ABNAHME_ELEMENTGUETE`) | `netzguete.guete` |
 | Randtreue je Körper | ≥ 99 % (`ABNAHME_RANDTREUE`) | `Volumenkoerper.randtreue` |
-| Volumenbilanz je Körper | ≤ 0,5 % (`ABNAHME_VOLUMENBILANZ`) | `elementvolumina` gegen `_polyederhuelle` |
-| Seiten im Inneren (FEHLER) / Riss im Netz, Netzrand neben der Hülle (WARNUNG) | 0 | freie Elementseiten gegen die Randflächen, Abstand ≤ 1 % der Seitengröße (`ABNAHME_HUELLABSTAND`) |
+| Volumenbilanz je Körper | ≤ 0,5 % (`ABNAHME_VOLUMENBILANZ`), an windschiefen Flächen zuzüglich Σ A · Abstand der Netzseiten | `elementvolumina` gegen `_polyederhuelle` |
+| Seiten im Inneren (FEHLER) / Riss im Netz, Netzrand neben der Hülle (WARNUNG) | 0 | freie Elementseiten gegen die Randflächen, Abstand ≤ 1 % der Seitengröße (`ABNAHME_HUELLABSTAND`), an windschiefen Flächen zuzüglich der Sehnengrenze (`_sehnengrenze`) |
 
 **Volumenbilanz und freie Seiten gegen die Randflächen** (22.09.2026). Ein
 Sechsflächner, dessen Deckel um eine Ecke verdreht ist (4, 5, 6, 7 → 5, 6, 7,
@@ -5234,9 +5237,10 @@ des Netzes mit den **Randflächen** des Körpers:
   dann `mesher3d.huellvolumen`. Für eine ebene Fläche ist der Fächer exakt;
   für ein nicht ebenes Viereck mit geraden Kanten ist ⅓ c·A (A = ½ d₁ × d₂)
   genau der Beitrag der bilinearen Fläche — so bildet der Sechsflächner sie
-  ab, und so vernetzt sie der freie Vernetzer (Coons-Fläche). Ein 4 × 4 × 4
-  abgebildetes Netz mit windschiefem Deckel (Ecke 0,2 angehoben) besteht
-  darum ohne Befund. Körper mit krummen Randlinien (Bogen, Kreis, Spline)
+  ab (seine Knoten liegen darauf; ein 4 × 4 × 4 abgebildetes Netz mit
+  windschiefem Deckel, Ecke 0,2 angehoben, besteht ohne Befund). Der freie
+  Vernetzer legt sein Netz nur genähert darauf, siehe *Sehnen auf
+  windschiefen Flächen* unten. Körper mit krummen Randlinien (Bogen, Kreis, Spline)
   werden nicht geprüft: ihre Sehnenteilung hängt an der Netzweite, die
   Abweichung läge in derselben Größe wie das Gesuchte.
 * **Nicht** als Bezug taugt das Randvolumen der freien Elementseiten desselben
@@ -5248,38 +5252,114 @@ Am Würfelpaar 2 × 1 × 1 mit verdrehtem zweitem Würfel: V_N = 1,6667 gegen
 V_H = 2,0 (16,7 %). Zweites Merkmal sind die **freien Seiten, die auf keiner
 Randfläche liegen** (Schwerpunkt der Ecken weiter als 1 % der Seitengröße von
 jeder Randfläche; eben: Abstand zur Ebene und Punkt im Vieleck, bilinear:
-Abstand zu einem 16 × 16-Raster der Fläche): dort 5 von 12. Sie finden auch
+Fußpunkt nach Newton und Sehnengrenze, siehe unten): dort 5 von 12. Sie finden auch
 **ein** verdrehtes Element im Inneren, bei dem die Bilanz nur um ein Drittel
 seines Volumens verschöbe (4 × 4 × 4-Netz: 8 Seiten, das Element mit Nummer).
 Ob der Körper hinter einer solchen Seite weitergeht, sagt die Windungszahl der
-Hülle an einem Punkt knapp vor ihr (1 % der Seitengröße, auf der vom eigenen
+feinen Hülle (windschiefe Flächen in 16 × 16 Teilvierecken) an einem Punkt
+knapp vor ihr (1 % der Seitengröße, auf der vom eigenen
 Element abgewandten Seite — die Tupel in `solid.FLAECHEN` sind gemischt
 orientiert, gerichtet wird deshalb am Elementschwerpunkt): geht er weiter, ist
 es ein FEHLER („Seiten im Inneren", über sie geht keine Kraft); steht die Seite
 über die Hülle hinaus, eine WARNUNG („Netzrand neben der Hülle"). So schnitt der
 freie Vernetzer an einem Prisma mit eckigem Loch eine einspringende Ecke ab:
 3 von 1024 Seiten, Netzvolumen 0,012 % über dem Hüllvolumen (zweimal
-gemessen). Eine Seite im Inneren ist dagegen nur ein **Riss ohne Weite**
-(WARNUNG, „Riss im Netz", `_risse_ohne_weite`), wenn sie eben ist und an fünf
-Punkten (Schwerpunkt und je halbwegs zu den Ecken) von freien Seiten bedeckt
-wird, die einen Knoten mit ihr teilen, in ihrer Ebene liegen und in die
-Gegenrichtung zeigen: dieselben Knoten, nur anders in Dreiecke geteilt. Ein
-Punkt allein genügt nicht — der Schwerpunkt der ebenen Seite x = 1 im
-Würfelpaar liegt auch auf der verwundenen Seite des verdrehten Nachbarn.
-Gemeinsame Knoten sind Bedingung, damit doppelte Knoten ein FEHLER bleiben.
-Solche Risse entstehen, wenn der freie Vernetzer flache Tetraeder aussortiert
-(„54 flache Tetraeder aussortiert"): an der Pyramide neben der gesweepten
-Platte (Kugel an AV1, test_sweep) blieben zwei ebene Vierecke, beiderseits
-verschieden geteilt, 8 Seiten, Netzvolumen gleich Hüllvolumen auf 3 · 10⁻¹⁶.
-Freie Seiten werden über die sortierten Eckennummern gefunden, in
-zwei int64 gepackt und mit `np.lexsort` sortiert.
+gemessen). Seiten im Inneren sind dagegen nur ein **Riss ohne Weite**
+(WARNUNG, „Riss im Netz", `_flache_hohlraeume`), wenn sie über gemeinsame
+Kanten eine Gruppe bilden, die
 
-Laufzeit an einem Körper aus 64 000 hex8 (zwei Threads, siebenmal gemessen in
-zwei Durchgängen auf der geteilten Maschine): die ganze Prüfung 0,16–0,26 s
-(vor dem Packen der Schlüssel und dem gemeinsamen Knotenfeld 0,97–1,10 s). Für
-1 Mio Elemente **nicht gemessen**; linear hochgerechnet 2,5–4,1 s. Ein Körper
-mit krummen Randlinien wird an der ersten krummen Linie verlassen, bevor ein
-Element angefasst wird.
+1. **geschlossen** ist: die gerichteten Kanten der Seiten (umlaufend wie ihr
+   Flächenvektor S, vom eigenen Element weg) heben sich auf; was bleibt, ist
+   der Rand, und seine Schleifen spannen zusammen höchstens 10 % der
+   Seitenfläche auf (`ABNAHME_RISS_UFER`, `_randflaeche`), und
+2. **kein nennenswertes Volumen** einschließt: V = |Σ ⅓ (q − c) · S| ≤
+   n · FLACH · h_max³ mit n der Zahl der Seiten, c ihrem Schwerpunkt,
+   h_max der größten Elementdiagonale im Körper und FLACH = 10⁻⁶ aus dem
+   Vernetzer, der Tetraeder mit V ≤ FLACH · h³ aussortiert.
+
+Gemessen an allen 29 Gruppen, die die Modelle der Suiten test_mesher3d und
+test_sweep bilden: Rand 0 bis 5,6 % der Seitenfläche, Volumen mindestens um
+den Faktor 8,3 unter der Grenze. Offene Gruppen: drei Würfel in einer Reihe
+mit verdrehtem mittlerem 41 %, verdrehter Boden 26 %, verdrehtes Eckelement
+30 %, doppelte Knoten 100 % (ein Ufer ohne Gegenüber). Die Summe der
+Flächenvektoren taugt als Merkmal nicht: in der Reihe heben sich die vordere
+und die hintere Öffnung auf (|Σ S| = 0, scheinbares Volumen 0). Ein Formmaß
+taugt auch nicht: die Hohlräume des Vernetzers haben V/L³ bis 0,015 (einzeln)
+und 0,031 (Haufen), die Zelle eines verdrehten Würfels 0,118 wie ein
+fehlender regelmäßiger Tetraeder, und gegen ihre Nachbarn sind die
+Hohlräume an der Bohrung 1 bis 10 % groß (die Nachbarn sind dort klein), die
+Zelle des verdrehten Würfels 7 %. Die erste Fassung (22.09.2026) verlangte
+Ebenheit auf 1 % des Seitendurchmessers; die Hohlräume sind aber 1,7 bis 11 %
+dick und standen als FEHLER da (Platte mit Bohrung, 34 600 tet4: 8 Seiten;
+Keile am feinen Rand, 2701 tet4: 4 Seiten). Jetzt sind es Warnungen mit 8
+und 4 Seiten. Ein Tetraeder, der nicht flach ist und fehlt, bleibt ein
+FEHLER — geschlossen, aber mit dem Volumen eines Elements. Freie Seiten
+werden über die sortierten Eckennummern gefunden, in zwei int64 gepackt und
+mit `np.lexsort` sortiert.
+
+**Sehnen auf windschiefen Flächen** (Nachbesserung 23.09.2026). Ein
+Tetraedernetz liegt auf einer bilinearen Fläche auf Sehnen, und der freie
+Vernetzer setzt Knoten auf Sehnen seines groben Dreiecksnetzes
+(`huelle_verfeinern` halbiert Hülldreiecke an der längsten Kante; der neue
+Punkt liegt auf dem groben Dreieck). Am Würfel 1 × 1 × 1 mit um dz angehobener Deckelecke (eine
+Bodenkante geteilt, damit er frei vernetzt wird) liegen die Deckelknoten bis
+4,65 / 7,55 / 6,55 / 27,0 mm neben der Fläche (dz = 0,3 / 0,5 / 1,0 / 1,0 bei
+h = 0,25 / 0,25 / 0,25 / 0,5); bei dz = 0,5 knapp unter dz · h² / 4 =
+7,81 mm, der Abweichung einer Zellendiagonale in ihrer Mitte. Die erste Fassung meldete diese richtigen Netze — jede innere Seite
+genau zweimal vorhanden — als FEHLER: 2 bis 53 „Seiten im Inneren", bei
+dz = 1,0 und h = 0,5 dazu „Volumenbilanz 0,782 %" (Gegenprüfung). Drei Gründe,
+drei Änderungen:
+
+* Die Windungszahl rechnete gegen den groben Fächer der windschiefen Fläche,
+  der bis |d| / 16 neben ihr liegt (d = x₀ − x₁ + x₂ − x₃; 31,25 mm bei
+  dz = 0,5 — die Seitenschwerpunkte lagen −0,87 bis 5,21 mm daneben). Jetzt
+  rechnet sie gegen die Fläche in 16 × 16 Teilvierecken, jedes als Fächer um
+  seine Mitte (Abweichung ≤ |d| / 4096).
+* Eine flache Seite über die Parameterweiten Δu, Δv weicht um höchstens
+  |d| Δu Δv / 4 von der Fläche ab, und Δu, Δv ≤ D / σ_min (σ_min kleinster
+  Singulärwert von [x_u, x_v] auf 9 × 9 Punkten). Eine Seite gilt als auf der
+  windschiefen Fläche, wenn Schwerpunkt **und Ecken** höchstens 1 % ihres
+  Durchmessers plus |d| D² / (4 σ_min²) danebenliegen, mit D dem größten
+  Seitendurchmesser auf dieser Fläche: die Knoten liegen auf Sehnen des
+  groben Netzes, und das ist so weit wie die größten Seiten. Mit der
+  Diagonale des eigenen Elements lagen am Würfel 18 von 90 Ecken darüber
+  (Grenze dort 4,8 mm); mit der Diagonale des größten Elements wäre die Grenze
+  am abgebildeten 4 × 4 × 4-Netz 51,9 statt 21,6 mm (die Elemente am
+  angehobenen Eck sind hoch). Gemessen: Grenze 9,6 / 16,1 / 26,2 / 132,7 mm
+  gegen Ecken bis 4,65 / 7,55 / 6,55 / 27,0 mm. Die Ecken zählen mit, weil am
+  Schwerpunkt allein eine 50-mm-Beule verschwand (die Schwerpunkte ihrer vier
+  Seiten wandern nur 12,5 mm). Der Preis: kleinere Abweichungen des Netzrands
+  meldet die Abnahme an windschiefen Flächen nicht — am abgebildeten
+  4 × 4 × 4-Netz (dz = 0,5) bleibt eine Beule von 25 mm ungenannt, eine von
+  30 mm ist eine WARNUNG. Lücken und verdrehte Elemente liegen um
+  Elementgröße daneben, das 4 σ_min² / (|d| D)-fache der Grenze, und bleiben
+  FEHLER (gemessen: fehlender Tetraeder am windschiefen Deckel des freien
+  Netzes, verdrehtes Element am Deckel des abgebildeten Netzes, doppelte
+  Knoten).
+* Die Volumenbilanz lässt zu den 0,5 % das Volumen zu, das der Netzrand an
+  windschiefen Flächen erklären kann: Σ A · (größter Abstand von Ecken,
+  Kantenmitten und Schwerpunkt zur Fläche), eine obere Schranke. Gerechnet
+  wird sie nur, wenn die Bilanz über 0,5 % liegt. Bei dz = 1,0 und h = 0,5:
+  0,782 % Abweichung, zugelassen 2,264 %.
+
+Den Fußpunkt auf der bilinearen Fläche sucht ein gestapeltes
+Newton-Verfahren (`_bilinear_abstand`: Start am nächsten Punkt eines
+5 × 5-Rasters, höchstens zwölf Schritte, geklemmt auf das Einheitsquadrat,
+dazu der Abstand zu den vier geraden Randkanten). Gegen eine Zerlegung in
+256 × 256 Teilvierecke liegt er nie weiter als deren eigener Fehler
+|d| / (16 · 256²); er misst einen Punkt der Fläche und ist darum nie kleiner
+als der wahre Abstand. Er ersetzt eine Schleife über 1024 Dreiecke je Fläche
+mit je einem Aufruf von `punkt_dreieck_abstand`.
+
+Laufzeit von `_abnahme_volumenbilanz` an einem abgebildeten Sechsflächner
+(zwei Threads, die Maschine geteilt mit drei weiteren Sitzungen, die Zeiten
+schwanken darum): 64 000 hex8 mit ebenen Flächen 0,16 s, mit sechs
+windschiefen 0,23–0,24 s (in der ersten Fassung 4,5–5,4 s, Gegenprüfung);
+216 000 hex8 eben 0,57–0,74 s, windschief 0,97–1,30 s (erste Fassung
+8,5–8,8 s). Für 1 Mio Elemente **nicht gemessen**; aus 216 000 linear
+hochgerechnet eben 2,6–3,4 s, windschief 4,5–6,0 s. Ein Körper mit krummen
+Randlinien wird an der ersten krummen Linie verlassen, bevor ein Element
+angefasst wird.
 
 **Elemente, die eine Fuge überspannen.** Beim Ausführen einer Fuge werden die
 gemeinsamen Randknoten verdoppelt und die Elemente der gelösten Seite auf die

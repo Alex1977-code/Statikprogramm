@@ -755,6 +755,24 @@ def test_flaechenlast_auf_seite_ohne_flaeche():
           not any("Seite 1" in z for z in m2.check()),
           str([z[:60] for z in m2.check() if "Seite" in z]))
 
+    # Ein Element mit falscher Knotenzahl darf check() nicht umwerfen.
+    # add_element nimmt ein hex8 mit sieben Knoten an; traegt es eine
+    # Flaechenlast, warf check() seit der Kur (7000048) beim Stapeln der
+    # Knoten ValueError („inhomogeneous shape") statt eine Liste zu geben -
+    # und do_solve ruft check() ohne try auf (Gegenpruefung, 23.09.2026).
+    # Vorher kam dasselbe Modell mit ['WARNUNG: 1 Knoten ohne Elementanschluss'].
+    m3 = wuerfel(W)
+    m3.add_node(2.0, 0.0, 0.0)
+    m3.add_element("hex8", list(range(1, 8)), "S235")    # sieben Knoten
+    m3.load_face(1, -1000e3, face=1)
+    try:
+        z3, fehler3 = m3.check(), ""
+    except Exception as ex:                  # noqa: BLE001 - genau das wird geprueft
+        z3, fehler3 = None, f"{type(ex).__name__}: {str(ex)[:60]}"
+    check("ein hex8 mit sieben Knoten und Flächenlast wirft check() nicht um",
+          isinstance(z3, list) and any("Knoten ohne Elementanschluss" in z for z in z3),
+          fehler3 or str([z[:50] for z in z3]))
+
 
 def test_objektlast_nennt_den_nullvektor_als_grund():
     """Eine Objektlast ohne Richtung hieß „liegt ganz im Windschatten".

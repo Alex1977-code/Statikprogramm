@@ -3712,10 +3712,10 @@ nichts stillschweigend Übergangenes:
 | Knoten im Rechennetz ohne Element | 0 |
 | Formgüte des schlechtesten Elements je Körper | ≥ 0,05 |
 | Randtreue je Körper | ≥ 99 % |
-| **Volumenbilanz je Körper**: Elemente gegen Randflächen | ≤ 0,5 % |
+| **Volumenbilanz je Körper**: Elemente gegen Randflächen | ≤ 0,5 % (an windschiefen Flächen zuzüglich der Sehnen) |
 | **Seiten im Inneren**: freie Elementseiten, hinter denen der Körper weitergeht | 0 |
-| Netzrand neben der Hülle (Warnung): freie Seiten, die über die Randflächen hinausstehen | 0 |
-| Riss im Netz (Warnung): Riss ohne Weite, beiderseits dieselben Knoten, verschieden geteilt | 0 |
+| Netzrand neben der Hülle (Warnung): freie Seiten neben den Randflächen, außen oder als Beule | 0 |
+| Riss im Netz (Warnung): Riss oder Hohlraum ohne nennenswertes Volumen | 0 |
 
 **Der verdrehte Sechsflächner** (seit 22.09.2026). Stimmen die acht Knoten
 eines Sechsflächners, ist aber der Deckel um eine Ecke verdreht (4, 5, 6, 7 →
@@ -3733,16 +3733,38 @@ im Inneren] … 5 von 12 freien Elementseiten liegen im Inneren des Körpers …
 (z. B. Element 1 mit 4 Seiten, Element 0 mit 1 Seite)“). Das findet auch
 **ein** verdrehtes Element im Inneren eines Netzes: an einem 4 × 4 × 4-Würfel
 nennt die Prüfung das Element mit seiner Nummer, obwohl die Bilanz sich nur
-um ein Drittel eines von 64 Elementen verschiebt. Steht eine freie Seite
-dagegen über die Randfläche **hinaus**, ist es eine Warnung („Netzrand neben
-der Hülle“): so schnitt der freie Vernetzer an einem Prisma mit eckigem Loch
-eine einspringende Ecke ab (3 von 1024 Seiten, 0,012 % mehr Volumen).
-Ebenfalls eine Warnung ist der **Riss ohne Weite** („Riss im Netz“): auf beiden
-Seiten einer ebenen Fläche im Inneren liegen dieselben Knoten, aber verschieden
-in Dreiecke geteilt. Der Körper stimmt, die Verschiebungen passen dort aber nur
-an Knoten und Kanten zusammen. So bleibt es zurück, wenn der freie Vernetzer
-flache Tetraeder aussortiert — gemessen an einer Pyramide neben einer
-gesweepten Platte: 8 Seiten, das Volumen auf 3 · 10⁻¹⁶ genau.
+um ein Drittel eines von 64 Elementen verschiebt. Liegt eine freie Seite
+dagegen **außerhalb** des Körpers, ist es eine Warnung („Netzrand neben der
+Hülle“, mit dem größten Abstand in mm): so schnitt der freie Vernetzer an einem
+Prisma mit eckigem Loch eine einspringende Ecke ab (3 von 1024 Seiten,
+0,012 % mehr Volumen). Ebenfalls eine Warnung ist der **Riss ohne Weite**
+(„Riss im Netz“): freie Seiten im Inneren, die zusammen einen geschlossenen
+Hohlraum ohne nennenswertes Volumen umschließen — nicht mehr, als der freie
+Vernetzer selbst aussortiert. Solche Hohlräume bleiben, wenn er flache
+Tetraeder aussortiert (Platte 0,9 × 0,9 × 0,035 m mit Bohrung: 8 Seiten, zwei
+Hohlräume von zusammen 0,056 mm³), oder wenn beiderseits einer Fläche dieselben
+Knoten verschieden in Dreiecke geteilt sind. Der Körper stimmt, die
+Verschiebungen passen dort aber nur an Knoten und Kanten zusammen. Bis zum
+23.09.2026 meldete die Abnahme die Hohlräume des Vernetzers als FEHLER „Seiten
+im Inneren“, vor jeder Rechnung mit der Rückfrage „Trotzdem rechnen?“ — und
+neu vernetzen ergibt dasselbe Netz. Ein Hohlraum mit dem Volumen eines
+Elements bleibt ein FEHLER, ebenso doppelte Knoten.
+
+**Windschiefe Randflächen.** Ein Tetraedernetz liegt auf einer windschiefen
+(bilinearen) Fläche auf Sehnen, und der freie Vernetzer setzt Knoten auf Sehnen
+seines groben Dreiecksnetzes: am Würfel 1 × 1 × 1 m mit um 0,5 m angehobener
+Deckelecke (Netzweite 0,25 m) bis 7,55 mm neben der Fläche. Bis zum 23.09.2026
+meldete die Abnahme solche richtigen Netze als FEHLER (2 bis 53 „Seiten im
+Inneren“, bei Netzweite 0,5 m und um 1 m angehobener Ecke dazu „Volumenbilanz
+0,782 %“). Jetzt gilt an windschiefen Flächen eine Grenze aus der Verwindung
+der Fläche und dem größten Seitendurchmesser darauf (im Beispiel 16,1 mm), und
+die Volumenbilanz lässt das Volumen zu, das der Netzrand dort erklären kann.
+Die Kehrseite: kleinere Abweichungen des Netzrands meldet die Abnahme an
+windschiefen Flächen nicht — am abgebildeten 4 × 4 × 4-Netz desselben Würfels
+bleibt eine Beule von 25 mm ungenannt, eine von 30 mm steht als Warnung da.
+Lücken und verdrehte Elemente liegen um Elementgröße daneben und bleiben
+FEHLER.
+
 Geprüft werden Körper, deren Randlinien gerade sind und deren Randflächen eben
 sind oder Vierecke; Körper mit Bögen, Kreisen oder Splines prüft der freie
 Vernetzer schon beim Vernetzen selbst (Volumen gegen Hülle, Randtreue). Was

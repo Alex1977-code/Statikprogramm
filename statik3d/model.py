@@ -5106,6 +5106,16 @@ class Model:
                 continue                    # steht oben schon als FEHLER da
             if any(not 0 <= int(n) < self.nn for n in el.nodes):
                 continue                    # steht oben schon als FEHLER da
+            # Falsche Knotenzahl (add_element nimmt ein hex8 mit sieben Knoten
+            # an): keine Seite zu bilden, und gestapelt wuerden die Knoten zu
+            # einem ungleichmaessigen Feld - np.array warf dann ValueError, und
+            # check() gab statt der Liste eine Ausnahme (Gegenpruefung,
+            # 23.09.2026). Hier wird die Seite nicht beurteilt.
+            try:
+                if len(el.nodes) != _sl.knotenzahl(el.typ):
+                    continue
+            except ValueError:
+                continue
             gruppen.setdefault((el.typ, seite), []).append(j)
         aus = []
         for (typ, seite), jdx in gruppen.items():

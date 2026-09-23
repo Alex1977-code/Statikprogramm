@@ -766,8 +766,296 @@ def test_abnahme_findet_verdrehten_sechsflaechner():
           str(namen5))
 
 
+def _wuerfel_angehoben(dz, h):
+    """Würfel 1 x 1 x 1 m, die Deckelecke (1, 1, 1) um dz angehoben - der
+    Deckel ist windschief (bilinear). Eine Bodenkante ist bei x = 0,5
+    geteilt; mit fünf Ecken im Boden geht der Körper an den freien
+    Vernetzer (Gegenprüfung vom 23.09.2026)."""
+    from statik3d import mesher
+    m = Model("angehoben")
+    m.add_material(Material.steel("S235"))
+    P = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [0, 0, 1], [1, 0, 1], [1, 1, 1 + dz],
+         [0, 1, 1], [0.5, 0, 0]]
+    ecken = [int(m.add_node(*p)) for p in P]
+    seiten = [[0, 8, 1, 2, 3], [4, 5, 6, 7], [0, 8, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6],
+              [3, 0, 4, 7]]
+    kante, fl = {}, []
+    for s_i, ring in enumerate(seiten):
+        ln = []
+        for a, b in zip(ring, ring[1:] + ring[:1]):
+            key = (min(a, b), max(a, b))
+            if key not in kante:
+                kante[key] = f"L{len(kante)}"
+                m.add_line(kante[key], [ecken[a], ecken[b]])
+            ln.append(kante[key])
+        m.add_flaeche(f"F{s_i}", ln, material="S235")
+        fl.append(f"F{s_i}")
+    k = m.add_koerper("K", fl, material="S235")
+    els = [int(i) for i in mesher.mesh_koerper(m, k, log=[], frei=True, h=h)]
+    for i in (0, 1, 2, 3):
+        m.fix(ecken[i], "all")
+    return m, k, els
+
+
+_NETZ_BEFUNDE = ("Volumenbilanz", "Seiten im Inneren", "Netzrand neben der Hülle",
+                 "Riss im Netz")
+
+
+def test_abnahme_ohne_fehlalarm_am_freien_netz():
+    """Richtige Netze des freien Vernetzers rissen die Abnahme (Gegenprüfung
+    vom 23.09.2026, M1 a): am Würfel mit angehobener Deckelecke meldete sie
+    „FEHLER Seiten im Inneren" (h = 0,25: dz = 0,5 6 Seiten, dz = 1,0 53;
+    dz = 1,0 und h = 0,5: 8 Seiten und „FEHLER Volumenbilanz 0,782 %"). Das
+    Netz ist richtig: jede innere Seite kommt genau zweimal vor.
+
+    Drei Ursachen. Die Windungszahl rechnete gegen den groben Fächer des
+    windschiefen Deckels, der bis |d|/16 = 31,25 mm neben der bilinearen
+    Fläche liegt - die Seiten lagen -0,87 bis 5,21 mm daneben. Der freie
+    Vernetzer legt Knoten auf Sehnen seines groben Dreiecksnetzes
+    (gemessen 7,55 mm, dz·h²/4 = 7,81 mm), und dafür galt dieselbe 1-%-Grenze
+    wie an ebenen Flächen. Und die Volumenbilanz rechnete die Sehnen nicht ein.
+    Die Kur darf dabei keinen echten Fehler am windschiefen Deckel verdecken.
+    """
+    from collections import Counter
+    from statik3d.elements import solid as sl
+    for dz, h in ((0.5, 0.25), (1.0, 0.5)):
+        m, k, els = _wuerfel_angehoben(dz, h)
+        zahl = Counter()
+        for i in els:
+            e = m.elements[i]
+            for s in sl.FLAECHEN_ECKEN[e.typ]:
+                zahl[tuple(sorted(int(e.nodes[j]) for j in s))] += 1
+        bef = [b for b in dg.abnahme(m, warnungen=True) if b.pruefung in _NETZ_BEFUNDE]
+        check(f"freies Netz, Deckelecke {dz} m angehoben, h = {h}: kein Befund",
+              max(zahl.values()) == 2 and not bef,
+              f"{len(els)} tet4, Seiten höchstens {max(zahl.values())}-fach; "
+              + "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g}" for b in bef))
+        if dz == 0.5:
+            # Gegenprobe: ein Tetraeder mit drei Ecken im windschiefen Deckel
+            # fehlt - diese Delle ist Elementgroesse tief, nicht Sehnenweite
+            deckel = [i for i in els if sum(
+                abs(p[2] - (1 + dz * p[0] * p[1])) < 1e-9 and 1e-9 < p[0] < 1 - 1e-9
+                and 1e-9 < p[1] < 1 - 1e-9 for p in m.nodes[m.elements[i].nodes]) == 3]
+            weg = deckel[0]
+            k.elemente = [i for i in els if i != weg]
+            sn = [b for b in dg._abnahme_volumenbilanz(m, "K", k, k.elemente)
+                  if b.pruefung == "Seiten im Inneren"]
+            check("  und ein fehlender Tetraeder am windschiefen Deckel bleibt ein FEHLER",
+                  len(sn) == 1 and sn[0].stufe == "FEHLER",
+                  f"Element {weg}: " + ("; ".join(f"{b.wert:.0f} Seiten" for b in sn)
+                                        or "kein Befund"))
+            # Ein Tetraeder mitten im Koerper fehlt: ein geschlossener
+            # Hohlraum, aber mit dem Volumen eines Elements - kein Riss
+            mitte = [i for i in els
+                     if all(0.3 < c < 0.7 for c in m.nodes[m.elements[i].nodes].mean(axis=0))]
+            k.elemente = [i for i in els if i != mitte[0]]
+            bef = dg._abnahme_volumenbilanz(m, "K", k, k.elemente)
+            sn = [b for b in bef if b.pruefung == "Seiten im Inneren"]
+            check("  ein fehlender Tetraeder im Innern: geschlossen, aber kein Riss",
+                  len(sn) == 1 and sn[0].wert == 4.0
+                  and not [b for b in bef if b.pruefung == "Riss im Netz"],
+                  f"Element {mitte[0]}: "
+                  + "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.0f}" for b in bef))
+            k.elemente = els
+
+    # Die feine Huelle: am abgebildeten 4 x 4 x 4-Netz (dz = 0,5) wird der
+    # Deckelknoten bei (0,75; 0,75) 40 mm nach aussen gedrueckt - dort liegt
+    # der grobe Faecher 31,25 mm ueber dem Deckel. Das ist eine Beule, eine
+    # WARNUNG. Gegen den groben Faecher gerechnet war es ein FEHLER „Seiten
+    # im Inneren" (2 Seiten). Die Grenze fuer Sehnen ist dort 21,6 mm - die
+    # Beule liegt darueber und wird gemeldet.
+    from statik3d import mesher
+    m4 = Model("beule")
+    m4.add_material(Material.steel("S235"))
+    W = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [0, 0, 1], [1, 0, 1], [1, 1, 1.5], [0, 1, 1]]
+    ecken4 = [int(m4.add_node(*p)) for p in W]
+    k4 = _quaderkoerper(m4, ecken4)
+    mesher.mesh_koerper(m4, k4, log=[], frei=False)
+    for i in range(4):
+        m4.fix(ecken4[i], "all")
+    kn = int(np.argmin(np.linalg.norm(m4.nodes - [0.75, 0.75, 1.28125], axis=1)))
+    m4.nodes[kn, 2] += 0.04
+    bef4 = [b for b in dg.abnahme(m4, warnungen=True) if b.pruefung in _NETZ_BEFUNDE]
+    check("Beule im windschiefen Deckel: eine WARNUNG, kein FEHLER",
+          len(bef4) == 1 and bef4[0].pruefung == "Netzrand neben der Hülle"
+          and bef4[0].stufe == "WARNUNG" and bef4[0].wert == 4.0,
+          "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.0f}" for b in bef4) or "kein Befund")
+
+
+def test_abnahme_luecken_des_vernetzers_sind_risse():
+    """Der freie Vernetzer sortiert Tetraeder mit V <= FLACH·h³ aus, und ihre
+    Lücken bleiben im Netz. Die Abnahme meldete sie als „FEHLER Seiten im
+    Inneren" (Gegenprüfung vom 23.09.2026, M1 b: Platte mit Bohrung 8
+    Seiten, Keile am feinen Rand 4) - vor jeder Rechnung die Rückfrage
+    „Trotzdem rechnen?", und neu vernetzen ergibt dasselbe Netz. Gemeint war
+    die WARNUNG „Riss im Netz"; der alte Risstest verlangte aber Ebenheit auf
+    1 % des Seitendurchmessers, die Lücken sind 1,7 bis 11 % dick.
+
+    Die Grenze ist jetzt die des Vernetzers selbst: FLACH·h³ je Seite der
+    Gruppe, h die größte Elementdiagonale. Ein Formmaß taugt nicht - die
+    Zelle eines verdrehten Würfels hat V/L³ = 0,118, die Lücken bis 0,031,
+    und gegen ihre Nachbarn sind die Lücken an der Bohrung 1 bis 10 % groß,
+    die Zelle des verdrehten Würfels 7 %.
+    """
+    from statik3d import mesher, mesher3d
+    import contextlib
+    import io
+    import tests.test_sweep as TS
+    alt = mesher3d.RANDFELD
+    mesher3d.RANDFELD = True
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            m, k = TS.platte_mit_stufe()
+            m.netz.sweep = False
+            mesher.modell_vernetzen(m, [], workers=1)
+    finally:
+        mesher3d.RANDFELD = alt
+    els = [int(i) for i in k.elemente]
+    bef = dg._abnahme_volumenbilanz(m, k.name, k, els)
+    ri = [b for b in bef if b.pruefung == "Riss im Netz"]
+    check("Keile am feinen Rand, frei vernetzt: die Lücke ist eine WARNUNG Riss",
+          len(ri) == 1 and ri[0].stufe == "WARNUNG" and ri[0].wert == 4.0
+          and not [b for b in bef if b.stufe == "FEHLER"],
+          f"{len(els)} tet4; " + "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.0f}" for b in bef))
+    # Gegenprobe: fehlt ein Tetraeder, der nicht flach ist, ist es eine
+    # Luecke und ein FEHLER - die Regel winkt nicht jeden Hohlraum durch. Die
+    # Platte ist eine Tetraederlage dick: der fehlende Tetraeder hinterlaesst
+    # eine Delle in der Plattenflaeche (drei Seiten, eine offene Gruppe).
+    V = dg.elementvolumina(m, els)
+    mittel = [i for j, i in enumerate(els)
+              if V[j] > 0.5 * float(np.median(V))
+              and all(0.3 < c < 0.7 for c in m.nodes[m.elements[i].nodes].mean(axis=0)[:2]
+                      / np.array([0.2, 0.1]))]
+    k.elemente = [i for i in els if i != mittel[0]]
+    sn = [b for b in dg._abnahme_volumenbilanz(m, k.name, k, k.elemente)
+          if b.pruefung == "Seiten im Inneren"]
+    check("  ein fehlender Tetraeder mittlerer Größe (Delle) bleibt ein FEHLER",
+          len(sn) == 1 and sn[0].stufe == "FEHLER",
+          f"Element {mittel[0]}: " + ("; ".join(f"{b.wert:.0f} Seiten" for b in sn)
+                                      or "kein Befund"))
+
+
+def test_abnahme_offene_gruppen_sind_kein_riss():
+    """Ein Riss braucht zwei Ufer, die sich schließen. Zwei Fälle, in denen
+    die Seiten im Inneren eine offene Gruppe bilden - beide FEHLER:
+
+    * drei Würfel in einer Reihe, der mittlere verdreht: die Gruppe ist vorn
+      und hinten offen (2 m² Rand bei 6,9 m² Seitenfläche). Die Summe der
+      Flächenvektoren verschwindet dort trotzdem, und das scheinbare Volumen
+      auch - daran allein gemessen wäre es ein Riss gewesen (so geschehen
+      beim ersten Entwurf dieser Nachbesserung).
+    * doppelte Knoten: das Netz ist bei x = 0,5 aufgetrennt, jede Seite der
+      Trennfläche hat ein Ufer ohne Gegenüber.
+    """
+    from statik3d import mesher
+    m = Model("reihe")
+    m.add_material(Material.steel("S235"))
+    ids = mesher.grid_box(m, "S235", 3.0, 1.0, 1.0, 3, 1, 1, typ="hex8")
+    k = _quaderkoerper(m, [ids[0, 0, 0], ids[3, 0, 0], ids[3, 1, 0], ids[0, 1, 0],
+                           ids[0, 0, 1], ids[3, 0, 1], ids[3, 1, 1], ids[0, 1, 1]])
+    k.elemente = [0, 1, 2]
+    for kn in ids[0].ravel():
+        m.fix(int(kn), "all")
+    n = list(m.elements[1].nodes)
+    m.elements[1].nodes = n[:4] + [n[7], n[4], n[5], n[6]]
+    bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+    sn = [b for b in bef if b.pruefung == "Seiten im Inneren"]
+    check("drei Würfel, der mittlere verdreht: Seiten im Inneren, kein Riss",
+          len(sn) == 1 and sn[0].element == 1 and sn[0].wert == 6.0
+          and not [b for b in bef if b.pruefung == "Riss im Netz"],
+          "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g}" for b in bef))
+
+    m2 = Model("doppelt")
+    m2.add_material(Material.steel("S235"))
+    W = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]]
+    ecken2 = [int(m2.add_node(*p)) for p in W]
+    k2 = _quaderkoerper(m2, ecken2)
+    els2 = [int(i) for i in mesher.mesh_koerper(m2, k2, log=[], frei=False)]
+    neu = {}
+    for j in els2:
+        e = m2.elements[j]
+        if m2.nodes[e.nodes].mean(axis=0)[0] > 0.5:
+            nn = []
+            for kn in e.nodes:
+                if abs(m2.nodes[kn][0] - 0.5) < 1e-9:
+                    if kn not in neu:
+                        neu[kn] = int(m2.add_node(*m2.nodes[kn]))
+                    nn.append(neu[kn])
+                else:
+                    nn.append(kn)
+            e.nodes = nn
+    bef2 = dg._abnahme_volumenbilanz(m2, "K1", k2, els2)
+    sn2 = [b for b in bef2 if b.pruefung == "Seiten im Inneren"]
+    check("doppelte Knoten bei x = 0,5: Seiten im Inneren, kein Riss",
+          len(sn2) == 1 and sn2[0].wert == 32.0
+          and not [b for b in bef2 if b.pruefung == "Riss im Netz"],
+          f"{len(neu)} doppelte Knoten; "
+          + "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g}" for b in bef2))
+
+
+def test_windschiefe_randflaechen_ohne_dreiecksschleife():
+    """Je windschiefer Randfläche lief eine Python-Schleife über 1024
+    Dreiecke mit je einem Aufruf von punkt_dreieck_abstand (Gegenprüfung vom
+    23.09.2026, M2): an 64 000 hex8 mit sechs windschiefen Flächen 4,5 bis
+    5,4 s gegen 0,15 s mit ebenen. Jetzt der Fußpunkt nach Newton, gestapelt.
+
+    Zuerst die Genauigkeit gegen eine feine Dreieckszerlegung (64 x 64
+    Teilvierecke), dann die Zeit: windschief gegen eben am selben Netz. Das
+    Verhältnis hängt nicht daran, wie belastet die Maschine gerade ist.
+    """
+    import time
+    from statik3d import mesher, mesher3d as M3
+
+    def sechsflaechner(schief, n=24):
+        m = Model("zeit")
+        m.add_material(Material.steel("S235"))
+        E = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+                      [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]], float)
+        if schief:
+            E += np.array([[0, 0, 0], [0.05, -0.1, 0.12], [0.1, 0.05, -0.1],
+                           [-0.08, 0.1, 0.09], [0.1, 0.07, 0.0], [-0.06, 0.1, 0.15],
+                           [0.12, -0.05, 0.2], [0.03, 0.12, -0.1]])
+        k = _quaderkoerper(m, [int(m.add_node(*p)) for p in E])
+        k.teilung = [n, n, n]
+        els = [int(i) for i in mesher.mesh_koerper(m, k, log=[], frei=False, h=1.0 / n)]
+        dauer = []
+        for _ in range(3):
+            t = time.perf_counter()
+            bef = dg._abnahme_volumenbilanz(m, "K1", k, els)
+            dauer.append(time.perf_counter() - t)
+        return len(els), min(dauer), bef, len(dg._polyederhuelle(m, k)["bilinear"])
+
+    n_e, t_eben, b_eben, _ = sechsflaechner(False)
+    _, t_schief, b_schief, n_schief = sechsflaechner(True)
+    check("sechs windschiefe Randflächen: höchstens das Dreifache der ebenen",
+          n_schief == 6 and not b_eben and not b_schief and t_schief < 3.0 * t_eben + 0.02,
+          f"{n_e} hex8: eben {t_eben * 1e3:.0f} ms, windschief {t_schief * 1e3:.0f} ms "
+          f"({t_schief / t_eben:.1f}-fach)")
+
+    X4 = np.array([[0, 0, 0], [3, 0.2, 0.4], [2.5, 1.1, -0.6], [0.1, 0.9, 0.8]], float)
+    rng = np.random.default_rng(3)
+    uv = rng.uniform(-0.3, 1.3, (60, 2))
+    Q = dg._bilinear_punkt(X4, uv[:, 0], uv[:, 1]) + rng.normal(0.0, 0.1, (60, 3))
+    P, T = dg._bilinear_gitter(X4, 64)
+    a, b, c = P[T[:, 0]], P[T[:, 1]], P[T[:, 2]]
+    fein = np.array([M3.punkt_dreieck_abstand(np.broadcast_to(x, a.shape), a, b, c).min()
+                     for x in Q])
+    newton = dg._bilinear_abstand(Q, X4)
+    # Die Zerlegung liegt um hoechstens |d|/(16*64^2) neben der Flaeche,
+    # und Newton misst einen Punkt der Flaeche: nie mehr als der wahre Abstand
+    fehler = float(np.linalg.norm(X4[0] - X4[1] + X4[2] - X4[3])) / (16 * 64 ** 2)
+    check("Fußpunkt nach Newton: nicht weiter als die feine Zerlegung",
+          float((newton - fein).max()) <= fehler + 1e-12,
+          f"größte Überschreitung {float((newton - fein).max()):.2e} "
+          f"(Zerlegung genau auf {fehler:.1e})")
+
+
 def main():
     for f in (test_abnahme_findet_verdrehten_sechsflaechner,
+              test_abnahme_ohne_fehlalarm_am_freien_netz,
+              test_abnahme_luecken_des_vernetzers_sind_risse,
+              test_abnahme_offene_gruppen_sind_kein_riss,
+              test_windschiefe_randflaechen_ohne_dreiecksschleife,
               test_abnahme_meldet_ausgefallene_pruefungen,
               test_nicht_messbare_formguete_gilt_nicht_als_beste,
               test_teiltragwerke, test_unvernetzt, test_koerper_ohne_netz_haelt_an,

@@ -858,17 +858,172 @@ def elementvolumina(model, els, gruppen: dict = None) -> np.ndarray:
     return V
 
 
+def _bilinear_punkt(X4: np.ndarray, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+    """Punkt x(u, v) der bilinearen Flaeche ueber den Ecken X4 (Ringfolge)."""
+    x0, x1, x2, x3 = X4
+    return (x0 + u[..., None] * (x1 - x0) + v[..., None] * (x3 - x0)
+            + (u * v)[..., None] * (x0 - x1 + x2 - x3))
+
+
+def _bilinear_gitter(X4: np.ndarray, teilung: int = 16) -> tuple:
+    """Die bilineare Flaeche als Dreiecke: teilung x teilung Teilvierecke,
+    jedes als Faecher um seine Mitte (die liegt auf der Flaeche). Die Dreiecke
+    laufen wie der Ring X4 - ihre Normale zeigt wie x_u x x_v.
+
+    Der Faecher eines Teilvierecks weicht von der Flaeche um hoechstens
+    |d| / (16 * teilung^2) ab (d = x0 - x1 + x2 - x3, die Verwindung): bei
+    16 Teilen |d| / 4096, fuer eine um 1 m verwundene Flaeche 0,24 mm. Der
+    grobe Faecher um die Mitte des ganzen Vierecks weicht um |d| / 16 ab -
+    gemessen 31,25 mm am Wuerfel mit um 0,5 m angehobener Deckelecke, bei
+    Seitenschwerpunkten des freien Netzes zwischen -0,87 und 5,21 mm.
+    """
+    n = int(teilung)
+    t = np.linspace(0.0, 1.0, n + 1)
+    tm = 0.5 * (t[:-1] + t[1:])
+    u, v = np.meshgrid(t, t, indexing="ij")
+    um, vm = np.meshgrid(tm, tm, indexing="ij")
+    P = np.vstack([_bilinear_punkt(X4, u, v).reshape(-1, 3),
+                   _bilinear_punkt(X4, um, vm).reshape(-1, 3)])
+    i, j = (g.ravel() for g in np.meshgrid(np.arange(n), np.arange(n), indexing="ij"))
+    e = [i * (n + 1) + j, (i + 1) * (n + 1) + j, (i + 1) * (n + 1) + j + 1, i * (n + 1) + j + 1]
+    mitte = (n + 1) ** 2 + i * n + j
+    T = np.concatenate([np.stack([mitte, e[q], e[(q + 1) % 4]], axis=1) for q in range(4)])
+    return P, T
+
+
+def _strecke_abstand(Q: np.ndarray, a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Abstand jedes Punktes zur Strecke a-b."""
+    s = b - a
+    L2 = float(s @ s)
+    t = np.clip(((Q - a) @ s) / L2, 0.0, 1.0) if L2 > 0.0 else np.zeros(len(Q))
+    return np.linalg.norm(Q - (a + t[:, None] * s), axis=1)
+
+
+def _bilinear_abstand(Q: np.ndarray, X4: np.ndarray) -> np.ndarray:
+    """Kuerzester Abstand jedes Punktes zur bilinearen Flaeche ueber X4.
+
+    Fusspunkt (u, v) nach Newton, gestapelt ueber alle Punkte: Start am
+    naechsten Punkt eines 5 x 5-Rasters, dann hoechstens zwoelf Schritte mit der vollen
+    Hesse-Matrix (x_uu = x_vv = 0, x_uv = d), wo sie nicht positiv ist mit
+    Gauss-Newton; geklemmt auf das Einheitsquadrat. Liegt der Fusspunkt auf
+    dem Rand, gibt der Abstand zu den vier geraden Randkanten ihn genau.
+    Ersetzt die Schleife ueber 16 x 16 x 4 = 1024 Dreiecke je Flaeche mit je
+    einem Aufruf von punkt_dreieck_abstand: die brauchte an 64 000 hex8 mit
+    sechs windschiefen Flaechen 4,5 bis 5,4 s (Gegenpruefung, 23.09.2026).
+    """
+    Q = np.atleast_2d(np.asarray(Q, float))
+    if not len(Q):
+        return np.zeros(0)
+    X4 = np.asarray(X4, float)
+    x0, x1, x2, x3 = X4
+    a, b, d = x1 - x0, x3 - x0, x0 - x1 + x2 - x3
+    t = np.linspace(0.0, 1.0, 5)
+    ug, vg = (g.ravel() for g in np.meshgrid(t, t, indexing="ij"))
+    G = _bilinear_punkt(X4, ug, vg)                              # (25, 3)
+    u, v = np.empty(len(Q)), np.empty(len(Q))
+    for s in range(0, len(Q), 20_000):
+        D2 = ((Q[s:s + 20_000, None, :] - G[None]) ** 2).sum(axis=2)
+        k = D2.argmin(axis=1)
+        u[s:s + 20_000], v[s:s + 20_000] = ug[k], vg[k]
+    for _ in range(12):
+        r = _bilinear_punkt(X4, u, v) - Q
+        Bu, Bv = a + v[:, None] * d, b + u[:, None] * d
+        g1, g2 = np.einsum("ij,ij->i", Bu, r), np.einsum("ij,ij->i", Bv, r)
+        h11, h22 = np.einsum("ij,ij->i", Bu, Bu), np.einsum("ij,ij->i", Bv, Bv)
+        h12g = np.einsum("ij,ij->i", Bu, Bv)
+        h12 = h12g + r @ d
+        det = h11 * h22 - h12 * h12
+        gn = ~(det > 1e-12 * h11 * h22)
+        h12 = np.where(gn, h12g, h12)
+        det = np.maximum(h11 * h22 - h12 * h12, 1e-300)
+        u1 = np.clip(u - (h22 * g1 - h12 * g2) / det, 0.0, 1.0)
+        v1 = np.clip(v - (h11 * g2 - h12 * g1) / det, 0.0, 1.0)
+        schritt = max(float(np.abs(u1 - u).max()), float(np.abs(v1 - v).max()))
+        u, v = u1, v1
+        if schritt < 1e-12:
+            break                           # alle Fusspunkte stehen
+    dist = np.linalg.norm(_bilinear_punkt(X4, u, v) - Q, axis=1)
+    for i in range(4):
+        dist = np.minimum(dist, _strecke_abstand(Q, X4[i], X4[(i + 1) % 4]))
+    return dist
+
+
+def _sehnengrenze(X4: np.ndarray) -> float:
+    """|d| / (4 sigma_min^2): mal D^2 der groesste Abstand einer Sehne der
+    Weite D von der bilinearen Flaeche ueber X4.
+
+    d = x0 - x1 + x2 - x3 ist die Verwindung (x_uv), sigma_min die kleinste
+    Dehnung der Abbildung (u, v) -> x, der kleinste Singulaerwert von
+    [x_u, x_v] auf einem 9 x 9-Raster. Eine flache Seite ueber die
+    Parameterweiten du, dv weicht um hoechstens |d| du dv / 4 ab, und
+    du, dv <= D / sigma_min.
+    """
+    X4 = np.asarray(X4, float)
+    x0, x1, x2, x3 = X4
+    a, b, d = x1 - x0, x3 - x0, x0 - x1 + x2 - x3
+    t = np.linspace(0.0, 1.0, 9)
+    u, v = (g.ravel() for g in np.meshgrid(t, t, indexing="ij"))
+    Ju, Jv = a + v[:, None] * d, b + u[:, None] * d
+    g11, g22, g12 = (Ju * Ju).sum(1), (Jv * Jv).sum(1), (Ju * Jv).sum(1)
+    spur, det = g11 + g22, g11 * g22 - g12 * g12
+    lam = 0.5 * (spur - np.sqrt(np.maximum(spur * spur - 4.0 * det, 0.0)))
+    s2 = float(lam.min())
+    if not s2 > 0.0:
+        # Flaeche an einer Stelle ohne Dehnung: keine Sehne zulassen, lieber
+        # eine Warnung zu viel als eine Luecke uebersehen
+        return 0.0
+    return float(np.linalg.norm(d)) / (4.0 * s2)
+
+
+def _eben_abstand(Q: np.ndarray, eb) -> np.ndarray:
+    """Abstand jedes Punktes zu einer ebenen Randflaeche (mit Oeffnungen)."""
+    from . import mesher3d as M3
+    c0, e1, e2, n0, ringe2 = eb
+    d = Q - c0
+    off = d @ n0
+    p2 = np.stack([d @ e1, d @ e2], axis=1)
+    drin = M3._in_polygon_2d(p2, ringe2)
+    rand = np.full(len(Q), np.inf)
+    for R in ringe2:
+        for i in range(len(R)):
+            a, b = R[i], R[(i + 1) % len(R)]
+            s = b - a
+            L2 = float(s @ s)
+            t = np.clip(((p2 - a) @ s) / L2, 0.0, 1.0) if L2 > 0.0 else np.zeros(len(Q))
+            rand = np.minimum(rand, np.linalg.norm(p2 - (a + t[:, None] * s), axis=1))
+    return np.sqrt(off * off + np.where(drin, 0.0, rand) ** 2)
+
+
+def _huelle_abstand(Q: np.ndarray, huelle: dict) -> tuple:
+    """(Abstand zur Huelle, naechster Teil ist windschief) je Punkt."""
+    Q = np.atleast_2d(np.asarray(Q, float))
+    dist = np.full(len(Q), np.inf)
+    schief = np.zeros(len(Q), bool)
+    for eb in huelle["ebenen"]:
+        dist = np.minimum(dist, _eben_abstand(Q, eb))
+    for X4 in huelle["bilinear"]:
+        db = _bilinear_abstand(Q, X4)
+        schief = np.where(db < dist, True, schief)
+        dist = np.minimum(dist, db)
+    return dist, schief
+
+
 def _polyederhuelle(model, koerper):
     """Die Huelle eines Koerpers aus seinen Randflaechen - nur dort, wo sie
     sich **ohne Naeherung** darstellen laesst, sonst None.
 
     Ohne Naeherung heisst: jede Randlinie ist gerade (Polylinie), und jede
     Randflaeche ist eben oder ein Viereck ohne Oeffnung. Ein nicht ebenes
-    Viereck mit geraden Kanten ist die bilineare Flaeche - so bildet der
-    Sechsflaechner es ab, und so vernetzt es auch der freie Vernetzer
-    (Coons-Flaeche ueber vier gerade Seiten). Krumme Linien (Bogen, Kreis,
-    Spline) bleiben aussen vor: ihre Teilung haengt an der Netzweite, und
-    die Sehnenabweichung laege in derselben Groesse wie das, was gesucht wird.
+    Viereck mit geraden Kanten ist die bilineare Flaeche. So bildet der
+    Sechsflaechner es ab (seine Knoten liegen darauf). Der freie Vernetzer
+    legt sein Netz nur **naeherungsweise** darauf: am Wuerfel mit um 0,5 m
+    angehobener Deckelecke (h = 0,25) liegen Deckelknoten bis 7,55 mm neben
+    der bilinearen Flaeche (dz * h^2 / 4 = 7,81 mm, die Sehne seines groben
+    Dreiecksnetzes; Gegenpruefung, 23.09.2026). Diese Sehnenabweichung wird
+    in :func:`_abnahme_volumenbilanz` ausdruecklich zugelassen. Krumme Linien
+    (Bogen, Kreis, Spline) bleiben aussen vor: ihre Teilung haengt an der
+    Netzweite, und die Sehnenabweichung laege in derselben Groesse wie das,
+    was gesucht wird.
 
     Jeder Rand wird als Faecher um den Schwerpunkt seiner Ecken dargestellt.
     Das ist fuer eine ebene Flaeche exakt, und fuer das Viereck ist das
@@ -883,12 +1038,13 @@ def _polyederhuelle(model, koerper):
     elements.solid.FLAECHEN (gemischt orientiert, Nachtrag C) werden gar
     nicht gebraucht.
 
-    Rueckgabe dict: V (Huellvolumen), P und T (die Faecher, nach aussen
-    gerichtet - fuer die Windungszahl), ebenen [(Mitte, e1, e2, Normale,
-    Ringe in der Ebene)], bilinear [(Punkte, Dreiecke)] - letztere fein
-    unterteilt, damit der Abstand einer Elementseite zur gewoelbten Flaeche
-    nicht an der groben Darstellung haengt. Fuer Abstaende taugen die Faecher
-    selbst nicht: der Faecher des Aussenrands deckt auch die Oeffnungen.
+    Rueckgabe dict: V (Huellvolumen aus den Faechern), PW und TW (die Huelle
+    fuer die Windungszahl, nach aussen gerichtet: ebene Flaechen als ihre
+    Faecher, windschiefe fein unterteilt, siehe :func:`_bilinear_gitter` - der
+    grobe Faecher liegt dort bis |d| / 16 neben der Flaeche), ebenen
+    [(Mitte, e1, e2, Normale, Ringe in der Ebene)], bilinear [Ecken (4, 3),
+    nach aussen gerichtet]. Fuer Abstaende taugen die Faecher nicht: der
+    Faecher des Aussenrands deckt auch die Oeffnungen.
     """
     from . import mesher3d as M3
     from .model import _rand_aus_linien
@@ -917,8 +1073,8 @@ def _polyederhuelle(model, koerper):
         R = model.nodes[r]
         return np.cross(R, np.roll(R, -1, axis=0)).sum(axis=0)
 
-    dreiecke, kanten_je_flaeche, ebenen, bilinear = [], [], [], []
-    for f in flaechen:
+    dreiecke, kanten_je_flaeche, ebenen, schief = [], [], [], []
+    for fi, f in enumerate(flaechen):
         ringe = []
         for zug in [list(f.linien or [])] + [list(o) for o in (f.oeffnungen or [])]:
             for ln_name in zug:
@@ -953,25 +1109,7 @@ def _polyederhuelle(model, koerper):
                                axis=1) for r in ringe]
             ebenen.append((c0, e1, e2, n0, ringe2))
         else:
-            # Bilineare Flaeche x(u, v) auf einem 16 x 16-Raster, jedes
-            # Teilviereck als Faecher um seinen Schwerpunkt (der liegt auf
-            # der Flaeche). Die Abweichung der Faecher von der Flaeche faellt
-            # mit dem Quadrat der Teilung.
-            x0, x1, x2, x3 = (model.nodes[n] for n in ringe[0])
-            t = np.linspace(0.0, 1.0, 17)
-            u, v = np.meshgrid(t, t, indexing="ij")
-            u, v = u[..., None], v[..., None]
-            G = ((1 - u) * (1 - v) * x0 + u * (1 - v) * x1 + u * v * x2
-                 + (1 - u) * v * x3)                                  # (17, 17, 3)
-            Pb = [G.reshape(-1, 3)]
-            Tb = []
-            for i in range(16):
-                for j in range(16):
-                    ecke = [i * 17 + j, (i + 1) * 17 + j, (i + 1) * 17 + j + 1, i * 17 + j + 1]
-                    m = 17 * 17 + len(Tb) // 4
-                    Pb.append(G.reshape(-1, 3)[ecke].mean(axis=0)[None])
-                    Tb += [(m, ecke[q], ecke[(q + 1) % 4]) for q in range(4)]
-            bilinear.append((np.vstack(Pb), np.array(Tb, int)))
+            schief.append((fi, np.array(model.nodes[ringe[0]], float)))
     # Flaechen gegeneinander richten: eine gemeinsame Randkante durchlaufen
     # die beiden Nachbarn gegenlaeufig. Jede Kante muss in genau zwei Raendern
     # liegen, und alle Flaechen muessen zusammenhaengen - sonst ist die Huelle
@@ -1003,13 +1141,28 @@ def _polyederhuelle(model, koerper):
         return None                         # zerfaellt in Teile
     T = np.array([(c, a, b) if s > 0 else (c, b, a)
                   for s, tri in zip(vz, dreiecke) for c, a, b in tri], dtype=int)
+    von = np.array([fi for fi, tri in enumerate(dreiecke) for _ in tri], dtype=int)
     P = np.array(punkte, float)
     V = M3.huellvolumen(P, T)
-    if V < 0.0:
+    kehren = V < 0.0
+    if kehren:
         T, V = T[:, [0, 2, 1]], -V          # nach aussen kehren
     if not V > 0.0:
         return None
-    return {"V": float(V), "P": P, "T": T, "ebenen": ebenen, "bilinear": bilinear}
+    # Windschiefe Flaechen nach aussen gerichtet (Ring umkehren heisst u und
+    # v tauschen, die Normale x_u x x_v kehrt sich um) und fein unterteilt
+    bilinear, PW, TW = [], [P], [T[~np.isin(von, [fi for fi, _ in schief])]]
+    basis = len(P)
+    for fi, X4 in schief:
+        if (vz[fi] > 0) == kehren:
+            X4 = X4[[0, 3, 2, 1]]
+        bilinear.append(X4)
+        Pg, Tg = _bilinear_gitter(X4)
+        PW.append(Pg)
+        TW.append(Tg + basis)
+        basis += len(Pg)
+    return {"V": float(V), "P": P, "T": T, "PW": np.vstack(PW),
+            "TW": np.concatenate(TW), "ebenen": ebenen, "bilinear": bilinear}
 
 
 def _freie_seiten_ecken(model, els, gruppen: dict = None):
@@ -1049,51 +1202,157 @@ def _freie_seiten_ecken(model, els, gruppen: dict = None):
     return F[frei], E[frei]
 
 
-def _risse_ohne_weite(F, Xf, n_aus, tol) -> np.ndarray:
-    """Welche dieser freien Seiten gehoeren zu einem Riss ohne Weite?
+#: Wann eine Gruppe freier Seiten im Inneren ein **Riss ohne Weite** ist
+#: (WARNUNG) und kein fehlender Nachbar (FEHLER). Zwei Bedingungen:
+#:
+#: * **geschlossen**: die Seiten umschliessen etwas. Die gerichteten Kanten
+#:   der Seiten (umlaufend wie ihr Flaechenvektor, vom eigenen Element weg)
+#:   heben sich paarweise auf; was bleibt, ist der Rand der Gruppe. Seine
+#:   Schleifen duerfen zusammen hoechstens diesen Anteil der Seitenflaeche
+#:   aufspannen. Ein Riss mit Knoten nur auf einem Ufer (T-Stoss) hat
+#:   Randschleifen ohne Flaeche (drei Punkte auf einer Kante), ein Hohlraum
+#:   gar keinen Rand. Gemessen an den 29 Gruppen, die die Modelle der Suiten
+#:   test_mesher3d und test_sweep bilden (23.09.2026): Rand 0 bis 5,6 % der
+#:   Seitenflaeche. Die Seiten an doppelten Knoten sind dagegen ein Ufer ohne
+#:   Gegenueber (Rand 100 %), und die Gruppe um einen verdrehten Wuerfel in
+#:   einer Reihe ist vorn und hinten offen: 2,00 m2 Rand bei 4,83 m2
+#:   Seitenflaeche (41 %; verdrehter Boden 26 %, verdrehtes Eckelement 30 %).
+#:   Die Summe der Flaechenvektoren taugt dafuer nicht - in der Reihe heben
+#:   sich vorn und hinten auf (gemessen |Summe S| = 0, das scheinbare Volumen
+#:   ebenso 0, und die Gruppe galt im ersten Entwurf als Riss).
+ABNAHME_RISS_UFER = 0.10
+#: * **ohne nennenswertes Volumen**: nicht mehr, als der freie Vernetzer
+#:   selbst aussortiert - er wirft Tetraeder mit V <= FLACH * h^3 hinaus
+#:   (mesher3d._innere und die Nachpruefung nach der Glaettung), und genau
+#:   diese Luecken bleiben im Netz. Als h gilt hier die groesste
+#:   Elementdiagonale im Koerper (die Diagonale ist nie kleiner als die
+#:   laengste Kante), und je Seite der Gruppe ist ein solcher Tetraeder
+#:   zugelassen - ein Haufen aus k Tetraedern hat mehr als k freie Seiten.
+#:   Ein Formmass taugt dafuer nicht: die Hohlraeume des Vernetzers haben
+#:   V / L^3 bis 0,015 (einzeln) und 0,031 (Haufen), die Zelle eines
+#:   verdrehten Wuerfels 0,118 wie ein fehlender regelmaessiger Tetraeder -
+#:   und neben ihren Nachbarn sind die Hohlraeume an der Bohrung 1 bis 10 %
+#:   gross (die Nachbarn sind dort klein), die Zelle des verdrehten Wuerfels
+#:   7 %. Gegen FLACH * h^3 liegen sie dagegen weit auseinander: die 29
+#:   Gruppen der Suiten mindestens um den Faktor 8,3 unter dieser Grenze,
+#:   die fehlende Zelle des verdrehten Wuerfels bei einem Drittel seines
+#:   Volumens, dem Hunderttausendfachen von FLACH * h^3.
 
-    F (m, 4) Eckknoten (-1 bei Dreiecken), Xf (m, 4, 3) ihre Lage, n_aus
-    (m, 3) Einheitsnormale vom eigenen Element weg, tol (m,) Abstandsgrenze.
-    Eine Seite gehoert dazu, wenn sie eben ist und ihre Flaeche vollstaendig
-    von freien Seiten der Gegenseite bedeckt wird, die mit ihr einen Knoten
-    teilen, in ihrer Ebene liegen und in die Gegenrichtung zeigen. Geprueft an
-    fuenf Punkten (Schwerpunkt und je halbwegs zu den Ecken) - einer allein
-    genuegt nicht: der Schwerpunkt einer ebenen Seite liegt auch auf der
-    verwundenen Seite eines verdrehten Nachbarn (gemessen am Wuerfelpaar).
-    Gemeinsame Knoten sind Bedingung: doppelte Knoten (gleicher Ort, andere
-    Nummer) sind kein Riss ohne Weite, dort haengt nichts zusammen.
+
+def _randflaeche(F, Xf, S) -> float:
+    """Flaeche, die der Rand einer Gruppe von Seiten aufspannt.
+
+    Jede Seite laeuft so um, dass ihre Normale in Richtung S zeigt. Ihre
+    gerichteten Kanten werden gezaehlt (a -> b plus, b -> a minus); was sich
+    nicht aufhebt, ist der Rand. Er wird zu Schleifen verkettet, und je
+    Schleife zaehlt der Betrag ihres Flaechenvektors 1/2 sum p_i x p_i+1 -
+    einzeln, damit sich zwei gegenueberliegende Oeffnungen nicht aufheben.
     """
-    from . import mesher3d as M3
+    zahl: dict = {}
+    for i in range(len(F)):
+        r = [j for j in range(4) if F[i][j] >= 0]
+        P = Xf[i][r]
+        n_ring = 0.5 * sum(np.cross(P[j], P[(j + 1) % len(r)]) for j in range(len(r)))
+        kn = [int(F[i][j]) for j in r]
+        if float(n_ring @ S[i]) < 0.0:
+            kn, P = kn[::-1], P[::-1]
+        for j in range(len(kn)):
+            a, b = kn[j], kn[(j + 1) % len(kn)]
+            zahl[(a, b)] = zahl.get((a, b), 0) + 1
+            zahl[(b, a)] = zahl.get((b, a), 0) - 1
+    lage: dict = {}
+    for i in range(len(F)):
+        for j in range(4):
+            if F[i][j] >= 0:
+                lage[int(F[i][j])] = Xf[i][j]
+    weiter: dict = {}
+    for (a, b), k in zahl.items():
+        for _ in range(max(k, 0)):
+            weiter.setdefault(a, []).append(b)
+    flaeche = 0.0
+    while weiter:
+        start = next(iter(weiter))
+        schleife, a = [start], start
+        while True:
+            b = weiter[a].pop()
+            if not weiter[a]:
+                del weiter[a]
+            if b == start or b not in weiter:
+                break
+            schleife.append(b)
+            a = b
+        P = np.array([lage[k] for k in schleife])
+        flaeche += 0.5 * float(np.linalg.norm(np.cross(P, np.roll(P, -1, axis=0)).sum(axis=0)))
+    return flaeche
+
+
+def _flache_hohlraeume(F, Xf, S, h_max: float) -> tuple:
+    """Welche dieser Seiten im Inneren bilden Risse ohne Weite?
+    -> (Maske, Volumen dieser Hohlraeume zusammen).
+
+    F (m, 4) Eckknoten (-1 bei Dreiecken), Xf (m, 4, 3) ihre Lage, S (m, 3)
+    Flaechenvektor vom eigenen Element weg, h_max die groesste
+    Elementdiagonale im Koerper.
+
+    Die Seiten werden ueber gemeinsame Kanten zu Gruppen verbunden. Eine
+    Gruppe ist ein Riss ohne Weite, wenn sie geschlossen ist
+    (:data:`ABNAHME_RISS_UFER`, :func:`_randflaeche`) und hoechstens so viel
+    Volumen einschliesst, wie der freie Vernetzer je Seite aussortiert
+    (FLACH * h_max^3). Das Volumen folgt aus dem Gaussschen Satz,
+    sum 1/3 * (q - c) * S um den Schwerpunkt c der Gruppe.
+
+    Dazu gehoeren: ein Riss zwischen zwei verschieden in Dreiecke geteilten
+    Haelften einer ebenen Flaeche (Volumen 0), ein Riss mit Knoten nur auf
+    einer Seite (offen, Volumen 0 - am Modell test_nachbar_mit_verschiedener_
+    teilung 8 Seiten, 1e-19 m^3), die Luecke eines aussortierten flachen
+    Tetraeders (geschlossen, 4 Seiten). Nicht dazu: doppelte Knoten (je ein
+    Ufer), eine fehlende Zelle, ein verdrehtes Element.
+
+    Bis zum 23.09.2026 stand hier ein Ebenheitstest mit 1 % des
+    Seitendurchmessers. Die Luecken des Vernetzers sind aber 1,7 bis 11 %
+    dick (Platte mit Bohrung, 34 600 und 12 925 tet4; Keile am feinen Rand,
+    2701 tet4) und wurden als FEHLER „Seiten im Inneren" gemeldet.
+    """
+    from .mesher3d import FLACH
     m = len(F)
     riss = np.zeros(m, bool)
-    an_knoten: dict = {}
+    if not m:
+        return riss, 0.0
+    an_kante: dict = {}
     for i in range(m):
-        for kn in F[i]:
-            if kn >= 0:
-                an_knoten.setdefault(int(kn), []).append(i)
+        ecken = [int(k) for k in F[i] if k >= 0]
+        for a, b in zip(ecken, ecken[1:] + ecken[:1]):
+            an_kante.setdefault((min(a, b), max(a, b)), []).append(i)
+    wurzel = list(range(m))
+
+    def finde(i):
+        while wurzel[i] != i:
+            wurzel[i] = wurzel[wurzel[i]]
+            i = wurzel[i]
+        return i
+
+    for seiten in an_kante.values():
+        for j in seiten[1:]:
+            ra, rb = finde(seiten[0]), finde(j)
+            if ra != rb:
+                wurzel[rb] = ra
+    gruppen: dict = {}
     for i in range(m):
-        ecken = Xf[i][F[i] >= 0]
-        mitte = ecken.mean(axis=0)
-        if np.abs((ecken - mitte) @ n_aus[i]).max() > tol[i]:
-            continue                        # nicht eben
-        gegen = []
-        for j in {j for kn in F[i] if kn >= 0 for j in an_knoten[int(kn)] if j != i}:
-            ej = Xf[j][F[j] >= 0]
-            if n_aus[j] @ n_aus[i] >= 0.0 or np.abs((ej - mitte) @ n_aus[i]).max() > tol[i]:
-                continue                    # nicht gegenueber oder nicht in der Ebene
-            gegen.append(ej[[0, 1, 2]])
-            if len(ej) == 4:
-                gegen.append(ej[[0, 2, 3]])
-        if not gegen:
-            continue
-        proben = np.vstack([mitte[None], 0.5 * (ecken + mitte)])
-        d = np.full(len(proben), np.inf)
-        for a, b, c in gegen:
-            d = np.minimum(d, M3.punkt_dreieck_abstand(
-                proben, np.broadcast_to(a, proben.shape), np.broadcast_to(b, proben.shape),
-                np.broadcast_to(c, proben.shape)))
-        riss[i] = bool((d <= tol[i]).all())
-    return riss
+        gruppen.setdefault(finde(i), []).append(i)
+    maske = (F >= 0)[:, :, None]
+    q = (Xf * maske).sum(axis=1) / maske.sum(axis=1)
+    A = np.linalg.norm(S, axis=1)
+    V_zus = 0.0
+    for idx in gruppen.values():
+        idx = np.asarray(idx)
+        if _randflaeche(F[idx], Xf[idx], S[idx]) > ABNAHME_RISS_UFER * A[idx].sum():
+            continue                        # offen: doppelte Knoten, Luecke, verdreht
+        c = q[idx].mean(axis=0)
+        V_g = abs(float(np.einsum("ij,ij->", q[idx] - c, S[idx]))) / 3.0
+        if V_g <= len(idx) * FLACH * h_max ** 3:
+            riss[idx] = True
+            V_zus += V_g
+    return riss, V_zus
 
 
 def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
@@ -1110,19 +1369,36 @@ def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
        das Randvolumen der freien Elementseiten: in bilinearer Darstellung
        ist das mit der Jacobi-Summe identisch (gemessen 1,6667 = 1,6667 am
        verdrehten Wuerfelpaar), und gefaechert haengt es an der Diagonale
-       (1,3333 oder 2,0000) - beides sagt nichts.
+       (1,3333 oder 2,0000) - beides sagt nichts. Zugelassen wird zu den
+       0,5 % das Volumen, das der Netzrand durch seinen gemessenen Abstand zu
+       windschiefen Randflaechen erklaert (Seitenflaeche mal groesster
+       Abstand): auf einer windschiefen Flaeche liegt ein Tetraedernetz auf
+       Sehnen. Am frei vernetzten Wuerfel mit um 1 m angehobener Deckelecke
+       (h = 0,5) waren das 0,782 % mehr Volumen, bei richtigem Netz.
     2. **Freie Seiten neben der Huelle**: freie Elementseiten, deren
        Schwerpunkt auf keiner Randflaeche liegt. Wo Nachbarn nicht
        zusammenpassen, wird eine Seite frei, die im Inneren liegt - das
        findet auch **ein** verdrehtes Element unter tausenden, bei dem die
-       Bilanz nur um ein Drittel seines Volumens verschoebe. Geht der Koerper
-       hinter der Seite weiter, ist es ein FEHLER („Seiten im Inneren") -
-       ausser die Gegenseite liegt mit denselben Knoten eben an und ist nur
-       anders in Dreiecke geteilt: dann ist es ein Riss ohne Weite und eine
-       WARNUNG („Riss im Netz", :func:`_risse_ohne_weite`). Steht die Seite
-       ueber die Huelle hinaus, ist es ebenfalls eine WARNUNG („Netzrand
-       neben der Hülle") - so schneidet der freie Vernetzer bisweilen eine
-       einspringende Ecke ab.
+       Bilanz nur um ein Drittel seines Volumens verschoebe. An einer
+       windschiefen Randflaeche gilt eine Seite als darauf, solange sie nicht
+       weiter daneben liegt als eine Sehne der groessten Seite auf dieser
+       Flaeche (:func:`_sehnengrenze`). Geht der Koerper knapp hinter der Seite weiter
+       (Windungszahl der feinen Huelle, 1 % des Seitendurchmessers dahinter),
+       ist es ein FEHLER („Seiten im Inneren") - ausser die Seiten bilden
+       zusammen einen Riss ohne Weite: WARNUNG („Riss im Netz",
+       :func:`_flache_hohlraeume`). Sonst weicht nur der Netzrand von der
+       Randflaeche ab (eine abgeschnittene Ecke, eine Beule): WARNUNG
+       („Netzrand neben der Hülle").
+
+       Bis zum 23.09.2026 meldete das richtige freie Netze als FEHLER
+       (Gegenpruefung): am Wuerfel mit angehobener Deckelecke 2 bis 53
+       Aussenseiten auf Sehnen, an der Platte mit Bohrung und an den Keilen
+       am feinen Rand die Luecken aussortierter flacher Tetraeder. Drei
+       Ursachen: die Windungszahl rechnete gegen den groben Faecher der
+       windschiefen Flaeche, der bis |d| / 16 danebenliegt (31,25 mm am
+       Wuerfel mit dz = 0,5, die Seiten nur -0,87 bis 5,21 mm); an
+       windschiefen Flaechen galt dieselbe 1-%-Grenze wie an ebenen; und der
+       Risstest verlangte Ebenheit auf 1 %, die Luecken sind 1,7 bis 11 % dick.
 
     Geprueft wird nur, wo die Huelle ohne Naeherung feststeht (gerade Kanten,
     siehe :func:`_polyederhuelle`); fuer Koerper mit krummen Randlinien sagt
@@ -1141,25 +1417,32 @@ def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
     aus = []
     V_netz, V_h = float(V_el.sum()), huelle["V"]
     abw = abs(V_netz - V_h) / V_h
-    if abw > ABNAHME_VOLUMENBILANZ:
-        aus.append(Befund(
-            pruefung="Volumenbilanz", objekt=str(name), wert=float(abw),
-            grenze=ABNAHME_VOLUMENBILANZ,
-            text=f"Volumen {name}: die Elemente haben zusammen {dezimal(V_netz * 1e6)} cm³, "
-                 f"die Randflächen schließen {dezimal(V_h * 1e6)} cm³ ein (Abweichung "
-                 f"{dezimal(abw * 100)} %, Grenze {dezimal(ABNAHME_VOLUMENBILANZ * 100, 1)} %) "
-                 "- gerechnet würde ein anderer Körper als der gezeichnete. Ursache ist "
-                 "ein verdrehtes Element (Deckel um eine Ecke versetzt) oder ein Netz, "
-                 "das den Körper nicht füllt. Den Körper neu vernetzen (Netz → Vernetzen)."))
     F, E = _freie_seiten_ecken(model, els, gruppen)
-    if not len(F):
-        return aus
+    m = len(F)
     maske = (F >= 0)[:, :, None]
     Xf = model.nodes[np.maximum(F, 0)]                         # (m, 4, 3)
-    q = (Xf * maske).sum(axis=1) / maske.sum(axis=1)
+    q = (Xf * maske).sum(axis=1) / np.maximum(maske.sum(axis=1), 1)
     Xb = np.where(maske, Xf, Xf[:, :1])
-    tol = ABNAHME_HUELLABSTAND * np.linalg.norm(Xb.max(axis=1) - Xb.min(axis=1), axis=1)
-    auf = np.zeros(len(F), bool)
+    D_f = np.linalg.norm(Xb.max(axis=1) - Xb.min(axis=1), axis=1)     # Seitendurchmesser
+    tol = ABNAHME_HUELLABSTAND * D_f
+    viereck = F[:, 3] >= 0
+    # Flaechenvektor (Dreieck: (b-a) x (c-a) / 2, Viereck: Diagonalen)
+    S = 0.5 * np.cross(Xf[:, 1] - Xf[:, 0], Xf[:, 2] - Xf[:, 0])
+    S[viereck] = 0.5 * np.cross(Xf[viereck, 2] - Xf[viereck, 0],
+                                Xf[viereck, 3] - Xf[viereck, 1])
+    A = np.linalg.norm(S, axis=1)
+
+    def stich(idx):
+        """Stichpunkte je Seite fuer den groessten Abstand zur Flaeche: Ecken,
+        Kantenmitten und Schwerpunkt (dort liegt die Sehnenabweichung)."""
+        Xi = Xb[idx]
+        Xn = np.roll(Xi, -1, axis=1)
+        Xn[~viereck[idx], 2] = Xi[~viereck[idx], 0]
+        return np.concatenate([Xi, 0.5 * (Xi + Xn), q[idx, None]], axis=1).reshape(-1, 3)
+
+    auf = np.zeros(m, bool)
+    abstand = np.zeros(m)                  # groesster Abstand zur Randflaeche
+    schief_nr = np.full(m, -1)             # auf welcher windschiefen Flaeche
     for c0, e1, e2, n0, ringe2 in huelle["ebenen"]:
         rest = np.nonzero(~auf)[0]
         if not len(rest):
@@ -1170,43 +1453,150 @@ def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
         d = q[nah] - c0
         drin = M3._in_polygon_2d(np.stack([d @ e1, d @ e2], axis=1), ringe2)
         auf[nah[drin]] = True
-    for Pb, Tb in huelle["bilinear"]:
+    if huelle["bilinear"]:
+        # Groesse des eigenen Elements (Diagonale seiner Huellbox) je Seite -
+        # sie bestimmt, wie weit ein Netz auf Sehnen neben der Flaeche liegt
+        stelle = np.full(len(model.elements), -1)
+        stelle[np.asarray(els, int)] = np.arange(len(els))
+        D_el = np.zeros(len(els))
+        for _typ, (pos, K) in gruppen.items():
+            X = model.nodes[K]
+            D_el[pos] = np.linalg.norm(X.max(axis=1) - X.min(axis=1), axis=1)
+        D_e = D_el[stelle[E]]
+    for nr, X4 in enumerate(huelle["bilinear"]):
         rest = np.nonzero(~auf)[0]
         if not len(rest):
             break
-        qr = q[rest]
-        dmin = np.full(len(rest), np.inf)
-        for a, b, c in Tb:
-            dmin = np.minimum(dmin, M3.punkt_dreieck_abstand(
-                qr, np.broadcast_to(Pb[a], qr.shape), np.broadcast_to(Pb[b], qr.shape),
-                np.broadcast_to(Pb[c], qr.shape)))
-        auf[rest[dmin <= tol[rest]]] = True
+        # Wie weit darf eine Seite neben der windschiefen Flaeche liegen?
+        # Ein Tetraedernetz liegt dort auf Sehnen, und der freie Vernetzer
+        # setzt Knoten auf Sehnen seines groben Dreiecksnetzes (huelle_verfeinern
+        # halbiert Huelldreiecke an der laengsten Kante, der neue Punkt liegt
+        # auf dem groben Dreieck): gemessen bis 7,55 mm am Wuerfel mit um 0,5 m
+        # angehobener Deckelecke (h = 0,25), so viel weicht die Mitte einer
+        # Zellendiagonale ab, dz * h^2 / 4 = 7,81 mm. Allgemein weicht eine
+        # Sehne ueber die Parameterweiten du, dv um hoechstens |d| du dv / 4
+        # ab (d = x0 - x1 + x2 - x3), und du, dv <= D / sigma_min mit sigma_min,
+        # der kleinsten Dehnung der Flaeche (:func:`_sehnengrenze`). Fuer D
+        # taugt die einzelne Seite nicht: die Knoten liegen auf Sehnen des
+        # **groben** Netzes der Flaeche. Am Wuerfel lagen Ecken 7,55 mm daneben
+        # an Seiten, deren Element nur 0,163 m Diagonale hat - die Grenze aus
+        # der eigenen Diagonale waere 4,8 mm gewesen (18 von 90 Seiten
+        # darueber, bei dz = 1,0 30 von 202). D ist darum der groesste
+        # Seitendurchmesser auf dieser Flaeche; welche Seiten darauf liegen,
+        # sagt ein erster Durchgang ueber den Schwerpunkt mit der Diagonale
+        # des eigenen Elements. Gemessen am Wuerfel (dz 0,3 / 0,5 / 1,0 / 1,0
+        # bei h 0,25 / 0,25 / 0,25 / 0,5): Ecken bis 4,65 / 7,55 / 6,55 /
+        # 27,0 mm gegen die Grenze 9,6 / 16,1 / 26,2 / 132,7 mm. Die
+        # Elementdiagonale selbst waere zu grosszuegig: am abgebildeten
+        # 4 x 4 x 4-Netz (dz = 0,5) 51,9 mm statt 21,6 mm, weil die Elemente
+        # am angehobenen Eck hoch sind. Eine Luecke, ein verdrehtes Element
+        # liegt um Elementgroesse daneben, das ist 4 sigma^2 / (|d| D) mal mehr
+        # als diese Grenze. Kleinere Abweichungen des Netzrands meldet die
+        # Abnahme an windschiefen Flaechen nicht.
+        s_b = _sehnengrenze(X4)
+        # Nur Seiten in der Huellbox der Flaeche - die uebrigen liegen weiter
+        # als jede Grenze davon weg
+        weit = tol[rest] + s_b * float(D_e[rest].max()) ** 2
+        lo, hi = X4.min(axis=0), X4.max(axis=0)
+        drin = ((q[rest] >= lo - weit[:, None]) & (q[rest] <= hi + weit[:, None])).all(1)
+        rest = rest[drin]
+        if not len(rest):
+            continue
+        d_q = _bilinear_abstand(q[rest], X4)
+        erst = d_q <= tol[rest] + s_b * D_e[rest] ** 2
+        if not erst.any():
+            continue
+        H = float(D_f[rest[erst]].max())
+        grenze_b = tol[rest] + s_b * H * H
+        rest, grenze_b = rest[d_q <= grenze_b], grenze_b[d_q <= grenze_b]
+        # Die Grenze gilt fuer jeden Punkt des Netzrands, also auch fuer die
+        # Ecken. Nur am Schwerpunkt gemessen, verschwand eine Beule: ein
+        # Deckelknoten des abgebildeten 4 x 4 x 4-Netzes 50 mm aus dem
+        # windschiefen Deckel (dz = 0,5) verschiebt die Schwerpunkte seiner
+        # vier Seiten nur um 12,5 mm, die Grenze dort ist 21,6 mm.
+        kn = F[rest]
+        gueltig = kn >= 0
+        uniq, inv = np.unique(kn[gueltig], return_inverse=True)
+        d_ecke = np.zeros(kn.shape)
+        d_ecke[gueltig] = _bilinear_abstand(model.nodes[uniq], X4)[inv]
+        nah = rest[d_ecke.max(axis=1) <= grenze_b]
+        auf[nah] = True
+        schief_nr[nah] = nr
     neben = np.nonzero(~auf)[0]
+    innen = np.zeros(m, bool)
+    riss = np.zeros(m, bool)
+    V_riss = 0.0
+    if len(neben):
+        # Auf welcher Seite geht der Koerper weiter? Die Aussenrichtung wird
+        # am Element gemessen (weg von seinem Schwerpunkt, wie
+        # Model._seitennormale) - die Tupel in FLAECHEN sind gemischt
+        # orientiert (Nachtrag C).
+        Xs = Xf[neben]
+        a, b, c = Xs[:, 0], Xs[:, 1], Xs[:, 2]
+        nvec = np.cross(b - a, c - a)
+        vn = viereck[neben]
+        nvec[vn] = np.cross(c[vn] - a[vn], Xs[vn, 3] - b[vn])
+        ce = np.array([model.nodes[[int(x) for x in model.elements[int(e)].nodes]].mean(axis=0)
+                       for e in E[neben]])
+        vor = np.where(np.einsum("ij,ij->i", nvec, q[neben] - ce) < 0.0, -1.0, 1.0)
+        nvec *= vor[:, None]
+        S[neben] *= vor[:, None]
+        nvec /= np.maximum(np.linalg.norm(nvec, axis=1), 1e-300)[:, None]
+        # Ein Punkt knapp hinter der Seite, auf der dem eigenen Element
+        # abgewandten Seite, und die Windungszahl der **feinen** Huelle dort
+        # (der grobe Faecher einer windschiefen Flaeche liegt bis |d| / 16
+        # daneben, siehe _bilinear_gitter)
+        probe = q[neben] + tol[neben][:, None] * nvec
+        drin = M3.windungszahl(probe, huelle["PW"], huelle["TW"]) > 0.5
+        innen[neben[drin]] = True
+        # Im Inneren: umschliessen die Seiten einen Hohlraum ohne nennenswertes
+        # Volumen, ist es ein Riss ohne Weite (so bleiben flache Tetraeder
+        # zurueck, die der freie Vernetzer aussortiert), sonst fehlt ein
+        # Nachbar: verdrehtes Element, Luecke, doppelte Knoten.
+        ii = neben[drin]
+        if len(ii):
+            h_max = 0.0
+            for _typ, (pos, K) in gruppen.items():
+                X = model.nodes[K]
+                h_max = max(h_max, float(np.linalg.norm(X.max(axis=1) - X.min(axis=1),
+                                                        axis=1).max()))
+            r, V_riss = _flache_hohlraeume(F[ii], Xf[ii], S[ii], h_max)
+            riss[ii[r]] = True
+        rand = neben[~drin]
+        if len(rand):
+            d_r, schief_r = _huelle_abstand(stich(rand), huelle)
+            abstand[rand] = d_r.reshape(len(rand), -1).max(1)
+            schief_nr[rand[schief_r.reshape(len(rand), -1).any(1)]] = len(huelle["bilinear"])
+    # Volumen, das der Netzrand an windschiefen Flaechen erklaert: hoechstens
+    # Seitenflaeche mal groesster Abstand (eine obere Schranke). Gebraucht nur,
+    # wenn die Bilanz ueber 0,5 % liegt - an 216 000 hex8 mit sechs
+    # windschiefen Flaechen kosteten die neun Stichpunkte je Seite sonst bei
+    # jeder Abnahme den groessten Teil der Zeit.
+    V_sehne = 0.0
+    if abw > ABNAHME_VOLUMENBILANZ:
+        for nr, X4 in enumerate(huelle["bilinear"]):
+            idx = np.nonzero((schief_nr == nr) & ~innen)[0]
+            if len(idx):
+                abstand[idx] = _bilinear_abstand(stich(idx), X4).reshape(len(idx), -1).max(1)
+        idx = np.nonzero((schief_nr >= 0) & ~innen)[0]
+        V_sehne = float((A[idx] * abstand[idx]).sum())
+    grenze = ABNAHME_VOLUMENBILANZ + V_sehne / V_h
+    if abw > grenze:
+        sehnen_text = ("" if V_sehne <= 0.0 else
+                       f"; davon zugelassen {dezimal(V_sehne * 1e6)} cm³, die der Netzrand "
+                       "auf den windschiefen Randflächen erklären kann")
+        aus.append(Befund(
+            pruefung="Volumenbilanz", objekt=str(name), wert=float(abw),
+            grenze=float(grenze),
+            text=f"Volumen {name}: die Elemente haben zusammen {dezimal(V_netz * 1e6)} cm³, "
+                 f"die Randflächen schließen {dezimal(V_h * 1e6)} cm³ ein (Abweichung "
+                 f"{dezimal(abw * 100)} %, Grenze "
+                 f"{dezimal(grenze * 100, None if V_sehne > 0.0 else 1)} %{sehnen_text}) "
+                 "- gerechnet würde ein anderer Körper als der gezeichnete. Ursache ist "
+                 "ein verdrehtes Element (Deckel um eine Ecke versetzt) oder ein Netz, "
+                 "das den Körper nicht füllt. Den Körper neu vernetzen (Netz → Vernetzen)."))
     if not len(neben):
         return aus
-    # Auf welcher Seite geht der Koerper weiter? Ein Punkt knapp vor der Seite,
-    # auf der dem eigenen Element abgewandten Seite, und die Windungszahl der
-    # Huelle dort. Die Aussenrichtung wird am Element gemessen (weg von seinem
-    # Schwerpunkt, wie Model._seitennormale) - die Tupel in FLAECHEN sind
-    # gemischt orientiert (Nachtrag C).
-    #   innen:  der Koerper geht dort weiter, aber kein Element nimmt die Seite
-    #           auf - Nachbarn passen nicht zusammen (verdrehtes Element,
-    #           doppelte Knoten, Riss). Ueber diese Seite geht keine Kraft.
-    #   aussen: der Netzrand steht ueber die Randflaeche hinaus. Am frei
-    #           vernetzten Prisma mit eckigem Loch (Vernetzer, 22.09.2026)
-    #           schnitten drei Seiten eine einspringende Ecke des Lochs ab,
-    #           das Netz hatte 0,012 % mehr Volumen als die Huelle.
-    Xn = Xf[neben]
-    a, b, c = Xn[:, 0], Xn[:, 1], Xn[:, 2]
-    viereck = F[neben, 3] >= 0
-    nvec = np.cross(b - a, c - a)
-    nvec[viereck] = np.cross(c[viereck] - a[viereck], Xn[viereck, 3] - b[viereck])
-    ce = np.array([model.nodes[[int(x) for x in model.elements[int(e)].nodes]].mean(axis=0)
-                   for e in E[neben]])
-    nvec *= np.where(np.einsum("ij,ij->i", nvec, q[neben] - ce) < 0.0, -1.0, 1.0)[:, None]
-    nvec /= np.maximum(np.linalg.norm(nvec, axis=1), 1e-300)[:, None]
-    probe = q[neben] + tol[neben][:, None] * nvec
-    im_koerper = M3.windungszahl(probe, huelle["P"], huelle["T"]) > 0.5
 
     def beispiele(idx):
         el, zahl = np.unique(E[idx], return_counts=True)
@@ -1215,24 +1605,16 @@ def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
                          f"Seite{'n' if zahl[j] > 1 else ''}" for j in reihe[:3])
         return int(el[reihe[0]]), text + (" …" if len(reihe) > 3 else "")
 
-    # Im Inneren zwei Faelle: liegt auf der anderen Seite eine ebene freie
-    # Seite desselben Netzes mit denselben Knoten, nur anders in Dreiecke
-    # geteilt, ist es ein **Riss ohne Weite** - der Koerper stimmt, nur die
-    # Teilung der Flaeche nicht (so bleiben zwei Vierecke zurueck, wenn der
-    # freie Vernetzer flache Tetraeder aussortiert: gemessen an der Pyramide
-    # des Sweep-Pruefkoerpers, 8 Seiten, Volumen auf 3e-16 genau). Sonst liegt
-    # nichts an: verdrehtes Element, Luecke, doppelte Knoten.
-    innen_idx = neben[im_koerper]
-    riss = _risse_ohne_weite(F[innen_idx], Xf[innen_idx], nvec[im_koerper],
-                             tol[innen_idx])
-    echt_idx, riss_idx = innen_idx[~riss], innen_idx[riss]
+    echt_idx = np.nonzero(innen & ~riss)[0]
+    riss_idx = np.nonzero(riss)[0]
+    rand_idx = np.nonzero(~auf & ~innen)[0]
     if len(echt_idx):
         schlimm, bsp = beispiele(echt_idx)
         aus.append(Befund(
             pruefung="Seiten im Inneren", objekt=str(name), element=schlimm,
             knoten=[int(x) for x in model.elements[schlimm].nodes],
             wert=float(len(echt_idx)), grenze=0.0,
-            text=f"Volumen {name}: {len(echt_idx)} von {len(F)} freien Elementseiten "
+            text=f"Volumen {name}: {len(echt_idx)} von {m} freien Elementseiten "
                  f"liegen im Inneren des Körpers statt auf einer Randfläche (z. B. {bsp}) "
                  "- der Körper geht dort weiter, aber kein Nachbarelement schließt an. "
                  "Über diese Seiten gehen keine Kräfte. Ursache ist ein verdrehtes "
@@ -1244,21 +1626,23 @@ def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
             pruefung="Riss im Netz", objekt=str(name), element=schlimm,
             knoten=[int(x) for x in model.elements[schlimm].nodes],
             wert=float(len(riss_idx)), grenze=0.0, stufe="WARNUNG",
-            text=f"Volumen {name}: {len(riss_idx)} freie Elementseiten im Inneren bilden "
-                 f"Risse ohne Weite (z. B. {bsp}) - beiderseits einer ebenen Fläche "
-                 "liegen dieselben Knoten, aber verschieden in Dreiecke geteilt. Der "
-                 "Körper stimmt, die Verschiebungen passen dort aber nur an Knoten und "
-                 "Kanten zusammen. Wo es auf diese Stelle ankommt, neu vernetzen."))
-    aussen_idx = neben[~im_koerper]
-    if len(aussen_idx):
-        schlimm, bsp = beispiele(aussen_idx)
+            text=f"Volumen {name}: {len(riss_idx)} freie Elementseiten im Inneren "
+                 f"umschließen Hohlräume ohne nennenswertes Volumen (zusammen "
+                 f"{dezimal(V_riss * 1e9)} mm³; z. B. {bsp}) - Risse ohne Weite, wie sie "
+                 "bleiben, wenn der Vernetzer flache Tetraeder aussortiert oder beiderseits "
+                 "einer Fläche verschieden in Dreiecke teilt. Der Körper stimmt, die "
+                 "Verschiebungen passen dort aber nur an Knoten und Kanten zusammen. Wo es "
+                 "auf diese Stelle ankommt, neu vernetzen."))
+    if len(rand_idx):
+        schlimm, bsp = beispiele(rand_idx)
         aus.append(Befund(
             pruefung="Netzrand neben der Hülle", objekt=str(name), element=schlimm,
             knoten=[int(x) for x in model.elements[schlimm].nodes],
-            wert=float(len(aussen_idx)), grenze=0.0, stufe="WARNUNG",
-            text=f"Volumen {name}: {len(aussen_idx)} von {len(F)} freien Elementseiten "
-                 f"stehen über die Randflächen hinaus (z. B. {bsp}) - der Netzrand "
-                 "schneidet dort eine Ecke ab oder wölbt sich nach außen; das Netz hat "
+            wert=float(len(rand_idx)), grenze=0.0, stufe="WARNUNG",
+            text=f"Volumen {name}: {len(rand_idx)} von {m} freien Elementseiten liegen "
+                 f"neben den Randflächen, bis {dezimal(float(abstand[rand_idx].max()) * 1e3)} mm "
+                 f"(z. B. {bsp}) - der Netzrand schneidet dort eine Ecke ab, wölbt sich "
+                 "oder liegt auf Sehnen einer windschiefen Fläche; das Netz hat "
                  f"{dezimal(abw * 100)} % {'mehr' if V_netz >= V_h else 'weniger'} "
                  "Volumen als die Randflächen einschließen. Wo es auf diese Stelle "
                  "ankommt, dort feiner oder neu vernetzen."))
