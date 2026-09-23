@@ -10874,8 +10874,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     "Anschlüsse")
 
         # Verformungsnachweise (GZG): Grenzwert und Ergebnis in einer Tabelle.
-        # Die Spalten stehen in gzg_spalten() neben refresh_verformungen, das
-        # sie fuellt - beide muessen zusammenpassen.
+        # Spalten und Zeilen stehen in gui/gzg_tabelle.py nebeneinander
+        # (gzg_spalten und refresh_verformungen rufen sie) - beide muessen
+        # zusammenpassen.
         self.tbl_gzg = tab.Datentabelle(self.gzg_spalten(),
                                         "Verformungen", self, mit_kennwerten=True)
         self.tbl_gzg.zeile_gewaehlt.connect(self._tabelle_verformung)
@@ -13110,52 +13111,20 @@ class MainWindow(QtWidgets.QMainWindow):
     def gzg_spalten() -> list:
         """Spalten der Tabelle „Verformungen“ (Verformungsnachweise, GZG).
 
-        Ohne Fenster abrufbar, damit tests/test_gzg.py Kopf, Einheit und
-        Einheitenumstellung dieser Spalten zusammen mit den Zeilen aus
-        refresh_verformungen pruefen kann (Befund FM8 vom 22.09.2026: die
-        Oberflaechenpruefung hielt nur die Gegenrichtung).
+        Sie stehen in gui/gzg_tabelle.py neben dem Zeilenbau, damit
+        tests/test_gzg.py beides ohne gui.main pruefen kann (Befund FM8 vom
+        22.09.2026, Befund B147 vom 23.09.2026).
         """
-        return [
-            Spalte("Nachweis"), Spalte("Bezug"), Spalte("Größe"),
-            Spalte("Situation"),
-            # Zwei Zahlenspalten statt einer: eine Verdrehung steht in mrad
-            # und hat unter einem Kopf "mm" nichts zu suchen. Wer den Wert
-            # gegen eine mm-Grenze haelt (Dichtung, Fuehrung, Anschlag nach
-            # DIN 19704), vergleicht sonst Winkel mit Weg - und bei der
-            # Einheitenwahl "cm" wurde die Zahl zusaetzlich mit 0,1
-            # malgenommen (12,97 -> 1,30) und als cm beschriftet. "mrad" steht
-            # nicht in einheiten.GRUND, die Verdrehung wird von der
-            # Einheitenwahl also nicht mehr angefasst.
-            Spalte("Wert", "mm", "zahl", 2,
-                   hinweis="größte Verschiebung über alle GZG-Kombinationen"),
-            Spalte("Verdrehung", "mrad", "zahl", 2,
-                   hinweis="größte Verdrehung über alle GZG-Kombinationen "
-                           "(φx, φy, φz)"),
-            Spalte("Grenzwert"),
-            Spalte("Ausnutzung", "", "zahl", 3, hinweis="Filter z. B. > 1"),
-            Spalte("Kombination"), Spalte("Stelle"), Spalte("Status")]
+        from . import gzg_tabelle
+        return gzg_tabelle.spalten()
 
     def refresh_verformungen(self):
-        """Die Tabelle der Verformungsnachweise aufbauen."""
+        """Die Tabelle der Verformungsnachweise aufbauen (Zeilen aus
+        gui/gzg_tabelle.py, ohne Fenster geprueft in tests/test_gzg.py)."""
         if not hasattr(self, "tbl_gzg"):
             return
-        from ..gzg import SITUATIONEN
-        erg = getattr(self.analysis, "gzg", None) if self.analysis is not None else None
-        zeilen = []
-        for name, g in self.model.verformungsgrenzen.items():
-            c = erg.checks.get(name) if erg is not None else None
-            zeilen.append([name, g.bezug(), g.groesse,
-                           SITUATIONEN.get(g.situation, g.situation or "alle GZG"),
-                           ("" if c is None or c.fehler or c.winkel
-                            else c.wert * 1e3),
-                           (c.wert * 1e3 if c is not None and not c.fehler
-                            and c.winkel else ""),
-                           (c.grenztext if c is not None else g.grenztext()),
-                           (c.util if c is not None else ""),
-                           (c.kombination if c is not None else ""),
-                           (c.stelle if c is not None else ""),
-                           (c.status() if c is not None else "nicht gerechnet")])
-        self._fill(self.tbl_gzg, zeilen)
+        from . import gzg_tabelle
+        self._fill(self.tbl_gzg, gzg_tabelle.zeilen(self.model, self.analysis))
 
     def _tabelle_anschluss(self, wert):
         """Zeile eines Anschlusses angeklickt: seinen Stab in der Ansicht wählen."""
