@@ -377,8 +377,9 @@ def test_stab_ohne_streckgrenze_nicht_gefuehrt():
     geführt" - aber DesignResults.summary() zaehlte weiter nur util > 1 und
     schrieb "... max. Ausnutzung 0.633 ... - alle erfuellt" (gemessen
     22.09.2026). Genau diese Zeile steht in der Oberflaeche nach "Nachweise
-    EC3", im Etikett der Maske Nachweise (Gruppe "Nachweise führen") und in
-    Analysis.summary().
+    EC3", im Etikett der Maske Nachweise (Gruppe "Nachweise führen"), im
+    Textfeld der Maske Ergebnisse und in Analysis.summary() - alle Stellen
+    im Kommentar von DesignResults.summary().
     Geprueft wird am echten Weg solve_all(design=True).
     """
     m = _traeger_und_stab_ohne_fy()
@@ -412,6 +413,55 @@ def test_stab_ohne_streckgrenze_nicht_gefuehrt():
     d2 = check_members(m, an, members=["Traeger"], use_jobs=False)
     check("Gegenprobe nur Traeger: summary() 'alle erfuellt'",
           float(d2.summary().endswith(" - alle erfuellt")), 1.0, 0)
+
+
+def _svg_mit_titel(html: str, titel: str) -> str:
+    """Das eingebettete SVG-Bild mit diesem <title> - leer, wenn es fehlt."""
+    i = html.find(f"<title>{titel}</title>")
+    if i < 0:
+        return ""
+    return html[html.rfind("<svg", 0, i):html.find("</svg>", i) + len("</svg>")]
+
+
+def test_nicht_gefuehrt_ohne_ausnutzung_in_bildern():
+    """Ein nicht gefuehrter Stab hat keine Ausnutzung - auch nicht in der
+    Faerbung "Ausnutzung EC3" und im Balkendiagramm des Berichts.
+
+    Bis zum 23.09.2026 gab util_by_element den Elementen eines Stabes ohne
+    f_y seine Ausnutzung 0,0 mit: in der Oberflaeche und im Bericht wurden
+    sie gruen (#2e8b57, Klasse < 0,50) und sahen aus wie unbeansprucht, und
+    das Balkendiagramm "Ausnutzung je Stab" zeigte fuer "Ohne_fy" einen
+    gruenen Balken mit "0.000" (Befund B054, gemessen am selben Modell).
+    """
+    from statik3d.report import Report
+    from statik3d.report import svg as sv
+    m = _traeger_und_stab_ohne_fy()
+    an = solver.solve_all(m, design=True)
+    d = an.design
+    ube = d.util_by_element()
+    ohne = list(m.members["Ohne_fy"].elements)
+    traeger = list(m.members["Traeger"].elements)
+    ut = d.members["Traeger"].util
+    check("util_by_element: kein Wert fuer die Elemente des nicht gefuehrten Stabs",
+          float(sum(1 for e in ohne if e in ube)), 0.0, 0)
+    check("util_by_element: der Traeger behaelt seine Ausnutzung",
+          float(all(e in ube and ube[e] == ut for e in traeger) and ut > 0.5), 1.0, 0)
+    html = Report(m, an).html()
+    balken = _svg_mit_titel(html, "Ausnutzung je Stab")
+    check("Balkendiagramm: kein Balken fuer den nicht gefuehrten Stab",
+          float(bool(balken) and ">Ohne_fy<" not in balken), 1.0, 0)
+    check("Balkendiagramm: der Traeger mit seinem Wert",
+          float(">Traeger<" in balken and f">{ut:.3f}<" in balken), 1.0, 0)
+    bild = _svg_mit_titel(html, "Ausnutzung der Stäbe")
+    gruen = bild.count(f'stroke="{sv.util_colour(0.0)}"')
+    stabfarbe = bild.count(f'stroke="{sv.COL_BEAM}"')
+    print(f"     Bild 'Ausnutzung der Stäbe': {gruen} Linien gruen, {stabfarbe} in Stabfarbe")
+    check("Bericht, Faerbung: keine Linie in der Farbe der Ausnutzung 0",
+          float(gruen), 0.0, 0)
+    check("Bericht, Faerbung: die sechs Elemente von Ohne_fy in Stabfarbe",
+          float(stabfarbe), float(len(ohne)), 0)
+    check("beide Bildunterschriften nennen den nicht gefuehrten Stab",
+          float(html.count("weil nicht geführt: Ohne_fy")), 2.0, 0)
 
 
 def test_frame_parallel_design():
@@ -507,6 +557,7 @@ def main():
     test_schadensakkumulation()
     test_design_driver()
     test_stab_ohne_streckgrenze_nicht_gefuehrt()
+    test_nicht_gefuehrt_ohne_ausnutzung_in_bildern()
     test_frame_parallel_design()
     test_nachweisauftrag_traegt_kein_modell()
     nok = sum(1 for r in RESULTS if r[4])

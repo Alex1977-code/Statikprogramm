@@ -2672,6 +2672,15 @@ class Report:
               ("Nachweisstellen je Element", str(ds.stations)),
               ("Kombinationen (GZT)", ", ".join(d.combinations[:40])
                + (" …" if len(d.combinations) > 40 else ""))]
+        # Dasselbe Ergebnis unter mehreren Namen ist nur einmal nachgewiesen
+        # (ec3.design._gleiche_zusammenfassen); ab fuenf Namen kuerzt der
+        # Eintrag, hier stehen alle. getattr: aeltere Ergebnisdateien.
+        gleiche = getattr(d, "gleiche", None) or {}
+        if gleiche:
+            gl = list(gleiche.values())
+            kv.append(("Gleiche Ergebnisse, einmal nachgewiesen",
+                       "; ".join(" = ".join(v) for v in gl[:40])
+                       + (" …" if len(gl) > 40 else "")))
         b.append(("kv", kv, "Einstellungen der Nachweise"))
         # Uebersicht
         b.append(self._h(2, "Übersicht"))
@@ -2688,12 +2697,21 @@ class Report:
                                  "GZT-Kombinationen)", None, ""))
         if note:
             b.append(("note", note))
-        if self.opt("figures"):
-            labels = [mc.member for mc in list(d.members.values())[:60]]
-            vals = [mc.util for mc in list(d.members.values())[:60]]
+        # Ein nicht gefuehrter Stab (mc.fehler) hat keine Ausnutzung: kein
+        # Balken und keine Farbe. Bis zum 23.09.2026 stand er hier mit 0,000
+        # als gruener Balken und gruen im Bild - wie unbeansprucht (B054).
+        gefuehrt = [mc for mc in d.members.values() if not mc.fehler]
+        ohne = [mc.member for mc in d.members.values() if mc.fehler]
+        ohne_text = (", ".join(ohne[:10]) + (f" und {len(ohne) - 10} weitere"
+                                               if len(ohne) > 10 else "")) if ohne else ""
+        if self.opt("figures") and gefuehrt:
+            labels = [mc.member for mc in gefuehrt[:60]]
+            vals = [mc.util for mc in gefuehrt[:60]]
             b.append(self._figure(sv.draw_bar_chart(labels, vals, 620, None, 1.0,
                                                     "Ausnutzung je Stab"),
-                                  "Ausnutzungsgrade der Stäbe (Grenze 1.0)"))
+                                  "Ausnutzungsgrade der Stäbe (Grenze 1.0)"
+                                  + (f"; ohne Balken, weil nicht geführt: {ohne_text}"
+                                     if ohne else "")))
             if m.nn:
                 views = self._views()
                 view = views[0] if len(views) == 1 else "iso"
@@ -2701,7 +2719,9 @@ class Report:
                                              self.opt("figure_height"), util=d.util_by_element(),
                                              field="util", show_supports=True, show_loads=False,
                                              title="Ausnutzung der Stäbe")
-                b.append(self._figure(svg_text, "Ausnutzung der Stäbe (Farbskala)"))
+                b.append(self._figure(svg_text, "Ausnutzung der Stäbe (Farbskala)"
+                                      + (f"; in Stabfarbe, weil nicht geführt: {ohne_text}"
+                                         if ohne else "")))
         # Einzelnachweise
         b.append(self._h(2, "Nachweise im Einzelnen"))
         if self.opt("design_detail"):

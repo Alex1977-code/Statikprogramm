@@ -59,14 +59,31 @@ class DesignResults:
     #: Kombinationen, die nicht nachgewiesen werden konnten (kein Ergebnis),
     #: im Klartext - siehe _uls_results
     warnungen: list = field(default_factory=list)
+    #: Eintraege, unter denen mehrere Namen dasselbe Ergebnis tragen und die
+    #: darum nur einmal nachgewiesen wurden: {Eintrag: [alle Namen]} - siehe
+    #: _gleiche_zusammenfassen. Ergebnisse von vor dem 23.09.2026 kennen das
+    #: Feld nicht (getattr).
+    gleiche: dict = field(default_factory=dict)
 
     @property
     def util_max(self) -> float:
         return max((m.util for m in self.members.values()), default=0.0)
 
     def util_by_element(self) -> dict:
+        """Ausnutzung je Element fuer die Faerbung "Ausnutzung EC3" (Oberflaeche,
+        Browser, Bild im Bericht).
+
+        Ein nicht gefuehrter Stab (``fehler``) hat keine Ausnutzung und
+        bekommt darum keinen Eintrag: seine Elemente bleiben ohne Wert
+        (Oberflaeche grau, Bericht in Stabfarbe). Bis zum 23.09.2026 kam er
+        mit seiner 0,0 hinein und wurde gruen (Klasse < 0,50) - ein Stab ohne
+        f_y sah aus wie unbeansprucht (Befund B054, Traeger IPE 300 neben
+        einem Stab aus Werkstoff ohne Streckgrenze).
+        """
         out = {}
         for m in self.members.values():
+            if m.fehler:
+                continue
             for e in m.elements:
                 out[e] = max(out.get(e, 0.0), m.util)
         return out
@@ -78,9 +95,13 @@ class DesignResults:
         # Streckgrenze) zaehlen weder als erfuellt noch fuer die groesste
         # Ausnutzung. Bis zum 22.09.2026 stand hier nur ``util > 1``: ein
         # Traeger mit 0,633 und ein Stab ohne f_y ergaben "max. Ausnutzung
-        # 0.633 ... - alle erfuellt" - in der Oberflaeche nach "Nachweise EC3",
-        # im Etikett der Maske Nachweise (Gruppe "Nachweise fuehren", nicht
-        # unter der Ergebnistabelle) und in Analysis.summary().
+        # 0.633 ... - alle erfuellt".
+        # Die Zeile steht (main.py, Stand 23.09.2026) im Protokoll und in der
+        # Statuszeile nach "Nachweise EC3" (_design_done), im Etikett der
+        # Maske Nachweise (lbl_design, Gruppe "Nachweise fuehren", nicht unter
+        # der Ergebnistabelle), im Textfeld der Maske Ergebnisse (txt_res,
+        # show_results) und ueber Analysis.summary() im Protokoll und im
+        # Textfeld der Maske Berechnung (txt_summary, _solve_done).
         # Wie VolumenResults.summary(): "alle erfuellt" nur, wenn nichts offen
         # blieb.
         gefuehrt = [m for m in self.members.values() if not m.fehler]
@@ -262,6 +283,8 @@ def _uls_results(model: Model, analysis, combos=None, warnungen: list = None) ->
     Lastfaelle wird nur zurueckgegriffen, wenn das Modell **gar keine**
     Kombination hat. Fehlt das Ergebnis einer Kombination, steht sie in
     ``warnungen`` als "nicht nachgewiesen" - sie wird nicht still ersetzt.
+    Dasselbe Ergebnis kann so unter mehreren Namen stehen; check_members
+    fasst es danach zusammen (_gleiche_zusammenfassen).
 
     Bis zum 22.09.2026 fiel die Funktion auf die Lastfaelle zurueck, sobald
     ``analysis.combinations`` leer war, und uebersah Ergebniskombinationen
@@ -307,6 +330,77 @@ def _uls_results(model: Model, analysis, combos=None, warnungen: list = None) ->
         warn.append("Das Modell hat Kombinationen, aber keine des Grenzzustands der "
                     "Tragfähigkeit – die GZT-Nachweise wurden nicht geführt")
     return out
+
+
+def _gleich_name(namen: list) -> str:
+    """Der Eintrag fuer mehrere Namen desselben Ergebnisses: "EK_A [1] =
+    EK_B [1]"; ab fuenf Namen die ersten drei und die Zahl der weiteren (die
+    volle Liste steht in DesignResults.gleiche)."""
+    if len(namen) <= 4:
+        return " = ".join(namen)
+    return " = ".join(namen[:3]) + f" = … ({len(namen) - 3} weitere)"
+
+
+def _gleiche_zusammenfassen(model: Model, analysis, results: dict) -> tuple:
+    """Gleiche Ergebnisse nur einmal nachweisen - Rueckgabe
+    ({Eintrag: Results}, {Eintrag: [alle Namen]} nur fuer zusammengefasste).
+
+    Kommt ein Lastfall mit Faktor 1 als Alternative in mehreren
+    Ergebniskombinationen vor, liefert _uls_results dasselbe Ergebnis unter
+    jedem Namen, und der
+    Nachweis lief bis zum 23.09.2026 ueber jeden: am Kragarm mit EK_A und
+    EK_B, je {LF1} oder {1,35·LF1 + 1,5·LF2}, und K2 fuenf Eintraege statt
+    drei (Befund B055). Das Ergebnis stimmte, die Arbeit war doppelt.
+
+    Gleich heisst hier:
+
+    * **dasselbe Objekt** - ein Lastfall mit Faktor 1 als Alternative ist
+      das Lastfallergebnis selbst (ergebnisse_der_alternativen);
+    * zwei **neu ueberlagerte** Alternativen mit denselben Faktoren - die
+      Ueberlagerung derselben linearen Lastfaelle mit denselben Faktoren.
+      Ueberlagert wird nur im linearen Modell, und die Lastfaelle einer
+      Kombination gehoeren zu ihrer Situation; gleiche Faktoren heissen
+      also gleiche Situation.
+
+    Abgelegte Alternativen (``analysis.alternativen``: Theorie II./III.
+    Ordnung, Kontaktmodell) und gewoehnliche Kombinationen werden nur ueber
+    das Objekt verglichen: ihr Ergebnis haengt auch an der Theorie der
+    Kombination bzw. am Startzustand der direkten Loesung, nicht allein an
+    den Faktoren.
+
+    Der Eintrag behaelt die Stelle des ersten Namens und heisst "EK_A [1] =
+    EK_B [1]"; so steht er in design.combinations, im massgebenden Nachweis
+    und in den Tabellen je Kombination.
+    """
+    from ..solver import alternativen_der_kombination
+    abgelegt = getattr(analysis, "alternativen", None) or {}
+    lastfaelle = {id(r) for r in (getattr(analysis, "cases", None) or {}).values()}
+    faktoren = {}
+    for c in (getattr(model, "combinations", None) or {}).values():
+        if c.ist_umhuellende:
+            for n, teile in alternativen_der_kombination(c):
+                faktoren[n] = teile
+    gruppen: dict = {}          # Schluessel -> [Namen], in Reihenfolge
+    ergebnis: dict = {}         # Schluessel -> Results
+    for name, res in results.items():
+        # neu ueberlagert: eine Alternative, weder abgelegt noch das
+        # Lastfallergebnis selbst
+        ueberlagert = (name in faktoren and name not in abgelegt
+                       and id(res) not in lastfaelle)
+        schluessel = (("summe", tuple(sorted(faktoren[name].items()))) if ueberlagert
+                      else ("objekt", id(res)))
+        if schluessel in gruppen:
+            gruppen[schluessel].append(name)
+        else:
+            gruppen[schluessel] = [name]
+            ergebnis[schluessel] = res
+    out, gleiche = {}, {}
+    for schluessel, namen in gruppen.items():
+        eintrag = _gleich_name(namen)
+        out[eintrag] = ergebnis[schluessel]
+        if len(namen) > 1:
+            gleiche[eintrag] = list(namen)
+    return out, gleiche
 
 
 def _melde(progress, text: str, anteil: float = None) -> None:
@@ -356,10 +450,12 @@ def check_members(model: Model, analysis, combos: list = None, members: list = N
     # kippte von "Alle Nachweise erfüllt." auf "nicht geführt: EC3"
     # (Gegenpruefung 23.09.2026, Kragarm und Halle).
     results = _uls_results(model, analysis, combos, warnungen=warnungen) if names else {}
+    # dasselbe Ergebnis unter mehreren Namen nur einmal nachweisen (B055)
+    results, gleiche = _gleiche_zusammenfassen(model, analysis, results)
     out = DesignResults(combinations=list(results), settings={
         "gamma_M0": model.design.gamma_M0, "gamma_M1": model.design.gamma_M1,
         "Methode": f"Anhang {model.design.interaction_method}",
-        "BDK": model.design.lt_method}, warnungen=warnungen)
+        "BDK": model.design.lt_method}, warnungen=warnungen, gleiche=gleiche)
     if not names or not results:
         _melde(progress, "Nachweise EC3: keine Staebe mit Nachweis" if not names else
                "Nachweise EC3: keine Ergebnisse einer GZT-Kombination", _anteil(anteil, 1.0))

@@ -980,6 +980,29 @@ Stabes vorher 0,170 (nachgewiesen gegen LF1 und LF2 mit Faktor 1), jetzt
 (0,3619, Hexaederstab) stimmen ebenso mit der gewöhnlichen Kombination
 überein (`test_umhuellende`).
 
+**Gleiche Alternativen im Stabnachweis.** Steht ein Lastfall mit Faktor 1
+als Alternative in mehreren Ergebniskombinationen, liefert
+`ergebnisse_der_alternativen` unter jedem Namen dasselbe Lastfallergebnis. Der Stabnachweis nach EC3 lief
+bis zum 23.09.2026 über jeden Namen (Befund B055). Jetzt fasst
+`_gleiche_zusammenfassen` vor dem Nachweis zusammen, was sicher dasselbe
+Ergebnis ist: dasselbe Objekt, oder zwei neu überlagerte Alternativen mit
+denselben Faktoren. Überlagert wird nur im linearen Modell, und die
+Lastfälle einer Kombination gehören zu ihrer Situation; gleiche Faktoren
+heißen dort also gleiches Ergebnis. Abgelegte Alternativen (Theorie II./III.
+Ordnung, Kontaktmodell) und gewöhnliche Kombinationen werden nur über das
+Objekt verglichen. Ihr Ergebnis hängt auch an der Theorie der Kombination
+bzw. am Startzustand der direkten Lösung. Der Eintrag heißt „EK_A [1] =
+EK_B [1]" (ab fünf Namen gekürzt, die volle Liste in
+`DesignResults.gleiche` und im Bericht unter „Gleiche Ergebnisse, einmal
+nachgewiesen"). Gemessen am Kragarm mit EK_A und EK_B, je {LF1} oder
+{1,35·LF1 + 1,5·LF2}, und K2 = 1,35·LF1 + 1,5·LF2: vorher 5 Einträge und 5
+Querschnittsnachweise je Stab, jetzt 3; die Ausnutzung bleibt 0,370213,
+maßgebend „EK_A [2] = EK_B [2]" statt „EK_A [2]". Im Kontaktmodell bleiben
+die beiden direkt gelösten EK_A [2] und EK_B [2] zwei Einträge
+(`test_gleiche_alternativen_einmal_nachgewiesen`). Die übrigen Nachweise
+(Volumen, Beulen, Lasteinleitung, Anschlüsse, Verformungen) laufen weiter
+über jeden Namen.
+
 Neu überlagert wird eine Alternative nur, wenn die volle Rechnung es genauso
 täte. Ist sie nach der Theorie der Ergebniskombination nach II. oder III.
 Ordnung zu rechnen, kommt ihr Ergebnis aus `Analysis.alternativen`. Dorthin
@@ -6236,6 +6259,20 @@ weiteren Wegen, jeweils gemessen am Stand 97df705:
   Server das Urteil aus den Stabnachweisen mit (`err` bei Ausnutzung über 1,
   `warn` bei einem nicht geführten Stab, sonst `ok`), und die Oberfläche liest
   den Text nicht mehr aus (`test_nachweiszeile_nicht_gefuehrt_nicht_gruen`).
+
+Ein weiterer Weg, gemessen am Stand ec6448c (Befund B054): die Färbung
+„Ausnutzung EC3" und das Balkendiagramm. `DesignResults.util_by_element()`
+gab den Elementen eines nicht geführten Stabes dessen Ausnutzung 0,0 mit. Am
+Einfeldträger IPE 300 mit dem Stab „Ohne_fy" daneben waren im Bericht alle
+6 Linien dieses Stabes im Bild „Ausnutzung der Stäbe" grün (#2e8b57, Klasse
+< 0,50), und das Balkendiagramm „Ausnutzung je Stab" zeigte für ihn einen
+grünen Balken mit „0.000" — wie ein unbeanspruchter Stab. Jetzt bekommt ein
+nicht geführter Stab in `util_by_element()` keinen Eintrag. In der
+Oberfläche bleiben seine Zellen ohne Wert (NaN, grau wie jedes Element ohne
+Wert), die Stabtabelle der Maske *Ergebnisse* zeigt „-". Im Bericht stehen
+seine Linien in Stabfarbe, im Balkendiagramm fehlt er, und beide
+Bildunterschriften nennen ihn (`test_ec3`,
+`test_nicht_gefuehrt_ohne_ausnutzung_in_bildern`).
 
 **„Alle Nachweise erfüllt." galt auch bei gerissenem Volumennachweis.**
 `self.volumen` fehlte im Gesamturteil **doppelt**: in der Statusprüfung und in

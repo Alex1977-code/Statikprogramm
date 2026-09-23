@@ -729,6 +729,76 @@ def test_keine_warnung_ohne_verlangten_nachweis():
           not vb.warnungen and bool(vb2.warnungen), f"{vb.warnungen} / {vb2.warnungen}")
 
 
+def test_gleiche_alternativen_einmal_nachgewiesen():
+    """Dieselbe Alternative in zwei GZT-Ergebniskombinationen wird im
+    Stabnachweis nur einmal nachgewiesen, unter beiden Namen (Befund B055).
+
+    Vorher lief der Nachweis ueber jeden Namen: an diesem Kragarm mit
+    EK_A und EK_B, je {LF1} oder {1,35·LF1 + 1,5·LF2}, und K2 = 1,35·LF1 +
+    1,5·LF2 standen 5 Eintraege in design.combinations und 5
+    Querschnittsnachweise je Stab; EK_A [1] und EK_B [1] waren dasselbe
+    Lastfallergebnis, EK_A [2] und EK_B [2] dieselbe Ueberlagerung
+    (gemessen 23.09.2026). Das Ergebnis stimmte, die Arbeit war doppelt.
+    """
+    from statik3d.ec3 import design as ec3d
+    from statik3d.report import Report
+    m, _ = _kragarm_nachweis("")
+    for n in ("EK_A", "EK_B"):
+        m.combinations[n] = Combination(
+            n, {}, "ULS", alternativen=[{"LF1": 1.0}, {"LF1": 1.35, "LF2": 1.5}])
+    m.add_combination("K2", {"LF1": 1.35, "LF2": 1.5}, "ULS")
+    an = solver.solve_all(m, design=True)
+    d = an.design
+    mc = d.members["S1"]
+    check("gleiche Alternativen: je Ergebnis ein Eintrag, beide Namen daran",
+          d.combinations == ["EK_A [1] = EK_B [1]", "EK_A [2] = EK_B [2]", "K2"],
+          str(d.combinations))
+    check("check_member rechnet je verschiedenem Ergebnis einmal",
+          len(mc.section_checks) == 3, f"{len(mc.section_checks)} Querschnittsnachweise")
+    # Bezug: derselbe Nachweis ueber alle fuenf Namen einzeln
+    alle = ec3d._uls_results(m, an)
+    ref = ec3d.check_member(m, m.members["S1"], alle)
+    check("Ausnutzung wie der Nachweis ueber alle Namen einzeln",
+          len(alle) == 5 and mc.util == ref.util and mc.util > 0.3,
+          f"{mc.util:.6f} gegen {ref.util:.6f} ({len(alle)} Namen)")
+    check("massgebend bleibt EK_A [2], jetzt mit dem gleichen Namen daran",
+          ref.governing.get("combo") == "EK_A [2]"
+          and mc.governing.get("combo") == "EK_A [2] = EK_B [2]",
+          f"{mc.governing.get('combo')} / einzeln {ref.governing.get('combo')}")
+    check("die vollen Namenslisten stehen im Ergebnis",
+          getattr(d, "gleiche", None) == {"EK_A [1] = EK_B [1]": ["EK_A [1]", "EK_B [1]"],
+                                          "EK_A [2] = EK_B [2]": ["EK_A [2]", "EK_B [2]"]},
+          str(getattr(d, "gleiche", None)))
+    html = Report(m, an).html()
+    check("Bericht: die Kombination heisst 'EK_A [1] = EK_B [1]', die Einstellungen "
+          "nennen die gleichen", "EK_A [1] = EK_B [1]" in html
+          and "Gleiche Ergebnisse, einmal nachgewiesen" in html)
+    namen = [f"E{i} [1]" for i in range(6)]
+    check("ab fuenf Namen kuerzt der Eintrag, bis vier nicht",
+          ec3d._gleich_name(namen) == "E0 [1] = E1 [1] = E2 [1] = … (3 weitere)"
+          and ec3d._gleich_name(namen[:4]) == " = ".join(namen[:4]),
+          ec3d._gleich_name(namen))
+    # Abgelegte Alternativen (Kontaktmodell) werden nur ueber das Objekt
+    # verglichen: jede direkte Loesung startet im Kontaktzustand der vorigen
+    # (solver.solve_combination, ``start``), dass gleiche Faktoren dort
+    # dasselbe Ergebnis geben, ist nicht belegt. An diesem Kragarm sind
+    # EK_A [2] und EK_B [2] gleich (max |du| = 0, 23.09.2026) und bleiben
+    # trotzdem zwei Eintraege.
+    mk, ids = _kragarm_drei_lastfaelle()
+    mk.support(ids[-1], [2], uz=dict(failure="zug"))
+    for n in ("EK_A", "EK_B"):
+        mk.combinations[n] = Combination(
+            n, {}, "ULS", alternativen=[{"LF1": 1.0}, {"LF1": 1.0, "LF2": 1.0}])
+    ank = solver.solve_all(mk, combinations=True, envelopes=True)
+    wk: list = []
+    ulsk = ec3d._uls_results(mk, ank, warnungen=wk)
+    zus, gleich = ec3d._gleiche_zusammenfassen(mk, ank, ulsk)
+    check("Kontaktmodell: Lastfall-Alternative zusammengefasst, direkt geloeste nicht",
+          list(zus) == ["EK_A [1] = EK_B [1]", "EK_A [2]", "EK_B [2]"] and not wk
+          and "EK_A [2]" in ank.alternativen and "EK_B [2]" in ank.alternativen,
+          f"{list(zus)} {wk}")
+
+
 def main():
     for t in (test_kombination_mit_alternativen, test_speichern_und_laden,
               test_umbenennen_und_entfernen, test_modellpruefung_sieht_alternativen,
@@ -744,7 +814,8 @@ def main():
               test_lastfall_hoeherer_ordnung_ohne_abgelegtes_ergebnis,
               test_alternative_bei_theorie_I_aus_linearen_lastfaellen,
               test_stellungsreihe_ohne_kombinationen,
-              test_keine_warnung_ohne_verlangten_nachweis):
+              test_keine_warnung_ohne_verlangten_nachweis,
+              test_gleiche_alternativen_einmal_nachgewiesen):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
