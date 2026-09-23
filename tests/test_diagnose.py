@@ -818,7 +818,9 @@ def test_abnahme_ohne_fehlalarm_am_freien_netz():
     """
     from collections import Counter
     from statik3d.elements import solid as sl
-    for dz, h in ((0.5, 0.25), (1.0, 0.5)):
+    # dz 0,3 und 1,0 bei h 0,25 dazu seit B053 (22./23.09.2026): die Ecken
+    # freier Netze behalten die Sehnenzulage, die abgebildeter nicht
+    for dz, h in ((0.5, 0.25), (1.0, 0.5), (0.3, 0.25), (1.0, 0.25)):
         m, k, els = _wuerfel_angehoben(dz, h)
         zahl = Counter()
         for i in els:
@@ -909,6 +911,36 @@ def test_abnahme_ohne_fehlalarm_am_freien_netz():
           and bef4[0].stufe == "WARNUNG" and bef4[0].wert == 4.0,
           "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.0f}" for b in bef4) or "kein Befund")
 
+    # Nebenbefund B053 (22./23.09.2026): die Sehnenzulage galt auch für die
+    # Ecken der Seiten eines abgebildeten Netzes, dessen Knoten gemessen genau
+    # auf der windschiefen Fläche liegen (0,0000 mm). So blieb eine Beule von
+    # 25 mm (dz = 0,5) bzw. 100 mm (dz = 1,0) ungenannt, erst 30 bzw. 150 mm
+    # waren eine WARNUNG. Die Sehne liegt zwischen den Knoten, nicht an ihnen.
+    for dz, beule in ((0.5, 0.025), (1.0, 0.100)):
+        m5 = Model("beule")
+        m5.add_material(Material.steel("S235"))
+        W5 = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [0, 0, 1], [1, 0, 1], [1, 1, 1 + dz],
+              [0, 1, 1]]
+        ecken5 = [int(m5.add_node(*p)) for p in W5]
+        k5 = _quaderkoerper(m5, ecken5)
+        mesher.mesh_koerper(m5, k5, log=[], frei=False)
+        for i in range(4):
+            m5.fix(ecken5[i], "all")
+        X4 = dg._polyederhuelle(m5, k5)["bilinear"][0]
+        oben = [i for i in range(m5.nn)
+                if abs(m5.nodes[i, 2] - (1 + dz * m5.nodes[i, 0] * m5.nodes[i, 1])) < 1e-9]
+        d_oben = float(dg._bilinear_abstand(m5.nodes[oben], X4).max())
+        kn = int(np.argmin(np.linalg.norm(m5.nodes - [0.75, 0.75, 1 + dz * 0.5625], axis=1)))
+        m5.nodes[kn, 2] += beule
+        bef5 = [b for b in dg.abnahme(m5, warnungen=True) if b.pruefung in _NETZ_BEFUNDE]
+        check(f"abgebildetes Netz, Deckelecke {dz} m angehoben, Beule {beule * 1e3:.0f} mm: "
+              "WARNUNG Netzrand",
+              len(oben) == 25 and d_oben < 1e-9
+              and [(b.stufe, b.pruefung, b.wert) for b in bef5]
+              == [("WARNUNG", "Netzrand neben der Hülle", 4.0)],
+              f"Deckelknoten bis {d_oben * 1e3:.4f} mm neben der Fläche; "
+              + ("; ".join(f"{b.stufe} {b.pruefung} {b.wert:.0f}" for b in bef5) or "kein Befund"))
+
 
 def test_abnahme_luecken_des_vernetzers_sind_risse():
     """Der freie Vernetzer sortiert Tetraeder mit V <= FLACH·h³ aus, und ihre
@@ -954,6 +986,8 @@ def test_abnahme_luecken_des_vernetzers_sind_risse():
           "von Hand geändert" in text and "dasselbe Netz" in text
           and "Neu vernetzen mit denselben Einstellungen ergibt dasselbe Netz" not in text,
           text[-300:])
+    check("  und nennt als Herkunft den Vernetzer, der flache Tetraeder aussortiert",
+          "Vernetzer flache Tetraeder aussortiert" in text, text[:420])
     # Gegenprobe: fehlt ein Tetraeder, der nicht flach ist, ist es kein Riss -
     # die Regel winkt nicht jeden Hohlraum durch. Die Platte ist eine
     # Tetraederlage dick: der fehlende Tetraeder hinterlaesst eine Delle in
@@ -976,6 +1010,42 @@ def test_abnahme_luecken_des_vernetzers_sind_risse():
           and not [b for b in bef if b.pruefung == "Seiten im Inneren"],
           f"Element {mittel[0]} ({V_weg:.4g} m³): "
           + ("; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g}" for b in bef) or "kein Befund"))
+
+    # Nebenbefund B050 (22./23.09.2026): fehlt ein Tetraeder, der selbst flach
+    # ist (t/L ≤ 5 %, dünn gegen die Nachbarn), blieb es bei der WARNUNG Riss
+    # ohne Rückfrage - gleich wie groß der Hohlraum ist. Element 53 dieses
+    # Netzes: t/L 4,06 %, 1,752e-6 m³, das 13 250-Fache von FLACH·L³ (L die
+    # längste Elementkante des Körpers, 50,9 mm). Die Lücke des Vernetzers
+    # daneben hat das 0,87-Fache, die größte der 30 Lücken in den Modellen der
+    # Suiten test_mesher3d und test_sweep ebenso (gemessen 23.09.2026).
+    def eigen(i):
+        P = m.nodes[m.elements[i].nodes]
+        V_i = abs(float(np.linalg.det(P[1:] - P[0]))) / 6.0
+        A_i = sum(0.5 * np.linalg.norm(np.cross(P[b] - P[a], P[c] - P[a]))
+                  for a, b, c in ((0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3)))
+        L_i = max(np.linalg.norm(P[a] - P[b]) for a in range(4) for b in range(a + 1, 4))
+        return V_i, 2.0 * V_i / A_i / L_i
+
+    def kurz(bef):
+        return [(b.stufe, b.pruefung, b.wert) for b in bef]
+    V53, tl53 = eigen(53)
+    k.elemente = [i for i in els if i != 53]
+    bef = dg._abnahme_volumenbilanz(m, k.name, k, k.elemente)
+    check("  ein fehlender flacher Tetraeder in Elementgröße (t/L 4,1 %, 1,75 cm³): FEHLER, "
+          "die Lücke des Vernetzers bleibt ein Riss",
+          len(els) == 2701 and abs(V53 - 1.752e-6) < 1e-9 and 0.040 < tl53 < 0.041
+          and kurz(bef) == [("FEHLER", "Seiten im Inneren", 4.0), ("WARNUNG", "Riss im Netz", 4.0)],
+          f"V {V53:.4g} m³, t/L {tl53 * 100:.2f} %: {kurz(bef)}")
+    # Gegenprobe und Grenze: ein flacher Tetraeder so klein wie die, die der
+    # Vernetzer aussortiert (Element 2179, 1,454e-10 m³ = 1,10 FLACH·L³),
+    # bleibt ein Riss - an dieser Größe ist er von ihnen nicht zu trennen
+    V2179, _tl = eigen(2179)
+    k.elemente = [i for i in els if i != 2179]
+    bef = dg._abnahme_volumenbilanz(m, k.name, k, k.elemente)
+    check("  ein fehlender flacher Tetraeder so klein wie die aussortierten bleibt ein Riss",
+          abs(V2179 - 1.454e-10) < 1e-12 and kurz(bef) == [("WARNUNG", "Riss im Netz", 8.0)],
+          f"V {V2179:.4g} m³: {kurz(bef)}")
+    k.elemente = els
 
 
 def test_abnahme_offene_gruppen_sind_kein_riss():
@@ -1206,6 +1276,17 @@ def test_abnahme_riss_misst_am_oertlichen_element():
                                               np.ones(8, bool), None, np.full(8, t_a))
     check("  zwei Hohlräume an einer Kante: der Tetraeder kein Riss, der flache ein Riss",
           not riss[:4].any() and riss[4:].all(), str(riss.astype(int).tolist()))
+    # Mit der Größe (ABNAHME_RISS_FLACH, Nebenbefund B050): L = 30 lässt je
+    # vier Seiten 2e-6 · 30³ = 0,054 zu - der flache Hohlraum (0,027) bleibt
+    # ein Riss, obwohl beide zusammen (0,142) zu groß sind; getrennt wird nach
+    # der Form, die Größe zählt je Stück. Mit L = 20 (0,016) ist auch er zu groß.
+    r30 = dg._gruppen_im_inneren(None, {}, [], F, Xf, S, np.zeros(8, int), np.ones(8, bool),
+                                 None, np.full(8, t_a), L_koerper=30.0)[0]
+    r20 = dg._gruppen_im_inneren(None, {}, [], F, Xf, S, np.zeros(8, int), np.ones(8, bool),
+                                 None, np.full(8, t_a), L_koerper=20.0)[0]
+    check("  mit der Größe: getrennt nach der Form, die Größe je Stück",
+          not r30[:4].any() and r30[4:].all() and not r20.any(),
+          f"L 30: {r30.astype(int).tolist()}, L 20: {r20.astype(int).tolist()}")
 
 
 _KUHN = ((0, 1, 2, 6), (0, 2, 3, 6), (0, 3, 7, 6), (0, 7, 4, 6), (0, 4, 5, 6), (0, 5, 1, 6))
@@ -1467,6 +1548,14 @@ def test_abnahme_luecke_im_netzrand():
           bool(lu) and abs(lu[0].wert - 5.5155e-4) < 2e-7 and "0.921" in text
           and "0.412" in text and "dasselbe Netz" in text and "sweepen" in text,
           text[:400])
+    # Nebenbefund B049 (22./23.09.2026): die Abhilfe „Sechsflächner sweepen“
+    # ist nur an den fünf Prismen gemessen, und ab Werk ist der Sweep aus,
+    # weil er am Drehlager 992 entartete Keile erzeugte (Benutzerhandbuch,
+    # Netzeinstellungen). Die Meldung empfahl ihn, ohne das zu sagen.
+    check("  die Abhilfe Sweep sagt, dass er ab Werk aus ist, warum, und dass danach die "
+          "Abnahme zu lesen ist",
+          "ab Werk aus" in text and "entartete Keile" in text and "Abnahme lesen" in text,
+          text[-520:])
     check("  neu vernetzen ergibt dasselbe Netz und denselben Befund",
           ergebnisse[1][0] == n_el and [(b.pruefung, round(b.wert, 9)) for b in ergebnisse[1][1]]
           == [(b.pruefung, round(b.wert, 9)) for b in bef],
@@ -1502,6 +1591,42 @@ def test_abnahme_luecke_im_netzrand():
           and len(k.elemente) == n_frei and not nachher,
           f"{n_frei} tet4, vorher {len(vorher)} Befunde, Lücke {[round(b.wert, 7) for b in lu]}, "
           f"neu vernetzt {len(k.elemente)} tet4, {len(nachher)} Befunde")
+
+    # Nebenbefunde B050/B051 (22./23.09.2026): ein flacher Tetraeder im
+    # Inneren desselben Netzes von Hand gelöscht - der flachste unter der
+    # Deckelmitte des langen Schenkels, 35 728 mm³, t/L 3,65 %. Das war eine
+    # WARNUNG „Riss im Netz 4“ ohne Rückfrage, und der Text nannte als Grund
+    # den Vernetzer, der flache Tetraeder aussortiere; der sortiert aber nur
+    # V ≤ FLACH·h³ = 1,7 mm³ aus. Ein Hohlraum in Elementgröße ist kein Riss.
+    def t_l(i):
+        P = m.nodes[m.elements[i].nodes]
+        V = abs(float(np.linalg.det(P[1:] - P[0]))) / 6.0
+        A = sum(0.5 * np.linalg.norm(np.cross(P[b] - P[a], P[c] - P[a]))
+                for a, b, c in ((0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3)))
+        L = max(np.linalg.norm(P[a] - P[b]) for a in range(4) for b in range(a + 1, 4))
+        return 2.0 * V / A / L, V
+    innen_l = [i for i in k.elemente
+               if 0.1 < m.nodes[m.elements[i].nodes][:, 0].mean() < 0.4
+               and 0.3 < m.nodes[m.elements[i].nodes][:, 1].mean() < 1.7
+               and 0.12 < m.nodes[m.elements[i].nodes][:, 2].mean() < 0.28]
+    flach = min(innen_l, key=lambda i: t_l(i)[0])
+    tl_f, V_f = t_l(flach)
+    m.elemente_loeschen([flach])
+    bef = [b for b in dg.abnahme(m, warnungen=True) if b.pruefung in _NETZ_BEFUNDE
+           or b.pruefung == "Lücke im Netzrand"]
+    sn = [b for b in bef if b.pruefung == "Seiten im Inneren"]
+    check("  flacher Tetraeder in Elementgröße von Hand gelöscht (35 728 mm³): FEHLER mit "
+          "Rückfrage, kein Riss",
+          abs(V_f - 3.5728e-5) < 1e-8 and 0.036 < tl_f < 0.037
+          and [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", 4.0)]
+          and [b.pruefung for b in dg.abnahme(m)] == ["Seiten im Inneren"],
+          f"Element {flach}, V {V_f * 1e9:.0f} mm³, t/L {tl_f * 100:.2f} %: "
+          + "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g}" for b in bef))
+    text_sn = sn[0].text if sn else ""
+    check("  der Text schreibt die Lücke nicht dem Vernetzer zu und nennt ein fehlendes Element",
+          "Vernetzer flache Tetraeder aussortiert" not in text_sn
+          and "fehlendes Element" in text_sn and "von Hand gelöscht" in text_sn,
+          text_sn[-380:])
 
     # T-Prisma, h = 0,1: die Luecke liegt an der einspringenden Kante
     # (1,2 | 0,4). Zwei Seiten liegen im Inneren, zwei stehen in die
@@ -1590,6 +1715,239 @@ def test_abnahme_luecke_im_netzrand():
           "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g}" for b in bef))
 
 
+def test_abnahme_knoten_ueber_kopplung():
+    """Nebenbefund B099 (22./23.09.2026): das abgestufte Netz 20:1 (Knotenlager
+    an den 121 Bodenknoten) neu vernetzt mit ``mesher.modell_vernetzen`` ergab
+    „FEHLER Knoten ohne Element 117 … sie tragen nichts, und eine Last darauf
+    ginge verloren". Die 117 Knoten bleiben mit Absicht stehen - sie tragen
+    ein Knotenlager (``Model.netzknoten_loeschen`` schützt sie) - und der
+    Vernetzer koppelt sie starr an das neue Netz (306 Kopplungen). Das Modell
+    rechnet: Fz = -100 kN, Summe der Reaktionen in z 100 000,0 N. Falsch war
+    die Meldung. Ein Knoten, der über eine Kopplung, einen starren Körper oder
+    ein Spaltelement an einem Elementknoten hängt, hat keinen Befund; ein
+    wirklich loser bleibt ein FEHLER.
+    """
+    from statik3d import mesher
+    from statik3d.model import Kopplung, GapElement
+    import contextlib
+    import io
+    m, k = _gestuft(20)
+    with contextlib.redirect_stdout(io.StringIO()):
+        mesher.modell_vernetzen(m, [], workers=1)
+    belegt = {int(n) for e in m.elements for n in e.nodes}
+    ohne = [i for i in range(m.nn) if i not in belegt]
+    gekoppelt = {int(x) for kp in m.kopplungen for x in (kp.node_a, kp.node_b)}
+    gelagert = {int(s.node) for s in m.supports}
+
+    def knoten_befund():
+        return [b for b in dg.abnahme(m, warnungen=True) if b.pruefung == "Knoten ohne Element"]
+    kb = knoten_befund()
+    check("20:1 neu vernetzt: 117 gelagerte Knoten ohne Element, angekoppelt - kein Befund",
+          len(ohne) == 117 and set(ohne) <= gekoppelt and set(ohne) <= gelagert and not kb,
+          f"{len(ohne)} ohne Element, {len(m.kopplungen)} Kopplungen; "
+          + "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.0f}" for b in kb))
+
+    e0 = int(m.elements[k.elemente[0]].nodes[0])
+    lose = int(m.add_node(5.0, 5.0, 5.0))
+    kb = knoten_befund()
+    check("  ein wirklich loser Knoten bleibt ein FEHLER",
+          len(kb) == 1 and kb[0].stufe == "FEHLER" and kb[0].wert == 1.0 and kb[0].knoten == [lose],
+          "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.0f} {b.knoten}" for b in kb))
+    # Eine Kopplung unter losen Knoten, die an kein Element reicht, und eine
+    # Kopplung ohne wirksame Richtung schließen nichts an
+    a, b = int(m.add_node(6.0, 5.0, 5.0)), int(m.add_node(7.0, 5.0, 5.0))
+    m.kopplungen.append(Kopplung(a, b, [[1.0, 0.0, 0.0]], [float("inf")]))
+    c = int(m.add_node(8.0, 5.0, 5.0))
+    m.kopplungen.append(Kopplung(c, e0, [[1.0, 0.0, 0.0]], [0.0]))
+    # Ein starrer Körper und ein Spaltelement an einem Elementknoten schon,
+    # auch über eine Kette (d am Starrkörper, f über eine Kopplung an d)
+    d, f, g = (int(m.add_node(9.0 + i, 5.0, 5.0)) for i in range(3))
+    m.add_starrkoerper(e0, [d])
+    m.kopplungen.append(Kopplung(f, d, [[0.0, 0.0, 1.0]], [1e9]))
+    m.gap_elements.append(GapElement(g, e0))
+    kb = knoten_befund()
+    check("  Kopplung ohne Elementknoten oder ohne Richtung: lose; Starrkörper, Spaltelement "
+          "und Kette: angeschlossen",
+          len(kb) == 1 and kb[0].wert == 4.0 and sorted(kb[0].knoten) == sorted([lose, a, b, c]),
+          "; ".join(f"{b_.stufe} {b_.pruefung} {b_.wert:.0f} {b_.knoten}" for b_ in kb))
+
+
+def _randschleifen_alt(F, Xf, S) -> list:
+    """diagnose._randschleifen bis zum 23.09.2026 (je Seite eine
+    Python-Schleife mit np.cross) - als Vergleich."""
+    zahl: dict = {}
+    for i in range(len(F)):
+        r = [j for j in range(4) if F[i][j] >= 0]
+        P = Xf[i][r]
+        n_ring = 0.5 * sum(np.cross(P[j], P[(j + 1) % len(r)]) for j in range(len(r)))
+        kn = [int(F[i][j]) for j in r]
+        if float(n_ring @ S[i]) < 0.0:
+            kn = kn[::-1]
+        for j in range(len(kn)):
+            a, b = kn[j], kn[(j + 1) % len(kn)]
+            zahl[(a, b)] = zahl.get((a, b), 0) + 1
+            zahl[(b, a)] = zahl.get((b, a), 0) - 1
+    lage: dict = {}
+    for i in range(len(F)):
+        for j in range(4):
+            if F[i][j] >= 0:
+                lage[int(F[i][j])] = Xf[i][j]
+    weiter: dict = {}
+    for (a, b), k in zahl.items():
+        for _ in range(max(k, 0)):
+            weiter.setdefault(a, []).append(b)
+    schleifen = []
+    while weiter:
+        start = next(iter(weiter))
+        schleife, a = [start], start
+        while True:
+            b = weiter[a].pop()
+            if not weiter[a]:
+                del weiter[a]
+            if b == start or b not in weiter:
+                break
+            schleife.append(b)
+            a = b
+        schleifen.append((schleife, np.array([lage[k] for k in schleife])))
+    return schleifen
+
+
+def _seitengruppen_alt(F, nur_paare: bool = False) -> list:
+    """diagnose._seitengruppen bis zum 23.09.2026 (Vereinigungs-Suche in
+    Python) - als Vergleich."""
+    m = len(F)
+    an_kante: dict = {}
+    for i in range(m):
+        ecken = [int(k) for k in F[i] if k >= 0]
+        for a, b in zip(ecken, ecken[1:] + ecken[:1]):
+            an_kante.setdefault((min(a, b), max(a, b)), []).append(i)
+    wurzel = list(range(m))
+
+    def finde(i):
+        while wurzel[i] != i:
+            wurzel[i] = wurzel[wurzel[i]]
+            i = wurzel[i]
+        return i
+
+    for seiten in an_kante.values():
+        if nur_paare and len(seiten) != 2:
+            continue
+        for j in seiten[1:]:
+            ra, rb = finde(seiten[0]), finde(j)
+            if ra != rb:
+                wurzel[rb] = ra
+    gruppen: dict = {}
+    for i in range(m):
+        gruppen.setdefault(finde(i), []).append(i)
+    return [np.asarray(g) for g in gruppen.values()]
+
+
+def _nicht_konform(n):
+    """tet4-Netz n x n x n über den Einheitswürfel mit derselben Fünferzerlegung
+    in jeder Zelle - nicht konform: jede innere Zellseite ist beiderseits
+    verschieden in Dreiecke geteilt, ein Riss (so baute grid_box bis c85b9cc)."""
+    m = Model("riss")
+    m.add_material(Material.steel("S235"))
+    ids = np.zeros((n + 1,) * 3, int)
+    for i in range(n + 1):
+        for j in range(n + 1):
+            for kk in range(n + 1):
+                ids[i, j, kk] = m.add_node(i / n, j / n, kk / n)
+    for i in range(n):
+        for j in range(n):
+            for kk in range(n):
+                c = [ids[i, j, kk], ids[i + 1, j, kk], ids[i + 1, j + 1, kk], ids[i, j + 1, kk],
+                     ids[i, j, kk + 1], ids[i + 1, j, kk + 1], ids[i + 1, j + 1, kk + 1],
+                     ids[i, j + 1, kk + 1]]
+                for t in ((0, 1, 3, 4), (1, 2, 3, 6), (1, 3, 4, 6), (1, 4, 5, 6), (3, 4, 6, 7)):
+                    m.add_element("tet4", [int(c[x]) for x in t], "S235")
+    k = _quaderkoerper(m, [ids[0, 0, 0], ids[n, 0, 0], ids[n, n, 0], ids[0, n, 0],
+                           ids[0, 0, n], ids[n, 0, n], ids[n, n, n], ids[0, n, n]])
+    k.elemente = list(range(len(m.elements)))
+    return m, k
+
+
+def test_abnahme_riss_gestapelt():
+    """Nebenbefund B052 (22./23.09.2026): _randschleifen lief je Seite in
+    Python mit einem np.cross je Seite, _seitengruppen je Seite und Kante.
+    Am nicht konformen tet4-Netz n = 20 (40 000 Elemente, 91 200 Rissseiten)
+    brauchte _abnahme_netz bei ec6448c 14,7 bis 15,0 s; im Profil entfielen
+    23,2 von 28,5 s auf _randschleifen (282 985 Aufrufe von np.cross). Jetzt
+    gestapelt: ein np.cross je Gruppe, gezählt mit np.unique, verkettet wird
+    nur der Rand; die Gruppen über scipy.sparse.csgraph.connected_components.
+    Neu 2,3 bis 2,7 s im selben Prozess.
+
+    Geprüft: dieselben Gruppen und Randschleifen wie der alte Stand (Reihenfolge
+    eingeschlossen), derselbe Befund, und im selben Lauf höchstens die Hälfte
+    der Zeit des alten Stands (n = 10, 5000 Elemente, 10 800 Rissseiten).
+    """
+    import time
+    m, k = _nicht_konform(10)
+    els = k.elemente
+    F, _E = dg._freie_seiten_ecken(m, els)
+    Xf = m.nodes[np.maximum(F, 0)]
+    viereck = F[:, 3] >= 0
+    S = 0.5 * np.cross(Xf[:, 1] - Xf[:, 0], Xf[:, 2] - Xf[:, 0])
+    S[viereck] = 0.5 * np.cross(Xf[viereck, 2] - Xf[viereck, 0], Xf[viereck, 3] - Xf[viereck, 1])
+    # Wechselnde Richtung der Flächenvektoren, damit auch das Umkehren der
+    # Seiten verglichen wird
+    S[::3] *= -1.0
+
+    def gleich_gruppen(a, b):
+        return len(a) == len(b) and all(np.array_equal(x, y) for x, y in zip(a, b))
+
+    def gleich_schleifen(a, b):
+        return len(a) == len(b) and all(ka == kb and np.array_equal(Pa, Pb)
+                                        for (ka, Pa), (kb, Pb) in zip(a, b))
+    # Alle freien Seiten hängen zusammen (eine Gruppe); in viele Gruppen
+    # zerfallen sie, wenn nur ein Teil davon genommen wird - zufällig
+    # gezogen, fest gesät
+    rng = np.random.default_rng(7)
+    teile = [np.arange(len(F))] + [np.sort(rng.choice(len(F), z, replace=False))
+                                   for z in (600, 2000, 5000)]
+    abweichend, n_gruppen = [], 0
+    for t_i, auswahl in enumerate(teile):
+        Ft = F[auswahl]
+        for paare in (False, True):
+            g_neu, g_alt = dg._seitengruppen(Ft, nur_paare=paare), _seitengruppen_alt(Ft, paare)
+            n_gruppen += len(g_alt)
+            if not gleich_gruppen(g_neu, g_alt):
+                abweichend.append(f"Gruppen {t_i} {paare}")
+            for g in g_alt[:300]:
+                idx = auswahl[g]
+                if not gleich_schleifen(dg._randschleifen(F[idx], Xf[idx], S[idx]),
+                                        _randschleifen_alt(F[idx], Xf[idx], S[idx])):
+                    abweichend.append(f"Schleifen {t_i} {g[:3]}")
+    # dazu Stücke von je 40 Seiten am Stück, auch aus mehreren Hohlräumen
+    for s in range(0, len(F), 40):
+        idx = np.arange(s, min(s + 40, len(F)))
+        if not gleich_schleifen(dg._randschleifen(F[idx], Xf[idx], S[idx]),
+                                _randschleifen_alt(F[idx], Xf[idx], S[idx])):
+            abweichend.append(f"Stück {s}")
+    check("gestapelt: dieselben Gruppen und Randschleifen wie der alte Stand",
+          len(F) == 12000 and n_gruppen > 1000 and not abweichend,
+          f"{len(F)} freie Seiten, {n_gruppen} Gruppen verglichen; abweichend {abweichend[:5]}")
+
+    def lauf():
+        dauer, bef = [], None
+        for _ in range(2):
+            t = time.perf_counter()
+            bef = dg._abnahme_volumenbilanz(m, "K1", k, els)
+            dauer.append(time.perf_counter() - t)
+        return min(dauer), [(b.stufe, b.pruefung, b.wert, b.text) for b in bef]
+    t_neu, b_neu = lauf()
+    echt = dg._randschleifen, dg._seitengruppen
+    dg._randschleifen, dg._seitengruppen = _randschleifen_alt, _seitengruppen_alt
+    try:
+        t_alt, b_alt = lauf()
+    finally:
+        dg._randschleifen, dg._seitengruppen = echt
+    check("  derselbe Befund (WARNUNG Riss im Netz 10 800), in höchstens der halben Zeit",
+          b_neu == b_alt and [x[:3] for x in b_neu] == [("WARNUNG", "Riss im Netz", 10800.0)]
+          and t_neu <= 0.5 * t_alt,
+          f"neu {t_neu:.2f} s, alt {t_alt:.2f} s; {[x[:3] for x in b_neu]}")
+
+
 def main():
     for f in (test_abnahme_findet_verdrehten_sechsflaechner,
               test_abnahme_ohne_fehlalarm_am_freien_netz,
@@ -1599,6 +1957,8 @@ def main():
               test_abnahme_riss_an_laenglichen_zellen,
               test_abnahme_windschief_misst_am_oertlichen_element,
               test_abnahme_luecke_im_netzrand,
+              test_abnahme_knoten_ueber_kopplung,
+              test_abnahme_riss_gestapelt,
               test_windschiefe_randflaechen_ohne_dreiecksschleife,
               test_abnahme_meldet_ausgefallene_pruefungen,
               test_nicht_messbare_formguete_gilt_nicht_als_beste,
