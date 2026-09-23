@@ -212,7 +212,11 @@ Verweis da: „CO9: die Tabelle führt keine Nummer 9“, „CO2: Kreis, führt 
 Verweise auf diese Kombination zurück“ (auf sich selbst: „CO1: Kreis,
 verweist auf diese Kombination selbst“) oder „CO1: wird selbst nicht
 angelegt, siehe Warnung zu LK1“ — dann nennt die Warnung zu LK1 den
-eigentlichen Grund. Bis zum 22.09.2026 fiel eine
+eigentlichen Grund. In einer Kette verweist jede Warnung nur einen Schritt
+weiter: bei „1: 1.35*LF1 + x“, „2: CO1 + LF2“, „3: CO2 + LF3“ verweist die
+Warnung zu LK3 auf LK2 und die zu LK2 auf LK1; den eigentlichen Grund (nicht
+erkannter Teil „+ x“) nennt erst die Warnung zu LK1 am Ende der Kette, und
+keine der drei Kombinationen wird angelegt. Bis zum 22.09.2026 fiel eine
 Zeile ohne eigenen LF-Faktor **vor** der Warnung weg: an den vier Zeilen
 „1.35*LF1 + 1.5*LF2“, „CO1 + CO3“, „1.0*EK1“, „LF1 + CO1“ meldete das
 Protokoll „2 Lastkombinationen“ und eine Warnung zu LK4, LK2 und LK3
@@ -241,11 +245,16 @@ der kein Anteil ist (außer Leerzeichen und „+“), wird die Kombination nicht
 angelegt, sondern mit Formel und dem übrig gebliebenen Text gewarnt:
 „Kombination LK8 („1.35*LF1 + 1.5*Schnee“): Formel nicht vollstaendig gelesen
 - nicht uebernommen (nicht erkannter Teil ['+ 1.5*Schnee'])“. Vorher fiel
-dieser Text ohne Meldung weg, sobald daneben ein Lastfall-Anteil stand.
-Gemessen am Stand vom 23.09.2026 vor dieser Änderung: „1.35*LC1 + RC1“
-wurde 1,35·LF1, „1.35*LF1 + 1.5*LF2 + 0.9*RC2“ wurde 1,35·LF1 + 1,5·LF2,
-„1.35*LF1 + 1.5*Schnee“ wurde 1,35·LF1 und „1.35*(LF1 + LF2)“ wurde
-LF1 + LF2, jeweils ohne Protokollzeile. Ein Verweis auf eine solche Zeile
+dieser Text ohne Meldung weg, sobald daneben ein Lastfall-Anteil oder ein
+aufgelöster Verweis stand. Gemessen am Stand vom 23.09.2026 vor dieser
+Änderung: „1.35*LC1 + RC1“ wurde 1,35·LF1, „1.35*LF1 + 1.5*LF2 + 0.9*RC2“
+wurde 1,35·LF1 + 1,5·LF2, „1.35*LF1 + 1.5*Schnee“ wurde 1,35·LF1 und
+„1.35*(LF1 + LF2)“ wurde LF1 + LF2, jeweils ohne Protokollzeile. Neben einem
+Verweis ergaben „1: 1.35*LF1“, „2: CO1 + Schnee“ die Kombination
+LK2 = 1,35·LF1 und „2: 2*CO1 x“ LK2 = 2,7·LF1; die Infozeile zur Auflösung
+nannte dabei nur das Ergebnis („… aufgeloest: 1.35*LF1“ bzw.
+„… aufgeloest: 2.7*LF1“), nicht den weggefallenen Text. Heute wird LK2 in
+beiden Fällen gewarnt und nicht angelegt. Ein Verweis auf eine solche Zeile
 bleibt offen, die verweisende Kombination wird ebenfalls gewarnt und nicht
 angelegt: „1: 1.35*LF1 + 1.5*Schnee“, „2: CO1 + LF2“ ergibt zwei Warnungen
 und „0 von 2 Lastkombinationen“. In der ersten Fassung dieser Regel vom
@@ -253,10 +262,15 @@ selben Tag ging der übrige Text nicht mit in die Auflösung der Verweise:
 dieselben zwei Zeilen ergaben LK2 = LF2 + 1,35·LF1 mit nur einer Infozeile
 und „1 von 2“, und „2: LF3 + CO1“ nahm aus „1: 1.35*(LF1 + LF2)“ die Anteile
 LF1 + LF2 ohne den Faktor 1,35 mit. Dieselbe Regel trifft auch einen
-Vorsatz wie „GZT-1: 1.35*LF1“ oder einen Zusatz wie „LF1/p“; beides wurde
-vorher mit dem erkannten Rest angelegt. Alle Formeln in diesem Absatz sind
-selbst gebaut: ob RFEM RC, EK, Klammern oder solche Zusätze in eine
-Lastkombinationsformel schreibt, ist an keiner echten Datei gemessen.
+Vorsatz wie „GZT-1: 1.35*LF1“, einen Zusatz wie „LF1/p + 1.5*LF2“ oder
+„1.35*LF1 + 1.5*LF2 [GZT]“ und eine Aufzählung mit Komma statt Plus wie
+„1.35*LF1, 1.5*LF2“: die Warnung nennt den nicht erkannten Teil („GZT-1:“,
+„/p“, „[GZT]“ bzw. „,“), die Kombination wird nicht angelegt. Am Stand vor
+dieser Änderung wurden alle vier mit dem erkannten Teil angelegt, ohne
+Protokollzeile. Alle Formeln in diesem Absatz sind selbst gebaut: ob RFEM
+RC, EK, Klammern, Kommas oder solche Zusätze in eine Lastkombinationsformel
+schreibt, ist an keiner echten Datei gemessen; darum liest das Programm
+keinen dieser Zusätze, sondern warnt.
 
 **Eine Zeile ohne Nummer bekommt eine freie Nummer** (seit 23.09.2026), und
 zwar die nächste nach der größten Nummer der Tabelle; das Protokoll nennt
