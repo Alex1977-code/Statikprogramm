@@ -3490,7 +3490,7 @@ Es gibt drei Vorlagen:
 Der Dialog schlägt aus Profil und Schnittgrößen eine vollständige Geometrie vor
 — Blechdicken, Schraubenbild, Nahtdicken — und bessert sie nach: Je nach
 maßgebendem Nachweis wird das Blech dicker, die Schraube größer, die Zahl der
-Schrauben oder Reihen größer oder die Naht dicker bzw. länger. Erfüllt sind
+Schrauben oder Reihen größer oder die Naht dicker. Erfüllt sind
 die Nachweise danach nicht immer. Kann das Nachbessern am maßgebenden
 Nachweis nichts ändern — bei der Kopfplatte etwa „Druckflansch auf die
 Platte“, der Trägerflansch selbst (siehe unten) — oder reichen seine Runden

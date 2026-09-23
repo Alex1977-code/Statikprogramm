@@ -661,6 +661,56 @@ def test_kopfplatte_vorschlagsreihe():
               f"ab {df[0] if df else '-'} kNm; erfüllt dabei {ok_df}")
 
 
+def test_nachbessern_verlaengert_keine_naht():
+    """Das Benutzerhandbuch zaehlt auf, was der Dialog beim Nachbessern
+    aendert: Blech dicker, Schraube groesser, mehr Schrauben oder Reihen, Naht
+    dicker. Seine erste Fassung zu B010 sagte „Naht dicker bzw. laenger"
+    (Mangel der Gegenpruefung, 24.09.2026) - verlaengert wird keine Naht.
+
+    Eine Nahtlaenge als Feld hat nur das Knotenblech (l_weld), und nur
+    Gusset.improve verlaengert sie, beim geschweissten Blech. Gusset.propose
+    kehrt beim geschweissten Blech aber vor dem Nachbessern zurueck, und der
+    Dialog legt gar keins an: update_proposal (gui/dialogs.py) uebergibt nur
+    N, V_z, M_y und die Schraube. Gemessen 24.09.2026 an HEB 200 S355: mit
+    welded=True wird improve nie gerufen, l_weld = 100/398/626 mm bei
+    N = 200/800/2000 kN stammt allein aus der Formel in propose (eta 0,994
+    bis 0,999, massgebend die Kehlnaht)."""
+    from statik3d.joints import templates as T
+
+    m = Model("Diagonale")
+    m.add_material(Material.steel("S355"))
+    m.add_section(Section.from_profile("HEB 200"))
+    e = m.add_element("beam", [m.add_node(0, 0, 0), m.add_node(0, 0, 4)], "S355", "HEB 200")
+
+    gerufen = []
+    nachbessern = T.Gusset.improve
+
+    def spion(self, *a, **k):
+        gerufen.append(self.welded)
+        return nachbessern(self, *a, **k)
+
+    T.Gusset.improve = spion
+    try:
+        laengen = []
+        for N in (200e3, 800e3, 2000e3):
+            g = T.propose("diagonale", m, e, 1, N=N, welded=True)
+            laengen.append(round(g.l_weld * 1e3))
+        geschweisst_gerufen = list(gerufen)
+        gerufen.clear()
+        # der Weg des Dialogs: N, V_z, M_y und die Schraube
+        dialog = [T.propose("diagonale", m, e, 1, bolt=None, N=N, Vz=0.0, My=0.0)
+                  for N in (200e3, 800e3, 2000e3)]
+    finally:
+        T.Gusset.improve = nachbessern
+
+    check("geschweißtes Knotenblech: kein Nachbessern, Nahtlänge aus propose",
+          geschweisst_gerufen == [] and laengen == [100, 398, 626],
+          f"improve {len(geschweisst_gerufen)}-mal gerufen, l = {laengen} mm")
+    check("Dialogweg: Knotenblech geschraubt, nachgebessert ohne Naht",
+          all(not g.welded for g in dialog) and gerufen == [False, False, False],
+          f"welded {[g.welded for g in dialog]}, improve bei welded {gerufen}")
+
+
 # --------------------------------------------------------------------------
 # Anschluss als Teil des Modells: speichern, ueber alle Kombinationen
 # nachweisen, Ermuedung aus den Ermuedungslasten, Bericht
@@ -1005,7 +1055,7 @@ def test_gelenk_im_modell_und_bericht():
 def main():
     for t in (test_schrauben, test_naehte, test_tstub, test_fe_schraube,
               test_bleche, test_nachweise, test_vorlagen, test_kopfplatte_vorschlagsreihe,
-              test_anschluss_im_modell,
+              test_nachbessern_verlaengert_keine_naht, test_anschluss_im_modell,
               test_momenten_rotation, test_gelenk_in_der_rechnung,
               test_gelenk_im_modell_und_bericht):
         print(f"\n--- {t.__name__} ---")
