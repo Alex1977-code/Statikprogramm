@@ -2415,12 +2415,15 @@ def test_deaktivierte_staebe():
         from statik3d.model import FatigueLoad
         m.add_combination("FAT - Case 1", {"LF1": 1.0}, "FAT")
         m.fatigue_loads["E1"] = FatigueLoad("E1", case_max="FAT - Case 1")
-        fehler = [z for z in m.check() if "Ermuedungslast" in z]
+        # Die Meldung lautet seit dem 23.09.2026 "Ermüdungslast" (Befund
+        # B057). Mit der alten Schreibweise hier bestand die erste Pruefung
+        # leer, die zweite schlug fehl (gemessen 23.09.2026).
+        fehler = [z for z in m.check() if "Ermüdungslast" in z]
         check("Ermuedungslast mit einer Kombination als Zustand wird nicht als 'Lastfall unbekannt' abgewiesen",
               not fehler, str(fehler[:1]))
         m.fatigue_loads["E2"] = FatigueLoad("E2", case_max="gibtsnicht")
         check("ein wirklich unbekannter Zustand wird weiter gemeldet",
-              any("Ermuedungslast 'E2'" in z and "unbekannt" in z for z in m.check()))
+              any("Ermüdungslast 'E2'" in z and "unbekannt" in z for z in m.check()))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

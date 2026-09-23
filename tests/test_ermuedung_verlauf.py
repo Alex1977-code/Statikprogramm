@@ -743,13 +743,109 @@ def test_unvollstaendig_je_weg():
               "kein Eintrag" if x is None else f"{x.status()} D = {x.util:.3f} {x.fehlende_lasten}")
 
 
+def test_nicht_gefuehrt_nicht_gefaerbt():
+    """Befund B056 (Nebenbefund 22./23.09.2026): ein nicht gefuehrter Stab in
+    der Faerbung "Ausnutzung Ermüdung".
+
+    ``FatigueResults.util_by_element`` nahm jeden Stab aus ``members`` mit
+    seiner Ausnutzung auf - auch einen mit ``fehler``, dessen util 0.0 keine
+    Aussage ist. Am Stand ec6448c gemessen: M1 mit einer oder-EK als
+    Mindestzustand ist "nicht geführt", und die Karte lieferte {0: 0.0,
+    1: 0.0}; die Ansicht (main._util_map -> viewport.result_field) faerbte
+    ihn damit wie einen unbeanspruchten Stab. Volumen mit ``fehler`` fielen
+    schon heraus (D_je_element None). Erwartet: seine Elemente fehlen in der
+    Karte, haben also keinen Wert. Ist die Karte dadurch ganz leer - an
+    diesem Modell der Fall -, zeigt viewport.result_field die elastische
+    Ausnutzung mit der Skala "Ausnutzung elastisch [-]" (gemessen
+    23.09.2026); das ist Sache der Ansicht und hier nicht geprueft.
+    """
+    ms = _stab_oben_unten()
+    ek = ms.add_combination("EK_oder", {}, "FAT")
+    ek.alternativen = [{"OBEN": 1.0}, {"UNTEN": 1.0}]
+    ms.add_fatigue_load("EL", "OBEN", "EK_oder", cycles=1e6)
+    fat = solver.solve_all(ms, fatigue=True).fatigue
+    fm = fat.members.get("M1")
+    check("Vorbedingung: M1 steht als nicht geführt im Nachweis",
+          fm is not None and fm.status() == "nicht geführt" and fm.util == 0.0,
+          repr(getattr(fm, "fehler", None))[:80])
+    karte = fat.util_by_element(ms)
+    check("nicht geführter Stab: seine Elemente fehlen in util_by_element",
+          not any(e in karte for e in ms.members["M1"].elements), str(karte))
+    # Gegenprobe, damit die Kur nicht zu scharf ist: derselbe Stab, OBEN
+    # gegen UNTEN, ist gefuehrt und behaelt seinen Wert in der Karte.
+    ms = _stab_oben_unten()
+    ms.add_fatigue_load("EL", "OBEN", "UNTEN", cycles=1e6)
+    fat = solver.solve_all(ms, fatigue=True).fatigue
+    fm = fat.members["M1"]
+    karte = fat.util_by_element(ms)
+    check("Gegenprobe: geführter Stab behält seine Ausnutzung je Element",
+          not fm.fehler and fm.util > 0
+          and all(karte.get(e) == fm.util for e in ms.members["M1"].elements),
+          f"D = {fm.util:.4f}, Karte {karte}")
+
+
+def test_warntexte_mit_umlaut():
+    """Befund B057 (Nebenbefund 22./23.09.2026): die Warntexte "Ermuedungslast
+    ...: Ergebnis ... fehlt" gehen als "Hinweis:", als "Der Nachweis konnte
+    nicht geführt werden: ..." und in die offenen Warnungen des Berichts,
+    ebenso die Modellpruefung "FEHLER: Ermuedungslast ...: ... unbekannt" -
+    beides stand am Stand ec6448c ohne Umlaut im Bericht.
+
+    Geprueft wird jede der sechs Stellen in fatigue.py, an denen der Text
+    entsteht (Stab und Volumen je: Hoechstzustand fehlt, Mindestzustand
+    fehlt, Glied eines Verlaufs fehlt), die Modellpruefung und der Bericht
+    zum Modell des Befunds (Last EL2 auf den unbekannten Fall "FEHLT").
+    """
+    from statik3d.report import Report
+
+    def drei_wege(m, oben, unten):
+        m.add_fatigue_load("Oben", "FEHLT", unten, 1e5)
+        m.add_fatigue_load("Unten", oben, "FEHLT", 1e5)
+        m.fatigue_loads["Folge"] = FatigueLoad("Folge", folge=[oben, "FEHLT", unten],
+                                               wiederholungen=1e5)
+        return m
+
+    ms = drei_wege(_stab_oben_unten(), "OBEN", "UNTEN")
+    mv = drei_wege(_zugstab_volumen(1000e3, -400e3), "LF1", "LF2")
+    for art, m, eintrag in (("Stab", ms, lambda f: f.members.get("M1")),
+                            ("Volumen", mv, lambda f: f.volumen.get("V1"))):
+        x = eintrag(solver.solve_all(m, design=False, fatigue=True).fatigue)
+        warn = list(getattr(x, "warnings", None) or [])
+        check(f"{art}: je Weg ein Warntext 'Ermüdungslast <Name>: Ergebnis ...'",
+              sorted(w.split(":")[0] for w in warn)
+              == ["Ermüdungslast Folge", "Ermüdungslast Oben", "Ermüdungslast Unten"],
+              " | ".join(warn)[:120])
+        check(f"{art}: kein Warntext ohne Umlaut",
+              not any("Ermuedung" in w for w in warn), " | ".join(warn)[:120])
+        # Die Modellpruefung liest nur case_max/case_min (model.py, "for k in
+        # (f.case_max, f.case_min)"); das Glied des Verlaufs meldet sie nicht.
+        zeilen = [z for z in m.check() if "FEHLT" in z]
+        check(f"{art}: Modellpruefung nennt die Ermüdungslast mit Umlaut",
+              sorted(z.split("'")[1] for z in zeilen) == ["Oben", "Unten"]
+              and all(z.startswith("FEHLER: Ermüdungslast '") for z in zeilen),
+              " | ".join(zeilen)[:120])
+
+    m = _stab_oben_unten()
+    m.add_fatigue_load("EL2", "FEHLT", None, cycles=1e6)
+    an = solver.solve_all(m, fatigue=True)
+    html = Report(m, an).html()
+    check("Bericht: Hinweis und Grund lauten 'Ermüdungslast EL2'",
+          "Hinweis: Ermüdungslast EL2" in html and "Ermüdung M1: Ermüdungslast EL2" in html
+          and "Modellprüfung: FEHLER: Ermüdungslast" in html,
+          f"{html.count('Ermüdungslast EL2')}x 'Ermüdungslast EL2'")
+    check("Bericht: nirgends 'Ermuedungslast'", "Ermuedungslast" not in html,
+          f"{html.count('Ermuedungslast')}x")
+
+
 def main():
     for t in (test_spanne, test_hauptspannungen, test_volumen, test_naht_beruehrung,
               test_kerbfall_vorschlaege,
               test_fehlender_mindestzustand_wird_gemeldet,
               test_mindestzustand_volumen_und_oder_ek,
               test_volumen_ohne_beitrag_und_unvollstaendig,
-              test_unvollstaendig_je_weg):
+              test_unvollstaendig_je_weg,
+              test_nicht_gefuehrt_nicht_gefaerbt,
+              test_warntexte_mit_umlaut):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

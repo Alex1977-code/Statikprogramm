@@ -3364,6 +3364,19 @@ Ergebnis, steht er dagegen als **nicht geführt** da, mit dem fehlenden
 Ergebnis als Grund, obwohl die Last auch mit diesem Ergebnis nichts
 beitrüge.
 
+In der Färbung „Ausnutzung Ermüdung“ hat ein **nicht geführter** Stab keinen
+Wert, wie ein nicht geführtes Volumen. Bis zum 23.09.2026 stand er dort mit 0
+und sah aus wie unbeansprucht (gemessen an einem Kragarm aus zwei Balken mit
+einer oder-verknüpften Ergebniskombination als Mindestzustand). Hat gar kein
+Stab und kein Volumen einen Wert — alle nicht geführt oder ohne wirksame
+Ermüdungslast —, zeigt die Ansicht die elastische Ausnutzung des gewählten
+Ergebnisses: die Farbskala heißt dann „Ausnutzung elastisch [-]“, die
+Kennwerte nennen denselben Wert als „max. Ausnutzung“. Das ist kein Wert des
+Ermüdungsnachweises. Die Hinweise zu einem fehlenden Ergebnis beginnen mit
+„Ermüdungslast *Name*: Ergebnis …“, die Modellprüfung meldet einen
+unbekannten Zustand als „FEHLER: Ermüdungslast '*Name*': Lastfall oder
+Kombination '…' unbekannt“ (bis zum 23.09.2026 beide ohne Umlaut).
+
 Ergebnis: Tabelle „Nachweise EC3“ mit Ausnutzung, maßgebendem Nachweis,
 Kombination und Stelle; Färbung „Ausnutzung EC3“ im Viewport; alle Details
 im Bericht.

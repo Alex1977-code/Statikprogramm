@@ -5282,7 +5282,7 @@ class Model:
             # Nachweis liest beide aus den Ergebnissen (ec3.fatigue, all_res)
             for k in (f.case_max, f.case_min):
                 if k and k not in self.load_cases and k not in self.combinations:
-                    msgs.append(f"FEHLER: Ermuedungslast '{f.name}': Lastfall oder Kombination '{k}' unbekannt")
+                    msgs.append(f"FEHLER: Ermüdungslast '{f.name}': Lastfall oder Kombination '{k}' unbekannt")
             # ... aber keine oder-verknuepfte Ergebniskombination: sie hat nur
             # eine Umhuellende (an.envelopes), kein Einzelergebnis, und der
             # Nachweis dieser Last kann nicht gefuehrt werden. Bis zum
