@@ -2776,6 +2776,19 @@ der Wiederholungen. Das **Zählverfahren** bestimmt, was aus dem Verlauf wird:
 
 Die Schadensakkumulation ist immer Palmgren-Miner über alle Lasten am Ort.
 
+**Keine oder-verknüpfte Ergebniskombination als Zustand.** Eine Kombination
+mit Alternativen (so kommen die FAT-Kombinationen aus RFEM herein) wird nur
+als Umhüllende gerechnet und hat kein Einzelergebnis, aus dem sich σ_max oder
+σ_min lesen ließe. Die Maske der Ermüdungslast bietet sie darum nicht mehr als
+oberen oder unteren Zustand an, und die Modellprüfung meldet sie vor der
+Rechnung als FEHLER („Zustand '…' ist eine oder-verknüpfte
+Ergebniskombination“). Beschreiben Sie eine solche Last als Verlauf über die
+Lastfälle ihrer Alternativen — so legt sie auch der RFEM-Import an. Bei einer
+Last mit Verlauf prüft die Modellprüfung nur die Glieder des Verlaufs, denn
+nur sie gehen in den Nachweis ein; einen oberen oder unteren Zustand, den eine
+solche Last aus einer älteren Datei noch mitführt, liest der Nachweis nicht,
+und die Prüfung meldet ihn nicht.
+
 **Grundlast.** Ein Lastfall mit dem Haken „Grundlast“ (Maske Lastfall) wirkt
 in jeder direkt gelösten Rechnung mit: in Modellen mit Kontakt oder
 Ausfallstäben bei jedem Lastfall, jeder Kombination und jedem Zustand einer
@@ -2870,6 +2883,42 @@ sind nicht verschwiegen, sondern nachweislich unschädlich. Ist ein
 Bezugszeitraum eingestellt (die Lastspielzahlen gelten für so viele Jahre),
 weist der Bericht zusätzlich die rechnerische **Lebensdauer** aus:
 Bezugszeitraum / D.
+
+**Fehlt das Ergebnis eines Zustands**, wird diese Ermüdungslast nicht
+gerechnet — auch dann nicht, wenn nur der untere Zustand fehlt (bis zum
+22.09.2026 wurde er still durch den Nullzustand ersetzt). Der Eintrag im
+Bericht, in der Tabelle Ermüdung und in der Meldung nach der Rechnung sagt
+dann, was gilt:
+
+* **nicht geführt** — keine Last hat beigetragen. Statt D = 0,000 und
+  „Element -1“ steht der Grund, z. B. „Ergebnis 'EK7' des Mindestzustands
+  fehlt“.
+* **unvollständig** — mindestens eine Last fehlt in D; der Status nennt sie.
+  Das gilt am Stab wie am Volumen und für jeden Weg, auf dem eine Last
+  ausfällt: fehlender oberer oder unterer Zustand, eine oder-verknüpfte
+  Ergebniskombination als Zustand, ein Verlauf mit fehlendem Glied (dann
+  zählen seine übrigen Glieder, der Eintrag bleibt aber unvollständig).
+  Eine Last mit 0 Lastspielen bzw. Wiederholungen (etwa eine Sammlung aus
+  dem RFEM-Import) zählt dabei nicht mit, sie trüge ohnehin nichts bei;
+  trägt eine andere Last bei, steht ihr fehlendes Ergebnis nur als Hinweis
+  da.
+  Das Gesamturteil sagt dann „nicht vollständig geführt“ statt „Alle
+  Nachweise erfüllt.“ (Prüfkörper Zugstab-Volumen: D = 0,383 allein aus der
+  gerechneten Last; der alte Stand rechnete die zweite gegen null und wies
+  0,523 aus).
+* **NICHT erfüllt** — D > 1 schon aus den gerechneten Lasten, auch wenn
+  zusätzlich eine Last fehlt: eine ganz fehlende Last kann D nach Miner nur
+  vergrößern (für einen Verlauf mit Rainflow- oder Reservoirzählung, dem nur
+  ein Glied fehlt, ist das nicht gezeigt).
+
+Was zu tun ist: den genannten Lastfall bzw. die Kombination rechnen oder in
+der Ermüdungslast einen Zustand mit Ergebnis wählen. Ein Stab oder Volumen,
+dessen Lasten alle unwirksam sind (0 Lastspiele bzw. Wiederholungen), bekommt
+keinen Eintrag, solange keiner dieser Lasten ein Ergebnis fehlt; die Meldung
+nennt ihn dann „ohne wirksame Ermüdungslast“. Fehlt einer von ihnen ein
+Ergebnis, steht er dagegen als **nicht geführt** da, mit dem fehlenden
+Ergebnis als Grund, obwohl die Last auch mit diesem Ergebnis nichts
+beitrüge.
 
 Ergebnis: Tabelle „Nachweise EC3“ mit Ausnutzung, maßgebendem Nachweis,
 Kombination und Stelle; Färbung „Ausnutzung EC3“ im Viewport; alle Details

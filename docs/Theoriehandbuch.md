@@ -5078,6 +5078,49 @@ zeigen, die auch ohne Absicht entsteht:
   Test gefunden hätte**, weil der Zweig nicht durchlaufen wird. Gefunden durch
   Lesen.
 
+**Nachtrag: die Reste der Ermüdung (Befunde FE2, FE5, FE13, SV5).** Die
+Rechenstelle war behoben, drei Dinge nicht:
+
+* *Der Volumenzweig war ungeprüft.* Jetzt hält ihn ein Test am Zugstab-Volumen
+  (σ = 100 gegen −40 N/mm²). Mit der alten Zeile
+  `b = signal(case_min) if case_min in all_res else 0.0` weist er für den
+  fehlenden Mindestzustand D = 0,1397 statt 0 aus, mit zwei Lasten
+  0,52304 statt 0,38334 (gemessen durch Zurücknehmen).
+* *Die Ursache lag vor der Rechnung.* Die Maske bot eine oder-verknüpfte
+  Ergebniskombination als Zustand an, die Modellprüfung ließ sie durch — sie
+  steht in `model.combinations`, der Löser legt aber nur ihre Umhüllende ab
+  (`an.envelopes`), nie ein Einzelergebnis. `Model.ermuedungszustaende()`
+  nimmt sie aus der Auswahl, `Model.check()` meldet sie als FEHLER, auch als
+  Glied eines Verlaufs. Geprüft werden dabei nur die Zustände, die der
+  Nachweis liest: bei einem Verlauf dessen Glieder, sonst `case_max` und
+  `case_min`. Die erste Fassung prüfte bei einem Verlauf auch ein
+  mitgeführtes `case_max`, das `ec3.fatigue` nie liest (gemessen: D = 0,38334
+  mit und ohne), und ihr FEHLER hätte die CLI (Exit 2) und den Rechenstart
+  über die Web-Schnittstelle abgewiesen.
+* *Der Bericht las den Status aus D allein.* Ein nicht gerechneter Eintrag
+  (D = 0) hieß „Nachweis erfüllt“. `FatigueMember`/`FatigueVolumen.status()`
+  unterscheidet jetzt vier Fälle: nicht geführt (`fehler`), NICHT erfüllt
+  (D > 1), unvollständig (`fehlende_lasten`), erfüllt. Die Reihenfolge folgt
+  aus Miner: eine ganz fehlende Last trägt an jedem Ort einen Summanden ≥ 0
+  bei, D > 1 bleibt also auch mit ihr überschritten, D ≤ 1 sagt ohne sie
+  nichts. Für einen Verlauf, dem nur ein Zustand fehlt, gilt das bei der
+  Spanne ebenso (die Spanne einer Teilmenge ist nicht größer); für Rainflow
+  und Reservoir ist es nicht gezeigt. Eine unwirksame Last (0 Lastspiele bzw.
+  Wiederholungen) fehlt nie in D, auch wenn ihr Ergebnis fehlt — die erste
+  Fassung der Kur machte daraus „unvollständig“, eine Gegenprobe im Test hat
+  es gezeigt. Ist sie die einzige Last eines Stabs oder Volumens, steht er
+  trotzdem als „nicht geführt“ da, mit ihrem fehlenden Ergebnis als Grund
+  (ohne fehlendes Ergebnis: kein Eintrag, „ohne wirksame Ermüdungslast“).
+* *Und die erste Fassung dieser Kur prüfte nur einen Teil der Wege.* Ihre
+  Tests auf „unvollständig“ hielten allein den Volumenkörper mit fehlendem
+  Mindestzustand. Sechs Stellen ließen sich auf die alte bloße Warnung bzw.
+  den alten Stand zurücksetzen, ohne dass eine Prüfung fiel, nämlich die
+  ursprüngliche Fehlerstelle im Stabzweig, das Gesamturteil für Stäbe, beide
+  Verläufe mit fehlendem Glied, die Reihenfolge in `_status` und die Maske
+  (Mutationsproben der Gegenprüfung, von uns wiederholt; dazu zwei eigene für
+  den fehlenden Höchstzustand). `test_unvollstaendig_je_weg` rechnet jetzt
+  jeden der vier Wege an Stab und Volumen neben einer gerechneten Last.
+
 **Die übrigen 31 Befunde sind nicht behoben**, aber aufgeschrieben (mit Datei,
 Zeile und der Gegenprüfung, die sie nicht widerlegen konnte). Darunter: die
 Netzabnahme meldet „bestanden", obwohl Prüfungen ausgefallen sind; der

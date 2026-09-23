@@ -3156,6 +3156,20 @@ class Model:
         self.fatigue_loads[name] = f
         return f
 
+    def ermuedungszustaende(self) -> list[str]:
+        """Namen, die als Zustand einer Ermuedungslast taugen: Lastfaelle und
+        Kombinationen **ohne** Alternativen.
+
+        Eine oder-verknuepfte Ergebniskombination (``ist_umhuellende``) rechnet
+        der Loeser nur als Umhuellende (an.envelopes); ein Einzelergebnis, aus
+        dem sich sigma_max oder sigma_min lesen liesse, gibt es zu ihr nicht.
+        Die Maske der Ermuedungslast bot sie bis zum 22.09.2026 trotzdem als
+        oberen und unteren Zustand an (Befund FE13).
+        """
+        return list(self.load_cases) + [n for n, c in self.combinations.items()
+                                        if n not in self.load_cases
+                                        and not c.ist_umhuellende]
+
     # Kompatible Ein-Lastfall-API -> aktiver Lastfall
     @property
     def nodal_loads(self) -> list[NodalLoad]:
@@ -5127,6 +5141,32 @@ class Model:
             for k in (f.case_max, f.case_min):
                 if k and k not in self.load_cases and k not in self.combinations:
                     msgs.append(f"FEHLER: Ermuedungslast '{f.name}': Lastfall oder Kombination '{k}' unbekannt")
+            # ... aber keine oder-verknuepfte Ergebniskombination: sie hat nur
+            # eine Umhuellende (an.envelopes), kein Einzelergebnis, und der
+            # Nachweis dieser Last kann nicht gefuehrt werden. Bis zum
+            # 22.09.2026 liess die Pruefung sie durch, die Maske bot sie als
+            # unteren Zustand an, und die Rechnung setzte still sigma_min = 0
+            # (Befunde FE2/FE13); seit efcf3d6 meldet es erst der Nachweis,
+            # nach der Rechnung. Hier steht es vorher.
+            # Geprueft werden nur die Zustaende, die der Nachweis liest: bei
+            # einem Verlauf die Glieder, sonst case_max/case_min. Ein Verlauf
+            # behaelt ein case_max aus der alten Maske (sie uebergab es auch
+            # im Modus Verlauf); die erste Fassung dieser Pruefung meldete
+            # dafuer einen FEHLER, obwohl ec3.fatigue es nie liest - gemessen
+            # am Zugstab-Volumen D = 0,38334 mit und ohne dieses case_max, und
+            # der FEHLER haette CLI und Web-Rechenstart abgewiesen (Mangel 2
+            # der Gegenpruefung, 23.09.2026).
+            zustaende = list(f.folge) if getattr(f, "folge", None) else [f.case_max, f.case_min]
+            for k in dict.fromkeys(zustaende):
+                c = self.combinations.get(k) if k else None
+                if c is not None and k not in self.load_cases and c.ist_umhuellende:
+                    msgs.append(
+                        f"FEHLER: Ermüdungslast '{f.name}': Zustand '{k}' ist eine "
+                        f"oder-verknüpfte Ergebniskombination ({len(c.alternativen)} "
+                        "Alternativen) - sie hat kein Einzelergebnis und fehlt darum "
+                        "im Ermüdungsnachweis dieser Last. Einen Lastfall oder eine "
+                        "Kombination ohne Alternativen wählen oder die Last als "
+                        "Verlauf über die Lastfälle der Alternativen beschreiben.")
         for m in self.members.values():
             for i in m.elements:
                 if i < 0 or i >= len(self.elements):

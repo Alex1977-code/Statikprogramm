@@ -277,6 +277,15 @@ class FatigueMember:
     jahre: float = float("inf")
     #: Bezugszeitraum, auf den die Lastspielzahlen sich beziehen [Jahre]
     bezugsjahre: float = 0.0
+    #: Ermuedungslasten, die wegen eines fehlenden Ergebnisses nicht (oder
+    #: nur mit einem Teil ihres Verlaufs) in D stehen. Ohne dieses Feld war
+    #: ein Nachweis, dem von zwei Lasten eine fehlte, im Bericht "erfuellt"
+    #: und im Gesamturteil "Alle Nachweise erfuellt." - der Hinweis stand nur
+    #: darunter (Befund FE5, gemessen: D = 0,38334 allein aus der guten Last).
+    fehlende_lasten: list = field(default_factory=list)
+
+    def status(self) -> str:
+        return _status(self)
 
     def tabelle(self) -> list:
         """Die Schadensakkumulation Stufe fuer Stufe am massgebenden Ort."""
@@ -321,9 +330,61 @@ class FatigueVolumen:
     #: Elemente des Koerpers und ihre Schaedigung (float32) - fuer die Faerbung
     elemente: list = field(default_factory=list)
     D_je_element: object = None
+    #: Siehe FatigueMember.fehlende_lasten
+    fehlende_lasten: list = field(default_factory=list)
+
+    def status(self) -> str:
+        return _status(self)
 
     def tabelle(self) -> list:
         return schaedigungstabelle(self.kollektiv, self.category, self.gamma_Mf)
+
+
+def _status(n) -> str:
+    """Status eines Ermuedungsnachweises (Stab oder Volumen).
+
+    "nicht geführt": keine Last hat beigetragen (``fehler``) - D = 0 ist dann
+    keine Aussage. "NICHT erfüllt": D > 1 aus den gerechneten Lasten - so
+    stand es auch vorher da. "unvollständig": D <= 1, aber mindestens eine
+    Last fehlt in D (``fehlende_lasten``); ihr Beitrag ist nicht bekannt, das
+    Ergebnis darf darum nicht "erfüllt" heissen. Ergebnisse aus Dateien vor
+    dem 22.09.2026 kennen die Felder nicht - daher getattr.
+    """
+    if getattr(n, "fehler", ""):
+        return "nicht geführt"
+    if n.util > 1.0:
+        return "NICHT erfüllt"
+    if getattr(n, "fehlende_lasten", None):
+        return "unvollständig"
+    return "erfüllt"
+
+
+def _nicht_gerechnet(nachweis, fl, text: str, wirksam: bool = True) -> None:
+    """Das Ergebnis einer Ermuedungslast fehlt: Warnung **und** Name der Last
+    am Nachweis. Die Warnung allein reichte nicht - der Bericht setzte den
+    Status aus D und schrieb "Nachweis erfüllt", obwohl eine Last fehlte.
+
+    ``wirksam=False`` (0 Lastspiele bzw. Wiederholungen, z. B. die Sammlungen
+    aus dem RFEM-Import): die Warnung bleibt wie bisher, die Last fehlt aber
+    nicht in D - sie haette nichts beigetragen. Ohne diese Unterscheidung
+    hiess ein Nachweis mit gewollt unwirksamer Sammlung "unvollständig"
+    (gemessen am Pruefkoerper, test_volumen_ohne_beitrag_und_unvollstaendig).
+    """
+    nachweis.warnings.append(text)
+    if wirksam:
+        _fehlt_in_d(nachweis, fl)
+
+
+def _fehlt_in_d(nachweis, fl) -> None:
+    """Die Last *fl* steht nicht (vollstaendig) in D dieses Nachweises."""
+    if fl.name not in nachweis.fehlende_lasten:
+        nachweis.fehlende_lasten.append(fl.name)
+
+
+def _aufzaehlen(namen: list, n: int = 5) -> str:
+    """Die ersten *n* Namen, dahinter die Zahl der uebrigen."""
+    kopf = ", ".join(namen[:n])
+    return kopf + (f" und {len(namen) - n} weitere" if len(namen) > n else "")
 
 
 @dataclass
@@ -332,32 +393,79 @@ class FatigueResults:
     gamma_Ff: float = 1.0
     #: Ermuedungsnachweise der Volumenkoerper mit Kerbfall
     volumen: dict = field(default_factory=dict)
+    #: Staebe und Volumen mit Kerbfall, zu denen keine Ermuedungslast
+    #: beitraegt, obwohl kein Ergebnis fehlt (alle Lasten mit 0 Lastspielen
+    #: bzw. Wiederholungen oder Verlauf mit weniger als zwei Zustaenden) -
+    #: als "Stab <Name>" / "Volumen <Name>". Sie bekommen gewollt keinen
+    #: Eintrag ("0 heisst unwirksam"); bis zum 22.09.2026 sagte die
+    #: Zusammenfassung dann aber "keine Staebe oder Volumen mit Kerbfall",
+    #: obwohl es sie gab (Befund SV5, Faelle D/E der Probe).
+    ohne_wirksame_last: list = field(default_factory=list)
 
     def summary(self) -> str:
-        if not self.members and not self.volumen:
-            return "Ermuedung: keine Staebe oder Volumen mit Kerbfall"
-        alle = list(self.members.values()) + list(self.volumen.values())
-        worst = max(alle, key=lambda m: m.util)
-        wname = getattr(worst, "member", None) or f"Volumen {worst.name}"
-        teile = ([f"{len(self.members)} Staebe"] if self.members else []) + (
+        # Stab- und Volumeneintraege mit Anzeigenamen; ein nicht gefuehrter
+        # Eintrag (fehler) hat D = 0 und darf weder "max. Schaedigung" sein
+        # noch die Zeile allein bestreiten - bis zum 22.09.2026 stand dann
+        # "max. Schaedigung D = 0.000 (Volumen V1, Kerbfall 71)" da.
+        alle = ([(f"Stab {m.member}", m) for m in self.members.values()]
+                + [(f"Volumen {v.name}", v) for v in self.volumen.values()])
+        ohne = list(getattr(self, "ohne_wirksame_last", None) or [])
+        if not alle:
+            if ohne:
+                return (f"Ermüdung: kein Nachweis geführt - {len(ohne)} mit Kerbfall ohne "
+                        f"wirksame Ermüdungslast ({_aufzaehlen(ohne)}): Lastspiele bzw. "
+                        "Wiederholungen 0 oder Verlauf mit weniger als zwei Zuständen")
+            return "Ermüdung: keine Stäbe oder Volumen mit Kerbfall"
+        teile = ([f"{len(self.members)} Stäbe"] if self.members else []) + (
             [f"{len(self.volumen)} Volumen"] if self.volumen else [])
-        return (f"Ermuedung: {', '.join(teile)}, max. Schaedigung D = {worst.util:.3f} "
-                f"({wname}, Kerbfall {worst.category/1e6:.0f})")
+        text = f"Ermüdung: {', '.join(teile)}"
+        gefuehrt = [(n, x) for n, x in alle if not getattr(x, "fehler", "")]
+        if gefuehrt:
+            wname, worst = max(gefuehrt, key=lambda nx: nx[1].util)
+            text += (f", max. Schädigung D = {worst.util:.3f} "
+                     f"({wname}, Kerbfall {worst.category/1e6:.0f})")
+        offen = [n for n, x in alle if getattr(x, "fehler", "")]
+        if offen:
+            text += f"; nicht geführt: {_aufzaehlen(offen)}"
+        teil = [n for n, x in gefuehrt if getattr(x, "fehlende_lasten", None)]
+        if teil:
+            text += f"; unvollständig (Ergebnis einer Last fehlt): {_aufzaehlen(teil)}"
+        if ohne:
+            text += f"; ohne wirksame Ermüdungslast: {_aufzaehlen(ohne)}"
+        return text
 
     def table(self) -> list[list]:
         rows = [["Stab", "Kerbfall", "gamma_Mf", "max Delta-sigma [MPa]", "Delta-sigma_E,2 [MPa]",
                  "D (Miner)", "D Schub", "Ausnutzung", "massgebend"]]
+
+        # Ein nicht gefuehrter Eintrag zeigt statt D 0.000 und "Element -1"
+        # (so bis zum 22.09.2026) den Grund; einem unvollstaendigen wird die
+        # fehlende Last an den massgebenden Ort gehaengt.
+        def ort(x, text: str) -> str:
+            fehlend = getattr(x, "fehlende_lasten", None)
+            if fehlend:
+                text += f" - unvollständig, nicht gerechnet: {_aufzaehlen(fehlend)}"
+            return text
+
         for m in self.members.values():
+            if getattr(m, "fehler", ""):
+                rows.append([m.member, f"{m.category/1e6:.0f}", f"{m.gamma_Mf:.2f}",
+                             "–", "–", "–", "–", "–", f"nicht geführt: {m.fehler}"])
+                continue
             rows.append([m.member, f"{m.category/1e6:.0f}", f"{m.gamma_Mf:.2f}",
                          f"{m.dsig_max/1e6:.1f}", f"{m.dsig_E2/1e6:.1f}", f"{m.D:.3f}",
-                         f"{m.D_shear:.3f}", f"{m.util:.3f}", m.governing])
+                         f"{m.D_shear:.3f}", f"{m.util:.3f}", ort(m, m.governing)])
         for v in self.volumen.values():
             kf = f"{v.category_grund/1e6:.0f}" + (f" / Naht {v.category_naht/1e6:.0f}"
                                                   if v.n_naht and v.category_naht else "")
+            if getattr(v, "fehler", ""):
+                rows.append([f"Volumen {v.name}", kf, f"{v.gamma_Mf:.2f}",
+                             "–", "–", "–", "–", "–", f"nicht geführt: {v.fehler}"])
+                continue
             rows.append([f"Volumen {v.name}", kf, f"{v.gamma_Mf:.2f}",
                          f"{v.dsig_max/1e6:.1f}", f"{v.dsig_E2/1e6:.1f}", f"{v.D:.3f}",
                          "0.000", f"{v.util:.3f}",
-                         f"Element {v.element}" + (" (Naht)" if v.naht else "")])
+                         ort(v, f"Element {v.element}" + (" (Naht)" if v.naht else ""))])
         return rows
 
     def util_by_element(self, model: Model) -> dict:
@@ -397,6 +505,7 @@ def _verlauf(model: Model, all_res: dict, member: Member, fl, n: int, fm):
     sig_t, tau_t, x = [], [], None
     for fall in fl.folge:
         if fall not in all_res:
+            # ob die Last in D fehlt, entscheidet der Aufrufer (Wiederholungen)
             fm.warnings.append(f"Ermuedungslast {fl.name}: Ergebnis '{fall}' fehlt")
             continue
         x, s_, t_ = _stress_points(model, all_res[fall], member, n)
@@ -631,9 +740,10 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
             if getattr(fl, "folge", None):
                 namen = [f for f in fl.folge if f in all_res]
                 fehlt = [f for f in fl.folge if f not in all_res]
-                if fehlt:
-                    fv.warnings.append(f"Ermuedungslast {fl.name}: Ergebnis '{fehlt[0]}' fehlt")
                 wdh = _wiederholungen(fl, ds)
+                if fehlt:
+                    _nicht_gerechnet(fv, fl, f"Ermuedungslast {fl.name}: Ergebnis '{fehlt[0]}' fehlt",
+                                     wirksam=wdh > 0)
                 if len(namen) < 2 or wdh <= 0:
                     continue
                 V = np.stack([signal(f) for f in namen], axis=1) * faktor     # (n, Zustaende)
@@ -660,17 +770,18 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
                 beitrag = True
                 continue
             if fl.case_max not in all_res:
-                fv.warnings.append(f"Ermuedungslast {fl.name}: Ergebnis '{fl.case_max}' fehlt")
+                _nicht_gerechnet(fv, fl, f"Ermuedungslast {fl.name}: Ergebnis '{fl.case_max}' fehlt",
+                                 wirksam=_spiele(fl, ds) > 0)
                 continue
             spiele = _spiele(fl, ds)
             if spiele <= 0:
                 continue
             if fl.case_min and fl.case_min not in all_res:
                 # Siehe den Stabzweig: angegeben und nicht gerechnet ist nicht
-                # null, sondern ein nicht gefuehrter Nachweis.
-                fv.warnings.append(
-                    f"Ermuedungslast {fl.name}: Ergebnis '{fl.case_min}' des "
-                    f"Mindestzustands fehlt - Nachweis nicht gefuehrt")
+                # null, sondern eine Last, die im Nachweis fehlt.
+                _nicht_gerechnet(fv, fl,
+                                 f"Ermuedungslast {fl.name}: Ergebnis '{fl.case_min}' des "
+                                 f"Mindestzustands fehlt - die Last wird nicht gerechnet")
                 continue
             a = signal(fl.case_max)
             b = signal(fl.case_min) if fl.case_min else 0.0
@@ -688,6 +799,11 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
             if fv.warnings:
                 fv.fehler = fv.warnings[0]
                 out.volumen[k.name] = fv
+            else:
+                # Kein Ergebnis fehlt, alle Lasten sind unwirksam (0 Spiele,
+                # Verlauf mit einem Zustand): gewollt kein Eintrag, aber die
+                # Zusammenfassung muss den Koerper nennen koennen.
+                out.ohne_wirksame_last.append(f"Volumen {k.name}")
             continue
         j = int(np.argmax(D))
         fv.D = float(D[j])
@@ -759,10 +875,14 @@ def check_fatigue(model: Model, analysis, progress=None, n: int = None,
             faktor = fl.factor * ds.gamma_Ff
             if getattr(fl, "folge", None):
                 x, sig, tau = _verlauf(model, all_res, member, fl, n, fm)
+                wdh = _wiederholungen(fl, ds)
+                if wdh > 0 and any(fall not in all_res for fall in fl.folge):
+                    # _verlauf hat die Warnung geschrieben; eine wirksame Last
+                    # fehlt damit (ganz oder mit einem Teil ihres Verlaufs) in D
+                    _fehlt_in_d(fm, fl)
                 if sig is None:
                     continue
                 xs = x
-                wdh = _wiederholungen(fl, ds)
                 if wdh <= 0:
                     # unwirksam - so kommen die Sammlungen aus dem RFEM-Import,
                     # damit ihre Ereignisse nicht doppelt zaehlen; frueher
@@ -790,7 +910,8 @@ def check_fatigue(model: Model, analysis, progress=None, n: int = None,
                     _groesste_stufe({(0, j): v for j, v in eigen_t.items()}, fl.name, x))
                 continue
             if fl.case_max not in all_res:
-                fm.warnings.append(f"Ermuedungslast {fl.name}: Ergebnis '{fl.case_max}' fehlt")
+                _nicht_gerechnet(fm, fl, f"Ermuedungslast {fl.name}: Ergebnis '{fl.case_max}' fehlt",
+                                 wirksam=_spiele(fl, ds) > 0)
                 continue
             spiele = _spiele(fl, ds)
             if spiele <= 0:
@@ -807,9 +928,11 @@ def check_fatigue(model: Model, analysis, progress=None, n: int = None,
                 # die Schaedigung um den Faktor 6 bis 25 zu klein aus, und
                 # zwar auf der unsicheren Seite. Der fehlende HOECHSTzustand
                 # wurde die ganze Zeit gemeldet - der Mindestzustand nicht.
-                fm.warnings.append(
-                    f"Ermuedungslast {fl.name}: Ergebnis '{fl.case_min}' des "
-                    f"Mindestzustands fehlt - Nachweis nicht gefuehrt")
+                # Traegt eine andere Last bei, ist der Nachweis damit nicht
+                # "nicht gefuehrt", sondern unvollstaendig (fehlende_lasten).
+                _nicht_gerechnet(fm, fl,
+                                 f"Ermuedungslast {fl.name}: Ergebnis '{fl.case_min}' des "
+                                 f"Mindestzustands fehlt - die Last wird nicht gerechnet")
                 continue
             if fl.case_min:
                 _, s_min, t_min = _stress_points(model, all_res[fl.case_min], member, n)
@@ -837,6 +960,9 @@ def check_fatigue(model: Model, analysis, progress=None, n: int = None,
             if fm.warnings:
                 fm.fehler = fm.warnings[0]
                 out.members[mname] = fm
+            else:
+                # alle Lasten unwirksam - siehe FatigueResults.ohne_wirksame_last
+                out.ohne_wirksame_last.append(f"Stab {mname}")
             continue
         # Massgebend ist der Ort mit der groessten Schaedigung - nicht die
         # groesste Schwingbreite irgendwo und die naechste woanders.
