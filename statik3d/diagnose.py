@@ -274,6 +274,22 @@ def entartetes_volumen(V: float, d: float) -> bool:
 ENTARTUNG_GENAUIGKEIT = ("ihre Genauigkeit ist die des Keils bzw. der Pyramide oder des "
                          "Tetraeders - am Kragarm liegt der Keil bei 90 / 405 / 2 295 FHG "
                          "−64,6 / −15,8 / −4,3 N/mm² daneben, der Sechsflächner −1,6 / +0,2 / −0,03")
+#: dasselbe fuer die quadratischen Ziele (VQ203, 23.09.2026): der
+#: quadratische Keil rechnet am Kragarm wie der hex20
+ENTARTUNG_GENAUIGKEIT_QUADRATISCH = ("der quadratische Keil (pent15) rechnet wie der Sechsflächner mit "
+                                     "20 Knoten - am Kragarm −0,02 N/mm² bei 1 599 FHG gegen −0,02 bei "
+                                     "1 359 FHG (hex20); der tet10 +4,1 bei 2 295 FHG")
+
+
+def entartung_genauigkeit(zahl: dict) -> str:
+    """Der Genauigkeitshinweis zu einer Umwandlungszaehlung {"hex8→pent6": n,
+    ...}: der des linearen Keils, der des quadratischen oder beide."""
+    ziele = {k.split("→")[-1] for k in (zahl or {})}
+    quad = bool(ziele & {"pent15", "tet10"})
+    lin = bool(ziele - {"pent15", "tet10"}) or not ziele
+    if quad and lin:
+        return ENTARTUNG_GENAUIGKEIT + "; " + ENTARTUNG_GENAUIGKEIT_QUADRATISCH
+    return ENTARTUNG_GENAUIGKEIT_QUADRATISCH if quad else ENTARTUNG_GENAUIGKEIT
 
 
 def _entartung(model, i: int) -> tuple:
@@ -2239,7 +2255,7 @@ def meldungen(model, d: dict = None) -> list:
         teile = ", ".join(f"{k}: {v}" for k, v in sorted(zahl.items()))
         wann = "werden beim Rechnen" if wa else "wurden"
         z.append(f"Hinweis: {n} Elemente aus entarteten Volumenelementen (zusammenfallende "
-                 f"Knoten) {wann} umgewandelt ({teile}) - {ENTARTUNG_GENAUIGKEIT}")
+                 f"Knoten) {wann} umgewandelt ({teile}) - {entartung_genauigkeit(zahl)}")
     nf, nk = len(d["unvernetzte_flaechen"]), len(d["unvernetzte_koerper"])
     if nf or nk:
         z.append("WARNUNG: " + " und ".join(x for x in (f"{nf} Flächen" if nf else "", f"{nk} Volumen" if nk else "") if x)

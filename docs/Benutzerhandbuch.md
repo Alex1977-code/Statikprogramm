@@ -4329,6 +4329,14 @@ davon nicht betroffen.
   Kante zusammengezogen), ist das ein **FEHLER** mit Elementnummer, und die
   Rechnung hält an. Bis zum 23.09.2026 fielen auch diese Elemente still weg — ein
   Kragarm aus Keil-Sechsflächnern rechnete mit 0,0 mm Durchbiegung.
+  **VQ83 und VQ203** (Namen aus InfoGraph) sind in Statik3D der Sechsflächner mit 8
+  bzw. 20 Knoten, der so entarten darf: er rechnet als Keil, Pyramide oder Tetraeder,
+  der hex20 als quadratischer Keil (pent15) oder quadratischer Tetraeder (tet10). Das ist
+  gemessen genauer, als den entarteten Sechsflächner selbst zu rechnen (Kragarm mit 2 295
+  Unbekannten: −4,3 statt −55,3 N/mm²; quadratisch −0,02 statt −95,6); ein zur Pyramide
+  entarteter hex20 hat kein quadratisches Gegenstück und ist ein FEHLER. Welche
+  Elementtypen in einem Netz aneinanderstoßen dürfen, steht im Theoriehandbuch § 7a
+  (Verträglichkeit an einer gemeinsamen Seite); die Vorgabe tet10 + VQ83 ist zulässig.
   Beim **Import** geschieht die Umwandlung schon im Anschluss an das
   Zusammenführen doppelter Knoten, und das Importprotokoll nennt sie
   („Entartete Volumenelemente umgewandelt (hex8→pent6: 2) …“) – dort, wo
