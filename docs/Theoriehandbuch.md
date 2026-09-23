@@ -147,11 +147,20 @@ Umfangsdehnung durch ∂u_r/∂r ersetzt.
 | Starrer Körper | RBE2 (die Slaves folgen dem Master starr) und RBE3 (der Master ist der gewichtete Mittelpunkt: eine Last verteilt sich, ohne zu versteifen) - als Zwangsbedingung im Strafverfahren |
 
 Die Elemente sind gegen analytische Lösungen und Patch-Tests verifiziert:
-`tests/test_verification.py` (26 Benchmarks), dazu je Familie
+`tests/test_verification.py` (27 Benchmarks), dazu je Familie
 `tests/test_elemente_volumen.py`, `tests/test_elemente_schalen.py`,
 `tests/test_elemente_ebene.py`, `tests/test_elemente_stab.py` und - für das
 Zusammenspiel mit Modell, Löser, Netz, Bericht und Schnittstellen -
 `tests/test_elemente.py`.
+
+Der Tet10-Kragträger der Verifikation (2,0 × 0,2 × 0,2 m, 8 × 2 × 2 Zellen zu
+je fünf Tetraedern, 393 Knoten, ν = 0) trifft die Timoshenko-Durchbiegung auf
+−0,11 % (gemessen 23.09.2026) und wird mit 1 % geprüft. Bis zum 23.09.2026
+erzeugte die Prüfung ihr tet4-Ausgangsnetz mit einer eigenen Kopie der
+Quaderzerlegung ohne den Schachbrettwechsel aus `mesher.grid_box`: 384 statt
+144 freie Dreiecke, also innere Risse, und +3,85 % Abweichung, die die
+damalige Toleranz von 5 % durchließ. Jetzt nimmt sie `mesher.grid_box` und
+prüft zusätzlich, dass nur die Randdreiecke frei sind.
 
 ### 1.2a Ausfallstäbe, Seile und der siebte Freiheitsgrad
 
@@ -7167,7 +7176,7 @@ die Meldung für einen Freibrief hält.
 
 | Test | Umfang |
 |---|---|
-| `tests/test_verification.py` | 26 Benchmarks Stab/Schale/Volumen (analytisch, Patch-Tests) |
+| `tests/test_verification.py` | 27 Benchmarks Stab/Schale/Volumen (analytisch, Patch-Tests) |
 | `tests/test_supports.py` | Lager mit Ausfall bei Zug/Druck, Schlupf, Reibung, Grenzkraft; Linien- und Flächenlager; Federgelenke gegen Handrechnungen |
 | `tests/test_sections.py` | Profildatenbank nach Land gegen Katalogwerte, Hauptachsen der Winkel, zusammengesetzte Querschnitte |
 | `tests/test_gzg.py` | Verformungsnachweise gegen 5qL⁴/384EI, PL³/48EI und den Kragarm; Grenzwertbildung L/x, absolut, Überhöhung, Punktpaar |
