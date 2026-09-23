@@ -287,12 +287,19 @@ class AnschlussResults:
     joints: dict = field(default_factory=dict)
     combinations: list = field(default_factory=list)
     settings: dict = field(default_factory=dict)
+    #: Kombinationen ohne Ergebnis ("nicht nachgewiesen"), siehe
+    #: ec3.design._uls_results
+    warnungen: list = field(default_factory=list)
 
     @property
     def util_max(self) -> float:
         return max((j.eta for j in self.joints.values()), default=0.0)
 
     def summary(self) -> str:
+        from ..ec3.design import warnzeilen
+        return self._summary() + warnzeilen(self)
+
+    def _summary(self) -> str:
         if not self.joints:
             return "Anschlüsse: keine"
         schlecht = [j.name for j in self.joints.values() if j.eta > 1.0]
@@ -458,12 +465,16 @@ def check_joints(model: Model, analysis, combos: list = None, progress=None,
                  ermuedung: bool = True) -> AnschlussResults:
     """Alle Anschluesse des Modells nachweisen."""
     from ..ec3.design import _uls_results
-    results = _uls_results(model, analysis, combos)
+    warnungen: list = []
+    namen = [n for n, j in model.joints.items() if j.design]
+    # ohne Anschluss mit Nachweis keine Warnung ueber fehlende Kombinationen
+    # (wie ec3.design.check_members, Gegenpruefung 23.09.2026)
+    results = _uls_results(model, analysis, combos, warnungen=warnungen) if namen else {}
     out = AnschlussResults(combinations=list(results), settings={
         "gamma_M0": model.design.gamma_M0, "gamma_M2": model.design.gamma_M2,
         "gamma_Ff": model.design.gamma_Ff,
-        "Norm": "DIN EN 1993-1-8 (Tragfähigkeit), DIN EN 1993-1-9 (Ermüdung)"})
-    namen = [n for n, j in model.joints.items() if j.design]
+        "Norm": "DIN EN 1993-1-8 (Tragfähigkeit), DIN EN 1993-1-9 (Ermüdung)"},
+        warnungen=warnungen)
     for i, n in enumerate(namen):
         out.joints[n] = check_joint(model, model.joints[n], results, analysis,
                                     ermuedung=ermuedung)

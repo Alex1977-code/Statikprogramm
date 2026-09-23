@@ -857,6 +857,67 @@ def _fliessendes_kontaktmodell():
     return m
 
 
+def test_laufbuch_mit_fliessen():
+    """Laufbuch je Lastfall (22.09.2026): mit Fließen rechnet derselbe
+    Lastfall viele Kontaktläufe - am Drehlager zwölf. Die Summen in res.info
+    sagen nicht, welcher Lauf gedeckelt war und ob der letzte dabei ist, aus
+    dem u und σ stammen. Jetzt steht jeder Lauf einzeln da, mit seiner Art
+    (Vorlauf, Laststufe, Newton, Abschluss), abgeleitet aus info['verlauf']
+    der Fließ-Iteration, ohne deren Signatur zu ändern."""
+    from statik3d import contact as ct
+    from tests.test_kontakthalt import laufbuch_pruefen
+    m = _fliessendes_kontaktmodell()
+    r = solver.solve_static(m)
+    laeufe = laufbuch_pruefen(r, "Fließen", pruefe=check)
+    if not laeufe:
+        return
+    arten = [e["art"] for e in laeufe]
+    pz = r.info.get("plastizitaet") or {}
+    check("erster Lauf der Vorlauf, letzter der Abschluss",
+          arten[0] == "Vorlauf" and arten[-1] == "Abschluss", str(arten))
+    check("je Laststufe ein Lauf 'Laststufe'", arten.count("Laststufe") == pz.get("laststufen"),
+          f"{arten.count('Laststufe')} gegen {pz.get('laststufen')} Laststufen")
+    check("die Newton-Läufe: je Schritt, der die Toleranz verfehlt, einer - mit Tangente",
+          pz.get("konvergiert") and "Newton" in arten
+          and arten.count("Newton") == int(pz["iterationen"]) - int(pz["laststufen"])
+          and all(e["tangente"] for e in laeufe if e["art"] == "Newton"),
+          f"{arten.count('Newton')} Newton-Läufe, {pz.get('iterationen')} Schritte")
+    check("jeder spätere Lauf startet vom Zustand des Laufs davor",
+          all(e["start_von_lauf"] == e["nr"] - 1 for e in laeufe[2:]),
+          str([e["start_von_lauf"] for e in laeufe]))
+    check("der Vorlauf gibt seinen Zustand an keinen Lauf weiter",
+          laeufe[1]["start_von_lauf"] == laeufe[0]["start_von_lauf"]
+          and not any(e["start_von_lauf"] == 1 for e in laeufe),
+          str([e["start_von_lauf"] for e in laeufe]))
+
+    # Anfangsdehnung: je Schritt ein Aufruf, der erste einer Laststufe heisst so
+    m3 = _fliessendes_kontaktmodell()
+    m3.plastizitaet.verfahren = "anfangsdehnung"
+    r3 = solver.solve_static(m3)
+    l3 = laufbuch_pruefen(r3, "Anfangsdehnung", pruefe=check)
+    a3 = [e["art"] for e in l3]
+    pz3 = r3.info.get("plastizitaet") or {}
+    check("Anfangsdehnung: Vorlauf, je Schritt ein Lauf, Abschluss",
+          a3 and a3[0] == "Vorlauf" and a3[-1] == "Abschluss"
+          and len(a3) == int(pz3.get("iterationen", -9)) + 2
+          and a3.count("Laststufe") == pz3.get("laststufen") and "Fliessschritt" in a3,
+          f"{len(a3)} Läufe, {pz3.get('iterationen')} Schritte: {a3[:5]}")
+
+    # Mit Deckel 1: gedeckelte Läufe stehen einzeln da
+    m2 = _fliessendes_kontaktmodell()          # vor dem Deckel bauen: es rechnet selbst
+    alt_max = ct.MAX_CYCLES
+    ct.MAX_CYCLES = 1
+    try:
+        r2 = solver.solve_static(m2)
+    finally:
+        ct.MAX_CYCLES = alt_max
+    l2 = laufbuch_pruefen(r2, "Fließen, Deckel 1", pruefe=check)
+    gedeckelt = [e["nr"] for e in l2 if e["grund"] == "deckel"]
+    check("mit Deckel 1: mindestens ein Lauf gedeckelt, jeder mit Nummer und Art",
+          gedeckelt and all(l2[n - 1]["art"] for n in gedeckelt),
+          f"gedeckelt {gedeckelt} von {len(l2)}: " + str([l2[n - 1]["art"] for n in gedeckelt]))
+
+
 def test_kontaktsystem_wird_wiederverwendet():
     """Der geometrische Teil des Kontakts - welcher Slave-Knoten auf welche
     Master-Facette fällt, Normalen, Flächenquadriken, Suchbäume - hängt weder
@@ -931,11 +992,12 @@ def test_initialize_setzt_den_ganzen_zustand_zurueck():
     cs = ct.ContactSystem(m, sys_.K, [], None)
     frisch = {k: getattr(cs, k) for k in
               ("phase", "cycles", "settle", "stabilising", "warm", "dF_slip",
-               "gleit_anteil", "gleit_guete")}
+               "gleit_anteil", "gleit_guete", "am_deckel")}
     # Zustand verbiegen, wie ihn eine Rechnung hinterlässt
     cs.phase, cs.cycles, cs.settle = 2, 7, 3
     cs.stabilising, cs.warm, cs.dF_slip = True, True, 1.5
     cs.gleit_anteil, cs.gleit_guete = 0.5, 0.02
+    cs.am_deckel = True
     for c in cs.cons[:5]:
         c.slip, c.frozen, c.yielding, c.toggles = True, True, True, 9
         c.gehalten = c.schub_halt = True
@@ -1139,6 +1201,7 @@ def main():
               test_zusatzsteifigkeit_gehoert_in_den_schluessel_der_faktorisierung,
               test_protokoll_sagt_was_die_runde_bewegt_und_kostet,
               test_kennzahlen_zaehlen_alle_laeufe_des_lastfalls,
+              test_laufbuch_mit_fliessen,
               test_kontaktsystem_wird_wiederverwendet,
               test_initialize_setzt_den_ganzen_zustand_zurueck,
               test_sechsflaechner_fliesst_unter_biegung,

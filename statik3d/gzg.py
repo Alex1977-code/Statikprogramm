@@ -154,12 +154,18 @@ class GrenzeCheck:
 class GZGResults:
     checks: dict = field(default_factory=dict)
     kombinationen: list = field(default_factory=list)
+    #: Kombinationen ohne Ergebnis ("nicht nachgewiesen"), siehe _sls_results
+    warnungen: list = field(default_factory=list)
 
     @property
     def util_max(self) -> float:
         return max((c.util for c in self.checks.values()), default=0.0)
 
     def summary(self) -> str:
+        from .ec3.design import warnzeilen
+        return self._summary() + warnzeilen(self)
+
+    def _summary(self) -> str:
         if not self.checks:
             return "Verformungsnachweise: keine Grenzwerte festgelegt"
         schlecht = [c.name for c in self.checks.values() if c.util > 1.0]
@@ -190,22 +196,43 @@ class GZGResults:
 # --------------------------------------------------------------------------
 # Nachweis
 # --------------------------------------------------------------------------
-def _sls_results(model: Model, analysis, situation: str = "") -> dict:
-    """Die GZG-Ergebnisse der gewaehlten Bemessungssituation."""
+def _sls_results(model: Model, analysis, situation: str = "",
+                 warnungen: list = None) -> dict:
+    """Die GZG-Ergebnisse der gewaehlten Bemessungssituation.
+
+    Eine Ergebniskombination ("A oder B oder ...") geht mit **jeder
+    Alternative** als eigenem Eintrag "EK [k]" ein
+    (solver.ergebnisse_der_alternativen). Auf die Lastfaelle wird nur
+    zurueckgegriffen, wenn das Modell **gar keine** Kombination hat; bis zum
+    22.09.2026 genuegte dafuer ein leeres ``analysis.combinations`` - ein
+    Modell nur mit GZG-Ergebniskombinationen wurde so gegen die Lastfaelle
+    nachgewiesen (Befund FE11). Fehlt das Ergebnis einer Kombination, steht
+    sie in ``warnungen``.
+    """
+    warn = warnungen if warnungen is not None else []
+    kombis = getattr(model, "combinations", None) or {}
+    if not kombis:
+        if situation:
+            # eine bestimmte Situation wurde verlangt und fehlt - das wird
+            # gesagt, nicht durch etwas anderes ersetzt
+            return {}
+        # gar keine Kombinationen im Modell: dann gelten die Lastfaelle selbst
+        return dict(getattr(analysis, "cases", None) or {})
     combos = getattr(analysis, "combinations", None) or {}
-    aus = {k: r for k, r in combos.items()
-           if k in model.combinations and model.combinations[k].is_sls
-           and (not situation or model.combinations[k].typ == situation)}
-    if aus:
-        return aus
-    if situation:
-        # eine bestimmte Situation wurde verlangt und fehlt - das wird gesagt,
-        # nicht durch etwas anderes ersetzt
-        return {}
-    if combos:
-        return {}
-    # gar keine Kombinationen im Modell: dann gelten die Lastfaelle selbst
-    return dict(getattr(analysis, "cases", None) or {})
+    aus = {}
+    for k, c in kombis.items():
+        if not c.is_sls or (situation and c.typ != situation):
+            continue
+        if c.ist_umhuellende:
+            alt, w = _s.ergebnisse_der_alternativen(model, analysis, c)
+            aus.update(alt)
+            warn.extend(w)
+        elif k in combos:
+            aus[k] = combos[k]
+        else:
+            warn.append(f"Kombination {k} nicht nachgewiesen: kein Ergebnis in der "
+                        "Berechnung – „Alle Lastfälle + Kombinationen“ rechnen")
+    return aus
 
 
 def _knotenwert(res, knoten: int, groesse: str) -> float:
@@ -316,8 +343,11 @@ def check_verformung(model: Model, analysis, progress=None) -> GZGResults:
     """Alle Verformungsnachweise des Modells fuehren."""
     out = GZGResults()
     namen = list(model.verformungsgrenzen)
-    situationen = {g.situation for g in model.verformungsgrenzen.values()}
-    vorrat = {s: _sls_results(model, analysis, s) for s in situationen}
+    situationen = sorted({g.situation for g in model.verformungsgrenzen.values()})
+    warnungen: list = []
+    vorrat = {s: _sls_results(model, analysis, s, warnungen=warnungen) for s in situationen}
+    # "" (alle GZG) und eine einzelne Situation melden dieselbe Kombination
+    out.warnungen = list(dict.fromkeys(warnungen))
     out.kombinationen = sorted({k for v in vorrat.values() for k in v})
     for i, n in enumerate(namen):
         g = model.verformungsgrenzen[n]

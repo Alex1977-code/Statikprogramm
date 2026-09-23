@@ -881,6 +881,9 @@ function renderErgebnisse() {
   const fields = [['umag', '|u| Verschiebung'], ['uz', 'uz'], ['ux', 'ux'], ['uy', 'uy'], ['vm', 'Vergleichsspannung σv'], ['util', 'Ausnutzung EC3'], ['util_fat', 'Ausnutzung Ermüdung'], ['util_el', 'Ausnutzung elastisch'], ['member', 'Stäbe farbig'], ['none', 'keine Färbung']];
   const diag = [['', 'kein Verlauf'], ['N', 'N'], ['Vy', 'Vy'], ['Vz', 'Vz'], ['Mt', 'Mt'], ['My', 'My'], ['Mz', 'Mz']];
   const memberOpts = [['', '– Stab wählen –']].concat(s.members.map(m => [m.name, m.name]));
+  // Farbe der Nachweiszeile vom Server (design_status: err/warn/ok). Bis zum
+  // 23.09.2026 stand hier /NICHT/.test(design_summary) - "nicht geführt" ist
+  // klein geschrieben, ein Stab ohne f_y stand darum gruen da (gemessen).
   let html = `
 <div class="card">
   <div class="grid2">${sel('which', 'Ergebnis', S.entries.map(e => [e.id, e.label]), S.ro.which, 'data-ro="which"')}${sel('field', 'Färbung', fields, S.ro.field, 'data-ro="field"')}
@@ -888,7 +891,7 @@ function renderErgebnisse() {
   <label><span>Überhöhung ×${g(S.ro.scale * Math.pow(10, S.ro.factor), 3)}</span><input type="range" min="-2" max="2" step="0.1" value="${S.ro.factor}" data-ro="factor"></label></div>
   ${chk('deform', 'Verformt darstellen', S.ro.deform, 'data-ro="deform"')}
   <pre>${esc(R.summary)}</pre>
-  ${R.design_summary ? `<div class="msg ${/NICHT/.test(R.design_summary) ? 'err' : 'ok'}">${esc(R.design_summary)}</div>` : ''}
+  ${R.design_summary ? `<div class="msg ${esc(R.design_status || '')}">${esc(R.design_summary)}</div>` : ''}
   ${R.fatigue_summary ? `<div class="msg">${esc(R.fatigue_summary)}</div>` : ''}
 </div>`;
   if (s.members.length) {
@@ -956,7 +959,8 @@ function renderNachweise() {
   <div class="muted">${s.has_analysis ? `${s.members.length} Stäbe, ${s.fatigue_loads.length} Ermüdungslasten` : 'Zuerst unter „Rechnen“ berechnen (Nachweise laufen dort auf Wunsch automatisch mit).'}</div></div>`;
   if (D && D.design) {
     const d = D.design, rows = d.table.slice(1);
-    html += `<div class="card"><div class="msg ${d.util_max > 1 ? 'err' : 'ok'}">${esc(d.summary)}</div>
+    // Farbe vom Server: util_max > 1 allein zeigte einen nicht gefuehrten Stab (Ausnutzung 0) gruen
+    html += `<div class="card"><div class="msg ${esc(d.status || '')}">${esc(d.summary)}</div>
     ${table(['Stab', 'Querschnitt', 'Kl.', 'Ausn.', 'maßgebend', 'Kombination', 'x [m]'], rows.map(r => [r[0], r[1], r[4], parseFloat(r[5]), r[6], r[7], r[8]]), {rowAttr: r => `class="tap" data-action="member-detail" data-name="${esc(r[0])}"`, format: (c, j) => j === 3 ? utilBadge(c) : j === 6 ? esc(c) : esc(c)})}
     <div class="muted">Zeile antippen: alle Zwischenwerte des Stabes.</div></div>`;
   }
@@ -1068,15 +1072,72 @@ function renderMehr() {
 // ======================================================================
 function etaFarbe(e) { return e > 1 ? 'var(--bad)' : e > 0.85 ? 'var(--warn)' : 'var(--ok)'; }
 
+// Nachweisstand einer gerechneten Stellung aus der Übersicht des Servers:
+// '' (nicht gerechnet oder Fehler), 'ok', 'teil' (Warnungen, aber Stäbe
+// nachgewiesen: η ist keine vollständige Ausnutzung) oder 'ohne' (Warnungen
+// und kein Stab nachgewiesen: η = 0 ist gar keine Ausnutzung). Vorher wurde
+// nur nach η > 1 gefärbt - ohne Kombinationen stand "η = 0,000" grün als
+// erfüllt da (Gegenprüfung 23.09.2026, Beispiel „Stauwand“: 3 Stellungen
+// mit je 13 Warnungen).
+function stellungStand(e) {
+  if (!e || e.fehler) return '';
+  if (!(e.warnungen || []).length) return 'ok';
+  return e.nachgewiesen ? 'teil' : 'ohne';
+}
+function anzahlWarnungen(n) { return `${n} Warnung${n === 1 ? '' : 'en'}`; }
+
+// Die Zeile der Umhüllenden über alle Stellungen: {kl, text}
+function umhuellendeEta(B) {
+  const unvoll = B.unvollstaendig || [];
+  if (B.eta_bestimmt === false) {
+    return {kl: 'warn', text: `η nicht bestimmt – in keiner Stellung wurde ein Nachweis geführt (${unvoll.map(esc).join(', ')})`};
+  }
+  return {kl: B.eta > 1 ? 'err' : unvoll.length ? 'warn' : 'ok',
+          text: `η = ${fmt(B.eta, 3)}${B.massgebende_stellung ? ` – maßgebend ${esc(B.massgebende_stellung)}` : ''}`
+            + (unvoll.length ? ` – nicht vollständig nachgewiesen: ${unvoll.map(esc).join(', ')}` : '')};
+}
+
+// Kurzform für den Filmstreifen
+function umhuellendeKurz(B) {
+  if (B.eta_bestimmt === false) return 'Umhüllende η nicht bestimmt – kein Nachweis geführt';
+  return `Umhüllende η = ${fmt(B.eta, 3)}${(B.unvollstaendig || []).length ? ' – nicht vollständig nachgewiesen' : ''}`;
+}
+
+// Die Meldung zur gewählten Stellung; mit Warnungen dazu aufklappbar, was
+// nicht nachgewiesen wurde (vorher stand das nur im zugeklappten Bericht der
+// ganzen Reihe)
+function stellungMeldung(e) {
+  const stand = stellungStand(e), w = e.warnungen || [];
+  const u = `u max = ${fmt(e.u_max * 1e3, 3)} mm`;
+  let h = stand === 'ohne'
+    ? `<div class="msg warn">η nicht bestimmt – kein Nachweis geführt (${anzahlWarnungen(w.length)}) · ${u}</div>`
+    : `<div class="msg ${e.eta > 1 ? 'err' : stand === 'teil' ? 'warn' : 'ok'}">η = ${fmt(e.eta, 3)}`
+      + `${stand === 'teil' ? ` – nicht vollständig nachgewiesen (${anzahlWarnungen(w.length)})` : ''}`
+      + ` · ${u}${e.massgebend ? ' · maßgebende Stellung' : ''}</div>`;
+  if (w.length) {
+    h += `<details><summary>Nicht nachgewiesen <span class="n">${w.length}</span></summary><div class="body">`
+      + w.slice(0, 30).map(x => `<div class="muted">${esc(x)}</div>`).join('')
+      + (w.length > 30 ? `<div class="muted">… und ${w.length - 30} weitere (Protokoll)</div>` : '')
+      + `</div></details>`;
+  }
+  return h;
+}
+
 function stellungKarte(st, i) {
   const e = st.ergebnis;
   const aktiv = S.stellung === st.name;
-  const eta = e && !e.fehler ? `<span class="eta" style="background:${etaFarbe(e.eta)}">η ${fmt(e.eta, 2)}</span>` : '';
-  return `<div class="stellung${aktiv ? ' aktiv' : ''}${e && e.fuehrt ? ' massgebend' : ''}" data-action="pick-stellung" data-name="${esc(st.name)}" title="${esc(st.beschreibung || st.name)}${e && e.fuehrt ? ' – maßgebende Stellung' : ''}">
+  const stand = stellungStand(e);
+  const fuehrt = e && e.fuehrt && stand !== 'ohne';
+  const eta = stand === 'ohne'
+    ? `<span class="eta" style="background:var(--warn)">η –</span>`
+    : stand ? `<span class="eta" style="background:${stand === 'teil' && e.eta <= 1 ? 'var(--warn)' : etaFarbe(e.eta)}">η ${fmt(e.eta, 2)}</span>` : '';
+  const hinweis = stand === 'ohne' ? ' – kein Nachweis geführt' : stand === 'teil' ? ' – nicht vollständig nachgewiesen' : '';
+  return `<div class="stellung${aktiv ? ' aktiv' : ''}${fuehrt ? ' massgebend' : ''}" data-action="pick-stellung" data-name="${esc(st.name)}" title="${esc(st.beschreibung || st.name)}${fuehrt ? ' – maßgebende Stellung' : ''}${hinweis}">
     <span class="id">S${i + 1}</span>${eta}
     <div class="deg">${fmt(st.winkel, 1)}°</div>
     <div class="nm">${esc(st.name)}</div>
     ${e && e.fehler ? `<div class="fehler">Fehler</div>` : ''}
+    ${stand === 'ohne' ? `<div class="offen">nicht geführt</div>` : stand === 'teil' ? `<div class="offen">nicht vollständig</div>` : ''}
   </div>`;
 }
 
@@ -1148,23 +1209,32 @@ function renderBruecke() {
         <b>Lastfälle</b><span>${esc((gew.faelle || []).join(', ') || 'alle')}</span>
         <b>Drehung</b><span>${gew.dreh_winkel ? `${fmt(gew.dreh_winkel, 1)}° · ${esc((gew.gruppen || []).join(', ') || 'ganzes Modell')}` : 'keine'}</span>
         <b>Antrieb</b><span>${gew.antrieb ? 'Moment angesetzt' : '–'}</span></div>
-      ${e ? (e.fehler ? `<div class="msg err">${esc(e.fehler)}</div>`
-        : `<div class="msg ${e.eta > 1 ? 'err' : 'ok'}">η = ${fmt(e.eta, 3)} · u max = ${fmt(e.u_max * 1e3, 3)} mm${e.massgebend ? ' · maßgebende Stellung' : ''}</div>`)
+      ${e ? (e.fehler ? `<div class="msg err">${esc(e.fehler)}</div>` : stellungMeldung(e))
         : '<div class="muted">Diese Stellung ist noch nicht gerechnet.</div>'}
     </div>`;
   }
 
   if (B.gerechnet) {
-    const kl = B.eta > 1 ? 'err' : 'ok';
+    const umh = umhuellendeEta(B);
+    // Stellungen ohne gefuehrten Nachweis haben kein η - kein Punkt bei 0
+    const ohne = new Set(liste.filter(x => stellungStand(x.ergebnis) === 'ohne').map(x => x.name));
+    const kurve = (B.kurve || []).filter(p => !ohne.has(p[3]));
+    const kurveHtml = etaKurve(kurve);
     html += `<div class="card">
-      <div class="msg ${kl}">Umhüllende über alle Stellungen: η = ${fmt(B.eta, 3)}${B.massgebende_stellung ? ` – maßgebend ${esc(B.massgebende_stellung)}` : ''}</div>
+      <div class="msg ${umh.kl}">Umhüllende über alle Stellungen: ${umh.text}</div>
       <div class="kv"><b>größte Verformung</b><span>${fmt(B.u_max * 1e3, 3)} mm</span><b>Stellungen</b><span>${liste.length}</span>${B.fehlerhaft && B.fehlerhaft.length ? `<b>fehlerhaft</b><span class="status-bad">${B.fehlerhaft.map(esc).join(', ')}</span>` : ''}</div>
-      <h3 class="klar">Ausnutzung η über die Stellungen</h3>${etaKurve(B.kurve)}
+      <h3 class="klar">Ausnutzung η über die Stellungen</h3>${kurveHtml
+        || (ohne.size ? `<div class="muted">Keine Kurve: ohne Nachweis ${[...ohne].map(esc).join(', ')}.</div>` : '')}
     </div>`;
     html += `<details><summary>Bericht der Stellungen</summary><div class="body"><pre>${esc(B.bericht || '')}</pre></div></details>`;
   }
 
   if (liste.length) {
+    const standVon = Object.fromEntries(liste.map(x => [x.name, stellungStand(x.ergebnis)]));
+    // nicht vollständig nachgewiesen: nie grün, auch wenn der Wert klein ist
+    const etaZelle = (c, stand) => c === '' ? '–' : stand === 'ohne' ? '<span class="offen">nicht geführt</span>'
+      : stand === 'teil' ? `<span class="util" style="background:${Number(c) > 1 ? '#c62828' : '#e5701c'}">${fmt(c, 2)}</span> <span class="offen">nicht vollständig</span>`
+      : utilBadge(c);
     html += `<details open><summary>Stellungen <span class="n">${liste.length}</span></summary><div class="body">
       ${table(['Stellung', 'Winkel', 'Lager aus', 'Lastfälle', 'η', 'u max [mm]', ''],
         liste.map(x => [x.name, fmt(x.winkel, 1) + '°', (x.lager_aus || []).join(', ') || '–',
@@ -1173,7 +1243,7 @@ function renderBruecke() {
           x.ergebnis && !x.ergebnis.fehler ? fmt(x.ergebnis.u_max * 1e3, 3) : (x.ergebnis && x.ergebnis.fehler ? 'Fehler' : '–'),
           `<button class="btn small danger" data-action="op" data-payload='${JSON.stringify({op: 'remove_stellung', name: x.name})}' data-confirm="Stellung ${x.name} entfernen?">✕</button>`]),
         {rowAttr: r => `class="tap" data-action="edit-stellung" data-name="${esc(r[0])}"`,
-         format: (c, j) => j === 4 ? (c === '' ? '–' : utilBadge(c)) : j === 6 ? c : esc(c)})}
+         format: (c, j, r) => j === 4 ? etaZelle(c, standVon[r[0]]) : j === 6 ? c : esc(c)})}
       <div class="muted">Zeile antippen: Stellung ändern.</div></div></details>`;
   }
   html += `<details${liste.length ? '' : ' open'}><summary>Neue Stellung</summary><div class="body">${stellungForm(null)}</div></details>`;
@@ -1264,7 +1334,7 @@ function renderFilm() {
     bindActions(el); return;
   }
   el.innerHTML = `<div class="row" style="margin:0 0 2px"><h3 style="margin:0">Stellungen des Systems</h3><span style="flex:1"></span>
-    <span class="muted">${B.gerechnet ? `Umhüllende η = ${fmt(B.eta, 3)}` : 'noch nicht gerechnet'}</span>
+    <span class="${B.gerechnet && (B.unvollstaendig || []).length ? 'offen' : 'muted'}">${B.gerechnet ? umhuellendeKurz(B) : 'noch nicht gerechnet'}</span>
     <button class="btn small" data-action="neue-stellung">+ Stellung</button>
     <button class="btn small primary" data-action="op" data-payload='${JSON.stringify({op: 'stellungen_rechnen', kombinationen: true, nachweise: true})}'>▶ rechnen</button></div>
     <div class="stellungen">${liste.map(stellungKarte).join('')}</div>`;

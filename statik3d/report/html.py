@@ -225,6 +225,29 @@ def _pretty(s: str) -> str:
             .replace("lambda_LT", "λ̄_LT").replace("chi_LT", "χ_LT"))
 
 
+def _ermuedung_statustext(x) -> str:
+    """Statuszeile eines Ermuedungsnachweises (Stab oder Volumen).
+
+    Bis zum 22.09.2026 hing sie allein an ``util <= 1``: ein nicht gefuehrter
+    Eintrag (D = 0) hiess "Nachweis erfüllt", ebenso einer, dem von zwei
+    Lasten eine fehlte (Befunde FE2/FE5/SV5, gemessen). Der Status kommt
+    jetzt aus FatigueMember/FatigueVolumen.status().
+    """
+    st = x.status()
+    if st == "nicht geführt":
+        return "Nachweis nicht geführt"
+    if st == "unvollständig":
+        return ("Nachweis unvollständig – nicht gerechnet: "
+                + ", ".join(getattr(x, "fehlende_lasten", None) or []))
+    return {"erfüllt": "Nachweis erfüllt", "NICHT erfüllt": "Nachweis NICHT erfüllt"}.get(st, st)
+
+
+def _ermuedung_unvollstaendig(x) -> str:
+    """Zusatz fuer die Uebersichtstabelle: welche Lasten in D fehlen."""
+    fehlend = getattr(x, "fehlende_lasten", None)
+    return f" – unvollständig, nicht gerechnet: {', '.join(fehlend)}" if fehlend else ""
+
+
 def _dof_text(dofs) -> str:
     return " ".join(DOF_NAMES[d] for d in sorted(set(int(d) for d in dofs)) if 0 <= d < 6)
 
@@ -234,6 +257,20 @@ def _ids_text(ids, limit: int = 12) -> str:
     if len(ids) <= limit:
         return _ranges(ids)
     return f"{_ranges(ids[:limit])} … ({len(ids)} Stück)"
+
+
+def _theorie_kurz(text) -> str:
+    """Roemische Zahl der Theorie: "II. Ordnung" -> "II", "III" -> "III".
+
+    Die Theorie steht im Programm in zwei Schreibweisen: als Einstellung
+    ("I"/"II"/"III", model.theorie_von) und im Ergebnis ("II. Ordnung",
+    theorie2.py/theorie3.py). Verglichen werden darf nur die roemische Zahl.
+    Ein unbekannter Text bleibt, wie er ist - er faellt dann im Vergleich auf,
+    statt still als gleich zu gelten.
+    """
+    s = str(text or "").strip()
+    treffer = re.match(r"(III|II|I)\b", s.upper())
+    return treffer.group(1) if treffer else s
 
 
 # ==========================================================================
@@ -1487,6 +1524,7 @@ class Report:
             return []
         st = v.settings or {}
         b = [self._h(1, "Spannungsnachweise der Volumenbereiche")]
+        b += self._nachweis_warnungen(v, "Volumennachweise")
         b.append(self._h(2, "Grundlagen"))
         b.append(("list", [
             "Ein Volumen hat keinen Querschnitt: Klassifizierung, plastische "
@@ -1922,6 +1960,15 @@ class Report:
                 "Kapitel „Ergebnisse“ ausgewiesenen Lastfälle sind Ergebnisse nach "
                 "Theorie I. Ordnung und dürfen nicht mehr überlagert werden; die "
                 "Kombinationen und die Umhüllenden sind es nicht.")
+        ek = [n for n, c in self.model.combinations.items()
+              if c.ist_umhuellende and self.model.theorie_von(c) == "II"]
+        if ek:
+            items.append(
+                "Ergebniskombinationen („A oder B oder …“: " + ", ".join(ek[:10])
+                + (" …" if len(ek) > 10 else "") + ") werden nicht als Ganzes "
+                "gerechnet: jede Alternative steht als eigene Zeile „EK [k]“ und wird "
+                "wie eine Kombination behandelt; die Umhüllende der Ergebniskombination "
+                "und die Nachweise nehmen diese Ergebnisse.")
         b.append(("list", items))
 
         b.append(self._h(2, "Übersicht"))
@@ -2349,7 +2396,20 @@ class Report:
                             # Ergebnis, nicht zur Art der Meldung - sonst
                             # zerfiele eine Meldung in bis zu zwoelf Zeilen.
                             art = re.sub(r" \(Kontaktlauf \d+\)$", "", s)
-                            weitere.setdefault(art, []).append(_name)
+                            # Ebenso die Rundenbilanz der Deckelzeile
+                            # (ContactSystem.runden_text, " - in 40 Runden:
+                            # 31 mit ...", seit 22.09.2026): ihre Zahlen sind
+                            # je Lauf und Lastfall andere, und ohne diesen
+                            # Schnitt wuerde aus der einen gebuendelten Zeile
+                            # eine je gedeckeltem Lauf - am Drehlager bis zu
+                            # 422 x 12. Die Zahlen stehen je Lauf im Laufbuch.
+                            art = re.sub(r" - in \d+ Runden?: .*$", "", art)
+                            namen_art = weitere.setdefault(art, [])
+                            # Ein Ergebnis mit mehreren gedeckelten Laeufen
+                            # traegt dieselbe Art mehrmals - gezaehlt werden
+                            # Ergebnisse, nicht Zeilen
+                            if not namen_art or namen_art[-1] != _name:
+                                namen_art.append(_name)
                 nicht_konv = [_name for _name, _res, _kk in rest
                               if _res.info.get("contact_converged") is False]
                 for s, namen in weitere.items():
@@ -2570,10 +2630,24 @@ class Report:
         return b
 
     # ============================================================ Kapitel 5
+    def _nachweis_warnungen(self, ergebnis, titel: str) -> list:
+        """Kombinationen, die ein Nachweis mangels Ergebnis nicht führen
+        konnte - hervorgehoben im Kapitel und in der Liste der Zusammenfassung.
+        Bis zum 22.09.2026 wurden sie still übergangen oder durch die
+        Lastfälle ersetzt (Befund FE11)."""
+        w = list(getattr(ergebnis, "warnungen", None) or []) if ergebnis is not None else []
+        if not w:
+            return []
+        self._warnings.extend(f"{titel}: {x}" for x in w)
+        return [("status", f"{titel}: nicht alles nachgewiesen – {len(w)} "
+                           f"Warnung{'en' if len(w) > 1 else ''}, siehe die Liste.", False),
+                ("list", w)]
+
     def chapter_design(self) -> list:
         m = self.model
         b = [self._h(1, "Nachweise nach DIN EN 1993-1-1")]
         d = self.design if self.opt("design") else None
+        b += self._nachweis_warnungen(d, "Nachweise EC3")
         if d is None or not getattr(d, "members", None):
             if not self.opt("design"):
                 b.append(("p", "Die Ausgabe der Nachweise ist deaktiviert."))
@@ -2643,6 +2717,10 @@ class Report:
         else:
             b.append(("note", "Kurzform: die Nachweise stehen in der Übersicht; Zwischenwerte je "
                               "Stab liefert der Bericht im Umfang „mittel“ oder „lang“."))
+        # Den Hinweis, warum ein Stab **nicht gefuehrt** ist, legt
+        # chapter_summary an - dort, wo die Statuszeile die Staebe zaehlt. Hier
+        # stand er bis zum 23.09.2026 und fehlte darum, sobald die Berichts-
+        # option "Nachweise EC3" aus ist (fruehe Rueckkehr oben).
         nf = [mc.member for mc in d.members.values() if mc.util > 1.0]
         if nf:
             self._warnings.append("Nachweise NICHT erfüllt für: " + ", ".join(nf))
@@ -2917,6 +2995,7 @@ class Report:
                                      for c in (getattr(bl, "felder", None) or {}).values()))
         b = [self._h(1, "Beulnachweise nach DIN EN 1993-1-5"
                         + (" und DIN EN 1993-1-6" if hat_schale else ""))]
+        b += self._nachweis_warnungen(bl, "Beulnachweise")
         if bl is None or not getattr(bl, "felder", None):
             if not self.opt("beulen"):
                 b.append(("p", "Die Ausgabe der Beulnachweise ist deaktiviert."))
@@ -3182,6 +3261,7 @@ class Report:
         if le is None or not getattr(le, "stellen", None):
             return []
         b = [self._h(2, "Lasteinleitung (Abschnitt 6)")]
+        b += self._nachweis_warnungen(le, "Lasteinleitung")
         b.append(("list", [
             "Beulnachweis des Stegs unter einer örtlich eingeleiteten Querkraft: "
             "F_cr = 0,9 k_F E t_w³/h_w mit k_F nach Bild 6.1, wirksame Lastlänge "
@@ -3266,6 +3346,16 @@ class Report:
             elif not m.fatigue_loads:
                 b.append(("p", "Kein Ermüdungsnachweis erforderlich (keine Ermüdungslasten "
                                "definiert)."))
+            elif f is not None and getattr(f, "ohne_wirksame_last", None):
+                # Es gibt Staebe/Volumen mit Kerbfall - nur traegt keine Last
+                # bei (Befund SV5). "keine Stäbe mit Kerbfall" waere falsch.
+                ohne = list(f.ohne_wirksame_last)
+                b.append(("p", "Es wurden keine Ermüdungsnachweise geführt: zu "
+                               + ", ".join(ohne[:10])
+                               + (f" und {len(ohne) - 10} weiteren" if len(ohne) > 10 else "")
+                               + " (Kerbfall zugewiesen) trägt keine Ermüdungslast bei – "
+                                 "Lastspiele bzw. Wiederholungen 0 oder ein Verlauf mit "
+                                 "weniger als zwei Zuständen."))
             else:
                 b.append(("p", "Es wurden keine Ermüdungsnachweise geführt (keine Stäbe mit "
                                "Kerbfall oder keine Ergebnisse)."))
@@ -3304,13 +3394,19 @@ class Report:
                  "D_σ (Miner)", "D_τ", "Ausnutzung"]
                 + (["Lebensdauer [a]"] if jahre else []) + ["maßgebender Ort"]]
         for fm in f.members.values():
+            if getattr(fm, "fehler", ""):
+                # nicht gefuehrt: keine Nullen, die wie ein Ergebnis aussehen
+                rows.append([fm.member, fmt(fm.category / 1e6, 0), fmt(fm.gamma_Mf, 2),
+                             "–", "–", "–", "–", "nicht geführt"]
+                            + (["–"] if jahre else []) + [_pretty(fm.fehler)])
+                continue
             zeile = [fm.member, fmt(fm.category / 1e6, 0), fmt(fm.gamma_Mf, 2),
                      fmt(fm.dsig_max / 1e6, 1), fmt(fm.dsig_E2 / 1e6, 1), fmt(fm.D, 3),
                      fmt(fm.D_shear, 3), Util(fm.util)]
             if jahre:
                 j = getattr(fm, "jahre", float("inf"))
                 zeile.append(fmt(j, 0) if np.isfinite(j) else "∞")
-            rows.append(zeile + [_pretty(fm.governing)])
+            rows.append(zeile + [_pretty(fm.governing) + _ermuedung_unvollstaendig(fm)])
         rows, note = self._truncate(rows, 400)
         b.append(("table", rows, "Ermüdungsnachweis je Stab", None, ""))
         if note:
@@ -3329,6 +3425,17 @@ class Report:
                             else "sicheres Leben") + " / "
                            + ("gering" if mem.consequence == "low" else "hoch")
                            + f" → γ_Mf = {fmt(GAMMA_MF.get((mem.assessment, mem.consequence), fm.gamma_Mf), 2)}"))
+            if getattr(fm, "fehler", ""):
+                # Bis zum 22.09.2026 stand hier "Nachweis erfüllt" mit
+                # D = 0,0000 - fuer einen Stab, zu dem keine Last gerechnet
+                # wurde (Befund FE2, gemessen).
+                kv.append(("Status", _ermuedung_statustext(fm)))
+                b.append(("kv", kv, f"Ermüdung Stab {fm.member}"))
+                b.append(("p", f"Der Nachweis konnte nicht geführt werden: {_pretty(fm.fehler)}"))
+                if fm.warnings:
+                    b.append(("list", [f"Hinweis: {w}" for w in fm.warnings]))
+                    self._warnings.extend(f"Ermüdung {fm.member}: {w}" for w in fm.warnings)
+                continue
             kv += [("Dauerfestigkeit Δσ_D (5·10⁶)", f"{0.737 * fm.category / fm.gamma_Mf / 1e6:.1f} MPa"),
                    ("Schwellenwert Δσ_L (10⁸)",
                     f"{0.549 * 0.737 * fm.category / fm.gamma_Mf / 1e6:.1f} MPa"),
@@ -3339,7 +3446,7 @@ class Report:
             if np.isfinite(getattr(fm, "jahre", np.inf)) and getattr(fm, "bezugsjahre", 0) > 0:
                 kv.append(("Rechnerische Lebensdauer",
                            f"{fmt(fm.bezugsjahre, 0)} a / D = {fmt(fm.jahre, 0)} a"))
-            kv += [("Status", "Nachweis erfüllt" if fm.util <= 1.0 else "Nachweis NICHT erfüllt")]
+            kv += [("Status", _ermuedung_statustext(fm))]
             b.append(("kv", kv, f"Ermüdung Stab {fm.member}"))
             if getattr(fm, "kollektiv", None):
                 rows = [["Stufe", "Δσ [MPa]", "n", "N_R", "D_i = n / N_R", "Σ D"]]
@@ -3421,13 +3528,19 @@ class Report:
         for fv in f.volumen.values():
             kf = fmt(fv.category_grund / 1e6, 0) + (f" / Naht {fmt(fv.category_naht / 1e6, 0)}"
                                                     if fv.n_naht and fv.category_naht else "")
+            if getattr(fv, "fehler", ""):
+                # statt D 0.000 und "Element -1 von 40" (Befund SV5, gemessen)
+                rows.append([fv.name, kf, fv.konzept or "–", fmt(fv.gamma_Mf, 2),
+                             "–", "–", "–", "nicht geführt"]
+                            + (["–"] if jahre else []) + [_pretty(fv.fehler)])
+                continue
             zeile = [fv.name, kf, fv.konzept or "–", fmt(fv.gamma_Mf, 2),
                      fmt(fv.dsig_max / 1e6, 1), fmt(fv.dsig_E2 / 1e6, 1), fmt(fv.D, 3), Util(fv.util)]
             if jahre:
                 j = getattr(fv, "jahre", float("inf"))
                 zeile.append(fmt(j, 0) if np.isfinite(j) else "∞")
             rows.append(zeile + [f"Element {fv.element}" + (" an der Naht" if fv.naht else "")
-                                 + f" von {fv.n_elemente}"])
+                                 + f" von {fv.n_elemente}" + _ermuedung_unvollstaendig(fv)])
         b.append(("table", rows, "Ermüdungsnachweis je Volumenkörper", None, ""))
         for fv in f.volumen.values():
             b.append(self._h(3, f"Volumen {fv.name}"))
@@ -3436,6 +3549,18 @@ class Report:
             if fv.n_naht and fv.category_naht:
                 kv.append(("Kerbfall an verschweißten Berührungsstellen",
                            f"{fv.category_naht / 1e6:.0f} MPa an {fv.n_naht} Elementen"))
+            if getattr(fv, "fehler", ""):
+                # Bis zum 22.09.2026: "Nachweis erfüllt", D 0,0000 am
+                # "Element -1" (Befunde FE2/SV5, gemessen).
+                kv += [("γ_Mf", fmt(fv.gamma_Mf, 2)),
+                       ("Elemente im Nachweis", str(fv.n_elemente)),
+                       ("Status", _ermuedung_statustext(fv))]
+                b.append(("kv", kv, f"Ermüdung Volumen {fv.name}"))
+                b.append(("p", f"Der Nachweis konnte nicht geführt werden: {_pretty(fv.fehler)}"))
+                if fv.warnings:
+                    b.append(("list", [f"Hinweis: {w}" for w in fv.warnings]))
+                    self._warnings.extend(f"Ermüdung Volumen {fv.name}: {w}" for w in fv.warnings)
+                continue
             kv += [("Kerbfall am maßgebenden Element", f"{fv.category / 1e6:.0f} MPa"
                     + (" (Naht)" if fv.naht else "")),
                    ("γ_Mf", fmt(fv.gamma_Mf, 2)),
@@ -3448,7 +3573,7 @@ class Report:
             if np.isfinite(getattr(fv, "jahre", np.inf)) and getattr(fv, "bezugsjahre", 0) > 0:
                 kv.append(("Rechnerische Lebensdauer",
                            f"{fmt(fv.bezugsjahre, 0)} a / D = {fmt(fv.jahre, 0)} a"))
-            kv.append(("Status", "Nachweis erfüllt" if fv.util <= 1.0 else "Nachweis NICHT erfüllt"))
+            kv.append(("Status", _ermuedung_statustext(fv)))
             b.append(("kv", kv, f"Ermüdung Volumen {fv.name}"))
             if fv.kollektiv:
                 rows = [["Stufe", "Δσ [MPa]", "n", "N_R", "D_i = n / N_R", "Σ D"]]
@@ -3477,6 +3602,7 @@ class Report:
         m = self.model
         b = [self._h(1, "Anschlüsse nach DIN EN 1993-1-8")]
         j = self.joints if self.opt("joints") else None
+        b += self._nachweis_warnungen(j, "Anschlüsse")
         if j is None or not getattr(j, "joints", None):
             if not self.opt("joints"):
                 b.append(("p", "Die Ausgabe der Anschlussnachweise ist deaktiviert."))
@@ -3675,6 +3801,7 @@ class Report:
         m = self.model
         b = [self._h(1, "Verformungsnachweise (Grenzzustand der Gebrauchstauglichkeit)")]
         g = self.gzg if self.opt("gzg") else None
+        b += self._nachweis_warnungen(g, "Verformungsnachweise")
         if g is None or not getattr(g, "checks", None):
             if not self.opt("gzg"):
                 b.append(("p", "Die Ausgabe der Verformungsnachweise ist deaktiviert."))
@@ -3800,36 +3927,72 @@ class Report:
         d = self.design
         status_ok = True
         nicht_gefuehrt: list = []
+        stab_gefuehrt = False
         if d is not None and getattr(d, "members", None):
-            worst = max(d.members.values(), key=lambda mc: mc.util)
-            g = worst.governing
-            kv.append(("max. Ausnutzung Nachweise EC3", Util(worst.util)))
-            kv.append(("maßgebend", f"Stab {worst.member}: {g.get('name', '')}, Kombination "
-                                    f"{g.get('combo', '')}, x = {fmt(g.get('x', 0.0), 2)} m"))
+            # Die groesste Ausnutzung nur ueber **gefuehrte** Staebe. Bis zum
+            # 23.09.2026 lief ``worst`` ueber alle: war kein Stab gefuehrt,
+            # stand hier "max. Ausnutzung Nachweise EC3 0.000" und "maßgebend
+            # Stab Riegel_ohne_fy: , Kombination , x = 0.00 m" - eine
+            # Ausnutzung, die es nicht gibt (gemessen, ein Riegel ohne f_y).
+            gefuehrte_staebe = [mc for mc in d.members.values() if not mc.fehler]
+            stab_gefuehrt = bool(gefuehrte_staebe)
+            if gefuehrte_staebe:
+                worst = max(gefuehrte_staebe, key=lambda mc: mc.util)
+                g = worst.governing
+                kv.append(("max. Ausnutzung Nachweise EC3", Util(worst.util)))
+                kv.append(("maßgebend", f"Stab {worst.member}: {g.get('name', '')}, Kombination "
+                                        f"{g.get('combo', '')}, x = {fmt(g.get('x', 0.0), 2)} m"))
             nf = [mc.member for mc in d.members.values() if mc.util > 1.0]
             if nf:
                 status_ok = False
             # Ein nicht gefuehrter Nachweis ist kein erfuellter. Seine
             # Ausnutzung ist 0,000 und faellt darum weder bei ``worst`` noch
             # bei ``nf`` auf - er ging bis zum 22.09.2026 als bestanden durch.
-            ohne = [mc.member for mc in d.members.values() if mc.fehler]
+            ohne = [mc for mc in d.members.values() if mc.fehler]
             if ohne:
                 nicht_gefuehrt.append(f"{len(ohne)} Stäbe (EC3)")
+                # Der Grund gehoert in die Hinweise, auf die die Statuszeile
+                # verweist - hier, aus derselben Quelle wie die Zaehlung, damit
+                # beides nie auseinanderlaeuft. Er stand erst im Nachweiskapitel
+                # (nur Detailblock, dann chapter_design) und fehlte gemessen im
+                # Umfang "kurz", in "mittel" mit 22 Staeben und bei
+                # ausgeschalteter Option "Nachweise EC3" - jedes Mal mit "Es
+                # liegen keine offenen Hinweise oder Warnungen vor" unter der
+                # Statuszeile. Derselbe Text wie im Detailblock, damit
+                # dict.fromkeys unten ihn nur einmal fuehrt.
+                for mc in ohne:
+                    self._warnings.extend(f"Stab {mc.member}: {w}"
+                                          for w in (mc.warnings or [mc.fehler]))
         f = self.fatigue
+        # Ermuedung: ein Eintrag, dem von mehreren Lasten eine fehlt, ist weder
+        # erfuellt noch nicht gefuehrt, sondern unvollstaendig. Bis zum
+        # 22.09.2026 stand dann "Alle Nachweise erfüllt." hier, und der
+        # Hinweis nur darunter (Befund FE5, gemessen).
+        unvollstaendig: list = []
         if f is not None and getattr(f, "members", None):
-            worst = max(f.members.values(), key=lambda fm: fm.util)
-            kv.append(("max. Schädigung Ermüdung", Util(worst.util)))
-            kv.append(("maßgebend (Ermüdung)", f"Stab {worst.member}, Kerbfall "
-                                               f"{worst.category / 1e6:.0f}: {_pretty(worst.governing)}"))
+            gefuehrte_e = [fm for fm in f.members.values() if not getattr(fm, "fehler", "")]
+            if gefuehrte_e:
+                # ein nicht gefuehrter Stab (D = 0) ist kein "maßgebend"
+                worst = max(gefuehrte_e, key=lambda fm: fm.util)
+                kv.append(("max. Schädigung Ermüdung", Util(worst.util)))
+                kv.append(("maßgebend (Ermüdung)", f"Stab {worst.member}, Kerbfall "
+                                                   f"{worst.category / 1e6:.0f}: {_pretty(worst.governing)}"))
             if any(fm.util > 1.0 for fm in f.members.values()):
                 status_ok = False
             ohne_e = [fm.member for fm in f.members.values() if getattr(fm, "fehler", "")]
             if ohne_e:
-                nicht_gefuehrt.append(f"{len(ohne_e)} Staebe (Ermuedung)")
+                nicht_gefuehrt.append(f"{len(ohne_e)} Stäbe (Ermüdung)")
+            teil_e = [fm.member for fm in gefuehrte_e if getattr(fm, "fehlende_lasten", None)]
+            if teil_e:
+                unvollstaendig.append(f"{len(teil_e)} Stäbe (Ermüdung)")
         if f is not None and getattr(f, "volumen", None):
             ohne_v = [fv.name for fv in f.volumen.values() if getattr(fv, "fehler", "")]
             if ohne_v:
-                nicht_gefuehrt.append(f"{len(ohne_v)} Volumenkoerper (Ermuedung)")
+                nicht_gefuehrt.append(f"{len(ohne_v)} Volumenkörper (Ermüdung)")
+            teil_v = [fv.name for fv in f.volumen.values()
+                      if not getattr(fv, "fehler", "") and getattr(fv, "fehlende_lasten", None)]
+            if teil_v:
+                unvollstaendig.append(f"{len(teil_v)} Volumenkörper (Ermüdung)")
         bl = self.beulen
         if bl is not None and getattr(bl, "felder", None):
             worst = max(bl.felder.values(), key=lambda c: c.util)
@@ -3886,8 +4049,18 @@ class Report:
         if f is not None and getattr(f, "volumen", None):
             if any(getattr(fv, "util", 0.0) > 1.0 for fv in f.volumen.values()):
                 status_ok = False
+        # Kombinationen ohne Ergebnis (Befund FE11): nicht nachgewiesen ist
+        # nicht erfuellt - das Gesamturteil muss es nennen
+        for titel, erg in (("EC3", d), ("Beulen", bl), ("Lasteinleitung", li),
+                           ("Verformung", gz), ("Anschlüsse", aj), ("Volumen", vo)):
+            n_w = len(getattr(erg, "warnungen", None) or []) if erg is not None else 0
+            if n_w:
+                nicht_gefuehrt.append(f"{titel} ({n_w} Warnung{'en' if n_w > 1 else ''})")
         b.append(("kv", kv, "Wesentliche Ergebnisse"))
-        gefuehrt = ((d is not None and getattr(d, "members", None))
+        # EC3 zaehlt nur als gefuehrt, wenn mindestens ein Stab gefuehrt ist -
+        # sonst hiess es bei lauter Staeben ohne f_y "Alle **geführten**
+        # Nachweise erfüllt", obwohl keiner gefuehrt war (gemessen 23.09.2026).
+        gefuehrt = (stab_gefuehrt
                     or (f is not None and getattr(f, "members", None))
                     or (f is not None and getattr(f, "volumen", None))
                     or (aj is not None and getattr(aj, "joints", None))
@@ -3899,18 +4072,36 @@ class Report:
             if not status_ok:
                 b.append(("status", "Nachweise NICHT erfüllt – siehe die Nachweiskapitel.",
                           False))
-            elif nicht_gefuehrt:
+            elif nicht_gefuehrt or unvollstaendig:
                 # Weder "erfuellt" noch "nicht erfuellt" - und genau das muss
                 # dastehen. Die eine Zeile, die ein Pruefer als Gesamturteil
                 # liest, darf einen uebersprungenen Nachweis nicht verschlucken.
-                b.append(("status", "Alle **geführten** Nachweise erfüllt – nicht geführt "
-                                    "wurden: " + ", ".join(nicht_gefuehrt)
+                teile = []
+                if nicht_gefuehrt:
+                    teile.append("nicht geführt wurden: " + ", ".join(nicht_gefuehrt))
+                if unvollstaendig:
+                    teile.append("nicht vollständig geführt wurden: "
+                                 + ", ".join(unvollstaendig))
+                b.append(("status", "Alle **geführten** Nachweise erfüllt – "
+                                    + "; ".join(teile)
                                     + " (siehe die Hinweise unten).", False))
             else:
                 b.append(("status", "Alle Nachweise erfüllt.", True))
+        elif nicht_gefuehrt:
+            # Nachweise waren verlangt, aber keiner liess sich fuehren - das
+            # ist weder "erfüllt" noch "keine Nachweise" (gruen).
+            b.append(("status", "Kein Nachweis geführt – nicht geführt wurden: "
+                                + ", ".join(nicht_gefuehrt) + " (siehe die Hinweise unten).",
+                      False))
         else:
             b.append(("status", "Es wurden keine Nachweise geführt; die Ergebnisse dienen der "
                                 "Schnittgrößen- und Verformungsermittlung.", True))
+        # Ist der Gleichungsloeser ausgewichen, gehoert das in die Hinweise -
+        # eine Zeile je Grund ueber alle Ergebnisse. Bis zum 22.09.2026 stand
+        # es nirgends im Bericht; der Anhang nannte nur den Loeser, der am Ende
+        # gerechnet hat (Befund K2).
+        from ..solver import ausweichen_gebuendelt
+        self._warnings.extend(ausweichen_gebuendelt(self.all_results()))
         warn = list(dict.fromkeys(self._warnings))
         chk = [s for s in self._modellpruefung() if s.startswith("FEHLER") or s.startswith("WARNUNG")]
         warn += [f"Modellprüfung: {s}" for s in chk]
@@ -3931,16 +4122,25 @@ class Report:
         wies trotzdem "II" bzw. "III" aus. Der Loeser schreibt seither
         ``res.info["theorie"]``; steht dort etwas anderes als eingestellt,
         sagt die Spalte es.
+
+        Verglichen werden die **roemischen Zahlen**: theorie2.py/theorie3.py
+        schreiben "II. Ordnung"/"III. Ordnung", der Loeser bei einem
+        gescheiterten Lastfall "I", die Einstellung heisst "II"/"III". Der
+        erste Vergleich stellte die Texte unmittelbar gegeneinander - damit
+        stand jeder GELUNGENE Lastfall als "II. Ordnung (statt II: nicht
+        gerechnet)" im Bericht (gemessen 22.09.2026, tests/test_theorie3.py).
         """
         m = self.model
-        gewuenscht = m.theorie_von(lc) if hasattr(m, "theorie_von") else "I"
+        gewuenscht = _theorie_kurz(m.theorie_von(lc) if hasattr(m, "theorie_von") else "I")
         res = (self.results or {}).get(lc.name) if isinstance(self.results, dict) else None
         if res is None:
             an = getattr(self, "analysis", None)
             res = (getattr(an, "cases", None) or {}).get(lc.name) if an is not None else None
         gerechnet = (getattr(res, "info", None) or {}).get("theorie") if res is not None else None
-        if gerechnet and str(gerechnet) != str(gewuenscht):
-            return f"{gerechnet} (statt {gewuenscht}: nicht gerechnet)"
+        if gerechnet:
+            gerechnet = _theorie_kurz(gerechnet)
+            if gerechnet != gewuenscht:
+                return f"{gerechnet} (statt {gewuenscht}: nicht gerechnet)"
         return gewuenscht
 
     # ============================================================ Anhang
@@ -3963,7 +4163,18 @@ class Report:
         if info.get("parallel"):
             kv.append(("Parallelisierung", str(info["parallel"])))
         if info.get("solver"):
-            kv.append(("Gleichungslöser", str(info["solver"])))
+            # Der Grund selbst steht einmal in den Hinweisen der
+            # Zusammenfassung; hier nur, dass nicht der gewaehlte Loeser rechnete
+            # und auf welchen ausgewichen wurde. info["solver"] ist der Loeser
+            # der letzten Faktorisierung - scheitert PARDISO nur in einem Teil
+            # der Kontaktschritte, steht dort wieder "pardiso" (23.09.2026).
+            from ..solver import ausweich_arten, ausweichloeser_text
+            arten = ausweich_arten(self.all_results())
+            mit = ausweichloeser_text(dict.fromkeys(lo for e in arten for lo in e["loeser"]))
+            kv.append(("Gleichungslöser", str(info["solver"])
+                       + ((" – ausgewichen" + (f" auf {mit}" if mit else "")
+                           + ", Grund unter den Hinweisen der Zusammenfassung")
+                          if arten else "")))
         if info.get("ndof") is not None:
             kv.append(("Freiheitsgrade gesamt / aktiv",
                        f"{info.get('ndof')} / {info.get('nfree', '–')}"))

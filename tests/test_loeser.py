@@ -1194,6 +1194,201 @@ def test_ausweichen_erreicht_den_fortschritt_auch_im_kontakt():
           str(sum(1 for z in zeilen if "Gleichungslöser ausgewichen" in z)))
 
 
+def _k2_modell():
+    """Kragarm aus sechs Staeben, zwei Lastfaelle und eine ueberlagerte
+    Kombination - klein genug, dass jeder Loeser ihn in Millisekunden rechnet."""
+    from statik3d import mesher
+    m = Model("k2")
+    m.add_material(Material.steel("S235"))
+    m.add_section(Section.rectangle("R", 0.1, 0.2))
+    ids = mesher.line_of_beams(m, "S235", "R", (0, 0, 0), (2.0, 0, 0), 6)
+    m.fix(ids[0], "all")
+    m.add_load_case("LF1", "G")
+    m.add_load_case("LF2", "Q")
+    m.load_node(ids[-1], Fz=-1.0e4, case="LF1")
+    m.load_node(ids[-1], Fy=2.0e3, case="LF2")
+    m.add_combination("K1", {"LF1": 1.35, "LF2": 1.5}, "ULS")
+    return m
+
+
+def test_ausweichgrund_erreicht_ergebnis_bericht_und_modalanalyse():
+    """Der Ausweichgrund gehoert ans Ergebnis, nicht nur in den Fortschritt.
+
+    Befund K2 (22.09.2026): ``_log_einmal`` meldet ueber warnings.warn - das
+    erreicht weder das Protokollfenster noch die exe. Die Fortschrittszeile
+    aus 54b6f9a gibt es nur, wenn ein Fortschritt mitlaeuft. Rechenketten,
+    Pool und Farm rechnen ohne (jobs._job_solve_kette ruft solve_cases ohne
+    progress): gemessen mit PARDISO im Prozess zum Scheitern gebracht stand in
+    ``res.info`` nur "superlu", der Bericht nannte das Ausweichen nicht, und
+    solve_modal meldete es weder im Fortschritt noch am Ergebnis.
+    """
+    import re
+    import pypardiso
+    from statik3d import solver as S
+    from statik3d.report.html import Report
+    alt_backend = parallel.settings().solver_backend
+    parallel.configure(solver_backend="auto")
+    echt = pypardiso.PyPardisoSolver.factorize
+
+    def wirft(self, A):
+        raise RuntimeError("Probe: PARDISO verweigert")
+
+    pypardiso.PyPardisoSolver.factorize = wirft
+    try:
+        # 1. Ohne Fortschritt - so rechnen Ketten, Pool und Farm
+        r = S.solve_static(_k2_modell(), case="LF1")
+        grund = str(r.info.get("ausweichgrund", ""))
+        check("ohne Fortschritt traegt das Ergebnis den Grund",
+              "PARDISO" in grund and "verweigert" in grund, repr(grund)[:90])
+        check("und die Zusammenfassung des Ergebnisses nennt ihn",
+              "ausgewichen" in r.summary() and "verweigert" in r.summary(),
+              next((z for z in r.summary().splitlines() if "ausgewichen" in z),
+                   "keine Zeile")[:90])
+
+        # 2. Alles mit Bericht: gleiche Gruende werden zu einer Zeile
+        m = _k2_modell()
+        an = S.solve_all(m)
+        traeger = sorted(n for n, x in an.all_results().items()
+                         if "verweigert" in str(x.info.get("ausweichgrund", "")))
+        check("jedes Ergebnis traegt ihn, auch die ueberlagerte Kombination",
+              traeger == ["K1", "LF1", "LF2"], str(traeger))
+        html = Report(m, an).html()
+        punkte = [p for p in re.findall(r"<li>(.*?)</li>", html, re.S) if "ausgewichen" in p]
+        check("der Bericht nennt ihn unter den Hinweisen - eine Zeile fuer drei Ergebnisse",
+              len(punkte) == 1 and "verweigert" in punkte[0] and "3 Ergebnis" in punkte[0],
+              f"{len(punkte)} Zeilen: " + (punkte[0][:90] if punkte else ""))
+        check("der Grund steht einmal im Bericht, nicht je Ergebnis",
+              html.count("Probe: PARDISO verweigert") == 1,
+              f"{html.count('Probe: PARDISO verweigert')} mal")
+        zf = an.summary()
+        check("die Zusammenfassung der Oberflaeche nennt ihn einmal",
+              zf.count("verweigert") == 1, f"{zf.count('verweigert')} mal")
+
+        # 3. Modalanalyse: Fortschritt und Ergebnis
+        zeilen = []
+        rm = S.solve_modal(_k2_modell(), nmodes=3,
+                           progress=lambda *a: zeilen.append(" ".join(str(x) for x in a)))
+        n_z = sum(1 for z in zeilen if "ausgewichen" in z)
+        check("die Modalanalyse meldet ihn im Fortschritt, einmal", n_z == 1, f"{n_z} Zeilen")
+        check("und traegt ihn am Ergebnis",
+              "verweigert" in str(rm.info.get("ausweichgrund", "")),
+              repr(rm.info.get("ausweichgrund"))[:90])
+
+        # 4. Theorie II. Ordnung ersetzt die lineare Kombination - ihr
+        #    Ergebnis muss den Grund selbst tragen
+        from statik3d.theorie2 import solve_theorie2
+        r2, _i2 = solve_theorie2(_k2_modell(), {"LF1": 1.35, "LF2": 1.5}, "K1")
+        check("das Ergebnis nach Theorie II. Ordnung traegt ihn",
+              "verweigert" in str(r2.info.get("ausweichgrund", "")),
+              repr(r2.info.get("ausweichgrund"))[:90])
+    finally:
+        pypardiso.PyPardisoSolver.factorize = echt
+        parallel.configure(solver_backend=alt_backend)
+
+    # Gegenprobe: ohne Ausfall steht nichts da
+    m0 = _k2_modell()
+    an0 = S.solve_all(m0)
+    check("ohne Ausfall traegt kein Ergebnis einen Grund",
+          not any("ausweichgrund" in x.info for x in an0.all_results().values()),
+          str([n for n, x in an0.all_results().items() if "ausweichgrund" in x.info]))
+    check("und der Bericht nennt kein Ausweichen",
+          "ausgewichen" not in Report(m0, an0).html())
+
+
+def test_ausweichloeser_und_buendelung_je_art():
+    """Die Hinweiszeile nennt den Loeser, auf den ausgewichen wurde, und
+    buendelt Gruende derselben Art auch innerhalb eines Ergebnisses.
+
+    Gegenpruefung von 4a8c464 (23.09.2026):
+    1. "gerechnet mit ..." kam aus info["solver"], dem Loeser der **letzten**
+       Faktorisierung. Scheiterte PARDISO nur beim ersten von sieben
+       Versuchen, hiess es "gerechnet mit MKL PARDISO" - neben einem Grund,
+       der sagt, dass PARDISO nicht rechnete.
+    2. Ein Kontaktlastfall, dessen Nichtnullen sich zwischen den Schritten
+       aendern, trug zwei 32-Bit-Gruende mit "; " verbunden; die Buendelung
+       machte daraus eine eigene Zeile neben der seiner Nachbarn.
+    """
+    import re
+    import warnings
+    import pypardiso
+    from statik3d import solver as S
+    from statik3d.examples_lib import block_friction_example
+    from statik3d.report.html import Report
+    alt_backend = parallel.settings().solver_backend
+    alt_grenze = S.INT32_MAX
+    parallel.configure(solver_backend="auto")
+    echt = pypardiso.PyPardisoSolver.factorize
+    versuche = {"n": 0}
+
+    def einmal_aus(self, A):
+        versuche["n"] += 1
+        if versuche["n"] == 1:
+            raise RuntimeError("Probe: PARDISO nur beim ersten Mal aus")
+        return echt(self, A)
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            # 1. PARDISO faellt nur in der ersten Faktorisierung aus
+            m = block_friction_example()
+            pypardiso.PyPardisoSolver.factorize = einmal_aus
+            try:
+                an = S.solve_all(m, combinations=False)
+            finally:
+                pypardiso.PyPardisoSolver.factorize = echt
+            r = an.all_results()["LF1"]
+            check("Vorbedingung: nur teilweise ausgefallen, zuletzt rechnete PARDISO",
+                  versuche["n"] > 1 and r.info.get("solver") == "pardiso",
+                  f"{versuche['n']} Versuche, solver={r.info.get('solver')!r}")
+            check("das Ergebnis nennt SuperLU als Ausweichloeser",
+                  [lo for _g, lo in (r.info.get("ausweichen") or [])] == ["superlu"],
+                  repr(r.info.get("ausweichen"))[:120])
+            zeilen = [z for z in an.summary().splitlines() if "ausgewichen" in z]
+            check("die Zusammenfassung nennt SuperLU, nicht PARDISO als den Loeser, der rechnete",
+                  len(zeilen) == 1 and "stattdessen rechnete SuperLU" in zeilen[0]
+                  and "MKL PARDISO" not in zeilen[0],
+                  (zeilen[0] if zeilen else "keine Zeile")[60:200])
+            zr = [z for z in r.summary().splitlines() if "ausgewichen" in z]
+            check("ebenso die Zusammenfassung des Ergebnisses",
+                  len(zr) == 1 and "SuperLU" in zr[0], (zr[0] if zr else "keine Zeile")[:160])
+            html = Report(m, an).html()
+            li = [p for p in re.findall(r"<li>(.*?)</li>", html, re.S) if "ausgewichen" in p]
+            check("der Bericht nennt SuperLU, nicht PARDISO",
+                  len(li) == 1 and "stattdessen rechnete SuperLU" in li[0]
+                  and "MKL PARDISO" not in li[0], (li[0] if li else "keine Zeile")[60:200])
+            i = html.find("Gleichungslöser</")
+            anhang = re.sub(r"<[^>]+>", " ", html[i:i + 400]) if i >= 0 else ""
+            check("der Anhang nennt den Ausweichloeser",
+                  "ausgewichen auf SuperLU" in anhang, " ".join(anhang.split())[:140])
+
+            # 2. Ausweichen ueber die 32-Bit-Grenze (auf 50 gesenkt) an einem
+            #    kippenden Block: die Kante hebt ab, die Nichtnullen aendern sich
+            S.INT32_MAX = 50
+            m2 = block_friction_example()
+            top = [k for k in range(len(m2.nodes)) if abs(m2.nodes[k][2] - 0.4) < 1e-9]
+            m2.add_load_case("LF2", "Q", "Kippen")
+            for n in top:
+                m2.load_node(n, Fz=-20000.0 / len(top), Fx=15000.0 / len(top), case="LF2")
+            m2.add_combination("K1", {"LF1": 1.0, "LF2": 1.0}, "ULS")
+            an2 = S.solve_all(m2)
+            erg = an2.all_results()
+            texte = {n: str(x.info.get("ausweichgrund") or "") for n, x in erg.items()}
+            check("Vorbedingung: die Gruende tragen verschiedene Eintragszahlen",
+                  len(set(texte.values())) > 1 and all(texte.values()),
+                  str({n: re.findall(r"\d+ Einträge", t) for n, t in texte.items()}))
+            check("jedes Ergebnis traegt je Art einen Grund, nicht einen je Eintragszahl",
+                  all(t.count("PARDISO:") == 1 for t in texte.values()),
+                  str({n: t.count("PARDISO:") for n, t in texte.items()}))
+            zs = S.ausweichen_gebuendelt(erg.items())
+            check("eine Zeile fuer alle drei Ergebnisse",
+                  len(zs) == 1 and "3 Ergebnissen" in zs[0],
+                  f"{len(zs)} Zeilen: " + " | ".join(z[:70] for z in zs))
+    finally:
+        pypardiso.PyPardisoSolver.factorize = echt
+        S.INT32_MAX = alt_grenze
+        parallel.configure(solver_backend=alt_backend)
+
+
 def test_ketten_rechnen_mit_den_einstellungen_des_hauptprozesses():
     """Unter spawn beginnt jeder Kettenprozess mit den Vorgaben.
 
@@ -1306,10 +1501,303 @@ def test_abbruchmeldung_nennt_ihren_lauf():
           r2.info["contact_letzter_lauf_konvergiert"] is False)
 
 
+def _laplace_2d(n: int) -> sparse.csr_matrix:
+    """5-Punkt-Laplace mit Dirichlet-Rand auf n x n: regulaer, positiv definit."""
+    e = np.ones(n)
+    T = sparse.diags([-e[:-1], 2.0 * e, -e[:-1]], [-1, 0, 1])
+    I_ = sparse.identity(n)
+    return (sparse.kron(T, I_) + sparse.kron(I_, T)).tocsr()
+
+
+def test_pardiso_zaehlt_gestoerte_pivots():
+    """iparm(14) ist die Zahl der Pivots, die MKL angehoben hat - gezeigt an
+    einer kleinen Matrix, nicht aus der Doku uebernommen.
+
+    Der Dirichlet-Laplace ist regulaer: 0. Ein entkoppelter Block [[1, 1],
+    [1, 1]] hat nach einem Eliminationsschritt den Pivot 1 - 1*1/1 = 0, exakt;
+    MKL hebt ihn an (iparm(10) = 13, also auf rund 1e-13 der Matrixnorm)
+    statt abzubrechen: 1. Drei solche Bloecke: 3. Gemessen 22.09.2026 mit dem
+    mkl_rt.3.dll der Programmumgebung, ein Thread: 0 / 1 / 3.
+    """
+    try:
+        import pypardiso                                        # noqa: F401
+    except Exception:                                           # noqa: BLE001
+        check("Pardiso fehlt - gestoerte Pivots uebersprungen", True)
+        return
+    from statik3d import solver as S
+    L = _laplace_2d(6)
+    B = sparse.csr_matrix(np.array([[1.0, 1.0], [1.0, 1.0]]))
+    ls0 = LinearSolver(L, backend="pardiso")
+    ls1 = LinearSolver(sparse.block_diag([L, B]).tocsr(), backend="pardiso")
+    ls3 = LinearSolver(sparse.block_diag([L, B, B, B]).tocsr(), backend="pardiso")
+    check("regulaere Matrix: kein Pivot angehoben", ls0.gestoerte_pivots == 0,
+          repr(ls0.gestoerte_pivots))
+    check("ein Block mit Pivot 0: einer angehoben", ls1.gestoerte_pivots == 1,
+          repr(ls1.gestoerte_pivots))
+    check("drei Bloecke: drei angehoben", ls3.gestoerte_pivots == 3,
+          repr(ls3.gestoerte_pivots))
+    check("der Loeser nennt seinen Matrixtyp (unsymmetrisch, 11)", ls0.mtype == 11,
+          repr(ls0.mtype))
+    kz = ls1.pardiso_kennzahlen
+    check("die Kennzahlen tragen iparm(18) als nnz, wie nnz_faktor",
+          kz.get("nnz") == ls1.nnz_faktor and ls1.nnz_faktor > 0,
+          f"{kz.get('nnz')} / {ls1.nnz_faktor}")
+    check("die Eingabefelder stehen da, wie MKL sie zurueckgibt",
+          set(kz.get("eingabe", {})) == {str(i) for i in S.PARDISO_EINGABEFELDER}
+          and kz["eingabe"]["10"] == 13, str(kz.get("eingabe")))
+    check("der Speicher ist als 'laut Doku' gekennzeichnet",
+          set(kz.get("speicher_kb", {})) == {"15", "16", "17"}
+          and "laut" in kz.get("speicher_einheit", ""), str(kz.get("speicher_kb")))
+    lu = LinearSolver(L, backend="superlu")
+    check("SuperLU meldet keine Zahl - None, nicht 0", lu.gestoerte_pivots is None
+          and lu.mtype is None, f"{lu.gestoerte_pivots!r} / {lu.mtype!r}")
+
+
+def test_residuum_gehoert_zur_loesung():
+    """``LinearSolver.residuum`` beschreibt die Loesung, die solve() gerade
+    gerechnet hat. Ohne Pruefung (check=False) gibt es keins: nan, nicht die
+    Zahl der vorigen Loesung - die schriebe der Loeser-Nachweis sonst dem
+    Lastfall zu. Das Buch zaehlt nan nicht als gemessen (Gegenpruefung
+    22.09.2026: die Aenderung stand ohne Test da)."""
+    from statik3d.solver import _LoeserBuch
+    L = _laplace_2d(6)
+    b = np.arange(1.0, L.shape[0] + 1.0)
+    ls = LinearSolver(L, backend="superlu")
+    ls.solve(b)
+    r1 = ls.residuum
+    check("mit Pruefung: ein gemessenes Residuum", np.isfinite(r1) and r1 < 1e-10, repr(r1))
+    ls.solve(b, check=False)
+    check("ohne Pruefung: nan, nicht das der vorigen Loesung", np.isnan(ls.residuum),
+          repr(ls.residuum))
+    buch = _LoeserBuch(0.0)
+    buch.loesung(ls)
+    check("das Buch zaehlt eine Loesung ohne Residuum nicht als gemessen",
+          buch.residuum_gemessen == 0 and buch.residuum_max is None,
+          f"{buch.residuum_gemessen} / {buch.residuum_max!r}")
+    ls.solve(b)
+    buch.loesung(ls)
+    check("wohl aber die naechste gepruefte",
+          buch.residuum_gemessen == 1 and buch.residuum_max == ls.residuum,
+          f"{buch.residuum_gemessen} / {buch.residuum_max!r}")
+
+
+def _block_zwei_lastfaelle():
+    """Der Block mit Reibung und ein zweiter Lastfall mit umgekehrter
+    Horizontallast - beide rechnen Kontakt und faktorisieren."""
+    from statik3d.examples_lib import block_friction_example
+    m = block_friction_example()
+    erster = m.active_case
+    oben = [nl.node for nl in m.case(erster).nodal_loads]
+    m.add_load_case("LF2", "Q")
+    for n in oben:
+        m.load_node(n, Fz=-90000.0 / len(oben), Fx=-15000.0 / len(oben), case="LF2")
+    return m, erster
+
+
+def test_loeser_nachweis_je_lastfall():
+    """Der Loeser-Nachweis gilt dem Lastfall, nicht dem Rechensystem.
+
+    ``zeit_faktorisierung`` summiert ueber das System (so dokumentiert,
+    Theoriehandbuch 1.3); in einer Kette waechst der Wert von Lastfall zu
+    Lastfall. Die Nachpruefung der Loesersitzung (22.09.2026) musste die
+    Faktorisierungszeit je Lastfall deshalb aus Differenzen rechnen
+    (1190,1 - 734,8 = 455,3 s). Der Nachweis traegt sie jetzt selbst - und
+    zaehlt dort, wo geloest wird: welcher Loeser, wie oft, mit welchen Threads,
+    und das groesste Residuum.
+    """
+    from statik3d.solver import StaticSystem, loeser_da, solve_cases
+    m, erster = _block_zwei_lastfaelle()
+    alt = parallel.settings().solver_backend
+    try:
+        parallel.configure(solver_backend="auto")
+        system = StaticSystem(m)
+        out = solve_cases(m, [erster, "LF2"], system=system)
+    finally:
+        parallel.configure(solver_backend=alt)
+    n1 = out[erster].info.get("loeser_nachweis")
+    n2 = out["LF2"].info.get("loeser_nachweis")
+    if not check("jeder Lastfall traegt einen Loeser-Nachweis",
+                 isinstance(n1, dict) and isinstance(n2, dict), repr(n2)[:80]):
+        return
+    z1 = out[erster].info["zeit_faktorisierung"]
+    z2 = out["LF2"].info["zeit_faktorisierung"]
+    check("'zeit_faktorisierung' bleibt die Summe des Systems (wie dokumentiert)",
+          z2 > z1 > 0.0, f"{z1:.4f} / {z2:.4f} s")
+    close("der zweite Lastfall hat nur seine eigene Faktorisierungszeit",
+          n2["zeit_faktorisierung_lastfall"], z2 - z1, 1e-12, "s")
+    check("und die ist kleiner als die Summe",
+          0.0 < n2["zeit_faktorisierung_lastfall"] < z2,
+          f"{n2['zeit_faktorisierung_lastfall']:.4f} von {z2:.4f} s")
+    for name, n in ((erster, n1), ("LF2", n2)):
+        info = out[name].info
+        check(f"{name}: Faktorisierungen des Lastfalls = die der Kontaktschritte",
+              n["faktorisierungen"] == info.get("contact_factorisations"),
+              f"{n['faktorisierungen']} / {info.get('contact_factorisations')}")
+        check(f"{name}: je Kontaktschritt eine Loesung, gezaehlt beim Loesen",
+              sum(n["loesungen"].values()) == info.get("contact_iterations"),
+              f"{n['loesungen']} / {info.get('contact_iterations')}")
+    if loeser_da("pardiso"):
+        check("PARDISO hat geloest, mit mtype 11 und seinen Threads",
+              set(n2["loesungen"]) == {"pardiso"} and set(n2["mtype"]) == {"11"}
+              and n2["threads"], f"{n2['loesungen']} {n2['mtype']} {n2['threads']}")
+        check("gestoerte Pivots gezaehlt (Summe und Hoechstwert)",
+              n2["gestoerte_pivots_summe"] == 0 and n2["gestoerte_pivots_max"] == 0,
+              f"{n2['gestoerte_pivots_summe']} / {n2['gestoerte_pivots_max']}")
+    schranke = LinearSolver.genauigkeit()[0]
+    for name, n in ((erster, n1), ("LF2", n2)):
+        r = n.get("residuum_linear_max")
+        check(f"{name}: 0 < groesstes Residuum <= Schranke {schranke:g}",
+              r is not None and 0.0 < r <= schranke, repr(r))
+    check("kein Ausweichen, keine Gruende", not n1["ausweichgruende"]
+          and not n2["ausweichgruende"], str(n2["ausweichgruende"]))
+
+
+def test_loeser_nachweis_nennt_das_ausweichen():
+    """Weicht PARDISO aus, steht es im Nachweis des Lastfalls - mit Grund.
+
+    Gezaehlt wird beim Loesen, nicht beim Faktorisieren: ein lineares Modell
+    faktorisiert beim Aufstellen des Systems, also **vor** dem Lastfall. Ein
+    Nachweis, der nur Faktorisierungen zaehlte, bliebe hier leer (Einwand der
+    Gegenprobe zum Entwurf, 22.09.2026).
+
+    Zwei Threads fuer PARDISO sind eingestellt, damit die Threadzahl des
+    Ersatzes etwas zeigt: PARDISO setzt sie vor ps.factorize, und bis zur
+    Gegenpruefung (22.09.2026) blieb sie nach dem Ausweichen stehen - der
+    Nachweis nannte "1x SuperLU (2 Threads)".
+    """
+    import pypardiso
+    from statik3d.solver import solve_static
+    m, _L, _A = _zugstab()
+    echt = pypardiso.PyPardisoSolver.factorize
+
+    def wirft(self, A):
+        raise RuntimeError("Probe: PARDISO verweigert")
+
+    pypardiso.PyPardisoSolver.factorize = wirft
+    alt = parallel.settings().solver_backend
+    alt_t = parallel.settings().solver_threads
+    try:
+        parallel.configure(solver_backend="auto", solver_threads=2)
+        res = solve_static(m)
+    finally:
+        pypardiso.PyPardisoSolver.factorize = echt
+        parallel.configure(solver_backend=alt, solver_threads=alt_t)
+    n = res.info.get("loeser_nachweis") or {}
+    check("SuperLU hat geloest, einmal", n.get("loesungen") == {"superlu": 1},
+          str(n.get("loesungen")))
+    check("mit einem Thread, nicht mit den zwei von PARDISO",
+          n.get("threads") == {"1": 1}, str(n.get("threads")))
+    check("und ohne PARDISO-Matrixtyp", n.get("mtype") == {}, str(n.get("mtype")))
+    gruende = n.get("ausweichgruende") or {}
+    check("der Grund steht im Nachweis, mit der Zahl der Loesungen",
+          any("PARDISO" in g and "verweigert" in g for g in gruende)
+          and sum(gruende.values()) == 1, str(gruende)[:100])
+    check("die Faktorisierung lag vor dem Lastfall: 0 im Lastfall",
+          n.get("faktorisierungen") == 0 and n.get("zeit_faktorisierung_lastfall") == 0.0,
+          f"{n.get('faktorisierungen')} / {n.get('zeit_faktorisierung_lastfall')}")
+    check("SuperLU meldet keine gestoerten Pivots - keine Zahl statt 0",
+          n.get("gestoerte_pivots_max") is None, repr(n.get("gestoerte_pivots_max")))
+    z = res.summary()
+    check("die Zusammenfassung nennt das Ausweichen",
+          "Ausgewichen" in z and "verweigert" in z,
+          next((x for x in z.splitlines() if "Ausgewichen" in x), "keine Zeile")[:100])
+    zeile = next((x for x in z.splitlines() if x.startswith("Lösungen")), "keine Zeile")
+    check("die Zeile Lösungen sagt: SuperLU einkernig", "1× SuperLU (einkernig)" in zeile,
+          zeile[:100])
+
+
+def test_zusammenfassung_nennt_gestoerte_pivots():
+    """Gestoerte Pivots stehen in der Zusammenfassung, wenn es welche gab -
+    sonst keine Zeile (am Block mit Reibung sind es 0, eine echte Rechnung mit
+    angehobenen Pivots gibt es im kleinen Test nicht)."""
+    from statik3d.solver import Results
+    nachweis = {"loesungen": {"pardiso": 12}, "loesungen_gescheitert": 0,
+                "ausweichgruende": {}, "threads": {"16": 12}, "mtype": {"11": 12},
+                "faktorisierungen": 11, "faktorisierungen_mit_gestoerten_pivots": 2,
+                "gestoerte_pivots_summe": 3, "gestoerte_pivots_max": 2,
+                "zeit_faktorisierung_lastfall": 1.25, "residuum_linear_max": 3.1e-13,
+                "residuum_gemessen": 12, "mkl_cbwr": None}
+    r = Results(name="LF1")
+    r.info = {"loeser_nachweis": nachweis}
+    z = r.summary()
+    # Die Zeilen selbst pruefen, nicht die ganze Zusammenfassung: "3" oder
+    # "12" stehen dort auch ohne diese Zeilen (etwa in "3.1e-13").
+    loes = next((x for x in z.splitlines() if x.startswith("Lösungen")), "keine Zeile")
+    piv = next((x for x in z.splitlines() if x.startswith("Gestörte Pivots")), "keine Zeile")
+    check("die Zusammenfassung nennt Loeser, Loesungen und Faktorisierungen",
+          "12× MKL PARDISO (16 Threads, mtype 11)" in loes
+          and "11 Faktorisierungen in 1.250 s" in loes and "höchstens 3.1e-13" in loes,
+          loes[:110])
+    check("und die gestoerten Pivots: Summe, Faktorisierungen, Hoechstwert",
+          "3 in 2 von 11 Faktorisierungen" in piv and "höchstens 2 " in piv, piv[:110])
+    ohne = dict(nachweis, gestoerte_pivots_summe=0, gestoerte_pivots_max=0,
+                faktorisierungen_mit_gestoerten_pivots=0)
+    r.info = {"loeser_nachweis": ohne}
+    check("ohne gestoerte Pivots keine Zeile dazu", "Gestörte Pivots" not in r.summary())
+
+
+_CBWR_PROBE = r"""
+import json, os, sys
+sys.path.insert(0, os.getcwd())
+from tests.test_loeser import _zugstab
+from statik3d import parallel
+from statik3d.solver import solve_static
+parallel.configure(solver_backend="auto")
+m, _L, _A = _zugstab()
+a = solve_static(m).info["loeser_nachweis"]
+os.environ["MKL_CBWR"] = "COMPATIBLE"      # nach dem Laden: MKL liest das nicht mehr
+b = solve_static(m).info["loeser_nachweis"]
+print("ERGEBNIS " + json.dumps({"a": a.get("mkl_cbwr"), "b": b.get("mkl_cbwr"),
+                                 "loeser": a.get("loesungen")}))
+"""
+
+
+def test_loeser_nachweis_haelt_mkl_cbwr_fest():
+    """MKL_CBWR steht im Nachweis - so, wie es beim ersten Laden von MKL galt.
+
+    MKL liest die Variable nur beim Laden; ein spaeteres Setzen wirkt nicht.
+    Gemessen 22.09.2026 (mkl_rt.3.dll, MKL_CBWR_Get(MKL_CBWR_BRANCH = 1)):
+    ohne Variable 1 (BRANCH_OFF), mit AUTO 2, mit COMPATIBLE 3. Darum ein
+    eigener Prozess: im Testprozess ist MKL laengst geladen.
+    """
+    import json
+    import subprocess
+    try:
+        import pypardiso                                        # noqa: F401
+    except Exception:                                           # noqa: BLE001
+        check("Pardiso fehlt - MKL_CBWR uebersprungen", True)
+        return
+    wurzel = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = dict(os.environ, MKL_CBWR="AUTO", OMP_NUM_THREADS="1", MKL_NUM_THREADS="1",
+               PYTHONUTF8="1")
+    p = subprocess.run([sys.executable, "-c", _CBWR_PROBE], cwd=wurzel, env=env,
+                       capture_output=True, text=True, timeout=300)
+    zeile = next((z for z in p.stdout.splitlines() if z.startswith("ERGEBNIS ")), "")
+    if not check("der Probeprozess laeuft durch", p.returncode == 0 and zeile,
+                 (p.stderr or p.stdout)[-160:]):
+        return
+    d = json.loads(zeile[len("ERGEBNIS "):])
+    a, b = d.get("a") or {}, d.get("b") or {}
+    check("PARDISO hat im Probeprozess geloest", d.get("loeser") == {"pardiso": 1},
+          str(d.get("loeser")))
+    check("die Umgebung beim Laden steht im Nachweis", a.get("umgebung") == "AUTO", str(a))
+    check("und was MKL selbst meldet: AUTO (Code 2)",
+          a.get("code") == 2 and a.get("zweig") == "AUTO", str(a))
+    check("spaeteres Setzen aendert den festgehaltenen Wert nicht",
+          b.get("umgebung") == "AUTO" and b.get("code") == 2, str(b))
+
+
 def main():
     for f in (test_pardiso_faellt_nicht_still_aus, test_ketten_teilen_sich_die_threads,
+              test_pardiso_zaehlt_gestoerte_pivots, test_residuum_gehoert_zur_loesung,
+              test_loeser_nachweis_je_lastfall,
+              test_loeser_nachweis_nennt_das_ausweichen,
+              test_zusammenfassung_nennt_gestoerte_pivots,
+              test_loeser_nachweis_haelt_mkl_cbwr_fest,
               test_abbruchmeldung_nennt_ihren_lauf,
               test_ausweichen_erreicht_den_fortschritt_auch_im_kontakt,
+              test_ausweichgrund_erreicht_ergebnis_bericht_und_modalanalyse,
+              test_ausweichloeser_und_buendelung_je_art,
               test_ketten_rechnen_mit_den_einstellungen_des_hauptprozesses,
               test_speicherfehler_nennt_zahlen, test_symmetriepruefung, test_loeser_treffen_die_geschlossene_loesung,
               test_jeder_loeser_sagt_woher_er_kommt, test_ama_liegt_der_exe_bei,

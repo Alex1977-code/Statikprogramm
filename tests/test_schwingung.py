@@ -173,14 +173,20 @@ def test_nachweis():
     close("kleine Fallhöhe: v = √(2gΔh)", erg5.v, v5, 1e-12, "m/s")
     check("steife Haut, breite Kante: V_r ≤ 1 unkritisch, erfüllt",
           erg5.moden[0].V_r <= 1.0 and erg5.status == "erfüllt", f"V_r={erg5.moden[0].V_r:.3f} {erg5.status}")
-    # Persistenz
-    d = json.loads(json.dumps(m.to_dict()))
-    m3 = Model.from_dict(d)
-    check("Schwingungsnachweis wird mit dem Modell gespeichert",
-          "N1" not in m3.schwingungen and m3.wasserdruecke["S"].h_ow == 4.0)
+    # Persistenz. sw.nachweis rechnet nur; eingetragen wird der Nachweis von
+    # der Oberflaeche (gui/main.py setzt m.schwingungen[sn.name] vor dem
+    # Aufruf). Frueher hiess die erste Pruefung "wird mit dem Modell
+    # gespeichert", sicherte aber "N1" NICHT im Modell zu (Befund FM1, 22.09.2026).
+    check("sw.nachweis trägt den Nachweis nicht selbst ins Modell ein",
+          "N1" not in m.schwingungen, str(sorted(m.schwingungen)))
     m.schwingungen["N1"] = sn
-    m4 = Model.from_dict(json.loads(json.dumps(m.to_dict())))
-    check("… und geladen", m4.schwingungen["N1"].d_kante == 0.2 and m4.schwingungen["N1"].betriebsstunden == 500.0)
+    d = json.loads(json.dumps(m.to_dict()))
+    gespeichert = [x.get("name") for x in d.get("schwingungen") or []]
+    check("Schwingungsnachweis wird mit dem Modell gespeichert", "N1" in gespeichert, str(gespeichert))
+    m4 = Model.from_dict(d)
+    check("… und geladen", "N1" in m4.schwingungen and m4.schwingungen["N1"].d_kante == 0.2
+          and m4.schwingungen["N1"].betriebsstunden == 500.0 and m4.wasserdruecke["S"].h_ow == 4.0,
+          str(sorted(m4.schwingungen)))
     # Fehlerfaelle
     try:
         sw.nachweis(m, sw.Schwingungsnachweis("X", wasserdruck="gibtsnicht"))

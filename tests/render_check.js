@@ -1,12 +1,14 @@
 // Rendert die Register der Weboberflaeche ohne Browser: app.js wird in einem
 // vm-Kontext mit einem winzigen DOM-Ersatz ausgefuehrt, dann werden alle
 // render*-Funktionen mit einem echten Zustand (JSON aus dem Server) aufgerufen.
-// Aufruf:  node tests/render_check.js <app.js> <zustand.json>
+// Aufruf:  node tests/render_check.js <app.js> <zustand.json> [Vorsatz]
+// Der Vorsatz steht vor jedem Pruefungsnamen - so bleiben zwei Laeufe mit
+// verschiedenen Zustaenden in einer Suite unterscheidbar.
 'use strict';
 const fs = require('fs');
 const vm = require('vm');
 
-const [appPfad, zustandPfad] = process.argv.slice(2);
+const [appPfad, zustandPfad, vorsatz = ''] = process.argv.slice(2);
 const quelle = fs.readFileSync(appPfad, 'utf8');
 const zustand = JSON.parse(fs.readFileSync(zustandPfad, 'utf8'));
 
@@ -53,8 +55,11 @@ vm.runInContext(quelle, ctx, {filename: 'app.js'});
 const ev = quelltext => vm.runInContext(quelltext, ctx);
 const ergebnisse = [];
 function pruefe(name, ok, detail) {
+  name = vorsatz + name;
   ergebnisse.push([name, !!ok]);
-  console.log(`${ok ? 'OK ' : 'FAIL'} ${name.padEnd(58)} ${detail || ''}`);
+  // zwei Leerzeichen vor dem Detail: test_web trennt dort den Namen ab,
+  // auch wenn der Name (mit Vorsatz) laenger als 58 Zeichen ist
+  console.log(`${ok ? 'OK ' : 'FAIL'} ${name.padEnd(58)}  ${detail || ''}`);
 }
 ctx.__zustand = zustand;
 ev('S.state = __zustand; view = {opts: {}, draw(){}, resize(){}, fit(){}, setGeometry(){}};');
@@ -71,17 +76,66 @@ for (const [tab, fn] of [['modell', 'renderModell'], ['lasten', 'renderLasten'],
 ev("S.tab = 'bruecke'");
 const h = ev('renderBruecke()');
 const B = zustand.stellungen;
+// Gerechnete Stellungen; "ohne": mit Warnungen des Stabnachweises und ohne
+// einen gefuehrten Nachweis - deren eta = 0 ist keine Ausnutzung. Fehlt das
+// Feld "nachgewiesen" (Server von vor dem 23.09.2026), gilt eine Stellung mit
+// Warnungen als ohne Nachweis.
+const gerechnet = B.liste.filter(x => x.ergebnis && !x.ergebnis.fehler);
+const offen = gerechnet.filter(x => (x.ergebnis.warnungen || []).length);
+const ohne = offen.filter(x => !x.ergebnis.nachgewiesen);
+const bestimmt = gerechnet.filter(x => !ohne.includes(x));
+const nichtBestimmt = B.eta_bestimmt === false || (ohne.length > 0 && !bestimmt.length);
 pruefe('Stellungen als Karten', B.liste.every(x => h.includes(x.name)));
 pruefe('Umhuellende genannt', !B.gerechnet || /Umh.llende/.test(h));
-pruefe('eta-Kurve gezeichnet', !B.gerechnet || /class="kurve"/.test(h));
-pruefe('Kurve hat einen Punkt je Stellung',
-       !B.gerechnet || (h.match(/class="punkt/g) || []).length === B.kurve.length);
+pruefe('eta-Kurve gezeichnet', !B.gerechnet || bestimmt.length < 2 || /class="kurve"/.test(h));
+pruefe('Kurve hat einen Punkt je Stellung mit bestimmtem eta',
+       !B.gerechnet || bestimmt.length < 2
+       || (h.match(/class="punkt/g) || []).length === bestimmt.length);
 pruefe('DIN 19704 mit offenen Beiwerten',
        !B.regelwerk || (h.includes('DIN 19704') && h.includes('zu bestätigen')));
 pruefe('ZTV-ING-Liste', !B.ztv || !B.ztv.length || h.includes('ZTV-ING'));
 pruefe('Formular fuer neue Stellung', h.includes('data-op="stellung"'));
 pruefe('Rechnen-Knopf mit Nutzlast', h.includes('stellungen_rechnen'));
 pruefe('Keine unaufgeloeste Vorlage', !h.includes('undefined') && !h.includes('[object Object]'));
+
+// --- Stellungen ohne (vollstaendigen) Nachweis ----------------------------
+// Gegenpruefung 23.09.2026: Karte, Meldung, Tabelle, Kurve und Filmstreifen
+// zeigten "η = 0,000" gruen, also als erfuellt, obwohl kein Nachweis
+// gefuehrt war - app.js las "warnungen" und "unvollstaendig" nicht.
+const karte = x => ev(`stellungKarte(S.state.stellungen.liste[${B.liste.indexOf(x)}], ${B.liste.indexOf(x)})`);
+pruefe('Karte ohne Nachweis: kein eta-Wert, sondern "nicht geführt"',
+       ohne.every(x => { const k = karte(x); return !/η \d/.test(k) && k.includes('nicht geführt'); }),
+       ohne.length ? karte(ohne[0]).replace(/\s+/g, ' ').slice(0, 160) : '');
+pruefe('Karte nicht vollständig nachgewiesen: nicht grün',
+       offen.every(x => !karte(x).includes('background:var(--ok)')));
+pruefe('Tabelle: eta nur für Stellungen mit Nachweis',
+       (h.match(/class="util"/g) || []).length === bestimmt.length,
+       `${(h.match(/class="util"/g) || []).length} Werte, ${bestimmt.length} bestimmt`);
+const zeileTab = x => (h.match(new RegExp(`<tr class="tap" data-action="edit-stellung" data-name="${x.name}">[\\s\\S]*?</tr>`)) || [''])[0];
+pruefe('Tabelle: Stellung nicht vollständig nachgewiesen nicht grün',
+       offen.every(x => zeileTab(x) && !zeileTab(x).includes('#2e8b3a')));
+pruefe('Kurve: kein Punkt für eine Stellung ohne Nachweis',
+       ohne.every(x => !h.includes(`<title>${x.name}:`)));
+const zeileUmh = (h.match(/<div class="msg [a-z]+">Umhüllende über alle Stellungen[^<]*<\/div>/) || [''])[0];
+pruefe('Umhüllende nicht grün, wenn eine Stellung nicht nachgewiesen ist',
+       !B.gerechnet || !offen.length || (zeileUmh && !zeileUmh.includes('msg ok')), zeileUmh);
+pruefe('Umhüllende ohne jeden Nachweis: "η nicht bestimmt" statt eines Werts',
+       !B.gerechnet || !nichtBestimmt
+       || (zeileUmh.includes('η nicht bestimmt') && !/η = \d/.test(zeileUmh)), zeileUmh);
+if (offen.length) {
+  ev(`S.stellung = ${JSON.stringify(offen[0].name)}`);
+  const hs = ev('renderBruecke()');
+  const meldung = (hs.match(/<div class="msg [a-z]+">η[^<]*<\/div>/) || [''])[0];
+  pruefe('Gewählte Stellung ohne vollständigen Nachweis: Meldung nicht grün',
+         meldung && !meldung.includes('msg ok')
+         && /nicht vollständig nachgewiesen|kein Nachweis geführt/.test(meldung), meldung);
+  // an der Karte der Stellung, nicht nur im zugeklappten Bericht der Reihe
+  const n = offen[0].ergebnis.warnungen.length;
+  pruefe('Gewählte Stellung: die Warnungen sind aufklappbar',
+         hs.includes(`<summary>Nicht nachgewiesen <span class="n">${n}</span></summary>`)
+         && hs.includes(esc0(offen[0].ergebnis.warnungen[0]).slice(0, 40)));
+}
+function esc0(s) { return ev(`esc(${JSON.stringify(s)})`); }
 
 const gewaehlt = B.liste.length ? B.liste[0].name : '';
 ev(`S.stellung = ${JSON.stringify(gewaehlt)}`);
@@ -99,6 +153,13 @@ const film = knoten['#film'].innerHTML;
 pruefe('Filmstreifen gefuellt', film.includes('Stellungen des Systems'));
 pruefe('Filmstreifen zeigt jede Stellung',
        B.liste.every(x => film.includes(x.name)) || !B.liste.length);
+pruefe('Filmstreifen ohne jeden Nachweis: kein eta-Wert der Umhüllenden',
+       !B.gerechnet || !nichtBestimmt
+       || (!/Umhüllende η = \d/.test(film) && film.includes('η nicht bestimmt')),
+       (film.match(/Umhüllende[^<]*/) || [''])[0]);
+pruefe('Filmstreifen: nicht vollständig nachgewiesen wird genannt',
+       !B.gerechnet || !offen.length || /Umhüllende[^<]*nicht/.test(film),
+       (film.match(/Umhüllende[^<]*/) || [''])[0]);
 
 ctx.window.innerWidth = 1440;
 ev('updateWerkbank()');

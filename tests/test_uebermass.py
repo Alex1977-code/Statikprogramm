@@ -316,10 +316,149 @@ def test_datenmodell():
           and m3.case().uebermasse[0].passmass == "H7/s6")
 
 
+# --------------------------------------------------------------------------
+# Zuordnung nur ueber den genauen Namen der Fuge
+# --------------------------------------------------------------------------
+def wuerfelpaare(namen, uebermasse) -> Model:
+    """Getrennte Würfelpaare nebeneinander (je 2 m in x versetzt), je eine
+    Fuge mit eigenem Namen, sonst wie :func:`zwei_wuerfel` mit gehaltener
+    Oberseite. ``uebermasse`` ist [(Fuge, Überdeckung)] in genau der
+    Reihenfolge, in der sie im Lastfall stehen - die Reihenfolge ist Teil
+    der Prüfung."""
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    U = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+                  [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1.]])
+    for i, name in enumerate(namen):
+        b = m.nn
+        v = np.array([2.0 * i, 0.0, 0.0])
+        m.add_nodes(np.vstack([U + v, U + v + np.array([0, 0, 1.0])]))
+        m.add_element("hex8", list(range(b, b + 8)), "S235", group=f"Unten {i}")
+        m.add_element("hex8", list(range(b + 8, b + 16)), "S235", group=f"Oben {i}")
+        for k in range(4):
+            m.fix(b + k, [2])
+        m.fix(b, [0, 1])
+        m.fix(b + 1, [1])
+        for k in (12, 13, 14, 15):
+            m.fix(b + k, [2])
+        m.fix(b + 12, [0, 1])
+        m.fix(b + 13, [1])
+        m.contact_pairs.append(ContactPair(name, slave_nodes=[b + 8, b + 9, b + 10, b + 11],
+                                           master_faces=[[b + 4, b + 5, b + 6, b + 7]],
+                                           search_radius=0.5))
+    lc = m.add_load_case("LF1")
+    lc.gravity = [0, 0, 0]
+    for ziel, u in uebermasse:
+        lc.uebermasse.append(Uebermass(ziel, u))
+    return m
+
+
+def _pressung(r, i) -> float:
+    """Auflagerkraft unter Würfelpaar i [N] - die Presskraft seiner Fuge."""
+    return float(r.reactions[16 * i:16 * i + 4, 2].sum())
+
+
+def test_praefix_ist_keine_zuordnung():
+    """Ein Übermaß gehört genau der Fuge, deren Namen es trägt.
+
+    Bis zum 22.09.2026 griff ein Präfixzweig: fand sich der Name des
+    Kontaktpaars nicht, galt der erste Eintrag, mit dem er **beginnt**. Ein
+    Kontaktpaar trägt aber immer genau den Namen seiner Bedingung
+    (fugen.py: ``ContactPair(name=kb.name, ...)``, die einzige Stelle neben
+    ``Model.add_contact_pair``) - der Präfixtreffer war also nie das gemeinte
+    Paar, sondern ein fremdes. Gemessen von der Element-/Lösersitzung: volle
+    Pressung auf „Fuge (2)“ ohne eigenes Übermaß, den Namen, den
+    ``kontakte.name_fuer`` für die zweite Fuge vergibt."""
+    soll = UEBER * E_STAHL / (2 * L_WUERFEL) * A_FUGE
+    r = solver.solve_static(wuerfelpaare(["Fuge", "Fuge (2)"], [("Fuge", UEBER)]),
+                            case="LF1")
+    close("die Fuge mit Übermaß steht unter ihrer Pressung", _pressung(r, 0), soll,
+          1e-4 * soll, " N")
+    check("die Fuge „Fuge (2)“ ohne Übermaß bleibt kraftlos",
+          abs(_pressung(r, 1)) < 1e-6 * soll, f"{_pressung(r, 1):.1f} N")
+    log = r.info.get("contact_log", [])
+    zeile = [z for z in log if "'Fuge (2)'" in z and "NICHT" in z]
+    check("das Protokoll sagt, dass der fremde Eintrag hier nicht wirkt",
+          zeile and "„Fuge“" in zeile[0], (zeile[0] if zeile else "keine Zeile")[:110])
+
+
+def test_mehrdeutiger_praefix_haengt_nicht_an_der_reihenfolge():
+    """Bei zwei passenden Präfixen entschied die Eingabereihenfolge (gemessen:
+    Faktor 5 an „Deckel_2 (Typ 1)“). „Deckel“, „Deckel_2“ und
+    „Deckel_2 (Typ 1)“ sind Namen, die das Programm selbst erzeugt
+    (``_common.unique_name``, RFEM-Import „⟨Name⟩ (Typ n)“). Jetzt wirkt an
+    „Deckel_2 (Typ 1)“ keiner der beiden, in beiden Reihenfolgen, und die
+    beiden anderen Fugen bekommen genau ihr eigenes Übermaß."""
+    namen = ["Deckel", "Deckel_2", "Deckel_2 (Typ 1)"]
+    groß, klein = 100e-6, 20e-6
+    ra = solver.solve_static(wuerfelpaare(namen, [("Deckel", groß), ("Deckel_2", klein)]),
+                             case="LF1")
+    rb = solver.solve_static(wuerfelpaare(namen, [("Deckel_2", klein), ("Deckel", groß)]),
+                             case="LF1")
+    soll = groß * E_STAHL / (2 * L_WUERFEL) * A_FUGE
+    for wer, r in (("Deckel, Deckel_2", ra), ("Deckel_2, Deckel", rb)):
+        check(f"Reihenfolge {wer}: „Deckel_2 (Typ 1)“ bleibt kraftlos",
+              abs(_pressung(r, 2)) < 1e-6 * soll, f"{_pressung(r, 2):.1f} N")
+        close(f"Reihenfolge {wer}: „Deckel“ trägt seine 100 µm", _pressung(r, 0), soll,
+              1e-4 * soll, " N")
+        close(f"Reihenfolge {wer}: „Deckel_2“ trägt seine 20 µm", _pressung(r, 1),
+              soll * klein / groß, 1e-4 * soll * klein / groß, " N")
+    log = ra.info.get("contact_log", [])
+    zeile = [z for z in log if "'Deckel_2 (Typ 1)'" in z and "NICHT" in z]
+    check("das Protokoll nennt beide fremden Einträge",
+          zeile and "„Deckel“" in zeile[0] and "„Deckel_2“" in zeile[0],
+          (zeile[0] if zeile else "keine Zeile")[:120])
+    check("ein genauer Treffer bleibt ohne Warnung ('Deckel_2' beginnt auch mit 'Deckel')",
+          not any("'Deckel_2'" in z and "NICHT" in z for z in log),
+          "; ".join(z for z in log if "'Deckel_2'" in z)[:120])
+
+
+def test_uebermass_ohne_fuge_wird_benannt():
+    """Ein Übermaß, dessen Name **keine** Fuge trägt, wirkte nirgends und
+    niemand sagte es.
+
+    Das geschieht, wenn die Fuge nach dem Eintragen umbenannt oder
+    aufgeteilt wurde - der RFEM-Import macht aus einer Freigabe mit zwei
+    Freigabetypen „⟨Name⟩ (Typ 3)“ und „⟨Name⟩ (Typ 4)“. Bis zum 22.09.2026
+    griff dort der Präfixzweig; seit er fehlt, nannte die Zeile je Teilfuge
+    den Eintrag „Achse“ einen, der „zu einer anderen Fuge gehört“ - eine
+    solche Fuge gibt es aber nicht. Und ein Eintrag ohne jede Namens-
+    verwandtschaft („Weg“) fiel ganz ohne Zeile weg (Gegenprüfung des
+    Strangs, 22.09.2026). Jetzt nennt eine Zeile je solchem Eintrag, dass
+    er nirgends wirkt, und die Teilfugen, deren Namen nur so beginnen."""
+    r = solver.solve_static(wuerfelpaare(["Achse (Typ 3)", "Achse (Typ 4)"],
+                                         [("Achse", UEBER), ("Weg", UEBER)]),
+                            case="LF1")
+    soll = UEBER * E_STAHL / (2 * L_WUERFEL) * A_FUGE
+    for i in (0, 1):
+        check(f"Teilfuge {i + 1} ohne eigenes Übermaß bleibt kraftlos",
+              abs(_pressung(r, i)) < 1e-6 * soll, f"{_pressung(r, i):.1f} N")
+    log = r.info.get("contact_log", [])
+    achse = [z for z in log if "„Achse“" in z and "wirkt nirgends" in z]
+    check("das Protokoll nennt „Achse“ als wirkungslos, samt beiden Teilfugen",
+          bool(achse) and "„Achse (Typ 3)“" in achse[0] and "„Achse (Typ 4)“" in achse[0],
+          (achse[0] if achse else "keine Zeile")[:120])
+    weg = [z for z in log if "„Weg“" in z and "wirkt nirgends" in z]
+    check("auch ein Eintrag ohne jede Namensverwandtschaft wird genannt", bool(weg),
+          (weg[0] if weg else "keine Zeile")[:120])
+    falsch = [z for z in log if "„Achse“" in z and "anderen Fuge" in z]
+    check("keine Zeile behauptet eine andere Fuge „Achse“", not falsch,
+          (falsch[0] if falsch else "")[:120])
+    # Der Bericht nimmt contact_log in die Warnungen, ausser Zeilen mit
+    # "zugeordnet" (report/html.py) - die neue Zeile muss durchkommen
+    check("die Zeile kommt in die Warnungen des Berichts",
+          bool(achse) and bool(weg) and not any("zugeordnet" in z for z in achse + weg))
+    r0 = solver.solve_static(wuerfelpaare(["Fuge"], [("Fuge", UEBER)]), case="LF1")
+    check("Gegenprobe: ein genauer Treffer meldet nichts dergleichen",
+          not any("wirkt nirgends" in z for z in r0.info.get("contact_log", [])))
+
+
 def main():
     for f in (test_ebene_fuge, test_kombination_skaliert, test_zylindrische_fuge,
               test_schub_ueber_die_reibung, test_passung_aus_abmassen,
-              test_passungsarten, test_datenmodell):
+              test_passungsarten, test_datenmodell, test_praefix_ist_keine_zuordnung,
+              test_mehrdeutiger_praefix_haengt_nicht_an_der_reihenfolge,
+              test_uebermass_ohne_fuge_wird_benannt):
         print(f"\n--- {f.__name__} ---")
         try:
             f()

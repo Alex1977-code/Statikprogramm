@@ -285,8 +285,8 @@ def import_file(path: str, model: Model = None, log: list = None, **options) -> 
         if fresh:
             model = loaded
         else:
-            model = _append_model(model, loaded, tol)
             C.say(log, f"JSON-Modell '{loaded.name}' angehaengt")
+            model = _append_model(model, loaded, tol, log)
         model.meta["quelle"] = path
         C.say(log, f"Statik3D-Modell geladen: {model.nn} Knoten, {len(model.elements)} Elemente")
         return model
@@ -402,40 +402,16 @@ def _melde(fortschritt, anteil: float, text: str) -> None:
         fortschritt(float(max(0.0, min(1.0, anteil))), str(text))
 
 
-def _append_model(target: Model, src: Model, tol: float) -> Model:
-    """Geladenes JSON-Modell an ein bestehendes Modell anhaengen."""
-    base = target.nn
-    for m in src.materials.values():
-        target.materials.setdefault(m.name, m)
-    for s in src.sections.values():
-        target.sections.setdefault(s.name, s)
-    for s in src.shells.values():
-        target.shells.setdefault(s.name, s)
-    if src.nn:
-        target.add_nodes(src.nodes)
-    e_base = len(target.elements)
-    for e in src.elements:
-        target.add_element(e.typ, [n + base for n in e.nodes], e.mat, e.sec, e.roll, e.group,
-                           e.hinges)
-    for s in src.supports:
-        target.fix(s.node + base, s.dofs, s.values, s.stiffness)
-    for name, lc in src.load_cases.items():
-        tgt = C.get_or_add_case(target, name, lc.category, lc.description)
-        for l in lc.nodal_loads:
-            target.load_node(l.node + base, *l.F, case=name)
-        for l in lc.beam_loads:
-            target.load_beam(l.elem + e_base, *l.q, system=l.system, case=name, q2=l.q2)
-        for l in lc.face_loads:
-            target.load_face(l.elem + e_base, l.p, l.face, case=name, direction=l.direction)
-        for l in lc.temp_loads:
-            target.load_temp(l.elem + e_base, l.dT, l.dT_z, case=name)
-        if any(lc.gravity):
-            tgt.gravity = list(lc.gravity)
-    for m in src.members.values():
-        target.add_member(C.unique_name(target.members, m.name),
-                          [i + e_base for i in m.elements])
-    C.merge_duplicate_nodes(target, tol)
-    return target
+def _append_model(target: Model, src: Model, tol: float, log: list = None) -> Model:
+    """Geladenes JSON-Modell an ein bestehendes Modell anhaengen.
+
+    Bis zum 22.09.2026 stand hier eine eigene, unvollstaendige Uebertragung
+    (Befund SV11: am Hallenrahmen kamen 0 von 72 Kombinationen, 0 von 1
+    Linienlager, 0 von 1 Flaechenlager und 0 von 2 Ermuedungslasten an, ohne
+    Meldung). Jetzt ordnet :mod:`.anhaengen` jeden Schluessel des Modells ein
+    und meldet, was nicht uebertragbar ist."""
+    from .anhaengen import modell_anhaengen
+    return modell_anhaengen(target, src, tol, log)
 
 
 __all__ = ["SUPPORTED", "PROPRIETARY", "import_file", "explain_format", "file_filter"]

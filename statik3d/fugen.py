@@ -106,6 +106,82 @@ DURCHGAENGE = 4
 FORMSCHLUSS_MIN = 0.02
 
 
+# --------------------------------------------------------------------------
+# Sperre: Kontakt, Fugen und Flaechenlager an Seiten mit Seitenmitten
+# --------------------------------------------------------------------------
+#: Kontakt, Fugen und Flaechenlager nehmen von einer Volumenseite nur die
+#: **Eckknoten** (assemble.SOLID_FACES = solid.FLAECHEN_ECKEN). Quadratische
+#: Elemente (tet10, hex20, pent15, shell6, shell8) haben auf der Seite weitere
+#: Knoten, und die werden dabei still uebergangen. Gemessen am 22.09.2026 an
+#: tests/test_fugen.zwei_bloecke bzw. _wuerfel (Kantenlaenge 0,5, Einkern):
+#:   - Trennen einer Fuge verdoppelt nur die Ecken, die Seitenmitten bleiben
+#:     beiden Koerpern gemeinsam: eine Fuge ohne Zugfestigkeit trug mit tet10
+#:     525,8 kN von 1000 kN Zug (passende Netze, 50 gemeinsame Mitten) bzw.
+#:     371,2 kN (eigene Flaechen, 18 gemeinsame Randmitten); mit tet4 0 kN.
+#:   - Ein starres Flaechenlager hielt 24 von 77 Bodenknoten; die Oberseite
+#:     sank um 41 % mehr als mit festgehaltenen Bodenknoten; mit tet4 gleich.
+#: Bis der Kontakt die Seitenmitten traegt (Auftrag B4), bricht die Rechnung
+#: hier laut ab, statt still falsch zu rechnen. Eine verschweisste Fuge
+#: (starr in allen Richtungen, passende Netze) trennt nichts und bleibt erlaubt.
+class QuadratischeSeiten(ValueError):
+    """Kontakt, Fuge oder Flaechenlager an einer Elementseite mit Seitenmitten."""
+
+
+def _quadratische_volumentypen() -> set:
+    """Volumentypen, deren Seiten mehr Knoten haben als Ecken."""
+    from .elements import solid as sl
+    return {typ for typ, seiten in sl.FLAECHEN.items()
+            if any(len(f) != len(e) for f, e in zip(seiten, sl.FLAECHEN_ECKEN[typ]))}
+
+
+def ist_quadratisch(el) -> bool:
+    """Hat das Element Knoten auf seinen Seiten ausser den Ecken?"""
+    from .assemble import SHELL_TYPES
+    if el.typ in SHELL_TYPES:
+        return len(el.nodes) > 4
+    return el.typ in _quadratische_volumentypen()
+
+
+def quadratische_knoten(model: Model) -> dict:
+    """{Knoten: erstes quadratisches Element daran} - leer ohne solche Elemente.
+
+    Erst ein Blick auf die Typen (ein Durchgang, am Drehlager mit 646.000
+    tet4 der einzige): nur wenn es quadratische Elemente gibt, werden ihre
+    Knoten gesammelt."""
+    from .assemble import SHELL_TYPES
+    quad = _quadratische_volumentypen()
+    if not any(el.typ in quad or (el.typ in SHELL_TYPES and len(el.nodes) > 4)
+               for el in model.elements):
+        return {}
+    out: dict = {}
+    for i, el in enumerate(model.elements):
+        if ist_quadratisch(el):
+            for n in el.nodes:
+                out.setdefault(int(n), i)
+    return out
+
+
+def quadratische_seiten_sperren(model: Model, knoten, was: str, q: dict = None) -> None:
+    """Wirft :class:`QuadratischeSeiten`, wenn einer dieser Knoten an einem
+    quadratischen Element haengt. ``was`` nennt die Stelle (Fuge, Kontaktpaar,
+    Flaechenlager mit Namen)."""
+    q = quadratische_knoten(model) if q is None else q
+    if not q:
+        return
+    treffer = sorted({q[int(n)] for n in knoten if int(n) in q})
+    if not treffer:
+        return
+    typen = sorted({model.elements[i].typ for i in treffer})
+    raise QuadratischeSeiten(
+        f"{was}: liegt an {len(treffer)} quadratischen Elementen ({', '.join(typen)}), "
+        f"z. B. Element {', '.join(str(i) for i in treffer[:8])}. Kontakt, Fugen und "
+        "Flächenlager nehmen heute nur die Eckknoten einer Elementseite; die Seitenmitten "
+        "blieben verbunden bzw. ungelagert, und das Ergebnis wäre still falsch (gemessen: "
+        "eine getrennte Fuge trug 53 % Zug, ein starres Flächenlager ließ 41 % mehr "
+        "Setzung zu). Abhilfe bis dahin: diese Körper linear vernetzen "
+        "(Netzeinstellungen → Elementansatz linear).")
+
+
 def formschluss(model: Model, facetten: list) -> tuple:
     """Wie viele Richtungen die Fuge durch ihre Form haelt.
 
@@ -726,6 +802,18 @@ def kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
                            f"Knoten für Knoten - die {len(fugenknoten)} gemeinsamen Knoten bleiben "
                            "(verschweißt, nichts zu trennen)")
             return bericht
+
+    # Getrennt wird nur an den Ecken - an quadratischen Elementen blieben die
+    # Seitenmitten verbunden (QuadratischeSeiten). Geprueft werden beide
+    # Seiten: die Fugenknoten und die Gegenflaechen, an denen ein Kontaktpaar
+    # entstuende.
+    q = quadratische_knoten(model)
+    if q:
+        knoten = set(fugenknoten) | {n for x in dreiecke for n in x[1]}
+        gegen = _seiten_flaechen(model, kb.gegenflaechen)
+        if gegen:
+            knoten |= {n for x in _dreiecke_der_fuge(model, gegen) for n in x[1]}
+        quadratische_seiten_sperren(model, knoten, f"Kontaktbedingung {kb.name}", q)
 
     # ---- 3) Normalen und Einflussflaechen ------------------------------
     # Die Richtung des Spaltelements zeigt vom bleibenden Knoten zum geloesten,

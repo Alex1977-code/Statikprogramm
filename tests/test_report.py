@@ -351,6 +351,57 @@ def test_kontaktwarnungen_der_uebrigen_ergebnisse():
     _assert_since(n0)
 
 
+def test_deckelzeilen_mit_rundenbilanz_werden_gebuendelt():
+    """Seit dem Laufbuch (22.09.2026) haengt die Deckelzeile des
+    Kontaktsystems eine Rundenbilanz an (``ContactSystem.runden_text``:
+    " - in 40 Runden: 31 mit ..."). Ihre Zahlen sind je Lauf und Lastfall
+    andere. Ohne Schnitt wuerde die Buendelung der uebrigen Ergebnisse daraus
+    eine Warnzeile je gedeckeltem Lauf machen - am Drehlager bis zu 422 x 12
+    statt einer. Und ein Ergebnis mit mehreren gedeckelten Laeufen traegt
+    dieselbe Art mehrmals: gezaehlt werden Ergebnisse, nicht Zeilen."""
+    n0 = len(RESULTS)
+    import copy as _copy
+    from statik3d import contact as ct
+    from statik3d import examples_lib as _ex
+
+    def deckelzeile(n_runden, n_knoten):
+        # Der veraenderliche Teil im Format, das das Kontaktsystem schreibt
+        cs = object.__new__(ct.ContactSystem)
+        t = [0] * len(ct.RUNDEN_FELDER)
+        t[0] = 2
+        t[ct.RUNDEN_FELDER.index("gleiten_neu")] = n_knoten
+        cs.runden = [tuple(t)] * n_runden
+        return ("Kontakt: Nachpruefung der Reibung nach 40 Zustandswechseln abgebrochen"
+                + cs.runden_text(n_runden))
+
+    probe = deckelzeile(3, 7)
+    check("die Probe traegt eine Rundenbilanz", " - in 3 Runden: 3 mit neuem Gleiten" in probe,
+          probe)
+    m = _ex.build_example("friction")
+    an = solver.solve_all(m)
+    grund = next(n for n, r in an.cases.items() if getattr(r, "contact", None))
+    for _k in (2, 3, 4):
+        kopie = _copy.copy(an.cases[grund])
+        kopie.info = dict(getattr(an.cases[grund], "info", {}) or {})
+        an.cases[f"{grund} ({_k})"] = kopie
+    ergebnisse = list(an.all_results().items())
+    uebrige = 0
+    for _i, (_name, r) in enumerate(ergebnisse):
+        if _i:
+            # zwei gedeckelte Laeufe je Ergebnis, jeder mit eigener Bilanz
+            r.info["contact_log"] = [deckelzeile(_i, 2 * _i + 1), deckelzeile(_i + 1, 3 * _i)]
+            uebrige += 1
+    rep = Report(m, an, options={"max_contact_results": 1})
+    rep.html()
+    zeilen = [z for z in (getattr(rep, "_warnings", []) or []) if "Nachpruefung der Reibung" in z]
+    check("verschiedene Rundenbilanzen ergeben EINE Warnzeile", len(zeilen) == 1,
+          f"{len(zeilen)} Zeilen: " + str([z[:70] for z in zeilen[:3]]))
+    check("sie zaehlt Ergebnisse, nicht Zeilen",
+          len(zeilen) == 1 and f"({uebrige} weitere Ergebnisse" in zeilen[0],
+          zeilen[0][:90] if zeilen else "keine")
+    _assert_since(n0)
+
+
 def test_pdf():
     n0 = len(RESULTS)
     m = build_beam_model()
@@ -637,15 +688,278 @@ def test_nicht_gefuehrt_ist_nicht_erfuellt():
     return len(RESULTS) - n0
 
 
+def _kv_status(html: str, titel: str):
+    """Die Zeile „Status“ des Schlüssel-Wert-Blocks mit der Überschrift *titel*
+    im erzeugten HTML - oder None, wenn es den Block oder die Zeile nicht gibt."""
+    blk = re.search(r'<div class="caption">' + re.escape(titel)
+                    + r'</div><table class="kv"><tbody>(.*?)</tbody>', html, re.S)
+    if not blk:
+        return None
+    zeile = re.search(r"<tr><th>Status</th><td>(.*?)</td></tr>", blk.group(1), re.S)
+    return re.sub(r"<[^>]+>", "", zeile.group(1)) if zeile else None
+
+
+def test_ermuedung_nicht_gefuehrt_im_bericht():
+    """Befunde FE2, FE5, FE13, SV5 (22.09.2026): der Ermüdungseintrag, dessen
+    Nachweis nicht oder nicht vollständig geführt wurde, im Bericht.
+
+    Gemessen vor der Kur: ein Volumen, dessen einzige Ermüdungslast ihren
+    Mindestzustand verliert, stand mit „Status: Nachweis erfüllt“, D 0.000
+    und „Element -1 von 40“ im Bericht; beim Stab ebenso. Verlor von zwei
+    Lasten eine ihren Mindestzustand (oder-EK), lautete das Gesamturteil
+    „Alle Nachweise erfüllt.“ - der Hinweis stand nur darunter, und der
+    Anhang schrieb „Die Modellprüfung ergab keine Beanstandungen“.
+
+    Geprüft wird die **Zeile im Bericht**, wie im Test darüber.
+    """
+    n0 = len(RESULTS)
+    import html as _html_text
+    from tests.test_ermuedung_verlauf import _zugstab_volumen, _stab_oben_unten, _oder_ek
+
+    # (1) Volumen: die einzige Last verliert ihren Mindestzustand
+    m = _zugstab_volumen(1000e3, -400e3)
+    m.add_fatigue_load("Zwei", "LF1", "FEHLT", 1e5)
+    an = solver.solve_all(m, design=False, fatigue=True)
+    html = Report(m, an).html()
+    st = _kv_status(html, "Ermüdung Volumen V1")
+    check("Ermüdung Volumen ohne Mindestzustand: Status „nicht geführt“",
+          st is not None and "nicht geführt" in st and "erfüllt" not in st, repr(st))
+    check("die Übersicht zeigt kein „Element -1“", "Element -1" not in html,
+          "Element -1 gefunden" if "Element -1" in html else "")
+
+    # (2) Stab: die einzige Last verliert ihren Mindestzustand
+    ms = _stab_oben_unten()
+    ms.add_fatigue_load("EL", "OBEN", "FEHLT", cycles=1e6)
+    an = solver.solve_all(ms, fatigue=True)
+    html = Report(ms, an).html()
+    st = _kv_status(html, "Ermüdung Stab M1")
+    check("Ermüdung Stab ohne Mindestzustand: Status „nicht geführt“",
+          st is not None and "nicht geführt" in st and "erfüllt" not in st, repr(st))
+
+    # (3) Zwei Lasten, eine mit oder-EK als Mindestzustand
+    m = _zugstab_volumen(1000e3, -400e3)
+    m.add_fatigue_load("Gut", "LF1", "LF2", 1e5)
+    _oder_ek(m)
+    m.add_fatigue_load("Schlecht", "LF1", "EK_oder", 1e5)
+    an = solver.solve_all(m, design=False, fatigue=True)
+    html = Report(m, an).html()
+    check("Gesamturteil sagt nicht „Alle Nachweise erfüllt.“",
+          "Alle Nachweise erfüllt." not in html, "")
+    check("sondern nennt den Ermüdungsnachweis nicht vollständig geführt",
+          "nicht vollständig geführt" in html, "")
+    st = _kv_status(html, "Ermüdung Volumen V1")
+    check("der Eintrag selbst heißt „unvollständig“ und nennt die Last",
+          st is not None and "unvollständig" in st and "Schlecht" in st, repr(st))
+    check("die Modellprüfung im Bericht meldet die oder-EK",
+          "Die Modellprüfung ergab keine Beanstandungen" not in html
+          and re.search(r"FEHLER: Ermüdungslast 'Schlecht'[^<]*EK_oder",
+                        _html_text.unescape(html)) is not None, "")
+
+    # (4) Dasselbe am Stab - der ursprünglichen Fehlerstelle des Befunds FE5.
+    # (3) hielt nur den Volumenkörper: das Gesamturteil ohne den Stabteil
+    # („if teil_e“ → „if False“) und der Stabzweig mit der alten bloßen
+    # Warnung blieben bei 120/120 (Mangel 1 der Gegenprüfung, 23.09.2026,
+    # Mutationen M10 und M11). Gegenprobe zuerst: „Gut“ allein ist erfüllt,
+    # sonst sagte das Gesamturteil hier nichts über die fehlende Last.
+    ms = _stab_oben_unten()
+    ms.add_fatigue_load("Gut", "OBEN", "UNTEN", cycles=5e4)
+    html = Report(ms, solver.solve_all(ms, fatigue=True)).html()
+    check("Stab, Gegenprobe: „Gut“ allein → „Alle Nachweise erfüllt.“",
+          "Alle Nachweise erfüllt." in html
+          and _kv_status(html, "Ermüdung Stab M1") == "Nachweis erfüllt",
+          repr(_kv_status(html, "Ermüdung Stab M1")))
+    ek = ms.add_combination("EK_oder", {}, "FAT")
+    ek.alternativen = [{"OBEN": 1.0}, {"UNTEN": 1.0}]
+    ms.add_fatigue_load("Schlecht", "OBEN", "EK_oder", cycles=5e4)
+    html = Report(ms, solver.solve_all(ms, fatigue=True)).html()
+    check("Stab, eine von zwei Lasten fällt aus: nicht „Alle Nachweise erfüllt.“, "
+          "sondern „nicht vollständig geführt“",
+          "Alle Nachweise erfüllt." not in html
+          and "nicht vollständig geführt wurden: 1 Stäbe (Ermüdung)" in html, "")
+    st = _kv_status(html, "Ermüdung Stab M1")
+    check("der Stabeintrag heißt „unvollständig“ und nennt die Last",
+          st is not None and "unvollständig" in st and "Schlecht" in st, repr(st))
+    _assert_since(n0)
+    return len(RESULTS) - n0
+
+
+def _hinweisliste(html: str) -> list:
+    """Die Punkte der Liste "Offene Hinweise und Warnungen" der Zusammenfassung."""
+    i = html.find("Offene Hinweise und Warnungen:")
+    if i < 0:
+        return []
+    j = html.find("<ul>", i)
+    k = html.find("</ul>", j)
+    if j < 0 or k < 0:
+        return []
+    return re.findall(r"<li>(.*?)</li>", html[j:k], re.S)
+
+
+def test_stab_ohne_streckgrenze_in_den_hinweisen():
+    """Ein nicht geführter Stab gehört in jedem Umfang in die Hinweise.
+
+    Der Grund (Werkstoff ohne Streckgrenze) lag nur in ``mc.warnings``, und
+    die kamen allein über ``_member_design_blocks`` in die Hinweisliste.
+    Dieser Block läuft im Umfang „kurz" - der Vorgabe des Berichtsrahmens -
+    gar nicht, in „mittel" nur für die 20 am höchsten ausgenutzten Stäbe; ein
+    Stab mit Ausnutzung 0,000 fällt dort zuerst heraus. Gemessen 22.09.2026
+    im Umfang „kurz": 'ohne Streckgrenze' 0-mal im Bericht, die Statuszeile
+    verweist auf „die Hinweise unten", und direkt darunter steht „Es liegen
+    keine offenen Hinweise oder Warnungen vor."
+
+    Derselbe Widerspruch auf einem zweiten Weg: die Berichtsoption „Nachweise
+    EC3" (ReportDialog, ``design=False``). Das Nachweiskapitel kehrt dann früh
+    zurück, die Zusammenfassung liest ``self.design`` aber weiter und nennt
+    den Stab in der Statuszeile. Gemessen 23.09.2026 an 97df705 mit
+    ``{"umfang": "kurz", "design": False}`` und ebenso „lang": Statuszeile
+    „… nicht geführt wurden: 1 Stäbe (EC3) (siehe die Hinweise unten).",
+    darunter „Es liegen keine offenen Hinweise oder Warnungen vor."
+    """
+    n0 = len(RESULTS)
+    m = build_beam_model()
+    m.add_material(Material("Frei", 210e9, 0.3, 7850.0))       # fy = None
+    ids = mesher.line_of_beams(m, "Frei", "IPE 300", (0, 2, 0), (6, 2, 0), 6)
+    m.fix(ids[0], [0, 1, 2, 3])
+    m.fix(ids[-1], [1, 2, 3])
+    els = [i for i, e in enumerate(m.elements) if e.mat == "Frei"]
+    for e in els:
+        m.load_beam(e, qz=-10000.0)
+    m.add_member("Ohne_fy", els)
+    an = solver.solve_all(m, design=True)
+    for opts in ({"umfang": "kurz"}, {"umfang": "lang"},
+                 {"umfang": "kurz", "design": False}, {"umfang": "lang", "design": False}):
+        umfang = opts["umfang"] + (", Nachweise EC3 aus" if "design" in opts else "")
+        html = Report(m, an, options=opts).html()
+        hin = _hinweisliste(html)
+        treffer = [h for h in hin if "Ohne_fy" in h and "ohne Streckgrenze" in h]
+        check(f"Umfang {umfang}: die Hinweise nennen den Stab ohne Streckgrenze",
+              len(treffer) == 1, f"{len(treffer)} Treffer in {len(hin)} Hinweisen")
+        check(f"Umfang {umfang}: … und sagen, was zu tun ist",
+              bool(treffer) and "Nachweis nicht geführt" in treffer[0]
+              and "am Werkstoff" in treffer[0], treffer[0] if treffer else "–")
+        check(f"Umfang {umfang}: nicht 'keine offenen Hinweise'",
+              "keine offenen Hinweise" not in html, "")
+        if "design" in opts:
+            check(f"Umfang {umfang}: das Nachweiskapitel ist wirklich aus",
+                  "Die Ausgabe der Nachweise ist deaktiviert." in html, "")
+
+    # Umfang "mittel" mit mehr als 20 Staeben: die Details werden nach
+    # Ausnutzung auf 20 gekuerzt, der Stab ohne f_y (0,000) steht am Ende
+    y = 4.0
+    for i in range(20):
+        ids = mesher.line_of_beams(m, "S235", "IPE 300", (0, y, 0), (6, y, 0), 2)
+        m.fix(ids[0], [0, 1, 2, 3])
+        m.fix(ids[-1], [1, 2, 3])
+        neu = [len(m.elements) - 2, len(m.elements) - 1]
+        for e in neu:
+            m.load_beam(e, qz=-10000.0)
+        m.add_member(f"Zusatz{i + 1}", neu)
+        y += 2.0
+    an2 = solver.solve_all(m, design=True)
+    html = Report(m, an2, options={"umfang": "mittel"}).html()
+    check("Umfang mittel: 22 Stäbe, die Details sind gekürzt",
+          len(an2.design.members) == 22 and "am höchsten ausgenutzten" in html,
+          f"{len(an2.design.members)} Stäbe")
+    hin = _hinweisliste(html)
+    check("Umfang mittel, gekürzt: die Hinweise nennen den Stab ohne Streckgrenze",
+          any("Ohne_fy" in h and "ohne Streckgrenze" in h for h in hin),
+          f"{len(hin)} Hinweise")
+    _assert_since(n0)
+
+
+def _statuszeilen(html: str) -> list:
+    """(Klasse, Text) jeder Statuszeile des Berichts."""
+    return re.findall(r'<div class="status (ok|nok)">(.*?)</div>', html, re.S)
+
+
+def _kennwert(html: str, schluessel: str):
+    """Wert einer Zeile im Block "Wesentliche Ergebnisse" (None, wenn sie fehlt)."""
+    t = re.search(r"<tr><th>" + re.escape(schluessel) + r"</th><td>(.*?)</td></tr>", html, re.S)
+    return re.sub(r"<[^>]+>", "", t.group(1)) if t else None
+
+
+def test_kein_stab_gefuehrt_keine_ausnutzung():
+    """Ist kein einziger Stab geführt, gibt es keine größte Ausnutzung.
+
+    Die Zusammenfassung bildete die größte Ausnutzung über **alle** Stäbe,
+    auch über die nicht geführten. Gemessen 23.09.2026 an 97df705 (und
+    genauso an 54b6f9a) mit einem einzigen Riegel aus einem Werkstoff ohne
+    f_y, Umfang „kurz": „max. Ausnutzung Nachweise EC3 | 0.000", „maßgebend
+    | Stab Riegel_ohne_fy: , Kombination , x = 0.00 m" und die Statuszeile
+    „Alle **geführten** Nachweise erfüllt – nicht geführt wurden: 1 Stäbe
+    (EC3)", obwohl kein Nachweis geführt war. ``DesignResults.summary()``
+    nennt in diesem Fall schon keine Ausnutzung mehr, der Bericht tat es.
+    """
+    n0 = len(RESULTS)
+    m = Model("nur ohne fy")
+    m.add_material(Material("Frei", 210e9, 0.3, 7850.0))       # fy = None
+    m.add_section(make_section("IPE 300"))
+    ids = mesher.line_of_beams(m, "Frei", "IPE 300", (0, 0, 0), (6, 0, 0), 6)
+    m.fix(ids[0], [0, 1, 2, 3])
+    m.fix(ids[-1], [1, 2, 3])
+    m.case().category = "G"
+    for e in range(6):
+        m.load_beam(e, qz=-10000.0)
+    m.add_member("Ohne_fy", list(range(6)))
+    m.add_combination("K1", {"LF1": 1.0}, "ULS")
+    an = solver.solve_all(m, design=True)
+    check("Aufbau: der einzige Stab ist nicht geführt",
+          list(an.design.members) == ["Ohne_fy"] and bool(an.design.members["Ohne_fy"].fehler)
+          and an.fatigue is None and an.volumen is None, "")
+    for umfang in ("kurz", "lang"):
+        html = Report(m, an, options={"umfang": umfang}).html()
+        wert = _kennwert(html, "max. Ausnutzung Nachweise EC3")
+        check(f"nur nicht geführt, {umfang}: keine 'max. Ausnutzung Nachweise EC3'",
+              wert is None, f"steht da: {wert}")
+        mg = _kennwert(html, "maßgebend")
+        check(f"nur nicht geführt, {umfang}: kein 'maßgebend' ohne Nachweis",
+              mg is None, f"steht da: {mg}")
+        st = _statuszeilen(html)
+        check(f"nur nicht geführt, {umfang}: Statuszeile nok, nicht 'geführten … erfüllt'",
+              len(st) == 1 and st[0][0] == "nok" and "erfüllt" not in st[0][1]
+              and "nicht geführt wurden: 1 Stäbe (EC3)" in st[0][1], str(st))
+        check(f"nur nicht geführt, {umfang}: der Stab steht in den Hinweisen",
+              any("Ohne_fy" in h and "ohne Streckgrenze" in h for h in _hinweisliste(html)), "")
+
+    # Gegenprobe: ein geführter Stab daneben - dann gibt es die Ausnutzung,
+    # und sie stammt von ihm, nicht vom nicht geführten
+    m2 = build_beam_model()
+    m2.add_material(Material("Frei", 210e9, 0.3, 7850.0))
+    ids = mesher.line_of_beams(m2, "Frei", "IPE 300", (0, 2, 0), (6, 2, 0), 6)
+    m2.fix(ids[0], [0, 1, 2, 3])
+    m2.fix(ids[-1], [1, 2, 3])
+    els = [i for i, e in enumerate(m2.elements) if e.mat == "Frei"]
+    for e in els:
+        m2.load_beam(e, qz=-10000.0)
+    m2.add_member("Ohne_fy", els)
+    an2 = solver.solve_all(m2, design=True)
+    html = Report(m2, an2, options={"umfang": "kurz"}).html()
+    u_tr = an2.design.members["Traeger"].util
+    wert = _kennwert(html, "max. Ausnutzung Nachweise EC3")
+    check("Gegenprobe mit geführtem Träger: Ausnutzung des Trägers",
+          wert is not None and abs(float(wert) - u_tr) < 1e-3, f"{wert} / {u_tr:.3f}")
+    mg = _kennwert(html, "maßgebend") or ""
+    check("Gegenprobe: maßgebend ist der Träger", mg.startswith("Stab Traeger:"), mg)
+    st = _statuszeilen(html)
+    check("Gegenprobe: 'Alle geführten … erfüllt – nicht geführt wurden'",
+          len(st) == 1 and st[0][0] == "nok" and "geführten" in st[0][1]
+          and "nicht geführt wurden: 1 Stäbe (EC3)" in st[0][1], str(st))
+    _assert_since(n0)
+
+
 def main():
     print("=" * 96)
     print("STATIK3D - Test statischer Bericht (HTML / Markdown / PDF / SVG)")
     print("=" * 96)
     tests = [test_kontaktwarnungen_der_uebrigen_ergebnisse,
+             test_deckelzeilen_mit_rundenbilanz_werden_gebuendelt,
              test_beam_report, test_frame_report, test_contact_report, test_plate_and_solid,
              test_svg_helpers, test_kontaktbedingungen_im_bericht, test_pdf, test_fortschritt,
              test_gliederung_und_rahmen, test_grosses_netz,
-             test_nicht_gefuehrt_ist_nicht_erfuellt]
+             test_nicht_gefuehrt_ist_nicht_erfuellt,
+             test_ermuedung_nicht_gefuehrt_im_bericht,
+             test_stab_ohne_streckgrenze_in_den_hinweisen,
+             test_kein_stab_gefuehrt_keine_ausnutzung]
     for t in tests:
         try:
             t()

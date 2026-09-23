@@ -194,9 +194,383 @@ def test_tabellen_erweitert():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def test_kombinationen_abgezaehlt():
+    """Jede Zeile der Tabelle „2.5 Lastkombinationen“ hat einen gezählten Ausgang.
+
+    In dieser Tabelle haben eine eigene Protokollzeile nur die nicht
+    übernommenen Zeilen LK2 und LK3 (je eine WARNUNG) und die aufgelöste LK4;
+    LK1 und LK5 stehen nur in der Schlusszeile „3 von 5 Lastkombinationen“
+    (gemessen an den Ständen 0ad95bb und aa22f5d). Das ist keine Regel für
+    jede Zeile aus eigenen Lastfall-Anteilen: eine Zeile ohne Nummer oder mit
+    Ausweichnamen bekommt auch dann eine eigene Zeile, z. B. bei
+    ['1;GZT;1.35*LF1', ';GZT;1.5*LF2', '1;GZT;LF2'] „Kombination LK2
+    (Tabellenzeile 2 ohne Nummer): 1.5*LF2“ und „Kombination LK1_2
+    (Tabellennummer 1; LK1 gab es schon): 1*LF2“ (gemessen am Stand aa22f5d).
+
+    Bis zum 22.09.2026 verwarf die Schleife eine Zeile ohne LF-Faktor
+    (``if not factors: continue``) **vor** der Warnung über nicht aufgelöste
+    Verweise (Befund SV10). Gemessen an den ersten vier Zeilen unten:
+    Protokoll „2 Lastkombinationen“, Modell LK1 und LK4, eine Warnung nur für
+    LK4 - LK2 und LK3 verschwanden ohne eine Zeile. Dazu wurde eine Zeile,
+    deren Nummer als Text „CO5“ dasteht und deren Formel nicht mit einer Zahl
+    beginnt, als Blocktitel gelesen und ebenfalls wortlos verworfen.
+    """
+    d = tempfile.mkdtemp(prefix="s3d_ko_")
+    try:
+        def w(n, t):
+            with open(os.path.join(d, n), "w", encoding="utf-8") as f:
+                f.write(t)
+        w("1.1 Knoten.csv", "Knoten Nr.;X [m];Y [m];Z [m]\n1;0;0;0\n2;2;0;0\n")
+        w("2.1 Lastfaelle.csv", "Lastfall Nr.;Bezeichnung\n1;Eigengewicht\n2;Nutzlast\n")
+        w("2.5 Lastkombinationen.csv",
+          "Lastkombination Nr.;Bemessungssituation;Belastung\n"
+          "1;GZT;1.35*LF1 + 1.5*LF2\n"
+          "2;GZT;CO1 + CO3\n"
+          "3;GZT;1.0*EK1\n"
+          "4;GZT;LF1 + CO1\n"
+          "CO5;;LF1 + LF2\n")
+        log = []
+        m = import_rfem_tables(d, Model("Ko"), log)
+        txt = "\n".join(log)
+        ko = [z for z in log if "ombination" in z]
+        for nr in (2, 3):
+            check(f"die Zeile LK{nr} steht im Protokoll",
+                  any(f"LK{nr}" in z for z in ko), str(ko))
+        check("die Verweise der verworfenen Zeilen werden genannt",
+              "CO3" in txt and "EK1" in txt, str(ko))
+        check("die Schlusszeile nennt Übernommene von allen Zeilen",
+              "3 von 5 Lastkombinationen" in txt,
+              next((z for z in log if z.strip().endswith("Lastkombinationen")), "keine Zeile"))
+        # Der Verweis auf eine schon gelesene Kombination wird aufgeloest:
+        # LF1 + CO1 = LF1 + 1,35 LF1 + 1,5 LF2
+        lk4 = m.combinations.get("LK4")
+        f4 = dict(lk4.factors) if lk4 is not None else {}
+        check("LF1 + CO1 wird zu 2,35 LF1 + 1,5 LF2 aufgelöst",
+              abs(f4.get("LF1", 0.0) - 2.35) < 1e-12 and abs(f4.get("LF2", 0.0) - 1.5) < 1e-12,
+              str(f4))
+        check("die Zeile „CO5“ wird nicht als Blocktitel verworfen",
+              "LK5" in m.combinations, str(sorted(m.combinations)))
+        check("LK2 und LK3 sind nicht still im Modell",
+              "LK2" not in m.combinations and "LK3" not in m.combinations,
+              str(sorted(m.combinations)))
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_kombination_minus_vor_verweis():
+    """Ein Minus ohne Zahl zieht ab, auch vor einem Verweis auf eine Kombination.
+
+    Der Ausdruck in ``_formel_zerlegen`` fing das Vorzeichen nur zusammen mit
+    einer Ziffer. „LF2 - CO1“ ging darum als LF2 + CO1 ein; seit Verweise
+    aufgeloest werden (Befund SV10), ergab das mit CO1 = 1,35·LF1 still
+    LK2 = LF2 + 1,35·LF1 statt LF2 - 1,35·LF1, nur mit einer Infozeile
+    (Gegenpruefung vom 23.09.2026). Vorher war LK2 = LF2 mit einer Warnung.
+    Dieselbe Ursache: „LF1 - LF2“ ergab LF1 + LF2. Die Zeile mit
+    ausgeschriebenem Faktor „1.0*LF2 - 1.0*CO1“ rechnete schon richtig und
+    ist die Gegenprobe. Ob RFEM ein Minus ohne Zahl schreibt, ist an keiner
+    echten Datei gemessen.
+    """
+    d = tempfile.mkdtemp(prefix="s3d_km_")
+    try:
+        def w(n, t):
+            with open(os.path.join(d, n), "w", encoding="utf-8") as f:
+                f.write(t)
+        w("1.1 Knoten.csv", "Knoten Nr.;X [m];Y [m];Z [m]\n1;0;0;0\n2;2;0;0\n")
+        w("2.1 Lastfaelle.csv", "Lastfall Nr.;Bezeichnung\n1;Eigengewicht\n2;Nutzlast\n")
+        w("2.5 Lastkombinationen.csv",
+          "Lastkombination Nr.;Bemessungssituation;Belastung\n"
+          "1;GZT;1.35*LF1\n"
+          "2;GZT;LF2 - CO1\n"
+          "3;GZT;1.0*LF2 - 1.0*CO1\n"
+          "4;GZT;LF1 - LF2\n")
+        log = []
+        m = import_rfem_tables(d, Model("Km"), log)
+
+        def faktoren(name):
+            k = m.combinations.get(name)
+            return dict(k.factors) if k is not None else {}
+
+        def gleich(ist, soll):
+            return set(ist) == set(soll) and all(abs(ist[k] - v) < 1e-12
+                                                 for k, v in soll.items())
+
+        check("„LF2 - CO1“ ergibt LF2 - 1,35·LF1",
+              gleich(faktoren("LK2"), {"LF2": 1.0, "LF1": -1.35}), str(faktoren("LK2")))
+        check("„1.0*LF2 - 1.0*CO1“ ergibt dasselbe (Gegenprobe)",
+              gleich(faktoren("LK3"), {"LF2": 1.0, "LF1": -1.35}), str(faktoren("LK3")))
+        check("„LF1 - LF2“ ergibt LF1 - LF2",
+              gleich(faktoren("LK4"), {"LF1": 1.0, "LF2": -1.0}), str(faktoren("LK4")))
+        z2 = next((z for z in log if "LK2" in z), "keine Zeile")
+        check("das Protokoll nennt das Ergebnis der Aufloesung samt Vorzeichen",
+              "1*LF2 - 1.35*LF1" in z2, z2)
+        check("alle vier Zeilen angelegt", "4 von 4 Lastkombinationen" in "\n".join(log),
+              next((z for z in log if z.strip().endswith("Lastkombinationen")),
+                   "keine Zeile"))
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def _kombinationstabelle(prefix, zeilen, lastfaelle=3):
+    """Kleine Tabellenmappe mit „2.5 Lastkombinationen“ -> (Modell, Protokoll)."""
+    d = tempfile.mkdtemp(prefix=prefix)
+    try:
+        def w(n, t):
+            with open(os.path.join(d, n), "w", encoding="utf-8") as f:
+                f.write(t)
+        w("1.1 Knoten.csv", "Knoten Nr.;X [m];Y [m];Z [m]\n1;0;0;0\n2;2;0;0\n")
+        w("2.1 Lastfaelle.csv", "Lastfall Nr.;Bezeichnung\n"
+          + "".join(f"{i};LF {i}\n" for i in range(1, lastfaelle + 1)))
+        w("2.5 Lastkombinationen.csv",
+          "Lastkombination Nr.;Bemessungssituation;Belastung\n" + "\n".join(zeilen) + "\n")
+        log = []
+        m = import_rfem_tables(d, Model("Kt"), log)
+        return m, log
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def _gleich(ist, soll):
+    return set(ist) == set(soll) and all(abs(ist[k] - v) < 1e-12 for k, v in soll.items())
+
+
+def test_kombination_unerkannter_teil():
+    """Ein nicht erkannter Teil der Formel legt die Kombination nicht halb an.
+
+    Gegenpruefung vom 23.09.2026 zu Befund SV10: Der Ausdruck in
+    ``_formel_zerlegen`` griff nur LF/LC/CO/LK/EK heraus, der Rest der Formel
+    fiel ohne Meldung weg, sobald daneben ein LF-Anteil stand. Gemessen am
+    Stand 6cbc144: „1.35*LC1 + RC1“ wurde LK6 = {LF1: 1,35},
+    „1.35*LF1 + 1.5*LF2 + 0.9*RC2“ wurde {LF1: 1,35, LF2: 1,5},
+    „1.35*LF1 + 1.5*Schnee“ wurde {LF1: 1,35} - zu keiner der Zeilen eine
+    Protokollzeile. RC ist das englische Kuerzel der Ergebniskombination (wie
+    CO zu LK); ob RFEM RC oder EK in eine Lastkombinationsformel schreibt, ist
+    an keiner echten Datei gemessen. Die Klammer „1.35*(LF1 + LF2)“ ergab
+    LF1 = LF2 = 1,0 aus demselben Grund („1.35*(“ fiel weg).
+    """
+    m, log = _kombinationstabelle("s3d_kt_", [
+        "1;GZT;1.35*LF1 + 1.5*LF2",
+        "2;GZT;1.35 LF1 + 1.5 LF2",
+        "3;GZT;1,35*LF1 + 1,50*LF2 + 0,9*LF3",
+        "4;GZT;1.35*LF1 + -1.0*LF2",
+        "6;GZT;1.35*LC1 + RC1",
+        "7;GZT;1.35*LF1 + 1.5*LF2 + 0.9*RC2",
+        "8;GZT;1.35*LF1 + 1.5*Schnee",
+        "9;GZT;1.35*(LF1 + LF2)",
+    ])
+    ko = [z for z in log if "ombination" in z]
+    for nr in (6, 7, 8, 9):
+        check(f"LK{nr} mit nicht erkanntem Teil nicht halb angelegt",
+              f"LK{nr}" not in m.combinations,
+              str(dict(m.combinations[f"LK{nr}"].factors)) if f"LK{nr}" in m.combinations
+              else "nicht angelegt")
+        z = next((z for z in ko if f"LK{nr} " in z or f"LK{nr}:" in z), "keine Zeile")
+        check(f"LK{nr} steht als Warnung im Protokoll", z.startswith("WARNUNG"), z)
+    z6 = next((z for z in ko if "LK6" in z), "")
+    check("LK6: RC1 wird als Ergebniskombination genannt",
+          "RC1" in z6 and "Ergebniskombination" in z6, z6)
+    z8 = next((z for z in ko if "LK8" in z), "")
+    # Den Rest selbst pruefen, nicht nur „Schnee“: die Warnung zitiert die
+    # Formel „1.35*LF1 + 1.5*Schnee“, „Schnee“ stuende also auch ohne den
+    # Rest darin. Gegenpruefung vom 23.09.2026: mit ``pass`` statt
+    # ``gruende.append(f"nicht erkannter Teil {rest}")`` bestand die alte
+    # Pruefung „"Schnee" in z8“ weiter (test_rfem 70/70).
+    check("LK8: der nicht erkannte Teil „+ 1.5*Schnee“ wird genannt",
+          "nicht erkannter Teil ['+ 1.5*Schnee']" in z8, z8)
+    # Gegenprobe: Schreibweisen ohne Rest bleiben, wie sie waren.
+    check("„1.35 LF1 + 1.5 LF2“ ohne Stern bleibt",
+          _gleich(dict(m.combinations["LK2"].factors) if "LK2" in m.combinations else {},
+                  {"LF1": 1.35, "LF2": 1.5}))
+    check("Dezimalkomma bleibt",
+          _gleich(dict(m.combinations["LK3"].factors) if "LK3" in m.combinations else {},
+                  {"LF1": 1.35, "LF2": 1.5, "LF3": 0.9}))
+    check("„+ -1.0*LF2“ bleibt -1,0",
+          _gleich(dict(m.combinations["LK4"].factors) if "LK4" in m.combinations else {},
+                  {"LF1": 1.35, "LF2": -1.0}))
+    check("Schlusszeile „4 von 8 Lastkombinationen“",
+          "4 von 8 Lastkombinationen" in "\n".join(log),
+          next((z for z in log if z.strip().endswith("Lastkombinationen")), "keine Zeile"))
+
+
+def test_kombination_verweis_auf_rest():
+    """Ein Verweis auf eine Zeile mit nicht erkanntem Teil bleibt offen.
+
+    Gegenpruefung vom 23.09.2026 zu Befund SV10: Die Zeile mit Rest selbst
+    wurde gewarnt und nicht angelegt, der Rest ging aber nicht mit in die
+    Aufloesung der Verweise. Ein Verweis auf sie wurde darum mit ihren halb
+    gelesenen Faktoren aufgeloest. Gemessen am Stand 0ad95bb:
+    ['1: 1.35*LF1 + 1.5*Schnee', '2: CO1 + LF2'] ergab LK2 = LF2 + 1,35·LF1
+    mit nur einer Infozeile und „1 von 2“; ['1: 1.35*(LF1 + LF2)',
+    '2: LF3 + CO1'] ergab LK2 = LF1 + LF2 + LF3 (richtig waeren 1,35/1,35/1,0);
+    die Kette ['1: 1.35*LF1 + x', '2: CO1', '3: 2*CO2 + LF2'] legte
+    LK2 = 1,35·LF1 und LK3 = 2,7·LF1 + LF2 an. Alle Formeln selbst gebaut; ob
+    RFEM so etwas schreibt, ist an keiner echten Datei gemessen.
+    """
+    m, log = _kombinationstabelle("s3d_kr_", ["1;GZT;1.35*LF1 + 1.5*Schnee",
+                                              "2;GZT;CO1 + LF2"], lastfaelle=2)
+    ko = [z for z in log if "ombination" in z]
+    for nr in (1, 2):
+        z = next((z for z in ko if f"LK{nr} " in z or f"LK{nr}:" in z), "keine Zeile")
+        check(f"(1) LK{nr} steht als Warnung im Protokoll", z.startswith("WARNUNG"), z)
+    check("(1) LK2 nicht mit dem halb gelesenen CO1 angelegt", "LK2" not in m.combinations,
+          str(dict(m.combinations["LK2"].factors)) if "LK2" in m.combinations
+          else "nicht angelegt")
+    check("(1) Schlusszeile „0 von 2 Lastkombinationen“",
+          "0 von 2 Lastkombinationen" in "\n".join(log),
+          next((z for z in log if z.strip().endswith("Lastkombinationen")), "keine Zeile"))
+
+    m, log = _kombinationstabelle("s3d_kr_", ["1;GZT;1.35*(LF1 + LF2)",
+                                              "2;GZT;LF3 + CO1"], lastfaelle=3)
+    check("(2) die Klammer kommt nicht ueber den Verweis an", "LK2" not in m.combinations,
+          str(dict(m.combinations["LK2"].factors)) if "LK2" in m.combinations
+          else "nicht angelegt")
+    check("(2) Schlusszeile „0 von 2 Lastkombinationen“",
+          "0 von 2 Lastkombinationen" in "\n".join(log),
+          next((z for z in log if z.strip().endswith("Lastkombinationen")), "keine Zeile"))
+
+    m, log = _kombinationstabelle("s3d_kr_", ["1;GZT;1.35*LF1 + x", "2;GZT;CO1",
+                                              "3;GZT;2*CO2 + LF2"], lastfaelle=2)
+    ko = [z for z in log if "ombination" in z]
+    for nr in (2, 3):
+        check(f"(3) Kette: LK{nr} nicht angelegt", f"LK{nr}" not in m.combinations,
+              str(dict(m.combinations[f"LK{nr}"].factors)) if f"LK{nr}" in m.combinations
+              else "nicht angelegt")
+        z = next((z for z in ko if f"LK{nr} " in z or f"LK{nr}:" in z), "keine Zeile")
+        check(f"(3) Kette: LK{nr} steht als Warnung im Protokoll", z.startswith("WARNUNG"), z)
+    check("(3) Schlusszeile „0 von 3 Lastkombinationen“",
+          "0 von 3 Lastkombinationen" in "\n".join(log),
+          next((z for z in log if z.strip().endswith("Lastkombinationen")), "keine Zeile"))
+
+    # Gegenprobe: dieselbe Kette ohne Rest wird weiter aufgeloest.
+    m, log = _kombinationstabelle("s3d_kr_", ["1;GZT;1.35*LF1", "2;GZT;CO1",
+                                              "3;GZT;2*CO2 + LF2"], lastfaelle=2)
+    lk3 = dict(m.combinations["LK3"].factors) if "LK3" in m.combinations else {}
+    check("Gegenprobe: Kette ohne Rest ergibt LK3 = 2,7·LF1 + LF2",
+          _gleich(lk3, {"LF1": 2.7, "LF2": 1.0}), str(lk3))
+    check("Gegenprobe: „3 von 3 Lastkombinationen“",
+          "3 von 3 Lastkombinationen" in "\n".join(log),
+          next((z for z in log if z.strip().endswith("Lastkombinationen")), "keine Zeile"))
+
+
+def test_kombination_verweis_grund():
+    """Die Warnung zu einem offenen CO/LK-Verweis nennt den Grund dieses Verweises.
+
+    Je Verweis einer von drei Gruenden: die Tabelle fuehrt die Nummer nicht;
+    Kreis; oder die verwiesene Zeile wird selbst nicht angelegt, mit dem Namen
+    ihrer Warnung. Geprueft an Tabellen, die CO1 vollstaendig fuehren, CO1
+    aber nicht anlegen (nicht erkannter Teil, kein Lastfall), an einer Kette,
+    an zwei Kreisen (einer mit einer Zeile, die nur hineinverweist), am
+    Verweis auf sich selbst und an einer fehlenden Nummer neben EK
+    (Gegenpruefung vom 23.09.2026 zu Befund SV10). Alle Formeln selbst gebaut;
+    ob RFEM so etwas schreibt, ist an keiner echten Datei gemessen.
+    """
+    alt = "fuehrt diese Kombination nicht oder nicht vollstaendig"
+    alle = []
+
+    def tabelle(zeilen, lastfaelle):
+        m, log = _kombinationstabelle("s3d_kg_", zeilen, lastfaelle=lastfaelle)
+        alle.extend(log)
+        return m, log
+
+    def warnung(log, nr):
+        return next((z for z in log if z.startswith("WARNUNG")
+                     and (f"LK{nr} " in z or f"LK{nr}:" in z)), "keine Zeile")
+
+    # (1) die verwiesene Zeile hat einen nicht erkannten Teil
+    m, log = tabelle(["1;GZT;1.35*LF1 + 1.5*Schnee", "2;GZT;CO1 + LF2"], 2)
+    z = warnung(log, 2)
+    check("(1) CO1: wird selbst nicht angelegt, siehe LK1",
+          "(CO1: wird selbst nicht angelegt, siehe Warnung zu LK1)" in z, z)
+    check("(1) die Warnung zu LK1, auf die verwiesen wird, gibt es",
+          warnung(log, 1) != "keine Zeile", warnung(log, 1))
+
+    # (2) die verwiesene Zeile hat keinen erkennbaren Lastfall
+    m, log = tabelle(["1;GZT;Schnee", "2;GZT;CO1 + LF2"], 2)
+    z = warnung(log, 2)
+    check("(2) Formel ohne Lastfall: CO1 wird selbst nicht angelegt",
+          "(CO1: wird selbst nicht angelegt, siehe Warnung zu LK1)" in z, z)
+
+    # (3) Kette mit eigenem LF in der Mitte: LK2 ist offen, LK3 verweist auf LK2
+    m, log = tabelle(["1;GZT;1.35*LF1 + x", "2;GZT;CO1 + LF2", "3;GZT;CO2 + LF3"], 3)
+    z = warnung(log, 3)
+    check("(3) Kette: CO2 wird selbst nicht angelegt, siehe LK2",
+          "(CO2: wird selbst nicht angelegt, siehe Warnung zu LK2)" in z, z)
+    check("(3) Kette: LK3 nicht ohne den offenen Anteil von LK2 angelegt",
+          "LK3" not in m.combinations,
+          str(dict(m.combinations["LK3"].factors)) if "LK3" in m.combinations
+          else "nicht angelegt")
+
+    # (4) Kreis ueber zwei Zeilen
+    m, log = tabelle(["1;GZT;LF1 + CO2", "2;GZT;LF2 + CO1"], 2)
+    for nr, ref in ((1, "CO2"), (2, "CO1")):
+        z = warnung(log, nr)
+        check(f"(4) Kreis: LK{nr} nennt {ref} als Kreis",
+              f"({ref}: Kreis, führt über Verweise auf diese Kombination zurück)" in z, z)
+
+    # (5) Kreis zwischen 2 und 3; Zeile 1 verweist nur hinein und liegt nicht darin
+    m, log = tabelle(["1;GZT;LF1 + CO2", "2;GZT;LF2 + CO3", "3;GZT;LF3 + CO2"], 3)
+    z = warnung(log, 1)
+    check("(5) LK1 liegt nicht im Kreis: CO2 wird selbst nicht angelegt",
+          "(CO2: wird selbst nicht angelegt, siehe Warnung zu LK2)" in z, z)
+    for nr, ref in ((2, "CO3"), (3, "CO2")):
+        z = warnung(log, nr)
+        check(f"(5) LK{nr} nennt {ref} als Kreis", f"({ref}: Kreis, führt über" in z, z)
+
+    # (6) Verweis auf sich selbst; (7) EK, Verweis auf eine Zeile mit Rest und eine
+    # Nummer, die die Tabelle nicht fuehrt, in einer Formel
+    m, log = tabelle(["1;GZT;LF1 + CO1", "2;GZT;LF2 + x", "3;GZT;LF3 + CO2 + EK1 + CO9"], 3)
+    z = warnung(log, 1)
+    check("(6) CO1 in LK1: Kreis auf sich selbst",
+          "(CO1: Kreis, verweist auf diese Kombination selbst)" in z, z)
+    z = warnung(log, 3)
+    check("(7) je Verweis ein Grund: EK, CO2 nicht angelegt, CO9 fehlt",
+          "(EK/RC ist eine Ergebniskombination (Umhuellende), als Summand nicht "
+          "darstellbar; CO2: wird selbst nicht angelegt, siehe Warnung zu LK2; "
+          "CO9: die Tabelle führt keine Nummer 9)" in z, z)
+    check("(1)-(7) der alte Sammelgrund steht in keiner Zeile",
+          not any(alt in x for x in alle), next((x for x in alle if alt in x), ""))
+
+
+def test_kombination_ohne_nummer_name():
+    """Eine Zeile ohne Nummer belegt keinen Namen, den die Tabelle vergibt.
+
+    Gegenpruefung vom 23.09.2026 zu Befund SV10: Die Zeile ohne Nummer hiess
+    LK{Zahl der bisher angelegten + 1}, das Protokoll nennt aber die
+    Tabellennummer. Gemessen am Stand 6cbc144: bei
+    ['1;GZT;1.35*LF1', ';GZT;1.5*LF2', '2;GZT;1.0*EK1'] warnte das Protokoll
+    „LK2 ... nicht uebernommen“, im Modell stand LK2 = {LF2: 1,5}. Bei
+    [';GZT;1.5*LF2', '1;GZT;1.35*LF1 + CO2', '2;GZT;LF2'] meldete es
+    „LK1: ... aufgeloest: 1.35*LF1 + 1*LF2“, LK1 war aber {LF2: 1,5} und die
+    aufgeloeste Kombination hiess LK1_2.
+    """
+    m, log = _kombinationstabelle("s3d_kn_", ["1;GZT;1.35*LF1", ";GZT;1.5*LF2",
+                                              "2;GZT;1.0*EK1"], lastfaelle=2)
+    check("A: die gewarnte LK2 steht nicht im Modell", "LK2" not in m.combinations,
+          str({k: dict(c.factors) for k, c in m.combinations.items()}))
+    frei = [k for k, c in m.combinations.items() if _gleich(dict(c.factors), {"LF2": 1.5})]
+    z = next((z for z in log if frei and frei[0] in z and "ohne Nummer" in z), "keine Zeile")
+    check("A: die Zeile ohne Nummer nennt ihren Namen im Modell", z != "keine Zeile",
+          f"{frei} / {z}")
+
+    m, log = _kombinationstabelle("s3d_kn_", [";GZT;1.5*LF2", "1;GZT;1.35*LF1 + CO2",
+                                              "2;GZT;LF2"], lastfaelle=2)
+    lk1 = dict(m.combinations["LK1"].factors) if "LK1" in m.combinations else {}
+    check("B: LK1 ist die aufgeloeste Tabellenzeile 1",
+          _gleich(lk1, {"LF1": 1.35, "LF2": 1.0}), str(lk1))
+    check("B: kein Ausweichname LK1_2", "LK1_2" not in m.combinations,
+          str(sorted(m.combinations)))
+    frei = [k for k, c in m.combinations.items() if _gleich(dict(c.factors), {"LF2": 1.5})]
+    z = next((z for z in log if frei and frei[0] in z and "ohne Nummer" in z), "keine Zeile")
+    check("B: die Zeile ohne Nummer nennt ihren Namen im Modell", z != "keine Zeile",
+          f"{frei} / {z}")
+    check("B: alle drei Zeilen angelegt", "3 von 3 Lastkombinationen" in "\n".join(log))
+
+
 def main():
     for t in (test_native_sqlite, test_native_zip_und_json, test_native_unbekannt,
-              test_tabellen_erweitert):
+              test_tabellen_erweitert, test_kombinationen_abgezaehlt,
+              test_kombination_minus_vor_verweis, test_kombination_unerkannter_teil,
+              test_kombination_verweis_auf_rest, test_kombination_verweis_grund,
+              test_kombination_ohne_nummer_name):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

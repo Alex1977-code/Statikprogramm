@@ -393,6 +393,252 @@ def test_der_deckel_gilt_nicht_als_konvergenz():
               "der Text unterscheidet Deckel und Schrittgrenze")
 
 
+def test_deckel_merker_gilt_fuer_die_letzte_runde():
+    """``update()`` sagt selbst, ob es **diese** Runde am Deckel beendet hat.
+
+    Der Loeser las den Deckel an ``cs.cycles >= MAX_CYCLES`` ab. Der Zaehler
+    bleibt nach dem Deckel aber stehen: laeuft die Schleife weiter (der
+    Schubhalt wurde geloest) und endet eine spaetere Runde echt ohne Wechsel,
+    sah das genauso aus. Jetzt setzt ``update()`` den Merker ``am_deckel``
+    bei jedem Aufruf neu. Stumpf mit zwei Runden in Phase 2, Deckel 1: Runde
+    1 wechselt (Deckel), Runde 2 wechselt nicht (fertig)."""
+    print("")
+    print("--- Der Deckelmerker gilt fuer die letzte Runde ---")
+    from statik3d import contact as _ct
+    cs = object.__new__(_ct.ContactSystem)
+    cs.phase, cs.cycles, cs.settle, cs.log = 2, 0, 0, []
+    cs.dF_slip, cs.f_ref = 0.0, 1.0
+    folge = iter([True, False])
+    cs._update_states = lambda u: next(folge)
+    alt = _ct.MAX_CYCLES
+    _ct.MAX_CYCLES = 1
+    try:
+        r1, d1 = cs.update(None), getattr(cs, "am_deckel", None)
+        r2, d2 = cs.update(None), getattr(cs, "am_deckel", None)
+    finally:
+        _ct.MAX_CYCLES = alt
+    check("Runde 1 endet am Deckel und sagt es", r1 is False and d1 is True,
+          f"update {r1}, am_deckel {d1}")
+    check("Runde 2 endet ohne Wechsel und ist nicht am Deckel", r2 is False and d2 is False,
+          f"update {r2}, am_deckel {d2}")
+    check("obwohl der Zaehler noch auf dem Deckel steht (die alte Probe hiesse: Deckel)",
+          cs.cycles >= 1, f"cycles {cs.cycles}")
+
+
+def test_deckel_am_tatsaechlichen_austritt():
+    """Der Randfall im Loeser: gibt ``update()`` am Deckel auf, loest aber
+    ``schub_halt_loesen()`` in derselben Runde etwas, laeuft die Schleife
+    weiter. Endet sie spaeter echt ohne Wechsel, meldete der Loeser trotzdem
+    den Deckel, weil ``cycles >= MAX_CYCLES`` stehen blieb (gefunden von der
+    Loesersitzung am Quelltext, 22.09.2026).
+
+    Nachgestellt am Block mit Reibung mit Deckel 1: ``schub_halt_loesen``
+    meldet in jeder Runde, die am Deckel endet, einen geloesten Schubhalt.
+    Die Schleife laeuft damit genau den Weg des Laufs ohne Deckel - der Deckel
+    aendert nur den Rueckgabewert, die Zustaende setzt ``_update_states``
+    ohnehin - und endet echt ohne Wechsel. Erwartet: konvergiert, dasselbe u
+    wie ohne Deckel, und das Protokoll erzaehlt, warum es nach dem Deckel
+    weiterging."""
+    print("")
+    print("--- Deckel, danach doch noch konvergiert ---")
+    from statik3d import contact as _ct
+    from statik3d.contact import ContactSystem
+    from statik3d.examples_lib import block_friction_example
+
+    r_frei = solver.solve_static(block_friction_example())
+
+    alt = (_ct.MAX_CYCLES, ContactSystem._update_states, ContactSystem.update,
+           ContactSystem.schub_halt_loesen)
+    zaehler = {"deckel": 0}
+
+    def zustaende(self, u):
+        self._t_gewechselt = alt[1](self, u)
+        return self._t_gewechselt
+
+    def update(self, u):
+        weiter = alt[2](self, u)
+        # In Phase 2 gibt update() mit Wechsel nur am Deckel False zurueck
+        self._t_deckel = (not weiter and self.phase == 2
+                          and bool(getattr(self, "_t_gewechselt", False)))
+        return weiter
+
+    def schub_halt_loesen(self):
+        n = alt[3](self)
+        if getattr(self, "_t_deckel", False):
+            zaehler["deckel"] += 1
+            self._t_deckel = False
+            return max(n, 1)
+        return n
+
+    _ct.MAX_CYCLES = 1
+    ContactSystem._update_states = zustaende
+    ContactSystem.update = update
+    ContactSystem.schub_halt_loesen = schub_halt_loesen
+    try:
+        r = solver.solve_static(block_friction_example())
+    finally:
+        (_ct.MAX_CYCLES, ContactSystem._update_states, ContactSystem.update,
+         ContactSystem.schub_halt_loesen) = alt
+    check("der Deckel greift wirklich, und es geht danach weiter",
+          zaehler["deckel"] >= 1, f"{zaehler['deckel']} Runden am Deckel")
+    check("der Lauf endet echt ohne Wechsel und gilt als konvergiert",
+          r.info.get("contact_converged") is True,
+          f"contact_converged = {r.info.get('contact_converged')}")
+    check("dieselben Schritte wie ohne Deckel",
+          r.info.get("contact_iterations") == r_frei.info.get("contact_iterations"),
+          f"{r.info.get('contact_iterations')} gegen {r_frei.info.get('contact_iterations')}")
+    du = float(np.abs(r.u - r_frei.u).max())
+    check("und dasselbe Ergebnis (max |du| = 0)", du == 0.0, f"max |du| = {du:.3e} m")
+    log = r.info.get("contact_log") or []
+    check("keine Deckelmeldung des Loesers ('nicht auskonvergiert')",
+          not any("nicht auskonvergiert" in z for z in log), "")
+    check("das Protokoll sagt, warum es nach dem Deckel weiterging",
+          any("Schubhalt" in z and "weiter" in z for z in log),
+          next((z for z in log if "Schubhalt" in z), "keine Zeile")[:110])
+
+
+def test_ohne_merker_gilt_die_vorsichtige_probe():
+    """Fehlt ``am_deckel`` - ein Kontaktsystem, dessen ``update()`` ihn nicht
+    setzt -, darf der Loeser das nicht als "nicht am Deckel", also als
+    konvergiert lesen. Die erste Fassung las ``getattr(cs, "am_deckel",
+    False)`` und meldete so einen gedeckelten Lauf als konvergiert
+    (Gegenpruefung des Strangs, 22.09.2026). Jetzt gilt ohne Merker die alte
+    Probe ``phase == 2 and cycles >= MAX_CYCLES``. Block mit Reibung, Deckel
+    1, der Merker nach jedem ``update()`` entfernt."""
+    print("")
+    print("--- Ohne Deckelmerker: die vorsichtige Probe ---")
+    from statik3d import contact as _ct
+    from statik3d.contact import ContactSystem
+    from statik3d.examples_lib import block_friction_example
+
+    alt = (_ct.MAX_CYCLES, ContactSystem.update)
+
+    def update_ohne_merker(self, u):
+        weiter = alt[1](self, u)
+        self.__dict__.pop("am_deckel", None)
+        return weiter
+
+    _ct.MAX_CYCLES = 1
+    ContactSystem.update = update_ohne_merker
+    try:
+        r = solver.solve_static(block_friction_example())
+    finally:
+        _ct.MAX_CYCLES, ContactSystem.update = alt
+    log = r.info.get("contact_log") or []
+    check("der Deckel greift", any("abgebrochen" in z for z in log))
+    check("ohne Merker meldet der Loeser NICHT konvergiert",
+          r.info.get("contact_converged") is False,
+          f"contact_converged = {r.info.get('contact_converged')}")
+def laufbuch_pruefen(r, titel="", pruefe=None):
+    """Die Zusicherungen des Laufbuchs, die fuer **jede** Rechnung gelten
+    (auch von test_plastizitaet benutzt, mit dessen ``check`` als
+    ``pruefe``). Rueckgabe das Laufbuch."""
+    check = pruefe or globals()["check"]
+    laeufe = r.info.get("laeufe")
+    check(f"{titel}: ein Laufbuch liegt vor", isinstance(laeufe, list) and laeufe,
+          "Schluessel fehlt" if laeufe is None else f"{len(laeufe)} Eintraege")
+    if not laeufe:
+        return []
+    check(f"{titel}: je Kontaktlauf ein Eintrag, nicht zusammengefasst",
+          len(laeufe) == int(r.info.get("contact_laeufe", -1))
+          and [e["nr"] for e in laeufe] == list(range(1, len(laeufe) + 1)),
+          f"{len(laeufe)} Eintraege, contact_laeufe {r.info.get('contact_laeufe')}")
+    check(f"{titel}: die Schritte summieren sich zu contact_iterations",
+          sum(e["schritte"] for e in laeufe) == int(r.info.get("contact_iterations", -1)),
+          f"{sum(e['schritte'] for e in laeufe)} gegen {r.info.get('contact_iterations')}")
+    check(f"{titel}: die Faktorisierungen zu contact_factorisations",
+          sum(e["faktorisierungen"] or 0 for e in laeufe) == int(r.info.get("contact_factorisations", -1)),
+          f"{sum(e['faktorisierungen'] or 0 for e in laeufe)} gegen {r.info.get('contact_factorisations')}")
+    # 'eingefroren' ist der eine Grund bei konvergiert: der Lauf hat nicht
+    # iteriert, gemeldet wird wie bisher konvergiert
+    schief = [e["nr"] for e in laeufe
+              if e["grund"] != "eingefroren" and e["konvergiert"] != (e["grund"] == "")]
+    check(f"{titel}: konvergiert genau dann, wenn kein Grund dasteht", not schief, str(schief))
+    check(f"{titel}: 'letzter Lauf konvergiert' ist der letzte Eintrag",
+          r.info.get("contact_letzter_lauf_konvergiert") is laeufe[-1]["konvergiert"]
+          and int(r.info.get("contact_laeufe_nicht_konvergiert", -1))
+          == sum(1 for e in laeufe if not e["konvergiert"]),
+          f"{r.info.get('contact_letzter_lauf_konvergiert')} / {laeufe[-1]['konvergiert']}")
+    ohne = [e["nr"] for e in laeufe if len(e["runden"]) != e["schritte"]]
+    check(f"{titel}: je Kontaktschritt eine Runde im Eintrag", not ohne, str(ohne))
+    return laeufe
+
+
+def test_deckel_nennt_die_wechselarten():
+    """Die Abbruchzeile des Deckels nennt, welche Wechsel die gezaehlten
+    Runden gefuellt haben, und das Laufbuch fuehrt jeden Lauf einzeln
+    (22.09.2026). Am Block mit Reibung und Deckel 1: der erste Wechsel der
+    Phase 2 kappt den Lauf."""
+    print("")
+    print("--- Der Deckel nennt die Wechselarten ---")
+    from statik3d import contact as _ct
+    from statik3d.examples_lib import block_friction_example
+
+    alt_max = _ct.MAX_CYCLES
+    _ct.MAX_CYCLES = 1
+    try:
+        r = solver.solve_static(block_friction_example())
+    finally:
+        _ct.MAX_CYCLES = alt_max
+    zeile = [z for z in (r.info.get("contact_log") or [])
+             if z.startswith("Kontakt: Nachpruefung der Reibung")]
+    check("die Deckelzeile des Kontaktsystems steht im Protokoll", zeile, str(zeile)[:120])
+    check("sie nennt die Runden und ihre Wechselart",
+          zeile and " - in 1 Runde: " in zeile[0]
+          and any(w in zeile[0] for w in ("mit neuem Gleiten", "mit Öffnen/Schließen",
+                                          "mit Gleiten nach", "mit Fließwechsel")),
+          zeile[0][:160] if zeile else "")
+    laeufe = laufbuch_pruefen(r, "Deckel 1")
+    check("mindestens ein Lauf mit Grund 'deckel'",
+          any(e["grund"] == "deckel" for e in laeufe),
+          str([(e["nr"], e["grund"]) for e in laeufe]))
+    gedeckelt = [e for e in laeufe if e["grund"] == "deckel"]
+    if gedeckelt:
+        e = gedeckelt[0]
+        stelle = {f: i for i, f in enumerate(_ct.RUNDEN_FELDER)}
+        mit_wechsel = [t for t in e["runden"] if t[stelle["phase"]] == 2
+                       and any(t[stelle[k]] for k in _ct.RUNDEN_EREIGNISSE)]
+        check("der gedeckelte Lauf hat so viele Phase-2-Runden mit Wechsel, wie der Deckel zaehlt",
+              len(mit_wechsel) == e["zyklen"] == 1,
+              f"{len(mit_wechsel)} Runden, zyklen {e['zyklen']}")
+        check("und traegt seinen Endzustand als Kennung und seine Verschiebung",
+              isinstance(e["endzustand_kennung"], str) and len(e["endzustand_kennung"]) == 16
+              and e["u_max"] is not None and e["u_max"] > 0,
+              f"{e['endzustand_kennung']}, u_max {e['u_max']}")
+
+
+def test_abbruch_steht_im_laufbuch():
+    """Bricht die Kontakt-Iteration ab (der nach oben gezogene Block haengt an
+    gehaltenen Punkten), bekommt der abgebrochene Lauf einen eigenen Eintrag
+    mit Grund 'abbruch' - und die Laufzaehlung wird daraus abgeleitet."""
+    m = _hochgezogen()
+    alt = solver.StaticSystem.hilfsfesselung
+    solver.StaticSystem.hilfsfesselung = lambda self: False
+    ex = None
+    try:
+        solver.solve_static(m)
+    except RuntimeError as e:
+        ex = e
+    finally:
+        solver.StaticSystem.hilfsfesselung = alt
+    res = getattr(ex, "teilergebnis", None)
+    laeufe = (res.info.get("laeufe") if res is not None else None) or []
+    check("Abbruch mit Teilergebnis und Laufbuch", isinstance(ex, solver.KontaktAbbruch) and laeufe,
+          str(ex)[:80])
+    if not laeufe:
+        return
+    check("der letzte Eintrag ist der abgebrochene Lauf",
+          laeufe[-1]["grund"] == "abbruch" and laeufe[-1]["konvergiert"] is False
+          and laeufe[-1]["schritte"] == int(ex.iteration),
+          f"{laeufe[-1]['grund']}, {laeufe[-1]['schritte']} Schritte")
+    check("die Zaehlung stammt aus dem Laufbuch",
+          int(res.info["contact_laeufe"]) == len(laeufe)
+          and res.info["contact_letzter_lauf_konvergiert"] is False
+          and int(res.info["contact_laeufe_nicht_konvergiert"]) == sum(
+              1 for e in laeufe if not e["konvergiert"]),
+          f"{res.info['contact_laeufe']} Laeufe")
+
+
 def _mit_einem_teil(name, fn):
     """fn() ausfuehren, waehrend _teile_bedingungen genau ein Teil mit den
     Bedingungen des uebergebenen Systems meldet. So prueft der Test die Auswahl
@@ -488,7 +734,12 @@ def main():
               test_schub_am_ende_wird_gemeldet,
               test_schub_halt_steht_im_schluessel,
               test_zusatzmatrix_kennt_ihre_belegung,
-              test_der_deckel_gilt_nicht_als_konvergenz):
+              test_der_deckel_gilt_nicht_als_konvergenz,
+              test_deckel_merker_gilt_fuer_die_letzte_runde,
+              test_deckel_am_tatsaechlichen_austritt,
+              test_ohne_merker_gilt_die_vorsichtige_probe,
+              test_deckel_nennt_die_wechselarten,
+              test_abbruch_steht_im_laufbuch):
         try:
             t()
         except Exception as ex:      # noqa: BLE001
