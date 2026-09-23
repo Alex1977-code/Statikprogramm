@@ -3220,18 +3220,36 @@ größte Schwingbreite des Körpers in N/mm²:
 Die Schwingbreite 0 → F am Nachweispunkt ist gleich dem statischen Wert der
 geglätteten Knotenspannung dort. Die Elementregel lag an diesem Körper auf der
 unsicheren Seite: das Element rechts des Schnitts zeigt an seinem
-maßgebenden Punkt weniger als der Knoten am Schnitt.
+maßgebenden Punkt weniger als der Knoten am Schnitt. Das Element links des
+Schnitts, zur Einspannung hin, zeigt dagegen mehr (401,94 bzw. 377,61 N/mm²);
+auf welche Seite die Elementregel fällt, hängt also daran, wo der Körper endet.
 
-**Ohne Knotenwerte** — eine Ergebnisdatei vor dem 22.09.2026, eine
-Überlagerung verschiedener Situationen (`Results.combine` verwirft sie dann)
-— rechnet der Körper nach der Elementregel, und der Nachweis sagt es als
-Hinweis. Eine unbekannte Einstellung führt den Nachweis nicht („nicht
-geführt“ mit Grund). **Fließende Elemente** sind wie im statischen Nachweis
-von σ·n = 0 ausgenommen — ihre Knoten tragen die Spannung des nächsten
-Integrationspunkts —, und der Nachweis nennt Zustand und Zahl der fließenden
-Elemente des Körpers (`test_volumen_regel_rueckfall_und_fliessen`: Balken aus
-einer hex8-Lage unter 1,20 M_el, 5 fließende Elemente; die Schwingbreite ist
-dort genau die Knotenspannung des Lösers).
+**Abgeschaltete Elemente** (Situationen): Die Knotentabelle eines Zustands
+mittelt nur über die wirkenden Elemente; ein Knoten, an dem nur abgeschaltete
+Elemente des Körpers liegen, fehlt darin. Er trägt in diesem Zustand die
+Spannung 0 — so rechnet auch die Elementregel das abgeschaltete Element
+(`solver.postprocess` gibt ihm Nullen) —, alle anderen Knoten die geglättete
+Spannung wie im statischen Nachweis. Bis zur Nachbesserung vom 23.09.2026 fiel
+der ganze Körper dann auf die Elementregel zurück, bei jedem Neurechnen wieder
+(gemessen am Kragarm 8 × 2 × 4, Körper = alle Elemente, Eckelement an der
+Einspannung abgeschaltet, 0 → F: größte Schwingbreite 1 141,55 N/mm² nach der
+Elementregel, jetzt 1 123,53 nach der Knotenregel;
+`test_volumen_abgeschaltete_elemente`).
+
+**Ohne Knotenwerte** rechnet der Körper nach der Elementregel, und der
+Hinweis nennt die Ursache, die vorliegt: ein Ergebnis aus einer
+Programmfassung vor dem 23.09.2026 (die Knotentabelle `res.solid_knoten` kam
+mit dem Merge 21ce779 am 23.09.2026 in das Programm; neu gerechnet gilt die
+Knotenregel), eine Überlagerung, deren Lastfälle verschiedene Knotentabellen
+führen (`Results.combine` verwirft sie dann), oder ein fehlender Knoten, an
+dem ein Element des Körpers wirkt (mit Nummer). Eine unbekannte Einstellung
+führt den Nachweis nicht („nicht geführt“ mit Grund). **Fließende Elemente**
+sind wie im statischen Nachweis von σ·n = 0 ausgenommen — sie tragen zum
+Knotenmittel den Wert ihres nächsten Integrationspunkts bei (§ 5d) —, und der
+Nachweis nennt Zustand und Zahl der fließenden Elemente des Körpers
+(`test_volumen_regel_rueckfall_und_fliessen`: Balken aus einer hex8-Lage unter
+1,20 M_el, 5 fließende Elemente; die Schwingbreite ist dort genau die
+Knotenspannung des Lösers).
 
 Die Hauptspannungen kommen geschlossen (Cardano, trigonometrisch) für alle
 Elemente auf einmal: 200 000 Tensoren in unter 2 s, gegen `eigvalsh` je

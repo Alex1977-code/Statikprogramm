@@ -3299,15 +3299,22 @@ Schädigung nach Miner mit der Wöhlerlinie für Normalspannungen, maßgebend de
 Knoten mit dem größten D. Die Spannung am Knoten ist seit dem 23.09.2026 die
 geglättete Knotenspannung — dieselbe, die der statische Volumennachweis liest,
 an freien Oberflächen mit σ·n = 0 (Vorgabe von `randspannung`). Am
-Kragarm-Prüfkörper (hex8, Schwingbreite 0 → F, Soll 355 N/mm²) traf sie mit
-405 und 2 295 Freiheitsgraden auf 0,22 N/mm² genau; der bis dahin gerechnete
-Elementwert lag dort 40,65 bzw. 21,69 N/mm² darunter (gemessen 23.09.2026).
-Wer den Elementwert wie bis zum 23.09.2026 will, setzt die
-Nachweiseinstellung `ermuedung_volumen` auf „element“ (Modelldatei, Abschnitt
-„design“); der Bericht nennt je Körper die gerechnete Regel. Fehlen
-einem Ergebnis die Knotenwerte (ältere Ergebnisdatei), rechnet der Körper mit
-dem Elementwert und sagt es als Hinweis; fließen Elemente des Körpers, nennt
-der Nachweis Zustand und Zahl. Das Ergebnis steht in der Tabelle Ermüdung
+Kragarm-Prüfkörper (hex8, Schwingbreite 0 → F, Soll 355 N/mm² an der
+Oberkante bei L/2) traf sie mit 405 und 2 295 Freiheitsgraden auf 0,22 N/mm²
+genau. Der bis dahin gerechnete Elementwert hängt dort daran, wo der Körper
+endet: besteht er aus den Elementen mit x ≥ L/2 (der Prüfaufbau), lag der
+Elementwert 40,65 bzw. 21,69 N/mm² unter dem Soll; das Element auf der
+Einspannseite des Schnitts zeigt dagegen 46,94 bzw. 22,61 N/mm² zu viel
+(gemessen 23.09.2026, Theoriehandbuch 5.5-3). Wer den Elementwert wie bis zum
+23.09.2026 will, setzt die Nachweiseinstellung `ermuedung_volumen` auf
+„element“ (Modelldatei, Abschnitt „design“); der Bericht nennt je Körper die
+gerechnete Regel. Ein Knoten, an dem in einer Situation nur abgeschaltete
+Elemente des Körpers liegen, trägt in diesem Zustand die Spannung 0 — wie das
+abgeschaltete Element nach der Elementregel. Fehlen einem Ergebnis sonst
+Knotenwerte (etwa eine Ergebnisdatei aus einer Programmfassung vor dem
+23.09.2026), rechnet der Körper mit dem Elementwert und nennt die Ursache als
+Hinweis; fließen Elemente des Körpers, nennt der Nachweis Zustand und Zahl.
+Das Ergebnis steht in der Tabelle Ermüdung
 („Volumen V1", ein Klick wählt den Körper), in der Färbung „Ausnutzung
 Ermüdung" je Element (das größte D an seinen Ecken) und im Bericht (Block
 „Ermüdungsnachweis Volumen"). Die Spannung ist eine Struktur- oder

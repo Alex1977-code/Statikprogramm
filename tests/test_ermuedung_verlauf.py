@@ -816,6 +816,18 @@ def test_volumen_randspannung_kragarm():
               and abs(fa.D - 1e5 / F.sn_life(alt, 160e6, fa.gamma_Mf)) < 1e-12 * fa.D
               and abs(alt - kr.sigma) > 20e6,
               f"{fa.dsig_max / 1e6:.2f} N/mm2 ({(fa.dsig_max - kr.sigma) / 1e6:+.2f})")
+        # Dass die Elementregel hier zu wenig zeigt, liegt am Koerper x >= L/2
+        # (Gegenpruefung 23.09.2026, Mangel 1): am Nachweisknoten zeigt das
+        # Element zur Einspannung mehr als das Soll, das zur Last weniger
+        seite = {}
+        for i, e in enumerate(m.elements):
+            if n in e.nodes:
+                links = m.nodes[e.nodes, 0].max() <= kr.x_nw + 1e-9
+                s_e = float(F.signalspannung(np.asarray(res.solid_res[i])[None])[0])
+                seite.setdefault("Einspannseite" if links else "Lastseite", []).append(s_e)
+        check(f"{name}: Elementwerte am Nachweisknoten - Einspannseite über, Lastseite unter dem Soll",
+              min(seite.get("Einspannseite", [0.0])) > kr.sigma > max(seite.get("Lastseite", [1e12])),
+              ", ".join(f"{k} {max(v) / 1e6:.2f}" for k, v in seite.items()) + " N/mm2")
         if netz != (8, 2, 4):
             continue
         # Der Bericht nennt die gerechnete Regel
@@ -834,15 +846,22 @@ def test_volumen_randspannung_kragarm():
 
 
 def test_volumen_regel_rueckfall_und_fliessen():
-    """Die Grenzen der Regel "knoten": Ergebnisse ohne Knotenwerte (Dateien
-    vor dem 22.09.2026) rechnen nach der alten Regel **mit Hinweis**; eine
-    unbekannte Einstellung fuehrt den Nachweis nicht; fliessende Elemente
-    bleiben wie im statischen Nachweis von sigma n = 0 ausgenommen, und der
-    Nachweis sagt es."""
+    """Die Grenzen der Regel "knoten": Ergebnisse ohne Knotenwerte (aus
+    Programmfassungen vor dem 23.09.2026 - main bekam res.solid_knoten mit dem
+    Merge 21ce779 am 23.09.2026) rechnen nach der alten Regel **mit Hinweis**,
+    und der Hinweis nennt die Ursache, die vorliegt; eine unbekannte
+    Einstellung fuehrt den Nachweis nicht; fliessende Elemente bleiben wie im
+    statischen Nachweis von sigma n = 0 ausgenommen, und der Nachweis sagt es
+    - mit dem, was ihre Knoten tragen (Gegenpruefung 23.09.2026, Maengel 3
+    und 4: der Hinweis nannte "vor dem 22.09.2026" und "Kombination
+    verschiedener Situationen", die Fliessmeldung "die Spannung des naechsten
+    Integrationspunkts" - der Knoten traegt aber das Mittel, am Kragarm mit
+    fy = 400 N/mm2 333,99 gegen 451,62 am Integrationspunkt)."""
     m, kr, lf, rechts, n = _kragarm_volumen((8, 2, 4))
     an = solver.solve_all(m, design=False, fatigue=True)
     alt = max(abs(float(F.signalspannung(np.asarray(an.cases[lf].solid_res[i])[None])[0]))
               for i in rechts) * m.design.gamma_Ff
+    sk_voll = an.cases[lf].solid_knoten
     # (1) aeltere Ergebnisdatei: kein solid_knoten
     an.cases[lf].solid_knoten = {}
     fv = F.check_fatigue(m, an).volumen["R"]
@@ -850,12 +869,28 @@ def test_volumen_regel_rueckfall_und_fliessen():
           getattr(fv, "regel", "") == "element" and not fv.fehler and abs(fv.dsig_max - alt) < 1e-9 * alt
           and any("Knotenwerte" in w and lf in w for w in fv.warnings),
           f"{getattr(fv, 'regel', None)} {fv.warnings}")
-    # (2) Kombination verschiedener Situationen (Results.combine: verworfen)
+    check("ohne Knotenwerte: der Hinweis nennt den 23.09.2026, keine Situationen",
+          any("23.09.2026" in w and "22.09.2026" not in w and "Situation" not in w
+              for w in fv.warnings), str(fv.warnings))
+    # (2) verworfene Ueberlagerung (Results.combine: Lastfaelle mit
+    # verschiedenen Knotentabellen)
     an.cases[lf].solid_knoten = {"verworfen": True}
     fv = F.check_fatigue(m, an).volumen["R"]
-    check("verworfene Knotenwerte: ebenso alte Regel mit Hinweis",
-          getattr(fv, "regel", "") == "element" and any("Knotenwerte" in w for w in fv.warnings),
+    check("verworfene Knotenwerte: ebenso alte Regel mit Hinweis, der das Verwerfen nennt",
+          getattr(fv, "regel", "") == "element" and any("Knotenwerte" in w for w in fv.warnings)
+          and any("verworfen" in w and "Situation" not in w for w in fv.warnings),
           str(fv.warnings))
+    # (2b) ein Ort fehlt, an dem ein Element des Koerpers wirkt: alte Regel,
+    # der Hinweis nennt den Knoten und raet nicht "neu rechnen"
+    weg = np.asarray(sk_voll["knoten"]) != n
+    an.cases[lf].solid_knoten = {k: (np.asarray(v)[weg] if k in ("knoten", "gruppe", "spannung", "frei")
+                                     else v) for k, v in sk_voll.items()}
+    fv = F.check_fatigue(m, an).volumen["R"]
+    check("fehlender Ort an einem wirkenden Element: alte Regel, Hinweis nennt den Knoten",
+          getattr(fv, "regel", "") == "element" and abs(fv.dsig_max - alt) < 1e-9 * alt
+          and any(f"Knoten {n + 1}" in w and "eu rechnen" not in w for w in fv.warnings),
+          str(fv.warnings))
+    an.cases[lf].solid_knoten = sk_voll
     # (3) unbekannte Einstellung: nicht geführt, Grund nennt die erlaubten Werte
     m.design.ermuedung_volumen = "irgendwas"
     fv = F.check_fatigue(m, an).volumen.get("R")
@@ -888,6 +923,11 @@ def test_volumen_regel_rueckfall_und_fliessen():
           fliessend > 0 and getattr(fv, "regel", "") == "knoten" and not fv.fehler
           and any("fließen" in w and lfp in w and f"{fliessend} " in w for w in fv.warnings),
           f"{fliessend} fließend, {fv.warnings}")
+    check("fließend: die Meldung sagt, dass der Knoten das Mittel trägt (Beitrag des nächsten "
+          "Integrationspunkts)",
+          any("Knotenmittel" in w and "nächsten Integrationspunkts bei" in w
+              and "tragen die Spannung des nächsten" not in w for w in fv.warnings),
+          str(fv.warnings))
     sk = anp.cases[lfp].solid_knoten
     kn = np.asarray(sk["knoten"])
     orte = getattr(fv, "orte", None)
@@ -899,6 +939,81 @@ def test_volumen_regel_rueckfall_und_fliessen():
           f"{0 if orte is None else len(orte)} Orte / {len(kn)} Knoten")
 
 
+def test_volumen_abgeschaltete_elemente():
+    """Gegenpruefung 23.09.2026 (Maengel 2 und 3): ein frisch gerechnetes
+    Ergebnis in einer Situation mit abgeschalteten Elementen des Koerpers
+    fuehrt die Knoten nicht, an denen nur abgeschaltete Elemente liegen. Die
+    Regel "knoten" fiel darauf fuer den ganzen Koerper auf den Elementwert
+    zurueck, mit einem Hinweis, der eine alte Ergebnisdatei oder eine
+    Kombination verschiedener Situationen als Ursache nannte und "neu
+    rechnen" riet - am Kragarm 8x2x4 mit abgeschaltetem Eckelement stand nach
+    beiden Laeufen Regel 'element', 1141,55 N/mm2, derselbe Hinweis. Der
+    statische Nachweis las am selben Ergebnis die geglaettete Spannung.
+
+    Jetzt: ein Ort, an dem im Zustand kein Element des Koerpers wirkt, traegt
+    dort die Spannung 0 - wie das abgeschaltete Element nach der Elementregel
+    (solver.postprocess gibt ihm Nullen) -, jeder andere die geglaettete
+    Spannung des Loesers, dieselbe wie der statische Nachweis."""
+    from statik3d.model import Situation, Volumenkoerper
+    from tests import pruefkoerper as pk
+    kr = pk.Kragarm()
+    m, ids = kr.modell("hex8", 8, 2, 4)
+    ecke = ids[(0, 0, 0)]
+    e0 = next(i for i, e in enumerate(m.elements) if ecke in e.nodes)
+    m.situationen["S1"] = Situation("S1", "", [e0], "Ecke aus")
+    lf = list(m.load_cases)[0]
+    m.load_cases[lf].situation = "S1"
+    m.koerper["K"] = Volumenkoerper("K", [], material="S", elemente=list(range(len(m.elements))),
+                                    kerbfall=160e6)
+    # ein zweiter Lastfall in der Grundstellung: die halbe Last
+    m.add_load_case("LF2", "Q")
+    m.active_case = "LF2"
+    seiten = pk.randseiten(m, lambda X: bool(np.all(np.abs(X[:, 0] - kr.L) < 1e-9)))
+    pk.schubkraft_auf_seiten(m, seiten, 0.5 * kr.F, (0.0, 0.0, -1.0))
+    m.add_fatigue_load("0-F", lf, None, 1e5)
+    an = solver.solve_all(m, design=False, fatigue=True)
+    g = m.design.gamma_Ff
+
+    def signal_je_ort(res, orte):
+        sk = res.solid_knoten
+        wo = {int(k): j for j, k in enumerate(np.asarray(sk["knoten"]))}
+        S = np.asarray(sk["spannung"])
+        return np.array([float(F.signalspannung(S[wo[int(o)]][None])[0]) if int(o) in wo else 0.0
+                         for o in orte])
+
+    r1, r2 = an.cases[lf], an.cases["LF2"]
+    fehlt = ecke not in set(np.asarray(r1.solid_knoten["knoten"]).tolist())
+    fv = an.fatigue.volumen["K"]
+    orte = getattr(fv, "orte", None)
+    check("abgeschaltetes Eckelement: der Loeser fuehrt seinen Eckknoten nicht (Voraussetzung)",
+          fehlt and r1.info.get("inaktiv") == [e0], f"inaktiv {r1.info.get('inaktiv')}")
+    check("abgeschaltetes Element: Regel 'knoten' ohne Rueckfall-Hinweis",
+          getattr(fv, "regel", "") == "knoten" and orte is not None
+          and not any("Knotenwerte" in w for w in fv.warnings),
+          f"{getattr(fv, 'regel', None)} {fv.warnings}")
+    orte = np.asarray(orte) if orte is not None else np.zeros(0, int)
+    d_je = np.asarray(fv.dsig_je_ort) if fv.dsig_je_ort is not None else np.zeros(0)
+    soll = np.abs(signal_je_ort(r1, orte)) * g
+    k0 = np.flatnonzero(orte == ecke)
+    check("0 -> F: je Ort die Knotenspannung des Loesers, am Ort ohne wirkendes Element 0",
+          len(orte) > 0 and np.allclose(d_je, soll, rtol=1e-12, atol=1e-3) and len(k0) == 1
+          and d_je[k0[0]] == 0.0 and abs(fv.dsig_max - soll.max()) <= 1e-12 * soll.max(),
+          f"max {fv.dsig_max / 1e6:.2f} N/mm2, am Eckknoten {d_je[k0[0]] if len(k0) else None}")
+    # Schwingbreite zwischen zwei Situationen: LF1 (Eckelement aus) und LF2
+    m.fatigue_loads.clear()
+    m.add_fatigue_load("LF1-LF2", lf, "LF2", 1e5)
+    fv = F.check_fatigue(m, an).volumen["K"]
+    orte = np.asarray(fv.orte) if getattr(fv, "orte", None) is not None else np.zeros(0, int)
+    soll = np.abs(signal_je_ort(r2, orte) - signal_je_ort(r1, orte)) * g
+    k0 = np.flatnonzero(orte == ecke)
+    s_ecke = abs(float(signal_je_ort(r2, [ecke])[0])) * g
+    check("zwei Situationen: je Ort |sigma(LF2) - sigma(LF1)|, am Eckknoten |sigma(LF2) - 0|",
+          getattr(fv, "regel", "") == "knoten" and len(orte) > 0
+          and np.allclose(np.asarray(fv.dsig_je_ort), soll, rtol=1e-12, atol=1e-3)
+          and len(k0) == 1 and abs(fv.dsig_je_ort[k0[0]] - s_ecke) <= 1e-12 * s_ecke and s_ecke > 0,
+          f"{getattr(fv, 'regel', None)}, Eckknoten {s_ecke / 1e6:.2f} N/mm2, {fv.warnings}")
+
+
 def main():
     for t in (test_spanne, test_hauptspannungen, test_volumen, test_naht_beruehrung,
               test_kerbfall_vorschlaege,
@@ -907,7 +1022,8 @@ def main():
               test_volumen_ohne_beitrag_und_unvollstaendig,
               test_unvollstaendig_je_weg,
               test_volumen_randspannung_kragarm,
-              test_volumen_regel_rueckfall_und_fliessen):
+              test_volumen_regel_rueckfall_und_fliessen,
+              test_volumen_abgeschaltete_elemente):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
