@@ -884,6 +884,27 @@ def _abnahme_netz(model) -> list:
                     text=f"Volumen {name}: Volumenbilanz und freie Seiten ließen sich "
                          f"nicht prüfen ({type(ex).__name__}: {str(ex)[:100]}) - ob ein "
                          "Element verdreht ist, ist hier nicht geprüft."))
+    # Volumenelemente, die zu keinem Koerper gehoeren (etwa ein reiner
+    # Netzimport), haben keine Randflaechen als Bezug - Volumenbilanz und
+    # freie Seiten sind fuer sie nicht geprueft. Bis zum 23.09.2026 stand
+    # dafuer nichts da: das verdrehte Wuerfelpaar ohne Koerper gab
+    # abnahme(warnungen=True) == [], also „bestanden" (B038). Eine WARNUNG
+    # mit „nicht geprüft" im Namen zaehlt die Oberflaeche in „bestanden,
+    # soweit geprüft".
+    from .assemble import SOLID_FACES
+    im_koerper: set = set()
+    for k in (getattr(model, "koerper", None) or {}).values():
+        im_koerper.update(int(x) for x in (k.elemente or []))
+    ohne = [i for i, e in enumerate(model.elements)
+            if e.typ in SOLID_FACES and i not in im_koerper]
+    if ohne:
+        aus.append(Befund(
+            pruefung="Volumenbilanz nicht geprüft", element=int(ohne[0]),
+            wert=float(len(ohne)), grenze=0.0, stufe="WARNUNG",
+            text=f"{len(ohne)} Volumenelemente gehören zu keinem Körper (z. B. "
+                 + ", ".join(f"Element {i}" for i in ohne[:3]) + (" …" if len(ohne) > 3 else "")
+                 + ") - ohne Randflächen gibt es keinen Bezug für Volumenbilanz und freie "
+                   "Seiten; ob eines davon verdreht ist oder eines fehlt, ist nicht geprüft."))
     return aus
 
 
@@ -1111,9 +1132,11 @@ def _huelle_abstand(Q: np.ndarray, huelle: dict) -> tuple:
     return dist, schief
 
 
-def _polyederhuelle(model, koerper):
+def _polyederhuelle(model, koerper, grund: list = None):
     """Die Huelle eines Koerpers aus seinen Randflaechen - nur dort, wo sie
-    sich **ohne Naeherung** darstellen laesst, sonst None.
+    sich **ohne Naeherung** darstellen laesst, sonst None. ``grund`` nimmt
+    dann den Grund im Klartext auf (fuer die Zeile „Volumenbilanz nicht
+    geprüft", B038).
 
     Ohne Naeherung heisst: jede Randlinie ist gerade (Polylinie), und jede
     Randflaeche ist eben oder ein Viereck ohne Oeffnung. Ein nicht ebenes
@@ -1155,7 +1178,11 @@ def _polyederhuelle(model, koerper):
     alle_fl = getattr(model, "flaechen", None) or {}
     linien = getattr(model, "lines", None) or {}
     flaechen = [alle_fl.get(x) for x in namen]
+    grund = grund if grund is not None else []
     if len(flaechen) < 4 or any(f is None for f in flaechen):
+        grund.append("der Körper hat keine Randflächen" if not namen else
+                     "eine Randfläche fehlt im Modell" if any(f is None for f in flaechen) else
+                     f"nur {len(flaechen)} Randflächen")
         return None
     nn = int(model.nn)
     lokal: dict = {}
@@ -1182,18 +1209,27 @@ def _polyederhuelle(model, koerper):
         for zug in [list(f.linien or [])] + [list(o) for o in (f.oeffnungen or [])]:
             for ln_name in zug:
                 ln = linien.get(ln_name)
-                if ln is None or (ln.typ or "polyline") != "polyline":
+                if ln is None:
+                    grund.append(f"die Randlinie {ln_name} fehlt im Modell")
+                    return None
+                if (ln.typ or "polyline") != "polyline":
+                    grund.append(f"krumme Randlinie ({ln_name}: {ln.typ}) - die Hülle wäre "
+                                 "genähert")
                     return None             # krumm: die Huelle waere genaehert
             r = [int(n) for n in _rand_aus_linien(model, zug)]
             if len(r) < 3 or any(not 0 <= n < nn for n in r):
+                grund.append(f"der Rand der Fläche {namen[fi]} ist kein Vieleck")
                 return None
             ringe.append(r)
         X = model.nodes[[n for r in ringe for n in r]]
         eben = M3.ist_eben(X)
         if not eben and (len(ringe) > 1 or len(ringe[0]) != 4):
+            grund.append(f"die Fläche {namen[fi]} ist gewölbt und kein Viereck - die Hülle "
+                         "wäre genähert")
             return None                     # gewoelbt und kein bilineares Viereck
         n_aussen = newell(ringe[0])
         if not np.linalg.norm(n_aussen) > 0.0:
+            grund.append(f"die Fläche {namen[fi]} hat keinen Flächeninhalt")
             return None                     # Rand ohne Flaeche
         # Oeffnungen laufen gegen den Aussenrand - dann ist die Summe der
         # Faecher die Flaeche mit ausgesparten Loechern
@@ -1223,6 +1259,8 @@ def _polyederhuelle(model, koerper):
         for a, b in kanten:
             an_kante.setdefault((min(a, b), max(a, b)), []).append((fi, 1 if a < b else -1))
     if any(len(v) != 2 for v in an_kante.values()):
+        grund.append("die Hülle ist nicht dicht (eine Randkante gehört nicht zu genau zwei "
+                     "Flächen)")
         return None
     nachbarn: list = [[] for _ in flaechen]
     for (fa, sa), (fb, sb) in an_kante.values():
@@ -1239,8 +1277,10 @@ def _polyederhuelle(model, koerper):
                 vz[fb] = soll
                 stapel.append(fb)
             elif vz[fb] != soll:
+                grund.append("die Hülle lässt sich nicht einheitlich richten")
                 return None                 # nicht orientierbar
     if 0 in vz:
+        grund.append("die Hülle zerfällt in Teile")
         return None                         # zerfaellt in Teile
     T = np.array([(c, a, b) if s > 0 else (c, b, a)
                   for s, tri in zip(vz, dreiecke) for c, a, b in tri], dtype=int)
@@ -1251,6 +1291,7 @@ def _polyederhuelle(model, koerper):
     if kehren:
         T, V = T[:, [0, 2, 1]], -V          # nach aussen kehren
     if not V > 0.0:
+        grund.append("die Hülle schließt keinen Rauminhalt ein")
         return None
     # Windschiefe Flaechen nach aussen gerichtet (Ring umkehren heisst u und
     # v tauschen, die Normale x_u x x_v kehrt sich um) und fein unterteilt
@@ -1313,9 +1354,15 @@ def _freie_seiten_ecken(model, els, gruppen: dict = None):
 #:   der Seiten (umlaufend wie ihr Flaechenvektor, vom eigenen Element weg)
 #:   heben sich paarweise auf; was bleibt, ist der Rand der Gruppe. Seine
 #:   Schleifen duerfen zusammen hoechstens diesen Anteil der Seitenflaeche
-#:   aufspannen. Ein Riss mit Knoten nur auf einem Ufer (T-Stoss) hat
-#:   Randschleifen ohne Flaeche (drei Punkte auf einer Kante), ein Hohlraum
-#:   gar keinen Rand. Gemessen an den 30 geschlossenen Gruppen, die die
+#:   aufspannen. Ein Riss, dessen Ufer Kanten teilen, hat Randschleifen ohne
+#:   Flaeche, ein Hohlraum gar keinen Rand. Teilen die Ufer keine Kante,
+#:   ist es kein Riss: ein T-Stoss von Sechsflaechnern (links 1 hex8, rechts
+#:   2 x 2 x 2, Knoten nur auf einem Ufer) ergibt zwei offene Gruppen ohne
+#:   gemeinsame Kante und FEHLER „Seiten im Inneren 5“, derselbe in
+#:   Kuhn-Tetraeder zerlegt FEHLER 10 (ec6448c, 23.09.2026); die Ursache
+#:   heisst dort „hängende Knoten“ (_gruppen_im_inneren). Ob ein T-Stoss mit
+#:   halbierten Kanten, die beide Ufer teilen, ein Riss wird, ist nicht
+#:   gemessen. Gemessen an den 30 geschlossenen Gruppen, die die
 #:   Modelle der Suiten test_mesher3d und test_sweep bilden (23.09.2026):
 #:   Rand 0 bis 5,6 % der Seitenflaeche. Offen ist dagegen eine Trennflaeche
 #:   aus doppelten Knoten, die bis an die Huelle geht (Rand 100 %), und die
@@ -1332,7 +1379,10 @@ ABNAHME_RISS_UFER = 0.10
 #:   aehnlicher Seitenlaengen: Luecken, die der freie Vernetzer hinterlaesst
 #:   (dieselben 30 Gruppen), t/L bis 3,55 % (ein Haufen aus zehn Seiten),
 #:   einzeln bis 3,31 %; die 40 kleinsten fehlenden Tetraeder mit V/L^3 ueber
-#:   0,04 an der Platte mit Bohrung 8,5 bis 12,8 %. An **laenglichen** Zellen
+#:   0,04 an der Platte mit Bohrung eigenes t/L 8,5 bis 12,8 %, t/L der
+#:   Gruppe ab 4,80 % (El 26949, 5,11 % El 33529; 23.09.2026) - bei El 26949
+#:   trennt erst die Bedingung gegen die Elemente daneben (0,931). An
+#:   **laenglichen** Zellen
 #:   traegt t/L allein nicht (zweite Gegenpruefung vom 23.09.2026, Mangel 1):
 #:   die Dicke folgt der kurzen Seite, L der langen. Gemessen am 23.09.2026, abgestufte
 #:   hex8-Netze 10 x 10 x 10 (5:1, 20:1, 50:1), je innere Zelle einzeln: ein
@@ -1372,12 +1422,35 @@ ABNAHME_RISS_NACHBAR = 0.65
 #:   Massen: der Hohlraum eines verdrehten Sechsflaechners ist gemessen 0,21-
 #:   bis 2,7-mal so dick wie seine Nachbarn (Median), je nach Abstufung.
 #: * **keine doppelten Knoten**: zwei Knoten der Seiten im Inneren mit
-#:   verschiedener Nummer am selben Ort (:data:`ABNAHME_FUGENNAEHE`). Ein
+#:   verschiedener Nummer am selben Ort (:data:`ABNAHME_KNOTENNAEHE`), und
+#:   kein Knoten der Gruppe, den im Koerper nur ein Element benutzt. Ein
 #:   Sechsflaechner IM INNEREN, der an den vier Knoten einer Seite
 #:   losgeloest ist, umschliesst mit den Nachbarn einen Hohlraum ohne Volumen (zweite
 #:   Gegenpruefung, Mangel 2: WARNUNG Riss 10), hat an diesen Knoten aber
 #:   keine Verbindung. Gesucht wird auch fuer die Luecke im Netzrand (siehe
 #:   _gruppen_im_inneren).
+#:
+#: Wann zwei Knotennummern „am selben Ort" liegen und wann ein Knoten auf
+#: einer Seite liegt, ohne ihre Ecke zu sein (haengender Knoten eines
+#: T-Stosses): naeher als dieser Anteil der kuerzesten Kante an den beiden
+#: Knoten bzw. der laengsten Kante der Seite. Bis zum 23.09.2026 galt fuer
+#: doppelte Knoten fest ABNAHME_FUGENNAEHE = 1e-6 m, unabhaengig von der
+#: Elementgroesse (B042): im Block 6 x 6 x 6 ueber 0,75 m (Zelle 125 mm), in
+#: Kuhn-Tetraeder zerlegt, war Tetraeder 554 an einem Knoten losgeloest und
+#: 2e-6 oder 1e-5 m versetzt nur eine WARNUNG „Riss im Netz 6“, ohne
+#: Rueckfrage vor dem Rechnen. Gemessen am 23.09.2026 an den 29 geschlossenen
+#: Gruppen der Modelle von test_mesher3d und test_sweep: kleinster Abstand
+#: zweier Knoten durch die kuerzeste Kante an ihnen 0,995 - die Grenze liegt
+#: einen Faktor 100 darunter. Der losgeloeste Knoten des Tetraeders 554 liegt
+#: bei 1,6e-5 (2e-6 m) und 8e-5 (1e-5 m) der Kante; ab 1,25 mm Versatz (1 %)
+#: findet ihn nur noch die Bedingung „nur ein Element" (kein Knoten jener 29
+#: Gruppen): gemessen bis 1 cm Versatz je FEHLER 6. An der Oberflaeche
+#: (Tetraeder 164 des 8 x 8 x 8-Netzes, an drei Huellknoten losgeloest) war
+#: es bei ec6448c schon ab 1e-5 m nur eine WARNUNG „Lücke im Netzrand“ 651 cm3;
+#: jetzt bis 2 mm FEHLER 6, bei 5 mm und 1 cm FEHLER 4 neben einer „Lücke“
+#: 326 cm3 (die Bedingung „nur ein Element" gilt dort nicht, siehe
+#: _gruppen_im_inneren). ABNAHME_FUGENNAEHE bleibt fuer die Fugenpruefung.
+ABNAHME_KNOTENNAEHE = 0.01
 #: Windschiefe Randflaechen: eine freie Seite liegt darauf, wenn ihre Ecken
 #: nicht weiter danebenliegen als eine Sehne der **oertlichen** Weite H, und
 #: wenn sie in die Richtung der Flaeche zeigt (siehe _abnahme_volumenbilanz).
@@ -1597,7 +1670,8 @@ def _verdrehte_elemente(model, gruppen, els, kandidaten, huelle) -> set:
     return aus
 
 
-def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T) -> tuple:
+def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T,
+                        ursachen: dict = None) -> tuple:
     """Die freien Seiten neben der Huelle (F, Xf, S ihr Flaechenvektor vom
     eigenen Element weg, E ihre Elemente, T die Dicke ihres Elements
     2 V / Summe seiner Seitenflaechen; ``innen``: der Koerper geht hinter
@@ -1614,19 +1688,22 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T) -> t
       Luecke eines aussortierten flachen Tetraeders (4 Seiten).
     * **offen zur Huelle**: jede Randschleife ist eine Oeffnung in der Huelle
       (:func:`_schliesspunkt`), kein Element der Gruppe ist verdreht
-      (:func:`_verdrehte_elemente`), und die Gruppe hat keine doppelten
-      Knoten - ein Stueck fehlt an der Oberflaeche.
+      (:func:`_verdrehte_elemente`), die Gruppe hat keine doppelten Knoten
+      und kein Gegenueber (haengende Knoten) - ein Stueck fehlt an der
+      Oberflaeche.
       Laeuft der Rand ueber Seiten, hinter denen der Koerper nicht
       weitergeht (an einer einspringenden Kante: T-Prisma, h = 0,1, zwei
       Seiten im Inneren und zwei bis 29,2 mm neben der Huelle, 23.09.2026),
       zaehlen diese mit. Das Volumen folgt aus dem Gaussschen Satz ueber die
-      Seiten und die Faecher der Schleifen um p0. Eine Luecke, die kein
-      Volumen hat (ein Ufer, dessen Rand auf der Huelle liegt), bleibt ein
-      FEHLER.
+      Seiten und die Faecher der Schleifen um p0.
     * alles andere bleibt ein fehlender Nachbar: verdrehtes Element,
-      doppelte Knoten, Hohlraum im Innern.
+      doppelte Knoten, haengende Knoten, Hohlraum im Innern, oder ein
+      Netzrand, der die Randflaeche verfehlt.
 
-    Luecken: [{"idx" (Stellen in F), "V", "ort", "element"}].
+    Luecken: [{"idx" (Stellen in F), "V", "ort", "element"}]. ``ursachen``
+    nimmt je Seite im Inneren, die weder Riss noch Luecke ist, die Ursache
+    auf ({Stelle in F: "verdreht" | "doppelt" | "haengend" | "hohlraum" |
+    "netzrand"}) - fuer den Text des FEHLERs (B040, B046).
     """
     m = len(F)
     riss = np.zeros(m, bool)
@@ -1684,9 +1761,13 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T) -> t
     # im Ganzen ein Riss waere und eine Kante mit mehr als zwei Seiten hat.
     kandidaten = []                         # [(Stellen, Volumen)] geschlossen und duenn
     offen = []
+    gruppe = np.full(m, -1, dtype=np.int64)     # Gruppe je Seite im Inneren
+    alle_gruppen = []                            # [(Stellen, geschlossen)]
     for g in _seitengruppen(F[ii]):
         idx = ii[g]
         zu, schleifen = geschlossen(idx)
+        gruppe[idx] = len(alle_gruppen)
+        alle_gruppen.append((idx, zu))
         if not zu:
             offen.append((idx, schleifen, float(A[idx].sum()), float(kante[idx].max())))
             continue
@@ -1714,6 +1795,10 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T) -> t
     # Elements (326 cm3). Es fehlt aber nichts, das Element haengt an einem
     # Knoten oder schwebt (dritte Gegenpruefung vom 23.09.2026). Darum werden
     # die doppelten Knoten auch fuer die offenen Gruppen gesucht.
+    #
+    # Doppelte Knoten: naeher beieinander als ABNAHME_KNOTENNAEHE mal die
+    # kuerzeste Kante an den beiden (unter den Seiten im Inneren) - nicht mehr
+    # fest 1e-6 m (B042, siehe ABNAHME_KNOTENNAEHE).
     doppelt = np.zeros(m, bool)
     if kandidaten or offen:
         kn = F[ii]
@@ -1721,23 +1806,99 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T) -> t
         nummern, erst = np.unique(kn[da], return_index=True)
         if len(nummern) > 1:
             from scipy.spatial import cKDTree
-            paare = cKDTree(Xf[ii][da][erst]).query_pairs(ABNAHME_FUGENNAEHE,
-                                                          output_type="ndarray")
+            laenge = np.linalg.norm(Xz[ii] - np.roll(Xz[ii], -1, axis=1), axis=2)   # (., 4)
+            lok = np.searchsorted(nummern, Fz[ii])
+            kmin = np.full(len(nummern), np.inf)
+            for j in range(4):
+                gilt = echt_k[ii][:, j]
+                np.minimum.at(kmin, lok[gilt, j], laenge[gilt, j])
+                np.minimum.at(kmin, lok[gilt, (j + 1) % 4], laenge[gilt, j])
+            kmin = np.where(np.isfinite(kmin), kmin, 0.0)
+            P = Xf[ii][da][erst]
+            paare = cKDTree(P).query_pairs(ABNAHME_KNOTENNAEHE * float(kmin.max()),
+                                           output_type="ndarray")
+            if len(paare):
+                d = np.linalg.norm(P[paare[:, 0]] - P[paare[:, 1]], axis=1)
+                paare = paare[d <= ABNAHME_KNOTENNAEHE * np.minimum(kmin[paare[:, 0]],
+                                                                    kmin[paare[:, 1]])]
             if len(paare):
                 doppelt[ii] = np.isin(kn, nummern[np.unique(paare)]).any(axis=1)
+    # Ein Knoten, den im Koerper nur ein Element benutzt, haengt an nichts:
+    # ein Hohlraum an ihm ist kein Riss, wie weit der Knoten auch versetzt
+    # ist (am Tetraeder 554 oben ab 1,25 mm reicht ABNAHME_KNOTENNAEHE
+    # nicht mehr). Nur fuer geschlossene Gruppen: an der Oberflaeche benutzt
+    # auch in einem richtigen Netz mancher Knoten nur ein Element (die
+    # Trennflaeche um eine Eckzelle, gemessen 23.09.2026: 3 solche Knoten auf
+    # der Seite des Restnetzes).
+    einzeln: set = set()
+    zu_idx = [idx for idx, zu in alle_gruppen if zu]
+    if zu_idx and gruppen:
+        alle_kn = np.concatenate([Kg.ravel() for _t, (_p, Kg) in gruppen.items()])
+        zahl_kn = np.bincount(alle_kn, minlength=int(F.max()) + 1)
+        kand_kn = np.unique(np.concatenate([F[idx][F[idx] >= 0] for idx in zu_idx]))
+        einzeln = {int(x) for x in kand_kn[zahl_kn[kand_kn] == 1]}
+
+    def losgeloest(idx):
+        return bool(einzeln) and bool(einzeln & {int(x) for x in F[idx].ravel() if x >= 0})
+
     verdreht_zu: set = set()
     if kandidaten and model is not None:
         verdreht_zu = _verdrehte_elemente(
             model, gruppen, els, {int(e) for idx, _V in kandidaten for e in E[idx]}, huelle)
     V_riss = 0.0
     for idx, V_g in kandidaten:
-        if doppelt[idx].any() or verdreht_zu & {int(e) for e in E[idx]}:
+        if doppelt[idx].any() or losgeloest(idx) or verdreht_zu & {int(e) for e in E[idx]}:
             continue
         riss[idx] = True
         V_riss += V_g
     luecken: list = []
     verdreht: set = set()
+    haengend: set = set()
+
+    def ursachen_eintragen():
+        """Je Seite im Inneren, die weder Riss noch Luecke ist, die Ursache -
+        fuer den Text des FEHLERs. Bis zum 23.09.2026 nannte er fuer jede
+        Gruppe „verdrehtes Element, doppelte Knoten oder Hohlraum": am T-Stoss
+        fehlten die haengenden Knoten (B040), an den Netzen des eigenen
+        Vernetzers, deren Rand die Randflaeche verfehlt, traf keine der drei
+        zu (B046, U-Prisma h 0,3)."""
+        if ursachen is None:
+            return
+        in_luecke = np.zeros(m, bool)
+        for lu in luecken:
+            in_luecke[lu["idx"]] = True
+        rest_zu = [idx for idx, zu in alle_gruppen
+                   if zu and not (riss[idx] | in_luecke[idx]).all()]
+        verdreht_rest: set = set()
+        if rest_zu and model is not None:
+            # auch der Hohlraum eines verdrehten Elements, der nicht duenn
+            # ist, heisst „verdreht" und nicht „Hohlraum"
+            verdreht_rest = _verdrehte_elemente(
+                model, gruppen, els, {int(e) for idx in rest_zu for e in E[idx]}, huelle)
+        for nr, (idx, zu) in enumerate(alle_gruppen):
+            rest = idx[~(riss[idx] | in_luecke[idx])]
+            if not len(rest):
+                continue
+            # Reihenfolge: ein losgeloestes Element hat auch „verdrehte"
+            # Kanten (keine teilt es mit einem Nachbarn), und ein doppelter
+            # Knoten liegt auch auf der Seite des Nachbarn; der T-Stoss hat
+            # ebenso Kanten, die kein anderes Element hat (gemessen am T-Stoss
+            # in der Ecke, hex8: vier Elemente „verdreht")
+            if doppelt[idx].any() or (zu and losgeloest(idx)):
+                u = "doppelt"
+            elif nr in haengend:
+                u = "haengend"
+            elif (verdreht | verdreht_zu | verdreht_rest) & {int(e) for e in E[idx]}:
+                u = "verdreht"
+            elif zu:
+                u = "hohlraum"
+            else:
+                u = "netzrand"
+            for i in rest:
+                ursachen[int(i)] = u
+
     if not offen:
+        ursachen_eintragen()
         return riss, V_riss, luecken, verdreht
     # Zusammenhang ueber alle Seiten neben der Huelle, fuer den zweiten Versuch
     komp = np.zeros(m, dtype=np.int64)
@@ -1746,10 +1907,13 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T) -> t
     verdreht = _verdrehte_elemente(
         model, gruppen, els,
         {int(e) for idx, *_r in offen for e in E[np.nonzero(komp == komp[idx[0]])[0]]}, huelle)
+    haengend = _haengende_gruppen(F, Xf, q, kante, ii, gruppe, [idx for idx, *_r in offen])
 
     def luecke(idx, schleifen, A_g, L_g):
         if doppelt[idx].any() or verdreht & {int(e) for e in E[idx]}:
             return None
+        if haengend & {int(x) for x in gruppe[idx] if x >= 0}:
+            return None                     # ein Ufer mit Gegenueber: nichts fehlt
         durchm = max(float(np.linalg.norm(np.ptp(P, axis=0))) for _k, P in schleifen)
         tol = ABNAHME_HUELLABSTAND * max(durchm, L_g)
         punkte = [_schliesspunkt(P, huelle, tol) for _k, P in schleifen]
@@ -1771,7 +1935,16 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T) -> t
             fluss = float(np.einsum("ij,ij->", q[idx[drin]] - c, S[idx[drin]]))
             A_in = float(A[idx[drin]].sum())
         V_l = abs(fluss) / 3.0
-        if 2.0 * V_l / A_in <= ABNAHME_RISS_DICKE * L_g:
+        # „Kein Volumen" heisst: die Seiten liegen im Rahmen der Knotennaehe
+        # auf dem Faecher ueber der Huelle. Bis zum 23.09.2026 stand hier
+        # t/L <= ABNAHME_RISS_DICKE (5 %), und eine duenne echte Luecke wurde
+        # ein FEHLER (B044): am L-Prisma h 0,2 (1493 tet4) das von Hand
+        # geloeschte Element 62 (1,643e-4 m^3, 2 V / A / L 2,87 %), ebenso 69
+        # und 70 (4,50 und 3,36 %). Ein Ufer, hinter dem nichts fehlt, hat
+        # dagegen Volumen: es schliesst mit der Huelle den vernetzten Block
+        # dahinter ein (Trennflaeche um eine Eckzelle 1953 cm3, T-Stoss in der
+        # Ecke ebenso). Das erkennen die doppelten und die haengenden Knoten.
+        if 2.0 * V_l / A_in <= ABNAHME_KNOTENNAEHE * L_g:
             return None                     # ein Ufer ohne Volumen: kein Stueck fehlt
         gross = max(range(len(schleifen)),
                     key=lambda j: np.linalg.norm(_flaechenvektor(schleifen[j][1])))
@@ -1790,7 +1963,66 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T) -> t
                             float(A[k_idx].sum()), float(kante[k_idx].max()))
         if lu is not None:
             luecken.append(lu)
+    ursachen_eintragen()
     return riss, V_riss, luecken, verdreht
+
+
+def _haengende_gruppen(F, Xf, q, kante, ii, gruppe, offene) -> set:
+    """Gruppen von Seiten im Inneren, die ein Gegenueber haben: ein Knoten
+    einer offenen Gruppe liegt auf einer Seite einer anderen Gruppe, ohne
+    ihre Ecke zu sein (naeher als ABNAHME_KNOTENNAEHE mal ihre laengste
+    Kante). Beide Gruppen sind dann Ufer derselben Stelle - ein T-Stoss mit
+    haengenden Knoten oder eine Trennflaeche -, und hinter keiner von beiden
+    fehlt etwas.
+
+    Gemessen am 23.09.2026 (B040, B044): der T-Stoss in der Ecke eines
+    8 x 8 x 8-Netzes (Eckzelle in 2 x 2 x 2 geteilt) hat zwei offene Ufer,
+    deren Rand auf der Huelle liegt; jedes schloss mit der Huelle den
+    Eckblock ein, und die Abnahme meldete zwei Luecken von zusammen 3906 cm3
+    (in Kuhn-Tetraedern nur diese WARNUNG, abnahme() leer). Die 12 Knoten des
+    feinen Ufers liegen auf den 3 Seiten des groben (Abstand 0)."""
+    from . import mesher3d as M3
+    from scipy.spatial import cKDTree
+    pruef = np.concatenate(offene) if offene else np.zeros(0, np.int64)
+    if not len(pruef) or len(ii) < 2:
+        return set()
+    # (Knoten, Gruppe, Lage) der offenen Gruppen, je Paar einmal
+    punkte: dict = {}
+    for i in pruef:
+        for j in range(4):
+            if F[i, j] >= 0:
+                punkte.setdefault((int(F[i, j]), int(gruppe[i])), Xf[i, j])
+    schluessel = list(punkte)
+    Pp = np.array([punkte[s] for s in schluessel])
+    baum = cKDTree(q[ii])
+    # Jeder Punkt einer Seite liegt hoechstens zwei laengste Kanten von
+    # ihrem Eckenschwerpunkt entfernt
+    treffer = baum.query_ball_point(Pp, 2.0 * float(kante[ii].max()))
+    pa, pf = [], []
+    for k, liste in enumerate(treffer):
+        nummer, grp = schluessel[k]
+        for s in liste:
+            f = int(ii[s])
+            if int(gruppe[f]) == grp or nummer in F[f]:
+                continue
+            pa.append(k)
+            pf.append(f)
+    if not pa:
+        return set()
+    pa, pf = np.asarray(pa), np.asarray(pf)
+    Q = Pp[pa]
+    a, b, c = Xf[pf, 0], Xf[pf, 1], Xf[pf, 2]
+    d = M3.punkt_dreieck_abstand(Q, a, b, c)
+    vier = F[pf, 3] >= 0
+    if vier.any():
+        d[vier] = np.minimum(d[vier], M3.punkt_dreieck_abstand(
+            Q[vier], Xf[pf[vier], 0], Xf[pf[vier], 2], Xf[pf[vier], 3]))
+    auf = d <= ABNAHME_KNOTENNAEHE * kante[pf]
+    aus: set = set()
+    for k, f in zip(pa[auf], pf[auf]):
+        aus.add(int(schluessel[int(k)][1]))
+        aus.add(int(gruppe[f]))
+    return aus
 
 
 def _elementdicke(model, gruppen, V_el, wahl) -> np.ndarray:
@@ -1832,6 +2064,35 @@ def _ringmax(F, werte, ringe: int) -> np.ndarray:
     return H
 
 
+#: Ursachen des FEHLERs „Seiten im Inneren" in der Reihenfolge des Textes
+#: (_gruppen_im_inneren bestimmt sie je Gruppe von Seiten).
+_URSACHEN = (
+    ("verdreht", "ein verdrehtes Element (Deckel um eine Ecke versetzt)"),
+    ("doppelt", "doppelte Knoten (ein Element ist dort vom Nachbarn gelöst: zwei "
+                "Knotennummern am selben Ort oder ein Knoten, den nur dieses Element benutzt)"),
+    ("haengend", "hängende Knoten (ein Ufer feiner geteilt als das andere: seine Knoten "
+                 "liegen auf den Seiten des Nachbarn, ohne deren Ecken zu sein)"),
+    ("hohlraum", "ein Hohlraum im Netz (ringsum von Elementseiten umschlossen und zu dick "
+                 "für einen Riss)"),
+    ("netzrand", "der Netzrand verfehlt die Randfläche (die freien Seiten laufen durch den "
+                 "Körper, statt auf der Randfläche zu liegen; kein Element verdreht, kein "
+                 "Knoten doppelt oder hängend)"),
+)
+#: Abhilfe, wenn der Netzrand die Randflaeche verfehlt (B046). Gemessen am
+#: 23.09.2026 auf dem Standardweg (mesher.modell_vernetzen): U-Prisma
+#: 1,5 x 1 x 0,5 m, Netzweite 0,3 m, 1113 tet4 (konform, jede innere Seite
+#: genau zweimal) FEHLER 4 und WARNUNG Netzrand 9 - mit Sweep 32 hex8 und
+#: 16 pent6 ohne Befund; Platte 0,6 x 0,6 x 0,035 m mit Bohrung r 6 mm
+#: (24-Eck), Ziellaenge 0,05 m, 24 712 tet4 FEHLER 110 und WARNUNG 29 - mit
+#: Sweep 908 hex8 und 24 pent6 ohne Befund. „Neu vernetzen" allein ergibt
+#: dasselbe Netz (an beiden zweimal vernetzt: dieselben Elemente, dieselben
+#: Knotenlagen, derselbe Befund).
+_NETZRAND_ABHILFE = ("Ist das Netz unverändert vom eigenen Vernetzer: Netzeinstellungen → "
+                     "„Sechsflächner sweepen“ (für Körper aus Grundfläche mal Weg) beseitigte "
+                     "das am U-Prisma (Netzweite 300 mm) und an einer Platte mit Bohrung "
+                     "(r 6 mm, Ziellänge 50 mm), gemessen 23.09.2026.")
+
+
 def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
     """Volumenbilanz und Seiten neben der Huelle - gegen die Randflaechen.
 
@@ -1868,12 +2129,14 @@ def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
        * ein Riss ohne Weite (geschlossen, duenn gegen die eigenen Seiten und
          gegen die Elemente daneben, kein Element verdreht, keine doppelten
          Knoten): WARNUNG „Riss im Netz";
-       * eine Luecke im Netzrand (offen zur Huelle, kein Element verdreht):
+       * eine Luecke im Netzrand (offen zur Huelle, kein Element verdreht,
+         keine doppelten oder haengenden Knoten):
          WARNUNG „Lücke im Netzrand" mit Ort und Volumen, solange alle Luecken
          des Koerpers zusammen unter der Grenze der Volumenbilanz bleiben
          (0,5 % des Koerpers), sonst FEHLER;
-       * alles andere - verdrehtes Element, doppelte Knoten, Hohlraum im
-         Innern: FEHLER „Seiten im Inneren".
+       * alles andere - verdrehtes Element, doppelte Knoten, haengende
+         Knoten, Hohlraum im Innern, Netzrand, der die Randflaeche verfehlt:
+         FEHLER „Seiten im Inneren", mit der gefundenen Ursache im Text.
 
        Steht eine Seite dagegen ueber die Huelle hinaus (eine abgeschnittene
        Ecke, eine Beule), ist es eine WARNUNG („Netzrand neben der Hülle").
@@ -1896,19 +2159,30 @@ def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
        laengsten Kante seiner Seiten: in laenglichen Zellen wurden ein
        verdrehter Sechsflaechner, ein fehlender Sechsflaechner oder
        Kuhn-Tetraeder zur WARNUNG „Riss" (abgestuft 50:1: 357, 72 und 340 von
-       je 512 inneren Zellen), ebenso ein Element, das an vier Knoten
-       losgeloest ist (zweite Gegenpruefung, Maengel 1 und 2).
+       je 512 inneren Zellen), ebenso ein Sechsflaechner, der an einem bis
+       vier Knoten losgeloest ist; ein Kuhn-Tetraeder nur an einem Knoten, an
+       zwei bis vier Knoten war er FEHLER (zweite Gegenpruefung, Maengel 1
+       und 2; nachgemessen an e188334: hex8 292 WARNUNG Riss 6 bis 12,
+       Tetraeder 1752 an einem Knoten Riss 6, an zwei bis vier FEHLER 8).
 
     Geprueft wird nur, wo die Huelle ohne Naeherung feststeht (gerade Kanten,
-    siehe :func:`_polyederhuelle`); fuer Koerper mit krummen Randlinien sagt
-    diese Pruefung nichts - dort nimmt der freie Vernetzer sein Netz beim
-    Vernetzen selbst ab (Volumen gegen Huelle, Randtreue).
+    siehe :func:`_polyederhuelle`). Fuer Koerper mit krummen Randlinien oder
+    einer anderen Huelle, die sich so nicht darstellen laesst, steht eine
+    WARNUNG „Volumenbilanz nicht geprüft" mit dem Grund da - bis zum
+    23.09.2026 kam nichts (B038), und die Abnahme hiess „bestanden".
     """
     from . import mesher3d as M3
     from .spannungen import dezimal
-    huelle = _polyederhuelle(model, koerper)
+    grund: list = []
+    huelle = _polyederhuelle(model, koerper, grund)
     if huelle is None:
-        return []
+        return [Befund(
+            pruefung="Volumenbilanz nicht geprüft", objekt=str(name), element=int(els[0]),
+            wert=float(len(els)), grenze=0.0, stufe="WARNUNG",
+            text=f"Volumen {name}: Volumenbilanz und freie Seiten sind nicht geprüft - "
+                 f"{grund[0] if grund else 'die Hülle lässt sich nicht ohne Näherung darstellen'}. "
+                 f"Ob eines der {len(els)} Elemente verdreht ist oder eines fehlt, sagt die "
+                 "Abnahme für diesen Körper nicht.")]
     gruppen = _knotenmatrizen(model, els)
     V_el = elementvolumina(model, els, gruppen)
     if not len(V_el) or not np.isfinite(V_el).all():
@@ -2028,6 +2302,7 @@ def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
     riss = np.zeros(m, bool)
     V_riss = 0.0
     luecken: list = []
+    ursache: dict = {}                      # Stelle in F -> Ursache des FEHLERs
     if len(neben):
         # Auf welcher Seite geht der Koerper weiter? Die Aussenrichtung wird
         # am Element gemessen (weg von seinem Schwerpunkt, wie
@@ -2059,11 +2334,14 @@ def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
             wahl = np.zeros(len(els), bool)
             wahl[stelle[E[neben[drin]]]] = True
             T_f = _elementdicke(model, gruppen, V_el, wahl)[stelle[E[neben]]]
+            ursache_lok: dict = {}
             r, V_riss, luecken, _verdreht = _gruppen_im_inneren(
-                model, gruppen, els, F[neben], Xf[neben], S[neben], E[neben], drin, huelle, T_f)
+                model, gruppen, els, F[neben], Xf[neben], S[neben], E[neben], drin, huelle, T_f,
+                ursache_lok)
             riss[neben[r]] = True
             for lu in luecken:
                 lu["idx"] = neben[lu["idx"]]
+            ursache = {int(neben[i]): u for i, u in ursache_lok.items()}
         rand = neben[~drin]
         if len(rand):
             d_r, schief_r = _huelle_abstand(stich(rand), huelle)
@@ -2136,6 +2414,17 @@ def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
     rand_idx = np.nonzero(~auf & ~innen & ~luecke)[0]
     if len(echt_idx):
         schlimm, bsp = beispiele(echt_idx)
+        # Die Ursache, die an diesen Seiten gefunden wurde - bis zum
+        # 23.09.2026 stand fuer jede „verdrehtes Element, doppelte Knoten oder
+        # Hohlraum" da (B040: am T-Stoss fehlten die haengenden Knoten; B046:
+        # an Netzen des eigenen Vernetzers traf keine der drei zu, und der
+        # Rat galt nur fuer Importe)
+        zahl_u: dict = {}
+        for i in echt_idx:
+            u = ursache.get(int(i), "hohlraum")
+            zahl_u[u] = zahl_u.get(u, 0) + 1
+        gefunden = "; ".join(f"{t} an {zahl_u[u]} Seite{'n' if zahl_u[u] > 1 else ''}"
+                             for u, t in _URSACHEN if u in zahl_u)
         aus.append(Befund(
             pruefung="Seiten im Inneren", objekt=str(name), element=schlimm,
             knoten=[int(x) for x in model.elements[schlimm].nodes],
@@ -2143,9 +2432,9 @@ def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
             text=f"Volumen {name}: {len(echt_idx)} von {m} freien Elementseiten "
                  f"liegen im Inneren des Körpers statt auf einer Randfläche (z. B. {bsp}) "
                  "- der Körper geht dort weiter, aber kein Nachbarelement schließt an. "
-                 "Über diese Seiten gehen keine Kräfte. Ursache ist ein verdrehtes "
-                 "Element (Deckel um eine Ecke versetzt), doppelte Knoten oder ein "
-                 "Hohlraum im Netz. " + neu_vernetzen))
+                 f"Über diese Seiten gehen keine Kräfte. Gefunden: {gefunden}. "
+                 + neu_vernetzen
+                 + (" " + _NETZRAND_ABHILFE if "netzrand" in zahl_u else "")))
     if luecken:
         V_lu = float(sum(lu["V"] for lu in luecken))
         grenze_lu = ABNAHME_VOLUMENBILANZ * V_h
@@ -2173,8 +2462,10 @@ def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
                  + neu_vernetzen + " Beseitigt hat eine Lücke des eigenen Vernetzers an L-, "
                  "T- und U-Prismen (gemessen 23.09.2026): Netzeinstellungen → „Sechsflächner "
                  "sweepen“ (für Körper aus Grundfläche mal Weg) oder der Vernetzer gmsh bzw. "
-                 "Netgen, je an allen fünf; eine andere Ziellänge nur an drei oder vier "
-                 "von fünf."))
+                 "Netgen, je an allen fünf, auch bei gleich vielen Elementen - mit derselben "
+                 "Netzweite ergeben gmsh und Netgen dort nur 22 bis 37 % der Elemente des "
+                 "eigenen Vernetzers, gleich viele bei 60 bis 70 % der Netzweite; eine andere "
+                 "Ziellänge nur an drei oder vier von fünf."))
     if len(riss_idx):
         schlimm, bsp = beispiele(riss_idx)
         aus.append(Befund(

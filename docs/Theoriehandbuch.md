@@ -6538,7 +6538,8 @@ nach neun Minuten. `diagnose.abnahme(model)` prüft:
 | Formgüte des schlechtesten Elements je Körper | ≥ 0,05 (`ABNAHME_ELEMENTGUETE`) | `netzguete.guete` |
 | Randtreue je Körper | ≥ 99 % (`ABNAHME_RANDTREUE`) | `Volumenkoerper.randtreue` |
 | Volumenbilanz je Körper | ≤ 0,5 % (`ABNAHME_VOLUMENBILANZ`), an windschiefen Flächen zuzüglich Σ A · Abstand der Netzseiten | `elementvolumina` gegen `_polyederhuelle` |
-| Seiten im Inneren (FEHLER) / Lücke im Netzrand (WARNUNG, über 0,5 % des Körpers FEHLER) / Riss im Netz, Netzrand neben der Hülle (WARNUNG) | 0 | freie Elementseiten gegen die Randflächen, Abstand ≤ 1 % der Seitengröße (`ABNAHME_HUELLABSTAND`), an windschiefen Flächen zuzüglich der örtlichen Sehnengrenze (`_sehnengrenze`, `ABNAHME_SCHIEF_RINGE`) und nur in Richtung der Fläche (`ABNAHME_SCHIEF_RICHTUNG`); Gruppen im Inneren: `_gruppen_im_inneren` (Riss: t/L ≤ 5 % `ABNAHME_RISS_DICKE`, t ≤ 0,65 · Dicke der Nachbarn `ABNAHME_RISS_NACHBAR`, kein verdrehtes Element, keine doppelten Knoten) |
+| Seiten im Inneren (FEHLER) / Lücke im Netzrand (WARNUNG, über 0,5 % des Körpers FEHLER) / Riss im Netz, Netzrand neben der Hülle (WARNUNG) | 0 | freie Elementseiten gegen die Randflächen, Abstand ≤ 1 % der Seitengröße (`ABNAHME_HUELLABSTAND`), an windschiefen Flächen zuzüglich der örtlichen Sehnengrenze (`_sehnengrenze`, `ABNAHME_SCHIEF_RINGE`) und nur in Richtung der Fläche (`ABNAHME_SCHIEF_RICHTUNG`); Gruppen im Inneren: `_gruppen_im_inneren` (Riss: t/L ≤ 5 % `ABNAHME_RISS_DICKE`, t ≤ 0,65 · Dicke der Nachbarn `ABNAHME_RISS_NACHBAR`, kein verdrehtes Element, keine doppelten Knoten; Lücke: kein verdrehtes Element, keine doppelten oder hängenden Knoten `ABNAHME_KNOTENNAEHE`, `_haengende_gruppen`; sonst FEHLER mit der gefundenen Ursache) |
+| Volumenbilanz nicht geprüft (WARNUNG) | – | `_polyederhuelle` gibt keine Hülle (krumme Randlinie, gewölbte Fläche ohne vier Ecken, Hülle nicht dicht) oder Volumenelemente gehören zu keinem Körper |
 
 **Volumenbilanz und freie Seiten gegen die Randflächen** (22.09.2026). Ein
 Sechsflächner, dessen Deckel um eine Ecke verdreht ist (4, 5, 6, 7 → 5, 6, 7,
@@ -6563,7 +6564,16 @@ des Netzes mit den **Randflächen** des Körpers:
   Vernetzer legt sein Netz nur genähert darauf, siehe *Sehnen auf
   windschiefen Flächen* unten. Körper mit krummen Randlinien (Bogen, Kreis, Spline)
   werden nicht geprüft: ihre Sehnenteilung hängt an der Netzweite, die
-  Abweichung läge in derselben Größe wie das Gesuchte.
+  Abweichung läge in derselben Größe wie das Gesuchte. Dafür steht seit dem
+  23.09.2026 eine WARNUNG „Volumenbilanz nicht geprüft“ mit dem Grund da
+  (`_polyederhuelle(…, grund)`), ebenso für jede andere Hülle ohne Darstellung
+  und für Volumenelemente, die zu keinem Körper gehören (reiner Netzimport).
+  Vorher gab `abnahme(warnungen=True)` dort eine leere Liste – „bestanden“:
+  am Würfelpaar mit verdrehtem zweitem Würfel ohne Körper und ebenso mit einer
+  Randlinie vom Typ Bogen (mit Körper und geraden Linien FEHLER Volumenbilanz
+  und Seiten im Inneren). In den Modellen von test_mesher3d und test_sweep
+  bekommen 32 von 80 Körpern diese Zeile (31 krumme Randlinie, 1 Hülle nicht
+  dicht); sonst sind dort alle Befunde dieselben wie bei ec6448c.
 * **Nicht** als Bezug taugt das Randvolumen der freien Elementseiten desselben
   Netzes: bilinear gerechnet ist es mit V_N identisch (gemessen 1,6667 gegen
   1,6667 am verdrehten Würfelpaar), gefächert hängt es an der Diagonale
@@ -6604,7 +6614,22 @@ Kanten eine Gruppe bilden, die
    kein anderes Element hat und nicht auf der Hülle liegt
    (`_verdrehte_elemente`, dieselbe Prüfung wie bei der Lücke im Netzrand),
    und keine zwei Knoten der Seiten im Inneren mit verschiedener Nummer am
-   selben Ort (`ABNAHME_FUGENNAEHE` = 10⁻⁶ m).
+   selben Ort – näher beieinander als 1 % der kürzesten Kante an den beiden
+   (`ABNAHME_KNOTENNAEHE`) – und kein Knoten der Gruppe, den im Körper nur
+   ein Element benutzt.
+
+Bis zum 23.09.2026 hieß „am selben Ort“ fest 10⁻⁶ m (`ABNAHME_FUGENNAEHE`,
+das die Fugenprüfung weiter benutzt), gleich wie groß die Elemente sind. Im
+Block 6 × 6 × 6 über 0,75 m (Zelle 125 mm), in Kuhn-Tetraeder zerlegt, war
+Tetraeder 554 an Knoten 0 oder 1 losgelöst und der neue Knoten 2 · 10⁻⁶ oder
+10⁻⁵ m versetzt nur eine WARNUNG „Riss im Netz 6“ ohne Rückfrage (ec6448c).
+Heute FEHLER 6, gemessen bei Versatz 2 · 10⁻⁶ m bis 1 cm (Anteil an der Kante
+1,6 · 10⁻⁵ bis 0,08); ab 1,25 mm (1 %) findet ihn nur noch die Bedingung
+„nur ein Element“. In den 29 geschlossenen Gruppen der Modelle von
+test_mesher3d und test_sweep lagen zwei verschiedene Knoten mindestens das
+0,995-Fache der kürzesten Kante an ihnen auseinander, und keinen ihrer
+Knoten benutzte nur ein Element; ihre Befunde sind mit der neuen Bedingung
+dieselben.
 
 Bedingung 2 allein trägt an länglichen Zellen nicht: Die Dicke eines
 Hohlraums folgt der kurzen Seite, L der langen. Gemessen am 23.09.2026, t/L:
@@ -6734,10 +6759,68 @@ die Aussparung; die Bilanz sind 1,17e-5 m³. Keine Lücke ist die Gruppe,
   mit je dem Volumen des Elements (326 cm³). Mit dieser Bedingung ist das
   ein FEHLER „Seiten im Inneren 6“, ebenso der Sechsflächner der Zelle 27 an
   allen acht Knoten (10 Seiten);
-* wenn sie **kein Volumen** hat (t/L ≤ 5 %, Bedingung 2 des Risses): ein
-  Ufer, dessen Rand auf der Hülle liegt, ist ein Schnitt;
+* wenn sie ein **Gegenüber** hat (`_haengende_gruppen`): Ein Knoten einer
+  offenen Gruppe liegt auf einer Seite einer anderen Gruppe, ohne ihre Ecke zu
+  sein (Abstand ≤ 1 % ihrer längsten Kante, `ABNAHME_KNOTENNAEHE`); dann sind
+  beide Gruppen Ufer derselben Stelle, ein T-Stoß mit hängenden Knoten oder
+  eine Trennfläche. Jedes Ufer schließt mit der Hülle den vernetzten Block
+  dahinter ein und hat darum Volumen. Gemessen am 23.09.2026 im
+  8 × 8 × 8-Netz des Würfels 1 × 1 × 1 m: die Eckzelle in 2 × 2 × 2 geteilt
+  (T-Stoß an der Oberfläche) war in Kuhn-Tetraedern zwei Lücken von zusammen
+  3906 cm³ und sonst nichts (`abnahme()` leer), in hex8 eine Lücke 1953 cm³
+  neben FEHLER 12; die Eckzelle mit eigenen Knoten abgetrennt, 10⁻⁵ oder
+  10⁻³ m versetzt, eine Lücke 1953 cm³ neben FEHLER 3. Heute FEHLER 15 bzw.
+  30 und 6 Seiten;
+* wenn sie **kein Volumen** hat: 2 V / A ≤ 1 % von L (`ABNAHME_KNOTENNAEHE`),
+  die Seiten liegen dann auf dem Fächer über der Hülle. Bis zum 23.09.2026
+  galt hier t/L ≤ 5 % (Bedingung 2 des Risses), und eine dünne echte Lücke
+  war ein FEHLER: am L-Prisma (h 0,2, 1493 tet4, ohne Befund) die von Hand
+  gelöschten Elemente 62, 69 und 70 (1,643 / 2,495 / 2,245 · 10⁻⁴ m³, t/L
+  2,87 / 4,50 / 3,36 %). Heute Lücken mit genau diesen Volumina. Seiten im
+  Inneren liegen mit ihrem Schwerpunkt weiter als 1 % ihres Durchmessers
+  neben der Hülle, und das Ufer einer Trennfläche fängt das Gegenüber; eine
+  Gruppe, an der diese Bedingung greift, ist nicht gemessen worden. Sie
+  bleibt als Schranke;
 * wenn sich kein p₀ findet: Die Schleife um einen Körper, den doppelte Knoten
   zerschneiden, läuft über gegenüberliegende Flächen.
+
+Eine Folge der neuen Volumenbedingung an einem Netz des eigenen Vernetzers: An der
+Platte 1 × 0,6 × 0,2 m mit Bohrung r 0,1 m, mit `mesh_koerper_frei`
+vernetzt (Ziellänge 0,04 m, 30 013 tet4), waren zwei offene Gruppen von je 4
+Seiten mit geschlossenem Rand auf der Hülle (V je 1,652 · 10⁻⁷ m³, t/L
+3,47 %, t / Dicke der Nachbarn 1,07 und 1,15) ein FEHLER; heute zwei Lücken
+von zusammen 0,33 cm³ (WARNUNG), die übrigen 4 Seiten bleiben ein FEHLER
+(Netzrand verfehlt die Randfläche, unten).
+
+**Die Ursache des FEHLERs** (23.09.2026). Was weder Riss noch Lücke ist,
+bekommt je Gruppe eine Ursache, und der Text nennt sie mit der Zahl der
+Seiten (`_URSACHEN`), in dieser Reihenfolge der Prüfung: doppelte Knoten
+(zwei Nummern näher als 1 % der kürzesten Kante oder, bei geschlossenen
+Gruppen, ein Knoten in nur einem Element); hängende Knoten (Gegenüber, siehe
+oben); verdrehtes Element; bei geschlossenen Gruppen Hohlraum; bei offenen
+**Netzrand verfehlt die Randfläche**. Die Reihenfolge ist nötig, weil
+`_verdrehte_elemente` auch ein losgelöstes Element und die feinen Elemente
+eines T-Stoßes nennt: Ihre Kanten teilt kein anderes Element (T-Stoß in der
+Ecke, hex8: vier Elemente „verdreht“). Vorher stand für jede Gruppe
+„verdrehtes Element, doppelte Knoten oder Hohlraum“ da. Gemessen:
+
+| Fall (23.09.2026) | Befund | Ursache |
+|---|---|---|
+| T-Stoß hex8 (1 gegen 2 × 2 × 2), Körper 2 × 1 × 1 m | FEHLER 5 (vorher ebenso) | hängende Knoten |
+| derselbe in Kuhn-Tetraedern | FEHLER 10 (vorher ebenso) | hängende Knoten |
+| U-Prisma 1,5 × 1 × 0,5 m, h 0,3, Standardweg, 1113 tet4, konform | FEHLER 4, WARNUNG Netzrand 9 | Netzrand verfehlt die Randfläche |
+| Platte 0,6 × 0,6 × 0,035 m, Bohrung r 6 mm (24-Eck), Ziellänge 0,05 m, `modell_vernetzen`, 24 712 tet4 | FEHLER 110, WARNUNG 29 | Netzrand verfehlt die Randfläche |
+| dieselbe mit `mesh_koerper_frei`, 14 242 tet4 | FEHLER 126, WARNUNG 31 | Netzrand verfehlt die Randfläche |
+| Stufe d 0,45 mm, t 0,02 m, `mesh_koerper_frei`, 1358 tet4 | FEHLER 5, WARNUNG 12 | Netzrand verfehlt die Randfläche |
+| Zelle 100 × 100 × 200 mm, Element 444 verdreht | FEHLER 8 | verdrehtes Element |
+
+Am U-Prisma liegen Netzknoten wie (0,404 | 0,23 | 0,083) im Körper neben der
+einspringenden Kante x = 0,4, y = 0,3; die Seiten von dort zu den Wänden der
+Aussparung laufen durch den Körper, andere stehen in die Aussparung
+(Netzvolumen 0,505338 gegen 0,505 m³). Für diese Ursache nennt der Text die
+Abhilfe, die gemessen wirkt: „Sechsflächner sweepen“ – U-Prisma 32 hex8 und
+16 pent6, Platte mit Bohrung 908 hex8 und 24 pent6, beide ohne Befund. Für
+die anderen Ursachen steht sie nicht da.
 
 Die Lücken eines Körpers sind eine WARNUNG mit Ort (Mitte der größten
 Schleife), Volumen und Anteil am Körper. Ein FEHLER werden sie, wenn sie
@@ -6746,7 +6829,15 @@ Gemessen an den Netzen des eigenen Vernetzers mit Lücke (L-, T- und
 U-Prismen, Standardweg): Lücken von 0,006 bis 0,113 % des Körpers. Der
 Text nennt die Abhilfen, die an diesen fünf Prismen gemessen halfen (Sweep,
 gmsh, Netgen: 5 von 5; andere
-Ziellänge 3 bis 4 von 5; MMG3D 0 von 5), und dass neu vernetzen mit denselben
+Ziellänge 3 bis 4 von 5; MMG3D 0 von 5). gmsh und Netgen ergeben mit
+derselben Netzweite (hs-Weg) nur 22 bis 37 % der Elemente des eigenen
+Vernetzers (L-Prisma h 0,25: 821 gegen 203 und 187 tet4); so war die
+Abhilfe zuerst gemessen. Nachgemessen am 23.09.2026 mit der Netzweite, die
+der Elementzahl des eigenen Vernetzers am nächsten kommt (0,6- bis 0,7-fach,
+Elementzahl 0,87- bis 1,05-fach; L h 0,25 / L h 0,1 / T h 0,2 / T h 0,1 /
+U h 0,1: gmsh 843 / 11 025 / 698 / 6078 / 7921, Netgen 713 / 10 566 / 628 /
+5548 / 8106 gegen 821 / 10 729 / 663 / 5997 / 8005): alle ohne Befund. Der
+Text sagt das so. Und er sagt, dass neu vernetzen mit denselben
 Einstellungen dasselbe Netz ergibt: Der Vernetzer rechnet mit fester Saat,
 und gemessen wurden dieselbe Elementzahl und derselbe Befund. Das gilt nur
 für Netze, die unverändert vom eigenen Vernetzer stammen; der Text rät darum
@@ -6864,7 +6955,12 @@ Knoten (vierte Fassung) nachgemessen, je viermal: 7,72–7,87 s gegen
 7,59–7,72 s. Die Dicke wird nur für die Elemente an Seiten im Inneren
 gerechnet, die Suche nach doppelten Knoten und verdrehten Elementen nur, wenn
 eine Gruppe sonst ein Riss wäre. Ein Körper mit krummen Randlinien wird an der
-ersten krummen Linie verlassen, bevor ein Element angefasst wird.
+ersten krummen Linie verlassen, bevor ein Element angefasst wird (mit der
+WARNUNG „Volumenbilanz nicht geprüft“). Mit relativer Knotennähe, Gegenüber
+und Ursachen (23.09.2026) am selben nicht konformen Netz (fünf Tetraeder je
+Zelle, 20 × 20 × 20, 91 200 Rissseiten), alter und neuer Stand abwechselnd,
+je zweimal drei Läufe auf einer stark belasteten Maschine: alt 9,2–15,4 s,
+neu 14,1–16,5 s – der Unterschied liegt in der Streuung.
 
 **Elemente, die eine Fuge überspannen.** Beim Ausführen einer Fuge werden die
 gemeinsamen Randknoten verdoppelt und die Elemente der gelösten Seite auf die
