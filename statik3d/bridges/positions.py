@@ -72,7 +72,9 @@ class Stellung:
     dreh_achse / dreh_punkt / dreh_winkel:
                   Drehung der bewegten Bauteile: Achse, ein Punkt darauf und der
                   Winkel in Grad. Gedreht werden die Knoten der Gruppen in
-                  dreh_gruppen (leer = alle Knoten, die nicht gelagert sind).
+                  dreh_gruppen (leer = alle Knoten ohne Knotenlager; Knoten
+                  auf Linien- und Flächenlagern bewegen sich mit, siehe
+                  _bewegte_knoten). Dieselben Knoten verschiebt verschiebung.
     dreh_gruppen: Elementgruppen, die sich mitbewegen.
     antrieb:      (Knoten, Momentenvektor [Nm]) - das Antriebsmoment, das die
                   Stellung hält. Wird als Knotenlast in einem eigenen Lastfall

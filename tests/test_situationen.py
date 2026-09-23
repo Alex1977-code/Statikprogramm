@@ -143,6 +143,75 @@ def test_stellung():
     check("unbekannte Stellung ist ein FEHLER", any("gibt es nicht" in x for x in m.check()))
 
 
+def test_stellung_texte_nennen_knotenlager():
+    """Ohne Gruppen bewegt eine Stellung alle Knoten ohne Knotenlager - auch
+    die auf Linien- und Flaechenlagern (Stellung._bewegte_knoten haelt nur die
+    Knoten aus m.supports fest; test_importers.test_json_anhaengen_stellung_
+    protokoll haelt das als gewollt fest). Die Beschriftung im Stellungsdialog
+    ("Gruppen (leer = alles ohne Lager)"), der Docstring von Stellung ("leer =
+    alle Knoten, die nicht gelagert sind") und die Zeile Verdrehung im
+    Benutzerhandbuch ("bewegt sind alle nicht gelagerten Knoten") sagten bis
+    zum 23.09.2026 etwas anderes (Befund B059). Gemessen am 23.09.2026 am
+    Beispiel 'frame' (17 Knoten, Knotenlager an 0 und 5), Verschiebung 1 m in
+    z: ein starres Linienlager an den Knoten 1 und 2 und ein Flaechenlager an
+    3 und 4 - alle vier um 1,0 m verschoben, 15 von 17 Knoten bewegt.
+    Geprueft wird zuerst das Verhalten (damit die Texte an ihm haengen), dann
+    die drei Texte."""
+    from statik3d import examples_lib
+    from statik3d.model import LineSupport, SurfaceSupport, DofBehaviour
+    from statik3d.situationen import situationsmodell
+
+    m = examples_lib.build_example("frame")
+    fest = sorted({s.node for s in m.supports})
+    frei = [i for i in range(m.nn) if i not in fest]
+    auf_linie, auf_flaeche = frei[:2], frei[2:4]
+    starr = {k: DofBehaviour("rigid") for k in range(3)}
+    m.line_supports.append(LineSupport("LL", nodes=auf_linie, behaviour=dict(starr)))
+    m.surface_supports.append(SurfaceSupport("FL", nodes=auf_flaeche, areas=[1.0, 1.0],
+                                             behaviour=dict(starr)))
+    m.stellungen.append(Stellung("Offen", verschiebung=(0.0, 0.0, 1.0)))
+    m.situationen["S"] = Situation("S", stellung="Offen")
+    ms, _a, _log = situationsmodell(m, "S")
+    dz = np.asarray(ms.nodes)[:, 2] - np.asarray(m.nodes)[:, 2]
+    bewegt = np.abs(np.asarray(ms.nodes) - np.asarray(m.nodes)).max(axis=1) > 1e-12
+    check("ohne Gruppe: Knoten auf Linien- und Flächenlager um 1 m verschoben, "
+          "nur Knotenlager bleiben",
+          np.allclose(dz[auf_linie + auf_flaeche], 1.0) and not bewegt[fest].any()
+          and int(bewegt.sum()) == m.nn - len(fest),
+          f"Knotenlager an {fest}; dz Linienlager {dz[auf_linie].tolist()}, "
+          f"Flächenlager {dz[auf_flaeche].tolist()}; bewegt {int(bewegt.sum())} von {m.nn}")
+
+    def sagt_knotenlager(text):
+        # der Text muss das Knotenlager als das nennen, was festhaelt, und
+        # sagen, dass Linien- und Flaechenlager mitgehen; "nicht gelagert" /
+        # "ohne Lager" waere wieder die alte, falsche Aussage
+        t = " ".join((text or "").split())
+        return ("Knotenlager" in t and "Linien- und Flächenlager" in t
+                and "nicht gelagert" not in t and "ohne Lager" not in t)
+
+    doc = Stellung.__doc__ or ""
+    stueck = doc[doc.find("dreh_achse / dreh_punkt"):doc.find("dreh_gruppen: Elementgruppen")]
+    check("Docstring Stellung: leere dreh_gruppen = alle Knoten ohne Knotenlager",
+          bool(stueck) and sagt_knotenlager(stueck), " ".join(stueck.split()))
+
+    hb = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                      "docs", "Benutzerhandbuch.md")
+    with open(hb, encoding="utf-8") as f:
+        zeilen = [z for z in f if z.startswith("| Verdrehung [°], Drehachse, Punkt der Achse |")]
+    check("Benutzerhandbuch, Maske Stellung: Zeile Verdrehung nennt das Knotenlager",
+          len(zeilen) == 1 and sagt_knotenlager(zeilen[0]), " / ".join(z.strip() for z in zeilen))
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6 import QtWidgets
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])  # noqa: F841
+    from statik3d.gui.dialogs import StellungDialog
+    dlg = StellungDialog(stellung=Stellung("Offen"))
+    texte = [w.text() for w in dlg.findChildren(QtWidgets.QLabel) if w.text().startswith("Gruppen")]
+    dlg.deleteLater()
+    check("Stellungsdialog: Beschriftung Gruppen nennt das Knotenlager",
+          len(texte) == 1 and sagt_knotenlager(texte[0]), " / ".join(texte))
+
+
 def test_stellung_lage_und_wirkung():
     """Ausgangsstellung, Verschiebung, abgeschaltete Staebe, biegesteife
     Gelenke und Lager je Stellung - gegen geschlossene Loesungen."""
@@ -350,6 +419,7 @@ def test_abgeschalteter_stab_in_jeder_situation():
 
 def main():
     for t in (test_abgeschalteter_stab_in_jeder_situation, test_abgeschaltete_elemente, test_stellung, test_stellung_lage_und_wirkung,
+              test_stellung_texte_nennen_knotenlager,
               test_speichern, test_subsystem, test_kombinationen_je_situation):
         print(f"\n--- {t.__name__} ---")
         try:
