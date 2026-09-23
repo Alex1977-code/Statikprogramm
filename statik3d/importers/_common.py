@@ -126,25 +126,33 @@ def count_duplicate_nodes(model: Model, tol: float = DEFAULT_TOL) -> int:
     return int(model.nn - len(np.unique(key, axis=0)))
 
 
-def merge_duplicate_nodes(model: Model, tol: float = DEFAULT_TOL) -> int:
+def merge_duplicate_nodes(model: Model, tol: float = DEFAULT_TOL, ab: int = 0) -> int:
     """Doppelte Knoten zusammenfuehren, alle Verweise umhaengen.
 
     Wie mesher.merge_nodes, beruecksichtigt aber zusaetzlich die Knotenlasten
     *aller* Lastfaelle sowie Kontaktobjekte. Rueckgabe: Anzahl entfernter Knoten.
+
+    ``ab``: nur die Knoten ab dieser Nummer untereinander zusammenfuehren; die
+    davor bleiben unberuehrt, auch wenn einer von ihnen auf einem spaeteren
+    liegt. Das braucht das Anhaengen einer Datei (``import_file`` mit
+    ``model``): zusammengefuehrt wird dort nur innerhalb der Datei, an das
+    Ziel schliesst danach ``anschluss_zusammenfuehren`` an (Befund B071,
+    23.09.2026). Mit ``ab=0`` wie bisher ueber das ganze Modell.
     """
-    if model.nn == 0:
+    ab = max(0, int(ab))
+    if model.nn <= ab:
         return 0
-    key = np.floor(model.nodes / tol + 0.5).astype(np.int64)
+    key = np.floor(model.nodes[ab:] / tol + 0.5).astype(np.int64)
     _, first, inverse = np.unique(key, axis=0, return_index=True, return_inverse=True)
     inverse = np.asarray(inverse).reshape(-1)
     order = np.argsort(first)
     remap = np.zeros(len(first), dtype=int)
     remap[order] = np.arange(len(first))
-    new_index = remap[inverse]
-    n_removed = model.nn - len(first)
+    n_removed = model.nn - ab - len(first)
     if n_removed == 0:
         return 0
-    new_nodes = np.zeros((len(first), 3))
+    new_index = np.concatenate([np.arange(ab, dtype=int), ab + remap[inverse]])
+    new_nodes = np.zeros((ab + len(first), 3))
     new_nodes[new_index] = model.nodes
     _umnummerieren(model, new_index, new_nodes)
     return n_removed
@@ -197,6 +205,28 @@ def anschluss_zusammenfuehren(model: Model, n_ziel: int,
     new_nodes = np.vstack([model.nodes[:n_ziel], model.nodes[n_ziel:][bleibt]])
     _umnummerieren(model, new_index, new_nodes)
     return n_merge, stellen
+
+
+def anschluss_melden(log: Optional[list], n: int, unklar: list,
+                     quelle: str = "Quelle") -> None:
+    """Ergebnis von ``anschluss_zusammenfuehren`` ins Protokoll schreiben.
+
+    Gemeinsam fuer das Anhaengen eines JSON-Modells (``quelle="Quelle"``) und
+    einer anderen Datei (``quelle="Datei"``), damit beide Wege dieselbe
+    Warnung fuer uneindeutige Stellen geben."""
+    if n:
+        say(log, f"{n} Knoten der {quelle} lagen auf Knoten des Ziels und "
+                 "wurden zusammengeführt")
+    if unklar:
+        x, y, z = unklar[0]
+        warn(log,
+             f"An {len(unklar)} Stelle{'' if len(unklar) == 1 else 'n'} liegen in "
+             f"Ziel oder {quelle} schon mehrere Knoten aufeinander (etwa die beiden "
+             "Seiten einer Kontaktfuge), und ein Knoten des anderen Teils liegt "
+             "dazu. Dort wurde nichts "
+             "zusammengeführt, weil nicht eindeutig ist, welcher Knoten anschließen "
+             f"soll - die erste bei ({x:g}, {y:g}, {z:g}) m. Bitte dort prüfen, ob "
+             f"Ziel und {quelle} verbunden sein sollen.")
 
 
 def _umnummerieren(model: Model, new_index, new_nodes) -> None:

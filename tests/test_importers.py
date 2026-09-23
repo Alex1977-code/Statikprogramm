@@ -1574,6 +1574,117 @@ def test_json_anhaengen_fuge_traegt_wie_allein():
                    f"selbst {selbst} von {len(z.gap_elements)}")
 
 
+def _infocad_text(knoten, elemente) -> str:
+    """Kleinste InfoCAD-Textausgabe (/ExportTxt) mit Staeben. Ihr Leser legt
+    jeden Knoten ohne Abgleich an; zusammengefuehrt und angeschlossen wird
+    erst in der Nachbereitung von import_file."""
+    def block(name, zeilen):
+        aus = [f"BEGIN {name} N={len(zeilen)} TIME=23.09.26 12:00", "?\t?\t?\t?"]
+        aus += ["\t".join(str(x) for x in z) for z in zeilen]
+        return "\n".join(aus + [f"END {name}"])
+    el = [[i + 1, 2, a, b, 0, 0, 0, 0, 1, 1, 0, 0, 655617]
+          for i, (a, b) in enumerate(elemente)]
+    kn = [[i + 1] + [f"{c:g}" for c in p] for i, p in enumerate(knoten)]
+    return "\n".join([block("KNOTEN", kn), block("ELEMENTE", el),
+                      block("MAT", [[1, 1, "210000", "81000", "0,3", "1,2e-5", "78,5"]]),
+                      block("QUERSW", [[1, 1, "0,0", 0, 0]])]) + "\n"
+
+
+def test_datei_anhaengen_fuge_bleibt():
+    """Eine andere Datei als JSON (DXF, IFC, .inp, .rf6, InfoCAD …) an ein
+    Ziel mit getrennter Fuge anhaengen: die Fuge bleibt getrennt.
+
+    Befund B071. Bis zur Nachbesserung vom 23.09.2026 lief die Nachbereitung
+    von import_file beim Anhaengen merge_duplicate_nodes ueber das ganze
+    Modell. Gemessen am 23.09.2026 mit dem Ziel unten (zwei Staebe, dazwischen
+    das Spaltelement (1, 2), aussen eingespannt, 1 kN zieht am Fugenende
+    des linken Stabes nach -x, die Fuge oeffnet) und einer .inp abseits bei
+    x = 10…11:
+    allein Rx = 1000,0 N am linken Lager, nach dem Anhaengen Spaltelement
+    (1, 1) und Rx = 500,0 N - beide Staebe verschweisst; das Protokoll sagte
+    nur "1 doppelte Knoten zusammengefuehrt". Beim JSON-Anhaengen war das
+    schon behoben (test_json_anhaengen_doppelknoten_bleiben).
+
+    Jetzt werden nur die Knoten der Datei untereinander zusammengefuehrt
+    (wie bei einem frischen Import) und dann nur eindeutig an das Ziel
+    angeschlossen (_common.anschluss_zusammenfuehren)."""
+    inp = textwrap.dedent("""\
+        *HEADING
+        fern
+        *NODE, NSET=ALLE
+        1, 10.0, 0.0, 0.0
+        2, 11.0, 0.0, 0.0
+        *ELEMENT, TYPE=B31, ELSET=BALKEN
+        1, 1, 2
+        *NSET, NSET=FEST
+        1
+        *MATERIAL, NAME=STAHL
+        *ELASTIC
+        210.0E9, 0.3
+        *BEAM SECTION, SECTION=RECT, ELSET=BALKEN, MATERIAL=STAHL
+        0.1, 0.05
+        0.0, 0.0, -1.0
+        *BOUNDARY
+        FEST, ENCASTRE
+        """)
+
+    def ziel():
+        m = _zwei_staebe_mit_spalt("Ziel", 0.0)
+        m.fix(0, "all")
+        m.fix(3, "all")
+        m.load_node(1, Fx=-1000.0, case="LF1")
+        return m
+
+    def rx(m):
+        r = solver.solve_static(m, case="LF1", workers=1)
+        return float(np.asarray(r.reactions).reshape(-1, 6)[0, 0])
+
+    allein = rx(ziel())
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "fern.inp")
+        with open(p, "w") as f:
+            f.write(inp)
+        log = []
+        z = import_file(p, model=ziel(), log=log)
+        spalt = [(g.node_a, g.node_b) for g in z.gap_elements]
+        expect("Datei anhaengen (.inp abseits): Spaltelement des Ziels verbindet weiter "
+               "zwei Knoten", spalt == [(1, 2)] and z.nn == 6,
+               f"{spalt}, {z.nn} Knoten, Elemente {[e.nodes for e in z.elements]}")
+        r = rx(z)
+        expect("Datei anhaengen (.inp abseits): linkes Lager traegt die 1 kN wie allein",
+               abs(allein - 1000.0) < 1.0 and abs(r - allein) < 1.0,
+               f"allein {allein:.1f} N, angehaengt {r:.1f} N")
+        expect("Datei anhaengen (.inp abseits): keine Zeile ueber zusammengefuehrte Knoten",
+               not any("zusammengef" in x for x in log), "\n".join(log))
+
+        # InfoCAD: K1 liegt auf dem Zielknoten 3 (eindeutig), K2/K3 liegen in
+        # der Datei aufeinander, K5 liegt auf der Fuge des Ziels bei x = 1
+        p = os.path.join(d, "teil.txt")
+        with open(p, "w", encoding="utf-8", newline="\r\n") as f:
+            f.write(_infocad_text([(2, 0, 0), (2, 1, 0), (2, 1, 0), (3, 1, 0),
+                                   (1, 0, 0), (1, 1, 0)],
+                                  [(1, 2), (3, 4), (5, 6)]))
+        frisch = import_file(p, log=[])
+        expect("Datei frisch importiert: Knoten der Datei werden untereinander "
+               "zusammengefuehrt", frisch.nn == 5, f"{frisch.nn} Knoten")
+        log = []
+        z = import_file(p, model=_zwei_staebe_mit_spalt("Ziel", 0.0), log=log)
+    spalt = [(g.node_a, g.node_b) for g in z.gap_elements]
+    knoten = [e.nodes for e in z.elements]
+    unklar = [x for x in log if x.startswith("WARNUNG") and "An 1 Stelle " in x
+              and "(1, 0, 0)" in x]
+    expect("Datei anhaengen (InfoCAD): Fuge des Ziels bleibt, Doppel der Datei und "
+           "eindeutiger Anschluss zusammengefuehrt, Knoten auf der Fuge getrennt",
+           spalt == [(1, 2)] and z.nn == 8
+           and knoten == [[0, 1], [2, 3], [3, 4], [4, 5], [6, 7]],
+           f"Spalt {spalt}, {z.nn} Knoten, Elemente {knoten}")
+    expect("Datei anhaengen (InfoCAD): das Protokoll nennt Anschluss und uneindeutige Stelle",
+           len(unklar) == 1
+           and any("1 Knoten der Datei lagen auf Knoten des Ziels" in x for x in log)
+           and any(x.startswith("1 doppelte Knoten zusammengefuehrt") for x in log),
+           "\n".join(log))
+
+
 def test_json_anhaengen_ermuedung_auf_kombination():
     """Ein Zustand einer Ermuedungslast darf eine Kombination sein (am CBG
     alle 20). Wird die Kombination der Quelle umbenannt, folgt ihr die
@@ -1884,7 +1995,7 @@ TESTS = [
          test_rfem_csv_folder, test_dispatcher, test_json_anhaengen_vollstaendig,
          test_json_anhaengen_hallenrahmen, test_json_anhaengen_eigengewicht_und_gleiches,
          test_json_anhaengen_doppelknoten_bleiben, test_doppelte_knoten_verweise,
-         test_json_anhaengen_fuge_traegt_wie_allein,
+         test_json_anhaengen_fuge_traegt_wie_allein, test_datei_anhaengen_fuge_bleibt,
          test_json_anhaengen_ermuedung_auf_kombination, test_json_anhaengen_koerpergruppe,
          test_json_anhaengen_stellung_des_ziels, test_json_anhaengen_stellung_protokoll,
          test_json_anhaengen_schluessel,
