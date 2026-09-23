@@ -194,11 +194,13 @@ Geprüft in `tests/test_infocad.py`.
 **Lastkombinationen aus der Tabelle zählen sich ab** (seit 22.09.2026). Die
 Schlusszeile „n von m Lastkombinationen“ zählt jede Zeile von
 „2.5 Lastkombinationen“. Eine eigene Protokollzeile bekommt jede nicht
-übernommene Zeile (mit Grund), jede aufgelöste, jede ohne Nummer und jede,
-die einen Ausweichnamen bekommt, weil ihr Name schon vergeben ist (mit ihrem
-Ergebnis); eine Zeile, die nur aus eigenen Lastfall-Anteilen besteht und
-unter ihrer Tabellennummer angelegt wird, steht nur in dieser Zählung. Ein Verweis auf eine andere Lastkombination
-derselben Tabelle („CO3“ oder „LK3“, auch wenn sie weiter unten steht) wird
+übernommene Zeile (mit Grund), jede aufgelöste, jede ohne Nummer, jede mit
+einer Nummer, die die Tabelle mehrfach führt (seit 23.09.2026, siehe unten),
+und jede, die einen Ausweichnamen bekommt, weil ihr Name schon vergeben ist
+(mit ihrem Ergebnis); eine Zeile, die nur aus eigenen Lastfall-Anteilen
+besteht und unter ihrer Tabellennummer angelegt wird, die die Tabelle nur
+einmal führt, steht nur in dieser Zählung. Ein Verweis auf eine andere
+Lastkombination derselben Tabelle („CO3“ oder „LK3“, auch wenn sie weiter unten steht) wird
 mit deren Faktoren mal dem Vorfaktor aufgelöst: „LF1 + CO1“ mit
 CO1 = 1,35·LF1 + 1,5·LF2 ergibt 2,35·LF1 + 1,5·LF2, und das Protokoll sagt
 es. Nicht auflösbar sind ein Verweis auf eine **Ergebniskombination** („EK1“

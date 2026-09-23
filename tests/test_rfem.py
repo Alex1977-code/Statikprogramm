@@ -814,13 +814,77 @@ def test_kombination_zeilennummer():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def test_kombination_eigene_zeile():
+    """Welche Zeile der Tabelle eine eigene Protokollzeile bekommt, wie Schnittstellen.md sie aufzaehlt.
+
+    Schnittstellen.md, „Lastkombinationen aus der Tabelle zählen sich ab“:
+    eine eigene Zeile bekommt jede nicht übernommene, jede aufgelöste, jede
+    ohne Nummer, jede mit einer Nummer, die die Tabelle mehrfach führt, und
+    jede mit Ausweichnamen; eine Zeile nur aus eigenen Lastfall-Anteilen
+    unter ihrer nur einmal geführten Tabellennummer steht nur in der
+    Schlusszeile. Gegenpruefung vom 24.09.2026: seit der Kur zu B086
+    (e9aecb7) bekommt auch eine angelegte Zeile mit mehrfach gefuehrter
+    Nummer ohne Verweis und ohne Ausweichnamen eine eigene Zeile
+    (['2;GZT;LF1', '2;GZT;LF2'] -> „Kombination LK2 (Zeile 2 in
+    „2.5 Lastkombinationen“; die Tabelle führt die Nummer 2 mehrfach):
+    1*LF1“; am Stand ec6448c stand zu ihr keine Zeile), das Handbuch zaehlte
+    sie aber nicht auf und nannte sie unter „steht nur in dieser Zählung“.
+    Geprueft werden beide Haelften des Satzes.
+    """
+    d = tempfile.mkdtemp(prefix="s3d_ke_")
+    try:
+        def w(n, t):
+            with open(os.path.join(d, n), "w", encoding="utf-8") as f:
+                f.write(t)
+        w("1.1 Knoten.csv", "Knoten Nr.;X [m];Y [m];Z [m]\n1;0;0;0\n2;2;0;0\n")
+        w("2.1 Lastfaelle.csv", "Lastfall Nr.;Bezeichnung\n1;LF 1\n2;LF 2\n3;LF 3\n")
+        w("2.5 Lastkombinationen.csv",
+          "Lastkombination Nr.;Bemessungssituation;Belastung\n"
+          "1;GZT;1.35*LF1\n"      # Zeile 2: eindeutige Nummer, nur eigene Anteile
+          "2;GZT;LF1 + CO1\n"     # Zeile 3: aufgeloest
+          ";GZT;1.5*LF2\n"        # Zeile 4: ohne Nummer -> LK7
+          "3;GZT;LF1\n"           # Zeile 5: Nummer 3 mehrfach, unter LK3 angelegt
+          "3;GZT;LF2\n"           # Zeile 6: Nummer 3 mehrfach, Ausweichname LK3_2
+          "4;GZT;1.0*EK1\n"       # Zeile 7: nicht uebernommen
+          "5;GZT;LF3\n"           # Zeile 8: LK5 gab es im Modell schon -> LK5_2
+          "6;GZT;0.9*LF3\n")      # Zeile 9: eindeutige Nummer, nur eigene Anteile
+        m = Model("Ke")
+        m.add_combination("LK5", {"LF1": 1.0}, "ULS", "vorher")
+        log = []
+        m = import_rfem_tables(d, m, log)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    eigene = {}
+    for z in log:
+        mm = re.match(r"Kombination (LK\d+(?:_\d+)?)[ :]", z)
+        if mm:
+            eigene.setdefault(mm.group(1), []).append(z)
+    angelegt = sorted(k for k in m.combinations if k != "LK5")
+    check("sieben Zeilen angelegt", angelegt == ["LK1", "LK2", "LK3", "LK3_2", "LK5_2",
+                                                "LK6", "LK7"], str(angelegt))
+    for name, grund in (("LK2", "aufgelöst"), ("LK7", "ohne Nummer"),
+                        ("LK3", "mehrfach"), ("LK3_2", "mehrfach"),
+                        ("LK5_2", "gab es schon")):
+        z = eigene.get(name, [])
+        check(f"{name} hat genau eine eigene Zeile mit Ergebnis („{grund}“)",
+              len(z) == 1 and grund in z[0] and "*LF" in z[0], str(z))
+    for name in ("LK1", "LK6"):
+        check(f"{name} (eindeutige Nummer, nur eigene Anteile) steht nur in der Zählung",
+              name not in eigene, str(eigene.get(name)))
+    z = next((z for z in log if z.startswith("WARNUNG: Kombination LK4 ")), "keine Zeile")
+    check("LK4 wird mit Grund gewarnt", "Umhüllende" in z, z)
+    check("Schlusszeile „7 von 8 Lastkombinationen“",
+          "7 von 8 Lastkombinationen" in "\n".join(log), _schlusszeile(log))
+
+
 def main():
     for t in (test_native_sqlite, test_native_zip_und_json, test_native_unbekannt,
               test_tabellen_erweitert, test_kombinationen_abgezaehlt,
               test_kombination_minus_vor_verweis, test_kombination_unerkannter_teil,
               test_kombination_verweis_auf_rest, test_kombination_verweis_grund,
               test_kombination_ohne_nummer_name, test_kombination_plus_nur_verbindet,
-              test_kombination_doppelte_nummer, test_kombination_zeilennummer):
+              test_kombination_doppelte_nummer, test_kombination_zeilennummer,
+              test_kombination_eigene_zeile):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
