@@ -347,12 +347,104 @@ def test_im_modell_und_bericht():
           "Gerechnet wird nach Theorie I. Ordnung" in h0)
 
 
+def _druckkragarm(theorie2="aus", druck=5.0e5):
+    """Kragarm unter Druck mit Querlast am Ende, drei Lastfaelle."""
+    from statik3d.model import Section
+    from statik3d import mesher
+    m = Model("Druckkragarm")
+    m.add_material(Material("S", E=2.1e11, rho=0.0))
+    m.add_section(Section.rectangle("R", 0.1, 0.2))
+    ids = mesher.line_of_beams(m, "S", "R", (0, 0, 0), (3.0, 0, 0), 4)
+    m.fix(ids[0], "all")
+    for name, fy in (("LF1", 1.0e3), ("LF2", 2.0e3), ("LF3", 1.5e3)):
+        m.add_load_case(name, "G")
+        m.load_node(ids[-1], Fx=-druck, Fy=fy, case=name)
+    m.design.theorie2 = theorie2
+    m.design.imperfektionen = False
+    return m, ids
+
+
+def _lastfallsatz(html):
+    import re
+    treffer = re.search(r"Die im Kapitel „Ergebnisse“ ausgewiesenen Lastfälle[^<]*", html)
+    return treffer.group(0) if treffer else ""
+
+
+def test_bericht_lastfaelle_hoeherer_ordnung():
+    """Das Theoriekapitel sagte bis zum 23.09.2026 ohne Ausnahme: „Die im
+    Kapitel Ergebnisse ausgewiesenen Lastfälle sind Ergebnisse nach Theorie I.
+    Ordnung" - auch fuer einen Lastfall, dessen Feld Theorie auf II./III.
+    steht und dessen Ergebnis in an.cases nach II./III. Ordnung gerechnet ist
+    (Druckkragarm: LF1 5,339 mm am Kragende statt linear 2,574 mm)."""
+    from statik3d.report import Report
+    m, ids = _druckkragarm("aus")
+    m.load_cases["LF1"].theorie = "II"
+    m.load_cases["LF2"].theorie = "III"
+    an = solver.solve_all(m, design=False)
+    lin = solver.solve_cases(m)
+    sp = ids[-1]
+    u_ii, u_lin = an.cases["LF1"].u[sp, 1] * 1e3, lin["LF1"].u[sp, 1] * 1e3
+    check("Voraussetzung: LF1 ist nach II. Ordnung gerechnet",
+          an.cases["LF1"].info.get("theorie") == "II. Ordnung" and u_ii > 1.5 * u_lin,
+          f"u_y {u_ii:.3f} mm, linear {u_lin:.3f} mm")
+    check("Voraussetzung: LF2 ist nach III. Ordnung gerechnet",
+          an.cases["LF2"].info.get("theorie") == "III. Ordnung")
+    satz = _lastfallsatz(Report(m, an).html())
+    check("Theoriekapitel enthält den Satz über die Lastfälle", bool(satz))
+    check("er nimmt LF1 als II. Ordnung aus", "LF1 (II. Ordnung)" in satz, satz[:160])
+    check("und LF2 als III. Ordnung", "LF2 (III. Ordnung)" in satz)
+    check("LF3 (linear) bleibt unter Theorie I. Ordnung",
+          "nach Theorie I. Ordnung" in satz and "LF3" not in satz)
+
+    m, ids = _druckkragarm("aus")
+    for lc in m.load_cases.values():
+        lc.theorie = "II"
+    satz = _lastfallsatz(Report(m, solver.solve_all(m, design=False)).html())
+    check("alle Lastfälle nach II. Ordnung: kein Wort von Theorie I. Ordnung",
+          bool(satz) and "Theorie I. Ordnung" not in satz
+          and all(f"LF{k} (II. Ordnung)" in satz for k in (1, 2, 3)), satz[:160])
+
+    # Scheitert die Rechnung nach II. Ordnung, bleibt das lineare Ergebnis
+    # (info["theorie"] = "I") - der Lastfall gehoert dann zu Theorie I.
+    m, ids = _druckkragarm("aus")
+    m.load_cases["LF1"].theorie = "II"
+    m.load_cases["LF2"].theorie = "II"
+    echt = T2.solve_theorie2
+
+    def lf2_scheitert(model, factors, name, *a, **k):
+        if name == "LF2":
+            raise ValueError("Probe: II. Ordnung verweigert")
+        return echt(model, factors, name, *a, **k)
+
+    T2.solve_theorie2 = lf2_scheitert
+    try:
+        an = solver.solve_all(m, design=False)
+    finally:
+        T2.solve_theorie2 = echt
+    satz = _lastfallsatz(Report(m, an).html())
+    check("gescheiterter Lastfall zählt zu Theorie I. Ordnung",
+          an.cases["LF2"].info.get("theorie") == "I" and "LF1 (II. Ordnung)" in satz
+          and "LF2" not in satz, satz[:160])
+
+    # Gegenprobe: lineare Lastfaelle, Kombination nach II. Ordnung - der Satz
+    # bleibt, wie er war
+    from statik3d.model import Combination
+    m, ids = _druckkragarm("ein")
+    m.combinations["K1"] = Combination("K1", {"LF1": 1.0, "LF2": 1.0}, "ULS")
+    satz = _lastfallsatz(Report(m, solver.solve_all(m, design=False)).html())
+    check("nur lineare Lastfälle: der Satz ist unverändert",
+          satz == "Die im Kapitel „Ergebnisse“ ausgewiesenen Lastfälle sind Ergebnisse "
+                  "nach Theorie I. Ordnung und dürfen nicht mehr überlagert werden; "
+                  "die Kombinationen und die Umhüllenden sind es nicht.", satz[:160])
+
+
 def main():
     print("=" * 92)
     print("STATIK3D - Verifikation Theorie II. Ordnung (DIN EN 1993-1-1, 5.2/5.3)")
     print("=" * 92)
     for t in (test_imperfektionsbeiwerte, test_alpha_cr, test_vergroesserung,
-              test_ersatzlasten, test_vorkruemmung, test_im_modell_und_bericht):
+              test_ersatzlasten, test_vorkruemmung, test_im_modell_und_bericht,
+              test_bericht_lastfaelle_hoeherer_ordnung):
         print()
         t()
     ok = sum(1 for _n, o in RESULTS if o)

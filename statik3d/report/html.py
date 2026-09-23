@@ -1956,10 +1956,8 @@ class Report:
         if gerechnet:
             items.append(
                 "Nach Theorie II. Ordnung gilt die Superposition nicht mehr: jede "
-                "Kombination wird einzeln am verformten System gerechnet. Die im "
-                "Kapitel „Ergebnisse“ ausgewiesenen Lastfälle sind Ergebnisse nach "
-                "Theorie I. Ordnung und dürfen nicht mehr überlagert werden; die "
-                "Kombinationen und die Umhüllenden sind es nicht.")
+                "Kombination wird einzeln am verformten System gerechnet. "
+                + self._lastfallsatz_theorie())
         ek = [n for n, c in self.model.combinations.items()
               if c.ist_umhuellende and self.model.theorie_von(c) == "II"]
         if ek:
@@ -4111,6 +4109,47 @@ class Report:
         else:
             b.append(("p", "Es liegen keine offenen Hinweise oder Warnungen vor."))
         return b
+
+    def _lastfallsatz_theorie(self) -> str:
+        """Satz des Theoriekapitels ueber die Lastfallergebnisse.
+
+        Bis zum 23.09.2026 hiess es hier ohne Ausnahme, die Lastfaelle seien
+        Ergebnisse nach Theorie I. Ordnung. Ein Lastfall mit dem Feld Theorie
+        auf II. oder III. steht aber nach II./III. Ordnung in an.cases
+        (solver._lastfaelle_hoeherer_ordnung ersetzt das lineare Ergebnis):
+        am Druckkragarm LF1 5,339 mm am Kragende statt linear 2,574 mm, und
+        der Bericht nannte ihn trotzdem Theorie I (gemessen 23.09.2026,
+        tests/test_theorie2.py). Massgebend ist darum, was gerechnet WURDE
+        (res.info["theorie"], wie in ``_theorie_spalte``) - ein gescheiterter
+        Lastfall traegt dort "I" und gehoert zu Recht zu Theorie I.
+        """
+        hoeher, linear = [], 0
+        for name, res in self.cases.items():
+            th = _theorie_kurz((getattr(res, "info", None) or {}).get("theorie") or "I")
+            if th in ("II", "III"):
+                hoeher.append(f"{name} ({th}. Ordnung)")
+            else:
+                linear += 1
+        if not hoeher:
+            return ("Die im Kapitel „Ergebnisse“ ausgewiesenen Lastfälle sind Ergebnisse "
+                    "nach Theorie I. Ordnung und dürfen nicht mehr überlagert werden; die "
+                    "Kombinationen und die Umhüllenden sind es nicht.")
+        if len(hoeher) > 10:
+            liste = ", ".join(hoeher[:10]) + f" … ({len(hoeher)} Lastfälle)"
+        elif len(hoeher) == 1:
+            liste = hoeher[0]
+        else:
+            liste = ", ".join(hoeher[:-1]) + " und " + hoeher[-1]
+        if not linear:
+            return ("Die im Kapitel „Ergebnisse“ ausgewiesenen Lastfälle sind selbst am "
+                    f"verformten System gerechnet – {liste} – und dürfen nicht "
+                    "überlagert werden.")
+        return ("Die im Kapitel „Ergebnisse“ ausgewiesenen Lastfälle sind Ergebnisse "
+                f"nach Theorie I. Ordnung – ausgenommen {liste}, "
+                + ("der selbst am verformten System gerechnet ist" if len(hoeher) == 1
+                   else "die selbst am verformten System gerechnet sind")
+                + " – und dürfen nicht mehr überlagert werden; die Kombinationen und "
+                  "die Umhüllenden sind es nicht.")
 
     def _theorie_spalte(self, lc) -> str:
         """Die **gerechnete** Theorie eines Lastfalls, nicht die eingestellte.
