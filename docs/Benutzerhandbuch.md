@@ -3713,9 +3713,10 @@ nichts stillschweigend Übergangenes:
 | Formgüte des schlechtesten Elements je Körper | ≥ 0,05 |
 | Randtreue je Körper | ≥ 99 % |
 | **Volumenbilanz je Körper**: Elemente gegen Randflächen | ≤ 0,5 % (an windschiefen Flächen zuzüglich der Sehnen) |
-| **Seiten im Inneren**: freie Elementseiten, hinter denen der Körper weitergeht | 0 |
+| **Seiten im Inneren**: freie Elementseiten, hinter denen der Körper weitergeht (verdrehtes Element, doppelte Knoten, Hohlraum) | 0 |
+| Lücke im Netzrand (Warnung, über 0,5 % des Körpers Fehler): an der Oberfläche fehlt dem Netz ein Stück | 0 |
 | Netzrand neben der Hülle (Warnung): freie Seiten neben den Randflächen, außen oder als Beule | 0 |
-| Riss im Netz (Warnung): Riss oder Hohlraum ohne nennenswertes Volumen | 0 |
+| Riss im Netz (Warnung): geschlossener Hohlraum, dünn gegen seine eigenen Seiten | 0 |
 
 **Der verdrehte Sechsflächner** (seit 22.09.2026). Stimmen die acht Knoten
 eines Sechsflächners, ist aber der Deckel um eine Ecke verdreht (4, 5, 6, 7 →
@@ -3738,17 +3739,50 @@ dagegen **außerhalb** des Körpers, ist es eine Warnung („Netzrand neben der
 Hülle“, mit dem größten Abstand in mm): so schnitt der freie Vernetzer an einem
 Prisma mit eckigem Loch eine einspringende Ecke ab (3 von 1024 Seiten,
 0,012 % mehr Volumen). Ebenfalls eine Warnung ist der **Riss ohne Weite**
-(„Riss im Netz“): freie Seiten im Inneren, die zusammen einen geschlossenen
-Hohlraum ohne nennenswertes Volumen umschließen — nicht mehr, als der freie
-Vernetzer selbst aussortiert. Solche Hohlräume bleiben, wenn er flache
+(„Riss im Netz“): freie Seiten im Inneren, die zusammen einen geschlossenen,
+**dünnen** Hohlraum umschließen. Dünn heißt: seine mittlere Dicke (zweimal
+Volumen durch Seitenfläche) ist höchstens 5 % der längsten Kante seiner
+Seiten. Das misst der Hohlraum an sich selbst, gleich wie fein oder grob das
+Netz daneben ist. Solche Hohlräume bleiben, wenn der freie Vernetzer flache
 Tetraeder aussortiert (Platte 0,9 × 0,9 × 0,035 m mit Bohrung: 8 Seiten, zwei
 Hohlräume von zusammen 0,056 mm³), oder wenn beiderseits einer Fläche dieselben
-Knoten verschieden in Dreiecke geteilt sind. Der Körper stimmt, die
-Verschiebungen passen dort aber nur an Knoten und Kanten zusammen. Bis zum
+Knoten verschieden in Dreiecke geteilt sind. Die Hohlräume des Vernetzers
+lagen in den Modellen der Prüfsuiten bei höchstens 3,55 %. Der Körper stimmt,
+die Verschiebungen passen dort aber nur an Knoten und Kanten zusammen. Bis zum
 23.09.2026 meldete die Abnahme die Hohlräume des Vernetzers als FEHLER „Seiten
 im Inneren“, vor jeder Rechnung mit der Rückfrage „Trotzdem rechnen?“ — und
-neu vernetzen ergibt dasselbe Netz. Ein Hohlraum mit dem Volumen eines
-Elements bleibt ein FEHLER, ebenso doppelte Knoten.
+neu vernetzen ergibt dasselbe Netz. Ein fehlendes Element, das nicht flach ist,
+bleibt ein FEHLER, ebenso ein verdrehtes Element und doppelte Knoten. Gemessen
+wurden der verdrehte Sechsflächner (6,9 %, in abgestuften Netzen von 1:1 bis
+100:1) und 40 fehlende Tetraeder an der Platte mit Bohrung (8,5 bis 12,8 %):
+alle FEHLER. Die erste Fassung dieser Regel vom selben Tag maß gegen das
+größte Element im ganzen Körper; in abgestuften Netzen ließ sie beides als
+Riss durchgehen.
+
+**Lücke im Netzrand** (Warnung, seit 23.09.2026). Fehlt dem Netz an der
+Oberfläche ein Stück, liegen die freien Seiten der Nachbarn im Inneren, und
+ihr Rand liegt auf der Randfläche. Das meldet die Abnahme mit Ort und Volumen,
+zum Beispiel: „Volumen K: an 1 Stelle fehlt dem Netz ein Stück an der
+Oberfläche (bei (0.921 | 0.412 | 0.400) m 552 cm³; zusammen 552 cm³ = 0.079 %
+des Körpers, 3 freie Elementseiten im Inneren)“. So lässt der eigene freie
+Vernetzer an L-, T- und U-Prismen einen Tetraeder weg: in einer Stichprobe
+über die Netzweiten 0,25, 0,2 und 0,1 m an 5 von 9 Netzen, Fehlbetrag 0,003
+bis 0,113 %. Bis zum 23.09.2026 war das ein FEHLER „Seiten im Inneren“ mit
+dem Rat „neu vernetzen“, und neu vernetzen ergibt dasselbe Netz. Geholfen hat
+an diesen fünf Prismen, gemessen: in den Netzeinstellungen „Sechsflächner
+sweepen“ (nur für Körper aus Grundfläche mal Weg) oder der Vernetzer gmsh bzw.
+Netgen, jeweils an allen fünf. Der Sweep ist ab Werk aus; warum, steht bei
+den Netzeinstellungen. Eine um 5 bis 10 % andere Ziellänge half nur an drei
+oder vier, die Nachbesserung mit MMG3D an keinem. Ein FEHLER ist die
+Lücke, wenn alle Lücken eines Körpers zusammen mehr als 0,5 % seines Volumens
+ausmachen. Das ist dieselbe Grenze wie bei der Volumenbilanz. Ein verdrehter
+Sechsflächner am Rand oder in der Ecke ist keine Lücke, sondern bleibt ein
+FEHLER, gemessen an beiden Lagen: Seine Seitenkanten laufen über die
+Diagonalen der Nachbarseiten, und kein anderes Element hat sie. Ebenfalls
+FEHLER bleiben Hohlräume, die ringsum von Nachbarseiten eingeschlossen sind,
+auch wenn sie die Oberfläche an einer Kante berühren. Gemessen an einem
+Würfel mit angehobener Ecke, frei mit Netzweite 0,1 m vernetzt: FEHLER
+„Seiten im Inneren 4“. Eine Abhilfe ist dafür nicht gemessen.
 
 **Windschiefe Randflächen.** Ein Tetraedernetz liegt auf einer windschiefen
 (bilinearen) Fläche auf Sehnen, und der freie Vernetzer setzt Knoten auf Sehnen
@@ -3757,18 +3791,37 @@ Deckelecke (Netzweite 0,25 m) bis 7,55 mm neben der Fläche. Bis zum 23.09.2026
 meldete die Abnahme solche richtigen Netze als FEHLER (2 bis 53 „Seiten im
 Inneren“, bei Netzweite 0,5 m und um 1 m angehobener Ecke dazu „Volumenbilanz
 0,782 %“). Jetzt gilt an windschiefen Flächen eine Grenze aus der Verwindung
-der Fläche und dem größten Seitendurchmesser darauf (im Beispiel 16,1 mm), und
-die Volumenbilanz lässt das Volumen zu, das der Netzrand dort erklären kann.
-Die Kehrseite: kleinere Abweichungen des Netzrands meldet die Abnahme an
-windschiefen Flächen nicht — am abgebildeten 4 × 4 × 4-Netz desselben Würfels
-bleibt eine Beule von 25 mm ungenannt, eine von 30 mm steht als Warnung da.
-Lücken und verdrehte Elemente liegen um Elementgröße daneben und bleiben
-FEHLER.
+der Fläche und dem größten Seitendurchmesser **in der Nachbarschaft** der
+Seite: unter den Seiten, die höchstens drei Ringe über gemeinsame Knoten
+entfernt sind. Im Beispiel sind das 13,2 bis 19,7 mm. Außerdem muss die Seite
+in die Richtung der Fläche zeigen: Richtige Netze lagen gemessen bis 9,7°
+daneben, die Grenze liegt bei 30° und mehr. Die Volumenbilanz lässt das
+Volumen zu, das der Netzrand dort erklären kann. Die erste Fassung vom selben
+Tag nahm den größten Seitendurchmesser der **ganzen** Fläche und keine
+Richtung. In einem abgestuften Netz (20:1, Deckel z = 1 + 0,5·x·y) lag die
+Grenze so bei rund 24 mm, und ein verdrehtes Element der obersten Lage blieb
+ohne Meldung. Heute ist es ein FEHLER „Seiten im Inneren“, gemessen an
+Elementen verschiedener Größe bei 20:1 und 50:1: Ihre Seiten stehen 81 bis
+90° gegen den Deckel. Ein verdrehtes Element in der groben Ecke, wo die
+oberste Lage dünn ist gegen die Sehne, findet nur die Richtung: Seine Ecken
+liegen bei 20:1 17 bis 18 mm neben dem Deckel, seine Seiten stehen 57 bis 87°
+dagegen. Die Kehrseite: kleinere Abweichungen des Netzrands meldet
+die Abnahme an windschiefen Flächen nicht. Am abgebildeten 4 × 4 × 4-Netz
+desselben Würfels bleibt eine Beule von 25 mm ungenannt, eine von 30 mm steht
+als Warnung da. Ist die Ecke um 1 m angehoben, bleibt dort selbst eine Beule
+von 100 mm ungenannt.
 
 Geprüft werden Körper, deren Randlinien gerade sind und deren Randflächen eben
 sind oder Vierecke; Körper mit Bögen, Kreisen oder Splines prüft der freie
 Vernetzer schon beim Vernetzen selbst (Volumen gegen Hülle, Randtreue). Was
-tun: den Körper neu vernetzen (Netz → Vernetzen).
+tun: Stammt das Netz aus einem Import oder ist es von Hand geändert, den Körper
+neu vernetzen (Netz → Vernetzen). Am abgestuften Netz mit verdrehtem Element
+verschwand damit der Befund „Seiten im Inneren“. Im nachgestellten Fall blieben
+die Knoten des alten Netzes ohne Element stehen und meldeten sich als „Knoten
+ohne Element“. Der eigene Vernetzer ergibt mit denselben Einstellungen
+dasselbe Netz, an fünf Prismen nachgemessen. Bei Befunden an seinen Netzen
+hilft neu vernetzen allein also nicht; was bei einer Lücke im Netzrand
+geholfen hat, steht oben.
 
 **„Bestanden" heißt nicht „nicht geprüft".** Zwei der Teilprüfungen fingen
 eine Ausnahme stumm ab und gaben eine leere Liste zurück — und leer heißt in
