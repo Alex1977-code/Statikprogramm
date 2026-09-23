@@ -1469,15 +1469,23 @@ def _op_stellungen_rechnen(st, m, d):
     st.umhuellende = umh
     for z in reihe.log:
         st.log.append(z)
-    # kurztext sagt es, wenn kein Nachweis gefuehrt wurde ("eta nicht
-    # bestimmt - kein Nachweis gefuehrt"). Gemessen 23.09.2026 ueber diese
-    # Operation am ausgelieferten Stand 54b6f9a: Stauwand mit 3 Stellungen und
-    # "kombinationen": false ergab "eta = 0.291" (Stabnachweis aus den
-    # Lastfaellen); "eta = 0.000" stand dort bei reinen GZG-Kombinationen
-    # (Halle ohne ihre 42 GZT-Kombinationen, 1 Stellung). "eta = 0.000" mit
-    # "kombinationen": false gab nur die nie ausgelieferte Zwischenfassung
-    # fb59de1 aus. Am Stand ec6448c meldet diese Operation in beiden Faellen
-    # "eta nicht bestimmt - kein Nachweis gefuehrt".
+    # kurztext meldet "eta nicht bestimmt - kein Nachweis gefuehrt" nur, wenn
+    # der Stabnachweis in einer Stellung Warnungen hat und in keiner Stellung
+    # einen Stab nachweisen konnte (Umhuellende.eta_bestimmt). Ohne Warnungen
+    # sagt er es nicht: ein Modell ohne Staebe meldet "eta = 0.000", obwohl
+    # nichts nachgewiesen wurde (Stauwand ohne ihre 3 Staebe, 2 Stellungen,
+    # mit und ohne Kombinationen, gemessen 24.09.2026 an 54b6f9a und 042fb81).
+    # Modelle mit Staeben, gemessen ueber diese Operation 23./24.09.2026: am
+    # Stand 54b6f9a (von 5eb21e6 nach main gemergt) ergab die Stauwand mit 3
+    # Stellungen und "kombinationen": false "eta = 0.291" (Stabnachweis aus
+    # den Lastfaellen); "eta = 0.000" stand dort bei reinen GZG-Kombinationen
+    # (Halle ohne ihre 42 GZT-Kombinationen, 1 Stellung; dieselbe Halle mit
+    # "kombinationen": false ergab "eta = 0.278"). Fuer diese beiden Modelle
+    # gab von den gemessenen Staenden (54b6f9a, fb59de1, ec6448c, 042fb81) nur
+    # fb59de1 mit "kombinationen": false "eta = 0.000" aus - eine
+    # Zwischenfassung, die nie Spitze von main war. An ec6448c und 042fb81
+    # meldet diese Operation fuer die Stauwand ohne Kombinationen und die
+    # Halle ohne GZT "eta nicht bestimmt - kein Nachweis gefuehrt".
     return f"{len(liste)} Stellungen gerechnet: " + umh.kurztext()
 
 
