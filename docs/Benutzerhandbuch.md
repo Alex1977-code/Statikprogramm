@@ -3180,10 +3180,11 @@ Kombinationen"**. Wurden nur die Lastfälle gerechnet oder stammen die
 Ergebnisse aus einer Datei von vor dem 22.09.2026, fehlen sie. Die Nachweise
 melden solche Alternativen dann als „nicht nachgewiesen" und überlagern sie
 nicht linear. Das gilt auch für eine Alternative mit einem Lastfall, der nach
-II. oder III. Ordnung gerechnet wird. Vorher kam dort still das lineare
-Ergebnis heraus: am Druckkragarm 3,321 statt 9,705 mm, an der Halle
-(„ein", alle Kombinationen als eine Ergebniskombination) Riegel 0,9654 statt
-0,9734.
+II. oder III. Ordnung gerechnet wird. Bis zum 22.09.2026 wurden die Stäbe
+nach einer Rechnung nur der Lastfälle gegen die Lastfälle mit Faktor 1
+nachgewiesen, ohne Hinweis, dass die Kombinationen fehlten: an der Halle
+(„ein", alle GZT-Kombinationen als eine Ergebniskombination) Riegel 0,2776
+aus LF1. Die volle Rechnung ergibt dort jetzt 0,9734.
 
 Bei „automatisch" mit α_cr an oder über der Grenze bleibt eine Alternative
 in der vollen Rechnung bei I. Ordnung, wie eine gewöhnliche Kombination, und
@@ -4357,12 +4358,14 @@ bestimmt", wenn in keiner Stellung ein Nachweis geführt wurde. Fehlt nur ein
 Teil der Nachweise, steht η in Warnfarbe mit „nicht vollständig
 nachgewiesen". Unter der gewählten Stellung lassen sich die Warnungen
 aufklappen („Nicht nachgewiesen"). Bis zum 22.09.2026 kam in beiden oben
-genannten Fällen keine Warnung, und die Stellung galt als erfüllt. Mit
+genannten Fällen keine Warnung, dass Nachweise fehlten. Mit
 `kombinationen=False` wurden die Stäbe gegen die Lastfälle mit Faktor 1
-nachgewiesen (Stauwand, drei Stellungen: „eta = 0.291" aus dem Lastfall
-„Wasser"). Mit nur GZG-Kombinationen wurde kein Stab nachgewiesen; der
-Bericht nannte „eta = 0.000", und der Browser zeigte „η = 0,000" grün
-(Halle).
+nachgewiesen, und nach dieser Ausnutzung wurde die Stellung beurteilt
+(Stauwand, drei Stellungen: „eta = 0.291" aus dem Lastfall „Wasser",
+erfüllt; mit fünffachem Wasserdruck „eta = 2.419", nicht erfüllt). Mit nur
+GZG-Kombinationen wurde kein Stab nachgewiesen; an der Halle war η = 0 und
+die Stellung erfüllt, der Bericht nannte „eta = 0.000", und der Browser
+zeigte „η = 0,000" grün.
 
 ### Lastfälle nach DIN 19704 anlegen und das Lastenheft
 

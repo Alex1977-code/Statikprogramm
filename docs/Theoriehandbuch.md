@@ -793,10 +793,15 @@ Lasteinleitungsnachweisen auf 1e-9, ohne Warnung.
 
 Gemeldet wird nur, was ein Bauteil verlangt. Hat kein Stab, Volumenbereich
 oder Anschluss einen Nachweis und gibt es kein Beulfeld und keine
-Lasteinleitungsstelle, wird `_uls_results` gar nicht gefragt. Vorher kippte
-ein Modell nur mit GZG-Kombinationen und Stäben ohne Nachweis im Gesamturteil
-von „Alle Nachweise erfüllt." auf „nicht geführt: EC3 (1 Warnung)" (Kragarm
-und Halle, Gegenprüfung 23.09.2026).
+Lasteinleitungsstelle, wird `_uls_results` gar nicht gefragt. In der ersten
+Fassung der Kur kippte ein Modell nur mit GZG-Kombinationen und Stäben ohne
+Nachweis im Gesamturteil von „Alle Nachweise erfüllt." auf „nicht geführt:
+EC3 (1 Warnung)" (Kragarm und Halle, Gegenprüfung 23.09.2026). Am Stand bis
+22.09.2026 meldeten die Stabnachweise keine fehlenden Kombinationen, und das
+Gesamturteil kannte den Eintrag „EC3 (n Warnungen)" nicht. An einem Kragarm
+(IPE 300, 3 m, nur eine GZG-Kombination mit Verformungsgrenze, Stab ohne
+Nachweis) und an der Halle (nur GZG-Kombinationen, Stäbe ohne Nachweis, eine
+Verformungsgrenze) stand dort „Alle Nachweise erfüllt.".
 
 **Theorie II./III. Ordnung einer Ergebniskombination.** Nach II. Ordnung gilt
 keine Superposition (EN 1993-1-1, 5.2); das gilt auch innerhalb einer
