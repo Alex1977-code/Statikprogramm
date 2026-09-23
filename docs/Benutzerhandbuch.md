@@ -2978,10 +2978,14 @@ Kombination, die auf eine andere verweist („LF1 + CO1“), wird mit deren
 Faktoren aufgelöst — ein Minus ohne Zahl („LF2 - CO1“) zieht dabei ab, und
 das Protokoll nennt das Ergebnis samt Vorzeichen —, und eine, die sich
 nicht vollständig auflösen lässt (Verweis auf eine Ergebniskombination
-„EK1“ oder „RC1“ oder auf eine Kombination, die selbst nicht angelegt
-wird) oder deren Formel einen nicht erkannten Teil enthält
-(„1.35*LF1 + 1.5*Schnee“), wird **nicht** angelegt, sondern mit Formel und Grund gewarnt — legen Sie sie dann in der
-Kombinationsmaske von Hand an. Die **Einwirkungskategorie** eines
+„EK1“ oder „RC1“, auf eine Kombination, die selbst nicht angelegt
+wird, oder auf eine Nummer, die die Tabelle mehrfach führt) oder deren
+Formel einen nicht erkannten Teil enthält („1.35*LF1 + 1.5*Schnee“, auch
+ein „+“ am Ende oder ein doppeltes „++“), wird **nicht** angelegt, sondern mit Formel und Grund gewarnt — legen Sie sie dann in der
+Kombinationsmaske von Hand an. Wo eine Meldung eine Zeile nennt („Zeile 5
+in „2.5 Lastkombinationen““, bei einer Zeile ohne Nummer oder mit
+mehrfach geführter Nummer), ist es die Zeile des Blatts bzw. der CSV-Datei,
+Kopf- und Leerzeilen mitgezählt. Die **Einwirkungskategorie** eines
 RFEM-6-Lastfalls ist aus einer Kennzahl angenommen, die an keiner Datei
 belegt ist: das Protokoll nennt je Kennzahl die angenommene Kategorie und
 die Lastfälle, deren Name sie umgestellt hat, und warnt; prüfen Sie ψ und γ
