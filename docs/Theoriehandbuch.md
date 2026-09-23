@@ -7388,6 +7388,24 @@ Hohlkugel mit einem Zielknoten auf einer Ecke einer gekrümmten Kante: die
 Geometrie jedes angehängten Elements ist bitgleich die der Quelle
 (`tests/test_importers.py`).
 
+Mitgenommen werden dabei nur die Kantenmitten, die ein tetp-Element liest:
+deren Kante vor dem Zusammenführen Kante eines tetp-Elements ist. Die übrigen
+wirken nirgends und fallen weg. Solche verwaisten Einträge lässt
+`Model.netzknoten_loeschen` stehen, das die Kantenmitten nicht mitführt –
+zum Teil mit Knotennummern hinter dem Ende der Knotenliste. An ihnen brach
+das Zusammenführen bis zur Nachbesserung vom 23.09.2026 mit einem IndexError
+ab: gemessen (zweimal) beim Anhängen eines JSON-Modells an die gespeicherte
+Hohlkugel mit einem Stab, deren tetp-Netz entfernt war; vor der Speicherung
+der Kantenmitten (Stand ec6448c) lief derselbe Ablauf durch. Nur die Einträge
+hinter dem Ende zu verwerfen genügt nicht: Ein verwaister Eintrag mit
+gültigen Nummern wird zur Kante eines tetp-Elements, sobald beim
+Zusammenführen ein neuer Knoten auf deren Ecke fällt. Mit dieser Variante
+gemessen (zweimal, 23.09.2026) nach `netzknoten_loeschen` und sieben
+hinzugefügten Knoten, der letzte auf einer Ecke: eine gerade Kante lag danach
+45,79 mm daneben, ohne Warnung. Jetzt bleibt die Geometrie der tetp-Elemente
+über das Zusammenführen bitgleich, außer im gemeldeten Fall zweier
+verschiedener Kantenmitten auf einer Kante (`tests/test_importers.py`).
+
 **Nachweisstellen auf Kontaktflächen.** Gemessen 23.09.2026 (Labor,
 Hohlzylinder h = 0,05 m, Bohrungsfläche als Kontaktseite, dort nur linearer
 Ansatz, die Geometrie bleibt gekrümmt), Knotenmittel am Innenrand:

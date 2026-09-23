@@ -206,6 +206,9 @@ def _umnummerieren(model: Model, new_index, new_nodes, log: Optional[list] = Non
     """Neue Knotenliste setzen und jeden Knotenverweis umhaengen
     (``new_index[alt] = neu``); gleich gewordene Knoten in Linien, Linien-
     und Flaechenlagern einmal fuehren."""
+    # Die Kantenmitten zuerst: welche ein tetp-Element liest, entscheiden die
+    # alten Knotennummern der Elemente - die werden gleich umgehaengt
+    _kantenmitten_umhaengen(model, new_index, new_nodes, log)
     model.nodes = new_nodes
     for e in model.elements:
         e.nodes = [int(new_index[n]) for n in e.nodes]
@@ -254,7 +257,6 @@ def _umnummerieren(model: Model, new_index, new_nodes, log: Optional[list] = Non
         ss.nodes = nodes
         ss.areas = areas if any(areas) else []
     _weitere_knotenverweise_umhaengen(model, new_index)
-    _kantenmitten_umhaengen(model, new_index, log)
 
 
 def _zusammenfassen(knoten, flaechen) -> tuple[list, list]:
@@ -369,10 +371,13 @@ def _weitere_knotenverweise_umhaengen(model: Model, new_index) -> None:
                 st.antrieb = an
 
 
-def _kantenmitten_umhaengen(model: Model, new_index, log: Optional[list] = None) -> None:
+def _kantenmitten_umhaengen(model: Model, new_index, new_nodes,
+                            log: Optional[list] = None) -> None:
     """Die gekruemmte Geometrie der Tetraeder mit Ordnung p
     (``model.tetp_kantenmitten``, {(a, b) mit a < b: Kantenmitte}) auf die
-    neuen Knotennummern setzen.
+    neuen Knotennummern setzen. Aufzurufen, **bevor** die Elemente
+    umnummeriert sind (``_umnummerieren``); ``new_nodes`` sind die neuen
+    Koordinaten.
 
     Seit dem 23.09.2026 steht sie in der Modelldatei und kommt beim Anhaengen
     mit; ohne das hier zeigte nach dem Zusammenfuehren jede Kante hinter
@@ -383,6 +388,25 @@ def _kantenmitten_umhaengen(model: Model, new_index, log: Optional[list] = None)
     jetzt bitgleich (tests.test_importers,
     test_json_anhaengen_tetp_kantenmitten).
 
+    Mitgenommen wird nur, was ein tetp-Element liest: die Kantenmitte einer
+    Kante (a, b), a < b, die in den alten Nummern Kante eines tetp-Elements
+    ist. Die uebrigen wirken nirgends und fallen weg. Solche verwaisten
+    Schluessel laesst ``Model.netzknoten_loeschen`` stehen (es fuehrt die
+    Kantenmitten nicht mit), mit Knotennummern bis hinter das Ende der
+    Liste. Bis zur Nachbesserung vom 23.09.2026 wurden sie hier indiziert:
+    Anhaengen eines JSON-Modells an ein gespeichertes Modell, dessen
+    tetp-Netz danach entfernt war (Hohlkugel 2 x 2, p = 3, und ein Stab;
+    danach 38 Knoten, 126 Kantenmitten), brach mit IndexError ab - vor der
+    Speicher-Kur (ec6448c) lief es durch (je zweimal gemessen; Pruefung
+    tests.test_importers, test_json_anhaengen_nach_netz_entfernen). Nur die
+    Schluessel hinter dem Ende zu verwerfen genuegt nicht: einer mit
+    gueltiger Nummer wird beim Zusammenfuehren zur Kante eines
+    tetp-Elements, sobald ein neuer Knoten auf deren Ecke faellt, und
+    kruemmt sie still - mit dieser Variante gemessen (zweimal, 23.09.2026)
+    nach netzknoten_loeschen und 7 hinzugefuegten Knoten, der letzte auf
+    einer Ecke: eine gerade Kante 45,79 mm daneben, ohne Warnung (Pruefung
+    tests.test_importers, test_zusammenfuehren_kantenmitte_ohne_element).
+
     Fallen zwei Kanten auf eine, gilt die zuerst eingetragene Kantenmitte -
     beim Anhaengen die des Ziels, dessen Eintraege vor denen der Quelle
     stehen. Liegen die beiden weiter auseinander als 1e-9 der Kantenlaenge
@@ -392,10 +416,19 @@ def _kantenmitten_umhaengen(model: Model, new_index, log: Optional[list] = None)
     km = getattr(model, "tetp_kantenmitten", None)
     if not km:
         return
-    X = np.asarray(model.nodes, float)
+    from ..elements import tetp as _tp
+    ecken = [e.nodes[:4] for e in model.elements if _tp.ist_tetp(e.typ)]
+    wirkt: set = set()
+    if ecken:
+        kanten = np.asarray(ecken, dtype=np.int64).reshape(-1, 4)[:, np.asarray(_tp.TET10_KANTEN)]
+        kanten.sort(axis=2)
+        wirkt = set(map(tuple, kanten.reshape(-1, 2).tolist()))
+    X = np.asarray(new_nodes, float)
     neu: dict = {}
     abweichend, weiteste = 0, 0.0
     for (a, b), p in km.items():
+        if (int(a), int(b)) not in wirkt:       # verwaist: liest kein Element
+            continue
         ka, kb = int(new_index[int(a)]), int(new_index[int(b)])
         schl = (min(ka, kb), max(ka, kb))
         da = neu.get(schl)

@@ -1915,6 +1915,139 @@ def test_json_anhaengen_tetp_kantenmitten():
            f"{ziel2.nn} Knoten, {len(km2)} Kanten; " + ("\n".join(zeile) or "keine Zeile"))
 
 
+def _tetp_hohlkugel():
+    """Hohlkugel tet10 2 x 2, zu tetp3 gemacht: gekruemmte Kanten in
+    ``tetp_kantenmitten``, die frei gewordenen Mittenknoten stehen noch."""
+    from statik3d.elements import tetp as tp
+    from tests import pruefkoerper as pk
+    m = pk.Hohlkugel().modell("tet10", 2, 2)
+    m.case().nodal_loads.clear()
+    tp.aus_tet10(m, ordnung=3)
+    return m
+
+
+def _tetp_kanten(model) -> set:
+    """Die Kanten (a < b) aller tetp-Elemente - nur deren Kantenmitten liest
+    tetp.geometrie_modell."""
+    from statik3d.elements import tetp as tp
+    aus = set()
+    for e in model.elements:
+        if tp.ist_tetp(e.typ):
+            kn = [int(n) for n in e.nodes[:4]]
+            aus |= {(min(kn[i], kn[j]), max(kn[i], kn[j])) for i, j in tp.TET10_KANTEN}
+    return aus
+
+
+def test_json_anhaengen_nach_netz_entfernen():
+    """Gegenpruefung vom 23.09.2026: Model.netzknoten_loeschen fuehrt
+    ``tetp_kantenmitten`` nicht mit - nach dem Entfernen eines tetp-Netzes
+    (wie beim Neuvernetzen: elemente_loeschen, dann netzknoten_loeschen)
+    bleiben Schluessel mit Knotennummern hinter dem Ende der Liste. Das
+    Zusammenfuehren beim Anhaengen indizierte sie und brach mit IndexError
+    ab ('index 46 is out of bounds for axis 0 with size 40'); vor der
+    Speicher-Kur (ec6448c) lief derselbe Ablauf durch: 39 Knoten,
+    2 Elemente, 1 Knoten zusammengefuehrt. So muss es wieder sein - und
+    ohne tetp-Element bleibt keine Kantenmitte stehen."""
+    from statik3d.elements import tetp as tp
+    m = _tetp_hohlkugel()
+    mat = next(iter(m.materials))
+    m.add_element("truss", [m.add_node(1.0, 0.0, 0.0), m.add_node(2.0, 0.0, 0.0)], mat, None)
+    q = Model("q")
+    q.materials = dict(m.materials)
+    q.add_element("truss", [q.add_node(2.0, 0.0, 0.0), q.add_node(3.0, 0.0, 0.0)], mat, None)
+    with tempfile.TemporaryDirectory() as d:
+        pz, pq = os.path.join(d, "z.json"), os.path.join(d, "q.json")
+        m.save(pz)
+        q.save(pq)
+        z = Model.load(pz)
+        z.elemente_loeschen([i for i, e in enumerate(z.elements) if tp.ist_tetp(e.typ)])
+        z.netzknoten_loeschen()
+        vorher = f"nach dem Entfernen {z.nn} Knoten, {len(z.tetp_kantenmitten)} Kantenmitten"
+        log = []
+        try:
+            z = import_file(pq, model=z, log=log)
+            fehler = ""
+        except Exception as ex:                 # noqa: BLE001 - der Befund ist der Abbruch
+            fehler = f"{type(ex).__name__}: {ex}"
+    if fehler:
+        expect("Anhaengen nach dem Entfernen eines tetp-Netzes laeuft durch", False,
+               f"{vorher}; {fehler}")
+        return
+    km = z.tetp_kantenmitten
+    expect("Anhaengen nach dem Entfernen eines tetp-Netzes laeuft durch wie vor der Kur",
+           z.nn == 39 and len(z.elements) == 2 and not km
+           and any("1 Knoten der Quelle lagen auf Knoten des Ziels" in x for x in log),
+           f"{vorher}; danach {z.nn} Knoten, {len(z.elements)} Elemente, "
+           f"{len(km)} Kantenmitten")
+
+
+def test_zusammenfuehren_nach_netzknoten_loeschen():
+    """Gegenpruefung vom 23.09.2026: nach aus_tet10 und netzknoten_loeschen
+    (die frei gewordenen Mittenknoten gehen, 305 -> 57 Knoten) stehen
+    Kantenmitten mit Knotennummern bis hinter das Ende der Liste im Modell.
+    merge_duplicate_nodes danach - jeder Import in ein solches Modell,
+    joints.build.weld_couple - brach ab ('index 63 is out of bounds for
+    axis 0 with size 58'). Jetzt laeuft es durch, und die Geometrie jedes
+    tetp-Elements bleibt ueber das Zusammenfuehren bitgleich (was
+    netzknoten_loeschen selbst an ihr verschiebt, prueft diese Pruefung
+    nicht)."""
+    from statik3d.importers import _common as C
+    from statik3d.elements import tetp as tp
+    m = _tetp_hohlkugel()
+    idx = list(range(len(m.elements)))
+    m.netzknoten_loeschen()
+    G1 = tp.geometrie_modell(m, idx)
+    km1 = len(m.tetp_kantenmitten)
+    m.nodes = np.vstack([m.nodes, m.nodes[:1]])      # ein Doppel, wie ein Import es bringt
+    try:
+        n = C.merge_duplicate_nodes(m)
+    except Exception as ex:                     # noqa: BLE001 - der Befund ist der Abbruch
+        expect("merge_duplicate_nodes nach netzknoten_loeschen laeuft durch", False,
+               f"{km1} Kantenmitten; {type(ex).__name__}: {ex}")
+        return
+    G2 = tp.geometrie_modell(m, idx)
+    km = m.tetp_kantenmitten
+    fremd = [k for k in km if k not in _tetp_kanten(m)]
+    expect("merge_duplicate_nodes nach netzknoten_loeschen: laeuft durch, Geometrie bitgleich, "
+           "nur Kantenmitten an tetp-Kanten",
+           n == 1 and np.array_equal(G1, G2) and not fremd,
+           f"{n} zusammengefuehrt, max|dG| {float(np.abs(G2 - G1).max()):.3e} m, "
+           f"{km1} -> {len(km)} Kantenmitten, {len(fremd)} an keiner tetp-Kante")
+
+
+def test_zusammenfuehren_kantenmitte_ohne_element():
+    """Eine Kantenmitte, deren Kante zu keinem tetp-Element gehoert (wie die,
+    die netzknoten_loeschen hinter dem Ende der Knotenliste stehen laesst),
+    wirkt nirgends. Das Zusammenfuehren darf sie nicht auf eine tetp-Kante
+    heben: ein Import legt den Knoten ``nn`` genau auf die Ecke c einer
+    geraden Kante (x, c), und der verwaiste Schluessel (x, nn) wurde zu
+    (x, c) - die gerade Kante war danach still gekruemmt."""
+    from statik3d.importers import _common as C
+    from statik3d.elements import tetp as tp
+    m = _tetp_hohlkugel()
+    idx = list(range(len(m.elements)))
+    km = m.tetp_kantenmitten
+    x, c = next(k for k in sorted(_tetp_kanten(m)) if k not in km)       # eine gerade Kante
+    nn = m.nn
+    X = np.asarray(m.nodes, float)
+    km[(x, nn)] = 0.5 * (X[x] + X[c]) + np.array([0.0, 0.0, 0.05])        # verwaist
+    G1 = tp.geometrie_modell(m, idx)
+    n_km = len(km)
+    m.nodes = np.vstack([X, X[c:c + 1]])             # Knoten nn auf der Ecke c
+    try:
+        n = C.merge_duplicate_nodes(m)
+    except Exception as ex:                     # noqa: BLE001
+        expect("Zusammenfuehren mit verwaister Kantenmitte laeuft durch", False,
+               f"{type(ex).__name__}: {ex}")
+        return
+    G2 = tp.geometrie_modell(m, idx)
+    km2 = m.tetp_kantenmitten
+    expect("Zusammenfuehren hebt eine verwaiste Kantenmitte nicht auf eine gerade tetp-Kante",
+           n == 1 and np.array_equal(G1, G2) and (x, c) not in km2 and len(km2) == n_km - 1,
+           f"Kante ({x}, {c}): {n} zusammengefuehrt, max|dG| "
+           f"{float(np.abs(G2 - G1).max()) * 1e3:.4g} mm, {n_km} -> {len(km2)} Kantenmitten")
+
+
 def test_json_anhaengen_schluessel():
     """Jeder Schluessel von Model.to_dict() und LoadCase.to_dict() ist beim
     Anhaengen eingeordnet: uebertragen, als Einstellung des Ziels behalten
@@ -1952,7 +2085,9 @@ TESTS = [
          test_json_anhaengen_fuge_traegt_wie_allein,
          test_json_anhaengen_ermuedung_auf_kombination, test_json_anhaengen_koerpergruppe,
          test_json_anhaengen_stellung_des_ziels, test_json_anhaengen_stellung_protokoll,
-         test_json_anhaengen_tetp_kantenmitten, test_json_anhaengen_schluessel,
+         test_json_anhaengen_tetp_kantenmitten, test_json_anhaengen_nach_netz_entfernen,
+         test_zusammenfuehren_nach_netzknoten_loeschen,
+         test_zusammenfuehren_kantenmitte_ohne_element, test_json_anhaengen_schluessel,
          test_entarteter_sechsflaechner_beim_import]
 
 
