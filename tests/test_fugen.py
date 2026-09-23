@@ -73,7 +73,8 @@ class Bauer:
         return f"L{self.i}"
 
 
-def zwei_bloecke(art: str = "gemeinsam", h: float = 0.5, h_oben: float = 0.0) -> Model:
+def zwei_bloecke(art: str = "gemeinsam", h: float = 0.5, h_oben: float = 0.0,
+                ordnung: int = 1) -> Model:
     """Zwei Einheitswuerfel uebereinander, vernetzt.
 
     art = "gemeinsam": beide Koerper haben **dieselbe** Trennflaeche - der
@@ -82,6 +83,7 @@ def zwei_bloecke(art: str = "gemeinsam", h: float = 0.5, h_oben: float = 0.0) ->
           denselben Linien - nur der Rand ist gemeinsam (nicht passende
           Netze, so kommt es aus RFEM).
     h_oben > 0: der obere Wuerfel bekommt eine eigene, andere Kantenlaenge.
+    ordnung = 2: tet10 statt tet4.
     """
     m = Model()
     m.add_material(Material.steel("S235"))
@@ -113,6 +115,7 @@ def zwei_bloecke(art: str = "gemeinsam", h: float = 0.5, h_oben: float = 0.0) ->
     k1 = m.add_koerper("Unten", ["Boden", fuge_u] + unten, material="S235")
     k2 = m.add_koerper("Oben", [fuge_o, "Dach"] + oben, material="S235")
     m.netz.ziellaenge = h
+    m.netz.ordnung = ordnung
     cache = {}
     M3.mesh_koerper_frei(m, k1, log=[], cache=cache)
     M3.mesh_koerper_frei(m, k2, h=float(h_oben or 0.0), log=[], cache=cache)
@@ -582,8 +585,8 @@ def test_lager_werden_mitgenommen():
 # --------------------------------------------------------------------------
 # 3) Freie Rechtecklasten
 # --------------------------------------------------------------------------
-def _wuerfel(h: float = 0.5) -> Model:
-    """Ein Einheitswuerfel, vernetzt - Deckel oben."""
+def _wuerfel(h: float = 0.5, ordnung: int = 1) -> Model:
+    """Ein Einheitswuerfel, vernetzt - Deckel oben (ordnung = 2: tet10)."""
     m = Model()
     m.add_material(Material.steel("S235"))
     m.add_nodes(np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
@@ -600,6 +603,7 @@ def _wuerfel(h: float = 0.5) -> Model:
         mantel.append(f"M{i}")
     k = m.add_koerper("V1", ["Boden", "Deckel"] + mantel, material="S235")
     m.netz.ziellaenge = h
+    m.netz.ordnung = ordnung
     M3.mesh_koerper_frei(m, k, log=[], cache={})
     return m
 
@@ -2128,55 +2132,225 @@ def test_viereckfuge_zaehlt_ganz():
     Unterschied beim Netzvergleich wie ein Netzeinfluss aus (22.09.2026).
 
     Geprüft wird die Federsteifigkeit, die am Ende herauskommt - nicht die
-    Zwischengröße A.
+    Zwischengröße A - und zwar **auf dem echten Weg** durch
+    `fugen.kontaktfuge_ausfuehren`. Die frühere Fassung dieser Prüfung rief
+    die Fugenroutine nie auf, sondern rechnete die Formel im Test selbst nach;
+    mit dem alten ``nd[:3]`` im Speicher bestand sie weiter (gemessen
+    22.09.2026). So misst sie das Programm:
+
+    * zwei hex8 übereinander, gemeinsame Fugenfläche 2,0 x 1,0 m (eine
+      Viereckfacette, vier gemeinsame Knoten - passende Netze),
+    * Federfuge c_n = 1e9 N/m³ normal, c_t = 1e8 N/m³ in beiden Tangenten.
+
+    Soll: Σ k_n = c_n · 2,0 m² = 2,000e9 N/m, Σ k_t = 2 · c_t · 2,0 m²
+    = 4,000e8 N/m. Mit dem alten ``nd[:3]`` kommt gemessen genau die Hälfte
+    heraus (Σ k_n = 1,000e9 N/m, Verhältnis 0,5000).
     """
-    import numpy as np
-    from statik3d.model import Model, Material, Kontaktbedingung, DofBehaviour
-    from statik3d import fugen
-
-    def bau(typ):
-        """Zwei Würfel übereinander, Fuge dazwischen - als Hexaeder oder
-        Tetraeder vernetzt. Dieselbe Fugenfläche, dasselbe Modell."""
-        m = Model(f"fuge_{typ}")
-        m.add_material(Material.steel("S235"))
-        from statik3d import mesher
-        g1 = mesher.grid_box(m, "S235", 1.0, 1.0, 1.0, 1, 1, 1, typ=typ)
-        return m, g1
-
-    # Die Flaeche einer Facette unmittelbar: ein ebenes Viereck 2 x 1 m
-    X = np.array([[0.0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0]])
-    nd = [0, 1, 2, 3]
-    nur_erstes = 0.5 * float(np.linalg.norm(np.cross(X[1] - X[0], X[2] - X[0])))
-    ganz = 0.0
-    for i in range(1, len(nd) - 1):
-        ganz += 0.5 * float(np.linalg.norm(np.cross(X[i] - X[0], X[i + 1] - X[0])))
-    check("die Probe ist scharf: das erste Dreieck ist die halbe Fläche",
-          abs(nur_erstes - 1.0) < 1e-12 and abs(ganz - 2.0) < 1e-12,
-          f"{nur_erstes:.4f} gegen {ganz:.4f} m²")
-
-    # Und dasselbe durch die Fugenroutine: ein Modell mit einer Viereckfacette
-    m = Model("viereck")
+    c_n, c_t = 1.0e9, 1.0e8         # N/m^3 - Bettung normal / tangential
+    A_fuge = 2.0 * 1.0              # m^2   - die gemeinsame Viereckflaeche
+    m = Model("viereckfuge")
     m.add_material(Material.steel("S235"))
     for p in ([0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0],
-              [0, 0, 1], [2, 0, 1], [2, 1, 1], [0, 1, 1.]):
+              [0, 0, 1], [2, 0, 1], [2, 1, 1], [0, 1, 1],
+              [0, 0, 2], [2, 0, 2], [2, 1, 2], [0, 1, 2.]):
         m.add_node(*p)
-    m.add_element("hex8", list(range(8)), "S235")
-    seite_b = [(0, [0, 1, 2, 3], np.array([0.0, 0.0, -1.0]))]
-    flaeche = {}
-    for _e, nds, _n in seite_b:
-        P = np.asarray(m.nodes, float)[nds]
-        A = 0.0
-        for i in range(1, len(nds) - 1):
-            A += 0.5 * float(np.linalg.norm(np.cross(P[i] - P[0], P[i + 1] - P[0])))
-        for k in nds:
-            flaeche[k] = flaeche.get(k, 0.0) + A / len(nds)
-    check("die Einflussfläche je Knoten ist ein Viertel der ganzen Facette",
-          all(abs(v - 0.5) < 1e-12 for v in flaeche.values()),
-          f"{sorted(set(round(v, 6) for v in flaeche.values()))} m² je Knoten")
+    e0 = m.add_element("hex8", [0, 1, 2, 3, 4, 5, 6, 7], "S235", group="Unten")
+    e1 = m.add_element("hex8", [4, 5, 6, 7, 8, 9, 10, 11], "S235", group="Oben")
+    for i, (a, b) in enumerate(((4, 5), (5, 6), (6, 7), (7, 4))):
+        m.add_line(f"L{i}", [a, b], "polyline")
+    f = m.add_flaeche("Fuge", ["L0", "L1", "L2", "L3"], material="S235")
+    # Deckel des unteren (Seite 1) und Grund des oberen Hexaeders (Seite 0):
+    # beides dieselbe Viereckseite z = 1 - so traegt der Sweep sie ein.
+    f.randseiten = [[e0, 1], [e1, 0]]
+    kb = m.add_kontaktbedingung(
+        "Fuge", flaechennamen=["Fuge"], gegenflaechen=[], koerpernamen=["Oben"],
+        behaviour={0: DofBehaviour("spring", c_t), 1: DofBehaviour("spring", c_t),
+                   2: DofBehaviour("spring", c_n)})
+    log = []
+    ber = fugen.kontaktfuge_ausfuehren(m, kb, log=log)
+    check("die Fuge läuft Knoten gegen Knoten (4 Knoten verdoppelt, kein Kontaktpaar)",
+          kb.ausgefuehrt and ber.get("knoten") == 4 and not ber.get("kontaktpaar"),
+          str(ber))
+    kn = [k.steifigkeiten[0] for k in m.kopplungen if len(k.richtungen) == 1]
+    kt = [s for k in m.kopplungen if len(k.richtungen) == 2 for s in k.steifigkeiten]
+    check("je Knoten eine Normal- und eine Tangentialkopplung",
+          len(kn) == 4 and len(kt) == 8, f"{len(kn)} normal, {len(kt)} tangential")
+    close("Σ Normalfedern = c_n · A (ganze Viereckfläche)", sum(kn), c_n * A_fuge,
+          1e-9 * c_n * A_fuge, " N/m")
+    close("Σ Tangentialfedern = 2 · c_t · A", sum(kt), 2.0 * c_t * A_fuge,
+          1e-9 * c_t * A_fuge, " N/m")
+
+
+# --------------------------------------------------------------------------
+# tet10: Kontakt, Fugen und Flaechenlager sehen nur die Ecken - Sperre
+# --------------------------------------------------------------------------
+def _gemeinsame_knoten(m: Model) -> int:
+    """Knoten, an denen Elemente zweier Koerper haengen."""
+    grp: dict = {}
+    for e in m.elements:
+        for n in e.nodes:
+            grp.setdefault(int(n), set()).add(str(getattr(e, "group", "")))
+    return sum(1 for g in grp.values() if len(g) > 1)
+
+
+def _ohne_sperre(f):
+    """f() mit abgeschalteter Sperre - nur um zu belegen, was sie verhindert."""
+    alt = fugen.quadratische_knoten
+    fugen.quadratische_knoten = lambda model: {}
+    try:
+        return f()
+    finally:
+        fugen.quadratische_knoten = alt
+
+
+def test_tet10_fuge_gesperrt():
+    """Getrennt wird an den Ecken; die tet10-Seitenmitten blieben beiden
+    Koerpern gemeinsam, und eine Fuge ohne Zugfestigkeit truege Zug.
+    Gemessen am 22.09.2026 (Kantenlaenge 0,5, Einkern): 525,8 kN von 1000 kN
+    bei passenden Netzen, 371,2 kN bei eigenen Flaechen, tet4 0 kN."""
+    p = -1.0e6
+    F = -p * A_FUGE
+    for art in ("gemeinsam", "eigene"):
+        m = zwei_bloecke(art, ordnung=2)
+        check(f"{art}: das Netz ist tet10", {e.typ for e in m.elements} == {"tet10"},
+              str(sorted({e.typ for e in m.elements})))
+        nn, ne = m.nn, len(m.elements)
+        kb = kontaktbedingung(m, art)
+        try:
+            fugen.kontaktfuge_ausfuehren(m, kb, [])
+            gesperrt, text = False, ""
+        except fugen.QuadratischeSeiten as ex:
+            gesperrt, text = True, str(ex)
+        check(f"{art}: das Trennen an tet10 bricht laut ab", gesperrt, text[:90])
+        check(f"{art}: die Meldung nennt die Bedingung, den Typ und die Abhilfe",
+              "Kontaktbedingung Fuge" in text and "tet10" in text and "linear" in text)
+        check(f"{art}: das Modell bleibt unverändert (keine halbe Trennung)",
+              m.nn == nn and len(m.elements) == ne and not kb.ausgefuehrt,
+              f"Knoten {nn} -> {m.nn}")
+
+        # Beleg, was die Sperre verhindert: ohne sie traegt die Fuge Zug. Bei
+        # eigenen Flaechen entsteht ein Kontaktpaar, und das sperrt beim
+        # Rechnen ein zweites Mal (contact.py) - darum auch dort ohne Sperre.
+        m2 = zwei_bloecke(art, ordnung=2)
+        kb2 = kontaktbedingung(m2, art)
+        _ohne_sperre(lambda: fugen.kontaktfuge_ausfuehren(m2, kb2, []))
+        g = _ohne_sperre(lambda: rechnen(m2, p, federn=1.0e11))
+        check(f"{art}: ohne Sperre blieben Knoten gemeinsam und die Fuge trüge Zug",
+              _gemeinsame_knoten(m2) > 0 and -g["R_fundament"] > 0.3 * F,
+              f"{_gemeinsame_knoten(m2)} gemeinsame Knoten, "
+              f"R = {-g['R_fundament'] / 1e3:.1f} kN von {F / 1e3:.0f} kN")
+
+
+def test_tet10_verschweisst_erlaubt():
+    """Starr in allen Richtungen bei passenden Netzen trennt nichts - das
+    bleibt an tet10 erlaubt. Belegt wird, dass weder Ecken noch Mitten
+    verdoppelt werden (sonst hinge die Fuge nur an den Mitten) und die Fuge
+    Zug wie ein durchgehender Koerper traegt."""
+    p = -1.0e6
+    F = -p * A_FUGE
+    k_feder = 1.0e11
+    ganz = rechnen(zwei_bloecke("gemeinsam", ordnung=2), p, federn=k_feder)
+    m = zwei_bloecke("gemeinsam", ordnung=2)
+    nn = m.nn
+    starr = DofBehaviour("rigid")
+    kb = m.add_kontaktbedingung("Naht", flaechennamen=["Fuge"], gegenflaechen=[],
+                                koerpernamen=["Oben"], behaviour={0: starr, 1: starr, 2: starr})
+    try:
+        b = fugen.kontaktfuge_ausfuehren(m, kb, [])
+        ok, text = True, ""
+    except fugen.QuadratischeSeiten as ex:
+        b, ok, text = {}, False, str(ex)
+    check("verschweißt an tet10: keine Sperre", ok, text[:90])
+    check("verschweißt: ausgeführt, kein Knoten verdoppelt (weder Ecke noch Mitte)",
+          kb.ausgefuehrt and m.nn == nn and b.get("knoten", 0) == 0,
+          f"Knoten {nn} -> {m.nn}, verschweißt {b.get('verschweisst')}")
+    g = rechnen(m, p, federn=k_feder)
+    close("verschweißt: das Fundament trägt wie am durchgehenden Körper",
+          g["R_fundament"], ganz["R_fundament"], abs(F) * 1e-6, " N")
+
+
+def test_tet10_kontaktpaar_gesperrt():
+    """Ein Kontaktpaar an tet10 (etwa aus einer Datei) sieht nur die Ecken -
+    die Seitenmitten des Slave laufen ungehindert durch den Master."""
+    m = zwei_bloecke("eigene", ordnung=2)
+    unten = {i for i, e in enumerate(m.elements) if str(e.group) == "Unten"}
+    oben_knoten = [n for n in _flaechenknoten(m, 1.0)
+                   if any(n in m.elements[i].nodes for i, e in enumerate(m.elements)
+                          if str(e.group) == "Oben")]
+    m.add_contact_pair("Paar", oben_knoten[:4], master_elements=sorted(unten))
+    for i in _flaechenknoten(m, 0.0):
+        m.fix(i, [0, 1, 2])
+    lc = m.add_load_case("LF1")
+    lc.gravity = [0, 0, 0]
+    m.add_geometrielast("Dach", 1.0e6, "flaeche", case="LF1")
+    m.lasten_verteilen()
+    try:
+        solver.solve_static(m, case="LF1")
+        gesperrt, text = False, ""
+    except fugen.QuadratischeSeiten as ex:
+        gesperrt, text = True, str(ex)
+    check("Kontaktpaar an tet10: die Rechnung bricht laut ab",
+          gesperrt and "Kontaktpaar Paar" in text, text[:90])
+
+
+def test_tet10_flaechenlager_gesperrt():
+    """Ein starres Flaechenlager hielt an tet10 nur die Ecken: gemessen am
+    22.09.2026 24 von 77 Bodenknoten, die Oberseite sank um 41 % mehr als
+    mit festgehaltenen Bodenknoten. An tet4 stimmt es und bleibt erlaubt."""
+    from statik3d import supports
+    p = 1.0e6
+
+    def rechne(ordnung, lager):
+        m = _wuerfel(0.5, ordnung=ordnung)
+        unten = _flaechenknoten(m, 0.0)
+        oben = _flaechenknoten(m, 1.0)
+        if lager:
+            ss = m.add_surface_support(name="Starr", ux=dict(typ="rigid"), uy=dict(typ="rigid"),
+                                       uz=dict(typ="rigid"))
+            ss.flaechen = ["Boden"]
+        else:
+            for i in unten:
+                m.fix(i, [0, 1, 2])
+        lc = m.add_load_case("LF1")
+        lc.gravity = [0, 0, 0]
+        m.add_geometrielast("Deckel", p, "flaeche", case="LF1")
+        m.lasten_verteilen()
+        r = solver.solve_static(m, case="LF1")
+        return float(r.u.reshape(-1, 6)[oben, 2].mean()), m
+
+    u_fest, _ = rechne(1, False)
+    u_lager, _ = rechne(1, True)
+    close("tet4: das starre Flächenlager hält wie feste Bodenknoten", u_lager, u_fest,
+          abs(u_fest) * 1e-9, " m")
+    try:
+        rechne(2, True)
+        gesperrt, text = False, ""
+    except fugen.QuadratischeSeiten as ex:
+        gesperrt, text = True, str(ex)
+    check("tet10: das Flächenlager bricht laut ab", gesperrt and "Flächenlager Starr" in text,
+          text[:90])
+    u_fest2, m2 = rechne(2, False)
+    check("tet10 ohne Flächenlager (Knoten fest) rechnet weiter", u_fest2 < 0,
+          f"u = {u_fest2 * 1e3:.6f} mm")
+    check("die Lagerzusammenfassung nennt die Sperre, statt abzubrechen",
+          "gesperrt" in supports.summary(_mit_flaechenlager(_wuerfel(0.5, ordnung=2))))
+    u_ohne, _ = _ohne_sperre(lambda: rechne(2, True))
+    check("ohne Sperre sänke die Oberseite deutlich mehr (Seitenmitten ungelagert)",
+          abs(u_ohne) > 1.2 * abs(u_fest2),
+          f"{u_ohne * 1e3:.6f} mm gegen {u_fest2 * 1e3:.6f} mm")
+
+
+def _mit_flaechenlager(m: Model) -> Model:
+    ss = m.add_surface_support(name="Starr", ux=dict(typ="rigid"), uy=dict(typ="rigid"),
+                               uz=dict(typ="rigid"))
+    ss.flaechen = ["Boden"]
+    return m
 
 
 def main():
-    for t in (test_viereckfuge_zaehlt_ganz, test_fuge_laesst_schweissnaht_ganz, test_passende_netze_druck, test_passende_netze_zug,
+    for t in (test_tet10_fuge_gesperrt, test_tet10_verschweisst_erlaubt,
+              test_tet10_kontaktpaar_gesperrt, test_tet10_flaechenlager_gesperrt,
+              test_viereckfuge_zaehlt_ganz,test_fuge_laesst_schweissnaht_ganz, test_passende_netze_druck, test_passende_netze_zug,
               test_vorzeichen_aus_der_geometrie, test_eigene_flaechen,
               test_eigene_flaechen_zug, test_fuge_ueber_gegenseite, test_alle_fugen,
               test_suchradius_kommt_aus_der_fuge, test_diagnose_sieht_die_gegenseite,

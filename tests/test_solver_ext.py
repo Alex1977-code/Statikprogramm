@@ -597,11 +597,23 @@ def test_ketten_mit_eingefrorenen_zustaenden():
         solver._cases_in_ketten = echt
         parallel.configure(ketten=alt_k)
 
-    frozen1 = sorted(n for n in namen if erg1[n].info.get("contact_frozen"))
-    frozen2 = sorted(n for n in namen if erg2[n].info.get("contact_frozen"))
-    pruefe("dieselben Zustände sind eingefroren wie ohne Ketten",
-           frozen1 == frozen2 and len(frozen1) == len(ref),
-           f"{len(frozen1)} gegen {len(frozen2)}, erwartet {len(ref)}")
+    # Seit dem 22.09.2026 bleibt ein Zustand nur eingefroren, wenn sein
+    # eingefrorener Kontaktzustand zur Last passt; sonst wird er nachgerechnet
+    # (contact_frozen_verworfen). Die Ketten duerfen daran nichts aendern:
+    # dieselben Zustaende eingefroren, dieselben verworfen, und jeder Zustand
+    # mit Referenz ist eines von beiden.
+    def _art(e):
+        i = e.info
+        return "eingefroren" if i.get("contact_frozen") else             "verworfen" if i.get("contact_frozen_verworfen") else "frei"
+    arten1 = {n: _art(erg1[n]) for n in namen}
+    arten2 = {n: _art(erg2[n]) for n in namen}
+    mit_ref1 = sorted(n for n in namen if arten1[n] != "frei")
+    pruefe("dieselben Zustände sind eingefroren bzw. verworfen wie ohne Ketten",
+           arten1 == arten2 and mit_ref1 == sorted(ref),
+           f"eingefroren {sum(a == 'eingefroren' for a in arten1.values())} gegen "
+           f"{sum(a == 'eingefroren' for a in arten2.values())}, verworfen "
+           f"{sum(a == 'verworfen' for a in arten1.values())} gegen "
+           f"{sum(a == 'verworfen' for a in arten2.values())}, mit Referenz {len(mit_ref1)} von {len(ref)}")
 
     # Die erste Kette sieht dieselbe Folge wie der Einzellauf und muss darum
     # bitgleich sein. Die zweite beginnt mit einem **kalten** Kopf - dort

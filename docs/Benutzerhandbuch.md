@@ -883,6 +883,35 @@ quadratische mit demselben Netz auf 99 %. Er kostet dafür mehr Knoten. Für
 Spannungsnachweise an Kerben, Augen und Bohrungen gehören die quadratischen
 genommen.
 
+**Quadratische Elemente an Fugen, Kontakten und Flächenlagern: noch gesperrt.**
+Kontakt, Fugen und Flächenlager nehmen von einer Elementseite heute nur die
+Eckknoten. Die Seitenmitten eines tet10, hex20, pent15, shell6 oder shell8
+werden dabei übergangen. Beim Trennen einer Fuge blieben sie beiden Körpern
+gemeinsam, bei einem Flächenlager ungelagert, und das Ergebnis wäre still falsch.
+Gemessen an zwei Würfeln mit 0,5 m Netz: Eine Fuge ohne Zugfestigkeit trug 53 %
+des Zuges (bei eigenen Fugenflächen 37 %), ein starres Flächenlager ließ 41 % mehr
+Setzung zu als festgehaltene Bodenknoten. Mit linearen Elementen stimmt beides
+exakt. Deshalb bricht das Programm ab, sobald eine Kontaktbedingung, ein
+Kontaktpaar oder ein Flächenlager an einem quadratischen Element liegt. Die
+Meldung nennt Bedingung, Elementtyp und Elementnummern. Abhilfe: diese Körper
+linear vernetzen (*Netzeinstellungen → Elementansatz linear*). Erlaubt bleibt
+eine verschweißte Fuge (starr in allen Richtungen, passende Netze), denn sie
+trennt nichts. Der Kontakt über quadratische Seiten ist in Arbeit.
+
+**Ordnung je Körper** (23.09.2026, im Aufbau): Jeder Volumenkörper trägt im Modell
+und in der Datei eine eigene Ordnung (`Volumenkoerper.ordnung`): leer heißt „wie das
+Netz bzw. automatisch“, 1 heißt tet4, 2 heißt tet10. Leer ist die Vorgabe, auch für
+ältere Dateien; andere Werte als 1 und 2 meldet die Modellprüfung als FEHLER. **Heute
+wirkt das Feld noch nicht auf das Netz** — der Vernetzer liest weiter nur die Ordnung
+der Netzeinstellungen, die Eingabe in der Oberfläche folgt. Fertig sind die Teile
+dahinter: `elementwahl.vorschlag` schlägt je Körper tet10 vor, wo ein Nachweis geführt
+wird und ein Vorlauf Biegung oder einen großen Fehler zeigt (eine gesetzte Ordnung
+gewinnt; Theoriehandbuch § 6b-2), und ein gemischtes Netz aus tet4- und tet10-Körpern
+rechnet, die Seitenmitten an der Grenze bindet das Programm selbst. **Vorsicht an
+Kontaktfugen:** Ein Körper mit Ordnung 2 an einer Kontaktfuge oder einem nichtlinearen
+Flächenlager wird von der tet10-Sperre angehalten (`fugen.quadratische_seiten_sperren`),
+bis der Kontakt für tet10 fertig ist; das Protokoll sagt es laut.
+
 **Splitter** — fast flache Elemente — werden herausgeglättet: die *freien*
 Knoten wandern so, dass die schlechteste Güte steigt; die Randknoten bleiben,
 wo sie sind, damit sich das Volumen nicht ändert. Die Schwelle steht ebenfalls
@@ -1118,7 +1147,7 @@ einen Streifen.
 |---|---|
 | Posten | Name des Lastfalls oder der Kombination |
 | Art | Lastfall oder Kombination |
-| Zustand | offen, läuft, fertig - und, sobald der Rechenkern es meldet, „läuft (konvergiert)“ bzw. „läuft (nicht konvergiert)“ |
+| Zustand | offen, läuft, fertig - und, sobald der Rechenkern es meldet, „läuft (konvergiert)“, „läuft (nicht konvergiert)“ bzw. „läuft (Probelauf)“; nach dem Abschluss steht dieser Stand statt „fertig“ da (siehe unten) |
 | Schritte | „Kontakt 12 · Plast. 5 (Stufe 2/3)“ - die Zähler der laufenden Iterationen |
 | Konvergenz | die zuletzt gemessene Zahl: „Δu 3.2e-05“ der Kontakt-Iteration, „Änderung 8.13e-07“ der Plastizität |
 | Zeit | Laufzeit des Postens, im Halbsekundentakt; nach dem Abschluss seine Gesamtzeit |
@@ -1147,6 +1176,50 @@ Hinter dem letzten Posten läuft noch der Nachlauf - Umhüllende und Nachweise.
 Solange steht er in der Fußzeile des Fensters („Kombination 54 von 54 -
 Umhüllende GZT-12: 3/7“), damit die Liste dabei nicht wie eingefroren
 aussieht.
+
+#### Rechenliste: ein gedeckelter Lastfall heißt „nicht konvergiert“ (22.09.2026)
+
+Bis zum 22.09.2026 zeigte die Rechenliste bei einem Lastfall, dessen
+Nachprüfung der Reibung nach 40 Zustandswechseln aufgegeben hatte,
+**„konvergiert“**. Die Meldung des Rechenkerns lautet „Kontakt: Nachprüfung
+der Reibung nach 40 Zustandswechseln abgebrochen - das Ergebnis ist nicht
+auskonvergiert“; die Liste suchte nur „nicht konvergiert“ - das steht darin
+nicht - und fand dann „konvergiert“ in „aus**konvergiert**“. Eine andere
+Meldung, die „konvergiert“ ohne Verneinung sagt, gibt es im Fortschrittsstrom
+nicht: „konvergiert“ stand also genau bei den gedeckelten Lastfällen. Am
+Block mit Reibung mit künstlich niedrigem Deckel nachgestellt: der echte
+Strom des Rechenkerns ergab „konvergiert“, jetzt ergibt er „nicht
+konvergiert“ (`tests/test_rechenliste.py`).
+
+Jetzt heißt es dort **„nicht konvergiert“** - bei „nicht konvergiert“ und
+„nicht auskonvergiert“ in jeder Schreibung (auch „NICHT KONVERGIERT“) und bei
+der Zeile „Nachprüfung der Reibung … abgebrochen“, die das Wort
+„konvergiert“ gar nicht enthält. Ein „abgebrochen“, das nicht die Reibung
+betrifft (etwa „Vernetzen abgebrochen“), ändert den Zustand nicht. Die
+Verneinung klebt wie bisher: ein einziger gedeckelter Lauf zählt für den
+ganzen Posten.
+
+Ein **Probelauf** (die Rechnung der adaptiven Vernetzung mit einem einzigen
+Kontaktschritt) steht als **„Probelauf“** da - nicht als „konvergiert“, denn
+er ist es mit Absicht nicht, und nicht als „nicht konvergiert“, denn das wäre
+keine Nachricht. Sein Ergebnis ist ein Netzmaß, kein Nachweis.
+
+Für die Kennzeichnung eines **fertigen** Lastfalls aus seinen Zahlen statt aus
+dem Meldungstext gibt es `rechenliste.zustand_aus_info(res.info)`. Sie gibt
+„konvergiert“, „Probelauf“ oder „NICHT konvergiert: …“ mit den Gründen
+zurück, etwa „NICHT konvergiert: 3 von 11 Kontaktläufen nicht konvergiert“
+oder „…, darunter der letzte“. Jeder gedeckelte Kontaktlauf zählt, auch wenn
+der letzte konvergiert ist - mit einer Ausnahme: dem elastischen Vorlauf einer
+Rechnung mit Fließen, der das Ergebnis nachweislich nicht beeinflusst
+(Theoriehandbuch § 4.0, „Welcher gedeckelte Lauf zählt“). Eine Zwischenstufe
+„eingeschränkt“ gibt es nicht; ob ein Lastfall mit einem gedeckelten
+Zwischenlauf als Nachweis taugt, entscheidet der Anwender. **Noch nicht
+angeschlossen**: Zusammenfassung und Bericht zeigen weiter
+`contact_converged`, das über alle Läufe klebt, den Vorlauf eingeschlossen.
+Ebenso die Rechenliste während des Laufs: sie liest die Meldungen, und die
+Deckelmeldung des Vorlaufs ist eine davon. Ist allein der Vorlauf gedeckelt,
+steht dort „nicht konvergiert“, während `zustand_aus_info` „konvergiert“
+sagt - die Abweichung geht zur vorsichtigen Seite.
 
 ### Ergebnisse und Bericht
 
@@ -1797,6 +1870,16 @@ Projektangaben; die stehen unter dem obersten Punkt des Modellbaums. Solange
 eine Maske offen ist, steht rechts nur sie. Stabzug, Platte und Quader sind
 Masken im Register *Geometrie*, der Import steht im Register *Datei*.
 
+**Quader mit Tetraedern.** Die Maske *Quader erzeugen* teilt den Quader in
+nx × ny × nz Zellen; mit dem Elementtyp **tet4** wird jede Zelle in fünf
+Tetraeder zerlegt. Seit 22.09.2026 passen die Tetraeder benachbarter Zellen an
+der gemeinsamen Seite aufeinander. Vorher blieb jede innere Zellseite als Riss
+im Netz stehen (2 × 2 × 2 Zellen: 96 freie Dreiecke statt 48); am Kragarm
+2 × 0,4 × 0,4 m mit Endlast bog sich die Spitze dadurch mit 10 × 3 × 3 Zellen
+um 0,14 % und mit 20 × 4 × 4 Zellen um 1,1 % weiter durch. Ein früher erzeugter
+tet4-Quader steht mit seinen Elementen in der Modelldatei und behält die Risse:
+Elemente löschen und den Quader neu erzeugen. Mit **hex8** betrifft das nichts.
+
 **Rechtsklick auf die Auswahl.** Sind Knoten, Linien, Stäbe, Flächen,
 Volumen oder Elemente gewählt (mit ihren Lagern und Kontaktbedingungen),
 öffnet der Rechtsklick in der Ansicht ein Menü: oben *Selektiertes
@@ -2295,6 +2378,23 @@ erzeugt hat. Eine Flächenlast auf einer noch nicht vernetzten Fläche wird
 trotzdem **gezeichnet** — so sieht man die Lasten eines eben eingelesenen
 RFEM-Modells.
 
+**Flächenlast auf einer Elementseite ohne Fläche.** Liegen die Ecken einer
+Volumenseite auf einer Linie oder in einem Punkt (zusammengelegte Knoten mit
+eigenen Nummern), oder heben sich die beiden Dreiecke eines Vierecks auf
+(vertauschte Knoten), hat die Seite keine Fläche, und eine Last darauf wirkt
+mit 0 N. Das ist richtig und bleibt so; seit 22.09.2026 steht es aber in der
+Modellprüfung: „WARNUNG: Lastfall 'LF1': Flächenlast auf Element 0 (hex8):
+Seite 1 hat keine Fläche … - die Last wirkt mit 0 N, steht aber mit p = …
+kN/m² im Bericht“. Vorher stand die Last mit vollem p im Bericht, und die
+Prüfung schwieg (gemessen an einem Sechsflächner mit zur Linie
+zusammengelegtem Deckel: 0 N, keine Zeile). Hat die Seite nur fast keine
+Fläche, nennt die Zeile die Kraft, mit der die Last wirklich wirkt. Ist ein
+Viereck in sich verschlungen (vertauschte Knoten, eine Ecke leicht versetzt),
+heißt es „die Ecken von Seite 1 spannen fast keine Fläche auf, die Seite ist
+aber in sich verschlungen … - die Last wirkt mit … N“ (gemessen am
+1 × 1-m-Deckel mit 1000 kN/m²: 577350 N). Abhilfe: die Knoten der Seite
+prüfen oder die Last auf eine Seite mit Fläche legen.
+
 **Im Bild**: Kräfte und Streckenlasten rot (Pfeile), Temperatur als Punkte
 (orange warm, blau kalt), Zwangsverformungen grün, das Fenster einer freien
 Rechtecklast als Rahmen. Der Schalter „Lasten“ (Glasleiste, Register
@@ -2369,6 +2469,55 @@ dabei ins Nichts geht.
 **In der Kombination** zählt das Übermaß wie jede andere Last: es geht mit
 dem Beiwert seines Lastfalls ein. Wer das nicht will, legt es in einen
 ständigen Lastfall mit γ = 1,0.
+
+#### Übermaß wirkt nur an der Fuge mit genau diesem Namen (22.09.2026)
+
+Ein Übermaß gehört genau der Fuge, deren Namen es trägt. Bis zum 22.09.2026
+galt es auch an jeder Fuge, deren Name mit diesem Namen **beginnt** - ohne
+Meldung. Das Programm vergibt solche Namen selbst: die zweite Fuge zwischen
+denselben Körpern heißt „Fuge (2)“, eine Kopie „Deckel_2“, der RFEM-Import
+teilt eine Freigabe in „⟨Name⟩ (Typ 1)“, „⟨Name⟩ (Typ 2)“ auf, und
+„Kontaktbedingung 1“ ist der Anfang von „Kontaktbedingung 10“. Gemessen an
+zwei getrennten Würfelpaaren mit 100 µm Übermaß nur auf „Fuge“: die Fuge
+„Fuge (2)“ ohne jedes Übermaß stand unter derselben Pressung von
+10 499 371 N wie „Fuge“. Passten zwei Einträge („Deckel“ 100 µm, „Deckel_2“
+20 µm an der Fuge „Deckel_2 (Typ 1)“), entschied die Reihenfolge der
+Eingabe - 10 499 371 N oder 2 099 874 N, Faktor 5.
+
+Jetzt wirkt an einer solchen Fuge **kein** Übermaß, und das Protokoll (und
+damit die Warnungen des Berichts) sagt es:
+
+    Kontaktpaar 'Fuge (2)': kein eigenes Übermaß eingetragen - die Einträge
+    „Fuge“ gehören zu einer anderen Fuge und wirken hier NICHT.
+
+Wer an einer aufgeteilten Fuge Übermaß will, trägt es für jede Teilfuge ein -
+die Maske bietet genau diese Namen an. Ein Modell, das ein Übermaß noch auf
+den Namen vor der Aufteilung führt, rechnet diese Teilfugen jetzt ohne
+Übermaß; die Zeile im nächsten Abschnitt nennt sie (`tests/test_uebermass.py`).
+
+#### Übermaß ohne Fuge dieses Namens (22.09.2026)
+
+Ein Übermaß, dessen Name **keine** Fuge im Netz trägt, wirkt nirgends. Das
+geschieht, wenn die Fuge nach dem Eintragen umbenannt, gelöscht oder
+aufgeteilt wurde. Umbenannt wird auch von selbst: eine automatisch angelegte
+Kontaktbedingung trägt ihre Wirkung im Namen, und wer die Wirkung ändert,
+ändert den Namen mit - das Übermaß behält den alten. Und der RFEM-Import
+macht aus einer Freigabe mit mehreren Freigabetypen „⟨Name⟩ (Typ 3)“,
+„⟨Name⟩ (Typ 4)“; eine Fuge „⟨Name⟩“ gibt es dann nicht mehr. Bis zum 22.09.2026 fiel ein solcher Eintrag ohne
+jede Zeile weg; stand eine Teilfuge mit diesem Namensanfang daneben, nannte
+ihre Zeile den Eintrag „zu einer anderen Fuge gehörig“ - eine solche Fuge
+gab es aber nicht. Jetzt steht im Protokoll (und in den Warnungen des
+Berichts) eine Zeile je Eintrag:
+
+    Übermaß „Achse“: kein Kontaktpaar trägt genau diesen Namen - das Übermaß
+    wirkt nirgends, auch nicht an „Achse (Typ 3)“, „Achse (Typ 4)“ (deren
+    Namen beginnen nur so; eine aufgeteilte Fuge braucht das Übermaß je
+    Teilfuge).
+
+Abhilfe: das Übermaß unter dem heutigen Namen jeder Fuge neu eintragen. Die
+Zeile steht nur, wenn das Modell überhaupt Kontakt rechnet; ein Modell ganz
+ohne Kontaktfuge hat kein Kontaktsystem, das sie schreiben könnte
+(`tests/test_uebermass.py`, `test_uebermass_ohne_fuge_wird_benannt`).
 
 ### Lastgenerierer Wasserdruck (Stahlwasserbau)
 
@@ -2611,6 +2760,155 @@ als **Drehfeder**. Eine Drehfeder wirkt nur, wenn der Knoten selbst gehalten ist
   Marker im Viewport). Hebt ein Bauteil vollständig ab oder rutscht es ohne
   Halt, wird das als Fehler gemeldet – dann Lagerung oder Lasten prüfen.
 
+#### Einseitiges Lager ohne Richtung (22.09.2026)
+
+Ein einseitiges Lager, dessen Stützrichtung der Nullvektor (0 0 0) ist, kann
+nie tragen. Bis zum 22.09.2026 rechnete das Programm es trotzdem mit, still:
+die Bedingung stand mit F_n = 0 und Status „Kontakt“ in der Kontakttabelle,
+und das Ergebnis war das eines Systems ohne dieses Lager. Gemessen an einem
+Träger von 8 m (links eingespannt, rechts in z gelagert, 10 kN/m, Lager in
+Feldmitte): mit Richtung 0 0 1 trägt das Lager 45 668 N und u_z in
+Feldmitte ist praktisch null; mit 0 0 0 sind es −4,562 mm wie ganz ohne
+Lager. Nur eine numpy-Warnung auf der Konsole („invalid value encountered in
+divide“) deutete darauf hin - in keinem Protokoll, in der exe unsichtbar.
+Mit Reibbeiwert μ > 0 brach die Rechnung stattdessen mit „Gleichungssystem
+singulär“ ab, ohne das Lager zu nennen.
+
+Jetzt fällt ein solches Lager aus der Rechnung heraus, und das Protokoll (und
+damit die Warnungen des Berichts) nennt es:
+
+    Einseitiges Lager Knoten 4: Richtung unbestimmt (Nullvektor) - bitte
+    'direction' angeben
+
+Die Rechnung läuft - mit und ohne Reibung - als die ohne dieses Lager, und
+die Kontakttabelle führt keine Scheinzeile mehr. Schon vor dem Rechnen meldet
+die Modellprüfung „Einseitiges Lager Knoten 4: Richtung ist der Nullvektor -
+das Lager kann nie tragen“; die Protokollzeile fängt den Fall auch dort, wo
+die Prüfung nicht gelaufen ist (`tests/test_supports.py`).
+
+#### Deckel mitten im Lauf, danach doch konvergiert (22.09.2026)
+
+Gibt die Nachprüfung der Reibung nach 40 Zustandswechseln auf, rechnet das
+Programm in einem Sonderfall trotzdem weiter: wenn in derselben Runde ein
+**Schubhalt** gelöst wurde (ein Teil, das zwischendurch am Schubhalt hing,
+liegt wieder an). Kam der Lauf danach echt zur Ruhe - kein Zustand wechselt
+mehr -, meldete das Programm bis zum 22.09.2026 trotzdem „nicht
+auskonvergiert“. Jetzt zählt die Runde, in der die Iteration wirklich endet:
+endet sie am Deckel, heißt es „nicht auskonvergiert“ wie bisher; endet sie
+ohne Wechsel, ist der Lauf konvergiert. Im Protokoll steht dann neben der
+Zeile „Nachpruefung der Reibung nach 40 Zustandswechseln abgebrochen“ auch
+„nach dem Deckel der Reibungsnachprüfung wurde ein Schubhalt gelöst - die
+Iteration läuft weiter“ - die Abbruchzeile war dann nicht das Ende des Laufs.
+
+#### Was aus dem Sonderfall folgt: die Schlussprüfungen laufen (22.09.2026)
+
+Ein solcher Lauf gilt nicht nur als konvergiert, er wird auch so behandelt.
+Nach jedem konvergierten Lauf prüft das Programm, ob ein Teil am Ende noch am
+Schubhalt hängt oder an gehaltenen Punkten unter Zug steht - dann bricht es
+mit „kein belastbares Ergebnis“ bzw. „kein statisches Gleichgewicht“ ab -,
+und nach einem Warmstart, ob gleitende Knoten gegen ihre Richtung laufen -
+dann setzt es wenige davon auf Haften zurück und rechnet weiter, bei vielen
+beginnt es von der Geometrie neu. Ein gedeckelter Lauf übersprang diese
+Prüfungen. Im Sonderfall oben kann deshalb seit dem 22.09.2026 ein Abbruch
+oder eine weitere Rechnung stehen, wo vorher ein Ergebnis mit „nicht
+auskonvergiert“ stand; die weitere Rechnung ändert dann auch die Zahlen. (Am
+Block mit Reibung im Test, kalt gestartet, bricht keine der Prüfungen ab:
+21 Schritte, dieselbe Verschiebung wie ohne Deckel,
+`tests/test_kontakthalt.py`.)
+### Laufbuch: jeder Kontaktlauf einzeln (seit 22.09.2026)
+
+Mit Fließen rechnet ein Lastfall viele Kontaktläufe — einen Vorlauf, je
+Laststufe einen, je Newton-Schritt einen und einen Abschluss (am Drehlager
+zwölf). Bisher standen im Ergebnis nur Summen. Jetzt hat jeder Lauf einen
+eigenen Eintrag in `res.info["laeufe"]`, in der Reihenfolge der Rechnung und
+nie zusammengefasst. An der Rechnung ändert das nichts: gemessen an 13
+Rechnungen mit Reibung sind Verschiebungen, Auflagerkräfte, Spannungen und
+Kontaktkräfte vorher und nachher bitgleich.
+
+Was ein Eintrag sagt:
+
+* **Art und Nummer**: `nr`, `art` (`Lastfall`, `Vorlauf`, `Laststufe`,
+  `Newton`, `Fliessschritt`, `Abschluss`), bei Fließen dazu `stufe` und
+  `schritt`.
+* **Ob er konvergiert ist, und wenn nicht, warum**: `konvergiert` und
+  `grund` — leer, oder `deckel` (die Nachprüfung der Reibung hat nach 40
+  Runden aufgegeben), `max_iter` (Schrittgrenze), `probelauf`, `abbruch`
+  (kein Gleichgewicht). `eingefroren` heißt: kein eigener Lauf, sondern der
+  eingefrorene Kontaktzustand der Referenz. Konvergiert heißt er nur, weil
+  geprüft ist, dass der Zustand zur Last passt. Passt er nicht, wird der
+  Zustand nachgerechnet, und der Lauf ist ein gewöhnlicher (siehe
+  „Kontaktzustand der Ermüdungszustände“).
+* **Womit er begann**: `warm` (aus einem gesicherten Kontaktzustand),
+  `neustart` (Warmstart verworfen oder korrigiert), `start_von_lauf` (der Lauf,
+  dessen Zustand der Start war; 0 = der Start, den der Lastfall mitbekam;
+  leer = von der Geometrie).
+* **Was er kostete**: `schritte`, `faktorisierungen`.
+* **Wo er endete**: `phase`, `n_aktiv`, `n_gleitet`, `u_max` (größte
+  Knotenverschiebung in m) und `endzustand_kennung` — 16 Zeichen, die für
+  denselben Kontaktzustand in jeder Rechnung gleich sind. Zwei Läufe mit
+  verschiedener Kennung endeten in verschiedenen Zuständen (Aktivmenge,
+  Haften/Gleiten, Fließen). Gleiche Kennung heißt **nicht** gleiche Kräfte:
+  Normalkräfte und Gleitrichtungen stehen nicht darin.
+* **Was in jeder Runde wechselte**: `runden`, je Kontaktschritt eine Zeile
+  mit den Zahlen der Wechsel — Öffnen und Schließen (getrennt nach
+  Reibstelle und reibungsfreier Fuge), neues Gleiten, Gleiten eines gerade
+  wieder geschlossenen Knotens, Fließwechsel, Einfrieren — und dazu Anteil,
+  Gütemaß und Zahl der haftenden Knoten. Die Spaltennamen stehen in
+  `statik3d.contact.RUNDEN_FELDER`.
+
+Die bekannten Angaben „Kontakt-Iterationen … in n Läufen" und „letzter Lauf
+konvergiert" werden jetzt aus dem Laufbuch abgeleitet.
+
+**Die Deckelzeile nennt die Wechselarten.** Gibt die Nachprüfung der Reibung
+auf, steht im Kontaktprotokoll jetzt auch, was die gezählten Runden gefüllt
+hat, etwa:
+
+```
+Kontakt: Nachpruefung der Reibung nach 40 Zustandswechseln abgebrochen - in 40 Runden:
+31 mit Öffnen/Schließen reibungsfreier Bedingungen (212 Wechsel), 12 mit neuem Gleiten (340 Knoten)
+```
+
+(eine Zeile; die Zahlen zeigen die Form, am Drehlager sind sie noch nicht
+gemessen). Überwiegen Öffnen und Schließen in Fugen, liegt es nicht an der
+Reibung; überwiegt neues Gleiten, an ihr.
+
+**Woher der Warmstart kam.** `res.info["start_angeboten_von"]` nennt, welcher
+Kontaktzustand dem Lastfall als Start angeboten wurde („Lastfall LF1",
+„Kombination K1", „System ‹Situation›", leer = keiner), und
+`res.info["start_genutzt"]`, ob er ihn wirklich übernommen hat. Beides steht
+getrennt, weil ein angebotener Start verworfen werden kann (umgekehrte Last)
+und ein eingefrorener Zustand ihn gar nicht braucht. Nach einem eingefrorenen
+Zustand startet der nächste Lastfall vom Zustand **davor** — das steht dann
+auch so da. Modelle mit Zug- oder Druckstäben (Ausfall) und Kontakt rechnen
+jeden Lastfall von der Geometrie; dort steht `start_vermerk` „Ausfallweg ohne
+Warmstart".
+
+Oberfläche, Rechenliste und Bericht zeigen das Laufbuch noch nicht; es steht
+im Ergebnis und in der Ergebnisdatei.
+
+#### Deckelzeilen im Bericht, Ketten und Aufträge (Gegenprüfung 22.09.2026)
+
+**Im Bericht bleibt es eine Warnung.** Für die Ergebnisse ohne eigene
+Kontakttabelle fasst der Bericht gleiche Kontaktmeldungen zu einer Zeile
+zusammen, etwa „Kontakt (37 weitere Ergebnisse, z. B. LF12): Kontakt:
+Nachpruefung der Reibung nach 40 Zustandswechseln abgebrochen". Die
+Rundenbilanz hinter der Deckelzeile („ - in 40 Runden: …") steht dort nicht —
+ihre Zahlen sind je Lauf verschieden und hätten aus der einen Zeile Hunderte
+gemacht; sie stehen im Laufbuch des Ergebnisses. Die Zahl nennt die
+**Ergebnisse**: ein Lastfall mit mehreren gedeckelten Läufen zählt einmal.
+
+**Kette.** Rechnen die Lastfälle in mehreren Ketten gleichzeitig, steht in
+`res.info["kette"]`, in welcher (etwa `(2, 3)`: zweite von drei). Der erste
+Lastfall jeder Kette beginnt ohne Warmstart — deshalb steht dort
+`start_angeboten_von` leer.
+
+**Kombination als eigener Auftrag.** Wird eine nichtlineare Kombination als
+eigener Auftrag gerechnet (mehrere Arbeiter oder Rechnerfarm), beginnt sie
+ohne Warmstart; seriell beginnt dieselbe Kombination beim Kontaktzustand des
+letzten Lastfalls. Bei Reibung hängt der Endzustand vom Weg ab; wie stark
+sich das im Ergebnis zeigt, ist nicht gemessen. Im Ergebnis steht dann
+`start_vermerk` „Auftrag ohne Warmstart".
+
 ## 7 Import
 
 **Z-Achse nach unten (RFEM).** RFEM legt seine Modelle mit der Z-Achse nach
@@ -2669,6 +2967,29 @@ werden untersucht und, soweit ihr Behälter zugänglich ist, ausgelesen –
 andernfalls nennt das Programm den Exportweg (RFEM: IFC-Statikmodell, SAF oder
 Tabellen; InfoCAD: IFC-Statikmodell oder DXF).
 
+**Das Importprotokoll zählt ab, was in der Datei steht** (seit 22.09.2026).
+Bei den RFEM-6-Stablasten steht jede Zeile der Datei genau einmal im
+Protokoll — übernommen oder mit Grund nicht übernommen —, gezählt je
+Lastzeile und nicht je Stab („62 Stablasten (Gleichlast) an ihre Staebe
+gehaengt (944 Stabzuordnungen)“ am CBG-Trolley); was die Datei nicht lesbar
+führt, meldet eine Warnung „k von n Stablasten waren nicht zu lesen“. Beim
+Tabellenimport nennt die Schlusszeile „n von m Lastkombinationen“; eine
+Kombination, die auf eine andere verweist („LF1 + CO1“), wird mit deren
+Faktoren aufgelöst — ein Minus ohne Zahl („LF2 - CO1“) zieht dabei ab, und
+das Protokoll nennt das Ergebnis samt Vorzeichen —, und eine, die sich
+nicht vollständig auflösen lässt (Verweis auf eine Ergebniskombination
+„EK1“ oder „RC1“ oder auf eine Kombination, die selbst nicht angelegt
+wird) oder deren Formel einen nicht erkannten Teil enthält
+(„1.35*LF1 + 1.5*Schnee“), wird **nicht** angelegt, sondern mit Formel und Grund gewarnt — legen Sie sie dann in der
+Kombinationsmaske von Hand an. Die **Einwirkungskategorie** eines
+RFEM-6-Lastfalls ist aus einer Kennzahl angenommen, die an keiner Datei
+belegt ist: das Protokoll nennt je Kennzahl die angenommene Kategorie und
+die Lastfälle, deren Name sie umgestellt hat, und warnt; prüfen Sie ψ und γ
+in der Lastfallmaske. Ein Volumenkörper aus sechs Vierecken wird als
+Sechsflächner nur dann unmittelbar vernetzt, wenn seine Knotenfolge genau
+die sechs Randflächen ergibt; sonst geht er an den freien Vernetzer (Einzelheiten im
+Schnittstellenhandbuch).
+
 Aus HiCAD übernommene Stäbe enden an der **Außenkante** des angeschlossenen
 Bauteils – ihre Achsen laufen um die halbe Profilhöhe daneben vorbei, das Modell
 zerfällt zunächst in Teile. Unter **Start → Modell prüfen**
@@ -2712,6 +3033,112 @@ nachgeholt (Protokoll unten). Die integrierten Linien stehen an der Fläche
 (Modelldatei); das Netz folgt ihnen noch nicht — für die starren Scheiben
 ist das ohne Folge, ihre Kopplung nimmt die Netzknoten innerhalb des
 Kreises.
+
+**Ein Statik3D-Modell (`.json`) an ein vorhandenes anhängen** (Haken „an
+vorhandenes Modell anhängen“ im Importdialog). Übertragen wird das ganze
+Modell: Knoten, Elemente mit allen Angaben (nur Zug/Druck, Exzentrizität,
+Gelenkfedern), Knoten-, Linien- und Flächenlager samt Nichtlinearität,
+Linien, Flächen, Volumenkörper, Stäbe mit ihren Nachweisangaben, Gelenke,
+Kombinationen, Ermüdungslasten, Kontaktbedingungen, Kontaktpaare,
+Spaltelemente, Kopplungen, Punktmassen, Federn, Starrkörper, Situationen,
+Anschlüsse, Beul- und Volumenbereiche, Layer, Unterlagen, die Wasserdruck-
+und Windgeneratoren und je Lastfall alle Lastarten einschließlich Flächen-
+und Linienlasten an Objekten, Zwangsverformungen, Vorspannung und Übermaß.
+Bis zum 22.09.2026 kamen nur Knoten, Elemente, Knotenlager, vier Lastarten
+und die Stäbe an – am Hallenrahmen fielen 72 Kombinationen, ein Linienlager,
+ein Flächenlager, zwei Ermüdungslasten und eine Linienlast ohne Meldung weg;
+jetzt kommen alle an. Was das Protokoll dabei sagt:
+
+* **„Aus der Quelle übertragen:“** – die Anzahl je Objektart.
+* **„Umbenannt …“** – ein Name, den es im Ziel schon gibt, bekommt eine
+  Nummer (`S1` → `S1_2`, `F1` → `F1_2`), und alles in der Quelle, was ihn
+  nennt – Lasten, Kontaktbedingungen, Kombinationen, Layer –, zeigt auf das
+  umbenannte Objekt. Das gilt auch für die Gruppe der Elemente eines
+  umbenannten Volumenkörpers (`V1` → `V1_2`); über sie findet eine
+  Kontaktbedingung ihren Körper. Bis zum 23.09.2026 behielten die Elemente
+  `V1`, und die Fuge der Quelle löste im Versuch den Block des anderen
+  Körpers. Ebenso folgen die Ermüdungslasten, deren Zustand eine Kombination
+  ist (am CBG alle 20), der umbenannten Kombination; bis dahin zeigte eine
+  solche Ermüdungslast ohne Meldung auf die gleichnamige Kombination des
+  Ziels. Werkstoffe, Querschnitte, Dicken, Kombinationen und
+  Ermüdungslasten mit gleichem Namen **und** gleichem Inhalt werden nicht
+  doppelt angelegt; bei gleichem Namen und anderem Inhalt behält das
+  angehängte Teil seinen eigenen (am Hallenrahmen: `S355` der Halle mit
+  Sorte und f_u, `S355` des Rahmens ohne – die Halle rechnet mit `S355_2`).
+* **Lastfall gibt es im Ziel schon** – die Lasten kommen in denselben
+  Lastfall; es gelten dessen Eigenschaften (Einwirkung, ψ, γ, Grundlast,
+  Situation, Theorie). Weichen die der Quelle ab, nennt die Warnung jede
+  Abweichung mit beiden Werten – dann im Lastfall prüfen. Ein neuer Lastfall
+  bringt alle seine Eigenschaften mit.
+* **Eigengewicht** gilt je Lastfall für alle Elemente. Hatten Ziel und Quelle
+  in einem Lastfall verschiedenes, warnt das Protokoll: es erfasst jetzt auch
+  die Elemente des anderen Teils oder fehlt ihnen.
+* **Nicht übertragen** und mit Anzahl gemeldet werden die Berichtseinträge
+  (sie zeigen Ergebnisse des Quellmodells) und die Stellungen (eine
+  Stellung, die verschiebt oder dreht, bewegt ohne Gruppenangabe alle Knoten
+  ohne Knotenlager – auch die auf Linienlagern –, also auch die des Ziels).
+  Einstellungen – Netz, Nachweise, Plastizität, Einheiten, Bericht – bleiben
+  die des Ziels; weichen die der Quelle ab, steht es im Protokoll.
+* **Situationen mit Stellung:** Eine Situation der Quelle behält den Namen
+  ihrer Stellung, und die Modellprüfung meldet „Stellung … unbekannt“, bis die
+  Stellung im Ziel angelegt ist. Hat das Ziel eine Stellung desselben Namens,
+  zeigt die Situation stattdessen auf einen neuen Namen (`Offen` → `Offen_2`),
+  und die Warnung „Situationen der Quelle nennen eine Stellung, die es im
+  Ziel unter demselben Namen gibt …“ nennt jede solche Situation. Bis zum
+  23.09.2026 rechnete sie still in der Stellung des Ziels. Im Versuch hob die
+  Stellung `Offen` der Quelle die Knoten eines Rahmens um 1,0 m, die
+  gleichnamige des Ziels bewegte nichts; am Lastknoten der Quelle ergaben
+  sich allein 4,7572 mm, angehängt 1,7876 mm, ohne Meldung. Solange die
+  Modellprüfung „Stellung … unbekannt“ meldet, ist das ein Fehler:
+  **Berechnen** weist dann in allen vier Rechenarten ab, auch für die
+  Lastfälle des Ziels; **▶ Alle Stellungen rechnen** meldet den Fehler bei
+  jeder Stellung und rechnet keine; die Kommandozeile gibt 2 zurück. Nicht
+  gesperrt ist der Schwingungsnachweis des Verschlusses: *Nachweis führen*
+  prüft das Modell vorher nicht. Im Versuch (Schützhaut mit Wasserdruck,
+  daran der Rahmen angehängt) rechnete er trotz des Fehlers die
+  Eigenfrequenzen in Luft und Wasser und den Lastfall der Druckschwankung.
+  Ruft ein Skript `solver.solve_all` trotzdem auf, kommt es auf „Lastfälle
+  gleichzeitig (Ketten)“ an. Mit der Vorgabe nacheinander – in einem Skript
+  gilt sie, solange es weder `parallel.einstellungen_laden()` noch
+  `parallel.configure(ketten=…)` aufruft – bricht die ganze Rechnung mit
+  „Situation 'S-offen_2': Stellung 'Offen_2' unbekannt“ ab, ohne
+  Teilergebnis. Mit mehreren Ketten scheitert jede Kette ganz, die einen
+  Lastfall dieser Situation enthält, und die Ausnahme („Kette …: Situation
+  'S-offen_2': …“) trägt die Lastfälle der übrigen Ketten als Teilergebnis –
+  im Versuch mit zwei Ketten LF1 des Ziels. Legt man die Stellung der Quelle
+  unter dem neuen Namen im Ziel an, rechnet der Lastfall im selben Versuch
+  wie allein (4,7572 mm).
+* **Anschluss:** Ein Knoten der Quelle, der auf einem Knoten des Ziels
+  liegt, wird mit ihm zusammengeführt („1 Knoten der Quelle lagen auf Knoten
+  des Ziels …“); jeder Verweis darauf folgt, auch Ecken und integrierte
+  Knoten von Flächen, Punktmassen, Starrkörper und Zwangsverformungen.
+  Knoten, die innerhalb des Ziels oder innerhalb der Quelle schon
+  aufeinanderliegen, bleiben getrennt, etwa die beiden Seiten einer
+  ausgeführten Kontaktfuge. Bis zum 23.09.2026 wurde über das ganze Modell
+  zusammengeführt. Gemessen an zwei Blöcken mit der Fuge „Ausfall bei Zug“
+  unter 200 kN Zug: allein 0,0 N am Fundament, angehängt −198 152,7 N, weil
+  danach 24 von 24 Spaltelementen einen Knoten mit sich selbst verbanden
+  (an `Kopfplatte_HEA_200.json` 117 von 117). Im selben Versuch sind es
+  jetzt 0,0 N wie allein. Liegt ein Knoten des einen Teils auf einer solchen
+  Doppelstelle des anderen, ist nicht eindeutig, woran er anschließen soll.
+  Dann bleibt er getrennt, und die Warnung „An … Stellen liegen in Ziel oder
+  Quelle schon mehrere Knoten aufeinander …“ nennt die Zahl und die erste
+  Stelle. Dort ist zu prüfen, ob die Teile verbunden sein sollen.
+
+Gegenprobe: Rahmen mit angehängtem Hallenrahmen, alter gegen neuen Weg (am
+23.09.2026 nach der Nachbesserung wiederholt): in allen fünf Lastfällen
+dieselben Verschiebungen (Abweichung 0), dazu jetzt die 72 Kombinationen.
+
+Die Nachbereitung der übrigen Importe (RFEM 6, DXF, IFC, …) führt
+aufeinanderliegende Knoten weiterhin über das ganze Modell zusammen. Seit dem
+22.09.2026 folgen dabei auch die Ecken und integrierten Knoten der Flächen.
+Am `Drehlager_V15_4_export.rf6` lagen vorher 64 von 3128 Flächenecken
+neben den Knoten ihrer Randlinien (bis 1,8 m), weitere 1380 zeigten hinter
+das Ende der Knotenliste, ebenso 10 von 168 integrierten Knoten; jetzt
+jeweils 0.
+„Spiel geben“ liest diese Ecken: an den 73 zylindrischen Körpern des
+Drehlagers entstehen beim Trennen von den Nachbarn jetzt 359 statt 363
+Knotenkopien (V16 und V29 je 2 weniger), die 24 Linienkopien bleiben.
 
 ## 8 Nachweise nach EC3
 
@@ -2761,6 +3188,19 @@ der Wiederholungen. Das **Zählverfahren** bestimmt, was aus dem Verlauf wird:
 
 Die Schadensakkumulation ist immer Palmgren-Miner über alle Lasten am Ort.
 
+**Keine oder-verknüpfte Ergebniskombination als Zustand.** Eine Kombination
+mit Alternativen (so kommen die FAT-Kombinationen aus RFEM herein) wird nur
+als Umhüllende gerechnet und hat kein Einzelergebnis, aus dem sich σ_max oder
+σ_min lesen ließe. Die Maske der Ermüdungslast bietet sie darum nicht mehr als
+oberen oder unteren Zustand an, und die Modellprüfung meldet sie vor der
+Rechnung als FEHLER („Zustand '…' ist eine oder-verknüpfte
+Ergebniskombination“). Beschreiben Sie eine solche Last als Verlauf über die
+Lastfälle ihrer Alternativen — so legt sie auch der RFEM-Import an. Bei einer
+Last mit Verlauf prüft die Modellprüfung nur die Glieder des Verlaufs, denn
+nur sie gehen in den Nachweis ein; einen oberen oder unteren Zustand, den eine
+solche Last aus einer älteren Datei noch mitführt, liest der Nachweis nicht,
+und die Prüfung meldet ihn nicht.
+
 **Grundlast.** Ein Lastfall mit dem Haken „Grundlast“ (Maske Lastfall) wirkt
 in jeder direkt gelösten Rechnung mit: in Modellen mit Kontakt oder
 Ausfallstäben bei jedem Lastfall, jeder Kombination und jedem Zustand einer
@@ -2795,6 +3235,38 @@ davon 15 s die Lösung (eine Rückwärtseinsetzung ohne Faktorisierung) und
 gleich trifft; Verschiebungen auf 0,16 % gleich, Spannungen im Median
 gleich, 99 % der Elemente innerhalb 0,1 N/mm² — nur an einer
 Spannungsspitze (4656 N/mm², Kopplung) weichen 216 N/mm² ab.
+
+**Eingefroren nur, wenn der Zustand passt (seit 22.09.2026).** Bis dahin hieß
+ein eingefrorener Zustand immer „konvergiert“, auch wenn der übernommene
+Kontaktzustand zur Last gar nicht passte. Jetzt prüft das Programm nach der
+linearen Lösung jede Bedingung:
+- Trägt eine geschlossene Stelle Zug (außer im Verbund)?
+- Ist eine offene durchdrungen?
+- Haftet ein Knoten über dem Reibkegel?
+- Gleitet ein Knoten gegen seine Gleitrichtung?
+
+Trifft eines davon zu, verwirft das Programm den eingefrorenen Zustand und
+rechnet den Zustand nichtlinear nach. Als Start dient der eingefrorene Zustand.
+Das Protokoll nennt die Verstöße, etwa „Kontaktzustand eingefroren, passt aber
+nicht zu dieser Last: 4 haftende über dem Reibkegel (bis 1,29-fach) – wird
+nichtlinear nachgerechnet“. Das Ergebnis trägt sie unter
+`contact_frozen_verworfen`.
+
+Gemessen am Block mit Reibung, Referenz H1. Die Prozentwerte sind die
+Abweichung des eingefrorenen Ergebnisses von der nichtlinearen Lösung, so wie
+es bis dahin als konvergiert galt:
+
+| Zustand | Befund der Prüfung | Abweichung bisher |
+|---|---|---|
+| 1,0 H1 | passt, bleibt eingefroren | 0 % |
+| 1,1 H1 | 4 Knoten haften über dem Kegel | 7,0 % |
+| 0,5 H1 | Durchdringung, Gleiten gegen die Richtung | 18,8 % |
+| −1,0 H1 | 6 geschlossene Stellen unter Zug | 70,0 % |
+
+Nachgerechnet stimmen alle drei nicht passenden Zustände mit der
+nichtlinearen Lösung überein (0,0000 N/mm²). Wo der Zustand passt, bleibt der
+schnelle Weg ohne Faktorisierung. Wie viele der eingefrorenen Zustände am
+Drehlager nachgerechnet werden müssen, ist noch nicht gemessen.
 
 **Lastspielzahl.** Die Lastspiele bzw. Wiederholungen jeder Ermüdungslast
 sind entweder eigene Werte oder — Haken „globale Lastspielzahl" im Dialog —
@@ -2856,9 +3328,64 @@ Bezugszeitraum eingestellt (die Lastspielzahlen gelten für so viele Jahre),
 weist der Bericht zusätzlich die rechnerische **Lebensdauer** aus:
 Bezugszeitraum / D.
 
+**Fehlt das Ergebnis eines Zustands**, wird diese Ermüdungslast nicht
+gerechnet — auch dann nicht, wenn nur der untere Zustand fehlt (bis zum
+22.09.2026 wurde er still durch den Nullzustand ersetzt). Der Eintrag im
+Bericht, in der Tabelle Ermüdung und in der Meldung nach der Rechnung sagt
+dann, was gilt:
+
+* **nicht geführt** — keine Last hat beigetragen. Statt D = 0,000 und
+  „Element -1“ steht der Grund, z. B. „Ergebnis 'EK7' des Mindestzustands
+  fehlt“.
+* **unvollständig** — mindestens eine Last fehlt in D; der Status nennt sie.
+  Das gilt am Stab wie am Volumen und für jeden Weg, auf dem eine Last
+  ausfällt: fehlender oberer oder unterer Zustand, eine oder-verknüpfte
+  Ergebniskombination als Zustand, ein Verlauf mit fehlendem Glied (dann
+  zählen seine übrigen Glieder, der Eintrag bleibt aber unvollständig).
+  Eine Last mit 0 Lastspielen bzw. Wiederholungen (etwa eine Sammlung aus
+  dem RFEM-Import) zählt dabei nicht mit, sie trüge ohnehin nichts bei;
+  trägt eine andere Last bei, steht ihr fehlendes Ergebnis nur als Hinweis
+  da.
+  Das Gesamturteil sagt dann „nicht vollständig geführt“ statt „Alle
+  Nachweise erfüllt.“ (Prüfkörper Zugstab-Volumen: D = 0,383 allein aus der
+  gerechneten Last; der alte Stand rechnete die zweite gegen null und wies
+  0,523 aus).
+* **NICHT erfüllt** — D > 1 schon aus den gerechneten Lasten, auch wenn
+  zusätzlich eine Last fehlt: eine ganz fehlende Last kann D nach Miner nur
+  vergrößern (für einen Verlauf mit Rainflow- oder Reservoirzählung, dem nur
+  ein Glied fehlt, ist das nicht gezeigt).
+
+Was zu tun ist: den genannten Lastfall bzw. die Kombination rechnen oder in
+der Ermüdungslast einen Zustand mit Ergebnis wählen. Ein Stab oder Volumen,
+dessen Lasten alle unwirksam sind (0 Lastspiele bzw. Wiederholungen), bekommt
+keinen Eintrag, solange keiner dieser Lasten ein Ergebnis fehlt; die Meldung
+nennt ihn dann „ohne wirksame Ermüdungslast“. Fehlt einer von ihnen ein
+Ergebnis, steht er dagegen als **nicht geführt** da, mit dem fehlenden
+Ergebnis als Grund, obwohl die Last auch mit diesem Ergebnis nichts
+beitrüge.
+
 Ergebnis: Tabelle „Nachweise EC3“ mit Ausnutzung, maßgebendem Nachweis,
 Kombination und Stelle; Färbung „Ausnutzung EC3“ im Viewport; alle Details
 im Bericht.
+
+**Stab ohne Streckgrenze.** Hat der Werkstoff eines Stabes keine
+Streckgrenze f_y — das kommt bei Importen vor, wenn die Stahlsorte nicht
+erkannt wird —, wird sein Nachweis **nicht geführt**. Die Tabelle zeigt dann
+Ausnutzung 0.000 mit Status „nicht geführt“, die Zeile nach *Nachweise EC3*
+(sie steht auch im Etikett der Maske *Nachweise*, Gruppe „Nachweise führen
+(nach der Berechnung)“) endet mit „- 1 nicht geführt: *Stab*
+(Werkstoff … ohne Streckgrenze)“ statt „- alle erfuellt“, und die größte
+Ausnutzung dort stammt nur von geführten Stäben. Im Bericht steht der Stab in
+jedem Umfang unter „Offene Hinweise und Warnungen“, auch wenn die
+Berichtsoption „Nachweise EC3“ ausgeschaltet ist. Sind die übrigen Nachweise
+erfüllt, sagt die Statuszeile „Alle geführten Nachweise erfüllt – nicht
+geführt wurden: …“. Ist gar kein Stab geführt (und kein anderer Nachweis),
+heißt sie „Kein Nachweis geführt – nicht geführt wurden: …“, und die
+Wesentlichen Ergebnisse nennen dann keine größte Ausnutzung EC3. In der
+Bedienung im Browser (Kap. 12) ist die Nachweiszeile in diesem Fall gelb
+hinterlegt statt grün, bei einer Ausnutzung über 1 rot. Abhilfe:
+Streckgrenze am Werkstoff eintragen (Tabelle *Eigenschaften → Werkstoffe*) oder am
+Stab den Haken „Nachweis nach EC3“ herausnehmen.
 
 ### Schwingungsnachweis des Verschlusses
 
@@ -2966,6 +3493,26 @@ Nachweise erfüllt sind; jeder Wert lässt sich danach ändern. Die Vorschläge
 folgen den Regeln der EN 1993-1-8 (Rand- und Lochabstände Tab. 3.3, Nahtdicken
 4.5.1, Blechdicke so, dass der T-Stummel nicht im Modus 1 versagt). Der
 Vorschlag ist **kein Nachweis** — maßgebend ist immer die Rechnung.
+Bei der Kopfplatte wählt der Vorschlag zuerst die Schraube: die kleinste der
+Leiter M12 bis M36, von der vier Schrauben die Zugkraft im Flansch tragen.
+Die Anfangsdicke des Blechs folgt aus Schraube und Profil, nicht aus dem
+Moment; danach wird das Blech in 2-mm-Schritten dicker, solange T-Stummel
+oder Durchstanzen maßgebend sind. Gemessen am IPE 400 (S355, V_z = 90 kN,
+N = 0, M_y in 10-kNm-Schritten bis 700 kNm): bei M_y = 170 kNm 15 mm mit M16,
+von 180 bis 210 kNm 13 mm mit M20; bei 270 kNm 19 mm mit M20, von 280 bis
+320 kNm 16 mm mit M24. Mit N = −100 kN ergeben sich bis 320 kNm dieselben
+Abmessungen. An diesen beiden Schraubenwechseln wird das Blech dünner, an den
+drei folgenden nicht: Zwischen 390 und 400 kNm (M24 → M27) bleibt es bei
+N = 0 mit 18 mm gleich und wird bei N = −100 kN von 16 auf 18 mm dicker,
+zwischen 510 und 520 kNm (M30) und zwischen 620 und 630 kNm (M36) wird es
+dicker (18 → 20 mm, 20 → 23 mm). Diese Vorschläge erfüllen die Nachweise
+schon nicht mehr: Von 340 kNm an (N = 0) bzw. 330 kNm an (N = −100 kN) ist
+„Druckflansch auf die Platte“ maßgebend, die Flanschkraft gegen
+b·t_f·f_y/γ_M0 des Trägerflansches. Dort endet das Nachbessern mit η > 1,
+und der Vorschlag trägt den Hinweis, die Geometrie von Hand anzupassen.
+Der Vorschlag für 180 kNm (13 mm, M20, 4 Reihen) trägt
+320 kNm bei N = 0 nicht (η = 1,461, maßgebend der T-Stummel der Zugzone); der
+Vorschlag für 320 kNm mit 16 mm und M24 erfüllt die Nachweise mit η = 0,986.
 
 **Schnittgrößen**: standardmäßig aus der Berechnung. Der Anschluss wird über
 **alle GZT-Kombinationen** geführt; die ungünstigste ist maßgebend, und die
@@ -3122,9 +3669,31 @@ brauchbaren und einem wertlosen Nachweis ausmachen:
   Bericht es als Hinweis. Bis zum 22.09.2026 rechnete der Volumennachweis
   immer mit der dünnsten Stufe — η fiel bei dicken Bauteilen 6 % zu klein aus.
 
-Ausgewertet wird je Element an der Mitte **und** an den Eckpunkten; maßgebend
-ist der größte Wert. Die Elementmitte allein würde die Randspannung bei
-Biegung um rund ein Viertel unterschätzen.
+Ausgewertet wird an den **Eckknoten**, mit der **geglätteten** Spannung (seit
+22.09.2026): an jedem Knoten das Mittel der Elemente desselben Körpers und
+Werkstoffs, maßgebend ist der größte Knoten des Bereichs. Der Bericht nennt ihn
+(„Knoten 812 (geglättet)“). Bis dahin nahm der Nachweis je Element das Maximum
+über Mitte und Ecken — bei linearen Elementen zeigt die eine Ecke den
+Momentenverlauf zu hoch, die andere zu niedrig: am Prüfkörper (Soll 355 N/mm²)
+lag der hex8 so um +65 N/mm² daneben, geglättet um +0,8 N/mm² bei denselben
+405 Freiheitsgraden. Die Elementmitte allein hätte die Randspannung bei Biegung
+um rund ein Viertel unterschätzt. Fließende Elemente tragen den Wert ihres
+nächsten Integrationspunkts bei — dort liegt er auf der Fließfläche. Über eine
+Körper- oder Werkstoffgrenze wird nicht gemittelt. Eine Ergebnisdatei von vor
+dem 22.09.2026 hat keine Knotenwerte; dann gilt die alte Regel.
+
+**An freien Oberflächen** (seit 23.09.2026) zieht das Programm die geglättete
+Spannung zusätzlich auf σ·n = 0 — dort, wo nichts anliegt, trägt die Oberfläche
+keine Normal- und Schubspannung. Am freien Rand einer Bohrung unter Zug rückt der
+hex8 so bei 4 455 Unbekannten von −14,7 auf −1,1 N/mm² an die exakte Lösung, bei
+16 575 von −5,2 auf +0,8 N/mm². Nicht angefasst werden Knoten mit Lager, Last, Kontakt, Fuge,
+Kopplung, Starrkörper, angeschlossenem Stab oder Schale, Knoten an der Grenze zweier
+Körper oder Werkstoffe, einspringende Kanten und fließende Elemente. Der Bericht
+nennt die Stelle dann „Knoten 812 (geglättet, σ·n = 0)“. Wer das bisherige
+Knotenmittel will, setzt die Einstellung `randspannung` des Modells auf „gemittelt“.
+Einschränkung: beim sehr groben tet4 unter Biegung wird der Wert damit schlechter
+(Kragarm mit 90 Unbekannten 18 N/mm²), doch der liegt dort ohnehin 260 N/mm²
+daneben. Die Ermüdung ist davon nicht betroffen, sie rechnet mit den Elementwerten.
 
 Der Bericht führt je Bereich den vollen Spannungstensor, die Hauptspannungen,
 τ_max, die hydrostatische Spannung, die Mehrachsigkeit h = σ_m/σ_v, σ_v und
@@ -3164,6 +3733,40 @@ Kombination wird einzeln gerechnet — das dauert länger als eine lineare
 Überlagerung. Die Ergebnisse der einzelnen **Lastfälle** bleiben Ergebnisse
 nach Theorie I. Ordnung und dürfen nicht mehr von Hand überlagert werden.
 
+Eine **Ergebniskombination** („A oder B oder …", aus RFEM) wird nicht als
+Ganzes gerechnet, sondern jede ihrer Alternativen: in der Tabelle des
+Theoriekapitels steht je Alternative eine Zeile „EK1 [1]", „EK1 [2]" …, die
+Ergebniskombination selbst nicht. Ihre Umhüllende und die Nachweise nehmen
+diese Ergebnisse. Bis zum 22.09.2026 stand dort eine Zeile „EK1" mit
+u_I = u_II = 0,00 mm, als „am verformten System gerechnet" gezählt, und die
+Umhüllende blieb linear – am Druckkragarm 3,321 statt 9,705 mm. Dasselbe gilt
+für eine Ergebniskombination mit Theorie III. Ordnung. Viele Alternativen
+kosten entsprechend Rechenzeit; nach II. Ordnung werden gleiche Alternativen
+mehrerer Ergebniskombinationen nur einmal gerechnet.
+
+Die Ergebnisse dieser Alternativen entstehen nur mit **„Alle Lastfälle +
+Kombinationen"**. Wurden nur die Lastfälle gerechnet oder stammen die
+Ergebnisse aus einer Datei von vor dem 22.09.2026, fehlen sie. Die Nachweise
+melden solche Alternativen dann als „nicht nachgewiesen" und überlagern sie
+nicht linear. Das gilt auch für eine Alternative mit einem Lastfall, der nach
+II. oder III. Ordnung gerechnet wird. Bis zum 22.09.2026 wurden die Stäbe
+nach einer Rechnung nur der Lastfälle gegen die Lastfälle mit Faktor 1
+nachgewiesen, ohne Hinweis, dass die Kombinationen fehlten: an der Halle
+(„ein", alle GZT-Kombinationen als eine Ergebniskombination) Riegel 0,2776
+aus LF1. Die volle Rechnung ergibt dort jetzt 0,9734.
+
+Bei „automatisch" mit α_cr an oder über der Grenze bleibt eine Alternative
+in der vollen Rechnung bei I. Ordnung, wie eine gewöhnliche Kombination, und
+es kommt keine Warnung. Ihr Ergebnis ist dann die Überlagerung der
+**linearen** Lastfallergebnisse, auch wenn einer ihrer Lastfälle selbst auf
+Theorie II. Ordnung steht – genau wie bei der gewöhnlichen Kombination.
+Gemessen an einem Zweigelenkrahmen mit dem Windlastfall W auf II. Ordnung
+(α_cr der Alternativen 18,1 bis 25,8): Stielkopf 102,14 mm und Ausnutzung
+Stiel links 0,5423, gleich wie mit den gewöhnlichen Kombinationen. Bis zum
+22.09.2026 wurden dort statt der Alternativen die Lastfälle mit Faktor 1
+nachgewiesen, ohne Warnung: Stiel links 0,4970 aus W. Die Umhüllende am
+Stielkopf war mit 102,14 mm dieselbe.
+
 ### Theorie je Lastfall und Kombination: I., II., III. Ordnung
 
 Im Lastfall- und im Kombinationsdialog steht das Feld **Theorie**:
@@ -3181,6 +3784,21 @@ Tabellen unten und der Modellbaum zeigen die Wahl; der Bericht führt je
 Lastfall und Kombination die Theorie und für III. Ordnung Laststufen,
 Iterationen, Residuum, u_max nach I. und III. Ordnung und die größte
 Drehung auf.
+
+Die Spalte **Theorie** der Lastfalltabelle im Bericht nennt die
+**gerechnete** Theorie. Ist ein Lastfall nach II. oder III. Ordnung gelungen,
+steht dort schlicht „II" bzw. „III". Scheitert die Rechnung — bei beiden,
+weil das Gleichungssystem singulär ist, bei III. Ordnung außerdem, weil eine
+Laststufe nicht konvergiert oder das Modell Kontakt, Flächen- oder
+Volumenelemente, eine Zwangsverformung oder eine vorgegebene
+Lagerverschiebung enthält —, bleibt das lineare Ergebnis stehen, und die
+Spalte zeigt zum Beispiel „I (statt III: nicht gerechnet)". Den Grund nennt
+bei III. Ordnung die Spalte „Hinweis" im Kapitel zur Theorie III. Ordnung,
+bei II. Ordnung die Hinweisliste am Ende des Kapitels zur Theorie II. Ordnung
+und die offenen Warnungen der Zusammenfassung. Was tun: die Ursache beheben
+(etwa mehr Laststufen wählen oder den Kontakt entfernen) oder den Lastfall
+bewusst auf I. Ordnung stellen — die Nachweise dieses Lastfalls rechnen sonst
+ohne die Zusatzmomente aus der Verformung.
 
 ### Verformungsnachweise (GZG)
 
@@ -3205,9 +3823,21 @@ Wichtig für den Kragarm: die Durchbiegung eines Stabes bezieht sich auf die
 **Sehne** — dreht der ganze Stab mit, fällt das heraus. Für eine Kragarmspitze
 ist der Bezug „Knoten“ der richtige.
 
-Ergebnis: Tabelle „Verformungen“ mit Wert, Grenzwert, Ausnutzung,
-maßgebender Kombination und Stelle; Kapitel 8 des Berichts führt jeden
-Nachweis mit seiner Verformung je Kombination.
+Ergebnis: Tabelle „Verformungen“ mit Wert beziehungsweise Verdrehung,
+Grenzwert, Ausnutzung, maßgebender Kombination und Stelle; Kapitel 8 des
+Berichts führt jeden Nachweis mit seiner Verformung je Kombination.
+
+Die größte Verformung steht je nach Größe in einer von zwei Spalten:
+Verschiebungen und Durchbiegungen (u_x, u_y, u_z, Betrag u) in **„Wert [mm]“** — diese
+Spalte folgt der Einheit „Verformung“ aus *Ansicht → Einheiten* —,
+Verdrehungen (φ_x, φ_y, φ_z) in **„Verdrehung [mrad]“**. Die Verdrehung rechnet
+die Einheitenwahl nicht um, auch nicht in Zwischenablage, CSV und Excel; die
+jeweils andere Spalte bleibt leer. Gemessen in der Prüfung (tests/test_gzg.py,
+Einfeldträger IPE 400, L = 8 m, q = 20 kN/m) bei Verformung in cm: die
+Durchbiegung steht als 2,20 cm unter „Wert [cm]“, die Endverdrehung weiter als
+8,78 mrad unter „Verdrehung [mrad]“. Vor dem 22.09.2026 stand eine Verdrehung in
+mrad unter „Wert [mm]“ und wurde bei cm mit 0,1 malgenommen; der Bericht war
+davon nicht betroffen.
 
 ## 9 Berechnung und Parallelisierung
 
@@ -3247,9 +3877,30 @@ Nachweis mit seiner Verformung je Kombination.
   Faktorisierungen der Kontaktschritte als eigene Zeile „Gleichungslöser
   ausgewichen - …“, einmal je Lastfall. Ein Grund ist dabei jeder Weg vorbei an
   PARDISO: eine Ausnahme, die 32-Bit-Grenze der Schnittstelle, ein installiertes,
-  aber scheiterndes CHOLMOD. **Noch nicht** zurück kommt die Meldung aus
-  Lastfällen, die in Rechenketten laufen; die rechnen seit dem 22.09.2026 aber
-  mit denselben Einstellungen wie der Hauptprozess (vorher begann jede Kette mit
+  aber scheiterndes CHOLMOD. **Der Grund steht außerdem am Ergebnis** — auch
+  bei Lastfällen aus Rechenketten, dem Prozesspool oder der Farm, die ohne
+  Protokollzeilen rechnen: die Zusammenfassung eines Ergebnisses zeigt die Zeile
+  „Löser ausgewichen : … – stattdessen rechnete …“, die Zusammenfassung nach
+  „Alle Lastfälle“ und der Bericht (Zusammenfassung → „Offene Hinweise und
+  Warnungen“) je Grund **eine** Zeile „Gleichungslöser ausgewichen bei *n*
+  Ergebnissen (…)“ mit dem Löser, auf den ausgewichen wurde; der Anhang
+  „Rechenlauf“ nennt ihn ebenfalls und verweist auf die Hinweise. Zahlen im
+  Grund (Zeilen, Einträge) machen keinen eigenen Grund: die Matrix eines
+  Kontaktmodells ändert sich von Schritt zu Schritt, der Grund bleibt derselbe.
+  Die Angabe „Gleichungslöser“ eines Ergebnisses und im Anhang ist dagegen der
+  Löser der **letzten** Faktorisierung: scheitert PARDISO nur in einem Teil der
+  Kontaktschritte, steht dort „pardiso“, und die Hinweiszeile nennt den Löser,
+  der in den Schritten rechnete, an denen PARDISO scheiterte (geprüft am Block
+  mit Reibung, PARDISO beim ersten von sieben Versuchen zum Scheitern gebracht:
+  „pardiso“ im Ergebnis, „stattdessen rechnete SuperLU“ in der Hinweiszeile).
+  Überlagerte Kombinationen tragen den Grund ihrer Lastfälle, Ergebnisse nach
+  Theorie II. Ordnung ihren eigenen. Die Eigenschwingungen melden ein Ausweichen
+  ebenso im Protokoll und in ihrer Zusammenfassung. Ein Ergebnis trägt den Grund
+  nur, wenn es selbst mit dem Ausweichlöser gelöst wurde: fällt PARDISO bei einem
+  Kontaktmodell erst in einem späteren Lastfall aus, bleiben die davor gerechneten
+  ohne Vermerk (geprüft am Block mit Reibung, drei Läufe auf demselben System:
+  vor dem Ausfall ohne, beim Ausfall mit, danach wieder ohne Vermerk).
+  Rechenketten rechnen seit dem 22.09.2026 mit denselben Einstellungen wie der Hauptprozess (vorher begann jede Kette mit
   „automatisch“, auch wenn „MKL PARDISO“ eingestellt war, und wich still aus,
   wo die Rechnung sonst abgebrochen hätte). Bis zum 22.09.2026 wurde ein
   Fehler von PARDISO bei „automatisch“ ohne eine Zeile verworfen; am Drehlager
@@ -3351,8 +4002,9 @@ Nachweis mit seiner Verformung je Kombination.
   **Verfestigung E_t/E** ist die Tangente nach dem Fließen (0 %
   ideal-plastisch, Vorgabe 1 %), **Laststufen** (Vorgabe 3) bringen die
   Last stufenweise auf, **Schritte je Stufe** (Vorgabe 25) und die
-  **Toleranz** (Änderung der plastischen Knotenlasten gegen die Last,
-  Vorgabe 1e-3) begrenzen die Iteration. Mit Kontakt ist jeder Schritt eine
+  **Toleranz** (geschätzter Fehler der plastischen Knotenlasten gegen die
+  Last, Vorgabe 1e-3; bis zum 23.09.2026 die Änderung je Schritt, die nahe
+  der Grenzlast zu früh „konvergiert“ meldete) begrenzen die Iteration. Mit Kontakt ist jeder Schritt eine
   Kontakt-Iteration (warm gestartet); Kombinationen werden dann direkt
   gerechnet, nicht überlagert. Die Spannungen im Ergebnis sind die wahren
   (σ = D(ε − ε_p)), die Auflagerkräfte tragen die Last. Das Protokoll nennt
@@ -3376,6 +4028,21 @@ Nachweis mit seiner Verformung je Kombination.
   dort kommt die Anfangsdehnung mit acht bis zehn Rückwärtseinsetzungen
   aus und ist billiger. Bei 0 % Verfestigung (ideal-plastisch) schaltet
   das Programm von selbst zurück, weil die Tangente dann singulär wäre.
+  Seit dem 23.09.2026 kommt die Anfangsdehnung dabei auf dieselbe Lösung wie
+  der Newton; vorher konnte sie „konvergiert“ melden und nahe der Grenzlast
+  bis 3,9 N/mm² daneben liegen (Theoriehandbuch § 5e.2, Rohr nach Hill). Dafür
+  braucht sie dort mehr Schritte (tet10 bei 0,97 der Grenzlast 55 statt 26).
+  Die Tangente ist seit dem 20.09.2026 für **jeden** Volumentyp die exakte
+  Ableitung (nachgemessen am 22.09.2026, auch tet10 und hex8); frühere
+  Hinweise, beim tet10 sei sie nur genähert, gelten nicht mehr.
+* **Punkte über die Dicke beim Sechsflächner** (22.09.2026, eine Einstellung
+  am Modell, `plastizitaet.dicke_punkte`, Vorgabe 5): mit Fließen rechnet der
+  `hex8` in Lagenrichtung fünf Gauss-Lobatto-Punkte statt zwei Gaußpunkten; die
+  äußersten liegen auf der Oberfläche. Damit fließt schon **eine** Lage unter
+  Biegung an der Randfaser (vorher erst ab drei bis vier Lagen), und die
+  Randspannung trifft die Momenten-Krümmungs-Lösung auf 0,2 N/mm². Der Preis sind
+  20 statt 8 Punkte je Element in jedem Fließschritt. 2 stellt die alte Regel
+  wieder her. Ohne Fließen ändert sich nichts.
 * **MUMPS** ist unter Windows ein eigener Bau (gfortran, OpenMP, OpenBLAS,
   METIS — `docs/MUMPS_Windows_Bauanleitung.md`), nachgeladen beim Start. Symmetrische
   Steifigkeitsmatrizen gehen als unteres Dreieck hinein (SYM=2): halber
@@ -3679,6 +4346,60 @@ Nachweis mit seiner Verformung je Kombination.
   dann, welcher Anlauf stehen blieb und warum nicht feiner. Ohne Netz bleibt
   ein Körper nur, wenn schon der erste Anlauf scheitert.
 
+### Löser-Nachweis je Lastfall
+
+*Seit 22.09.2026.* Die Zusammenfassung eines Lastfalls (Textfeld der
+Ergebnisse; nach „Nur aktiver Lastfall“ auch im Protokoll) sagt, womit
+**dieser** Lastfall gelöst wurde — nicht das Rechensystem, das viele Lastfälle
+nacheinander rechnet. Am Block mit Reibung, zweiter Lastfall, ein Thread
+(ausgegeben 22.09.2026; die Zeit schwankt von Lauf zu Lauf):
+
+```
+Lösungen                : 22× MKL PARDISO (einkernig, mtype 11); 16 Faktorisierungen in 0.052 s; Residuum höchstens 2.9e-13
+```
+
+* **Lösungen**: welcher Gleichungslöser wie oft gelöst hat, mit wie vielen
+  Threads (was MKL wirklich nimmt, nicht was eingestellt ist), die
+  Faktorisierungen **dieses** Lastfalls und ihre Zeit, dazu das größte
+  Residuum ‖K x − b‖/‖b‖ aller Lösungen. Es muss unter der eingestellten
+  Genauigkeit liegen (Vorgabe 10⁻⁶), sonst hätte die Rechnung abgebrochen.
+  Ein lineares Modell zeigt hier **0 Faktorisierungen**: es faktorisiert
+  einmal beim Aufstellen, für alle Lastfälle zusammen.
+* **Ausgewichen** (nur wenn es geschah): der Grund, warum der gewählte Löser
+  nicht rechnete, und wie viele Lösungen der Ersatz gerechnet hat — auch bei
+  den Faktorisierungen der Kontaktschritte, deren Ausweichen bisher nur als
+  Zeile im Protokoll stand, einmal je System.
+* **Gestörte Pivots** (nur wenn es welche gab): wie viele Pivots MKL PARDISO
+  angehoben hat, statt abzubrechen, und in wie vielen Faktorisierungen. Das
+  geschieht, wenn die Matrix dort (fast) singulär ist — ein Bauteil ohne Halt
+  in einer Richtung, eine offene Fuge. Das Ergebnis ist dann an dieser Stelle
+  nicht eindeutig; das Residuum zeigt, ob die Lösung trotzdem das
+  Gleichungssystem erfüllt.
+
+Die Zeile „Gleichungsloeser“ darüber bleibt, wie sie war. Im Ergebnis
+(`Results.info["loeser_nachweis"]`) stehen zusätzlich die Einstellung
+`MKL_CBWR`, wie sie galt, als das Programm MKL zum ersten Mal lud — später
+gesetzt wirkt sie nicht mehr —, und was MKL dazu meldet (Reproduzierbarkeit,
+siehe oben), und die Eingabewerte von PARDISO. Weil der
+Nachweis im Ergebnis steht, kommt er auch aus Rechenketten mit zurück — das
+ist aus dem Quelltext hergeleitet (die Kette gibt die Ergebnisse samt dieser
+Angaben zurück), an einer Kette gemessen ist es nicht. Ein abgebrochener
+Lastfall trägt den Nachweis noch nicht. Die Rechnung selbst ändert sich
+dadurch nicht: verglichen an vier Modellen mit einem Thread, alle Werte
+bitgleich (Theoriehandbuch § 1.3-1).
+
+#### Threads nach dem Ausweichen (Gegenprüfung 22.09.2026)
+
+Weicht PARDISO aus, nennen die Zeile „Faktorisiert (…)“ und die Zeile
+„Lösungen“ den Ersatz jetzt mit **seiner** Threadzahl: SuperLU „einkernig“.
+Vorher blieb die Zahl stehen, die PARDISO vor seinem Scheitern eingestellt
+hatte. Gemessen 22.09.2026 mit zwei eingestellten Threads und einem PARDISO,
+das die Zerlegung verweigert: „1× SuperLU (2 Threads)“, obwohl SuperLU
+immer einkernig rechnet. Ebenso fallen Matrixtyp und gestörte Pivots von
+PARDISO weg; sie gehörten nicht zur Lösung des Ersatzes. Am Ergebnis ändert
+das nichts, es ist nur die Angabe (Test
+`test_loeser_nachweis_nennt_das_ausweichen` in `tests/test_loeser.py`).
+
 ### Abnahme des Netzes vor dem Rechnen
 
 Vor jedem Lauf nimmt das Programm das Netz ab. Ein Bauteil ist vollständig
@@ -3695,6 +4416,163 @@ nichts stillschweigend Übergangenes:
 | Knoten im Rechennetz ohne Element | 0 |
 | Formgüte des schlechtesten Elements je Körper | ≥ 0,05 |
 | Randtreue je Körper | ≥ 99 % |
+| **Volumenbilanz je Körper**: Elemente gegen Randflächen | ≤ 0,5 % (an windschiefen Flächen zuzüglich der Sehnen) |
+| **Seiten im Inneren**: freie Elementseiten, hinter denen der Körper weitergeht (verdrehtes Element, doppelte Knoten, Hohlraum) | 0 |
+| Lücke im Netzrand (Warnung, über 0,5 % des Körpers Fehler): an der Oberfläche fehlt dem Netz ein Stück, kein verdrehtes Element, keine doppelten Knoten | 0 |
+| Netzrand neben der Hülle (Warnung): freie Seiten neben den Randflächen, außen oder als Beule | 0 |
+| Riss im Netz (Warnung): geschlossener Hohlraum, dünn gegen seine eigenen Seiten und gegen die Elemente daneben, kein verdrehtes Element, keine doppelten Knoten | 0 |
+
+**Der verdrehte Sechsflächner** (seit 22.09.2026). Stimmen die acht Knoten
+eines Sechsflächners, ist aber der Deckel um eine Ecke verdreht (4, 5, 6, 7 →
+5, 6, 7, 4), bleibt die Jacobi-Determinante überall positiv, die Formgüte liegt
+bei 0,707 — und das Element rechnet mit 0,6667 statt 1,0 seines Volumens.
+Keine Prüfung am Element findet das; die Abnahme gab dafür bisher kein Wort.
+Jetzt vergleicht sie je Körper das Netz mit seinen **Randflächen**: die Summe
+der Elementvolumina gegen das Volumen, das die Randflächen einschließen
+(„FEHLER: [Volumenbilanz] Volumen K1: die Elemente haben zusammen 1666667 cm³,
+die Randflächen schließen 2000000 cm³ ein (Abweichung 16.7 %, Grenze 0.5 %) …“
+am Würfelpaar 2 × 1 × 1 m mit verdrehtem zweitem Würfel), und jede freie
+Elementseite gegen die Randflächen. Liegt eine im Inneren des Körpers, schließt
+dort kein Nachbar an, und über diese Seite geht keine Kraft („FEHLER: [Seiten
+im Inneren] … 5 von 12 freien Elementseiten liegen im Inneren des Körpers …
+(z. B. Element 1 mit 4 Seiten, Element 0 mit 1 Seite)“). Das findet auch
+**ein** verdrehtes Element im Inneren eines Netzes: an einem 4 × 4 × 4-Würfel
+nennt die Prüfung das Element mit seiner Nummer, obwohl die Bilanz sich nur
+um ein Drittel eines von 64 Elementen verschiebt. Liegt eine freie Seite
+dagegen **außerhalb** des Körpers, ist es eine Warnung („Netzrand neben der
+Hülle“, mit dem größten Abstand in mm): so schnitt der freie Vernetzer an einem
+Prisma mit eckigem Loch eine einspringende Ecke ab (3 von 1024 Seiten,
+0,012 % mehr Volumen). Ebenfalls eine Warnung ist der **Riss ohne Weite**
+(„Riss im Netz“): freie Seiten im Inneren, die zusammen einen geschlossenen,
+**dünnen** Hohlraum umschließen. Dünn heißt zweierlei. Seine mittlere Dicke
+(zweimal Volumen durch Seitenfläche) ist höchstens 5 % der längsten Kante
+seiner Seiten, und sie ist höchstens 0,65-mal so groß wie die Dicke der
+Elemente, an denen er liegt (Median, die Dicke eines Elements ebenso
+gerechnet). Das zweite Maß braucht es für längliche Elemente: Dort folgt die
+Dicke der kurzen Seite, die längste Kante aber der langen. Solche Hohlräume
+bleiben, wenn der freie Vernetzer flache Tetraeder aussortiert (Platte
+0,9 × 0,9 × 0,035 m mit Bohrung: 8 Seiten, zwei Hohlräume von zusammen
+0,056 mm³), oder wenn beiderseits einer Fläche dieselben Knoten verschieden in
+Dreiecke geteilt sind. Die 30 geschlossenen Gruppen in den Modellen der
+Prüfsuiten lagen bei höchstens 3,55 % der längsten Kante und waren höchstens
+0,48-mal so dick wie die Elemente daneben. Der Körper stimmt bis auf diese
+Hohlräume, die Verschiebungen passen dort aber nur an Knoten und Kanten
+zusammen. Bis zum 23.09.2026 meldete die Abnahme die Hohlräume des Vernetzers
+als FEHLER „Seiten im Inneren“, vor jeder Rechnung mit der Rückfrage „Trotzdem
+rechnen?“ — und neu vernetzen ergibt dasselbe Netz.
+
+**Nie ein Riss** sind ein verdrehtes Element und doppelte Knoten, gleich wie
+dünn der Hohlraum ist. Ein verdrehter Sechsflächner hat eine Seitenkante, die
+kein anderes Element hat, und doppelte Knoten sind zwei Nummern am selben Ort.
+Gemessen am 23.09.2026, alle FEHLER „Seiten im Inneren“: verdrehte
+Sechsflächner in gleichmäßigen Netzen mit Zellen von 100 × 100 × 100 bis
+100 × 100 × 300 mm und in abgestuften Netzen 5:1, 20:1 und 50:1 (je alle 512
+inneren Zellen einzeln); fehlende Sechsflächner und fehlende Tetraeder in
+denselben abgestuften Netzen; ein Element, das an Knoten losgelöst ist, im
+gleichmäßigen 8 × 8 × 8-Netz: jeder der sechs Tetraeder einer inneren Zelle
+und einer Zelle an der Seitenfläche, an einem bis vier Knoten losgelöst, der
+Sechsflächner innen an einem bis vier und an allen acht Knoten, an der
+Seitenfläche an einem, zwei, vier und acht Knoten. Die zwei Fassungen dieser
+Regel vom selben Tag maßen erst gegen das größte Element im ganzen Körper,
+dann nur gegen die längste Kante. Beide ließen solche Fehler in abgestuften
+oder länglichen Netzen als Riss durchgehen, die zweite zum Beispiel bei 50:1
+357 von 512 verdrehten Sechsflächnern. Die Kehrseite: Fehlt ein Tetraeder, der selbst so flach ist wie die, die der Vernetzer
+aussortiert, ist auch das ein Riss. Einzeln entfernt war das am frei
+vernetzten Würfel mit angehobener Ecke (1483 Tetraeder) bei 20 von 541
+inneren Tetraedern so, an der Platte mit Keilen (2701 Tetraeder) bei 75 von
+947. Die Dicke dieser Tetraeder war höchstens 4,98 % ihrer längsten Kante.
+Jeder fehlende Tetraeder mit einer Dicke über 5 % seiner längsten Kante war in
+diesen Messungen ein FEHLER.
+
+**Lücke im Netzrand** (Warnung, seit 23.09.2026). Fehlt dem Netz an der
+Oberfläche ein Stück, liegen die freien Seiten der Nachbarn im Inneren, und
+ihr Rand liegt auf der Randfläche. Das meldet die Abnahme mit Ort und Volumen,
+zum Beispiel: „Volumen K: an 1 Stelle fehlt dem Netz ein Stück an der
+Oberfläche (bei (0.921 | 0.412 | 0.400) m 552 cm³; zusammen 552 cm³ = 0.079 %
+des Körpers, 3 freie Elementseiten im Inneren)“. So lässt der eigene freie
+Vernetzer an L-, T- und U-Prismen einen Tetraeder weg: in einer Stichprobe
+über die Netzweiten 0,25, 0,2 und 0,1 m an 5 von 9 Netzen, Fehlbetrag 0,003
+bis 0,113 %. Bis zum 23.09.2026 war das ein FEHLER „Seiten im Inneren“ mit
+dem Rat „neu vernetzen“, und neu vernetzen ergibt dasselbe Netz. Geholfen hat
+an diesen fünf Prismen, gemessen: in den Netzeinstellungen „Sechsflächner
+sweepen“ (nur für Körper aus Grundfläche mal Weg) oder der Vernetzer gmsh bzw.
+Netgen, jeweils an allen fünf. Der Sweep ist ab Werk aus; warum, steht bei
+den Netzeinstellungen. Eine um 5 bis 10 % andere Ziellänge half nur an drei
+oder vier, die Nachbesserung mit MMG3D an keinem. Das gilt für Netze, die
+unverändert vom eigenen Vernetzer stammen. Ist das Netz importiert oder von
+Hand geändert, rät der Text, neu zu vernetzen. Gemessen an einem von Hand
+geänderten Netz: Am frei vernetzten L-Prisma (Netzweite 0,12 m, 6173
+Tetraeder, ohne Befund) wurde ein Tetraeder am Deckel mit „Elemente löschen“
+entfernt, gemeldet als „Lücke im Netzrand“ mit 115 cm³. Neu vernetzt mit
+denselben Einstellungen waren es wieder 6173 Tetraeder ohne Befund -
+gemessen ohne Oberfläche mit der Funktion hinter `statik3d --vernetzen` und
+der adaptiven Vernetzung (`mesher.modell_vernetzen`), die auch die Knoten des
+alten Netzes entfernt. „Netz → Vernetzen“ in der Oberfläche entfernt sie
+nicht (am Quelltext: `_vernetzen` löscht nur die Elemente). Diesen Weg ohne
+Oberfläche nachgestellt, verschwand die Lücke ebenso (6173 Tetraeder), aber
+1229 Knoten des alten Netzes blieben ohne Element stehen: FEHLER „Knoten ohne
+Element“. In der laufenden Oberfläche ist das nicht gemessen. Der Text der
+Warnung nennt beide Fälle; bis zum 23.09.2026 sagte er nur „Neu vernetzen mit
+denselben Einstellungen ergibt dasselbe Netz“, ebenso der Text des Risses. Ein
+FEHLER ist die Lücke, wenn alle Lücken eines Körpers zusammen mehr als 0,5 % seines Volumens
+ausmachen. Das ist dieselbe Grenze wie bei der Volumenbilanz. Ein verdrehter
+Sechsflächner am Rand oder in der Ecke ist keine Lücke, sondern bleibt ein
+FEHLER, gemessen an beiden Lagen: Seine Seitenkanten laufen über die
+Diagonalen der Nachbarseiten, und kein anderes Element hat sie. Ebenso wenig
+ist ein Element an der Oberfläche eine Lücke, das an Knoten losgelöst ist
+(doppelte Knoten): Ein Tetraeder an der Seitenfläche des 8 × 8 × 8-Netzes,
+an seinen drei Knoten auf der Randfläche oder an allen vier losgelöst, hängt
+nur noch an einem Knoten oder schwebt. Seine freien Seiten und die der
+Nachbarn haben ihren Rand auf der Randfläche wie bei einer Lücke, es fehlt
+aber nichts. Gemessen: FEHLER „Seiten im Inneren 6“. Ebenfalls
+FEHLER bleiben Hohlräume, die ringsum von Nachbarseiten eingeschlossen sind,
+auch wenn sie die Oberfläche an einer Kante berühren. Gemessen an einem
+Würfel mit angehobener Ecke, frei mit Netzweite 0,1 m vernetzt: FEHLER
+„Seiten im Inneren 4“. Eine Abhilfe ist dafür nicht gemessen.
+
+**Windschiefe Randflächen.** Ein Tetraedernetz liegt auf einer windschiefen
+(bilinearen) Fläche auf Sehnen, und der freie Vernetzer setzt Knoten auf Sehnen
+seines groben Dreiecksnetzes: am Würfel 1 × 1 × 1 m mit um 0,5 m angehobener
+Deckelecke (Netzweite 0,25 m) bis 7,55 mm neben der Fläche. Bis zum 23.09.2026
+meldete die Abnahme solche richtigen Netze als FEHLER (2 bis 53 „Seiten im
+Inneren“, bei Netzweite 0,5 m und um 1 m angehobener Ecke dazu „Volumenbilanz
+0,782 %“). Jetzt gilt an windschiefen Flächen eine Grenze aus der Verwindung
+der Fläche und dem größten Seitendurchmesser **in der Nachbarschaft** der
+Seite: unter den Seiten, die höchstens drei Ringe über gemeinsame Knoten
+entfernt sind. Im Beispiel sind das 13,2 bis 19,7 mm. Außerdem muss die Seite
+in die Richtung der Fläche zeigen: Richtige Netze lagen gemessen bis 9,7°
+daneben, die Grenze liegt bei 30° und mehr. Die Volumenbilanz lässt das
+Volumen zu, das der Netzrand dort erklären kann. Die erste Fassung vom selben
+Tag nahm den größten Seitendurchmesser der **ganzen** Fläche und keine
+Richtung. In einem abgestuften Netz (20:1, Deckel z = 1 + 0,5·x·y) lag die
+Grenze so bei rund 24 mm, und ein verdrehtes Element der obersten Lage blieb
+ohne Meldung. Heute ist es ein FEHLER „Seiten im Inneren“: Seine Seiten
+stehen 81 bis 90° gegen den Deckel. Gemessen an 324 Fällen (Abstufung 1:1,
+5:1, 20:1 und 50:1, Ecke um 0,3, 0,5 und 1,0 m angehoben, neun Zellen der
+beiden obersten Lagen, Deckel um eine Ecke vor, zurück und um zwei versetzt)
+war jeder ein FEHLER. In der zweiten Fassung vom selben Tag waren 75 davon nur
+ein „Riss im Netz“, weil die Riss-Regel an länglichen Zellen versagte (siehe
+oben).
+Ein verdrehtes Element in der groben Ecke, wo die
+oberste Lage dünn ist gegen die Sehne, findet nur die Richtung: Seine Ecken
+liegen bei 20:1 17 bis 18 mm neben dem Deckel, seine Seiten stehen 57 bis 87°
+dagegen. Die Kehrseite: kleinere Abweichungen des Netzrands meldet
+die Abnahme an windschiefen Flächen nicht. Am abgebildeten 4 × 4 × 4-Netz
+desselben Würfels bleibt eine Beule von 25 mm ungenannt, eine von 30 mm steht
+als Warnung da. Ist die Ecke um 1 m angehoben, bleibt dort selbst eine Beule
+von 100 mm ungenannt.
+
+Geprüft werden Körper, deren Randlinien gerade sind und deren Randflächen eben
+sind oder Vierecke; Körper mit Bögen, Kreisen oder Splines prüft der freie
+Vernetzer schon beim Vernetzen selbst (Volumen gegen Hülle, Randtreue). Was
+tun: Stammt das Netz aus einem Import oder ist es von Hand geändert, den Körper
+neu vernetzen (Netz → Vernetzen). Am abgestuften Netz mit verdrehtem Element
+verschwand damit der Befund „Seiten im Inneren“. Im nachgestellten Fall blieben
+die Knoten des alten Netzes ohne Element stehen und meldeten sich als „Knoten
+ohne Element“. Der eigene Vernetzer ergibt mit denselben Einstellungen
+dasselbe Netz, an fünf Prismen nachgemessen. Bei Befunden an seinen Netzen
+hilft neu vernetzen allein also nicht; was bei einer Lücke im Netzrand
+geholfen hat, steht oben.
 
 **„Bestanden" heißt nicht „nicht geprüft".** Zwei der Teilprüfungen fingen
 eine Ausnahme stumm ab und gaben eine leere Liste zurück — und leer heißt in
@@ -3985,6 +4863,22 @@ eigenen Skala: Bauteil wählen, *Selektion anzeigen*, ablesen. Geprüft in
   Kombinationsdialog zeigt sie ihre Alternativen; die Faktorfelder sind dort
   gesperrt, denn die Alternativen kommen aus der Quelldatei. Ein umbenannter
   oder gelöschter Lastfall zieht durch alle Alternativen.
+  **Nachgewiesen** wird nicht die Umhüllende, sondern jede Alternative für
+  sich: in den Nachweistabellen (Stäbe, Volumen, Beulen, Lasteinleitung,
+  Anschlüsse, Verformungen) steht in der Spalte *Kombination* zum Beispiel
+  „EK1 [2]" – die zweite Alternative der Ergebniskombination EK1. Bis zum
+  22.09.2026 übergingen die Nachweise Ergebniskombinationen; hatte ein Modell
+  nur solche, wurden still die Lastfälle mit Faktor 1 nachgewiesen (am
+  Kragarm Ausnutzung 0,170 statt 0,370). Die Lastfälle selbst werden jetzt nur
+  noch nachgewiesen, wenn das Modell **gar keine** Kombination hat. Fehlt das
+  Ergebnis einer Kombination (etwa weil nur die Lastfälle gerechnet wurden),
+  steht in Protokoll, Nachweiszeile und Bericht „WARNUNG: Kombination …
+  nicht nachgewiesen" und das Gesamturteil sagt „nicht nachgewiesen" – dann
+  „Alle Lastfälle + Kombinationen" rechnen. Gemeldet wird nur, was ein
+  Bauteil verlangt: Sind alle Stäbe, Volumenbereiche und Anschlüsse ohne
+  Nachweis und gibt es kein Beulfeld und keine Lasteinleitungsstelle, meldet
+  auch keine fehlende GZT-Kombination etwas. Ein Modell nur mit
+  GZG-Kombinationen behält dann sein „Alle Nachweise erfüllt."
 * Schnittgrößenverläufe N, Vy, Vz, Mt, My, Mz an den Stäben (bei Umhüllenden
   der betragsmäßig größere Extremwert), auswählbar im Modellbaum unter
   „Ergebnisse → Schnittgrößen".
@@ -4290,6 +5184,32 @@ größte Auflagerkraft je Knoten — **jeweils mit der Stellung, in der sie
 auftritt**. `umh.kurve()` liefert `(Winkel, η, u_max)` für die Kurve über den
 Stellungswinkel. Eine Stellung ohne ausreichende Lagerung wird als Fehler
 ausgewiesen, nicht stillschweigend übergangen.
+
+Die Nachweise einer Stellung brauchen die Ergebnisse ihrer Kombinationen.
+Mit `reihe.rechnen(kombinationen=False, nachweise=True)` fehlen sie – im
+Browser über die Operation `stellungen_rechnen` mit `"kombinationen":
+false`; der Knopf „Alle Stellungen rechnen" sendet `true`. Ebenso führt ein
+Modell, dessen Stäbe einen Nachweis verlangen, das aber nur
+GZG-Kombinationen hat, keinen Stabnachweis. Dann ist die Stellung nicht
+`ok`, und der Bericht schreibt „Umhüllende: eta nicht bestimmt" oder „NICHT
+VOLLSTÄNDIG NACHGEWIESEN". Unter „Nicht nachgewiesen" stehen die Warnungen.
+Die Meldung nach dem Rechnen (`umh.kurztext()`) sagt es ebenso.
+
+Im Browser zeigt eine Stellung ohne jeden geführten Nachweis auf der Karte
+„η –" und „nicht geführt", in der Tabelle „nicht geführt" und keinen Punkt in
+der η-Kurve; die Zeile der Umhüllenden und der Filmstreifen sagen „η nicht
+bestimmt", wenn in keiner Stellung ein Nachweis geführt wurde. Fehlt nur ein
+Teil der Nachweise, steht η in Warnfarbe mit „nicht vollständig
+nachgewiesen". Unter der gewählten Stellung lassen sich die Warnungen
+aufklappen („Nicht nachgewiesen"). Bis zum 22.09.2026 kam in beiden oben
+genannten Fällen keine Warnung, dass Nachweise fehlten. Mit
+`kombinationen=False` wurden die Stäbe gegen die Lastfälle mit Faktor 1
+nachgewiesen, und nach dieser Ausnutzung wurde die Stellung beurteilt
+(Stauwand, drei Stellungen: „eta = 0.291" aus dem Lastfall „Wasser",
+erfüllt; mit fünffachem Wasserdruck „eta = 2.419", nicht erfüllt). Mit nur
+GZG-Kombinationen wurde kein Stab nachgewiesen; an der Halle war η = 0 und
+die Stellung erfüllt, der Bericht nannte „eta = 0.000", und der Browser
+zeigte „η = 0,000" grün.
 
 ### Lastfälle nach DIN 19704 anlegen und das Lastenheft
 

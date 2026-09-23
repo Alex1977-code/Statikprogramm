@@ -4,6 +4,8 @@ Verifikation der Verformungsnachweise (Grenzzustand der Gebrauchstauglichkeit).
 Geprueft wird gegen geschlossene Loesungen der Balkenbiegung - der
 Einfeldtraeger unter Gleichlast und unter Einzellast, der Kragarm - und gegen
 die Regeln der Grenzwertbildung (L/x, absolut, Ueberhoehung, Punktpaar).
+Dazu die Tabelle „Verformungen“ der Oberflaeche ohne Fenster: in welcher
+Spalte und Einheit eine Verdrehung steht (Befund FM8 vom 22.09.2026).
 
 Aufruf:  python -m tests.test_gzg
 """
@@ -257,12 +259,96 @@ def test_modell_und_bericht():
                                                   "quasi-ständig")))
 
 
+def test_verdrehung_in_der_tabelle():
+    """Befund FM8 (22.09.2026): eine Verdrehung stand in mrad unter dem Kopf
+    „Wert [mm]“, und die Einheitenwahl „cm“ nahm sie zusaetzlich mit 0,1 mal.
+    Die Oberflaechenpruefung hielt nur die Gegenrichtung (Durchbiegung nicht
+    in der mrad-Spalte). Hier ohne Fenster: die Zeilen kommen aus
+    MainWindow.refresh_verformungen mit einer Attrappe fuer self, Kopf und
+    Einheitenumstellung aus dem Tabellenmodell mit den Spalten der Oberflaeche.
+    """
+    import types
+    from statik3d.einheiten import Einheiten
+    from statik3d.gui.main import MainWindow
+    from statik3d.gui.tabellen import TabellenModell
+
+    m, ids, els = traeger(4)
+    for e in els:
+        m.load_beam(e, qz=-20e3)
+    m.add_verformungsgrenze("Durchbiegung", "stab", stab="T", groesse="uz",
+                            grenzart="L/x", wert=300, situation="")
+    m.add_verformungsgrenze("Endverdrehung", "knoten", knoten=[ids[0]],
+                            groesse="phiy", grenzart="absolut", wert=0.010,
+                            situation="")
+    an = solver.solve_all(m, design=True)
+    cd = an.gzg.checks["Durchbiegung"]
+    cw = an.gzg.checks["Endverdrehung"]
+    check("die Endverdrehung wird als Winkel gerechnet",
+          cw.winkel and not cw.fehler and cw.wert > 0, cw.werttext())
+
+    zeilen = []
+    attrappe = types.SimpleNamespace(model=m, analysis=an, tbl_gzg=object(),
+                                     _fill=lambda _t, z: zeilen.extend(z))
+    MainWindow.refresh_verformungen(attrappe)
+    z = {r[0]: r for r in zeilen}
+    spalten = MainWindow.gzg_spalten()
+    check("jede Zeile hat so viele Felder wie die Tabelle Spalten",
+          all(len(r) == len(spalten) for r in zeilen),
+          f"{[len(r) for r in zeilen]} Felder, {len(spalten)} Spalten")
+
+    def zahl(x):
+        return float(x) if isinstance(x, float) else None
+
+    def gleich(x, soll, tol):
+        return zahl(x) is not None and abs(zahl(x) - soll) < tol
+
+    zw, zd = z["Endverdrehung"], z["Durchbiegung"]
+    check("die Verdrehung steht nicht in der mm-Spalte", zw[4] == "",
+          f"Spalte 4 = {zw[4]!r}")
+    check("die Verdrehung steht in der mrad-Spalte, in mrad",
+          gleich(zw[5], cw.wert * 1e3, 1e-12),
+          f"Spalte 5 = {zw[5]!r}, Rechnung {cw.werttext()}")
+    check("die Durchbiegung steht in der mm-Spalte, in mm",
+          gleich(zd[4], cd.wert * 1e3, 1e-12) and zd[5] == "",
+          f"Spalte 4 = {zd[4]!r}, Spalte 5 = {zd[5]!r}")
+
+    e = Einheiten()
+    modell = TabellenModell(spalten, zeilen)
+    modell.einheiten_quelle = lambda: e
+    check("Köpfe bei Verformung in mm",
+          modell.kopf(4) == "Wert [mm]" and modell.kopf(5) == "Verdrehung [mrad]",
+          f"{modell.kopf(4)!r}, {modell.kopf(5)!r}")
+    e.verformung = "cm"
+    check("Verformung in cm: die Verschiebungsspalte heißt cm",
+          modell.kopf(4) == "Wert [cm]", repr(modell.kopf(4)))
+    check("Verformung in cm: die Verdrehungsspalte bleibt mrad",
+          modell.kopf(5) == "Verdrehung [mrad]", repr(modell.kopf(5)))
+    # Kein Zahlenfeld der Verdrehungszeile darf die Einheitenwahl anfassen -
+    # vor der Kur wurde der Winkel in Spalte 4 mit 0,1 malgenommen und als
+    # cm beschriftet. angezeigt rundet auf Nachkommastellen + 6, darum 1e-6.
+    umgerechnet = [(modell.kopf(k), v, modell.angezeigt(k, v))
+                   for k, v in enumerate(zw) if zahl(v) is not None
+                   and abs(modell.angezeigt(k, v) - v) >= 1e-6]
+    check("Verformung in cm: die Verdrehung wird nicht umgerechnet",
+          not umgerechnet and zahl(zw[5]) is not None,
+          str(umgerechnet) if umgerechnet
+          else f"{modell.angezeigt(5, zw[5])} mrad")
+    check("Verformung in cm: die Durchbiegung wird umgerechnet",
+          gleich(modell.angezeigt(4, zd[4]), (zahl(zd[4]) or 0.0) / 10.0, 1e-6),
+          f"{modell.angezeigt(4, zd[4])} cm aus {zd[4]!r} mm")
+    export = {r[0]: r for r in modell.zeilen_angezeigt(zeilen)}["Endverdrehung"]
+    check("Zwischenablage, CSV und Excel führen die Verdrehung in mrad",
+          export[4] == "" and gleich(export[5], cw.wert * 1e3, 1e-6),
+          f"Spalte 4 = {export[4]!r}, Spalte 5 = {export[5]!r}")
+
+
 def main():
     print("=" * 92)
     print("STATIK3D - Verifikation Verformungsnachweise (GZG)")
     print("=" * 92)
     for t in (test_durchbiegung_gegen_handrechnung, test_grenzwerte,
-              test_fehler_werden_benannt, test_modell_und_bericht):
+              test_fehler_werden_benannt, test_modell_und_bericht,
+              test_verdrehung_in_der_tabelle):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

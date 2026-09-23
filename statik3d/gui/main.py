@@ -10873,27 +10873,11 @@ class MainWindow(QtWidgets.QMainWindow):
         tabs.addTab(self._eingabetabelle(self.tbl_joint, b_neu, b_zeig, b_weg),
                     "Anschlüsse")
 
-        # Verformungsnachweise (GZG): Grenzwert und Ergebnis in einer Tabelle
-        self.tbl_gzg = tab.Datentabelle([
-            Spalte("Nachweis"), Spalte("Bezug"), Spalte("Größe"),
-            Spalte("Situation"),
-            # Zwei Zahlenspalten statt einer: eine Verdrehung steht in mrad
-            # und hat unter einem Kopf "mm" nichts zu suchen. Wer den Wert
-            # gegen eine mm-Grenze haelt (Dichtung, Fuehrung, Anschlag nach
-            # DIN 19704), vergleicht sonst Winkel mit Weg - und bei der
-            # Einheitenwahl "cm" wurde die Zahl zusaetzlich mit 0,1
-            # malgenommen (12,97 -> 1,30) und als cm beschriftet. "mrad" steht
-            # nicht in einheiten.GRUND, die Verdrehung wird von der
-            # Einheitenwahl also nicht mehr angefasst.
-            Spalte("Wert", "mm", "zahl", 2,
-                   hinweis="größte Verschiebung über alle GZG-Kombinationen"),
-            Spalte("Verdrehung", "mrad", "zahl", 2,
-                   hinweis="größte Verdrehung über alle GZG-Kombinationen "
-                           "(φx, φy, φz)"),
-            Spalte("Grenzwert"),
-            Spalte("Ausnutzung", "", "zahl", 3, hinweis="Filter z. B. > 1"),
-            Spalte("Kombination"), Spalte("Stelle"), Spalte("Status")],
-            "Verformungen", self, mit_kennwerten=True)
+        # Verformungsnachweise (GZG): Grenzwert und Ergebnis in einer Tabelle.
+        # Die Spalten stehen in gzg_spalten() neben refresh_verformungen, das
+        # sie fuellt - beide muessen zusammenpassen.
+        self.tbl_gzg = tab.Datentabelle(self.gzg_spalten(),
+                                        "Verformungen", self, mit_kennwerten=True)
         self.tbl_gzg.zeile_gewaehlt.connect(self._tabelle_verformung)
         v1 = QtWidgets.QPushButton("Verformungsgrenze…")
         v1.clicked.connect(self.add_verformungsgrenze)
@@ -11349,7 +11333,9 @@ class MainWindow(QtWidgets.QMainWindow):
             e = erg.get(s.name)
             rows.append([s.name, f"{s.winkel:g}", ", ".join(s.lager_aus) or "–",
                          ", ".join(s.faelle) or "alle",
-                         "–" if e is None or e.fehler else f"{e.eta:.3f}",
+                         # ohne gefuehrten Nachweis ist eta = 0 keine Zahl
+                         "–" if e is None or e.fehler
+                         or (e.warnungen and not e.nachgewiesen) else f"{e.eta:.3f}",
                          "–" if e is None or e.fehler else f"{e.u_max * 1e3:.3f}"])
         self._fill(self.tbl_stellung, rows)
         if u is not None:
@@ -11357,7 +11343,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 (f"Umhüllende über alle Stellungen: η = {u.eta:.3f}"
                  + (f" – maßgebend {u.massgebende_stellung}"
                     if u.massgebende_stellung else "")
-                 + f"; größte Verformung {u.u_max * 1e3:.3f} mm").replace(".", ","))
+                 + f"; größte Verformung {u.u_max * 1e3:.3f} mm").replace(".", ",")
+                # nicht nachgewiesene Kombinationen gehoeren neben das eta
+                + u.warnhinweis())
         elif self._stellungen_obj():
             self.lbl_umh.setText(f"{len(self._stellungen_obj())} Stellungen angelegt – "
                                  "noch nicht gerechnet")
@@ -11423,9 +11411,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.umhuellende = umh
         for z in reihe.log:
             self.info(z)
-        self.info(f"{len(liste)} Stellungen gerechnet: eta = {umh.eta:.3f}"
-                  + (f", maßgebend {umh.massgebende_stellung}"
-                     if umh.massgebende_stellung else ""))
+        # kurztext: wie vorher "eta = ..., maßgebend ...", dazu der Hinweis,
+        # wenn Kombinationen nicht nachgewiesen wurden
+        self.info(f"{len(liste)} Stellungen gerechnet: " + umh.kurztext())
         self.refresh_all()
 
     def maske_din19704_lastfaelle(self):
@@ -13117,6 +13105,35 @@ class MainWindow(QtWidgets.QMainWindow):
         elif g.knoten:
             self._set_selection([int(n) for n in g.knoten
                                  if 0 <= int(n) < self.model.nn])
+
+    @staticmethod
+    def gzg_spalten() -> list:
+        """Spalten der Tabelle „Verformungen“ (Verformungsnachweise, GZG).
+
+        Ohne Fenster abrufbar, damit tests/test_gzg.py Kopf, Einheit und
+        Einheitenumstellung dieser Spalten zusammen mit den Zeilen aus
+        refresh_verformungen pruefen kann (Befund FM8 vom 22.09.2026: die
+        Oberflaechenpruefung hielt nur die Gegenrichtung).
+        """
+        return [
+            Spalte("Nachweis"), Spalte("Bezug"), Spalte("Größe"),
+            Spalte("Situation"),
+            # Zwei Zahlenspalten statt einer: eine Verdrehung steht in mrad
+            # und hat unter einem Kopf "mm" nichts zu suchen. Wer den Wert
+            # gegen eine mm-Grenze haelt (Dichtung, Fuehrung, Anschlag nach
+            # DIN 19704), vergleicht sonst Winkel mit Weg - und bei der
+            # Einheitenwahl "cm" wurde die Zahl zusaetzlich mit 0,1
+            # malgenommen (12,97 -> 1,30) und als cm beschriftet. "mrad" steht
+            # nicht in einheiten.GRUND, die Verdrehung wird von der
+            # Einheitenwahl also nicht mehr angefasst.
+            Spalte("Wert", "mm", "zahl", 2,
+                   hinweis="größte Verschiebung über alle GZG-Kombinationen"),
+            Spalte("Verdrehung", "mrad", "zahl", 2,
+                   hinweis="größte Verdrehung über alle GZG-Kombinationen "
+                           "(φx, φy, φz)"),
+            Spalte("Grenzwert"),
+            Spalte("Ausnutzung", "", "zahl", 3, hinweis="Filter z. B. > 1"),
+            Spalte("Kombination"), Spalte("Stelle"), Spalte("Status")]
 
     def refresh_verformungen(self):
         """Die Tabelle der Verformungsnachweise aufbauen."""

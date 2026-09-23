@@ -433,8 +433,15 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
 def check_theorie3(model: Model, analysis, combos: list = None, progress=None,
                    systeme: dict = None, schritte: int = None) -> Th3Results:
     """Alle Kombinationen mit theorie = "III" rechnen und die Ergebnisse der
-    Berechnung **ersetzen** (nach Theorie III. Ordnung gilt keine Superposition)."""
+    Berechnung **ersetzen** (nach Theorie III. Ordnung gilt keine Superposition).
+
+    Eine Ergebniskombination (Alternativen, ``factors`` leer) wird wie in
+    :func:`theorie2.check_theorie2` je Alternative "EK [k]" gerechnet und nach
+    ``analysis.alternativen`` gelegt - nicht mit leeren Faktoren als
+    Nullergebnis nach ``analysis.combinations`` (Befund FE12, 22.09.2026)."""
     from .model import GRUNDSTELLUNG
+    from .solver import alternativen_der_kombination
+    from .theorie2 import _alternative_ablegen
     ds = model.design
     out = Th3Results(settings={
         "imperfektionen": bool(getattr(ds, "imperfektionen", True)),
@@ -443,29 +450,46 @@ def check_theorie3(model: Model, analysis, combos: list = None, progress=None,
         "Norm": "geometrisch nichtlinear, korotational; Imperfektionen DIN EN 1993-1-1, 5.3"})
     names = combos if combos is not None else [
         n for n, c in model.combinations.items() if (getattr(c, "theorie", "") or "").upper() == "III"]
-    for k, n in enumerate(names):
+    # (Zeile, Kombination, Faktoren, ist Alternative einer Ergebniskombination)
+    auftraege = []
+    for n in names:
+        c = model.combinations[n]
+        if c.ist_umhuellende:
+            auftraege += [(name, n, teile, True) for name, teile in alternativen_der_kombination(c)]
+        else:
+            auftraege.append((n, n, dict(c.factors), False))
+    for k, (zeile, n, faktoren, alternative) in enumerate(auftraege):
         combo = model.combinations[n]
         sit = getattr(combo, "situation", "") or GRUNDSTELLUNG
         m_c, aktiv = model, None
         if systeme and sit in systeme:
             m_c, sys_c = systeme[sit]
             aktiv = getattr(sys_c, "aktiv", None)
+        if not any(f for f in faktoren.values()):
+            # Nichts belastet: kein Nullergebnis als "III. Ordnung" ablegen
+            out.kombinationen[zeile] = Th3Info(
+                name=zeile, hinweise=["keine Lastfälle mit Faktor ≠ 0 – nichts nach "
+                                      "Theorie III. Ordnung zu rechnen"])
+            continue
         try:
-            res, info = solve_theorie3(m_c, combo.factors, n, schritte=out.settings["schritte"],
+            res, info = solve_theorie3(m_c, faktoren, zeile, schritte=out.settings["schritte"],
                                        imperfektionen=out.settings["imperfektionen"],
                                        elastisch=not out.settings["plastisch"],
                                        richtung=getattr(ds, "th2_richtung", None),
                                        alle_vorkruemmungen=bool(getattr(ds, "th2_alle_vorkruemmungen", False)),
                                        aktiv=aktiv, progress=progress)
         except ValueError as ex:
-            info = Th3Info(name=n, fehler=str(ex))
+            info = Th3Info(name=zeile, fehler=str(ex))
             res = None
-        out.kombinationen[n] = info
+        out.kombinationen[zeile] = info
         if res is not None and not info.fehler and analysis is not None:
             res.info["typ"] = combo.typ
             if sit != GRUNDSTELLUNG:
                 res.info["situation"] = sit
-            analysis.combinations[n] = res
+            if alternative:
+                _alternative_ablegen(analysis, zeile, res)
+            else:
+                analysis.combinations[n] = res
         if progress:
-            progress(f"{n}: Theorie III. Ordnung ({k + 1}/{len(names)})")
+            progress(f"{zeile}: Theorie III. Ordnung ({k + 1}/{len(auftraege)})")
     return out

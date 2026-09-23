@@ -1,0 +1,656 @@
+"""
+Der Tetraeder mit Ordnung p in der Rechnung von Statik3D (solver.solve_static).
+
+  * Model.ndof zaehlt die Zusatz-FHG, res.u bleibt (nn, 6)
+  * Kragarm (Kuhn-Gitter, tetp3): Auflagerkraft = Last; sigma_v an der
+    Oberkante aus dem Knotenmittel der Rechnung (res.solid_rand) gegen
+    Saint-Venant auf 1 N/mm2
+  * Eigengewicht: Auflagerkraft = rho g V
+  * Uebergang tet4/tetp3 und Symmetrieebene: Patch-Test ueber die Rechnung
+  * Temperatur: freie Dehnung ohne Spannung
+  * je Lastart tetp2/3/4 gegen geschlossene Loesung und tet10; Linienlager
+  * Fehlerschaetzer (Zeile "wie tet4"), Indikator der naechsten Ordnung
+  * Plastizitaet: Tangente, Zugstab, Newton quadratisch
+  * aus_tet10: gekruemmte Kantenmitten aus einem tet10-Netz
+
+Aufruf:  python -m tests.test_tetp_rechnung
+"""
+import os
+import sys
+
+import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from statik3d import solver                                         # noqa: E402
+from statik3d.elements import tetp as tp                            # noqa: E402
+from statik3d.model import Material, Model                          # noqa: E402
+
+RESULTS = []
+E_ST, NU_ST = 210e9, 0.3
+KUHN = [(0, 1, 3, 7), (0, 1, 7, 5), (0, 5, 7, 4), (0, 3, 2, 7), (0, 6, 4, 7), (0, 2, 6, 7)]
+
+
+def check(name, ok, detail=""):
+    ok = bool(ok)
+    RESULTS.append((name, ok))
+    print(f"{'OK ' if ok else 'FAIL'} {name:62s} {detail}")
+    return ok
+
+
+def sv(s):
+    s = np.asarray(s, float)
+    return float(np.sqrt(0.5 * ((s[0] - s[1]) ** 2 + (s[1] - s[2]) ** 2 + (s[2] - s[0]) ** 2)
+                         + 3 * (s[3] ** 2 + s[4] ** 2 + s[5] ** 2)))
+
+
+def quader(nx, ny, nz, L, B, H, typ_von, rho=7850.0, alpha=1.2e-5):
+    m = Model("tetp")
+    m.add_material(Material("S", E=E_ST, nu=NU_ST, rho=rho, alpha=alpha))
+    ids = {}
+    for k in range(nz + 1):
+        for j in range(ny + 1):
+            for i in range(nx + 1):
+                ids[(i, j, k)] = m.add_node(L * i / nx, B * j / ny, H * k / nz)
+    X = np.asarray(m.nodes, float)
+    for k in range(nz):
+        for j in range(ny):
+            for i in range(nx):
+                z = [ids[(i + (c & 1), j + ((c >> 1) & 1), k + ((c >> 2) & 1))] for c in range(8)]
+                for tet in KUHN:
+                    kn = [z[c] for c in tet]
+                    Xe = X[kn]
+                    if np.linalg.det(np.array([Xe[1] - Xe[0], Xe[2] - Xe[0], Xe[3] - Xe[0]])) < 0:
+                        kn[1], kn[2] = kn[2], kn[1]
+                    m.add_element(typ_von(X[kn].mean(axis=0)), kn, "S")
+    return m
+
+
+def seiten_auf(m, bedingung):
+    """[(Element, Seite)] der Elementseiten, deren Ecken alle die Bedingung erfuellen."""
+    aus = []
+    X = np.asarray(m.nodes, float)
+    for i, e in enumerate(m.elements):
+        for s, ecken in enumerate(tp.SEITEN):
+            if all(bedingung(X[e.nodes[a]]) for a in ecken):
+                aus.append((i, s))
+    return aus
+
+
+def test_kragarm():
+    """Wie tests/test_tetp.test_kragarm, aber durch den Loeser: 10 x 1 x 2
+    Kuhn-Zellen, damit die Nachweisstelle (L/2, B/2, H) ein Knoten ist. Im
+    Labor gemessen (22.09.2026, p = 3, 10 x 1 x 2): jedes Element dort
+    hoechstens 0,075 N/mm2 daneben."""
+    L, B, H = 1.0, 0.1, 0.2
+    I = B * H ** 3 / 12
+    F = 355e6 * I / (0.5 * L * 0.5 * H)
+    m = quader(10, 2, 2, L, B, H, lambda c: "tetp3", rho=0.0)
+    lc = m.add_load_case("LF1")
+    lc.gravity = [0.0, 0.0, 0.0]
+    for i, s in seiten_auf(m, lambda x: abs(x[0] - L) < 1e-9):
+        m.load_face(i, F / (B * H), s, case="LF1", direction=(0.0, 0.0, -1.0))
+    for n in range(m.nn):
+        if abs(m.nodes[n][0]) < 1e-9:
+            m.fix(n, [0, 1, 2])
+    res = solver.solve_static(m, case="LF1")
+    check("Model.ndof zaehlt die Zusatz-FHG, res.u bleibt (nn, 6)",
+          m.ndof == 6 * m.nn + tp.anzahl_fhg(m) and np.asarray(res.u).shape == (m.nn, 6),
+          f"ndof {m.ndof} = 6 * {m.nn} + {tp.anzahl_fhg(m)}")
+    Fz = float(np.asarray(res.reactions)[:, 2].sum())
+    check("Kragarm: Auflagerkraft = Last", abs(Fz - F) < 1e-6 * F, f"{Fz:.3f} N gegen {F:.3f} N")
+    X = np.asarray(m.nodes, float)
+    ziel = [n for n in range(m.nn) if np.linalg.norm(X[n] - [0.5 * L, 0.5 * B, H]) < 1e-9]
+    rand = res.solid_rand
+    werte = [sv(s) / 1e6 for i, (s, kn) in rand.items() if kn in ziel]
+    abw = max(abs(w - 355.0) for w in werte) if werte else float("inf")
+    check("Kragarm tetp3 durch den Loeser: Knotenmittel an der Oberkante auf 1 N/mm2",
+          abw <= 1.0, f"{len(werte)} Elemente mit dieser Ecke, groesste Abweichung {abw:.3f} N/mm2")
+
+
+def test_eigengewicht():
+    m = quader(2, 1, 1, 1.0, 0.5, 0.4, lambda c: "tetp3" if c[0] > 0.5 else "tetp2")
+    lc = m.add_load_case("G")
+    lc.gravity = [0.0, 0.0, -9.81]
+    for n in range(m.nn):
+        if abs(m.nodes[n][2]) < 1e-9:
+            m.fix(n, [0, 1, 2])
+    res = solver.solve_static(m, case="G")
+    Fz = float(np.asarray(res.reactions)[:, 2].sum())
+    soll = 7850.0 * 9.81 * 0.2
+    check("Eigengewicht tetp2/tetp3: Auflagerkraft = rho g V", abs(Fz - soll) < 1e-8 * soll,
+          f"{Fz:.4f} N gegen {soll:.4f} N")
+
+
+def test_patch_rechnung():
+    """Lineares Verschiebungsfeld am ganzen Rand vorgegeben, innen tet4 und
+    tetp3 gemischt: die Spannung jedes Elements ist die konstante des Feldes."""
+    rng = np.random.default_rng(5)
+    A = rng.normal(size=(3, 3)) * 1e-4
+    m = quader(3, 3, 3, 1.0, 1.0, 1.0, lambda c: "tetp3" if c[0] > 0.4 else "tet4")
+    lc = m.add_load_case("P")
+    lc.gravity = [0.0, 0.0, 0.0]
+    X = np.asarray(m.nodes, float)
+    for n in range(m.nn):
+        if min(X[n].min(), 1 - X[n].max()) < 1e-9:
+            m.fix(n, [0, 1, 2], values=list(A @ X[n]))
+    res = solver.solve_static(m, case="P")
+    eps = np.array([A[0, 0], A[1, 1], A[2, 2], A[0, 1] + A[1, 0], A[1, 2] + A[2, 1], A[0, 2] + A[2, 0]])
+    lam = E_ST * NU_ST / ((1 + NU_ST) * (1 - 2 * NU_ST))
+    mu = E_ST / (2 * (1 + NU_ST))
+    soll = np.array([lam * eps[:3].sum() + 2 * mu * eps[0], lam * eps[:3].sum() + 2 * mu * eps[1],
+                     lam * eps[:3].sum() + 2 * mu * eps[2], mu * eps[3], mu * eps[4], mu * eps[5]])
+    fehler = max(np.abs(np.asarray(s, float) - soll).max() for s in res.solid_res.values()) / np.abs(soll).max()
+    typen = sorted({e.typ for e in m.elements})
+    check("Patch-Test durch den Loeser, tet4 und tetp3 gemischt", fehler < 1e-9,
+          f"rel. Fehler {fehler:.1e}, Typen {typen}")
+
+
+def test_symmetrieebene():
+    """Wuerfel unter gleichmaessigem Zug in x; gelagert nur die Normalen der
+    drei Ebenen x = 0, y = 0, z = 0 (Symmetrie). Exakt: sigma_xx = p, alles
+    andere null - in der Ebene darf keine Zusatz-FHG festgehalten sein."""
+    m = quader(2, 2, 2, 1.0, 1.0, 1.0, lambda c: "tetp3", rho=0.0)
+    lc = m.add_load_case("Z")
+    lc.gravity = [0.0, 0.0, 0.0]
+    X = np.asarray(m.nodes, float)
+    for n in range(m.nn):
+        d = [c for c in range(3) if abs(X[n, c]) < 1e-9]
+        if d:
+            m.fix(n, d)
+    p = 100e6
+    for i, s in seiten_auf(m, lambda x: abs(x[0] - 1.0) < 1e-9):
+        m.load_face(i, p, s, case="Z", direction=(1.0, 0.0, 0.0))
+    res = solver.solve_static(m, case="Z")
+    soll = np.array([p, 0, 0, 0, 0, 0])
+    fehler = max(np.abs(np.asarray(s, float) - soll).max() for s in res.solid_res.values()) / p
+    check("Symmetrieebenen: einachsiger Zug exakt", fehler < 1e-9, f"rel. Fehler {fehler:.1e}")
+
+
+def test_temperatur():
+    """Frei gelagerter Wuerfel (statisch bestimmt), gleichmaessig erwaermt: keine Spannung."""
+    m = quader(2, 2, 2, 1.0, 1.0, 1.0, lambda c: "tetp3")
+    lc = m.add_load_case("T")
+    lc.gravity = [0.0, 0.0, 0.0]
+    X = np.asarray(m.nodes, float)
+    a = [n for n in range(m.nn) if np.linalg.norm(X[n]) < 1e-9][0]
+    b = [n for n in range(m.nn) if np.linalg.norm(X[n] - [1, 0, 0]) < 1e-9][0]
+    c = [n for n in range(m.nn) if np.linalg.norm(X[n] - [0, 1, 0]) < 1e-9][0]
+    m.fix(a, [0, 1, 2])
+    m.fix(b, [1, 2])
+    m.fix(c, [2])
+    from statik3d.model import TempLoad
+    for i in range(len(m.elements)):
+        lc.temp_loads.append(TempLoad(i, 50.0))
+    res = solver.solve_static(m, case="T")
+    s_max = max(np.abs(np.asarray(s, float)).max() for s in res.solid_res.values())
+    u = np.asarray(res.u, float)[:, :3]
+    soll_u = 1.2e-5 * 50.0 * X
+    check("Temperatur: freie Dehnung ohne Spannung", s_max < 1e-3 and np.abs(u - soll_u).max() < 1e-12,
+          f"groesste Spannung {s_max:.2e} Pa, u-Abweichung {np.abs(u - soll_u).max():.1e} m")
+
+
+# --------------------------------------------------------------------------
+# Je Lastart: tetp2/3/4 gegen die geschlossene Loesung und gegen tet10
+# (Auflage der Statik3D-Sitzung, 23.09.2026)
+# --------------------------------------------------------------------------
+def _wuerfel(typ, lagerung, n=2):
+    """Wuerfel 1 m aus Kuhn-Zellen; typ "tet10" bekommt Kantenmitten."""
+    m = quader(n, n, n, 1.0, 1.0, 1.0, lambda c: "tet4")
+    if typ == "tet10":
+        mitten = {}
+        for e in m.elements:
+            kn = list(e.nodes[:4])
+            neu = []
+            for a, b in ((0, 1), (1, 2), (0, 2), (0, 3), (1, 3), (2, 3)):
+                k = (min(kn[a], kn[b]), max(kn[a], kn[b]))
+                if k not in mitten:
+                    mitten[k] = m.add_node(*(0.5 * (np.asarray(m.nodes[kn[a]]) + np.asarray(m.nodes[kn[b]]))))
+                neu.append(mitten[k])
+            e.typ, e.nodes = "tet10", kn + neu
+    else:
+        for e in m.elements:
+            e.typ = typ
+    m._tetp_version = getattr(m, "_tetp_version", 0) + 1
+    X = np.asarray(m.nodes, float)
+    if lagerung == "boden":
+        for i in range(m.nn):
+            if abs(X[i, 2]) < 1e-9:
+                m.fix(i, [0, 1, 2])
+    elif lagerung == "alle":
+        for i in range(m.nn):
+            if min(X[i].min(), 1 - X[i].max()) < 1e-9:
+                m.fix(i, [0, 1, 2])
+    elif lagerung == "frei":
+        a = [i for i in range(m.nn) if np.linalg.norm(X[i]) < 1e-9][0]
+        b = [i for i in range(m.nn) if np.linalg.norm(X[i] - [1, 0, 0]) < 1e-9][0]
+        c = [i for i in range(m.nn) if np.linalg.norm(X[i] - [0, 1, 0]) < 1e-9][0]
+        m.fix(a, [0, 1, 2])
+        m.fix(b, [1, 2])
+        m.fix(c, [2])
+    return m
+
+
+def _lastfall(m, name):
+    lc = m.add_load_case(name)
+    lc.gravity = [0.0, 0.0, 0.0]
+    return lc
+
+
+def test_lastarten():
+    rho, g = 7850.0, 9.81
+    E, nu, alpha, dT = E_ST, NU_ST, 1.2e-5, 30.0
+    zeilen = []
+    for typ in ("tetp2", "tetp3", "tetp4", "tet10"):
+        # Eigengewicht, Boden eingespannt: Auflagerkraft = rho g V
+        m = _wuerfel(typ, "boden")
+        lc = _lastfall(m, "G")
+        lc.gravity = [0.0, 0.0, -g]
+        r = solver.solve_static(m, case="G")
+        R_g = float(np.asarray(r.reactions)[:, 2].sum())
+        # Seitendruck auf die Deckflaeche, einmal normal, einmal schraeg
+        m = _wuerfel(typ, "boden")
+        _lastfall(m, "D")
+        d = np.array([1.0, 0.0, -1.0]) / np.sqrt(2.0)
+        for i, s in seiten_auf(m, lambda x: abs(x[2] - 1.0) < 1e-9):
+            m.load_face(i, 1e5, s, case="D")
+            m.load_face(i, 2e5, s, case="D", direction=d)
+        r = solver.solve_static(m, case="D")
+        R_d = np.asarray(r.reactions)[:, :3].sum(axis=0)
+        # Temperatur allseitig behindert: sigma = -E alpha dT / (1 - 2 nu)
+        from statik3d.model import TempLoad
+        m = _wuerfel(typ, "alle")
+        lc = _lastfall(m, "T")
+        for i in range(len(m.elements)):
+            lc.temp_loads.append(TempLoad(i, dT))
+        r = solver.solve_static(m, case="T")
+        s_T = np.array([np.asarray(s, float) for s in r.solid_res.values()])
+        # Vorspannung eines Koerpers (einachsig in z), allseitig behindert und frei
+        import types
+        from statik3d.model import Vorspannung
+        s_V = []
+        for lag in ("alle", "frei"):
+            m = _wuerfel(typ, lag)
+            m.koerper = {"K": types.SimpleNamespace(elemente=list(range(len(m.elements))))}
+            lc = _lastfall(m, "V")
+            lc.vorspannungen.append(Vorspannung("K", "koerper", 1e6, [0.0, 0.0, 1.0]))
+            r = solver.solve_static(m, case="V")
+            s_V.append(np.array([np.asarray(s, float) for s in r.solid_res.values()]))
+        zeilen.append((typ, R_g, R_d, s_T, s_V))
+    V = 1.0
+    soll_T = -E * alpha * dT / (1 - 2 * nu)
+    for typ, R_g, R_d, s_T, s_V in zeilen:
+        ok_g = abs(R_g - rho * g * V) < 1e-9 * rho * g * V
+        soll_d = -(np.array([0.0, 0.0, -1e5]) + 2e5 * d)        # Reaktion = - Last
+        ok_d = np.abs(R_d - soll_d).max() < 1e-9 * 3e5
+        ok_T = np.abs(s_T[:, :3] - soll_T).max() < 1e-9 * abs(soll_T) and np.abs(s_T[:, 3:]).max() < 1e-9 * abs(soll_T)
+        # Vorspannung 1 MN auf A = 1 m2: behindert sigma_zz = +1 MPa (Zug im Koerper), frei 0
+        ok_V = (np.abs(s_V[0][:, 2] - 1e6).max() < 1e-6 * 1e6 and np.abs(s_V[1]).max() < 1e-6 * 1e6)
+        check(f"{typ}: Eigengewicht, Seitendruck (normal/schraeg), Temperatur, Vorspannung",
+              ok_g and ok_d and ok_T and ok_V,
+              f"G {R_g:.3f} N; D {np.round(R_d, 3)}; T {s_T[:, 2].mean() / 1e6:+.3f} MPa "
+              f"(Soll {soll_T / 1e6:+.3f}); V behindert {s_V[0][:, 2].mean() / 1e6:+.4f}, frei "
+              f"{np.abs(s_V[1]).max():.1e}")
+    # tetp und tet10 gleich (dieselben Zahlen je Lastart)
+    ref = zeilen[-1]
+    gleich = all(abs(z[1] - ref[1]) < 1e-9 * abs(ref[1]) and np.abs(z[2] - ref[2]).max() < 1e-6
+                 and abs(z[3][:, 2].mean() - ref[3][:, 2].mean()) < 1e-6 * abs(ref[3][:, 2].mean())
+                 for z in zeilen[:-1])
+    check("tetp2/3/4 und tet10: je Lastart dieselben Summen und Spannungen", gleich)
+
+
+def test_linienlager_an_kante():
+    """Starres Linienlager an einer tetp-Kante (beide Ecken gelagert, Kante auf
+    dem Rand): die Zusatz-FHG der Kante sind in der gelagerten Richtung
+    gesperrt. Federndes Linienlager: die Kante bleibt linear."""
+    m = quader(2, 2, 2, 1.0, 1.0, 1.0, lambda c: "tetp3")
+    X = np.asarray(m.nodes, float)
+    linie = [i for i in range(m.nn) if abs(X[i, 0]) < 1e-9 and abs(X[i, 2]) < 1e-9]
+    for i in linie:
+        m.fix(i, [2])
+    an = tp.anreicherung(m)
+    ks = [k for k, (a, b) in enumerate(an.kanten) if a in linie and b in linie]
+    fest = set(tp.gesperrte_fhg(m).tolist())
+    ok = all(an.start_kante[k] + 3 * r + 2 in fest for k in ks for r in range(an.p_kante[k] - 1))
+    frei_xy = all(an.start_kante[k] + 3 * r + c not in fest for k in ks for r in range(an.p_kante[k] - 1)
+                  for c in (0, 1))
+    check("starres Linienlager an tetp-Kanten: Zusatz-FHG in z gesperrt, in x, y frei", ok and frei_xy and ks,
+          f"{len(ks)} Kanten")
+    m2 = quader(2, 2, 2, 1.0, 1.0, 1.0, lambda c: "tetp3")
+    for i in linie:
+        m2.fix(i, [2], stiffness=[1e9])
+    an2 = tp.anreicherung(m2)
+    ks2 = [k for k, (a, b) in enumerate(an2.kanten) if a in linie and b in linie]
+    check("federndes Linienlager an tetp-Kanten: Kanten bleiben linear",
+          all(an2.p_kante[k] == 1 for k in ks2) and ks2, f"{len(ks2)} Kanten")
+
+
+def test_schaetzer_zeile():
+    """Der Fehlerschaetzer liest tetp wie tet4 (netzfehler._LINEAR) und sagt es
+    in einer eigenen Zeile - nur, wenn tetp im Indikator steckt. Bis zum
+    23.09.2026 fehlte tetp in _LINEAR: der Indikator brach am Modell mit tetp
+    mit KeyError ab."""
+    from statik3d import netzfehler
+    zeilen = {}
+    for typ in ("tetp3", "tet4"):
+        m = quader(2, 2, 2, 1.0, 1.0, 1.0, lambda c, typ=typ: typ, rho=0.0)
+        lc = m.add_load_case("L")
+        lc.gravity = [0.0, 0.0, 0.0]
+        for n in range(m.nn):
+            if abs(m.nodes[n][2]) < 1e-9:
+                m.fix(n, [0, 1, 2])
+        for i, s in seiten_auf(m, lambda x: abs(x[2] - 1.0) < 1e-9):
+            m.load_face(i, 1e6, s, case="L", direction=(1.0, 0.0, 0.0))
+        res = solver.solve_static(m, case="L")
+        zeilen[typ] = netzfehler.bericht(netzfehler.indikator(m, res))
+    mit = [z for z in zeilen["tetp3"] if "Ordnung p" in z]
+    ohne = [z for z in zeilen["tet4"] if "Ordnung p" in z]
+    check("Fehlerschaetzer mit tetp: laeuft, Zeile 'wie tet4' vorhanden; ohne tetp keine",
+          len(mit) == 1 and not ohne, mit[0].strip() if mit else str(zeilen["tetp3"])[:80])
+
+
+def test_indikator_ordnet():
+    """tetp.naechste_ordnung am Kragarm (p = 2): die fuenf Elemente mit der
+    groessten Energie der naechsten Ordnung liegen an der Einspannung
+    (x < 0,1 m) - dort sitzt die Singularitaet. Gemessen 23.09.2026; die
+    Funktion liefert bewusst keine Spannung (punktweise um Faktoren daneben)."""
+    from scipy.sparse.linalg import spsolve
+    from statik3d import assemble as asm
+    L, B, H = 1.0, 0.1, 0.2
+    m = quader(10, 2, 2, L, B, H, lambda c: "tetp2", rho=0.0)
+    lc = m.add_load_case("LF1")
+    lc.gravity = [0.0, 0.0, 0.0]
+    for i, s in seiten_auf(m, lambda x: abs(x[0] - L) < 1e-9):
+        m.load_face(i, 1e6, s, case="LF1", direction=(0.0, 0.0, -1.0))
+    for n in range(m.nn):
+        if abs(m.nodes[n][0]) < 1e-9:
+            m.fix(n, [0, 1, 2])
+    K = asm.stiffness(m)
+    F = asm.load_vector(m, "LF1")
+    fest, werte = asm.constrained_dofs(m, K)
+    u = np.zeros(m.ndof)
+    frei = np.nonzero(~fest)[0]
+    u[frei] = spsolve(K[frei][:, frei].tocsc(), F[frei])
+    eta2 = tp.naechste_ordnung(m, u)
+    X = np.asarray(m.nodes, float)
+    oben = sorted(eta2, key=eta2.get)[-5:]
+    xs = [float(X[m.elements[i].nodes].mean(axis=0)[0]) for i in oben]
+    check("Indikator der naechsten Ordnung: die groessten Werte an der Einspannung",
+          len(eta2) == len(m.elements) and max(xs) < 0.1, f"x der fuenf groessten: {np.round(xs, 3).tolist()}")
+
+
+# --------------------------------------------------------------------------
+# Plastizitaet ueber den gemeinsamen Dehnungsoperator
+# --------------------------------------------------------------------------
+def test_plastisch_tangente():
+    """dK = -dF_p/du fuer tetp2/3/4 gegen zentrale Differenzen, wie die erste
+    Element-Sitzung es fuer die anderen Typen prueft
+    (test_plastizitaet.test_tangente_exakt_fuer_jeden_typ)."""
+    from statik3d import plastizitaet as pl
+    einst = pl.Plastizitaet(an=True, verfestigung=0.02)
+    rng = np.random.default_rng(5)
+    for typ in ("tetp2", "tetp3", "tetp4"):
+        m = quader(1, 1, 1, 1.0, 1.0, 1.0, lambda c, typ=typ: typ)
+        m.materials["S"].fy = 355e6
+        el = pl._solid_elemente(m, None)
+        u = rng.normal(0.0, 2.5e-3, m.ndof)
+        _F, _z, info = pl._schritt_block(m, u, pl.Zustand(), einst, el, typ, [], tangente=True)
+        dK = info["dK"].toarray()
+        spalten = np.flatnonzero(np.abs(dK).sum(axis=0) > 0)[:40]
+        num = np.zeros((m.ndof, len(spalten)))
+        h = 1e-9
+        for j, a in enumerate(spalten):
+            up, um = u.copy(), u.copy()
+            up[a] += h
+            um[a] -= h
+            num[:, j] = -(pl._schritt_block(m, up, pl.Zustand(), einst, el, typ, [])[0]
+                          - pl._schritt_block(m, um, pl.Zustand(), einst, el, typ, [])[0]) / (2 * h)
+        abw = float(np.abs(dK[:, spalten] - num).max()) / max(float(np.abs(num).max()), 1e-30)
+        check(f"{typ}: plastische Tangente = -dF_p/du ({info['fliessend']} fliessende Elemente)",
+              info["fliessend"] > 0 and abw < 1e-6, f"{abw:.2e} an {len(spalten)} Spalten")
+
+
+def test_plastisch_zugstab():
+    """Einachsiger Zug ueber die Fliessgrenze, drei Symmetrieebenen: exakt
+    sigma = fy + H eps_p, fuer jede Ordnung (homogenes Feld)."""
+    from statik3d import plastizitaet as pl
+    fy, r = 355e6, 0.02
+    sigma = 1.3 * fy
+    for typ in ("tetp2", "tetp3"):
+        m = quader(2, 1, 1, 0.3, 0.1, 0.1, lambda c, typ=typ: typ, rho=0.0)
+        m.materials["S"].fy = fy
+        X = np.asarray(m.nodes, float)
+        for n in range(m.nn):
+            d = [c for c in range(3) if abs(X[n, c]) < 1e-9]
+            if d:
+                m.fix(n, d)
+        lc = m.add_load_case("Z")
+        lc.gravity = [0.0, 0.0, 0.0]
+        for i, s in seiten_auf(m, lambda x: abs(x[0] - 0.3) < 1e-9):
+            m.load_face(i, sigma, s, case="Z", direction=(1.0, 0.0, 0.0))
+        m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=r, laststufen=2, iterationen=40,
+                                         toleranz=1e-10)
+        res = solver.solve_static(m, case="Z")
+        s = np.array([np.asarray(v, float) for v in res.solid_res.values()])
+        h_soll = pl.Plastizitaet(an=True, verfestigung=r).H(E_ST)
+        eps_p = (sigma - fy) / h_soll
+        u_x = float(np.max(np.asarray(res.u, float)[:, 0]))
+        soll_u = (sigma / E_ST + eps_p) * 0.3
+        check(f"{typ}: plastischer Zugstab sigma = {sigma / 1e6:.1f} N/mm2, u = (s/E + eps_p) L",
+              np.abs(s[:, 0] - sigma).max() < 1e-6 * sigma and abs(u_x - soll_u) < 1e-6 * soll_u,
+              f"sigma_xx {s[:, 0].min() / 1e6:.3f}..{s[:, 0].max() / 1e6:.3f}, u {u_x * 1e3:.5f} mm "
+              f"(Soll {soll_u * 1e3:.5f})")
+
+
+def test_plastisch_newton():
+    """Kragtraeger 200 x 200 mm unter 1,20 M_el (Endmoment als lineare
+    Normalspannung), eine Laststufe, tetp3: Newton quadratisch wie beim hex8
+    und tet10 (test_plastizitaet.test_newton_konvergiert_quadratisch)."""
+    import re
+    from statik3d import plastizitaet as pl
+    fy, b, h, L = 235e6, 0.2, 0.2, 1.0
+    M = 1.2 * fy * b * h ** 2 / 6.0
+    I = b * h ** 3 / 12.0
+    m = quader(5, 1, 2, L, b, h, lambda c: "tetp3", rho=0.0)
+    m.materials["S"].fy = fy
+    for n in range(m.nn):
+        if abs(m.nodes[n][0]) < 1e-9:
+            m.fix(n, [0, 1, 2])
+    lc = m.add_load_case("M")
+    lc.gravity = [0.0, 0.0, 0.0]
+    # Endmoment: Normalspannung linear ueber die Hoehe; je Seite der Mittelwert
+    # ist zu grob - drei Streifen z der Seite bekommen je ihre Spannung
+    X = np.asarray(m.nodes, float)
+    for i, s in seiten_auf(m, lambda x: abs(x[0] - L) < 1e-9):
+        z = X[[m.elements[i].nodes[a] for a in tp.SEITEN[s]], 2].mean()
+        m.load_face(i, -M * (z - h / 2) / I, s, case="M")
+    m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.02, laststufen=1, iterationen=12,
+                                     toleranz=1e-10)
+    meld = []
+    r = solver.solve_static(m, case="M", progress=lambda s_, *a, **k: meld.append(str(s_)))
+    e = [float(z[-1]) for s_ in meld if "Newton-Schritt" in s_
+         for z in [re.findall(r"nderung ([0-9.]+e[+-][0-9]+)", s_)] if z]
+    info = r.info.get("plastizitaet") or {}
+    ueber = [x for x in e if x > 1e-10]
+    quad = len(ueber) >= 3 and all(ueber[k + 1] <= 10.0 * ueber[k] ** 2
+                                   for k in range(len(ueber) - 3, len(ueber) - 1))
+    check("tetp3: Newton quadratisch unter 1,20 M_el", quad and info.get("konvergiert") and len(e) <= 8,
+          " -> ".join(f"{x:.1e}" for x in e))
+
+
+def test_aus_tet10():
+    """tetp.aus_tet10 an der Hohlkugel der ersten Element-Sitzung (tet10 mit
+    Kantenmitten auf der Kugel): mit Knotenlasten an Mittenknoten bricht der
+    Umwandler laut ab; ohne sie werden die gekruemmten Kantenmitten zu
+    Geometrie, und die Rechnung gibt dieselben Zahlen wie der direkte Aufbau
+    in tests/messung_tetp_hohlkugel.py (p = 3, 2 x 2: gemessen 23.09.2026
+    kleinste -4,09, groesste +8,17 N/mm2 Abweichung)."""
+    from statik3d.elements import solid as sl
+    from tests import messung_tetp_hohlkugel as mh
+    from tests import pruefkoerper as pk
+    hk = pk.Hohlkugel()
+    m = hk.modell("tet10", 2, 2)
+    try:
+        tp.aus_tet10(m, ordnung=3)
+        check("aus_tet10: Knotenlast am Mittenknoten bricht laut ab", False, "kein Fehler")
+    except ValueError as ex:
+        check("aus_tet10: Knotenlast am Mittenknoten bricht laut ab", "Mittenknoten" in str(ex),
+              str(ex)[:60])
+    m = hk.modell("tet10", 2, 2)
+    m.case().nodal_loads.clear()
+    info = tp.aus_tet10(m, ordnung=3)
+    X = np.asarray(m.nodes, float)
+    r = np.linalg.norm(X, axis=1)
+    innen = np.abs(r - hk.a) < 1e-9 * hk.b
+    for i, e in enumerate(m.elements):
+        for s, ecken in enumerate(tp.SEITEN):
+            if innen[[e.nodes[a] for a in ecken]].all():
+                m.load_face(i, hk.p, s)
+    res = next(iter(solver.solve_all(m).cases.values()))
+    sk = res.solid_knoten
+    pos = {int(k): j for j, k in enumerate(np.asarray(sk["knoten"]))}
+    S = np.asarray(sk["spannung"])
+    f = np.array([sl.von_mises(S[pos[n]]) for n in hk.nachweisknoten(m)]) / 1e6 - 355.0
+    m2 = mh.modell(hk, 2, 2, "p3")
+    res2 = next(iter(solver.solve_all(m2).cases.values()))
+    sk2 = res2.solid_knoten
+    pos2 = {int(k): j for j, k in enumerate(np.asarray(sk2["knoten"]))}
+    S2 = np.asarray(sk2["spannung"])
+    f2 = np.array([sl.von_mises(S2[pos2[n]]) for n in hk.nachweisknoten(m2)]) / 1e6 - 355.0
+    check("aus_tet10: gekruemmte tetp3-Hohlkugel = direkter Aufbau",
+          info["gekruemmt"] > 0 and abs(f.min() - f2.min()) < 1e-6 and abs(f.max() - f2.max()) < 1e-6,
+          f"{info['elemente']} Elemente, {info['gekruemmt']} gekruemmte Kanten; "
+          f"Abweichung {f.min():+.2f}..{f.max():+.2f} gegen {f2.min():+.2f}..{f2.max():+.2f} N/mm2")
+
+
+def test_grenzkante_gerade():
+    """Eine Kante, die ein tetp mit einem tet4 teilt, ist auch geometrisch
+    gerade (sonst klafft die Geometrie); eine gekruemmte Kante im Inneren
+    des p-Gebiets bleibt gekruemmt."""
+    m = quader(2, 2, 2, 1.0, 1.0, 1.0, lambda c: "tet4" if c[0] < 0.5 else "tetp3")
+    X = np.asarray(m.nodes, float)
+    an = tp.anreicherung(m)
+    grenze = [tuple(int(v) for v in k) for k in an.kanten
+              if abs(X[k[0], 0] - 0.5) < 1e-9 and abs(X[k[1], 0] - 0.5) < 1e-9]
+    innen = [tuple(int(v) for v in k) for k in an.kanten if min(X[k[0], 0], X[k[1], 0]) > 0.5 + 1e-9]
+    km = {}
+    for k in (grenze[0], innen[0]):
+        km[k] = 0.5 * (X[k[0]] + X[k[1]]) + np.array([0.0, 0.0, 0.01])
+    m.tetp_kantenmitten = km
+    idx = [i for i, e in enumerate(m.elements) if e.typ == "tetp3"]
+    G = tp.geometrie_modell(m, idx)
+    gerade_ok, krumm_ok = True, False
+    for a, i in enumerate(idx):
+        kn = m.elements[i].nodes
+        for mm, (p_, q_) in enumerate(tp.TET10_KANTEN):
+            k = (min(kn[p_], kn[q_]), max(kn[p_], kn[q_]))
+            mitte = 0.5 * (X[kn[p_]] + X[kn[q_]])
+            if k == grenze[0]:
+                gerade_ok &= bool(np.allclose(G[a, 4 + mm], mitte))
+            if k == innen[0]:
+                krumm_ok |= bool(np.allclose(G[a, 4 + mm], km[k]))
+    check("Grenzkante zu tet4 geometrisch gerade, innere Kante gekruemmt", gerade_ok and krumm_ok,
+          f"Grenze {grenze[0]}, innen {innen[0]}")
+
+
+def test_flaechenschnittstelle():
+    """tetp.flaechenschnittstelle: Flaeche = Summe dA, Normalen nach aussen,
+    lineares Feld exakt, Druck konsistent zur Seitenlast."""
+    m = quader(1, 1, 1, 1.0, 1.0, 1.0, lambda c: "tetp3")
+    X = np.asarray(m.nodes, float)
+    seiten = seiten_auf(m, lambda x: abs(x[2] - 1.0) < 1e-9)
+    fs = tp.flaechenschnittstelle(m, seiten)
+    flaeche = float(fs["dA"].sum())
+    aussen = bool(np.all(fs["normalen"][fs["dA"] > 0][:, 2] > 0.999999))
+    rng = np.random.default_rng(2)
+    A = rng.normal(size=(3, 3))
+    u = np.zeros(m.ndof)
+    for c in range(3):
+        u[6 * np.arange(m.nn) + c] = X @ A[c]
+    feld = np.einsum("nmk,nkc->nmc", fs["ansatz"], u[fs["fhg"]])
+    soll = fs["punkte"] @ A.T
+    lin = float(np.abs(np.where(fs["dA"][..., None] > 0, feld - soll, 0.0)).max())
+    kons = 0.0
+    for r, (i, s) in enumerate(seiten):
+        d, fe = tp.seitenlast_modell(m, i, s, 1e5)
+        k = int(fs["k"][r])
+        f2 = -1e5 * np.einsum("m,mk,mc->kc", fs["dA"][r], fs["ansatz"][r][:, :k], fs["normalen"][r])
+        voll = dict()
+        for dof, val in zip(d, fe):
+            voll[int(dof)] = voll.get(int(dof), 0.0) + float(val)
+        for a in range(k):
+            for c in range(3):
+                kons = max(kons, abs(voll.get(int(fs["fhg"][r][a, c]), 0.0) - f2[a, c]))
+    check("Flaechenschnittstelle: Flaeche, Aussennormale, lineares Feld, Druck konsistent",
+          abs(flaeche - 1.0) < 1e-12 and aussen and lin < 1e-12 and kons < 1e-6,
+          f"Flaeche {flaeche:.12f}, lin. Feld {lin:.1e}, Druck {kons:.1e} N")
+
+
+class _ZaehlListe(list):
+    """Liste, die mitzaehlt, wie oft ueber sie gelaufen wird."""
+    laeufe = 0
+
+    def __iter__(self):
+        _ZaehlListe.laeufe += 1
+        return super().__iter__()
+
+
+def test_ndof_ohne_tetp():
+    """Ohne tetp ist Model.ndof wortwoertlich wie vorher (6 nn + Woelb-FHG),
+    und wiederholte Aufrufe laufen nicht ueber die Elemente (Einwand der
+    Statik3D-Sitzung 23.09.2026: ndof wird oft gefragt, das Drehlager hat
+    645.934 Volumenelemente). Mit tetp an Ort und Stelle eingesetzt zaehlt
+    ndof nach _tetp_version += 1 die Zusatz-FHG mit."""
+    m = quader(2, 2, 2, 1.0, 1.0, 1.0, lambda c: "tet4")
+    alt = m.nn * 6 + len(m.woelb_knoten())
+    m.elements = _ZaehlListe(m.elements)
+    erst = m.ndof
+    vorher = _ZaehlListe.laeufe
+    for _ in range(100):
+        n = m.ndof
+    check("ndof ohne tetp unveraendert, 100 Aufrufe ohne Lauf ueber die Elemente",
+          erst == alt and n == alt and _ZaehlListe.laeufe == vorher,
+          f"ndof {n} = {alt}; Laeufe ueber die Elemente {_ZaehlListe.laeufe - vorher}")
+    m.elements[0].typ = "tetp3"
+    m._tetp_version = getattr(m, "_tetp_version", 0) + 1
+    check("tetp an Ort und Stelle eingesetzt: ndof zaehlt die Zusatz-FHG",
+          m.ndof > alt, f"{m.ndof} > {alt}")
+    # ... und OHNE den Zaehler: ndof merkt es nicht, stiffness bricht laut ab
+    from statik3d import assemble as asm
+    for neu_typ, text in (("tetp2", "tet4 -> tetp2"), ("tetp4", "tetp3 -> tetp4")):
+        m2 = quader(2, 2, 2, 1.0, 1.0, 1.0, lambda c: "tet4" if neu_typ == "tetp2" else "tetp3")
+        n_vorher = m2.ndof
+        m2.elements[0].typ = neu_typ
+        try:
+            asm.stiffness(m2)
+            check(f"Typ an Ort und Stelle ohne _tetp_version ({text}): stiffness laut", False,
+                  "kein Fehler")
+        except ValueError as ex:
+            check(f"Typ an Ort und Stelle ohne _tetp_version ({text}): stiffness laut",
+                  "_tetp_version" in str(ex), f"ndof vorher {n_vorher}; {str(ex)[:60]}")
+
+
+def main():
+    test_ndof_ohne_tetp()
+    test_kragarm()
+    test_eigengewicht()
+    test_patch_rechnung()
+    test_symmetrieebene()
+    test_temperatur()
+    test_lastarten()
+    test_linienlager_an_kante()
+    test_schaetzer_zeile()
+    test_indikator_ordnet()
+    test_plastisch_tangente()
+    test_plastisch_zugstab()
+    test_plastisch_newton()
+    test_aus_tet10()
+    test_grenzkante_gerade()
+    test_flaechenschnittstelle()
+    n_fail = sum(1 for _n, ok in RESULTS if not ok)
+    print(f"\n{len(RESULTS) - n_fail}/{len(RESULTS)} bestanden")
+    return 1 if n_fail else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

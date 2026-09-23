@@ -3588,9 +3588,13 @@ def _tet10_knoten(model: Model, ecken: list, kanten: dict) -> list:
     Tetraeder mit quadratischem Verschiebungsansatz). Sie werden ueber das
     **Knotenpaar** gemerkt: zwei Elemente an derselben Kante bekommen damit
     denselben Mittenknoten, und ebenso zwei Koerper, die sich eine Randflaeche
-    teilen - dort haben die Eckknoten ja schon dieselben Nummern. An einer
-    Kontaktfuge sind die Eckknoten verschieden, also auch die Mittenknoten:
-    die Fuge bleibt offen.
+    teilen - dort haben die Eckknoten ja schon dieselben Nummern. Sind die
+    Eckknoten an einer Fuge schon beim Vernetzen verschieden, sind es auch die
+    Mittenknoten. Getrennt wird eine Fuge aber meist erst **nach** dem
+    Vernetzen (fugen.kontaktfuge_ausfuehren), und das verdoppelt nur die
+    Ecken: die Mitten blieben gemeinsam, die Fuge verbunden. Darum sperrt
+    fugen.QuadratischeSeiten diesen Fall (gemessen 22.09.2026: 53 % Zug durch
+    eine Fuge ohne Zugfestigkeit).
     """
     out = list(ecken)
     for a, b in TET10_KANTEN:

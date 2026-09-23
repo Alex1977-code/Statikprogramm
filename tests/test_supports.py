@@ -488,12 +488,78 @@ def test_lagersymbolik():
           np.allclose(dritt.points, erst.points) and dritt.n_points == erst.n_points)
 
 
+def _traeger_mit_einseitigem_lager(richtung):
+    """Traeger 8 m, links eingespannt, rechts in z gelagert, Gleichlast; in
+    Feldmitte C ein einseitiges Lager mit ``richtung`` (None: ohne Lager)."""
+    m = Model("Traeger")
+    m.add_material(Material("S"))
+    m.add_section(Section.rectangle("R", 0.1, 0.3))
+    ids = [m.add_node(float(i), 0.0, 0.0) for i in range(9)]
+    els = [m.add_element("beam", [ids[i], ids[i + 1]], "S", "R") for i in range(8)]
+    m.fix(ids[0], "all")
+    m.fix(ids[8], [1, 2, 3])
+    for e in els:
+        m.load_beam(e, qz=-10e3)
+    if richtung is not None:
+        m.add_contact_support(ids[4], direction=richtung)
+    return m, ids[0], ids[4]
+
+
+def test_einseitiges_lager_ohne_richtung():
+    """Ein einseitiges Lager mit dem Nullvektor als Richtung wirkte nie und
+    meldete nichts: aus dem Nullvektor wurde beim Normieren wieder der
+    Nullvektor, die Bedingung stand mit Fn = 0 und Status "Kontakt" in der
+    Ergebnisliste, und das Ergebnis war Zeichen fuer Zeichen das ohne Lager
+    (gemessen von der Element-/Loesersitzung, 22.09.2026). Nur numpy sagte auf
+    stderr "invalid value encountered in divide" - in keinem Protokoll.
+    Jetzt faellt die Bedingung heraus, und das Protokoll nennt das Lager -
+    wie beim Spaltelement ohne Richtung. Die Rechnung selbst bleibt die ohne
+    Lager, denn ein Lager ohne Richtung kann nicht tragen."""
+    import warnings
+    m_ohne, _A, C = _traeger_mit_einseitigem_lager(None)
+    r_ohne = solver.solve_static(m_ohne)
+    m0, _A, C = _traeger_mit_einseitigem_lager((0.0, 0.0, 0.0))
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        r0 = solver.solve_static(m0)
+    check("Nullvektor: keine Bedingung, keine Ergebniszeile", len(r0.contact), 0, 0)
+    log = r0.info.get("contact_log", [])
+    zeile = [z for z in log if "Einseitiges Lager Knoten" in z and "Nullvektor" in z]
+    check("Nullvektor: das Protokoll nennt das Lager", float(bool(zeile)), 1.0, 0,
+          (zeile[0] if zeile else "keine Zeile")[:70])
+    nan = [str(x.message) for x in w if issubclass(x.category, RuntimeWarning)]
+    check("Nullvektor: numpy rechnet nicht mehr mit 0/0", len(nan), 0, 0,
+          (nan[0] if nan else "")[:50])
+    check("Nullvektor: u_z(C) wie ohne Lager", r0.u[C, 2], r_ohne.u[C, 2], 1e-12, "m")
+    # Mit Reibung ging die NaN-Tangentenbasis als ct in die Bedingung, und der
+    # Lauf brach mit "Gleichungssystem singulaer" ab (gemessen am Stand vor
+    # der Aenderung, 22.09.2026). Jetzt derselbe Weg wie ohne Reibung.
+    m_mu, _A, C = _traeger_mit_einseitigem_lager((0.0, 0.0, 0.0))
+    m_mu.contact_supports[0].mu = 0.3
+    try:
+        r_mu = solver.solve_static(m_mu)
+        check("Nullvektor mit Reibung: kein Abbruch, u_z(C) wie ohne Lager",
+              r_mu.u[C, 2], r_ohne.u[C, 2], 1e-12, "m")
+    except RuntimeError as ex:
+        check("Nullvektor mit Reibung: kein Abbruch, u_z(C) wie ohne Lager", 1.0, 0.0, 0,
+              str(ex).splitlines()[0][:60])
+    m1, _A, C = _traeger_mit_einseitigem_lager((0.0, 0.0, 1.0))
+    r1 = solver.solve_static(m1)
+    check("Gegenprobe (0,0,1): das Lager traegt, u_z(C) ~ 0",
+          abs(r1.u[C, 2]) / abs(r_ohne.u[C, 2]), 0.0, 1e-6)
+    check("Gegenprobe (0,0,1): eine Bedingung mit Druckkraft",
+          float(len(r1.contact) == 1 and r1.contact[0]["Fn"] > 0), 1.0, 0,
+          f"Fn = {r1.contact[0]['Fn']:.2f} N" if r1.contact else "")
+    check("Gegenprobe (0,0,1): kein Eintrag zum Nullvektor",
+          float(any("Nullvektor" in z for z in r1.info.get("contact_log", []))), 0.0, 0)
+
+
 def main():
     for t in (test_federlager_mit_schlupf, test_zug_und_druckausfall, test_grenzkraft,
               test_reibung_knotenlager, test_linienlager, test_flaechenlager,
               test_rotationslager_und_zusammenfassung, test_federgelenke,
               test_lager_folgen_dem_netz, test_flaechenlager_in_flaechenachsen,
-              test_lagersymbolik):
+              test_lagersymbolik, test_einseitiges_lager_ohne_richtung):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

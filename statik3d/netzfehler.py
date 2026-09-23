@@ -111,11 +111,13 @@ KALIBRIERUNG = 5.0
 SPANNUNGSSCHUTZ = 0.5
 KONZENTRATION = 2.0
 #: Elementansatz -> Konvergenzordnung p der Spannung
-ORDNUNG = {"tet4": 1, "tet10": 2, "hex8": 1, "hex20": 2, "pent6": 1, "pent15": 2, "pyr5": 1}
+ORDNUNG = {"tet4": 1, "tet10": 2, "hex8": 1, "hex20": 2, "pent6": 1, "pent15": 2, "pyr5": 1,
+           "tetp2": 2, "tetp3": 3, "tetp4": 4}
 #: Eckknoten je Typ - das Knotenmittel wird linear ueber die Ecken
 #: interpoliert, auch bei den quadratischen Typen (tet10 ueber seine vier
 #: Ecken, wie bisher).
-ECKEN = {"tet4": 4, "tet10": 4, "hex8": 8, "hex20": 8, "pent6": 6, "pent15": 6, "pyr5": 5}
+ECKEN = {"tet4": 4, "tet10": 4, "hex8": 8, "hex20": 8, "pent6": 6, "pent15": 6, "pyr5": 5,
+         "tetp2": 4, "tetp3": 4, "tetp4": 4}
 #: Kanten je Typ (Eckknoten) fuer die mittlere Kantenlaenge
 KANTEN = {4: [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)],
           8: [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4), (0, 4), (1, 5), (2, 6), (3, 7)],
@@ -124,7 +126,11 @@ KANTEN = {4: [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)],
 #: Der lineare Typ mit denselben Ecken - seine Formfunktionen und Gausspunkte
 #: rechnen das Integral der Energienorm ueber das Element
 _LINEAR = {"tet4": "tet4", "tet10": "tet4", "hex8": "hex8", "hex20": "hex8",
-           "pent6": "pent6", "pent15": "pent6", "pyr5": "pyr5"}
+           "pent6": "pent6", "pent15": "pent6", "pyr5": "pyr5",
+           # Tetraeder mit Ordnung p: vorerst wie tet4 gelesen (Eckfehler linear
+           # ueber die vier Ecken); die hoehere Ordnung ist nicht beruecksichtigt
+           # - bericht() sagt es in einer eigenen Zeile
+           "tetp2": "tet4", "tetp3": "tet4", "tetp4": "tet4"}
 #: Hoechstzahl der Feldpunkte, die der Schaetzer schreibt; darueber werden
 #: die Zellen der Vorausduennung verdoppelt (siehe feldpunkte)
 FELDPUNKTE_MAX = 200_000
@@ -323,9 +329,10 @@ def indikator(model, ergebnisse) -> dict:
     summe_eta2 = float(eta2.sum())
     eta_rel = np.sqrt(summe_eta2 / (U2 + summe_eta2)) if (U2 + summe_eta2) > 0 else 0.0
     p = np.array([ORDNUNG.get(model.elements[int(i)].typ, 1) for i in ids_alle], int)
+    tetp = int(sum(1 for i in ids_alle if model.elements[int(i)].typ in ("tetp2", "tetp3", "tetp4")))
     return {"ids": ids_alle, "eta": np.sqrt(eta2), "h": h_alle, "V": V_alle, "sv": sv,
             "zentren": zentren, "eta_rel": float(eta_rel), "U": float(np.sqrt(U2)),
-            "N": int(n_alle), "p": p}
+            "N": int(n_alle), "p": p, "tetp": tetp}
 
 
 #: Kalibrierung fuer Netze aus Hexaedern und Keilen (Sweep). Gemessen an der
@@ -507,4 +514,7 @@ def bericht(ind: dict) -> list:
         anteil = float(np.sum(np.sort(eta ** 2)[::-1][:max(1, len(eta) // 10)]) / max(np.sum(eta ** 2), 1e-300))
         z.append(f"  das Zehntel der Elemente mit dem größten Fehler trägt {anteil * 100:.0f} % des "
                  f"Gesamtfehlers; Kantenlängen {np.min(ind['h']) * 1e3:.1f} … {np.max(ind['h']) * 1e3:.1f} mm")
+    if ind.get("tetp"):
+        z.append(f"  Tetraeder mit Ordnung p ({ind['tetp']}): der Schätzer behandelt sie vorerst "
+                 "wie tet4 – die höhere Ordnung ist nicht berücksichtigt.")
     return z

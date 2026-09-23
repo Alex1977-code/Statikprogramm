@@ -452,11 +452,23 @@ def test_vorlagen():
     check("Kopfplatte: Beschreibung nennt Blech und Schrauben",
           "Blech" in a.describe() and a.bolt.size in a.describe())
 
-    # groesseres Moment -> staerkerer Anschluss
+    # groesseres Moment -> staerkerer Anschluss, und zwar strikt: die fruehere
+    # Zusicherung a2.tp >= a.tp war auch wahr, wenn propose das Moment nicht
+    # auswertet und a2 == a liefert (Befund SV2, 22.09.2026)
     a2 = EndPlate.propose(m, elem=e_tr, end=1, N=0.0, Vz=90e3, My=320e3)
-    check("groesseres Moment -> dickeres Blech oder groessere Schraube",
-          a2.tp >= a.tp or a2.bolt.d > a.bolt.d,
-          f"t = {a2.tp * 1e3:.0f} mm, {a2.bolt.size}")
+    check("größeres Moment -> dickeres Blech, größere Schraube oder mehr Reihen",
+          a2.tp > a.tp or a2.bolt.d > a.bolt.d or len(a2.rows) > len(a.rows),
+          f"180 kNm: t = {a.tp * 1e3:.0f} mm, {a.bolt.size}, {len(a.rows)} Reihen / "
+          f"320 kNm: t = {a2.tp * 1e3:.0f} mm, {a2.bolt.size}, {len(a2.rows)} Reihen")
+    # Scharf ist das nur, wenn der Vorschlag fuer 180 kNm die 320 kNm nicht
+    # traegt (gemessen eta = 1,461, massgebend T-Stummel) - sonst waere
+    # "staerker" gar nicht noetig
+    j_alt = a.design(N=0.0, Vz=90e3, My=320e3)
+    check("Vorschlag für 180 kNm trägt 320 kNm nicht", not j_alt.ok,
+          f"eta = {j_alt.eta:.3f}, maßgebend {j_alt.massgebend}")
+    j2 = a2.design(N=0.0, Vz=90e3, My=320e3)
+    check("Vorschlag für 320 kNm erfüllt die Nachweise", j2.ok,
+          f"eta = {j2.eta:.3f}, maßgebend {j2.massgebend}")
 
     # FE-Modell der Kopfplatte
     log = []

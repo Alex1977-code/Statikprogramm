@@ -270,14 +270,20 @@ class Table:
             return None
         return C.parse_number(row[j])
 
-    def data(self):
-        """(Zeile, Blocktitel) - Blocktitel z.B. 'LF1' aus Zwischenzeilen."""
+    def data(self, bloecke: bool = True):
+        """(Zeile, Blocktitel) - Blocktitel z.B. 'LF1' aus Zwischenzeilen.
+
+        ``bloecke=False`` fuer Tabellen ohne Bloecke (Lastkombinationen): dort
+        ist eine Zeile mit der Nummer „CO5“ und der Formel „LF1 + LF2“ eine
+        Kombination und kein Titel. Als Titel gelesen fiel sie bis zum
+        22.09.2026 wortlos weg (Befund SV10).
+        """
         for r in self.rows[self.start:]:
             cells = [C.clean_text(c) for c in r]
             if not any(cells):
                 continue
             first = next(c for c in cells if c)
-            m = _BLOCK_TITLE.match(first)
+            m = _BLOCK_TITLE.match(first) if bloecke else None
             if m and sum(1 for c in cells if c) <= 3 and \
                     all(C.parse_number(c) is None or c == first for c in cells if c):
                 yield None, m.group(0).upper().replace(" ", "")
@@ -356,23 +362,167 @@ def _load_direction(text: str) -> tuple[Optional[int], str, bool]:
     return axis, ("local" if local else "global"), projected
 
 
-def _parse_formula(text: str) -> tuple[dict[str, float], list[str]]:
-    """'1.35*LF1 + 1.5*LF2' -> ({'LF1': 1.35, 'LF2': 1.5}, [nicht aufloesbare Teile])."""
+def _formel_zerlegen(text: str) -> tuple[dict[str, float], list[tuple[float, str, int]],
+                                          list[str]]:
+    """'1.35*LF1 + 2*CO3' -> ({'LF1': 1.35}, [(2.0, 'CO', 3)], []).
+
+    Die Verweise behalten ihren Vorfaktor: ein Verweis auf eine andere
+    Lastkombination wird mit ihm aufgeloest (siehe Kombinationsschleife).
+
+    Das Vorzeichen wird **getrennt** von der Zahl gefangen: bis zum 23.09.2026
+    stand es in derselben Gruppe wie die Ziffern, ein Minus ohne Zahl fiel
+    darum weg. Gemessen: „LF1 - LF2“ ergab LF1 + LF2, und „LF2 - CO1“ mit
+    CO1 = 1,35·LF1 wurde seit der Aufloesung der Verweise still zu
+    LF2 + 1,35·LF1 statt LF2 - 1,35·LF1 (Gegenpruefung zu Befund SV10).
+
+    Der dritte Rueckgabewert sind die Teile der Formel, die kein Anteil
+    geworden sind (ohne Leerraum und „+“, die nur verbinden). Bis zum
+    23.09.2026 fielen sie ohne Meldung weg, sobald daneben ein LF-Anteil
+    stand. Gemessen am Stand 6cbc144: „1.35*LC1 + RC1“ ergab LK = 1,35·LF1,
+    „1.35*LF1 + 1.5*Schnee“ ergab 1,35·LF1 und „1.35*(LF1 + LF2)“ ergab
+    LF1 + LF2 - jeweils ohne Protokollzeile. „RC“ ist das englische Kuerzel
+    der Ergebniskombination (wie „CO“ zu „LK“) und wird wie „EK“ als Verweis
+    gelesen; ob RFEM RC oder EK in eine Lastkombinationsformel schreibt, ist
+    an keiner echten Datei gemessen.
+    """
     factors: dict[str, float] = {}
-    others = []
-    for m in re.finditer(r"([+-]?\s*\d+(?:[.,]\d+)?)?\s*\*?\s*(LF|LC|CO|LK|EK)\s*(\d+)",
+    verweise: list[tuple[float, str, int]] = []
+    rest: list[str] = []
+    pos = 0
+
+    def luecke(stueck: str) -> None:
+        if re.sub(r"[\s+]", "", stueck):
+            rest.append(stueck.strip())
+
+    for m in re.finditer(r"([+-])?\s*(\d+(?:[.,]\d+)?)?\s*\*?\s*(LF|LC|CO|LK|EK|RC)\s*(\d+)",
                          text, re.IGNORECASE):
-        f = m.group(1)
-        f = C.parse_number(f.replace(" ", "")) if f else 1.0
+        luecke(text[pos:m.start()])
+        pos = m.end()
+        f = C.parse_number(m.group(2)) if m.group(2) else 1.0
         if f is None:
             f = 1.0
-        kind = m.group(2).upper()
+        if m.group(1) == "-":
+            f = -f
+        kind = m.group(3).upper()
         if kind in ("LF", "LC"):
-            key = f"LF{int(m.group(3))}"
+            key = f"LF{int(m.group(4))}"
             factors[key] = factors.get(key, 0.0) + f
         else:
-            others.append(f"{kind}{m.group(3)}")
-    return factors, others
+            verweise.append((f, kind, int(m.group(4))))
+    luecke(text[pos:])
+    return factors, verweise, rest
+
+
+def _faktoren_text(faktoren: dict) -> str:
+    """{'LF2': 1.0, 'LF1': -1.35} -> '1*LF2 - 1.35*LF1' fuers Protokoll.
+
+    Nie wissenschaftlich (2.39e+03), darum feste vier Stellen, Nullen weg.
+    """
+    teile = []
+    for k, v in faktoren.items():
+        zahl = f"{abs(v):.4f}".rstrip("0").rstrip(".")
+        teile.append(("- " if v < 0 else "+ ") + f"{zahl}*{k}")
+    s = " ".join(teile)
+    return s[2:] if s.startswith("+ ") else s
+
+
+def _kombinationen_aufloesen(zeilen: list) -> list:
+    """Verweise auf andere Lastkombinationen derselben Tabelle aufloesen.
+
+    ``zeilen`` [(Nummer oder None, LF-Faktoren, Verweise, nicht erkannter
+    Rest)] -> je Zeile (Faktoren, nicht aufgeloeste Verweise, Grund je
+    offenem CO/LK-Verweis; den Grund fuer EK/RC nennt der Aufrufer). „CO n“ und
+    „LK n“ sind die Lastkombination Nummer n dieser Tabelle; sie geht mit
+    ihren Faktoren mal dem Vorfaktor ein - auch wenn sie weiter unten steht.
+    „EK n“ (englisch „RC n“) ist eine
+    Ergebniskombination, also eine Umhuellende und keine Summe - sie laesst
+    sich nicht als Summand schreiben und bleibt offen, ebenso ein Kreis
+    (CO1 verweist auf CO2, CO2 auf CO1) und eine Nummer, die es nicht gibt.
+    Offen bleibt auch, was ueber eine offene Kombination hereinkaeme, und ein
+    Verweis auf eine Zeile mit nicht erkanntem Teil (``rest`` aus
+    _formel_zerlegen): ihre Faktoren sind nur halb gelesen. Bis zum
+    23.09.2026 kam der Rest hier nicht an, ein Verweis nahm die halben
+    Faktoren mit. Gemessen am Stand 0ad95bb: ['1: 1.35*LF1 + 1.5*Schnee',
+    '2: CO1 + LF2'] ergab LK2 = LF2 + 1,35·LF1 mit nur einer Infozeile,
+    ['1: 1.35*(LF1 + LF2)', '2: LF3 + CO1'] ergab LK2 = LF1 + LF2 + LF3
+    (Gegenpruefung zu Befund SV10).
+
+    Der Grund eines offenen CO/LK-Verweises wird aus dem Aufbau der Tabelle
+    bestimmt, nicht aus dem Weg der Rekursion: die Tabelle fuehrt die Nummer
+    nicht; der Verweis fuehrt ueber CO/LK-Verweise auf die eigene Zeile
+    zurueck (Kreis); sonst wird die verwiesene Zeile selbst nicht angelegt
+    (offener Verweis, kein Lastfall oder nicht erkannter Teil - ihre eigene
+    Warnung nennt den Grund).
+    """
+    nach_nummer: dict[int, int] = {}
+    for i, (no, _f, _v, _r) in enumerate(zeilen):
+        if no is not None:
+            nach_nummer.setdefault(int(no), i)
+    fertig: dict[int, tuple] = {}
+
+    def aufloesen(i: int, pfad: frozenset) -> tuple:
+        if i in fertig:
+            return fertig[i]
+        _no, faktoren, verweise, _rest = zeilen[i]
+        f = dict(faktoren)
+        offen: list[str] = []
+        for vf, art, nr in verweise:
+            j = nach_nummer.get(nr) if art in ("CO", "LK") else None
+            if j is None or j == i or j in pfad:
+                offen.append(f"{art}{nr}")
+                continue
+            fj, offen_j = aufloesen(j, pfad | {i})
+            if offen_j or not fj or zeilen[j][3]:
+                offen.append(f"{art}{nr}")
+                continue
+            for k, v in fj.items():
+                f[k] = f.get(k, 0.0) + vf * v
+        fertig[i] = (f, offen)
+        return fertig[i]
+
+    def ziel(art: str, nr: int):
+        return nach_nummer.get(nr) if art in ("CO", "LK") else None
+
+    def fuehrt_zurueck(j: int, i: int) -> bool:
+        """Erreicht Zeile j ueber CO/LK-Verweise die Zeile i?"""
+        gesehen: set[int] = set()
+        stapel = [j]
+        while stapel:
+            a = stapel.pop()
+            if a == i:
+                return True
+            if a in gesehen:
+                continue
+            gesehen.add(a)
+            for _vf, art, nr in zeilen[a][2]:
+                b = ziel(art, nr)
+                if b is not None:
+                    stapel.append(b)
+        return False
+
+    def grund(i: int, art: str, nr: int) -> str:
+        ref = f"{art}{nr}"
+        j = ziel(art, nr)
+        if j is None:
+            return f"{ref}: die Tabelle führt keine Nummer {nr}"
+        if j == i:
+            return f"{ref}: Kreis, verweist auf diese Kombination selbst"
+        if fuehrt_zurueck(j, i):
+            return f"{ref}: Kreis, führt über Verweise auf diese Kombination zurück"
+        # Kein Kreis: dann blieb der Verweis in aufloesen offen, weil Zeile j
+        # selbst offen ist, keinen Lastfall hat oder einen nicht erkannten
+        # Teil (j im Pfad der Rekursion ist oben als Kreis erfasst, der Pfad
+        # fuehrt ja zu i zurueck) - genau dann legt die Schleife in
+        # import_rfem_tables Zeile j nicht an und warnt unter LK{nr}.
+        return f"{ref}: wird selbst nicht angelegt, siehe Warnung zu LK{nr}"
+
+    aus = []
+    for i in range(len(zeilen)):
+        f, offen = aufloesen(i, frozenset())
+        warum = {f"{a}{n}": grund(i, a, n) for _vf, a, n in zeilen[i][2]
+                 if a in ("CO", "LK") and f"{a}{n}" in offen}
+        aus.append((f, offen, warum))
+    return aus
 
 
 # --------------------------------------------------------------------------
@@ -837,16 +987,93 @@ def import_rfem_tables(path: str, model: Model = None, log: list = None,
     # ---- Kombinationen ------------------------------------------------------------------
     t = found.get("combinations")
     if t is not None:
-        n_co = 0
-        for row, _ in t.data():
+        # Jede Zeile mit Inhalt bekommt einen gezaehlten Ausgang (Befund SV10):
+        # bis zum 22.09.2026 fiel eine Zeile ohne LF-Faktor mit
+        # ``if not factors: continue`` **vor** der Warnung weg. Gemessen an
+        # vier Zeilen ('1.35*LF1 + 1.5*LF2', 'CO1 + CO3', '1.0*EK1',
+        # 'LF1 + CO1'): Protokoll "2 Lastkombinationen", eine Warnung nur fuer
+        # LK4, LK2 und LK3 ohne jede Zeile. Darum erst alle Zeilen lesen, dann
+        # die Verweise aufloesen, dann anlegen oder mit Grund nennen.
+        roh = []
+        for row, _ in t.data(bloecke=False):
             if row is None:
                 continue
             formula = t.text(row, "formula")
-            factors, others = _parse_formula(formula)
-            if not factors:
-                continue
+            factors, verweise, rest = _formel_zerlegen(formula)
             no = t.num(row, "no")
-            no = int(no) if no is not None else n_co + 1
+            if no is None:
+                # Die Nummer steht auch als Text da ("CO5", "LK 5").
+                mn = re.match(r"^\s*(?:CO|LK)?\s*(\d+)\s*$", t.text(row, "no"),
+                              re.IGNORECASE)
+                no = int(mn.group(1)) if mn else None
+            roh.append((row, formula, no, factors, verweise, rest))
+        # Der Rest geht mit in die Aufloesung: ein Verweis auf eine Zeile mit
+        # nicht erkanntem Teil bleibt offen (siehe _kombinationen_aufloesen).
+        aufgeloest = _kombinationen_aufloesen([(no, f, v, x) for _r, _t, no, f, v, x in roh])
+        # Eine Zeile ohne Nummer bekommt eine Nummer, die keine Zeile der
+        # Tabelle traegt. Bis zum 23.09.2026 hiess sie LK{angelegte + 1} und
+        # konnte so den Namen einer nummerierten Zeile belegen, die das
+        # Protokoll unter diesem Namen warnte oder aufloeste. Gemessen am Stand
+        # 6cbc144: ['1;1.35*LF1', ';1.5*LF2', '2;1.0*EK1'] warnte „LK2 nicht
+        # uebernommen“, im Modell stand LK2 = 1,5·LF2; bei [';1.5*LF2',
+        # '1;1.35*LF1 + CO2', '2;LF2'] nannte die Infozeile LK1, die
+        # aufgeloeste Kombination hiess aber LK1_2 (Gegenpruefung zu SV10).
+        naechste = max((int(z[2]) for z in roh if z[2] is not None), default=0) + 1
+        n_co = 0
+        for k, ((row, formula, no, _f0, verweise, rest), (factors, offen, warum)) in \
+                enumerate(zip(roh, aufgeloest), 1):
+            wer = f"LK{int(no)}" if no is not None else f"in Tabellenzeile {k} ohne Nummer"
+            if not _f0 and not verweise:
+                C.warn(log, f"Kombination {wer}: Formel „{formula}“ ohne erkennbaren "
+                            "Lastfall - nicht uebernommen.")
+                continue
+            if offen or rest:
+                # Eine Kombination ohne einen ihrer Anteile waere zu klein und
+                # saehe im Nachweis wie eine vollstaendige aus - darum nicht
+                # halb anlegen, sondern nennen. Das gilt auch fuer einen nicht
+                # erkannten Teil der Formel (``rest``, siehe _formel_zerlegen).
+                gruende = []
+                if any(x.startswith(("EK", "RC")) for x in offen):
+                    gruende.append("EK/RC ist eine Ergebniskombination (Umhuellende), "
+                                   "als Summand nicht darstellbar")
+                # CO/LK: je Verweis sein Grund (keine solche Nummer, Kreis,
+                # oder die verwiesene Zeile wird selbst nicht angelegt).
+                gruende += [warum[x] for x in dict.fromkeys(offen) if x in warum]
+                if rest:
+                    gruende.append(f"nicht erkannter Teil {rest}")
+                alle = [f"{a}{n}" for _v, a, n in verweise]
+                C.warn(log, f"Kombination {wer} („{formula}“): "
+                            + (f"Verweise {offen} nicht aufloesbar" if offen
+                               else "Formel nicht vollstaendig gelesen")
+                            + " - nicht uebernommen (" + "; ".join(gruende) + ")."
+                            + (f" Die Zeile besteht nur aus Verweisen {alle}."
+                               if not _f0 and not rest else "")
+                            + " Bitte in RFEM nachsehen und die Kombination von "
+                              "Hand anlegen.")
+                continue
+            # Hier ist ``factors`` nie leer: ein eigener LF-Anteil bleibt
+            # erhalten, und ein Verweis ohne Faktoren waere in ``offen``.
+            woher = []
+            if no is None:
+                no = naechste
+                naechste += 1
+                woher.append(f"Tabellenzeile {k} ohne Nummer")
+            soll = f"LK{int(no)}"
+            name = C.unique_name(model.combinations, soll)
+            if name != soll:
+                if not woher:
+                    woher.append(f"Tabellennummer {int(no)}")
+                woher.append(f"{soll} gab es schon")
+            herkunft = f" ({'; '.join(woher)})" if woher else ""
+            if verweise:
+                # Das Ergebnis samt Vorzeichen nennen: ein falsch gelesenes
+                # Vorzeichen stand vorher nur als "aufgeloest" da und fiel
+                # nicht auf (Gegenpruefung vom 23.09.2026, „LF2 - CO1“).
+                C.say(log, f"Kombination {name}{herkunft}: Verweise "
+                           f"{[f'{a}{n}' for _v, a, n in verweise]} auf die Faktoren "
+                           f"der Kombinationen aufgeloest: {_faktoren_text(factors)}")
+            elif herkunft:
+                C.say(log, f"Kombination {name}{herkunft}: {_faktoren_text(factors)}")
             for key in factors:
                 if key not in model.load_cases:
                     C.get_or_add_case(model, key, "Q", "")
@@ -858,13 +1085,9 @@ def import_rfem_tables(path: str, model: Model = None, log: list = None,
                 typ = "ACC"
             elif re.search(r"EQU|LAGESICH", sit):
                 typ = "EQU"
-            name = f"LK{no}"
-            model.add_combination(C.unique_name(model.combinations, name), factors, typ,
-                                  t.text(row, "name") or formula)
-            if others:
-                C.warn(log, f"Kombination {name}: Verweise {others} nicht aufgeloest")
+            model.add_combination(name, factors, typ, t.text(row, "name") or formula)
             n_co += 1
-        C.say(log, f"{n_co} Lastkombinationen")
+        C.say(log, f"{n_co} von {len(roh)} Lastkombinationen")
 
     # ---- Knotenlasten -----------------------------------------------------------------
     t = found.get("nodal_loads")

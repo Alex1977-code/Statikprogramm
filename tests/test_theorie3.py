@@ -278,10 +278,97 @@ def test_gescheiterte_theorie_meldet_sich():
           "die Spalte nennt die gerechnete Theorie")
 
 
+def _zweifeld_kragarm(theorie: str):
+    """Kragarm aus zwei Staeben, Endknoten unter Druck- und Querlast."""
+    m = Model("Theoriespalte")
+    m.add_material(Material.steel("S235"))
+    m.add_section(Section.rectangle("R", 0.1, 0.1))
+    k = [m.add_node(i * 1.0, 0.0, 0.0) for i in range(3)]
+    for i in range(2):
+        m.add_element("beam", [k[i], k[i + 1]], "S235", "R")
+    m.fix(k[0], "all")
+    lc = m.case()
+    lc.theorie = theorie
+    m.load_node(k[2], Fz=-1000.0, Fx=-5000.0)
+    return m, lc
+
+
+def test_gelungene_theorie_steht_schlicht_in_der_tabelle():
+    """Ein gelungen nach Theorie II/III gerechneter Lastfall heisst in der
+    Lastfalltabelle schlicht "II" bzw. "III".
+
+    Die Kur vom 22.09.2026 (efcf3d6) verglich ``res.info["theorie"]`` mit der
+    Einstellung. theorie2.py/theorie3.py schreiben dort aber "II. Ordnung" bzw.
+    "III. Ordnung", die Einstellung heisst "II"/"III" - der Text war nie gleich.
+    Gemessen mit scratchpad/stand/probe_fe1.py: jeder GELUNGENE Lastfall stand
+    als "II. Ordnung (statt II: nicht gerechnet)" im Bericht.
+    """
+    from statik3d.report.html import Report
+    for th in ("II", "III"):
+        m, lc = _zweifeld_kragarm(th)
+        an = solver.solve_all(m)
+        res = an.cases.get(lc.name)
+        gerechnet = (getattr(res, "info", None) or {}).get("theorie")
+        check(f"Theorie {th}: Lastfall gelungen gerechnet",
+              res is not None and gerechnet == f"{th}. Ordnung", str(gerechnet))
+        r = Report(m, an)
+        spalte = r._theorie_spalte(lc)
+        check(f"Theorie {th}: Spalte schlicht '{th}'", spalte == th, repr(spalte))
+        html = r.html()
+        check(f"Theorie {th}: Bericht behauptet kein 'nicht gerechnet'",
+              f"statt {th}: nicht gerechnet" not in html,
+              "Spaltentext im Bericht" if f"statt {th}" in html else "")
+
+
+def test_theorie_mit_info_fehler_markiert_das_lineare_ergebnis():
+    """Endet Theorie II/III mit ``info.fehler`` (singulaer, keine Konvergenz),
+    bleibt das lineare Ergebnis stehen - und muss das auch sagen.
+
+    solver.py ersetzte das Ergebnis in diesem Zweig richtig nicht, markierte
+    das stehenbleibende lineare Ergebnis aber auch nicht (nur der
+    ValueError-Zweig tat es). Die Lastfalltabelle wies dann "III" aus, obwohl
+    nach Theorie I. Ordnung gerechnet war. Die Fehlerfaelle werden hier
+    erzwungen: der echte Loeser rechnet, danach wird ``info.fehler`` gesetzt -
+    so wie theorie3.py (keine Konvergenz) und theorie2.py (singulaer) es tun.
+    """
+    from statik3d import theorie2 as t2mod
+    from statik3d import theorie3 as t3mod
+    from statik3d.report.html import Report
+    faelle = (("III", t3mod, "solve_theorie3", "keine Konvergenz"),
+              ("II", t2mod, "solve_theorie2", "Gleichungssystem singulär (α_cr ≈ 1?): erzwungen"))
+    for th, modul, fname, fehlertext in faelle:
+        original = getattr(modul, fname)
+
+        def gescheitert(*a, _orig=original, _text=fehlertext, **kw):
+            res, info = _orig(*a, **kw)
+            info.fehler = _text
+            info.gerechnet = False
+            return res, info
+
+        setattr(modul, fname, gescheitert)
+        try:
+            m, lc = _zweifeld_kragarm(th)
+            an = solver.solve_all(m)
+        finally:
+            setattr(modul, fname, original)
+        res = an.cases.get(lc.name)
+        info = res.info if res is not None else {}
+        check(f"Theorie {th} mit info.fehler: Ergebnis sagt Theorie I",
+              info.get("theorie") == "I", str(info.get("theorie")))
+        check(f"Theorie {th} mit info.fehler: gewuenschte Theorie und Grund stehen darin",
+              info.get("theorie_gewuenscht") == th and info.get("theorie_fehler") == fehlertext,
+              f"{info.get('theorie_gewuenscht')} / {str(info.get('theorie_fehler'))[:40]}")
+        spalte = Report(m, an)._theorie_spalte(lc)
+        check(f"Theorie {th} mit info.fehler: Spalte 'I (statt {th}: nicht gerechnet)'",
+              spalte == f"I (statt {th}: nicht gerechnet)", repr(spalte))
+
+
 def main():
     for t in (test_drehungen, test_kreisbogen, test_elastica, test_seil,
               test_druckstab_II_gegen_III, test_theoriewahl,
-              test_gescheiterte_theorie_meldet_sich):
+              test_gescheiterte_theorie_meldet_sich,
+              test_gelungene_theorie_steht_schlicht_in_der_tabelle,
+              test_theorie_mit_info_fehler_markiert_das_lineare_ergebnis):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

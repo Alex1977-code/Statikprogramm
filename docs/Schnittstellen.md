@@ -191,6 +191,87 @@ Geprüft in `tests/test_infocad.py`.
   (`[kN]`, `[mm]`). RFEM-Achsen: Z nach unten wird unverändert übernommen;
   Option `z_up=True` spiegelt.
 
+**Lastkombinationen aus der Tabelle zählen sich ab** (seit 22.09.2026). Die
+Schlusszeile „n von m Lastkombinationen“ zählt jede Zeile von
+„2.5 Lastkombinationen“. Eine eigene Protokollzeile bekommt jede nicht
+übernommene Zeile (mit Grund), jede aufgelöste, jede ohne Nummer und jede,
+die einen Ausweichnamen bekommt, weil ihr Name schon vergeben ist (mit ihrem
+Ergebnis); eine Zeile, die nur aus eigenen Lastfall-Anteilen besteht und
+unter ihrer Tabellennummer angelegt wird, steht nur in dieser Zählung. Ein Verweis auf eine andere Lastkombination
+derselben Tabelle („CO3“ oder „LK3“, auch wenn sie weiter unten steht) wird
+mit deren Faktoren mal dem Vorfaktor aufgelöst: „LF1 + CO1“ mit
+CO1 = 1,35·LF1 + 1,5·LF2 ergibt 2,35·LF1 + 1,5·LF2, und das Protokoll sagt
+es. Nicht auflösbar sind ein Verweis auf eine **Ergebniskombination** („EK1“
+— eine Umhüllende, kein Summand), ein Kreis (CO2 → CO4 → CO2), eine
+Nummer, die die Tabelle nicht führt, und ein Verweis auf eine Kombination,
+die selbst nicht angelegt wird. Eine solche Kombination wird **nicht
+angelegt**, auch nicht mit ihren übrigen Anteilen — sie wäre zu klein und sähe
+im Nachweis vollständig aus —, sondern mit Formel und Grund als Warnung
+genannt; ebenso eine Formel ohne erkennbaren Lastfall. Der Grund steht je
+Verweis da: „CO9: die Tabelle führt keine Nummer 9“, „CO2: Kreis, führt über
+Verweise auf diese Kombination zurück“ (auf sich selbst: „CO1: Kreis,
+verweist auf diese Kombination selbst“) oder „CO1: wird selbst nicht
+angelegt, siehe Warnung zu LK1“ — dann nennt die Warnung zu LK1 den
+eigentlichen Grund. Bis zum 22.09.2026 fiel eine
+Zeile ohne eigenen LF-Faktor **vor** der Warnung weg: an den vier Zeilen
+„1.35*LF1 + 1.5*LF2“, „CO1 + CO3“, „1.0*EK1“, „LF1 + CO1“ meldete das
+Protokoll „2 Lastkombinationen“ und eine Warnung zu LK4, LK2 und LK3
+verschwanden ohne Zeile, und LK4 kam nur mit LF1 an. Außerdem las der
+Parser eine Zeile mit der Nummer „CO5“ und der Formel „LF1 + LF2“ als
+Blocktitel und verwarf sie; die Kombinationstabelle kennt keine Blocktitel
+mehr, die Nummer wird auch aus „CO5“ gelesen.
+
+**Ein Minus ohne Zahl zieht ab** (seit 23.09.2026). Das Vorzeichen wird
+getrennt von der Zahl gelesen: „LF1 - LF2“ ergibt LF1 − LF2, „LF2 - CO1“ mit
+CO1 = 1,35·LF1 ergibt LF2 − 1,35·LF1, und die Protokollzeile der Auflösung
+nennt das Ergebnis samt Vorzeichen („… aufgeloest: 1*LF2 - 1.35*LF1“).
+Vorher stand das Vorzeichen in derselben Gruppe wie die Ziffern und fiel ohne
+Zahl weg: „LF1 - LF2“ ergab LF1 + LF2, und „LF2 - CO1“ wurde mit der
+Auflösung der Verweise vom 22.09.2026 still zu LF2 + 1,35·LF1 — vorher war
+dieselbe Zeile noch mit einer Warnung ohne den Verweis angelegt worden. Ein
+ausgeschriebener Faktor („1.0*LF2 - 1.0*CO1“) rechnete schon richtig. Ob RFEM
+ein Minus ohne Zahl in die Tabelle schreibt, ist an keiner echten Datei
+gemessen.
+
+**Ein nicht erkannter Teil der Formel legt die Kombination nicht halb an**
+(seit 23.09.2026). Erkannt werden Anteile der Form „Zahl * LF n“ (auch LC)
+und Verweise CO, LK, EK und RC; RC ist das englische Kürzel der
+Ergebniskombination und wird wie EK behandelt. Bleibt daneben Text übrig,
+der kein Anteil ist (außer Leerzeichen und „+“), wird die Kombination nicht
+angelegt, sondern mit Formel und dem übrig gebliebenen Text gewarnt:
+„Kombination LK8 („1.35*LF1 + 1.5*Schnee“): Formel nicht vollstaendig gelesen
+- nicht uebernommen (nicht erkannter Teil ['+ 1.5*Schnee'])“. Vorher fiel
+dieser Text ohne Meldung weg, sobald daneben ein Lastfall-Anteil stand.
+Gemessen am Stand vom 23.09.2026 vor dieser Änderung: „1.35*LC1 + RC1“
+wurde 1,35·LF1, „1.35*LF1 + 1.5*LF2 + 0.9*RC2“ wurde 1,35·LF1 + 1,5·LF2,
+„1.35*LF1 + 1.5*Schnee“ wurde 1,35·LF1 und „1.35*(LF1 + LF2)“ wurde
+LF1 + LF2, jeweils ohne Protokollzeile. Ein Verweis auf eine solche Zeile
+bleibt offen, die verweisende Kombination wird ebenfalls gewarnt und nicht
+angelegt: „1: 1.35*LF1 + 1.5*Schnee“, „2: CO1 + LF2“ ergibt zwei Warnungen
+und „0 von 2 Lastkombinationen“. In der ersten Fassung dieser Regel vom
+selben Tag ging der übrige Text nicht mit in die Auflösung der Verweise:
+dieselben zwei Zeilen ergaben LK2 = LF2 + 1,35·LF1 mit nur einer Infozeile
+und „1 von 2“, und „2: LF3 + CO1“ nahm aus „1: 1.35*(LF1 + LF2)“ die Anteile
+LF1 + LF2 ohne den Faktor 1,35 mit. Dieselbe Regel trifft auch einen
+Vorsatz wie „GZT-1: 1.35*LF1“ oder einen Zusatz wie „LF1/p“; beides wurde
+vorher mit dem erkannten Rest angelegt. Alle Formeln in diesem Absatz sind
+selbst gebaut: ob RFEM RC, EK, Klammern oder solche Zusätze in eine
+Lastkombinationsformel schreibt, ist an keiner echten Datei gemessen.
+
+**Eine Zeile ohne Nummer bekommt eine freie Nummer** (seit 23.09.2026), und
+zwar die nächste nach der größten Nummer der Tabelle; das Protokoll nennt
+sie: „Kombination LK3 (Tabellenzeile 2 ohne Nummer): 1.5*LF2“. Vorher hieß
+sie LK(Zahl der bisher angelegten + 1) und konnte so den Namen einer
+nummerierten Zeile belegen, die das Protokoll unter diesem Namen warnte oder
+auflöste. Gemessen an den Zeilen „1: 1.35*LF1“, „(ohne Nummer): 1.5*LF2“,
+„2: 1.0*EK1“: das Protokoll warnte „LK2 … nicht uebernommen“, im Modell stand
+aber LK2 = 1,5·LF2. Bei „(ohne Nummer): 1.5*LF2“, „1: 1.35*LF1 + CO2“,
+„2: LF2“ nannte die Infozeile LK1 = 1,35·LF1 + LF2, LK1 war aber 1,5·LF2 und
+die aufgelöste Kombination hieß LK1_2. Ist ein Name schon vergeben (doppelte
+Nummer in der Tabelle, oder das Modell hatte ihn vorher), nennt die
+Protokollzeile den Ausweichnamen: „Kombination LK2_2 (Tabellennummer 2; LK2
+gab es schon): …“.
+
 ## IFC-Statikmodell – Details
 
 * Einheiten aus `IfcUnitAssignment` (Längen-, Kraft-, abgeleitete Einheiten).
@@ -505,6 +586,24 @@ werden über die gemeinsamen Knoten der Seitenflächen zugeordnet und die
 Jacobi-Determinante geprüft (bei negativem Vorzeichen werden Boden und Deckel
 getauscht).
 
+**Die Knotenfolge kommt aus den Knotenmengen der Flächen, nicht aus ihrer
+Aufzählung** (`rfem6_db._hex_order`, seit 22.09.2026). Der Deckelknoten über
+einem Bodenknoten u ist der eine Deckelknoten, den beide Seitenflächen an u
+enthalten; der Umlauf des Bodens folgt aus der Nachbarschaft in den
+Seitenflächen. Zum Schluss muss die Liste acht verschiedene Knoten haben und
+ihre sechs Seiten müssen genau die gegebenen Flächen sein, sonst geht der
+Körper an den freien Vernetzer. Vorher nahm die Zuordnung den Deckelknoten,
+der in der Seitenfläche *neben* dem Bodenknoten steht, und verließ sich damit
+auf einen Umlauf. Gemessen am Einheitswürfel über 81 Schreibweisen der
+Seiten (je Seite Umlauf, [a,c,b,d] oder [d,b,c,a]): 57 falsche Listen statt
+None, 45 davon mit doppeltem Knoten; die dritte Seite als [6,3,7,2] ergab
+[0,1,2,3,4,5,7,7], und das Element rechnete ohne Meldung mit V = 0,75 statt
+1,00. Jetzt ergeben alle 81 und eine Stichprobe von 2000 beliebigen
+Knotenfolgen (jede Fläche in einer der 24 Folgen, Flächen gemischt) den
+Würfel, ohne eine falsche Liste. Ein Deckel, der in den Flächen wirklich
+verdreht angegeben ist, wird treu abgebildet. Ob RFEM Randflächen je anders
+als im Umlauf liefert, ist nicht belegt.
+
 Alles andere geht an den **freien Vernetzer** (`statik3d/mesher3d.py`, siehe
 Theoriehandbuch Kapitel 6a): die Randflächen werden in Dreiecke geteilt, die
 Hülle auf Dichtheit geprüft und mit Tetraedern gefüllt. Im Beispielmodell einer
@@ -622,6 +721,7 @@ Jeder Lastfall kommt mit Name (als Beschreibung), Einwirkungskategorie
 | Flächenlast (`SurfaceLoad` → `SurfaceTypeLoadImplForce`) | auf die Schalenelemente der vernetzten Zielfläche gelegt; ist die Fläche noch nicht vernetzt, bleibt die Last als **Geometrielast** an ihr hängen und wird beim Vernetzen verteilt |
 | **Freie Rechtecklast** (`FreeRectangularLoad`) | als Geometrielast mit Fenster und Richtung – siehe unten |
 | **Stabvorspannung** (`MemberTypeLoadImplInitialPrestress`) | als gleichwertige Temperaturlast (siehe unten) |
+| Stablast (`MemberLoad` → `LineTypeLoadImplForce`) | die Gleichlast über die ganze Stablänge als Stablast; andere Verteilungen, unbekannte Richtungen und andere Arten werden gezählt und genannt |
 | Linienlast, Volumenlast | gemeldet – sie brauchen das Linien- bzw. Volumennetz |
 
 **Die Lastrichtung einer Flächenlast wird angesetzt.** RFEM führt zu jeder
@@ -651,6 +751,22 @@ Zahl der Rohzeilen. Vorher nannte das Protokoll bei Linien- und Volumenlasten
 je eine Zeile, bei den Flächen aber nichts — der Anwender durfte daraus
 schließen, dort sei nichts weggefallen.
 
+**Die Stablasten zählen sich ab** (seit 22.09.2026). Jede Zeile der Tabelle
+`MemberLoad` hat genau einen gezählten Ausgang — übernommen (Gleichlast,
+Vorspannung) oder mit Grund nicht übernommen (andere Verteilung, unbekannte
+Richtung, andere Art, ohne Ziel oder Betrag, ohne auflösbaren Lastfall) —, und
+die Summe wird gegen die Zahl der Rohzeilen abgeglichen; was dabei fehlt,
+meldet die Warnung „k von n Stablasten waren nicht zu lesen“. Gezählt wird
+**je Lastzeile**, nicht je Stab: eine Gleichlast auf zwei Stäben ist eine
+Stablast („(2 Stabzuordnungen)“), eine Vorspannung auf drei Stäben eine
+Stabvorspannung („auf 3 Staebe“). Vorher zählte die Gleichlast je Stab und
+die Vorspannung je Stabelement, und zwei Wege fehlten ganz: eine Stablast,
+deren Umsetzungstabelle die Datei nicht führt, und eine ohne auflösbaren
+Lastfall. An vier Zeilen (Gleichlast, Einzellast, Temperatur, fehlende
+Umsetzung) nannte das Protokoll 3. Am CBG-Trolley geht die Abzählung auf:
+198 Zeilen = 62 Gleichlasten (944 Stabzuordnungen) + 136 nicht übernommen
+(129× Verteilung 2, 7× Verteilung 7).
+
 **Einwirkungskategorie.** `ACTION_CATEGORY` führt nur wenige Kennzahlen;
 alles Übrige wurde still zu „Q" (veränderlich, allgemein, ψ₀ = 0,80), und das
 Protokoll meldete nur „Einwirkungskategorie übernommen". Jetzt steht die
@@ -660,6 +776,26 @@ Lastfalls verbessert die Kategorie — aber nur dort, wo die Kennzahl nichts
 hergibt: ein „G" aus der Datei darf der Freitext nicht umstoßen, sonst würde
 ein Lastfall „Windverband Eigenlast" mit der Kennzahl 1 zu W und damit
 veränderlich.
+
+**Auch die geführten Kennzahlen sind eine Annahme** (seit 22.09.2026 so
+genannt). Die Zuordnung in `ACTION_CATEGORY` (1, 2 → G; 3, 11, 12, 13 → Q)
+ist an keiner RFEM-Datei belegt, und die Tabellen `Action` und `ActionImpl`
+sind in beiden vorliegenden Dateien leer. Gemessen: am CBG-Trolley tragen 8
+Lastfälle die Kennzahl 11, 7 davon heißen „G - …“ (Steel Structure, Bucket
+Wheel …) und werden nur über den Namen zu G; am Drehlager tragen alle 422
+Lastfälle die Kennzahl 11, darunter 128 „Bemessungslast im GZT …“,
+164 „Ermüdungslast - Drehlager …“, 104 „char.Last - Drehlager …“,
+24 „char.Last - Verkehrslage …“ und 2 „Vorspannung der Zuganker …“
+(nachgezählt am 23.09.2026) — dieselbe Kennzahl steht je Datei und sogar
+innerhalb einer Datei für anderes. Das Protokoll nennt darum je Kennzahl
+die angenommene Kategorie und die Lastfälle, die der Name umgestellt hat,
+
+    Kennzahl 11 -> Q (Annahme, an keiner Datei belegt): 8x; davon ueber den
+    Namen umgestellt: zu G: LF1, LF2, LF3, LF4, LF5, LF6, LF7
+
+und warnt, ψ und γ in der Lastfallmaske nachzusehen. Die erste Zeile sagt
+nicht mehr „Einwirkungskategorie übernommen“, sondern „aus der Kennzahl
+angenommen“.
 
 **Freie Rechtecklasten.** RFEM legt das Lastfenster in die uv-Ebene eines
 eigenen Koordinatensystems (`coordinateSystem_id` → `CoordinateSystem…

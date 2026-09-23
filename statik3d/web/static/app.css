@@ -140,6 +140,9 @@ svg.chart{width:100%;height:auto;background:#fff;border:1px solid var(--line);bo
 .kurve text{font-size:9px;fill:var(--muted)}
 .beiwert{display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px solid var(--line);font-size:12px}
 .beiwert .offen{color:var(--warn);font-weight:600}
+/* Stellung ohne (vollstaendigen) Nachweis: Karte, Tabelle, Filmstreifen */
+.offen{color:var(--warn);font-weight:600}
+.stellung .offen{font-size:11px;margin-top:4px}
 
 /* ---------------------------------------------------------------------
    Werkbank: dreispaltige Arbeitsflaeche ab 1100 px (Entwurf 1a)

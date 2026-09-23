@@ -24,6 +24,8 @@ LINE_TYPES = EL.STAB_TYPEN                  # beam, truss, seil
 PLANE_TYPES = EL.EBENE_TYPEN                # ebene3 .. ebene8
 GRENZSCHICHT_TYPES = ("grenzschicht6", "grenzschicht8")
 TRANSLATION_TYPES = EL.VERSCHIEBUNGS_TYPEN  # nur ux, uy, uz je Knoten
+#: Tetraeder mit Ordnung p: Zusatz-FHG hinter den Knoten-FHG (elements/tetp.py)
+TETP_TYPES = ("tetp2", "tetp3", "tetp4")
 
 
 # --------------------------------------------------------------------------
@@ -36,6 +38,13 @@ def element_dofs(e, model: Model = None) -> np.ndarray:
     seiner Knoten an (sie stehen im Modell hinter den 6·nn Knoten-FHG) -
     dafuer braucht die Funktion das Modell.
     """
+    if e.typ in TETP_TYPES:
+        # Tetraeder mit Ordnung p: Ecken und Zusatz-FHG (elements/tetp.py)
+        if model is None:
+            raise ValueError(f"{e.typ}: die FHG haengen am Modell (Zusatz-FHG) - "
+                             "element_dofs(e, model) aufrufen")
+        from .elements import tetp as _tp
+        return np.asarray(_tp.element_fhg_objekt(model, e), dtype=int)
     if e.typ in TRANSLATION_TYPES:
         d = []
         for n in e.nodes:
@@ -219,6 +228,10 @@ def element_matrix(model: Model, e):
     """Elementsteifigkeitsmatrix im globalen System."""
     mat = model.materials[e.mat]
     X = model.nodes[e.nodes]
+    if e.typ in TETP_TYPES:
+        from .elements import tetp as _tp
+        i = _tp.index_von(model, e)
+        return _tp.matrizen(model, [i])[i][1]
 
     if e.typ in LINE_TYPES:
         if model.stab_woelbt(e):
@@ -260,6 +273,13 @@ def element_matrix(model: Model, e):
             # gewoehnlich weiter - sonst fehlte ihm der volumetrische Anteil
             # ganz (gemessen 20.09.2026: 109 % Unterschied, still).
             return sl.k_tet4_deviatorisch(X, mat.E, mat.nu)[0]
+        if e.typ == "hex8":
+            # dieselbe Punktregel wie der Stapel (mit Fliessen Lobatto ueber
+            # die Dicke, solid.hex8_regel_fuer) - hier rechnen nur noch der
+            # Rueckfall (ein Element nennen) und die Diagnose
+            return sl.k_hex8(X, mat.E, mat.nu, regel=sl.hex8_regel_fuer(model))[0]
+        if e.typ == "pent6":
+            return sl.k_pent6(X, mat.E, mat.nu, regel=sl.pent6_regel_fuer(model))[0]
         return getattr(sl, "k_" + e.typ)(X, mat.E, mat.nu)[0]
 
     if e.typ in PLANE_TYPES:
@@ -373,31 +393,48 @@ def elementfehler(model: Model, i: int, ex: Exception) -> ValueError:
 #: Hoechstzahl Sechsflaechner je Stapel. 4096 mal 24x24 in double sind 19 MB
 #: je Zwischenfeld, und davon entstehen in hex8_matrizen_stapel drei.
 HEX8_STAPEL = 4096
+#: Typen, deren Steifigkeit gestapelt ueber den Dehnungsoperator entsteht
+#: (Pflicht 5). Die Reihenfolge der Elemente je Stapel ist die des Blocks;
+#: je Element rechnet der Stapel dieselben Zahlen wie der Einzelweg
+#: (tests/test_elemente_volumen.py haelt das auf 1e-12 fest).
+STAPEL_TYPEN = ("hex8", "tet10", "hex20", "pent6", "pent15", "pyr5") + TETP_TYPES
 
 
 def _matrix_chunk(model: Model, idx: list[int]) -> list[tuple]:
     out: list = [None] * len(idx)
-    # Sechsflaechner stapelweise: einzeln kostet k_hex8 571,7 µs je Element,
+    # Sechsflaechner stapelweise: einzeln kostete k_hex8 571,7 µs je Element,
     # im Stapel 57,5 µs - Faktor 9,9 (gemessen 21.09.2026 an 4000 verzerrten
     # Wuerfeln, Ergebnis identisch bis 6e-16). Am Drehlagernetz der
-    # Vernetzersitzung sind das 17,8 s gegen 1,79 s je Aufstellen fuer 31.108
-    # Sechsflaechner. Der tet4 braucht das nicht: er kostet 24,2 µs, und der
-    # Aufruf ist dort nicht der Brocken.
+    # Vernetzersitzung waren das 17,8 s gegen 1,79 s je Aufstellen fuer 31.108
+    # Sechsflaechner. Der tet4 braucht das nicht: er kostet 18,0 µs, und der
+    # Aufruf ist dort nicht der Brocken. Nachgemessen 23.09.2026
+    # (tests/messung_elementzeiten.py, ruhige Maschine, Einkern): hex8 einzeln
+    # 880 µs, im Stapel 58,3 µs; tet10 einzeln 199 µs, im Stapel 21,3 µs.
+    #
+    # Seit dem 22.09.2026 geht jeder Typ mit Dehnungsoperator diesen Weg,
+    # nicht nur der hex8 (Pflicht 5 des Auftrags an die Element-Sitzung: der
+    # tet10 an den Nachweisstellen braucht ihn genauso). Die Steifigkeit kommt
+    # dabei aus **demselben** Operator wie Spannung und Plastizitaet
+    # (elements.solid.steifigkeit_aus_operator). Der tet4 bleibt beim
+    # Einzelweg: er kostet 18,0 µs, und mit Knotendilatation rechnet er
+    # seinen deviatorischen Anteil ueber element_matrix.
     je_werkstoff: dict = {}
     for pos, i in enumerate(idx):
         e = model.elements[i]
-        if e.typ == "hex8" and not getattr(e, "sec", None):
-            je_werkstoff.setdefault(e.mat, []).append((pos, i))
+        if e.typ in STAPEL_TYPEN and not getattr(e, "sec", None):
+            je_werkstoff.setdefault((e.typ, e.mat), []).append((pos, i))
     gestapelt = set()
-    for mat_name, stellen in je_werkstoff.items():
-        if len(stellen) < 8:            # unter acht lohnt der Umweg nicht
-            continue
+    for (typ, mat_name), stellen in je_werkstoff.items():
+        # Keine Mindestzahl mehr (bis 22.09.2026: acht): der Einzelweg
+        # element_matrix kennt die Mittelknotenbindung des Operators nicht
         mat = model.materials[mat_name]
+        D = sl.D_matrix(float(mat.E), float(mat.nu))
         for a0 in range(0, len(stellen), HEX8_STAPEL):
             teil = stellen[a0:a0 + HEX8_STAPEL]
-            X = np.asarray([model.nodes[model.elements[i].nodes[:8]] for _p, i in teil], float)
             try:
-                Ks, _V = sl.k_hex8_stapel(X, float(mat.E), float(mat.nu))
+                Ks = []
+                for op in sl.dehnungsoperator(model, typ, [i for _p, i in teil]):
+                    Ks.extend(sl.steifigkeit_aus_operator(op, D))
             except Exception as ex:     # noqa: BLE001 - einzeln nachfahren, um das Element zu nennen
                 for _p, i in teil:
                     try:
@@ -422,8 +459,17 @@ def _matrix_chunk(model: Model, idx: list[int]) -> list[tuple]:
 
 def _mass_chunk(model: Model, idx: list[int]) -> list[tuple]:
     out = []
+    p_el = [i for i in idx if model.elements[i].typ in TETP_TYPES]
+    if p_el:
+        # konsistente Masse: hierarchische Funktionen sind an den Ecken null,
+        # eine Zeilensummen-Masse gaebe ihnen keine
+        from .elements import tetp as _tp
+        for d, me in _tp.massen_modell(model, p_el).values():
+            out.append((np.asarray(d, dtype=int), me))
     for i in idx:
         e = model.elements[i]
+        if e.typ in TETP_TYPES:
+            continue
         try:
             me = np.asarray(element_mass(model, e), float)
         except Exception as ex:      # noqa: BLE001
@@ -594,6 +640,25 @@ def knotendilatation_je_element(model: Model, u: np.ndarray, aktiv=None) -> dict
 def stiffness(model: Model, workers=None, aktiv=None) -> sparse.csr_matrix:
     """Gesamtsteifigkeit; ``aktiv`` (Maske je Element) laesst abgeschaltete
     Elemente einer Situation weg."""
+    # Einmal je Aufstellen voll nachzaehlen, ob Tetraeder mit Ordnung p im
+    # Modell stecken: Model.ndof fragt nur einen Zwischenspeicher (hat_tetp,
+    # Schluessel Elementzahl und _tetp_version). Wurde ein Element an Ort und
+    # Stelle zu tetp, ohne den Zaehler zu erhoehen, stimmte die FHG-Zahl nicht
+    # - dann laut abbrechen statt mit falscher Groesse weiterrechnen.
+    hat = any(e.typ in TETP_TYPES for e in model.elements)
+    if hat != model.hat_tetp():
+        raise ValueError("Elementtypen wurden an Ort und Stelle geaendert (Tetraeder mit "
+                         "Ordnung p hinzu oder weg), ohne model._tetp_version zu erhoehen - "
+                         "die Zahl der Freiheitsgrade (Model.ndof) ist veraltet")
+    if hat:
+        from .elements import tetp as _tp
+        vorher = model.ndof                     # was der billige Schluessel sagt
+        an = _tp.anreicherung(model, streng=True)
+        soll = model.nn * NDOF + len(model.woelb_knoten()) + (0 if an is None else an.anzahl)
+        if vorher != soll:
+            raise ValueError(f"Model.ndof = {vorher}, nachgezaehlt {soll}: die Zusatz-FHG "
+                             "der Tetraeder mit Ordnung p haben sich geaendert, ohne dass "
+                             "model._tetp_version erhoeht wurde")
     K = _assemble_triplets(model, _matrix_chunk, workers, aktive_indizes(model, aktiv))
     if getattr(model, "knotendilatation", False):
         Kv = knotendilatation(model, aktiv)
@@ -612,6 +677,92 @@ def stiffness(model: Model, workers=None, aktiv=None) -> sparse.csr_matrix:
         K = (K + Kk).tocsr()
     Ks = starrkoerper(model, K)
     return (K + Ks).tocsr() if Ks is not None else K
+
+
+def mittelknoten_bindungen(model: Model) -> list:
+    """[(Mittelknoten, Ecke a, Ecke b)] der Seitenmitten quadratischer
+    Volumenelemente, deren Seite ein **lineares** Volumenelement mit denselben
+    Ecken teilt - der Uebergang tet4/tet10 (hex8/hex20, pent6/pent15) an einer
+    verbundenen Grenze (Auftrag B5 an die Element-Sitzung, 22.09.2026).
+
+    Das lineare Element kennt dort keinen Mittelknoten. Laeuft die
+    Verschiebung des quadratischen Elements an der Seite frei, klafft die
+    Grenze, und das lineare Feld ist kein Gleichgewicht mehr (gemessen
+    22.09.2026: Patch-Test um 2,5e-1 daneben, tests/test_elemente_volumen.py,
+    t_uebergang_linear_quadratisch). Gebunden wird u_m = (u_a + u_b)/2 -
+    **exakt**, nicht im Strafverfahren (mit der Strafe 1e4 lag der
+    Patch-Test bei 6e-6): der Dehnungsoperator der quadratischen Elemente
+    schlaegt den Gradienten von m je zur Haelfte auf a und b
+    (solid._binde_mittelknoten), Lasten und Massen an m gehen ebenso auf a
+    und b (load_vector, mass), und die Verschiebung von m wird nach dem Loesen
+    aus a und b eingetragen (mittelknoten_nachfuehren).
+
+    Rein topologisch (unabhaengig von einer Situation): die Bindung haengt
+    nur daran, dass die Seite geteilt ist. An einer **Kontaktfuge** wird
+    nichts gebunden - dort haben beide Seiten eigene Knoten (fugen.py), die
+    Ecken stimmen nicht ueberein.
+    """
+    import itertools
+    typen = {e.typ for e in model.elements}
+    if not (typen & set(SOLID_TYPES)) or not any(EL.ist_quadratisch(t) for t in typen & set(SOLID_TYPES)) \
+            or all(EL.ist_quadratisch(t) for t in typen & set(SOLID_TYPES)):
+        return []
+    kn = np.fromiter(itertools.chain.from_iterable(e.nodes for e in model.elements), np.int64)
+    schluessel = (len(model.elements), model.nn, hash(kn.tobytes()),
+                  hash(tuple(e.typ for e in model.elements)))
+    alt = getattr(model, "_mittelknoten", None)
+    if alt is not None and alt[0] == schluessel:
+        return alt[1]
+    lineare: set = set()
+    for e in model.elements:
+        if e.typ in SOLID_TYPES and not EL.ist_quadratisch(e.typ):
+            for fe in sl.FLAECHEN_ECKEN[e.typ]:
+                lineare.add(frozenset(int(e.nodes[a]) for a in fe))
+    bindung: dict = {}
+    for e in model.elements:
+        if e.typ not in SOLID_TYPES or not EL.ist_quadratisch(e.typ):
+            continue
+        for f, fe in zip(sl.FLAECHEN[e.typ], sl.FLAECHEN_ECKEN[e.typ]):
+            if frozenset(int(e.nodes[a]) for a in fe) not in lineare:
+                continue
+            ne = len(fe)
+            for k in range(ne, len(f)):             # Kantenmitten in Kantenreihenfolge
+                a, b = fe[k - ne], fe[(k - ne + 1) % ne]
+                bindung[int(e.nodes[f[k]])] = (int(e.nodes[a]), int(e.nodes[b]))
+    aus = [(m, a, b) for m, (a, b) in sorted(bindung.items())]
+    try:
+        model._mittelknoten = (schluessel, aus)
+    except AttributeError:
+        pass
+    return aus
+
+
+def mittelknoten_umlenken(model: Model, F: np.ndarray, bind=None) -> np.ndarray:
+    """F an gebundenen Mittelknoten je zur Haelfte auf die Ecken a und b
+    (F' = T^T F fuer u_m = (u_a + u_b)/2); F selbst wird geaendert."""
+    bind = mittelknoten_bindungen(model) if bind is None else bind
+    for m, a, b in bind:
+        for r in range(3):
+            f = F[NDOF * m + r]
+            if f:
+                F[NDOF * a + r] += 0.5 * f
+                F[NDOF * b + r] += 0.5 * f
+                F[NDOF * m + r] = 0.0
+    return F
+
+
+def mittelknoten_nachfuehren(model: Model, u: np.ndarray) -> np.ndarray:
+    """u_m = (u_a + u_b)/2 fuer die gebundenen Mittelknoten eintragen (eine
+    Kopie). Kein Element liest u_m - ihr Operator traegt dort keinen
+    Gradienten -, aber die Anzeige und die Ergebnisdatei tun es."""
+    bind = mittelknoten_bindungen(model)
+    if not bind:
+        return u
+    u = np.array(u, float, copy=True)
+    for m, a, b in bind:
+        for r in range(3):
+            u[NDOF * m + r] = 0.5 * (u[NDOF * a + r] + u[NDOF * b + r])
+    return u
 
 
 def starrkoerper(model: Model, K: sparse.spmatrix = None) -> sparse.spmatrix:
@@ -707,6 +858,13 @@ def mass(model: Model, workers=None, aktiv=None) -> sparse.csr_matrix:
     """Gesamtmasse (konzentriert) samt Punktmassen; ``aktiv`` laesst
     abgeschaltete Elemente weg."""
     M = _assemble_triplets(model, _mass_chunk, workers, aktive_indizes(model, aktiv))
+    bind = mittelknoten_bindungen(model)
+    if bind:
+        # konzentrierte Masse gebundener Mittelknoten je zur Haelfte auf die
+        # Ecken (Zeilensumme von T^T M T; die Summe der Masse bleibt)
+        d = np.asarray(M.diagonal()).ravel().copy()
+        mittelknoten_umlenken(model, d, bind)
+        M = (M - sparse.diags(np.asarray(M.diagonal()).ravel()) + sparse.diags(d)).tocsr()
     Mp = punktmassen(model)
     return (M + Mp).tocsr() if Mp is not None else M
 
@@ -1126,7 +1284,11 @@ def load_vector(model: Model, case: LoadCase = None, aktiv=None) -> np.ndarray:
         if l.direction is not None and not any(float(x) for x in l.direction):
             raise ValueError(f"Flaechenlast auf Element {l.elem}: richtung darf "
                              "nicht der Nullvektor sein")
-        if e.typ in SHELL_TYPES:
+        if e.typ in TETP_TYPES:
+            from .elements import tetp as _tp
+            d, fe = _tp.seitenlast_modell(model, l.elem, int(l.face), l.p, l.direction)
+            np.add.at(F, d, fe)
+        elif e.typ in SHELL_TYPES:
             F[element_dofs(e)] += shell_face_load(model, e, l.p, l.direction)
         elif e.typ in SOLID_TYPES:
             F[element_dofs(e)] += solid_face_pressure(model, e, l.p, l.face, l.direction)
@@ -1140,7 +1302,13 @@ def load_vector(model: Model, case: LoadCase = None, aktiv=None) -> np.ndarray:
         if not _wirkt(aktiv, tl.elem):
             continue
         e = model.elements[tl.elem]
-        if e.typ in SHELL_TYPES:
+        if e.typ in TETP_TYPES:
+            from .elements import tetp as _tp
+            mat = model.materials[e.mat]
+            s0 = sl.D_matrix(mat.E, mat.nu) @ (mat.alpha * tl.dT * np.array([1.0, 1.0, 1.0, 0, 0, 0]))
+            d, fe = _tp.anfangsspannung_modell(model, tl.elem, s0)
+            np.add.at(F, d, fe)
+        elif e.typ in SHELL_TYPES:
             F[element_dofs(e)] += shell_thermal_loads(model, e, tl.dT)
         elif e.typ in SOLID_TYPES:
             F[element_dofs(e)] += solid_thermal_loads(model, e, tl.dT)
@@ -1152,16 +1320,30 @@ def load_vector(model: Model, case: LoadCase = None, aktiv=None) -> np.ndarray:
         if getattr(v, "art", "stab") != "koerper":
             continue
         for i, s0 in solid_prestress(model, v).items():
-            if _wirkt(aktiv, i):
-                F[element_dofs(model.elements[i])] += solid_initial_stress_loads(model, model.elements[i], s0)
+            if not _wirkt(aktiv, i):
+                continue
+            if model.elements[i].typ in TETP_TYPES:
+                from .elements import tetp as _tp
+                d, fe = _tp.anfangsspannung_modell(model, i, s0)
+                np.add.at(F, d, fe)
+                continue
+            F[element_dofs(model.elements[i])] += solid_initial_stress_loads(model, model.elements[i], s0)
 
     # Eigengewicht Schalen, Volumen und ebene Elemente (Staebe: siehe oben)
     # ueber die konzentrierten Knotenmassen; dazu die Punktmassen
     g = np.asarray(case.gravity, float)
     if np.any(g):
+        p_el = ([i for i, e in enumerate(model.elements) if e.typ in TETP_TYPES and _wirkt(aktiv, i)]
+                if model.hat_tetp() else [])
+        if p_el:
+            # konsistent: int N rho g dV, auch auf die Zusatz-FHG
+            from .elements import tetp as _tp
+            dichte = lambda e: float(model.materials[e.mat].rho) * g
+            for d, fe in _tp.volumenlasten_modell(model, p_el, dichte).values():
+                np.add.at(F, d, fe)
         for i, e in enumerate(model.elements):
             if not _wirkt(aktiv, i) or e.typ in LINE_TYPES or e.typ == "feder" \
-                    or e.typ in GRENZSCHICHT_TYPES:
+                    or e.typ in GRENZSCHICHT_TYPES or e.typ in TETP_TYPES:
                 continue
             m = element_masse_knoten(model, e)
             for k, n in enumerate(e.nodes):
@@ -1170,6 +1352,9 @@ def load_vector(model: Model, case: LoadCase = None, aktiv=None) -> np.ndarray:
             n = int(p.node)
             if 0 <= n < model.nn and (kn_aktiv is None or kn_aktiv[n]):
                 F[NDOF * n: NDOF * n + 3] += float(p.masse) * g
+    # Gebundene Mittelknoten (Uebergang linear/quadratisch): ihre Last traegt
+    # die Kante - je zur Haelfte die Ecken (siehe mittelknoten_bindungen)
+    mittelknoten_umlenken(model, F)
     return F
 
 
@@ -1286,6 +1471,14 @@ def constrained_dofs(model: Model, K: sparse.csr_matrix):
         if e.typ == "rigid":
             fixed[e.index] = True
             vals[e.index] = e.value
+    # Tetraeder mit Ordnung p: an einer starr gelagerten Randseite sind die
+    # Zusatz-FHG in der gelagerten Richtung null (tetp.gesperrte_fhg)
+    if model.hat_tetp():
+        from .elements import tetp as _tp
+        gs = _tp.gesperrte_fhg(model)
+        if len(gs):
+            fixed[gs] = True
+            vals[gs] = 0.0
     # Woelbeinspannung: die Verwoelbung ist am Knoten behindert
     wi = model.woelb_index() if model.ndof > model.nn * NDOF else {}
     if wi:

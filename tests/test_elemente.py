@@ -128,9 +128,11 @@ def _volumen_modell(typ: str):
             if float(n @ (spitze - P4.mean(axis=0))) < 0:
                 sd = sd[::-1]
             m.add_element("pyr5", [ids[sd[0]], ids[sd[1]], ids[sd[2]], ids[sd[3]], c], mat)
-    elif typ == "tet4":
+    elif typ in ("tet4", "tetp2", "tetp3", "tetp4"):
+        # tetpN: dieselben fuenf Ecken-Tetraeder, die Ordnung steckt in den
+        # Zusatz-FHG hinter den Knoten (elements/tetp.py)
         for e in ((0, 1, 3, 4), (1, 2, 3, 6), (1, 3, 4, 6), (1, 4, 5, 6), (3, 4, 6, 7)):
-            m.add_element("tet4", [ids[i] for i in e], mat)
+            m.add_element(typ, [ids[i] for i in e], mat)
     elif typ == "tet10":
         for e in ((0, 1, 3, 4), (1, 2, 3, 6), (1, 3, 4, 6), (1, 4, 5, 6), (3, 4, 6, 7)):
             a = [ids[i] for i in e]
@@ -674,6 +676,55 @@ def test_netz_quadratisch():
           str({m2.elements[i].typ for i in els2}))
 
 
+def test_quader_tet4_konform():
+    """„Quader erzeugen“ mit tet4: das Netz ist konform, ohne innere Risse.
+
+    grid_box teilt jede Quaderzelle in fuenf Tetraeder. Bis 22.09.2026 geschah
+    das in jeder Zelle gleich; dann liegen die Diagonalen einer gemeinsamen
+    Zellseite auf beiden Seiten verschieden, die beiden Dreieckspaare decken
+    sich nicht, und jede solche Seite bleibt als zwei freie Dreiecke im Netz
+    stehen - ein innerer Riss, an dem die Verschiebung springen darf.
+    Gemessen vorher: 4x1x1 Zellen 48 freie Dreiecke statt 36, 2x2x2 96 statt
+    48, 3x3x3 324 statt 108.
+
+    Geprueft wird das Netz selbst: jede Dreiecksseite gehoert zu hoechstens
+    zwei Tetraedern, frei bleiben genau die 2 Dreiecke je Zellseite auf dem
+    Rand, 4 (nx ny + ny nz + nx nz); jedes Tetraeder hat positives Volumen,
+    und die Summe ist das Quadervolumen.
+    """
+    from collections import Counter
+    lx, ly, lz = 1.2, 0.7, 0.5
+    groessen = [(1, 1, 1), (2, 1, 1), (4, 1, 1), (1, 3, 1), (1, 1, 2), (2, 2, 1),
+                (2, 2, 2), (3, 2, 1), (3, 3, 3), (5, 4, 3)]
+    riss, mehrfach, vol = [], [], []
+    for nx, ny, nz in groessen:
+        m = Model("Quader")
+        mat = stahl(m)
+        mesher.grid_box(m, mat, lx, ly, lz, nx, ny, nz, origin=(0.3, -0.2, 1.0), typ="tet4")
+        seiten = Counter()
+        V = []
+        for e in m.elements:
+            for f in ((0, 1, 2), (0, 1, 3), (1, 2, 3), (0, 2, 3)):
+                seiten[tuple(sorted(e.nodes[i] for i in f))] += 1
+            X = m.nodes[e.nodes]
+            V.append(float(np.linalg.det(np.array([X[1] - X[0], X[2] - X[0], X[3] - X[0]]))) / 6.0)
+        frei = sum(1 for c in seiten.values() if c == 1)
+        soll = 4 * (nx * ny + ny * nz + nx * nz)
+        if frei != soll:
+            riss.append(f"{nx}x{ny}x{nz}: {frei} statt {soll}")
+        if any(c > 2 for c in seiten.values()):
+            mehrfach.append(f"{nx}x{ny}x{nz}")
+        if min(V) <= 0.0 or abs(sum(V) - lx * ly * lz) > 1e-12 * lx * ly * lz \
+                or len(V) != 5 * nx * ny * nz:
+            vol.append(f"{nx}x{ny}x{nz}: min V {min(V):.3g}, Summe {sum(V):.6g}, {len(V)} Tetraeder")
+    check("Quader tet4: frei nur die Randdreiecke, keine inneren Risse",
+          not riss, "; ".join(riss) or f"{len(groessen)} Rastergroessen bis 5x4x3")
+    check("Quader tet4: keine Dreiecksseite an mehr als zwei Tetraedern",
+          not mehrfach, ", ".join(mehrfach))
+    check("Quader tet4: alle Volumina positiv, Summe = lx ly lz, 5 je Zelle",
+          not vol, "; ".join(vol))
+
+
 def test_bericht_und_export():
     """Bericht und Export kommen mit allen Typen zurecht."""
     from statik3d.exporters import vtk as vtk_ex, abaqus as abq_ex, nastran as nas_ex
@@ -714,7 +765,8 @@ def main():
     for t in (test_verzeichnis, test_volumen_zug, test_schalen_kragarm, test_schalen_platte,
               test_ebene, test_zugstab, test_exzentrizitaet, test_woelbkrafttorsion,
               test_feder_und_punktmasse, test_daempfer, test_starrkoerper, test_eigenformen_mit_kontakt, test_grenzschicht,
-              test_speichern_laden, test_netz_quadratisch, test_bericht_und_export):
+              test_speichern_laden, test_netz_quadratisch, test_quader_tet4_konform,
+              test_bericht_und_export):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

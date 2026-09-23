@@ -55,6 +55,14 @@ ELEMENTE: dict[str, Elementart] = {a.typ: a for a in (
                "(Reissner-Mindlin)", 2),
     Elementart("tet4", "volumen", 4, 3, VTK_TETRA, "Tetraeder, linear"),
     Elementart("tet10", "volumen", 10, 3, VTK_TET10, "Tetraeder, quadratisch", 2),
+    # Tetraeder mit Ordnung p (elements/tetp.py): vier Eckknoten, die hoeheren
+    # Ansaetze als hierarchische Zusatz-FHG hinter den Knoten-FHG
+    Elementart("tetp2", "volumen", 4, 3, VTK_TETRA, "Tetraeder mit Ordnung p = 2 "
+               "(hierarchisch, nur Eckknoten)", 2),
+    Elementart("tetp3", "volumen", 4, 3, VTK_TETRA, "Tetraeder mit Ordnung p = 3 "
+               "(hierarchisch, nur Eckknoten)", 3),
+    Elementart("tetp4", "volumen", 4, 3, VTK_TETRA, "Tetraeder mit Ordnung p = 4 "
+               "(hierarchisch, nur Eckknoten)", 4),
     Elementart("hex8", "volumen", 8, 3, VTK_HEX, "Hexaeder mit inkompatiblen Moden"),
     Elementart("hex20", "volumen", 20, 3, VTK_HEX20, "Hexaeder, quadratisch (20 Knoten)", 2),
     Elementart("pent6", "volumen", 6, 3, VTK_WEDGE, "Keil (Prisma), linear"),

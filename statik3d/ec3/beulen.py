@@ -938,12 +938,19 @@ class BeulResults:
     felder: dict = field(default_factory=dict)
     kombinationen: list = field(default_factory=list)
     settings: dict = field(default_factory=dict)
+    #: Kombinationen ohne Ergebnis ("nicht nachgewiesen"), siehe
+    #: design._uls_results
+    warnungen: list = field(default_factory=list)
 
     @property
     def util_max(self) -> float:
         return max((c.util for c in self.felder.values()), default=0.0)
 
     def summary(self) -> str:
+        from .design import warnzeilen
+        return self._summary() + warnzeilen(self)
+
+    def _summary(self) -> str:
         if not self.felder:
             return "Beulnachweise: keine Beulfelder festgelegt"
         schlecht = [c.name for c in self.felder.values() if c.util > 1.0]
@@ -1004,12 +1011,19 @@ class EinleitungCheck:
 class EinleitungResults:
     stellen: dict = field(default_factory=dict)
     kombinationen: list = field(default_factory=list)
+    #: Kombinationen ohne Ergebnis ("nicht nachgewiesen"), siehe
+    #: design._uls_results
+    warnungen: list = field(default_factory=list)
 
     @property
     def util_max(self) -> float:
         return max((c.util for c in self.stellen.values()), default=0.0)
 
     def summary(self) -> str:
+        from .design import warnzeilen
+        return self._summary() + warnzeilen(self)
+
+    def _summary(self) -> str:
         if not self.stellen:
             return "Lasteinleitung: keine Stellen festgelegt"
         schlecht = [c.name for c in self.stellen.values()
@@ -1044,9 +1058,17 @@ class EinleitungResults:
 
 
 def _knotenlast(model, kombiname: str, knoten: int, richtung: int) -> float:
-    """Die eingeleitete Knotenkraft [N] einer Kombination oder eines Lastfalls."""
+    """Die eingeleitete Knotenkraft [N] einer Kombination, einer Alternative
+    "EK [k]" einer Ergebniskombination oder eines Lastfalls."""
+    from ..solver import faktoren_der_alternative
     comb = model.combinations.get(kombiname)
-    faktoren = comb.factors if comb is not None else {kombiname: 1.0}
+    if comb is not None:
+        faktoren = comb.factors
+    else:
+        # Eine Alternative steht nicht in model.combinations; ohne ihre
+        # Faktoren kaeme hier still 0 N heraus und die Stelle fiele aus dem
+        # Nachweis (22.09.2026, mit Befund FE11)
+        faktoren = faktoren_der_alternative(model, kombiname) or {kombiname: 1.0}
     F = 0.0
     for lf, f in faktoren.items():
         lc = model.load_cases.get(lf)
@@ -1137,9 +1159,13 @@ def check_lasteinleitungen(model, analysis, combos: list = None,
                            progress=None) -> EinleitungResults:
     """Alle Lasteinleitungsstellen ueber alle GZT-Kombinationen nachweisen."""
     from .design import _uls_results
-    ergebnisse = _uls_results(model, analysis, combos)
+    warnungen: list = []
+    # ohne Stelle kein Nachweis - und keine Warnung ueber fehlende
+    # Kombinationen (wie check_members, Gegenpruefung 23.09.2026)
+    ergebnisse = (_uls_results(model, analysis, combos, warnungen=warnungen)
+                  if model.lasteinleitungen else {})
     ds = model.design
-    out = EinleitungResults(kombinationen=list(ergebnisse))
+    out = EinleitungResults(kombinationen=list(ergebnisse), warnungen=warnungen)
     for i, (name, le) in enumerate(model.lasteinleitungen.items()):
         c = EinleitungCheck(name, le.bezug(), le.typ)
         sw = _stegwerte(model, le)
@@ -1200,11 +1226,16 @@ def check_lasteinleitungen(model, analysis, combos: list = None,
 def check_beulen(model, analysis, combos: list = None, progress=None) -> BeulResults:
     """Alle Beulfelder des Modells ueber alle GZT-Kombinationen nachweisen."""
     from .design import _uls_results
-    ergebnisse = _uls_results(model, analysis, combos)
+    warnungen: list = []
+    # ohne Beulfeld kein Nachweis - und keine Warnung ueber fehlende
+    # Kombinationen (wie check_members, Gegenpruefung 23.09.2026)
+    ergebnisse = (_uls_results(model, analysis, combos, warnungen=warnungen)
+                  if model.beulfelder else {})
     ds = model.design
     out = BeulResults(kombinationen=list(ergebnisse), settings={
         "gamma_M1": ds.gamma_M1, "eta": ETA_SCHUB,
-        "Norm": "DIN EN 1993-1-5, Abschnitt 10 (Methode der reduzierten Spannungen)"})
+        "Norm": "DIN EN 1993-1-5, Abschnitt 10 (Methode der reduzierten Spannungen)"},
+        warnungen=warnungen)
     for i, (name, bf) in enumerate(model.beulfelder.items()):
         c = BeulCheck(name)
         for kname, res in ergebnisse.items():

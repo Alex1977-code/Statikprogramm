@@ -411,7 +411,13 @@ class FatigueLoadDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.setWindowTitle("Ermüdungslast (Lastwechsel oder Verlauf)")
         self.name = QtWidgets.QLineEdit(f"E{len(model.fatigue_loads)+1}")
-        cases = _namen(model.load_cases) + _namen(model.combinations)
+        # Nur Zustaende mit Einzelergebnis: eine oder-verknuepfte
+        # Ergebniskombination hat keines (Model.ermuedungszustaende, Befund
+        # FE13) - als unterer Zustand wurde sie bis zum 22.09.2026 still zu
+        # sigma_min = 0. Reihenfolge wie bisher: Lastfaelle, dann Kombinationen.
+        taugt = set(model.ermuedungszustaende())
+        cases = [n for n in _namen(model.load_cases) + _namen(model.combinations)
+                 if n in taugt]
         self.art = QtWidgets.QComboBox()
         self.art.addItems(["Zwei Zustände", "Verlauf (Folge von Lastfällen)"])
         self.cmax = QtWidgets.QComboBox(); self.cmax.addItems(cases)

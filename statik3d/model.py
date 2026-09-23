@@ -2171,6 +2171,12 @@ class Volumenkoerper:
     #: Bemessungskonzept und Schadensfolge fuer gamma_Mf (wie beim Stab)
     assessment: str = "damage_tolerant"   # damage_tolerant | safe_life
     consequence: str = "low"              # low | high
+    #: Elementordnung dieses Koerpers (Auftrag B1, 23.09.2026): None = wie das
+    #: Netz (netz.ordnung) bzw. die automatische Wahl (elementwahl.vorschlag),
+    #: 1 = tet4, 2 = tet10. Vorgabe None und nicht 1: eine 1 uebersteuerte die
+    #: automatische Wahl, und eine aeltere Datei ohne das Feld soll rechnen wie
+    #: bisher. Model.check lehnt andere Werte ab.
+    ordnung: Optional[int] = None
 
     def bezug(self) -> str:
         t = f"{len(self.flaechen)} Flächen"
@@ -3072,6 +3078,12 @@ class Model:
         #: im Fliessbereich am staerksten wirkt, weil von-Mises-Fliessen
         #: volumentreu ist. Kostet einen breiteren Stern in der Matrix.
         self.knotendilatation = False
+        #: Randspannung der Volumen (Auftrag B6, 23.09.2026): "frei" zieht die
+        #: geglaettete Knotenspannung an freien Oberflaechen auf sigma n = 0
+        #: (solver.rand_projizieren), "gemittelt" laesst das Knotenmittel wie
+        #: bis zum 23.09.2026. Welche gerechnet wurde, steht in res.info und
+        #: an der Nachweisstelle.
+        self.randspannung = "frei"
         # Kontakt
         self.contact_supports: list[ContactSupport] = []
         self.gap_elements: list[GapElement] = []
@@ -3155,6 +3167,20 @@ class Model:
         f = FatigueLoad(name, case_max, case_min, cycles, factor)
         self.fatigue_loads[name] = f
         return f
+
+    def ermuedungszustaende(self) -> list[str]:
+        """Namen, die als Zustand einer Ermuedungslast taugen: Lastfaelle und
+        Kombinationen **ohne** Alternativen.
+
+        Eine oder-verknuepfte Ergebniskombination (``ist_umhuellende``) rechnet
+        der Loeser nur als Umhuellende (an.envelopes); ein Einzelergebnis, aus
+        dem sich sigma_max oder sigma_min lesen liesse, gibt es zu ihr nicht.
+        Die Maske der Ermuedungslast bot sie bis zum 22.09.2026 trotzdem als
+        oberen und unteren Zustand an (Befund FE13).
+        """
+        return list(self.load_cases) + [n for n, c in self.combinations.items()
+                                        if n not in self.load_cases
+                                        and not c.ist_umhuellende]
 
     # Kompatible Ein-Lastfall-API -> aktiver Lastfall
     @property
@@ -4964,7 +4990,28 @@ class Model:
     def ndof(self) -> int:
         """6 FHG je Knoten, dahinter je ein Woelb-FHG fuer die Knoten der
         Staebe mit Woelbkrafttorsion."""
-        return self.nn * NDOF + len(self.woelb_knoten())
+        n = self.nn * NDOF + len(self.woelb_knoten())
+        if self.hat_tetp():
+            # Tetraeder mit Ordnung p: Zusatz-FHG hinter Knoten- und Woelb-FHG
+            from .elements import tetp as _tp
+            n += _tp.anzahl_fhg(self)
+        return n
+
+    def hat_tetp(self) -> bool:
+        """Steckt ein Tetraeder mit Ordnung p (tetp2/3/4) im Modell?
+
+        Zwischengespeichert ueber (Elementzahl, _tetp_version): ndof wird
+        oft gefragt, und eine Schleife ueber alle Elemente je Aufruf kostete
+        am Drehlager (645.934 Volumenelemente) bei jedem Modell - auch ohne
+        tetp. Wer Elementtypen an Ort und Stelle aendert, ohne die Zahl der
+        Elemente zu aendern, erhoeht _tetp_version (wie _woelb_version)."""
+        stand = (len(self.elements), getattr(self, "_tetp_version", 0))
+        zw = getattr(self, "_tetp_hat", None)
+        if zw is not None and zw[0] == stand:
+            return zw[1]
+        hat = any(e.typ in ("tetp2", "tetp3", "tetp4") for e in self.elements)
+        self._tetp_hat = (stand, hat)
+        return hat
 
     def element_nodes(self, e: Element) -> np.ndarray:
         return self.nodes[e.nodes]
@@ -5069,6 +5116,106 @@ class Model:
             self.bemassung_einstellung = BemassungEinstellung()
         return self.bemassung_einstellung
 
+    def _flaechenlasten_ohne_seitenflaeche(self, lc, _sl) -> list[str]:
+        """WARNUNG je Flaechenlast, deren Volumenseite praktisch keine Flaeche hat.
+
+        Eine solche Last wirkt mit 0 N: assemble.solid_face_pressure gibt fuer
+        eine Seitennormale der Laenge null den Nullvektor zurueck. Fuer eine
+        Flaeche ohne Inhalt ist das richtig und bleibt so - eine Ausnahme
+        stuende gegen 940324f ("ein entartetes Element darf die Rechnung nicht
+        stoppen"). Still war nur, dass die Last mit vollem p im Bericht steht.
+        Die Begruendung in 52322e5, check() melde das Element ohnehin als
+        entartet, haelt nicht fuer jeden Fall: ein Sechsflaechner, dessen
+        Deckel mit **eigenen** Knotennummern zu einer Linie zusammengelegt ist,
+        behaelt ein Volumen (die Entartungspruefung misst die Streumatrix
+        aller acht Ecken), seine Steifigkeit laesst sich aufstellen - und die
+        Last auf dem Deckel ergab gemessen 0 N ohne eine Zeile in check().
+
+        Die Flaeche wird wie in solid_face_pressure aus den Ecken der Seite
+        gebildet (Viereck: beide Dreiecke). Die Grenze ist relativ zur
+        Elementgroesse d, der Diagonale der Huellbox: A <= ENTARTET_REL * d^2,
+        also eine Seite, die schmaler ist als ein Zehnmillionstel des
+        Elements. Gerechnet wird je (Elementart, Seite) im Block, denn aus
+        Objektlasten entstehen tausende Seitenlasten je Lastfall.
+        """
+        from .diagnose import ENTARTET_REL
+        from .spannungen import dezimal as _dezimal
+        gruppen: dict = {}
+        for j, l in enumerate(lc.face_loads):
+            i = int(l.elem)
+            if not 0 <= i < len(self.elements):
+                continue
+            el = self.elements[i]
+            if el.typ not in _EL.VOLUMEN_TYPEN:
+                continue
+            seite = int(l.face)
+            if not 0 <= seite < len(_sl.FLAECHEN[el.typ]):
+                continue                    # steht oben schon als FEHLER da
+            if any(not 0 <= int(n) < self.nn for n in el.nodes):
+                continue                    # steht oben schon als FEHLER da
+            # Falsche Knotenzahl (add_element nimmt ein hex8 mit sieben Knoten
+            # an): keine Seite zu bilden, und gestapelt wuerden die Knoten zu
+            # einem ungleichmaessigen Feld - np.array warf dann ValueError, und
+            # check() gab statt der Liste eine Ausnahme (Gegenpruefung,
+            # 23.09.2026). Hier wird die Seite nicht beurteilt.
+            try:
+                if len(el.nodes) != _sl.knotenzahl(el.typ):
+                    continue
+            except ValueError:
+                continue
+            gruppen.setdefault((el.typ, seite), []).append(j)
+        aus = []
+        for (typ, seite), jdx in gruppen.items():
+            K = np.array([[int(n) for n in self.elements[int(lc.face_loads[j].elem)].nodes]
+                          for j in jdx], dtype=int)
+            X = self.nodes[K]                                  # (n, Knoten, 3)
+            fn = list(_sl.FLAECHEN[typ][seite])
+            P = X[:, fn[:4] if len(fn) in (4, 8) else fn[:3]]
+            nvec = np.cross(P[:, 1] - P[:, 0], P[:, 2] - P[:, 0])
+            if P.shape[1] == 4:
+                nvec = nvec + np.cross(P[:, 2] - P[:, 0], P[:, 3] - P[:, 0])
+            A = 0.5 * np.linalg.norm(nvec, axis=1)
+            d = np.linalg.norm(X.max(axis=1) - X.min(axis=1), axis=1)
+            for k in np.nonzero(A <= ENTARTET_REL * d * d)[0]:
+                l = lc.face_loads[jdx[int(k)]]
+                # Zahlen ausgeschrieben (spannungen.dezimal), nie 2.39e+03
+                if A[k] <= 0.0:
+                    was = (f"Seite {seite} hat keine Fläche (ihre Ecken liegen auf einer "
+                           "Linie oder in einem Punkt, oder die beiden Dreiecke des "
+                           "Vierecks heben sich auf) - die Last wirkt mit 0 N")
+                else:
+                    # Die Kraft so, wie der Lastvektor sie aufstellt, nicht als
+                    # p*A: solid_face_pressure integriert |dA| ueber die Seite.
+                    # Beim schmalen Deckel ist das p*A (1e-9 breit: 0,001 N),
+                    # beim fast verschlungenen (6/7 getauscht, eine Ecke 1e-9
+                    # versetzt) heben sich nur die Flaechenvektoren auf, die
+                    # Last wirkt mit gemessen 577 350 N - p*A nannte 0,001 N.
+                    from .assemble import solid_face_pressure
+                    el = self.elements[int(l.elem)]
+                    fk = solid_face_pressure(self, el, l.p, seite, l.direction)
+                    kraft = float(np.linalg.norm(fk.reshape(-1, 3).sum(axis=0)))
+                    if kraft <= 2.0 * abs(float(l.p)) * float(A[k]):
+                        was = (f"Seite {seite} hat praktisch keine Fläche (schmaler als "
+                               "ein Zehnmillionstel des Elements) - die Last wirkt mit "
+                               f"nur {_dezimal(kraft)} N")
+                    else:
+                        # Quadratische Seiten (6 und 8 Knoten) koennen auch ueber
+                        # die Kantenmitten gewoelbt sein - dort nicht
+                        # „verschlungen" behaupten
+                        grund = ("in sich verschlungen (die beiden Dreiecke des "
+                                 "Vierecks zeigen gegeneinander, Knoten vertauscht)"
+                                 if len(fn) == 4 else
+                                 "verschlungen oder über die Kantenmitten gewölbt")
+                        was = (f"die Ecken von Seite {seite} spannen fast keine Fläche "
+                               f"auf, die Seite ist aber {grund} - die Last wirkt mit "
+                               f"{_dezimal(kraft)} N")
+                aus.append(f"WARNUNG: Lastfall '{lc.name}': Flächenlast auf Element "
+                           f"{l.elem} ({typ}): {was}, steht aber mit p = "
+                           f"{_dezimal(float(l.p) / 1e3)} kN/m² im Bericht. Die Knoten "
+                           "der Seite prüfen (zusammengelegt oder vertauscht) oder die "
+                           "Last auf eine Seite mit Fläche legen")
+        return aus
+
     def check(self) -> list[str]:
         """Einfache Modellpruefung. Gibt Liste von Warnungen/Fehlern zurueck."""
         msgs = []
@@ -5094,6 +5241,15 @@ class Model:
         free = np.where(~used)[0]
         if len(free):
             msgs.append(f"WARNUNG: {len(free)} Knoten ohne Elementanschluss")
+        if str(getattr(self, "randspannung", "frei") or "frei") not in ("frei", "gemittelt"):
+            msgs.append(f"FEHLER: Randspannung '{self.randspannung}' unbekannt - "
+                        f"erlaubt sind 'frei' und 'gemittelt'")
+        for kn, kb in (self.koerper or {}).items():
+            o = getattr(kb, "ordnung", None)
+            # bool ist in Python eine Zahl (True == 1) - ausdruecklich ausschliessen
+            if o is not None and (isinstance(o, bool) or not isinstance(o, int) or o not in (1, 2)):
+                msgs.append(f"FEHLER: Volumenkörper '{kn}': Elementordnung {o!r} unbekannt - "
+                            f"erlaubt sind 1 (tet4), 2 (tet10) oder leer (automatisch)")
         for c in self.combinations.values():
             for k in c.lastfaelle():
                 if k not in self.load_cases:
@@ -5127,6 +5283,32 @@ class Model:
             for k in (f.case_max, f.case_min):
                 if k and k not in self.load_cases and k not in self.combinations:
                     msgs.append(f"FEHLER: Ermuedungslast '{f.name}': Lastfall oder Kombination '{k}' unbekannt")
+            # ... aber keine oder-verknuepfte Ergebniskombination: sie hat nur
+            # eine Umhuellende (an.envelopes), kein Einzelergebnis, und der
+            # Nachweis dieser Last kann nicht gefuehrt werden. Bis zum
+            # 22.09.2026 liess die Pruefung sie durch, die Maske bot sie als
+            # unteren Zustand an, und die Rechnung setzte still sigma_min = 0
+            # (Befunde FE2/FE13); seit efcf3d6 meldet es erst der Nachweis,
+            # nach der Rechnung. Hier steht es vorher.
+            # Geprueft werden nur die Zustaende, die der Nachweis liest: bei
+            # einem Verlauf die Glieder, sonst case_max/case_min. Ein Verlauf
+            # behaelt ein case_max aus der alten Maske (sie uebergab es auch
+            # im Modus Verlauf); die erste Fassung dieser Pruefung meldete
+            # dafuer einen FEHLER, obwohl ec3.fatigue es nie liest - gemessen
+            # am Zugstab-Volumen D = 0,38334 mit und ohne dieses case_max, und
+            # der FEHLER haette CLI und Web-Rechenstart abgewiesen (Mangel 2
+            # der Gegenpruefung, 23.09.2026).
+            zustaende = list(f.folge) if getattr(f, "folge", None) else [f.case_max, f.case_min]
+            for k in dict.fromkeys(zustaende):
+                c = self.combinations.get(k) if k else None
+                if c is not None and k not in self.load_cases and c.ist_umhuellende:
+                    msgs.append(
+                        f"FEHLER: Ermüdungslast '{f.name}': Zustand '{k}' ist eine "
+                        f"oder-verknüpfte Ergebniskombination ({len(c.alternativen)} "
+                        "Alternativen) - sie hat kein Einzelergebnis und fehlt darum "
+                        "im Ermüdungsnachweis dieser Last. Einen Lastfall oder eine "
+                        "Kombination ohne Alternativen wählen oder die Last als "
+                        "Verlauf über die Lastfälle der Alternativen beschreiben.")
         for m in self.members.values():
             for i in m.elements:
                 if i < 0 or i >= len(self.elements):
@@ -5166,6 +5348,7 @@ class Model:
                     msgs.append(f"FEHLER: Lastfall '{lc.name}': Flaechenlast auf "
                                 f"Element {l.elem}: Richtung ist der Nullvektor - "
                                 "die Last wirkt mit 0 N")
+            msgs += self._flaechenlasten_ohne_seitenflaeche(lc, _sl)
         for cs in self.contact_supports:
             # Ein einseitiges Lager ohne Richtung kann nie tragen: die Normale
             # wird zu (0,0,0), die Bedingung traegt keinen Freiheitsgrad, und
@@ -5237,6 +5420,7 @@ class Model:
             "design": asdict(self.design),
             "plastizitaet": asdict(self.plastizitaet),
             "knotendilatation": bool(self.knotendilatation),
+            "randspannung": str(getattr(self, "randspannung", "frei") or "frei"),
             "contact_supports": [asdict(c) for c in self.contact_supports],
             "gap_elements": [asdict(g) for g in self.gap_elements],
             "kopplungen": [asdict(k) for k in self.kopplungen],
@@ -5364,6 +5548,7 @@ class Model:
         if "plastizitaet" in d:
             m.plastizitaet = _dc(Plastizitaet, d["plastizitaet"])
         m.knotendilatation = bool(d.get("knotendilatation", False))
+        m.randspannung = str(d.get("randspannung", "frei") or "frei")
         m.contact_supports = [_dc(ContactSupport, c) for c in d.get("contact_supports", [])]
         m.gap_elements = [_dc(GapElement, g) for g in d.get("gap_elements", [])]
         m.kopplungen = [_dc(Kopplung, k) for k in d.get("kopplungen", [])]

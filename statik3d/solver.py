@@ -68,6 +68,8 @@ def _mkl_lib():
             _find_mkl()
             import pypardiso
             _MKL_LIB = pypardiso.PyPardisoSolver().libmkl or False
+            if _MKL_LIB:
+                _mkl_cbwr_festhalten(_MKL_LIB)
         except Exception:                                  # noqa: BLE001
             _MKL_LIB = False
     return _MKL_LIB or None
@@ -100,6 +102,58 @@ def _mkl_threads_setzen(lib, n: int) -> int:
         return int(lesen())
     except (AttributeError, OSError):
         return int(n)
+
+
+#: MKL_CBWR, wie es galt, als Statik3D MKL zum ersten Mal geladen hat - None,
+#: solange das nicht geschehen ist (siehe _mkl_cbwr_festhalten).
+_MKL_CBWR = None
+
+#: Argument von MKL_CBWR_Get fuer den eingestellten Zweig und die Namen der
+#: Zweige, aus mkl_cbwr.h. Der Header liegt der Programmumgebung nicht bei;
+#: gelesen aus der Kopie in Intels Repository intel/mklnn (src/mkl_cat.h,
+#: Abschnitt "MKL CBWR stuff"), die Signatur ``int mkl_cbwr_get(int option)``
+#: aus IntelPython/mkl-service (mkl/_mkl_service.pxd). Gemessen 22.09.2026 am
+#: mkl_rt.3.dll der Programmumgebung: ohne Variable 1, mit MKL_CBWR=AUTO 2,
+#: mit MKL_CBWR=COMPATIBLE 3 - wie die Tabelle.
+MKL_CBWR_BRANCH = 1
+MKL_CBWR_ZWEIGE = {0: "OFF", 1: "BRANCH_OFF", 2: "AUTO", 3: "COMPATIBLE", 4: "SSE2",
+                   5: "SSE3", 6: "SSSE3", 7: "SSE4_1", 8: "SSE4_2", 9: "AVX", 10: "AVX2",
+                   11: "AVX512_MIC", 12: "AVX512"}
+
+
+def _mkl_cbwr_festhalten(lib) -> None:
+    """MKL_CBWR festhalten, einmal je Prozess, beim ersten Laden von MKL.
+
+    MKL liest die Variable nur beim Laden; wer sie danach setzt, aendert
+    nichts mehr (gemessen 22.09.2026: gesetzt nach dem Laden, meldet MKL
+    weiter den alten Zweig). Darum zaehlt der Wert von diesem Zeitpunkt und
+    nicht der beim Faktorisieren. Daneben steht, was MKL selbst meldet
+    (MKL_CBWR_Get) - aber nur, wenn das geladene mkl_rt die Funktion hat;
+    sonst "unbekannt", nicht geraten.
+
+    Ein eigener Prototyp statt ``lib.MKL_CBWR_Get``: argtypes am geteilten
+    CDLL-Objekt gelten fuer alle, die es benutzen.
+    """
+    global _MKL_CBWR
+    if _MKL_CBWR is not None:
+        return
+    import ctypes
+    code, zweig = "unbekannt", "unbekannt"
+    lib = getattr(lib, "libmkl", lib)
+    if lib is not None:
+        try:
+            lesen = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int)(("MKL_CBWR_Get", lib))
+            code = int(lesen(MKL_CBWR_BRANCH))
+            zweig = MKL_CBWR_ZWEIGE.get(code, f"unbekannt ({code})")
+        except Exception:                                  # noqa: BLE001
+            code, zweig = "unbekannt", "unbekannt"
+    _MKL_CBWR = {"umgebung": os.environ.get("MKL_CBWR"), "code": code, "zweig": zweig}
+
+
+def mkl_cbwr() -> Optional[dict]:
+    """{umgebung, code, zweig} vom ersten Laden von MKL - None, solange
+    Statik3D MKL nicht geladen hat. ``umgebung`` ist None ohne Variable."""
+    return None if _MKL_CBWR is None else dict(_MKL_CBWR)
 
 
 def threads_automatisch(backend: str) -> int:
@@ -552,12 +606,146 @@ def threads_je_kette(eingestellt: int, ketten: int) -> int:
 
 
 def _log_einmal(text: str) -> None:
-    """Denselben Hinweis nur einmal je Programmlauf schreiben."""
+    """Denselben Hinweis nur einmal je Programmlauf schreiben - fuer die
+    Konsole.
+
+    warnings.warn erreicht weder das Protokollfenster der Oberflaeche noch
+    die exe (dort werden Python-Warnungen nicht angezeigt). Der Anwender
+    erfaehrt ein Ausweichen darum ueber das Ergebnis: ``res.info
+    ["ausweichgrund"]`` (:func:`ausweich_info`), das Zusammenfassung und
+    Bericht lesen (:func:`ausweichen_gebuendelt`), und ueber den Fortschritt
+    (StaticSystem._loeser_merken, solve_modal)."""
     if text in _GEMELDET:
         return
     _GEMELDET.add(text)
     import warnings
     warnings.warn(text, RuntimeWarning, stacklevel=2)
+
+
+def ausweichgruende_zaehlen(system) -> dict:
+    """Stand der Loesungen mit ausgewichenem Loeser:
+    (Grund, Ausweichloeser) -> Zahl.
+
+    Vor einer Rechnung genommen, sagt :func:`ausweich_info` danach, welche
+    Gruende genau diese Rechnung betrafen (StaticSystem._geloest zaehlt)."""
+    return dict(getattr(system, "_ausweich_genutzt", None) or {})
+
+
+def _ausweich_art(grund: str) -> str:
+    """Art eines Ausweichgrunds: der Text ohne seine Zahlen.
+
+    Der 32-Bit-Grund nennt Zeilen und Eintraege, und die aendern sich bei
+    Kontakt von Schritt zu Schritt (inaktive Fugenbedingungen fallen heraus):
+    am kippenden Block mit Reibung trug ein Lastfall "375 Zeilen, 19153
+    Eintraege" und "376 Zeilen, 19903 Eintraege" (gemessen 23.09.2026 mit auf
+    50 gesenkter Grenze). Das ist ein Grund, nicht zwei."""
+    import re
+    return re.sub(r"\d+", "#", grund)
+
+
+def _ausweich_eintraege(paare) -> dict:
+    """``res.info``-Eintraege aus (Grund, Ausweichloeser)-Paaren - je Art und
+    Ausweichloeser ein Paar, der erste Text bleibt.
+
+    ``ausweichen`` haelt die Paare fuer Zusammenfassung und Bericht,
+    ``ausweichgrund`` den lesbaren Text, je Art einmal. Leer ohne Paare."""
+    vereint: dict = {}
+    for g, lo in paare:
+        if g:
+            vereint.setdefault((_ausweich_art(g), lo or ""), (g, lo or ""))
+    if not vereint:
+        return {}
+    texte: dict = {}
+    for g, _lo in vereint.values():
+        texte.setdefault(_ausweich_art(g), g)
+    return {"ausweichgrund": "; ".join(texte.values()), "ausweichen": list(vereint.values())}
+
+
+def ausweich_paare(info: dict) -> list:
+    """(Grund, Ausweichloeser)-Paare eines Ergebnisses; der Loeser ist leer,
+    wenn nur der Text ``ausweichgrund`` vorliegt."""
+    info = info or {}
+    paare = info.get("ausweichen")
+    if paare:
+        return [(str(g), str(lo or "")) for g, lo in paare]
+    grund = str(info.get("ausweichgrund") or "")
+    return [(grund, "")] if grund else []
+
+
+def ausweich_info(system, vorher: dict) -> dict:
+    """``{"ausweichgrund": ..., "ausweichen": [...]}`` fuer ``Results.info`` -
+    leer, wenn seit ``vorher`` keine Loesung mit einem ausgewichenen Loeser
+    lief.
+
+    Gezaehlt wird je **Loesung**, nicht je System. Die Grundfaktorisierung
+    eines linearen Systems dient allen Lastfaellen - jeder, der mit ihr
+    rechnet, traegt den Grund. Ein Kontaktmodell faktorisiert dagegen in jedem
+    Schritt neu (am Drehlager 145-mal je Lastfall): scheitert PARDISO erst im
+    dritten Lastfall, betrifft das die beiden davor nicht, und eine Marke am
+    System hinge sie ihnen trotzdem an.
+
+    Der Ausweichloeser kommt aus der Loesung selbst, nicht aus
+    ``system.backend``: das ist der Loeser der **letzten** Faktorisierung.
+    Scheitert PARDISO nur beim ersten von sieben Faktorisierungsversuchen
+    eines Lastfalls, steht dort wieder "pardiso" (gemessen 23.09.2026 am Block
+    mit Reibung, Probe des Gegenpruefers am Stand 4a8c464), und die
+    Hinweiszeile nannte bis dahin PARDISO als den Loeser, der stattdessen
+    rechnete."""
+    jetzt = getattr(system, "_ausweich_genutzt", None) or {}
+    vorher = vorher or {}
+    return _ausweich_eintraege([k for k, n in jetzt.items() if n > vorher.get(k, 0)])
+
+
+def ausweich_arten(ergebnisse) -> list:
+    """Ausweichen ueber alle Ergebnisse, je Art des Grunds ein Eintrag
+    ``{"grund", "namen", "loeser"}`` - Grundlage fuer
+    :func:`ausweichen_gebuendelt` und den Anhang des Berichts.
+
+    ``ergebnisse``: (Name, Results)-Paare. ``loeser`` sind die Loeser, auf die
+    ausgewichen wurde. Zahlen im Grund zaehlen nicht zur Art
+    (:func:`_ausweich_art`) - auch nicht, wenn ein Ergebnis mehrere Faelle
+    derselben Art traegt."""
+    arten: dict = {}
+    for name, r in ergebnisse:
+        info = getattr(r, "info", None) or {}
+        for g, lo in ausweich_paare(info):
+            e = arten.setdefault(_ausweich_art(g), {"grund": g, "namen": [], "loeser": []})
+            # Die Paare eines Ergebnisses folgen aufeinander - derselbe Name
+            # kaeme nur doppelt, wenn eine Art mit zwei Loesern auftrat
+            if not e["namen"] or e["namen"][-1] != str(name):
+                e["namen"].append(str(name))
+            if lo and lo not in e["loeser"]:
+                e["loeser"].append(lo)
+    return list(arten.values())
+
+
+def ausweichloeser_text(loeser) -> str:
+    """Lesbare Namen der Loeser, auf die ausgewichen wurde."""
+    return ", ".join(NAMEN.get(k, k) + (f" ({LOESER[k][3]})" if k in LOESER else "")
+                     for k in loeser)
+
+
+def ausweichen_gebuendelt(ergebnisse) -> list:
+    """Je Art von Ausweichgrund **eine** Zeile ueber alle Ergebnisse - fuer
+    die Hinweise des Berichts und die Zusammenfassung der Oberflaeche.
+
+    ``ergebnisse``: (Name, Results)-Paare. Ohne Buendelung stuende derselbe
+    Grund einmal je Ergebnis da, am Drehlager 422-mal. Die Zeile nennt den
+    Loeser, auf den ausgewichen wurde (aus ``ausweichen``), nicht den der
+    letzten Faktorisierung.
+    """
+    zeilen = []
+    for e in ausweich_arten(ergebnisse):
+        n = len(e["namen"])
+        mit = ausweichloeser_text(e["loeser"])
+        zeilen.append(
+            f"Gleichungslöser ausgewichen bei {n} Ergebnis{'' if n == 1 else 'sen'} "
+            f"({', '.join(e['namen'][:3])}{' …' if n > 3 else ''}): {e['grund']}"
+            + (f" – stattdessen rechnete {mit}" if mit else "")
+            + ". Den Grund beheben oder unter Berechnung → Einstellungen → "
+              "Gleichungslöser einen Löser wählen; ein ausdrücklich gewählter Löser "
+              "bricht ab, statt auszuweichen.")
+    return zeilen
 
 
 #: Groesste Zeilenzahl und groesste Zahl von Eintraegen, die die
@@ -577,18 +765,49 @@ def _log_einmal(text: str) -> None:
 INT32_MAX = 2 ** 31 - 1
 
 
-def _pardiso_nnz_faktor(ps) -> int:
-    """Nichtnullen der Faktorisierung aus iparm(18) - 0, wenn nichts gemeldet wird.
+#: Die iparm-Eingabefelder, die nach der Faktorisierung mitgeschrieben werden,
+#: so wie MKL sie zurueckgibt. pypardiso uebergibt ein Nullfeld (iparm(1) = 0,
+#: MKL nimmt seine Vorgaben); danach steht darin, womit gerechnet wurde.
+#: Gemessen 22.09.2026 am Dirichlet-Laplace mit 36 Zeilen, ein Thread:
+#: 1: 1, 2: 3, 8: 2, 10: 13, 11: 1, 13: 1, 21: 0, 24: 0, 25: 0. Die
+#: Ausgabefelder (7, 14-20, 22, 23, 30) gehoeren nicht dazu.
+PARDISO_EINGABEFELDER = (1, 2, 8, 10, 11, 13, 21, 24, 25)
 
-    Gemessen 20.09.2026 an einer Tridiagonalmatrix: n = 200 gibt 964, n = 400
-    gibt 1960 - linear, wie es fuer ein Band sein muss. ``get_iparms()`` zaehlt
-    von 1; iparm(17) steht direkt daneben und meint den Speicher in KB (28 bei
-    n = 400), nicht die Eintraege. Die beiden sind leicht zu verwechseln.
+
+def _pardiso_kennzahlen(ps) -> dict:
+    """Was MKL PARDISO bei der Faktorisierung getan hat, aus iparm - direkt
+    nach ``ps.factorize`` zu lesen, vor jedem solve (der schreibt iparm neu).
+
+    * ``gestoert`` = iparm(14): Zahl der angehobenen Pivots. Gemessen
+      22.09.2026: Dirichlet-Laplace 0; mit einem entkoppelten Block
+      [[1, 1], [1, 1]] (Pivot nach einem Eliminationsschritt exakt 0) 1; mit
+      drei solchen Bloecken 3 (tests/test_loeser.py).
+    * ``nnz`` = iparm(18): Nichtnullen des Faktors. Gemessen 20.09.2026 an
+      einer Tridiagonalmatrix: n = 200 gibt 964, n = 400 gibt 1960 - linear,
+      wie es fuer ein Band sein muss.
+    * ``speicher_kb`` = iparm(15), (16), (17): Spitze der Analyse, dauerhaft
+      aus der Analyse, Zahlenphase - in KB **laut MKL-Dokumentation**, nicht
+      nachgemessen. iparm(17) steht direkt neben iparm(18) und ist leicht mit
+      den Eintraegen zu verwechseln (28 bei der Tridiagonalmatrix n = 400).
+    * ``eingabe``: die Felder PARDISO_EINGABEFELDER.
+
+    ``get_iparms()`` zaehlt von 1. Leer, wenn iparm nicht lesbar ist.
     """
     try:
-        return int(ps.get_iparms()[18])
-    except Exception:
-        return 0
+        ip = ps.get_iparms()
+    except Exception:                                      # noqa: BLE001
+        return {}
+
+    def feld(i):
+        try:
+            return int(ip[i])
+        except Exception:                                  # noqa: BLE001
+            return None
+
+    return {"gestoert": feld(14), "nnz": feld(18),
+            "speicher_kb": {str(i): feld(i) for i in (15, 16, 17)},
+            "speicher_einheit": "KB laut MKL-Dokumentation, nicht nachgemessen",
+            "eingabe": {str(i): feld(i) for i in PARDISO_EINGABEFELDER}}
 
 
 class LinearSolver:
@@ -665,6 +884,13 @@ class LinearSolver:
         self._vorgabe = None         # nur ama: wonach faktorisiert wurde (fuer den Nachweis)
         self.nachiterationen = 0
         self.residuum = 0.0
+        #: Nur PARDISO: Matrixtyp (pypardiso rechnet mit 11, reell unsymmetrisch),
+        #: angehobene Pivots (iparm(14)) und alle Kennzahlen aus
+        #: _pardiso_kennzahlen. None bei den anderen Loesern - sie melden keine
+        #: Zahl, und 0 hiesse "keiner angehoben".
+        self.mtype = None
+        self.gestoerte_pivots = None
+        self.pardiso_kennzahlen = {}
         #: Warum der gewaehlte Loeser nicht rechnete, wenn auf einen anderen
         #: ausgewichen wurde - leer, wenn nicht. Steht in beschreibung() und
         #: damit im Fortschrittsstrom und im Protokoll.
@@ -686,6 +912,7 @@ class LinearSolver:
                 _find_mkl()
                 import pypardiso
                 ps = pypardiso.PyPardisoSolver()
+                _mkl_cbwr_festhalten(ps)         # nur beim ersten Mal
                 # self._K ist bereits K.tocsr() (siehe oben). Ein zweites
                 # tocsr() auf derselben Matrix kostete bei Drehlagergroesse
                 # 0,280 s (475.935 Zeilen, 17,6 Mio. Nichtnullen, gemessen
@@ -695,13 +922,34 @@ class LinearSolver:
                 # Threadzahl aus den Einstellungen (0 = alle Kerne bis auf einen)
                 self.threads = _mkl_threads_setzen(ps, threads_vorgabe("pardiso"))
                 ps.factorize(Kcsr)
-                self.nnz_faktor = _pardiso_nnz_faktor(ps)
+                # Direkt nach der Faktorisierung: solve schreibt iparm neu
+                kz = _pardiso_kennzahlen(ps)
+                self.pardiso_kennzahlen = kz
+                self.nnz_faktor = int(kz.get("nnz") or 0)
+                self.gestoerte_pivots = kz.get("gestoert")
+                # pypardiso 0.4.7 fuehrt den Typ als ps.mtype. Fehlte das Feld,
+                # liefe ein AttributeError in das except unten, und nur das
+                # Mitschreiben liesse den Loeser ausweichen.
+                mt = getattr(ps, "mtype", None)
+                self.mtype = None if mt is None else int(mt)
                 self._ps = ps
                 self._solve = lambda b: ps.solve(Kcsr, b)
                 self.backend = "pardiso"
             except Exception as ex:
                 if be == "pardiso":
                     raise
+                # Was PARDISO vor dem Scheitern eingetragen hat, gehoert nicht
+                # dem Ersatz. Die Threadzahl setzt _mkl_threads_setzen schon vor
+                # ps.factorize; ohne diese Zeilen nannten beschreibung() und der
+                # Loeser-Nachweis SuperLU mit den Threads von PARDISO (gemessen
+                # 22.09.2026 mit solver_threads = 2 und werfendem factorize:
+                # Nachweis threads {"2": 1}, Zeile "1x SuperLU (2 Threads)").
+                # SuperLU rechnet einkernig (test_superlu_nennt_sich_einkernig).
+                self.threads = 1
+                self.mtype = None
+                self.gestoerte_pivots = None
+                self.pardiso_kennzahlen = {}
+                self.nnz_faktor = 0
                 # **Nicht still verwerfen.** Bis zum 22.09.2026 fiel hier jede
                 # PARDISO-Ausnahme ohne eine Zeile weg, und es ging ueber
                 # CHOLMOD (meist nicht installiert) nach SuperLU. Am Drehlager
@@ -965,6 +1213,12 @@ class LinearSolver:
         if self._solve is None:
             raise RuntimeError("Loeser ist freigegeben - erneut faktorisieren")
         b = np.asarray(b, float)
+        # Das Residuum gehoert zu **dieser** Loesung. Ohne Pruefung (check=False,
+        # mehrere rechte Seiten, b = 0) gibt es keins - dann nan statt der Zahl
+        # der vorigen Loesung, die StaticSystem sonst diesem Lastfall
+        # zuschriebe. Gelesen wird es nur vom Loeser-Nachweis (_LoeserBuch) und
+        # von Tests; am Rechenweg haengt es nicht.
+        self.residuum = float("nan")
         x = self._solve(b)
         # Der Nachweis von ama gehoert zu genau dieser Loesung. Die Nachiteration unten ruft
         # self._solve fuer die Korrektur b - K x auf, und deren Residuum bezieht sich auf
@@ -1062,6 +1316,13 @@ class Results:
     beam_q: dict = field(default_factory=dict)      # elem -> Abschnittslasten (n,8): a, b, q1, q2
     shell_res: dict = field(default_factory=dict)   # elem -> [nx ny nxy mx my mxy]
     solid_res: dict = field(default_factory=dict)   # elem -> Spannungen (6,)
+    #: elem -> Elementmittel Integral sigma dV / V (6,) - linear in u, daher in
+    #: Kombinationen exakt ueberlagerbar; das liest der Fehlerschaetzer
+    #: (netzfehler.MITTELFELD). Seit 22.09.2026.
+    solid_mittel: dict = field(default_factory=dict)
+    #: Geglaettete Eckspannung je Knoten, Koerper und Werkstoff (siehe
+    #: randspannung_knoten) - daraus liest der Nachweis (solid_rand). Seit 22.09.2026.
+    solid_knoten: dict = field(default_factory=dict)
     feder_res: dict = field(default_factory=dict)   # elem -> lokale Federkraefte (6,)
     grenzschicht_res: dict = field(default_factory=dict)  # elem -> (sn, st1, st2)
     bimomente: dict = field(default_factory=dict)   # elem -> (B Anfang, B Ende) [Nm^2]
@@ -1107,6 +1368,53 @@ class Results:
                 i: {"s": s, "vM": sl.von_mises(s), "principal": sl.principal(s)}
                 for i, s in self.solid_res.items()}
         return self._cache["solid_stress"]
+
+    @property
+    def solid_rand(self) -> dict:
+        """{Element: (Spannung (6,), Eckknoten)} - die geglaettete Spannung an der
+        massgebenden Ecke des Elements (groesstes sigma_v unter seinen Eckknoten,
+        gemittelt je Knoten, Koerper und Werkstoff; siehe randspannung_knoten).
+        Leer, wenn der Loeser keine Knotenwerte gefuehrt hat."""
+        if "solid_rand" not in self._cache:
+            sk = self.solid_knoten or {}
+            aus = {}
+            frei: set = set()
+            if sk and "spannung" in sk:
+                m = self.model
+                ng = max(1, len(sk["gruppen"]))
+                pos = {int(k): j for j, k in enumerate(np.asarray(sk["knoten"]) * ng
+                                                        + np.asarray(sk["gruppe"]))}
+                grp = {g: j for j, g in enumerate(sk["gruppen"])}
+                S = np.asarray(sk["spannung"], float)
+                from . import spannungen as spn
+                sv = spn.volumen_werte(S, "sv") if len(S) else np.zeros(0)
+                for i in self.solid_res:
+                    e = m.elements[i]
+                    if e.typ not in sl.ECKEN_NATUERLICH:
+                        continue
+                    g = grp.get((str(getattr(e, "group", "")), str(e.mat)))
+                    if g is None:
+                        continue
+                    nk = len(sl.ECKEN_NATUERLICH[e.typ])
+                    js = [pos.get(int(n) * ng + g) for n in e.nodes[:nk]]
+                    js = [j for j in js if j is not None]
+                    if not js:
+                        continue
+                    j = max(js, key=lambda jj: sv[jj])
+                    aus[i] = (S[j], int(sk["knoten"][j]))
+                    if "frei" in sk and bool(sk["frei"][j]):
+                        frei.add(i)
+            self._cache["solid_rand"] = aus
+            self._cache["solid_rand_frei"] = frei
+        return self._cache["solid_rand"]
+
+    @property
+    def solid_rand_frei(self) -> set:
+        """Elemente, deren Randspannung (solid_rand) an einem freien Knoten auf
+        sigma n = 0 gezogen ist (rand_projizieren) - fuer die Beschriftung im
+        Nachweis."""
+        self.solid_rand
+        return self._cache.get("solid_rand_frei", set())
 
     @property
     def node_vm(self) -> np.ndarray:
@@ -1184,8 +1492,39 @@ class Results:
                 out.shell_res[i] = out.shell_res.get(i, 0.0) + f * v
             for i, v in r.solid_res.items():
                 out.solid_res[i] = out.solid_res.get(i, 0.0) + f * v
+            for i, v in (getattr(r, "solid_mittel", None) or {}).items():
+                out.solid_mittel[i] = out.solid_mittel.get(i, 0.0) + f * v
+            sk = getattr(r, "solid_knoten", None) or {}
+            if sk:
+                if not out.solid_knoten:
+                    out.solid_knoten = {"knoten": sk["knoten"], "gruppe": sk["gruppe"],
+                                        "gruppen": list(sk["gruppen"]),
+                                        "spannung": f * np.asarray(sk["spannung"], float)}
+                    if "frei" in sk:
+                        out.solid_knoten["frei"] = np.asarray(sk["frei"], bool).copy()
+                elif (len(sk["knoten"]) == len(out.solid_knoten["knoten"])
+                      and np.array_equal(sk["knoten"], out.solid_knoten["knoten"])
+                      and np.array_equal(sk["gruppe"], out.solid_knoten["gruppe"])):
+                    out.solid_knoten["spannung"] = (out.solid_knoten["spannung"]
+                                                    + f * np.asarray(sk["spannung"], float))
+                    # Die freien Knoten haengen an den Lasten des Lastfalls
+                    # (rand_projizieren): jeder Anteil ist fuer sich die beste
+                    # Schaetzung, die Summe bleibt linear. "sigma n = 0" heisst
+                    # ein Knoten der Summe nur, wenn er es in jedem Anteil war.
+                    if "frei" in out.solid_knoten:
+                        out.solid_knoten["frei"] = (out.solid_knoten["frei"]
+                                                    & np.asarray(sk.get("frei", np.zeros(len(sk["knoten"]), bool)), bool))
+                else:
+                    # verschiedene Schluessel (andere Situation): nicht
+                    # ueberlagerbar - lieber keine Randspannung als eine falsche
+                    out.solid_knoten = {"verworfen": True}
         out.info = {"ndof": model.ndof, "superposition": True,
                     "factors": {r.name: f for r, f in parts}}
+        # Eine Ueberlagerung besteht aus Loesungen - ist dort ausgewichen
+        # worden, gilt das auch fuer sie (sonst nennte die Zusammenfassung
+        # einer Kombination es nicht, obwohl jeder ihrer Lastfaelle es traegt).
+        out.info.update(_ausweich_eintraege(
+            [p for r, f in parts if f for p in ausweich_paare(r.info or {})]))
         return out
 
     def scaled(self, f: float, name: str = "") -> "Results":
@@ -1205,6 +1544,13 @@ class Results:
               f"Rechenzeit              : {self.info.get('time', 0):.3f} s"]
         if self.info.get("solver"):
             s.append(f"Gleichungsloeser        : {self.info['solver']}")
+        # "Gleichungsloeser" darueber ist der Loeser der letzten
+        # Faktorisierung - der Ausweichloeser steht darum hier dabei
+        for g, lo in ausweich_paare(self.info):
+            s.append(f"Löser ausgewichen       : {g}"
+                     + (f" – stattdessen rechnete {ausweichloeser_text([lo])}" if lo else ""))
+        if self.info.get("loeser_nachweis"):
+            s.extend(loeser_nachweis_zeilen(self.info["loeser_nachweis"]))
         if self.u is not None and self.u.size:
             i = int(np.argmax(self.umag))
             s.append(f"max. Verschiebung       : {self.umag[i]*1000:.4f} mm (Knoten {i})")
@@ -1352,6 +1698,120 @@ def shell_derived(model: Model, i: int, r: np.ndarray) -> dict:
 # ==========================================================================
 # Statisches System
 # ==========================================================================
+class _LoeserBuch:
+    """Was die Loesungen **eines Lastfalls** benutzt haben - der Loeser-Nachweis.
+
+    Gezaehlt wird dort, wo geloest wird (StaticSystem._geloest), nicht nur
+    beim Faktorisieren: ein Lastfall kann eine Faktorisierung benutzen, die
+    vor ihm entstand. Ein lineares Modell faktorisiert beim Aufstellen des
+    Systems, und die behaltene Kontaktfaktorisierung
+    (StaticSystem._kontakt_loeser) ueberlebt den Wechsel des Lastfalls -
+    eingefrorene Zustaende sind darauf gebaut. Ein Nachweis, der nur
+    Faktorisierungen zaehlte, bliebe dort leer (Einwand der Gegenprobe zum
+    Entwurf, 22.09.2026). Die Faktorisierungen des Lastfalls zaehlen getrennt.
+
+    Nur Zaehlen und Lesen: kein Wert hier geht in eine Rechnung zurueck.
+    """
+
+    def __init__(self, zeit_vorher: float):
+        self.zeit_vorher = float(zeit_vorher)
+        self.loesungen: dict = {}            # Loeser -> Zahl der Loesungen
+        self.threads: dict = {}              # wirksame Threads -> Zahl der Loesungen
+        self.mtype: dict = {}                # PARDISO-Matrixtyp -> Zahl der Loesungen
+        self.ausweichgruende: dict = {}      # Grund -> Zahl der Loesungen
+        self.gescheitert = 0
+        self.faktorisierungen = 0
+        self.faktorisierungen_gestoert = 0
+        self.gestoert_summe = None           # None: keine Faktorisierung meldete eine Zahl
+        self.gestoert_max = None
+        self.residuum_max = None
+        self.residuum_gemessen = 0
+        self.pardiso_eingabe = None
+
+    @staticmethod
+    def _zaehlen(d: dict, schluessel: str) -> None:
+        d[schluessel] = d.get(schluessel, 0) + 1
+
+    def _gestoert(self, ls):
+        g = getattr(ls, "gestoerte_pivots", None)
+        if g is not None:
+            self.gestoert_max = max(int(g), self.gestoert_max or 0)
+        return g
+
+    def faktorisierung(self, ls) -> None:
+        self.faktorisierungen += 1
+        g = self._gestoert(ls)
+        if g is not None:
+            self.gestoert_summe = (self.gestoert_summe or 0) + int(g)
+            self.faktorisierungen_gestoert += 1 if int(g) > 0 else 0
+
+    def loesung(self, ls) -> None:
+        self._zaehlen(self.loesungen, str(getattr(ls, "backend", "?")))
+        self._zaehlen(self.threads, str(int(getattr(ls, "threads", 1) or 1)))
+        mt = getattr(ls, "mtype", None)
+        if mt is not None:
+            self._zaehlen(self.mtype, str(int(mt)))
+        grund = getattr(ls, "ausweichgrund", "")
+        if grund:
+            self._zaehlen(self.ausweichgruende, str(grund))
+        self._gestoert(ls)
+        r = getattr(ls, "residuum", None)
+        if r is not None and np.isfinite(r):
+            self.residuum_gemessen += 1
+            self.residuum_max = float(r) if self.residuum_max is None else max(self.residuum_max, float(r))
+        kz = getattr(ls, "pardiso_kennzahlen", None)
+        if kz:
+            self.pardiso_eingabe = dict(kz.get("eingabe") or {})
+
+    def als_dict(self, zeit_jetzt: float) -> dict:
+        return {"loesungen": dict(self.loesungen), "loesungen_gescheitert": self.gescheitert,
+                "ausweichgruende": dict(self.ausweichgruende),
+                "threads": dict(self.threads), "mtype": dict(self.mtype),
+                "faktorisierungen": self.faktorisierungen,
+                "faktorisierungen_mit_gestoerten_pivots": self.faktorisierungen_gestoert,
+                "gestoerte_pivots_summe": self.gestoert_summe,
+                "gestoerte_pivots_max": self.gestoert_max,
+                # Differenz der Systemsumme: das System rechnet viele Lastfaelle
+                "zeit_faktorisierung_lastfall": float(zeit_jetzt) - self.zeit_vorher,
+                "residuum_linear_max": self.residuum_max,
+                "residuum_gemessen": self.residuum_gemessen,
+                "pardiso_eingabe": self.pardiso_eingabe,
+                "mkl_cbwr": mkl_cbwr()}
+
+
+def loeser_nachweis_zeilen(nw: dict) -> list:
+    """Die Zeilen der Zusammenfassung zum Loeser-Nachweis eines Lastfalls:
+    wer wie oft geloest hat, Ausweichen mit Grund, gestoerte Pivots - die
+    beiden letzten nur, wenn es sie gab."""
+    z = []
+    loes = nw.get("loesungen") or {}
+    if loes:
+        thr = sorted(int(t) for t in (nw.get("threads") or {}))
+        wie = ("einkernig" if thr == [1] else "/".join(str(t) for t in thr) + " Threads") if thr else ""
+        mt = sorted(nw.get("mtype") or {})
+        if mt:
+            wie += (", " if wie else "") + "mtype " + "/".join(mt)
+        text = ", ".join(f"{n}× {NAMEN.get(b, b)}" for b, n in loes.items())
+        text += f" ({wie})" if wie else ""
+        text += (f"; {int(nw.get('faktorisierungen', 0) or 0)} Faktorisierungen in "
+                 f"{float(nw.get('zeit_faktorisierung_lastfall', 0.0) or 0.0):.3f} s")
+        r = nw.get("residuum_linear_max")
+        if r is not None:
+            text += f"; Residuum höchstens {float(r):.1e}"
+        z.append(f"Lösungen                : {text}")
+    if nw.get("loesungen_gescheitert"):
+        z.append(f"Gescheiterte Lösungen   : {int(nw['loesungen_gescheitert'])}")
+    for grund, n in (nw.get("ausweichgruende") or {}).items():
+        z.append(f"Ausgewichen             : {grund} ({n} Lösung{'' if n == 1 else 'en'})")
+    summe, hoechst = nw.get("gestoerte_pivots_summe"), nw.get("gestoerte_pivots_max")
+    if summe or hoechst:
+        z.append(f"Gestörte Pivots         : {int(summe or 0)} in "
+                 f"{int(nw.get('faktorisierungen_mit_gestoerten_pivots', 0) or 0)} von "
+                 f"{int(nw.get('faktorisierungen', 0) or 0)} Faktorisierungen dieses Lastfalls, "
+                 f"höchstens {int(hoechst or 0)} je benutzter Faktorisierung")
+    return z
+
+
 class StaticSystem:
     """Assemblierte und faktorisierte Steifigkeit fuer beliebig viele Lastfaelle."""
 
@@ -1392,6 +1852,12 @@ class StaticSystem:
         self.zeit_faktorisierung = 0.0
         self.nnz_matrix = 0
         self.nnz_faktor = 0
+        #: Loesungen mit ausgewichenem Loeser, (Grund, Ausweichloeser) -> Zahl
+        #: (_geloest zaehlt, ausweich_info liest je Ergebnis)
+        self._ausweich_genutzt: dict = {}
+        #: Loeser-Nachweis des laufenden Lastfalls (nachweis_beginnen) - None
+        #: ausserhalb eines Lastfalls
+        self._nachweis_buch = None
         self.t_assemble = time.time() - t0
         if not model.has_contact:
             _ = self.solver          # sofort faktorisieren (bei Kontakt erst mit Kc)
@@ -1436,6 +1902,22 @@ class StaticSystem:
             fortschritt = getattr(self, "_progress", None)
             if fortschritt:
                 _melde(fortschritt, f"Gleichungslöser ausgewichen - {grund}")
+        buch = getattr(self, "_nachweis_buch", None)
+        if buch is not None:
+            buch.faktorisierung(ls)
+
+    def nachweis_beginnen(self) -> None:
+        """Den Loeser-Nachweis eines Lastfalls neu beginnen (_solve_loads).
+
+        Ein Buch, das ein abgebrochener Lastfall offen liess, wird ersetzt -
+        seine Zahlen gehoeren nicht zum naechsten."""
+        self._nachweis_buch = _LoeserBuch(self.zeit_faktorisierung)
+
+    def nachweis_abschliessen(self) -> Optional[dict]:
+        """Den Loeser-Nachweis des Lastfalls als Woerterbuch; None, wenn keiner
+        begonnen wurde. Danach zaehlt nichts mehr hinein."""
+        buch, self._nachweis_buch = getattr(self, "_nachweis_buch", None), None
+        return None if buch is None else buch.als_dict(self.zeit_faktorisierung)
 
     def gerandet(self, Kff):
         """Kff mit dem Lagrange-Rand der Hilfsfesselung.
@@ -1624,12 +2106,34 @@ class StaticSystem:
         Die Randzeilen fordern ``V u = 0``; ihre rechte Seite ist null. Die
         Multiplikatoren am Ende der Loesung sind die Haltekraefte und gehen
         den Aufrufer nichts an.
+
+        Hier zaehlt auch der Loeser-Nachweis des Lastfalls (_LoeserBuch): jede
+        Loesung mit dem Loeser, der sie gerechnet hat.
         """
+        # Jede Loesung mit einem ausgewichenen Loeser zaehlen - daraus liest
+        # _solve_loads, ob **dieses** Ergebnis betroffen ist (ausweich_info).
+        # Vor dem Loesen: auch ein Abbruch danach rechnete mit dem Ausweichloeser.
+        # Mit dem Loeser dieser Loesung: self.backend ist nur der der letzten.
+        grund = getattr(ls, "ausweichgrund", "")
+        if grund:
+            genutzt = self.__dict__.setdefault("_ausweich_genutzt", {})
+            schluessel = (grund, str(getattr(ls, "backend", "") or ""))
+            genutzt[schluessel] = genutzt.get(schluessel, 0) + 1
         m = self._rand
-        if not m:
-            return ls.solve(rhs)
-        x = ls.solve(np.concatenate([rhs, np.zeros(m)]))
-        return np.asarray(x, float).ravel()[:len(rhs)]
+        buch = getattr(self, "_nachweis_buch", None)
+        try:
+            if not m:
+                x = ls.solve(rhs)
+            else:
+                x = ls.solve(np.concatenate([rhs, np.zeros(m)]))
+                x = np.asarray(x, float).ravel()[:len(rhs)]
+        except BaseException:
+            if buch is not None:
+                buch.gescheitert += 1
+            raise
+        if buch is not None:
+            buch.loesung(ls)
+        return x
 
     def reactions(self, u: np.ndarray, F: np.ndarray, K_extra=None) -> np.ndarray:
         K = self.K if K_extra is None else (self.K + K_extra)
@@ -1760,26 +2264,37 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
     # (21.09.2026). Zwei Drittel davon sind die acht Gausspunkte fuer die
     # inneren Freiheitsgrade, der Rest die neun Auswertepunkte; im Stapel
     # sind es 58,1 µs, Ergebnis identisch bis 2,5e-16. Am Drehlagernetz der
-    # Vernetzersitzung waeren das 42,8 s -> 1,81 s je Nachlauf.
+    # Vernetzersitzung waeren das 42,8 s -> 1,81 s je Nachlauf. Nachgemessen
+    # 23.09.2026 (tests/messung_elementzeiten.py): einzeln 2 296 µs, im Stapel
+    # 71,8 µs - beides seit dem 22.09.2026 mit Elementmittel und ueber den
+    # Dehnungsoperator; der Einzelweg rechnet nur noch im Rueckfall.
+    #
+    # Seit dem 22.09.2026 fuer jeden Typ mit Dehnungsoperator (asm.STAPEL_TYPEN)
+    # und aus **demselben** Operator wie Steifigkeit und Plastizitaet
+    # (sl.spannungen_stapel). Dabei faellt das Elementmittel Integral
+    # sigma dV / V mit ab: ``solid_mittel``, das der Fehlerschaetzer liest
+    # (netzfehler.MITTELFELD) - bis dahin fuehrte der Loeser es nicht, und der
+    # Schaetzer bekam fuer den elastischen hex8 das Eckmaximum.
     hex_vor: dict = {}
+    mittel_vor: dict = {}
     je_werkstoff: dict = {}
     for i in idx:
         e = model.elements[i]
-        if e.typ == "hex8":
-            je_werkstoff.setdefault(e.mat, []).append(i)
-    for mat_name, liste in je_werkstoff.items():
-        if len(liste) < 8:            # unter acht lohnt der Umweg nicht
-            continue
+        if e.typ in asm.STAPEL_TYPEN:
+            je_werkstoff.setdefault((e.typ, e.mat), []).append(i)
+    for (typ, mat_name), liste in je_werkstoff.items():
         mat = model.materials[mat_name]
         for a0 in range(0, len(liste), asm.HEX8_STAPEL):
             teil = liste[a0:a0 + asm.HEX8_STAPEL]
             try:
-                Xs = np.asarray([model.nodes[model.elements[j].nodes[:8]] for j in teil], float)
                 Us = np.asarray([u[asm.element_dofs(model.elements[j], model)] for j in teil], float)
-                for j, sp in zip(teil, sl.spannungen_hex8_stapel(Xs, mat.E, mat.nu, Us)):
+                S, M = sl.spannungen_stapel(model, typ, teil, mat.E, mat.nu, Us)
+                for j, sp, mm in zip(teil, S, M):
                     hex_vor[j] = sp
+                    mittel_vor[j] = mm
             except Exception:         # noqa: BLE001 - dann rechnet die Schleife einzeln
                 hex_vor = {k: v for k, v in hex_vor.items() if k not in teil}
+                mittel_vor = {k: v for k, v in mittel_vor.items() if k not in teil}
     for i in idx:
         e = model.elements[i]
         mat = model.materials[e.mat]
@@ -1899,20 +2414,57 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
                 abzug = s0 if abzug is None else abzug + s0
             if abzug is not None:
                 werte = [w - abzug for w in werte]
-            if sig0 and i in sig0 and len(werte) > 1:
-                # Fliessende Elemente: nur die Mitte. Die Plastizitaet wird an
-                # den **Gausspunkten** erzwungen, die Auswertepunkte (Ecken)
-                # liegen ausserhalb, und die abgezogene Vorspannung D eps_p
-                # ist das Mittel ueber die Gausspunkte. An einer Ecke waechst
-                # eps ueber dieses Mittel hinaus, eps_p bleibt zurueck - die
-                # gemeldete Spannung schiesst ueber die Fliessflaeche hinaus.
-                # Gemessen am Reibblock (20.09.2026): Eckwert 2,93 MPa gegen
-                # die verfestigte Fliessgrenze 1,42 - und damit ueber dem
-                # elastischen Spitzenwert 2,30, was es nicht geben kann.
-                # In der Mitte ist das Elementmittel die richtige Berichtigung.
-                werte = werte[:1]
-            s_ = werte[0] if len(werte) == 1 else max(werte, key=sl.von_mises)
+            punkte = temp.get("plast_punkte") if isinstance(temp, dict) else None
+            ecken_nr = sl.ecken_der_auswertepunkte(e.typ) if e.typ in sl.ECKEN_NATUERLICH else None
+            if punkte and i in punkte:
+                # Fliessende Elemente: die Spannung an den **Integrations-
+                # punkten** (plastizitaet.punktspannungen), nicht an Mitte und
+                # Ecken. Nur dort ist eps_p bekannt; an einer Ecke waechst eps
+                # ueber die Punkte hinaus, eps_p bleibt zurueck, und die
+                # gemeldete Spannung schoss ueber die Fliessflaeche (gemessen
+                # 20.09.2026 am Reibblock: 2,93 MPa gegen die verfestigte
+                # Grenze 1,42). Bis zum 22.09.2026 stand hier deshalb die
+                # Mitte mit dem Mittel von D eps_p - beim Sechsflaechner unter
+                # Biegung der schlechteste Ort (dort ist die Spannung null).
+                # Jeder Punktwert liegt auf oder in der Fliessflaeche; massgebend
+                # ist der groesste, und die Ecke nimmt den naechsten Punkt.
+                xi_p, sig_p = punkte[i]
+                rest = None
+                if i in temp:
+                    rest = sl.D_matrix(mat.E, mat.nu) @ (
+                        mat.alpha * temp[i] * np.array([1.0, 1.0, 1.0, 0, 0, 0]))
+                vor = (temp.get("sigma0_ohne_plastisch") or {}).get(i)
+                if vor is not None:
+                    rest = np.asarray(vor, float) if rest is None else rest + np.asarray(vor, float)
+                werte_p = [np.asarray(x, float) - (0.0 if rest is None else rest) for x in sig_p]
+                s_ = max(werte_p, key=sl.von_mises)
+                if ecken_nr is not None and xi_p is not None:
+                    en = np.asarray(sl.ECKEN_NATUERLICH[e.typ], float)
+                    naechst = np.argmin(np.linalg.norm(en[:, None, :] - np.asarray(xi_p)[None], axis=2),
+                                        axis=1)
+                    ecken = np.array([werte_p[k] for k in naechst])
+                else:
+                    ecken = None
+            else:
+                if sig0 and i in sig0 and len(werte) > 1:
+                    # Plastischer Zustand ohne Punktspannungen (etwa ein Typ ohne
+                    # Dehnungsoperator): die Mitte, wie bis zum 22.09.2026
+                    werte = werte[:1]
+                s_ = werte[0] if len(werte) == 1 else max(werte, key=sl.von_mises)
+                ecken = None
+                if ecken_nr is not None:
+                    ecken = np.array([werte[k] if k < len(werte) else werte[0] for k in ecken_nr])
             out.append((i, "solid", s_))
+            if ecken is not None:
+                out.append((i, "solid_ecken", ecken))
+            # Elementmittel: beim Typ mit einem Punkt (tet4) ist es dieser
+            # Punkt, sonst das Gewichtsmittel ueber die Integrationspunkte aus
+            # dem Stapel - mit demselben Abzug (Temperatur, D eps_p).
+            if i in mittel_vor:
+                mm = np.asarray(mittel_vor[i], float)
+                out.append((i, "solid_mittel", mm - abzug if abzug is not None else mm))
+            elif len(werte) == 1 and e.typ not in asm.STAPEL_TYPEN:
+                out.append((i, "solid_mittel", s_))
         elif e.typ in asm.PLANE_TYPES:
             from .elements import ebene
             t = model.shells[e.sec].t if e.sec and e.sec in model.shells else 1.0
@@ -1942,8 +2494,373 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
     return out
 
 
+def randspannung_knoten(model: Model, ecken: dict) -> dict:
+    """Die geglaettete Spannung an den Eckknoten der Volumenelemente: je
+    Knoten, Koerper (Element.group) und Werkstoff das Mittel der Elementwerte
+    an diesem Knoten.
+
+    ``ecken`` ist {Element: (Ecken, 6)} in Knotenreihenfolge (solver.
+    _post_chunk: elastisch das Elementfeld an der Ecke, fliessend der
+    naechste Integrationspunkt). Rueckgabe {"knoten": (m,), "gruppe": (m,),
+    "spannung": (m,6), "gruppen": [(Koerper, Werkstoff), ...]} - leer, wenn
+    es keine Volumen gibt. Linear in u, also in Kombinationen exakt
+    ueberlagerbar.
+
+    Warum gemittelt wird, und warum je Koerper und Werkstoff (Auftrag A4/B6
+    an die Element-Sitzung, 22.09.2026): Ein Element mit linearem Ansatz
+    zeigt an seinen Ecken den Momentenverlauf versetzt - die Ecke zur
+    Einspannung zu hoch, die andere zu niedrig. Am Kragarm-Pruefkoerper
+    (Oberkante bei L/2, Soll 355 N/mm2) lag das bisherige Elementmaximum beim
+    hex8 um +173 / +65 / +31 N/mm2 daneben (90 / 405 / 2295 FHG), beim tet10
+    um +157 / +85 / +43; der Knotenmittelwert um -9,6 / +0,8 / +0,2 bzw.
+    +14,2 / +4,0 (405 / 2295 FHG). Ueber eine Koerper- oder Werkstoffgrenze
+    hinweg waere das Mittel falsch: die Spannung springt dort wirklich.
+    """
+    if not ecken:
+        return {}
+    knoten_l, gruppe_l, werte_l = [], [], []
+    gruppen: dict = {}
+    for i, S in ecken.items():
+        e = model.elements[i]
+        k = sl.knotenzahl(e.typ) if e.typ in sl.ECKEN_NATUERLICH else len(S)
+        nk = len(sl.ECKEN_NATUERLICH.get(e.typ, S))
+        g = gruppen.setdefault((str(getattr(e, "group", "")), str(e.mat)), len(gruppen))
+        knoten_l.append(np.asarray(e.nodes[:nk], np.int64))
+        gruppe_l.append(np.full(nk, g, np.int64))
+        werte_l.append(np.asarray(S, float).reshape(nk, 6))
+        del k
+    kn = np.concatenate(knoten_l)
+    gr = np.concatenate(gruppe_l)
+    W = np.concatenate(werte_l)
+    schluessel = kn * max(1, len(gruppen)) + gr
+    einmalig, inv = np.unique(schluessel, return_inverse=True)
+    summe = np.zeros((len(einmalig), 6))
+    np.add.at(summe, inv, W)
+    zahl = np.bincount(inv, minlength=len(einmalig)).astype(float)
+    return {"knoten": einmalig // max(1, len(gruppen)), "gruppe": einmalig % max(1, len(gruppen)),
+            "spannung": summe / zahl[:, None],
+            "gruppen": [k for k, _v in sorted(gruppen.items(), key=lambda kv: kv[1])]}
+
+
+# --------------------------------------------------------------------------
+# Randspannung an freien Oberflaechen (Auftrag B6, 23.09.2026)
+# --------------------------------------------------------------------------
+#: Die Wege der Randspannung (Model.randspannung): "frei" (Vorgabe) projiziert
+#: die geglaettete Knotenspannung an freien Oberflaechen auf sigma n = 0,
+#: "gemittelt" laesst das Knotenmittel wie bis zum 23.09.2026.
+RANDSPANNUNG_WEGE = ("frei", "gemittelt")
+#: Normalen eines Knotens, die weniger als diesen Winkel [Grad] auseinander
+#: liegen, gehoeren zu einer glatten Flaeche und werden gemittelt; mehr ist
+#: eine Kante. 30 Grad liegen ueber der Facettierung eines Bogens (BOGENWINKEL
+#: 18 Grad) und unter jeder gewollten Kante.
+KANTENWINKEL = 30.0
+
+
+def _nicht_freie_knoten(model: Model, faelle=None) -> np.ndarray:
+    """Knoten, an denen sigma n **nicht** bekannt ist (bool, nn) - streng:
+
+    * Lager aller Art, Kontaktlager, Spaltelemente, Kontaktpaare (Slave-Knoten,
+      Master-Facetten, alle Knoten der Master-Elemente), Kopplungen,
+      Starrkoerper, getrennte Fugenknoten, Lasteinleitungen, Punktmassen,
+      Daempfer;
+    * jede Last der wirkenden Lastfaelle ``faelle`` (None: aller): Knotenlasten,
+      Zwangsverformungen und alle Knoten einer belasteten Seite. Eigengewicht,
+      Temperatur und Vorspannung wirken im Volumen und lassen sigma n = 0 an
+      der freien Oberflaeche stehen.
+
+    Die Knoten der Nicht-Volumenelemente und die Grenzen zwischen Koerpern
+    kommen aus _randnormalen bzw. aus der Knotentabelle (rand_projizieren).
+    """
+    nn = model.nn
+    aus = np.zeros(nn, bool)
+
+    def setze(knoten):
+        k = np.asarray([int(x) for x in knoten if x is not None], np.int64)
+        k = k[(k >= 0) & (k < nn)]
+        if k.size:
+            aus[k] = True
+    for sp in model.supports:
+        setze([sp.node])
+    for grp in (model.line_supports, model.surface_supports):
+        for x in grp:
+            setze(x.nodes or [])
+    for cs in getattr(model, "contact_supports", None) or []:
+        setze([cs.node])
+    for gp in getattr(model, "gap_elements", None) or []:
+        setze([gp.node_a, gp.node_b])
+    for cp in getattr(model, "contact_pairs", None) or []:
+        setze(cp.slave_nodes or [])
+        for f in cp.master_faces or []:
+            setze(f or [])
+        for i in cp.master_elements or []:
+            if 0 <= int(i) < len(model.elements):
+                setze(model.elements[int(i)].nodes)
+    for kp in getattr(model, "kopplungen", None) or []:
+        setze([kp.node_a, kp.node_b])
+    for sk in getattr(model, "starrkoerper", None) or []:
+        setze([sk.master] + list(sk.slaves or []))
+    for paare in (getattr(model, "getrennte_knoten", None) or {}).values():
+        setze([n for p in paare for n in p])
+    for x in (getattr(model, "lasteinleitungen", None) or {}).values():
+        setze([x.knoten])
+    for pm in getattr(model, "punktmassen", None) or []:
+        setze([pm.node])
+    for dp in getattr(model, "daempfer", None) or []:
+        setze([dp.node_a] + ([dp.node_b] if int(dp.node_b) >= 0 else []))
+    namen = list(model.load_cases) if faelle is None else [f for f in faelle if f in model.load_cases]
+    for name in namen:
+        lc = model.load_cases[name]
+        setze([l.node for l in lc.nodal_loads])
+        setze([z.node for z in lc.zwangsverformungen])
+        for fl in lc.face_loads:
+            if not 0 <= int(fl.elem) < len(model.elements):
+                continue
+            e = model.elements[int(fl.elem)]
+            seiten = sl.FLAECHEN.get(e.typ)
+            if seiten is None or not 0 <= int(fl.face) < len(seiten):
+                setze(e.nodes)
+            else:
+                setze([e.nodes[a] for a in seiten[int(fl.face)]])
+    return aus
+
+
+def _randnormalen(model: Model, aktiv=None) -> dict:
+    """Die Randseiten der wirksamen Volumenelemente (Seiten, die genau einmal
+    vorkommen) mit den aeusseren Normalen an ihren Ecken: {"knoten": (m,),
+    "normale": (m,3), "flaeche": (m,), "element": (m,), "seite_knoten": (m,4)}
+    - eine Zeile je (Randseite, Ecke), dazu "nicht_volumen" (bool, nn): die
+    Knoten wirksamer Nicht-Volumenelemente (Stab, Schale, Feder, Spalt), an
+    denen ein anderes Element Kraft einleitet. Die Normale kommt aus der
+    Geometrie der Seite **an der Ecke** (tet10/hex20: aus der gekruemmten
+    Seite), nach aussen ueber den Elementschwerpunkt.
+
+    Vektorisiert je (Typ, Seite); rand_projizieren merkt sich das Ergebnis je
+    Rechnung am StaticSystem - das Netz aendert sich nicht, ohne dass das
+    System neu entsteht, und der Nachlauf laeuft je Lastfall."""
+    X = np.asarray(model.nodes, float)
+    nn = model.nn
+    nicht_volumen = np.zeros(nn, bool)
+    je_typ: dict = {}
+    for i, e in enumerate(model.elements):
+        if aktiv is not None and not aktiv[i]:
+            continue
+        if e.typ in sl.ECKEN_NATUERLICH:
+            je_typ.setdefault(e.typ, []).append(i)
+        else:
+            k = np.asarray(e.nodes, np.int64)
+            nicht_volumen[k[(k >= 0) & (k < nn)]] = True
+    schl, herkunft = [], []          # herkunft: (typ, seite, Elementfeld, Knotenfeld)
+    for typ, idx in je_typ.items():
+        idx = np.asarray(idx, np.int64)
+        conn = np.asarray([model.elements[i].nodes for i in idx], np.int64)
+        for s, f in enumerate(sl.FLAECHEN_ECKEN[typ]):
+            ecken = np.sort(conn[:, list(f)], axis=1)
+            if ecken.shape[1] < 4:
+                ecken = np.hstack([np.full((len(idx), 4 - ecken.shape[1]), -1, np.int64), ecken])
+            schl.append(ecken)
+            herkunft.append((typ, s, idx, conn))
+    leer = {"knoten": np.zeros(0, np.int64), "normale": np.zeros((0, 3)), "flaeche": np.zeros(0),
+            "element": np.zeros(0, np.int64), "seite_knoten": np.zeros((0, 4), np.int64),
+            "nicht_volumen": nicht_volumen}
+    if not schl:
+        return leer
+    # Zeilen als ein Void-Wert vergleichen: np.unique(axis=0) sortiert
+    # zeilenweise und war hier der groesste Posten
+    K = np.ascontiguousarray(np.vstack(schl))
+    _u, inv, zahl = np.unique(K.view(np.dtype((np.void, K.dtype.itemsize * K.shape[1]))).ravel(),
+                              return_inverse=True, return_counts=True)
+    einmal = zahl[inv.ravel()] == 1
+    kn_l, nv_l, fl_l, el_l, sk_l = [], [], [], [], []
+    a0 = 0
+    for (typ, s, idx, conn), ecken in zip(herkunft, schl):
+        sel = einmal[a0:a0 + len(idx)]
+        a0 += len(idx)
+        if not sel.any():
+            continue
+        seite = list(sl.FLAECHEN[typ][s])
+        k = len(seite)
+        cb = conn[sel]
+        P = X[cb[:, seite]]                                    # (m, k, 3)
+        nk = len(sl.ECKEN_NATUERLICH[typ])
+        mitte = X[cb[:, :nk]].mean(axis=1)                     # (m, 3)
+        GP, W = sl._SEITEN_GAUSS[k]
+        A = np.zeros(len(cb))
+        for (a, b), w in zip(GP, W):
+            _N, dN = sl.seite_N_dN(k, a, b)
+            t1 = np.einsum("mkd,k->md", P, dN[:, 0])
+            t2 = np.einsum("mkd,k->md", P, dN[:, 1])
+            A += w * np.linalg.norm(np.cross(t1, t2), axis=1)
+        eckzahl = 3 if k in (3, 6) else 4
+        for c in range(eckzahl):
+            a, b = ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))[c] if eckzahl == 3 else sl._QUAD_SIGNS[c]
+            N, dN = sl.seite_N_dN(k, a, b)
+            t1 = np.einsum("mkd,k->md", P, dN[:, 0])
+            t2 = np.einsum("mkd,k->md", P, dN[:, 1])
+            n = np.cross(t1, t2)
+            ln = np.linalg.norm(n, axis=1)
+            gut = ln > 0.0
+            n = n[gut] / ln[gut, None]
+            lage = np.einsum("mkd,k->md", P[gut], N) - mitte[gut]
+            n[np.einsum("md,md->m", n, lage) < 0.0] *= -1.0
+            kn_l.append(cb[gut][:, seite[c]])
+            nv_l.append(n)
+            fl_l.append(A[gut])
+            el_l.append(idx[sel][gut])
+            sk_l.append(ecken[sel][gut])
+    return {"knoten": np.concatenate(kn_l), "normale": np.vstack(nv_l), "flaeche": np.concatenate(fl_l),
+            "element": np.concatenate(el_l), "seite_knoten": np.vstack(sk_l),
+            "nicht_volumen": nicht_volumen}
+
+
+def _projektor_frei(normalen: list) -> np.ndarray:
+    """Die lineare Abbildung P (6,6) auf Voigt-Spannungen, die sigma auf
+    sigma n_i = 0 fuer alle Normalen n_i zieht, mit der kleinsten Aenderung im
+    Frobenius-Mass (Schubanteile zaehlen doppelt). Eine Normale ergibt
+    sigma' = sigma - n (x) r - r (x) n + (n . r) n (x) n mit r = sigma n; zwei
+    oder drei (Kante, Ecke) werden **gleichzeitig** erfuellt, nicht
+    nacheinander."""
+    C = []
+    for n in normalen:
+        x, y, z = n
+        # (sigma n) in Voigt xx, yy, zz, xy, yz, xz
+        C.append([x, 0, 0, y, 0, z])
+        C.append([0, y, 0, x, z, 0])
+        C.append([0, 0, z, 0, y, x])
+    C = np.asarray(C, float)
+    Wi = np.diag([1.0, 1.0, 1.0, 0.5, 0.5, 0.5])
+    M = C @ Wi @ C.T
+    return np.eye(6) - Wi @ C.T @ np.linalg.pinv(M, rcond=1e-10) @ C
+
+
+def _projiziere_glatt(S: np.ndarray, n: np.ndarray) -> np.ndarray:
+    """sigma' = sigma - n (x) r - r (x) n + (n . r) n (x) n, r = sigma n, fuer
+    einen Stapel Voigt-Spannungen S (m,6) und Normalen n (m,3)."""
+    T = np.empty((len(S), 3, 3))
+    T[:, 0, 0], T[:, 1, 1], T[:, 2, 2] = S[:, 0], S[:, 1], S[:, 2]
+    T[:, 0, 1] = T[:, 1, 0] = S[:, 3]
+    T[:, 1, 2] = T[:, 2, 1] = S[:, 4]
+    T[:, 0, 2] = T[:, 2, 0] = S[:, 5]
+    r = np.einsum("mij,mj->mi", T, n)
+    nr = np.einsum("mi,mi->m", n, r)
+    T = (T - np.einsum("mi,mj->mij", n, r) - np.einsum("mi,mj->mij", r, n)
+         + nr[:, None, None] * np.einsum("mi,mj->mij", n, n))
+    return np.column_stack([T[:, 0, 0], T[:, 1, 1], T[:, 2, 2], T[:, 0, 1], T[:, 1, 2], T[:, 0, 2]])
+
+
+def rand_projizieren(model: Model, sk: dict, aktiv=None, faelle=None, merker: dict = None,
+                     fliessend=None) -> dict:
+    """Die geglaettete Knotenspannung ``sk`` (randspannung_knoten) an freien
+    Oberflaechen auf sigma n = 0 ziehen; setzt sk["frei"] (bool je Zeile).
+    ``faelle``: die wirkenden Lastfaelle (deren Lasten sperren Knoten), None =
+    alle. ``merker``: ein dict, in dem die Randseiten fuer diese Rechnung
+    liegen bleiben (postprocess gibt das des StaticSystem). ``fliessend``:
+    Elemente mit plastischem Zustand - ihre Knoten bleiben, wie sie sind: dort
+    begrenzt die Fliessflaeche die Spannung, und die Projektion aendert den
+    Deviator. Am Balken mit einer hex8-Lage unter 1,20 M_el schob sie die
+    Randfaser auf 251,6 N/mm2, ueber die verfestigte Fliessgrenze 236,3
+    (tests/test_volumen.py, test_randspannung_fliessend, 23.09.2026).
+
+    Warum (gemessen 23.09.2026, tests/test_randspannung.py): das Knotenmittel
+    am Rand mischt die Spannung der Randelemente mit der ihres Inneren, auch
+    in den Komponenten, die der Rand kennt. Am Kirsch-Loch (Zug, freier
+    Lochrand, halbe Dicke bei 90 Grad) lag der hex8 bei 4 455 FHG 14,7 N/mm2
+    daneben, auf sigma n = 0 gezogen 1,1; der tet10 bei 29 835 FHG 5,8 statt
+    4,2, der tet4 bei 16 575 FHG 24 statt 15. Unter Biegung an der ebenen
+    freien Seite (Kragarm) aendert es fast nichts: dort sind die
+    Randkomponenten schon fast null.
+
+    Projiziert wird nur ein Knoten, der in genau einem Koerper liegt, selbst
+    frei ist und dessen Randseiten alle frei sind (eine Seite mit einem nicht
+    freien Knoten ist nicht frei; _nicht_freie_knoten, _randnormalen). Glatte
+    Flaeche (alle Normalen innerhalb KANTENWINKEL um ihr Mittel): eine
+    Normale, flaechengewichtet gemittelt. Kante oder Ecke: die Normalen
+    buendeln und alle gleichzeitig erfuellen, aber nur, wenn sie **konvex**
+    ist - an einer einspringenden Kante ist die Spannung singulaer, und die
+    Projektion wuerde den Kerbgrund schoenen. Linear in der Spannung: fuer
+    feste freie Knoten in Kombinationen exakt ueberlagerbar.
+    """
+    if not sk or "spannung" not in sk or not len(sk["knoten"]):
+        return sk
+    knoten = np.asarray(sk["knoten"], np.int64)
+    frei = np.zeros(len(knoten), bool)
+    sk["frei"] = frei
+    merker = {} if merker is None else merker
+    # je wirksamer Elementmenge (Ausfallstaebe schalten je Lastfall ab)
+    schluessel = None if aktiv is None else hash(np.asarray(aktiv, bool).tobytes())
+    alt = merker.get("randnormalen")
+    if alt is not None and alt[0] == schluessel:
+        rn = alt[1]
+    else:
+        rn = _randnormalen(model, aktiv)
+        merker["randnormalen"] = (schluessel, rn)
+    if not len(rn["knoten"]):
+        return sk
+    nicht = _nicht_freie_knoten(model, faelle) | rn["nicht_volumen"]
+    for i in (fliessend or ()):
+        if 0 <= int(i) < len(model.elements):
+            k = np.asarray(model.elements[int(i)].nodes, np.int64)
+            nicht[k[(k >= 0) & (k < model.nn)]] = True
+    # Grenze zweier Koerper oder Werkstoffe: der Knoten steht mehrfach in der Tabelle
+    u_kn, zahl = np.unique(knoten, return_counts=True)
+    nicht[u_kn[zahl > 1]] = True
+    # Eine Seite mit einem nicht freien Knoten ist nicht frei - alle ihre Knoten fallen raus
+    sk4 = rn["seite_knoten"]
+    schlecht_seite = np.any(np.where(sk4 >= 0, nicht[np.maximum(sk4, 0)], False), axis=1)
+    gesperrt = nicht.copy()
+    gesperrt[rn["knoten"][schlecht_seite]] = True
+    zeilen = np.flatnonzero(~gesperrt[rn["knoten"]])
+    if not len(zeilen):
+        return sk
+    kn = rn["knoten"][zeilen]
+    nv = rn["normale"][zeilen] * rn["flaeche"][zeilen, None]
+    einz, inv = np.unique(kn, return_inverse=True)
+    inv = inv.ravel()
+    mittel = np.zeros((len(einz), 3))
+    np.add.at(mittel, inv, nv)
+    ln = np.linalg.norm(mittel, axis=1)
+    ok = ln > 0.0
+    mittel[ok] /= ln[ok, None]
+    cos_zeile = np.einsum("md,md->m", rn["normale"][zeilen], mittel[inv])
+    cos_min = np.ones(len(einz))
+    np.minimum.at(cos_min, inv, cos_zeile)
+    glatt = ok & (cos_min >= np.cos(np.radians(KANTENWINKEL)))
+    S = np.asarray(sk["spannung"], float).copy()
+    j = np.searchsorted(knoten, einz)
+    da = (j < len(knoten))
+    da[da] = knoten[j[da]] == einz[da]
+    g = glatt & da
+    if g.any():
+        S[j[g]] = _projiziere_glatt(S[j[g]], mittel[g])
+        frei[j[g]] = True
+    # Kanten und Ecken einzeln: buendeln, Konvexitaet pruefen, gleichzeitig projizieren
+    X = np.asarray(model.nodes, float)
+    cos_kante = np.cos(np.radians(KANTENWINKEL))
+    for q in np.flatnonzero(~glatt & da & ok):
+        n = int(einz[q])
+        zs = zeilen[inv == q]
+        buendel: list = []
+        for z in zs[np.argsort(-rn["flaeche"][zs])]:
+            v = rn["normale"][z] * rn["flaeche"][z]
+            for b in buendel:
+                if np.dot(b / np.linalg.norm(b), rn["normale"][z]) >= cos_kante:
+                    b += v
+                    break
+            else:
+                buendel.append(v.copy())
+        normalen = [b / np.linalg.norm(b) for b in buendel]
+        els = {int(i) for i in rn["element"][zs]}
+        mitten = [X[list(model.elements[i].nodes)].mean(axis=0) - X[n] for i in els]
+        if any(np.dot(c, m) > 0.0 for c in normalen for m in mitten):
+            continue                    # einspringend: nicht anfassen
+        S[j[q]] = _projektor_frei(normalen) @ S[j[q]]
+        frei[j[q]] = True
+    sk["spannung"] = S
+    return sk
+
+
 def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
-                q: dict = None, temp: dict = None, workers: int = None, aktiv=None):
+                q: dict = None, temp: dict = None, workers: int = None, aktiv=None,
+                system=None):
     """Rohgroessen je Element aus dem Verschiebungsvektor u (ndof,).
     Abgeschaltete Elemente (``aktiv`` False) bekommen Nullen: sie wirken nicht."""
     feq = feq if feq is not None else {}
@@ -1952,6 +2869,7 @@ def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
     idx = asm.aktive_indizes(model, aktiv)
     ev = (asm.knotendilatation_je_element(model, u, aktiv)
           if getattr(model, "knotendilatation", False) else None)
+    ecken: dict = {}
     items = parallel.map_elements(_post_chunk, model, idx, workers=workers,
                                   extra={"u": u, "feq": feq, "temp": temp,
                                          "ev_dilatation": ev})
@@ -1970,6 +2888,7 @@ def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
                 res.grenzschicht_res[i] = np.zeros(3)
             else:
                 res.solid_res[i] = np.zeros(6)
+                res.solid_mittel[i] = np.zeros(6)
     for i, kind, val in items:
         if kind == "beam":
             res.beam_end[i] = val
@@ -1983,8 +2902,32 @@ def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
             res.feder_res[i] = val
         elif kind == "grenzschicht":
             res.grenzschicht_res[i] = val
+        elif kind == "solid_mittel":
+            res.solid_mittel[i] = val
+        elif kind == "solid_ecken":
+            ecken[i] = val
         else:
             res.solid_res[i] = val
+    res.solid_knoten = randspannung_knoten(model, ecken)
+    weg = str(getattr(model, "randspannung", "frei") or "frei")
+    if weg == "frei" and res.solid_knoten:
+        faktoren = res.info.get("factors")
+        faelle = [n for n, f in faktoren.items() if f] if isinstance(faktoren, dict) else None
+        merker = None
+        if system is not None:
+            merker = getattr(system, "_randspannung_merker", None)
+            if merker is None:
+                merker = {}
+                try:
+                    system._randspannung_merker = merker
+                except AttributeError:
+                    merker = None
+        fliessend = list((temp.get("plast_punkte") or {}).keys()) if isinstance(temp, dict) else None
+        rand_projizieren(model, res.solid_knoten, aktiv, faelle, merker, fliessend)
+        res.info["randspannung"] = (f"geglättet, an freien Oberflächen σ·n = 0 "
+                                    f"({int(np.sum(res.solid_knoten.get('frei', [])))} Knoten)")
+    elif res.solid_knoten:
+        res.info["randspannung"] = "geglättet (Knotenmittel)"
     res._cache.clear()
 
 
@@ -2029,7 +2972,36 @@ def _nichtlinear(model, ausfall: bool = None) -> bool:
     return bool(model.hat_ausfallstaebe() if ausfall is None else ausfall)
 
 
-def _kontakt_info_sammeln(res, cinfo: dict) -> dict:
+def _laufbuch_eintrag(nr: int, cinfo: dict, art: str = "", start_von_lauf=None) -> dict:
+    """Ein Eintrag des Laufbuchs (``res.info['laeufe']``) aus dem ``cinfo``
+    **eines** Kontaktlaufs - vor jeder Summierung gebaut.
+
+    ``start_von_lauf``: Nummer des Laufs desselben Lastfalls, dessen
+    Kontaktzustand der Start war; 0 = der Start, der dem Lastfall angeboten
+    wurde (res.info['start_angeboten_von']); None = ohne Start (kalt).
+    Ob der Start angenommen wurde, sagt ``warm``."""
+    lauf = dict(cinfo.get("contact_lauf") or {})
+    konvergiert = bool(cinfo.get("contact_converged", True))
+    grund = lauf.get("grund")
+    if grund is None:
+        # Ein cinfo ohne Laufangaben (Einheitstest, aelterer Stand): der
+        # Grund ist unbekannt, aber leer darf er nur bei Konvergenz sein
+        grund = "" if konvergiert else "unbekannt"
+    return {"nr": int(nr), "art": str(art or ""),
+            "schritte": int(cinfo.get("contact_iterations", 0) or 0),
+            "faktorisierungen": int(cinfo.get("contact_factorisations", 0) or 0),
+            "konvergiert": konvergiert, "grund": str(grund),
+            "warm": bool(cinfo.get("contact_warm", False)),
+            "neustart": bool(lauf.get("neustart", False)),
+            "start_von_lauf": start_von_lauf,
+            "zyklen": lauf.get("zyklen"), "phase": lauf.get("phase"),
+            "n_aktiv": lauf.get("n_aktiv"), "n_gleitet": lauf.get("n_gleitet"),
+            "runden": list(lauf.get("runden") or []),
+            "endzustand_kennung": lauf.get("endzustand_kennung"),
+            "u_max": lauf.get("u_max")}
+
+
+def _kontakt_info_sammeln(res, cinfo: dict, art: str = "", start_von_lauf=None) -> dict:
     """Die Kennzahlen des Kontakts aufaddieren statt ueberschreiben.
 
     Mit Plastizitaet loest derselbe Lastfall viele Male - am Drehlager 18
@@ -2039,13 +3011,27 @@ def _kontakt_info_sammeln(res, cinfo: dict) -> dict:
     Kontaktmeldungen der frueheren Schritte (etwa "Nachpruefung der Reibung
     nach 40 Zustandswechseln abgebrochen") fielen ganz weg (19.09.2026).
     "Nicht konvergiert" klebt: ein einziger gekappter Lauf zaehlt.
+
+    **Laufbuch** (22.09.2026): jeder Kontaktlauf bekommt einen eigenen
+    Eintrag in ``res.info['laeufe']`` (siehe :func:`_laufbuch_eintrag`),
+    gebaut **vor** der Summierung und nie zusammengefasst. Die Summen oben
+    sagen nicht, welcher der zwoelf Laeufe am Drehlager gedeckelt war und ob
+    der letzte - aus dem u und sigma stammen - dabei ist. Die Kennzahlen
+    ``contact_laeufe``, ``contact_letzter_lauf_konvergiert`` und
+    ``contact_laeufe_nicht_konvergiert`` werden aus dem Laufbuch abgeleitet.
+    ``art`` und ``start_von_lauf`` gibt ``_solve_loads`` mit.
     """
+    alte = list(res.info.get("laeufe") or [])
+    eintrag = _laufbuch_eintrag(len(alte) + 1, cinfo, art, start_von_lauf)
+    cinfo.pop("contact_lauf", None)     # steht jetzt im Eintrag, nicht als Einzelwert
     for k in ("contact_iterations", "contact_factorisations"):
         if k in cinfo:
             cinfo[k] = int(res.info.get(k, 0) or 0) + int(cinfo[k] or 0)
-    lauf = int(res.info.get("contact_laeufe", 0) or 0) + 1
-    cinfo["contact_laeufe"] = lauf
-    dieser = bool(cinfo.get("contact_converged", True))
+    laeufe = alte + [eintrag]
+    cinfo["laeufe"] = laeufe
+    lauf = eintrag["nr"]
+    cinfo["contact_laeufe"] = len(laeufe)
+    dieser = eintrag["konvergiert"]
     cinfo["contact_converged"] = bool(res.info.get("contact_converged", True)) and dieser
     # **Welcher Lauf, und war es der letzte?** Die Meldung "Nachpruefung der
     # Reibung ... abgebrochen" nannte keinen Lauf und wurde unten mit den
@@ -2055,9 +3041,8 @@ def _kontakt_info_sammeln(res, cinfo: dict) -> dict:
     # mehr sagen (am Drehlager genau so geschehen; Nachpruefung der
     # Loesersitzung vom 22.09.2026). Die Abbruchzeile traegt jetzt ihren
     # Lauf und wird nicht zusammengefasst.
-    cinfo["contact_letzter_lauf_konvergiert"] = dieser
-    cinfo["contact_laeufe_nicht_konvergiert"] = (
-        int(res.info.get("contact_laeufe_nicht_konvergiert", 0) or 0) + (0 if dieser else 1))
+    cinfo["contact_letzter_lauf_konvergiert"] = laeufe[-1]["konvergiert"]
+    cinfo["contact_laeufe_nicht_konvergiert"] = sum(1 for e in laeufe if not e["konvergiert"])
     abbruch = cinfo.get("contact_abbruch")
     eigene = [f"{z} (Kontaktlauf {lauf})" if abbruch and z == abbruch else z
               for z in (cinfo.get("contact_log") or [])]
@@ -2065,6 +3050,58 @@ def _kontakt_info_sammeln(res, cinfo: dict) -> dict:
     neu_log = [z for z in eigene if z not in alt_log]
     cinfo["contact_log"] = alt_log + neu_log
     return cinfo
+
+
+def _fliessarten(info: dict, einst) -> list:
+    """Die Art jedes Loeseraufrufs von ``plastizitaet.iteration`` als Liste
+    (Art, Laststufe, Schritt) - nachgezeichnet aus ``info['verlauf']``, ohne
+    die Signatur von iteration zu aendern (sie wird aus Tests mit einem
+    einfachen ``loesen`` gerufen).
+
+    Newton (``_newton``): je Laststufe ein Aufruf zu Beginn ("Laststufe"),
+    dann je Schritt, der die Toleranz noch verfehlt, einer ("Newton"); zum
+    Schluss einer ("Abschluss"). Anfangsdehnung: je Schritt ein Aufruf, der
+    erste einer Laststufe heisst "Laststufe", die weiteren "Fliessschritt".
+    Ohne Volumenelemente ruft iteration einmal: "Abschluss"."""
+    verlauf = list(info.get("verlauf") or [])
+    if not verlauf:
+        return [("Abschluss", None, None)]
+    stufen = int(info.get("laststufen", 1) or 1)
+    tol = float(einst.toleranz)
+    newton = info.get("verfahren") == "tangente"
+    arten = []
+    for k in range(1, stufen + 1):
+        schritte = [v for v in verlauf if v[0] == k]
+        if newton:
+            arten.append(("Laststufe", k, 0))
+            # iteration bricht beim ersten diff <= tol ab, ohne zu loesen;
+            # "not <=" wie dort, damit auch ein NaN genauso zaehlt
+            arten.extend(("Newton", k, int(it)) for (_k, it, diff, _n) in schritte
+                         if not (diff <= tol))
+        else:
+            arten.extend(("Laststufe" if it == 1 else "Fliessschritt", k, int(it))
+                         for (_k, it, _d, _n) in schritte)
+    arten.append(("Abschluss", None, None))
+    return arten
+
+
+def _fliessarten_eintragen(res, info: dict, einst, aufrufe: list) -> None:
+    """Die vorlaeufige Art "Fliessen" der Laufbuch-Eintraege durch die
+    nachgezeichnete ersetzen. Passt die Zahl der Aufrufe nicht - oder traegt
+    ein Aufruf eine Tangente, wo keiner eine haben kann -, bleibt es bei
+    "Fliessen": eine falsche Zuordnung waere schlimmer als eine grobe."""
+    try:
+        arten = _fliessarten(info, einst)
+    except Exception:                  # noqa: BLE001 - Buchfuehrung darf nie die Rechnung kosten
+        return
+    if len(arten) != len(aufrufe):
+        return
+    if any(tang and art != "Newton" for (_i, tang), (art, _k, _s) in zip(aufrufe, arten)):
+        return
+    laeufe = res.info.get("laeufe") or []
+    for (i, tang), (art, k, s) in zip(aufrufe, arten):
+        if i is not None and 0 <= i < len(laeufe):
+            laeufe[i].update({"art": art, "stufe": k, "schritt": s, "tangente": bool(tang)})
 
 
 def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start):
@@ -2075,9 +3112,13 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start):
     Spannungsnachlauf sigma = D eps - D eps_p rechnet."""
     from . import plastizitaet as pl
     halter = {"start": start, "R": None, "aktiv": aktiv}
+    aufrufe: list = []      # je Loeseraufruf (Index im Laufbuch oder None, mit Tangente)
 
     def loesen(Fg, dK=None):
+        vor = len(res.info.get("laeufe") or [])
         u_, R_, a_ = rechnen(Fg, halter["start"], dK)
+        nach = len(res.info.get("laeufe") or [])
+        aufrufe.append((vor if nach == vor + 1 else None, dK is not None))
         halter["R"], halter["aktiv"] = R_, a_
         if getattr(res, "kontaktzustand", None) is not None:
             halter["start"] = res.kontaktzustand
@@ -2087,11 +3128,17 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start):
     u, zustand, F_p, info = pl.iteration(model, F, loesen, model.plastizitaet, aktiv, log=log,
                                          progress=lambda t: _melde(progress, t),
                                          loesen_tangente=loesen)
+    _fliessarten_eintragen(res, info, model.plastizitaet, aufrufe)
     if not isinstance(temp, dict):
         temp = {}
     sig0 = temp.setdefault("sigma0", {})
+    # Was vor dem Fliessen in sigma0 stand, ist Vorspannung - die Spannungen
+    # an den Integrationspunkten (unten) rechnen eps_p selbst ab und brauchen
+    # nur diesen Rest
+    temp["sigma0_ohne_plastisch"] = {i: np.array(v, float, copy=True) for i, v in sig0.items()}
     for i, s0 in pl.sigma0_je_element(model, zustand).items():
         sig0[i] = np.asarray(sig0.get(i, 0.0), float) + s0
+    temp["plast_punkte"] = pl.punktspannungen(model, u, zustand)
     for z in log:
         _melde(progress, z)
     res.info["plastizitaet"] = {k: v for k, v in info.items() if k != "verlauf"}
@@ -2103,11 +3150,54 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start):
     return u, halter["R"], halter["aktiv"], temp
 
 
+def _startherkunft_eintragen(res, start, start_von, ausfallweg: bool) -> None:
+    """Woher der Warmstart des Lastfalls kam - **angeboten** und **genutzt**
+    getrennt (22.09.2026).
+
+    Angeboten ist nicht genutzt: ``zustand_setzen`` lehnt eine Sicherung ab,
+    die nicht zu den Bedingungen passt, ``solve_with_contact`` verwirft einen
+    Warmstart ohne Halt oder mit vielen Knoten gegen ihre Gleitrichtung und
+    rechnet von der Geometrie, und ein eingefrorener Zustand rechnet mit
+    seiner Referenz statt mit dem Start. Der Ausfallweg reicht den Start gar
+    nicht weiter (``solve_with_ausfall`` ruft ``solve_with_contact`` ohne
+    ``start``) - dort gilt immer: nichts angeboten. Eine einzige Angabe
+    "Start von" behauptete in all diesen Faellen einen Warmstart, den es nie
+    gab (Gegenprobe der Loesersitzung).
+
+    ``start_genutzt`` ist wahr, wenn ein Kontaktlauf, der den angebotenen
+    Start bekam (``start_von_lauf == 0`` im Laufbuch), warm endete."""
+    if ausfallweg:
+        res.info["start_angeboten_von"] = None
+        res.info["start_genutzt"] = False
+        res.info["start_vermerk"] = "Ausfallweg ohne Warmstart"
+        return
+    res.info["start_angeboten_von"] = (str(start_von) if start_von else "unbekannt") \
+        if start is not None else None
+    res.info["start_genutzt"] = any(bool(e.get("warm")) for e in (res.info.get("laeufe") or [])
+                                    if e.get("start_von_lauf") == 0)
+
+
 def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
                  kind: str, workers=None, progress=None, start=None,
-                 einfrieren=None, fenster=None, probelauf: bool = False) -> Results:
+                 einfrieren=None, fenster=None, probelauf: bool = False,
+                 start_von: str = None) -> Results:
+    """Einen Lastfall (oder eine direkt geloeste Kombination) rechnen.
+
+    ``start_von`` nennt nur, woher ``start`` stammt ("Lastfall LF1",
+    "Kombination K1", "System <Situation>") - es steht als
+    ``res.info['start_angeboten_von']`` im Ergebnis und aendert nichts an
+    der Rechnung."""
     t0 = time.time()
+    # Loeser-Nachweis je Lastfall: das System wird ueber Lastfaelle und
+    # Kombinationen geteilt, seine Summen (zeit_faktorisierung) wachsen mit.
+    if hasattr(system, "nachweis_beginnen"):
+        system.nachweis_beginnen()
     aktiv = getattr(system, "aktiv", None)
+    # Wie oft vorher mit einem ausgewichenen Loeser geloest wurde - am Ende
+    # steht in res.info, ob dieses Ergebnis betroffen ist. Ketten, Pool und
+    # Farm rechnen ohne Fortschritt; dort ist das Ergebnis der einzige Weg,
+    # auf dem der Grund den Anwender erreicht (Befund K2, 22.09.2026).
+    ausweich_vorher = ausweichgruende_zaehlen(system)
     # Grundlasten (LoadCase.grundlast) wirken in jeder direkt geloesten
     # Rechnung mit - dort gibt es keine Ueberlagerung, in die man sie spaeter
     # legen koennte. Linear bleibt der Lastfall, was er ist.
@@ -2125,6 +3215,23 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         res.info["situation"] = system.situation
     if grund:
         res.info["grundlast"] = list(grund)
+    # Laufbuch: die Art des naechsten Kontaktlaufs und die Zustaende, die die
+    # Laeufe hinterlassen haben - daran erkennt der naechste, von welchem
+    # Lauf sein Start stammt (Vergleich mit ``is``, keine Kopie). Reine
+    # Buchfuehrung, nichts davon geht in die Rechnung.
+    lauf_art = {"art": "Vorlauf" if _plastisch(model) else "Lastfall"}
+    zustaende: list = []        # [(Nr. des Laufs, Kontaktzustand danach)]
+
+    def _start_von_lauf(st_eff):
+        if st_eff is None:
+            return None
+        if st_eff is start:
+            return 0
+        for nr, z in reversed(zustaende):
+            if z is st_eff:
+                return nr
+        return -1               # Herkunft unbekannt (von aussen hineingereicht)
+
     def _rechnen(F_ges=None, start_=None, K_zusatz=None):
         """Der Loesungsweg des Lastfalls - wiederholbar. F_ges ersetzt die
         Last (Plastizitaet: F + F_p), start_ den Warmstart des Kontakts,
@@ -2140,9 +3247,13 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
             res.info["ausfall_log"] = alog
             if kontakt is not None:
                 res.contact, res.contact_forces, cinfo = kontakt
-                res.info.update(_kontakt_info_sammeln(res, cinfo))
+                # solve_with_ausfall reicht keinen Start weiter: kalt
+                res.info.update(_kontakt_info_sammeln(res, cinfo, lauf_art["art"], None))
             return u_, R_, aktiv_
         if model.has_contact:
+            # Derselbe Ausdruck wie unten im Aufruf, nur fuer das Laufbuch
+            st_eff = None if (probelauf and start_ is None) else st
+            von_lauf = _start_von_lauf(st_eff)
             u_, R_, res.contact, res.contact_forces, cinfo = solve_with_contact(
                 model, system, Fg, progress=progress, us=us, uebermass=ueber,
                 # Der Probelauf verwirft den Warmstart des **vorigen
@@ -2162,7 +3273,8 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
                 einfrieren=einfrieren,
                 fenster=fenster, K_zusatz=K_zusatz, probelauf=probelauf)
             res.kontaktzustand = cinfo.pop("contact_state", None)
-            res.info.update(_kontakt_info_sammeln(res, cinfo))
+            res.info.update(_kontakt_info_sammeln(res, cinfo, lauf_art["art"], von_lauf))
+            zustaende.append((len(res.info["laeufe"]), res.kontaktzustand))
             return u_, R_, aktiv
         u_ = system.solve(Fg, K_extra=K_zusatz, us=us)
         return u_, system.reactions(u_, Fg, K_zusatz), aktiv
@@ -2176,7 +3288,9 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         # weiterrechnen. Der Nutzer sieht dann die Verformung und daneben,
         # welche Last in der Bewegung ins Nichts geht - und entscheidet selbst.
         if not system.hilfsfesselung():
-            _teilergebnis_anhaengen(model, system, res, ex, F, feq, q, temp, workers, aktiv)
+            _teilergebnis_anhaengen(model, system, res, ex, F, feq, q, temp, workers, aktiv,
+                                    art=lauf_art["art"])
+            res.info.update(ausweich_info(system, ausweich_vorher))
             raise
         n_sg = len(system.singular)
         _melde(progress, f"{n_sg} freie Bewegung{'' if n_sg == 1 else 'en'} gefunden - "
@@ -2186,10 +3300,27 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         except RuntimeError as ex2:
             # Auch mit Hilfsfesselung kein Gleichgewicht: die Verformung der
             # letzten Iteration bleibt als Ergebnis "Abbruch" erhalten
-            _teilergebnis_anhaengen(model, system, res, ex2, F, feq, q, temp, workers, aktiv)
+            _teilergebnis_anhaengen(model, system, res, ex2, F, feq, q, temp, workers, aktiv,
+                                    art=lauf_art["art"])
+            res.info.update(ausweich_info(system, ausweich_vorher))
             raise
         hilfs = True
+    if _plastisch(model) and "contact_laeufe" in res.info:
+        # Die Kontaktlaeufe bis hier sind der elastische Vorlauf. Sein Zustand
+        # geht nicht weiter - der erste plastische Lauf startet bei ``start``,
+        # nicht bei res.kontaktzustand (_plastizitaet_rechnen) -, und sein u
+        # wird ueberschrieben. Ein gedeckelter Vorlauf aendert das Ergebnis
+        # darum nicht: am Block mit Reibung max |du| = 0 gegen den Lauf ohne
+        # Deckel (tests/test_rechenliste, 22.09.2026). Damit die Kennzeichnung
+        # (rechenliste.zustand_aus_info) ihn herausrechnen kann, stehen seine
+        # Zahlen hier eigens; contact_converged klebt weiter ueber alle Laeufe.
+        res.info["contact_vorlauf_laeufe"] = int(res.info.get("contact_laeufe", 0) or 0)
+        res.info["contact_vorlauf_nicht_konvergiert"] = int(
+            res.info.get("contact_laeufe_nicht_konvergiert", 0) or 0)
     if _plastisch(model):
+        # Vorlaeufig: welcher Aufruf der Fliess-Iteration welche Art hat,
+        # steht erst nach ihrem Ende fest (_fliessarten_eintragen)
+        lauf_art["art"] = "Fliessen"
         # Der Probelauf rechnet das Fliessen **mit** - nur der Kontakt bleibt
         # bei einem Schritt. Die erste Fassung (357d61d) liess die Plastizitaet
         # aus, weil fuer den Spannungssprung die elastische Spannung zu genuegen
@@ -2203,8 +3334,12 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         try:
             u, R, aktiv_eff, temp = _plastizitaet_rechnen(model, res, F, _rechnen, aktiv, temp, progress, start)
         except RuntimeError as ex3:
-            _teilergebnis_anhaengen(model, system, res, ex3, F, feq, q, temp, workers, aktiv)
+            _teilergebnis_anhaengen(model, system, res, ex3, F, feq, q, temp, workers, aktiv,
+                                    art=lauf_art["art"])
+            res.info.update(ausweich_info(system, ausweich_vorher))
             raise
+    if model.has_contact:
+        _startherkunft_eintragen(res, start, start_von, model.hat_ausfallstaebe())
     if hilfs:
         u = system.ohne_starrkoerper(u)
     if system.singular:
@@ -2222,10 +3357,14 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
                      "solver": system.backend, "factors": dict(factors),
                      "nnz_matrix": int(getattr(system, "nnz_matrix", 0)),
                      "nnz_faktor": int(getattr(system, "nnz_faktor", 0)),
-                     "zeit_faktorisierung": float(getattr(system, "zeit_faktorisierung", 0.0))})
+                     "zeit_faktorisierung": float(getattr(system, "zeit_faktorisierung", 0.0)),
+                     **ausweich_info(system, ausweich_vorher)})
+    nachweis = system.nachweis_abschliessen() if hasattr(system, "nachweis_abschliessen") else None
+    if nachweis is not None:
+        res.info["loeser_nachweis"] = nachweis
     if probelauf:
         res.info["probelauf"] = True
-    postprocess(model, u, res, feq, q, temp, workers, aktiv_eff)
+    postprocess(model, u, res, feq, q, temp, workers, aktiv_eff, system=system)
     res.info["time"] = time.time() - t0 + system.t_assemble
     return res
 
@@ -2247,6 +3386,9 @@ def verschiebungen_eintragen(model: Model, res: Results, u: np.ndarray, R: np.nd
     """u und R (ndof,) in die Ergebnisfelder (nn, 6) schreiben; die Woelb-FHG
     hinter den Knotenfreiheitsgraden landen in res.woelb."""
     n6 = model.nn * NDOF
+    # gebundene Mittelknoten (Uebergang linear/quadratisch) haben keine
+    # eigene Steifigkeit; ihre Verschiebung folgt aus der Kante
+    u = asm.mittelknoten_nachfuehren(model, u)
     res.u = np.asarray(u[:n6], float).reshape(-1, NDOF)
     res.reactions = np.asarray(R[:n6], float).reshape(-1, NDOF)
     if len(u) > n6:
@@ -2551,14 +3693,18 @@ def _solve_cases_innen(model: Model, cases: list = None, workers: int = None,
     try:
         if system is not None:
             start = None
+            start_von = None        # woher ``start`` stammt - nur fuers Ergebnis
             for k, name in enumerate(names):
                 ref, einf = _einfrieren(name)
                 n_ = max(1, len(names))
                 out[name] = _solve_loads(model, system, {name: 1.0}, name, "case", workers,
                                          progress=progress, start=start, einfrieren=einf,
-                                         fenster=(0.35 + 0.25 * k / n_, 0.35 + 0.25 * (k + 1) / n_))
+                                         fenster=(0.35 + 0.25 * k / n_, 0.35 + 0.25 * (k + 1) / n_),
+                                         start_von=start_von)
                 if einf is not None:
                     out[name].info["contact_frozen_from"] = ref
+                if out[name].kontaktzustand:
+                    start_von = f"Lastfall {name}"
                 start = out[name].kontaktzustand or start
                 _melde(progress, f"Lastfall {name} ({k + 1}/{len(names)})",
                        0.35 + 0.25 * (k + 1) / n_)
@@ -2568,16 +3714,25 @@ def _solve_cases_innen(model: Model, cases: list = None, workers: int = None,
         for sit, sit_names in model.lastfaelle_je_situation(names).items():
             m_s, sys_s = systeme[sit]
             start = getattr(sys_s, "kontaktzustand", None)
+            # Der Zustand am System kann aus einem frueheren Aufruf stammen
+            # (Lastfall oder Kombination); kennt es seine Herkunft nicht, heisst
+            # sie nach dem System
+            start_von = (getattr(sys_s, "kontaktzustand_von", None) or f"System {sit}") \
+                if start is not None else None
             for name in _mit_referenzen_zuerst(list(sit_names), referenzen):
                 ref, einf = _einfrieren(name)
                 n_ = max(1, len(names))
                 out[name] = _solve_loads(m_s, sys_s, {name: 1.0}, name, "case", workers,
                                          progress=progress, start=start, einfrieren=einf,
-                                         fenster=(0.35 + 0.25 * k / n_, 0.35 + 0.25 * (k + 1) / n_))
+                                         fenster=(0.35 + 0.25 * k / n_, 0.35 + 0.25 * (k + 1) / n_),
+                                         start_von=start_von)
                 if einf is not None:
                     out[name].info["contact_frozen_from"] = ref
+                if out[name].kontaktzustand:
+                    start_von = f"Lastfall {name}"
                 start = out[name].kontaktzustand or start
                 sys_s.kontaktzustand = start
+                sys_s.kontaktzustand_von = start_von
                 k += 1
                 _melde(progress, f"Lastfall {name} ({k}/{len(names)})"
                        + (f" – Situation {sit}" if sit != GRUNDSTELLUNG else ""),
@@ -2727,12 +3882,19 @@ def _cases_in_ketten(model: Model, names: list, k: int, progress=None,
                 pass
     out: dict = {}
     fehler = []
-    for job, r in zip(jobs, fertig):
+    for i_kette, (job, r) in enumerate(zip(jobs, fertig)):
         if not r.ok:
             fehler.append(f"Kette {job.label}: {r.error}")
             continue
         for n, res in (r.result or {}).items():
             res.model = model
+            # Laufbuch: in welcher Kette (Nummer, Zahl der Ketten) der
+            # Lastfall lief. Der erste jeder Kette startet kalt - ohne diese
+            # Angabe liesse sich ein "start_angeboten_von: None" mitten in der
+            # Reihe nicht von einem Fehler unterscheiden. Reine Buchfuehrung.
+            info = getattr(res, "info", None)
+            if isinstance(info, dict):
+                info["kette"] = (i_kette + 1, len(bloecke))
             out[n] = res
     gerettet = {n: out[n] for n in names if n in out}
     # **Was hier bewusst NICHT steht.** Eine erste Fassung zog die
@@ -2810,17 +3972,58 @@ def solve_combination(model: Model, combo: Combination, case_results: dict = Non
             system = StaticSystem(model, workers, progress)
     if start is None:
         start = getattr(system, "kontaktzustand", None)
+        start_von = (getattr(system, "kontaktzustand_von", None) or f"System {sit}") \
+            if start is not None else None
+    else:
+        start_von = "Aufrufer"      # von aussen hineingereicht, Herkunft unbekannt
     res = _solve_loads(model, system, combo.factors, combo.name, "combination", workers,
-                       progress, start=start)
+                       progress, start=start, start_von=start_von)
     if res.kontaktzustand is not None:
         system.kontaktzustand = res.kontaktzustand
+        system.kontaktzustand_von = f"Kombination {combo.name}"
     res.info["typ"] = combo.typ
     return res
 
 
+def alternativen_der_kombination(combo: Combination) -> list:
+    """[(Name, {Lastfall: Faktor})] je Alternative einer Ergebniskombination.
+
+    Der Name ist "EK [k]" mit k ab 1 in der Reihenfolge der Alternativen -
+    derselbe in der Herkunft der Umhuellenden, in den Nachweisen und in den
+    Tabellen der Theorie II./III. Ordnung. Eine Alternative ohne Faktor
+    ungleich null entfaellt, behaelt aber ihre Nummer nicht fuer eine andere.
+    """
+    aus = []
+    for k, alt in enumerate(combo.alternativen, 1):
+        teile = {a: f for a, f in alt.items() if f}
+        if teile:
+            aus.append((f"{combo.name} [{k}]", teile))
+    return aus
+
+
+def faktoren_der_alternative(model: Model, name: str):
+    """{Lastfall: Faktor} der Alternative "EK [k]" - None, wenn keine
+    Ergebniskombination eine Alternative dieses Namens hat."""
+    for c in (getattr(model, "combinations", None) or {}).values():
+        if c.ist_umhuellende and name.startswith(f"{c.name} ["):
+            for n, teile in alternativen_der_kombination(c):
+                if n == name:
+                    return dict(teile)
+    return None
+
+
+def _lastfall_alternative(teile: dict):
+    """Der Lastfall, wenn die Alternative genau dieser Lastfall mit Faktor 1
+    ist - sonst None. Dann **ist** die Alternative das Lastfallergebnis."""
+    if len(teile) != 1:
+        return None
+    lc, f = next(iter(teile.items()))
+    return lc if abs(f - 1.0) < 1e-12 else None
+
+
 def umhuellende_der_kombination(model: Model, combo: Combination, case_results: dict,
                                 systeme: dict = None, workers: int = None,
-                                progress=None) -> tuple:
+                                progress=None, ablage: dict = None) -> tuple:
     """Die Umhuellende einer Kombination mit Alternativen - Rueckgabe
     (Envelope, Zahl der zusaetzlich geloesten Alternativen).
 
@@ -2829,31 +4032,155 @@ def umhuellende_der_kombination(model: Model, combo: Combination, case_results: 
     Drehlager sind das alle 720 Eintraege der 52 Ergebniskombinationen. Jede
     andere Alternative wird als voruebergehende Kombination gerechnet
     (Ueberlagerung; im Kontaktmodell direkte Loesung) und nach dem Einfalten
-    verworfen - der Speicher haengt nicht von der Zahl der Alternativen ab.
+    verworfen - im linearen Modell haengt der Speicher nicht von der Zahl
+    der Alternativen ab; die Nachweise ueberlagern sie bei Bedarf neu
+    (:func:`ergebnisse_der_alternativen`).
+
+    ``case_results`` muessen die **linearen** Lastfallergebnisse sein, auch
+    wenn ein Lastfall auf theorie "II"/"III" steht: eine Alternative ist
+    entweder die Ueberlagerung linearer Lastfaelle (sie gilt nach I.
+    Ordnung) oder als Ganzes nach II./III. Ordnung gerechnet (dann liegt sie
+    in ``ablage``) - nie ein Gemisch (solve_all, ``lineare_cases``).
+
+    ``ablage`` (``Analysis.alternativen``) nimmt die Ergebnisse auf, die sich
+    spaeter **nicht** aus den Lastfaellen wiedergewinnen lassen, und liefert
+    die schon gerechneten: Alternativen nach Theorie II./III. Ordnung (legt
+    theorie2/theorie3 ab), direkte Loesungen im Kontaktmodell und
+    Alternativen aus Lastfaellen, deren lineares Ergebnis danach durch II./III.
+    Ordnung ersetzt wird. Ohne sie sahen die Nachweise die Alternativen gar
+    nicht (22.09.2026: nur-oder-Modell 0,170 statt 0,370 Ausnutzung).
     """
     from dataclasses import replace
     sit = _kombination_pruefen(model, combo)
     env = Envelope(model, {}, combo.name)
     geloest = 0
-    for k, alt in enumerate(combo.alternativen, 1):
-        teile = {a: f for a, f in alt.items() if f}
-        if not teile:
-            continue
-        lc = next(iter(teile))
-        if len(teile) == 1 and abs(teile[lc] - 1.0) < 1e-12 and case_results \
-                and lc in case_results:
+    nl = None
+    # Lastfaelle, deren Ergebnis _lastfaelle_hoeherer_ordnung in an.cases
+    # ersetzt (hat): eine Alternative mit ihnen laesst sich spaeter nicht
+    # mehr aus an.cases ueberlagern und wird darum abgelegt
+    wechselt = {k for k, lc in model.load_cases.items()
+                if model.theorie_von(lc) in ("II", "III")}
+    liste = alternativen_der_kombination(combo)
+    for k, (name, teile) in enumerate(liste, 1):
+        lc = _lastfall_alternative(teile)
+        if ablage is not None and name in ablage:
+            env.aufnehmen(name, ablage[name])
+            geloest += 1
+        elif lc is not None and case_results and lc in case_results:
             env.aufnehmen(lc, case_results[lc])
+            if ablage is not None and lc in wechselt:
+                ablage[name] = case_results[lc]
         else:
-            name = f"{combo.name} [{k}]"
             zwischen = replace(combo, name=name, factors=teile, alternativen=[])
             res = solve_combination(model, zwischen, case_results, workers=workers,
                                     systeme=systeme)
             env.aufnehmen(name, res)
             geloest += 1
-        _melde(progress, f"Umhüllende {combo.name}: {k}/{len(combo.alternativen)}"
+            if ablage is not None:
+                if nl is None:
+                    nl = _nichtlinear(model)
+                if nl or (wechselt & set(teile)):
+                    ablage[name] = res
+        _melde(progress, f"Umhüllende {combo.name}: {k}/{len(liste)}"
                + (f" – Situation {sit}" if sit != GRUNDSTELLUNG else ""),
-               0.60 + 0.30 * k / max(1, len(combo.alternativen)))
+               0.60 + 0.30 * k / max(1, len(liste)))
     return env, geloest
+
+
+def ergebnisse_der_alternativen(model: Model, analysis, combo: Combination) -> tuple:
+    """Die Ergebnisse der Alternativen einer Ergebniskombination fuer die
+    Nachweise - Rueckgabe ({"EK [k]": Results}, [Warnungen]).
+
+    Ein Nachweis braucht **zusammengehoerige** Schnittgroessen; die
+    Umhuellende mischt Minimum und Maximum verschiedener Alternativen und
+    taugt dafuer nicht. Darum sieht jeder Nachweis jede Alternative wie eine
+    eigene Kombination, in derselben Reihenfolge wie die Umhuellende:
+
+    * abgelegt (``analysis.alternativen``): Theorie II./III. Ordnung,
+      Kontaktmodell - so, wie die Umhuellende sie gefaltet hat;
+    * ein Lastfall mit Faktor 1: das Lastfallergebnis;
+    * sonst im linearen Modell die Ueberlagerung der Lastfaelle.
+
+    Was so nicht zu haben ist, wird als Warnung benannt und nicht still
+    durch etwas anderes ersetzt: das Kontaktmodell ohne abgelegtes Ergebnis
+    und jede Alternative, die nach Theorie II./III. Ordnung zu rechnen ist
+    (Theorie der EK oder eines ihrer Lastfaelle) und nicht abgelegt wurde -
+    etwa nach ``solve_all(combinations=False)`` oder aus einer
+    Ergebnisdatei von vor dem 22.09.2026. Ueberlagert kaeme dort still das
+    lineare Ergebnis heraus: am Druckkragarm EK1 [2] 3,321 statt 9,705 mm,
+    an der Halle (theorie2 "ein", alle GZT-Kombinationen als eine EK) Riegel
+    0,9654 statt 0,9734 - ohne Warnung, waehrend die gewoehnlichen
+    Kombinationen derselben Rechnung als "nicht nachgewiesen" gemeldet
+    wurden (Gegenpruefung 23.09.2026).
+    """
+    from dataclasses import replace
+    aus: dict = {}
+    warn: list = []
+    abgelegt = getattr(analysis, "alternativen", None) or {}
+    cases = getattr(analysis, "cases", None) or {}
+    nl = None
+    theorie = model.theorie_von(combo)
+    # Lastfaelle, deren Ergebnis II./III. Ordnung ist oder war: ueberlagern
+    # ist dann nicht zulaessig, und die volle Rechnung legt jede Alternative
+    # mit ihnen ab (umhuellende_der_kombination, ``wechselt``)
+    hoeher = {k for k, lf in model.load_cases.items()
+              if model.theorie_von(lf) in ("II", "III")}
+    for name, teile in alternativen_der_kombination(combo):
+        lc = _lastfall_alternative(teile)
+        if name in abgelegt:
+            aus[name] = abgelegt[name]
+            continue
+        grund = None
+        if theorie in ("II", "III") and not _bei_theorie_I_geblieben(analysis, theorie, name):
+            grund = (f"sie ist nach Theorie {theorie}. Ordnung zu rechnen, ihr Ergebnis "
+                     "liegt nicht vor (Überlagerung wäre linear)")
+        elif hoeher & set(teile):
+            grund = (f"Lastfall {', '.join(sorted(hoeher & set(teile)))} wird nach Theorie "
+                     "II./III. Ordnung gerechnet, ihr Ergebnis liegt nicht vor "
+                     "(Überlagerung nicht zulässig)")
+        if grund is not None:
+            warn.append(f"Kombination {name} (Alternative der Ergebniskombination "
+                        f"{combo.name}) nicht nachgewiesen: {grund} – „Alle Lastfälle + "
+                        "Kombinationen“ neu rechnen")
+            continue
+        if lc is not None and lc in cases:
+            aus[name] = cases[lc]
+            continue
+        fehlt = [a for a in teile if a not in cases]
+        if nl is None:
+            nl = _nichtlinear(model)
+        if not nl and not fehlt:
+            zwischen = replace(combo, name=name, factors=teile, alternativen=[])
+            try:
+                aus[name] = solve_combination(model, zwischen, cases, nichtlinear=False)
+            except ValueError as ex:
+                warn.append(f"Kombination {name} (Alternative der Ergebniskombination "
+                            f"{combo.name}) nicht nachgewiesen: {ex}")
+            continue
+        grund = (f"Lastfall {', '.join(fehlt)} nicht gerechnet" if fehlt else
+                 "ihr direkt gelöstes Ergebnis liegt nicht vor (nichtlineares Modell, "
+                 "Überlagerung nicht zulässig)")
+        warn.append(f"Kombination {name} (Alternative der Ergebniskombination {combo.name}) "
+                    f"nicht nachgewiesen: {grund} – „Alle Lastfälle + Kombinationen“ "
+                    "neu rechnen")
+    return aus, warn
+
+
+def _bei_theorie_I_geblieben(analysis, theorie: str, name: str) -> bool:
+    """Ob die Rechnung nach Theorie II. bzw. III. Ordnung die Alternative
+    ``name`` gesehen hat und bei ihrem linearen Ergebnis geblieben ist -
+    dann darf ergebnisse_der_alternativen es ueberlagern.
+
+    Das trifft zu bei alpha_cr >= Grenze nach 5.2.1(3) (theorie2 "auto")
+    und bei einem Fehler der Rechnung, den das Theoriekapitel nennt ("nicht
+    geführt"); beides behandelt check_theorie2/check_theorie3 bei einer
+    gewoehnlichen Kombination genauso - deren lineares Ergebnis bleibt
+    stehen. Keine Zeile fuer die Alternative heisst: nicht nach dieser
+    Theorie gerechnet, das lineare Ergebnis waere geraten.
+    """
+    t = getattr(analysis, "theorie2" if theorie == "II" else "theorie3", None)
+    info = (getattr(t, "kombinationen", None) or {}).get(name)
+    return info is not None and not getattr(info, "gerechnet", False)
 
 
 def _teil_merken(ex, name: str, wert: dict):
@@ -3250,7 +4577,7 @@ def _kontakt_abbruch(it: int, ex, cs, model, u, zug: list = None, log: list = No
 
 
 def _teilergebnis_anhaengen(model, system, res, ex, F, feq=None, q=None, temp=None,
-                            workers=None, aktiv=None) -> None:
+                            workers=None, aktiv=None, art: str = "") -> None:
     """Nach einem Abbruch der Kontakt-Iteration: die Verschiebung der letzten
     geloesten Iteration als Ergebnis an die Ausnahme haengen - samt den
     Teilen, deren Kontaktbedingungen zuletzt alle offen waren, als freie
@@ -3271,9 +4598,21 @@ def _teilergebnis_anhaengen(model, system, res, ex, F, feq=None, q=None, temp=No
         # auf dem Stand des VORIGEN, konvergierten Laufs, und ein abgebrochener
         # Lastfall meldete "letzter Lauf konvergiert" (gefunden von der
         # Loesersitzung am Quelltext, 22.09.2026).
-        _laeufe = int(res.info.get("contact_laeufe", 0) or 0) + 1
-        _nicht = int(res.info.get("contact_laeufe_nicht_konvergiert", 0) or 0) + 1
+        #
+        # Das Laufbuch bekommt fuer den abgebrochenen Lauf einen eigenen
+        # Eintrag (grund 'abbruch'); die Zaehlung wird daraus abgeleitet wie
+        # in _kontakt_info_sammeln. Zustandsangaben gibt es nicht - die
+        # Iteration hat kein Ende erreicht.
+        _alte = list(res.info.get("laeufe") or [])
+        _eintrag = _laufbuch_eintrag(len(_alte) + 1, {
+            "contact_iterations": int(ex.iteration), "contact_converged": False,
+            "contact_lauf": {"grund": "abbruch"}}, art, None)
+        _eintrag["faktorisierungen"] = None      # nicht bekannt: der Lauf gab kein cinfo zurueck
+        _laeufe_liste = _alte + [_eintrag]
+        _laeufe = len(_laeufe_liste)
+        _nicht = sum(1 for e in _laeufe_liste if not e["konvergiert"])
         res.info.update({"abbruch": str(ex).splitlines()[0], "abbruch_iteration": int(ex.iteration),
+                         "laeufe": _laeufe_liste,
                          "contact_laeufe": _laeufe, "contact_letzter_lauf_konvergiert": False,
                          "contact_laeufe_nicht_konvergiert": _nicht,
                          "contact_iterations": int(ex.iteration), "contact_converged": False,
@@ -3323,7 +4662,7 @@ def _teilergebnis_anhaengen(model, system, res, ex, F, feq=None, q=None, temp=No
         res.info["singularitaeten"] = [singularitaet_info(x) for x in _sg.wichtigste(res.singular)]
         if feq is not None:
             try:
-                postprocess(model, u, res, feq, q, temp, workers, aktiv)
+                postprocess(model, u, res, feq, q, temp, workers, aktiv, system=system)
             except Exception as ex3:      # noqa: BLE001 - Spannungen sind Zugabe, die Verformung zaehlt
                 res.info["abbruch_nachlauf"] = str(ex3)
     except Exception as ex2:              # noqa: BLE001 - das Teilergebnis darf den Abbruch nicht verschlucken
@@ -3398,6 +4737,35 @@ def _kontaktsystem(system: StaticSystem, model: Model, uebermass, log: list):
     return cs
 
 
+def _kontaktlauf_angaben(cs, u, model: Model, grund: str) -> dict:
+    """Was das Laufbuch ueber einen Kontaktlauf festhaelt (``cinfo['contact_lauf']``,
+    in _kontakt_info_sammeln zum Eintrag gemacht): Grund des Endes, Zustand am
+    Ende und die Runden (contact.RUNDEN_FELDER).
+
+    ``u_max`` ist die groesste Verschiebung eines Knotens [m], nur ueber die
+    drei Verschiebungen - u haengt Drehungen und Woelb-Freiheitsgrade an, und
+    ein Maximum ueber m und rad zusammen waere keine Groesse. Dasselbe Mass
+    wie "max|u|" der Drehlager-Messungen (Knotenbetrag)."""
+    u_max = None
+    if u is not None:
+        n6 = model.nn * NDOF
+        v = np.asarray(u, float)[:n6].reshape(-1, NDOF)[:, :3]
+        u_max = float(np.linalg.norm(v, axis=1).max()) if len(v) else 0.0
+    return {"grund": grund, "zyklen": int(cs.cycles), "phase": int(cs.phase),
+            "n_aktiv": int(cs.n_active), "n_gleitet": int(cs.n_slip),
+            "runden": list(getattr(cs, "runden", None) or []),
+            "endzustand_kennung": cs.endzustand_kennung(), "u_max": u_max}
+
+
+def _neustart_vermerken(cinfo2: dict, runden_vorher: list) -> None:
+    """Ein Neustart gehoert zu **demselben** Kontaktlauf: die Runden vor dem
+    Neustart kommen vor die des Neustarts, damit je Schritt eine Runde im
+    Laufbuch steht (Schritte werden dort ebenso zusammengezaehlt)."""
+    lauf = cinfo2.setdefault("contact_lauf", {})
+    lauf["neustart"] = True
+    lauf["runden"] = list(runden_vorher) + list(lauf.get("runden") or [])
+
+
 def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                        max_iter: int = 120, progress=None, us: np.ndarray = None,
                        K_zusatz: sparse.spmatrix = None, uebermass: dict = None,
@@ -3446,26 +4814,59 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         return s if kz_kenn is None else s + (kz_kenn,)
 
     f0 = getattr(system, "faktorisierungen", 0)
+    eingefroren_verworfen = None     # Verstoesse, wenn der eingefrorene Zustand nicht passte
     if einfrieren is not None and cs.cons and cs.zustand_setzen(einfrieren):
         Kc, Fc = cs.matrices(model.ndof)
         if K_zusatz is not None:
             Kc = Kc + K_zusatz
         u = system.solve(F, Kc, Fc, us=us, signatur=signatur())
-        cs._update_states(u)                 # nur zur Auswertung: g, Fn, Ft je Bedingung
-        R = system.reactions(u, F + Fc, Kc)
-        Rsup = cs.support_reactions(model.nn)
-        n6 = model.nn * NDOF
-        Rk = R[:n6].reshape(-1, NDOF)
-        Rk[:, :3] += Rsup
-        R[:n6] = Rk.ravel()
-        log.append("Kontaktzustand eingefroren: Kontaktsteifigkeit und -kräfte des "
-                   "Referenzzustands, lineare Lösung ohne Iteration")
-        log.extend(cs.warnings())
-        return u, R, cs.results(), cs.nodal_forces(model.nn), {
-            "contact_iterations": 1, "contact_converged": True, "contact_log": log,
-            "contact_warm": False, "contact_frozen": True,
-            "contact_factorisations": getattr(system, "faktorisierungen", 0) - f0,
-            "contact_state": None}
+        # Vor _update_states (das setzt Zustaende um): passt der eingefrorene
+        # Zustand zu dieser Last? Bis zum 22.09.2026 hiess der Lauf immer
+        # "konvergiert", auch wenn eine geschlossene Bedingung Zug trug (FE4).
+        # Gemessen am Block mit Reibung, Referenz H1: 1,0 H1 passt (0,00 %
+        # gegen die nichtlineare Loesung), 1,1 H1 vier Knoten ueber dem
+        # Reibkegel (7,0 %), 0,5 H1 Durchdringung und Gleiten gegen die
+        # Richtung (18,8 %), -1,0 H1 Zug an sechs geschlossenen (70,0 %).
+        verst = cs.zustand_verstoesse(u)
+        passt = not (verst["zug"] or verst["durchdringung"] or verst["kegel"] or verst["gegen"])
+        if passt:
+            cs._update_states(u)             # nur zur Auswertung: g, Fn, Ft je Bedingung
+            R = system.reactions(u, F + Fc, Kc)
+            Rsup = cs.support_reactions(model.nn)
+            n6 = model.nn * NDOF
+            Rk = R[:n6].reshape(-1, NDOF)
+            Rk[:, :3] += Rsup
+            R[:n6] = Rk.ravel()
+            log.append("Kontaktzustand eingefroren: Kontaktsteifigkeit und -kräfte des "
+                       "Referenzzustands, lineare Lösung ohne Iteration")
+            log.extend(cs.warnings())
+            return u, R, cs.results(), cs.nodal_forces(model.nn), {
+                "contact_iterations": 1, "contact_converged": True, "contact_log": log,
+                "contact_warm": False, "contact_frozen": True,
+                "contact_factorisations": getattr(system, "faktorisierungen", 0) - f0,
+                "contact_state": None,
+                # konvergiert: der Zustand erfuellt alle Bedingungen unter dieser
+                # Last; der Grund sagt, dass dieser Lauf nicht iteriert hat
+                "contact_lauf": _kontaktlauf_angaben(cs, u, model, "eingefroren")}
+        # Passt nicht: nichtlinear nachrechnen, vom eingefrorenen Zustand aus
+        teile = []
+        if verst["zug"]:
+            teile.append(f"{verst['zug']} geschlossene Bedingungen unter Zug "
+                         f"(größter {verst['zug_max'] / 1e3:.3g} kN)")
+        if verst["durchdringung"]:
+            teile.append(f"{verst['durchdringung']} offene durchdrungen "
+                         f"(größte {verst['durchdringung_max'] * 1e3:.3g} mm)")
+        if verst["kegel"]:
+            teile.append(f"{verst['kegel']} haftende über dem Reibkegel "
+                         f"(bis {verst['kegel_max']:.3g}-fach)")
+        if verst["gegen"]:
+            teile.append(f"{verst['gegen']} gleitende gegen ihre Gleitrichtung")
+        zeile = ("Kontaktzustand eingefroren, passt aber nicht zu dieser Last: "
+                 + ", ".join(teile) + " - wird nichtlinear nachgerechnet, Start: der eingefrorene Zustand")
+        log.append(zeile)
+        _melde(progress, zeile)
+        eingefroren_verworfen = verst
+        start = einfrieren
     warm = bool(start) and cs.zustand_setzen(start)
     if warm:
         log.append("Warmstart aus dem Kontaktzustand des vorigen Lastfalls")
@@ -3487,7 +4888,9 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         return u, R, [], np.zeros((model.nn, 3)), {"contact_iterations": 0,
                                                    "contact_converged": True,
                                                    "contact_log": log,
-                                                   "contact_state": None}
+                                                   "contact_state": None,
+                                                   "contact_lauf": _kontaktlauf_angaben(
+                                                       cs, u, model, "")}
     u = None
     forced = False
     for it in range(1, max_iter + 1):
@@ -3505,6 +4908,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 # Lager mit Reibung, Ausfall bei Zug und Schlupf 2 mm)
                 log.append("Warmstart verworfen: im ersten Schritt kein Gleichgewicht - "
                            "Neustart von der Geometrie")
+                runden_vorher = list(getattr(cs, "runden", None) or [])
                 u2, R2, cons2, cf2, cinfo2 = solve_with_contact(
                     model, system, F, max_iter, progress, us, K_zusatz, uebermass,
                     start=None, versuch=versuch + 1, fenster=fenster,
@@ -3512,6 +4916,9 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 cinfo2["contact_log"] = log + list(cinfo2.get("contact_log", []))
                 cinfo2["contact_warm"] = False
                 cinfo2["contact_factorisations"] = getattr(system, "faktorisierungen", 0) - f0
+                _neustart_vermerken(cinfo2, runden_vorher)
+                if eingefroren_verworfen is not None:     # der Neustart kennt ihn nicht
+                    cinfo2["contact_frozen_verworfen"] = eingefroren_verworfen
                 return u2, R2, cons2, cf2, cinfo2
             if it == 1 and not forced and cs.stabilise():
                 # Im ersten Schritt haelt keine Bedingung - etwa eine Schraube,
@@ -3556,6 +4963,13 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             # wieder an, und die gewoehnliche Haftbindung uebernimmt. Der
             # naechste Schritt rechnet ohne ihn.
             changed = True
+            weiter = ("Kontakt: nach dem Deckel der Reibungsnachprüfung wurde ein "
+                      "Schubhalt gelöst - die Iteration läuft weiter")
+            if getattr(cs, "am_deckel", False) and weiter not in log:
+                # Die Abbruchzeile des Kontaktsystems steht schon im
+                # Protokoll; ohne diese Zeile laese man dort "abgebrochen"
+                # neben einem Lauf, der danach noch zu Ende kommen kann.
+                log.append(weiter)
         if progress:
             # Anteil im Fenster des Lastfalls: 1 - 0,85^it waechst mit jedem
             # Schritt und naehert sich der Fensterkante - ein wachsender Balken
@@ -3595,7 +5009,15 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             # sah damit aus wie eine auskonvergierte - und genau gegen solche
             # Zahlen pruefen wir 'aendert das Ergebnis nicht'. Gefunden von der
             # Loesersitzung am Quelltext (21.09.2026).
-            deckel = cs.phase == 2 and cs.cycles >= _MAX_CYCLES
+            # Entschieden wird an der Runde, in der die Schleife wirklich
+            # endet (cs.am_deckel), nicht an cs.cycles: der Zaehler bleibt
+            # nach dem Deckel stehen, und eine spaetere Runde ohne Wechsel
+            # meldete sonst ebenfalls den Deckel (22.09.2026).
+            # Fehlt der Merker (ein Kontaktsystem, dessen update() ihn nicht
+            # setzt), gilt die alte, vorsichtige Probe: ein fehlender Merker
+            # darf nicht "konvergiert" heissen (Gegenpruefung, 22.09.2026).
+            deckel = bool(getattr(cs, "am_deckel",
+                                  cs.phase == 2 and cs.cycles >= _MAX_CYCLES))
             converged = not deckel
             break
     if converged and u is not None:
@@ -3639,6 +5061,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 log.append(f"Warmstart verworfen: {n_v} gleitende Knoten bewegen sich gegen "
                            "ihre Richtung - Neustart von der Geometrie")
                 neu_start = None
+            runden_vorher = list(getattr(cs, "runden", None) or [])
             u2, R2, cons2, cf2, cinfo2 = solve_with_contact(
                 model, system, F, max_iter, progress, us, K_zusatz, uebermass,
                 start=neu_start, versuch=versuch + 1, fenster=fenster,
@@ -3647,6 +5070,9 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             cinfo2["contact_warm"] = bool(neu_start) and cinfo2.get("contact_warm", False)
             cinfo2["contact_iterations"] = it + cinfo2.get("contact_iterations", 0)
             cinfo2["contact_factorisations"] = getattr(system, "faktorisierungen", 0) - f0
+            _neustart_vermerken(cinfo2, runden_vorher)
+            if eingefroren_verworfen is not None:         # der Neustart kennt ihn nicht
+                cinfo2["contact_frozen_verworfen"] = eingefroren_verworfen
             return u2, R2, cons2, cf2, cinfo2
     R = system.reactions(u, F + (Fc if Fc is not None else 0.0), Kc)
     # Einseitige Lager als Auflagerreaktionen ausweisen
@@ -3670,12 +5096,17 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         log.append(text)
         _melde(progress, text)
     log.extend(cs.warnings())
+    # Derselbe Entscheid wie der Meldetext oben, als Wort fuers Laufbuch
+    grund = ("" if converged else "probelauf" if probelauf
+             else "deckel" if deckel else "max_iter")
     return u, R, cs.results(), cs.nodal_forces(model.nn), {
         "contact_abbruch": (text if not converged else ""),
         "contact_iterations": it, "contact_converged": converged, "contact_log": log,
         "contact_warm": warm,
         "contact_factorisations": getattr(system, "faktorisierungen", 0) - f0,
-        "contact_state": cs.zustand()}
+        "contact_state": cs.zustand(),
+        "contact_frozen_verworfen": eingefroren_verworfen,
+        "contact_lauf": _kontaktlauf_angaben(cs, u, model, grund)}
 
 
 # ==========================================================================
@@ -3914,6 +5345,11 @@ class Analysis:
     modelle: dict = field(default_factory=dict)
     theorie3: object = None
     schwingung: object = None
+    #: Ergebnisse von Alternativen einer Ergebniskombination ("EK [k]"), die
+    #: sich nicht aus den Lastfaellen wiedergewinnen lassen: Theorie II./III.
+    #: Ordnung, Kontaktmodell (umhuellende_der_kombination). Die Nachweise
+    #: lesen sie ueber ergebnisse_der_alternativen.
+    alternativen: dict = field(default_factory=dict)
 
     def all_results(self) -> dict:
         d = dict(self.cases)
@@ -3926,6 +5362,9 @@ class Analysis:
     def summary(self) -> str:
         s = [f"Lastfaelle: {len(self.cases)}   Kombinationen: {len(self.combinations)}   "
              f"Rechenzeit: {self.info.get('time', 0):.2f} s ({self.info.get('parallel', '')})"]
+        # Ausweichen des Gleichungsloesers: eine Zeile je Grund ueber alle
+        # Ergebnisse - auch aus Ketten, Pool und Farm, die ohne Fortschritt rechnen
+        s += ausweichen_gebuendelt(self.all_results().items())
         for k, env in self.envelopes.items():
             s.append(env.summary())
         if self.theorie2 is not None and getattr(self.theorie2, "kombinationen", None):
@@ -4009,19 +5448,36 @@ def _lastfaelle_hoeherer_ordnung(model: Model, an, systeme: dict, progress=None)
                     an.theorie3 = Th3Results(
                         settings={"schritte": int(getattr(ds, "th3_schritte", 10) or 10)})
                 an.theorie3.kombinationen[name] = Th3Info(name=name, fehler=str(ex))
-            alt_res = an.cases.get(name)
-            if alt_res is not None:
-                # Das Ergebnis bleibt stehen - es ist ja gerechnet -, sagt aber
-                # ab jetzt selbst, nach welcher Theorie.
-                alt_res.info["theorie"] = "I"
-                alt_res.info["theorie_gewuenscht"] = th
-                alt_res.info["theorie_fehler"] = str(ex)
+            _lineares_ergebnis_markieren(an, name, th, str(ex))
             continue
         if not info.fehler:
             res.kind = "case"
             if lc.situation:
                 res.info["situation"] = lc.situation
             an.cases[name] = res
+        else:
+            # Singulaeres System (theorie2.py) oder keine Konvergenz
+            # (theorie3.py): das nichtlineare Ergebnis wird zu Recht NICHT
+            # uebernommen, der Fehler steht ueber kombinationen[name] schon im
+            # Theoriekapitel. Das stehenbleibende lineare Ergebnis blieb aber
+            # unmarkiert, und die Lastfalltabelle wies weiter "II"/"III" aus,
+            # obwohl nach Theorie I. Ordnung gerechnet war (gemessen 22.09.2026
+            # mit erzwungenem info.fehler, tests/test_theorie3.py). Darum
+            # dieselbe Markierung wie im ValueError-Zweig.
+            an.info.setdefault("warnungen", []).append(f"Lastfall {name}: {info.fehler}")
+            _lineares_ergebnis_markieren(an, name, th, str(info.fehler))
+
+
+def _lineares_ergebnis_markieren(an, name: str, th: str, grund: str) -> None:
+    """Ein Lastfall, dessen Rechnung nach Theorie ``th`` scheiterte, behaelt
+    sein lineares Ergebnis - es ist ja gerechnet -, sagt aber ab jetzt selbst,
+    nach welcher Theorie (report/html.py, ``_theorie_spalte``)."""
+    alt_res = an.cases.get(name)
+    if alt_res is None:
+        return
+    alt_res.info["theorie"] = "I"
+    alt_res.info["theorie_gewuenscht"] = th
+    alt_res.info["theorie_fehler"] = grund
 
 
 def ermuedungsreferenzen(model: Model) -> dict:
@@ -4143,25 +5599,54 @@ def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progres
     an.systeme = {k: v[1] for k, v in systeme.items()}
     an.modelle = {k: v[0] for k, v in systeme.items()}
     system = an.systeme[GRUNDSTELLUNG]
+    ek_rechnen = bool(combinations and model.combinations)
+    umhuellende_ek: dict = {}
+
+    def _ek_umhuellende(namen, lineare_cases: dict) -> None:
+        for n in namen:
+            c = model.combinations[n]
+            env, geloest = umhuellende_der_kombination(model, c, lineare_cases, systeme,
+                                                       workers, progress,
+                                                       ablage=an.alternativen)
+            umhuellende_ek[n] = env
+            an.info.setdefault("umhuellende", {})[n] = {
+                "alternativen": len(c.alternativen), "geloest": geloest}
+
+    # Ergebniskombinationen, deren Theorie II. oder III. Ordnung ist: ihre
+    # Alternativen rechnen check_theorie2/check_theorie3 unten am verformten
+    # System, erst danach wird gefaltet. Vorher gingen sie hier linear in die
+    # Umhuellende, und check_theorie2 legte fuer die EK selbst (factors leer)
+    # ein Nullergebnis in an.combinations (Befund FE12, 22.09.2026).
+    ek_hoeher = [n for n, c in model.combinations.items()
+                 if c.ist_umhuellende and model.theorie_von(c) in ("II", "III")]
     if combinations and model.combinations:
         an.combinations = solve_combinations(model, case_results=an.cases, system=None,
                                              workers=workers, progress=progress,
                                              systeme=systeme)
         # Kombinationen mit Alternativen: je eine Umhuellende, keine Ergebnisse
         # in an.combinations. Sie stehen hinter den Art-Umhuellenden (unten).
-        umhuellende_ek: dict = {}
-        for n, c in model.combinations.items():
-            if c.ist_umhuellende:
-                env, geloest = umhuellende_der_kombination(model, c, an.cases, systeme,
-                                                           workers, progress)
-                umhuellende_ek[n] = env
-                an.info.setdefault("umhuellende", {})[n] = {
-                    "alternativen": len(c.alternativen), "geloest": geloest}
-        an.info["_umhuellende_ek"] = umhuellende_ek
+        _ek_umhuellende([n for n, c in model.combinations.items()
+                         if c.ist_umhuellende and n not in ek_hoeher], an.cases)
+    # Die linearen Lastfallergebnisse, bevor _lastfaelle_hoeherer_ordnung die
+    # mit theorie "II"/"III" ersetzt (es setzt je Lastfall ein neues Objekt
+    # ein, die flache Kopie behaelt die linearen). Aus ihnen - wie oben jede
+    # gewoehnliche Kombination - ueberlagert die Umhuellende einer EK nach
+    # II./III. Ordnung jede Alternative, die bei I. Ordnung bleibt (theorie2
+    # "auto" mit alpha_cr >= Grenze, Fehler der Rechnung). Vorher kam dort
+    # an.cases nach dem Ersetzen hinein: 1,35·G linear + 1,5·W nach II.
+    # Ordnung, ein Gemisch, weder I. noch II. Ordnung, abgelegt und
+    # nachgewiesen (Gegenpruefung 23.09.2026, W mit theorie "II", auto:
+    # Rahmen Stielkopf 102,4519 statt 102,1415 mm wie K2; Druckkragarm
+    # des Tests EK1 [2] 3,374407 statt 3,320749 mm).
+    lineare_cases = dict(an.cases) if (ek_rechnen and ek_hoeher) else None
     # Theorie je Lastfall: II. oder III. Ordnung ersetzt das lineare Ergebnis
     _lastfaelle_hoeherer_ordnung(model, an, systeme, progress)
-    th2 = [n for n, c in model.combinations.items() if model.theorie_von(c) == "II"]
-    if th2 and an.combinations:
+    # Eine Ergebniskombination kommt nur mit ihren Alternativen hinein
+    # (Ergebnisse nach an.alternativen) und nur, wenn Kombinationen gerechnet
+    # werden; eine gewoehnliche, wenn es Kombinationsergebnisse gibt.
+    th2 = [n for n, c in model.combinations.items() if model.theorie_von(c) == "II"
+           and (ek_rechnen if c.ist_umhuellende else bool(an.combinations))]
+    if th2:
         # Gleichgewicht am verformten System: die Kombinationen werden
         # ersetzt, denn nach Theorie II. Ordnung gilt keine Superposition
         # mehr (EN 1993-1-1, 5.2). Danach erst die Umhuellenden bilden.
@@ -4176,8 +5661,9 @@ def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progres
         else:                       # Lastfaelle nach II. Ordnung stehen schon darin
             an.theorie2.kombinationen.update(t2.kombinationen)
             an.theorie2.settings.update(t2.settings)
-    th3 = [n for n, c in model.combinations.items() if model.theorie_von(c) == "III"]
-    if th3 and an.combinations:
+    th3 = [n for n, c in model.combinations.items() if model.theorie_von(c) == "III"
+           and (ek_rechnen if c.ist_umhuellende else bool(an.combinations))]
+    if th3:
         from .theorie3 import check_theorie3
         t3 = check_theorie3(model, an, combos=th3, progress=progress, systeme=systeme)
         if an.theorie3 is None:
@@ -4185,7 +5671,14 @@ def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progres
         else:
             an.theorie3.kombinationen.update(t3.kombinationen)
             an.theorie3.settings.update(t3.settings)
-    umhuellende_ek = an.info.pop("_umhuellende_ek", {}) or {}
+    if ek_rechnen and ek_hoeher:
+        # Nach II./III. Ordnung Gerechnetes kommt aus an.alternativen, alles
+        # andere aus den linearen Lastfaellen - nie aus einem Gemisch
+        _ek_umhuellende(ek_hoeher, lineare_cases)
+        lineare_cases = None        # die ersetzten linearen Ergebnisse freigeben
+        # in der Reihenfolge des Modells, wie vorher
+        umhuellende_ek = {n: umhuellende_ek[n] for n in model.combinations
+                          if n in umhuellende_ek}
     if envelopes:
         groups: dict[str, dict] = {}
         for n, r in an.combinations.items():
@@ -4195,8 +5688,11 @@ def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progres
         for key, rs in groups.items():
             an.envelopes[key] = Envelope(model, rs, f"Umhuellende {key}")
         # Die Umhuellende einer Ergebniskombination gehoert in die Umhuellende
-        # ihrer Art: so sehen die Nachweise (GZT, GZG, Ermuedung) auch die
-        # Alternativen - wie in RFEM.
+        # ihrer Art - wie in RFEM. Die Nachweise lesen die Umhuellenden
+        # **nicht** (sie brauchen zusammengehoerige Schnittgroessen); sie
+        # sehen die Alternativen einzeln ueber ergebnisse_der_alternativen.
+        # Hier stand bis zum 22.09.2026, die Nachweise saehen so die
+        # Alternativen - das traf nie zu (Befund FE11).
         for n, env in umhuellende_ek.items():
             typ = model.combinations[n].typ
             key = "ULS" if typ in ("ULS", "EQU", "ACC", "USER") else typ
@@ -4305,6 +5801,10 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
     sigma = -1e-6 * float(kd.mean() / max(float(mdf.mean()), 1e-300))
     A = (Kff - sigma * Mff).tocsc()
     loeser = LinearSolver(A)
+    # Die Modalanalyse faktorisiert selbst, ohne StaticSystem - das Ausweichen
+    # meldete hier bis zum 22.09.2026 nur warnings.warn (Befund K2).
+    if loeser.ausweichgrund:
+        _melde(progress, f"Gleichungslöser ausgewichen - {loeser.ausweichgrund}")
     try:
         op = LinearOperator(A.shape, dtype=float,
                             matvec=lambda x: loeser.solve(np.asarray(x, float).ravel(), check=False))
@@ -4333,6 +5833,7 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
                 "starrkoerper": int(np.sum(freqs < STARR_HZ)),
                 "kontakt": kontakt_text, "kontakt_aktiv": n_kontakt,
                 "loeser": loeser.backend}
+    res.info.update(_ausweich_eintraege([(loeser.ausweichgrund, loeser.backend)]))
     return res
 
 

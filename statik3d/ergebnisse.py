@@ -27,8 +27,10 @@ DATEIENDUNG = ".ergebnisse"
 VERSION = 1
 _MODELLMARKE = "STATIK3D_MODELL"
 #: Woerterbuecher je Element, die als (Nummern, Matrix) gepackt werden
-_JE_ELEMENT = ("beam_end", "beam_q", "shell_res", "solid_res", "feder_res",
+_JE_ELEMENT = ("beam_end", "beam_q", "shell_res", "solid_res", "solid_mittel", "feder_res",
                "grenzschicht_res", "bimomente")
+#: Felder der Analyse, die {Name: Results} halten und gepackt werden
+_ERGEBNISGRUPPEN = ("cases", "combinations", "alternativen")
 
 
 def pfad_zu(modellpfad: str) -> str:
@@ -122,15 +124,19 @@ def schreiben(pfad: str, model, analysis, fortschritt=None) -> int:
     """Die Analyse neben das Modell schreiben. Rueckgabe: Bytes."""
     if fortschritt:
         fortschritt(0.05, "Ergebnisse packen")
-    inhalt = {"kennung": kennung(model), "cases": {}, "combinations": {}}
-    for gruppe in ("cases", "combinations"):
+    inhalt = {"kennung": kennung(model)}
+    # alternativen: Ergebnisse von Alternativen einer Ergebniskombination, die
+    # die Nachweise nicht aus den Lastfaellen wiedergewinnen koennen
+    # (Kontaktmodell, Theorie II./III. Ordnung) - gepackt wie die Lastfaelle
+    for gruppe in _ERGEBNISGRUPPEN:
+        inhalt[gruppe] = {}
         for name, res in (getattr(analysis, gruppe, None) or {}).items():
             inhalt[gruppe][name] = _packen_results(res)
     for feld, wert in vars(analysis).items():
         # systeme: Faktorisierungen (SuperLU/Pardiso, nicht picklebar, nach dem
         # Laden wertlos); modelle: die Modellkopien je Stellung - sie entstehen
         # bei der naechsten Rechnung neu
-        if feld in ("model", "cases", "combinations", "systeme", "modelle"):
+        if feld in ("model", "systeme", "modelle") + _ERGEBNISGRUPPEN:
             continue
         inhalt[feld] = wert
     if fortschritt:
@@ -155,11 +161,11 @@ def lesen(pfad: str, model, fortschritt=None):
     if fortschritt:
         fortschritt(0.6, "Ergebnisse entpacken")
     an = Analysis(model)
-    for gruppe in ("cases", "combinations"):
+    for gruppe in _ERGEBNISGRUPPEN:
         for name, d in (inhalt.get(gruppe) or {}).items():
             getattr(an, gruppe)[name] = _entpacken_results(d, model)
     for feld, wert in inhalt.items():
-        if feld in ("kennung", "cases", "combinations"):
+        if feld in ("kennung",) + _ERGEBNISGRUPPEN:
             continue
         setattr(an, feld, wert)
     if fortschritt:

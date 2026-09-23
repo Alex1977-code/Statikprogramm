@@ -309,6 +309,117 @@ def test_randspannung():
           f"{min(sv2) / 1e6:.4f} … {max(sv2) / 1e6:.4f} N/mm²")
 
 
+def test_elementmittel():
+    """res.solid_mittel ist das Elementmittel Integral sigma dV / V.
+
+    Der Fehlerschaetzer liest es (netzfehler.MITTELFELD), wenn der Loeser es
+    fuehrt - bis zum 22.09.2026 tat er das nicht, und der Schaetzer bekam fuer
+    den elastischen hex8 das Eckmaximum aus solid_res. Bei Gleichspannung
+    muss das Mittel N/A sein; unter Biegung liegt es zwischen den Randwerten
+    und ist in einer Kombination exakt die Summe der Lastfaelle (linear in u).
+    """
+    m, els, soll = zugkoerper()
+    res = solver.solve_static(m)
+    abw = max(abs(float(res.solid_mittel[i][2]) - soll) for i in els) / soll
+    check("hex8 unter Gleichzug: Elementmittel = N/A", abw < 1e-9, f"{abw:.1e}")
+    m, els, _soll = biegebalken()
+    an = solver.solve_all(m)
+    res = an.combinations["K1"]
+    ok = all(i in res.solid_mittel for i in els)
+    innen = [i for i in els if float(np.asarray(m.nodes[m.elements[i].nodes])[:, 0].mean()) > 0.2]
+    kleiner = all(V.vergleichsspannung(np.asarray(res.solid_mittel[i]))
+                  <= V.vergleichsspannung(np.asarray(res.solid_res[i])) + 1e-6 for i in innen)
+    check("hex8 unter Biegung: Mittel fuer jedes Element, nie ueber dem massgebenden Punkt",
+          ok and kleiner)
+    # K1 = 1,0 * Lastfall: das Mittel der Kombination ist das des Lastfalls
+    lf = next(iter(an.cases.values()))
+    abw = max(float(np.abs(np.asarray(res.solid_mittel[i]) - np.asarray(lf.solid_mittel[i])).max())
+              for i in els)
+    check("Kombination: solid_mittel wird mit ueberlagert", abw < 1e-6, f"{abw:.1e} Pa")
+
+
+def test_randspannung_geglaettet():
+    """A4/B6 (22.09.2026): der Nachweis liest die **geglaettete** Eckspannung.
+
+    Kragarm-Pruefkoerper (tests/pruefkoerper.py): Oberkante bei L/2, nach
+    Saint-Venant exakt 355 N/mm2. Dort ist ein Knoten; seine geglaettete
+    Spannung (Mittel der Elemente gleichen Koerpers und Werkstoffs) trifft
+    beim hex8 8x2x4 auf 0,8 N/mm2, beim tet10 8x2x4 auf 4 N/mm2 (quadratisch,
+    O(h^2)). Das Elementmaximum, das der Nachweis bis dahin las, lag beim hex8
+    um 64 N/mm2 darueber.
+    """
+    from statik3d.elements import solid as sl
+    from tests import pruefkoerper as pk
+    kr = pk.Kragarm()
+    for typ, netz, tol, alt_min in (("hex8", (8, 2, 4), 1.0, 20.0), ("tet10", (8, 2, 4), 5.0, 20.0)):
+        m, ids = kr.modell(typ, *netz)
+        res, _t = pk.loese(m)
+        nx, ny, nz = netz
+        n = ids[(nx // 2, ny // 2, nz)]
+        sk = res.solid_knoten
+        j = np.flatnonzero(np.asarray(sk["knoten"]) == n)
+        sv = sl.von_mises(np.asarray(sk["spannung"])[j[0]]) if len(j) == 1 else float("nan")
+        check(f"{typ} {nx}x{ny}x{nz}: geglaettete Spannung am Nachweispunkt auf {tol:g} N/mm2",
+              abs(sv - kr.sigma) < tol * 1e6, f"{sv / 1e6:.2f} gegen {kr.sigma / 1e6:.1f} N/mm2")
+        am_knoten = [i for i, e in enumerate(m.elements) if n in e.nodes]
+        alt = max(sl.von_mises(np.asarray(res.solid_res[i])) for i in am_knoten)
+        check(f"{typ}: das Elementmaximum (bisherige Regel) lag deutlich darueber",
+              alt - kr.sigma > alt_min * 1e6, f"{alt / 1e6:.1f} N/mm2")
+        rand = res.solid_rand
+        check(f"{typ}: solid_rand je Element ist die groesste seiner geglaetteten Ecken",
+              all(i in rand and sl.von_mises(rand[i][0]) >= sv - 1e-6 for i in am_knoten))
+    # Kombination: die Knotenwerte werden ueberlagert
+    m, ids = kr.modell("hex8", 4, 1, 2)
+    m.add_combination("K2", {list(m.load_cases)[0]: 2.0}, typ="ULS")
+    an = solver.solve_all(m)
+    lf = next(iter(an.cases.values()))
+    ko = an.combinations["K2"]
+    check("Kombination 2,0 x Lastfall: Knotenwerte verdoppelt",
+          np.allclose(np.asarray(ko.solid_knoten["spannung"]),
+                      2.0 * np.asarray(lf.solid_knoten["spannung"]), rtol=1e-9, atol=1e-3))
+
+
+def test_randspannung_fliessend():
+    """Fliessende Elemente tragen ihren naechsten Integrationspunkt bei - der
+    liegt auf der Fliessflaeche, eine Ecke schoss frueher darueber hinaus.
+
+    hex8, eine Lage, reine Biegung 1,20 M_el, fuenf Lobatto-Punkte ueber die
+    Dicke: die Randfaser nach der Momenten-Kruemmungs-Beziehung traegt 236,35
+    N/mm2 (fy 235, E_t/E 2 %). Die geglaettete Spannung der oberen Knoten in
+    Feldmitte trifft das auf 1 N/mm2, und kein Knotenwert liegt ueber der
+    verfestigten Fliessgrenze des am staerksten gedehnten Punktes.
+    """
+    from statik3d import plastizitaet as pl
+    from statik3d.elements import solid as sl
+    from tests import pruefkoerper as pk
+    fy, E, r = 235e6, 210e9, 0.02
+    b = h = 0.2
+    L = 1.0
+    M = 1.2 * fy * b * h ** 2 / 6.0
+    m, ids = pk.quader("hex8", 5, 1, 1, L, b, h, fy=fy)
+    for k in [n for n in range(m.nn) if abs(m.nodes[n, 0]) < 1e-9]:
+        m.fix(int(k), "all")
+    seiten = pk.randseiten(m, lambda X: bool(np.all(np.abs(X[:, 0] - L) < 1e-9)))
+    I = b * h ** 3 / 12
+    pk.spannung_auf_seiten(m, seiten, lambda x: (M * (x[2] - h / 2) / I, 0.0, 0.0))
+    m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=r, laststufen=1, iterationen=30,
+                                     toleranz=1e-9)
+    res = solver.solve_static(m)
+    sk = res.solid_knoten
+    kn = np.asarray(sk["knoten"])
+    S = np.asarray(sk["spannung"])
+    oben = [ids[(i, j, 1)] for i in (2, 3) for j in (0, 1)]
+    sv = [sl.von_mises(S[np.flatnonzero(kn == n)[0]]) for n in oben]
+    check("fließend, eine Lage: geglättete Randspannung in Feldmitte auf 1 N/mm²",
+          all(abs(v - 236.35e6) < 1e6 for v in sv),
+          ", ".join(f"{v / 1e6:.2f}" for v in sv) + " gegen 236,35 N/mm²")
+    ep = max(float(np.max(v)) for v in [np.asarray(x) for x in res.info["plastisch"].values()])
+    grenze = fy + E * r / (1 - r) * ep
+    alle = [sl.von_mises(x) for x in S]
+    check("kein Knotenwert über der verfestigten Fließgrenze",
+          max(alle) <= grenze * (1 + 1e-9), f"{max(alle) / 1e6:.2f} ≤ {grenze / 1e6:.2f} N/mm²")
+
+
 def test_fehlerfaelle():
     m, els, _soll = zugkoerper()
     try:
@@ -391,6 +502,49 @@ def test_bericht():
           "Volumenbereich" not in h2)
 
 
+def test_gesamturteil_reines_volumenmodell():
+    """Das Gesamturteil des Berichts an einem Modell **nur aus Volumen**.
+
+    Bis zum 22.09.2026 fehlte der Volumennachweis in der Zusammenfassung des
+    Berichts doppelt: in der Statuspruefung und in der Liste der gefuehrten
+    Nachweise. Ein Modell ohne Staebe - am Drehlager der Regelfall - bekam
+    darum "Es wurden keine Nachweise gefuehrt ..." mit gruener Klasse, auch
+    wenn der Volumennachweis riss. test_report prueft den Status nur am
+    Balkenmodell mit Stab; dort faellt der fehlende Eintrag in "gefuehrt"
+    nicht auf (gemessen 22.09.2026: Volumen aus "gefuehrt" gestrichen, jene
+    Pruefung besteht weiter 7/7).
+
+    Zugkoerper 100 x 100 mm, S355, gemessen: N = 4000 kN -> Ausnutzung
+    1,194; N = 2500 kN -> 0,746.
+    """
+    import re
+    from statik3d.report import Report
+
+    def status(N):
+        m, els, _soll = zugkoerper(N=N)
+        m.add_volumenbereich("Schaft", els)
+        an = solver.solve_all(m, design=True)
+        zeilen = re.findall(r'<div class="status (ok|nok)">(.*?)</div>',
+                            Report(m, an).html(), re.S)
+        return m, an.volumen.bereiche["Schaft"].util, zeilen
+
+    m, util, zeilen = status(4000e3)
+    check("reines Volumenmodell: keine Staebe, Volumennachweis reisst",
+          not m.members and util > 1.0, f"{len(m.members)} Staebe, Ausnutzung {util:.3f}")
+    check("genau eine Statuszeile im Bericht", len(zeilen) == 1, str(zeilen))
+    klasse, text = zeilen[0] if zeilen else ("", "")
+    check("reissender Volumennachweis: Statuszeile 'NICHT erfüllt', Klasse nok",
+          klasse == "nok" and "NICHT erfüllt" in text, f"{klasse}: {text}")
+    check("... und nicht 'keine Nachweise geführt'",
+          "keine Nachweise geführt" not in text, text)
+
+    _m2, util2, zeilen2 = status(2500e3)
+    klasse2, text2 = zeilen2[0] if zeilen2 else ("", "")
+    check("Gegenprobe erfuellter Volumennachweis: 'Alle Nachweise erfüllt.', Klasse ok",
+          util2 <= 1.0 and klasse2 == "ok" and text2.strip() == "Alle Nachweise erfüllt.",
+          f"Ausnutzung {util2:.3f}, {klasse2}: {text2}")
+
+
 def test_nachweis_nimmt_die_spannung_des_loesers():
     """Der Nachweis darf die Spannung nicht neu aus der Verschiebung rechnen.
 
@@ -434,13 +588,18 @@ def test_nachweis_nimmt_die_spannung_des_loesers():
     info = r.info.get("plastizitaet") or {}
     check(f"Probe: {info.get('fliessend', 0)} von {len(m.elements)} Elementen fliessen",
           info.get("fliessend", 0) > 50, str(info.get("fliessend")))
-    loeser = max(pl.vergleichsspannung(np.asarray(v, float)) for v in r.solid_res.values())
+    # Seit dem 22.09.2026 liest der Nachweis die geglaettete Eckspannung des
+    # Loesers (res.solid_rand, siehe test_randspannung_geglaettet) - auch sie
+    # traegt D eps_p und den gemittelten Volumenanteil, sie ist nur ueber die
+    # Nachbarn eines Knotens gemittelt statt je Element das Maximum.
+    loeser = max(pl.vergleichsspannung(np.asarray(v[0], float)) for v in r.solid_rand.values())
+    elementweise = max(pl.vergleichsspannung(np.asarray(v, float)) for v in r.solid_res.values())
     sp = V._elementspannungen(m, r, list(range(len(m.elements))))
     nachweis = max(V.vergleichsspannung(q) for _i, q, _n in sp)
-    check("der Nachweis nimmt dieselbe Spannung wie der Loeser",
+    check("der Nachweis nimmt dieselbe Spannung wie der Loeser (geglaettet)",
           abs(nachweis - loeser) <= 1e-6 * loeser,
           f"{nachweis / 1e6:.1f} gegen {loeser / 1e6:.1f} MPa "
-          f"(Verhaeltnis {nachweis / loeser:.4f})")
+          f"(elementweise {elementweise / 1e6:.1f})")
     # Gegenprobe: ohne die Berichtigung waere es um ein Vielfaches daneben
     from statik3d.elements import solid as sl
     roh = []
@@ -579,8 +738,9 @@ def main():
     print("=" * 92)
     for t in (test_erzeugnisdicke_mindert_die_streckgrenze,
               test_erzeugnisdicke_ist_angebbar, test_spannungsformeln, test_zugkoerper, test_randspannung,
-              test_nachweis_nimmt_die_spannung_des_loesers,
-              test_fehlerfaelle, test_bericht):
+              test_nachweis_nimmt_die_spannung_des_loesers, test_elementmittel,
+              test_randspannung_geglaettet, test_randspannung_fliessend,
+              test_fehlerfaelle, test_bericht, test_gesamturteil_reines_volumenmodell):
         print()
         t()
     ok = sum(1 for _n, o in RESULTS if o)

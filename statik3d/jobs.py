@@ -10,6 +10,13 @@ def _job_solve_combination(model: dict, combination: str):
     from . import solver
     m = Model.from_dict(model)
     res = solver.solve_combination(m, m.combinations[combination])
+    if "start_angeboten_von" in res.info:
+        # Ein Auftrag baut sein System neu und rechnet darum kalt - seriell
+        # startet dieselbe Kombination warm vom letzten Lastfall. Bei Reibung
+        # ist das pfadabhaengig; der Vermerk sagt, warum hier nichts
+        # angeboten wurde (wie im Ausfallweg, 22.09.2026). Der Vermerk des
+        # Ausfallwegs bleibt: der reicht auch seriell nie einen Start weiter.
+        res.info.setdefault("start_vermerk", "Auftrag ohne Warmstart")
     res.model = None          # Modell nicht zuruecksenden
     return res
 

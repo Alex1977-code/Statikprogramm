@@ -674,6 +674,106 @@ def test_lasten_verschwinden_nicht_mehr_still():
           str([z for z in m6.check() if "Lager" in z])[:70])
 
 
+def test_flaechenlast_auf_seite_ohne_flaeche():
+    """Eine Flächenlast auf einer Volumenseite ohne Fläche wirkt mit 0 N -
+    das ist richtig, aber es muss dastehen.
+
+    `solid_face_pressure` gibt für eine Seite, deren Normale die Länge null
+    hat, den Nullvektor zurück (assemble.py: ``if ln <= 0: return f``). Für
+    eine Fläche ohne Inhalt ist 0 N physikalisch richtig und bleibt so. Still
+    war nur, dass die Last mit vollem p im Bericht steht und `Model.check()`
+    nichts dazu sagt: ein Sechsflächner, dessen Deckel mit **eigenen**
+    Knotennummern zu einer Linie zusammengelegt ist, behält ein Volumen, die
+    Entartungsprüfung (Streumatrix aller acht Ecken) sieht ihn nicht, und
+    seine Steifigkeit lässt sich aufstellen. Gemessen vor der Kur: 0 N und
+    keine Zeile in check().
+    """
+    from statik3d import assemble
+    from statik3d.model import Material, Model
+
+    W = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+         [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1.]]
+
+    def wuerfel(knoten):
+        m = Model("seite")
+        m.add_material(Material.steel("S235"))
+        for p in knoten:
+            m.add_node(*p)
+        m.add_element("hex8", list(range(8)), "S235")
+        for k in range(4):
+            m.fix(k, "all")
+        m.load_face(0, -1000e3, face=1)          # Seite 1 = Deckel (4, 5, 6, 7)
+        return m
+
+    # Deckel zu einer Linie bei y = 0,5 zusammengelegt, jede Ecke behaelt
+    # ihre eigene Knotennummer (4 und 7 liegen aufeinander, 5 und 6 ebenso)
+    linie = [list(p) for p in W]
+    linie[4], linie[5], linie[6], linie[7] = [0, .5, 1], [1, .5, 1], [1, .5, 1], [0, .5, 1]
+    m = wuerfel(linie)
+    F = np.asarray(assemble.load_vector(m, m.case()), float)
+    check("die Last auf der Seite ohne Fläche wirkt mit 0 N (bleibt so)",
+          float(np.abs(F).sum()) == 0.0, f"Summe |F| = {float(np.abs(F).sum()):.4g} N")
+    zeilen = [z for z in m.check() if "Seite 1" in z and "Fläche" in z]
+    check("check() nennt die Last auf der Seite ohne Fläche",
+          len(zeilen) == 1 and zeilen[0].startswith("WARNUNG")
+          and "Lastfall 'LF1'" in zeilen[0] and "Element 0" in zeilen[0]
+          and "die Last wirkt mit 0 N" in zeilen[0],
+          (zeilen[0] if zeilen else "keine Zeile")[:110])
+
+    # Die Zahl in der Zeile ist die, mit der die Last wirklich wirkt. Ein
+    # Deckel von 1e-9 Breite traegt p*A = 0,001 N. Ein fast verschlungener
+    # Deckel (6/7 getauscht, eine Ecke 1e-9 versetzt) hat fast keinen
+    # Flaechenvektor, die Last wirkt aber ueber die ganze verschlungene Flaeche
+    # (gemessen |Summe F| = 577 350 N) - die Zeile nannte dort 0,001 N.
+    import re
+
+    def zahl_und_kraft(knoten):
+        mm = wuerfel(knoten)
+        FF = np.asarray(assemble.load_vector(mm, mm.case()), float)
+        res = float(np.linalg.norm([FF[i::6].sum() for i in range(3)]))
+        zz = [z for z in mm.check() if "Seite 1" in z]
+        t = re.search(r"wirkt mit (?:nur )?([0-9.,]+) N", zz[0]) if len(zz) == 1 else None
+        return (float(t.group(1).replace(",", ".")) if t else None), res, zz
+
+    schmal = [list(p) for p in W]
+    schmal[4], schmal[5], schmal[6], schmal[7] = [0, .5, 1], [1, .5, 1], [1, .5 + 1e-9, 1], [0, .5 + 1e-9, 1]
+    schleife = [list(p) for p in W]
+    schleife[6], schleife[7] = [0, 1, 1], [1, 1, 1 + 1e-9]
+    for name, kn in (("schmaler Deckel", schmal), ("fast verschlungener Deckel", schleife)):
+        z, res, zz = zahl_und_kraft(kn)
+        check(f"{name}: die Zeile nennt die Kraft, mit der die Last wirkt",
+              z is not None and abs(z - res) <= 0.01 * res + 1e-9,
+              f"Zeile {z} N, Lastvektor {res:.6f} N; " + (zz[0][60:150] if zz else "keine Zeile"))
+
+    # Gegenprobe: der gueltige Deckel traegt und wird nicht beanstandet
+    m2 = wuerfel(W)
+    F2 = np.asarray(assemble.load_vector(m2, m2.case()), float)
+    check("auf dem gültigen Deckel trägt die Last p·A = 1000 kN",
+          abs(abs(float(F2[2::6].sum())) - 1000e3) < 1e-6 * 1000e3,
+          f"Summe Fz = {float(F2[2::6].sum()):.6g} N")
+    check("und check() beanstandet ihn nicht",
+          not any("Seite 1" in z for z in m2.check()),
+          str([z[:60] for z in m2.check() if "Seite" in z]))
+
+    # Ein Element mit falscher Knotenzahl darf check() nicht umwerfen.
+    # add_element nimmt ein hex8 mit sieben Knoten an; traegt es eine
+    # Flaechenlast, warf check() seit der Kur (7000048) beim Stapeln der
+    # Knoten ValueError („inhomogeneous shape") statt eine Liste zu geben -
+    # und do_solve ruft check() ohne try auf (Gegenpruefung, 23.09.2026).
+    # Vorher kam dasselbe Modell mit ['WARNUNG: 1 Knoten ohne Elementanschluss'].
+    m3 = wuerfel(W)
+    m3.add_node(2.0, 0.0, 0.0)
+    m3.add_element("hex8", list(range(1, 8)), "S235")    # sieben Knoten
+    m3.load_face(1, -1000e3, face=1)
+    try:
+        z3, fehler3 = m3.check(), ""
+    except Exception as ex:                  # noqa: BLE001 - genau das wird geprueft
+        z3, fehler3 = None, f"{type(ex).__name__}: {str(ex)[:60]}"
+    check("ein hex8 mit sieben Knoten und Flächenlast wirft check() nicht um",
+          isinstance(z3, list) and any("Knoten ohne Elementanschluss" in z for z in z3),
+          fehler3 or str([z[:50] for z in z3]))
+
+
 def test_objektlast_nennt_den_nullvektor_als_grund():
     """Eine Objektlast ohne Richtung hieß „liegt ganz im Windschatten".
 
@@ -721,6 +821,7 @@ def test_objektlast_nennt_den_nullvektor_als_grund():
 
 def main():
     for t in (test_lasten_verschwinden_nicht_mehr_still,
+              test_flaechenlast_auf_seite_ohne_flaeche,
               test_objektlast_nennt_den_nullvektor_als_grund,
               test_volleinspannkraefte, test_teillast_einfeldtraeger, test_zwangsverformung,
               test_flaechenlast_linear, test_linienlast_auf_linie, test_temperatur_objektlast,
