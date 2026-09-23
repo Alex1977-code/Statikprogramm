@@ -2768,13 +2768,25 @@ jetzt kommen alle an. Was das Protokoll dabei sagt:
   Stellung `Offen` der Quelle die Knoten eines Rahmens um 1,0 m, die
   gleichnamige des Ziels bewegte nichts; am Lastknoten der Quelle ergaben
   sich allein 4,7572 mm, angehängt 1,7876 mm, ohne Meldung. Solange die
-  Modellprüfung „Stellung … unbekannt“ meldet, ist das ein Fehler: Die
-  Oberfläche rechnet dann gar nicht, in keiner Rechenart und auch nicht die
-  Lastfälle des Ziels, die Kommandozeile ebenso wenig. Ruft ein Skript
-  `solver.solve_all` trotzdem auf, bricht die ganze Rechnung mit „Situation
-  'S-offen_2': Stellung 'Offen_2' unbekannt“ ab, ohne Teilergebnis. Legt man
-  die Stellung der Quelle unter dem neuen Namen im Ziel an, rechnet der
-  Lastfall im selben Versuch wie allein (4,7572 mm).
+  Modellprüfung „Stellung … unbekannt“ meldet, ist das ein Fehler:
+  **Berechnen** weist dann in allen vier Rechenarten ab, auch für die
+  Lastfälle des Ziels; **▶ Alle Stellungen rechnen** meldet den Fehler bei
+  jeder Stellung und rechnet keine; die Kommandozeile gibt 2 zurück. Nicht
+  gesperrt ist der Schwingungsnachweis des Verschlusses: *Nachweis führen*
+  prüft das Modell vorher nicht. Im Versuch (Schützhaut mit Wasserdruck,
+  daran der Rahmen angehängt) rechnete er trotz des Fehlers die
+  Eigenfrequenzen in Luft und Wasser und den Lastfall der Druckschwankung.
+  Ruft ein Skript `solver.solve_all` trotzdem auf, kommt es auf „Lastfälle
+  gleichzeitig (Ketten)“ an. Mit der Vorgabe nacheinander – in einem Skript
+  gilt sie, solange es weder `parallel.einstellungen_laden()` noch
+  `parallel.configure(ketten=…)` aufruft – bricht die ganze Rechnung mit
+  „Situation 'S-offen_2': Stellung 'Offen_2' unbekannt“ ab, ohne
+  Teilergebnis. Mit mehreren Ketten scheitert jede Kette ganz, die einen
+  Lastfall dieser Situation enthält, und die Ausnahme („Kette …: Situation
+  'S-offen_2': …“) trägt die Lastfälle der übrigen Ketten als Teilergebnis –
+  im Versuch mit zwei Ketten LF1 des Ziels. Legt man die Stellung der Quelle
+  unter dem neuen Namen im Ziel an, rechnet der Lastfall im selben Versuch
+  wie allein (4,7572 mm).
 * **Anschluss:** Ein Knoten der Quelle, der auf einem Knoten des Ziels
   liegt, wird mit ihm zusammengeführt („1 Knoten der Quelle lagen auf Knoten
   des Ziels …“); jeder Verweis darauf folgt, auch Ecken und integrierte

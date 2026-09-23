@@ -1683,21 +1683,46 @@ def test_json_anhaengen_stellung_des_ziels():
         fehler = str(ex)
     expect("Anhaengen: Rechnung in der Situation der Quelle bricht mit Meldung ab",
            "Offen_2" in fehler and "unbekannt" in fehler, fehler or "rechnet ohne Meldung")
-    # Abgebrochen wird nicht nur diese Situation: solve_all baut alle
-    # Situationssysteme, bevor der erste Lastfall rechnet
-    # (solver.systeme_je_situation), und die Ausnahme traegt kein
-    # Teilergebnis - auch LF1 des Ziels in der Grundstellung bekommt keines.
-    # So steht es seit dem 23.09.2026 im Handbuch; vorher hiess es, die
-    # Rechnung "dieser Situation" breche ab. LF1 allein rechnet.
+    # Wie weit solve_all abbricht, haengt an "Lastfaelle gleichzeitig
+    # (Ketten)"; das Handbuch nennt beide Faelle.
+    # * Vorgabe nacheinander (ketten = 1): solve_all baut alle
+    #   Situationssysteme, bevor der erste Lastfall rechnet
+    #   (solver.systeme_je_situation), und die Ausnahme traegt kein
+    #   Teilergebnis - auch LF1 des Ziels in der Grundstellung bekommt keines.
+    # * Zwei Ketten: _cases_in_ketten teilt Situation fuer Situation auf, nur
+    #   die Kette mit LF-S scheitert, und LF1 haengt als Teilergebnis an der
+    #   Ausnahme (_teil_merken, _teilanalyse).
+    # LF1 allein rechnet.
+    from statik3d import parallel
+
+    def alle_rechnen(ketten):
+        parallel.configure(ketten=ketten)
+        try:
+            solver.solve_all(z, workers=1)
+            return "fertig", None, None
+        except (ValueError, RuntimeError) as ex:
+            teil = getattr(ex, "teilanalyse", None)
+            return (f"{type(ex).__name__}: {(str(ex).splitlines() or [''])[0]}",
+                    None if teil is None else sorted(teil.cases),
+                    getattr(ex, "teil_cases", None))
+
+    alt_k = parallel.settings().ketten
     try:
-        solver.solve_all(z, workers=1)
-        fehler = ""
-    except ValueError as ex:
-        fehler = f"{ex} | Attribute {sorted(vars(ex))}"
+        fehler, teil, teil_cases = alle_rechnen(1)
+        fehler2, teil2, _teil_cases2 = alle_rechnen(2)
+    finally:
+        parallel.configure(ketten=alt_k)
     nur_lf1 = sorted(solver.solve_cases(z, ["LF1"], workers=1))
-    expect("Anhaengen: alle Lastfaelle rechnen bricht ganz ab, LF1 allein rechnet",
-           "Offen_2" in fehler and "unbekannt" in fehler and nur_lf1 == ["LF1"],
-           f"solve_all: {fehler or 'fertig'}; solve_cases(['LF1']): {nur_lf1}")
+    expect("Anhaengen: nacheinander bricht solve_all ganz ab, ohne Teilergebnis; "
+           "LF1 allein rechnet",
+           fehler.startswith("ValueError:") and "Offen_2" in fehler and "unbekannt" in fehler
+           and teil is None and teil_cases is None and nur_lf1 == ["LF1"],
+           f"solve_all: {fehler}, Teilergebnis {teil}, teil_cases {teil_cases}; "
+           f"solve_cases(['LF1']): {nur_lf1}")
+    expect("Anhaengen: in zwei Ketten scheitert nur die Kette mit LF-S, LF1 ist Teilergebnis",
+           fehler2.startswith("RuntimeError: Kette") and "'S-offen_2'" in fehler2
+           and "unbekannt" in fehler2 and teil2 == ["LF1"],
+           f"solve_all: {fehler2}, Teilergebnis {teil2}")
     # Legt der Anwender die Stellung der Quelle unter dem neuen Namen an,
     # rechnet der Lastfall der Quelle wie allein
     z.stellungen.append(Stellung("Offen_2", verschiebung=(0.0, 0.0, 1.0)))
