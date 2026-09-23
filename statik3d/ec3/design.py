@@ -76,7 +76,8 @@ class DesignResults:
         # Ausnutzung. Bis zum 22.09.2026 stand hier nur ``util > 1``: ein
         # Traeger mit 0,633 und ein Stab ohne f_y ergaben "max. Ausnutzung
         # 0.633 ... - alle erfuellt" - in der Oberflaeche nach "Nachweise EC3",
-        # im Etikett unter der Nachweistabelle und in Analysis.summary().
+        # im Etikett der Maske Nachweise (Gruppe "Nachweise fuehren", nicht
+        # unter der Ergebnistabelle) und in Analysis.summary().
         # Wie VolumenResults.summary(): "alle erfuellt" nur, wenn nichts offen
         # blieb.
         gefuehrt = [m for m in self.members.values() if not m.fehler]
@@ -95,7 +96,7 @@ class DesignResults:
         if ohne:
             # Namen und Grund, damit man weiss, wo man nachtragen muss; ein
             # Import kann Hunderte Staebe ohne f_y bringen - die Zeile steht
-            # auch im Etikett unter der Tabelle, darum hoechstens zehn Namen.
+            # auch im Etikett der Maske Nachweise, darum hoechstens zehn Namen.
             namen = ", ".join(m.member for m in ohne[:10])
             if len(ohne) > 10:
                 namen += f" und {len(ohne) - 10} weitere"

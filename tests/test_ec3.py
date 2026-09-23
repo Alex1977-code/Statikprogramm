@@ -377,7 +377,8 @@ def test_stab_ohne_streckgrenze_nicht_gefuehrt():
     geführt" - aber DesignResults.summary() zaehlte weiter nur util > 1 und
     schrieb "... max. Ausnutzung 0.633 ... - alle erfuellt" (gemessen
     22.09.2026). Genau diese Zeile steht in der Oberflaeche nach "Nachweise
-    EC3", im Etikett unter der Nachweistabelle und in Analysis.summary().
+    EC3", im Etikett der Maske Nachweise (Gruppe "Nachweise führen") und in
+    Analysis.summary().
     Geprueft wird am echten Weg solve_all(design=True).
     """
     m = _traeger_und_stab_ohne_fy()

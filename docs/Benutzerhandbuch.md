@@ -2864,7 +2864,8 @@ im Bericht.
 Streckgrenze f_y — das kommt bei Importen vor, wenn die Stahlsorte nicht
 erkannt wird —, wird sein Nachweis **nicht geführt**. Die Tabelle zeigt dann
 Ausnutzung 0.000 mit Status „nicht geführt“, die Zeile nach *Nachweise EC3*
-(und das Etikett unter der Tabelle) endet mit „- 1 nicht geführt: *Stab*
+(sie steht auch im Etikett der Maske *Nachweise*, Gruppe „Nachweise führen
+(nach der Berechnung)“) endet mit „- 1 nicht geführt: *Stab*
 (Werkstoff … ohne Streckgrenze)“ statt „- alle erfuellt“, und die größte
 Ausnutzung dort stammt nur von geführten Stäben. Im Bericht steht der Stab in
 jedem Umfang unter „Offene Hinweise und Warnungen“, auch wenn die

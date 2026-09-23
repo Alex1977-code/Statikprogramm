@@ -5014,8 +5014,9 @@ Werkstoff ohne f_y):
 
 * `DesignResults.summary()` zählte weiter nur Ausnutzung > 1 und schrieb
   „… max. Ausnutzung 0.633 … - alle erfuellt". Diese Zeile steht in der
-  Oberfläche nach *Nachweise EC3*, im Etikett unter der Nachweistabelle und in
-  der Zusammenfassung der Berechnung. Jetzt zählen nicht geführte Stäbe weder
+  Oberfläche nach *Nachweise EC3*, im Etikett der Maske *Nachweise* (Gruppe
+  „Nachweise führen (nach der Berechnung)“) und in der Zusammenfassung der
+  Berechnung. Jetzt zählen nicht geführte Stäbe weder
   für „alle erfuellt" noch für die größte Ausnutzung; die Zeile endet mit
   „- 1 nicht geführt: *Stab* (Werkstoff … ohne Streckgrenze)", höchstens zehn
   Namen. Ist kein Stab geführt, nennt sie keine Ausnutzung.
