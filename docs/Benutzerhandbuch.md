@@ -3714,7 +3714,7 @@ nichts stillschweigend Übergangenes:
 | Randtreue je Körper | ≥ 99 % |
 | **Volumenbilanz je Körper**: Elemente gegen Randflächen | ≤ 0,5 % (an windschiefen Flächen zuzüglich der Sehnen) |
 | **Seiten im Inneren**: freie Elementseiten, hinter denen der Körper weitergeht (verdrehtes Element, doppelte Knoten, Hohlraum) | 0 |
-| Lücke im Netzrand (Warnung, über 0,5 % des Körpers Fehler): an der Oberfläche fehlt dem Netz ein Stück | 0 |
+| Lücke im Netzrand (Warnung, über 0,5 % des Körpers Fehler): an der Oberfläche fehlt dem Netz ein Stück, kein verdrehtes Element, keine doppelten Knoten | 0 |
 | Netzrand neben der Hülle (Warnung): freie Seiten neben den Randflächen, außen oder als Beule | 0 |
 | Riss im Netz (Warnung): geschlossener Hohlraum, dünn gegen seine eigenen Seiten und gegen die Elemente daneben, kein verdrehtes Element, keine doppelten Knoten | 0 |
 
@@ -3764,13 +3764,15 @@ Gemessen am 23.09.2026, alle FEHLER „Seiten im Inneren“: verdrehte
 Sechsflächner in gleichmäßigen Netzen mit Zellen von 100 × 100 × 100 bis
 100 × 100 × 300 mm und in abgestuften Netzen 5:1, 20:1 und 50:1 (je alle 512
 inneren Zellen einzeln); fehlende Sechsflächner und fehlende Tetraeder in
-denselben abgestuften Netzen; ein Element, das an einem, zwei oder vier Knoten
-losgelöst ist (Sechsflächner und Tetraeder). Die zwei Fassungen dieser Regel
-vom selben Tag maßen erst gegen das größte Element im ganzen Körper, dann nur
-gegen die längste Kante. Beide ließen solche Fehler in abgestuften oder
-länglichen Netzen als Riss durchgehen, die zweite zum Beispiel bei 50:1 357
-von 512 verdrehten Sechsflächnern und jedes losgelöste Element. Die Kehrseite:
-Fehlt ein Tetraeder, der selbst so flach ist wie die, die der Vernetzer
+denselben abgestuften Netzen; ein Element, das an Knoten losgelöst ist, im
+gleichmäßigen 8 × 8 × 8-Netz: jeder der sechs Tetraeder einer inneren Zelle
+und einer Zelle an der Seitenfläche, an einem bis vier Knoten losgelöst, der
+Sechsflächner innen an einem bis vier und an allen acht Knoten, an der
+Seitenfläche an einem, zwei, vier und acht Knoten. Die zwei Fassungen dieser
+Regel vom selben Tag maßen erst gegen das größte Element im ganzen Körper,
+dann nur gegen die längste Kante. Beide ließen solche Fehler in abgestuften
+oder länglichen Netzen als Riss durchgehen, die zweite zum Beispiel bei 50:1
+357 von 512 verdrehten Sechsflächnern. Die Kehrseite: Fehlt ein Tetraeder, der selbst so flach ist wie die, die der Vernetzer
 aussortiert, ist auch das ein Riss. Einzeln entfernt war das am frei
 vernetzten Würfel mit angehobener Ecke (1483 Tetraeder) bei 20 von 541
 inneren Tetraedern so, an der Platte mit Keilen (2701 Tetraeder) bei 75 von
@@ -3794,18 +3796,31 @@ Netgen, jeweils an allen fünf. Der Sweep ist ab Werk aus; warum, steht bei
 den Netzeinstellungen. Eine um 5 bis 10 % andere Ziellänge half nur an drei
 oder vier, die Nachbesserung mit MMG3D an keinem. Das gilt für Netze, die
 unverändert vom eigenen Vernetzer stammen. Ist das Netz importiert oder von
-Hand geändert, hilft neu vernetzen: Am frei vernetzten L-Prisma (Netzweite
-0,12 m, 6173 Tetraeder, ohne Befund) wurde ein Tetraeder am Deckel mit
-„Elemente löschen“ entfernt, gemeldet als „Lücke im Netzrand“ mit 115 cm³.
-Neu vernetzt mit denselben Einstellungen waren es wieder 6173 Tetraeder ohne
-Befund. Der Text der Warnung nennt beide Fälle; bis zum 23.09.2026 sagte er
-nur „Neu vernetzen mit denselben Einstellungen ergibt dasselbe Netz“, ebenso
-der Text des Risses. Ein FEHLER ist die
-Lücke, wenn alle Lücken eines Körpers zusammen mehr als 0,5 % seines Volumens
+Hand geändert, rät der Text, neu zu vernetzen. Gemessen an einem von Hand
+geänderten Netz: Am frei vernetzten L-Prisma (Netzweite 0,12 m, 6173
+Tetraeder, ohne Befund) wurde ein Tetraeder am Deckel mit „Elemente löschen“
+entfernt, gemeldet als „Lücke im Netzrand“ mit 115 cm³. Neu vernetzt mit
+denselben Einstellungen waren es wieder 6173 Tetraeder ohne Befund -
+gemessen ohne Oberfläche mit der Funktion hinter `statik3d --vernetzen` und
+der adaptiven Vernetzung (`mesher.modell_vernetzen`), die auch die Knoten des
+alten Netzes entfernt. „Netz → Vernetzen“ in der Oberfläche entfernt sie
+nicht (am Quelltext: `_vernetzen` löscht nur die Elemente). Diesen Weg ohne
+Oberfläche nachgestellt, verschwand die Lücke ebenso (6173 Tetraeder), aber
+1229 Knoten des alten Netzes blieben ohne Element stehen: FEHLER „Knoten ohne
+Element“. In der laufenden Oberfläche ist das nicht gemessen. Der Text der
+Warnung nennt beide Fälle; bis zum 23.09.2026 sagte er nur „Neu vernetzen mit
+denselben Einstellungen ergibt dasselbe Netz“, ebenso der Text des Risses. Ein
+FEHLER ist die Lücke, wenn alle Lücken eines Körpers zusammen mehr als 0,5 % seines Volumens
 ausmachen. Das ist dieselbe Grenze wie bei der Volumenbilanz. Ein verdrehter
 Sechsflächner am Rand oder in der Ecke ist keine Lücke, sondern bleibt ein
 FEHLER, gemessen an beiden Lagen: Seine Seitenkanten laufen über die
-Diagonalen der Nachbarseiten, und kein anderes Element hat sie. Ebenfalls
+Diagonalen der Nachbarseiten, und kein anderes Element hat sie. Ebenso wenig
+ist ein Element an der Oberfläche eine Lücke, das an Knoten losgelöst ist
+(doppelte Knoten): Ein Tetraeder an der Seitenfläche des 8 × 8 × 8-Netzes,
+an seinen drei Knoten auf der Randfläche oder an allen vier losgelöst, hängt
+nur noch an einem Knoten oder schwebt. Seine freien Seiten und die der
+Nachbarn haben ihren Rand auf der Randfläche wie bei einer Lücke, es fehlt
+aber nichts. Gemessen: FEHLER „Seiten im Inneren 6“. Ebenfalls
 FEHLER bleiben Hohlräume, die ringsum von Nachbarseiten eingeschlossen sind,
 auch wenn sie die Oberfläche an einer Kante berühren. Gemessen an einem
 Würfel mit angehobener Ecke, frei mit Netzweite 0,1 m vernetzt: FEHLER

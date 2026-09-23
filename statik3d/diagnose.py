@@ -1256,9 +1256,13 @@ ABNAHME_RISS_DICKE = 0.05
 #: * **duenn gegen die Elemente daneben**: t hoechstens dieser Anteil der
 #:   Dicke der Elemente, deren Seiten die Gruppe bilden (Median je Seite,
 #:   Dicke eines Elements 2 V / Summe seiner Seitenflaechen). Die Dicke eines
-#:   laenglichen Elements folgt wie die seiner Luecke der kurzen Seite; ein
-#:   fehlendes Element hinterlaesst einen Hohlraum so dick wie seine
-#:   Nachbarn. Gemessen am 23.09.2026, t durch Median der Nachbardicke:
+#:   laenglichen Elements folgt wie die seiner Luecke der kurzen Seite. In
+#:   den hex8-Netzen und ihrer Kuhn-Zerlegung unten war der Hohlraum eines
+#:   fehlenden Elements etwa so dick wie seine Nachbarn, im frei vernetzten
+#:   Tetraedernetz nicht immer: an der Platte mit Bohrung (34 600 tet4)
+#:   einzeln entfernte flache Tetraeder 22584 / 2514 / 28444 0,100 / 0,390 /
+#:   0,529 (eigenes t/L 0,90 / 2,92 / 4,96 %, je ein Riss). Gemessen am
+#:   23.09.2026, t durch Median der Nachbardicke:
 #:
 #:   - Luecken des freien Vernetzers (die 30 geschlossenen Gruppen der
 #:     Modelle von test_mesher3d und test_sweep, Platte mit Bohrung und
@@ -1281,9 +1285,11 @@ ABNAHME_RISS_NACHBAR = 0.65
 #:   bis 2,7-mal so dick wie seine Nachbarn (Median), je nach Abstufung.
 #: * **keine doppelten Knoten**: zwei Knoten der Seiten im Inneren mit
 #:   verschiedener Nummer am selben Ort (:data:`ABNAHME_FUGENNAEHE`). Ein
-#:   Element, das an vier Knoten losgeloest ist, umschliesst einen Hohlraum
-#:   ohne Volumen (zweite Gegenpruefung, Mangel 2: WARNUNG Riss 10), hat an
-#:   diesen Knoten aber keine Verbindung.
+#:   Sechsflaechner, der an den vier Knoten einer Seite losgeloest ist,
+#:   umschliesst mit den Nachbarn einen Hohlraum ohne Volumen (zweite
+#:   Gegenpruefung, Mangel 2: WARNUNG Riss 10), hat an diesen Knoten aber
+#:   keine Verbindung. Gesucht wird auch fuer die Luecke im Netzrand (siehe
+#:   _gruppen_im_inneren).
 #: Windschiefe Randflaechen: eine freie Seite liegt darauf, wenn ihre Ecken
 #: nicht weiter danebenliegen als eine Sehne der **oertlichen** Weite H, und
 #: wenn sie in die Richtung der Flaeche zeigt (siehe _abnahme_volumenbilanz).
@@ -1519,8 +1525,9 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T) -> t
       Modell test_nachbar_mit_verschiedener_teilung 8 Seiten, 1e-19 m^3), die
       Luecke eines aussortierten flachen Tetraeders (4 Seiten).
     * **offen zur Huelle**: jede Randschleife ist eine Oeffnung in der Huelle
-      (:func:`_schliesspunkt`) und kein Element der Gruppe ist verdreht
-      (:func:`_verdrehte_elemente`) - ein Stueck fehlt an der Oberflaeche.
+      (:func:`_schliesspunkt`), kein Element der Gruppe ist verdreht
+      (:func:`_verdrehte_elemente`), und die Gruppe hat keine doppelten
+      Knoten - ein Stueck fehlt an der Oberflaeche.
       Laeuft der Rand ueber Seiten, hinter denen der Koerper nicht
       weitergeht (an einer einspringenden Kante: T-Prisma, h = 0,1, zwei
       Seiten im Inneren und zwei bis 29,2 mm neben der Huelle, 23.09.2026),
@@ -1607,9 +1614,17 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T) -> t
         if ist_riss:
             kandidaten.append((idx, V_g))
     # Doppelte Knoten und verdrehte Elemente sind kein Riss, wie duenn der
-    # Hohlraum auch ist (Mass-unabhaengig, siehe ABNAHME_RISS_NACHBAR)
+    # Hohlraum auch ist (Mass-unabhaengig, siehe ABNAHME_RISS_NACHBAR), und
+    # keine Luecke im Netzrand. Ein Element an der Oberflaeche, das an Knoten
+    # losgeloest ist, bildet offene Gruppen, deren Rand auf der Huelle liegt:
+    # ein Kuhn-Tetraeder an der Seite x = 0 des gleichmaessigen
+    # 8 x 8 x 8-Netzes (Element 164), an seinen drei Knoten auf der Huelle
+    # oder an allen vier losgeloest, zwei Gruppen mit je dem Volumen des
+    # Elements (326 cm3). Es fehlt aber nichts, das Element haengt an einem
+    # Knoten oder schwebt (dritte Gegenpruefung vom 23.09.2026). Darum werden
+    # die doppelten Knoten auch fuer die offenen Gruppen gesucht.
     doppelt = np.zeros(m, bool)
-    if kandidaten:
+    if kandidaten or offen:
         kn = F[ii]
         da = kn >= 0
         nummern, erst = np.unique(kn[da], return_index=True)
@@ -1642,7 +1657,7 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T) -> t
         {int(e) for idx, *_r in offen for e in E[np.nonzero(komp == komp[idx[0]])[0]]}, huelle)
 
     def luecke(idx, schleifen, A_g, L_g):
-        if verdreht & {int(e) for e in E[idx]}:
+        if doppelt[idx].any() or verdreht & {int(e) for e in E[idx]}:
             return None
         durchm = max(float(np.linalg.norm(np.ptp(P, axis=0))) for _k, P in schleifen)
         tol = ABNAHME_HUELLABSTAND * max(durchm, L_g)
@@ -1988,11 +2003,16 @@ def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
     # dort also nicht. An einem von Hand geaenderten Netz hilft es: L-Prisma,
     # h 0,12, 6173 tet4 ohne Befund, Element 649 mit Model.elemente_loeschen
     # entfernt (wie „Elemente löschen" in der Oberflaeche) -> „Lücke im
-    # Netzrand" 115 cm3; neu vernetzt mit denselben Einstellungen wieder
-    # 6173 tet4 ohne Befund (zweite Gegenpruefung, Mangel 4, nachgemessen
-    # 23.09.2026). Darum steht dieser Satz in jedem Befund, der ein neues Netz
-    # nahelegt - bis zum 23.09.2026 sagten Luecke und Riss nur „Neu vernetzen
-    # mit denselben Einstellungen ergibt dasselbe Netz".
+    # Netzrand" 115 cm3; neu vernetzt mit denselben Einstellungen ueber
+    # mesher.modell_vernetzen wieder 6173 tet4 ohne Befund (zweite
+    # Gegenpruefung, Mangel 4, nachgemessen 23.09.2026). Darum steht dieser
+    # Satz in jedem Befund, der ein neues Netz nahelegt - bis zum 23.09.2026
+    # sagten Luecke und Riss nur „Neu vernetzen mit denselben Einstellungen
+    # ergibt dasselbe Netz". Der Weg „Netz → Vernetzen" der Oberflaeche
+    # (gui.main._vernetzen) loescht aber nur die Elemente, nicht die Knoten
+    # des alten Netzes (netzknoten_loeschen ruft nur modell_vernetzen); ohne
+    # Qt nachgestellt: 6173 tet4, aber FEHLER „Knoten ohne Element" 1229
+    # (dritte Gegenpruefung).
     neu_vernetzen = ("Stammt das Netz aus einem Import oder ist es von Hand geändert, den "
                      "Körper neu vernetzen (Netz → Vernetzen); der eigene Vernetzer ergibt mit "
                      "denselben Einstellungen dasselbe Netz.")

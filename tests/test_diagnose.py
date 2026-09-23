@@ -1246,8 +1246,9 @@ def test_abnahme_riss_an_laenglichen_zellen():
     stimmt", ohne Rückfrage vor dem Rechnen (t/L 4,37 %; bei 46af735 und
     3f5ae87 FEHLER). Abgestuft 50:1 gingen von je 512 inneren Zellen 357
     verdrehte, 72 fehlende Sechsflächner und 340 fehlende Kuhn-Tetraeder als
-    Riss durch. Und ein Element, das an vier Knoten losgelöst ist (doppelte
-    Knoten), umschließt einen Hohlraum ohne Volumen: WARNUNG „Riss im Netz 10".
+    Riss durch. Und ein Sechsflächner, der an den vier Knoten einer Seite
+    losgelöst ist (doppelte Knoten), umschließt mit den Nachbarn einen
+    Hohlraum ohne Volumen: WARNUNG „Riss im Netz 10".
 
     Jetzt muss ein Riss auch dünn sein gegen die Elemente daneben
     (ABNAHME_RISS_NACHBAR), und verdrehte Elemente und doppelte Knoten sind
@@ -1542,6 +1543,34 @@ def test_abnahme_luecke_im_netzrand():
           [(b.stufe, b.pruefung) for b in bef] == [("FEHLER", "Seiten im Inneren")]
           and bef[0].element == 9,
           "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g}" for b in bef))
+    # Dritte Gegenpruefung vom 23.09.2026: ein Element an der Oberflaeche, das
+    # an Knoten losgeloest ist (doppelte Knoten), ist keine Luecke - es fehlt
+    # nichts, das Element haengt an einem Knoten oder schwebt. Kuhn-Tetraeder 2
+    # der Zelle 27 an der Seite x = 0 (Element 164) an seinen drei Knoten auf
+    # der Huelle oder an allen vier losgeloest: zwei offene Gruppen mit je dem
+    # Volumen des Elements, deren Rand auf der Huelle liegt. Ebenso der
+    # Sechsflaechner der Zelle 27 an allen acht Knoten.
+    still = []
+    for welche in ((0, 1, 2), (0, 1, 2, 3)):
+        m, k = _gleichmaessig(1.0, 1.0, 1.0, 8)
+        _in_kuhn(m, k)
+        nd = list(m.elements[164].nodes)
+        for j in welche:
+            nd[j] = int(m.add_node(*m.nodes[nd[j]]))
+        m.elements[164].nodes = nd
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        if ([(b.stufe, b.pruefung, b.wert) for b in bef] != [("FEHLER", "Seiten im Inneren", 6.0)]
+                or [b.pruefung for b in dg.abnahme(m)] != ["Seiten im Inneren"]):
+            still.append(f"Knoten {welche}: "
+                         + "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g}" for b in bef))
+    m, k = _gleichmaessig(1.0, 1.0, 1.0, 8)
+    m.elements[27].nodes = [int(m.add_node(*m.nodes[x])) for x in m.elements[27].nodes]
+    bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+    if [(b.stufe, b.pruefung, b.wert) for b in bef] != [("FEHLER", "Seiten im Inneren", 10.0)]:
+        still.append("hex8 27 an acht Knoten: "
+                     + "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g}" for b in bef))
+    check("  Element an der Oberfläche losgelöst (doppelte Knoten): FEHLER mit Rückfrage, "
+          "keine Lücke", not still, " | ".join(still))
 
     # Gegenprobe: eine Lücke über der Grenze der Volumenbilanz (0,5 %) ist ein
     # FEHLER - am 4 x 4 x 4-Würfel fehlen die acht Elemente einer Ecke (12,5 %)

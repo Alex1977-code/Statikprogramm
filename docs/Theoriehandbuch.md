@@ -5297,8 +5297,10 @@ Hohlraums folgt der kurzen Seite, L der langen. Gemessen am 23.09.2026, t/L:
 | fehlender Tetraeder der Kuhn-Zerlegung (sechs je Zelle), gleichmäßig 100 × 100 × 100 bis 300 mm und abgestuft | 0,79 bis 7,97 % |
 | fehlender Tetraeder der Platte mit Bohrung, die 40 kleinsten mit V/L³ über 0,04 (eigenes t/L) | 8,5 bis 12,8 % |
 
-Bedingung 3 misst an der Stelle selbst: Ein fehlendes Element hinterlässt
-einen Hohlraum so dick wie seine Nachbarn, auch wenn alle länglich sind.
+Bedingung 3 misst an der Stelle selbst. In den hex8-Netzen und ihrer
+Kuhn-Zerlegung war der Hohlraum eines fehlenden Elements etwa so dick wie
+seine Nachbarn, auch in länglichen Zellen; im frei vernetzten Tetraedernetz
+nicht immer (Platte mit Bohrung, 34 600 tet4, die beiden letzten Zeilen).
 Gemessen, t durch den Median der Nachbardicke:
 
 | Hohlraum | t / Dicke der Nachbarn |
@@ -5306,24 +5308,32 @@ Gemessen, t durch den Median der Nachbardicke:
 | Lücken des freien Vernetzers (dieselben 30 Gruppen) | 0 bis 0,482 |
 | fehlender Sechsflächner, gleichmäßig 100 × 100 × 100 bis 500 mm und abgestuft wie oben | 1,00 bis 1,01 |
 | fehlender Kuhn-Tetraeder, gleichmäßig und abgestuft wie oben | 0,865 bis 1,07 |
-| fehlender Tetraeder der Platte mit Bohrung, die 40 kleinsten mit V/L³ über 0,04 | 0,55 bis 1,34 |
 | verdrehter Sechsflächner, gleichmäßig und abgestuft wie oben | 0,21 bis 2,7 |
+| fehlender Tetraeder der Platte mit Bohrung, die 40 kleinsten mit V/L³ über 0,04 | 0,55 bis 1,34 |
+| fehlender flacher Tetraeder derselben Platte, Elemente 22584 / 2514 / 28444 (eigenes t/L 0,90 / 2,92 / 4,96 %) | 0,100 / 0,390 / 0,529 |
 
-Die Grenze 0,65 liegt zwischen 0,482 und 0,865 (Faktor 1,35 und 1,33). Allein
+Die Grenze 0,65 liegt zwischen 0,482 und 0,865 (Faktor 1,35 und 1,33). Die
+drei flachen Tetraeder der letzten Zeile liegen unter 0,65 und unter 5 % t/L;
+einzeln entfernt war jeder ein Riss (siehe die Kehrseite unten). Allein
 trägt auch Bedingung 3 nicht: An der Platte mit Bohrung sind die kleinsten
 fehlenden Tetraeder kleiner als ihre Nachbarn (bis 0,55), dort trennt t/L. Und
 den verdrehten Sechsflächner trennt keines der beiden Maße, er wird an seiner
 Kante erkannt (Bedingung 4). Ebenso ein Element, das an Knoten losgelöst ist:
-Sein Hohlraum hat kein Volumen. Gemessen mit allen vier Bedingungen, alle
-FEHLER „Seiten im Inneren“: die verdrehten und fehlenden Sechsflächner und
-Kuhn-Tetraeder der beiden Tabellen, verdrehte Sechsflächner unter einem
-windschiefen Deckel (324 Fälle: Abstufung 1:1, 5:1, 20:1, 50:1, Ecke um 0,3,
-0,5 und 1,0 m angehoben, neun Zellen der beiden obersten Lagen, drei
-Verdrehungen), Elemente, die an einem, zwei oder vier Knoten losgelöst sind
-(Sechsflächner und Tetraeder), und die 40 kleinsten fehlenden Tetraeder der
-Platte mit Bohrung. Die Gruppen der Suiten test_mesher3d und test_sweep geben
-dieselben Befunde wie vorher, ebenso die Anwendermodelle modell.json (eine
-WARNUNG Riss 4, Hohlraum 3,6e-19 m³) und drehlager.json (keiner).
+Erkannt wird es an den doppelten Knoten (Bedingung 4). Gemessen mit allen
+vier Bedingungen, alle FEHLER „Seiten im Inneren“: die verdrehten und
+fehlenden Sechsflächner und Kuhn-Tetraeder der beiden Tabellen, verdrehte
+Sechsflächner unter einem windschiefen Deckel (324 Fälle: Abstufung 1:1, 5:1,
+20:1, 50:1, Ecke um 0,3, 0,5 und 1,0 m angehoben, neun Zellen der beiden
+obersten Lagen, drei Verdrehungen), die 40 kleinsten fehlenden Tetraeder der
+Platte mit Bohrung und Elemente, die an Knoten losgelöst sind: im
+gleichmäßigen 8 × 8 × 8-Netz jeder der sechs Kuhn-Tetraeder einer inneren
+Zelle und einer Zelle an der Seite x = 0 an einem bis vier Knoten, der
+Sechsflächner innen an einem bis vier und an allen acht Knoten, an der Seite
+x = 0 an einem, zwei, vier und acht Knoten (dort mit der Bedingung „keine
+doppelten Knoten“ der Lücke im Netzrand, unten). Die Gruppen der Suiten
+test_mesher3d und test_sweep geben dieselben Befunde wie vorher, ebenso die
+Anwendermodelle modell.json (eine WARNUNG Riss 4, Hohlraum 3,6e-19 m³) und
+drehlager.json (keiner).
 
 Die Kehrseite: Fehlt ein Tetraeder, der selbst so flach ist wie die, die der
 Vernetzer aussortiert, ist auch das ein Riss. Einzeln entfernt am frei
@@ -5338,10 +5348,10 @@ Rand der Gruppen des Vernetzers 0 bis 5,6 % der Seitenfläche. Offene Gruppen:
 drei Würfel in einer Reihe mit verdrehtem mittlerem 41 %, verdrehter Boden
 26 %, verdrehtes Eckelement 30 %, eine Trennfläche aus doppelten Knoten, die
 bis an die Hülle geht, 100 % (ein Ufer ohne Gegenüber). Ist dagegen nur ein
-Element an vier Knoten losgelöst, ist die Gruppe geschlossen und hat kein
-Volumen; das fängt Bedingung 4. Die Summe der Flächenvektoren taugt als
-Merkmal nicht: in der Reihe heben sich die vordere und die hintere Öffnung auf
-(|Σ S| = 0, scheinbares Volumen 0).
+Sechsflächner im Inneren an den vier Knoten einer Seite losgelöst, ist die
+Gruppe geschlossen und hat kein Volumen; das fängt Bedingung 4. Die Summe
+der Flächenvektoren taugt als Merkmal nicht: in der Reihe heben sich die
+vordere und die hintere Öffnung auf (|Σ S| = 0, scheinbares Volumen 0).
 
 Die erste Fassung (22.09.2026) verlangte Ebenheit auf 1 % des
 Seitendurchmessers; die Hohlräume sind aber 1,7 bis 11 % dick und standen als
@@ -5356,10 +5366,9 @@ nicht an der Abstufung" und hatte den verdrehten Sechsflächner nur an der
 Würfelzelle gemessen (6,90 %). In länglichen Zellen ging er als Riss durch
 (Zelle 100 × 100 × 200 mm: „WARNUNG Riss im Netz 8 … Der Körper stimmt", keine
 Rückfrage vor dem Rechnen; abgestuft 50:1: 357 von 512), ebenso fehlende
-Sechsflächner (72 von 512) und Kuhn-Tetraeder (340 von 512), verdrehte
-Elemente unter windschiefem Deckel (75 von 324) und jedes an Knoten
-losgelöste Element („Riss im Netz" mit 10 Seiten, „zusammen 0.000 mm³"). Das
-war die zweite Gegenprüfung vom 23.09.2026, Mängel 1 und 2.
+Sechsflächner (72 von 512) und Kuhn-Tetraeder (340 von 512) und verdrehte
+Elemente unter windschiefem Deckel (75 von 324). Das war die zweite
+Gegenprüfung vom 23.09.2026, Mangel 1.
 
 Zwei Hohlräume, die sich nur an einer Kante berühren (dort liegen vier
 Seiten), werden getrennt beurteilt — aber nur, wenn jedes Teil für sich
@@ -5392,6 +5401,15 @@ die Aussparung; die Bilanz sind 1,17e-5 m³. Keine Lücke ist die Gruppe,
   Eckelement eines 3 × 2 × 2-Blocks als Lücke. Tetraeder bleiben außen vor:
   Jede Folge von vier Knoten ist derselbe Tetraeder, und ein Netz mit Lücke
   hat Kanten, die nur noch ein Element trägt;
+* wenn ihre Seiten **doppelte Knoten** haben (wie Bedingung 4 des Risses,
+  gesucht unter allen Seiten im Inneren): Ein Element an der Oberfläche, das
+  an Knoten losgelöst ist, lässt offene Gruppen zurück, deren Rand auf der
+  Hülle liegt, obwohl nichts fehlt. Gemessen am Kuhn-Tetraeder 2 der Zelle 27
+  an der Seite x = 0 des gleichmäßigen 8 × 8 × 8-Netzes (Element 164), an
+  seinen drei Knoten auf der Hülle oder an allen vier losgelöst: zwei Gruppen
+  mit je dem Volumen des Elements (326 cm³). Mit dieser Bedingung ist das
+  ein FEHLER „Seiten im Inneren 6“, ebenso der Sechsflächner der Zelle 27 an
+  allen acht Knoten (10 Seiten);
 * wenn sie **kein Volumen** hat (t/L ≤ 5 %, Bedingung 2 des Risses): ein
   Ufer, dessen Rand auf der Hülle liegt, ist ein Schnitt;
 * wenn sich kein p₀ findet: Die Schleife um einen Körper, den doppelte Knoten
@@ -5413,7 +5431,11 @@ geändertes Netz neu zu vernetzen. Gemessen (zweite Gegenprüfung, Mangel 4):
 L-Prisma, h = 0,12, 6173 tet4 ohne Befund; ein Tetraeder mit einer Seite im
 Deckel mit `Model.elemente_loeschen` entfernt (so löscht auch „Elemente
 löschen" in der Oberfläche) ergibt eine Lücke von 115 cm³, neu vernetzt mit
-denselben Einstellungen sind es wieder 6173 tet4 ohne Befund. Einen Hohlraum,
+denselben Einstellungen über `mesher.modell_vernetzen` sind es wieder 6173 tet4
+ohne Befund. Dieser Weg entfernt die Knoten des alten Netzes
+(`Model.netzknoten_loeschen`); „Netz → Vernetzen" in der Oberfläche
+(`gui.main._vernetzen`) löscht nur die Elemente. So nachgestellt, ohne Qt:
+6173 tet4, aber 1229 Knoten ohne Element, FEHLER. Einen Hohlraum,
 der ringsum von Nachbarseiten eingeschlossen ist, meldet die Abnahme
 weiter als „Seiten im Inneren", auch wenn er die Oberfläche an einer Kante
 berührt. Gemessen am Würfel mit um 0,5 m angehobener Ecke, frei mit h = 0,1:
