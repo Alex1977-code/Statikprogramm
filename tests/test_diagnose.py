@@ -1394,6 +1394,62 @@ def test_abnahme_windschief_misst_am_oertlichen_element():
           "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.0f}" for b in bef) or "kein Befund")
 
 
+def test_abnahme_beule_windschief_nach_richtung():
+    """Wie groß darf eine Beule im windschiefen Deckel sein, bis die Abnahme
+    sie nennt - und in welche Richtung gemessen? Das Benutzerhandbuch sagte
+    bis zum 23.09.2026 ohne Richtung, bei um 1 m angehobener Deckelecke
+    bleibe „selbst eine Beule von 100 mm ungenannt" (Nebenbefund B020). Das
+    gilt für einen Deckelknoten, der 100 mm **in z** verschoben ist: er
+    liegt nur 68 bis 81 mm neben der Fläche (Abstand zur bilinearen Fläche,
+    gegengeprüft durch Abtasten, 23.09.2026). 100 mm **senkrecht zur
+    Fläche** sind eine WARNUNG „Netzrand neben der Hülle" mit 4 Seiten.
+
+    Abgebildetes 4 x 4 x 4-Netz (64 hex8), Deckel z = 1 + dz·x·y, geprüft
+    an den Deckelknoten (0,5|0,5), (0,75|0,75), (0,25|0,75) und (0,75|0,25).
+    Die Prüfung hält die Zahlen des Handbuchabsatzes fest: ändert sich die
+    Grenze, muss der Absatz mit.
+    """
+    from statik3d import mesher
+
+    def beule(dz, x, y, mm, richtung):
+        m = Model("beule")
+        m.add_material(Material.steel("S235"))
+        E = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+             [0, 0, 1], [1, 0, 1], [1, 1, 1 + dz], [0, 1, 1]]
+        ecken = [int(m.add_node(*p)) for p in E]
+        els = mesher.mesh_koerper(m, _quaderkoerper(m, ecken), log=[], frei=False)
+        for i in range(4):
+            m.fix(ecken[i], "all")
+        kn = int(np.argmin(np.linalg.norm(m.nodes - [x, y, 1 + dz * x * y], axis=1)))
+        if richtung == "z":
+            m.nodes[kn, 2] += mm * 1e-3
+        else:
+            nrm = np.array([-dz * y, -dz * x, 1.0])
+            m.nodes[kn] = m.nodes[kn] + mm * 1e-3 * nrm / np.linalg.norm(nrm)
+        bef = [b for b in dg.abnahme(m, warnungen=True) if b.pruefung in _NETZ_BEFUNDE]
+        return len(els), [(b.stufe, b.pruefung, b.wert) for b in bef]
+
+    WARN = [("WARNUNG", "Netzrand neben der Hülle", 4.0)]
+    KNOTEN = ((0.5, 0.5), (0.75, 0.75), (0.25, 0.75), (0.75, 0.25))
+    for dz, mm, richtung, soll, text in (
+            (0.5, 25, "z", [], "25 mm in z: kein Befund"),
+            (0.5, 25, "n", [], "25 mm senkrecht zur Fläche: kein Befund"),
+            (0.5, 30, "z", WARN, "30 mm in z: WARNUNG Netzrand 4"),
+            (0.5, 30, "n", WARN, "30 mm senkrecht zur Fläche: WARNUNG Netzrand 4"),
+            (1.0, 100, "z", [], "100 mm in z: kein Befund"),
+            (1.0, 60, "n", [], "60 mm senkrecht zur Fläche: kein Befund"),
+            (1.0, 100, "n", WARN, "100 mm senkrecht zur Fläche: WARNUNG Netzrand 4"),
+            (1.0, 150, "z", WARN, "150 mm in z: WARNUNG Netzrand 4")):
+        falsch = []
+        for x, y in KNOTEN:
+            n_el, ist = beule(dz, x, y, mm, richtung)
+            if n_el != 64 or ist != soll:
+                falsch.append(f"({x}|{y}) {n_el} El.: "
+                              + ("; ".join(f"{s} {p} {w:.0f}" for s, p, w in ist) or "kein Befund"))
+        check(f"4x4x4, Ecke {dz:g} m hoch, Deckelknoten {text}".replace(".", ","),
+              not falsch, " | ".join(falsch))
+
+
 def _extrudiert(m, P2, z0, z1, name="K"):
     """Prisma aus einem Grundriss (Liste von (x, y)), alle Kanten gerade."""
     u = [int(m.add_node(x, y, z0)) for x, y in P2]
@@ -1598,6 +1654,7 @@ def main():
               test_abnahme_riss_misst_am_oertlichen_element,
               test_abnahme_riss_an_laenglichen_zellen,
               test_abnahme_windschief_misst_am_oertlichen_element,
+              test_abnahme_beule_windschief_nach_richtung,
               test_abnahme_luecke_im_netzrand,
               test_windschiefe_randflaechen_ohne_dreiecksschleife,
               test_abnahme_meldet_ausgefallene_pruefungen,

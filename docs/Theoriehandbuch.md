@@ -6823,13 +6823,20 @@ drei Änderungen:
   und 50:1. Die Ecken zählen mit, weil am Schwerpunkt allein eine 50-mm-Beule
   verschwand (die Schwerpunkte ihrer vier Seiten wandern nur 12,5 mm). Der
   Preis: kleinere Abweichungen des Netzrands meldet die Abnahme an
-  windschiefen Flächen nicht. Am abgebildeten 4 × 4 × 4-Netz (dz = 0,5) bleibt
-  eine Beule von 25 mm ungenannt, eine von 30 mm ist eine WARNUNG; bei
-  dz = 1,0 bleibt auch eine von 100 mm ungenannt (nachgemessen mit der
-  örtlichen Grenze). Ein fehlender Tetraeder am windschiefen Deckel des freien
-  Netzes ist eine Lücke im Netzrand (2,892e-4 m³ gemeldet, der Tetraeder hat
-  2,841e-4 m³; die Lücke reicht bis zur Fläche, der Tetraeder nur bis zu
-  seiner Sehne).
+  windschiefen Flächen nicht. Die Grenze gilt für den Abstand zur Fläche
+  (`_bilinear_abstand`), nicht für die Verschiebung in z. Am abgebildeten
+  4 × 4 × 4-Netz (dz = 0,5) bleibt ein Deckelknoten 25 mm außerhalb
+  ungenannt, bei 30 mm ist es eine WARNUNG, in z wie entlang der
+  Flächennormale verschoben. Bei dz = 1,0 bleibt ein Deckelknoten ungenannt,
+  der 100 mm in z verschoben ist; er liegt nur 68 bis 81 mm neben der Fläche
+  (gegengeprüft durch Abtasten der Fläche). 100 mm entlang der Normalen sind
+  eine WARNUNG „Netzrand neben der Hülle" mit 4 Seiten, 60 mm bleiben
+  ungenannt (nachgemessen mit der örtlichen Grenze an den Deckelknoten
+  (0,5|0,5), (0,75|0,75), (0,25|0,75) und (0,75|0,25), 23.09.2026;
+  `test_abnahme_beule_windschief_nach_richtung`). Ein fehlender Tetraeder am
+  windschiefen Deckel des freien Netzes ist eine Lücke im Netzrand
+  (2,892e-4 m³ gemeldet, der Tetraeder hat 2,841e-4 m³; die Lücke reicht bis
+  zur Fläche, der Tetraeder nur bis zu seiner Sehne).
 * Die Volumenbilanz lässt zu den 0,5 % das Volumen zu, das der Netzrand an
   windschiefen Flächen erklären kann: Σ A · (größter Abstand von Ecken,
   Kantenmitten und Schwerpunkt zur Fläche), eine obere Schranke. Gerechnet

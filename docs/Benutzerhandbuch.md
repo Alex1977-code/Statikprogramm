@@ -4577,10 +4577,15 @@ Ein verdrehtes Element in der groben Ecke, wo die
 oberste Lage dünn ist gegen die Sehne, findet nur die Richtung: Seine Ecken
 liegen bei 20:1 17 bis 18 mm neben dem Deckel, seine Seiten stehen 57 bis 87°
 dagegen. Die Kehrseite: kleinere Abweichungen des Netzrands meldet
-die Abnahme an windschiefen Flächen nicht. Am abgebildeten 4 × 4 × 4-Netz
-desselben Würfels bleibt eine Beule von 25 mm ungenannt, eine von 30 mm steht
-als Warnung da. Ist die Ecke um 1 m angehoben, bleibt dort selbst eine Beule
-von 100 mm ungenannt.
+die Abnahme an windschiefen Flächen nicht. Gemessen wird dabei der Abstand
+senkrecht zur Fläche. Am abgebildeten 4 × 4 × 4-Netz desselben Würfels bleibt
+ein Deckelknoten, der 25 mm nach außen verschoben ist, ungenannt, bei 30 mm
+steht eine Warnung da, in z wie senkrecht zur Fläche verschoben. Ist die Ecke
+um 1 m angehoben, bleibt dort ein Deckelknoten ungenannt, der 100 mm **in z**
+verschoben ist: Er liegt nur 68 bis 81 mm neben der Fläche. 100 mm
+**senkrecht zur Fläche** sind dort eine Warnung „Netzrand neben der Hülle“,
+60 mm bleiben ungenannt (gemessen am 23.09.2026 an den Deckelknoten
+(0,5|0,5), (0,75|0,75), (0,25|0,75) und (0,75|0,25)).
 
 Geprüft werden Körper, deren Randlinien gerade sind und deren Randflächen eben
 sind oder Vierecke; Körper mit Bögen, Kreisen oder Splines prüft der freie
@@ -5215,14 +5220,15 @@ GZG-Kombinationen hat, keinen Stabnachweis. Dann ist die Stellung nicht
 VOLLSTÄNDIG NACHGEWIESEN". Unter „Nicht nachgewiesen" stehen die Warnungen.
 Die Meldung nach dem Rechnen (`umh.kurztext()`) sagt es ebenso.
 
-Im Browser zeigt eine Stellung ohne jeden geführten Nachweis auf der Karte
-„η –" und „nicht geführt", in der Tabelle „nicht geführt" und keinen Punkt in
-der η-Kurve; die Zeile der Umhüllenden und der Filmstreifen sagen „η nicht
-bestimmt", wenn in keiner Stellung ein Nachweis geführt wurde. Fehlt nur ein
-Teil der Nachweise, steht η in Warnfarbe mit „nicht vollständig
-nachgewiesen". Unter der gewählten Stellung lassen sich die Warnungen
-aufklappen („Nicht nachgewiesen"). Bis zum 22.09.2026 kam in beiden oben
-genannten Fällen keine Warnung, dass Nachweise fehlten. Mit
+Im Browser zeigt eine Stellung, deren Nachweise verlangt waren, aber in
+keinem Stab geführt werden konnten (die beiden Fälle oben, erkennbar an den
+Warnungen), auf der Karte „η –" und „nicht geführt", in der Tabelle „nicht
+geführt" und keinen Punkt in der η-Kurve; die Zeile der Umhüllenden und der
+Filmstreifen sagen „η nicht bestimmt", wenn in keiner Stellung ein Nachweis
+geführt wurde. Fehlt nur ein Teil der Nachweise, steht η in Warnfarbe mit
+„nicht vollständig nachgewiesen". Unter der gewählten Stellung lassen sich
+die Warnungen aufklappen („Nicht nachgewiesen"). Bis zum 22.09.2026 kam in
+beiden oben genannten Fällen keine Warnung, dass Nachweise fehlten. Mit
 `kombinationen=False` wurden die Stäbe gegen die Lastfälle mit Faktor 1
 nachgewiesen, und nach dieser Ausnutzung wurde die Stellung beurteilt
 (Stauwand, drei Stellungen: „eta = 0.291" aus dem Lastfall „Wasser",
@@ -5230,6 +5236,17 @@ erfüllt; mit fünffachem Wasserdruck „eta = 2.419", nicht erfüllt). Mit nur
 GZG-Kombinationen wurde kein Stab nachgewiesen; an der Halle war η = 0 und
 die Stellung erfüllt, der Bericht nannte „eta = 0.000", und der Browser
 zeigte „η = 0,000" grün.
+
+**Ohne verlangten Nachweis gibt es keine Warnung.** Werden die Stellungen mit
+`"nachweise": false` gerechnet (nur über die Operation; der Knopf „Alle
+Stellungen rechnen" sendet `true`) oder ist bei keinem Stab „Nachweis
+führen" gesetzt (`design = False`), dann steht η = 0 in der Farbe für
+erfüllt da: auf der Karte „η 0,00", in der Tabelle 0,00 grün, in der
+η-Kurve ein Punkt je Stellung, in der Zeile der Umhüllenden und im
+Filmstreifen „η = 0,000". Die Meldung nach dem Rechnen (`umh.kurztext()`)
+lautet „eta = 0.000, maßgebend …". Nachgewiesen ist dabei nichts: η = 0
+heißt hier „nicht geprüft", nicht „ohne Ausnutzung" (gemessen am 23.09.2026
+am Beispiel „gate" mit zwei und mit drei Stellungen, für beide Fälle).
 
 ### Lastfälle nach DIN 19704 anlegen und das Lastenheft
 

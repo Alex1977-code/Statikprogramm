@@ -653,6 +653,39 @@ def test_oberflaeche_rendert():
               and all(e.get("warnungen") and e.get("nachgewiesen") is False for e in erg),
               f"eta_bestimmt {B.get('eta_bestimmt')}, unvollstaendig {B.get('unvollstaendig')}, "
               f"{[(len(e.get('warnungen') or []), e.get('nachgewiesen')) for e in erg]}")
+
+        # Ohne verlangten Nachweis - "nachweise": false, danach alle Staebe
+        # ohne "Nachweis führen" (design = False): keine Warnung und kein
+        # Stab nachgewiesen. Der Browser zeigt dann η = 0 in der Farbe fuer
+        # erfuellt, und die Meldung nach dem Rechnen lautet "eta = 0.000".
+        # Das Benutzerhandbuch versprach bis zum 23.09.2026 auch hier „η –"
+        # (Nebenbefund B021) und beschreibt jetzt genau diese Anzeige;
+        # render_check.js prueft sie, hier steht, dass der Zustand den Fall
+        # wirklich enthaelt (sonst waeren jene Pruefungen leer bestanden).
+        def ungefragt(vorsatz, meldung, staebe_aus=True):
+            zustand = rendern(vorsatz)
+            B = zustand.get("stellungen") or {}
+            erg = [x.get("ergebnis") or {} for x in B.get("liste", [])]
+            check(f"{vorsatz}keine Warnung, kein Stab nachgewiesen, Meldung 'eta = 0.000'",
+                  len(erg) == 3 and B.get("eta_bestimmt") is True
+                  and B.get("unvollstaendig") == []
+                  and all(e.get("warnungen") == [] and e.get("nachgewiesen") is False
+                          and e.get("eta") == 0.0 for e in erg)
+                  and "eta = 0.000" in meldung and staebe_aus,
+                  f"eta_bestimmt {B.get('eta_bestimmt')}, "
+                  f"{[(e.get('eta'), len(e.get('warnungen') or []), e.get('nachgewiesen')) for e in erg]}; "
+                  f"{meldung}")
+
+        st, j, _ = c.op(op="stellungen_rechnen", nachweise=False)
+        ungefragt("nachweise=false: ", j.get("message") or "")
+        st, z, _ = c.get("/api/state")
+        for x in z.get("members") or []:
+            c.op(op="set_member", name=x["name"], fields={"design": False})
+        st, z, _ = c.get("/api/state")
+        st, j, _ = c.op(op="stellungen_rechnen", nachweise=True)
+        ungefragt("alle Stäbe design=False: ", j.get("message") or "",
+                  len(z.get("members") or []) == 3
+                  and not any(x.get("design") for x in z["members"]))
     finally:
         server.shutdown()
         server.server_close()
