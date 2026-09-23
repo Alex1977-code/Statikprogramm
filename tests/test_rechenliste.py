@@ -261,6 +261,25 @@ def test_zustand_aus_info():
     check("Probelauf", z == "Probelauf", z)
 
 
+def test_zustand_aus_info_abgekuerzt():
+    """Gemeinsame Iteration von Fliessen und Kontakt (23.09.2026): abgekuerzte
+    Laeufe stehen nicht unter den nicht konvergierten (solver._kontakt_info_
+    sammeln) und zaehlen auch in "N von M" nicht mit - sonst stuende dort
+    "1 von 19", wo 13 der 19 Laeufe mit Absicht nach einem Schritt endeten.
+    Der letzte Lauf muss trotzdem konvergiert sein."""
+    Z = rl.zustand_aus_info
+    gemeinsam = {"contact_laeufe": 19, "contact_laeufe_abgekuerzt": 13,
+                 "contact_laeufe_nicht_konvergiert": 0,
+                 "contact_letzter_lauf_konvergiert": True, "contact_converged": True,
+                 "plastizitaet": {"konvergiert": True}}
+    z = Z(gemeinsam)
+    check("abgekuerzte Laeufe allein: konvergiert", z == "konvergiert", z)
+    z = Z(dict(gemeinsam, contact_laeufe_nicht_konvergiert=1,
+               contact_letzter_lauf_konvergiert=False, contact_converged=False))
+    check("der letzte Lauf gedeckelt: NICHT konvergiert, gezaehlt unter den vollen Laeufen",
+          z.startswith("NICHT konvergiert") and "1 von 6" in z and "letzte" in z, z)
+
+
 def test_vorlauf_mit_deckel():
     """Gemessen statt behauptet: ein gedeckelter elastischer Vorlauf aendert
     das Ergebnis einer Rechnung mit Fliessen nicht. Block mit Reibung,
@@ -279,8 +298,10 @@ def test_vorlauf_mit_deckel():
                  if m0.elements[i].mat == "S235")
         m = block_friction_example()
         m.materials["S235"].fy = 0.6 * q0
+        # Den Vorlauf hat nur die verschachtelte Iteration; die gemeinsame
+        # (Vorgabe seit dem 23.09.2026) laesst ihn weg
         m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.05, laststufen=2,
-                                         iterationen=40, toleranz=1e-4)
+                                         iterationen=40, toleranz=1e-4, kontakt="verschachtelt")
         return m
 
     m_frei, m_vor = modell(), modell()
@@ -392,6 +413,7 @@ def main():
     for t in (test_posten_aus_modell, test_marke_lesen, test_fortschritt_aus_meldung,
               test_schritte_text, test_zustand_aus_meldung,
               test_deckelmeldung_ist_nicht_konvergiert, test_zustand_aus_info,
+              test_zustand_aus_info_abgekuerzt,
               test_deckel_im_fortschrittsstrom, test_vorlauf_mit_deckel,
               test_farm_text, test_dauer_text, test_fenster):
         print(f"\n--- {t.__name__} ---")

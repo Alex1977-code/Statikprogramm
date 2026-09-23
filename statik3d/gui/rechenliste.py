@@ -178,6 +178,11 @@ def zustand_aus_info(info) -> str:
       Zustand des Vorlaufs, und dessen u wird ueberschrieben. Gemessen am
       Block mit Reibung: Vorlauf gedeckelt, max |du| = 0 gegen den Lauf ohne
       Deckel (tests/test_rechenliste.test_vorlauf_mit_deckel, 22.09.2026);
+    * ``contact_laeufe_abgekuerzt`` - Laeufe, die die gemeinsame Iteration
+      von Fliessen und Kontakt mitten in einer Laststufe mit Absicht nach
+      einem Schritt beendet (23.09.2026). Sie stehen nicht unter den nicht
+      konvergierten und zaehlen auch in "N von M" nicht mit; der letzte Lauf
+      muss trotzdem konvergiert sein (``contact_letzter_lauf_konvergiert``);
     * ``plastizitaet.konvergiert``, ``ausfall_log``, ``abbruch``, ``probelauf``.
 
     Jeder andere gedeckelte Lauf macht den Posten "NICHT konvergiert", auch
@@ -198,7 +203,8 @@ def zustand_aus_info(info) -> str:
         gruende.append("abgebrochen (" + str(info["abbruch"]).splitlines()[0][:80] + ")")
     if "contact_laeufe_nicht_konvergiert" in info:
         n_vor = int(info.get("contact_vorlauf_laeufe", 0) or 0)
-        laeufe = int(info.get("contact_laeufe", 0) or 0) - n_vor
+        laeufe = (int(info.get("contact_laeufe", 0) or 0) - n_vor
+                  - int(info.get("contact_laeufe_abgekuerzt", 0) or 0))
         nicht = (int(info.get("contact_laeufe_nicht_konvergiert", 0) or 0)
                  - int(info.get("contact_vorlauf_nicht_konvergiert", 0) or 0))
         letzter = info.get("contact_letzter_lauf_konvergiert", True) is not False

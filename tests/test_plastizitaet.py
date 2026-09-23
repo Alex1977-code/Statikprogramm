@@ -219,6 +219,20 @@ def test_kontakt():
         e3 = getattr(m3, "plastizitaet", None)
         check("die Einstellung reist mit dem Modell (an, 5 %, 2 Laststufen)",
               e3 is not None and e3.an and abs(e3.verfestigung - 0.05) < 1e-12 and e3.laststufen == 2, str(e3))
+        # Die Wahl "mit Kontakt" (23.09.2026) ebenso - und eine Datei von
+        # vorher ohne sie laedt mit der Vorgabe
+        m.plastizitaet.kontakt = "verschachtelt"
+        m.save(pf)
+        e4 = Model.load(pf).plastizitaet
+        import json as _json
+        with open(pf, encoding="utf-8") as f:
+            daten = _json.load(f)
+        daten["plastizitaet"].pop("kontakt", None)
+        with open(pf, "w", encoding="utf-8") as f:
+            _json.dump(daten, f)
+        e5 = Model.load(pf).plastizitaet
+        check("… auch „mit Kontakt: verschachtelt“; ältere Dateien laden mit „gemeinsam“",
+              e4.kontakt == "verschachtelt" and e5.kontakt == "gemeinsam", f"{e4.kontakt} / {e5.kontakt}")
 
 
 def _tet4_netz(n=6):
@@ -866,7 +880,10 @@ def test_laufbuch_mit_fliessen():
     der Fließ-Iteration, ohne deren Signatur zu ändern."""
     from statik3d import contact as ct
     from tests.test_kontakthalt import laufbuch_pruefen
+    # Die verschachtelte Iteration mit ihrem Vorlauf; die gemeinsame (Vorgabe
+    # seit dem 23.09.2026) steht unten
     m = _fliessendes_kontaktmodell()
+    m.plastizitaet.kontakt = "verschachtelt"
     r = solver.solve_static(m)
     laeufe = laufbuch_pruefen(r, "Fließen", pruefe=check)
     if not laeufe:
@@ -890,9 +907,28 @@ def test_laufbuch_mit_fliessen():
           and not any(e["start_von_lauf"] == 1 for e in laeufe),
           str([e["start_von_lauf"] for e in laeufe]))
 
+    # Gemeinsam (Vorgabe): kein Vorlauf, die Arten schreibt der Newton selbst
+    # mit (plastizitaet._newton, info['aufrufe']) - auch die "Abnahme"
+    mg = _fliessendes_kontaktmodell()
+    rg = solver.solve_static(mg)
+    lg = laufbuch_pruefen(rg, "Fließen gemeinsam", pruefe=check)
+    ag = [e["art"] for e in lg]
+    pzg = rg.info.get("plastizitaet") or {}
+    check("gemeinsam: kein Vorlauf, erster Lauf die Laststufe, letzter der Abschluss",
+          ag and "Vorlauf" not in ag and ag[0] == "Laststufe" and ag[-1] == "Abschluss"
+          and ag.count("Laststufe") == pzg.get("laststufen"), str(ag))
+    check("gemeinsam: jeder Lauf nach dem ersten startet vom Zustand des Laufs davor",
+          all(e["start_von_lauf"] == e["nr"] - 1 for e in lg[1:]),
+          str([e["start_von_lauf"] for e in lg]))
+    check("gemeinsam: die Arten stehen so im Laufbuch, wie der Newton sie gerufen hat",
+          [tuple(a) for a in pzg.get("aufrufe") or []]
+          == [(e["art"], e.get("stufe"), e.get("schritt")) for e in lg],
+          str([tuple(a) for a in pzg.get("aufrufe") or []][:4]))
+
     # Anfangsdehnung: je Schritt ein Aufruf, der erste einer Laststufe heisst so
     m3 = _fliessendes_kontaktmodell()
     m3.plastizitaet.verfahren = "anfangsdehnung"
+    m3.plastizitaet.kontakt = "verschachtelt"
     r3 = solver.solve_static(m3)
     l3 = laufbuch_pruefen(r3, "Anfangsdehnung", pruefe=check)
     a3 = [e["art"] for e in l3]
@@ -902,6 +938,18 @@ def test_laufbuch_mit_fliessen():
           and len(a3) == int(pz3.get("iterationen", -9)) + 2
           and a3.count("Laststufe") == pz3.get("laststufen") and "Fliessschritt" in a3,
           f"{len(a3)} Läufe, {pz3.get('iterationen')} Schritte: {a3[:5]}")
+    # ... und gemeinsam (Vorgabe): abgekuerzt wird dort nichts, aber der
+    # Vorlauf entfaellt auch hier - bei bitgleichem Ergebnis
+    m4 = _fliessendes_kontaktmodell()
+    m4.plastizitaet.verfahren = "anfangsdehnung"
+    r4 = solver.solve_static(m4)
+    l4 = laufbuch_pruefen(r4, "Anfangsdehnung gemeinsam", pruefe=check)
+    a4 = [e["art"] for e in l4]
+    check("Anfangsdehnung gemeinsam: ohne Vorlauf und ohne abgekürzte Läufe, "
+          "sonst dieselben Läufe und bitgleich",
+          a4 == a3[1:] and not any(e.get("abgekuerzt") for e in l4)
+          and np.array_equal(np.asarray(r4.u, float), np.asarray(r3.u, float)),
+          f"{a4[:3]} gegen {a3[:3]}")
 
     # Mit Deckel 1: gedeckelte Läufe stehen einzeln da
     m2 = _fliessendes_kontaktmodell()          # vor dem Deckel bauen: es rechnet selbst
@@ -1190,6 +1238,339 @@ def test_tet4_wertet_in_seinem_gausspunkt_aus():
           f"{len(_sl._ISO['hex8'][1])} Punkte, Auswertepunkt {_sl.AUSWERTEPUNKTE['hex8'][0]}")
 
 
+def _drehlagerartiges_modell():
+    """Zwei Koerper mit einer Reibfuge, wie am Drehlager (23.09.2026): ein
+    Stempel 0,2 x 0,2 x 0,2 m aus tet4 mit gewoelbter Unterseite (Spalt bis
+    0,1 mm am Rand, die Beruehrflaeche waechst mit der Last) auf einem Sockel
+    0,6 x 0,6 x 0,3 m, Fuge mit mu 0,1, Sockel unten fest, Stempel oben
+    seitlich gehalten. Die Auflast sitzt zu 60 % auf der Seite x > 0,3 und ist
+    so gross, dass die elastische Vergleichsspannung fy/0,4 erreicht - unter
+    der gedrueckten Kante fliesst der Sockel. Einstellungen wie am Drehlager:
+    E_t/E 1 %, drei Laststufen, Toleranz 1e-3."""
+    def aufbau(P):
+        m = Model("Stempel")
+        m.add_material(Material("S235", E=210e9, nu=0.3, rho=7850))
+        s = mesher.grid_box(m, "S235", 0.6, 0.6, 0.3, 6, 6, 3, typ="tet4")
+        n_sockel = len(m.elements)
+        for n in s[:, :, 0].ravel():
+            m.fix(int(n), "all")
+        p = mesher.grid_box(m, "S235", 0.2, 0.2, 0.2, 4, 4, 4, origin=(0.2, 0.2, 0.3), typ="tet4")
+        X = m.nodes
+        for n in p.ravel():
+            x, y, z = X[int(n)]
+            X[int(n), 2] = z + 5e-5 * ((x - 0.3) ** 2 + (y - 0.3) ** 2) / 0.01 * (1.0 - (z - 0.3) / 0.2)
+        m.add_contact_pair("Stempel/Sockel", [int(n) for n in p[:, :, 0].ravel()],
+                           list(range(n_sockel)), mu=0.1)
+        oben = [int(n) for n in p[:, :, -1].ravel()]
+        for n in oben:
+            m.fix(n, [0, 1])
+        lc = m.add_load_case("LF1")
+        lc.gravity = [0, 0, 0]
+        xs = np.asarray(m.nodes, float)[oben, 0]
+        rechts = [n for n, x in zip(oben, xs) if x > 0.3 + 1e-9]
+        links = [n for n, x in zip(oben, xs) if x < 0.3 - 1e-9]
+        for n in rechts:
+            m.load_node(n, Fz=-P * 0.6 / len(rechts))
+        for n in links:
+            m.load_node(n, Fz=-P * 0.4 / len(links))
+        return m
+
+    m0 = aufbau(1.0)
+    q0 = max(pl.vergleichsspannung(np.asarray(v, float))
+             for v in solver.solve_static(m0).solid_res.values())
+    m = aufbau(235e6 / (0.4 * q0))
+    m.materials["S235"].fy = 235e6
+    m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.01, laststufen=3,
+                                     iterationen=25, toleranz=1e-3)
+    return m
+
+
+def _gequetschter_block():
+    """tests/test_solver_ext.test_probelauf_und_kennzahlen: Block 0,4 m auf
+    starrer Platte, mu 0,3, 60 MN Auflast (weit ueber der Quetschlast von
+    37,6 MN) und 9 MN quer; 2 %, zwei Laststufen, Toleranz 1e-4. Alle neun
+    Kontaktbedingungen gleiten, ε_p erreicht 12 %."""
+    from statik3d.model import ShellProp
+    m = Model()
+    m.add_material(Material("S", fy=235e6))
+    m.add_material(Material("Starr", E=210e12))
+    m.add_shell_prop(ShellProp("t", 0.05))
+    pl_ = mesher.grid_plate(m, "Starr", "t", 2.0, 2.0, 2, 2, origin=(-1, -1, 0))
+    for n in pl_.ravel():
+        m.fix(int(n), "all")
+    platte = list(range(len(m.elements)))
+    box = mesher.grid_box(m, "S", 0.4, 0.4, 0.4, 2, 2, 2, origin=(-0.2, -0.2, 0.0))
+    unten = [int(n) for n in box[:, :, 0].ravel()]
+    oben = [int(n) for n in box[:, :, -1].ravel()]
+    m.add_contact_pair("Block/Platte", unten, platte, mu=0.3)
+    for n in oben:
+        m.load_node(n, Fz=-60e6 / len(oben), Fx=9e6 / len(oben))
+    m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.02, laststufen=2,
+                                     iterationen=40, toleranz=1e-4)
+    return m
+
+
+def _gezaehlt(m):
+    """solve_static mit gezaehlten Zerlegungen (Aufrufe von LinearSolver)."""
+    n = {"z": 0}
+    alt = solver.LinearSolver.__init__
+
+    def zaehlend(self, *a, **kw):
+        n["z"] += 1
+        alt(self, *a, **kw)
+
+    solver.LinearSolver.__init__ = zaehlend
+    try:
+        r = solver.solve_static(m)
+    finally:
+        solver.LinearSolver.__init__ = alt
+    return r, n["z"]
+
+
+def _vergleichsspannungen(r):
+    return np.array([pl.vergleichsspannung(np.asarray(r.solid_res[i], float))
+                     for i in sorted(r.solid_res)])
+
+
+_VERGLEICH: dict = {}
+
+
+def _gemeinsam_gegen_verschachtelt():
+    """Je Modell (verschachtelt, gemeinsam): (Ergebnis, Zerlegungen) - einmal
+    gerechnet, von T1 bis T3 gelesen."""
+    if not _VERGLEICH:
+        for titel, bau in (("Block mit Reibung", _fliessendes_kontaktmodell),
+                           ("zwei Körper, Fuge mit µ 0,1", _drehlagerartiges_modell)):
+            m_alt = bau()
+            m_alt.plastizitaet.kontakt = "verschachtelt"
+            alt = _gezaehlt(m_alt)
+            neu = _gezaehlt(bau())
+            _VERGLEICH[titel] = (alt, neu)
+    return _VERGLEICH
+
+
+def test_gemeinsame_iteration_spart_zerlegungen():
+    """T1 (23.09.2026): Fließen und Kontakt gemeinsam iteriert - innerhalb
+    einer Laststufe rechnet jeder Newton-Schritt nur einen Kontaktschritt,
+    die Stufe endet mit voll auskonvergiertem Kontakt - braucht deutlich
+    weniger Zerlegungen als die verschachtelte Iteration, in der jeder
+    Newton-Schritt den Kontakt auskonvergiert. Gezählt werden die Aufrufe
+    von LinearSolver, nicht die Buchführung des Laufbuchs."""
+    for titel, ((_r_alt, z_alt), (_r_neu, z_neu)) in _gemeinsam_gegen_verschachtelt().items():
+        check(f"{titel}: gemeinsam höchstens 70 % der Zerlegungen von verschachtelt",
+              z_neu <= 0.70 * z_alt, f"{z_neu} gegen {z_alt} ({z_neu / max(z_alt, 1) * 100:.0f} %)")
+
+
+def test_gemeinsame_iteration_rechnet_dasselbe():
+    """T2 (23.09.2026): dasselbe Ergebnis wie verschachtelt - Vergleichs-
+    spannung je Element auf 1 N/mm² (und auf 1 ‰ der größten), Verschiebung
+    auf 1e-4 der größten, Auflagerkräfte im Gleichgewicht mit der Last, beide
+    Rechnungen „konvergiert“. Vorbedingung: die gemeinsame Rechnung ist
+    wirklich eine andere - ohne Vorlauf, und am Modell mit zwei Körpern
+    unterwegs abgekürzt -, sonst vergliche der Test zweimal dasselbe. Am
+    Block ändert sich der Kontakt in keinem Newton-Schritt: jeder
+    abgekürzte Lauf ist dort nach seinem einen Schritt auskonvergiert."""
+    from statik3d.gui.rechenliste import zustand_aus_info
+    for titel, ((r_alt, _z), (r_neu, _z2)) in _gemeinsam_gegen_verschachtelt().items():
+        arten_alt = [e["art"] for e in (r_alt.info.get("laeufe") or [])]
+        arten_neu = [e["art"] for e in (r_neu.info.get("laeufe") or [])]
+        check(f"{titel}: die gemeinsame Rechnung ist eine andere - ohne Vorlauf",
+              "Vorlauf" in arten_alt and "Vorlauf" not in arten_neu,
+              f"verschachtelt {arten_alt[:2]}, gemeinsam {arten_neu[:2]}")
+        if titel.startswith("zwei"):
+            ab = [e["nr"] for e in (r_neu.info.get("laeufe") or []) if e.get("grund") == "abgekuerzt"]
+            check(f"{titel}: die gemeinsame Rechnung kürzt unterwegs ab", ab,
+                  f"{len(ab)} abgekürzte von {len(arten_neu)} Läufen")
+        za, zn = zustand_aus_info(r_alt.info), zustand_aus_info(r_neu.info)
+        check(f"{titel}: beide konvergiert", za == "konvergiert" and zn == "konvergiert",
+              f"verschachtelt: {za}; gemeinsam: {zn}")
+        sa, sn = _vergleichsspannungen(r_alt), _vergleichsspannungen(r_neu)
+        d = float(np.abs(sa - sn).max())
+        check(f"{titel}: σ_v je Element auf 1 N/mm² und 1 ‰ der größten gleich",
+              d <= 1e6 and d <= 1e-3 * float(sa.max()),
+              f"max |Δσ_v| {d / 1e6:.4f} N/mm² bei σ_v,max {float(sa.max()) / 1e6:.2f} N/mm²")
+        ua, un = np.asarray(r_alt.u, float)[:, :3], np.asarray(r_neu.u, float)[:, :3]
+        du = float(np.abs(ua - un).max()) / float(np.abs(ua).max())
+        check(f"{titel}: Verschiebungen auf 1e-4 der größten gleich", du <= 1e-4, f"{du:.2e}")
+        F = solver.case_loads(r_neu.model, {list(r_neu.model.load_cases)[0]: 1.0})[0]
+        F3 = np.asarray(F, float)[:r_neu.model.nn * 6].reshape(-1, 6)[:, :3].sum(axis=0)
+        Ra = np.asarray(r_alt.reactions, float)[:, :3].sum(axis=0)
+        Rn = np.asarray(r_neu.reactions, float)[:, :3].sum(axis=0)
+        bez = float(np.abs(F3).max())
+        check(f"{titel}: Auflagerkräfte beider im Gleichgewicht mit der Last",
+              float(np.abs(Rn + F3).max()) <= 1e-6 * bez and float(np.abs(Ra - Rn).max()) <= 1e-6 * bez,
+              f"Σ R gemeinsam {Rn}, verschachtelt {Ra}, Last {F3}")
+
+
+def _rest_am_ende(m):
+    """Rechnen und hinterher nachprüfen: passt F_p zum End-u? Die Rückführung
+    von der Basis der letzten Laststufe (das Argument des letzten
+    Tangentenschritts) an der End-Verschiebung gegen das zurückgegebene F_p,
+    bezogen auf |F| wie das Kriterium der Iteration. Unabhängig von dem, was
+    die Iteration selbst darüber meldet."""
+    spur = {}
+    alt_schritt, alt_iteration = pl.schritt, pl.iteration
+
+    def schritt(model, u, zustand, einst, elemente, log=None, tangente=False):
+        if tangente:
+            spur["basis"], spur["elemente"] = zustand, elemente
+        return alt_schritt(model, u, zustand, einst, elemente, log, tangente)
+
+    def iteration(model, F, *a, **kw):
+        erg = alt_iteration(model, F, *a, **kw)
+        spur["erg"], spur["F"] = erg, np.asarray(F, float)
+        return erg
+
+    pl.schritt, pl.iteration = schritt, iteration
+    try:
+        r = solver.solve_static(m)
+    finally:
+        pl.schritt, pl.iteration = alt_schritt, alt_iteration
+    u, _z, F_p, _info = spur["erg"]
+    F_p_ende, _z2, _i2 = alt_schritt(m, u, spur["basis"], m.plastizitaet, spur["elemente"])
+    return r, float(np.linalg.norm(F_p_ende - F_p)) / float(np.linalg.norm(spur["F"]))
+
+
+def test_gemeinsame_iteration_kein_falsches_konvergiert():
+    """T3 (23.09.2026): „konvergiert“ nur, wenn der letzte Schritt mit voll
+    auskonvergiertem Kontakt gerechnet ist und beide Kriterien dort gelten.
+
+    (a) Abgekürzte Läufe stehen im Laufbuch (Grund „abgekuerzt“) und
+    verderben den Lastfall nicht; jede Laststufe endet mit einem vollen Lauf,
+    der letzte Lauf ist der volle Abschluss. (b) Deckel 2: der Abschluss wird
+    gedeckelt - der Lastfall heißt „NICHT konvergiert“. (c) Plastizität am
+    End-u: am gequetschten Block (tests/test_solver_ext) änderte der volle
+    Kontaktlauf des Abschlusses den Zustand, und F_p passte am Ende nicht
+    mehr zum u (gemessen 23.09.2026: Rest 2,5e-4 bei Toleranz 1e-4) - bis
+    dahin trotzdem „konvergiert“, in beiden Verfahren."""
+    from statik3d import contact as ct
+    from statik3d.gui.rechenliste import zustand_aus_info
+    from tests.test_kontakthalt import laufbuch_pruefen
+    (_alt, (r, _z)) = _gemeinsam_gegen_verschachtelt()["zwei Körper, Fuge mit µ 0,1"]
+    laeufe = laufbuch_pruefen(r, "gemeinsam", pruefe=check)
+    ab = [e for e in laeufe if e.get("grund") == "abgekuerzt"]
+    check("(a) abgekürzte Läufe stehen einzeln im Laufbuch, als nicht konvergiert mit Grund",
+          ab and all(not e["konvergiert"] and e.get("abgekuerzt") for e in ab),
+          f"{len(ab)} von {len(laeufe)}")
+    check("(a) … und verderben den Lastfall nicht",
+          r.info.get("contact_converged") is True
+          and int(r.info.get("contact_laeufe_nicht_konvergiert", -1)) == 0
+          and int(r.info.get("contact_laeufe_abgekuerzt", -1)) == len(ab)
+          and zustand_aus_info(r.info) == "konvergiert",
+          f"{zustand_aus_info(r.info)}, nicht konvergiert "
+          f"{r.info.get('contact_laeufe_nicht_konvergiert')}")
+    zeile = [x for x in r.summary().splitlines() if x.startswith("Kontakt-Iterationen")]
+    check("(a) die Zusammenfassung nennt die abgekürzten Läufe",
+          zeile and f"({len(ab)} davon abgekürzt)" in zeile[0], zeile[0] if zeile else "keine Zeile")
+    stufenende =[laeufe[i - 1] for i, e in enumerate(laeufe) if i and e["art"] == "Laststufe"]
+    check("(a) jede Laststufe endet mit einem vollen Lauf, der letzte ist der volle Abschluss",
+          laeufe[-1]["art"] == "Abschluss" and laeufe[-1]["konvergiert"]
+          and not laeufe[-1].get("abgekuerzt")
+          and all(not e.get("abgekuerzt") for e in stufenende),
+          str([(e["nr"], e["art"], e["grund"]) for e in stufenende + [laeufe[-1]]]))
+
+    m2 = _drehlagerartiges_modell()          # vor dem Deckel bauen: es rechnet selbst
+    alt_max = ct.MAX_CYCLES
+    ct.MAX_CYCLES = 2
+    try:
+        r2 = solver.solve_static(m2)
+    finally:
+        ct.MAX_CYCLES = alt_max
+    l2 = r2.info.get("laeufe") or []
+    check("(b) Deckel 2: auch hier wird unterwegs abgekürzt",
+          any(e.get("grund") == "abgekuerzt" for e in l2), f"{len(l2)} Läufe")
+    check("(b) Deckel 2: der Abschluss ist gedeckelt - „NICHT konvergiert“",
+          l2 and l2[-1]["grund"] == "deckel" and r2.info.get("contact_letzter_lauf_konvergiert") is False
+          and r2.info.get("contact_converged") is False
+          and zustand_aus_info(r2.info).startswith("NICHT konvergiert"),
+          f"letzter Lauf {l2[-1]['art'] if l2 else '-'} / {l2[-1]['grund'] if l2 else '-'}: "
+          f"{zustand_aus_info(r2.info)}")
+
+    tol = 1e-4
+    for kontakt in ("verschachtelt", "gemeinsam"):
+        m3 = _gequetschter_block()
+        m3.plastizitaet.kontakt = kontakt
+        r3, rest = _rest_am_ende(m3)
+        z3 = zustand_aus_info(r3.info)
+        check(f"(c) gequetschter Block, {kontakt}: „konvergiert“ nur, wenn F_p am End-u passt",
+              rest <= tol if z3 == "konvergiert" else z3.startswith("NICHT konvergiert"),
+              f"{z3}; Rest am End-u {rest:.2e} (Toleranz {tol:g})")
+
+
+def test_ruecknahme_der_schlussabnahme():
+    """T4 (23.09.2026): Rücknahmeprobe zu T3 (c). Ohne die Schlussabnahme -
+    Prüfung der Plastizität an der Lösung mit dem voll auskonvergierten
+    Kontakt des Abschlusses - meldet der gequetschte Block wieder
+    „konvergiert“, obwohl F_p dort nicht zum u passt. Die Prüfung ist also
+    das, was die falsche Meldung verhindert, nicht ein Zufall der Rechnung."""
+    from statik3d.gui.rechenliste import zustand_aus_info
+    alt = pl._schlussabnahme
+    pl._schlussabnahme = lambda rest, toleranz: True
+    try:
+        m = _gequetschter_block()
+        m.plastizitaet.kontakt = "verschachtelt"
+        r, rest = _rest_am_ende(m)
+    finally:
+        pl._schlussabnahme = alt
+    check("ohne Schlussabnahme: „konvergiert“, obwohl F_p am End-u um mehr als die Toleranz abweicht",
+          zustand_aus_info(r.info) == "konvergiert" and rest > 1e-4,
+          f"{zustand_aus_info(r.info)}; Rest {rest:.2e} > 1e-4")
+
+
+def test_gemeinsam_aendert_nichts_ohne_beides():
+    """T5 (23.09.2026): die Einstellung wirkt nur, wo Fließen UND Kontakt
+    zusammenkommen. Kontakt ohne Plastizität und Plastizität ohne Kontakt
+    rechnen mit „gemeinsam“ und „verschachtelt“ bitgleich (Verschiebungen,
+    Auflagerkräfte, Kontaktkräfte), je an zwei Modellen. Dass beide auch
+    bitgleich zum Stand vor dem Umbau sind, belegt die Messung gegen 6a961e5
+    (sha256), nicht dieser Test - er läuft auf einem Stand."""
+    def rechne(m, kontakt):
+        m.plastizitaet.kontakt = kontakt
+        r = solver.solve_static(m)
+        cf = getattr(r, "contact_forces", None)
+        return (np.asarray(r.u, float), np.asarray(r.reactions, float),
+                np.asarray(np.zeros((0, 3)) if cf is None else cf, float),
+                np.array(sorted((r.info.get("plastisch") or {}).items()), float).reshape(-1, 2))
+
+    def nur_kontakt_stempel():
+        m = _drehlagerartiges_modell()
+        m.plastizitaet.an = False
+        return m
+
+    def zugwuerfel():
+        m, _n = _wuerfel_zug(1.1 * FY)
+        m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.02, laststufen=2,
+                                         iterationen=60, toleranz=1e-8)
+        return m
+
+    def kragtraeger_tet4():
+        m = Model()
+        m.add_material(Material("S", E=E, nu=NU, fy=235e6))
+        g = mesher.grid_box(m, "S", 1.0, 0.2, 0.2, 6, 2, 2, typ="tet4")
+        for k in g[0, :, :].ravel():
+            m.fix(int(k), "all")
+        # 1 MN: elastisch 1,5 fy am Einspannrand, 48 von 120 Elementen fliessen
+        for k in g[-1, :, -1].ravel():
+            m.load_node(int(k), Fz=-1.0e6 / len(g[-1, :, -1].ravel()))
+        m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.01, laststufen=3,
+                                         iterationen=25, toleranz=1e-3)
+        return m
+
+    for titel, bau in (("Kontakt ohne Plastizität: Block mit Reibung", block_friction_example),
+                       ("Kontakt ohne Plastizität: Stempel auf Sockel", nur_kontakt_stempel),
+                       ("Plastizität ohne Kontakt: Zugwürfel hex8", zugwuerfel),
+                       ("Plastizität ohne Kontakt: Kragträger tet4", kragtraeger_tet4)):
+        a = rechne(bau(), "verschachtelt")
+        b = rechne(bau(), "gemeinsam")
+        # Ohne Kontakt sind die Kontaktkraefte NaN (nicht vorhanden) - NaN an
+        # derselben Stelle gilt als gleich
+        check(f"{titel}: gemeinsam und verschachtelt bitgleich "
+              f"({len(a[3])} Elemente fließen)",
+              all(np.array_equal(x, y, equal_nan=True) for x, y in zip(a, b)),
+              str([float(np.nanmax(np.abs(x - y))) if x.shape == y.shape and x.size else x.shape
+                   for x, y in zip(a, b)]))
+
+
 def main():
     for t in (test_rueckfuehrung, test_tangente_ist_die_ableitung_der_rueckfuehrung,
               test_blockweise_wie_die_schleife,
@@ -1207,7 +1588,12 @@ def main():
               test_sechsflaechner_fliesst_unter_biegung,
               test_plastische_randfaser_mit_wenigen_lagen,
               test_tet4_wertet_in_seinem_gausspunkt_aus,
-              test_loeser, test_kombination, test_kontakt):
+              test_loeser, test_kombination, test_kontakt,
+              test_gemeinsame_iteration_spart_zerlegungen,
+              test_gemeinsame_iteration_rechnet_dasselbe,
+              test_gemeinsame_iteration_kein_falsches_konvergiert,
+              test_ruecknahme_der_schlussabnahme,
+              test_gemeinsam_aendert_nichts_ohne_beides):
         try:
             t()
         except Exception as ex:      # noqa: BLE001
