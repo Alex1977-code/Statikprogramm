@@ -2543,6 +2543,7 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
 
     # ---- Flaechenlasten
     n_ok = n_ohne = n_geo = n_art = n_betrag = 0
+    n_lf = 0                        # ohne aufloesbaren Lastfall
     n_roh = len(db.rows("SurfaceLoad"))
     summe = 0.0
     if db.has("SurfaceLoad"):
@@ -2552,6 +2553,11 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
             lc = lc_name.get(case_of.get(h["id"]))
             tbl = h.get("impl_table") or ""
             if not lc:
+                # Bis zum 23.09.2026 ungezaehlt: der Abgleich unten fing sie
+                # auf, nannte aber den falschen Grund („fuehrt ihre
+                # Umsetzungstabelle nicht“) - gemessen an einer Last am
+                # Lastfall 99, den es nicht gibt (Befund B079).
+                n_lf += 1
                 continue
             if "Force" not in tbl:
                 # Temperatur, Dehnung, Vorkruemmung, Masse: nicht uebernommen -
@@ -2615,7 +2621,12 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
         # ist auf dem Weg verlorengegangen - db.impls() laesst eine Last ohne
         # ihre Umsetzungstabelle wortlos aus, und genau das soll nicht mehr
         # unbemerkt bleiben.
-        fehlt = n_roh - (n_ok + n_geo + n_ohne + n_art + n_betrag)
+        fehlt = n_roh - (n_ok + n_geo + n_ohne + n_art + n_betrag + n_lf)
+        if n_lf:
+            C.warn(log, f"  {n_lf} Flaechenlasten ohne aufloesbaren Lastfall - nicht "
+                        "uebernommen: der Lastfall, an dem sie haengen, fehlt in der "
+                        "Datei oder ist keiner, den der Import liest. Bitte die "
+                        "Lastfaelle in RFEM nachsehen.")
         if n_art:
             C.say(log, f"  {n_art} Flaechenlasten anderer Art (Temperatur, "
                        "Dehnung, Vorkruemmung, Masse) - nicht uebernommen")
@@ -2653,9 +2664,10 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
     # Element - eine Vorspannung auf drei Staeben stand als "3" da, und eine
     # verlorene Zeile fiel in der Summe nicht auf.
     n_vs = n_vs_ohne = 0            # Lastzeilen: uebernommen / nicht
-    n_vs_staebe = 0                 # Staebe, auf denen eine Vorspannung liegt
+    vs_staebe: set = set()          # verschiedene Staebe mit einer Vorspannung
+    vs_n0: list = []                # |N_0| je uebernommener Lastzeile
+    vs_je_lf: dict = {}             # Lastfall -> Summe |N_0| ueber seine Staebe
     n_vs_el_ohne = 0                # Stabelemente ohne A oder alpha
-    vs_kraft = 0.0
     if db.has("MemberLoad"):
         case_of = _load_case_of(db, "MemberLoad")
         el_of_member: dict[int, list] = {}
@@ -2688,21 +2700,39 @@ def _loads(db: Db, m: Model, lc_name: dict, surf_els: dict, log: list,
                     m.load_temp(e, dT, case=lc)
                     am_stab = True
                 if am_stab:
-                    n_vs_staebe += 1
-                    vs_kraft += abs(N0)
+                    vs_staebe.add(nm)
+                    vs_je_lf[lc] = vs_je_lf.get(lc, 0.0) + abs(N0)
                     gelegt = True
             if gelegt:
                 n_vs += 1
+                vs_n0.append(abs(N0))
             else:
                 n_vs_ohne += 1
     if n_vs:
         # Die Kraft dazusagen: in der Datei steht nur die Temperatur, und
         # danach sieht es wie ein Versehen aus (19.09.2026: "was denn fuer
         # temperaturlasten? das sollte vorspannung sein")
+        #
+        # Verschiedene Staebe und die Kraft **je Lastfall** (Befund B080):
+        # bis zum 23.09.2026 standen hier die Stabzuordnungen aller Lastzeilen
+        # und die Summe von N_0 ueber alle Lastfaelle. Am Drehlager (422
+        # Lastfaelle mit je einer Vorspannzeile auf dieselben 16 Staebe) hiess
+        # das "auf 6752 Staebe, zusammen 5738768 kN" - 6752 = 422 x 16, und
+        # die Summe ueber die Lastfaelle, von denen jeder seine eigene
+        # Vorspannung traegt, hat keine Bedeutung (gemessen 23.09.2026).
+        from ..spannungen import dezimal
+
+        def spanne(werte) -> str:
+            lo, hi = dezimal(min(werte) / 1e3), dezimal(max(werte) / 1e3)
+            return f"{lo} kN" if lo == hi else f"{lo} bis {hi} kN"
+
+        vs_n_lf, vs_n_st = len(vs_je_lf), len(vs_staebe)
         C.say(log, f"  {n_vs} Stabvorspannungen als gleichwertige "
                    f"Temperaturlast uebernommen (dT = -N_0/(E*A*alpha)) - "
-                   f"auf {n_vs_staebe} Staebe, zusammen {vs_kraft / 1e3:.0f} kN, "
-                   f"im Mittel {vs_kraft / max(1, n_vs_staebe) / 1e3:.0f} kN je Stab")
+                   f"in {vs_n_lf} {'Lastfall' if vs_n_lf == 1 else 'Lastfaellen'} auf "
+                   + ("1 Stab" if vs_n_st == 1 else f"{vs_n_st} verschiedene Staebe")
+                   + f", N_0 {spanne(vs_n0)} je Stab, "
+                   f"je Lastfall zusammen {spanne(vs_je_lf.values())}")
     if n_vs_ohne:
         C.say(log, f"  {n_vs_ohne} Vorspannlasten ohne Ziel, ohne Betrag oder "
                    "ohne Waermedehnzahl - nicht uebernommen")
@@ -2840,6 +2870,7 @@ def _stablasten(db: Db, m: Model, lc_name: dict, member_name: dict, log: list,
     n_roh = db.count("MemberLoad")
     n_ok = n_ohne = n_art = n_ohne_lf = 0
     n_zuordnungen = 0
+    fehlende_zuordnungen: list = []     # Member-ids ohne Stab im Modell
     andere_verteilung: dict = {}
     andere_richtung: dict = {}
     gedeutet: set = set()
@@ -2869,9 +2900,8 @@ def _stablasten(db: Db, m: Model, lc_name: dict, member_name: dict, log: list,
             gedeutet.add(rd)
         werte = _magnituden(db, tbl, impl.get("varyingLoadParameters_id"))
         p1, p2 = werte
-        ziele = [member_name[x] for x in
-                 db.container(tbl + "_assignedTo").get(impl["id"], [])
-                 if x in member_name]
+        zugeordnet = db.container(tbl + "_assignedTo").get(impl["id"], [])
+        ziele = [member_name[x] for x in zugeordnet if x in member_name]
         if not ziele or (not p1 and not p2):
             n_ohne += 1
             continue
@@ -2883,9 +2913,33 @@ def _stablasten(db: Db, m: Model, lc_name: dict, member_name: dict, log: list,
         # nicht gegen die Rohzeilen auf.
         n_ok += 1
         n_zuordnungen += len(ziele)
+        # Der Anteil auf Staeben, die das Modell nicht fuehrt (Linie ohne
+        # Knoten, Stabtyp ohne Tragwirkung wie der Ergebnisstab, oder gar
+        # nicht in der Datei), fiel bis zum 23.09.2026 wortlos weg, und die
+        # Zeile zaehlte trotzdem als uebernommen - gemessen: Stablast auf
+        # [1, 2] mit Stab 2 als Ergebnisstab, im Protokoll nur "2 Stablasten
+        # (Gleichlast) an ihre Staebe gehaengt" (Befund B081). Die Abzaehlung
+        # gegen die Rohzeilen faengt das nicht, sie zaehlt Lastzeilen.
+        fehlende_zuordnungen.extend(x for x in zugeordnet if x not in member_name)
     if n_ok:
         C.say(log, f"  {n_ok} Stablasten (Gleichlast) an ihre Staebe gehaengt"
                    + (f" ({n_zuordnungen} Stabzuordnungen)" if n_zuordnungen != n_ok else ""))
+    if fehlende_zuordnungen:
+        stab = db.by_id("Member")
+
+        def nummer(x):
+            nr = (stab.get(x) or {}).get("userID")
+            return nr if nr is not None else x
+
+        # Die RFEM-Nummer (userID); ein Stab, den die Datei gar nicht fuehrt,
+        # mit seiner Kennung aus der Zuordnung.
+        nummern = sorted({nummer(x) for x in fehlende_zuordnungen},
+                         key=lambda v: (0, v) if isinstance(v, int) else (1, str(v)))
+        C.warn(log, f"    dabei {len(fehlende_zuordnungen)} Stabzuordnungen auf Staeben, die "
+                    f"das Modell nicht fuehrt (Stab {', '.join(str(n) for n in nummern[:12])}"
+                    f"{', …' if len(nummern) > 12 else ''}) - dieser Anteil der Last fehlt. "
+                    "Nicht uebernommen werden Staebe ohne Knoten an ihrer Linie und "
+                    "Stabtypen ohne Tragwirkung (siehe Stabtypen oben).")
     if gedeutet:
         C.say(log, "    Lastrichtung " + ", ".join(
             f"{r} = {LOAD_DIRECTION[r][1]}" for r in sorted(gedeutet))
@@ -3559,10 +3613,14 @@ def _ermuedungslasten_aus_fat(m: Model, log: list) -> None:
     if k:
         spanne = (f"{min(laengen)} bis {max(laengen)}" if len(set(laengen)) > 1
                   else str(laengen[0])) if laengen else "einen"
+        # Ausgeschrieben, nie wissenschaftlich: das Format :g schrieb die
+        # Vorgabe 2e6 bis zum 23.09.2026 als "2e+06" hin (Befund B082).
+        from ..spannungen import dezimal
         C.say(log, f"  {k} Ermüdungslasten aus diesen Kombinationen: je ein Verlauf über ihre "
                    f"{spanne} Zustände, Schwingbreite Maximum minus Minimum („spanne“, wie in "
                    "RFEM). Die Datei führt keine Lastspielzahlen: es gilt die globale "
-                   f"Lastspielzahl ({m.design.ermuedung_lastspiele:g}, Nachweise → Konfiguration), "
+                   f"Lastspielzahl ({dezimal(m.design.ermuedung_lastspiele)}, "
+                   "Nachweise → Konfiguration), "
                    "je Last im Dialog Ermüdungslast überschreibbar - zu bestätigen.")
     if einzeln:
         C.say(log, f"  {len(einzeln)} davon haben nur einen Zustand und werden gegen den "

@@ -2972,7 +2972,13 @@ Bei den RFEM-6-Stablasten steht jede Zeile der Datei genau einmal im
 Protokoll — übernommen oder mit Grund nicht übernommen —, gezählt je
 Lastzeile und nicht je Stab („62 Stablasten (Gleichlast) an ihre Staebe
 gehaengt (944 Stabzuordnungen)“ am CBG-Trolley); was die Datei nicht lesbar
-führt, meldet eine Warnung „k von n Stablasten waren nicht zu lesen“. Beim
+führt, meldet eine Warnung „k von n Stablasten waren nicht zu lesen“. Seit
+23.09.2026 nennt eine eigene Warnung auch den Anteil einer Stablast, der auf
+einem Stab liegt, den das Modell nicht führt (etwa einem Ergebnisstab), mit
+den Stabnummern; eine Flächenlast ohne auflösbaren Lastfall wird mit diesem
+Grund gemeldet statt als „Umsetzungstabelle fehlt“; die Zeile zur
+Stabvorspannung nennt die verschiedenen Stäbe und die Kraft je Lastfall statt
+einer Summe über alle Lastfälle. Beim
 Tabellenimport nennt die Schlusszeile „n von m Lastkombinationen“; eine
 Kombination, die auf eine andere verweist („LF1 + CO1“), wird mit deren
 Faktoren aufgelöst — ein Minus ohne Zahl („LF2 - CO1“) zieht dabei ab, und
