@@ -201,8 +201,9 @@ derselben Tabelle („CO3“ oder „LK3“, auch wenn sie weiter unten steht) w
 mit deren Faktoren mal dem Vorfaktor aufgelöst: „LF1 + CO1“ mit
 CO1 = 1,35·LF1 + 1,5·LF2 ergibt 2,35·LF1 + 1,5·LF2, und das Protokoll sagt
 es. Nicht auflösbar sind ein Verweis auf eine **Ergebniskombination** („EK1“
-— eine Umhüllende, kein Summand), ein Kreis (CO2 → CO4 → CO2) und eine
-Nummer, die die Tabelle nicht führt. Eine solche Kombination wird **nicht
+— eine Umhüllende, kein Summand), ein Kreis (CO2 → CO4 → CO2), eine
+Nummer, die die Tabelle nicht führt, und ein Verweis auf eine Kombination,
+die selbst nicht angelegt wird. Eine solche Kombination wird **nicht
 angelegt**, auch nicht mit ihren übrigen Anteilen — sie wäre zu klein und sähe
 im Nachweis vollständig aus —, sondern mit Formel und Grund als Warnung
 genannt; ebenso eine Formel ohne erkennbaren Lastfall. Bis dahin fiel eine
@@ -238,7 +239,14 @@ dieser Text ohne Meldung weg, sobald daneben ein Lastfall-Anteil stand.
 Gemessen am Stand vom 23.09.2026 vor dieser Änderung: „1.35*LC1 + RC1“
 wurde 1,35·LF1, „1.35*LF1 + 1.5*LF2 + 0.9*RC2“ wurde 1,35·LF1 + 1,5·LF2,
 „1.35*LF1 + 1.5*Schnee“ wurde 1,35·LF1 und „1.35*(LF1 + LF2)“ wurde
-LF1 + LF2, jeweils ohne Protokollzeile. Dieselbe Regel trifft auch einen
+LF1 + LF2, jeweils ohne Protokollzeile. Ein Verweis auf eine solche Zeile
+bleibt offen, die verweisende Kombination wird ebenfalls gewarnt und nicht
+angelegt: „1: 1.35*LF1 + 1.5*Schnee“, „2: CO1 + LF2“ ergibt zwei Warnungen
+und „0 von 2 Lastkombinationen“. In der ersten Fassung dieser Regel vom
+selben Tag ging der übrige Text nicht mit in die Auflösung der Verweise:
+dieselben zwei Zeilen ergaben LK2 = LF2 + 1,35·LF1 mit nur einer Infozeile
+und „1 von 2“, und „2: LF3 + CO1“ nahm aus „1: 1.35*(LF1 + LF2)“ die Anteile
+LF1 + LF2 ohne den Faktor 1,35 mit. Dieselbe Regel trifft auch einen
 Vorsatz wie „GZT-1: 1.35*LF1“ oder einen Zusatz wie „LF1/p“; beides wurde
 vorher mit dem erkannten Rest angelegt. Alle Formeln in diesem Absatz sind
 selbst gebaut: ob RFEM RC, EK, Klammern oder solche Zusätze in eine

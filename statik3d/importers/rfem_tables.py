@@ -429,18 +429,25 @@ def _faktoren_text(faktoren: dict) -> str:
 def _kombinationen_aufloesen(zeilen: list) -> list:
     """Verweise auf andere Lastkombinationen derselben Tabelle aufloesen.
 
-    ``zeilen`` [(Nummer oder None, LF-Faktoren, Verweise)] -> je Zeile
-    (Faktoren, nicht aufgeloeste Verweise). „CO n“ und „LK n“ sind die
-    Lastkombination Nummer n dieser Tabelle; sie geht mit ihren Faktoren mal
-    dem Vorfaktor ein - auch wenn sie weiter unten steht. „EK n“ (englisch
-    „RC n“) ist eine
+    ``zeilen`` [(Nummer oder None, LF-Faktoren, Verweise, nicht erkannter
+    Rest)] -> je Zeile (Faktoren, nicht aufgeloeste Verweise). „CO n“ und
+    „LK n“ sind die Lastkombination Nummer n dieser Tabelle; sie geht mit
+    ihren Faktoren mal dem Vorfaktor ein - auch wenn sie weiter unten steht.
+    „EK n“ (englisch „RC n“) ist eine
     Ergebniskombination, also eine Umhuellende und keine Summe - sie laesst
     sich nicht als Summand schreiben und bleibt offen, ebenso ein Kreis
     (CO1 verweist auf CO2, CO2 auf CO1) und eine Nummer, die es nicht gibt.
-    Offen bleibt auch, was ueber eine offene Kombination hereinkaeme.
+    Offen bleibt auch, was ueber eine offene Kombination hereinkaeme, und ein
+    Verweis auf eine Zeile mit nicht erkanntem Teil (``rest`` aus
+    _formel_zerlegen): ihre Faktoren sind nur halb gelesen. Bis zum
+    23.09.2026 kam der Rest hier nicht an, ein Verweis nahm die halben
+    Faktoren mit. Gemessen am Stand 0ad95bb: ['1: 1.35*LF1 + 1.5*Schnee',
+    '2: CO1 + LF2'] ergab LK2 = LF2 + 1,35·LF1 mit nur einer Infozeile,
+    ['1: 1.35*(LF1 + LF2)', '2: LF3 + CO1'] ergab LK2 = LF1 + LF2 + LF3
+    (Gegenpruefung zu Befund SV10).
     """
     nach_nummer: dict[int, int] = {}
-    for i, (no, _f, _v) in enumerate(zeilen):
+    for i, (no, _f, _v, _r) in enumerate(zeilen):
         if no is not None:
             nach_nummer.setdefault(int(no), i)
     fertig: dict[int, tuple] = {}
@@ -448,7 +455,7 @@ def _kombinationen_aufloesen(zeilen: list) -> list:
     def aufloesen(i: int, pfad: frozenset) -> tuple:
         if i in fertig:
             return fertig[i]
-        _no, faktoren, verweise = zeilen[i]
+        _no, faktoren, verweise, _rest = zeilen[i]
         f = dict(faktoren)
         offen: list[str] = []
         for vf, art, nr in verweise:
@@ -457,7 +464,7 @@ def _kombinationen_aufloesen(zeilen: list) -> list:
                 offen.append(f"{art}{nr}")
                 continue
             fj, offen_j = aufloesen(j, pfad | {i})
-            if offen_j or not fj:
+            if offen_j or not fj or zeilen[j][3]:
                 offen.append(f"{art}{nr}")
                 continue
             for k, v in fj.items():
@@ -950,7 +957,9 @@ def import_rfem_tables(path: str, model: Model = None, log: list = None,
                               re.IGNORECASE)
                 no = int(mn.group(1)) if mn else None
             roh.append((row, formula, no, factors, verweise, rest))
-        aufgeloest = _kombinationen_aufloesen([(no, f, v) for _r, _t, no, f, v, _x in roh])
+        # Der Rest geht mit in die Aufloesung: ein Verweis auf eine Zeile mit
+        # nicht erkanntem Teil bleibt offen (siehe _kombinationen_aufloesen).
+        aufgeloest = _kombinationen_aufloesen([(no, f, v, x) for _r, _t, no, f, v, x in roh])
         # Eine Zeile ohne Nummer bekommt eine Nummer, die keine Zeile der
         # Tabelle traegt. Bis zum 23.09.2026 hiess sie LK{angelegte + 1} und
         # konnte so den Namen einer nummerierten Zeile belegen, die das

@@ -195,7 +195,12 @@ def test_tabellen_erweitert():
 
 
 def test_kombinationen_abgezaehlt():
-    """Jede Zeile der Tabelle „2.5 Lastkombinationen“ steht im Protokoll.
+    """Jede Zeile der Tabelle „2.5 Lastkombinationen“ hat einen gezählten Ausgang.
+
+    Eine eigene Protokollzeile haben nur die nicht übernommenen Zeilen (hier
+    LK2 und LK3, je eine WARNUNG) und die aufgelösten (LK4); LK1 und LK5
+    bestehen nur aus eigenen Lastfall-Anteilen und stehen nur in der
+    Schlusszeile „3 von 5 Lastkombinationen“ (gemessen am Stand 0ad95bb).
 
     Bis zum 22.09.2026 verwarf die Schleife eine Zeile ohne LF-Faktor
     (``if not factors: continue``) **vor** der Warnung über nicht aufgelöste
@@ -359,7 +364,13 @@ def test_kombination_unerkannter_teil():
     check("LK6: RC1 wird als Ergebniskombination genannt",
           "RC1" in z6 and "Ergebniskombination" in z6, z6)
     z8 = next((z for z in ko if "LK8" in z), "")
-    check("LK8: der nicht erkannte Teil „Schnee“ wird genannt", "Schnee" in z8, z8)
+    # Den Rest selbst pruefen, nicht nur „Schnee“: die Warnung zitiert die
+    # Formel „1.35*LF1 + 1.5*Schnee“, „Schnee“ stuende also auch ohne den
+    # Rest darin. Gegenpruefung vom 23.09.2026: mit ``pass`` statt
+    # ``gruende.append(f"nicht erkannter Teil {rest}")`` bestand die alte
+    # Pruefung „"Schnee" in z8“ weiter (test_rfem 70/70).
+    check("LK8: der nicht erkannte Teil „+ 1.5*Schnee“ wird genannt",
+          "nicht erkannter Teil ['+ 1.5*Schnee']" in z8, z8)
     # Gegenprobe: Schreibweisen ohne Rest bleiben, wie sie waren.
     check("„1.35 LF1 + 1.5 LF2“ ohne Stern bleibt",
           _gleich(dict(m.combinations["LK2"].factors) if "LK2" in m.combinations else {},
@@ -372,6 +383,66 @@ def test_kombination_unerkannter_teil():
                   {"LF1": 1.35, "LF2": -1.0}))
     check("Schlusszeile „4 von 8 Lastkombinationen“",
           "4 von 8 Lastkombinationen" in "\n".join(log),
+          next((z for z in log if z.strip().endswith("Lastkombinationen")), "keine Zeile"))
+
+
+def test_kombination_verweis_auf_rest():
+    """Ein Verweis auf eine Zeile mit nicht erkanntem Teil bleibt offen.
+
+    Gegenpruefung vom 23.09.2026 zu Befund SV10: Die Zeile mit Rest selbst
+    wurde gewarnt und nicht angelegt, der Rest ging aber nicht mit in die
+    Aufloesung der Verweise. Ein Verweis auf sie wurde darum mit ihren halb
+    gelesenen Faktoren aufgeloest. Gemessen am Stand 0ad95bb:
+    ['1: 1.35*LF1 + 1.5*Schnee', '2: CO1 + LF2'] ergab LK2 = LF2 + 1,35·LF1
+    mit nur einer Infozeile und „1 von 2“; ['1: 1.35*(LF1 + LF2)',
+    '2: LF3 + CO1'] ergab LK2 = LF1 + LF2 + LF3 (richtig waeren 1,35/1,35/1,0);
+    die Kette ['1: 1.35*LF1 + x', '2: CO1', '3: 2*CO2 + LF2'] legte
+    LK2 = 1,35·LF1 und LK3 = 2,7·LF1 + LF2 an. Alle Formeln selbst gebaut; ob
+    RFEM so etwas schreibt, ist an keiner echten Datei gemessen.
+    """
+    m, log = _kombinationstabelle("s3d_kr_", ["1;GZT;1.35*LF1 + 1.5*Schnee",
+                                              "2;GZT;CO1 + LF2"], lastfaelle=2)
+    ko = [z for z in log if "ombination" in z]
+    for nr in (1, 2):
+        z = next((z for z in ko if f"LK{nr} " in z or f"LK{nr}:" in z), "keine Zeile")
+        check(f"(1) LK{nr} steht als Warnung im Protokoll", z.startswith("WARNUNG"), z)
+    check("(1) LK2 nicht mit dem halb gelesenen CO1 angelegt", "LK2" not in m.combinations,
+          str(dict(m.combinations["LK2"].factors)) if "LK2" in m.combinations
+          else "nicht angelegt")
+    check("(1) Schlusszeile „0 von 2 Lastkombinationen“",
+          "0 von 2 Lastkombinationen" in "\n".join(log),
+          next((z for z in log if z.strip().endswith("Lastkombinationen")), "keine Zeile"))
+
+    m, log = _kombinationstabelle("s3d_kr_", ["1;GZT;1.35*(LF1 + LF2)",
+                                              "2;GZT;LF3 + CO1"], lastfaelle=3)
+    check("(2) die Klammer kommt nicht ueber den Verweis an", "LK2" not in m.combinations,
+          str(dict(m.combinations["LK2"].factors)) if "LK2" in m.combinations
+          else "nicht angelegt")
+    check("(2) Schlusszeile „0 von 2 Lastkombinationen“",
+          "0 von 2 Lastkombinationen" in "\n".join(log),
+          next((z for z in log if z.strip().endswith("Lastkombinationen")), "keine Zeile"))
+
+    m, log = _kombinationstabelle("s3d_kr_", ["1;GZT;1.35*LF1 + x", "2;GZT;CO1",
+                                              "3;GZT;2*CO2 + LF2"], lastfaelle=2)
+    ko = [z for z in log if "ombination" in z]
+    for nr in (2, 3):
+        check(f"(3) Kette: LK{nr} nicht angelegt", f"LK{nr}" not in m.combinations,
+              str(dict(m.combinations[f"LK{nr}"].factors)) if f"LK{nr}" in m.combinations
+              else "nicht angelegt")
+        z = next((z for z in ko if f"LK{nr} " in z or f"LK{nr}:" in z), "keine Zeile")
+        check(f"(3) Kette: LK{nr} steht als Warnung im Protokoll", z.startswith("WARNUNG"), z)
+    check("(3) Schlusszeile „0 von 3 Lastkombinationen“",
+          "0 von 3 Lastkombinationen" in "\n".join(log),
+          next((z for z in log if z.strip().endswith("Lastkombinationen")), "keine Zeile"))
+
+    # Gegenprobe: dieselbe Kette ohne Rest wird weiter aufgeloest.
+    m, log = _kombinationstabelle("s3d_kr_", ["1;GZT;1.35*LF1", "2;GZT;CO1",
+                                              "3;GZT;2*CO2 + LF2"], lastfaelle=2)
+    lk3 = dict(m.combinations["LK3"].factors) if "LK3" in m.combinations else {}
+    check("Gegenprobe: Kette ohne Rest ergibt LK3 = 2,7·LF1 + LF2",
+          _gleich(lk3, {"LF1": 2.7, "LF2": 1.0}), str(lk3))
+    check("Gegenprobe: „3 von 3 Lastkombinationen“",
+          "3 von 3 Lastkombinationen" in "\n".join(log),
           next((z for z in log if z.strip().endswith("Lastkombinationen")), "keine Zeile"))
 
 
@@ -414,7 +485,7 @@ def main():
     for t in (test_native_sqlite, test_native_zip_und_json, test_native_unbekannt,
               test_tabellen_erweitert, test_kombinationen_abgezaehlt,
               test_kombination_minus_vor_verweis, test_kombination_unerkannter_teil,
-              test_kombination_ohne_nummer_name):
+              test_kombination_verweis_auf_rest, test_kombination_ohne_nummer_name):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
