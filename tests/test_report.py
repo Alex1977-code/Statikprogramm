@@ -351,6 +351,57 @@ def test_kontaktwarnungen_der_uebrigen_ergebnisse():
     _assert_since(n0)
 
 
+def test_deckelzeilen_mit_rundenbilanz_werden_gebuendelt():
+    """Seit dem Laufbuch (22.09.2026) haengt die Deckelzeile des
+    Kontaktsystems eine Rundenbilanz an (``ContactSystem.runden_text``:
+    " - in 40 Runden: 31 mit ..."). Ihre Zahlen sind je Lauf und Lastfall
+    andere. Ohne Schnitt wuerde die Buendelung der uebrigen Ergebnisse daraus
+    eine Warnzeile je gedeckeltem Lauf machen - am Drehlager bis zu 422 x 12
+    statt einer. Und ein Ergebnis mit mehreren gedeckelten Laeufen traegt
+    dieselbe Art mehrmals: gezaehlt werden Ergebnisse, nicht Zeilen."""
+    n0 = len(RESULTS)
+    import copy as _copy
+    from statik3d import contact as ct
+    from statik3d import examples_lib as _ex
+
+    def deckelzeile(n_runden, n_knoten):
+        # Der veraenderliche Teil im Format, das das Kontaktsystem schreibt
+        cs = object.__new__(ct.ContactSystem)
+        t = [0] * len(ct.RUNDEN_FELDER)
+        t[0] = 2
+        t[ct.RUNDEN_FELDER.index("gleiten_neu")] = n_knoten
+        cs.runden = [tuple(t)] * n_runden
+        return ("Kontakt: Nachpruefung der Reibung nach 40 Zustandswechseln abgebrochen"
+                + cs.runden_text(n_runden))
+
+    probe = deckelzeile(3, 7)
+    check("die Probe traegt eine Rundenbilanz", " - in 3 Runden: 3 mit neuem Gleiten" in probe,
+          probe)
+    m = _ex.build_example("friction")
+    an = solver.solve_all(m)
+    grund = next(n for n, r in an.cases.items() if getattr(r, "contact", None))
+    for _k in (2, 3, 4):
+        kopie = _copy.copy(an.cases[grund])
+        kopie.info = dict(getattr(an.cases[grund], "info", {}) or {})
+        an.cases[f"{grund} ({_k})"] = kopie
+    ergebnisse = list(an.all_results().items())
+    uebrige = 0
+    for _i, (_name, r) in enumerate(ergebnisse):
+        if _i:
+            # zwei gedeckelte Laeufe je Ergebnis, jeder mit eigener Bilanz
+            r.info["contact_log"] = [deckelzeile(_i, 2 * _i + 1), deckelzeile(_i + 1, 3 * _i)]
+            uebrige += 1
+    rep = Report(m, an, options={"max_contact_results": 1})
+    rep.html()
+    zeilen = [z for z in (getattr(rep, "_warnings", []) or []) if "Nachpruefung der Reibung" in z]
+    check("verschiedene Rundenbilanzen ergeben EINE Warnzeile", len(zeilen) == 1,
+          f"{len(zeilen)} Zeilen: " + str([z[:70] for z in zeilen[:3]]))
+    check("sie zaehlt Ergebnisse, nicht Zeilen",
+          len(zeilen) == 1 and f"({uebrige} weitere Ergebnisse" in zeilen[0],
+          zeilen[0][:90] if zeilen else "keine")
+    _assert_since(n0)
+
+
 def test_pdf():
     n0 = len(RESULTS)
     m = build_beam_model()
@@ -901,6 +952,7 @@ def main():
     print("STATIK3D - Test statischer Bericht (HTML / Markdown / PDF / SVG)")
     print("=" * 96)
     tests = [test_kontaktwarnungen_der_uebrigen_ergebnisse,
+             test_deckelzeilen_mit_rundenbilanz_werden_gebuendelt,
              test_beam_report, test_frame_report, test_contact_report, test_plate_and_solid,
              test_svg_helpers, test_kontaktbedingungen_im_bericht, test_pdf, test_fortschritt,
              test_gliederung_und_rahmen, test_grosses_netz,

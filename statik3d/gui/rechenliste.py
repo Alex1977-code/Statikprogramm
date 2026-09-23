@@ -42,6 +42,23 @@ FERTIG = "fertig"
 OFFEN = "offen"
 ABGEBROCHEN = "abgebrochen"
 
+#: Die Konvergenzstaende eines Postens. PROBELAUF ist weder das eine noch das
+#: andere: der Kontakt rechnet dort absichtlich nur einen Schritt, und das
+#: Ergebnis ist ein Netzmass, kein Nachweis (solver.solve_static).
+KONVERGIERT = "konvergiert"
+NICHT_KONVERGIERT = "nicht konvergiert"
+PROBELAUF = "Probelauf"
+
+#: Eine Meldung, die Nichtkonvergenz sagt. Drei Formen stehen im Strom des
+#: Rechenkerns: "nicht konvergiert" (Schrittgrenze der Kontakt- und der
+#: Ausfall-Iteration, Plastizitaet), "nicht auskonvergiert" (Deckel der
+#: Reibungsnachpruefung, solver.solve_with_contact) und "Nachpruefung der
+#: Reibung ... abgebrochen" (contact.ContactSystem.update, ohne das Wort
+#: "konvergiert"). Ein anderes "abgebrochen" - etwa beim Vernetzen - sagt
+#: nichts ueber die Konvergenz und bleibt draussen.
+VERNEINT = re.compile(r"nicht\s+(?:aus)?konvergiert|reibung\b.*\babgebrochen", re.IGNORECASE)
+PROBE = re.compile(r"^\s*Probelauf\b", re.IGNORECASE)
+
 
 def posten_aus_modell(model, kind: str) -> list:
     """[(Name, Art)] der Posten, die eine Rechnung dieser Art abarbeitet.
@@ -119,21 +136,90 @@ def schritte_text(stand: dict) -> str:
 def zustand_aus_meldung(text: str, bisher: str) -> str:
     """Was eine Meldung ueber den Konvergenzstand des laufenden Postens sagt.
 
-    "NICHT konvergiert" muss vor "konvergiert" geprueft werden, sonst
-    verschluckt die Teilzeichenkette die Verneinung.
+    Die Verneinung muss vor "konvergiert" geprueft werden, sonst verschluckt
+    die Teilzeichenkette sie. Bis zum 22.09.2026 kannte die Pruefung nur
+    "nicht konvergiert" - die Deckelmeldung des Loesers sagt aber "nicht
+    **aus**konvergiert", und sie las die Liste als "konvergiert". Eine andere
+    Meldung mit "konvergiert" ohne Verneinung gab es im Strom nicht: die Liste
+    zeigte "konvergiert" also genau bei dem Lastfall, dessen Reibungs-
+    nachpruefung aufgegeben hatte (Nachpruefung der Loesersitzung).
 
-    Und die Verneinung **klebt**: ein Posten loest mit Plastizitaet viele
-    Male, und ein einziger gekappter Lauf zaehlt - genauso haelt es der
-    Bericht (solver: "Nicht konvergiert klebt").
+    Die Verneinung **klebt**: ein Posten loest mit Plastizitaet viele Male,
+    und ein gekappter Lauf zaehlt - genauso haelt es der Bericht (solver:
+    "Nicht konvergiert klebt"). Der Probelauf klebt noch fester: bei ihm ist
+    jeder Kontaktlauf mit Absicht nach einem Schritt zu Ende, und was er
+    liefert, ist ein Netzmass - "nicht konvergiert" waere dort keine
+    Nachricht, "konvergiert" eine falsche.
     """
     t = str(text)
-    if "NICHT konvergiert" in t or "nicht konvergiert" in t:
-        return "nicht konvergiert"
-    if bisher == "nicht konvergiert":
+    if bisher == PROBELAUF or PROBE.match(t):
+        return PROBELAUF
+    if VERNEINT.search(t):
+        return NICHT_KONVERGIERT
+    if bisher == NICHT_KONVERGIERT:
         return bisher
-    if "konvergiert" in t:
-        return "konvergiert"
+    if "konvergiert" in t.lower():
+        return KONVERGIERT
     return bisher
+
+
+def zustand_aus_info(info) -> str:
+    """Der Konvergenzstand eines fertigen Postens aus ``Results.info``.
+
+    Rueckgabe "konvergiert", "Probelauf" oder "NICHT konvergiert: <Gruende>".
+    Gelesen werden die Zahlen, die der Loeser je Kontaktlauf fuehrt
+    (solver._kontakt_info_sammeln), nicht der Text der Meldungen:
+
+    * ``contact_laeufe_nicht_konvergiert`` - gedeckelte oder an der
+      Schrittgrenze beendete Kontaktlaeufe, ``contact_letzter_lauf_konvergiert``;
+    * ``contact_vorlauf_*`` - die Laeufe des elastischen Vorlaufs einer
+      Rechnung mit Fliessen (solver._solve_loads). Sie zaehlen **nicht**:
+      der erste plastische Lauf startet beim Start des Lastfalls, nicht beim
+      Zustand des Vorlaufs, und dessen u wird ueberschrieben. Gemessen am
+      Block mit Reibung: Vorlauf gedeckelt, max |du| = 0 gegen den Lauf ohne
+      Deckel (tests/test_rechenliste.test_vorlauf_mit_deckel, 22.09.2026);
+    * ``plastizitaet.konvergiert``, ``ausfall_log``, ``abbruch``, ``probelauf``.
+
+    Jeder andere gedeckelte Lauf macht den Posten "NICHT konvergiert", auch
+    wenn der letzte Lauf konvergiert ist: jeder plastische Lauf reicht seinen
+    Kontaktzustand an den naechsten weiter, und der bestimmt die plastische
+    Dehnung mit. Eine Zwischenstufe ("eingeschraenkt") gibt es mit Absicht
+    nicht - ob ein solcher Lastfall als Nachweis gilt, entscheidet der
+    Anwender, nicht diese Funktion.
+
+    Aeltere Ergebnisse ohne Laufzaehlung fallen auf ``contact_converged``
+    zurueck - das klebt ueber alle Laeufe, den Vorlauf eingeschlossen.
+    """
+    info = info or {}
+    if info.get("probelauf"):
+        return PROBELAUF
+    gruende = []
+    if info.get("abbruch"):
+        gruende.append("abgebrochen (" + str(info["abbruch"]).splitlines()[0][:80] + ")")
+    if "contact_laeufe_nicht_konvergiert" in info:
+        n_vor = int(info.get("contact_vorlauf_laeufe", 0) or 0)
+        laeufe = int(info.get("contact_laeufe", 0) or 0) - n_vor
+        nicht = (int(info.get("contact_laeufe_nicht_konvergiert", 0) or 0)
+                 - int(info.get("contact_vorlauf_nicht_konvergiert", 0) or 0))
+        letzter = info.get("contact_letzter_lauf_konvergiert", True) is not False
+        if not letzter:
+            nicht = max(nicht, 1)
+        if nicht > 0:
+            if laeufe <= 1:
+                gruende.append("Kontaktlauf nicht konvergiert")
+            else:
+                gruende.append(f"{nicht} von {laeufe} Kontaktläufen nicht konvergiert"
+                               + ("" if letzter else ", darunter der letzte"))
+    elif info.get("contact_converged") is False:
+        gruende.append("Kontakt nicht konvergiert")
+    pz = info.get("plastizitaet")
+    if isinstance(pz, dict) and pz.get("konvergiert", True) is False:
+        gruende.append("Plastizität nicht konvergiert")
+    if any("nicht konvergiert" in str(z) for z in (info.get("ausfall_log") or [])):
+        gruende.append("Ausfall-Iteration nicht konvergiert")
+    if gruende:
+        return "NICHT konvergiert: " + "; ".join(gruende)
+    return KONVERGIERT
 
 
 def farm_text(status: dict) -> str:

@@ -375,6 +375,122 @@ rechnet ihn falsch herum.
 Lastfall. Für die adaptive Schleife ist das genau richtig, weil sie je Runde
 ein frisches System aufbaut; in einer Rechenkette, die mehrere Lastfälle auf
 demselben System rechnet, wächst der Wert von Lastfall zu Lastfall weiter.
+Die Zeit **eines** Lastfalls steht im Löser-Nachweis (nächster Abschnitt).
+
+#### 1.3-1 Löser-Nachweis je Lastfall (`loeser_nachweis`)
+
+*Neu am 22.09.2026 (Zweig `loeser/loeser-nachweis`). Nur Lesen und
+Mitschreiben — das Ergebnis bleibt bitgleich (Nachweis am Ende des
+Abschnitts).*
+
+**Warum.** Welcher Löser einen Lastfall wirklich gerechnet hat, mit wie vielen
+Threads, wie genau und in welcher Zeit, ließ sich hinterher nicht sagen.
+`zeit_faktorisierung` ist die Summe des Systems (siehe oben); die Nachprüfung
+der Lösersitzung musste die Faktorisierungszeit je Lastfall aus Differenzen
+rechnen (1190,1 − 734,8 = 455,3 s für LF3 am Drehlager). Ein Ausweichen bei
+den Faktorisierungen der Kontaktschritte stand nur als Fortschrittszeile im
+Protokoll, einmal je System — im Ergebnis stand es nicht.
+
+**Wo gezählt wird.** `_solve_loads` beginnt für jeden Lastfall und jede
+direkt gerechnete Kombination ein eigenes Buch (`StaticSystem.nachweis_beginnen`)
+und legt es am Ende als `Results.info["loeser_nachweis"]` ab. Gezählt wird
+**beim Lösen** (`StaticSystem._geloest`), nicht nur beim Faktorisieren: ein
+Lastfall kann eine Faktorisierung benutzen, die vor ihm entstand. Ein lineares
+Modell faktorisiert beim Aufstellen des Systems, also vor jedem Lastfall, und
+die behaltene Kontaktfaktorisierung (`_kontakt_loeser`) überlebt den Wechsel
+des Lastfalls — eingefrorene Zustände sind darauf gebaut. Ein Nachweis, der
+nur Faktorisierungen zählte, bliebe dort leer. Die Faktorisierungen des
+Lastfalls zählen getrennt (`StaticSystem._loeser_merken`).
+
+| Schlüssel | Bedeutung |
+|---|---|
+| `loesungen` | Löser → Zahl der Lösungen dieses Lastfalls, z. B. `{"pardiso": 22}` |
+| `loesungen_gescheitert` | Lösungen, die mit einer Ausnahme endeten |
+| `ausweichgruende` | Grund (`LinearSolver.ausweichgrund`) → Zahl der Lösungen, die damit gerechnet wurden |
+| `threads` | wirksame Threadzahl → Zahl der Lösungen (bei PARDISO, was MKL nach dem Setzen meldet) |
+| `mtype` | PARDISO-Matrixtyp → Zahl der Lösungen; heute immer `11` (reell, unsymmetrisch) |
+| `faktorisierungen` | Faktorisierungen **dieses** Lastfalls; 0 bei linearen Modellen |
+| `zeit_faktorisierung_lastfall` | Faktorisierungszeit dieses Lastfalls [s], als Differenz der Systemsumme |
+| `gestoerte_pivots_summe` | angehobene Pivots über die Faktorisierungen dieses Lastfalls; `None`, wenn kein Löser eine Zahl meldet |
+| `gestoerte_pivots_max` | höchster Wert unter allen Faktorisierungen, die der Lastfall gemacht **oder benutzt** hat |
+| `faktorisierungen_mit_gestoerten_pivots` | wie viele davon mindestens einen angehobenen Pivot hatten |
+| `residuum_linear_max` | größtes relatives Residuum ‖K x − b‖/‖b‖ der Lösungen; `None`, wenn keine Lösung geprüft wurde |
+| `residuum_gemessen` | Zahl der Lösungen mit gemessenem Residuum |
+| `pardiso_eingabe` | iparm-Eingabefelder 1, 2, 8, 10, 11, 13, 21, 24, 25 der zuletzt benutzten PARDISO-Faktorisierung, so wie MKL sie zurückgibt |
+| `mkl_cbwr` | `{umgebung, code, zweig}`: `MKL_CBWR` beim ersten Laden von MKL und was MKL selbst meldet; `None`, solange MKL nicht geladen ist |
+
+`solver` und `zeit_faktorisierung` bleiben, wie oben dokumentiert. Ein
+abgebrochener Lastfall (Teilergebnis) trägt den Nachweis noch nicht.
+
+**Gestörte Pivots sind iparm(14).** MKL PARDISO hebt einen zu kleinen Pivot
+an (Vorgabe iparm(10) = 13, also auf rund 10⁻¹³ der Matrixnorm), statt
+abzubrechen, und zählt das in iparm(14). Das steht in der MKL-Dokumentation;
+geprüft ist es an einer kleinen Matrix (`tests/test_loeser.py`,
+`test_pardiso_zaehlt_gestoerte_pivots`, gemessen 22.09.2026 mit dem
+`mkl_rt.3.dll` der Programmumgebung): Dirichlet-Laplace 6×6 gibt 0; mit einem
+entkoppelten Block [[1, 1], [1, 1]], dessen Pivot nach einem
+Eliminationsschritt exakt 0 ist, gibt es 1; mit drei solchen Blöcken 3.
+Gelesen wird direkt nach `ps.factorize`, vor jedem Lösen — das schreibt iparm
+neu. `LinearSolver` führt dazu `mtype`, `gestoerte_pivots` und
+`pardiso_kennzahlen` (`_pardiso_kennzahlen`: iparm(14), iparm(18) als `nnz`,
+iparm(15)–(17) als Speicher in KB **laut Doku, nicht nachgemessen**, und die
+Eingabefelder). Die anderen Löser melden keine Zahl: dort steht `None`, nicht
+0 — 0 hieße „keiner angehoben“.
+
+**MKL_CBWR wird beim ersten Laden festgehalten.** MKL liest die Variable nur
+beim Laden. Gemessen 22.09.2026: mit `MKL_CBWR=AUTO` gestartet, danach im
+Prozess auf `COMPATIBLE` gesetzt, meldet `MKL_CBWR_Get` weiter 2 (AUTO). Der
+Wert beim Faktorisieren wäre also nicht der wirksame. Festgehalten werden die
+Umgebung beim ersten Laden durch Statik3D und der Code, den MKL selbst meldet
+(`MKL_CBWR_Get(MKL_CBWR_BRANCH = 1)`) — aber nur, wenn das geladene `mkl_rt`
+die Funktion hat, sonst „unbekannt“. Die Namen der Codes stammen aus
+`mkl_cbwr.h` (der Header liegt der Programmumgebung nicht bei; gelesen in der
+Kopie in Intels Repository `intel/mklnn`, `src/mkl_cat.h`). Gemessen passt
+das: ohne Variable 1 (BRANCH_OFF), `AUTO` 2, `COMPATIBLE` 3.
+
+**Das Residuum gehört zur Lösung.** `LinearSolver.solve` setzt `residuum` bei
+jedem Aufruf auf nan und erst nach der Prüfung auf den gemessenen Wert. Ohne
+Prüfung (keine verlangt, mehrere rechte Seiten, b = 0) bliebe sonst die Zahl
+der vorigen Lösung stehen und würde diesem Lastfall zugeschrieben. `residuum`
+liest nur der Nachweis (und Tests); am Rechenweg hängt es nicht.
+
+**Am Block mit Reibung gemessen** (`test_loeser_nachweis_je_lastfall`, zwei
+Lastfälle auf einem System, ein Thread, 22.09.2026): LF1 21 Lösungen und 7
+Faktorisierungen, LF2 22 Lösungen und 16 Faktorisierungen — je Kontaktschritt
+genau eine Lösung, und die Faktorisierungen gleich `contact_factorisations`.
+Die Faktorisierungszeit von LF2 ist genau `zeit_faktorisierung(LF2) −
+zeit_faktorisierung(LF1)`. Das größte Residuum lag bei 3,3·10⁻¹⁵ (LF1) und
+2,9·10⁻¹³ (LF2), gestörte Pivots 0.
+
+**Bitgleich.** Gerechnet mit Stand 54b6f9a und mit dem neuen Stand, je ein
+Thread (`OMP_NUM_THREADS=MKL_NUM_THREADS=1`), an vier Modellen: Block mit
+Reibung in zwei Lastfällen mit Warmstart, Zugstab linear, freier Würfel mit
+Netto-Last (Hilfsfesselung, also der Lagrange-Rand in `_geloest`) und der
+fließende Block mit Kontakt (7 Kontaktläufe, 53 Kontaktschritte). Alle 318
+verglichenen Felder — Verschiebungen, Auflager- und Kontaktkräfte, Spannungen,
+Kontaktzustand und die Zählwerte in `info` — sind gleich
+(`numpy.array_equal`, 22.09.2026). Mit mehreren Threads ist PARDISO schon für
+sich nicht bitgleich (§ 9 des Benutzerhandbuchs); dort wurde nicht verglichen.
+
+##### Gegenprüfung 22.09.2026: Threads nach dem Ausweichen
+
+`LinearSolver._aufbauen` setzt die Threadzahl für PARDISO
+(`_mkl_threads_setzen`) **vor** `ps.factorize`. Scheiterte die Zerlegung,
+blieb `threads` auf diesem Wert, und SuperLU erschien in `beschreibung()`
+und im Nachweis mit den Threads von PARDISO — gemessen mit
+`solver_threads = 2` und werfendem `factorize`: `threads = {"2": 1}`, Zeile
+„1× SuperLU (2 Threads)“. Der Klassenkommentar sagt dagegen: SuperLU meldet
+immer 1. Jetzt setzt der Ausweichzweig `threads = 1` und löscht, was PARDISO
+vor dem Scheitern eingetragen hat (`mtype`, `gestoerte_pivots`,
+`pardiso_kennzahlen`, `nnz_faktor`). `mtype` wird mit `getattr` gelesen: ein
+fehlendes Feld in pypardiso darf nicht über das `except` den Löser wechseln
+lassen, nur weil mitgeschrieben wird. Die Rechnung berührt das nicht; es sind
+nur Angaben (`test_loeser_nachweis_nennt_das_ausweichen`).
+
+Das Zurücksetzen von `residuum` auf nan (oben) hat seither einen eigenen Test,
+`test_residuum_gehoert_zur_loesung`: ohne die nan-Zeile meldet `residuum` nach
+`solve(b, check=False)` die Zahl der vorigen Lösung, 7,9·10⁻¹⁶, und das Buch
+zählte sie als gemessen (3 von 4 Prüfungen rot, gemessen 22.09.2026).
 
 
 ### 1.4 Querschnittswerte freier Profile
@@ -1484,7 +1600,9 @@ setzte `contact_converged` auf wahr; die Warnung stand allein im
 Das ist keine Geschwindigkeitsfrage. Jede Zahl, gegen die geprüft wird, ob
 eine Änderung „das Ergebnis nicht ändert", kann aus einem gedeckelten Lauf
 stammen — und sah bis dahin aus wie eine auskonvergierte. Der Löser
-unterscheidet die beiden Fälle jetzt an `cs.cycles` und nennt im Protokoll den
+unterscheidet die beiden Fälle jetzt am Merker `cs.am_deckel` der letzten
+Runde (bis zum 22.09.2026 an `cs.cycles`, siehe „Der Deckel gilt für die
+Runde, in der die Schleife endet“) und nennt im Protokoll den
 Grund statt der Schrittzahl. `tests/test_kontakthalt.py` setzt den Deckel
 künstlich auf 1 und prüft, dass `contact_converged` dann **falsch** meldet;
 mit dem alten Stand meldet dieselbe Prüfung wahr.
@@ -1694,6 +1812,87 @@ der Fugenkante gehörten allen dreien; ohne Mitnahme meldete die Abnahme
 doppelte“, mit Mitnahme bleibt die Rippe am Würfel und kein Knoten gehört
 Fundament und Würfel zugleich.
 
+#### Welcher gedeckelte Lauf zählt: der Vorlauf nicht (22.09.2026)
+
+Mit Fließen rechnet ein Lastfall viele Kontaktläufe: zuerst einen
+**elastischen Vorlauf** (`_solve_loads`, der erste `_rechnen()`), danach je
+Laststufe und Newton-Schritt einen (`_plastizitaet_rechnen`). Der Vorlauf
+gibt nichts weiter. Der erste plastische Lauf startet beim Start des
+Lastfalls (`halter = {"start": start, …}`), nicht beim Kontaktzustand des
+Vorlaufs, und das u des Vorlaufs wird überschrieben. Gemessen am Block mit
+Reibung (Streckgrenze 60 % der elastischen Vergleichsspannung, zwei
+Laststufen), Deckel 1 nur während des Vorlaufs: der Vorlauf ist gedeckelt,
+`contact_converged` meldet falsch, und die Verschiebungen sind **bitgleich**
+mit dem Lauf ohne Deckel - max |Δu| = 0 bei max |u| = 2,883·10⁻⁶ m
+(`tests/test_rechenliste.test_vorlauf_mit_deckel`).
+
+Jeder **plastische** Lauf dagegen reicht seinen Kontaktzustand an den
+nächsten weiter (`halter["start"] = res.kontaktzustand`), und dieser Zustand
+bestimmt die plastische Dehnung mit. Darum gilt: jeder gedeckelte Lauf außer
+dem Vorlauf macht den Lastfall „NICHT konvergiert“, auch wenn der letzte Lauf
+konvergiert ist. Der Löser führt die Zahlen des Vorlaufs eigens in `res.info`
+(`contact_vorlauf_laeufe`, `contact_vorlauf_nicht_konvergiert`), damit
+`rechenliste.zustand_aus_info` sie herausrechnen kann. `contact_converged`
+bleibt, wie es war, und klebt über alle Läufe, den Vorlauf eingeschlossen.
+
+Eine Zwischenstufe „eingeschränkt“ (letzter Lauf konvergiert, ein
+Zwischenlauf gedeckelt) gibt es mit Absicht nicht. Ob ein solcher Lastfall
+als Nachweis taugt, ist eine Entscheidung des Anwenders; bis sie getroffen
+ist, heißt er „NICHT konvergiert“. Die Rechenliste las die Deckelmeldung bis
+zum 22.09.2026 sogar als „konvergiert“ (Benutzerhandbuch, Rechenliste).
+
+#### Der Deckel gilt für die Runde, in der die Schleife endet (22.09.2026)
+
+`ContactSystem.update` gibt in Phase 2 `False` zurück, wenn nichts mehr
+wechselt, und wenn die Nachprüfung am Deckel aufgibt. Bis zum 22.09.2026
+entschied `solve_with_contact` den Abbruchgrund an
+`cs.phase == 2 and cs.cycles >= MAX_CYCLES`. Der Zähler bleibt nach dem
+Deckel aber stehen. Löst `schub_halt_loesen()` in der Deckelrunde einen
+Schubhalt, setzt der Löser `changed = True`, und die Schleife läuft weiter;
+endet eine spätere Runde **echt** ohne Wechsel, stand der Zähler immer noch
+auf dem Deckel, und der Lauf hieß „nicht auskonvergiert“.
+
+Jetzt setzt `update()` bei jedem Aufruf den Merker `am_deckel` neu: wahr
+genau dann, wenn **dieser** Aufruf am Deckel aufgegeben hat. Der Löser liest
+den Grund an der Runde ab, in der die Schleife wirklich endet. Läuft sie nach
+einem Deckel weiter, steht das im Protokoll („nach dem Deckel der
+Reibungsnachprüfung wurde ein Schubhalt gelöst - die Iteration läuft
+weiter“), damit die Abbruchzeile des Kontaktsystems daneben nicht wie das
+Ende des Laufs aussieht. Endet die Schleife danach an der Schrittgrenze, heißt
+der Grund wie bisher „nach 120 Schritten nicht konvergiert“.
+
+Nachgestellt am Block mit Reibung mit Deckel 1, wobei `schub_halt_loesen` in
+jeder Deckelrunde einen gelösten Schubhalt meldet (4 Deckelrunden): die
+Schleife geht damit genau den Weg des Laufs ohne Deckel - 21 Schritte,
+max |Δu| = 0 - und endet echt ohne Wechsel. Vorher: `contact_converged`
+falsch und „nicht auskonvergiert“ im Protokoll; jetzt konvergiert
+(`tests/test_kontakthalt.py`, `test_deckel_merker_gilt_fuer_die_letzte_runde`,
+`test_deckel_am_tatsaechlichen_austritt`). Ein Lauf, der am Deckel **endet**,
+heißt weiter „nicht auskonvergiert“ (`test_der_deckel_gilt_nicht_als_konvergenz`).
+
+#### Folgen des Merkers: Schlussprüfungen und vorsichtiger Rückfall (22.09.2026)
+
+`converged = not deckel` entscheidet mehr als die Kennzahl. Nur ein
+konvergierter Lauf durchläuft die Schlussprüfungen von `solve_with_contact`:
+`schub_unter_last` und `_gehaltene_unter_zug` (beide brechen mit
+`KontaktAbbruch` ab) und nach einem Warmstart `warmstart_verstoesse` (wenige
+Verstöße: auf Haften zurück und rekursiv weiter vom Zustand; viele: neu von
+der Geometrie). Im Randfall oben liefen sie bis zum 22.09.2026 nicht; jetzt
+laufen sie. Dort kann also ein Abbruch oder eine weitere Rechnung stehen, wo
+vorher ein gedeckeltes Ergebnis stand - eine Ergebnisänderung genau in
+diesem Randfall, in keinem anderen. Am Block des Tests greift keine der
+Prüfungen (kalter Start, 21 Schritte, max |Δu| = 0).
+
+Fehlt der Merker - ein Kontaktsystem, dessen `update()` ihn nicht setzt -,
+gilt die alte Probe `phase == 2 and cycles >= MAX_CYCLES`. Die erste Fassung
+las `getattr(cs, "am_deckel", False)`: ein fehlender Merker hieß „nicht am
+Deckel“, also konvergiert. Am Block mit Reibung, Deckel 1 und nach jedem
+`update()` entferntem Merker meldete sie `contact_converged` wahr, jetzt
+falsch (`tests/test_kontakthalt.py`,
+`test_ohne_merker_gilt_die_vorsichtige_probe`). `ContactSystem.update`
+setzt den Merker in jedem Aufruf; der Rückfall betrifft keine Rechnung des
+Programms, er verhindert nur, dass ein fehlender Wert als Erfolg gelesen wird.
+
 ### 4.0a Übermaß: die Presspassung als Last
 
 `model.Uebermass`, `contact.ContactSystem._fugen_uebermass`, `passungen.py`
@@ -1773,6 +1972,280 @@ Modell mit 40 µm Übermaß trifft auf die Stelle genau, die 20 µm
 Spaltschluss ergeben, und 40 µm Spaltschluss geben das Doppelte
 (`tests/test_uebermass.py`).
 
+#### Zuordnung nur über den genauen Namen (22.09.2026)
+
+`_fugen_uebermass` sucht das Übermaß eines Kontaktpaars unter seinem Namen.
+Bis zum 22.09.2026 folgte bei einem Fehltreffer ein Präfixzweig: es galt der
+**erste** Eintrag, mit dem der Name des Paars beginnt - begründet damit, dass
+eine Fuge in mehrere Paare aufgeteilt sein könne, die den Fugennamen als
+Vorsatz tragen. Das trifft nicht zu. Ein Kontaktpaar trägt immer genau den
+Namen seiner Bedingung (`fugen.py`: `ContactPair(name=kb.name, …)`; die
+einzige andere Stelle, `Model.add_contact_pair`, nimmt den Namen, wie er
+kommt), und beim Neuvernetzen werden alte Paare über **Namensgleichheit**
+abgeräumt. Der Präfixtreffer war darum nie das gemeinte Paar, sondern ein
+fremdes, und bei zwei Treffern entschied die Reihenfolge, in der die
+Einträge im Lastfall stehen.
+
+Gemessen an getrennten Würfelpaaren (je 1 m² Fuge, 100 µm, Sollwert der
+Presskraft δ·E/(2·L)·A = 10 500 000 N):
+
+| Fall | vorher | jetzt |
+|---|---|---|
+| „Fuge (2)“, Übermaß nur auf „Fuge“ | 10 499 371 N | 0 N |
+| „Deckel_2 (Typ 1)“, Einträge „Deckel“ 100 µm, „Deckel_2“ 20 µm | 10 499 371 N | 0 N |
+| dasselbe, Einträge in umgekehrter Reihenfolge | 2 099 874 N | 0 N |
+
+Die Fugen mit genauem Treffer („Fuge“, „Deckel“, „Deckel_2“) rechnen
+unverändert (10 499 371 N bzw. 2 099 874 N). Findet sich kein genauer
+Eintrag, aber ein Präfix, gilt 0, und das Protokoll nennt die fremden
+Einträge („… gehören zu einer anderen Fuge und wirken hier NICHT“); die
+Zeile geht über `contact_log` in die Warnungen des Berichts
+(`tests/test_uebermass.py`, `test_praefix_ist_keine_zuordnung`,
+`test_mehrdeutiger_praefix_haengt_nicht_an_der_reihenfolge`).
+
+#### Übermaß ohne Kontaktpaar dieses Namens (22.09.2026)
+
+Ein Eintrag, dessen Namen **kein** Kontaktpaar trägt, wirkt nirgends - etwa
+nach dem Umbenennen oder Aufteilen einer Fuge (RFEM-Import: aus „Achse“
+werden „Achse (Typ 3)“ und „Achse (Typ 4)“). Mit dem Präfixzweig galt er
+dort noch; ohne ihn nannte die Zeile je Teilfuge ihn „zu einer anderen Fuge
+gehörig“, obwohl es keine Fuge „Achse“ gab, und ein Eintrag ohne jede
+Namensverwandtschaft fiel ohne Zeile weg. Jetzt:
+
+* `ContactSystem._build` hält die Namen aller Paare (`_paarnamen`), und
+  `_fugen_uebermass` nennt als „fremd“ nur Einträge, die eine andere Fuge
+  wirklich trägt;
+* `_uebermass_ohne_fuge` schreibt nach dem Aufbau aller Paare je Eintrag
+  ohne Paar eine Zeile „Übermaß „Achse“: kein Kontaktpaar trägt genau diesen
+  Namen - das Übermaß wirkt nirgends, auch nicht an „Achse (Typ 3)“, …“. Das
+  Wort „zugeordnet“ steht mit Absicht nicht darin: `report/html.py` lässt
+  Zeilen mit diesem Wort aus den Warnungen des Berichts.
+
+Gerechnet wird wie zuvor ohne diesen Eintrag (beide Teilfugen 0 N). Die
+Zeile steht im Aufbauprotokoll (`_baulog`) und damit in jedem Lastfall, der
+das Kontaktsystem wiederverwendet. Ohne jede Kontaktfuge gibt es kein
+Kontaktsystem und keine Zeile - dort müsste `Model.check()` den Eintrag
+nennen, das tut es noch nicht (`tests/test_uebermass.py`,
+`test_uebermass_ohne_fuge_wird_benannt`).
+### 4.0b Laufbuch je Lastfall: jeder Kontaktlauf einzeln, Wechselarten je Runde (22.09.2026)
+
+`solver._kontakt_info_sammeln`, `solver._laufbuch_eintrag`, `solver._fliessarten`,
+`solver._startherkunft_eintragen`, `contact.RUNDEN_FELDER`,
+`ContactSystem.runden`, `ContactSystem.endzustand_kennung`
+
+**Warum.** Mit Fließen rechnet ein Lastfall viele Kontaktläufe — am
+Drehlager zwölf für LF1. `res.info` führte davon nur Summen
+(`contact_iterations`, `contact_factorisations`) und seit dem 22.09.2026
+drei Zählwerte (`contact_laeufe`, `contact_letzter_lauf_konvergiert`,
+`contact_laeufe_nicht_konvergiert`). Welcher der zwölf Läufe gedeckelt war,
+in welcher Laststufe, und welche Art Zustandswechsel die 40 Runden des
+Deckels gefüllt hat, stand nirgends. Die Abhilfen hängen aber genau daran:
+Öffnen und Schließen reibungsfreier Fugen verlangt etwas anderes als neues
+Gleiten an der Reibstelle oder Fließen einer Grenzkraft. Das Laufbuch ist
+**reine Buchführung** — nichts davon geht in Zustand, Matrix,
+Faktorisierungsschlüssel oder Abbruch zurück.
+
+**Je Kontaktlauf ein Eintrag, nie zusammengefasst.** `res.info["laeufe"]` ist
+eine Liste; `_kontakt_info_sammeln` baut den Eintrag **vor** der Summierung
+aus dem `cinfo` genau dieses Laufs. Felder:
+
+| Feld | Bedeutung |
+|---|---|
+| `nr` | 1, 2, … in der Reihenfolge der Läufe |
+| `art` | `Lastfall` (ohne Fließen), sonst `Vorlauf`, `Laststufe`, `Newton`, `Fliessschritt` (Anfangsdehnung), `Abschluss`; bei einem Abbruch in der Fließ-Iteration vorläufig `Fliessen` |
+| `stufe`, `schritt`, `tangente` | nur bei Fließen: Laststufe, Schritt darin, ob mit der konsistenten Tangente gelöst wurde |
+| `schritte`, `faktorisierungen` | dieses Laufs (Summe über alle = die bisherigen Summenwerte) |
+| `konvergiert`, `grund` | `grund` ist `''` oder `deckel`, `max_iter`, `probelauf`, `eingefroren`, `abbruch` |
+| `warm`, `neustart` | Start aus einem Kontaktzustand angenommen; Warmstart verworfen oder zurückgesetzt und neu gerechnet |
+| `start_von_lauf` | Nummer des Laufs, dessen Zustand der Start war; 0 = der dem Lastfall angebotene Start; `None` = kalt; −1 = ein von außen übergebener Zustand unbekannter Herkunft |
+| `zyklen`, `phase`, `n_aktiv`, `n_gleitet` | Zustand am Ende des Laufs (`cycles`, Phase, geschlossene und gleitende Bedingungen) |
+| `runden` | je Kontaktschritt ein Zahlentupel nach `contact.RUNDEN_FELDER` (unten) |
+| `endzustand_kennung` | 16 Hexziffern, prozessfest (unten) |
+| `u_max` | größte Knotenverschiebung [m], Betrag nur über die drei Verschiebungen — dasselbe Maß wie „max\|u\|" der Drehlager-Messungen |
+
+`contact_laeufe`, `contact_letzter_lauf_konvergiert` und
+`contact_laeufe_nicht_konvergiert` werden seitdem aus dem Laufbuch
+**abgeleitet** (Länge, letzter Eintrag, Zahl der nicht konvergierten), nicht
+mehr getrennt hochgezählt. Ein Kontaktabbruch (`KontaktAbbruch`) bekommt in
+`_teilergebnis_anhaengen` einen eigenen Eintrag mit Grund `abbruch`;
+`faktorisierungen` ist dort `None`, weil der Lauf kein `cinfo` zurückgab.
+
+**`konvergiert` und `grund`.** Für jeden Eintrag gilt `konvergiert ==
+(grund == '')` — mit **einer** Ausnahme: ein eingefrorener Zustand
+(`einfrieren=…`) meldet wie bisher `konvergiert = True`, trägt aber den Grund
+`eingefroren`. Er hat nicht iteriert; ob seine Referenz konvergiert war, steht
+bei der Referenz (`contact_frozen_from`). Der Grund folgt demselben Entscheid
+wie der Meldetext am Ende von `solve_with_contact` (Probelauf vor Deckel vor
+Schrittgrenze).
+
+**Die Art ohne neue Signatur.** `plastizitaet.iteration` wird aus Tests mit
+einem einfachen `loesen` gerufen; ein zusätzlicher Rückruf hätte jede dieser
+Stellen berührt. Stattdessen merkt sich `_plastizitaet_rechnen` je
+Löseraufruf, welcher Laufbuch-Eintrag entstand und ob eine Tangente `dK`
+dabei war, und `_fliessarten` zeichnet die Folge nach dem Ende aus
+`info["verlauf"]` nach: im Newton-Weg je Laststufe ein Aufruf zu Beginn, dann
+je Schritt, der die Toleranz verfehlt, einer (`not (diff <= toleranz)`, wie
+dort — auch ein NaN zählt gleich), zum Schluss der Abschluss; im
+Anfangsdehnungsweg je Schritt ein Aufruf. Stimmt die Zahl der Aufrufe nicht
+oder trägt ein Aufruf eine Tangente, wo keiner eine haben kann, bleibt es bei
+`Fliessen` — eine falsche Zuordnung wäre schlimmer als eine grobe.
+`start_von_lauf` entsteht über **Identität** (`is`) des übergebenen
+Kontaktzustands mit dem, den ein früherer Lauf hinterließ — ohne Kopie und
+ohne Vergleich von Inhalten.
+
+Am Block mit Reibung und Fließen (`_fliessendes_kontaktmodell`, 2 Laststufen,
+22.09.2026) sieht das so aus: Vorlauf 21 Schritte, Laststufe 1 21 Schritte
+(kalt, denn sie bekommt den Start des Lastfalls, nicht den des Vorlaufs),
+Laststufe 2 6 Schritte mit Neustart, Newton 2/1/1, Abschluss 1 — 53 Schritte
+in 7 Läufen, wie `contact_iterations` sagt. Mit `MAX_CYCLES = 1` sind Läufe
+1 bis 6 gedeckelt, der Abschluss nicht. Dabei zeigt sich ein Befund, der
+bisher nur hergeleitet war: **kein Lauf startet vom Zustand des Vorlaufs**
+(`start_von_lauf` ist nie 1). Der Vorlauf kostet mit Fließen einen vollen
+Kontaktlauf und reicht nichts weiter.
+
+**Wechselarten je Runde** (`ContactSystem.runden`). `_update_states` hängt je
+Aufruf — also je Kontaktschritt — ein Zahlentupel an; `initialize`,
+`zustand_setzen` und `__init__` beginnen die Liste neu (ein Stumpf aus
+`object.__new__` bekommt sie beim ersten Aufruf). Gezählt werden
+**Ereignisse**, nicht Bedingungen:
+
+* `schliessen_reib`/`schliessen_frei`, `oeffnen_reib`/`oeffnen_frei` — Reibstelle
+  heißt `ct` vorhanden und μ > 0 oder Haften;
+* `fliessen_an`, `fliessen_aus` — Grenzkraft erreicht, Entlastung;
+* `gleiten_neu` — Haften → Gleiten mit echtem Kegelverstoß (μ·Fn > 0);
+  `gleiten_nach_schliessen` — bei μ·Fn = 0 und in derselben Runde geschlossen;
+  `gleiten_ohne_fn` — bei μ·Fn = 0, schon vorher geschlossen. Ein wieder
+  geschlossener Reibknoten trägt Fn = 0 aus der offenen Runde; jede
+  Schubverschiebung liegt dann „über" der Grenze, und in Phase 2 steht er mit
+  dem Verhältnis ∞ ganz vorn in der Reihe. Das ist kein Kegelverstoß und
+  wird darum getrennt gezählt;
+* `haften_zurueck`, `richtung` — Phase 1: Gleiten → Haften, Gleitrichtung
+  nachgeführt;
+* `eingefroren_neu` — nach acht Wechseln festgehalten; beim
+  **Öffnungsversuch** ändert sich `active` dabei nicht, es zählt dann nur
+  hier;
+* dazu `bedingungen` (verschiedene Bedingungen mit Ereignis), `verstoesse`
+  (Phase 2: haftende Knoten über dem Kegel), `H` (haftende Reibknoten vor der
+  Umstellung — dieselbe Zahl wie `haftend` in der Anteilsregel), `a`
+  (Gleitanteil der Runde), `guete`, `dF_slip` (beide auf f_ref bezogen) und
+  `ganz_rutschend` (Gruppen, deren aktive Reibknoten alle gleiten).
+
+Eine Runde mit mindestens einem Ereignis ist genau eine, die `changed`
+meldet — jede Stelle, die `changed` setzt, zählt ein Ereignis. Darum ist die
+Zahl der Phase-2-Runden mit Ereignis seit dem letzten Rücksetzen gleich
+`cycles`, und die Deckelzeile in `ContactSystem.update` fasst genau die
+gezählten Runden zusammen: „Kontakt: Nachpruefung der Reibung nach 40
+Zustandswechseln abgebrochen - in 40 Runden: 31 mit Öffnen/Schließen
+reibungsfreier Bedingungen (212 Wechsel), 12 mit neuem Gleiten (340 Knoten)"
+(Zahlen hier zur Form; am Drehlager noch nicht gemessen). Die Zeile wird in
+`_kontakt_info_sammeln` weiterhin wie jede Meldung ohne Laufnummer
+zusammengefasst, wenn sie wörtlich gleich ist; die Zuordnung zum Lauf steht
+im Laufbuch.
+
+**Endzustand-Kennung** (`ContactSystem.endzustand_kennung`). `signatur()` hasht
+mit dem eingebauten `hash()`, und der ist je Prozess anders gesät
+(PYTHONHASHSEED) — als Faktorisierungsschlüssel innerhalb eines Laufs richtig,
+zum Vergleich zweier Rechnungen unbrauchbar. Die Kennung ist
+`hashlib.blake2b` (8 Byte) über Phase, Zahl der Bedingungen, die gepackten
+Bitfelder aktiv/gleitet/fließt/Schubhalt und die sortierten ganz rutschenden
+Gruppen. **Nicht** darin stehen Normalkräfte und Gleitrichtungen: sie leben
+nur im Lastvektor F_c. Gleiche Kennung heißt gleiche Aktivmenge, gleiches
+Haften/Gleiten und Fließen — nicht gleiche Kräfte. `test_kontaktzustand`
+hält einen festen Wert für einen von Hand gesetzten Zustand fest und prüft
+ihn unter zwei Hash-Saatwerten in eigenen Prozessen.
+
+**Warmstart-Herkunft je Lastfall.** `res.info["start_angeboten_von"]`
+(„Lastfall LF1", „Kombination K1", „System ‹Situation›" oder `None`) und
+`res.info["start_genutzt"]` stehen getrennt, denn angeboten ist nicht
+genutzt: `zustand_setzen` lehnt fremde Sicherungen ab, der Warmstart kann
+verworfen werden, ein eingefrorener Zustand rechnet mit seiner Referenz.
+`start_genutzt` ist wahr, wenn ein Lauf mit `start_von_lauf == 0` warm
+endete. Die Herkunft wird nur fortgeschrieben, wenn ein Lastfall wirklich
+einen Zustand hinterlässt — nach einem eingefrorenen LF2 startet LF3 vom
+Zustand von LF1, und genau das steht dann da. `StaticSystem` trägt dazu
+`kontaktzustand_von`. Im **Ausfallweg** (`solve_with_ausfall`) wird kein Start
+weitergereicht; dort steht immer `None` mit `start_vermerk = "Ausfallweg ohne
+Warmstart"`.
+
+**Bitgleich — gemessen.** Vor dem Einbau (Stand 54b6f9a) und danach wurden
+dieselben 13 Rechnungen mit `solver_threads = 1` ausgeführt: Block mit
+Reibung; mit Fließen im Newton- und im Anfangsdehnungsweg; beides mit
+`MAX_CYCLES = 1`; vier Lastfälle warm hintereinander (einer mit verworfenem
+Warmstart); eine Kombination mit Warmstart; drei Lastfälle mit Einfrieren.
+Verglichen per `tobytes()`: u, Reaktionen, `solid_res` und Kontaktkräfte —
+**65 von 65 Feldern bitgleich**, dazu die acht Kontakt-Kennzahlen je Rechnung
+gleich. Dass der Vergleich scharf ist, zeigt die Gegenprobe: mit
+`SLIP_STIFFNESS_FINE` um 10⁻⁷ relativ verstellt sind 52 der 65 Felder
+verschieden. Zwei Läufe des alten Stands untereinander: 65 von 65 bitgleich.
+
+**Was es kostet.** Je Runde ein Durchlauf mehr über die Gruppen
+(`_full_slip_groups`) und einige Zähler in der Schleife; je Lauf die Kennung
+(vier Bitfelder). Gegen rund 3,5 s je Faktorisierung am Drehlager ist das
+nicht messbar, gemessen ist es dort aber nicht. Ein Rundentupel belegt rund
+384 Byte im Speicher und rund 68 Byte gepickelt (gemessen an einem Tupel mit
+Drehlager-Größen); bei 150 Runden je Lastfall sind das 57 kB bzw. 10 kB.
+
+**Grenzen.** Der Ausfallweg sammelt nur das `cinfo` des letzten inneren
+Kontaktlaufs; ein Deckel in einem früheren Ausfallschritt bleibt unsichtbar.
+Ein erster Versuch, der vor der Hilfsfesselung scheitert, hinterlässt keinen
+Eintrag (er zählt auch nicht in `contact_laeufe`). `contact_iterations` nach
+einem Abbruch ist wie bisher nur die Schrittzahl des abgebrochenen Laufs,
+nicht die Summe.
+
+#### 4.0b-1 Gegenprüfung: Bericht, Ketten und Aufträge (22.09.2026)
+
+**Die Rundenbilanz zerlegte die Bündelung im Bericht.** Der Bericht zeigt
+für die Ergebnisse ohne eigene Kontakttabelle jede Kontaktmeldung **einmal**,
+mit der Zahl der Ergebnisse, die sie tragen (`report/html.py`, Warnungsliste
+wächst um höchstens die Zahl der verschiedenen Texte). Gebündelt wird nach
+dem Text. Die Deckelzeile des Kontaktsystems war bis zum Laufbuch ein fester
+Text; mit der Rundenbilanz („ - in 40 Runden: 31 mit …") hat sie je Lauf und
+Lastfall andere Zahlen, und jeder gedeckelte Lauf hätte eine eigene
+Warnzeile bekommen — am Drehlager bis zu 422 × 12. Die Bündelung schneidet
+die Bilanz deshalb ab wie die Laufnummer „(Kontaktlauf n)"; die Zahlen stehen
+je Lauf im Laufbuch. Dabei fiel ein zweiter Fehler auf, der schon mit der
+Laufnummer bestand: ein Ergebnis mit mehreren gedeckelten Läufen trägt
+dieselbe Art mehrmals und wurde **mehrmals** gezählt („12 weitere Ergebnisse"
+für eines). Gezählt werden jetzt Ergebnisse, nicht Zeilen.
+`tests/test_report.py::test_deckelzeilen_mit_rundenbilanz_werden_gebuendelt`:
+drei Ergebnisse mit je zwei gedeckelten Läufen verschiedener Bilanz ergeben
+eine Warnzeile „(3 weitere Ergebnisse …)"; ohne die Änderung waren es sechs
+Zeilen zu je „1 weitere Ergebnisse". Im `contact_log` **eines** Ergebnisses
+steht die Deckelzeile dagegen je gedeckeltem Lauf einmal — wörtlich gleich
+sind zwei Bilanzen selten, und dort gehört die Zahl hin.
+
+**Kette.** Auf dem Kettenweg (`_cases_in_ketten`) trägt jedes Ergebnis
+`res.info["kette"]` = (Nummer der Kette, Zahl der Ketten). Der erste Lastfall
+jeder Kette startet kalt; ohne diese Angabe stünde mitten in der Reihe ein
+`start_angeboten_von = None`, das sich von einem Fehler nicht unterscheiden
+lässt (Vorschlag 5 des Entwurfs, von der Gegenprobe bestätigt).
+
+**Auftrag.** Eine nichtlineare Kombination, die als eigener Auftrag rechnet
+(`use_jobs`, `jobs._job_solve_combination`), baut ihr System neu und beginnt
+kalt; seriell beginnt dieselbe Kombination warm vom Zustand des letzten
+Lastfalls. Bei Reibung hängt der Endzustand vom Weg ab (hergeleitet; wie
+stark sich das zeigt, ist nicht gemessen). Der Auftrag vermerkt es als
+`start_vermerk = "Auftrag ohne Warmstart"`; der Vermerk des Ausfallwegs hat
+Vorrang, weil der auch seriell nie einen Start weiterreicht.
+`tests/test_kontaktzustand.py::test_kette_und_auftrag_stehen_im_ergebnis`
+(ohne Prozesse: `run_jobs` ersetzt, der Auftrag im selben Prozess).
+
+**Bitgleich, unabhängig nachgemessen.** Stand 54b6f9a gegen das Laufbuch
+(72698df), je ein frischer Prozess, `workers = 1`, `solver_threads = 1`:
+Block mit Reibung, derselbe mit `MAX_CYCLES = 1`, Fließen (Newton) mit und
+ohne Deckel 1, Anfangsdehnung, drei Lastfälle warm hintereinander. sha256
+über u, Reaktionen, `solid_res` und Kontaktkräfte sowie sechs
+Kontakt-Kennzahlen: **80 von 80 gleich**. Fließen ohne Deckel: 53 Schritte in
+7 Läufen, mit Deckel 1 sechs Läufe nicht konvergiert und der letzte
+konvergiert — wie oben beschrieben.
+
+**Nicht gebaut** (offen für die nächste Stufe): `res.info["nachweis"]` aus
+Punkt 6 des Entwurfs (mit `vorlauf_ohne_zustandsuebergabe` und den
+gedeckelten Läufen, wie die Gegenprobe es vorschlägt) — die Angaben sind aus
+dem Laufbuch ableitbar, die Zusammenfassung gehört aber zur Kennzeichnung
+(Vorschlag 2) und wird dort entschieden. Ebenso die Einträge der inneren
+Kontaktläufe des Ausfallwegs (siehe „Grenzen").
+
 ### 4.1 Lager mit Ausfall, Schlupf, Reibung und Grenzkraft
 
 Knoten-, Linien- und Flächenlager werden zunächst einheitlich auf
@@ -1833,6 +2306,37 @@ Kontaktbedingung mit dem Spalt g = g₀ + c·u:
 Rotationsfreiheitsgrade werden genauso behandelt (ohne Reibung); ihre Kräfte
 erscheinen als Momente in den Auflagerreaktionen, nicht in den
 Knotenkontaktkräften.
+
+#### Einseitiges Lager mit dem Nullvektor als Richtung (22.09.2026)
+
+`ContactSystem._build` normierte die Richtung eines einseitigen Lagers mit
+`n /= norm(n) or 1.0`. Aus dem Nullvektor wurde so wieder der Nullvektor: die
+Bedingung g = g₀ + nᵀu hatte die Zeile null, trug keinen Freiheitsgrad und
+stand mit F_n = 0 und Status „Kontakt“ in der Ergebnisliste. Nur
+`_tangent_basis` teilte 0 durch 0 (numpy: „invalid value encountered in
+divide“, auf stderr, in keinem Protokoll). Das Spaltelement zehn Zeilen tiefer
+fing denselben Fall schon ab. Gemessen am Träger 8 m (links eingespannt,
+rechts in z gelagert, 10 kN/m, Lager in Feldmitte):
+
+| Richtung | Zeilen in der Kontakttabelle | u_z Feldmitte | F_n |
+|---|---|---|---|
+| (0, 0, 1) | 1 | −3,62·10⁻¹⁰ m | 45 668,24 N |
+| (0, 0, 0), vorher | 1 („Kontakt“) | −4,562031 mm | −0,0 N |
+| (0, 0, 0), jetzt | 0 | −4,562031 mm | - |
+| ohne Lager | 0 | −4,562031 mm | - |
+
+Mit μ = 0,3 ging die NaN-Tangentenbasis als c_t in die Bedingung, und der Lauf
+brach mit „Kontakt-Iteration 1: Gleichungssystem singulär“ ab, ohne das Lager
+zu nennen (am Stand vor der Änderung gemessen). Jetzt wird die Bedingung wie
+beim Spaltelement weggelassen und ins Protokoll geschrieben („Einseitiges
+Lager Knoten 4: Richtung unbestimmt (Nullvektor) - bitte 'direction'
+angeben“), mit und ohne Reibung. Der Lauf mit (0, 0, 0) ist seither
+**bitgleich** mit dem ohne Lager (vorher wich u_z in der 15. geltenden
+Ziffer ab, −0,004562030661418937 m gegen −0,004562030661418983 m, weil er
+über die Kontaktiteration lief); die Gegenprobe mit (0, 0, 1) ist bitgleich mit
+dem Stand davor (Prüfsumme der Verschiebungen unverändert).
+`Model.check()` meldet den Fall schon vor dem Rechnen
+(`tests/test_supports.py`, `test_einseitiges_lager_ohne_richtung`).
 
 ### 4.1a Halt für Teile ohne geschlossene Bedingung (19.09.2026)
 

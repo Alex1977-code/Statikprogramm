@@ -68,6 +68,8 @@ def _mkl_lib():
             _find_mkl()
             import pypardiso
             _MKL_LIB = pypardiso.PyPardisoSolver().libmkl or False
+            if _MKL_LIB:
+                _mkl_cbwr_festhalten(_MKL_LIB)
         except Exception:                                  # noqa: BLE001
             _MKL_LIB = False
     return _MKL_LIB or None
@@ -100,6 +102,58 @@ def _mkl_threads_setzen(lib, n: int) -> int:
         return int(lesen())
     except (AttributeError, OSError):
         return int(n)
+
+
+#: MKL_CBWR, wie es galt, als Statik3D MKL zum ersten Mal geladen hat - None,
+#: solange das nicht geschehen ist (siehe _mkl_cbwr_festhalten).
+_MKL_CBWR = None
+
+#: Argument von MKL_CBWR_Get fuer den eingestellten Zweig und die Namen der
+#: Zweige, aus mkl_cbwr.h. Der Header liegt der Programmumgebung nicht bei;
+#: gelesen aus der Kopie in Intels Repository intel/mklnn (src/mkl_cat.h,
+#: Abschnitt "MKL CBWR stuff"), die Signatur ``int mkl_cbwr_get(int option)``
+#: aus IntelPython/mkl-service (mkl/_mkl_service.pxd). Gemessen 22.09.2026 am
+#: mkl_rt.3.dll der Programmumgebung: ohne Variable 1, mit MKL_CBWR=AUTO 2,
+#: mit MKL_CBWR=COMPATIBLE 3 - wie die Tabelle.
+MKL_CBWR_BRANCH = 1
+MKL_CBWR_ZWEIGE = {0: "OFF", 1: "BRANCH_OFF", 2: "AUTO", 3: "COMPATIBLE", 4: "SSE2",
+                   5: "SSE3", 6: "SSSE3", 7: "SSE4_1", 8: "SSE4_2", 9: "AVX", 10: "AVX2",
+                   11: "AVX512_MIC", 12: "AVX512"}
+
+
+def _mkl_cbwr_festhalten(lib) -> None:
+    """MKL_CBWR festhalten, einmal je Prozess, beim ersten Laden von MKL.
+
+    MKL liest die Variable nur beim Laden; wer sie danach setzt, aendert
+    nichts mehr (gemessen 22.09.2026: gesetzt nach dem Laden, meldet MKL
+    weiter den alten Zweig). Darum zaehlt der Wert von diesem Zeitpunkt und
+    nicht der beim Faktorisieren. Daneben steht, was MKL selbst meldet
+    (MKL_CBWR_Get) - aber nur, wenn das geladene mkl_rt die Funktion hat;
+    sonst "unbekannt", nicht geraten.
+
+    Ein eigener Prototyp statt ``lib.MKL_CBWR_Get``: argtypes am geteilten
+    CDLL-Objekt gelten fuer alle, die es benutzen.
+    """
+    global _MKL_CBWR
+    if _MKL_CBWR is not None:
+        return
+    import ctypes
+    code, zweig = "unbekannt", "unbekannt"
+    lib = getattr(lib, "libmkl", lib)
+    if lib is not None:
+        try:
+            lesen = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int)(("MKL_CBWR_Get", lib))
+            code = int(lesen(MKL_CBWR_BRANCH))
+            zweig = MKL_CBWR_ZWEIGE.get(code, f"unbekannt ({code})")
+        except Exception:                                  # noqa: BLE001
+            code, zweig = "unbekannt", "unbekannt"
+    _MKL_CBWR = {"umgebung": os.environ.get("MKL_CBWR"), "code": code, "zweig": zweig}
+
+
+def mkl_cbwr() -> Optional[dict]:
+    """{umgebung, code, zweig} vom ersten Laden von MKL - None, solange
+    Statik3D MKL nicht geladen hat. ``umgebung`` ist None ohne Variable."""
+    return None if _MKL_CBWR is None else dict(_MKL_CBWR)
 
 
 def threads_automatisch(backend: str) -> int:
@@ -711,18 +765,49 @@ def ausweichen_gebuendelt(ergebnisse) -> list:
 INT32_MAX = 2 ** 31 - 1
 
 
-def _pardiso_nnz_faktor(ps) -> int:
-    """Nichtnullen der Faktorisierung aus iparm(18) - 0, wenn nichts gemeldet wird.
+#: Die iparm-Eingabefelder, die nach der Faktorisierung mitgeschrieben werden,
+#: so wie MKL sie zurueckgibt. pypardiso uebergibt ein Nullfeld (iparm(1) = 0,
+#: MKL nimmt seine Vorgaben); danach steht darin, womit gerechnet wurde.
+#: Gemessen 22.09.2026 am Dirichlet-Laplace mit 36 Zeilen, ein Thread:
+#: 1: 1, 2: 3, 8: 2, 10: 13, 11: 1, 13: 1, 21: 0, 24: 0, 25: 0. Die
+#: Ausgabefelder (7, 14-20, 22, 23, 30) gehoeren nicht dazu.
+PARDISO_EINGABEFELDER = (1, 2, 8, 10, 11, 13, 21, 24, 25)
 
-    Gemessen 20.09.2026 an einer Tridiagonalmatrix: n = 200 gibt 964, n = 400
-    gibt 1960 - linear, wie es fuer ein Band sein muss. ``get_iparms()`` zaehlt
-    von 1; iparm(17) steht direkt daneben und meint den Speicher in KB (28 bei
-    n = 400), nicht die Eintraege. Die beiden sind leicht zu verwechseln.
+
+def _pardiso_kennzahlen(ps) -> dict:
+    """Was MKL PARDISO bei der Faktorisierung getan hat, aus iparm - direkt
+    nach ``ps.factorize`` zu lesen, vor jedem solve (der schreibt iparm neu).
+
+    * ``gestoert`` = iparm(14): Zahl der angehobenen Pivots. Gemessen
+      22.09.2026: Dirichlet-Laplace 0; mit einem entkoppelten Block
+      [[1, 1], [1, 1]] (Pivot nach einem Eliminationsschritt exakt 0) 1; mit
+      drei solchen Bloecken 3 (tests/test_loeser.py).
+    * ``nnz`` = iparm(18): Nichtnullen des Faktors. Gemessen 20.09.2026 an
+      einer Tridiagonalmatrix: n = 200 gibt 964, n = 400 gibt 1960 - linear,
+      wie es fuer ein Band sein muss.
+    * ``speicher_kb`` = iparm(15), (16), (17): Spitze der Analyse, dauerhaft
+      aus der Analyse, Zahlenphase - in KB **laut MKL-Dokumentation**, nicht
+      nachgemessen. iparm(17) steht direkt neben iparm(18) und ist leicht mit
+      den Eintraegen zu verwechseln (28 bei der Tridiagonalmatrix n = 400).
+    * ``eingabe``: die Felder PARDISO_EINGABEFELDER.
+
+    ``get_iparms()`` zaehlt von 1. Leer, wenn iparm nicht lesbar ist.
     """
     try:
-        return int(ps.get_iparms()[18])
-    except Exception:
-        return 0
+        ip = ps.get_iparms()
+    except Exception:                                      # noqa: BLE001
+        return {}
+
+    def feld(i):
+        try:
+            return int(ip[i])
+        except Exception:                                  # noqa: BLE001
+            return None
+
+    return {"gestoert": feld(14), "nnz": feld(18),
+            "speicher_kb": {str(i): feld(i) for i in (15, 16, 17)},
+            "speicher_einheit": "KB laut MKL-Dokumentation, nicht nachgemessen",
+            "eingabe": {str(i): feld(i) for i in PARDISO_EINGABEFELDER}}
 
 
 class LinearSolver:
@@ -799,6 +884,13 @@ class LinearSolver:
         self._vorgabe = None         # nur ama: wonach faktorisiert wurde (fuer den Nachweis)
         self.nachiterationen = 0
         self.residuum = 0.0
+        #: Nur PARDISO: Matrixtyp (pypardiso rechnet mit 11, reell unsymmetrisch),
+        #: angehobene Pivots (iparm(14)) und alle Kennzahlen aus
+        #: _pardiso_kennzahlen. None bei den anderen Loesern - sie melden keine
+        #: Zahl, und 0 hiesse "keiner angehoben".
+        self.mtype = None
+        self.gestoerte_pivots = None
+        self.pardiso_kennzahlen = {}
         #: Warum der gewaehlte Loeser nicht rechnete, wenn auf einen anderen
         #: ausgewichen wurde - leer, wenn nicht. Steht in beschreibung() und
         #: damit im Fortschrittsstrom und im Protokoll.
@@ -820,6 +912,7 @@ class LinearSolver:
                 _find_mkl()
                 import pypardiso
                 ps = pypardiso.PyPardisoSolver()
+                _mkl_cbwr_festhalten(ps)         # nur beim ersten Mal
                 # self._K ist bereits K.tocsr() (siehe oben). Ein zweites
                 # tocsr() auf derselben Matrix kostete bei Drehlagergroesse
                 # 0,280 s (475.935 Zeilen, 17,6 Mio. Nichtnullen, gemessen
@@ -829,13 +922,34 @@ class LinearSolver:
                 # Threadzahl aus den Einstellungen (0 = alle Kerne bis auf einen)
                 self.threads = _mkl_threads_setzen(ps, threads_vorgabe("pardiso"))
                 ps.factorize(Kcsr)
-                self.nnz_faktor = _pardiso_nnz_faktor(ps)
+                # Direkt nach der Faktorisierung: solve schreibt iparm neu
+                kz = _pardiso_kennzahlen(ps)
+                self.pardiso_kennzahlen = kz
+                self.nnz_faktor = int(kz.get("nnz") or 0)
+                self.gestoerte_pivots = kz.get("gestoert")
+                # pypardiso 0.4.7 fuehrt den Typ als ps.mtype. Fehlte das Feld,
+                # liefe ein AttributeError in das except unten, und nur das
+                # Mitschreiben liesse den Loeser ausweichen.
+                mt = getattr(ps, "mtype", None)
+                self.mtype = None if mt is None else int(mt)
                 self._ps = ps
                 self._solve = lambda b: ps.solve(Kcsr, b)
                 self.backend = "pardiso"
             except Exception as ex:
                 if be == "pardiso":
                     raise
+                # Was PARDISO vor dem Scheitern eingetragen hat, gehoert nicht
+                # dem Ersatz. Die Threadzahl setzt _mkl_threads_setzen schon vor
+                # ps.factorize; ohne diese Zeilen nannten beschreibung() und der
+                # Loeser-Nachweis SuperLU mit den Threads von PARDISO (gemessen
+                # 22.09.2026 mit solver_threads = 2 und werfendem factorize:
+                # Nachweis threads {"2": 1}, Zeile "1x SuperLU (2 Threads)").
+                # SuperLU rechnet einkernig (test_superlu_nennt_sich_einkernig).
+                self.threads = 1
+                self.mtype = None
+                self.gestoerte_pivots = None
+                self.pardiso_kennzahlen = {}
+                self.nnz_faktor = 0
                 # **Nicht still verwerfen.** Bis zum 22.09.2026 fiel hier jede
                 # PARDISO-Ausnahme ohne eine Zeile weg, und es ging ueber
                 # CHOLMOD (meist nicht installiert) nach SuperLU. Am Drehlager
@@ -1099,6 +1213,12 @@ class LinearSolver:
         if self._solve is None:
             raise RuntimeError("Loeser ist freigegeben - erneut faktorisieren")
         b = np.asarray(b, float)
+        # Das Residuum gehoert zu **dieser** Loesung. Ohne Pruefung (check=False,
+        # mehrere rechte Seiten, b = 0) gibt es keins - dann nan statt der Zahl
+        # der vorigen Loesung, die StaticSystem sonst diesem Lastfall
+        # zuschriebe. Gelesen wird es nur vom Loeser-Nachweis (_LoeserBuch) und
+        # von Tests; am Rechenweg haengt es nicht.
+        self.residuum = float("nan")
         x = self._solve(b)
         # Der Nachweis von ama gehoert zu genau dieser Loesung. Die Nachiteration unten ruft
         # self._solve fuer die Korrektur b - K x auf, und deren Residuum bezieht sich auf
@@ -1349,6 +1469,8 @@ class Results:
         for g, lo in ausweich_paare(self.info):
             s.append(f"Löser ausgewichen       : {g}"
                      + (f" – stattdessen rechnete {ausweichloeser_text([lo])}" if lo else ""))
+        if self.info.get("loeser_nachweis"):
+            s.extend(loeser_nachweis_zeilen(self.info["loeser_nachweis"]))
         if self.u is not None and self.u.size:
             i = int(np.argmax(self.umag))
             s.append(f"max. Verschiebung       : {self.umag[i]*1000:.4f} mm (Knoten {i})")
@@ -1496,6 +1618,120 @@ def shell_derived(model: Model, i: int, r: np.ndarray) -> dict:
 # ==========================================================================
 # Statisches System
 # ==========================================================================
+class _LoeserBuch:
+    """Was die Loesungen **eines Lastfalls** benutzt haben - der Loeser-Nachweis.
+
+    Gezaehlt wird dort, wo geloest wird (StaticSystem._geloest), nicht nur
+    beim Faktorisieren: ein Lastfall kann eine Faktorisierung benutzen, die
+    vor ihm entstand. Ein lineares Modell faktorisiert beim Aufstellen des
+    Systems, und die behaltene Kontaktfaktorisierung
+    (StaticSystem._kontakt_loeser) ueberlebt den Wechsel des Lastfalls -
+    eingefrorene Zustaende sind darauf gebaut. Ein Nachweis, der nur
+    Faktorisierungen zaehlte, bliebe dort leer (Einwand der Gegenprobe zum
+    Entwurf, 22.09.2026). Die Faktorisierungen des Lastfalls zaehlen getrennt.
+
+    Nur Zaehlen und Lesen: kein Wert hier geht in eine Rechnung zurueck.
+    """
+
+    def __init__(self, zeit_vorher: float):
+        self.zeit_vorher = float(zeit_vorher)
+        self.loesungen: dict = {}            # Loeser -> Zahl der Loesungen
+        self.threads: dict = {}              # wirksame Threads -> Zahl der Loesungen
+        self.mtype: dict = {}                # PARDISO-Matrixtyp -> Zahl der Loesungen
+        self.ausweichgruende: dict = {}      # Grund -> Zahl der Loesungen
+        self.gescheitert = 0
+        self.faktorisierungen = 0
+        self.faktorisierungen_gestoert = 0
+        self.gestoert_summe = None           # None: keine Faktorisierung meldete eine Zahl
+        self.gestoert_max = None
+        self.residuum_max = None
+        self.residuum_gemessen = 0
+        self.pardiso_eingabe = None
+
+    @staticmethod
+    def _zaehlen(d: dict, schluessel: str) -> None:
+        d[schluessel] = d.get(schluessel, 0) + 1
+
+    def _gestoert(self, ls):
+        g = getattr(ls, "gestoerte_pivots", None)
+        if g is not None:
+            self.gestoert_max = max(int(g), self.gestoert_max or 0)
+        return g
+
+    def faktorisierung(self, ls) -> None:
+        self.faktorisierungen += 1
+        g = self._gestoert(ls)
+        if g is not None:
+            self.gestoert_summe = (self.gestoert_summe or 0) + int(g)
+            self.faktorisierungen_gestoert += 1 if int(g) > 0 else 0
+
+    def loesung(self, ls) -> None:
+        self._zaehlen(self.loesungen, str(getattr(ls, "backend", "?")))
+        self._zaehlen(self.threads, str(int(getattr(ls, "threads", 1) or 1)))
+        mt = getattr(ls, "mtype", None)
+        if mt is not None:
+            self._zaehlen(self.mtype, str(int(mt)))
+        grund = getattr(ls, "ausweichgrund", "")
+        if grund:
+            self._zaehlen(self.ausweichgruende, str(grund))
+        self._gestoert(ls)
+        r = getattr(ls, "residuum", None)
+        if r is not None and np.isfinite(r):
+            self.residuum_gemessen += 1
+            self.residuum_max = float(r) if self.residuum_max is None else max(self.residuum_max, float(r))
+        kz = getattr(ls, "pardiso_kennzahlen", None)
+        if kz:
+            self.pardiso_eingabe = dict(kz.get("eingabe") or {})
+
+    def als_dict(self, zeit_jetzt: float) -> dict:
+        return {"loesungen": dict(self.loesungen), "loesungen_gescheitert": self.gescheitert,
+                "ausweichgruende": dict(self.ausweichgruende),
+                "threads": dict(self.threads), "mtype": dict(self.mtype),
+                "faktorisierungen": self.faktorisierungen,
+                "faktorisierungen_mit_gestoerten_pivots": self.faktorisierungen_gestoert,
+                "gestoerte_pivots_summe": self.gestoert_summe,
+                "gestoerte_pivots_max": self.gestoert_max,
+                # Differenz der Systemsumme: das System rechnet viele Lastfaelle
+                "zeit_faktorisierung_lastfall": float(zeit_jetzt) - self.zeit_vorher,
+                "residuum_linear_max": self.residuum_max,
+                "residuum_gemessen": self.residuum_gemessen,
+                "pardiso_eingabe": self.pardiso_eingabe,
+                "mkl_cbwr": mkl_cbwr()}
+
+
+def loeser_nachweis_zeilen(nw: dict) -> list:
+    """Die Zeilen der Zusammenfassung zum Loeser-Nachweis eines Lastfalls:
+    wer wie oft geloest hat, Ausweichen mit Grund, gestoerte Pivots - die
+    beiden letzten nur, wenn es sie gab."""
+    z = []
+    loes = nw.get("loesungen") or {}
+    if loes:
+        thr = sorted(int(t) for t in (nw.get("threads") or {}))
+        wie = ("einkernig" if thr == [1] else "/".join(str(t) for t in thr) + " Threads") if thr else ""
+        mt = sorted(nw.get("mtype") or {})
+        if mt:
+            wie += (", " if wie else "") + "mtype " + "/".join(mt)
+        text = ", ".join(f"{n}× {NAMEN.get(b, b)}" for b, n in loes.items())
+        text += f" ({wie})" if wie else ""
+        text += (f"; {int(nw.get('faktorisierungen', 0) or 0)} Faktorisierungen in "
+                 f"{float(nw.get('zeit_faktorisierung_lastfall', 0.0) or 0.0):.3f} s")
+        r = nw.get("residuum_linear_max")
+        if r is not None:
+            text += f"; Residuum höchstens {float(r):.1e}"
+        z.append(f"Lösungen                : {text}")
+    if nw.get("loesungen_gescheitert"):
+        z.append(f"Gescheiterte Lösungen   : {int(nw['loesungen_gescheitert'])}")
+    for grund, n in (nw.get("ausweichgruende") or {}).items():
+        z.append(f"Ausgewichen             : {grund} ({n} Lösung{'' if n == 1 else 'en'})")
+    summe, hoechst = nw.get("gestoerte_pivots_summe"), nw.get("gestoerte_pivots_max")
+    if summe or hoechst:
+        z.append(f"Gestörte Pivots         : {int(summe or 0)} in "
+                 f"{int(nw.get('faktorisierungen_mit_gestoerten_pivots', 0) or 0)} von "
+                 f"{int(nw.get('faktorisierungen', 0) or 0)} Faktorisierungen dieses Lastfalls, "
+                 f"höchstens {int(hoechst or 0)} je benutzter Faktorisierung")
+    return z
+
+
 class StaticSystem:
     """Assemblierte und faktorisierte Steifigkeit fuer beliebig viele Lastfaelle."""
 
@@ -1539,6 +1775,9 @@ class StaticSystem:
         #: Loesungen mit ausgewichenem Loeser, (Grund, Ausweichloeser) -> Zahl
         #: (_geloest zaehlt, ausweich_info liest je Ergebnis)
         self._ausweich_genutzt: dict = {}
+        #: Loeser-Nachweis des laufenden Lastfalls (nachweis_beginnen) - None
+        #: ausserhalb eines Lastfalls
+        self._nachweis_buch = None
         self.t_assemble = time.time() - t0
         if not model.has_contact:
             _ = self.solver          # sofort faktorisieren (bei Kontakt erst mit Kc)
@@ -1583,6 +1822,22 @@ class StaticSystem:
             fortschritt = getattr(self, "_progress", None)
             if fortschritt:
                 _melde(fortschritt, f"Gleichungslöser ausgewichen - {grund}")
+        buch = getattr(self, "_nachweis_buch", None)
+        if buch is not None:
+            buch.faktorisierung(ls)
+
+    def nachweis_beginnen(self) -> None:
+        """Den Loeser-Nachweis eines Lastfalls neu beginnen (_solve_loads).
+
+        Ein Buch, das ein abgebrochener Lastfall offen liess, wird ersetzt -
+        seine Zahlen gehoeren nicht zum naechsten."""
+        self._nachweis_buch = _LoeserBuch(self.zeit_faktorisierung)
+
+    def nachweis_abschliessen(self) -> Optional[dict]:
+        """Den Loeser-Nachweis des Lastfalls als Woerterbuch; None, wenn keiner
+        begonnen wurde. Danach zaehlt nichts mehr hinein."""
+        buch, self._nachweis_buch = getattr(self, "_nachweis_buch", None), None
+        return None if buch is None else buch.als_dict(self.zeit_faktorisierung)
 
     def gerandet(self, Kff):
         """Kff mit dem Lagrange-Rand der Hilfsfesselung.
@@ -1771,6 +2026,9 @@ class StaticSystem:
         Die Randzeilen fordern ``V u = 0``; ihre rechte Seite ist null. Die
         Multiplikatoren am Ende der Loesung sind die Haltekraefte und gehen
         den Aufrufer nichts an.
+
+        Hier zaehlt auch der Loeser-Nachweis des Lastfalls (_LoeserBuch): jede
+        Loesung mit dem Loeser, der sie gerechnet hat.
         """
         # Jede Loesung mit einem ausgewichenen Loeser zaehlen - daraus liest
         # _solve_loads, ob **dieses** Ergebnis betroffen ist (ausweich_info).
@@ -1782,10 +2040,20 @@ class StaticSystem:
             schluessel = (grund, str(getattr(ls, "backend", "") or ""))
             genutzt[schluessel] = genutzt.get(schluessel, 0) + 1
         m = self._rand
-        if not m:
-            return ls.solve(rhs)
-        x = ls.solve(np.concatenate([rhs, np.zeros(m)]))
-        return np.asarray(x, float).ravel()[:len(rhs)]
+        buch = getattr(self, "_nachweis_buch", None)
+        try:
+            if not m:
+                x = ls.solve(rhs)
+            else:
+                x = ls.solve(np.concatenate([rhs, np.zeros(m)]))
+                x = np.asarray(x, float).ravel()[:len(rhs)]
+        except BaseException:
+            if buch is not None:
+                buch.gescheitert += 1
+            raise
+        if buch is not None:
+            buch.loesung(ls)
+        return x
 
     def reactions(self, u: np.ndarray, F: np.ndarray, K_extra=None) -> np.ndarray:
         K = self.K if K_extra is None else (self.K + K_extra)
@@ -2185,7 +2453,36 @@ def _nichtlinear(model, ausfall: bool = None) -> bool:
     return bool(model.hat_ausfallstaebe() if ausfall is None else ausfall)
 
 
-def _kontakt_info_sammeln(res, cinfo: dict) -> dict:
+def _laufbuch_eintrag(nr: int, cinfo: dict, art: str = "", start_von_lauf=None) -> dict:
+    """Ein Eintrag des Laufbuchs (``res.info['laeufe']``) aus dem ``cinfo``
+    **eines** Kontaktlaufs - vor jeder Summierung gebaut.
+
+    ``start_von_lauf``: Nummer des Laufs desselben Lastfalls, dessen
+    Kontaktzustand der Start war; 0 = der Start, der dem Lastfall angeboten
+    wurde (res.info['start_angeboten_von']); None = ohne Start (kalt).
+    Ob der Start angenommen wurde, sagt ``warm``."""
+    lauf = dict(cinfo.get("contact_lauf") or {})
+    konvergiert = bool(cinfo.get("contact_converged", True))
+    grund = lauf.get("grund")
+    if grund is None:
+        # Ein cinfo ohne Laufangaben (Einheitstest, aelterer Stand): der
+        # Grund ist unbekannt, aber leer darf er nur bei Konvergenz sein
+        grund = "" if konvergiert else "unbekannt"
+    return {"nr": int(nr), "art": str(art or ""),
+            "schritte": int(cinfo.get("contact_iterations", 0) or 0),
+            "faktorisierungen": int(cinfo.get("contact_factorisations", 0) or 0),
+            "konvergiert": konvergiert, "grund": str(grund),
+            "warm": bool(cinfo.get("contact_warm", False)),
+            "neustart": bool(lauf.get("neustart", False)),
+            "start_von_lauf": start_von_lauf,
+            "zyklen": lauf.get("zyklen"), "phase": lauf.get("phase"),
+            "n_aktiv": lauf.get("n_aktiv"), "n_gleitet": lauf.get("n_gleitet"),
+            "runden": list(lauf.get("runden") or []),
+            "endzustand_kennung": lauf.get("endzustand_kennung"),
+            "u_max": lauf.get("u_max")}
+
+
+def _kontakt_info_sammeln(res, cinfo: dict, art: str = "", start_von_lauf=None) -> dict:
     """Die Kennzahlen des Kontakts aufaddieren statt ueberschreiben.
 
     Mit Plastizitaet loest derselbe Lastfall viele Male - am Drehlager 18
@@ -2195,13 +2492,27 @@ def _kontakt_info_sammeln(res, cinfo: dict) -> dict:
     Kontaktmeldungen der frueheren Schritte (etwa "Nachpruefung der Reibung
     nach 40 Zustandswechseln abgebrochen") fielen ganz weg (19.09.2026).
     "Nicht konvergiert" klebt: ein einziger gekappter Lauf zaehlt.
+
+    **Laufbuch** (22.09.2026): jeder Kontaktlauf bekommt einen eigenen
+    Eintrag in ``res.info['laeufe']`` (siehe :func:`_laufbuch_eintrag`),
+    gebaut **vor** der Summierung und nie zusammengefasst. Die Summen oben
+    sagen nicht, welcher der zwoelf Laeufe am Drehlager gedeckelt war und ob
+    der letzte - aus dem u und sigma stammen - dabei ist. Die Kennzahlen
+    ``contact_laeufe``, ``contact_letzter_lauf_konvergiert`` und
+    ``contact_laeufe_nicht_konvergiert`` werden aus dem Laufbuch abgeleitet.
+    ``art`` und ``start_von_lauf`` gibt ``_solve_loads`` mit.
     """
+    alte = list(res.info.get("laeufe") or [])
+    eintrag = _laufbuch_eintrag(len(alte) + 1, cinfo, art, start_von_lauf)
+    cinfo.pop("contact_lauf", None)     # steht jetzt im Eintrag, nicht als Einzelwert
     for k in ("contact_iterations", "contact_factorisations"):
         if k in cinfo:
             cinfo[k] = int(res.info.get(k, 0) or 0) + int(cinfo[k] or 0)
-    lauf = int(res.info.get("contact_laeufe", 0) or 0) + 1
-    cinfo["contact_laeufe"] = lauf
-    dieser = bool(cinfo.get("contact_converged", True))
+    laeufe = alte + [eintrag]
+    cinfo["laeufe"] = laeufe
+    lauf = eintrag["nr"]
+    cinfo["contact_laeufe"] = len(laeufe)
+    dieser = eintrag["konvergiert"]
     cinfo["contact_converged"] = bool(res.info.get("contact_converged", True)) and dieser
     # **Welcher Lauf, und war es der letzte?** Die Meldung "Nachpruefung der
     # Reibung ... abgebrochen" nannte keinen Lauf und wurde unten mit den
@@ -2211,9 +2522,8 @@ def _kontakt_info_sammeln(res, cinfo: dict) -> dict:
     # mehr sagen (am Drehlager genau so geschehen; Nachpruefung der
     # Loesersitzung vom 22.09.2026). Die Abbruchzeile traegt jetzt ihren
     # Lauf und wird nicht zusammengefasst.
-    cinfo["contact_letzter_lauf_konvergiert"] = dieser
-    cinfo["contact_laeufe_nicht_konvergiert"] = (
-        int(res.info.get("contact_laeufe_nicht_konvergiert", 0) or 0) + (0 if dieser else 1))
+    cinfo["contact_letzter_lauf_konvergiert"] = laeufe[-1]["konvergiert"]
+    cinfo["contact_laeufe_nicht_konvergiert"] = sum(1 for e in laeufe if not e["konvergiert"])
     abbruch = cinfo.get("contact_abbruch")
     eigene = [f"{z} (Kontaktlauf {lauf})" if abbruch and z == abbruch else z
               for z in (cinfo.get("contact_log") or [])]
@@ -2221,6 +2531,58 @@ def _kontakt_info_sammeln(res, cinfo: dict) -> dict:
     neu_log = [z for z in eigene if z not in alt_log]
     cinfo["contact_log"] = alt_log + neu_log
     return cinfo
+
+
+def _fliessarten(info: dict, einst) -> list:
+    """Die Art jedes Loeseraufrufs von ``plastizitaet.iteration`` als Liste
+    (Art, Laststufe, Schritt) - nachgezeichnet aus ``info['verlauf']``, ohne
+    die Signatur von iteration zu aendern (sie wird aus Tests mit einem
+    einfachen ``loesen`` gerufen).
+
+    Newton (``_newton``): je Laststufe ein Aufruf zu Beginn ("Laststufe"),
+    dann je Schritt, der die Toleranz noch verfehlt, einer ("Newton"); zum
+    Schluss einer ("Abschluss"). Anfangsdehnung: je Schritt ein Aufruf, der
+    erste einer Laststufe heisst "Laststufe", die weiteren "Fliessschritt".
+    Ohne Volumenelemente ruft iteration einmal: "Abschluss"."""
+    verlauf = list(info.get("verlauf") or [])
+    if not verlauf:
+        return [("Abschluss", None, None)]
+    stufen = int(info.get("laststufen", 1) or 1)
+    tol = float(einst.toleranz)
+    newton = info.get("verfahren") == "tangente"
+    arten = []
+    for k in range(1, stufen + 1):
+        schritte = [v for v in verlauf if v[0] == k]
+        if newton:
+            arten.append(("Laststufe", k, 0))
+            # iteration bricht beim ersten diff <= tol ab, ohne zu loesen;
+            # "not <=" wie dort, damit auch ein NaN genauso zaehlt
+            arten.extend(("Newton", k, int(it)) for (_k, it, diff, _n) in schritte
+                         if not (diff <= tol))
+        else:
+            arten.extend(("Laststufe" if it == 1 else "Fliessschritt", k, int(it))
+                         for (_k, it, _d, _n) in schritte)
+    arten.append(("Abschluss", None, None))
+    return arten
+
+
+def _fliessarten_eintragen(res, info: dict, einst, aufrufe: list) -> None:
+    """Die vorlaeufige Art "Fliessen" der Laufbuch-Eintraege durch die
+    nachgezeichnete ersetzen. Passt die Zahl der Aufrufe nicht - oder traegt
+    ein Aufruf eine Tangente, wo keiner eine haben kann -, bleibt es bei
+    "Fliessen": eine falsche Zuordnung waere schlimmer als eine grobe."""
+    try:
+        arten = _fliessarten(info, einst)
+    except Exception:                  # noqa: BLE001 - Buchfuehrung darf nie die Rechnung kosten
+        return
+    if len(arten) != len(aufrufe):
+        return
+    if any(tang and art != "Newton" for (_i, tang), (art, _k, _s) in zip(aufrufe, arten)):
+        return
+    laeufe = res.info.get("laeufe") or []
+    for (i, tang), (art, k, s) in zip(aufrufe, arten):
+        if i is not None and 0 <= i < len(laeufe):
+            laeufe[i].update({"art": art, "stufe": k, "schritt": s, "tangente": bool(tang)})
 
 
 def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start):
@@ -2231,9 +2593,13 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start):
     Spannungsnachlauf sigma = D eps - D eps_p rechnet."""
     from . import plastizitaet as pl
     halter = {"start": start, "R": None, "aktiv": aktiv}
+    aufrufe: list = []      # je Loeseraufruf (Index im Laufbuch oder None, mit Tangente)
 
     def loesen(Fg, dK=None):
+        vor = len(res.info.get("laeufe") or [])
         u_, R_, a_ = rechnen(Fg, halter["start"], dK)
+        nach = len(res.info.get("laeufe") or [])
+        aufrufe.append((vor if nach == vor + 1 else None, dK is not None))
         halter["R"], halter["aktiv"] = R_, a_
         if getattr(res, "kontaktzustand", None) is not None:
             halter["start"] = res.kontaktzustand
@@ -2243,6 +2609,7 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start):
     u, zustand, F_p, info = pl.iteration(model, F, loesen, model.plastizitaet, aktiv, log=log,
                                          progress=lambda t: _melde(progress, t),
                                          loesen_tangente=loesen)
+    _fliessarten_eintragen(res, info, model.plastizitaet, aufrufe)
     if not isinstance(temp, dict):
         temp = {}
     sig0 = temp.setdefault("sigma0", {})
@@ -2259,10 +2626,48 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start):
     return u, halter["R"], halter["aktiv"], temp
 
 
+def _startherkunft_eintragen(res, start, start_von, ausfallweg: bool) -> None:
+    """Woher der Warmstart des Lastfalls kam - **angeboten** und **genutzt**
+    getrennt (22.09.2026).
+
+    Angeboten ist nicht genutzt: ``zustand_setzen`` lehnt eine Sicherung ab,
+    die nicht zu den Bedingungen passt, ``solve_with_contact`` verwirft einen
+    Warmstart ohne Halt oder mit vielen Knoten gegen ihre Gleitrichtung und
+    rechnet von der Geometrie, und ein eingefrorener Zustand rechnet mit
+    seiner Referenz statt mit dem Start. Der Ausfallweg reicht den Start gar
+    nicht weiter (``solve_with_ausfall`` ruft ``solve_with_contact`` ohne
+    ``start``) - dort gilt immer: nichts angeboten. Eine einzige Angabe
+    "Start von" behauptete in all diesen Faellen einen Warmstart, den es nie
+    gab (Gegenprobe der Loesersitzung).
+
+    ``start_genutzt`` ist wahr, wenn ein Kontaktlauf, der den angebotenen
+    Start bekam (``start_von_lauf == 0`` im Laufbuch), warm endete."""
+    if ausfallweg:
+        res.info["start_angeboten_von"] = None
+        res.info["start_genutzt"] = False
+        res.info["start_vermerk"] = "Ausfallweg ohne Warmstart"
+        return
+    res.info["start_angeboten_von"] = (str(start_von) if start_von else "unbekannt") \
+        if start is not None else None
+    res.info["start_genutzt"] = any(bool(e.get("warm")) for e in (res.info.get("laeufe") or [])
+                                    if e.get("start_von_lauf") == 0)
+
+
 def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
                  kind: str, workers=None, progress=None, start=None,
-                 einfrieren=None, fenster=None, probelauf: bool = False) -> Results:
+                 einfrieren=None, fenster=None, probelauf: bool = False,
+                 start_von: str = None) -> Results:
+    """Einen Lastfall (oder eine direkt geloeste Kombination) rechnen.
+
+    ``start_von`` nennt nur, woher ``start`` stammt ("Lastfall LF1",
+    "Kombination K1", "System <Situation>") - es steht als
+    ``res.info['start_angeboten_von']`` im Ergebnis und aendert nichts an
+    der Rechnung."""
     t0 = time.time()
+    # Loeser-Nachweis je Lastfall: das System wird ueber Lastfaelle und
+    # Kombinationen geteilt, seine Summen (zeit_faktorisierung) wachsen mit.
+    if hasattr(system, "nachweis_beginnen"):
+        system.nachweis_beginnen()
     aktiv = getattr(system, "aktiv", None)
     # Wie oft vorher mit einem ausgewichenen Loeser geloest wurde - am Ende
     # steht in res.info, ob dieses Ergebnis betroffen ist. Ketten, Pool und
@@ -2286,6 +2691,23 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         res.info["situation"] = system.situation
     if grund:
         res.info["grundlast"] = list(grund)
+    # Laufbuch: die Art des naechsten Kontaktlaufs und die Zustaende, die die
+    # Laeufe hinterlassen haben - daran erkennt der naechste, von welchem
+    # Lauf sein Start stammt (Vergleich mit ``is``, keine Kopie). Reine
+    # Buchfuehrung, nichts davon geht in die Rechnung.
+    lauf_art = {"art": "Vorlauf" if _plastisch(model) else "Lastfall"}
+    zustaende: list = []        # [(Nr. des Laufs, Kontaktzustand danach)]
+
+    def _start_von_lauf(st_eff):
+        if st_eff is None:
+            return None
+        if st_eff is start:
+            return 0
+        for nr, z in reversed(zustaende):
+            if z is st_eff:
+                return nr
+        return -1               # Herkunft unbekannt (von aussen hineingereicht)
+
     def _rechnen(F_ges=None, start_=None, K_zusatz=None):
         """Der Loesungsweg des Lastfalls - wiederholbar. F_ges ersetzt die
         Last (Plastizitaet: F + F_p), start_ den Warmstart des Kontakts,
@@ -2301,9 +2723,13 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
             res.info["ausfall_log"] = alog
             if kontakt is not None:
                 res.contact, res.contact_forces, cinfo = kontakt
-                res.info.update(_kontakt_info_sammeln(res, cinfo))
+                # solve_with_ausfall reicht keinen Start weiter: kalt
+                res.info.update(_kontakt_info_sammeln(res, cinfo, lauf_art["art"], None))
             return u_, R_, aktiv_
         if model.has_contact:
+            # Derselbe Ausdruck wie unten im Aufruf, nur fuer das Laufbuch
+            st_eff = None if (probelauf and start_ is None) else st
+            von_lauf = _start_von_lauf(st_eff)
             u_, R_, res.contact, res.contact_forces, cinfo = solve_with_contact(
                 model, system, Fg, progress=progress, us=us, uebermass=ueber,
                 # Der Probelauf verwirft den Warmstart des **vorigen
@@ -2323,7 +2749,8 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
                 einfrieren=einfrieren,
                 fenster=fenster, K_zusatz=K_zusatz, probelauf=probelauf)
             res.kontaktzustand = cinfo.pop("contact_state", None)
-            res.info.update(_kontakt_info_sammeln(res, cinfo))
+            res.info.update(_kontakt_info_sammeln(res, cinfo, lauf_art["art"], von_lauf))
+            zustaende.append((len(res.info["laeufe"]), res.kontaktzustand))
             return u_, R_, aktiv
         u_ = system.solve(Fg, K_extra=K_zusatz, us=us)
         return u_, system.reactions(u_, Fg, K_zusatz), aktiv
@@ -2337,7 +2764,8 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         # weiterrechnen. Der Nutzer sieht dann die Verformung und daneben,
         # welche Last in der Bewegung ins Nichts geht - und entscheidet selbst.
         if not system.hilfsfesselung():
-            _teilergebnis_anhaengen(model, system, res, ex, F, feq, q, temp, workers, aktiv)
+            _teilergebnis_anhaengen(model, system, res, ex, F, feq, q, temp, workers, aktiv,
+                                    art=lauf_art["art"])
             res.info.update(ausweich_info(system, ausweich_vorher))
             raise
         n_sg = len(system.singular)
@@ -2348,11 +2776,27 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         except RuntimeError as ex2:
             # Auch mit Hilfsfesselung kein Gleichgewicht: die Verformung der
             # letzten Iteration bleibt als Ergebnis "Abbruch" erhalten
-            _teilergebnis_anhaengen(model, system, res, ex2, F, feq, q, temp, workers, aktiv)
+            _teilergebnis_anhaengen(model, system, res, ex2, F, feq, q, temp, workers, aktiv,
+                                    art=lauf_art["art"])
             res.info.update(ausweich_info(system, ausweich_vorher))
             raise
         hilfs = True
+    if _plastisch(model) and "contact_laeufe" in res.info:
+        # Die Kontaktlaeufe bis hier sind der elastische Vorlauf. Sein Zustand
+        # geht nicht weiter - der erste plastische Lauf startet bei ``start``,
+        # nicht bei res.kontaktzustand (_plastizitaet_rechnen) -, und sein u
+        # wird ueberschrieben. Ein gedeckelter Vorlauf aendert das Ergebnis
+        # darum nicht: am Block mit Reibung max |du| = 0 gegen den Lauf ohne
+        # Deckel (tests/test_rechenliste, 22.09.2026). Damit die Kennzeichnung
+        # (rechenliste.zustand_aus_info) ihn herausrechnen kann, stehen seine
+        # Zahlen hier eigens; contact_converged klebt weiter ueber alle Laeufe.
+        res.info["contact_vorlauf_laeufe"] = int(res.info.get("contact_laeufe", 0) or 0)
+        res.info["contact_vorlauf_nicht_konvergiert"] = int(
+            res.info.get("contact_laeufe_nicht_konvergiert", 0) or 0)
     if _plastisch(model):
+        # Vorlaeufig: welcher Aufruf der Fliess-Iteration welche Art hat,
+        # steht erst nach ihrem Ende fest (_fliessarten_eintragen)
+        lauf_art["art"] = "Fliessen"
         # Der Probelauf rechnet das Fliessen **mit** - nur der Kontakt bleibt
         # bei einem Schritt. Die erste Fassung (357d61d) liess die Plastizitaet
         # aus, weil fuer den Spannungssprung die elastische Spannung zu genuegen
@@ -2366,9 +2810,12 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         try:
             u, R, aktiv_eff, temp = _plastizitaet_rechnen(model, res, F, _rechnen, aktiv, temp, progress, start)
         except RuntimeError as ex3:
-            _teilergebnis_anhaengen(model, system, res, ex3, F, feq, q, temp, workers, aktiv)
+            _teilergebnis_anhaengen(model, system, res, ex3, F, feq, q, temp, workers, aktiv,
+                                    art=lauf_art["art"])
             res.info.update(ausweich_info(system, ausweich_vorher))
             raise
+    if model.has_contact:
+        _startherkunft_eintragen(res, start, start_von, model.hat_ausfallstaebe())
     if hilfs:
         u = system.ohne_starrkoerper(u)
     if system.singular:
@@ -2388,6 +2835,9 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
                      "nnz_faktor": int(getattr(system, "nnz_faktor", 0)),
                      "zeit_faktorisierung": float(getattr(system, "zeit_faktorisierung", 0.0)),
                      **ausweich_info(system, ausweich_vorher)})
+    nachweis = system.nachweis_abschliessen() if hasattr(system, "nachweis_abschliessen") else None
+    if nachweis is not None:
+        res.info["loeser_nachweis"] = nachweis
     if probelauf:
         res.info["probelauf"] = True
     postprocess(model, u, res, feq, q, temp, workers, aktiv_eff)
@@ -2716,14 +3166,18 @@ def _solve_cases_innen(model: Model, cases: list = None, workers: int = None,
     try:
         if system is not None:
             start = None
+            start_von = None        # woher ``start`` stammt - nur fuers Ergebnis
             for k, name in enumerate(names):
                 ref, einf = _einfrieren(name)
                 n_ = max(1, len(names))
                 out[name] = _solve_loads(model, system, {name: 1.0}, name, "case", workers,
                                          progress=progress, start=start, einfrieren=einf,
-                                         fenster=(0.35 + 0.25 * k / n_, 0.35 + 0.25 * (k + 1) / n_))
+                                         fenster=(0.35 + 0.25 * k / n_, 0.35 + 0.25 * (k + 1) / n_),
+                                         start_von=start_von)
                 if einf is not None:
                     out[name].info["contact_frozen_from"] = ref
+                if out[name].kontaktzustand:
+                    start_von = f"Lastfall {name}"
                 start = out[name].kontaktzustand or start
                 _melde(progress, f"Lastfall {name} ({k + 1}/{len(names)})",
                        0.35 + 0.25 * (k + 1) / n_)
@@ -2733,16 +3187,25 @@ def _solve_cases_innen(model: Model, cases: list = None, workers: int = None,
         for sit, sit_names in model.lastfaelle_je_situation(names).items():
             m_s, sys_s = systeme[sit]
             start = getattr(sys_s, "kontaktzustand", None)
+            # Der Zustand am System kann aus einem frueheren Aufruf stammen
+            # (Lastfall oder Kombination); kennt es seine Herkunft nicht, heisst
+            # sie nach dem System
+            start_von = (getattr(sys_s, "kontaktzustand_von", None) or f"System {sit}") \
+                if start is not None else None
             for name in _mit_referenzen_zuerst(list(sit_names), referenzen):
                 ref, einf = _einfrieren(name)
                 n_ = max(1, len(names))
                 out[name] = _solve_loads(m_s, sys_s, {name: 1.0}, name, "case", workers,
                                          progress=progress, start=start, einfrieren=einf,
-                                         fenster=(0.35 + 0.25 * k / n_, 0.35 + 0.25 * (k + 1) / n_))
+                                         fenster=(0.35 + 0.25 * k / n_, 0.35 + 0.25 * (k + 1) / n_),
+                                         start_von=start_von)
                 if einf is not None:
                     out[name].info["contact_frozen_from"] = ref
+                if out[name].kontaktzustand:
+                    start_von = f"Lastfall {name}"
                 start = out[name].kontaktzustand or start
                 sys_s.kontaktzustand = start
+                sys_s.kontaktzustand_von = start_von
                 k += 1
                 _melde(progress, f"Lastfall {name} ({k}/{len(names)})"
                        + (f" – Situation {sit}" if sit != GRUNDSTELLUNG else ""),
@@ -2892,12 +3355,19 @@ def _cases_in_ketten(model: Model, names: list, k: int, progress=None,
                 pass
     out: dict = {}
     fehler = []
-    for job, r in zip(jobs, fertig):
+    for i_kette, (job, r) in enumerate(zip(jobs, fertig)):
         if not r.ok:
             fehler.append(f"Kette {job.label}: {r.error}")
             continue
         for n, res in (r.result or {}).items():
             res.model = model
+            # Laufbuch: in welcher Kette (Nummer, Zahl der Ketten) der
+            # Lastfall lief. Der erste jeder Kette startet kalt - ohne diese
+            # Angabe liesse sich ein "start_angeboten_von: None" mitten in der
+            # Reihe nicht von einem Fehler unterscheiden. Reine Buchfuehrung.
+            info = getattr(res, "info", None)
+            if isinstance(info, dict):
+                info["kette"] = (i_kette + 1, len(bloecke))
             out[n] = res
     gerettet = {n: out[n] for n in names if n in out}
     # **Was hier bewusst NICHT steht.** Eine erste Fassung zog die
@@ -2975,10 +3445,15 @@ def solve_combination(model: Model, combo: Combination, case_results: dict = Non
             system = StaticSystem(model, workers, progress)
     if start is None:
         start = getattr(system, "kontaktzustand", None)
+        start_von = (getattr(system, "kontaktzustand_von", None) or f"System {sit}") \
+            if start is not None else None
+    else:
+        start_von = "Aufrufer"      # von aussen hineingereicht, Herkunft unbekannt
     res = _solve_loads(model, system, combo.factors, combo.name, "combination", workers,
-                       progress, start=start)
+                       progress, start=start, start_von=start_von)
     if res.kontaktzustand is not None:
         system.kontaktzustand = res.kontaktzustand
+        system.kontaktzustand_von = f"Kombination {combo.name}"
     res.info["typ"] = combo.typ
     return res
 
@@ -3575,7 +4050,7 @@ def _kontakt_abbruch(it: int, ex, cs, model, u, zug: list = None, log: list = No
 
 
 def _teilergebnis_anhaengen(model, system, res, ex, F, feq=None, q=None, temp=None,
-                            workers=None, aktiv=None) -> None:
+                            workers=None, aktiv=None, art: str = "") -> None:
     """Nach einem Abbruch der Kontakt-Iteration: die Verschiebung der letzten
     geloesten Iteration als Ergebnis an die Ausnahme haengen - samt den
     Teilen, deren Kontaktbedingungen zuletzt alle offen waren, als freie
@@ -3596,9 +4071,21 @@ def _teilergebnis_anhaengen(model, system, res, ex, F, feq=None, q=None, temp=No
         # auf dem Stand des VORIGEN, konvergierten Laufs, und ein abgebrochener
         # Lastfall meldete "letzter Lauf konvergiert" (gefunden von der
         # Loesersitzung am Quelltext, 22.09.2026).
-        _laeufe = int(res.info.get("contact_laeufe", 0) or 0) + 1
-        _nicht = int(res.info.get("contact_laeufe_nicht_konvergiert", 0) or 0) + 1
+        #
+        # Das Laufbuch bekommt fuer den abgebrochenen Lauf einen eigenen
+        # Eintrag (grund 'abbruch'); die Zaehlung wird daraus abgeleitet wie
+        # in _kontakt_info_sammeln. Zustandsangaben gibt es nicht - die
+        # Iteration hat kein Ende erreicht.
+        _alte = list(res.info.get("laeufe") or [])
+        _eintrag = _laufbuch_eintrag(len(_alte) + 1, {
+            "contact_iterations": int(ex.iteration), "contact_converged": False,
+            "contact_lauf": {"grund": "abbruch"}}, art, None)
+        _eintrag["faktorisierungen"] = None      # nicht bekannt: der Lauf gab kein cinfo zurueck
+        _laeufe_liste = _alte + [_eintrag]
+        _laeufe = len(_laeufe_liste)
+        _nicht = sum(1 for e in _laeufe_liste if not e["konvergiert"])
         res.info.update({"abbruch": str(ex).splitlines()[0], "abbruch_iteration": int(ex.iteration),
+                         "laeufe": _laeufe_liste,
                          "contact_laeufe": _laeufe, "contact_letzter_lauf_konvergiert": False,
                          "contact_laeufe_nicht_konvergiert": _nicht,
                          "contact_iterations": int(ex.iteration), "contact_converged": False,
@@ -3723,6 +4210,35 @@ def _kontaktsystem(system: StaticSystem, model: Model, uebermass, log: list):
     return cs
 
 
+def _kontaktlauf_angaben(cs, u, model: Model, grund: str) -> dict:
+    """Was das Laufbuch ueber einen Kontaktlauf festhaelt (``cinfo['contact_lauf']``,
+    in _kontakt_info_sammeln zum Eintrag gemacht): Grund des Endes, Zustand am
+    Ende und die Runden (contact.RUNDEN_FELDER).
+
+    ``u_max`` ist die groesste Verschiebung eines Knotens [m], nur ueber die
+    drei Verschiebungen - u haengt Drehungen und Woelb-Freiheitsgrade an, und
+    ein Maximum ueber m und rad zusammen waere keine Groesse. Dasselbe Mass
+    wie "max|u|" der Drehlager-Messungen (Knotenbetrag)."""
+    u_max = None
+    if u is not None:
+        n6 = model.nn * NDOF
+        v = np.asarray(u, float)[:n6].reshape(-1, NDOF)[:, :3]
+        u_max = float(np.linalg.norm(v, axis=1).max()) if len(v) else 0.0
+    return {"grund": grund, "zyklen": int(cs.cycles), "phase": int(cs.phase),
+            "n_aktiv": int(cs.n_active), "n_gleitet": int(cs.n_slip),
+            "runden": list(getattr(cs, "runden", None) or []),
+            "endzustand_kennung": cs.endzustand_kennung(), "u_max": u_max}
+
+
+def _neustart_vermerken(cinfo2: dict, runden_vorher: list) -> None:
+    """Ein Neustart gehoert zu **demselben** Kontaktlauf: die Runden vor dem
+    Neustart kommen vor die des Neustarts, damit je Schritt eine Runde im
+    Laufbuch steht (Schritte werden dort ebenso zusammengezaehlt)."""
+    lauf = cinfo2.setdefault("contact_lauf", {})
+    lauf["neustart"] = True
+    lauf["runden"] = list(runden_vorher) + list(lauf.get("runden") or [])
+
+
 def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                        max_iter: int = 120, progress=None, us: np.ndarray = None,
                        K_zusatz: sparse.spmatrix = None, uebermass: dict = None,
@@ -3771,26 +4287,59 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         return s if kz_kenn is None else s + (kz_kenn,)
 
     f0 = getattr(system, "faktorisierungen", 0)
+    eingefroren_verworfen = None     # Verstoesse, wenn der eingefrorene Zustand nicht passte
     if einfrieren is not None and cs.cons and cs.zustand_setzen(einfrieren):
         Kc, Fc = cs.matrices(model.ndof)
         if K_zusatz is not None:
             Kc = Kc + K_zusatz
         u = system.solve(F, Kc, Fc, us=us, signatur=signatur())
-        cs._update_states(u)                 # nur zur Auswertung: g, Fn, Ft je Bedingung
-        R = system.reactions(u, F + Fc, Kc)
-        Rsup = cs.support_reactions(model.nn)
-        n6 = model.nn * NDOF
-        Rk = R[:n6].reshape(-1, NDOF)
-        Rk[:, :3] += Rsup
-        R[:n6] = Rk.ravel()
-        log.append("Kontaktzustand eingefroren: Kontaktsteifigkeit und -kräfte des "
-                   "Referenzzustands, lineare Lösung ohne Iteration")
-        log.extend(cs.warnings())
-        return u, R, cs.results(), cs.nodal_forces(model.nn), {
-            "contact_iterations": 1, "contact_converged": True, "contact_log": log,
-            "contact_warm": False, "contact_frozen": True,
-            "contact_factorisations": getattr(system, "faktorisierungen", 0) - f0,
-            "contact_state": None}
+        # Vor _update_states (das setzt Zustaende um): passt der eingefrorene
+        # Zustand zu dieser Last? Bis zum 22.09.2026 hiess der Lauf immer
+        # "konvergiert", auch wenn eine geschlossene Bedingung Zug trug (FE4).
+        # Gemessen am Block mit Reibung, Referenz H1: 1,0 H1 passt (0,00 %
+        # gegen die nichtlineare Loesung), 1,1 H1 vier Knoten ueber dem
+        # Reibkegel (7,0 %), 0,5 H1 Durchdringung und Gleiten gegen die
+        # Richtung (18,8 %), -1,0 H1 Zug an sechs geschlossenen (70,0 %).
+        verst = cs.zustand_verstoesse(u)
+        passt = not (verst["zug"] or verst["durchdringung"] or verst["kegel"] or verst["gegen"])
+        if passt:
+            cs._update_states(u)             # nur zur Auswertung: g, Fn, Ft je Bedingung
+            R = system.reactions(u, F + Fc, Kc)
+            Rsup = cs.support_reactions(model.nn)
+            n6 = model.nn * NDOF
+            Rk = R[:n6].reshape(-1, NDOF)
+            Rk[:, :3] += Rsup
+            R[:n6] = Rk.ravel()
+            log.append("Kontaktzustand eingefroren: Kontaktsteifigkeit und -kräfte des "
+                       "Referenzzustands, lineare Lösung ohne Iteration")
+            log.extend(cs.warnings())
+            return u, R, cs.results(), cs.nodal_forces(model.nn), {
+                "contact_iterations": 1, "contact_converged": True, "contact_log": log,
+                "contact_warm": False, "contact_frozen": True,
+                "contact_factorisations": getattr(system, "faktorisierungen", 0) - f0,
+                "contact_state": None,
+                # konvergiert: der Zustand erfuellt alle Bedingungen unter dieser
+                # Last; der Grund sagt, dass dieser Lauf nicht iteriert hat
+                "contact_lauf": _kontaktlauf_angaben(cs, u, model, "eingefroren")}
+        # Passt nicht: nichtlinear nachrechnen, vom eingefrorenen Zustand aus
+        teile = []
+        if verst["zug"]:
+            teile.append(f"{verst['zug']} geschlossene Bedingungen unter Zug "
+                         f"(größter {verst['zug_max'] / 1e3:.3g} kN)")
+        if verst["durchdringung"]:
+            teile.append(f"{verst['durchdringung']} offene durchdrungen "
+                         f"(größte {verst['durchdringung_max'] * 1e3:.3g} mm)")
+        if verst["kegel"]:
+            teile.append(f"{verst['kegel']} haftende über dem Reibkegel "
+                         f"(bis {verst['kegel_max']:.3g}-fach)")
+        if verst["gegen"]:
+            teile.append(f"{verst['gegen']} gleitende gegen ihre Gleitrichtung")
+        zeile = ("Kontaktzustand eingefroren, passt aber nicht zu dieser Last: "
+                 + ", ".join(teile) + " - wird nichtlinear nachgerechnet, Start: der eingefrorene Zustand")
+        log.append(zeile)
+        _melde(progress, zeile)
+        eingefroren_verworfen = verst
+        start = einfrieren
     warm = bool(start) and cs.zustand_setzen(start)
     if warm:
         log.append("Warmstart aus dem Kontaktzustand des vorigen Lastfalls")
@@ -3812,7 +4361,9 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         return u, R, [], np.zeros((model.nn, 3)), {"contact_iterations": 0,
                                                    "contact_converged": True,
                                                    "contact_log": log,
-                                                   "contact_state": None}
+                                                   "contact_state": None,
+                                                   "contact_lauf": _kontaktlauf_angaben(
+                                                       cs, u, model, "")}
     u = None
     forced = False
     for it in range(1, max_iter + 1):
@@ -3830,6 +4381,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 # Lager mit Reibung, Ausfall bei Zug und Schlupf 2 mm)
                 log.append("Warmstart verworfen: im ersten Schritt kein Gleichgewicht - "
                            "Neustart von der Geometrie")
+                runden_vorher = list(getattr(cs, "runden", None) or [])
                 u2, R2, cons2, cf2, cinfo2 = solve_with_contact(
                     model, system, F, max_iter, progress, us, K_zusatz, uebermass,
                     start=None, versuch=versuch + 1, fenster=fenster,
@@ -3837,6 +4389,9 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 cinfo2["contact_log"] = log + list(cinfo2.get("contact_log", []))
                 cinfo2["contact_warm"] = False
                 cinfo2["contact_factorisations"] = getattr(system, "faktorisierungen", 0) - f0
+                _neustart_vermerken(cinfo2, runden_vorher)
+                if eingefroren_verworfen is not None:     # der Neustart kennt ihn nicht
+                    cinfo2["contact_frozen_verworfen"] = eingefroren_verworfen
                 return u2, R2, cons2, cf2, cinfo2
             if it == 1 and not forced and cs.stabilise():
                 # Im ersten Schritt haelt keine Bedingung - etwa eine Schraube,
@@ -3881,6 +4436,13 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             # wieder an, und die gewoehnliche Haftbindung uebernimmt. Der
             # naechste Schritt rechnet ohne ihn.
             changed = True
+            weiter = ("Kontakt: nach dem Deckel der Reibungsnachprüfung wurde ein "
+                      "Schubhalt gelöst - die Iteration läuft weiter")
+            if getattr(cs, "am_deckel", False) and weiter not in log:
+                # Die Abbruchzeile des Kontaktsystems steht schon im
+                # Protokoll; ohne diese Zeile laese man dort "abgebrochen"
+                # neben einem Lauf, der danach noch zu Ende kommen kann.
+                log.append(weiter)
         if progress:
             # Anteil im Fenster des Lastfalls: 1 - 0,85^it waechst mit jedem
             # Schritt und naehert sich der Fensterkante - ein wachsender Balken
@@ -3920,7 +4482,15 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             # sah damit aus wie eine auskonvergierte - und genau gegen solche
             # Zahlen pruefen wir 'aendert das Ergebnis nicht'. Gefunden von der
             # Loesersitzung am Quelltext (21.09.2026).
-            deckel = cs.phase == 2 and cs.cycles >= _MAX_CYCLES
+            # Entschieden wird an der Runde, in der die Schleife wirklich
+            # endet (cs.am_deckel), nicht an cs.cycles: der Zaehler bleibt
+            # nach dem Deckel stehen, und eine spaetere Runde ohne Wechsel
+            # meldete sonst ebenfalls den Deckel (22.09.2026).
+            # Fehlt der Merker (ein Kontaktsystem, dessen update() ihn nicht
+            # setzt), gilt die alte, vorsichtige Probe: ein fehlender Merker
+            # darf nicht "konvergiert" heissen (Gegenpruefung, 22.09.2026).
+            deckel = bool(getattr(cs, "am_deckel",
+                                  cs.phase == 2 and cs.cycles >= _MAX_CYCLES))
             converged = not deckel
             break
     if converged and u is not None:
@@ -3964,6 +4534,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 log.append(f"Warmstart verworfen: {n_v} gleitende Knoten bewegen sich gegen "
                            "ihre Richtung - Neustart von der Geometrie")
                 neu_start = None
+            runden_vorher = list(getattr(cs, "runden", None) or [])
             u2, R2, cons2, cf2, cinfo2 = solve_with_contact(
                 model, system, F, max_iter, progress, us, K_zusatz, uebermass,
                 start=neu_start, versuch=versuch + 1, fenster=fenster,
@@ -3972,6 +4543,9 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             cinfo2["contact_warm"] = bool(neu_start) and cinfo2.get("contact_warm", False)
             cinfo2["contact_iterations"] = it + cinfo2.get("contact_iterations", 0)
             cinfo2["contact_factorisations"] = getattr(system, "faktorisierungen", 0) - f0
+            _neustart_vermerken(cinfo2, runden_vorher)
+            if eingefroren_verworfen is not None:         # der Neustart kennt ihn nicht
+                cinfo2["contact_frozen_verworfen"] = eingefroren_verworfen
             return u2, R2, cons2, cf2, cinfo2
     R = system.reactions(u, F + (Fc if Fc is not None else 0.0), Kc)
     # Einseitige Lager als Auflagerreaktionen ausweisen
@@ -3995,12 +4569,17 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         log.append(text)
         _melde(progress, text)
     log.extend(cs.warnings())
+    # Derselbe Entscheid wie der Meldetext oben, als Wort fuers Laufbuch
+    grund = ("" if converged else "probelauf" if probelauf
+             else "deckel" if deckel else "max_iter")
     return u, R, cs.results(), cs.nodal_forces(model.nn), {
         "contact_abbruch": (text if not converged else ""),
         "contact_iterations": it, "contact_converged": converged, "contact_log": log,
         "contact_warm": warm,
         "contact_factorisations": getattr(system, "faktorisierungen", 0) - f0,
-        "contact_state": cs.zustand()}
+        "contact_state": cs.zustand(),
+        "contact_frozen_verworfen": eingefroren_verworfen,
+        "contact_lauf": _kontaktlauf_angaben(cs, u, model, grund)}
 
 
 # ==========================================================================
