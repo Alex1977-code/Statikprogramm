@@ -556,7 +556,7 @@ def test_stellungen_din19704_export():
 
 # --------------------------------------------------------------------------
 def _node() -> str:
-    """Pfad zu node, falls vorhanden - sonst leer (die Pruefung entfaellt dann)."""
+    """Pfad zu node, falls vorhanden - sonst leer (dann ``_ohne_node``)."""
     import shutil
     for name in ("node", "nodejs"):
         p = shutil.which(name)
@@ -568,10 +568,36 @@ def _node() -> str:
     return ""
 
 
+# Renderpruefungen, die mangels node nicht liefen und mit STATIK3D_OHNE_NODE=1
+# ausgelassen werden durften. main() zaehlt sie gesondert als "uebersprungen",
+# nicht als bestanden.
+UEBERSPRUNGEN = []
+
+
+def _ohne_node(was: str) -> None:
+    """node fehlt: die Renderpruefung ``was`` ist nicht gelaufen.
+
+    Das reisst die Pruefung, ausser STATIK3D_OHNE_NODE=1 erlaubt das Auslassen
+    ausdruecklich; dann steht es unter "uebersprungen". Bis ec6448c trugen
+    beide Renderpruefungen hier ``check(..., True)`` ein. Gemessen 23.09.2026
+    an ec6448c mit app.js von 97df705 (vor der Kur f63f2c7 der Nachweiszeile):
+    mit node 232/255 (19 FAIL beim Rendern der Stellungen, 4 bei der
+    Nachweiszeile), mit PATH ohne node 142/142 - die Ruecknahme von app.js
+    fiel auf einem Rechner ohne node nicht auf.
+    """
+    if os.environ.get("STATIK3D_OHNE_NODE") == "1":
+        UEBERSPRUNGEN.append(was)
+        print(f"SKIP {was:62s} node fehlt, ausgelassen (STATIK3D_OHNE_NODE=1)")
+    else:
+        check(f"{was}: node vorhanden", False,
+              "node nicht gefunden - node installieren oder STATIK3D_OHNE_NODE=1 setzen")
+
+
 def test_oberflaeche_rendert():
     """Die Oberflaeche wird ohne Browser gerendert: alle Register, Baum, Filmstreifen.
 
     Statisch geprueft wird immer; mit node laeuft app.js zusaetzlich wirklich.
+    Ohne node reisst die Pruefung (``_ohne_node``).
     """
     n0 = len(RESULTS)
     hier = os.path.dirname(os.path.abspath(__file__))
@@ -594,7 +620,7 @@ def test_oberflaeche_rendert():
 
     node = _node()
     if not node:
-        check("node nicht vorhanden - Renderpruefung entfaellt", True)
+        _ohne_node("Renderpruefung der Oberflaeche")
         _assert_since(n0)
         return
 
@@ -746,7 +772,73 @@ def test_nachweiszeile_nicht_gefuehrt_nicht_gruen():
                   len(zeilen) == 1 and zeilen[0]["klasse"] == soll,
                   str(zeilen) if zeilen else (p.stderr or p.stdout)[-300:])
     if not node:
-        check("node nicht vorhanden - Renderpruefung der Nachweiszeile entfaellt", True)
+        _ohne_node("Renderpruefung der Nachweiszeile")
+    _assert_since(n0)
+
+
+def _ohne_node_laufen(test, erlaubt: bool):
+    """``test`` so laufen lassen, als fehle node; ``erlaubt`` setzt
+    STATIK3D_OHNE_NODE=1. Liefert (gerissen, Ergebnisse, Uebersprungenes,
+    Ausgabe); die Eintraege des inneren Laufs werden wieder entfernt, sie
+    gehoeren nicht zur Zusammenfassung dieser Suite."""
+    import contextlib
+    import io
+    g = globals()
+    # get: bis ec6448c gab es die Liste nicht; die Pruefung soll dort mit
+    # FAIL enden, nicht mit NameError.
+    uebersprungen = g.get("UEBERSPRUNGEN", [])
+    n_r, n_u = len(RESULTS), len(uebersprungen)
+    alt_node, alt_env = g["_node"], os.environ.get("STATIK3D_OHNE_NODE")
+    g["_node"] = lambda: ""
+    if erlaubt:
+        os.environ["STATIK3D_OHNE_NODE"] = "1"
+    else:
+        os.environ.pop("STATIK3D_OHNE_NODE", None)
+    puffer = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(puffer):
+            test()
+        gerissen = False
+    except AssertionError:
+        gerissen = True
+    finally:
+        g["_node"] = alt_node
+        if alt_env is None:
+            os.environ.pop("STATIK3D_OHNE_NODE", None)
+        else:
+            os.environ["STATIK3D_OHNE_NODE"] = alt_env
+    innen, weg = RESULTS[n_r:], uebersprungen[n_u:]
+    del RESULTS[n_r:]
+    del uebersprungen[n_u:]
+    return gerissen, innen, weg, puffer.getvalue()
+
+
+def test_ohne_node_nicht_bestanden():
+    """Ohne node zaehlt keine Renderpruefung als bestanden.
+
+    Beide Renderpruefungen trugen ohne node ``check(..., True)`` ein und
+    liessen die Laeufe von app.js aus; eine Ruecknahme nur von app.js fiel
+    auf einem Rechner ohne node nicht auf. Jetzt reisst die Pruefung ohne
+    node; nur STATIK3D_OHNE_NODE=1 erlaubt das Auslassen, und dann steht es
+    unter "uebersprungen", nicht unter den bestandenen Pruefungen.
+    Nachgestellt wird das Fehlen von node, indem ``_node`` leer liefert.
+    """
+    n0 = len(RESULTS)
+    for test in (test_oberflaeche_rendert, test_nachweiszeile_nicht_gefuehrt_nicht_gruen):
+        name = test.__name__
+        gerissen, innen, weg, aus = _ohne_node_laufen(test, erlaubt=False)
+        gruen_node = [n for n, ok in innen if ok and "node" in n]
+        rot_node = [n for n, ok in innen if not ok and "node" in n]
+        check(f"{name} ohne node: reisst, ein FAIL nennt node",
+              gerissen and rot_node and not gruen_node and not weg,
+              f"gerissen {gerissen}, FAIL {rot_node}, OK {gruen_node}, uebersprungen {weg}")
+        gerissen, innen, weg, aus = _ohne_node_laufen(test, erlaubt=True)
+        gruen_node = [n for n, ok in innen if ok and "node" in n]
+        rot = [n for n, ok in innen if not ok]
+        check(f"{name} mit STATIK3D_OHNE_NODE=1: uebersprungen, nicht bestanden",
+              not gerissen and not rot and not gruen_node and len(weg) == 1
+              and "SKIP" in aus,
+              f"gerissen {gerissen}, FAIL {rot}, OK {gruen_node}, uebersprungen {weg}")
     _assert_since(n0)
 
 
@@ -755,6 +847,7 @@ def main():
               test_contact_and_import, test_nichtlineare_lager_und_profile,
               test_stellungen_din19704_export, test_oberflaeche_rendert,
               test_nachweiszeile_nicht_gefuehrt_nicht_gruen,
+              test_ohne_node_nicht_bestanden,
               test_bound_state):
         print(f"\n--- {t.__name__} ---")
         try:
@@ -767,6 +860,9 @@ def main():
             RESULTS.append((t.__name__ + " (Ausnahme: %s)" % ex, False))
     n_ok = sum(1 for _, ok in RESULTS if ok)
     print(f"\n{n_ok}/{len(RESULTS)} Pruefungen bestanden")
+    if UEBERSPRUNGEN:
+        print(f"{len(UEBERSPRUNGEN)} uebersprungen (node fehlt, STATIK3D_OHNE_NODE=1):",
+              UEBERSPRUNGEN)
     failed = [n for n, ok in RESULTS if not ok]
     if failed:
         print("FEHLGESCHLAGEN:", failed)
