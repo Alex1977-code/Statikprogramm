@@ -2985,7 +2985,17 @@ Kombinationsmaske von Hand an. Die **Einwirkungskategorie** eines
 RFEM-6-Lastfalls ist aus einer Kennzahl angenommen, die an keiner Datei
 belegt ist: das Protokoll nennt je Kennzahl die angenommene Kategorie und
 die Lastfälle, deren Name sie umgestellt hat, und warnt; prüfen Sie ψ und γ
-in der Lastfallmaske. Ein Volumenkörper aus sechs Vierecken wird als
+in der Lastfallmaske. Der Name sagt dabei nur über die **Einwirkung**
+etwas: eine Angabe zur Bemessungssituation („ständige“, „vorübergehende“,
+„außergewöhnliche Bemessungssituation“, „Bemessungssituation bei
+Erdbeben“) zählt nicht, und ein Lastfall, dessen Name „Ermüdung“ enthält,
+wird FAT (nur für den Ermüdungsnachweis, in keiner erzeugten Kombination),
+auch wenn der Name daneben „Eigengewicht“ oder „Temperatur“ nennt. Am
+Drehlager (422 Lastfälle, alle mit der Kennzahl 11) machte der Name bis zum
+23.09.2026 96 Lastfälle über „ständige Bemessungssituation“ zu G, 16 über
+„außergewöhnliche Bemessungssituation“ zu A und die 164 Ermüdungslastfälle
+zu G (160) bzw. T (4); jetzt sind es 256× Q, 164× FAT und 2× P.
+Ein Volumenkörper aus sechs Vierecken wird als
 Sechsflächner nur dann unmittelbar vernetzt, wenn seine Knotenfolge genau
 die sechs Randflächen ergibt; sonst geht er an den freien Vernetzer (Einzelheiten im
 Schnittstellenhandbuch).

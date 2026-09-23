@@ -620,11 +620,36 @@ def expand_ranges(items: list[str]) -> list[str]:
     return out
 
 
+#: Angaben zur Bemessungssituation (DIN EN 1990, 6.4.1) im normierten Text.
+#: Sie sagen, in welcher Situation ein Lastfall nachgewiesen wird, nicht
+#: welche Einwirkung er traegt (Befund B073): am Drehlager machte
+#: „staendige Bemessungssituation“ 96 von 422 Lastfaellen zu G und
+#: „aussergewoehnliche Bemessungssituation“ 16 zu A (gemessen am Stand
+#: ec6448c, 23.09.2026). Darum faellt die Angabe vor der Deutung heraus.
+_BEMESSUNGSSITUATION = re.compile(
+    r"\b(?:(?:staendig|voruebergehend|aussergewoehnlich|erdbeben"
+    r"|persistent|transient|accidental|seismic)\w*\s+(?:(?:und|oder|and|or)\s+)?)+"
+    r"(?:bemessungssituation|design situation)\w*"
+    r"|\bbemessungssituation\w*\s+(?:bei\s+)?erdbeben\w*")
+
+
 def category_from_text(text, default: str = "Q") -> str:
-    """Einwirkungskategorie (Schluessel in ACTION_CATEGORIES) aus Freitext."""
-    s = norm_key(text)
+    """Einwirkungskategorie (Schluessel in ACTION_CATEGORIES) aus Freitext.
+
+    Eine Angabe zur Bemessungssituation zaehlt nicht als Einwirkung, und eine
+    Ermuedungslast ist FAT, was immer sie sonst nennt.
+    """
+    s = _BEMESSUNGSSITUATION.sub(" ", norm_key(text)).strip()
     if not s:
         return default
+    # Ermuedung zuerst: am Drehlager heissen 164 Lastfaelle „Ermuedungslast
+    # - ... - Eigengewicht ...“ bzw. „... Temperatur“ und wurden ueber diese
+    # Woerter zu G (160) und T (4), gemessen am Stand ec6448c, 23.09.2026.
+    # Als G oder T gehen sie in die erzeugten Kombinationen ein
+    # (combinations._kombinationen_bilden); FAT ist weder staendig noch
+    # veraenderlich und bleibt dem Ermuedungsnachweis.
+    if re.search(r"ermued|fatigue", s):
+        return "FAT"
     if re.search(r"staendig|permanent|dead|eigengewicht|self ?weight|\bg\b", s):
         return "G"
     if re.search(r"vorspann|prestress|\bp\b", s):
@@ -639,8 +664,6 @@ def category_from_text(text, default: str = "Q") -> str:
         return "H"
     if re.search(r"setzung|settlement", s):
         return "SET"
-    if re.search(r"ermued|fatigue", s):
-        return "FAT"
     if re.search(r"aussergew|accident|erdbeben|seismic|seism|anprall|explosion|fire|brand", s):
         return "A"
     if re.search(r"kran|crane", s):

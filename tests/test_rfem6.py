@@ -1919,6 +1919,84 @@ def test_einwirkungskategorie_wird_genannt():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+#: Lastfallnamen vom Drehlager (Drehlager_V15_4_export.rf6, LF33, LF233,
+#: LF123, LF401, LF602) mit der Kategorie, die der Name wirklich hergibt
+DREHLAGER_NAMEN = [
+    ("Bemessungslast im GZT Drehlager Ost - Hochlage 0 Grad - ständige "
+     "Bemessungssituation - Zeitpunkt 0", "Q"),
+    ("char.Last - Drehlager Ost - Hochlage 0 Grad - ständige Bemessungssituation "
+     "- Zeitpunkt 0", "Q"),
+    ("Bemessungslast im GZT Drehlager West - Hochlage 82 Grad - außergewöhnliche "
+     "Bemessungssituation - Zeitpunkt 0", "Q"),
+    ("Ermüdungslast - Drehlager Ost - Eigengewicht in Verkehrslage - Zeitpunkt 1", "FAT"),
+    ("Ermüdungslast - Drehlager West - EG+Lagerreibung EG Verkehrslage durch "
+     "(+)Temperatur - Zeitpunkt 1", "FAT"),
+]
+
+
+def test_bemessungssituation_ist_keine_einwirkungsart():
+    """Die Bemessungssituation im Lastfallnamen ist keine Einwirkungsart
+    (Befund B073).
+
+    Am Drehlager tragen alle 422 Lastfaelle die Kennzahl 11 -> Q, und der
+    Name verfeinert. Am Stand ec6448c (gemessen am 23.09.2026) machte
+    `category_from_text` daraus 256x G und 16x A: 96 ueber „staendig“ aus
+    „staendige Bemessungssituation“ (48 „Bemessungslast im GZT ...“, 48
+    „char.Last ...“), 160 „Ermuedungslast ... Eigengewicht ...“ ueber
+    „Eigengewicht“ und 16 ueber „aussergewoehnliche Bemessungssituation“;
+    dazu 4 „Ermuedungslast ... Temperatur“ zu T. Die Situation sagt nichts
+    ueber die Einwirkung, und die Kategorie wirkt ueber is_permanent und
+    is_accidental auf die erzeugten Kombinationen (gamma_G statt gamma_Q).
+    Eine Ermuedungslast ist FAT, was immer sie enthaelt.
+    """
+    for name, soll in DREHLAGER_NAMEN:
+        ist = _C.category_from_text(name, "Q")
+        check(f"Drehlager: {name[:40]}… -> {soll}", ist == soll, ist)
+    # die anderen Schreibweisen der Situationen nach DIN EN 1990 (6.4.1)
+    for name, soll in [("Nutzlast - ständige und vorübergehende Bemessungssituation", "Q"),
+                       ("Nutzlast - accidental design situation", "Q"),
+                       ("Verkehr - Bemessungssituation bei Erdbeben", "Q"),
+                       ("Verkehr - Erdbeben-Bemessungssituation", "Q")]:
+        ist = _C.category_from_text(name, "Q")
+        check(f"Situation: {name} -> {soll}", ist == soll, ist)
+    # Gegenproben: steht die Einwirkung selbst im Namen, bleibt sie erkannt
+    for name, soll in [("Eigengewicht", "G"), ("Ständige Lasten", "G"),
+                       ("Eigengewicht - ständige Bemessungssituation", "G"),
+                       ("Anprall - außergewöhnliche Bemessungssituation", "A"),
+                       ("Außergewöhnliche Einwirkung", "A"),
+                       ("Erdbeben", "A"), ("Temperatur", "T")]:
+        ist = _C.category_from_text(name, "Q")
+        check(f"Gegenprobe: {name} -> {soll}", ist == soll, ist)
+
+    # ueber den ganzen Import: Kennzahl 11 -> Q, der Name verfeinert
+    tmp = tempfile.mkdtemp()
+    try:
+        f = make_rf6(
+            os.path.join(tmp, "situation.rf6"),
+            nodes=[(0, 0, 0), (2, 0, 0)],
+            lines=[], members=[], supports=[],
+            load_cases=[(n, 11, 0.0) for n, _ in DREHLAGER_NAMEN]
+            + [("Eigengewicht", 11, 1.0)],
+        )
+        log = []
+        m = R6.read_rf6(f, log=log)
+        for i, (name, soll) in enumerate(DREHLAGER_NAMEN, start=1):
+            lc = m.load_cases[f"LF{i}"]
+            check(f"Import LF{i} -> {soll}", lc.category == soll, lc.category)
+        check("kein Lastfall wird ueber die Situation staendig",
+              not any(m.load_cases[f"LF{i}"].is_permanent for i in (1, 2)),
+              str([m.load_cases[f"LF{i}"].category for i in (1, 2)]))
+        check("kein Lastfall wird ueber die Situation aussergewoehnlich",
+              not m.load_cases["LF3"].is_accidental, m.load_cases["LF3"].category)
+        check("Gegenprobe: „Eigengewicht“ mit Kennzahl 11 wird G",
+              m.load_cases["LF6"].category == "G", m.load_cases["LF6"].category)
+        zeile = next((z for z in log if "Kennzahl 11" in z), "")
+        check("das Protokoll nennt die Ermuedungslasten als umgestellt",
+              "zu FAT: LF4, LF5" in zeile, zeile.strip())
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_lastfaelle_und_lasten():
     tmp = tempfile.mkdtemp()
     try:
@@ -2689,7 +2767,8 @@ def test_hex_order_nie_falsch():
 def main():
     for t in (test_flaechenlast_richtung, test_flaechenlasten_werden_abgezaehlt,
               test_stablasten_werden_abgezaehlt, test_hex_order_nie_falsch,
-              test_einwirkungskategorie_wird_genannt, test_stab_und_knotenlasten, test_deaktivierte_staebe, test_grundmodell, test_nichtlineare_lager, test_abheben,
+              test_einwirkungskategorie_wird_genannt,
+              test_bemessungssituation_ist_keine_einwirkungsart, test_stab_und_knotenlasten, test_deaktivierte_staebe, test_grundmodell, test_nichtlineare_lager, test_abheben,
               test_linien_flaechenlager, test_flaechen_mit_dicke,
               test_volumenkoerper, test_stabtypen, test_kontaktbedingungen,
               test_freigabetyp_je_objekt,

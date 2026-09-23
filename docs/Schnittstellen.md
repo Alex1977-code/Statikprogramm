@@ -797,6 +797,24 @@ und warnt, ψ und γ in der Lastfallmaske nachzusehen. Die erste Zeile sagt
 nicht mehr „Einwirkungskategorie übernommen“, sondern „aus der Kennzahl
 angenommen“.
 
+**Bemessungssituation und Ermüdung im Namen** (Befund B073).
+`category_from_text` nimmt Angaben zur Bemessungssituation nach DIN EN 1990,
+6.4.1 („ständige [und vorübergehende]“, „außergewöhnliche
+Bemessungssituation“, „Bemessungssituation bei Erdbeben“, englisch „…
+design situation“) aus dem Text, bevor es die Einwirkung sucht, und prüft
+„Ermüdung/fatigue“ vor allen anderen Wörtern. Gemessen am Drehlager am Stand
+ec6448c (23.09.2026): 96 Lastfälle wurden über „ständige
+Bemessungssituation“ zu G (48 „Bemessungslast im GZT …“, 48 „char.Last …“),
+16 über „außergewöhnliche Bemessungssituation“ zu A, und von den 164
+„Ermüdungslast …“ 160 über „Eigengewicht“ zu G und 4 über „Temperatur“ zu T.
+Mit der Kur: 256× Q, 164× FAT, 2× P; das Protokoll nennt die 164 unter „zu
+FAT“. Die zweite Drehlager-Datei (…_Netz_abgestimmt_Passstifte_Kopfbolzen22)
+wechselt genauso, der CBG-Trolley gar nicht (10× G, 45× Q, 3× P vorher wie
+nachher). Steht die Einwirkung selbst im Namen („Eigengewicht - ständige
+Bemessungssituation“, „Anprall - außergewöhnliche Bemessungssituation“),
+bleibt sie erkannt (`tests.test_rfem6`,
+`test_bemessungssituation_ist_keine_einwirkungsart`).
+
 **Freie Rechtecklasten.** RFEM legt das Lastfenster in die uv-Ebene eines
 eigenen Koordinatensystems (`coordinateSystem_id` → `CoordinateSystem…
 2PointsAndAngle`: Ursprung, ein Punkt auf der u-Achse, Drehwinkel der
