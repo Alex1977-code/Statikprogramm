@@ -4324,6 +4324,11 @@ davon nicht betroffen.
   Kante zusammengezogen), ist das ein **FEHLER** mit Elementnummer, und die
   Rechnung hält an. Bis zum 23.09.2026 fielen auch diese Elemente still weg — ein
   Kragarm aus Keil-Sechsflächnern rechnete mit 0,0 mm Durchbiegung.
+  Beim **Import** geschieht die Umwandlung schon im Anschluss an das
+  Zusammenführen doppelter Knoten, und das Importprotokoll nennt sie
+  („Entartete Volumenelemente umgewandelt (hex8→pent6: 2) …“) – dort, wo
+  solche Elemente entstehen: in der Datei selbst oder durch gleich liegende
+  Knoten, die zusammengeführt werden.
   Der Vernetzer legt sie gar nicht erst an: ein Volumenkörper, dessen
   Eckknoten in einer Ebene liegen, bekommt kein Element und eine Warnung mit
   seinem Namen (in Dateien aus RFEM stehen solche Null-Volumen als
