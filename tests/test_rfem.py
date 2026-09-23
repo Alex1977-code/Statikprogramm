@@ -541,6 +541,15 @@ def test_kombination_ohne_nummer_name():
     [';GZT;1.5*LF2', '1;GZT;1.35*LF1 + CO2', '2;GZT;LF2'] meldete es
     „LK1: ... aufgeloest: 1.35*LF1 + 1*LF2“, LK1 war aber {LF2: 1,5} und die
     aufgeloeste Kombination hiess LK1_2.
+
+    C und D: eine doppelte Tabellennummer bekommt einen Ausweichnamen, und
+    die Protokollzeile nennt ihn samt Grund, mit Verweis (Aufloesezeile) und
+    ohne (elif-Zweig). Bis zum 23.09.2026 hielt das keine Pruefung (Befund
+    B089): am Stand ec6448c bestand diese Suite 96/96 auch mit ``{herkunft}``
+    aus der Aufloesezeile gestrichen, dann hiess die Zeile nur „Kombination
+    LK2_2: Verweise ['CO1'] ...“. Ebenso 96/96 ohne den Grund „LK2 gab es
+    schon“ und mit einem elif-Zweig nur fuer Zeilen ohne Nummer (dann bekam
+    LK2_2 = LF3 gar keine Zeile).
     """
     m, log = _kombinationstabelle("s3d_kn_", ["1;GZT;1.35*LF1", ";GZT;1.5*LF2",
                                               "2;GZT;1.0*EK1"], lastfaelle=2)
@@ -563,6 +572,28 @@ def test_kombination_ohne_nummer_name():
     check("B: die Zeile ohne Nummer nennt ihren Namen im Modell", z != "keine Zeile",
           f"{frei} / {z}")
     check("B: alle drei Zeilen angelegt", "3 von 3 Lastkombinationen" in "\n".join(log))
+
+    # C: doppelte Nummer 2, die zweite Zeile mit Verweis -> Aufloesezeile
+    m, log = _kombinationstabelle("s3d_kn_", ["1;GZT;LF1", "2;GZT;LF2", "2;GZT;LF3 + CO1"],
+                                  lastfaelle=3)
+    fk = {k: dict(c.factors) for k, c in m.combinations.items()}
+    check("C: LK2 ist die erste Zeile 2, LK2_2 die aufgeloeste zweite",
+          _gleich(fk.get("LK2", {}), {"LF2": 1.0})
+          and _gleich(fk.get("LK2_2", {}), {"LF3": 1.0, "LF1": 1.0}), str(fk))
+    z = next((z for z in log if "Verweise ['CO1']" in z), "keine Zeile")
+    check("C: die Aufloesezeile nennt den Ausweichnamen samt Grund",
+          z.startswith("Kombination LK2_2 (Tabellennummer 2; LK2 gab es schon): "
+                       "Verweise ['CO1']") and z.endswith(": 1*LF3 + 1*LF1"), z)
+
+    # D: dieselbe Doppelung ohne Verweis -> eigene Zeile nur wegen des Ausweichnamens
+    m, log = _kombinationstabelle("s3d_kn_", ["1;GZT;LF1", "2;GZT;LF2", "2;GZT;LF3"],
+                                  lastfaelle=3)
+    fk = {k: dict(c.factors) for k, c in m.combinations.items()}
+    check("D: LK2_2 ist die zweite Zeile 2", _gleich(fk.get("LK2_2", {}), {"LF3": 1.0}),
+          str(fk))
+    z = next((z for z in log if "LK2_2" in z), "keine Zeile")
+    check("D: die Zeile ohne Verweis nennt den Ausweichnamen samt Grund",
+          z == "Kombination LK2_2 (Tabellennummer 2; LK2 gab es schon): 1*LF3", z)
 
 
 def main():
