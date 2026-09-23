@@ -505,6 +505,11 @@ def test_nachweisetikett_folgt_dem_ergebnis():
     Ermuedung wurde es geleert (B069).
     Ohne Fenster: echte Methode, self als Attrappe, das Etikett merkt sich
     seinen Text wie das QLabel.
+    Geprueft ist nur show_results selbst. Wege, die das Ergebnis verwerfen,
+    ohne show_results aufzurufen (clear_loads, new_model, Uebernehmen in der
+    Lastfallmaske), lassen die alte Zeile stehen - gemessen am 24.09.2026,
+    clear_loads und new_model im Fenster (offscreen), das Uebernehmen mit
+    Attrappe; noch offen.
     """
     from unittest import mock
     from statik3d.gui.main import MainWindow

@@ -3202,10 +3202,11 @@ solche Last aus einer älteren Datei noch mitführt, liest der Nachweis nicht,
 und die Prüfung meldet ihn nicht.
 
 **Lastfall umbenennen.** Bekommt ein Lastfall einen neuen Namen — im Register
-Lastfälle, per Doppelklick im Modellbaum, in seiner Maske rechts oder in der
-Bedienung im Browser —, heißt er auch in jeder Ermüdungslast neu: als oberer
-und unterer Zustand und als Glied eines Verlaufs. Bis zum 23.09.2026 zog die
-Oberfläche nur die Kombinationen nach, die Bedienung im Browser dazu die
+Lastfälle, per Doppelklick in der Tabelle „Lastfälle“ unten (Gruppe Lasten),
+in seiner Maske rechts (die auch ein Doppelklick im Modellbaum öffnet) oder
+in der Bedienung im Browser —, heißt er auch in jeder Ermüdungslast neu: als
+oberer und unterer Zustand und als Glied eines Verlaufs. Bis zum 23.09.2026
+zog die Oberfläche nur die Kombinationen nach, die Bedienung im Browser dazu die
 beiden Zustände, den Verlauf aber nicht. Die Modellprüfung meldete den alten
 Namen dann als „Lastfall oder Kombination '…' unbekannt“ (nur bei einem
 Zustand, nicht bei einem Glied des Verlaufs), und der Nachweis meldete
@@ -3383,12 +3384,19 @@ Kombination und Stelle; Färbung „Ausnutzung EC3“ im Viewport; alle Details
 im Bericht.
 
 Das Etikett der Maske *Nachweise* (Gruppe „Nachweise führen (nach der
-Berechnung)“) zeigt die Zeile der Nachweise EC3 und darunter die der
-Ermüdung — jeweils nur, wenn das aktuelle Ergebnis sie hat. Ohne beide steht
-dort „noch keine Nachweise“. Bis zum 23.09.2026 blieb nach einer Rechnung mit
-EC3 und einer zweiten ohne Nachweise die alte Zeile („Nachweise EC3: … max.
-Ausnutzung 0.633 … - alle erfuellt“ am Einfeldträger IPE 300 in
-`tests/test_ec3.py`) stehen, und mit nur Ermüdung war das Etikett leer.
+Berechnung)“) wird nach jeder Rechnung, nach „Nachweise EC3“ und
+„Ermüdungsnachweis“, beim Wechsel des gezeigten Ergebnisses und nach einer
+Änderung aus dem Browser neu geschrieben. Es zeigt dann die Zeile der
+Nachweise EC3 und darunter die der Ermüdung — jeweils nur, wenn das Ergebnis
+sie hat; ohne beide steht dort „noch keine Nachweise“. Werden die Ergebnisse
+verworfen, ohne dass neu gerechnet wird — gemessen am 24.09.2026 mit „Lasten
+des aktiven Lastfalls löschen“, *Datei → Neu* und „Übernehmen“ in der Maske
+eines Lastfalls —, bleibt die alte Zeile stehen, bis einer der zuerst
+genannten Anlässe das Etikett neu schreibt. Bis zum 23.09.2026 blieb nach
+einer Rechnung mit EC3 und einer zweiten ohne Nachweise die alte Zeile
+(„Nachweise EC3: … max. Ausnutzung 0.633 … - alle erfuellt“ am Einfeldträger
+IPE 300 in `tests/test_ec3.py`) stehen, und mit nur Ermüdung war das Etikett
+leer.
 
 **Stab ohne Streckgrenze.** Hat der Werkstoff eines Stabes keine
 Streckgrenze f_y — das kommt bei Importen vor, wenn die Stahlsorte nicht

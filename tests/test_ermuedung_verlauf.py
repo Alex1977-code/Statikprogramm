@@ -420,10 +420,10 @@ def test_lastfall_umbenennen_zieht_ermuedungslasten_nach():
     """Nebenbefund NB3 (22./23.09.2026): ein umbenannter Lastfall hiess in
     den Ermuedungslasten weiter wie vorher.
 
-    Die Oberflaeche (Register Lastfaelle, Modellbaum, Objektmaske) benannte
-    ihn nur in den Kombinationen um, nicht in case_max, case_min und den
-    Gliedern eines Verlaufs; der Webserver (Operation edit_case) zog
-    case_max/case_min nach, den Verlauf nicht. Danach meldete die
+    Die Oberflaeche (Register Lastfaelle, Tabelle „Lastfaelle“ unten, Maske
+    rechts) benannte ihn nur in den Kombinationen um, nicht in case_max,
+    case_min und den Gliedern eines Verlaufs; der Webserver (Operation
+    edit_case) zog case_max/case_min nach, den Verlauf nicht. Danach meldete die
     Modellpruefung den alten Namen als „unbekannt“, und dem Nachweis fehlte
     die Last: gemessen am Stand ec6448c D = 0,018426 (Oberflaeche) bzw.
     1,236980 (Web) statt 2,437110, beide als unvollstaendig markiert.
@@ -489,8 +489,12 @@ def test_lastfall_umbenennen_zieht_ermuedungslasten_nach():
               f"D = {D:.6f} gegen {D0:.6f}, fehlend {fehlt}")
 
     # Drei Wege der Oberflaeche: Register Lastfaelle (edit_case), Doppelklick
-    # im Modellbaum (lastfall_bearbeiten) und die Objektmaske rechts
-    # („Übernehmen“, _eigenschaften_uebernehmen)
+    # in der Tabelle „Lastfaelle“ unten (lastfall_bearbeiten, einziger
+    # Aufrufer ist tbl_lastfall.view.doubleClicked in _build_modelltabellen)
+    # und die Maske rechts („Übernehmen“, _eigenschaften_uebernehmen). Der
+    # Doppelklick im Modellbaum ist kein eigener Weg, er oeffnet die Maske
+    # rechts - geprueft nach deren Weg. Bis zum 24.09.2026 stand hier
+    # „Modellbaum“ fuer lastfall_bearbeiten (Gegenpruefung zu NB3).
     m = bau()
     m.active_case = "LF2"
     fenster = mock.MagicMock()
@@ -505,7 +509,7 @@ def test_lastfall_umbenennen_zieht_ermuedungslasten_nach():
     fenster.model = m
     with mock.patch.object(G.dg, "LoadCaseDialog", Lastfallmaske):
         G.MainWindow.lastfall_bearbeiten(fenster, "LF2")
-    pruefen("Oberfläche, Modellbaum", m)
+    pruefen("Oberfläche, Tabelle Lastfälle", m)
 
     m = bau()
     lc = m.load_cases["LF2"]
@@ -518,6 +522,17 @@ def test_lastfall_umbenennen_zieht_ermuedungslasten_nach():
          "nummer": lc.nummer, "g_z": str(lc.gravity[2] if len(lc.gravity) > 2 else 0.0),
          "psi": ""}, False)
     pruefen("Oberfläche, Objektmaske", m)
+    # Der Doppelklick im Modellbaum fuehrt in dieselbe Maske (_baum_bearbeiten
+    # -> _objektmaske), nicht nach lastfall_bearbeiten. Nur dann ist der Weg
+    # ueber den Modellbaum mit dem der Maske oben mitgeprueft.
+    fenster = mock.MagicMock()
+    fenster.model = bau()
+    G.MainWindow._baum_bearbeiten(fenster, "lastfall", "LF2")
+    check("Oberfläche: Doppelklick im Modellbaum öffnet die Maske rechts",
+          fenster._objektmaske.call_args_list == [mock.call("lastfall", "LF2")]
+          and not fenster.lastfall_bearbeiten.called,
+          f"_objektmaske {fenster._objektmaske.call_args_list}, "
+          f"lastfall_bearbeiten {fenster.lastfall_bearbeiten.call_args_list}")
 
     m = bau()
     OPS["edit_case"](None, m, {"name": "LF2", "fields": {"new_name": "Nutzlast"}})
