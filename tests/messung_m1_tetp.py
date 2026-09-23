@@ -26,6 +26,9 @@ Varianten:
                                   tet4-Rest die Nachweisstellen)
     ... Nachweiskoerper           dieselben nur in den Koerpern mit Nachweis
                                   (Volumenbereiche mit design), Rest tet4
+    --koerper                     jeder Koerper ab 1 % der Elemente einzeln als
+                                  tetp2 und tetp3, Rest tet4, mit dem Aufwand
+                                  gegen heute (Liste je Koerper)
     --alle                        auch p = 2 ueberall und p = 4 in der Lage
                                   mit p = 2 im Rest (am Drehlager 2,66 Mio.
                                   FHG und mehr - Muster allein ~8 min)
@@ -40,7 +43,7 @@ die Rechnung heute haette.
 
 Kein Test (steht nicht in run_all). Aufruf (Maschine vorher ansagen):
 
-    python -m tests.messung_m1_tetp <modell.json> [--alle]
+    python -m tests.messung_m1_tetp <modell.json> [--koerper | --alle]
 """
 from __future__ import annotations
 
@@ -50,7 +53,7 @@ import time
 import numpy as np
 from scipy import sparse
 
-from tests.messung_m1 import symbolisch, zeile
+from tests.messung_m1 import muster, zeile
 
 #: Grenzwinkel fuer "gekruemmt" in Grad
 GRENZWINKEL = 0.5
@@ -162,6 +165,33 @@ def muster_tetp(model, zeiten=None):
     return K, n_frei, nnz_frei, kontrolle
 
 
+def symbolisch_voll(A):
+    """Wie messung_m1.symbolisch, dazu iparm(17) = Speicher fuer die
+    Faktorisierung in KB. (nnz im Faktor, MFlops, Sekunden, KB)"""
+    import pypardiso
+    s = pypardiso.PyPardisoSolver(mtype=11)
+    s.set_iparm(18, -1)
+    s.set_phase(11)
+    A = sparse.csr_matrix(A) + sparse.diags(np.full(A.shape[0], 10.0))
+    t0 = time.perf_counter()
+    s._call_pardiso(A.tocsr(), np.zeros((A.shape[0], 1)))
+    t = time.perf_counter() - t0
+    nnz_l, mflops, kb = int(s.get_iparm(18)), int(s.get_iparm(19)), int(s.get_iparm(17))
+    s.free_memory(everything=True)
+    return nnz_l, mflops, t, kb
+
+
+def nnz_berichtigt(roh: int, kb: int):
+    """iparm(18) ist int32 und kann mehrfach ueberlaufen. Die Zahl der
+    Ueberlaeufe folgt aus dem Faktorspeicher iparm(17): nnz ~ KB * 1024 / 8
+    (die Faktorwerte als double). Rueckgabe (nnz, Ueberlaeufe, KB*128/nnz)."""
+    rest = roh % 2 ** 32
+    schaetz = kb * 1024 / 8
+    k = max(0, int(round((schaetz - rest) / 2 ** 32)))
+    nnz = rest + k * 2 ** 32
+    return nnz, k, schaetz / max(nnz, 1)
+
+
 def zeile_tetp(name, model):
     zeiten = {}
     t0 = time.perf_counter()
@@ -176,13 +206,11 @@ def zeile_tetp(name, model):
         print(f"{name:34s} FHG {n:9d}  nnz(K) {nnz_k:12d}  keine Analyse: nnz(K) > {GRENZE_NNZ:.0e} "
               f"(Speicher)  (Muster {t_m:.1f} s: {teile})", flush=True)
         return {"name": name, "fhg": n, "nnz_K": nnz_k, "nnz_L": None, "mflops": None}
-    nnz_l, mflops, t_s = symbolisch(A)
+    roh, mflops, t_s, kb = symbolisch_voll(A)
     del A
-    ueber = ""
-    if nnz_l < 0:
-        # iparm(18) ist int32: ueber 2^31 laeuft die Zahl ins Negative
-        nnz_l += 2 ** 32
-        ueber = " [iparm(18) int32 uebergelaufen, +2^32]"
+    nnz_l, k, verh = nnz_berichtigt(roh, kb)
+    # iparm(18) ist int32: ueber 2^31 laeuft die Zahl ueber, auch mehrfach
+    ueber = f" [iparm(17) {kb} KB, KB*128/nnz {verh:.3f}" + (f", {k}x 2^32 ergaenzt]" if k else "]")
     print(f"{name:34s} FHG {n:9d}  nnz(K) {nnz_k:12d}  nnz(L) {nnz_l:13d}  MFlops {mflops:13d}  "
           f"(Muster {t_m:.1f} s: {teile}; Analyse {t_s:.1f} s; Spitze bisher {spitze_gb():.1f} GB){ueber}",
           flush=True)
@@ -231,6 +259,37 @@ def setze(model, ordnung_je):
     model._tetp_version = getattr(model, "_tetp_version", 0) + 1
 
 
+def je_koerper(m, heute, tet4, anteil_min=0.01, ordnungen=("tetp2", "tetp3")):
+    """Jeden Koerper (Model.koerper) ab ``anteil_min`` der Elemente einzeln
+    als tetp, der Rest bleibt tet4 - absteigend nach Elementzahl. Dazu der
+    Aufwand gegenueber heute. p = 3 nur, solange p = 2 unter GRENZE_NNZ blieb."""
+    ist_tet4 = np.zeros(len(m.elements), bool)
+    ist_tet4[tet4] = True
+    koerper = []
+    for name, vk in (getattr(m, "koerper", None) or {}).items():
+        els = [int(i) for i in (vk.elemente or []) if 0 <= int(i) < len(m.elements) and ist_tet4[int(i)]]
+        if len(els) >= anteil_min * len(tet4):
+            koerper.append((len(els), name, els))
+    koerper.sort(reverse=True)
+    summe = sum(n for n, _name, _els in koerper)
+    print(f"Koerper ab {anteil_min:.0%} der tet4: {len(koerper)}, zusammen {summe} von {len(tet4)} "
+          f"({summe / len(tet4):.1%})", flush=True)
+    for n, name, els in koerper:
+        for typ in ordnungen:
+            setze(m, {i: typ for i in els})
+            try:
+                z = zeile_tetp(f"{name} ({n}, {n / len(tet4):.1%}) {typ}", m)
+            finally:
+                setze(m, {i: "tet4" for i in els})
+            if z["mflops"] is not None:
+                def q(k):
+                    return z[k] / max(heute[k], 1)
+                print(f"    gegen heute: FHG {q('fhg'):.2f}x, nnz(L) {q('nnz_L'):.2f}x, "
+                      f"MFlops {q('mflops'):.2f}x", flush=True)
+            else:
+                break
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     pfad = argv[0]
@@ -243,8 +302,14 @@ def main(argv=None):
     for e in m.elements:
         typen[e.typ] = typen.get(e.typ, 0) + 1
     print("Elementtypen:", ", ".join(f"{t} {n}" for t, n in sorted(typen.items())), flush=True)
-    zeile("heute", m)
+    heute = zeile("heute", m)
+    # Eichung der Ueberlaufkorrektur am Netz von heute (kein Ueberlauf)
+    roh, _mf, _t, kb = symbolisch_voll(muster(m)[0])
+    print(f"Eichung heute: iparm(18) {roh}, iparm(17) {kb} KB, KB*128/nnz {kb * 128 / roh:.3f}", flush=True)
     tet4 = [i for i, e in enumerate(m.elements) if e.typ == "tet4"]
+    if "--koerper" in argv:
+        je_koerper(m, heute, tet4)
+        return
     kr, n_kr, n_eb = gekruemmte_knoten(m)
     lage = {i for i in tet4 if any(int(n) in kr for n in m.elements[i].nodes[:4])}
     print(f"gekruemmte Flaechen {n_kr} (eben {n_eb}), Knoten darauf {len(kr)}, "

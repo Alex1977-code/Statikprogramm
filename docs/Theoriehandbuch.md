@@ -7382,10 +7382,77 @@ wurden alle Felder der Anreicherung, die gesperrten FHG und der
 Fingerabdruck gegen die alte Fassung, an vier Quadern und am Drehlager
 (p = 2 überall und gemischt tet4/p2/p4).
 
-**Offen.** Kantenmitten auf der wahren Geometrie an Bauteilen liefert erst der
-Vernetzer (V2); aus dessen tet10 macht `aus_tet10` gekrümmte `tetp`, die Wahl der Ordnung je Element in der
-Oberfläche und automatisch, ein Fehlerschätzer für höhere Ordnung
+**Kosten je Körper (M1, 23.09.2026).** `tests/messung_m1_tetp.py --koerper`:
+jeder Körper ab 1 % der Elemente einzeln als `tetp`, der Rest bleibt tet4.
+Faktorisierung gegen heute (79.231 MFlops), in Klammern die Unbekannten:
+
+| Körper | Elemente | p = 2 | p = 3 |
+|---|---|---|---|
+| V30 | 116.438 (18,0 %) | 29,6 × (1,80 ×) | 327 × (4,03 ×) |
+| V33 | 80.600 (12,5 %) | 4,27 × (1,62 ×) | 33,4 × (3,28 ×) |
+| V35 | 79.105 (12,2 %) | 3,75 × (1,61 ×) | 33,4 × (3,24 ×) |
+| V31 | 78.176 (12,1 %) | 3,20 × (1,56 ×) | 27,8 × (3,10 ×) |
+| V14 | 53.258 (8,2 %) | 6,70 × (1,38 ×) | 53,0 × (2,44 ×) |
+| V34 | 49.274 (7,6 %) | 2,55 × (1,35 ×) | 16,5 × (2,30 ×) |
+| V15 | 46.976 (7,3 %) | 2,35 × (1,33 ×) | 16,1 × (2,23 ×) |
+| V36 | 38.564 (6,0 %) | 2,11 × (1,25 ×) | 10,4 × (1,97 ×) |
+
+Nach der Löser-Sitzung (LF1, gemessen 23.09.2026) sind die Zerlegungen 49 %
+der Laufzeit (139 × 3,41 s von 965 s). Auf dem heutigen Netz verlängert also
+schon der kleinste Körper mit p = 2 die Rechnung deutlich. Die Faktorgröße
+meldet PARDISO in iparm(18) als int32; sie lief bei V30 mit p = 3 einmal ganz
+um 2³² und ist über den Faktorspeicher iparm(17) berichtigt (Verhältnis
+KB · 128 / nnz = 1,06 bis 1,15 an großen Faktoren, gemessen).
+
+**Wie genau ist tet4 an einer Bohrung? (Labor, 23.09.2026.)** Lamé-Hohlzylinder
+(r = 0,1/0,2 m, Innendruck, σ_v am Innenrand auf 355 N/mm², Netz aus dem
+Statik3D-Vernetzer, alle Netze konform geprüft), Knotenmittel am Innenrand:
+
+| tet4, h | Knoten auf dem Ring (Bogen) | FHG | MFlop | Fehler |
+|---|---|---|---|---|
+| 0,050 m | 20 (18,0°) | 888 | 8 | 121,0 N/mm² |
+| 0,035 m | 20 (18,0°) | 2.107 | 55 | 105,6 N/mm² |
+| 0,025 m | 26 (13,8°) | 5.243 | 371 | 81,1 N/mm² |
+| 0,018 m | 34 (10,6°) | 13.224 | 2.397 | 67,4 N/mm² |
+| 0,013 m | 48 (7,5°) | 33.042 | 16.290 | 48,9 N/mm² |
+| 0,010 m | 62 (5,8°) | 70.072 | 71.262 | 40,7 N/mm² |
+| 0,008 m | 78 (4,6°) | 132.185 | 267.503 | 31,3 N/mm² |
+
+Auf dem Netz der ersten Zeile, gekrümmt: `tetp` mit p = 4 in einer Lage und
+sonst p = 2 liegt 1,05 N/mm² daneben (19.067 FHG, 4.598 MFlop), mit zwei Lagen
+0,36 N/mm² (35.121 FHG, 19.878 MFlop). tet4 erreicht die 1 N/mm² auf keiner
+Stufe; bei 58-fachem Aufwand liegt er noch 31 N/mm² daneben.
+
+**Wie grob darf das gekrümmte Netz sein? (Labor, gleicher Körper.)** Bogenwinkel
+des Vernetzers (`mesher3d.BOGENWINKEL`, im Labor gesetzt) und Kantenlänge
+gegen den Fehler, nur Netze ohne gerade gebliebene Kante an der Bohrung:
+
+| Bogen, h | Tetraeder | kleinste det J/6V | p = 4 in 1 Lage, sonst 2 | p = 4 überall | p = 3 überall |
+|---|---|---|---|---|---|
+| 18°, 0,05 m | 1.400 | 0,218 | 1,05 N/mm², 4.598 MFlop | 0,40 N/mm², 38.053 MFlop | 1,85 N/mm², 7.059 MFlop |
+| 36°, 0,07 m | 405 | 0,260 | 2,89 N/mm², 899 MFlop | 2,59 N/mm², 3.788 MFlop | 15,0 N/mm², 649 MFlop |
+| 36°, 0,10 m | 136 | 0,772 | 3,24 N/mm², 278 MFlop | 3,26 N/mm², 493 MFlop | 9,27 N/mm², 94 MFlop |
+
+Bei 36° bleibt jede Ordnung bei etwa 2,6 N/mm² stehen: Die quadratische
+Geometrie trifft den Bogen nicht genauer. Für 1 N/mm² mit quadratischer
+Geometrie reicht nach dieser Messung ein Bogen von 18°; zwischen 18° und 36°
+ist nicht sauber gemessen. Die Elementgröße ist dort nicht die Grenze: Bei 36°
+änderte h = 0,7 statt 1,0 × Bohrungsradius wenig (2,89 gegen 3,24 N/mm²); bei
+18° ist nur h = 0,5 × Bohrungsradius gültig gemessen. Was die Messung unbrauchbar machte, und damit die
+Anforderung an den Vernetzer (V2): Eine einzige gerade gebliebene
+Bohrungskante (30°, h = 0,05 m) ergab 11 bis 34 N/mm² für jedes p. Geglättete
+innere Kantenmitten mit kleinster det J/6V = 0,062 (30°, h = 0,07 m) ergaben
+157 bis 890 N/mm². Und Knoten, die der Vernetzer bei grober Kantenlänge auf die
+ebenen Facetten setzt (r = R·cos(Bogen/2) statt r = R), müssen ebenfalls auf
+die wahre Fläche. Das Labor hat sie nicht verschoben (18° und 30° bei
+h = 0,07 bis 0,10 m), diese Zeilen sind ungültig und fehlen oben.
+
+**Offen.** Kantenmitten und Randknoten auf der wahren Geometrie an Bauteilen liefert erst der
+Vernetzer (V2, siehe oben); aus dessen tet10 macht `aus_tet10` gekrümmte `tetp`. Weiter offen
+sind die Wahl der Ordnung je Element in der Oberfläche und automatisch sowie ein Fehlerschätzer für höhere Ordnung
 (`netzfehler` behandelt das Element vorerst wie einen tet4). Der Anwender hat
 festgelegt, dass die Rechnung am Drehlager nicht länger werden darf als heute.
-Nach M1 geht das nur mit einem gröberen gekrümmten Netz. Ob das Element es
-dann schafft, zeigen erst M2 und M3.
+Nach M1 geht das nur mit einem gröberen gekrümmten Netz in den Nachweiskörpern
+(Labor: Bogen 18° bei h = 0,5 × Bohrungsradius gemessen). Ob das Element es dann am
+Bauteil schafft, zeigen erst M2 und M3. Nachweisstellen auf Kontaktseiten
+bleiben ohne Kontakt über Punkte der Seite (B4) bei 15 bis 20 N/mm².
