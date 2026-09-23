@@ -464,6 +464,38 @@ def test_nicht_gefuehrt_ohne_ausnutzung_in_bildern():
           float(html.count("weil nicht geführt: Ohne_fy")), 2.0, 0)
 
 
+def test_kein_stab_gefuehrt_keine_bilder():
+    """Ist **kein** Stab gefuehrt, zeichnet der Bericht weder das
+    Balkendiagramm "Ausnutzung je Stab" noch das Bild "Ausnutzung der Staebe"
+    (html.py chapter_design, ``and gefuehrt``) - es gaebe keinen Wert zu
+    zeigen. So steht es in beiden Handbuechern und im Docstring von
+    util_by_element. Bis zum 24.09.2026 sagten sie nur "in Stabfarbe, beide
+    Bildunterschriften nennen ihn", was hier nicht zutrifft (Gegenpruefung
+    zu B054: ein Stab HEA 200 aus Werkstoff ohne f_y, kein Bild, keine
+    Bildunterschrift). Der Fall ist nicht abwegig: bei Importen ohne
+    erkannte Stahlsorte fehlt f_y oft an allen Staeben.
+    """
+    from statik3d.report import Report
+    m = _traeger_und_stab_ohne_fy()
+    for e in m.members["Traeger"].elements:
+        m.elements[e].mat = "Frei"               # jetzt ist auch er ohne f_y
+    an = solver.solve_all(m, design=True)
+    d = an.design
+    check("kein Stab gefuehrt: beide Staebe 'nicht geführt'",
+          float(sorted(mc.status() for mc in d.members.values())
+                == ["nicht geführt", "nicht geführt"]), 1.0, 0)
+    check("kein Stab gefuehrt: util_by_element ist leer",
+          float(len(d.util_by_element())), 0.0, 0)
+    html = Report(m, an).html()
+    check("kein Stab gefuehrt: kein Balkendiagramm 'Ausnutzung je Stab'",
+          float(bool(_svg_mit_titel(html, "Ausnutzung je Stab"))), 0.0, 0)
+    check("kein Stab gefuehrt: kein Bild 'Ausnutzung der Stäbe'",
+          float(bool(_svg_mit_titel(html, "Ausnutzung der Stäbe"))), 0.0, 0)
+    check("kein Stab gefuehrt: keine Bildunterschrift zur Ausnutzung",
+          float(html.count("Ausnutzungsgrade der Stäbe")
+                + html.count("Ausnutzung der Stäbe (Farbskala)")), 0.0, 0)
+
+
 def test_frame_parallel_design():
     """Rahmen mit vielen Staeben: Nachweise seriell == parallel (Auftraege)."""
     from statik3d.examples_lib import frame_example
@@ -558,6 +590,7 @@ def main():
     test_design_driver()
     test_stab_ohne_streckgrenze_nicht_gefuehrt()
     test_nicht_gefuehrt_ohne_ausnutzung_in_bildern()
+    test_kein_stab_gefuehrt_keine_bilder()
     test_frame_parallel_design()
     test_nachweisauftrag_traegt_kein_modell()
     nok = sum(1 for r in RESULTS if r[4])

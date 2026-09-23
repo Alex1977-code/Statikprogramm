@@ -799,6 +799,59 @@ def test_gleiche_alternativen_einmal_nachgewiesen():
           f"{list(zus)} {wk}")
 
 
+def test_gleiche_im_bericht_nur_die_ersten_40():
+    """Die vollen Namenslisten gleicher Alternativen: vollstaendig in
+    DesignResults.gleiche, im Bericht (Zeile "Gleiche Ergebnisse, einmal
+    nachgewiesen") nur die der ersten 40 zusammengefassten Eintraege, danach
+    " …" (html.py chapter_design, ``gl[:40]``).
+
+    Bis zum 24.09.2026 sagten beide Handbuecher und der Kommentar im Bericht
+    "die volle Liste steht im Bericht". Gegenpruefung am Kragarm mit LF1 bis
+    LF42 und EK1 bis EK5, jede mit den 42 Alternativen {LFi: 1}: 42 Eintraege
+    mit je 5 Namen, massgebend "EK1 [42] = EK2 [42] = EK3 [42] = … (2
+    weitere)", und gerade dessen volle Liste fehlte im Bericht ("EK5 [42]"
+    0-mal).
+    """
+    import html as html_mod
+    import re
+    from statik3d.report import Report
+    n_lf = 42
+    m = Model("viele gleiche")
+    m.add_material(Material.steel("S235"))
+    m.add_section(Section.rectangle("R", 0.1, 0.2))
+    ids = mesher.line_of_beams(m, "S235", "R", (0, 0, 0), (2.0, 0, 0), 4)
+    m.fix(ids[0], "all")
+    m.add_member("S1", list(range(len(m.elements))))
+    for i in range(1, n_lf + 1):
+        m.add_load_case(f"LF{i}", "Q")
+        m.load_node(ids[-1], Fz=-1.0e3 * i, case=f"LF{i}")
+    for k in range(1, 6):
+        m.combinations[f"EK{k}"] = Combination(
+            f"EK{k}", {}, "ULS", alternativen=[{f"LF{i}": 1.0} for i in range(1, n_lf + 1)])
+    an = solver.solve_all(m, design=True)
+    d = an.design
+    gl = list(d.gleiche.values())
+    check("42 Eintraege mit je 5 Namen",
+          len(d.combinations) == n_lf and len(gl) == n_lf and all(len(v) == 5 for v in gl),
+          f"{len(d.combinations)} Eintraege, {len(gl)} Gruppen")
+    mass = d.members["S1"].governing.get("combo")
+    check("massgebend ist der gekuerzte Eintrag der groessten Last, voll in gleiche",
+          mass == "EK1 [42] = EK2 [42] = EK3 [42] = … (2 weitere)"
+          and d.gleiche.get(mass) == [f"EK{k} [42]" for k in range(1, 6)], str(mass))
+    html = Report(m, an).html()
+    i = html.find("Gleiche Ergebnisse, einmal nachgewiesen")
+    zeile = html_mod.unescape(re.sub(r"<[^>]+>", "", html[i:html.find("</tr>", i)])) \
+        if i >= 0 else ""
+    drin = sum(1 for v in gl if " = ".join(v) in zeile)
+    check("Bericht: die vollen Listen der ersten 40 Eintraege, dann ' …'",
+          drin == 40 and all(" = ".join(v) in zeile for v in gl[:40])
+          and zeile.rstrip().endswith("…"), f"{drin} volle Listen")
+    check("Bericht: Eintrag 41 und 42 (der massgebende) nicht in der Zeile, "
+          "'EK5 [42]' nirgends im Bericht",
+          "EK5 [41]" not in zeile and "EK5 [42]" not in zeile and "EK5 [42]" not in html,
+          f"'EK5 [42]' {html.count('EK5 [42]')}-mal im Bericht")
+
+
 def main():
     for t in (test_kombination_mit_alternativen, test_speichern_und_laden,
               test_umbenennen_und_entfernen, test_modellpruefung_sieht_alternativen,
@@ -815,7 +868,8 @@ def main():
               test_alternative_bei_theorie_I_aus_linearen_lastfaellen,
               test_stellungsreihe_ohne_kombinationen,
               test_keine_warnung_ohne_verlangten_nachweis,
-              test_gleiche_alternativen_einmal_nachgewiesen):
+              test_gleiche_alternativen_einmal_nachgewiesen,
+              test_gleiche_im_bericht_nur_die_ersten_40):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

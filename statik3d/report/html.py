@@ -2674,7 +2674,14 @@ class Report:
                + (" …" if len(d.combinations) > 40 else ""))]
         # Dasselbe Ergebnis unter mehreren Namen ist nur einmal nachgewiesen
         # (ec3.design._gleiche_zusammenfassen); ab fuenf Namen kuerzt der
-        # Eintrag, hier stehen alle. getattr: aeltere Ergebnisdateien.
+        # Eintrag. Hier stehen die vollen Namenslisten, aber wie in der Zeile
+        # darueber nur die der ersten 40 Eintraege, danach " …"; vollstaendig
+        # sind sie nur in DesignResults.gleiche. Bei mehr als 40 kann gerade
+        # der massgebende gekuerzte Eintrag fehlen (Gegenpruefung 24.09.2026:
+        # EK1 bis EK5 mit je 42 gleichen Alternativen, massgebend Eintrag 42,
+        # "EK5 [42]" 0-mal im Bericht; test_umhuellende.
+        # test_gleiche_im_bericht_nur_die_ersten_40). getattr: aeltere
+        # Ergebnisdateien.
         gleiche = getattr(d, "gleiche", None) or {}
         if gleiche:
             gl = list(gleiche.values())
@@ -2700,6 +2707,8 @@ class Report:
         # Ein nicht gefuehrter Stab (mc.fehler) hat keine Ausnutzung: kein
         # Balken und keine Farbe. Bis zum 23.09.2026 stand er hier mit 0,000
         # als gruener Balken und gruen im Bild - wie unbeansprucht (B054).
+        # Ist kein Stab gefuehrt, entfallen beide Bilder: sie haetten keinen
+        # Wert zu zeigen (test_ec3.test_kein_stab_gefuehrt_keine_bilder).
         gefuehrt = [mc for mc in d.members.values() if not mc.fehler]
         ohne = [mc.member for mc in d.members.values() if mc.fehler]
         ohne_text = (", ".join(ohne[:10]) + (f" und {len(ohne) - 10} weitere"

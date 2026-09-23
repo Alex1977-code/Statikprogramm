@@ -75,7 +75,10 @@ class DesignResults:
 
         Ein nicht gefuehrter Stab (``fehler``) hat keine Ausnutzung und
         bekommt darum keinen Eintrag: seine Elemente bleiben ohne Wert
-        (Oberflaeche grau, Bericht in Stabfarbe). Bis zum 23.09.2026 kam er
+        (Oberflaeche grau, Bericht in Stabfarbe). Ist gar kein Stab gefuehrt,
+        entfallen im Bericht beide Bilder zur Ausnutzung, Balkendiagramm und
+        Faerbung (html.py chapter_design; test_ec3.
+        test_kein_stab_gefuehrt_keine_bilder). Bis zum 23.09.2026 kam er
         mit seiner 0,0 hinein und wurde gruen (Klasse < 0,50) - ein Stab ohne
         f_y sah aus wie unbeansprucht (Befund B054, Traeger IPE 300 neben
         einem Stab aus Werkstoff ohne Streckgrenze).

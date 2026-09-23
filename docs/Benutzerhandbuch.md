@@ -3381,10 +3381,11 @@ ohne Wert; die Stabtabelle der Maske *Ergebnisse* zeigt in der Spalte
 Ausnutzung „-“. Im Bericht fehlt er im Balkendiagramm „Ausnutzung je Stab“
 und steht im Bild „Ausnutzung der Stäbe“ in Stabfarbe; beide
 Bildunterschriften nennen ihn. Bis zum 23.09.2026 ging er dort mit 0,000 ein
-und war im Bericht grün wie ein unbeanspruchter Stab. Im Bericht steht der Stab in
-jedem Umfang unter „Offene Hinweise und Warnungen“, auch wenn die
-Berichtsoption „Nachweise EC3“ ausgeschaltet ist. Sind die übrigen Nachweise
-erfüllt, sagt die Statuszeile „Alle geführten Nachweise erfüllt – nicht
+und war im Bericht grün wie ein unbeanspruchter Stab. Ist gar kein Stab
+geführt, entfallen im Bericht beide Bilder, weil sie keinen Wert zu zeigen
+hätten. Im Bericht steht der Stab in jedem Umfang unter „Offene Hinweise
+und Warnungen“, auch wenn die Berichtsoption „Nachweise EC3“ ausgeschaltet
+ist. Sind die übrigen Nachweise erfüllt, sagt die Statuszeile „Alle geführten Nachweise erfüllt – nicht
 geführt wurden: …“. Ist gar kein Stab geführt (und kein anderer Nachweis),
 heißt sie „Kein Nachweis geführt – nicht geführt wurden: …“, und die
 Wesentlichen Ergebnisse nennen dann keine größte Ausnutzung EC3. In der
@@ -4896,10 +4897,14 @@ eigenen Skala: Bauteil wählen, *Selektion anzeigen*, ablesen. Geprüft in
   dieselbe Alternative in mehreren Ergebniskombinationen (derselbe Lastfall
   mit Faktor 1 oder, im linearen Modell, dieselben Faktoren), weist der
   Stabnachweis nach EC3 sie nur einmal nach und nennt alle Namen, etwa
-  „EK_A [1] = EK_B [1]"; ab fünf Namen wird gekürzt, die volle Liste steht im
-  Bericht unter „Gleiche Ergebnisse, einmal nachgewiesen". Die Ausnutzung
-  bleibt dieselbe (am Kragarm mit zwei solchen Ergebniskombinationen und
-  einer gewöhnlichen Kombination 3 statt 5 Nachweisläufe je Stab, Ausnutzung
+  „EK_A [1] = EK_B [1]"; ab fünf Namen wird gekürzt („EK1 [1] = EK2 [1] =
+  EK3 [1] = … (2 weitere)"). Die vollen Namenslisten stehen im Bericht unter
+  „Gleiche Ergebnisse, einmal nachgewiesen" (Berichtsoption „Nachweise
+  EC3"), aber nur für die ersten 40 zusammengefassten Einträge; sind es mehr,
+  endet die Zeile mit „…". Am Kragarm mit fünf Ergebniskombinationen zu je
+  42 gleichen Alternativen fehlte so gerade die volle Liste des maßgebenden
+  Eintrags, des 42., im Bericht. Die Ausnutzung bleibt dieselbe (am Kragarm
+  mit zwei solchen Ergebniskombinationen und einer gewöhnlichen Kombination 3 statt 5 Nachweisläufe je Stab, Ausnutzung
   0,370 wie vorher). Direkt gelöste
   Alternativen (Kontaktmodell, Theorie II./III. Ordnung) werden nur
   zusammengefasst, wenn es dasselbe gespeicherte Ergebnis ist; die übrigen
