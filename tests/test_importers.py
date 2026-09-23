@@ -1802,7 +1802,14 @@ def test_json_anhaengen_stellung_protokoll():
     23.09.2026 stand dort "eine Stellung bewegt das ganze System"; gemessen
     am Beispiel 'frame' (17 Knoten, Knotenlager an 0 und 5): Gruppe 'Klappe'
     aus den Elementen 10 bis 15 bewegt 7 Knoten, eine Stellung, die nur ein
-    Lager abschaltet, keinen."""
+    Lager abschaltet, keinen.
+
+    Mit Gruppenangabe bewegt sie auch Knoten mit Knotenlager. Das war bis
+    zum 23.09.2026 ungeprueft (Befund B149): die Gruppe 'Klappe' (Knoten 9,
+    11 bis 16) enthaelt keinen Lagerknoten, und eine Verfaelschung, die mit
+    Gruppe die Knotenlager festhaelt, bestand die beiden Stellungstests
+    10/10. Gemessen am 23.09.2026: eine Gruppe aus Element 0 (Knoten 0 und
+    1, Knotenlager an 0) bewegt beide Knoten."""
     from statik3d import examples_lib
     from statik3d.model import Situation, LineSupport, DofBehaviour
     from statik3d.bridges.positions import Stellung
@@ -1834,6 +1841,22 @@ def test_json_anhaengen_stellung_protokoll():
            f"Gruppe {gruppe}, nur Lager aus {nur_lager}, ohne Gruppe {int(ohne.sum())} von "
            f"{m.nn} (Knotenlager an {sorted(fest)}), auf Linienlager bewegt "
            f"{ohne[auf_linienlager].tolist()}")
+
+    # Die Gruppe muss einen Knoten mit Knotenlager enthalten, sonst prueft
+    # das nichts (B149): Element 0 des Beispiels 'frame' hat die Knoten 0 und
+    # 1, das Knotenlager sitzt an 0. Verlangt sind genau diese beiden Knoten -
+    # haelt die Stellung den Lagerknoten fest, fehlt Knoten 0.
+    m = examples_lib.build_example("frame")
+    fest = {s.node for s in m.supports}
+    fuss_knoten = sorted({int(k) for k in m.elements[0].nodes})
+    m.elements[0].group = "Fuss"
+    fuss = bewegt(m, Stellung("Fuss", verschiebung=(0.0, 0.0, 1.0), dreh_gruppen=["Fuss"]))
+    fuss_bewegt = np.nonzero(fuss)[0].tolist()
+    lager_in_gruppe = sorted(set(fuss_knoten) & fest)
+    expect("Stellung mit Gruppe bewegt auch die Knoten der Gruppe mit Knotenlager",
+           bool(lager_in_gruppe) and fuss_bewegt == fuss_knoten,
+           f"Gruppe aus Element 0: Knoten {fuss_knoten}, davon mit Knotenlager "
+           f"{lager_in_gruppe}, bewegt {fuss_bewegt}")
 
     q = examples_lib.build_example("frame")
     q.nodes = np.asarray(q.nodes, float) + np.array([50.0, 0.0, 0.0])
