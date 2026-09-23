@@ -827,22 +827,29 @@ Lastfallergebnisse fest, bevor `_lastfaelle_hoeherer_ordnung` die Lastfälle
 mit Theorie II./III. ersetzt, und faltet die Umhüllende einer
 Ergebniskombination nach II./III. Ordnung damit (`lineare_cases`). Eine
 Alternative ist so entweder linear überlagert oder als Ganzes nach II./III.
-Ordnung gerechnet, nie ein Gemisch. Bis zum 23.09.2026 wurde diese Umhüllende
-erst nach dem Ersetzen aus `Analysis.cases` gefaltet: Mit einem Lastfall W
-auf Theorie II. Ordnung war eine linear gebliebene Alternative
-1,35·G (linear) + 1,5·W (II. Ordnung), und dieses Gemisch ging abgelegt in
-die Nachweise. Gemessen an einem Zweigelenkrahmen (Stiele HEB 200, 5 m,
-Riegel IPE 300, 8 m; G 8 kN/m und Q 0,5 kN/m auf dem Riegel, W 25 kN am
-linken Stielkopf; „automatisch", α_cr der Alternative 19,23): Stielkopf
-102,4519 statt 102,1415 mm wie die gewöhnliche Kombination, Ausnutzung
-Stiel links 0,548474 statt 0,542323, Riegel 1,717078 statt 1,715794, Stiel
-rechts 1,08153 statt 1,079967. Am Druckkragarm von `test_umhuellende`
-(Druck 50 kN je Lastfall, α_cr 15,13,
-LF2 auf II. Ordnung) EK1 [2] 3,374407 statt 3,320749 mm und die
+Ordnung gerechnet, nie ein Gemisch. Eine Zwischenfassung dieser Änderung
+(nicht ausgeliefert, Gegenprüfung 23.09.2026) faltete diese Umhüllende erst
+nach dem Ersetzen aus `Analysis.cases`: Mit einem Lastfall W auf Theorie
+II. Ordnung war eine linear gebliebene Alternative 1,35·G (linear) +
+1,5·W (II. Ordnung), und dieses Gemisch ging abgelegt in die Nachweise.
+Gemessen an einem Zweigelenkrahmen (Stiele HEB 200, 5 m, Riegel IPE 300,
+8 m; G 8 kN/m und Q 0,5 kN/m auf dem Riegel, W 25 kN am linken Stielkopf;
+„automatisch", α_cr der Alternative 19,23): Stielkopf 102,4519 statt
+102,1415 mm wie die gewöhnliche Kombination, Ausnutzung Stiel links 0,548474
+statt 0,542323, Riegel 1,717078 statt 1,715794, Stiel rechts 1,08153 statt
+1,079967. Am Druckkragarm von `test_umhuellende` (Druck 50 kN je Lastfall,
+α_cr 15,13, LF2 auf II. Ordnung) EK1 [2] 3,374407 statt 3,320749 mm und die
 Lastfall-Alternative 1,0·LF2 1,562553 statt 1,526781 mm. Jetzt gleichen beide
 Modelle der gewöhnlichen Kombination. Die gewöhnlichen Kombinationen hatten
 das Gemisch nicht, sie entstehen vor dem Ersetzen (am Druckkragarm K2
-bitgleich 1,35·LF1 + 1,5·LF2 aus den linearen Lastfällen).
+bitgleich 1,35·LF1 + 1,5·LF2 aus den linearen Lastfällen). Vor dieser
+Änderung (Stand bis 22.09.2026) gab es das Gemisch ebenfalls nicht:
+`solve_all` faltete die Umhüllende einer Ergebniskombination vor
+`_lastfaelle_hoeherer_ordnung`, rechnete aber keine Alternative nach
+II. Ordnung und wies keine nach (siehe oben). Am Zweigelenkrahmen war die
+Umhüllende am Stielkopf 102,1415 mm wie mit der gewöhnlichen Kombination;
+die Stäbe wurden ohne Warnung gegen die Lastfälle mit Faktor 1 nachgewiesen,
+Stiel links 0,49702 aus W statt 0,542323.
 
 ### 3.1 Situationen: Stellung und wirksame Elemente
 

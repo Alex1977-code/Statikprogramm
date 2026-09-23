@@ -3189,12 +3189,13 @@ Bei „automatisch" mit α_cr an oder über der Grenze bleibt eine Alternative
 in der vollen Rechnung bei I. Ordnung, wie eine gewöhnliche Kombination, und
 es kommt keine Warnung. Ihr Ergebnis ist dann die Überlagerung der
 **linearen** Lastfallergebnisse, auch wenn einer ihrer Lastfälle selbst auf
-Theorie II. Ordnung steht – genau wie bei der gewöhnlichen Kombination. Bis
-zum 23.09.2026 wurde dort mit dem schon nach II. Ordnung gerechneten
-Lastfall überlagert, ein Gemisch aus I. und II. Ordnung. Gemessen an einem
-Zweigelenkrahmen mit dem Windlastfall auf II. Ordnung: Stielkopf 102,45 statt
-102,14 mm, Ausnutzung Stiel links 0,5485 statt 0,5423. Jetzt gleicht die
-Ergebniskombination dort der gewöhnlichen Kombination.
+Theorie II. Ordnung steht – genau wie bei der gewöhnlichen Kombination.
+Gemessen an einem Zweigelenkrahmen mit dem Windlastfall W auf II. Ordnung
+(α_cr der Alternativen 18,1 bis 25,8): Stielkopf 102,14 mm und Ausnutzung
+Stiel links 0,5423, gleich wie mit den gewöhnlichen Kombinationen. Bis zum
+22.09.2026 wurden dort statt der Alternativen die Lastfälle mit Faktor 1
+nachgewiesen, ohne Warnung: Stiel links 0,4970 aus W. Die Umhüllende am
+Stielkopf war mit 102,14 mm dieselbe.
 
 ### Theorie je Lastfall und Kombination: I., II., III. Ordnung
 
@@ -4355,9 +4356,13 @@ der η-Kurve; die Zeile der Umhüllenden und der Filmstreifen sagen „η nicht
 bestimmt", wenn in keiner Stellung ein Nachweis geführt wurde. Fehlt nur ein
 Teil der Nachweise, steht η in Warnfarbe mit „nicht vollständig
 nachgewiesen". Unter der gewählten Stellung lassen sich die Warnungen
-aufklappen („Nicht nachgewiesen"). Vorher stand „eta = 0.000" im Bericht,
-die Stellung galt als erfüllt, und der Browser zeigte „η = 0,000" grün; die
-Warnungen standen nur im Protokoll und im zugeklappten Bericht.
+aufklappen („Nicht nachgewiesen"). Bis zum 22.09.2026 kam in beiden oben
+genannten Fällen keine Warnung, und die Stellung galt als erfüllt. Mit
+`kombinationen=False` wurden die Stäbe gegen die Lastfälle mit Faktor 1
+nachgewiesen (Stauwand, drei Stellungen: „eta = 0.291" aus dem Lastfall
+„Wasser"). Mit nur GZG-Kombinationen wurde kein Stab nachgewiesen; der
+Bericht nannte „eta = 0.000", und der Browser zeigte „η = 0,000" grün
+(Halle).
 
 ### Lastfälle nach DIN 19704 anlegen und das Lastenheft
 
