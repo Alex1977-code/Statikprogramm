@@ -1855,6 +1855,17 @@ def test_einwirkungskategorie_wird_genannt():
     Kennzahl darf der Freitext nicht umstossen, sonst wuerde ein Lastfall
     „Windverband Eigenlast“ mit der Kennzahl 1 zu W und damit veraenderlich.
     Genau das ist die Gegenprobe unten.
+
+    **Auch die gefuehrten Kennzahlen sind eine Annahme** (Befund FM9): keine
+    ist an einer echten Datei belegt. Gemessen am CBG-Trolley tragen 8
+    Lastfaelle die Kennzahl 11, 7 davon heissen „G - ...“ und werden nur ueber
+    den Namen zu G; am Drehlager tragen alle 422 Lastfaelle die Kennzahl 11,
+    darunter 128 „Bemessungslast im GZT ...“, 164 „Ermuedungslast ...“,
+    128 „char.Last ...“ und 2 „Vorspannung der Zuganker ...“ (nachgezaehlt
+    am 23.09.2026). Bis zum 22.09.2026 stand fuer
+    eine gefuehrte Kennzahl nur die Verteilung im Protokoll, ohne Warnung.
+    LF5 (neutraler Name, Kennzahl 11) und LF6 („G - Stahlbau“, Kennzahl 11)
+    pruefen das.
     """
     tmp = tempfile.mkdtemp()
     try:
@@ -1865,7 +1876,9 @@ def test_einwirkungskategorie_wird_genannt():
             load_cases=[("Eigengewicht", 1, 1.0),
                         ("Schnee auf dem Dach", 91, 0.0),
                         ("Wind quer", 92, 0.0),
-                        ("Windverband Eigenlast", 1, 0.0)],
+                        ("Windverband Eigenlast", 1, 0.0),
+                        ("Lastfall A", 11, 0.0),
+                        ("G - Stahlbau", 11, 0.0)],
         )
         log = []
         m = R6.read_rf6(f, log=log)
@@ -1886,6 +1899,22 @@ def test_einwirkungskategorie_wird_genannt():
         check("die Probe ist scharf: ohne die Kennzahlschranke waere es W",
               _C.category_from_text("Windverband Eigenlast", "Q") == "W",
               _C.category_from_text("Windverband Eigenlast", "Q"))
+        # FM9: die gefuehrte Kennzahl 11 ist eine Annahme und steht als solche da
+        check("Kennzahl 11 steht mit angenommener Kategorie im Protokoll",
+              any("Kennzahl 11 -> Q" in z and "Annahme" in z for z in log),
+              next((x.strip() for x in log if "Kennzahl 11" in x), "keine Zeile"))
+        check("die Annahme steht als Warnung da, mit psi und gamma",
+              any(z.startswith("WARNUNG") and "angenommen" in z and "11" in z
+                  and "psi" in z for z in log),
+              next((x.strip()[:120] for x in log if x.startswith("WARNUNG") and "angenommen" in x),
+                   "keine Zeile"))
+        check("der Lastfall, den der Name umgestellt hat, wird genannt",
+              any("LF6" in z and "Namen" in z for z in log),
+              next((x.strip() for x in log if "LF6" in x), "keine Zeile"))
+        check("der neutrale Name bleibt beim angenommenen Q",
+              m.load_cases["LF5"].category == "Q", m.load_cases["LF5"].category)
+        check("„G - Stahlbau“ mit Kennzahl 11 wird ueber den Namen G",
+              m.load_cases["LF6"].category == "G", m.load_cases["LF6"].category)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -2464,8 +2493,202 @@ def test_stab_und_knotenlasten():
               f"Fz = {float(kl[0].F[2]):.1f} N")
 
 
+def _genannte_stablasten(log) -> int:
+    """Summe der Stablasten, die das Protokoll nennt - je Zeile die Zahl vorn,
+    sonst die Summe der „Nx“ (so stehen Verteilungen und Richtungen da)."""
+    import re
+    summe = 0
+    for z in log:
+        s = str(z).replace("WARNUNG:", " ").strip()
+        if not any(w in s for w in ("Stablasten", "Stabvorspannungen", "Vorspannlasten",
+                                     "Verteilung", "Lastrichtung unbekannt")):
+            continue
+        vorn = re.match(r"(\d+)\s", s)
+        if vorn:
+            summe += int(vorn.group(1))
+        else:
+            summe += sum(int(x) for x in re.findall(r"(\d+)x\b", s))
+    return summe
+
+
+def test_stablasten_werden_abgezaehlt():
+    """Jede Zeile der Tabelle ``MemberLoad`` hat genau einen gezählten Ausgang.
+
+    Bis zum 22.09.2026 fehlten zwei Wege im Protokoll (Befund SV8): eine
+    Stablast, deren Umsetzungstabelle die Datei nicht führt (``db.impls``
+    lässt sie wortlos aus), und eine Stablast ohne auflösbaren Lastfall.
+    Dazu war die Zählung schief - die Gleichlast zählte je Stab, die
+    Vorspannung je Stabelement. Gemessen an vier Zeilen (Gleichlast,
+    Einzellast, Temperatur, fehlende Umsetzung): genannt waren 3 von 4.
+
+    Hier sechs Zeilen: Vorspannung auf drei Stäbe, Gleichlast auf zwei
+    Stäbe, Einzellast, Temperatur, fehlende Umsetzungstabelle und eine
+    Gleichlast an einem Lastfall, den es nicht gibt.
+    """
+    tmp = tempfile.mkdtemp()
+    try:
+        db = os.path.join(tmp, "model.db")
+        build_db(db, nodes=[(0, 0, 0), (4, 0, 0), (8, 0, 0), (12, 0, 0)],
+                 lines=[[1, 2], [2, 3], [3, 4]],
+                 members=[(1, None, None), (2, None, None), (3, None, None)],
+                 supports=[("Fest", (INF,) * 6, (0,) * 6, None, [1]),
+                           ("Gleitlager", (0.0, INF, INF, 0.0, 0.0, 0.0),
+                            (0,) * 6, None, [4])],
+                 load_cases=[("LF1", 1, 0.0)],
+                 prestress=[(1, [1, 2, 3], 120e3)],                  # id 1
+                 member_loads=[(1, [1, 2], 0, 13, -1003.0, None),    # 1001 Gleichlast
+                               (1, [1], 2, 13, -5000.0, None),       # 1002 Einzellast
+                               (1, [2], 0, 13, -700.0, None),        # 1003 -> Temperatur
+                               (1, [2], 0, 13, -900.0, None),        # 1004 -> Tabelle fehlt
+                               (1, [3], 0, 13, -800.0, None)])       # 1005 -> kein Lastfall
+        con = sqlite3.connect(db)
+        con.execute("UPDATE MemberLoad SET impl_table = "
+                    "'MemberTypeLoadImplTemperature' WHERE id = 1003")
+        con.execute("CREATE TABLE MemberTypeLoadImplTemperature (id INTEGER "
+                    "PRIMARY KEY, version INTEGER, parent_id bigint, parent_table TEXT)")
+        con.execute("INSERT INTO MemberTypeLoadImplTemperature VALUES "
+                    "(1003,1,1003,'MemberLoad')")
+        con.execute("UPDATE MemberLoad SET impl_table = 'GibtEsNicht' WHERE id = 1004")
+        con.execute("UPDATE MemberLoad SET parentModelObject_id = 99 WHERE id = 1005")
+        con.commit()
+        n_roh = con.execute("SELECT COUNT(*) FROM MemberLoad").fetchone()[0]
+        con.close()
+        f = os.path.join(tmp, "stab_abzaehlen.rf6")
+        with zipfile.ZipFile(f, "w", zipfile.ZIP_DEFLATED) as z:
+            z.write(db, "model.db")
+            z.writestr("mesh.xml", MESH_XML)
+            z.writestr("format.txt", "RFEM\n6.11.0004\nRFEM6\n6.12.0010\n1\n")
+            z.writestr("general_data.xml",
+                       "<?xml version='1.0'?><property key='generalData'/>")
+        log = []
+        m = R6.read_rf6(f, log=log)
+        txt = "\n".join(log)
+        zeilen = [z.strip() for z in log if any(w in z for w in (
+            "Stablasten", "Stabvorspannungen", "Vorspannlasten", "Verteilung",
+            "Lastrichtung unbekannt"))]
+        check("die Stablast ohne Umsetzungstabelle wird genannt",
+              any("nicht zu lesen" in z and "1 von 6 Stablasten" in z for z in log),
+              next((x for x in log if "nicht zu lesen" in x), "keine Zeile"))
+        check("die Stablast ohne auflösbaren Lastfall wird genannt",
+              "ohne aufloesbaren Lastfall" in txt,
+              next((x for x in log if "Lastfall" in x and "Stab" in x), "keine Zeile"))
+        check("die Gleichlast auf zwei Stäben zählt als eine Zeile",
+              any(z.strip().startswith("1 Stablasten (Gleichlast)") for z in log),
+              next((x.strip() for x in log if "(Gleichlast)" in x), "keine Zeile"))
+        check("die Vorspannung auf drei Stäben zählt als eine Zeile",
+              any(z.strip().startswith("1 Stabvorspannungen") for z in log),
+              next((x.strip()[:60] for x in log if "Stabvorspannungen" in x), "keine Zeile"))
+        genannt = _genannte_stablasten(log)
+        check("die Summe der genannten Stablasten trifft die Rohzeilen",
+              genannt == n_roh == 6, f"{genannt} von {n_roh}")
+        # Die Wirkung bleibt: die Gleichlast haengt an beiden Staeben, die
+        # Vorspannung liegt auf allen drei Stabelementen.
+        lasten = [x for lc in m.load_cases.values() for x in lc.linienlasten
+                  if x.art == "stab"]
+        check("die Gleichlast hängt weiter an beiden Stäben", len(lasten) == 2,
+              f"{len(lasten)}")
+        tl = [x for lc in m.load_cases.values() for x in lc.temp_loads]
+        check("die Vorspannung liegt weiter auf allen drei Stabelementen",
+              len(tl) == 3, f"{len(tl)}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_hex_order_nie_falsch():
+    """``_hex_order`` liefert den gegebenen Sechsflächner oder None - nie eine
+    falsche Knotenliste (Nachtrag B, 22.09.2026).
+
+    Die Funktion ordnete jedem Grundknoten den Deckelknoten zu, der in einer
+    Seitenfläche **neben** ihm steht, und verließ sich damit auf einen Umlauf.
+    Ist eine Seite abwechselnd aufgezählt (oben, unten, oben, unten), greift
+    das daneben. Gemessen über 81 Schreibweisen (je Seite Umlauf, [a,c,b,d]
+    oder [d,b,c,a]): **57 falsche Listen statt None** - 45 mit doppeltem
+    Knoten, 12 mit acht Knoten, aber anderen Seiten. Schon eine Seite reicht:
+    die dritte als [6,3,7,2] ergab [0,1,2,3,4,5,7,7], und das Element rechnete
+    ohne Meldung mit V = 0,75 statt 1,00.
+    """
+    from itertools import permutations, product
+    import random
+    from statik3d.elements.solid import FLAECHEN, solid_volume
+    X = np.array([(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+                  (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)], float)
+    boden, deckel = [0, 1, 2, 3], [4, 5, 6, 7]
+    seiten = [[0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7]]
+
+    def beschreibt(order, flaechen) -> bool:
+        """Die Liste hat acht verschiedene Knoten, und ihre Seiten sind genau
+        die gegebenen Flaechen (als Knotenmengen)."""
+        return (len(set(order)) == 8 and
+                {frozenset(order[i] for i in f) for f in FLAECHEN["hex8"]}
+                == {frozenset(f) for f in flaechen})
+
+    def falsch(order, flaechen) -> bool:
+        return order is not None and not beschreibt(order, flaechen)
+
+    o = R6._hex_order([boden, deckel] + seiten)
+    check("richtiger Umlauf -> [0..7]", o == list(range(8)), str(o))
+
+    alle = [[d, b, c, a] for a, b, c, d in seiten]        # oben, unten, oben, unten
+    f = [boden, deckel] + alle
+    o = R6._hex_order(f)
+    check("alle Seiten [d,b,c,a]: keine falsche Liste", not falsch(o, f),
+          f"{o} (vorher [0, 1, 2, 3, 7, 6, 7, 4])")
+
+    f = [boden, deckel, seiten[0], seiten[1], [6, 3, 7, 2], seiten[3]]
+    o = R6._hex_order(f)
+    check("nur die dritte Seite als [6,3,7,2]: keine falsche Liste", not falsch(o, f),
+          f"{o} (vorher [0, 1, 2, 3, 4, 5, 7, 7])")
+    V = solid_volume("hex8", X[o]) if o is not None else None
+    check("und kein Element mit stillen 75 % Volumen",
+          o is None or abs(V - 1.0) < 1e-12,
+          f"V = {V:.4f}" if V is not None else "None - freier Vernetzer")
+
+    # Ein wirklich verdreht angegebener Deckel ist ein gueltiger Koerper und
+    # wird treu abgebildet: 4 steht ueber 1, 5 ueber 2, 6 ueber 3, 7 ueber 0.
+    verdreht = [[0, 1, 4, 7], [1, 2, 5, 4], [2, 3, 6, 5], [3, 0, 7, 6]]
+    f = [boden, deckel] + verdreht
+    o = R6._hex_order(f)
+    check("ein verdreht angegebener Deckel besteht weiter",
+          o is not None and beschreibt(o, f) and o[:4] == boden, str(o))
+
+    # Stichprobe 1: die 81 Schreibweisen des Befunds
+    n_falsch = n_none = 0
+    for wahl in product(range(3), repeat=4):
+        fl = [boden, deckel] + [
+            [s, [s[0], s[2], s[1], s[3]], [s[3], s[1], s[2], s[0]]][w]
+            for s, w in zip(seiten, wahl)]
+        o = R6._hex_order(fl)
+        n_falsch += falsch(o, fl)
+        n_none += o is None
+    check("81 Seitenschreibweisen: keine falsche Liste", n_falsch == 0,
+          f"{n_falsch} falsch, {n_none} None (vorher 57 falsch)")
+
+    # Stichprobe 2: jede Flaeche in beliebiger Knotenfolge, Flaechen in
+    # beliebiger Reihenfolge - 2000 Faelle mit festem Startwert
+    rnd = random.Random(20260922)
+    folgen = list(permutations(range(4)))
+    n_falsch = n_none = 0
+    for _ in range(2000):
+        fl = [[f0[i] for i in rnd.choice(folgen)] for f0 in [boden, deckel] + seiten]
+        rnd.shuffle(fl)
+        o = R6._hex_order(fl)
+        n_falsch += falsch(o, fl)
+        n_none += o is None
+    check("2000 beliebige Knotenfolgen: keine falsche Liste", n_falsch == 0,
+          f"{n_falsch} falsch, {n_none} None")
+    # Die Zuordnung kommt aus den Knotenmengen: jede Schreibweise ergibt den
+    # Koerper, keine faellt an den freien Vernetzer.
+    check("und jede ergibt den Körper (keine None)", n_none == 0, f"{n_none} None")
+    # Sechs Vierecke mit acht Knoten, die keinen Sechsflaechner bilden: die
+    # vierte Seite nimmt die Deckelknoten der dritten. Das muss None sein.
+    f = [boden, deckel, seiten[0], seiten[1], seiten[2], [3, 0, 6, 7]]
+    o = R6._hex_order(f)
+    check("kein Sechsflächner -> None (freier Vernetzer)", o is None, str(o))
+
+
 def main():
     for t in (test_flaechenlast_richtung, test_flaechenlasten_werden_abgezaehlt,
+              test_stablasten_werden_abgezaehlt, test_hex_order_nie_falsch,
               test_einwirkungskategorie_wird_genannt, test_stab_und_knotenlasten, test_deaktivierte_staebe, test_grundmodell, test_nichtlineare_lager, test_abheben,
               test_linien_flaechenlager, test_flaechen_mit_dicke,
               test_volumenkoerper, test_stabtypen, test_kontaktbedingungen,
