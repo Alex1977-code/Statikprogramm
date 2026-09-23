@@ -1071,9 +1071,12 @@ Umhüllende am Stielkopf 102,1415 mm wie mit der gewöhnlichen Kombination;
 die Stäbe wurden ohne Warnung gegen die Lastfälle mit Faktor 1 nachgewiesen,
 Stiel links 0,49702 aus W statt 0,542323. Die Zahlen des heutigen Standes am
 Zweigelenkrahmen (jeweils nach „statt", dazu α_cr) rechnet
-`tests/test_theorie2.py` nach, ebenso die im Benutzerhandbuch; die Zahlen
-der Stände 54b6f9a und 9337a3c sind Messungen an diesen Ständen und im
-Repository nicht nachzurechnen.
+`tests/test_theorie2.py` nach, ebenso die im Benutzerhandbuch. Die Zahlen
+der Stände 54b6f9a und 9337a3c sind Messungen an diesen Ständen; kein Test
+rechnet sie nach, weil der heutige Stand anders rechnet. Nachrechnen lassen
+sie sich, indem man diese Stände aus dem Repository holt und dort rechnet:
+Am Zweigelenkrahmen ergab das Modell aus `tests/test_theorie2.py` so am
+24.09.2026 an beiden Ständen die hier genannten Zahlen.
 
 ### 3.1 Situationen: Stellung und wirksame Elemente
 

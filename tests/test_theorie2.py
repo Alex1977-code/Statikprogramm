@@ -361,7 +361,12 @@ def test_im_modell_und_bericht():
 # 18,0916 bis 25,8131, Stiel links 0,542323, Stielkopf 102,141489 mm, gleich
 # mit Skript und mit dieser Pruefung. Aussagen ueber den Stand vor der
 # Aenderung (54b6f9a, 22.09.2026) und ueber die nicht ausgelieferte
-# Zwischenfassung (9337a3c) sind im Repo nicht nachzurechnen; sie muessen
+# Zwischenfassung (9337a3c) rechnet diese Pruefung nicht nach, denn der
+# heutige Code rechnet anders. Nachzurechnen sind sie nur an diesen Commits
+# selbst (git archive <commit> statik3d, Modell _zweigelenkrahmen). Am
+# 24.09.2026 so gerechnet: 54b6f9a Stiel links 0,497020 aus W, Stielkopf
+# 102,141489 mm; 9337a3c Stielkopf 102,451944 mm, Stiel links 0,548474,
+# Riegel 1,717078, Stiel rechts 1,081530, wie im Text. Diese Aussagen muessen
 # darum den Stand nennen, an dem sie gemessen wurden.
 
 _DOCS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs")
@@ -519,9 +524,14 @@ def test_handbuch_zweigelenkrahmen():
     check("TH: Aussage über den Stand vor der Änderung nennt den Stand",
           "22.09.2026" not in B or "Stand 54b6f9a" in B,
           _gruppe(r"(Vor dieser Änderung \([^)]*\))", B) or "")
+    # Nur in der Klammer hinter der Zwischenfassung suchen: der Schlusssatz des
+    # Absatzes nennt 9337a3c ohnehin. Im ganzen Absatz gesucht, bestand die
+    # Pruefung auch ohne und mit falschem Stand in der Klammer (gemessen
+    # 24.09.2026: "gemessen an 9337a3c," gestrichen bzw. durch fb59de1
+    # ersetzt, je 27 von 27 Handbuchpruefungen bestanden).
+    zw = _gruppe(r"(Zwischenfassung dieser Änderung \([^)]*\))", B)
     check("TH: die Zwischenfassung nennt den gemessenen Stand",
-          "Zwischenfassung" not in B or "9337a3c" in B,
-          _gruppe(r"(Zwischenfassung dieser Änderung \([^)]*\))", B) or "")
+          "Zwischenfassung" not in B or (zw is not None and "9337a3c" in zw), zw or "")
 
 
 def test_handbuch_stauwand():
