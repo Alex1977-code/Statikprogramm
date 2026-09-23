@@ -380,7 +380,7 @@ def import_file(path: str, model: Model = None, log: list = None, **options) -> 
     if umgewandelt:
         C.say(log, "Entartete Volumenelemente umgewandelt ("
                    + ", ".join(f"{k}: {v}" for k, v in umgewandelt.items())
-                   + ") - " + _dg.ENTARTUNG_GENAUIGKEIT)
+                   + ") - " + _dg.entartung_genauigkeit(umgewandelt))
     ext = os.path.splitext(path)[1].lower()
     if ext in _NO_MEMBER_INFO or kind == "cad":
         members = model.auto_members()
