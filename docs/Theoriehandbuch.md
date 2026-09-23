@@ -6885,11 +6885,26 @@ Elementen). Das ist der Fall, den man von außen als „halb vernetzt" sieht.
 nehmen Formgüte q = 12 (3V)^(2/3) / Σ l², Netzvolumen und Steifigkeit
 (`solid.tet4_shape_grad`) den Betrag des Volumens. Ein Knoten, der durch die
 Gegenseite seiner Tetraeder geschoben ist, stülpt sie um; sie überdecken ihre
-Nachbarn, und keine der Prüfungen oben sah es: Kuhn-Netz 10 × 10 × 10 (Zellen
-0,1 m, 6000 tet4), Knoten 665 um 1,2 h verschoben, sechs Tetraeder mit
-det J < 0, Abnahme ohne Befund. Um 1,5 h verschoben, waagerechte Last oben:
-σ_v an den sechs 192,5 bis 247,3 kPa, an den Elementen um Knoten 665 im
-unverschobenen Netz 281,0 bis 329,1 kPa, mittlere Verschiebung oben −0,055 %.
+Nachbarn. Am Kuhn-Netz 10 × 10 × 10 (Zellen 0,1 m, 6000 tet4), Knoten 665 um
+1,2 h verschoben, sechs Tetraeder mit det J < 0, sah es keine der übrigen
+Prüfungen: Abnahme ohne Befund (vor dieser Prüfung, 23.09.2026). Um 1,5 h
+verschoben, waagerechte Last oben: σ_v an den sechs 192,5 bis 247,3 kPa, an
+den Elementen um Knoten 665 im unverschobenen Netz 281,0 bis 329,1 kPa,
+mittlere Verschiebung oben −0,055 %.
+
+Die Volumenbilanz sieht nur das Übervolumen. Ein umgestülptes Tetraeder geht
+mit +|V| statt −|V| in Σ |V| ein; das Netz ist um 2 Σ |V_um| zu groß. Gemessen
+am 24.09.2026, jeweils Σ |V| − V_Körper = 2 Σ |V_um| bis auf höchstens
+1,5 · 10⁻¹⁶ m³: Kuhn-Netz 10 × 10 × 10, 1,2 h: 400 cm³ = 0,04 % < 0,5 %,
+kein Befund; Kuhn-Netz 4 × 4 × 4, derselbe Schub: 6250 cm³ = 0,625 %,
+FEHLER „Volumenbilanz“ neben
+„Netz gefaltet“; freies Netz des oberen Würfels aus `test_fugen.zwei_bloecke`
+("eigene", h 0,5, oben 0,15; 4454 tet4): 17 umgestülpte in sechs Gruppen,
+Volumenbilanz 0,767 % = 7671 cm³, dazu „Elementgüte“ 0,020 an Element 2745,
+einem der 17, das zugleich flach ist. Der Befund „Netz gefaltet“ nennt deshalb
+2 Σ |V| seiner Gruppe; die Gruppen eines Körpers ergeben zusammen den Anteil
+der Faltung an der Volumenbilanz (dort 3167 + 1510 + 283 + 167 + 1336 +
+1208 = 7671 cm³).
 
 Das Merkmal ist die Lage zu den Nachbarn, nicht det J je Element: zwei
 vertauschte Knoten geben det J < 0, sind aber dasselbe Tetraeder mit anderer
@@ -6899,9 +6914,12 @@ mit den Gegenknoten p und q teilen, ist mit n = (x_b − x_a) × (x_c − x_a)
 
   h_p = n · (x_p − x_a),  h_q = n · (x_q − x_a).
 
-Haben h_p und h_q dasselbe Vorzeichen und sind beide größer als
-10⁻⁹ · |n| · L (L die längste Seitenkante; `ABNAHME_FALTUNG_EBENE`, nur gegen
-Rundung — ein Knoten so nahe an der Ebene gibt ohnehin Formgüte ≈ 0), liegen
+Haben h_p und h_q dasselbe Vorzeichen und sind beide dem Betrag nach größer
+als 10⁻⁹ · |n| · L, also |h_p|, |h_q| > 10⁻⁹ · |n| · L (beide Vorzeichen
+kommen vor: am Kuhn-Netz 10 × 10 × 10 mit 1,2 h sind von den 12 gefalteten
+Seiten 6 mit h_p, h_q > 0 und 6 mit h_p, h_q < 0, gemessen am 24.09.2026;
+L die längste Seitenkante; `ABNAHME_FALTUNG_EBENE`, nur gegen Rundung — ein
+Knoten so nahe an der Ebene gibt ohnehin Formgüte ≈ 0), liegen
 beide Tetraeder auf derselben Seite: das Netz ist dort gefaltet. Die Seiten
 werden wie in `_freie_seiten_ecken` sortiert gepackt und mit `lexsort`
 gepaart. Welche Tetraeder umgestülpt sind, folgt aus einer Zweifärbung über

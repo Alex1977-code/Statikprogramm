@@ -1334,6 +1334,53 @@ def test_abnahme_findet_gefaltetes_tetraedernetz():
           f"{kurz(bef)}")
 
 
+def test_faltungsbefund_nennt_das_uebervolumen_der_volumenbilanz():
+    """Gegenprüfung vom 24.09.2026 zu B112, Mangel 1: jeder Befund „Netz
+    gefaltet“ sagte „Formgüte und Volumenbilanz sehen das nicht“ - eine
+    allgemeine Regel aus der einen Messung am Kuhn-Netz 10 × 10 × 10. Sie ist
+    falsch: ein umgestülptes Tetraeder geht mit +|V| statt −|V| ins
+    Netzvolumen ein, das Netz ist um das Doppelte seines Volumens zu groß, und
+    die Volumenbilanz meldet das, sobald es über ihrer Grenze liegt. Gemessen
+    am 24.09.2026: Kuhn-Netz 4 × 4 × 4 (Zellen 0,25 m), Knoten 62 um 1,2·h
+    verschoben - sechs Tetraeder umgestülpt, Σ|V| − 1 m³ = 2 Σ|V_um| = 6250 cm³,
+    und im selben Protokoll FEHLER Volumenbilanz 0,625 % neben dem Satz, sie
+    sehe es nicht. Am Kuhn-Netz 10 × 10 × 10 sind es 400 cm³ (0,04 %), dort
+    meldet die Volumenbilanz nichts. Der Befund nennt jetzt das Übervolumen
+    seiner Tetraeder, und das muss zur Volumenbilanz passen.
+    """
+    from statik3d.spannungen import dezimal
+
+    for n, erwartet_vb in ((4, True), (10, False)):
+        m, k = _gleichmaessig(1.0, 1.0, 1.0, n)
+        _in_kuhn(m, k)
+        mitte = int(np.argmin(np.linalg.norm(m.nodes - np.array([0.5, 0.5, 0.5]), axis=1)))
+        m.nodes[mitte] = m.nodes[mitte] + np.array([1.2 / n, 0.0, 0.0])
+        # Unabhaengig vom Pruefling: signierte Volumina, Wuerfel 1 m³
+        P = np.asarray(m.nodes, float)[np.array([e.nodes for e in m.elements])]
+        V = np.einsum("ij,ij->i", P[:, 1] - P[:, 0],
+                      np.cross(P[:, 2] - P[:, 0], P[:, 3] - P[:, 0])) / 6.0
+        ueber = float(np.abs(V).sum() - 1.0)
+        bef = dg.abnahme(m, warnungen=True)
+        fa = [b for b in bef if b.pruefung == "Netz gefaltet"]
+        vb = [b for b in bef if b.pruefung == "Volumenbilanz"]
+        menge = f"{dezimal(ueber * 1e6)} cm³"
+        check(f"Kuhn-Netz {n} × {n} × {n}, Knoten {mitte} um 1,2·h: ein Befund „Netz "
+              f"gefaltet“ mit den {int((V < 0).sum())} Tetraedern mit V < 0, sein Text "
+              f"nennt das Übervolumen {menge} = Σ|V| − 1 m³",
+              len(fa) == 1 and sorted(fa[0].elemente) == sorted(np.nonzero(V < 0)[0].tolist())
+              and menge in fa[0].text,
+              "; ".join(b.text for b in fa) or "kein Befund Netz gefaltet")
+        check("  und bestreitet nicht, was die Volumenbilanz sieht",
+              all("sehen das nicht" not in b.text and "sieht das nicht" not in b.text
+                  for b in fa),
+              "; ".join(b.text for b in fa))
+        check(f"  Volumenbilanz {'meldet' if erwartet_vb else 'meldet nicht'}: Abweichung "
+              f"{dezimal(ueber * 100)} % gegen die Grenze "
+              f"{dezimal(dg.ABNAHME_VOLUMENBILANZ * 100, 1)} %",
+              (len(vb) == 1 and abs(vb[0].wert - ueber) <= 1e-9) if erwartet_vb else vb == [],
+              "; ".join(f"{b.pruefung} {b.wert:.6g}" for b in vb) or "kein Befund Volumenbilanz")
+
+
 def test_abnahme_riss_an_laenglichen_zellen():
     """Zweite Gegenprüfung vom 23.09.2026, Mängel 1 und 2: die Riss-Regel der
     zweiten Kur maß die Dicke eines Hohlraums nur an der längsten Kante
@@ -1697,6 +1744,7 @@ def main():
               test_abnahme_windschief_misst_am_oertlichen_element,
               test_abnahme_luecke_im_netzrand,
               test_abnahme_findet_gefaltetes_tetraedernetz,
+              test_faltungsbefund_nennt_das_uebervolumen_der_volumenbilanz,
               test_windschiefe_randflaechen_ohne_dreiecksschleife,
               test_abnahme_meldet_ausgefallene_pruefungen,
               test_nicht_messbare_formguete_gilt_nicht_als_beste,

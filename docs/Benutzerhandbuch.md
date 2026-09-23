@@ -4603,10 +4603,22 @@ geholfen hat, steht oben.
 **Gefaltetes Tetraedernetz** (seit 23.09.2026). Wird ein Knoten durch die
 gegenüberliegende Seite seiner Tetraeder geschoben, stülpen sie sich um und
 überdecken ihre Nachbarn. Beim Tetraeder mit vier Knoten nehmen Formgüte,
-Elementvolumen und die Rechnung selbst den Betrag des Volumens — keine der
-Prüfungen oben sah das. Am Würfel 1 × 1 × 1 m, 10 × 10 × 10 Zellen in je sechs
-Tetraeder geteilt, den mittleren Knoten 665 um das 1,2-fache der Zellweite
-verschoben: sechs Tetraeder umgestülpt, die Abnahme meldete nichts. Um das
+Elementvolumen und die Rechnung selbst den Betrag des Volumens. Am Würfel
+1 × 1 × 1 m, 10 × 10 × 10 Zellen in je sechs Tetraeder geteilt, den mittleren
+Knoten 665 um das 1,2-fache der Zellweite verschoben: sechs Tetraeder
+umgestülpt, und die Abnahme ohne diese Prüfung meldete nichts. Die
+Volumenbilanz sieht nur das Übervolumen: jedes umgestülpte Tetraeder zählt dort
+mit seinem Volumen, statt es abzuziehen, das Netz ist also um das Doppelte
+seines Volumens zu groß — hier 400 cm³ oder 0,04 %, unter ihrer Grenze 0,5 %.
+Bei 4 × 4 × 4 Zellen macht derselbe Schub 0,625 %, und die Volumenbilanz
+meldet es neben der Faltung. An zwei Würfeln 1 × 1 × 1 m übereinander mit je
+eigener Trennfläche, der obere frei vernetzt mit Netzweite 0,15 m
+(4454 Tetraeder), fand die Abnahme 17 umgestülpte
+Tetraeder in sechs Gruppen, dazu „Volumenbilanz“ 0,767 % — genau das Doppelte
+ihres Volumens — und „Elementgüte“ 0,020 an einem von ihnen, das zugleich flach
+ist (gemessen am 24.09.2026). Jeder Befund „Netz gefaltet“ nennt darum, wie
+viel seine Tetraeder zu viel ins Netzvolumen bringen; die sechs dort ergeben
+zusammen die 7671 cm³, um die die Volumenbilanz zu hoch liegt. Um das
 1,5-fache verschoben und oben waagerecht belastet, lag die Vergleichsspannung
 an diesen sechs bei 192,5 bis 247,3 kPa, an den Elementen um denselben Knoten
 im unverschobenen Netz bei 281,0 bis 329,1 kPa; die mittlere Verschiebung oben

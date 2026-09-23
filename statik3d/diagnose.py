@@ -485,7 +485,10 @@ def abnahme(model, guete: list = None, warnungen: bool = False) -> list:
     7. **Gefaltetes Tetraedernetz** - an einer gemeinsamen Seite zweier
        tet4 liegen beide Gegenknoten auf derselben Seite der Ebene
        (:func:`_abnahme_faltung`); Formguete, Volumen und die Rechnung selbst
-       nehmen beim tet4 den Betrag des Volumens und sehen es nicht.
+       nehmen beim tet4 den Betrag des Volumens. Die Volumenbilanz sieht nur
+       das Uebervolumen, 2 |V| je umgestuelptem Tetraeder, und meldet es erst
+       ueber ihrer Grenze (Kuhn-Netz 10 x 10 x 10 mit sechs umgestuelpten:
+       0,04 %, kein Befund; 4 x 4 x 4: 0,625 %, FEHLER; 24.09.2026).
 
     Faellt eine der Teilpruefungen aus (die Halteguete, die Formguete oder die
     Faltung lassen sich nicht ermitteln), erscheint das als eigener Befund der Stufe
@@ -923,15 +926,19 @@ def _abnahme_faltung(model) -> list:
     Formguete (netzguete: 12 (3V)^(2/3) / Summe l^2) und Elementvolumen
     (:func:`elementvolumina`, solid.tet4_shape_grad) rechnen beim Tetraeder
     mit dem **Betrag** des Volumens. Ein Knoten, der durch die Gegenseite
-    seiner Tetraeder geschoben ist, stuelpt sie um, und keine andere Pruefung
-    sah es: am 10 x 10 x 10-Kuhn-Netz (Zellen 0,1 m) Knoten 665 um 1,2 h
-    verschoben, sechs Tetraeder mit det J < 0, abnahme(warnungen=True) = []
+    seiner Tetraeder geschoben ist, stuelpt sie um. Am 10 x 10 x 10-Kuhn-Netz
+    (Zellen 0,1 m) Knoten 665 um 1,2 h verschoben, sechs Tetraeder mit
+    det J < 0, sah es keine andere Pruefung: abnahme(warnungen=True) = []
     (23.09.2026; ein umgestuelpter Sechsflaechner gibt dagegen eine negative
-    Formguete). Die Rechnung nimmt jedes als aufrechtes Tetraeder mit |V|,
-    die umgestuelpten ueberdecken ihre Nachbarn. Gemessen bei 1,5 h und
-    waagerechter Last oben: sigma_v an den sechs 192,5 bis 247,3 kPa, an den
-    Elementen um Knoten 665 im unverschobenen Netz 281,0 bis 329,1 kPa; die
-    mittlere Verschiebung oben aendert sich nur um -0,055 %.
+    Formguete). Die Volumenbilanz sieht nur das Uebervolumen 2 |V| je
+    umgestuelptem Tetraeder, dort 0,04 % unter ihrer Grenze 0,5 %; am
+    Kuhn-Netz 4 x 4 x 4 macht derselbe Schub 0,625 %, und sie meldet es
+    neben diesem Befund (24.09.2026). Die Rechnung nimmt jedes als
+    aufrechtes Tetraeder mit |V|, die umgestuelpten ueberdecken ihre
+    Nachbarn. Gemessen bei 1,5 h und waagerechter Last oben: sigma_v an den
+    sechs 192,5 bis 247,3 kPa, an den Elementen um Knoten 665 im
+    unverschobenen Netz 281,0 bis 329,1 kPa; die mittlere Verschiebung oben
+    aendert sich nur um -0,055 %.
 
     **Die Knotenfolge ist kein Kriterium.** Zwei vertauschte Knoten geben ein
     negatives det J, sind aber dasselbe Tetraeder mit anderer Nummerierung:
@@ -1059,9 +1066,27 @@ def _abnahme_faltung(model) -> list:
                 koerper_von[int(x)].add(str(nm))
     ordnung = np.argsort(gruppe, kind="stable")
     grenzen = np.searchsorted(gruppe[ordnung], np.arange(ng + 1))
+    # Uebervolumen je Gruppe. Ein umgestuelptes Tetraeder geht mit +|V| statt
+    # -|V| ins Netzvolumen (elementvolumina) ein, das Netz ist also um 2 |V|
+    # zu gross - das sieht die Volumenbilanz und meldet es ueber ihrer Grenze.
+    # Bis 24.09.2026 stand im Befund „Formgüte und Volumenbilanz sehen das
+    # nicht“; das galt nur am Kuhn-Netz 10 x 10 x 10 (1,2 h: 400 cm3 = 0,04 %).
+    # Gemessen 24.09.2026: Kuhn-Netz 4 x 4 x 4, Knoten 62 um 1,2 h: Summe |V|
+    # - 1 m3 = 2 Summe |V_um| = 6250 cm3 und FEHLER Volumenbilanz 0,625 %;
+    # freies Netz tests.test_fugen.zwei_bloecke("eigene", 0.5, 0.15), Koerper
+    # Oben: 17 umgestuelpte in sechs Gruppen, Volumenbilanz 0,767 % = 2 Summe
+    # |V| der 17, und eines davon (Element 2745, flach) meldet auch die
+    # Elementguete (0,020). Die Zahl im Befund verbindet ihn mit der Bilanz.
+    from .spannungen import dezimal
+    Pu = X[K[um_idx]]
+    V_um = np.abs(np.einsum("ij,ij->i", Pu[:, 1] - Pu[:, 0],
+                            np.cross(Pu[:, 2] - Pu[:, 0], Pu[:, 3] - Pu[:, 0]))) / 6.0
     aus = []
     for g in range(ng):
         lokal = um_idx[ordnung[grenzen[g]:grenzen[g + 1]]]
+        ueber = 2.0 * float(V_um[ordnung[grenzen[g]:grenzen[g + 1]]].sum())
+        menge = (f"{dezimal(ueber * 1e6)} cm³" if ueber * 1e6 >= 1.0
+                 else f"{dezimal(ueber * 1e9)} mm³")
         els = sorted(int(idx[j]) for j in lokal)
         gemeinsam = set(int(x) for x in K[lokal[0]])
         for j in lokal[1:]:
@@ -1081,9 +1106,10 @@ def _abnahme_faltung(model) -> list:
                  f"Nachbarn (Elemente {liste}{am}) - an {seiten} gemeinsamen Seiten "
                  "liegen beide Nachbarn auf derselben Seite. Dort ist das Netz "
                  "gefaltet: die Elemente überdecken sich, und die Rechnung nimmt "
-                 "jedes mit dem Betrag seines Volumens, als stünde es aufrecht - "
-                 "Formgüte und Volumenbilanz sehen das nicht. Die Knoten "
-                 "zurücksetzen oder neu vernetzen."))
+                 "jedes mit dem Betrag seines Volumens, als stünde es aufrecht. Ins "
+                 f"Netzvolumen gehen sie so mit {menge} zu viel ein, dem Doppelten "
+                 "ihres Volumens; die Volumenbilanz meldet das erst über ihrer "
+                 "Grenze. Die Knoten zurücksetzen oder neu vernetzen."))
     return aus
 
 
