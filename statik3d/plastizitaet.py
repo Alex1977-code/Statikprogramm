@@ -89,6 +89,9 @@ _P_DEV = np.array([
 #: Die beiden Wege durch die Plastizitaet - siehe :func:`iteration`
 WEGE = ("tangente", "anfangsdehnung")
 
+#: Wie Newton und Kontakt zusammen iterieren - siehe :func:`_newton`
+KONTAKT_WEGE = ("gemeinsam", "verschachtelt")
+
 #: Kleinster Verfestigungsmodul **der Tangente**, bezogen auf 3G. Bei sehr
 #: kleiner Verfestigung ist D_ep in Fliessrichtung fast singulaer (Eigenwert
 #: 2G (H/3G)/(1 + H/3G)), und oberhalb der Grenzlast wird es K + ΔK auch: am
@@ -114,6 +117,12 @@ class Plastizitaet:
     Schritt, dafuer wenige Schritte, unabhaengig von der Verfestigung),
     ``"anfangsdehnung"`` die Anfangsdehnungs-Iteration bei fester Steifigkeit
     (eine Faktorisierung je Rechnung, dafuer linear mit dem Faktor 1 − E_t/E).
+
+    ``kontakt`` gilt nur mit Kontakt: ``"gemeinsam"`` laesst den Loeser im
+    Newton die Kontaktiteration innerhalb einer Laststufe abkuerzen (und in
+    beiden Wegen den elastischen Vorlauf weg), ``"verschachtelt"`` iteriert
+    den Kontakt in jedem Schritt aus (der Weg bis zum 23.09.2026) - siehe
+    :func:`_newton`.
     """
     an: bool = False
     verfestigung: float = 0.01
@@ -135,6 +144,7 @@ class Plastizitaet:
     #: plastische Moment auf die Randfaser). Fuer Parallelepipede ist die
     #: elastische Steifigkeit mit jeder Regel >= 2 Punkten dieselbe.
     dicke_punkte: int = 5
+    kontakt: str = "gemeinsam"
 
     def H(self, E: float) -> float:
         """Verfestigungsmodul H aus der Tangente E_t = r E: H = E r / (1 - r)."""
@@ -923,8 +933,25 @@ def _schritt_schleife(model, u, zustand: Zustand, einst: Plastizitaet, elemente:
     return F_p, neu, {"fliessend": n_fliesst, "q_max": q_max}
 
 
+def _schlussabnahme(rest: float, toleranz: float) -> bool:
+    """Die Abnahme am Schluss: passt F_p zur Loesung des Abschlusses?
+    ``rest`` ist die Aenderung von F_p, die die Rueckfuehrung (von der Basis
+    der letzten Laststufe) an dieser Loesung ergibt, bezogen auf |F| wie das
+    Kriterium der Iteration.
+
+    Bis zum 23.09.2026 pruefte das niemand: der Abschluss loest elastisch mit
+    dem F_p des letzten Newton-Schritts, mit Kontakt in einem eigenen, voll
+    auskonvergierten Lauf - und der kann den Kontaktzustand noch aendern. Am
+    gequetschten Block (tests/test_solver_ext, mu 0,3, eps_p 12 %) blieb so
+    ein Rest von 2,5e-4 bei Toleranz 1e-4, gemeldet wurde "konvergiert".
+    Eine eigene Funktion, damit die Ruecknahmeprobe sie abschalten kann
+    (tests/test_plastizitaet.test_ruecknahme_der_schlussabnahme)."""
+    return rest <= toleranz
+
+
 def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: list,
-            norm_F: float, info: dict, log: list = None, progress=None) -> tuple:
+            norm_F: float, info: dict, log: list = None, progress=None,
+            kontakt_abnahme=None) -> tuple:
     """Newton mit der konsistenten Tangente - siehe :func:`iteration`.
 
     Die Rueckfuehrung geht in jedem Schritt vom Zustand am **Anfang der
@@ -932,20 +959,73 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
     F_p eine Funktion von u allein und D_ep wirklich ihre Ableitung. Die
     Anfangsdehnungs-Iteration schreibt eps_p dagegen von Schritt zu Schritt
     fort - dasselbe im Grenzwert, aber nicht differenzierbar.
+
+    **Mit Kontakt gemeinsam iteriert (23.09.2026)** - nur wenn der Loeser
+    ``kontakt_abnahme`` mitgibt (solver._plastizitaet_rechnen, Einstellung
+    ``kontakt``). Dann bekommen ``loesen`` und ``loesen_tangente`` das
+    Schluesselwort ``voll``: mit ``False`` darf der Loeser die
+    Kontaktiteration nach einem Schritt abbrechen und ihren Zustand an die
+    naechste Loesung weiterreichen; ``kontakt_abnahme()`` sagt, ob die letzte
+    Loesung trotzdem mit auskonvergiertem Kontakt gerechnet ist. Verschachtelt
+    iterierte jeder Newton-Schritt den Kontakt aus - am Drehlager zwoelf
+    Kontaktlaeufe mit 144 Schritten und 139 Zerlegungen fuer zehn
+    Newton-Schritte (LF1, cProfile 23.09.2026). Gemeinsam heisst:
+
+    * der Startwert jeder Laststufe wie bisher mit vollem Kontakt - dort legt
+      die Kontaktiteration Haften, Gleiten und die Gleitrichtungen fest, und
+      das Ergebnis haengt bei Reibung am Weg dorthin. Abgekuerzt lag es in
+      9 von 45 Probelaeufen ueber 1 N/mm2 neben dem verschachtelten (bis
+      89,6), mit vollem Startwert in 5 (Theoriehandbuch § 5e.3);
+    * die Newton-Schritte der Stufe mit abgekuerztem Kontakt;
+    * eine Stufe endet erst, wenn die Aenderung unter der Toleranz liegt
+      **und** die Loesung dazu nicht abgekuerzt war - sonst folgt ein
+      Newton-Schritt mit vollem Kontakt ("Abnahme") und die Pruefung;
+    * nach der Haelfte der Schritte einer Stufe rechnet der Rest der Stufe
+      mit vollem Kontakt wie verschachtelt - am gequetschten Block pendelte
+      die Aenderung sonst bis zum letzten Schritt im Dreierzyklus
+      0,180 / 0,164 / 0,0535;
+    * in der letzten Stufe ist die Abnahme der Abschluss selbst: voller
+      Kontakt, elastisch mit F + F_p, dann :func:`_schlussabnahme` an dieser
+      Loesung - besteht sie nicht, geht der Newton weiter.
+
+    Gemessen an 15 Modellen mit Reibung und Fliessen, je 1 bis 3 Laststufen
+    (23.09.2026): 1741 statt 3015 Zerlegungen; die Vergleichsspannung in 39
+    von 45 Faellen auf 0,26 N/mm2 wie verschachtelt, in 40 auf 1 N/mm2
+    (Theoriehandbuch § 5e.3). Ohne ``kontakt_abnahme`` rechnet dieser
+    Newton Aufruf fuer Aufruf wie vorher (verschachtelt bitgleich in allen 45).
+
+    Jeder Loeseraufruf steht mit seiner Art in ``info["aufrufe"]`` (Art,
+    Laststufe, Schritt) - daraus baut der Loeser das Laufbuch.
     """
     info["verfahren"] = "tangente"
     stufen = int(max(1, einst.laststufen))
+    n_max = int(max(1, einst.iterationen))
+    tol = float(einst.toleranz)
+    gemeinsam = kontakt_abnahme is not None
+    aufrufe = info.setdefault("aufrufe", [])
+
+    def _loesen(Fg, dK, voll, *art):
+        aufrufe.append(art)
+        if not gemeinsam:
+            return loesen(Fg) if dK is None else loesen_tangente(Fg, dK)
+        return loesen(Fg, voll=voll) if dK is None else loesen_tangente(Fg, dK, voll=voll)
+
     basis = Zustand()
     F_p = np.zeros(model.ndof)
     u = None
     diff = 0.0
+    basis_anfang = basis
+    abgeschlossen = False       # gemeinsam: der Abschluss hat die letzte Stufe abgenommen
     for k in range(1, stufen + 1):
         F_k = (k / stufen) * F
+        basis_anfang = basis
         # Startwert der Laststufe: elastische Loesung mit dem bisherigen F_p -
         # ein Rueckwaertseinsetzen auf der schon vorhandenen Faktorisierung
-        u = loesen(F_k + F_p)
+        u = _loesen(F_k + F_p, None, True, "Laststufe", k, 0)
         F_p_stufe, zustand_stufe = F_p, basis
-        for it in range(1, int(max(1, einst.iterationen)) + 1):
+        n_kurz = 0              # abgekuerzte Newton-Schritte dieser Stufe
+        abschluss = None        # (F_p, Zustand), mit denen der Abschluss gerechnet ist
+        for it in range(1, n_max + 1):
             F_p_neu, zustand_neu, s_info = schritt(model, u, basis, einst, elemente, log,
                                                    tangente=True)
             diff = float(np.linalg.norm(F_p_neu - F_p_stufe)) / norm_F
@@ -955,15 +1035,34 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
             if progress is not None:
                 progress(f"Plastizität: Laststufe {k}/{stufen}, Newton-Schritt {it}: "
                          f"{s_info['fliessend']} Elemente fließen, Änderung {diff:.2e}")
-            if diff <= float(einst.toleranz):
+            if abschluss is not None and _schlussabnahme(diff, tol):
+                # Wie verschachtelt: Zustand und F_p sind die, mit denen der
+                # Abschluss gerechnet ist - geprueft ist, dass sie zu ihm passen
+                F_p_stufe, zustand_stufe = abschluss
+                abgeschlossen = True
                 break
+            if abschluss is None and diff <= tol:
+                if not gemeinsam:
+                    break
+                if k == stufen:
+                    u = _loesen(F + F_p_neu, None, True, "Abschluss", None, None)
+                    abschluss = (F_p_neu, zustand_neu)
+                    continue
+                if kontakt_abnahme():
+                    break
+                art, voll = "Abnahme", True
+            else:
+                abschluss = None
+                art = "Newton"
+                voll = not gemeinsam or n_kurz >= n_max // 2
+                n_kurz += 0 if voll else 1
             dK = s_info["dK"]
             if dK.nnz == 0:
                 # Nichts fliesst gerade (etwa beim Entlasten): die Tangente ist
                 # die elastische, und dafuer gibt es die Faktorisierung schon
-                u = loesen(F_k + F_p_neu)
+                u = _loesen(F_k + F_p_neu, None, voll, art, k, it)
             else:
-                u = loesen_tangente(F_k + F_p_neu + dK @ u, dK)
+                u = _loesen(F_k + F_p_neu + dK @ u, dK, voll, art, k, it)
                 info["faktorisierungen"] += 1
         else:
             info["konvergiert"] = False
@@ -971,9 +1070,20 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
                 log.append(f"Plastizität: Laststufe {k} nach {einst.iterationen} Newton-Schritten "
                            f"nicht konvergiert (Änderung {diff:.2e} > {einst.toleranz:g})")
         basis, F_p = zustand_stufe, F_p_stufe
-    # Die letzte Loesung gehoert zum letzten Zustand: im Gleichgewicht ist
-    # K u = F + F_p, also genau diese elastische Loesung
-    u = loesen(F + F_p)
+    if abgeschlossen:
+        rest = diff
+    else:
+        # Die letzte Loesung gehoert zum letzten Zustand: im Gleichgewicht ist
+        # K u = F + F_p, also genau diese elastische Loesung
+        u = _loesen(F + F_p, None, True, "Abschluss", None, None)
+        F_p_ende, _z, _i = schritt(model, u, basis_anfang, einst, elemente, None)
+        rest = float(np.linalg.norm(F_p_ende - F_p)) / norm_F
+    info["rest_abschluss"] = rest
+    if info["konvergiert"] and not _schlussabnahme(rest, tol):
+        info["konvergiert"] = False
+        if log is not None:
+            log.append(f"Plastizität: an der Lösung des Abschlusses passt F_p nicht mehr "
+                       f"(Änderung {rest:.2e} > {einst.toleranz:g}) - nicht konvergiert")
     info["fliessend"] = len(basis.fliessend())
     info["eps_p_max"] = basis.eq_max()
     if log is not None:
@@ -986,7 +1096,7 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
 
 
 def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = None,
-              progress=None, loesen_tangente=None) -> tuple:
+              progress=None, loesen_tangente=None, kontakt_abnahme=None) -> tuple:
     """Laststufen und Fliess-Iteration. ``loesen(F_ges)`` liefert u fuer die
     Gesamtlast bei der **elastischen** Steifigkeit (mit Kontakt: eine
     Kontakt-Iteration, die Faktorisierung bleibt). Rueckgabe
@@ -1011,6 +1121,10 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
 
     Ohne ``loesen_tangente`` (etwa aus einem Test, der nur ``system.solve``
     hergibt) faellt "tangente" auf "anfangsdehnung" zurueck.
+
+    ``kontakt_abnahme`` (nur der Newton, nur vom Loeser mit Kontakt): Fliessen
+    und Kontakt gemeinsam iterieren - siehe :func:`_newton`. Ohne sie, und im
+    Weg "anfangsdehnung" immer, bleibt jeder Aufruf ein voller Kontaktlauf.
     """
     elemente = _solid_elemente(model, aktiv)
     zustand = Zustand()
@@ -1037,7 +1151,7 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
                      and all(model.elements[i].typ in sl.OPERATOREN for i in elemente))
     if str(getattr(einst, "verfahren", "tangente")) == "tangente" and kann_tangente:
         return _newton(model, F, loesen, loesen_tangente, einst, elemente, norm_F, info,
-                       log, progress)
+                       log, progress, kontakt_abnahme)
     stufen = int(max(1, einst.laststufen))
     for k in range(1, stufen + 1):
         lam = k / stufen
