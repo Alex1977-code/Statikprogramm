@@ -523,6 +523,69 @@ def test_aus_tet10():
           f"Abweichung {f.min():+.2f}..{f.max():+.2f} gegen {f2.min():+.2f}..{f2.max():+.2f} N/mm2")
 
 
+def test_grenzkante_gerade():
+    """Eine Kante, die ein tetp mit einem tet4 teilt, ist auch geometrisch
+    gerade (sonst klafft die Geometrie); eine gekruemmte Kante im Inneren
+    des p-Gebiets bleibt gekruemmt."""
+    m = quader(2, 2, 2, 1.0, 1.0, 1.0, lambda c: "tet4" if c[0] < 0.5 else "tetp3")
+    X = np.asarray(m.nodes, float)
+    an = tp.anreicherung(m)
+    grenze = [tuple(int(v) for v in k) for k in an.kanten
+              if abs(X[k[0], 0] - 0.5) < 1e-9 and abs(X[k[1], 0] - 0.5) < 1e-9]
+    innen = [tuple(int(v) for v in k) for k in an.kanten if min(X[k[0], 0], X[k[1], 0]) > 0.5 + 1e-9]
+    km = {}
+    for k in (grenze[0], innen[0]):
+        km[k] = 0.5 * (X[k[0]] + X[k[1]]) + np.array([0.0, 0.0, 0.01])
+    m.tetp_kantenmitten = km
+    idx = [i for i, e in enumerate(m.elements) if e.typ == "tetp3"]
+    G = tp.geometrie_modell(m, idx)
+    gerade_ok, krumm_ok = True, False
+    for a, i in enumerate(idx):
+        kn = m.elements[i].nodes
+        for mm, (p_, q_) in enumerate(tp.TET10_KANTEN):
+            k = (min(kn[p_], kn[q_]), max(kn[p_], kn[q_]))
+            mitte = 0.5 * (X[kn[p_]] + X[kn[q_]])
+            if k == grenze[0]:
+                gerade_ok &= bool(np.allclose(G[a, 4 + mm], mitte))
+            if k == innen[0]:
+                krumm_ok |= bool(np.allclose(G[a, 4 + mm], km[k]))
+    check("Grenzkante zu tet4 geometrisch gerade, innere Kante gekruemmt", gerade_ok and krumm_ok,
+          f"Grenze {grenze[0]}, innen {innen[0]}")
+
+
+def test_flaechenschnittstelle():
+    """tetp.flaechenschnittstelle: Flaeche = Summe dA, Normalen nach aussen,
+    lineares Feld exakt, Druck konsistent zur Seitenlast."""
+    m = quader(1, 1, 1, 1.0, 1.0, 1.0, lambda c: "tetp3")
+    X = np.asarray(m.nodes, float)
+    seiten = seiten_auf(m, lambda x: abs(x[2] - 1.0) < 1e-9)
+    fs = tp.flaechenschnittstelle(m, seiten)
+    flaeche = float(fs["dA"].sum())
+    aussen = bool(np.all(fs["normalen"][fs["dA"] > 0][:, 2] > 0.999999))
+    rng = np.random.default_rng(2)
+    A = rng.normal(size=(3, 3))
+    u = np.zeros(m.ndof)
+    for c in range(3):
+        u[6 * np.arange(m.nn) + c] = X @ A[c]
+    feld = np.einsum("nmk,nkc->nmc", fs["ansatz"], u[fs["fhg"]])
+    soll = fs["punkte"] @ A.T
+    lin = float(np.abs(np.where(fs["dA"][..., None] > 0, feld - soll, 0.0)).max())
+    kons = 0.0
+    for r, (i, s) in enumerate(seiten):
+        d, fe = tp.seitenlast_modell(m, i, s, 1e5)
+        k = int(fs["k"][r])
+        f2 = -1e5 * np.einsum("m,mk,mc->kc", fs["dA"][r], fs["ansatz"][r][:, :k], fs["normalen"][r])
+        voll = dict()
+        for dof, val in zip(d, fe):
+            voll[int(dof)] = voll.get(int(dof), 0.0) + float(val)
+        for a in range(k):
+            for c in range(3):
+                kons = max(kons, abs(voll.get(int(fs["fhg"][r][a, c]), 0.0) - f2[a, c]))
+    check("Flaechenschnittstelle: Flaeche, Aussennormale, lineares Feld, Druck konsistent",
+          abs(flaeche - 1.0) < 1e-12 and aussen and lin < 1e-12 and kons < 1e-6,
+          f"Flaeche {flaeche:.12f}, lin. Feld {lin:.1e}, Druck {kons:.1e} N")
+
+
 class _ZaehlListe(list):
     """Liste, die mitzaehlt, wie oft ueber sie gelaufen wird."""
     laeufe = 0
@@ -582,6 +645,8 @@ def main():
     test_plastisch_zugstab()
     test_plastisch_newton()
     test_aus_tet10()
+    test_grenzkante_gerade()
+    test_flaechenschnittstelle()
     n_fail = sum(1 for _n, ok in RESULTS if not ok)
     print(f"\n{len(RESULTS) - n_fail}/{len(RESULTS)} bestanden")
     return 1 if n_fail else 0

@@ -824,7 +824,9 @@ def pruefe_pflichtseiten(model, an) -> None:
 
 
 def pflichtseiten(model, idx_p) -> tuple:
-    """(Kanten, Flaechen), die linear bleiben muessen.
+    """(Kanten, Flaechen, fremde Kanten): was linear bleiben muss, und die
+    Kanten, die ein Element ohne Anreicherung mitbenutzt (dort ist auch die
+    Geometrie gerade, siehe geometrie_modell).
 
     1. Alles, was ein Volumenelement ohne Anreicherung mitbenutzt (tet4, tet10,
        hex8 ...): dessen Spur auf der gemeinsamen Seite ist linear.
@@ -832,6 +834,7 @@ def pflichtseiten(model, idx_p) -> tuple:
     """
     from ..elemente import VOLUMEN_TYPEN
     kanten, flaechen = set(), set()
+    fremd = set()
     for e in model.elements:
         if e.typ in VOLUMEN_TYPEN and not ist_tetp(e.typ):
             kn = [int(n) for n in e.nodes]
@@ -841,6 +844,7 @@ def pflichtseiten(model, idx_p) -> tuple:
             for a in range(len(ecken)):
                 for b in range(a + 1, len(ecken)):
                     kanten.add((min(ecken[a], ecken[b]), max(ecken[a], ecken[b])))
+                    fremd.add((min(ecken[a], ecken[b]), max(ecken[a], ecken[b])))
             if e.typ in ("tet4", "tet10"):
                 for f in SEITEN:
                     flaechen.add(tuple(sorted(ecken[i] for i in f)))
@@ -880,7 +884,13 @@ def pflichtseiten(model, idx_p) -> tuple:
             for a, b in KANTEN:
                 if kn[a] in geb and kn[b] in geb:
                     kanten.add((min(kn[a], kn[b]), max(kn[a], kn[b])))
-    return kanten, flaechen
+    # gemerkt fuer die Geometrie: eine Kante, die ein Element ohne Anreicherung
+    # mitbenutzt, ist dort gerade - also auch beim tetp (sonst klafft die
+    # Geometrie). Kontakt- und Fugenkanten bleiben gekruemmt: dort liegt kein
+    # Nachbar, dessen Geometrie passen muesste, und die Nachweisstellen an
+    # Bohrungen brauchen die Kruemmung (Labor 23.09.2026: eine einzige gerade
+    # Bohrungskante, und selbst p = 4 lag dort 23 N/mm2 daneben).
+    return kanten, flaechen, fremd
 
 
 def basis_fhg(model) -> int:
@@ -949,8 +959,9 @@ def anreicherung(model, streng: bool = False):
         return zw[2]
     kn = np.array([model.elements[i].nodes[:4] for i in idx_p], dtype=np.int64)
     ordn = np.array([TYPEN[model.elements[i].typ] for i in idx_p], dtype=np.int64)
-    lk, lf = pflichtseiten(model, idx_p)
+    lk, lf, fremd = pflichtseiten(model, idx_p)
     an = Anreicherung(kn, ordn, basis_fhg(model), linear_kanten=lk, linear_flaechen=lf)
+    an.gerade_kanten = fremd
     pruefe_pflichtseiten(model, an)
     an.idx = np.array(idx_p, dtype=np.int64)
     an.stelle = {int(i): s for s, i in enumerate(idx_p)}
@@ -994,11 +1005,14 @@ def geometrie_modell(model, idx) -> np.ndarray:
     G = geometrie(X[kn])
     km = kantenmitten(model)
     if km:
+        an = anreicherung(model)
+        gerade = getattr(an, "gerade_kanten", set()) if an is not None else set()
         G = G.copy()
         for a, e in enumerate(kn):
             for m, (i, j) in enumerate(TET10_KANTEN):
-                p = km.get((min(e[i], e[j]), max(e[i], e[j])))
-                if p is not None:
+                schl = (min(e[i], e[j]), max(e[i], e[j]))
+                p = km.get(schl)
+                if p is not None and schl not in gerade:
                     G[a, 4 + m] = p
     return G
 
@@ -1388,6 +1402,99 @@ def aus_tet10(model, elemente=None, ordnung: int = 3, toleranz: float = 1e-9) ->
     if frei and getattr(model, "supports", None):
         model.supports = [sp for sp in model.supports if int(sp.node) not in frei]
     return {"elemente": len(idx), "gekruemmt": gekruemmt, "mittenknoten": frei}
+
+
+# --------------------------------------------------------------------------
+# Flaechenschnittstelle fuer einen kuenftigen Kontakt ueber Punkte der Seite
+# (Absprache mit der Loeser-Sitzung 23.09.2026; heute bleiben Kontaktseiten
+# linear, und diese Funktion wird von keiner Rechnung gerufen)
+# --------------------------------------------------------------------------
+def seitenfunktionen(P) -> list:
+    """Positionen (in funktionen(P)) der Funktionen, die auf Seite ``s``
+    (SEITEN-Nummer) nicht verschwinden: je Seite eine Liste."""
+    fu = funktionen(P)
+    aus = []
+    for ecken in SEITEN:
+        es = set(ecken)
+        pos = []
+        for c, (art, ent, _q, _r) in enumerate(fu):
+            if art == "e" and ent in es:
+                pos.append(c)
+            elif art == "k" and set(KANTEN[ent]) <= es:
+                pos.append(c)
+            elif art == "f" and set(FLAECHEN[ent]) == es:
+                pos.append(c)
+        aus.append(pos)
+    return aus
+
+
+def flaechenschnittstelle(model, seiten, grad: int = None) -> dict:
+    """Integrationspunkte, Flaechengewichte, Aussennormalen und Ansatzwerte
+    der Seiten ``seiten`` = [(Element, Seite), ...] von p-Elementen.
+
+    Rueckgabe {"punkte" (n,m,3), "dA" (n,m), "normalen" (n,m,3) nach aussen
+    (weg von der Gegenecke, wie Model._seitennormale), "ansatz" (n,m,k),
+    "fhg" (n,k,3), "k" (n,) Zahl der wirksamen Funktionen je Seite}. k ist
+    die groesste Funktionszahl der Seiten; kuerzere Seiten sind mit Nullen
+    (Ansatz) und den FHG ihrer ersten Ecke aufgefuellt. Die Verschiebung am
+    Punkt ist u = sum_a ansatz[a] * u[fhg[a]]."""
+    seiten = [(int(i), int(s)) for i, s in seiten]
+    n = len(seiten)
+    daten = []
+    for i, s in seiten:
+        (P, _els, fhg, maske), = _laeufe(model, [i])
+        pos = [c for c in seitenfunktionen(P)[s] if maske[0][c]]
+        G = geometrie_modell(model, [i])[0]
+        g = np.array(model.elements[i].nodes[:4], dtype=np.int64)
+        grad_i = (2 * P + 2) if grad is None else grad
+        from scipy.special import roots_jacobi
+        nq = max(2, (grad_i + 2) // 2)
+        a, wa = roots_jacobi(nq, 1, 0)
+        c_, wc = roots_jacobi(nq, 0, 0)
+        a, c_ = (a + 1) / 2, (c_ + 1) / 2
+        AA, CC = np.meshgrid(a, c_, indexing="ij")
+        u_ = AA.ravel()
+        v_ = (CC * (1 - AA)).ravel()
+        w = np.outer(wa, wc).ravel()
+        w = 0.5 * w / w.sum()
+        ecken = SEITEN[s]
+        L = np.zeros((len(u_), 4))
+        L[:, ecken[0]] = 1 - u_ - v_
+        L[:, ecken[1]] = u_
+        L[:, ecken[2]] = v_
+        F, _dF = basis_ref(L, P)
+        Fg = F @ orientierung(g[None], P)[0]
+        dN = np.zeros((len(u_), 10, 4))
+        for e_ in range(4):
+            dN[:, e_, e_] = 4 * L[:, e_] - 1
+        for kk, (p_, q_) in enumerate(TET10_KANTEN):
+            dN[:, 4 + kk, p_] = 4 * L[:, q_]
+            dN[:, 4 + kk, q_] = 4 * L[:, p_]
+        xu = np.einsum("ka,mk->ma", G, dN[:, :, ecken[1]] - dN[:, :, ecken[0]])
+        xv = np.einsum("ka,mk->ma", G, dN[:, :, ecken[2]] - dN[:, :, ecken[0]])
+        nA = np.cross(xu, xv)
+        pkt = geometrie_werte(L) @ G
+        gegen = [e_ for e_ in range(4) if e_ not in ecken][0]
+        aussen = np.sign(np.einsum("ma,ma->m", nA, pkt - G[gegen][None, :]))
+        nA = nA * np.where(aussen == 0, 1.0, aussen)[:, None]
+        betrag = np.linalg.norm(nA, axis=1)
+        daten.append((pkt, w * betrag, nA / betrag[:, None], Fg[:, pos],
+                      fhg[0].reshape(-1, 3)[pos]))
+    m = max(len(d[1]) for d in daten) if daten else 0
+    k = max(d[3].shape[1] for d in daten) if daten else 0
+    aus = {"punkte": np.zeros((n, m, 3)), "dA": np.zeros((n, m)), "normalen": np.zeros((n, m, 3)),
+           "ansatz": np.zeros((n, m, k)), "fhg": np.zeros((n, k, 3), dtype=np.int64),
+           "k": np.zeros(n, dtype=np.int64)}
+    for r, (pkt, dA, nor, ans, dofs) in enumerate(daten):
+        mm, kk = len(dA), ans.shape[1]
+        aus["punkte"][r, :mm] = pkt
+        aus["dA"][r, :mm] = dA
+        aus["normalen"][r, :mm] = nor
+        aus["ansatz"][r, :mm, :kk] = ans
+        aus["fhg"][r, :kk] = dofs
+        aus["fhg"][r, kk:] = dofs[0]
+        aus["k"][r] = kk
+    return aus
 
 
 def _anmelden():

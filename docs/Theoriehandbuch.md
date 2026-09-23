@@ -7311,6 +7311,36 @@ Seite. Gemessen 23.09.2026 an der Hohlkugel der ersten Element-Sitzung
 gekrümmte Kanten, dieselbe Abweichung (−4,09 bis +8,17 N/mm²) wie der direkte
 Aufbau.
 
+**Nachweisstellen auf Kontaktflächen.** Gemessen 23.09.2026 (Labor,
+Hohlzylinder h = 0,05 m, Bohrungsfläche als Kontaktseite, dort nur linearer
+Ansatz, die Geometrie bleibt gekrümmt), Knotenmittel am Innenrand:
+
+| Ordnung | ohne Kontaktregel | Bohrung als Kontaktseite |
+|---|---|---|
+| p = 2 überall | 14,8 N/mm² | 16,0 N/mm² |
+| p = 4 in einer Lage, sonst p = 2 | 1,05 N/mm² | 19,5 N/mm² |
+| p = 4 in zwei Lagen, sonst p = 2 | 0,36 N/mm² | 19,9 N/mm² |
+| p = 4 überall | 0,40 N/mm² | 19,9 N/mm² |
+
+Liegt die Nachweisstelle **direkt auf** einer Kontaktseite, bringt das
+Element heute also nichts gegenüber dem tet10: Der lineare Ansatz auf der
+Seite begrenzt den Fehler auf 15 bis 20 N/mm², egal welches p im Inneren
+steckt. Abhilfe wäre ein Kontakt über Punkte der Seite mit allen Funktionen
+der Seite (Ecken, Kanten, Fläche) statt über die Ecken. Das gilt für den
+tet10 genauso und ist ein Umbau des Kontakts (Löser-Sitzung, B4). Die
+Schnittstelle dafür liefert `tetp.flaechenschnittstelle`: Punkte, dA,
+Außennormalen, Ansatzwerte und FHG je Seite, geprüft gegen Fläche, Normale,
+lineares Feld und die Seitenlast. Solange der Kontakt sie nicht nutzt,
+bleiben Kontaktseiten linear.
+
+**Geometrie an der Grenze zum tet4.** Eine Kante, die ein `tetp` mit einem
+Element ohne Anreicherung teilt, ist auch geometrisch gerade, sonst klaffte
+die Geometrie. Kontakt- und Fugenkanten bleiben gekrümmt: Dort liegt kein
+Nachbar, dessen Geometrie passen müsste, und Nachweisstellen an Bohrungen
+brauchen die Krümmung. Gemessen am Hohlzylinder: Musste eine einzige
+Bohrungskante gerade bleiben (Umklappschutz, h = 0,035 m), lag dort selbst
+p = 4 überall 23 N/mm² daneben.
+
 **Offen.** Kantenmitten auf der wahren Geometrie an Bauteilen liefert erst der
 Vernetzer (V2); aus dessen tet10 macht `aus_tet10` gekrümmte `tetp`, die Wahl der Ordnung je Element in der
 Oberfläche und automatisch, ein Fehlerschätzer für höhere Ordnung
