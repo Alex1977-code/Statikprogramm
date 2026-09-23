@@ -216,6 +216,17 @@ def _run_chunk_datei(func: Callable, idx: list[int], extra_pfad):
     return func(_WORKER_MODEL, idx, _WORKER_EXTRA)
 
 
+def vor_dem_pickeln(model) -> None:
+    """Was das Modell vor der Rechnung an sich selbst aendert, bevor es in
+    einen anderen Prozess geht: heute die Umwandlung entarteter
+    Volumenelemente (diagnose.entartete_menge). Sonst rechnen Haupt- und
+    Arbeitsprozess mit verschiedenen Elementen."""
+    if not getattr(model, "elements", None) or not hasattr(model, "nodes"):
+        return
+    from .diagnose import entartete_menge
+    entartete_menge(model)
+
+
 class Arbeiter:
     """Ein Prozesspool, der eine ganze Rechnung lang steht.
 
@@ -264,6 +275,14 @@ class Arbeiter:
     def _starten(self) -> None:
         import pickle
         import tempfile
+        # Erst umwandeln, dann pickeln: entartete Volumenelemente (doppelte
+        # Knoten) werden in diagnose.entartete_menge an Ort und Stelle zu
+        # Keil, Pyramide oder Tetraeder. Geschah das erst nach dem Pickeln,
+        # rechneten die Arbeiter mit den entarteten hex8 und der Hauptprozess
+        # mit pent6 (Befund der Statik3D-Sitzung, 23.09.2026; tests/
+        # test_entartung.py). Ein Element mit Volumen ohne eindeutige Deutung
+        # haelt hier mit FEHLER an - wie im seriellen Weg.
+        vor_dem_pickeln(self.model)
         fd, pfad = tempfile.mkstemp(prefix="statik3d_pool_", suffix=".pkl")
         os.close(fd)
         try:

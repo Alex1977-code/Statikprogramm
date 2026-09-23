@@ -6442,7 +6442,12 @@ Elementnummer, und die Rechnung hält dort an. Die Modellprüfung nennt die
 Umwandlung mit Anzahl je Art („hex8→pent6: 128“) und den Preis: der Kragarm aus
 Keilen liegt bei 90 / 405 / 2 295 FHG −64,6 / −15,8 / −4,3 N/mm² daneben, der aus
 Sechsflächnern −1,6 / +0,2 / −0,03. Nach der Umwandlung rechnet der Keil-Kragarm
-bitgleich wie das pent6-Netz (`tests/test_entartung.py`).
+bitgleich wie das pent6-Netz (`tests/test_entartung.py`). Umgewandelt wird, **bevor**
+das Modell in einen anderen Prozess geht (`parallel.vor_dem_pickeln`: beim Öffnen des
+stehenden Pools und vor den Rechenketten). Sonst rechneten die Arbeiter mit den
+entarteten hex8 und der Hauptprozess mit pent6 — am Keil-Kragarm mit zwei Arbeitern
+brach die Rechnung so mit „Singular matrix“ ab; seither ist sie seriell und parallel
+bitgleich zum pent6-Netz.
 
 Ein Volumenkörper, der so nie ein Netz bekommen kann, gilt auch nicht als
 **unvernetzt** (`Model.koerper_traegt`). Sonst forderte die

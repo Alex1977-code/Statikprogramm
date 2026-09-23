@@ -3831,6 +3831,9 @@ def _cases_in_ketten(model: Model, names: list, k: int, progress=None,
     _melde(progress, f"{len(names)} Lastfälle in {len(bloecke)} Ketten "
                      f"({je} Arbeiter und {threads} Löser-Threads je Kette)")
     pfad = None
+    # vor dem Pickeln bzw. to_dict umwandeln (parallel.vor_dem_pickeln): jede
+    # Kette rechnete sonst die Umwandlung noch einmal selbst
+    parallel.vor_dem_pickeln(model)
     if st.backend != "farm":
         fd, pfad = tempfile.mkstemp(prefix="statik3d_kette_", suffix=".pkl")
         os.close(fd)

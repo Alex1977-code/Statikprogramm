@@ -137,11 +137,50 @@ def test_nullkoerper_und_fehler():
     check("… und die Rechnung hält dort an, statt es still wegzulassen", hielt, text)
 
 
+def test_parallel_mit_stehendem_pool():
+    """Der stehende Pool (parallel.Arbeiter) pickelt das Modell beim Oeffnen -
+    geschah das vor der ersten Umwandlung, rechneten die Arbeiter mit den
+    entarteten hex8 (det J an den Gausspunkten positiv, also ohne Fehler) und
+    der Hauptprozess mit pent6 (Befund der Statik3D-Sitzung, 23.09.2026).
+    Seriell und parallel muss w bitgleich zum pent6-Netz sein."""
+    from statik3d import parallel
+    alt_min, alt_w = parallel.settings().min_elements, parallel.settings().workers
+    parallel.configure(min_elements=1, workers=2)
+    try:
+        mp, _i = pk.Kragarm().modell("pent6", 8, 2, 4)
+        wp = float(np.abs(np.asarray(next(iter(solver.solve_all(mp, workers=1).cases.values())).u)[:, 2]).max())
+        for w in (1, 2):
+            m, _ids = keil_kragarm((8, 2, 4))
+            r = next(iter(solver.solve_all(m, workers=w).cases.values()))
+            ww = float(np.abs(np.asarray(r.u)[:, 2]).max())
+            check(f"Keil-hex8-Kragarm mit {w} Arbeiter(n) (stehender Pool): w bitgleich zum pent6-Netz",
+                  ww == wp, f"{ww * 1e3:.9f} mm gegen {wp * 1e3:.9f} mm")
+        # Ruecknahmeprobe: ohne Umwandlung vor dem Pickeln rechnen die Arbeiter
+        # mit den entarteten hex8 - gemessen 23.09.2026: "Singular matrix"
+        m, _ids = keil_kragarm((8, 2, 4))
+        vorher = parallel.vor_dem_pickeln
+        parallel.vor_dem_pickeln = lambda model: None
+        try:
+            try:
+                r = next(iter(solver.solve_all(m, workers=2).cases.values()))
+                ww = float(np.abs(np.asarray(r.u)[:, 2]).max())
+                falsch, text = ww != wp, f"{ww * 1e3:.9f} mm"
+            except Exception as ex:              # noqa: BLE001
+                falsch, text = True, f"{type(ex).__name__}: {str(ex)[:60]}"
+        finally:
+            parallel.vor_dem_pickeln = vorher
+        check("Rücknahmeprobe: ohne Umwandlung vor dem Pickeln rechnet der Pool falsch oder bricht ab",
+              falsch, text)
+    finally:
+        parallel.configure(min_elements=alt_min, workers=alt_w)
+
+
 def main():
     print("=" * 100)
     print("STATIK3D - Entartete Volumenelemente (zusammenfallende Knoten)")
     print("=" * 100)
-    for t in (test_kragarm_aus_keil_sechsflaechnern, test_jede_umwandlung, test_nullkoerper_und_fehler):
+    for t in (test_kragarm_aus_keil_sechsflaechnern, test_jede_umwandlung, test_nullkoerper_und_fehler,
+              test_parallel_mit_stehendem_pool):
         try:
             t()
         except Exception as ex:                  # noqa: BLE001
