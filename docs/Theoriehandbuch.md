@@ -6281,6 +6281,34 @@ Geprüft in `tests/test_theorie3.py` am Kragarm aus zwei Stäben (gelungen: II
 und III; gescheitert: erzwungenes `info.fehler`); an einem großen Modell nicht
 gemessen.
 
+**Gescheiterte Kombinationen blieben still linear (B132).** Der Satz oben,
+der Kombinationszweig mache es „seit jeher richtig", stimmte nur halb:
+`check_theorie2`/`check_theorie3` tragen den Fehler ins Theoriekapitel ein und
+übernehmen das Ergebnis zu Recht nur ohne Fehler — das stehende
+Überlagerungsergebnis der Kombination markierten sie aber nicht. Die
+Kombinationstabelle des Berichts druckte `model.theorie_von`, also die
+Einstellung, und die GZT-Nachweise liefen ohne Warnung mit dem linearen
+Ergebnis. Gemessen am 23.09.2026 am Stand ec6448c, Kragarm aus zwei Stäben,
+K1 = 1,35 · LF nach III. Ordnung mit Zwangsverformung (`ValueError`) bzw.
+nach II. Ordnung mit erzwungenem `info.fehler`: Tabelle „III" bzw. „II",
+`_uls_results` liefert K1 ohne Warnung; mit einem Stab mit Nachweis lautete
+das Gesamturteil „Alle Nachweise erfüllt." bei Ausnutzung 0,053 aus dem
+linearen Ergebnis. Jetzt markiert `solve_all` nach `check_theorie2` und
+`check_theorie3` jede gewöhnliche Kombination mit `info.fehler` wie einen
+Lastfall (`info["theorie"] = "I"`, `theorie_gewuenscht`, `theorie_fehler`;
+`_gescheiterte_kombinationen_markieren`), beide Kombinationstabellen des
+Berichts zeigen die gerechnete Theorie („I (statt III: nicht gerechnet)"),
+und `_uls_results` nennt die Kombination in den Warnungen als „nur nach
+Theorie I. Ordnung nachgewiesen". Am selben Kragarm lautet das Gesamturteil
+damit „Alle **geführten** Nachweise erfüllt – nicht geführt wurden: EC3
+(1 Warnung)". Maßgebend ist allein `info.fehler`, nicht „nicht gerechnet":
+bei `theorie2 = "auto"` und α_cr über der Grenze bleibt die Kombination nach
+5.2.1(3) zulässig linear und unmarkiert (Gegenprobe am Kragarm aus zehn
+Stäben, α_cr = 49,98). Die Alternativen einer Ergebniskombination („EK [k]")
+deckt diese Kur nicht ab. Geprüft in `tests/test_theorie3.py`
+(`test_gescheiterte_kombination_markiert_das_lineare_ergebnis`); an einem
+großen Modell nicht gemessen.
+
 **Ermüdung: ein fehlender Mindestzustand wurde still zu null.** `case_min`
 angegeben, aber nicht gerechnet, fiel in denselben Zweig wie „kein
 Mindestzustand angegeben". Gemessen an einem Kragarm:

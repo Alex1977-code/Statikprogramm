@@ -3800,6 +3800,19 @@ und die offenen Warnungen der Zusammenfassung. Was tun: die Ursache beheben
 bewusst auf I. Ordnung stellen — die Nachweise dieses Lastfalls rechnen sonst
 ohne die Zusatzmomente aus der Verformung.
 
+Ebenso die Spalte **Theorie** der Kombinationstabelle — im Kapitel
+Einwirkungen und als eingefügte Tabelle „Kombinationen": Scheitert eine
+Kombination nach II. oder III. Ordnung, bleibt ihre Überlagerung nach
+I. Ordnung stehen, und die Spalte zeigt „I (statt II: nicht gerechnet)" bzw.
+„I (statt III: nicht gerechnet)". Die Nachweise werden mit diesem linearen
+Ergebnis geführt und sagen das: unter den Warnungen des Nachweises steht
+„Kombination … nur nach Theorie I. Ordnung nachgewiesen" mit dem Grund, und
+das Gesamturteil der Zusammenfassung lautet nicht mehr „Alle Nachweise
+erfüllt.", sondern nennt den Nachweis unter „nicht geführt wurden". Bleibt
+eine Kombination bei der Einstellung „automatisch" nach I. Ordnung, weil
+α_cr über der Grenze liegt, ist das kein Scheitern — dort steht weiter „II"
+ohne Warnung.
+
 ### Verformungsnachweise (GZG)
 
 Die Kombinationen des Grenzzustands der Gebrauchstauglichkeit rechnet Statik3D

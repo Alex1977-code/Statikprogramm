@@ -32,7 +32,7 @@ import re
 import numpy as np
 
 from .. import __version__
-from ..model import ACTION_CATEGORIES, DOF_NAMES
+from ..model import ACTION_CATEGORIES, DOF_NAMES, Combination
 from .. import elemente as _EL
 from ..combinations import combination_table
 from . import svg as sv
@@ -723,7 +723,8 @@ class Report:
                 rows.append([lc.name, ACTION_CATEGORIES.get(lc.category, lc.category),
                              str(lc.n_loads), lc.description or ""])
         elif name == "Kombinationen":
-            rows = [list(map(str, r)) for r in combination_table(m)] if m.combinations else []
+            rows = ([list(map(str, r)) for r in combination_table(m, self._theorie_spalte)]
+                    if m.combinations else [])
             if not rows:
                 return [("note", "Es gibt keine Kombinationen.")]
         else:
@@ -1449,7 +1450,8 @@ class Report:
                                   f"{len(m.load_cases) - grenze} sind in den Tabellen beschrieben."))
         b.append(self._h(2, "Kombinationen"))
         if m.combinations:
-            rows = combination_table(m)
+            # die gerechnete Theorie, nicht die eingestellte (Befund B132)
+            rows = combination_table(m, self._theorie_spalte)
             head = list(rows[0])
             head[1] = "Typ"
             body = []
@@ -4129,13 +4131,21 @@ class Report:
         erste Vergleich stellte die Texte unmittelbar gegeneinander - damit
         stand jeder GELUNGENE Lastfall als "II. Ordnung (statt II: nicht
         gerechnet)" im Bericht (gemessen 22.09.2026, tests/test_theorie3.py).
+
+        Ebenso fuer eine **Kombination** (Kombinationstabelle,
+        combination_table): ihr Ergebnis steht in ``self.combos``. Bis zum
+        23.09.2026 druckte die Tabelle dort die Einstellung, auch wenn Theorie
+        II/III gescheitert war und das lineare Ergebnis stand (Befund B132).
         """
         m = self.model
         gewuenscht = _theorie_kurz(m.theorie_von(lc) if hasattr(m, "theorie_von") else "I")
-        res = (self.results or {}).get(lc.name) if isinstance(self.results, dict) else None
-        if res is None:
-            an = getattr(self, "analysis", None)
-            res = (getattr(an, "cases", None) or {}).get(lc.name) if an is not None else None
+        if isinstance(lc, Combination):
+            res = self.combos.get(lc.name)
+        else:
+            res = (self.results or {}).get(lc.name) if isinstance(self.results, dict) else None
+            if res is None:
+                an = getattr(self, "analysis", None)
+                res = (getattr(an, "cases", None) or {}).get(lc.name) if an is not None else None
         gerechnet = (getattr(res, "info", None) or {}).get("theorie") if res is not None else None
         if gerechnet:
             gerechnet = _theorie_kurz(gerechnet)
