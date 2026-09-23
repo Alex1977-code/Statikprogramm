@@ -881,6 +881,9 @@ function renderErgebnisse() {
   const fields = [['umag', '|u| Verschiebung'], ['uz', 'uz'], ['ux', 'ux'], ['uy', 'uy'], ['vm', 'Vergleichsspannung σv'], ['util', 'Ausnutzung EC3'], ['util_fat', 'Ausnutzung Ermüdung'], ['util_el', 'Ausnutzung elastisch'], ['member', 'Stäbe farbig'], ['none', 'keine Färbung']];
   const diag = [['', 'kein Verlauf'], ['N', 'N'], ['Vy', 'Vy'], ['Vz', 'Vz'], ['Mt', 'Mt'], ['My', 'My'], ['Mz', 'Mz']];
   const memberOpts = [['', '– Stab wählen –']].concat(s.members.map(m => [m.name, m.name]));
+  // Farbe der Nachweiszeile vom Server (design_status: err/warn/ok). Bis zum
+  // 23.09.2026 stand hier /NICHT/.test(design_summary) - "nicht geführt" ist
+  // klein geschrieben, ein Stab ohne f_y stand darum gruen da (gemessen).
   let html = `
 <div class="card">
   <div class="grid2">${sel('which', 'Ergebnis', S.entries.map(e => [e.id, e.label]), S.ro.which, 'data-ro="which"')}${sel('field', 'Färbung', fields, S.ro.field, 'data-ro="field"')}
@@ -888,7 +891,7 @@ function renderErgebnisse() {
   <label><span>Überhöhung ×${g(S.ro.scale * Math.pow(10, S.ro.factor), 3)}</span><input type="range" min="-2" max="2" step="0.1" value="${S.ro.factor}" data-ro="factor"></label></div>
   ${chk('deform', 'Verformt darstellen', S.ro.deform, 'data-ro="deform"')}
   <pre>${esc(R.summary)}</pre>
-  ${R.design_summary ? `<div class="msg ${/NICHT/.test(R.design_summary) ? 'err' : 'ok'}">${esc(R.design_summary)}</div>` : ''}
+  ${R.design_summary ? `<div class="msg ${esc(R.design_status || '')}">${esc(R.design_summary)}</div>` : ''}
   ${R.fatigue_summary ? `<div class="msg">${esc(R.fatigue_summary)}</div>` : ''}
 </div>`;
   if (s.members.length) {
@@ -956,7 +959,8 @@ function renderNachweise() {
   <div class="muted">${s.has_analysis ? `${s.members.length} Stäbe, ${s.fatigue_loads.length} Ermüdungslasten` : 'Zuerst unter „Rechnen“ berechnen (Nachweise laufen dort auf Wunsch automatisch mit).'}</div></div>`;
   if (D && D.design) {
     const d = D.design, rows = d.table.slice(1);
-    html += `<div class="card"><div class="msg ${d.util_max > 1 ? 'err' : 'ok'}">${esc(d.summary)}</div>
+    // Farbe vom Server: util_max > 1 allein zeigte einen nicht gefuehrten Stab (Ausnutzung 0) gruen
+    html += `<div class="card"><div class="msg ${esc(d.status || '')}">${esc(d.summary)}</div>
     ${table(['Stab', 'Querschnitt', 'Kl.', 'Ausn.', 'maßgebend', 'Kombination', 'x [m]'], rows.map(r => [r[0], r[1], r[4], parseFloat(r[5]), r[6], r[7], r[8]]), {rowAttr: r => `class="tap" data-action="member-detail" data-name="${esc(r[0])}"`, format: (c, j) => j === 3 ? utilBadge(c) : j === 6 ? esc(c) : esc(c)})}
     <div class="muted">Zeile antippen: alle Zwischenwerte des Stabes.</div></div>`;
   }

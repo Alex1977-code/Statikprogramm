@@ -5013,11 +5013,11 @@ Einfeldträger IPE 300 S235 mit Ausnutzung 0,633 und daneben ein Stab aus einem
 Werkstoff ohne f_y):
 
 * `DesignResults.summary()` zählte weiter nur Ausnutzung > 1 und schrieb
-  „… max. Ausnutzung 0.633 … – alle erfuellt". Diese Zeile steht in der
+  „… max. Ausnutzung 0.633 … - alle erfuellt". Diese Zeile steht in der
   Oberfläche nach *Nachweise EC3*, im Etikett unter der Nachweistabelle und in
   der Zusammenfassung der Berechnung. Jetzt zählen nicht geführte Stäbe weder
   für „alle erfuellt" noch für die größte Ausnutzung; die Zeile endet mit
-  „– 1 nicht geführt: *Stab* (Werkstoff … ohne Streckgrenze)", höchstens zehn
+  „- 1 nicht geführt: *Stab* (Werkstoff … ohne Streckgrenze)", höchstens zehn
   Namen. Ist kein Stab geführt, nennt sie keine Ausnutzung.
 * Der Grund stand nur in `mc.warnings`, und die kamen allein über den
   Detailblock je Stab in die Hinweisliste des Berichts. Den gibt es im Umfang
@@ -5025,11 +5025,42 @@ Werkstoff ohne f_y):
   ausgenutzten Stäbe — ein Stab mit 0,000 fällt zuerst heraus. Gemessen:
   „kurz" mit 2 Stäben und „mittel" mit 22 Stäben ergaben **0 Hinweise**, und
   unter der Statuszeile, die auf „die Hinweise unten" verweist, stand „Es
-  liegen keine offenen Hinweise oder Warnungen vor." Jetzt legt das
-  Nachweiskapitel für jeden nicht geführten Stab einen Hinweis an, unabhängig
-  vom Umfang, mit demselben Text wie der Detailblock (er steht darum nur
-  einmal in der Liste) und mit dem, was zu tun ist: Streckgrenze am Werkstoff
-  eintragen oder am Stab „Nachweis nach EC3" ausschalten.
+  liegen keine offenen Hinweise oder Warnungen vor." Seitdem gibt es für jeden
+  nicht geführten Stab einen Hinweis, unabhängig vom Umfang, mit demselben
+  Text wie der Detailblock (er steht darum nur einmal in der Liste) und mit
+  dem, was zu tun ist: Streckgrenze am Werkstoff eintragen oder am Stab
+  „Nachweis nach EC3" ausschalten.
+
+Die Gegenprüfung dieser Kur (23.09.2026) fand denselben Fehler auf drei
+weiteren Wegen, jeweils gemessen am Stand 97df705:
+
+* **Berichtsoption „Nachweise EC3" aus.** Der Hinweis entstand im
+  Nachweiskapitel, und das kehrt bei ausgeschalteter Option früh zurück. Die
+  Zusammenfassung liest die Nachweisergebnisse aber unabhängig von der Option.
+  Stütze S355 und Riegel ohne f_y, Umfang „kurz" und ebenso „lang": Statuszeile
+  „… nicht geführt wurden: 1 Stäbe (EC3) (siehe die Hinweise unten).",
+  darunter „Es liegen keine offenen Hinweise oder Warnungen vor." Jetzt legt
+  die Zusammenfassung den Hinweis an, an der Stelle, an der sie die nicht
+  geführten Stäbe für die Statuszeile zählt — beides kommt aus derselben
+  Liste.
+* **Kein einziger Stab geführt.** Die Wesentlichen Ergebnisse bildeten die
+  größte Ausnutzung über alle Stäbe, auch über die nicht geführten. Mit einem
+  einzigen Riegel ohne f_y standen dort „max. Ausnutzung Nachweise EC3" mit
+  0.000 und „maßgebend" mit „Stab Riegel_ohne_fy: , Kombination , x = 0.00 m", die
+  Statuszeile sagte „Alle **geführten** Nachweise erfüllt – nicht geführt
+  wurden: 1 Stäbe (EC3)", obwohl kein Nachweis geführt war. Jetzt zählt nur
+  ein geführter Stab für Ausnutzung und maßgebende Stelle; ist keiner geführt
+  und auch sonst kein Nachweis, fehlen beide Zeilen, und die Statuszeile heißt
+  „Kein Nachweis geführt – nicht geführt wurden: …" (rot, nicht grün wie „Es
+  wurden keine Nachweise geführt").
+* **Bedienung im Browser.** Die Oberfläche färbte die Nachweiszeile im
+  Register *Ergebnisse* über `/NICHT/.test(...)` am Text und im Register
+  *Nachweise* über `util_max > 1`. „nicht geführt" ist klein geschrieben, ein
+  nicht geführter Stab hat Ausnutzung 0 — beide Zeilen waren grün (ohne
+  Browser gerendert, `tests/render_nachweiszeile.js`). Jetzt liefert der
+  Server das Urteil aus den Stabnachweisen mit (`err` bei Ausnutzung über 1,
+  `warn` bei einem nicht geführten Stab, sonst `ok`), und die Oberfläche liest
+  den Text nicht mehr aus (`test_nachweiszeile_nicht_gefuehrt_nicht_gruen`).
 
 **„Alle Nachweise erfüllt." galt auch bei gerissenem Volumennachweis.**
 `self.volumen` fehlte im Gesamturteil **doppelt**: in der Statusprüfung und in

@@ -626,10 +626,102 @@ def test_oberflaeche_rendert():
     _assert_since(n0)
 
 
+def _nachweismodell(traeger_q: float = None, ohne_fy: bool = True) -> Model:
+    """Einfeldtraeger IPE 300 S235 (qz = traeger_q, None = ohne) und daneben
+    ein Stab aus einem Werkstoff ohne Streckgrenze (ohne_fy)."""
+    from statik3d.model import Material
+    from statik3d.profiles import make_section
+    from statik3d import mesher
+    m = Model("Nachweiszeile")
+    m.add_material(Material.steel("S235"))
+    m.add_material(Material("Frei", 210e9, 0.3, 7850.0))        # fy = None
+    m.add_section(make_section("IPE 300"))
+    m.case().category = "G"
+    for name, mat, y, q in (("Traeger", "S235", 0.0, traeger_q),
+                            ("Ohne_fy", "Frei", 2.0, -10000.0 if ohne_fy else None)):
+        if q is None:
+            continue
+        ids = mesher.line_of_beams(m, mat, "IPE 300", (0, y, 0), (6, y, 0), 6)
+        m.fix(ids[0], [0, 1, 2, 3])
+        m.fix(ids[-1], [1, 2, 3])
+        els = list(range(len(m.elements) - 6, len(m.elements)))
+        for e in els:
+            m.load_beam(e, qz=q)
+        m.add_member(name, els)
+    m.add_combination("K1", {"LF1": 1.0}, "ULS")
+    return m
+
+
+def test_nachweiszeile_nicht_gefuehrt_nicht_gruen():
+    """Die Nachweiszeile der Weboberflaeche ist bei einem nicht gefuehrten Stab nicht gruen.
+
+    Die Oberflaeche faerbte ``design_summary`` mit ``/NICHT/.test(...)``
+    (app.js, Register Ergebnisse) und die Zeile im Register Nachweise mit
+    ``util_max > 1``. Seit ``DesignResults.summary()`` nicht gefuehrte Staebe
+    nennt, heisst es dort „- 1 nicht geführt: …" - klein geschrieben, und
+    ein nicht gefuehrter Stab hat Ausnutzung 0. Gemessen 23.09.2026 an
+    97df705: beide Zeilen gruen (Klasse ok). Der Server liefert das Urteil
+    jetzt als Klasse mit, die Oberflaeche liest den Text nicht mehr aus.
+    """
+    n0 = len(RESULTS)
+    node = _node()
+    hier = os.path.dirname(os.path.abspath(__file__))
+    app_js = os.path.join(os.path.dirname(hier), "statik3d", "web", "static", "app.js")
+    faelle = (("Traeger 0,633 und Stab ohne f_y", _nachweismodell(-10000.0), "warn"),
+              ("nur Stab ohne f_y", _nachweismodell(None), "warn"),
+              ("Traeger ueber 1 und Stab ohne f_y", _nachweismodell(-150000.0), "err"),
+              ("Gegenprobe nur Traeger 0,633", _nachweismodell(-10000.0, ohne_fy=False), "ok"))
+    for name, m, soll in faelle:
+        server, thread, state = start_server_thread(m, host="127.0.0.1", port=0, key=KEY)
+        c = Client(server.local_url.rstrip("/"))
+        try:
+            c.post("/api/solve", {"kind": "all", "design": True, "workers": 1})
+            job = c.wait_job()
+            st, r, _ = c.get("/api/results")
+            st2, dp, _ = c.get("/api/design")
+            st3, zustand, _ = c.get("/api/state")
+            st4, entries, _ = c.get("/api/entries")
+        finally:
+            server.shutdown()
+            server.server_close()
+        text = r.get("design_summary", "")
+        check(f"{name}: gerechnet, Nachweiszeile da", job["status"] == "fertig" and bool(text),
+              job.get("error", "") or text)
+        check(f"{name}: /api/results design_status = {soll}",
+              r.get("design_status") == soll, str(r.get("design_status")))
+        check(f"{name}: /api/design status = {soll}",
+              (dp.get("design") or {}).get("status") == soll,
+              str((dp.get("design") or {}).get("status")))
+        if not node:
+            continue
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            pfad = os.path.join(tmp, "daten.json")
+            with open(pfad, "w", encoding="utf-8") as f:
+                json.dump({"state": zustand, "entries": entries, "result": r, "design": dp}, f)
+            p = subprocess.run([node, os.path.join(hier, "render_nachweiszeile.js"), app_js, pfad],
+                               capture_output=True, text=True, timeout=120, encoding="utf-8")
+        try:
+            aus = json.loads(p.stdout.strip().splitlines()[-1])
+        except Exception:        # noqa: BLE001
+            aus = {}
+        for tab in ("ergebnisse", "nachweise"):
+            zeilen = [z for z in (aus.get(tab) or []) if isinstance(z, dict)
+                      and z.get("text", "").startswith("Nachweise EC3")]
+            check(f"{name}: Register {tab} zeigt die Nachweiszeile als {soll}",
+                  len(zeilen) == 1 and zeilen[0]["klasse"] == soll,
+                  str(zeilen) if zeilen else (p.stderr or p.stdout)[-300:])
+    if not node:
+        check("node nicht vorhanden - Renderpruefung der Nachweiszeile entfaellt", True)
+    _assert_since(n0)
+
+
 def main():
     for t in (test_static_and_auth, test_model_editing, test_solve_results_report,
               test_contact_and_import, test_nichtlineare_lager_und_profile,
               test_stellungen_din19704_export, test_oberflaeche_rendert,
+              test_nachweiszeile_nicht_gefuehrt_nicht_gruen,
               test_bound_state):
         print(f"\n--- {t.__name__} ---")
         try:

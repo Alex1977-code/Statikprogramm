@@ -743,9 +743,27 @@ def result_payload(st: State, which: str = None, field: str = "umag", mode: int 
             out["contact_markers"] = [{"node": int(c["node"]), "status": c["status"]} for c in contact]
         if an is not None and an.design is not None:
             out["design_summary"] = an.design.summary()
+            out["design_status"] = _nachweis_klasse(an.design)
         if an is not None and an.fatigue is not None:
             out["fatigue_summary"] = an.fatigue.summary()
         return out
+
+
+def _nachweis_klasse(d) -> str:
+    """Farbe der Nachweiszeile EC3 in der Oberflaeche: 'err' (ein Stab ueber 1),
+    'warn' (ein Stab nicht gefuehrt, etwa Werkstoff ohne f_y) oder 'ok'.
+
+    Das Urteil kommt aus den Stabnachweisen, nicht aus dem Text der Zeile.
+    app.js las bis zum 23.09.2026 ``/NICHT/`` aus summary() bzw. verglich
+    ``util_max > 1``; ein nicht gefuehrter Stab (Ausnutzung 0, Text "nicht
+    geführt" klein) stand darum gemessen in beiden Registern gruen da.
+    """
+    stabe = list((getattr(d, "members", None) or {}).values())
+    if any(mc.util > 1.0 for mc in stabe):
+        return "err"
+    if any(getattr(mc, "fehler", "") for mc in stabe):
+        return "warn"
+    return "ok"
 
 
 def diagram_payload(st: State, which: str = None, quantity: str = "My", n: int = 9) -> dict:
@@ -843,7 +861,8 @@ def design_payload(st: State) -> dict:
                "n_members": len(st.model.members), "n_fatigue_loads": len(st.model.fatigue_loads)}
         if an is not None and an.design is not None:
             d = an.design
-            out["design"] = {"summary": d.summary(), "table": d.table(), "util_max": float(d.util_max),
+            out["design"] = {"summary": d.summary(), "status": _nachweis_klasse(d),
+                             "table": d.table(), "util_max": float(d.util_max),
                              "combinations": list(d.combinations), "settings": _clean(d.settings),
                              "members": {k: _member_check_dict(v) for k, v in d.members.items()}}
         if an is not None and an.fatigue is not None:
