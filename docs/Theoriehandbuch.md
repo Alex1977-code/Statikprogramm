@@ -993,7 +993,14 @@ Fehler der Rechnung, den die Zeile nennt. So bleibt auch bei einer
 gewöhnlichen Kombination das lineare Ergebnis stehen
 (`_bei_theorie_I_geblieben`). Sonst wird sie als „nicht nachgewiesen"
 gemeldet, etwa nach `solve_all(combinations=False)` oder mit einer
-Ergebnisdatei von vor dem 22.09.2026. In der ersten Fassung der Kur wurde sie
+Ergebnisdatei ohne die Gruppe `alternativen` (`ergebnisse._ERGEBNISGRUPPEN`).
+So schrieb sie jeder Stand vor fb59de1 (22.09.2026, 23:54), im Hauptzweig
+jeder vor dem Merge 21ce779 (23.09.2026, 10:07); `ergebnisse.lesen` lädt
+sie mit leerem `Analysis.alternativen`. Gemessen am Druckkragarm mit einer
+Datei, die der Stand 54b6f9a (= Hauptzweig 5eb21e6) geschrieben hat: EK1 [1]
+und EK1 [2] „nicht nachgewiesen“ mit Theorie II. Ordnung als Grund, K2
+nachgewiesen (`test_ergebnisse`, dort mit einer Datei ohne die Gruppe
+nachgestellt). In der ersten Fassung der Kur wurde sie
 dort still linear überlagert (Gegenprüfung 23.09.2026). Am Druckkragarm stand
 EK1 [2] mit 3,321 statt 9,705 mm. An der Halle (theorie2 „ein", alle 42
 GZT-Kombinationen als eine Ergebniskombination) kamen Riegel 0,9654 statt
@@ -1066,9 +1073,23 @@ bitgleich 1,35·LF1 + 1,5·LF2 aus den linearen Lastfällen). Vor dieser
 `solve_all` faltete die Umhüllende einer Ergebniskombination vor
 `_lastfaelle_hoeherer_ordnung`, rechnete aber keine Alternative nach
 II. Ordnung und wies keine nach (siehe oben). Am Zweigelenkrahmen war die
-Umhüllende am Stielkopf 102,1415 mm wie mit der gewöhnlichen Kombination;
-die Stäbe wurden ohne Warnung gegen die Lastfälle mit Faktor 1 nachgewiesen,
-Stiel links 0,49702 aus W statt 0,542323.
+Umhüllende am Stielkopf 102,1415 mm wie mit der gewöhnlichen Kombination.
+Wogegen die Stäbe nachgewiesen wurden, hing am Modell: `_uls_results` nahm
+die GZT-Einträge aus `Analysis.combinations`, sobald dort etwas stand, sonst
+die Lastfälle. Am Rahmen („automatisch“) fehlte die Ergebniskombination in
+`combinations`; an der Halle („ein“) stand sie dort mit dem Ergebnis null,
+gerechnet von `check_theorie2` wie eine Kombination ohne Faktoren (sie steht
+in `theorie2.kombinationen`, |u| = 0). Gemessen an 54b6f9a, jedes Mal ohne
+Warnung: Hat der Rahmen nur die Ergebniskombination, gelten die Lastfälle
+mit Faktor 1, Stiel links 0,497020 aus W statt 0,542323. Hat er daneben
+K1 = 1,35 G + 1,5 Q und K2 = 1,35 G + 1,5 W als gewöhnliche Kombinationen
+und die Ergebniskombination aus 1,35 G + 1,5 Q + 0,9 W und 1,0 G + 1,5 W,
+bleibt die Ergebniskombination unbeachtet, Stiel links 0,480754 aus K2
+statt 0,542323 aus EK [2]. An der Halle („ein“, alle 42 GZT-Kombinationen
+als eine Ergebniskombination, die 30 GZG-Kombinationen daneben) geht die
+Ergebniskombination mit dem Ergebnis null ein: alle drei Stäbe η = 0,0000,
+maßgebend „EK“, „alle erfuellt“ (jetzt Stiel links 0,6454, Stiel rechts
+0,6398, Riegel 0,9734).
 
 ### 3.1 Situationen: Stellung und wirksame Elemente
 
@@ -6659,7 +6680,8 @@ drehlager.json (keiner).
 Die Kehrseite: Fehlt ein Tetraeder, der selbst so flach ist wie die, die der
 Vernetzer aussortiert, ist auch das ein Riss. Einzeln entfernt am frei
 vernetzten Würfel mit um 0,5 m angehobener Ecke (h 0,25, 1483 tet4) bei 20 von
-541 inneren Tetraedern, an der Platte mit Keilen (2701 tet4) bei 75 von 947,
+541 inneren Tetraedern, an der Platte mit Keilen (2701 tet4) bei 75 von 947
+(innen heißt hier: kein Knoten auf der Hülle),
 an der Platte mit Bohrung bei 4 von 40 zufällig gezogenen und bei den 15
 flachsten (eigenes t/L 0,44 bis 0,71 %). Die so entfernten Tetraeder hatten
 ein eigenes t/L von höchstens 4,98 %; jeder entfernte Tetraeder mit eigenem
@@ -6674,7 +6696,7 @@ Gruppe geschlossen und hat kein Volumen; das fängt Bedingung 4. Die Summe
 der Flächenvektoren taugt als Merkmal nicht: in der Reihe heben sich die
 vordere und die hintere Öffnung auf (|Σ S| = 0, scheinbares Volumen 0).
 
-Die erste Fassung (22.09.2026) verlangte Ebenheit auf 1 % des
+Die erste Fassung (7000048, 23.09.2026) verlangte Ebenheit auf 1 % des
 Seitendurchmessers; die Hohlräume sind aber 1,7 bis 11 % dick und standen als
 FEHLER da (Platte mit Bohrung, 34 600 tet4: 8 Seiten; Keile am feinen Rand,
 2701 tet4: 4 Seiten). Die zweite Fassung (3f5ae87) ließ V ≤ n · FLACH · h_max³
@@ -6690,6 +6712,19 @@ Rückfrage vor dem Rechnen; abgestuft 50:1: 357 von 512), ebenso fehlende
 Sechsflächner (72 von 512) und Kuhn-Tetraeder (340 von 512) und verdrehte
 Elemente unter windschiefem Deckel (75 von 324). Das war die zweite
 Gegenprüfung vom 23.09.2026, Mangel 1.
+
+Diese drei Fassungen waren **nie ausgeliefert**: Zwischenstände des
+Entwicklungszweigs vom 23.09.2026 (7000048 um 00:10, 3f5ae87 um 03:16,
+e188334 um 05:15), abgelöst von 8c7a116 (06:27). Dieselben Stände sind die
+erste, zweite und dritte Fassung, die unten bei den windschiefen Flächen und
+bei der Laufzeit genannt sind. Der Hauptzweig ging mit dem
+Merge 21ce779 (23.09.2026, 10:07) vom Stand 5eb21e6 gleich zu 8c7a116 und
+den Nachbesserungen danach; die Abnahme von 5eb21e6 kannte weder die
+Volumenbilanz noch „Seiten im Inneren“, „Riss im Netz“, „Lücke im Netzrand“
+oder „Netzrand neben der Hülle“ (am Quelltext). Gemessen an einem L-Prisma
+(821 tet4, h 0,25) mit einer Lücke von 552 cm³ an der Oberfläche: die
+Abnahme von 54b6f9a (gleicher Baum wie 5eb21e6) mit `warnungen=True` ohne
+Befund, die heutige mit der WARNUNG „Lücke im Netzrand“.
 
 Zwei Hohlräume, die sich nur an einer Kante berühren (dort liegen vier
 Seiten), werden getrennt beurteilt — aber nur, wenn jedes Teil für sich

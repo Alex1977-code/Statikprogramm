@@ -3488,17 +3488,30 @@ Es gibt drei Vorlagen:
 | **Knotenblech** | Diagonalanschluss (Gusset), geschraubt oder geschweißt |
 
 Der Dialog schlägt aus Profil und Schnittgrößen eine vollständige Geometrie vor
-— Blechdicken, Schraubenbild, Nahtdicken — und bessert sie nach, bis die
-Nachweise erfüllt sind; jeder Wert lässt sich danach ändern. Die Vorschläge
+— Blechdicken, Schraubenbild, Nahtdicken — und bessert sie nach: Je nach
+maßgebendem Nachweis wird das Blech dicker, die Schraube größer, die Zahl der
+Schrauben oder Reihen größer oder die Naht dicker bzw. länger. Erfüllt sind
+die Nachweise danach nicht immer. Kann das Nachbessern am maßgebenden
+Nachweis nichts ändern — bei der Kopfplatte etwa „Druckflansch auf die
+Platte“, der Trägerflansch selbst (siehe unten) — oder reichen seine Runden
+nicht, bleibt η > 1, und der Vorschlag trägt den Hinweis „Vorschlag erreicht
+eta = …“. Jeder Wert lässt sich danach ändern. Die Vorschläge
 folgen den Regeln der EN 1993-1-8 (Rand- und Lochabstände Tab. 3.3, Nahtdicken
 4.5.1, Blechdicke so, dass der T-Stummel nicht im Modus 1 versagt). Der
 Vorschlag ist **kein Nachweis** — maßgebend ist immer die Rechnung.
 Bei der Kopfplatte wählt der Vorschlag zuerst die Schraube: die kleinste der
 Leiter M12 bis M36, von der vier Schrauben die Zugkraft im Flansch tragen.
-Die Anfangsdicke des Blechs folgt aus Schraube und Profil, nicht aus dem
-Moment; danach wird das Blech in 2-mm-Schritten dicker, solange T-Stummel
+Die Anfangsdicke des Blechs folgt aus Schraube, Profil und Streckgrenze des
+Trägerwerkstoffs (die Platte bekommt dieselbe Stahlsorte), nicht aus dem
+Moment: Am IPE 400 mit M16/M20/M24 sind es bei S235 13/16/19 mm und bei S355
+11/13/16 mm, je Schraube derselbe Wert von 10 bis 700 kNm (gemessen ohne
+Nachbessern). Danach wird das Blech in 2-mm-Schritten dicker, solange T-Stummel
 oder Durchstanzen maßgebend sind. Gemessen am IPE 400 (S355, V_z = 90 kN,
-N = 0, M_y in 10-kNm-Schritten bis 700 kNm): bei M_y = 170 kNm 15 mm mit M16,
+N = 0, M_y in 10-kNm-Schritten von 10 bis 700 kNm) wechselt die Schraube
+sechsmal. Beim ersten Wechsel zwischen 80 und 90 kNm (M12 → M16) bleibt das
+Blech 10 mm dick: Bei 90 kNm wählt der Vorschlag zuerst M12 (η = 1,019,
+maßgebend „Interaktion Abscheren und Zug“), das Nachbessern nimmt M16 und
+lässt das Blech, wie es ist. Bei M_y = 170 kNm 15 mm mit M16,
 von 180 bis 210 kNm 13 mm mit M20; bei 270 kNm 19 mm mit M20, von 280 bis
 320 kNm 16 mm mit M24. Mit N = −100 kN ergeben sich bis 320 kNm dieselben
 Abmessungen. An diesen beiden Schraubenwechseln wird das Blech dünner, an den
@@ -3506,9 +3519,13 @@ drei folgenden nicht: Zwischen 390 und 400 kNm (M24 → M27) bleibt es bei
 N = 0 mit 18 mm gleich und wird bei N = −100 kN von 16 auf 18 mm dicker,
 zwischen 510 und 520 kNm (M30) und zwischen 620 und 630 kNm (M36) wird es
 dicker (18 → 20 mm, 20 → 23 mm). Diese Vorschläge erfüllen die Nachweise
-schon nicht mehr: Von 340 kNm an (N = 0) bzw. 330 kNm an (N = −100 kN) ist
-„Druckflansch auf die Platte“ maßgebend, die Flanschkraft gegen
-b·t_f·f_y/γ_M0 des Trägerflansches. Dort endet das Nachbessern mit η > 1,
+schon nicht mehr: Von 340 kNm an (N = 0) bzw. 330 kNm an (N = −100 kN)
+erfüllt sie kein Vorschlag der Reihe — 37 bzw. 38 von 70 —, bei 700 kNm ist
+η = 2,099 (N = 0). Maßgebend ist dort „Druckflansch auf die
+Platte“, die Flanschkraft gegen b·t_f·f_y/γ_M0 des Trägerflansches.
+Maßgebend ist dieser Nachweis schon vorher, bei noch erfüllten Nachweisen:
+ab 330 kNm (N = 0, η = 0,990) bzw. ab 300 kNm (N = −100 kN, η = 0,933).
+Von 340 bzw. 330 kNm an endet das Nachbessern mit η > 1,
 und der Vorschlag trägt den Hinweis, die Geometrie von Hand anzupassen.
 Der Vorschlag für 180 kNm (13 mm, M20, 4 Reihen) trägt
 320 kNm bei N = 0 nicht (η = 1,461, maßgebend der T-Stummel der Zugzone); der
@@ -3746,10 +3763,16 @@ mehrerer Ergebniskombinationen nur einmal gerechnet.
 
 Die Ergebnisse dieser Alternativen entstehen nur mit **„Alle Lastfälle +
 Kombinationen"**. Wurden nur die Lastfälle gerechnet oder stammen die
-Ergebnisse aus einer Datei von vor dem 22.09.2026, fehlen sie. Die Nachweise
+Ergebnisse aus der Datei eines älteren Programmstands, fehlen sie: Die
+Ergebnisdatei nimmt die Alternativen erst seit dem späten Abend des
+22.09.2026 auf, im Hauptzweig (und einer daraus gebauten exe) erst seit dem
+Merge vom 23.09.2026, 10:07. Die Nachweise
 melden solche Alternativen dann als „nicht nachgewiesen" und überlagern sie
 nicht linear. Das gilt auch für eine Alternative mit einem Lastfall, der nach
-II. oder III. Ordnung gerechnet wird. Bis zum 22.09.2026 wurden die Stäbe
+II. oder III. Ordnung gerechnet wird. Gemessen am Druckkragarm mit einer
+Ergebnisdatei, die der Hauptzweig-Stand vom 22.09.2026 geschrieben hat:
+beide Alternativen „nicht nachgewiesen“ mit dem Grund Theorie II. Ordnung,
+die gewöhnliche Kombination daneben wird nachgewiesen. Bis zum 22.09.2026 wurden die Stäbe
 nach einer Rechnung nur der Lastfälle gegen die Lastfälle mit Faktor 1
 nachgewiesen, ohne Hinweis, dass die Kombinationen fehlten: an der Halle
 („ein", alle GZT-Kombinationen als eine Ergebniskombination) Riegel 0,2776
@@ -3763,9 +3786,19 @@ Theorie II. Ordnung steht – genau wie bei der gewöhnlichen Kombination.
 Gemessen an einem Zweigelenkrahmen mit dem Windlastfall W auf II. Ordnung
 (α_cr der Alternativen 18,1 bis 25,8): Stielkopf 102,14 mm und Ausnutzung
 Stiel links 0,5423, gleich wie mit den gewöhnlichen Kombinationen. Bis zum
-22.09.2026 wurden dort statt der Alternativen die Lastfälle mit Faktor 1
-nachgewiesen, ohne Warnung: Stiel links 0,4970 aus W. Die Umhüllende am
-Stielkopf war mit 102,14 mm dieselbe.
+22.09.2026 hing es vom Modell ab, wogegen die Stäbe statt der Alternativen
+nachgewiesen wurden, jedes Mal ohne Warnung. Hatte das Modell außer der
+Ergebniskombination keine Kombination, wie dieser Rahmen, waren es die
+Lastfälle mit Faktor 1: Stiel links 0,4970 aus W. Standen gewöhnliche
+GZT-Kombinationen daneben, blieb die Ergebniskombination unbeachtet:
+Derselbe Rahmen mit 1,35 G + 1,5 Q und 1,35 G + 1,5 W als gewöhnlichen
+Kombinationen und „1,35 G + 1,5 Q + 0,9 W oder 1,0 G + 1,5 W“ als
+Ergebniskombination ergab Stiel links 0,4808 aus 1,35 G + 1,5 W statt
+0,5423 aus 1,0 G + 1,5 W. An der Halle nach
+II. Ordnung („ein“, alle GZT-Kombinationen als eine Ergebniskombination,
+die GZG-Kombinationen daneben) ging die Ergebniskombination mit dem Ergebnis
+null in die Nachweise: alle Stäbe η = 0, „alle erfüllt“ (jetzt Riegel
+0,9734). Die Umhüllende am Stielkopf des Rahmens war mit 102,14 mm dieselbe.
 
 ### Theorie je Lastfall und Kombination: I., II., III. Ordnung
 
@@ -4442,7 +4475,11 @@ nichts stillschweigend Übergangenes:
 | Netzrand neben der Hülle (Warnung): freie Seiten neben den Randflächen, außen oder als Beule | 0 |
 | Riss im Netz (Warnung): geschlossener Hohlraum, dünn gegen seine eigenen Seiten und gegen die Elemente daneben, kein verdrehtes Element, keine doppelten Knoten | 0 |
 
-**Der verdrehte Sechsflächner** (seit 22.09.2026). Stimmen die acht Knoten
+Die Volumenbilanz und die vier Prüfungen darunter gibt es seit dem
+23.09.2026, im Hauptzweig seit dem Merge an diesem Tag. Die Abnahme des
+Hauptzweigs vom 22.09.2026 hatte keine davon.
+
+**Der verdrehte Sechsflächner** (seit 23.09.2026). Stimmen die acht Knoten
 eines Sechsflächners, ist aber der Deckel um eine Ecke verdreht (4, 5, 6, 7 →
 5, 6, 7, 4), bleibt die Jacobi-Determinante überall positiv, die Formgüte liegt
 bei 0,707 — und das Element rechnet mit 0,6667 statt 1,0 seines Volumens.
@@ -4477,9 +4514,7 @@ Dreiecke geteilt sind. Die 30 geschlossenen Gruppen in den Modellen der
 Prüfsuiten lagen bei höchstens 3,55 % der längsten Kante und waren höchstens
 0,48-mal so dick wie die Elemente daneben. Der Körper stimmt bis auf diese
 Hohlräume, die Verschiebungen passen dort aber nur an Knoten und Kanten
-zusammen. Bis zum 23.09.2026 meldete die Abnahme die Hohlräume des Vernetzers
-als FEHLER „Seiten im Inneren“, vor jeder Rechnung mit der Rückfrage „Trotzdem
-rechnen?“ — und neu vernetzen ergibt dasselbe Netz.
+zusammen.
 
 **Nie ein Riss** sind ein verdrehtes Element und doppelte Knoten, gleich wie
 dünn der Hohlraum ist. Ein verdrehter Sechsflächner hat eine Seitenkante, die
@@ -4492,15 +4527,13 @@ denselben abgestuften Netzen; ein Element, das an Knoten losgelöst ist, im
 gleichmäßigen 8 × 8 × 8-Netz: jeder der sechs Tetraeder einer inneren Zelle
 und einer Zelle an der Seitenfläche, an einem bis vier Knoten losgelöst, der
 Sechsflächner innen an einem bis vier und an allen acht Knoten, an der
-Seitenfläche an einem, zwei, vier und acht Knoten. Die zwei Fassungen dieser
-Regel vom selben Tag maßen erst gegen das größte Element im ganzen Körper,
-dann nur gegen die längste Kante. Beide ließen solche Fehler in abgestuften
-oder länglichen Netzen als Riss durchgehen, die zweite zum Beispiel bei 50:1
-357 von 512 verdrehten Sechsflächnern. Die Kehrseite: Fehlt ein Tetraeder, der selbst so flach ist wie die, die der Vernetzer
+Seitenfläche an einem, zwei, vier und acht Knoten. Die Kehrseite: Fehlt ein
+Tetraeder, der selbst so flach ist wie die, die der Vernetzer
 aussortiert, ist auch das ein Riss. Einzeln entfernt war das am frei
 vernetzten Würfel mit angehobener Ecke (1483 Tetraeder) bei 20 von 541
 inneren Tetraedern so, an der Platte mit Keilen (2701 Tetraeder) bei 75 von
-947. Die Dicke dieser Tetraeder war höchstens 4,98 % ihrer längsten Kante.
+947; als innen zählen dabei die Tetraeder ohne Knoten auf der Hülle. Die
+Dicke dieser Tetraeder war höchstens 4,98 % ihrer längsten Kante.
 Jeder fehlende Tetraeder mit einer Dicke über 5 % seiner längsten Kante war in
 diesen Messungen ein FEHLER.
 
@@ -4512,8 +4545,10 @@ Oberfläche (bei (0.921 | 0.412 | 0.400) m 552 cm³; zusammen 552 cm³ = 0.079 %
 des Körpers, 3 freie Elementseiten im Inneren)“. So lässt der eigene freie
 Vernetzer an L-, T- und U-Prismen einen Tetraeder weg: in einer Stichprobe
 über die Netzweiten 0,25, 0,2 und 0,1 m an 5 von 9 Netzen, Fehlbetrag 0,003
-bis 0,113 %. Bis zum 23.09.2026 war das ein FEHLER „Seiten im Inneren“ mit
-dem Rat „neu vernetzen“, und neu vernetzen ergibt dasselbe Netz. Geholfen hat
+bis 0,113 %. Die Abnahme des Hauptzweigs vom 22.09.2026 meldete ein solches
+Netz nicht: Am L-Prisma des Beispiels (Netzweite 0,25 m, 821 Tetraeder,
+Lücke 552 cm³) fand sie nichts, gemessen am 23.09.2026 mit demselben Netz.
+Geholfen hat
 an diesen fünf Prismen, gemessen: in den Netzeinstellungen „Sechsflächner
 sweepen“ (nur für Körper aus Grundfläche mal Weg) oder der Vernetzer gmsh bzw.
 Netgen, jeweils an allen fünf. Der Sweep ist ab Werk aus; warum, steht bei
@@ -4532,8 +4567,7 @@ nicht (am Quelltext: `_vernetzen` löscht nur die Elemente). Diesen Weg ohne
 Oberfläche nachgestellt, verschwand die Lücke ebenso (6173 Tetraeder), aber
 1229 Knoten des alten Netzes blieben ohne Element stehen: FEHLER „Knoten ohne
 Element“. In der laufenden Oberfläche ist das nicht gemessen. Der Text der
-Warnung nennt beide Fälle; bis zum 23.09.2026 sagte er nur „Neu vernetzen mit
-denselben Einstellungen ergibt dasselbe Netz“, ebenso der Text des Risses. Ein
+Warnung nennt beide Fälle, ebenso der Text des Risses. Ein
 FEHLER ist die Lücke, wenn alle Lücken eines Körpers zusammen mehr als 0,5 % seines Volumens
 ausmachen. Das ist dieselbe Grenze wie bei der Volumenbilanz. Ein verdrehter
 Sechsflächner am Rand oder in der Ecke ist keine Lücke, sondern bleibt ein
@@ -4553,26 +4587,21 @@ Würfel mit angehobener Ecke, frei mit Netzweite 0,1 m vernetzt: FEHLER
 **Windschiefe Randflächen.** Ein Tetraedernetz liegt auf einer windschiefen
 (bilinearen) Fläche auf Sehnen, und der freie Vernetzer setzt Knoten auf Sehnen
 seines groben Dreiecksnetzes: am Würfel 1 × 1 × 1 m mit um 0,5 m angehobener
-Deckelecke (Netzweite 0,25 m) bis 7,55 mm neben der Fläche. Bis zum 23.09.2026
-meldete die Abnahme solche richtigen Netze als FEHLER (2 bis 53 „Seiten im
-Inneren“, bei Netzweite 0,5 m und um 1 m angehobener Ecke dazu „Volumenbilanz
-0,782 %“). Jetzt gilt an windschiefen Flächen eine Grenze aus der Verwindung
+Deckelecke (Netzweite 0,25 m) bis 7,55 mm neben der Fläche. Damit solche
+richtigen Netze nicht als FEHLER dastehen, gilt an windschiefen Flächen eine
+Grenze aus der Verwindung
 der Fläche und dem größten Seitendurchmesser **in der Nachbarschaft** der
 Seite: unter den Seiten, die höchstens drei Ringe über gemeinsame Knoten
 entfernt sind. Im Beispiel sind das 13,2 bis 19,7 mm. Außerdem muss die Seite
 in die Richtung der Fläche zeigen: Richtige Netze lagen gemessen bis 9,7°
 daneben, die Grenze liegt bei 30° und mehr. Die Volumenbilanz lässt das
-Volumen zu, das der Netzrand dort erklären kann. Die erste Fassung vom selben
-Tag nahm den größten Seitendurchmesser der **ganzen** Fläche und keine
-Richtung. In einem abgestuften Netz (20:1, Deckel z = 1 + 0,5·x·y) lag die
-Grenze so bei rund 24 mm, und ein verdrehtes Element der obersten Lage blieb
-ohne Meldung. Heute ist es ein FEHLER „Seiten im Inneren“: Seine Seiten
+Volumen zu, das der Netzrand dort erklären kann. Ein verdrehtes Element der
+obersten Lage eines abgestuften Netzes (20:1, Deckel z = 1 + 0,5·x·y) ist
+ein FEHLER „Seiten im Inneren“: Seine Seiten
 stehen 81 bis 90° gegen den Deckel. Gemessen an 324 Fällen (Abstufung 1:1,
 5:1, 20:1 und 50:1, Ecke um 0,3, 0,5 und 1,0 m angehoben, neun Zellen der
 beiden obersten Lagen, Deckel um eine Ecke vor, zurück und um zwei versetzt)
-war jeder ein FEHLER. In der zweiten Fassung vom selben Tag waren 75 davon nur
-ein „Riss im Netz“, weil die Riss-Regel an länglichen Zellen versagte (siehe
-oben).
+war jeder ein FEHLER.
 Ein verdrehtes Element in der groben Ecke, wo die
 oberste Lage dünn ist gegen die Sehne, findet nur die Richtung: Seine Ecken
 liegen bei 20:1 17 bis 18 mm neben dem Deckel, seine Seiten stehen 57 bis 87°
