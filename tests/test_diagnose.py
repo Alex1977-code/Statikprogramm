@@ -1237,6 +1237,103 @@ def _gleichmaessig(lx, ly, lz, n):
     return m, k
 
 
+def test_abnahme_findet_gefaltetes_tetraedernetz():
+    """B112 (Nebenbefund der Fehlerrunden vom 22./23.09.2026): Formgüte
+    (netzguete) und Elementvolumen rechnen beim Tetraeder mit dem Betrag des
+    Volumens. Ein Netz, in dem ein Knoten durch die Gegenseite seiner
+    Tetraeder geschoben ist, ging darum ohne Befund durch die Abnahme: am
+    10 × 10 × 10-Kuhn-Netz Knoten 665 um 1,2·h verschoben, sechs Tetraeder
+    umgestülpt (det J ≤ 0), abnahme(warnungen=True) = []. Ein umgestülpter
+    Sechsflächner ergibt dagegen FEHLER Elementgüte.
+
+    Die Abnahme prüft jetzt je gemeinsamer Seite zweier Tetraeder, ob ihre
+    Gegenknoten auf verschiedenen Seiten der Ebene liegen. Das hängt nicht an
+    der Knotenfolge: zwei vertauschte Knoten in einem Tetraeder sind dasselbe
+    Tetraeder mit anderer Nummerierung, die Rechnung ist gleich (gemessen am
+    23.09.2026 max|Δu| 1,5e-20 m bei max|u| 4,4e-6 m), und das bleibt ohne
+    Befund.
+    """
+    from statik3d.elements import solid as sl
+
+    def kurz(bef):
+        return "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g}" for b in bef) or "kein Befund"
+
+    def kuhn():
+        m, k = _gleichmaessig(1.0, 1.0, 1.0, 10)
+        _in_kuhn(m, k)
+        return m, k
+
+    m, k = kuhn()
+    mitte = int(np.argmin(np.linalg.norm(m.nodes - np.array([0.5, 0.5, 0.5]), axis=1)))
+    check("ungestörtes Kuhn-Netz 10 × 10 × 10: kein Befund, kein Tetraeder mit det J ≤ 0",
+          dg.abnahme(m, warnungen=True) == [] and sl.jacobi_pruefung(m) == [],
+          kurz(dg.abnahme(m, warnungen=True)))
+    umgestuelpt = [3266, 3267, 3271, 3328, 3330, 3335]
+    for schub in (1.2, 1.5):
+        m, k = kuhn()
+        m.nodes[mitte] = m.nodes[mitte] + np.array([schub * 0.1, 0.0, 0.0])
+        neg = sorted(e for e, _t, _d in sl.jacobi_pruefung(m))
+        bef = dg.abnahme(m, warnungen=True)
+        fa = [b for b in bef if b.pruefung == "Netz gefaltet"]
+        check(f"Knoten {mitte} um {schub}·h verschoben: FEHLER Netz gefaltet mit den "
+              "sechs umgestülpten Tetraedern",
+              neg == umgestuelpt and [b.pruefung for b in bef] == ["Netz gefaltet"]
+              and fa[0].stufe == "FEHLER" and sorted(fa[0].elemente) == umgestuelpt
+              and fa[0].wert == 6.0 and mitte in fa[0].knoten
+              and all(str(e) in fa[0].text for e in umgestuelpt),
+              f"det J ≤ 0: {neg}; {kurz(bef)}; "
+              + (f"Elemente {sorted(fa[0].elemente)}, Knoten {fa[0].knoten}" if fa else ""))
+        check("  und abnahme() ohne Warnungen fragt vor dem Rechnen nach",
+              [b.pruefung for b in dg.abnahme(m)] == ["Netz gefaltet"],
+              kurz(dg.abnahme(m)))
+    # Gegenprobe: um 0,5·h verschoben bleibt jedes Tetraeder aufrecht
+    m, k = kuhn()
+    m.nodes[mitte] = m.nodes[mitte] + np.array([0.05, 0.0, 0.0])
+    check("  Gegenprobe: um 0,5·h verschoben ist nichts gefaltet - kein Befund",
+          sl.jacobi_pruefung(m) == [] and dg.abnahme(m, warnungen=True) == [],
+          kurz(dg.abnahme(m, warnungen=True)))
+    # Faellt die Pruefung aus, ist das nicht „nichts gefunden"
+    echt = getattr(dg, "_abnahme_faltung", None)
+
+    def wirft(*a, **kw):
+        raise RuntimeError("Seitentabelle nicht aufzubauen")
+
+    dg._abnahme_faltung = wirft
+    try:
+        mit, ohne = dg.abnahme(m, warnungen=True), dg.abnahme(m)
+    finally:
+        if echt is None:
+            del dg._abnahme_faltung
+        else:
+            dg._abnahme_faltung = echt
+    check("  fällt die Prüfung aus: WARNUNG „Faltung nicht geprüft“, hält nicht an",
+          [(b.stufe, b.pruefung) for b in mit] == [("WARNUNG", "Faltung nicht geprüft")]
+          and ohne == [], kurz(mit))
+
+    # Zwei Knoten in Element 3330 vertauscht: dasselbe Tetraeder, andere
+    # Nummerierung - die Rechnung ist gleich, also kein Befund
+    ergebnisse = []
+    for tauschen in (False, True):
+        m, k = kuhn()
+        for i, p in enumerate(m.nodes):
+            if abs(p[2] - 1.0) < 1e-12:
+                m.load_node(i, Fx=1000.0, Fz=-2000.0)
+        if tauschen:
+            n = list(m.elements[3330].nodes)
+            n[0], n[1] = n[1], n[0]
+            m.elements[3330].nodes = n
+            neg = sl.jacobi_pruefung(m)
+            bef = dg.abnahme(m, warnungen=True)
+        r = solver.solve_static(m)
+        ergebnisse.append(np.asarray(r.u, float).reshape(m.nn, -1)[:, :3])
+    du = float(np.abs(ergebnisse[1] - ergebnisse[0]).max())
+    u = float(np.abs(ergebnisse[0]).max())
+    check("zwei Knoten in Element 3330 vertauscht: det J < 0, Rechnung gleich, kein Befund",
+          [e for e, _t, _d in neg] == [3330] and du <= 1e-12 * u and bef == [],
+          f"det J ≤ 0: {[e for e, _t, _d in neg]}; max|Δu| {du:.2g} m bei max|u| {u:.2g} m; "
+          f"{kurz(bef)}")
+
+
 def test_abnahme_riss_an_laenglichen_zellen():
     """Zweite Gegenprüfung vom 23.09.2026, Mängel 1 und 2: die Riss-Regel der
     zweiten Kur maß die Dicke eines Hohlraums nur an der längsten Kante
@@ -1599,6 +1696,7 @@ def main():
               test_abnahme_riss_an_laenglichen_zellen,
               test_abnahme_windschief_misst_am_oertlichen_element,
               test_abnahme_luecke_im_netzrand,
+              test_abnahme_findet_gefaltetes_tetraedernetz,
               test_windschiefe_randflaechen_ohne_dreiecksschleife,
               test_abnahme_meldet_ausgefallene_pruefungen,
               test_nicht_messbare_formguete_gilt_nicht_als_beste,

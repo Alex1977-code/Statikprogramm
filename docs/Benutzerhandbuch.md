@@ -4435,6 +4435,7 @@ nichts stillschweigend Übergangenes:
 | Haltegüte je Teiltragwerk | ≥ 10⁻⁴ |
 | Knoten im Rechennetz ohne Element | 0 |
 | Formgüte des schlechtesten Elements je Körper | ≥ 0,05 |
+| **Netz gefaltet**: umgestülpte Tetraeder zwischen ihren Nachbarn | 0 |
 | Randtreue je Körper | ≥ 99 % |
 | **Volumenbilanz je Körper**: Elemente gegen Randflächen | ≤ 0,5 % (an windschiefen Flächen zuzüglich der Sehnen) |
 | **Seiten im Inneren**: freie Elementseiten, hinter denen der Körper weitergeht (verdrehtes Element, doppelte Knoten, Hohlraum) | 0 |
@@ -4474,8 +4475,13 @@ bleiben, wenn der freie Vernetzer flache Tetraeder aussortiert (Platte
 0,9 × 0,9 × 0,035 m mit Bohrung: 8 Seiten, zwei Hohlräume von zusammen
 0,056 mm³), oder wenn beiderseits einer Fläche dieselben Knoten verschieden in
 Dreiecke geteilt sind. Die 30 geschlossenen Gruppen in den Modellen der
-Prüfsuiten lagen bei höchstens 3,55 % der längsten Kante und waren höchstens
-0,48-mal so dick wie die Elemente daneben. Der Körper stimmt bis auf diese
+Prüfsuiten lagen bei höchstens 3,55 % der längsten Kante und waren als ganze
+Gruppe höchstens 0,48-mal so dick wie die Elemente daneben. Zerfällt eine
+Gruppe an einer Kante, an der mehr als zwei Seiten liegen, in geschlossene
+Stücke, beurteilt die Abnahme jedes Stück für sich; solche Stücke waren bis
+0,58-mal so dick (Platte mit Bohrung, frei vernetzt ohne „intelligent“,
+12 925 Tetraeder; gemessen am 23.09.2026). Bis zur Grenze 0,65 bleibt dort
+nur ein Abstand von Faktor 1,12. Der Körper stimmt bis auf diese
 Hohlräume, die Verschiebungen passen dort aber nur an Knoten und Kanten
 zusammen. Bis zum 23.09.2026 meldete die Abnahme die Hohlräume des Vernetzers
 als FEHLER „Seiten im Inneren“, vor jeder Rechnung mit der Rückfrage „Trotzdem
@@ -4593,6 +4599,35 @@ ohne Element“. Der eigene Vernetzer ergibt mit denselben Einstellungen
 dasselbe Netz, an fünf Prismen nachgemessen. Bei Befunden an seinen Netzen
 hilft neu vernetzen allein also nicht; was bei einer Lücke im Netzrand
 geholfen hat, steht oben.
+
+**Gefaltetes Tetraedernetz** (seit 23.09.2026). Wird ein Knoten durch die
+gegenüberliegende Seite seiner Tetraeder geschoben, stülpen sie sich um und
+überdecken ihre Nachbarn. Beim Tetraeder mit vier Knoten nehmen Formgüte,
+Elementvolumen und die Rechnung selbst den Betrag des Volumens — keine der
+Prüfungen oben sah das. Am Würfel 1 × 1 × 1 m, 10 × 10 × 10 Zellen in je sechs
+Tetraeder geteilt, den mittleren Knoten 665 um das 1,2-fache der Zellweite
+verschoben: sechs Tetraeder umgestülpt, die Abnahme meldete nichts. Um das
+1,5-fache verschoben und oben waagerecht belastet, lag die Vergleichsspannung
+an diesen sechs bei 192,5 bis 247,3 kPa, an den Elementen um denselben Knoten
+im unverschobenen Netz bei 281,0 bis 329,1 kPa; die mittlere Verschiebung oben
+änderte sich nur um −0,055 %. Im Ganzen sieht man es dem Ergebnis also nicht
+an. Jetzt prüft die Abnahme jede Seite, die genau zwei Tetraeder teilen: die
+beiden Knoten, die ihr gegenüberliegen, müssen beiderseits ihrer Ebene
+liegen. Liegen sie auf derselben Seite, ist das Netz dort gefaltet („FEHLER: [Netz
+gefaltet] Volumen K1: 6 Tetraeder liegen umgestülpt zwischen ihren Nachbarn
+(Elemente 3266, 3267, 3271, 3328, 3330, 3335, alle an den Knoten 665, 786) …“).
+Welche der Nachbarn die umgestülpten sind, entscheidet der Zusammenhang: in
+jedem zusammenhängenden Netz die kleinere der beiden Gruppen.
+
+Die Knotenfolge zählt dabei nicht. Sind in einem Tetraeder nur zwei Knoten
+vertauscht, ist seine Jacobi-Determinante negativ, es ist aber dasselbe
+Tetraeder mit anderer Nummerierung und rechnet gleich (am selben Netz
+Element 3330: die Verschiebungen weichen um höchstens 1,5 · 10⁻²⁰ m ab, bei
+4,4 · 10⁻⁶ m größter Verschiebung); die Abnahme bleibt dort still. Die Prüfung
+gilt für Netze aus Tetraedern mit vier Knoten. Am Drehlagermodell
+(645 934 Tetraeder) findet sie nichts und kostet 1,6 bis 2,8 s von 37,6 s für
+die ganze Abnahme (23.09.2026). Lässt sie sich nicht ausführen, steht
+`Faltung nicht geprüft` als Warnung im Protokoll.
 
 **„Bestanden" heißt nicht „nicht geprüft".** Zwei der Teilprüfungen fingen
 eine Ausnahme stumm ab und gaben eine leere Liste zurück — und leer heißt in

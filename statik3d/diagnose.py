@@ -453,6 +453,9 @@ class Befund:
     grenze: float = 0.0
     text: str = ""
     stufe: str = "FEHLER"                #: FEHLER haelt an, WARNUNG nennt nur
+    #: alle betroffenen Elemente, wo es mehr als eins sind (``element`` ist
+    #: dann das erste davon) - bisher nur beim gefalteten Netz
+    elemente: list = field(default_factory=list)
 
 
 def abnahme(model, guete: list = None, warnungen: bool = False) -> list:
@@ -479,9 +482,13 @@ def abnahme(model, guete: list = None, warnungen: bool = False) -> list:
     6. **Volumenbilanz** und **Seiten neben der Huelle** je Koerper - das
        Netz gegen seine Randflaechen (:func:`_abnahme_volumenbilanz`); findet
        den verdrehten Sechsflaechner, den keine Pruefung am Element sieht.
+    7. **Gefaltetes Tetraedernetz** - an einer gemeinsamen Seite zweier
+       tet4 liegen beide Gegenknoten auf derselben Seite der Ebene
+       (:func:`_abnahme_faltung`); Formguete, Volumen und die Rechnung selbst
+       nehmen beim tet4 den Betrag des Volumens und sehen es nicht.
 
-    Faellt eine der Teilpruefungen aus (die Halteguete oder die Formguete
-    lassen sich nicht ermitteln), erscheint das als eigener Befund der Stufe
+    Faellt eine der Teilpruefungen aus (die Halteguete, die Formguete oder die
+    Faltung lassen sich nicht ermitteln), erscheint das als eigener Befund der Stufe
     WARNUNG mit dem Zusatz „nicht geprueft" im Namen - eine leere Liste hiesse
     sonst „abgenommen", obwohl gar nicht gemessen wurde.
 
@@ -497,6 +504,15 @@ def abnahme(model, guete: list = None, warnungen: bool = False) -> list:
     aus += _abnahme_kontaktpaare(model)
     aus += _abnahme_halteguete(model, guete)
     aus += _abnahme_netz(model)
+    try:
+        aus += _abnahme_faltung(model)
+    except Exception as ex:               # noqa: BLE001 - eine Abnahme darf nie sperren
+        # „Ausgefallen" ist nicht „nichts gefunden" (siehe _abnahme_halteguete)
+        aus.append(Befund(
+            pruefung="Faltung nicht geprüft", wert=0.0, grenze=0.0, stufe="WARNUNG",
+            text="Ob das Tetraedernetz gefaltet ist (umgestülpte Tetraeder zwischen "
+                 f"ihren Nachbarn), ließ sich nicht prüfen ({type(ex).__name__}: "
+                 f"{str(ex)[:100]})."))
     if not warnungen:
         aus = [b for b in aus if getattr(b, "stufe", "FEHLER") != "WARNUNG"]
     return aus
@@ -884,6 +900,190 @@ def _abnahme_netz(model) -> list:
                     text=f"Volumen {name}: Volumenbilanz und freie Seiten ließen sich "
                          f"nicht prüfen ({type(ex).__name__}: {str(ex)[:100]}) - ob ein "
                          "Element verdreht ist, ist hier nicht geprüft."))
+    return aus
+
+
+#: Tetraederarten der Faltungspruefung. Nur tet4: er rechnet mit |V|
+#: (solid.tet4_shape_grad) und schweigt, wenn er umgestuelpt ist. tet10 und
+#: die anderen isoparametrischen Elemente brechen bei det J <= 0 mit einer
+#: Meldung ab (solid._k_iso, solid._iso_an_punkten).
+_FALTUNG_TYPEN = ("tet4",)
+#: Seite j eines Tetraeders liegt seinem Eckknoten j gegenueber.
+_TET_GEGENSEITEN = np.array([(1, 2, 3), (0, 2, 3), (0, 1, 3), (0, 1, 2)])
+#: Ein Gegenknoten liegt **auf** der Ebene seiner Seite, wenn sein Abstand
+#: hoechstens dieser Anteil der laengsten Seitenkante ist - nur gegen
+#: Rundungsfehler. Ein Tetraeder, dessen Knoten so nahe an der Gegenseite
+#: liegt, hat die Formguete fast 0 und faellt schon unter „Elementgüte" auf.
+ABNAHME_FALTUNG_EBENE = 1e-9
+
+
+def _abnahme_faltung(model) -> list:
+    """Gefaltetes Tetraedernetz: umgestuelpte Tetraeder zwischen ihren Nachbarn.
+
+    Formguete (netzguete: 12 (3V)^(2/3) / Summe l^2) und Elementvolumen
+    (:func:`elementvolumina`, solid.tet4_shape_grad) rechnen beim Tetraeder
+    mit dem **Betrag** des Volumens. Ein Knoten, der durch die Gegenseite
+    seiner Tetraeder geschoben ist, stuelpt sie um, und keine andere Pruefung
+    sah es: am 10 x 10 x 10-Kuhn-Netz (Zellen 0,1 m) Knoten 665 um 1,2 h
+    verschoben, sechs Tetraeder mit det J < 0, abnahme(warnungen=True) = []
+    (23.09.2026; ein umgestuelpter Sechsflaechner gibt dagegen eine negative
+    Formguete). Die Rechnung nimmt jedes als aufrechtes Tetraeder mit |V|,
+    die umgestuelpten ueberdecken ihre Nachbarn. Gemessen bei 1,5 h und
+    waagerechter Last oben: sigma_v an den sechs 192,5 bis 247,3 kPa, an den
+    Elementen um Knoten 665 im unverschobenen Netz 281,0 bis 329,1 kPa; die
+    mittlere Verschiebung oben aendert sich nur um -0,055 %.
+
+    **Die Knotenfolge ist kein Kriterium.** Zwei vertauschte Knoten geben ein
+    negatives det J, sind aber dasselbe Tetraeder mit anderer Nummerierung:
+    die Rechnung ist gleich (Element 3330 desselben Netzes, max|du| 1,5e-20 m
+    bei max|u| 4,4e-6 m). solid.jacobi_pruefung meldet auch diesen Fall;
+    darum wird hier nicht det J je Element geprueft, sondern die Lage zu den
+    Nachbarn: an jeder Seite, die genau zwei Tetraeder teilen, muessen ihre
+    Gegenknoten auf verschiedenen Seiten der Ebene liegen. Liegen sie auf
+    derselben, ueberdecken sich die beiden - das Netz ist dort gefaltet.
+
+    Welches der beiden umgestuelpt ist, sagt erst der Zusammenhang: ueber die
+    Seiten eingefaerbt, Nachbarn ueber einer gefalteten Seite verschieden,
+    sonst gleich - die seltenere Farbe je zusammenhaengendem Netz sind die
+    umgestuelpten. Je Gruppe umgestuelpter Tetraeder mit gemeinsamen Knoten
+    ein FEHLER mit allen Elementnummern (``Befund.elemente``) und den
+    Knoten, die sie alle gemeinsam haben (am Kuhn-Netz oben 665 und 786: die
+    sechs liegen um die Kante vom verschobenen Knoten zum Nachbarn, an dem er
+    vorbeigeschoben wurde).
+    """
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import breadth_first_order, connected_components
+    nn = int(model.nn)
+    alle = model.elements
+    idx = [i for i, e in enumerate(alle) if e.typ in _FALTUNG_TYPEN and len(e.nodes) == 4]
+    if len(idx) < 2:
+        return []
+    # Knotenlisten in einem Zug nach numpy. Eine Liste je Element umzuwandeln
+    # kostete am Kuhn-Netz 48 x 48 x 48 (663 552 tet4) 1,82 bis 2,16 s fuer die
+    # ganze Pruefung, so 1,45 bis 1,50 s (ohne Faltung, 23.09.2026).
+    K = np.array([alle[i].nodes for i in idx], dtype=np.int64)
+    idx = np.asarray(idx, np.int64)
+    gut = ((K >= 0) & (K < nn)).all(axis=1)
+    idx, K = idx[gut], K[gut]
+    n = len(K)
+    X = np.asarray(model.nodes, float)
+
+    # Gemeinsame Seiten: die sortierten Ecken in zwei int64 gepackt und mit
+    # lexsort sortiert (wie in _freie_seiten_ecken); nur Seiten, die genau
+    # zwei Tetraeder teilen
+    S = np.sort(K[:, _TET_GEGENSEITEN].reshape(-1, 3), axis=1)      # (4n, 3)
+    gegen = K.reshape(-1)                                             # Gegenknoten
+    eigner = np.repeat(np.arange(n), 4)
+    b = np.int64(nn + 1)
+    hoch, tief = S[:, 0] * b + S[:, 1], S[:, 2]
+    o = np.lexsort((tief, hoch))
+    o = o[((S[:, 0] != S[:, 1]) & (S[:, 1] != S[:, 2]))[o]]         # ohne entartete Seiten
+    if len(o) < 2:
+        return []
+    hs, ts = hoch[o], tief[o]
+    neu = np.ones(len(o), bool)
+    neu[1:] = (hs[1:] != hs[:-1]) | (ts[1:] != ts[:-1])
+    start = np.nonzero(neu)[0]
+    zahl = np.diff(np.append(start, len(o)))
+    paar = start[zahl == 2]
+    a, c = o[paar], o[paar + 1]
+    # zweimal dasselbe Element oder dieselben vier Knoten: keine Faltung
+    anders = (eigner[a] != eigner[c]) & (gegen[a] != gegen[c])
+    a, c = a[anders], c[anders]
+    if not len(a):
+        return []
+    x0 = X[S[a, 0]]
+    e1, e2 = X[S[a, 1]] - x0, X[S[a, 2]] - x0
+    nv = np.cross(e1, e2)
+    hp = np.einsum("ij,ij->i", nv, X[gegen[a]] - x0)
+    hq = np.einsum("ij,ij->i", nv, X[gegen[c]] - x0)
+    L = np.maximum(np.maximum(np.linalg.norm(e1, axis=1), np.linalg.norm(e2, axis=1)),
+                   np.linalg.norm(e2 - e1, axis=1))
+    tol = ABNAHME_FALTUNG_EBENE * np.linalg.norm(nv, axis=1) * L
+    klar = (np.abs(hp) > tol) & (np.abs(hq) > tol)
+    falt = klar & (np.sign(hp) == np.sign(hq))
+    if not falt.any():
+        return []
+
+    # Einfaerben: Graph der Nachbarschaft ueber klare Seiten, Gewicht 2 ueber
+    # einer gefalteten, 1 ueber einer richtigen Seite
+    ea, ec = eigner[a][klar], eigner[c][klar]
+    w = falt[klar].astype(np.int8) + 1
+    G = coo_matrix((np.concatenate([w, w]),
+                    (np.concatenate([ea, ec]), np.concatenate([ec, ea]))),
+                   shape=(n, n)).tocsr()
+    _nk, komp = connected_components(G, directed=False)
+    vor = np.arange(n)
+    par = np.zeros(n, np.int64)
+    betroffen = np.unique(komp[eigner[a][falt]])
+    for kk in betroffen:
+        wurzel = int(np.nonzero(komp == kk)[0][0])
+        folge, pred = breadth_first_order(G, wurzel, directed=False, return_predecessors=True)
+        kind = folge[1:]
+        vor[kind] = pred[kind]
+        par[kind] = (np.asarray(G[pred[kind], kind]).ravel() == 2)
+    # Paritaet bis zur Wurzel durch Zeigerspringen (log2 der Tiefe Schritte)
+    while (vor[vor] != vor).any():
+        par = par + par[vor]
+        vor = vor[vor]
+    farbe = par % 2
+    um = np.zeros(n, bool)
+    for kk in betroffen:
+        drin = komp == kk
+        eins = int((drin & (farbe == 1)).sum())
+        seltener = 1 if eins <= int(drin.sum()) - eins else 0
+        um |= drin & (farbe == seltener)
+    um_idx = np.nonzero(um)[0]
+    if not len(um_idx):
+        return []
+
+    # Gruppen umgestuelpter Tetraeder mit gemeinsamen Knoten
+    M = coo_matrix((np.ones(4 * len(um_idx)),
+                    (np.repeat(np.arange(len(um_idx)), 4), K[um_idx].ravel())),
+                   shape=(len(um_idx), nn)).tocsr()
+    ng, gruppe = connected_components(M @ M.T, directed=False)
+    # Gefaltete Seiten je Gruppe: von den beiden Tetraedern einer gefalteten
+    # Seite ist genau eines umgestuelpt (sie haben verschiedene Farbe).
+    gruppe_von = np.full(n, -1)
+    gruppe_von[um_idx] = gruppe
+    g_seite = np.maximum(gruppe_von[eigner[a][falt]], gruppe_von[eigner[c][falt]])
+    seiten_je = np.bincount(g_seite[g_seite >= 0], minlength=ng)
+    # Koerper je umgestuelptem Element in einem Durchgang ueber die Koerper
+    # (je Gruppe alle Koerper zu durchsuchen wuechse mit Gruppen mal Elementen;
+    # so am Kuhn-Netz 30 x 30 x 30 mit 125 Faltstellen die ganze Pruefung
+    # 0,33 bis 0,44 s, 23.09.2026)
+    koerper_von: dict = {int(idx[j]): set() for j in um_idx}
+    for nm, k in (getattr(model, "koerper", None) or {}).items():
+        for x in (getattr(k, "elemente", None) or []):
+            if int(x) in koerper_von:
+                koerper_von[int(x)].add(str(nm))
+    ordnung = np.argsort(gruppe, kind="stable")
+    grenzen = np.searchsorted(gruppe[ordnung], np.arange(ng + 1))
+    aus = []
+    for g in range(ng):
+        lokal = um_idx[ordnung[grenzen[g]:grenzen[g + 1]]]
+        els = sorted(int(idx[j]) for j in lokal)
+        gemeinsam = set(int(x) for x in K[lokal[0]])
+        for j in lokal[1:]:
+            gemeinsam &= set(int(x) for x in K[j])
+        seiten = int(seiten_je[g])
+        namen = sorted(set().union(*(koerper_von[e] for e in els)))
+        liste = ", ".join(str(e) for e in els[:12]) + (f" … (insgesamt {len(els)})"
+                                                      if len(els) > 12 else "")
+        am = ("" if not gemeinsam else
+              f", alle am Knoten {min(gemeinsam)}" if len(gemeinsam) == 1 else
+              f", alle an den Knoten {', '.join(str(x) for x in sorted(gemeinsam))}")
+        wo = f"Volumen {', '.join(namen)}" if namen else "Netz"
+        aus.append(Befund(
+            pruefung="Netz gefaltet", objekt=", ".join(namen), element=els[0],
+            elemente=els, knoten=sorted(gemeinsam), wert=float(len(els)), grenze=0.0,
+            text=f"{wo}: {len(els)} Tetraeder liegen umgestülpt zwischen ihren "
+                 f"Nachbarn (Elemente {liste}{am}) - an {seiten} gemeinsamen Seiten "
+                 "liegen beide Nachbarn auf derselben Seite. Dort ist das Netz "
+                 "gefaltet: die Elemente überdecken sich, und die Rechnung nimmt "
+                 "jedes mit dem Betrag seines Volumens, als stünde es aufrecht - "
+                 "Formgüte und Volumenbilanz sehen das nicht. Die Knoten "
+                 "zurücksetzen oder neu vernetzen."))
     return aus
 
 
@@ -1352,16 +1552,25 @@ ABNAHME_RISS_DICKE = 0.05
 #:   0,529 (eigenes t/L 0,90 / 2,92 / 4,96 %, je ein Riss). Gemessen am
 #:   23.09.2026, t durch Median der Nachbardicke:
 #:
-#:   - Luecken des freien Vernetzers (die 30 geschlossenen Gruppen der
+#:   - Luecken des freien Vernetzers (die geschlossenen Gruppen der
 #:     Modelle von test_mesher3d und test_sweep, Platte mit Bohrung und
-#:     Keile eingeschlossen): 0,000 bis 0,482;
+#:     Keile eingeschlossen), als ganze Gruppe: 0,000 bis 0,482. Beurteilt
+#:     wird aber nicht immer die ganze Gruppe: zerfaellt sie an einer Kante
+#:     mit mehr als zwei Seiten in geschlossene Stuecke, wird jedes Stueck
+#:     fuer sich gemessen (_gruppen_im_inneren), und die Stuecke reichen
+#:     hoeher - bis 0,579 an der Platte mit Bohrung ohne „intelligent"
+#:     (12 925 tet4, Modell aus test_mantellinie_der_bohrung: zwei Stuecke
+#:     aus je 4 Seiten 0,579 und 0,570, eines aus 6 Seiten 0,507). Gemessen
+#:     am 23.09.2026 an jeder Abnahme beider Suiten und an je einer Abnahme
+#:     nach jedem freien Vernetzen darin (die Suite nimmt dieses Netz selbst
+#:     nicht ab);
 #:   - fehlender Sechsflaechner (gleichmaessig 100 x 100 x 100 bis 500 mm und
 #:     abgestuft 5:1, 20:1, 50:1, je 512 innere Zellen): 1,00 bis 1,01;
 #:   - fehlender Kuhn-Tetraeder (gleichmaessig 100 x 100 x 100 bis 300 mm,
 #:     abgestuft 5:1, 20:1, 50:1): 0,865 bis 1,07.
 #:
-#:   Die Grenze liegt dazwischen, Abstand Faktor 1,35 nach unten und 1,33
-#:   nach oben. Allein traegt auch dieses Mass nicht: an der Platte mit
+#:   Die Grenze liegt dazwischen, Abstand Faktor 1,12 nach unten (0,65 zu
+#:   0,579) und 1,33 nach oben. Allein traegt auch dieses Mass nicht: an der Platte mit
 #:   Bohrung sind die kleinsten fehlenden Tetraeder kleiner als ihre
 #:   Nachbarn (Median 0,55 bis 1,34) - dort trennt t/L.
 ABNAHME_RISS_NACHBAR = 0.65
