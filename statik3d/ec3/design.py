@@ -129,7 +129,7 @@ def check_member(model: Model, member: Member, results: dict, n: int = None) -> 
     if not fy:
         mc.fehler = f"Werkstoff {mat.name} ohne Streckgrenze"
         # Der Hinweis sagt, was zu tun ist: er steht im Bericht in jedem Umfang
-        # unter "Offene Hinweise und Warnungen" (report.html chapter_design)
+        # unter "Offene Hinweise und Warnungen" (report.html chapter_summary)
         # und ist oft die einzige Stelle, an der der Grund steht.
         mc.warnings.append(f"{mc.fehler} – Nachweis nicht geführt; Streckgrenze f_y am "
                            "Werkstoff eintragen oder am Stab „Nachweis nach EC3“ ausschalten")
