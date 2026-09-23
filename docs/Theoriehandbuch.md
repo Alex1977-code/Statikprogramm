@@ -537,11 +537,31 @@ Grund, den eine leer gebliebene Objektlast nennt, ist berichtigt: „liegt ganz
 im Windschatten der Last" schickte den Anwender auf die Suche nach einer
 verdeckten Fläche, wo in Wahrheit die Richtung fehlte.
 
-**Nicht** geändert wurde der Fall der *entarteten* Seite (Fläche null): er ist
-nicht still — das Element wird von `Model.check()` von sich aus als „entartet
-ohne Ausdehnung" gemeldet, und ein zur Geraden entartetes Element bricht den
-Lauf ohnehin ab. Eine Ausnahme dort stünde außerdem gegen die Festlegung, dass
-ein entartetes Element die Rechnung nicht stoppen darf.
+Die *entartete* Seite (Fläche null) bricht dagegen **nicht** ab: für eine
+Fläche ohne Inhalt ist 0 N das richtige Ergebnis, und eine Ausnahme dort stünde
+gegen die Festlegung, dass ein entartetes Element die Rechnung nicht stoppen
+darf. Die frühere Annahme, `Model.check()` melde das Element dann ohnehin als
+„entartet ohne Ausdehnung", hielt aber nicht für jeden Fall: ein Sechsflächner,
+dessen Deckel mit **eigenen** Knotennummern zu einer Linie zusammengelegt ist,
+behält ein Volumen (die Entartungsprüfung misst die Streumatrix aller acht
+Ecken), seine Steifigkeit lässt sich aufstellen, und die Last auf dem Deckel
+ergab gemessen 0 N ohne eine Zeile in der Prüfung. Seit dem 22.09.2026 nennt
+`Model.check()` jede solche Last als WARNUNG mit Lastfall, Element und Seite.
+Die Fläche wird wie in `solid_face_pressure` aus den Ecken gebildet (Viereck:
+beide Dreiecke); die Grenze ist A ≤ 10⁻⁷ · d² mit d der Diagonale der Hüllbox
+des Elements (`diagnose.ENTARTET_REL`). Gerechnet wird je (Elementart, Seite)
+im Block: 64 000 Seitenlasten 0,34–0,48 s (fünfmal gemessen in zwei
+Durchgängen auf der geteilten Maschine). Liegt A knapp über null, nennt die
+Zeile die Kraft so, wie der Lastvektor sie aufstellt, und nicht p · A: `solid_face_pressure` integriert |dA| über die Seite. Beim 10⁻⁹
+breiten Deckel ist das p · A = 0,001 N. Beim fast verschlungenen Deckel
+(Knoten 6 und 7 getauscht, eine Ecke 10⁻⁹ versetzt) heben sich nur die
+Flächenvektoren der beiden Dreiecke auf; die Last wirkt gemessen mit
+577 350 N, und die Zeile heißt „in sich verschlungen" (p · A hätte 0,001 N
+genannt). Die Steifigkeit dieses Elements bricht ohnehin mit „negativer
+Jacobi-Determinante" ab. Elemente mit falscher Knotenzahl (`add_element` nimmt
+ein hex8 mit sieben Knoten an) übergeht die Prüfung; beim Stapeln der Knoten
+warfen sie `check()` in der ersten Fassung mit `ValueError` um, statt eine
+Liste zurückzugeben (Gegenprüfung, 23.09.2026).
 * Temperatur: gleichmäßige Änderung ΔT (Stäbe, Schalen, Volumen) und
   Temperaturdifferenz über die Stabhöhe ΔT_z (Krümmung α ΔT_z / h). Die
   Anfangsdehnung wird bei der Spannungsrückrechnung abgezogen.
@@ -5475,6 +5495,334 @@ nach neun Minuten. `diagnose.abnahme(model)` prüft:
 | Knoten im Rechennetz ohne Element | 0 | die Elementliste |
 | Formgüte des schlechtesten Elements je Körper | ≥ 0,05 (`ABNAHME_ELEMENTGUETE`) | `netzguete.guete` |
 | Randtreue je Körper | ≥ 99 % (`ABNAHME_RANDTREUE`) | `Volumenkoerper.randtreue` |
+| Volumenbilanz je Körper | ≤ 0,5 % (`ABNAHME_VOLUMENBILANZ`), an windschiefen Flächen zuzüglich Σ A · Abstand der Netzseiten | `elementvolumina` gegen `_polyederhuelle` |
+| Seiten im Inneren (FEHLER) / Lücke im Netzrand (WARNUNG, über 0,5 % des Körpers FEHLER) / Riss im Netz, Netzrand neben der Hülle (WARNUNG) | 0 | freie Elementseiten gegen die Randflächen, Abstand ≤ 1 % der Seitengröße (`ABNAHME_HUELLABSTAND`), an windschiefen Flächen zuzüglich der örtlichen Sehnengrenze (`_sehnengrenze`, `ABNAHME_SCHIEF_RINGE`) und nur in Richtung der Fläche (`ABNAHME_SCHIEF_RICHTUNG`); Gruppen im Inneren: `_gruppen_im_inneren` (Riss: t/L ≤ 5 % `ABNAHME_RISS_DICKE`, t ≤ 0,65 · Dicke der Nachbarn `ABNAHME_RISS_NACHBAR`, kein verdrehtes Element, keine doppelten Knoten) |
+
+**Volumenbilanz und freie Seiten gegen die Randflächen** (22.09.2026). Ein
+Sechsflächner, dessen Deckel um eine Ecke verdreht ist (4, 5, 6, 7 → 5, 6, 7,
+4), ist ein gültiger Körper, nur ein anderer als der gemeinte: det J an allen
+acht Gaußpunkten positiv, skalierte Jacobi-Determinante 0,707, Volumen 0,6667
+statt 1,0. Elementseitig ist er nicht zu finden. Gefunden wird er am Vergleich
+des Netzes mit den **Randflächen** des Körpers:
+
+* **Netzvolumen** V_N = Σ_e Σ_g w_g |det J_e(ξ_g)| — dieselbe Summe wie
+  `solid.solid_volume`, aber gestapelt je Elementart: je Gaußpunkt ein Produkt
+  dN_gᵀ X über alle Elemente und eine ausgeschriebene 3 × 3-Determinante
+  (größte Abweichung zu `solid_volume` 2,2 · 10⁻¹⁶ an je drei verzerrten
+  Elementen aller sieben Volumentypen).
+* **Hüllvolumen** V_H = ⅓ Σ_f c_f · A_f aus den Randflächen: jeder Rand als
+  Fächer um den Schwerpunkt seiner Ecken, Öffnungen gegenläufig zum
+  Außenrand, die Flächen über gemeinsame Randkanten gegeneinander gerichtet,
+  dann `mesher3d.huellvolumen`. Für eine ebene Fläche ist der Fächer exakt;
+  für ein nicht ebenes Viereck mit geraden Kanten ist ⅓ c·A (A = ½ d₁ × d₂)
+  genau der Beitrag der bilinearen Fläche — so bildet der Sechsflächner sie
+  ab (seine Knoten liegen darauf; ein 4 × 4 × 4 abgebildetes Netz mit
+  windschiefem Deckel, Ecke 0,2 angehoben, besteht ohne Befund). Der freie
+  Vernetzer legt sein Netz nur genähert darauf, siehe *Sehnen auf
+  windschiefen Flächen* unten. Körper mit krummen Randlinien (Bogen, Kreis, Spline)
+  werden nicht geprüft: ihre Sehnenteilung hängt an der Netzweite, die
+  Abweichung läge in derselben Größe wie das Gesuchte.
+* **Nicht** als Bezug taugt das Randvolumen der freien Elementseiten desselben
+  Netzes: bilinear gerechnet ist es mit V_N identisch (gemessen 1,6667 gegen
+  1,6667 am verdrehten Würfelpaar), gefächert hängt es an der Diagonale
+  (1,3333 oder 2,0000).
+
+Am Würfelpaar 2 × 1 × 1 mit verdrehtem zweitem Würfel: V_N = 1,6667 gegen
+V_H = 2,0 (16,7 %). Zweites Merkmal sind die **freien Seiten, die auf keiner
+Randfläche liegen** (Schwerpunkt der Ecken weiter als 1 % der Seitengröße von
+jeder Randfläche; eben: Abstand zur Ebene und Punkt im Vieleck, bilinear:
+Fußpunkt nach Newton und Sehnengrenze, siehe unten): dort 5 von 12. Sie finden auch
+**ein** verdrehtes Element im Inneren, bei dem die Bilanz nur um ein Drittel
+seines Volumens verschöbe (4 × 4 × 4-Netz: 8 Seiten, das Element mit Nummer).
+Ob der Körper hinter einer solchen Seite weitergeht, sagt die Windungszahl der
+feinen Hülle (windschiefe Flächen in 16 × 16 Teilvierecken) an einem Punkt
+knapp vor ihr (1 % der Seitengröße, auf der vom eigenen
+Element abgewandten Seite — die Tupel in `solid.FLAECHEN` sind gemischt
+orientiert, gerichtet wird deshalb am Elementschwerpunkt): geht er weiter, ist
+es ein FEHLER („Seiten im Inneren", über sie geht keine Kraft); steht die Seite
+über die Hülle hinaus, eine WARNUNG („Netzrand neben der Hülle"). So schnitt der
+freie Vernetzer an einem Prisma mit eckigem Loch eine einspringende Ecke ab:
+3 von 1024 Seiten, Netzvolumen 0,012 % über dem Hüllvolumen (zweimal
+gemessen). Seiten im Inneren sind dagegen nur ein **Riss ohne Weite**
+(WARNUNG, „Riss im Netz", `_gruppen_im_inneren`), wenn sie über gemeinsame
+Kanten eine Gruppe bilden, die
+
+1. **geschlossen** ist: die gerichteten Kanten der Seiten (umlaufend wie ihr
+   Flächenvektor S, vom eigenen Element weg) heben sich auf; was bleibt, ist
+   der Rand, und seine Schleifen spannen zusammen höchstens 10 % der
+   Seitenfläche auf (`ABNAHME_RISS_UFER`, `_randflaeche`), und
+2. **dünn gegen die eigenen Seiten** ist: die mittlere Dicke t = 2 V / Σ A,
+   mit V = |Σ ⅓ (q − c) · S| (c der Schwerpunkt der Seiten), ist höchstens
+   5 % der längsten Kante L der Gruppe (`ABNAHME_RISS_DICKE`),
+3. **dünn gegen die Elemente daneben** ist: t ist höchstens 0,65-mal der
+   Median der Dicken 2 V_e / Σ A_e der Elemente, deren Seiten die Gruppe
+   bilden, je Seite gezählt (`ABNAHME_RISS_NACHBAR`, `_elementdicke`), und
+4. **kein verdrehtes Element und keine doppelten Knoten** enthält: kein
+   Sechsflächner, Keil oder keine Pyramide der Gruppe mit einer Kante, die
+   kein anderes Element hat und nicht auf der Hülle liegt
+   (`_verdrehte_elemente`, dieselbe Prüfung wie bei der Lücke im Netzrand),
+   und keine zwei Knoten der Seiten im Inneren mit verschiedener Nummer am
+   selben Ort (`ABNAHME_FUGENNAEHE` = 10⁻⁶ m).
+
+Bedingung 2 allein trägt an länglichen Zellen nicht: Die Dicke eines
+Hohlraums folgt der kurzen Seite, L der langen. Gemessen am 23.09.2026, t/L:
+
+| Hohlraum | t/L |
+|---|---|
+| Lücken des freien Vernetzers (30 geschlossene Gruppen der Modelle der Suiten test_mesher3d und test_sweep: Platte mit Bohrung, Keile am feinen Rand, Risse ohne Volumen) | 0 bis 3,31 % einzeln, bis 3,55 % als Haufen aus zehn Seiten |
+| verdrehter Sechsflächner, gleichmäßiges Netz, Zelle 100 × 100 × 100 / 150 / 170 / 200 / 300 mm | 6,90 / 5,42 / 4,95 / 4,37 / 3,09 % |
+| verdrehter Sechsflächner, abgestuftes Netz 5:1, 20:1, 50:1 (je alle 512 inneren Zellen) | 0,47 bis 9,75 % |
+| fehlender Sechsflächner, ebenso | 2,33 bis 33,3 % |
+| fehlender Tetraeder der Kuhn-Zerlegung (sechs je Zelle), gleichmäßig 100 × 100 × 100 bis 300 mm und abgestuft | 0,79 bis 7,97 % |
+| fehlender Tetraeder der Platte mit Bohrung, die 40 kleinsten mit V/L³ über 0,04 (eigenes t/L) | 8,5 bis 12,8 % |
+
+Bedingung 3 misst an der Stelle selbst. In den hex8-Netzen und ihrer
+Kuhn-Zerlegung war der Hohlraum eines fehlenden Elements etwa so dick wie
+seine Nachbarn, auch in länglichen Zellen; im frei vernetzten Tetraedernetz
+nicht immer (Platte mit Bohrung, 34 600 tet4, die beiden letzten Zeilen).
+Gemessen, t durch den Median der Nachbardicke:
+
+| Hohlraum | t / Dicke der Nachbarn |
+|---|---|
+| Lücken des freien Vernetzers (dieselben 30 Gruppen) | 0 bis 0,482 |
+| fehlender Sechsflächner, gleichmäßig 100 × 100 × 100 bis 500 mm und abgestuft wie oben | 1,00 bis 1,01 |
+| fehlender Kuhn-Tetraeder, gleichmäßig und abgestuft wie oben | 0,865 bis 1,07 |
+| verdrehter Sechsflächner, gleichmäßig und abgestuft wie oben | 0,21 bis 2,7 |
+| fehlender Tetraeder der Platte mit Bohrung, die 40 kleinsten mit V/L³ über 0,04 | 0,55 bis 1,34 |
+| fehlender flacher Tetraeder derselben Platte, Elemente 22584 / 2514 / 28444 (eigenes t/L 0,90 / 2,92 / 4,96 %) | 0,100 / 0,390 / 0,529 |
+
+Die Grenze 0,65 liegt zwischen 0,482 und 0,865 (Faktor 1,35 und 1,33). Die
+drei flachen Tetraeder der letzten Zeile liegen unter 0,65 und unter 5 % t/L;
+einzeln entfernt war jeder ein Riss (siehe die Kehrseite unten). Allein
+trägt auch Bedingung 3 nicht: An der Platte mit Bohrung sind die kleinsten
+fehlenden Tetraeder kleiner als ihre Nachbarn (bis 0,55), dort trennt t/L. Und
+den verdrehten Sechsflächner trennt keines der beiden Maße, er wird an seiner
+Kante erkannt (Bedingung 4). Ebenso ein Element, das an Knoten losgelöst ist:
+Erkannt wird es an den doppelten Knoten (Bedingung 4). Gemessen mit allen
+vier Bedingungen, alle FEHLER „Seiten im Inneren“: die verdrehten und
+fehlenden Sechsflächner und Kuhn-Tetraeder der beiden Tabellen, verdrehte
+Sechsflächner unter einem windschiefen Deckel (324 Fälle: Abstufung 1:1, 5:1,
+20:1, 50:1, Ecke um 0,3, 0,5 und 1,0 m angehoben, neun Zellen der beiden
+obersten Lagen, drei Verdrehungen), die 40 kleinsten fehlenden Tetraeder der
+Platte mit Bohrung und Elemente, die an Knoten losgelöst sind: im
+gleichmäßigen 8 × 8 × 8-Netz jeder der sechs Kuhn-Tetraeder einer inneren
+Zelle und einer Zelle an der Seite x = 0 an einem bis vier Knoten, der
+Sechsflächner innen an einem bis vier und an allen acht Knoten, an der Seite
+x = 0 an einem, zwei, vier und acht Knoten (dort mit der Bedingung „keine
+doppelten Knoten“ der Lücke im Netzrand, unten). Die Gruppen der Suiten
+test_mesher3d und test_sweep geben dieselben Befunde wie vorher, ebenso die
+Anwendermodelle modell.json (eine WARNUNG Riss 4, Hohlraum 3,6e-19 m³) und
+drehlager.json (keiner).
+
+Die Kehrseite: Fehlt ein Tetraeder, der selbst so flach ist wie die, die der
+Vernetzer aussortiert, ist auch das ein Riss. Einzeln entfernt am frei
+vernetzten Würfel mit um 0,5 m angehobener Ecke (h 0,25, 1483 tet4) bei 20 von
+541 inneren Tetraedern, an der Platte mit Keilen (2701 tet4) bei 75 von 947,
+an der Platte mit Bohrung bei 4 von 40 zufällig gezogenen und bei den 15
+flachsten (eigenes t/L 0,44 bis 0,71 %). Die so entfernten Tetraeder hatten
+ein eigenes t/L von höchstens 4,98 %; jeder entfernte Tetraeder mit eigenem
+t/L über 5 % war in diesen Messungen ein FEHLER.
+
+Rand der Gruppen des Vernetzers 0 bis 5,6 % der Seitenfläche. Offene Gruppen:
+drei Würfel in einer Reihe mit verdrehtem mittlerem 41 %, verdrehter Boden
+26 %, verdrehtes Eckelement 30 %, eine Trennfläche aus doppelten Knoten, die
+bis an die Hülle geht, 100 % (ein Ufer ohne Gegenüber). Ist dagegen nur ein
+Sechsflächner im Inneren an den vier Knoten einer Seite losgelöst, ist die
+Gruppe geschlossen und hat kein Volumen; das fängt Bedingung 4. Die Summe
+der Flächenvektoren taugt als Merkmal nicht: in der Reihe heben sich die
+vordere und die hintere Öffnung auf (|Σ S| = 0, scheinbares Volumen 0).
+
+Die erste Fassung (22.09.2026) verlangte Ebenheit auf 1 % des
+Seitendurchmessers; die Hohlräume sind aber 1,7 bis 11 % dick und standen als
+FEHLER da (Platte mit Bohrung, 34 600 tet4: 8 Seiten; Keile am feinen Rand,
+2701 tet4: 4 Seiten). Die zweite Fassung (3f5ae87) ließ V ≤ n · FLACH · h_max³
+zu, mit h_max der größten Elementdiagonale im ganzen Körper — in abgestuften
+Netzen so viel, dass ein verdrehter Sechsflächner (50:1, Hohlraum 448 mm³)
+und jeder der 40 fehlenden Tetraeder an der Platte mit Bohrung als Riss
+durchgingen (Gegenprüfung, Mangel 1). Die dritte Fassung (e188334) hatte nur
+die Bedingungen 1 und 2. Sie hielt t/L für ein Maß „nur an der Gruppe selbst,
+nicht an der Abstufung" und hatte den verdrehten Sechsflächner nur an der
+Würfelzelle gemessen (6,90 %). In länglichen Zellen ging er als Riss durch
+(Zelle 100 × 100 × 200 mm: „WARNUNG Riss im Netz 8 … Der Körper stimmt", keine
+Rückfrage vor dem Rechnen; abgestuft 50:1: 357 von 512), ebenso fehlende
+Sechsflächner (72 von 512) und Kuhn-Tetraeder (340 von 512) und verdrehte
+Elemente unter windschiefem Deckel (75 von 324). Das war die zweite
+Gegenprüfung vom 23.09.2026, Mangel 1.
+
+Zwei Hohlräume, die sich nur an einer Kante berühren (dort liegen vier
+Seiten), werden getrennt beurteilt — aber nur, wenn jedes Teil für sich
+geschlossen ist. An der Platte mit Bohrung berührte ein fehlender Tetraeder
+(4,27e-10 m³) eine Lücke des Vernetzers (3,4e-11 m³); zusammengezählt war
+t/L = 4,8 %, ein Riss. Ohne die Bedingung zerfiel dagegen ein Haufen aus
+15 Seiten (Rand 5,6 %) in drei geschlossene und zwei offene Stücke, und
+3 Seiten wurden ein FEHLER.
+
+**Lücke im Netzrand** (23.09.2026, Gegenprüfung Mangel 3). Ist eine Gruppe von
+Seiten im Inneren offen, und liegt jede ihrer Randschleifen auf der Hülle, fehlt
+dem Netz an der Oberfläche ein Stück. Auf der Hülle heißt (`_schliesspunkt`):
+Jede Kante der Schleife liegt in einer Randfläche, eben oder bilinear (dann
+gilt die Tangentialebene an der Kantenmitte). Es gibt einen Punkt p₀ auf all
+diesen Ebenen (an einer Kante des Körpers auf der Kante, in einer Ecke in der
+Ecke), und der Fächer von p₀ über die Schleife liegt auf der Hülle. Das
+Volumen ist dann V = |Σ (q − p₀) · S − Σ (p₀ − c) · A_Schleife| / 3, wobei
+die Fächer auf den Ebenen durch p₀ nichts beitragen. Dazu zählen Seiten, die
+über die Hülle hinausstehen, wenn der Rand der Gruppe erst mit ihnen auf der
+Hülle liegt. Gezählt wird dann nur, was im Körper fehlt. Am T-Prisma (h 0,1)
+an der einspringenden Kante fehlen 2,43e-5 m³, und 1,26e-5 m³ Netz stehen in
+die Aussparung; die Bilanz sind 1,17e-5 m³. Keine Lücke ist die Gruppe,
+
+* wenn eines ihrer Elemente **verdreht** ist (`_verdrehte_elemente`): ein
+  Sechsflächner, Keil oder eine Pyramide mit einer Kante, die kein anderes
+  Element des Körpers hat und die nicht auf der Hülle liegt. Beim verdrehten
+  Sechsflächner laufen die Seitenkanten über die Diagonalen der
+  Nachbarseiten. Dass beide Knoten auch in einem Nachbarn stehen, genügt
+  darum nicht als „gemeinsame Kante": So galt im ersten Entwurf das verdrehte
+  Eckelement eines 3 × 2 × 2-Blocks als Lücke. Tetraeder bleiben außen vor:
+  Jede Folge von vier Knoten ist derselbe Tetraeder, und ein Netz mit Lücke
+  hat Kanten, die nur noch ein Element trägt;
+* wenn ihre Seiten **doppelte Knoten** haben (wie Bedingung 4 des Risses,
+  gesucht unter allen Seiten im Inneren): Ein Element an der Oberfläche, das an Knoten losgelöst ist, **kann**
+  offene Gruppen zurücklassen, deren Rand auf der Hülle liegt, obwohl nichts
+  fehlt – gemessen nur bei bestimmten Knotenmengen: der Kuhn-Tetraeder 164
+  (ebenso 165) erst, wenn mindestens zwei seiner Hüllknoten losgelöst sind,
+  der Tetraeder 162 derselben Zelle bei keiner der 15 Mengen, der
+  Sechsflächner 27 bei 39 von 163 Mengen, an einem einzelnen Knoten nie. Gemessen am Kuhn-Tetraeder 2 der Zelle 27
+  an der Seite x = 0 des gleichmäßigen 8 × 8 × 8-Netzes (Element 164), an
+  seinen drei Knoten auf der Hülle oder an allen vier losgelöst: zwei Gruppen
+  mit je dem Volumen des Elements (326 cm³). Mit dieser Bedingung ist das
+  ein FEHLER „Seiten im Inneren 6“, ebenso der Sechsflächner der Zelle 27 an
+  allen acht Knoten (10 Seiten);
+* wenn sie **kein Volumen** hat (t/L ≤ 5 %, Bedingung 2 des Risses): ein
+  Ufer, dessen Rand auf der Hülle liegt, ist ein Schnitt;
+* wenn sich kein p₀ findet: Die Schleife um einen Körper, den doppelte Knoten
+  zerschneiden, läuft über gegenüberliegende Flächen.
+
+Die Lücken eines Körpers sind eine WARNUNG mit Ort (Mitte der größten
+Schleife), Volumen und Anteil am Körper. Ein FEHLER werden sie, wenn sie
+zusammen mehr als `ABNAHME_VOLUMENBILANZ` = 0,5 % des Körpers ausmachen.
+Gemessen an den Netzen des eigenen Vernetzers mit Lücke (L-, T- und
+U-Prismen, Standardweg): Lücken von 0,006 bis 0,113 % des Körpers. Der
+Text nennt die Abhilfen, die an diesen fünf Prismen gemessen halfen (Sweep,
+gmsh, Netgen: 5 von 5; andere
+Ziellänge 3 bis 4 von 5; MMG3D 0 von 5), und dass neu vernetzen mit denselben
+Einstellungen dasselbe Netz ergibt: Der Vernetzer rechnet mit fester Saat,
+und gemessen wurden dieselbe Elementzahl und derselbe Befund. Das gilt nur
+für Netze, die unverändert vom eigenen Vernetzer stammen; der Text rät darum
+wie bei „Seiten im Inneren" und beim Riss, ein importiertes oder von Hand
+geändertes Netz neu zu vernetzen. Gemessen (zweite Gegenprüfung, Mangel 4):
+L-Prisma, h = 0,12, 6173 tet4 ohne Befund; ein Tetraeder mit einer Seite im
+Deckel mit `Model.elemente_loeschen` entfernt (so löscht auch „Elemente
+löschen" in der Oberfläche) ergibt eine Lücke von 115 cm³, neu vernetzt mit
+denselben Einstellungen über `mesher.modell_vernetzen` sind es wieder 6173 tet4
+ohne Befund. Dieser Weg entfernt die Knoten des alten Netzes
+(`Model.netzknoten_loeschen`); „Netz → Vernetzen" in der Oberfläche
+(`gui.main._vernetzen`) löscht nur die Elemente. So nachgestellt, ohne Qt:
+6173 tet4, aber 1229 Knoten ohne Element, FEHLER. Einen Hohlraum,
+der ringsum von Nachbarseiten eingeschlossen ist, meldet die Abnahme
+weiter als „Seiten im Inneren", auch wenn er die Oberfläche an einer Kante
+berührt. Gemessen am Würfel mit um 0,5 m angehobener Ecke, frei mit h = 0,1:
+4 Seiten in der Ecke (1|1|1,5). Die Ursache der Lücken im Vernetzer steht im
+Befund an die Vernetzer-Sitzung vom 23.09.2026: Am L-Prisma (h = 0,25)
+zählt `innen()` einen Strahl, der die Kante zweier Hülldreiecke trifft,
+doppelt. Die entfernten Kappen haben dort 0 m³.
+
+Freie Seiten werden über die sortierten Eckennummern gefunden, in zwei int64
+gepackt und mit `np.lexsort` sortiert.
+
+**Sehnen auf windschiefen Flächen** (Nachbesserung 23.09.2026). Ein
+Tetraedernetz liegt auf einer bilinearen Fläche auf Sehnen, und der freie
+Vernetzer setzt Knoten auf Sehnen seines groben Dreiecksnetzes
+(`huelle_verfeinern` halbiert Hülldreiecke an der längsten Kante; der neue
+Punkt liegt auf dem groben Dreieck). Am Würfel 1 × 1 × 1 mit um dz angehobener Deckelecke (eine
+Bodenkante geteilt, damit er frei vernetzt wird) liegen die Deckelknoten bis
+4,65 / 7,55 / 6,55 / 27,0 mm neben der Fläche (dz = 0,3 / 0,5 / 1,0 / 1,0 bei
+h = 0,25 / 0,25 / 0,25 / 0,5); bei dz = 0,5 knapp unter dz · h² / 4 =
+7,81 mm, der Abweichung einer Zellendiagonale in ihrer Mitte. Die erste Fassung meldete diese richtigen Netze — jede innere Seite
+genau zweimal vorhanden — als FEHLER: 2 bis 53 „Seiten im Inneren", bei
+dz = 1,0 und h = 0,5 dazu „Volumenbilanz 0,782 %" (Gegenprüfung). Drei Gründe,
+drei Änderungen:
+
+* Die Windungszahl rechnete gegen den groben Fächer der windschiefen Fläche,
+  der bis |d| / 16 neben ihr liegt (d = x₀ − x₁ + x₂ − x₃; 31,25 mm bei
+  dz = 0,5 — die Seitenschwerpunkte lagen −0,87 bis 5,21 mm daneben). Jetzt
+  rechnet sie gegen die Fläche in 16 × 16 Teilvierecken, jedes als Fächer um
+  seine Mitte (Abweichung ≤ |d| / 4096).
+* Eine flache Seite über die Parameterweiten Δu, Δv weicht um höchstens
+  |d| Δu Δv / 4 von der Fläche ab, und Δu, Δv ≤ D / σ_min (σ_min kleinster
+  Singulärwert von [x_u, x_v] auf 9 × 9 Punkten). Eine Seite gilt als auf der
+  windschiefen Fläche, wenn Schwerpunkt **und Ecken** höchstens 1 % ihres
+  Durchmessers plus s_b H² danebenliegen, s_b = |d| / (4 σ_min²). H ist
+  **örtlich**: der größte Seitendurchmesser unter den Seiten dieser Fläche,
+  die höchstens drei Ringe (Nachbarn über gemeinsame Knoten) entfernt sind
+  (`ABNAHME_SCHIEF_RINGE`, `_ringmax`). Gezählt werden dabei nur Seiten, die
+  eine Vorauswahl bestehen: Schwerpunkt nicht weiter als s_b (2 D_e)² daneben
+  (D_e die Diagonale des eigenen Elements) und die Richtung stimmt. Die Knoten
+  liegen auf Sehnen des groben Netzes, das größer ist als die Seiten, die
+  daraus werden. Am freien Würfel (dz 0,3 / 0,5 / 1,0 bei h 0,25, dz 1,0 bei
+  h 0,5, dz 0,3 und 1,0 bei h 0,1), Ecken-Abstand weniger 1 % durch s_b H²:
+  mit H aus der eigenen Seite bis 1,83, aus einem Ring 1,33, aus zwei 1,21,
+  aus drei 0,46. Die Grenze liegt dort bei dz = 0,5 zwischen 13,2 und
+  19,7 mm, gegen Ecken bis 7,55 mm.
+* Eine Seite auf der Fläche muss auch in ihre Richtung zeigen: der Winkel
+  zwischen Seite und Fläche (Normale am Fußpunkt ihres Schwerpunkts) höchstens
+  arctan(0,577 + 2 s_b D_e) (`ABNAHME_SCHIEF_RICHTUNG`, 30° und mehr); 2 s_b D
+  ist, wie weit sich die Flächennormale über eine Sehne der Weite D dreht.
+  Gemessen: Seiten richtiger Netze bis 9,7° (frei, dz 1,0, h 0,5), abgebildete
+  0,0°; die Seiten verdrehter Elemente unter dem Deckel abgestufter Netze
+  (1:1, 20:1, 50:1) 56,9 bis 89,9°.
+
+  Die zweite Fassung (3f5ae87) nahm als D den größten Seitendurchmesser der
+  **ganzen** Fläche und keine Richtung. Am abgestuften Netz (20:1, Deckel
+  z = 1 + 0,5 x y, alle Lagen bilinear, also exakt) lag die Grenze so bei rund
+  24 mm, und die 8 Seiten eines verdrehten Elements der obersten Lage
+  (Ecken 0 und 14,8 mm daneben, 81 bis 90° gegen den Deckel) galten als
+  Deckel. Das war kein Befund, bei 50:1 ebenso (Gegenprüfung, Mangel 2).
+  Heute: FEHLER „Seiten im Inneren 8" für die Elemente 119 und 559 bei 20:1
+  und 50:1. Die Ecken zählen mit, weil am Schwerpunkt allein eine 50-mm-Beule
+  verschwand (die Schwerpunkte ihrer vier Seiten wandern nur 12,5 mm). Der
+  Preis: kleinere Abweichungen des Netzrands meldet die Abnahme an
+  windschiefen Flächen nicht. Am abgebildeten 4 × 4 × 4-Netz (dz = 0,5) bleibt
+  eine Beule von 25 mm ungenannt, eine von 30 mm ist eine WARNUNG; bei
+  dz = 1,0 bleibt auch eine von 100 mm ungenannt (nachgemessen mit der
+  örtlichen Grenze). Ein fehlender Tetraeder am windschiefen Deckel des freien
+  Netzes ist eine Lücke im Netzrand (2,892e-4 m³ gemeldet, der Tetraeder hat
+  2,841e-4 m³; die Lücke reicht bis zur Fläche, der Tetraeder nur bis zu
+  seiner Sehne).
+* Die Volumenbilanz lässt zu den 0,5 % das Volumen zu, das der Netzrand an
+  windschiefen Flächen erklären kann: Σ A · (größter Abstand von Ecken,
+  Kantenmitten und Schwerpunkt zur Fläche), eine obere Schranke. Gerechnet
+  wird sie nur, wenn die Bilanz über 0,5 % liegt. Bei dz = 1,0 und h = 0,5:
+  0,782 % Abweichung, zugelassen 2,264 %.
+
+Den Fußpunkt auf der bilinearen Fläche sucht ein gestapeltes
+Newton-Verfahren (`_bilinear_fuss`: Start am nächsten Punkt eines
+5 × 5-Rasters, höchstens zwölf Schritte, geklemmt auf das Einheitsquadrat,
+dazu der Abstand zu den vier geraden Randkanten). Gegen eine Zerlegung in
+256 × 256 Teilvierecke liegt er nie weiter als deren eigener Fehler
+|d| / (16 · 256²); er misst einen Punkt der Fläche und ist darum nie kleiner
+als der wahre Abstand. Er ersetzt eine Schleife über 1024 Dreiecke je Fläche
+mit je einem Aufruf von `punkt_dreieck_abstand`.
+
+Laufzeit von `_abnahme_volumenbilanz` an einem abgebildeten Sechsflächner
+(zwei Threads, die Maschine geteilt mit drei weiteren Sitzungen, die Zeiten
+schwanken darum): 64 000 hex8 mit ebenen Flächen 0,16 s, mit sechs
+windschiefen 0,23–0,24 s (in der ersten Fassung 4,5–5,4 s, Gegenprüfung);
+216 000 hex8 eben 0,57–0,74 s, windschief 0,97–1,30 s (erste Fassung
+8,5–8,8 s). Für 1 Mio Elemente **nicht gemessen**; aus 216 000 linear
+hochgerechnet eben 2,6–3,4 s, windschief 4,5–6,0 s. Nach der dritten Fassung
+(örtliche Sehnengrenze, Richtung, Gruppen und Lücken) nachgemessen, alter und
+neuer Stand nacheinander, je dreimal: 64 000 hex8 eben 0,15–0,16 s (alt
+ebenso), windschief 0,23–0,24 s (alt 0,22–0,25 s); 216 000 hex8 eben
+0,54–0,56 s (alt 0,54–0,55 s), windschief 0,74–0,78 s (alt ebenso). Die
+Gruppen im Inneren kosten nur, wo es Seiten im Inneren gibt. Am nicht
+konformen tet4-Netz aus `grid_box` (40 000 Elemente, jede innere Zellseite
+ein Riss, 91 200 Seiten) braucht `_abnahme_netz` 7,6–7,7 s gegen 7,0–7,1 s
+im alten Stand. Mit Dicke der Nachbarn, verdrehten Elementen und doppelten
+Knoten (vierte Fassung) nachgemessen, je viermal: 7,72–7,87 s gegen
+7,59–7,72 s. Die Dicke wird nur für die Elemente an Seiten im Inneren
+gerechnet, die Suche nach doppelten Knoten und verdrehten Elementen nur, wenn
+eine Gruppe sonst ein Riss wäre. Ein Körper mit krummen Randlinien wird an der
+ersten krummen Linie verlassen, bevor ein Element angefasst wird.
 
 **Elemente, die eine Fuge überspannen.** Beim Ausführen einer Fuge werden die
 gemeinsamen Randknoten verdoppelt und die Elemente der gelösten Seite auf die

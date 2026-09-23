@@ -5083,6 +5083,106 @@ class Model:
             self.bemassung_einstellung = BemassungEinstellung()
         return self.bemassung_einstellung
 
+    def _flaechenlasten_ohne_seitenflaeche(self, lc, _sl) -> list[str]:
+        """WARNUNG je Flaechenlast, deren Volumenseite praktisch keine Flaeche hat.
+
+        Eine solche Last wirkt mit 0 N: assemble.solid_face_pressure gibt fuer
+        eine Seitennormale der Laenge null den Nullvektor zurueck. Fuer eine
+        Flaeche ohne Inhalt ist das richtig und bleibt so - eine Ausnahme
+        stuende gegen 940324f ("ein entartetes Element darf die Rechnung nicht
+        stoppen"). Still war nur, dass die Last mit vollem p im Bericht steht.
+        Die Begruendung in 52322e5, check() melde das Element ohnehin als
+        entartet, haelt nicht fuer jeden Fall: ein Sechsflaechner, dessen
+        Deckel mit **eigenen** Knotennummern zu einer Linie zusammengelegt ist,
+        behaelt ein Volumen (die Entartungspruefung misst die Streumatrix
+        aller acht Ecken), seine Steifigkeit laesst sich aufstellen - und die
+        Last auf dem Deckel ergab gemessen 0 N ohne eine Zeile in check().
+
+        Die Flaeche wird wie in solid_face_pressure aus den Ecken der Seite
+        gebildet (Viereck: beide Dreiecke). Die Grenze ist relativ zur
+        Elementgroesse d, der Diagonale der Huellbox: A <= ENTARTET_REL * d^2,
+        also eine Seite, die schmaler ist als ein Zehnmillionstel des
+        Elements. Gerechnet wird je (Elementart, Seite) im Block, denn aus
+        Objektlasten entstehen tausende Seitenlasten je Lastfall.
+        """
+        from .diagnose import ENTARTET_REL
+        from .spannungen import dezimal as _dezimal
+        gruppen: dict = {}
+        for j, l in enumerate(lc.face_loads):
+            i = int(l.elem)
+            if not 0 <= i < len(self.elements):
+                continue
+            el = self.elements[i]
+            if el.typ not in _EL.VOLUMEN_TYPEN:
+                continue
+            seite = int(l.face)
+            if not 0 <= seite < len(_sl.FLAECHEN[el.typ]):
+                continue                    # steht oben schon als FEHLER da
+            if any(not 0 <= int(n) < self.nn for n in el.nodes):
+                continue                    # steht oben schon als FEHLER da
+            # Falsche Knotenzahl (add_element nimmt ein hex8 mit sieben Knoten
+            # an): keine Seite zu bilden, und gestapelt wuerden die Knoten zu
+            # einem ungleichmaessigen Feld - np.array warf dann ValueError, und
+            # check() gab statt der Liste eine Ausnahme (Gegenpruefung,
+            # 23.09.2026). Hier wird die Seite nicht beurteilt.
+            try:
+                if len(el.nodes) != _sl.knotenzahl(el.typ):
+                    continue
+            except ValueError:
+                continue
+            gruppen.setdefault((el.typ, seite), []).append(j)
+        aus = []
+        for (typ, seite), jdx in gruppen.items():
+            K = np.array([[int(n) for n in self.elements[int(lc.face_loads[j].elem)].nodes]
+                          for j in jdx], dtype=int)
+            X = self.nodes[K]                                  # (n, Knoten, 3)
+            fn = list(_sl.FLAECHEN[typ][seite])
+            P = X[:, fn[:4] if len(fn) in (4, 8) else fn[:3]]
+            nvec = np.cross(P[:, 1] - P[:, 0], P[:, 2] - P[:, 0])
+            if P.shape[1] == 4:
+                nvec = nvec + np.cross(P[:, 2] - P[:, 0], P[:, 3] - P[:, 0])
+            A = 0.5 * np.linalg.norm(nvec, axis=1)
+            d = np.linalg.norm(X.max(axis=1) - X.min(axis=1), axis=1)
+            for k in np.nonzero(A <= ENTARTET_REL * d * d)[0]:
+                l = lc.face_loads[jdx[int(k)]]
+                # Zahlen ausgeschrieben (spannungen.dezimal), nie 2.39e+03
+                if A[k] <= 0.0:
+                    was = (f"Seite {seite} hat keine Fläche (ihre Ecken liegen auf einer "
+                           "Linie oder in einem Punkt, oder die beiden Dreiecke des "
+                           "Vierecks heben sich auf) - die Last wirkt mit 0 N")
+                else:
+                    # Die Kraft so, wie der Lastvektor sie aufstellt, nicht als
+                    # p*A: solid_face_pressure integriert |dA| ueber die Seite.
+                    # Beim schmalen Deckel ist das p*A (1e-9 breit: 0,001 N),
+                    # beim fast verschlungenen (6/7 getauscht, eine Ecke 1e-9
+                    # versetzt) heben sich nur die Flaechenvektoren auf, die
+                    # Last wirkt mit gemessen 577 350 N - p*A nannte 0,001 N.
+                    from .assemble import solid_face_pressure
+                    el = self.elements[int(l.elem)]
+                    fk = solid_face_pressure(self, el, l.p, seite, l.direction)
+                    kraft = float(np.linalg.norm(fk.reshape(-1, 3).sum(axis=0)))
+                    if kraft <= 2.0 * abs(float(l.p)) * float(A[k]):
+                        was = (f"Seite {seite} hat praktisch keine Fläche (schmaler als "
+                               "ein Zehnmillionstel des Elements) - die Last wirkt mit "
+                               f"nur {_dezimal(kraft)} N")
+                    else:
+                        # Quadratische Seiten (6 und 8 Knoten) koennen auch ueber
+                        # die Kantenmitten gewoelbt sein - dort nicht
+                        # „verschlungen" behaupten
+                        grund = ("in sich verschlungen (die beiden Dreiecke des "
+                                 "Vierecks zeigen gegeneinander, Knoten vertauscht)"
+                                 if len(fn) == 4 else
+                                 "verschlungen oder über die Kantenmitten gewölbt")
+                        was = (f"die Ecken von Seite {seite} spannen fast keine Fläche "
+                               f"auf, die Seite ist aber {grund} - die Last wirkt mit "
+                               f"{_dezimal(kraft)} N")
+                aus.append(f"WARNUNG: Lastfall '{lc.name}': Flächenlast auf Element "
+                           f"{l.elem} ({typ}): {was}, steht aber mit p = "
+                           f"{_dezimal(float(l.p) / 1e3)} kN/m² im Bericht. Die Knoten "
+                           "der Seite prüfen (zusammengelegt oder vertauscht) oder die "
+                           "Last auf eine Seite mit Fläche legen")
+        return aus
+
     def check(self) -> list[str]:
         """Einfache Modellpruefung. Gibt Liste von Warnungen/Fehlern zurueck."""
         msgs = []
@@ -5206,6 +5306,7 @@ class Model:
                     msgs.append(f"FEHLER: Lastfall '{lc.name}': Flaechenlast auf "
                                 f"Element {l.elem}: Richtung ist der Nullvektor - "
                                 "die Last wirkt mit 0 N")
+            msgs += self._flaechenlasten_ohne_seitenflaeche(lc, _sl)
         for cs in self.contact_supports:
             # Ein einseitiges Lager ohne Richtung kann nie tragen: die Normale
             # wird zu (0,0,0), die Bedingung traegt keinen Freiheitsgrad, und
