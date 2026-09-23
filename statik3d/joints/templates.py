@@ -218,7 +218,8 @@ class EndPlate(JointTemplate):
         # Keine Rippen vorschlagen: weder design() noch build() setzt sie an.
         # Bis 23.09.2026 kamen hier bei |M_y| > 0,6 f_y W_el,y zwei Rippen
         # hinzu, die an keinem Nachweis etwas aenderten (B096; IPE 400,
-        # V_z = 90 kN: ab 250 kNm, eta mit und ohne Rippen gleich).
+        # S355, V_z = 90 kN, N = 0: ab 250 kNm, eta mit und ohne Rippen
+        # gleich, bei 700 kNm 2,099 - auch diese Rippen kamen von hier).
         a.hinweise.append(f"Vorschlag aus {sec.name}: Zugkraft im Flansch "
                           f"F_t = {Ft / 1e3:.0f} kN, {n} Schrauben {a.bolt.size}")
         a.improve(N=N, Vz=Vz, My=My)
@@ -248,9 +249,13 @@ class EndPlate(JointTemplate):
                 # Die Flanschkraft uebersteigt b t_f f_y/gamma_M0 des
                 # Traegerflansches - das ist das Profil, nicht die Kopfplatte:
                 # Blech, Schrauben und Naehte aendern diesen Nachweis nicht.
-                # Bis 23.09.2026 setzte der Vorschlag hier 2 Rippen, die der
-                # Nachweis nicht ansetzt (B096; IPE 400, 700 kNm: eta = 2,099
-                # mit und ohne Rippen). Darum Abbruch mit Klartext.
+                # Bis 23.09.2026 setzte improve hier 2 Rippen, wenn propose
+                # noch keine gesetzt hatte; der Nachweis setzt sie nicht an
+                # (B096). Gemessen am Stand ec6448c, IPE 400, S355,
+                # V_z = 90 kN: bei N = -3000 kN und M_y = 100 kNm kamen die
+                # Rippen von hier, eta = 1,300 mit und ohne Rippen; bei
+                # N = 0 und -100 kN, 100 bis 700 kNm dagegen nie, dort kamen
+                # sie aus propose. Darum Abbruch mit Klartext.
                 c = next(x for x in j.checks if x.name == wo)
                 self.hinweise.append(
                     f"Der Druckflansch des Trägers ist überlastet: Flanschkraft "

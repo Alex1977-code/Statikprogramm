@@ -565,7 +565,12 @@ def test_kopfplatte_ohne_scheinrippen():
     def nachweise(t, **f):
         return [(c.name, c.E, c.R) for c in t.design(**f).checks]
 
-    # 250 kNm: Rippen kamen aus propose, 700 kNm zusaetzlich aus improve
+    # 250 kNm deckt die Rippen aus propose ab. 700 kNm faengt zusaetzlich
+    # Rippen aus improve ab, falls sie dort wieder gesetzt wuerden: ohne
+    # Rippen aus propose erreicht improve dort den Druckflansch-Zweig. Am
+    # Stand ec6448c kamen die Rippen auch bei 700 kNm aus propose. improve
+    # setzte sie bei N = 0 und -100 kN, 100 bis 700 kNm nie, wohl aber bei
+    # N = -3000 kN mit M_y = 0, 50 und 100 kNm (gemessen 24.09.2026).
     for My in (250e3, 700e3):
         f = dict(N=0.0, Vz=90e3, My=My)
         a = EndPlate.propose(m, elem=e_tr, end=1, **f)
