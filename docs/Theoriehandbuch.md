@@ -5402,9 +5402,12 @@ die Aussparung; die Bilanz sind 1,17e-5 m³. Keine Lücke ist die Gruppe,
   Jede Folge von vier Knoten ist derselbe Tetraeder, und ein Netz mit Lücke
   hat Kanten, die nur noch ein Element trägt;
 * wenn ihre Seiten **doppelte Knoten** haben (wie Bedingung 4 des Risses,
-  gesucht unter allen Seiten im Inneren): Ein Element an der Oberfläche, das
-  an Knoten losgelöst ist, lässt offene Gruppen zurück, deren Rand auf der
-  Hülle liegt, obwohl nichts fehlt. Gemessen am Kuhn-Tetraeder 2 der Zelle 27
+  gesucht unter allen Seiten im Inneren): Ein Element an der Oberfläche, das an Knoten losgelöst ist, **kann**
+  offene Gruppen zurücklassen, deren Rand auf der Hülle liegt, obwohl nichts
+  fehlt – gemessen nur bei bestimmten Knotenmengen: der Kuhn-Tetraeder 164
+  (ebenso 165) erst, wenn mindestens zwei seiner Hüllknoten losgelöst sind,
+  der Tetraeder 162 derselben Zelle bei keiner der 15 Mengen, der
+  Sechsflächner 27 bei 39 von 163 Mengen, an einem einzelnen Knoten nie. Gemessen am Kuhn-Tetraeder 2 der Zelle 27
   an der Seite x = 0 des gleichmäßigen 8 × 8 × 8-Netzes (Element 164), an
   seinen drei Knoten auf der Hülle oder an allen vier losgelöst: zwei Gruppen
   mit je dem Volumen des Elements (326 cm³). Mit dieser Bedingung ist das

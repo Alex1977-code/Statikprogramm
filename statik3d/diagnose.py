@@ -1285,8 +1285,8 @@ ABNAHME_RISS_NACHBAR = 0.65
 #:   bis 2,7-mal so dick wie seine Nachbarn (Median), je nach Abstufung.
 #: * **keine doppelten Knoten**: zwei Knoten der Seiten im Inneren mit
 #:   verschiedener Nummer am selben Ort (:data:`ABNAHME_FUGENNAEHE`). Ein
-#:   Sechsflaechner, der an den vier Knoten einer Seite losgeloest ist,
-#:   umschliesst mit den Nachbarn einen Hohlraum ohne Volumen (zweite
+#:   Sechsflaechner IM INNEREN, der an den vier Knoten einer Seite
+#:   losgeloest ist, umschliesst mit den Nachbarn einen Hohlraum ohne Volumen (zweite
 #:   Gegenpruefung, Mangel 2: WARNUNG Riss 10), hat an diesen Knoten aber
 #:   keine Verbindung. Gesucht wird auch fuer die Luecke im Netzrand (siehe
 #:   _gruppen_im_inneren).
@@ -1615,8 +1615,11 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T) -> t
             kandidaten.append((idx, V_g))
     # Doppelte Knoten und verdrehte Elemente sind kein Riss, wie duenn der
     # Hohlraum auch ist (Mass-unabhaengig, siehe ABNAHME_RISS_NACHBAR), und
-    # keine Luecke im Netzrand. Ein Element an der Oberflaeche, das an Knoten
-    # losgeloest ist, bildet offene Gruppen, deren Rand auf der Huelle liegt:
+    # keine Luecke im Netzrand. Ein Element an der Oberflaeche, das an Knoten losgeloest ist, KANN offene
+    # Gruppen bilden, deren Rand auf der Huelle liegt (nur bei bestimmten
+    # Knotenmengen, dritte Gegenpruefung vom 23.09.2026: Tetraeder 164/165 erst ab
+    # zwei losgeloesten Huellknoten, Tetraeder 162 nie, hex8 27 bei 39 von 163
+    # Mengen, an einem Knoten nie). Beispiel:
     # ein Kuhn-Tetraeder an der Seite x = 0 des gleichmaessigen
     # 8 x 8 x 8-Netzes (Element 164), an seinen drei Knoten auf der Huelle
     # oder an allen vier losgeloest, zwei Gruppen mit je dem Volumen des
