@@ -6305,8 +6305,21 @@ damit „Alle **geführten** Nachweise erfüllt – nicht geführt wurden: EC3
 bei `theorie2 = "auto"` und α_cr über der Grenze bleibt die Kombination nach
 5.2.1(3) zulässig linear und unmarkiert (Gegenprobe am Kragarm aus zehn
 Stäben, α_cr = 49,98). Die Alternativen einer Ergebniskombination („EK [k]")
-deckt diese Kur nicht ab. Geprüft in `tests/test_theorie3.py`
-(`test_gescheiterte_kombination_markiert_das_lineare_ergebnis`); an einem
+deckt diese Kur nicht ab, und auch der Verformungsnachweis meldet nichts:
+`gzg._sls_results` übernimmt eine GZG-Kombination ohne `_nur_linear_melden`.
+Gemessen am 24.09.2026 am Stand d9f42db, derselbe Kragarm mit
+Zwangsverformung bzw. erzwungenem `info.fehler`: S1 = 1,0 · LF (SLS_CH)
+nach III. bzw. II. Ordnung mit einer Verformungsgrenze am Endknoten — die
+Tabelle zeigt richtig „I (statt …: nicht gerechnet)", aber `gzg.warnungen`
+ist leer und das Gesamturteil lautet „Alle Nachweise erfüllt."; EK1 mit zwei
+Alternativen nach III. bzw. II. Ordnung — Zellen „III" bzw. „II",
+`_uls_results` liefert „EK1 [1]", „EK1 [2]" ohne Warnung. Den Grund nennt
+in diesen Fällen das Theoriekapitel. Das Benutzerhandbuch nennt beide
+Ausnahmen. Geprüft in
+`tests/test_theorie3.py`
+(`test_gescheiterte_kombination_markiert_das_lineare_ergebnis`; den
+Einklang von Handbuchtext und Programm für beide Ausnahmen prüft
+`test_handbuch_nennt_die_ausnahmen_der_kombinationsmeldung`); an einem
 großen Modell nicht gemessen.
 
 **Ermüdung: ein fehlender Mindestzustand wurde still zu null.** `case_min`

@@ -3802,16 +3802,33 @@ ohne die Zusatzmomente aus der Verformung.
 
 Ebenso die Spalte **Theorie** der Kombinationstabelle — im Kapitel
 Einwirkungen und als eingefügte Tabelle „Kombinationen": Scheitert eine
-Kombination nach II. oder III. Ordnung, bleibt ihre Überlagerung nach
-I. Ordnung stehen, und die Spalte zeigt „I (statt II: nicht gerechnet)" bzw.
-„I (statt III: nicht gerechnet)". Die Nachweise werden mit diesem linearen
-Ergebnis geführt und sagen das: unter den Warnungen des Nachweises steht
-„Kombination … nur nach Theorie I. Ordnung nachgewiesen" mit dem Grund, und
-das Gesamturteil der Zusammenfassung lautet nicht mehr „Alle Nachweise
-erfüllt.", sondern nennt den Nachweis unter „nicht geführt wurden". Bleibt
-eine Kombination bei der Einstellung „automatisch" nach I. Ordnung, weil
-α_cr über der Grenze liegt, ist das kein Scheitern — dort steht weiter „II"
-ohne Warnung.
+gewöhnliche Kombination nach II. oder III. Ordnung — eine GZT- ebenso wie
+eine GZG-Kombination —, bleibt ihre Überlagerung nach I. Ordnung stehen, und
+die Spalte zeigt „I (statt II: nicht gerechnet)" bzw. „I (statt III: nicht
+gerechnet)". Die GZT-Nachweise der Stäbe, Beulfelder, Lasteinleitungen,
+Volumenbereiche und Anschlüsse werden mit diesem linearen Ergebnis geführt
+und sagen das: unter ihren Warnungen steht „Kombination … nur nach Theorie
+I. Ordnung nachgewiesen" mit dem Grund, und das Gesamturteil der
+Zusammenfassung lautet nicht mehr „Alle Nachweise erfüllt." — sind die
+Nachweise sonst erfüllt, nennt es den Nachweis unter „nicht geführt wurden".
+Bleibt eine Kombination bei der Einstellung „automatisch" nach I. Ordnung,
+weil α_cr über der Grenze liegt, ist das kein Scheitern — dort steht weiter
+„II" ohne Warnung.
+
+Nicht gemeldet wird das lineare Ergebnis bisher insbesondere hier:
+
+- Der **Verformungsnachweis** (GZG) rechnet mit dem linearen Ergebnis einer
+  gescheiterten GZG-Kombination ohne Warnung, und das Gesamturteil kann
+  „Alle Nachweise erfüllt." lauten. Die Spalte Theorie der
+  Kombinationstabelle zeigt dabei richtig „I (statt …: nicht gerechnet)".
+- Scheitern die Alternativen einer **Ergebniskombination** („EK1 [1]",
+  „EK1 [2]" …) nach II. oder III. Ordnung, bleiben sie beim linearen
+  Ergebnis und werden so nachgewiesen, ohne Warnung; die Spalte Theorie der
+  Kombinationstabelle zeigt weiter die Einstellung („II" bzw. „III").
+
+In beiden Fällen nennt das Kapitel zur Theorie II. bzw. III. Ordnung den
+Grund. Wer GZG-Kombinationen oder Ergebniskombinationen nach II. oder
+III. Ordnung rechnet, sieht dort nach, ob jede Zeile gerechnet wurde.
 
 ### Verformungsnachweise (GZG)
 

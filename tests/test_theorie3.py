@@ -501,13 +501,105 @@ def test_gescheiterte_kombination_markiert_das_lineare_ergebnis():
           f"α_cr={getattr(info_t, 'alpha_cr', None)} {info.get('theorie')!r} {zellen!r} {warn!r}")
 
 
+def _handbuchabschnitt_kombinationstabelle() -> str:
+    """Der Text des Benutzerhandbuchs zur Spalte Theorie der
+    Kombinationstabelle: ab "Ebenso die Spalte **Theorie** der
+    Kombinationstabelle" bis zur naechsten Ueberschrift."""
+    pfad = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "docs", "Benutzerhandbuch.md")
+    with open(pfad, encoding="utf-8") as f:
+        text = f.read()
+    anfang = text.find("Ebenso die Spalte **Theorie** der Kombinationstabelle")
+    if anfang < 0:
+        return ""
+    ende = text.find("\n#", anfang)
+    return text[anfang:ende if ende > 0 else len(text)]
+
+
+def test_handbuch_nennt_die_ausnahmen_der_kombinationsmeldung():
+    """Das Benutzerhandbuch sagt, was bei einer gescheiterten Kombination
+    gemeldet wird - und nennt die Faelle, in denen es (noch) nicht so ist.
+
+    Die Kur von B132 (d9f42db) meldet das lineare Ergebnis in den
+    GZT-Nachweisen (_uls_results). Ihr Handbuchabsatz sagte aber ohne
+    Einschraenkung "Scheitert eine Kombination nach II. oder III. Ordnung ...
+    Die Nachweise ... sagen das". Gemessen 24.09.2026 am Stand d9f42db,
+    Kragarm aus zwei Staeben mit Zwangsverformung: (1) GZG-Kombination
+    S1 = 1,0·LF nach III mit Verformungsgrenze - Zellen "I (statt III: nicht
+    gerechnet)", aber gzg.warnungen [], Verformungsnachweis mit S1 und
+    Gesamturteil "Alle Nachweise erfüllt."; (2) Ergebniskombination EK1 nach
+    III mit zwei Alternativen - Zellen "III", _uls_results ["EK1 [1]",
+    "EK1 [2]"] ohne Warnung (Gegenpruefung der Kur, Maengel 1 und 2).
+
+    Geprueft wird der Einklang: nennt das Handbuch eine Ausnahme, muss das
+    Programm sie haben, und umgekehrt. Wird die Meldung fuer GZG-Kombinationen
+    oder Ergebniskombinationen nachgeruestet, faellt diese Pruefung durch, bis
+    der Handbuchtext angepasst ist.
+    """
+    from statik3d.ec3.design import _uls_results
+    abschnitt = _handbuchabschnitt_kombinationstabelle()
+    check("Handbuch: Abschnitt zur Spalte Theorie der Kombinationstabelle gefunden",
+          bool(abschnitt), f"{len(abschnitt)} Zeichen")
+
+    # (1) GZG-Kombination nach III mit Zwangsverformung, dazu eine
+    # GZT-Kombination nach I, damit die GZT-Nachweise ohne Warnung laufen
+    m, lc = _kombinationsmodell("I", zwang=True)
+    m.combinations["S1"] = Combination("S1", {lc.name: 1.0}, "SLS_CH", theorie="III")
+    m.add_verformungsgrenze("w", "knoten", knoten=[2], groesse="uz", grenzart="absolut",
+                            wert=1.0)
+    an = solver.solve_all(m, design=True)
+    grund = str(getattr((getattr(an.theorie3, "kombinationen", None) or {}).get("S1"),
+                        "fehler", "") or "")
+    check("GZG S1 nach III mit Zwangsverformung: die Rechnung ist gescheitert",
+          bool(grund), grund[:60])
+    zellen = _theorie_der_kombinationstabellen(m, an, "S1")
+    check("GZG S1: beide Kombinationstabellen 'I (statt III: nicht gerechnet)'",
+          zellen == ["I (statt III: nicht gerechnet)"] * 2, repr(zellen))
+    gz = getattr(an, "gzg", None)
+    gzg_mit_s1 = any(c.kombination == "S1" for c in (getattr(gz, "checks", None) or {}).values())
+    gzg_meldet = any("S1" in w and "Theorie I. Ordnung" in w
+                     for w in (getattr(gz, "warnungen", None) or []))
+    check("GZG S1: der Verformungsnachweis läuft mit S1", gzg_mit_s1,
+          repr({k: c.kombination for k, c in (getattr(gz, "checks", None) or {}).items()}))
+    nennt_gzg = "Verformungsnachweis" in abschnitt
+    check("Handbuch und Programm einig: Verformungsnachweis meldet S1 "
+          f"{'ja' if gzg_meldet else 'nicht'} – Handbuch nennt die Ausnahme "
+          f"{'ja' if nennt_gzg else 'nicht'}",
+          nennt_gzg != gzg_meldet,
+          repr((getattr(gz, "warnungen", None) or [])[:2]))
+
+    # (2) Ergebniskombination nach III mit zwei Alternativen und
+    # Zwangsverformung
+    m, lc = _kombinationsmodell("I", zwang=True)
+    del m.combinations["K1"]
+    ek = Combination("EK1", {}, "ULS", theorie="III")
+    ek.alternativen = [{lc.name: 1.35}, {lc.name: 1.0}]
+    m.combinations["EK1"] = ek
+    an = solver.solve_all(m)
+    kz = getattr(an.theorie3, "kombinationen", None) or {}
+    check("EK1 nach III mit Zwangsverformung: beide Alternativen gescheitert",
+          len(kz) == 2 and all(getattr(v, "fehler", "") for v in kz.values()),
+          repr({k: str(getattr(v, "fehler", ""))[:40] for k, v in kz.items()}))
+    warn: list = []
+    uls = _uls_results(m, an, warnungen=warn)
+    zellen = _theorie_der_kombinationstabellen(m, an, "EK1")
+    ek_meldet = (any("EK1" in w and "Theorie I. Ordnung" in w for w in warn)
+                 or any("statt" in z for z in zellen))
+    nennt_ek = "Ergebniskombination" in abschnitt
+    check("Handbuch und Programm einig: EK1-Alternativen gemeldet "
+          f"{'ja' if ek_meldet else 'nicht'} – Handbuch nennt die Ausnahme "
+          f"{'ja' if nennt_ek else 'nicht'}",
+          nennt_ek != ek_meldet, f"{sorted(uls)} {zellen!r} {warn!r}")
+
+
 def main():
     for t in (test_drehungen, test_kreisbogen, test_elastica, test_seil,
               test_druckstab_II_gegen_III, test_theoriewahl,
               test_gescheiterte_theorie_meldet_sich,
               test_gelungene_theorie_steht_schlicht_in_der_tabelle,
               test_theorie_mit_info_fehler_markiert_das_lineare_ergebnis,
-              test_gescheiterte_kombination_markiert_das_lineare_ergebnis):
+              test_gescheiterte_kombination_markiert_das_lineare_ergebnis,
+              test_handbuch_nennt_die_ausnahmen_der_kombinationsmeldung):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
