@@ -362,8 +362,9 @@ def _load_direction(text: str) -> tuple[Optional[int], str, bool]:
     return axis, ("local" if local else "global"), projected
 
 
-def _formel_zerlegen(text: str) -> tuple[dict[str, float], list[tuple[float, str, int]]]:
-    """'1.35*LF1 + 2*CO3' -> ({'LF1': 1.35}, [(2.0, 'CO', 3)]).
+def _formel_zerlegen(text: str) -> tuple[dict[str, float], list[tuple[float, str, int]],
+                                          list[str]]:
+    """'1.35*LF1 + 2*CO3' -> ({'LF1': 1.35}, [(2.0, 'CO', 3)], []).
 
     Die Verweise behalten ihren Vorfaktor: ein Verweis auf eine andere
     Lastkombination wird mit ihm aufgeloest (siehe Kombinationsschleife).
@@ -373,11 +374,30 @@ def _formel_zerlegen(text: str) -> tuple[dict[str, float], list[tuple[float, str
     darum weg. Gemessen: „LF1 - LF2“ ergab LF1 + LF2, und „LF2 - CO1“ mit
     CO1 = 1,35·LF1 wurde seit der Aufloesung der Verweise still zu
     LF2 + 1,35·LF1 statt LF2 - 1,35·LF1 (Gegenpruefung zu Befund SV10).
+
+    Der dritte Rueckgabewert sind die Teile der Formel, die kein Anteil
+    geworden sind (ohne Leerraum und „+“, die nur verbinden). Bis zum
+    23.09.2026 fielen sie ohne Meldung weg, sobald daneben ein LF-Anteil
+    stand. Gemessen am Stand 6cbc144: „1.35*LC1 + RC1“ ergab LK = 1,35·LF1,
+    „1.35*LF1 + 1.5*Schnee“ ergab 1,35·LF1 und „1.35*(LF1 + LF2)“ ergab
+    LF1 + LF2 - jeweils ohne Protokollzeile. „RC“ ist das englische Kuerzel
+    der Ergebniskombination (wie „CO“ zu „LK“) und wird wie „EK“ als Verweis
+    gelesen; ob RFEM RC oder EK in eine Lastkombinationsformel schreibt, ist
+    an keiner echten Datei gemessen.
     """
     factors: dict[str, float] = {}
     verweise: list[tuple[float, str, int]] = []
-    for m in re.finditer(r"([+-])?\s*(\d+(?:[.,]\d+)?)?\s*\*?\s*(LF|LC|CO|LK|EK)\s*(\d+)",
+    rest: list[str] = []
+    pos = 0
+
+    def luecke(stueck: str) -> None:
+        if re.sub(r"[\s+]", "", stueck):
+            rest.append(stueck.strip())
+
+    for m in re.finditer(r"([+-])?\s*(\d+(?:[.,]\d+)?)?\s*\*?\s*(LF|LC|CO|LK|EK|RC)\s*(\d+)",
                          text, re.IGNORECASE):
+        luecke(text[pos:m.start()])
+        pos = m.end()
         f = C.parse_number(m.group(2)) if m.group(2) else 1.0
         if f is None:
             f = 1.0
@@ -389,7 +409,8 @@ def _formel_zerlegen(text: str) -> tuple[dict[str, float], list[tuple[float, str
             factors[key] = factors.get(key, 0.0) + f
         else:
             verweise.append((f, kind, int(m.group(4))))
-    return factors, verweise
+    luecke(text[pos:])
+    return factors, verweise, rest
 
 
 def _faktoren_text(faktoren: dict) -> str:
@@ -411,7 +432,8 @@ def _kombinationen_aufloesen(zeilen: list) -> list:
     ``zeilen`` [(Nummer oder None, LF-Faktoren, Verweise)] -> je Zeile
     (Faktoren, nicht aufgeloeste Verweise). „CO n“ und „LK n“ sind die
     Lastkombination Nummer n dieser Tabelle; sie geht mit ihren Faktoren mal
-    dem Vorfaktor ein - auch wenn sie weiter unten steht. „EK n“ ist eine
+    dem Vorfaktor ein - auch wenn sie weiter unten steht. „EK n“ (englisch
+    „RC n“) ist eine
     Ergebniskombination, also eine Umhuellende und keine Summe - sie laesst
     sich nicht als Summand schreiben und bleibt offen, ebenso ein Kreis
     (CO1 verweist auf CO2, CO2 auf CO1) und eine Nummer, die es nicht gibt.
@@ -920,51 +942,79 @@ def import_rfem_tables(path: str, model: Model = None, log: list = None,
             if row is None:
                 continue
             formula = t.text(row, "formula")
-            factors, verweise = _formel_zerlegen(formula)
+            factors, verweise, rest = _formel_zerlegen(formula)
             no = t.num(row, "no")
             if no is None:
                 # Die Nummer steht auch als Text da ("CO5", "LK 5").
                 mn = re.match(r"^\s*(?:CO|LK)?\s*(\d+)\s*$", t.text(row, "no"),
                               re.IGNORECASE)
                 no = int(mn.group(1)) if mn else None
-            roh.append((row, formula, no, factors, verweise))
-        aufgeloest = _kombinationen_aufloesen([(no, f, v) for _r, _t, no, f, v in roh])
+            roh.append((row, formula, no, factors, verweise, rest))
+        aufgeloest = _kombinationen_aufloesen([(no, f, v) for _r, _t, no, f, v, _x in roh])
+        # Eine Zeile ohne Nummer bekommt eine Nummer, die keine Zeile der
+        # Tabelle traegt. Bis zum 23.09.2026 hiess sie LK{angelegte + 1} und
+        # konnte so den Namen einer nummerierten Zeile belegen, die das
+        # Protokoll unter diesem Namen warnte oder aufloeste. Gemessen am Stand
+        # 6cbc144: ['1;1.35*LF1', ';1.5*LF2', '2;1.0*EK1'] warnte „LK2 nicht
+        # uebernommen“, im Modell stand LK2 = 1,5·LF2; bei [';1.5*LF2',
+        # '1;1.35*LF1 + CO2', '2;LF2'] nannte die Infozeile LK1, die
+        # aufgeloeste Kombination hiess aber LK1_2 (Gegenpruefung zu SV10).
+        naechste = max((int(z[2]) for z in roh if z[2] is not None), default=0) + 1
         n_co = 0
-        for k, ((row, formula, no, _f0, verweise), (factors, offen)) in \
+        for k, ((row, formula, no, _f0, verweise, rest), (factors, offen)) in \
                 enumerate(zip(roh, aufgeloest), 1):
-            wer = f"LK{int(no)}" if no is not None else f"in Tabellenzeile {k}"
-            if offen:
-                # Eine Kombination ohne einen ihrer Anteile waere zu klein und
-                # saehe im Nachweis wie eine vollstaendige aus - darum nicht
-                # halb anlegen, sondern nennen.
-                gruende = []
-                if any(x.startswith("EK") for x in offen):
-                    gruende.append("EK ist eine Ergebniskombination (Umhuellende), "
-                                   "als Summand nicht darstellbar")
-                if any(not x.startswith("EK") for x in offen):
-                    gruende.append("CO/LK: die Tabelle fuehrt diese Kombination "
-                                   "nicht oder nicht vollstaendig")
-                alle = [f"{a}{n}" for _v, a, n in verweise]
-                C.warn(log, f"Kombination {wer} („{formula}“): Verweise {offen} "
-                            "nicht aufloesbar - nicht uebernommen ("
-                            + "; ".join(gruende) + ")."
-                            + (f" Die Zeile besteht nur aus Verweisen {alle}." if not _f0
-                               else "")
-                            + " Bitte in RFEM nachsehen und die Kombination von "
-                              "Hand anlegen.")
-                continue
-            if not factors:
+            wer = f"LK{int(no)}" if no is not None else f"in Tabellenzeile {k} ohne Nummer"
+            if not _f0 and not verweise:
                 C.warn(log, f"Kombination {wer}: Formel „{formula}“ ohne erkennbaren "
                             "Lastfall - nicht uebernommen.")
                 continue
+            if offen or rest:
+                # Eine Kombination ohne einen ihrer Anteile waere zu klein und
+                # saehe im Nachweis wie eine vollstaendige aus - darum nicht
+                # halb anlegen, sondern nennen. Das gilt auch fuer einen nicht
+                # erkannten Teil der Formel (``rest``, siehe _formel_zerlegen).
+                gruende = []
+                if any(x.startswith(("EK", "RC")) for x in offen):
+                    gruende.append("EK/RC ist eine Ergebniskombination (Umhuellende), "
+                                   "als Summand nicht darstellbar")
+                if any(not x.startswith(("EK", "RC")) for x in offen):
+                    gruende.append("CO/LK: die Tabelle fuehrt diese Kombination "
+                                   "nicht oder nicht vollstaendig")
+                if rest:
+                    gruende.append(f"nicht erkannter Teil {rest}")
+                alle = [f"{a}{n}" for _v, a, n in verweise]
+                C.warn(log, f"Kombination {wer} („{formula}“): "
+                            + (f"Verweise {offen} nicht aufloesbar" if offen
+                               else "Formel nicht vollstaendig gelesen")
+                            + " - nicht uebernommen (" + "; ".join(gruende) + ")."
+                            + (f" Die Zeile besteht nur aus Verweisen {alle}."
+                               if not _f0 and not rest else "")
+                            + " Bitte in RFEM nachsehen und die Kombination von "
+                              "Hand anlegen.")
+                continue
+            # Hier ist ``factors`` nie leer: ein eigener LF-Anteil bleibt
+            # erhalten, und ein Verweis ohne Faktoren waere in ``offen``.
+            woher = []
+            if no is None:
+                no = naechste
+                naechste += 1
+                woher.append(f"Tabellenzeile {k} ohne Nummer")
+            soll = f"LK{int(no)}"
+            name = C.unique_name(model.combinations, soll)
+            if name != soll:
+                if not woher:
+                    woher.append(f"Tabellennummer {int(no)}")
+                woher.append(f"{soll} gab es schon")
+            herkunft = f" ({'; '.join(woher)})" if woher else ""
             if verweise:
                 # Das Ergebnis samt Vorzeichen nennen: ein falsch gelesenes
                 # Vorzeichen stand vorher nur als "aufgeloest" da und fiel
                 # nicht auf (Gegenpruefung vom 23.09.2026, „LF2 - CO1“).
-                C.say(log, f"Kombination {wer}: Verweise "
+                C.say(log, f"Kombination {name}{herkunft}: Verweise "
                            f"{[f'{a}{n}' for _v, a, n in verweise]} auf die Faktoren "
                            f"der Kombinationen aufgeloest: {_faktoren_text(factors)}")
-            no = int(no) if no is not None else n_co + 1
+            elif herkunft:
+                C.say(log, f"Kombination {name}{herkunft}: {_faktoren_text(factors)}")
             for key in factors:
                 if key not in model.load_cases:
                     C.get_or_add_case(model, key, "Q", "")
@@ -976,9 +1026,7 @@ def import_rfem_tables(path: str, model: Model = None, log: list = None,
                 typ = "ACC"
             elif re.search(r"EQU|LAGESICH", sit):
                 typ = "EQU"
-            name = f"LK{no}"
-            model.add_combination(C.unique_name(model.combinations, name), factors, typ,
-                                  t.text(row, "name") or formula)
+            model.add_combination(name, factors, typ, t.text(row, "name") or formula)
             n_co += 1
         C.say(log, f"{n_co} von {len(roh)} Lastkombinationen")
 

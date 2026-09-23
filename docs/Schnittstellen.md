@@ -191,9 +191,12 @@ Geprüft in `tests/test_infocad.py`.
   (`[kN]`, `[mm]`). RFEM-Achsen: Z nach unten wird unverändert übernommen;
   Option `z_up=True` spiegelt.
 
-**Lastkombinationen aus der Tabelle zählen sich ab** (seit 22.09.2026). Jede
-Zeile von „2.5 Lastkombinationen“ steht im Protokoll, die Schlusszeile lautet
-„n von m Lastkombinationen“. Ein Verweis auf eine andere Lastkombination
+**Lastkombinationen aus der Tabelle zählen sich ab** (seit 22.09.2026). Die
+Schlusszeile „n von m Lastkombinationen“ zählt jede Zeile von
+„2.5 Lastkombinationen“. Eine eigene Protokollzeile bekommt jede nicht
+übernommene Zeile (mit Grund), jede aufgelöste und jede ohne Nummer (mit
+ihrem Ergebnis); eine Zeile, die nur aus eigenen Lastfall-Anteilen besteht und
+eine Nummer trägt, steht nur in dieser Zählung. Ein Verweis auf eine andere Lastkombination
 derselben Tabelle („CO3“ oder „LK3“, auch wenn sie weiter unten steht) wird
 mit deren Faktoren mal dem Vorfaktor aufgelöst: „LF1 + CO1“ mit
 CO1 = 1,35·LF1 + 1,5·LF2 ergibt 2,35·LF1 + 1,5·LF2, und das Protokoll sagt
@@ -222,6 +225,38 @@ dieselbe Zeile noch mit einer Warnung ohne den Verweis angelegt worden. Ein
 ausgeschriebener Faktor („1.0*LF2 - 1.0*CO1“) rechnete schon richtig. Ob RFEM
 ein Minus ohne Zahl in die Tabelle schreibt, ist an keiner echten Datei
 gemessen.
+
+**Ein nicht erkannter Teil der Formel legt die Kombination nicht halb an**
+(seit 23.09.2026). Erkannt werden Anteile der Form „Zahl * LF n“ (auch LC)
+und Verweise CO, LK, EK und RC; RC ist das englische Kürzel der
+Ergebniskombination und wird wie EK behandelt. Bleibt daneben Text übrig,
+der kein Anteil ist (außer Leerzeichen und „+“), wird die Kombination nicht
+angelegt, sondern mit Formel und dem übrig gebliebenen Text gewarnt:
+„Kombination LK8 („1.35*LF1 + 1.5*Schnee“): Formel nicht vollstaendig gelesen
+- nicht uebernommen (nicht erkannter Teil ['+ 1.5*Schnee'])“. Vorher fiel
+dieser Text ohne Meldung weg, sobald daneben ein Lastfall-Anteil stand.
+Gemessen am Stand vom 23.09.2026 vor dieser Änderung: „1.35*LC1 + RC1“
+wurde 1,35·LF1, „1.35*LF1 + 1.5*LF2 + 0.9*RC2“ wurde 1,35·LF1 + 1,5·LF2,
+„1.35*LF1 + 1.5*Schnee“ wurde 1,35·LF1 und „1.35*(LF1 + LF2)“ wurde
+LF1 + LF2, jeweils ohne Protokollzeile. Dieselbe Regel trifft auch einen
+Vorsatz wie „GZT-1: 1.35*LF1“ oder einen Zusatz wie „LF1/p“; beides wurde
+vorher mit dem erkannten Rest angelegt. Alle Formeln in diesem Absatz sind
+selbst gebaut: ob RFEM RC, EK, Klammern oder solche Zusätze in eine
+Lastkombinationsformel schreibt, ist an keiner echten Datei gemessen.
+
+**Eine Zeile ohne Nummer bekommt eine freie Nummer** (seit 23.09.2026), und
+zwar die nächste nach der größten Nummer der Tabelle; das Protokoll nennt
+sie: „Kombination LK3 (Tabellenzeile 2 ohne Nummer): 1.5*LF2“. Vorher hieß
+sie LK(Zahl der bisher angelegten + 1) und konnte so den Namen einer
+nummerierten Zeile belegen, die das Protokoll unter diesem Namen warnte oder
+auflöste. Gemessen an den Zeilen „1: 1.35*LF1“, „(ohne Nummer): 1.5*LF2“,
+„2: 1.0*EK1“: das Protokoll warnte „LK2 … nicht uebernommen“, im Modell stand
+aber LK2 = 1,5·LF2. Bei „(ohne Nummer): 1.5*LF2“, „1: 1.35*LF1 + CO2“,
+„2: LF2“ nannte die Infozeile LK1 = 1,35·LF1 + LF2, LK1 war aber 1,5·LF2 und
+die aufgelöste Kombination hieß LK1_2. Ist ein Name schon vergeben (doppelte
+Nummer in der Tabelle, oder das Modell hatte ihn vorher), nennt die
+Protokollzeile den Ausweichnamen: „Kombination LK2_2 (Tabellennummer 2; LK2
+gab es schon): …“.
 
 ## IFC-Statikmodell – Details
 

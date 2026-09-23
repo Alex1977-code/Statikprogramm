@@ -2680,7 +2680,8 @@ Kombination, die auf eine andere verweist („LF1 + CO1“), wird mit deren
 Faktoren aufgelöst — ein Minus ohne Zahl („LF2 - CO1“) zieht dabei ab, und
 das Protokoll nennt das Ergebnis samt Vorzeichen —, und eine, die sich
 nicht vollständig auflösen lässt (Verweis auf eine Ergebniskombination
-„EK1“), wird **nicht** angelegt, sondern mit Formel und Grund gewarnt — legen Sie sie dann in der
+„EK1“ oder „RC1“) oder deren Formel einen nicht erkannten Teil enthält
+(„1.35*LF1 + 1.5*Schnee“), wird **nicht** angelegt, sondern mit Formel und Grund gewarnt — legen Sie sie dann in der
 Kombinationsmaske von Hand an. Die **Einwirkungskategorie** eines
 RFEM-6-Lastfalls ist aus einer Kennzahl angenommen, die an keiner Datei
 belegt ist: das Protokoll nennt je Kennzahl die angenommene Kategorie und

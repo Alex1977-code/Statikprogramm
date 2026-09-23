@@ -300,10 +300,121 @@ def test_kombination_minus_vor_verweis():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def _kombinationstabelle(prefix, zeilen, lastfaelle=3):
+    """Kleine Tabellenmappe mit „2.5 Lastkombinationen“ -> (Modell, Protokoll)."""
+    d = tempfile.mkdtemp(prefix=prefix)
+    try:
+        def w(n, t):
+            with open(os.path.join(d, n), "w", encoding="utf-8") as f:
+                f.write(t)
+        w("1.1 Knoten.csv", "Knoten Nr.;X [m];Y [m];Z [m]\n1;0;0;0\n2;2;0;0\n")
+        w("2.1 Lastfaelle.csv", "Lastfall Nr.;Bezeichnung\n"
+          + "".join(f"{i};LF {i}\n" for i in range(1, lastfaelle + 1)))
+        w("2.5 Lastkombinationen.csv",
+          "Lastkombination Nr.;Bemessungssituation;Belastung\n" + "\n".join(zeilen) + "\n")
+        log = []
+        m = import_rfem_tables(d, Model("Kt"), log)
+        return m, log
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def _gleich(ist, soll):
+    return set(ist) == set(soll) and all(abs(ist[k] - v) < 1e-12 for k, v in soll.items())
+
+
+def test_kombination_unerkannter_teil():
+    """Ein nicht erkannter Teil der Formel legt die Kombination nicht halb an.
+
+    Gegenpruefung vom 23.09.2026 zu Befund SV10: Der Ausdruck in
+    ``_formel_zerlegen`` griff nur LF/LC/CO/LK/EK heraus, der Rest der Formel
+    fiel ohne Meldung weg, sobald daneben ein LF-Anteil stand. Gemessen am
+    Stand 6cbc144: „1.35*LC1 + RC1“ wurde LK6 = {LF1: 1,35},
+    „1.35*LF1 + 1.5*LF2 + 0.9*RC2“ wurde {LF1: 1,35, LF2: 1,5},
+    „1.35*LF1 + 1.5*Schnee“ wurde {LF1: 1,35} - zu keiner der Zeilen eine
+    Protokollzeile. RC ist das englische Kuerzel der Ergebniskombination (wie
+    CO zu LK); ob RFEM RC oder EK in eine Lastkombinationsformel schreibt, ist
+    an keiner echten Datei gemessen. Die Klammer „1.35*(LF1 + LF2)“ ergab
+    LF1 = LF2 = 1,0 aus demselben Grund („1.35*(“ fiel weg).
+    """
+    m, log = _kombinationstabelle("s3d_kt_", [
+        "1;GZT;1.35*LF1 + 1.5*LF2",
+        "2;GZT;1.35 LF1 + 1.5 LF2",
+        "3;GZT;1,35*LF1 + 1,50*LF2 + 0,9*LF3",
+        "4;GZT;1.35*LF1 + -1.0*LF2",
+        "6;GZT;1.35*LC1 + RC1",
+        "7;GZT;1.35*LF1 + 1.5*LF2 + 0.9*RC2",
+        "8;GZT;1.35*LF1 + 1.5*Schnee",
+        "9;GZT;1.35*(LF1 + LF2)",
+    ])
+    ko = [z for z in log if "ombination" in z]
+    for nr in (6, 7, 8, 9):
+        check(f"LK{nr} mit nicht erkanntem Teil nicht halb angelegt",
+              f"LK{nr}" not in m.combinations,
+              str(dict(m.combinations[f"LK{nr}"].factors)) if f"LK{nr}" in m.combinations
+              else "nicht angelegt")
+        z = next((z for z in ko if f"LK{nr} " in z or f"LK{nr}:" in z), "keine Zeile")
+        check(f"LK{nr} steht als Warnung im Protokoll", z.startswith("WARNUNG"), z)
+    z6 = next((z for z in ko if "LK6" in z), "")
+    check("LK6: RC1 wird als Ergebniskombination genannt",
+          "RC1" in z6 and "Ergebniskombination" in z6, z6)
+    z8 = next((z for z in ko if "LK8" in z), "")
+    check("LK8: der nicht erkannte Teil „Schnee“ wird genannt", "Schnee" in z8, z8)
+    # Gegenprobe: Schreibweisen ohne Rest bleiben, wie sie waren.
+    check("„1.35 LF1 + 1.5 LF2“ ohne Stern bleibt",
+          _gleich(dict(m.combinations["LK2"].factors) if "LK2" in m.combinations else {},
+                  {"LF1": 1.35, "LF2": 1.5}))
+    check("Dezimalkomma bleibt",
+          _gleich(dict(m.combinations["LK3"].factors) if "LK3" in m.combinations else {},
+                  {"LF1": 1.35, "LF2": 1.5, "LF3": 0.9}))
+    check("„+ -1.0*LF2“ bleibt -1,0",
+          _gleich(dict(m.combinations["LK4"].factors) if "LK4" in m.combinations else {},
+                  {"LF1": 1.35, "LF2": -1.0}))
+    check("Schlusszeile „4 von 8 Lastkombinationen“",
+          "4 von 8 Lastkombinationen" in "\n".join(log),
+          next((z for z in log if z.strip().endswith("Lastkombinationen")), "keine Zeile"))
+
+
+def test_kombination_ohne_nummer_name():
+    """Eine Zeile ohne Nummer belegt keinen Namen, den die Tabelle vergibt.
+
+    Gegenpruefung vom 23.09.2026 zu Befund SV10: Die Zeile ohne Nummer hiess
+    LK{Zahl der bisher angelegten + 1}, das Protokoll nennt aber die
+    Tabellennummer. Gemessen am Stand 6cbc144: bei
+    ['1;GZT;1.35*LF1', ';GZT;1.5*LF2', '2;GZT;1.0*EK1'] warnte das Protokoll
+    „LK2 ... nicht uebernommen“, im Modell stand LK2 = {LF2: 1,5}. Bei
+    [';GZT;1.5*LF2', '1;GZT;1.35*LF1 + CO2', '2;GZT;LF2'] meldete es
+    „LK1: ... aufgeloest: 1.35*LF1 + 1*LF2“, LK1 war aber {LF2: 1,5} und die
+    aufgeloeste Kombination hiess LK1_2.
+    """
+    m, log = _kombinationstabelle("s3d_kn_", ["1;GZT;1.35*LF1", ";GZT;1.5*LF2",
+                                              "2;GZT;1.0*EK1"], lastfaelle=2)
+    check("A: die gewarnte LK2 steht nicht im Modell", "LK2" not in m.combinations,
+          str({k: dict(c.factors) for k, c in m.combinations.items()}))
+    frei = [k for k, c in m.combinations.items() if _gleich(dict(c.factors), {"LF2": 1.5})]
+    z = next((z for z in log if frei and frei[0] in z and "ohne Nummer" in z), "keine Zeile")
+    check("A: die Zeile ohne Nummer nennt ihren Namen im Modell", z != "keine Zeile",
+          f"{frei} / {z}")
+
+    m, log = _kombinationstabelle("s3d_kn_", [";GZT;1.5*LF2", "1;GZT;1.35*LF1 + CO2",
+                                              "2;GZT;LF2"], lastfaelle=2)
+    lk1 = dict(m.combinations["LK1"].factors) if "LK1" in m.combinations else {}
+    check("B: LK1 ist die aufgeloeste Tabellenzeile 1",
+          _gleich(lk1, {"LF1": 1.35, "LF2": 1.0}), str(lk1))
+    check("B: kein Ausweichname LK1_2", "LK1_2" not in m.combinations,
+          str(sorted(m.combinations)))
+    frei = [k for k, c in m.combinations.items() if _gleich(dict(c.factors), {"LF2": 1.5})]
+    z = next((z for z in log if frei and frei[0] in z and "ohne Nummer" in z), "keine Zeile")
+    check("B: die Zeile ohne Nummer nennt ihren Namen im Modell", z != "keine Zeile",
+          f"{frei} / {z}")
+    check("B: alle drei Zeilen angelegt", "3 von 3 Lastkombinationen" in "\n".join(log))
+
+
 def main():
     for t in (test_native_sqlite, test_native_zip_und_json, test_native_unbekannt,
               test_tabellen_erweitert, test_kombinationen_abgezaehlt,
-              test_kombination_minus_vor_verweis):
+              test_kombination_minus_vor_verweis, test_kombination_unerkannter_teil,
+              test_kombination_ohne_nummer_name):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
