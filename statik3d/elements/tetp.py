@@ -574,6 +574,42 @@ def spannungen_stapel(X, g, P, E, nu, U, punkte=None, maske=None, elemente=None)
 # --------------------------------------------------------------------------
 # Freiheitsgrade: Entitaeten, Ordnungen, Nummern
 # --------------------------------------------------------------------------
+def _schluessel(zeilen, basis: int):
+    """int64-Schluessel je Zeile (Knotennummern < basis), lexikografisch
+    geordnet wie die Zeilen selbst - oder None, wenn er ueberliefe."""
+    zeilen = np.asarray(zeilen, dtype=np.int64)
+    if basis ** zeilen.shape[1] >= 2 ** 62:
+        return None
+    schl = np.zeros(len(zeilen), dtype=np.int64)
+    for j in range(zeilen.shape[1]):
+        schl = schl * basis + zeilen[:, j]
+    return schl
+
+
+def _eindeutig(zeilen, basis: int):
+    """Wie np.unique(zeilen, axis=0, return_inverse=True), aber ueber einen
+    Schluessel: am Drehlager (645.934 Elemente) kostete die zeilenweise Form
+    4,0 s der 22,7 s der Anreicherung."""
+    zeilen = np.asarray(zeilen, dtype=np.int64)
+    schl = _schluessel(zeilen, basis)
+    if schl is None:
+        u, inv = np.unique(zeilen, axis=0, return_inverse=True)
+        return u, np.asarray(inv).ravel()
+    _u, erst, inv = np.unique(schl, return_index=True, return_inverse=True)
+    return zeilen[erst], np.asarray(inv).ravel()
+
+
+def _enthalten(zeilen, menge, basis: int) -> np.ndarray:
+    """Maske: welche Zeilen (sortierte Tupel) liegen in der Menge ``menge``."""
+    if not menge:
+        return np.zeros(len(zeilen), dtype=bool)
+    andere = np.array(sorted(menge), dtype=np.int64).reshape(len(menge), -1)
+    a, b = _schluessel(zeilen, basis), _schluessel(andere, basis)
+    if a is None:
+        return np.array([tuple(z) in menge for z in map(tuple, np.asarray(zeilen).tolist())], dtype=bool)
+    return np.isin(a, b)
+
+
 class Anreicherung:
     """Nummerierung der hierarchischen Freiheitsgrade eines Netzes.
 
@@ -609,8 +645,11 @@ class Anreicherung:
         # Kanten und Flaechen der Elemente (Schluessel sortiert)
         ks = np.sort(self.ecken[:, np.array(KANTEN)], axis=2)           # (n,6,2)
         fs = np.sort(self.ecken[:, np.array(FLAECHEN)], axis=2)         # (n,4,3)
-        kschl, self.el_kante = np.unique(ks.reshape(-1, 2), axis=0, return_inverse=True)
-        fschl, self.el_flaeche = np.unique(fs.reshape(-1, 3), axis=0, return_inverse=True)
+        grund = int(self.ecken.max()) + 1 if n else 1
+        for z in list(lk) + list(lf):
+            grund = max(grund, max(z) + 1)
+        kschl, self.el_kante = _eindeutig(ks.reshape(-1, 2), grund)
+        fschl, self.el_flaeche = _eindeutig(fs.reshape(-1, 3), grund)
         self.el_kante = self.el_kante.reshape(n, 6)
         self.el_flaeche = self.el_flaeche.reshape(n, 4)
         self.kanten = kschl
@@ -622,10 +661,10 @@ class Anreicherung:
         self.kanten_pflicht = np.zeros(len(kschl), bool)
         self.flaechen_pflicht = np.zeros(len(fschl), bool)
         if lk:
-            self.kanten_pflicht = np.array([tuple(k) in lk for k in map(tuple, kschl)])
+            self.kanten_pflicht = _enthalten(kschl, lk, grund)
             pk[self.kanten_pflicht] = 1
         if lf:
-            self.flaechen_pflicht = np.array([tuple(f) in lf for f in map(tuple, fschl)])
+            self.flaechen_pflicht = _enthalten(fschl, lf, grund)
             pf[self.flaechen_pflicht] = 1
         self.p_kante, self.p_flaeche = pk, pf
         self.p_innen = self.ordnung.copy()
@@ -794,26 +833,25 @@ def _randseiten(an) -> np.ndarray:
     return an._rand
 
 
-def pruefe_pflichtseiten(model, an) -> None:
+def pruefe_pflichtseiten(model, an, geb=None) -> None:
     """Laut statt still: traegt eine Seite an Kontakt, Fuge, Kopplung oder
     einem federnden Lager doch einen Zusatzansatz, bricht die Rechnung ab.
     Der Kontakt kennt nur die Ecken (assemble.SOLID_FACES); eine Kante mit
     p > 1 auf seiner Seite waere dort still falsch - derselbe Fehler, den der
     tet10 mit seinen Mittenknoten an den Fugen hatte (Loeser-Sitzung
     22.09.2026: 52,6 % Zug an einer Fuge ohne Zug)."""
-    geb = _gebundene_knoten(model)
+    geb = _gebundene_knoten(model) if geb is None else geb
     if not geb:
         return
     auf = np.zeros(int(model.nn), bool)
     auf[[n for n in geb if 0 <= n < model.nn]] = True
     f_geb = auf[an.flaechen].all(axis=1)
     schlecht_f = np.nonzero(f_geb & (an.p_flaeche > 1))[0]
-    k_geb = np.zeros(len(an.kanten), bool)
-    for f in np.nonzero(f_geb)[0]:
-        tri = an.flaechen[f]
-        for a, b in ((tri[0], tri[1]), (tri[0], tri[2]), (tri[1], tri[2])):
-            k_geb[np.nonzero((an.kanten[:, 0] == a) & (an.kanten[:, 1] == b))[0]] = True
-    k_geb |= auf[an.kanten].all(axis=1)
+    # die Kanten gebundener Seiten sind darin enthalten (beide Ecken gebunden).
+    # Frueher suchte je gebundene Seite eine Schleife ihre Kanten in der ganzen
+    # Kantenliste - quadratisch: am Drehlager (645.934 tetp2, 110.089
+    # gebundene Seiten) brauchte die Anreicherung damit 564 s, ohne 22,7 s
+    k_geb = auf[an.kanten].all(axis=1)
     schlecht_k = np.nonzero(k_geb & (an.p_kante > 1))[0]
     if len(schlecht_f) or len(schlecht_k):
         wo = (f"Seite mit den Knoten {[int(x) + 1 for x in an.flaechen[schlecht_f[0]]]}" if len(schlecht_f)
@@ -823,7 +861,7 @@ def pruefe_pflichtseiten(model, an) -> None:
                          f"Seiten, {len(schlecht_k)} Kanten). Dort muss sie linear bleiben.")
 
 
-def pflichtseiten(model, idx_p) -> tuple:
+def pflichtseiten(model, idx_p, geb=None) -> tuple:
     """(Kanten, Flaechen, fremde Kanten): was linear bleiben muss, und die
     Kanten, die ein Element ohne Anreicherung mitbenutzt (dort ist auch die
     Geometrie gerade, siehe geometrie_modell).
@@ -834,32 +872,35 @@ def pflichtseiten(model, idx_p) -> tuple:
     """
     from ..elemente import VOLUMEN_TYPEN
     kanten, flaechen = set(), set()
-    fremd = set()
+    # je Typ als Feld statt je Element: am Drehlager (645.934 tetp2) kostete
+    # pflichtseiten mit Schleifen je Element 10,4 s der 22,7 s der Anreicherung
+    je_typ: dict = {}
     for e in model.elements:
         if e.typ in VOLUMEN_TYPEN and not ist_tetp(e.typ):
-            kn = [int(n) for n in e.nodes]
-            # alle Eckpaare und -tripel reichen: was keine Kante bzw. Seite
-            # eines p-Elements ist, wird nie gefragt
-            ecken = kn[:4] if e.typ in ("tet4", "tet10") else kn
-            for a in range(len(ecken)):
-                for b in range(a + 1, len(ecken)):
-                    kanten.add((min(ecken[a], ecken[b]), max(ecken[a], ecken[b])))
-                    fremd.add((min(ecken[a], ecken[b]), max(ecken[a], ecken[b])))
-            if e.typ in ("tet4", "tet10"):
-                for f in SEITEN:
-                    flaechen.add(tuple(sorted(ecken[i] for i in f)))
+            je_typ.setdefault((e.typ, len(e.nodes)), []).append(e.nodes)
+    for (typ, _k), liste in je_typ.items():
+        kn = np.asarray(liste, dtype=np.int64)
+        # alle Eckpaare und -tripel reichen: was keine Kante bzw. Seite
+        # eines p-Elements ist, wird nie gefragt
+        ecken = kn[:, :4] if typ in ("tet4", "tet10") else kn
+        m = ecken.shape[1]
+        paare = [(a, b) for a in range(m) for b in range(a + 1, m)]
+        kp = np.sort(ecken[:, np.array(paare)], axis=2).reshape(-1, 2)
+        kanten.update(map(tuple, kp.tolist()))
+        if typ in ("tet4", "tet10"):
+            fp = np.sort(ecken[:, np.array(SEITEN)], axis=2).reshape(-1, 3)
+            flaechen.update(map(tuple, fp.tolist()))
+    fremd = set(kanten)
+    kn_p = np.array([model.elements[i].nodes[:4] for i in idx_p], dtype=np.int64).reshape(-1, 4)
     # Ein quadratisches Element mit Mittenknoten (tet10, hex20, pent15), das
     # eine Kante mit einem p-Element teilt: dort traegt es einen Mittenknoten,
     # den das p-Element nicht kennt - die Grenze waere nicht konform (Hinweis
     # der ersten Element-Sitzung 23.09.2026). Laut abweisen.
-    p_kanten = set()
-    for i in idx_p:
-        kn = [int(n) for n in model.elements[i].nodes[:4]]
-        for a, b in KANTEN:
-            p_kanten.add((min(kn[a], kn[b]), max(kn[a], kn[b])))
-    for j, e in enumerate(model.elements):
-        if e.typ in ("tet10", "hex20", "pent15"):
-            from . import solid as sl
+    quadratisch = [(j, e) for j, e in enumerate(model.elements) if e.typ in ("tet10", "hex20", "pent15")]
+    if quadratisch:
+        from . import solid as sl
+        p_kanten = set(map(tuple, np.sort(kn_p[:, np.array(KANTEN)], axis=2).reshape(-1, 2).tolist()))
+        for j, e in quadratisch:
             for f in sl.FLAECHEN_ECKEN[e.typ]:
                 ecken = [int(e.nodes[a]) for a in f]
                 for a in range(len(ecken)):
@@ -870,20 +911,21 @@ def pflichtseiten(model, idx_p) -> tuple:
                             "einem Tetraeder mit Ordnung p: der Mittenknoten des quadratischen "
                             "Elements haette dort kein Gegenueber. Beide Koerper als tetp "
                             "rechnen oder die Grenze als Kontakt/Kopplung fuehren.")
-    geb = _gebundene_knoten(model)
-    if geb:
-        for i in idx_p:
-            kn = [int(n) for n in model.elements[i].nodes[:4]]
-            for f in SEITEN:
-                tri = [kn[j] for j in f]
-                if all(n in geb for n in tri):
-                    flaechen.add(tuple(sorted(tri)))
-            # auch eine einzelne Kante zwischen zwei gebundenen Ecken (ein
-            # federndes Linienlager, der Rand einer Kontaktflaeche): zwischen
-            # den Ecken haelt dort nur, was an den Ecken haelt
-            for a, b in KANTEN:
-                if kn[a] in geb and kn[b] in geb:
-                    kanten.add((min(kn[a], kn[b]), max(kn[a], kn[b])))
+    geb = _gebundene_knoten(model) if geb is None else geb
+    if geb and len(kn_p):
+        auf = np.zeros(int(model.nn), bool)
+        auf[[n for n in geb if 0 <= n < model.nn]] = True
+        for f in SEITEN:
+            tri = kn_p[:, list(f)]
+            gebunden = auf[tri].all(axis=1)
+            flaechen.update(map(tuple, np.sort(tri[gebunden], axis=1).tolist()))
+        # auch eine einzelne Kante zwischen zwei gebundenen Ecken (ein
+        # federndes Linienlager, der Rand einer Kontaktflaeche): zwischen
+        # den Ecken haelt dort nur, was an den Ecken haelt
+        for a, b in KANTEN:
+            paar = kn_p[:, [a, b]]
+            gebunden = auf[paar].all(axis=1)
+            kanten.update(map(tuple, np.sort(paar[gebunden], axis=1).tolist()))
     # gemerkt fuer die Geometrie: eine Kante, die ein Element ohne Anreicherung
     # mitbenutzt, ist dort gerade - also auch beim tetp (sonst klafft die
     # Geometrie). Kontakt- und Fugenkanten bleiben gekruemmt: dort liegt kein
@@ -898,14 +940,14 @@ def basis_fhg(model) -> int:
     return int(model.nn) * 6 + len(model.woelb_knoten())
 
 
-def _fingerabdruck(model, idx_p) -> str:
+def _fingerabdruck(model, idx_p, geb=None) -> str:
     """Voller Fingerabdruck: Ecken und Ordnung der p-Elemente, die gebundenen
     Knoten und alle Nicht-p-Volumenelemente (ihre Seiten bleiben linear)."""
     import hashlib
     import itertools
     kn = np.array([model.elements[i].nodes[:4] for i in idx_p], dtype=np.int64).reshape(-1, 4)
     ordn = np.array([TYPEN[model.elements[i].typ] for i in idx_p], dtype=np.int64)
-    geb = np.array(sorted(_gebundene_knoten(model)), dtype=np.int64)
+    geb = np.array(sorted(_gebundene_knoten(model) if geb is None else geb), dtype=np.int64)
     andere = [e for e in model.elements if not ist_tetp(e.typ)]
     lang = np.fromiter((len(e.nodes) for e in andere), dtype=np.int64, count=len(andere))
     alle = np.fromiter(itertools.chain.from_iterable(e.nodes for e in andere), dtype=np.int64)
@@ -950,7 +992,8 @@ def anreicherung(model, streng: bool = False):
         except Exception:        # noqa: BLE001
             pass
         return None
-    fa = _fingerabdruck(model, idx_p)
+    geb = _gebundene_knoten(model)
+    fa = _fingerabdruck(model, idx_p, geb)
     if zw is not None and zw[1] == fa and zw[2] is not None:
         try:
             model._tetp_zwischen = (schnell, fa, zw[2])
@@ -959,10 +1002,10 @@ def anreicherung(model, streng: bool = False):
         return zw[2]
     kn = np.array([model.elements[i].nodes[:4] for i in idx_p], dtype=np.int64)
     ordn = np.array([TYPEN[model.elements[i].typ] for i in idx_p], dtype=np.int64)
-    lk, lf, fremd = pflichtseiten(model, idx_p)
+    lk, lf, fremd = pflichtseiten(model, idx_p, geb)
     an = Anreicherung(kn, ordn, basis_fhg(model), linear_kanten=lk, linear_flaechen=lf)
     an.gerade_kanten = fremd
-    pruefe_pflichtseiten(model, an)
+    pruefe_pflichtseiten(model, an, geb)
     an.idx = np.array(idx_p, dtype=np.int64)
     an.stelle = {int(i): s for s, i in enumerate(idx_p)}
     an.gruppe_je = an.gruppe(np.arange(len(idx_p)))

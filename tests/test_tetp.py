@@ -572,6 +572,33 @@ def test_modell_jacobi_gekruemmt():
           f"{len(schlecht)} Elemente, z. B. {schlecht[0] if schlecht else None}")
 
 
+def test_pflichtpruefung_linear():
+    """Die Pflichtpruefung darf nicht je gebundene Seite die ganze Kantenliste
+    durchsuchen: am Drehlager (645.934 tetp2, 110.089 gebundene Seiten) brauchte
+    die Anreicherung damit 564 s, ohne die Suche 22,7 s. Hier sind alle Knoten ausser dem Master gebunden (Starrkoerper),
+    fast jede Seite ist Pflichtseite. Gemessen 23.09.2026 bei n = 14 (16.464 Elemente, 34.104
+    Seiten): quadratische Suche 3,07 s, jetzt 0,0012 s - die Grenze 0,5 s
+    liegt 400-fach ueber dem neuen und 6-fach unter dem alten Wert."""
+    import time
+    from statik3d.model import StarrKoerper
+    from tests import pruefkoerper as pk
+    m, _ids = pk.quader("tet4", 14, 14, 14, 1.0, 1.0, 1.0)
+    m.starrkoerper = [StarrKoerper("S", master=0, slaves=list(range(1, m.nn)))]
+    for e in m.elements:
+        e.typ = "tetp2"
+    m._tetp_version = 1
+    an = tp.anreicherung(m, streng=True)
+    geb = tp._gebundene_knoten(m)
+    t0 = time.perf_counter()
+    tp.pruefe_pflichtseiten(m, an, geb)
+    t = time.perf_counter() - t0
+    # gebunden sind die Slaves, nicht der Master (Knoten 0)
+    soll = ~(an.flaechen == 0).any(axis=1)
+    check("Pflichtpruefung ohne Suche je Seite (16.464 Elemente, alle Seiten gebunden)",
+          t < 0.5 and np.array_equal(an.flaechen_pflicht, soll),
+          f"{t:.4f} s, {int(an.flaechen_pflicht.sum())} von {len(an.flaechen)} Seiten linear")
+
+
 def main():
     test_regeln()
     test_vollstaendig()
@@ -589,6 +616,7 @@ def main():
     test_importreihenfolge()
     test_modell_tet10_nachbar_laut()
     test_modell_jacobi_gekruemmt()
+    test_pflichtpruefung_linear()
     n_fail = sum(1 for _n, ok in RESULTS if not ok)
     print(f"\n{len(RESULTS) - n_fail}/{len(RESULTS)} bestanden")
     return 1 if n_fail else 0

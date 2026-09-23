@@ -7133,7 +7133,7 @@ die Meldung für einen Freibrief hält.
 | `tests/test_ec3.py` | Klassifizierung, Querschnittsnachweise, Knicken (χ), M_cr, χ_LT, C1/C_m, Interaktion, Wöhlerlinien, Nachweisführung |
 | `tests/test_importers.py` | Import DXF, IFC, SAF, RFEM-Tabellen, INP, BDF |
 | `tests/test_report.py` | Berichtserzeugung |
-| `tests/test_tetp.py` | Tetraeder mit Ordnung p: Integrationsregeln gegen alle Monome, Vollständigkeit bis p = 4, sechs Starrkörpermoden, Patch-Test (verzerrt, gemischte Ordnung, lineare Pflichtseite, gekrümmt), Stapel gegen Einzelweg, Masse und Lasten, Kragarm auf 1 N/mm², umgeklapptes Element; am Modell Übergang zu tet4, Kontakt- und Lagerseiten, getrennte Fuge, laute Pflichtprüfung, Importreihenfolge, tet10-Nachbar, Jacobi-Prüfung gekrümmter Elemente |
+| `tests/test_tetp.py` | Tetraeder mit Ordnung p: Integrationsregeln gegen alle Monome, Vollständigkeit bis p = 4, sechs Starrkörpermoden, Patch-Test (verzerrt, gemischte Ordnung, lineare Pflichtseite, gekrümmt), Stapel gegen Einzelweg, Masse und Lasten, Kragarm auf 1 N/mm², umgeklapptes Element; am Modell Übergang zu tet4, Kontakt- und Lagerseiten, getrennte Fuge, laute Pflichtprüfung, Importreihenfolge, tet10-Nachbar, Jacobi-Prüfung gekrümmter Elemente, Pflichtprüfung ohne Suche je Seite (16.464 Elemente unter 0,5 s, vorher 3,1 s) |
 | `tests/test_tetp_rechnung.py` | dasselbe Element durch den Löser: Model.ndof mit und ohne tetp (ohne Lauf über die Elemente), laute Abweisung veralteter FHG-Zahlen, Kragarm-Knotenmittel auf 1 N/mm², Lastsummen, Patch-Test tet4/tetp3 gemischt, Symmetrieebenen, Temperatur; je Lastart tetp2/3/4 gegen geschlossene Lösung und tet10; Linienlager starr und federnd |
 
 ## 10 Tetraeder mit Ordnung p (`elements/tetp.py`, 22./23.09.2026)
@@ -7341,9 +7341,51 @@ brauchen die Krümmung. Gemessen am Hohlzylinder: Musste eine einzige
 Bohrungskante gerade bleiben (Umklappschutz, h = 0,035 m), lag dort selbst
 p = 4 überall 23 N/mm² daneben.
 
+**Kosten am Drehlager (M1, 23.09.2026).** Gemessen ohne zu rechnen
+(`tests/messung_m1_tetp.py`, dieselben Spalten wie `tests/messung_m1.py`):
+Muster der Steifigkeit über die Inzidenz Element–Funktion, dann die
+symbolische Analyse von PARDISO (Phase 11). `drehlager.json`: 158.728 Knoten,
+645.934 tet4. Gekrümmt sind 786 der 1.311 Modellflächen (Winkel einer
+Seitennormale zur mittleren Normale über 0,5°, gemessen am Netz). Die Lage
+daran (Elemente mit einer Ecke auf der Fläche) umfasst 251.007 Elemente, 39 %.
+
+| Variante | Unbekannte | nnz(K) | nnz(Faktor) | MFlops Faktor |
+|---|---|---|---|---|
+| heute (tet4) | 475.599 | 17.598.267 | 171.056.601 | 79.231 |
+| p = 2 überall | 2.662.476 | 201.087.810 | 2.562.688.524 | 4.166.926 (52,6 × heute) |
+| p = 4 in der Lage, Rest tet4 | 7.324.635 | 1.143.391.563 | – | – |
+| p = 4 in der Lage, sonst p = 2 | 8.845.266 | 1.346.891.508 | – | – |
+
+Die letzten beiden wurden nur gezählt: Über nnz(K) = 6·10⁸ baut das Skript die
+Matrix nicht (die Maschine teilen sich mehrere Sitzungen). Die letzte Zeile
+enthält alle Funktionen der zweiten, kostet also mehr als das 52,6-Fache.
+nnz(Faktor) meldet PARDISO in iparm(18) als int32; bei p = 2 lief die Zahl
+über und ist um 2³² berichtigt. Im Muster gleicht p = 2 überall dem tet10
+überall genau (am Quader 1.176 FHG und nnz 76.176 in beiden).
+
+**Folgerung:** Auf dem heutigen Netz des Drehlagers bleibt keine Variante mit
+höherer Ordnung an allen Krümmungen in der Rechenzeit von heute. Das Element
+kann sich dort nur auf einem deutlich gröberen, gekrümmten Netz lohnen.
+Hergeleitet, nicht gemessen: Wächst der Faktoraufwand wie n², braucht p = 2
+für die Kosten von heute etwa 14 % seiner Unbekannten, also etwa doppelt so
+große Elemente. Ob ein solches Netz die 1 N/mm² hält, zeigt erst M2/M3.
+
+**Aufbau der Anreicherung.** Beim Messen fiel auf, dass `anreicherung` am
+Drehlager (alles tetp2) 489 bis 564 s brauchte (zwei Läufe): Die Pflichtprüfung suchte für jede
+der 110.089 gebundenen Seiten ihre Kanten in der ganzen Kantenliste. Die Suche
+war überflüssig, denn die Kanten einer gebundenen Seite haben zwei gebundene
+Ecken und stehen schon in der Menge daneben. Ohne sie: 22,7 s. Mit Feldern
+statt Schleifen je Element in `pflichtseiten` und einem Schlüssel statt
+`np.unique(axis=0)`: 5,8 s; gemischt tet4/p2/p4 16,1 statt 280 s. Die
+Nummerierung ist dieselbe; geprüft
+wurden alle Felder der Anreicherung, die gesperrten FHG und der
+Fingerabdruck gegen die alte Fassung, an vier Quadern und am Drehlager
+(p = 2 überall und gemischt tet4/p2/p4).
+
 **Offen.** Kantenmitten auf der wahren Geometrie an Bauteilen liefert erst der
 Vernetzer (V2); aus dessen tet10 macht `aus_tet10` gekrümmte `tetp`, die Wahl der Ordnung je Element in der
 Oberfläche und automatisch, ein Fehlerschätzer für höhere Ordnung
-(`netzfehler` behandelt das Element vorerst wie einen tet4) und die Messung
-der Rechenzeit am Drehlager. Der Anwender hat festgelegt, dass die Rechnung dort nicht länger werden darf als heute. Ob das
-Element das schafft, zeigt erst die Messung M3.
+(`netzfehler` behandelt das Element vorerst wie einen tet4). Der Anwender hat
+festgelegt, dass die Rechnung am Drehlager nicht länger werden darf als heute.
+Nach M1 geht das nur mit einem gröberen gekrümmten Netz. Ob das Element es
+dann schafft, zeigen erst M2 und M3.
