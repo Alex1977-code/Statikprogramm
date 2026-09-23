@@ -4803,7 +4803,14 @@ dazu gesagt:
   Prüfung hätte das Element seinen deviatorischen Anteil bekommen und keinen
   volumetrischen zurück — die Steifigkeit hätte sich um 109 % ihres größten
   Eintrags geändert, ohne eine Meldung. Solche Bauteile rechnen mit dem
-  gewöhnlichen Tetraeder weiter, und das Protokoll sagt es.
+  gewöhnlichen Tetraeder weiter. **Gesagt wird es seit dem 24.09.2026 im
+  Ergebnis** (`res.info["dilatation_hinweise"]`, je Werkstoff mit der Zahl der
+  betroffenen tet4), in der Zusammenfassung und in den Hinweisen des Berichts
+  (`solver.dilatation_gebuendelt`). Vorher ging es nur über `warnings.warn` und
+  erreichte weder Protokoll noch Bericht noch die exe (Befund B032). Die Regel
+  verlangt 0 ≤ ν < 0,5; bei ν = 0,5 rechnet schon der gewöhnliche tet4 nicht (laut,
+  mit Elementnummer), geprüft ist die Meldung darum mit ν = −0,1
+  (`tests/test_dilatation.py`).
 * **Temperatur- und Anfangsspannungslasten bleiben elementlokal.** Bei
   gleichmäßiger Erwärmung ist das exakt (gemessen 0,00 MPa, ν = 0,3 und
   0,499); bei veränderlichem Feld ist die äquivalente Last nicht das

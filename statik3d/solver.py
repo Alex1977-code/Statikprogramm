@@ -728,6 +728,18 @@ def ausweichloeser_text(loeser) -> str:
                      for k in loeser)
 
 
+def dilatation_gebuendelt(ergebnisse) -> list:
+    """Die Meldungen der Knotendilatation (res.info["dilatation_hinweise"])
+    ueber alle Ergebnisse, jede Zeile einmal - fuer die Hinweise des Berichts
+    und die Zusammenfassung. ``ergebnisse``: (Name, Results)-Paare."""
+    zeilen: dict = {}
+    for _name, r in ergebnisse:
+        inf = r.info if isinstance(getattr(r, "info", None), dict) else {}
+        for z in inf.get("dilatation_hinweise") or []:
+            zeilen.setdefault(f"Knotendilatation: {z}", None)
+    return list(zeilen)
+
+
 def ausweichen_gebuendelt(ergebnisse) -> list:
     """Je Art von Ausweichgrund **eine** Zeile ueber alle Ergebnisse - fuer
     die Hinweise des Berichts und die Zusammenfassung der Oberflaeche.
@@ -2912,6 +2924,21 @@ def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
         else:
             res.solid_res[i] = val
     res.solid_knoten = randspannung_knoten(model, ecken)
+    if getattr(model, "knotendilatation", False):
+        # je Rechnung einmal (am StaticSystem gemerkt), nicht je Lastfall
+        schl = None if aktiv is None else hash(np.asarray(aktiv, bool).tobytes())
+        alt = getattr(system, "_dilatation_meldungen", None) if system is not None else None
+        if alt is not None and alt[0] == schl:
+            dm = alt[1]
+        else:
+            dm = asm.dilatation_meldungen(model, aktiv)
+            if system is not None:
+                try:
+                    system._dilatation_meldungen = (schl, dm)
+                except AttributeError:
+                    pass
+        if dm:
+            res.info["dilatation_hinweise"] = list(dm)
     weg = str(getattr(model, "randspannung", "frei") or "frei")
     if weg == "frei" and res.solid_knoten:
         faktoren = res.info.get("factors")
@@ -5371,6 +5398,7 @@ class Analysis:
         # Ausweichen des Gleichungsloesers: eine Zeile je Grund ueber alle
         # Ergebnisse - auch aus Ketten, Pool und Farm, die ohne Fortschritt rechnen
         s += ausweichen_gebuendelt(self.all_results().items())
+        s += dilatation_gebuendelt(self.all_results().items())
         for k, env in self.envelopes.items():
             s.append(env.summary())
         if self.theorie2 is not None and getattr(self.theorie2, "kombinationen", None):

@@ -883,6 +883,15 @@ quadratische mit demselben Netz auf 99 %. Er kostet dafür mehr Knoten. Für
 Spannungsnachweise an Kerben, Augen und Bohrungen gehören die quadratischen
 genommen.
 
+**Tetraeder ohne volumetrische Versteifung** (Kästchen „knotengemittelte
+Dilatation“): der lineare Tetraeder rechnet seine Volumendehnung dann über die
+Nachbarn gemittelt, das hebt die Versteifung auf, die ihn fast inkompressibel und
+im Fließbereich zu steif macht (Theoriehandbuch, Knotendilatation). Das geht nur für
+Werkstoffe mit 0 ≤ ν < 0,5; Bauteile aus anderen Werkstoffen rechnen mit dem
+gewöhnlichen Tetraeder weiter, und das steht seit dem 24.09.2026 in der
+Zusammenfassung und in den Hinweisen des Berichts („Knotendilatation: Werkstoff …,
+Querdehnzahl … (n tet4)“) — vorher nirgends, wo man es las.
+
 **Quadratische Elemente an Fugen, Kontakten und Flächenlagern: noch gesperrt.**
 Kontakt, Fugen und Flächenlager nehmen von einer Elementseite heute nur die
 Eckknoten. Die Seitenmitten eines tet10, hex20, pent15, shell6 oder shell8
