@@ -6795,10 +6795,14 @@ von zusammen 0,33 cm³ (WARNUNG), die übrigen 4 Seiten bleiben ein FEHLER
 **Die Ursache des FEHLERs** (23.09.2026). Was weder Riss noch Lücke ist,
 bekommt je Gruppe eine Ursache, und der Text nennt sie mit der Zahl der
 Seiten (`_URSACHEN`), in dieser Reihenfolge der Prüfung: doppelte Knoten
-(zwei Nummern näher als 1 % der kürzesten Kante oder, bei geschlossenen
-Gruppen, ein Knoten in nur einem Element); hängende Knoten (Gegenüber, siehe
-oben); verdrehtes Element; bei geschlossenen Gruppen Hohlraum; bei offenen
-**Netzrand verfehlt die Randfläche**. Die Reihenfolge ist nötig, weil
+(zwei Nummern näher als 1 % der kürzesten Kante; ein Knoten in nur einem
+Element, bei offenen Gruppen nur, wenn er weiter als 1 % seiner kürzesten
+Kante von jedem Punkt der Randlinien liegt; oder ein Gegenüber über einen
+solchen Knoten); hängende Knoten (Gegenüber, siehe oben, ohne losgelösten
+Knoten); verdrehtes Element; bei geschlossenen Gruppen Hohlraum; bei offenen
+**Netzrand verfehlt die Randfläche**. Das Gegenüber wird dafür an allen
+Gruppen ohne Ursache gesucht und an den Gruppen, die mit ihnen Knoten
+teilen, nicht nur an offenen. Die Reihenfolge ist nötig, weil
 `_verdrehte_elemente` auch ein losgelöstes Element und die feinen Elemente
 eines T-Stoßes nennt: Ihre Kanten teilt kein anderes Element (T-Stoß in der
 Ecke, hex8: vier Elemente „verdreht“). Vorher stand für jede Gruppe
@@ -6813,6 +6817,47 @@ Ecke, hex8: vier Elemente „verdreht“). Vorher stand für jede Gruppe
 | dieselbe mit `mesh_koerper_frei`, 14 242 tet4 | FEHLER 126, WARNUNG 31 | Netzrand verfehlt die Randfläche |
 | Stufe d 0,45 mm, t 0,02 m, `mesh_koerper_frei`, 1358 tet4 | FEHLER 5, WARNUNG 12 | Netzrand verfehlt die Randfläche |
 | Zelle 100 × 100 × 200 mm, Element 444 verdreht | FEHLER 8 | verdrehtes Element |
+
+Die erste Fassung (70614f8) suchte das Gegenüber nur zwischen offenen
+Gruppen und Knoten in nur einem Element nur in geschlossenen (Gegenprüfung
+vom 23.09.2026). Am 24.09.2026 an diesem Stand und an der Nachbesserung
+gemessen, die Befunde sind in beiden gleich, nur die Ursache ändert sich
+(8 × 8 × 8-Netz des Würfels 1 × 1 × 1 m, Kante 125 mm; Versatz in Richtung
+(0,6 | 0 | 0,8)):
+
+| Fall | Befund | Ursache 70614f8 | Ursache jetzt |
+|---|---|---|---|
+| T-Stoß im Inneren: 3 × 3 × 3 hex8, Mittelzelle 2 × 2 × 2, Σ V = 1 | FEHLER 30 | verdrehtes Element 24, Hohlraum 6 | hängende Knoten 30 |
+| derselbe in Kuhn-Tetraedern | FEHLER 60 | Hohlraum 60 | hängende Knoten 60 |
+| Schachbrett 8 × 8 × 8 hex8, jede zweite Zelle 2 × 2 × 2 | FEHLER 1344, WARNUNG Riss 5376 | Netzrand verfehlt die Randfläche, Rat zum Sweep | hängende Knoten |
+| Kuhn-Tetraeder 164 an der Seite x = 0, drei Hüllknoten losgelöst, 1,25 / 1,3 / 1,6 / 2 / 2,5 mm | FEHLER 6 | hängende Knoten | doppelte Knoten |
+| Eckzelle mit eigenen Knoten abgetrennt, 2 / 5 mm | FEHLER 6 / 8 | hängende Knoten | doppelte Knoten |
+| hex8 27 an der Seite x = 0, vier Hüllknoten losgelöst, 1,3 / 2 / 5 mm | FEHLER 8 / 8 / 9 | verdrehtes Element | doppelte Knoten |
+| hex8 292 im Inneren an allen acht Knoten losgelöst, 0 / 0,01 / 2 mm | FEHLER 12 | doppelte Knoten 6, Hohlraum 6 | doppelte Knoten 12 |
+| innerer Block 2 × 2 × 2 (Zellen 3 und 4 je Richtung) mit eigenen Knoten auf seiner Oberfläche, hex8, 0 / 0,01 / 1 / 2 mm | FEHLER 48 | doppelte Knoten 24, Hohlraum 24 | doppelte Knoten 48 |
+| derselbe in Kuhn-Tetraedern, 0 / 0,01 / 1 mm | FEHLER 96 | Hohlraum 96 | doppelte Knoten 96 |
+| derselbe in Kuhn-Tetraedern, 2 mm | FEHLER 96 | Hohlraum 96 | hängende Knoten 96 |
+| hex8 0 (Ecke des Würfels) verdreht | FEHLER 6 | verdrehtes Element | verdrehtes Element |
+
+Das verdrehte Eckelement benutzt die Würfelecke allein, wie im richtigen
+Netz; ohne die Ausnahme für die Punkte der Randlinien hieße es „doppelte
+Knoten“ (gezielt verfälscht gemessen). Den Tetraeder-Block findet bis 1 mm
+nur die Suche nach doppelten Knoten, die dafür an allen Gruppen läuft (vorher
+nur, wenn eine Gruppe sonst Riss oder Lücke hätte werden können; ohne sie
+hieße er „hängende Knoten“). Bei 2 mm (1,6 % der Kante) liegen die Knoten
+weiter auseinander als `ABNAHME_KNOTENNAEHE`, und jeden benutzen mindestens
+zwei Elemente; es bleibt das Gegenüber, der Text sagt „hängende Knoten“.
+Er beschreibt darum nur, was gefunden wurde – Knoten des einen Ufers auf
+den Seiten des anderen, ohne deren Ecken zu sein –, und nennt den T-Stoß nur
+als Beispiel. Im hex8-Block benutzt jede der acht Blockecken nur ein Element;
+er heißt bei allen vier gemessenen Versätzen „doppelte Knoten“. Alle Zeilen der ersten Tabelle behielten Befund und Ursache
+(nachgemessen am 24.09.2026), ebenso verdrehte hex8 an der Seite und im
+Inneren (Elemente 36 und 292), ein fehlender hex8 und ein fehlender
+Kuhn-Tetraeder im Inneren (Hohlraum), die Lochplatte r 0,1
+(`mesh_koerper_frei`, FEHLER 4 neben Lücken von zusammen 0,33 cm³). An den
+164 Körpern, die test_diagnose (84), test_mesher3d (30) und test_sweep (50)
+bauen, blieben alle Befunde gleich; die Ursache änderte sich nur an den 11
+Körpern der Fälle dieser Tabelle, die test_diagnose jetzt prüft.
 
 Am U-Prisma liegen Netzknoten wie (0,404 | 0,23 | 0,083) im Körper neben der
 einspringenden Kante x = 0,4, y = 0,3; die Seiten von dort zu den Wänden der
@@ -6953,14 +6998,23 @@ ein Riss, 91 200 Seiten) braucht `_abnahme_netz` 7,6–7,7 s gegen 7,0–7,1 s
 im alten Stand. Mit Dicke der Nachbarn, verdrehten Elementen und doppelten
 Knoten (vierte Fassung) nachgemessen, je viermal: 7,72–7,87 s gegen
 7,59–7,72 s. Die Dicke wird nur für die Elemente an Seiten im Inneren
-gerechnet, die Suche nach doppelten Knoten und verdrehten Elementen nur, wenn
-eine Gruppe sonst ein Riss wäre. Ein Körper mit krummen Randlinien wird an der
+gerechnet, die Suche nach verdrehten Elementen nur für Gruppen, die sonst
+ein Riss oder eine Lücke wären oder eine Ursache brauchen; die Suche nach
+doppelten Knoten läuft seit dem 24.09.2026, sobald es Seiten im Inneren gibt
+(vorher nur bei dünnen geschlossenen oder offenen Gruppen). Ein Körper mit krummen Randlinien wird an der
 ersten krummen Linie verlassen, bevor ein Element angefasst wird (mit der
 WARNUNG „Volumenbilanz nicht geprüft“). Mit relativer Knotennähe, Gegenüber
 und Ursachen (23.09.2026) am selben nicht konformen Netz (fünf Tetraeder je
 Zelle, 20 × 20 × 20, 91 200 Rissseiten), alter und neuer Stand abwechselnd,
 je zweimal drei Läufe auf einer stark belasteten Maschine: alt 9,2–15,4 s,
-neu 14,1–16,5 s – der Unterschied liegt in der Streuung.
+neu 14,1–16,5 s – der Unterschied liegt in der Streuung. Mit dem Gegenüber
+für alle Gruppen ohne Ursache (24.09.2026; die Suche danach gestapelt statt
+in Python-Schleifen), gegen 70614f8 abwechselnd je drei Läufe: dasselbe Netz
+12,2–14,1 s gegen 13,1–14,2 s; Schachbrett 6 × 6 × 6 (`_abnahme_volumenbilanz`)
+2,2–2,7 s gegen 3,0–3,8 s, 8 × 8 × 8 6,1–6,9 s gegen 5,8–6,2 s (mit den
+Schleifen 8,4 und 8,6 s); `abnahme` an drehlager.json (645 998 Elemente,
+108 Körper, je zwei Läufe) 37,4–40,5 s gegen 37,0–37,5 s. Die Befunde waren
+jeweils dieselben.
 
 **Elemente, die eine Fuge überspannen.** Beim Ausführen einer Fuge werden die
 gemeinsamen Randknoten verdoppelt und die Elemente der gelösten Seite auf die

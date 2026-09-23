@@ -1722,6 +1722,53 @@ def _ecke_tstoss(n=8, art="hex8"):
     return m, kb
 
 
+def _schach(n, fein=None):
+    """hex8-Netz n x n x n über dem Würfel 1 x 1 x 1 m; die Zellen in
+    ``fein`` (ohne Angabe jede Zelle mit gerader Indexsumme, ein Schachbrett)
+    in 2 x 2 x 2 Zellen geteilt - ein T-Stoß an jeder Seite zwischen einer
+    feinen und einer groben Zelle (Gegenprüfung vom 23.09.2026,
+    g2_nb_diagnose_1/p_schach.py)."""
+    m = Model("schach")
+    m.add_material(Material.steel("S235"))
+    h = 1.0 / n
+    kn = {}
+
+    def k(x, y, z):
+        key = (round(x, 9), round(y, 9), round(z, 9))
+        if key not in kn:
+            kn[key] = int(m.add_node(x, y, z))
+        return kn[key]
+
+    def hexa(x0, y0, z0, d):
+        P = [(x0, y0, z0), (x0 + d, y0, z0), (x0 + d, y0 + d, z0), (x0, y0 + d, z0),
+             (x0, y0, z0 + d), (x0 + d, y0, z0 + d), (x0 + d, y0 + d, z0 + d), (x0, y0 + d, z0 + d)]
+        m.add_element("hex8", [k(*p) for p in P], "S235")
+
+    for i in range(n):
+        for j in range(n):
+            for l_ in range(n):
+                if ((i + j + l_) % 2 == 0) if fein is None else ((i, j, l_) in fein):
+                    for a in range(2):
+                        for b in range(2):
+                            for c in range(2):
+                                hexa(i * h + a * h / 2, j * h + b * h / 2, l_ * h + c * h / 2, h / 2)
+                else:
+                    hexa(i * h, j * h, l_ * h, h)
+    kb = _quaderkoerper(m, [k(0, 0, 0), k(1, 0, 0), k(1, 1, 0), k(0, 1, 0),
+                            k(0, 0, 1), k(1, 0, 1), k(1, 1, 1), k(0, 1, 1)])
+    kb.elemente = list(range(len(m.elements)))
+    return m, kb
+
+
+def _gefunden(bef):
+    """Der Teil „Gefunden: …“ des FEHLERs „Seiten im Inneren“."""
+    for b in bef:
+        if b.pruefung == "Seiten im Inneren":
+            i = b.text.find("Gefunden:")
+            return b.text[i:b.text.find(". ", i)] if i >= 0 else ""
+    return ""
+
+
 def test_abnahme_t_stoss_nennt_haengende_knoten():
     """B040 (Nebenbefund vom 22./23.09.2026): Ein T-Stoß - ein Ufer feiner
     geteilt als das andere, seine Knoten liegen auf den Seiten des Nachbarn -
@@ -1731,10 +1778,18 @@ def test_abnahme_t_stoss_nennt_haengende_knoten():
     doppelte Knoten oder Hohlraum - die hängenden Knoten fehlten.
 
     Liegt der T-Stoß in einer Ecke, schließt der Rand beider Ufer an die
-    Hülle an, und die Abnahme hielt jedes Ufer für eine „Lücke im Netzrand“
-    mit dem Volumen des Eckblocks (8 x 8 x 8 in Kuhn-Tetraedern: nur WARNUNG
-    Lücke 3906 cm³, ``abnahme() == []``; ec6448c) - obwohl nichts fehlt. Ein
-    Ufer mit Gegenüber ist keine Lücke.
+    Hülle an. Am Stand ec6448c hielt die Abnahme in Kuhn-Tetraedern jedes
+    Ufer für eine „Lücke im Netzrand“ mit dem Volumen des Eckblocks (zwei
+    Lücken, zusammen 3906 cm³, nur WARNUNG, ``abnahme() == []``), in hex8
+    eines (Lücke 1953 cm³ neben FEHLER 12; nachgemessen am 24.09.2026) -
+    obwohl nichts fehlt. Ein Ufer mit Gegenüber ist keine Lücke.
+
+    Die erste Kur (70614f8) suchte die hängenden Knoten nur zwischen offenen
+    Gruppen (Gegenprüfung vom 23.09.2026, Mangel 1): der T-Stoß im Inneren -
+    zwei geschlossene Gruppen - hieß „verdrehtes Element an 24 Seiten; ein
+    Hohlraum im Netz an 6 Seiten“, in Kuhn-Tetraedern „Hohlraum an 60“, und
+    im Schachbrett 8 x 8 x 8, wo die feinen Ufer als Riss gelten, hießen die
+    groben „Netzrand verfehlt die Randfläche“ mit dem Rat zum Sweep.
     """
     for art, zahl in (("hex8", 5.0), ("tet4", 10.0)):
         m, k = _tstoss(art)
@@ -1751,6 +1806,32 @@ def test_abnahme_t_stoss_nennt_haengende_knoten():
               and "hängende Knoten" in bef[0].text
               and [b.pruefung for b in dg.abnahme(m)] == ["Seiten im Inneren"],
               _kurz(bef))
+    # T-Stoss im Inneren: die Mittelzelle eines 3 x 3 x 3-Netzes geteilt,
+    # Summe der Elementvolumina genau 1 - kein Hohlraum, nichts verdreht
+    for art, zahl in (("hex8", 30.0), ("tet4", 60.0)):
+        m, k = _schach(3, {(1, 1, 1)})
+        if art == "tet4":
+            _in_kuhn(m, k)
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        gef = _gefunden(bef)
+        check(f"T-Stoß im Inneren ({art}): FEHLER {zahl:.0f}, nur hängende Knoten",
+              [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", zahl)]
+              and "hängende Knoten" in gef and f"an {zahl:.0f} Seiten" in gef
+              and "verdreht" not in gef and "Hohlraum" not in gef,
+              _kurz(bef) + " | " + gef[:160])
+    # Schachbrett 8 x 8 x 8: die feinen Ufer gelten als Riss (ihr Rand 9,8 %
+    # der Seitenflaeche, unter ABNAHME_RISS_UFER), die groben bleiben FEHLER -
+    # ihr Gegenueber ist die Riss-Gruppe
+    m, k = _schach(8)
+    bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+    gef = _gefunden(bef)
+    fehler = [b for b in bef if b.pruefung == "Seiten im Inneren"]
+    check("Schachbrett 8 x 8 x 8: FEHLER 1344 hängende Knoten neben WARNUNG Riss 5376, kein Sweep-Rat",
+          [(b.stufe, b.pruefung, b.wert) for b in bef]
+          == [("FEHLER", "Seiten im Inneren", 1344.0), ("WARNUNG", "Riss im Netz", 5376.0)]
+          and "hängende Knoten" in gef and "an 1344 Seiten" in gef and "Netzrand" not in gef
+          and "sweepen" not in fehler[0].text,
+          _kurz(bef) + " | " + gef[:160])
 
 
 def test_abnahme_doppelte_knoten_relativ_zur_kante():
@@ -1784,7 +1865,10 @@ def test_abnahme_doppelte_knoten_relativ_zur_kante():
     # 8 x 8 x 8-Netzes (Zelle 125 mm), an seinen drei Huellknoten losgeloest.
     # Bei ec6448c ab 1e-5 m Versatz nur WARNUNG „Lücke im Netzrand“ 651 cm³,
     # abnahme() leer - obwohl nichts fehlt (gemessen 23.09.2026)
-    for versatz in (1e-5, 2e-3):
+    # Die Ursache im Text: ueber 1 % der Kante (1,25 mm) hiess es bei der
+    # ersten Kur (70614f8) „hängende Knoten (ein Ufer feiner geteilt …)“ -
+    # beide Ufer sind aber gleich geteilt (Gegenpruefung vom 23.09.2026)
+    for versatz in (1e-5, 1.3e-3, 2e-3):
         m, k = _gleichmaessig(1.0, 1.0, 1.0, 8)
         _in_kuhn(m, k)
         nd = list(m.elements[164].nodes)
@@ -1792,10 +1876,94 @@ def test_abnahme_doppelte_knoten_relativ_zur_kante():
             nd[j] = int(m.add_node(*(m.nodes[nd[j]] + versatz * np.array([0.6, 0.0, 0.8]))))
         m.elements[164].nodes = nd
         bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
-        check(f"Tetraeder 164 an der Oberfläche an drei Knoten losgelöst, {versatz:g} m: FEHLER 6, keine Lücke",
+        gef = _gefunden(bef)
+        check(f"Tetraeder 164 an der Oberfläche an drei Knoten losgelöst, {versatz:g} m: "
+              "FEHLER 6 doppelte Knoten, keine Lücke",
               [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", 6.0)]
+              and "doppelte Knoten" in gef and "an 6 Seiten" in gef and "hängende" not in gef
               and [b.pruefung for b in dg.abnahme(m)] == ["Seiten im Inneren"],
-              _kurz(bef))
+              _kurz(bef) + " | " + gef[:120])
+    # Sechsflaechner 27 an der Seite x = 0, an seinen vier Huellknoten
+    # losgeloest: bei der ersten Kur ab 1,3 mm „verdrehtes Element“ (seine
+    # Kanten teilt kein Nachbar mehr)
+    for versatz in (1e-5, 2e-3):
+        m, k = _gleichmaessig(1.0, 1.0, 1.0, 8)
+        el = m.elements[27]
+        P = m.nodes[el.nodes]
+        nd = list(el.nodes)
+        for j in [j for j in range(8) if abs(P[j][0]) < 1e-9]:
+            nd[j] = int(m.add_node(*(P[j] + versatz * np.array([0.6, 0.0, 0.8]))))
+        el.nodes = nd
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        gef = _gefunden(bef)
+        check(f"Sechsflächner 27 an vier Hüllknoten losgelöst, {versatz:g} m: FEHLER 8 doppelte Knoten",
+              [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", 8.0)]
+              and "doppelte Knoten" in gef and "an 8 Seiten" in gef and "verdreht" not in gef,
+              _kurz(bef) + " | " + gef[:120])
+    # Sechsflaechner 292 im Inneren an allen acht Knoten losgeloest: die
+    # Seiten der Nachbarn hiessen bei der ersten Kur „Hohlraum“
+    m, k = _gleichmaessig(1.0, 1.0, 1.0, 8)
+    nd = list(m.elements[292].nodes)
+    for j in range(8):
+        nd[j] = int(m.add_node(*(m.nodes[nd[j]] + 1e-5 * np.array([0.6, 0.0, 0.8]))))
+    m.elements[292].nodes = nd
+    bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+    gef = _gefunden(bef)
+    check("Sechsflächner 292 an allen acht Knoten losgelöst: FEHLER 12, nur doppelte Knoten",
+          [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", 12.0)]
+          and "doppelte Knoten" in gef and "an 12 Seiten" in gef and "Hohlraum" not in gef,
+          _kurz(bef) + " | " + gef[:160])
+    # Gegenprobe: das verdrehte Eckelement benutzt die Wuerfelecke allein wie
+    # im richtigen Netz - es bleibt „verdreht“, nicht „doppelt“
+    m, k = _gleichmaessig(1.0, 1.0, 1.0, 8)
+    _verdrehen(m, 0)
+    bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+    gef = _gefunden(bef)
+    check("  Gegenprobe: verdrehtes Eckelement 0 - Ursache verdreht, nicht doppelt",
+          [(b.stufe, b.pruefung) for b in bef] == [("FEHLER", "Seiten im Inneren")]
+          and "verdrehtes Element" in gef and "doppelte" not in gef,
+          _kurz(bef) + " | " + gef[:120])
+    # Innerer Block 2 x 2 x 2 mit eigenen Knoten auf seiner Oberflaeche: in
+    # Kuhn-Tetraedern benutzt jeden Knoten mehr als ein Element, dort findet
+    # nur die Suche nach doppelten Knoten die Ursache - bei der ersten Kur
+    # (70614f8) „Hohlraum an 96 Seiten“, hex8 „doppelt 24, Hohlraum 24“
+    for art, zahl in (("hex8", 48.0), ("tet4", 96.0)):
+        m, k = _block_getrennt(1e-5, art)
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        gef = _gefunden(bef)
+        check(f"innerer Block 2 x 2 x 2 abgetrennt ({art}, 1e-05 m): FEHLER {zahl:.0f}, nur doppelte Knoten",
+              [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", zahl)]
+              and "doppelte Knoten" in gef and f"an {zahl:.0f} Seiten" in gef,
+              _kurz(bef) + " | " + gef[:160])
+
+
+def _block_getrennt(versatz=0.0, art="hex8", lo=3, hi=5, n=8):
+    """hex8-Netz n x n x n über dem Würfel 1 x 1 x 1 m, der innere Block der
+    Zellen lo..hi-1 je Richtung auf seiner Oberfläche mit eigenen Knoten, um
+    ``versatz`` in Richtung (0,6 | 0 | 0,8) verschoben: eine geschlossene
+    Trennfläche im Inneren; ``tet4``: danach in Kuhn-Tetraeder zerlegt."""
+    m, k = _gleichmaessig(1.0, 1.0, 1.0, n)
+    a, b = lo / n, hi / n
+    neu = {}
+    for e in list(k.elemente):
+        el = m.elements[e]
+        c = m.nodes[el.nodes].mean(axis=0)
+        if not ((c > a) & (c < b)).all():
+            continue
+        nd = []
+        for x in el.nodes:
+            p = m.nodes[int(x)]
+            if ((p >= a - 1e-9) & (p <= b + 1e-9)).all() and (
+                    (np.abs(p - a) < 1e-9) | (np.abs(p - b) < 1e-9)).any():
+                if int(x) not in neu:
+                    neu[int(x)] = int(m.add_node(*(p + versatz * np.array([0.6, 0.0, 0.8]))))
+                nd.append(neu[int(x)])
+            else:
+                nd.append(int(x))
+        el.nodes = nd
+    if art == "tet4":
+        _in_kuhn(m, k)
+    return m, k
 
 
 def _ecke_getrennt(zellen=1, versatz=0.0, n=8):
@@ -1859,13 +2027,18 @@ def test_abnahme_duenne_luecke_und_ufer_ohne_gegenueber():
               and [(b.stufe, b.pruefung) for b in bef] == [("WARNUNG", "Lücke im Netzrand")]
               and abs(bef[0].wert - V_soll) < 1e-3 * V_soll and not dg.abnahme(m),
               f"{n_el} tet4, vorher {_kurz(vorher)}; gelöscht: {_kurz(bef)}")
-    for versatz in (0.0, 1e-5):
+    # Ueber 1 % der Kante (1,25 mm) versetzt hiess die Ursache bei der ersten
+    # Kur (70614f8) „hängende Knoten (ein Ufer feiner geteilt …)“, obwohl
+    # beide Ufer gleich geteilt sind (Gegenpruefung vom 23.09.2026)
+    for versatz, zahl in ((0.0, 6.0), (1e-5, 6.0), (2e-3, 6.0), (5e-3, 8.0)):
         m, k = _ecke_getrennt(1, versatz)
         bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
-        check(f"Trennfläche um die Eckzelle, {versatz:g} m versetzt: FEHLER 6 (doppelte Knoten), keine Lücke",
-              [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", 6.0)]
-              and "doppelte Knoten" in bef[0].text,
-              _kurz(bef))
+        gef = _gefunden(bef)
+        check(f"Trennfläche um die Eckzelle, {versatz:g} m versetzt: FEHLER {zahl:.0f} "
+              "(doppelte Knoten), keine Lücke",
+              [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", zahl)]
+              and "doppelte Knoten" in gef and f"an {zahl:.0f} Seiten" in gef and "hängende" not in gef,
+              _kurz(bef) + " | " + gef[:120])
 
 
 def test_abnahme_netzrand_verfehlt_randflaeche():

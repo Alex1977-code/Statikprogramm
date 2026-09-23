@@ -4602,16 +4602,44 @@ Befund.
 
 **Die Ursache im Text** (seit 23.09.2026). Der FEHLER „Seiten im Inneren“
 nennt, was an den Seiten gefunden wurde, und an wie vielen: ein verdrehtes
-Element; doppelte Knoten (zwei Nummern am selben Ort oder ein Knoten, den nur
-ein Element benutzt); hängende Knoten (ein Ufer feiner geteilt als das
-andere); einen Hohlraum im Netz; oder einen **Netzrand, der die Randfläche
+Element; doppelte Knoten, also ein losgelöstes Element (zwei Nummern am
+selben Ort, oder ein Knoten, den nur ein Element benutzt und der nicht in
+einer Ecke des Körpers liegt); hängende Knoten (Knoten des einen Ufers
+liegen auf den Seiten des anderen, ohne deren Ecken zu sein, etwa an einem
+T-Stoß); einen Hohlraum im Netz; oder einen **Netzrand, der die Randfläche
 verfehlt**. Vorher stand immer „ein verdrehtes Element, doppelte Knoten oder
 ein Hohlraum“ da. Ein T-Stoß von Sechsflächnern – links ein Würfel
 1 × 1 × 1 m, rechts derselbe in 2 × 2 × 2 geteilt, die Knoten der feinen
 Seite liegen auf der Seite des groben – ist ein FEHLER mit 5 Seiten, in
-Tetraeder zerlegt mit 10. Das war schon vorher so; es ist kein Riss, weil
-die beiden Ufer keine gemeinsame Kante haben. Neu ist nur, dass der Text die
-hängenden Knoten nennt. Den Netzrand, der die Randfläche verfehlt, findet die
+Tetraeder zerlegt mit 10; liegt die geteilte Zelle mitten in einem Netz aus
+3 × 3 × 3 Würfeln, sind es 30 bzw. 60 Seiten. Das war schon vorher so. Ein
+Riss ist das nicht, weil die Ufer offen sind (ihr Rand liegt auf der
+Randfläche) bzw. zu dick. Ob die Ufer eine Kante teilen, fragt die Abnahme
+dabei nicht: Im Schachbrett aus 8 × 8 × 8 Würfeln, jeder zweite in
+2 × 2 × 2 geteilt, gelten die feinen Ufer als „Riss im Netz“ (5376 Seiten)
+und nur die groben als FEHLER (1344 Seiten); mit 4 oder 6 Würfeln je Kante
+ist alles ein FEHLER (gemessen, vorher ebenso). Neu ist, dass der Text die
+hängenden Knoten nennt. Die erste Fassung dieser Ursachen (23.09.2026)
+suchte hängende Knoten nur an Ufern, deren Rand auf der Randfläche liegt,
+und Knoten, die nur ein Element benutzt, nur an geschlossenen Hohlräumen.
+So hieß der T-Stoß mitten im Netz „verdrehtes Element“ und „Hohlraum“, die
+groben Ufer des Schachbretts „Netzrand verfehlt die Randfläche“ mit dem Rat
+zum Sweep, und ein Element an der Seitenfläche des 8 × 8 × 8-Netzes (Kante
+125 mm), das an seinen Knoten auf der Randfläche losgelöst und um mehr als
+1 % der Kante versetzt war, hieß „hängende Knoten“ (Tetraeder, 1,25 bis
+2,5 mm; ebenso die abgetrennte Eckzelle bei 2 und 5 mm) oder „verdrehtes
+Element“ (Sechsflächner, 1,3 bis 5 mm). Seit dem 24.09.2026 heißen diese
+Fälle „hängende Knoten“ bzw. „doppelte Knoten“, gemessen an allen genannten
+Versätzen. Eine Grenze bleibt: Liegen die Knoten eines abgetrennten Bereichs
+weiter als 1 % der Kante auseinander und benutzt jeden mehr als ein Element,
+findet die Abnahme nur noch, dass Knoten des einen Ufers auf den Seiten des
+anderen liegen, und nennt „hängende Knoten“ – gemessen an einem inneren
+Block aus 2 × 2 × 2 Würfeln, in Tetraeder zerlegt und mit eigenen Knoten
+2 mm versetzt (bis 1 mm „doppelte Knoten“). Der Text beschreibt darum nur,
+was gefunden wurde, und nennt den T-Stoß als Beispiel. Ein verdrehtes
+Element in der Ecke des Körpers bleibt
+„verdrehtes Element“: Den Eckknoten benutzt auch im richtigen Netz nur ein
+Element. Den Netzrand, der die Randfläche verfehlt, findet die
 Abnahme an konformen Netzen des eigenen Vernetzers (jede innere Seite genau
 zweimal): am U-Prisma 1,5 × 1 × 0,5 m mit Netzweite 0,3 m (1113 Tetraeder)
 laufen 4 freie Seiten an den einspringenden Kanten durch den Körper; an der
