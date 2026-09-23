@@ -4183,6 +4183,27 @@ folgt an Kanten, die ein Nachbar mitbenutzt, der Linienvorgabe (Quader 2 × 1 ×
 Pyramide an der Wand und Feldkugel an einer Kante: 4 × 5 × 10 Hexaeder, 66 Wandknoten
 geteilt, Deckellast 2 000,0 kN kommt an — vorher 0 kN, `test_quader_randseiten_und_nachbar`).
 
+**Quadergenerator mit Tetraedern (`mesher.grid_box`, 22.09.2026).** Die Maske
+*Quader erzeugen* (und die Web-Operation `box`) teilt mit `typ="tet4"` jede Zelle des
+Rasters in fünf Tetraeder: vier Eck-Tetraeder und eines in der Mitte. Die Diagonalen aller
+sechs Zellseiten laufen durch die vier Ecken des Mitteltetraeders — in der Grundform die
+Ecken 1, 3, 4, 6 der Zelle. Die Nachbarzelle sieht dieselbe Seite von der anderen Seite;
+bei gleicher Zerlegung läge ihre Diagonale über die beiden anderen Ecken, die zwei
+Dreieckspaare deckten sich nicht, und die Seite bliebe ein innerer Riss, an dem die
+Verschiebung springen darf (nur ein linearer Verschiebungszustand ist davon nicht
+betroffen). Deshalb wechselt die Zerlegung schachbrettartig mit (i + j + k) mod 2: die
+gespiegelte Form hat die Mitte 0, 2, 5, 7 und trifft die Diagonalen der Nachbarn. Sie ist
+die x-Spiegelung der Grundform mit zwei getauschten Knoten, damit jedes Tetraeder positiv
+orientiert bleibt. Prüfung (`tests/test_elemente.py`, `test_quader_tet4_konform`, zehn
+Rastergrößen von 1 × 1 × 1 bis 5 × 4 × 3): frei bleiben genau die 4 (nx·ny + ny·nz + nx·nz)
+Randdreiecke, keine Dreiecksseite gehört zu mehr als zwei Tetraedern, alle Volumina sind
+positiv, ihre Summe ist lx·ly·lz. Vorher gemessen: 2 × 2 × 2 Zellen 96 statt 48 freie
+Dreiecke, 3 × 3 × 3 324 statt 108. Am Kragarm 2 × 0,4 × 0,4 m (Endlast 100 kN, E = 210 GPa)
+lag die Spitzendurchbiegung mit Rissen bei 0,43802 statt 0,43741 mm (10 × 3 × 3 Zellen,
++0,14 %) und 0,54363 statt 0,53761 mm (20 × 4 × 4, +1,1 %). Der Abstand zur
+Balkenlösung mit Schubanteil (0,61381 mm) besteht auch im rissfreien Netz und nimmt erst
+mit dem Verfeinern ab (Verhältnis 0,713 bei 10 × 3 × 3, 0,876 bei 20 × 4 × 4).
+
 **Pyramiden als Übergang (`netz.pyramiden`, 21.09.2026).** An der Grenze zwischen einem
 gesweepten (oder abgebildeten) Körper und einem frei vernetzten Nachbarn steht eine
 Hexaederseite zwei Tetraederseiten gegenüber: knotenkonform, aber mit anderer Interpolation

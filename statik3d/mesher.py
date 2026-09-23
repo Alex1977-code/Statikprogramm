@@ -149,8 +149,28 @@ def grid_box(model: Model, mat: str, lx, ly, lz, nx, ny, nz,
                 if typ == "hex8":
                     model.add_element("hex8", c, mat)
                 else:
-                    for tet in [(0, 1, 3, 4), (1, 2, 3, 6), (1, 3, 4, 6),
-                                (1, 4, 5, 6), (3, 4, 6, 7)]:
+                    # Fuenf Tetraeder je Zelle: vier Eck-Tetraeder und eines in
+                    # der Mitte. Die Diagonalen der sechs Zellseiten laufen
+                    # alle durch die vier Ecken des Mitteltetraeders - in der
+                    # Grundform durch 1,3,4,6. Die Nachbarzelle sieht dieselbe
+                    # Seite von der anderen Seite, dort liefe die Diagonale
+                    # bei gleicher Zerlegung durch die anderen beiden Ecken.
+                    # Deshalb wechselt die Zerlegung schachbrettartig mit
+                    # (i+j+k) % 2: die gespiegelte Form hat die Mitte 0,2,5,7
+                    # und trifft damit die Diagonalen der Nachbarn. Ohne den
+                    # Wechsel blieb jede innere Zellseite als Riss aus zwei
+                    # freien Dreiecken stehen (gemessen 22.09.2026: 2x2x2
+                    # Zellen 96 freie Dreiecke statt 48, 3x3x3 324 statt 108).
+                    # Die gespiegelte Form ist die x-Spiegelung der Grundform
+                    # (0<->1, 2<->3, 4<->5, 6<->7) mit zwei getauschten Knoten,
+                    # damit jedes Tetraeder positiv orientiert bleibt.
+                    if (i + j + k) % 2 == 0:
+                        tets = [(0, 1, 3, 4), (1, 2, 3, 6), (1, 3, 4, 6),
+                                (1, 4, 5, 6), (3, 4, 6, 7)]
+                    else:
+                        tets = [(1, 0, 5, 2), (0, 3, 7, 2), (0, 2, 7, 5),
+                                (0, 5, 7, 4), (2, 5, 6, 7)]
+                    for tet in tets:
                         model.add_element("tet4", [c[x] for x in tet], mat)
     return ids
 

@@ -1812,6 +1812,16 @@ Projektangaben; die stehen unter dem obersten Punkt des Modellbaums. Solange
 eine Maske offen ist, steht rechts nur sie. Stabzug, Platte und Quader sind
 Masken im Register *Geometrie*, der Import steht im Register *Datei*.
 
+**Quader mit Tetraedern.** Die Maske *Quader erzeugen* teilt den Quader in
+nx × ny × nz Zellen; mit dem Elementtyp **tet4** wird jede Zelle in fünf
+Tetraeder zerlegt. Seit 22.09.2026 passen die Tetraeder benachbarter Zellen an
+der gemeinsamen Seite aufeinander. Vorher blieb jede innere Zellseite als Riss
+im Netz stehen (2 × 2 × 2 Zellen: 96 freie Dreiecke statt 48); am Kragarm
+2 × 0,4 × 0,4 m mit Endlast bog sich die Spitze dadurch mit 10 × 3 × 3 Zellen
+um 0,14 % und mit 20 × 4 × 4 Zellen um 1,1 % weiter durch. Ein früher erzeugter
+tet4-Quader steht mit seinen Elementen in der Modelldatei und behält die Risse:
+Elemente löschen und den Quader neu erzeugen. Mit **hex8** betrifft das nichts.
+
 **Rechtsklick auf die Auswahl.** Sind Knoten, Linien, Stäbe, Flächen,
 Volumen oder Elemente gewählt (mit ihren Lagern und Kontaktbedingungen),
 öffnet der Rechtsklick in der Ansicht ein Menü: oben *Selektiertes
