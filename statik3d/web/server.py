@@ -341,6 +341,13 @@ def _stellungen_summary(st: State) -> dict:
         for e in umh.reihe.ergebnisse:
             erg[e.stellung.name] = {"eta": float(e.eta), "u_max": float(e.u_max),
                                     "massgebend": e.massgebend, "fehler": e.fehler,
+                                    # nicht nachgewiesene Kombinationen: eta
+                                    # ist dann keine vollstaendige Ausnutzung
+                                    "warnungen": list(e.warnungen),
+                                    # False: kein Stab nachgewiesen - mit
+                                    # Warnungen ist eta = 0 dann gar keine
+                                    # Ausnutzung (app.js: "nicht geführt")
+                                    "nachgewiesen": bool(e.nachgewiesen),
                                     "fuehrt": bool(fuehrend is not None
                                                    and e is fuehrend and not e.fehler)}
     out = {
@@ -358,6 +365,12 @@ def _stellungen_summary(st: State) -> dict:
                     "massgebende_stellung": umh.massgebende_stellung,
                     "kurve": [[float(w), float(e), float(u), n] for w, e, u, n in umh.kurve()],
                     "fehlerhaft": [x.stellung.name for x in umh.fehlerhaft],
+                    "unvollstaendig": [x.stellung.name for x in umh.unvollstaendig],
+                    # False: in keiner Stellung ein Nachweis gefuehrt - das
+                    # eta der Umhuellenden ist dann keine Zahl (Umhuellende.
+                    # eta_bestimmt); vorher zeigte der Browser "η = 0,000"
+                    # gruen (Gegenpruefung 23.09.2026)
+                    "eta_bestimmt": bool(umh.eta_bestimmt),
                     "bericht": umh.bericht()})
     rw = getattr(st, "regelwerk", None)
     if rw is not None:
@@ -1435,8 +1448,9 @@ def _op_stellungen_rechnen(st, m, d):
     st.umhuellende = umh
     for z in reihe.log:
         st.log.append(z)
-    return (f"{len(liste)} Stellungen gerechnet: eta = {umh.eta:.3f}"
-            + (f", massgebend {umh.massgebende_stellung}" if umh.massgebende_stellung else ""))
+    # kurztext sagt es, wenn Kombinationen nicht nachgewiesen wurden (etwa mit
+    # "kombinationen": false) - vorher stand hier "eta = 0.000" als Ergebnis
+    return f"{len(liste)} Stellungen gerechnet: " + umh.kurztext()
 
 
 @op("staebe_anschliessen")

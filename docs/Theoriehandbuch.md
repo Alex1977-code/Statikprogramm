@@ -725,8 +725,9 @@ Größe an jeder Nachweisstelle mit der maßgebenden Kombination gespeichert.
 LF2/p oder …" ist keine Summe: ihr Ergebnis ist Minimum und Maximum je Größe
 über die *Alternativen* (`Combination.alternativen`, jede Alternative ein
 Satz Lastfall → Faktor). Der Löser bildet daraus je Kombination eine eigene
-Umhüllende und faltet sie in die Umhüllende ihrer Art ein, so dass Nachweise
-sie sehen. Zwei Dinge halten das bezahlbar:
+Umhüllende und faltet sie in die Umhüllende ihrer Art ein (zur Darstellung;
+die Nachweise sehen die Alternativen einzeln, siehe unten). Zwei Dinge
+halten das bezahlbar:
 
 * Die Umhüllende wird **inkrementell** gebildet (`Envelope.aufnehmen`): ein
   Ergebnis nach dem anderen geht in das laufende Minimum und Maximum ein,
@@ -740,13 +741,129 @@ sie sehen. Zwei Dinge halten das bezahlbar:
   720 Einträge der 52 Ergebniskombinationen zu: die Umhüllenden kosten keine
   einzige zusätzliche Lösung. Jede andere Alternative wird als vorübergehende
   Kombination gerechnet (Überlagerung; im Kontaktmodell direkte Lösung) und
-  nach dem Einfalten verworfen; das Protokoll nennt die Zahl.
+  im linearen Modell nach dem Einfalten verworfen; das Protokoll nennt die
+  Zahl. Was sich später nicht aus den Lastfällen wiedergewinnen lässt – die
+  direkte Lösung im Kontaktmodell, eine Alternative nach Theorie II./III.
+  Ordnung, eine Alternative aus Lastfällen, deren lineares Ergebnis danach
+  durch II./III. Ordnung ersetzt wird –, bleibt in `Analysis.alternativen`
+  und wird mit den Ergebnissen gespeichert.
 
 Belegt am Kragarm mit drei Lastfällen: die Umhüllende über die Alternativen
 {LF1}, {LF2}, {1,35·LF1 + 1,5·LF3} ist gleich der Umhüllenden über dieselben,
 einzeln gerechneten Kombinationen, in Werten und Herkunft; im Kontaktmodell
 wird die zusammengesetzte Alternative direkt gelöst, die Lastfall-Alternative
 weiterhin wiederverwendet.
+
+**Nachweise über Ergebniskombinationen.** Ein Nachweis braucht
+zusammengehörige Schnittgrößen; die Umhüllende mischt Minimum und Maximum
+verschiedener Alternativen und taugt dafür nicht. Jeder Nachweis – Stäbe,
+Volumen, Beulen, Lasteinleitung, Anschlüsse, Verformungen – sieht darum jede
+Alternative als eigene Kombination „EK [k]" (`ergebnisse_der_alternativen`):
+abgelegt aus `Analysis.alternativen`, als Lastfallergebnis (ein Lastfall mit
+Faktor 1) oder im linearen Modell aus den Lastfällen neu überlagert. Auf die
+Lastfälle selbst fällt ein Nachweis nur zurück, wenn das Modell **gar keine**
+Kombination hat; fehlt das Ergebnis einer Kombination oder Alternative, wird
+sie als „nicht nachgewiesen" gemeldet (Protokoll, Nachweiszeile, Bericht,
+Gesamturteil) und nicht ersetzt. Bis zum 22.09.2026 lasen die Nachweise nur
+`Analysis.combinations`, in dem Ergebniskombinationen nicht stehen, und
+wichen bei leerem `combinations` auf die Lastfälle aus. Gemessen am Kragarm
+(LF1 Fz = 10 kN, LF2 Fz = 20 kN an der Spitze), nur mit der
+Ergebniskombination {1,35·LF1} oder {1,35·LF1 + 1,5·LF2}: Ausnutzung des
+Stabes vorher 0,170 (nachgewiesen gegen LF1 und LF2 mit Faktor 1), jetzt
+0,370 wie mit der gewöhnlichen Kombination 1,35·LF1 + 1,5·LF2; das Verhältnis
+2,175 ist 4,35e4/2e4. Verformungsnachweis (0,1152) und Volumennachweis
+(0,3619, Hexaederstab) stimmen ebenso mit der gewöhnlichen Kombination
+überein (`test_umhuellende`).
+
+Neu überlagert wird eine Alternative nur, wenn die volle Rechnung es genauso
+täte. Ist sie nach der Theorie der Ergebniskombination nach II. oder III.
+Ordnung zu rechnen, kommt ihr Ergebnis aus `Analysis.alternativen`. Dorthin
+legt die volle Rechnung auch jede Alternative mit einem Lastfall, dessen
+Ergebnis in `Analysis.cases` durch II./III. Ordnung ersetzt wird: ihre
+Überlagerung der linearen Lastfälle lässt sich danach aus `Analysis.cases`
+nicht mehr bilden. Überlagert wird sie
+dann nur, wenn das Theoriekapitel eine Zeile für sie hat, die beim linearen
+Ergebnis blieb: α_cr an oder über der Grenze bei „automatisch", oder ein
+Fehler der Rechnung, den die Zeile nennt. So bleibt auch bei einer
+gewöhnlichen Kombination das lineare Ergebnis stehen
+(`_bei_theorie_I_geblieben`). Sonst wird sie als „nicht nachgewiesen"
+gemeldet, etwa nach `solve_all(combinations=False)` oder mit einer
+Ergebnisdatei von vor dem 22.09.2026. In der ersten Fassung der Kur wurde sie
+dort still linear überlagert (Gegenprüfung 23.09.2026). Am Druckkragarm stand
+EK1 [2] mit 3,321 statt 9,705 mm. An der Halle (theorie2 „ein", alle 42
+GZT-Kombinationen als eine Ergebniskombination) kamen Riegel 0,9654 statt
+0,9734 und Stiel links 0,6325 statt 0,6454 heraus, ohne Warnung. Die
+gewöhnlichen Kombinationen derselben Rechnung meldeten dagegen 42 Warnungen.
+Jetzt melden beide Fassungen 42 Warnungen. Die volle Rechnung ist davon
+unberührt. An der Halle mit Kranlast gleichen Ergebniskombination und
+gewöhnliche Kombinationen einander bei „aus", „automatisch" (26 von 42
+Alternativen nach II. Ordnung) und „ein" in den Stab- und
+Lasteinleitungsnachweisen auf 1e-9, ohne Warnung.
+
+Gemeldet wird nur, was ein Bauteil verlangt. Hat kein Stab, Volumenbereich
+oder Anschluss einen Nachweis und gibt es kein Beulfeld und keine
+Lasteinleitungsstelle, wird `_uls_results` gar nicht gefragt. In der ersten
+Fassung der Kur kippte ein Modell nur mit GZG-Kombinationen und Stäben ohne
+Nachweis im Gesamturteil von „Alle Nachweise erfüllt." auf „nicht geführt:
+EC3 (1 Warnung)" (Kragarm und Halle, Gegenprüfung 23.09.2026). Am Stand bis
+22.09.2026 meldeten die Stabnachweise keine fehlenden Kombinationen, und das
+Gesamturteil kannte den Eintrag „EC3 (n Warnungen)" nicht. An einem Kragarm
+(IPE 300, 3 m, nur eine GZG-Kombination mit Verformungsgrenze, Stab ohne
+Nachweis) und an der Halle (nur GZG-Kombinationen, Stäbe ohne Nachweis, eine
+Verformungsgrenze) stand dort „Alle Nachweise erfüllt.".
+
+**Theorie II./III. Ordnung einer Ergebniskombination.** Nach II. Ordnung gilt
+keine Superposition (EN 1993-1-1, 5.2); das gilt auch innerhalb einer
+Ergebniskombination. Ist sie nach II. Ordnung (Einstellung „ein" oder
+„automatisch", oder ausdrücklich) oder III. Ordnung zu rechnen, rechnen
+`check_theorie2`/`check_theorie3` jede Alternative einzeln am verformten
+System – auch eine Lastfall-Alternative – als Zeile „EK [k]"; die
+Umhüllende wird erst danach aus diesen Ergebnissen gebildet. Bei
+„automatisch" entscheidet α_cr je Alternative; liegt es an oder über der
+Grenze (10 elastisch, 15 plastisch), bleibt es beim linearen Ergebnis. Nach II. Ordnung wird eine Alternative, die in
+mehreren Ergebniskombinationen gleich vorkommt, einmal gerechnet. Vorher
+rechnete `check_theorie2` die Ergebniskombination selbst mit leeren Faktoren:
+ein Nullergebnis, als „am verformten System gerechnet" gezählt und unter
+`Analysis.combinations` abgelegt – von dort ging es in die Art-Umhüllende und
+in die Nachweise –, während die Umhüllende der Alternativen linear blieb.
+Eine Kombination ohne Faktor ≠ 0 wird jetzt gar nicht mehr nach II./III.
+Ordnung abgelegt. Gemessen am Druckkragarm (Querlast in y, α_cr = 1,51 für
+1,35·LF1 + 1,5·LF2): Querverschiebung der Umhüllenden 9,705 mm wie bei der
+gleichwertigen Kombination nach II. Ordnung, linear 3,321 mm (Zuwachs
++192,3 %); nach III. Ordnung 9,468 mm.
+
+Bleibt eine Alternative bei I. Ordnung (α_cr an oder über der Grenze, oder
+ein Fehler der Rechnung, den ihre Zeile nennt), ist ihr Ergebnis die
+Überlagerung der **linearen** Lastfallergebnisse – wie bei der gewöhnlichen
+Kombination, die `solve_combinations` vor `_lastfaelle_hoeherer_ordnung` aus
+denselben linearen Ergebnissen bildet. `solve_all` hält dazu die linearen
+Lastfallergebnisse fest, bevor `_lastfaelle_hoeherer_ordnung` die Lastfälle
+mit Theorie II./III. ersetzt, und faltet die Umhüllende einer
+Ergebniskombination nach II./III. Ordnung damit (`lineare_cases`). Eine
+Alternative ist so entweder linear überlagert oder als Ganzes nach II./III.
+Ordnung gerechnet, nie ein Gemisch. Eine Zwischenfassung dieser Änderung
+(nicht ausgeliefert, Gegenprüfung 23.09.2026) faltete diese Umhüllende erst
+nach dem Ersetzen aus `Analysis.cases`: Mit einem Lastfall W auf Theorie
+II. Ordnung war eine linear gebliebene Alternative 1,35·G (linear) +
+1,5·W (II. Ordnung), und dieses Gemisch ging abgelegt in die Nachweise.
+Gemessen an einem Zweigelenkrahmen (Stiele HEB 200, 5 m, Riegel IPE 300,
+8 m; G 8 kN/m und Q 0,5 kN/m auf dem Riegel, W 25 kN am linken Stielkopf;
+„automatisch", α_cr der Alternative 19,23): Stielkopf 102,4519 statt
+102,1415 mm wie die gewöhnliche Kombination, Ausnutzung Stiel links 0,548474
+statt 0,542323, Riegel 1,717078 statt 1,715794, Stiel rechts 1,08153 statt
+1,079967. Am Druckkragarm von `test_umhuellende` (Druck 50 kN je Lastfall,
+α_cr 15,13, LF2 auf II. Ordnung) EK1 [2] 3,374407 statt 3,320749 mm und die
+Lastfall-Alternative 1,0·LF2 1,562553 statt 1,526781 mm. Jetzt gleichen beide
+Modelle der gewöhnlichen Kombination. Die gewöhnlichen Kombinationen hatten
+das Gemisch nicht, sie entstehen vor dem Ersetzen (am Druckkragarm K2
+bitgleich 1,35·LF1 + 1,5·LF2 aus den linearen Lastfällen). Vor dieser
+Änderung (Stand bis 22.09.2026) gab es das Gemisch ebenfalls nicht:
+`solve_all` faltete die Umhüllende einer Ergebniskombination vor
+`_lastfaelle_hoeherer_ordnung`, rechnete aber keine Alternative nach
+II. Ordnung und wies keine nach (siehe oben). Am Zweigelenkrahmen war die
+Umhüllende am Stielkopf 102,1415 mm wie mit der gewöhnlichen Kombination;
+die Stäbe wurden ohne Warnung gegen die Lastfälle mit Faktor 1 nachgewiesen,
+Stiel links 0,49702 aus W statt 0,542323.
 
 ### 3.1 Situationen: Stellung und wirksame Elemente
 

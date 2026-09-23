@@ -11333,7 +11333,9 @@ class MainWindow(QtWidgets.QMainWindow):
             e = erg.get(s.name)
             rows.append([s.name, f"{s.winkel:g}", ", ".join(s.lager_aus) or "–",
                          ", ".join(s.faelle) or "alle",
-                         "–" if e is None or e.fehler else f"{e.eta:.3f}",
+                         # ohne gefuehrten Nachweis ist eta = 0 keine Zahl
+                         "–" if e is None or e.fehler
+                         or (e.warnungen and not e.nachgewiesen) else f"{e.eta:.3f}",
                          "–" if e is None or e.fehler else f"{e.u_max * 1e3:.3f}"])
         self._fill(self.tbl_stellung, rows)
         if u is not None:
@@ -11341,7 +11343,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 (f"Umhüllende über alle Stellungen: η = {u.eta:.3f}"
                  + (f" – maßgebend {u.massgebende_stellung}"
                     if u.massgebende_stellung else "")
-                 + f"; größte Verformung {u.u_max * 1e3:.3f} mm").replace(".", ","))
+                 + f"; größte Verformung {u.u_max * 1e3:.3f} mm").replace(".", ",")
+                # nicht nachgewiesene Kombinationen gehoeren neben das eta
+                + u.warnhinweis())
         elif self._stellungen_obj():
             self.lbl_umh.setText(f"{len(self._stellungen_obj())} Stellungen angelegt – "
                                  "noch nicht gerechnet")
@@ -11407,9 +11411,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.umhuellende = umh
         for z in reihe.log:
             self.info(z)
-        self.info(f"{len(liste)} Stellungen gerechnet: eta = {umh.eta:.3f}"
-                  + (f", maßgebend {umh.massgebende_stellung}"
-                     if umh.massgebende_stellung else ""))
+        # kurztext: wie vorher "eta = ..., maßgebend ...", dazu der Hinweis,
+        # wenn Kombinationen nicht nachgewiesen wurden
+        self.info(f"{len(liste)} Stellungen gerechnet: " + umh.kurztext())
         self.refresh_all()
 
     def maske_din19704_lastfaelle(self):

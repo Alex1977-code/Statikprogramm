@@ -3258,6 +3258,40 @@ Kombination wird einzeln gerechnet — das dauert länger als eine lineare
 Überlagerung. Die Ergebnisse der einzelnen **Lastfälle** bleiben Ergebnisse
 nach Theorie I. Ordnung und dürfen nicht mehr von Hand überlagert werden.
 
+Eine **Ergebniskombination** („A oder B oder …", aus RFEM) wird nicht als
+Ganzes gerechnet, sondern jede ihrer Alternativen: in der Tabelle des
+Theoriekapitels steht je Alternative eine Zeile „EK1 [1]", „EK1 [2]" …, die
+Ergebniskombination selbst nicht. Ihre Umhüllende und die Nachweise nehmen
+diese Ergebnisse. Bis zum 22.09.2026 stand dort eine Zeile „EK1" mit
+u_I = u_II = 0,00 mm, als „am verformten System gerechnet" gezählt, und die
+Umhüllende blieb linear – am Druckkragarm 3,321 statt 9,705 mm. Dasselbe gilt
+für eine Ergebniskombination mit Theorie III. Ordnung. Viele Alternativen
+kosten entsprechend Rechenzeit; nach II. Ordnung werden gleiche Alternativen
+mehrerer Ergebniskombinationen nur einmal gerechnet.
+
+Die Ergebnisse dieser Alternativen entstehen nur mit **„Alle Lastfälle +
+Kombinationen"**. Wurden nur die Lastfälle gerechnet oder stammen die
+Ergebnisse aus einer Datei von vor dem 22.09.2026, fehlen sie. Die Nachweise
+melden solche Alternativen dann als „nicht nachgewiesen" und überlagern sie
+nicht linear. Das gilt auch für eine Alternative mit einem Lastfall, der nach
+II. oder III. Ordnung gerechnet wird. Bis zum 22.09.2026 wurden die Stäbe
+nach einer Rechnung nur der Lastfälle gegen die Lastfälle mit Faktor 1
+nachgewiesen, ohne Hinweis, dass die Kombinationen fehlten: an der Halle
+(„ein", alle GZT-Kombinationen als eine Ergebniskombination) Riegel 0,2776
+aus LF1. Die volle Rechnung ergibt dort jetzt 0,9734.
+
+Bei „automatisch" mit α_cr an oder über der Grenze bleibt eine Alternative
+in der vollen Rechnung bei I. Ordnung, wie eine gewöhnliche Kombination, und
+es kommt keine Warnung. Ihr Ergebnis ist dann die Überlagerung der
+**linearen** Lastfallergebnisse, auch wenn einer ihrer Lastfälle selbst auf
+Theorie II. Ordnung steht – genau wie bei der gewöhnlichen Kombination.
+Gemessen an einem Zweigelenkrahmen mit dem Windlastfall W auf II. Ordnung
+(α_cr der Alternativen 18,1 bis 25,8): Stielkopf 102,14 mm und Ausnutzung
+Stiel links 0,5423, gleich wie mit den gewöhnlichen Kombinationen. Bis zum
+22.09.2026 wurden dort statt der Alternativen die Lastfälle mit Faktor 1
+nachgewiesen, ohne Warnung: Stiel links 0,4970 aus W. Die Umhüllende am
+Stielkopf war mit 102,14 mm dieselbe.
+
 ### Theorie je Lastfall und Kombination: I., II., III. Ordnung
 
 Im Lastfall- und im Kombinationsdialog steht das Feld **Theorie**:
@@ -4127,6 +4161,22 @@ eigenen Skala: Bauteil wählen, *Selektion anzeigen*, ablesen. Geprüft in
   Kombinationsdialog zeigt sie ihre Alternativen; die Faktorfelder sind dort
   gesperrt, denn die Alternativen kommen aus der Quelldatei. Ein umbenannter
   oder gelöschter Lastfall zieht durch alle Alternativen.
+  **Nachgewiesen** wird nicht die Umhüllende, sondern jede Alternative für
+  sich: in den Nachweistabellen (Stäbe, Volumen, Beulen, Lasteinleitung,
+  Anschlüsse, Verformungen) steht in der Spalte *Kombination* zum Beispiel
+  „EK1 [2]" – die zweite Alternative der Ergebniskombination EK1. Bis zum
+  22.09.2026 übergingen die Nachweise Ergebniskombinationen; hatte ein Modell
+  nur solche, wurden still die Lastfälle mit Faktor 1 nachgewiesen (am
+  Kragarm Ausnutzung 0,170 statt 0,370). Die Lastfälle selbst werden jetzt nur
+  noch nachgewiesen, wenn das Modell **gar keine** Kombination hat. Fehlt das
+  Ergebnis einer Kombination (etwa weil nur die Lastfälle gerechnet wurden),
+  steht in Protokoll, Nachweiszeile und Bericht „WARNUNG: Kombination …
+  nicht nachgewiesen" und das Gesamturteil sagt „nicht nachgewiesen" – dann
+  „Alle Lastfälle + Kombinationen" rechnen. Gemeldet wird nur, was ein
+  Bauteil verlangt: Sind alle Stäbe, Volumenbereiche und Anschlüsse ohne
+  Nachweis und gibt es kein Beulfeld und keine Lasteinleitungsstelle, meldet
+  auch keine fehlende GZT-Kombination etwas. Ein Modell nur mit
+  GZG-Kombinationen behält dann sein „Alle Nachweise erfüllt."
 * Schnittgrößenverläufe N, Vy, Vz, Mt, My, Mz an den Stäben (bei Umhüllenden
   der betragsmäßig größere Extremwert), auswählbar im Modellbaum unter
   „Ergebnisse → Schnittgrößen".
@@ -4432,6 +4482,32 @@ größte Auflagerkraft je Knoten — **jeweils mit der Stellung, in der sie
 auftritt**. `umh.kurve()` liefert `(Winkel, η, u_max)` für die Kurve über den
 Stellungswinkel. Eine Stellung ohne ausreichende Lagerung wird als Fehler
 ausgewiesen, nicht stillschweigend übergangen.
+
+Die Nachweise einer Stellung brauchen die Ergebnisse ihrer Kombinationen.
+Mit `reihe.rechnen(kombinationen=False, nachweise=True)` fehlen sie – im
+Browser über die Operation `stellungen_rechnen` mit `"kombinationen":
+false`; der Knopf „Alle Stellungen rechnen" sendet `true`. Ebenso führt ein
+Modell, dessen Stäbe einen Nachweis verlangen, das aber nur
+GZG-Kombinationen hat, keinen Stabnachweis. Dann ist die Stellung nicht
+`ok`, und der Bericht schreibt „Umhüllende: eta nicht bestimmt" oder „NICHT
+VOLLSTÄNDIG NACHGEWIESEN". Unter „Nicht nachgewiesen" stehen die Warnungen.
+Die Meldung nach dem Rechnen (`umh.kurztext()`) sagt es ebenso.
+
+Im Browser zeigt eine Stellung ohne jeden geführten Nachweis auf der Karte
+„η –" und „nicht geführt", in der Tabelle „nicht geführt" und keinen Punkt in
+der η-Kurve; die Zeile der Umhüllenden und der Filmstreifen sagen „η nicht
+bestimmt", wenn in keiner Stellung ein Nachweis geführt wurde. Fehlt nur ein
+Teil der Nachweise, steht η in Warnfarbe mit „nicht vollständig
+nachgewiesen". Unter der gewählten Stellung lassen sich die Warnungen
+aufklappen („Nicht nachgewiesen"). Bis zum 22.09.2026 kam in beiden oben
+genannten Fällen keine Warnung, dass Nachweise fehlten. Mit
+`kombinationen=False` wurden die Stäbe gegen die Lastfälle mit Faktor 1
+nachgewiesen, und nach dieser Ausnutzung wurde die Stellung beurteilt
+(Stauwand, drei Stellungen: „eta = 0.291" aus dem Lastfall „Wasser",
+erfüllt; mit fünffachem Wasserdruck „eta = 2.419", nicht erfüllt). Mit nur
+GZG-Kombinationen wurde kein Stab nachgewiesen; an der Halle war η = 0 und
+die Stellung erfüllt, der Bericht nannte „eta = 0.000", und der Browser
+zeigte „η = 0,000" grün.
 
 ### Lastfälle nach DIN 19704 anlegen und das Lastenheft
 

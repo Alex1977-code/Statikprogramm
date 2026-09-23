@@ -2983,9 +2983,45 @@ def solve_combination(model: Model, combo: Combination, case_results: dict = Non
     return res
 
 
+def alternativen_der_kombination(combo: Combination) -> list:
+    """[(Name, {Lastfall: Faktor})] je Alternative einer Ergebniskombination.
+
+    Der Name ist "EK [k]" mit k ab 1 in der Reihenfolge der Alternativen -
+    derselbe in der Herkunft der Umhuellenden, in den Nachweisen und in den
+    Tabellen der Theorie II./III. Ordnung. Eine Alternative ohne Faktor
+    ungleich null entfaellt, behaelt aber ihre Nummer nicht fuer eine andere.
+    """
+    aus = []
+    for k, alt in enumerate(combo.alternativen, 1):
+        teile = {a: f for a, f in alt.items() if f}
+        if teile:
+            aus.append((f"{combo.name} [{k}]", teile))
+    return aus
+
+
+def faktoren_der_alternative(model: Model, name: str):
+    """{Lastfall: Faktor} der Alternative "EK [k]" - None, wenn keine
+    Ergebniskombination eine Alternative dieses Namens hat."""
+    for c in (getattr(model, "combinations", None) or {}).values():
+        if c.ist_umhuellende and name.startswith(f"{c.name} ["):
+            for n, teile in alternativen_der_kombination(c):
+                if n == name:
+                    return dict(teile)
+    return None
+
+
+def _lastfall_alternative(teile: dict):
+    """Der Lastfall, wenn die Alternative genau dieser Lastfall mit Faktor 1
+    ist - sonst None. Dann **ist** die Alternative das Lastfallergebnis."""
+    if len(teile) != 1:
+        return None
+    lc, f = next(iter(teile.items()))
+    return lc if abs(f - 1.0) < 1e-12 else None
+
+
 def umhuellende_der_kombination(model: Model, combo: Combination, case_results: dict,
                                 systeme: dict = None, workers: int = None,
-                                progress=None) -> tuple:
+                                progress=None, ablage: dict = None) -> tuple:
     """Die Umhuellende einer Kombination mit Alternativen - Rueckgabe
     (Envelope, Zahl der zusaetzlich geloesten Alternativen).
 
@@ -2994,31 +3030,155 @@ def umhuellende_der_kombination(model: Model, combo: Combination, case_results: 
     Drehlager sind das alle 720 Eintraege der 52 Ergebniskombinationen. Jede
     andere Alternative wird als voruebergehende Kombination gerechnet
     (Ueberlagerung; im Kontaktmodell direkte Loesung) und nach dem Einfalten
-    verworfen - der Speicher haengt nicht von der Zahl der Alternativen ab.
+    verworfen - im linearen Modell haengt der Speicher nicht von der Zahl
+    der Alternativen ab; die Nachweise ueberlagern sie bei Bedarf neu
+    (:func:`ergebnisse_der_alternativen`).
+
+    ``case_results`` muessen die **linearen** Lastfallergebnisse sein, auch
+    wenn ein Lastfall auf theorie "II"/"III" steht: eine Alternative ist
+    entweder die Ueberlagerung linearer Lastfaelle (sie gilt nach I.
+    Ordnung) oder als Ganzes nach II./III. Ordnung gerechnet (dann liegt sie
+    in ``ablage``) - nie ein Gemisch (solve_all, ``lineare_cases``).
+
+    ``ablage`` (``Analysis.alternativen``) nimmt die Ergebnisse auf, die sich
+    spaeter **nicht** aus den Lastfaellen wiedergewinnen lassen, und liefert
+    die schon gerechneten: Alternativen nach Theorie II./III. Ordnung (legt
+    theorie2/theorie3 ab), direkte Loesungen im Kontaktmodell und
+    Alternativen aus Lastfaellen, deren lineares Ergebnis danach durch II./III.
+    Ordnung ersetzt wird. Ohne sie sahen die Nachweise die Alternativen gar
+    nicht (22.09.2026: nur-oder-Modell 0,170 statt 0,370 Ausnutzung).
     """
     from dataclasses import replace
     sit = _kombination_pruefen(model, combo)
     env = Envelope(model, {}, combo.name)
     geloest = 0
-    for k, alt in enumerate(combo.alternativen, 1):
-        teile = {a: f for a, f in alt.items() if f}
-        if not teile:
-            continue
-        lc = next(iter(teile))
-        if len(teile) == 1 and abs(teile[lc] - 1.0) < 1e-12 and case_results \
-                and lc in case_results:
+    nl = None
+    # Lastfaelle, deren Ergebnis _lastfaelle_hoeherer_ordnung in an.cases
+    # ersetzt (hat): eine Alternative mit ihnen laesst sich spaeter nicht
+    # mehr aus an.cases ueberlagern und wird darum abgelegt
+    wechselt = {k for k, lc in model.load_cases.items()
+                if model.theorie_von(lc) in ("II", "III")}
+    liste = alternativen_der_kombination(combo)
+    for k, (name, teile) in enumerate(liste, 1):
+        lc = _lastfall_alternative(teile)
+        if ablage is not None and name in ablage:
+            env.aufnehmen(name, ablage[name])
+            geloest += 1
+        elif lc is not None and case_results and lc in case_results:
             env.aufnehmen(lc, case_results[lc])
+            if ablage is not None and lc in wechselt:
+                ablage[name] = case_results[lc]
         else:
-            name = f"{combo.name} [{k}]"
             zwischen = replace(combo, name=name, factors=teile, alternativen=[])
             res = solve_combination(model, zwischen, case_results, workers=workers,
                                     systeme=systeme)
             env.aufnehmen(name, res)
             geloest += 1
-        _melde(progress, f"Umhüllende {combo.name}: {k}/{len(combo.alternativen)}"
+            if ablage is not None:
+                if nl is None:
+                    nl = _nichtlinear(model)
+                if nl or (wechselt & set(teile)):
+                    ablage[name] = res
+        _melde(progress, f"Umhüllende {combo.name}: {k}/{len(liste)}"
                + (f" – Situation {sit}" if sit != GRUNDSTELLUNG else ""),
-               0.60 + 0.30 * k / max(1, len(combo.alternativen)))
+               0.60 + 0.30 * k / max(1, len(liste)))
     return env, geloest
+
+
+def ergebnisse_der_alternativen(model: Model, analysis, combo: Combination) -> tuple:
+    """Die Ergebnisse der Alternativen einer Ergebniskombination fuer die
+    Nachweise - Rueckgabe ({"EK [k]": Results}, [Warnungen]).
+
+    Ein Nachweis braucht **zusammengehoerige** Schnittgroessen; die
+    Umhuellende mischt Minimum und Maximum verschiedener Alternativen und
+    taugt dafuer nicht. Darum sieht jeder Nachweis jede Alternative wie eine
+    eigene Kombination, in derselben Reihenfolge wie die Umhuellende:
+
+    * abgelegt (``analysis.alternativen``): Theorie II./III. Ordnung,
+      Kontaktmodell - so, wie die Umhuellende sie gefaltet hat;
+    * ein Lastfall mit Faktor 1: das Lastfallergebnis;
+    * sonst im linearen Modell die Ueberlagerung der Lastfaelle.
+
+    Was so nicht zu haben ist, wird als Warnung benannt und nicht still
+    durch etwas anderes ersetzt: das Kontaktmodell ohne abgelegtes Ergebnis
+    und jede Alternative, die nach Theorie II./III. Ordnung zu rechnen ist
+    (Theorie der EK oder eines ihrer Lastfaelle) und nicht abgelegt wurde -
+    etwa nach ``solve_all(combinations=False)`` oder aus einer
+    Ergebnisdatei von vor dem 22.09.2026. Ueberlagert kaeme dort still das
+    lineare Ergebnis heraus: am Druckkragarm EK1 [2] 3,321 statt 9,705 mm,
+    an der Halle (theorie2 "ein", alle GZT-Kombinationen als eine EK) Riegel
+    0,9654 statt 0,9734 - ohne Warnung, waehrend die gewoehnlichen
+    Kombinationen derselben Rechnung als "nicht nachgewiesen" gemeldet
+    wurden (Gegenpruefung 23.09.2026).
+    """
+    from dataclasses import replace
+    aus: dict = {}
+    warn: list = []
+    abgelegt = getattr(analysis, "alternativen", None) or {}
+    cases = getattr(analysis, "cases", None) or {}
+    nl = None
+    theorie = model.theorie_von(combo)
+    # Lastfaelle, deren Ergebnis II./III. Ordnung ist oder war: ueberlagern
+    # ist dann nicht zulaessig, und die volle Rechnung legt jede Alternative
+    # mit ihnen ab (umhuellende_der_kombination, ``wechselt``)
+    hoeher = {k for k, lf in model.load_cases.items()
+              if model.theorie_von(lf) in ("II", "III")}
+    for name, teile in alternativen_der_kombination(combo):
+        lc = _lastfall_alternative(teile)
+        if name in abgelegt:
+            aus[name] = abgelegt[name]
+            continue
+        grund = None
+        if theorie in ("II", "III") and not _bei_theorie_I_geblieben(analysis, theorie, name):
+            grund = (f"sie ist nach Theorie {theorie}. Ordnung zu rechnen, ihr Ergebnis "
+                     "liegt nicht vor (Überlagerung wäre linear)")
+        elif hoeher & set(teile):
+            grund = (f"Lastfall {', '.join(sorted(hoeher & set(teile)))} wird nach Theorie "
+                     "II./III. Ordnung gerechnet, ihr Ergebnis liegt nicht vor "
+                     "(Überlagerung nicht zulässig)")
+        if grund is not None:
+            warn.append(f"Kombination {name} (Alternative der Ergebniskombination "
+                        f"{combo.name}) nicht nachgewiesen: {grund} – „Alle Lastfälle + "
+                        "Kombinationen“ neu rechnen")
+            continue
+        if lc is not None and lc in cases:
+            aus[name] = cases[lc]
+            continue
+        fehlt = [a for a in teile if a not in cases]
+        if nl is None:
+            nl = _nichtlinear(model)
+        if not nl and not fehlt:
+            zwischen = replace(combo, name=name, factors=teile, alternativen=[])
+            try:
+                aus[name] = solve_combination(model, zwischen, cases, nichtlinear=False)
+            except ValueError as ex:
+                warn.append(f"Kombination {name} (Alternative der Ergebniskombination "
+                            f"{combo.name}) nicht nachgewiesen: {ex}")
+            continue
+        grund = (f"Lastfall {', '.join(fehlt)} nicht gerechnet" if fehlt else
+                 "ihr direkt gelöstes Ergebnis liegt nicht vor (nichtlineares Modell, "
+                 "Überlagerung nicht zulässig)")
+        warn.append(f"Kombination {name} (Alternative der Ergebniskombination {combo.name}) "
+                    f"nicht nachgewiesen: {grund} – „Alle Lastfälle + Kombinationen“ "
+                    "neu rechnen")
+    return aus, warn
+
+
+def _bei_theorie_I_geblieben(analysis, theorie: str, name: str) -> bool:
+    """Ob die Rechnung nach Theorie II. bzw. III. Ordnung die Alternative
+    ``name`` gesehen hat und bei ihrem linearen Ergebnis geblieben ist -
+    dann darf ergebnisse_der_alternativen es ueberlagern.
+
+    Das trifft zu bei alpha_cr >= Grenze nach 5.2.1(3) (theorie2 "auto")
+    und bei einem Fehler der Rechnung, den das Theoriekapitel nennt ("nicht
+    geführt"); beides behandelt check_theorie2/check_theorie3 bei einer
+    gewoehnlichen Kombination genauso - deren lineares Ergebnis bleibt
+    stehen. Keine Zeile fuer die Alternative heisst: nicht nach dieser
+    Theorie gerechnet, das lineare Ergebnis waere geraten.
+    """
+    t = getattr(analysis, "theorie2" if theorie == "II" else "theorie3", None)
+    info = (getattr(t, "kombinationen", None) or {}).get(name)
+    return info is not None and not getattr(info, "gerechnet", False)
 
 
 def _teil_merken(ex, name: str, wert: dict):
@@ -4079,6 +4239,11 @@ class Analysis:
     modelle: dict = field(default_factory=dict)
     theorie3: object = None
     schwingung: object = None
+    #: Ergebnisse von Alternativen einer Ergebniskombination ("EK [k]"), die
+    #: sich nicht aus den Lastfaellen wiedergewinnen lassen: Theorie II./III.
+    #: Ordnung, Kontaktmodell (umhuellende_der_kombination). Die Nachweise
+    #: lesen sie ueber ergebnisse_der_alternativen.
+    alternativen: dict = field(default_factory=dict)
 
     def all_results(self) -> dict:
         d = dict(self.cases)
@@ -4328,25 +4493,54 @@ def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progres
     an.systeme = {k: v[1] for k, v in systeme.items()}
     an.modelle = {k: v[0] for k, v in systeme.items()}
     system = an.systeme[GRUNDSTELLUNG]
+    ek_rechnen = bool(combinations and model.combinations)
+    umhuellende_ek: dict = {}
+
+    def _ek_umhuellende(namen, lineare_cases: dict) -> None:
+        for n in namen:
+            c = model.combinations[n]
+            env, geloest = umhuellende_der_kombination(model, c, lineare_cases, systeme,
+                                                       workers, progress,
+                                                       ablage=an.alternativen)
+            umhuellende_ek[n] = env
+            an.info.setdefault("umhuellende", {})[n] = {
+                "alternativen": len(c.alternativen), "geloest": geloest}
+
+    # Ergebniskombinationen, deren Theorie II. oder III. Ordnung ist: ihre
+    # Alternativen rechnen check_theorie2/check_theorie3 unten am verformten
+    # System, erst danach wird gefaltet. Vorher gingen sie hier linear in die
+    # Umhuellende, und check_theorie2 legte fuer die EK selbst (factors leer)
+    # ein Nullergebnis in an.combinations (Befund FE12, 22.09.2026).
+    ek_hoeher = [n for n, c in model.combinations.items()
+                 if c.ist_umhuellende and model.theorie_von(c) in ("II", "III")]
     if combinations and model.combinations:
         an.combinations = solve_combinations(model, case_results=an.cases, system=None,
                                              workers=workers, progress=progress,
                                              systeme=systeme)
         # Kombinationen mit Alternativen: je eine Umhuellende, keine Ergebnisse
         # in an.combinations. Sie stehen hinter den Art-Umhuellenden (unten).
-        umhuellende_ek: dict = {}
-        for n, c in model.combinations.items():
-            if c.ist_umhuellende:
-                env, geloest = umhuellende_der_kombination(model, c, an.cases, systeme,
-                                                           workers, progress)
-                umhuellende_ek[n] = env
-                an.info.setdefault("umhuellende", {})[n] = {
-                    "alternativen": len(c.alternativen), "geloest": geloest}
-        an.info["_umhuellende_ek"] = umhuellende_ek
+        _ek_umhuellende([n for n, c in model.combinations.items()
+                         if c.ist_umhuellende and n not in ek_hoeher], an.cases)
+    # Die linearen Lastfallergebnisse, bevor _lastfaelle_hoeherer_ordnung die
+    # mit theorie "II"/"III" ersetzt (es setzt je Lastfall ein neues Objekt
+    # ein, die flache Kopie behaelt die linearen). Aus ihnen - wie oben jede
+    # gewoehnliche Kombination - ueberlagert die Umhuellende einer EK nach
+    # II./III. Ordnung jede Alternative, die bei I. Ordnung bleibt (theorie2
+    # "auto" mit alpha_cr >= Grenze, Fehler der Rechnung). Vorher kam dort
+    # an.cases nach dem Ersetzen hinein: 1,35·G linear + 1,5·W nach II.
+    # Ordnung, ein Gemisch, weder I. noch II. Ordnung, abgelegt und
+    # nachgewiesen (Gegenpruefung 23.09.2026, W mit theorie "II", auto:
+    # Rahmen Stielkopf 102,4519 statt 102,1415 mm wie K2; Druckkragarm
+    # des Tests EK1 [2] 3,374407 statt 3,320749 mm).
+    lineare_cases = dict(an.cases) if (ek_rechnen and ek_hoeher) else None
     # Theorie je Lastfall: II. oder III. Ordnung ersetzt das lineare Ergebnis
     _lastfaelle_hoeherer_ordnung(model, an, systeme, progress)
-    th2 = [n for n, c in model.combinations.items() if model.theorie_von(c) == "II"]
-    if th2 and an.combinations:
+    # Eine Ergebniskombination kommt nur mit ihren Alternativen hinein
+    # (Ergebnisse nach an.alternativen) und nur, wenn Kombinationen gerechnet
+    # werden; eine gewoehnliche, wenn es Kombinationsergebnisse gibt.
+    th2 = [n for n, c in model.combinations.items() if model.theorie_von(c) == "II"
+           and (ek_rechnen if c.ist_umhuellende else bool(an.combinations))]
+    if th2:
         # Gleichgewicht am verformten System: die Kombinationen werden
         # ersetzt, denn nach Theorie II. Ordnung gilt keine Superposition
         # mehr (EN 1993-1-1, 5.2). Danach erst die Umhuellenden bilden.
@@ -4361,8 +4555,9 @@ def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progres
         else:                       # Lastfaelle nach II. Ordnung stehen schon darin
             an.theorie2.kombinationen.update(t2.kombinationen)
             an.theorie2.settings.update(t2.settings)
-    th3 = [n for n, c in model.combinations.items() if model.theorie_von(c) == "III"]
-    if th3 and an.combinations:
+    th3 = [n for n, c in model.combinations.items() if model.theorie_von(c) == "III"
+           and (ek_rechnen if c.ist_umhuellende else bool(an.combinations))]
+    if th3:
         from .theorie3 import check_theorie3
         t3 = check_theorie3(model, an, combos=th3, progress=progress, systeme=systeme)
         if an.theorie3 is None:
@@ -4370,7 +4565,14 @@ def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progres
         else:
             an.theorie3.kombinationen.update(t3.kombinationen)
             an.theorie3.settings.update(t3.settings)
-    umhuellende_ek = an.info.pop("_umhuellende_ek", {}) or {}
+    if ek_rechnen and ek_hoeher:
+        # Nach II./III. Ordnung Gerechnetes kommt aus an.alternativen, alles
+        # andere aus den linearen Lastfaellen - nie aus einem Gemisch
+        _ek_umhuellende(ek_hoeher, lineare_cases)
+        lineare_cases = None        # die ersetzten linearen Ergebnisse freigeben
+        # in der Reihenfolge des Modells, wie vorher
+        umhuellende_ek = {n: umhuellende_ek[n] for n in model.combinations
+                          if n in umhuellende_ek}
     if envelopes:
         groups: dict[str, dict] = {}
         for n, r in an.combinations.items():
@@ -4380,8 +4582,11 @@ def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progres
         for key, rs in groups.items():
             an.envelopes[key] = Envelope(model, rs, f"Umhuellende {key}")
         # Die Umhuellende einer Ergebniskombination gehoert in die Umhuellende
-        # ihrer Art: so sehen die Nachweise (GZT, GZG, Ermuedung) auch die
-        # Alternativen - wie in RFEM.
+        # ihrer Art - wie in RFEM. Die Nachweise lesen die Umhuellenden
+        # **nicht** (sie brauchen zusammengehoerige Schnittgroessen); sie
+        # sehen die Alternativen einzeln ueber ergebnisse_der_alternativen.
+        # Hier stand bis zum 22.09.2026, die Nachweise saehen so die
+        # Alternativen - das traf nie zu (Befund FE11).
         for n, env in umhuellende_ek.items():
             typ = model.combinations[n].typ
             key = "ULS" if typ in ("ULS", "EQU", "ACC", "USER") else typ
