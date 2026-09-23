@@ -743,8 +743,15 @@ def test_stellung_behaelt_ergebniskombination():
     check("ohne jeden Lastfall entfallen EK3 und K3",
           "EK3" not in m1.combinations and "K3" not in m1.combinations, str(sorted(m1.combinations)))
     zeilen = [z for z in r.log if "entfallen" in z]
+
+    # nach Namen getrennt: "K3" in z fand sich schon in "EK3", und ein
+    # Protokoll ohne K3 bestand die Pruefung (Gegenpruefung 23.09.2026)
+    def genannt(art: str) -> list:
+        return [x for z in zeilen if f"{art} ohne Lastfall entfallen" in z
+                for x in z.split(": ")[-1].split(", ")]
     check("das Protokoll nennt die entfallene Alternative und die Kombinationen",
-          any("EK2 [2]" in z for z in zeilen) and any("EK3" in z and "K3" in z for z in zeilen),
+          genannt("Alternativen") == ["EK2 [2]"]
+          and sorted(genannt("Kombinationen")) == ["EK3", "K3"],
           str(zeilen))
 
 

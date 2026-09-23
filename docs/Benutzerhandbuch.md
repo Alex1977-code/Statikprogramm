@@ -5213,10 +5213,13 @@ Lastfälle. Eine Alternative oder Kombination, der danach kein Lastfall
 bleibt, entfällt, und das Protokoll nennt sie („Kombinationen ohne Lastfall
 entfallen: …", „Alternativen ohne Lastfall entfallen: EK2 [2]"). Bis zum
 23.09.2026 fiel jede Ergebniskombination in einer Stellung mit `faelle` ohne
-Meldung weg, und der Stabnachweis wich auf die Lastfälle aus. Gemessen an
-einem Kragarm mit EK1 = 1,35·LF1 oder 1,35·LF1 + 1,5·LF2: in der Stellung mit
-`faelle=["LF1", "LF2"]`, also allen Lastfällen, kam η = 0,1702 statt 0,3702
-heraus. Jetzt liefert sie 0,3702 wie die Stellung ohne `faelle`.
+Meldung weg, und der Stabnachweis lief ohne sie. Gemessen an einem Kragarm
+mit EK1 = 1,35·LF1 oder 1,35·LF1 + 1,5·LF2 in der Stellung mit
+`faelle=["LF1", "LF2"]`, also allen Lastfällen: Hatte das Modell nur EK1,
+wich der Nachweis auf die Lastfälle aus, und es kam η = 0,1702 statt 0,3702
+heraus. Stand daneben die gewöhnliche Kombination K1 = LF1 + LF2, lief er
+allein gegen K1, mit η = 0,2553. Jetzt liefert die Stellung in beiden Fällen
+0,3702 wie die Stellung ohne `faelle`.
 
 Das Antriebsmoment (`antrieb`) kommt mit dem Faktor 1,0 in jede Kombination
 und in jede Alternative, die einen positiven Faktor hat. Bis zum 23.09.2026
@@ -5227,11 +5230,14 @@ liefern jetzt beide.
 
 Ermüdungslasten, deren Zustand in der Stellung fehlt, entfallen mit und
 stehen im Protokoll („Ermüdungslasten ohne Lastfall entfallen: …"). Bei
-einem Verlauf entscheiden seine Lastfälle (`folge`) und nicht `case_max`.
-Bis zum 23.09.2026 entschied `case_max`, das der Nachweis bei einem Verlauf
-nicht liest. Die Verläufe aus einer RFEM-6-Datei (.rf6) haben kein
+einem Verlauf entscheiden seine Glieder (`folge`) und nicht `case_max`. Ein
+Glied darf ein Lastfall oder eine Kombination sein; der Verlauf bleibt, wenn
+alle seine Glieder in der Stellung bleiben. Bis zum 23.09.2026 entschied
+`case_max`, das der Ermüdungsnachweis von Stäben und Volumen bei einem
+Verlauf nicht liest. Die Verläufe aus einer RFEM-6-Datei (.rf6) haben kein
 `case_max` und entfielen deshalb in jeder Stellung mit `faelle`. Ein Verlauf
-mit Lastfällen außerhalb der Stellung blieb dagegen stehen.
+mit Lastfällen außerhalb der Stellung blieb dagegen stehen, wenn sein
+`case_max` ein Lastfall der Stellung war.
 
 Die Nachweise einer Stellung brauchen die Ergebnisse ihrer Kombinationen.
 Mit `reihe.rechnen(kombinationen=False, nachweise=True)` fehlen sie – im

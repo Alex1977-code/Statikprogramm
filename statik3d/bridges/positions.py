@@ -301,13 +301,24 @@ class Stellung:
                 k_weg.append(name)
         # Ermuedungslasten, deren Zustand in dieser Stellung fehlt, entfallen mit:
         # sonst bricht die ganze Stellung an einem Verweis ins Leere ab. Bei
-        # einem Verlauf zaehlen seine Glieder - nur sie liest der Nachweis
-        # (ec3.fatigue); case_max/case_min eines Verlaufs sind ohne Bedeutung
-        # und bis ec6448c entschieden sie hier: ein Verlauf mit case_max ""
-        # (rfem6_db) entfiel in jeder solchen Stellung.
+        # einem Verlauf zaehlen seine Glieder - nur sie liest der
+        # Ermuedungsnachweis von Staeben und Volumen (ec3.fatigue),
+        # case_max/case_min eines Verlaufs liest er nicht; bis ec6448c
+        # entschieden sie hier: ein Verlauf mit case_max "" (rfem6_db)
+        # entfiel in jeder solchen Stellung. (Der Ermuedungsnachweis der
+        # Anschluesse, joints/anschluss.py, liest case_max auch bei einem
+        # Verlauf; die Stellungsreihe rechnet aber keine Ermuedung.) Ein Glied
+        # darf eine Kombination sein (die Oberflaeche nimmt sie an, gui/main.py
+        # add_fatigue_load; ec3.fatigue liest sie aus all_results) - darum
+        # gelten auch die Kombinationen, die oben stehen blieben. 8daa37e
+        # pruefte nur gegen die Lastfaelle, und ein Verlauf ueber K1 = G + Q1
+        # entfiel in der Stellung faelle=[G, Q1], obwohl K1 blieb
+        # (Gegenpruefung 23.09.2026).
+        zustaende = behalten | set(m.combinations)
+
         def fehlt(f) -> bool:
             if getattr(f, "folge", None):
-                return not set(f.folge) <= behalten
+                return not set(f.folge) <= zustaende
             return (f.case_max not in behalten
                     or (f.case_min is not None and f.case_min not in behalten))
         weg = [f.name for f in m.fatigue_loads.values() if fehlt(f)]
@@ -317,7 +328,8 @@ class Stellung:
             if getattr(f, "folge", None):
                 # ein stehengebliebenes case_max/case_min eines Verlaufs, dessen
                 # Lastfall hier fehlt, meldete Model.check als FEHLER und
-                # wiese die Stellung ab, obwohl der Nachweis es nicht liest
+                # wiese die Stellung ab, obwohl ec3.fatigue es bei einem
+                # Verlauf nicht liest
                 if f.case_max and f.case_max not in m.load_cases and f.case_max not in m.combinations:
                     f.case_max = ""
                 if f.case_min and f.case_min not in m.load_cases and f.case_min not in m.combinations:
