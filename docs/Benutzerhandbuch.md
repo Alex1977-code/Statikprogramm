@@ -3763,9 +3763,9 @@ Theorie II. Ordnung steht – genau wie bei der gewöhnlichen Kombination.
 Gemessen an einem Zweigelenkrahmen mit dem Windlastfall W auf II. Ordnung
 (α_cr der Alternativen 18,1 bis 25,8): Stielkopf 102,14 mm und Ausnutzung
 Stiel links 0,5423, gleich wie mit den gewöhnlichen Kombinationen. Bis zum
-22.09.2026 wurden dort statt der Alternativen die Lastfälle mit Faktor 1
-nachgewiesen, ohne Warnung: Stiel links 0,4970 aus W. Die Umhüllende am
-Stielkopf war mit 102,14 mm dieselbe.
+22.09.2026 (Stand 54b6f9a) wurden dort statt der Alternativen die Lastfälle
+mit Faktor 1 nachgewiesen, ohne Warnung: Stiel links 0,4970 aus W. Die
+Umhüllende am Stielkopf war mit 102,14 mm dieselbe.
 
 ### Theorie je Lastfall und Kombination: I., II., III. Ordnung
 
@@ -5221,8 +5221,8 @@ der η-Kurve; die Zeile der Umhüllenden und der Filmstreifen sagen „η nicht
 bestimmt", wenn in keiner Stellung ein Nachweis geführt wurde. Fehlt nur ein
 Teil der Nachweise, steht η in Warnfarbe mit „nicht vollständig
 nachgewiesen". Unter der gewählten Stellung lassen sich die Warnungen
-aufklappen („Nicht nachgewiesen"). Bis zum 22.09.2026 kam in beiden oben
-genannten Fällen keine Warnung, dass Nachweise fehlten. Mit
+aufklappen („Nicht nachgewiesen"). Bis zum 22.09.2026 (Stand 54b6f9a) kam
+in beiden oben genannten Fällen keine Warnung, dass Nachweise fehlten. Mit
 `kombinationen=False` wurden die Stäbe gegen die Lastfälle mit Faktor 1
 nachgewiesen, und nach dieser Ausnutzung wurde die Stellung beurteilt
 (Stauwand, drei Stellungen: „eta = 0.291" aus dem Lastfall „Wasser",

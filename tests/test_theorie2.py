@@ -12,10 +12,15 @@ Geprueft wird gegen geschlossene Loesungen:
   * die Ersatzhorizontalkraft gegen phi N_Ed mit phi = phi_0 alpha_h alpha_m
   * die Wirkung der Ersatzlast gegen die von Hand vergroesserte Zusatzlast
 
+und die Handbuchsaetze zu Ergebniskombinationen bei "automatisch" gegen die
+Rechnung (Zweigelenkrahmen, Stauwand): laufen Rechnung und Satz auseinander,
+schlaegt die Pruefung fehl.
+
 Aufruf:  python -m tests.test_theorie2
 """
 import math
 import os
+import re
 import sys
 
 import numpy as np
@@ -347,12 +352,228 @@ def test_im_modell_und_bericht():
           "Gerechnet wird nach Theorie I. Ordnung" in h0)
 
 
+# --------------------------------------------------------------------------
+# Handbuchsaetze gegen die Rechnung (Befund B139, 23.09.2026). Bis dahin lag
+# die Pruefung dieser Absaetze nur im Scratchpad und suchte nur Zeichenketten;
+# die Zahlen des heutigen Standes (α_cr 18,1 bis 25,8, Stiel links 0,5423,
+# Stielkopf 102,14 mm, drei Stellungen) pruefte niemand. Hier werden sie
+# nachgerechnet - gemessen am 23.09.2026 an ec6448c: α_cr der Alternativen
+# 18,0916 bis 25,8131, Stiel links 0,542323, Stielkopf 102,141489 mm, gleich
+# mit Skript und mit dieser Pruefung. Aussagen ueber den Stand vor der
+# Aenderung (54b6f9a, 22.09.2026) und ueber die nicht ausgelieferte
+# Zwischenfassung (9337a3c) sind im Repo nicht nachzurechnen; sie muessen
+# darum den Stand nennen, an dem sie gemessen wurden.
+
+_DOCS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs")
+_ZAHLWORT = {"eine": 1, "zwei": 2, "drei": 3, "vier": 4, "fünf": 5, "sechs": 6}
+# Die vier GZT-Kombinationen des Zweigelenkrahmens
+_RAHMEN_GZT = {"K1": {"G": 1.35, "Q": 1.5}, "K2": {"G": 1.35, "W": 1.5},
+               "K3": {"G": 1.35, "Q": 1.5, "W": 0.9}, "K4": {"G": 1.0, "W": 1.5}}
+
+
+def _absatz(datei: str, merkmal: str) -> str:
+    """Der Absatz aus docs/<datei>, der ``merkmal`` enthaelt, Leerraum zu
+    einem Leerzeichen zusammengezogen; "" wenn es keinen gibt."""
+    with open(os.path.join(_DOCS, datei), encoding="utf-8") as f:
+        text = f.read()
+    for a in re.split(r"\n\s*\n", text):
+        a = " ".join(a.split())
+        if merkmal in a:
+            return a
+    return ""
+
+
+def _wie_im_text(text_zahl, wert: float) -> bool:
+    """Gerundet auf die Stellen, die der Handbuchsatz nennt, gleich?"""
+    if not text_zahl:
+        return False
+    stellen = len(text_zahl.split(",", 1)[1]) if "," in text_zahl else 0
+    return f"{wert:.{stellen}f}".replace(".", ",") == text_zahl
+
+
+def _gruppe(muster: str, text: str):
+    t = re.search(muster, text)
+    return t.group(1) if t else None
+
+
+def _zweigelenkrahmen(ergebniskombination: bool):
+    """Verschieblicher Zweigelenkrahmen der Handbuchsaetze: Stiele HEB 200,
+    5 m, Riegel IPE 300, 8 m; G 8 kN/m und Q 0,5 kN/m auf dem Riegel, W 25 kN
+    am linken Stielkopf; W auf Theorie II. Ordnung, theorie2 "automatisch".
+    Die vier GZT-Kombinationen gewoehnlich oder als eine Ergebniskombination
+    "EK" mit vier Alternativen (Aufbau der Gegenpruefung vom 23.09.2026)."""
+    from statik3d import mesher
+    from statik3d.model import Section, Combination
+    m = Model("Rahmen")
+    m.add_material(Material.steel("S235"))
+    m.add_section(Section.from_profile("HEB 200"))
+    m.add_section(Section.from_profile("IPE 300"))
+    mesher.line_of_beams(m, "S235", "HEB 200", (0, 0, 0), (0, 0, 5.0), 5)
+    ne = len(m.elements)
+    mesher.line_of_beams(m, "S235", "IPE 300", (0, 0, 5.0), (8.0, 0, 5.0), 8)
+    nr = len(m.elements)
+    mesher.line_of_beams(m, "S235", "HEB 200", (8.0, 0, 5.0), (8.0, 0, 0), 5)
+    mesher.merge_nodes(m)
+    m.add_member("StielL", list(range(0, ne)))
+    m.add_member("Riegel", list(range(ne, nr)))
+    m.add_member("StielR", list(range(nr, len(m.elements))))
+    for i in range(m.nn):
+        if abs(m.nodes[i][2]) < 1e-9:
+            m.fix(i, [0, 1, 2, 3, 5])      # Fussgelenk: Drehung um y frei
+    kopf = [i for i in range(m.nn) if abs(m.nodes[i][2] - 5.0) < 1e-9]
+    for i in kopf:
+        m.fix(i, [1])                      # aus der Ebene gehalten
+    for lf in ("G", "Q", "W"):
+        m.add_load_case(lf, lf)
+    for e in range(ne, nr):
+        m.load_beam(e, qz=-8e3, case="G")
+        m.load_beam(e, qz=-0.5e3, case="Q")
+    kl = min(kopf, key=lambda i: m.nodes[i][0])
+    m.load_node(kl, Fx=25e3, case="W")
+    m.load_cases["W"].theorie = "II"
+    m.design.theorie2 = "auto"
+    if ergebniskombination:
+        m.combinations["EK"] = Combination(
+            "EK", {}, "ULS", alternativen=[dict(f) for f in _RAHMEN_GZT.values()])
+    else:
+        for n, f in _RAHMEN_GZT.items():
+            m.combinations[n] = Combination(n, dict(f), "ULS")
+    return m, kl
+
+
+def test_handbuch_zweigelenkrahmen():
+    """Benutzerhandbuch (Theorie II. Ordnung, Alternative bei I. Ordnung) und
+    Theoriehandbuch (Kombinationen mit Alternativen) nennen Zahlen des
+    Zweigelenkrahmens. Die des heutigen Standes werden nachgerechnet."""
+    A = _absatz("Benutzerhandbuch.md",
+                "mit α_cr an oder über der Grenze bleibt eine Alternative")
+    B = _absatz("Theoriehandbuch.md", "Bleibt eine Alternative bei I. Ordnung")
+    check("Handbuchabsätze zum Zweigelenkrahmen gefunden", A and B,
+          f"Benutzerhandbuch {len(A)} Zeichen, Theoriehandbuch {len(B)} Zeichen")
+    erg = {}
+    for v, ek in (("K", False), ("EK", True)):
+        m, kl = _zweigelenkrahmen(ek)
+        erg[v] = (m, kl, solver.solve_all(m, design=True))
+    m, kl, an = erg["EK"]
+    _mk, klk, ank = erg["K"]
+    check("W ist nach II. Ordnung gerechnet",
+          an.cases["W"].info.get("theorie") == "II. Ordnung",
+          str(an.cases["W"].info.get("theorie")))
+    alt = {z: i for z, i in an.theorie2.kombinationen.items() if z.startswith("EK [")}
+    ac = [i.alpha_cr for i in alt.values()]
+    check("alle vier Alternativen bleiben bei I. Ordnung (α_cr ≥ 10)",
+          len(alt) == 4 and all(not i.gerechnet and i.alpha_cr >= i.grenze
+                                for i in alt.values()),
+          ", ".join(f"{z} {i.alpha_cr:.2f}" for z, i in alt.items()))
+    warn = list(getattr(an.design, "warnungen", None) or [])
+    check("und es kommt keine Warnung", not warn, str(warn[:1]))
+    kopf = float(an.envelopes["ULS"].u_max[kl, 0]) * 1e3
+    kopf_k = float(ank.envelopes["ULS"].u_max[klk, 0]) * 1e3
+    eta = {s: mc.util for s, mc in an.design.members.items()}
+    eta_k = {s: mc.util for s, mc in ank.design.members.items()}
+    check("Stielkopf und Ausnutzungen gleich wie mit den gewöhnlichen Kombinationen",
+          abs(kopf - kopf_k) <= 1e-9 * kopf_k
+          and all(abs(eta[s] - eta_k[s]) <= 1e-12 for s in eta_k) and set(eta) == set(eta_k),
+          f"Stielkopf {kopf:.6f} / {kopf_k:.6f} mm, Stiel links "
+          f"{eta.get('StielL', 0):.6f} / {eta_k.get('StielL', 0):.6f}")
+
+    # Benutzerhandbuch: nur gerundete Zahlen des heutigen Standes
+    check("BH beschreibt den gerechneten Aufbau",
+          "Zweigelenkrahmen mit dem Windlastfall W auf II. Ordnung" in A)
+    a1 = _gruppe(r"α_cr der Alternativen (\d+,\d+) bis \d+,\d+\)", A)
+    a2 = _gruppe(r"α_cr der Alternativen \d+,\d+ bis (\d+,\d+)\)", A)
+    check("BH: α_cr der Alternativen wie gerechnet",
+          ac and _wie_im_text(a1, min(ac)) and _wie_im_text(a2, max(ac)),
+          f"Text {a1} bis {a2}, gerechnet {min(ac or [0]):.4f} bis {max(ac or [0]):.4f}")
+    t = re.search(r"Stielkopf (\d+,\d+) mm und Ausnutzung Stiel links (\d+,\d+), "
+                  r"gleich wie mit den gewöhnlichen Kombinationen", A)
+    check("BH: Stielkopf wie gerechnet", t and _wie_im_text(t.group(1), kopf),
+          f"Text {t and t.group(1)} mm, gerechnet {kopf:.6f} mm")
+    check("BH: Ausnutzung Stiel links wie gerechnet",
+          t and _wie_im_text(t.group(2), eta.get("StielL", 0.0)),
+          f"Text {t and t.group(2)}, gerechnet {eta.get('StielL', 0.0):.6f}")
+    check("BH (Rahmen): Aussage über den Stand vor der Änderung nennt den Stand",
+          "22.09.2026" not in A or "Stand 54b6f9a" in A,
+          _gruppe(r"(Bis zum 22\.09\.2026[^,:]*)", A) or "")
+
+    # Theoriehandbuch: nach "statt" steht der heutige Stand
+    check("TH beschreibt den gerechneten Aufbau",
+          "Stiele HEB 200, 5 m, Riegel IPE 300, 8 m; G 8 kN/m und Q 0,5 kN/m auf "
+          "dem Riegel, W 25 kN am linken Stielkopf" in B)
+    k2 = [i + 1 for i, f in enumerate(_RAHMEN_GZT.values()) if f == {"G": 1.35, "W": 1.5}][0]
+    a_k2 = alt.get(f"EK [{k2}]")
+    t = _gruppe(r"α_cr der Alternative (\d+,\d+)\)", B)
+    check("TH: α_cr der Alternative 1,35·G + 1,5·W wie gerechnet",
+          a_k2 is not None and _wie_im_text(t, a_k2.alpha_cr),
+          f"Text {t}, gerechnet {a_k2.alpha_cr if a_k2 else float('nan'):.4f}")
+    for name, muster, wert in (
+            ("Stielkopf", r"Stielkopf [\d,]+ statt (\d+,\d+) mm wie die gewöhnliche", kopf),
+            ("Stiel links", r"Ausnutzung Stiel links [\d,]+ statt (\d+,\d+)", eta.get("StielL", 0.0)),
+            ("Riegel", r"Riegel [\d,]+ statt (\d+,\d+)", eta.get("Riegel", 0.0)),
+            ("Stiel rechts", r"Stiel rechts [\d,]+ statt (\d+,\d+)", eta.get("StielR", 0.0)),
+            ("Stiel links gegen den Stand vor der Änderung",
+             r"Stiel links [\d,]+ aus W statt (\d+,\d+)\.", eta.get("StielL", 0.0))):
+        t = _gruppe(muster, B)
+        check(f"TH: {name} heute wie gerechnet", _wie_im_text(t, wert),
+              f"Text {t}, gerechnet {wert:.6f}")
+    check("TH: Aussage über den Stand vor der Änderung nennt den Stand",
+          "22.09.2026" not in B or "Stand 54b6f9a" in B,
+          _gruppe(r"(Vor dieser Änderung \([^)]*\))", B) or "")
+    check("TH: die Zwischenfassung nennt den gemessenen Stand",
+          "Zwischenfassung" not in B or "9337a3c" in B,
+          _gruppe(r"(Zwischenfassung dieser Änderung \([^)]*\))", B) or "")
+
+
+def test_handbuch_stauwand():
+    """Benutzerhandbuch (Bewegliche Bruecken): eine Stellungsreihe mit
+    ``kombinationen=False`` weist nichts nach. Gerechnet wird die Stauwand
+    mit den drei Stellungen der Messung am Stand 54b6f9a (0°, 40°, 82°); was
+    der Absatz ueber den heutigen Stand sagt, muss die Rechnung zeigen, und
+    die Stellungszahl im Satz ueber den Stand vor der Aenderung muss die der
+    Rechnung sein."""
+    from statik3d.bridges.positions import Stellungsreihe, Stellung
+    P = _absatz("Benutzerhandbuch.md",
+                "Die Nachweise einer Stellung brauchen die Ergebnisse ihrer Kombinationen.")
+    C = _absatz("Benutzerhandbuch.md", "Im Browser zeigt eine Stellung ohne jeden geführten Nachweis")
+    check("Handbuchabsätze zu den Stellungen gefunden", P and C,
+          f"{len(P)} und {len(C)} Zeichen")
+    m = examples_lib.build_example("gate")
+    reihe = Stellungsreihe(m, "Stauwand")
+    for name, w in (("geschlossen", 0.0), ("Zwischen", 40.0), ("offen", 82.0)):
+        reihe.add(Stellung(name, w, f"{w:g} Grad"))
+    umh = reihe.rechnen(kombinationen=False, nachweise=True)
+    erg = reihe.ergebnisse
+    check("BH: `reihe.rechnen(kombinationen=False, nachweise=True)` – keine Stellung `ok`",
+          "`reihe.rechnen(kombinationen=False, nachweise=True)`" in P and "nicht `ok`" in P
+          and erg and all(not e.ok and e.warnungen for e in erg),
+          ", ".join(f"{e.stellung.name}: ok {e.ok}, {len(e.warnungen or [])} Warnungen"
+                    for e in erg))
+    b = umh.bericht()
+    for text, n in (("Umhüllende: eta nicht bestimmt", 1),
+                    ("NICHT VOLLSTÄNDIG NACHGEWIESEN", len(erg))):
+        check(f"BH und Bericht: „{text}“",
+              f"„{text}" in P and b.count(text) >= n, f"{b.count(text)}× im Bericht")
+    check("BH und Bericht: Warnungen unter „Nicht nachgewiesen“",
+          "Unter „Nicht nachgewiesen\" stehen die Warnungen" in P
+          and "\nNicht nachgewiesen:" in b and "WARNUNG: Kombination" in b)
+    kurz = umh.kurztext()
+    check("BH und Meldung nach dem Rechnen: „eta nicht bestimmt“",
+          "(`umh.kurztext()`) sagt es ebenso" in P and "eta nicht bestimmt" in kurz, kurz[:70])
+    t = _gruppe(r"\(Stauwand, (\w+) Stellungen:", C)
+    check("BH: Stellungszahl der Stauwand wie gerechnet",
+          _ZAHLWORT.get(t or "") == len(erg), f"Text „{t}“, gerechnet {len(erg)}")
+    check("BH (Stellungen): Aussage über den Stand vor der Änderung nennt den Stand",
+          "22.09.2026" not in C or "Stand 54b6f9a" in C,
+          _gruppe(r"(Bis zum 22\.09\.2026[^,:]*)", C) or "")
+
+
 def main():
     print("=" * 92)
     print("STATIK3D - Verifikation Theorie II. Ordnung (DIN EN 1993-1-1, 5.2/5.3)")
     print("=" * 92)
     for t in (test_imperfektionsbeiwerte, test_alpha_cr, test_vergroesserung,
-              test_ersatzlasten, test_vorkruemmung, test_im_modell_und_bericht):
+              test_ersatzlasten, test_vorkruemmung, test_im_modell_und_bericht,
+              test_handbuch_zweigelenkrahmen, test_handbuch_stauwand):
         print()
         t()
     ok = sum(1 for _n, o in RESULTS if o)
