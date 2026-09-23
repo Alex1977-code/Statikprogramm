@@ -527,6 +527,13 @@ def test_stellungen_din19704_export():
               and B["massgebende_stellung"] and B["bericht"])
         check("Jede Stellung hat ein Ergebnis",
               all(x["ergebnis"] and not x["ergebnis"]["fehler"] for x in B["liste"]))
+        # Ohne "nachweise" nimmt die Operation true - anders als
+        # Stellungsreihe.rechnen() in Python (Vorgabe False, siehe
+        # test_bridges.test_reihe_ohne_verlangten_nachweis). Das
+        # Benutzerhandbuch sagt beides seit dem 24.09.2026.
+        check("Operation ohne 'nachweise': jede Stellung nachgewiesen",
+              all((x["ergebnis"] or {}).get("nachgewiesen") is True for x in B["liste"]),
+              str([(x["ergebnis"] or {}).get("nachgewiesen") for x in B["liste"]]))
 
         st, j, _ = c.op(op="remove_stellung", name="offen")
         check("Stellung entfernt", st == 200 and len(j["state"]["stellungen"]["liste"]) == 2)

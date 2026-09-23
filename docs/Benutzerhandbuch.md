@@ -5237,16 +5237,27 @@ GZG-Kombinationen wurde kein Stab nachgewiesen; an der Halle war η = 0 und
 die Stellung erfüllt, der Bericht nannte „eta = 0.000", und der Browser
 zeigte „η = 0,000" grün.
 
-**Ohne verlangten Nachweis gibt es keine Warnung.** Werden die Stellungen mit
-`"nachweise": false` gerechnet (nur über die Operation; der Knopf „Alle
-Stellungen rechnen" sendet `true`) oder ist bei keinem Stab „Nachweis
-führen" gesetzt (`design = False`), dann steht η = 0 in der Farbe für
-erfüllt da: auf der Karte „η 0,00", in der Tabelle 0,00 grün, in der
-η-Kurve ein Punkt je Stellung, in der Zeile der Umhüllenden und im
-Filmstreifen „η = 0,000". Die Meldung nach dem Rechnen (`umh.kurztext()`)
-lautet „eta = 0.000, maßgebend …". Nachgewiesen ist dabei nichts: η = 0
-heißt hier „nicht geprüft", nicht „ohne Ausnutzung" (gemessen am 23.09.2026
-am Beispiel „gate" mit zwei und mit drei Stellungen, für beide Fälle).
+**Ohne verlangten Nachweis gibt es keine Warnung.** Das gilt, wenn die
+Stellungen ohne Nachweis gerechnet werden oder bei keinem Stab „Nachweis
+führen" gesetzt ist (`design = False`). Ohne Nachweis rechnet in Python
+schon `reihe.rechnen()` ohne Argument, denn dort ist `nachweise=False` die
+Vorgabe; das Beispiel oben gibt `nachweise=True` ausdrücklich an. Im
+Browser geht es nur über die Operation `stellungen_rechnen` mit
+`"nachweise": false`: Ohne diese Angabe nimmt die Operation `true`, und die
+Knöpfe „Alle Stellungen rechnen" im Register und „rechnen" im Filmstreifen
+senden `true`. Die Desktop-Oberfläche („Alle Stellungen rechnen" im Register,
+„Alle Stellungen" im Ribbon *Berechnung*) rechnet immer mit Nachweis. In
+beiden Fällen steht im Browser η = 0 in der Farbe für erfüllt da: auf der
+Karte „η 0,00", in der Tabelle 0,00 grün, in der η-Kurve ein Punkt je
+Stellung, in der Zeile der Umhüllenden und im Filmstreifen „η = 0,000".
+Die Meldung nach dem Rechnen (`umh.kurztext()`)
+lautet „eta = 0.000, maßgebend …", der Bericht (`umh.bericht()`)
+„Umhüllende: eta = 0.000, maßgebend in …". Nachgewiesen ist dabei nichts:
+η = 0 heißt hier „nicht geprüft", nicht „ohne Ausnutzung" (im Browser
+gemessen am 23.09.2026 am Beispiel „gate" mit zwei und mit drei Stellungen,
+in Python am 24.09.2026 am selben Beispiel mit drei Stellungen, jeweils für
+beide Fälle; mit `nachweise=True` und Stäben mit Nachweis ergab sich in
+Python η = 0,515).
 
 ### Lastfälle nach DIN 19704 anlegen und das Lastenheft
 
