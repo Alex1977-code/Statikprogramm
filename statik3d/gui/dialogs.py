@@ -12,23 +12,25 @@ from .. import profiles
 from ..ec3.fatigue import DETAIL_CATEGORIES, DETAIL_EXAMPLES
 from .. import elemente as EL
 from .design import namen as _namen
+from . import zahlenfeld as zf
 
 
-class NumEdit(QtWidgets.QLineEdit):
+class NumEdit(zf.Zahlenfeld):
+    """Zahlenfeld der Dialoge und Register - die Regel steht in
+    statik3d/zahlen.py (24.09.2026). Bis dahin QDoubleValidator mit dem
+    Gebietsschema des Systems und ``float(text.replace(",", "."))``, das bei
+    „2.000.000“ still 0 lieferte."""
+
     def __init__(self, value=0.0, width=80):
-        super().__init__(f"{value:g}")
-        self.setValidator(QtGui.QDoubleValidator(-1e30, 1e30, 12))
-        self.setFixedWidth(width)
+        super().__init__(value, width)
 
     def value(self) -> float:
-        t = self.text().replace(",", ".").strip()
-        try:
-            return float(t)
-        except ValueError:
-            return 0.0
+        """Die Zahl (leer = 0). Eine ungueltige Eingabe wirft Eingabefehler:
+        der OK-Knopf ist dann gesperrt, im Register prueft freigeben()."""
+        return self.wert()
 
     def set(self, v):
-        self.setText(f"{v:g}")
+        self.setzen(v)
 
 
 def row(*widgets) -> QtWidgets.QWidget:
@@ -45,6 +47,9 @@ def buttons(dialog: QtWidgets.QDialog) -> QtWidgets.QDialogButtonBox:
     bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
     bb.accepted.connect(dialog.accept)
     bb.rejected.connect(dialog.reject)
+    # OK bleibt gesperrt, solange ein Zahlenfeld ungueltig oder noch
+    # mehrdeutig ist (24.09.2026) - im Dialog laesst sich OK nicht abfangen
+    zf.Waechter(dialog, [bb.button(QtWidgets.QDialogButtonBox.Ok)], frage_sperrt=True)
     return bb
 
 
@@ -679,6 +684,7 @@ class SupportNonlinearDialog(QtWidgets.QDialog):
         bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok
                                         | QtWidgets.QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
+        zf.Waechter(self, [bb.button(QtWidgets.QDialogButtonBox.Ok)], frage_sperrt=True)
         lay.addWidget(bb)
         if support is not None:
             self.load(support)
@@ -880,15 +886,15 @@ class KoerperDialog(QtWidgets.QDialog):
             sp.setValue(int(t[i] if i < len(t) else 4))
             self.n.append(sp)
         self.kommentar = QtWidgets.QLineEdit(getattr(koerper, "kommentar", "") or "")
-        self.kerbfall = QtWidgets.QLineEdit(
-            f"{koerper.kerbfall / 1e6:g}" if getattr(koerper, "kerbfall", 0.0) else "")
+        self.kerbfall = zf.Zahlenfeld(
+            koerper.kerbfall / 1e6 if getattr(koerper, "kerbfall", 0.0) else None)
         self.kerbfall.setPlaceholderText("leer = kein Ermüdungsnachweis")
         self.kerbfall.setToolTip("Kerbfall Δσ_C [N/mm²] für den Ermüdungsnachweis des Volumens "
                                  "(Hauptspannung je Knoten, EN 1993-1-9)"
                                  + (" - Vorschlag des Programms, zu prüfen"
                                     if getattr(koerper, "kerbfall_vorschlag", False) else ""))
-        self.kerbfall_naht = QtWidgets.QLineEdit(
-            f"{koerper.kerbfall_naht / 1e6:g}" if getattr(koerper, "kerbfall_naht", 0.0) else "")
+        self.kerbfall_naht = zf.Zahlenfeld(
+            koerper.kerbfall_naht / 1e6 if getattr(koerper, "kerbfall_naht", 0.0) else None)
         self.kerbfall_naht.setPlaceholderText("leer = wie Kerbfall")
         self.kerbfall_naht.setToolTip("Kerbfall an verschweißten Berührungsstellen mit anderen "
                                       "Volumen (gemeinsame Knoten ohne Kontaktbedingung)")
@@ -909,16 +915,10 @@ class KoerperDialog(QtWidgets.QDialog):
         f.addRow(buttons(self))
 
     def werte(self) -> dict:
-        kt = self.kerbfall.text().strip().replace(",", ".")
-        nt = self.kerbfall_naht.text().strip().replace(",", ".")
-        try:
-            kerbfall = float(kt) * 1e6 if kt else 0.0
-        except ValueError:
-            kerbfall = 0.0
-        try:
-            kerbfall_naht = float(nt) * 1e6 if nt else 0.0
-        except ValueError:
-            kerbfall_naht = 0.0
+        # Zahlenfelder (24.09.2026): leer = keiner; eine ungueltige Eingabe
+        # sperrt OK, statt wie bisher still 0 (kein Nachweis) zu werden
+        kerbfall = self.kerbfall.wert() * 1e6
+        kerbfall_naht = self.kerbfall_naht.wert() * 1e6
         return {"name": self.name.text().strip() or "V",
                 "flaechen": [i.text() for i in self.liste.selectedItems()],
                 "material": self.material.currentText(),
@@ -1392,6 +1392,7 @@ class JointDialog(QtWidgets.QDialog):
                                         | QtWidgets.QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
+        zf.Waechter(self, [bb.button(QtWidgets.QDialogButtonBox.Ok)], frage_sperrt=True)
         zeile.addWidget(bb)
         lay.addLayout(zeile)
         self.cb_typ.currentIndexChanged.connect(self.update_proposal)
@@ -1566,6 +1567,7 @@ class BeulfeldDialog(QtWidgets.QDialog):
                                         | QtWidgets.QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
+        zf.Waechter(self, [bb.button(QtWidgets.QDialogButtonBox.Ok)], frage_sperrt=True)
         lay.addWidget(bb)
         self.cb_art.currentIndexChanged.connect(self._umschalten)
         self._umschalten()
@@ -1684,6 +1686,7 @@ class LasteinleitungDialog(QtWidgets.QDialog):
                                         | QtWidgets.QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
+        zf.Waechter(self, [bb.button(QtWidgets.QDialogButtonBox.Ok)], frage_sperrt=True)
         lay.addWidget(bb)
 
     def result(self) -> tuple:
@@ -1751,6 +1754,7 @@ class VolumenbereichDialog(QtWidgets.QDialog):
                                         | QtWidgets.QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
+        zf.Waechter(self, [bb.button(QtWidgets.QDialogButtonBox.Ok)], frage_sperrt=True)
         lay.addWidget(bb)
 
     def result(self) -> tuple:
@@ -1848,6 +1852,7 @@ class VerformungsgrenzeDialog(QtWidgets.QDialog):
                                         | QtWidgets.QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
+        zf.Waechter(self, [bb.button(QtWidgets.QDialogButtonBox.Ok)], frage_sperrt=True)
         lay.addWidget(bb)
         for w in (self.cb_art, self.cb_grenzart):
             w.currentIndexChanged.connect(self._umschalten)

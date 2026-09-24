@@ -284,14 +284,18 @@ def main():
     # Eingabe-Aktionen: Auswahl, Lager, Lasten, Lastfaelle, Kontakt, Staebe
     w.new_model(); app.processEvents()
     w.beam_p2[0].set(6.0); w.beam_n.setValue(6); w.make_beams(); app.processEvents()
+    # Das Register rechnet seit 24.09.2026 in der Einheiteneinstellung
+    # (Vorgabe kN, kN/m) wie die Masken - vorher in N: -10 kN = -10 000 N
     w.sel[0].setText("0"); w.sel[1].setText("0"); w.do_select(); w.set_support(all_dofs=True)
-    w.sel[0].setText("6"); w.sel[1].setText("6"); w.do_select(); w.ld[2].set(-10000); w.add_load()
-    w.q[2].set(-2000); w.add_beam_load()
+    w.sel[0].setText("6"); w.sel[1].setText("6"); w.do_select(); w.ld[2].set(-10); w.add_load()
+    check("Register Lager/Lasten in kN: −10 kN kommen als −10 000 N an",
+          abs(w.model.case().nodal_loads[-1].F[2] + 10000.0) < 1e-9, str(w.model.case().nodal_loads[-1].F))
+    w.q[2].set(-2); w.add_beam_load()
     w.cb_g.setChecked(True)
     w.model.add_load_case("Q", "Q_B"); w.refresh_all()
     w.tbl_lc.selectRow(1); app.processEvents()
     check("aktiver Lastfall umgeschaltet", w.model.active_case == "Q", w.model.active_case)
-    w.ld[2].set(-5000); w.add_load()
+    w.ld[2].set(-5); w.add_load()
     from statik3d.combinations import generate_combinations
     generate_combinations(w.model); w.refresh_all()
     w.sel[0].setText("3"); w.sel[1].setText("3"); w.do_select(); w.add_contact_support()

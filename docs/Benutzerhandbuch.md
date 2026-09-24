@@ -1798,7 +1798,12 @@ Werkstoff, Teilung und Bemerkung, bei Schweißnähten Nahtart, Lage, a, t, ℓ,
 Ausführung und „gilt für“. Wo eine Auswahl besteht (Werkstoff, Querschnitt,
 Dicke, Nahtart, Lage, Ausführung), öffnet die Zelle eine **Aufklappliste**;
 Unzulässiges (unbekannter Knoten, fehlende Linie) wird mit Hinweis
-abgewiesen, jede Änderung ist rückgängig machbar. **Mehrfachauswahl:** mit
+abgewiesen, jede Änderung ist rückgängig machbar. Eine Zahlenzelle öffnet
+seit 24.09.2026 mit **voller Genauigkeit** und Komma (1234,5678 statt
+1234,57); wer sie öffnet und ohne Änderung verlässt, ändert nichts – kein
+Rückgängig-Schritt, die Ergebnisse bleiben. Getippte Zahlen folgen der Regel
+unter „Zahlen eingeben“: „2.000.000“ und „33.000“ werden nicht übernommen,
+der Grund steht am Zeiger. **Mehrfachauswahl:** mit
 **Umschalt** markiert ein Klick einen Bereich von Zeilen, mit **Strg** kommen
 einzelne Zeilen dazu oder gehen heraus; die Ansicht wählt dann alles
 zusammen, was die Zeilen einzeln gewählt hätten (die Knoten mehrerer Stäbe,
@@ -2041,6 +2046,17 @@ Die Maße im Bild haben eigene Angaben (*Messen → Bemaßung: Einstellungen*),
 der Bericht bleibt bei kN, m, mm und N/mm². „Rückgängig“ nimmt auch eine
 Einheitenumstellung zurück.
 
+**Register Lager/Lasten und Kontakt** (seit 24.09.2026): Kräfte, Momente,
+Strecken- und Flächenlasten, Federsteifigkeiten, Spalte und die Koordinaten
+des Auswahlfensters stehen in der eingestellten Einheit – in der Vorgabe
+kN, kNm, kN/m, kN/m², kN/m und m –, die Beschriftung nennt sie. Bis dahin
+rechnete das Register fest in N, die Masken in kN: dieselbe Zahl war dort
+tausendmal kleiner. Wird die Einheit umgestellt, zeigen die Felder dieselbe
+Größe in der neuen Einheit (aus −10 kN werden −10 000 N). Die Masken rechts
+sind weiter mit ihrer Einheit beschriftet (kN, kN/m). Die **Statusleiste**
+nennt die gewählten Einheiten, etwa „kN · m · N/mm² · u in mm“, statt fest
+„m · N · Pa“.
+
 ### Messen und Bemaßen (Register Messen)
 
 **Messen** beantwortet eine Frage sofort: *Abstand* (zwei Punkte: Länge,
@@ -2088,6 +2104,42 @@ Modell und blockiert nichts. Beide Wege führen zum selben Ziel:
 Querschnitt, Material, Dicke und Lastfall gelten für alle folgenden Objekte,
 bis man sie ändert. **Esc** schließt die Maske. Ein neuer Erzeuge-Befehl löst
 die vorige Maske ab — es ist immer höchstens eine offen.
+
+### Zahlen eingeben (seit 24.09.2026)
+
+Alle Zahlenfelder – in den Masken rechts, in den Registern und in den Dialogen –
+lesen nach derselben Regel. Sie gilt auch für die Ermüdungsmaske und die
+Zellen der Tabellen unten.
+
+| Eingabe | gelesen | Anzeige |
+|---|---|---|
+| `2,5` oder `2.5` | 2,5 – Komma und Punkt sind Dezimaltrenner, höchstens einer je Zahl | normal, nach dem Verlassen „2,5“ |
+| `2 000 000` | 2 000 000 – Leerzeichen (auch schmale) trennen Tausender, nur in Dreiergruppen | normal |
+| `2e6`, `1,5e5` | 2 000 000, 150 000 | nach dem Verlassen ausgeschrieben |
+| `2.000.000`, `1.000,5`, `12 5` | **ungültig** – höchstens ein Dezimaltrenner, Leerzeichen nur als Tausendertrennung | roter Rahmen, Meldung, „Übernehmen“ gesperrt |
+| `33.000` | **mehrdeutig**: 33,000 oder 33 000? | gelber Hinweis „33,000 – gemeint 33 000?“, bis bestätigt |
+
+Eine mehrdeutige Eingabe gilt erst, wenn sie bestätigt ist: in der Maske mit
+einem zweiten „Übernehmen“ oder einer zweiten Eingabetaste, im Dialog mit dem
+Haken im Feld oder zweimal Eingabetaste, im Register mit einem zweiten Klick
+auf den Knopf. Wer 33 000 meint, schreibt es mit Leerzeichen. Eine ungültige
+Eingabe wird nie still zu 0 oder zu einer anderen Zahl; ein leeres Feld zählt
+wie bisher als 0. Nach dem Verlassen steht die Zahl formatiert da: mit Komma,
+Tausender mit Leerzeichen, nie als „2e+06“ (die Ansicht bleibt beim Punkt).
+Bis zum 24.09.2026 wurde „33.000“ still zu 33 und „2.000.000“ zu 0 – der
+Qt-Validator folgte dem Gebietsschema des Systems.
+
+**Welche Felder die Ergebnisse behalten.** Ein „Übernehmen“ verwirft die
+Ergebnisse, sobald sich an der Rechnung etwas ändert. Felder, die nur
+beschriften, behalten sie: Name, Bildunterschrift, Bemerkung, Text und Platz
+eines Berichtseintrags; Bemerkung von Linie, Fläche und Volumen; Beschreibung
+eines Lastfalls; Name und Symbolgröße eines Lagers; Bemerkung und
+Passmaß-Bezeichnung einer Vorspannung bzw. eines Übermaßes; in den Tabellen
+dieselben Spalten sowie Beschriftung und Bemerkung der Unterlagen. Nennt eine
+Stellung ein Lager beim Namen, verwirft sein Umbenennen die Ergebnisse, denn
+die Stellung schaltet dann ein anderes Lager ab. Alles andere verwirft wie
+bisher – im Zweifel wird verworfen. „Übernehmen“ ohne Änderung legt keinen
+Rückgängig-Schritt an.
 
 ### Verschieben, Kopieren, Drehen, Spiegeln
 
