@@ -1508,6 +1508,105 @@ def test_warntexte_mit_umlaut():
           f"{html.count('Ermuedungslast')}x")
 
 
+def _gui():
+    import importlib
+    return importlib.import_module("statik3d.gui.main")    # gui.main() verdeckt das Modul
+
+
+def _texte(aufrufe):
+    return [str(c.args[0]) for c in aufrufe.call_args_list if c.args]
+
+
+def test_maske_weist_oder_ek_im_verlauf_ab():
+    """Befund B066 (23.09.2026): Die Eingabe einer Ermuedungslast als Verlauf
+    (MainWindow.add_fatigue_load) wies nur unbekannte Namen ab; eine
+    oder-verknuepfte Ergebniskombination nahm sie an. Gemeldet hat es erst
+    die Modellpruefung vor der Rechnung („Zustand 'EK-oder' ist eine
+    oder-verknüpfte Ergebniskombination …“). Die Auswahl „Zwei Zustände“
+    bietet sie gar nicht an (model.ermuedungszustaende). Hier der echte
+    add_fatigue_load mit einem Ersatz fuer den Dialog im Modus Verlauf."""
+    from unittest import mock
+    G = _gui()
+
+    class Dialog:
+        """Liefert, was FatigueLoadDialog im Modus Verlauf liefert."""
+        folge: list = []
+
+        def __init__(self, _parent, _model):
+            self.art = mock.MagicMock()
+            self.art.currentIndex.return_value = 1            # Verlauf
+            self.zaehlung = mock.MagicMock()
+            self.zaehlung.currentText.return_value = "spanne"
+
+        def exec(self):
+            return True
+
+        def folge_namen(self):
+            return list(Dialog.folge)
+
+        def values(self):
+            return ("", "LF1", None, None, 1.0)
+
+    def eingeben(m, folge):
+        Dialog.folge = folge
+        s = mock.MagicMock()
+        s.model = m
+        with mock.patch.object(G, "FatigueLoadDialog", Dialog):
+            G.MainWindow.add_fatigue_load(s)
+        return s
+
+    m = _kragarm()
+    _oder_ek(m, "EK-oder")
+    s = eingeben(m, ["LF1", "EK-oder"])
+    check("Verlauf mit oder-EK: die Eingabe meldet es",
+          any("EK-oder" in t and "oder-verknüpft" in t for t in _texte(s.error)), str(_texte(s.error))[:160])
+    check("… und legt keine Ermüdungslast an", not m.fatigue_loads, str(list(m.fatigue_loads)))
+    s = eingeben(m, ["LF1", "LF2", "LF3"])
+    check("Gegenprobe, Verlauf aus Lastfällen: angelegt, ohne Meldung",
+          len(m.fatigue_loads) == 1 and not _texte(s.error)
+          and list(m.fatigue_loads.values())[0].folge == ["LF1", "LF2", "LF3"],
+          f"{list(m.fatigue_loads)}, error {_texte(s.error)}")
+
+
+def test_etikett_nachweise_nennt_die_ermuedung():
+    """Befund B069 (23.09.2026): show_results setzte das Etikett unter den
+    Knoepfen „Nachweise EC3“ und „Ermüdungsnachweis“ im Ermuedungszweig auf
+    ``an.design.summary() if an.design else ''`` - mit Ermuedung, aber ohne
+    EC3-Nachweis also leer; die Ermuedungszeile stand nur im Ergebnistext.
+    Ohne Nachweise blieb das Etikett einer frueheren Rechnung stehen. Hier der
+    echte show_results mit einer Attrappe fuer self."""
+    from unittest import mock
+    G = _gui()
+    m = _kragarm()
+    m.fatigue_loads["Ereignis"] = FatigueLoad("Ereignis", folge=["LF1", "LF2", "LF3"],
+                                              wiederholungen=1e5)
+
+    def etikett(an):
+        s = mock.MagicMock()
+        s.model = m
+        s.analysis = an
+        s._util_map.return_value = {}
+        s.current_result.return_value = next(iter(an.cases.values()))
+        with mock.patch.object(G, "QtWidgets"):
+            G.MainWindow.show_results(s)
+        return _texte(s.lbl_design.setText)
+
+    an = solver.solve_all(m, design=False, fatigue=True)
+    zeile = an.fatigue.summary()
+    t = etikett(an)
+    check("nur Ermüdung: das Etikett nennt die Ermüdungszeile",
+          an.design is None and t and zeile in t[-1], f"setText {t}, Zeile {zeile[:60]!r}")
+    an = solver.solve_all(m, design=True, fatigue=True)
+    t = etikett(an)
+    check("EC3 und Ermüdung: beide Zeilen",
+          an.design is not None and t and an.design.summary() in t[-1] and an.fatigue.summary() in t[-1],
+          f"setText {[x[:50] for x in t]}")
+    an = solver.solve_all(m, design=False, fatigue=False)
+    t = etikett(an)
+    check("ohne Nachweise: „noch keine Nachweise“, nichts von früher",
+          t and t[-1] == "noch keine Nachweise", f"setText {t}")
+
+
 def main():
     for t in (test_spanne, test_hauptspannungen, test_volumen, test_naht_beruehrung,
               test_kerbfall_vorschlaege,
@@ -1522,7 +1621,9 @@ def main():
               test_volumen_ergebnis_aelterer_fassung,
               test_nicht_gefuehrt_nicht_gefaerbt,
               test_ansicht_ohne_wert_ungefaerbt,
-              test_warntexte_mit_umlaut):
+              test_warntexte_mit_umlaut,
+              test_maske_weist_oder_ek_im_verlauf_ab,
+              test_etikett_nachweise_nennt_die_ermuedung):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

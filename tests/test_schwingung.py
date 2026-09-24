@@ -212,8 +212,64 @@ def test_bericht():
     check("Kapitel im Gesamtbericht", (not html) or "Schwingungsnachweis des Verschlusses" in html)
 
 
+def test_oberflaeche_prueft_das_modell():
+    """Befund B065 (23.09.2026): *Nachweis führen* (MainWindow.
+    _schwingung_rechnen) rief schwingung.nachweis ohne Model.check und
+    rechnete auch bei einem FEHLER der Modellpruefung - samt dem Lastfall der
+    Druckschwankung (solve_cases). Gemessen an der Schuetzhaut mit
+    angehaengtem Rahmen und „Stellung 'Offen_2' unbekannt“: kein error(),
+    f_Luft 4,3596/6,5018 Hz, σ_amp 61,6 N/mm². Berechnen, Knicklaengen und
+    die adaptive Vernetzung pruefen vorher; hier der echte
+    _schwingung_rechnen mit einer Attrappe fuer self."""
+    import importlib
+    from unittest import mock
+    from statik3d.model import Combination
+    G = importlib.import_module("statik3d.gui.main")      # gui.main() verdeckt das Modul
+
+    def modell():
+        m = _haut(nz=20)
+        wd = Wasserdruck("S", flaechen=["Haut"], h_ow=4.0, richtung=[1.0, 0, 0], unterstroemt=True,
+                         spalt=0.3, cp_dyn=0.1)
+        wdm.lasten_erzeugen(m, wd)
+        m.wasserdruecke["S"] = wd
+        return m
+
+    def fuehren(m):
+        sn = sw.Schwingungsnachweis("N1", wasserdruck="S", n_moden=2, d_kante=0.2)
+        s = mock.MagicMock()
+        s.model = m
+        s.analysis = None
+        s._schwingung_aus_maske.return_value = sn
+        s._trotzdem_rechnen = G.MainWindow._trotzdem_rechnen.__get__(s)
+        with mock.patch.object(G, "QtWidgets"), \
+                mock.patch.object(sw, "nachweis", wraps=sw.nachweis) as spion:
+            erg = G.MainWindow._schwingung_rechnen(s, {}, sn)
+        return s, erg, spion
+
+    def texte(aufrufe):
+        return [str(c.args[0]) for c in aufrufe.call_args_list if c.args]
+
+    m = modell()
+    m.combinations["K9"] = Combination("K9", {"LF-X": 1.0}, "ULS")
+    meldung = "Kombination 'K9': Lastfall 'LF-X' unbekannt"
+    s, erg, spion = fuehren(m)
+    check("FEHLER in der Modellprüfung: die Meldung kommt",
+          any(meldung in t for t in texte(s.error)), str(texte(s.error))[:120])
+    check("… kein Ergebnis, der Nachweis wird nicht gerechnet (auch keine Druckschwankung)",
+          erg is None and not spion.called, f"Ergebnis {type(erg).__name__}, nachweis gerufen {spion.called}")
+    check("… die Angaben der Maske bleiben im Modell", "N1" in m.schwingungen, str(sorted(m.schwingungen)))
+
+    m = modell()
+    fehler = [x for x in m.check() if x.startswith("FEHLER")]
+    s, erg, spion = fuehren(m)
+    check("Gegenprobe ohne FEHLER: der Nachweis wird gerechnet",
+          not fehler and spion.called and erg is not None and len(erg.moden) == 2
+          and not texte(s.error), f"FEHLER {fehler}, error {texte(s.error)}")
+
+
 def main():
-    for f in (test_formeln, test_zusatzmasse_auf_dem_netz, test_eigenfrequenzen, test_nachweis, test_bericht):
+    for f in (test_formeln, test_zusatzmasse_auf_dem_netz, test_eigenfrequenzen, test_nachweis, test_bericht,
+              test_oberflaeche_prueft_das_modell):
         print(f"\n--- {f.__name__} ---")
         try:
             f()

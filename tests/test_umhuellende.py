@@ -125,6 +125,126 @@ def test_modellpruefung_sieht_alternativen():
           any("EK" in x and "LF9" in x and "unbekannt" in x for x in m.check()), str(m.check()))
 
 
+class _Maskenrekorder:
+    """Statt masken.Maske (ein QFrame): merkt Titel und Felder, und ok()
+    ruft die angeschlossenen Rueckrufe mit den Werten, wie „Übernehmen“."""
+    zuletzt = None
+
+    def __init__(self, titel, felder, **_kw):
+        import types
+        self.titel, self.felder = titel, felder
+        self._rueckrufe = {"angewendet": [], "abgebrochen": [], "geschlossen": [],
+                           "feld_fokussiert": []}
+        for n, liste in self._rueckrufe.items():
+            setattr(self, n, types.SimpleNamespace(connect=liste.append))
+        _Maskenrekorder.zuletzt = self
+
+    def feld(self, name):
+        return next((f for f in self.felder if f.name == name), None)
+
+    def werte(self) -> dict:
+        # wie Maske.werte(): ein Infofeld liefert seinen Text
+        return {f.name: f.wert for f in self.felder}
+
+    def ok(self, w=None):
+        for cb in self._rueckrufe["angewendet"]:
+            cb(self.werte() if w is None else w)
+
+
+def test_objektmaske_behaelt_die_alternativen():
+    """Nebenbefund NB01 (Fehlerrunden 22./23.09.2026): Die Objektmaske
+    „Kombination“ fuellte bei einer Umhuellenden das Feld Faktoren mit der
+    Formel („1.35·LF1 + 1.5·LF2 oder 1·LF1“), und „Übernehmen“ las es als
+    „Lastfall: Faktor“. Schon eine geaenderte Beschreibung endete mit „FEHLER:
+    Faktor … bitte als „Lastfall: Faktor“ schreiben“; schrieb man Faktoren
+    hinein, entstand eine Kombination ohne Alternativen ({'LF1': 1.35}),
+    und die Meldung nannte nur die neue Formel. Hier ohne Fenster: die echte
+    Maske (_objektmaske) mit einem Rekorder statt des QFrame, „Übernehmen“
+    ueber die echten _objekt_uebernehmen/_eigenschaften_uebernehmen."""
+    import importlib
+    from unittest import mock
+    G = importlib.import_module("statik3d.gui.main")      # gui.main() verdeckt das Modul
+    m = Model("Maske")
+    m.add_load_case("LF2", "Q", activate=False)
+    alternativen = [{"LF1": 1.35, "LF2": 1.5}, {"LF1": 1.0}]
+    m.combinations["EK1"] = Combination("EK1", {}, "ULS", "aus RFEM",
+                                        bemessungssituation="GZT (STR/GEO) - ständig",
+                                        alternativen=[dict(a) for a in alternativen])
+
+    def fenster():
+        s = mock.MagicMock()
+        s.model = m
+        s._baum_ist_eintrag.return_value = True
+        s._layer_sperre_melden.return_value = False
+        for n in ("_objektmaske", "_objekt_uebernehmen", "_eigenschaften_uebernehmen"):
+            setattr(s, n, getattr(G.MainWindow, n).__get__(s))
+        return s
+
+    def fehler(s):
+        return [str(c.args[0]) for c in s.error.call_args_list if c.args]
+
+    # Die ganze Pruefung lang ersetzt: nach „Übernehmen“ baut
+    # _eigenschaften_uebernehmen die Maske neu auf, ein echter QFrame ohne
+    # QApplication beendet den Prozess ohne Meldung.
+    ersatz = mock.patch.object(G.msk, "Maske", _Maskenrekorder)
+    ersatz.start()
+    try:
+        _objektmaske_umhuellende(G, m, alternativen, fenster, fehler)
+    finally:
+        ersatz.stop()
+
+
+def _objektmaske_umhuellende(G, m, alternativen, fenster, fehler):
+    s = fenster()
+    s._objektmaske("kombination", "EK1")
+    mk = _Maskenrekorder.zuletzt
+    f = mk.feld("faktoren")
+    check("Maske der Umhüllenden: Faktoren sind eine Anzeige, kein Eingabefeld",
+          f is not None and f.art == "info", "" if f is None else f"art {f.art!r}, {f.wert!r}")
+    w = mk.werte()
+    w["beschreibung"] = "geändert"
+    mk.ok(w)
+    c = m.combinations["EK1"]
+    check("… Übernehmen mit geänderter Beschreibung meldet keinen Fehler",
+          not fehler(s), str(fehler(s)))
+    check("… die Beschreibung ist geschrieben", c.description == "geändert", repr(c.description))
+    check("… die Alternativen bleiben, wie sie waren",
+          c.ist_umhuellende and c.alternativen == alternativen and not c.factors,
+          f"alternativen {c.alternativen}, factors {c.factors}")
+    check("… ebenso die Bemessungssituation aus der Quelldatei",
+          c.bemessungssituation == "GZT (STR/GEO) - ständig", repr(c.bemessungssituation))
+
+    # Was die alte Maske lieferte (die Formel im Feld Faktoren) oder was ein
+    # Anwender dort hineinschrieb, darf die Umhuellende nicht in eine Summe
+    # verwandeln.
+    for text in (m.combinations["EK1"].formula(), "LF1: 1,35"):
+        s = fenster()
+        s._eigenschaften_uebernehmen("kombination", "EK1",
+                                     {"name": "EK2", "typ": "ULS", "beschreibung": "umbenannt",
+                                      "situation": GRUNDSTELLUNG, "theorie": "", "faktoren": text})
+        c = m.combinations.get("EK2")
+        check(f"Faktoren „{text[:22]}…“: umbenannt, Alternativen bleiben",
+              not fehler(s) and c is not None and "EK1" not in m.combinations
+              and c.alternativen == alternativen and not c.factors,
+              f"Fehler {fehler(s)}, " + ("fehlt" if c is None else f"alternativen {c.alternativen}, "
+                                                                   f"factors {c.factors}"))
+        if c is not None:
+            m.combinations.pop("EK2")
+            c.name = "EK1"
+            m.combinations["EK1"] = c
+
+    # Gegenprobe: eine gewoehnliche Kombination nimmt ihre Faktoren weiter aus dem Feld
+    m.combinations["K1"] = Combination("K1", {"LF1": 1.0}, "ULS")
+    s = fenster()
+    s._eigenschaften_uebernehmen("kombination", "K1",
+                                 {"name": "K1", "typ": "ULS", "beschreibung": "", "theorie": "",
+                                  "situation": GRUNDSTELLUNG, "faktoren": "LF1: 1,35, LF2: 1,5"})
+    c = m.combinations["K1"]
+    check("gewöhnliche Kombination: Faktoren aus dem Feld",
+          not fehler(s) and c.factors == {"LF1": 1.35, "LF2": 1.5} and not c.alternativen,
+          f"Fehler {fehler(s)}, factors {c.factors}")
+
+
 # --------------------------------------------------------------------------
 # Loeser: inkrementelle Umhuellende
 # --------------------------------------------------------------------------
@@ -865,6 +985,7 @@ def test_gleiche_im_bericht_nur_die_ersten_40():
 def main():
     for t in (test_kombination_mit_alternativen, test_speichern_und_laden,
               test_umbenennen_und_entfernen, test_modellpruefung_sieht_alternativen,
+              test_objektmaske_behaelt_die_alternativen,
               test_umhuellende_inkrementell_gleich_gestapelt,
               test_alternativen_werden_umhuellende, test_alternativen_im_kontaktmodell,
               test_nachweis_sieht_die_alternativen, test_rueckfall_nur_ohne_kombinationen,

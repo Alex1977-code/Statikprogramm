@@ -7218,8 +7218,13 @@ löschen" in der Oberfläche) ergibt eine Lücke von 115 cm³, neu vernetzt mit
 denselben Einstellungen über `mesher.modell_vernetzen` sind es wieder 6173 tet4
 ohne Befund. Dieser Weg entfernt die Knoten des alten Netzes
 (`Model.netzknoten_loeschen`); „Netz → Vernetzen" in der Oberfläche
-(`gui.main._vernetzen`) löscht nur die Elemente. So nachgestellt, ohne Qt:
-6173 tet4, aber 1229 Knoten ohne Element, FEHLER. Einen Hohlraum,
+(`gui.main._vernetzen`) löschte bis zum 23.09.2026 nur die Elemente. So
+nachgestellt, ohne Qt: 6173 tet4, aber 1229 Knoten ohne Element, FEHLER.
+Seither ruft auch `_vernetzen` nach dem Löschen der alten Netze
+`Model.netzknoten_loeschen` - mit den Knoten der gelöschten Elemente als
+Kandidaten, damit ein gesetzter Knoten ohne Anschluss stehen bleibt: zweites
+Netz 1241 Knoten wie das erste, ohne „Knoten ohne Element" (Befund B062,
+ebenso ohne Qt nachgestellt). Einen Hohlraum,
 der ringsum von Nachbarseiten eingeschlossen ist, meldet die Abnahme
 weiter als „Seiten im Inneren", auch wenn er die Oberfläche an einer Kante
 berührt. Gemessen am Würfel mit um 0,5 m angehobener Ecke, frei mit h = 0,1:

@@ -180,6 +180,77 @@ def test_reihe():
           str([s.dreh_winkel for s in st]))
 
 
+def test_meldung_nach_allen_stellungen():
+    """Befund B064 (23.09.2026): Nach „▶ Alle Stellungen rechnen“ stand immer
+    „{n} Stellungen gerechnet: eta = …“ - gezaehlt wurden die angelegten
+    Stellungen, nicht die gerechneten. Scheiterte jede an einem FEHLER,
+    lautete die Zeile „2 Stellungen gerechnet: eta = 0.000“ (Umhuellende mit
+    0 Ergebnissen, eta_bestimmt True). Hier der echte
+    MainWindow.stellungen_rechnen, self als Attrappe."""
+    import importlib
+    from unittest import mock
+    G = importlib.import_module("statik3d.gui.main")      # gui.main() verdeckt das Modul
+
+    def texte(aufrufe):
+        return [str(c.args[0]) for c in aufrufe.call_args_list if c.args]
+
+    def rechne(stellungen):
+        m, _n = _klappe()
+        m.stellungen = list(stellungen)
+        s = mock.MagicMock()
+        s.model = m
+        s._stellungen_obj.return_value = list(stellungen)
+        with mock.patch.object(G, "QtWidgets"):       # nur der Wartezeiger im Weg
+            G.MainWindow.stellungen_rechnen(s)
+        return s
+
+    def etikett(s):
+        # stellungen_rechnen endet mit refresh_all, und das ruft
+        # refresh_stellungen - hier von Hand, der echte
+        s.lbl_umh.setText.reset_mock()
+        G.MainWindow.refresh_stellungen(s)
+        return (texte(s.lbl_umh.setText) or [""])[-1]
+
+    ohne_lager = dict(lager_aus=["Drehlager", "Endauflager"])
+    s = rechne([Stellung("X", 0.0, **ohne_lager), Stellung("Y", 10.0, **ohne_lager)])
+    u = s.umhuellende
+    alle = texte(s.info) + texte(s.error)
+    check("keine Stellung rechenbar: die Umhüllende hat kein Ergebnis",
+          not u.ergebnisse and len(u.fehlerhaft) == 2,
+          f"{len(u.ergebnisse)} Ergebnisse, {len(u.fehlerhaft)} fehlerhaft")
+    check("… keine Zeile „2 Stellungen gerechnet“ und kein „eta = 0.000“",
+          not any("2 Stellungen gerechnet" in t or "eta = 0.000" in t for t in alle),
+          str(alle[-1:]))
+    check("… sondern „keine Stellung gerechnet“ mit der Zahl der FEHLER",
+          any("keine stellung gerechnet" in t.lower() and "2" in t for t in alle), str(alle[-1:]))
+    check("… eta gilt als nicht bestimmt", not u.eta_bestimmt and "nicht bestimmt" in u.kurztext(),
+          f"eta_bestimmt {u.eta_bestimmt}, {u.kurztext()!r}")
+    check("… auch im Bericht", "eta nicht bestimmt" in u.bericht() and "eta = 0.000" not in u.bericht(),
+          [z for z in u.bericht().splitlines() if z.startswith("Umhüllende")][:1])
+    # Das Etikett unter „▶ Alle Stellungen rechnen“ (lbl_umh) zeigte bis zum
+    # 24.09.2026 trotzdem „η = 0,000; größte Verformung 0,000 mm“ - genau die
+    # Scheinausnutzung, die Schlusszeile und Bericht nicht mehr nannten
+    # (Gegenpruefung zu B064, gemessen mit dem echten refresh_stellungen).
+    lbl = etikett(s)
+    check("… und das Etikett im Register: kein „η = 0,000“, sondern „nicht bestimmt“",
+          "η = 0" not in lbl and "nicht bestimmt" in lbl and "2 mit FEHLER" in lbl, lbl)
+
+    s = rechne([Stellung("S1", 0.0, "geschlossen"), Stellung("X", 0.0, **ohne_lager)])
+    u = s.umhuellende
+    letzte = (texte(s.info) or [""])[-1]
+    check("eine von zwei rechenbar: „1 von 2 Stellungen gerechnet (1 mit FEHLER)“",
+          len(u.ergebnisse) == 1 and "1 von 2 Stellungen gerechnet" in letzte
+          and "1 mit FEHLER" in letzte and f"eta = {u.eta:.3f}" in letzte, letzte)
+    lbl = etikett(s)
+    check("… das Etikett nennt dann das η der gerechneten Stellung",
+          f"η = {u.eta:.3f}".replace(".", ",") in lbl and "nicht bestimmt" not in lbl, lbl)
+
+    s = rechne([Stellung("S1", 0.0, "geschlossen")])
+    letzte = (texte(s.info) or [""])[-1]
+    check("Gegenprobe, alle gerechnet: die Zeile wie bisher",
+          letzte.startswith("1 Stellungen gerechnet: eta = ") and not texte(s.error), letzte)
+
+
 # --------------------------------------------------------------------------
 # 4) DIN 19704: Lastfallklassen und Kombinationen
 # --------------------------------------------------------------------------
@@ -279,7 +350,8 @@ def test_ztv_ing():
 
 
 def main():
-    for t in (test_drehung, test_stellungen, test_reihe, test_din19704, test_ztv_ing):
+    for t in (test_drehung, test_stellungen, test_reihe, test_meldung_nach_allen_stellungen,
+              test_din19704, test_ztv_ing):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

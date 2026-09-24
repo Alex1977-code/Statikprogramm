@@ -120,6 +120,11 @@ def _bewegung_kurz(s) -> str:
     return " + ".join(teile) if teile else "im Gleichgewicht"
 
 
+def _stellung_fehlt_text(name: str) -> str:
+    """Der Eintrag der Situationsmaske fuer eine Stellung, die es nicht gibt."""
+    return f"{name} (fehlt)"
+
+
 # ==========================================================================
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
@@ -5148,16 +5153,28 @@ class MainWindow(QtWidgets.QMainWindow):
                 c = m.combinations.get(name)
                 situationen = m.situationsnamen()
                 th = next((t for t, v in THEORIEN if v == ((c.theorie if c else "") or "").upper()), THEORIEN[0][0])
-                fak = (c.formula() if c and c.ist_umhuellende
-                       else ", ".join(f"{k}: {v:g}" for k, v in (c.factors.items() if c else []))) if c else ""
+                fak = ", ".join(f"{k}: {v:g}" for k, v in (c.factors.items() if c else []))
+                # Eine Umhuellende (oder-verknuepfte Ergebniskombination) hat
+                # keine Faktoren, sondern Alternativen - wie im Dialog
+                # (CombinationDialog) bleiben sie, wie sie sind. Bis zum
+                # 23.09.2026 stand hier ihre Formel als Eingabefeld, und
+                # „Übernehmen“ las sie als „Lastfall: Faktor“: schon eine
+                # geaenderte Beschreibung endete mit einem Fehler, und
+                # hineingeschriebene Faktoren machten aus ihr still eine Summe
+                # (Nebenbefund NB01).
+                feld_fak = (F("faktoren", "Faktoren", "info",
+                              f"Umhüllende über {len(c.alternativen)} Alternativen (aus der Quelldatei) "
+                              "- hier nicht änderbar")
+                            if c is not None and c.ist_umhuellende else
+                            F("faktoren", "Faktoren (Lastfall: Faktor, …)", "text", fak, breite=220,
+                              hinweis="z. B. „LF1: 1,35, Wind: 1,5“ - nur Lastfälle derselben Situation"))
                 felder = [F("name", "Name", "text", name, breite=140),
                           F("typ", "Typ", "wahl", (c.typ if c and c.typ in typen else "ULS"), typen),
                           F("beschreibung", "Beschreibung", "text", (c.description if c else ""), breite=180),
                           F("situation", "Situation", "wahl",
                             (c.situation if c and c.situation in situationen else situationen[0]), situationen),
                           F("theorie", "Theorie", "wahl", th, [t for t, _v in THEORIEN]),
-                          F("faktoren", "Faktoren (Lastfall: Faktor, …)", "text", fak, breite=220,
-                            hinweis="z. B. „LF1: 1,35, Wind: 1,5“ - nur Lastfälle derselben Situation"),
+                          feld_fak,
                           F("formel", "Formel", "info", c.formula() if c else "–")]
                 # Die Bemessungssituation aus der Quelldatei ist eine Angabe,
                 # keine Einstellung: sie sagt, wofuer die Kombination da ist.
@@ -7115,8 +7132,16 @@ class MainWindow(QtWidgets.QMainWindow):
             self.info(f"Lastfall {neuname}: {kat}, Nr. {lc.nummer}" + (f", Situation {lc.situation}" if lc.situation else ""))
             name = neuname
         elif art == "kombination":
+            # Eine Umhuellende (Alternativen aus der Quelldatei) behaelt ihre
+            # Alternativen; geschrieben werden Name, Typ, Beschreibung,
+            # Situation und Theorie - wie CombinationDialog.result. Bis zum
+            # 23.09.2026 las diese Stelle ihre Formel als Faktoren: „1.35·LF1 +
+            # 1.5·LF2 oder 1·LF1“ endete mit einem Fehler, „LF1: 1,35“ machte
+            # aus ihr {'LF1': 1.35} ohne Alternativen (Nebenbefund NB01).
+            vorher = None if neu else m.combinations.get(name)
+            umh = vorher is not None and vorher.ist_umhuellende
             faktoren: dict = {}
-            text = str(w.get("faktoren", "") or "").strip()
+            text = "" if umh else str(w.get("faktoren", "") or "").strip()
             # Das Dezimalkomma vor dem Trennen retten: „LF1: 1,35, Wind: 1,5“
             text = re.sub(r"(\d),(\d)", r"\1.\2", text)
             for teil in [t for t in text.replace(";", ",").split(",") if t.strip()]:
@@ -7137,7 +7162,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 return self.error(f"Kombination „{neuname}“ gibt es schon")
             sit = str(w.get("situation", "") or "")
             sit = "" if sit in ("", GRUNDSTELLUNG) else sit
-            fremd = [k for k in faktoren if (getattr(m.load_cases[k], "situation", "") or "") != sit]
+            fremd = [k for k in (vorher.lastfaelle() if umh else faktoren) if k in m.load_cases
+                     and (getattr(m.load_cases[k], "situation", "") or "") != sit]
             if fremd:
                 return self.error("Lastfälle einer anderen Situation lassen sich nicht kombinieren: "
                                   + ", ".join(fremd))
@@ -7145,6 +7171,9 @@ class MainWindow(QtWidgets.QMainWindow):
             c = Combination(neuname, faktoren, str(w.get("typ", "ULS") or "ULS"),
                             str(w.get("beschreibung", "") or ""), situation=sit,
                             theorie=next((v for t, v in THEORIEN if t == str(w.get("theorie", ""))), ""))
+            if umh:
+                c.bemessungssituation = vorher.bemessungssituation
+                c.alternativen = [dict(a) for a in vorher.alternativen]
             if not neu and name in m.combinations and neuname != name:
                 del m.combinations[name]
             m.combinations[neuname] = c
@@ -7710,6 +7739,16 @@ class MainWindow(QtWidgets.QMainWindow):
         unbewegt = "– (unbewegt)"
         stellungen = [unbewegt] + [s.name for s in m.stellungen]
         wahl = sit.stellung if sit.stellung in stellungen else unbewegt
+        if sit.stellung and m.stellung(sit.stellung) is None:
+            # Eine Stellung, die es nicht gibt (etwa 'Offen_2' nach dem
+            # Anhaengen eines Modells), steht als eigener Eintrag da und ist
+            # gewaehlt. Bis zum 23.09.2026 zeigte die Maske „– (unbewegt)“,
+            # und „Übernehmen“ ohne jede Aenderung setzte die Stellung leer:
+            # die Meldung der Modellpruefung verschwand, und die Situation
+            # rechnete still unbewegt (angehaengter Rahmen: 1,7876 statt
+            # 4,7572 mm am Lastknoten, Befund B061).
+            wahl = _stellung_fehlt_text(sit.stellung)
+            stellungen.append(wahl)
         faelle = [k for k, lc in m.load_cases.items() if (lc.situation or "") == sit.name] if not neu else []
         kombis = [k for k, c in m.combinations.items() if (c.situation or "") == sit.name] if not neu else []
         felder = [F("name", "Name", "text", sit.name, breite=150),
@@ -7786,14 +7825,23 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.error(f"Situation „{name}“ gibt es schon")
         stellung = str(w.get("stellung", ""))
         stellung = "" if stellung.startswith("–") else stellung
-        if stellung and m.stellung(stellung) is None:
+        # Der Eintrag „… (fehlt)“ der Maske laesst die unbekannte Stellung,
+        # wie sie war: leer wird sie nur, wenn der Anwender „unbewegt“
+        # waehlt (Befund B061).
+        vorher = m.situationen.get(alt) if alt else None
+        behalten = ""
+        if (stellung and m.stellung(stellung) is None and vorher is not None and vorher.stellung
+                and m.stellung(vorher.stellung) is None
+                and stellung == _stellung_fehlt_text(vorher.stellung)):
+            stellung = behalten = vorher.stellung
+        if stellung and not behalten and m.stellung(stellung) is None:
             return self.error(f"Stellung „{stellung}“ gibt es nicht")
         faelle = self._namensliste(w.get("lastfaelle"))
         kombis = self._namensliste(w.get("kombinationen"))
         fehlt = [x for x in faelle if x not in m.load_cases] + [x for x in kombis if x not in m.combinations]
         if fehlt:
             return self.error("Unbekannt: " + ", ".join(fehlt[:6]))
-        if stellung and m.elements:
+        if stellung and not behalten and m.elements:
             st = m.stellung(stellung)
             if len(st.deaktivierte_elemente(m)) >= len(m.elements):
                 return self.error("In dieser Stellung wirkt kein Element - so bleibt nichts zu rechnen")
@@ -7821,7 +7869,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.analysis = None
         self.results = None
         self._situation_vorschau(None)
-        self.info(f"Situation {name}: {sit.bezug()}")
+        self.info(f"Situation {name}: {sit.bezug()}"
+                  + (f" - WARNUNG: die Stellung „{behalten}“ gibt es nicht; die Modellprüfung meldet "
+                     "es, und die Situation rechnet erst, wenn die Stellung angelegt oder eine "
+                     "andere gewählt ist" if behalten else ""))
         self.refresh_all()
         self.maskenrand.schliessen()
 
@@ -8957,11 +9008,26 @@ class MainWindow(QtWidgets.QMainWindow):
             # Kantenmitten quadratischer Elemente teilen sich die Nachbarn -
             # ein Woerterbuch fuer alle Flaechen dieses Laufs
             kanten: dict = {}
+            # Die Knoten der alten Netze gehen mit (Model.netzknoten_loeschen).
+            # _netz_loeschen nimmt nur die Elemente; bis zum 23.09.2026 blieben
+            # die Knoten stehen: am L-Prisma h 0,12 nach dem zweiten Vernetzen
+            # 2470 statt 1241 Knoten, Abnahme FEHLER „Knoten ohne Element“ 1229
+            # (Befund B062). Kandidaten sind nur die Knoten der geloeschten
+            # Elemente - anders als in mesher.modell_vernetzen, das jeden
+            # unbenutzten Knoten nimmt: ein gesetzter Konstruktionsknoten, an
+            # dem noch nichts haengt, gehoert zu keinem Netz.
+            alte_knoten: set = set()
+
+            def knoten_von(elemente):
+                els = self.model.elements
+                alte_knoten.update(int(x) for e in (elemente or []) if 0 <= int(e) < len(els)
+                                   for x in els[int(e)].nodes)
             for i, f in enumerate(flaechen):
                 if not self._fortschritt(int(1000 * erledigt / summe),
                                          f"Vernetze Fläche {i + 1} von {len(flaechen)}: {f.name}"):
                     abgebrochen = True
                     break
+                knoten_von(f.elemente)
                 self._netz_loeschen(f.elemente)
                 f.elemente = []
                 n += len(mesher.mesh_flaeche(self.model, f, log, kanten=kanten))
@@ -8972,8 +9038,15 @@ class MainWindow(QtWidgets.QMainWindow):
             cache: dict = {}
             if koerper and not abgebrochen:
                 for k in koerper:
+                    knoten_von(k.elemente)
                     self._netz_loeschen(k.elemente)
                     k.elemente = []
+            # Nach dem Loeschen der alten Volumennetze und vor dem neuen: die
+            # neuen Flaechennetze haengen schon an ihren Knoten und behalten sie.
+            weg = self.model.netzknoten_loeschen(alte_knoten) if alte_knoten else 0
+            if weg:
+                log.append(f"{weg} Knoten des alten Netzes entfernt")
+            if koerper and not abgebrochen:
                 erledigt = w_f
 
                 def ruf(anteil, text):
@@ -9134,9 +9207,36 @@ class MainWindow(QtWidgets.QMainWindow):
 
         def fortschritt(anteil, text):
             return self._fortschritt(int(1000 * float(anteil or 0.0)), text or "Adaptiv vernetzen …")
+
+        # Jeder Durchgang rechnet (solve_static). Bis zum 23.09.2026 pruefte
+        # hier niemand das Modell: mit dem FEHLER „Kombination 'K9': Lastfall
+        # 'LF-X' unbekannt“ rechnete die Schleife zwei Durchgaenge und meldete
+        # „Adaptiv vernetzt“ (Befund B063). Geprueft wird wie in do_solve
+        # nach dem Vernetzen - vorher meldet die Pruefung auch „keine Elemente
+        # definiert“, was erst das Netz behebt - und vor jeder Rechnung, weil
+        # jeder Durchgang neu vernetzt.
+        class _Gesperrt(Exception):
+            pass
+
+        rechnen_standard = _ad._rechnen_standard(None, None, log)
+        zugelassen: list = []
+
+        def rechnen(mm, lf):
+            fehler = [x for x in mm.check() if x.startswith("FEHLER")]
+            if fehler and fehler != zugelassen:
+                if not self._trotzdem_rechnen(fehler):
+                    raise _Gesperrt()
+                zugelassen[:] = fehler
+            return rechnen_standard(mm, lf)
+        gesperrt = False
         try:
             erg = _ad.adaptiv_vernetzen(m, [lastfall], runden=int(runden), ziel=float(ziel) / 100.0,
-                                        log=log, fortschritt=fortschritt)
+                                        log=log, fortschritt=fortschritt, rechnen=rechnen)
+        except _Gesperrt:
+            gesperrt = True
+            log.append(f"Adaptiv vernetzen angehalten, bevor gerechnet wurde: die Modellprüfung meldet "
+                       f"FEHLER. Das zuletzt erzeugte Netz ({len(m.elements)} Elemente) bleibt stehen.")
+            erg = {"verlauf": []}
         except Exception as ex:            # noqa: BLE001 - der Grund gehoert ins Protokoll, nicht in einen Absturz
             log.append(f"Adaptive Vernetzung abgebrochen: {ex}")
             erg = {"verlauf": []}
@@ -9151,7 +9251,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if v:
             self.info(f"Adaptiv vernetzt: {len(v)} Durchgänge, "
                       + " → ".join(f"{x['elemente']} Elemente ({x['eta_rel'] * 100:.1f} %)" for x in v))
-        else:
+        elif not gesperrt:                 # gesperrt: die Meldung kam schon (_trotzdem_rechnen)
             self.info("Nichts vernetzt - das Protokoll sagt, warum")
         self._info_zeigen()
 
@@ -11343,7 +11443,16 @@ class MainWindow(QtWidgets.QMainWindow):
                          or (e.warnungen and not e.nachgewiesen) else f"{e.eta:.3f}",
                          "–" if e is None or e.fehler else f"{e.u_max * 1e3:.3f}"])
         self._fill(self.tbl_stellung, rows)
-        if u is not None:
+        if u is not None and not u.ergebnisse:
+            # Ohne jedes Ergebnis ist η = 0 keine Ausnutzung. Bis zum
+            # 24.09.2026 stand hier nach zwei am FEHLER gescheiterten
+            # Stellungen „η = 0,000; größte Verformung 0,000 mm“, waehrend
+            # Schlusszeile und Bericht schon „nicht bestimmt“ sagten
+            # (Gegenpruefung zu B064).
+            self.lbl_umh.setText(
+                "Umhüllende über alle Stellungen: η nicht bestimmt – keine Stellung gerechnet"
+                + (f" ({len(u.fehlerhaft)} mit FEHLER, siehe Protokoll)" if u.fehlerhaft else ""))
+        elif u is not None:
             self.lbl_umh.setText(
                 (f"Umhüllende über alle Stellungen: η = {u.eta:.3f}"
                  + (f" – maßgebend {u.massgebende_stellung}"
@@ -11416,9 +11525,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self.umhuellende = umh
         for z in reihe.log:
             self.info(z)
-        # kurztext: wie vorher "eta = ..., maßgebend ...", dazu der Hinweis,
-        # wenn Kombinationen nicht nachgewiesen wurden
-        self.info(f"{len(liste)} Stellungen gerechnet: " + umh.kurztext())
+        # Gezaehlt wird, was gerechnet ist, nicht was angelegt ist. Bis zum
+        # 23.09.2026 stand hier immer „{n} Stellungen gerechnet: …“ - auch
+        # wenn jede Stellung am FEHLER gescheitert war: „2 Stellungen
+        # gerechnet: eta = 0.000“ bei 0 Ergebnissen (Befund B064).
+        n_ok, n_fehler = len(umh.ergebnisse), len(umh.fehlerhaft)
+        if not n_ok:
+            self.error(f"Keine Stellung gerechnet – {n_fehler} von {len(liste)} mit FEHLER "
+                       "(siehe Protokoll)")
+        elif n_fehler:
+            self.info(f"{n_ok} von {len(liste)} Stellungen gerechnet ({n_fehler} mit FEHLER, "
+                      "siehe Protokoll): " + umh.kurztext())
+        else:
+            # kurztext: wie vorher "eta = ..., maßgebend ...", dazu der Hinweis,
+            # wenn Kombinationen nicht nachgewiesen wurden
+            self.info(f"{len(liste)} Stellungen gerechnet: " + umh.kurztext())
         self.refresh_all()
 
     def maske_din19704_lastfaelle(self):
@@ -12591,6 +12712,15 @@ class MainWindow(QtWidgets.QMainWindow):
         if alt and alt != sn.name and alt in m.schwingungen:
             del m.schwingungen[alt]
         m.schwingungen[sn.name] = sn
+        # Der Nachweis rechnet Eigenformen und den Lastfall der
+        # Druckschwankung (solve_cases) - also erst nach der Modellpruefung,
+        # wie jede andere Rechnung (do_solve). Bis zum 23.09.2026 rechnete er
+        # trotz FEHLER: an der Schuetzhaut mit angehaengtem Rahmen („Stellung
+        # 'Offen_2' unbekannt“) f_Luft 4,3596/6,5018 Hz und σ_amp 61,6 N/mm²,
+        # ohne Meldung (Befund B065). Die Angaben der Maske bleiben im Modell.
+        msgs = [x for x in m.check() if x.startswith("FEHLER")]
+        if msgs and not self._trotzdem_rechnen(msgs):
+            return None
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
         try:
             erg = swm.nachweis(m, sn, self.analysis,
@@ -16278,6 +16408,21 @@ class MainWindow(QtWidgets.QMainWindow):
             if folge and unbekannt:
                 return self.error("Der Verlauf nennt Lastfälle, die es nicht gibt: "
                                   + ", ".join(unbekannt))
+            # Eine oder-verknuepfte Ergebniskombination hat kein
+            # Einzelergebnis und fehlt darum im Nachweis (Model.check,
+            # model.ermuedungszustaende). Die Auswahl „Zwei Zustände“ bietet
+            # sie nicht an; das Textfeld des Verlaufs nahm sie bis zum
+            # 23.09.2026 an, gemeldet hat es erst die Modellpruefung vor der
+            # Rechnung (Befund B066).
+            taugt = set(self.model.ermuedungszustaende())
+            oder = [x for x in dict.fromkeys(folge) if x not in taugt and x in self.model.combinations]
+            if oder:
+                return self.error(
+                    "Der Verlauf nennt oder-verknüpfte Ergebniskombinationen: "
+                    + ", ".join(f"{x} ({len(self.model.combinations[x].alternativen)} Alternativen)"
+                                for x in oder)
+                    + ". Sie haben kein Einzelergebnis und fehlten sonst im Ermüdungsnachweis. "
+                      "Stattdessen die Lastfälle ihrer Alternativen in den Verlauf schreiben.")
             if folge and len(folge) < 2:
                 return self.error("Ein Verlauf braucht mindestens zwei Lastfälle - "
                                   "sonst gibt es nichts zu zählen.")
@@ -17473,7 +17618,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # oder Ermuedungsergebnis geschrieben: nach einer Rechnung mit EC3 und
         # einer ohne Nachweise blieb „Nachweise EC3: … max. Ausnutzung 0.633
         # … - alle erfuellt“ stehen, mit nur Ermuedung wurde es geleert
-        # (IPE 300, tests/test_ec3.py, test_nachweisetikett_folgt_dem_ergebnis).
+        # (IPE 300, tests/test_ec3.py, test_nachweisetikett_folgt_dem_ergebnis;
+        # Befund B069, tests/test_ermuedung_verlauf.py,
+        # test_etikett_nachweise_nennt_die_ermuedung).
         an = self.analysis
         teile = [t.summary() for t in (getattr(an, "design", None),
                                        getattr(an, "fatigue", None)) if t is not None]
