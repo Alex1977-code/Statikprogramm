@@ -7393,8 +7393,9 @@ am Netz des Vernetzers vom Stand ec6448c, das dafür in
 `tests/netz_platte_bohrung_ec6448c.npz` festgehalten ist. Der Vernetzer vom
 23.09.2026 gibt für dieselbe Platte ein anderes Netz (13 708 tet4), an dem er
 selbst eine verbliebene Lücke im Netzrand meldet und die Abnahme „FEHLER
-Seiten im Inneren 376“ (gemessen 24.09.2026, ebenso mit h 0,04 und 0,06 m);
-an ihm ist die Grenze nicht festzulegen. Das andere Ende ist der
+Seiten im Inneren 366“ (gemessen 24.09.2026 mit der Regel für dünne Lücken,
+die seit diesem Tag gilt, vorher 376; den FEHLER gibt es ebenso mit h 0,04
+und 0,06 m); an ihm ist die Grenze nicht festzulegen. Das andere Ende ist der
 fehlende Kuhn-Tetraeder mit 0,865 (abgestuft 50:1, Element 710, t/L 0,79 %)
 als FEHLER. Ebenso, dass der Median zählt und nicht der dickste oder dünnste
 Nachbar. Die
@@ -7790,7 +7791,7 @@ Ecke, hex8: vier Elemente „verdreht“). Vorher stand für jede Gruppe
 | U-Prisma 1,5 × 1 × 0,5 m, h 0,3, Standardweg, 1113 tet4, konform | FEHLER 4, WARNUNG Netzrand 9 | Netzrand verfehlt die Randfläche |
 | Platte 0,6 × 0,6 × 0,035 m, Bohrung r 6 mm (24-Eck), Ziellänge 0,05 m, `modell_vernetzen`, 24 712 tet4 | FEHLER 110, WARNUNG 29 | Netzrand verfehlt die Randfläche |
 | dieselbe mit `mesh_koerper_frei`, 14 242 tet4 | FEHLER 126, WARNUNG 31 | Netzrand verfehlt die Randfläche |
-| Stufe d 0,45 mm, t 0,02 m, `mesh_koerper_frei`, 1358 tet4 | FEHLER 5, WARNUNG 12 | Netzrand verfehlt die Randfläche |
+| Stufe d 0,45 mm, t 0,02 m, `mesh_koerper_frei`, 1437 tet4 | FEHLER 5, WARNUNG Riss 4, Netzrand 12 | Netzrand verfehlt die Randfläche |
 | Zelle 100 × 100 × 200 mm, Element 444 verdreht | FEHLER 8 | verdrehtes Element |
 
 Die Netze des eigenen Vernetzers in dieser Tabelle stammen von seinem Stand
