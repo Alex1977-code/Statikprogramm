@@ -1447,6 +1447,19 @@ class Combination:
         return " oder ".join(teile)
 
 
+#: Klartext der Zaehlverfahren einer Ermuedungslast (FatigueLoad.zaehlung).
+#: Die Schluessel sind die gespeicherten Werte und bleiben, wie sie sind
+#: (Dateien, Import, Web, Rechnung); nur Maske und Bericht zeigen den Text.
+#: Bis zum 24.09.2026 stand dort roh „spanne/rainflow/reservoir“, und der
+#: Anwender fragte, was das heisse. Beide lesen diese eine Tabelle, damit
+#: Maske und Bericht dasselbe sagen.
+ZAEHLVERFAHREN_TEXT = {
+    "spanne": "Größte Spanne je Durchlauf (ein Spiel: Maximum − Minimum)",
+    "rainflow": "Rainflow-Zählung (Rinnenzählung, EN 1993-1-9 Anhang A)",
+    "reservoir": "Reservoir-Zählung (Speicherverfahren, EN 1993-1-9 Anhang A)",
+}
+
+
 @dataclass
 class FatigueLoad:
     """Ermuedungsbeanspruchung - auf zwei Wegen zu beschreiben.
