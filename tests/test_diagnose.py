@@ -23,6 +23,14 @@ def check(name, ok, detail=""):
     return ok
 
 
+def _fenster(n, gemessen, anteil=0.05):
+    """Elementzahl eines frei vernetzten Netzes im Fenster ±anteil um den
+    gemessenen Wert. Die Zahl haengt am Vernetzer und ist nicht die Aussage
+    der Pruefung (Hinweis der Vernetzer-Sitzung, 24.09.2026: nach jedem
+    Vernetzer-Stand rissen sonst Pruefungen, deren Befund gleich blieb)."""
+    return abs(n - gemessen) <= anteil * gemessen
+
+
 def _zwei_teile(lager_b=False):
     """Zwei Kragarme: Teil A (K0-K1) gelagert, Teil B (K2-K3) frei."""
     m = Model()
@@ -921,8 +929,9 @@ def test_abnahme_ohne_fehlalarm_am_freien_netz():
             # Startpunkte des Vernetzers halten Abstand zur Huelle), seit dem
             # Abend 1091 (auch die Kappenpunkte halten Abstand); Element 765
             # ist ein kleiner, nicht flacher Tetraeder, t/L 9,3 % (vorher 6,75 %).
+            # Die Elementzahl als Fenster: gemessen 1091 (24.09.2026).
             check("  ein fehlender kleiner Tetraeder, der nicht flach ist (t/L 5 … 10 %): FEHLER",
-                  len(els) == 1091 and 0.05 < 2 * V_t / A_t / L_t < 0.10
+                  _fenster(len(els), 1091) and 0.05 < 2 * V_t / A_t / L_t < 0.10
                   and [(b.stufe, b.pruefung, b.wert) for b in bef]
                   == [("FEHLER", "Seiten im Inneren", 4.0)],
                   f"{len(els)} tet4, t/L {2 * V_t / A_t / L_t * 100:.2f} %: "
@@ -1017,6 +1026,8 @@ def test_abnahme_luecken_des_vernetzers_sind_risse():
     „Trotzdem rechnen?", und neu vernetzen ergibt dasselbe Netz. Gemeint war
     die WARNUNG „Riss im Netz"; der alte Risstest verlangte aber Ebenheit auf
     1 % des Seitendurchmessers, die Lücken sind 1,7 bis 11 % dick.
+    (Seit 24.09.2026 behält der Vernetzer diese Tetraeder; der Test nimmt
+    einen solchen darum von Hand heraus.)
 
     Ein Riss ist jetzt ein geschlossener Hohlraum, dessen mittlere Dicke
     2V/ΣA höchstens 5 % der längsten Kante seiner Seiten ist (gemessen an
@@ -1042,27 +1053,63 @@ def test_abnahme_luecken_des_vernetzers_sind_risse():
     # Seit 24.09.2026 (Vernetzer, Nachtrag B101) misst flache_tetraeder die
     # eigene Groesse des Tetraeders: die duennen Keile am feinen Rand bleiben
     # im Netz, der Vernetzer laesst dort keine Luecke mehr. Der Riss wird
-    # darum von Hand gelegt - der duennste Tetraeder am Rand (mittlere Dicke
-    # 2V/Sum A bezogen auf die laengste Kante) kommt heraus; sein Hohlraum ist
-    # genau das, was die Abnahme als Riss melden soll.
-    X = np.asarray(m.nodes, float)
-    dicke = []
-    for i in els_alle:
-        P = X[m.elements[i].nodes[:4]]
+    # darum von Hand gelegt - heraus kommt ein Tetraeder, wie ihn der
+    # Vernetzer bis dahin aussortierte: innen (alle vier Seiten an Nachbarn,
+    # jeder Knoten auch in anderen Elementen), flach (t/L hoechstens
+    # ABNAHME_RISS_DICKE) und hoechstens FLACH·h³ gross. Gemessen 24.09.2026
+    # (zweimal, Netz vor und nach dem Merge 7ce5510 verglichen): das ist genau
+    # einer, Element 2478 (V 1,151e-10 m³ = 0,87 FLACH·L³ = 0,92 FLACH·h³,
+    # t/L 1,48 %) - derselbe Tetraeder, dessen Luecke der Vernetzer bis dahin
+    # an dieser Stelle liess (b98941b: 2502 tet4, Knoten und alle uebrigen
+    # Tetraeder gleich). Der duennste Tetraeder des Netzes (Element 1524,
+    # t/L 0,76 %), den der erste Entwurf dieses Tests herausnahm, ist aber
+    # 89-mal FLACH·L³ gross: nach B050 (ABNAHME_RISS_FLACH) ist sein Fehlen
+    # richtig ein FEHLER „Seiten im Inneren 4" und kein Riss (mit
+    # abgeschalteter Groessenregel gemessen: WARNUNG Riss 4).
+    from collections import Counter
+    SEITEN = ((0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3))
+
+    def eigen(i):
+        P = m.nodes[m.elements[i].nodes[:4]]
         V_i = abs(float(np.linalg.det(P[1:] - P[0]))) / 6.0
-        A_i = sum(0.5 * np.linalg.norm(np.cross(P[b] - P[a], P[c] - P[a]))
-                  for a, b, c in ((0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3)))
+        A_i = sum(0.5 * np.linalg.norm(np.cross(P[b] - P[a], P[c] - P[a])) for a, b, c in SEITEN)
         L_i = max(np.linalg.norm(P[a] - P[b]) for a in range(4) for b in range(a + 1, 4))
-        dicke.append(2 * V_i / A_i / L_i)
-    riss_el = els_alle[int(np.argmin(dicke))]
+        return V_i, 2.0 * V_i / A_i / L_i, L_i
+
+    def kurz(bef):
+        return [(b.stufe, b.pruefung, b.wert) for b in bef]
+    seiten = Counter(tuple(sorted(int(m.elements[i].nodes[a]) for a in s))
+                     for i in els_alle for s in SEITEN)
+    benutzt = Counter(int(n) for i in els_alle for n in m.elements[i].nodes[:4])
+
+    def freie_seiten(i):
+        kn = m.elements[i].nodes
+        return sum(seiten[tuple(sorted(int(kn[a]) for a in s))] == 1 for s in SEITEN)
+
+    def knoten_geteilt(i):
+        return min(benutzt[int(n)] for n in m.elements[i].nodes[:4]) >= 2
+
+    def innen(i):
+        return freie_seiten(i) == 0 and knoten_geteilt(i)
+    E = {i: eigen(i) for i in els_alle}
+    L_k = max(e[2] for e in E.values())             # laengste Elementkante des Koerpers
+    FLACH_h3 = mesher3d.FLACH * m.netz.ziellaenge ** 3
+    FLACH_L3 = mesher3d.FLACH * L_k ** 3
+    klein_flach = [i for i in els_alle if innen(i) and E[i][1] <= dg.ABNAHME_RISS_DICKE
+                   and E[i][0] <= FLACH_h3]
+    riss_el = min(klein_flach, key=lambda i: E[i][1]) if klein_flach else -1
     els = [i for i in els_alle if i != riss_el]
     k.elemente = els
     bef = dg._abnahme_volumenbilanz(m, k.name, k, els)
     ri = [b for b in bef if b.pruefung == "Riss im Netz"]
-    check("Keile am feinen Rand, frei vernetzt: der von Hand entfernte dünnste Tetraeder ist eine WARNUNG Riss",
-          len(ri) == 1 and ri[0].stufe == "WARNUNG" and ri[0].wert == 4.0
+    V_r, tl_r, _L = E.get(riss_el, (0.0, 0.0, 0.0))
+    check("Keile am feinen Rand, frei vernetzt: ein fehlender Tetraeder, so klein wie die "
+          "aussortierten, ist eine WARNUNG Riss",
+          riss_el >= 0 and innen(riss_el) and tl_r <= dg.ABNAHME_RISS_DICKE and V_r <= FLACH_h3
+          and len(ri) == 1 and ri[0].stufe == "WARNUNG" and ri[0].wert == 4.0
           and not [b for b in bef if b.stufe == "FEHLER"],
-          f"{len(els_alle)} tet4, Element {riss_el} mit Dicke {min(dicke) * 100:.2f} % entfernt; "
+          f"{len(els_alle)} tet4, {len(klein_flach)} Kandidat(en), Element {riss_el} entfernt "
+          f"(V {V_r:.4g} m³ = {V_r / FLACH_L3:.2f} FLACH·L³, t/L {tl_r * 100:.2f} %); "
           + "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.0f}" for b in bef))
     # Zweite Gegenpruefung, Mangel 3: der Text sagte „Neu vernetzen mit
     # denselben Einstellungen ergibt dasselbe Netz" ohne Einschraenkung - an
@@ -1077,65 +1124,83 @@ def test_abnahme_luecken_des_vernetzers_sind_risse():
     # Gegenprobe: fehlt ein Tetraeder, der nicht flach ist, ist es kein Riss -
     # die Regel winkt nicht jeden Hohlraum durch. Die Platte ist eine
     # Tetraederlage dick: der fehlende Tetraeder hinterlaesst eine Delle in
-    # der Plattenflaeche (drei Seiten, offen zur Randflaeche). Das ist eine
-    # Luecke im Netzrand mit dem Volumen des Tetraeders (Mangel 3 der
-    # Gegenpruefung vom 23.09.2026: WARNUNG unter der Grenze der Volumenbilanz).
+    # der Plattenflaeche (offen zur Randflaeche: mindestens eine seiner
+    # Seiten liegt auf der Huelle). Das ist eine Luecke im Netzrand mit dem
+    # Volumen des Tetraeders (Mangel 3 der Gegenpruefung vom 23.09.2026).
+    # Gemessen 24.09.2026 vor und nach dem Merge 7ce5510: Element 1,
+    # 7,347e-6 m³, eine Seite auf der Huelle.
     V = dg.elementvolumina(m, els)
     mittel = [i for j, i in enumerate(els)
-              if V[j] > 0.5 * float(np.median(V))
+              if V[j] > 0.5 * float(np.median(V)) and freie_seiten(i) >= 1 and knoten_geteilt(i)
               and all(0.3 < c < 0.7 for c in m.nodes[m.elements[i].nodes].mean(axis=0)[:2]
                       / np.array([0.2, 0.1]))]
     V_weg = float(V[els.index(mittel[0])])
     k.elemente = [i for i in els if i != mittel[0]]
     bef = dg._abnahme_volumenbilanz(m, k.name, k, k.elemente)
     lu = [b for b in bef if b.pruefung == "Lücke im Netzrand"]
-    # (die Luecke der Keile bleibt daneben der Riss mit 4 Seiten)
+    # (der Riss daneben bleibt der Riss mit 4 Seiten)
     check("  ein fehlender Tetraeder mittlerer Größe (Delle) ist eine Lücke, kein Riss",
           len(lu) == 1 and abs(lu[0].wert - V_weg) < 1e-3 * V_weg
           and [b.wert for b in bef if b.pruefung == "Riss im Netz"] == [4.0]
           and not [b for b in bef if b.pruefung == "Seiten im Inneren"],
-          f"Element {mittel[0]} ({V_weg:.4g} m³): "
+          f"Element {mittel[0]} ({V_weg:.4g} m³, {freie_seiten(mittel[0])} Seite(n) auf der Hülle): "
           + ("; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g}" for b in bef) or "kein Befund"))
 
     # Nebenbefund B050 (22./23.09.2026): fehlt ein Tetraeder, der selbst flach
     # ist (t/L ≤ 5 %, dünn gegen die Nachbarn), blieb es bei der WARNUNG Riss
-    # ohne Rückfrage - gleich wie groß der Hohlraum ist. Element 58 dieses
-    # Netzes: t/L 4,06 %, 1,752e-6 m³, das 13 250-Fache von FLACH·L³ (L die
-    # längste Elementkante des Körpers, 50,9 mm). Die Lücke des Vernetzers
-    # daneben hat das 0,87-Fache, die größte der 30 Lücken in den Modellen der
-    # Suiten test_mesher3d und test_sweep ebenso (gemessen 23.09.2026). Seit
-    # dem Vernetzer vom 23.09.2026 (Fable-Sitzung) hat die Platte 2502 statt
-    # 2701 tet4; derselbe Tetraeder heißt jetzt 58 statt 53, der kleine
-    # flache unten 2414 statt 2179 (gleiches Volumen und t/L, nachgemessen
-    # 24.09.2026).
-    def eigen(i):
-        P = m.nodes[m.elements[i].nodes]
-        V_i = abs(float(np.linalg.det(P[1:] - P[0]))) / 6.0
-        A_i = sum(0.5 * np.linalg.norm(np.cross(P[b] - P[a], P[c] - P[a]))
-                  for a, b, c in ((0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3)))
-        L_i = max(np.linalg.norm(P[a] - P[b]) for a in range(4) for b in range(a + 1, 4))
-        return V_i, 2.0 * V_i / A_i / L_i
-
-    def kurz(bef):
-        return [(b.stufe, b.pruefung, b.wert) for b in bef]
-    V53, tl53 = eigen(58)
-    k.elemente = [i for i in els if i != 58]
-    bef = dg._abnahme_volumenbilanz(m, k.name, k, k.elemente)
-    check("  ein fehlender flacher Tetraeder in Elementgröße (t/L 4,1 %, 1,75 cm³): FEHLER, "
-          "die Lücke des Vernetzers bleibt ein Riss",
-          len(els) == 2502 and abs(V53 - 1.752e-6) < 1e-9 and 0.040 < tl53 < 0.041
-          and kurz(bef) == [("FEHLER", "Seiten im Inneren", 4.0), ("WARNUNG", "Riss im Netz", 4.0)],
-          f"V {V53:.4g} m³, t/L {tl53 * 100:.2f} %: {kurz(bef)}")
+    # ohne Rückfrage - gleich wie groß der Hohlraum ist. Gemeint ist ein
+    # innerer flacher Tetraeder in Elementgröße, dessen Hohlraum ohne die
+    # Größenregel ein Riss wäre; gewählt wird der größte solche (Nummern sind
+    # netzabhängig). Gemessen 24.09.2026 vor und nach dem Merge 7ce5510:
+    # Element 58, t/L 4,06 %, 1,752e-6 m³, das 13 250-Fache von FLACH·L³ (L
+    # die längste Elementkante des Körpers, 50,9 mm). Die Lücke des
+    # Vernetzers (Element 2478 oben) hat das 0,87-Fache, die größte der 30
+    # Lücken in den Modellen der Suiten test_mesher3d und test_sweep ebenso
+    # (gemessen 23.09.2026).
+    def ohne(e):
+        k.elemente = [i for i in els if i != e]
+        return kurz(dg._abnahme_volumenbilanz(m, k.name, k, k.elemente))
+    gross = sorted((i for i in els if innen(i) and E[i][1] <= dg.ABNAHME_RISS_DICKE
+                    and E[i][0] > dg.ABNAHME_RISS_FLACH * FLACH_L3), key=lambda i: -E[i][0])
+    echt_flach = dg.ABNAHME_RISS_FLACH
+    gross_el, ohne_regel = -1, []
+    try:
+        dg.ABNAHME_RISS_FLACH = float("inf")
+        for i in gross:
+            ohne_regel = ohne(i)
+            if ohne_regel and all(b[:2] == ("WARNUNG", "Riss im Netz") for b in ohne_regel):
+                gross_el = i
+                break
+    finally:
+        dg.ABNAHME_RISS_FLACH = echt_flach
+    V_g, tl_g, _L = E.get(gross_el, (0.0, 0.0, 0.0))
+    bef_g = ohne(gross_el)
+    # Elementzahl als Fenster (Hinweis der Vernetzer-Sitzung, 24.09.2026):
+    # gemessen 2503 tet4 (b98941b 2502 mit der Luecke)
+    check("  ein fehlender flacher Tetraeder in Elementgröße (t/L ≤ 5 %, über 1000 FLACH·L³): "
+          "FEHLER, der Riss daneben bleibt ein Riss",
+          _fenster(len(els_alle), 2503)
+          and gross_el >= 0 and V_g > 1000 * FLACH_L3 and tl_g <= dg.ABNAHME_RISS_DICKE
+          and ohne_regel == [("WARNUNG", "Riss im Netz", 8.0)]
+          and bef_g == [("FEHLER", "Seiten im Inneren", 4.0), ("WARNUNG", "Riss im Netz", 4.0)],
+          f"{len(els_alle)} tet4, Element {gross_el}: V {V_g:.4g} m³ = {V_g / FLACH_L3:.0f} "
+          f"FLACH·L³, t/L {tl_g * 100:.2f} %; ohne Größenregel {ohne_regel}; {bef_g}")
     # Gegenprobe und Grenze: ein flacher Tetraeder so klein wie die, die der
-    # Vernetzer aussortiert (Element 2414, 1,454e-10 m³ = 1,10 FLACH·L³),
-    # bleibt ein Riss - an dieser Größe ist er von ihnen nicht zu trennen
-    V2179, _tl = eigen(2414)
-    k.elemente = [i for i in els if i != 2414]
-    bef = dg._abnahme_volumenbilanz(m, k.name, k, k.elemente)
+    # Vernetzer aussortierte, aber über FLACH·h³ (der kleinste innere flache,
+    # den er behält; gemessen 24.09.2026: Element 2414, 1,454e-10 m³ = 1,10
+    # FLACH·L³, t/L 1,86 %), bleibt ein Riss - an dieser Größe ist er von
+    # ihnen nicht zu trennen (Grenze ABNAHME_RISS_FLACH = 2 FLACH·L³)
+    klein = sorted((i for i in els if innen(i) and E[i][1] <= dg.ABNAHME_RISS_DICKE
+                    and E[i][0] > FLACH_h3), key=lambda i: E[i][0])
+    klein_el = klein[0] if klein else -1
+    V_k, tl_k, _L = E.get(klein_el, (0.0, 0.0, 0.0))
+    bef_k = ohne(klein_el)
     check("  ein fehlender flacher Tetraeder so klein wie die aussortierten bleibt ein Riss",
-          abs(V2179 - 1.454e-10) < 1e-12 and kurz(bef) == [("WARNUNG", "Riss im Netz", 8.0)],
-          f"V {V2179:.4g} m³: {kurz(bef)}")
-    k.elemente = els
+          klein_el >= 0 and FLACH_h3 < V_k <= dg.ABNAHME_RISS_FLACH * FLACH_L3
+          and bef_k == [("WARNUNG", "Riss im Netz", 8.0)],
+          f"Element {klein_el}: V {V_k:.4g} m³ = {V_k / FLACH_L3:.2f} FLACH·L³, "
+          f"t/L {tl_k * 100:.2f} %: {bef_k}")
+    k.elemente = els_alle
 
     # Wie dick darf ein Riss gegen die Elemente daneben sein
     # (ABNAHME_RISS_NACHBAR)? Die Luecken der Keile oben sind duenn genug fuer
@@ -2382,8 +2447,10 @@ def test_abnahme_luecke_im_netzrand():
     # Luecke geschlossen: innen() zaehlt die Kante einmal, die Startpunkte
     # halten Abstand zur Huelle, tetraedern_treu verlangt den Rauminhalt.
     # 634 statt 821 Tetraeder, Rauminhalt auf Rundung gleich der Huelle.
+    # Die Elementzahl als Fenster um 634 (gemessen 24.09.2026); das Netz mit
+    # der Luecke (821) liegt weit ausserhalb.
     check("L-Prisma h = 0,25, Standardweg: keine „Lücke im Netzrand“ mehr, kein Befund",
-          n_el == 634 and not bef and not lu and not fehler,
+          _fenster(n_el, 634) and not bef and not lu and not fehler,
           f"{n_el} Elemente; " + "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g}" for b in bef)
           + " | FEHLER: " + "; ".join(b.pruefung for b in fehler))
     check("  neu vernetzen ergibt dasselbe Netz und denselben Befund",
@@ -2412,8 +2479,10 @@ def test_abnahme_luecke_im_netzrand():
     with contextlib.redirect_stdout(io.StringIO()):
         mesher.modell_vernetzen(m, [], workers=1, hs={"K": 0.12})
     nachher = [b for b in dg.abnahme(m, warnungen=True) if b.pruefung in _NETZ_BEFUNDE]
+    # n_frei als Fenster um 6155 (gemessen 24.09.2026); die Aussage ist, dass
+    # neu vernetzen genau diese Zahl wieder ergibt (len(k.elemente) == n_frei)
     check("  von Hand gelöschtes Element: Lücke, und neu vernetzen stellt das Netz wieder her",
-          n_frei == 6155 and not vorher and len(lu) == 1 and "von Hand geändert" in lu[0].text
+          _fenster(n_frei, 6155) and not vorher and len(lu) == 1 and "von Hand geändert" in lu[0].text
           and len(k.elemente) == n_frei and not nachher,
           f"{n_frei} tet4, vorher {len(vorher)} Befunde, Lücke {[round(b.wert, 7) for b in lu]}, "
           f"neu vernetzt {len(k.elemente)} tet4, {len(nachher)} Befunde")
@@ -2484,8 +2553,10 @@ def test_abnahme_luecke_im_netzrand():
     with contextlib.redirect_stdout(io.StringIO()):
         mesher.modell_vernetzen(m, [], workers=1, hs={"K": 0.1})
     bef = [b for b in dg.abnahme(m, warnungen=True) if b.pruefung in _NETZ_BEFUNDE]
+    # Die Elementzahl als Fenster: gemessen 5825 (23.09.2026), 5886 (Vernetzer
+    # vom 24.09.2026)
     check("T-Prisma h = 0,1, Standardweg: keine Lücke mehr an der einspringenden Kante, kein Befund",
-          len(k.elemente) == 5886 and not bef,
+          _fenster(len(k.elemente), 5886) and not bef,
           f"{len(k.elemente)} Elemente; "
           + "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g}" for b in bef))
 
