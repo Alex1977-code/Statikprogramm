@@ -421,12 +421,20 @@ def nachweis(model, sn: Schwingungsnachweis, analysis=None, progress=None,
                             "kerbfall": kf, "gamma_Mf": float(sn.gamma_Mf),
                             "gamma_Ff": float(sn.gamma_Ff)})
     erg.dyn = dyn
-    # Ausweichen des Gleichungsloesers. Beide Modalanalysen und der
-    # Druckschwankungs-Lastfall rechnen hier ohne Fortschritt; der Grund stand
-    # nur in res_luft.info/res_wasser.info, der des Lastfalls ging ganz
-    # verloren (res_d wird nicht abgelegt), und Protokoll und Bericht nannten
-    # ihn nicht - mit PARDISO im Prozess zum Scheitern gebracht 0-mal
-    # "ausgewichen" im ganzen Bericht (Befund B121, gemessen 23.09.2026).
+    # Ausweichen des Gleichungsloesers. Die Modalanalyse in Luft, die im
+    # Wasser (nur mit hydrodynamischer Masse, sonst ist res_w = res_l) und der
+    # Druckschwankungs-Lastfall rechnen hier ohne Fortschritt. Am Stand ec6448c
+    # stand der Grund nur in res_luft.info/res_wasser.info, der des Lastfalls
+    # ging ganz verloren (res_d wird nicht abgelegt), das Protokoll nannte ihn
+    # nicht, und der Bericht aus einer Analyse (Report(m, an)) auch nicht - mit
+    # PARDISO im Prozess zum Scheitern gebracht 0-mal "ausgewichen" darin
+    # (Befund B121, gemessen 23.09.2026). Ohne Analyse schreibt die Oberflaeche
+    # den Bericht aus erg.res_wasser (gui/main.py, _schwingung_rechnen und
+    # make_report); er zeigte nur das Ausweichen dieser einen Modalanalyse und
+    # zeigt es weiterhin so (gemessen 24.09.2026 an den Staenden ec6448c und
+    # 8219674: je 1-mal "ausgewichen", "bei 1 Ergebnis (Eigenschwingungen im
+    # Wasser (S))", ohne hydrodynamische Masse "bei 1 Ergebnis
+    # (Modalanalyse)").
     # Ein Lastfall aus der Analyse fehlt hier mit Absicht: er steht mit ihren
     # Ergebnissen schon in Zusammenfassung und Bericht (gemessen 23.09.2026
     # nach solve_all mit werfendem PARDISO: eine Hinweiszeile "bei 4
