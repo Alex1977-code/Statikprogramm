@@ -4293,9 +4293,22 @@ class Report:
         # es nirgends im Bericht; der Anhang nannte nur den Loeser, der am Ende
         # gerechnet hat (Befund K2).
         from ..solver import ausweichen_gebuendelt, dilatation_gebuendelt
-        self._warnings.extend(ausweichen_gebuendelt(self.all_results()))
+        ergebnisse = self.all_results()
+        # Der Schwingungsnachweis rechnet seine Modalanalysen und den
+        # Druckschwankungs-Lastfall selbst; sein Ausweichen steht in
+        # schwingung.info. Ohne diese Zeilen nannte der Bericht es nicht
+        # (Befund B121, gemessen 23.09.2026: 0-mal "ausgewichen"). Er steht
+        # hinter den Lastfaellen und Kombinationen: bei gleichem Grund zaehlt
+        # er in ihrer Zeile mit, beim Namen genannt nur unter den ersten drei
+        # (ausweichen_gebuendelt; mit drei Lastfaellen gemessen 24.09.2026
+        # "bei 4 Ergebnissen (LF1, Wasser S, Wasser S dyn …)").
+        sw_ = getattr(self, "schwingung", None)
+        mit_sw = ergebnisse
+        if sw_ is not None:
+            mit_sw = ergebnisse + [(f"Schwingungsnachweis {sw_.name}", sw_)]
+        self._warnings.extend(ausweichen_gebuendelt(mit_sw))
         # wo die Knotendilatation nicht greift (Befund B032, 24.09.2026)
-        self._warnings.extend(dilatation_gebuendelt(self.all_results()))
+        self._warnings.extend(dilatation_gebuendelt(ergebnisse))
         warn = list(dict.fromkeys(self._warnings))
         chk = [s for s in self._modellpruefung() if s.startswith("FEHLER") or s.startswith("WARNUNG")]
         warn += [f"Modellprüfung: {s}" for s in chk]
