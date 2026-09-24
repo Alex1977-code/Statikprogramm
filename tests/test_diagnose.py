@@ -1340,7 +1340,9 @@ def test_faltungsbefund_nennt_das_uebervolumen_der_volumenbilanz():
     allgemeine Regel aus der einen Messung am Kuhn-Netz 10 × 10 × 10. Sie ist
     falsch: ein umgestülptes Tetraeder geht mit +|V| statt −|V| ins
     Netzvolumen ein, das Netz ist um das Doppelte seines Volumens zu groß, und
-    die Volumenbilanz meldet das, sobald es über ihrer Grenze liegt. Gemessen
+    wo die Volumenbilanz läuft (hier für K1, einen Quader), meldet sie das,
+    sobald es über ihrer Grenze liegt; wo sie nicht läuft, siehe
+    test_faltungsbefund_nur_mit_laufender_volumenbilanz. Gemessen
     am 24.09.2026: Kuhn-Netz 4 × 4 × 4 (Zellen 0,25 m), Knoten 62 um 1,2·h
     verschoben - sechs Tetraeder umgestülpt, Σ|V| − 1 m³ = 2 Σ|V_um| = 6250 cm³,
     und im selben Protokoll FEHLER Volumenbilanz 0,625 % neben dem Satz, sie
@@ -1379,6 +1381,172 @@ def test_faltungsbefund_nennt_das_uebervolumen_der_volumenbilanz():
               f"{dezimal(dg.ABNAHME_VOLUMENBILANZ * 100, 1)} %",
               (len(vb) == 1 and abs(vb[0].wert - ueber) <= 1e-9) if erwartet_vb else vb == [],
               "; ".join(f"{b.pruefung} {b.wert:.6g}" for b in vb) or "kein Befund Volumenbilanz")
+
+
+def _signierte_volumina(m, els):
+    """V je tet4 mit Vorzeichen - unabhängig vom Prüfling gerechnet."""
+    P = np.asarray(m.nodes, float)[np.array([m.elements[i].nodes for i in els])]
+    return np.einsum("ij,ij->i", P[:, 1] - P[:, 0],
+                     np.cross(P[:, 2] - P[:, 0], P[:, 3] - P[:, 0])) / 6.0
+
+
+def test_faltungsbefund_nur_mit_laufender_volumenbilanz():
+    """Zweite Gegenprüfung vom 24.09.2026 zu B112, Mängel 1 und 4: jeder
+    Befund „Netz gefaltet“ endete mit „die Volumenbilanz meldet das erst über
+    ihrer Grenze“. Die Volumenbilanz läuft aber nur für Elemente in einem
+    Körper (_abnahme_netz geht model.koerper durch) und nur, wo die Hülle aus
+    geraden Randlinien feststeht (_polyederhuelle, sonst gibt
+    _abnahme_volumenbilanz nichts zurück). Gemessen am 24.09.2026, Stand
+    4a139f3: Kuhn-Netz 4 × 4 × 4 ohne Körper (als Nastran-BDF gelesen: 125
+    Knoten, 384 tet4, kein Körper), Knoten 62 um 1,2·h - Übervolumen 0,625 %
+    über der Grenze 0,5 %: nur „Netz gefaltet“, dessen Text die Meldung der
+    Volumenbilanz versprach, und kein Befund „Volumenbilanz“; Zylinder aus
+    Bogenlinien (tests.test_mesher3d.buchse, h 0,3, 1006 tet4), Knoten 143
+    um 1,3·h - Übervolumen 1,642 %, ebenso. Der Befund
+    sagt jetzt je Fall, was ist: mit laufender Volumenbilanz deren Abweichung,
+    sonst dass es keine gab.
+    """
+    import tempfile
+    from statik3d import mesher3d as M3
+    from statik3d.importers import nastran
+    from statik3d.spannungen import dezimal
+    import tests.test_mesher3d as TM
+
+    alt_satz = "erst über ihrer Grenze"
+
+    def teile(bef):
+        return ([b for b in bef if b.pruefung == "Netz gefaltet"],
+                [b for b in bef if b.pruefung == "Volumenbilanz"])
+
+    # (a) Kuhn-Netz 4 x 4 x 4 im Koerper K1 (Quader: die Volumenbilanz laeuft)
+    m, k = _gleichmaessig(1.0, 1.0, 1.0, 4)
+    _in_kuhn(m, k)
+    mitte = int(np.argmin(np.linalg.norm(m.nodes - np.array([0.5, 0.5, 0.5]), axis=1)))
+    m.nodes[mitte] = m.nodes[mitte] + np.array([0.3, 0.0, 0.0])
+    fa, vb = teile(dg.abnahme(m, warnungen=True))
+    check("Kuhn 4 × 4 × 4 im Körper K1: „Netz gefaltet“ nennt die Volumenbilanz von K1 "
+          "mit ihrer Abweichung, und sie meldet",
+          len(fa) == 1 and len(vb) == 1 and "Volumenbilanz von Volumen K1" in fa[0].text
+          and f"Abweichung {dezimal(vb[0].wert * 100)} %" in fa[0].text
+          and alt_satz not in fa[0].text,
+          "; ".join(b.text for b in fa + vb) or "keine Befunde")
+    # Bricht die Volumenbilanz nach dem Rechnen ab, geht ihr Befund verloren
+    # („Volumenbilanz nicht geprüft“) - dann darf sich der Faltungsbefund
+    # nicht auf sie berufen
+    echt = dg._abnahme_volumenbilanz
+
+    def bricht_ab(*a, **kw):
+        echt(*a, **kw)
+        raise RuntimeError("nach der Bilanz abgebrochen")
+
+    dg._abnahme_volumenbilanz = bricht_ab
+    try:
+        bef = dg.abnahme(m, warnungen=True)
+    finally:
+        dg._abnahme_volumenbilanz = echt
+    fa, vb = teile(bef)
+    check("  bricht die Volumenbilanz ab (WARNUNG „nicht geprüft“), sagt der "
+          "Faltungsbefund, dass keine lief",
+          vb == [] and any(b.pruefung == "Volumenbilanz nicht geprüft" for b in bef)
+          and len(fa) == 1 and "für Volumen K1 lief keine Volumenbilanz" in fa[0].text,
+          "; ".join(f"{b.stufe} {b.pruefung}" for b in bef) + " | "
+          + "; ".join(b.text for b in fa))
+
+    # (b) dasselbe Netz ohne Koerper - wie aus einem Import, einmal ueber den
+    # Nastran-Leser, einmal mit geleertem model.koerper
+    V = _signierte_volumina(m, range(len(m.elements)))
+    ueber = float((np.abs(V).sum() - V.sum()) / V.sum())
+    zeilen = ["BEGIN BULK", "MAT1,1,2.1+11,,0.3,7850.", "PSOLID,1,1"]
+    zeilen += [f"GRID,{i + 1},,{p[0]:.6f},{p[1]:.6f},{p[2]:.6f}"
+               for i, p in enumerate(np.asarray(m.nodes, float))]
+    zeilen += [f"CTETRA,{j + 1},1," + ",".join(str(int(x) + 1) for x in e.nodes)
+               for j, e in enumerate(m.elements)]
+    with tempfile.TemporaryDirectory() as ordner:
+        pfad = os.path.join(ordner, "gefaltet.bdf")
+        with open(pfad, "w") as f:
+            f.write("\n".join(zeilen + ["ENDDATA"]) + "\n")
+        mi = nastran.import_bdf(pfad, log=[])
+    m.koerper.clear()
+    for titel, mm in (("Nastran-Import", mi), ("model.koerper geleert", m)):
+        fa, vb = teile(dg.abnahme(mm, warnungen=True))
+        check(f"  ohne Körper ({titel}, {len(mm.elements)} tet4, "
+              f"{len(getattr(mm, 'koerper', None) or {})} Körper): Übervolumen "
+              f"{dezimal(ueber * 100)} % über der Grenze, keine Volumenbilanz - der Befund "
+              "sagt das, statt eine Meldung zu versprechen",
+              ueber > dg.ABNAHME_VOLUMENBILANZ and len(fa) == 1 and vb == []
+              and "keiner Volumenbilanz" in fa[0].text and alt_satz not in fa[0].text,
+              "; ".join(b.text for b in fa + vb) or "keine Befunde")
+
+    # (c) Zylinder aus Bogenlinien: keine Huelle ohne Naeherung, keine Bilanz
+    m = TM.neues_modell()
+    k = TM.buchse(m, 0.5, 0.0, 1.0)
+    h = 0.3
+    m.netz.ziellaenge = h
+    els = [int(x) for x in M3.mesh_koerper_frei(m, k, log=[])]
+    X = np.asarray(m.nodes, float)
+    benutzt = np.unique(np.array([m.elements[i].nodes for i in els]).ravel())
+    r = np.linalg.norm(X[benutzt, :2], axis=1)
+    innen = benutzt[(r < 0.5 - 0.6 * h) & (X[benutzt, 2] > 0.6 * h)
+                    & (X[benutzt, 2] < 1 - 0.6 * h)]
+    kn = int(innen[np.argmin(np.linalg.norm(X[innen] - np.array([0, 0, 0.5]), axis=1))])
+    m.nodes[kn] = X[kn] + np.array([1.3 * h, 0.0, 0.0])
+    V = _signierte_volumina(m, els)
+    ueber = float((np.abs(V).sum() - V.sum()) / V.sum())
+    fa, vb = teile(dg.abnahme(m, warnungen=True))
+    check(f"  Zylinder aus Bogenlinien ({len(els)} tet4), Knoten {kn} um 1,3·h: "
+          f"Übervolumen {dezimal(ueber * 100)} %, keine Hülle ohne Näherung, keine "
+          "Volumenbilanz - der Befund sagt das",
+          dg._polyederhuelle(m, k) is None and ueber > dg.ABNAHME_VOLUMENBILANZ
+          and len(fa) == 1 and vb == [] and int((V < 0).sum()) == len(fa[0].elemente)
+          and f"für Volumen {k.name} lief keine Volumenbilanz" in fa[0].text
+          and alt_satz not in fa[0].text,
+          "; ".join(b.text for b in fa + vb) or "keine Befunde")
+
+
+def test_faltungsbefund_nennt_nur_gemessene_abhilfe():
+    """Zweite Gegenprüfung vom 24.09.2026 zu B112, Mangel 3: jeder Befund
+    „Netz gefaltet“ riet „Die Knoten zurücksetzen oder neu vernetzen.“ Bei
+    einer Faltung, die der Vernetzer selbst erzeugt, hat der Anwender keinen
+    Knoten verschoben, und der eigene Vernetzer ergibt mit denselben
+    Einstellungen dasselbe Netz. Gemessen am 24.09.2026: zwei Würfel
+    übereinander mit je eigener Trennfläche (tests.test_fugen.zwei_bloecke,
+    unten h 0,5, oben frei vernetzt) - oben mit h 0,12 bis 0,18 gefaltet
+    (12 bis 20 umgestülpte), mit 0,19, 0,2 und 0,25 nicht; jeder Aufbau
+    zweimal bitgleich samt Befunden. Der Befund nennt jetzt genau das; ändert
+    sich der Vernetzer, fällt diese Prüfung durch, und der Text ist
+    nachzumessen.
+    """
+    import tests.test_fugen as TF
+
+    def aufbau(h_oben):
+        m = TF.zwei_bloecke("eigene", 0.5, h_oben)
+        fa = [b for b in dg.abnahme(m, warnungen=True) if b.pruefung == "Netz gefaltet"]
+        return m, fa
+
+    m1, fa1 = aufbau(0.15)
+    m2, fa2 = aufbau(0.15)
+    gleich = (np.array_equal(np.asarray(m1.nodes), np.asarray(m2.nodes))
+              and [list(e.nodes) for e in m1.elements] == [list(e.nodes) for e in m2.elements]
+              and [b.elemente for b in fa1] == [b.elemente for b in fa2])
+    check("zwei Würfel, eigene Trennflächen, oben h 0,15: gefaltet, und derselbe "
+          "Aufbau ergibt dasselbe Netz mit denselben Befunden",
+          len(fa1) > 0 and gleich, f"{len(fa1)} Befunde, gleich: {gleich}")
+    check("  kein Befund rät mehr „Knoten zurücksetzen oder neu vernetzen“; jeder "
+          "nennt, dass derselbe Vernetzer dieselbe Faltung ergibt, und was half",
+          fa1 and all("zurücksetzen" not in b.text and "neu vernetzen" not in b.text
+                      and "dasselbe Netz mit derselben Faltung" in b.text
+                      and "0.19, 0.2 und 0.25 m" in b.text for b in fa1),
+          fa1[0].text if fa1 else "kein Befund")
+    # Die Zahlen im Text: gefaltet von 0,12 bis 0,18, nicht bei 0,19/0,2/0,25
+    falsch = []
+    for h_oben in (0.12, 0.13, 0.14, 0.16, 0.17, 0.18, 0.19, 0.2, 0.25):
+        m, fa = aufbau(h_oben)
+        els = list(m.koerper["Oben"].elemente)
+        um = int((_signierte_volumina(m, els) < 0).sum())
+        if (h_oben < 0.185) != (len(fa) > 0 and um > 0):
+            falsch.append(f"h {h_oben}: {um} umgestülpt, {len(fa)} Befunde")
+    check("  die Messung im Befundtext gilt noch: oben 0,12 bis 0,18 gefaltet, "
+          "0,19, 0,2 und 0,25 nicht", not falsch, "; ".join(falsch) or "wie im Text")
 
 
 def test_abnahme_riss_an_laenglichen_zellen():
@@ -1745,6 +1913,8 @@ def main():
               test_abnahme_luecke_im_netzrand,
               test_abnahme_findet_gefaltetes_tetraedernetz,
               test_faltungsbefund_nennt_das_uebervolumen_der_volumenbilanz,
+              test_faltungsbefund_nur_mit_laufender_volumenbilanz,
+              test_faltungsbefund_nennt_nur_gemessene_abhilfe,
               test_windschiefe_randflaechen_ohne_dreiecksschleife,
               test_abnahme_meldet_ausgefallene_pruefungen,
               test_nicht_messbare_formguete_gilt_nicht_als_beste,

@@ -4606,19 +4606,7 @@ gegenüberliegende Seite seiner Tetraeder geschoben, stülpen sie sich um und
 Elementvolumen und die Rechnung selbst den Betrag des Volumens. Am Würfel
 1 × 1 × 1 m, 10 × 10 × 10 Zellen in je sechs Tetraeder geteilt, den mittleren
 Knoten 665 um das 1,2-fache der Zellweite verschoben: sechs Tetraeder
-umgestülpt, und die Abnahme ohne diese Prüfung meldete nichts. Die
-Volumenbilanz sieht nur das Übervolumen: jedes umgestülpte Tetraeder zählt dort
-mit seinem Volumen, statt es abzuziehen, das Netz ist also um das Doppelte
-seines Volumens zu groß — hier 400 cm³ oder 0,04 %, unter ihrer Grenze 0,5 %.
-Bei 4 × 4 × 4 Zellen macht derselbe Schub 0,625 %, und die Volumenbilanz
-meldet es neben der Faltung. An zwei Würfeln 1 × 1 × 1 m übereinander mit je
-eigener Trennfläche, der obere frei vernetzt mit Netzweite 0,15 m
-(4454 Tetraeder), fand die Abnahme 17 umgestülpte
-Tetraeder in sechs Gruppen, dazu „Volumenbilanz“ 0,767 % — genau das Doppelte
-ihres Volumens — und „Elementgüte“ 0,020 an einem von ihnen, das zugleich flach
-ist (gemessen am 24.09.2026). Jeder Befund „Netz gefaltet“ nennt darum, wie
-viel seine Tetraeder zu viel ins Netzvolumen bringen; die sechs dort ergeben
-zusammen die 7671 cm³, um die die Volumenbilanz zu hoch liegt. Um das
+umgestülpt, und die Abnahme ohne diese Prüfung meldete nichts. Um das
 1,5-fache verschoben und oben waagerecht belastet, lag die Vergleichsspannung
 an diesen sechs bei 192,5 bis 247,3 kPa, an den Elementen um denselben Knoten
 im unverschobenen Netz bei 281,0 bis 329,1 kPa; die mittlere Verschiebung oben
@@ -4630,6 +4618,40 @@ gefaltet] Volumen K1: 6 Tetraeder liegen umgestülpt zwischen ihren Nachbarn
 (Elemente 3266, 3267, 3271, 3328, 3330, 3335, alle an den Knoten 665, 786) …“).
 Welche der Nachbarn die umgestülpten sind, entscheidet der Zusammenhang: in
 jedem zusammenhängenden Netz die kleinere der beiden Gruppen.
+
+Im Netzvolumen zählt jedes umgestülpte Tetraeder mit seinem Volumen, statt es
+abzuziehen; das Netz ist also um das Doppelte seines Volumens zu groß. In eine
+Volumenbilanz geht das nur ein, wo es eine gibt: für die Elemente eines
+Körpers, dessen Randlinien gerade und dessen Randflächen eben oder Vierecke
+ohne Öffnung sind. Im Würfel eben sind es 400 cm³ oder 0,04 %, unter ihrer
+Grenze 0,5 %; bei 4 × 4 × 4 Zellen macht derselbe Schub 0,625 %, und die
+Volumenbilanz meldet es neben der Faltung. Dasselbe Netz als Nastran-Datei
+gelesen, also ohne Körper, hat keine Volumenbilanz, ebenso ein frei
+vernetzter Zylinder aus Bogenlinien (1006 Tetraeder), in dem ein innerer
+Knoten um das 1,3-fache der Netzweite verschoben ist: 1,642 % zu viel, und
+nur „Netz gefaltet“ meldet etwas. An zwei Würfeln 1 × 1 × 1 m übereinander
+mit je eigener Trennfläche, der obere frei vernetzt mit Netzweite 0,15 m
+(4454 Tetraeder), fand die Abnahme 17 umgestülpte Tetraeder in sechs Gruppen,
+dazu „Volumenbilanz“ 0,767 % — genau das Doppelte ihres Volumens — und
+„Elementgüte“ 0,020 an einem von ihnen, das zugleich flach ist; die sechs
+Befunde „Netz gefaltet“ dort ergeben zusammen die 7671 cm³, um die die
+Volumenbilanz zu hoch liegt (gemessen am 24.09.2026). Jeder Befund „Netz
+gefaltet“ nennt darum, wie viel seine Tetraeder zu viel ins Netzvolumen
+bringen, und dazu die Abweichung der Volumenbilanz ihres Körpers, oder dass
+für ihn keine lief bzw. die Tetraeder zu keinem Körper gehören.
+
+Die Faltung an den zwei Würfeln hat der eigene Vernetzer selbst erzeugt, von
+Hand war kein Knoten verschoben. Mit denselben Einstellungen gibt er dasselbe
+Netz mit derselben Faltung: jeder Aufbau zweimal, bitgleich samt Befunden;
+ebenso ein Würfel mit aufgesetzter Pyramide, zweimal über dieselbe Vernetzung
+wie „Netz → Vernetzen“ vernetzt. Neu vernetzen allein hilft dort also nicht.
+Bei Netzweite 0,5 m unten war der obere Würfel mit 0,12 bis 0,18 m gefaltet
+(in Schritten von 0,01 m, 12 bis 20 umgestülpte Tetraeder), mit 0,19, 0,2 und
+0,25 m nicht; bei 0,15 m blieb er auch mit dem Vernetzer gmsh oder Netgen
+(je 10 umgestülpte) und mit der Nachbesserung MMG3D (17) gefaltet (gemessen
+am 24.09.2026). Jede der sechs Gruppen hängt dort an einem Knoten auf dem
+gemeinsamen Rand beider Würfel (z = 1 m), den auch der untere benutzt. Was an
+diesem Modell half, nennt auch der Befund.
 
 Die Knotenfolge zählt dabei nicht. Sind in einem Tetraeder nur zwei Knoten
 vertauscht, ist seine Jacobi-Determinante negativ, es ist aber dasselbe

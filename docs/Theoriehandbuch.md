@@ -6892,19 +6892,49 @@ verschoben, waagerechte Last oben: σ_v an den sechs 192,5 bis 247,3 kPa, an
 den Elementen um Knoten 665 im unverschobenen Netz 281,0 bis 329,1 kPa,
 mittlere Verschiebung oben −0,055 %.
 
-Die Volumenbilanz sieht nur das Übervolumen. Ein umgestülptes Tetraeder geht
-mit +|V| statt −|V| in Σ |V| ein; das Netz ist um 2 Σ |V_um| zu groß. Gemessen
-am 24.09.2026, jeweils Σ |V| − V_Körper = 2 Σ |V_um| bis auf höchstens
-1,5 · 10⁻¹⁶ m³: Kuhn-Netz 10 × 10 × 10, 1,2 h: 400 cm³ = 0,04 % < 0,5 %,
-kein Befund; Kuhn-Netz 4 × 4 × 4, derselbe Schub: 6250 cm³ = 0,625 %,
-FEHLER „Volumenbilanz“ neben
-„Netz gefaltet“; freies Netz des oberen Würfels aus `test_fugen.zwei_bloecke`
-("eigene", h 0,5, oben 0,15; 4454 tet4): 17 umgestülpte in sechs Gruppen,
-Volumenbilanz 0,767 % = 7671 cm³, dazu „Elementgüte“ 0,020 an Element 2745,
-einem der 17, das zugleich flach ist. Der Befund „Netz gefaltet“ nennt deshalb
-2 Σ |V| seiner Gruppe; die Gruppen eines Körpers ergeben zusammen den Anteil
-der Faltung an der Volumenbilanz (dort 3167 + 1510 + 283 + 167 + 1336 +
-1208 = 7671 cm³).
+Übervolumen und Volumenbilanz. Ein umgestülptes Tetraeder geht mit +|V|
+statt −|V| in Σ |V| ein; das Netz ist um 2 Σ |V_um| zu groß. In einer
+Volumenbilanz steht das nur, wo sie läuft: für Elemente eines Körpers
+(`_abnahme_netz` geht `model.koerper` durch), dessen Hülle `_polyederhuelle`
+ohne Näherung liefert (nicht bei krummen Randlinien, siehe Volumenbilanz
+oben). Gemessen am 24.09.2026, jeweils Σ |V| − V_Körper = 2 Σ |V_um| bis auf
+höchstens 1,5 · 10⁻¹⁶ m³: Kuhn-Netz 10 × 10 × 10 im Quader K1, 1,2 h:
+400 cm³ = 0,04 % < 0,5 %, kein Befund; Kuhn-Netz 4 × 4 × 4, derselbe Schub:
+6250 cm³ = 0,625 %, FEHLER „Volumenbilanz“ neben „Netz gefaltet“; dasselbe
+4 × 4 × 4-Netz als Nastran-BDF gelesen (`importers.nastran.import_bdf`:
+384 tet4, kein Körper): 0,625 %, nur „Netz gefaltet“; Zylinder aus
+Bogenlinien (`test_mesher3d.buchse`, r 0,5 m, H 1 m, h 0,3; 1006 tet4,
+`_polyederhuelle` = None), innerer Knoten 143 um 1,3 h: 8 umgestülpte,
+1,642 %, nur „Netz gefaltet“; freies Netz des oberen Würfels aus
+`test_fugen.zwei_bloecke` ("eigene", h 0,5, oben 0,15; 4454 tet4):
+17 umgestülpte in sechs Gruppen, Volumenbilanz 0,767 % = 7671 cm³, dazu
+„Elementgüte“ 0,020 an Element 2745, einem der 17, das zugleich flach ist.
+Der Befund „Netz gefaltet“ nennt deshalb 2 Σ |V| seiner Gruppe und dazu, was
+die Volumenbilanz in dieser Abnahme tat: `_abnahme_volumenbilanz` trägt je
+Körper Abweichung und Grenze in das Wörterbuch `bilanz` ein, sobald beide
+gerechnet sind (bricht sie danach ab, nimmt `_abnahme_netz` den Eintrag
+wieder heraus, denn ihr Befund ist dann verloren). Steht der Körper darin,
+nennt der Befund Abweichung und Grenze, sonst „für Volumen … lief keine
+Volumenbilanz“; ohne Körper „zu keiner Volumenbilanz“. Die Gruppen eines
+Körpers ergeben zusammen den Anteil der Faltung an der Volumenbilanz (bei
+den zwei Würfeln 3167 + 1510 + 283 + 167 + 1336 + 1208 = 7671 cm³).
+
+Abhilfe nennt der Befund nur, soweit gemessen. Bis 24.09.2026 stand dort
+„Die Knoten zurücksetzen oder neu vernetzen.“; das setzt einen von Hand
+verschobenen Knoten voraus. Eine Faltung des Vernetzers selbst bleibt: er
+rechnet mit fester Saat und gibt mit denselben Einstellungen dasselbe Netz.
+Gemessen am 24.09.2026 an `zwei_bloecke("eigene", 0,5, h_oben)`, jeder
+Aufbau zweimal, bitgleich samt Befunden: gefaltet bei h_oben 0,12 bis 0,18 (Schritt 0,01: 19, 20, 15, 17,
+12, 13, 14 umgestülpte), frei bei 0,19, 0,2 und 0,25; bei 0,15 mit gmsh und
+Netgen je 10, mit der Nachbesserung MMG3D 17 umgestülpte. Über
+`mesher.modell_vernetzen` ein Würfel mit aufgesetzter Pyramide (eigene
+Trennflächen, oben 0,15 bzw. 0,12: 11 bzw. 18 umgestülpte), zweimal vernetzt:
+dieselben Knoten und Befunde. Jede der sechs Gruppen bei 0,15 hängt an einem
+Knoten des Rings z = 1, den auch der untere Körper benutzt; auf der Kante
+y = 0 liegen dort die Teilungspunkte beider Körper ineinander (unten 0,25,
+0,5 und 0,75, dazwischen oben 0,5714, 0,7143 und 0,8571). Der Befund nennt
+die Zahlen der zwei Würfel für Tetraeder in einem Körper;
+`test_faltungsbefund_nennt_nur_gemessene_abhilfe` hält sie fest.
 
 Das Merkmal ist die Lage zu den Nachbarn, nicht det J je Element: zwei
 vertauschte Knoten geben det J < 0, sind aber dasselbe Tetraeder mit anderer

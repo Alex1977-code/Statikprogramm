@@ -485,10 +485,15 @@ def abnahme(model, guete: list = None, warnungen: bool = False) -> list:
     7. **Gefaltetes Tetraedernetz** - an einer gemeinsamen Seite zweier
        tet4 liegen beide Gegenknoten auf derselben Seite der Ebene
        (:func:`_abnahme_faltung`); Formguete, Volumen und die Rechnung selbst
-       nehmen beim tet4 den Betrag des Volumens. Die Volumenbilanz sieht nur
-       das Uebervolumen, 2 |V| je umgestuelptem Tetraeder, und meldet es erst
-       ueber ihrer Grenze (Kuhn-Netz 10 x 10 x 10 mit sechs umgestuelpten:
-       0,04 %, kein Befund; 4 x 4 x 4: 0,625 %, FEHLER; 24.09.2026).
+       nehmen beim tet4 den Betrag des Volumens. Ein umgestuelptes Tetraeder
+       macht das Netzvolumen um 2 |V| zu gross. In eine Volumenbilanz
+       (Punkt 6) geht das nur ein, wo sie laeuft: fuer Elemente eines
+       Koerpers, dessen Huelle ohne Naeherung feststeht
+       (:func:`_polyederhuelle`). Dort meldet sie es erst ueber ihrer Grenze
+       (Kuhn-Netz 10 x 10 x 10 mit sechs umgestuelpten: 0,04 %, kein Befund;
+       4 x 4 x 4: 0,625 %, FEHLER). Ohne Koerper (Nastran-Import, 0,625 %)
+       und am Zylinder aus Bogenlinien (1,642 %) gibt es keine Volumenbilanz
+       (24.09.2026). Der Befund sagt je Gruppe, welcher Fall vorliegt.
 
     Faellt eine der Teilpruefungen aus (die Halteguete, die Formguete oder die
     Faltung lassen sich nicht ermitteln), erscheint das als eigener Befund der Stufe
@@ -506,9 +511,11 @@ def abnahme(model, guete: list = None, warnungen: bool = False) -> list:
     aus += _abnahme_gemeinsame_flaechen(model)
     aus += _abnahme_kontaktpaare(model)
     aus += _abnahme_halteguete(model, guete)
-    aus += _abnahme_netz(model)
+    # Fuer welche Koerper die Volumenbilanz lief - der Faltungsbefund sagt es
+    bilanz: dict = {}
+    aus += _abnahme_netz(model, bilanz)
     try:
-        aus += _abnahme_faltung(model)
+        aus += _abnahme_faltung(model, bilanz)
     except Exception as ex:               # noqa: BLE001 - eine Abnahme darf nie sperren
         # „Ausgefallen" ist nicht „nichts gefunden" (siehe _abnahme_halteguete)
         aus.append(Befund(
@@ -811,8 +818,12 @@ def _abnahme_halteguete(model, guete: list = None) -> list:
     return aus
 
 
-def _abnahme_netz(model) -> list:
-    """Knoten ohne Element, Elementgueete, Randtreue und Volumenbilanz je Koerper."""
+def _abnahme_netz(model, bilanz: dict = None) -> list:
+    """Knoten ohne Element, Elementgueete, Randtreue und Volumenbilanz je Koerper.
+
+    ``bilanz`` (wenn gegeben) sammelt je Koerper, fuer den die Volumenbilanz
+    gerechnet wurde, (abw, grenze, Sehnenanteil > 0) - siehe
+    :func:`_abnahme_volumenbilanz` und :func:`_abnahme_faltung`."""
     aus = []
     belegt = {int(n) for e in model.elements for n in e.nodes}
     lose = [k for k in range(model.nn) if k not in belegt]
@@ -892,11 +903,13 @@ def _abnahme_netz(model) -> list:
                      "Geometrie ist im Netz nicht vollständig abgebildet."))
         if els:
             try:
-                aus += _abnahme_volumenbilanz(model, name, k, els)
+                aus += _abnahme_volumenbilanz(model, name, k, els, bilanz)
             except Exception as ex:       # noqa: BLE001 - eine Abnahme darf nie sperren
                 # Nicht nach oben durchlassen: die Oberflaeche faengt eine
                 # Ausnahme aus abnahme() als „Abnahme nicht möglich" ab, und
                 # dann fielen alle anderen Teilpruefungen mit aus.
+                if bilanz is not None:     # ihr Befund ging mit verloren
+                    bilanz.pop(str(name), None)
                 aus.append(Befund(
                     pruefung="Volumenbilanz nicht geprüft", objekt=str(name),
                     wert=0.0, grenze=0.0, stufe="WARNUNG",
@@ -920,7 +933,7 @@ _TET_GEGENSEITEN = np.array([(1, 2, 3), (0, 2, 3), (0, 1, 3), (0, 1, 2)])
 ABNAHME_FALTUNG_EBENE = 1e-9
 
 
-def _abnahme_faltung(model) -> list:
+def _abnahme_faltung(model, bilanz: dict = None) -> list:
     """Gefaltetes Tetraedernetz: umgestuelpte Tetraeder zwischen ihren Nachbarn.
 
     Formguete (netzguete: 12 (3V)^(2/3) / Summe l^2) und Elementvolumen
@@ -930,10 +943,16 @@ def _abnahme_faltung(model) -> list:
     (Zellen 0,1 m) Knoten 665 um 1,2 h verschoben, sechs Tetraeder mit
     det J < 0, sah es keine andere Pruefung: abnahme(warnungen=True) = []
     (23.09.2026; ein umgestuelpter Sechsflaechner gibt dagegen eine negative
-    Formguete). Die Volumenbilanz sieht nur das Uebervolumen 2 |V| je
-    umgestuelptem Tetraeder, dort 0,04 % unter ihrer Grenze 0,5 %; am
-    Kuhn-Netz 4 x 4 x 4 macht derselbe Schub 0,625 %, und sie meldet es
-    neben diesem Befund (24.09.2026). Die Rechnung nimmt jedes als
+    Formguete). Das Uebervolumen 2 |V| je umgestuelptem Tetraeder steht nur
+    dort in einer Volumenbilanz, wo sie laeuft (Elemente eines Koerpers, dessen
+    Huelle ohne Naeherung feststeht): am Kuhn-Netz im Quader K1 0,04 % unter
+    ihrer Grenze 0,5 %; am Kuhn-Netz 4 x 4 x 4 macht derselbe Schub 0,625 %,
+    und sie meldet es neben diesem Befund. Dasselbe Netz ohne Koerper und ein
+    Zylinder aus Bogenlinien (1,642 %) haben keine Volumenbilanz (24.09.2026).
+    ``bilanz`` ({Koerper: (abw, grenze, Sehnenanteil > 0)} aus
+    :func:`_abnahme_netz`) sagt, fuer welche Koerper sie lief; der Befund
+    nennt dann ihre Abweichung, sonst dass es keine gab. Ohne ``bilanz``
+    sagt er dazu nichts. Die Rechnung nimmt jedes als
     aufrechtes Tetraeder mit |V|, die umgestuelpten ueberdecken ihre
     Nachbarn. Gemessen bei 1,5 h und waagerechter Last oben: sigma_v an den
     sechs 192,5 bis 247,3 kPa, an den Elementen um Knoten 665 im
@@ -1068,15 +1087,44 @@ def _abnahme_faltung(model) -> list:
     grenzen = np.searchsorted(gruppe[ordnung], np.arange(ng + 1))
     # Uebervolumen je Gruppe. Ein umgestuelptes Tetraeder geht mit +|V| statt
     # -|V| ins Netzvolumen (elementvolumina) ein, das Netz ist also um 2 |V|
-    # zu gross - das sieht die Volumenbilanz und meldet es ueber ihrer Grenze.
-    # Bis 24.09.2026 stand im Befund „Formgüte und Volumenbilanz sehen das
-    # nicht“; das galt nur am Kuhn-Netz 10 x 10 x 10 (1,2 h: 400 cm3 = 0,04 %).
-    # Gemessen 24.09.2026: Kuhn-Netz 4 x 4 x 4, Knoten 62 um 1,2 h: Summe |V|
-    # - 1 m3 = 2 Summe |V_um| = 6250 cm3 und FEHLER Volumenbilanz 0,625 %;
-    # freies Netz tests.test_fugen.zwei_bloecke("eigene", 0.5, 0.15), Koerper
-    # Oben: 17 umgestuelpte in sechs Gruppen, Volumenbilanz 0,767 % = 2 Summe
-    # |V| der 17, und eines davon (Element 2745, flach) meldet auch die
-    # Elementguete (0,020). Die Zahl im Befund verbindet ihn mit der Bilanz.
+    # zu gross. In einer Volumenbilanz steht das nur, wo sie lief (``bilanz``):
+    # fuer Elemente eines Koerpers, dessen Huelle ohne Naeherung feststeht.
+    # Bis 24.09.2026 stand im Befund zuerst „Formgüte und Volumenbilanz sehen
+    # das nicht“ (galt nur am Kuhn-Netz 10 x 10 x 10: 400 cm3 = 0,04 %), dann
+    # „die Volumenbilanz meldet das erst über ihrer Grenze“ - auch das nur an
+    # Polyederkoerpern gemessen (zweite Gegenpruefung, Maengel 1 und 4).
+    # Gemessen 24.09.2026 am Stand 4a139f3: Kuhn-Netz 4 x 4 x 4, Knoten 62 um
+    # 1,2 h: Summe |V| - 1 m3 = 2 Summe |V_um| = 6250 cm3 = 0,625 %; im Koerper
+    # K1 FEHLER Volumenbilanz 0,625 %, als Nastran-BDF gelesen (384 tet4, kein
+    # Koerper) nur „Netz gefaltet“. Zylinder aus Bogenlinien
+    # (tests.test_mesher3d.buchse, h 0,3, 1006 tet4), Knoten 143 um 1,3 h:
+    # 1,642 %, _polyederhuelle = None, nur „Netz gefaltet“. Freies Netz
+    # tests.test_fugen.zwei_bloecke("eigene", 0.5, 0.15), Koerper Oben: 17
+    # umgestuelpte in sechs Gruppen, Volumenbilanz 0,767 % = 2 Summe |V| der
+    # 17, und eines davon (Element 2745, flach) meldet auch die Elementguete
+    # (0,020). Der Befund sagt darum je Gruppe, ob und mit welcher
+    # Abweichung die Volumenbilanz lief.
+    #
+    # Abhilfe nur, was gemessen ist (zweite Gegenpruefung, Mangel 3): bis
+    # 24.09.2026 stand hier „Die Knoten zurücksetzen oder neu vernetzen.“ -
+    # das setzt einen von Hand verschobenen Knoten voraus; eine Faltung des
+    # Vernetzers selbst bleibt damit bestehen. Der eigene Vernetzer
+    # rechnet mit fester Saat (mesher3d: default_rng(20240904) fuer die
+    # inneren Punkte, 20240906 + Runde in tetraedern). Gemessen 24.09.2026:
+    # zwei_bloecke("eigene", 0.5, h_oben) je zweimal aufgebaut, bitgleich
+    # samt Befunden; gefaltet bei h_oben 0,12 bis 0,18 (in 0,01-Schritten, 12
+    # bis 20 umgestuelpte), nicht bei 0,19, 0,2 und 0,25; bei 0,15 mit gmsh
+    # und Netgen je 10, mit Nachbesserung MMG3D 17 umgestuelpte. Ueber
+    # mesher.modell_vernetzen (Wuerfel mit aufgesetzter Pyramide, eigene
+    # Trennflaechen, oben 0,15 bzw. 0,12: 11 bzw. 18 umgestuelpte) ergab
+    # zweimal Vernetzen dieselben Knoten und Befunde.
+    # test_faltungsbefund_nennt_nur_gemessene_abhilfe haelt die Zahlen des
+    # Textes fest.
+    abhilfe = (" Stammt die Faltung vom eigenen Vernetzer, gibt er mit denselben "
+               "Einstellungen wieder dasselbe Netz mit derselben Faltung. An zwei "
+               "Würfeln übereinander mit je eigener Trennfläche (unten Netzweite 0.5 m) "
+               "war der obere frei vernetzt mit 0.12 bis 0.18 m gefaltet, mit 0.19, 0.2 "
+               "und 0.25 m nicht (gemessen 24.09.2026).")
     from .spannungen import dezimal
     Pu = X[K[um_idx]]
     V_um = np.abs(np.einsum("ij,ij->i", Pu[:, 1] - Pu[:, 0],
@@ -1099,6 +1147,20 @@ def _abnahme_faltung(model) -> list:
               f", alle am Knoten {min(gemeinsam)}" if len(gemeinsam) == 1 else
               f", alle an den Knoten {', '.join(str(x) for x in sorted(gemeinsam))}")
         wo = f"Volumen {', '.join(namen)}" if namen else "Netz"
+        # Was die Volumenbilanz damit tat - nur, was in dieser Abnahme geschah
+        zur_bilanz = ""
+        if bilanz is not None and not namen:
+            zur_bilanz = "; sie gehören zu keinem Volumen und damit zu keiner Volumenbilanz"
+        elif bilanz is not None:
+            mit = [nm for nm in namen if nm in bilanz]
+            ohne = [nm for nm in namen if nm not in bilanz]
+            if mit:
+                zur_bilanz += "; in der Volumenbilanz " + " und ".join(
+                    f"von Volumen {nm} (Abweichung {dezimal(bilanz[nm][0] * 100)} %, "
+                    f"Grenze {dezimal(bilanz[nm][1] * 100, None if bilanz[nm][2] else 1)} %)"
+                    for nm in mit) + " ist das enthalten"
+            if ohne:
+                zur_bilanz += f"; für Volumen {', '.join(ohne)} lief keine Volumenbilanz"
         aus.append(Befund(
             pruefung="Netz gefaltet", objekt=", ".join(namen), element=els[0],
             elemente=els, knoten=sorted(gemeinsam), wert=float(len(els)), grenze=0.0,
@@ -1108,8 +1170,7 @@ def _abnahme_faltung(model) -> list:
                  "gefaltet: die Elemente überdecken sich, und die Rechnung nimmt "
                  "jedes mit dem Betrag seines Volumens, als stünde es aufrecht. Ins "
                  f"Netzvolumen gehen sie so mit {menge} zu viel ein, dem Doppelten "
-                 "ihres Volumens; die Volumenbilanz meldet das erst über ihrer "
-                 "Grenze. Die Knoten zurücksetzen oder neu vernetzen."))
+                 f"ihres Volumens{zur_bilanz}." + (abhilfe if namen else "")))
     return aus
 
 
@@ -2067,8 +2128,12 @@ def _ringmax(F, werte, ringe: int) -> np.ndarray:
     return H
 
 
-def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
+def _abnahme_volumenbilanz(model, name, koerper, els, bilanz: dict = None) -> list:
     """Volumenbilanz und Seiten neben der Huelle - gegen die Randflaechen.
+
+    ``bilanz`` (wenn gegeben) erhaelt fuer diesen Koerper (abw, grenze,
+    Sehnenanteil > 0), sobald die Bilanz gerechnet ist - der Befund „Netz
+    gefaltet“ sagt damit, ob und mit welcher Abweichung sie lief.
 
     Ein verdrehter Sechsflaechner (Deckelknoten um eins versetzt) ist ein
     gueltiger Koerper, nur ein anderer als der gemeinte: det J ueberall
@@ -2321,6 +2386,8 @@ def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
         idx = np.nonzero((schief_nr >= 0) & ~innen)[0]
         V_sehne = float((A[idx] * abstand[idx]).sum())
     grenze = ABNAHME_VOLUMENBILANZ + V_sehne / V_h
+    if bilanz is not None:
+        bilanz[str(name)] = (float(abw), float(grenze), V_sehne > 0.0)
     # Was ein Import oder eine Handaenderung verdorben hat, ersetzt ein neues
     # Netz. Der eigene Vernetzer rechnet ohne Zufall (feste Saat,
     # mesher3d.tetraedern) und ergibt mit denselben Einstellungen dasselbe
