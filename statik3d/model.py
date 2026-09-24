@@ -177,6 +177,12 @@ class Material:
             return wert
         if self.grade in STEEL_GRADES and t > 0.040:
             return STEEL_GRADES[self.grade][2]
+        # Ein leeres f_y nimmt bis 40 mm den Wert der Sorte - so sagt es der
+        # Werkstoffdialog ("leer = aus der Stahlsorte"). Bis zum 23.09.2026
+        # kam hier 0 heraus: ein IPE 300 mit Sorte S235 und leerem f_y war
+        # "nicht geführt" (Befund B060)
+        if not self.fy and self.grade in STEEL_GRADES:
+            return STEEL_GRADES[self.grade][0]
         return self.fy or 0.0
 
     def ultimate_strength(self, t: float = 0.0) -> float:
@@ -185,6 +191,10 @@ class Material:
             return wert
         if self.grade in STEEL_GRADES and t > 0.040:
             return STEEL_GRADES[self.grade][3]
+        # Ohne f_u und ohne f_y die Sorte (wie yield_strength); mit f_y bleibt
+        # es bei 1,3 f_y
+        if not self.fu and not self.fy and self.grade in STEEL_GRADES:
+            return STEEL_GRADES[self.grade][1]
         return self.fu or (1.3 * self.fy if self.fy else 0.0)
 
 
@@ -1437,6 +1447,40 @@ class Combination:
         return " oder ".join(teile)
 
 
+#: Klartext der Zaehlverfahren einer Ermuedungslast (FatigueLoad.zaehlung).
+#: Die Schluessel sind die gespeicherten Werte und bleiben, wie sie sind
+#: (Dateien, Import, Web, Rechnung); nur Maske und Bericht zeigen den Text.
+#: Bis zum 24.09.2026 stand dort roh „spanne/rainflow/reservoir“, und der
+#: Anwender fragte, was das heisse. Beide lesen diese eine Tabelle, damit
+#: Maske und Bericht dasselbe sagen.
+ZAEHLVERFAHREN_TEXT = {
+    "spanne": "Größte Spanne je Durchlauf (ein Spiel: Maximum − Minimum)",
+    "rainflow": "Rainflow-Zählung (Rinnenzählung, EN 1993-1-9 Anhang A)",
+    "reservoir": "Reservoir-Zählung (Speicherverfahren, EN 1993-1-9 Anhang A)",
+}
+
+
+def lastspiele_text(n) -> str:
+    """Lastspiel- oder Beiwertzahl zum Lesen: Tausender mit Leerzeichen,
+    Dezimalkomma, nie „2e+06“ (Anwender, 12.09.2026: wissenschaftliche
+    Schreibweise ist unlesbar). 2e6 -> „2 000 000“, 1.5 -> „1,5“.
+
+    Steht im Modell und nicht in der Oberflaeche, weil Maske, Register,
+    Modellbaum (FatigueLoad.bezug) und Bericht dieselbe Schreibweise brauchen
+    und der Bericht die Oberflaeche nicht laden darf."""
+    import math
+    try:
+        x = float(n)
+    except (TypeError, ValueError):
+        return str(n)
+    if not math.isfinite(x):
+        return "–"
+    if x == round(x) and abs(x) < 1e18:
+        return f"{int(round(x)):,}".replace(",", " ")
+    ganz, _, rest = format(x, ",.10f").rstrip("0").partition(".")
+    return ganz.replace(",", " ") + ("," + rest if rest else "")
+
+
 @dataclass
 class FatigueLoad:
     """Ermuedungsbeanspruchung - auf zwei Wegen zu beschreiben.
@@ -1475,11 +1519,25 @@ class FatigueLoad:
     #: "reservoir". Aeltere Dateien fuehren ihren gespeicherten Wert mit.
     zaehlung: str = "spanne"
 
+    def lastfall_umbenennen(self, alt: str, neu: str) -> None:
+        """Ein umbenannter Lastfall heisst auch in beiden Zustaenden und in
+        jedem Glied des Verlaufs neu. Bis zum 23.09.2026 zog die Oberflaeche
+        nur die Kombinationen nach, der Webserver dazu case_max/case_min,
+        den Verlauf nicht: die Modellpruefung meldete den alten Namen als
+        „unbekannt“, und dem Nachweis fehlte die Last - am Kragarm D = 0,018
+        statt 2,437 (tests/test_ermuedung_verlauf.py)."""
+        if self.case_max == alt:
+            self.case_max = neu
+        if self.case_min == alt:
+            self.case_min = neu
+        if self.folge:
+            self.folge = [neu if k == alt else k for k in self.folge]
+
     def bezug(self) -> str:
         if self.folge:
-            w = "global" if self.wiederholungen is None else f"{self.wiederholungen:g}"
+            w = "global" if self.wiederholungen is None else lastspiele_text(self.wiederholungen)
             return f"Verlauf über {len(self.folge)} Lastfälle, {w}× ({self.zaehlung})"
-        n = "globale Lastspielzahl" if self.cycles is None else f"{self.cycles:g} Spiele"
+        n = "globale Lastspielzahl" if self.cycles is None else f"{lastspiele_text(self.cycles)} Spiele"
         return f"{self.case_max} gegen {self.case_min or 'Nullzustand'}, {n}"
 
 
@@ -2684,6 +2742,12 @@ class DesignSettings:
     #: Kontaktzustand linear (eine Rueckwaertseinsetzung je Zustand statt
     #: 30 bis 40 Kontaktschritten - am Drehlager 18 min je Zustand).
     ermuedung_kontakt_einfrieren: bool = True
+    #: Spannung der Volumen-Ermuedung (ec3.fatigue.VOLUMEN_REGELN, 23.09.2026):
+    #: "knoten" (Vorgabe) nimmt je Knoten die geglaettete Knotenspannung des
+    #: Loesers (res.solid_knoten, an freien Oberflaechen sigma n = 0 nach
+    #: Model.randspannung) - dieselbe wie der statische Volumennachweis;
+    #: "element" den Elementwert (res.solid_res) wie bis zum 23.09.2026.
+    ermuedung_volumen: str = "knoten"
     # --- Theorie II. Ordnung und Imperfektionen (EN 1993-1-1, 5.2 und 5.3)
     theorie2: str = "aus"              # aus | auto (nach 5.2.1(3)) | ein
     imperfektionen: bool = True        # Ersatzimperfektionen nach 5.3.2 ansetzen
@@ -3033,6 +3097,17 @@ class Model:
         self.name = name
         self.nodes: np.ndarray = np.zeros((0, 3))
         self.elements: list[Element] = []
+        #: Gekruemmte Geometrie der Tetraeder mit Ordnung p (elements.tetp):
+        #: {(a, b) mit a < b: Kantenmitte (3,)}, aus einem tet10-Netz
+        #: uebernommen (tetp.aus_tet10); eine Kante ohne Eintrag ist gerade.
+        #: Gehoert zum Modell und steht darum in der Datei (to_dict
+        #: "tetp_kantenmitten"). Bis zum 23.09.2026 lebte sie nur zur
+        #: Laufzeit: gespeichert, geladen - oder als Auftrag an Pool und Farm
+        #: geschickt (jobs.py, auch to_dict) - rechnete das Modell still mit
+        #: geraden Kanten. Hohlkugel p = 3, 2 x 2 (126 gekruemmte Kanten):
+        #: max|du| 4,87 um bei max|u| 79,4 um, Knotenspannung bis 45,3 N/mm2
+        #: anders (zweimal gemessen am 23.09.2026).
+        self.tetp_kantenmitten: dict = {}
         self.materials: dict[str, Material] = {}
         self.sections: dict[str, Section] = {}
         self.shells: dict[str, ShellProp] = {}
@@ -3139,14 +3214,71 @@ class Model:
             self.active_case = name
         return lc
 
-    def remove_load_case(self, name: str):
+    def remove_load_case(self, name: str) -> list[str]:
+        """Einen Lastfall loeschen - samt seinen Verweisen in den Kombinationen
+        und den Ermuedungslasten.
+
+        Der Name faellt aus den Faktoren **und** aus jeder Alternative einer
+        Kombination (Combination.lastfall_entfernen) und aus jedem Verlauf
+        einer Ermuedungslast. Eine Ermuedungslast aus zwei Zustaenden, deren
+        oberer oder unterer Zustand dieser Lastfall war, entfaellt ganz: den
+        Zustand still durch den Nullzustand zu ersetzen, aenderte die
+        Schwingbreite, ohne dass es jemand entschieden haette - die Stellung
+        (bridges.positions) laesst solche Lasten ebenso entfallen. Ein
+        Verlauf, dem kein Glied bleibt, entfaellt auch.
+
+        Andere Verweise auf den Namen bleiben stehen, etwa die Lastfallliste
+        einer Stellung (bridges.positions.Stellung.faelle): gemessen
+        24.09.2026 mit faelle ['LF1', 'LF2'] nach remove_load_case('LF2')
+        Rueckgabe [], faelle unveraendert, check() ohne FEHLER oder WARNUNG, und
+        Stellungsreihe.rechnen laesst die Stellung mit "Lastfall 'LF2' gibt
+        es im Modell nicht" ohne Ergebnis.
+
+        Bis zum 23.09.2026 gingen nur die Faktoren mit (Befund B105): die
+        Alternativen einer oder-EK und die Ermuedungslasten zeigten danach
+        ins Leere, check() meldete FEHLER, und solve_all brach mit KeyError
+        "Lastfall 'LF2' existiert nicht" ab.
+
+        Rueckgabe: Klartextzeilen, was mitging (leer, wenn nichts).
+        """
+        aus: list[str] = []
         self.load_cases.pop(name, None)
         for c in self.combinations.values():
-            c.factors.pop(name, None)
+            if name in c.factors or any(name in a for a in c.alternativen):
+                c.lastfall_entfernen(name)
+                aus.append(f"Kombination '{c.name}': Lastfall '{name}' entfernt")
+        # Traegt eine Kombination denselben Namen, bleibt ein Verweis der
+        # Ermuedungslast gueltig (Zustand = Lastfall oder Kombination)
+        if name not in self.combinations:
+            for fl in list(self.fatigue_loads.values()):
+                if fl.folge:
+                    # Ein Verlauf liest nur seine Glieder (ec3.fatigue);
+                    # ein altes case_max/case_min wird nur geleert
+                    if fl.case_max == name:
+                        fl.case_max = ""
+                    if fl.case_min == name:
+                        fl.case_min = None
+                    if name not in fl.folge:
+                        continue
+                    rest = [k for k in fl.folge if k != name]
+                    if rest:
+                        fl.folge = rest
+                        aus.append(f"Ermüdungslast '{fl.name}': Lastfall '{name}' aus dem "
+                                   f"Verlauf entfernt ({', '.join(rest)})")
+                    else:
+                        del self.fatigue_loads[fl.name]
+                        aus.append(f"Ermüdungslast '{fl.name}' entfällt: ihr Verlauf bestand "
+                                   f"nur aus Lastfall '{name}'")
+                elif name in (fl.case_max, fl.case_min):
+                    del self.fatigue_loads[fl.name]
+                    welcher = "oberer" if fl.case_max == name else "unterer"
+                    aus.append(f"Ermüdungslast '{fl.name}' entfällt: ihr {welcher} Zustand "
+                               f"war Lastfall '{name}'")
         if self.active_case == name:
             self.active_case = next(iter(self.load_cases), "")
         if not self.load_cases:
             self.add_load_case("LF1", "G")
+        return aus
 
     def case(self, name: str = None) -> LoadCase:
         """Lastfall (default: aktiver Lastfall)."""
@@ -3240,7 +3372,14 @@ class Model:
         from .elemente import ELEMENTE
         if typ not in ELEMENTE:
             raise KeyError(f"Elementtyp '{typ}' unbekannt: {', '.join(ELEMENTE)}")
-        e = Element(typ, [int(n) for n in nodes], mat, sec, roll, group,
+        knoten = [int(n) for n in nodes]
+        # Ein hex8 mit sieben Knoten wurde bis zum 23.09.2026 angenommen;
+        # check() schwieg, und erst die Rechnung brach mit "operands could
+        # not be broadcast" ab (Befund B106)
+        if len(knoten) != ELEMENTE[typ].knoten:
+            raise ValueError(f"{typ} braucht {ELEMENTE[typ].knoten} Knoten, "
+                             f"angegeben sind {len(knoten)}")
+        e = Element(typ, knoten, mat, sec, roll, group,
                     list(hinges) if hinges else [])
         for k, v in kw.items():
             if not hasattr(e, k):
@@ -3611,6 +3750,13 @@ class Model:
         for grp in (self.line_supports, self.surface_supports):
             for x in grp:
                 x.nodes = [f(n) for n in (x.nodes or [])]
+        # Die Normalengruppen eines lokalen Flaechenlagers [Achse, Vorzeichen,
+        # Knoten, Einflussflaechen] nennen ebenfalls Knoten; sie blieben bis
+        # zum 23.09.2026 stehen (Befund B107)
+        for x in self.surface_supports:
+            if getattr(x, "gruppen", None):
+                x.gruppen = [[g[0], g[1], [f(n) for n in g[2]]] + list(g[3:])
+                             for g in x.gruppen]
         for lc in self.load_cases.values():
             for l in lc.nodal_loads:
                 l.node = f(l.node)
@@ -3622,6 +3768,16 @@ class Model:
             g.node_a, g.node_b = f(g.node_a), f(g.node_b)
         for cp in getattr(self, "contact_pairs", None) or []:
             cp.slave_nodes = [f(n) for n in (cp.slave_nodes or [])]
+            # Passung: Einflussflaeche je Slave-Knoten und die Randknoten, die
+            # nicht haften (contact.py liest beide ueber die Knotennummer).
+            # Bis zum 23.09.2026 blieben sie stehen: nach knoten_loeschen(0)
+            # hatte ein Slave-Knoten keine Einflussflaeche mehr - seine
+            # Lochleibungsgrenze wurde 0, also keine -, und der Randknoten war
+            # ein anderer (Befund B107)
+            if getattr(cp, "knotenflaechen", None):
+                cp.knotenflaechen = {f(k): a for k, a in cp.knotenflaechen.items()}
+            if getattr(cp, "rand_knoten", None):
+                cp.rand_knoten = [f(n) for n in cp.rand_knoten]
             # master_faces sind **Knotenlisten** (drei oder vier Knoten je
             # Facette, siehe ContactPair) - contact.py liest sie als
             # Knotennummern. Ohne diese Zeile zeigten sie nach dem Loeschen
@@ -3717,12 +3873,45 @@ class Model:
                              if int(sk.master) != i and sk.slaves]
         for L in (getattr(self, "layer", None) or {}).values():
             L.knoten = [n for n in (L.knoten or []) if int(n) != i]
+        self._knoten_aus_gruppen_und_passung({i})
         self.nodes = np.delete(np.asarray(self.nodes, float), i, axis=0)
         self._knotenverweise_abbilden({n: n - 1 for n in range(i + 1, self.nn + 1)})
         return ""
 
-    def netzknoten_loeschen(self) -> int:
+    def _knoten_aus_gruppen_und_passung(self, weg: set) -> None:
+        """Geloeschte Knoten aus den Normalengruppen der Flaechenlager (samt
+        ihrer Einflussflaeche) und aus den Passungsdaten der Kontaktpaare
+        (Einflussflaeche, Randknoten) nehmen - **vor** dem Umnummerieren,
+        sonst zeigte die alte Nummer danach auf einen anderen Knoten
+        (Befund B107, 23.09.2026)."""
+        for x in self.surface_supports:
+            if not getattr(x, "gruppen", None):
+                continue
+            neu = []
+            for g in x.gruppen:
+                kn = list(g[2])
+                halten = [int(n) not in weg for n in kn]
+                g2 = [g[0], g[1], [n for n, ok in zip(kn, halten) if ok]]
+                if len(g) > 3:
+                    fl = list(g[3])
+                    g2.append([a for a, ok in zip(fl, halten) if ok] if len(fl) == len(kn) else fl)
+                    g2 += list(g[4:])
+                neu.append(g2)
+            x.gruppen = neu
+        for cp in getattr(self, "contact_pairs", None) or []:
+            if getattr(cp, "knotenflaechen", None):
+                cp.knotenflaechen = {k: a for k, a in cp.knotenflaechen.items() if int(k) not in weg}
+            if getattr(cp, "rand_knoten", None):
+                cp.rand_knoten = [n for n in cp.rand_knoten if int(n) not in weg]
+
+    def netzknoten_loeschen(self, kandidaten=None) -> int:
         """Alle Knoten entfernen, an denen **nichts mehr haengt** - in einem Zug.
+
+        ``kandidaten``: nur diese Knoten duerfen weg - die Knoten der eben
+        geloeschten Elemente; None = jeder Knoten, an dem nichts haengt. Die
+        Oberflaeche (gui.main._vernetzen) gibt sie an, denn ein gesetzter
+        Konstruktionsknoten, an dem noch nichts haengt, gehoert zu keinem
+        Netz und bleibt stehen (Befund B062, 23.09.2026).
 
         Das sind die Knoten eines geloeschten Netzes: :meth:`elemente_loeschen`
         nimmt die Elemente, die Knoten blieben. Nach einem Neuvernetzen
@@ -3794,6 +3983,12 @@ class Model:
         for f in self.flaechen.values():
             merke(f.ecken or [])
             merke(getattr(f, "integrierte_knoten", None) or [])
+        if kandidaten is not None:
+            # Wer kein Kandidat ist, bleibt - wie ein benutzter Knoten
+            frei = np.ones(nn, bool)
+            idx = [int(k) for k in kandidaten if 0 <= int(k) < nn]
+            frei[idx] = False
+            benutzt |= frei
         weg = np.flatnonzero(~benutzt)
         if not len(weg):
             return 0
@@ -3808,6 +4003,7 @@ class Model:
             areas = getattr(x, "areas", None)
             if areas is not None and len(areas) == len(alt_kn):
                 x.areas = [a for a, ok in zip(areas, halten) if ok]
+        self._knoten_aus_gruppen_und_passung({int(k) for k in weg})
         self.nodes = np.asarray(self.nodes, float)[bleibt]
         self._knotenverweise_abbilden(neu)
         return int(len(weg))
@@ -4028,6 +4224,29 @@ class Model:
                 return s
         return None
 
+    def stellung_unbewegt(self, stellung: str) -> bool:
+        """Nennt eine Situation mit *stellung* die unbewegte Lage? Ja, wenn
+        der Name leer ist, oder wenn er GRUNDSTELLUNG ist und keine Stellung
+        so heisst.
+
+        An einer Stelle, weil situationsmodell, aktive_elemente und
+        Model.check dasselbe meinen muessen: bis zum 23.09.2026 rechneten die
+        ersten beiden 'Grundstellung' ohne Stellung dieses Namens als
+        unbewegt, und check() meldete sie als unbekannte Stellung (FEHLER,
+        CLI Exit 2; Befund B108).
+
+        Eine echte Stellung dieses Namens geht vor: die Maske Stellung prueft
+        nur auf leeren und doppelten Namen, und der RFEM-Import benennt
+        Stellungen nach den Strukturmodifikationen. Die erste Kur zu B108
+        (Stand b72e754) nahm 'Grundstellung' immer als unbewegt und uebersah
+        so eine Stellung still - gemessen 24.09.2026 an zwei Kragarmen
+        HEA 200, deren Stellung 'Grundstellung' Stab B abschaltet: w am Ende
+        von B -11,8131 mm statt 0,0 mm (Stand ec6448c), keine Zeile in
+        check() oder im Protokoll."""
+        if not stellung:
+            return True
+        return stellung == GRUNDSTELLUNG and self.stellung(stellung) is None
+
     def grundmaske(self):
         """Maske (n_elemente,) der Elemente, die ueberhaupt wirken: False fuer
         die Elemente abgeschalteter Staebe (Member.aus, in RFEM „deaktiviert");
@@ -4055,7 +4274,7 @@ class Model:
                 aktiv[int(i)] = False
         # Die Stellung der Situation schaltet ihre Staebe, Flaechen und
         # Volumen ab - das gehoert zur Wirkung des Systems in dieser Stellung
-        st = self.stellung(sit.stellung) if sit.stellung else None
+        st = None if self.stellung_unbewegt(sit.stellung) else self.stellung(sit.stellung)
         if st is not None and hasattr(st, "deaktivierte_elemente"):
             for i in st.deaktivierte_elemente(self):
                 aktiv[int(i)] = False
@@ -5233,6 +5452,15 @@ class Model:
                 msgs.append(f"FEHLER: Element {i}: Querschnitt '{e.sec}' unbekannt")
             if e.typ in _EL.SCHALEN_TYPEN and e.sec not in self.shells:
                 msgs.append(f"FEHLER: Element {i}: Schalendicke '{e.sec}' unbekannt")
+            # Aus JSON oder Import kommt ein Element ohne add_element herein.
+            # Eine falsche Knotenzahl stand bis zum 23.09.2026 in keiner
+            # Zeile (hex8 mit 7 Knoten) oder liess check() selbst werfen
+            # (tet4 mit 3 Knoten, Befund B106); die Diagnose laesst so ein
+            # Element aus (diagnose.knotenzahl_falsch)
+            art = _EL.ELEMENTE.get(e.typ)
+            if art is not None and len(e.nodes) != art.knoten:
+                msgs.append(f"FEHLER: Element {i} ({e.typ}): {len(e.nodes)} Knoten, "
+                            f"erwartet {art.knoten}")
             for n in e.nodes:
                 if n < 0 or n >= self.nn:
                     msgs.append(f"FEHLER: Element {i}: Knoten {n} existiert nicht")
@@ -5261,7 +5489,9 @@ class Model:
             if lc.situation and lc.situation not in namen:
                 msgs.append(f"FEHLER: Lastfall '{lc.name}': Situation '{lc.situation}' unbekannt")
         for sit in self.situationen.values():
-            if sit.stellung and self.stellung(sit.stellung) is None:
+            # 'Grundstellung' ohne Stellung dieses Namens ist die unbewegte,
+            # keine unbekannte (stellung_unbewegt, wie situationsmodell rechnet)
+            if not self.stellung_unbewegt(sit.stellung) and self.stellung(sit.stellung) is None:
                 msgs.append(f"FEHLER: Situation '{sit.name}': Stellung '{sit.stellung}' unbekannt")
             if sit.deaktiviert and len(sit.deaktiviert) >= len(self.elements):
                 msgs.append(f"FEHLER: Situation '{sit.name}': alle Elemente deaktiviert")
@@ -5279,10 +5509,22 @@ class Model:
             # Ein Zustand darf ein Lastfall oder eine Kombination sein - die
             # FAT-Kombinationen aus RFEM (CBG-Trolley: 20 Ermuedungslasten je
             # ein Zustand gegen den Nullzustand) sind Kombinationen, und der
-            # Nachweis liest beide aus den Ergebnissen (ec3.fatigue, all_res)
-            for k in (f.case_max, f.case_min):
+            # Nachweis liest beide aus den Ergebnissen (ec3.fatigue, all_res).
+            # Geprueft werden die Zustaende, die der Nachweis liest: bei einem
+            # Verlauf die Glieder, sonst case_max/case_min. Bis zum 23.09.2026
+            # pruefte diese Zeile nur case_max/case_min - ein unbekanntes Glied
+            # 'WEG' im Verlauf meldete erst die Rechnung ("unvollständig",
+            # Befund B109), ein nie gelesenes altes case_max 'WEG' eines
+            # Verlaufs dagegen war ein FEHLER, obwohl die Rechnung D = 0,3833355
+            # "erfüllt" ergab (Befund B110). Ebenso ergab ein aus der alten
+            # Maske mitgefuehrtes case_max nach dem Loeschen dieses Lastfalls
+            # einen FEHLER fuer eine Last, die ihn gar nicht nennt (Befund
+            # B067): ein Verlauf liest case_max/case_min nicht (ec3.fatigue und
+            # seit 23.09.2026 auch der Anschluss).
+            gelesen = list(f.folge) if getattr(f, "folge", None) else [f.case_max, f.case_min]
+            for k in dict.fromkeys(gelesen):
                 if k and k not in self.load_cases and k not in self.combinations:
-                    msgs.append(f"FEHLER: Ermuedungslast '{f.name}': Lastfall oder Kombination '{k}' unbekannt")
+                    msgs.append(f"FEHLER: Ermüdungslast '{f.name}': Lastfall oder Kombination '{k}' unbekannt")
             # ... aber keine oder-verknuepfte Ergebniskombination: sie hat nur
             # eine Umhuellende (an.envelopes), kein Einzelergebnis, und der
             # Nachweis dieser Last kann nicht gefuehrt werden. Bis zum
@@ -5393,6 +5635,12 @@ class Model:
             "meta": dict(self.meta),
             "nodes": knoten,
             "elements": elemente,
+            # nur, was ein tetp-Element liest: verwaiste Eintraege (etwa nach
+            # netzknoten_loeschen, das die Kantenmitten nicht mitfuehrt)
+            # ueberstanden sonst Speichern und Laden - siehe
+            # tetp_kantenmitten_gelesen
+            "tetp_kantenmitten": _kantenmitten_liste(tetp_kantenmitten_gelesen(
+                getattr(self, "tetp_kantenmitten", None), self.elements)),
             "materials": {k: asdict(v) for k, v in self.materials.items()},
             "sections": {k: asdict(v) for k, v in self.sections.items()},
             "shells": {k: asdict(v) for k, v in self.shells.items()},
@@ -5495,6 +5743,11 @@ class Model:
             if fortschritt is not None and (i & 8191) == 0 and i:
                 _melde(fortschritt, 0.15 + 0.60 * i / max(1, n_el),
                        f"Element {i} von {n_el} aufbauen")
+        # Dateien vor dem 23.09.2026 kennen den Schluessel nicht: gerade
+        # Kanten, wie sie bis dahin geladen wurden. Ein Eintrag, den kein
+        # tetp-Element liest, faellt weg (wie beim Schreiben, siehe to_dict)
+        m.tetp_kantenmitten = tetp_kantenmitten_gelesen(
+            _kantenmitten_aus(d.get("tetp_kantenmitten")), m.elements)
         _melde(fortschritt, 0.78, "übriges Modell aufbauen")
         m.materials = {k: _dc(Material, v) for k, v in d["materials"].items()}
         m.sections = {k: _dc(Section, v) for k, v in d["sections"].items()}
@@ -5718,6 +5971,90 @@ def _support_dict(s: Support) -> dict:
 
 def _support_from(d: dict) -> Support:
     return _beh_from(Support, d)
+
+
+def tetp_kanten(elemente) -> np.ndarray:
+    """Die Kanten der Tetraeder mit Ordnung p in ``elemente``, so wie
+    ``tetp.geometrie_modell`` die Kantenmitten nachschlaegt: (6 n, 2) int64,
+    je Zeile (a, b) mit a < b aus den vier Ecken, je Element die sechs
+    Kanten in der Reihenfolge von ``tetp.TET10_KANTEN``, die Elemente in
+    ihrer Reihenfolge - eine gemeinsame Kante steht mehrfach."""
+    from .elements import tetp as _tp
+    ecken = [e.nodes[:4] for e in elemente if _tp.ist_tetp(e.typ)]
+    if not ecken:
+        return np.zeros((0, 2), dtype=np.int64)
+    k = np.asarray(ecken, dtype=np.int64).reshape(-1, 4)[:, np.asarray(_tp.TET10_KANTEN)]
+    k.sort(axis=2)
+    return k.reshape(-1, 2)
+
+
+def tetp_kantenmitten_gelesen(km, elemente) -> dict:
+    """Die Eintraege von ``km`` ({(a, b): Kantenmitte}), die ein Tetraeder mit
+    Ordnung p in ``elemente`` liest, in der Reihenfolge von ``km``.
+
+    Die uebrigen wirken im Augenblick nirgends, koennen aber spaeter wirken:
+    faellt ihre Kante auf die eines neuen tetp-Elements, kruemmt sie es.
+    ``Model.netzknoten_loeschen`` fuehrt die Kantenmitten nicht mit und
+    laesst solche verwaisten Eintraege stehen. Gemessen an bc1dfe0 (zweimal
+    am 23.09., einmal am 24.09.2026, tests.test_importers
+    test_json_anhaengen_verwaiste_kantenmitten): an eine Hohlkugel, deren
+    tetp-Netz so entfernt war, einen Kragarm aus geraden tetp3 gehaengt -
+    8 Elemente bis 5556 mm neben der Quelle, 7 davon umgeklappt, ohne
+    Warnung. Darum schreibt ``to_dict`` nur diese Eintraege, ``from_dict``
+    liest nur sie, und das Anhaengen nimmt nur sie mit."""
+    if not km:
+        return {}
+    k = tetp_kanten(elemente)
+    if not len(k):
+        return {}
+    n = int(k.max()) + 1
+    schl = np.asarray(list(km), dtype=np.int64).reshape(-1, 2)
+    im_netz = ((schl >= 0) & (schl < n)).all(axis=1)
+    code = np.where(im_netz, schl[:, 0] * n + schl[:, 1], -1)
+    liest = im_netz & np.isin(code, k[:, 0] * n + k[:, 1])
+    return {s: p for (s, p), ja in zip(km.items(), liest.tolist()) if ja}
+
+
+def _kantenmitten_liste(km) -> list:
+    """``Model.tetp_kantenmitten`` {(a, b): Punkt} fuer die Datei:
+    [[a, b, x, y, z], ...] in der Reihenfolge des Woerterbuchs.
+
+    Die Koordinaten gehen als Python-float in JSON; json schreibt die
+    kuerzeste Darstellung, die beim Lesen denselben Wert ergibt - der
+    Umlauf ist bitgleich (tests.test_tetp_rechnung). Die Schluessel werden
+    nicht geordnet oder umgedreht: was hier ankommt, kommt zurueck
+    (``to_dict`` gibt nur, was ein tetp-Element liest)."""
+    aus = []
+    for (a, b), p in (km or {}).items():
+        x, y, z = np.asarray(p, dtype=float).reshape(3).tolist()
+        aus.append([int(a), int(b), x, y, z])
+    return aus
+
+
+def _kantenmitten_aus(liste) -> dict:
+    """Gegenstueck zu :func:`_kantenmitten_liste`. Eine Datei ohne den
+    Schluessel (vor dem 23.09.2026) ergibt {} - gerade Kanten wie bisher.
+    Was der Schreiber nie erzeugt (keine fuenf Zahlen je Eintrag,
+    gebrochene Knotennummer), bricht mit Klartext ab, statt still eine
+    gekruemmte Kante zu verlieren oder an die falsche Stelle zu setzen."""
+    if not liste:
+        return {}
+    try:
+        feld = np.asarray(liste, dtype=float)
+    except (TypeError, ValueError) as ex:
+        raise ValueError("Modelldatei: 'tetp_kantenmitten' ist beschädigt - erwartet "
+                         "sind je gekrümmter Kante fünf Zahlen [Knoten a, Knoten b, x, y, z]"
+                         ) from ex
+    if feld.ndim != 2 or feld.shape[1] != 5:
+        raise ValueError("Modelldatei: 'tetp_kantenmitten' ist beschädigt - erwartet sind "
+                         "je gekrümmter Kante fünf Zahlen [Knoten a, Knoten b, x, y, z], "
+                         f"gelesen Form {feld.shape}")
+    kn = feld[:, :2]
+    if not np.array_equal(kn, np.round(kn)) or (kn < 0).any():
+        raise ValueError("Modelldatei: 'tetp_kantenmitten' ist beschädigt - eine "
+                         "Knotennummer ist keine natürliche Zahl")
+    punkte = feld[:, 2:].copy()
+    return dict(zip(map(tuple, kn.astype(np.int64).tolist()), punkte))
 
 
 def _dc(cls, d: dict):

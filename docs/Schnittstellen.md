@@ -194,25 +194,33 @@ Geprüft in `tests/test_infocad.py`.
 **Lastkombinationen aus der Tabelle zählen sich ab** (seit 22.09.2026). Die
 Schlusszeile „n von m Lastkombinationen“ zählt jede Zeile von
 „2.5 Lastkombinationen“. Eine eigene Protokollzeile bekommt jede nicht
-übernommene Zeile (mit Grund), jede aufgelöste, jede ohne Nummer und jede,
-die einen Ausweichnamen bekommt, weil ihr Name schon vergeben ist (mit ihrem
-Ergebnis); eine Zeile, die nur aus eigenen Lastfall-Anteilen besteht und
-unter ihrer Tabellennummer angelegt wird, steht nur in dieser Zählung. Ein Verweis auf eine andere Lastkombination
-derselben Tabelle („CO3“ oder „LK3“, auch wenn sie weiter unten steht) wird
+übernommene Zeile (mit Grund), jede aufgelöste, jede ohne Nummer, jede mit
+einer Nummer, die die Tabelle mehrfach führt (seit 23.09.2026, siehe unten),
+und jede, die einen Ausweichnamen bekommt, weil ihr Name schon vergeben ist
+(mit ihrem Ergebnis); eine Zeile, die nur aus eigenen Lastfall-Anteilen
+besteht und unter ihrer Tabellennummer angelegt wird, die die Tabelle nur
+einmal führt, steht nur in dieser Zählung. Ein Verweis auf eine andere
+Lastkombination derselben Tabelle („CO3“ oder „LK3“, auch wenn sie weiter unten steht) wird
 mit deren Faktoren mal dem Vorfaktor aufgelöst: „LF1 + CO1“ mit
 CO1 = 1,35·LF1 + 1,5·LF2 ergibt 2,35·LF1 + 1,5·LF2, und das Protokoll sagt
 es. Nicht auflösbar sind ein Verweis auf eine **Ergebniskombination** („EK1“
 — eine Umhüllende, kein Summand), ein Kreis (CO2 → CO4 → CO2), eine
-Nummer, die die Tabelle nicht führt, und ein Verweis auf eine Kombination,
+Nummer, die die Tabelle nicht führt, eine Nummer, die sie mehrfach führt,
+und ein Verweis auf eine Kombination,
 die selbst nicht angelegt wird. Eine solche Kombination wird **nicht
 angelegt**, auch nicht mit ihren übrigen Anteilen — sie wäre zu klein und sähe
 im Nachweis vollständig aus —, sondern mit Formel und Grund als Warnung
 genannt; ebenso eine Formel ohne erkennbaren Lastfall. Der Grund steht je
-Verweis da: „CO9: die Tabelle führt keine Nummer 9“, „CO2: Kreis, führt über
+Verweis da: „CO9: die Tabelle führt keine Nummer 9“, „CO2: die Tabelle
+führt die Nummer 2 mehrfach“, „CO2: Kreis, führt über
 Verweise auf diese Kombination zurück“ (auf sich selbst: „CO1: Kreis,
 verweist auf diese Kombination selbst“) oder „CO1: wird selbst nicht
 angelegt, siehe Warnung zu LK1“ — dann nennt die Warnung zu LK1 den
-eigentlichen Grund. Bis zum 22.09.2026 fiel eine
+eigentlichen Grund. In einer Kette verweist jede Warnung nur einen Schritt
+weiter: bei „1: 1.35*LF1 + x“, „2: CO1 + LF2“, „3: CO2 + LF3“ verweist die
+Warnung zu LK3 auf LK2 und die zu LK2 auf LK1; den eigentlichen Grund (nicht
+erkannter Teil „+ x“) nennt erst die Warnung zu LK1 am Ende der Kette, und
+keine der drei Kombinationen wird angelegt. Bis zum 22.09.2026 fiel eine
 Zeile ohne eigenen LF-Faktor **vor** der Warnung weg: an den vier Zeilen
 „1.35*LF1 + 1.5*LF2“, „CO1 + CO3“, „1.0*EK1“, „LF1 + CO1“ meldete das
 Protokoll „2 Lastkombinationen“ und eine Warnung zu LK4, LK2 und LK3
@@ -224,7 +232,7 @@ mehr, die Nummer wird auch aus „CO5“ gelesen.
 **Ein Minus ohne Zahl zieht ab** (seit 23.09.2026). Das Vorzeichen wird
 getrennt von der Zahl gelesen: „LF1 - LF2“ ergibt LF1 − LF2, „LF2 - CO1“ mit
 CO1 = 1,35·LF1 ergibt LF2 − 1,35·LF1, und die Protokollzeile der Auflösung
-nennt das Ergebnis samt Vorzeichen („… aufgeloest: 1*LF2 - 1.35*LF1“).
+nennt das Ergebnis samt Vorzeichen („… aufgelöst: 1*LF2 - 1.35*LF1“).
 Vorher stand das Vorzeichen in derselben Gruppe wie die Ziffern und fiel ohne
 Zahl weg: „LF1 - LF2“ ergab LF1 + LF2, und „LF2 - CO1“ wurde mit der
 Auflösung der Verweise vom 22.09.2026 still zu LF2 + 1,35·LF1 — vorher war
@@ -237,15 +245,21 @@ gemessen.
 (seit 23.09.2026). Erkannt werden Anteile der Form „Zahl * LF n“ (auch LC)
 und Verweise CO, LK, EK und RC; RC ist das englische Kürzel der
 Ergebniskombination und wird wie EK behandelt. Bleibt daneben Text übrig,
-der kein Anteil ist (außer Leerzeichen und „+“), wird die Kombination nicht
+der kein Anteil ist (außer Leerzeichen und je einem „+“ zwischen zwei
+Anteilen, siehe unten), wird die Kombination nicht
 angelegt, sondern mit Formel und dem übrig gebliebenen Text gewarnt:
-„Kombination LK8 („1.35*LF1 + 1.5*Schnee“): Formel nicht vollstaendig gelesen
-- nicht uebernommen (nicht erkannter Teil ['+ 1.5*Schnee'])“. Vorher fiel
-dieser Text ohne Meldung weg, sobald daneben ein Lastfall-Anteil stand.
-Gemessen am Stand vom 23.09.2026 vor dieser Änderung: „1.35*LC1 + RC1“
-wurde 1,35·LF1, „1.35*LF1 + 1.5*LF2 + 0.9*RC2“ wurde 1,35·LF1 + 1,5·LF2,
-„1.35*LF1 + 1.5*Schnee“ wurde 1,35·LF1 und „1.35*(LF1 + LF2)“ wurde
-LF1 + LF2, jeweils ohne Protokollzeile. Ein Verweis auf eine solche Zeile
+„Kombination LK8 („1.35*LF1 + 1.5*Schnee“): Formel nicht vollständig gelesen
+– nicht übernommen (nicht erkannter Teil ['+ 1.5*Schnee'])“. Vorher fiel
+dieser Text ohne Meldung weg, sobald daneben ein Lastfall-Anteil oder ein
+aufgelöster Verweis stand. Gemessen am Stand vom 23.09.2026 vor dieser
+Änderung: „1.35*LC1 + RC1“ wurde 1,35·LF1, „1.35*LF1 + 1.5*LF2 + 0.9*RC2“
+wurde 1,35·LF1 + 1,5·LF2, „1.35*LF1 + 1.5*Schnee“ wurde 1,35·LF1 und
+„1.35*(LF1 + LF2)“ wurde LF1 + LF2, jeweils ohne Protokollzeile. Neben einem
+Verweis ergaben „1: 1.35*LF1“, „2: CO1 + Schnee“ die Kombination
+LK2 = 1,35·LF1 und „2: 2*CO1 x“ LK2 = 2,7·LF1; die Infozeile zur Auflösung
+nannte dabei nur das Ergebnis („… aufgeloest: 1.35*LF1“ bzw.
+„… aufgeloest: 2.7*LF1“), nicht den weggefallenen Text. Heute wird LK2 in
+beiden Fällen gewarnt und nicht angelegt. Ein Verweis auf eine solche Zeile
 bleibt offen, die verweisende Kombination wird ebenfalls gewarnt und nicht
 angelegt: „1: 1.35*LF1 + 1.5*Schnee“, „2: CO1 + LF2“ ergibt zwei Warnungen
 und „0 von 2 Lastkombinationen“. In der ersten Fassung dieser Regel vom
@@ -253,24 +267,81 @@ selben Tag ging der übrige Text nicht mit in die Auflösung der Verweise:
 dieselben zwei Zeilen ergaben LK2 = LF2 + 1,35·LF1 mit nur einer Infozeile
 und „1 von 2“, und „2: LF3 + CO1“ nahm aus „1: 1.35*(LF1 + LF2)“ die Anteile
 LF1 + LF2 ohne den Faktor 1,35 mit. Dieselbe Regel trifft auch einen
-Vorsatz wie „GZT-1: 1.35*LF1“ oder einen Zusatz wie „LF1/p“; beides wurde
-vorher mit dem erkannten Rest angelegt. Alle Formeln in diesem Absatz sind
-selbst gebaut: ob RFEM RC, EK, Klammern oder solche Zusätze in eine
-Lastkombinationsformel schreibt, ist an keiner echten Datei gemessen.
+Vorsatz wie „GZT-1: 1.35*LF1“, einen Zusatz wie „LF1/p + 1.5*LF2“ oder
+„1.35*LF1 + 1.5*LF2 [GZT]“ und eine Aufzählung mit Komma statt Plus wie
+„1.35*LF1, 1.5*LF2“: die Warnung nennt den nicht erkannten Teil („GZT-1:“,
+„/p“, „[GZT]“ bzw. „,“), die Kombination wird nicht angelegt. Am Stand vor
+dieser Änderung wurden alle vier mit dem erkannten Teil angelegt, ohne
+Protokollzeile. Alle Formeln in diesem Absatz sind selbst gebaut: ob RFEM
+RC, EK, Klammern, Kommas oder solche Zusätze in eine Lastkombinationsformel
+schreibt, ist an keiner echten Datei gemessen; darum liest das Programm
+keinen dieser Zusätze, sondern warnt.
+
+**Ein „+“ verbindet nur zwei Anteile** (seit 23.09.2026). Vor dem ersten
+und nach dem letzten Anteil steht keines, zwischen zweien höchstens eines;
+„1.35*LF1+1.5*LF2“, „1.35*LF1 + -1.0*LF2“ und „-LF1 + LF2“ bleiben, wie
+sie waren. Ein „+“ am Ende, am Anfang oder doppelt ist ein nicht erkannter
+Teil: „1.35*LF1 + 1.5*LF2 +“ wird nicht angelegt, sondern gewarnt („…
+Formel nicht vollständig gelesen – nicht übernommen (nicht erkannter Teil
+['+'])“), ebenso „1.35*LF1 ++ 1.5*LF2“ (['++']) und „+ 1.35*LF1“ (['+']).
+Ein „+“ am Ende kann auf eine abgeschnittene Formel deuten. Vorher verwarf
+der Parser jedes Stück vor, zwischen oder nach den Anteilen, das nur aus
+Leerzeichen und „+“ bestand, gleich wie viele „+“ darin standen; gemessen am
+Stand ec6448c wurden die ersten beiden
+Formeln ohne Meldung 1,35·LF1 + 1,5·LF2 und die dritte 1,35·LF1 („3 von 3
+Lastkombinationen“). Ein „-“ am Ende wurde schon vorher gewarnt. Ob RFEM je
+eine abgeschnittene Formel schreibt, ist an keiner echten Datei gemessen.
 
 **Eine Zeile ohne Nummer bekommt eine freie Nummer** (seit 23.09.2026), und
 zwar die nächste nach der größten Nummer der Tabelle; das Protokoll nennt
-sie: „Kombination LK3 (Tabellenzeile 2 ohne Nummer): 1.5*LF2“. Vorher hieß
+sie: „Kombination LK3 (Zeile 3 in „2.5 Lastkombinationen“ ohne Nummer):
+1.5*LF2“. Vorher hieß
 sie LK(Zahl der bisher angelegten + 1) und konnte so den Namen einer
 nummerierten Zeile belegen, die das Protokoll unter diesem Namen warnte oder
 auflöste. Gemessen an den Zeilen „1: 1.35*LF1“, „(ohne Nummer): 1.5*LF2“,
-„2: 1.0*EK1“: das Protokoll warnte „LK2 … nicht uebernommen“, im Modell stand
+„2: 1.0*EK1“: das Protokoll warnte, LK2 werde nicht übernommen, im Modell stand
 aber LK2 = 1,5·LF2. Bei „(ohne Nummer): 1.5*LF2“, „1: 1.35*LF1 + CO2“,
 „2: LF2“ nannte die Infozeile LK1 = 1,35·LF1 + LF2, LK1 war aber 1,5·LF2 und
-die aufgelöste Kombination hieß LK1_2. Ist ein Name schon vergeben (doppelte
-Nummer in der Tabelle, oder das Modell hatte ihn vorher), nennt die
-Protokollzeile den Ausweichnamen: „Kombination LK2_2 (Tabellennummer 2; LK2
-gab es schon): …“.
+die aufgelöste Kombination hieß LK1_2. Ist ein Name schon vergeben, nennt die
+Protokollzeile den Ausweichnamen: hatte das Modell LK2 vorher, „Kombination
+LK2_2 (Tabellennummer 2; LK2 gab es schon): 1*LF2“; führt die Tabelle die
+Nummer 2 zweimal, „Kombination LK2_2 (Zeile 3 in „2.5 Lastkombinationen“;
+die Tabelle führt die Nummer 2 mehrfach; LK2 gab es schon): 1*LF2“.
+
+**Eine Nummer, die die Tabelle mehrfach führt, wird nicht still aufgelöst**
+(seit 23.09.2026). Ein Verweis CO n oder LK n auf sie bleibt offen, mit dem
+Grund „CO2: die Tabelle führt die Nummer 2 mehrfach“ — welche der Zeilen
+gemeint ist, steht nicht da. Die Zeilen selbst werden wie jede andere
+angelegt oder gewarnt; jede Meldung zu ihnen nennt ihre Zeile im Blatt, und
+jede angelegte bekommt eine eigene Protokollzeile. Bei „2: LF1“, „2: EK1“
+steht „Kombination LK2 (Zeile 2 in „2.5 Lastkombinationen“; die Tabelle
+führt die Nummer 2 mehrfach): 1*LF1“ neben der Warnung „Kombination LK2
+(Zeile 3 in „2.5 Lastkombinationen“; die Tabelle führt die Nummer 2
+mehrfach) („EK1“): …“. Vorher zeigte ein Verweis still auf die erste Zeile
+mit dieser Nummer. Gemessen am Stand ec6448c: „2: LF1“, „2: LF2 + CO2“,
+„(ohne Nummer): LF1“ ergab LK2_2 = LF2 + LF1 — der Verweis der Zeile auf
+ihre eigene Nummer galt nicht als Kreis —; bei „2: LF1“, „2: EK1“ warnte das
+Protokoll „Kombination LK2 („EK1“) …“, und im Modell stand LK2 = LF1 ohne
+eigene Zeile; bei „1: 1.35*LF1 + x“, „1: LF2“, „2: CO1“ meldete LK2 „CO1:
+wird selbst nicht angelegt, siehe Warnung zu LK1“, obwohl LK1 = LF2 angelegt
+war. Ob RFEM doppelte Nummern schreibt, ist an keiner echten Datei gemessen.
+
+**Die Meldung nennt die Zeile im Blatt** (seit 23.09.2026). „Zeile 5 in
+„2.5 Lastkombinationen““ ist die fünfte Zeile des Blatts bzw. der
+CSV-Datei, Kopf- und Leerzeilen mitgezählt; im xlsx-Blatt ist das die
+Zeilennummer am linken Rand. Eine Zelle, die in Anführungszeichen einen
+Zeilenumbruch enthält, zählt in der CSV-Datei als eine Zeile: gemessen heißt
+die Zeile danach „Zeile 3“, im Texteditor steht sie in Zeile 4. Vorher hieß
+es „Tabellenzeile k“, und k zählte nur die nicht leeren Datenzeilen.
+Gemessen am Stand ec6448c an einer CSV-Datei mit Kopfzeile, „1: 1.35*LF1“,
+zwei Leerzeilen, „(ohne Nummer): 1.5*LF2“ und „(ohne Nummer): Schnee“: die
+Zeile 5 der Datei hieß „Tabellenzeile 2“, die Zeile 6 „Tabellenzeile 3“.
+
+Die Meldungen zu Lastkombinationen schreiben seit 23.09.2026 durchgehend mit
+Umlauten („nicht auflösbar – nicht übernommen“, „Umhüllende“,
+„aufgelöst“). Vorher stand der Rahmen einer Warnung in ASCII-Umschrift
+(„nicht aufloesbar - nicht uebernommen“), die Gründe darin mit Umlauten
+(„führt“).
 
 ## IFC-Statikmodell – Details
 
@@ -310,6 +381,19 @@ Small-, Large- und Free-Field-Format, Fortsetzungszeilen, Zahlen wie
 `1.2-3`, `THRU`, `INCLUDE`. Lastkarten mit SID werden Lastfälle „SID n“;
 `LOAD`-Karten werden Kombinationen. Nastran-Ebene 1 entspricht der lokalen
 y-Achse (I1 → Iz, I2 → Iy); die Stabverdrehung folgt dem Orientierungsvektor.
+
+CHEXA mit 20 und CPENTA mit 15 Knoten zählen nach den Kantenmitten unten die
+**senkrechten** Kanten und dann die oberen; Statik3D (wie VTK und Abaqus) umgekehrt.
+Import und Export ordnen die Kantenmitten deshalb um. Bis zum 23.09.2026 blieb die
+Folge unverändert: ein regelmäßiger Würfel (CHEXA, 20 Knoten) kam mit 1,046 statt
+1,0 m³ herein, ein Keil (CPENTA, 15 Knoten) mit 0,405 statt 0,5 m³ – die Elemente
+waren still verzerrt. Export und Import in Statik3D hoben sich dabei auf; andere
+Programme lasen die exportierte Datei falsch.
+
+Ein CHEXA mit zusammenfallenden Knoten (zum Keil entartet) wird beim Import
+umgewandelt; das Protokoll nennt Anzahl und Genauigkeit der Zielart – beim
+Sechsflächner mit 20 Knoten die des quadratischen Keils (pent15), nicht die des
+linearen.
 
 ## CAD (gmsh)
 
@@ -749,7 +833,13 @@ verschwanden besonders leise, weil sie schon beim Auflösen der Umsetzung
 wegfielen, bevor die Leseschleife sie sah; gezählt wird deshalb gegen die
 Zahl der Rohzeilen. Vorher nannte das Protokoll bei Linien- und Volumenlasten
 je eine Zeile, bei den Flächen aber nichts — der Anwender durfte daraus
-schließen, dort sei nichts weggefallen.
+schließen, dort sei nichts weggefallen. Eine Flächenlast, deren Lastfall sich
+nicht auflösen lässt (der Lastfall fehlt in der Datei oder ist keiner, den der
+Import liest), hat seit 23.09.2026 eine eigene Warnung „k Flaechenlasten ohne
+aufloesbaren Lastfall“, wie bei den Stablasten. Vorher zählte der Leser sie
+nicht, und der Abgleich meldete sie mit dem falschen Grund „die Datei führt
+ihre Umsetzungstabelle nicht“ (gemessen an zwei Flächenlasten, eine davon am
+Lastfall 99, den es nicht gibt).
 
 **Die Stablasten zählen sich ab** (seit 22.09.2026). Jede Zeile der Tabelle
 `MemberLoad` hat genau einen gezählten Ausgang — übernommen (Gleichlast,
@@ -759,13 +849,28 @@ die Summe wird gegen die Zahl der Rohzeilen abgeglichen; was dabei fehlt,
 meldet die Warnung „k von n Stablasten waren nicht zu lesen“. Gezählt wird
 **je Lastzeile**, nicht je Stab: eine Gleichlast auf zwei Stäben ist eine
 Stablast („(2 Stabzuordnungen)“), eine Vorspannung auf drei Stäben eine
-Stabvorspannung („auf 3 Staebe“). Vorher zählte die Gleichlast je Stab und
+Stabvorspannung („auf 3 verschiedene Staebe“). Vorher zählte die Gleichlast je Stab und
 die Vorspannung je Stabelement, und zwei Wege fehlten ganz: eine Stablast,
 deren Umsetzungstabelle die Datei nicht führt, und eine ohne auflösbaren
 Lastfall. An vier Zeilen (Gleichlast, Einzellast, Temperatur, fehlende
 Umsetzung) nannte das Protokoll 3. Am CBG-Trolley geht die Abzählung auf:
 198 Zeilen = 62 Gleichlasten (944 Stabzuordnungen) + 136 nicht übernommen
 (129× Verteilung 2, 7× Verteilung 7).
+
+**Stablasten auf Stäben, die das Modell nicht führt** (seit 23.09.2026).
+Nennt eine Gleichlast mehrere Stäbe und fehlt einer davon im Modell — seine
+Linie hat keine Knoten, sein Stabtyp trägt nicht (Ergebnisstab,
+Bemessungsstreifen, Lastverteilungsstab, Flächenmodell) oder die Datei führt
+ihn gar nicht —, kommt die Last auf den übrigen Stäben an, und die Warnung
+„dabei k Stabzuordnungen auf Staeben, die das Modell nicht fuehrt (Stab …) -
+dieser Anteil der Last fehlt“ nennt den fehlenden Anteil mit den
+RFEM-Stabnummern. Vorher fiel er wortlos weg, und die Lastzeile zählte als
+übernommen; die Abzählung gegen die Rohzeilen fängt das nicht, weil sie
+Lastzeilen zählt. Gemessen an zwei Gleichlasten auf den Stäben [1, 2] und
+[1, 77] mit Stab 2 als Ergebnisstab: das Protokoll sagte nur „2 Stablasten
+(Gleichlast) an ihre Staebe gehaengt“, jetzt steht dazu „2
+Stabzuordnungen … (Stab 2, 77)“. Fehlen einer Lastzeile alle Stäbe, zählt sie
+wie bisher unter „ohne Ziel oder ohne Betrag“.
 
 **Einwirkungskategorie.** `ACTION_CATEGORY` führt nur wenige Kennzahlen;
 alles Übrige wurde still zu „Q" (veränderlich, allgemein, ψ₀ = 0,80), und das
@@ -797,6 +902,99 @@ und warnt, ψ und γ in der Lastfallmaske nachzusehen. Die erste Zeile sagt
 nicht mehr „Einwirkungskategorie übernommen“, sondern „aus der Kennzahl
 angenommen“.
 
+**Bemessungssituation und Ermüdung im Namen** (Befund B073).
+`category_from_text` nimmt Angaben zur Bemessungssituation (Einteilung nach
+DIN EN 1990, 3.2 (2)P) aus dem Text, bevor es die Einwirkung sucht, und
+prüft „Ermüdung/fatigue“ vor allen anderen Wörtern. `rfem6_db` fragt den
+Namen nur, wenn die Kennzahl Q ergibt; mit Kennzahl 1 oder 2 bleibt auch
+„Ermüdungslast - Eigengewicht“ G (gemessen am 24.09.2026).
+
+Erkannt werden nur diese Schreibweisen (`_BEMESSUNGSSITUATION`, angewandt
+auf den Text nach `norm_key`): „ständig“, „vorübergehend“,
+„außergewöhnlich“ mit einer der Endungen -e, -en, -er, -es, -em (Pflicht)
+oder „Erdbeben“ ohne Anhang unmittelbar vor „Bemessungssituation(en)“, zwei
+davon mit „und“, „u.“ oder „oder“ verbunden; „Bemessungssituation
+Erdbeben“ und „Bemessungssituation bei Erdbeben“ (auch in der Mehrzahl);
+englisch „persistent“, „transient“, „accidental“, „seismic“ vor
+„design situation(s)“, zwei davon mit „and“ oder „or“ verbunden. Nicht
+erkannt und damit weiter G bzw. A (im Protokoll unter „umgestellt“):
+„ständige/vorübergehende Bemessungssituation“, „Bemessungssituation
+ständig“, „Ständig - Bemessungssituation“ und „Ständig
+Bemessungssituation“ (ohne Endung), „Ständig und vorübergehend“ ohne
+„Bemessungssituation“, „Bemessungssituation außergewöhnlich“,
+„Außergewöhnlich - Bemessungssituation“ (gemessen am 24.09.2026).
+
+Zwei Eigenschaften von `norm_key` gelten für die ganze Deutung. Erstens
+wird jedes Zeichen außer Buchstaben und Ziffern zum Leerzeichen:
+Leerzeichen, Bindestrich und Gedankenstrich sind gleich. „Erdbeben -
+Bemessungssituation 2“ ist darum nicht von „Erdbeben-Bemessungssituation
+2“ zu unterscheiden und gilt als Situation (bleibt Q; am Stand ec6448c A),
+ebenso „Außergewöhnliche - Bemessungssituation“. Zweitens wirft `norm_key`
+Text in einem Paar runder oder eckiger Klammern weg, bevor gesucht wird
+(gedacht für Einheiten in Spaltenköpfen; ein Durchgang mit
+`[\[(][^\[\]()]*[\])]`). „Kran (Ermüdung)“ gibt Q_K, „Eigengewicht
+(Ermüdung)“ G, „Temperatur [Ermüdung]“ T und „Nutzlast
+(Bemessungssituation außergewöhnlich)“ Q. Bei geschachtelten Klammern
+fällt nur die innerste weg („Kran (Ermüdung (LM3))“ gibt FAT), eine
+offene Klammer bleibt stehen („Kran (Ermüdung“ gibt FAT). Mit Kennzahl 11
+steht „Kran (Ermüdung)“ darum als Q_K in den erzeugten Kombinationen; in
+einem Modell aus vier Lastfällen (Eigengewicht, Nutzlast, „Kran
+(Ermüdung)“, „Kran - Ermüdung“) in 14 von 23, davon 6 GZT mit 1,5, während
+„Kran - Ermüdung“ als FAT in keiner steht (gemessen am 24.09.2026). Am
+Stand ec6448c ergeben die Klammernamen dieselben Kategorien, das ist kein
+Rückschritt der Kur. In den Lastfallnamen der drei RFEM-Dateien
+stehen in Klammern nur „(+)“, „(-)“, „(+Fy)“ und „(-Fy)“ (Drehlager) bzw.
+nichts (CBG-Trolley).
+
+Gemessen am Drehlager am Stand ec6448c (23.09.2026): 96 Lastfälle wurden
+über „ständige Bemessungssituation“ zu G (48 „Bemessungslast im GZT …“,
+48 „char.Last …“), 16 über „außergewöhnliche Bemessungssituation“ zu A, und
+von den 164 „Ermüdungslast …“ 160 über „Eigengewicht“ zu G und 4 über
+„Temperatur“ zu T. Mit der Kur: 256× Q, 164× FAT, 2× P; das Protokoll
+nennt die 164 unter „zu FAT“. Die zweite Drehlager-Datei
+(…_Netz_abgestimmt_Passstifte_Kopfbolzen22) wechselt genauso, der
+CBG-Trolley gar nicht (10× G, 45× Q, 3× P vorher wie nachher). Mit den
+beiden engeren Fassungen vom 24.09.2026 (Stand 28c9326 und die jetzige mit
+Pflichtendung) an allen drei Dateien nachgemessen: dieselben Zahlen, kein
+Lastfall anders.
+
+Die erste Fassung vom 23.09.2026 (Stand d5e565d) wiederholte die
+Adjektivgruppe auch ohne Bindewort und ließ nach jedem Wort beliebige
+Buchstaben zu. Sie verschluckte dann ein Einwirkungswort direkt vor der
+Angabe, das selbst ein Situationswort ist oder damit beginnt: „Erdbeben -
+Erdbeben-Bemessungssituation“, „Erdbebenlast Bemessungssituation“ und
+„Accidental - accidental design situation“ wurden Q statt A, „Ständig -
+ständige Bemessungssituation“ Q statt G. In einem Modell aus fünf
+Lastfällen stand „Erdbeben - Erdbeben-Bemessungssituation“ (Kennzahl 11)
+damit in 16 von 26 erzeugten GZT-Kombinationen (Faktor 1,5 bzw. 1,2) statt
+in 2 außergewöhnlichen (Faktor 1,0), und das Protokoll nannte ihn nicht,
+weil Q der Kennzahl entspricht (gemessen am 23. und 24.09.2026). Die
+zweite Fassung (Stand 28c9326) ließ die Adjektivendung frei: „Ständig -
+Bemessungssituation 1“ und „Ständig Bemessungssituation“ wurden Q statt G,
+„Außergewöhnlich - Bemessungssituation“ Q statt A, ebenfalls ohne Nennung
+im Protokoll (gemessen am 24.09.2026). Mit der jetzigen Fassung geben
+diese Namen wieder A bzw. G: steht die Einwirkung selbst im Namen
+(„Eigengewicht - ständige Bemessungssituation“, „Anprall -
+außergewöhnliche Bemessungssituation“, „Erdbeben -
+Erdbeben-Bemessungssituation“, „Ständig - ständige Bemessungssituation“,
+„Ständig - Bemessungssituation 1“), bleibt sie erkannt (`tests.test_rfem6`,
+`test_bemessungssituation_ist_keine_einwirkungsart`). Ausgenommen sind vier
+Fälle, in denen die Einwirkung nicht erkannt wird und es ohne ein weiteres
+Einwirkungswort bei Q bleibt: sie ist mit „und“, „u.“ oder „oder“
+(englisch „and“, „or“) an die Angabe gebunden („Erdbeben und
+außergewöhnliche Bemessungssituation“) und zählt als Teil davon; sie steht
+selbst in der erkannten Form unmittelbar vor „Bemessungssituation“ bzw.
+„design situation“ („Erdbeben - Bemessungssituation 2“, „Außergewöhnliche -
+Bemessungssituation“, „Seismic design situation“, siehe oben); sie heißt
+„Erdbeben“ und steht unmittelbar nach „Bemessungssituation(en)“, auch mit
+„bei“ oder einem Strich dazwischen („Bemessungssituation - Erdbeben“,
+„Bemessungssituation bei Erdbeben“); oder sie steht in Klammern
+(„Nutzlast (Erdbeben)“). Am Stand ec6448c gaben die Beispiele der ersten
+drei Fälle A; die Klammern wirkten dort schon so. Das Protokoll nennt einen
+solchen Lastfall nicht unter „umgestellt“, weil Q der Kategorie aus der
+Kennzahl entspricht; mit Kennzahl 11 geht er als Q in die erzeugten
+GZT-Kombinationen ein (gemessen am 24.09.2026).
+
 **Freie Rechtecklasten.** RFEM legt das Lastfenster in die uv-Ebene eines
 eigenen Koordinatensystems (`coordinateSystem_id` → `CoordinateSystem…
 2PointsAndAngle`: Ursprung, ein Punkt auf der u-Achse, Drehwinkel der
@@ -821,7 +1019,18 @@ Am voll behinderten Stab kommt damit genau N₀ heraus; im statisch
 unbestimmten System verteilt die Rechnung die Kraft richtig um. So kommt die
 Vorspannung an, ohne dass das Programm eine eigene Vorspannlast bräuchte —
 und das Protokoll sagt es, damit niemand die Temperaturlast für ein Versehen
-hält.
+hält. Die Zeile nennt die Zahl der Lastfälle, die **verschiedenen** Stäbe,
+N₀ je Stab und die Summe der Vorspannkräfte **je Lastfall** — am Drehlager
+(gemessen 23.09.2026):
+
+    422 Stabvorspannungen als gleichwertige Temperaturlast uebernommen
+      (dT = -N_0/(E*A*alpha)) - in 422 Lastfaellen auf 16 verschiedene Staebe,
+      N_0 805 bis 952 kN je Stab, je Lastfall zusammen 12880 bis 15232 kN
+
+Bis zum 23.09.2026 stand dort „auf 6752 Staebe, zusammen 5738768 kN, im
+Mittel 850 kN je Stab“: gezählt waren die Stabzuordnungen aller Lastzeilen
+(6752 = 422 × 16) und summiert N₀ über alle 422 Lastfälle, von denen jeder
+seine eigene Vorspannung trägt — eine Zahl ohne Bedeutung.
 
 ### Strukturmodifikation: das Ausfallszenario
 
@@ -968,7 +1177,9 @@ Nachweiseinstellungen (`ermuedung_lastspiele`, Nachweise → Konfiguration;
 daneben `ermuedung_kontakt_einfrieren`, Vorgabe ein: in Kontaktmodellen wird
 nur der erste Zustand jeder Ermüdungslast nichtlinear gelöst, die weiteren
 linear mit seinem eingefrorenen Kontaktzustand),
-je Last im Dialog Ermüdungslast überschreibbar. Enthält die Zustandsmenge
+je Last in der Maske Ermüdungslasten überschreibbar. Das Protokoll nennt ihren
+Wert ausgeschrieben („globale Lastspielzahl (2000000, …)“); bis zum
+23.09.2026 stand dort „2e+06“. Enthält die Zustandsmenge
 einer Kombination die einer anderen mit mindestens zwei Zuständen
 vollständig, ist sie eine **Sammlung** von Ereignissen und bekommt 0
 Wiederholungen (unwirksam), damit nichts doppelt zählt; ein einzelner

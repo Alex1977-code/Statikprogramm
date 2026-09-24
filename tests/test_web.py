@@ -362,6 +362,46 @@ def test_contact_and_import():
     _assert_since(n0)
 
 
+def test_quader_elementtyp():
+    """Operation box: nur hex8 und tet4, jeder andere typ wird mit 400 abgewiesen.
+
+    Bis 23.09.2026 reichte _op_box d.get("typ") ungeprueft an grid_box, das
+    alles ausser "hex8" still als tet4 baute: gemessen am Stand ec6448c ergab
+    typ="hex20", "tet10", "HEX8" oder "quatsch" bei 1x1x1 Zellen je 5 tet4
+    mit der Meldung „Quader erzeugt“. Verlangt ist jetzt Status 400 mit dem
+    Typ im Fehlertext und ein unveraendertes Modell (0 Knoten, 0 Elemente).
+    """
+    n0 = len(RESULTS)
+    server, c = _server()
+    try:
+        st, j, _ = c.op(op="new", name="Quader")
+        st, j, _ = c.op(op="add_material", grade="S355")
+        falsch = []
+        for typ in ("hex20", "tet10", "HEX8", "quatsch"):
+            st, j, _ = c.op(op="box", lx=1, ly=1, lz=1, nx=1, ny=1, nz=1, mat="S355", typ=typ)
+            if st != 400 or typ not in str(j.get("error", "")):
+                falsch.append(f"{typ}: Status {st}, {j.get('error') or j.get('message')!r}, "
+                              f"Typen {(j.get('state') or {}).get('types')}")
+        st, s, _ = c.get("/api/state")
+        check("Quader: unbekannter typ abgewiesen (400, Typ in der Meldung)",
+              not falsch, "; ".join(falsch) or "hex20, tet10, HEX8, quatsch")
+        check("Quader: abgewiesener typ laesst das Modell leer",
+              st == 200 and s["nn"] == 0 and s["ne"] == 0, f"nn {s.get('nn')}, ne {s.get('ne')}")
+        typen = {}
+        for typ in (None, "hex8", "tet4"):
+            c.op(op="new", name="Quader")
+            c.op(op="add_material", grade="S355")
+            kw = {} if typ is None else {"typ": typ}
+            st, j, _ = c.op(op="box", lx=1, ly=1, lz=1, nx=1, ny=1, nz=1, mat="S355", **kw)
+            typen[str(typ)] = j["state"]["types"] if st == 200 else f"Status {st}"
+        check("Quader: ohne typ hex8, hex8 -> 1 hex8, tet4 -> 5 tet4",
+              typen == {"None": {"hex8": 1}, "hex8": {"hex8": 1}, "tet4": {"tet4": 5}}, str(typen))
+    finally:
+        server.shutdown()
+        server.server_close()
+    _assert_since(n0)
+
+
 def test_nichtlineare_lager_und_profile():
     """Neue Operationen: Lagerwirkung je FHG, Linien-/Flaechenlager, Gelenke,
     zusammengesetzte Querschnitte, Profilliste nach Land."""
@@ -527,6 +567,13 @@ def test_stellungen_din19704_export():
               and B["massgebende_stellung"] and B["bericht"])
         check("Jede Stellung hat ein Ergebnis",
               all(x["ergebnis"] and not x["ergebnis"]["fehler"] for x in B["liste"]))
+        # Ohne "nachweise" nimmt die Operation true - anders als
+        # Stellungsreihe.rechnen() in Python (Vorgabe False, siehe
+        # test_bridges.test_reihe_ohne_verlangten_nachweis). Das
+        # Benutzerhandbuch sagt beides seit dem 24.09.2026.
+        check("Operation ohne 'nachweise': jede Stellung nachgewiesen",
+              all((x["ergebnis"] or {}).get("nachgewiesen") is True for x in B["liste"]),
+              str([(x["ergebnis"] or {}).get("nachgewiesen") for x in B["liste"]]))
 
         st, j, _ = c.op(op="remove_stellung", name="offen")
         check("Stellung entfernt", st == 200 and len(j["state"]["stellungen"]["liste"]) == 2)
@@ -556,7 +603,7 @@ def test_stellungen_din19704_export():
 
 # --------------------------------------------------------------------------
 def _node() -> str:
-    """Pfad zu node, falls vorhanden - sonst leer (die Pruefung entfaellt dann)."""
+    """Pfad zu node, falls vorhanden - sonst leer (dann ``_ohne_node``)."""
     import shutil
     for name in ("node", "nodejs"):
         p = shutil.which(name)
@@ -568,10 +615,36 @@ def _node() -> str:
     return ""
 
 
+# Renderpruefungen, die mangels node nicht liefen und mit STATIK3D_OHNE_NODE=1
+# ausgelassen werden durften. main() zaehlt sie gesondert als "uebersprungen",
+# nicht als bestanden.
+UEBERSPRUNGEN = []
+
+
+def _ohne_node(was: str) -> None:
+    """node fehlt: die Renderpruefung ``was`` ist nicht gelaufen.
+
+    Das reisst die Pruefung, ausser STATIK3D_OHNE_NODE=1 erlaubt das Auslassen
+    ausdruecklich; dann steht es unter "uebersprungen". Bis ec6448c trugen
+    beide Renderpruefungen hier ``check(..., True)`` ein. Gemessen 23.09.2026
+    an ec6448c mit app.js von 97df705 (vor der Kur f63f2c7 der Nachweiszeile):
+    mit node 232/255 (19 FAIL beim Rendern der Stellungen, 4 bei der
+    Nachweiszeile), mit PATH ohne node 142/142 - die Ruecknahme von app.js
+    fiel auf einem Rechner ohne node nicht auf.
+    """
+    if os.environ.get("STATIK3D_OHNE_NODE") == "1":
+        UEBERSPRUNGEN.append(was)
+        print(f"SKIP {was:62s} node fehlt, ausgelassen (STATIK3D_OHNE_NODE=1)")
+    else:
+        check(f"{was}: node vorhanden", False,
+              "node nicht gefunden - node installieren oder STATIK3D_OHNE_NODE=1 setzen")
+
+
 def test_oberflaeche_rendert():
     """Die Oberflaeche wird ohne Browser gerendert: alle Register, Baum, Filmstreifen.
 
     Statisch geprueft wird immer; mit node laeuft app.js zusaetzlich wirklich.
+    Ohne node reisst die Pruefung (``_ohne_node``).
     """
     n0 = len(RESULTS)
     hier = os.path.dirname(os.path.abspath(__file__))
@@ -594,7 +667,7 @@ def test_oberflaeche_rendert():
 
     node = _node()
     if not node:
-        check("node nicht vorhanden - Renderpruefung entfaellt", True)
+        _ohne_node("Renderpruefung der Oberflaeche")
         _assert_since(n0)
         return
 
@@ -653,6 +726,58 @@ def test_oberflaeche_rendert():
               and all(e.get("warnungen") and e.get("nachgewiesen") is False for e in erg),
               f"eta_bestimmt {B.get('eta_bestimmt')}, unvollstaendig {B.get('unvollstaendig')}, "
               f"{[(len(e.get('warnungen') or []), e.get('nachgewiesen')) for e in erg]}")
+        # Mit Kombinationen, aber ohne verlangten Nachweis: keine Warnung und
+        # trotzdem kein Nachweis. Bis ec6448c kam "eta = 0.000" zurueck, und
+        # jede Karte zeigte "η 0,00" gruen (gemessen 23.09.2026).
+        st, j, _ = c.op(op="stellungen_rechnen", kombinationen=True, nachweise=False)
+        meldung = j.get("message", "")
+        check("ohne verlangten Nachweis: die Meldung nennt kein eta = 0.000",
+              st == 200 and "eta = 0.000" not in meldung and "nicht bestimmt" in meldung, meldung)
+        zustand = rendern("ohne verlangten Nachweis: ")
+        B = zustand.get("stellungen") or {}
+        erg = [x.get("ergebnis") or {} for x in B.get("liste", [])]
+        check("ohne verlangten Nachweis: Uebersicht sagt 'eta nicht bestimmt', "
+              "keine Warnung, nichts nachgewiesen",
+              B.get("eta_bestimmt") is False and len(erg) == 3
+              and all(not e.get("warnungen") and e.get("nachgewiesen") is False for e in erg),
+              f"eta_bestimmt {B.get('eta_bestimmt')}, "
+              f"{[(len(e.get('warnungen') or []), e.get('nachgewiesen')) for e in erg]}")
+
+        # Ohne verlangten Nachweis - "nachweise": false, danach alle Staebe
+        # ohne "Nachweis führen" (design = False): keine Warnung und kein
+        # Stab nachgewiesen. Am Stand ec6448c zeigte der Browser dann η = 0
+        # in der Farbe fuer erfuellt, und die Meldung nach dem Rechnen lautete
+        # "eta = 0.000" (Nebenbefund B021). Seit B036 (fix2/nb_bridges_
+        # positions, Pruefung oben) ist eta dort nicht bestimmt; beim
+        # Zusammenfuehren (24.09.2026) prueft diese Pruefung das auch fuer
+        # alle Staebe mit design = False. render_check.js prueft die Anzeige,
+        # hier steht, dass der Zustand den Fall wirklich enthaelt (sonst
+        # waeren jene Pruefungen leer bestanden).
+        def ungefragt(vorsatz, meldung, staebe_aus=True):
+            zustand = rendern(vorsatz)
+            B = zustand.get("stellungen") or {}
+            erg = [x.get("ergebnis") or {} for x in B.get("liste", [])]
+            check(f"{vorsatz}keine Warnung, kein Stab nachgewiesen, Meldung 'eta nicht bestimmt'",
+                  len(erg) == 3 and B.get("eta_bestimmt") is False
+                  and B.get("unvollstaendig") == []
+                  and all(e.get("warnungen") == [] and e.get("nachgewiesen") is False
+                          for e in erg)
+                  and "nicht bestimmt" in meldung and "eta = 0.000" not in meldung
+                  and staebe_aus,
+                  f"eta_bestimmt {B.get('eta_bestimmt')}, "
+                  f"{[(e.get('eta'), len(e.get('warnungen') or []), e.get('nachgewiesen')) for e in erg]}; "
+                  f"{meldung}")
+
+        st, j, _ = c.op(op="stellungen_rechnen", nachweise=False)
+        ungefragt("nachweise=false: ", j.get("message") or "")
+        st, z, _ = c.get("/api/state")
+        for x in z.get("members") or []:
+            c.op(op="set_member", name=x["name"], fields={"design": False})
+        st, z, _ = c.get("/api/state")
+        st, j, _ = c.op(op="stellungen_rechnen", nachweise=True)
+        ungefragt("alle Stäbe design=False: ", j.get("message") or "",
+                  len(z.get("members") or []) == 3
+                  and not any(x.get("design") for x in z["members"]))
     finally:
         server.shutdown()
         server.server_close()
@@ -695,8 +820,16 @@ def test_nachweiszeile_nicht_gefuehrt_nicht_gruen():
     ein nicht gefuehrter Stab hat Ausnutzung 0. Gemessen 23.09.2026 an
     97df705: beide Zeilen gruen (Klasse ok). Der Server liefert das Urteil
     jetzt als Klasse mit, die Oberflaeche liest den Text nicht mehr aus.
+
+    Am Ende wird der Satz des Benutzerhandbuchs („Stab ohne Streckgrenze“)
+    gegen die gemessenen Klassen geprueft: am Stand ec6448c stand „in diesem
+    Fall gelb“ direkt hinter „Ist gar kein Stab geführt …“ und las sich, als
+    gelte gelb nur dann - gelb ist die Zeile aber auch neben einem geführten
+    Träger mit 0,633 (Nebenbefund der Fehlerrunden 22./23.09.2026).
     """
+    from tests import handbuch
     n0 = len(RESULTS)
+    gemessen = {}
     node = _node()
     hier = os.path.dirname(os.path.abspath(__file__))
     app_js = os.path.join(os.path.dirname(hier), "statik3d", "web", "static", "app.js")
@@ -718,6 +851,7 @@ def test_nachweiszeile_nicht_gefuehrt_nicht_gruen():
             server.shutdown()
             server.server_close()
         text = r.get("design_summary", "")
+        gemessen[name] = r.get("design_status")
         check(f"{name}: gerechnet, Nachweiszeile da", job["status"] == "fertig" and bool(text),
               job.get("error", "") or text)
         check(f"{name}: /api/results design_status = {soll}",
@@ -746,15 +880,366 @@ def test_nachweiszeile_nicht_gefuehrt_nicht_gruen():
                   len(zeilen) == 1 and zeilen[0]["klasse"] == soll,
                   str(zeilen) if zeilen else (p.stderr or p.stdout)[-300:])
     if not node:
-        check("node nicht vorhanden - Renderpruefung der Nachweiszeile entfaellt", True)
+        _ohne_node("Renderpruefung der Nachweiszeile")
+    hb = handbuch.absatz("**Stab ohne Streckgrenze.**")
+    check("Handbuch: gelb, sobald ein Stab nicht geführt ist, auch neben geführten",
+          gemessen.get("Traeger 0,633 und Stab ohne f_y") == "warn"
+          and gemessen.get("nur Stab ohne f_y") == "warn"
+          and "gelb hinterlegt statt grün, sobald ein Stab nicht geführt ist, auch wenn "
+              "die übrigen Stäbe geführt und erfüllt sind" in hb
+          and "in diesem Fall gelb" not in hb, f"{gemessen}; {hb[-420:]}")
+    check("Handbuch: rot, sobald ein Stab über 1 liegt, auch neben einem nicht geführten",
+          gemessen.get("Traeger ueber 1 und Stab ohne f_y") == "err"
+          and "rot ist sie, sobald ein Stab eine Ausnutzung über 1 hat, auch neben einem "
+              "nicht geführten" in hb, f"{gemessen}; {hb[-420:]}")
+    _assert_since(n0)
+
+
+def _nachweise_rendern(node: str, daten: dict) -> dict:
+    """Die Register Ergebnisse/Nachweise, die Tabellenzeilen, das Stabdetail und
+    den Stabverlauf mit tests/render_nachweiszeile.js rendern (Ausgabe als dict,
+    bei einem Fehler {"fehler": Ausgabe von node})."""
+    import subprocess
+    import tempfile
+    hier = os.path.dirname(os.path.abspath(__file__))
+    app_js = os.path.join(os.path.dirname(hier), "statik3d", "web", "static", "app.js")
+    with tempfile.TemporaryDirectory() as tmp:
+        pfad = os.path.join(tmp, "daten.json")
+        with open(pfad, "w", encoding="utf-8") as f:
+            json.dump(daten, f)
+        p = subprocess.run([node, os.path.join(hier, "render_nachweiszeile.js"), app_js, pfad],
+                           capture_output=True, text=True, timeout=120, encoding="utf-8")
+    try:
+        return json.loads(p.stdout.strip().splitlines()[-1])
+    except Exception:        # noqa: BLE001
+        return {"fehler": (p.stderr or p.stdout)[-300:]}
+
+
+def test_nicht_gefuehrter_stab_tabelle_detail_verlauf():
+    """Ein nicht gefuehrter Stab steht in Tabelle, Stabdetail und Stabverlauf nicht gruen da.
+
+    Die Nachweiszeile wurde am 23.09.2026 umgestellt (Klasse vom Server), die
+    Stellen je Stab nicht: Gemessen 23.09.2026 an ec6448c (Traeger 0,633 und
+    Stab Ohne_fy aus einem Werkstoff ohne f_y, Status "nicht geführt"):
+    Tabellenzeile im Register Nachweise ``<span class="util"
+    style="background:#2e8b3a">0,00</span>`` (app.js nahm die Ausnutzung
+    r[5], nicht den Status r[9]), Stabdetail ``<span class="status-ok">nicht
+    geführt</span>`` mit gruenem 0,00 (Farbe aus ``m.util > 1``), Stabverlauf
+    ``<div class="msg ok">Nachweis: Ausnutzung 0,000 –  (, x = – m) · Klasse
+    1</div>`` (Farbe aus ``d.design.util > 1``). Der Server liefert jetzt je
+    Stab die Klasse (err/warn/ok) mit, die Oberflaeche faerbt danach.
+    """
+    n0 = len(RESULTS)
+    node = _node()
+    m = _nachweismodell(-10000.0)
+    server, thread, state = start_server_thread(m, host="127.0.0.1", port=0, key=KEY)
+    c = Client(server.local_url.rstrip("/"))
+    try:
+        c.post("/api/solve", {"kind": "all", "design": True, "workers": 1})
+        job = c.wait_job()
+        st, dp, _ = c.get("/api/design")
+        stabverlauf = {}
+        for name in ("Traeger", "Ohne_fy"):
+            st2, stabverlauf[name], _ = c.get(f"/api/member?which=combo:K1&name={name}")
+        st3, zustand, _ = c.get("/api/state")
+        st4, r, _ = c.get("/api/results")
+        st5, entries, _ = c.get("/api/entries")
+    finally:
+        server.shutdown()
+        server.server_close()
+    stabe = (dp.get("design") or {}).get("members") or {}
+    ohne, traeger = stabe.get("Ohne_fy") or {}, stabe.get("Traeger") or {}
+    check("Stab ohne f_y: gerechnet, Status 'nicht geführt'",
+          job["status"] == "fertig" and ohne.get("status") == "nicht geführt"
+          and traeger.get("status") == "erfüllt",
+          job.get("error", "") or f"{ohne.get('status')}, {traeger.get('status')}")
+    check("/api/design: Klasse je Stab (Ohne_fy warn, Traeger ok)",
+          ohne.get("klasse") == "warn" and traeger.get("klasse") == "ok",
+          f"{ohne.get('klasse')}, {traeger.get('klasse')}")
+    check("/api/member: Klasse des Stabnachweises (Ohne_fy warn, Traeger ok)",
+          (stabverlauf["Ohne_fy"].get("design") or {}).get("klasse") == "warn"
+          and (stabverlauf["Traeger"].get("design") or {}).get("klasse") == "ok",
+          str([(stabverlauf[k].get("design") or {}).get("klasse") for k in stabverlauf]))
+    if not node:
+        _ohne_node("Renderpruefung je Stab")
+        _assert_since(n0)
+        return
+    aus = _nachweise_rendern(node, {"state": zustand, "entries": entries, "result": r,
+                                    "design": dp, "member": stabverlauf})
+    zeilen = aus.get("stabzeilen") or {}
+    z = zeilen.get("Ohne_fy", "")
+    check("Tabelle: Ohne_fy ohne gruenes 0,00, Ausnutzung '–' in Warnfarbe, 'nicht geführt'",
+          z and "#2e8b3a" not in z and "0,00" not in z
+          and 'style="background:var(--warn)"' in z and "nicht geführt" in z,
+          z[:300] or str(aus.get("fehler") or aus.get("stabfehler")))
+    check("Gegenprobe Tabelle: Traeger weiter mit Ausnutzung 0,63",
+          '<span class="util" style="background:#d4b000">0,63</span>' in zeilen.get("Traeger", ""),
+          zeilen.get("Traeger", "")[:300])
+    detail = aus.get("stabdetail") or {}
+    d_ohne, d_tr = detail.get("Ohne_fy") or {}, detail.get("Traeger") or {}
+    check("Stabdetail: Ohne_fy 'nicht geführt' in Warnfarbe, Ausnutzung '–'",
+          '<span class="status-warn">nicht geführt</span>' in d_ohne.get("kopf", "")
+          and "0,00" not in d_ohne.get("ausnutzung", "")
+          and "#2e8b3a" not in d_ohne.get("ausnutzung", ""), str(d_ohne))
+    check("Gegenprobe Stabdetail: Traeger 'erfüllt' gruen mit 0,63",
+          '<span class="status-ok">erfüllt</span>' in d_tr.get("kopf", "")
+          and "0,63" in d_tr.get("ausnutzung", ""), str(d_tr))
+    verlauf = aus.get("stabverlauf") or {}
+    v_ohne = [x for x in verlauf.get("Ohne_fy") or [] if x.get("text", "").startswith("Nachweis")]
+    check("Stabverlauf: Ohne_fy 'Nachweis nicht geführt' als warn, ohne Ausnutzung 0,000",
+          len(v_ohne) == 1 and v_ohne[0]["klasse"] == "warn"
+          and "nicht geführt" in v_ohne[0]["text"] and "0,000" not in v_ohne[0]["text"],
+          str(v_ohne))
+    v_tr = [x for x in verlauf.get("Traeger") or [] if x.get("text", "").startswith("Nachweis")]
+    check("Gegenprobe Stabverlauf: Traeger 'Ausnutzung 0,633' als ok",
+          len(v_tr) == 1 and v_tr[0]["klasse"] == "ok" and "Ausnutzung 0,633" in v_tr[0]["text"],
+          str(v_tr))
+    _assert_since(n0)
+
+
+def _ermuedungsmodell(lasten, kerbfall: bool = True) -> Model:
+    """_nachweismodell(-10000) mit einem zweiten Lastfall Q (qz = -5 kN/m auf
+    dem Traeger), Kerbfall 71 an beiden Staeben (kerbfall) und den
+    Ermuedungslasten *lasten* = [(Name, Lastfall, Lastspiele)]."""
+    m = _nachweismodell(-10000.0)
+    m.add_load_case("Q", "Q", activate=False)
+    for e in range(6):
+        m.load_beam(e, qz=-5000.0, case="Q")
+    if kerbfall:
+        for mem in m.members.values():
+            mem.detail_category = 71e6
+    for name, fall, n in lasten:
+        m.add_fatigue_load(name, fall, None, n, 1.0)
+    return m
+
+
+def test_ermuedungszeile_nicht_gefuehrt_nicht_gruen():
+    """Die Zeile "Ermüdung: …" im Register Nachweise ist nur gruen, wenn jeder
+    Ermuedungsnachweis gefuehrt, vollstaendig und erfuellt ist.
+
+    app.js faerbte sie mit ``rows.some(r => parseFloat(r[7]) > 1)``; ein nicht
+    gefuehrter Stab hat in der Spalte Ausnutzung "–", parseFloat gibt NaN.
+    Gemessen 23.09.2026 an ec6448c: ``<div class="msg ok">Ermüdung: 2 Stäbe;
+    nicht geführt: Stab Traeger, Stab Ohne_fy</div>``. Der Weg ist der aus dem
+    Browser: nur den Lastfall LF1 rechnen, dann den Ermuedungsnachweis mit
+    einer Last auf dem nicht gerechneten Lastfall Q.
+    """
+    n0 = len(RESULTS)
+    node = _node()
+    faelle = (("nicht geführt (Q nicht gerechnet)", _ermuedungsmodell([("E_Q", "Q", 2e6)]), "warn"),
+              ("unvollständig (Q fehlt, LF1 D < 1)",
+               _ermuedungsmodell([("E_Q", "Q", 2e6), ("E_LF1", "LF1", 1e5)]), "warn"),
+              ("keine Staebe mit Kerbfall",
+               _ermuedungsmodell([("E_LF1", "LF1", 1e5)], kerbfall=False), "warn"),
+              ("NICHT erfüllt (LF1 D > 1, Q fehlt)",
+               _ermuedungsmodell([("E_Q", "Q", 2e6), ("E_LF1", "LF1", 2e6)]), "err"),
+              ("Gegenprobe erfüllt (nur LF1, D < 1)",
+               _ermuedungsmodell([("E_LF1", "LF1", 1e5)]), "ok"))
+    for name, m, soll in faelle:
+        server, thread, state = start_server_thread(m, host="127.0.0.1", port=0, key=KEY)
+        c = Client(server.local_url.rstrip("/"))
+        try:
+            c.post("/api/solve", {"kind": "case", "case": "LF1", "workers": 1})
+            job = c.wait_job()
+            c.post("/api/fatigue")
+            job2 = c.wait_job()
+            st, dp, _ = c.get("/api/design")
+            st2, zustand, _ = c.get("/api/state")
+        finally:
+            server.shutdown()
+            server.server_close()
+        f = dp.get("fatigue") or {}
+        check(f"Ermuedung {name}: gerechnet",
+              job["status"] == "fertig" and job2["status"] == "fertig" and f.get("summary"),
+              job.get("error", "") or job2.get("error", "") or str(f.get("summary")))
+        check(f"Ermuedung {name}: /api/design fatigue.status = {soll}",
+              f.get("status") == soll, f"{f.get('status')} - {f.get('summary')}")
+        if not node:
+            continue
+        aus = _nachweise_rendern(node, {"state": zustand, "entries": [], "result": {},
+                                        "design": dp})
+        zeilen = [z for z in (aus.get("nachweise") or []) if isinstance(z, dict)
+                  and z.get("text", "").startswith("Ermüdung")]
+        check(f"Ermuedung {name}: Register Nachweise zeigt die Zeile als {soll}",
+              len(zeilen) == 1 and zeilen[0]["klasse"] == soll,
+              str(zeilen) if zeilen else str(aus.get("fehler") or aus)[:300])
+    if not node:
+        _ohne_node("Renderpruefung der Ermuedungszeile")
+    _assert_since(n0)
+
+
+def test_ermuedungslast_zustand_kombination():
+    """add_fatigue_load nimmt als Zustand, was Modell, Maske und Nachweis nehmen.
+
+    Befund B134: die Operation verlangte case_max und case_min unter den
+    Lastfaellen und wies eine Kombination mit „Lastfall 'GZT1' unbekannt"
+    (HTTP 400) ab - gemessen 23.09.2026 an ec6448c mit dem Beispiel Halle.
+    Model.check laesst seit 13.09.2026 (e9c6a1e) einen Lastfall oder eine
+    Kombination zu, die GUI-Maske bietet Model.ermuedungszustaende() an, und
+    der Nachweis liest beide aus all_results. Keinen Zustand hat nur eine
+    oder-verknuepfte Ergebniskombination (kein Einzelergebnis, Befund FE13):
+    sie bleibt abgewiesen, mit einem Text, der das sagt. Das Formular im
+    Browser bot nur Lastfaelle an.
+    """
+    from statik3d.model import Combination
+    n0 = len(RESULTS)
+    m = _nachweismodell(-10000.0, ohne_fy=False)        # LF1 und K1 = 1,0 * LF1
+    m.combinations["EK"] = Combination("EK", {}, "ULS",
+                                       alternativen=[{"LF1": 1.0}, {"LF1": 1.35}])
+    node = _node()
+    server, thread, state = start_server_thread(m, host="127.0.0.1", port=0, key=KEY)
+    c = Client(server.local_url.rstrip("/"))
+    try:
+        st, j, _ = c.op(op="set_member", name="Traeger", fields={"detail_category": 71e6})
+        check("Ermuedung: Kerbfall 71 am Traeger", st == 200, j.get("error", ""))
+        st, j, _ = c.op(op="add_fatigue_load", name="E_K", case_max="K1", cycles=1e6)
+        check("Ermuedungslast: Kombination als oberer Zustand angenommen",
+              st == 200 and [(f["name"], f["case_max"]) for f in j["state"]["fatigue_loads"]]
+              == [("E_K", "K1")], f"{st} {j.get('error', '')}")
+        st, j, _ = c.op(op="add_fatigue_load", name="E_LK", case_max="LF1", case_min="K1")
+        check("Ermuedungslast: Kombination als unterer Zustand angenommen",
+              st == 200 and any(f["name"] == "E_LK" and f["case_min"] == "K1"
+                                for f in j["state"]["fatigue_loads"]),
+              f"{st} {j.get('error', '')}")
+        c.op(op="remove_fatigue_load", name="E_LK")
+        for rolle in ("case_max", "case_min"):
+            st, j, _ = c.post("/api/op", {"op": "add_fatigue_load", "name": "E_EK",
+                                          "case_max": "LF1", rolle: "EK"})
+            fehler = j.get("error", "")
+            check(f"Ergebniskombination mit Alternativen als {rolle}: 400, ohne Einzelergebnis",
+                  st == 400 and "'EK'" in fehler and "Alternativen" in fehler
+                  and "kein Einzelergebnis" in fehler, f"{st} {fehler}")
+        st, j, _ = c.op(op="add_fatigue_load", name="E_X", case_max="GIBTSNICHT")
+        check("Unbekannter Zustand: 400 'Lastfall oder Kombination ... unbekannt'",
+              st == 400 and "Lastfall oder Kombination 'GIBTSNICHT' unbekannt" in j.get("error", ""),
+              f"{st} {j.get('error', '')}")
+        st, zustand, _ = c.get("/api/state")
+        check("Zustand nennt die waehlbaren Ermuedungszustaende",
+              zustand.get("ermuedungszustaende") == ["LF1", "K1"],
+              str(zustand.get("ermuedungszustaende")))
+        # Angenommen heisst auch gerechnet: K1 = 1,0 * LF1, also dieselbe
+        # Schadenssumme wie mit LF1 als Zustand
+        c.post("/api/solve", {"kind": "all", "design": False, "fatigue": True, "workers": 1})
+        job = c.wait_job()
+        st, dp, _ = c.get("/api/design")
+        f_k = ((dp.get("fatigue") or {}).get("members") or {}).get("Traeger") or {}
+        c.op(op="remove_fatigue_load", name="E_K")
+        c.op(op="add_fatigue_load", name="E_L", case_max="LF1", cycles=1e6)
+        c.post("/api/fatigue", {})
+        job2 = c.wait_job()
+        st, dp, _ = c.get("/api/design")
+        f_l = ((dp.get("fatigue") or {}).get("members") or {}).get("Traeger") or {}
+        d_k, d_l = f_k.get("D"), f_l.get("D")
+        check("Ermuedung mit Kombination K1 gerechnet: D wie mit LF1",
+              job["status"] == "fertig" and job2["status"] == "fertig" and not f_k.get("fehler")
+              and d_k is not None and d_l is not None and d_l > 0
+              and abs(d_k - d_l) <= 1e-9 * d_l,
+              f"D(K1) {d_k}, D(LF1) {d_l}, {f_k.get('fehler', '')} "
+              f"{job.get('error', '')} {job2.get('error', '')}")
+    finally:
+        server.shutdown()
+        server.server_close()
+    if not node:
+        _ohne_node("Renderpruefung des Ermuedungsformulars")
+        _assert_since(n0)
+        return
+    import subprocess
+    import tempfile
+    hier = os.path.dirname(os.path.abspath(__file__))
+    app_js = os.path.join(os.path.dirname(hier), "statik3d", "web", "static", "app.js")
+    with tempfile.TemporaryDirectory() as tmp:
+        pfad = os.path.join(tmp, "zustand.json")
+        with open(pfad, "w", encoding="utf-8") as f:
+            json.dump(zustand, f)
+        p = subprocess.run([node, os.path.join(hier, "render_ermuedungsformular.js"), app_js, pfad],
+                           capture_output=True, text=True, timeout=120, encoding="utf-8")
+    try:
+        aus = json.loads(p.stdout.strip().splitlines()[-1])
+    except Exception:        # noqa: BLE001
+        aus = {"fehler": (p.stderr or p.stdout)[-300:]}
+    check("Formular Ermuedungslast: oberer Zustand bietet Lastfall und Kombination, "
+          "nicht die Ergebniskombination",
+          aus.get("case_max") == ["LF1", "K1"], str(aus))
+    check("Formular Ermuedungslast: unterer Zustand bietet Nullzustand, Lastfall und Kombination",
+          aus.get("case_min") == ["", "LF1", "K1"], str(aus))
+    _assert_since(n0)
+
+
+def _ohne_node_laufen(test, erlaubt: bool):
+    """``test`` so laufen lassen, als fehle node; ``erlaubt`` setzt
+    STATIK3D_OHNE_NODE=1. Liefert (gerissen, Ergebnisse, Uebersprungenes,
+    Ausgabe); die Eintraege des inneren Laufs werden wieder entfernt, sie
+    gehoeren nicht zur Zusammenfassung dieser Suite."""
+    import contextlib
+    import io
+    g = globals()
+    # get: bis ec6448c gab es die Liste nicht; die Pruefung soll dort mit
+    # FAIL enden, nicht mit NameError.
+    uebersprungen = g.get("UEBERSPRUNGEN", [])
+    n_r, n_u = len(RESULTS), len(uebersprungen)
+    alt_node, alt_env = g["_node"], os.environ.get("STATIK3D_OHNE_NODE")
+    g["_node"] = lambda: ""
+    if erlaubt:
+        os.environ["STATIK3D_OHNE_NODE"] = "1"
+    else:
+        os.environ.pop("STATIK3D_OHNE_NODE", None)
+    puffer = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(puffer):
+            test()
+        gerissen = False
+    except AssertionError:
+        gerissen = True
+    finally:
+        g["_node"] = alt_node
+        if alt_env is None:
+            os.environ.pop("STATIK3D_OHNE_NODE", None)
+        else:
+            os.environ["STATIK3D_OHNE_NODE"] = alt_env
+    innen, weg = RESULTS[n_r:], uebersprungen[n_u:]
+    del RESULTS[n_r:]
+    del uebersprungen[n_u:]
+    return gerissen, innen, weg, puffer.getvalue()
+
+
+def test_ohne_node_nicht_bestanden():
+    """Ohne node zaehlt keine Renderpruefung als bestanden.
+
+    Beide Renderpruefungen trugen ohne node ``check(..., True)`` ein und
+    liessen die Laeufe von app.js aus; eine Ruecknahme nur von app.js fiel
+    auf einem Rechner ohne node nicht auf. Jetzt reisst die Pruefung ohne
+    node; nur STATIK3D_OHNE_NODE=1 erlaubt das Auslassen, und dann steht es
+    unter "uebersprungen", nicht unter den bestandenen Pruefungen.
+    Nachgestellt wird das Fehlen von node, indem ``_node`` leer liefert.
+    """
+    n0 = len(RESULTS)
+    for test in (test_oberflaeche_rendert, test_nachweiszeile_nicht_gefuehrt_nicht_gruen):
+        name = test.__name__
+        gerissen, innen, weg, aus = _ohne_node_laufen(test, erlaubt=False)
+        gruen_node = [n for n, ok in innen if ok and "node" in n]
+        rot_node = [n for n, ok in innen if not ok and "node" in n]
+        check(f"{name} ohne node: reisst, ein FAIL nennt node",
+              gerissen and rot_node and not gruen_node and not weg,
+              f"gerissen {gerissen}, FAIL {rot_node}, OK {gruen_node}, uebersprungen {weg}")
+        gerissen, innen, weg, aus = _ohne_node_laufen(test, erlaubt=True)
+        gruen_node = [n for n, ok in innen if ok and "node" in n]
+        rot = [n for n, ok in innen if not ok]
+        check(f"{name} mit STATIK3D_OHNE_NODE=1: uebersprungen, nicht bestanden",
+              not gerissen and not rot and not gruen_node and len(weg) == 1
+              and "SKIP" in aus,
+              f"gerissen {gerissen}, FAIL {rot}, OK {gruen_node}, uebersprungen {weg}")
     _assert_since(n0)
 
 
 def main():
     for t in (test_static_and_auth, test_model_editing, test_solve_results_report,
-              test_contact_and_import, test_nichtlineare_lager_und_profile,
+              test_contact_and_import, test_quader_elementtyp, test_nichtlineare_lager_und_profile,
               test_stellungen_din19704_export, test_oberflaeche_rendert,
               test_nachweiszeile_nicht_gefuehrt_nicht_gruen,
+              test_nicht_gefuehrter_stab_tabelle_detail_verlauf,
+              test_ermuedungszeile_nicht_gefuehrt_nicht_gruen,
+              test_ermuedungslast_zustand_kombination,
+              test_ohne_node_nicht_bestanden,
               test_bound_state):
         print(f"\n--- {t.__name__} ---")
         try:
@@ -767,6 +1252,9 @@ def main():
             RESULTS.append((t.__name__ + " (Ausnahme: %s)" % ex, False))
     n_ok = sum(1 for _, ok in RESULTS if ok)
     print(f"\n{n_ok}/{len(RESULTS)} Pruefungen bestanden")
+    if UEBERSPRUNGEN:
+        print(f"{len(UEBERSPRUNGEN)} uebersprungen (node fehlt, STATIK3D_OHNE_NODE=1):",
+              UEBERSPRUNGEN)
     failed = [n for n, ok in RESULTS if not ok]
     if failed:
         print("FEHLGESCHLAGEN:", failed)

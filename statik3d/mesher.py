@@ -131,7 +131,17 @@ def mesh_box_gmsh(model: Model, mat: str, lx, ly, lz, size, order=2,
 def grid_box(model: Model, mat: str, lx, ly, lz, nx, ny, nz,
              origin=(0, 0, 0), typ="hex8") -> np.ndarray:
     """Strukturiertes Hexaeder- oder Tetraedernetz eines Quaders.
+    typ: "hex8" (ein Hexaeder je Zelle) oder "tet4" (fuenf Tetraeder je
+    Zelle); jeder andere Wert ergibt einen ValueError.
     Rueckgabe: Knoten-Index-Array der Form (nx+1, ny+1, nz+1)."""
+    # Pruefung vor dem ersten Knoten, damit ein abgewiesener Aufruf das Modell
+    # nicht halb fuellt. Bis 23.09.2026 fiel jeder typ ausser "hex8" still in
+    # die Fuenferzerlegung; die Web-Operation box reicht typ ungeprueft durch,
+    # gemessen am Stand ec6448c ergaben "hex20", "tet10", "HEX8" und "quatsch"
+    # bei 1x1x1 Zellen je 5 tet4 mit der Meldung „Quader erzeugt“.
+    if typ not in ("hex8", "tet4"):
+        raise ValueError(f"Elementtyp '{typ}' für den Quader nicht möglich: "
+                         "nur hex8 oder tet4")
     ox, oy, oz = origin
     ids = np.zeros((nx + 1, ny + 1, nz + 1), dtype=int)
     for i in range(nx + 1):
@@ -427,6 +437,20 @@ def netz_ordnung(model: Model, ordnung: int = 0) -> int:
     return max(1, int(getattr(getattr(model, "netz", None), "ordnung", 1) or 1))
 
 
+def koerper_ordnung(model: Model, koerper, ordnung: int = 0) -> int:
+    """Die Elementordnung **dieses** Koerpers: ``Volumenkoerper.ordnung``
+    (1 oder 2) geht vor, sonst die des Aufrufs bzw. der Netzeinstellungen.
+
+    Anweisung V1 (Loeser-Sitzung, 22.09.2026): tet10 dort, wo nachgewiesen
+    wird, tet4 im Rest; welche Koerper das sind, sagt ``elementwahl`` oder der
+    Anwender ueber das Feld am Koerper (Statik3D-Sitzung, 23.09.2026).
+    """
+    eigene = getattr(koerper, "ordnung", None)
+    if eigene in (1, 2):
+        return int(eigene)
+    return netz_ordnung(model, ordnung)
+
+
 def mesh_flaeche(model: Model, flaeche, log: list = None, dreiecke: bool = None,
                  ordnung: int = 0, kanten: dict = None) -> list[int]:
     """Eine Flaeche in Schalenelemente umsetzen.
@@ -645,6 +669,15 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
     :func:`netzkarten`; ohne sie bildet der freie Vernetzer sie selbst - je
     Koerper, am Drehlager 48 x 1,5 s.
     """
+    # Die Ordnung dieses Koerpers - ein Koerper mit Ordnung 2 bekommt tet10 und
+    # geht darum an den freien Vernetzer, auch wenn er sonst abgebildet oder
+    # gesweept wuerde: Sechsflaechner zweiter Ordnung neben tet4-Nachbarn
+    # koppelt heute niemand (Anweisung V1, 22./23.09.2026).
+    ordnung = koerper_ordnung(model, koerper, ordnung)
+    if ordnung >= 2 and frei and getattr(koerper, "ordnung", None) == 2:
+        from .mesher3d import mesh_koerper_frei
+        return mesh_koerper_frei(model, koerper, h=h, log=log, cache=cache,
+                                 ordnung=ordnung, fortschritt=fortschritt, karten=karten)
     from .importers import _common as C
     from .model import _rand_aus_linien          # noqa: F401  (Doku)
     entartetes_volumen, OHNE_NETZ = _entartungspruefung()
@@ -901,7 +934,8 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
     def einbauen(k, els_oder_aus):
         nonlocal erledigt
         if isinstance(els_oder_aus, dict):
-            els = M3.koerper_einbauen(model, k, els_oder_aus, log, cache, ordnung)
+            els = M3.koerper_einbauen(model, k, els_oder_aus, log, cache,
+                                      koerper_ordnung(model, k, ordnung))
         else:
             els = els_oder_aus
         aus["elemente"] += len(els)
@@ -918,7 +952,10 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
             C.say(log, f"Volumen gesamt: {z['elemente']} Elemente auf {z['knoten']} Knoten "
                        f"({z['elemente_je_knoten']:.2f} je Knoten) - Hexaeder {z['hexaeder']} "
                        f"({z['anteil_hexaeder'] * 100:.1f} %), Keile {z['keile']}, "
-                       f"Pyramiden {z['pyramiden']}, Tetraeder {z['tetraeder']}")
+                       f"Pyramiden {z['pyramiden']}, Tetraeder {z['tetraeder']}"
+                       + (f"; Winkelfehler bis {z['winkelfehler_max']:.0f}°, "
+                          f"{z['hexaeder_regelmaessig']} Hexaeder regelmäßig (≤ {SW.WINKELFEHLER_GRENZE:.0f}°)"
+                          if z["hexaeder"] or z["keile"] else ""))
 
     frei = [k for k in koerper if not abgebildet(model, k)]
     # 1) Abgebildete Koerper gleich hier - das kostet nichts
@@ -928,6 +965,13 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
     # Arbeitsprozesse (netzfeld.aufbauen).
     from . import netzfeld
     model.groessenfeld = netzfeld.aufbauen(model, log=log)
+    # Der Bogenwinkel je Linie aus den Vorgaben der Koerper - einmal je Lauf,
+    # vor den Karten, und mit dem Modell in die Arbeitsprozesse
+    from . import mesher3d as _M3
+    _je_linie = _M3.bogenwinkel_je_linie(model)
+    if _je_linie or _M3.bogenwinkel_vorgabe(model) != _M3.BOGENWINKEL:
+        C.say(log, f"Bogenwinkel: Vorgabe {_M3.bogenwinkel_vorgabe(model):.0f}° je Abschnitt"
+                   + (f", an {len(_je_linie)} Linien nach der Vorgabe eines Körpers" if _je_linie else ""))
     # Vorgegebene Flaechennetze (Sweep) - je Lauf neu; die abgebildeten und
     # gesweepten Koerper fuellen sie, die freien Koerper lesen sie.
     model.flaechennetze = {}
@@ -1005,8 +1049,20 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
             offen[k.name] = pool.apply_async(_koerper_arbeit,
                                              (k.name, float(hs.get(k.name, 0.0) or 0.0)))
         t_tick = 0.0
+        # Eingebaut wird in der **festen** Folge von ``frei`` (gross zuerst),
+        # nicht in der des Fertigwerdens: die Knoten- und Elementnummern
+        # entstehen beim Einbau (mesher3d.koerper_einbauen), und zwei Laeufe
+        # derselben Datei - oder zwei Maschinen mit verschiedener Kernzahl -
+        # muessen dieselben Nummern ergeben. Vorher behielten am Drehlager
+        # 18 von 3 731 Knoten ihre Nummer zwischen zwei Laeufen (Statik3D-
+        # Sitzung, gemessen 22.09.2026); jeder Bericht mit einer Knotennummer
+        # war damit unnachpruefbar. Gerechnet wird weiter parallel; nur der
+        # Einbau wartet, bis der naechste in der Reihe fertig ist.
+        reihe = [k.name for k in frei]
         while offen:
-            fertige = [name for name, r in offen.items() if r.ready()]
+            fertige = []
+            while reihe and reihe[0] in offen and offen[reihe[0]].ready():
+                fertige.append(reihe.pop(0))
             for name in fertige:
                 r = offen.pop(name)
                 try:

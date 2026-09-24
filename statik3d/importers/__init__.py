@@ -255,8 +255,13 @@ def _from_zip_member(path: str, endungen, kind: str, model, log, **options) -> M
 def import_file(path: str, model: Model = None, log: list = None, **options) -> Model:
     """Datei anhand der Endung erkennen und in ein Modell importieren.
 
-    model: bestehendes Modell, an das die Geometrie angehaengt wird (Knoten werden
-           mit Toleranz zusammengefuehrt); None -> neues Modell mit dem Dateinamen.
+    model: bestehendes Modell, an das die Geometrie angehaengt wird. Die
+           Nachbereitung fuehrt die Knoten der Datei mit Toleranz untereinander
+           zusammen und schliesst sie nur dort an das Modell an, wo an ihrer
+           Stelle genau ein Knoten des Modells liegt. (Leser mit
+           ``_common.NodeIndex`` - DXF, IFC, INP, BDF, SAF, SDNF,
+           RFEM-Tabellen - schliessen schon beim Lesen an den ersten Knoten an
+           ihrer Stelle an.) None -> neues Modell mit dem Dateinamen.
     log:   Liste fuer Meldungen/Warnungen (deutsch).
     options: unit_scale, tol und formatspezifische Optionen (siehe Module);
            ``fortschritt(anteil 0…1, text)`` meldet die Phasen - fuer die
@@ -364,12 +369,25 @@ def import_file(path: str, model: Model = None, log: list = None, **options) -> 
         n_gedreht = model.um_x_drehen()
         C.say(log, f"Modell um die x-Achse gedreht ({n_gedreht} Knoten): die Z-Achse der "
                    "Datei zeigte nach unten, hier zeigt z nach oben (y gespiegelt).")
-    n_merged = C.merge_duplicate_nodes(model, tol) if model.nn > n_nodes0 else 0
+    # Zusammengefuehrt wird nur innerhalb der Datei (ab n_nodes0; bei einem
+    # frischen Modell ist das das ganze). Bis zum 23.09.2026 lief das beim
+    # Anhaengen ueber das ganze Modell und verschweisste, was im Ziel
+    # absichtlich aufeinanderliegt (Befund B071): gemessen wurde das
+    # Spaltelement (1, 2) des Ziels (1, 1), und am linken Lager kamen
+    # 500,0 N statt 1000,0 N an (tests.test_importers,
+    # test_datei_anhaengen_fuge_bleibt). An das Ziel schliesst die Datei
+    # danach nur eindeutig an - wie beim JSON-Anhaengen (anhaengen.py).
+    # log: fallen zwei verschiedene gekruemmte Kantenmitten auf eine Kante,
+    # sagt es das Protokoll (_kantenmitten_umhaengen).
+    n_merged = C.merge_duplicate_nodes(model, tol, ab=n_nodes0, log=log) if model.nn > n_nodes0 else 0
     if n_merged:
         kb = getattr(model, "kontaktbedingungen", None) or {}
         C.say(log, f"{n_merged} doppelte Knoten zusammengefuehrt"
                    + (f" - die Flaechen der {len(kb)} Kontaktbedingungen werden beim "
                       "Vernetzen wieder getrennt" if kb else ""))
+    if not fresh and n_nodes0 > 0 and model.nn > n_nodes0:
+        n_an, unklar = C.anschluss_zusammenfuehren(model, n_nodes0, tol, log=log)
+        C.anschluss_melden(log, n_an, unklar, "Datei")
     # Zum Keil entartete Sechsflaechner (doppelte Knoten aus der Datei oder
     # aus dem Zusammenfuehren eben) wandelt die Rechnung ohnehin um
     # (diagnose.entartete_menge). Hier schon, damit das Protokoll des Imports
@@ -380,7 +398,7 @@ def import_file(path: str, model: Model = None, log: list = None, **options) -> 
     if umgewandelt:
         C.say(log, "Entartete Volumenelemente umgewandelt ("
                    + ", ".join(f"{k}: {v}" for k, v in umgewandelt.items())
-                   + ") - " + _dg.ENTARTUNG_GENAUIGKEIT)
+                   + ") - " + _dg.entartung_genauigkeit(umgewandelt))
     ext = os.path.splitext(path)[1].lower()
     if ext in _NO_MEMBER_INFO or kind == "cad":
         members = model.auto_members()

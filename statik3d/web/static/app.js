@@ -87,6 +87,15 @@ function utilBadge(u) {
   const col = v > 1 ? '#c62828' : v > 0.85 ? '#e5701c' : v > 0.6 ? '#d4b000' : '#2e8b3a';
   return `<span class="util" style="background:${col}">${fmt(v, 2)}</span>`;
 }
+// Ausnutzung eines Stabnachweises EC3 mit der Klasse des Servers (err/warn/ok,
+// server._stab_klasse). 'warn' heißt "nicht geführt" (etwa Werkstoff ohne
+// f_y): die Ausnutzung 0 ist dann kein Wert. utilBadge allein zeigte sie als
+// grünes "0,00" (gemessen 23.09.2026 an ec6448c).
+function stabBadge(u, klasse) {
+  if (klasse === 'warn') return '<span class="util" style="background:var(--warn)" title="nicht geführt">–</span>';
+  return utilBadge(u);
+}
+function statusKlasse(klasse) { return klasse === 'err' ? 'status-bad' : klasse === 'warn' ? 'status-warn' : 'status-ok'; }
 function v0(u) { return u; }
 function table(header, rows, o = {}) {
   const th = header.map(hh => `<th>${esc(hh)}</th>`).join('');
@@ -614,6 +623,14 @@ function matOpts(s) { return Object.keys(s.materials).map(k => [k, k]); }
 function secOpts(s) { return Object.keys(s.sections).map(k => [k, `${k} (${s.sections[k].describe})`]); }
 function shellOpts(s) { return Object.keys(s.shells).map(k => [k, `${k} (t = ${g(s.shells[k].t * 1000, 3)} mm)`]); }
 function caseOpts(s, extra = []) { return extra.concat(s.load_cases.map(c => [c.name, `${c.name} (${c.category})`])); }
+// Zustaende einer Ermuedungslast: Lastfaelle und Kombinationen ohne
+// Alternativen, wie sie der Server nennt (Model.ermuedungszustaende) - das
+// Formular bot bis zum 23.09.2026 nur Lastfaelle an (Befund B134)
+function fatOpts(s, extra = []) {
+  const lf = new Map(s.load_cases.map(c => [c.name, `${c.name} (${c.category})`]));
+  const ko = new Map(s.combinations.map(c => [c.name, `${c.name} (Kombination ${c.typ})`]));
+  return extra.concat((s.ermuedungszustaende || []).map(n => [n, lf.get(n) || ko.get(n) || n]));
+}
 function opBtn(payload, label, cls = 'btn small', confirm = '') {
   return `<button class="${cls}" data-action="op" data-payload="${esc(JSON.stringify(payload))}" ${confirm ? `data-confirm="${esc(confirm)}"` : ''}>${label}</button>`;
 }
@@ -835,7 +852,7 @@ function renderLasten() {
 
 <details><summary>Ermüdungslasten <span class="n">${s.fatigue_loads.length}</span></summary><div class="body">
   <ul class="list">${s.fatigue_loads.map(f => `<li><span class="txt">${esc(f.name)}<span class="sub">${f.folge && f.folge.length ? 'Verlauf über ' + f.folge.length + ' Lastfälle (' + esc(f.zaehlung || 'spanne') + ')' : esc(f.case_max) + ' ↔ ' + esc(f.case_min || 'Null')} · ${(f.folge && f.folge.length ? f.wiederholungen : f.cycles) == null ? 'Lastspiele global' : g(f.folge && f.folge.length ? f.wiederholungen : f.cycles) + ' Lastspiele'} · Faktor ${g(f.factor)}</span></span>${opBtn({op: 'remove_fatigue_load', name: f.name}, '✕', 'btn small danger')}</li>`).join('') || '<li class="muted">keine</li>'}</ul>
-  <form data-op="add_fatigue_load" data-reset><div class="row">${inp('name', 'Name', '')}${sel('case_max', 'Lastfall max', caseOpts(s))}${sel('case_min', 'Lastfall min', caseOpts(s, [['', 'Nullzustand']]))}${num('cycles', 'Lastspiele', 2e6)}${num('factor', 'Faktor', 1)}<button class="btn small primary">+ Ermüdungslast</button></div></form>
+  <form data-op="add_fatigue_load" data-reset><div class="row">${inp('name', 'Name', '')}${sel('case_max', 'Oberer Zustand (Lastfall/Kombination)', fatOpts(s))}${sel('case_min', 'Unterer Zustand', fatOpts(s, [['', 'Nullzustand']]))}${num('cycles', 'Lastspiele', 2e6)}${num('factor', 'Faktor', 1)}<button class="btn small primary">+ Ermüdungslast</button></div></form>
   <div class="muted">Kerbfälle je Stab unter Modell → Stäbe.</div>
 </div></details>`;
 }
@@ -937,7 +954,11 @@ function memberChart(d) {
   let extra = '';
   if (d.design) {
     const gv = d.design.governing || {};
-    extra += `<div class="msg ${d.design.util > 1 ? 'err' : 'ok'}">Nachweis: Ausnutzung ${fmt(d.design.util, 3)} – ${esc(gv.name || '')} (${esc(gv.combo || '')}, x = ${g(gv.x, 3)} m) · Klasse ${d.design.cls}</div>`;
+    // Klasse vom Server; bis zum 23.09.2026 stand hier d.design.util > 1, ein
+    // nicht geführter Stab zeigte "Nachweis: Ausnutzung 0,000" grün
+    extra += d.design.klasse === 'warn'
+      ? `<div class="msg warn">Nachweis nicht geführt: ${esc(d.design.fehler || d.design.status || '')}</div>`
+      : `<div class="msg ${esc(d.design.klasse || '')}">Nachweis: Ausnutzung ${fmt(d.design.util, 3)} – ${esc(gv.name || '')} (${esc(gv.combo || '')}, x = ${g(gv.x, 3)} m) · Klasse ${d.design.cls}</div>`;
   }
   if (d.fatigue) extra += `<div class="msg">Ermüdung: D = ${fmt(d.fatigue.util, 3)} · Δσ max = ${fmt(d.fatigue.dsig_max / 1e6, 1)} MPa</div>`;
   return parts.join('') + extra;
@@ -960,13 +981,18 @@ function renderNachweise() {
   if (D && D.design) {
     const d = D.design, rows = d.table.slice(1);
     // Farbe vom Server: util_max > 1 allein zeigte einen nicht gefuehrten Stab (Ausnutzung 0) gruen
+    // Je Zeile ebenso (klasse des Stabes): die Zeile eines nicht geführten
+    // Stabes zeigte bis zum 23.09.2026 ein grünes "0,00" statt des Status r[9]
+    const stab = r => d.members[r[0]] || {};
     html += `<div class="card"><div class="msg ${esc(d.status || '')}">${esc(d.summary)}</div>
-    ${table(['Stab', 'Querschnitt', 'Kl.', 'Ausn.', 'maßgebend', 'Kombination', 'x [m]'], rows.map(r => [r[0], r[1], r[4], parseFloat(r[5]), r[6], r[7], r[8]]), {rowAttr: r => `class="tap" data-action="member-detail" data-name="${esc(r[0])}"`, format: (c, j) => j === 3 ? utilBadge(c) : j === 6 ? esc(c) : esc(c)})}
+    ${table(['Stab', 'Querschnitt', 'Kl.', 'Ausn.', 'maßgebend', 'Kombination', 'x [m]'], rows.map(r => [r[0], r[1], r[4], parseFloat(r[5]), stab(r).klasse === 'warn' ? r[9] : r[6], r[7], r[8]]), {rowAttr: r => `class="tap" data-action="member-detail" data-name="${esc(r[0])}"`, format: (c, j, r) => j === 3 ? stabBadge(c, stab(r).klasse) : esc(c)})}
     <div class="muted">Zeile antippen: alle Zwischenwerte des Stabes.</div></div>`;
   }
   if (D && D.fatigue) {
     const f = D.fatigue, rows = f.table.slice(1);
-    html += `<div class="card"><div class="msg ${rows.some(r => parseFloat(r[7]) > 1) ? 'err' : 'ok'}">${esc(f.summary)}</div>
+    // Farbe vom Server (_ermuedung_klasse); parseFloat(r[7]) > 1 machte "–"
+    // (nicht geführt) zu NaN und die Zeile grün (gemessen 23.09.2026, ec6448c)
+    html += `<div class="card"><div class="msg ${esc(f.status || '')}">${esc(f.summary)}</div>
     ${table(['Stab', 'Kerbfall', 'γMf', 'Δσ max', 'Δσ E,2', 'D', 'D Schub', 'Ausn.', 'maßgebend'], rows.map(r => [r[0], r[1], r[2], r[3], r[4], r[5], r[6], parseFloat(r[7]), r[8]]), {rowAttr: r => `class="tap" data-action="fatigue-detail" data-name="${esc(r[0])}"`, format: (c, j) => j === 7 ? utilBadge(c) : esc(c)})}</div>`;
   }
   return html;
@@ -995,8 +1021,9 @@ function checksTable(ch) {
 function memberDetail(name) {
   const m = S.design && S.design.design && S.design.design.members[name];
   if (!m) return;
-  let html = `<h2>Stab ${esc(name)} <span class="${m.util > 1 ? 'status-bad' : 'status-ok'}">${esc(m.status)}</span></h2>
-  <div class="kv"><b>Querschnitt</b><span>${esc(m.section)} (Klasse ${m.cls})</span><b>Material</b><span>${esc(m.material)}</span><b>Länge</b><span>${g(m.L, 4)} m</span><b>Ausnutzung</b><span>${utilBadge(m.util)}</span></div>
+  // Farbe aus der Klasse des Servers; m.util > 1 färbte "nicht geführt" grün
+  let html = `<h2>Stab ${esc(name)} <span class="${statusKlasse(m.klasse)}">${esc(m.status)}</span></h2>
+  <div class="kv"><b>Querschnitt</b><span>${esc(m.section)} (Klasse ${m.cls})</span><b>Material</b><span>${esc(m.material)}</span><b>Länge</b><span>${g(m.L, 4)} m</span><b>Ausnutzung</b><span>${stabBadge(m.util, m.klasse)}</span></div>
   <h3>Maßgebend</h3>${kvTable(m.governing, ['checks'])}${checksTable(m.governing && m.governing.checks)}`;
   if (m.warnings && m.warnings.length) html += `<div class="msg warn">${m.warnings.map(esc).join('<br>')}</div>`;
   if (m.section_checks && m.section_checks.length) {
@@ -1073,16 +1100,22 @@ function renderMehr() {
 function etaFarbe(e) { return e > 1 ? 'var(--bad)' : e > 0.85 ? 'var(--warn)' : 'var(--ok)'; }
 
 // Nachweisstand einer gerechneten Stellung aus der Übersicht des Servers:
-// '' (nicht gerechnet oder Fehler), 'ok', 'teil' (Warnungen, aber Stäbe
-// nachgewiesen: η ist keine vollständige Ausnutzung) oder 'ohne' (Warnungen
-// und kein Stab nachgewiesen: η = 0 ist gar keine Ausnutzung). Vorher wurde
-// nur nach η > 1 gefärbt - ohne Kombinationen stand "η = 0,000" grün als
-// erfüllt da (Gegenprüfung 23.09.2026, Beispiel „Stauwand“: 3 Stellungen
-// mit je 13 Warnungen).
+// '' (nicht gerechnet oder Fehler), 'ohne' (kein Stab nachgewiesen, mit oder
+// ohne Warnungen: η = 0 ist gar keine Ausnutzung), 'teil' (Warnungen, aber
+// Stäbe nachgewiesen: η ist keine vollständige Ausnutzung) oder 'ok'. Vorher
+// wurde nur nach η > 1 gefärbt. Gemessen 23.09.2026: Der ausgelieferte Stand
+// 54b6f9a zeigte "η = 0,000" grün als erfüllt, wenn nur GZG-Kombinationen
+// da waren (Beispiel „Halle“ ohne GZT-Kombinationen); ohne Kombinationen wies
+// er die Stäbe gegen die Lastfälle nach (Stauwand, 3 Stellungen: η = 0,291
+// aus „Wasser“, keine Warnung). Am nicht ausgelieferten Zwischenstand
+// 9337a3c stand die Stauwand ohne Kombinationen (mit DIN 19704) mit
+// "η = 0,000" grün da, je Stellung 13 Warnungen. Bis ec6448c galt eine
+// Stellung ohne Warnung als 'ok', auch ohne Nachweis: Stauwand mit
+// "nachweise": false, dreimal „η 0,00“ grün (gemessen 23.09.2026, B036).
 function stellungStand(e) {
   if (!e || e.fehler) return '';
-  if (!(e.warnungen || []).length) return 'ok';
-  return e.nachgewiesen ? 'teil' : 'ohne';
+  if (!e.nachgewiesen) return 'ohne';
+  return (e.warnungen || []).length ? 'teil' : 'ok';
 }
 function anzahlWarnungen(n) { return `${n} Warnung${n === 1 ? '' : 'en'}`; }
 
@@ -1090,7 +1123,7 @@ function anzahlWarnungen(n) { return `${n} Warnung${n === 1 ? '' : 'en'}`; }
 function umhuellendeEta(B) {
   const unvoll = B.unvollstaendig || [];
   if (B.eta_bestimmt === false) {
-    return {kl: 'warn', text: `η nicht bestimmt – in keiner Stellung wurde ein Nachweis geführt (${unvoll.map(esc).join(', ')})`};
+    return {kl: 'warn', text: `η nicht bestimmt – in keiner Stellung wurde ein Nachweis geführt${unvoll.length ? ` (${unvoll.map(esc).join(', ')})` : ''}`};
   }
   return {kl: B.eta > 1 ? 'err' : unvoll.length ? 'warn' : 'ok',
           text: `η = ${fmt(B.eta, 3)}${B.massgebende_stellung ? ` – maßgebend ${esc(B.massgebende_stellung)}` : ''}`
@@ -1110,10 +1143,14 @@ function stellungMeldung(e) {
   const stand = stellungStand(e), w = e.warnungen || [];
   const u = `u max = ${fmt(e.u_max * 1e3, 3)} mm`;
   let h = stand === 'ohne'
-    ? `<div class="msg warn">η nicht bestimmt – kein Nachweis geführt (${anzahlWarnungen(w.length)}) · ${u}</div>`
+    ? `<div class="msg warn">η nicht bestimmt – kein Nachweis geführt${w.length ? ` (${anzahlWarnungen(w.length)})` : ''} · ${u}</div>`
     : `<div class="msg ${e.eta > 1 ? 'err' : stand === 'teil' ? 'warn' : 'ok'}">η = ${fmt(e.eta, 3)}`
       + `${stand === 'teil' ? ` – nicht vollständig nachgewiesen (${anzahlWarnungen(w.length)})` : ''}`
-      + ` · ${u}${e.massgebend ? ' · maßgebende Stellung' : ''}</div>`;
+      // "fuehrt" wie auf der Karte (stellungKarte); "massgebend" ist der Text
+      // des maßgebenden Stabnachweises und stand an jeder Stellung mit
+      // Nachweis - gemessen 23.09.2026 an ec6448c: alle drei Stellungen der
+      // Stauwand hießen "maßgebende Stellung"
+      + ` · ${u}${e.fuehrt ? ' · maßgebende Stellung' : ''}</div>`;
   if (w.length) {
     h += `<details><summary>Nicht nachgewiesen <span class="n">${w.length}</span></summary><div class="body">`
       + w.slice(0, 30).map(x => `<div class="muted">${esc(x)}</div>`).join('')

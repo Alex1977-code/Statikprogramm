@@ -175,12 +175,111 @@ def test_parallel_mit_stehendem_pool():
         parallel.configure(min_elements=alt_min, workers=alt_w)
 
 
+def kragarm_quadratisch(art, nx, ny, nz):
+    """Kragarm wie pk.Kragarm aus hex20, aus pent15 oder aus zum Keil
+    entarteten hex20 ("keil20": Ecken u0 u1 u2 u2 / o0 o1 o2 o2, die Mitte der
+    zusammengefallenen Kante ist ihre Ecke) - dieselben Keile wie pent15."""
+    from statik3d.model import Material, Model
+    kr = pk.Kragarm()
+    L, B, H = kr.L, kr.B, kr.H
+    m = Model(art)
+    m.add_material(Material("S", E=pk.E_ST, nu=pk.NU_ST, rho=0.0))
+    ids = {}
+    for k in range(nz + 1):
+        for j in range(ny + 1):
+            for i in range(nx + 1):
+                ids[(i, j, k)] = m.add_node(L * i / nx, B * j / ny, H * k / nz)
+    mitten = {}
+
+    def mi(a, b):
+        key = (min(a, b), max(a, b))
+        if key not in mitten:
+            mitten[key] = m.add_node(*(0.5 * (m.nodes[a] + m.nodes[b])))
+        return mitten[key]
+    kanten = sl._KANTEN_QUADRATISCH["hex20"]
+    for k in range(nz):
+        for j in range(ny):
+            for i in range(nx):
+                z = [ids[(i + (x & 1), j + ((x >> 1) & 1), k + ((x >> 2) & 1))] for x in range(8)]
+                c = [z[x] for x in pk.HEX_AUS_ZELLE]
+                if art == "hex20":
+                    m.add_element("hex20", c + [mi(c[a], c[b]) for a, b in kanten], "S")
+                    continue
+                for (p0, p1, p2) in ((0, 1, 2), (0, 2, 3)):
+                    u, o = [c[p0], c[p1], c[p2]], [c[p0 + 4], c[p1 + 4], c[p2 + 4]]
+                    if art == "pent15":
+                        m.add_element("pent15", u + o + [mi(u[0], u[1]), mi(u[1], u[2]), mi(u[2], u[0]),
+                                                         mi(o[0], o[1]), mi(o[1], o[2]), mi(o[2], o[0]),
+                                                         mi(u[0], o[0]), mi(u[1], o[1]), mi(u[2], o[2])], "S")
+                    else:
+                        ecken = [u[0], u[1], u[2], u[2], o[0], o[1], o[2], o[2]]
+                        m.add_element("hex20", ecken + [mi(ecken[a], ecken[b]) if ecken[a] != ecken[b]
+                                                        else ecken[a] for a, b in kanten], "S")
+    tol = 1e-9
+    pk.einspannen(m, lambda X: bool(np.all(np.abs(X[:, 0]) < tol)))
+    seiten = pk.randseiten(m, lambda X: bool(np.all(np.abs(X[:, 0] - L) < tol)))
+    pk.schubkraft_auf_seiten(m, seiten, kr.F, (0.0, 0.0, -1.0))
+    return m, ids
+
+
+def test_vq203_hex20():
+    """VQ203 (23.09.2026): der zum Keil entartete hex20 wird ein pent15, der
+    zum Tetraeder entartete ein tet10; eine Pyramide hat kein quadratisches
+    Gegenstueck (FEHLER), und eine eigene Mitte an einer zusammengefallenen
+    Kante haette kein Element (FEHLER). Direkt als hex20 gerechnet lag der
+    Keil am Kragarm (8,2,4) -95,6 N/mm2 daneben, als pent15 -0,02."""
+    m, _ids = kragarm_quadratisch("keil20", 8, 2, 4)
+    mp, _i = kragarm_quadratisch("pent15", 8, 2, 4)
+    u = np.asarray(next(iter(solver.solve_all(m).cases.values())).u)
+    up = np.asarray(next(iter(solver.solve_all(mp).cases.values())).u)
+    # nicht bitgleich: die beiden Netze legen die Kantenmitten in anderer
+    # Folge an, die Nummerierung und damit die Rundung der Zerlegung sind
+    # verschieden (gemessen 1,0e-12 relativ bei gleicher Knotenfolge je Element)
+    abw = float(np.abs(u - up).max() / np.abs(up).max())
+    check("Kragarm aus Keil-hex20 (8,2,4): Verschiebungen wie das pent15-Netz (1e-10)", abw < 1e-10,
+          f"{abw:.1e} relativ, w {np.abs(u[:, 2]).max() * 1e3:.6f} mm")
+    z = [x for x in diagnose.meldungen(m) if "umgewandelt" in x]
+    check("… die Meldung nennt hex20→pent15 mit Anzahl und die Genauigkeit des quadratischen Keils",
+          len(z) == 1 and "hex20→pent15: 128" in z[0] and "pent15" in z[0] and "hex20" in z[0],
+          z[0][:100] if z else "")
+    W = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+                  [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]], float)
+
+    def einzel20(ecken_lokal, eigene_mitte=False):
+        mm = Model("einzel20")
+        mm.add_material(Material("S", E=210e9, nu=0.3, rho=0.0))
+        ids = [mm.add_node(*p) for p in W]
+        ec = [ids[k] for k in ecken_lokal]
+        mit: dict = {}
+        mids = []
+        for k, (a, b) in enumerate(sl._KANTEN_QUADRATISCH["hex20"]):
+            if ec[a] == ec[b]:
+                mids.append(mm.add_node(*mm.nodes[ec[a]]) if eigene_mitte and k == 2 else ec[a])
+                continue
+            key = (min(ec[a], ec[b]), max(ec[a], ec[b]))
+            if key not in mit:
+                mit[key] = mm.add_node(*(0.5 * (mm.nodes[ec[a]] + mm.nodes[ec[b]])))
+            mids.append(mit[key])
+        mm.add_element("hex20", ec + mids, "S")
+        return mm
+    mm = einzel20([0, 1, 3, 3, 4, 4, 4, 4])
+    zahl = diagnose.entartete_umwandeln(mm)
+    e = mm.elements[0]
+    check("hex20 mit vier Ecken → tet10, Volumen 1/6", e.typ == "tet10" and zahl == {"hex20→tet10": 1}
+          and abs(sl.jacobi_volumen("tet10", mm.nodes[e.nodes])["V"] - 1 / 6) < 1e-12, str(zahl))
+    for name, ecken, eigen in (("Pyramide (kein pyr13)", [0, 1, 2, 3, 6, 6, 6, 6], False),
+                               ("eigene Mitte an der zusammengefallenen Kante", [0, 1, 2, 2, 4, 5, 6, 6], True)):
+        mm = einzel20(ecken, eigen)
+        f = diagnose.entartete_einordnen(mm)["fehler"]
+        check(f"hex20 entartet, {name}: FEHLER statt Umwandlung", len(f) == 1, f[0][2][:70] if f else "")
+
+
 def main():
     print("=" * 100)
     print("STATIK3D - Entartete Volumenelemente (zusammenfallende Knoten)")
     print("=" * 100)
     for t in (test_kragarm_aus_keil_sechsflaechnern, test_jede_umwandlung, test_nullkoerper_und_fehler,
-              test_parallel_mit_stehendem_pool):
+              test_parallel_mit_stehendem_pool, test_vq203_hex20):
         try:
             t()
         except Exception as ex:                  # noqa: BLE001

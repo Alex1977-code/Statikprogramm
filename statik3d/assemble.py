@@ -524,10 +524,34 @@ def dilatation_moeglich(model: Model, mat) -> str:
     """
     nu = float(getattr(mat, "nu", 0.0))
     if not (0.0 <= nu < 0.5):
-        return (f"Werkstoff '{getattr(mat, 'name', '?')}': Querdehnzahl {nu:g} - die "
-                "knotengemittelte Dilatation braucht 0 <= nu < 0,5. Dieses Bauteil "
-                "rechnet mit dem gewoehnlichen Tetraeder weiter.")
+        return (f"Werkstoff '{getattr(mat, 'name', '?')}': Querdehnzahl {nu:g} – die "
+                "knotengemittelte Dilatation braucht 0 ≤ ν < 0,5. Diese Elemente "
+                "rechnen mit dem gewöhnlichen Tetraeder weiter")
     return ""
+
+
+def dilatation_meldungen(model: Model, aktiv=None) -> list:
+    """Wo die knotengemittelte Dilatation nicht greift: je Werkstoff eine
+    Zeile mit der Zahl der betroffenen tet4 - fuer ``res.info``, Zusammenfassung
+    und Bericht (solver.dilatation_gebuendelt). Leer ohne Knotendilatation.
+
+    Bis zum 24.09.2026 ging das nur ueber warnings.warn (Befund B032 der
+    Nachpruefung): das erreichte weder das Protokoll noch den Bericht noch die
+    exe, und der Anwender las eine Rechnung mit Knotendilatation, in der ein
+    Bauteil still mit dem gewoehnlichen Tetraeder rechnete."""
+    if not getattr(model, "knotendilatation", False):
+        return []
+    zahl: dict = {}
+    for i in aktive_indizes(model, aktiv):
+        e = model.elements[i]
+        if e.typ == "tet4":
+            zahl[e.mat] = zahl.get(e.mat, 0) + 1
+    aus = []
+    for mat, n in zahl.items():
+        grund = dilatation_moeglich(model, model.materials[mat])
+        if grund:
+            aus.append(f"{grund} ({n} tet4)")
+    return aus
 
 
 def _dilatationsdaten(model: Model, aktiv=None):
@@ -548,16 +572,12 @@ def _dilatationsdaten(model: Model, aktiv=None):
     idx_alle = [i for i in aktive_indizes(model, aktiv) if model.elements[i].typ == "tet4"]
     if not idx_alle:
         return None
-    gemeldet: set = set()
+    # Wo es nicht geht, rechnet der gewoehnliche Tetraeder weiter; gemeldet
+    # wird das ueber res.info (dilatation_meldungen), nicht hier
     behalten, mats = [], []
     for i in idx_alle:
         e = model.elements[i]
-        fehler = dilatation_moeglich(model, model.materials[e.mat])
-        if fehler:
-            if fehler not in gemeldet:
-                gemeldet.add(fehler)
-                import warnings
-                warnings.warn(fehler, RuntimeWarning, stacklevel=3)
+        if dilatation_moeglich(model, model.materials[e.mat]):
             continue
         behalten.append(i)
         mats.append(e.mat)

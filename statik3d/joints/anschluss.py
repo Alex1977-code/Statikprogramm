@@ -12,8 +12,9 @@ Die Rechenteile fuer Schrauben, Naehte und T-Stummel stehen in ``bolts.py``,
   jeder Anschluss wird ueber **alle GZT-Kombinationen** gefuehrt, die
   unguenstigste ist massgebend;
 * die Ermuedung nutzt die Ermuedungslasten des Modells: je Last die
-  Schwingbreite der Stabendschnittgroessen, die Schaedigungen werden nach
-  Palmgren-Miner ueber alle Lasten aufsummiert.
+  Schwingbreite der Stabendschnittgroessen - aus zwei Zustaenden oder aus
+  einem Verlauf gezaehlt wie im Stabnachweis (``_stufen``) -, die
+  Schaedigungen werden nach Palmgren-Miner ueber alle Lasten aufsummiert.
 
     from statik3d.joints.anschluss import check_joints
     an = solver.solve_all(model, design=True)
@@ -270,6 +271,9 @@ class AnschlussCheck:
     gelenk: object = None             # Gelenkkennwerte (Steifigkeit, Klasse, Rotation)
     modelliert: str = ""              # wie der Anschluss in der Rechnung sitzt
     fehler: str = ""
+    #: Wirksame Ermuedungslasten, die nicht (vollstaendig) in D stehen, weil
+    #: ein Ergebnis fehlt - wie FatigueMember.fehlende_lasten im Stabnachweis
+    fehlende_lasten: list = field(default_factory=list)
 
     @property
     def eta(self) -> float:
@@ -277,9 +281,19 @@ class AnschlussCheck:
         return max(self.util, self.D)
 
     def status(self) -> str:
+        """Wie ec3.fatigue._status: "unvollständig", wenn eta <= 1 ist, aber
+        eine wirksame Ermuedungslast in D fehlt. Bis zum 23.09.2026 urteilte
+        der Status allein nach eta - ein Anschluss, dessen einzige
+        Ermuedungslast nicht gerechnet war, hiess mit D = 0 "erfüllt" (Befund
+        B094). Ergebnisse aus aelteren Dateien kennen das Feld nicht - daher
+        getattr."""
         if self.fehler:
             return "nicht geführt"
-        return "erfüllt" if self.eta <= 1.0 else "NICHT erfüllt"
+        if self.eta > 1.0:
+            return "NICHT erfüllt"
+        if getattr(self, "fehlende_lasten", None):
+            return "unvollständig"
+        return "erfüllt"
 
 
 @dataclass
@@ -304,6 +318,7 @@ class AnschlussResults:
             return "Anschlüsse: keine"
         schlecht = [j.name for j in self.joints.values() if j.eta > 1.0]
         fehler = [j.name for j in self.joints.values() if j.fehler]
+        offen = [j.name for j in self.joints.values() if j.status() == "unvollständig"]
         worst = max(self.joints.values(), key=lambda j: j.eta)
         wo = (f"Ermüdung, D = {worst.D:.3f}" if worst.D > worst.util
               else worst.massgebend + (f", {worst.kombination}" if worst.kombination else ""))
@@ -311,8 +326,11 @@ class AnschlussResults:
              f"max. Ausnutzung {worst.eta:.3f} ({worst.name}: {wo})")
         if schlecht:
             s += f" - {len(schlecht)} NICHT erfüllt: " + ", ".join(schlecht)
-        elif not fehler:
+        elif not fehler and not offen:
             s += " - alle erfüllt"
+        if offen:
+            s += (f" - {len(offen)} unvollständig (Ergebnis einer Ermüdungslast "
+                  "fehlt): " + ", ".join(offen))
         if fehler:
             s += f" - {len(fehler)} nicht geführt: " + ", ".join(fehler)
         return s
@@ -423,42 +441,108 @@ def check_joint(model: Model, joint: Joint, results: dict, analysis=None,
     # frueher gesammelte Hinweise (Steifigkeit, Stuetze) bleiben stehen
     c.hinweise += [h for h in j.hinweise if h not in c.hinweise]
 
-    # -- Ermuedung: je Ermuedungslast die Schwingbreite -------------------
+    # -- Ermuedung: je Ermuedungslast die Schwingbreiten ------------------
     if not ermuedung:
         return c
     alle = analysis.all_results() if hasattr(analysis, "all_results") else {}
     namen = joint.ermuedung or list(model.fatigue_loads)
     schluessel = ERMUEDUNGSGROESSE.get(joint.typ, "dN")
+    groesse = "My" if schluessel == "dMy" else "N"
+
+    def wert(fall: str) -> float:
+        return endkraefte(alle[fall], joint.elem, joint.end).get(groesse, 0.0)
+
     teile = []
     for fn in namen:
         fl = model.fatigue_loads.get(fn)
         if fl is None:
             c.hinweise.append(f"Ermüdungslast '{fn}' gibt es nicht")
             continue
-        if fl.case_max not in alle:
-            c.hinweise.append(f"Ermüdungslast {fl.name}: Ergebnis "
-                              f"'{fl.case_max}' fehlt")
-            continue
-        oben = endkraefte(alle[fl.case_max], joint.elem, joint.end)
-        unten = (endkraefte(alle[fl.case_min], joint.elem, joint.end)
-                 if fl.case_min and fl.case_min in alle else {})
-        groesse = "My" if schluessel == "dMy" else "N"
-        d = abs(oben.get(groesse, 0.0) - unten.get(groesse, 0.0)) * fl.factor
-        if d <= 0:
-            continue
-        try:
-            je = t.design(**k, n_cycles=fl.cycles, **{schluessel: d})
-        except Exception as ex:          # noqa: BLE001
-            c.hinweise.append(f"Ermüdung {fl.name}: {type(ex).__name__}: {ex}")
-            continue
-        for e in je.ermuedung:
-            teile.append((fl.name, e))
-        for h in je.hinweise:
-            if h not in c.hinweise:
-                c.hinweise.append(h)
+        for d, n in _stufen(fl, model.design, alle, wert, c):
+            if d <= 0 or n <= 0:
+                continue
+            try:
+                je = t.design(**k, n_cycles=n, **{schluessel: d})
+            except Exception as ex:          # noqa: BLE001
+                c.hinweise.append(f"Ermüdung {fl.name}: {type(ex).__name__}: {ex}")
+                _fehlt_in_d(c, fl)
+                continue
+            for e in je.ermuedung:
+                teile.append((fl.name, e))
+            for h in je.hinweise:
+                if h not in c.hinweise:
+                    c.hinweise.append(h)
     c.ermuedung = _ermuedung_zusammenfassen(teile)
     c.D = max((e["schaedigung"] for e in c.ermuedung), default=0.0)
     return c
+
+
+def _fehlt_in_d(c: AnschlussCheck, fl) -> None:
+    """Die Last *fl* steht nicht (vollstaendig) in D dieses Anschlusses."""
+    if fl.name not in c.fehlende_lasten:
+        c.fehlende_lasten.append(fl.name)
+
+
+def _stufen(fl, ds, alle: dict, wert, c: AnschlussCheck) -> list:
+    """Die Stufen einer Ermuedungslast am Anschluss: [(Schwingbreite, Spiele)].
+
+    Gezaehlt wird wie im Stabnachweis (ec3.fatigue.check_fatigue), nur mit
+    der Stabendschnittgroesse statt der Spannung (``wert(fall)``):
+
+    * **Verlauf** (``folge``): die Glieder nach ``fl.zaehlung`` (Vorgabe
+      "spanne": Maximum minus Minimum, ein Spiel je Wiederholung),
+      Wiederholungen ueber ``_wiederholungen`` (None = globale
+      Lastspielzahl). Bis zum 23.09.2026 las der Anschluss nur case_max: mit
+      dem case_max, das die Maske auch im Modus Verlauf mitgab, rechnete der
+      Verlauf [Kran, LF1] am Hallenrahmen D = 12,1718 (Kran gegen null) statt
+      6,0967 (die Spanne, wie zwei Zustaende Kran gegen LF1); mit leerem
+      case_max wie aus dem RFEM-Import D = 0 (Befund B094). Fehlt ein
+      Glied, zaehlen die uebrigen wie in ec3.fatigue._verlauf - die Last
+      steht dann nur teilweise in D ([Kran, FEHLT, LF1] mit 1e5: D = 0,304835
+      wie [Kran, LF1], gemessen 24.09.2026).
+    * **Zwei Zustaende**: |case_max - case_min| mit ``_spiele`` (None =
+      globale Lastspielzahl; bis zum 23.09.2026 ging None an die Vorlage, und
+      die uebersprang die Ermuedung still - D = 0 statt 6,0967, Befund NB1).
+      Ein benannter, aber nicht gerechneter Mindestzustand ist **nicht
+      null**: bis zum 23.09.2026 rechnete er als Nullzustand, D = 12,1718
+      statt 6,0967 ohne Hinweis (Befund B095, wie FE2 im Stabnachweis).
+
+    Beide Wege mit ``fl.factor * gamma_Ff`` wie im Stabnachweis; gamma_Ff
+    wirkte am Anschluss bis zum 23.09.2026 nicht (D = 6,0967 bei 1,0 und bei
+    1,5, Befund NB2). Fehlt ein Ergebnis einer wirksamen Last, steht ein
+    Hinweis da, und die Last kommt nach ``c.fehlende_lasten`` - der
+    Anschluss heisst dann "unvollständig" statt "erfüllt".
+    """
+    from ..ec3.fatigue import _spiele, _wiederholungen, _zaehlen, kollektiv
+    faktor = fl.factor * ds.gamma_Ff
+    if getattr(fl, "folge", None):
+        wdh = _wiederholungen(fl, ds)
+        fehlt = [f for f in dict.fromkeys(fl.folge) if f not in alle]
+        for f in fehlt:
+            c.hinweise.append(f"Ermüdungslast {fl.name}: Ergebnis '{f}' fehlt")
+        if fehlt and wdh > 0:
+            _fehlt_in_d(c, fl)
+        werte = [wert(f) * faktor for f in fl.folge if f in alle]
+        if wdh <= 0 or len(werte) < 2:
+            # 0 Wiederholungen: unwirksam (Sammlungen aus dem RFEM-Import)
+            return []
+        return [(h, n * wdh) for h, n in
+                kollektiv(_zaehlen(werte, getattr(fl, "zaehlung", "spanne")))]
+    spiele = _spiele(fl, ds)
+    if fl.case_max not in alle:
+        c.hinweise.append(f"Ermüdungslast {fl.name}: Ergebnis '{fl.case_max}' fehlt")
+        if spiele > 0:
+            _fehlt_in_d(c, fl)
+        return []
+    if spiele <= 0:
+        return []
+    if fl.case_min and fl.case_min not in alle:
+        c.hinweise.append(f"Ermüdungslast {fl.name}: Ergebnis '{fl.case_min}' des "
+                          "Mindestzustands fehlt - die Last wird nicht gerechnet")
+        _fehlt_in_d(c, fl)
+        return []
+    unten = wert(fl.case_min) if fl.case_min else 0.0
+    return [(abs(wert(fl.case_max) - unten) * faktor, spiele)]
 
 
 def check_joints(model: Model, analysis, combos: list = None, progress=None,

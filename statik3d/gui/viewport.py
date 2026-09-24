@@ -1,6 +1,8 @@
 """Darstellung des Modells und der Ergebnisse im 3D-Viewport (pyvista)."""
 from __future__ import annotations
 
+from typing import NamedTuple
+
 import numpy as np
 import pyvista as pv
 
@@ -2846,6 +2848,217 @@ def diagram_scale(model: Model, res, quantity: str, n: int = 9) -> float:
     return 0.08 * model.characteristic_size() / vmax
 
 
+#: Faerbungen der Verdrehungen, Einheit fest mrad (einheiten.faktor("winkel")
+#: rechnet nicht von rad um - wie im GZG-Nachweis und im Bericht)
+VERDREHUNGEN = ("|φ| Verdrehung", "φx", "φy", "φz")
+#: Eintraege der Gruppe „Verformungen“ im Modellbaum: (Text, Faerbung)
+VERFORMUNGEN_BAUM = (("u gesamt |u|", "|u| Verschiebung"), ("ux", "ux"), ("uy", "uy"),
+                     ("uz", "uz"), ("φ gesamt |φ|", "|φ| Verdrehung"), ("φx", "φx"),
+                     ("φy", "φy"), ("φz", "φz"))
+OHNE_VERDREHUNG_VOLUMEN = "keine Verdrehungen: nur Volumenkörper (Knoten ohne Drehfreiheitsgrad)"
+OHNE_VERDREHUNG = ("keine Verdrehungen: kein Knoten mit Drehsteifigkeit (Fachwerkstäbe, Seile, "
+                   "Scheiben und Volumenkörper haben keinen Drehfreiheitsgrad)")
+#: Zusatz fuer |phi| einer Umhuellenden aus einer alten Ergebnisdatei (24.09.2026)
+PHI_NICHT_GESPEICHERT = "nicht in der Ergebnisdatei – neu rechnen"
+_DREH_CACHE: dict = {}
+
+
+def ist_verdrehung(feld: str) -> bool:
+    return str(feld or "") in VERDREHUNGEN
+
+
+def _balkenenden_drehsteif(e) -> tuple:
+    """(Anfang, Ende): bekommt der Knoten am Stabanfang bzw. -ende aus diesem
+    Balken eine Drehsteifigkeit?
+
+    Stabendgelenke (``e.hinges``, lokale FHG 3..5 am Anfang, 9..11 am Ende)
+    kondensiert assemble.condense heraus - ihre Zeilen werden null. Torsion
+    traegt der Stab nur, wenn keines der beiden Enden sie freigibt (3 und 9);
+    Biegung um y bzw. z haelt ein Ende, dessen eigenes Gelenk (4/5 bzw.
+    10/11) fehlt. Ein Pendelstab [3, 4, 5, 10, 11] haelt also keinen seiner
+    Knoten (Befund 24.09.2026: er zeigte Nullen statt grau). Mit Versatz
+    (exzentrizitaet) oder Woelbkrafttorsion rechnet die Assemblierung anders
+    - dort zaehlt der Stab wie bisher als drehsteif.
+    """
+    h = set(int(x) for x in (e.hinges or ()))
+    if not h or getattr(e, "exzentrizitaet", None) or getattr(e, "woelb", False):
+        return True, True
+    torsion = 3 not in h and 9 not in h
+    return (torsion or 4 not in h or 5 not in h,
+            torsion or 10 not in h or 11 not in h)
+
+
+def drehknoten_vergessen() -> None:
+    """Den Zwischenspeicher von :func:`drehknoten` leeren - nach jeder
+    Rechnung, damit die Maske zu dem Modell gehoert, das gerechnet wurde
+    (Federn, Gelenke und Starrkoerper aendern sich an Ort und Stelle)."""
+    _DREH_CACHE.clear()
+
+
+def drehknoten(model: Model) -> np.ndarray:
+    """Welche Knoten eine Drehsteifigkeit haben: die an einem Balken (ohne
+    Momentengelenke an diesem Ende), einer Schale, einer Feder mit
+    Drehfedern oder einem Starrkoerper (Master; bei RBE2 auch die Slaves).
+
+    Alle anderen - Volumen-, Scheiben-, Fachwerk- und Seilknoten - sperrt die
+    Assemblierung ohne Steifigkeit mit 0 (assemble.constrained_dofs; Fachwerk
+    und Seil: beam3d.k_local_truss laesst die Rotationen leer). Dort ist
+    phi genau 0, aber kein Ergebnis; die Faerbung zeigt sie grau statt als
+    Nullen (dem Anwender am 24.09.2026 zugesagt). Einmal je Netz bestimmt:
+    Baum, Faerbung und Kennwerte fragen bei jedem Neuzeichnen. Der Schluessel
+    enthaelt die Drehfedern und Starrkoerper; Gelenke und alles andere, was
+    sich an Ort und Stelle aendert, erfasst :func:`drehknoten_vergessen` nach
+    der Rechnung.
+    """
+    elemente = model.elements
+    federn = getattr(model, "federn", {}) or {}
+    starr = getattr(model, "starrkoerper", None) or []
+    try:
+        drehfedern = tuple(sorted((str(n), tuple(float(k) for k in list(fp.k)[3:6]))
+                                  for n, fp in federn.items()))
+    except (TypeError, ValueError, AttributeError):
+        drehfedern = (len(federn),)
+    schluessel = (id(model), id(elemente), len(elemente), int(model.nn), drehfedern,
+                  tuple((int(sk.master), str(sk.art), len(sk.slaves)) for sk in starr))
+    if schluessel in _DREH_CACHE:
+        return _DREH_CACHE[schluessel]
+    maske = np.zeros(int(model.nn), bool)
+    schalen = set(EL.SCHALEN_TYPEN)
+    for e in elemente:
+        t = e.typ
+        if t == "beam":
+            a, b = _balkenenden_drehsteif(e)
+            if a:
+                maske[int(e.nodes[0])] = True
+            if b:
+                maske[int(e.nodes[-1])] = True
+        elif t in schalen:
+            maske[list(e.nodes)] = True
+        elif t == "feder":
+            fp = federn.get(e.sec)
+            if fp is not None and any(float(k) > 0 for k in list(fp.k)[3:6]):
+                maske[list(e.nodes)] = True
+    nn = int(model.nn)
+    for sk in starr:
+        # RBE2: theta_s = theta_m und u_s = u_m + theta_m x r - Master und
+        # Slaves drehen mit; RBE3: nur der Master (assemble.starrkoerper)
+        m_ = int(sk.master)
+        slaves = [int(x) for x in sk.slaves if 0 <= int(x) < nn and int(x) != m_]
+        if not slaves or not 0 <= m_ < nn:
+            continue
+        maske[m_] = True
+        if str(sk.art).upper() == "RBE2":
+            maske[slaves] = True
+    if len(_DREH_CACHE) >= 4:           # Grundmodell und Situationsmodelle
+        _DREH_CACHE.clear()
+    _DREH_CACHE[schluessel] = maske
+    return maske
+
+
+def ohne_verdrehung(model: Model) -> str:
+    """Warum ein Modell keine Verdrehungen hat - als Zusatz und Meldung."""
+    if model.elements and all(EL.familie(e.typ) == "volumen" for e in model.elements):
+        return OHNE_VERDREHUNG_VOLUMEN
+    return OHNE_VERDREHUNG
+
+
+def _verdrehung(model: Model, res, field: str):
+    """(Knotenwerte [mrad] oder None, Name) einer Verdrehungsfaerbung; NaN an
+    Knoten ohne Drehsteifigkeit."""
+    k = None if field.startswith("|") else 3 + "xyz".index(field[-1])
+    u = getattr(res, "u", None)
+    if u is not None:
+        u = np.asarray(u, float)
+        if u.ndim != 2 or u.shape[1] < 6:
+            return np.full(model.nn, np.nan), field + " [mrad]"
+        w = np.linalg.norm(u[:, 3:6], axis=1) if k is None else u[:, k]
+        name = "|φ| [mrad]" if k is None else f"{field} [mrad]"
+    elif getattr(res, "u_max", None) is not None:
+        if k is None:
+            pm = getattr(res, "phimag_max", None)
+            w = np.full(model.nn, np.nan) if pm is None else np.asarray(pm, float)
+            name = "|φ| max [mrad]"
+        else:
+            w = np.where(np.abs(res.u_max[:, k]) > np.abs(res.u_min[:, k]),
+                         res.u_max[:, k], res.u_min[:, k])
+            name = f"{field} extrem [mrad]"
+    else:
+        return None, ""
+    w = np.asarray(w, float)
+    if len(w) != int(model.nn):
+        # Ergebnis zu einem anderen Netz: nach der Rechnung einen Knoten
+        # angelegt (die Rechnung bleibt stehen) - kein Wert statt ValueError
+        # in refresh_all (Befund 24.09.2026). Nur hinzugekommene Knoten: die
+        # alten behalten ihren Wert, die neuen sind NaN (grau) - wie |u| in
+        # der Ansicht (_aufbauen, ergebnis_passt, 24.09.2026)
+        w = auf_laenge(w, int(model.nn))
+        if w is None:
+            return None, name
+    return np.where(drehknoten(model), w * 1000, np.nan), name
+
+
+#: Zusatz im Modellbaum statt „min … max“, wenn das Ergebnis zu einem
+#: anderen Modellstand gehoert (ergebnis_passt „anders“, 24.09.2026)
+NEU_RECHNEN = "neu rechnen"
+
+
+def verformungen_liste(model: Model, res, passt: str = None) -> list:
+    """Die Gruppe „Verformungen“ fuer den Modellbaum: [(Text, Zusatz,
+    Faerbung, grau)].
+
+    Der Zusatz ist „min … max mm“ bzw. „mrad“ des gezeigten Ergebnisses, als
+    Dezimalzahl (spannungen.dezimal) - genau die Grenzen dessen, was die
+    Faerbung nach dem Klick zeigt, auch bei der Umhuellenden (dort das
+    betragsgroessere Extrem je Knoten; bis zum 24.09.2026 stand hier min(u_min)
+    … max(u_max), dessen eine Grenze dann nirgends im Bild zu finden war).
+    Hat kein Knoten eine Drehsteifigkeit, stehen die phi-Eintraege grau mit
+    der Erklaerung als Zusatz.
+
+    ``passt`` ist ergebnis_passt(model, res, Stand der Rechnung); ohne ihn
+    entscheiden die Anzahlen. „anders“: keine Zahlen, jeder Eintrag grau mit
+    „neu rechnen“ - welche Nummer zu welchem Wert gehoert, ist nicht mehr
+    bekannt. „gewachsen“: der Bereich ueber die alten Knoten (die neuen
+    haben keinen Wert). Bis zur Gegenpruefung von 97be9ff (24.09.2026) galt
+    nur len(u) == nn: „anders“ bei gleicher Knotenzahl zeigte den alten
+    Bereich, „gewachsen“ gar keine Liste.
+    """
+    from .. import spannungen as spn
+    u = displacement_of(res)
+    if u is None:
+        return []
+    if passt is None:
+        passt = ergebnis_passt(model, res)
+    if passt == "anders":
+        return [(text, NEU_RECHNEN, feld, True) for text, feld in VERFORMUNGEN_BAUM]
+    ohne = not drehknoten(model).any()
+    out = []
+    for text, feld in VERFORMUNGEN_BAUM:
+        phi = ist_verdrehung(feld)
+        if phi and ohne:
+            out.append((text, ohne_verdrehung(model), feld, True))
+            continue
+        einheit = "mrad" if phi else "mm"
+        betrag = feld.startswith("|")
+        if (phi and betrag and getattr(res, "u", None) is None
+                and getattr(res, "u_max", None) is not None
+                and getattr(res, "phimag_max", None) is None):
+            # Umhuellende aus einer Ergebnisdatei von vor dem 24.09.2026: |phi|
+            # ist dort nicht gespeichert und laesst sich aus u_min/u_max nicht
+            # ehrlich bilden - grau mit Hinweis statt eines falschen Werts
+            out.append((text, PHI_NICHT_GESPEICHERT, feld, True))
+            continue
+        w, _c, _n = result_field(model, res, feld)
+        w = np.asarray(w, float) if w is not None else np.array([])
+        if not np.isfinite(w).any():
+            out.append((text, "", feld, False))
+            continue
+        lo, hi = float(np.nanmin(w)), float(np.nanmax(w))
+        vz = not betrag
+        out.append((text, f"{spn.dezimal(lo, vorzeichen=vz)} … "
+                          f"{spn.dezimal(hi, vorzeichen=vz)} {einheit}", feld, False))
+    return out
+
+
 def result_field(model: Model, res, field: str, util: dict = None, seite: str = "max"):
     """(Knotenskalare oder None, Zellskalare oder None, Name).
 
@@ -2872,11 +3085,23 @@ def result_field(model: Model, res, field: str, util: dict = None, seite: str = 
             return res.u[:, k] * 1000, None, field + " [mm]"
         return np.where(np.abs(res.u_max[:, k]) > np.abs(res.u_min[:, k]),
                         res.u_max[:, k], res.u_min[:, k]) * 1000, None, field + " extrem [mm]"
+    if field in VERDREHUNGEN:
+        werte, name = _verdrehung(model, res, field)
+        return werte, None, name
     if field.startswith("Vergleich"):
         if hasattr(res, "node_vm_max"):
             return np.nan_to_num(res.node_vm_max) / 1e6, None, "σv max [MPa]"
         return np.nan_to_num(res.node_vm) / 1e6, None, "σv [MPa]"
-    if field.startswith("Ausnutzung") and util:
+    # Ist ein Nachweis da (util nicht None), bleibt es bei seinen Werten, auch
+    # wenn die Karte leer ist - dann hat keine Zelle einen Wert. Bis zum
+    # 24.09.2026 stand hier "and util": eine leere Karte (alle Staebe "nicht
+    # gefuehrt" oder ohne wirksame Ermuedungslast) fiel auf die elastische
+    # Ausnutzung zurueck, und "Ausnutzung Ermüdung" faerbte Werte, die nicht
+    # aus dem Ermuedungsnachweis stammen - gemessen am Durchlauftraeger aus
+    # vier Balken [0.3349, 0.1318, 0.0878, 0.0439], auch am Stab ohne
+    # Kerbfall. Die elastische Ausnutzung gibt es nur ohne Nachweis (None)
+    # und unter "Ausnutzung elastisch" (main._util_map gibt dort None).
+    if field.startswith("Ausnutzung") and util is not None:
         c = np.full(len(model.elements), np.nan)
         for i, v in util.items():
             c[i] = v
@@ -2894,6 +3119,110 @@ def result_field(model: Model, res, field: str, util: dict = None, seite: str = 
                 c[i] = d["util"]
         return None, c, "Ausnutzung elastisch [-]"
     return None, None, ""
+
+
+#: Zeile der Kopfzeile, wenn das gezeigte Ergebnis zu einem anderen
+#: Modellstand gehoert (24.09.2026)
+ERGEBNIS_VERALTET = "Ergebnis passt nicht mehr zum Modell – neu rechnen"
+
+
+class Modellstand(NamedTuple):
+    """Fingerabdruck des Modells bei der Rechnung (modellstand)."""
+    nn: int
+    ne: int
+    #: Kopie der Knotenmatrix - eine Kopie, weil Knoten an Ort und Stelle
+    #: verschoben werden (model.nodes[i] = ..., Achsen spiegeln)
+    knoten: np.ndarray
+    #: hash der Elementliste als Tupel (Typ, Knoten) je Element
+    elemente: int
+
+
+def _elementhash(elements, n: int) -> int:
+    """hash der ersten n Elemente als Tupel (Typ, Knoten...) - ein Tupel-Hash
+    statt einer Kopie der Liste. Gemessen am 24.09.2026: 29-46 ms fuer
+    196 608 tet4, 0,11-0,19 s fuer 650 000 (Drehlager-Groesse); redraw mit
+    gezeigtem Ergebnis bei 196 608 tet4 0,51 s -> 0,57 s. Schneller waren
+    weder map/attrgetter mit chain noch numpy (fromiter) - die Schleife ueber
+    die Element-Objekte bleibt. Ohne gezeigtes Ergebnis kostet es nichts
+    (ergebnis_passt kehrt bei res None vorher zurueck)."""
+    return hash(tuple([(e.typ, *e.nodes) for e in elements[:n]]))
+
+
+def modellstand(model) -> Modellstand:
+    """Woran ergebnis_passt einen Modellstand erkennt: Knoten- und
+    Elementzahl, die Knotenkoordinaten und je Element Typ und Knoten. Die
+    Oberflaeche merkt ihn sich nach jeder Rechnung und beim Laden einer
+    Ergebnisdatei (_solve_done).
+
+    Bis zum 24.09.2026 waren es nur die beiden Anzahlen: ein Element loeschen
+    und eines anlegen galt als „passt“ - die Werte lagen dann an anderen
+    Elementen, ohne Hinweis; einen Knoten verschieben bemerkte niemand
+    (Gegenpruefung von 5090fe2)."""
+    ne = len(model.elements)
+    return Modellstand(int(model.nn), ne, np.array(model.nodes, float, copy=True),
+                       _elementhash(model.elements, ne))
+
+
+def ergebnis_passt(model, res, stand: Modellstand = None) -> str:
+    """Gehoert das Ergebnis noch zum Modell?
+
+    „passt“: das Modell ist genau der Stand der Rechnung (``stand``, siehe
+    modellstand). „gewachsen“: der Stand der Rechnung ist unveraendert der
+    Anfang des Modells - gleiche Koordinaten der alten Knoten, gleiche alte
+    Elemente an gleicher Nummer - und es wurde nur angehaengt (Knoten,
+    Stabzug, Flaeche): die alten behalten ihre Nummern und Werte, die neuen
+    haben keinen. „anders“: alles andere (geloescht, verschoben, umgebaut,
+    auch geloescht und wieder gleich viele angelegt) - welche Nummer zu
+    welchem Wert gehoert, ist dann nicht mehr bekannt, das Ergebnis kommt
+    nicht ins Bild.
+
+    Bis zum 24.09.2026 nahm die Ansicht an, dass Ergebnis und Modell gleich
+    viele Knoten haben: ein Stabzug nach der Rechnung bei gezeigten
+    Ergebnissen brach das Zeichnen mit IndexError ab (u[kn] mit neuen
+    Knotennummern). Mehr Knoten im Ergebnis (Laenge von u) als im Modell ist
+    immer „anders“; ohne ``stand`` entscheiden nur die Anzahlen.
+    """
+    if res is None:
+        return "passt"
+    nn, ne = int(model.nn), len(model.elements)
+    n_res = None
+    for a in ("u", "u_max", "modes", "buckling_modes"):
+        x = getattr(res, a, None)
+        if x is None:
+            continue
+        x = np.asarray(x)
+        n_res = int(x.shape[1]) if a in ("modes", "buckling_modes") and x.ndim == 3 else int(len(x))
+        break
+    if n_res is not None and n_res > nn:
+        return "anders"
+    if stand is None:
+        return "passt" if n_res is None or n_res == nn else "gewachsen"
+    # die billigen Vergleiche zuerst, der Elementhash zuletzt
+    if stand.nn > nn or stand.ne > ne:
+        return "anders"
+    alt = np.asarray(model.nodes, float)[:stand.nn]
+    if alt.shape != stand.knoten.shape or not np.array_equal(alt, stand.knoten):
+        return "anders"
+    if _elementhash(model.elements, stand.ne) != stand.elemente:
+        return "anders"
+    if stand.nn == nn and stand.ne == ne and (n_res is None or n_res == nn):
+        return "passt"
+    return "gewachsen"
+
+
+def auf_laenge(a, n: int, fuell: float = np.nan):
+    """Knoten- oder Elementwerte eines frueheren (kleineren) Modellstands auf
+    n Eintraege auffuellen - die neuen ohne Wert (NaN, in der Ansicht grau)
+    bzw. mit ``fuell``. Laenger als n: None, denn welche Nummer zu welchem
+    Wert gehoert, ist dann nicht mehr bekannt (24.09.2026)."""
+    if a is None:
+        return None
+    a = np.asarray(a, float)
+    if len(a) == n:
+        return a
+    if len(a) > n:
+        return None
+    return np.concatenate([a, np.full((n - len(a),) + a.shape[1:], fuell)])
 
 
 def displacement_of(res):
@@ -3039,6 +3368,24 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
             if gewaehlt(nm):
                 zeilen.append(zeile(nm, z(np.nanmin(u[:, j]), "verformung"), "",
                                     z(np.nanmax(u[:, j]), "verformung"), "", E.einheit("verformung")))
+    formen = any(getattr(res, a, None) is not None for a in ("modes", "buckling_modes"))
+    if not alle and feld in VERDREHUNGEN and not formen:
+        # dieselben Werte wie die Faerbung (Umhuellende: |phi| aus phimag_max),
+        # mrad fest; Knoten ohne Drehsteifigkeit zaehlen nicht. Zu einer
+        # Eigen- oder Knickform keine Zeile: ihre Drehungen sind keine mrad,
+        # und res.u waeren die statischen Werte (Befund 24.09.2026)
+        phi, _name = _verdrehung(model, res, feld)
+        phi = nur_sicht(phi)
+        if phi is not None and len(phi) and np.isfinite(phi).any():
+            if feld.startswith("|"):
+                k = int(np.nanargmax(phi))
+                zeilen.append(zeile("phi", "", "", spn.dezimal(phi[k]), f"Knoten {k}", "mrad"))
+            else:
+                a, b = int(np.nanargmin(phi)), int(np.nanargmax(phi))
+                zeilen.append(zeile("phi" + feld[-1], spn.dezimal(phi[a]), f"Knoten {a}",
+                                    spn.dezimal(phi[b]), f"Knoten {b}", "mrad"))
+        elif phi is not None and not drehknoten(model).any():
+            zeilen.append(ohne_verdrehung(model))
     reihe = (groesse,) if verlauf else SCHNITTGROESSEN
     grenzen = schnittgroessen_grenzen(model, res, reihe, elemente=elemente) \
         if (alle or gewaehlt("schnitt")) else {}
@@ -3086,7 +3433,11 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
         zeilen.append(zeile("sig_v", "", "", z(float(vm[k]), "spannung"),
                             f"Knoten {k}", E.einheit("spannung")))
     werte = dict(util or {}) if gewaehlt("ausnutzung") else {}
-    if not werte and gewaehlt("ausnutzung"):
+    # wie result_field: die elastische Ausnutzung nur ohne Nachweis (util
+    # None). Bis zum 24.09.2026 "if not werte": bei leerer Ermuedungskarte
+    # stand hier ohne Hinweis "max. Ausnutzung 0.335 an A" - der elastische
+    # Wert (gemessen am Durchlauftraeger aus vier Balken).
+    if util is None and gewaehlt("ausnutzung"):
         for i, d in (getattr(res, "beam_forces", None) or {}).items():
             if d.get("util") is not None:
                 werte[i] = d["util"]

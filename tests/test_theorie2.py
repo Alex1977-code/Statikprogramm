@@ -12,10 +12,15 @@ Geprueft wird gegen geschlossene Loesungen:
   * die Ersatzhorizontalkraft gegen phi N_Ed mit phi = phi_0 alpha_h alpha_m
   * die Wirkung der Ersatzlast gegen die von Hand vergroesserte Zusatzlast
 
+und die Handbuchsaetze zu Ergebniskombinationen bei "automatisch" gegen die
+Rechnung (Zweigelenkrahmen, Stauwand): laufen Rechnung und Satz auseinander,
+schlaegt die Pruefung fehl.
+
 Aufruf:  python -m tests.test_theorie2
 """
 import math
 import os
+import re
 import sys
 
 import numpy as np
@@ -140,6 +145,225 @@ def test_alpha_cr():
           T2.erforderlich(12.0, True)["noetig"],
           T2.erforderlich(12.0, True)["text"])
     check("α_cr = 8 verlangt sie immer", T2.erforderlich(8.0)["noetig"])
+
+
+def zweigelenkrahmen():
+    """Zweigelenkrahmen: Stiele HEB 200, 5 m, Riegel IPE 300, 8 m, Fuesse
+    gelenkig, die Riegelhoehe aus der Ebene gehalten; G 8 kN/m und Q 0,5 kN/m
+    auf dem Riegel, W 25 kN waagerecht am linken Stielkopf. Unter W allein
+    ist ein Stiel gezogen, der andere gedrueckt (N_W = ±15,625 kN)."""
+    from statik3d import mesher
+    from statik3d.model import Section
+    m = Model("Zweigelenkrahmen")
+    m.add_material(Material.steel("S235"))
+    m.add_section(Section.from_profile("HEB 200"))
+    m.add_section(Section.from_profile("IPE 300"))
+    mesher.line_of_beams(m, "S235", "HEB 200", (0, 0, 0), (0, 0, 5.0), 5)
+    a = len(m.elements)
+    mesher.line_of_beams(m, "S235", "IPE 300", (0, 0, 5.0), (8.0, 0, 5.0), 8)
+    b = len(m.elements)
+    mesher.line_of_beams(m, "S235", "HEB 200", (8.0, 0, 5.0), (8.0, 0, 0), 5)
+    mesher.merge_nodes(m)
+    m.add_member("StielL", list(range(0, a)))
+    m.add_member("Riegel", list(range(a, b)))
+    m.add_member("StielR", list(range(b, len(m.elements))))
+    for i in range(m.nn):
+        if abs(m.nodes[i][2]) < 1e-9:
+            m.fix(i, [0, 1, 2, 3, 5])
+        elif abs(m.nodes[i][2] - 5.0) < 1e-9:
+            m.fix(i, [1])
+    for lf in ("G", "Q", "W"):
+        m.add_load_case(lf, lf)
+    for e in range(a, b):
+        m.load_beam(e, qz=-8e3, case="G")
+        m.load_beam(e, qz=-0.5e3, case="Q")
+    kopf = min((i for i in range(m.nn) if abs(m.nodes[i][2] - 5.0) < 1e-9),
+               key=lambda i: m.nodes[i][0])
+    m.load_node(kopf, Fx=25e3, case="W")
+    return m
+
+
+def test_alpha_cr_zug_und_druck():
+    """α_cr bei gezogenen und gedrückten Stäben zugleich (Befund B130).
+
+    Bis zum 23.09.2026 rief alpha_cr eigsh(K, M=−K_g, sigma=0): ARPACK setzt
+    für M ein positiv (semi)definites Skalarprodukt voraus, mit Zug und Druck
+    ist −K_g aber indefinit. Am Zweigelenkrahmen gab W in 200 Aufrufen 200
+    verschiedene Werte, alle unter 3,6, statt 77,33 - und „auto“ rechnete
+    1,5·W nach II. Ordnung, obwohl α_cr = 51,55 ist. Bezug hier: das dichte
+    Problem −K_g v = μ K v (scipy.linalg.eigh, K positiv definit), α = 1/μ_max.
+    """
+    import scipy.linalg as sla
+    from statik3d import assemble as asm
+    m = zweigelenkrahmen()
+    system = solver.StaticSystem(m)
+    fi = system.fi
+    K = system.Kff.toarray()
+    bezug = {}
+    for name, fak in (("W", {"W": 1.0}), ("K1", {"G": 1.35, "Q": 1.5})):
+        u = system.solve(solver.case_loads(m, fak)[0])
+        G = -asm.geometric_stiffness(m, u)[fi][:, fi].toarray()
+        mu = sla.eigh(G, K, eigvals_only=True)
+        bezug[name] = 1.0 / mu.max()
+        werte = [T2.alpha_cr(m, system, u) for _ in range(5)]
+        a = [w["alpha_cr"] for w in werte]
+        if name == "W":
+            ew = np.linalg.eigvalsh(G)
+            check("Voraussetzung: unter W ist −K_g indefinit (Zug und Druck)",
+                  ew.min() < -1e-9 * abs(ew).max() and ew.max() > 1e-9 * abs(ew).max(),
+                  f"{int((ew < -1e-9 * abs(ew).max()).sum())} negative, "
+                  f"{int((ew > 1e-9 * abs(ew).max()).sum())} positive Eigenwerte")
+        close(f"α_cr {name} gleich dem dichten Bezug", a[0], bezug[name], 1e-8)
+        # Bitgleich, nicht nur auf 12 Stellen: ohne den festen Startvektor
+        # gaben 200 Aufrufe unter K1 198 verschiedene Werte (Spanne 8,3e-12),
+        # mit ihm einen (gemessen 24.09.2026)
+        check(f"α_cr {name} fünfmal gerechnet, fünfmal bitgleich",
+              len(set(a)) == 1, ", ".join(repr(x) for x in a))
+        v = werte[0].get("modus")
+        vf = v[fi] if v is not None else np.zeros(len(fi))
+        r = np.linalg.norm(K @ vf - a[0] * (G @ vf)) / max(np.linalg.norm(K @ vf), 1e-300)
+        check(f"die Eigenform {name} erfüllt K v = α_cr (−K_g) v", r < 1e-6,
+              f"Residuum {r:.1e}")
+
+    # Unter „auto“: der Lastfall W auf II. Ordnung und KW = 1,5·W
+    m.load_cases["W"].theorie = "II"
+    m.design.theorie2 = "auto"
+    m.add_combination("KW", {"W": 1.5}, typ="ULS")
+    an = solver.solve_all(m, design=False)
+    kz = an.theorie2.kombinationen
+    close("Lastfall W auf II. Ordnung: α_cr wie der Bezug",
+          kz["W"].alpha_cr, bezug["W"], 1e-8)
+    close("KW = 1,5·W: α_cr = α_cr(W)/1,5", kz["KW"].alpha_cr, bezug["W"] / 1.5, 1e-8)
+    check("KW bleibt unter „auto“ bei I. Ordnung (α_cr ≥ 10)",
+          not kz["KW"].gerechnet
+          and an.combinations["KW"].info.get("theorie") != "II. Ordnung",
+          kz["KW"].text())
+
+    # Nur Zug: es gibt keinen positiven Verzweigungslastfaktor
+    sec = make_section("HEB 300")
+    mz = Model("Zugstab")
+    mz.add_material(Material.steel("S355"))
+    mz.add_section(sec)
+    n = 12
+    iz = [mz.add_node(0.0, 0.0, 6.0 * i / n) for i in range(n + 1)]
+    for i in range(n):
+        mz.add_element("beam", [iz[i], iz[i + 1]], "S355", sec.name)
+    mz.fix(iz[0], [0, 1, 2, 5])
+    mz.fix(iz[-1], [0, 1, 5])
+    mz.add_load_case("LF1", "G", "")
+    mz.load_node(iz[-1], Fz=+1000e3, Fy=1e3, case="LF1")
+    sz = solver.StaticSystem(mz)
+    az = [T2.alpha_cr(mz, sz, sz.solve(solver.case_loads(mz, {"LF1": 1.0})[0]))
+          for _ in range(3)]
+    check("nur Zug: α_cr = ∞, „kein positiver Verzweigungslastfaktor“",
+          all(math.isinf(x["alpha_cr"]) and "kein positiver" in x["fehler"] for x in az),
+          str([(x["alpha_cr"], x["fehler"]) for x in az]))
+
+
+def geschossrahmen(nx=3, nz=2, a=6.0, h=4.0, s=4):
+    """Symmetrischer Geschossrahmen: nx x nx Felder zu a, nz Geschosse zu h,
+    Stützen HEB 300, Riegel IPE 400, Verbände CHS 88.9X5 in den Außenwänden,
+    jeder Stab in s Elemente geteilt, Füße eingespannt; Lastfall G mit
+    150 kN lotrecht je Knotenpunkt. Die größten μ häufen sich (3 x 3 x 2:
+    27 innerhalb 10⁻³ von μ_max, dicht gerechnet 24.09.2026)."""
+    m = Model("Geschossrahmen")
+    m.add_material(Material.steel("S235"))
+    for p in ("HEB 300", "IPE 400", "CHS 88.9X5"):
+        m.add_section(make_section(p))
+    kn = {}
+    for k in range(nz + 1):
+        for j in range(nx + 1):
+            for i in range(nx + 1):
+                kn[i, j, k] = m.add_node(i * a, j * a, k * h)
+
+    def stab(p, q, sec):
+        A, B = np.array(m.nodes[p]), np.array(m.nodes[q])
+        ids = [p] + [m.add_node(*(A + (B - A) * t / s)) for t in range(1, s)] + [q]
+        for t in range(s):
+            m.add_element("beam", [ids[t], ids[t + 1]], "S235", sec)
+
+    for k in range(nz):
+        for j in range(nx + 1):
+            for i in range(nx + 1):
+                stab(kn[i, j, k], kn[i, j, k + 1], "HEB 300")
+    for k in range(1, nz + 1):
+        for j in range(nx + 1):
+            for i in range(nx):
+                stab(kn[i, j, k], kn[i + 1, j, k], "IPE 400")
+        for i in range(nx + 1):
+            for j in range(nx):
+                stab(kn[i, j, k], kn[i, j + 1, k], "IPE 400")
+    for k in range(nz):
+        for j in (0, nx):
+            stab(kn[0, j, k], kn[1, j, k + 1], "CHS 88.9X5")
+            stab(kn[1, j, k], kn[0, j, k + 1], "CHS 88.9X5")
+        for i in (0, nx):
+            stab(kn[i, 0, k], kn[i, 1, k + 1], "CHS 88.9X5")
+            stab(kn[i, 1, k], kn[i, 0, k + 1], "CHS 88.9X5")
+    for j in range(nx + 1):
+        for i in range(nx + 1):
+            m.fix(kn[i, j, 0], "all")
+    m.add_load_case("G", "G")
+    for k in range(1, nz + 1):
+        for j in range(nx + 1):
+            for i in range(nx + 1):
+                m.load_node(kn[i, j, k], Fz=-150e3, case="G")
+    return m
+
+
+def test_alpha_cr_haeufung():
+    """α_cr bei gehäuften größten μ: richtig und nicht langsam.
+
+    Mit eigsh(−K_g, M=K, 'LA') im Regelmodus (Stand 9dc88a3) brauchte ein
+    Aufruf am symmetrischen Geschossrahmen mit 5856 FHG 52,5 s (gemessen
+    24.09.2026), hier mit 1920 FHG 4,4 bis 5,6 s, das 81- bis 114-Fache
+    von Aufbau und Lösung des Systems (jetzt das 1,6- bis 2,1-Fache). Der
+    Grund: die 27 größten μ liegen innerhalb 10⁻³. Jetzt: Schätzwert,
+    Verschiebung s über μ_max, die der Trägheitssatz an s·K + K_g
+    bestätigt, dann Shift-invert um s.
+    """
+    import time
+    import scipy.linalg as sla
+    from statik3d import assemble as asm
+    m = geschossrahmen()
+    t_sys = []
+    for _ in range(3):
+        t0 = time.perf_counter()
+        system = solver.StaticSystem(m)
+        u = system.solve(solver.case_loads(m, {"G": 1.0})[0])
+        t_sys.append(time.perf_counter() - t0)
+    fi = system.fi
+    Kgff = asm.geometric_stiffness(m, u)[fi][:, fi].tocsc()
+    mu = np.sort(sla.eigh(-Kgff.toarray(), system.Kff.toarray(), eigvals_only=True))[::-1]
+    bezug = 1.0 / mu[0]
+    n_nah = int((mu >= mu[0] * (1 - 1e-3)).sum())
+    check("Voraussetzung: die größten μ häufen sich", n_nah >= 20,
+          f"{n_nah} μ innerhalb 10⁻³ von μ_max, {len(fi)} FHG")
+    t_a, werte = [], []
+    for _ in range(3):
+        t0 = time.perf_counter()
+        werte.append(T2.alpha_cr(m, system, u)["alpha_cr"])
+        t_a.append(time.perf_counter() - t0)
+    close("α_cr gleich dem dichten Bezug", werte[0], bezug, 1e-9)
+    # Ein Verhaeltnis, keine Sekunden: es haengt nicht daran, wie belastet
+    # die Maschine gerade ist
+    check("α_cr kostet höchstens das Zehnfache von Aufbau und Lösung",
+          min(t_a) <= 10.0 * min(t_sys),
+          f"α_cr {min(t_a):.3f} s, System {min(t_sys):.3f} s "
+          f"({min(t_a) / min(t_sys):.1f}-fach)")
+
+    # Die Verschiebung wird erzwungen, nicht erhofft: auch aus schlechten
+    # Schaetzwerten unter mu_max (statt Stufe 1) kommt mu_max heraus
+    f = getattr(T2, "groesstes_mu", None)
+    for faktor in (0.99, 0.3):
+        try:
+            r = f(system.Kff, Kgff, schaetzwert=faktor * mu[0]) if f else None
+        except Exception as exc:                  # pragma: no cover
+            r = None
+            print("   ", type(exc).__name__, exc)
+        got = 1.0 / r[0][0] if r is not None and r[0] is not None else math.nan
+        check(f"Schätzwert {faktor:g}·μ_max: trotzdem α_cr gleich dem Bezug",
+              abs(got / bezug - 1) <= 1e-9, f"{got:.10g} / {bezug:.10g}")
 
 
 def test_vergroesserung():
@@ -330,6 +554,11 @@ def test_im_modell_und_bericht():
           f"maßgebender Knoten {kn}")
     check("die Zusammenfassung nennt es",
           "Theorie II. Ordnung" in an2.summary())
+    # Analysis.summary haengte die Zeile bis zum 23.09.2026 zweimal an - einmal
+    # hinter den Umhuellenden, einmal am Ende (Befund B125)
+    check("… und zwar einmal",
+          an2.summary().count("Theorie II. Ordnung:") == 1,
+          f"{an2.summary().count('Theorie II. Ordnung:')} Zeilen")
 
     html = Report(m2, an2).html()
     for text in ("Berechnung nach Theorie II. Ordnung",
@@ -347,12 +576,451 @@ def test_im_modell_und_bericht():
           "Gerechnet wird nach Theorie I. Ordnung" in h0)
 
 
+def _druckkragarm(theorie2="aus", druck=5.0e5):
+    """Kragarm unter Druck mit Querlast am Ende, drei Lastfaelle."""
+    from statik3d.model import Section
+    from statik3d import mesher
+    m = Model("Druckkragarm")
+    m.add_material(Material("S", E=2.1e11, rho=0.0))
+    m.add_section(Section.rectangle("R", 0.1, 0.2))
+    ids = mesher.line_of_beams(m, "S", "R", (0, 0, 0), (3.0, 0, 0), 4)
+    m.fix(ids[0], "all")
+    for name, fy in (("LF1", 1.0e3), ("LF2", 2.0e3), ("LF3", 1.5e3)):
+        m.add_load_case(name, "G")
+        m.load_node(ids[-1], Fx=-druck, Fy=fy, case=name)
+    m.design.theorie2 = theorie2
+    m.design.imperfektionen = False
+    return m, ids
+
+
+def _lastfallsatz(html):
+    import re
+    treffer = re.search(r"Die im Kapitel „Ergebnisse“ ausgewiesenen Lastfälle[^<]*", html)
+    return treffer.group(0) if treffer else ""
+
+
+def test_bericht_lastfaelle_hoeherer_ordnung():
+    """Das Theoriekapitel sagte bis zum 23.09.2026 ohne Ausnahme: „Die im
+    Kapitel Ergebnisse ausgewiesenen Lastfälle sind Ergebnisse nach Theorie I.
+    Ordnung" - auch fuer einen Lastfall, dessen Feld Theorie auf II./III.
+    steht und dessen Ergebnis in an.cases nach II./III. Ordnung gerechnet ist
+    (Druckkragarm: LF1 5,339 mm am Kragende statt linear 2,574 mm)."""
+    from statik3d.report import Report
+    m, ids = _druckkragarm("aus")
+    m.load_cases["LF1"].theorie = "II"
+    m.load_cases["LF2"].theorie = "III"
+    an = solver.solve_all(m, design=False)
+    lin = solver.solve_cases(m)
+    sp = ids[-1]
+    u_ii, u_lin = an.cases["LF1"].u[sp, 1] * 1e3, lin["LF1"].u[sp, 1] * 1e3
+    check("Voraussetzung: LF1 ist nach II. Ordnung gerechnet",
+          an.cases["LF1"].info.get("theorie") == "II. Ordnung" and u_ii > 1.5 * u_lin,
+          f"u_y {u_ii:.3f} mm, linear {u_lin:.3f} mm")
+    check("Voraussetzung: LF2 ist nach III. Ordnung gerechnet",
+          an.cases["LF2"].info.get("theorie") == "III. Ordnung")
+    satz = _lastfallsatz(Report(m, an).html())
+    check("Theoriekapitel enthält den Satz über die Lastfälle", bool(satz))
+    check("er nimmt LF1 als II. Ordnung aus", "LF1 (II. Ordnung)" in satz, satz[:160])
+    check("und LF2 als III. Ordnung", "LF2 (III. Ordnung)" in satz)
+    check("LF3 (linear) bleibt unter Theorie I. Ordnung",
+          "nach Theorie I. Ordnung" in satz and "LF3" not in satz)
+
+    m, ids = _druckkragarm("aus")
+    for lc in m.load_cases.values():
+        lc.theorie = "II"
+    satz = _lastfallsatz(Report(m, solver.solve_all(m, design=False)).html())
+    check("alle Lastfälle nach II. Ordnung: kein Wort von Theorie I. Ordnung",
+          bool(satz) and "Theorie I. Ordnung" not in satz
+          and all(f"LF{k} (II. Ordnung)" in satz for k in (1, 2, 3)), satz[:160])
+
+    # Scheitert die Rechnung nach II. Ordnung, bleibt das lineare Ergebnis
+    # (info["theorie"] = "I") - der Lastfall gehoert dann zu Theorie I.
+    m, ids = _druckkragarm("aus")
+    m.load_cases["LF1"].theorie = "II"
+    m.load_cases["LF2"].theorie = "II"
+    echt = T2.solve_theorie2
+
+    def lf2_scheitert(model, factors, name, *a, **k):
+        if name == "LF2":
+            raise ValueError("Probe: II. Ordnung verweigert")
+        return echt(model, factors, name, *a, **k)
+
+    T2.solve_theorie2 = lf2_scheitert
+    try:
+        an = solver.solve_all(m, design=False)
+    finally:
+        T2.solve_theorie2 = echt
+    satz = _lastfallsatz(Report(m, an).html())
+    check("gescheiterter Lastfall zählt zu Theorie I. Ordnung",
+          an.cases["LF2"].info.get("theorie") == "I" and "LF1 (II. Ordnung)" in satz
+          and "LF2" not in satz, satz[:160])
+
+    # Gegenprobe: lineare Lastfaelle, Kombination nach II. Ordnung - der Satz
+    # bleibt, wie er war. Mit halbem Druck: K1 = LF1 + LF2 traegt sonst
+    # 2 x 5e5 N, alpha_cr = 0,96 <= 1, und seit B131 wird K1 dann nicht nach
+    # II. Ordnung gerechnet (Fehler statt Ergebnis) - ohne gerechnete
+    # Kombination steht der Satz gar nicht im Kapitel. Mit 2,5e5 N je
+    # Lastfall alpha_cr = 1,92, K1 gerechnet (gemessen 24.09.2026).
+    from statik3d.model import Combination
+    m, ids = _druckkragarm("ein", druck=2.5e5)
+    m.combinations["K1"] = Combination("K1", {"LF1": 1.0, "LF2": 1.0}, "ULS")
+    satz = _lastfallsatz(Report(m, solver.solve_all(m, design=False)).html())
+    check("nur lineare Lastfälle: der Satz ist unverändert",
+          satz == "Die im Kapitel „Ergebnisse“ ausgewiesenen Lastfälle sind Ergebnisse "
+                  "nach Theorie I. Ordnung und dürfen nicht mehr überlagert werden; "
+                  "die Kombinationen und die Umhüllenden sind es nicht.", satz[:160])
+
+
+def _kapitel(html, titel):
+    """Text eines Kapitels (von seiner Ueberschrift bis zur naechsten) oder None."""
+    import re
+    for teil in re.split(r'(?=<h2 id="[^"]*" class="chapter">)', html):
+        if teil.startswith("<h2") and titel in teil[:300]:
+            return teil
+    return None
+
+
+def _zelle(html, text):
+    """Steht ``text`` als ganze Tabellenzelle in ``html``?"""
+    import re
+    return html is not None and re.search(r"<td[^>]*>" + re.escape(text) + "</td>", html) is not None
+
+
+def _theorie_in_lastfalltabelle(html, name):
+    """Spalte Theorie der Lastfalltabelle (Kapitel Einwirkungen) fuer ``name``."""
+    import re
+    tab = re.search(r"Lastfälle und Einwirkungskategorien.*?</table>", html, re.S)
+    if not tab:
+        return None
+    for zeile in re.findall(r"<tr>(.*?)</tr>", tab.group(0), re.S):
+        zellen = re.findall(r"<td[^>]*>(.*?)</td>", zeile, re.S)
+        if zellen and zellen[0] == name:
+            return zellen[11]
+    return None
+
+
+def test_bericht_lastfall_iii_ohne_rechnung_ii():
+    """Wo der Bericht einen Lastfall auf III. Ordnung nennt.
+
+    Das Benutzerhandbuch sagte in der Fassung vom 23.09.2026 (ad451de), der
+    Bericht nenne die Lastfaelle auf II. oder III. Ordnung im Kapitel zur
+    Theorie II. Ordnung. Den Satz dort gibt es aber nur, wenn in diesem
+    Kapitel etwas nach II. Ordnung gerechnet ist (report/html.py
+    chapter_theorie2, ``if gerechnet:``), und das Kapitel nur, wenn es
+    Th2-Ergebnisse gibt. Gemessen 24.09.2026 am Druckkragarm mit Druck 10 kN:
+    bei „automatisch“ hat K1 = LF1 + LF3 α_cr 47,9, bleibt ungerechnet, und
+    LF2 (III) fehlt im Kapitel zur Theorie II. Ordnung; bei „aus“ fehlt das
+    Kapitel ganz. Genannt ist LF2 dann in der Tabelle des Kapitels zur
+    Theorie III. Ordnung und in der Spalte Theorie der Lastfalltabelle - so
+    steht es jetzt im Handbuch, und diese Pruefung haelt es fest."""
+    from statik3d.model import Combination
+    from statik3d.report import Report
+    t2_titel = "Berechnung nach Theorie II. Ordnung"
+    t3_titel = "Berechnung nach Theorie III. Ordnung"
+
+    # (a) automatisch, keine Kombination verlangt II. Ordnung
+    m, ids = _druckkragarm("auto", druck=1.0e4)
+    m.load_cases["LF2"].theorie = "III"
+    m.combinations["K1"] = Combination("K1", {"LF1": 1.0, "LF3": 1.0}, "ULS")
+    an = solver.solve_all(m, design=False)
+    k1 = an.theorie2.kombinationen.get("K1") if an.theorie2 is not None else None
+    check("Voraussetzung (auto): LF2 nach III. Ordnung gerechnet",
+          an.cases["LF2"].info.get("theorie") == "III. Ordnung")
+    check("Voraussetzung (auto): K1 hält α_cr ein und ist nicht gerechnet",
+          k1 is not None and not k1.gerechnet and k1.alpha_cr >= k1.grenze
+          and not any(i.gerechnet for i in an.theorie2.kombinationen.values()),
+          f"α_cr {getattr(k1, 'alpha_cr', None)}")
+    h = Report(m, an).html()
+    kap2, kap3 = _kapitel(h, t2_titel), _kapitel(h, t3_titel)
+    check("auto: Kapitel Theorie II steht, aber ohne Satz über die Lastfälle",
+          kap2 is not None and not _lastfallsatz(kap2))
+    check("auto: LF2 wird im Kapitel Theorie II nicht genannt",
+          kap2 is not None and "LF2" not in kap2)
+    check("auto: LF2 steht in der Tabelle des Kapitels Theorie III",
+          _zelle(kap3, "LF2"))
+    check("auto: Lastfalltabelle, Spalte Theorie von LF2 ist III",
+          _theorie_in_lastfalltabelle(h, "LF2") == "III",
+          repr(_theorie_in_lastfalltabelle(h, "LF2")))
+
+    # (b) aus, nur ein Lastfall auf III: kein Kapitel zur Theorie II. Ordnung
+    m, ids = _druckkragarm("aus")
+    m.load_cases["LF2"].theorie = "III"
+    an = solver.solve_all(m, design=False)
+    h = Report(m, an).html()
+    check("aus: LF2 nach III. Ordnung, kein Kapitel Theorie II",
+          an.cases["LF2"].info.get("theorie") == "III. Ordnung"
+          and an.theorie2 is None and _kapitel(h, t2_titel) is None
+          and not _lastfallsatz(h))
+    check("aus: LF2 in Tabelle Theorie III und Spalte Theorie III",
+          _zelle(_kapitel(h, t3_titel), "LF2")
+          and _theorie_in_lastfalltabelle(h, "LF2") == "III",
+          repr(_theorie_in_lastfalltabelle(h, "LF2")))
+
+    # (c) automatisch wie (a), dazu LF1 auf II: ein gelungener Lastfall auf
+    # II. Ordnung ist selbst gerechnet (auch mit α_cr ueber der Grenze), also
+    # steht der Satz und nennt beide
+    m, ids = _druckkragarm("auto", druck=1.0e4)
+    m.load_cases["LF1"].theorie = "II"
+    m.load_cases["LF2"].theorie = "III"
+    m.combinations["K1"] = Combination("K1", {"LF1": 1.0, "LF3": 1.0}, "ULS")
+    an = solver.solve_all(m, design=False)
+    lf1 = an.theorie2.kombinationen.get("LF1") if an.theorie2 is not None else None
+    satz = _lastfallsatz(_kapitel(Report(m, an).html(), t2_titel) or "")
+    check("auto mit LF1 auf II: LF1 gerechnet, obwohl α_cr über der Grenze",
+          lf1 is not None and lf1.gerechnet and lf1.alpha_cr >= lf1.grenze,
+          f"α_cr {getattr(lf1, 'alpha_cr', None)}")
+    check("auto mit LF1 auf II: Satz nennt LF1 (II) und LF2 (III)",
+          "LF1 (II. Ordnung)" in satz and "LF2 (III. Ordnung)" in satz, satz[:160])
+
+    # (d) wie (a), aber K1 ausdruecklich auf II: gerechnet trotz α_cr 47,9,
+    # der Satz steht und nennt LF2 (gemessen 24.09.2026, auch bei „aus“)
+    m, ids = _druckkragarm("auto", druck=1.0e4)
+    m.load_cases["LF2"].theorie = "III"
+    m.combinations["K1"] = Combination("K1", {"LF1": 1.0, "LF3": 1.0}, "ULS")
+    m.combinations["K1"].theorie = "II"
+    an = solver.solve_all(m, design=False)
+    k1 = an.theorie2.kombinationen.get("K1") if an.theorie2 is not None else None
+    satz = _lastfallsatz(_kapitel(Report(m, an).html(), t2_titel) or "")
+    check("auto mit K1 auf II: K1 gerechnet, Satz nennt LF2 (III)",
+          k1 is not None and k1.gerechnet and "LF2 (III. Ordnung)" in satz,
+          f"α_cr {getattr(k1, 'alpha_cr', None)} {satz[:120]}")
+
+
+# --------------------------------------------------------------------------
+# Handbuchsaetze gegen die Rechnung (Befund B139, 23.09.2026). Bis dahin lag
+# die Pruefung dieser Absaetze nur im Scratchpad und suchte nur Zeichenketten;
+# die Zahlen des heutigen Standes (α_cr 18,1 bis 25,8, Stiel links 0,5423,
+# Stielkopf 102,14 mm, drei Stellungen) pruefte niemand. Hier werden sie
+# nachgerechnet - gemessen am 23.09.2026 an ec6448c: α_cr der Alternativen
+# 18,0916 bis 25,8131, Stiel links 0,542323, Stielkopf 102,141489 mm, gleich
+# mit Skript und mit dieser Pruefung. Aussagen ueber den Stand vor der
+# Aenderung (54b6f9a, 22.09.2026) und ueber die nicht ausgelieferte
+# Zwischenfassung (9337a3c) rechnet diese Pruefung nicht nach, denn der
+# heutige Code rechnet anders. Nachzurechnen sind sie nur an diesen Commits
+# selbst (git archive <commit> statik3d, Modell _zweigelenkrahmen). Am
+# 24.09.2026 so gerechnet: 54b6f9a Stiel links 0,497020 aus W, Stielkopf
+# 102,141489 mm; 9337a3c Stielkopf 102,451944 mm, Stiel links 0,548474,
+# Riegel 1,717078, Stiel rechts 1,081530, wie im Text. Diese Aussagen muessen
+# darum den Stand nennen, an dem sie gemessen wurden.
+
+_DOCS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs")
+_ZAHLWORT = {"eine": 1, "zwei": 2, "drei": 3, "vier": 4, "fünf": 5, "sechs": 6}
+# Die vier GZT-Kombinationen des Zweigelenkrahmens
+_RAHMEN_GZT = {"K1": {"G": 1.35, "Q": 1.5}, "K2": {"G": 1.35, "W": 1.5},
+               "K3": {"G": 1.35, "Q": 1.5, "W": 0.9}, "K4": {"G": 1.0, "W": 1.5}}
+
+
+def _absatz(datei: str, merkmal: str) -> str:
+    """Der Absatz aus docs/<datei>, der ``merkmal`` enthaelt, Leerraum zu
+    einem Leerzeichen zusammengezogen; "" wenn es keinen gibt."""
+    with open(os.path.join(_DOCS, datei), encoding="utf-8") as f:
+        text = f.read()
+    for a in re.split(r"\n\s*\n", text):
+        a = " ".join(a.split())
+        if merkmal in a:
+            return a
+    return ""
+
+
+def _wie_im_text(text_zahl, wert: float) -> bool:
+    """Gerundet auf die Stellen, die der Handbuchsatz nennt, gleich?"""
+    if not text_zahl:
+        return False
+    stellen = len(text_zahl.split(",", 1)[1]) if "," in text_zahl else 0
+    return f"{wert:.{stellen}f}".replace(".", ",") == text_zahl
+
+
+def _gruppe(muster: str, text: str):
+    t = re.search(muster, text)
+    return t.group(1) if t else None
+
+
+def _zweigelenkrahmen(ergebniskombination: bool):
+    """Verschieblicher Zweigelenkrahmen der Handbuchsaetze: Stiele HEB 200,
+    5 m, Riegel IPE 300, 8 m; G 8 kN/m und Q 0,5 kN/m auf dem Riegel, W 25 kN
+    am linken Stielkopf; W auf Theorie II. Ordnung, theorie2 "automatisch".
+    Die vier GZT-Kombinationen gewoehnlich oder als eine Ergebniskombination
+    "EK" mit vier Alternativen (Aufbau der Gegenpruefung vom 23.09.2026)."""
+    from statik3d import mesher
+    from statik3d.model import Section, Combination
+    m = Model("Rahmen")
+    m.add_material(Material.steel("S235"))
+    m.add_section(Section.from_profile("HEB 200"))
+    m.add_section(Section.from_profile("IPE 300"))
+    mesher.line_of_beams(m, "S235", "HEB 200", (0, 0, 0), (0, 0, 5.0), 5)
+    ne = len(m.elements)
+    mesher.line_of_beams(m, "S235", "IPE 300", (0, 0, 5.0), (8.0, 0, 5.0), 8)
+    nr = len(m.elements)
+    mesher.line_of_beams(m, "S235", "HEB 200", (8.0, 0, 5.0), (8.0, 0, 0), 5)
+    mesher.merge_nodes(m)
+    m.add_member("StielL", list(range(0, ne)))
+    m.add_member("Riegel", list(range(ne, nr)))
+    m.add_member("StielR", list(range(nr, len(m.elements))))
+    for i in range(m.nn):
+        if abs(m.nodes[i][2]) < 1e-9:
+            m.fix(i, [0, 1, 2, 3, 5])      # Fussgelenk: Drehung um y frei
+    kopf = [i for i in range(m.nn) if abs(m.nodes[i][2] - 5.0) < 1e-9]
+    for i in kopf:
+        m.fix(i, [1])                      # aus der Ebene gehalten
+    for lf in ("G", "Q", "W"):
+        m.add_load_case(lf, lf)
+    for e in range(ne, nr):
+        m.load_beam(e, qz=-8e3, case="G")
+        m.load_beam(e, qz=-0.5e3, case="Q")
+    kl = min(kopf, key=lambda i: m.nodes[i][0])
+    m.load_node(kl, Fx=25e3, case="W")
+    m.load_cases["W"].theorie = "II"
+    m.design.theorie2 = "auto"
+    if ergebniskombination:
+        m.combinations["EK"] = Combination(
+            "EK", {}, "ULS", alternativen=[dict(f) for f in _RAHMEN_GZT.values()])
+    else:
+        for n, f in _RAHMEN_GZT.items():
+            m.combinations[n] = Combination(n, dict(f), "ULS")
+    return m, kl
+
+
+def test_handbuch_zweigelenkrahmen():
+    """Benutzerhandbuch (Theorie II. Ordnung, Alternative bei I. Ordnung) und
+    Theoriehandbuch (Kombinationen mit Alternativen) nennen Zahlen des
+    Zweigelenkrahmens. Die des heutigen Standes werden nachgerechnet."""
+    A = _absatz("Benutzerhandbuch.md",
+                "mit α_cr an oder über der Grenze bleibt eine Alternative")
+    B = _absatz("Theoriehandbuch.md", "Bleibt eine Alternative bei I. Ordnung")
+    check("Handbuchabsätze zum Zweigelenkrahmen gefunden", A and B,
+          f"Benutzerhandbuch {len(A)} Zeichen, Theoriehandbuch {len(B)} Zeichen")
+    erg = {}
+    for v, ek in (("K", False), ("EK", True)):
+        m, kl = _zweigelenkrahmen(ek)
+        erg[v] = (m, kl, solver.solve_all(m, design=True))
+    m, kl, an = erg["EK"]
+    _mk, klk, ank = erg["K"]
+    check("W ist nach II. Ordnung gerechnet",
+          an.cases["W"].info.get("theorie") == "II. Ordnung",
+          str(an.cases["W"].info.get("theorie")))
+    alt = {z: i for z, i in an.theorie2.kombinationen.items() if z.startswith("EK [")}
+    ac = [i.alpha_cr for i in alt.values()]
+    check("alle vier Alternativen bleiben bei I. Ordnung (α_cr ≥ 10)",
+          len(alt) == 4 and all(not i.gerechnet and i.alpha_cr >= i.grenze
+                                for i in alt.values()),
+          ", ".join(f"{z} {i.alpha_cr:.2f}" for z, i in alt.items()))
+    warn = list(getattr(an.design, "warnungen", None) or [])
+    check("und es kommt keine Warnung", not warn, str(warn[:1]))
+    kopf = float(an.envelopes["ULS"].u_max[kl, 0]) * 1e3
+    kopf_k = float(ank.envelopes["ULS"].u_max[klk, 0]) * 1e3
+    eta = {s: mc.util for s, mc in an.design.members.items()}
+    eta_k = {s: mc.util for s, mc in ank.design.members.items()}
+    check("Stielkopf und Ausnutzungen gleich wie mit den gewöhnlichen Kombinationen",
+          abs(kopf - kopf_k) <= 1e-9 * kopf_k
+          and all(abs(eta[s] - eta_k[s]) <= 1e-12 for s in eta_k) and set(eta) == set(eta_k),
+          f"Stielkopf {kopf:.6f} / {kopf_k:.6f} mm, Stiel links "
+          f"{eta.get('StielL', 0):.6f} / {eta_k.get('StielL', 0):.6f}")
+
+    # Benutzerhandbuch: nur gerundete Zahlen des heutigen Standes
+    check("BH beschreibt den gerechneten Aufbau",
+          "Zweigelenkrahmen mit dem Windlastfall W auf II. Ordnung" in A)
+    a1 = _gruppe(r"α_cr der Alternativen (\d+,\d+) bis \d+,\d+\)", A)
+    a2 = _gruppe(r"α_cr der Alternativen \d+,\d+ bis (\d+,\d+)\)", A)
+    check("BH: α_cr der Alternativen wie gerechnet",
+          ac and _wie_im_text(a1, min(ac)) and _wie_im_text(a2, max(ac)),
+          f"Text {a1} bis {a2}, gerechnet {min(ac or [0]):.4f} bis {max(ac or [0]):.4f}")
+    t = re.search(r"Stielkopf (\d+,\d+) mm und Ausnutzung Stiel links (\d+,\d+), "
+                  r"gleich wie mit den gewöhnlichen Kombinationen", A)
+    check("BH: Stielkopf wie gerechnet", t and _wie_im_text(t.group(1), kopf),
+          f"Text {t and t.group(1)} mm, gerechnet {kopf:.6f} mm")
+    check("BH: Ausnutzung Stiel links wie gerechnet",
+          t and _wie_im_text(t.group(2), eta.get("StielL", 0.0)),
+          f"Text {t and t.group(2)}, gerechnet {eta.get('StielL', 0.0):.6f}")
+    check("BH (Rahmen): Aussage über den Stand vor der Änderung nennt den Stand",
+          "22.09.2026" not in A or "Stand 54b6f9a" in A,
+          _gruppe(r"(Bis zum 22\.09\.2026[^,:]*)", A) or "")
+
+    # Theoriehandbuch: nach "statt" steht der heutige Stand
+    check("TH beschreibt den gerechneten Aufbau",
+          "Stiele HEB 200, 5 m, Riegel IPE 300, 8 m; G 8 kN/m und Q 0,5 kN/m auf "
+          "dem Riegel, W 25 kN am linken Stielkopf" in B)
+    k2 = [i + 1 for i, f in enumerate(_RAHMEN_GZT.values()) if f == {"G": 1.35, "W": 1.5}][0]
+    a_k2 = alt.get(f"EK [{k2}]")
+    t = _gruppe(r"α_cr der Alternative (\d+,\d+)\)", B)
+    check("TH: α_cr der Alternative 1,35·G + 1,5·W wie gerechnet",
+          a_k2 is not None and _wie_im_text(t, a_k2.alpha_cr),
+          f"Text {t}, gerechnet {a_k2.alpha_cr if a_k2 else float('nan'):.4f}")
+    for name, muster, wert in (
+            ("Stielkopf", r"Stielkopf [\d,]+ statt (\d+,\d+) mm wie die gewöhnliche", kopf),
+            ("Stiel links", r"Ausnutzung Stiel links [\d,]+ statt (\d+,\d+)", eta.get("StielL", 0.0)),
+            ("Riegel", r"Riegel [\d,]+ statt (\d+,\d+)", eta.get("Riegel", 0.0)),
+            ("Stiel rechts", r"Stiel rechts [\d,]+ statt (\d+,\d+)", eta.get("StielR", 0.0)),
+            ("Stiel links gegen den Stand vor der Änderung",
+             r"Stiel links [\d,]+ aus W statt (\d+,\d+)\.", eta.get("StielL", 0.0))):
+        t = _gruppe(muster, B)
+        check(f"TH: {name} heute wie gerechnet", _wie_im_text(t, wert),
+              f"Text {t}, gerechnet {wert:.6f}")
+    check("TH: Aussage über den Stand vor der Änderung nennt den Stand",
+          "22.09.2026" not in B or "Stand 54b6f9a" in B,
+          _gruppe(r"(Vor dieser Änderung \([^)]*\))", B) or "")
+    # Nur in der Klammer hinter der Zwischenfassung suchen: der Schlusssatz des
+    # Absatzes nennt 9337a3c ohnehin. Im ganzen Absatz gesucht, bestand die
+    # Pruefung auch ohne und mit falschem Stand in der Klammer (gemessen
+    # 24.09.2026: "gemessen an 9337a3c," gestrichen bzw. durch fb59de1
+    # ersetzt, je 27 von 27 Handbuchpruefungen bestanden).
+    zw = _gruppe(r"(Zwischenfassung dieser Änderung \([^)]*\))", B)
+    check("TH: die Zwischenfassung nennt den gemessenen Stand",
+          "Zwischenfassung" not in B or (zw is not None and "9337a3c" in zw), zw or "")
+
+
+def test_handbuch_stauwand():
+    """Benutzerhandbuch (Bewegliche Bruecken): eine Stellungsreihe mit
+    ``kombinationen=False`` weist nichts nach. Gerechnet wird die Stauwand
+    mit den drei Stellungen der Messung am Stand 54b6f9a (0°, 40°, 82°); was
+    der Absatz ueber den heutigen Stand sagt, muss die Rechnung zeigen, und
+    die Stellungszahl im Satz ueber den Stand vor der Aenderung muss die der
+    Rechnung sein."""
+    from statik3d.bridges.positions import Stellungsreihe, Stellung
+    P = _absatz("Benutzerhandbuch.md",
+                "Die Nachweise einer Stellung brauchen die Ergebnisse ihrer Kombinationen.")
+    C = _absatz("Benutzerhandbuch.md", "Im Browser zeigt eine Stellung ohne jeden geführten Nachweis")
+    check("Handbuchabsätze zu den Stellungen gefunden", P and C,
+          f"{len(P)} und {len(C)} Zeichen")
+    m = examples_lib.build_example("gate")
+    reihe = Stellungsreihe(m, "Stauwand")
+    for name, w in (("geschlossen", 0.0), ("Zwischen", 40.0), ("offen", 82.0)):
+        reihe.add(Stellung(name, w, f"{w:g} Grad"))
+    umh = reihe.rechnen(kombinationen=False, nachweise=True)
+    erg = reihe.ergebnisse
+    check("BH: `reihe.rechnen(kombinationen=False, nachweise=True)` – keine Stellung `ok`",
+          "`reihe.rechnen(kombinationen=False, nachweise=True)`" in P and "nicht `ok`" in P
+          and erg and all(not e.ok and e.warnungen for e in erg),
+          ", ".join(f"{e.stellung.name}: ok {e.ok}, {len(e.warnungen or [])} Warnungen"
+                    for e in erg))
+    b = umh.bericht()
+    for text, n in (("Umhüllende: eta nicht bestimmt", 1),
+                    ("NICHT VOLLSTÄNDIG NACHGEWIESEN", len(erg))):
+        check(f"BH und Bericht: „{text}“",
+              f"„{text}" in P and b.count(text) >= n, f"{b.count(text)}× im Bericht")
+    check("BH und Bericht: Warnungen unter „Nicht nachgewiesen“",
+          "Unter „Nicht nachgewiesen\" stehen die Warnungen" in P
+          and "\nNicht nachgewiesen:" in b and "WARNUNG: Kombination" in b)
+    kurz = umh.kurztext()
+    check("BH und Meldung nach dem Rechnen: „eta nicht bestimmt“",
+          "(`umh.kurztext()`) sagt es ebenso" in P and "eta nicht bestimmt" in kurz, kurz[:70])
+    t = _gruppe(r"\(Stauwand, (\w+) Stellungen:", C)
+    check("BH: Stellungszahl der Stauwand wie gerechnet",
+          _ZAHLWORT.get(t or "") == len(erg), f"Text „{t}“, gerechnet {len(erg)}")
+    check("BH (Stellungen): Aussage über den Stand vor der Änderung nennt den Stand",
+          "22.09.2026" not in C or "Stand 54b6f9a" in C,
+          _gruppe(r"(Bis zum 22\.09\.2026[^,:]*)", C) or "")
+
+
 def main():
     print("=" * 92)
     print("STATIK3D - Verifikation Theorie II. Ordnung (DIN EN 1993-1-1, 5.2/5.3)")
     print("=" * 92)
-    for t in (test_imperfektionsbeiwerte, test_alpha_cr, test_vergroesserung,
-              test_ersatzlasten, test_vorkruemmung, test_im_modell_und_bericht):
+    for t in (test_imperfektionsbeiwerte, test_alpha_cr, test_alpha_cr_zug_und_druck,
+              test_alpha_cr_haeufung, test_vergroesserung, test_ersatzlasten,
+              test_vorkruemmung, test_im_modell_und_bericht,
+              test_bericht_lastfaelle_hoeherer_ordnung,
+              test_bericht_lastfall_iii_ohne_rechnung_ii,
+              test_handbuch_zweigelenkrahmen, test_handbuch_stauwand):
         print()
         t()
     ok = sum(1 for _n, o in RESULTS if o)

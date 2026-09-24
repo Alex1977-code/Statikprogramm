@@ -367,7 +367,53 @@ def main():
     d3 = dg.LoadCaseDialog(w, existing=list(w.model.load_cases))
     d4 = dg.CombinationDialog(w, w.model)
     d5 = dg.AutoCombinationDialog(w, w.model.design)
-    d6 = dg.FatigueLoadDialog(w, w.model)
+    # Ermuedungslasten: seit 24.09.2026 die rechte Maske statt des Dialogs.
+    # Oeffnen, „Zeile je Lastfall…“, eine Zeile mit eigenem n uebernehmen,
+    # Register und Baum ziehen nach, Rueckgaengig nimmt alles zurueck.
+    from statik3d.gui.ermuedungsmaske import Ermuedungsmaske as _EM
+    from PySide6 import QtCore as _QC
+    fl_vorher = list(w.model.fatigue_loads)
+    belegt = {f.case_max for f in w.model.fatigue_loads.values() if not f.folge and f.case_min is None}
+    frei = [z for z in w.model.ermuedungszustaende() if z not in belegt][:2]
+    mk_e = w.maske_ermuedungslasten(neu=True); app.processEvents()
+    check("Maske Ermüdungslasten steht rechts (Ribbon „Ermüdungslasten…“)",
+          isinstance(mk_e, _EM) and w.maskenrand.maske is mk_e and w.rechts_zeigt() == "maske",
+          w.rechts_zeigt())
+    neu_e = mk_e.zeilen_je_lastfall(frei); app.processEvents()
+    check("Zeile je Lastfall: je freiem Lastfall eine Zeile, die Maske bleibt offen",
+          frei and neu_e and len(neu_e) == len(frei) and all(n in w.model.fatigue_loads for n in neu_e)
+          and w.maskenrand.maske is mk_e and mk_e.tabelle.rowCount() == len(w.model.fatigue_loads),
+          f"frei {frei}, neu {neu_e}")
+    if neu_e:
+        mk_e.zeile_waehlen(neu_e[0])
+        mk_e.global_n.setChecked(False)
+        mk_e.n.setText("2e6")
+        mk_e.anwenden(); app.processEvents()
+        fe = w.model.fatigue_loads.get(neu_e[0])
+        check("Übernehmen: eigenes n = 2e6, im Feld „2 000 000“",
+              fe is not None and fe.cycles == 2e6 and mk_e.n.text() == "2 000 000",
+              f"{getattr(fe, 'cycles', None)} / {mk_e.n.text()!r}")
+        zellen = [w.tbl_fatl.item(r, c).text() for r in range(w.tbl_fatl.rowCount())
+                  for c in range(w.tbl_fatl.columnCount()) if w.tbl_fatl.item(r, c)]
+        check("Register Lastfälle führt die Zeilen, ohne „e+“",
+              neu_e[0] in zellen and not any("e+" in z for z in zellen), str(zellen[:8]))
+        zweig = w.baum.findItems("Ermüdungslasten", _QC.Qt.MatchRecursive)
+        check("Modellbaum: Knoten „Ermüdungslasten“ mit den Zeilen",
+              zweig and zweig[0].childCount() >= len(w.model.fatigue_loads),
+              str(zweig[0].childCount() if zweig else None))
+        # Rueckgaengig: der gemerkte Stand ist der vor „Übernehmen“ und davor
+        # der vor „Zeile je Lastfall“. Nicht w.undo() rufen - das setzt das
+        # Modell neu und verwirft die Rechnung, die weiter unten gebraucht wird.
+        st = getattr(w, "_undo", [])
+        check("Rückgängig-Stapel: Stand vor Übernehmen und vor „Zeile je Lastfall“",
+              len(st) >= 2 and st[-1][1].fatigue_loads.get(neu_e[0]) is not None
+              and st[-1][1].fatigue_loads[neu_e[0]].cycles is None
+              and list(st[-2][1].fatigue_loads) == fl_vorher,
+              str([x[0] for x in st[-2:]]))
+        for n_ in neu_e:
+            w.model.fatigue_loads.pop(n_, None)
+        w.refresh_all(); app.processEvents()
+    w.maskenrand.schliessen(); app.processEvents()
     mem = next(iter(w.model.members.values()))
     d7 = dg.MemberDialog(w, mem, 6.0)
     # Wölbkrafttorsion: die Randbedingung der Verwölbung gehört in die Maske
@@ -2327,8 +2373,9 @@ def main():
               f"{len(w.plotter.scalar_bars)} Skalen, {sum(1 for a in akt_ if a.startswith('contact_'))} Marken, "
               f"{sum(1 for a in akt_ if a.startswith('result_'))} Ergebnisdarsteller")
         check("… das Modell bleibt im Bild und die Kopfzeile sagt, dass die Ergebnisse ausgeblendet sind",
-              modell_ and "Ergebnisse ausgeblendet" in " ".join(w._kopfzeile_zeilen),
-              f"{modell_}, {str(w._kopfzeile_zeilen)[:100]}")
+              modell_ and "Ergebnisse ausgeblendet (Knopf „Ergebnisse“ in der Glasleiste oder Register"
+              in " ".join(" ".join(w._kopfzeile_zeilen).split()),   # zwei Zeilen
+              f"{modell_}, {str(w._kopfzeile_zeilen)[-120:]}")
         check("… und die Ergebnisse sind nur versteckt, nicht verworfen",
               w.current_result() is not None and not w.ergebnisse_sichtbar())
         w.act_ergebnisse.setChecked(True); app.processEvents()
@@ -2391,6 +2438,16 @@ def main():
         check("Schnittgrößen im Baum als normale Dezimalzahl (kein 2.33e-13 im Modellbaum)",
               sg and not any("e-" in z or "e+" in z for z in sg) and all("…" in z for z in sg[:-1]),
               str(sg[:2]))
+        # Verformungen und Verdrehungen, gesamt und je Achse (24.09.2026)
+        ver = erg.get("Verformungen", [])
+        check("Ergebnisliste: „Verformungen“ mit |u|, ux, uy, uz, |φ|, φx, φy, φz, ohne e+/e-",
+              [e[0] for e in ver] == ["u gesamt |u|", "ux", "uy", "uz", "φ gesamt |φ|", "φx", "φy", "φz"]
+              and not any("e-" in e[1] or "e+" in e[1] for e in ver), str([e[1] for e in ver][:2]))
+        w._baum_geklickt("ergebnis", "feld:φy"); app.processEvents()
+        check("Klick „φy“ im Baum stellt die Färbung ein, mit Skala",
+              w.cb_field.currentText() == "φy" and len(w.plotter.scalar_bars) >= 1,
+              w.cb_field.currentText())
+        w.cb_field.setCurrentText(FIELDS[0]); app.processEvents()
         namen = zweige(w.baum)
         check("Ergebnisse stehen im Modellbaum", "Ergebnisse" in namen)
         check("Bericht steht im Modellbaum", "Bericht" in namen)
@@ -7413,7 +7470,11 @@ def main():
               w.glasleiste.lay.itemAt(0).widget() is cbl
               and w.glasleiste.listen.get("lastwahl") is cbl,
               type(w.glasleiste.lay.itemAt(0).widget()).__name__)
-        eintr = [(cbl.itemText(i), cbl.itemData(i)) for i in range(cbl.count())]
+        check("Glasleiste: Knopf „Ergebnisse zeigen“ direkt dahinter, Aktion des Ribbons (24.09.2026)",
+              "ergebnisse" in kn and w.glasleiste.lay.itemAt(1).widget() is kn["ergebnisse"]
+              and kn["ergebnisse"].defaultAction() is w.act_ergebnisse,
+              type(w.glasleiste.lay.itemAt(1).widget()).__name__)
+        eintr =[(cbl.itemText(i), cbl.itemData(i)) for i in range(cbl.count())]
         check("sie führt jeden Lastfall und jede Kombination",
               len(eintr) == len(w.model.load_cases) + len(w.model.combinations)
               and eintr[0][1] == ("case", list(w.model.load_cases)[0])

@@ -6,7 +6,7 @@ Geometrie vor - Blechdicken, Schraubenbild, Nahtdicken -, die anschliessend
 geaendert werden kann. Aus derselben Beschreibung entstehen das FE-Modell
 (Schalen oder Volumen) und die Nachweise.
 
-    Kopfplatte    Stirnplatte am Stabende, geschraubt, mit Steifen und Rippen
+    Kopfplatte    Stirnplatte am Stabende, geschraubt
     Lasche        Laschenstoss mit Flansch- und Steglaschen
     Diagonale     Knotenblech (Gusset) fuer Streben und Verbaende
 
@@ -149,7 +149,10 @@ class EndPlate(JointTemplate):
              positiv nach oben (Zugflansch bei positivem Moment)
     w:       Schraubenabstand quer (Riss) [m]
     a_f, a_w: Nahtdicke am Flansch und am Steg [m]
-    stiffeners: Anzahl der Rippen ueber und unter dem Flansch
+    stiffeners, t_stiff: Anzahl und Dicke von Rippen - nur beschreibend:
+             weder design() noch build() setzt sie an, darum schlaegt der
+             Vorschlag keine vor (B096, 23.09.2026). Stehen welche in einer
+             aelteren Datei, nennen describe/kennwerte sie "nicht angesetzt".
     """
     tp: float = 0.020
     bp: float = 0.200
@@ -212,11 +215,11 @@ class EndPlate(JointTemplate):
         a.a_w = max(min_throat(tw), round(0.55 * tw * 1000) / 1000.0)
         a.a_f = min(a.a_f, max_throat(tf))
         a.a_w = min(a.a_w, max_throat(tw))
-        if abs(My) > 0.6 * fy * (sec.Wel_y or 1e-4):
-            a.stiffeners = 2
-            a.t_stiff = max(tw, 0.010)
-            a.hinweise.append("hohes Moment - Rippen über und unter dem Zugflansch "
-                              "vorgeschlagen")
+        # Keine Rippen vorschlagen: weder design() noch build() setzt sie an.
+        # Bis 23.09.2026 kamen hier bei |M_y| > 0,6 f_y W_el,y zwei Rippen
+        # hinzu, die an keinem Nachweis etwas aenderten (B096; IPE 400,
+        # S355, V_z = 90 kN, N = 0: ab 250 kNm, eta mit und ohne Rippen
+        # gleich, bei 700 kNm 2,099 - auch diese Rippen kamen von hier).
         a.hinweise.append(f"Vorschlag aus {sec.name}: Zugkraft im Flansch "
                           f"F_t = {Ft / 1e3:.0f} kN, {n} Schrauben {a.bolt.size}")
         a.improve(N=N, Vz=Vz, My=My)
@@ -243,13 +246,24 @@ class EndPlate(JointTemplate):
                 self.a_w = min(round(self.a_w * 1000 + 1) / 1000.0,
                                max_throat(self.sec.tw or 0.008))
             elif "Druckflansch" in wo:
-                # Die Flanschkraft uebersteigt b t_f f_y - das ist der Traeger
-                # selbst, nicht der Anschluss. Eine Druckrippe verteilt sie.
-                if self.stiffeners < 2:
-                    self.stiffeners = 2
-                    self.t_stiff = max(self.sec.tw or 0.008, 0.010)
-                else:
-                    break
+                # Die Flanschkraft uebersteigt b t_f f_y/gamma_M0 des
+                # Traegerflansches - das ist das Profil, nicht die Kopfplatte:
+                # Blech, Schrauben und Naehte aendern diesen Nachweis nicht.
+                # Bis 23.09.2026 setzte improve hier 2 Rippen, wenn propose
+                # noch keine gesetzt hatte; der Nachweis setzt sie nicht an
+                # (B096). Gemessen am Stand ec6448c, IPE 400, S355,
+                # V_z = 90 kN: bei N = -3000 kN und M_y = 100 kNm kamen die
+                # Rippen von hier, eta = 1,300 mit und ohne Rippen; bei
+                # N = 0 und -100 kN, 100 bis 700 kNm dagegen nie, dort kamen
+                # sie aus propose. Darum Abbruch mit Klartext.
+                c = next(x for x in j.checks if x.name == wo)
+                self.hinweise.append(
+                    f"Der Druckflansch des Trägers ist überlastet: Flanschkraft "
+                    f"{c.E / 1e3:.0f} kN gegen b·t_f·f_y/γ_M0 = {c.R / 1e3:.0f} kN. "
+                    "Das liegt am Profil, nicht an der Kopfplatte – Blech, "
+                    "Schrauben und Nähte ändern diesen Nachweis nicht, Rippen "
+                    "setzt er nicht an. Abhilfe: Voute oder größeres Profil.")
+                break
             elif "Zug F_t" in wo or "Abscheren" in wo or "Lochleibung" in wo \
                     or "Interaktion" in wo or "Gleitfestigkeit" in wo:
                 if not self._next_bolt():
@@ -294,7 +308,8 @@ class EndPlate(JointTemplate):
              f"  Reihen bei z = {z} mm, Riss w = {self.w * 1e3:.0f} mm",
              f"  Naehte: Flansch a = {self.a_f * 1e3:g} mm, Steg a = {self.a_w * 1e3:g} mm"]
         if self.stiffeners:
-            t.append(f"  {self.stiffeners} Rippen, t = {self.t_stiff * 1e3:g} mm")
+            t.append(f"  {self.stiffeners} Rippen, t = {self.t_stiff * 1e3:g} mm "
+                     "– in Nachweis und FE-Teilmodell nicht angesetzt")
         for h in self.hinweise:
             t.append("  Hinweis: " + h)
         return "\n".join(t)
@@ -440,7 +455,8 @@ class EndPlate(JointTemplate):
               ("Kehlnaht am Flansch", f"a = {self.a_f * 1e3:g} mm"),
               ("Kehlnaht am Steg", f"a = {self.a_w * 1e3:g} mm")]
         if self.stiffeners:
-            kv.append(("Rippen", f"{self.stiffeners} Stück, t = {self.t_stiff * 1e3:g} mm"))
+            kv.append(("Rippen", f"{self.stiffeners} Stück, t = {self.t_stiff * 1e3:g} mm "
+                                 "– in Nachweis und FE-Teilmodell nicht angesetzt"))
         return kv
 
     def bolt_positions(self) -> list[tuple[float, float]]:

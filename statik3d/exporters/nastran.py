@@ -81,6 +81,11 @@ def write_bdf(model: Model, path: str, results=None, log: list = None, **_) -> s
             p = pid(("solid", e.mat))
             karte = {"hex8": "CHEXA   ", "hex20": "CHEXA   ", "pent6": "CPENTA  ",
                      "pent15": "CPENTA  ", "pyr5": "CPYRAM  "}[e.typ]
+            if e.typ in ("hex20", "pent15"):
+                # Kantenmitten in Nastran-Folge (senkrecht vor oben), siehe
+                # importers.nastran.nastran_folge
+                from ..importers.nastran import nastran_folge
+                n = nastran_folge(n)
             karten.append(karte + _i(eid) + _i(p) + "".join(_i(x) for x in n[:6]))
             rest = n[6:]
             while rest:

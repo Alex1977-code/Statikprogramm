@@ -9,7 +9,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from statik3d.model import Model, Material, Section, ShellProp
-from statik3d import solver
+from statik3d import solver, mesher
 
 RESULTS = []
 
@@ -231,24 +231,14 @@ def t_membrane():
 
 # --------------------------------------------------------------------------
 def _box_mesh(m, mat, L, b, h, nx, ny, nz, typ="hex8"):
-    ids = np.zeros((nx + 1, ny + 1, nz + 1), dtype=int)
-    for i in range(nx + 1):
-        for j in range(ny + 1):
-            for k in range(nz + 1):
-                ids[i, j, k] = m.add_node(i * L / nx, j * b / ny, k * h / nz)
-    for i in range(nx):
-        for j in range(ny):
-            for k in range(nz):
-                c = [ids[i, j, k], ids[i + 1, j, k], ids[i + 1, j + 1, k], ids[i, j + 1, k],
-                     ids[i, j, k + 1], ids[i + 1, j, k + 1], ids[i + 1, j + 1, k + 1],
-                     ids[i, j + 1, k + 1]]
-                if typ == "hex8":
-                    m.add_element("hex8", c, mat)
-                else:
-                    for tet in [(0, 1, 3, 4), (1, 2, 3, 6), (1, 3, 4, 6),
-                                (1, 4, 5, 6), (3, 4, 6, 7)]:
-                        m.add_element("tet4", [c[x] for x in tet], mat)
-    return ids
+    # Bis 23.09.2026 stand hier eine eigene Kopie der Quaderzerlegung, die
+    # jede Zelle gleich in fuenf Tetraeder teilte - ohne den Schachbrettwechsel,
+    # den mesher.grid_box seit 22.09.2026 hat. Das tet4-Netz hatte dadurch
+    # innere Risse (8x2x2 Zellen: 384 freie Dreiecke statt 144), und der
+    # Tet10-Kragtraeger lag um +3,85 % neben Timoshenko statt -0,11 %.
+    # Deshalb keine Kopie mehr: Knoten und hex8 entstehen in grid_box in
+    # derselben Reihenfolge wie vorher, ids[i, j, k] bleibt gleich.
+    return mesher.grid_box(m, mat, L, b, h, nx, ny, nz, typ=typ)
 
 
 def t_solid_tension(typ="hex8"):
@@ -322,14 +312,35 @@ def t_solid_tet10():
     check("Tet10 Patch-Test (sigma_y = 0)", 1.0 + q, 1.0, 1e-8)
 
 
+def _freie_dreiecke(m):
+    """Zahl der Tetraederseiten, die zu genau einem Tetraeder gehoeren."""
+    from collections import Counter
+    seiten = Counter()
+    for e in m.elements:
+        n = e.nodes[:4]
+        for f in ((0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3)):
+            seiten[tuple(sorted(n[i] for i in f))] += 1
+    return sum(1 for c in seiten.values() if c == 1)
+
+
 def t_tet10_cantilever():
-    """Kragtraeger aus Tet10 gegen Balkentheorie (Biegung, nu=0)."""
+    """Kragtraeger aus Tet10 gegen Balkentheorie (Biegung, nu=0).
+
+    Das tet4-Ausgangsnetz muss konform sein: frei duerfen nur die zwei
+    Dreiecke je Zellseite auf dem Quaderrand bleiben, 4 (nx ny + ny nz + nx nz)
+    = 144. Bis 23.09.2026 zerlegte _box_mesh jede Zelle gleich (ohne den
+    Schachbrettwechsel aus mesher.grid_box); gemessen 384 freie Dreiecke, also
+    240 innere Rissdreiecke, und w um +3,85 % ueber Timoshenko - die damalige
+    Toleranz von 5 % liess das durch. Auf dem konformen Netz gemessen
+    (23.09.2026) -0,11 %, deshalb jetzt 1 %."""
     L, b, h = 2.0, 0.2, 0.2
     E, nu, F = 210e9, 0.0, 10000.0
     m = Model()
     m.add_material(Material("S", E=E, nu=nu))
     nx, ny, nz = 8, 2, 2
     ids = _box_mesh(m, "S", L, b, h, nx, ny, nz, "tet4")
+    check("Tet10-Kragtraeger: freie Dreiecke (Risse)",
+          _freie_dreiecke(m), 4 * (nx * ny + ny * nz + nx * nz), 0.0)
     m2 = _tet4_to_tet10(m)
     lo, hi = m2.bbox()
     end_nodes = []
@@ -346,7 +357,7 @@ def t_tet10_cantilever():
     I = b * h ** 3 / 12
     G = E / 2.0
     ana = F * L ** 3 / (3 * E * I) + F * L / (5 / 6 * b * h * G)
-    check("Tet10-Kragtraeger vs. Timoshenko", w, ana, 0.05)
+    check("Tet10-Kragtraeger vs. Timoshenko", w, ana, 0.01)
 
 
 def _tet4_to_tet10(m):

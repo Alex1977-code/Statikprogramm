@@ -125,6 +125,126 @@ def test_modellpruefung_sieht_alternativen():
           any("EK" in x and "LF9" in x and "unbekannt" in x for x in m.check()), str(m.check()))
 
 
+class _Maskenrekorder:
+    """Statt masken.Maske (ein QFrame): merkt Titel und Felder, und ok()
+    ruft die angeschlossenen Rueckrufe mit den Werten, wie „Übernehmen“."""
+    zuletzt = None
+
+    def __init__(self, titel, felder, **_kw):
+        import types
+        self.titel, self.felder = titel, felder
+        self._rueckrufe = {"angewendet": [], "abgebrochen": [], "geschlossen": [],
+                           "feld_fokussiert": []}
+        for n, liste in self._rueckrufe.items():
+            setattr(self, n, types.SimpleNamespace(connect=liste.append))
+        _Maskenrekorder.zuletzt = self
+
+    def feld(self, name):
+        return next((f for f in self.felder if f.name == name), None)
+
+    def werte(self) -> dict:
+        # wie Maske.werte(): ein Infofeld liefert seinen Text
+        return {f.name: f.wert for f in self.felder}
+
+    def ok(self, w=None):
+        for cb in self._rueckrufe["angewendet"]:
+            cb(self.werte() if w is None else w)
+
+
+def test_objektmaske_behaelt_die_alternativen():
+    """Nebenbefund NB01 (Fehlerrunden 22./23.09.2026): Die Objektmaske
+    „Kombination“ fuellte bei einer Umhuellenden das Feld Faktoren mit der
+    Formel („1.35·LF1 + 1.5·LF2 oder 1·LF1“), und „Übernehmen“ las es als
+    „Lastfall: Faktor“. Schon eine geaenderte Beschreibung endete mit „FEHLER:
+    Faktor … bitte als „Lastfall: Faktor“ schreiben“; schrieb man Faktoren
+    hinein, entstand eine Kombination ohne Alternativen ({'LF1': 1.35}),
+    und die Meldung nannte nur die neue Formel. Hier ohne Fenster: die echte
+    Maske (_objektmaske) mit einem Rekorder statt des QFrame, „Übernehmen“
+    ueber die echten _objekt_uebernehmen/_eigenschaften_uebernehmen."""
+    import importlib
+    from unittest import mock
+    G = importlib.import_module("statik3d.gui.main")      # gui.main() verdeckt das Modul
+    m = Model("Maske")
+    m.add_load_case("LF2", "Q", activate=False)
+    alternativen = [{"LF1": 1.35, "LF2": 1.5}, {"LF1": 1.0}]
+    m.combinations["EK1"] = Combination("EK1", {}, "ULS", "aus RFEM",
+                                        bemessungssituation="GZT (STR/GEO) - ständig",
+                                        alternativen=[dict(a) for a in alternativen])
+
+    def fenster():
+        s = mock.MagicMock()
+        s.model = m
+        s._baum_ist_eintrag.return_value = True
+        s._layer_sperre_melden.return_value = False
+        for n in ("_objektmaske", "_objekt_uebernehmen", "_eigenschaften_uebernehmen"):
+            setattr(s, n, getattr(G.MainWindow, n).__get__(s))
+        return s
+
+    def fehler(s):
+        return [str(c.args[0]) for c in s.error.call_args_list if c.args]
+
+    # Die ganze Pruefung lang ersetzt: nach „Übernehmen“ baut
+    # _eigenschaften_uebernehmen die Maske neu auf, ein echter QFrame ohne
+    # QApplication beendet den Prozess ohne Meldung.
+    ersatz = mock.patch.object(G.msk, "Maske", _Maskenrekorder)
+    ersatz.start()
+    try:
+        _objektmaske_umhuellende(G, m, alternativen, fenster, fehler)
+    finally:
+        ersatz.stop()
+
+
+def _objektmaske_umhuellende(G, m, alternativen, fenster, fehler):
+    s = fenster()
+    s._objektmaske("kombination", "EK1")
+    mk = _Maskenrekorder.zuletzt
+    f = mk.feld("faktoren")
+    check("Maske der Umhüllenden: Faktoren sind eine Anzeige, kein Eingabefeld",
+          f is not None and f.art == "info", "" if f is None else f"art {f.art!r}, {f.wert!r}")
+    w = mk.werte()
+    w["beschreibung"] = "geändert"
+    mk.ok(w)
+    c = m.combinations["EK1"]
+    check("… Übernehmen mit geänderter Beschreibung meldet keinen Fehler",
+          not fehler(s), str(fehler(s)))
+    check("… die Beschreibung ist geschrieben", c.description == "geändert", repr(c.description))
+    check("… die Alternativen bleiben, wie sie waren",
+          c.ist_umhuellende and c.alternativen == alternativen and not c.factors,
+          f"alternativen {c.alternativen}, factors {c.factors}")
+    check("… ebenso die Bemessungssituation aus der Quelldatei",
+          c.bemessungssituation == "GZT (STR/GEO) - ständig", repr(c.bemessungssituation))
+
+    # Was die alte Maske lieferte (die Formel im Feld Faktoren) oder was ein
+    # Anwender dort hineinschrieb, darf die Umhuellende nicht in eine Summe
+    # verwandeln.
+    for text in (m.combinations["EK1"].formula(), "LF1: 1,35"):
+        s = fenster()
+        s._eigenschaften_uebernehmen("kombination", "EK1",
+                                     {"name": "EK2", "typ": "ULS", "beschreibung": "umbenannt",
+                                      "situation": GRUNDSTELLUNG, "theorie": "", "faktoren": text})
+        c = m.combinations.get("EK2")
+        check(f"Faktoren „{text[:22]}…“: umbenannt, Alternativen bleiben",
+              not fehler(s) and c is not None and "EK1" not in m.combinations
+              and c.alternativen == alternativen and not c.factors,
+              f"Fehler {fehler(s)}, " + ("fehlt" if c is None else f"alternativen {c.alternativen}, "
+                                                                   f"factors {c.factors}"))
+        if c is not None:
+            m.combinations.pop("EK2")
+            c.name = "EK1"
+            m.combinations["EK1"] = c
+
+    # Gegenprobe: eine gewoehnliche Kombination nimmt ihre Faktoren weiter aus dem Feld
+    m.combinations["K1"] = Combination("K1", {"LF1": 1.0}, "ULS")
+    s = fenster()
+    s._eigenschaften_uebernehmen("kombination", "K1",
+                                 {"name": "K1", "typ": "ULS", "beschreibung": "", "theorie": "",
+                                  "situation": GRUNDSTELLUNG, "faktoren": "LF1: 1,35, LF2: 1,5"})
+    c = m.combinations["K1"]
+    check("gewöhnliche Kombination: Faktoren aus dem Feld",
+          not fehler(s) and c.factors == {"LF1": 1.35, "LF2": 1.5} and not c.alternativen,
+          f"Fehler {fehler(s)}, factors {c.factors}")
+
+
 # --------------------------------------------------------------------------
 # Loeser: inkrementelle Umhuellende
 # --------------------------------------------------------------------------
@@ -522,6 +642,69 @@ def test_theorie2_leere_kombination_schreibt_nichts():
           f"{list(an.combinations)} {None if i0 is None else (i0.gerechnet, i0.hinweise)}")
 
 
+def test_theorie2_ueber_der_verzweigungslast():
+    """Liegt die Last ueber der Verzweigungslast (alpha_cr <= 1), gibt es am
+    verformten System kein Gleichgewicht (Befund B131). Bis zum 23.09.2026
+    wurde das Ergebnis trotzdem uebernommen: am Druckkragarm mit Druck 1e6 N
+    und "auto" K2 mit alpha_cr 0,756 als gerechnet, fehler und hinweise leer,
+    u_y an der Spitze -10,100 mm gegen linear +3,321 mm, und die
+    Zusammenfassung meldete nur "Verformungszuwachs +204.2 %"."""
+    m, ids = _druckkragarm("auto", druck=1.0e6)
+    an = solver.solve_all(m)
+    sp = ids[-1]
+    t2 = an.theorie2
+    lin = solver.solve_combination(m, Combination("lin", {"LF1": 1.35, "LF2": 1.5}, "ULS"),
+                                   an.cases, nichtlinear=False)
+    for n in ("K2", "EK1 [2]"):
+        i = t2.kombinationen[n]
+        check(f"alpha_cr <= 1: {n} nicht gerechnet, der Fehler nennt die Verzweigungslast",
+              i.alpha_cr <= 1.0 and not i.gerechnet and "Verzweigungslast" in i.fehler,
+              f"alpha_cr {i.alpha_cr:.4f}, gerechnet {i.gerechnet}, fehler {i.fehler!r}")
+    i1 = t2.kombinationen["EK1 [1]"]
+    check("EK1 [1] (alpha_cr ueber 1) bleibt gerechnet",
+          i1.alpha_cr > 1.0 and i1.gerechnet and not i1.fehler,
+          f"alpha_cr {i1.alpha_cr:.4f} {i1.fehler!r}")
+    check("die Zusammenfassung nennt K2 und EK1 [2] als nicht gefuehrt",
+          "2 nicht geführt" in t2.summary() and "K2" in t2.summary().split("nicht geführt")[-1]
+          and "EK1 [2]" in t2.summary().split("nicht geführt")[-1], t2.summary())
+    k2 = an.combinations["K2"]
+    check("kein Ergebnis mit umgekehrtem Vorzeichen in an.combinations['K2']",
+          k2.info.get("theorie") != "II. Ordnung" and np.allclose(k2.u, lin.u)
+          and k2.u[sp, 1] > 0,
+          f"K2 u_y {k2.u[sp, 1] * 1e3:.3f} mm, linear {lin.u[sp, 1] * 1e3:.3f} mm, "
+          f"theorie {k2.info.get('theorie')}")
+    check("und keine Alternative EK1 [2] nach II. Ordnung abgelegt",
+          "EK1 [2]" not in (an.alternativen or {}), str(list(an.alternativen or {})))
+
+    # Gegenprobe: Druck 5e5 N, alpha_cr 1,51 - unveraendert gerechnet
+    m5, ids5 = _druckkragarm("auto", druck=5.0e5)
+    an5 = solver.solve_all(m5)
+    t5 = an5.theorie2.kombinationen
+    k5 = an5.combinations["K2"]
+    check("Druck 5e5: alle drei gerechnet, kein Fehler",
+          all(i.gerechnet and not i.fehler for i in t5.values()) and len(t5) == 3,
+          str({k: (round(i.alpha_cr, 4), i.gerechnet, i.fehler) for k, i in t5.items()}))
+    close("Druck 5e5: K2 u_y an der Spitze wie bisher (9,705 mm)",
+          k5.u[ids5[-1], 1] * 1e3, 9.705, 1e-3, "mm")
+
+    # Lastfall mit Theorie II ueber der Verzweigungslast (_lastfaelle_hoeherer_ordnung)
+    m3, ids3 = _druckkragarm("aus", druck=3.0e6)
+    m3.load_cases["LF1"].theorie = "II"
+    an3 = solver.solve_all(m3)
+    lin3 = solver.solve_cases(m3)                 # rein linear
+    i3 = an3.theorie2.kombinationen.get("LF1") if an3.theorie2 else None
+    r3 = an3.cases["LF1"]
+    check("Lastfall LF1 (Theorie II, alpha_cr <= 1): Fehler statt Ergebnis",
+          i3 is not None and i3.alpha_cr <= 1.0 and not i3.gerechnet and i3.fehler,
+          "keine Zeile" if i3 is None else f"alpha_cr {i3.alpha_cr:.4f} {i3.fehler!r}")
+    check("sein Ergebnis bleibt das lineare und sagt es",
+          np.allclose(r3.u, lin3["LF1"].u) and r3.info.get("theorie") == "I"
+          and r3.info.get("theorie_gewuenscht") == "II"
+          and any("Lastfall LF1" in w for w in an3.info.get("warnungen", [])),
+          f"u_y {r3.u[ids3[-1], 1] * 1e3:.3f} mm, linear {lin3['LF1'].u[ids3[-1], 1] * 1e3:.3f} mm, "
+          f"theorie {r3.info.get('theorie')!r}")
+
+
 def test_theorie3_der_ergebniskombination():
     """Dasselbe fuer eine EK mit theorie = 'III'."""
     m, ids = _druckkragarm("aus", theorie_ek="III")
@@ -605,16 +788,29 @@ def test_lastfall_hoeherer_ordnung_ohne_abgelegtes_ergebnis():
     check("fehlt sie, wird sie mit dem Lastfall gemeldet",
           list(uls) == ["EK1 [1]"] and any("EK1 [2]" in x and "Lastfall LF2" in x for x in w),
           f"{list(uls)} {[x[:100] for x in w]}")
+    # Gesucht ist die lineare Ueberlagerung - sie ist zulaessig (EK1 hat
+    # Theorie I), laesst sich nur aus analysis.cases nicht mehr bilden. Bis zum
+    # 23.09.2026 hiess es "Ueberlagerung nicht zulaessig" (Nebenbefund 5).
+    text = next((x for x in w if "EK1 [2]" in x), "")
+    check("die Meldung sagt, was fehlt: die lineare Ueberlagerung, nicht mehr zu bilden",
+          "lineare Überlagerung" in text and "nicht mehr aus den Lastfallergebnissen" in text
+          and "nicht zulässig" not in text, text[:220])
 
 
 def test_alternative_bei_theorie_I_aus_linearen_lastfaellen():
     """Eine Alternative einer EK nach II. Ordnung, die bei I. Ordnung bleibt
     (theorie2 "auto", alpha_cr >= 10), ist die Ueberlagerung der LINEAREN
-    Lastfaelle - wie die gewoehnliche Kombination. Vorher faltete solve_all
-    die EK erst nach _lastfaelle_hoeherer_ordnung: mit LF2 auf theorie "II"
-    kam ein Gemisch heraus (1,35·LF1 linear + 1,5·LF2 nach II. Ordnung),
-    wurde abgelegt und nachgewiesen - gemessen 23.09.2026 an diesem Modell
-    EK1 [2] 3,374407 statt 3,320749 mm, EK1 [3] 1,562553 statt 1,526781 mm."""
+    Lastfaelle - wie die gewoehnliche Kombination. In der ersten Fassung der
+    Kur (fb59de1 und 9337a3c, nur auf dem Zweig) faltete solve_all die EK
+    nach II./III. Ordnung erst nach _lastfaelle_hoeherer_ordnung aus
+    an.cases: mit LF2 auf theorie "II" kam ein Gemisch heraus (1,35·LF1
+    linear + 1,5·LF2 nach II. Ordnung), wurde abgelegt und nachgewiesen -
+    gemessen 23.09.2026 an diesem Modell EK1 [2] 3,374407 statt 3,320749 mm,
+    EK1 [3] 1,562553 statt 1,526781 mm. Am Stand bis 22.09.2026 (54b6f9a)
+    faltete solve_all die EK vor _lastfaelle_hoeherer_ordnung aus den
+    linearen Lastfaellen (Umhuellende 3,320749 mm wie K2); die Alternativen
+    wurden weder abgelegt noch einzeln nachgewiesen (_uls_results nur K2
+    3,320749 und K3 1,526781 mm, gemessen 23.09.2026)."""
     from statik3d.ec3.design import _uls_results
     from statik3d.solver import Results
     m, ids = _druckkragarm("auto", druck=5.0e4)
@@ -691,11 +887,97 @@ def test_stellungsreihe_ohne_kombinationen():
           f"eta {e2.eta:.4f} soll {soll:.4f}, {hinweis}")
 
 
+def _stellungen_eta(kombi: str, *stellungen) -> tuple:
+    """Kragarm (_kragarm_nachweis) in den gegebenen Stellungen gerechnet, mit
+    Nachweisen: ({Stellung: StellungsErgebnis}, Protokoll)."""
+    from statik3d.bridges.positions import Stellungsreihe
+    m, ids = _kragarm_nachweis(kombi)
+    r = Stellungsreihe(m, "Kragarm")
+    for st in stellungen:
+        r.add(st(ids) if callable(st) else st)
+    r.rechnen(kombinationen=True, nachweise=True)
+    return {e.stellung.name: e for e in r.ergebnisse}, r.log
+
+
+def test_stellung_behaelt_ergebniskombination():
+    """Eine Stellung mit einer Liste 'faelle' behaelt die Ergebniskombination
+    und nimmt nur die fehlenden Lastfaelle aus ihren Alternativen. Vorher
+    (bis ec6448c) loeschte _faelle jede Kombination mit leeren factors, also
+    jede Ergebniskombination, ohne Meldung: in der Stellung mit allen
+    Lastfaellen eta 0,1702 statt 0,3702, weil der Nachweis auf die
+    Lastfaelle zurueckfiel (gemessen 23.09.2026)."""
+    from statik3d.bridges.positions import Stellung
+    stellungen = (Stellung("alle", 0.0), Stellung("faelle", 0.0, faelle=["LF1", "LF2"]),
+                  Stellung("nur_LF1", 0.0, faelle=["LF1"]))
+    ek, _ = _stellungen_eta("EK", *stellungen)
+    k, _ = _stellungen_eta("K", *stellungen)
+    e = ek["faelle"]
+    check("faelle mit allen Lastfaellen: EK1 bleibt, eta wie ohne faelle",
+          "EK1" in e.modell.combinations and abs(e.eta - ek["alle"].eta) < 1e-9
+          and ek["alle"].eta > 0.3 and not e.warnungen,
+          f"eta {e.eta:.4f} / ohne faelle {ek['alle'].eta:.4f}, {sorted(e.modell.combinations)}")
+    e1 = ek["nur_LF1"]
+    alt = e1.modell.combinations["EK1"].alternativen if "EK1" in e1.modell.combinations else None
+    check("nur LF1: die Alternativen verlieren LF2, eta wie K2 ohne LF2",
+          alt == [{"LF1": 1.35}, {"LF1": 1.35}] and abs(e1.eta - k["nur_LF1"].eta) < 1e-9,
+          f"{alt}, eta {e1.eta:.4f} / K {k['nur_LF1'].eta:.4f}")
+    # eine Alternative und eine Kombination ganz aus dem fehlenden Lastfall
+    # entfallen - das Protokoll nennt beide
+    from statik3d.bridges.positions import Stellungsreihe
+    m, _ids = _kragarm_nachweis("EK")
+    m.combinations["EK2"] = Combination("EK2", {}, "ULS",
+                                        alternativen=[{"LF1": 1.0}, {"LF2": 1.5}])
+    m.combinations["EK3"] = Combination("EK3", {}, "ULS", alternativen=[{"LF2": 1.5}])
+    m.add_combination("K3", {"LF2": 1.5})
+    r = Stellungsreihe(m, "Kragarm")
+    r.add(Stellung("nur_LF1", 0.0, faelle=["LF1"]))
+    m1 = r.stellungen[0].modell(m, r.log)
+    check("die leer gewordene Alternative entfaellt, die Kombination bleibt",
+          m1.combinations.get("EK2") is not None
+          and m1.combinations["EK2"].alternativen == [{"LF1": 1.0}],
+          str(getattr(m1.combinations.get("EK2"), "alternativen", None)))
+    check("ohne jeden Lastfall entfallen EK3 und K3",
+          "EK3" not in m1.combinations and "K3" not in m1.combinations, str(sorted(m1.combinations)))
+    zeilen = [z for z in r.log if "entfallen" in z]
+
+    # nach Namen getrennt: "K3" in z fand sich schon in "EK3", und ein
+    # Protokoll ohne K3 bestand die Pruefung (Gegenpruefung 23.09.2026)
+    def genannt(art: str) -> list:
+        return [x for z in zeilen if f"{art} ohne Lastfall entfallen" in z
+                for x in z.split(": ")[-1].split(", ")]
+    check("das Protokoll nennt die entfallene Alternative und die Kombinationen",
+          genannt("Alternativen") == ["EK2 [2]"]
+          and sorted(genannt("Kombinationen")) == ["EK3", "K3"],
+          str(zeilen))
+
+
+def test_antrieb_in_den_alternativen():
+    """Der Antriebslastfall einer Stellung kommt auch in die Alternativen einer
+    Ergebniskombination, nicht nur in factors. Vorher (bis ec6448c) blieb
+    die EK ohne Antrieb: eta 0,3702 wie ohne Antrieb, mit der gleichwertigen
+    K2 0,4255 (Mz 50 kNm an der Spitze, gemessen 23.09.2026)."""
+    from statik3d.bridges.positions import Stellung
+    antrieb = (lambda ids: Stellung("antrieb", 0.0, antrieb=(ids[-1], (0.0, 0.0, 5.0e4))))
+    ek, _ = _stellungen_eta("EK", Stellung("ohne", 0.0), antrieb)
+    k, _ = _stellungen_eta("K", Stellung("ohne", 0.0), antrieb)
+    e = ek["antrieb"]
+    alt = e.modell.combinations["EK1"].alternativen
+    check("jede Alternative traegt den Antrieb mit 1,0",
+          all(a.get("Antrieb antrieb") == 1.0 for a in alt) and len(alt) == 2, str(alt))
+    check("EK und gleichwertige K2 liefern mit Antrieb dasselbe eta",
+          abs(e.eta - k["antrieb"].eta) < 1e-9 and k["antrieb"].eta > k["ohne"].eta + 0.01,
+          f"EK {e.eta:.4f} / K {k['antrieb'].eta:.4f} / ohne Antrieb {k['ohne'].eta:.4f}")
+
+
 def test_keine_warnung_ohne_verlangten_nachweis():
     """Verlangt kein Stab (Bereich, Beulfeld, Anschluss) einen Nachweis, darf
-    keine fehlende GZT-Kombination gemeldet werden. Vorher kippte ein Modell
-    nur mit GZG-Kombinationen und Staeben ohne Nachweis im Gesamturteil von
-    'Alle Nachweise erfüllt.' auf 'nicht geführt: EC3 (1 Warnung)'."""
+    keine fehlende GZT-Kombination gemeldet werden. In der ersten Fassung
+    der Kur (fb59de1, nur auf dem Zweig) kippte ein Modell nur mit
+    GZG-Kombinationen und Staeben ohne Nachweis im Gesamturteil von 'Alle
+    Nachweise erfüllt.' auf 'nicht geführt: EC3 (1 Warnung)'. Am Stand bis
+    22.09.2026 (54b6f9a) meldeten die Stabnachweise keine fehlenden
+    Kombinationen, der Bericht sagte 'Alle Nachweise erfüllt.'; ebenso an
+    9337a3c und ec6448c (gemessen 23.09.2026 an diesem Kragarm)."""
     from statik3d.report import Report
     from statik3d.ec3.volumen import check_volumen
     from statik3d.ec3.beulen import check_beulen, check_lasteinleitungen
@@ -729,9 +1011,133 @@ def test_keine_warnung_ohne_verlangten_nachweis():
           not vb.warnungen and bool(vb2.warnungen), f"{vb.warnungen} / {vb2.warnungen}")
 
 
+def test_gleiche_alternativen_einmal_nachgewiesen():
+    """Dieselbe Alternative in zwei GZT-Ergebniskombinationen wird im
+    Stabnachweis nur einmal nachgewiesen, unter beiden Namen (Befund B055).
+
+    Vorher lief der Nachweis ueber jeden Namen: an diesem Kragarm mit
+    EK_A und EK_B, je {LF1} oder {1,35·LF1 + 1,5·LF2}, und K2 = 1,35·LF1 +
+    1,5·LF2 standen 5 Eintraege in design.combinations und 5
+    Querschnittsnachweise je Stab; EK_A [1] und EK_B [1] waren dasselbe
+    Lastfallergebnis, EK_A [2] und EK_B [2] dieselbe Ueberlagerung
+    (gemessen 23.09.2026). Das Ergebnis stimmte, die Arbeit war doppelt.
+    """
+    from statik3d.ec3 import design as ec3d
+    from statik3d.report import Report
+    m, _ = _kragarm_nachweis("")
+    for n in ("EK_A", "EK_B"):
+        m.combinations[n] = Combination(
+            n, {}, "ULS", alternativen=[{"LF1": 1.0}, {"LF1": 1.35, "LF2": 1.5}])
+    m.add_combination("K2", {"LF1": 1.35, "LF2": 1.5}, "ULS")
+    an = solver.solve_all(m, design=True)
+    d = an.design
+    mc = d.members["S1"]
+    check("gleiche Alternativen: je Ergebnis ein Eintrag, beide Namen daran",
+          d.combinations == ["EK_A [1] = EK_B [1]", "EK_A [2] = EK_B [2]", "K2"],
+          str(d.combinations))
+    check("check_member rechnet je verschiedenem Ergebnis einmal",
+          len(mc.section_checks) == 3, f"{len(mc.section_checks)} Querschnittsnachweise")
+    # Bezug: derselbe Nachweis ueber alle fuenf Namen einzeln
+    alle = ec3d._uls_results(m, an)
+    ref = ec3d.check_member(m, m.members["S1"], alle)
+    check("Ausnutzung wie der Nachweis ueber alle Namen einzeln",
+          len(alle) == 5 and mc.util == ref.util and mc.util > 0.3,
+          f"{mc.util:.6f} gegen {ref.util:.6f} ({len(alle)} Namen)")
+    check("massgebend bleibt EK_A [2], jetzt mit dem gleichen Namen daran",
+          ref.governing.get("combo") == "EK_A [2]"
+          and mc.governing.get("combo") == "EK_A [2] = EK_B [2]",
+          f"{mc.governing.get('combo')} / einzeln {ref.governing.get('combo')}")
+    check("die vollen Namenslisten stehen im Ergebnis",
+          getattr(d, "gleiche", None) == {"EK_A [1] = EK_B [1]": ["EK_A [1]", "EK_B [1]"],
+                                          "EK_A [2] = EK_B [2]": ["EK_A [2]", "EK_B [2]"]},
+          str(getattr(d, "gleiche", None)))
+    html = Report(m, an).html()
+    check("Bericht: die Kombination heisst 'EK_A [1] = EK_B [1]', die Einstellungen "
+          "nennen die gleichen", "EK_A [1] = EK_B [1]" in html
+          and "Gleiche Ergebnisse, einmal nachgewiesen" in html)
+    namen = [f"E{i} [1]" for i in range(6)]
+    check("ab fuenf Namen kuerzt der Eintrag, bis vier nicht",
+          ec3d._gleich_name(namen) == "E0 [1] = E1 [1] = E2 [1] = … (3 weitere)"
+          and ec3d._gleich_name(namen[:4]) == " = ".join(namen[:4]),
+          ec3d._gleich_name(namen))
+    # Abgelegte Alternativen (Kontaktmodell) werden nur ueber das Objekt
+    # verglichen: jede direkte Loesung startet im Kontaktzustand der vorigen
+    # (solver.solve_combination, ``start``), dass gleiche Faktoren dort
+    # dasselbe Ergebnis geben, ist nicht belegt. An diesem Kragarm sind
+    # EK_A [2] und EK_B [2] gleich (max |du| = 0, 23.09.2026) und bleiben
+    # trotzdem zwei Eintraege.
+    mk, ids = _kragarm_drei_lastfaelle()
+    mk.support(ids[-1], [2], uz=dict(failure="zug"))
+    for n in ("EK_A", "EK_B"):
+        mk.combinations[n] = Combination(
+            n, {}, "ULS", alternativen=[{"LF1": 1.0}, {"LF1": 1.0, "LF2": 1.0}])
+    ank = solver.solve_all(mk, combinations=True, envelopes=True)
+    wk: list = []
+    ulsk = ec3d._uls_results(mk, ank, warnungen=wk)
+    zus, gleich = ec3d._gleiche_zusammenfassen(mk, ank, ulsk)
+    check("Kontaktmodell: Lastfall-Alternative zusammengefasst, direkt geloeste nicht",
+          list(zus) == ["EK_A [1] = EK_B [1]", "EK_A [2]", "EK_B [2]"] and not wk
+          and "EK_A [2]" in ank.alternativen and "EK_B [2]" in ank.alternativen,
+          f"{list(zus)} {wk}")
+
+
+def test_gleiche_im_bericht_nur_die_ersten_40():
+    """Die vollen Namenslisten gleicher Alternativen: vollstaendig in
+    DesignResults.gleiche, im Bericht (Zeile "Gleiche Ergebnisse, einmal
+    nachgewiesen") nur die der ersten 40 zusammengefassten Eintraege, danach
+    " …" (html.py chapter_design, ``gl[:40]``).
+
+    Bis zum 24.09.2026 sagten beide Handbuecher und der Kommentar im Bericht
+    "die volle Liste steht im Bericht". Gegenpruefung am Kragarm mit LF1 bis
+    LF42 und EK1 bis EK5, jede mit den 42 Alternativen {LFi: 1}: 42 Eintraege
+    mit je 5 Namen, massgebend "EK1 [42] = EK2 [42] = EK3 [42] = … (2
+    weitere)", und gerade dessen volle Liste fehlte im Bericht ("EK5 [42]"
+    0-mal).
+    """
+    import html as html_mod
+    import re
+    from statik3d.report import Report
+    n_lf = 42
+    m = Model("viele gleiche")
+    m.add_material(Material.steel("S235"))
+    m.add_section(Section.rectangle("R", 0.1, 0.2))
+    ids = mesher.line_of_beams(m, "S235", "R", (0, 0, 0), (2.0, 0, 0), 4)
+    m.fix(ids[0], "all")
+    m.add_member("S1", list(range(len(m.elements))))
+    for i in range(1, n_lf + 1):
+        m.add_load_case(f"LF{i}", "Q")
+        m.load_node(ids[-1], Fz=-1.0e3 * i, case=f"LF{i}")
+    for k in range(1, 6):
+        m.combinations[f"EK{k}"] = Combination(
+            f"EK{k}", {}, "ULS", alternativen=[{f"LF{i}": 1.0} for i in range(1, n_lf + 1)])
+    an = solver.solve_all(m, design=True)
+    d = an.design
+    gl = list(d.gleiche.values())
+    check("42 Eintraege mit je 5 Namen",
+          len(d.combinations) == n_lf and len(gl) == n_lf and all(len(v) == 5 for v in gl),
+          f"{len(d.combinations)} Eintraege, {len(gl)} Gruppen")
+    mass = d.members["S1"].governing.get("combo")
+    check("massgebend ist der gekuerzte Eintrag der groessten Last, voll in gleiche",
+          mass == "EK1 [42] = EK2 [42] = EK3 [42] = … (2 weitere)"
+          and d.gleiche.get(mass) == [f"EK{k} [42]" for k in range(1, 6)], str(mass))
+    html = Report(m, an).html()
+    i = html.find("Gleiche Ergebnisse, einmal nachgewiesen")
+    zeile = html_mod.unescape(re.sub(r"<[^>]+>", "", html[i:html.find("</tr>", i)])) \
+        if i >= 0 else ""
+    drin = sum(1 for v in gl if " = ".join(v) in zeile)
+    check("Bericht: die vollen Listen der ersten 40 Eintraege, dann ' …'",
+          drin == 40 and all(" = ".join(v) in zeile for v in gl[:40])
+          and zeile.rstrip().endswith("…"), f"{drin} volle Listen")
+    check("Bericht: Eintrag 41 und 42 (der massgebende) nicht in der Zeile, "
+          "'EK5 [42]' nirgends im Bericht",
+          "EK5 [41]" not in zeile and "EK5 [42]" not in zeile and "EK5 [42]" not in html,
+          f"'EK5 [42]' {html.count('EK5 [42]')}-mal im Bericht")
+
+
 def main():
     for t in (test_kombination_mit_alternativen, test_speichern_und_laden,
               test_umbenennen_und_entfernen, test_modellpruefung_sieht_alternativen,
+              test_objektmaske_behaelt_die_alternativen,
               test_umhuellende_inkrementell_gleich_gestapelt,
               test_alternativen_werden_umhuellende, test_alternativen_im_kontaktmodell,
               test_nachweis_sieht_die_alternativen, test_rueckfall_nur_ohne_kombinationen,
@@ -739,12 +1145,17 @@ def main():
               test_kontaktmodell_alternativen_fuer_nachweise,
               test_theorie2_der_ergebniskombination,
               test_theorie2_leere_kombination_schreibt_nichts,
+              test_theorie2_ueber_der_verzweigungslast,
               test_theorie3_der_ergebniskombination,
               test_hoehere_theorie_ohne_abgelegtes_ergebnis,
               test_lastfall_hoeherer_ordnung_ohne_abgelegtes_ergebnis,
               test_alternative_bei_theorie_I_aus_linearen_lastfaellen,
               test_stellungsreihe_ohne_kombinationen,
-              test_keine_warnung_ohne_verlangten_nachweis):
+              test_stellung_behaelt_ergebniskombination,
+              test_antrieb_in_den_alternativen,
+              test_keine_warnung_ohne_verlangten_nachweis,
+              test_gleiche_alternativen_einmal_nachgewiesen,
+              test_gleiche_im_bericht_nur_die_ersten_40):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

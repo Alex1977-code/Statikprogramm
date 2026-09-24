@@ -180,6 +180,232 @@ def test_reihe():
           str([s.dreh_winkel for s in st]))
 
 
+def test_meldung_nach_allen_stellungen():
+    """Befund B064 (23.09.2026): Nach „▶ Alle Stellungen rechnen“ stand immer
+    „{n} Stellungen gerechnet: eta = …“ - gezaehlt wurden die angelegten
+    Stellungen, nicht die gerechneten. Scheiterte jede an einem FEHLER,
+    lautete die Zeile „2 Stellungen gerechnet: eta = 0.000“ (Umhuellende mit
+    0 Ergebnissen, eta_bestimmt True). Hier der echte
+    MainWindow.stellungen_rechnen, self als Attrappe."""
+    import importlib
+    from unittest import mock
+    G = importlib.import_module("statik3d.gui.main")      # gui.main() verdeckt das Modul
+
+    def texte(aufrufe):
+        return [str(c.args[0]) for c in aufrufe.call_args_list if c.args]
+
+    def rechne(stellungen):
+        m, _n = _klappe()
+        m.stellungen = list(stellungen)
+        s = mock.MagicMock()
+        s.model = m
+        s._stellungen_obj.return_value = list(stellungen)
+        with mock.patch.object(G, "QtWidgets"):       # nur der Wartezeiger im Weg
+            G.MainWindow.stellungen_rechnen(s)
+        return s
+
+    def etikett(s):
+        # stellungen_rechnen endet mit refresh_all, und das ruft
+        # refresh_stellungen - hier von Hand, der echte
+        s.lbl_umh.setText.reset_mock()
+        G.MainWindow.refresh_stellungen(s)
+        return (texte(s.lbl_umh.setText) or [""])[-1]
+
+    ohne_lager = dict(lager_aus=["Drehlager", "Endauflager"])
+    s = rechne([Stellung("X", 0.0, **ohne_lager), Stellung("Y", 10.0, **ohne_lager)])
+    u = s.umhuellende
+    alle = texte(s.info) + texte(s.error)
+    check("keine Stellung rechenbar: die Umhüllende hat kein Ergebnis",
+          not u.ergebnisse and len(u.fehlerhaft) == 2,
+          f"{len(u.ergebnisse)} Ergebnisse, {len(u.fehlerhaft)} fehlerhaft")
+    check("… keine Zeile „2 Stellungen gerechnet“ und kein „eta = 0.000“",
+          not any("2 Stellungen gerechnet" in t or "eta = 0.000" in t for t in alle),
+          str(alle[-1:]))
+    check("… sondern „keine Stellung gerechnet“ mit der Zahl der FEHLER",
+          any("keine stellung gerechnet" in t.lower() and "2" in t for t in alle), str(alle[-1:]))
+    check("… eta gilt als nicht bestimmt", not u.eta_bestimmt and "nicht bestimmt" in u.kurztext(),
+          f"eta_bestimmt {u.eta_bestimmt}, {u.kurztext()!r}")
+    check("… auch im Bericht", "eta nicht bestimmt" in u.bericht() and "eta = 0.000" not in u.bericht(),
+          [z for z in u.bericht().splitlines() if z.startswith("Umhüllende")][:1])
+    # Das Etikett unter „▶ Alle Stellungen rechnen“ (lbl_umh) zeigte bis zum
+    # 24.09.2026 trotzdem „η = 0,000; größte Verformung 0,000 mm“ - genau die
+    # Scheinausnutzung, die Schlusszeile und Bericht nicht mehr nannten
+    # (Gegenpruefung zu B064, gemessen mit dem echten refresh_stellungen).
+    lbl = etikett(s)
+    check("… und das Etikett im Register: kein „η = 0,000“, sondern „nicht bestimmt“",
+          "η = 0" not in lbl and "nicht bestimmt" in lbl and "2 mit FEHLER" in lbl, lbl)
+
+    s = rechne([Stellung("S1", 0.0, "geschlossen"), Stellung("X", 0.0, **ohne_lager)])
+    u = s.umhuellende
+    letzte = (texte(s.info) or [""])[-1]
+    check("eine von zwei rechenbar: „1 von 2 Stellungen gerechnet (1 mit FEHLER)“",
+          len(u.ergebnisse) == 1 and "1 von 2 Stellungen gerechnet" in letzte
+          and "1 mit FEHLER" in letzte and f"eta = {u.eta:.3f}" in letzte, letzte)
+    lbl = etikett(s)
+    check("… das Etikett nennt dann das η der gerechneten Stellung",
+          f"η = {u.eta:.3f}".replace(".", ",") in lbl and "nicht bestimmt" not in lbl, lbl)
+
+    s = rechne([Stellung("S1", 0.0, "geschlossen")])
+    letzte = (texte(s.info) or [""])[-1]
+    check("Gegenprobe, alle gerechnet: die Zeile wie bisher",
+          letzte.startswith("1 Stellungen gerechnet: eta = ") and not texte(s.error), letzte)
+
+
+def test_eta_ohne_nachweis():
+    """Ohne einen gefuehrten Stabnachweis ist eta = 0 keine Ausnutzung - auch
+    dann, wenn keine Warnung kommt: mit nachweise=False und in einem Modell
+    ohne Stab mit Nachweis. Vorher (bis ec6448c) galt eta = 0 in beiden
+    Faellen als bestimmt: kurztext 'eta = 0.000, maßgebend S1 …', jede
+    Stellung ok (Klappe, zwei Stellungen, gemessen 23.09.2026)."""
+    m, n = _klappe()
+    m.add_combination("K1", {"LF1": 1.35})
+    for titel, nachweise, ohne_staebe in (("nachweise=False", False, False),
+                                          ("ohne Stab, nachweise=True", True, True)):
+        mm = m.copy()
+        if ohne_staebe:
+            mm.members.clear()
+        r = Stellungsreihe(mm, "Klappe")
+        r.add(Stellung("S1", 0.0, "geschlossen"))
+        r.add(Stellung("S2", 30.0, "offen", lager_aus=["Endauflager"]))
+        u = r.rechnen(kombinationen=True, nachweise=nachweise)
+        kurz = u.kurztext()
+        check(f"{titel}: eta nicht bestimmt, kein 'eta = 0.000'",
+              not u.eta_bestimmt and "eta = 0.000" not in kurz and "nicht bestimmt" in kurz,
+              kurz)
+        check(f"{titel}: keine Stellung gilt als erfüllt",
+              len(u.ergebnisse) == 2 and not any(e.ok for e in u.ergebnisse),
+              str([(e.stellung.name, e.ok, e.nachgewiesen) for e in u.ergebnisse]))
+        b = u.bericht()
+        zeilen = [z for z in b.splitlines() if z.startswith(("S1 ", "S2 ", "Umhüllende"))]
+        check(f"{titel}: Bericht ohne eta-Wert",
+              "Umhüllende: eta nicht bestimmt" in b and "0.000" not in "".join(zeilen), str(zeilen))
+    # Gegenprobe: mit Stab und Nachweis bleibt eta bestimmt
+    r = Stellungsreihe(m, "Klappe")
+    r.add(Stellung("S1", 0.0, "geschlossen"))
+    u = r.rechnen(kombinationen=True, nachweise=True)
+    check("mit Stabnachweis: eta bestimmt und ok",
+          u.eta_bestimmt and u.eta > 0 and u.kurztext().startswith("eta = ")
+          and r.ergebnis("S1").ok, u.kurztext())
+
+
+def test_ermuedung_in_stellung():
+    """Eine Ermuedungslast als Verlauf bleibt in einer Stellung, solange ihre
+    Glieder da sind - Lastfaelle oder Kombinationen der Stellung; ihr case_max
+    und case_min liest der Ermuedungsnachweis von Staeben und Volumen
+    (ec3.fatigue) nicht. Vorher (bis ec6448c) entschieden case_max und
+    case_min: ein Verlauf mit case_max '' (rfem6_db, berichtigte Maske)
+    entfiel in jeder Stellung mit 'faelle', ebenso einer mit case_min
+    ausserhalb der Stellung (V_cmin, gemessen 24.09.2026); einer mit Gliedern
+    ausserhalb der Stellung blieb stehen, wenn sein case_max ein Lastfall der
+    Stellung war und sein case_min leer oder ebenfalls ein Lastfall der
+    Stellung (V_fehlt). 8daa37e pruefte die Glieder nur gegen die
+    Lastfaelle: ein Verlauf mit einer Kombination als Glied (die Oberflaeche
+    nimmt sie an, gui/main.py add_fatigue_load) entfiel, obwohl die
+    Kombination in der Stellung bleibt (Gegenpruefung 23.09.2026)."""
+    from statik3d.model import FatigueLoad
+    m, n = _klappe()
+    m.add_load_case("LF2", "Q", activate=False)
+    m.add_load_case("LF3", "Q", activate=False)
+    m.load_node(n[1], Fz=-1e4, case="LF2")
+    m.load_node(n[1], Fz=-2e4, case="LF3")
+    m.add_combination("K1", {"LF1": 1.0, "LF2": 1.0})
+    m.add_combination("K3", {"LF3": 1.0})
+    fl = m.fatigue_loads
+    fl["V_leer"] = FatigueLoad("V_leer", "", None, folge=["LF1", "LF2"], wiederholungen=1e5)
+    fl["V_alt"] = FatigueLoad("V_alt", "LF3", None, folge=["LF1", "LF2"], wiederholungen=1e5)
+    fl["V_fehlt"] = FatigueLoad("V_fehlt", "LF1", None, folge=["LF1", "LF3"], wiederholungen=1e5)
+    # case_max, wie ihn die Maske bis B067 setzte: den ersten Eintrag der
+    # Liste (seither laesst sie case_max bei einem Verlauf leer; Dateien aus
+    # der alten Maske tragen ihn weiter)
+    fl["V_kombi"] = FatigueLoad("V_kombi", "LF1", None, folge=["LF1", "K1"], wiederholungen=1e5)
+    fl["V_kombi_weg"] = FatigueLoad("V_kombi_weg", "LF1", None, folge=["LF1", "K3"],
+                                    wiederholungen=1e5)
+    # case_min lieferte die Maske bis B067 auch im Modus Verlauf
+    # (gui/dialogs.py values(), gui/main.py add_fatigue_load); beide Glieder
+    # liegen in der Stellung
+    fl["V_cmin"] = FatigueLoad("V_cmin", "LF1", "LF3", folge=["LF1", "LF2"], wiederholungen=1e5)
+    fl["Z"] = FatigueLoad("Z", "LF2", "LF1")
+    fl["Z3"] = FatigueLoad("Z3", "LF3", None)
+    check("Grundmodell ohne Fehler", not [z for z in m.check() if z.startswith("FEHLER")])
+    log = []
+    m2 = Stellung("S", 0.0, faelle=["LF1", "LF2"]).modell(m, log)
+    check("Verlauf mit vorhandenen Gliedern bleibt, auch mit case_max '' oder veraltet",
+          {"V_leer", "V_alt"} <= set(m2.fatigue_loads), str(sorted(m2.fatigue_loads)))
+    check("Verlauf mit vorhandenen Gliedern bleibt, auch mit case_min außerhalb der Stellung",
+          "V_cmin" in m2.fatigue_loads, str(sorted(m2.fatigue_loads)))
+    check("Verlauf mit einer Kombination der Stellung als Glied bleibt",
+          "V_kombi" in m2.fatigue_loads and "K1" in m2.combinations,
+          f"{sorted(m2.fatigue_loads)}, Kombinationen {sorted(m2.combinations)}")
+    check("Verlauf mit fehlendem Glied (Lastfall oder entfallene Kombination) "
+          "entfällt, zwei Zustände wie bisher",
+          sorted(m2.fatigue_loads) == ["V_alt", "V_cmin", "V_kombi", "V_leer", "Z"],
+          str(sorted(m2.fatigue_loads)))
+    check("das Stellungsmodell ist ohne Fehler (veraltetes case_max oder case_min stört nicht)",
+          not [z for z in m2.check() if z.startswith("FEHLER")],
+          str([z for z in m2.check() if z.startswith("FEHLER")]))
+    zeile = [z for z in log if "Ermüdungslasten" in z]
+    check("das Protokoll nennt genau die entfallenen",
+          len(zeile) == 1 and zeile[0].split(": ")[-1].split(", ") == ["V_fehlt", "V_kombi_weg", "Z3"],
+          str(zeile))
+
+
+def test_reihe_ohne_verlangten_nachweis():
+    """In Python fuehrt reihe.rechnen() ohne Argument keinen Nachweis, denn
+    nachweise=False ist die Vorgabe - anders als Knopf und Operation im
+    Browser, die true nehmen. Das Benutzerhandbuch sagte bis zum 24.09.2026,
+    ohne Nachweis gehe es "nur über die Operation". Gemessen am 24.09.2026
+    am Beispiel gate mit drei Stellungen (Stand ec6448c): ohne Argument je
+    Stellung eta 0.000, nicht nachgewiesen, keine Warnung, ok; mit
+    nachweise=True eta 0.515. Ebenso ohne Warnung: alle Staebe design = False.
+
+    Seit B036 (fix2/nb_bridges_positions, test_eta_ohne_nachweis) ist eta
+    ohne gefuehrten Stabnachweis nicht bestimmt und keine Stellung erfuellt;
+    beim Zusammenfuehren (24.09.2026) prueft diese Pruefung darum "eta nicht
+    bestimmt" statt "eta = 0.000" - weiter ohne Warnung."""
+    from statik3d.examples_lib import gate_example
+
+    def reihe_aus(m):
+        r = Stellungsreihe(m, m.name)
+        for name, w in (("geschlossen", 0.0), ("Zwischen", 40.0), ("offen", 82.0)):
+            r.add(Stellung(name, w, f"{w:g} Grad"))
+        return r
+
+    def ohne_nachweis(vorsatz, u):
+        erg = u.ergebnisse
+        kurz, b = u.kurztext(), u.bericht()
+        check(f"{vorsatz}: kein Stab nachgewiesen, keine Warnung, keine Stellung erfüllt",
+              len(erg) == 3 and not u.fehlerhaft
+              and all(not e.nachgewiesen and e.warnungen == [] and not e.ok for e in erg),
+              str([(round(e.eta, 3), e.nachgewiesen, len(e.warnungen), e.ok) for e in erg]))
+        check(f"{vorsatz}: kurztext und Bericht nennen 'eta nicht bestimmt', ohne Warnhinweis",
+              not u.eta_bestimmt
+              and kurz == "eta nicht bestimmt – kein Stabnachweis geführt"
+              and "Umhüllende: eta nicht bestimmt – in keiner Stellung wurde ein "
+                  "Stabnachweis geführt" in b
+              and "eta = 0.000" not in kurz + b and "NICHT VOLLSTÄNDIG" not in kurz + b,
+              f"{kurz!r}; {[z for z in b.splitlines() if z.startswith('Umhüllende')]}")
+
+    m = gate_example()
+    check("Voraussetzung: gate hat Kombinationen und Stäbe mit 'Nachweis führen'",
+          len(m.combinations) > 0 and len(m.members) == 3
+          and all(x.design for x in m.members.values()),
+          f"{len(m.combinations)} Kombinationen, "
+          f"{[(k, x.design) for k, x in m.members.items()]}")
+    ohne_nachweis("reihe.rechnen() ohne Argument", reihe_aus(m).rechnen())
+
+    u = reihe_aus(m).rechnen(nachweise=True)
+    check("Gegenfall rechnen(nachweise=True): alle Stellungen nachgewiesen, eta > 0",
+          len(u.ergebnisse) == 3 and u.eta_bestimmt
+          and all(e.nachgewiesen and e.eta > 0.0 and e.warnungen == [] for e in u.ergebnisse)
+          and u.kurztext().startswith("eta = ") and not u.kurztext().startswith("eta = 0.000"),
+          f"{u.kurztext()!r}, {[round(e.eta, 3) for e in u.ergebnisse]}")
+
+    for x in m.members.values():
+        x.design = False
+    ohne_nachweis("alle Stäbe design=False, rechnen(nachweise=True)",
+                  reihe_aus(m).rechnen(nachweise=True))
+
+
 # --------------------------------------------------------------------------
 # 4) DIN 19704: Lastfallklassen und Kombinationen
 # --------------------------------------------------------------------------
@@ -278,8 +504,50 @@ def test_ztv_ing():
           "Grenzmoment der Kupplung" not in p2, str(sorted(p2)))
 
 
+def test_stellung_ermuedungslasten_im_protokoll():
+    """Eine Stellung mit eigener Lastfallliste nennt im Protokoll jede
+    Ermuedungslast, die mit den fehlenden Lastfaellen entfaellt.
+
+    Seit dem 23.09.2026 nimmt Model.remove_load_case die Ermuedungslasten
+    selbst mit (Befund B105); die Stellung sah sie danach nicht mehr und
+    haette sie im Protokoll verschwiegen. Ein Verlauf mit einem Glied
+    ausserhalb der Stellung entfaellt dort ganz (test_ermuedung_in_stellung,
+    V_fehlt) - remove_load_case kuerzt ihn zwar, die Stellung entscheidet
+    aber nach den Gliedern davor. Im Zweig fix2/nb_model blieb er hier
+    gekuerzt auf LF1 stehen; beim Zusammenfuehren mit der Regel aus
+    fix2/nb_bridges_positions (Verlauf bleibt nur, wenn alle Glieder
+    bleiben) gilt diese.
+    """
+    from statik3d.model import FatigueLoad
+    m, n = _klappe()
+    m.add_load_case("Verkehr", "Q", activate=False)
+    m.fatigue_loads["Z"] = FatigueLoad("Z", case_max="Verkehr", case_min="LF1", cycles=1e5)
+    m.fatigue_loads["B"] = FatigueLoad("B", case_max="LF1", cycles=1e5)
+    # Verlauf mit altem case_max aus der Maske: 'Verkehr' fehlt, er entfaellt
+    m.fatigue_loads["V"] = FatigueLoad("V", case_max="LF1", folge=["LF1", "Verkehr"],
+                                       wiederholungen=1e5)
+    log: list = []
+    m2 = Stellung("S6", 0.0, faelle=["LF1"]).modell(m, log)
+    text = "\n".join(log)
+    print("     " + text.replace("\n", "\n     "))
+    check("Last mit 'Verkehr' als oberem Zustand entfaellt", "Z" not in m2.fatigue_loads,
+          str(list(m2.fatigue_loads)))
+    check("… und das Protokoll nennt sie",
+          any("entfallen" in z and "Z" in z.split(":")[-1] for z in log), text[-120:])
+    check("Last nur mit LF1 bleibt", "B" in m2.fatigue_loads)
+    check("Verlauf mit fehlendem Glied entfaellt ganz, das Protokoll nennt ihn",
+          "V" not in m2.fatigue_loads
+          and any("entfallen" in z and "V" in z.split(": ")[-1].split(", ") for z in log),
+          text[-120:])
+    check("Grundmodell unveraendert", sorted(m.fatigue_loads) == ["B", "V", "Z"]
+          and m.fatigue_loads["V"].folge == ["LF1", "Verkehr"])
+
+
 def main():
-    for t in (test_drehung, test_stellungen, test_reihe, test_din19704, test_ztv_ing):
+    for t in (test_drehung, test_stellungen, test_reihe, test_reihe_ohne_verlangten_nachweis,
+              test_meldung_nach_allen_stellungen, test_eta_ohne_nachweis,
+              test_ermuedung_in_stellung, test_din19704, test_ztv_ing,
+              test_stellung_ermuedungslasten_im_protokoll):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

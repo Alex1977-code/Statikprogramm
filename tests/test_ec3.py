@@ -377,8 +377,9 @@ def test_stab_ohne_streckgrenze_nicht_gefuehrt():
     geführt" - aber DesignResults.summary() zaehlte weiter nur util > 1 und
     schrieb "... max. Ausnutzung 0.633 ... - alle erfuellt" (gemessen
     22.09.2026). Genau diese Zeile steht in der Oberflaeche nach "Nachweise
-    EC3", im Etikett der Maske Nachweise (Gruppe "Nachweise führen") und in
-    Analysis.summary().
+    EC3", im Etikett der Maske Nachweise (Gruppe "Nachweise führen"), im
+    Textfeld der Maske Ergebnisse und in Analysis.summary() - alle Stellen
+    im Kommentar von DesignResults.summary().
     Geprueft wird am echten Weg solve_all(design=True).
     """
     m = _traeger_und_stab_ohne_fy()
@@ -412,6 +413,135 @@ def test_stab_ohne_streckgrenze_nicht_gefuehrt():
     d2 = check_members(m, an, members=["Traeger"], use_jobs=False)
     check("Gegenprobe nur Traeger: summary() 'alle erfuellt'",
           float(d2.summary().endswith(" - alle erfuellt")), 1.0, 0)
+
+
+def _svg_mit_titel(html: str, titel: str) -> str:
+    """Das eingebettete SVG-Bild mit diesem <title> - leer, wenn es fehlt."""
+    i = html.find(f"<title>{titel}</title>")
+    if i < 0:
+        return ""
+    return html[html.rfind("<svg", 0, i):html.find("</svg>", i) + len("</svg>")]
+
+
+def test_nicht_gefuehrt_ohne_ausnutzung_in_bildern():
+    """Ein nicht gefuehrter Stab hat keine Ausnutzung - auch nicht in der
+    Faerbung "Ausnutzung EC3" und im Balkendiagramm des Berichts.
+
+    Bis zum 23.09.2026 gab util_by_element den Elementen eines Stabes ohne
+    f_y seine Ausnutzung 0,0 mit: in der Oberflaeche und im Bericht wurden
+    sie gruen (#2e8b57, Klasse < 0,50) und sahen aus wie unbeansprucht, und
+    das Balkendiagramm "Ausnutzung je Stab" zeigte fuer "Ohne_fy" einen
+    gruenen Balken mit "0.000" (Befund B054, gemessen am selben Modell).
+    """
+    from statik3d.report import Report
+    from statik3d.report import svg as sv
+    m = _traeger_und_stab_ohne_fy()
+    an = solver.solve_all(m, design=True)
+    d = an.design
+    ube = d.util_by_element()
+    ohne = list(m.members["Ohne_fy"].elements)
+    traeger = list(m.members["Traeger"].elements)
+    ut = d.members["Traeger"].util
+    check("util_by_element: kein Wert fuer die Elemente des nicht gefuehrten Stabs",
+          float(sum(1 for e in ohne if e in ube)), 0.0, 0)
+    check("util_by_element: der Traeger behaelt seine Ausnutzung",
+          float(all(e in ube and ube[e] == ut for e in traeger) and ut > 0.5), 1.0, 0)
+    html = Report(m, an).html()
+    balken = _svg_mit_titel(html, "Ausnutzung je Stab")
+    check("Balkendiagramm: kein Balken fuer den nicht gefuehrten Stab",
+          float(bool(balken) and ">Ohne_fy<" not in balken), 1.0, 0)
+    check("Balkendiagramm: der Traeger mit seinem Wert",
+          float(">Traeger<" in balken and f">{ut:.3f}<" in balken), 1.0, 0)
+    bild = _svg_mit_titel(html, "Ausnutzung der Stäbe")
+    gruen = bild.count(f'stroke="{sv.util_colour(0.0)}"')
+    stabfarbe = bild.count(f'stroke="{sv.COL_BEAM}"')
+    print(f"     Bild 'Ausnutzung der Stäbe': {gruen} Linien gruen, {stabfarbe} in Stabfarbe")
+    check("Bericht, Faerbung: keine Linie in der Farbe der Ausnutzung 0",
+          float(gruen), 0.0, 0)
+    check("Bericht, Faerbung: die sechs Elemente von Ohne_fy in Stabfarbe",
+          float(stabfarbe), float(len(ohne)), 0)
+    check("beide Bildunterschriften nennen den nicht gefuehrten Stab",
+          float(html.count("weil nicht geführt: Ohne_fy")), 2.0, 0)
+
+
+def test_kein_stab_gefuehrt_keine_bilder():
+    """Ist **kein** Stab gefuehrt, zeichnet der Bericht weder das
+    Balkendiagramm "Ausnutzung je Stab" noch das Bild "Ausnutzung der Staebe"
+    (html.py chapter_design, ``and gefuehrt``) - es gaebe keinen Wert zu
+    zeigen. So steht es in beiden Handbuechern und im Docstring von
+    util_by_element. Bis zum 24.09.2026 sagten sie nur "in Stabfarbe, beide
+    Bildunterschriften nennen ihn", was hier nicht zutrifft (Gegenpruefung
+    zu B054: ein Stab HEA 200 aus Werkstoff ohne f_y, kein Bild, keine
+    Bildunterschrift). Der Fall ist nicht abwegig: bei Importen ohne
+    erkannte Stahlsorte fehlt f_y oft an allen Staeben.
+    """
+    from statik3d.report import Report
+    m = _traeger_und_stab_ohne_fy()
+    for e in m.members["Traeger"].elements:
+        m.elements[e].mat = "Frei"               # jetzt ist auch er ohne f_y
+    an = solver.solve_all(m, design=True)
+    d = an.design
+    check("kein Stab gefuehrt: beide Staebe 'nicht geführt'",
+          float(sorted(mc.status() for mc in d.members.values())
+                == ["nicht geführt", "nicht geführt"]), 1.0, 0)
+    check("kein Stab gefuehrt: util_by_element ist leer",
+          float(len(d.util_by_element())), 0.0, 0)
+    html = Report(m, an).html()
+    check("kein Stab gefuehrt: kein Balkendiagramm 'Ausnutzung je Stab'",
+          float(bool(_svg_mit_titel(html, "Ausnutzung je Stab"))), 0.0, 0)
+    check("kein Stab gefuehrt: kein Bild 'Ausnutzung der Stäbe'",
+          float(bool(_svg_mit_titel(html, "Ausnutzung der Stäbe"))), 0.0, 0)
+    check("kein Stab gefuehrt: keine Bildunterschrift zur Ausnutzung",
+          float(html.count("Ausnutzungsgrade der Stäbe")
+                + html.count("Ausnutzung der Stäbe (Farbskala)")), 0.0, 0)
+
+
+def test_sorte_ohne_streckgrenze():
+    """Befund B060: Werkstoff mit Stahlsorte, aber leerem f_y.
+
+    Der Werkstoffdialog sagt bei f_y "leer = aus der Stahlsorte" und
+    speichert dann fy = None. Material.yield_strength nahm die Sorte aber nur
+    fuer t > 40 mm und gab darunter ``fy or 0.0`` zurueck: gemessen am Stand
+    ec6448c (23.09.2026) mit Sorte S235 und leerem f_y 0 N/mm² bei 0 / 10,7 /
+    40 mm und 215 N/mm² bei 41 / 80 mm; ein IPE 300 aus diesem Werkstoff war
+    "nicht geführt" ("Werkstoff Frei ohne Streckgrenze"), obwohl die Sorte
+    eingetragen ist. Richtig ist EN 1993-1-1 Tab. 3.1 bis 40 mm: 235 / 360
+    N/mm² (die Zweistufenregel bei 40 mm; EN 10025-2 selbst stuft feiner).
+    Ohne Sorte und ohne f_y bleibt der Stab nicht gefuehrt
+    (test_stab_ohne_streckgrenze_nicht_gefuehrt).
+    """
+    mt = Material("Frei", 210e9, 0.3, 7850.0, 12e-6, None, None, "S235")
+    check("Sorte S235, f_y leer: f_y bei t = 10,7 mm = 235 N/mm²", mt.yield_strength(0.0107), 235e6, 0)
+    check("Sorte S235, f_y leer: f_y bei t = 0 (ohne Dicke) = 235 N/mm²", mt.yield_strength(0.0), 235e6, 0)
+    check("Sorte S235, f_y leer: f_y bei t = 40 mm = 235 N/mm²", mt.yield_strength(0.040), 235e6, 0)
+    check("Sorte S235, f_y leer: f_y bei t = 41 mm = 215 N/mm² (wie bisher)",
+          mt.yield_strength(0.041), 215e6, 0)
+    check("Sorte S235, f_u leer: f_u bei t = 10,7 mm = 360 N/mm²", mt.ultimate_strength(0.0107), 360e6, 0)
+    # Ein ausdrueckliches f_y bleibt bis 40 mm vorn - die Sorte ersetzt dort
+    # nur das leere Feld. Ueber 40 mm gilt die untere Stufe der Sorte auch
+    # gegen ein eingetragenes f_y (yield_strength fragt t > 0,040 m zuerst ab).
+    # Das Benutzerhandbuch sagte am 23.09.2026 "geht der Sorte immer vor";
+    # gemessen 24.09.2026: bei 41 mm 215 statt 300 N/mm², f_u 360 statt 390
+    mx = Material("Eigen", fy=300e6, grade="S235")
+    check("f_y 300 mit Sorte S235: f_y bei 10,7 mm bleibt 300 N/mm²", mx.yield_strength(0.0107), 300e6, 0)
+    check("f_y 300 mit Sorte S235: f_y bei 40 mm bleibt 300 N/mm²", mx.yield_strength(0.040), 300e6, 0)
+    check("f_y 300 ohne f_u: f_u bleibt 1,3 f_y = 390 N/mm²", mx.ultimate_strength(0.0107), 390e6, 1e-12)
+    check("f_y 300 mit Sorte S235: über 40 mm gilt die untere Stufe der Sorte, 215 N/mm²",
+          mx.yield_strength(0.041), 215e6, 0)
+    check("f_y 300 ohne f_u: über 40 mm f_u der Sorte, 360 N/mm² (nicht 1,3 f_y)",
+          mx.ultimate_strength(0.041), 360e6, 0)
+
+    # Am echten Weg: derselbe Traeger zweimal, einmal aus Material.steel("S235"),
+    # einmal aus dem Werkstoff mit Sorte S235 und leerem f_y
+    m = _traeger_und_stab_ohne_fy()
+    m.materials["Frei"].grade = "S235"
+    an = solver.solve_all(m, design=True)
+    mc, mt_ = an.design.members["Ohne_fy"], an.design.members["Traeger"]
+    print("     Ohne_fy:", mc.status(), repr(mc.fehler), f"util {mc.util:.4f}",
+          "| Traeger:", mt_.status(), f"util {mt_.util:.4f}")
+    check("Stab aus Sorte S235 mit leerem f_y ist geführt (kein fehler)",
+          float(not mc.fehler and mc.status() != "nicht geführt"), 1.0, 0)
+    check("… mit derselben Ausnutzung wie der Träger aus S235", mc.util, mt_.util, 1e-9)
 
 
 def test_frame_parallel_design():
@@ -492,6 +622,143 @@ def test_nachweisauftrag_traegt_kein_modell():
           float(all(j.payload.get("paket") for j in gefangen)), 1.0, 0)
 
 
+def test_nachweisetikett_folgt_dem_ergebnis():
+    """Das Etikett der Maske Nachweise (Gruppe „Nachweise führen“) zeigt,
+    was die statische Analyse (self.analysis: das Ergebnis der letzten
+    Rechnung „Alle Lastfaelle + Kombinationen“ oder „Nur aktiver Lastfall“)
+    an Nachweisen hat - nicht, was eine fruehere statische Rechnung hatte.
+    Eigenformen und Knicken lassen diese Analyse stehen (_solve_done setzt
+    dann nur results): danach bleibt ihre Zeile, obwohl das gezeigte
+    Ergebnis selbst keine Nachweise hat. Gemessen am 24.09.2026 im Fenster
+    (offscreen), Einfeldtraeger IPE 300 mit Druckkraft: EC3-Zeile nach
+    do_solve('modal') und do_solve('buckling') unveraendert.
+
+    MainWindow.show_results setzte das Etikett bis zum 23.09.2026 nur, wenn
+    ein EC3- oder Ermuedungsergebnis vorlag. Nach einer Rechnung mit EC3 und
+    einer zweiten ohne Nachweise blieb die alte Zeile „Nachweise EC3: …
+    max. Ausnutzung …“ stehen (Nebenbefund NB1, Probe np_6/p68: am
+    Hallenrahmen 0 setText-Aufrufe bei der zweiten Rechnung); mit nur
+    Ermuedung wurde es geleert (B069).
+    Ohne Fenster: echte Methoden, self als Attrappe, das Etikett merkt sich
+    seinen Text wie das QLabel.
+    Geprueft sind show_results und _solve_done (Eigenformen, Knicken,
+    aktiver Lastfall nach einer Rechnung mit Nachweisen). Wege, die das
+    Ergebnis verwerfen, ohne show_results aufzurufen (clear_loads,
+    new_model, Uebernehmen in der Lastfallmaske), lassen die alte Zeile
+    stehen - gemessen am 24.09.2026,
+    clear_loads und new_model im Fenster (offscreen), das Uebernehmen mit
+    Attrappe; noch offen.
+    """
+    from unittest import mock
+    from statik3d.gui.main import MainWindow
+
+    class Etikett:
+        def __init__(self):
+            self.text = "noch keine Nachweise"      # wie beim Anlegen der Maske
+
+        def setText(self, t):
+            self.text = str(t)
+
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    m.add_section(make_section("IPE 300"))
+    ids = mesher.line_of_beams(m, "S235", "IPE 300", (0, 0, 0), (6, 0, 0), 6)
+    m.fix(ids[0], [0, 1, 2, 3]); m.fix(ids[-1], [1, 2, 3])
+    m.case().category = "G"
+    for e in range(6):
+        m.load_beam(e, qz=-10000.0)
+    m.add_member("Traeger", list(range(6)), detail_category=71e6)
+    m.add_combination("K1", {"LF1": 1.0}, "ULS")
+    m.add_fatigue_load("Ermuedung", "LF1", None, 2e6)
+    an_ec3 = solver.solve_all(m, design=True, fatigue=False)
+    an_fat = solver.solve_all(m, design=False, fatigue=True)
+    an_beide = solver.solve_all(m, design=True, fatigue=True)
+    an_ohne = solver.solve_all(m, design=False, fatigue=False)
+
+    fenster = mock.MagicMock()
+    fenster.model = m
+    fenster.results = None
+    fenster.lbl_design = Etikett()
+
+    def zeige(an):
+        fenster.analysis = an
+        fenster.current_result.return_value = (
+            None if an is None else next(iter(an.combinations.values())))
+        try:
+            MainWindow.show_results(fenster)
+        except Exception as ex:      # noqa: BLE001 - als Fehlschlag zaehlen
+            print(f"     show_results: {type(ex).__name__}: {ex}")
+            return f"(Ausnahme {type(ex).__name__})"
+        return fenster.lbl_design.text
+
+    t = zeige(an_ec3)
+    print("     mit EC3:", t)
+    check("Etikett: mit EC3 steht die Zeile der Nachweise EC3",
+          float(t == an_ec3.design.summary()), 1.0, 0)
+    t = zeige(an_ohne)
+    print("     danach ohne Nachweise:", t)
+    check("Etikett: danach ohne Nachweise keine EC3-Zeile mehr",
+          float("Nachweise EC3" not in t), 1.0, 0)
+    check("Etikett: ohne Nachweise 'noch keine Nachweise'",
+          float(t == "noch keine Nachweise"), 1.0, 0)
+    t = zeige(an_fat)
+    print("     nur Ermuedung:", t)
+    check("Etikett: nur Ermuedung zeigt die Zeile der Ermuedung",
+          float(t == an_fat.fatigue.summary() and "Nachweise EC3" not in t), 1.0, 0)
+    t = zeige(an_beide)
+    check("Etikett: EC3 und Ermuedung untereinander",
+          float(t == an_beide.design.summary() + "\n" + an_beide.fatigue.summary()), 1.0, 0)
+    t = zeige(None)
+    check("Etikett: ohne Ergebnis 'noch keine Nachweise'",
+          float(t == "noch keine Nachweise"), 1.0, 0)
+
+    # Nach der statischen Rechnung eine weitere Rechnung ueber den echten
+    # _solve_done: Eigenformen und Knicken setzen nur results und lassen
+    # analysis stehen - gezeigt werden dann Eigenformen bzw. Knickfiguren,
+    # das Etikett behaelt die Zeile der statischen Rechnung. Der Einzellastfall
+    # ersetzt analysis und hat keine Nachweise. Bis zum 24.09.2026 sagten
+    # Docstring und Handbuch „das gezeigte Ergebnis“ - nach Eigenformen falsch
+    # (Gegenpruefung, im Fenster gemessen).
+    import copy
+    m_druck = copy.deepcopy(m)
+    m_druck.load_node(ids[-1], Fx=-100000.0)     # Normalkraft fuer das Verzweigungsproblem
+    fenster.show_results = lambda: MainWindow.show_results(fenster)
+
+    def danach(an, art, r):
+        zeige(an)                                # die statische Rechnung vorher
+        fenster.results = None
+        fenster.current_result.return_value = r
+        if art != "case":                        # results gesetzt: die echte Auswahl
+            fenster.current_result.side_effect = lambda: MainWindow.current_result(fenster)
+        try:
+            MainWindow._solve_done(fenster, art, r)
+        except Exception as ex:      # noqa: BLE001 - als Fehlschlag zaehlen
+            print(f"     _solve_done({art!r}): {type(ex).__name__}: {ex}")
+            return f"(Ausnahme {type(ex).__name__})"
+        finally:
+            fenster.current_result.side_effect = None
+        return fenster.lbl_design.text
+
+    r_modal = solver.solve_modal(m, 2)
+    t = danach(an_ec3, "modal", r_modal)
+    print("     EC3, danach Eigenformen:", t)
+    check("Etikett: nach Eigenformen sind die Eigenformen gezeigt",
+          float(fenster.results is r_modal and r_modal.freqs is not None), 1.0, 0)
+    check("Etikett: nach Eigenformen bleibt die EC3-Zeile der statischen Rechnung",
+          float(t == an_ec3.design.summary()), 1.0, 0)
+    r_knick = solver.solve_buckling(m_druck, 2)
+    t = danach(an_beide, "buckling", r_knick)
+    print("     EC3 + Ermuedung, danach Knicken:", t.replace("\n", " | "))
+    check("Etikett: nach Knicken sind die Knickfiguren gezeigt",
+          float(fenster.results is r_knick and r_knick.buckling_factors is not None), 1.0, 0)
+    check("Etikett: nach Knicken bleiben EC3- und Ermuedungszeile",
+          float(t == an_beide.design.summary() + "\n" + an_beide.fatigue.summary()), 1.0, 0)
+    t = danach(an_ec3, "case", solver.solve_static(m))
+    print("     EC3, danach aktiver Lastfall:", t)
+    check("Etikett: nach dem aktiven Lastfall 'noch keine Nachweise'",
+          float(t == "noch keine Nachweise"), 1.0, 0)
+
+
 def main():
     print("=" * 100)
     print("STATIK3D - Verifikation EC3 (Klassifizierung, Querschnitt, Stabilitaet, Ermuedung)")
@@ -507,9 +774,13 @@ def main():
     test_schadensakkumulation()
     test_design_driver()
     test_stab_ohne_streckgrenze_nicht_gefuehrt()
+    test_nicht_gefuehrt_ohne_ausnutzung_in_bildern()
+    test_kein_stab_gefuehrt_keine_bilder()
+    test_sorte_ohne_streckgrenze()
     test_frame_parallel_design()
     test_nachweisauftrag_traegt_kein_modell()
-    nok = sum(1 for r in RESULTS if r[4])
+    test_nachweisetikett_folgt_dem_ergebnis()
+    nok =sum(1 for r in RESULTS if r[4])
     print("=" * 100)
     print(f"Ergebnis: {nok}/{len(RESULTS)} Tests bestanden")
     return 0 if nok == len(RESULTS) else 1

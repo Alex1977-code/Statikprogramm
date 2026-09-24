@@ -164,8 +164,10 @@ def test_volumen_und_kontakt():
           str([sp.dezimal(2391.22), sp.dezimal(-2.33e-13), sp.dezimal(943.33, vorzeichen=True)]))
     check("Skalenformat: ausgeschriebene Zahlen nach Spanne",
           [sp.skalenformat(0, 2390), sp.skalenformat(0, 45.2), sp.skalenformat(-2.5, 1.0),
-           sp.skalenformat(0, 0.05), sp.skalenformat(0, 1e-5)] == ["%.0f", "%.1f", "%.2f", "%.3f", "%.2e"]
-          and "2390" == "%.0f" % 2390.0)
+           sp.skalenformat(0, 0.05), sp.skalenformat(0, 1e-5), sp.skalenformat(0, 1.43e-3),
+           sp.skalenformat(0, 0)] == ["%.0f", "%.1f", "%.2f", "%.3f", "%.6f", "%.4f", "%.3f"]
+          and "2390" == "%.0f" % 2390.0 and "0.0014" == sp.skalenformat(0, 1.43e-3) % 1.43e-3
+          and "e" not in sp.skalenformat(0, 1e-30) % 1e-30)
     check("Schluessel und Beschriftung", sp.schluessel("volumen", "sv") == "spannung:volumen:sv"
           and sp.beschriftung("volumen", "sv") == "Volumen σ_v (von Mises) [N/mm²]"
           and sp.beschriftung("flaechen", "sx", "oben") == "Flächen σ_x oben [N/mm²]"

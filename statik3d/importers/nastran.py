@@ -32,6 +32,24 @@ from typing import Optional
 
 from ..model import Model, Material, Section
 from ..elements.solid import normalize_tet10
+
+
+def nastran_folge(knoten: list) -> list:
+    """Kantenmitten von CHEXA (20) und CPENTA (15) zwischen der Nastran-Folge
+    und der von Statik3D umordnen - in beide Richtungen dieselbe Vertauschung.
+
+    Nastran zaehlt nach den Kanten unten die SENKRECHTEN Kanten, dann die
+    oberen; Statik3D (wie VTK und Abaqus, solid.hex20_N_dN/pent15_N_dN) erst
+    die oberen, dann die senkrechten. Bis zum 23.09.2026 blieb die Folge
+    unveraendert: ein regelmaessiger Wuerfel kam mit 1,046 statt 1,0 m3
+    herein, ein Keil mit 0,405 statt 0,5 m3 - still verzerrt.
+    """
+    k = list(knoten)
+    if len(k) == 20:
+        return k[:12] + k[16:20] + k[12:16]
+    if len(k) == 15:
+        return k[:9] + k[12:15] + k[9:12]
+    return k
 from . import _common as C
 
 _NUM_SHORT = re.compile(r"^([+-]?\d*\.?\d*)([+-]\d+)$")
@@ -412,7 +430,8 @@ def import_bdf(path: str, model: Model = None, log: list = None,
                 gids = [g for g in gids if g is not None]
                 ids = [grids[g] for g in gids]
                 if len(ids) >= 20:
-                    elems[eid] = model.add_element("hex20", ids[:20], mat_for(props.get(pid)))
+                    elems[eid] = model.add_element("hex20", nastran_folge(ids[:20]),
+                                                   mat_for(props.get(pid)))
                 else:
                     elems[eid] = model.add_element("hex8", ids[:8], mat_for(props.get(pid)))
             elif name == "CPENTA":
@@ -421,7 +440,8 @@ def import_bdf(path: str, model: Model = None, log: list = None,
                 gids = [g for g in gids if g is not None]
                 ids = [grids[g] for g in gids]
                 if len(ids) >= 15:
-                    elems[eid] = model.add_element("pent15", ids[:15], mat_for(props.get(pid)))
+                    elems[eid] = model.add_element("pent15", nastran_folge(ids[:15]),
+                                                   mat_for(props.get(pid)))
                 else:
                     elems[eid] = model.add_element("pent6", ids[:6], mat_for(props.get(pid)))
             elif name == "CPYRAM":

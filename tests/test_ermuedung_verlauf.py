@@ -416,6 +416,137 @@ def test_fehlender_mindestzustand_wird_gemeldet():
           f"D = {getattr(fm3, 'util', 0.0):.4f}, keine Warnung")
 
 
+def test_lastfall_umbenennen_zieht_ermuedungslasten_nach():
+    """Nebenbefund NB3 (22./23.09.2026): ein umbenannter Lastfall hiess in
+    den Ermuedungslasten weiter wie vorher.
+
+    Die Oberflaeche (Register Lastfaelle, Tabelle „Lastfaelle“ unten, Maske
+    rechts) benannte ihn nur in den Kombinationen um, nicht in case_max,
+    case_min und den Gliedern eines Verlaufs; der Webserver (Operation
+    edit_case) zog case_max/case_min nach, den Verlauf nicht. Danach meldete die
+    Modellpruefung den alten Namen als „unbekannt“, und dem Nachweis fehlte
+    die Last: gemessen am Stand ec6448c D = 0,018426 (Oberflaeche) bzw.
+    1,236980 (Web) statt 2,437110, beide als unvollstaendig markiert.
+    Geprueft werden alle vier Wege, die Oberflaeche mit ihren echten
+    Methoden (self und Lastfallmaske als Attrappe). Richtig ist: dieselbe
+    Schaedigung wie vor dem Umbenennen.
+    """
+    import importlib
+    from unittest import mock
+    # statik3d.gui.main als Modul - der Paketname "main" ist die Startfunktion
+    G = importlib.import_module("statik3d.gui.main")
+    from statik3d.web import OPS
+
+    def bau():
+        m = _kragarm()
+        m.add_fatigue_load("Paar", "LF2", "LF3", cycles=1e5)
+        m.fatigue_loads["Verlauf"] = FatigueLoad("Verlauf", folge=["LF1", "LF2", "LF3"],
+                                                 wiederholungen=1e5)
+        return m
+
+    def schaedigung(m):
+        an = solver.solve_all(m, design=False, fatigue=True)
+        fm = an.fatigue.members["Kragarm"]
+        return fm.util, list(getattr(fm, "fehlende_lasten", None) or [])
+
+    D0, fehlt0 = schaedigung(bau())
+    check("vor dem Umbenennen: Nachweis vollständig", D0 > 0 and not fehlt0,
+          f"D = {D0:.6f}, fehlend {fehlt0}")
+
+    class Lastfallmaske:
+        """Attrappe der Maske Lastfall: LF2 heisst jetzt 'Nutzlast'."""
+        def __init__(self, _fenster, lc, *_a, **_k):
+            self.lc = lc
+
+        def exec(self):
+            return True
+
+        def values(self):
+            return ("Nutzlast", self.lc.category, self.lc.description,
+                    self.lc.exclusive_group)
+
+        def situation_name(self):
+            return self.lc.situation
+
+        def theorie_name(self):
+            return self.lc.theorie
+
+    def pruefen(weg, m):
+        fl, vl = m.fatigue_loads["Paar"], m.fatigue_loads["Verlauf"]
+        check(f"{weg}: der Lastfall heißt jetzt 'Nutzlast'",
+              list(m.load_cases) == ["LF1", "Nutzlast", "LF3"], str(list(m.load_cases)))
+        check(f"{weg}: oberer Zustand der Ermüdungslast umbenannt",
+              fl.case_max == "Nutzlast" and fl.case_min == "LF3",
+              f"{fl.case_max} gegen {fl.case_min}")
+        check(f"{weg}: der Verlauf nennt den neuen Namen",
+              vl.folge == ["LF1", "Nutzlast", "LF3"], str(vl.folge))
+        unbekannt = [x for x in m.check() if "unbekannt" in x]
+        check(f"{weg}: Modellprüfung meldet nichts „unbekannt“", not unbekannt,
+              "; ".join(unbekannt)[:90])
+        D, fehlt = schaedigung(m)
+        check(f"{weg}: dieselbe Schädigung wie vor dem Umbenennen",
+              not fehlt and abs(D - D0) <= 1e-12 * D0,
+              f"D = {D:.6f} gegen {D0:.6f}, fehlend {fehlt}")
+
+    # Drei Wege der Oberflaeche: Register Lastfaelle (edit_case), Doppelklick
+    # in der Tabelle „Lastfaelle“ unten (lastfall_bearbeiten, einziger
+    # Aufrufer ist tbl_lastfall.view.doubleClicked in _build_modelltabellen)
+    # und die Maske rechts („Übernehmen“, _eigenschaften_uebernehmen). Der
+    # Doppelklick im Modellbaum ist kein eigener Weg, er oeffnet die Maske
+    # rechts - geprueft nach deren Weg. Bis zum 24.09.2026 stand hier
+    # „Modellbaum“ fuer lastfall_bearbeiten (Gegenpruefung zu NB3).
+    m = bau()
+    m.active_case = "LF2"
+    fenster = mock.MagicMock()
+    fenster.model = m
+    with mock.patch.object(G, "LoadCaseDialog", Lastfallmaske):
+        G.MainWindow.edit_case(fenster)
+    pruefen("Oberfläche, Register Lastfälle", m)
+    check("Oberfläche: aktiver Lastfall folgt", m.active_case == "Nutzlast", m.active_case)
+
+    m = bau()
+    fenster = mock.MagicMock()
+    fenster.model = m
+    with mock.patch.object(G.dg, "LoadCaseDialog", Lastfallmaske):
+        G.MainWindow.lastfall_bearbeiten(fenster, "LF2")
+    pruefen("Oberfläche, Tabelle Lastfälle", m)
+
+    m = bau()
+    lc = m.load_cases["LF2"]
+    fenster = mock.MagicMock()
+    fenster.model = m
+    G.MainWindow._eigenschaften_uebernehmen(
+        fenster, "lastfall", "LF2",
+        {"name": "Nutzlast", "kategorie": lc.category, "beschreibung": lc.description,
+         "gruppe": lc.exclusive_group, "situation": "", "theorie": "", "grundlast": False,
+         "nummer": lc.nummer, "g_z": str(lc.gravity[2] if len(lc.gravity) > 2 else 0.0),
+         "psi": ""}, False)
+    pruefen("Oberfläche, Objektmaske", m)
+    # Der Doppelklick im Modellbaum fuehrt in dieselbe Maske (_baum_bearbeiten
+    # -> _objektmaske), nicht nach lastfall_bearbeiten. Nur dann ist der Weg
+    # ueber den Modellbaum mit dem der Maske oben mitgeprueft.
+    fenster = mock.MagicMock()
+    fenster.model = bau()
+    G.MainWindow._baum_bearbeiten(fenster, "lastfall", "LF2")
+    check("Oberfläche: Doppelklick im Modellbaum öffnet die Maske rechts",
+          fenster._objektmaske.call_args_list == [mock.call("lastfall", "LF2")]
+          and not fenster.lastfall_bearbeiten.called,
+          f"_objektmaske {fenster._objektmaske.call_args_list}, "
+          f"lastfall_bearbeiten {fenster.lastfall_bearbeiten.call_args_list}")
+
+    m = bau()
+    OPS["edit_case"](None, m, {"name": "LF2", "fields": {"new_name": "Nutzlast"}})
+    pruefen("Web", m)
+
+    # Der untere Zustand zieht ebenso nach
+    m = bau()
+    OPS["edit_case"](None, m, {"name": "LF3", "fields": {"new_name": "Wind"}})
+    fl = m.fatigue_loads["Paar"]
+    check("Web: unterer Zustand umbenannt, Verlauf auch",
+          fl.case_min == "Wind" and m.fatigue_loads["Verlauf"].folge == ["LF1", "LF2", "Wind"],
+          f"{fl.case_min}, {m.fatigue_loads['Verlauf'].folge}")
+
+
 def _oder_ek(m, name="EK_oder"):
     """Eine oder-verknuepfte Ergebniskombination, wie sie der RFEM-Import fuer
     die FAT-Kombinationen anlegt: ``factors`` leer, je Alternative ein
@@ -522,20 +653,25 @@ def test_mindestzustand_volumen_und_oder_ek():
     check("Auswahl der Zustaende: Lastfaelle und gewoehnliche Kombinationen, keine oder-EK",
           namen is not None and "EK_oder" not in namen
           and {"LF1", "LF2", "EK_summe"} <= set(namen), str(namen))
+    # Seit 24.09.2026 die rechte Maske Ermuedungslasten statt des Dialogs;
+    # dazu die Liste „verfügbare Zustände“ des Verlaufs.
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6 import QtWidgets
-    from statik3d.gui.dialogs import FatigueLoadDialog
+    from statik3d.gui.ermuedungsmaske import Ermuedungsmaske
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    maske = FatigueLoadDialog(None, m)
-    oben = [maske.cmax.itemText(i) for i in range(maske.cmax.count())]
-    unten = [maske.cmin.itemText(i) for i in range(maske.cmin.count())]
+    maske = Ermuedungsmaske(lambda: m, neu=True)
+    oben = [maske.oben.itemText(i) for i in range(maske.oben.count())]
+    unten = [maske.unten.itemText(i) for i in range(maske.unten.count())]
+    verf = [maske.verfuegbar.item(i).text() for i in range(maske.verfuegbar.count())]
     maske.deleteLater()
     app.processEvents()
     check("Maske: oberer Zustand ohne oder-EK, mit Lastfaellen und EK_summe",
           "EK_oder" not in oben and {"LF1", "LF2", "EK_summe"} <= set(oben), str(oben))
     check("Maske: unterer Zustand ohne oder-EK, Nullzustand zuerst",
-          "EK_oder" not in unten and unten[:1] == ["(Nullzustand)"]
+          "EK_oder" not in unten and unten[:1] == ["Nullzustand"]
           and {"LF1", "LF2", "EK_summe"} <= set(unten), str(unten))
+    check("Maske: verfügbare Zustände des Verlaufs ohne oder-EK",
+          "EK_oder" not in verf and {"LF1", "LF2", "EK_summe"} <= set(verf), str(verf))
 
     # (5) Ein Verlauf liest nur seine Glieder (fatigue.py: "if folge: ...
     # continue"). Ein case_max, das eine Verlaufs-Last aus der alten Maske
@@ -743,13 +879,978 @@ def test_unvollstaendig_je_weg():
               "kein Eintrag" if x is None else f"{x.status()} D = {x.util:.3f} {x.fehlende_lasten}")
 
 
+def _kragarm_volumen(netz):
+    """Kragarm-Pruefkoerper (tests/pruefkoerper.Kragarm, hex8): Oberkante bei
+    L/2, Breitenmitte, nach Saint-Venant 355 N/mm2. Der Koerper mit Kerbfall
+    sind die Elemente mit x >= L/2 - das Moment faellt von dort zur Last hin,
+    seine groesste Schwingbreite liegt also am Schnitt x = L/2. Eine
+    Ermuedungslast 0 -> F (kein Mindestzustand): ihre Schwingbreite ist der
+    statische Wert."""
+    from statik3d.model import Volumenkoerper
+    from tests import pruefkoerper as pk
+    kr = pk.Kragarm()
+    m, ids = kr.modell("hex8", *netz)
+    rechts = [i for i, e in enumerate(m.elements) if m.nodes[e.nodes, 0].min() >= kr.x_nw - 1e-9]
+    m.koerper["R"] = Volumenkoerper("R", [], material="S", elemente=rechts, kerbfall=160e6)
+    lf = list(m.load_cases)[0]
+    m.add_fatigue_load("0-F", lf, None, 1e5)
+    nx, ny, nz = netz
+    return m, kr, lf, rechts, ids[(nx // 2, ny // 2, nz)]
+
+
+def _balken(kr, x, z):
+    """sigma_xx des Kragarms nach der Balkenloesung (Saint-Venant) bei x in
+    der Hoehe z: F (L - x) (z - H/2) / I."""
+    return kr.F * (kr.L - x) * (z - kr.H / 2) / kr.I
+
+
+def test_volumen_randspannung_kragarm():
+    """Befund der ersten Element-Sitzung (23.09.2026): die Volumen-Ermuedung
+    las den Elementwert (res.solid_res), der statische Nachweis seit dem
+    22./23.09.2026 die geglaettete Randspannung (res.solid_knoten, an freien
+    Oberflaechen sigma n = 0). Am Kragarm (Schwingbreite 0 -> F, Koerper
+    x >= L/2) lag die groesste Schwingbreite nach der Elementregel bei
+    314,35 N/mm2 (hex8 8x2x4) bzw. 333,31 (16x4x8) gegen 355 - 40,65 bzw.
+    21,69 N/mm2 auf der unsicheren Seite (gemessen am Stand ec6448c,
+    23.09.2026). Jetzt: je Knoten die Schwingbreite aus den geglaetteten
+    Tensoren, auf 1 N/mm2 wie der statische Nachweis; die alte Regel bleibt
+    waehlbar (DesignSettings.ermuedung_volumen = "element") und liefert die
+    alten Zahlen; der Bericht nennt die gerechnete Regel.
+
+    Dazu (Gegenpruefung 24.09.2026, Runde 4): wo der Elementwert liegt und
+    was die Balkenloesung dort gibt, und die Koerperenden x >= 3L/8 und
+    x >= L/4 - die Handbuecher nennen genau diese Zahlen.
+    """
+    from statik3d import assemble as asm
+    from statik3d.elements import solid as sl
+    gemessen = {}
+    for netz in ((8, 2, 4), (16, 4, 8)):
+        m, kr, lf, rechts, n = _kragarm_volumen(netz)
+        an = solver.solve_all(m, design=False, fatigue=True)
+        res = an.cases[lf]
+        fv = an.fatigue.volumen["R"]
+        g = m.design.gamma_Ff
+        name = "hex8 %dx%dx%d" % netz
+        # statisch: die geglaettete Knotenspannung des Loesers am Nachweispunkt
+        sk = res.solid_knoten
+        j = np.flatnonzero(np.asarray(sk["knoten"]) == n)
+        S = np.asarray(sk["spannung"])[j[:1]]
+        s_stat = float(F.signalspannung(S)[0]) if len(j) == 1 else float("nan")
+        check(f"{name}: statisch am Nachweispunkt auf 1 N/mm2 (Hauptspannung, von Mises)",
+              abs(s_stat - kr.sigma) < 1e6 and abs(sl.von_mises(S[0]) - kr.sigma) < 1e6,
+              f"{s_stat / 1e6:.2f} / {sl.von_mises(S[0]) / 1e6:.2f} gegen {kr.sigma / 1e6:.1f} N/mm2")
+        # Schwingbreite 0 -> F am selben Knoten: gleich dem statischen Wert
+        orte = getattr(fv, "orte", None)
+        d_je = getattr(fv, "dsig_je_ort", None)
+        k = np.flatnonzero(np.asarray(orte) == n) if orte is not None else []
+        d_n = float(np.asarray(d_je)[k[0]]) if len(k) == 1 else float("nan")
+        check(f"{name}: Schwingbreite 0 -> F am Nachweispunkt = statischer Wert, auf 1 N/mm2",
+              abs(d_n - g * s_stat) < 1e-9 * kr.sigma and abs(d_n - g * kr.sigma) < 1e6,
+              f"{d_n / 1e6:.2f} N/mm2")
+        check(f"{name}: groesste Schwingbreite des Koerpers auf 1 N/mm2 an der Balkenloesung",
+              abs(fv.dsig_max - g * kr.sigma) < 1e6,
+              f"{fv.dsig_max / 1e6:.2f} gegen {g * kr.sigma / 1e6:.1f} N/mm2")
+        check(f"{name}: Regel 'knoten' gerechnet, massgebender Knoten benannt, D = n / N_R",
+              getattr(fv, "regel", "") == "knoten" and getattr(fv, "knoten", -1) >= 0
+              and fv.element in rechts
+              and abs(fv.D - 1e5 / F.sn_life(fv.dsig_max, 160e6, fv.gamma_Mf)) < 1e-12 * fv.D,
+              f"{getattr(fv, 'regel', None)} Knoten {getattr(fv, 'knoten', None)} D = {fv.D:.5f}")
+        # Die alte Regel bleibt waehlbar - mit den alten Zahlen (Elementwert)
+        alt = max(abs(float(F.signalspannung(np.asarray(res.solid_res[i])[None])[0])) for i in rechts) * g
+        m.design.ermuedung_volumen = "element"
+        fa = F.check_fatigue(m, an).volumen["R"]
+        check(f"{name}: Regel 'element' liefert den Elementwert wie bisher",
+              getattr(fa, "regel", "") == "element" and abs(fa.dsig_max - alt) < 1e-9 * alt
+              and abs(fa.D - 1e5 / F.sn_life(alt, 160e6, fa.gamma_Mf)) < 1e-12 * fa.D
+              and abs(alt - kr.sigma) > 20e6,
+              f"{fa.dsig_max / 1e6:.2f} N/mm2 ({(fa.dsig_max - kr.sigma) / 1e6:+.2f})")
+        gemessen[netz] = {"element": fa.dsig_max / g, "knoten": fv.dsig_max / g}
+        # Wo der Elementwert liegt (Gegenpruefung 24.09.2026, Runde 4): der
+        # Elementwert (solid_res) ist der Tensor an einem Auswertepunkt des
+        # Elements. b4b545e verglich den der Elemente zur Einspannung mit dem
+        # Soll bei L/2 und schrieb "46,94 N/mm2 zu viel" - ihr Auswertepunkt
+        # liegt aber bei x = 3L/8 (8x2x4) bzw. 7L/16 (16x4x8), und dort gibt
+        # die Balkenloesung mehr: gemessen 401,94 gegen 443,75 bzw. 377,61
+        # gegen 399,38 N/mm2. Je Element am Nachweisknoten: der Auswertepunkt,
+        # dessen Tensor gleich solid_res ist, und die Balkenloesung dort.
+        ecken = np.asarray(sl.ECKEN_NATUERLICH["hex8"], float)
+        mat = m.materials[m.elements[0].mat]
+        u = np.asarray(res.u, float).reshape(-1)
+        am_knoten = []
+        for i, e in enumerate(m.elements):
+            if n not in e.nodes:
+                continue
+            X = m.nodes[e.nodes]
+            S9 = sl.spannungen_hex8_stapel(X[None], mat.E, mat.nu, u[asm.element_dofs(e, m)][None])[0]
+            sr = np.asarray(res.solid_res[i], float)
+            punkte = [q for q in range(len(S9)) if np.allclose(S9[q], sr, rtol=1e-10, atol=1e-3)]
+            if not punkte:
+                am_knoten.append((i, "?", float("nan"), float("nan"), float("nan")))
+                continue
+            p = np.asarray(sl.AUSWERTEPUNKTE["hex8"][punkte[0]], float)
+            xp = (np.prod(1 + ecken * p[None], axis=1) / 8.0) @ X
+            links = m.nodes[e.nodes, 0].max() <= kr.x_nw + 1e-9
+            am_knoten.append((i, "Einspannseite" if links else "Lastseite", xp[0],
+                              float(F.signalspannung(sr[None])[0]), _balken(kr, xp[0], xp[2])))
+        check(f"{name}: Elementwerte am Nachweisknoten liegen an ihrem Auswertepunkt unter der "
+              "Balkenlösung, auf beiden Seiten des Schnitts",
+              len(am_knoten) == 4 and {s for _i, s, *_r in am_knoten} == {"Einspannseite", "Lastseite"}
+              and all(s_el < b for _i, _s, _x, s_el, b in am_knoten),
+              "; ".join(f"{s} x {x:.4f}: {s_el / 1e6:.2f} gegen {b / 1e6:.2f}"
+                        for s, (x, s_el, b) in {s: (x, s_el, b) for _i, s, x, s_el, b
+                                                in am_knoten}.items()) + " N/mm2")
+        gemessen[netz]["einspannseite"] = next(
+            ((s_el, b) for _i, s, _x, s_el, b in am_knoten if s == "Einspannseite"), None)
+        # Andere Koerperenden (x >= 3L/8, x >= L/4): die Balkenloesung am
+        # Koerperende ist die groesste Schwingbreite des Koerpers
+        for x0 in (3 * kr.L / 8, kr.L / 4):
+            m.koerper["R"].elemente = [i for i, e in enumerate(m.elements)
+                                       if m.nodes[e.nodes, 0].min() >= x0 - 1e-9]
+            w = {}
+            for regel in ("element", "knoten"):
+                m.design.ermuedung_volumen = regel
+                w[regel] = F.check_fatigue(m, an).volumen["R"].dsig_max / g
+            b = _balken(kr, x0, kr.H)
+            gemessen[(netz, x0)] = w
+            check(f"{name}, Körper x >= {x0:.3f}: Elementregel unter der Balkenlösung am Körperende, "
+                  "Knotenregel näher daran",
+                  w["element"] < b and abs(w["knoten"] - b) < abs(w["element"] - b),
+                  f"Balken {b / 1e6:.2f}, Element {w['element'] / 1e6:.2f}, "
+                  f"Knoten {w['knoten'] / 1e6:.2f} N/mm2")
+        m.koerper["R"].elemente = rechts
+        if netz != (8, 2, 4):
+            continue
+        # Der Bericht nennt die gerechnete Regel
+        from statik3d.report.html import Report
+        import tempfile
+        texte = {}
+        for regel in ("knoten", "element"):
+            m.design.ermuedung_volumen = regel
+            an.fatigue = F.check_fatigue(m, an)
+            pfad_ = os.path.join(tempfile.mkdtemp(), f"kragarm_{regel}.html")
+            Report(m, an).to_html(pfad_)
+            texte[regel] = open(pfad_, encoding="utf-8").read()
+        check("Bericht nennt die Regel: geglättete Knotenspannung bzw. Elementwert",
+              "geglättete Knotenspannung" in texte["knoten"] and "Regel „knoten“" in texte["knoten"]
+              and "Regel „element“" in texte["element"] and "Regel „knoten“" not in texte["element"])
+    # Die Handbuecher nennen genau diese Messung: Theoriehandbuch 5.5-3 die
+    # Tabelle der Koerperenden und den Elementwert der Einspannseite gegen
+    # die Balkenloesung an seinem Auswertepunkt; der Satz aus b4b545e ("zu
+    # viel", "haengt also daran, wo der Koerper endet") ist weg.
+    wurzel = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(wurzel, "docs", "Theoriehandbuch.md"), encoding="utf-8") as fh:
+        th = fh.read()
+    with open(os.path.join(wurzel, "docs", "Benutzerhandbuch.md"), encoding="utf-8") as fh:
+        bh = fh.read()
+
+    def de(x):
+        return f"{x / 1e6:.2f}".replace(".", ",")
+
+    def mit_abw(x, b):
+        return f"{de(x)} ({'+' if x >= b else '−'}{de(abs(x - b))})"
+
+    fehlt = []
+    for netz in ((8, 2, 4), (16, 4, 8)):
+        for x0, w in [(kr.x_nw, gemessen.get(netz))] + [(x, gemessen.get((netz, x)))
+                                                          for x in (3 * kr.L / 8, kr.L / 4)]:
+            b = _balken(kr, x0, kr.H)
+            for regel in ("element", "knoten"):
+                t = mit_abw(w[regel], b) if w else "?"
+                if t not in th:
+                    fehlt.append(f"{netz} x0={x0:.3f} {regel}: {t}")
+        es = gemessen.get(netz, {}).get("einspannseite")
+        for t in ((de(es[0]), de(es[1])) if es else ("?",)):
+            if t not in th:
+                fehlt.append(f"{netz} Einspannseite: {t}")
+    i = bh.find("**Ermüdung für Volumen.**")
+    absatz = bh[i:bh.find("**Berührungsstellen zwischen Volumen.**", i)] if i >= 0 else ""
+    check("Handbücher: Elementwert gegen die Balkenlösung an seinem Auswertepunkt und am "
+          "Körperende, ohne 'zu viel' und ohne 'hängt daran, wo der Körper endet'",
+          not fehlt and absatz and "zu viel" not in absatz and "46,94" not in absatz
+          and "wo der Körper endet" not in absatz and "wo der Körper endet" not in th,
+          f"fehlt im Theoriehandbuch: {fehlt}" if fehlt else "")
+
+
+def test_volumen_regel_rueckfall_und_fliessen():
+    """Die Grenzen der Regel "knoten": Ergebnisse ohne Knotenwerte (aus
+    Programmfassungen vor dem 23.09.2026 - main bekam res.solid_knoten mit dem
+    Merge 21ce779 am 23.09.2026) rechnen nach der alten Regel **mit Hinweis**,
+    und der Hinweis nennt die Ursache, die vorliegt; eine unbekannte
+    Einstellung fuehrt den Nachweis nicht; fliessende Elemente bleiben wie im
+    statischen Nachweis von sigma n = 0 ausgenommen, und der Nachweis sagt es
+    - mit dem, was ihre Knoten tragen (Gegenpruefung 23.09.2026, Maengel 3
+    und 4: der Hinweis nannte "vor dem 22.09.2026" und "Kombination
+    verschiedener Situationen", die Fliessmeldung "die Spannung des naechsten
+    Integrationspunkts" - der Knoten traegt aber das Mittel, am Kragarm mit
+    fy = 400 N/mm2 333,99 gegen 451,62 am Integrationspunkt)."""
+    m, kr, lf, rechts, n = _kragarm_volumen((8, 2, 4))
+    an = solver.solve_all(m, design=False, fatigue=True)
+    alt = max(abs(float(F.signalspannung(np.asarray(an.cases[lf].solid_res[i])[None])[0]))
+              for i in rechts) * m.design.gamma_Ff
+    sk_voll = an.cases[lf].solid_knoten
+    # (1) aeltere Ergebnisdatei: kein solid_knoten
+    an.cases[lf].solid_knoten = {}
+    fv = F.check_fatigue(m, an).volumen["R"]
+    check("ohne Knotenwerte: alte Regel (Elementwert), gerechnet, mit Hinweis",
+          getattr(fv, "regel", "") == "element" and not fv.fehler and abs(fv.dsig_max - alt) < 1e-9 * alt
+          and any("Knotenwerte" in w and lf in w for w in fv.warnings),
+          f"{getattr(fv, 'regel', None)} {fv.warnings}")
+    check("ohne Knotenwerte: der Hinweis nennt den 23.09.2026, keine Situationen",
+          any("23.09.2026" in w and "22.09.2026" not in w and "Situation" not in w
+              for w in fv.warnings), str(fv.warnings))
+    # (2) verworfene Ueberlagerung (Results.combine: Lastfaelle mit
+    # verschiedenen Knotentabellen)
+    an.cases[lf].solid_knoten = {"verworfen": True}
+    fv = F.check_fatigue(m, an).volumen["R"]
+    check("verworfene Knotenwerte: ebenso alte Regel mit Hinweis, der das Verwerfen nennt",
+          getattr(fv, "regel", "") == "element" and any("Knotenwerte" in w for w in fv.warnings)
+          and any("verworfen" in w and "Situation" not in w for w in fv.warnings),
+          str(fv.warnings))
+    # (2b) ein Ort fehlt, an dem ein Element des Koerpers wirkt: alte Regel,
+    # der Hinweis nennt den Knoten und raet nicht "neu rechnen"
+    weg = np.asarray(sk_voll["knoten"]) != n
+    an.cases[lf].solid_knoten = {k: (np.asarray(v)[weg] if k in ("knoten", "gruppe", "spannung", "frei")
+                                     else v) for k, v in sk_voll.items()}
+    fv = F.check_fatigue(m, an).volumen["R"]
+    check("fehlender Ort an einem wirkenden Element: alte Regel, Hinweis nennt den Knoten",
+          getattr(fv, "regel", "") == "element" and abs(fv.dsig_max - alt) < 1e-9 * alt
+          and any(f"Knoten {n + 1}" in w and "eu rechnen" not in w for w in fv.warnings),
+          str(fv.warnings))
+    an.cases[lf].solid_knoten = sk_voll
+    # (3) unbekannte Einstellung: nicht geführt, Grund nennt die erlaubten Werte
+    m.design.ermuedung_volumen = "irgendwas"
+    fv = F.check_fatigue(m, an).volumen.get("R")
+    check("unbekannte Einstellung: nicht geführt, keine stille Ersatzregel",
+          fv is not None and fv.status() == "nicht geführt" and "irgendwas" in fv.fehler
+          and "knoten" in fv.fehler and "element" in fv.fehler,
+          repr(getattr(fv, "fehler", None)))
+    # (4) fliessende Elemente: Balken aus einer hex8-Lage, reine Biegung
+    # 1,20 M_el (wie tests/test_volumen.py, test_randspannung_fliessend)
+    from statik3d import plastizitaet as pl
+    from statik3d.model import Volumenkoerper
+    from tests import pruefkoerper as pk
+    fy, b, h, L = 235e6, 0.2, 0.2, 1.0
+    M = 1.2 * fy * b * h ** 2 / 6.0
+    mp, _ids = pk.quader("hex8", 5, 1, 1, L, b, h, fy=fy)
+    for k in [x for x in range(mp.nn) if abs(mp.nodes[x, 0]) < 1e-9]:
+        mp.fix(int(k), "all")
+    seiten = pk.randseiten(mp, lambda X: bool(np.all(np.abs(X[:, 0] - L) < 1e-9)))
+    pk.spannung_auf_seiten(mp, seiten, lambda x: (M * (x[2] - h / 2) / (b * h ** 3 / 12), 0.0, 0.0))
+    mp.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.02, laststufen=1, iterationen=30,
+                                      toleranz=1e-9)
+    mp.koerper["B"] = Volumenkoerper("B", [], material="S", elemente=list(range(len(mp.elements))),
+                                     kerbfall=160e6)
+    lfp = list(mp.load_cases)[0]
+    mp.add_fatigue_load("0-M", lfp, None, 1e5)
+    anp = solver.solve_all(mp, design=False, fatigue=True)
+    fliessend = len(anp.cases[lfp].info.get("plastisch") or {})
+    fv = anp.fatigue.volumen["B"]
+    check("fließende Elemente: Meldung nennt Zustand und Zahl, Nachweis gerechnet",
+          fliessend > 0 and getattr(fv, "regel", "") == "knoten" and not fv.fehler
+          and any("fließen" in w and lfp in w and f"{fliessend} " in w for w in fv.warnings),
+          f"{fliessend} fließend, {fv.warnings}")
+    check("fließend: die Meldung sagt, dass der Knoten das Mittel trägt (Beitrag des nächsten "
+          "Integrationspunkts)",
+          any("Knotenmittel" in w and "nächsten Integrationspunkts bei" in w
+              and "tragen die Spannung des nächsten" not in w for w in fv.warnings),
+          str(fv.warnings))
+    sk = anp.cases[lfp].solid_knoten
+    kn = np.asarray(sk["knoten"])
+    orte = getattr(fv, "orte", None)
+    d_je = getattr(fv, "dsig_je_ort", None)
+    soll = np.abs(F.signalspannung(np.asarray(sk["spannung"]))) * mp.design.gamma_Ff
+    gleich = (orte is not None and d_je is not None and np.array_equal(np.asarray(orte), kn)
+              and np.allclose(np.asarray(d_je), soll, rtol=1e-12, atol=1e-3))
+    check("fließend: die Schwingbreite ist die Knotenspannung des Lösers (dort ohne σ·n = 0)", gleich,
+          f"{0 if orte is None else len(orte)} Orte / {len(kn)} Knoten")
+
+
+def test_volumen_abgeschaltete_elemente():
+    """Gegenpruefung 23.09.2026 (Maengel 2 und 3): ein frisch gerechnetes
+    Ergebnis in einer Situation mit abgeschalteten Elementen des Koerpers
+    fuehrt die Knoten nicht, an denen nur abgeschaltete Elemente liegen. Die
+    Regel "knoten" fiel darauf fuer den ganzen Koerper auf den Elementwert
+    zurueck, mit einem Hinweis, der eine alte Ergebnisdatei oder eine
+    Kombination verschiedener Situationen als Ursache nannte und "neu
+    rechnen" riet - am Kragarm 8x2x4 mit abgeschaltetem Eckelement stand nach
+    beiden Laeufen Regel 'element', 1141,55 N/mm2, derselbe Hinweis. Der
+    statische Nachweis las am selben Ergebnis die geglaettete Spannung.
+
+    Jetzt: ein Ort, an dem im Zustand kein Element des Koerpers wirkt, traegt
+    dort die Spannung 0 - wie das abgeschaltete Element nach der Elementregel
+    (solver.postprocess gibt ihm Nullen) -, jeder andere die geglaettete
+    Spannung des Loesers, dieselbe wie der statische Nachweis."""
+    from statik3d.model import Situation, Volumenkoerper
+    from tests import pruefkoerper as pk
+    kr = pk.Kragarm()
+    m, ids = kr.modell("hex8", 8, 2, 4)
+    ecke = ids[(0, 0, 0)]
+    e0 = next(i for i, e in enumerate(m.elements) if ecke in e.nodes)
+    m.situationen["S1"] = Situation("S1", "", [e0], "Ecke aus")
+    lf = list(m.load_cases)[0]
+    m.load_cases[lf].situation = "S1"
+    m.koerper["K"] = Volumenkoerper("K", [], material="S", elemente=list(range(len(m.elements))),
+                                    kerbfall=160e6)
+    # ein zweiter Lastfall in der Grundstellung: die halbe Last
+    m.add_load_case("LF2", "Q")
+    m.active_case = "LF2"
+    seiten = pk.randseiten(m, lambda X: bool(np.all(np.abs(X[:, 0] - kr.L) < 1e-9)))
+    pk.schubkraft_auf_seiten(m, seiten, 0.5 * kr.F, (0.0, 0.0, -1.0))
+    m.add_fatigue_load("0-F", lf, None, 1e5)
+    an = solver.solve_all(m, design=False, fatigue=True)
+    g = m.design.gamma_Ff
+
+    def signal_je_ort(res, orte):
+        sk = res.solid_knoten
+        wo = {int(k): j for j, k in enumerate(np.asarray(sk["knoten"]))}
+        S = np.asarray(sk["spannung"])
+        return np.array([float(F.signalspannung(S[wo[int(o)]][None])[0]) if int(o) in wo else 0.0
+                         for o in orte])
+
+    r1, r2 = an.cases[lf], an.cases["LF2"]
+    fehlt = ecke not in set(np.asarray(r1.solid_knoten["knoten"]).tolist())
+    fv = an.fatigue.volumen["K"]
+    orte = getattr(fv, "orte", None)
+    check("abgeschaltetes Eckelement: der Loeser fuehrt seinen Eckknoten nicht (Voraussetzung)",
+          fehlt and r1.info.get("inaktiv") == [e0], f"inaktiv {r1.info.get('inaktiv')}")
+    check("abgeschaltetes Element: Regel 'knoten' ohne Rueckfall-Hinweis",
+          getattr(fv, "regel", "") == "knoten" and orte is not None
+          and not any("Knotenwerte" in w for w in fv.warnings),
+          f"{getattr(fv, 'regel', None)} {fv.warnings}")
+    orte = np.asarray(orte) if orte is not None else np.zeros(0, int)
+    d_je = np.asarray(fv.dsig_je_ort) if fv.dsig_je_ort is not None else np.zeros(0)
+    soll = np.abs(signal_je_ort(r1, orte)) * g
+    k0 = np.flatnonzero(orte == ecke)
+    check("0 -> F: je Ort die Knotenspannung des Loesers, am Ort ohne wirkendes Element 0",
+          len(orte) > 0 and np.allclose(d_je, soll, rtol=1e-12, atol=1e-3) and len(k0) == 1
+          and d_je[k0[0]] == 0.0 and abs(fv.dsig_max - soll.max()) <= 1e-12 * soll.max(),
+          f"max {fv.dsig_max / 1e6:.2f} N/mm2, am Eckknoten {d_je[k0[0]] if len(k0) else None}")
+    # Schwingbreite zwischen zwei Situationen: LF1 (Eckelement aus) und LF2
+    m.fatigue_loads.clear()
+    m.add_fatigue_load("LF1-LF2", lf, "LF2", 1e5)
+    fv = F.check_fatigue(m, an).volumen["K"]
+    orte = np.asarray(fv.orte) if getattr(fv, "orte", None) is not None else np.zeros(0, int)
+    soll = np.abs(signal_je_ort(r2, orte) - signal_je_ort(r1, orte)) * g
+    k0 = np.flatnonzero(orte == ecke)
+    s_ecke = abs(float(signal_je_ort(r2, [ecke])[0])) * g
+    check("zwei Situationen: je Ort |sigma(LF2) - sigma(LF1)|, am Eckknoten |sigma(LF2) - 0|",
+          getattr(fv, "regel", "") == "knoten" and len(orte) > 0
+          and np.allclose(np.asarray(fv.dsig_je_ort), soll, rtol=1e-12, atol=1e-3)
+          and len(k0) == 1 and abs(fv.dsig_je_ort[k0[0]] - s_ecke) <= 1e-12 * s_ecke and s_ecke > 0,
+          f"{getattr(fv, 'regel', None)}, Eckknoten {s_ecke / 1e6:.2f} N/mm2, {fv.warnings}")
+
+
+def test_volumen_ergebnis_aelterer_fassung():
+    """Gegenpruefung 24.09.2026, Runde 4 (Mangel 1): ein Ermuedungsergebnis,
+    das eine Programmfassung ohne die Einstellung ermuedung_volumen (vor
+    a4ec83f) gerechnet und in die Ergebnisdatei geschrieben hat, kennt das
+    Feld 'regel' nicht - Pickle stellt nur das __dict__ her, getattr liest
+    die Klassenvorgabe "element". Der Bericht schrieb dann "Gerechnet mit der
+    Einstellung ermuedung_volumen = „element“ oder - mit Hinweis am Koerper -
+    weil dem Ergebnis die Knotenwerte fehlen"; beides stimmte nicht (gemessen
+    mit einer Ergebnisdatei von ec6448c, Kragarm 8x2x4, Koerper x >= L/2:
+    Einstellung des geladenen Modells 'knoten', keine Hinweise, Element 12,
+    314,3 N/mm2). Nachgebildet: das Ergebnis nach der Elementregel ohne die
+    vier Felder, die a4ec83f dazubrachte, durch die Ergebnisdatei geschrieben
+    und gelesen - ohne Neurechnung, wie beim Oeffnen in der Oberflaeche."""
+    import re
+    import tempfile
+    from statik3d import ergebnisse
+    from statik3d.report.html import Report
+    m, kr, lf, rechts, n = _kragarm_volumen((8, 2, 4))
+    m.design.ermuedung_volumen = "element"
+    an = solver.solve_all(m, design=False, fatigue=True)
+    fv = an.fatigue.volumen["R"]
+    for feld in ("regel", "knoten", "orte", "dsig_je_ort"):
+        vars(fv).pop(feld, None)
+    m.design.ermuedung_volumen = "knoten"
+    ordner = tempfile.mkdtemp()
+    pfad = os.path.join(ordner, "alt.ergebnisse")
+    ergebnisse.schreiben(pfad, m, an)
+    an2 = ergebnisse.lesen(pfad, m)
+    fv2 = an2.fatigue.volumen["R"]
+    check("ältere Fassung nachgebildet: 'regel' fehlt nach dem Lesen, keine Hinweise",
+          "regel" not in vars(fv2) and fv2.regel == "element" and fv2.warnings == []
+          and fv2.element in rechts, f"{sorted(vars(fv2))[:4]} … Element {fv2.element}")
+
+    def bericht(a, name):
+        p = os.path.join(ordner, name)
+        Report(m, a).to_html(p)
+        with open(p, encoding="utf-8") as fh:
+            t = re.sub(r"<[^>]+>", " ", fh.read())
+        return re.sub(r"\s+", " ", t)
+
+    t = bericht(an2, "alt.html")
+    # der Block im Text (das Inhaltsverzeichnis fuehrt die Ueberschrift ohne &nbsp;)
+    i = t.find("&nbsp;Ermüdungsnachweis Volumen")
+    block = t[i:t.find("&nbsp;Anschlüsse nach DIN EN 1993-1-8", i)] if i >= 0 else ""
+    check("ältere Fassung: der Bericht nennt weder die Einstellung „element“ noch fehlende "
+          "Knotenwerte als Grund",
+          block and "Gerechnet mit der Einstellung ermuedung_volumen" not in block
+          and "Knotenwerte fehlen" not in block, block[:160])
+    check("ältere Fassung: der Bericht sagt, woher das Ergebnis kommt und was neu gerechnet gilt",
+          "älteren Programmfassung" in block and "nicht neu gerechnet" in block
+          and "ermuedung_volumen = „knoten“" in block
+          and f"Element {fv2.element}" in block and "314.3" in block, block[:400])
+    zus = t[t.rfind("Zusammenfassung"):]
+    check("ältere Fassung: Hinweis auch in der Zusammenfassung",
+          "Ermüdung Volumen R" in zus and "älteren Programmfassung" in zus, zus[:300])
+    # Gegenprobe: ein neu gerechnetes Ergebnis nach der Regel "element"
+    m.design.ermuedung_volumen = "element"
+    an2.fatigue = F.check_fatigue(m, an2)
+    t = bericht(an2, "neu.html")
+    check("neu gerechnet nach „element“: der Bericht nennt die Einstellung, keine ältere Fassung",
+          "Gerechnet mit der Einstellung ermuedung_volumen = „element“" in t
+          and "älteren Programmfassung" not in t)
+    m.design.ermuedung_volumen = "knoten"
+
+
+def test_nicht_gefuehrt_nicht_gefaerbt():
+    """Befund B056 (Nebenbefund 22./23.09.2026): ein nicht gefuehrter Stab in
+    der Faerbung "Ausnutzung Ermüdung".
+
+    ``FatigueResults.util_by_element`` nahm jeden Stab aus ``members`` mit
+    seiner Ausnutzung auf - auch einen mit ``fehler``, dessen util 0.0 keine
+    Aussage ist. Am Stand ec6448c gemessen: M1 mit einer oder-EK als
+    Mindestzustand ist "nicht geführt", und die Karte lieferte {0: 0.0,
+    1: 0.0}; die Ansicht (main._util_map -> viewport.result_field) faerbte
+    ihn damit wie einen unbeanspruchten Stab. Volumen mit ``fehler`` fielen
+    schon heraus (D_je_element None). Erwartet: seine Elemente fehlen in der
+    Karte, haben also keinen Wert. Ist die Karte dadurch ganz leer - an
+    diesem Modell der Fall -, prueft die Ansicht
+    test_ansicht_ohne_wert_ungefaerbt.
+    """
+    ms = _stab_oben_unten()
+    ek = ms.add_combination("EK_oder", {}, "FAT")
+    ek.alternativen = [{"OBEN": 1.0}, {"UNTEN": 1.0}]
+    ms.add_fatigue_load("EL", "OBEN", "EK_oder", cycles=1e6)
+    fat = solver.solve_all(ms, fatigue=True).fatigue
+    fm = fat.members.get("M1")
+    check("Vorbedingung: M1 steht als nicht geführt im Nachweis",
+          fm is not None and fm.status() == "nicht geführt" and fm.util == 0.0,
+          repr(getattr(fm, "fehler", None))[:80])
+    karte = fat.util_by_element(ms)
+    check("nicht geführter Stab: seine Elemente fehlen in util_by_element",
+          not any(e in karte for e in ms.members["M1"].elements), str(karte))
+    # Gegenprobe, damit die Kur nicht zu scharf ist: derselbe Stab, OBEN
+    # gegen UNTEN, ist gefuehrt und behaelt seinen Wert in der Karte.
+    ms = _stab_oben_unten()
+    ms.add_fatigue_load("EL", "OBEN", "UNTEN", cycles=1e6)
+    fat = solver.solve_all(ms, fatigue=True).fatigue
+    fm = fat.members["M1"]
+    karte = fat.util_by_element(ms)
+    check("Gegenprobe: geführter Stab behält seine Ausnutzung je Element",
+          not fm.fehler and fm.util > 0
+          and all(karte.get(e) == fm.util for e in ms.members["M1"].elements),
+          f"D = {fm.util:.4f}, Karte {karte}")
+
+
+def _zwei_staebe(szenario: str):
+    """Durchlauftraeger aus vier Balken (Rechteck 0,1 x 0,1), Stab A (El. 0, 1)
+    mit Kerbfall 71, Stab B (El. 2, 3) ohne Kerbfall, Lastfaelle L1 und L2."""
+    from statik3d.model import Section
+    m = Model("zwei_staebe")
+    m.add_material(Material.steel("S235"))
+    m.add_section(Section.rectangle("R", 0.1, 0.1))
+    k = [m.add_node(i * 1.0, 0.0, 0.0) for i in range(5)]
+    for i in range(4):
+        m.add_element("beam", [k[i], k[i + 1]], "S235", "R")
+    m.fix(k[0], "all")
+    m.fix(k[4], [0, 1, 2])
+    m.add_member("A", [0, 1], detail_category=71e6)
+    m.add_member("B", [2, 3])
+    m.add_load_case("L1", "Q")
+    m.load_node(k[1], Fz=-2.0e4, case="L1")
+    m.add_load_case("L2", "Q")
+    m.load_node(k[3], Fz=-1.0e4, case="L2")
+    if szenario == "nicht_gefuehrt":
+        m.add_fatigue_load("F", "L1", "UNBEKANNT", cycles=1e6)
+    elif szenario == "null_spiele":
+        m.add_fatigue_load("F", "L1", "L2", cycles=0.0)
+    else:
+        m.add_fatigue_load("F", "L1", "L2", cycles=1e6)
+    return m
+
+
+def test_ansicht_ohne_wert_ungefaerbt():
+    """Mangel 1 der Gegenpruefung zu B056 (24.09.2026): leere Karte in der
+    Desktop-Ansicht.
+
+    Nicht gefuehrt ist ein Eintrag nur, wenn keine Last beitraegt - das haengt
+    an den Lasten und Ergebnissen, nicht am Stab; die Karte ist dann ganz
+    leer. viewport.result_field ("... and util:") und viewport.kennwerte
+    ("if not werte") wichen bei leerer Karte auf die elastische Ausnutzung
+    aus. Gemessen am Stand dc90b5e an diesem Modell: Feld "Ausnutzung
+    elastisch [-]" [0.3349, 0.1318, 0.0878, 0.0439], Kennwert "max.
+    Ausnutzung 0.335 an A" - auch fuer Stab B ohne Kerbfall, der bei ec6448c
+    ohne Wert blieb. Mit 0 Lastspielen stand es schon bei ec6448c so da.
+    Erwartet: ist ein Nachweis da (Karte nicht None), bleibt es bei seinen
+    Werten, eine leere Karte ergibt keine Zelle mit Wert und keinen Kennwert.
+    Ohne Nachweis (None) bleibt die elastische Ausnutzung.
+    """
+    from statik3d.gui import viewport as vp
+    FELD = "Ausnutzung Ermüdung"
+
+    def ansicht(m, an, karte, feld=FELD):
+        r = an.cases["L1"]
+        _ps, cs, name = vp.result_field(m, r, feld, karte)
+        kw = [z for z in vp.kennwerte(m, r, karte, feld=feld) if "Ausnutzung" in z]
+        return cs, name, kw
+
+    def mit_wert(cs):
+        return [] if cs is None else [i for i, v in enumerate(cs) if np.isfinite(v)]
+
+    for sz, text in (("nicht_gefuehrt", "nicht geführter Stab"),
+                     ("null_spiele", "ohne wirksame Last (0 Lastspiele)")):
+        m = _zwei_staebe(sz)
+        an = solver.solve_all(m, design=True, fatigue=True)
+        karte = an.fatigue.util_by_element(m)
+        cs, name, kw = ansicht(m, an, karte)
+        check(f"{text}: Vorbedingung leere Karte",
+              karte == {} and (sz != "nicht_gefuehrt"
+                               or an.fatigue.members["A"].status() == "nicht geführt"),
+              str(karte))
+        check(f"{text}: keine Zelle mit Wert, keine elastische Ausnutzung",
+              cs is not None and not mit_wert(cs) and "elastisch" not in name,
+              f"{name!r} Zellen mit Wert {mit_wert(cs)}")
+        check(f"{text}: kein Kennwert 'max. Ausnutzung'", not kw, str(kw))
+
+    # Gegenprobe: gefuehrt -> Stab A mit seinem Wert, Stab B ohne Kerbfall ohne
+    m = _zwei_staebe("gefuehrt")
+    an = solver.solve_all(m, design=True, fatigue=True)
+    karte = an.fatigue.util_by_element(m)
+    util = an.fatigue.members["A"].util
+    cs, name, kw = ansicht(m, an, karte)
+    check("Gegenprobe geführt: A mit D, B ohne Kerbfall ohne Wert",
+          mit_wert(cs) == [0, 1] and all(abs(cs[i] - util) < 1e-12 for i in (0, 1)),
+          f"{name!r} D = {util:.4f}, Zellen {[round(float(v), 4) for v in cs]}")
+    check("Gegenprobe geführt: Kennwert nennt D am Stab A",
+          kw == [f"max. Ausnutzung {util:.3f} an A"], str(kw))
+    # ohne Nachweis (Karte None): elastische Ausnutzung wie bisher
+    r = an.cases["L1"]
+    elast = {i: d["util"] for i, d in r.beam_forces.items() if d["util"] is not None}
+    for feld, karte_ in ((FELD, None), ("Ausnutzung elastisch", None)):
+        cs, name, kw = ansicht(m, an, karte_, feld)
+        check(f"ohne Nachweis, Feld {feld!r}: elastische Ausnutzung",
+              name == "Ausnutzung elastisch [-]" and mit_wert(cs) == sorted(elast)
+              and all(abs(cs[i] - elast[i]) < 1e-12 for i in elast) and len(kw) == 1,
+              f"{name!r} {kw}")
+    # EC3: Nachweis gerechnet, aber kein Stab darin -> leere Karte
+    m = _zwei_staebe("gefuehrt")
+    for mem in m.members.values():
+        mem.design = False
+    an = solver.solve_all(m, design=True, fatigue=False)
+    karte = an.design.util_by_element() if an.design is not None else None
+    cs, name, kw = ansicht(m, an, karte, "Ausnutzung EC3")
+    check("Ausnutzung EC3 mit leerer Karte: keine Zelle mit Wert, kein Kennwert",
+          karte == {} and cs is not None and not mit_wert(cs) and not kw,
+          f"Karte {karte} {name!r} {mit_wert(cs)} {kw}")
+    # reines Volumenmodell, nicht gefuehrt: ohne Stab gibt es keine elastische
+    # Ausnutzung, es blieb schon vorher ohne Wert (Gegenpruefung 23.09.2026)
+    mv = _zugstab_volumen(1000e3, -400e3)
+    mv.add_fatigue_load("EL", "FEHLT", "LF2", 1e5)
+    an = solver.solve_all(mv, fatigue=True)
+    karte = an.fatigue.util_by_element(mv)
+    r = an.cases["LF1"]
+    _ps, cs, name = vp.result_field(mv, r, FELD, karte)
+    kw = [z for z in vp.kennwerte(mv, r, karte, feld=FELD) if "Ausnutzung" in z]
+    check("Volumen nicht geführt: keine Zelle mit Wert, kein Kennwert",
+          an.fatigue.volumen["V1"].status() == "nicht geführt" and karte == {}
+          and cs is not None and not mit_wert(cs) and not kw,
+          f"{name!r} {mit_wert(cs)} {kw}")
+
+
+def test_warntexte_mit_umlaut():
+    """Befund B057 (Nebenbefund 22./23.09.2026): die Warntexte "Ermuedungslast
+    ...: Ergebnis ... fehlt" gehen als "Hinweis:", als "Der Nachweis konnte
+    nicht geführt werden: ..." und in die offenen Warnungen des Berichts,
+    ebenso die Modellpruefung "FEHLER: Ermuedungslast ...: ... unbekannt" -
+    beides stand am Stand ec6448c ohne Umlaut im Bericht.
+
+    Geprueft wird jede der sechs Stellen in fatigue.py, an denen der Text
+    entsteht (Stab und Volumen je: Hoechstzustand fehlt, Mindestzustand
+    fehlt, Glied eines Verlaufs fehlt), die Modellpruefung und der Bericht
+    zum Modell des Befunds (Last EL2 auf den unbekannten Fall "FEHLT").
+    """
+    from statik3d.report import Report
+
+    def drei_wege(m, oben, unten):
+        m.add_fatigue_load("Oben", "FEHLT", unten, 1e5)
+        m.add_fatigue_load("Unten", oben, "FEHLT", 1e5)
+        m.fatigue_loads["Folge"] = FatigueLoad("Folge", folge=[oben, "FEHLT", unten],
+                                               wiederholungen=1e5)
+        return m
+
+    ms = drei_wege(_stab_oben_unten(), "OBEN", "UNTEN")
+    mv = drei_wege(_zugstab_volumen(1000e3, -400e3), "LF1", "LF2")
+    for art, m, eintrag in (("Stab", ms, lambda f: f.members.get("M1")),
+                            ("Volumen", mv, lambda f: f.volumen.get("V1"))):
+        x = eintrag(solver.solve_all(m, design=False, fatigue=True).fatigue)
+        warn = list(getattr(x, "warnings", None) or [])
+        check(f"{art}: je Weg ein Warntext 'Ermüdungslast <Name>: Ergebnis ...'",
+              sorted(w.split(":")[0] for w in warn)
+              == ["Ermüdungslast Folge", "Ermüdungslast Oben", "Ermüdungslast Unten"],
+              " | ".join(warn)[:120])
+        check(f"{art}: kein Warntext ohne Umlaut",
+              not any("Ermuedung" in w for w in warn), " | ".join(warn)[:120])
+        # Die Modellpruefung liest die Zustaende, die der Nachweis liest:
+        # case_max/case_min einer Last mit zwei Zustaenden, bei einem Verlauf
+        # nur seine Glieder (model.py; B067, seit B109 aus fix2/nb_model auch
+        # das unbekannte Glied 'FEHLT' des Verlaufs 'Folge').
+        zeilen = [z for z in m.check() if "FEHLT" in z]
+        check(f"{art}: Modellpruefung nennt die Ermüdungslast mit Umlaut",
+              sorted(z.split("'")[1] for z in zeilen) == ["Folge", "Oben", "Unten"]
+              and all(z.startswith("FEHLER: Ermüdungslast '") for z in zeilen),
+              " | ".join(zeilen)[:120])
+
+    m = _stab_oben_unten()
+    m.add_fatigue_load("EL2", "FEHLT", None, cycles=1e6)
+    an = solver.solve_all(m, fatigue=True)
+    html = Report(m, an).html()
+    check("Bericht: Hinweis und Grund lauten 'Ermüdungslast EL2'",
+          "Hinweis: Ermüdungslast EL2" in html and "Ermüdung M1: Ermüdungslast EL2" in html
+          and "Modellprüfung: FEHLER: Ermüdungslast" in html,
+          f"{html.count('Ermüdungslast EL2')}x 'Ermüdungslast EL2'")
+    check("Bericht: nirgends 'Ermuedungslast'", "Ermuedungslast" not in html,
+          f"{html.count('Ermuedungslast')}x")
+
+
+def _gui():
+    import importlib
+    return importlib.import_module("statik3d.gui.main")    # gui.main() verdeckt das Modul
+
+
+def _texte(aufrufe):
+    return [str(c.args[0]) for c in aufrufe.call_args_list if c.args]
+
+
+def _maske_verlauf(m, text, n=None, meldungen=None):
+    """Eine Ermuedungslast im Modus Verlauf ueber das Hauptfenster anlegen:
+    MainWindow.add_fatigue_load (Register Lastfaelle „Neu…“) oeffnet die
+    echte Maske Ermuedungslasten (offscreen), der Verlauf wird als
+    Komma-Liste getippt, „Übernehmen“. Bis zum 24.09.2026 stand hier der
+    modale Dialog; die Aussagen der Tests bleiben dieselben.
+
+    ``n`` None = globale Lastspielzahl, sonst eigene Durchlaeufe.
+    Rueckgabe: (neue Last oder None, Maske)."""
+    import types
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6 import QtWidgets
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    G = _gui()
+    log = meldungen if meldungen is not None else []
+    s = types.SimpleNamespace(model=m, merken=lambda _was: None, refresh_all=lambda: None,
+                              maske_erzeugen=lambda mk, fokus=True: mk,
+                              log=types.SimpleNamespace(appendPlainText=log.append))
+    s._ermuedung_aendern = lambda was, fn: G.MainWindow._ermuedung_aendern(s, was, fn)
+    s.maske_ermuedungslasten = lambda **k: G.MainWindow.maske_ermuedungslasten(s, **k)
+    vorher = set(m.fatigue_loads)
+    mk = G.MainWindow.add_fatigue_load(s)
+    mk.art.setCurrentIndex(mk.art.findData("verlauf"))
+    mk.folge_text.setText(text)
+    mk.folge_text.textEdited.emit(text)
+    mk.zaehlung.setCurrentIndex(mk.zaehlung.findData("spanne"))
+    mk.global_n.setChecked(n is None)
+    if n is not None:
+        mk.n.setText(str(n))
+    mk.anwenden()
+    app.processEvents()
+    neue = [x for x in m.fatigue_loads if x not in vorher]
+    return (m.fatigue_loads[neue[0]] if neue else None), mk
+
+
+def test_maske_weist_oder_ek_im_verlauf_ab():
+    """Befund B066 (23.09.2026): Die Eingabe einer Ermuedungslast als Verlauf
+    (MainWindow.add_fatigue_load) wies nur unbekannte Namen ab; eine
+    oder-verknuepfte Ergebniskombination nahm sie an. Gemeldet hat es erst
+    die Modellpruefung vor der Rechnung („Zustand 'EK-oder' ist eine
+    oder-verknüpfte Ergebniskombination …“). Die Auswahl „Zwei Zustände“
+    bietet sie gar nicht an (model.ermuedungszustaende). Seit 24.09.2026
+    ueber add_fatigue_load mit der echten Maske Ermuedungslasten."""
+    m = _kragarm()
+    _oder_ek(m, "EK-oder")
+    fl, mk = _maske_verlauf(m, "LF1, EK-oder")
+    meldung = mk.lbl_meldung.text()
+    check("Verlauf mit oder-EK: die Eingabe meldet es",
+          "EK-oder" in meldung and "oder-verknüpft" in meldung, meldung[:160])
+    check("… und legt keine Ermüdungslast an", fl is None and not m.fatigue_loads,
+          str(list(m.fatigue_loads)))
+    fl, mk = _maske_verlauf(m, "LF1, LF2, LF3")
+    check("Gegenprobe, Verlauf aus Lastfällen: angelegt, ohne Meldung",
+          len(m.fatigue_loads) == 1 and "übernommen" in mk.lbl_meldung.text()
+          and fl is not None and fl.folge == ["LF1", "LF2", "LF3"],
+          f"{list(m.fatigue_loads)}, Meldung {mk.lbl_meldung.text()!r}")
+
+
+def test_etikett_nachweise_nennt_die_ermuedung():
+    """Befund B069 (23.09.2026): show_results setzte das Etikett unter den
+    Knoepfen „Nachweise EC3“ und „Ermüdungsnachweis“ im Ermuedungszweig auf
+    ``an.design.summary() if an.design else ''`` - mit Ermuedung, aber ohne
+    EC3-Nachweis also leer; die Ermuedungszeile stand nur im Ergebnistext.
+    Ohne Nachweise blieb das Etikett einer frueheren Rechnung stehen. Hier der
+    echte show_results mit einer Attrappe fuer self."""
+    from unittest import mock
+    G = _gui()
+    m = _kragarm()
+    m.fatigue_loads["Ereignis"] = FatigueLoad("Ereignis", folge=["LF1", "LF2", "LF3"],
+                                              wiederholungen=1e5)
+
+    def etikett(an):
+        s = mock.MagicMock()
+        s.model = m
+        s.analysis = an
+        s._util_map.return_value = {}
+        s.current_result.return_value = next(iter(an.cases.values()))
+        with mock.patch.object(G, "QtWidgets"):
+            G.MainWindow.show_results(s)
+        return _texte(s.lbl_design.setText)
+
+    an = solver.solve_all(m, design=False, fatigue=True)
+    zeile = an.fatigue.summary()
+    t = etikett(an)
+    check("nur Ermüdung: das Etikett nennt die Ermüdungszeile",
+          an.design is None and t and zeile in t[-1], f"setText {t}, Zeile {zeile[:60]!r}")
+    an = solver.solve_all(m, design=True, fatigue=True)
+    t = etikett(an)
+    check("EC3 und Ermüdung: beide Zeilen",
+          an.design is not None and t and an.design.summary() in t[-1] and an.fatigue.summary() in t[-1],
+          f"setText {[x[:50] for x in t]}")
+    an = solver.solve_all(m, design=False, fatigue=False)
+    t = etikett(an)
+    check("ohne Nachweise: „noch keine Nachweise“, nichts von früher",
+          t and t[-1] == "noch keine Nachweise", f"setText {t}")
+
+
+def test_maske_verlauf_ohne_zustaende():
+    """Befund B067 (Nebenbefund 22./23.09.2026, am Stand ec6448c gemessen):
+    Die Maske uebergab im Modus Verlauf den ersten Eintrag der gesperrten
+    Auswahl „Oberer Zustand“ (im Hallenrahmen 'Kran') als case_max. Der
+    Anschlussnachweis las ihn: der Verlauf Null -> S -> Null ergab an der
+    Kopfplatte K1 D = 3,04294 (Kran gegen null) statt 7,12871 (S gegen null).
+    Und nach dem Loeschen von 'Kran' meldete die Modellpruefung einen FEHLER
+    fuer eine Last, die 'Kran' gar nicht nennt. Geprueft ueber den echten
+    MainWindow.add_fatigue_load mit der echten Maske (offscreen; seit
+    24.09.2026 die rechte Maske Ermuedungslasten statt des Dialogs).
+    """
+    from statik3d import examples_lib
+    from statik3d.joints import anschluss as A
+    from statik3d.joints.templates import propose
+
+    meldungen = []
+
+    def neu(m, text):
+        """Die echte Maske im Modus Verlauf, eigene Wiederholungen 5e5."""
+        fl, mk = _maske_verlauf(m, text, n=5e5)
+        if fl is None and mk.lbl_meldung.text():
+            meldungen.append(mk.lbl_meldung.text())
+        return fl
+
+    def fehler(m):
+        return [z for z in m.check() if z.startswith("FEHLER")]
+
+    def hall():
+        m = examples_lib.build_example("hall")
+        m.fatigue_loads.clear()
+        return m
+
+    # (1) Im Modus Verlauf stehen die Zustaende nur in der Folge
+    m = hall()
+    fl = neu(m, "LF1, S, LF1")
+    check("Maske, Modus Verlauf: Folge übernommen, case_max leer, case_min None",
+          fl is not None and fl.folge == ["LF1", "S", "LF1"] and fl.case_max == ""
+          and fl.case_min is None and fl.wiederholungen == 5e5,
+          "keine Last" if fl is None else f"case_max {fl.case_max!r}, case_min {fl.case_min!r}")
+    m.remove_load_case("Kran")
+    check("... Lastfall 'Kran' gelöscht: kein FEHLER für den Verlauf ohne 'Kran'",
+          not fehler(m), "; ".join(fehler(m))[:100])
+
+    # (2) Dateien aus der alten Maske tragen das case_max weiter: die
+    # Modellpruefung liest es bei einem Verlauf nicht mehr. Eine Last aus
+    # zwei Zustaenden mit dem geloeschten Zustand nimmt remove_load_case seit
+    # B105 (fix2/nb_model) selbst mit und nennt sie in der Rueckgabe; bis
+    # dahin blieb sie stehen und war ein FEHLER.
+    m = hall()
+    m.fatigue_loads["Alt"] = FatigueLoad("Alt", case_max="Kran", folge=["LF1", "S", "LF1"],
+                                         wiederholungen=5e5)
+    m.add_fatigue_load("Zwei", "Kran", None, 5e5)
+    aus = m.remove_load_case("Kran")
+    zeilen = fehler(m)
+    check("alter Verlauf mit case_max 'Kran': kein FEHLER; zwei Zustände: entfällt mit dem Lastfall",
+          not [z for z in zeilen if "'Alt'" in z] and "Alt" in m.fatigue_loads
+          and "Zwei" not in m.fatigue_loads and any("'Zwei' entfällt" in a for a in aus),
+          "; ".join(zeilen + aus)[:110])
+    # Gegenprobe: bei zwei Zustaenden liest die Modellpruefung case_max weiter
+    m.add_fatigue_load("Zwei", "Kran", None, 5e5)
+    zeilen = fehler(m)
+    check("… Gegenprobe: zwei Zustände mit unbekanntem 'Kran': FEHLER",
+          [z for z in zeilen if "'Zwei'" in z] and not [z for z in zeilen if "'Alt'" in z],
+          "; ".join(zeilen)[:110])
+
+    # (3) Modus Verlauf mit leerem Feld: frueher entstand still die Last
+    # „Kran gegen Nullzustand“ aus der gesperrten Auswahl
+    m = hall()
+    meldungen.clear()
+    fl = neu(m, "")
+    check("Modus Verlauf ohne Lastfälle: Meldung, keine Last",
+          fl is None and not m.fatigue_loads and meldungen,
+          "angelegt: " + (fl.bezug() if fl is not None else "-") + f"; {meldungen}")
+
+    # (4) Anschluss K1: der Verlauf Null -> S -> Null ueber die Maske wie S gegen null
+    m = hall()
+    lc = m.add_load_case("Null", "Q", activate=False)
+    lc.gravity = [0.0, 0.0, 0.0]
+    e_kopf = m.members["Riegel"].elements[0]
+    m.joints["K1"] = A.als_joint(propose("kopfplatte", m, e_kopf, end=0, N=-50e3,
+                                         Vz=150e3, My=300e3), "K1")
+    verlauf = neu(m, "Null, S, Null")
+    m.add_fatigue_load("S-Null", "S", None, 5e5)
+    m.add_fatigue_load("Kran-Null", "Kran", None, 5e5)
+    an = solver.solve_all(m, design=True, fatigue=False)
+    D = {}
+    for name in (verlauf.name if verlauf is not None else "?", "S-Null", "Kran-Null"):
+        m.joints["K1"].ermuedung = [name]
+        D[name] = A.check_joints(m, an).joints["K1"].D
+    dv = D.get(verlauf.name if verlauf is not None else "?", 0.0)
+    check("Anschluss K1: Verlauf Null-S-Null über die Maske wie S gegen null",
+          D["S-Null"] > 0 and abs(dv - D["S-Null"]) <= 1e-9 * D["S-Null"]
+          and D["Kran-Null"] != D["S-Null"],
+          f"D = {dv:.6g}, S gegen null {D['S-Null']:.6g}, Kran gegen null {D['Kran-Null']:.6g}")
+
+
+def test_namenspruefung_liest_die_zustaende_des_nachweises():
+    """Befunde B109 und B110: die Modellpruefung prueft die Namen einer
+    Ermuedungslast an denselben Zustaenden, die der Nachweis liest - bei einem
+    Verlauf die Glieder von ``folge``, sonst case_max/case_min.
+
+    Am Stand ec6448c (23.09.2026) war es umgekehrt: ein unbekanntes Glied
+    ('WEG') in ``folge`` meldete die Pruefung nicht; erst die Rechnung sagte
+    "unvollständig" (D = 0,3833355, Warnung "Ergebnis 'WEG' fehlt"). Ein
+    unbekanntes case_max einer Verlaufs-Last, das der Nachweis nie liest,
+    meldete sie dagegen als FEHLER, obwohl die Rechnung D = 0,3833355
+    "erfüllt" ergab - der FEHLER hielt CLI (Exit 2) und Web-Rechenstart an.
+    """
+    def zeilen(m, last):
+        return [z for z in m.check() if z.startswith("FEHLER") and f"'{last}'" in z]
+
+    # B109: unbekanntes Glied im Verlauf
+    m = _zugstab_volumen(1000e3, -400e3)
+    m.fatigue_loads["V"] = FatigueLoad("V", folge=["LF1", "LF2", "WEG"], wiederholungen=1e5)
+    z = zeilen(m, "V")
+    check("Verlauf mit unbekanntem Glied 'WEG': FEHLER vor der Rechnung",
+          any("'WEG'" in x and "unbekannt" in x for x in z), "; ".join(z)[:90] or "(keine Zeile)")
+    # Gegenprobe: bekannte Glieder - keine Zeile
+    m.fatigue_loads["V"].folge = ["LF1", "LF2"]
+    z = zeilen(m, "V")
+    check("… Verlauf nur aus bekannten Gliedern: keine Zeile", not z, "; ".join(z)[:90])
+
+    # B110: unbekanntes case_max/case_min bei einem Verlauf - der Nachweis liest es nicht
+    m = _zugstab_volumen(1000e3, -400e3)
+    m.fatigue_loads["V"] = FatigueLoad("V", case_max="WEG", case_min="WEG2",
+                                       folge=["LF1", "LF2"], wiederholungen=1e5)
+    z = zeilen(m, "V")
+    check("Verlauf mit altem case_max 'WEG' / case_min 'WEG2': kein FEHLER", not z,
+          "; ".join(z)[:90])
+    fv = solver.solve_all(m, design=False, fatigue=True).fatigue.volumen["V1"]
+    check("… und die Rechnung liest es nicht: erfüllt, ohne Warnung",
+          fv.D > 0 and fv.status() == "erfüllt" and not fv.warnings,
+          f"D = {fv.D:.7f}, {fv.status()}, {fv.warnings}")
+    # Gegenprobe: ohne Verlauf ist case_max 'WEG' weiter ein FEHLER
+    m.fatigue_loads["V"] = FatigueLoad("V", case_max="WEG", cycles=1e5)
+    z = zeilen(m, "V")
+    check("Gegenprobe zwei Zustaende, case_max 'WEG': FEHLER",
+          any("'WEG'" in x and "unbekannt" in x for x in z), "; ".join(z)[:90] or "(keine Zeile)")
+    m.fatigue_loads["V"] = FatigueLoad("V", case_max="LF1", case_min="WEG2", cycles=1e5)
+    z = zeilen(m, "V")
+    check("Gegenprobe zwei Zustaende, case_min 'WEG2': FEHLER",
+          any("'WEG2'" in x and "unbekannt" in x for x in z), "; ".join(z)[:90] or "(keine Zeile)")
+
+
+def test_lastfall_loeschen_nimmt_umhuellende_und_ermuedung_mit():
+    """Befund B105: Model.remove_load_case nahm den Lastfall nur aus
+    Combination.factors - nicht aus den Alternativen einer oder-EK und nicht
+    aus den Ermuedungslasten.
+
+    Gemessen am Stand ec6448c (23.09.2026): nach remove_load_case('LF2')
+    standen die Alternativen [{LF1}, {LF2}, {LF3}] unveraendert da, eine
+    Ermuedungslast behielt case_max 'LF2', ein Verlauf ['LF1', 'LF2'];
+    check() meldete FEHLER, und solve_all brach mit KeyError "Lastfall 'LF2'
+    existiert nicht" ab.
+
+    Richtig: der Name faellt aus jeder Alternative und aus jedem Verlauf; eine
+    Last aus zwei Zustaenden, deren oberer oder unterer Zustand der geloeschte
+    Lastfall war, entfaellt ganz (kein stiller Ersatz durch den Nullzustand -
+    so haelt es auch die Stellung, bridges.positions); ein Verlauf, dem kein
+    Glied bleibt, ebenso. Der Rueckgabewert nennt alles, was mitging.
+    """
+    m = _zugstab_volumen(1000e3, -400e3)
+    m.add_load_case("LF3", "Q")
+    ek = _oder_ek(m)
+    ek.alternativen.append({"LF3": 1.0})
+    m.fatigue_loads["Z"] = FatigueLoad("Z", case_max="LF2", case_min="LF1", cycles=1e5)
+    m.fatigue_loads["Zmin"] = FatigueLoad("Zmin", case_max="LF1", case_min="LF2", cycles=1e5)
+    m.fatigue_loads["Bleibt"] = FatigueLoad("Bleibt", case_max="LF1", case_min="LF3", cycles=1e5)
+    m.fatigue_loads["V"] = FatigueLoad("V", folge=["LF1", "LF2", "LF3"], wiederholungen=1e5)
+    m.fatigue_loads["W"] = FatigueLoad("W", case_max="LF2", folge=["LF1", "LF3"], wiederholungen=1e5)
+    m.fatigue_loads["Nur2"] = FatigueLoad("Nur2", folge=["LF2"], wiederholungen=1e5)
+    vorher = [z for z in m.check() if z.startswith("FEHLER")]
+    check("vorher: Modellpruefung ohne FEHLER", not vorher, "; ".join(vorher)[:90])
+
+    mit = m.remove_load_case("LF2")
+    print("     mitgegangen:", mit)
+    check("LF2 ist geloescht", "LF2" not in m.load_cases, str(list(m.load_cases)))
+    check("LF2 in keiner Alternative der oder-EK mehr",
+          ek.alternativen == [{"LF1": 1.0}, {"LF3": 1.0}], str(ek.alternativen))
+    verweise = [(f.name, f.case_max, f.case_min, list(f.folge)) for f in m.fatigue_loads.values()
+                if "LF2" in (f.case_max, f.case_min) or "LF2" in (f.folge or [])]
+    check("LF2 in keinem case_max, case_min oder Verlauf mehr", not verweise, str(verweise))
+    check("Lasten aus zwei Zustaenden mit LF2 oben oder unten entfallen",
+          "Z" not in m.fatigue_loads and "Zmin" not in m.fatigue_loads, str(list(m.fatigue_loads)))
+    check("… eine Last ohne LF2 bleibt unveraendert",
+          "Bleibt" in m.fatigue_loads
+          and (m.fatigue_loads["Bleibt"].case_max, m.fatigue_loads["Bleibt"].case_min) == ("LF1", "LF3"))
+    check("Verlauf verliert nur das Glied LF2",
+          "V" in m.fatigue_loads and m.fatigue_loads["V"].folge == ["LF1", "LF3"],
+          str(getattr(m.fatigue_loads.get("V"), "folge", None)))
+    check("Verlauf mit altem case_max LF2: Glieder bleiben, case_max geleert",
+          "W" in m.fatigue_loads and m.fatigue_loads["W"].folge == ["LF1", "LF3"]
+          and not m.fatigue_loads["W"].case_max, str(m.fatigue_loads.get("W")))
+    check("Verlauf, dem kein Glied bleibt, entfaellt", "Nur2" not in m.fatigue_loads)
+    text = " ".join(mit or [])
+    check("Rueckgabe nennt die oder-EK und jede Ermuedungslast, die sich aendert",
+          all(f"'{n}'" in text for n in ("EK_oder", "Z", "Zmin", "V", "Nur2"))
+          and "'Bleibt'" not in text, text[:120])
+    nachher = [z for z in m.check() if z.startswith("FEHLER")]
+    check("nachher: Modellpruefung ohne FEHLER", not nachher, "; ".join(nachher)[:90])
+    try:
+        an = solver.solve_all(m, design=False, fatigue=True)
+        fv = an.fatigue.volumen["V1"]
+        gut = "EK_oder" in an.envelopes and fv.status() == "erfüllt"
+        detail = f"D = {fv.D:.5f}, {fv.status()}, {fv.warnings}"
+    except Exception as ex:          # noqa: BLE001
+        gut, detail = False, f"{type(ex).__name__}: {ex}"
+    check("solve_all laeuft durch, Umhuellende und Ermuedung gerechnet", gut, detail)
+
+
 def main():
     for t in (test_spanne, test_hauptspannungen, test_volumen, test_naht_beruehrung,
               test_kerbfall_vorschlaege,
               test_fehlender_mindestzustand_wird_gemeldet,
+              test_lastfall_umbenennen_zieht_ermuedungslasten_nach,
               test_mindestzustand_volumen_und_oder_ek,
               test_volumen_ohne_beitrag_und_unvollstaendig,
-              test_unvollstaendig_je_weg):
+              test_unvollstaendig_je_weg,
+              test_volumen_randspannung_kragarm,
+              test_volumen_regel_rueckfall_und_fliessen,
+              test_volumen_abgeschaltete_elemente,
+              test_volumen_ergebnis_aelterer_fassung,
+              test_nicht_gefuehrt_nicht_gefaerbt,
+              test_ansicht_ohne_wert_ungefaerbt,
+              test_warntexte_mit_umlaut,
+              test_maske_weist_oder_ek_im_verlauf_ab,
+              test_etikett_nachweise_nennt_die_ermuedung,
+              test_maske_verlauf_ohne_zustaende,
+              test_namenspruefung_liest_die_zustaende_des_nachweises,
+              test_lastfall_loeschen_nimmt_umhuellende_und_ermuedung_mit):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

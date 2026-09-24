@@ -76,13 +76,14 @@ for (const [tab, fn] of [['modell', 'renderModell'], ['lasten', 'renderLasten'],
 ev("S.tab = 'bruecke'");
 const h = ev('renderBruecke()');
 const B = zustand.stellungen;
-// Gerechnete Stellungen; "ohne": mit Warnungen des Stabnachweises und ohne
-// einen gefuehrten Nachweis - deren eta = 0 ist keine Ausnutzung. Fehlt das
-// Feld "nachgewiesen" (Server von vor dem 23.09.2026), gilt eine Stellung mit
-// Warnungen als ohne Nachweis.
+// Gerechnete Stellungen; "ohne": ohne einen gefuehrten Stabnachweis, mit oder
+// ohne Warnungen - deren eta = 0 ist keine Ausnutzung. Bis ec6448c zaehlte
+// hier eine Stellung ohne Warnung als bestimmt, und der Fall nachweise=false
+// blieb ungeprueft. Fehlt das Feld "nachgewiesen" (Server von vor dem
+// 23.09.2026), gilt die Stellung als ohne Nachweis, wie in app.js.
 const gerechnet = B.liste.filter(x => x.ergebnis && !x.ergebnis.fehler);
 const offen = gerechnet.filter(x => (x.ergebnis.warnungen || []).length);
-const ohne = offen.filter(x => !x.ergebnis.nachgewiesen);
+const ohne = gerechnet.filter(x => !x.ergebnis.nachgewiesen);
 const bestimmt = gerechnet.filter(x => !ohne.includes(x));
 const nichtBestimmt = B.eta_bestimmt === false || (ohne.length > 0 && !bestimmt.length);
 pruefe('Stellungen als Karten', B.liste.every(x => h.includes(x.name)));
@@ -122,6 +123,19 @@ pruefe('Umhüllende nicht grün, wenn eine Stellung nicht nachgewiesen ist',
 pruefe('Umhüllende ohne jeden Nachweis: "η nicht bestimmt" statt eines Werts',
        !B.gerechnet || !nichtBestimmt
        || (zeileUmh.includes('η nicht bestimmt') && !/η = \d/.test(zeileUmh)), zeileUmh);
+// "· maßgebende Stellung" in der Meldung der gewählten Stellung nur an der
+// Stellung, die das η der Umhüllenden bestimmt ("fuehrt"), wie auf der Karte.
+// Gemessen 23.09.2026 an ec6448c (Stauwand, 3 Stellungen mit Kombinationen):
+// alle drei Meldungen endeten auf "maßgebende Stellung" - app.js las das Feld
+// "massgebend", den Text des maßgebenden Stabnachweises ("Riegel 2:
+// Interaktion Gl. 6.62"), nicht das Kennzeichen "fuehrt".
+const meldungVon = x => ev(`stellungMeldung(S.state.stellungen.liste[${B.liste.indexOf(x)}].ergebnis)`);
+const nennenMassgebend = gerechnet.filter(x => meldungVon(x).includes('maßgebende Stellung')).map(x => x.name);
+const sollMassgebend = gerechnet.filter(x => x.ergebnis.fuehrt && !ohne.includes(x)).map(x => x.name);
+pruefe('Meldung "maßgebende Stellung" nur an der Stellung, die η bestimmt',
+       JSON.stringify(nennenMassgebend) === JSON.stringify(sollMassgebend)
+       && (!bestimmt.length || sollMassgebend.length === 1),
+       `nennen: ${nennenMassgebend.join(', ') || '–'}; soll: ${sollMassgebend.join(', ') || '–'}`);
 if (offen.length) {
   ev(`S.stellung = ${JSON.stringify(offen[0].name)}`);
   const hs = ev('renderBruecke()');
@@ -134,6 +148,17 @@ if (offen.length) {
   pruefe('Gewählte Stellung: die Warnungen sind aufklappbar',
          hs.includes(`<summary>Nicht nachgewiesen <span class="n">${n}</span></summary>`)
          && hs.includes(esc0(offen[0].ergebnis.warnungen[0]).slice(0, 40)));
+}
+// ohne Nachweis und ohne Warnung (nachweise=false, kein Stab mit Nachweis):
+// die Meldung der gewaehlten Stellung nennt kein η und ist nicht gruen
+const ohneWarnung = ohne.filter(x => !offen.includes(x));
+if (ohneWarnung.length) {
+  ev(`S.stellung = ${JSON.stringify(ohneWarnung[0].name)}`);
+  const hs = ev('renderBruecke()');
+  const meldung = (hs.match(/<div class="msg [a-z]+">η[^<]*<\/div>/) || [''])[0];
+  pruefe('Gewählte Stellung ohne Nachweis und ohne Warnung: kein η-Wert, nicht grün',
+         meldung && !meldung.includes('msg ok') && meldung.includes('kein Nachweis geführt')
+         && !/η = \d/.test(meldung) && !meldung.includes('0 Warnungen'), meldung);
 }
 function esc0(s) { return ev(`esc(${JSON.stringify(s)})`); }
 
@@ -160,6 +185,33 @@ pruefe('Filmstreifen ohne jeden Nachweis: kein eta-Wert der Umhüllenden',
 pruefe('Filmstreifen: nicht vollständig nachgewiesen wird genannt',
        !B.gerechnet || !offen.length || /Umhüllende[^<]*nicht/.test(film),
        (film.match(/Umhüllende[^<]*/) || [''])[0]);
+
+// --- Stellungen ohne verlangten Nachweis ----------------------------------
+// Mit "nachweise": false oder mit allen Staeben ohne "Nachweis führen" gibt
+// es weder Warnungen noch einen nachgewiesenen Stab (positions.py:
+// warnungen leer, nachgewiesen False). Am Stand ec6448c zeigte app.js dann
+// η = 0 in der Farbe fuer erfuellt: Karte, Tabelle, Kurve, Umhuellende,
+// Filmstreifen (gemessen 23.09.2026 am Beispiel gate; Nebenbefund B021).
+// Seit B036 (fix2/nb_bridges_positions) ist η dort nicht bestimmt, wie bei
+// einer Stellung mit Warnungen; hier steht, dass gerade der Fall ohne
+// Warnung so erscheint - aendert sich die Anzeige, muss der Absatz
+// „Ohne verlangten Nachweis“ im Benutzerhandbuch mit.
+const ungefragt = gerechnet.filter(x => !(x.ergebnis.warnungen || []).length
+                                        && x.ergebnis.nachgewiesen === false);
+const alleUngefragt = B.gerechnet && gerechnet.length > 0 && ungefragt.length === gerechnet.length;
+pruefe('Ohne verlangten Nachweis: Karte „η –“ und „nicht geführt“, nicht grün',
+       ungefragt.every(x => { const k = karte(x);
+                              return !/η \d/.test(k) && k.includes('nicht geführt')
+                                     && !k.includes('background:var(--ok)'); }),
+       ungefragt.length ? karte(ungefragt[0]).replace(/\s+/g, ' ').slice(0, 160) : '');
+pruefe('Ohne verlangten Nachweis: Tabelle ohne η-Wert, kein Punkt in der Kurve',
+       ungefragt.every(x => !zeileTab(x).includes('class="util"') && !h.includes(`<title>${x.name}:`)),
+       ungefragt.length ? zeileTab(ungefragt[0]).replace(/\s+/g, ' ').slice(0, 160) : '');
+pruefe('Ohne jeden verlangten Nachweis: Umhüllende und Filmstreifen „η nicht bestimmt“, nicht grün',
+       !alleUngefragt
+       || (zeileUmh.includes('η nicht bestimmt') && !zeileUmh.startsWith('<div class="msg ok">')
+           && film.includes('η nicht bestimmt') && !/Umhüllende η = \d/.test(film)),
+       `${zeileUmh} / ${(film.match(/Umhüllende[^<]*/) || [''])[0]}`);
 
 ctx.window.innerWidth = 1440;
 ev('updateWerkbank()');

@@ -107,6 +107,96 @@ def ist_quadratisch(typ: str) -> bool:
     return a is not None and a.ordnung >= 2
 
 
+#: Seitenformen der Volumentypen, mit denen sie an einen Nachbarn stossen
+#: (Auftrag VQ83/VQ203, 23.09.2026): tri3/quad4 linear, tri6/quad8 quadratisch
+#: mit Kantenmitten, "trip" die Seite eines Tetraeders mit Ordnung p (ohne
+#: Mittenknoten; seine Spur richtet sich nach dem Nachbarn, tetp.pflichtseiten).
+#: VQ83 und VQ203 sind in der Oberflaeche die Namen von hex8 und hex20, die
+#: entarten duerfen; gerechnet werden sie als der Keil, die Pyramide oder der
+#: Tetraeder, der sie sind (solid.entartung_aufloesen) - darum haben sie hier
+#: die Seitenformen von hex8/pent6/pyr5/tet4 bzw. hex20/pent15/tet10.
+SEITENFORMEN: dict = {
+    "tet4": ("tri3",), "tet10": ("tri6",),
+    "tetp2": ("trip",), "tetp3": ("trip",), "tetp4": ("trip",),
+    "hex8": ("quad4",), "hex20": ("quad8",),
+    "pent6": ("tri3", "quad4"), "pent15": ("tri6", "quad8"),
+    "pyr5": ("quad4", "tri3"),
+}
+
+#: Vertraeglichkeit zweier Seitenformen an einer gemeinsamen Seite:
+#:   "direkt"  - dieselbe Spur, konform ohne Zutat;
+#:   "bindung" - konform, weil die Assemblierung die Kantenmitten der
+#:               quadratischen Seite an ihre Ecken bindet (u_m = (u_a + u_b)/2,
+#:               assemble.mittelknoten_bindungen, B5);
+#:   "linear"  - konform, weil das tetp die Seite linear haelt (tetp.pflichtseiten);
+#:   "nein"    - nicht konform: verschiedene Form (Dreieck gegen Viereck), oder
+#:               tet10 neben tetp (die Rechnung haelt dort laut an).
+SEITEN_VERTRAEGLICH: dict = {
+    frozenset(("tri3",)): "direkt", frozenset(("quad4",)): "direkt",
+    frozenset(("tri6",)): "direkt", frozenset(("quad8",)): "direkt",
+    frozenset(("trip",)): "direkt",
+    frozenset(("tri3", "tri6")): "bindung", frozenset(("quad4", "quad8")): "bindung",
+    frozenset(("trip", "tri3")): "linear", frozenset(("trip", "tri6")): "nein",
+}
+
+#: Rangfolge, wenn zwei Typen ueber mehrere Seitenformen stossen koennen
+_RANG = {"direkt": 0, "linear": 1, "bindung": 2, "uebergang": 3, "nein": 4}
+
+#: Klartext der Vertraeglichkeit fuer Oberflaeche und Bericht
+VERTRAEGLICH_TEXT: dict = {
+    "direkt": "passen direkt aneinander",
+    "linear": "passen aneinander, die Seite des Tetraeders mit Ordnung p bleibt linear",
+    "bindung": "passen aneinander, die Kantenmitten der quadratischen Seite werden an die Ecken "
+               "gebunden (dort wirkt die Seite linear)",
+    "uebergang": "Dreieck gegen Viereck: nur über Pyramiden (pyr5) als Übergang, die der Sweep setzt",
+    "nein": "passen nicht aneinander",
+}
+
+
+def _form(seite: str) -> str:
+    """Dreieck (tri3, tri6, trip) oder Viereck (quad4, quad8)."""
+    return "viereck" if seite.startswith("quad") else "dreieck"
+
+
+def seiten_vertraeglich(a: str, b: str) -> str:
+    """Vertraeglichkeit zweier Seitenformen (SEITEN_VERTRAEGLICH), sonst "nein"."""
+    return SEITEN_VERTRAEGLICH.get(frozenset((a, b)), "nein")
+
+
+def vertraeglich(typ_a: str, typ_b: str) -> str:
+    """Vertraeglichkeit zweier Volumentypen im selben Netz: die beste ueber
+    ihre gemeinsamen Seitenformen. Haben sie keine gleich geformte Seite
+    (Dreieck gegen Viereck), fuehrt nur eine Pyramide (pyr5: Viereck unten,
+    Dreiecke seitlich) von einem zum anderen - "uebergang", wenn beide Seiten
+    der Pyramide passen. Haben sie gleich geformte Seiten, die nicht passen
+    (tet10 neben tetp), ist es "nein": dort stossen sie direkt aneinander."""
+    fa, fb = SEITENFORMEN.get(typ_a, ()), SEITENFORMEN.get(typ_b, ())
+    if not fa or not fb:
+        return "nein"
+    gleich = [(x, y) for x in fa for y in fb if _form(x) == _form(y)]
+    if gleich:
+        return min((seiten_vertraeglich(x, y) for x, y in gleich), key=_RANG.__getitem__)
+    ueber_a = min((seiten_vertraeglich(x, "tri3") for x in fa if _form(x) == "dreieck"),
+                  key=_RANG.__getitem__, default="nein")
+    ueber_b = min((seiten_vertraeglich(y, "quad4") for y in fb if _form(y) == "viereck"),
+                  key=_RANG.__getitem__, default="nein")
+    if _RANG[ueber_a] < _RANG["nein"] and _RANG[ueber_b] < _RANG["nein"]:
+        return "uebergang"
+    ueber_a = min((seiten_vertraeglich(x, "quad4") for x in fa if _form(x) == "viereck"),
+                  key=_RANG.__getitem__, default="nein")
+    ueber_b = min((seiten_vertraeglich(y, "tri3") for y in fb if _form(y) == "dreieck"),
+                  key=_RANG.__getitem__, default="nein")
+    if _RANG[ueber_a] < _RANG["nein"] and _RANG[ueber_b] < _RANG["nein"]:
+        return "uebergang"
+    return "nein"
+
+
+#: Vertraeglichkeit je Paar von Volumentypen - daraus liest die Oberflaeche,
+#: welche angehakten Elemente zusammen gehen (Ausgrauen); ein Test prueft die
+#: Tabelle gegen die Rechnung (tests/test_vertraeglich.py).
+VERTRAEGLICH: dict = {(a, b): vertraeglich(a, b) for a in SEITENFORMEN for b in SEITENFORMEN}
+
+
 #: Zustaende der ebenen Elemente
 EBENE_ZUSTAENDE = {
     "spannung": "ebener Spannungszustand (Scheibe mit Dicke t)",

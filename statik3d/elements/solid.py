@@ -1209,6 +1209,74 @@ def _kreis_ohne_doppelte(folge, kn):
     return aus
 
 
+#: Kanten der quadratischen Typen in der Reihenfolge ihrer Kantenmitten
+#: (hex20: Mitten 8..19; pent15: 6..14; tet10: 4..9) - siehe hex20_N_dN,
+#: FLAECHEN["pent15"] und FLAECHEN["tet10"]
+_KANTEN_QUADRATISCH = {
+    "hex20": ((0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4),
+              (0, 4), (1, 5), (2, 6), (3, 7)),
+    "pent15": ((0, 1), (1, 2), (2, 0), (3, 4), (4, 5), (5, 3), (0, 3), (1, 4), (2, 5)),
+    "tet10": ((0, 1), (1, 2), (0, 2), (0, 3), (1, 3), (2, 3)),
+}
+#: quadratischer Typ -> (linearer Typ der Ecken, Eckenzahl); linear umgewandelt
+#: -> quadratisches Ziel (eine Pyramide hat kein quadratisches Gegenstueck)
+_QUADRATISCH_ENTARTUNG = {"hex20": ("hex8", 8), "pent15": ("pent6", 6)}
+_QUADRATISCH_ZIEL = {"pent6": "pent15", "tet4": "tet10"}
+
+
+def _entartung_quadratisch(typ, kn, X, grenze_volumen) -> tuple:
+    """entartung_aufloesen fuer hex20 und pent15 (VQ203, 23.09.2026): die
+    Ecken wie beim linearen Typ einordnen, dann jede Kante des Ziels (pent15,
+    tet10) auf ihre Kantenmitte abbilden. Streng: die Mitte einer
+    zusammengefallenen Kante muss derselbe Knoten wie ihre Ecke sein, und
+    Kanten, die auf dieselbe Zielkante fallen, muessen dieselbe Mitte haben -
+    sonst bliebe ein Knoten ohne Element (singulaer) oder die Kante haette
+    zwei Mitten. Gemessen am Kragarm: der entartete hex20 direkt gerechnet
+    -213 / -96 N/mm2 bei (4,1,2) / (8,2,4), als pent15 -4,7 / -0,02."""
+    lin, ne = _QUADRATISCH_ENTARTUNG[typ]
+    ecken = kn[:ne]
+    try:
+        V0 = abs(jacobi_volumen(typ, X)["V"])
+    except Exception:                        # noqa: BLE001
+        V0 = float("inf")
+    if len(set(ecken)) <= 3 or V0 <= grenze_volumen:
+        return "null", typ, kn, "zwei Knoten des Elements sind derselbe, kein Volumen"
+    art, lin_typ, lin_kn, grund = entartung_aufloesen(lin, ecken, X[:ne], grenze_volumen)
+    if art == "gut":
+        return "fehler", typ, kn, ("zusammenfallende Kantenmitten bei getrennten Ecken "
+                                   f"(Volumen {V0:.3g} m³)")
+    if art != "umwandeln" or lin_typ not in _QUADRATISCH_ZIEL:
+        return "fehler", typ, kn, (f"zusammenfallende Knoten, keine quadratische Umwandlung "
+                                   f"({grund or lin_typ}; Volumen {V0:.3g} m³)")
+    ziel = _QUADRATISCH_ZIEL[lin_typ]
+    # Kante (Ecke, Ecke) -> Mitten, aus den Kanten des entarteten Elements
+    mitte: dict = {}
+    for k, (a, b) in enumerate(_KANTEN_QUADRATISCH[typ]):
+        m = kn[ne + k]
+        if kn[a] == kn[b]:
+            if m != kn[a]:
+                return "fehler", typ, kn, ("die Mitte einer zusammengefallenen Kante ist ein "
+                                           f"eigener Knoten ({m + 1}) - er hinge an keinem Element")
+            continue
+        mitte.setdefault(frozenset((kn[a], kn[b])), set()).add(m)
+    neu = list(lin_kn)
+    for a, b in _KANTEN_QUADRATISCH[ziel]:
+        ms = mitte.get(frozenset((lin_kn[a], lin_kn[b])), set())
+        if len(ms) != 1:
+            return "fehler", typ, kn, (f"die Kante {lin_kn[a] + 1}–{lin_kn[b] + 1} des {ziel} hat "
+                                       f"{'keine' if not ms else 'mehrere'} Kantenmitte(n)")
+        neu.append(next(iter(ms)))
+    if set(neu) != set(kn):
+        return "fehler", typ, kn, "nach der Umwandlung bliebe ein Knoten ohne Element"
+    lage = {k: X[i] for i, k in enumerate(kn)}
+    d = jacobi_volumen(ziel, np.array([lage[k] for k in neu]))
+    if d["V"] <= 0.0 or d["det_min"] < -1e-12 * max(abs(d["det_max"]), 1e-300) \
+            or abs(d["V"] - V0) > 1e-6 * V0:
+        return "fehler", typ, kn, (f"zusammenfallende Knoten, die Umwandlung in {ziel} trifft das "
+                                   f"Volumen nicht ({d['V']:.3g} statt {V0:.3g} m³)")
+    return "umwandeln", ziel, neu, f"{typ} mit zusammenfallenden Knoten ist ein {ziel}"
+
+
 def entartung_aufloesen(typ, knoten, X, grenze_volumen: float = 1e-15) -> tuple:
     """Ein Volumenelement mit zusammenfallenden Knoten einordnen:
     (art, neuer_typ, neue_knoten, grund) mit art
@@ -1236,6 +1304,8 @@ def entartung_aufloesen(typ, knoten, X, grenze_volumen: float = 1e-15) -> tuple:
     einzeln = list(dict.fromkeys(kn))
     if len(einzeln) == len(kn):
         return "gut", typ, kn, ""
+    if typ in _QUADRATISCH_ENTARTUNG:
+        return _entartung_quadratisch(typ, kn, X, grenze_volumen)
     try:
         V0 = abs(jacobi_volumen(typ, X)["V"])
     except Exception:                        # noqa: BLE001 - dann aus den Ecken

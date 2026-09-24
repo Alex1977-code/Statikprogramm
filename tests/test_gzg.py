@@ -5,7 +5,8 @@ Geprueft wird gegen geschlossene Loesungen der Balkenbiegung - der
 Einfeldtraeger unter Gleichlast und unter Einzellast, der Kragarm - und gegen
 die Regeln der Grenzwertbildung (L/x, absolut, Ueberhoehung, Punktpaar).
 Dazu die Tabelle „Verformungen“ der Oberflaeche ohne Fenster: in welcher
-Spalte und Einheit eine Verdrehung steht (Befund FM8 vom 22.09.2026).
+Spalte und Einheit eine Verdrehung steht (Befund FM8 vom 22.09.2026) - und
+ohne das Hauptfenster gui.main zu laden (Befund B147 vom 23.09.2026).
 
 Aufruf:  python -m tests.test_gzg
 """
@@ -259,18 +260,112 @@ def test_modell_und_bericht():
                                                   "quasi-ständig")))
 
 
+def _methode_quelle(pfad, name):
+    """Quelltext der Methode ``name`` (in einer Klasse, vier Leerzeichen tief)
+    aus der Datei pfad - ohne sie zu importieren und ohne die ganze Datei zu
+    parsen (gui/main.py: 20630 Zeilen, ast.parse 0,3 bis 0,8 s am 23.09.2026)."""
+    import re
+    import textwrap
+    with open(pfad, encoding="utf-8") as f:
+        text = f.read()
+    m = re.search(rf"^    def {name}\(.*?(?=^    (?:def |@)|^\S|\Z)", text,
+                  re.S | re.M)
+    return textwrap.dedent(m.group(0)) if m else ""
+
+
+def _enthaelt(quelle, soll):
+    """Ob ein Ausdruck oder eine Anweisung der Quelle genau ``soll`` lautet
+    (nach ast.unparse, also ohne Ruecksicht auf Zeilenumbruch und Leerraum)."""
+    import ast
+    try:
+        baum = ast.parse(quelle)
+    except SyntaxError:
+        return False
+    return any(isinstance(n, (ast.expr, ast.stmt)) and ast.unparse(n) == soll
+               for n in ast.walk(baum))
+
+
+def _spalten_der_tabelle(quelle, attr):
+    """Womit ``self.<attr>`` in der Quelle angelegt wird, je Zuweisung (nach
+    ast.unparse): bei ``... = <x>.Datentabelle(...)`` die Spaltenangabe
+    (erstes Argument oder ``spalten=``), sonst die ganze rechte Seite.
+
+    Gebraucht, weil die Spalten einer Datentabelle beim Anlegen festliegen:
+    MainWindow._fill ruft fuer sie nur ``setzen(rows)``. Dass gzg_spalten
+    gzg_tabelle.spalten() liefert, sagt darum noch nicht, mit welchen Spalten
+    tbl_gzg angelegt wird: mit ``self.gzg_spalten()[:-1]`` beim Anlegen blieb
+    die Suite 50/50 (gemessen am 24.09.2026, vor dieser Pruefung)."""
+    import ast
+    try:
+        baum = ast.parse(quelle)
+    except SyntaxError:
+        return []
+    ergebnis = []
+    for n in ast.walk(baum):
+        if isinstance(n, ast.Assign):
+            ziele = n.targets
+        elif isinstance(n, ast.AnnAssign):
+            ziele = [n.target]
+        else:
+            continue
+        if n.value is None or not any(ast.unparse(z) == f"self.{attr}"
+                                      for z in ziele):
+            continue
+        wert = n.value
+        if (isinstance(wert, ast.Call)
+                and ast.unparse(wert.func).rsplit(".", 1)[-1] == "Datentabelle"):
+            arg = (wert.args[0] if wert.args else
+                   next((k.value for k in wert.keywords if k.arg == "spalten"),
+                        None))
+            ergebnis.append(ast.unparse(arg) if arg is not None else "")
+        else:
+            ergebnis.append(ast.unparse(wert))
+    return ergebnis
+
+
 def test_verdrehung_in_der_tabelle():
     """Befund FM8 (22.09.2026): eine Verdrehung stand in mrad unter dem Kopf
     „Wert [mm]“, und die Einheitenwahl „cm“ nahm sie zusaetzlich mit 0,1 mal.
     Die Oberflaechenpruefung hielt nur die Gegenrichtung (Durchbiegung nicht
-    in der mrad-Spalte). Hier ohne Fenster: die Zeilen kommen aus
-    MainWindow.refresh_verformungen mit einer Attrappe fuer self, Kopf und
-    Einheitenumstellung aus dem Tabellenmodell mit den Spalten der Oberflaeche.
+    in der mrad-Spalte). Hier ohne Fenster: Zeilen und Spalten kommen aus
+    gui/gzg_tabelle.py, Kopf und Einheitenumstellung aus dem Tabellenmodell.
+
+    Befund B147 (23.09.2026): bis dahin holte die Pruefung beides aus
+    MainWindow und lud damit gui.main samt pyvista, pyvistaqt und VTK - schon
+    ``from statik3d.gui.tabellen import ...`` tat das ueber gui/__init__.py.
+    Der Import machte den groessten Teil der Suitendauer aus. Darum prueft
+    sie jetzt, dass gui.main nicht geladen ist, und am Quelltext von
+    gui/main.py (ohne Import): _build_ergebnistabellen legt tbl_gzg genau
+    einmal an, mit gzg_spalten() als Spalten; gzg_spalten gibt
+    gzg_tabelle.spalten() zurueck; refresh_verformungen fuellt tbl_gzg mit
+    gzg_tabelle.zeilen(self.model, self.analysis). Das Fenster selbst
+    oeffnet sie nicht; die gefuellte tbl_gzg sieht nur test_gui_smoke.
     """
-    import types
     from statik3d.einheiten import Einheiten
-    from statik3d.gui.main import MainWindow
+    from statik3d.gui import gzg_tabelle
     from statik3d.gui.tabellen import TabellenModell
+
+    pfad = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "statik3d", "gui", "main.py")
+    soll_z = "self._fill(self.tbl_gzg, gzg_tabelle.zeilen(self.model, self.analysis))"
+    check("MainWindow.refresh_verformungen füllt die Tabelle mit gzg_tabelle.zeilen",
+          _enthaelt(_methode_quelle(pfad, "refresh_verformungen"), soll_z), soll_z)
+    soll_s = "return gzg_tabelle.spalten()"
+    check("MainWindow.gzg_spalten gibt gzg_tabelle.spalten zurück",
+          _enthaelt(_methode_quelle(pfad, "gzg_spalten"), soll_s), soll_s)
+    # Angelegt wird tbl_gzg in _build_ergebnistabellen; eine zweite Zuweisung
+    # anderswo in main.py wuerde die Tabelle ersetzen, darum auch die Zaehlung
+    # ueber die ganze Datei (ohne sie zu parsen, siehe _methode_quelle).
+    import re
+    with open(pfad, encoding="utf-8") as f:
+        zuweisungen = len(re.findall(r"^\s*self\.tbl_gzg\s*(?::[^=\n]*)?=(?!=)",
+                                     f.read(), re.M))
+    angelegt = _spalten_der_tabelle(
+        _methode_quelle(pfad, "_build_ergebnistabellen"), "tbl_gzg")
+    check("MainWindow legt die Tabelle mit gzg_spalten an (einmal)",
+          angelegt == ["self.gzg_spalten()"] and zuweisungen == 1,
+          f"Spalten beim Anlegen: {angelegt}, Zuweisungen in main.py: "
+          f"{zuweisungen}")
 
     m, ids, els = traeger(4)
     for e in els:
@@ -286,12 +381,9 @@ def test_verdrehung_in_der_tabelle():
     check("die Endverdrehung wird als Winkel gerechnet",
           cw.winkel and not cw.fehler and cw.wert > 0, cw.werttext())
 
-    zeilen = []
-    attrappe = types.SimpleNamespace(model=m, analysis=an, tbl_gzg=object(),
-                                     _fill=lambda _t, z: zeilen.extend(z))
-    MainWindow.refresh_verformungen(attrappe)
+    zeilen = gzg_tabelle.zeilen(m, an)
     z = {r[0]: r for r in zeilen}
-    spalten = MainWindow.gzg_spalten()
+    spalten = gzg_tabelle.spalten()
     check("jede Zeile hat so viele Felder wie die Tabelle Spalten",
           all(len(r) == len(spalten) for r in zeilen),
           f"{[len(r) for r in zeilen]} Felder, {len(spalten)} Spalten")
@@ -340,6 +432,13 @@ def test_verdrehung_in_der_tabelle():
     check("Zwischenablage, CSV und Excel führen die Verdrehung in mrad",
           export[4] == "" and gleich(export[5], cw.wert * 1e3, 1e-6),
           f"Spalte 4 = {export[4]!r}, Spalte 5 = {export[5]!r}")
+    # Erst am Ende: auch Kopf, Anzeige und Export duerfen gui.main nicht
+    # nachladen. Die Suite laeuft unter run_all in einem eigenen Prozess.
+    geladen = [n for n in ("statik3d.gui.main", "pyvistaqt", "pyvista")
+               if n in sys.modules]
+    check("die Tabellenprüfung lädt das Hauptfenster nicht (gui.main)",
+          "statik3d.gui.main" not in sys.modules,
+          f"geladen: {', '.join(geladen) or 'keins davon'}")
 
 
 def main():

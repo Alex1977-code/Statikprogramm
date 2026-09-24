@@ -27,10 +27,14 @@ innerhalb eines Teils: dort liegen Knoten absichtlich aufeinander (die
 Seiten einer Kontaktfuge). Namen: was es im Ziel schon gibt, bekommt einen
 eindeutigen neuen Namen (``S1`` -> ``S1_2``), und jeder Verweis der Quelle
 folgt ihm - auch die Gruppe der Elemente (sie nennt den Koerper) und die
-Zustaende der Ermuedungslasten, soweit sie Kombinationen sind. Stellungen
+Zustaende der Ermuedungslasten, soweit sie Kombinationen sind. Koerper- und
+Flaechennamen gelten auch dann als vergeben, wenn im Ziel nur eine
+Elementgruppe so heisst. Stellungen
 gehen nicht mit; nennt eine Situation der Quelle eine, die das Ziel unter
 demselben Namen hat, zeigt sie auf einen neuen Namen, den die
-Modellpruefung als unbekannt meldet (``_stellungsverweise``).
+Modellpruefung als unbekannt meldet (``_stellungsverweise``, auch bei einer
+Stellung namens 'Grundstellung': von ihr wirken in einer Situation die
+Abschaltungen, und die Warnung sagt, dass nur diese anzulegen sind).
 Werkstoffe, Querschnitte, Dicken, Kombinationen und Ermuedungslasten mit
 gleichem Namen **und** gleichem Inhalt werden nicht doppelt angelegt.
 Lastfaelle gleichen Namens werden wie bisher zusammengelegt; weichen ihre
@@ -45,12 +49,13 @@ from dataclasses import asdict, is_dataclass
 
 import numpy as np
 
-from ..model import Model, ACTION_CATEGORIES
+from ..model import Model, ACTION_CATEGORIES, tetp_kantenmitten_gelesen
 from . import _common as C
 
 #: Uebertragene Schluessel von Model.to_dict() -> Bezeichnung im Protokoll
 UEBERTRAGEN: dict[str, str] = {
     "nodes": "Knoten", "elements": "Elemente",
+    "tetp_kantenmitten": "gekrümmte Kanten (Tetraeder mit Ordnung p)",
     "materials": "Werkstoffe", "sections": "Querschnitte", "shells": "Flächendicken",
     "federn": "Federeigenschaften", "grenzschichten": "Grenzschichteigenschaften",
     "supports": "Knotenlager", "line_supports": "Linienlager",
@@ -105,6 +110,18 @@ NICHT_UEBERTRAGEN: dict[str, tuple[str, str]] = {
                    "Gruppenangabe die Knoten dieser Elementgruppen) - im Ziel neu anlegen; "
                    "Situationen, die eine Stellung nennen, meldet die Modellprüfung"),
 }
+
+#: Einen eigenen Zusatz zur Warnung fuer eine Stellung namens 'Grundstellung'
+#: gibt es nicht mehr: seit acfd1c4 (Mangel zu B108) wendet
+#: situationen.situationsmodell eine echte Stellung dieses Namens ganz an -
+#: Lage, Lager, Gelenke und Abschaltungen wie jede andere. Unter dem neuen
+#: Namen ist also die ganze Stellung anzulegen, wie die Warnung allgemein
+#: sagt. Bis dahin wirkten von ihr nur die Abschaltungen, und der Zusatz
+#: (B076) riet, nur sie anzulegen; gemessen am 24.09.2026 (Rahmen 'frame',
+#: Stellung hebt um 1,0 m und schaltet den rechten Stiel ab, 10 kN
+#: waagerecht) jetzt allein |u| = 12,5294 mm, ganz angelegt ebenso, nur die
+#: Abschaltung angelegt 3,8300 mm (tests.test_importers,
+#: test_json_anhaengen_stellung_grundstellung).
 
 #: Die Lastlisten eines Lastfalls (Schluessel von LoadCase.to_dict())
 LASTLISTEN = ("nodal_loads", "beam_loads", "face_loads", "temp_loads", "geometrielasten",
@@ -257,20 +274,10 @@ class _Anhang:
         # stand weiter auf "ausgefuehrt" - fugen.kontaktfuge_ausfuehren lehnt
         # ein neues Trennen dann ab ("schon ausgeführt").
         # Jetzt schliesst nur die Quelle an das Ziel an.
-        n, unklar = C.anschluss_zusammenfuehren(self.z, self.base, tol)
-        if n:
-            C.say(self.log, f"{n} Knoten der Quelle lagen auf Knoten des Ziels und "
-                            "wurden zusammengeführt")
-        if unklar:
-            x, y, z = unklar[0]
-            C.warn(self.log,
-                   f"An {len(unklar)} Stelle{'' if len(unklar) == 1 else 'n'} liegen in "
-                   "Ziel oder Quelle schon mehrere Knoten aufeinander (etwa die beiden "
-                   "Seiten einer Kontaktfuge), und ein Knoten des anderen Teils liegt "
-                   "dazu. Dort wurde nichts "
-                   "zusammengeführt, weil nicht eindeutig ist, welcher Knoten anschließen "
-                   f"soll - die erste bei ({x:g}, {y:g}, {z:g}) m. Bitte dort prüfen, ob "
-                   "Ziel und Quelle verbunden sein sollen.")
+        # log: treffen zwei verschiedene gekruemmte Kantenmitten auf eine
+        # Kante, gilt die des Ziels - und das Protokoll sagt es
+        n, unklar = C.anschluss_zusammenfuehren(self.z, self.base, tol, log=self.log)
+        C.anschluss_melden(self.log, n, unklar, "Quelle")
 
     def _namen(self) -> None:
         z, q = self.z, self.q
@@ -278,12 +285,24 @@ class _Anhang:
             zd, qd = getattr(z, art), getattr(q, art)
             self.namen_vergeben(art, zd, list(qd),
                                 lambda n, zd=zd, qd=qd: _inhalt(zd[n]) == _inhalt(qd[n]))
+        # Die Elemente eines Koerpers oder einer Flaeche tragen deren Namen als
+        # Gruppe (_netz), und fugen.py loest ueber die Gruppe. Also gilt ein
+        # Name auch dann als vergeben, wenn im Ziel nur eine Elementgruppe so
+        # heisst, ohne Koerper oder Flaeche (etwa ein DXF-Layer). Gemessen vor
+        # dieser Zeile (23.09.2026): Zielbloecke mit der Gruppe 'V1' links an
+        # einer Quelle mit Koerpern V1/V2 und Fuge KB1 auf V1 - KB1 haengte
+        # auch den Zielblock um (Elemente [0, 2] statt [2]), und die beiden
+        # Zielbloecke teilten danach 2 statt 4 Knoten, ohne Meldung.
+        gruppen_z = {str(e.group) for e in z.elements if e.group}
         for art in ("lines", "flaechen", "koerper", "members", "hinges", "situationen",
                     "joints", "verformungsgrenzen", "beulfelder", "volumenbereiche",
                     "lasteinleitungen", "subsysteme", "layer", "unterlagen",
                     "wasserdruecke", "winde", "schwingungen", "schweissnaehte",
                     "bemassungen"):
-            self.namen_vergeben(art, getattr(z, art) or {}, list(getattr(q, art) or {}))
+            vorhanden = set(getattr(z, art) or {})
+            if art in ("flaechen", "koerper"):
+                vorhanden |= gruppen_z
+            self.namen_vergeben(art, vorhanden, list(getattr(q, art) or {}))
         # Fugen: Kontaktbedingungen und Kontaktpaare teilen sich die Namen -
         # ein Uebermass, ein Spaltelement und eine Kopplung nennen die Fuge
         # beim Namen, gleich ob es eine Bedingung dazu gibt.
@@ -312,7 +331,8 @@ class _Anhang:
     def _stellungsverweise(self) -> None:
         """Stellungen gehen nicht mit (:data:`NICHT_UEBERTRAGEN`). Nennt eine
         Situation der Quelle eine Stellung, die das Ziel unter demselben Namen
-        hat, bekommt der Verweis einen neuen Namen, den es im Ziel nicht gibt.
+        hat, bekommt der Verweis einen neuen Namen, den es im Ziel nicht gibt -
+        auch der Name GRUNDSTELLUNG (siehe den Kommentar in der Schleife).
 
         Warum: sonst loeste ``Model.stellung`` ihn still auf die Stellung des
         Ziels auf, und ``Model.check`` meldete nichts (es prueft nur, ob der
@@ -344,7 +364,18 @@ class _Anhang:
                   | {str(getattr(s, "name", "")) for s in (q.stellungen or [])}
                   | set(genannt))
         for n in genannt:
-            # dieselbe Aufloesung wie beim Rechnen (Model.stellung)
+            # Aufgeloest wird wie in Model.aktive_elemente (Model.stellung),
+            # ohne Ausnahme fuer GRUNDSTELLUNG: hat das Ziel eine Stellung
+            # dieses Namens, wenden situationen.situationsmodell und
+            # Model.aktive_elemente sie ganz an (Model.stellung_unbewegt,
+            # seit acfd1c4). Bliebe der
+            # Verweis stehen, rechnete die Situation still mit der Abschaltung
+            # der gleichnamigen Stellung des Ziels. Gemessen am 24.09.2026 am
+            # Stand 159edab, der den Namen ausnahm: Kragarm aus HEB 300 mit
+            # Stuetzstab, die Stellung 'Grundstellung' der Quelle schaltet den
+            # Stuetzstab ab, das Ziel hat eine leere 'Grundstellung'; allein
+            # uz = -4,1412 mm, angehaengt -0,0064 mm, ohne Meldung. Was unter
+            # dem neuen Namen anzulegen ist, sagt die Warnung in _melden.
             if z.stellung(n) is not None:
                 neu = C.unique_name(belegt, n)
                 belegt.add(neu)
@@ -428,6 +459,12 @@ class _Anhang:
         # anderen Koerpers (gemessen 23.09.2026: allein unten geloest,
         # angehaengt oben). Wie transformieren.kopieren: Koerper vor Flaeche.
         gruppen = {**self.umbenannt.get("flaechen", {}), **self.umbenannt.get("koerper", {})}
+        # Kantenmitten des Ziels: nur, was ein tetp-Element des Ziels liest -
+        # und zwar bevor die Elemente der Quelle dazukommen. Ein verwaister
+        # Eintrag (netzknoten_loeschen fuehrt sie nicht mit) traf sonst mit
+        # seinen Nummern die Kante eines angehaengten Elements und kruemmte
+        # es (siehe model.tetp_kantenmitten_gelesen)
+        km_z = tetp_kantenmitten_gelesen(getattr(z, "tetp_kantenmitten", None), z.elements)
         sec: dict = {}
         woelb = False
         for e in q.elements:
@@ -455,6 +492,15 @@ class _Anhang:
         if woelb:
             # wie add_element: der Zwischenspeicher der Woelbknoten gilt nicht mehr
             z._woelb_version = getattr(z, "_woelb_version", 0) + 1
+        # Die gekruemmte Geometrie der tetp-Elemente haengt an Knotennummern:
+        # mit demselben Versatz wie die Elemente, von der Quelle ebenso nur,
+        # was eines ihrer tetp-Elemente liest. Das Zusammenfuehren danach
+        # haengt sie um (_common._kantenmitten_umhaengen).
+        km_q = tetp_kantenmitten_gelesen(getattr(q, "tetp_kantenmitten", None), q.elements)
+        for (a, b), p in km_q.items():
+            km_z[(int(a) + base, int(b) + base)] = np.array(p, dtype=float)
+        z.tetp_kantenmitten = km_z
+        self.n_kantenmitten = len(km_q)          # fuer das Protokoll: was mitkam
 
     def _lager(self) -> None:
         z, q = self.z, self.q
@@ -804,7 +850,13 @@ class _Anhang:
         z, q, log = self.z, self.q, self.log
         teile = []
         for key, text in UEBERTRAGEN.items():
-            n = q.nn if key == "nodes" else _anzahl(getattr(q, key, None))
+            if key == "nodes":
+                n = q.nn
+            elif key == "tetp_kantenmitten":
+                # nur, was ein tetp-Element der Quelle liest, kam mit (_netz)
+                n = getattr(self, "n_kantenmitten", 0)
+            else:
+                n = _anzahl(getattr(q, key, None))
             n -= len(self.gleich.get(key, []))
             if n:
                 teile.append(f"{text} {n}")
@@ -840,7 +892,8 @@ class _Anhang:
             for name, s in q.situationen.items():
                 if s.stellung in self.stellungsverweis:
                     je.setdefault(s.stellung, []).append(self.neu("situationen", name))
-            teile = [f"Situation {', '.join(repr(x) for x in sits)}: Stellung '{alt}' → "
+            teile = [f"Situation{'en' if len(sits) > 1 else ''} "
+                     f"{', '.join(repr(x) for x in sits)}: Stellung '{alt}' → "
                      f"'{self.stellungsverweis[alt]}'" for alt, sits in je.items()]
             C.warn(log, "Situationen der Quelle nennen eine Stellung, die es im Ziel unter "
                         "demselben Namen gibt. Stellungen werden nicht übertragen; damit diese "

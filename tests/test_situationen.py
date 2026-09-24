@@ -143,6 +143,169 @@ def test_stellung():
     check("unbekannte Stellung ist ein FEHLER", any("gibt es nicht" in x for x in m.check()))
 
 
+def test_stellung_texte_nennen_knotenlager():
+    """Ohne Gruppen bewegt eine Stellung alle Knoten ohne Knotenlager - auch
+    die auf Linien- und Flaechenlagern (Stellung._bewegte_knoten haelt nur die
+    Knoten aus m.supports fest; test_importers.test_json_anhaengen_stellung_
+    protokoll haelt das als gewollt fest). Die Beschriftung im Stellungsdialog
+    ("Gruppen (leer = alles ohne Lager)"), der Docstring von Stellung ("leer =
+    alle Knoten, die nicht gelagert sind") und die Zeile Verdrehung im
+    Benutzerhandbuch ("bewegt sind alle nicht gelagerten Knoten") sagten bis
+    zum 23.09.2026 etwas anderes (Befund B059). Gemessen am 23.09.2026 am
+    Beispiel 'frame' (17 Knoten, Knotenlager an 0 und 5), Verschiebung 1 m in
+    z: ein starres Linienlager an den Knoten 1 und 2 und ein Flaechenlager an
+    3 und 4 - alle vier um 1,0 m verschoben, 15 von 17 Knoten bewegt.
+    Geprueft wird zuerst das Verhalten (damit die Texte an ihm haengen), dann
+    die drei Texte."""
+    from statik3d import examples_lib
+    from statik3d.model import LineSupport, SurfaceSupport, DofBehaviour
+    from statik3d.situationen import situationsmodell
+
+    m = examples_lib.build_example("frame")
+    fest = sorted({s.node for s in m.supports})
+    frei = [i for i in range(m.nn) if i not in fest]
+    auf_linie, auf_flaeche = frei[:2], frei[2:4]
+    starr = {k: DofBehaviour("rigid") for k in range(3)}
+    m.line_supports.append(LineSupport("LL", nodes=auf_linie, behaviour=dict(starr)))
+    m.surface_supports.append(SurfaceSupport("FL", nodes=auf_flaeche, areas=[1.0, 1.0],
+                                             behaviour=dict(starr)))
+    m.stellungen.append(Stellung("Offen", verschiebung=(0.0, 0.0, 1.0)))
+    m.situationen["S"] = Situation("S", stellung="Offen")
+    ms, _a, _log = situationsmodell(m, "S")
+    dz = np.asarray(ms.nodes)[:, 2] - np.asarray(m.nodes)[:, 2]
+    bewegt = np.abs(np.asarray(ms.nodes) - np.asarray(m.nodes)).max(axis=1) > 1e-12
+    check("ohne Gruppe: Knoten auf Linien- und Flächenlager um 1 m verschoben, "
+          "nur Knotenlager bleiben",
+          np.allclose(dz[auf_linie + auf_flaeche], 1.0) and not bewegt[fest].any()
+          and int(bewegt.sum()) == m.nn - len(fest),
+          f"Knotenlager an {fest}; dz Linienlager {dz[auf_linie].tolist()}, "
+          f"Flächenlager {dz[auf_flaeche].tolist()}; bewegt {int(bewegt.sum())} von {m.nn}")
+
+    def sagt_knotenlager(text):
+        # der Text muss das Knotenlager als das nennen, was festhaelt, und
+        # sagen, dass Linien- und Flaechenlager mitgehen; "nicht gelagert" /
+        # "ohne Lager" waere wieder die alte, falsche Aussage
+        t = " ".join((text or "").split())
+        return ("Knotenlager" in t and "Linien- und Flächenlager" in t
+                and "nicht gelagert" not in t and "ohne Lager" not in t)
+
+    doc = Stellung.__doc__ or ""
+    stueck = doc[doc.find("dreh_achse / dreh_punkt"):doc.find("dreh_gruppen: Elementgruppen")]
+    check("Docstring Stellung: leere dreh_gruppen = alle Knoten ohne Knotenlager",
+          bool(stueck) and sagt_knotenlager(stueck), " ".join(stueck.split()))
+
+    hb = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                      "docs", "Benutzerhandbuch.md")
+    with open(hb, encoding="utf-8") as f:
+        zeilen = [z for z in f if z.startswith("| Verdrehung [°], Drehachse, Punkt der Achse |")]
+    check("Benutzerhandbuch, Maske Stellung: Zeile Verdrehung nennt das Knotenlager",
+          len(zeilen) == 1 and sagt_knotenlager(zeilen[0]), " / ".join(z.strip() for z in zeilen))
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6 import QtWidgets
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])  # noqa: F841
+    from statik3d.gui.dialogs import StellungDialog
+    dlg = StellungDialog(stellung=Stellung("Offen"))
+    texte = [w.text() for w in dlg.findChildren(QtWidgets.QLabel) if w.text().startswith("Gruppen")]
+    dlg.deleteLater()
+    check("Stellungsdialog: Beschriftung Gruppen nennt das Knotenlager",
+          len(texte) == 1 and sagt_knotenlager(texte[0]), " / ".join(texte))
+
+
+class _Maskenrekorder:
+    """Statt masken.Maske (ein QFrame): merkt Titel und Felder; ok() ruft die
+    angeschlossenen Rueckrufe mit den Werten, wie „Übernehmen“."""
+    zuletzt = None
+
+    def __init__(self, titel, felder, **_kw):
+        import types
+        self.titel, self.felder = titel, felder
+        self._rueckrufe = {"angewendet": [], "abgebrochen": [], "geschlossen": []}
+        for n, liste in self._rueckrufe.items():
+            setattr(self, n, types.SimpleNamespace(connect=liste.append))
+        _Maskenrekorder.zuletzt = self
+
+    def feld(self, name):
+        return next((f for f in self.felder if f.name == name), None)
+
+    def werte(self) -> dict:
+        return {f.name: f.wert for f in self.felder}
+
+    def ok(self, w=None):
+        for cb in self._rueckrufe["angewendet"]:
+            cb(self.werte() if w is None else w)
+
+
+def test_situationsmaske_unbekannte_stellung():
+    """Befund B061 (23.09.2026): Nannte eine Situation eine Stellung, die es
+    nicht gibt (etwa nach dem Anhaengen eines Modells: 'Offen_2'), zeigte
+    ihre Maske „– (unbewegt)“, und „Übernehmen“ ohne jede Aenderung setzte
+    stellung = ''. Die Meldung der Modellpruefung verschwand, und die
+    Situation rechnete unbewegt - gemessen am angehaengten Rahmen 1,7876
+    statt 4,7572 mm am Lastknoten. Hier: die echte Maske (_situationsmaske)
+    und das echte Übernehmen, die Maske als Rekorder statt des QFrame."""
+    import importlib
+    from unittest import mock
+    G = importlib.import_module("statik3d.gui.main")      # gui.main() verdeckt das Modul
+    m, ids, _sec = _balken(2, L)
+    m.stellungen.append(Stellung("Offen", verschiebung=(0.0, 0.0, 1.0)))
+    m.situationen["S"] = Situation("S", "Offen_2", [], "angehaengt")
+    m.add_load_case("LF-S", "Q", activate=False, situation="S")
+    m.load_node(ids[-1], Fz=-F, case="LF-S")
+    meldung = "Situation 'S': Stellung 'Offen_2' unbekannt"
+
+    def fenster():
+        s = mock.MagicMock()
+        s.model = m
+        for n in ("_situationsmaske", "_situation_uebernehmen"):
+            setattr(s, n, getattr(G.MainWindow, n).__get__(s))
+        s._namensliste = G.MainWindow._namensliste
+        return s
+
+    def texte(aufrufe):
+        return [str(c.args[0]) for c in aufrufe.call_args_list if c.args]
+
+    check("vorher: die Modellprüfung meldet die unbekannte Stellung",
+          any(meldung in x for x in m.check()), str(m.check()))
+    with mock.patch.object(G.msk, "Maske", _Maskenrekorder):
+        s = fenster()
+        s._situationsmaske(m.situationen["S"], False)
+        mk = _Maskenrekorder.zuletzt
+        f = mk.feld("stellung")
+        check("die Maske zeigt die fehlende Stellung als eigenen Eintrag, nicht „unbewegt“",
+              f is not None and "Offen_2" in str(f.wert) and "fehlt" in str(f.wert)
+              and f.wert in f.werte and not str(f.wert).startswith("–"),
+              "" if f is None else f"zeigt {f.wert!r}, Auswahl {f.werte}")
+        mk.ok()                         # Übernehmen, ohne etwas zu aendern
+        sit = m.situationen.get("S")
+        check("Übernehmen ohne Änderung: die Stellung bleibt 'Offen_2'",
+              sit is not None and sit.stellung == "Offen_2",
+              f"stellung {getattr(sit, 'stellung', None)!r}, error {texte(s.error)}")
+        check("… die Modellprüfung meldet sie weiter",
+              any(meldung in x for x in m.check()), str([x for x in m.check() if "FEHLER" in x]))
+        check("… und die Rückmeldung sagt, dass die Stellung fehlt",
+              any("Offen_2" in t and "gibt es nicht" in t for t in texte(s.info) + texte(s.error)),
+              str(texte(s.info) + texte(s.error)))
+        try:
+            solver.solve_cases(m, ["LF-S"], workers=1)
+            gerechnet = "gerechnet (unbewegt)"
+        except ValueError as ex:
+            gerechnet = str(ex)
+        check("… der Lastfall rechnet nicht still unbewegt, er bricht mit der Meldung ab",
+              "Offen_2" in gerechnet and "unbekannt" in gerechnet, gerechnet)
+
+        # Wer ausdruecklich „unbewegt“ waehlt, bekommt es
+        s = fenster()
+        s._situationsmaske(m.situationen["S"], False)
+        mk = _Maskenrekorder.zuletzt
+        w = mk.werte()
+        w["stellung"] = mk.feld("stellung").werte[0]
+        mk.ok(w)
+        check("ausdrücklich „– (unbewegt)“ gewählt: Stellung leer, keine Meldung mehr",
+              m.situationen["S"].stellung == "" and not any(meldung in x for x in m.check()),
+              f"stellung {m.situationen['S'].stellung!r}, error {texte(s.error)}")
+
+
 def test_stellung_lage_und_wirkung():
     """Ausgangsstellung, Verschiebung, abgeschaltete Staebe, biegesteife
     Gelenke und Lager je Stellung - gegen geschlossene Loesungen."""
@@ -322,6 +485,167 @@ def test_kombinationen_je_situation():
     check("alle Kombinationen gerechnet", set(an.combinations) == set(m.combinations))
 
 
+def _balken_mit_rolle() -> tuple:
+    """Balken 2L, eingespannt, Rolle 'Rolle' am Ende; Stellung 'offen' baut
+    die Rolle ab. LF1 (Grundstellung) und LF-S (Situation 'offen') tragen
+    dieselbe Last in Balkenmitte."""
+    m, ids, sec = _balken(2)
+    m.supports.append(Support(node=ids[2], dofs=[2], name="Rolle"))
+    m.stellungen.append(Stellung("offen", 0.0, "Rolle abgebaut", lager_aus=["Rolle"]))
+    m.situationen["offen"] = Situation("offen", "offen")
+    for lf in ("LF1", "LF-S"):
+        m.add_load_case(lf, "G")
+        m.load_node(ids[1], Fz=-F, case=lf)
+    m.load_cases["LF-S"].situation = "offen"
+    return m, ids, sec
+
+
+def _situation_in_zusammenfassung(res):
+    """Der Wert der Zeile „Situation : …“ in res.summary(), sonst None.
+
+    Die Zusammenfassung ist, was Oberflaeche (Protokoll und Feld
+    „Zusammenfassung“), Kommandozeile und Webserver nach der Rechnung
+    zeigen; res.info['situation'] zeigen sie nicht."""
+    for z in res.summary().splitlines():
+        kopf, _, wert = z.partition(":")
+        if kopf.strip() == "Situation":
+            return wert.strip()
+    return None
+
+
+def test_einzelner_lastfall_in_seiner_situation():
+    """„Nur aktiver Lastfall“ (Oberflaeche), ``--analyse lastfall`` (cli) und
+    der Webserver rufen solve_static. Das baute sein System bis zum 23.09.2026
+    ohne die Situation des Lastfalls und rechnete ihn still in der
+    Grundstellung (Befund B123; Winkelrahmen mit abgebauter Stuetze uz in
+    Kragarmmitte -0,2470 statt -3,5971 mm wie solve_cases)."""
+    m, ids, sec = _balken_mit_rolle()
+    n1 = ids[1]
+    EI = E * sec.Iy
+    check("Modellpruefung ohne Beanstandung", not m.check(), str(m.check()))
+    rs = solver.solve_static(m, case="LF-S")
+    close("Lastfall in seiner Situation: Rolle abgebaut -> Kragarm w = PL³/3EI",
+          rs.u[n1, 2], -F * L ** 3 / (3 * EI), 1e-9, "m")
+    rc = solver.solve_cases(m, ["LF-S"])["LF-S"]
+    check("bitgleich mit solve_cases (Verschiebungen und Lagerkraefte)",
+          np.array_equal(rs.u, rc.u) and np.array_equal(rs.reactions, rc.reactions),
+          f"{rs.u[n1, 2]:.9e} gegen {rc.u[n1, 2]:.9e}")
+    check("Ergebnis nennt seine Situation", rs.info.get("situation") == "offen",
+          str(rs.info.get("situation")))
+    # Was der Anwender nach der Rechnung liest, ist die Zusammenfassung. Am
+    # Stand b118805 stand die Situation nur in info, das Benutzerhandbuch
+    # sagte aber „das Ergebnis nennt die Situation“ (Gegenpruefung 24.09.2026)
+    check("die Zusammenfassung nennt die Situation", _situation_in_zusammenfassung(rs) == "offen",
+          str(_situation_in_zusammenfassung(rs)))
+    # aktiver Lastfall wie in der Oberflaeche: solve_static(model, progress)
+    m.active_case = "LF-S"
+    zeilen: list = []
+    ra = solver.solve_static(m, lambda text, *a: zeilen.append(str(text)))
+    check("aktiver Lastfall ebenso in seiner Situation", np.array_equal(ra.u, rc.u),
+          f"{ra.u[n1, 2]:.9e} gegen {rc.u[n1, 2]:.9e}")
+    # die Zeile, die das Benutzerhandbuch nennt, wortgleich
+    check("der Fortschritt hat die Zeile „System gelöst – Situation offen“",
+          "System gelöst – Situation offen" in zeilen, str(zeilen[-3:]))
+    check("... und die Zusammenfassung des aktiven Lastfalls die Situation",
+          _situation_in_zusammenfassung(ra) == "offen", str(_situation_in_zusammenfassung(ra)))
+    r1 = solver.solve_static(m, case="LF1")
+    close("Lastfall der Grundstellung unveraendert: eingespannt-gestuetzt w = 7PL³/96EI",
+          r1.u[n1, 2], -7 * F * L ** 3 / (96 * EI), 1e-9, "m")
+    check("Grundstellung: keine Zeile „Situation“ in der Zusammenfassung",
+          _situation_in_zusammenfassung(r1) is None, str(_situation_in_zusammenfassung(r1)))
+    try:
+        solver.solve_static(m, case="all")
+        check("alle Lastfaelle ueber zwei Situationen werden abgewiesen", False, "lief durch")
+    except ValueError as ex:
+        check("alle Lastfaelle ueber zwei Situationen werden abgewiesen",
+              GRUNDSTELLUNG in str(ex) and "offen" in str(ex), str(ex))
+    del m.load_cases["LF1"]
+    m.active_case = "LF-S"
+    rl = solver.solve_static(m, case="all")
+    check("alle Lastfaelle einer Situation: in dieser Situation",
+          np.array_equal(rl.u, rc.u) and rl.info.get("situation") == "offen",
+          f"{rl.u[n1, 2]:.9e} {rl.info.get('situation')}")
+
+
+def test_knicken_in_seiner_situation():
+    """solve_buckling baute sein System ebenso ohne Situation: Grundzustand,
+    Steifigkeit und geometrische Steifigkeit stammten aus der Grundstellung.
+    Gerechnet gegen die Eulerfaelle einer Stuetze laengs x (acht Elemente,
+    schubstarr): Kopf seitlich gehalten (eingespannt-gelenkig, (kL)² =
+    20,1907) oder in der Situation frei (Kragstuetze, π²/4)."""
+    m, ids, sec = _balken(8, L)
+    kopf = ids[-1]
+    I = min(sec.Iy, sec.Iz)
+    P = 1.0e3
+    m.supports.append(Support(node=kopf, dofs=[1, 2], name="Kopf"))
+    m.stellungen.append(Stellung("frei", 0.0, "Kopf frei", lager_aus=["Kopf"]))
+    m.situationen["frei"] = Situation("frei", "frei")
+    for lf in ("D", "D-frei"):
+        m.add_load_case(lf, "G")
+        m.load_node(kopf, Fx=-P, case=lf)
+    m.load_cases["D-frei"].situation = "frei"
+    m.combinations["K"] = Combination("K", {"D-frei": 1.5}, "ULS", situation="frei")
+    check("Modellpruefung ohne Beanstandung", not m.check(), str(m.check()))
+    rg = solver.solve_buckling(m, 2, case="D")
+    close("Grundstellung: eingespannt-gelenkig N_cr = 20,1907 EI/L²",
+          rg.buckling_factors[0] * P, 4.4934094579 ** 2 * E * I / L ** 2, 1e-3, "N")
+    check("Grundstellung: keine Zeile „Situation“ in der Zusammenfassung",
+          _situation_in_zusammenfassung(rg) is None, str(_situation_in_zusammenfassung(rg)))
+    # wie in der Oberflaeche: mit Fortschritt, danach die Zusammenfassung
+    zeilen: list = []
+    rk = solver.solve_buckling(m, 2, lambda text, *a: zeilen.append(str(text)), case="D-frei")
+    close("Lastfall in der Situation: Kragstuetze N_cr = π²EI/(2L)²",
+          rk.buckling_factors[0] * P, math.pi ** 2 * E * I / (2 * L) ** 2, 1e-4, "N")
+    check("Knickergebnis nennt seine Situation", rk.info.get("situation") == "frei",
+          str(rk.info.get("situation")))
+    # Das Benutzerhandbuch sagt, wo die Zeile steht: beim Knicken vor
+    # „Verzweigungsproblem wird gelöst“, nicht am Schluss
+    gl = "System gelöst – Situation frei"
+    vz = "Verzweigungsproblem wird gelöst"
+    check("Knicken: „System gelöst – Situation frei“ vor „Verzweigungsproblem …“",
+          gl in zeilen and vz in zeilen and zeilen.index(gl) < zeilen.index(vz),
+          str(zeilen[-3:]))
+    check("Knicken: die Zusammenfassung nennt die Situation",
+          _situation_in_zusammenfassung(rk) == "frei", str(_situation_in_zusammenfassung(rk)))
+    rc = solver.solve_buckling(m, 2, combination="K")
+    close("Kombination in der Situation: 1,5 · P gegen π²EI/(2L)²",
+          rc.buckling_factors[0] * 1.5 * P, math.pi ** 2 * E * I / (2 * L) ** 2, 1e-4, "N")
+    check("Kombination: die Zusammenfassung nennt die Situation",
+          _situation_in_zusammenfassung(rc) == "frei", str(_situation_in_zusammenfassung(rc)))
+    # case="all" wie in solve_static: ueber zwei Situationen abgewiesen (am
+    # Stand b7659cb kam hier KeyError "Lastfall 'all' existiert nicht",
+    # gemessen 24.09.2026)
+    try:
+        solver.solve_buckling(m, 2, case="all")
+        check("Knicken ueber alle Lastfaelle zweier Situationen wird abgewiesen", False,
+              "lief durch")
+    except ValueError as ex:
+        check("Knicken ueber alle Lastfaelle zweier Situationen wird abgewiesen",
+              "verschiedenen Situationen" in str(ex), str(ex)[:80])
+    except Exception as ex:          # noqa: BLE001
+        check("Knicken ueber alle Lastfaelle zweier Situationen wird abgewiesen", False,
+              f"{type(ex).__name__}: {ex}"[:80])
+    # Abgeschaltete Elemente: die aeussere Haelfte eines Stabes 2L wirkt in
+    # der Situation nicht; ihre Knoten ausser dem ersten haben kein wirksames
+    # Element und werden festgehalten. Ginge sie mit ihrer Verformung in die
+    # geometrische Steifigkeit ein, bekaeme ihr erstes Element (Laenge L/4)
+    # die ganze Verkuerzung der Stuetze als Dehnung: N = +4P = +4000 N, das
+    # naechste 0 N. Gemessen 24.09.2026 (system.aktiv bei geometric_stiffness
+    # weggelassen, sechs Faktoren): [-59,798; -239,192; 10850,028; 27039,519;
+    # ...] statt [959,576; 3838,305; ...] - der betragskleinste wird negativ, und
+    # darum faellt die Pruefung unten durch (-5,98e4 statt 9,595e5 N); der
+    # kleinste positive steigt von 959,5 auf 10850.
+    m2, ids2, sec2 = _balken(8, 2 * L)
+    m2.situationen["kurz"] = Situation("kurz", "", [4, 5, 6, 7], "aeussere Haelfte aus")
+    m2.add_load_case("D", "G")
+    m2.load_node(ids2[4], Fx=-P, case="D")
+    m2.load_cases["D"].situation = "kurz"
+    r2 = solver.solve_buckling(m2, 2, case="D")
+    close("abgeschaltete Haelfte: Kragstuetze der Laenge L, N_cr = π²EI/(2L)²",
+          r2.buckling_factors[0] * P, math.pi ** 2 * E * min(sec2.Iy, sec2.Iz) / (2 * L) ** 2,
+          1e-4, "N")
+
+
 def test_abgeschalteter_stab_in_jeder_situation():
     """Member.aus (RFEM deaktiviert) wirkt in der Grundstellung und in jeder
     Situation: kein Beitrag, keine Last, Knoten festgehalten."""
@@ -348,9 +672,122 @@ def test_abgeschalteter_stab_in_jeder_situation():
           np.allclose(r.u[k0], 0.0) and np.allclose(r.u[k1], 0.0) and r.info.get("inaktiv") == [e_los])
 
 
+def test_stellung_grundstellung_ist_unbewegt():
+    """Befund B108: eine Situation mit stellung = GRUNDSTELLUNG.
+
+    situationsmodell und aktive_elemente rechnen sie als unbewegt mit allen
+    Elementen. Model.check meldete sie am Stand ec6448c (23.09.2026) aber als
+    "FEHLER: Situation 'grund': Stellung 'Grundstellung' unbekannt" - und
+    dieser FEHLER haelt die Kommandozeile mit Exit 2 und den Web-Rechenstart
+    an, obwohl die Rechnung LF1 und LF2 liefert. Solange keine Stellung so
+    heisst, bietet die Maske den Wert nicht an; er kommt ueber JSON,
+    Anhaengen oder die Web-API herein. Gibt es eine Stellung dieses Namens,
+    gilt sie (test_echte_stellung_namens_grundstellung).
+    """
+    import tempfile
+    from statik3d.cli import main as cli_main
+    from statik3d.situationen import situationsmodell
+    m, ids, sec = _balken(2)
+    n0, n1, n2 = ids
+    EI = E * sec.Iy
+    m.add_load_case("LF1", "G")
+    m.load_node(n2, Fz=-F, case="LF1")
+    m.add_load_case("LF2", "G")
+    m.load_node(n2, Fz=-F, case="LF2")
+    m.situationen["grund"] = Situation("grund", stellung=GRUNDSTELLUNG)
+    m.load_cases["LF2"].situation = "grund"
+    zeilen = [z for z in m.check() if "Stellung" in z or "Situation" in z]
+    check("Stellung 'Grundstellung': kein FEHLER in der Modellpruefung", not zeilen, "; ".join(zeilen))
+    ms, aktiv, log = situationsmodell(m, "grund")
+    check("… situationsmodell: das Original, alle Elemente aktiv", ms is m and aktiv is None, str(log))
+    an = solver.solve_all(m)
+    close("LF2 in 'grund' rechnet wie unbewegt: w = PL³/3EI", an.cases["LF2"].u[n2, 2],
+          -F * (2 * L) ** 3 / (3 * EI), 1e-9, "m")
+    tmp = tempfile.mkdtemp()
+    try:
+        quelle = os.path.join(tmp, "grund.json")
+        m.save(quelle)
+        rc = cli_main([quelle, "--still"])
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+    check("Kommandozeile rechnet (kein Exit 2)", rc == 0, f"rc = {rc}")
+    # Gegenprobe: eine wirklich unbekannte Stellung bleibt ein FEHLER
+    m.situationen["grund"].stellung = "gibt es nicht"
+    zeilen = [z for z in m.check() if "Stellung" in z]
+    check("Gegenprobe: unbekannte Stellung bleibt FEHLER",
+          any(z.startswith("FEHLER") and "gibt es nicht" in z for z in zeilen), "; ".join(zeilen))
+
+
+def test_echte_stellung_namens_grundstellung():
+    """Gibt es eine Stellung, die 'Grundstellung' heisst, rechnet eine
+    Situation, die sie nennt, mit ihr - Lage, Lager und abgeschaltete Staebe.
+
+    Die Maske Stellung prueft nur auf leeren und doppelten Namen, und der
+    RFEM-Import benennt Stellungen nach den Strukturmodifikationen - so ein
+    Modell entsteht also auch in der Oberflaeche. Die Kur zu B108
+    (Stand b72e754) nahm 'Grundstellung' aber immer als unbewegt: Gegenprobe
+    24.09.2026 (zwei Kragarme HEA 200, Stellung 'Grundstellung' schaltet
+    Stab B ab) - aktive_elemente alle True, kein Protokoll, w am Ende von B
+    -11,8131 mm statt 0,0 mm am Stand ec6448c; check() meldete nichts.
+
+    Hier wirken Stab M2 und die Rolle unter der Balkenmitte in der Stellung
+    nicht. Der Kragarm der Laenge L traegt die Last in der Mitte allein,
+    w = FL³/3EI. Rechnete die Situation unbewegt, hielte die Rolle den
+    Lastpunkt (w = 0); nur die Staebe abschalten, ohne die Stellung
+    anzuwenden (so situationsmodell am Stand ec6448c: es gab das Original
+    zurueck), gaebe ebenfalls w = 0.
+    """
+    from statik3d.model import Member
+    from statik3d.situationen import situationsmodell
+    m, ids, sec = _balken(2, 2 * L)               # Knoten 0, 1, 2 bei x = 0, L, 2L
+    n0, n1, n2 = ids
+    EI = E * sec.Iy
+    m.members["M1"] = Member("M1", [0])
+    m.members["M2"] = Member("M2", [1])
+    m.supports.append(Support(node=n1, dofs=[2], name="Rolle"))
+    m.stellungen.append(Stellung(GRUNDSTELLUNG, 0.0, "heisst wie die unbewegte",
+                                 staebe_aus=["M2"], lager_aus=["Rolle"]))
+    m.situationen["s"] = Situation("s", stellung=GRUNDSTELLUNG)
+    m.add_load_case("LF1", "G")
+    m.load_node(n1, Fz=-F, case="LF1")
+    m.load_cases["LF1"].situation = "s"
+    m.add_load_case("LF2", "G")                   # daneben unbewegt: die Rolle haelt
+    m.load_node(n1, Fz=-F, case="LF2")
+    check("aktive_elemente: die Stellung schaltet M2 ab", m.aktive_elemente("s").tolist() == [True, False],
+          str(m.aktive_elemente("s").tolist()))
+    ms, aktiv, log = situationsmodell(m, "s")
+    check("situationsmodell wendet die Stellung an (Kopie ohne Rolle, M2 aus)",
+          ms is not m and len(ms.supports) == 1 and len(m.supports) == 2
+          and aktiv is not None and aktiv.tolist() == [True, False]
+          and any("1 Elemente ohne Wirkung" in z for z in log), "; ".join(log))
+    zeilen = [z for z in m.check() if "Stellung" in z or "Situation" in z]
+    check("Modellpruefung: keine Zeile zu Stellung oder Situation", not zeilen, "; ".join(zeilen))
+    an = solver.solve_all(m)
+    r1 = an.cases["LF1"]
+    close("in der Stellung: Kragarm L, w(L) = FL³/3EI", r1.u[n1, 2], -F * L ** 3 / (3 * EI), 1e-9, "m")
+    check("… M2 ohne Wirkung, sein Endknoten festgehalten",
+          list(r1.info.get("inaktiv") or []) == [1] and abs(r1.u[n2, 2]) < 1e-12,
+          f"inaktiv {r1.info.get('inaktiv')}")
+    check("LF2 unbewegt: die Rolle haelt den Lastpunkt", abs(an.cases["LF2"].u[n1, 2]) < 1e-12,
+          f"w = {an.cases['LF2'].u[n1, 2]:.3e} m")
+    # Gegenprobe: ohne Stellung dieses Namens ist 'Grundstellung' wieder die
+    # unbewegte (Befund B108) - kein FEHLER, das Original, alles aktiv
+    m.stellungen = []
+    zeilen = [z for z in m.check() if "Stellung" in z or "Situation" in z]
+    ms, aktiv, log = situationsmodell(m, "s")
+    check("Gegenprobe ohne Stellung 'Grundstellung': unbewegt, kein FEHLER",
+          not zeilen and ms is m and aktiv is None and bool(m.aktive_elemente("s").all()),
+          "; ".join(zeilen))
+
+
 def main():
-    for t in (test_abgeschalteter_stab_in_jeder_situation, test_abgeschaltete_elemente, test_stellung, test_stellung_lage_und_wirkung,
-              test_speichern, test_subsystem, test_kombinationen_je_situation):
+    for t in (test_abgeschalteter_stab_in_jeder_situation, test_abgeschaltete_elemente, test_stellung,
+              test_situationsmaske_unbekannte_stellung, test_stellung_lage_und_wirkung,
+              test_stellung_texte_nennen_knotenlager,
+              test_speichern, test_subsystem, test_kombinationen_je_situation,
+              test_einzelner_lastfall_in_seiner_situation, test_knicken_in_seiner_situation,
+              test_stellung_grundstellung_ist_unbewegt, test_echte_stellung_namens_grundstellung):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

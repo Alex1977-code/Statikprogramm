@@ -447,12 +447,14 @@ def test_fehlerfaelle():
     except ValueError:
         check("Flächenelement wird abgewiesen", True)
 
-    # Nachweis ausgeschaltet
+    # Nachweis ausgeschaltet: gewollt nicht gefuehrt, kein Fehler (B058,
+    # Gesamturteil in test_ausgeschalteter_bereich_im_gesamturteil)
     m.add_volumenbereich("Aus", els, design=False)
     an = solver.solve_all(m, design=True)
     c = an.volumen.bereiche["Aus"]
-    check("ausgeschalteter Bereich wird nicht geführt",
-          c.status() == "nicht geführt" and "ausgeschaltet" in c.fehler, c.fehler)
+    check("ausgeschalteter Bereich heißt „ausgeschaltet“, nicht „nicht geführt“",
+          c.status() == "ausgeschaltet" and getattr(c, "ausgeschaltet", False)
+          and not c.fehler, f"{c.status()}, fehler „{c.fehler}“")
 
     # als singulaer gekennzeichnet: nur berichtet
     m2, els2, _s = zugkoerper()
@@ -543,6 +545,95 @@ def test_gesamturteil_reines_volumenmodell():
     check("Gegenprobe erfuellter Volumennachweis: 'Alle Nachweise erfüllt.', Klasse ok",
           util2 <= 1.0 and klasse2 == "ok" and text2.strip() == "Alle Nachweise erfüllt.",
           f"Ausnutzung {util2:.3f}, {klasse2}: {text2}")
+
+
+def test_ausgeschalteter_bereich_im_gesamturteil():
+    """Befund B058: ein Volumenbereich mit ausgeschaltetem Nachweis (Schalter
+    „Nachweis führen“ aus, ``design=False``) ist **gewollt** nicht geführt.
+
+    Ein Stab mit ``design=False`` faellt ganz aus den Nachweisen heraus
+    (ec3/design.check_members) und kippt das Gesamturteil nicht. Der
+    Volumenbereich trug dagegen ``fehler = "Nachweis für diesen Bereich
+    ausgeschaltet"`` und zaehlte damit wie ein Bereich, der nicht gefuehrt
+    werden **konnte**. Gemessen am Stand ec6448c (23.09.2026), Zugkoerper
+    100 x 100 mm, S355, N = 2500 kN: „Schaft“ allein -> „Alle Nachweise
+    erfüllt.“ (ok); „Schaft“ + „Aus“ -> „Alle **geführten** Nachweise erfüllt
+    – nicht geführt wurden: 1 Volumenbereiche“ (nok); „Aus“ allein ->
+    dieselbe Zeile, obwohl gar kein Nachweis lief.
+
+    Geprueft wird die Zeile im Bericht und die Zusammenfassung, dazu die
+    Gegenprobe: ein Bereich, dessen Nachweis nicht gefuehrt werden **kann**
+    (kein Werkstoff mit Streckgrenze), zaehlt weiter als nicht gefuehrt.
+    """
+    import pickle
+    import re
+    from statik3d.report import Report
+
+    def lauf(namen, ohne_fy=False):
+        m, els, _soll = zugkoerper(N=2500e3)
+        if ohne_fy:
+            # vier Elemente ohne Streckgrenze - E wie S355, die Rechnung bleibt gleich
+            m.add_material(Material("Ohne_fy", E=210e9, nu=0.3))
+            for i in els[:4]:
+                m.elements[i].mat = "Ohne_fy"
+        for n in namen:
+            auswahl = els[:4] if n == "Ohne" else (els[4:] if ohne_fy else els)
+            m.add_volumenbereich(n, auswahl, design=(n != "Aus"))
+        an = solver.solve_all(m, design=True)
+        html = Report(m, an).html()
+        zeilen = re.findall(r'<div class="status (ok|nok)">(.*?)</div>', html, re.S)
+        return an, html, zeilen
+
+    an, html, zeilen = lauf(["Schaft", "Aus"])
+    c = an.volumen.bereiche.get("Aus")
+    check("„Aus“ steht mit Status „ausgeschaltet“ im Ergebnis, ohne Fehler",
+          c is not None and c.status() == "ausgeschaltet" and not c.fehler,
+          f"{c.status() if c else '-'}, fehler „{c.fehler if c else ''}“")
+    check("Schaft + ausgeschalteter Bereich: „Alle Nachweise erfüllt.“, Klasse ok",
+          zeilen == [("ok", "Alle Nachweise erfüllt.")], str(zeilen))
+    check("... der ausgeschaltete Bereich ist keine offene Warnung",
+          "Volumenbereich Aus:" not in html, "keine Zeile „Volumenbereich Aus: …“")
+    check("... steht aber in der Übersicht des Berichts als ausgeschaltet, η „–“",
+          re.search(r"<td>Aus</td>(?:(?!</tr>).)*<td class=\"num\">–</td><td></td>"
+                    r"<td>ausgeschaltet</td>", html, re.S) is not None,
+          "Zeile „Aus … – ausgeschaltet“")
+    check("... und im Einzelnen mit dem Satz, dass er ausgeschaltet ist",
+          "Der Nachweis ist für diesen Bereich ausgeschaltet" in html)
+    s = an.volumen.summary()
+    check("Zusammenfassung: alle erfüllt, „Aus“ ausgeschaltet, nichts nicht geführt",
+          "alle erfüllt" in s and "1 ausgeschaltet: Aus" in s and "nicht geführt" not in s, s)
+
+    an2, _html2, zeilen2 = lauf(["Aus"])
+    klasse2, text2 = zeilen2[0] if zeilen2 else ("", "")
+    check("nur ausgeschalteter Bereich: „Es wurden keine Nachweise geführt …“",
+          len(zeilen2) == 1 and text2.startswith("Es wurden keine Nachweise geführt"),
+          f"{klasse2}: {text2}")
+    check("... und nicht „Alle geführten Nachweise erfüllt“", "geführten" not in text2, text2)
+    s2 = an2.volumen.summary()
+    check("Zusammenfassung ohne geführten Bereich: ausgeschaltet, nicht „nicht geführt“",
+          "1 ausgeschaltet: Aus" in s2 and "nicht geführt" not in s2
+          and "alle erfüllt" not in s2, s2)
+
+    # Gegenprobe: nicht fuehrbar (kein f_y) bleibt "nicht geführt" - und nur
+    # dieser Bereich wird gezaehlt, der ausgeschaltete nicht. Seit B118 in der
+    # Einzahl („1 Volumenbereich“; vorher „1 Volumenbereiche“).
+    an3, html3, zeilen3 = lauf(["Schaft", "Aus", "Ohne"], ohne_fy=True)
+    klasse3, text3 = zeilen3[0] if zeilen3 else ("", "")
+    check("Gegenprobe ohne f_y: „nicht geführt wurden: 1 Volumenbereich“, Klasse nok",
+          klasse3 == "nok" and "nicht geführt wurden: 1 Volumenbereich " in text3,
+          f"{klasse3}: {text3}")
+    s3 = an3.volumen.summary()
+    check("... mit Warnung; die Zusammenfassung nennt nur „Ohne“ als nicht geführt",
+          "Volumenbereich Ohne:" in html3 and "1 nicht geführt: Ohne" in s3, s3)
+
+    # Ergebnisdatei von vor der Kur (ergebnisse.py pickelt die Nachweise): dort
+    # steht der alte Fehlertext, das Feld ``ausgeschaltet`` fehlt
+    alt = V.VolumenCheck("Aus", fehler="Nachweis für diesen Bereich ausgeschaltet")
+    alt.__dict__.pop("ausgeschaltet", None)
+    neu = pickle.loads(pickle.dumps(alt))
+    check("alte Ergebnisdatei: der ausgeschaltete Bereich kommt als ausgeschaltet zurück",
+          neu.status() == "ausgeschaltet" and not neu.fehler,
+          f"{neu.status()}, fehler „{neu.fehler}“")
 
 
 def test_nachweis_nimmt_die_spannung_des_loesers():
@@ -740,7 +831,8 @@ def main():
               test_erzeugnisdicke_ist_angebbar, test_spannungsformeln, test_zugkoerper, test_randspannung,
               test_nachweis_nimmt_die_spannung_des_loesers, test_elementmittel,
               test_randspannung_geglaettet, test_randspannung_fliessend,
-              test_fehlerfaelle, test_bericht, test_gesamturteil_reines_volumenmodell):
+              test_fehlerfaelle, test_bericht, test_gesamturteil_reines_volumenmodell,
+              test_ausgeschalteter_bereich_im_gesamturteil):
         print()
         t()
     ok = sum(1 for _n, o in RESULTS if o)

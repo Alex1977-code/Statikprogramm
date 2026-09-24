@@ -411,8 +411,6 @@ def _rahmen():
     m.add_material(Material.steel("S355"))
     m.add_section(Section.from_profile("IPE 400"))
     m.add_section(Section.from_profile("HEB 300"))
-    m.add_section(Section.from_profile("L 100x100x10")
-                  if "L 100x100x10" in [] else Section.from_profile("HEB 300"))
     n0 = m.add_node(0, 0, 0)
     n1 = m.add_node(6, 0, 0)
     n2 = m.add_node(0, 0, 4)
@@ -544,6 +542,226 @@ def test_vorlagen():
                              bolt=Bolt("M24", "10.9", category="E"))
     check("vorgespannte Schraube mindert die Schwingbreite",
           a_vor.bolt_range_factor() < 0.3, f"{a_vor.bolt_range_factor():.2f}")
+
+
+def test_kopfplatte_vorschlagsreihe():
+    """Die Reihe, die das Benutzerhandbuch zum Kopfplattenvorschlag beschreibt:
+    IPE 400, V_z = 90 kN, M_y in 10-kNm-Schritten von 10 bis 700 kNm, N = 0
+    und N = -100 kN (Befunde B010 bis B013, nachgemessen 23.09.2026).
+
+    Der Text sagte „bessert nach, bis die Nachweise erfuellt sind" (ab 340 kNm
+    endet der Vorschlag aber mit eta > 1), liess die Streckgrenze bei der
+    Anfangsdicke weg, nannte keinen Anfang der Reihe (ab 10 kNm wechselt die
+    Schraube sechsmal, nicht fuenfmal) und liess „Druckflansch massgebend"
+    erst dort beginnen, wo eta > 1 wird (massgebend ist er schon bei
+    erfuellten Nachweisen)."""
+    from statik3d.joints.templates import EndPlate
+
+    def traeger(grade):
+        m = Model("Traeger")
+        m.add_material(Material.steel(grade))
+        m.add_section(Section.from_profile("IPE 400"))
+        e = m.add_element("beam", [m.add_node(0, 0, 0), m.add_node(6, 0, 0)], grade, "IPE 400")
+        return m, e
+
+    momente = [k * 10e3 for k in range(1, 71)]
+    # Anfangsvorschlag ohne Nachbessern: propose ruft improve immer auf, der
+    # Anfangsstand ist nur mit abgeschaltetem improve zu sehen
+    nachbessern = EndPlate.improve
+    EndPlate.improve = lambda self, rounds=14, **f: self
+    try:
+        anfang = {}
+        for grade in ("S235", "S355"):
+            m, e = traeger(grade)
+            for My in momente:
+                a = EndPlate.propose(m, elem=e, end=1, N=0.0, Vz=90e3, My=My)
+                anfang.setdefault((grade, a.bolt.size), set()).add(round(a.tp * 1e3, 3))
+        m, e = traeger("S355")
+        a90 = EndPlate.propose(m, elem=e, end=1, N=0.0, Vz=90e3, My=90e3)
+        j90 = a90.design(N=0.0, Vz=90e3, My=90e3)
+    finally:
+        EndPlate.improve = nachbessern
+
+    # B011: die Anfangsdicke folgt aus Schraube, Profil und Streckgrenze -
+    # nicht aus dem Moment (je Schraube ein Wert ueber die ganze Reihe)
+    check("Anfangsdicke: je Stahlsorte und Schraube ein Wert über 10 bis 700 kNm",
+          all(len(v) == 1 for v in anfang.values()),
+          str({f"{g} {s}": sorted(v) for (g, s), v in anfang.items() if len(v) != 1}))
+    dicke = {k: min(v) for k, v in anfang.items()}
+    soll = {"M16": (13, 11), "M20": (16, 13), "M24": (19, 16)}
+    check("Anfangsdicke: S235 dicker als S355 (M16/M20/M24: 13/16/19 gegen 11/13/16 mm)",
+          all(dicke.get(("S235", s)) == t235 and dicke.get(("S355", s)) == t355
+              for s, (t235, t355) in soll.items()),
+          ", ".join(f"{s}: {dicke.get(('S235', s))} / {dicke.get(('S355', s))} mm"
+                    for s in soll))
+
+    # Die Reihe mit Nachbessern (S355)
+    m, e = traeger("S355")
+    reihe = {}
+    for N in (0.0, -100e3):
+        zeilen = []
+        for My in momente:
+            a = EndPlate.propose(m, elem=e, end=1, N=N, Vz=90e3, My=My)
+            j = a.design(N=N, Vz=90e3, My=My)
+            zeilen.append((round(My / 1e3), a.bolt.size, round(a.tp * 1e3), j, a.hinweise))
+        reihe[N] = zeilen
+    r0, r1 = reihe[0.0], reihe[-100e3]
+
+    # B010: das Nachbessern endet am Druckflansch mit eta > 1 und Hinweis
+    for N, zeilen, ab, anzahl in ((0.0, r0, 340, 37), (-100e3, r1, 330, 38)):
+        offen = [z for z in zeilen if not z[3].ok]
+        check(f"N = {N / 1e3:.0f} kN: ab {ab} kNm erfüllt der Vorschlag die Nachweise nicht "
+              f"({anzahl} von 70)",
+              [z[0] for z in offen] == list(range(ab, 701, 10)) and len(offen) == anzahl,
+              f"{len(offen)} von 70, ab {offen[0][0] if offen else '-'} kNm")
+        check(f"N = {N / 1e3:.0f} kN: dort maßgebend der Druckflansch, mit Hinweis",
+              bool(offen) and all("Druckflansch" in z[3].massgebend
+                                  and any(h.startswith("Vorschlag erreicht eta") for h in z[4])
+                                  for z in offen),
+              str(sorted({z[3].massgebend for z in offen})))
+    close("N = 0: eta bei 700 kNm", r0[-1][3].eta, 2.099, 5e-4)
+
+    # B012: ab 10 kNm wechselt die Schraube sechsmal; der erste Wechsel
+    # (80 -> 90 kNm, M12 -> M16) kommt aus dem Nachbessern, das Blech bleibt
+    wechsel = [(a[0], b[0], a[1], b[1], a[2], b[2]) for a, b in zip(r0, r0[1:])
+               if a[1] != b[1]]
+    check("N = 0: sechs Schraubenwechsel ab 10 kNm",
+          [(w[0], w[1]) for w in wechsel]
+          == [(80, 90), (170, 180), (270, 280), (390, 400), (510, 520), (620, 630)],
+          "; ".join(f"{w[0]}->{w[1]}: {w[2]}->{w[3]}, {w[4]}->{w[5]} mm" for w in wechsel))
+    check("erster Wechsel M12 -> M16, Blech bleibt 10 mm",
+          bool(wechsel) and wechsel[0][2:] == ("M12", "M16", 10, 10), str(wechsel[:1]))
+    check("bei 90 kNm wählt der Vorschlag zuerst M12 (eta 1,019, Interaktion)",
+          a90.bolt.size == "M12" and 1.018 < j90.eta < 1.020
+          and "Interaktion" in j90.massgebend,
+          f"{a90.bolt.size}, eta = {j90.eta:.3f}, {j90.massgebend}")
+    check("an den zwei folgenden Wechseln wird das Blech dünner, an den drei letzten nicht",
+          [w[5] < w[4] for w in wechsel[1:]] == [True, True, False, False, False],
+          str([(w[4], w[5]) for w in wechsel[1:]]))
+    check("die Abmessungen des Textes (170, 180-210, 270, 280-320 kNm)",
+          [(z[1], z[2]) for z in r0 if z[0] in (170, 180, 210, 270, 280, 320)]
+          == [("M16", 15), ("M20", 13), ("M20", 13), ("M20", 19), ("M24", 16), ("M24", 16)],
+          str([(z[0], z[1], z[2]) for z in r0 if z[0] in (170, 180, 210, 270, 280, 320)]))
+    check("mit N = -100 kN bis 320 kNm dieselben Abmessungen",
+          [(z[1], z[2]) for z in r0[:32]] == [(z[1], z[2]) for z in r1[:32]])
+
+    # B013: der Druckflansch ist schon bei erfuellten Nachweisen massgebend -
+    # 340/330 kNm sind die Stellen, ab denen eta > 1 wird
+    for N, zeilen, ab, voll in ((0.0, r0, 330, 340), (-100e3, r1, 300, 330)):
+        df = [z[0] for z in zeilen if "Druckflansch" in z[3].massgebend]
+        ok_df = [(z[0], round(z[3].eta, 3)) for z in zeilen
+                 if "Druckflansch" in z[3].massgebend and z[3].ok]
+        check(f"N = {N / 1e3:.0f} kN: Druckflansch maßgebend ab {ab} kNm, erfüllt bis "
+              f"{voll - 10} kNm",
+              df == list(range(ab, 701, 10))
+              and [x[0] for x in ok_df] == list(range(ab, voll, 10))
+              and all(x[1] <= 1.0 for x in ok_df),
+              f"ab {df[0] if df else '-'} kNm; erfüllt dabei {ok_df}")
+
+
+def test_nachbessern_verlaengert_keine_naht():
+    """Das Benutzerhandbuch zaehlt auf, was der Dialog beim Nachbessern
+    aendert: Blech dicker, Schraube groesser, mehr Schrauben oder Reihen, Naht
+    dicker. Seine erste Fassung zu B010 sagte „Naht dicker bzw. laenger"
+    (Mangel der Gegenpruefung, 24.09.2026) - verlaengert wird keine Naht.
+
+    Eine Nahtlaenge als Feld hat nur das Knotenblech (l_weld), und nur
+    Gusset.improve verlaengert sie, beim geschweissten Blech. Gusset.propose
+    kehrt beim geschweissten Blech aber vor dem Nachbessern zurueck, und der
+    Dialog legt gar keins an: update_proposal (gui/dialogs.py) uebergibt nur
+    N, V_z, M_y und die Schraube. Gemessen 24.09.2026 an HEB 200 S355: mit
+    welded=True wird improve nie gerufen, l_weld = 100/398/626 mm bei
+    N = 200/800/2000 kN stammt allein aus der Formel in propose (eta 0,994
+    bis 0,999, massgebend die Kehlnaht)."""
+    from statik3d.joints import templates as T
+
+    m = Model("Diagonale")
+    m.add_material(Material.steel("S355"))
+    m.add_section(Section.from_profile("HEB 200"))
+    e = m.add_element("beam", [m.add_node(0, 0, 0), m.add_node(0, 0, 4)], "S355", "HEB 200")
+
+    gerufen = []
+    nachbessern = T.Gusset.improve
+
+    def spion(self, *a, **k):
+        gerufen.append(self.welded)
+        return nachbessern(self, *a, **k)
+
+    T.Gusset.improve = spion
+    try:
+        laengen = []
+        for N in (200e3, 800e3, 2000e3):
+            g = T.propose("diagonale", m, e, 1, N=N, welded=True)
+            laengen.append(round(g.l_weld * 1e3))
+        geschweisst_gerufen = list(gerufen)
+        gerufen.clear()
+        # der Weg des Dialogs: N, V_z, M_y und die Schraube
+        dialog = [T.propose("diagonale", m, e, 1, bolt=None, N=N, Vz=0.0, My=0.0)
+                  for N in (200e3, 800e3, 2000e3)]
+    finally:
+        T.Gusset.improve = nachbessern
+
+    check("geschweißtes Knotenblech: kein Nachbessern, Nahtlänge aus propose",
+          geschweisst_gerufen == [] and laengen == [100, 398, 626],
+          f"improve {len(geschweisst_gerufen)}-mal gerufen, l = {laengen} mm")
+    check("Dialogweg: Knotenblech geschraubt, nachgebessert ohne Naht",
+          all(not g.welded for g in dialog) and gerufen == [False, False, False],
+          f"welded {[g.welded for g in dialog]}, improve bei welded {gerufen}")
+
+
+def test_kopfplatte_ohne_scheinrippen():
+    """Befund B096 (23.09.2026): der Vorschlag der Kopfplatte setzte 2 Rippen,
+    die weder design() noch build() ansetzt - aus propose bei |M_y| > 0,6 f_y
+    W_el,y („Rippen über und unter dem Zugflansch“), aus improve bei
+    maßgebendem Druckflansch („Eine Druckrippe verteilt sie“). Gemessen am
+    IPE 400 (V_z = 90 kN, N = 0): Rippen ab 250 kNm, bei 700 kNm eta = 2,099
+    mit und ohne Rippen.
+
+    Verlangt: hat propose Rippen gesetzt, rechnet design mit und ohne sie
+    verschieden - oder der Vorschlag enthält keine. Bleibt der Druckflansch
+    des Trägers maßgebend, nennt der Hinweis das Profil als Ursache.
+    """
+    import copy
+    from statik3d.joints.templates import EndPlate
+    m, e_tr, _e_di = _rahmen()
+
+    def nachweise(t, **f):
+        return [(c.name, c.E, c.R) for c in t.design(**f).checks]
+
+    # 250 kNm deckt die Rippen aus propose ab. 700 kNm faengt zusaetzlich
+    # Rippen aus improve ab, falls sie dort wieder gesetzt wuerden: ohne
+    # Rippen aus propose erreicht improve dort den Druckflansch-Zweig. Am
+    # Stand ec6448c kamen die Rippen auch bei 700 kNm aus propose. improve
+    # setzte sie bei N = 0 und -100 kN, 100 bis 700 kNm nie, wohl aber bei
+    # N = -3000 kN mit M_y = 0, 50 und 100 kNm (gemessen 24.09.2026).
+    for My in (250e3, 700e3):
+        f = dict(N=0.0, Vz=90e3, My=My)
+        a = EndPlate.propose(m, elem=e_tr, end=1, **f)
+        ohne = copy.copy(a)
+        ohne.stiffeners = 0
+        check(f"{My / 1e3:.0f} kNm: Rippen des Vorschlags wirken im Nachweis",
+              a.stiffeners == 0 or nachweise(a, **f) != nachweise(ohne, **f),
+              f"{a.stiffeners} Rippen, eta = {a.design(**f).eta:.3f}")
+
+    f7 = dict(N=0.0, Vz=90e3, My=700e3)
+    a7 = EndPlate.propose(m, elem=e_tr, end=1, **f7)
+    j7 = a7.design(**f7)
+    # Voraussetzung, sonst prueft der Hinweis unten nichts
+    check("700 kNm: Druckflansch des Trägers bleibt maßgebend",
+          "Druckflansch" in j7.massgebend and not j7.ok,
+          f"eta = {j7.eta:.3f}, maßgebend {j7.massgebend}")
+    check("Hinweis nennt das Profil als Ursache und die Abhilfe",
+          any("Druckflansch des Trägers" in h and "Voute" in h for h in a7.hinweise),
+          " | ".join(h[:50] for h in a7.hinweise))
+
+    # Rippen aus einer aelteren Datei: sichtbar als nicht angesetzt
+    a7.stiffeners = 2
+    zeile = next((z.strip() for z in a7.describe().splitlines() if "Rippen, t =" in z), "")
+    check("Rippen aus älteren Dateien: Beschreibung sagt „nicht angesetzt“",
+          "nicht angesetzt" in zeile, zeile)
+    check("Rippen aus älteren Dateien: Kennwerte sagen „nicht angesetzt“",
+          any(k == "Rippen" and "nicht angesetzt" in v for k, v in a7.kennwerte()),
+          str([v for k, v in a7.kennwerte() if k == "Rippen"]))
 
 
 # --------------------------------------------------------------------------
@@ -887,11 +1105,176 @@ def test_gelenk_im_modell_und_bericht():
           "Momenten-Rotations-Kennlinien nach 6.3 sind nicht enthalten" not in html)
 
 
+# --------------------------------------------------------------------------
+# Ermuedung am Anschluss: Verlauf, Mindestzustand, Lastspielzahl, gamma_Ff
+# --------------------------------------------------------------------------
+def test_anschluss_ermuedungslasten():
+    """Befunde B094, B095, NB1, NB2 (Nebenbefunde vom 22./23.09.2026, am Stand
+    ec6448c gemessen am Hallenrahmen mit der Kopfplatte K1, Kran gegen LF1):
+
+    * B094: ein Verlauf (``folge``) wurde am Anschluss nicht gezaehlt, gelesen
+      wurde nur case_max - mit dem case_max der Maske D = 12,1718 (Kran gegen
+      null statt der Spanne, 6,0967), mit leerem case_max wie aus dem
+      RFEM-Import D = 0 und nur ein Hinweis; der Status urteilte allein nach eta;
+    * B095: ein benannter, aber nicht gerechneter Mindestzustand wurde still
+      zur Null (D = 12,1718 ohne Hinweis);
+    * NB1: cycles=None (globale Lastspielzahl, Vorgabe der Maske und des
+      Imports) ergab D = 0 ohne Hinweis;
+    * NB2: gamma_Ff wirkte nicht (D = 6,0967 bei 1,0 und bei 1,5).
+    Vorbild ist der Stabnachweis ec3.fatigue.check_fatigue.
+    """
+    from statik3d import examples_lib
+    from statik3d.model import FatigueLoad
+    from statik3d.joints import anschluss as A
+    from statik3d.joints.templates import propose
+
+    m = examples_lib.build_example("hall")
+    e_kopf = m.members["Riegel"].elements[0]
+    m.joints["K1"] = A.als_joint(propose("kopfplatte", m, e_kopf, end=0, N=-50e3,
+                                         Vz=150e3, My=300e3), "K1")
+    an = solver.solve_all(m, design=True, fatigue=False)
+    m.design.ermuedung_lastspiele = 2e6
+    m.design.gamma_Ff = 1.0
+    # kleine feste Schnittgroessen: Tragfaehigkeit < 1, damit der Status der
+    # Ermuedung sichtbar wird (mit den Kombinationen ist util = 1,0096)
+    klein = {"N": 0.0, "Vz": 10e3, "My": 20e3}
+
+    def nachweis(*lasten, fest=None):
+        m.fatigue_loads.clear()
+        for fl in lasten:
+            m.fatigue_loads[fl.name] = fl
+        m.joints["K1"].ermuedung = [fl.name for fl in lasten]
+        m.joints["K1"].kraefte = dict(fest or {})
+        return A.check_joints(m, an).joints["K1"]
+
+    def fehlend(c):
+        return list(getattr(c, "fehlende_lasten", None) or [])
+
+    def gleich(a, b):
+        return b > 0 and abs(a - b) <= 1e-9 * b
+
+    zwei = nachweis(FatigueLoad("E", case_max="Kran", case_min="LF1", cycles=2e6))
+    check("zwei Zustände Kran gegen LF1: Schädigung am Anschluss", zwei.D > 1.0,
+          f"D = {zwei.D:.6g}")
+
+    # -- B094: der Verlauf wird gezaehlt -------------------------------------
+    faelle = [
+        ("wie der RFEM-Import (case_max leer, Wiederholungen global)",
+         FatigueLoad("E", folge=["Kran", "LF1"], zaehlung="spanne", wiederholungen=None)),
+        ("wie die Maske (case_max Kran, cycles 2e6)",
+         FatigueLoad("E", case_max="Kran", cycles=2e6, folge=["Kran", "LF1"],
+                     wiederholungen=2e6)),
+    ]
+    for text, fl in faelle:
+        v = nachweis(fl)
+        check(f"Verlauf {text}: D wie zwei Zustände",
+              gleich(v.D, zwei.D) and not fehlend(v)
+              and not [h for h in v.hinweise if "fehlt" in h],
+              f"D = {v.D:.6g} / {zwei.D:.6g}, {[h for h in v.hinweise if 'fehlt' in h]}")
+
+    # Das Zaehlverfahren der Last wirkt. LF1-Kran-LF1 unterscheidet die
+    # Verfahren nicht (Spanne, Rainflow und Reservoir je D = 6,0967, gemessen
+    # 24.09.2026) - eine Pruefung damit bestand auch, wenn der Anschluss
+    # immer "spanne" zaehlte. Mit drei verschiedenen Stufen (M_y am Anschluss
+    # LF1 85,1, Kran 47,4, S 63,0 kNm) zaehlt die Spanne nur ein Spiel
+    # Kran gegen LF1, Rainflow und Reservoir je ein volles Spiel Kran gegen
+    # LF1 und S gegen LF1 - wie zwei Lasten aus zwei Zustaenden (7,32878).
+    beide = nachweis(FatigueLoad("E1", case_max="Kran", case_min="LF1", cycles=2e6),
+                     FatigueLoad("E2", case_max="S", case_min="LF1", cycles=2e6))
+    for z, soll, text in (("spanne", zwei.D, "Kran gegen LF1"),
+                          ("rainflow", beide.D, "Kran gegen LF1 plus S gegen LF1"),
+                          ("reservoir", beide.D, "Kran gegen LF1 plus S gegen LF1")):
+        v = nachweis(FatigueLoad("E", folge=["LF1", "Kran", "LF1", "S", "LF1"],
+                                 wiederholungen=2e6, zaehlung=z))
+        check(f"Verlauf LF1-Kran-LF1-S-LF1, {z}: D wie {text}",
+              beide.D > 1.1 * zwei.D and gleich(v.D, soll) and not fehlend(v),
+              f"D = {v.D:.6g} / {soll:.6g} (Spanne {zwei.D:.6g}, beide {beide.D:.6g})")
+
+    # Ein fehlendes Glied: die uebrigen Glieder zaehlen (wie im Stabnachweis,
+    # ec3.fatigue._verlauf), die Last steht nur teilweise in D - unvollstaendig
+    ohne = nachweis(FatigueLoad("E", folge=["Kran", "LF1"], wiederholungen=1e5), fest=klein)
+    v = nachweis(FatigueLoad("E", folge=["Kran", "FEHLT", "LF1"], wiederholungen=1e5),
+                 fest=klein)
+    check("Verlauf mit fehlendem Glied: übrige Glieder zählen, Hinweis, unvollständig",
+          any("'FEHLT'" in h for h in v.hinweise) and fehlend(v) == ["E"]
+          and v.util < 1.0 and 0.0 < v.D < 1.0 and gleich(v.D, ohne.D)
+          and v.status() == "unvollständig",
+          f"{v.status()}, D = {v.D:.6g} / {ohne.D:.6g} ohne das Glied, "
+          f"util = {v.util:.3f}, fehlend {fehlend(v)}")
+    from statik3d.report import Report
+    an.joints = A.check_joints(m, an)
+    kap = Report(m, an).html().split("Anschlüsse nach DIN EN 1993-1-8")[-1]
+    kap = kap.split("Verformungsnachweise (Grenzzustand")[0]
+    check("Bericht, Verlauf mit fehlendem Glied: Status nennt das fehlende Ergebnis, "
+          "nicht „nicht gerechnet“",
+          "Nachweis unvollständig – Ergebnis fehlt für Ermüdungslast: E" in kap
+          and "nicht gerechnet" not in kap and "Schädigung (Ermüdung)" in kap)
+    v = nachweis(FatigueLoad("E", case_max="FEHLT", cycles=1e5), fest=klein)
+    check("fehlender Höchstzustand: nicht „erfüllt“, sondern unvollständig",
+          any("'FEHLT'" in h for h in v.hinweise) and v.status() == "unvollständig",
+          f"{v.status()}, D = {v.D:.4g}")
+    v = nachweis(FatigueLoad("E", folge=["Kran", "FEHLT"], wiederholungen=0.0), fest=klein)
+    check("unwirksame Sammlung (0 Wiederholungen) mit fehlendem Glied bleibt erfüllt",
+          v.status() == "erfüllt" and not fehlend(v) and v.D == 0.0,
+          f"{v.status()}, fehlend {fehlend(v)}")
+
+    # -- B095: benannter, nicht gerechneter Mindestzustand ---------------------
+    b = nachweis(FatigueLoad("E", case_max="Kran", case_min="GIBT_ES_NICHT", cycles=2e6))
+    check("fehlender Mindestzustand: Hinweis statt „Kran gegen null“",
+          any("GIBT_ES_NICHT" in h and "Mindestzustand" in h for h in b.hinweise)
+          and b.D == 0.0 and fehlend(b) == ["E"],
+          f"D = {b.D:.6g}, {[h for h in b.hinweise if 'GIBT' in h]}")
+    b = nachweis(FatigueLoad("E", case_max="Kran", case_min="GIBT_ES_NICHT", cycles=1e5),
+                 fest=klein)
+    check("... und der Anschluss heißt unvollständig, nicht erfüllt",
+          b.status() == "unvollständig", b.status())
+    b = nachweis(FatigueLoad("E", case_max="Kran", case_min="GIBT_ES_NICHT", cycles=0.0),
+                 fest=klein)
+    check("... außer bei 0 Lastspielen (die Last wäre unwirksam)",
+          b.status() == "erfüllt" and not fehlend(b), b.status())
+
+    # -- NB1: globale Lastspielzahl ------------------------------------------
+    g = nachweis(FatigueLoad("E", case_max="Kran", case_min="LF1", cycles=None))
+    check("cycles=None: globale Lastspielzahl 2e6, D wie mit 2e6",
+          gleich(g.D, zwei.D), f"D = {g.D:.6g} / {zwei.D:.6g}")
+
+    # -- NB2: gamma_Ff ---------------------------------------------------------
+    m.design.gamma_Ff = 1.5
+    try:
+        f15 = nachweis(FatigueLoad("E", case_max="Kran", case_min="LF1", cycles=2e6))
+    finally:
+        m.design.gamma_Ff = 1.0
+    check("γ_Ff = 1,5 vergrößert D am Anschluss um 1,5³",
+          {e["steigung"] for e in f15.ermuedung} == {3}
+          and gleich(f15.D, 1.5 ** 3 * zwei.D),
+          f"D = {f15.D:.6g} / {1.5 ** 3 * zwei.D:.6g}")
+
+    # -- Zusammenfassung und Bericht nennen den unvollstaendigen Anschluss -------
+    nachweis(FatigueLoad("E", case_max="Kran", case_min="GIBT_ES_NICHT", cycles=1e5),
+             fest=klein)
+    erg = A.check_joints(m, an)
+    check("Zusammenfassung: unvollständig statt „alle erfüllt“",
+          "unvollständig" in erg.summary() and "alle erfüllt" not in erg.summary(),
+          erg.summary()[:110])
+    an.joints = erg
+    html = Report(m, an).html()
+    kap = html.split("Anschlüsse nach DIN EN 1993-1-8")[-1]
+    kap = kap.split("Verformungsnachweise (Grenzzustand")[0]
+    check("Bericht: Anschluss unvollständig, nicht „Nachweis erfüllt“",
+          "Nachweis unvollständig" in kap and "Nachweis erfüllt" not in kap)
+    check("Bericht, Gesamturteil: der Anschluss ist nicht vollständig geführt",
+          "nicht vollständig geführt wurden: 1 Anschluss (Ermüdung)" in html
+          and "Alle Nachweise erfüllt." not in html)
+    m.joints["K1"].kraefte = {}
+
+
 def main():
     for t in (test_schrauben, test_naehte, test_tstub, test_fe_schraube,
-              test_bleche, test_nachweise, test_vorlagen, test_anschluss_im_modell,
+              test_bleche, test_nachweise, test_vorlagen, test_kopfplatte_vorschlagsreihe,
+              test_kopfplatte_ohne_scheinrippen,
+              test_nachbessern_verlaengert_keine_naht, test_anschluss_im_modell,
               test_momenten_rotation, test_gelenk_in_der_rechnung,
-              test_gelenk_im_modell_und_bericht):
+              test_gelenk_im_modell_und_bericht, test_anschluss_ermuedungslasten):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

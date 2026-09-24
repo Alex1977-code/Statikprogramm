@@ -1448,7 +1448,11 @@ def test_abnahme_warnstufe_splitter():
     fehler = [b for b in diagnose.abnahme(m) if b.pruefung in ("Elementgüte", "Splitter")]
     check("ohne warnungen=True kein Befund zur Guete (kein Element unter 0,05)", not fehler, str([b.pruefung for b in fehler]))
     alle = diagnose.abnahme(m, warnungen=True)
-    warn = [b for b in alle if b.stufe == "WARNUNG"]
+    # Die vier Randflaechen dieses Koerpers sind dieselbe (Huelle nicht
+    # dicht): seit dem 23.09.2026 steht dafuer auch die WARNUNG
+    # „Volumenbilanz nicht geprüft" da (B038) - sie gehoert nicht zu den
+    # Splittern, um die es hier geht
+    warn = [b for b in alle if b.stufe == "WARNUNG" and b.pruefung != "Volumenbilanz nicht geprüft"]
     check("mit warnungen=True eine WARNUNG 'Splitter' mit Zahl, Koerper und Elementnummer",
           len(warn) == 1 and warn[0].pruefung == "Splitter" and warn[0].objekt == "V1"
           and warn[0].element == e_flach and "1 von 2 Elementen" in warn[0].text, str([b.text for b in warn])[:160])
@@ -1462,6 +1466,820 @@ def test_abnahme_warnstufe_splitter():
           any(b.stufe == "FEHLER" and b.pruefung == "Elementgüte" for b in alle)
           and any(b.stufe == "WARNUNG" and b.pruefung == "Splitter" for b in alle),
           str([(b.stufe, b.pruefung) for b in alle]))
+
+
+def test_luecke_im_netzrand_geschlossen():
+    """Befund der Statik3D-Sitzung vom 23.09.2026: der freie Vernetzer liess an
+    5 von 9 L-, T- und U-Prismen einen Tetraeder an der Oberflaeche weg
+    (0,003 bis 0,113 % des Koerpers), am Wuerfel mit angehobener Deckelecke
+    einen ganz eingeschlossenen. Drei Ursachen, drei Kuren:
+
+    * ``innen()`` zaehlte einen Strahl doppelt, der genau die gemeinsame Kante
+      zweier Huelldreiecke trifft - jetzt entscheidet die Kante wie fuer einen
+      um (eps, eps^2) verschobenen Punkt (Simulation of Simplicity);
+    * ein Gitterpunkt stand mitten in einer Facette 0,85 mm vor der Huelle -
+      der flache Tetraeder dazwischen ist nie Delaunay; Startpunkte halten
+      jetzt RANDABSTAND_FLAECHE * h zur Huelle;
+    * ``tetraedern_treu`` nahm 0,01 % Fehlbetrag und 99,9 % Randtreue hin -
+      jetzt gilt der Rauminhalt (TREU_VOLUMEN), und nur echte Dellen
+      (``echte_dellen``, nicht der Diagonaltausch eines Huellvierecks) treiben
+      die Nachfuehrung.
+    Abnahme wie im Auftrag: Summe der Elementvolumina gleich Huellvolumen an
+    allen neun Prismen und am Wuerfel, keine Abnahme-Befunde."""
+    import contextlib
+    import io as _io
+    from statik3d import mesher, diagnose as dg
+    from test_diagnose import _extrudiert, _wuerfel_angehoben
+    L = [(0, 0), (2, 0), (2, 0.5), (0.5, 0.5), (0.5, 2), (0, 2)]
+    T = [(0, 0), (2, 0), (2, 0.4), (1.2, 0.4), (1.2, 1.5), (0.8, 1.5), (0.8, 0.4), (0, 0.4)]
+    U = [(0, 0), (2, 0), (2, 1.5), (1.4, 1.5), (1.4, 0.5), (0.6, 0.5), (0.6, 1.5), (0, 1.5)]
+
+    def flaeche(P):
+        x = np.array([q[0] for q in P])
+        y = np.array([q[1] for q in P])
+        return 0.5 * abs(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))
+    befunde = ("Lücke im Netzrand", "Seiten im Inneren", "Volumenbilanz", "Netzrand neben der Hülle")
+    for name, P, z1 in (("L", L, 0.4), ("T", T, 0.3), ("U", U, 0.4)):
+        for h in (0.25, 0.2, 0.1):
+            m = Model(name)
+            m.add_material(Material.steel("S235"))
+            k = _extrudiert(m, P, 0.0, z1)
+            with contextlib.redirect_stdout(_io.StringIO()):
+                mesher.modell_vernetzen(m, [], workers=1, hs={"K": h})
+            V = netzvolumen(m, k.elemente)
+            soll = flaeche(P) * z1
+            bef = [b for b in dg.abnahme(m, warnungen=True) if b.pruefung in befunde]
+            check(f"{name}-Prisma h = {h}: Rauminhalt gleich der Huelle, kein Befund",
+                  abs(V - soll) < 1e-9 * soll and not bef,
+                  f"{len(k.elemente)} tet4, {(soll - V) / soll * 100:+.5f} %, "
+                  + "; ".join(f"{b.stufe} {b.pruefung}" for b in bef))
+    with contextlib.redirect_stdout(_io.StringIO()):
+        m, k, els = _wuerfel_angehoben(0.5, 0.1)
+    bef = [b for b in dg.abnahme(m, warnungen=True) if b.pruefung in befunde]
+    check("Wuerfel mit angehobener Deckelecke, h = 0,1: kein eingeschlossener Tetraeder fehlt",
+          not bef, f"{len(els)} tet4; " + "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g}" for b in bef))
+    # Ruecknahmeprobe: alle drei Kuren zurueck - dann sind die Fehlbetraege
+    # der Statik3D-Sitzung wieder da (0,079 % am L-Prisma, 0,113 % am
+    # T-Prisma; die Elementzahl war 821 bzw. 663 und ist seit der Regel fuer
+    # die Kappenpunkte 809 bzw. 677 - gemessen 23.09.2026 abends). Jede Kur
+    # allein laesst sich nicht zuruecknehmen: die anderen beiden aendern die
+    # Punktmenge, und der Gleichstand an der Kante tritt dann nicht ein
+    # (gemessen 23.09.2026 - "nur Kante zurueck" 634 Tetraeder, 0,0000 %).
+    # Das Kantenkippen (huelle_kippen) aendert an dieser Luecke nichts - sie
+    # kommt aus der Gitterphase, nicht aus dem Gleichstand an der Kugel
+    # (mit und ohne KIPP_RUNDEN dieselben Zahlen).
+    alt = (M3._seite_mit_ausweichung, M3.RANDABSTAND_FLAECHE, M3.TREU_VOLUMEN, M3.TREU_RUNDEN)
+    M3._seite_mit_ausweichung = lambda l, gx, gy: l >= 0
+    M3.RANDABSTAND_FLAECHE = 0.0
+    M3.TREU_VOLUMEN, M3.TREU_RUNDEN = 1e-4, 3
+    try:
+        zurueck = {}
+        for name, P, z1, h in (("L", L, 0.4, 0.25), ("T", T, 0.3, 0.2)):
+            m = Model(name)
+            m.add_material(Material.steel("S235"))
+            k = _extrudiert(m, P, 0.0, z1)
+            with contextlib.redirect_stdout(_io.StringIO()):
+                mesher.modell_vernetzen(m, [], workers=1, hs={"K": h})
+            soll = flaeche(P) * z1
+            zurueck[name] = (len(k.elemente), (soll - netzvolumen(m, k.elemente)) / soll * 100)
+    finally:
+        (M3._seite_mit_ausweichung, M3.RANDABSTAND_FLAECHE, M3.TREU_VOLUMEN,
+         M3.TREU_RUNDEN) = alt
+    check("Ruecknahmeprobe: ohne die drei Kuren fehlen am L-Prisma wieder 0,079 %",
+          abs(zurueck["L"][1] - 0.0788) < 0.001,
+          f"{zurueck['L'][0]} tet4, {zurueck['L'][1]:+.4f} %")
+    check("  und am T-Prisma 0,113 % an der einspringenden Kante",
+          abs(zurueck["T"][1] - 0.1128) < 0.001,
+          f"{zurueck['T'][0]} tet4, {zurueck['T'][1]:+.4f} %")
+
+
+def test_huelle_kippen():
+    """Zweiter Auftrag der Statik3D-Sitzung (23.09.2026): die Luecke an der
+    rechtwinklig einspringenden Kante. Fuenf Huellpunkte liegen dort auf
+    einer Kugel (Thales), Qhull waehlt drei Tetraeder um die Kante quer
+    durch die Kerbe, das Huelldreieck fehlt. ``huelle_kippen`` nimmt die
+    andere Antwort (zwei Tetraeder mit dem Dreieck als Seite), ohne einen
+    Punkt zu setzen. Gemessen 23.09.2026: Stichprobe 3 Prismen x 23
+    Ziellaengen 11 -> 2 von 69 mit Fehlbetrag, die Stichprobe der
+    Statik3D-Sitzung 1 -> 0 von 69."""
+    import contextlib
+    import io as _io
+    from statik3d import mesher
+    from statik3d.elements.solid import solid_volume
+    # 1) der reine Fall: Dreieck a-b-c in z = 0, Kante u-w durchstoesst es,
+    #    drei Tetraeder um u-w
+    Pn = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0.3, 0.3, 1.0], [0.3, 0.3, -1.0],
+                   [3, 3, 3]], float)
+    a, b, c, u, w = 0, 1, 2, 3, 4
+    TET = np.array([[u, w, a, b], [u, w, b, c], [u, w, c, a], [a, b, 5, u]], int)
+    T = np.array([[a, b, c]], int)
+    TET2, n = M3.huelle_kippen(Pn, TET, Pn[:3], T)
+    seiten = {tuple(sorted(x)) for t in TET2.tolist() for x in
+              ((t[0], t[1], t[2]), (t[0], t[1], t[3]), (t[0], t[2], t[3]), (t[1], t[2], t[3]))}
+    check("eine Kante mit drei Tetraedern, die das Huelldreieck durchstoesst, wird gekippt",
+          n == 1 and len(TET2) == 3 and (a, b, c) in seiten, f"{n} gekippt, {len(TET2)} Tetraeder")
+    V = sum(abs(np.linalg.det(Pn[t][1:] - Pn[t][0])) / 6 for t in TET2.tolist())
+    V0 = sum(abs(np.linalg.det(Pn[t][1:] - Pn[t][0])) / 6 for t in TET.tolist())
+    close("  und der Rauminhalt bleibt derselbe", V, V0, 1e-12)
+    # 2) vier Tetraeder um die Kante: kein 3-2-Kippen moeglich, nichts geschieht
+    Pn4 = np.vstack([Pn, [[-0.5, -0.5, 0.0]]])
+    d = 6
+    TET4 = np.array([[u, w, a, b], [u, w, b, c], [u, w, c, d], [u, w, d, a]], int)
+    TET4b, n4 = M3.huelle_kippen(Pn4, TET4, Pn4[:3], T)
+    check("eine Kante mit vier Tetraedern bleibt stehen (kein 3-2-Kippen)", n4 == 0 and len(TET4b) == 4,
+          f"{n4} gekippt")
+    # 2b) drei Tetraeder an a, b, c und ein vierter um dieselbe Kante, der
+    #     keine der drei Ecken traegt: der Ring hat vier, nichts wird gekippt
+    Pn5 = np.vstack([Pn, [[-0.5, -0.5, 0.0], [-0.6, -0.4, 0.3]]])
+    TET5 = np.array([[u, w, a, b], [u, w, b, c], [u, w, c, a], [u, w, 6, 7]], int)
+    TET5b, n5 = M3.huelle_kippen(Pn5, TET5, Pn5[:3], T)
+    check("  auch wenn der vierte Tetraeder keine Ecke des Dreiecks traegt", n5 == 0 and len(TET5b) == 4,
+          f"{n5} gekippt")
+    # 3) am Prisma der Statik3D-Sitzung: T-Prisma (test_diagnose._extrudiert),
+    #    h = 0,09 - der Fall fuer test_diagnose: ohne Kippen 0,0003 %
+    #    Fehlbetrag nach acht Durchgaengen (10 751 Tetraeder), mit Kippen
+    #    exakt im ersten (7 864; gemessen 23.09.2026)
+    from test_diagnose import _extrudiert
+    T = [(0, 0), (2, 0), (2, 0.4), (1.2, 0.4), (1.2, 1.5), (0.8, 1.5), (0.8, 0.4), (0, 0.4)]
+
+    def lauf():
+        m = Model("T")
+        m.add_material(Material.steel("S235"))
+        k = _extrudiert(m, T, 0.0, 0.3)
+        log = []
+        with contextlib.redirect_stdout(_io.StringIO()):
+            mesher.modell_vernetzen(m, log, workers=1, hs={"K": 0.09})
+        V = sum(solid_volume(m.elements[i].typ, m.nodes[m.elements[i].nodes]) for i in k.elemente)
+        soll = (2 * 0.4 + 0.4 * 1.1) * 0.3
+        return len(k.elemente), (soll - V) / soll * 100, log
+    n_mit, fehl_mit, log_mit = lauf()
+    check("T-Prisma h = 0,09: Rauminhalt exakt im ersten Durchgang, eine Kante gekippt",
+          abs(fehl_mit) < 1e-9 and any("gekippt" in z for z in log_mit)
+          and not any("Lücke" in z for z in log_mit),
+          f"{n_mit} tet4, {fehl_mit:+.5f} %, " + "; ".join(z.strip()[:70] for z in log_mit if "gekippt" in z))
+    alt = M3.KIPP_RUNDEN
+    M3.KIPP_RUNDEN = 0
+    try:
+        n_ohne, fehl_ohne, log_ohne = lauf()
+    finally:
+        M3.KIPP_RUNDEN = alt
+    check("  Ruecknahmeprobe: ohne Kippen bleibt die Luecke (gemessen 0,0003 %) und wird gemeldet",
+          fehl_ohne > 1e-5 and any("Lücke im Netzrand" in z for z in log_ohne),
+          f"{n_ohne} tet4, {fehl_ohne:+.5f} %")
+
+
+def test_kappenpunkte_halten_abstand():
+    """Zweiter Auftrag (23.09.2026), Aufgabe 2: an der Bohrung der Buchse
+    r 50/100, h = 20 mm behielten 4 tet10 gerade Kanten, dazu eine Luecke
+    von 0,0023 %. Ursache: der Punkt, der eine Kappe **im ebenen Deckel**
+    aufloesen sollte (vier Punkte am Bohrungsrand und im Deckel), ging um
+    die halbe Kappenkante - bis 36 mm - senkrecht in den Koerper und landete
+    0,08 bis 2 mm neben der Bohrungswand. Jetzt hoechstens KAPPEN_WEG
+    Sollgroessen weit und mit KAPPEN_RANDABSTAND zur ganzen Huelle."""
+    import contextlib
+    import io as _io
+    from statik3d import mesher
+
+    def lauf():
+        m = neues_modell()
+        k = buchse(m, 0.1, 0.05, 0.1)
+        k.ordnung = 2
+        m.netz.sweep = False
+        m.netz.ziellaenge = 0.02
+        m.netz.dichte = "eigene"
+        log = []
+        with contextlib.redirect_stdout(_io.StringIO()):
+            mesher.modell_vernetzen(m, log, workers=1)
+        rueck = [z for z in log if "behalten gerade Kanten" in z]
+        luecke = [z for z in log if "Lücke im Netzrand" in z]
+        return len(k.elemente), rueck, luecke
+    alt = (M3.KRUMM_ANLAEUFE, M3.KAPPEN_RANDABSTAND, M3.KAPPEN_WEG)
+    M3.KRUMM_ANLAEUFE = 0                   # ohne oertliche Nachhilfe: die Regel allein
+    try:
+        n_neu, rueck_neu, luecke_neu = lauf()
+        M3.KAPPEN_RANDABSTAND, M3.KAPPEN_WEG = 0.0, float("inf")
+        n_alt, rueck_alt, luecke_alt = lauf()
+    finally:
+        M3.KRUMM_ANLAEUFE, M3.KAPPEN_RANDABSTAND, M3.KAPPEN_WEG = alt
+    check("Buchse r 50/100, h = 20 mm, tet10: keine gerade Kante, keine Luecke - ohne oertliche Verfeinerung",
+          not rueck_neu and not luecke_neu, f"{n_neu} tet10; " + "; ".join(z.strip()[:80] for z in rueck_neu + luecke_neu))
+    check("  Ruecknahmeprobe: mit der alten Kappenregel kommen die geraden Kanten und die Luecke wieder",
+          rueck_alt and luecke_alt, f"{n_alt} tet10; " + "; ".join(z.strip()[:90] for z in rueck_alt + luecke_alt))
+
+
+def test_krumme_kanten_oertlich_feiner():
+    """Zweiter Auftrag (23.09.2026), Aufgabe 2: wo eine gekruemmte tet10-Kante
+    die Jacobi-Determinante umklappen liesse, wird **oertlich feiner**
+    vernetzt - die betroffene Flaeche und ihre nicht gemeinsamen Linien um
+    VERFEINERN_FAKTOR, der Koerper behaelt seine Kantenlaenge -, bis die
+    Kante gueltig ist (koerper_vorbereiten, krumme_kanten_pruefen). Fall mit
+    groben Boegen: Buchse r 50/100 bei 36 Grad je Abschnitt und h = 35 mm,
+    5 ungueltige tet10 (gemessen 23.09.2026)."""
+    import contextlib
+    import io as _io
+    from statik3d import mesher
+    from statik3d.elements.solid import jacobi_volumen
+
+    def lauf():
+        m = neues_modell()
+        k = buchse(m, 0.1, 0.05, 0.1)
+        k.ordnung = 2
+        m.netz.sweep = False
+        m.netz.ziellaenge = 0.035
+        m.netz.dichte = "eigene"
+        m.netz.bogenwinkel = 36.0
+        log = []
+        with contextlib.redirect_stdout(_io.StringIO()):
+            mesher.modell_vernetzen(m, log, workers=1)
+        det = [jacobi_volumen("tet10", m.nodes[m.elements[i].nodes]) for i in k.elemente]
+        return (len(k.elemente), [z for z in log if "behalten gerade Kanten" in z],
+                [z for z in log if "örtlich feiner" in z], min(d["det_min"] / d["det_max"] for d in det))
+    n_mit, rueck_mit, oertlich, det_mit = lauf()
+    check("Buchse 36 Grad, h = 35 mm: die Mantelflaechen werden oertlich feiner, keine gerade Kante bleibt",
+          not rueck_mit and oertlich and det_mit > 0,
+          f"{n_mit} tet10, kleinste bezogene Determinante {det_mit:.3f}; " + "; ".join(z.strip()[:150] for z in oertlich))
+    alt = M3.KRUMM_ANLAEUFE
+    M3.KRUMM_ANLAEUFE = 0
+    try:
+        n_ohne, rueck_ohne, _o, _d = lauf()
+    finally:
+        M3.KRUMM_ANLAEUFE = alt
+    check("  Ruecknahmeprobe: ohne die oertlichen Anlaeufe behalten 5 tet10 gerade Kanten (872 Elemente)",
+          rueck_ohne and n_ohne < n_mit, f"{n_ohne} tet10; " + "; ".join(z.strip()[:110] for z in rueck_ohne))
+
+
+def test_bogenwinkel_je_koerper():
+    """Zweiter Auftrag (23.09.2026), Aufgabe 3 (V3): der Bogenwinkel je
+    Abschnitt ist einstellbar - am Modell (``Netzeinstellungen.bogenwinkel``)
+    und je Koerper (``Volumenkoerper.bogenwinkel``), Vorgabe wie bisher 18
+    Grad; an einer Linie zweier Koerper gilt der kleinere Winkel."""
+    import contextlib
+    import io as _io
+    from statik3d import mesher
+
+    def kreisknoten(m):
+        X = np.asarray(m.nodes, float)
+        return int(np.count_nonzero((np.abs(np.hypot(X[:, 0], X[:, 1]) - 0.1) < 1e-9) & (np.abs(X[:, 2]) < 1e-9)))
+
+    def lauf(modell_winkel=None, koerper_winkel=None):
+        # Zylinder r = 100, Hoehe 300 mm, h = 80 mm: die Laengenregel gaebe dem
+        # Halbkreis 4 Abschnitte, die Kruemmung bestimmt (5 bei 36, 10 bei 18 Grad)
+        m = neues_modell()
+        k = buchse(m, 0.1, 0.0, 0.3)
+        m.netz.sweep = False
+        m.netz.ziellaenge = 0.08
+        m.netz.dichte = "eigene"
+        if modell_winkel:
+            m.netz.bogenwinkel = modell_winkel
+        if koerper_winkel:
+            k.bogenwinkel = koerper_winkel
+        with contextlib.redirect_stdout(_io.StringIO()):
+            mesher.modell_vernetzen(m, [], workers=1)
+        return kreisknoten(m), len(m.elements)
+    n18, e18 = lauf()
+    n36m, e36m = lauf(modell_winkel=36.0)
+    n36k, e36k = lauf(koerper_winkel=36.0)
+    n12k, e12k = lauf(modell_winkel=36.0, koerper_winkel=12.0)
+    check("Vorgabe 18 Grad: 20 Knoten auf dem Grundkreis", n18 == 20, f"{n18} Knoten, {e18} Elemente")
+    check("Netzeinstellung 36 Grad: 10 Knoten", n36m == 10 and e36m < e18, f"{n36m} Knoten, {e36m} Elemente")
+    check("Vorgabe am Koerper 36 Grad: 10 Knoten", n36k == 10, f"{n36k} Knoten, {e36k} Elemente")
+    check("der Koerper darf feiner sein als das Modell (12 gegen 36 Grad): 30 Knoten", n12k == 30,
+          f"{n12k} Knoten, {e12k} Elemente")
+    m = neues_modell()
+    k1 = buchse(m, 0.1, 0.0, 0.3, "V1")
+    k1.bogenwinkel = 36.0
+    je = M3.bogenwinkel_je_linie(m)
+    check("bogenwinkel_je_linie nennt jede Linie des Koerpers mit seinem Winkel",
+          set(je) == {ln for f in k1.flaechen for ln in m.flaechen[f].linien} and set(je.values()) == {36.0},
+          f"{len(je)} Linien")
+    k1.bogenwinkel = None
+    check("  und nichts, wenn kein Koerper einen Winkel vorgibt", M3.bogenwinkel_je_linie(m) == {}, "")
+    check("  die Vorgabe des Modells bleibt 18 Grad", M3.bogenwinkel_vorgabe(m) == 18.0, f"{M3.bogenwinkel_vorgabe(m)}")
+    # Zwei Koerper an einer Linie (gestapelte Zylinder, Mittelkreis gemeinsam):
+    # der zweite ohne eigene Vorgabe zaehlt mit der des Modells - die kleinere gilt
+    m2 = neues_modell()
+    kA, kB = gestapelte_zylinder(m2, 0.1, 0.1, 0.1)
+    kA.bogenwinkel = 36.0
+    je = M3.bogenwinkel_je_linie(m2)
+    check("Koerper A 36 Grad, Koerper B ohne Vorgabe: der gemeinsame Kreis bleibt bei 18, der eigene Grundkreis bekommt 36",
+          je.get("KM1") == 18.0 and je.get("KU1") == 36.0 and "KO1" not in je, str(je))
+    kB.bogenwinkel = 12.0
+    je = M3.bogenwinkel_je_linie(m2)
+    check("  beide mit Vorgabe (36 und 12): der gemeinsame Kreis bekommt 12",
+          je.get("KM1") == 12.0 and je.get("KU1") == 36.0 and je.get("KO1") == 12.0, str(je))
+    m2.netz.sweep = False
+    m2.netz.ziellaenge = 0.08
+    m2.netz.dichte = "eigene"
+    with contextlib.redirect_stdout(_io.StringIO()):
+        mesher.modell_vernetzen(m2, [], workers=1)
+    X = np.asarray(m2.nodes, float)
+    r = np.hypot(X[:, 0], X[:, 1])
+    def kreis(z):
+        return int(np.count_nonzero((np.abs(r - 0.1) < 1e-9) & (np.abs(X[:, 2] - z) < 1e-9)))
+    # Der Mantel ist eine abgebildete Vierseitflaeche: Grund- und Mittelkreis
+    # sind gegenueberliegende Seiten und bekommen dieselbe Teilung - die
+    # feinere (12 Grad = 30 Knoten) zieht den Grundkreis mit (Linienteilung)
+    check("  vernetzt: Mittel- und Deckkreis 30 Knoten (12 Grad), der Grundkreis ueber den Mantel gebunden auch 30",
+          kreis(0.0) == 30 and kreis(0.1) == 30 and kreis(0.2) == 30,
+          f"{kreis(0.0)} / {kreis(0.1)} / {kreis(0.2)} Knoten")
+
+
+def gestapelte_zylinder(m: Model, r: float, h1: float, h2: float):
+    """Zwei Zylinder uebereinander (Koerper A unten, B oben), die sich die
+    Mittelkreisflaeche teilen; Linien KU*, KM*, KO* (Kreise), SA*, SB*
+    (Mantellinien). Rueckgabe (A, B)."""
+    satz = []
+    for z, marke in ((0.0, "U"), (h1, "M"), (h1 + h2, "O")):
+        a = m.add_node(-r, 0, z)
+        b = m.add_node(r, 0, z)
+        m.add_line(f"K{marke}1", [a, b], "arc", punkte=[(-r, 0, z), (0, r, z), (r, 0, z)])
+        m.add_line(f"K{marke}2", [b, a], "arc", punkte=[(r, 0, z), (0, -r, z), (-r, 0, z)])
+        satz.append((a, b))
+    (au, bu), (am, bm), (ao, bo) = satz
+    m.add_line("SA1", [au, am])
+    m.add_line("SA2", [bu, bm])
+    m.add_line("SB1", [am, ao])
+    m.add_line("SB2", [bm, bo])
+    m.add_flaeche("Grund", ["KU1", "KU2"], material="S235")
+    m.add_flaeche("Mitte", ["KM1", "KM2"], material="S235")
+    m.add_flaeche("Deckel", ["KO1", "KO2"], material="S235")
+    m.add_flaeche("MantelA1", ["KU1", "SA2", "KM1", "SA1"], material="S235")
+    m.add_flaeche("MantelA2", ["KU2", "SA1", "KM2", "SA2"], material="S235")
+    m.add_flaeche("MantelB1", ["KM1", "SB2", "KO1", "SB1"], material="S235")
+    m.add_flaeche("MantelB2", ["KM2", "SB1", "KO2", "SB2"], material="S235")
+    kA = m.add_koerper("A", ["Grund", "Mitte", "MantelA1", "MantelA2"], material="S235")
+    kB = m.add_koerper("B", ["Mitte", "Deckel", "MantelB1", "MantelB2"], material="S235")
+    return kA, kB
+
+
+def test_flache_tetraeder_nach_eigener_groesse():
+    """Nachtrag der Statik3D-Sitzung (24.09.2026, B101): flache Tetraeder
+    wurden an FLACH * h^3 mit dem h des **Koerpers** aussortiert; an einer
+    feinen Bohrung (Sehnen 2-7 mm bei h = 50 mm) fielen so Tetraeder mit
+    1,7-11 % Dicke heraus, die Abnahme meldete einen Riss. Jetzt zaehlt die
+    eigene laengste Kante (flache_tetraeder)."""
+    import contextlib
+    import io as _io
+    from statik3d import mesher, diagnose as dg
+    L = 3e-3
+    ecke = np.array([[0, 0, 0], [L, 0, 0], [0.5 * L, 0.866 * L, 0]], float)
+    def tet(dicke):
+        return np.vstack([ecke, [0.5 * L, 0.289 * L, dicke * L]])
+    Pn = np.vstack([tet(0.02), tet(1e-7) + 1.0])
+    TET = np.array([[0, 1, 2, 3], [4, 5, 6, 7]], int)
+    V = np.abs(M3.tetraedervolumen(Pn, TET))
+    flach = M3.flache_tetraeder(V, Pn, TET)
+    alt = V <= M3.FLACH * 0.05 ** 3
+    check("ein 3-mm-Tetraeder mit 2 % Dicke bleibt, einer mit 1e-7 Dicke fliegt",
+          flach.tolist() == [False, True], f"{flach.tolist()}, V = {V}")
+    check("  Ruecknahmeprobe: mit h = 50 mm des Koerpers flog auch der gesunde",
+          alt.tolist() == [True, True], f"{alt.tolist()}, Grenze {M3.FLACH * 0.05 ** 3:.3g} m³")
+    # Der Pruefkoerper der Statik3D-Sitzung: Platte R 450, t 35, Bohrung r 10 mm, h 50 mm
+    m = neues_modell()
+    k = buchse(m, 0.45, 0.01, 0.035)
+    m.netz.sweep = False
+    m.netz.ziellaenge = 0.05
+    m.netz.dichte = "eigene"
+    log = []
+    with contextlib.redirect_stdout(_io.StringIO()):
+        mesher.modell_vernetzen(m, log, workers=1)
+    bef = [b for b in dg.abnahme(m, warnungen=True)
+           if b.pruefung in ("Riss im Netz", "Lücke im Netzrand", "Seiten im Inneren", "Volumenbilanz")]
+    check("Platte R 450 / Bohrung r 10 / t 35 mm, h = 50 mm: kein Riss, keine Luecke",
+          not bef and not any("flache Tetraeder" in z for z in log),
+          f"{len(k.elemente)} tet4; " + "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.3g}" for b in bef))
+
+
+def kegelstumpf(m: Model, ru: float, ro: float, hoehe: float, name: str = "V1"):
+    """Kegelstumpf: Grundkreis ru, Deckkreis ro, zwei Mantelflaechen aus je
+    zwei Boegen verschiedener Halbmesser und zwei Mantellinien."""
+    satz = []
+    for z, r, marke in ((0.0, ru, "U"), (hoehe, ro, "O")):
+        a = m.add_node(-r, 0, z)
+        b = m.add_node(r, 0, z)
+        l1, l2 = f"K{marke}1", f"K{marke}2"
+        m.add_line(l1, [a, b], "arc", punkte=[(-r, 0, z), (0, r, z), (r, 0, z)])
+        m.add_line(l2, [b, a], "arc", punkte=[(r, 0, z), (0, -r, z), (-r, 0, z)])
+        satz.append((a, b, l1, l2))
+    (au, bu, u1, u2), (ao, bo, o1, o2) = satz
+    m.add_line("KV1", [au, ao])
+    m.add_line("KV2", [bu, bo])
+    m.add_flaeche("Mantel1", [u1, "KV2", o1, "KV1"], material="S235")
+    m.add_flaeche("Mantel2", [u2, "KV1", o2, "KV2"], material="S235")
+    m.add_flaeche("Boden", [u1, u2], material="S235")
+    m.add_flaeche("Deckel", [o1, o2], material="S235")
+    return m.add_koerper(name, ["Mantel1", "Mantel2", "Boden", "Deckel"], material="S235")
+
+
+def verdrehter_block(m: Model, dz: float = 0.1, name: str = "V1"):
+    """Einheitswuerfel, dessen Deckel an einer Ecke um dz angehoben ist: der
+    Deckel ist ein windschiefes Viereck aus vier Geraden, z = 1 + dz x y."""
+    P = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0, 0, 1), (1, 0, 1), (1, 1, 1 + dz), (0, 1, 1)]
+    n = [m.add_node(*p) for p in P]
+    kanten: dict = {}
+
+    def linie(a, b):
+        key = (min(a, b), max(a, b))
+        if key not in kanten:
+            kanten[key] = f"L{len(kanten)}"
+            m.add_line(kanten[key], [n[a], n[b]])
+        return kanten[key]
+    fl = []
+    for nm, q in (("Boden", (0, 1, 2, 3)), ("Deckel", (4, 5, 6, 7)), ("S0", (0, 1, 5, 4)),
+                  ("S1", (1, 2, 6, 5)), ("S2", (2, 3, 7, 6)), ("S3", (3, 0, 4, 7))):
+        m.add_flaeche(nm, [linie(q[i], q[(i + 1) % 4]) for i in range(4)], material="S235")
+        fl.append(nm)
+    return m.add_koerper(name, fl, material="S235")
+
+
+def _randkantenmitten(m: Model, k) -> tuple:
+    """(Randkanten des tet4-Netzrands als Knotenpaare, {Knotenpaar: Mittenknoten})"""
+    E4 = np.array([[int(x) for x in m.elements[i].nodes[:4]] for i in k.elemente])
+    mid = {}
+    for i in k.elemente:
+        kn = [int(x) for x in m.elements[i].nodes]
+        for (a, b), mm in zip(M3.TET10_KANTEN, kn[4:]):
+            mid[(min(kn[a], kn[b]), max(kn[a], kn[b]))] = mm
+    kanten = set()
+    for f in M3.freie_seiten(E4).tolist():
+        for a, b in ((f[0], f[1]), (f[1], f[2]), (f[2], f[0])):
+            kanten.add((min(a, b), max(a, b)))
+    return kanten, mid
+
+
+def test_projektor_kegel_und_windschief():
+    """Zweiter Auftrag (23.09.2026), Aufgabe 2: ``flaechenprojektoren`` kannte
+    den Zylinder; das Drehlager hat daneben 8 Kegelflaechen (Fasen,
+    Senkungen) und 8 windschiefe Vierecke aus Geraden (gezaehlt 23.09.2026),
+    keine Kugel, keinen Torus. Beide Arten werden abgebildet: die
+    tet10-Seitenmitten der Randkanten liegen auf Kegel bzw. bilinearer
+    Flaeche."""
+    import contextlib
+    import io as _io
+    from statik3d import mesher
+
+    def kegel(ohne):
+        m = neues_modell()
+        ru, ro, H = 0.1, 0.06, 0.1
+        k = kegelstumpf(m, ru, ro, H)
+        k.ordnung = 2
+        m.netz.sweep = False
+        m.netz.ziellaenge = 0.03
+        m.netz.dichte = "eigene"
+        alt = M3._kegelpassung
+        if ohne:
+            M3._kegelpassung = lambda *a, **kw: None
+        try:
+            with contextlib.redirect_stdout(_io.StringIO()):
+                mesher.modell_vernetzen(m, [], workers=1)
+        finally:
+            M3._kegelpassung = alt
+        X = np.asarray(m.nodes, float)
+        r, z = np.hypot(X[:, 0], X[:, 1]), X[:, 2]
+        rz = ru + (ro - ru) * z / H
+        auf = np.abs(r - rz) < 1e-7
+        kanten, mid = _randkantenmitten(m, k)
+        d = [abs(r[mid[key]] - rz[mid[key]]) for key in kanten if auf[key[0]] and auf[key[1]] and key in mid]
+        return len(d), max(d)
+    n, d_mit = kegel(False)
+    _n, d_ohne = kegel(True)
+    check("Kegelstumpf r 100 -> 60 mm, tet10: jede Randkantenmitte des Mantels liegt auf dem Kegel",
+          n > 100 and d_mit < 1e-9, f"{n} Mantelkanten, groesster Abstand {d_mit * 1e3:.4f} mm")
+    check("  Ruecknahmeprobe: ohne Kegelpassung liegt sie auf der Sehne (Sehnenpfeil 1,23 mm)",
+          d_ohne > 1e-3, f"{d_ohne * 1e3:.4f} mm")
+    from statik3d.sweep import _schleifenpunkte
+    m = neues_modell()
+    kegelstumpf(m, 0.1, 0.06, 0.1)
+    f = m.flaechen["Mantel1"]
+    kg = M3._kegelpassung(m, f, _schleifenpunkte(m, list(f.linien)))
+    check("  die Kegelpassung nennt Achse z und Steigung -0,4",
+          kg is not None and abs(abs(float(kg[1][2])) - 1.0) < 1e-12 and abs(abs(float(kg[3])) - 0.4) < 1e-9,
+          str(kg))
+
+    def wind(ohne):
+        m = neues_modell()
+        k = verdrehter_block(m, 0.1)
+        k.ordnung = 2
+        m.netz.sweep = False
+        m.netz.ziellaenge = 0.3
+        m.netz.dichte = "eigene"
+        alt = M3._windschief_projektor
+        if ohne:
+            M3._windschief_projektor = lambda *a, **kw: None
+        try:
+            with contextlib.redirect_stdout(_io.StringIO()):
+                mesher.modell_vernetzen(m, [], workers=1)
+        finally:
+            M3._windschief_projektor = alt
+        X = np.asarray(m.nodes, float)
+        soll = 1 + 0.1 * X[:, 0] * X[:, 1]
+        auf = np.abs(X[:, 2] - soll) < 1e-7
+        kanten, mid = _randkantenmitten(m, k)
+        d = [abs(X[mid[key], 2] - soll[mid[key]]) for key in kanten
+             if auf[key[0]] and auf[key[1]] and key in mid and X[key[0], 2] > 0.5 and X[key[1], 2] > 0.5]
+        return len(d), max(d), len(k.elemente)
+    n, d_mit, e_mit = wind(False)
+    _n, d_ohne, e_ohne = wind(True)
+    check("windschiefer Deckel z = 1 + 0,1 x y, tet10: jede Randkantenmitte liegt auf der bilinearen Flaeche",
+          n > 20 and d_mit < 1e-9, f"{n} Deckelkanten, groesster Abstand {d_mit * 1e3:.4f} mm, {e_mit} tet10")
+    check("  Ruecknahmeprobe: ohne den Projektor liegt die Mitte der Diagonale daneben",
+          d_ohne > 1e-3, f"{d_ohne * 1e3:.4f} mm, {e_ohne} tet10")
+    m = neues_modell()
+    kegelstumpf(m, 0.1, 0.06, 0.1)
+    arten = M3.projektorarten(m)
+    check("projektorarten zaehlt den Kegelstumpf: 2 Kegel, 2 eben",
+          arten == {"Zylinder": 0, "Kegel": 2, "Kugel": 0, "windschief": 0, "eben/ohne": 2}, str(arten))
+
+
+def hohlkugel_achtel(m: Model, a: float, b: float, name: str = "V1"):
+    """Achtel der Hohlkugel a <= r <= b (tests/pruefkoerper.Hohlkugel als
+    Geometrie): zwei Kugelflaechen aus je drei Grosskreisboegen, drei ebene
+    Viertelringe in den Symmetrieebenen."""
+    s2 = 1 / np.sqrt(2)
+    ia = [m.add_node(a, 0, 0), m.add_node(0, a, 0), m.add_node(0, 0, a)]
+    ib = [m.add_node(b, 0, 0), m.add_node(0, b, 0), m.add_node(0, 0, b)]
+
+    def bogen(nm, kn, r, ij):
+        P = {0: (r, 0, 0), 1: (0, r, 0), 2: (0, 0, r)}
+        mitte = {(0, 1): (r * s2, r * s2, 0), (1, 2): (0, r * s2, r * s2), (0, 2): (r * s2, 0, r * s2)}
+        i, j = ij
+        m.add_line(nm, [kn[i], kn[j]], "arc", punkte=[P[i], mitte[(min(i, j), max(i, j))], P[j]])
+    for tag, kn, r in (("I", ia, a), ("A", ib, b)):
+        bogen(f"{tag}xy", kn, r, (0, 1))
+        bogen(f"{tag}yz", kn, r, (1, 2))
+        bogen(f"{tag}zx", kn, r, (2, 0))
+    m.add_line("Rx", [ia[0], ib[0]])
+    m.add_line("Ry", [ia[1], ib[1]])
+    m.add_line("Rz", [ia[2], ib[2]])
+    m.add_flaeche("innen", ["Ixy", "Iyz", "Izx"], material="S235")
+    m.add_flaeche("aussen", ["Axy", "Ayz", "Azx"], material="S235")
+    m.add_flaeche("Ez", ["Ixy", "Ry", "Axy", "Rx"], material="S235")
+    m.add_flaeche("Ex", ["Iyz", "Rz", "Ayz", "Ry"], material="S235")
+    m.add_flaeche("Ey", ["Izx", "Rx", "Azx", "Rz"], material="S235")
+    return m.add_koerper(name, ["innen", "aussen", "Ez", "Ex", "Ey"], material="S235")
+
+
+def test_kugelflaeche():
+    """Zweiter Auftrag (23.09.2026), Aufgabe 4 (V5) braucht die Lame-Hohlkugel
+    mit dem freien Vernetzer: eine Kugelflaeche aus drei Grosskreisboegen
+    geht weder als Coons-Fleck noch als Abwicklung; das harmonische Heben
+    legte ihre inneren Punkte unter die Kugel. Jetzt: Kugelpassung, die
+    Flaechenpunkte auf der Kugel, der Projektor fuer Verfeinerung und
+    tet10-Seitenmitten."""
+    import contextlib
+    import io as _io
+    from statik3d import mesher
+
+    def lauf(ohne):
+        m = neues_modell()
+        k = hohlkugel_achtel(m, 0.1, 0.2)
+        k.ordnung = 2
+        m.netz.sweep = False
+        m.netz.ziellaenge = 0.03
+        m.netz.dichte = "eigene"
+        alt = M3._kugelpassung
+        if ohne:
+            M3._kugelpassung = lambda *a, **kw: None
+        try:
+            with contextlib.redirect_stdout(_io.StringIO()):
+                mesher.modell_vernetzen(m, [], workers=1)
+        finally:
+            M3._kugelpassung = alt
+        X = np.asarray(m.nodes, float)
+        r = np.linalg.norm(X, axis=1)
+        E4 = np.array([[int(x) for x in m.elements[i].nodes[:4]] for i in k.elemente])
+        rand = np.unique(M3.freie_seiten(E4))
+        ebene = (np.abs(X[:, 0]) < 1e-9) | (np.abs(X[:, 1]) < 1e-9) | (np.abs(X[:, 2]) < 1e-9)
+        kugel = rand[~ebene[rand]]
+        d_knoten = float(np.minimum(np.abs(r[kugel] - 0.1), np.abs(r[kugel] - 0.2)).max())
+        kanten, mid = _randkantenmitten(m, k)
+        d_mitten = [abs(r[mid[key]] - R) for key in kanten for R in (0.1, 0.2)
+                    if abs(r[key[0]] - R) < 1e-7 and abs(r[key[1]] - R) < 1e-7
+                    and not (ebene[key[0]] and ebene[key[1]]) and key in mid]
+        return len(kugel), d_knoten, len(d_mitten), max(d_mitten, default=0.0), len(k.elemente)
+    n_k, d_k, n_m, d_m, n_el = lauf(False)
+    check("Achtel der Hohlkugel a = 100, b = 200 mm, tet10: alle Huellknoten der Kugelflaechen auf den Kugeln",
+          n_k > 30 and d_k < 1e-9, f"{n_k} Knoten, groesster Abstand {d_k * 1e3:.4f} mm, {n_el} tet10")
+    check("  und alle Seitenmitten der Randkanten", n_m > 100 and d_m < 1e-9,
+          f"{n_m} Kanten, groesster Abstand {d_m * 1e3:.4f} mm")
+    _n, d_k0, _m, d_m0, _e = lauf(True)
+    check("  Ruecknahmeprobe: ohne Kugelpassung liegen Flaechenpunkte unter der Kugel (harmonisch gehoben)",
+          d_k0 > 1e-4, f"Huellknoten bis {d_k0 * 1e3:.3f} mm daneben, Seitenmitten bis {d_m0 * 1e3:.3f} mm")
+    m = neues_modell()
+    hohlkugel_achtel(m, 0.1, 0.2)
+    arten = M3.projektorarten(m)
+    check("  projektorarten zaehlt 2 Kugeln, 3 ebene", arten.get("Kugel") == 2 and arten.get("eben/ohne") == 3, str(arten))
+    # Mit Groessenfeld teilt die Linienteilung die Boegen ungleich - die
+    # Punkte muessen trotzdem genau auf dem Kreis liegen (vorher bis 7e-8 m
+    # daneben, und die Kugelpassung nahm den mittleren Radius)
+    m = neues_modell()
+    k = hohlkugel_achtel(m, 0.1, 0.2)
+    m.netz.sweep = False
+    m.netz.ziellaenge = 0.03
+    m.netz.dichte = "eigene"
+    m.netz.feldpunkte = [[0.1, 0.0, 0.0, 0.01, 0.03], [0.0, 0.07, 0.07, 0.012, 0.03]]
+    with contextlib.redirect_stdout(_io.StringIO()):
+        mesher.modell_vernetzen(m, [], workers=1)
+    X = np.asarray(m.nodes, float)
+    r = np.linalg.norm(X, axis=1)
+    E4 = np.array([[int(x) for x in m.elements[i].nodes[:4]] for i in k.elemente])
+    rand = np.unique(M3.freie_seiten(E4))
+    ebene = (np.abs(X[:, 0]) < 1e-9) | (np.abs(X[:, 1]) < 1e-9) | (np.abs(X[:, 2]) < 1e-9)
+    innen = rand[(r[rand] < 0.15) & ~ebene[rand]]
+    check("  mit Groessenfeld (ungleiche Bogenteilung) liegen die Knoten der Innenflaeche genau auf r = a",
+          len(innen) > 20 and float(np.abs(r[innen] - 0.1).max()) < 1e-12,
+          f"{len(innen)} Knoten, groesster Abstand {np.abs(r[innen] - 0.1).max():.2e} m, {len(k.elemente)} Elemente")
+
+
+def test_innen_zaehlt_die_kante_einmal():
+    """Ein Strahl genau durch die gemeinsame Kante zweier Huelldreiecke wird
+    von genau einem gezaehlt - wie fuer einen um (eps, eps^2) verschobenen
+    Punkt. Am Wuerfel: der Punkt unter der Deckeldiagonale ist innen, der
+    darueber aussen; ebenso ueber einer Ecke."""
+    P = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+                  [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]], float)
+    T = np.array([[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7],
+                  [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5],
+                  [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7]])
+    q = np.array([[0.5, 0.5, 0.5], [0.5, 0.5, 1.5],       # unter / ueber der Deckeldiagonale
+                  [0.25, 0.25, 0.5], [0.75, 0.75, 0.5],   # auf der Diagonale, innen
+                  [1.0, 1.0, 0.5], [1.0, 1.0, 1.5],       # senkrecht ueber der Ecke (1,1)
+                  [0.0, 0.0, 0.5]])                        # ueber der Ecke (0,0)
+    drin = M3.innen(q, P, T)
+    check("Punkte unter der Deckeldiagonale sind innen, darueber aussen",
+          list(drin[:4]) == [True, False, True, True], str(drin[:4].tolist()))
+    # Genau unter einer Deckelecke liegt der Punkt zugleich auf der Seitenwand
+    # (x = 1 oder y = 1): ein Randpunkt, fuer den beide Antworten vertretbar
+    # sind. Entscheidend ist, dass die Regel **eine** gibt und fuer alle
+    # Dreiecke dieselbe: der um (+eps, +eps^2) verschobene Punkt liegt an der
+    # Ecke (1, 1) draussen und an der Ecke (0, 0) drinnen.
+    check("ueber einer Deckelecke entscheidet dieselbe Verschiebung - (1,1) aussen, (0,0) innen",
+          not drin[4] and not drin[5] and drin[6], str(drin[4:].tolist()))
+    # Gegenprobe der alten Regel: beide Dreiecke zaehlen - der Punkt unter der
+    # Diagonale gilt als aussen
+    alt = M3._seite_mit_ausweichung
+    M3._seite_mit_ausweichung = lambda l, gx, gy: l >= 0
+    try:
+        alt_drin = M3.innen(q[:1], P, T)
+    finally:
+        M3._seite_mit_ausweichung = alt
+    check("mit der alten Regel l >= 0 galt derselbe Punkt als aussen", not alt_drin[0])
+
+
+def test_randtreue_nicht_messbar_meldet_null():
+    """Auftrag der Statik3D-Sitzung (22.09.2026), Nummer 1: misslingt die
+    Messung der Randtreue, stand 1,0 im Bericht - die Zusage, der Netzrand
+    liege genau auf der Huelle. Aus 83,3 % wurden so 100,0 %, der zweite
+    Anlauf unterblieb. Jetzt 0,0 (im ganzen Programm: nicht gemessen) und der
+    Grund im Bericht."""
+    P = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], float)
+    T = np.array([[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]])
+    TET = np.array([[0, 1, 2, 3]])
+    alt = M3.randtreue
+
+    def kaputt(*a, **kw):
+        raise ValueError("Probe: Randtreue nicht messbar")
+    M3.randtreue = kaputt
+    try:
+        tb = M3._netzbericht(P, TET, P, T)
+    finally:
+        M3.randtreue = alt
+    check("Randtreue 0,0 statt 1,0, und der Grund steht im Bericht",
+          tb["randtreue"] == 0.0 and tb["randabweichung"] == 0.0
+          and "ValueError" in tb.get("randtreue_fehler", ""),
+          f"randtreue {tb['randtreue']}, Fehler {tb.get('randtreue_fehler')}")
+    tb2 = M3._netzbericht(P, TET, P, T)
+    check("messbar bleibt sie 1,0 ohne Fehlereintrag",
+          tb2["randtreue"] == 1.0 and "randtreue_fehler" not in tb2, str(tb2.get("randtreue")))
+
+
+def _zwei_koerper_ungleich():
+    """Wie _zwei_koerper, aber die beiden Prismen bekommen **verschiedene**
+    Kantenlaengen - erst dann wird der obere vor dem unteren fertig, und die
+    Einbaufolge entscheidet ueber die Knotennummern."""
+    m, k1, k2 = _zwei_koerper()
+    return m, k1, k2, {"V1": 0.22, "V2": 0.45}
+
+
+def test_nummern_haengen_nicht_am_prozess():
+    """Auftrag der Statik3D-Sitzung (22.09.2026), Nummer 2: eingebaut wurde in
+    der Folge des Fertigwerdens; am Drehlager behielten 18 von 3 731 Knoten
+    ihre Nummer zwischen zwei Laeufen. Jetzt folgt der Einbau der festen
+    Reihe der Koerper. Geprueft mit zwei verschieden grossen Koerpern und
+    Knoten fuer Knoten - nicht nur an der Stueckzahl, die stimmte auch vorher."""
+    from statik3d import mesher
+    ms, s1, s2, hs = _zwei_koerper_ungleich()
+    erg_s = mesher.koerper_vernetzen(ms, [s1, s2], hs=hs, log=[], workers=1)
+    mp_, p1, p2, hs = _zwei_koerper_ungleich()
+    erg_p = mesher.koerper_vernetzen(mp_, [p1, p2], hs=hs, log=[], workers=2)
+    check("zwei verschieden feine Koerper, seriell und auf zwei Prozessen vernetzt",
+          erg_s["fertig"] == 2 and erg_p["fertig"] == 2 and erg_p.get("prozesse") == 2
+          and len(s1.elemente) != len(s2.elemente), f"{erg_s} / {erg_p}")
+    check("gleich viele Knoten und Elemente", ms.nn == mp_.nn and len(ms.elements) == len(mp_.elements),
+          f"{ms.nn}/{mp_.nn} Knoten, {len(ms.elements)}/{len(mp_.elements)} Elemente")
+    gleich = ms.nn == mp_.nn and bool(np.allclose(ms.nodes, mp_.nodes, atol=1e-12))
+    check("und jeder Knoten hat in beiden Laeufen dieselbe Nummer (Koordinaten Knoten fuer Knoten)",
+          gleich, f"{int((np.linalg.norm(ms.nodes - mp_.nodes, axis=1) < 1e-12).sum()) if ms.nn == mp_.nn else 0} von {ms.nn} gleich")
+    check("und jedes Element dieselben Knoten",
+          all(list(a.nodes) == list(b.nodes) and a.typ == b.typ for a, b in zip(ms.elements, mp_.elements)))
+
+
+def test_ordnung_je_koerper():
+    """Anweisung V1 (Loeser-Sitzung, 22.09.2026): ``Volumenkoerper.ordnung``
+    = 2 gibt tet10 in diesem Koerper, tet4 im Rest; an der gemeinsamen Flaeche
+    stimmen die Eckknoten ueberein. Umlauf: speichern, laden, dieselbe
+    Elementliste."""
+    from statik3d import mesher
+    m, k1, k2 = _zwei_koerper()
+    k2.ordnung = 2
+    erg = mesher.koerper_vernetzen(m, [k1, k2], log=[], workers=1)
+    typ1 = {m.elements[i].typ for i in k1.elemente}
+    typ2 = {m.elements[i].typ for i in k2.elemente}
+    check("V1 (ohne Vorgabe) tet4, V2 (Ordnung 2) tet10",
+          typ1 == {"tet4"} and typ2 == {"tet10"} and erg["fertig"] == 2, f"{typ1} / {typ2}")
+    # Die Eckknoten der gemeinsamen Flaeche Fm (z = 1) gehoeren beiden
+    ecken1 = {int(x) for i in k1.elemente for x in m.elements[i].nodes if abs(m.nodes[int(x)][2] - 1.0) < 1e-9}
+    ecken2 = {int(x) for i in k2.elemente for x in m.elements[i].nodes[:4] if abs(m.nodes[int(x)][2] - 1.0) < 1e-9}
+    check("die Eckknoten in der gemeinsamen Flaeche sind dieselben", ecken1 == ecken2 and len(ecken1) > 3,
+          f"{len(ecken1)} gegen {len(ecken2)}, gemeinsam {len(ecken1 & ecken2)}")
+    m2 = Model.from_dict(m.to_dict())
+    check("Umlauf: nach Speichern und Laden dieselbe Elementliste und Ordnung am Koerper",
+          [(e.typ, list(e.nodes)) for e in m2.elements] == [(e.typ, list(e.nodes)) for e in m.elements]
+          and m2.koerper["V2"].ordnung == 2 and m2.koerper["V1"].ordnung is None)
+    # Ein Quader mit Ordnung 2 geht nicht in den abgebildeten Hexaederpfad
+    from test_sweep import quader as _quader
+    mq, kq = _quader()
+    kq.ordnung = 2
+    mesher.modell_vernetzen(mq, [], workers=1)
+    check("ein Quader mit Ordnung 2 wird frei mit tet10 vernetzt statt abgebildet",
+          {mq.elements[i].typ for i in kq.elemente} == {"tet10"},
+          str({mq.elements[i].typ for i in kq.elemente}))
+
+
+def test_seitenmitten_auf_der_zylinderflaeche():
+    """Anweisung V2 mit Nachtrag (Loeser- und Element-Sitzung, 22./23.09.2026):
+    bei tet10 gehoeren alle Randknoten und Kantenmitten auf die wahre Flaeche,
+    nicht auf die Sehne - eine einzige gerade Bohrungskante liess das Element
+    hoechster Ordnung 23 N/mm^2 danebenliegen. Hohlzylinder r = 50/100 mm,
+    h = 35 mm wie in der Messung der Element-Sitzung."""
+    import contextlib
+    import io as _io
+    from statik3d import mesher
+    from statik3d.elements.solid import jacobi_volumen
+    m = neues_modell()
+    k = buchse(m, 0.1, 0.05, 0.1)
+    k.ordnung = 2
+    m.netz.sweep = False
+    m.netz.ziellaenge = 0.035
+    m.netz.dichte = "eigene"
+    log = []
+    with contextlib.redirect_stdout(_io.StringIO()):
+        mesher.modell_vernetzen(m, log, workers=1)
+    els = list(k.elemente)
+    check("der Hohlzylinder wird mit tet10 vernetzt", els and {m.elements[i].typ for i in els} == {"tet10"},
+          str({m.elements[i].typ for i in els}))
+    E4 = np.array([[int(x) for x in m.elements[i].nodes[:4]] for i in els])
+    mitte = {}
+    for i in els:
+        kn = [int(x) for x in m.elements[i].nodes]
+        for (a, b), mid in zip(M3.TET10_KANTEN, kn[4:]):
+            mitte[(min(kn[a], kn[b]), max(kn[a], kn[b]))] = mid
+    abst = {0.1: [0.0], 0.05: [0.0]}
+    zahl = {0.1: 0, 0.05: 0}
+    for f in M3.freie_seiten(E4).tolist():
+        for a, b in ((f[0], f[1]), (f[1], f[2]), (f[2], f[0])):
+            ra, rb = np.hypot(*m.nodes[a][:2]), np.hypot(*m.nodes[b][:2])
+            for R in (0.1, 0.05):
+                if abs(ra - R) < 1e-6 and abs(rb - R) < 1e-6:
+                    zahl[R] += 1
+                    abst[R].append(abs(np.hypot(*m.nodes[mitte[(min(a, b), max(a, b))]][:2]) - R))
+    check("jede Seitenmitte einer Randkante liegt auf dem Aussenzylinder (vorher auf der Sehne, 1,23 mm daneben)",
+          zahl[0.1] > 100 and max(abst[0.1]) < 1e-9, f"{zahl[0.1]} Kanten, groesster Abstand {max(abst[0.1]) * 1e3:.4f} mm")
+    check("und auf der Bohrung (vorher 0,62 mm daneben)",
+          zahl[0.05] > 100 and max(abst[0.05]) < 1e-9, f"{zahl[0.05]} Kanten, groesster Abstand {max(abst[0.05]) * 1e3:.4f} mm")
+    det = [jacobi_volumen("tet10", m.nodes[m.elements[i].nodes]) for i in els]
+    check("die Jacobi-Determinante bleibt an allen Integrationspunkten positiv",
+          all(d["det_min"] > 0 for d in det),
+          f"kleinstes Verhaeltnis {min(d['det_min'] / d['det_max'] for d in det):.3f}")
+    zeile = next((z for z in log if "Seitenmitten auf die gekrümmte Fläche" in z), "")
+    check("das Protokoll nennt die Zahl und den groessten Weg (der Sehnenpfeil r (1 - cos 9 Grad) = 1,231 mm)",
+          "Seitenmitten" in zeile and "1.231 mm" in zeile, zeile.strip()[:140])
+    check("kein Rueckfall auf gerade Kanten", not any("gerade Kanten" in z for z in log),
+          str([z.strip()[:100] for z in log if "gerade Kanten" in z]))
+    # Die Huelle selbst: ein neuer Huellpunkt aus der Verfeinerung liegt auf dem Zylinder
+    P = np.array([[0.1, 0.0, 0.0], [0.1 * np.cos(0.3), 0.1 * np.sin(0.3), 0.0],
+                  [0.1, 0.0, 0.05], [0.1 * np.cos(0.3), 0.1 * np.sin(0.3), 0.05]])
+    T = np.array([[0, 1, 2], [1, 3, 2]])
+    proj = {"M": M3._zylinder_projektor((np.zeros(3), np.array([0.0, 0.0, 1.0]), 0.1))}
+    P2, T2, _q = M3.huelle_verfeinern(P, T, [0], ["M", "M"], projektor=proj)
+    r_neu = np.hypot(*P2[len(P):].T[:2]) if len(P2) > len(P) else np.zeros(0)
+    check("ein neuer Huellpunkt der Verfeinerung liegt auf dem Zylinder, nicht auf der Sehne",
+          len(P2) > len(P) and np.allclose(r_neu, 0.1, atol=1e-12),
+          f"{len(P2) - len(P)} neue Punkte, r = {np.round(r_neu, 6).tolist()}")
+    P3, _T3, _q3 = M3.huelle_verfeinern(P, T, [0], ["M", "M"])
+    check("ohne Projektor bleibt er auf der Sehne (Ruecknahmeprobe)",
+          len(P3) > len(P) and abs(np.hypot(*P3[len(P)][:2]) - 0.1) > 1e-4,
+          f"r = {np.hypot(*P3[len(P)][:2]):.6f}")
 
 
 def main():
@@ -1478,7 +2296,13 @@ def main():
               test_undichte_huelle, test_quadratische_tetraeder,
               test_splitter_glaetten, test_huelle_verfeinern_haelt_form,
               test_gitterindex_zelle, test_geometrielast,
-              test_fortschritt_und_abbruch, test_parallel_vernetzen):
+              test_fortschritt_und_abbruch, test_parallel_vernetzen,
+              test_luecke_im_netzrand_geschlossen, test_innen_zaehlt_die_kante_einmal,
+              test_randtreue_nicht_messbar_meldet_null, test_nummern_haengen_nicht_am_prozess,
+              test_ordnung_je_koerper, test_seitenmitten_auf_der_zylinderflaeche,
+              test_huelle_kippen, test_kappenpunkte_halten_abstand, test_krumme_kanten_oertlich_feiner,
+              test_projektor_kegel_und_windschief, test_kugelflaeche, test_bogenwinkel_je_koerper,
+              test_flache_tetraeder_nach_eigener_groesse):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

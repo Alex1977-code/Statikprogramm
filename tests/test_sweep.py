@@ -744,11 +744,16 @@ def test_keile_am_feinen_rand():
           f"{aus_s[1]:.4f} → {an_s[1]:.4f}")
     check("der Preis sind weniger als doppelt so viele Elemente",
           an_s[0] < 2.0 * aus_s[0], f"{aus_s[0]} → {an_s[0]} Elemente")
+    # Seit 23.09.2026 halten die Startpunkte des freien Vernetzers Abstand zur
+    # Huelle (mesher3d.RANDABSTAND_FLAECHE): der Tetraederweg hat ohne Randfeld
+    # nur noch 7 statt 13 Splitter und Guete 0,086 statt 0,052 - das Randfeld
+    # hebt sie auf 0,131 (gemessen; vorher 0,052 -> 0,131, also Faktor 2,5,
+    # jetzt 1,5). Die Aussage bleibt: kein Splitter mehr, und die Guete steigt.
     check("dasselbe im Tetraederweg - die Hülle erbt die Splitter sonst ebenso",
-          aus_t[2] > 0 and an_t[2] == 0 and an_t[1] > 2.0 * aus_t[1],
+          aus_t[2] > 0 and an_t[2] == 0 and an_t[1] > 1.3 * aus_t[1],
           f"{aus_t[2]} → {an_t[2]} unter 0,10, Güte {aus_t[1]:.4f} → {an_t[1]:.4f}")
-    check("der Tetraederweg war nie die bessere Wahl: gleiche Güte, ein Vielfaches an Elementen",
-          abs(aus_t[1] - aus_s[1]) < 0.01 and aus_t[0] > 10 * aus_s[0],
+    check("der Tetraederweg war nie die bessere Wahl: ein Vielfaches an Elementen bei gleicher Groessenordnung der Güte",
+          aus_t[1] < 2.0 * aus_s[1] and aus_t[0] > 10 * aus_s[0],
           f"tet4 {aus_t[0]} Elemente/Güte {aus_t[1]:.4f} gegen Sweep {aus_s[0]}/{aus_s[1]:.4f}")
     # Wo kein feiner Rand ist, kostet die Regel fast nichts
     ohne = {}
@@ -1070,7 +1075,11 @@ def test_rippe_am_rand_ueber_ebene_zerlegt():
     # Zum Vergleich gemessen (22.09.2026): der Tetraeder braucht h = 6 mm,
     # 39 891 Elemente und 7 459 Knoten fuer 1,9674 mm - der gesweepte Block
     # steht mit 124 Elementen und 239 Knoten bei 2,0161 mm schon darueber.
-    check("der lineare Tetraeder ist hier dreimal zu steif", w_hex > 3.0 * w_tet,
+    # Der tet4-Wert hing an den Splittern des groben Netzes: mit 0,5811 mm war
+    # er dreimal zu steif; seit die Kappenpunkte Abstand zur Huelle halten
+    # (mesher3d.KAPPEN_RANDABSTAND, 23.09.2026) sind es 1,1397 mm - immer noch
+    # 1,8-mal zu steif gegen 2,0254 mm.
+    check("der lineare Tetraeder ist hier deutlich zu steif (gemessen 1,8-mal)", w_hex > 1.5 * w_tet,
           f"{w_hex * 1e3:.4f} mm gegen {w_tet * 1e3:.4f} mm")
     check("und das mit weniger Elementen", ne_hex < 0.25 * ne_tet, f"{ne_hex} gegen {ne_tet}")
 
@@ -1223,6 +1232,106 @@ def test_angleichen_schont_den_nachbarn():
     check("knotenkonform in der Fuge", _doppelte_knoten(m, fuge) == 0, f"{len(fuge)} Knoten")
     bef = diagnose.abnahme(m)
     check("Abnahme ohne Befund", not bef, str([b.pruefung for b in bef])[:120])
+
+
+def _gestapelter_zylinder(r=0.02, h1=0.03, h2=0.05, hh=0.01):
+    """Zylinder, dessen Mantel an z = h1 in **zwei Ringe** geteilt ist - wie
+    V61 am Drehlager: an der Zwischenkreislinie liegt ein Nachbar an, eine
+    Flaeche gibt es dort nicht. Die Kappen passen, aber je Randlinie stehen
+    zwei Waende uebereinander (23 der 40 nicht sweepbaren Drehlagerkoerper,
+    23.09.2026)."""
+    m = Model()
+    m.add_material(Material.steel("S235"))
+
+    def kreis(z, tag):
+        a = m.add_node(-r, 0, z)
+        b = m.add_node(r, 0, z)
+        m.add_line(f"{tag}1", [a, b], "arc", punkte=[(-r, 0, z), (0, r, z), (r, 0, z)])
+        m.add_line(f"{tag}2", [b, a], "arc", punkte=[(r, 0, z), (0, -r, z), (-r, 0, z)])
+        return a, b
+    au, bu = kreis(0.0, "U")
+    am, bm = kreis(h1, "M")
+    ao, bo = kreis(h1 + h2, "O")
+    m.add_line("S1", [au, am])
+    m.add_line("S2", [bu, bm])
+    m.add_line("S3", [am, ao])
+    m.add_line("S4", [bm, bo])
+    m.add_flaeche("KU", ["U1", "U2"], material="S235")
+    m.add_flaeche("KO", ["O1", "O2"], material="S235")
+    m.add_flaeche("W1", ["U1", "S2", "M1", "S1"], material="S235")
+    m.add_flaeche("W2", ["U2", "S1", "M2", "S2"], material="S235")
+    m.add_flaeche("W3", ["M1", "S4", "O1", "S3"], material="S235")
+    m.add_flaeche("W4", ["M2", "S3", "O2", "S4"], material="S235")
+    k = m.add_koerper("Z", ["KU", "KO", "W1", "W2", "W3", "W4"], material="S235")
+    m.netz.ziellaenge = hh
+    m.netz.dichte = "eigene"
+    m.netz.sweep = True
+    return m, k
+
+
+def test_zerlegen_an_vorhandener_schleife():
+    """Der gestapelte Zylinder: als Ganzes nicht sweepbar (zwei Waende je
+    Randlinie), aber an der Zwischenkreislinie teilbar - die Schnittflaeche
+    besteht aus vorhandenen Linien, keine Flaeche wird geschnitten."""
+    import time
+    m, k = _gestapelter_zylinder()
+    check("als Ganzes nicht sweepbar - zwei Waende je Randlinie",
+          sweep.erkennen(m, k) is None and "4 Wandflächen zu 2 Randlinien" in sweep.erkennen_warum_nicht(m, k),
+          sweep.erkennen_warum_nicht(m, k)[:100])
+    t0 = time.time()
+    bl, werk = sweep.zerlegen(m, k)
+    dt = time.time() - t0
+    check("an der vorhandenen Schleife in zwei sweepbare Bloecke zerlegt, in unter einer Sekunde",
+          bl is not None and len(bl) == 2 and all(e is not None for _n, e in bl) and dt < 1.0
+          and getattr(werk, "art", "") == "an einer vorhandenen Schleife",
+          f"{None if bl is None else [(len(n), e is not None) for n, e in bl]}, {dt:.2f} s, {getattr(werk, 'art', '')}")
+    check("eine Schnittflaeche aus den beiden Boegen der Zwischenkreislinie",
+          len(werk.flaechen) == 1 and sorted(m.flaechen[werk.flaechen[0]].linien) == ["M1", "M2"]
+          and not werk.linien and m.nn == 6, str([m.flaechen[x].linien for x in werk.flaechen]))
+    sweep.schnitte_entfernen(m, werk)
+    log = []
+    mesher.modell_vernetzen(m, log, workers=1)
+    typen = _typen(m)
+    check("vernetzt: nur Hexaeder", set(typen) == {"hex8"} and typen, str(typen))
+    V = sum(solid_volume(e.typ, m.nodes[e.nodes]) for e in m.elements)
+    V_soll = np.pi * 0.02 ** 2 * 0.08
+    check("Rauminhalt (Kreis als Vieleck)", 0.98 * V_soll <= V <= V_soll, f"{V / V_soll * 100:.1f} %")
+    check("die Zwischenkreislinie ist eine Lagengrenze - knotenkonform, keine doppelten Knoten",
+          _doppelte_knoten(m, [n for n in range(m.nn) if abs(m.nodes[n][2] - 0.03) < 1e-9]) == 0)
+    check("das Protokoll nennt die Schleife", any("vorhandenen Schleife" in z for z in log),
+          str([z[:90] for z in log if "zerlegt" in z])[:120])
+    check("Abnahme ohne Befund", not diagnose.abnahme(m))
+
+
+def test_zerlegen_namen_und_budget():
+    """Zwei Fehler vom Drehlager (23.09.2026): der Fussabdruck hiess nach der
+    Zahl der Schnitte und bekam nach einem verworfenen Versuch denselben
+    Namen wieder (KeyError 'V30§2'); und die Fussabdrucksuche probierte an
+    V30 255 s lang durch. Jetzt zaehlt Schnittwerk.marke durch, und ein
+    Budget begrenzt Zeit und Versuche."""
+    m, k = _platte_mit_nabe()
+    werk = sweep.Schnittwerk(m)
+    namen = [werk.marke(k) for _ in range(3)]
+    werk.zurueck_bis(werk.stand())
+    check("die Marke vergibt keinen Namen zweimal, auch nach dem Zuruecknehmen nicht",
+          len(set(namen)) == 3 and werk.marke(k) not in namen, str(namen + [werk.marke(k)]))
+    alt = (sweep.ZERLEGEN_ZEIT_S, sweep.ZERLEGEN_VERSUCHE)
+    sweep.ZERLEGEN_ZEIT_S, sweep.ZERLEGEN_VERSUCHE = 1e9, 0
+    try:
+        m2, k2 = _platte_mit_nabe()
+        bl, werk2 = sweep.zerlegen(m2, k2)
+        sweep.schnitte_entfernen(m2, werk2)
+        grund = sweep.zerlegen_warum_nicht(m2, k2)
+    finally:
+        sweep.ZERLEGEN_ZEIT_S, sweep.ZERLEGEN_VERSUCHE = alt
+    check("ohne Budget wird nichts zerlegt, und das Protokoll nennt den Abbruch",
+          bl is None and "abgebrochen" in grund, f"{bl} | {grund[:120]}")
+    m3, k3 = _platte_mit_nabe()
+    bl3, werk3 = sweep.zerlegen(m3, k3)
+    sweep.schnitte_entfernen(m3, werk3)
+    check("mit Budget wird die Platte mit Nabe wie zuvor zerlegt", bl3 is not None and len(bl3) == 2)
+    check("zerlegbar() merkt sich die Antwort am Modell",
+          sweep.zerlegbar(m3, k3) and (k3.name, tuple(k3.flaechen), m3.nn) in getattr(m3, "_zerlegbar_cache", {}))
 
 
 def test_umpaaren_spart_keile():
@@ -1419,7 +1528,8 @@ def main():
               test_keile_am_feinen_rand, test_verjuengter_zug, test_drehkoerper,
               test_krummer_quader_nicht_abgebildet, test_umpaaren_spart_keile,
               test_rippe_am_rand_ueber_ebene_zerlegt, test_kappen_verschieden_geteilt,
-              test_angleichen_schont_den_nachbarn,
+              test_angleichen_schont_den_nachbarn, test_zerlegen_an_vorhandener_schleife,
+              test_zerlegen_namen_und_budget,
               test_kragplatte_tet4_gegen_hex8):
         print(f"\n--- {t.__name__} ---")
         try:

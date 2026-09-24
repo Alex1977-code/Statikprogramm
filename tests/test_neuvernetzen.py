@@ -292,13 +292,249 @@ def test_master_facetten_folgen_dem_knotenloeschen():
           ist_f != vor_f, f"{len(vor_f)} Facetten, alle verschoben")
 
 
+def test_oberflaeche_entfernt_die_alten_knoten():
+    """Befund B062 (23.09.2026): „Netz → Vernetzen“ der Oberflaeche
+    (gui.main._vernetzen) loeschte je Objekt nur die Elemente des alten
+    Netzes (_netz_loeschen), die Knoten blieben stehen. Am L-Prisma h 0,12
+    ohne Qt nachgestellt: beim zweiten Vernetzen 2470 statt 1241 Knoten,
+    Abnahme FEHLER „Knoten ohne Element“ 1229, und vor jeder Rechnung fragte
+    die Abnahme nach. ``mesher.modell_vernetzen`` entfernt sie
+    (Model.netzknoten_loeschen). Hier der echte Oberflaechenweg, self als
+    Attrappe, zweimal mit denselben Einstellungen - verglichen mit
+    ``modell_vernetzen``."""
+    import importlib
+    import time
+    from unittest import mock
+    from statik3d import diagnose as dg
+    G = importlib.import_module("statik3d.gui.main")      # gui.main() verdeckt das Modul
+
+    def gui_vernetzen(m):
+        s = mock.MagicMock()
+        s.model = m
+        s._fortschritt_t0 = time.time()
+        s._netz_loeschen = G.MainWindow._netz_loeschen.__get__(s)
+        with mock.patch.object(G, "QtWidgets"):       # nur processEvents im Weg
+            G.MainWindow._vernetzen(s, list(m.flaechen.values()), list(m.koerper.values()))
+        return [str(c.args[0]) for c in s.log.appendPlainText.call_args_list if c.args]
+
+    def verwaist(m):
+        return sum(int(b.wert) for b in dg.abnahme(m) if b.pruefung == "Knoten ohne Element")
+
+    def hat_knoten(m, p):
+        return bool(np.any(np.all(np.abs(np.asarray(m.nodes) - np.asarray(p)) < 1e-12, axis=1)))
+
+    def grob():
+        # Grober als die Netzdichte (dort 108 mm, 22 551 tet4): vier
+        # Vernetzungen sollen Sekunden dauern, nicht Minuten
+        pk = pruefkoerper()
+        pk.netz.koerper_h = {"Unten": 0.25, "Oben": 0.25}
+        return pk
+
+    ref = grob()
+    _vernetzen(ref)
+    _vernetzen(ref)
+    m = grob()
+    # Ein gesetzter Knoten, an dem noch nichts haengt (etwa fuer eine
+    # spaetere Linie), gehoert zu keinem Netz: er muss das Neuvernetzen
+    # ueberleben - netzknoten_loeschen() ohne Kandidaten naehme ihn mit.
+    konstruktion = (5.0, 5.0, 5.0)
+    m.add_node(*konstruktion)
+    gui_vernetzen(m)
+    n1, e1, v1 = m.nn, len(m.elements), verwaist(m)
+    check("Oberfläche, erstes Netz: so viele Knoten wie modell_vernetzen, dazu der gesetzte",
+          n1 == ref.nn + 1 and e1 == len(ref.elements) and v1 <= 1,
+          f"{e1} Elemente, {n1} Knoten (modell_vernetzen {len(ref.elements)}, {ref.nn}), "
+          f"ohne Element {v1}")
+    log = gui_vernetzen(m)
+    check("**Oberfläche, zweites Netz: die Knoten des alten Netzes sind weg**",
+          m.nn == n1 and len(m.elements) == e1,
+          f"{len(m.elements)} Elemente, {m.nn} Knoten (erstes Netz {n1})")
+    check("… keine weiteren „Knoten ohne Element“ in der Abnahme", verwaist(m) == v1,
+          f"{verwaist(m)} (erstes Netz {v1})")
+    check("… der gesetzte Knoten ohne Element bleibt", hat_knoten(m, konstruktion))
+    check("… und das Protokoll nennt die entfernten",
+          any("Knoten des alten Netzes entfernt" in z for z in log),
+          str([z for z in log if "Knoten" in z][:3]))
+    # Lager und Fuge zeigen nach dem Umnummerieren auf Knoten des neuen
+    # Netzes.
+    am_netz = np.zeros(m.nn, bool)
+    am_netz[[int(x) for e in m.elements for x in e.nodes]] = True
+    lager = [int(k) for x in m.surface_supports for k in (x.nodes or [])]
+    fuge = [int(k) for p in m.contact_pairs for k in (p.slave_nodes or [])] + \
+           [int(k) for p in m.contact_pairs for f in (p.master_faces or []) for k in f]
+    check("… Lager und Fuge hängen an Knoten des neuen Netzes",
+          lager and fuge and all(0 <= k < m.nn and am_netz[k] for k in lager + fuge),
+          f"{len(lager)} Lagerknoten, {len(fuge)} Fugenverweise, "
+          f"{sum(1 for k in lager + fuge if not (0 <= k < m.nn and am_netz[k]))} daneben")
+
+    # Und es rechnet danach dasselbe wie nach modell_vernetzen. Die Faelle
+    # oben vernetzen ueber modell_vernetzen, nicht ueber diesen Weg, der seit
+    # B062 die Knoten umnummeriert - dass er danach rechnet, prueft nur diese
+    # Stelle. Bis zum 24.09.2026 stand hier, die Kontaktrechnung brauche
+    # Minuten: gemessen sind es Sekunden (24.09.2026, Rechner durch andere
+    # Laeufe ausgelastet: 13 bis 23 s je Rechnung, in einem ruhigeren Lauf
+    # die ganze Pruefung 29 s). Beide Netze sind gleich (1911 tet4, 24
+    # Kontaktzeilen), also auch die Zahlen: max |u| 0,7123 µm auf beiden
+    # Wegen, Abweichung 0.
+    a = _kennzahlen(solver.solve_static(ref), ref)
+    b = _kennzahlen(solver.solve_static(m), m)
+    soll = 2.0 * 7850.0 * 9.81
+    check("… rechnet: die Fuge trägt, die Auflager tragen das Eigengewicht",
+          b["kontaktzeilen"] > 0 and abs(b["Rz"] - soll) <= 1e-6 * soll,
+          f"{b['kontaktzeilen']} Kontaktzeilen (modell_vernetzen {a['kontaktzeilen']}), "
+          f"Rz {b['Rz'] / 1e3:.3f} kN von {soll / 1e3:.3f} kN")
+    nahe("**… und rechnet dasselbe wie nach modell_vernetzen**: größte Verschiebung",
+         b["u_max"], a["u_max"], 1e-4, " m")
+    d = float(np.abs(np.asarray(b["u_mittel"]) - np.asarray(a["u_mittel"])).max())
+    check("… auch der Mittelvektor der Verschiebung",
+          d <= 1e-4 * max(a["u_max"], 1e-12),
+          f"Δ Mittel {d * 1e6:.4f} µm gegen max |u| {a['u_max'] * 1e6:.4f} µm")
+
+
+def _passung_und_lagergruppen():
+    """Freier Knoten 0 vor einem Netz aus zwei hex8; ein Kontaktpaar mit
+    Passungsdaten (Einflussflaeche je Slave-Knoten, Randknoten,
+    Lochleibungsgrenze) und ein lokales Flaechenlager mit Normalengruppe auf
+    denselben vier Knoten der Stirnseite."""
+    from statik3d.model import ContactPair, SurfaceSupport
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    frei = m.add_node(-5.0, 0.0, 0.0)
+    ids = mesher.grid_box(m, "S235", 1.0, 0.1, 0.1, 2, 1, 1, typ="hex8")
+    s = [int(ids[2, 0, 0]), int(ids[2, 1, 0]), int(ids[2, 0, 1]), int(ids[2, 1, 1])]
+    cp = ContactPair("F1", slave_nodes=list(s),
+                     master_faces=[[int(ids[0, 0, 0]), int(ids[0, 1, 0]), int(ids[0, 1, 1])]],
+                     grenzpressung=200e6, knotenflaechen={n: 0.0025 for n in s},
+                     rand_knoten=[s[0]])
+    m.contact_pairs.append(cp)
+    ss = SurfaceSupport("SL", nodes=list(s), areas=[0.0025] * 4, lokal=True,
+                        gruppen=[[0, 1, list(s), [0.0025] * 4]])
+    m.surface_supports.append(ss)
+    return m, frei, s, cp, ss
+
+
+def test_passung_und_lagergruppen_folgen_dem_knotenloeschen():
+    """Befund B107: ``_knotenverweise_abbilden`` zog ContactPair.knotenflaechen
+    (Schluessel), ContactPair.rand_knoten und SurfaceSupport.gruppen nicht mit.
+
+    Gemessen am Stand ec6448c (23.09.2026): nach knoten_loeschen(0) waren
+    die Slave-Knoten [8, 10, 9, 11], die Schluessel der Einflussflaechen aber
+    weiter [9, 10, 11, 12] (Knoten 12 gab es nicht mehr), der Randknoten 9
+    und die Gruppenknoten [9, 11, 10, 12]. Slave-Knoten 8 hatte damit keine
+    Einflussflaeche - seine Lochleibungsgrenze wurde 0, also keine -, und
+    der Randknoten, der nicht haften soll, war ein anderer Knoten.
+    """
+    m, frei, s, cp, ss = _passung_und_lagergruppen()
+    grund = m.knoten_loeschen(frei)
+    check("knoten_loeschen(0) gelingt", grund == "", grund)
+    soll = [n - 1 for n in s]
+    check("die Slave-Knoten ruecken auf (das war schon vorher richtig)", cp.slave_nodes == soll,
+          str(cp.slave_nodes))
+    check("**die Einflussflaechen gehoeren zu denselben Slave-Knoten**",
+          sorted(cp.knotenflaechen) == sorted(cp.slave_nodes)
+          and all(abs(a - 0.0025) < 1e-15 for a in cp.knotenflaechen.values()),
+          f"{sorted(cp.knotenflaechen)} gegen {sorted(cp.slave_nodes)}")
+    check("**der Randknoten ist derselbe Knoten wie vorher**", cp.rand_knoten == [soll[0]],
+          f"{cp.rand_knoten} statt {[soll[0]]}")
+    check("**die Knoten der Normalengruppe sind die des Lagers**",
+          ss.gruppen[0][2] == ss.nodes == soll and ss.gruppen[0][3] == [0.0025] * 4,
+          f"{ss.gruppen[0][2]} gegen {ss.nodes}")
+
+    # Tauschen zweier Knotennummern: jeder Verweis folgt dem Knoten
+    m, frei, s, cp, ss = _passung_und_lagergruppen()
+    a, b = s[0], s[3]
+    m.knoten_tauschen(a, b)
+    check("knoten_tauschen: Einflussflaechen, Randknoten und Gruppe folgen",
+          sorted(cp.knotenflaechen) == sorted(cp.slave_nodes) and cp.rand_knoten == [b]
+          and ss.gruppen[0][2] == ss.nodes,
+          f"kf {sorted(cp.knotenflaechen)}, rand {cp.rand_knoten}, gruppe {ss.gruppen[0][2]}")
+
+    # Ein geloeschter Knoten, der in der Normalengruppe steht, faellt samt
+    # seiner Einflussflaeche heraus (die Listen bleiben gleich lang)
+    m, frei, s, cp, ss = _passung_und_lagergruppen()
+    k_los = m.add_node(-6.0, 0.0, 0.0)
+    ss.nodes.append(k_los)
+    ss.areas.append(0.001)
+    ss.gruppen[0][2].append(k_los)
+    ss.gruppen[0][3].append(0.001)
+    m.knoten_loeschen(k_los)
+    check("geloeschter Gruppenknoten faellt mit seiner Flaeche heraus",
+          ss.gruppen[0][2] == s and ss.gruppen[0][3] == [0.0025] * 4 and ss.nodes == s,
+          f"{ss.gruppen[0][2]} / {ss.gruppen[0][3]}")
+
+    # netzknoten_loeschen: der freie Knoten 0 geht, die Verweise folgen
+    m, frei, s, cp, ss = _passung_und_lagergruppen()
+    weg = m.netzknoten_loeschen()
+    check("netzknoten_loeschen: Einflussflaechen, Randknoten und Gruppe folgen",
+          weg == 1 and sorted(cp.knotenflaechen) == sorted(cp.slave_nodes)
+          and cp.rand_knoten == [s[0] - 1] and ss.gruppen[0][2] == ss.nodes,
+          f"weg {weg}, kf {sorted(cp.knotenflaechen)}, rand {cp.rand_knoten}, "
+          f"gruppe {ss.gruppen[0][2]} / {ss.nodes}")
+
+
+def test_tabellenknopf_knoten_loeschen_nimmt_denselben_weg():
+    """Der Knopf „Knoten löschen“ der Tabelle Knoten (MainWindow.knoten_loeschen)
+    nummerierte bis zum 24.09.2026 selbst um (Elemente, Linien, Lager,
+    Knotenlasten) und ging nicht ueber Model.knoten_loeschen. Gemessen an
+    eb2fc71 (24.09.2026) mit dem Modell unten, Zeile 0 (der freie Knoten):
+    danach nn = 12, die Lagerknoten [8, 10, 9, 11], aber die Slave-Knoten
+    [9, 11, 10, 12], die Master-Facette [[1, 3, 4]], die Schluessel der
+    Einflussflaechen [9, 10, 11, 12], der Randknoten 9 und die Gruppenknoten
+    [9, 11, 10, 12] - die Fuge zeigte auf fremde und auf einen nicht mehr
+    vorhandenen Knoten. Hier ohne Fenster: der Knopf mit einer Attrappe fuer
+    self (Zeile, Modell, merken, error, refresh_all), wie in test_gzg.
+    """
+    import types
+    from statik3d.gui.main import MainWindow
+
+    def knopf(m, zeile):
+        meld = []
+        attrappe = types.SimpleNamespace(
+            model=m, tbl_knoten=None, selection=None,
+            _zeilenzahl=lambda _tbl: zeile,
+            error=lambda t: meld.append("error: " + t),
+            merken=lambda t: meld.append("merken: " + t),
+            refresh_all=lambda: None)
+        MainWindow.knoten_loeschen(attrappe)
+        return meld
+
+    m, frei, s, cp, ss = _passung_und_lagergruppen()
+    nn = m.nn
+    master = [list(map(int, f)) for f in cp.master_faces]
+    meld = knopf(m, frei)
+    check("Tabellenknopf: der freie Knoten 0 geht, ohne Fehlermeldung",
+          m.nn == nn - 1 and meld == [f"merken: Knoten {frei} gelöscht"], str(meld))
+    soll = [n - 1 for n in s]
+    check("**Tabellenknopf: die Slave-Knoten ruecken mit auf**", cp.slave_nodes == soll,
+          f"{cp.slave_nodes} statt {soll}")
+    check("**Tabellenknopf: die Master-Facette rueckt mit auf**",
+          [list(map(int, f)) for f in cp.master_faces] == [[n - 1 for n in f] for f in master],
+          f"{cp.master_faces} statt {[[n - 1 for n in f] for f in master]}")
+    check("**Tabellenknopf: Einflussflaechen, Randknoten und Gruppe folgen**",
+          sorted(cp.knotenflaechen) == sorted(cp.slave_nodes) and cp.rand_knoten == [soll[0]]
+          and ss.gruppen[0][2] == ss.nodes == soll,
+          f"kf {sorted(cp.knotenflaechen)}, rand {cp.rand_knoten}, "
+          f"gruppe {ss.gruppen[0][2]} / {ss.nodes}")
+
+    # Ein Knoten mit Element bleibt, wie bisher, und nichts wird gemerkt
+    m, frei, s, cp, ss = _passung_und_lagergruppen()
+    nn = m.nn
+    meld = knopf(m, s[0])
+    check("Tabellenknopf: ein Knoten mit Element bleibt und wird genannt",
+          m.nn == nn and len(meld) == 1 and meld[0].startswith("error: ")
+          and cp.slave_nodes == s, str(meld))
+
+
 def main():
     print("=" * 92)
     print("STATIK3D - ein neu vernetztes Modell muss dasselbe rechnen")
     print("=" * 92)
     for t in (test_neuvernetzen_rechnet_dasselbe,
               test_fuge_und_lager_ueberleben_das_neuvernetzen,
-              test_master_facetten_folgen_dem_knotenloeschen):
+              test_master_facetten_folgen_dem_knotenloeschen,
+              test_oberflaeche_entfernt_die_alten_knoten,
+              test_passung_und_lagergruppen_folgen_dem_knotenloeschen,
+              test_tabellenknopf_knoten_loeschen_nimmt_denselben_weg):
         try:
             t()
         except Exception as ex:               # noqa: BLE001

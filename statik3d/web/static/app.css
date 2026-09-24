@@ -94,6 +94,7 @@ pre{white-space:pre-wrap;word-break:break-word;font-size:12px;background:#f7f9fb
 .util{display:inline-block;min-width:44px;text-align:center;border-radius:6px;padding:1px 6px;color:#fff;font-weight:600;font-size:12px}
 .status-ok{color:var(--ok);font-weight:600}
 .status-bad{color:var(--bad);font-weight:600}
+.status-warn{color:var(--warn);font-weight:600}
 .big{font-size:22px;font-weight:700}
 svg.chart{width:100%;height:auto;background:#fff;border:1px solid var(--line);border-radius:8px}
 #toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--nav-h) + 16px + env(safe-area-inset-bottom));max-width:92vw;background:#1c2733;color:#fff;padding:10px 16px;border-radius:10px;font-size:14px;z-index:50;box-shadow:0 4px 16px rgba(0,0,0,.3);white-space:pre-wrap}

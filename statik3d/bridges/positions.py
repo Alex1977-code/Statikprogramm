@@ -72,7 +72,9 @@ class Stellung:
     dreh_achse / dreh_punkt / dreh_winkel:
                   Drehung der bewegten Bauteile: Achse, ein Punkt darauf und der
                   Winkel in Grad. Gedreht werden die Knoten der Gruppen in
-                  dreh_gruppen (leer = alle Knoten, die nicht gelagert sind).
+                  dreh_gruppen (leer = alle Knoten ohne Knotenlager; Knoten
+                  auf Linien- und Flächenlagern bewegen sich mit, siehe
+                  _bewegte_knoten). Dieselben Knoten verschiebt verschiebung.
     dreh_gruppen: Elementgruppen, die sich mitbewegen.
     antrieb:      (Knoten, Momentenvektor [Nm]) - das Antriebsmoment, das die
                   Stellung hält. Wird als Knotenlast in einem eigenen Lastfall
@@ -275,22 +277,92 @@ class Stellung:
                              + ", ".join(f"'{x}'" for x in unbekannt)
                              + " gibt es im Modell nicht. Vorhanden: "
                              + ", ".join(sorted(m.load_cases)))
-        for name in list(m.load_cases):
-            if name not in behalten:
-                m.remove_load_case(name)
+        entfernt = [name for name in m.load_cases if name not in behalten]
+        # Alternativen, die nur aus entfernten Lastfaellen bestehen, entfallen
+        # (Combination.lastfall_entfernen) - fuer das Protokoll vorher gezaehlt
+        alt_weg = [(c.name, i) for c in m.combinations.values()
+                   for i, a in enumerate(c.alternativen, 1)
+                   if entfernt and set(a) <= set(entfernt)]
+        # remove_load_case nimmt seit dem 23.09.2026 die Ermuedungslasten
+        # schon selbst mit (Befund B105): Lasten aus zwei Zustaenden mit einem
+        # dieser Lastfaelle entfallen, ein Verlauf verliert das Glied. Fuer
+        # das Protokoll unten zaehlen sie trotzdem, und ob ein Verlauf in der
+        # Stellung bleibt, entscheiden seine Glieder **vor** dem Kuerzen
+        # (fehlt, unten) - darum der Stand davor
+        erm_vorher = {n: list(f.folge or []) for n, f in m.fatigue_loads.items()}
+        for name in entfernt:
+            # nimmt den Lastfall auch aus den Faktoren und den Alternativen
+            # jeder Kombination (Combination.lastfall_entfernen, Befund B105)
+            m.remove_load_case(name)
+        # Eine Ergebniskombination hat factors leer und bleibt, solange ihr
+        # eine Alternative bleibt. Bis ec6448c fiel hier jede Kombination mit
+        # leeren factors ohne Meldung weg: am Kragarm mit EK1 = 1,35 LF1 oder
+        # 1,35 LF1 + 1,5 LF2 ergab die Stellung mit allen Lastfaellen eta
+        # 0,1702 statt 0,3702, weil der Nachweis auf die Lastfaelle zurueckfiel
+        # (gemessen 23.09.2026).
+        k_weg = []
         for name in list(m.combinations):
             c = m.combinations[name]
-            if not set(c.factors) <= behalten or not c.factors:
+            if not set(c.factors) <= behalten or not (c.factors or c.alternativen):
                 del m.combinations[name]
-        # Ermuedungslasten, deren Lastfall in dieser Stellung fehlt, entfallen mit:
-        # sonst bricht die ganze Stellung an einem Verweis ins Leere ab.
-        weg = [f.name for f in m.fatigue_loads.values()
-               if f.case_max not in behalten
-               or (f.case_min is not None and f.case_min not in behalten)]
+                k_weg.append(name)
+        # Ermuedungslasten, deren Zustand in dieser Stellung fehlt, entfallen mit:
+        # sonst bricht die ganze Stellung an einem Verweis ins Leere ab. Bei
+        # einem Verlauf zaehlen seine Glieder - nur sie liest der
+        # Ermuedungsnachweis von Staeben und Volumen (ec3.fatigue),
+        # case_max/case_min eines Verlaufs liest er nicht; bis ec6448c
+        # entschieden sie hier: ein Verlauf mit case_max "" (rfem6_db)
+        # entfiel in jeder solchen Stellung. (Der Ermuedungsnachweis der
+        # Anschluesse, joints/anschluss.py, zaehlt einen Verlauf seit B094
+        # ebenfalls nach seinen Gliedern; die Stellungsreihe rechnet ohnehin
+        # keine Ermuedung.) Ein Glied
+        # darf eine Kombination sein (die Oberflaeche nimmt sie an, gui/main.py
+        # add_fatigue_load; ec3.fatigue liest sie aus all_results) - darum
+        # gelten auch die Kombinationen, die oben stehen blieben. 8daa37e
+        # pruefte nur gegen die Lastfaelle, und ein Verlauf ueber K1 = G + Q1
+        # entfiel in der Stellung faelle=[G, Q1], obwohl K1 blieb
+        # (Gegenpruefung 23.09.2026).
+        zustaende = behalten | set(m.combinations)
+
+        # Ein Verlauf mit einem Glied ausserhalb der Stellung entfaellt ganz,
+        # wie eine Last aus zwei Zustaenden; gekuerzt wird er hier nicht, denn
+        # ohne das Glied waere es eine andere Lastfolge (andere Schwingbreiten),
+        # die niemand angelegt hat. Darum die Glieder von vor remove_load_case.
+        def fehlt(f) -> bool:
+            folge = erm_vorher.get(f.name) or getattr(f, "folge", None)
+            if folge:
+                return not set(folge) <= zustaende
+            return (f.case_max not in behalten
+                    or (f.case_min is not None and f.case_min not in behalten))
+        weg = [f.name for f in m.fatigue_loads.values() if fehlt(f)]
         for name in weg:
             del m.fatigue_loads[name]
+        for f in m.fatigue_loads.values():
+            if getattr(f, "folge", None):
+                # ein stehengebliebenes case_max/case_min eines Verlaufs, dessen
+                # Lastfall hier fehlt, meldete Model.check bis B067 als FEHLER
+                # und wies die Stellung ab, obwohl kein Nachweis es bei einem
+                # Verlauf liest; seither prueft Model.check es nicht mehr.
+                # Geleert wird es trotzdem, damit die Kopie keinen Verweis
+                # auf einen Lastfall traegt, den es in ihr nicht gibt.
+                if f.case_max and f.case_max not in m.load_cases and f.case_max not in m.combinations:
+                    f.case_max = ""
+                if f.case_min and f.case_min not in m.load_cases and f.case_min not in m.combinations:
+                    f.case_min = None
+        # Im Protokoll jede Ermuedungslast, die hier fehlt - auch die, die
+        # remove_load_case schon genommen hat (Befund B105)
+        weg = [n for n in erm_vorher if n not in m.fatigue_loads]
         if log is not None:
             log.append(f"  {self.name}: Lastfälle {', '.join(sorted(behalten))}")
+            if k_weg:
+                log.append(f"  {self.name}: Kombinationen ohne Lastfall entfallen: "
+                           + ", ".join(k_weg))
+            # die Alternativen einer ganz entfallenen Kombination nennt die
+            # Zeile davor schon
+            alt_weg = [f"{k} [{i}]" for k, i in alt_weg if k not in k_weg]
+            if alt_weg:
+                log.append(f"  {self.name}: Alternativen ohne Lastfall entfallen: "
+                           + ", ".join(alt_weg))
             if weg:
                 log.append(f"  {self.name}: Ermüdungslasten ohne Lastfall entfallen: "
                            + ", ".join(sorted(weg)))
@@ -306,6 +378,13 @@ class Stellung:
         for c in m.combinations.values():
             if any(f > 0 for f in c.factors.values()):
                 c.factors.setdefault(name, 1.0)
+            # ebenso jede Alternative einer Ergebniskombination (factors leer):
+            # bis ec6448c blieb sie ohne Antrieb - am Kragarm eta 0,3702 wie
+            # ohne Antrieb statt 0,4255 wie die gleichwertige K2 (Mz 50 kNm,
+            # gemessen 23.09.2026)
+            for a in c.alternativen:
+                if any(f > 0 for f in a.values()):
+                    a.setdefault(name, 1.0)
         if log is not None:
             log.append(f"  {self.name}: Antriebsmoment |M| = "
                        f"{np.linalg.norm(moment) / 1e3:.1f} kNm an Knoten {knoten + 1}")
@@ -339,10 +418,17 @@ class StellungsErgebnis:
 
     @property
     def ok(self) -> bool:
-        # Nicht nachgewiesen ist nicht erfuellt: mit kombinationen=False kam
-        # hier eta = 0 und ok = True heraus, obwohl kein Nachweis gefuehrt
-        # war (Halle: 42 Kombinationen ohne Ergebnis, Gegenpruefung 23.09.2026)
-        return not self.fehler and not self.warnungen and self.eta <= 1.0 + 1e-9
+        # Nicht nachgewiesen ist nicht erfuellt - weder mit Warnungen
+        # (Kombination ohne Ergebnis) noch ohne jeden gefuehrten Stabnachweis
+        # (nachweise=False, kein Stab mit Nachweis). Im ausgelieferten Stand
+        # 54b6f9a kam mit kombinationen=False keine Warnung: die Staebe wurden
+        # gegen die Lastfaelle mit Faktor 1 nachgewiesen (Stauwand eta 0,2909
+        # aus "Wasser", Halle 0,2776 aus "LF1", ok True); eta 0 mit ok True gab
+        # es dort mit nur GZG-Kombinationen (Halle). Bis ec6448c galt eine
+        # Stellung ohne Warnung und ohne Nachweis als ok (Klappe mit
+        # nachweise=False: eta 0, ok True). Alles gemessen 23.09.2026.
+        return (not self.fehler and self.nachgewiesen and not self.warnungen
+                and self.eta <= 1.0 + 1e-9)
 
 
 class Stellungsreihe:
@@ -479,16 +565,25 @@ class Umhuellende:
 
     @property
     def eta_bestimmt(self) -> bool:
-        """False, wenn Nachweise verlangt waren, aber in keiner Stellung
-        einer gefuehrt wurde - dann ist eta = 0 keine Ausnutzung."""
-        return not self.unvollstaendig or any(e.nachgewiesen for e in self.ergebnisse)
+        """True nur, wenn in einer Stellung wirklich ein Stabnachweis gefuehrt
+        wurde - sonst ist eta = 0 keine Ausnutzung, mit oder ohne Warnungen,
+        und auch dann, wenn gar keine Stellung gerechnet ist. Bis ec6448c hing
+        es an den Warnungen: mit nachweise=False (Operation stellungen_rechnen
+        mit "nachweise": false) oder ohne Stab mit Nachweis kam keine, und es
+        hiess "eta = 0.000" (Stauwand, drei Stellungen, und die Klappe;
+        gemessen 23.09.2026; Befund B036). Ohne jedes Ergebnis galt eta bis
+        zum 23.09.2026 ebenso als bestimmt: „eta = 0.000“ nach zwei am FEHLER
+        gescheiterten Stellungen (Befund B064). kurztext und bericht nennen
+        den Fall ohne Ergebnis eigens („keine Stellung gerechnet“)."""
+        return any(e.nachgewiesen for e in self.ergebnisse)
 
     def warnhinweis(self) -> str:
         """Leer, wenn alles nachgewiesen ist - sonst der Zusatz, der hinter
-        jedes eta gehoert. Vorher stand nach ``rechnen(kombinationen=False,
-        nachweise=True)`` "eta = 0.000" ohne jeden Hinweis in Bericht und
-        Rueckgabetext; die Warnungen standen nur im Protokoll (Gegenpruefung
-        23.09.2026)."""
+        jedes eta gehoert. Im ausgelieferten Stand 54b6f9a gab es mit
+        ``rechnen(kombinationen=False, nachweise=True)`` keine Warnung: die
+        Staebe wurden gegen die Lastfaelle mit Faktor 1 nachgewiesen
+        (Stauwand "eta = 0.291" aus "Wasser", Halle "eta = 0.278" aus "LF1",
+        0 WARN-Zeilen im Protokoll; gemessen 23.09.2026)."""
         unvoll = self.unvollstaendig
         if not unvoll:
             return ""
@@ -498,9 +593,13 @@ class Umhuellende:
 
     def kurztext(self) -> str:
         """Die eine Zeile nach dem Rechnen: eta mit maßgebender Stellung und
-        dem Warnhinweis - oder, wenn nichts nachgewiesen wurde, genau das."""
+        dem Warnhinweis - oder, wenn nichts gerechnet oder nachgewiesen
+        wurde, genau das."""
+        if not self.ergebnisse:
+            return ("eta nicht bestimmt – keine Stellung gerechnet"
+                    + (f" ({len(self.fehlerhaft)} mit FEHLER, siehe Protokoll)" if self.fehlerhaft else ""))
         if not self.eta_bestimmt:
-            return "eta nicht bestimmt – kein Nachweis geführt" + self.warnhinweis()
+            return "eta nicht bestimmt – kein Stabnachweis geführt" + self.warnhinweis()
         return (f"eta = {self.eta:.3f}"
                 + (f", maßgebend {self.massgebende_stellung}" if self.massgebende_stellung
                    else "")
@@ -540,16 +639,20 @@ class Umhuellende:
                 z.append(f"{st.name:<10s}{st.winkel:>8.1f}°{'-':>12s}{'-':>9s}  "
                          f"FEHLER: {e.fehler[:40]}")
             else:
-                # ohne jeden gefuehrten Nachweis ist eta = 0 keine Zahl
-                eta = (f"{e.eta:>9.3f}" if e.nachgewiesen or not e.warnungen
-                       else f"{'-':>9s}")
+                # ohne jeden gefuehrten Nachweis ist eta = 0 keine Zahl, auch
+                # ohne Warnung (nachweise=False, kein Stab mit Nachweis)
+                eta = f"{e.eta:>9.3f}" if e.nachgewiesen else f"{'-':>9s}"
                 z.append(f"{st.name:<10s}{st.winkel:>8.1f}°{e.u_max * 1e3:>10.3f} mm"
                          f"{eta}  {st.beschreibung}"
                          + ("  (NICHT VOLLSTÄNDIG NACHGEWIESEN)" if e.warnungen else ""))
         z.append("-" * 78)
-        if not self.eta_bestimmt:
+        if not self.ergebnisse:
+            z.append("Umhüllende: eta nicht bestimmt – keine Stellung gerechnet"
+                     + (" (siehe „Nicht gerechnet“)" if self.fehlerhaft else ""))
+        elif not self.eta_bestimmt:
             z.append("Umhüllende: eta nicht bestimmt – in keiner Stellung wurde ein "
-                     "Nachweis geführt (siehe „Nicht nachgewiesen“)")
+                     "Stabnachweis geführt"
+                     + (" (siehe „Nicht nachgewiesen“)" if self.unvollstaendig else ""))
         else:
             z.append(f"Umhüllende: eta = {self.eta:.3f}"
                      + (f", maßgebend in {self.massgebende_stellung}"

@@ -244,11 +244,37 @@ def test_am_modell_gespeichert():
     del tempfile
 
 
+def test_meldung_steht_im_ergebnis():
+    """Befund B032 (24.09.2026): greift die Knotendilatation fuer einen
+    Werkstoff nicht (die Regel verlangt 0 <= nu < 0,5), rechnet sein Bauteil mit
+    dem gewoehnlichen Tetraeder weiter - bis dahin sagte das nur warnings.warn, und das erreichte
+    weder Protokoll noch Bericht noch die exe. Jetzt steht es in res.info, in
+    der Zusammenfassung und in den Hinweisen des Berichts. Geprueft mit
+    nu = -0,1: bei nu = 0,5 rechnet schon der gewoehnliche tet4 nicht (laut,
+    mit Elementnummer), die Meldung kaeme dort nie an."""
+    from statik3d import solver
+    for nu, soll in ((-0.1, True), (0.3, False)):
+        m, _w = _kragtraeger(nu, h=0.2)
+        m.knotendilatation = True
+        an = solver.solve_all(m)
+        res = next(iter(an.cases.values()))
+        z = res.info.get("dilatation_hinweise") or []
+        gebuendelt = solver.dilatation_gebuendelt(an.all_results().items())
+        if soll:
+            check("ν = −0,1: die Meldung steht im Ergebnis (Werkstoff, Querdehnzahl, Zahl der tet4)",
+                  len(z) == 1 and "Querdehnzahl -0.1" in z[0] and "tet4)" in z[0], z[0] if z else "fehlt")
+            check("… in der Zusammenfassung und gebündelt für den Bericht",
+                  any("Knotendilatation:" in x for x in an.summary().splitlines()) and len(gebuendelt) == 1,
+                  gebuendelt[0][:80] if gebuendelt else "")
+        else:
+            check("ν = 0,3: keine Meldung", not z and not gebuendelt)
+
+
 def main():
     for t in (test_aufspaltung_ist_exakt, test_ein_element_bleibt_der_gewoehnliche_tetraeder,
               test_patchtest, test_versteifung_ist_weg, test_gleichgewicht_und_spannung,
               test_nur_tet4_ist_betroffen, test_der_preis_steht_in_der_matrix,
-              test_am_modell_gespeichert):
+              test_am_modell_gespeichert, test_meldung_steht_im_ergebnis):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

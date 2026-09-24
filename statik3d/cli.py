@@ -110,10 +110,35 @@ def main(argv=None) -> int:
     if a.adaptiv is not None:
         from . import adaptiv as _ad, netzfehler as _nf
         zeilen: list[str] = []
-        _ad.adaptiv_vernetzen(m, [a.lastfall] if a.lastfall else None, runden=int(a.adaptiv),
-                              ziel=a.fehlerziel if a.fehlerziel else _nf.ZIEL,
-                              log=zeilen, workers=a.kerne,
-                              probelauf={"auto": None, "ja": True, "nein": False}[a.probelauf])
+        probelauf = {"auto": None, "ja": True, "nein": False}[a.probelauf]
+        rechnen_standard = _ad._rechnen_standard(a.kerne, probelauf, zeilen)
+        gesperrt: list = []
+
+        # Jeder Durchgang rechnet. Bis zum 23.09.2026 kam die Modellpruefung
+        # erst unten, nach Schleife und --speichern: mit dem FEHLER
+        # „Kombination 'K9': Lastfall 'LF-X' unbekannt“ liefen zwei
+        # Durchgaenge, das Modell wurde gespeichert, dann rc 2 (Befund B063).
+        # Geprueft wird nach dem Vernetzen - vorher meldet die Pruefung auch
+        # „keine Elemente definiert“ - und vor jeder Rechnung.
+        class _Gesperrt(Exception):
+            pass
+
+        def rechnen(mm, lf):
+            fehler = [x for x in mm.check() if x.startswith("FEHLER")]
+            if fehler:
+                gesperrt[:] = fehler
+                raise _Gesperrt()
+            return rechnen_standard(mm, lf)
+        try:
+            _ad.adaptiv_vernetzen(m, [a.lastfall] if a.lastfall else None, runden=int(a.adaptiv),
+                                  ziel=a.fehlerziel if a.fehlerziel else _nf.ZIEL,
+                                  log=zeilen, workers=a.kerne, probelauf=probelauf, rechnen=rechnen)
+        except _Gesperrt:
+            for s in zeilen:
+                log("  " + s)
+            print("Adaptiv vernetzen angehalten, bevor gerechnet wurde - nichts gespeichert:\n"
+                  + "\n".join(gesperrt), file=sys.stderr)
+            return 2
         for s in zeilen:
             log("  " + s)
     elif a.vernetzen:

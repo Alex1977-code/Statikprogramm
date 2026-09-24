@@ -126,32 +126,44 @@ def count_duplicate_nodes(model: Model, tol: float = DEFAULT_TOL) -> int:
     return int(model.nn - len(np.unique(key, axis=0)))
 
 
-def merge_duplicate_nodes(model: Model, tol: float = DEFAULT_TOL) -> int:
+def merge_duplicate_nodes(model: Model, tol: float = DEFAULT_TOL, ab: int = 0,
+                          log: Optional[list] = None) -> int:
     """Doppelte Knoten zusammenfuehren, alle Verweise umhaengen.
 
     Wie mesher.merge_nodes, beruecksichtigt aber zusaetzlich die Knotenlasten
     *aller* Lastfaelle sowie Kontaktobjekte. Rueckgabe: Anzahl entfernter Knoten.
+
+    ``ab``: nur die Knoten ab dieser Nummer untereinander zusammenfuehren; die
+    davor bleiben unberuehrt, auch wenn einer von ihnen auf einem spaeteren
+    liegt. Das braucht das Anhaengen einer Datei (``import_file`` mit
+    ``model``): zusammengefuehrt wird dort nur innerhalb der Datei, an das
+    Ziel schliesst danach ``anschluss_zusammenfuehren`` an (Befund B071,
+    23.09.2026). Mit ``ab=0`` wie bisher ueber das ganze Modell.
+
+    ``log``: Protokoll fuer die Warnung, wenn zwei verschiedene gekruemmte
+    Kantenmitten auf eine Kante fallen (:func:`_kantenmitten_umhaengen`).
     """
-    if model.nn == 0:
+    ab = max(0, int(ab))
+    if model.nn <= ab:
         return 0
-    key = np.floor(model.nodes / tol + 0.5).astype(np.int64)
+    key = np.floor(model.nodes[ab:] / tol + 0.5).astype(np.int64)
     _, first, inverse = np.unique(key, axis=0, return_index=True, return_inverse=True)
     inverse = np.asarray(inverse).reshape(-1)
     order = np.argsort(first)
     remap = np.zeros(len(first), dtype=int)
     remap[order] = np.arange(len(first))
-    new_index = remap[inverse]
-    n_removed = model.nn - len(first)
+    n_removed = model.nn - ab - len(first)
     if n_removed == 0:
         return 0
-    new_nodes = np.zeros((len(first), 3))
+    new_index = np.concatenate([np.arange(ab, dtype=int), ab + remap[inverse]])
+    new_nodes = np.zeros((ab + len(first), 3))
     new_nodes[new_index] = model.nodes
-    _umnummerieren(model, new_index, new_nodes)
+    _umnummerieren(model, new_index, new_nodes, log)
     return n_removed
 
 
-def anschluss_zusammenfuehren(model: Model, n_ziel: int,
-                              tol: float = DEFAULT_TOL) -> tuple[int, list]:
+def anschluss_zusammenfuehren(model: Model, n_ziel: int, tol: float = DEFAULT_TOL,
+                              log: Optional[list] = None) -> tuple[int, list]:
     """Angehaengte Knoten (ab ``n_ziel``) auf gleich liegende Knoten davor
     legen - nur zwischen den beiden Teilen, nie innerhalb eines Teils.
 
@@ -170,7 +182,7 @@ def anschluss_zusammenfuehren(model: Model, n_ziel: int,
     die Stelle kommt zurueck. Die Knoten des Ziels behalten ihre Nummern.
 
     Rueckgabe: (Anzahl zusammengefuehrter Knoten, Koordinaten der
-    uneindeutigen Stellen)."""
+    uneindeutigen Stellen). ``log`` wie bei :func:`merge_duplicate_nodes`."""
     n_ziel = int(n_ziel)
     if n_ziel <= 0 or model.nn <= n_ziel:
         return 0, []
@@ -195,14 +207,44 @@ def anschluss_zusammenfuehren(model: Model, n_ziel: int,
     anhang[bleibt] = n_ziel + np.arange(int(bleibt.sum()))
     anhang[eindeutig] = erster_z[inv_q[eindeutig]]
     new_nodes = np.vstack([model.nodes[:n_ziel], model.nodes[n_ziel:][bleibt]])
-    _umnummerieren(model, new_index, new_nodes)
+    _umnummerieren(model, new_index, new_nodes, log)
     return n_merge, stellen
 
 
-def _umnummerieren(model: Model, new_index, new_nodes) -> None:
+def anschluss_melden(log: Optional[list], n: int, unklar: list,
+                     quelle: str = "Quelle") -> None:
+    """Ergebnis von ``anschluss_zusammenfuehren`` ins Protokoll schreiben.
+
+    Gemeinsam fuer das Anhaengen eines JSON-Modells (``quelle="Quelle"``) und
+    einer anderen Datei (``quelle="Datei"``), damit beide Wege dieselbe
+    Warnung fuer uneindeutige Stellen geben."""
+    # Einzahl bei einem Knoten (Befunde B075/B077): bis zum 24.09.2026 hiess es
+    # auch dann „1 Knoten der Quelle lagen auf Knoten des Ziels“.
+    if n == 1:
+        say(log, f"1 Knoten der {quelle} lag auf einem Knoten des Ziels und "
+                 "wurde zusammengeführt")
+    elif n:
+        say(log, f"{n} Knoten der {quelle} lagen auf Knoten des Ziels und "
+                 "wurden zusammengeführt")
+    if unklar:
+        x, y, z = unklar[0]
+        warn(log,
+             f"An {len(unklar)} Stelle{'' if len(unklar) == 1 else 'n'} liegen in "
+             f"Ziel oder {quelle} schon mehrere Knoten aufeinander (etwa die beiden "
+             "Seiten einer Kontaktfuge), und ein Knoten des anderen Teils liegt "
+             "dazu. Dort wurde nichts "
+             "zusammengeführt, weil nicht eindeutig ist, welcher Knoten anschließen "
+             f"soll - die erste bei ({x:g}, {y:g}, {z:g}) m. Bitte dort prüfen, ob "
+             f"Ziel und {quelle} verbunden sein sollen.")
+
+
+def _umnummerieren(model: Model, new_index, new_nodes, log: Optional[list] = None) -> None:
     """Neue Knotenliste setzen und jeden Knotenverweis umhaengen
     (``new_index[alt] = neu``); gleich gewordene Knoten in Linien, Linien-
     und Flaechenlagern einmal fuehren."""
+    # Die Kantenmitten zuerst: welche ein tetp-Element liest, entscheiden die
+    # alten Knotennummern der Elemente - die werden gleich umgehaengt
+    _kantenmitten_umhaengen(model, new_index, new_nodes, log)
     model.nodes = new_nodes
     for e in model.elements:
         e.nodes = [int(new_index[n]) for n in e.nodes]
@@ -363,6 +405,139 @@ def _weitere_knotenverweise_umhaengen(model: Model, new_index) -> None:
                 st["antrieb"] = an
             else:
                 st.antrieb = an
+
+
+def _kantenmitten_umhaengen(model: Model, new_index, new_nodes,
+                            log: Optional[list] = None) -> None:
+    """Die gekruemmte Geometrie der Tetraeder mit Ordnung p
+    (``model.tetp_kantenmitten``, {(a, b) mit a < b: Kantenmitte}) auf die
+    neuen Knotennummern setzen. Aufzurufen, **bevor** die Elemente
+    umnummeriert sind (``_umnummerieren``); ``new_nodes`` sind die neuen
+    Koordinaten.
+
+    Seit dem 23.09.2026 steht sie in der Modelldatei und kommt beim Anhaengen
+    mit; ohne das hier zeigte nach dem Zusammenfuehren jede Kante hinter
+    einem entfernten Doppel auf andere Knoten - eine Kantenmitte landete an
+    einer fremden Kante oder wirkte nirgends mehr. Gemessen (zweimal,
+    23.09.2026) an der Hohlkugel mit einem Zielknoten auf einer gekruemmten
+    Kante: Geometrie der angehaengten Elemente bis 75,3 mm (groesste
+    Koordinatenaenderung; euklidisch 76,7 mm, nachgemessen zweimal am
+    24.09.2026 an ad5d527 ohne diesen Aufruf in _umnummerieren) neben der
+    Quelle, jetzt bitgleich (tests.test_importers,
+    test_json_anhaengen_tetp_kantenmitten).
+
+    Mitgenommen wird nur die Kantenmitte einer Kante (a, b), a < b, die in
+    den alten Nummern Kante eines tetp-Elements ist; die uebrigen fallen
+    weg. Solche verwaisten Schluessel laesst ``Model.netzknoten_loeschen``
+    stehen (es fuehrt die Kantenmitten nicht mit), mit Knotennummern bis
+    hinter das Ende der Liste. Bis zur Nachbesserung vom 23.09.2026 wurden
+    sie hier indiziert: Anhaengen eines JSON-Modells an ein gespeichertes
+    Modell, dessen tetp-Netz danach entfernt war (Hohlkugel 2 x 2, p = 3,
+    und ein Stab; danach 38 Knoten, 126 Kantenmitten), brach mit IndexError
+    ab - vor der Speicher-Kur (ec6448c) lief es durch (je zweimal gemessen;
+    Pruefung tests.test_importers, test_json_anhaengen_nach_netz_entfernen).
+    Nur die Schluessel hinter dem Ende zu verwerfen genuegt nicht: einer mit
+    gueltiger Nummer wird beim Zusammenfuehren zur Kante eines
+    tetp-Elements, sobald ein neuer Knoten auf deren Ecke faellt, und
+    kruemmt sie still - mit dieser Variante gemessen (zweimal, 23.09.2026)
+    nach netzknoten_loeschen und 7 hinzugefuegten Knoten, der letzte auf
+    einer Ecke: eine gerade Kante 45,79 mm daneben, ohne Warnung (Pruefung
+    tests.test_importers, test_zusammenfuehren_kantenmitte_ohne_element).
+    Der Filter hier sieht nur die alten Nummern: ein verwaister Eintrag des
+    Ziels, der mit ihnen schon Kante eines angehaengten Elements ist, kaeme
+    durch, und ohne zusammenfallende Knoten laeuft diese Funktion gar nicht.
+    Darum nimmt das Anhaengen vorher nur mit, was ein tetp-Element des
+    Ziels bzw. der Quelle liest (anhaengen._Anhang._netz,
+    model.tetp_kantenmitten_gelesen; an bc1dfe0 sonst bis 5556 mm,
+    Pruefung test_json_anhaengen_verwaiste_kantenmitten).
+
+    Fallen zwei Kanten von tetp-Elementen auf eine, gilt die Kante des
+    tetp-Elements, das im Modell zuerst steht - beim Anhaengen die des
+    Ziels, dessen Elemente vor denen der Quelle stehen -, und zwar gerade
+    oder gekruemmt: eine gerade Kante hat keinen Eintrag, ihre Kantenmitte
+    ist die Sehnenmitte. Kanten anderer Elemente sieht diese Funktion nicht:
+    teilt ein tet4 die Kante, ist sie dort gerade (tetp.pflichtseiten gibt
+    sie geometrie_modell als gerade_kanten), gleich welche Seite zuerst
+    steht, und hier kommt keine Warnung - gemessen 24.09.2026 am
+    Hohlzylinder, 8 gekruemmte Anschlusskanten, Kantenmitten um bis zu
+    3,843 mm verschoben (groesste Koordinatenaenderung 3,769 mm; Pruefung
+    test_json_anhaengen_tet4_nachbar). Bis zur
+    Nachbesserung vom 24.09.2026 galt der zuerst eingetragene Eintrag, und
+    ein fehlender zaehlte nicht: war eine Seite gerade und die andere
+    gekruemmt, galt still die gekruemmte (gemessen an bc1dfe0, Hohlkugel an
+    sich selbst gehaengt, eine Kante in einer der Dateien gerade: bis
+    1,921 mm verschoben (groesste Koordinatenaenderung 1,885 mm), keine
+    Warnung; Pruefung test_json_anhaengen_gerade_gegen_gekruemmt).
+    Liegen die beiden Kantenmitten weiter auseinander als 1e-9 der
+    Kantenlaenge (die Grenze, mit der tetp.aus_tet10 gekruemmt von gerade
+    trennt), sagt es das Protokoll: die Elemente der anderen Seite rechnen
+    dort mit einer anderen Geometrie als zuvor."""
+    km = getattr(model, "tetp_kantenmitten", None)
+    if not km:
+        return
+    from ..model import tetp_kanten
+    alt = tetp_kanten(model.elements)            # alte Nummern, in Elementreihenfolge
+    if not len(alt):
+        model.tetp_kantenmitten = {}
+        return
+    ni = np.asarray(new_index, dtype=np.int64).reshape(-1)
+    X = np.asarray(new_nodes, float)
+    n_alt, n_neu = len(ni), len(X)
+    # jede alte Kante einmal; erst = ihr erstes Auftreten in Elementreihenfolge
+    code_alt, erst = np.unique(alt[:, 0] * n_alt + alt[:, 1], return_index=True)
+    A = alt[erst]
+    B = np.sort(ni[A], axis=1)                   # dieselben Kanten in den neuen Nummern
+    _, gruppe, anzahl = np.unique(B[:, 0] * n_neu + B[:, 1], return_inverse=True,
+                                  return_counts=True)
+    gruppe = np.asarray(gruppe).reshape(-1)
+    # der Eintrag je alter Kante (None: gerade); verwaiste Schluessel treffen keine
+    schl = np.asarray(list(km), dtype=np.int64).reshape(-1, 2)
+    im_netz = ((schl >= 0) & (schl < n_alt)).all(axis=1)
+    code = np.where(im_netz, schl[:, 0] * n_alt + schl[:, 1], -1)
+    pos = np.minimum(np.searchsorted(code_alt, code), len(code_alt) - 1)
+    trifft = im_netz & (code_alt[pos] == code)
+    eintrag: list = [None] * len(A)
+    neu: dict = {}
+    einfach = anzahl[gruppe] == 1
+    for p, j, t in zip(km.values(), pos.tolist(), trifft.tolist()):
+        if t:
+            eintrag[j] = p
+            if einfach[j]:                       # die neue Kante hat nur diese alte
+                neu[(int(B[j, 0]), int(B[j, 1]))] = p
+    abweichend, gerade_krumm, weiteste = 0, 0, 0.0
+    mehr = np.flatnonzero(~einfach)
+    if len(mehr):
+        mehr = mehr[np.lexsort((erst[mehr], gruppe[mehr]))]
+        for glieder in np.split(mehr, np.flatnonzero(np.diff(gruppe[mehr])) + 1):
+            j0 = int(glieder[0])                 # die Kante des zuerst stehenden Elements
+            a, b = int(B[j0, 0]), int(B[j0, 1])
+            sehne = 0.5 * (X[a] + X[b])
+            if eintrag[j0] is not None:
+                neu[(a, b)] = eintrag[j0]
+            gilt = sehne if eintrag[j0] is None else np.asarray(eintrag[j0], float)
+            grenze = 1e-9 * max(float(np.linalg.norm(X[b] - X[a])), 1e-300)
+            weit, mit_gerade = 0.0, False
+            for j in glieder[1:].tolist():
+                andere = sehne if eintrag[j] is None else np.asarray(eintrag[j], float)
+                d = float(np.linalg.norm(andere - gilt))
+                if d > grenze:
+                    weit = max(weit, d)
+                    mit_gerade = mit_gerade or ((eintrag[j] is None) != (eintrag[j0] is None))
+            if weit > 0.0:
+                abweichend += 1
+                gerade_krumm += int(mit_gerade)
+                weiteste = max(weiteste, weit)
+    model.tetp_kantenmitten = neu
+    if abweichend:
+        gk = (f"; bei {gerade_krumm} davon war die Kante auf einer Seite gerade und auf der "
+              "anderen gekrümmt" if gerade_krumm else "")
+        warn(log, f"An {abweichend} Kante{'' if abweichend == 1 else 'n'} trafen beim "
+                  "Zusammenführen der Knoten zwei verschiedene Kantenmitten (Tetraeder mit "
+                  f"Ordnung p) aufeinander{gk}. Es gilt die Kante des Elements, das im Modell "
+                  "zuerst steht - beim Anhängen die des Ziels -; die andere lag bis "
+                  f"{weiteste * 1e3:.3g} mm daneben, und die Elemente der anderen Seite rechnen "
+                  "dort mit der geltenden Kante. Bitte die Geometrie an der Anschlussfläche "
+                  "prüfen.")
 
 
 # --------------------------------------------------------------------------
@@ -620,11 +795,59 @@ def expand_ranges(items: list[str]) -> list[str]:
     return out
 
 
+#: Angaben zur Bemessungssituation (DIN EN 1990, 3.2 (2)P) im normierten
+#: Text. Sie sagen, in welcher Situation ein Lastfall nachgewiesen wird,
+#: nicht welche Einwirkung er traegt (Befund B073): am Drehlager machte
+#: „staendige Bemessungssituation“ 96 von 422 Lastfaellen zu G und
+#: „aussergewoehnliche Bemessungssituation“ 16 zu A (gemessen am Stand
+#: ec6448c, 23.09.2026). Darum faellt die Angabe vor der Deutung heraus.
+#: Eng gefasst: hoechstens zwei Situationswoerter, mit „und/u./oder“
+#: verbunden, deutsche nur mit Adjektivendung (-e/-en/-er/-es/-em, Pflicht),
+#: „erdbeben“ ohne Anhang. norm_key hat vorher jeden Strich zu einem
+#: Leerzeichen gemacht und Text in (innersten) runden oder eckigen Klammern
+#: weggeworfen: „Erdbeben -
+#: Bemessungssituation 2“ ist darum hier dasselbe wie „Erdbeben-
+#: Bemessungssituation 2“ (Situation, bleibt Q), und in Klammern wird weder
+#: eine Situation noch „Ermuedung“ gefunden.
+#: Die erste Fassung (Stand d5e565d) wiederholte die Gruppe und liess \w* zu;
+#: sie verschluckte dann ein Einwirkungswort direkt davor, das selbst ein
+#: Situationswort ist oder damit beginnt: „Erdbeben - Erdbeben-
+#: Bemessungssituation“, „Erdbebenlast Bemessungssituation“ und „Staendig -
+#: staendige Bemessungssituation“ wurden Q statt A bzw. G (gemessen am
+#: 24.09.2026, tests.test_rfem6). Die zweite (Stand 28c9326) liess die
+#: Endung frei: „Staendig - Bemessungssituation 1“ und „Staendig
+#: Bemessungssituation“ wurden Q statt G, „Aussergewoehnlich -
+#: Bemessungssituation“ Q statt A (gemessen am 24.09.2026).
+_SITUATION_DE = (r"(?:(?:staendig|voruebergehend|aussergewoehnlich)(?:e|en|er|es|em)"
+                 r"|erdbeben)")
+_SITUATION_EN = r"(?:persistent|transient|accidental|seismic)"
+_BEMESSUNGSSITUATION = re.compile(
+    rf"\b{_SITUATION_DE}(?:\s+(?:und|u|oder)\s+{_SITUATION_DE})?"
+    r"\s+bemessungssituation(?:en)?\b"
+    rf"|\b{_SITUATION_EN}(?:\s+(?:and|or)\s+{_SITUATION_EN})?\s+design\s+situations?\b"
+    r"|\bbemessungssituation(?:en)?\s+(?:bei\s+)?erdbeben\b")
+
+
 def category_from_text(text, default: str = "Q") -> str:
-    """Einwirkungskategorie (Schluessel in ACTION_CATEGORIES) aus Freitext."""
-    s = norm_key(text)
+    """Einwirkungskategorie (Schluessel in ACTION_CATEGORIES) aus Freitext.
+
+    Eine Angabe zur Bemessungssituation in den Schreibweisen von
+    _BEMESSUNGSSITUATION zaehlt nicht als Einwirkung, und ein Text mit
+    „Ermuedung/fatigue“ ist FAT, was immer er sonst nennt. Beides nur
+    ausserhalb von Klammern: norm_key wirft Text in runden oder eckigen
+    Klammern vorher weg, „Kran (Ermuedung)“ ergibt Q_K.
+    """
+    s = _BEMESSUNGSSITUATION.sub(" ", norm_key(text)).strip()
     if not s:
         return default
+    # Ermuedung zuerst: am Drehlager heissen 164 Lastfaelle „Ermuedungslast
+    # - ... - Eigengewicht ...“ bzw. „... Temperatur“ und wurden ueber diese
+    # Woerter zu G (160) und T (4), gemessen am Stand ec6448c, 23.09.2026.
+    # Als G oder T gehen sie in die erzeugten Kombinationen ein
+    # (combinations._kombinationen_bilden); FAT ist weder staendig noch
+    # veraenderlich und bleibt dem Ermuedungsnachweis.
+    if re.search(r"ermued|fatigue", s):
+        return "FAT"
     if re.search(r"staendig|permanent|dead|eigengewicht|self ?weight|\bg\b", s):
         return "G"
     if re.search(r"vorspann|prestress|\bp\b", s):
@@ -639,8 +862,6 @@ def category_from_text(text, default: str = "Q") -> str:
         return "H"
     if re.search(r"setzung|settlement", s):
         return "SET"
-    if re.search(r"ermued|fatigue", s):
-        return "FAT"
     if re.search(r"aussergew|accident|erdbeben|seismic|seism|anprall|explosion|fire|brand", s):
         return "A"
     if re.search(r"kran|crane", s):
@@ -759,11 +980,14 @@ def drop_empty_default_case(model: Model, name: str = "LF1") -> bool:
     lc = model.load_cases.get(name)
     if lc is None or len(model.load_cases) < 2 or lc.n_loads:
         return False
+    # Benutzt heisst auch: Glied einer Alternative (oder-EK) oder eines
+    # Verlaufs. remove_load_case nimmt ihn dort seit dem 23.09.2026 heraus
+    # (Befund B105) - ein benutzter Lastfall der Quelldatei bleibt darum hier
     for c in model.combinations.values():
-        if name in c.factors:
+        if name in c.factors or any(name in a for a in c.alternativen):
             return False
     for f in model.fatigue_loads.values():
-        if name in (f.case_max, f.case_min):
+        if name in (f.case_max, f.case_min) or name in (f.folge or []):
             return False
     model.remove_load_case(name)
     return True

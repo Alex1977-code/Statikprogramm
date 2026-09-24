@@ -419,14 +419,16 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "staebe": "Stab mit Nachweis", "geoflaechen": "Fläche",
                  "geokoerper": "Volumen", "schweissnaehte": "Schweißnaht",
                  "bemassungen": "Linearmaß", "lastfaelle": "Lastfall",
-                 "kombinationen": "Kombination", "werkstoffe": "Werkstoff", "dicken": "Dicke",
+                 "kombinationen": "Kombination", "ermuedungslasten": "Ermüdungslast",
+                 "werkstoffe": "Werkstoff", "dicken": "Dicke",
                  "gelenke": "Gelenk", "stellungen": "Stellung",
                  "kontaktbedingungen": "Kontaktbedingung",
                  "lager": "Knotenlager", "linienlager": "Linienlager", "flaechenlager": "Flächenlager"}
     #: Eintraege, die sich per Rechtsklick oder Entf loeschen lassen
     LOESCH_ARTEN = {"querschnitt", "knoten", "linie", "stabelement", "stab", "geoflaeche",
                     "geokoerper_einzeln", "subsystem", "layer", "unterlage", "situation", "wasserdruck", "wind",
-                    "schweissnaht", "bemassung", "lastfall", "kombination", "werkstoff", "dicke",
+                    "schweissnaht", "bemassung", "lastfall", "kombination", "ermuedungslast",
+                    "werkstoff", "dicke",
                     "gelenk", "stellung", "berichtseintrag", "kontaktbedingung",
                     "lager_einzeln", "linienlager_einzeln", "flaechenlager_einzeln"}
     #: Eintragsart -> Zweigart (fuer "Neu" aus einem Eintrag heraus)
@@ -438,6 +440,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "wasserdruck": "generierer", "wind": "generierer",
                  "schweissnaht": "schweissnaehte", "bemassung": "bemassungen",
                  "lastfall": "lastfaelle", "kombination": "kombinationen",
+                 "ermuedungslast": "ermuedungslasten",
                  "werkstoff": "werkstoffe", "dicke": "dicken",
                  "gelenk": "gelenke", "stellung": "stellungen", "berichtseintrag": "bericht",
                  "kontaktbedingung": "kontaktbedingungen",
@@ -667,6 +670,11 @@ class Modellbaum(QtWidgets.QTreeWidget):
             it.setForeground(0, QtGui.QColor(farbe))
         if hinweis:
             it.setToolTip(0, hinweis)
+        if str(zahl):
+            # Spalte 1 ist auf 120 px gedeckelt und wird mit … gekuerzt - wer
+            # den Zusatz ueberfaehrt, liest ihn ganz (24.09.2026: die
+            # Erklaerung an grauen phi-Eintraegen war sonst nicht zu lesen)
+            it.setToolTip(1, str(zahl))
         return it
 
     def _liste(self, eltern, eintraege, art, sammelart="", sortieren=True, gesamt=None):
@@ -697,6 +705,50 @@ class Modellbaum(QtWidgets.QTreeWidget):
                                     "Tabelle unten – dort mit Filter.")
                 break
             self._zweig(eltern, text, zahl, art, schluessel=key, hinweis=tip, farbe=farbe)
+
+    def ergebnisse_nachziehen(self, ergebnisse: dict) -> bool:
+        """Nach einem Ergebniswechsel nur die Zusaetze (Spalte 1), Hinweise
+        und Farben der Ergebniseintraege neu setzen, ohne den Baum neu
+        aufzubauen.
+
+        Das geht nur, wenn Gruppen und Schluessel dieselben geblieben sind
+        (etwa Umhuellende -> Lastfall: „Verformungen“ und „Schnittgrößen“
+        bleiben, ihre Werte nicht). Sonst ``False`` - dann baut der Aufrufer
+        den Baum neu (:meth:`fuellen`). Befund 24.09.2026: der Zusatz blieb
+        beim alten Ergebnis stehen.
+        """
+        ew = None
+        for i in range(self.topLevelItemCount()):
+            w = self.topLevelItem(i)
+            for j in range(w.childCount()):
+                if w.child(j).data(0, QtCore.Qt.UserRole) == "ergebnisse":
+                    ew = w.child(j)
+        if ew is None:
+            return False
+        erg = {k: v for k, v in (ergebnisse or {}).items() if v}
+        gruppen = [ew.child(i) for i in range(ew.childCount())
+                   if ew.child(i).data(0, QtCore.Qt.UserRole) == "ergebnisgruppe"]
+        if [g.text(0) for g in gruppen] != list(erg):
+            return False
+        paare = []
+        for g in gruppen:
+            eintraege = erg[g.text(0)]
+            kinder = [g.child(i) for i in range(g.childCount()) if self._ist_eintrag(g.child(i))]
+            if g.text(1) != str(len(eintraege)) or                     [k.data(0, QtCore.Qt.UserRole + 1) for k in kinder]                     != [str(e[2]) for e in eintraege[:BAUM_MAX]]:
+                return False
+            paare.extend(zip(kinder, eintraege))
+        for it, e in paare:
+            # wie fuellen: ein vierter Wert ist die Textfarbe (grau), der
+            # Zusatz steht dann auch im Hinweis
+            zusatz, tip = str(e[1]), (e[1] if len(e) > 3 else e[0])
+            it.setText(1, zusatz)
+            it.setToolTip(0, tip)
+            it.setToolTip(1, zusatz)
+            if len(e) > 3 and e[3]:
+                it.setForeground(0, QtGui.QColor(e[3]))
+            else:
+                it.setData(0, QtCore.Qt.ForegroundRole, None)
+        return True
 
     # -- Beschriftungen ---------------------------------------------------
     @staticmethod
@@ -1015,6 +1067,20 @@ class Modellbaum(QtWidgets.QTreeWidget):
                           name + (f": Situation {c.situation}" if getattr(c, "situation", "") else ""))
                          for name, c in model.combinations.items()], "kombination",
                     "kombinationen")
+        # Ermuedungslasten neben Lastfaellen und Kombinationen: bis zum
+        # 24.09.2026 fehlten sie im Baum ganz, und der Anwender fand das Menue
+        # nicht („wo definiere ich … die zuweisung zu den ermüdungslasten“).
+        # Reihenfolge wie in der Maske (dort mit ↑/↓ geordnet), nicht sortiert.
+        from .ermuedungsmaske import kurztext, n_text
+        fls = getattr(model, "fatigue_loads", {}) or {}
+        el = self._zweig(ew, "Ermüdungslasten", len(fls), "ermuedungslasten",
+                         hinweis="Lastkollektiv für den Ermüdungsnachweis (Palmgren-Miner: "
+                                 "D = Σ nᵢ / Nᵢ über alle Zeilen am selben Ort). Klick öffnet "
+                                 "die Maske; Rechtsklick: Neu, Löschen.")
+        self._liste(el, [(name, n_text(f, model), name, f"Ermüdungslast {name}: {kurztext(f, model)}")
+                         for name, f in fls.items()], "ermuedungslast", "ermuedungslasten",
+                    sortieren=False)
+        self._zweig(el, "+ Ermüdungslast anlegen", "", "ermuedungslast_neu", farbe=FARBEN["akzent"])
 
         # ---- Lastgenerierer -------------------------------------------------
         wds = getattr(model, "wasserdruecke", {}) or {}
@@ -1049,8 +1115,10 @@ class Modellbaum(QtWidgets.QTreeWidget):
                 continue
             z = self._zweig(ew2, gruppe, len(eintraege), "ergebnisgruppe",
                             schluessel=gruppe)
-            self._liste(z, [(text, zusatz, key, text)
-                            for text, zusatz, key in eintraege],
+            # ein vierter Wert ist die Textfarbe (grau: kein Wert, der Zusatz
+            # sagt warum - er steht dann auch im Hinweis)
+            self._liste(z, [(e[0], e[1], e[2], e[1] if len(e) > 3 else e[0], *e[3:4])
+                            for e in eintraege],
                         "ergebnis", "ergebnisgruppe", sortieren=False)
         eintraege = list(getattr(model, "bericht", None) or [])
         bz = self._zweig(wurzel, "Bericht", len(eintraege), "bericht",

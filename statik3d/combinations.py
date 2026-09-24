@@ -198,14 +198,22 @@ def _kombinationen_bilden(model: Model, faelle: list, situation: str, uls: bool,
             add("GZG", f, "SLS_QP", "6.16b quasi-staendig")
 
 
-def combination_table(model: Model) -> list[list[str]]:
-    """Tabellarische Darstellung (fuer Bericht/GUI): Kopfzeile + Zeilen."""
+def combination_table(model: Model, theorie=None) -> list[list[str]]:
+    """Tabellarische Darstellung (fuer Bericht/GUI): Kopfzeile + Zeilen.
+
+    ``theorie``: Kombination -> Text der Spalte "Theorie". Ohne Angabe steht
+    dort die Einstellung (``model.theorie_von``). Der Bericht gibt die
+    **gerechnete** Theorie (Report._theorie_spalte): scheitert Theorie II/III
+    einer Kombination, steht deren lineares Ergebnis, und die Einstellung
+    allein wies weiter "II"/"III" aus (Befund B132, gemessen 23.09.2026)."""
     names = list(model.load_cases)
     head = ["Kombination", "Typ", "Leit", "Situation", "Theorie"] + names + ["Beschreibung"]
     rows = [head]
+    if theorie is None:
+        theorie = model.theorie_von if hasattr(model, "theorie_von") else (lambda _c: "I")
     for c in model.combinations.values():
         rows.append([c.name, c.typ, c.leading, getattr(c, "situation", "") or "Grundstellung",
-                     model.theorie_von(c) if hasattr(model, "theorie_von") else "I"]
+                     theorie(c)]
                     + [f"{c.factors.get(n, 0):g}" if c.factors.get(n, 0) else "" for n in names]
                     + [c.description])
     return rows

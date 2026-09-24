@@ -452,6 +452,8 @@ def state_summary(st: State) -> dict:
                               "factors": _clean(c.factors),
                               "alternativen": len(c.alternativen)} for c in m.combinations.values()],
             "fatigue_loads": [_clean(asdict(f)) for f in m.fatigue_loads.values()],
+            # was das Formular „+ Ermüdungslast" anbietet (Befund B134)
+            "ermuedungszustaende": m.ermuedungszustaende(),
             "members": members,
             "design": _clean(asdict(m.design)),
             "line_supports": [{"name": x.name, "nodes": list(x.nodes),
@@ -779,6 +781,42 @@ def _nachweis_klasse(d) -> str:
     return "ok"
 
 
+def _stab_klasse(mc) -> str:
+    """Farbe eines einzelnen Stabnachweises EC3: 'warn' (nicht gefuehrt, etwa
+    Werkstoff ohne f_y), 'err' (Ausnutzung ueber 1) oder 'ok'.
+
+    Tabelle, Stabdetail und Stabverlauf im Browser faerbten bis zum 23.09.2026
+    nach der Ausnutzung allein; ein nicht gefuehrter Stab hat 0 und stand
+    gemessen gruen mit "0,00" da (ec6448c, Stab aus Werkstoff ohne f_y).
+    """
+    if getattr(mc, "fehler", ""):
+        return "warn"
+    return "err" if mc.util > 1.0 else "ok"
+
+
+def _ermuedung_klasse(f) -> str:
+    """Farbe der Zeile "Ermüdung: …" im Register Nachweise: 'err' (ein
+    gefuehrter Nachweis mit D > 1), 'warn' (ein Nachweis nicht gefuehrt oder
+    unvollstaendig, ein Stab/Volumen ohne wirksame Last oder gar kein Eintrag
+    mit Kerbfall) oder 'ok'.
+
+    Wie _nachweis_klasse: das Urteil kommt aus den Nachweisen, nicht aus der
+    Tabelle. app.js faerbte bis zum 23.09.2026 mit ``parseFloat(r[7]) > 1``;
+    ein nicht gefuehrter Stab hat dort "–" (NaN), ein unvollstaendiger sein D
+    aus den gerechneten Lasten. Gemessen an ec6448c: "Ermüdung: 2 Stäbe; nicht
+    geführt: Stab Traeger, Stab Ohne_fy" und "… D = 0.074 …; unvollständig
+    (Ergebnis einer Last fehlt): …" gruen.
+    """
+    alle = (list((getattr(f, "members", None) or {}).values())
+            + list((getattr(f, "volumen", None) or {}).values()))
+    if any(not getattr(x, "fehler", "") and x.util > 1.0 for x in alle):
+        return "err"
+    if (not alle or getattr(f, "ohne_wirksame_last", None)
+            or any(getattr(x, "fehler", "") or getattr(x, "fehlende_lasten", None) for x in alle)):
+        return "warn"
+    return "ok"
+
+
 def diagram_payload(st: State, which: str = None, quantity: str = "My", n: int = 9) -> dict:
     if quantity not in FORCE_KEYS:
         raise ApiError(f"Schnittgröße '{quantity}' unbekannt ({', '.join(FORCE_KEYS)})")
@@ -864,6 +902,7 @@ def member_payload(st: State, which: str = None, name: str = "", n: int = None) 
 def _member_check_dict(mc) -> dict:
     d = _clean(asdict(mc))
     d["status"] = mc.status()
+    d["klasse"] = _stab_klasse(mc)
     return d
 
 
@@ -880,7 +919,8 @@ def design_payload(st: State) -> dict:
                              "members": {k: _member_check_dict(v) for k, v in d.members.items()}}
         if an is not None and an.fatigue is not None:
             f = an.fatigue
-            out["fatigue"] = {"summary": f.summary(), "table": f.table(), "gamma_Ff": float(f.gamma_Ff),
+            out["fatigue"] = {"summary": f.summary(), "status": _ermuedung_klasse(f),
+                              "table": f.table(), "gamma_Ff": float(f.gamma_Ff),
                               "members": {k: _clean(asdict(v)) for k, v in f.members.items()}}
         return out
 
@@ -1467,8 +1507,27 @@ def _op_stellungen_rechnen(st, m, d):
     st.umhuellende = umh
     for z in reihe.log:
         st.log.append(z)
-    # kurztext sagt es, wenn Kombinationen nicht nachgewiesen wurden (etwa mit
-    # "kombinationen": false) - vorher stand hier "eta = 0.000" als Ergebnis
+    # kurztext meldet "eta nicht bestimmt - kein Stabnachweis gefuehrt",
+    # wenn in keiner Stellung ein Stab nachgewiesen wurde
+    # (Umhuellende.eta_bestimmt), mit oder ohne Warnungen, also auch in einem
+    # Modell ohne Staebe (Befund B036), und "eta nicht bestimmt - keine
+    # Stellung gerechnet", wenn jede Stellung scheiterte (B064). Vorher hing
+    # eta_bestimmt an den Warnungen: ein Modell ohne Staebe meldete
+    # "eta = 0.000", obwohl nichts nachgewiesen wurde (Stauwand ohne ihre 3
+    # Staebe, 2 Stellungen, mit und ohne Kombinationen, gemessen 24.09.2026
+    # an 54b6f9a und 042fb81).
+    # Modelle mit Staeben, gemessen ueber diese Operation 23./24.09.2026: am
+    # Stand 54b6f9a (von 5eb21e6 nach main gemergt) ergab die Stauwand mit 3
+    # Stellungen und "kombinationen": false "eta = 0.291" (Stabnachweis aus
+    # den Lastfaellen); "eta = 0.000" stand dort bei reinen GZG-Kombinationen
+    # (Halle ohne ihre 42 GZT-Kombinationen, 1 Stellung; dieselbe Halle mit
+    # "kombinationen": false ergab "eta = 0.278"). Fuer diese beiden Modelle
+    # gab von den gemessenen Staenden (54b6f9a, fb59de1, ec6448c, 042fb81) nur
+    # fb59de1 mit "kombinationen": false "eta = 0.000" aus - eine
+    # Zwischenfassung, die nie Spitze von main war. An ec6448c und 042fb81
+    # meldete diese Operation fuer die Stauwand ohne Kombinationen und die
+    # Halle ohne GZT "eta nicht bestimmt - kein Nachweis gefuehrt" (seit
+    # B036 heisst es "kein Stabnachweis gefuehrt").
     return f"{len(liste)} Stellungen gerechnet: " + umh.kurztext()
 
 
@@ -1704,11 +1763,10 @@ def _op_edit_case(st, m, d):
         m.load_cases = {(new if k == old else k): v for k, v in m.load_cases.items()}
         for c in m.combinations.values():
             c.lastfall_umbenennen(old, new)
+        # beide Zustaende und der Verlauf - bis zum 23.09.2026 blieb der
+        # Verlauf beim alten Namen (tests/test_ermuedung_verlauf.py)
         for fl in m.fatigue_loads.values():
-            if fl.case_max == old:
-                fl.case_max = new
-            if fl.case_min == old:
-                fl.case_min = new
+            fl.lastfall_umbenennen(old, new)
         if m.active_case == old:
             m.active_case = new
     return f"Lastfall {lc.name} geändert"
@@ -1719,8 +1777,8 @@ def _op_remove_case(st, m, d):
     name = d.get("name")
     if name not in m.load_cases:
         raise ApiError(f"Lastfall '{name}' unbekannt")
-    m.remove_load_case(name)
-    return f"Lastfall {name} entfernt"
+    mit = m.remove_load_case(name)
+    return f"Lastfall {name} entfernt" + (" - " + "; ".join(mit) if mit else "")
 
 
 @op("copy_case")
@@ -1793,15 +1851,35 @@ def _op_clear_combos(st, m, d):
     return f"{n} Kombinationen entfernt"
 
 
+def _ermuedungszustand(m: Model, k) -> None:
+    """Ein Zustand einer Ermuedungslast muss ein Einzelergebnis haben.
+
+    Dieselbe Auswahl wie Model.check und die GUI-Maske
+    (Model.ermuedungszustaende): Lastfall oder Kombination ohne Alternativen.
+    Bis zum 23.09.2026 nahm diese Operation nur Lastfaelle und wies jede
+    Kombination mit „Lastfall … unbekannt" ab (Befund B134, Beispiel Halle:
+    GZT1 abgewiesen, LF1 angenommen).
+    """
+    if k in m.ermuedungszustaende():
+        return
+    c = m.combinations.get(k)
+    if c is not None and c.ist_umhuellende:
+        raise ApiError(
+            f"Kombination '{k}' ist eine oder-verknüpfte Ergebniskombination "
+            f"({len(c.alternativen)} Alternativen) - sie hat kein Einzelergebnis "
+            "und taugt nicht als Zustand einer Ermüdungslast. Einen Lastfall oder "
+            "eine Kombination ohne Alternativen wählen.")
+    raise ApiError(f"Lastfall oder Kombination '{k}' unbekannt")
+
+
 @op("add_fatigue_load")
 def _op_add_fat(st, m, d):
     name = (d.get("name") or "").strip() or f"E{len(m.fatigue_loads) + 1}"
     cmax = d.get("case_max")
-    if cmax not in m.load_cases:
-        raise ApiError(f"Lastfall '{cmax}' unbekannt")
+    _ermuedungszustand(m, cmax)
     cmin = d.get("case_min") or None
-    if cmin and cmin not in m.load_cases:
-        raise ApiError(f"Lastfall '{cmin}' unbekannt")
+    if cmin:
+        _ermuedungszustand(m, cmin)
     m.add_fatigue_load(name, cmax, cmin, _f(d, "cycles", 2e6), _f(d, "factor", 1.0))
     return f"Ermüdungslast {name} angelegt"
 

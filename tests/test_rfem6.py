@@ -1651,6 +1651,12 @@ def test_ermuedungslasten_aus_fat():
                   for x in log)
               and "nicht** abgeleitet" not in txt,
               next((x for x in log if "Ermüdungslasten" in x), "-"))
+        # Befund B082 (23.09.2026): das Format :g schrieb die Vorgabe 2e6 als
+        # "2e+06" ins Protokoll - Ergebniswerte stehen nie wissenschaftlich da.
+        zeile = next((x for x in log if "globale Lastspielzahl" in x), "")
+        check("die globale Lastspielzahl steht ausgeschrieben da (2000000, nicht 2e+06)",
+              "(2000000," in zeile and "e+" not in zeile and "e-" not in zeile,
+              zeile[zeile.find("Lastspielzahl ("):][:40] if zeile else "keine Zeile")
         zug = m.members.get("S1")
         balken = m.members.get("S2")
         check("Zugstab: Kerbfall 50 N/mm2 als Vorschlag", zug is not None
@@ -1842,6 +1848,61 @@ def test_flaechenlasten_werden_abgezaehlt():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_flaechenlast_ohne_lastfall():
+    """Eine Flaechenlast, deren Lastfall sich nicht aufloesen laesst, wird mit
+    diesem Grund genannt (Befund B079).
+
+    Bis zum 23.09.2026 zaehlte der Leser sie nirgends; der Abgleich gegen die
+    Rohzeilen fing sie zwar auf, meldete sie aber mit dem falschen Grund
+    „die Datei fuehrt ihre Umsetzungstabelle nicht“ - gemessen an zwei
+    Flaechenlasten, eine davon am Lastfall 99, den es nicht gibt. Die
+    Stablasten haben dafuer seit dem 22.09.2026 eine eigene Zeile.
+    """
+    tmp = tempfile.mkdtemp()
+    try:
+        db = os.path.join(tmp, "model.db")
+        build_db(db,
+                 nodes=[(0, 0, 0), (2, 0, 0), (2, 2, 0), (0, 2, 0)],
+                 lines=[], members=[], supports=[],
+                 surfaces=[([1, 2, 3, 4], 0.010)],
+                 load_cases=[("Last", 12, 0.0)],
+                 surface_loads=[(1, [1], -2000.0, 0),
+                                (1, [1], -1000.0, 0)])     # -> Lastfall 99
+        con = sqlite3.connect(db)
+        con.execute("UPDATE SurfaceLoad SET parentModelObject_id = 99 WHERE id = 2")
+        con.commit()
+        con.close()
+        f = os.path.join(tmp, "ohne_lastfall.rf6")
+        with zipfile.ZipFile(f, "w", zipfile.ZIP_DEFLATED) as z:
+            z.write(db, "model.db")
+            z.writestr("mesh.xml", MESH_XML)
+            z.writestr("format.txt", "RFEM\n6.11.0004\nRFEM6\n6.12.0010\n1\n")
+            z.writestr("general_data.xml",
+                       "<?xml version='1.0'?><property key='generalData'/>")
+        log = []
+        R6.read_rf6(f, log=log)
+        check("die Flaechenlast ohne Lastfall wird mit diesem Grund genannt",
+              any("1 Flaechenlasten ohne aufloesbaren Lastfall" in z for z in log),
+              next((x.strip() for x in log if "Flaechenlast" in x and "Lastfall" in x),
+                   "keine Zeile"))
+        check("und nicht als fehlende Umsetzungstabelle",
+              not any("Umsetzungstabelle" in z for z in log),
+              next((x.strip()[:70] for x in log if "Umsetzungstabelle" in x), "keine"))
+        genannt = 0
+        for z in log:
+            for wort in ("auf vernetzte Flaechen gelegt", "an ihre Flaeche gehaengt",
+                         "ohne vernetzte Zielflaeche", "anderer Art",
+                         "ohne lesbaren Betrag", "nicht zu lesen",
+                         "ohne aufloesbaren Lastfall"):
+                if wort in z and "Flaechenlast" in z:
+                    genannt += int(z.replace("WARNUNG:", " ").strip().split()[0])
+                    break
+        check("die Summe der genannten Flaechenlasten trifft die Zahl in der Datei",
+              genannt == 2, f"{genannt} von 2")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_einwirkungskategorie_wird_genannt():
     """Was als „Q“ endet, steht im Protokoll - und der Name verbessert nur,
     was die Kennzahl nicht hergibt.
@@ -1915,6 +1976,234 @@ def test_einwirkungskategorie_wird_genannt():
               m.load_cases["LF5"].category == "Q", m.load_cases["LF5"].category)
         check("„G - Stahlbau“ mit Kennzahl 11 wird ueber den Namen G",
               m.load_cases["LF6"].category == "G", m.load_cases["LF6"].category)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+#: Lastfallnamen vom Drehlager (Drehlager_V15_4_export.rf6, LF33, LF233,
+#: LF123, LF401, LF602) mit der Kategorie, die der Name wirklich hergibt
+DREHLAGER_NAMEN = [
+    ("Bemessungslast im GZT Drehlager Ost - Hochlage 0 Grad - ständige "
+     "Bemessungssituation - Zeitpunkt 0", "Q"),
+    ("char.Last - Drehlager Ost - Hochlage 0 Grad - ständige Bemessungssituation "
+     "- Zeitpunkt 0", "Q"),
+    ("Bemessungslast im GZT Drehlager West - Hochlage 82 Grad - außergewöhnliche "
+     "Bemessungssituation - Zeitpunkt 0", "Q"),
+    ("Ermüdungslast - Drehlager Ost - Eigengewicht in Verkehrslage - Zeitpunkt 1", "FAT"),
+    ("Ermüdungslast - Drehlager West - EG+Lagerreibung EG Verkehrslage durch "
+     "(+)Temperatur - Zeitpunkt 1", "FAT"),
+]
+
+
+def _handbuch_situationsabsatz() -> str:
+    """Der Teil des Absatzes zum RFEM-6-Import im Benutzerhandbuch, der die
+    herausgenommenen Schreibweisen der Bemessungssituation aufzaehlt, mit
+    Zeilenumbruechen als Leerzeichen ('' wenn nicht gefunden)."""
+    pfad = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "docs", "Benutzerhandbuch.md")
+    with open(pfad, encoding="utf-8") as f:
+        text = " ".join(f.read().split())
+    a = text.find("Außerhalb von Klammern gilt")
+    e = text.find("Ein Lastfall, dessen Name „Ermüdung“", a)
+    return text[a:e] if 0 <= a < e else ""
+
+
+def test_bemessungssituation_ist_keine_einwirkungsart():
+    """Die Bemessungssituation im Lastfallnamen ist keine Einwirkungsart
+    (Befund B073).
+
+    Am Drehlager tragen alle 422 Lastfaelle die Kennzahl 11 -> Q, und der
+    Name verfeinert. Am Stand ec6448c (gemessen am 23.09.2026) machte
+    `category_from_text` daraus 256x G und 16x A: 96 ueber „staendig“ aus
+    „staendige Bemessungssituation“ (48 „Bemessungslast im GZT ...“, 48
+    „char.Last ...“), 160 „Ermuedungslast ... Eigengewicht ...“ ueber
+    „Eigengewicht“ und 16 ueber „aussergewoehnliche Bemessungssituation“;
+    dazu 4 „Ermuedungslast ... Temperatur“ zu T. Die Situation sagt nichts
+    ueber die Einwirkung, und die Kategorie wirkt ueber is_permanent und
+    is_accidental auf die erzeugten Kombinationen (gamma_G statt gamma_Q).
+    Eine Ermuedungslast ist FAT, was immer sie enthaelt - sofern die
+    Kennzahl Q ergibt (nur dann fragt rfem6_db den Namen) und „Ermuedung“
+    ausserhalb von Klammern steht (norm_key wirft Klammertext weg).
+    """
+    for name, soll in DREHLAGER_NAMEN:
+        ist = _C.category_from_text(name, "Q")
+        check(f"Drehlager: {name[:40]}… -> {soll}", ist == soll, ist)
+    # die anderen Schreibweisen der Situationen nach DIN EN 1990, 3.2 (2)P
+    for name, soll in [("Nutzlast - ständige und vorübergehende Bemessungssituation", "Q"),
+                       ("Nutzlast - ständige u. vorübergehende Bemessungssituation", "Q"),
+                       ("Nutzlast - accidental design situation", "Q"),
+                       ("Verkehr - Bemessungssituation bei Erdbeben", "Q"),
+                       ("Verkehr - Erdbeben-Bemessungssituation", "Q")]:
+        ist = _C.category_from_text(name, "Q")
+        check(f"Situation: {name} -> {soll}", ist == soll, ist)
+    # Gegenproben: steht die Einwirkung selbst im Namen, bleibt sie erkannt
+    for name, soll in [("Eigengewicht", "G"), ("Ständige Lasten", "G"),
+                       ("Eigengewicht - ständige Bemessungssituation", "G"),
+                       ("Anprall - außergewöhnliche Bemessungssituation", "A"),
+                       ("Außergewöhnliche Einwirkung", "A"),
+                       ("Erdbeben", "A"), ("Temperatur", "T")]:
+        ist = _C.category_from_text(name, "Q")
+        check(f"Gegenprobe: {name} -> {soll}", ist == soll, ist)
+    # Gegenproben, bei denen das Einwirkungswort selbst ein Wort der
+    # Situationsangabe ist oder mit ihm zusammengesetzt ist und direkt davor
+    # steht. Am Stand d5e565d verschluckte der Filter es mit (die Adjektiv-
+    # gruppe wiederholt, dazu \w* nach jedem Adjektiv), und es kam Q heraus;
+    # am Stand ec6448c und hier: A bzw. G (gemessen am 24.09.2026).
+    for name, soll in [("Erdbebenlast Bemessungssituation", "A"),
+                       ("Erdbebenlast Bemessungssituation 2", "A"),
+                       ("Erdbeben - Erdbeben-Bemessungssituation", "A"),
+                       ("Erdbeben - außergewöhnliche Bemessungssituation", "A"),
+                       ("Erdbebenlast - außergewöhnliche Bemessungssituation", "A"),
+                       ("Erdbebeneinwirkung - Erdbeben-Bemessungssituation", "A"),
+                       ("Accidental - accidental design situation", "A"),
+                       ("Seismic - seismic design situation", "A"),
+                       ("Ständig - ständige Bemessungssituation", "G")]:
+        ist = _C.category_from_text(name, "Q")
+        check(f"Gegenprobe: {name} -> {soll}", ist == soll, ist)
+    # Gegenproben: ein Situationswort ohne Adjektivendung ist keine Angabe zur
+    # Bemessungssituation. Am Stand 28c9326 war die Endung freigestellt, und
+    # diese Namen wurden Q statt G bzw. A; am Stand ec6448c und hier G bzw. A
+    # (gemessen am 24.09.2026).
+    for name, soll in [("Ständig - Bemessungssituation 1", "G"),
+                       ("Ständig Bemessungssituation", "G"),
+                       ("Außergewöhnlich - Bemessungssituation", "A")]:
+        ist = _C.category_from_text(name, "Q")
+        check(f"ohne Endung: {name} -> {soll}", ist == soll, ist)
+    # Grenzen der Erkennung, so wie sie im Handbuch stehen: die Endung „-en“
+    # zaehlt; „Erdbeben“ mit Leerzeichen oder Strich vor „Bemessungssituation“
+    # ist die Situation (norm_key macht aus jedem Strich ein Leerzeichen); Text
+    # in runden oder eckigen Klammern wirft norm_key vorher weg, also auch
+    # „Ermuedung“ und eine Situationsangabe darin. Aendert sich eines davon,
+    # muss der Absatz im Benutzerhandbuch (RFEM-6-Import) mitgehen.
+    for name, soll in [("Nutzlast - ständigen Bemessungssituation", "Q"),
+                       ("Erdbeben - Bemessungssituation 2", "Q"),
+                       ("Kran (Ermüdung)", "Q_K"),
+                       ("Eigengewicht (Ermüdung)", "G"),
+                       ("Temperatur [Ermüdung]", "T"),
+                       ("Kran - Ermüdung", "FAT"),
+                       ("Nutzlast (Bemessungssituation außergewöhnlich)", "Q"),
+                       ("Nutzlast - Bemessungssituation außergewöhnlich", "A")]:
+        ist = _C.category_from_text(name, "Q")
+        check(f"Handbuch: {name} -> {soll}", ist == soll, ist)
+    # Die vier Faelle, in denen ein Einwirkungswort mit der Angabe herausfaellt
+    # und es bei Q bleibt, so wie sie in docs/Schnittstellen.md stehen
+    # („Ausgenommen sind vier Faelle“): mit und/u./oder bzw. and/or gebunden,
+    # unmittelbar vor „Bemessungssituation“/„design situation“, „Erdbeben“
+    # unmittelbar danach (auch mit „bei“ oder Strich), in Klammern. Am Stand
+    # ec6448c gaben die ersten drei A, die Klammer schon Q (gemessen am
+    # 24.09.2026; eine Durchmusterung von 245446 Namen fand keine weitere Art).
+    # Aendert sich einer, muss der Satz dort mitgehen.
+    for name, soll in [("Erdbeben und außergewöhnliche Bemessungssituation", "Q"),
+                       ("Erdbeben u. außergewöhnliche Bemessungssituation", "Q"),
+                       ("Seismic and accidental design situation", "Q"),
+                       ("Außergewöhnliche - Bemessungssituation", "Q"),
+                       ("Seismic design situation", "Q"),
+                       ("Bemessungssituation - Erdbeben", "Q"),
+                       ("Bemessungssituation bei Erdbeben", "Q"),
+                       ("Lastfall 3 - Bemessungssituation Erdbeben", "Q"),
+                       ("Nutzlast (Erdbeben)", "Q")]:
+        ist = _C.category_from_text(name, "Q")
+        check(f"Ausnahme: {name} -> {soll}", ist == soll, ist)
+    # Schreibweisen, die der Import herausnimmt, und die Stelle, an der der
+    # Absatz im Benutzerhandbuch (RFEM-6-Import) sie nennt. Bis 33a96d5
+    # nannte er englisch nur Einzelformen, keine Mehrzahl und als Trenner nur
+    # Leerzeichen und Striche, und sagte „Andere Schreibweisen nimmt der
+    # Import nicht heraus“. Nach diesem Text blieben „Accidental or seismic
+    # design situation“ und „Erdbeben / Bemessungssituation“ A mit
+    # Protokolleintrag; tatsaechlich wurden sie still Q und standen in einem
+    # Modell aus drei Lastfaellen in 14 von 23 erzeugten Kombinationen (GZT
+    # 4x 1,5, 2x 1,2) statt wie am Stand ec6448c in 2 ACC mit 1,0 (gemessen
+    # am 24.09.2026). Faellt eine Form aus dem Filter oder aus dem Text,
+    # faellt der Punkt.
+    handbuch = _handbuch_situationsabsatz()
+    check("Handbuch: Absatz zur Bemessungssituation gefunden", bool(handbuch),
+          f"{len(handbuch)} Zeichen" if handbuch else
+          "Anfang „Außerhalb von Klammern gilt“ oder Ende „Ein Lastfall, dessen "
+          "Name „Ermüdung““ fehlt in docs/Benutzerhandbuch.md")
+    for name, soll, stelle in [
+            ("Nutzlast - seismic or accidental design situation", "Q", "„and“ oder „or“"),
+            ("Nutzlast - accidental and transient design situation", "Q", "„and“ oder „or“"),
+            ("Nutzlast - accidental design situations", "Q", "„design situations“"),
+            ("Nutzlast - ständige Bemessungssituationen", "Q", "„Bemessungssituationen“"),
+            ("Nutzlast - Bemessungssituationen bei Erdbeben", "Q", "„Bemessungssituationen“"),
+            ("Erdbeben / Bemessungssituation", "Q", "„/“"),
+            ("Erdbeben: Bemessungssituation", "Q", "„:“"),
+            ("Nutzlast, ständige, Bemessungssituation", "Q", "„,“"),
+            ("Nutzlast - STAENDIGE BEMESSUNGSSITUATION", "Q", "Groß- und Kleinschreibung"),
+            ("Nutzlast - aussergewoehnliche Bemessungssituation", "Q", "„ss“"),
+            # Gegenproben: ohne die Angabe bleibt das Einwirkungswort erkannt
+            ("Nutzlast - seismic", "A", None), ("Nutzlast - ständige", "G", None),
+            ("Nutzlast - accidental", "A", None)]:
+        ist = _C.category_from_text(name, "Q")
+        genannt = stelle is None or stelle in handbuch
+        check(f"Handbuch nennt: {name} -> {soll}", ist == soll and genannt,
+              f"{ist}" + ("" if genannt else f", {stelle} fehlt im Absatz"))
+
+    # ueber den ganzen Import: Kennzahl 11 -> Q, der Name verfeinert
+    tmp = tempfile.mkdtemp()
+    try:
+        f = make_rf6(
+            os.path.join(tmp, "situation.rf6"),
+            nodes=[(0, 0, 0), (2, 0, 0)],
+            lines=[], members=[], supports=[],
+            load_cases=[(n, 11, 0.0) for n, _ in DREHLAGER_NAMEN]
+            + [("Eigengewicht", 11, 1.0),
+               ("Erdbeben - Erdbeben-Bemessungssituation", 11, 0.0),
+               ("Ermüdungslast - Eigengewicht", 1, 1.0),
+               ("Ständig - Bemessungssituation 1", 11, 0.0),
+               ("Bemessungssituation - Erdbeben", 11, 0.0),
+               ("Nutzlast - seismic or accidental design situation", 11, 0.0)],
+        )
+        log = []
+        m = R6.read_rf6(f, log=log)
+        for i, (name, soll) in enumerate(DREHLAGER_NAMEN, start=1):
+            lc = m.load_cases[f"LF{i}"]
+            check(f"Import LF{i} -> {soll}", lc.category == soll, lc.category)
+        check("kein Lastfall wird ueber die Situation staendig",
+              not any(m.load_cases[f"LF{i}"].is_permanent for i in (1, 2)),
+              str([m.load_cases[f"LF{i}"].category for i in (1, 2)]))
+        check("kein Lastfall wird ueber die Situation aussergewoehnlich",
+              not m.load_cases["LF3"].is_accidental, m.load_cases["LF3"].category)
+        check("Gegenprobe: „Eigengewicht“ mit Kennzahl 11 wird G",
+              m.load_cases["LF6"].category == "G", m.load_cases["LF6"].category)
+        # am Stand d5e565d wurde dieser Lastfall Q und stand mit 1,5 bzw. 1,2
+        # in 16 von 26 erzeugten ULS-Kombinationen statt mit 1,0 in 2 ACC,
+        # ohne dass das Protokoll ihn als umgestellt nannte (gemessen am
+        # 24.09.2026 an einem Modell aus 5 Lastfaellen: Eigengewicht, zwei
+        # Erdbeben-Namen, Nutzlast, Ermuedungslast mit Kennzahl 1)
+        check("Gegenprobe: „Erdbeben - Erdbeben-Bemessungssituation“ bleibt "
+              "aussergewoehnlich", m.load_cases["LF7"].is_accidental,
+              m.load_cases["LF7"].category)
+        # der Name verfeinert nur, wenn die Kennzahl Q ergibt: mit Kennzahl 1
+        # bleibt eine Ermuedungslast G (so steht es im Handbuch)
+        check("Kennzahl 1: „Ermüdungslast - Eigengewicht“ bleibt G",
+              m.load_cases["LF8"].category == "G", m.load_cases["LF8"].category)
+        zeile = next((z for z in log if "Kennzahl 11" in z), "")
+        check("das Protokoll nennt die Ermuedungslasten als umgestellt",
+              "zu FAT: LF4, LF5" in zeile, zeile.strip())
+        check("das Protokoll nennt den Erdbeben-Lastfall als umgestellt",
+              "zu A: LF7" in zeile, zeile.strip())
+        # ohne Adjektivendung keine Situationsangabe: „Staendig“ bleibt G, und
+        # das Protokoll nennt den Lastfall (am Stand 28c9326 still Q)
+        check("„Ständig - Bemessungssituation 1“ mit Kennzahl 11 wird G",
+              m.load_cases["LF9"].category == "G", m.load_cases["LF9"].category)
+        check("das Protokoll nennt ihn als umgestellt", "zu G: LF6, LF9" in zeile,
+              zeile.strip())
+        # „Erdbeben“ nach „Bemessungssituation“ faellt mit der Angabe heraus:
+        # Q wie aus der Kennzahl, darum nennt das Protokoll ihn nicht (so steht
+        # es in docs/Schnittstellen.md; am Stand ec6448c A und genannt)
+        check("„Bemessungssituation - Erdbeben“ mit Kennzahl 11 bleibt Q",
+              m.load_cases["LF10"].category == "Q", m.load_cases["LF10"].category)
+        check("das Protokoll nennt ihn nicht als umgestellt", "LF10" not in zeile,
+              zeile.strip())
+        # die englische Angabe mit „or“ faellt ganz heraus, „seismic“ mit ihr:
+        # Q und nicht genannt, so steht es jetzt im Benutzerhandbuch (am Stand
+        # ec6448c A und genannt, gemessen am 24.09.2026)
+        check("„Nutzlast - seismic or accidental design situation“ mit Kennzahl "
+              "11 bleibt Q", m.load_cases["LF11"].category == "Q",
+              m.load_cases["LF11"].category)
+        check("das Protokoll nennt ihn nicht als umgestellt", "LF11" not in zeile,
+              zeile.strip())
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -2415,12 +2704,15 @@ def test_deaktivierte_staebe():
         from statik3d.model import FatigueLoad
         m.add_combination("FAT - Case 1", {"LF1": 1.0}, "FAT")
         m.fatigue_loads["E1"] = FatigueLoad("E1", case_max="FAT - Case 1")
-        fehler = [z for z in m.check() if "Ermuedungslast" in z]
+        # Die Meldung lautet seit dem 23.09.2026 "Ermüdungslast" (Befund
+        # B057). Mit der alten Schreibweise hier bestand die erste Pruefung
+        # leer, die zweite schlug fehl (gemessen 23.09.2026).
+        fehler = [z for z in m.check() if "Ermüdungslast" in z]
         check("Ermuedungslast mit einer Kombination als Zustand wird nicht als 'Lastfall unbekannt' abgewiesen",
               not fehler, str(fehler[:1]))
         m.fatigue_loads["E2"] = FatigueLoad("E2", case_max="gibtsnicht")
         check("ein wirklich unbekannter Zustand wird weiter gemeldet",
-              any("Ermuedungslast 'E2'" in z and "unbekannt" in z for z in m.check()))
+              any("Ermüdungslast 'E2'" in z and "unbekannt" in z for z in m.check()))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -2594,6 +2886,97 @@ def test_stablasten_werden_abgezaehlt():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_vorspannung_zeile_je_lastfall():
+    """Die Vorspann-Zeile nennt verschiedene Staebe und die Kraft je Lastfall
+    (Befund B080).
+
+    Bis zum 23.09.2026 zaehlte sie die Stabzuordnungen aller Lastzeilen und
+    summierte N_0 ueber alle Lastfaelle. Am Drehlager (422 Lastfaelle mit je
+    einer Vorspannzeile auf dieselben 16 Staebe, N_0 = 805 oder 952 kN) stand
+    dort „auf 6752 Staebe, zusammen 5738768 kN“ - 6752 = 422 x 16, und die
+    Summe ueber die Lastfaelle hat keine Bedeutung.
+
+    Hier: LF1 spannt die Staebe 1, 2, 3 mit 120 kN, LF2 die Staebe 1, 2 mit
+    150 kN - drei verschiedene Staebe, je Lastfall 360 bzw. 300 kN.
+    """
+    import re
+    tmp = tempfile.mkdtemp()
+    try:
+        f = make_rf6(os.path.join(tmp, "vorspannung.rf6"),
+                     nodes=[(0, 0, 0), (4, 0, 0), (8, 0, 0), (12, 0, 0)],
+                     lines=[[1, 2], [2, 3], [3, 4]],
+                     members=[(1, None, None), (2, None, None), (3, None, None)],
+                     supports=[("Fest", (INF,) * 6, (0,) * 6, None, [1]),
+                               ("Gleitlager", (0.0, INF, INF, 0.0, 0.0, 0.0),
+                                (0,) * 6, None, [4])],
+                     load_cases=[("Vorspannung A", 1, 0.0), ("Vorspannung B", 1, 0.0)],
+                     prestress=[(1, [1, 2, 3], 120e3), (2, [1, 2], 150e3)])
+        log = []
+        m = R6.read_rf6(f, log=log)
+        zeile = next((z.strip() for z in log if "Stabvorspannungen" in z), "")
+        check("die Zeile zaehlt weiter je Lastzeile (2 Stabvorspannungen)",
+              zeile.startswith("2 Stabvorspannungen"), zeile[:40] or "keine Zeile")
+        treffer = re.search(r"auf (\d+) (?:verschiedene )?Staebe", zeile)
+        n_st = int(treffer.group(1)) if treffer else None
+        check("sie nennt 3 verschiedene Staebe, nicht 5 Zuordnungen", n_st == 3,
+              f"auf {n_st} Staebe")
+        check("keine Summe ueber die Lastfaelle (660 kN)", "660" not in zeile,
+              zeile[zeile.find(" - "):][:90])
+        check("die Kraft je Lastfall steht da (300 bis 360 kN)",
+              "300" in zeile and "360" in zeile, zeile[zeile.find(" - "):][:110])
+        check("und N_0 je Stab (120 bis 150 kN)", "120" in zeile and "150" in zeile,
+              zeile[zeile.find(" - "):][:110])
+        # Die Wirkung bleibt: fuenf Stabelemente tragen eine Temperaturlast.
+        tl = [x for lc in m.load_cases.values() for x in lc.temp_loads]
+        check("die Vorspannung liegt weiter auf allen fuenf Zuordnungen",
+              len(tl) == 5, f"{len(tl)}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_stablast_auf_fehlendem_stab():
+    """Nennt eine Stablast mehrere Staebe und fehlt einer davon im Modell,
+    steht der fehlende Anteil mit Stabnummer im Protokoll (Befund B081).
+
+    Bis zum 23.09.2026 fiel er wortlos weg: gemessen mit Stab 2 als
+    Ergebnisstab (kein Tragglied, nicht uebernommen) und den Lasten
+    (LF1, Staebe [1, 2], 1003 N/m) und (LF1, Staebe [1, 77], 500 N/m) - im
+    Modell hingen zwei Stablasten an S1, das Protokoll sagte nur „2 Stablasten
+    (Gleichlast) an ihre Staebe gehaengt“. Die Abzaehlung gegen die
+    Rohzeilen geht dabei auf und faengt den Verlust nicht.
+    """
+    tmp = tempfile.mkdtemp()
+    try:
+        f = make_rf6(os.path.join(tmp, "stab_fehlt.rf6"),
+                     nodes=[(0, 0, 0), (4, 0, 0), (8, 0, 0)],
+                     lines=[[1, 2], [2, 3]],
+                     members=[(1, None, None), (2, None, None, "MemberImplResultBeam")],
+                     supports=[("Fest", (INF,) * 6, (0,) * 6, None, [1]),
+                               ("Gleitlager", (0.0, INF, INF, 0.0, 0.0, 0.0),
+                                (0,) * 6, None, [3])],
+                     load_cases=[("LF1", 1, 0.0)],
+                     member_loads=[(1, [1, 2], 0, 13, -1003.0, None),
+                                   (1, [1, 77], 0, 13, -500.0, None)])
+        log = []
+        m = R6.read_rf6(f, log=log)
+        zeile = next((z.strip() for z in log if "Stabzuordnungen" in z
+                      and "fehlt" in z), "")
+        check("der fehlende Anteil wird genannt (2 Stabzuordnungen)",
+              "2 Stabzuordnungen" in zeile, zeile[:80] or "keine Zeile")
+        check("mit den Stabnummern 2 und 77",
+              "Stab 2, 77" in zeile, zeile[zeile.find("("):][:40] if zeile else "-")
+        check("als Warnung", zeile.startswith("WARNUNG"), zeile[:12])
+        lasten = [x for lc in m.load_cases.values() for x in lc.linienlasten
+                  if x.art == "stab"]
+        check("die Anteile auf S1 kommen weiter an", len(lasten) == 2,
+              f"{len(lasten)}")
+        genannt = _genannte_stablasten(log)
+        check("die Abzaehlung der Lastzeilen geht weiter auf", genannt == 2,
+              f"{genannt} von 2")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_hex_order_nie_falsch():
     """``_hex_order`` liefert den gegebenen Sechsflächner oder None - nie eine
     falsche Knotenliste (Nachtrag B, 22.09.2026).
@@ -2688,8 +3071,11 @@ def test_hex_order_nie_falsch():
 
 def main():
     for t in (test_flaechenlast_richtung, test_flaechenlasten_werden_abgezaehlt,
-              test_stablasten_werden_abgezaehlt, test_hex_order_nie_falsch,
-              test_einwirkungskategorie_wird_genannt, test_stab_und_knotenlasten, test_deaktivierte_staebe, test_grundmodell, test_nichtlineare_lager, test_abheben,
+              test_flaechenlast_ohne_lastfall,
+              test_stablasten_werden_abgezaehlt, test_vorspannung_zeile_je_lastfall,
+              test_stablast_auf_fehlendem_stab, test_hex_order_nie_falsch,
+              test_einwirkungskategorie_wird_genannt,
+              test_bemessungssituation_ist_keine_einwirkungsart, test_stab_und_knotenlasten, test_deaktivierte_staebe, test_grundmodell, test_nichtlineare_lager, test_abheben,
               test_linien_flaechenlager, test_flaechen_mit_dicke,
               test_volumenkoerper, test_stabtypen, test_kontaktbedingungen,
               test_freigabetyp_je_objekt,

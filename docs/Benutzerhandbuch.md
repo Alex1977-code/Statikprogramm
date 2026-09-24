@@ -657,6 +657,22 @@ Linie noch braucht, bleiben und werden genannt. Beim Löschen eines Elements
 oder Knotens werden Stabzüge, Flächen, Volumen, Lager, Lasten, Anschlüsse und
 Beulfelder mitgeführt, die Nummern dahinter rücken auf — und alles ist mit
 Rückgängig zurückzunehmen.
+Mit den Nummern wandern seit dem 23.09.2026 auch die **Passungsangaben einer
+Kontaktfuge** (Einflussfläche je Knoten, Randknoten, die nicht haften) und die
+**Normalengruppen eines Flächenlagers** mit; ein gelöschter Knoten fällt dort
+samt seiner Einflussfläche heraus. Vorher blieben sie stehen: im Versuch
+(ein freier Knoten 0 vor einem Netz aus zwei Sechsflächnern gelöscht) hatte
+danach ein Knoten der Fuge keine Einflussfläche mehr — seine
+Lochleibungsgrenze wirkte nicht —, und als Randknoten galt ein anderer
+Knoten als vorher. Der Knopf *Knoten löschen* unter der Tabelle „Knoten“
+nummerierte bis zum 24.09.2026 selbst um und ließ die Kontaktfugen dabei ganz
+stehen: im selben Versuch zeigten danach auch die Slave-Knoten und die
+Master-Facette der Fuge auf die alten Nummern, einer davon auf einen Knoten,
+den es nicht mehr gab. Seitdem nummeriert der Knopf über denselben Weg um wie
+der Befehl.
+Nach einem neuen Vernetzen baut das Programm diese Angaben
+ohnehin neu auf; betroffen war das Löschen und Umnummerieren von Knoten im
+fertig vernetzten Modell.
 
 ### Die Geometriekette: Knoten → Linien → Flächen → Volumen
 
@@ -722,7 +738,7 @@ Konsole gibt (behoben 14.09.2026). Wo es liegt, weiß Statik3D selbst (nachgelad
 | Nebenflächen grob (`nebenflaechen_grob`, seit 20.09.2026) | Bögen an **Nebenflächen** — Flächen ohne Last, Lager, Kontaktbedingung, integrierten Knoten, Netzverfeinerung und ohne zweiten Körper — werden mit 45° statt 18° je Abschnitt geteilt: acht statt zwanzig Abschnitte je Vollkreis. Eine Durchgangsbohrung ohne Bolzen, eine Ausrundung tragen nichts; ihre Form muss stimmen, nicht ihre Kerbspannung. Gemessen an einer Platte 1 × 0,6 × 0,2 m mit fünf Bohrungen: 40 364 → 17 969 Tetraeder. **Vorgabe aus**, weil es die Spannung an unbelasteten Bohrungen ändert (dort 490 → 343 N/mm²); die adaptive Vernetzung schaltet es für ihre Dauer ein und holt zurück, was trägt. Heute nur in der Datei (`netz.nebenflaechen_grob`), kein Feld in der Maske |
 | Netzverfeinerungen (`verfeinerungen`) | Wo das Netz fein sein soll, unabhängig von der Geometrie: eine **Kugel** um einen Punkt (`{“art”: “kugel”, “mitte”: [x, y, z], “radius”: r, “h”: h}`), eine **Fläche**, **Linie** oder ein **Körper** mit Namen (`{“art”: “flaeche”, “name”: “F12”, “h”: 0.005}`). Die Kantenlänge wächst von dort mit 0,35 je Meter ins Umfeld. Gemessen (Kugel 5 mm, r = 30 mm am Bohrungsrand): 4,2 mm Kanten in der Kugel, 24 mm im Feld, Abnahme ohne Befund. Heute nur in der Datei |
 | Eigene Kantenlänge je Körper (`koerper_h`) | `{Körpername: Kantenlänge in m}` — geht vor Dichte und Ziellänge; die Deckel (kleinste Kante, Dickenmaß, Höchstzahl) gelten weiter. So lässt sich ein Körper gröber lassen als der Rest. Die adaptive Vernetzung schreibt hier ihre Werte hinein |
-| Sweep (`sweep`, seit 20.09.2026) | **aus** (Vorgabe seit 21.09.2026), Haken „Sechsflächner sweepen (Hexaeder statt Tetraeder)“ in den Netzeinstellungen: ein Körper, der Grundfläche mal Weg ist — Platte, Ring, Flansch, Rippe, Lasche mit Bohrungen — wird in Lagen durchgezogen und besteht aus Hexaedern (hex8) und Keilen (pent6) statt Tetraedern (Theoriehandbuch § 6a, Sweep). Das Protokoll nennt Lagen, Hexaederanteil und Rauminhalt („3 450 Hexaeder (hex8) + 660 Keile (pent6) gesweept — Grundfläche Boden → Deckel, 10 Lagen à 20,0 mm … Hexaederanteil 83,9 %“) und am Ende die Bilanz aller Volumen („0,87 je Knoten — Hexaeder …, Tetraeder …“). Warum: der lineare Tetraeder sperrt, weil vier Elemente je Knoten je eine Volumenbedingung stellen; ein Hexaedernetz hat eines. Die Lagen: aus Weg und Kantenlänge, mindestens zwei — **mit Fließen mindestens vier** (mit einer und zwei Lagen fließt kein Element, Messung 21.09.2026), sechs bis acht über die Kantenlänge. Mantellinien, die Nachbarn gehören, bekommen ihre Teilung vorab und modellweit („Sweep: Lagen für 2 Körper vorab festgelegt …"), damit der Sweep nicht an verschieden geteilten Nachbarn scheitert. Seit 22.09.2026 auch **verjüngte Züge** (Kegelstumpf, konische Rippe, Nabe mit Anzug): der Deckel darf die skalierte Kopie des Grundes sein, die Lagen führen den Maßstab mit. Und **Drehkörper** (Rohrbogen, Ringsegment): Grund und Deckel stehen um den Drehwinkel gegeneinander, die Lagen liegen auf dem Bogen, der Rauminhalt wird nach Guldin geprüft (Ringsegment 90°: 99,5 %). Ein Körper mit sechs Vierecken und acht Ecken, aber **krummen** Kanten geht nicht mehr in den abgebildeten Quaderpfad — der schnitt die Rundung ab und verlor am 90°-Bogen 36 % des Rauminhalts, ohne eine Meldung. Woran ein Körper sonst scheitert, steht als eine Zeile je Körper im Protokoll („nicht gesweept — Kappen F1 → F2 decken sich weder verschoben (12,3 mm daneben) noch skaliert (0,4 mm, Maßstab 0,830) …"). Seit 21.09.2026 abends: **Zylinder** (vier Flächen: Bolzen, Stifte, Achsen) werden gesweept; der Grund darf aus **mehreren ebenen Flächen** bestehen (Platte mit Fußabdruck einer Nabe); ein Körper, der nicht als Ganzes Grundfläche mal Weg ist, wird an **Fußabdrücken zerlegt** („Volumen V1: nicht als Ganzes sweepbar — an 1 Fußabdruck(en) in 2 Blöcke zerlegt (2 davon sweepbar)"), gesweepte Blöcke wo es geht, Tetraeder für den Rest, knotengenau an der Schnittfläche. Seit 22.09.2026 auch an einer **Ebene**, wenn kein Fußabdruck greift — eine Rippe, die bis an den Rand der Platte läuft, hängt nicht über einer Öffnung; geschnitten wird an der Ebene der Deckfläche („an einer Ebene in 2 Blöcke zerlegt (2 davon sweepbar)“). Und Grund und Deckel dürfen ihren Rand **verschieden in Linien teilen**: die fehlenden Ecken werden übertragen und die Wand dazwischen mitgeteilt, sodass auch ein von Hand gebauter Körper sweepbar wird, dessen Deckel eine Kante in zwei Linien führt. Gemessen: Platte mit Nabe 441 hex8 + 108 pent6 statt 7 595 tet4; abgesetzte Welle 446 hex8 + 28 pent6 statt 2 415 gemischt. Platte mit Randrippe: **124 Elemente und 239 Knoten** statt 685 tet4 — und die Verschiebung 2,0161 mm gegen 0,5811 mm; ein Tetraedernetz braucht dafür 39 891 Elemente und 7 459 Knoten (1,9674 mm). **Warum die Vorgabe trotzdem aus ist:** am Drehlager erzeugte der Sweep am 21.09.2026 **992 entartete Keile** (10,6 % aller pent6, schlechteste Formgüte 0,025 — von 31.108 Hexaedern lag keiner unter 0,10), und derselbe Lastfall rechnete darauf max |u| 1,2335 statt 0,2716 mm, also **Faktor 4,5** daneben. Die Ursache war ein Band feiner Randstrecken gegen ein grobes Flächeninneres; seither folgt das Innennetz dem Rand (`mesher3d.RANDFELD`), und am Prüfkörper fielen die schlechten Keile von 34 auf **null**. **Am Drehlager selbst ist das noch nicht nachgemessen** — bis dahin wird von Hand eingeschaltet. Die Abnahme meldet solche Netze vor dem Rechnen; wer einschaltet, sollte sie lesen. |
+| Sweep (`sweep`, seit 20.09.2026) | **aus** (Vorgabe seit 21.09.2026), Haken „Sechsflächner sweepen (Hexaeder statt Tetraeder)“ in den Netzeinstellungen: ein Körper, der Grundfläche mal Weg ist — Platte, Ring, Flansch, Rippe, Lasche mit Bohrungen — wird in Lagen durchgezogen und besteht aus Hexaedern (hex8) und Keilen (pent6) statt Tetraedern (Theoriehandbuch § 6a, Sweep). Das Protokoll nennt Lagen, Hexaederanteil und Rauminhalt („3 450 Hexaeder (hex8) + 660 Keile (pent6) gesweept — Grundfläche Boden → Deckel, 10 Lagen à 20,0 mm … Hexaederanteil 83,9 %“) und am Ende die Bilanz aller Volumen („0,87 je Knoten — Hexaeder …, Tetraeder …“). Warum: der lineare Tetraeder sperrt, weil vier Elemente je Knoten je eine Volumenbedingung stellen; ein Hexaedernetz hat eines. Die Lagen: aus Weg und Kantenlänge, mindestens zwei — **mit Fließen mindestens vier** (mit einer und zwei Lagen fließt kein Element, Messung 21.09.2026), sechs bis acht über die Kantenlänge. Mantellinien, die Nachbarn gehören, bekommen ihre Teilung vorab und modellweit („Sweep: Lagen für 2 Körper vorab festgelegt …"), damit der Sweep nicht an verschieden geteilten Nachbarn scheitert. Seit 22.09.2026 auch **verjüngte Züge** (Kegelstumpf, konische Rippe, Nabe mit Anzug): der Deckel darf die skalierte Kopie des Grundes sein, die Lagen führen den Maßstab mit. Und **Drehkörper** (Rohrbogen, Ringsegment): Grund und Deckel stehen um den Drehwinkel gegeneinander, die Lagen liegen auf dem Bogen, der Rauminhalt wird nach Guldin geprüft (Ringsegment 90°: 99,5 %). Ein Körper mit sechs Vierecken und acht Ecken, aber **krummen** Kanten geht nicht mehr in den abgebildeten Quaderpfad — der schnitt die Rundung ab und verlor am 90°-Bogen 36 % des Rauminhalts, ohne eine Meldung. Woran ein Körper sonst scheitert, steht als eine Zeile je Körper im Protokoll („nicht gesweept — Kappen F1 → F2 decken sich weder verschoben (12,3 mm daneben) noch skaliert (0,4 mm, Maßstab 0,830) …"). Seit 21.09.2026 abends: **Zylinder** (vier Flächen: Bolzen, Stifte, Achsen) werden gesweept; der Grund darf aus **mehreren ebenen Flächen** bestehen (Platte mit Fußabdruck einer Nabe); ein Körper, der nicht als Ganzes Grundfläche mal Weg ist, wird an **Fußabdrücken zerlegt** („Volumen V1: nicht als Ganzes sweepbar — an 1 Fußabdruck(en) in 2 Blöcke zerlegt (2 davon sweepbar)"), gesweepte Blöcke wo es geht, Tetraeder für den Rest, knotengenau an der Schnittfläche. Seit 22.09.2026 auch an einer **Ebene**, wenn kein Fußabdruck greift — eine Rippe, die bis an den Rand der Platte läuft, hängt nicht über einer Öffnung; geschnitten wird an der Ebene der Deckfläche („an einer Ebene in 2 Blöcke zerlegt (2 davon sweepbar)“). Und Grund und Deckel dürfen ihren Rand **verschieden in Linien teilen**: die fehlenden Ecken werden übertragen und die Wand dazwischen mitgeteilt, sodass auch ein von Hand gebauter Körper sweepbar wird, dessen Deckel eine Kante in zwei Linien führt. Gemessen: Platte mit Nabe 441 hex8 + 108 pent6 statt 7 595 tet4; abgesetzte Welle 446 hex8 + 28 pent6 statt 2 415 gemischt. Seit 23.09.2026 auch an einer **vorhandenen Schleife** (ein Zylinder, dessen Mantel an einer Zwischenkreislinie geteilt ist: 23 von 40 nicht sweepbaren Drehlagerkörpern) und mit einem Zeitbudget von 20 s je Körper, dessen Abbruch das Protokoll nennt. Die **Lücke im Netzrand** des freien Vernetzers (ein fehlender Tetraeder an der Oberfläche, 0,003 bis 0,113 % des Körpers) ist seit 23.09.2026 geschlossen; an rechtwinkligen einspringenden Kanten holt seit dem Abend das **Kantenkippen** das fehlende Hülldreieck zurück („1 Kante(n) an der Hülle gekippt"), was bleibt, steht als WARNUNG im Protokoll (Stichprobe: 2 von 69 Netzen, Theoriehandbuch § 6a). Bei **tet10** werden gekrümmte Kanten, die das Element ungültig machten, nicht mehr gerade gelassen: die betroffene Fläche wird örtlich feiner vernetzt („örtlich feiner vernetzt (MantelI1 13,3 statt 20,0 mm …)"); nur an einer mit einem Nachbarn gemeinsamen Fläche bleibt die gerade Kante, mit Warnung. Der **Bogenwinkel** je Abschnitt (Vorgabe 18°) lässt sich am Modell (`bogenwinkel` in den Netzeinstellungen) und je Körper (`Volumenkoerper.bogenwinkel`) setzen; an einer Linie zweier Körper gilt der kleinere. Knoten- und Elementnummern hängen nicht mehr davon ab, welcher Arbeitsprozess zuerst fertig wird. Ein Körper mit `Volumenkoerper.ordnung` = 2 bekommt tet10, der Rest tet4. Platte mit Randrippe: **124 Elemente und 239 Knoten** statt 685 tet4 — und die Verschiebung 2,0161 mm gegen 0,5811 mm; ein Tetraedernetz braucht dafür 39 891 Elemente und 7 459 Knoten (1,9674 mm). **Warum die Vorgabe trotzdem aus ist:** am Drehlager erzeugte der Sweep am 21.09.2026 **992 entartete Keile** (10,6 % aller pent6, schlechteste Formgüte 0,025 — von 31.108 Hexaedern lag keiner unter 0,10), und derselbe Lastfall rechnete darauf max |u| 1,2335 statt 0,2716 mm, also **Faktor 4,5** daneben. Die Ursache war ein Band feiner Randstrecken gegen ein grobes Flächeninneres; seither folgt das Innennetz dem Rand (`mesher3d.RANDFELD`), und am Prüfkörper fielen die schlechten Keile von 34 auf **null**. **Am Drehlager selbst ist das noch nicht nachgemessen** — bis dahin wird von Hand eingeschaltet. Die Abnahme meldet solche Netze vor dem Rechnen; wer einschaltet, sollte sie lesen. |
 | Pyramiden am Übergang (`pyramiden`, seit 21.09.2026) | **Aus** (Vorgabe). Ein Tetraeder-Körper, der an die Vierecke eines gesweepten oder abgebildeten Nachbarn stößt, teilt heute jedes Viereck in zwei Dreiecke — knotengleich, aber mit anderer Interpolation auf der Diagonale. Eingeschaltet bekommt jedes Viereck eine **Pyramide** (pyr5) mit Spitze im Inneren, die Tetraeder folgen dahinter. Gemessen an der Platte mit Pyramidenkörper: 12 Pyramiden statt 33 Tetraeder, Rauminhalt gleich, Verschiebung 0,3588 → 0,3589 mm, Formgüte min 0,185 → 0,154. Aus, weil die Rechnung nichts gewinnt und die Formgüte sinkt; ein für den Kontakt sauberer Übergang ist der Grund, ihn einzuschalten. Heute nur in der Datei |
 | Feldpunkte (`feldpunkte`) | `[x, y, z, h]` oder `[x, y, z, h, r]` je Punkt — das, was der Fehlerschätzer aus einem Ergebnis ableitet (Theoriehandbuch § 6c). Werden mit dem Modell gespeichert; beim nächsten Vernetzen entsteht daraus dasselbe Größenfeld |
 
@@ -742,6 +758,19 @@ Fließen mitrechnet; lässt er es aus, rechnet die Schleife das fließende Model
 schreibt es ins Protokoll — ein elastischer Probelauf verfeinerte am Drehlager an den
 falschen Stellen (54 von 100 Spitzenelementen, 21.09.2026). `--probelauf ja` erzwingt den
 Probelauf, `--probelauf nein` den vollen Lauf.
+Vor jeder Rechnung prüft die Schleife das Modell wie **Berechnen** — nach dem Vernetzen,
+denn vorher meldet die Prüfung auch „keine Elemente definiert“. Meldet sie einen FEHLER,
+hält die Schleife an, ohne zu rechnen: die Oberfläche zeigt den Fehler (bei Teiltragwerken
+ohne Lager fragt sie wie Berechnen), das zuletzt erzeugte Netz bleibt stehen; die
+Befehlszeile schreibt den Fehler, speichert nichts und gibt 2 zurück. Bis zum 23.09.2026
+rechnete sie trotzdem — an der Platte mit Bohrung mit einer Kombination, die einen
+unbekannten Lastfall nennt, zwei Durchgänge; die Befehlszeile speicherte das Modell und
+nannte den Fehler erst danach. Die Modellprüfung zählt als Lagerung nur Knotenlager (und
+einseitige Lager): dieselbe Platte, allein über ihr Flächenlager gehalten, meldet sie auch
+vernetzt als „keine Lagerung definiert (System kinematisch)“, und die adaptive Schleife hält
+dort an (gemessen 23.09.2026). *Berechnen* weist sie laut Quelltext genauso ab, obwohl
+der Löser selbst die Platte rechnet (Summe der Auflagerkräfte 1920 kN, gleich der
+Zuglast).
 `--vernetzen` allein vernetzt ohne Oberfläche, in derselben Folge wie *Netz →
 Vernetzen*. Was die Schleife setzt (Kantenlänge je Körper, Feldpunkte), steht danach in
 den Netzeinstellungen des gespeicherten Modells. Ein Befehl in der Oberfläche ist mit
@@ -882,6 +911,15 @@ Kragträger mit 100 mm Kantenlänge kommt er auf 69 % der Balkenlösung, der
 quadratische mit demselben Netz auf 99 %. Er kostet dafür mehr Knoten. Für
 Spannungsnachweise an Kerben, Augen und Bohrungen gehören die quadratischen
 genommen.
+
+**Tetraeder ohne volumetrische Versteifung** (Kästchen „knotengemittelte
+Dilatation“): der lineare Tetraeder rechnet seine Volumendehnung dann über die
+Nachbarn gemittelt, das hebt die Versteifung auf, die ihn fast inkompressibel und
+im Fließbereich zu steif macht (Theoriehandbuch, Knotendilatation). Das geht nur für
+Werkstoffe mit 0 ≤ ν < 0,5; Bauteile aus anderen Werkstoffen rechnen mit dem
+gewöhnlichen Tetraeder weiter, und das steht seit dem 24.09.2026 in der
+Zusammenfassung und in den Hinweisen des Berichts („Knotendilatation: Werkstoff …,
+Querdehnzahl … (n tet4)“) — vorher nirgends, wo man es las.
 
 **Quadratische Elemente an Fugen, Kontakten und Flächenlagern: noch gesperrt.**
 Kontakt, Fugen und Flächenlager nehmen von einer Elementseite heute nur die
@@ -1229,6 +1267,38 @@ Knickfiguren. Ein Klick stellt das Ergebnis in der Ansicht ein — dieselbe
 Auswahl, die auch die Maske *Ergebnisse* rechts führt. Dort werden Färbung,
 Schnittgrößenverlauf und Überhöhung eingestellt.
 
+Der Zweig **Verformungen** (seit 24.09.2026) steht nach Lastfällen und
+Nachweisen, vor den Schnittgrößen, und führt acht Einträge: **u gesamt |u|**,
+**ux**, **uy**, **uz**, **φ gesamt |φ|**, **φx**, **φy**, **φz**. Daneben stehen
+kleinster und größter Wert des gezeigten Ergebnisses als Dezimalzahl, „min …
+max mm“ bzw. „min … max mrad“ — genau die Grenzen der Färbung, die ein Klick
+einstellt, auch bei einer Umhüllenden (dort je Knoten das betragsgrößere
+Extrem; das volle Minimum und Maximum aller Ergebnisse steht im Register
+*Umhüllende*). Wechselt man das Ergebnis — in der Ergebnismaske oder in der
+Glasleiste —, ziehen die Werte mit. Ein Klick
+stellt die Färbung ein — eine Umhüllende bleibt dabei vorn, denn sie führt
+Verschiebungen und Verdrehungen (anders als die Spannungen). Den Zweig gibt es
+nur mit einem Ergebnis, nicht zu Eigenformen oder Knickfiguren, und nicht,
+wenn nach der Rechnung Knoten angelegt wurden (das Ergebnis gehört dann zum
+alten Netz). Ist der Zusatz zu lang für die Spalte, zeigt ihn der Hinweis beim
+Überfahren ganz.
+
+**Verdrehungen gibt es nur an Knoten mit Drehsteifigkeit** — an Balken
+(außer an einem Stabende, dessen Momentengelenke den Knoten ganz freigeben,
+etwa bei einem Pendelstab), Schalen, Federn mit Drehfedern und starren
+Körpern (Master; bei RBE2 auch die Slaves). Volumen-, Scheiben-, Fachwerk- und
+Seilknoten haben keinen Drehfreiheitsgrad; die Rechnung hält ihn dort bei
+genau 0. Diese Knoten zeigt die Färbung **grau** (ohne Wert) statt als
+Nullen, die Farbskala reicht nur über die Knoten mit Drehsteifigkeit. Hat ein
+Modell gar keinen solchen Knoten, stehen die vier φ-Einträge grau mit einer
+Erklärung als Zusatz: beim reinen Volumenmodell „keine Verdrehungen: nur
+Volumenkörper (Knoten ohne Drehfreiheitsgrad)“, bei einem Fachwerk-, Seil- oder
+Scheibenmodell ohne Balken und Schalen „keine Verdrehungen: kein Knoten mit
+Drehsteifigkeit (Fachwerkstäbe, Seile, Scheiben und Volumenkörper haben keinen
+Drehfreiheitsgrad)“. Ein Klick meldet das in der Statuszeile und färbt nicht,
+ein Doppelklick übernimmt dann auch nichts in den Bericht. Geprüft in `tests/test_ergebnisbaum.py`, dort auch die
+Handrechnung am Kragarm: φ am Ende = F·L²/(2EI).
+
 Der Zweig **Schnittgrößen** führt N, Vy, Vz, Mt, My und Mz, jede mit ihren
 Grenzwerten daneben; ein Klick stellt den Verlauf in der Ansicht ein, „kein
 Verlauf" blendet ihn wieder aus.
@@ -1236,7 +1306,9 @@ Verlauf" blendet ihn wieder aus.
 **Kennwerte im Bild.** Unten links in der Ansicht stehen die Zahlen des
 **gewählten Ergebnisses** (seit 15.09.2026; vorher alles zugleich): zur Färbung
 |u| die größte Verformung mit Knoten, zu ux, uy oder uz die kleinste und
-größte Verformung dieser Richtung, zur Vergleichsspannung die größte mit
+größte Verformung dieser Richtung, zu |φ| die größte Verdrehung mit Knoten, zu
+φx, φy oder φz die kleinste und größte mit Knoten (in mrad, nur Knoten mit
+Drehsteifigkeit), zur Vergleichsspannung die größte mit
 Knoten, zu einer Ausnutzung die größte mit ihrem Ort, zu einer
 Spannungsgröße (Volumen, Flächen, Stäbe, Kontakt) ihr kleinster und größter
 Wert mit Knoten in der Einheit der Farbskala. Steht ein Schnittgrößenverlauf
@@ -1340,7 +1412,9 @@ einzelne Knotenlasten“). Sie folgt dem Schalter *Lasten*. Geprüft in
 ganze Ergebnisdarstellung aus dem Bild: Färbung, verformtes System, Werte,
 Kontaktmarken, Skala und Kopfzeile. Zurück bleibt das Modell, wie es vor der
 Rechnung aussah; die Ergebnisse bleiben gerechnet und kommen mit demselben
-Schalter zurück. Die Kopfzeile sagt, dass sie ausgeblendet sind. Für die
+Schalter zurück. Die Kopfzeile sagt, dass sie ausgeblendet sind, und nennt
+beide Wege zurück: den Knopf *Ergebnisse* in der Glasleiste (seit
+24.09.2026, gleich hinter der Lastfall-Liste) und das Register. Für die
 Färbung allein gibt es weiterhin den Eintrag *keine Färbung* in der Liste.
 
 Die Elementkanten des FE-Netzes sind **1 px** breit. Bis 13.09.2026 waren
@@ -1396,11 +1470,10 @@ Klartext erscheint beim Überfahren mit der Maus. Von links nach rechts:
 
 | Gruppe | Knöpfe |
 |---|---|
-| ganz links | **Aufklappliste Lastfall / Kombination** — was die Ansicht zeigt |
+| ganz links | **Aufklappliste Lastfall / Kombination** — was die Ansicht zeigt; gleich dahinter **Ergebnisse zeigen / ausblenden** (Schalter, seit 24.09.2026) |
 | Darstellung | Voll, Transparent, Hidden-Line, Drahtmodell |
 | Sichtbarkeit | Knoten (der Konstruktion; Netzknoten: *Netz → Netzknoten*), Linien, Stäbe, Flächen, Volumen, **Lager**, FE-Netz, Lasten — jedes einzeln schaltbar |
-| Sicht | Selektion anzeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen, **Verborgenes im Hintergrund** (Schalter), **Schnittebene** (Schalter mit Achse und Schieber), **Intelligente Auswahl** (Schalter) |
-| Layer | **Aufklappliste** (einen Layer allein zeigen, „Alle Layer“), **Layerliste** (Fenster: sichtbar und gesperrt je Layer, neu aus der Auswahl, Objekte wählen), **Layer aus Auswahl** — seit 16.09.2026 |
+| Sicht | Selektion anzeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen, **Verborgenes im Hintergrund** (Schalter), **Intelligente Auswahl** (Schalter) |
 | Fang | Fang ein/aus (die Fangarten einzeln: Ribbon *Geometrie → Arbeitsebene*) |
 | Auswahlart | was ein Klick trifft, als Knöpfe: Knoten, Linie, Stab, Fläche, Volumen, **Netz** (einzelne Elemente), **Lager** (Knoten-, Linien- und Flächenlager), **Last** — genau einer ist gedrückt |
 | ganz rechts | **Alles deselektieren** (✕, auch Esc) — der Griff, der jede Auswahl beendet |
@@ -1414,6 +1487,18 @@ Kombination hat erst nach der Berechnung etwas zu zeigen: liegt ein Ergebnis
 vor, schaltet die Ergebnisliste mit um, sonst sagt das Protokoll, woran es
 liegt. Umgekehrt zieht die Leiste nach, wenn das Ergebnis woanders gewählt
 wird — beides zeigt immer dasselbe.
+
+**Ergebnisse an und aus aus der Leiste** (seit 24.09.2026). Direkt hinter der
+Aufklappliste sitzt der Knopf **Ergebnisse zeigen / ausblenden**. Er ist
+derselbe Schalter wie *Ergebnisse → Ergebnisse zeigen* im Ribbon — beide
+stehen immer gleich, ein Klick auf den einen schaltet auch den anderen. Aus
+heißt: keine Färbung, kein verformtes System, keine Skala; das Modell bleibt
+im Bild, gerechnet bleibt alles. Die Kopfzeile nennt dann beide Wege zurück.
+Ein eigenes Tastenkürzel hat er nicht.
+
+**Schnittebene und Layer** stehen nicht in der Glasleiste (bis 24.09.2026
+führte diese Tabelle sie dort): die Schnittebene liegt im Register *Ansicht*,
+die Layer im Register *Ansicht* und im Modellbaum.
 
 **Verborgenes im Hintergrund.** Der Schalter (Register *Ansicht → Sicht*,
 auch in der Glasleiste) zeigt alles Ausgeblendete blass und durchscheinend
@@ -1880,6 +1965,19 @@ um 0,14 % und mit 20 × 4 × 4 Zellen um 1,1 % weiter durch. Ein früher erzeugt
 tet4-Quader steht mit seinen Elementen in der Modelldatei und behält die Risse:
 Elemente löschen und den Quader neu erzeugen. Mit **hex8** betrifft das nichts.
 
+**Quader nur mit hex8 oder tet4.** Der Quader kennt genau zwei Elementtypen:
+**hex8** (ein Hexaeder je Zelle) und **tet4** (fünf Tetraeder je Zelle). Die
+Maske und die Browser-Oberfläche bieten nur diese beiden an; über die
+Web-Schnittstelle (`POST /api/op` mit `"op": "box"`) oder ein Skript
+(`mesher.grid_box`) lässt sich aber jeder Text als Typ übergeben. Seit
+23.09.2026 bricht jeder andere Typ ab, bevor ein Knoten angelegt ist, mit der
+Meldung „Elementtyp 'hex20' für den Quader nicht möglich: nur hex8 oder tet4“
+(über die Web-Schnittstelle mit Status 400); das Modell bleibt, wie es war.
+Groß geschriebenes „HEX8“ zählt ebenfalls als anderer Typ. Vorher wurde jeder
+Typ außer hex8 still als tet4 gebaut: am Stand ec6448c ergaben „hex20“,
+„tet10“, „HEX8“ und „quatsch“ bei einer Zelle je fünf tet4 mit der Meldung
+„Quader erzeugt“. Ohne Typangabe baut die Web-Schnittstelle weiterhin hex8.
+
 **Rechtsklick auf die Auswahl.** Sind Knoten, Linien, Stäbe, Flächen,
 Volumen oder Elemente gewählt (mit ihren Lagern und Kontaktbedingungen),
 öffnet der Rechtsklick in der Ansicht ein Menü: oben *Selektiertes
@@ -2230,7 +2328,7 @@ zeigt ihre Maske, Entf löscht sie. Die Maske enthält genau:
 | Bezeichnung | der Name der Stellung |
 | Ausgangsstellung | „unbewegtes Modell“ oder eine andere Stellung, auf deren Lage die eigene Verschiebung und Verdrehung **aufsetzen** — so entsteht eine Kette von Stellungen (geschlossen → 30° → 60°) |
 | Verschiebung x, y, z [m] | Verschiebung der bewegten Knoten gegen die Ausgangsstellung |
-| Verdrehung [°], Drehachse, Punkt der Achse | Drehung der bewegten Knoten um die Achse gegen die Ausgangsstellung (bewegt sind alle nicht gelagerten Knoten bzw. die Elementgruppen der Stellung) |
+| Verdrehung [°], Drehachse, Punkt der Achse | Drehung der bewegten Knoten um die Achse gegen die Ausgangsstellung (bewegt sind die Knoten der Elementgruppen der Stellung; ohne Gruppen alle Knoten ohne Knotenlager — Knoten auf Linien- und Flächenlagern bewegen sich mit) |
 | Deaktivierte Stäbe, Flächen, Volumen | ihre Elemente tragen in dieser Stellung weder Steifigkeit noch Last, ihre Schnittgrößen sind null; Knoten ohne wirksames Element werden festgehalten |
 | Deaktivierte Gelenke | Liste zum Anhaken: diese Gelenke sind in der Stellung **biegesteif** (etwa eine Verriegelung) |
 | Deaktivierte Knoten-, Linien-, Flächenlager | Listen zum Anhaken (Namen oder Nummern wie im Modellbaum): sie greifen in dieser Stellung nicht |
@@ -2260,6 +2358,21 @@ an), nicht mehr als getippte Namen.
 Kombinationen zu; nicht mehr genannte fallen in die Grundstellung zurück.
 Was in der Stellung nicht wirkt (Stäbe, Flächen, Volumen, Gelenke, Lager),
 steht in der Stellung selbst — die Maske der Situation zeigt es nur an.
+Nennt eine Situation als Stellung „Grundstellung“ und heißt keine Stellung so
+(dann bietet die Maske den Namen nicht an; er kommt aus einer Modelldatei,
+beim Anhängen oder über die Web-API herein), ist sie unbewegt mit allen
+Elementen — so rechnet das Programm sie, und seit dem 23.09.2026 sagt die
+Modellprüfung dasselbe. Vorher meldete sie „FEHLER: Situation '…': Stellung
+'Grundstellung' unbekannt“, und die Kommandozeile gab 2 zurück, obwohl die
+Rechnung durchlief. Heißt dagegen eine Stellung selbst „Grundstellung“ (die
+Maske „Stellung“ lässt den Namen zu, und der RFEM-Import benennt Stellungen
+nach den Strukturmodifikationen), rechnet eine Situation, die sie nennt, mit
+dieser Stellung — Lage, Lager, Gelenke und abgeschaltete Elemente wie bei
+jeder anderen. Bis zum 24.09.2026 schaltete das Programm in diesem Fall nur
+ihre Stäbe, Flächen und Volumen ab; Lage, Lager und Gelenke blieben wie
+unbewegt. Geprüft in `tests/test_situationen.py`
+(`test_echte_stellung_namens_grundstellung`: eine Rolle, die die Stellung
+abschaltet, hielt den Lastpunkt bis dahin fest).
 
 **Aus RFEM kommen Situationen von selbst mit.** Eine Strukturmodifikation in
 der Quelldatei ist ein Ausfallszenario: sie schaltet genannte Stäbe und Lager
@@ -2972,23 +3085,99 @@ Bei den RFEM-6-Stablasten steht jede Zeile der Datei genau einmal im
 Protokoll — übernommen oder mit Grund nicht übernommen —, gezählt je
 Lastzeile und nicht je Stab („62 Stablasten (Gleichlast) an ihre Staebe
 gehaengt (944 Stabzuordnungen)“ am CBG-Trolley); was die Datei nicht lesbar
-führt, meldet eine Warnung „k von n Stablasten waren nicht zu lesen“. Beim
+führt, meldet eine Warnung „k von n Stablasten waren nicht zu lesen“. Seit
+23.09.2026 nennt eine eigene Warnung auch den Anteil einer Stablast, der auf
+einem Stab liegt, den das Modell nicht führt (etwa einem Ergebnisstab), mit
+den Stabnummern; eine Flächenlast ohne auflösbaren Lastfall wird mit diesem
+Grund gemeldet statt als „Umsetzungstabelle fehlt“; die Zeile zur
+Stabvorspannung nennt die verschiedenen Stäbe und die Kraft je Lastfall statt
+einer Summe über alle Lastfälle. Beim
 Tabellenimport nennt die Schlusszeile „n von m Lastkombinationen“; eine
 Kombination, die auf eine andere verweist („LF1 + CO1“), wird mit deren
 Faktoren aufgelöst — ein Minus ohne Zahl („LF2 - CO1“) zieht dabei ab, und
 das Protokoll nennt das Ergebnis samt Vorzeichen —, und eine, die sich
-nicht vollständig auflösen lässt (Verweis auf eine Ergebniskombination
-„EK1“ oder „RC1“ oder auf eine Kombination, die selbst nicht angelegt
-wird) oder deren Formel einen nicht erkannten Teil enthält
-(„1.35*LF1 + 1.5*Schnee“), wird **nicht** angelegt, sondern mit Formel und Grund gewarnt — legen Sie sie dann in der
-Kombinationsmaske von Hand an. Die **Einwirkungskategorie** eines
+nicht vollständig auflösen lässt (ein Verweis auf eine Ergebniskombination
+„EK1“ oder „RC1“, auf eine Nummer, die die Tabelle nicht führt, auf eine
+Nummer, die die Tabelle mehrfach führt, oder auf eine Kombination, die
+selbst nicht angelegt wird, sowie ein Kreis von Verweisen, auch der
+Verweis einer Kombination auf sich selbst; Einzelheiten im
+Schnittstellenhandbuch) oder deren Formel einen nicht erkannten Teil
+enthält („1.35*LF1 + 1.5*Schnee“, auch ein „+“ am Ende oder ein doppeltes
+„++“), wird **nicht** angelegt, sondern mit Formel und Grund gewarnt; wie
+Sie sie von Hand anlegen, steht im nächsten Absatz. Wo eine Meldung eine
+Zeile nennt („Zeile 5 in „2.5 Lastkombinationen““, bei einer Zeile ohne
+Nummer oder mit mehrfach geführter Nummer), ist es die Zeile des Blatts
+bzw. der CSV-Datei, Kopf- und Leerzeilen mitgezählt. Die
+**Einwirkungskategorie** eines
 RFEM-6-Lastfalls ist aus einer Kennzahl angenommen, die an keiner Datei
 belegt ist: das Protokoll nennt je Kennzahl die angenommene Kategorie und
 die Lastfälle, deren Name sie umgestellt hat, und warnt; prüfen Sie ψ und γ
-in der Lastfallmaske. Ein Volumenkörper aus sechs Vierecken wird als
+in der Lastfallmaske. Den Namen fragt der Import nur, wenn die Kennzahl Q
+ergibt; ergibt sie G (Kennzahl 1 oder 2), bleibt der Lastfall G, auch wenn
+er „Ermüdungslast …“ heißt. Ergibt sie Q, wertet der Import den Namen aus,
+aber **ohne den Text in runden oder eckigen Klammern** (bei geschachtelten
+Klammern ohne den der innersten); was dort steht, zählt für die Kategorie
+nicht. Außerhalb von Klammern gilt: eine Angabe zur Bemessungssituation
+zählt nicht als Einwirkung, wenn sie so geschrieben ist: „ständig“,
+„vorübergehend“ oder „außergewöhnlich“ mit Endung (-e, -en, -er, -es, -em,
+also etwa „ständige“ oder „ständigen“) oder „Erdbeben“ unmittelbar vor
+„Bemessungssituation“ (zwei davon mit „und“, „u.“ oder „oder“ verbunden),
+„Bemessungssituation Erdbeben“, „Bemessungssituation bei Erdbeben“ oder
+englisch „persistent“, „transient“, „accidental“ oder „seismic“ vor
+„design situation“ (zwei davon mit „and“ oder „or“ verbunden, etwa
+„seismic or accidental design situation“), jeweils auch in der Mehrzahl
+(„Bemessungssituationen“, „design situations“). Groß- und Kleinschreibung
+zählt dabei nicht, „ae“, „oe“, „ue“ und „ss“ gelten wie „ä“, „ö“, „ü“ und
+„ß“, und Satz- und Sonderzeichen gelten wie ein Leerzeichen: Bindestrich
+und Gedankenstrich ebenso wie „/“, „:“ oder „,“. „Erdbeben -
+Bemessungssituation 2“ und „Erdbeben / Bemessungssituation“ sind darum wie
+„Erdbeben-Bemessungssituation 2“ eine Situation und bleiben Q, ebenso
+„Außergewöhnliche - Bemessungssituation“ und „Nutzlast - seismic or
+accidental design situation“; das Protokoll nennt sie nicht unter
+„umgestellt“. Die genaue Regel steht im Schnittstellenhandbuch unter
+„Bemessungssituation und Ermüdung im Namen“. Nicht heraus nimmt der Import
+etwa „ständige/vorübergehende Bemessungssituation“ (ohne „und“ oder „oder“
+bleibt „ständige“ stehen), „Bemessungssituation ständig“, „Ständig -
+Bemessungssituation“ (ohne Endung) oder „Ständig und vorübergehend“ ohne
+das Wort „Bemessungssituation“; sie machen einen Lastfall weiter zu G,
+„Bemessungssituation außergewöhnlich“ oder „Außergewöhnlich -
+Bemessungssituation“ zu A, und das Protokoll nennt ihn unter „umgestellt“.
+Ein Lastfall, dessen Name „Ermüdung“ außerhalb von Klammern enthält, wird
+FAT (nur für den Ermüdungsnachweis, in keiner erzeugten Kombination), auch
+wenn der Name daneben „Eigengewicht“ oder „Temperatur“ nennt. In Klammern
+zählt „Ermüdung“ nicht: „Kran (Ermüdung)“ bleibt Q_K und geht in die
+erzeugten GZT-Kombinationen ein, „Eigengewicht (Ermüdung)“ wird G und
+„Temperatur [Ermüdung]“ T; ebenso bleibt „Nutzlast (Bemessungssituation
+außergewöhnlich)“ Q. Stellen Sie einen solchen Lastfall in der
+Lastfallmaske unter „Einwirkung“ auf FAT, oder schreiben Sie „Ermüdung“
+außerhalb der Klammern („Kran - Ermüdung“). Am
+Drehlager (422 Lastfälle, alle mit der Kennzahl 11) machte der Name bis zum
+23.09.2026 96 Lastfälle über „ständige Bemessungssituation“ zu G, 16 über
+„außergewöhnliche Bemessungssituation“ zu A und die 164 Ermüdungslastfälle
+zu G (160) bzw. T (4); jetzt sind es 256× Q, 164× FAT und 2× P.
+Ein Volumenkörper aus sechs Vierecken wird als
 Sechsflächner nur dann unmittelbar vernetzt, wenn seine Knotenfolge genau
 die sechs Randflächen ergibt; sonst geht er an den freien Vernetzer (Einzelheiten im
 Schnittstellenhandbuch).
+
+**Eine nicht übernommene Kombination von Hand anlegen.** Beide Wege, eine
+Kombination anzulegen – die Maske mit dem Feld „Faktoren (Lastfall:
+Faktor, …)“ und der Dialog *Kombination* mit einem Faktorfeld je Lastfall –,
+kennen nur die Lastfälle des Modells. Nennt der nicht erkannte Teil einen
+Lastfall, den der Import nicht angelegt hat („Schnee“ in
+„1.35*LF1 + 1.5*Schnee“), legen Sie diesen Lastfall samt seinen Lasten
+zuerst an; vorher bietet der Dialog kein Feld für ihn, und die Maske weist
+ihn ab („Lastfall „Schnee“ gibt es nicht“). Einen Verweis auf eine
+**Ergebniskombination** („1.35*LF1 + EK1“) kann keiner der beiden Wege
+nachbilden: beide legen eine Summe aus Lastfällen an, keine Umhüllende. Als
+eine Kombination lässt sich eine solche Zeile darum nicht anlegen. Sehen Sie
+in RFEM nach, aus welchen Alternativen die Ergebniskombination besteht, und
+legen Sie je Alternative eine eigene Kombination aus den übrigen Anteilen
+der Zeile und dieser Alternative an – bei EK1 = LF2 oder LF3 also
+1,35·LF1 + LF2 und 1,35·LF1 + LF3. Die Nachweise EC3 führen jede
+GZT-Kombination des Modells, also jede dieser Kombinationen. Diesen Weg
+nennt auch die Warnung des Imports (seit 23.09.2026; vorher riet sie auch
+hier, die Kombination von Hand anzulegen).
 
 Aus HiCAD übernommene Stäbe enden an der **Außenkante** des angeschlossenen
 Bauteils – ihre Achsen laufen um die halbe Profilhöhe daneben vorbei, das Modell
@@ -3057,7 +3246,16 @@ jetzt kommen alle an. Was das Protokoll dabei sagt:
   umbenannten Volumenkörpers (`V1` → `V1_2`); über sie findet eine
   Kontaktbedingung ihren Körper. Bis zum 23.09.2026 behielten die Elemente
   `V1`, und die Fuge der Quelle löste im Versuch den Block des anderen
-  Körpers. Ebenso folgen die Ermüdungslasten, deren Zustand eine Kombination
+  Körpers. Ein Volumenkörper oder eine Fläche der Quelle wird auch dann
+  umbenannt, wenn im Ziel nur eine Elementgruppe so heißt, ohne Körper oder
+  Fläche – etwa ein DXF-Layer. Bis zum 23.09.2026 trugen dann Elemente beider
+  Teile dieselbe Gruppe. Im Versuch lagen zwei Blöcke des Ziels, der untere
+  mit der Gruppe `V1`, an einer Quelle mit den Körpern `V1`/`V2` und einer
+  Fuge auf `V1`: die Fuge hängte auch den unteren Block des Ziels um, und er
+  teilte danach mit dem oberen nur noch 2 statt 4 Knoten, ohne Meldung.
+  Jetzt heißt der Körper der Quelle `V1_2`, die Fuge hängt nur ihn um, und
+  die Blöcke des Ziels teilen weiter 4 Knoten.
+  Ebenso folgen die Ermüdungslasten, deren Zustand eine Kombination
   ist (am CBG alle 20), der umbenannten Kombination; bis dahin zeigte eine
   solche Ermüdungslast ohne Meldung auf die gleichnamige Kombination des
   Ziels. Werkstoffe, Querschnitte, Dicken, Kombinationen und
@@ -3073,10 +3271,35 @@ jetzt kommen alle an. Was das Protokoll dabei sagt:
 * **Eigengewicht** gilt je Lastfall für alle Elemente. Hatten Ziel und Quelle
   in einem Lastfall verschiedenes, warnt das Protokoll: es erfasst jetzt auch
   die Elemente des anderen Teils oder fehlt ihnen.
+* **Gekrümmte Kanten (Tetraeder mit Ordnung p)** – die aus einem tet10-Netz
+  übernommene gekrümmte Geometrie steht seit dem 23.09.2026 in der
+  Modelldatei und kommt beim Anhängen mit (vorher ging sie schon beim
+  Speichern verloren, und das Modell rechnete nach dem Öffnen still mit
+  geraden Kanten). Liegen an einer Anschlusskante auf beiden Seiten
+  Tetraeder mit Ordnung p und verläuft sie in Ziel und Quelle verschieden –
+  zwei verschiedene Kantenmitten, oder auf einer Seite gerade und auf der
+  anderen gekrümmt –, gilt die Kante des Ziels, gerade oder gekrümmt, und
+  die Warnung „… zwei verschiedene Kantenmitten …“ nennt die Zahl der
+  Kanten (davon die auf einer Seite geraden) und den größten Abstand – dann
+  die Geometrie an der Anschlussfläche prüfen. Liegt auf einer Seite ein
+  tet4, wird die Kante gerade, gleich ob Ziel oder Quelle dort gekrümmt
+  war, und zwar **ohne Warnung**: An der Grenze zum tet4 ist ein Tetraeder
+  mit Ordnung p auch geometrisch gerade, sonst klaffte die Geometrie. Im
+  Versuch (24.09.2026, zweimal) standen zwei gleiche Viertel-Hohlzylinder
+  übereinander, einer aus tet4, einer aus gekrümmten Tetraedern mit
+  Ordnung p, je einmal als Ziel und als Quelle: Die 8 gekrümmten Kanten der
+  Anschlussfläche wurden gerade, deren Kantenmitten rückten um bis zu
+  3,843 mm auf die Sehnenmitte (so weit weicht der Kreisbogen dort von der
+  Sehne ab), und das Protokoll schwieg. Liegt auf einer Seite ein tet10,
+  bricht die Rechnung mit der Nummer des Elements und der Kante ab („…
+  teilt die Kante … mit einem Tetraeder mit Ordnung p …“).
 * **Nicht übertragen** und mit Anzahl gemeldet werden die Berichtseinträge
   (sie zeigen Ergebnisse des Quellmodells) und die Stellungen (eine
   Stellung, die verschiebt oder dreht, bewegt ohne Gruppenangabe alle Knoten
-  ohne Knotenlager – auch die auf Linienlagern –, also auch die des Ziels).
+  ohne Knotenlager – auch die auf Linienlagern –, also auch die des Ziels;
+  mit Gruppenangabe bewegt sie alle Knoten der Elemente dieser Gruppen, auch
+  solche mit Knotenlager – im Beispiel „frame“ verschiebt eine Gruppe aus
+  Element 0 dessen Knoten 0 und 1, obwohl an Knoten 0 ein Knotenlager sitzt).
   Einstellungen – Netz, Nachweise, Plastizität, Einheiten, Bericht – bleiben
   die des Ziels; weichen die der Quelle ab, steht es im Protokoll.
 * **Situationen mit Stellung:** Eine Situation der Quelle behält den Namen
@@ -3085,32 +3308,67 @@ jetzt kommen alle an. Was das Protokoll dabei sagt:
   zeigt die Situation stattdessen auf einen neuen Namen (`Offen` → `Offen_2`),
   und die Warnung „Situationen der Quelle nennen eine Stellung, die es im
   Ziel unter demselben Namen gibt …“ nennt jede solche Situation. Bis zum
-  23.09.2026 rechnete sie still in der Stellung des Ziels. Im Versuch hob die
-  Stellung `Offen` der Quelle die Knoten eines Rahmens um 1,0 m, die
-  gleichnamige des Ziels bewegte nichts; am Lastknoten der Quelle ergaben
-  sich allein 4,7572 mm, angehängt 1,7876 mm, ohne Meldung. Solange die
+  23.09.2026 kam die Situation beim Anhängen gar nicht mit, und der Lastfall
+  der Quelle rechnete ohne Meldung in der Grundstellung. Im Versuch hob die
+  Stellung `Offen` der Quelle die ungelagerten Knoten eines Rahmens um 1,0 m
+  (15 von 17; die beiden Lagerknoten blieben liegen), die gleichnamige des
+  Ziels bewegte nichts; am Lastknoten der Quelle ergaben sich allein
+  4,7572 mm, angehängt 1,7876 mm. Solange die
   Modellprüfung „Stellung … unbekannt“ meldet, ist das ein Fehler:
   **Berechnen** weist dann in allen vier Rechenarten ab, auch für die
   Lastfälle des Ziels; **▶ Alle Stellungen rechnen** meldet den Fehler bei
-  jeder Stellung und rechnet keine; die Kommandozeile gibt 2 zurück. Nicht
-  gesperrt ist der Schwingungsnachweis des Verschlusses: *Nachweis führen*
-  prüft das Modell vorher nicht. Im Versuch (Schützhaut mit Wasserdruck,
-  daran der Rahmen angehängt) rechnete er trotz des Fehlers die
-  Eigenfrequenzen in Luft und Wasser und den Lastfall der Druckschwankung.
-  Ruft ein Skript `solver.solve_all` trotzdem auf, kommt es auf „Lastfälle
+  jeder Stellung, rechnet keine und schließt mit „Keine Stellung gerechnet
+  – 2 von 2 mit FEHLER“ (bis zum 23.09.2026 stand dort „2 Stellungen
+  gerechnet: eta = 0.000“); die Kommandozeile gibt 2 zurück. Seit dem
+  23.09.2026 prüft auch der Schwingungsnachweis des Verschlusses
+  (*Nachweis führen*) das Modell vorher und weist ab; bis dahin rechnete er
+  im Versuch (Schützhaut mit Wasserdruck, daran der Rahmen angehängt) trotz
+  des Fehlers die Eigenfrequenzen in Luft und Wasser und den Lastfall der
+  Druckschwankung. Die Maske der Situation zeigt die fehlende Stellung als
+  eigenen Eintrag („Offen_2 (fehlt)“), und **Übernehmen** lässt sie stehen,
+  mit einer Warnung im Protokoll; leer wird sie nur, wenn man ausdrücklich
+  „– (unbewegt)“ wählt. Bis zum 23.09.2026 zeigte die Maske „– (unbewegt)“,
+  und Übernehmen ohne jede Änderung setzte die Stellung leer: die Meldung
+  der Modellprüfung verschwand, und der Lastfall rechnete unbewegt (im
+  Versuch 1,7876 statt 4,7572 mm am Lastknoten). Ruft ein Skript
+  `solver.solve_all` trotzdem auf, kommt es auf „Lastfälle
   gleichzeitig (Ketten)“ an. Mit der Vorgabe nacheinander – in einem Skript
-  gilt sie, solange es weder `parallel.einstellungen_laden()` noch
-  `parallel.configure(ketten=…)` aufruft – bricht die ganze Rechnung mit
+  gilt sie, solange es die Einstellung `ketten` nicht ändert: mit
+  `parallel.configure(ketten=…)`, durch Zuweisen an
+  `parallel.settings().ketten` oder mit `parallel.einstellungen_laden()`, das
+  die gespeicherten Einstellungen liest und etwa beim Erzeugen des
+  Hauptfensters läuft – bricht die ganze Rechnung mit
   „Situation 'S-offen_2': Stellung 'Offen_2' unbekannt“ ab, ohne
   Teilergebnis. Mit mehreren Ketten scheitert jede Kette ganz, die einen
   Lastfall dieser Situation enthält, und die Ausnahme („Kette …: Situation
   'S-offen_2': …“) trägt die Lastfälle der übrigen Ketten als Teilergebnis –
   im Versuch mit zwei Ketten LF1 des Ziels. Legt man die Stellung der Quelle
   unter dem neuen Namen im Ziel an, rechnet der Lastfall im selben Versuch
-  wie allein (4,7572 mm).
+  wie allein (4,7572 mm). Ohne Gruppenangabe hebt diese Stellung dabei auch
+  die ungelagerten Knoten des Ziels, siehe „Nicht übertragen“: im Versuch
+  30 von 34 Knoten, 15 davon im Ziel. Am Lastfall der Quelle änderte das im
+  Versuch nichts (ohne Eigengewicht); hat er Eigengewicht, das auch die
+  Elemente des Ziels erfasst, ist die Wirkung nicht gemessen. Eine
+  Gruppenangabe beschränkt die Stellung nur dann auf die Quelle, wenn deren
+  Elemente eine Gruppe tragen, die es im Ziel nicht gibt: Elementgruppen
+  behalten beim Anhängen ihren Namen, außer sie heißen wie ein umbenannter
+  Körper oder eine umbenannte Fläche. Im Versuch trugen beide Rahmen die
+  Gruppe `default`, und eine Stellung mit dieser Gruppe hob alle 34 Knoten
+  samt den Lagerknoten. Heißt die Stellung `Grundstellung`, zeigt die
+  Situation ebenso auf einen neuen Namen (`Grundstellung_2`), und darunter
+  ist wie bei jeder anderen die ganze Stellung anzulegen: Eine Stellung
+  dieses Namens wirkt mit Lage, Lagern, Gelenken und abgeschalteten
+  Elementen (siehe *Situationen: Stellung und ihre Lastfälle*). Bis zum
+  24.09.2026 wirkten von ihr nur die abgeschalteten Stäbe, Flächen und
+  Volumen, und die Warnung riet, unter dem neuen Namen nur diese
+  anzulegen. Im Versuch hob die Stellung `Grundstellung` des Rahmens um
+  1,0 m und schaltete seinen rechten Stiel ab (10 kN waagerecht): allein
+  ergab sich 12,5294 mm, mit der ganzen Stellung unter `Grundstellung_2`
+  ebenso, mit nur dem abgeschalteten Stiel darunter 3,8300 mm
+  (`tests/test_importers.py`).
 * **Anschluss:** Ein Knoten der Quelle, der auf einem Knoten des Ziels
-  liegt, wird mit ihm zusammengeführt („1 Knoten der Quelle lagen auf Knoten
-  des Ziels …“); jeder Verweis darauf folgt, auch Ecken und integrierte
+  liegt, wird mit ihm zusammengeführt („1 Knoten der Quelle lag auf einem
+  Knoten des Ziels …“); jeder Verweis darauf folgt, auch Ecken und integrierte
   Knoten von Flächen, Punktmassen, Starrkörper und Zwangsverformungen.
   Knoten, die innerhalb des Ziels oder innerhalb der Quelle schon
   aufeinanderliegen, bleiben getrennt, etwa die beiden Seiten einer
@@ -3130,8 +3388,30 @@ Gegenprobe: Rahmen mit angehängtem Hallenrahmen, alter gegen neuen Weg (am
 dieselben Verschiebungen (Abweichung 0), dazu jetzt die 72 Kombinationen.
 
 Die Nachbereitung der übrigen Importe (RFEM 6, DXF, IFC, …) führt
-aufeinanderliegende Knoten weiterhin über das ganze Modell zusammen. Seit dem
-22.09.2026 folgen dabei auch die Ecken und integrierten Knoten der Flächen.
+aufeinanderliegende Knoten der Datei zusammen; bei einem neuen Modell ist das
+das ganze Modell. **Beim Anhängen an ein vorhandenes Modell** (seit
+23.09.2026) wird nur innerhalb der Datei zusammengeführt; an das vorhandene
+Modell schließt die Datei danach an wie ein angehängtes Statik3D-Modell
+(„Anschluss“ oben): nur wo an der Stelle genau ein Knoten des Modells liegt
+(„1 Knoten der Datei lag auf einem Knoten des Ziels …“). Liegen dort schon
+mehrere, bleibt der Knoten der Datei getrennt, und die Warnung „An … Stellen
+liegen in Ziel oder Datei schon mehrere Knoten aufeinander …“ nennt die Zahl
+und die erste Stelle. Bis dahin lief das Zusammenführen auch beim Anhängen
+über das ganze Modell und verschweißte, was im vorhandenen Modell absichtlich
+aufeinanderliegt. Im Versuch (zwei Stäbe, dazwischen ein Spaltelement, außen
+eingespannt, 1 kN am Fugenende des linken Stabes zieht die Fuge auf; daran eine
+Abaqus-Datei mit einem Stab abseits angehängt) verband das Spaltelement danach
+einen Knoten mit sich selbst, und am linken Lager kamen 500,0 N statt
+1000,0 N an; das Protokoll sagte nur „1 doppelte Knoten zusammengefuehrt“.
+Jetzt sind es 1000,0 N wie ohne Anhang. **Einschränkung:** Der Leser für
+`.inp` schließt schon beim Lesen an vorhandene Knoten an. Liegt ein Knoten
+der Datei auf einer solchen Doppelstelle, hängt er am ersten Knoten dort,
+ohne Warnung – im Versuch am Ende des linken Stabes; die Fuge blieb
+getrennt. Die Leser für DXF, IFC, Nastran, SAF, SDNF und RFEM-Tabellen gehen
+nach dem Quelltext denselben Weg; gemessen ist das dort nicht.
+
+Seit dem 22.09.2026 folgen beim Zusammenführen auch die Ecken und
+integrierten Knoten der Flächen.
 Am `Drehlager_V15_4_export.rf6` lagen vorher 64 von 3128 Flächenecken
 neben den Knoten ihrer Randlinien (bis 1,8 m), weitere 1380 zeigten hinter
 das Ende der Knotenliste, ebenso 10 von 168 integrierten Knoten; jetzt
@@ -3161,7 +3441,84 @@ kollineare Elemente gleichen Querschnitts). Je Stab:
   Drillknicken, Biegedrillknicken (L_LT, kz, kw, C1 automatisch aus dem
   Momentenverlauf, Lastangriff oben/unten), Interaktion Gl. 6.61/6.62,
 * Ermüdung: Kerbfall wählen (Δσc mit Beispielen aus den Tabellen 8.1–8.5),
-  Schadensfolge/Konzept für γMf; Ermüdungslasten im Register Lastfälle.
+  Schadensfolge/Konzept für γMf; Ermüdungslasten in der Maske
+  **Ermüdungslasten (Lastkollektiv)**, siehe unten.
+
+**Maske Ermüdungslasten (Lastkollektiv).** Lasten → Lastfälle →
+„Ermüdungslasten…“, im Modellbaum der Knoten *Ermüdungslasten* unter
+Einwirkungen (Klick auf einen Eintrag öffnet die Maske mit dieser Zeile,
+Rechtsklick: Neu, Löschen) oder im Register Lastfälle „Neu…“ bzw. ein
+Doppelklick auf eine Zeile. Die Maske steht rechts und bleibt offen, während
+man im Modell weiterarbeitet.
+
+* **Kopfzeile:** „Schadenssumme linear nach Palmgren-Miner (EN 1993-1-9,
+  Anhang A): D = Σ nᵢ / Nᵢ über alle Zeilen und Stufen am selben Ort; Nachweis
+  D ≤ 1.“ Hier steht Palmgren-Miner: jede Zeile der Tabelle ist ein Beitrag
+  zum Kollektiv, und das Programm summiert alle Zeilen an jedem Ort.
+* **Tabelle** mit einer Zeile je Ermüdungslast: Name, Art („zwei Zustände“
+  oder „Verlauf“), oberer Zustand bzw. Verlauf, unterer Zustand
+  („Nullzustand“, wenn leer), Lastspiele n, Zählverfahren und
+  Schwingbeiwert. Die Lastspiele stehen ausgeschrieben („2 000 000“, bei der
+  globalen Zahl „global (2 000 000)“), nie als „2e+06“.
+* **„Zeile je Lastfall…“** öffnet in der Maske eine Liste der Lastfälle und
+  Kombinationen (ohne oder-verknüpfte). Je angehaktem Eintrag entsteht eine
+  Zeile „Lastfall gegen Nullzustand, n = global“; danach trägt man je Zeile
+  die eigene Lastspielzahl ein. So bekommt **jeder Lastfall seine
+  Lastspielzahl**. Gibt es für einen Lastfall schon eine Zeile gegen den
+  Nullzustand, entsteht keine zweite, weil sie seine Schädigung doppelt
+  zählen würde. Die Meldung nennt die vorhandene Zeile.
+* **„Neue Zeile“**, **„Zeile löschen“**, **↑ / ↓**: die Pfeile ordnen nur die
+  Anzeige, die Summe hängt nicht an der Reihenfolge.
+
+Unter der Tabelle wird die **gewählte Zeile** bearbeitet: Name, Art („Zwei
+Zustände (Spannungsschwingbreite zwischen oberem und unterem Zustand)“ oder
+„Zeitverlauf (Folge von Lastfällen, gezählt)“), bei zwei Zuständen oberer
+und unterer Zustand („Nullzustand“ steht zuerst). Einen **Verlauf** stellt
+man grafisch zusammen: links die verfügbaren Zustände, rechts der Verlauf,
+dazwischen „anfügen →“ (auch Doppelklick links), „← entfernen“ (auch
+Doppelklick rechts), ↑ und ↓. Darunter steht derselbe Verlauf als
+Komma-Liste. Beide sind gekoppelt: was man in der Liste ändert, steht sofort
+im Textfeld, und was man tippt, steht sofort in der Liste. Unbekannte Namen
+und oder-verknüpfte Kombinationen werden rot markiert und darunter genannt.
+Das Feld für n heißt beim Verlauf „Durchläufe des Verlaufs“; der Haken
+„globale Lastspielzahl (n = … aus Nachweise → Konfiguration)“ nennt die
+geltende Zahl. Eingaben wie „2 000 000“, „2000000“ oder „2e6“ gelten gleich.
+Tausenderpunkte („500.000“) weist das Feld ab: Der Punkt ist mehrdeutig und
+wurde bis zum 24.09.2026 still als Dezimalpunkt gelesen (500 statt 500 000).
+Der „Schwingbeiwert / dynamischer Faktor“ (früher „Faktor“) multipliziert
+die Schwingbreite dieser Zeile.
+
+**„Übernehmen“** schreibt die Zeile ins Modell, rückgängig zu machen wie jede
+Änderung. Vorher prüft die Maske und schreibt bei einem Fehler nichts. Die
+Meldung steht rot in der Maske:
+
+* Name leer, oder ein Name, den schon eine andere Zeile trägt. Der alte
+  Dialog überschrieb eine gleichnamige Last bis zum 24.09.2026 still.
+* Zwei Zustände ohne oberen Zustand, oder ein Zustand, der kein Lastfall
+  bzw. keine Kombination ist oder eine oder-verknüpfte Kombination.
+* Ein Verlauf mit weniger als zwei Gliedern, mit einem unbekannten Glied oder
+  mit einer oder-verknüpften Kombination.
+* n ≤ 0 oder Schwingbeiwert ≤ 0. Wer eine Last abschalten will, löscht die
+  Zeile. Ausnahme: Eine Zeile, die schon 0 trägt, bleibt bearbeitbar
+  (umbenennen, Schwingbeiwert) und behält ihre 0. So legt der RFEM-Import
+  seine Sammlungen an; die Tabelle zeigt sie als „0 (unwirksam)“. Der Haken
+  „globale Lastspielzahl“ machte eine solche Zeile wirksam, und ihre
+  Ereignisse zählten doppelt. Das sagt die Maske beim Laden der Zeile.
+* Die Zeile im Editor gibt es nicht mehr (Rückgängig oder gelöscht).
+
+Bei Rückgängig, Wiederholen und beim Löschen im Register bleibt die Maske
+offen, und ihr Editor lädt neu. Er zeigt dann die Zeile mit ihrem
+zurückgenommenen Stand. Gibt es sie nicht mehr, zeigt er die Zeile, die jetzt
+an ihrer Stelle steht. Bis zum 24.09.2026 blieb er stehen. „Übernehmen“ legte
+dann eine zurückgenommene Umbenennung als zweite Zeile an, und das Kollektiv
+zählte die Last doppelt.
+
+Beim Umbenennen einer Zeile nennen die Anschlüsse, die sie in ihrer Liste
+der Ermüdungslasten führen, sie beim neuen Namen; sonst fiele sie dort still
+aus dem Nachweis. Beim Verlauf speichert die Maske n nur als Durchläufe. Der
+Dialog schrieb es bis zum 24.09.2026 zusätzlich in die Lastspiele zweier
+Zustände, die beim Verlauf niemand liest. Geprüft in
+`tests/test_ermuedungsmaske.py`.
 
 **Eine Ermüdungslast beschreibt entweder zwei Zustände oder einen Verlauf.**
 Ein Zustand darf ein Lastfall **oder eine Kombination** sein — die
@@ -3171,14 +3528,19 @@ als „Lastfall unbekannt“ ab; am CBG-Trolley 20 Meldungen).
 *Zwei Zustände*: der Lastwechsel pendelt zwischen oben und unten, mit einer
 Lastspielzahl — das reicht, solange es wirklich nur zwei Zustände gibt.
 *Verlauf*: eine **Folge von Lastfällen** (oder Kombinationen) und die Zahl
-der Wiederholungen. Das **Zählverfahren** bestimmt, was aus dem Verlauf wird:
+der Wiederholungen. Das **Zählverfahren** bestimmt, was aus dem Verlauf wird.
+Maske und Bericht nennen es im Klartext; gespeichert wird weiter der kurze
+Wert in Klammern:
 
-* **spanne** (Vorgabe): eine Stufe mit der Schwingbreite Maximum minus
+* **Größte Spanne je Durchlauf (ein Spiel: Maximum − Minimum)** („spanne“,
+  Vorgabe): eine Stufe mit der Schwingbreite Maximum minus
   Minimum über alle Zustände, ein Spiel je Wiederholung — so bildet RFEM die
   Ermüdungsschwingbreite einer Ergebniskombination, und so kommen die
   Ermüdungslasten aus dem RFEM-Import. Die Reihenfolge der Zustände spielt
   keine Rolle; bei zwei Zuständen ist es dasselbe wie „zwei Zustände".
-* **rainflow** / **reservoir** (EN 1993-1-9, Anhang A): für eine echte
+* **Rainflow-Zählung (Rinnenzählung, EN 1993-1-9 Anhang A)** („rainflow“) und
+  **Reservoir-Zählung (Speicherverfahren, EN 1993-1-9 Anhang A)**
+  („reservoir“): für eine echte
   Zeitfolge (Überfahrt, Öffnungsvorgang, Betriebszyklus). Die Zwischenstufen
   tragen eigene, kleinere Spiele bei, und die zählen mit. Lassen Sie den
   Verlauf am größten Wert beginnen und enden — dann liefern beide dasselbe
@@ -3191,15 +3553,94 @@ Die Schadensakkumulation ist immer Palmgren-Miner über alle Lasten am Ort.
 **Keine oder-verknüpfte Ergebniskombination als Zustand.** Eine Kombination
 mit Alternativen (so kommen die FAT-Kombinationen aus RFEM herein) wird nur
 als Umhüllende gerechnet und hat kein Einzelergebnis, aus dem sich σ_max oder
-σ_min lesen ließe. Die Maske der Ermüdungslast bietet sie darum nicht mehr als
+σ_min lesen ließe. Die Maske Ermüdungslasten bietet sie darum nicht mehr als
 oberen oder unteren Zustand an, und die Modellprüfung meldet sie vor der
 Rechnung als FEHLER („Zustand '…' ist eine oder-verknüpfte
-Ergebniskombination“). Beschreiben Sie eine solche Last als Verlauf über die
+Ergebniskombination“). Nennt der Verlauf eine, weist die Maske ihn schon bei
+der Eingabe ab („Der Verlauf nennt oder-verknüpfte Ergebniskombinationen: …“)
+und legt keine Last an; bis zum 23.09.2026 nahm sie ihn an, und erst die
+Modellprüfung meldete es. Beschreiben Sie eine solche Last als Verlauf über die
 Lastfälle ihrer Alternativen — so legt sie auch der RFEM-Import an. Bei einer
 Last mit Verlauf prüft die Modellprüfung nur die Glieder des Verlaufs, denn
 nur sie gehen in den Nachweis ein; einen oberen oder unteren Zustand, den eine
 solche Last aus einer älteren Datei noch mitführt, liest der Nachweis nicht,
-und die Prüfung meldet ihn nicht.
+und die Prüfung meldet ihn nicht — seit 23.09.2026 auch dann nicht, wenn
+dieser Lastfall inzwischen gelöscht ist (vorher kam dafür „FEHLER: …
+unbekannt“).
+
+**Maske im Modus Verlauf.** Die Maske übernimmt dann nur die Folge; oberer
+und unterer Zustand bleiben leer (auch in der Maske Ermüdungslasten). Bis zum 23.09.2026 kam der erste Eintrag der
+gesperrten Auswahl „Oberer Zustand“ mit (im Hallenrahmen „Kran“), und der
+Anschlussnachweis rechnete mit ihm. Ein Verlauf braucht mindestens zwei
+Lastfälle; ein leeres Verlaufsfeld weist die Maske ab. Vorher legte sie
+still die Last „Kran gegen Nullzustand“ an.
+
+**Im Browser** (Register *Lasten → Ermüdungslasten*) bietet das Formular
+„+ Ermüdungslast“ dieselben Zustände an wie die Maske: Lastfälle und
+Kombinationen ohne Alternativen als oberen und unteren Zustand, als unteren
+zusätzlich den Nullzustand. Einen Verlauf legt das Formular nicht an. Bis
+zum 23.09.2026 bot es nur Lastfälle an, und die Operation
+`add_fatigue_load` wies jede Kombination als „Lastfall '…' unbekannt“ ab
+(Beispiel Halle: GZT1 abgewiesen, LF1 angenommen). Eine oder-verknüpfte
+Ergebniskombination weist sie jetzt mit dem Hinweis ab, dass diese kein
+Einzelergebnis hat, einen unbekannten Namen als „Lastfall oder Kombination
+'…' unbekannt“. Geprüft am Einfeldträger IPE 300 (6 m, Streckenlast 10 kN/m,
+Kerbfall 71, 10⁶ Lastspiele): mit der Kombination K1 = 1,0 · LF1 als Zustand
+ergibt der Ermüdungsnachweis dieselbe Schadenssumme wie mit LF1 (D = 0,736;
+`tests/test_web.py`).
+
+**Lastfall umbenennen.** Bekommt ein Lastfall einen neuen Namen — im Register
+Lastfälle, per Doppelklick in der Tabelle „Lastfälle“ unten (Gruppe Lasten),
+in seiner Maske rechts (die auch ein Doppelklick im Modellbaum öffnet) oder
+in der Bedienung im Browser —, heißt er auch in jeder Ermüdungslast neu: als
+oberer und unterer Zustand und als Glied eines Verlaufs. Bis zum 23.09.2026
+zog die Oberfläche nur die Kombinationen nach, die Bedienung im Browser dazu die
+beiden Zustände, den Verlauf aber nicht. Die Modellprüfung meldete den alten
+Namen dann als „Lastfall oder Kombination '…' unbekannt“ (nur bei einem
+Zustand, nicht bei einem Glied des Verlaufs), und der Nachweis meldete
+„unvollständig (Ergebnis einer Last fehlt)“ und rechnete ohne die Last bzw.
+ohne dieses Glied: am Kragarm IPE 200 (`tests/test_ermuedung_verlauf.py`,
+eine Last mit zwei Zuständen und eine mit Verlauf über drei Lastfälle)
+D = 0,018 nach dem Umbenennen in der Oberfläche und 1,237 im Browser statt
+2,437.
+
+Dasselbe gilt seit dem 23.09.2026 für **Namen, die es nicht gibt**: ein Glied
+des Verlaufs, das weder Lastfall noch Kombination ist, meldet die
+Modellprüfung vor der Rechnung als FEHLER („Ermüdungslast 'V': Lastfall oder
+Kombination 'WEG' unbekannt“); bei zwei Zuständen gilt das für den oberen und
+den unteren Zustand. Vorher prüfte sie nur diese beiden, auch bei einer Last
+mit Verlauf: am Zugstab-Volumen blieb ein Verlauf LF1, LF2, WEG ohne Meldung
+und kam erst aus der Rechnung als „unvollständig“ (D = 0,3833355, „Ergebnis
+'WEG' fehlt“); ein nie gelesener oberer Zustand 'WEG' neben dem Verlauf LF1,
+LF2 war dagegen ein FEHLER, obwohl die Rechnung D = 0,3833355 „erfüllt“ ergab
+— die Kommandozeile gab 2 zurück, und der Rechenstart im Browser wurde
+abgewiesen.
+
+**Einen Lastfall löschen** (Knopf „Löschen“ unter den Lastfällen, Modellbaum, Web-API)
+nimmt ihn seit dem 23.09.2026 aus den Kombinationen und den
+Ermüdungslasten: aus den Faktoren **und den Alternativen** jeder Kombination
+und aus jedem Verlauf einer Ermüdungslast. Eine Ermüdungslast aus zwei
+Zuständen, deren oberer oder unterer Zustand er war, entfällt ganz — der fehlende Zustand wird nicht
+still durch den Nullzustand ersetzt, das änderte die Schwingbreite; ebenso
+ein Verlauf, dem kein Glied bleibt. Das Protokoll (in der Web-API die
+Antwort) nennt, was mitging („Ermüdungslast 'Z' entfällt: ihr oberer Zustand
+war Lastfall 'LF2'“). Nach dem Knopf steht diese Zeile auch in der
+Statuszeile; nach dem Löschen im Modellbaum steht dort die allgemeine Meldung
+(„Lastfall LF2 samt seinen Lasten … gelöscht“, bei mehreren Einträgen auf
+einmal „… von … Einträgen gelöscht“), die Zeile dazu nur im Protokoll
+(gemessen 24.09.2026). Vorher
+nahm der Knopf nur die Faktoren mit: am Zugstab-Volumen mit einer oder-EK über
+LF1, LF2, LF3 standen nach dem Löschen von LF2 die Alternativen und die
+Ermüdungslasten weiter auf LF2, die Modellprüfung meldete FEHLER, und die
+Rechnung brach mit „Lastfall 'LF2' existiert nicht“ ab. Andere Verweise auf
+den Namen fasst das Löschen nicht an, so die **Lastfallliste einer Stellung**:
+stand dort „LF1, LF2“, bleibt LF2 nach dem Löschen stehen, die Modellprüfung
+meldet nichts, und erst die Rechnung der Stellungen lässt diese Stellung ohne
+Ergebnis („Stellung 'S1': Lastfall 'LF2' gibt es im Modell nicht“, gemessen
+24.09.2026). Dann den Lastfall in der Stellung herausnehmen. Eine Stellung mit
+eigener Lastfallliste nennt im Protokoll jede Ermüdungslast, die dabei
+entfällt; einen Verlauf kürzt sie nicht, er entfällt dort ganz, sobald ein
+Glied fehlt (siehe *Stellungen anlegen*).
 
 **Grundlast.** Ein Lastfall mit dem Haken „Grundlast“ (Maske Lastfall) wirkt
 in jeder direkt gelösten Rechnung mit: in Modellen mit Kontakt oder
@@ -3269,11 +3710,14 @@ schnelle Weg ohne Faktorisierung. Wie viele der eingefrorenen Zustände am
 Drehlager nachgerechnet werden müssen, ist noch nicht gemessen.
 
 **Lastspielzahl.** Die Lastspiele bzw. Wiederholungen jeder Ermüdungslast
-sind entweder eigene Werte oder — Haken „globale Lastspielzahl" im Dialog —
+sind entweder eigene Werte oder — Haken „globale Lastspielzahl“ in der
+Maske Ermüdungslasten —
 die **globale Lastspielzahl** aus Nachweise → Konfiguration (Vorgabe 2·10⁶;
 dort steht auch der Bezugszeitraum in Jahren für die Lebensdauer). So wird
-die Zahl einmal für alle Lasten gesetzt und je Nachweis überschrieben; die
-Tabelle Ermüdungslasten zeigt „global", wo die globale gilt. 0
+die Zahl einmal für alle Lasten gesetzt und je Zeile überschrieben: die
+eigene Zahl einer Zeile **ersetzt** die globale, sie kommt nicht dazu. Die
+Tabelle der Maske und das Register Lastfälle zeigen „global (2 000 000)“, wo
+die globale gilt, sonst die eigene Zahl ausgeschrieben. 0
 Wiederholungen heißt: die Last ist unwirksam — so bleiben die Sammlungen aus
 dem RFEM-Import stehen, ohne doppelt zu zählen.
 
@@ -3293,25 +3737,51 @@ eingegeben sind.
 
 **Ermüdung für Volumen.** Ein Volumen mit Kerbfall (Maske Volumen, Feld
 „Kerbfall Ermüdung"; Tabelle Volumen, Spalte Kerbfall; Dialog Volumenkörper)
-wird mit nachgewiesen: je Element und Zustand die vorzeichenbehaftete
+wird mit nachgewiesen: je Knoten und Zustand die vorzeichenbehaftete
 Hauptspannung mit dem größten Betrag, daraus das Kollektiv wie beim Stab,
-Schädigung nach Miner mit der Wöhlerlinie für Normalspannungen, maßgebend das
-Element mit dem größten D. Das Ergebnis steht in der Tabelle Ermüdung
+Schädigung nach Miner mit der Wöhlerlinie für Normalspannungen, maßgebend der
+Knoten mit dem größten D. Die Spannung am Knoten ist seit dem 23.09.2026 die
+geglättete Knotenspannung — dieselbe, die der statische Volumennachweis liest,
+an freien Oberflächen mit σ·n = 0 (Vorgabe von `randspannung`). Am
+Kragarm-Prüfkörper (hex8, Schwingbreite 0 → F, Soll 355 N/mm² an der
+Oberkante bei L/2) traf sie mit 405 und 2 295 Freiheitsgraden auf 0,22 N/mm²
+genau. Der bis dahin gerechnete Elementwert lag bei diesem Körper (die
+Elemente mit x ≥ L/2, der Prüfaufbau) 40,65 bzw. 21,69 N/mm² darunter und
+mit dem Körperende bei 3L/8 oder L/4 ebenfalls, um 19,16 bis 41,81 N/mm²
+(gemessen 24.09.2026, Theoriehandbuch 5.5-3). Der Elementwert ist die
+Spannung an einem Auswertepunkt des Elements; am Kragarm zeigt der hex8 die
+Biegespannung über seine Länge fast gleich und erreicht den größeren Wert am
+Körperende nicht. Wer den Elementwert wie bis zum 23.09.2026 will, setzt die
+Nachweiseinstellung `ermuedung_volumen` auf „element“ (Modelldatei, Abschnitt
+„design“); der Bericht nennt je Körper die gerechnete Regel. Ein Knoten, an
+dem in einer Situation nur abgeschaltete Elemente des Körpers liegen, trägt in
+diesem Zustand die Spannung 0 — wie das abgeschaltete Element nach der
+Elementregel. Fehlen einem Ergebnis sonst Knotenwerte (etwa eine
+Ergebnisdatei aus einer Programmfassung vor dem 23.09.2026), rechnet der
+Körper mit dem Elementwert und nennt die Ursache als Hinweis; fließen
+Elemente des Körpers, nennt der Nachweis Zustand und Zahl. Ein
+Ermüdungsergebnis, das eine ältere Programmfassung ohne die Einstellung
+`ermuedung_volumen` gerechnet und in die Ergebnisdatei geschrieben hat, zeigt
+der Bericht nach dem Öffnen so, wie es gerechnet wurde — mit dem Elementwert
+—, und sagt das als Hinweis; neu gerechnet gilt die Einstellung.
+Das Ergebnis steht in der Tabelle Ermüdung
 („Volumen V1", ein Klick wählt den Körper), in der Färbung „Ausnutzung
-Ermüdung" je Element und im Bericht (Block „Ermüdungsnachweis Volumen"). Die
-Spannung im Element ist eine Struktur- oder Kerbspannung, keine Nennspannung
-— der Kerbfall muss dazu passen (Theoriehandbuch 5.5-3).
+Ermüdung" je Element (das größte D an seinen Ecken) und im Bericht (Block
+„Ermüdungsnachweis Volumen"). Die Spannung ist eine Struktur- oder
+Kerbspannung, keine Nennspannung — der Kerbfall muss dazu passen
+(Theoriehandbuch 5.5-3).
 
 **Berührungsstellen zwischen Volumen.** Wo zwei Volumen Knoten teilen — der
 Vernetzer teilt sie nur über eine gemeinsame Fläche, in RFEM ist das ein
 durchverbundener Stoß — und keine Kontaktbedingung zwischen beiden
-eingegeben ist, gilt die Stelle als verschweißt: die Elemente mit einem
-solchen Knoten rechnen mit dem Feld „Kerbfall Naht" des Volumens (Maske,
+eingegeben ist, gilt die Stelle als verschweißt: ein solcher Knoten (mit
+„element“: jedes Element mit einem solchen Knoten) rechnet mit dem Feld
+„Kerbfall Naht" des Volumens (Maske,
 Tabelle Volumen, Dialog; leer = wie Kerbfall). Eine eingegebene
 Kontaktbedingung zwischen den beiden Körpern macht die Stelle zur Fuge, eine
 ausgeführte verdoppelt die Knoten ohnehin. Tabelle und Bericht nennen beide
 Kerbfälle („160 / Naht 90"), die Zahl der Elemente an Berührungsstellen und
-ob das maßgebende Element dort liegt. Am Drehlager: 47 gemeinsame Flächen
+ob die maßgebende Stelle dort liegt. Am Drehlager: 47 gemeinsame Flächen
 zwischen 25 Körperpaaren, keine davon mit Kontaktbedingung.
 
 **Die Schädigung wird am Ort aufsummiert**, nicht über Orte hinweg: D wird an
@@ -3336,7 +3806,13 @@ dann, was gilt:
 
 * **nicht geführt** — keine Last hat beigetragen. Statt D = 0,000 und
   „Element -1“ steht der Grund, z. B. „Ergebnis 'EK7' des Mindestzustands
-  fehlt“.
+  fehlt“. Ein solcher Eintrag zählt im Gesamturteil nicht als geführter
+  Nachweis: Ist jeder Ermüdungseintrag nicht geführt und sonst kein Nachweis
+  geführt, heißt die Statuszeile „Kein Nachweis geführt – nicht geführt
+  wurden: 1 Stab (Ermüdung) …“ (bis zum 23.09.2026 „Alle geführten Nachweise
+  erfüllt – …“, obwohl keiner geführt war; gemessen am Kragarm und am
+  Zugstab-Volumen mit der einzigen Ermüdungslast auf einem nicht gerechneten
+  Zustand).
 * **unvollständig** — mindestens eine Last fehlt in D; der Status nennt sie.
   Das gilt am Stab wie am Volumen und für jeden Weg, auf dem eine Last
   ausfällt: fehlender oberer oder unterer Zustand, eine oder-verknüpfte
@@ -3364,9 +3840,66 @@ Ergebnis, steht er dagegen als **nicht geführt** da, mit dem fehlenden
 Ergebnis als Grund, obwohl die Last auch mit diesem Ergebnis nichts
 beitrüge.
 
+In der Färbung „Ausnutzung Ermüdung“ hat ein **nicht geführter** Stab keinen
+Wert, wie ein nicht geführtes Volumen. Bis zum 23.09.2026 stand er dort mit 0
+und sah aus wie unbeansprucht (gemessen an einem Kragarm aus zwei Balken mit
+einer oder-verknüpften Ergebniskombination als Mindestzustand). Hat gar kein
+Stab und kein Volumen einen Wert — alle nicht geführt oder ohne wirksame
+Ermüdungslast —, bleibt das Modell in dieser Färbung grau (ohne Wert), ohne
+Farbskala, und die Kennwerte im Bild nennen keine „max. Ausnutzung“; ebenso
+„Ausnutzung EC3“, wenn die Nachweise gerechnet sind, aber kein Stab darin
+steht. Die elastische Ausnutzung der Stäbe zeigt die Färbung „Ausnutzung
+elastisch“; unter „Ausnutzung Ermüdung“ bzw. „Ausnutzung EC3“ erscheint sie
+nur, solange dieser Nachweis nicht gerechnet ist, und dann mit der Skala
+„Ausnutzung elastisch [-]“. Bis zum 24.09.2026 zeigte die Oberfläche auch bei
+gerechnetem Nachweis ohne einen Wert die elastische Ausnutzung aller Stäbe,
+auch der ohne Kerbfall, und nannte sie in den Kennwerten als „max.
+Ausnutzung“ (gemessen an einem Durchlaufträger aus vier Balken mit
+0 Lastspielen und bei „Ausnutzung EC3“ ohne Stab im Nachweis).
+
+Die Hinweise zu einem fehlenden Ergebnis beginnen mit „Ermüdungslast *Name*:
+Ergebnis …“. Einen unbekannten oberen oder unteren Zustand meldet schon die
+Modellprüfung vor der Rechnung, als „FEHLER: Ermüdungslast '*Name*':
+Lastfall oder Kombination '…' unbekannt“ (bis zum 23.09.2026 beide ohne
+Umlaut). Ebenso meldet sie ein unbekanntes Glied eines Verlaufs (seit dem
+23.09.2026, siehe **Namen, die es nicht gibt** bei den Ermüdungslasten);
+vorher nannte es erst der Nachweis nach der Rechnung, mit dem Hinweis
+„Ermüdungslast *Name*: Ergebnis '…' fehlt“.
+
+In der Bedienung im Browser (Kap. 12) ist die Zeile „Ermüdung: …“ im
+Register *Nachweise* rot, wenn ein geführter Nachweis D > 1 hat, und gelb,
+wenn ein Nachweis nicht geführt oder unvollständig ist, ein Stab oder
+Volumen ohne wirksame Ermüdungslast bleibt oder kein Stab und kein Volumen
+einen Kerbfall hat. Grün ist sie nur, wenn alle Nachweise geführt,
+vollständig und erfüllt sind. Bis zum 23.09.2026 war sie grün, solange keine
+Ausnutzung in der Tabelle über 1 lag – gemessen etwa mit „Ermüdung: 2 Stäbe;
+nicht geführt: Stab Traeger, Stab Ohne_fy“ (Ermüdungslast auf einem nicht
+gerechneten Lastfall).
+
 Ergebnis: Tabelle „Nachweise EC3“ mit Ausnutzung, maßgebendem Nachweis,
 Kombination und Stelle; Färbung „Ausnutzung EC3“ im Viewport; alle Details
 im Bericht.
+
+Das Etikett der Maske *Nachweise* (Gruppe „Nachweise führen (nach der
+Berechnung)“) zeigt die Nachweise der letzten statischen Rechnung („Alle
+Lastfälle + Kombinationen“ oder „Nur aktiver Lastfall“): die Zeile der
+Nachweise EC3 und darunter die der Ermüdung — jeweils nur, wenn diese
+Rechnung sie hat; ohne beide steht dort „noch keine Nachweise“. Neu
+geschrieben wird es nach jeder Rechnung, nach „Nachweise EC3“ und
+„Ermüdungsnachweis“, beim Wechsel des gezeigten Ergebnisses und nach einer
+Änderung aus dem Browser. „Eigenschwingungen (Modalanalyse)“ und „Knicken /
+Beulen (Stabtragwerke)“ ersetzen die statische Rechnung nicht: Das Programm
+behält ihr Ergebnis, „Nachweise EC3“ und „Ermüdungsnachweis“ rechnen weiter
+damit, und das Etikett zeigt weiter ihre Zeile, auch während Eigenformen
+bzw. Knickfiguren gezeigt werden (gemessen am 24.09.2026). Werden die
+Ergebnisse verworfen, ohne dass neu gerechnet wird — gemessen am 24.09.2026
+mit „Lasten des aktiven Lastfalls löschen“, *Datei → Neu* und „Übernehmen“
+in der Maske eines Lastfalls —, bleibt die alte Zeile stehen, bis einer der
+oben genannten Anlässe das Etikett neu schreibt. Bis zum 23.09.2026 blieb nach
+einer Rechnung mit EC3 und einer zweiten ohne Nachweise die alte Zeile
+(„Nachweise EC3: … max. Ausnutzung 0.633 … - alle erfuellt“ am Einfeldträger
+IPE 300 in `tests/test_ec3.py`) stehen, und mit nur Ermüdung war das Etikett
+leer.
 
 **Stab ohne Streckgrenze.** Hat der Werkstoff eines Stabes keine
 Streckgrenze f_y — das kommt bei Importen vor, wenn die Stahlsorte nicht
@@ -3375,17 +3908,50 @@ Ausnutzung 0.000 mit Status „nicht geführt“, die Zeile nach *Nachweise EC3*
 (sie steht auch im Etikett der Maske *Nachweise*, Gruppe „Nachweise führen
 (nach der Berechnung)“) endet mit „- 1 nicht geführt: *Stab*
 (Werkstoff … ohne Streckgrenze)“ statt „- alle erfuellt“, und die größte
-Ausnutzung dort stammt nur von geführten Stäben. Im Bericht steht der Stab in
-jedem Umfang unter „Offene Hinweise und Warnungen“, auch wenn die
-Berichtsoption „Nachweise EC3“ ausgeschaltet ist. Sind die übrigen Nachweise
-erfüllt, sagt die Statuszeile „Alle geführten Nachweise erfüllt – nicht
+Ausnutzung dort stammt nur von geführten Stäben. In der Färbung
+„Ausnutzung EC3“ bekommt er keinen Wert und bleibt grau wie jedes Element
+ohne Wert; die Stabtabelle der Maske *Ergebnisse* zeigt in der Spalte
+Ausnutzung „-“. Im Bericht fehlt er im Balkendiagramm „Ausnutzung je Stab“
+und steht im Bild „Ausnutzung der Stäbe“ in Stabfarbe; beide
+Bildunterschriften nennen ihn. Bis zum 23.09.2026 ging er dort mit 0,000 ein
+und war im Bericht grün wie ein unbeanspruchter Stab. Ist gar kein Stab
+geführt, entfallen im Bericht beide Bilder, weil sie keinen Wert zu zeigen
+hätten. Im Bericht steht der Stab in jedem Umfang unter „Offene Hinweise
+und Warnungen“, auch wenn die Berichtsoption „Nachweise EC3“ ausgeschaltet
+ist. Sind die übrigen Nachweise erfüllt, sagt die Statuszeile „Alle geführten Nachweise erfüllt – nicht
 geführt wurden: …“. Ist gar kein Stab geführt (und kein anderer Nachweis),
 heißt sie „Kein Nachweis geführt – nicht geführt wurden: …“, und die
 Wesentlichen Ergebnisse nennen dann keine größte Ausnutzung EC3. In der
-Bedienung im Browser (Kap. 12) ist die Nachweiszeile in diesem Fall gelb
-hinterlegt statt grün, bei einer Ausnutzung über 1 rot. Abhilfe:
-Streckgrenze am Werkstoff eintragen (Tabelle *Eigenschaften → Werkstoffe*) oder am
-Stab den Haken „Nachweis nach EC3“ herausnehmen.
+Bedienung im Browser (Kap. 12) ist die Nachweiszeile gelb hinterlegt statt
+grün, sobald ein Stab nicht geführt ist, auch wenn die übrigen Stäbe geführt
+und erfüllt sind; rot ist sie, sobald ein Stab eine Ausnutzung über 1 hat,
+auch neben einem nicht geführten. Der Stab selbst steht dort ebenfalls in
+Warnfarbe: in der Tabelle des Registers *Nachweise* mit Ausnutzung „–“ und
+„nicht geführt“ in der Spalte *maßgebend*, im Fenster nach Antippen der
+Zeile mit dem Status „nicht geführt“ und Ausnutzung „–“, und unter
+*Schnittgrößen am Stab* (Register *Ergebnisse*) als „Nachweis nicht geführt:
+Werkstoff … ohne Streckgrenze“. Bis zum 23.09.2026 zeigten diese drei
+Stellen den Stab grün mit Ausnutzung 0,00 bzw. „Nachweis: Ausnutzung 0,000“
+(gemessen an einem Stab aus einem Werkstoff ohne f_y). Abhilfe:
+Streckgrenze oder Stahlsorte am Werkstoff eintragen (Tabelle *Eigenschaften →
+Werkstoffe*) oder am Stab den Haken „Nachweis nach EC3“ herausnehmen.
+
+**Stahlsorte ohne f_y.** Bleibt im Werkstoffdialog f_y leer („leer = aus der
+Stahlsorte“) und ist eine Sorte S235 … S460 eingetragen, nehmen die Nachweise
+die Werte der Sorte nach EN 1993-1-1 Tab. 3.1: bis 40 mm Erzeugnisdicke die
+obere Stufe (S235: f_y = 235 N/mm²), darüber die untere (S235: 215 N/mm²).
+Ist auch f_u
+leer, kommt f_u ebenso aus der Sorte (S235 bis 40 mm: 360 N/mm²). Ein
+eingetragenes f_y geht der Sorte nur **bis 40 mm** vor, mit leerem f_u gilt
+dort f_u = 1,3 · f_y. Über 40 mm gilt die untere Stufe der Sorte für f_y und
+f_u, auch wenn f_y eingetragen ist: ein Werkstoff mit f_y = 300 N/mm², leerem
+f_u und Sorte S235 ergibt bei 10,7 und 40 mm Erzeugnisdicke f_y = 300 und
+f_u = 390 N/mm², bei 41 mm f_y = 215 und f_u = 360 N/mm² (gemessen
+24.09.2026). Eine Tabelle „nach Dicke“ aus RFEM 6 geht beidem vor. Bis zum
+23.09.2026 galt die Sorte nur über 40 mm, darunter war f_y null: ein IPE 300 aus einem Werkstoff mit
+Sorte S235 und leerem f_y war „nicht geführt“; jetzt hat er dieselbe
+Ausnutzung wie derselbe Träger aus S235 (0,633 am Einfeldträger der
+EC3-Prüfung).
 
 ### Schwingungsnachweis des Verschlusses
 
@@ -3414,7 +3980,53 @@ Beurteilung (unkritisch, Hinweis V_r, Resonanz). Der Bericht (Kapitel
 Antwort auf die Druckschwankung mit Ermüdung, die Erläuterung und das
 **Frequenzbild** (Eigenfrequenzen nass und trocken, Band der Wirbelablösung,
 Grenze V_r) samt der Westergaard-Verteilung über die Höhe. Die Angaben
-bleiben im Modell und werden mit der Datei gespeichert.
+bleiben im Modell und werden mit der Datei gespeichert. *Nachweis führen*
+prüft vorher das Modell wie **Berechnen**: meldet die Modellprüfung einen
+FEHLER, kommt die Meldung, und es wird nichts gerechnet, auch nicht der
+Lastfall der Druckschwankung (bei Teiltragwerken ohne Lager wird gefragt);
+die Angaben der Maske bleiben trotzdem im Modell. Bis zum 23.09.2026 rechnete
+der Nachweis ohne diese Prüfung.
+
+**Ausweichen des Gleichungslösers.** Der Nachweis rechnet die Eigenfrequenzen
+in Luft und im Wasser und – wenn die Berechnung ihn nicht schon enthält – den
+Lastfall der Druckschwankung selbst. Weicht dabei „automatisch“ aus (siehe
+*Gleichungslöser* in Kapitel 9), steht im Protokoll des Nachweises vor der
+Erläuterung eine Zeile „Gleichungslöser ausgewichen bei *n* Ergebnissen
+(Eigenfrequenzen in Luft, Eigenfrequenzen im Wasser, Lastfall …): *Grund* –
+stattdessen rechnete …“. Liegen beim Führen des Nachweises Ergebnisse von
+„Alle Lastfälle + Kombinationen“ oder „Nur aktiver Lastfall“ vor, zählt der
+Nachweis im Bericht unter „Offene Hinweise und Warnungen“ als ein Ergebnis
+„Schwingungsnachweis *Name*“, eingereiht hinter den Lastfällen und
+Kombinationen. Weicht nur er aus, lautet die Zeile „… bei 1 Ergebnis
+(Schwingungsnachweis *Name*): *Grund* …“. Bei gleichem Grund steht er in
+derselben Zeile wie die Lastfälle und Kombinationen und zählt dort mit. Die
+Zeile nennt aber nur die ersten drei Ergebnisse beim Namen, danach folgt „…“:
+Tragen drei oder mehr Lastfälle und Kombinationen denselben Grund, ist der
+Nachweis nur in der Zahl *n* enthalten, nicht mit seinem Namen (im Prüffall mit
+drei Lastfällen: „bei 4 Ergebnissen (LF1, Wasser S, Wasser S dyn …)“). Ein
+Druckschwankungs-Lastfall aus der Berechnung „Alle Lastfälle“ zählt in dieser
+Zeile bei den Lastfällen – beim Namen genannt nur, wenn er unter den ersten
+drei steht – und im Nachweis nicht noch einmal. Sonst – auch nach
+„Eigenschwingungen“ oder „Knicken“, die solche Ergebnisse nicht hinterlassen –
+schreibt die Oberfläche den Bericht aus der Modalanalyse, die sie nach dem
+Nachweis zeigt: Der Nachweis steht dann nicht darin, und die Zeile nennt nur
+diese eine Modalanalyse. Mit hydrodynamischer Masse ist das die Rechnung im
+Wasser, die Zeile lautet „… bei 1 Ergebnis (Eigenschwingungen im Wasser
+(*Wasserdruck*)): *Grund* …“. Ohne sie – Haken „Hydrodynamische Masse“ aus
+oder keine Wassermasse auf den benetzten Flächen, etwa weil sie über dem
+Wasserspiegel liegen – gilt die Rechnung in Luft auch für das Wasser, und die
+Zeile lautet „… bei 1 Ergebnis (Modalanalyse): *Grund* …“. Die übrigen
+Rechnungen des Nachweises (mit hydrodynamischer Masse die in Luft, in beiden
+Fällen der selbst gerechnete Druckschwankungs-Lastfall) zählen dort nicht mit.
+So stand diese Zeile auch vor der Änderung vom 23.09.2026 im Bericht. Das
+Protokoll des Nachweises nannte sein Ausweichen bis zum 23.09.2026 nicht, der
+Bericht mit Ergebnissen von „Alle Lastfälle + Kombinationen“ oder „Nur aktiver
+Lastfall“ ebenso wenig; zu sehen war es dann nur in der Zusammenfassung der
+Modalanalyse, die die Oberfläche nach dem Nachweis zeigt (mit hydrodynamischer
+Masse die im Wasser, ohne sie die in Luft), das des selbst gerechneten
+Druckschwankungs-Lastfalls nirgends (geprüft mit PARDISO im Prozess zum
+Scheitern gebracht: `test_ausweichen_erreicht_bericht` in
+`tests/test_schwingung.py`).
 
 ### Knicklängen aus der Knickfigur
 
@@ -3483,22 +4095,35 @@ Es gibt drei Vorlagen:
 
 | Vorlage | Anwendung |
 |---|---|
-| **Kopfplatte** | geschraubte Stirnplatte am Stabende, mit Rippen |
+| **Kopfplatte** | geschraubte Stirnplatte am Stabende (ohne Rippen, siehe unten) |
 | **Laschenstoß** | Flansch- und Steglaschen, geschraubt |
 | **Knotenblech** | Diagonalanschluss (Gusset), geschraubt oder geschweißt |
 
 Der Dialog schlägt aus Profil und Schnittgrößen eine vollständige Geometrie vor
-— Blechdicken, Schraubenbild, Nahtdicken — und bessert sie nach, bis die
-Nachweise erfüllt sind; jeder Wert lässt sich danach ändern. Die Vorschläge
+— Blechdicken, Schraubenbild, Nahtdicken — und bessert sie nach: Je nach
+maßgebendem Nachweis wird das Blech dicker, die Schraube größer, die Zahl der
+Schrauben oder Reihen größer oder die Naht dicker. Erfüllt sind
+die Nachweise danach nicht immer. Kann das Nachbessern am maßgebenden
+Nachweis nichts ändern — bei der Kopfplatte etwa „Druckflansch auf die
+Platte“, der Trägerflansch selbst (siehe unten) — oder reichen seine Runden
+nicht, bleibt η > 1, und der Vorschlag trägt den Hinweis „Vorschlag erreicht
+eta = …“. Jeder Wert lässt sich danach ändern. Die Vorschläge
 folgen den Regeln der EN 1993-1-8 (Rand- und Lochabstände Tab. 3.3, Nahtdicken
 4.5.1, Blechdicke so, dass der T-Stummel nicht im Modus 1 versagt). Der
 Vorschlag ist **kein Nachweis** — maßgebend ist immer die Rechnung.
 Bei der Kopfplatte wählt der Vorschlag zuerst die Schraube: die kleinste der
 Leiter M12 bis M36, von der vier Schrauben die Zugkraft im Flansch tragen.
-Die Anfangsdicke des Blechs folgt aus Schraube und Profil, nicht aus dem
-Moment; danach wird das Blech in 2-mm-Schritten dicker, solange T-Stummel
+Die Anfangsdicke des Blechs folgt aus Schraube, Profil und Streckgrenze des
+Trägerwerkstoffs (die Platte bekommt dieselbe Stahlsorte), nicht aus dem
+Moment: Am IPE 400 mit M16/M20/M24 sind es bei S235 13/16/19 mm und bei S355
+11/13/16 mm, je Schraube derselbe Wert von 10 bis 700 kNm (gemessen ohne
+Nachbessern). Danach wird das Blech in 2-mm-Schritten dicker, solange T-Stummel
 oder Durchstanzen maßgebend sind. Gemessen am IPE 400 (S355, V_z = 90 kN,
-N = 0, M_y in 10-kNm-Schritten bis 700 kNm): bei M_y = 170 kNm 15 mm mit M16,
+N = 0, M_y in 10-kNm-Schritten von 10 bis 700 kNm) wechselt die Schraube
+sechsmal. Beim ersten Wechsel zwischen 80 und 90 kNm (M12 → M16) bleibt das
+Blech 10 mm dick: Bei 90 kNm wählt der Vorschlag zuerst M12 (η = 1,019,
+maßgebend „Interaktion Abscheren und Zug“), das Nachbessern nimmt M16 und
+lässt das Blech, wie es ist. Bei M_y = 170 kNm 15 mm mit M16,
 von 180 bis 210 kNm 13 mm mit M20; bei 270 kNm 19 mm mit M20, von 280 bis
 320 kNm 16 mm mit M24. Mit N = −100 kN ergeben sich bis 320 kNm dieselben
 Abmessungen. An diesen beiden Schraubenwechseln wird das Blech dünner, an den
@@ -3506,13 +4131,31 @@ drei folgenden nicht: Zwischen 390 und 400 kNm (M24 → M27) bleibt es bei
 N = 0 mit 18 mm gleich und wird bei N = −100 kN von 16 auf 18 mm dicker,
 zwischen 510 und 520 kNm (M30) und zwischen 620 und 630 kNm (M36) wird es
 dicker (18 → 20 mm, 20 → 23 mm). Diese Vorschläge erfüllen die Nachweise
-schon nicht mehr: Von 340 kNm an (N = 0) bzw. 330 kNm an (N = −100 kN) ist
-„Druckflansch auf die Platte“ maßgebend, die Flanschkraft gegen
-b·t_f·f_y/γ_M0 des Trägerflansches. Dort endet das Nachbessern mit η > 1,
-und der Vorschlag trägt den Hinweis, die Geometrie von Hand anzupassen.
+schon nicht mehr: Von 340 kNm an (N = 0) bzw. 330 kNm an (N = −100 kN)
+erfüllt sie kein Vorschlag der Reihe — 37 bzw. 38 von 70 —, bei 700 kNm ist
+η = 2,099 (N = 0). Maßgebend ist dort „Druckflansch auf die
+Platte“, die Flanschkraft gegen b·t_f·f_y/γ_M0 des Trägerflansches.
+Maßgebend ist dieser Nachweis schon vorher, bei noch erfüllten Nachweisen:
+ab 330 kNm (N = 0, η = 0,990) bzw. ab 300 kNm (N = −100 kN, η = 0,933).
+Von 340 bzw. 330 kNm an endet das Nachbessern mit η > 1, denn Blech,
+Schrauben und Nähte ändern diesen Nachweis nicht. Der Vorschlag sagt das im
+Hinweis — der Druckflansch des Trägers ist überlastet (bei 340 kNm, N = 0:
+Flanschkraft 880 kN gegen 863 kN), Abhilfe Voute oder größeres Profil — und
+nennt η mit der Bitte, die Geometrie von Hand anzupassen.
 Der Vorschlag für 180 kNm (13 mm, M20, 4 Reihen) trägt
 320 kNm bei N = 0 nicht (η = 1,461, maßgebend der T-Stummel der Zugzone); der
 Vorschlag für 320 kNm mit 16 mm und M24 erfüllt die Nachweise mit η = 0,986.
+
+**Rippen** schlägt der Kopfplatten-Vorschlag nicht vor: weder die Nachweise
+noch das FE-Teilmodell setzen sie an. Bis zum 23.09.2026 setzte er zwei Rippen
+bei |M_y| > 0,6·f_y·W_el,y (am IPE 400 in 10-kNm-Schritten ab 250 kNm) und bei
+maßgebendem Druckflansch, und sie änderten an keinem Nachweis etwas — bei
+700 kNm war η = 2,099 mit und ohne Rippen. Blech, Schrauben, Reihen, Nähte und
+η der Vorschläge sind dadurch nicht anders geworden (verglichen an 244
+Vorschlägen: IPE 400 mit V_z = 90 kN und IPE 500 aus dem Beispiel „hall“ mit
+V_z = 100 kN, N = 0 und −100 kN, 100 bis 700 kNm in 10-kNm-Schritten). Steht in
+einer älteren Datei eine Rippenzahl, nennen Beschreibung und Bericht sie mit
+dem Zusatz „in Nachweis und FE-Teilmodell nicht angesetzt“.
 
 **Schnittgrößen**: standardmäßig aus der Berechnung. Der Anschluss wird über
 **alle GZT-Kombinationen** geführt; die ungünstigste ist maßgebend, und die
@@ -3538,6 +4181,31 @@ EN 1993-1-9 Tab. 8.1 (Schrauben, Bleche mit Loch) und 8.5 (Nähte); die
 Schädigungen werden nach Palmgren-Miner **über alle Ermüdungslasten**
 aufsummiert. Wichtig: eine nicht vorgespannte Schraube bekommt die volle
 äußere Schwingbreite ab — das Programm sagt das als Hinweis dazu.
+
+Gezählt wird wie beim Stab: bei *zwei Zuständen* die Differenz oben minus
+unten mit der Lastspielzahl, bei einem *Verlauf* das Kollektiv nach dem
+Zählverfahren der Last (größte Spanne, Rainflow, Reservoir) mal die
+Wiederholungen.
+„Globale Lastspielzahl“ gilt auch am Anschluss, und die Schwingbreite geht
+mit dem Faktor der Last und mit γ_Ff (Nachweise → Konfiguration) ein. Fehlt
+das Ergebnis des oberen oder des unteren Zustands, rechnet das Programm die
+Last nicht. Fehlt einem Verlauf ein Glied, zählen wie beim Stab seine übrigen
+Glieder (Hallenrahmen, Verlauf [Kran, fehlender Lastfall, LF1] mit
+10⁵ Wiederholungen: D = 0,305 wie beim Verlauf [Kran, LF1]). In beiden Fällen
+nennt der Hinweis das fehlende Ergebnis, und der Anschluss heißt
+„unvollständig“ statt „erfüllt“ (Tabelle, „Nachweise zeigen“, Bericht). Eine
+Last mit 0 Lastspielen bzw. Wiederholungen ist unwirksam und fehlt nicht.
+
+Bis zum 23.09.2026 las der Anschluss nur den oberen und unteren Zustand.
+Gemessen am Hallenrahmen mit der vorgeschlagenen Kopfplatte am Riegelanfang
+(Vorschlag für N = −50 kN, V_z = 150 kN, M_y = 300 kNm), Kran gegen LF1 mit
+2·10⁶ Spielen als zwei Zustände: D = 6,097. Der Verlauf [Kran, LF1] ergab mit
+dem oberen Zustand, den die Maske mitgab, D = 12,17 (Kran gegen null), mit
+leerem oberen Zustand wie aus dem RFEM-Import D = 0. Ein nicht gerechneter
+unterer Zustand zählte als Nullzustand (D = 12,17 ohne Hinweis), die globale
+Lastspielzahl ergab D = 0, und γ_Ff = 1,5 änderte nichts (D = 6,097). Jetzt
+ergeben beide Verläufe und die globale Lastspielzahl D = 6,097, γ_Ff = 1,5
+ergibt D = 20,58 (1,5³-fach), und der fehlende untere Zustand wird gemeldet.
 
 **Momenten-Rotations-Verhalten**: Statik3D bestimmt für jeden Anschluss die
 Anfangssteifigkeit S_j,ini nach dem Komponentenverfahren (6.3.1), die
@@ -3669,6 +4337,23 @@ brauchbaren und einem wertlosen Nachweis ausmachen:
   Bericht es als Hinweis. Bis zum 22.09.2026 rechnete der Volumennachweis
   immer mit der dünnsten Stufe — η fiel bei dicken Bauteilen 6 % zu klein aus.
 
+Ist **„Nachweis führen“** nicht gesetzt, bleibt der Bereich angelegt, sein
+Nachweis läuft aber nicht. In der Tabelle „Volumen“ und im Bericht steht er mit
+dem Status „ausgeschaltet“ (im Bericht mit η „–“), die Zusammenfassung der
+Volumennachweise endet mit „– 1 ausgeschaltet: *Name*“. Im Gesamturteil des
+Berichts zählt er nicht mit, wie ein Stab ohne Nachweis: er ist weder erfüllt
+noch „nicht geführt“ und steht nicht unter den offenen Hinweisen. „Nicht
+geführt“ heißt dagegen, dass ein verlangter Nachweis nicht geführt werden
+**konnte** — etwa weil kein Werkstoff im Bereich eine Streckgrenze hat —, und
+das nennt das Gesamturteil weiter. Bis zum 23.09.2026 zählte auch ein
+ausgeschalteter Bereich als nicht geführt. Am Zugkörper (100 × 100 mm, S355,
+N = 2500 kN) mit einem geführten und einem ausgeschalteten Bereich hieß das
+Gesamturteil „Alle **geführten** Nachweise erfüllt – nicht geführt wurden:
+1 Volumenbereiche“ statt „Alle Nachweise erfüllt.“. Mit dem ausgeschalteten
+Bereich allein stand dieselbe Zeile da, obwohl kein Nachweis lief; jetzt heißt
+es dort „Es wurden keine Nachweise geführt; …“. Eine Ergebnisdatei, die mit dem
+alten Stand gespeichert wurde, wird beim Öffnen ebenso gelesen.
+
 Ausgewertet wird an den **Eckknoten**, mit der **geglätteten** Spannung (seit
 22.09.2026): an jedem Knoten das Mittel der Elemente desselben Körpers und
 Werkstoffs, maßgebend ist der größte Knoten des Bereichs. Der Bericht nennt ihn
@@ -3726,12 +4411,60 @@ Der Bericht bekommt ein eigenes Kapitel: α_cr je Kombination mit dem
 Kriterium, das gewählte Verfahren, die Zahl der Iterationen, der
 Verformungszuwachs gegenüber Theorie I. Ordnung, dann φ mit α_h, α_m und der
 Richtung, die Ersatzhorizontalkraft je Stiel und die Vorkrümmung je Stab mit
-Knicklinie, e_0, q und V.
+Knicklinie, e_0, q und V. Protokoll und Zusammenfassung nach „Alle
+Lastfälle“ fassen es in **einer** Zeile „Theorie II. Ordnung: *n* von *m*
+Kombinationen am verformten System, min. α_cr …“ zusammen; bis zum
+23.09.2026 stand diese Zeile dort zweimal.
+
+**α_cr ≤ 1 – die Last liegt über der Verzweigungslast.** Dann gibt es am
+verformten System kein Gleichgewicht, und Statik3D übernimmt für diese
+Kombination bzw. diesen Lastfall kein Ergebnis nach II. Ordnung. Die Zeile
+im Theoriekapitel heißt „nicht geführt“, der Grund steht darunter und unter
+den offenen Warnungen des Berichts („α_cr = 0.76 ≤ 1: die Last liegt über
+der Verzweigungslast …“), und die Zusammenfassung zählt sie unter „nicht
+geführt“. Stehen bleibt das lineare Ergebnis; bei einem Lastfall zeigt die
+Spalte Theorie der Lastfalltabelle „I (statt II: nicht gerechnet)“. Was
+tun: aussteifen, Querschnitte vergrößern oder die Lasten prüfen – die
+Nachweise rechnen sonst mit dem linearen Ergebnis. Bis zum 23.09.2026 wurde
+das Ergebnis übernommen: am Druckkragarm der Prüfungen (Druck 1000 kN je
+Lastfall, α_cr = 0,76) als „gerechnet“ mit u_y = −10,100 mm an der Spitze
+gegen linear +3,321 mm, also mit umgekehrtem Vorzeichen; die
+Zusammenfassung meldete nur „Verformungszuwachs +204.2 %“.
+
+**α_cr bei gezogenen und gedrückten Stäben zugleich.** Bis zum 23.09.2026
+war α_cr in diesem Fall Zufall – ein Eigenwertlöser, dessen Voraussetzung
+dann nicht erfüllt war. An einem Zweigelenkrahmen mit Wind am Stielkopf
+(ein Stiel gezogen, einer gedrückt) kam für den Windlastfall bei jedem
+Aufruf ein anderer Wert heraus, in zwei Läufen mit je 200 Aufrufen alle
+unter 3,6; richtig ist 77,33. Bei „automatisch“ wurde eine Kombination
+1,5·Wind nach II. Ordnung gerechnet, obwohl α_cr = 51,55 ist. Jetzt kommt
+der dicht gerechnete Wert heraus; in drei Läufen mit je 200 Aufrufen war es
+jedes Mal genau derselbe (gemessen an diesem Rahmen, nicht allgemein
+zugesagt). Kombinationen, in denen alle Stäbe gedrückt sind, hatten das
+nicht (an der Halle alle 42 GZT-Kombinationen in allen angezeigten Stellen
+unverändert).
 
 **Wichtig**: Nach Theorie II. Ordnung gilt keine Superposition mehr. Jede
 Kombination wird einzeln gerechnet — das dauert länger als eine lineare
 Überlagerung. Die Ergebnisse der einzelnen **Lastfälle** bleiben Ergebnisse
-nach Theorie I. Ordnung und dürfen nicht mehr von Hand überlagert werden.
+nach Theorie I. Ordnung, außer bei Lastfällen, deren Feld **Theorie** auf II.
+oder III. Ordnung steht (siehe „Theorie je Lastfall und Kombination“ unten):
+deren Ergebnis ist selbst am verformten System gerechnet. Von Hand überlagert
+werden dürfen beide nicht mehr. Ist im Kapitel zur Theorie II. Ordnung etwas
+nach II. Ordnung gerechnet – dazu zählt jeder Lastfall und jede Kombination
+mit dem Feld Theorie auf II. Ordnung, sofern die Rechnung gelingt –, nennt der
+Bericht dort diese Lastfälle, etwa „ausgenommen LF1 (II. Ordnung)“; ein
+Lastfall, dessen Rechnung nach II. oder III. Ordnung gescheitert ist, behält
+sein lineares Ergebnis und zählt dort zu Theorie I. Ordnung. Sonst steht ein
+Lastfall auf III. Ordnung nur in der Tabelle des Kapitels zur Theorie III.
+Ordnung und in der Spalte **Theorie** der Lastfalltabelle – etwa bei
+„automatisch“, wenn α_cr bei keiner Kombination unter der Grenze liegt und
+weder ein Lastfall noch eine Kombination auf II. Ordnung steht (das Kapitel
+zur Theorie II. Ordnung erscheint dann ohne diesen Satz), oder bei „aus“ ohne
+Lastfall und Kombination auf II. Ordnung (das Kapitel fehlt dann ganz). Bis
+zum 23.09.2026 nannte der Bericht an dieser Stelle alle Lastfälle Ergebnisse
+nach Theorie I. Ordnung, auch einen Lastfall auf II. Ordnung — am Druckkragarm
+(Druck 500 kN, Querlast 1 kN) mit 5,339 mm am Kragende statt linear 2,574 mm.
 
 Eine **Ergebniskombination** („A oder B oder …", aus RFEM) wird nicht als
 Ganzes gerechnet, sondern jede ihrer Alternativen: in der Tabelle des
@@ -3739,17 +4472,38 @@ Theoriekapitels steht je Alternative eine Zeile „EK1 [1]", „EK1 [2]" …, di
 Ergebniskombination selbst nicht. Ihre Umhüllende und die Nachweise nehmen
 diese Ergebnisse. Bis zum 22.09.2026 stand dort eine Zeile „EK1" mit
 u_I = u_II = 0,00 mm, als „am verformten System gerechnet" gezählt, und die
-Umhüllende blieb linear – am Druckkragarm 3,321 statt 9,705 mm. Dasselbe gilt
-für eine Ergebniskombination mit Theorie III. Ordnung. Viele Alternativen
+Umhüllende blieb linear – am Druckkragarm 3,321 statt 9,705 mm. Hatte das
+Modell daneben eine gewöhnliche Kombination, nahmen bei „ein" auch die
+Nachweise dieses Nullergebnis: an der Halle (alle GZT-Kombinationen als
+eine Ergebniskombination, die GZG-Kombinationen daneben) Ausnutzung 0 an
+allen drei Stäben, maßgebend die Ergebniskombination, ohne Warnung, und im
+Bericht „Alle Nachweise erfüllt.". Dasselbe gilt für eine
+Ergebniskombination mit Theorie III. Ordnung. Bei „automatisch" wurde die
+Ergebniskombination der Halle nicht nach II. Ordnung gerechnet (α_cr
+unendlich), und kein Stab wurde nachgewiesen: im Bericht „Es wurden keine
+Nachweise geführt; die Ergebnisse dienen der Schnittgrößen- und
+Verformungsermittlung.". Viele Alternativen
 kosten entsprechend Rechenzeit; nach II. Ordnung werden gleiche Alternativen
 mehrerer Ergebniskombinationen nur einmal gerechnet.
 
 Die Ergebnisse dieser Alternativen entstehen nur mit **„Alle Lastfälle +
 Kombinationen"**. Wurden nur die Lastfälle gerechnet oder stammen die
-Ergebnisse aus einer Datei von vor dem 22.09.2026, fehlen sie. Die Nachweise
+Ergebnisse aus der Datei eines älteren Programmstands, fehlen sie: Die
+Ergebnisdatei nimmt die Alternativen erst seit dem späten Abend des
+22.09.2026 auf, im Hauptzweig (und einer daraus gebauten exe) erst seit dem
+Merge vom 23.09.2026, 10:07. Die Nachweise
 melden solche Alternativen dann als „nicht nachgewiesen" und überlagern sie
 nicht linear. Das gilt auch für eine Alternative mit einem Lastfall, der nach
-II. oder III. Ordnung gerechnet wird. Bis zum 22.09.2026 wurden die Stäbe
+II. oder III. Ordnung gerechnet wird: steht die Ergebniskombination selbst
+auf I. Ordnung, wäre ihr Ergebnis die lineare Überlagerung, doch das lineare
+Ergebnis des Lastfalls ist nach der Rechnung durch das nach II./III. Ordnung
+ersetzt. Die Meldung sagt darum „ihre lineare Überlagerung lässt sich nach
+dem Ersetzen nicht mehr aus den Lastfallergebnissen bilden“; bis zum
+23.09.2026 hieß es dort „Überlagerung nicht zulässig“, obwohl gerade sie das
+gesuchte Ergebnis ist. Gemessen am Druckkragarm mit einer Ergebnisdatei, die
+der Hauptzweig-Stand vom 22.09.2026 geschrieben hat: beide Alternativen
+„nicht nachgewiesen“ mit dem Grund Theorie II. Ordnung, die gewöhnliche
+Kombination daneben wird nachgewiesen. Bis zum 22.09.2026 wurden die Stäbe
 nach einer Rechnung nur der Lastfälle gegen die Lastfälle mit Faktor 1
 nachgewiesen, ohne Hinweis, dass die Kombinationen fehlten: an der Halle
 („ein", alle GZT-Kombinationen als eine Ergebniskombination) Riegel 0,2776
@@ -3763,9 +4517,19 @@ Theorie II. Ordnung steht – genau wie bei der gewöhnlichen Kombination.
 Gemessen an einem Zweigelenkrahmen mit dem Windlastfall W auf II. Ordnung
 (α_cr der Alternativen 18,1 bis 25,8): Stielkopf 102,14 mm und Ausnutzung
 Stiel links 0,5423, gleich wie mit den gewöhnlichen Kombinationen. Bis zum
-22.09.2026 wurden dort statt der Alternativen die Lastfälle mit Faktor 1
-nachgewiesen, ohne Warnung: Stiel links 0,4970 aus W. Die Umhüllende am
-Stielkopf war mit 102,14 mm dieselbe.
+22.09.2026 (Stand 54b6f9a) hing es vom Modell ab, wogegen die Stäbe statt
+der Alternativen nachgewiesen wurden, jedes Mal ohne Warnung. Hatte das
+Modell außer der Ergebniskombination keine Kombination, wie dieser Rahmen,
+waren es die Lastfälle mit Faktor 1: Stiel links 0,4970 aus W. Standen
+gewöhnliche GZT-Kombinationen daneben, blieb die Ergebniskombination
+unbeachtet: Derselbe Rahmen mit 1,35 G + 1,5 Q und 1,35 G + 1,5 W als
+gewöhnlichen Kombinationen und „1,35 G + 1,5 Q + 0,9 W oder 1,0 G + 1,5 W“
+als Ergebniskombination ergab Stiel links 0,4808 aus 1,35 G + 1,5 W statt
+0,5423 aus 1,0 G + 1,5 W. An der Halle nach II. Ordnung („ein“, alle
+GZT-Kombinationen als eine Ergebniskombination, die GZG-Kombinationen
+daneben) ging die Ergebniskombination mit dem Ergebnis null in die
+Nachweise: alle Stäbe η = 0, „alle erfüllt“ (jetzt Riegel 0,9734). Die
+Umhüllende am Stielkopf des Rahmens war mit 102,14 mm dieselbe.
 
 ### Theorie je Lastfall und Kombination: I., II., III. Ordnung
 
@@ -3795,10 +4559,49 @@ Lagerverschiebung enthält —, bleibt das lineare Ergebnis stehen, und die
 Spalte zeigt zum Beispiel „I (statt III: nicht gerechnet)". Den Grund nennt
 bei III. Ordnung die Spalte „Hinweis" im Kapitel zur Theorie III. Ordnung,
 bei II. Ordnung die Hinweisliste am Ende des Kapitels zur Theorie II. Ordnung
-und die offenen Warnungen der Zusammenfassung. Was tun: die Ursache beheben
+— und bei beiden die offenen Warnungen der Zusammenfassung („Theorie III.
+Ordnung LF1: …“). Bei III. Ordnung fehlte er dort bis zum 23.09.2026, und die
+Zusammenfassung sagte „Es liegen keine offenen Hinweise oder Warnungen vor“
+(gemessen am Kragarm aus zwei Stäben mit erzwungenem Scheitern). Was tun: die Ursache beheben
 (etwa mehr Laststufen wählen oder den Kontakt entfernen) oder den Lastfall
 bewusst auf I. Ordnung stellen — die Nachweise dieses Lastfalls rechnen sonst
 ohne die Zusatzmomente aus der Verformung.
+
+Ebenso die Spalte **Theorie** der Kombinationstabelle — im Kapitel
+Einwirkungen und als eingefügte Tabelle „Kombinationen": Scheitert eine
+gewöhnliche Kombination nach II. oder III. Ordnung — eine GZT- ebenso wie
+eine GZG-Kombination —, bleibt ihr Ergebnis nach I. Ordnung stehen, und
+die Spalte zeigt „I (statt II: nicht gerechnet)" bzw. „I (statt III: nicht
+gerechnet)". Dieses Ergebnis ist die Überlagerung der Lastfälle; in Modellen
+mit Kontakt, Ausfallstäben oder Seilen oder mit eingeschalteter Plastizität,
+deren Kombinationen direkt gerechnet werden, ist es die direkte Lösung der
+Kombination nach I. Ordnung. Am Kragarm mit Spaltelement (Spalt 2 mm, zwei
+Lastfälle, die den Spalt je allein schließen, Kombination nach III. Ordnung,
+die am Kontakt scheitert) steht so 2,0 mm, nicht die Summe 4,0 mm. Die
+GZT-Nachweise der Stäbe, Beulfelder, Lasteinleitungen, Volumenbereiche und
+Anschlüsse werden mit diesem Ergebnis nach I. Ordnung geführt und sagen
+das: unter ihren Warnungen steht „Kombination … nur nach Theorie I. Ordnung
+nachgewiesen" mit dem Grund, und das Gesamturteil der
+Zusammenfassung lautet nicht mehr „Alle Nachweise erfüllt." — sind die
+Nachweise sonst erfüllt, nennt es den Nachweis unter „nicht geführt wurden".
+Bleibt eine Kombination bei der Einstellung „automatisch" nach I. Ordnung,
+weil α_cr über der Grenze liegt, ist das kein Scheitern — dort steht weiter
+„II" ohne Warnung.
+
+Nicht gemeldet wird das lineare Ergebnis bisher insbesondere hier:
+
+- Der **Verformungsnachweis** (GZG) rechnet mit dem linearen Ergebnis einer
+  gescheiterten GZG-Kombination ohne Warnung, und das Gesamturteil kann
+  „Alle Nachweise erfüllt." lauten. Die Spalte Theorie der
+  Kombinationstabelle zeigt dabei richtig „I (statt …: nicht gerechnet)".
+- Scheitern die Alternativen einer **Ergebniskombination** („EK1 [1]",
+  „EK1 [2]" …) nach II. oder III. Ordnung, bleiben sie beim linearen
+  Ergebnis und werden so nachgewiesen, ohne Warnung; die Spalte Theorie der
+  Kombinationstabelle zeigt weiter die Einstellung („II" bzw. „III").
+
+In beiden Fällen nennt das Kapitel zur Theorie II. bzw. III. Ordnung den
+Grund. Wer GZG-Kombinationen oder Ergebniskombinationen nach II. oder
+III. Ordnung rechnet, sieht dort nach, ob jede Zeile gerechnet wurde.
 
 ### Verformungsnachweise (GZG)
 
@@ -3874,7 +4677,24 @@ davon nicht betroffen.
 * **Alle Lastfälle + Kombinationen**: Standard. Eine Faktorisierung, alle
   Lastfälle, Superposition, Umhüllende, optional Nachweise.
 * **Nur aktiver Lastfall**, **Eigenschwingungen**, **Knicken** (Grundzustand
-  = aktiver Lastfall).
+  = aktiver Lastfall). Der aktive Lastfall und der Grundzustand des Knickens
+  rechnen in der **Situation** des Lastfalls (Stellung, abgeschaltete
+  Elemente) – wie unter „Alle Lastfälle“. Im Protokoll steht dann die Zeile
+  „System gelöst – Situation …“ (beim Knicken vor „Verzweigungsproblem wird
+  gelöst“); danach folgt die Zusammenfassung des Ergebnisses (dieselbe steht
+  im Textfeld der Ergebnisse, in der Kommandozeile und im Webserver). Sie
+  nennt die Situation in einer eigenen Zeile „Situation“ – seit dem
+  24.09.2026; in der Grundstellung entfällt die Zeile. Bis zum 23.09.2026
+  rechneten beide still in der Grundstellung, ebenso `--analyse lastfall`
+  der Kommandozeile und der Webserver. Gemessen an einem
+  eingespannten Balken (2 × 3 m, Rechteck 10 × 20 cm, 10 kN in der Mitte)
+  mit einer Rolle am Ende, die die Stellung abbaut: Durchbiegung in der Mitte
+  1,406 statt 6,429 mm (PL³/3EI). An einer Stütze (3 m, eingespannt), deren
+  Kopfhalterung die Stellung abbaut: Knicklast 7,853 statt 0,9595 MN
+  (π²EI/(2L)²). Die Knickfaktoren sind die betragskleinsten, auch negative
+  (Knicken bei umgekehrter Last), nach Betrag geordnet. Mit Zug und Druck im
+  Grundzustand wechselten sie bis zum 23.09.2026 von Lauf zu Lauf – an einem
+  Zweigelenkrahmen unter Wind 4,27, 3,03 und 2,49 in drei Läufen statt 77,33.
 * **Gleichungslöser** (Auswahl in *Berechnung → Einstellungen*): Vorgabe
   **automatisch** = MKL PARDISO, sonst CHOLMOD, sonst SuperLU. **Weicht
   „automatisch“ aus, steht der Grund im Protokoll** — bei der Grundfaktorisierung
@@ -3898,9 +4718,22 @@ davon nicht betroffen.
   der in den Schritten rechnete, an denen PARDISO scheiterte (geprüft am Block
   mit Reibung, PARDISO beim ersten von sieben Versuchen zum Scheitern gebracht:
   „pardiso“ im Ergebnis, „stattdessen rechnete SuperLU“ in der Hinweiszeile).
+  Die Spalte „Löser“ der Tabelle „Rechenzeiten je Ergebnis“ im Anhang sagt
+  das seit dem 23.09.2026 je Ergebnis: „pardiso – ausgewichen auf SuperLU
+  (direkt, einkernig)“, bei einem Ergebnis, das ganz mit dem Ausweichlöser
+  rechnete, „superlu – ausgewichen“; eine überlagerte Kombination hat keinen
+  eigenen Löser und zeigt nur „ausgewichen auf SuperLU (direkt, einkernig)“;
+  ein Ergebnis ohne Ausweichen zeigt den Löser wie bisher. Vorher stand dort
+  schlicht „pardiso“. Geprüft in `tests/test_report.py`: der Teilausfall mit
+  so gesetzten Angaben am Ergebnis, der ganze Ausfall an einer echten
+  Rechnung (Kragarm aus sechs Stäben, PARDISO scheitert beim Faktorisieren:
+  LF1 und LF2 „superlu – ausgewichen“, die überlagerte K1 „ausgewichen auf
+  SuperLU (direkt, einkernig)“).
   Überlagerte Kombinationen tragen den Grund ihrer Lastfälle, Ergebnisse nach
   Theorie II. Ordnung ihren eigenen. Die Eigenschwingungen melden ein Ausweichen
-  ebenso im Protokoll und in ihrer Zusammenfassung. Ein Ergebnis trägt den Grund
+  ebenso im Protokoll und in ihrer Zusammenfassung, der Schwingungsnachweis des
+  Verschlusses in seinem Protokoll und in den Hinweisen des Berichts (siehe
+  dort). Ein Ergebnis trägt den Grund
   nur, wenn es selbst mit dem Ausweichlöser gelöst wurde: fällt PARDISO bei einem
   Kontaktmodell erst in einem späteren Lastfall aus, bleiben die davor gerechneten
   ohne Vermerk (geprüft am Block mit Reibung, drei Läufe auf demselben System:
@@ -3914,7 +4747,12 @@ davon nicht betroffen.
   anderen Grund als einer singulären Matrix, bricht die Rechnung mit **beiden**
   Gründen ab und nennt MUMPS oder ama als Ausweg — SuperLU reicht für große
   Modelle nicht. Eine singuläre Matrix wird weiter als solche gemeldet
-  („Lagerung prüfen“). Zur Wahl
+  („Lagerung prüfen“), mit dem Grund des Ausweichens: beim Scheitern der
+  Zerlegung als „(vorher: …)“, beim Verfehlen der Residuumsschranke als
+  „Gleichungssystem numerisch singulaer (Residuum …) (Löser ausgewichen - …)“.
+  Dort fehlte er bis zum 23.09.2026 (zwei Würfel mit nur einem gemeinsamen
+  Knoten, PARDISO zum Scheitern gebracht, SuperLU löste mit Residuum 1,5).
+  Zur Wahl
   stehen **MKL PARDISO** (direkt, mehrkernig — angefordert werden alle Kerne
   bis auf einen, MKL selbst kappt auf die physischen Kerne: 16 auf einem
   Rechner mit 16 Kernen / 32 Threads),
@@ -3929,6 +4767,14 @@ davon nicht betroffen.
   4e-10 relativ), **PyAMG** (iterativ:
   algebraisches Mehrgitter mit CG — speicherarm, aber je rechte Seite neu zu
   iterieren und einkernig) und **SuperLU** (direkt, einkernig, Rückfall).
+  Beim **Knicken** rechnet PyAMG nur den Grundzustand. Das
+  Verzweigungsproblem braucht viele Lösungen mit derselben Matrix und
+  zerlegt sie dafür direkt (Wahl wie „automatisch“); im Protokoll steht
+  „Verzweigungsproblem: PyAMG iteriert jede Lösung neu – K wird dafür direkt
+  zerlegt (…)“. Scheitert die direkte Zerlegung, iteriert PyAMG auch dort,
+  und das Protokoll sagt es. An einem Rahmen mit 17 430 Freiheitsgraden
+  (vier Knickformen, gemessen 24.09.2026) dauerte das Knicken mit PyAMG so
+  7,5 s, beim Iterieren in jedem Schritt 329 s.
   **In der exe stecken** MKL PARDISO, ama, PyAMG und SuperLU (PyAMG ist
   MIT-lizenziert, ama ist eigener Kern ohne Fremdlizenz); **MUMPS**
   (CeCILL-C) lädt das Programm beim Start nach (Kästchen im Dialog
@@ -4329,6 +5175,14 @@ davon nicht betroffen.
   Kante zusammengezogen), ist das ein **FEHLER** mit Elementnummer, und die
   Rechnung hält an. Bis zum 23.09.2026 fielen auch diese Elemente still weg — ein
   Kragarm aus Keil-Sechsflächnern rechnete mit 0,0 mm Durchbiegung.
+  **VQ83 und VQ203** (Namen aus InfoGraph) sind in Statik3D der Sechsflächner mit 8
+  bzw. 20 Knoten, der so entarten darf: er rechnet als Keil, Pyramide oder Tetraeder,
+  der hex20 als quadratischer Keil (pent15) oder quadratischer Tetraeder (tet10). Das ist
+  gemessen genauer, als den entarteten Sechsflächner selbst zu rechnen (Kragarm mit 2 295
+  Unbekannten: −4,3 statt −55,3 N/mm²; quadratisch −0,02 statt −95,6); ein zur Pyramide
+  entarteter hex20 hat kein quadratisches Gegenstück und ist ein FEHLER. Welche
+  Elementtypen in einem Netz aneinanderstoßen dürfen, steht im Theoriehandbuch § 7a
+  (Verträglichkeit an einer gemeinsamen Seite); die Vorgabe tet10 + VQ83 ist zulässig.
   Beim **Import** geschieht die Umwandlung schon im Anschluss an das
   Zusammenführen doppelter Knoten, und das Importprotokoll nennt sie
   („Entartete Volumenelemente umgewandelt (hex8→pent6: 2) …“) – dort, wo
@@ -4340,6 +5194,19 @@ davon nicht betroffen.
   Hilfsobjekte); und beim Zusammenlegen der Knoten auf gemeinsamen Flächen
   fallen flach gewordene Tetraeder heraus. Scheitert doch ein Element in der
   Elementschleife, nennt die Meldung Nummer, Art, Volumenkörper und Knoten.
+* **Falsche Knotenzahl** (seit 23.09.2026): Ein Element, dessen Knotenzahl
+  nicht zu seinem Typ passt (ein hex8 mit sieben Knoten), nimmt das Programm
+  beim Anlegen nicht an („hex8 braucht 8 Knoten, angegeben sind 7“). Kommt es
+  aus einer Modelldatei, meldet die Modellprüfung „FEHLER: Element 2 (hex8):
+  7 Knoten, erwartet 8“, und die Entartungsprüfung lässt es aus. Die übrigen
+  Zeilen zum selben Element kommen weiter, etwa „Element 2: Knoten 999
+  existiert nicht“ oder „Material 'WEG' unbekannt“ (gemessen 24.09.2026). Vorher
+  meldete die Prüfung dazu nichts, und erst die Rechnung brach mit „operands
+  could not be broadcast together“ ab. Ein hex8 mit neun Knoten, deren
+  neunter einen der acht wiederholte, gab einen falschen FEHLER
+  „zusammenfallende Knoten“; mit einem neunten, eigenen Knoten meldete die
+  Prüfung nichts (gemessen 24.09.2026 an einem Netz aus zwei hex8). Ein tet4
+  mit drei Knoten ließ die Prüfung selbst abbrechen.
 * **Volumen ohne Rauminhalt** gelten nicht als „unvernetzt“. Sie können gar
   kein Netz bekommen, und so fragte das Programm sonst vor jeder Rechnung
   nach einem Netz, das es nie geben kann. Statt der Warnung „ohne Netz“
@@ -4433,16 +5300,22 @@ nichts stillschweigend Übergangenes:
 | Abdeckung der Kontaktseite | ≥ 95 % |
 | Gegenkörper der Kontaktbedingung ohne eine einzige Facette | 0 |
 | Haltegüte je Teiltragwerk | ≥ 10⁻⁴ |
-| Knoten im Rechennetz ohne Element | 0 |
+| Knoten im Rechennetz ohne Element (nicht gezählt: über Kopplungen oder einen starren Körper in allen drei Richtungen am Netz gehalten, Anschlag am Spaltelement) | 0 |
 | Formgüte des schlechtesten Elements je Körper | ≥ 0,05 |
+| **Netz gefaltet**: umgestülpte Tetraeder zwischen ihren Nachbarn | 0 |
 | Randtreue je Körper | ≥ 99 % |
 | **Volumenbilanz je Körper**: Elemente gegen Randflächen | ≤ 0,5 % (an windschiefen Flächen zuzüglich der Sehnen) |
-| **Seiten im Inneren**: freie Elementseiten, hinter denen der Körper weitergeht (verdrehtes Element, doppelte Knoten, Hohlraum) | 0 |
-| Lücke im Netzrand (Warnung, über 0,5 % des Körpers Fehler): an der Oberfläche fehlt dem Netz ein Stück, kein verdrehtes Element, keine doppelten Knoten | 0 |
+| **Seiten im Inneren**: freie Elementseiten, hinter denen der Körper weitergeht (verdrehtes Element, doppelte Knoten, hängende Knoten, Hohlraum, Netzrand, der die Randfläche verfehlt – der Text nennt, was gefunden wurde) | 0 |
+| Lücke im Netzrand (Warnung, über 0,5 % des Körpers Fehler): an der Oberfläche fehlt dem Netz ein Stück, kein verdrehtes Element, keine doppelten oder hängenden Knoten | 0 |
 | Netzrand neben der Hülle (Warnung): freie Seiten neben den Randflächen, außen oder als Beule | 0 |
-| Riss im Netz (Warnung): geschlossener Hohlraum, dünn gegen seine eigenen Seiten und gegen die Elemente daneben, kein verdrehtes Element, keine doppelten Knoten | 0 |
+| Riss im Netz (Warnung): geschlossener Hohlraum, dünn gegen seine eigenen Seiten und gegen die Elemente daneben, so klein wie die Lücken des Vernetzers (höchstens 2 · 10⁻⁶ · L³ je vier Seiten, L die längste Elementkante des Körpers), kein verdrehtes Element, keine doppelten Knoten | 0 |
+| Volumenbilanz nicht geprüft (Warnung): Körper mit krummen Randlinien oder einer anderen Hülle, die sich nicht ohne Näherung darstellen lässt; Volumenelemente, die zu keinem Körper gehören | – |
 
-**Der verdrehte Sechsflächner** (seit 22.09.2026). Stimmen die acht Knoten
+Die Volumenbilanz und die fünf Prüfungen darunter gibt es seit dem
+23.09.2026, im Hauptzweig seit dem Merge an diesem Tag. Die Abnahme des
+Hauptzweigs vom 22.09.2026 hatte keine davon.
+
+**Der verdrehte Sechsflächner** (seit 23.09.2026). Stimmen die acht Knoten
 eines Sechsflächners, ist aber der Deckel um eine Ecke verdreht (4, 5, 6, 7 →
 5, 6, 7, 4), bleibt die Jacobi-Determinante überall positiv, die Formgüte liegt
 bei 0,707 — und das Element rechnet mit 0,6667 statt 1,0 seines Volumens.
@@ -4469,21 +5342,56 @@ Prisma mit eckigem Loch eine einspringende Ecke ab (3 von 1024 Seiten,
 seiner Seiten, und sie ist höchstens 0,65-mal so groß wie die Dicke der
 Elemente, an denen er liegt (Median, die Dicke eines Elements ebenso
 gerechnet). Das zweite Maß braucht es für längliche Elemente: Dort folgt die
-Dicke der kurzen Seite, die längste Kante aber der langen. Solche Hohlräume
+Dicke der kurzen Seite, die längste Kante aber der langen. Und der Hohlraum
+ist **klein** (seit 23.09.2026): höchstens 2 · 10⁻⁶ · L³ je vier seiner
+Seiten, L die längste Elementkante des Körpers. Der freie Vernetzer sortierte
+bis zum 24.09.2026 Tetraeder bis 10⁻⁶ · h³ aus, h seine Kantenlänge; seither
+bis 10⁻⁶ mal die dritte Potenz der eigenen längsten Kante des Tetraeders
+(Theoriehandbuch, Nachtrag B101). An den gemessenen freien
+Netzen war L das 1,02- bis 2,0-Fache von h (Platte mit Bohrung, h = 50 mm:
+L = 50,9 mm; Würfel und L-Prisma mit h = 0,1 bis 0,5 m: 1,68 h bis 2,0 h),
+die Grenze dort also das 2,1- bis 16-Fache von 10⁻⁶ · h³. Gesetzt ist sie an
+gemessenen Hohlräumen (siehe „Fehlt ein flacher Tetraeder“), nicht aus h
+hergeleitet. Solche Hohlräume
 bleiben, wenn der freie Vernetzer flache Tetraeder aussortiert (Platte
-0,9 × 0,9 × 0,035 m mit Bohrung: 8 Seiten, zwei Hohlräume von zusammen
-0,056 mm³), oder wenn beiderseits einer Fläche dieselben Knoten verschieden in
+0,9 × 0,9 × 0,035 m mit Bohrung r = 10 mm, Netzweite 50 mm: am 23.09.2026
+8 Seiten, zwei Hohlräume von zusammen 0,056 mm³; mit dem Vernetzer vom
+24.09.2026 sortiert er dort 54 Tetraeder aus, 216 Seiten, zusammen unter
+0,001 mm³. Die runde Scheibe R = 450 mm mit derselben Bohrung, von der das
+Theoriehandbuch beim Nachtrag B101 sagt, sie habe weder Riss noch Lücke, ist ein
+anderer Körper; gemessen 24.09.2026, zweimal), oder wenn beiderseits einer Fläche dieselben Knoten verschieden in
 Dreiecke geteilt sind. Die 30 geschlossenen Gruppen in den Modellen der
-Prüfsuiten lagen bei höchstens 3,55 % der längsten Kante und waren höchstens
-0,48-mal so dick wie die Elemente daneben. Der Körper stimmt bis auf diese
+Prüfsuiten lagen bei höchstens 3,55 % der längsten Kante, waren als ganze
+Gruppe höchstens 0,48-mal so dick wie die Elemente daneben und hatten
+höchstens das 0,87-Fache von 10⁻⁶ · L³ je vier Seiten. Stoßen mehrere
+Hohlräume an einer Kante zusammen, an der mehr als zwei Seiten liegen,
+beurteilt die Abnahme jeden für sich, aber nur, wenn der ganze Haufen ein
+Riss wäre und jeder Hohlraum darin für sich geschlossen ist; sonst beurteilt
+sie den Haufen als Ganzes. An der Platte mit Bohrung (ohne „intelligent“
+vernetzt, 12 925 Tetraeder) teilte sie so sechs Haufen in zwölf Hohlräume,
+der dickste davon war 0,58-mal so dick wie seine Nachbarn; bis zur Grenze
+0,65 bleibt dort nur ein Abstand von Faktor 1,12. Ein Haufen, in dem auch
+offene Stücke lagen, blieb ganz (0,42-mal so dick), obwohl zwei seiner
+Hohlräume für sich 0,59- und 0,60-mal so dick waren (gemessen 23. und
+24.09.2026). Der Körper stimmt bis auf diese
 Hohlräume, die Verschiebungen passen dort aber nur an Knoten und Kanten
-zusammen. Bis zum 23.09.2026 meldete die Abnahme die Hohlräume des Vernetzers
-als FEHLER „Seiten im Inneren“, vor jeder Rechnung mit der Rückfrage „Trotzdem
-rechnen?“ — und neu vernetzen ergibt dasselbe Netz.
+zusammen.
 
 **Nie ein Riss** sind ein verdrehtes Element und doppelte Knoten, gleich wie
 dünn der Hohlraum ist. Ein verdrehter Sechsflächner hat eine Seitenkante, die
 kein anderes Element hat, und doppelte Knoten sind zwei Nummern am selben Ort.
+„Am selben Ort“ heißt seit dem 23.09.2026: näher beieinander als 1 % der
+kürzesten Kante an den beiden Knoten. Vorher galt fest 0,001 mm, gleich wie
+groß die Elemente sind. Im Block 0,75 × 0,75 × 0,75 m aus 6 × 6 × 6 Zellen
+(125 mm), in Tetraeder zerlegt, war ein Tetraeder, der an einem Knoten
+losgelöst und 0,002 oder 0,01 mm versetzt war, deshalb nur ein „Riss im Netz“
+ohne Rückfrage vor dem Rechnen. Heute ist er ein FEHLER „Seiten im Inneren“.
+Ebenso ist ein Hohlraum nie ein Riss, wenn einen seiner Knoten im Körper nur
+ein einziges Element benutzt: Derselbe Tetraeder, 5 mm versetzt (4 % der
+Kante), ist gemessen ebenfalls ein FEHLER. In den 29 Rissen der Netze aus
+den Prüfsuiten lagen zwei verschiedene Knoten mindestens das 0,995-Fache der
+kürzesten Kante an ihnen auseinander, und keinen ihrer Knoten benutzte nur
+ein Element; ihre Befunde sind dieselben geblieben.
 Gemessen am 23.09.2026, alle FEHLER „Seiten im Inneren“: verdrehte
 Sechsflächner in gleichmäßigen Netzen mit Zellen von 100 × 100 × 100 bis
 100 × 100 × 300 mm und in abgestuften Netzen 5:1, 20:1 und 50:1 (je alle 512
@@ -4492,17 +5400,47 @@ denselben abgestuften Netzen; ein Element, das an Knoten losgelöst ist, im
 gleichmäßigen 8 × 8 × 8-Netz: jeder der sechs Tetraeder einer inneren Zelle
 und einer Zelle an der Seitenfläche, an einem bis vier Knoten losgelöst, der
 Sechsflächner innen an einem bis vier und an allen acht Knoten, an der
-Seitenfläche an einem, zwei, vier und acht Knoten. Die zwei Fassungen dieser
-Regel vom selben Tag maßen erst gegen das größte Element im ganzen Körper,
-dann nur gegen die längste Kante. Beide ließen solche Fehler in abgestuften
-oder länglichen Netzen als Riss durchgehen, die zweite zum Beispiel bei 50:1
-357 von 512 verdrehten Sechsflächnern. Die Kehrseite: Fehlt ein Tetraeder, der selbst so flach ist wie die, die der Vernetzer
-aussortiert, ist auch das ein Riss. Einzeln entfernt war das am frei
-vernetzten Würfel mit angehobener Ecke (1483 Tetraeder) bei 20 von 541
-inneren Tetraedern so, an der Platte mit Keilen (2701 Tetraeder) bei 75 von
-947. Die Dicke dieser Tetraeder war höchstens 4,98 % ihrer längsten Kante.
-Jeder fehlende Tetraeder mit einer Dicke über 5 % seiner längsten Kante war in
-diesen Messungen ein FEHLER.
+Seitenfläche an einem, zwei, vier und acht Knoten.
+
+**Fehlt ein flacher Tetraeder**, ist sein Hohlraum so dünn wie die Lücken
+des Vernetzers, aber nicht unbedingt so klein. Bis zum 23.09.2026 war auch das
+ein Riss, gleich wie groß, und vor dem Rechnen kam keine Rückfrage. An der
+frei vernetzten Platte mit Bohrung (34 600 Tetraeder, Netzweite 50 mm) traf
+das 1413 von 28 046 inneren Tetraedern (innen: alle vier Seiten mit einem
+Nachbarn), bis 2,05 cm³. Die Zahl ist aus
+den beiden Dicken vorhergesagt und an Stichproben mit der Abnahme bestätigt.
+Der Text des Risses nannte dazu als Grund den Vernetzer, auch bei einem von
+Hand gelöschten Tetraeder von 35 728 mm³ am L-Prisma (Netzweite 0,12 m); der
+Vernetzer sortiert dort nur bis 1,7 mm³ aus. Seither ist ein solcher
+Hohlraum über 2 · 10⁻⁶ · L³ ein FEHLER „Seiten im Inneren“, dessen Text ein
+fehlendes Element nennt, etwa von Hand gelöscht oder beim Import verloren.
+Gemessen: die Platte ohne ihren Tetraeder 17625 (2,05 cm³) und das L-Prisma
+ohne den gelöschten, beide FEHLER mit Rückfrage. Die Kehrseite: Kleinere
+fehlende flache Tetraeder bleiben ein Riss. Sie sind so klein wie die Lücken
+des Vernetzers und von ihnen nicht zu unterscheiden. Vorhergesagt: an der
+Platte mit Bohrung 48 der 1413 (bis 0,26 mm³), an der Platte mit Keilen
+(2701 Tetraeder) 7 von 183, am L-Prisma (6173 Tetraeder) keiner von 306 und
+am Würfel mit angehobener Ecke (1483 Tetraeder) keiner von 58. Mit der
+Abnahme gerechnet lag die Grenze genau bei 2: das 1,97- und 1,99-Fache ein
+Riss, das 2,01- und 2,03-Fache ein FEHLER. Der Text des Risses nennt deshalb
+nur die Größe der Hohlräume, nicht ihre Herkunft. Die Dicke der fehlenden
+flachen Tetraeder war höchstens 4,98 % ihrer längsten Kante; jeder fehlende
+Tetraeder mit einer Dicke über 5 % seiner längsten Kante war in diesen
+Messungen ein FEHLER. Gezählt ist das an den Netzen des eigenen Vernetzers vor
+seiner Änderung vom 23.09.2026. Seither hat die Platte mit Keilen 2502 statt
+2701 Tetraeder, das L-Prisma 6155 statt 6173 und der Würfel 1085 statt 1483;
+die Zählungen sind daran nicht wiederholt. Nachgemessen am 24.09.2026 sind nur
+Einzelfälle: An der Platte mit Keilen sind der flache Tetraeder von 1,75 cm³
+und der von 0,145 mm³ geblieben, ohne den ersten ein FEHLER, ohne den zweiten
+ein Riss; am L-Prisma ist der flachste Tetraeder unter dem Deckel des langen
+Schenkels jetzt 36 097 mm³ groß, von Hand gelöscht ein FEHLER mit Rückfrage.
+Seit dem 24.09.2026 (Vernetzer, Nachtrag B101) behält der Vernetzer an der
+Platte mit Keilen auch den flachen Tetraeder von 0,115 mm³, dessen Lücke bis
+dahin der Riss neben den beiden war. Die Platte hat jetzt 2503 Tetraeder und
+ohne Eingriff keinen Befund. Ohne den großen flachen allein meldet die
+Abnahme nur den FEHLER, ohne den kleinen allein einen Riss mit 4 statt 8
+Seiten. Die Prüfung nimmt den Tetraeder von 0,115 mm³ deshalb von Hand heraus
+(gemessen 24.09.2026, zweimal).
 
 **Lücke im Netzrand** (Warnung, seit 23.09.2026). Fehlt dem Netz an der
 Oberfläche ein Stück, liegen die freien Seiten der Nachbarn im Inneren, und
@@ -4512,12 +5450,27 @@ Oberfläche (bei (0.921 | 0.412 | 0.400) m 552 cm³; zusammen 552 cm³ = 0.079 %
 des Körpers, 3 freie Elementseiten im Inneren)“. So lässt der eigene freie
 Vernetzer an L-, T- und U-Prismen einen Tetraeder weg: in einer Stichprobe
 über die Netzweiten 0,25, 0,2 und 0,1 m an 5 von 9 Netzen, Fehlbetrag 0,003
-bis 0,113 %. Bis zum 23.09.2026 war das ein FEHLER „Seiten im Inneren“ mit
-dem Rat „neu vernetzen“, und neu vernetzen ergibt dasselbe Netz. Geholfen hat
+bis 0,113 %. Die Abnahme des Hauptzweigs vom 22.09.2026 meldete ein solches
+Netz nicht: Am L-Prisma des Beispiels (Netzweite 0,25 m, 821 Tetraeder,
+Lücke 552 cm³) fand sie nichts, gemessen am 23.09.2026 mit demselben Netz.
+Geholfen hat
 an diesen fünf Prismen, gemessen: in den Netzeinstellungen „Sechsflächner
 sweepen“ (nur für Körper aus Grundfläche mal Weg) oder der Vernetzer gmsh bzw.
-Netgen, jeweils an allen fünf. Der Sweep ist ab Werk aus; warum, steht bei
-den Netzeinstellungen. Eine um 5 bis 10 % andere Ziellänge half nur an drei
+Netgen, jeweils an allen fünf. Mit derselben Netzweite ergeben gmsh und Netgen
+dort aber nur 22 bis 37 % der Elemente des eigenen Vernetzers (L-Prisma,
+Netzweite 0,25 m: 821 Tetraeder gegen 203 mit gmsh und 187 mit Netgen) –
+so war die Abhilfe zuerst gemessen. Nachgemessen am 23.09.2026 bei
+vergleichbarer Elementzahl (Netzweite 60 bis 70 % der eigenen, 0,87- bis
+1,05-mal so viele Elemente): alle fünf ohne Befund. Wer mit gmsh oder Netgen
+gleich fein rechnen will, stellt die Netzweite entsprechend kleiner. Die
+Elementzahlen des eigenen Vernetzers sind die vor seiner Änderung vom
+23.09.2026; seither gibt er am L-Prisma mit Netzweite 0,25 m 634 Tetraeder
+ohne Lücke (gemessen 24.09.2026). Der Sweep ist ab Werk aus; warum, steht bei
+den Netzeinstellungen. Seit 23.09.2026 sagt das auch die Warnung selbst („ab
+Werk aus, weil er am Drehlager entartete Keile erzeugte - nach dem
+Einschalten die Abnahme lesen“); vorher empfahl sie den Sweep ohne diesen
+Hinweis. Gemessen ist die Abhilfe nur an den fünf Prismen, am Drehlager
+nicht. Eine um 5 bis 10 % andere Ziellänge half nur an drei
 oder vier, die Nachbesserung mit MMG3D an keinem. Das gilt für Netze, die
 unverändert vom eigenen Vernetzer stammen. Ist das Netz importiert oder von
 Hand geändert, rät der Text, neu zu vernetzen. Gemessen an einem von Hand
@@ -4527,13 +5480,19 @@ entfernt, gemeldet als „Lücke im Netzrand“ mit 115 cm³. Neu vernetzt mit
 denselben Einstellungen waren es wieder 6173 Tetraeder ohne Befund -
 gemessen ohne Oberfläche mit der Funktion hinter `statik3d --vernetzen` und
 der adaptiven Vernetzung (`mesher.modell_vernetzen`), die auch die Knoten des
-alten Netzes entfernt. „Netz → Vernetzen“ in der Oberfläche entfernt sie
-nicht (am Quelltext: `_vernetzen` löscht nur die Elemente). Diesen Weg ohne
+alten Netzes entfernt. „Netz → Vernetzen“ in der Oberfläche entfernte sie bis
+zum 23.09.2026 nicht (`_vernetzen` löschte nur die Elemente): diesen Weg ohne
 Oberfläche nachgestellt, verschwand die Lücke ebenso (6173 Tetraeder), aber
-1229 Knoten des alten Netzes blieben ohne Element stehen: FEHLER „Knoten ohne
-Element“. In der laufenden Oberfläche ist das nicht gemessen. Der Text der
-Warnung nennt beide Fälle; bis zum 23.09.2026 sagte er nur „Neu vernetzen mit
-denselben Einstellungen ergibt dasselbe Netz“, ebenso der Text des Risses. Ein
+1229 Knoten des alten Netzes blieben ohne Element stehen, FEHLER „Knoten ohne
+Element“. Seither entfernt auch dieser Weg sie; am selben L-Prisma zweimal mit
+denselben Einstellungen vernetzt, hat das zweite Netz wie das erste 1241
+Knoten, ohne „Knoten ohne Element“, und das Protokoll nennt „1229 Knoten des
+alten Netzes entfernt“. Entfernt werden nur Knoten der gelöschten Elemente,
+an denen nichts mehr hängt; ein gesetzter Knoten, an dem noch nichts hängt
+(etwa für eine spätere Linie), bleibt stehen. Gemessen ist beides ohne
+Oberfläche, mit der Funktion hinter „Netz → Vernetzen“, nicht in der
+laufenden Oberfläche. Der Text der
+Warnung nennt beide Fälle, ebenso der Text des Risses. Ein
 FEHLER ist die Lücke, wenn alle Lücken eines Körpers zusammen mehr als 0,5 % seines Volumens
 ausmachen. Das ist dieselbe Grenze wie bei der Volumenbilanz. Ein verdrehter
 Sechsflächner am Rand oder in der Ecke ist keine Lücke, sondern bleibt ein
@@ -4544,55 +5503,461 @@ ist ein Element an der Oberfläche eine Lücke, das an Knoten losgelöst ist
 an seinen drei Knoten auf der Randfläche oder an allen vier losgelöst, hängt
 nur noch an einem Knoten oder schwebt. Seine freien Seiten und die der
 Nachbarn haben ihren Rand auf der Randfläche wie bei einer Lücke, es fehlt
-aber nichts. Gemessen: FEHLER „Seiten im Inneren 6“. Ebenfalls
+aber nichts. Gemessen: FEHLER „Seiten im Inneren 6“. Bis zum 23.09.2026
+galt das nur, solange die neuen Knoten genau am alten Ort lagen: schon bei
+0,01 mm Versatz stand nur eine „Lücke im Netzrand“ von 651 cm³ da, ohne
+Rückfrage. Heute ist es bis 2 mm Versatz (1,6 % der Kante) ein FEHLER mit 6 Seiten;
+bei 5 mm und 1 cm bleibt ein FEHLER mit 4 Seiten, daneben steht aber eine
+„Lücke“ von 326 cm³, obwohl nichts fehlt. Ebenfalls
 FEHLER bleiben Hohlräume, die ringsum von Nachbarseiten eingeschlossen sind,
 auch wenn sie die Oberfläche an einer Kante berühren. Gemessen an einem
 Würfel mit angehobener Ecke, frei mit Netzweite 0,1 m vernetzt: FEHLER
-„Seiten im Inneren 4“. Eine Abhilfe ist dafür nicht gemessen.
+„Seiten im Inneren 4“. Eine Abhilfe ist dafür nicht gemessen. Ein FEHLER
+blieb auch eine Kerbe durch die ganze Dicke am Rand einer Platte
+1 × 1 × 0,125 m aus 16 × 16 × 2 Sechsflächnern, zwei Zellen groß:
+„Seiten im Inneren 6“ (gemessen 23.09.2026). Ihr Rand läuft über Deckel,
+Boden und Seitenfläche, und von einem Punkt aus lässt sich das fehlende
+Stück dort nicht ausmessen. An dünnen Platten kann dieselbe Kerbe anders
+ausgehen. Nach dem Programmtext entscheiden drei Abfragen nacheinander.
+Erstens zählt eine Seite der Kerbe zur Oberfläche, wenn ihr Schwerpunkt
+höchstens 1 % ihres Durchmessers neben Deckel oder Boden liegt. In der
+obersten und der untersten Elementlage ist das so, wenn die Zelle in der
+Ebene mindestens rund 50-mal so breit ist wie die Lage dick. Zählen alle
+Seiten der Kerbe zur Oberfläche, meldet nur noch die Volumenbilanz, und
+die erst ab 0,5 % des Körpers. Zweitens gelten die übrigen Seiten als
+Hohlraum, wenn ihre Öffnung höchstens 10 % ihrer Fläche ausmacht; bei
+einer rechteckigen Kerbe ist das so, wenn sie mehr als 4,5-mal so tief
+wie breit ist. Das ergibt FEHLER „Seiten im Inneren“. Drittens wird die
+Kerbe sonst eine Lücke, wenn die halbe Dicke höchstens 1 % der
+Raumdiagonale der Kerbe beträgt; die Abnahme misst dann von der Mitte der
+Dicke aus. Ist die halbe Dicke größer, bleibt es FEHLER „Seiten im
+Inneren“. Gemessen am 24.09.2026, die Zellweite in der Ebene in Klammern:
+
+* Blech 4 × 4 × 0,005 m aus einer Lage (50 mm), Kerbe 0,2 × 0,2 m
+  (200 cm³): WARNUNG „Lücke im Netzrand“ mit 133 cm³, also zwei Dritteln.
+  Dieselbe Kerbe im Blech 2 × 2 × 0,005 m (50 mm): FEHLER „Volumenbilanz“
+  und FEHLER „Lücke im Netzrand“ 133 cm³.
+* Im Blech 4 × 4 × 0,005 m (50 mm) blieben tiefe Kerben FEHLER „Seiten im
+  Inneren“: 0,1 × 0,5 m (22) und 0,05 × 0,3 m (13), 5- und 6-mal so tief
+  wie breit. Eine Kerbe 0,1 × 0,4 m (4-mal so tief) wurde eine Lücke
+  (133 von 200 cm³).
+* Kerbe 0,1 × 0,1 m im Blech 2 × 2 × 0,005 m (50 mm): Die halbe Dicke,
+  2,5 mm, liegt über 1 % der Raumdiagonale, 1,4 mm: FEHLER „Seiten im
+  Inneren 6“.
+* Platte 10 × 10 × 0,01 m, Kerbe 0,5 × 0,5 m (2 500 cm³, 0,25 % des
+  Körpers), mit einer, zwei oder drei Lagen: bei 125 mm je WARNUNG „Lücke im
+  Netzrand“ 1 667 cm³, bei 500 mm je keine Meldung. Bei 250 mm mit einer
+  Lage 1 667 cm³, mit zwei Lagen keine Meldung, mit drei Lagen 556 cm³. Die
+  Zahl der Lagen entscheidet also nicht für sich, sondern über den Abstand
+  der Seiten zu Deckel und Boden: Bei 250 mm und zwei Lagen ist die Zelle
+  50-mal so breit wie die Lage dick, alle Seiten der Kerbe zählen zur
+  Oberfläche; bei drei Lagen zählen die Seiten der beiden äußeren Lagen
+  dazu, die der mittleren nicht.
+
+Fehlen die zwei Zellen der Platte 1 × 1 × 0,125 m dagegen mitten in der
+Platte, ist das Loch durch die ganze Dicke eine Lücke mit ihrem Volumen
+(488 cm³).
+
+**Auch eine dünne Lücke ist eine Lücke** (seit 23.09.2026). Ob einer offenen
+Gruppe an der Oberfläche ein Stück fehlt, entschied vorher ihre mittlere
+Dicke: War sie höchstens 5 % der längsten Kante, galt die Gruppe als „Ufer
+ohne Volumen“ und blieb ein FEHLER „Seiten im Inneren“. So wurde am frei
+vernetzten L-Prisma (Netzweite 0,2 m, 1493 Tetraeder, ohne Befund) ein von
+Hand gelöschter flacher Tetraeder am Deckel (164 cm³, Dicke 2,87 % der
+längsten Kante) ein FEHLER, ebenso zwei Nachbarn (250 und 224 cm³). Heute
+sind es Lücken mit genau diesen Volumina (am selben Netz, das die Prüfungen
+dafür festhalten; der Vernetzer vom 23.09.2026 gibt dort 1364 Tetraeder mit
+anderen Nummern). Dass hinter einer offenen Gruppe
+nichts fehlt, zeigt dagegen ein **Gegenüber**: Die Ufer einer Trennfläche aus
+doppelten Knoten oder eines T-Stoßes schließen jedes für sich mit der
+Randfläche den Block dahinter ein, obwohl er vernetzt ist. Das erkennt die
+Abnahme an den doppelten und hängenden Knoten. Gemessen an einem
+8 × 8 × 8-Netz des Würfels 1 × 1 × 1 m: die Eckzelle mit eigenen Knoten
+abgetrennt, 0,01 oder 1 mm versetzt, vorher „Lücke im Netzrand“ 1953 cm³
+(Warnung) neben FEHLER 3; die Eckzelle in 2 × 2 × 2 Zellen geteilt (T-Stoß),
+in Tetraeder zerlegt vorher nur „Lücke im Netzrand“ 3906 cm³ als Warnung,
+ohne Rückfrage vor dem Rechnen. Heute ist beides ein FEHLER „Seiten im
+Inneren“ mit der Ursache doppelte bzw. hängende Knoten. Eine Folge an einem
+Netz des eigenen Vernetzers: An der Platte 1 × 0,6 × 0,2 m mit einer Bohrung
+r 0,1 m, direkt mit dem freien Vernetzer vernetzt (Ziellänge 0,04 m, 30 013
+Tetraeder), sind 8 der 12 Seiten, die vorher FEHLER waren, jetzt zwei Lücken
+von zusammen 0,33 cm³; 4 Seiten bleiben ein FEHLER. Über „Netz → Vernetzen“
+(`mesher.modell_vernetzen`, 19 599 Tetraeder) hat dieselbe Platte keinen
+Befund.
+
+**Die Ursache im Text** (seit 23.09.2026). Der FEHLER „Seiten im Inneren“
+nennt, was an den Seiten gefunden wurde, und an wie vielen: ein verdrehtes
+Element (nur, wenn eine Kante des Elements über die Diagonale einer
+Nachbarseite läuft); doppelte Knoten, also
+ein losgelöstes Element oder ein losgelöster Bereich (zwei Nummern am selben
+Ort; ein Knoten, den nur ein Element benutzt und der nicht in einer Ecke des
+Körpers liegt – an einem Ufer, dessen Rand auf der Randfläche liegt, nur,
+wenn ein anderer Knoten näher liegt als die halbe kürzeste Kante an den
+beiden; eigene Knoten neben denen des Nachbarn, ohne dass die Ufer dort eine
+Ecke teilen; oder an einem solchen Ufer eine Seite, neben der eine Kopie aus
+eigenen Knoten liegt – an einem ringsum geschlossenen Hohlraum aber
+nur, wenn von ihm nach Abzug der losgelösten Bereiche darin höchstens das
+halbe mittlere Element an ihm bleibt, siehe unten); hängende Knoten (Knoten
+des einen Ufers liegen auf den Seiten des anderen, ohne deren Ecken zu sein,
+und die Ufer teilen dort Ecken, etwa an einem T-Stoß; oder Knoten liegen auf
+einer Kante zwischen ihren Enden, weil eine Zelle nur in einer oder zwei
+Richtungen feiner geteilt ist); einen
+Hohlraum im Netz; einen **Netzrand, der die Randfläche verfehlt**; oder
+**keine sicher bestimmte Ursache** mit den möglichen (siehe unten).
+Vorher stand immer „ein verdrehtes Element, doppelte Knoten oder ein
+Hohlraum“ da. Ein T-Stoß von Sechsflächnern – links ein Würfel
+1 × 1 × 1 m, rechts derselbe in 2 × 2 × 2 geteilt, die Knoten der feinen
+Seite liegen auf der Seite des groben – ist ein FEHLER mit 5 Seiten, in
+Tetraeder zerlegt mit 10; liegt die geteilte Zelle mitten in einem Netz aus
+3 × 3 × 3 Würfeln, sind es 30 bzw. 60 Seiten. Das war schon vorher so. Ein
+Riss ist das nicht, weil die Ufer offen sind (ihr Rand liegt auf der
+Randfläche) bzw. zu dick. Ob die Ufer eine Kante teilen, fragt die Abnahme
+dabei nicht: Im Schachbrett aus 8 × 8 × 8 Würfeln, jeder zweite in
+2 × 2 × 2 geteilt, gelten die feinen Ufer als „Riss im Netz“ (5376 Seiten)
+und nur die groben als FEHLER (1344 Seiten); mit 4 oder 6 Würfeln je Kante
+ist alles ein FEHLER (gemessen, vorher ebenso). Neu ist, dass der Text die
+hängenden Knoten nennt. Die erste Fassung dieser Ursachen (23.09.2026)
+suchte hängende Knoten nur an Ufern, deren Rand auf der Randfläche liegt,
+und Knoten, die nur ein Element benutzt, nur an geschlossenen Hohlräumen.
+So hieß der T-Stoß mitten im Netz „verdrehtes Element“ und „Hohlraum“, die
+groben Ufer des Schachbretts „Netzrand verfehlt die Randfläche“ mit dem Rat
+zum Sweep, und ein Element an der Seitenfläche des 8 × 8 × 8-Netzes (Kante
+125 mm), das an seinen Knoten auf der Randfläche losgelöst und um mehr als
+1 % der Kante versetzt war, hieß „hängende Knoten“ (Tetraeder, 1,25 bis
+2,5 mm; ebenso die abgetrennte Eckzelle bei 2 und 5 mm) oder „verdrehtes
+Element“ (Sechsflächner, 1,3 bis 5 mm). Seit dem 24.09.2026 heißen diese
+Fälle „hängende Knoten“ bzw. „doppelte Knoten“, gemessen an allen genannten
+Versätzen. Diese Fassung hatte noch zwei Grenzen, gemessen im selben Netz an
+einem inneren Block aus 2 × 2 × 2 Würfeln mit eigenen Knoten auf seiner
+Oberfläche. In Tetraeder zerlegt hieß der Block „hängende Knoten“ bei 2 und
+3 mm Versatz in Richtung (1 | 1 | 1)/√3 und bei 2 bis 10 mm in Richtung
+(0,6 | 0 | 0,8), obwohl kein Ufer feiner geteilt ist (bis 1 mm „doppelte
+Knoten“). Ab 4 mm in Richtung (1 | 1 | 1)/√3 hieß er an allen 96 Seiten
+„Hohlraum“: Liegen die Knoten weiter als 1 % der längsten Seitenkante von
+den Seiten des anderen Ufers entfernt, findet die Abnahme nicht mehr, dass
+sie auf diesen Seiten liegen. Ebenso hießen beim Sechsflächner 292 (an allen
+acht Knoten losgelöst) und beim Sechsflächner-Block ab 3 mm in Richtung
+(1 | 1 | 1)/√3 die Seiten der Nachbarn „Hohlraum“. Seit der Nachbesserung
+vom selben Tag heißen Knoten auf den Seiten des anderen Ufers nur dann
+„hängende Knoten“, wenn wenigstens eine dieser Seiten eine Ecke mit ihrem
+eigenen Ufer teilt; Seiten, die ringsum Elemente umschließen, sind kein
+Hohlraum; und ein Hohlraum, in dem ein losgelöster Bereich liegt, gehörte zu
+diesem. Beide Blöcke und der Sechsflächner 292 heißen seitdem an allen Seiten
+„doppelte Knoten“ (gemessen bei 1 bis 10 mm in Richtung (1 | 1 | 1)/√3 und
+2 bis 10 mm in Richtung (0,6 | 0 | 0,8)). Der fehlende Sechsflächner 292 und
+der fehlende Tetraeder-Block hießen dabei weiter „Hohlraum“, und Ufer, die
+verschieden geteilt sind und nur die Ecken ihrer Zellen teilen (2 × 2 gegen
+3 × 3), heißen weiter „hängende Knoten“. Hängt der Tetraeder-Block an einem
+seiner Knoten am übrigen Netz, teilen die Ufer dort eine Ecke: bei 2 mm in
+Richtung (1 | 1 | 1)/√3 heißt er „hängende Knoten“, bei 5 mm „doppelte
+Knoten“. Der Text beschreibt nur, was gefunden wurde, und nennt den T-Stoß
+als Beispiel.
+
+Auch diese Fassung hatte Grenzen (zweite Gegenprüfung vom 24.09.2026,
+gemessen im selben Netz). Ein Hohlraum, in dem ein losgelöster Bereich lag,
+hieß ganz „doppelte Knoten“, auch wenn der Bereich ihn nicht ausfüllte:
+Fehlte der Würfel 292 und war sein Nachbar 293 an allen acht Knoten
+losgelöst und 3 bis 10 mm versetzt, stand „doppelte Knoten an 16 Seiten“ da,
+und das fehlende Element kam im Text nicht vor; ebenso, wenn der Block aus
+3 × 3 × 3 Würfeln bis auf den mittleren fehlte, der frei darin schwebte
+(60 Seiten). Bei 0 und 1 mm Versatz hieß ein solcher Hohlraum schon vorher
+so, weil die doppelten Knoten auf seinen Seiten liegen. Fehlten Würfel so,
+dass ein anderer in den Hohlraum hineinragt – drei in L-Form, sieben als
+Kreuz, ein Block aus 2 × 2 × 2 ohne eine Ecke –, hieß der Hohlraum
+„verdrehtes Element“ oder „doppelte Knoten“: Eine Kante, die danach nur
+noch ein Element trägt, galt als verdreht, und die Ecke des hineinragenden
+Würfels benutzt nur ein Element. In Tetraeder zerlegt hießen dieselben
+Hohlräume richtig „Hohlraum“. Und war eine Zelle nur in einer oder zwei
+Richtungen feiner geteilt, sodass beide Ufer Kanten teilen, hieß dieser
+T-Stoß „verdrehtes Element“, in Tetraedern „Hohlraum“ oder „doppelte
+Knoten“. Seither gilt: Ein ringsum geschlossener Hohlraum heißt nur dann
+„doppelte Knoten“, wenn von ihm nach Abzug der losgelösten Bereiche darin
+höchstens das halbe mittlere Element an ihm bleibt, sonst „Hohlraum“ – auch
+wenn doppelte Knoten auf seinen Seiten liegen oder ein Knoten an ihm nur von
+einem Element benutzt wird (am Block aus 2 × 2 × 2 Würfeln ohne eine Ecke
+ist das die Ecke des Würfels, der hineinragt). An einem solchen Hohlraum ist
+ein Element nur verdreht, wenn seine Kante über die Diagonale einer
+Nachbarseite läuft. Knoten auf einer Kante zwischen ihren Enden, die mit
+beiden Enden über Kanten verbunden sind, heißen „hängende Knoten“. Gemessen
+am 24.09.2026: 292 fehlt und 293 losgelöst bei 0, 3 und 10 mm „doppelte
+Knoten an 6 Seiten; ein Hohlraum an 10 Seiten“, der schwebende mittlere
+Würfel „doppelt 6; Hohlraum 54“ (in Tetraedern 12 und 108), die Hohlräume in
+L-Form, als Kreuz und als Block ohne Ecke „Hohlraum“, die nur in einer oder
+zwei Richtungen geteilten Zellen „hängende Knoten“ (als Würfel und die
+beiden, die in Tetraedern ein FEHLER sind). Die losgelösten Bereiche, die
+ihren Hohlraum ausfüllen, heißen weiter „doppelte Knoten“, ebenso der Spalt
+an einem losgelösten Knoten, gemessen bis 30 mm Versatz; verdrehte Würfel
+heißen weiter „verdrehtes Element“. Die Zahlen stehen im Theoriehandbuch.
+Ein verdrehtes
+Element in der Ecke des Körpers bleibt
+„verdrehtes Element“: Den Eckknoten benutzt auch im richtigen Netz nur ein
+Element. Den Netzrand, der die Randfläche verfehlt, findet die
+Abnahme an konformen Netzen des eigenen Vernetzers (jede innere Seite genau
+zweimal): am U-Prisma 1,5 × 1 × 0,5 m mit Netzweite 0,3 m (1113 Tetraeder)
+laufen 4 freie Seiten an den einspringenden Kanten durch den Körper; an der
+Platte 0,6 × 0,6 × 0,035 m mit einer Bohrung r 6 mm (24-Eck, Ziellänge
+0,05 m, 24 712 Tetraeder) sind es 110 Seiten. Kein Element ist dort verdreht,
+kein Knoten doppelt, und „neu vernetzen“ allein ergibt dasselbe Netz (an
+beiden nachgemessen: dieselben Elemente, dieselben Knotenlagen, derselbe
+Befund). Der
+Text nennt darum die Abhilfe, die gemessen gewirkt hat: „Sechsflächner
+sweepen“ – das U-Prisma hat dann 32 Sechsflächner und 16 Keile, die Platte
+908 und 24, beide ohne Befund. Ein Halt vor dem Rechnen bleibt es: An der
+Bohrung fehlt dem Netz Material bis 3,17 mm hinter der Wand (gemessen an
+einem Netz derselben Platte, direkt mit dem freien Vernetzer, 14 242
+Tetraeder), und am U-Prisma hat das Netz 0,067 % mehr Volumen als der
+Körper.
+
+Die dritte Gegenprüfung vom 24.09.2026 fand zwei Fälle, in denen der Text
+eine falsche Ursache nannte, beide an Ufern, deren Rand auf der Randfläche
+liegt (gemessen am 8 × 8 × 8-Netz des Würfels 1 × 1 × 1 m, Kante 125 mm).
+Fehlen an der Seitenfläche Würfel so, dass eine **Mulde mit einspringender
+Kante** entsteht – drei in L-Form, vier als T, das L zwei Lagen tief, das L
+an einer Kante des Körpers –, hieß das „doppelte Knoten“ an 11, 14, 19 bzw.
+9 Seiten: Den Knoten an der einspringenden Kante benutzt danach nur noch der
+Würfel dahinter, und dessen Kante dort trägt kein anderes Element. In
+Tetraeder zerlegt ist dieselbe Mulde eine „Lücke im Netzrand“. Und war der
+Körper **ganz durchtrennt** – in Tetraedern, die Hälfte x > 0,5 mit eigenen
+Knoten auf der Schnittebene, 3 mm oder mehr versetzt –, hieß das „der
+Netzrand verfehlt die Randfläche … kein Knoten doppelt“ mit dem Rat zum
+Sweep: Die Knoten liegen weiter als 1 % der Kante auseinander, und jeden
+benutzen mehrere Elemente. Seither gilt an solchen Ufern: Ein Knoten, den nur
+ein Element benutzt, heißt nur dann losgelöst, wenn ein anderer Knoten
+näher liegt als die halbe kürzeste Kante (an der Mulde liegt der nächste
+eine ganze Kante weit weg, an losgelösten Elementen bis 30 mm Versatz
+höchstens beim 0,27-Fachen); verdreht heißt ein Element nur, wenn seine Kante
+über die Diagonale einer Nachbarseite läuft; und eine Seite, neben der eine
+Kopie aus eigenen Knoten liegt, heißt „doppelte Knoten“. Die Nähe allein
+entscheidet dabei nicht: An einem Netz des eigenen Vernetzers (Stufe
+d 0,45 mm, Dicke 0,02 m) liegen zwei Knoten beim 0,27-Fachen der Kante
+beieinander, eine Kopie einer Seite gibt es dort nicht. Lässt sich die
+Ursache so nicht sicher bestimmen, sagt der Text das und nennt die
+möglichen: eine Mulde, ein verdrehtes Element, dessen Kanten nicht über die
+Diagonalen der Nachbarseiten laufen, oder ein losgelöstes Element, weiter
+als die halbe Kante versetzt. Gemessen: die Mulden heißen „keine sicher
+bestimmte Ursache“, der durchtrennte Körper bei 3 bis 30 mm Versatz in
+beiden Richtungen „doppelte Knoten“, solange beide Hälften die Schnittfläche
+gleich in Dreiecke teilen (ist sie verschieden geteilt, heißt derselbe Schnitt
+weiter „der Netzrand verfehlt die Randfläche“, und der Text sagt, dass
+doppelte Knoten dann nicht ausgeschlossen sind), ebenso ein Körper, der von unten her
+bis zur Mitte eingerissen ist (10 und 30 mm); der Befund selbst ist in allen
+Fällen derselbe. Verdrehte Würfel an der Seitenfläche, deren Deckel um eine
+Ecke versetzt ist, heißen weiter „verdrehtes Element“, losgelöste Elemente
+an der Seitenfläche (bis 30 mm) weiter „doppelte Knoten“, die Netze des
+eigenen Vernetzers (U-Prisma, Platte mit Bohrung, Lochplatte, Stufe) weiter
+„Netzrand verfehlt die Randfläche“. Ist der Deckel eines Würfels an der
+Seitenfläche um zwei Ecken versetzt, laufen seine Kanten durch die
+Zellmitte statt über eine Diagonale; bis dahin hieß er „verdrehtes
+Element“, jetzt „keine sicher bestimmte Ursache“ – dieselben Merkmale hat
+die Mulde. Dass zwei Knoten näher als 1 % der Kante „doppelt“ sind, hält
+seither eine eigene Prüfung fest: Ein Körper, der in Tetraedern von unten
+bis zur Mitte eingerissen ist, 0,002 bis 1 mm versetzt, ist ein FEHLER und
+kein „Riss im Netz“, auch an Würfeln von 10 m und 0,1 m Kantenlänge
+(0,8 % der Zellkante).
 
 **Windschiefe Randflächen.** Ein Tetraedernetz liegt auf einer windschiefen
 (bilinearen) Fläche auf Sehnen, und der freie Vernetzer setzt Knoten auf Sehnen
 seines groben Dreiecksnetzes: am Würfel 1 × 1 × 1 m mit um 0,5 m angehobener
-Deckelecke (Netzweite 0,25 m) bis 7,55 mm neben der Fläche. Bis zum 23.09.2026
-meldete die Abnahme solche richtigen Netze als FEHLER (2 bis 53 „Seiten im
-Inneren“, bei Netzweite 0,5 m und um 1 m angehobener Ecke dazu „Volumenbilanz
-0,782 %“). Jetzt gilt an windschiefen Flächen eine Grenze aus der Verwindung
+Deckelecke (Netzweite 0,25 m) bis 7,55 mm neben der Fläche. Damit solche
+richtigen Netze nicht als FEHLER dastehen, gilt an windschiefen Flächen eine
+Grenze aus der Verwindung
 der Fläche und dem größten Seitendurchmesser **in der Nachbarschaft** der
 Seite: unter den Seiten, die höchstens drei Ringe über gemeinsame Knoten
 entfernt sind. Im Beispiel sind das 13,2 bis 19,7 mm. Außerdem muss die Seite
 in die Richtung der Fläche zeigen: Richtige Netze lagen gemessen bis 9,7°
 daneben, die Grenze liegt bei 30° und mehr. Die Volumenbilanz lässt das
-Volumen zu, das der Netzrand dort erklären kann. Die erste Fassung vom selben
-Tag nahm den größten Seitendurchmesser der **ganzen** Fläche und keine
-Richtung. In einem abgestuften Netz (20:1, Deckel z = 1 + 0,5·x·y) lag die
-Grenze so bei rund 24 mm, und ein verdrehtes Element der obersten Lage blieb
-ohne Meldung. Heute ist es ein FEHLER „Seiten im Inneren“: Seine Seiten
+Volumen zu, das der Netzrand dort erklären kann. Ein verdrehtes Element der
+obersten Lage eines abgestuften Netzes (20:1, Deckel z = 1 + 0,5·x·y) ist
+ein FEHLER „Seiten im Inneren“: Seine Seiten
 stehen 81 bis 90° gegen den Deckel. Gemessen an 324 Fällen (Abstufung 1:1,
 5:1, 20:1 und 50:1, Ecke um 0,3, 0,5 und 1,0 m angehoben, neun Zellen der
 beiden obersten Lagen, Deckel um eine Ecke vor, zurück und um zwei versetzt)
-war jeder ein FEHLER. In der zweiten Fassung vom selben Tag waren 75 davon nur
-ein „Riss im Netz“, weil die Riss-Regel an länglichen Zellen versagte (siehe
-oben).
+war jeder ein FEHLER.
 Ein verdrehtes Element in der groben Ecke, wo die
 oberste Lage dünn ist gegen die Sehne, findet nur die Richtung: Seine Ecken
 liegen bei 20:1 17 bis 18 mm neben dem Deckel, seine Seiten stehen 57 bis 87°
-dagegen. Die Kehrseite: kleinere Abweichungen des Netzrands meldet
-die Abnahme an windschiefen Flächen nicht. Am abgebildeten 4 × 4 × 4-Netz
-desselben Würfels bleibt eine Beule von 25 mm ungenannt, eine von 30 mm steht
-als Warnung da. Ist die Ecke um 1 m angehoben, bleibt dort selbst eine Beule
-von 100 mm ungenannt.
+dagegen. Die Kehrseite: Kleinere Abweichungen des Netzrands meldet die
+Abnahme an windschiefen Flächen nicht, soweit sie in die Sehne fallen. Die
+Sehne liegt aber zwischen den Knoten. Seit 23.09.2026 gilt die Grenze
+deshalb nur noch für Ecken von Dreiecksseiten, deren Knoten der freie
+Vernetzer auf Sehnen setzt. Die Ecken von Viereckseiten (Sechsflächner,
+Keile, Pyramiden aus dem abgebildeten Netz oder dem Sweep) dürfen nur 1 %
+der Seitengröße danebenliegen; am abgebildeten 4 × 4 × 4-Netz liegen sie
+gemessen 0,0000 mm neben dem Deckel. Vorher blieb an diesem Netz ein
+Deckelknoten, der 25 mm nach außen verschoben war, ungenannt; bei einer um
+1 m angehobenen Ecke waren es an den neun inneren Deckelknoten 80 mm
+senkrecht nach außen und an sechs von ihnen 100 mm in z nach oben. Jetzt gilt
+am selben Netz, gemessen am 24.09.2026 an allen 21 Deckelknoten außer den
+vier Ecken: Ein Knoten 3,5 mm neben dem Deckel bleibt ungenannt. Die erste
+Warnung „Netzrand neben der Hülle“ kommt senkrecht zur Fläche verschoben
+zwischen 3,5 und 4,0 mm (Ecke um 0,5 m angehoben) bzw. 3,6 und 5,2 mm (um
+1 m), nach außen wie nach innen. Für die windschiefe Fläche ist dabei der
+Abstand des Knotens senkrecht zu ihr maßgebend, nicht die Richtung der
+Verschiebung: In z verschoben braucht es an den steileren Stellen mehr, bis
+4,7 bzw. 8,2 mm. Ab 5 mm (Ecke um 0,5 m) bzw. 7 mm senkrecht und 8,5 mm in z
+(um 1 m) warnt die Abnahme an allen 21 Knoten. Eine tiefere Delle meldet sie
+als Lücke im Netzrand: 20 mm senkrecht nach innen an allen neun inneren
+Deckelknoten (als Warnung, über 0,5 % des Körpers als FEHLER), an Randknoten
+zum Teil als FEHLER „Seiten im Inneren“; bei 100 mm steht an allen neun
+inneren Knoten dazu ein FEHLER „Volumenbilanz“ (gemessen am 24.09.2026 mit der
+Regel für dünne Lücken, die seit diesem Tag gilt, siehe „Lücke im Netzrand“).
+Bei um 1 m angehobener Ecke
+und 80 mm senkrecht nach außen kommt an den Randknoten (1|0,5), (1|0,75),
+(0,5|1) und (0,75|1) ein FEHLER „Seiten im Inneren“ dazu: Der Knoten
+verlässt dabei auch die ebene Seitenfläche, dort nach innen (an den zwölf
+Randknoten um 14 bis 48 mm). Am freien Netz bleibt es bei der Grenze: Am
+Würfel mit um 0,3, 0,5 und 1 m angehobener Ecke (Netzweite 0,25 m) und mit um
+1 m angehobener Ecke (Netzweite 0,5 m) meldet die Abnahme nichts.
 
 Geprüft werden Körper, deren Randlinien gerade sind und deren Randflächen eben
-sind oder Vierecke; Körper mit Bögen, Kreisen oder Splines prüft der freie
-Vernetzer schon beim Vernetzen selbst (Volumen gegen Hülle, Randtreue). Was
-tun: Stammt das Netz aus einem Import oder ist es von Hand geändert, den Körper
-neu vernetzen (Netz → Vernetzen). Am abgestuften Netz mit verdrehtem Element
-verschwand damit der Befund „Seiten im Inneren“. Im nachgestellten Fall blieben
-die Knoten des alten Netzes ohne Element stehen und meldeten sich als „Knoten
-ohne Element“. Der eigene Vernetzer ergibt mit denselben Einstellungen
+sind oder Vierecke. Für alle anderen steht seit dem 23.09.2026 eine Warnung
+„Volumenbilanz nicht geprüft“ mit dem Grund im Protokoll: Körper mit Bögen,
+Kreisen oder Splines („krumme Randlinie“), gewölbte Randflächen, die keine
+Vierecke sind, und Hüllen, die nicht dicht sind. Ebenso für Volumenelemente,
+die zu **keinem Körper** gehören, etwa nach dem Import eines reinen Netzes:
+Ohne Randflächen fehlt der Bezug. Vorher stand in beiden Fällen nichts da, und
+die Abnahme hieß „bestanden“ – gemessen am Würfelpaar mit verdrehtem zweitem
+Würfel: mit Körper FEHLER Volumenbilanz und Seiten im Inneren, dasselbe Netz
+ohne Körper oder mit einer Randlinie vom Typ Bogen kein einziger Befund. Die
+Warnung hält nichts an, die Überschrift lautet dann „bestanden, soweit
+geprüft“; sie steht je Körper da. In den Modellen der Prüfsuiten
+test_mesher3d und test_sweep trifft das 32 von 80 Körpern, 31 davon mit
+Bögen (gezählt am 23.09.2026); alle anderen Befunde der 80 Körper sind
+dieselben geblieben. Der freie Vernetzer nimmt Körper mit krummen Randlinien beim
+Vernetzen selbst ab (Volumen gegen Hülle, Randtreue); ob der Sweep oder ein
+abgebildetes Netz eines krummen Körpers einen verdrehten Sechsflächner
+meldet, ist nicht gemessen. Was tun: Stammt das Netz aus einem Import oder
+ist es von Hand geändert, den Körper neu vernetzen (Netz → Vernetzen). Am abgestuften Netz mit verdrehtem Element
+verschwand damit der Befund „Seiten im Inneren“. Bis zum 23.09.2026 blieben
+dabei die Knoten des alten Netzes ohne Element stehen und meldeten sich als
+„Knoten ohne Element“; seither entfernt Netz → Vernetzen sie (siehe oben bei
+der Lücke im Netzrand). Stehen bleiben Knoten, an denen noch etwas hängt: Am
+abgestuften Netz 20:1, neu vernetzt mit der Funktion hinter
+`statik3d --vernetzen` (`mesher.modell_vernetzen`), blieben 117 Knoten des
+alten Netzes ohne Element stehen: Sie tragen ein Knotenlager, und der
+Vernetzer koppelt sie starr an das neue Netz (306 Kopplungen). Bis zum
+23.09.2026 meldete die Abnahme sie als FEHLER „Knoten ohne Element … eine
+Last darauf ginge verloren“, obwohl das Modell trägt (Fz = −100 kN und
+Fx = 100 kN an einer Deckelecke, Summe der Lagerkräfte in z 100 000,0 N).
+Seither zählt ein
+Knoten nicht als „ohne Element“, der über Kopplungen oder einen starren
+Körper (RBE2) in allen drei Richtungen am Netz gehalten ist, auch über eine
+Kette solcher Verbindungen. Der Master einer Verteilkopplung (RBE3) zählt
+nur, wenn seine Slaves alle gehalten sind und ihn festlegen – nicht bei
+einem einzigen Slave neben dem Master, bei zwei Slaves oder bei Slaves auf
+einer Linie, wenn der Master neben dieser Linie steht. Was die Abnahme
+nicht in allen drei Richtungen gehalten findet, bleibt ein FEHLER; wo der
+Halt wirklich fehlt, geht die Last verloren, oder die Rechnung bricht ab.
+Gemessen am 24.09.2026 an einem Würfel aus 2 × 2 × 2 Elementen, 1000 N am
+Knoten: Eine Kopplung nur in z trägt die Last in z, die in x und y bleibt
+als Lagerkraft am Knoten selbst stehen; ebenso ein Spaltelement allein,
+dazu bricht Zug ab; am Slave eines RBE3 mit losem Master bricht jede Last
+ab (Gleichungssystem singulär); ein loser RBE3-Master 0,3 m über einem
+einzigen Deckelknoten trägt nur in z, über zwei Deckelknoten oder über
+einer Reihe von drei nicht quer zur Reihe (steht er auf der Reihe, trägt er
+in allen drei Richtungen); ein RBE2 mit einem einzigen Slave an einem
+Volumenknoten hält nur in Richtung des Versatzes (an einem Schalenknoten
+und am Ende eines am Anfang eingespannten Stabs ohne Gelenk in allen drei).
+Am Stabende hält ein RBE2 seinen Slave nur so weit, wie sich das Stabende
+nicht verdrehen kann. Die Biegung um eine Achse hält der Stab, wenn an
+diesem Ende kein Momentengelenk um sie sitzt: Mit dem Gelenk um die lokale
+z-Achse eines Stabs in x am Master-Ende und dem Slave 0,5 m daneben in z
+trugen alle drei Lasten, mit dem Slave daneben in x oder in y brach je
+eine ab (in y bzw. in x). Die Drehung um die Stabachse (Torsion) hält der
+Stab dagegen nur, wenn er an keinem Ende ein Torsionsgelenk hat und sein
+anderes Ende sich nicht um die Achse drehen kann – etwa weil es
+eingespannt ist oder ein weiterer Stab es über seine Biegung hält. Mit dem
+Torsionsgelenk am eingespannten Anfang und dem Slave in y
+brach die Last in z ab; mit beiden Enden nur in x, y und z gelagert ging
+die Kraft zwar in die Lager, das Moment um die Stabachse aber verloren.
+Beides meldet die Abnahme als FEHLER „Knoten ohne Element“, wie schon bis
+zum 23.09.2026, als sie jeden Knoten ohne Element so meldete (am 24.09.2026
+an beiden Fällen mit dem Slave in y und in z am damaligen Stand
+nachgemessen).
+Die Slaves eines RBE3 zählt die Abnahme nicht als angeschlossen, auch
+wenn der Master ein Element hat: Ein RBE3 verteilt eine Last am Master auf
+die Slaves, ohne sie zu versteifen. Die Rechnung kann einen solchen Slave
+trotzdem festlegen – am Würfel (Master am mittleren Deckelknoten, Slaves
+die acht übrigen Deckelknoten und ein loser Knoten daneben) gingen Lasten
+in +x, +y, +z, −z und −x am losen Slave ganz in die Lager. Die Meldung
+nennt solche Knoten darum eigens („Davon als Slave eines RBE3 …“) und sagt
+nicht, dass die Last verloren geht. Ein Anschlag – ein Knoten, der in x, y und z starr
+gelagert ist und über ein Spaltelement am Tragwerk hängt, wie im Beispiel
+„Kontakt: abhebendes Lager“ – gilt als angeschlossen: Eine Last auf ihm geht
+in sein Lager. Eine Kopplung ohne wirksame Richtung schließt
+nichts an, ein wirklich loser Knoten bleibt ein FEHLER. An echten Importen (RFEM,
+InfoCAD) ist das nicht gemessen. Der eigene Vernetzer ergibt mit denselben Einstellungen
 dasselbe Netz, an fünf Prismen nachgemessen. Bei Befunden an seinen Netzen
 hilft neu vernetzen allein also nicht; was bei einer Lücke im Netzrand
 geholfen hat, steht oben.
+
+**Gefaltetes Tetraedernetz** (seit 23.09.2026). Wird ein Knoten durch die
+gegenüberliegende Seite seiner Tetraeder geschoben, stülpen sie sich um und
+überdecken ihre Nachbarn. Beim Tetraeder mit vier Knoten nehmen Formgüte,
+Elementvolumen und die Rechnung selbst den Betrag des Volumens. Am Würfel
+1 × 1 × 1 m, 10 × 10 × 10 Zellen in je sechs Tetraeder geteilt, den mittleren
+Knoten 665 um das 1,2-fache der Zellweite verschoben: sechs Tetraeder
+umgestülpt, und die Abnahme ohne diese Prüfung meldete nichts. Um das
+1,5-fache verschoben und oben waagerecht belastet, lag die Vergleichsspannung
+an diesen sechs bei 192,5 bis 247,3 kPa, an den Elementen um denselben Knoten
+im unverschobenen Netz bei 281,0 bis 329,1 kPa; die mittlere Verschiebung oben
+änderte sich nur um −0,055 %. Im Ganzen sieht man es dem Ergebnis also nicht
+an. Jetzt prüft die Abnahme jede Seite, die genau zwei Tetraeder teilen: die
+beiden Knoten, die ihr gegenüberliegen, müssen beiderseits ihrer Ebene
+liegen. Liegen sie auf derselben Seite, ist das Netz dort gefaltet („FEHLER: [Netz
+gefaltet] Volumen K1: 6 Tetraeder liegen umgestülpt zwischen ihren Nachbarn
+(Elemente 3266, 3267, 3271, 3328, 3330, 3335, alle an den Knoten 665, 786) …“).
+Welche der Nachbarn die umgestülpten sind, entscheidet der Zusammenhang: in
+jedem zusammenhängenden Netz die kleinere der beiden Gruppen.
+
+Im Netzvolumen zählt jedes umgestülpte Tetraeder mit seinem Volumen, statt es
+abzuziehen; das Netzvolumen ist also um das Doppelte seines Volumens größer
+als ohne die Faltung. In eine Volumenbilanz geht das nur ein, wo es eine
+gibt: für die Elemente eines Körpers, dessen Randlinien gerade und dessen
+Randflächen eben oder Vierecke ohne Öffnung sind. Im Würfel eben sind es
+400 cm³ oder 0,04 %, unter ihrer Grenze 0,5 %; bei 4 × 4 × 4 Zellen macht
+derselbe Schub 0,625 %, und die Volumenbilanz meldet es neben der Faltung.
+Dasselbe Netz als Nastran-Datei gelesen, also ohne Körper, hat keine
+Volumenbilanz, ebenso ein frei vernetzter Zylinder aus Bogenlinien
+(1022 Tetraeder), in dem ein innerer Knoten um das 1,3-fache der Netzweite
+verschoben ist: 1,643 % mehr als das ungefaltete Netz, und nur „Netz
+gefaltet“ meldet etwas. Gegen den Zylinder selbst ist dieses Netz dabei nicht
+zu groß: Seine Randseiten sind eben, und schon ungefaltet hat es 1,637 %
+weniger Volumen als der Zylinder, gefaltet noch 0,021 % weniger. An zwei
+Würfeln 1 × 1 × 1 m übereinander mit je eigener Trennfläche, der obere frei
+vernetzt mit Netzweite 0,15 m
+(4458 Tetraeder), fand die Abnahme 17 umgestülpte Tetraeder in sechs Gruppen,
+dazu „Volumenbilanz“ 0,800 % — genau das Doppelte ihres Volumens — und
+„Elementgüte“ 0,0195 an einem von ihnen, das zugleich flach ist; die sechs
+Befunde „Netz gefaltet“ dort ergeben zusammen die 8004 cm³, um die die
+Volumenbilanz zu hoch liegt (gemessen am 24.09.2026 mit dem Vernetzer vom
+23.09.2026; vorher 4454 Tetraeder, 0,767 %, 7671 cm³). Jeder Befund „Netz
+gefaltet“ nennt darum, wie viel seine Tetraeder zu viel ins Netzvolumen
+bringen, und dazu die Abweichung der Volumenbilanz ihres Körpers, oder dass
+für ihn keine lief bzw. die Tetraeder zu keinem Körper gehören.
+
+Die Faltung an den zwei Würfeln hat der eigene Vernetzer selbst erzeugt, von
+Hand war kein Knoten verschoben. Mit denselben Einstellungen gibt er dasselbe
+Netz mit derselben Faltung: jeder Aufbau zweimal, bitgleich samt Befunden;
+ebenso ein Würfel mit aufgesetzter Pyramide, zweimal über dieselbe Vernetzung
+wie „Netz → Vernetzen“ vernetzt. Neu vernetzen allein hilft dort also nicht.
+Bei Netzweite 0,5 m unten war der obere Würfel mit 0,12 bis 0,18 m gefaltet
+(in Schritten von 0,01 m, 12 bis 20 umgestülpte Tetraeder), mit 0,19, 0,2 und
+0,25 m nicht; bei 0,15 m blieb er auch mit dem Vernetzer gmsh oder Netgen
+(je 10 umgestülpte) und mit der Nachbesserung MMG3D (17) gefaltet (gemessen
+am 24.09.2026). Jede der sechs Gruppen hängt dort an einem Knoten auf dem
+gemeinsamen Rand beider Würfel (z = 1 m), den auch der untere benutzt. Was an
+diesem Modell half, nennt auch der Befund.
+
+Die Knotenfolge zählt dabei nicht. Sind in einem Tetraeder nur zwei Knoten
+vertauscht, ist seine Jacobi-Determinante negativ, es ist aber dasselbe
+Tetraeder mit anderer Nummerierung und rechnet gleich (am selben Netz
+Element 3330: die Verschiebungen weichen um höchstens 1,5 · 10⁻²⁰ m ab, bei
+4,4 · 10⁻⁶ m größter Verschiebung); die Abnahme bleibt dort still. Die Prüfung
+gilt für Netze aus Tetraedern mit vier Knoten. Am Drehlagermodell
+(645 934 Tetraeder) findet sie nichts und kostet 1,6 bis 2,8 s von 37,6 s für
+die ganze Abnahme (23.09.2026). Lässt sie sich nicht ausführen, steht
+`Faltung nicht geprüft` als Warnung im Protokoll.
 
 **„Bestanden" heißt nicht „nicht geprüft".** Zwei der Teilprüfungen fingen
 eine Ausnahme stumm ab und gaben eine leere Liste zurück — und leer heißt in
@@ -4600,8 +5965,8 @@ der Abnahme ausdrücklich „das Netz ist abgenommen". Ein Modell, dessen
 Lagerung in einer Richtung fast nicht hält, wurde damit mit „Abnahme des
 Netzes: bestanden" quittiert. Fällt eine Prüfung heute aus, steht sie als
 eigene Zeile im Protokoll (`Haltegüte nicht geprüft`, `Elementgüte nicht
-geprüft`) und die Überschrift lautet **„bestanden, soweit geprüft (N
-Prüfungen fielen aus)"**. Als Warnung und nicht als Fehler: eine ausgefallene
+geprüft`, `Volumenbilanz nicht geprüft`) und die Überschrift lautet
+**„bestanden, soweit geprüft (N Prüfungen fielen aus)"**. Als Warnung und nicht als Fehler: eine ausgefallene
 Messung ist keine Verletzung des Modells, sie hält den Lauf also nicht an.
 
 Zwei Einzelheiten dazu, beide gemessen:
@@ -4752,6 +6117,12 @@ Findet die Suche gar nichts und ist das System dennoch singulär, greift die
 **Matrixdiagnose**: sie nennt das Bauteil, dessen Bewegung fast keine Energie
 kostet. Das ist der Fall, den die Topologie nicht sehen kann - zwei Körper,
 die nur einen Knoten teilen, hängen zusammen und sind trotzdem beweglich.
+Die Matrixdiagnose zerlegt das Gleichungssystem ein zweites Mal. Weicht der
+Gleichungslöser dabei aus, steht unter dem Befund der Hinweis
+„Diagnose-Faktorisierung: Gleichungslöser ausgewichen - …“ mit dem Grund,
+auch bei Rechnungen ohne Fortschrittsanzeige. Kann sie gar nicht rechnen,
+heißt es „Matrixdiagnose nicht möglich: …“; ob ein Bauteil fast ohne
+Steifigkeit ist, bleibt dann offen und ist von Hand zu prüfen.
 
 **Statt abzubrechen wird gerechnet.** Jede freie Bewegung wird mit einer
 Hilfsfesselung festgehalten. Die verfälscht die Spannungen nicht (sie wirkt
@@ -4765,7 +6136,9 @@ schwersten zuerst: erst die, in denen wirklich Last ins Nichts geht.
 
 ## 10 Ergebnisse und Bericht
 
-* **Färbung**: |u|, ux/uy/uz, Vergleichsspannung (Schalen/Volumen, Randspannung
+* **Färbung**: |u|, ux/uy/uz [mm], **|φ|, φx/φy/φz** [mrad] (Verdrehungen, seit
+  24.09.2026; auch im Modellbaum unter „Ergebnisse → Verformungen“),
+  Vergleichsspannung (Schalen/Volumen, Randspannung
   bei Stäben), Ausnutzung EC3 / Ermüdung / elastisch — und die **Spannungen je
   Art** analog ANSYS Mechanical, auch im Modellbaum unter „Ergebnisse →
   Spannungen Volumen / Spannungen Flächen / Spannungen Stäbe /
@@ -4791,6 +6164,19 @@ schwersten zuerst: erst die, in denen wirklich Last ins Nichts geht.
   nicht — sie führt Extremwerte, keine Tensoren; die Statuszeile sagt es, und
   gefärbt wird nichts. Die Größen und ihre Prüfung an geschlossenen Werten:
   `tests/test_spannungen.py`.
+
+  **Verdrehungen** φ sind die Drehfreiheitsgrade der Knoten, |φ| ihr Betrag, in
+  mrad (fest, wie im Verformungsnachweis). Zur Umhüllenden färbt φx/φy/φz das
+  betragsgrößere Extrem, |φ| den größten Betrag, den ein einzelnes Ergebnis
+  am Knoten hat (ebenso |u|; bis 24.09.2026 wurde der Betrag aus Minimum und
+  Maximum gebildet, deren Richtungen aus verschiedenen Ergebnissen stammen
+  können — das ergab zu viel oder zu wenig). **Volumenknoten haben keine eigenen Verdrehungen**: ein
+  Volumenelement hat nur Verschiebungen, die Rechnung hält den Drehfreiheitsgrad
+  dort bei 0. Diese Knoten — ebenso Scheiben-, Fachwerk- und Seilknoten —
+  stehen grau statt mit Nullen; in einem gemischten Modell trägt die Skala nur
+  die Stab- und Schalenknoten. Ein reines Volumenmodell färbt bei φ gar nicht,
+  die Statuszeile sagt warum. Die Kennwerte im Bild nennen zu |φ| die größte
+  Verdrehung mit Knoten, zu φx/φy/φz die kleinste und größte mit Knoten.
 **Kontaktergebnisse lesen** (12.09.2026, „ich sehe nicht, dass die Kontakte da
 wirken, wo sie sollen"): Die Färbung **Kontakt Zustand** zeigt je Kontaktknoten
 eine von vier Klassen in festen Farben — grau offen, grün haftet, orange
@@ -4803,7 +6189,9 @@ grau offen, blau Kontakt ohne Reibung) erscheinen nur noch mit dem Schalter
 *Ergebnisse → Kontaktmarken* — vorher lagen sie über jedem Ergebnis, am
 Drehlager 21 586 Kugeln, die man für Kontaktergebnisse hielt, die „nicht
 weggehen". Die **Skala** schreibt ihre Zahlen aus („2390" statt „2.39e+03"),
-mit Nachkommastellen nach der Spanne (unter 100: eine, unter 10: zwei).
+mit Nachkommastellen nach der Spanne (unter 100: eine, unter 10: zwei); unter
+0.01 so viele, dass zwei geltende Ziffern stehen („0.0014“ statt „1.43e-03“,
+seit 24.09.2026 — kleine Verdrehungen in mrad).
 
 **Zahlen als Dezimalzahl.** Ergebniswerte stehen überall als normale
 Dezimalzahl mit Punkt — Skala, Modellbaum (Schnittgrößen „−0.00 … +943 kN"),
@@ -4881,12 +6269,35 @@ eigenen Skala: Bauteil wählen, *Selektion anzeigen*, ablesen. Geprüft in
   Ergebnismaske, Bericht und Browser als „Umhüllende *Name*" neben den
   Umhüllenden je Art (GZT, GZG, Ermüdung), die sie mit enthalten. Im
   Kombinationsdialog zeigt sie ihre Alternativen; die Faktorfelder sind dort
-  gesperrt, denn die Alternativen kommen aus der Quelldatei. Ein umbenannter
+  gesperrt, denn die Alternativen kommen aus der Quelldatei. Ebenso in der
+  Objektmaske rechts: dort steht unter *Faktoren* „Umhüllende über n
+  Alternativen (aus der Quelldatei) – hier nicht änderbar“, und
+  **Übernehmen** schreibt Name, Typ, Beschreibung, Situation und Theorie,
+  die Alternativen und die Bemessungssituation bleiben. Bis zum 23.09.2026
+  stand dort die Formel als Eingabefeld: schon eine geänderte Beschreibung
+  endete mit „Faktor … bitte als „Lastfall: Faktor“ schreiben“, und
+  hineingeschriebene Faktoren („LF1: 1,35“) machten aus der Umhüllenden
+  eine gewöhnliche Kombination ohne Alternativen. Ein umbenannter
   oder gelöschter Lastfall zieht durch alle Alternativen.
   **Nachgewiesen** wird nicht die Umhüllende, sondern jede Alternative für
   sich: in den Nachweistabellen (Stäbe, Volumen, Beulen, Lasteinleitung,
   Anschlüsse, Verformungen) steht in der Spalte *Kombination* zum Beispiel
-  „EK1 [2]" – die zweite Alternative der Ergebniskombination EK1. Bis zum
+  „EK1 [2]" – die zweite Alternative der Ergebniskombination EK1. Steht
+  dieselbe Alternative in mehreren Ergebniskombinationen (derselbe Lastfall
+  mit Faktor 1 oder, im linearen Modell, dieselben Faktoren), weist der
+  Stabnachweis nach EC3 sie nur einmal nach und nennt alle Namen, etwa
+  „EK_A [1] = EK_B [1]"; ab fünf Namen wird gekürzt („EK1 [1] = EK2 [1] =
+  EK3 [1] = … (2 weitere)"). Die vollen Namenslisten stehen im Bericht unter
+  „Gleiche Ergebnisse, einmal nachgewiesen" (Berichtsoption „Nachweise
+  EC3"), aber nur für die ersten 40 zusammengefassten Einträge; sind es mehr,
+  endet die Zeile mit „…". Am Kragarm mit fünf Ergebniskombinationen zu je
+  42 gleichen Alternativen fehlte so gerade die volle Liste des maßgebenden
+  Eintrags, des 42., im Bericht. Die Ausnutzung bleibt dieselbe (am Kragarm
+  mit zwei solchen Ergebniskombinationen und einer gewöhnlichen Kombination 3 statt 5 Nachweisläufe je Stab, Ausnutzung
+  0,370 wie vorher). Direkt gelöste
+  Alternativen (Kontaktmodell, Theorie II./III. Ordnung) werden nur
+  zusammengefasst, wenn es dasselbe gespeicherte Ergebnis ist; die übrigen
+  Nachweise laufen weiter über jeden Namen. Bis zum
   22.09.2026 übergingen die Nachweise Ergebniskombinationen; hatte ein Modell
   nur solche, wurden still die Lastfälle mit Faktor 1 nachgewiesen (am
   Kragarm Ausnutzung 0,170 statt 0,370). Die Lastfälle selbst werden jetzt nur
@@ -4971,6 +6382,27 @@ Nachweisdetails der zwanzig am höchsten ausgenutzten Stäbe hinzu;
 **Langform** ist alles. Die Haken darunter zeigen, was der Umfang enthält;
 ein von Hand gesetzter Haken macht daraus eine **eigene Auswahl**. Der
 gewählte Umfang bleibt am Modell.
+
+**Nachweiskapitel ausgeschaltet.** Ein ausgeschalteter Haken „Nachweise EC3“
+oder „Ermüdung“ nimmt nur das Kapitel heraus. Dasselbe gilt für die Kapitel
+Volumen, Beulen, Anschlüsse und Verformungen; für sie gibt es im Dialog keinen
+Haken, nur die Berichtsoptionen `volumen`, `beulen`, `joints` und `gzg` der
+Programmschnittstelle (z. B. `write_report(…, beulen=False)`). Das
+Gesamturteil der Zusammenfassung bewertet weiter alle gerechneten
+Nachweise. Ist einer davon nicht erfüllt, steht unter „Offene
+Hinweise und Warnungen“ in jedem Fall die Zeile „… NICHT erfüllt für: *Namen*“,
+und die Statuszeile heißt „Nachweise NICHT erfüllt – siehe die Hinweise
+unten.“ statt „… siehe die Nachweiskapitel.“, sobald das Kapitel eines nicht
+erfüllten Nachweises ausgeschaltet ist. Bis zum 23.09.2026 entstand die Zeile
+nur im Kapitel: mit „Nachweise EC3“ aus (Einfeldträger IPE 300, Ausnutzung
+9,5) verwies die Statuszeile auf ein Kapitel, das nur „Die Ausgabe der
+Nachweise ist deaktiviert.“ enthielt, und darunter stand „Es liegen keine
+offenen Hinweise oder Warnungen vor.“; ebenso mit „Ermüdung“ aus (Kragarm,
+D = 12 185). Die Statuszeile zählt nicht geführte Einträge in Einzahl und
+Mehrzahl („1 Stab (EC3)“, „2 Stäbe (EC3)“, „1 Volumenbereich“). Ein
+Volumenbereich, der nur berichtet wird (Spannungssingularität), zählt nicht
+als geführter Nachweis: gibt es sonst keinen, heißt die Statuszeile „Es
+wurden keine Nachweise geführt; …“ statt „Alle Nachweise erfüllt.“
 
 **Große Netze.** Ab 200 000 Elementen zeichnet der Bericht in den
 Systemdarstellungen die **Umrisse der Volumenkörper** statt der Außenflächen
@@ -5205,6 +6637,44 @@ auftritt**. `umh.kurve()` liefert `(Winkel, η, u_max)` für die Kurve über den
 Stellungswinkel. Eine Stellung ohne ausreichende Lagerung wird als Fehler
 ausgewiesen, nicht stillschweigend übergangen.
 
+**Lastfälle einer Stellung.** Mit `faelle` fallen die übrigen Lastfälle aus
+dem Stellungsmodell heraus, auch aus den Kombinationen. Eine gewöhnliche
+Kombination behält ihre übrigen Summanden. Eine oder-verknüpfte
+Ergebniskombination behält ihre Alternativen, jede ohne die fehlenden
+Lastfälle. Eine Alternative oder Kombination, der danach kein Lastfall
+bleibt, entfällt, und das Protokoll nennt sie („Kombinationen ohne Lastfall
+entfallen: …", „Alternativen ohne Lastfall entfallen: EK2 [2]"). Bis zum
+23.09.2026 fiel jede Ergebniskombination in einer Stellung mit `faelle` ohne
+Meldung weg, und der Stabnachweis lief ohne sie. Gemessen an einem Kragarm
+mit EK1 = 1,35·LF1 oder 1,35·LF1 + 1,5·LF2 in der Stellung mit
+`faelle=["LF1", "LF2"]`, also allen Lastfällen: Hatte das Modell nur EK1,
+wich der Nachweis auf die Lastfälle aus, und es kam η = 0,1702 statt 0,3702
+heraus. Stand daneben die gewöhnliche Kombination K1 = LF1 + LF2, lief er
+allein gegen K1, mit η = 0,2553. Jetzt liefert die Stellung in beiden Fällen
+0,3702 wie die Stellung ohne `faelle`.
+
+Das Antriebsmoment (`antrieb`) kommt mit dem Faktor 1,0 in jede Kombination
+und in jede Alternative, die einen positiven Faktor hat. Bis zum 23.09.2026
+fehlte es in den Alternativen. Am selben Kragarm mit Mz = 50 kNm an der
+Spitze ergab die Ergebniskombination η = 0,3702 wie ohne Antrieb. Mit der
+gleichwertigen gewöhnlichen Kombination waren es 0,4255, und diesen Wert
+liefern jetzt beide.
+
+Ermüdungslasten, deren Zustand in der Stellung fehlt, entfallen mit und
+stehen im Protokoll („Ermüdungslasten ohne Lastfall entfallen: …"). Bei
+einem Verlauf entscheiden seine Glieder (`folge`) und nicht `case_max` oder
+`case_min`. Ein Glied darf ein Lastfall oder eine Kombination sein; der
+Verlauf bleibt, wenn alle seine Glieder in der Stellung bleiben; sonst
+entfällt er ganz. Gekürzt wird er in der Stellung nicht, anders als beim
+Löschen eines Lastfalls im Modell (siehe *Einen Lastfall löschen*): ohne das
+Glied wäre es eine andere Lastfolge mit anderen Schwingbreiten. Bis zum
+23.09.2026 entschieden `case_max` und `case_min`, die der Ermüdungsnachweis
+von Stäben und Volumen bei einem Verlauf nicht liest. Die Verläufe aus einer
+RFEM-6-Datei (.rf6) haben kein `case_max` und entfielen deshalb in jeder
+Stellung mit `faelle`. Ein Verlauf mit Lastfällen außerhalb der Stellung
+blieb dagegen stehen, wenn sein `case_max` ein Lastfall der Stellung war und
+sein `case_min` leer oder ebenfalls ein Lastfall der Stellung.
+
 Die Nachweise einer Stellung brauchen die Ergebnisse ihrer Kombinationen.
 Mit `reihe.rechnen(kombinationen=False, nachweise=True)` fehlen sie – im
 Browser über die Operation `stellungen_rechnen` mit `"kombinationen":
@@ -5215,14 +6685,25 @@ GZG-Kombinationen hat, keinen Stabnachweis. Dann ist die Stellung nicht
 VOLLSTÄNDIG NACHGEWIESEN". Unter „Nicht nachgewiesen" stehen die Warnungen.
 Die Meldung nach dem Rechnen (`umh.kurztext()`) sagt es ebenso.
 
+Auch ohne jede Warnung ist η nur bestimmt, wenn ein Stabnachweis geführt
+wurde. Das ist nicht der Fall mit `reihe.rechnen(nachweise=False)` (im
+Browser `"nachweise": false`) und in einem Modell ohne Stab mit Nachweis.
+Dann ist keine Stellung `ok`, der Bericht zeigt je Stellung „-" statt eines
+η und schreibt „Umhüllende: eta nicht bestimmt", und `umh.kurztext()` lautet
+„eta nicht bestimmt – kein Stabnachweis geführt". Bis zum 23.09.2026 kam in
+diesen Fällen „eta = 0.000", und jede Stellung galt als erfüllt: gemessen an
+der Klappbrücke mit zwei Stellungen, mit `nachweise=False` und ohne Stab. An
+der Stauwand mit drei Stellungen und `"nachweise": false` zeigte der Browser
+auf jeder Karte „η 0,00" grün.
+
 Im Browser zeigt eine Stellung ohne jeden geführten Nachweis auf der Karte
 „η –" und „nicht geführt", in der Tabelle „nicht geführt" und keinen Punkt in
 der η-Kurve; die Zeile der Umhüllenden und der Filmstreifen sagen „η nicht
 bestimmt", wenn in keiner Stellung ein Nachweis geführt wurde. Fehlt nur ein
 Teil der Nachweise, steht η in Warnfarbe mit „nicht vollständig
 nachgewiesen". Unter der gewählten Stellung lassen sich die Warnungen
-aufklappen („Nicht nachgewiesen"). Bis zum 22.09.2026 kam in beiden oben
-genannten Fällen keine Warnung, dass Nachweise fehlten. Mit
+aufklappen („Nicht nachgewiesen"). Bis zum 22.09.2026 (Stand 54b6f9a) kam
+in beiden oben genannten Fällen keine Warnung, dass Nachweise fehlten. Mit
 `kombinationen=False` wurden die Stäbe gegen die Lastfälle mit Faktor 1
 nachgewiesen, und nach dieser Ausnutzung wurde die Stellung beurteilt
 (Stauwand, drei Stellungen: „eta = 0.291" aus dem Lastfall „Wasser",
@@ -5230,6 +6711,32 @@ erfüllt; mit fünffachem Wasserdruck „eta = 2.419", nicht erfüllt). Mit nur
 GZG-Kombinationen wurde kein Stab nachgewiesen; an der Halle war η = 0 und
 die Stellung erfüllt, der Bericht nannte „eta = 0.000", und der Browser
 zeigte „η = 0,000" grün.
+
+**Ohne verlangten Nachweis gibt es keine Warnung.** Das gilt, wenn die
+Stellungen ohne Nachweis gerechnet werden oder bei keinem Stab „Nachweis
+führen" gesetzt ist (`design = False`). Ohne Nachweis rechnet in Python
+schon `reihe.rechnen()` ohne Argument, denn dort ist `nachweise=False` die
+Vorgabe; das Beispiel oben gibt `nachweise=True` ausdrücklich an. Im
+Browser geht es nur über die Operation `stellungen_rechnen` mit
+`"nachweise": false`: Ohne diese Angabe nimmt die Operation `true`, und die
+Knöpfe „Alle Stellungen rechnen" im Register und „rechnen" im Filmstreifen
+senden `true`. Die Desktop-Oberfläche („Alle Stellungen rechnen" im Register,
+„Alle Stellungen" im Ribbon *Berechnung*) rechnet immer mit Nachweis. In
+beiden Fällen ist η nicht bestimmt, wie oben beschrieben: keine Stellung ist
+`ok`, im Browser steht auf der Karte „η –" und „nicht geführt", in der
+Tabelle kein Wert und in der η-Kurve kein Punkt, in der Zeile der
+Umhüllenden und im Filmstreifen „η nicht bestimmt"; die Meldung nach dem
+Rechnen (`umh.kurztext()`) lautet „eta nicht bestimmt – kein Stabnachweis
+geführt", der Bericht (`umh.bericht()`) „Umhüllende: eta nicht bestimmt – in
+keiner Stellung wurde ein Stabnachweis geführt". Am Stand ec6448c stand dort
+in beiden Fällen η = 0 in der Farbe für erfüllt („η 0,00" auf der Karte,
+0,00 grün in der Tabelle, „eta = 0.000, maßgebend …"), obwohl nichts
+nachgewiesen war (im Browser gemessen am 23.09.2026 am Beispiel „gate" mit
+zwei und mit drei Stellungen, in Python am 24.09.2026 am selben Beispiel mit
+drei Stellungen, jeweils für beide Fälle; mit `nachweise=True` und Stäben
+mit Nachweis ergab sich in Python η = 0,515). Geprüft in
+`tests/test_bridges.py` (`test_reihe_ohne_verlangten_nachweis`) und
+`tests/test_web.py`.
 
 ### Lastfälle nach DIN 19704 anlegen und das Lastenheft
 
@@ -5311,7 +6818,17 @@ Systems“ in Kapitel 2); „Entfernen" arbeitet auf der gewählten Zeile.
 Lastfälle je Stellung und Antriebsmoment kommen aus der Python-Schnittstelle
 (`Stellung(faelle=…, antrieb=…)`). **▶ Alle Stellungen rechnen** rechnet jede Stellung einzeln
 und schreibt die Umhüllende darunter; der Filmstreifen unter der 3D-Ansicht
-zeigt danach je Karte das η, die maßgebende mit ★.
+zeigt danach je Karte das η, die maßgebende mit ★. Die Schlusszeile zählt,
+was gerechnet ist: „1 von 2 Stellungen gerechnet (1 mit FEHLER, siehe
+Protokoll): eta = …“, wenn eine scheitert; scheitern alle, meldet die
+Oberfläche „Keine Stellung gerechnet – 2 von 2 mit FEHLER“, und η gilt als
+nicht bestimmt: Die Zeile unter dem Knopf lautet dann „Umhüllende über alle
+Stellungen: η nicht bestimmt – keine Stellung gerechnet (2 mit FEHLER, siehe
+Protokoll)“, die Tabelle zeigt bei η und Verformung „–“, der Bericht „eta
+nicht bestimmt – keine Stellung gerechnet“. Bis zum 23.09.2026 stand in der
+Schlusszeile immer „2 Stellungen gerechnet“, bei null Ergebnissen mit
+„eta = 0.000“; die Zeile unter dem Knopf zeigte in diesem Fall noch bis zum
+24.09.2026 „η = 0,000; größte Verformung 0,000 mm“.
 
 „Kombinationen nach DIN 19704 bilden" legt die Kombinationen der drei
 Lastfallklassen an und schreibt darunter **jeden Beiwert mit seinem Zustand**
@@ -5330,6 +6847,11 @@ Kapitel 12). Das Register **⟳ Stellungen** führt den ganzen Ablauf:
 2. **▶ Alle Stellungen rechnen** rechnet jede Stellung einzeln und bildet die
    Umhüllende. Jede Karte zeigt danach ihr η, die maßgebende Stellung ist
    hervorgehoben, und die Kurve **η über den Stellungswinkel** steht darunter.
+   Die Meldung zur gewählten Stellung endet nur bei der Stellung, die das η
+   der Umhüllenden bestimmt, auf „· maßgebende Stellung“ – bei derselben,
+   deren Karte hervorgehoben ist. Bis zum 23.09.2026 stand der Zusatz an jeder
+   Stellung mit Stabnachweis (Stauwand, drei Stellungen mit Kombinationen: an
+   allen drei).
    Eine Stellung, die nicht rechenbar ist — etwa weil ein genannter Lastfall
    im Modell fehlt —, wird mit ihrer Fehlermeldung ausgewiesen; die übrigen
    Stellungen werden trotzdem gerechnet.

@@ -357,6 +357,136 @@ def test_entarteter_sechsflaechner_beim_import():
            bool(zeile) and "Keils" in zeile[0], zeile[0][:120] if zeile else "–")
 
 
+BDF_KEIL_ALS_HEXA20 = textwrap.dedent("""    $ quadratischer Keil als entarteter CHEXA mit 20 Knoten: G4 = G3, G8 = G7,
+    $ die Mitte der zusammengefallenen Kanten ist deren Ecke (11 = 3, 19 = 7),
+    $ die Kante 4-8 faellt auf 3-7 und hat dieselbe Mitte (16 = 15)
+    BEGIN BULK
+    GRID,1,,0.0,0.0,0.0
+    GRID,2,,1.0,0.0,0.0
+    GRID,3,,0.0,1.0,0.0
+    GRID,5,,0.0,0.0,1.0
+    GRID,6,,1.0,0.0,1.0
+    GRID,7,,0.0,1.0,1.0
+    GRID,9,,0.5,0.0,0.0
+    GRID,10,,0.5,0.5,0.0
+    GRID,12,,0.0,0.5,0.0
+    GRID,13,,0.0,0.0,0.5
+    GRID,14,,1.0,0.0,0.5
+    GRID,15,,0.0,1.0,0.5
+    GRID,17,,0.5,0.0,1.0
+    GRID,18,,0.5,0.5,1.0
+    GRID,20,,0.0,0.5,1.0
+    CHEXA,1,1,1,2,3,3,5,6
+    ,7,7,9,10,3,12,13,14
+    ,15,15,17,18,7,20
+    PSOLID,1,1
+    MAT1,1,2.1+11,,0.3,7850.0
+    ENDDATA
+    """)
+
+
+def test_entarteter_hex20_nennt_die_richtige_genauigkeit():
+    """Ein zum Keil entarteter Sechsflaechner mit 20 Knoten wird beim Import
+    zum quadratischen Keil (pent15, VQ203) - und das Protokoll nennt dessen
+    Genauigkeit, nicht die des linearen Keils (23.09.2026).
+
+    Der Importaufruf nahm bis dahin die feste Zeile des linearen Keils
+    (diagnose.ENTARTUNG_GENAUIGKEIT, "-15,8 N/mm2"); fuer pent15 ist das
+    falsch (am Kragarm -0,02 N/mm2, Messung der Element-Sitzung).
+    """
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "keil20.bdf")
+        with open(p, "w") as f:
+            f.write(BDF_KEIL_ALS_HEXA20)
+        log = []
+        m = import_file(p, log=log)
+    expect("der entartete hex20 ist nach dem Import ein pent15",
+           [e.typ for e in m.elements] == ["pent15"], str([e.typ for e in m.elements]))
+    zeile = [z for z in log if "umgewandelt" in z]
+    expect("das Protokoll nennt hex20→pent15",
+           len(zeile) == 1 and "hex20→pent15: 1" in zeile[0], str(zeile))
+    expect("… mit der Genauigkeit des quadratischen Keils, nicht der des linearen",
+           bool(zeile) and "quadratische Keil" in zeile[0] and "15,8" not in zeile[0],
+           zeile[0][:160] if zeile else "–")
+
+
+def _nastran_wuerfel20_und_keil15() -> str:
+    """Wuerfel 1 m (CHEXA, 20 Knoten) und Keil (CPENTA, 15 Knoten) in der
+    Knotenfolge der Nastran-Beschreibung: beim CHEXA 9-12 Kanten unten,
+    13-16 senkrecht, 17-20 oben; beim CPENTA 7-9 unten, 10-12 senkrecht,
+    13-15 oben."""
+    import numpy as _np
+    ecken = {1: (0, 0, 0), 2: (1, 0, 0), 3: (1, 1, 0), 4: (0, 1, 0),
+             5: (0, 0, 1), 6: (1, 0, 1), 7: (1, 1, 1), 8: (0, 1, 1)}
+    kanten = [(1, 2), (2, 3), (3, 4), (4, 1), (1, 5), (2, 6), (3, 7), (4, 8),
+              (5, 6), (6, 7), (7, 8), (8, 5)]
+    gr = dict(ecken)
+    for k, (a, b) in enumerate(kanten):
+        gr[9 + k] = tuple((_np.array(ecken[a]) + _np.array(ecken[b])) / 2)
+    keil = {101: (2, 0, 0), 102: (3, 0, 0), 103: (2, 1, 0),
+            104: (2, 0, 1), 105: (3, 0, 1), 106: (2, 1, 1)}
+    kk = [(101, 102), (102, 103), (103, 101), (101, 104), (102, 105), (103, 106),
+          (104, 105), (105, 106), (106, 104)]
+    gr.update(keil)
+    for k, (a, b) in enumerate(kk):
+        gr[107 + k] = tuple((_np.array(keil[a]) + _np.array(keil[b])) / 2)
+    z = ["BEGIN BULK"] + [f"GRID,{i},,{x},{y},{w}" for i, (x, y, w) in gr.items()]
+    z += ["CHEXA,1,1,1,2,3,4,5,6", ",7,8,9,10,11,12,13,14", ",15,16,17,18,19,20",
+          "CPENTA,2,1,101,102,103,104,105,106", ",107,108,109,110,111,112,113,114", ",115",
+          "PSOLID,1,1", "MAT1,1,2.1+11,,0.3,7850.0", "ENDDATA"]
+    return "\n".join(z) + "\n"
+
+
+def test_nastran_quadratische_volumen_knotenfolge():
+    """CHEXA mit 20 und CPENTA mit 15 Knoten: Nastran zaehlt die senkrechten
+    Kantenmitten VOR den oberen, Statik3D (wie VTK/Abaqus) danach (23.09.2026).
+
+    Bis dahin nahmen Import und Export die Folge unveraendert: ein
+    regelmaessiger Wuerfel kam mit 1,046 statt 1,0 m3 herein - die oberen
+    und die senkrechten Kantenmitten vertauscht, das Element still verzerrt,
+    ohne Meldung. Der Export schrieb dieselbe Vertauschung hinaus; Import und
+    Export von Statik3D hoben sich darum auf, andere Programme lasen falsch.
+    """
+    from statik3d.elements import solid as SO
+    from statik3d.exporters import export_model
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "quadratisch.bdf")
+        with open(p, "w") as f:
+            f.write(_nastran_wuerfel20_und_keil15())
+        m = import_file(p, log=[])
+        typen = [e.typ for e in m.elements]
+        expect("CHEXA(20) -> hex20, CPENTA(15) -> pent15", typen == ["hex20", "pent15"], str(typen))
+        vol = [SO.solid_volume(e.typ, m.nodes[[int(x) for x in e.nodes]]) for e in m.elements]
+        expect("Wuerfel 1,0 m³ und Keil 0,5 m³ - die Kantenmitten sitzen richtig",
+               abs(vol[0] - 1.0) < 1e-12 and abs(vol[1] - 0.5) < 1e-12, str(vol))
+        X = m.nodes[[int(x) for x in m.elements[0].nodes]]
+        expect("hex20: Knoten 12-15 oben (z = 1), 16-19 senkrecht (z = 0,5)",
+               np.allclose(X[12:16, 2], 1.0) and np.allclose(X[16:20, 2], 0.5),
+               f"{X[12:16, 2]} / {X[16:20, 2]}")
+        # Export -> Nastran-Folge; und hin und zurueck wieder dieselben Elemente
+        q = os.path.join(d, "zurueck.bdf")
+        export_model(m, q)
+        m2 = import_file(q, log=[])
+        vol2 = [SO.solid_volume(e.typ, m2.nodes[[int(x) for x in e.nodes]]) for e in m2.elements]
+        expect("hin und zurueck: dieselben Volumina", np.allclose(vol2, vol), str(vol2))
+        with open(q, encoding="utf-8", errors="replace") as f:
+            zeilen = f.read().splitlines()
+    # Die Datei selbst in Nastran-Folge: der 13. Knoten der CHEXA-Karte ist eine
+    # senkrechte Kantenmitte (z = 0,5), der 17. eine obere (z = 1)
+    z_von = {int(w[8:16]): float(w[40:48]) for w in zeilen if w.startswith("GRID")}
+    karte = []
+    for i, w in enumerate(zeilen):
+        if w.startswith("CHEXA"):
+            karte = [w[8 * k:8 * k + 8] for k in range(3, 9)]
+            for f in zeilen[i + 1:i + 3]:
+                karte += [f[8 * k:8 * k + 8] for k in range(1, 9)]
+            break
+    gids = [int(x) for x in karte if x.strip()]
+    expect("Export schreibt die Nastran-Folge (13. Knoten senkrecht, 17. oben)",
+           len(gids) == 20 and abs(z_von[gids[12]] - 0.5) < 1e-9 and abs(z_von[gids[16]] - 1.0) < 1e-9,
+           str([z_von.get(g) for g in gids[12:20]]))
+
+
 # --------------------------------------------------------------------------
 # IFC4 Structural Analysis View
 # --------------------------------------------------------------------------
@@ -1493,7 +1623,7 @@ def test_json_anhaengen_doppelknoten_bleiben():
            "nicht, und das Protokoll nennt sie",
            z.nn == 4 + 2 and [(g.node_a, g.node_b) for g in z.gap_elements] == [(1, 2)]
            and z.elements[3].nodes == [5, 0] and len(unklar) == 1
-           and any("1 Knoten der Quelle lagen auf Knoten des Ziels" in x for x in log),
+           and any("1 Knoten der Quelle lag auf einem Knoten des Ziels" in x for x in log),
            f"{z.nn} Knoten, Elemente {[e.nodes for e in z.elements]}\n" + "\n".join(log))
 
 
@@ -1572,6 +1702,117 @@ def test_json_anhaengen_fuge_traegt_wie_allein():
                    selbst == 0 and len(z.gap_elements) == 24 and abs(r - allein) < 1.0,
                    f"allein {allein:.1f} N, angehaengt {r:.1f} N, Spaltelemente mit sich "
                    f"selbst {selbst} von {len(z.gap_elements)}")
+
+
+def _infocad_text(knoten, elemente) -> str:
+    """Kleinste InfoCAD-Textausgabe (/ExportTxt) mit Staeben. Ihr Leser legt
+    jeden Knoten ohne Abgleich an; zusammengefuehrt und angeschlossen wird
+    erst in der Nachbereitung von import_file."""
+    def block(name, zeilen):
+        aus = [f"BEGIN {name} N={len(zeilen)} TIME=23.09.26 12:00", "?\t?\t?\t?"]
+        aus += ["\t".join(str(x) for x in z) for z in zeilen]
+        return "\n".join(aus + [f"END {name}"])
+    el = [[i + 1, 2, a, b, 0, 0, 0, 0, 1, 1, 0, 0, 655617]
+          for i, (a, b) in enumerate(elemente)]
+    kn = [[i + 1] + [f"{c:g}" for c in p] for i, p in enumerate(knoten)]
+    return "\n".join([block("KNOTEN", kn), block("ELEMENTE", el),
+                      block("MAT", [[1, 1, "210000", "81000", "0,3", "1,2e-5", "78,5"]]),
+                      block("QUERSW", [[1, 1, "0,0", 0, 0]])]) + "\n"
+
+
+def test_datei_anhaengen_fuge_bleibt():
+    """Eine andere Datei als JSON (DXF, IFC, .inp, .rf6, InfoCAD …) an ein
+    Ziel mit getrennter Fuge anhaengen: die Fuge bleibt getrennt.
+
+    Befund B071. Bis zur Nachbesserung vom 23.09.2026 lief die Nachbereitung
+    von import_file beim Anhaengen merge_duplicate_nodes ueber das ganze
+    Modell. Gemessen am 23.09.2026 mit dem Ziel unten (zwei Staebe, dazwischen
+    das Spaltelement (1, 2), aussen eingespannt, 1 kN zieht am Fugenende
+    des linken Stabes nach -x, die Fuge oeffnet) und einer .inp abseits bei
+    x = 10…11:
+    allein Rx = 1000,0 N am linken Lager, nach dem Anhaengen Spaltelement
+    (1, 1) und Rx = 500,0 N - beide Staebe verschweisst; das Protokoll sagte
+    nur "1 doppelte Knoten zusammengefuehrt". Beim JSON-Anhaengen war das
+    schon behoben (test_json_anhaengen_doppelknoten_bleiben).
+
+    Jetzt werden nur die Knoten der Datei untereinander zusammengefuehrt
+    (wie bei einem frischen Import) und dann nur eindeutig an das Ziel
+    angeschlossen (_common.anschluss_zusammenfuehren)."""
+    inp = textwrap.dedent("""\
+        *HEADING
+        fern
+        *NODE, NSET=ALLE
+        1, 10.0, 0.0, 0.0
+        2, 11.0, 0.0, 0.0
+        *ELEMENT, TYPE=B31, ELSET=BALKEN
+        1, 1, 2
+        *NSET, NSET=FEST
+        1
+        *MATERIAL, NAME=STAHL
+        *ELASTIC
+        210.0E9, 0.3
+        *BEAM SECTION, SECTION=RECT, ELSET=BALKEN, MATERIAL=STAHL
+        0.1, 0.05
+        0.0, 0.0, -1.0
+        *BOUNDARY
+        FEST, ENCASTRE
+        """)
+
+    def ziel():
+        m = _zwei_staebe_mit_spalt("Ziel", 0.0)
+        m.fix(0, "all")
+        m.fix(3, "all")
+        m.load_node(1, Fx=-1000.0, case="LF1")
+        return m
+
+    def rx(m):
+        r = solver.solve_static(m, case="LF1", workers=1)
+        return float(np.asarray(r.reactions).reshape(-1, 6)[0, 0])
+
+    allein = rx(ziel())
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "fern.inp")
+        with open(p, "w") as f:
+            f.write(inp)
+        log = []
+        z = import_file(p, model=ziel(), log=log)
+        spalt = [(g.node_a, g.node_b) for g in z.gap_elements]
+        expect("Datei anhaengen (.inp abseits): Spaltelement des Ziels verbindet weiter "
+               "zwei Knoten", spalt == [(1, 2)] and z.nn == 6,
+               f"{spalt}, {z.nn} Knoten, Elemente {[e.nodes for e in z.elements]}")
+        r = rx(z)
+        expect("Datei anhaengen (.inp abseits): linkes Lager traegt die 1 kN wie allein",
+               abs(allein - 1000.0) < 1.0 and abs(r - allein) < 1.0,
+               f"allein {allein:.1f} N, angehaengt {r:.1f} N")
+        expect("Datei anhaengen (.inp abseits): keine Zeile ueber zusammengefuehrte Knoten",
+               not any("zusammengef" in x for x in log), "\n".join(log))
+
+        # InfoCAD: K1 liegt auf dem Zielknoten 3 (eindeutig), K2/K3 liegen in
+        # der Datei aufeinander, K5 liegt auf der Fuge des Ziels bei x = 1
+        p = os.path.join(d, "teil.txt")
+        with open(p, "w", encoding="utf-8", newline="\r\n") as f:
+            f.write(_infocad_text([(2, 0, 0), (2, 1, 0), (2, 1, 0), (3, 1, 0),
+                                   (1, 0, 0), (1, 1, 0)],
+                                  [(1, 2), (3, 4), (5, 6)]))
+        frisch = import_file(p, log=[])
+        expect("Datei frisch importiert: Knoten der Datei werden untereinander "
+               "zusammengefuehrt", frisch.nn == 5, f"{frisch.nn} Knoten")
+        log = []
+        z = import_file(p, model=_zwei_staebe_mit_spalt("Ziel", 0.0), log=log)
+    spalt = [(g.node_a, g.node_b) for g in z.gap_elements]
+    knoten = [e.nodes for e in z.elements]
+    unklar = [x for x in log if x.startswith("WARNUNG") and "An 1 Stelle " in x
+              and "(1, 0, 0)" in x]
+    expect("Datei anhaengen (InfoCAD): Fuge des Ziels bleibt, Doppel der Datei und "
+           "eindeutiger Anschluss zusammengefuehrt, Knoten auf der Fuge getrennt",
+           spalt == [(1, 2)] and z.nn == 8
+           and knoten == [[0, 1], [2, 3], [3, 4], [4, 5], [6, 7]],
+           f"Spalt {spalt}, {z.nn} Knoten, Elemente {knoten}")
+    expect("Datei anhaengen (InfoCAD): das Protokoll nennt Anschluss und uneindeutige Stelle",
+           len(unklar) == 1
+           and any("1 Knoten der Datei lag auf einem Knoten des Ziels" in x for x in log)
+           and any(x.startswith("1 doppelte Knoten zusammengefuehrt") for x in log),
+           "\n".join(log))
 
 
 def test_json_anhaengen_ermuedung_auf_kombination():
@@ -1678,17 +1919,35 @@ def test_json_anhaengen_koerpergruppe():
 def test_json_anhaengen_stellung_des_ziels():
     """Stellungen werden nicht uebertragen; eine Situation der Quelle, die
     eine nennt, darf dann nicht still die gleichnamige Stellung des Ziels
-    benutzen. Gemessen vor der Nachbesserung vom 23.09.2026: Rahmen als
-    Quelle bei x = 50 m, Stellung 'Offen' hebt die ungelagerten Knoten um
-    1,0 m, Lastfall LF-S (10 kN waagerecht) in Situation 'S-offen'; das Ziel
-    ist der Rahmen bei x = 0 mit eigener Stellung 'Offen' ohne Verschiebung.
-    Allein |u| = 4,7572 mm am Lastknoten, angehaengt 1,7876 mm - die
-    Situation S-offen_2 nannte 'Offen' des Ziels, und weder Modellpruefung
-    noch Protokoll sagten etwas (das Protokoll versprach es sogar)."""
+    benutzen. Versuch: Rahmen als Quelle bei x = 50 m, Stellung 'Offen' hebt
+    die ungelagerten Knoten um 1,0 m (15 von 17, die Lagerknoten 0 und 5
+    bleiben liegen), Lastfall LF-S (10 kN waagerecht) in Situation
+    'S-offen'; das Ziel ist der Rahmen bei x = 0 mit eigener Stellung 'Offen'
+    ohne Verschiebung. Allein |u| = 4,7572 mm am Lastknoten.
+    Gemessen am ausgelieferten Stand 54b6f9a (Inhalt von main 5eb21e6, vor
+    der Nachbesserung vom 23.09.2026): die Situation kam beim Anhaengen gar
+    nicht mit - LF-S hatte die Situation '' (Grundstellung), die Situationen
+    des Ziels waren nur {'S-offen': 'Offen'}, weder Modellpruefung noch
+    Protokoll sagten etwas, angehaengt 1,7876 mm. Am Zwischenstand 94c6863
+    des Zweigs fix/anhaengen nannte die Situation S-offen_2 dagegen 'Offen'
+    des Ziels, ebenfalls 1,7876 mm ohne Fehler der Modellpruefung, obwohl das
+    Protokoll versprach, die Modellpruefung melde solche Situationen. Gleich
+    gross sind beide Zahlen nur, weil 'Offen' des Ziels nichts bewegt.
+
+    Die Handbuchsaetze zu diesem Versuch (Benutzerhandbuch, Punkt
+    „Situationen mit Stellung“) werden am Ende gegen die Messung geprueft:
+    am Stand ec6448c schrieben sie „rechnete sie still in der Stellung des
+    Ziels“ (Zweigstand, nicht der ausgelieferte), „die Knoten eines Rahmens“
+    (15 von 17), sagten nicht, dass die neu angelegte Stellung ohne
+    Gruppenangabe auch die Knoten des Ziels hebt (30 von 34), und nannten nur
+    zwei der Wege, auf denen ein Skript die Vorgabe ketten aendert
+    (Nebenbefunde der Fehlerrunden 22./23.09.2026)."""
+    import json
     from statik3d import examples_lib
     from statik3d.model import Situation
     from statik3d.bridges.positions import Stellung
     from statik3d.situationen import situationsmodell
+    from tests import handbuch
 
     def rahmen(dz, x0, mit_last):
         m = examples_lib.build_example("frame")
@@ -1709,10 +1968,22 @@ def test_json_anhaengen_stellung_des_ziels():
         r = solver.solve_cases(m, ["LF-S"], workers=1)["LF-S"]
         return float(np.linalg.norm(np.asarray(r.u).reshape(-1, 6)[i, :3]))
 
+    def bewegte(m, sit):
+        """Knoten, die die Stellung der Situation sit bewegt (Lagevergleich)."""
+        mm = situationsmodell(m, sit)[0]
+        return np.where(np.abs(np.asarray(mm.nodes) - np.asarray(m.nodes)).max(axis=1) > 1e-12)[0]
+
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, "q.json")
         rahmen(1.0, 50.0, True).save(p)
         allein = verschiebung(Model.load(p))
+        quelle = Model.load(p)
+        bewegt_q = bewegte(quelle, "S-offen")
+        lager_q = sorted({s.node for s in quelle.supports})
+        expect("Quelle allein: 'Offen' hebt die ungelagerten Knoten, die Lagerknoten bleiben",
+               sorted(bewegt_q.tolist()) == sorted(set(range(quelle.nn)) - set(lager_q))
+               and len(lager_q) > 0,
+               f"{len(bewegt_q)} von {quelle.nn} bewegt, Lagerknoten {lager_q}")
         # Ziel ohne Stellung: die Situation behaelt ihren Verweis, die
         # Modellpruefung meldet ihn (so, wie das Protokoll es sagt)
         z = examples_lib.build_example("frame")
@@ -1785,6 +2056,43 @@ def test_json_anhaengen_stellung_des_ziels():
            fehler2.startswith("RuntimeError: Kette") and "'S-offen_2'" in fehler2
            and "unbekannt" in fehler2 and teil2 == ["LF1"],
            f"solve_all: {fehler2}, Teilergebnis {teil2}")
+    # Die Vorgabe nacheinander gilt in einem Skript nur, solange es die
+    # Einstellung ketten nicht aendert. Jeder dieser Wege aendert, was
+    # solver.ketten_zahl liest; einstellungen_laden ruft auch
+    # MainWindow.__init__ (gui/main.py), das Hauptfenster ist hier nicht
+    # erzeugt, weil diese Suite ohne Oberflaeche laeuft.
+    wege = {}
+    alt_datei = os.environ.get("STATIK3D_EINSTELLUNGEN")
+    try:
+        parallel.configure(ketten=1)
+        parallel.configure(ketten=2)
+        wege["configure"] = solver.ketten_zahl(5)
+        parallel.configure(ketten=1)
+        parallel.settings().ketten = 2
+        wege["settings().ketten"] = solver.ketten_zahl(5)
+        parallel.configure(ketten=1)
+        with tempfile.TemporaryDirectory() as d:
+            datei = os.path.join(d, "einstellungen.json")
+            with open(datei, "w", encoding="utf-8") as f:
+                json.dump({"ketten": 2}, f)
+            os.environ["STATIK3D_EINSTELLUNGEN"] = datei
+            parallel.einstellungen_laden()
+            wege["einstellungen_laden"] = solver.ketten_zahl(5)
+    finally:
+        if alt_datei is None:
+            os.environ.pop("STATIK3D_EINSTELLUNGEN", None)
+        else:
+            os.environ["STATIK3D_EINSTELLUNGEN"] = alt_datei
+        parallel.configure(ketten=alt_k)
+    expect("Skript: configure, Zuweisen an settings().ketten und einstellungen_laden "
+           "aendern die Ketten",
+           wege == {"configure": 2, "settings().ketten": 2, "einstellungen_laden": 2}, str(wege))
+    # Bis zum 23.09.2026 kam die Situation beim Anhaengen nicht mit (gemessen
+    # an 54b6f9a, siehe oben): LF-S rechnete in der Grundstellung. Dieselbe
+    # Rechnung am jetzigen Stand, damit die Handbuchzahl belegt bleibt.
+    zg = z.copy()
+    zg.load_cases["LF-S"].situation = ""
+    grundstellung = verschiebung(zg)
     # Legt der Anwender die Stellung der Quelle unter dem neuen Namen an,
     # rechnet der Lastfall der Quelle wie allein
     z.stellungen.append(Stellung("Offen_2", verschiebung=(0.0, 0.0, 1.0)))
@@ -1792,6 +2100,48 @@ def test_json_anhaengen_stellung_des_ziels():
     expect("Anhaengen: mit der Stellung der Quelle unter neuem Namen rechnet LF-S wie allein",
            abs(angehaengt - allein) <= 1e-9 * max(allein, 1e-12) + 1e-15,
            f"allein {allein * 1e3:.4f} mm, angehaengt {angehaengt * 1e3:.4f} mm")
+    # ... hebt dabei aber ohne Gruppenangabe auch die ungelagerten Knoten des
+    # Ziels (Stellung._bewegte_knoten: alle ausser den Knotenlagerknoten)
+    x = np.asarray(z.nodes)[:, 0]
+    bewegt_z = bewegte(z, "S-offen_2")
+    lager_z = {s.node for s in z.supports}
+    im_ziel = int((x[bewegt_z] < 25.0).sum())
+    ziel_frei = [n for n in range(z.nn) if x[n] < 25.0 and n not in lager_z]
+    expect("Anhaengen: Offen_2 ohne Gruppe hebt auch die ungelagerten Knoten des Ziels",
+           len(bewegt_z) == z.nn - len(lager_z) and im_ziel == len(ziel_frei) > 0,
+           f"{len(bewegt_z)} von {z.nn}, davon {im_ziel} im Ziel")
+    # Mit Gruppenangabe grenzt sie nur ein, wenn die Quelle eine eigene Gruppe
+    # hat: Elementgruppen behalten beim Anhaengen ihren Namen (anhaengen.py
+    # benennt nur Gruppen um, die wie ein umbenannter Koerper oder eine
+    # umbenannte Flaeche heissen), hier heissen beide Rahmen 'default'.
+    n_ziel_el = len(examples_lib.build_example("frame").elements)
+    gruppen_q = sorted({e.group for e in z.elements[n_ziel_el:]})
+    gruppen_z = sorted({e.group for e in z.elements[:n_ziel_el]})
+    z.stellungen[-1] = Stellung("Offen_2", verschiebung=(0.0, 0.0, 1.0), dreh_gruppen=gruppen_q)
+    bewegt_g = bewegte(z, "S-offen_2")
+    expect("Anhaengen: Gruppe der Quelle heisst wie die des Ziels, die Stellung hebt alles",
+           gruppen_q == gruppen_z and len(bewegt_g) == z.nn,
+           f"Gruppen Quelle {gruppen_q}, Ziel {gruppen_z}; {len(bewegt_g)} von {z.nn} bewegt")
+
+    # Das Handbuch nennt diese Messungen (Punkt „Situationen mit Stellung“)
+    text = handbuch.absatz("* **Situationen mit Stellung:**")
+    expect("Handbuch: frueher rechnete LF-S in der Grundstellung (nicht in der des Ziels)",
+           "in der Stellung des Ziels" not in text
+           and "in der Grundstellung" in text
+           and f"allein {handbuch.zahl(allein * 1e3)} mm, angehängt "
+               f"{handbuch.zahl(grundstellung * 1e3)} mm" in text,
+           f"Grundstellung {grundstellung * 1e3:.4f} mm; {text[:420]}")
+    expect("Handbuch: die ungelagerten Knoten, mit Zahl",
+           f"die ungelagerten Knoten eines Rahmens um 1,0 m ({len(bewegt_q)} von {quelle.nn};"
+           in text, text[:600])
+    expect("Handbuch: neu angelegte Stellung hebt auch das Ziel, mit Zahl und Verweis",
+           f"{len(bewegt_z)} von {z.nn} Knoten, {im_ziel} davon im Ziel" in text
+           and "siehe „Nicht übertragen“" in text
+           and f"hob alle {len(bewegt_g)} Knoten samt den Lagerknoten" in text, text[-900:])
+    expect("Handbuch: alle Wege, auf denen ein Skript die Ketten aendert",
+           all(w in text for w in ("`parallel.configure(ketten=…)`", "`parallel.settings().ketten`",
+                                   "`parallel.einstellungen_laden()`", "Hauptfenster")),
+           text[-1500:])
 
 
 def test_json_anhaengen_stellung_protokoll():
@@ -1802,7 +2152,14 @@ def test_json_anhaengen_stellung_protokoll():
     23.09.2026 stand dort "eine Stellung bewegt das ganze System"; gemessen
     am Beispiel 'frame' (17 Knoten, Knotenlager an 0 und 5): Gruppe 'Klappe'
     aus den Elementen 10 bis 15 bewegt 7 Knoten, eine Stellung, die nur ein
-    Lager abschaltet, keinen."""
+    Lager abschaltet, keinen.
+
+    Mit Gruppenangabe bewegt sie auch Knoten mit Knotenlager. Das war bis
+    zum 23.09.2026 ungeprueft (Befund B149): die Gruppe 'Klappe' (Knoten 9,
+    11 bis 16) enthaelt keinen Lagerknoten, und eine Verfaelschung, die mit
+    Gruppe die Knotenlager festhaelt, bestand die beiden Stellungstests
+    10/10. Gemessen am 23.09.2026: eine Gruppe aus Element 0 (Knoten 0 und
+    1, Knotenlager an 0) bewegt beide Knoten."""
     from statik3d import examples_lib
     from statik3d.model import Situation, LineSupport, DofBehaviour
     from statik3d.bridges.positions import Stellung
@@ -1835,6 +2192,22 @@ def test_json_anhaengen_stellung_protokoll():
            f"{m.nn} (Knotenlager an {sorted(fest)}), auf Linienlager bewegt "
            f"{ohne[auf_linienlager].tolist()}")
 
+    # Die Gruppe muss einen Knoten mit Knotenlager enthalten, sonst prueft
+    # das nichts (B149): Element 0 des Beispiels 'frame' hat die Knoten 0 und
+    # 1, das Knotenlager sitzt an 0. Verlangt sind genau diese beiden Knoten -
+    # haelt die Stellung den Lagerknoten fest, fehlt Knoten 0.
+    m = examples_lib.build_example("frame")
+    fest = {s.node for s in m.supports}
+    fuss_knoten = sorted({int(k) for k in m.elements[0].nodes})
+    m.elements[0].group = "Fuss"
+    fuss = bewegt(m, Stellung("Fuss", verschiebung=(0.0, 0.0, 1.0), dreh_gruppen=["Fuss"]))
+    fuss_bewegt = np.nonzero(fuss)[0].tolist()
+    lager_in_gruppe = sorted(set(fuss_knoten) & fest)
+    expect("Stellung mit Gruppe bewegt auch die Knoten der Gruppe mit Knotenlager",
+           bool(lager_in_gruppe) and fuss_bewegt == fuss_knoten,
+           f"Gruppe aus Element 0: Knoten {fuss_knoten}, davon mit Knotenlager "
+           f"{lager_in_gruppe}, bewegt {fuss_bewegt}")
+
     q = examples_lib.build_example("frame")
     q.nodes = np.asarray(q.nodes, float) + np.array([50.0, 0.0, 0.0])
     q.stellungen = [Stellung("Offen", verschiebung=(0.0, 0.0, 1.0))]
@@ -1848,6 +2221,708 @@ def test_json_anhaengen_stellung_protokoll():
            len(zeile) == 1 and "ganze System" not in zeile[0]
            and "ohne Gruppenangabe" in zeile[0] and "ohne Knotenlager" in zeile[0],
            "\n".join(zeile) or "keine Zeile")
+
+
+def test_json_anhaengen_stellung_grundstellung():
+    """Eine Stellung darf 'Grundstellung' heissen (gui/main.py prueft den
+    Namen nur auf leer und doppelt). Gibt es eine Stellung dieses Namens,
+    wirkt sie ganz - Lage, Lager, Gelenke und Abschaltungen
+    (Model.stellung_unbewegt, seit acfd1c4 aus fix2/nb_model). Der Verweis
+    bekommt deshalb wie jeder andere einen neuen Namen (B076), und unter ihm
+    ist die ganze Stellung anzulegen, wie die Warnung allgemein sagt.
+
+    Gemessen am 24.09.2026 an diesem Aufbau (Rahmen 'frame' als Quelle bei
+    x = 50 m, 'Stiel rechts' = Elemente 4 bis 7; die Stellung 'Grundstellung'
+    hebt um 1,0 m und schaltet 'Stiel rechts' ab; 10 kN waagerecht an
+    Knoten 2; das Ziel hat eine leere Stellung 'Grundstellung'). Stand
+    159edab liess den Verweis stehen: keine Meldung, angehaengt 1,7876 mm,
+    gerechnet mit der leeren Maske des Ziels. Bis acfd1c4 wirkten von einer
+    Stellung dieses Namens nur die Abschaltungen: allein |u| = 3,8300 mm, und
+    die Warnung riet (B076), unter dem neuen Namen nur die Abschaltung
+    anzulegen. Beim Zusammenfuehren beider Zweige (24.09.2026): allein
+    12,5294 mm, ganz angelegt ebenso, nur mit der Abschaltung 3,8300 mm."""
+    from statik3d import examples_lib
+    from statik3d.model import Situation
+    from statik3d.bridges.positions import Stellung
+    from statik3d.situationen import situationsmodell
+
+    def quelle(maske=True):
+        m = examples_lib.build_example("frame")
+        m.nodes = np.asarray(m.nodes, float) + np.array([50.0, 0.0, 0.0])
+        m.add_member("Stiel rechts", [4, 5, 6, 7])
+        m.stellungen = [Stellung("Grundstellung", verschiebung=(0.0, 0.0, 1.0),
+                                 staebe_aus=["Stiel rechts"] if maske else [])]
+        m.situationen["S-g"] = Situation("S-g", stellung="Grundstellung")
+        lc = m.add_load_case("LF-S", "Q", activate=False, situation="S-g")
+        lc.gravity = [0.0, 0.0, 0.0]
+        m.load_node(2, Fx=1e4, case="LF-S")
+        return m
+
+    def verschiebung(m):
+        """|u| am Lastknoten der Quelle (bei x = 50 m, ueber die Lage gesucht)."""
+        p = np.asarray(examples_lib.build_example("frame").nodes[2], float) + [50.0, 0, 0]
+        i = int(np.argmin(np.abs(np.asarray(m.nodes) - p).max(axis=1)))
+        r = solver.solve_cases(m, ["LF-S"], workers=1)["LF-S"]
+        return float(np.linalg.norm(np.asarray(r.u).reshape(-1, 6)[i, :3]))
+
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "q.json")
+        quelle(maske=False).save(p)
+        ohne_maske = verschiebung(Model.load(p))
+        quelle().save(p)
+        allein = verschiebung(Model.load(p))
+        z = examples_lib.build_example("frame")
+        z.stellungen = [Stellung("Grundstellung")]
+        log = []
+        z = import_file(p, model=z, log=log)
+    # Allein wirkt die ganze Stellung, auch ihre Abschaltung - sonst
+    # pruefte "wie allein" unten nichts
+    expect("Stellung 'Grundstellung' allein: ihre Abschaltung wirkt",
+           abs(allein - ohne_maske) > 1e-4,
+           f"mit Abschaltung {allein * 1e3:.4f} mm, ohne {ohne_maske * 1e3:.4f} mm")
+    verweis = z.situationen["S-g"].stellung
+    chk = [c for c in z.check() if c.startswith("FEHLER") and "Stellung" in c]
+    zeile = [x for x in log
+             if x.startswith("WARNUNG") and "zeigen sie auf einen neuen Namen" in x]
+    expect("Anhaengen: auch der Verweis auf 'Grundstellung' bekommt einen neuen Namen, "
+           "die Modellpruefung meldet ihn",
+           verweis == "Grundstellung_2" and len(chk) == 1
+           and "'Grundstellung_2' unbekannt" in chk[0]
+           and len(zeile) == 1 and "'Grundstellung' → 'Grundstellung_2'" in zeile[0],
+           f"Verweis {verweis!r}, Modellpruefung {chk}, Protokoll {zeile}")
+    expect("Anhaengen: Warnung raet, die Stellung unter dem neuen Namen anzulegen, "
+           "ohne Sonderfall fuer 'Grundstellung'",
+           len(zeile) == 1 and "bis die Stellung unter diesem Namen im Ziel angelegt" in zeile[0]
+           and "nur die abgeschalteten Stäbe" not in zeile[0],
+           "\n".join(zeile) or "keine Zeile")
+    try:
+        situationsmodell(z, "S-g")
+        fehler = ""
+    except ValueError as ex:
+        fehler = str(ex)
+    expect("Anhaengen: Rechnung in der Situation der Quelle bricht mit Meldung ab",
+           "Grundstellung_2" in fehler and "unbekannt" in fehler, fehler or "rechnet ohne Meldung")
+    # Gegenprobe: nur die Abschaltung unter dem neuen Namen hebt den Rahmen
+    # nicht (so riet die Warnung bis acfd1c4)
+    z.stellungen.append(Stellung("Grundstellung_2", staebe_aus=["Stiel rechts"]))
+    nur_abschaltung = verschiebung(z)
+    # Wie die Warnung sagt: die ganze Stellung unter dem neuen Namen anlegen
+    z.stellungen[-1] = Stellung("Grundstellung_2", verschiebung=(0.0, 0.0, 1.0),
+                                staebe_aus=["Stiel rechts"])
+    ganz = verschiebung(z)
+    expect("Anhaengen: ganz angelegt rechnet die Situation wie allein, "
+           "nur mit der Abschaltung nicht",
+           abs(ganz - allein) <= 1e-9 * allein and abs(nur_abschaltung - allein) > 1e-4,
+           f"allein {allein * 1e3:.4f} mm, nur Abschaltung {nur_abschaltung * 1e3:.4f} mm, "
+           f"ganz {ganz * 1e3:.4f} mm")
+
+
+def test_json_anhaengen_koerper_gegen_zielgruppe():
+    """Ein Volumenkoerper oder eine Flaeche der Quelle bekommt auch dann einen
+    neuen Namen, wenn im Ziel nur eine Elementgruppe so heisst, ohne Koerper
+    oder Flaeche - etwa ein DXF-Layer (dxf.py: Element.group = Layer). Sonst
+    tragen Elemente beider Teile dieselbe Gruppe, und
+    fugen.kontaktfuge_ausfuehren haengt alle Elemente der geloesten Gruppe um.
+    Gemessen am Stand ec6448c (23.09.2026, b078_beruehrend.py): Zielbloecke
+    links an der Quelle, der untere mit der Gruppe 'V1'; die Fuge KB1 der
+    Quelle (V1 von V2 loesen) haengte die Elemente [0, 2] um statt nur [2],
+    und die beiden Zielbloecke teilten danach 2 statt 4 Knoten - ohne
+    Meldung. Heisst der untere Zielblock 'L1', wird nur [2] umgehaengt."""
+    from statik3d.model import Material, Volumenkoerper, Flaeche, ShellProp
+    from statik3d import fugen
+
+    def quelle():
+        m = Model("Quelle")
+        m.add_material(Material("S235"))
+        for zz in (0.0, 1.0, 2.0):
+            for (x, y) in ((0, 0), (1, 0), (1, 1), (0, 1)):
+                m.add_node(x, y, zz)
+        u = m.add_element("hex8", [0, 1, 2, 3, 4, 5, 6, 7], "S235", group="V1")
+        o = m.add_element("hex8", [4, 5, 6, 7, 8, 9, 10, 11], "S235", group="V2")
+        m.koerper["V1"] = Volumenkoerper("V1", material="S235", elemente=[u])
+        m.koerper["V2"] = Volumenkoerper("V2", material="S235", elemente=[o])
+        m.flaechen["FF"] = Flaeche("FF", randseiten=[[u, 1], [o, 0]])
+        m.add_kontaktbedingung("KB1", flaechennamen=["FF"], koerpernamen=["V1"])
+        return m
+
+    def ziel(gruppe_unten):
+        """Zwei Bloecke ohne Volumenkoerper links an der Quelle (x = -1 .. 0)."""
+        m = Model("Ziel")
+        m.add_material(Material("S235"))
+        for zz in (0.0, 1.0, 2.0):
+            for (x, y) in ((-1, 0), (0, 0), (0, 1), (-1, 1)):
+                m.add_node(x, y, zz)
+        m.add_element("hex8", [0, 1, 2, 3, 4, 5, 6, 7], "S235", group=gruppe_unten)
+        m.add_element("hex8", [4, 5, 6, 7, 8, 9, 10, 11], "S235", group="X")
+        return m
+
+    def anhaengen(q, z):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "q.json")
+            q.save(p)
+            return import_file(p, model=z, log=[])
+
+    def loesen(gruppe_unten):
+        z = anhaengen(quelle(), ziel(gruppe_unten))
+        gruppen = [e.group for e in z.elements]
+        koerper = {n: [int(e) for e in k.elemente] for n, k in z.koerper.items()}
+        vorher = [list(e.nodes) for e in z.elements]
+        fugen.kontaktfuge_ausfuehren(z, z.kontaktbedingungen["KB1"], [])
+        umgehaengt = [i for i, e in enumerate(z.elements) if list(e.nodes) != vorher[i]]
+        gemeinsam = len(set(z.elements[0].nodes) & set(z.elements[1].nodes))
+        return gruppen, koerper, umgehaengt, gemeinsam
+
+    _g, _k, umg_l1, gem_l1 = loesen("L1")
+    gruppen, koerper, umg_v1, gem_v1 = loesen("V1")
+    expect("Anhaengen: Koerper der Quelle weicht einer gleichnamigen Elementgruppe des Ziels aus",
+           gruppen == ["V1", "X", "V1_2", "V2"] and koerper == {"V1_2": [2], "V2": [3]},
+           f"Gruppen {gruppen}, Koerper {koerper}")
+    expect("Anhaengen: Fuge der Quelle loest nur ihren Block, die Zielbloecke bleiben verbunden",
+           umg_v1 == [2] and gem_v1 == 4 and (umg_l1, gem_l1) == ([2], 4),
+           f"Zielgruppe 'V1': umgehaengt {umg_v1}, gemeinsame Knoten {gem_v1}; "
+           f"Zielgruppe 'L1': umgehaengt {umg_l1}, gemeinsame Knoten {gem_l1}")
+
+    # Flaeche: ihre Schalenelemente tragen den Flaechennamen als Gruppe
+    def schale(name, x0, mit_flaeche):
+        m = Model(name)
+        m.add_material(Material("S235"))
+        m.add_shell_prop(ShellProp("t10", 0.010))
+        for (x, y) in ((0, 0), (1, 0), (1, 1), (0, 1)):
+            m.add_node(x0 + x, y, 0.0)
+        e = m.add_element("shell4", [0, 1, 2, 3], "S235", "t10", group="F1")
+        if mit_flaeche:
+            m.flaechen["F1"] = Flaeche("F1", elemente=[e])
+        return m
+
+    z = anhaengen(schale("Quelle", 5.0, True), schale("Ziel", 0.0, False))
+    gruppen = [e.group for e in z.elements]
+    flaechen = {n: [int(e) for e in f.elemente] for n, f in z.flaechen.items()}
+    expect("Anhaengen: Flaeche der Quelle weicht einer gleichnamigen Elementgruppe des Ziels aus",
+           gruppen == ["F1", "F1_2"] and flaechen == {"F1_2": [1]},
+           f"Gruppen {gruppen}, Flaechen {flaechen}")
+
+
+def test_json_anhaengen_einzahl_mehrzahl():
+    """Protokollzeilen des Anhaengens in Einzahl und Mehrzahl. Gemessen am
+    Stand ec6448c (23.09.2026, b075_b077_texte.py): "1 Knoten der Quelle
+    lagen auf Knoten des Ziels und wurden zusammengeführt", und die Warnung
+    zu den neuen Stellungsverweisen schrieb fuer zwei Namen "Situation
+    'S-offen', 'S-wind': ..."."""
+    from statik3d.model import Material, Section, Situation
+    from statik3d.bridges.positions import Stellung
+
+    def stab(name, punkte, sits=()):
+        m = Model(name)
+        m.add_material(Material("S235"))
+        m.add_section(Section.rectangle("R", 0.1, 0.2))
+        for p in punkte:
+            m.add_node(*p)
+        for i in range(len(punkte) - 1):
+            m.add_element("beam", [i, i + 1], "S235", "R")
+        m.stellungen = [Stellung("Offen")]
+        for s in sits:
+            m.situationen[s] = Situation(s, stellung="Offen")
+        return m
+
+    def protokoll(quelle):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "q.json")
+            quelle.save(p)
+            log = []
+            import_file(p, model=stab("Ziel", [(0, 0, 0), (1, 0, 0)]), log=log)
+        return log
+
+    # Quelle beginnt am Endknoten des Ziels: 1 Knoten schliesst an; zwei
+    # Situationen nennen die Stellung 'Offen', die das Ziel auch hat
+    log1 = protokoll(stab("Q", [(1, 0, 0), (2, 0, 0)], ["S-offen", "S-wind"]))
+    # Quelle verbindet beide Knoten des Ziels: 2 Knoten; eine Situation
+    log2 = protokoll(stab("Q", [(0, 0, 0), (0, 1, 0), (1, 0, 0)], ["S-offen"]))
+    kn1 = [x for x in log1 if "Knoten der Quelle" in x]
+    kn2 = [x for x in log2 if "Knoten der Quelle" in x]
+    expect("Anhaengen: ein zusammengefuehrter Knoten in der Einzahl",
+           kn1 == ["1 Knoten der Quelle lag auf einem Knoten des Ziels und wurde "
+                   "zusammengeführt"], "\n".join(kn1))
+    expect("Anhaengen: zwei zusammengefuehrte Knoten in der Mehrzahl",
+           kn2 == ["2 Knoten der Quelle lagen auf Knoten des Ziels und wurden "
+                   "zusammengeführt"], "\n".join(kn2))
+    st1 = [x for x in log1 if "Stellung 'Offen' →" in x]
+    st2 = [x for x in log2 if "Stellung 'Offen' →" in x]
+    expect("Anhaengen: zwei Situationen mit neuem Stellungsverweis in der Mehrzahl",
+           len(st1) == 1
+           and "Situationen 'S-offen', 'S-wind': Stellung 'Offen' → 'Offen_2'" in st1[0],
+           "\n".join(st1))
+    expect("Anhaengen: eine Situation mit neuem Stellungsverweis in der Einzahl",
+           len(st2) == 1 and "Situation 'S-offen': Stellung 'Offen' → 'Offen_2'" in st2[0]
+           and "Situationen 'S-offen'" not in st2[0], "\n".join(st2))
+
+
+def test_json_anhaengen_tetp_kantenmitten():
+    """Die gekruemmte Geometrie der Tetraeder mit Ordnung p (Modellschluessel
+    ``tetp_kantenmitten``, seit dem 23.09.2026 in der Datei) kommt beim
+    Anhaengen mit: die Knotennummern ihrer Kanten folgen dem Versatz und dem
+    Zusammenfuehren mit dem Ziel. Geprueft an der Geometrie jedes
+    angehaengten Elements (tetp.geometrie_modell) gegen die der Quelle -
+    bitgleich. Ein Zielknoten liegt auf einer Ecke einer gekruemmten Kante
+    der Quelle; das Zusammenfuehren nummeriert damit jeden spaeteren Knoten
+    der Quelle um.
+
+    Treffen beim Zusammenfuehren zwei verschiedene Kantenmitten auf dieselbe
+    Kante (die Quelle an sich selbst gehaengt, eine Kantenmitte um 1 mm
+    verschoben), gilt die des Ziels, und das Protokoll nennt die Kante."""
+    from statik3d.elements import tetp as tp
+    from tests import pruefkoerper as pk
+    hk = pk.Hohlkugel()
+    q0 = hk.modell("tet10", 2, 2)
+    q0.case().nodal_loads.clear()
+    tp.aus_tet10(q0, ordnung=3)
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "hohlkugel.json")
+        q0.save(p)
+        quelle = Model.load(p)                 # so, wie sie beim Anhaengen gelesen wird
+        km_q = getattr(quelle, "tetp_kantenmitten", None) or {}
+        a = next(iter(km_q))[0] if km_q else 0
+        ziel = Model("ziel")
+        ziel.add_node(5.0, 5.0, 5.0)
+        ziel.add_node(*[float(x) for x in quelle.nodes[a]])
+        log = []
+        ziel = import_file(p, model=ziel, log=log)
+
+        idx_q = [i for i, e in enumerate(quelle.elements) if tp.ist_tetp(e.typ)]
+        G_q = tp.geometrie_modell(quelle, idx_q)
+        G_z = tp.geometrie_modell(ziel, idx_q)       # das Ziel hatte keine Elemente
+        km_z = getattr(ziel, "tetp_kantenmitten", None) or {}
+        text = "\n".join(log)
+        expect("Anhaengen: gekruemmte Kanten der Quelle kommen an, Geometrie bitgleich",
+               len(km_q) > 0 and len(km_z) == len(km_q) and ziel.nn == 2 + quelle.nn - 1
+               and np.array_equal(G_q, G_z),
+               f"{len(km_z)} von {len(km_q)} Kanten, {ziel.nn} Knoten, "
+               f"max|dG| {float(np.abs(G_z - G_q).max()):.3e} m")
+        expect("Anhaengen: Protokoll nennt die gekruemmten Kanten, keine Warnung zum Feld",
+               "tetp_kantenmitten" not in text and "gekrümmte Kanten" in text, text[-400:])
+
+        # Konflikt: die Quelle an sich selbst, eine Kantenmitte um 1 mm verschoben
+        schl = next(iter(km_q))
+        q2 = Model.load(p)
+        q2.tetp_kantenmitten[schl] = np.asarray(q2.tetp_kantenmitten[schl], float) \
+            + np.array([0.0, 0.0, 1e-3])
+        p2 = os.path.join(d, "verschoben.json")
+        q2.save(p2)
+        ziel2 = Model.load(p)
+        log2 = []
+        ziel2 = import_file(p2, model=ziel2, log=log2)
+    km2 = ziel2.tetp_kantenmitten
+    zeile = [x for x in log2 if "Kantenmitte" in x]
+    expect("Anhaengen: zwei verschiedene Kantenmitten auf einer Kante - die des Ziels "
+           "gilt, das Protokoll nennt sie",
+           ziel2.nn == quelle.nn and len(km2) == len(km_q)
+           and np.array_equal(km2[schl], km_q[schl]) and len(zeile) == 1
+           and zeile[0].startswith("WARNUNG") and "1 Kante " in zeile[0]
+           and "1 mm" in zeile[0],
+           f"{ziel2.nn} Knoten, {len(km2)} Kanten; " + ("\n".join(zeile) or "keine Zeile"))
+
+
+def _tetp_hohlkugel():
+    """Hohlkugel tet10 2 x 2, zu tetp3 gemacht: gekruemmte Kanten in
+    ``tetp_kantenmitten``, die frei gewordenen Mittenknoten stehen noch."""
+    from statik3d.elements import tetp as tp
+    from tests import pruefkoerper as pk
+    m = pk.Hohlkugel().modell("tet10", 2, 2)
+    m.case().nodal_loads.clear()
+    tp.aus_tet10(m, ordnung=3)
+    return m
+
+
+def _tetp_kanten(model) -> set:
+    """Die Kanten (a < b) aller tetp-Elemente - nur deren Kantenmitten liest
+    tetp.geometrie_modell."""
+    from statik3d.elements import tetp as tp
+    aus = set()
+    for e in model.elements:
+        if tp.ist_tetp(e.typ):
+            kn = [int(n) for n in e.nodes[:4]]
+            aus |= {(min(kn[i], kn[j]), max(kn[i], kn[j])) for i, j in tp.TET10_KANTEN}
+    return aus
+
+
+def test_json_anhaengen_nach_netz_entfernen():
+    """Gegenpruefung vom 23.09.2026: Model.netzknoten_loeschen fuehrt
+    ``tetp_kantenmitten`` nicht mit - nach dem Entfernen eines tetp-Netzes
+    (wie beim Neuvernetzen: elemente_loeschen, dann netzknoten_loeschen)
+    bleiben Schluessel mit Knotennummern hinter dem Ende der Liste. Das
+    Zusammenfuehren beim Anhaengen indizierte sie und brach mit IndexError
+    ab ('index 46 is out of bounds for axis 0 with size 40'); vor der
+    Speicher-Kur (ec6448c) lief derselbe Ablauf durch: 39 Knoten,
+    2 Elemente, 1 Knoten zusammengefuehrt. So muss es wieder sein - und
+    ohne tetp-Element bleibt keine Kantenmitte stehen."""
+    from statik3d.elements import tetp as tp
+    m = _tetp_hohlkugel()
+    mat = next(iter(m.materials))
+    m.add_element("truss", [m.add_node(1.0, 0.0, 0.0), m.add_node(2.0, 0.0, 0.0)], mat, None)
+    q = Model("q")
+    q.materials = dict(m.materials)
+    q.add_element("truss", [q.add_node(2.0, 0.0, 0.0), q.add_node(3.0, 0.0, 0.0)], mat, None)
+    with tempfile.TemporaryDirectory() as d:
+        pz, pq = os.path.join(d, "z.json"), os.path.join(d, "q.json")
+        m.save(pz)
+        q.save(pq)
+        z = Model.load(pz)
+        z.elemente_loeschen([i for i, e in enumerate(z.elements) if tp.ist_tetp(e.typ)])
+        z.netzknoten_loeschen()
+        vorher = f"nach dem Entfernen {z.nn} Knoten, {len(z.tetp_kantenmitten)} Kantenmitten"
+        log = []
+        try:
+            z = import_file(pq, model=z, log=log)
+            fehler = ""
+        except Exception as ex:                 # noqa: BLE001 - der Befund ist der Abbruch
+            fehler = f"{type(ex).__name__}: {ex}"
+    if fehler:
+        expect("Anhaengen nach dem Entfernen eines tetp-Netzes laeuft durch", False,
+               f"{vorher}; {fehler}")
+        return
+    km = z.tetp_kantenmitten
+    expect("Anhaengen nach dem Entfernen eines tetp-Netzes laeuft durch wie vor der Kur",
+           z.nn == 39 and len(z.elements) == 2 and not km
+           and any("1 Knoten der Quelle lag auf einem Knoten des Ziels" in x for x in log),
+           f"{vorher}; danach {z.nn} Knoten, {len(z.elements)} Elemente, "
+           f"{len(km)} Kantenmitten")
+
+
+def test_zusammenfuehren_nach_netzknoten_loeschen():
+    """Gegenpruefung vom 23.09.2026: nach aus_tet10 und netzknoten_loeschen
+    (die frei gewordenen Mittenknoten gehen, 305 -> 57 Knoten) stehen
+    Kantenmitten mit Knotennummern bis hinter das Ende der Liste im Modell.
+    merge_duplicate_nodes danach brach ab, wenn so wenige Knoten dazukamen,
+    dass die hoechste Nummer einer Kantenmitte hinter dem neuen Ende lag -
+    etwa ein Import mit wenigen neuen Knoten oder joints.build.weld_couple
+    ('index 63 is out of bounds for axis 0 with size 58' mit einem neuen
+    Knoten; mit 247, 248 oder 400 neuen Knoten lief es durch, gemessen am
+    Stand ad5d527 am 23. und 24.09.2026, hoechste Nummer 276 bei 57
+    Knoten; ein Import ohne neue Knoten ruft merge_duplicate_nodes gar
+    nicht). Jetzt laeuft es durch, und die Geometrie jedes
+    tetp-Elements bleibt ueber das Zusammenfuehren bitgleich (was
+    netzknoten_loeschen selbst an ihr verschiebt, prueft diese Pruefung
+    nicht)."""
+    from statik3d.importers import _common as C
+    from statik3d.elements import tetp as tp
+    m = _tetp_hohlkugel()
+    idx = list(range(len(m.elements)))
+    m.netzknoten_loeschen()
+    G1 = tp.geometrie_modell(m, idx)
+    km1 = len(m.tetp_kantenmitten)
+    m.nodes = np.vstack([m.nodes, m.nodes[:1]])      # ein Doppel, wie ein Import es bringt
+    try:
+        n = C.merge_duplicate_nodes(m)
+    except Exception as ex:                     # noqa: BLE001 - der Befund ist der Abbruch
+        expect("merge_duplicate_nodes nach netzknoten_loeschen laeuft durch", False,
+               f"{km1} Kantenmitten; {type(ex).__name__}: {ex}")
+        return
+    G2 = tp.geometrie_modell(m, idx)
+    km = m.tetp_kantenmitten
+    fremd = [k for k in km if k not in _tetp_kanten(m)]
+    expect("merge_duplicate_nodes nach netzknoten_loeschen: laeuft durch, Geometrie bitgleich, "
+           "nur Kantenmitten an tetp-Kanten",
+           n == 1 and np.array_equal(G1, G2) and not fremd,
+           f"{n} zusammengefuehrt, max|dG| {float(np.abs(G2 - G1).max()):.3e} m, "
+           f"{km1} -> {len(km)} Kantenmitten, {len(fremd)} an keiner tetp-Kante")
+
+
+def test_zusammenfuehren_kantenmitte_ohne_element():
+    """Eine Kantenmitte, deren Kante zu keinem tetp-Element gehoert (wie die,
+    die netzknoten_loeschen hinter dem Ende der Knotenliste stehen laesst),
+    wirkt im Augenblick nirgends. Das Zusammenfuehren darf sie nicht auf eine tetp-Kante
+    heben: ein Import legt den Knoten ``nn`` genau auf die Ecke c einer
+    geraden Kante (x, c), und der verwaiste Schluessel (x, nn) wurde zu
+    (x, c) - die gerade Kante war danach still gekruemmt."""
+    from statik3d.importers import _common as C
+    from statik3d.elements import tetp as tp
+    m = _tetp_hohlkugel()
+    idx = list(range(len(m.elements)))
+    km = m.tetp_kantenmitten
+    x, c = next(k for k in sorted(_tetp_kanten(m)) if k not in km)       # eine gerade Kante
+    nn = m.nn
+    X = np.asarray(m.nodes, float)
+    km[(x, nn)] = 0.5 * (X[x] + X[c]) + np.array([0.0, 0.0, 0.05])        # verwaist
+    G1 = tp.geometrie_modell(m, idx)
+    n_km = len(km)
+    m.nodes = np.vstack([X, X[c:c + 1]])             # Knoten nn auf der Ecke c
+    try:
+        n = C.merge_duplicate_nodes(m)
+    except Exception as ex:                     # noqa: BLE001
+        expect("Zusammenfuehren mit verwaister Kantenmitte laeuft durch", False,
+               f"{type(ex).__name__}: {ex}")
+        return
+    G2 = tp.geometrie_modell(m, idx)
+    km2 = m.tetp_kantenmitten
+    expect("Zusammenfuehren hebt eine verwaiste Kantenmitte nicht auf eine gerade tetp-Kante",
+           n == 1 and np.array_equal(G1, G2) and (x, c) not in km2 and len(km2) == n_km - 1,
+           f"Kante ({x}, {c}): {n} zusammengefuehrt, max|dG| "
+           f"{float(np.abs(G2 - G1).max()) * 1e3:.4g} mm, {n_km} -> {len(km2)} Kantenmitten")
+
+
+def test_json_anhaengen_verwaiste_kantenmitten():
+    """Gegenpruefung vom 23.09.2026 zu bc1dfe0: verwaiste Kantenmitten des
+    Ziels (netzknoten_loeschen fuehrt sie nicht mit) kruemmten angehaengte
+    tetp-Elemente. Das Anhaengen setzte die Eintraege der Quelle mit Versatz
+    hinter die des Ziels; ein verwaister Schluessel des Ziels, der in den
+    neuen Nummern Kante eines angehaengten Elements ist, galt dann dort -
+    ohne Zusammenfuehren ohnehin (anschluss_zusammenfuehren kehrt bei 0
+    Knoten vorher zurueck), mit Zusammenfuehren, weil der Filter die alten
+    Nummern des angehaengten Elements sah. Gemessen an bc1dfe0 (zweimal am
+    23.09., einmal am 24.09.2026): Ziel die gespeicherte Hohlkugel mit Stab,
+    geladen, tetp-Netz entfernt (38 Knoten, 126 Kantenmitten); Quelle ein
+    Kragarm tet10 4 x 2 x 2 als tetp3 (keine gekruemmte Kante). Um (5, 0, 0)
+    versetzt: 8 angehaengte Elemente bis 5556 mm neben der Quelle, det J <= 0
+    an 7, keine Warnung; um (2, 0, 0) (1 Knoten auf dem Stabende): 2556 mm.
+    Ziel ganz geleert, Quelle eine gerade Hohlkugel als tetp3: 89,90 mm
+    (groesste Koordinatenaenderung 87,12 mm), die Rechnung brach ab (Element
+    umgeklappt). An ec6448c: 0 mm.
+
+    Jetzt ist die Geometrie jedes angehaengten Elements bitgleich die der
+    Quelle, kein Element klappt um."""
+    from statik3d.elements import tetp as tp
+    from tests import pruefkoerper as pk
+    m = _tetp_hohlkugel()
+    mat = next(iter(m.materials))
+    m.add_element("truss", [m.add_node(1.0, 0.0, 0.0), m.add_node(2.0, 0.0, 0.0)], mat, None)
+    zeilen, gut = [], True
+    with tempfile.TemporaryDirectory() as d:
+        pz = os.path.join(d, "z.json")
+        m.save(pz)
+        faelle = []
+        for versatz in ((5.0, 0.0, 0.0), (2.0, 0.0, 0.0)):
+            q, _ids = pk.Kragarm().modell("tet10", 4, 2, 2)
+            q.case().nodal_loads.clear()
+            tp.aus_tet10(q, ordnung=3)
+            q.nodes = np.asarray(q.nodes, float) + np.asarray(versatz)
+            faelle.append((f"Kragarm um {versatz[0]:g} m versetzt", q, False,
+                           versatz == (2.0, 0.0, 0.0)))
+        hg = pk.Hohlkugel().modell("tet4", 2, 2)
+        for e in hg.elements:
+            e.typ = "tetp3"
+        faelle.append(("Ziel geleert, gerade Hohlkugel tetp3", hg, True, False))
+        for name, q, leeren, verbunden in faelle:
+            z = Model.load(pz)
+            if leeren:
+                z.elemente_loeschen(list(range(len(z.elements))))
+                z.supports.clear()
+            else:
+                z.elemente_loeschen([i for i, e in enumerate(z.elements) if tp.ist_tetp(e.typ)])
+            z.netzknoten_loeschen()
+            vorher = f"Ziel {z.nn} Knoten, {len(z.tetp_kantenmitten)} Kantenmitten"
+            pq = os.path.join(d, "q.json")
+            q.save(pq)
+            q = Model.load(pq)
+            ne = len(z.elements)
+            log = []
+            z = import_file(pq, model=z, log=log)
+            idx = list(range(len(q.elements)))
+            G_q = tp.geometrie_modell(q, idx)
+            G_z = tp.geometrie_modell(z, [ne + i for i in idx])
+            dG = float(np.abs(G_z - G_q).max())
+            jac = tp.jacobi_pruefung(z, [ne + i for i in idx])
+            # Einzahl bei einem Knoten (B075/B077): "lag auf einem Knoten des Ziels"
+            zus = any("lagen auf Knoten des Ziels" in x or "lag auf einem Knoten des Ziels" in x
+                      for x in log)
+            ok = np.array_equal(G_z, G_q) and not jac and zus == verbunden
+            gut = gut and ok
+            zeilen.append(f"{name}: {vorher}; zusammengefuehrt {zus}; max|dG| {dG * 1e3:.4g} mm, "
+                          f"det J <= 0 an {len(jac)} von {len(idx)}")
+    expect("Anhaengen: verwaiste Kantenmitten des Ziels kruemmen keine angehaengten Elemente",
+           gut, " | ".join(zeilen))
+
+
+def test_speichern_ohne_verwaiste_kantenmitten():
+    """Gegenpruefung vom 23.09.2026 zu bc1dfe0: to_dict schrieb
+    ``tetp_kantenmitten`` ungefiltert, from_dict las es zurueck - verwaiste
+    Eintraege (an keiner Kante eines tetp-Elements) ueberstanden so Speichern
+    und Laden und konnten spaeter eine neue tetp-Kante kruemmen. Vor der
+    Speicher-Kur (ec6448c) ging mit der gekruemmten Geometrie auch jeder
+    verwaiste Eintrag beim Speichern verloren. Jetzt stehen in der Datei und
+    nach dem Laden nur die Eintraege, die ein tetp-Element liest (in der
+    Reihenfolge des Modells, bitgleich), und die Geometrie jedes
+    tetp-Elements bleibt bitgleich. Verwaist gemacht: die Haelfte der
+    tetp-Elemente entfernt, dazu ein Eintrag hinter dem Ende der
+    Knotenliste; ein weiterer steht nur in der Datei."""
+    import json
+    from statik3d.elements import tetp as tp
+    m = _tetp_hohlkugel()
+    idx_p = [i for i, e in enumerate(m.elements) if tp.ist_tetp(e.typ)]
+    m.elemente_loeschen(idx_p[len(idx_p) // 2:])
+    X = np.asarray(m.nodes, float)
+    km = m.tetp_kantenmitten
+    km[(0, m.nn + 5)] = X[0] + np.array([0.0, 0.0, 0.05])
+    liest = _tetp_kanten(m)
+    erwartet = [k for k in km if k in liest]
+    idx = [i for i, e in enumerate(m.elements) if tp.ist_tetp(e.typ)]
+    G1 = tp.geometrie_modell(m, idx)
+    with tempfile.TemporaryDirectory() as d:
+        pfad = os.path.join(d, "m.json")
+        m.save(pfad)
+        with open(pfad, encoding="utf-8") as f:
+            roh = json.load(f)
+        m2 = Model.load(pfad)
+    in_datei = [(int(a), int(b)) for a, b, *_ in roh.get("tetp_kantenmitten", [])]
+    km2 = m2.tetp_kantenmitten
+    G2 = tp.geometrie_modell(m2, idx)
+    expect("Speichern: nur Kantenmitten, die ein tetp-Element liest, in Datei und Modell",
+           len(erwartet) < len(km) and in_datei == erwartet and list(km2) == erwartet
+           and all(np.array_equal(km2[k], km[k]) for k in erwartet) and np.array_equal(G1, G2),
+           f"im Modell {len(km)}, davon gelesen {len(erwartet)}; in der Datei {len(in_datei)}, "
+           f"nach dem Laden {len(km2)}; max|dG| {float(np.abs(G2 - G1).max()):.3e} m")
+    # eine Datei mit verwaistem Eintrag (von Hand oder von einem Stand vor
+    # dieser Kur geschrieben) laedt ohne ihn
+    roh["tetp_kantenmitten"] = in_datei_roh = list(roh.get("tetp_kantenmitten", []))
+    in_datei_roh.append([1, m.nn + 3, 0.0, 0.0, 9.0])
+    m3 = Model.from_dict(roh)
+    expect("Laden: ein verwaister Eintrag der Datei faellt weg",
+           list(m3.tetp_kantenmitten) == erwartet,
+           f"{len(m3.tetp_kantenmitten)} Kantenmitten statt {len(erwartet)} ({m.nn} Knoten)")
+
+
+def test_json_anhaengen_gerade_gegen_gekruemmt():
+    """Gegenpruefung vom 23.09.2026 zu bc1dfe0: ist eine Anschlusskante auf
+    einer Seite gerade (kein Eintrag) und auf der anderen gekruemmt, galt
+    still die gekruemmte - auch fuer die Elemente, deren Kante gerade war.
+    Die Handbuecher sagten, es gelte die des Ziels und das Protokoll warne.
+    Gemessen an bc1dfe0 (zweimal am 23.09., einmal am 24.09.2026), die
+    Hohlkugel an sich selbst gehaengt, Kante (0, 1) in einer der Dateien
+    gerade: Ziel gerade - Ziel-Elemente bis 1,921 mm verschoben (groesste
+    Koordinatenaenderung 1,885 mm), keine Warnung; Ziel gekruemmt -
+    angehaengte Elemente bis 1,921 mm neben der Quelle (groesste
+    Koordinatenaenderung 1,885 mm), keine Warnung.
+
+    Jetzt gilt die Kante des Ziels, gerade oder gekruemmt: die Ziel-Elemente
+    bleiben bitgleich, die angehaengten nehmen dieselbe Geometrie an (sie
+    liegen auf denselben Knoten), und das Protokoll nennt die Kante."""
+    from statik3d.elements import tetp as tp
+    q0 = _tetp_hohlkugel()
+    ne = len(q0.elements)
+    zeilen, gut = [], True
+    with tempfile.TemporaryDirectory() as d:
+        voll = os.path.join(d, "voll.json")
+        q0.save(voll)
+        gerade = Model.load(voll)
+        k = next(iter(gerade.tetp_kantenmitten))
+        del gerade.tetp_kantenmitten[k]
+        pg = os.path.join(d, "gerade.json")
+        gerade.save(pg)
+        for fall, pz, pq in (("Ziel gerade, Quelle gekruemmt", pg, voll),
+                             ("Ziel gekruemmt, Quelle gerade", voll, pg)):
+            z = Model.load(pz)
+            G0 = tp.geometrie_modell(z, range(ne))
+            ziel_krumm = k in z.tetp_kantenmitten
+            log = []
+            z = import_file(pq, model=z, log=log)
+            G_ziel = tp.geometrie_modell(z, range(ne))
+            G_anh = tp.geometrie_modell(z, range(ne, 2 * ne))
+            warn = [x for x in log if "Kantenmitte" in x]
+            ok = (z.nn == q0.nn and np.array_equal(G_ziel, G0) and np.array_equal(G_anh, G0)
+                  and (k in z.tetp_kantenmitten) == ziel_krumm and len(warn) == 1
+                  and warn[0].startswith("WARNUNG") and "1 Kante " in warn[0]
+                  and "auf einer Seite gerade" in warn[0])
+            gut = gut and ok
+            d_ziel = float(np.abs(G_ziel - G0).max()) * 1e3
+            d_anh = float(np.abs(G_anh - G0).max()) * 1e3
+            zeilen.append(f"{fall}: Ziel-Elemente max|dG| {d_ziel:.4g} mm, angehaengte gegen "
+                          f"das Ziel {d_anh:.4g} mm; " + ("\n".join(warn) or "keine Warnung"))
+    expect("Anhaengen: gerade gegen gekruemmte Kante - es gilt die des Ziels, das Protokoll "
+           "nennt sie", gut, " | ".join(zeilen))
+
+
+def test_json_anhaengen_tet4_nachbar():
+    """Gegenpruefung vom 24.09.2026 zu d21fa80: die Handbuecher sagten
+    uneingeschraenkt, an einer Anschlusskante gelte die Kante des Ziels, und
+    die Warnung nenne sie. Das gilt nur zwischen zwei tetp-Elementen. Liegt
+    auf einer Seite ein tet4, ist die Kante gerade (tetp.pflichtseiten gibt
+    sie als gerade_kanten an geometrie_modell), gleich welche Seite zuerst
+    steht, und das Zusammenfuehren warnt nicht - es sieht nur Kanten von
+    tetp-Elementen. Gemessen (zweimal, 24.09.2026) am Viertel-Hohlzylinder
+    4 x 1 (tet10 mit Mitten auf dem Kreisbogen, aus_tet10, p = 3) mit
+    demselben Zylinder als tet4 um h darueber, in beiden Reihenfolgen: 10
+    Knoten zusammengefuehrt, 17 Anschlusskanten, davon 8 gekruemmt; die
+    Kantenmitten der tetp-Elemente ruecken dort um bis zu 3,843 mm (groesste
+    Koordinatenaenderung 3,769 mm), keine Warnung. Ein tet10 an einer
+    tetp-Kante bricht die Rechnung ab.
+
+    Die Pruefung haelt fest, was die Handbuecher jetzt sagen: an den
+    Anschlusskanten genau die Sehnenmitte, sonst bitgleich, keine Warnung zu
+    Kantenmitten; mit tet10 bricht die Anreicherung mit Element und Kante ab."""
+    from statik3d.elements import tetp as tp
+    from tests import pruefkoerper as pk
+    zyl = pk.Hohlzylinder()
+
+    def zylinder(typ, dz, p):
+        m = zyl.modell(typ, 4, 1)
+        m.case().nodal_loads.clear()
+        m.supports.clear()
+        m.nodes = np.asarray(m.nodes, float) + np.array([0.0, 0.0, dz])
+        if p:
+            tp.aus_tet10(m, ordnung=3)
+        return m
+
+    zeilen, gut = [], True
+    with tempfile.TemporaryDirectory() as d:
+        for fall, ziel, quelle in (
+                ("Ziel tetp3 gekruemmt, Quelle tet4", zylinder("tet10", 0.0, True),
+                 zylinder("tet4", zyl.h, False)),
+                ("Ziel tet4, Quelle tetp3 gekruemmt", zylinder("tet4", 0.0, False),
+                 zylinder("tet10", zyl.h, True))):
+            pq = os.path.join(d, "quelle.json")
+            quelle.save(pq)
+            ne = len(ziel.elements)
+            if any(tp.ist_tetp(e.typ) for e in ziel.elements):
+                idx, G0 = list(range(ne)), tp.geometrie_modell(ziel, range(ne))
+            else:
+                q = Model.load(pq)
+                idx = list(range(ne, ne + len(q.elements)))
+                G0 = tp.geometrie_modell(q, range(len(q.elements)))
+            log = []
+            z = import_file(pq, model=ziel, log=log)
+            G1 = tp.geometrie_modell(z, idx)
+            X = np.asarray(z.nodes, float)
+            vier = {(min(e.nodes[i], e.nodes[j]), max(e.nodes[i], e.nodes[j]))
+                    for e in z.elements if e.typ == "tet4" for i in range(4) for j in range(4)
+                    if i < j}
+            sehne = np.zeros_like(G0)
+            an_tet4 = np.zeros(G0.shape[:2], bool)
+            anschluss, krumm = set(), 0
+            for a, i_e in enumerate(idx):
+                kn = z.elements[i_e].nodes[:4]
+                for m_, (i, j) in enumerate(tp.TET10_KANTEN):
+                    s = (min(kn[i], kn[j]), max(kn[i], kn[j]))
+                    if s in vier:
+                        an_tet4[a, 4 + m_] = True
+                        sehne[a, 4 + m_] = 0.5 * (X[s[0]] + X[s[1]])
+                        if s not in anschluss:
+                            anschluss.add(s)
+                            krumm += int(s in z.tetp_kantenmitten)
+            gerade = np.array_equal(G1[an_tet4], sehne[an_tet4])
+            sonst = np.array_equal(G1[~an_tet4], G0[~an_tet4])
+            warn = [x for x in log if "Kantenmitte" in x]
+            ok = gerade and sonst and not warn and krumm > 0 and float(np.abs(G1 - G0).max()) > 0.0
+            gut = gut and ok
+            # der Weg euklidisch, wie ihn die Warnung beim Zusammenfuehren
+            # nennt, und daneben die groesste Koordinatenaenderung
+            zeilen.append(f"{fall}: {len(anschluss)} Anschlusskanten, davon {krumm} gekruemmt, "
+                          "dort " + ("Sehnenmitte" if gerade else "NICHT die Sehnenmitte")
+                          + ", tetp-Elemente um bis zu "
+                          f"{float(np.linalg.norm(G1 - G0, axis=2).max()) * 1e3:.4g} mm verschoben "
+                          f"(groesste Koordinatenaenderung {float(np.abs(G1 - G0).max()) * 1e3:.4g} mm), "
+                          "sonst " + ("bitgleich" if sonst else "ANDERS")
+                          + "; " + ("\n".join(warn) or "keine Warnung"))
+        pq = os.path.join(d, "quelle.json")
+        zylinder("tet10", zyl.h, False).save(pq)
+        z = import_file(pq, model=zylinder("tet10", 0.0, True), log=[])
+        try:
+            tp.anreicherung(z, streng=True)
+            meldung = "kein Abbruch"
+        except ValueError as ex:
+            meldung = str(ex)
+        ok = "(tet10) teilt die Kante" in meldung and "Ordnung p" in meldung
+        gut = gut and ok
+        zeilen.append(f"Ziel tetp3 gekruemmt, Quelle tet10: {meldung[:90]}")
+    expect("Anhaengen: an einer Kante zum tet4 ist die Kante gerade, ohne Warnung; ein tet10 "
+           "bricht ab", gut, " | ".join(zeilen))
 
 
 def test_json_anhaengen_schluessel():
@@ -1878,17 +2953,59 @@ def test_json_anhaengen_schluessel():
            not ohne_grund, ", ".join(ohne_grund))
 
 
+def test_leerer_standardlastfall_bleibt_wenn_benutzt():
+    """drop_empty_default_case entfernt den leeren LF1 nur, wenn ihn nichts
+    nennt - auch keine Alternative einer oder-EK und kein Verlauf einer
+    Ermuedungslast. Seit dem 23.09.2026 nimmt remove_load_case den Namen dort
+    heraus (Befund B105); ohne diese Schranke fiele ein benutzter Lastfall der
+    Quelldatei samt seinen Verweisen still weg."""
+    from statik3d.importers import _common as C
+    from statik3d.model import FatigueLoad
+
+    def modell():
+        m = Model()
+        m.add_node(0, 0, 0)
+        m.add_load_case("LF-A", "Q")
+        m.load_node(0, Fz=-1.0, case="LF-A")
+        return m
+
+    m = modell()
+    ek = m.add_combination("EK", {}, "FAT")
+    ek.alternativen = [{"LF1": 1.0}, {"LF-A": 1.0}]
+    expect("leerer LF1 als Alternative einer oder-EK bleibt",
+           not C.drop_empty_default_case(m) and "LF1" in m.load_cases
+           and ek.alternativen == [{"LF1": 1.0}, {"LF-A": 1.0}], str(list(m.load_cases)))
+    m = modell()
+    m.fatigue_loads["V"] = FatigueLoad("V", folge=["LF1", "LF-A"], wiederholungen=1e5)
+    expect("leerer LF1 als Glied eines Verlaufs bleibt",
+           not C.drop_empty_default_case(m) and "LF1" in m.load_cases
+           and m.fatigue_loads["V"].folge == ["LF1", "LF-A"], str(list(m.load_cases)))
+    m = modell()
+    expect("Gegenprobe: unbenutzter leerer LF1 entfaellt",
+           C.drop_empty_default_case(m) and "LF1" not in m.load_cases, str(list(m.load_cases)))
+
+
 TESTS = [
     test_dicke_wird_nicht_still_geerbt, test_xlsx_roundtrip, test_dxf, test_abaqus_inp, test_nastran_bdf, test_ifc_parser,
          test_ifc, test_ifc2x3, test_ifc_physical_fallback, test_saf, test_rfem_xlsx,
          test_rfem_csv_folder, test_dispatcher, test_json_anhaengen_vollstaendig,
          test_json_anhaengen_hallenrahmen, test_json_anhaengen_eigengewicht_und_gleiches,
          test_json_anhaengen_doppelknoten_bleiben, test_doppelte_knoten_verweise,
-         test_json_anhaengen_fuge_traegt_wie_allein,
+         test_json_anhaengen_fuge_traegt_wie_allein, test_datei_anhaengen_fuge_bleibt,
          test_json_anhaengen_ermuedung_auf_kombination, test_json_anhaengen_koerpergruppe,
          test_json_anhaengen_stellung_des_ziels, test_json_anhaengen_stellung_protokoll,
+         test_json_anhaengen_stellung_grundstellung, test_json_anhaengen_koerper_gegen_zielgruppe,
+         test_json_anhaengen_einzahl_mehrzahl,
+         test_json_anhaengen_tetp_kantenmitten, test_json_anhaengen_nach_netz_entfernen,
+         test_zusammenfuehren_nach_netzknoten_loeschen,
+         test_zusammenfuehren_kantenmitte_ohne_element,
+         test_json_anhaengen_verwaiste_kantenmitten, test_speichern_ohne_verwaiste_kantenmitten,
+         test_json_anhaengen_gerade_gegen_gekruemmt, test_json_anhaengen_tet4_nachbar,
          test_json_anhaengen_schluessel,
-         test_entarteter_sechsflaechner_beim_import]
+         test_entarteter_sechsflaechner_beim_import,
+         test_entarteter_hex20_nennt_die_richtige_genauigkeit,
+         test_nastran_quadratische_volumen_knotenfolge,
+         test_leerer_standardlastfall_bleibt_wenn_benutzt]
 
 
 def main() -> int:

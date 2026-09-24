@@ -162,7 +162,7 @@ write_report(m, an, "kragarm.html")
 ## Verifikation
 
 ```bash
-python -m tests.test_verification     # 26 Benchmarks Stab/Schale/Volumen
+python -m tests.test_verification     # 27 Benchmarks Stab/Schale/Volumen
 python -m tests.test_solver_ext       # 49 Prüfungen: Gelenke, Lasten, Kombinationen, Kontakt, Parallel, Farm
 python -m tests.test_supports         # 46 Prüfungen: Ausfall, Schlupf, Reibung, Linien-/Flächenlager
 python -m tests.test_sections         # 83 Prüfungen: Profildatenbank nach Land, zusammengesetzte Querschnitte
