@@ -13532,7 +13532,9 @@ class MainWindow(QtWidgets.QMainWindow):
                                     erm.lastspiele_text(f.factor)]
                                    for f in m.fatigue_loads.values()])
         # Eine offene Maske Ermuedungslasten zieht nach (Rueckgaengig, Lastfall
-        # geloescht oder umbenannt) - ihr Editor bleibt, wie er ist
+        # geloescht oder umbenannt). Ihr Editor laedt neu, wenn seine Zeile weg
+        # oder das Modell getauscht ist (Rueckgaengig), sonst bleibt er stehen
+        # (Ermuedungsmaske._editor_nachziehen)
         offen = getattr(getattr(self, "maskenrand", None), "maske", None)
         if isinstance(offen, Ermuedungsmaske) and _lebt(offen):
             offen.tabelle_fuellen()

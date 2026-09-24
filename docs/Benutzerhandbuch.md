@@ -3436,6 +3436,8 @@ und oder-verknüpfte Kombinationen werden rot markiert und darunter genannt.
 Das Feld für n heißt beim Verlauf „Durchläufe des Verlaufs“; der Haken
 „globale Lastspielzahl (n = … aus Nachweise → Konfiguration)“ nennt die
 geltende Zahl. Eingaben wie „2 000 000“, „2000000“ oder „2e6“ gelten gleich.
+Tausenderpunkte („500.000“) weist das Feld ab: Der Punkt ist mehrdeutig und
+wurde bis zum 24.09.2026 still als Dezimalpunkt gelesen (500 statt 500 000).
 Der „Schwingbeiwert / dynamischer Faktor“ (früher „Faktor“) multipliziert
 die Schwingbreite dieser Zeile.
 
@@ -3450,8 +3452,19 @@ Meldung steht rot in der Maske:
 * Ein Verlauf mit weniger als zwei Gliedern, mit einem unbekannten Glied oder
   mit einer oder-verknüpften Kombination.
 * n ≤ 0 oder Schwingbeiwert ≤ 0. Wer eine Last abschalten will, löscht die
-  Zeile; die 0 Wiederholungen der Sammlungen aus dem RFEM-Import zeigt die
-  Tabelle als „0 (unwirksam)“.
+  Zeile. Ausnahme: Eine Zeile, die schon 0 trägt, bleibt bearbeitbar
+  (umbenennen, Schwingbeiwert) und behält ihre 0. So legt der RFEM-Import
+  seine Sammlungen an; die Tabelle zeigt sie als „0 (unwirksam)“. Der Haken
+  „globale Lastspielzahl“ machte eine solche Zeile wirksam, und ihre
+  Ereignisse zählten doppelt. Das sagt die Maske beim Laden der Zeile.
+* Die Zeile im Editor gibt es nicht mehr (Rückgängig oder gelöscht).
+
+Bei Rückgängig, Wiederholen und beim Löschen im Register bleibt die Maske
+offen, und ihr Editor lädt neu. Er zeigt dann die Zeile mit ihrem
+zurückgenommenen Stand. Gibt es sie nicht mehr, zeigt er die Zeile, die jetzt
+an ihrer Stelle steht. Bis zum 24.09.2026 blieb er stehen. „Übernehmen“ legte
+dann eine zurückgenommene Umbenennung als zweite Zeile an, und das Kollektiv
+zählte die Last doppelt.
 
 Beim Umbenennen einer Zeile nennen die Anschlüsse, die sie in ihrer Liste
 der Ermüdungslasten führen, sie beim neuen Namen; sonst fiele sie dort still

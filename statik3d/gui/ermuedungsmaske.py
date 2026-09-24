@@ -21,6 +21,8 @@ davor und refresh_all() dahinter.
 from __future__ import annotations
 
 import math
+import re
+import weakref
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -82,16 +84,43 @@ def lastspiele_text(n) -> str:
     return ganz.replace(",", " ") + ("," + rest if rest else "")
 
 
-def lastspiele_lesen(text) -> float:
-    """Eingabe lesen: „2 000 000“, „2000000“, „2e6“, „1,5e5“. ValueError, wenn
-    es keine Zahl ist."""
+def _ohne_leer(text) -> str:
     t = str(text or "")
     for z in _LEER:
         t = t.replace(z, "")
-    t = t.replace(",", ".")
+    return t
+
+
+def zahl_lesen(text) -> float:
+    """Eine Zahl lesen: Leerzeichen fallen weg, Komma ist Dezimalzeichen.
+    ValueError, wenn es keine Zahl ist."""
+    t = _ohne_leer(text).replace(",", ".")
     if not t:
         raise ValueError("leer")
     return float(t)
+
+
+class TausenderpunktFehler(ValueError):
+    """„500.000“ im Lastspielfeld: deutsch geschriebene Tausenderpunkte."""
+
+
+#: „500.000“, „2.000.000“: Punkte als Tausendertrennung (ohne Komma, ohne e)
+_TAUSENDERPUNKT = re.compile(r"^[+-]?\d{1,3}(\.\d{3})+$")
+
+
+def lastspiele_lesen(text) -> float:
+    """Eingabe lesen: „2 000 000“, „2000000“, „2e6“, „1,5e5“. ValueError, wenn
+    es keine Zahl ist.
+
+    „500.000“ wird abgewiesen statt als 500 gelesen: im Deutschen ist der
+    Punkt die uebliche Tausendertrennung, float() naehme ihn als
+    Dezimalpunkt - die Zeile zaehlte dann 1000-mal zu wenig Spiele (unsichere
+    Seite), „2.000.000“ dagegen waere ein Fehler. Beides gleich behandeln.
+    """
+    if _TAUSENDERPUNKT.match(_ohne_leer(text)):
+        raise TausenderpunktFehler("Tausender bitte mit Leerzeichen schreiben, z. B. 500 000 "
+                                   "(der Punkt ist mehrdeutig)")
+    return zahl_lesen(text)
 
 
 def globale_lastspielzahl(model) -> float:
@@ -117,6 +146,15 @@ def zustand_text(f, laenge: int = 60) -> str:
 
 def unten_text(f) -> str:
     return "" if f.folge else (f.case_min or "Nullzustand")
+
+
+def _eigenes_n(f):
+    """Eigene Lastspielzahl der Zeile (Verlauf: Durchlaeufe); None = global
+    oder keine Zeile."""
+    if f is None:
+        return None
+    eigen = f.wiederholungen if f.folge else f.cycles
+    return None if eigen is None else float(eigen or 0.0)
 
 
 def n_text(f, model) -> str:
@@ -153,7 +191,14 @@ def pruefen(model, w: dict):
     (Model.add_fatigue_load) und nahm n <= 0 und einen Faktor <= 0 an.
     """
     name = str(w.get("name") or "").strip()
-    alt = w.get("alt")
+    alt = w.get("alt") or None
+    if alt is not None and alt not in model.fatigue_loads:
+        # Die Zeile im Editor ist nach Rueckgaengig oder Loeschen weg. Bis zum
+        # 24.09.2026 legte „Übernehmen“ sie dann still neu an - nach dem
+        # Rueckgaengig einer Umbenennung stand dieselbe Last zweimal im
+        # Kollektiv, und D verdoppelte sich
+        return None, (f"Die Zeile „{alt}“ gibt es nicht mehr (Rückgängig oder gelöscht) – "
+                      "nichts übernommen. „Neue Zeile“ legt eine neue an.")
     if not name:
         return None, "Der Name fehlt – jede Zeile braucht einen eindeutigen Namen."
     if name != alt and name in model.fatigue_loads:
@@ -198,13 +243,23 @@ def pruefen(model, w: dict):
         wort = "Die Zahl der Durchläufe" if verlauf else "Die Lastspielzahl"
         try:
             n = lastspiele_lesen(w.get("n"))
+        except TausenderpunktFehler as ex:
+            return None, f"{wort} „{w.get('n')}“: {ex}."
         except ValueError:
             return None, f"{wort} „{w.get('n')}“ ist keine Zahl (z. B. 2 000 000 oder 2e6)."
-        if not math.isfinite(n) or n <= 0:
+        # 0 heisst im Modell „unwirksam“: so legt der RFEM-Import Sammlungen
+        # an, damit ihre Ereignisse nicht doppelt zaehlen (rfem6_db). Eine
+        # Zeile, die schon 0 traegt, bleibt darum bearbeitbar (umbenennen,
+        # Beiwert); vorher wies die Maske sie ab und riet zum globalen Haken,
+        # der die Sammlung wirksam machte. Neu eintragen laesst sich 0 nicht
+        # (Entwurf 24.09.: n <= 0 ist ein Fehler).
+        if n == 0 and _eigenes_n(model.fatigue_loads.get(alt)) == 0.0:
+            pass
+        elif not math.isfinite(n) or n <= 0:
             return None, (f"{wort} muss größer als null sein (eingegeben: {w.get('n')}) – "
                           "oder den Haken „globale Lastspielzahl“ setzen.")
     try:
-        faktor = lastspiele_lesen(w.get("faktor"))
+        faktor = zahl_lesen(w.get("faktor"))
     except ValueError:
         return None, f"Der Schwingbeiwert „{w.get('faktor')}“ ist keine Zahl."
     if not math.isfinite(faktor) or faktor <= 0:
@@ -285,6 +340,11 @@ class Ermuedungsmaske(msk.Maske):
         self._protokoll = protokoll or (lambda _t: None)
         #: Name der Zeile im Editor im Modell (None = neue Zeile)
         self._alt = None
+        #: das Modellobjekt beim letzten Fuellen (schwach gehalten - eine
+        #: Sicherung des Drehlagers ist 1,4 GB). Rueckgaengig und Wiederholen
+        #: tauschen das Objekt aus; daran erkennt tabelle_fuellen, dass der
+        #: Editor neu laden muss
+        self._modell_ref = None
         super().__init__(TITEL, [], parent=parent, knopf="Übernehmen",
                          hinweis="Zeile in der Tabelle wählen, unten ändern und „Übernehmen“ – "
                                  "die Maske bleibt offen. Rückgängig nimmt jede Übernahme zurück.")
@@ -470,9 +530,25 @@ class Ermuedungsmaske(msk.Maske):
 
     # -- Tabelle -----------------------------------------------------------
     def tabelle_fuellen(self):
-        """Tabelle und Auswahllisten aus dem Modell - der Editor bleibt, wie er ist."""
+        """Tabelle und Auswahllisten aus dem Modell.
+
+        Der Editor bleibt, wie er ist (ungespeicherte Eingaben ueberleben
+        etwa einen umbenannten Lastfall) - ausser seine Zeile ist weg oder das
+        Modell wurde getauscht (Rueckgaengig/Wiederholen), siehe
+        _editor_nachziehen.
+        """
         m = self.modell()
+        getauscht = self._modell_ref is not None and self._modell_ref() is not m
+        try:
+            self._modell_ref = weakref.ref(m)
+        except TypeError:           # ein Modell ohne weakref-Stelle: nie „getauscht“
+            self._modell_ref = None
         t = self.tabelle
+        # Stelle der Editorzeile vor dem Fuellen: verschwindet sie (Loeschen
+        # von aussen, Rueckgaengig einer Umbenennung), zeigt der Editor die
+        # Zeile an derselben Stelle - wie „Zeile löschen“ in der Maske
+        vorher = [t.item(r, 0).text() if t.item(r, 0) else "" for r in range(t.rowCount())]
+        stelle = vorher.index(self._alt) if self._alt in vorher else 0
         gesperrt = t.blockSignals(True)
         try:
             t.setRowCount(0)
@@ -490,6 +566,40 @@ class Ermuedungsmaske(msk.Maske):
             t.blockSignals(gesperrt)
         self._zustaende_fuellen()
         self._global_beschriften()
+        # Auch nach eigenen Aenderungen (refresh_all im Fenster): danach setzt
+        # die aufrufende Methode den Editor ohnehin selbst
+        self._editor_nachziehen(getauscht, stelle)
+
+    def _editor_nachziehen(self, getauscht: bool, stelle: int = 0):
+        """Den Editor nach einer Aenderung von aussen (Rueckgaengig, Loeschen
+        im Baum oder Register) zum Modell passend machen.
+
+        Bis zum 24.09.2026 blieb er stehen: nach dem Rueckgaengig einer
+        Umbenennung zeigte er die zurueckgenommene Zeile weiter, und
+        „Übernehmen“ legte sie als zweite Zeile an (D am Kragarm 47,6 → 111);
+        nach dem Rueckgaengig einer Uebernahme schrieb die naechste den
+        zurueckgenommenen Wert wieder hinein.
+
+        Ist die Zeile weg, laedt er die Zeile an ihrer Stelle, unveraendert:
+        ein „Übernehmen“ ohne weitere Eingabe aendert dann nichts. Eine neue
+        Zeile stattdessen legte beim naechsten „Übernehmen“ wieder eine an.
+        """
+        alt = self._alt
+        if alt is None:
+            return                   # neue Zeile: „Übernehmen“ prueft den Namen
+        namen = list(self.modell().fatigue_loads)
+        if alt not in namen:
+            text = f"Die Zeile „{alt}“ gibt es nicht mehr (Rückgängig oder gelöscht)"
+            if namen:
+                nachfolger = namen[min(stelle, len(namen) - 1)]
+                self.zeile_waehlen(nachfolger)
+                self.meldung(f"{text} – der Editor zeigt „{nachfolger}“.", fehler=True)
+            else:
+                self.neue_zeile(fokus=False)
+                self.meldung(f"{text} – der Editor zeigt eine neue Zeile.", fehler=True)
+        elif getauscht:
+            self.zeile_waehlen(alt)
+            self.meldung(f"Zeile „{alt}“ neu geladen (Rückgängig/Wiederholen).")
 
     def _tabelle_markieren(self, name):
         namen = list(self.modell().fatigue_loads)
@@ -589,11 +699,18 @@ class Ermuedungsmaske(msk.Maske):
         self.faktor.setText(lastspiele_text(f.factor))
         self.gruppe.setTitle(f"Zeile „{f.name}“ bearbeiten")
         self.meldung("")
+        if _eigenes_n(f) == 0.0:
+            # Sammlung aus dem RFEM-Import: sagen, warum sie nicht zaehlt, und
+            # dass der globale Haken sie wirksam machte
+            self.meldung(f"{'Durchläufe' if f.folge else 'Lastspiele'} 0: diese Zeile ist "
+                         "unwirksam (Sammlung aus dem Import) und zählt im Nachweis nicht mit. "
+                         "Der Haken „globale Lastspielzahl“ machte sie wirksam.")
         self._art_umschalten()
 
-    def neue_zeile(self):
+    def neue_zeile(self, fokus: bool = True):
         """Den Editor fuer eine neue Zeile vorbereiten; ins Modell kommt sie erst
-        mit „Übernehmen“."""
+        mit „Übernehmen“. ``fokus=False`` beim Nachziehen von aussen: die
+        Tastatur bleibt, wo der Anwender gerade ist."""
         m = self.modell()
         self._alt = None
         self._tabelle_markieren(None)
@@ -610,7 +727,8 @@ class Ermuedungsmaske(msk.Maske):
         self.gruppe.setTitle("Neue Zeile")
         self.meldung("")
         self._art_umschalten()
-        self.name.setFocus()
+        if fokus:
+            self.name.setFocus()
 
     def _art_umschalten(self, *_):
         verlauf = self.art.currentData() == ART_VERLAUF
@@ -722,7 +840,9 @@ class Ermuedungsmaske(msk.Maske):
             self.meldung(fehler, fehler=True)
             self._protokoll("Ermüdungslasten: " + fehler)
             return None
-        alt = w["alt"] if w["alt"] in m.fatigue_loads else None
+        # pruefen hat eine verschwundene Zeile schon abgewiesen: alt ist None
+        # (neue Zeile) oder steht im Modell
+        alt = w["alt"] or None
         was = f"Ermüdungslast {fl.name}" + (f" (vorher {alt})" if alt and alt != fl.name else "")
         erg = {}
         self._aendern(was, lambda: erg.update(anschluesse=schreiben(self.modell(), fl, alt)))

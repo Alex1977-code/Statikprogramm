@@ -176,6 +176,37 @@ def test_zeile_bearbeiten_und_felder():
           isinstance(mk.n, QtWidgets.QLineEdit) and mk.n.validator() is None)
 
 
+def _wirft(fn, *a):
+    try:
+        fn(*a)
+    except ValueError:
+        return True
+    return False
+
+
+def test_tausenderpunkt_abgewiesen():
+    # „500.000“ las die Maske als 500 (1000-mal zu wenig Spiele, unsichere
+    # Seite), „2.000.000“ wies sie ab: beides gleich abweisen, mit Grund
+    em = _em()
+    check("Lastspiele „500.000“ und „2.000.000“ abgewiesen, nicht als 500 gelesen",
+          _wirft(em.lastspiele_lesen, "500.000") and _wirft(em.lastspiele_lesen, "2.000.000")
+          and _wirft(em.lastspiele_lesen, "1.000"))
+    check("… Dezimalpunkt bleibt lesbar: „1.5“, „2.5e5“, „1,5“",
+          em.lastspiele_lesen("1.5") == 1.5 and em.lastspiele_lesen("2.5e5") == 2.5e5
+          and em.lastspiele_lesen("1,5") == 1.5)
+    m = _mit_lasten()
+    vorher = list(m.fatigue_loads)
+    w = {"alt": None, "name": "Neu", "art": "zwei", "oben": "LF1", "unten": None,
+         "global": False, "n": "500.000", "faktor": "1"}
+    fl, fehler = em.pruefen(m, w)
+    check("pruefen: „500.000“ abgewiesen, Meldung rät zu „500 000“",
+          fl is None and "Leerzeichen" in fehler and "500 000" in fehler, fehler)
+    fl, fehler = em.pruefen(m, dict(w, n="500 000", faktor="1.000"))
+    check("… „500 000“ angenommen; Schwingbeiwert „1.000“ bleibt 1 (kein Tausender)",
+          fl is not None and fl.cycles == 5e5 and fl.factor == 1.0, fehler or str(fl))
+    check("… nichts ins Modell geschrieben", list(m.fatigue_loads) == vorher)
+
+
 def test_verlauf_liste_und_text_gekoppelt():
     m = _mit_lasten()
     mk, _ = _maske(m)
@@ -286,6 +317,19 @@ def test_uebernehmen_pruefungen():
           haken.was and "Neu" in haken.was[-1], str(haken.was))
     check("… die Tabelle zeigt die neue Zeile", [r[0] for r in _zellen(mk)][-1] == "Neu",
           str([r[0] for r in _zellen(mk)]))
+    # oder-EK als Zustand zweier Zustaende (aus Datei oder Import): die
+    # Auswahl haengt sie als „(nicht verfügbar)“ an, „Übernehmen“ weist ab
+    m.fatigue_loads["OderZ"] = FatigueLoad("OderZ", "EK_oder", None, cycles=1e5)
+    vor_oder = stand()
+    anzahl = len(haken.was)
+    mk.tabelle_fuellen()
+    mk.zeile_waehlen("OderZ")
+    mk.anwenden()
+    check("zwei Zustände: oder-EK als oberer Zustand abgewiesen, Modell unverändert",
+          stand() == vor_oder and "oder-verknüpfte" in mk.lbl_meldung.text()
+          and len(haken.was) == anzahl, mk.lbl_meldung.text())
+    del m.fatigue_loads["OderZ"]
+    mk.tabelle_fuellen()
     # zwei Zustaende, bearbeiten einer vorhandenen Zeile
     mk.zeile_waehlen("Oben")
     mk.global_n.setChecked(True)
@@ -372,6 +416,15 @@ def test_bericht_klartext():
           ZAEHLVERFAHREN_TEXT["rainflow"] in html, "")
     check("Bericht: nicht mehr roh „rainflow“ in der Tabelle",
           "<td>rainflow</td>" not in html, "")
+    # Ohne gespeichertes Zaehlverfahren gilt die Klassenvorgabe „spanne“
+    # (bis 24.09.2026 fiel der Bericht auf „rainflow“ zurueck)
+    spanne = ZAEHLVERFAHREN_TEXT["spanne"]
+    m.fatigue_loads["Folge"].zaehlung = ""
+    html2 = Report(m, an).html()
+    check("Bericht: leeres Zählverfahren → Klartext „spanne“, nicht „rainflow“",
+          html2.count(spanne) == html.count(spanne) + 1
+          and html2.count(ZAEHLVERFAHREN_TEXT["rainflow"]) == html.count(ZAEHLVERFAHREN_TEXT["rainflow"]) - 1,
+          f"spanne {html.count(spanne)} → {html2.count(spanne)}")
 
 
 def test_miner_summe_zweier_zeilen():
@@ -463,12 +516,210 @@ def test_modellbaum_und_hauptfenster():
           "Maske Ermüdungslasten" in dq and "Dialog Ermüdungslast" not in dq)
 
 
+def test_einstiege_hauptfenster():
+    """„Neu…“ im Register, Doppelklick im Register und „+ Ermüdungslast
+    anlegen“ im Baum - bei vorhandenen Zeilen, sonst legte der Konstruktor
+    ohnehin eine neue an und ein falscher Einstieg fiele nicht auf."""
+    _app()
+    G = _gui()
+    m = _mit_lasten()
+    masken = []
+    s = types.SimpleNamespace(model=m, merken=lambda was: None, refresh_all=lambda: None,
+                              maske_erzeugen=lambda mk, fokus=True: masken.append(mk) or mk,
+                              log=types.SimpleNamespace(appendPlainText=lambda t: None))
+    s._ermuedung_aendern = lambda was, fn: G.MainWindow._ermuedung_aendern(s, was, fn)
+    s.maske_ermuedungslasten = lambda *a, **k: G.MainWindow.maske_ermuedungslasten(s, *a, **k)
+    mk = G.MainWindow.add_fatigue_load(s)
+    check("Register „Neu…“: Maske mit neuer Zeile, obwohl es Zeilen gibt",
+          mk is not None and mk._alt is None and mk.name.text() not in m.fatigue_loads
+          and mk.gruppe.title() == "Neue Zeile", "" if mk is None else f"{mk._alt!r} {mk.name.text()!r}")
+    G.MainWindow._ermuedungslast_doppelklick(s, types.SimpleNamespace(row=lambda: 1))
+    check("Register Doppelklick auf Zeile 2: Maske mit „Global“",
+          len(masken) == 2 and masken[-1]._alt == "Global" and masken[-1].name.text() == "Global",
+          "" if len(masken) < 2 else masken[-1].name.text())
+    aufrufe = []
+    s2 = types.SimpleNamespace(maske_ermuedungslasten=lambda *a, **k: aufrufe.append((a, k)))
+    G.MainWindow._baum_system_geklickt(s2, "ermuedungslast_neu", "")
+    check("Baum „+ Ermüdungslast anlegen“ öffnet die Maske mit neuer Zeile",
+          aufrufe and aufrufe[-1][1].get("neu") is True, str(aufrufe))
+
+
+def _fenster(m):
+    """Attrappe des Hauptfensters mit den echten Methoden merken, undo,
+    _ermuedung_aendern, refresh_cases und remove_fatigue_load; refresh_all
+    ist refresh_cases (dort zieht die offene Maske nach)."""
+    from PySide6 import QtWidgets
+    G = _gui()
+    s = types.SimpleNamespace(model=m, SCHRITTE=G.MainWindow.SCHRITTE,
+                              UNDO_ELEMENTE=G.MainWindow.UNDO_ELEMENTE,
+                              tbl_lc=QtWidgets.QTableWidget(0, 5), tbl_comb=QtWidgets.QTableWidget(0, 4),
+                              tbl_fatl=QtWidgets.QTableWidget(0, 5), lbl_active=QtWidgets.QLabel(),
+                              cb_g=QtWidgets.QCheckBox(), maskenrand=types.SimpleNamespace(maske=None))
+    s._undo_knoepfe = lambda: None
+    s._undo_init = lambda: G.MainWindow._undo_init(s)
+    s.info = lambda t: None
+    s._lastwahl_fuellen = lambda: None
+    s._fill = lambda t, rows, header=None: G.MainWindow._fill(s, t, rows, header)
+    s.refresh_cases = lambda: G.MainWindow.refresh_cases(s)
+    s.refresh_all = s.refresh_cases
+    s.merken = lambda was: G.MainWindow.merken(s, was)
+    s.undo = lambda: G.MainWindow.undo(s)
+    s.redo = lambda: G.MainWindow.redo(s)
+
+    def modell_setzen(mm):              # wie _modell_setzen: Objekt tauschen, nachziehen
+        s.model = mm
+        s.refresh_all()
+    s._modell_setzen = modell_setzen
+    s._ermuedung_aendern = lambda was, fn: G.MainWindow._ermuedung_aendern(s, was, fn)
+    s.maskenrand.maske = _em().Ermuedungsmaske(lambda: s.model, aendern=s._ermuedung_aendern)
+    return s
+
+
+def _stand(m):
+    return {k: (v.case_max, v.case_min, v.cycles, v.factor, list(v.folge), v.wiederholungen)
+            for k, v in m.fatigue_loads.items()}
+
+
+def _D(m):
+    return solver.solve_all(m, design=False, fatigue=True).fatigue.members["Kragarm"].D
+
+
+def test_register_lastfaelle():
+    """Register Lastfaelle: dieselben Texte wie die Maske (Zaehlverfahren im
+    Klartext, Lastspiele ausgeschrieben) - ueber refresh_cases selbst."""
+    _app()
+    from statik3d.model import ZAEHLVERFAHREN_TEXT
+    s = _fenster(_mit_lasten())
+    s.refresh_cases()
+    t = s.tbl_fatl
+    z = [[(t.item(r, c).text() if t.item(r, c) else "") for c in range(t.columnCount())]
+         for r in range(t.rowCount())]
+    check("Register: Zählverfahren des Verlaufs im Klartext",
+          len(z) == 3 and z[2][3] == ZAEHLVERFAHREN_TEXT["rainflow"], str(z[2:] if len(z) > 2 else z))
+    check("Register: Lastspiele „2 000 000“ und „global (2 000 000)“, kein e+",
+          z[0][2] == "2 000 000" and z[1][2] == "global (2 000 000)" and z[2][2] == "500 000"
+          and not any("e+" in c for r in z for c in r), str([r[2] for r in z]))
+
+
+def test_aenderung_von_aussen():
+    """Rueckgaengig, Wiederholen und Loeschen im Register, waehrend die Maske
+    offen ist. Bis zum 24.09.2026 blieb der Editor stehen: nach Rueckgaengig
+    einer Umbenennung legte „Übernehmen“ die Zeile ein zweites Mal an (D am
+    Kragarm verdoppelt), eine im Register geloeschte Zeile lebte wieder auf."""
+    _app()
+    G = _gui()
+    s = _fenster(_mit_lasten())
+    mk = s.maskenrand.maske
+    s0 = _stand(s.model)
+    D0 = _D(s.model)
+    # (1) Bearbeiten und Rueckgaengig: der Editor zeigt wieder den alten Wert
+    mk.zeile_waehlen("Oben")
+    mk.n.setText("1000")
+    mk.anwenden()
+    ok = s.model.fatigue_loads["Oben"].cycles == 1000.0
+    s.undo()
+    check("Rückgängig einer Übernahme: Editor lädt den alten Wert neu",
+          ok and _stand(s.model) == s0 and mk.n.text() == "2 000 000" and mk._alt == "Oben"
+          and "neu geladen" in mk.lbl_meldung.text(), f"n = {mk.n.text()!r}, {mk.lbl_meldung.text()!r}")
+    mk.anwenden()
+    check("… „Übernehmen“ danach schreibt den zurückgenommenen Wert nicht wieder hinein",
+          _stand(s.model) == s0, str(s.model.fatigue_loads["Oben"].cycles))
+    # (2) Umbenennen und Rueckgaengig
+    mk.zeile_waehlen("Oben")
+    mk.name.setText("Oben2")
+    mk.anwenden()
+    ok = list(s.model.fatigue_loads) == ["Oben2", "Global", "Folge"]
+    s.undo()
+    check("Rückgängig einer Umbenennung: Editor zeigt die Zeile an ihrer Stelle („Oben“)",
+          ok and list(s.model.fatigue_loads) == ["Oben", "Global", "Folge"] and mk._alt == "Oben"
+          and mk.name.text() == "Oben" and mk.tabelle.currentRow() == 0
+          and "gibt es nicht mehr" in mk.lbl_meldung.text(),
+          f"{mk._alt!r} {mk.name.text()!r} {mk.lbl_meldung.text()!r}")
+    s.redo()
+    check("Wiederholen: Editor folgt („Oben2“)",
+          list(s.model.fatigue_loads)[0] == "Oben2" and mk.name.text() == "Oben2", mk.name.text())
+    s.undo()
+    mk.anwenden()
+    check("… „Übernehmen“ nach Rückgängig legt keine zweite Zeile an, D bleibt",
+          _stand(s.model) == s0 and abs(_D(s.model) - D0) <= 1e-12 * D0,
+          f"{list(s.model.fatigue_loads)} D {_D(s.model):.6g} / {D0:.6g}")
+    # (3) Modell mit einer Zeile weniger (wie nach Rueckgaengig): Tabelle folgt
+    mk.zeile_waehlen("Global")
+    mm = s.model.copy()
+    del mm.fatigue_loads["Folge"]
+    s._modell_setzen(mm)
+    check("Modell getauscht: Tabelle der Maske folgt (2 Zeilen)",
+          mk.tabelle.rowCount() == 2 and mk.name.text() == "Global", str(mk.tabelle.rowCount()))
+    # (4) im Register geloescht, waehrend der Editor die Zeile zeigt
+    s.model = _mit_lasten()
+    s.refresh_all()
+    mk.zeile_waehlen("Folge")
+    s.tbl_fatl.setCurrentCell(2, 0)
+    G.MainWindow.remove_fatigue_load(s)
+    geloescht = "Folge" not in s.model.fatigue_loads
+    mk.anwenden()
+    check("im Register gelöscht: „Übernehmen“ belebt die Zeile nicht wieder",
+          geloescht and "Folge" not in s.model.fatigue_loads and len(s.model.fatigue_loads) == 2,
+          str(list(s.model.fatigue_loads)))
+    # (5) Schutz in pruefen: eine verschwundene Zeile wird nie still neu angelegt
+    vorher = _stand(s.model)
+    mk._alt = "Weg"
+    mk.name.setText("Weg")
+    mk.anwenden()
+    check("Zeile im Editor fehlt im Modell: „Übernehmen“ abgewiesen, Modell unverändert",
+          _stand(s.model) == vorher and "gibt es nicht mehr" in mk.lbl_meldung.text(),
+          mk.lbl_meldung.text())
+
+
+def _sammlung():
+    """Wie der RFEM-Import: FAT1 ein Ereignis, FAT_alle die Sammlung mit
+    wiederholungen = 0 (unwirksam, damit nichts doppelt zaehlt)."""
+    m = _kragarm()
+    m.fatigue_loads["FAT1"] = FatigueLoad("FAT1", folge=["LF1", "LF2"], wiederholungen=None)
+    m.fatigue_loads["FAT_alle"] = FatigueLoad("FAT_alle", folge=["LF1", "LF2", "LF3"],
+                                              wiederholungen=0.0)
+    m.add_fatigue_load("Z0", "LF2", None, cycles=0.0)
+    return m
+
+
+def test_unwirksame_sammlung():
+    m = _sammlung()
+    D0 = _D(m)
+    mk, haken = _maske(m, auswahl="FAT_alle")
+    check("Sammlung mit 0 Durchläufen: Editor sagt „unwirksam“",
+          "unwirksam" in mk.lbl_meldung.text() and mk.n.text() == "0"
+          and not mk.global_n.isChecked(), mk.lbl_meldung.text())
+    mk.name.setText("FAT_Sammlung")
+    mk.anwenden()
+    f = m.fatigue_loads.get("FAT_Sammlung")
+    check("Sammlung umbenennen: angenommen, wiederholungen bleibt 0",
+          f is not None and f.wiederholungen == 0.0 and "FAT_alle" not in m.fatigue_loads,
+          mk.lbl_meldung.text())
+    check("… D bleibt (die Sammlung zählt nicht mit)", abs(_D(m) - D0) <= 1e-12 * max(D0, 1e-30),
+          f"{_D(m):.6g} / {D0:.6g}")
+    mk.zeile_waehlen("Z0")
+    mk.faktor.setText("1,1")
+    mk.anwenden()
+    check("zwei Zustände mit n = 0: Schwingbeiwert änderbar, n bleibt 0",
+          m.fatigue_loads["Z0"].cycles == 0.0 and abs(m.fatigue_loads["Z0"].factor - 1.1) < 1e-12,
+          mk.lbl_meldung.text())
+    mk.zeile_waehlen("FAT1")
+    mk.global_n.setChecked(False)
+    mk.n.setText("0")
+    mk.anwenden()
+    check("0 neu eintragen bleibt abgewiesen (Entwurf: n ≤ 0 ist ein Fehler)",
+          m.fatigue_loads["FAT1"].wiederholungen is None and "größer als null" in mk.lbl_meldung.text(),
+          mk.lbl_meldung.text())
+
+
 def main():
     for t in (test_tabelle_listet_lasten, test_zeile_bearbeiten_und_felder,
+              test_tausenderpunkt_abgewiesen,
               test_verlauf_liste_und_text_gekoppelt, test_uebernehmen_pruefungen,
               test_umbenennen_zieht_anschluesse_nach, test_zeile_je_lastfall_und_reihenfolge,
               test_bericht_klartext, test_miner_summe_zweier_zeilen,
-              test_modellbaum_und_hauptfenster):
+              test_modellbaum_und_hauptfenster, test_einstiege_hauptfenster,
+              test_register_lastfaelle, test_aenderung_von_aussen, test_unwirksame_sammlung):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
