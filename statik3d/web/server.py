@@ -452,6 +452,8 @@ def state_summary(st: State) -> dict:
                               "factors": _clean(c.factors),
                               "alternativen": len(c.alternativen)} for c in m.combinations.values()],
             "fatigue_loads": [_clean(asdict(f)) for f in m.fatigue_loads.values()],
+            # was das Formular „+ Ermüdungslast" anbietet (Befund B134)
+            "ermuedungszustaende": m.ermuedungszustaende(),
             "members": members,
             "design": _clean(asdict(m.design)),
             "line_supports": [{"name": x.name, "nodes": list(x.nodes),
@@ -1505,8 +1507,23 @@ def _op_stellungen_rechnen(st, m, d):
     st.umhuellende = umh
     for z in reihe.log:
         st.log.append(z)
-    # kurztext sagt es, wenn Kombinationen nicht nachgewiesen wurden (etwa mit
-    # "kombinationen": false) - vorher stand hier "eta = 0.000" als Ergebnis
+    # kurztext meldet "eta nicht bestimmt - kein Nachweis gefuehrt" nur, wenn
+    # der Stabnachweis in einer Stellung Warnungen hat und in keiner Stellung
+    # einen Stab nachweisen konnte (Umhuellende.eta_bestimmt). Ohne Warnungen
+    # sagt er es nicht: ein Modell ohne Staebe meldet "eta = 0.000", obwohl
+    # nichts nachgewiesen wurde (Stauwand ohne ihre 3 Staebe, 2 Stellungen,
+    # mit und ohne Kombinationen, gemessen 24.09.2026 an 54b6f9a und 042fb81).
+    # Modelle mit Staeben, gemessen ueber diese Operation 23./24.09.2026: am
+    # Stand 54b6f9a (von 5eb21e6 nach main gemergt) ergab die Stauwand mit 3
+    # Stellungen und "kombinationen": false "eta = 0.291" (Stabnachweis aus
+    # den Lastfaellen); "eta = 0.000" stand dort bei reinen GZG-Kombinationen
+    # (Halle ohne ihre 42 GZT-Kombinationen, 1 Stellung; dieselbe Halle mit
+    # "kombinationen": false ergab "eta = 0.278"). Fuer diese beiden Modelle
+    # gab von den gemessenen Staenden (54b6f9a, fb59de1, ec6448c, 042fb81) nur
+    # fb59de1 mit "kombinationen": false "eta = 0.000" aus - eine
+    # Zwischenfassung, die nie Spitze von main war. An ec6448c und 042fb81
+    # meldet diese Operation fuer die Stauwand ohne Kombinationen und die
+    # Halle ohne GZT "eta nicht bestimmt - kein Nachweis gefuehrt".
     return f"{len(liste)} Stellungen gerechnet: " + umh.kurztext()
 
 
@@ -1830,15 +1847,35 @@ def _op_clear_combos(st, m, d):
     return f"{n} Kombinationen entfernt"
 
 
+def _ermuedungszustand(m: Model, k) -> None:
+    """Ein Zustand einer Ermuedungslast muss ein Einzelergebnis haben.
+
+    Dieselbe Auswahl wie Model.check und die GUI-Maske
+    (Model.ermuedungszustaende): Lastfall oder Kombination ohne Alternativen.
+    Bis zum 23.09.2026 nahm diese Operation nur Lastfaelle und wies jede
+    Kombination mit „Lastfall … unbekannt" ab (Befund B134, Beispiel Halle:
+    GZT1 abgewiesen, LF1 angenommen).
+    """
+    if k in m.ermuedungszustaende():
+        return
+    c = m.combinations.get(k)
+    if c is not None and c.ist_umhuellende:
+        raise ApiError(
+            f"Kombination '{k}' ist eine oder-verknüpfte Ergebniskombination "
+            f"({len(c.alternativen)} Alternativen) - sie hat kein Einzelergebnis "
+            "und taugt nicht als Zustand einer Ermüdungslast. Einen Lastfall oder "
+            "eine Kombination ohne Alternativen wählen.")
+    raise ApiError(f"Lastfall oder Kombination '{k}' unbekannt")
+
+
 @op("add_fatigue_load")
 def _op_add_fat(st, m, d):
     name = (d.get("name") or "").strip() or f"E{len(m.fatigue_loads) + 1}"
     cmax = d.get("case_max")
-    if cmax not in m.load_cases:
-        raise ApiError(f"Lastfall '{cmax}' unbekannt")
+    _ermuedungszustand(m, cmax)
     cmin = d.get("case_min") or None
-    if cmin and cmin not in m.load_cases:
-        raise ApiError(f"Lastfall '{cmin}' unbekannt")
+    if cmin:
+        _ermuedungszustand(m, cmin)
     m.add_fatigue_load(name, cmax, cmin, _f(d, "cycles", 2e6), _f(d, "factor", 1.0))
     return f"Ermüdungslast {name} angelegt"
 

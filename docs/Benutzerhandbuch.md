@@ -3344,6 +3344,20 @@ nur sie gehen in den Nachweis ein; einen oberen oder unteren Zustand, den eine
 solche Last aus einer älteren Datei noch mitführt, liest der Nachweis nicht,
 und die Prüfung meldet ihn nicht.
 
+**Im Browser** (Register *Lasten → Ermüdungslasten*) bietet das Formular
+„+ Ermüdungslast“ dieselben Zustände an wie die Maske: Lastfälle und
+Kombinationen ohne Alternativen als oberen und unteren Zustand, als unteren
+zusätzlich den Nullzustand. Einen Verlauf legt das Formular nicht an. Bis
+zum 23.09.2026 bot es nur Lastfälle an, und die Operation
+`add_fatigue_load` wies jede Kombination als „Lastfall '…' unbekannt“ ab
+(Beispiel Halle: GZT1 abgewiesen, LF1 angenommen). Eine oder-verknüpfte
+Ergebniskombination weist sie jetzt mit dem Hinweis ab, dass diese kein
+Einzelergebnis hat, einen unbekannten Namen als „Lastfall oder Kombination
+'…' unbekannt“. Geprüft am Einfeldträger IPE 300 (6 m, Streckenlast 10 kN/m,
+Kerbfall 71, 10⁶ Lastspiele): mit der Kombination K1 = 1,0 · LF1 als Zustand
+ergibt der Ermüdungsnachweis dieselbe Schadenssumme wie mit LF1 (D = 0,736;
+`tests/test_web.py`).
+
 **Lastfall umbenennen.** Bekommt ein Lastfall einen neuen Namen — im Register
 Lastfälle, per Doppelklick in der Tabelle „Lastfälle“ unten (Gruppe Lasten),
 in seiner Maske rechts (die auch ein Doppelklick im Modellbaum öffnet) oder

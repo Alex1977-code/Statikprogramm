@@ -983,6 +983,103 @@ def test_ermuedungszeile_nicht_gefuehrt_nicht_gruen():
     _assert_since(n0)
 
 
+def test_ermuedungslast_zustand_kombination():
+    """add_fatigue_load nimmt als Zustand, was Modell, Maske und Nachweis nehmen.
+
+    Befund B134: die Operation verlangte case_max und case_min unter den
+    Lastfaellen und wies eine Kombination mit „Lastfall 'GZT1' unbekannt"
+    (HTTP 400) ab - gemessen 23.09.2026 an ec6448c mit dem Beispiel Halle.
+    Model.check laesst seit 13.09.2026 (e9c6a1e) einen Lastfall oder eine
+    Kombination zu, die GUI-Maske bietet Model.ermuedungszustaende() an, und
+    der Nachweis liest beide aus all_results. Keinen Zustand hat nur eine
+    oder-verknuepfte Ergebniskombination (kein Einzelergebnis, Befund FE13):
+    sie bleibt abgewiesen, mit einem Text, der das sagt. Das Formular im
+    Browser bot nur Lastfaelle an.
+    """
+    from statik3d.model import Combination
+    n0 = len(RESULTS)
+    m = _nachweismodell(-10000.0, ohne_fy=False)        # LF1 und K1 = 1,0 * LF1
+    m.combinations["EK"] = Combination("EK", {}, "ULS",
+                                       alternativen=[{"LF1": 1.0}, {"LF1": 1.35}])
+    node = _node()
+    server, thread, state = start_server_thread(m, host="127.0.0.1", port=0, key=KEY)
+    c = Client(server.local_url.rstrip("/"))
+    try:
+        st, j, _ = c.op(op="set_member", name="Traeger", fields={"detail_category": 71e6})
+        check("Ermuedung: Kerbfall 71 am Traeger", st == 200, j.get("error", ""))
+        st, j, _ = c.op(op="add_fatigue_load", name="E_K", case_max="K1", cycles=1e6)
+        check("Ermuedungslast: Kombination als oberer Zustand angenommen",
+              st == 200 and [(f["name"], f["case_max"]) for f in j["state"]["fatigue_loads"]]
+              == [("E_K", "K1")], f"{st} {j.get('error', '')}")
+        st, j, _ = c.op(op="add_fatigue_load", name="E_LK", case_max="LF1", case_min="K1")
+        check("Ermuedungslast: Kombination als unterer Zustand angenommen",
+              st == 200 and any(f["name"] == "E_LK" and f["case_min"] == "K1"
+                                for f in j["state"]["fatigue_loads"]),
+              f"{st} {j.get('error', '')}")
+        c.op(op="remove_fatigue_load", name="E_LK")
+        for rolle in ("case_max", "case_min"):
+            st, j, _ = c.post("/api/op", {"op": "add_fatigue_load", "name": "E_EK",
+                                          "case_max": "LF1", rolle: "EK"})
+            fehler = j.get("error", "")
+            check(f"Ergebniskombination mit Alternativen als {rolle}: 400, ohne Einzelergebnis",
+                  st == 400 and "'EK'" in fehler and "Alternativen" in fehler
+                  and "kein Einzelergebnis" in fehler, f"{st} {fehler}")
+        st, j, _ = c.op(op="add_fatigue_load", name="E_X", case_max="GIBTSNICHT")
+        check("Unbekannter Zustand: 400 'Lastfall oder Kombination ... unbekannt'",
+              st == 400 and "Lastfall oder Kombination 'GIBTSNICHT' unbekannt" in j.get("error", ""),
+              f"{st} {j.get('error', '')}")
+        st, zustand, _ = c.get("/api/state")
+        check("Zustand nennt die waehlbaren Ermuedungszustaende",
+              zustand.get("ermuedungszustaende") == ["LF1", "K1"],
+              str(zustand.get("ermuedungszustaende")))
+        # Angenommen heisst auch gerechnet: K1 = 1,0 * LF1, also dieselbe
+        # Schadenssumme wie mit LF1 als Zustand
+        c.post("/api/solve", {"kind": "all", "design": False, "fatigue": True, "workers": 1})
+        job = c.wait_job()
+        st, dp, _ = c.get("/api/design")
+        f_k = ((dp.get("fatigue") or {}).get("members") or {}).get("Traeger") or {}
+        c.op(op="remove_fatigue_load", name="E_K")
+        c.op(op="add_fatigue_load", name="E_L", case_max="LF1", cycles=1e6)
+        c.post("/api/fatigue", {})
+        job2 = c.wait_job()
+        st, dp, _ = c.get("/api/design")
+        f_l = ((dp.get("fatigue") or {}).get("members") or {}).get("Traeger") or {}
+        d_k, d_l = f_k.get("D"), f_l.get("D")
+        check("Ermuedung mit Kombination K1 gerechnet: D wie mit LF1",
+              job["status"] == "fertig" and job2["status"] == "fertig" and not f_k.get("fehler")
+              and d_k is not None and d_l is not None and d_l > 0
+              and abs(d_k - d_l) <= 1e-9 * d_l,
+              f"D(K1) {d_k}, D(LF1) {d_l}, {f_k.get('fehler', '')} "
+              f"{job.get('error', '')} {job2.get('error', '')}")
+    finally:
+        server.shutdown()
+        server.server_close()
+    if not node:
+        check("node nicht vorhanden - Renderpruefung des Ermuedungsformulars entfaellt", True)
+        _assert_since(n0)
+        return
+    import subprocess
+    import tempfile
+    hier = os.path.dirname(os.path.abspath(__file__))
+    app_js = os.path.join(os.path.dirname(hier), "statik3d", "web", "static", "app.js")
+    with tempfile.TemporaryDirectory() as tmp:
+        pfad = os.path.join(tmp, "zustand.json")
+        with open(pfad, "w", encoding="utf-8") as f:
+            json.dump(zustand, f)
+        p = subprocess.run([node, os.path.join(hier, "render_ermuedungsformular.js"), app_js, pfad],
+                           capture_output=True, text=True, timeout=120, encoding="utf-8")
+    try:
+        aus = json.loads(p.stdout.strip().splitlines()[-1])
+    except Exception:        # noqa: BLE001
+        aus = {"fehler": (p.stderr or p.stdout)[-300:]}
+    check("Formular Ermuedungslast: oberer Zustand bietet Lastfall und Kombination, "
+          "nicht die Ergebniskombination",
+          aus.get("case_max") == ["LF1", "K1"], str(aus))
+    check("Formular Ermuedungslast: unterer Zustand bietet Nullzustand, Lastfall und Kombination",
+          aus.get("case_min") == ["", "LF1", "K1"], str(aus))
+    _assert_since(n0)
+
+
 def main():
     for t in (test_static_and_auth, test_model_editing, test_solve_results_report,
               test_contact_and_import, test_quader_elementtyp, test_nichtlineare_lager_und_profile,
@@ -990,6 +1087,7 @@ def main():
               test_nachweiszeile_nicht_gefuehrt_nicht_gruen,
               test_nicht_gefuehrter_stab_tabelle_detail_verlauf,
               test_ermuedungszeile_nicht_gefuehrt_nicht_gruen,
+              test_ermuedungslast_zustand_kombination,
               test_bound_state):
         print(f"\n--- {t.__name__} ---")
         try:
