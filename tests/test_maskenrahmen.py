@@ -16,7 +16,12 @@ Geprueft wird:
 * das Hauptfenster (offscreen) bei 1366 x 768: keine Maske laesst es wachsen,
   der Hauptknopf bleibt im Fenster; kurze Masken stehen oben buendig und
   ungestreckt; der Docktitel verschwindet, solange eine Maske ihren eigenen
-  Titel zeigt; der Klickmodus der Felder geht in der Rollflaeche weiter.
+  Titel zeigt; der Klickmodus der Felder geht in der Rollflaeche weiter;
+* Nachbesserung nach der Gegenpruefung (24.09.2026): die Ansicht bekommt ihre
+  Breite und der untere Bereich seine Hoehe zurueck, maximiert waechst nichts
+  (eigener Prozess mit Bildschirm 1366 x 768), Fuss und Hinweis ganz zu sehen,
+  Mausrad/Pfeiltasten/Mausklick verstellen oder verrollen nichts, ✕ per Tab,
+  Enter in Tabellen uebernimmt nicht.
 
 Aufruf:  python -m tests.test_maskenrahmen
 """
@@ -492,7 +497,8 @@ def _fenster():
     mb.question = staticmethod(lambda *a, **k: mb.StandardButton.No)
     w.load_example("frame")
     _ruhe()
-    _FENSTER.update(w=w, app=app)
+    # Hoehe des unteren Bereichs vor der ersten Maske (test_unten_bleibt)
+    _FENSTER.update(w=w, app=app, unten0=w.unten_dock.height())
     return w, app
 
 
@@ -619,6 +625,10 @@ def test_unten_bleibt():
     _zuruecksetzen(w)
     _oeffnen(w, "Netz")
     h0 = w.unten_dock.height()
+    # Alle Masken der Pruefungen davor (51 in test_fenster_waechst_nie) sind
+    # zu: unten muss so hoch sein wie vor der ersten Maske
+    check("nach allen vorigen Masken: unten so hoch wie vor der ersten Maske (±5 px)",
+          abs(h0 - _FENSTER["unten0"]) <= 5, f"{_FENSTER['unten0']} -> {h0}")
     hoehen = [h0]
     for s in ("Wind", "zu", "Wasserdruck", "zu", "Wind", "Wasserdruck", "zu", "Netz"):
         _oeffnen(w, s)
@@ -891,6 +901,14 @@ def test_schliessen_ohne_maus():
     QtTest.QTest.keyClick(app.focusWidget(), QtCore.Qt.Key_Space)
     _ruhe()
     check("… die Leertaste auf ✕ schließt die Maske", not w.maskenrand.offen())
+    # Die Hinweise nennen ✕, nicht Esc: Esc schliesst im Fenster keine Maske
+    from statik3d.gui import masken as msk
+    from statik3d.gui.profilmaske import QuerschnittMaske
+    masken = [msk.Maske("Knoten", [], knoten=2), msk.Maske("Punkte", [], knoten=2, punkte=True),
+              QuerschnittMaske()]
+    texte = [m.lbl_hinweis.text() for m in masken]
+    check("Hinweiszeilen: „✕ schließt“ statt „Esc schließt“ (Klickmasken, Querschnitt)",
+          all("✕ schließt" in t and "Esc" not in t for t in texte), " | ".join(texte))
     _zuruecksetzen(w)
 
 
