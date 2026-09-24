@@ -6236,15 +6236,19 @@ weiteren Wegen, jeweils gemessen am Stand 97df705:
   Server das Urteil aus den Stabnachweisen mit (`err` bei Ausnutzung über 1,
   `warn` bei einem nicht geführten Stab, sonst `ok`), und die Oberfläche liest
   den Text nicht mehr aus (`test_nachweiszeile_nicht_gefuehrt_nicht_gruen`).
-* **Die Renderprüfung braucht `node`.** Diese Prüfung und
-  `test_oberflaeche_rendert` führen `app.js` mit `node` aus. Ohne `node`
-  trugen beide bis ec6448c eine bestandene Prüfung ein und ließen das Rendern
-  aus. Am 23.09.2026 mit `app.js` vom Stand 97df705 (vor der Kur der
-  Nachweiszeile) gemessen: mit `node` 232 von 255 Prüfungen bestanden, ohne
-  `node` 142 von 142 — die Rücknahme fiel auf einem Rechner ohne `node` nicht
-  auf. Jetzt reißt die Suite ohne `node`; nur `STATIK3D_OHNE_NODE=1` erlaubt
-  das Auslassen, und die Zusammenfassung zählt es dann als „übersprungen“,
-  nicht als bestanden (`test_ohne_node_nicht_bestanden`).
+
+**Die Renderprüfung braucht `node`.**
+`test_nachweiszeile_nicht_gefuehrt_nicht_gruen` und `test_oberflaeche_rendert`
+führen `app.js` mit `node` aus. Ohne `node` trugen beide bis ec6448c eine
+bestandene Prüfung ein und ließen das Rendern aus. Am Stand 97df705 gibt es
+die Prüfung der Nachweiszeile noch nicht; gemessen ist darum mit
+`tests/test_web.py` vom Stand ec6448c und `app.js` vom Stand 97df705, vor der
+Kur der Nachweiszeile (23.09.2026, am 24.09.2026 nachgemessen): mit `node` 232 von 255 Prüfungen bestanden, unter den 23
+Fehlschlägen die vier der Nachweiszeile; ohne `node` 142 von 142 — die
+zurückgenommene `app.js` fiel ohne `node` nicht auf. Jetzt reißt die Suite
+ohne `node`; nur `STATIK3D_OHNE_NODE=1` erlaubt das Auslassen, und die
+Zusammenfassung zählt es dann als „übersprungen“, nicht als bestanden
+(`test_ohne_node_nicht_bestanden`).
 
 **„Alle Nachweise erfüllt." galt auch bei gerissenem Volumennachweis.**
 `self.volumen` fehlte im Gesamturteil **doppelt**: in der Statusprüfung und in
