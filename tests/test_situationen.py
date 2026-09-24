@@ -337,6 +337,19 @@ def _balken_mit_rolle() -> tuple:
     return m, ids, sec
 
 
+def _situation_in_zusammenfassung(res):
+    """Der Wert der Zeile „Situation : …“ in res.summary(), sonst None.
+
+    Die Zusammenfassung ist, was Oberflaeche (Protokoll und Feld
+    „Zusammenfassung“), Kommandozeile und Webserver nach der Rechnung
+    zeigen; res.info['situation'] zeigen sie nicht."""
+    for z in res.summary().splitlines():
+        kopf, _, wert = z.partition(":")
+        if kopf.strip() == "Situation":
+            return wert.strip()
+    return None
+
+
 def test_einzelner_lastfall_in_seiner_situation():
     """„Nur aktiver Lastfall“ (Oberflaeche), ``--analyse lastfall`` (cli) und
     der Webserver rufen solve_static. Das baute sein System bis zum 23.09.2026
@@ -356,17 +369,27 @@ def test_einzelner_lastfall_in_seiner_situation():
           f"{rs.u[n1, 2]:.9e} gegen {rc.u[n1, 2]:.9e}")
     check("Ergebnis nennt seine Situation", rs.info.get("situation") == "offen",
           str(rs.info.get("situation")))
+    # Was der Anwender nach der Rechnung liest, ist die Zusammenfassung. Am
+    # Stand b118805 stand die Situation nur in info, das Benutzerhandbuch
+    # sagte aber „das Ergebnis nennt die Situation“ (Gegenpruefung 24.09.2026)
+    check("die Zusammenfassung nennt die Situation", _situation_in_zusammenfassung(rs) == "offen",
+          str(_situation_in_zusammenfassung(rs)))
     # aktiver Lastfall wie in der Oberflaeche: solve_static(model, progress)
     m.active_case = "LF-S"
     zeilen: list = []
     ra = solver.solve_static(m, lambda text, *a: zeilen.append(str(text)))
     check("aktiver Lastfall ebenso in seiner Situation", np.array_equal(ra.u, rc.u),
           f"{ra.u[n1, 2]:.9e} gegen {rc.u[n1, 2]:.9e}")
-    check("der Fortschritt nennt die Situation", any("Situation offen" in z for z in zeilen),
-          str(zeilen[-3:]))
+    # die Zeile, die das Benutzerhandbuch nennt, wortgleich
+    check("der Fortschritt hat die Zeile „System gelöst – Situation offen“",
+          "System gelöst – Situation offen" in zeilen, str(zeilen[-3:]))
+    check("... und die Zusammenfassung des aktiven Lastfalls die Situation",
+          _situation_in_zusammenfassung(ra) == "offen", str(_situation_in_zusammenfassung(ra)))
     r1 = solver.solve_static(m, case="LF1")
     close("Lastfall der Grundstellung unveraendert: eingespannt-gestuetzt w = 7PL³/96EI",
           r1.u[n1, 2], -7 * F * L ** 3 / (96 * EI), 1e-9, "m")
+    check("Grundstellung: keine Zeile „Situation“ in der Zusammenfassung",
+          _situation_in_zusammenfassung(r1) is None, str(_situation_in_zusammenfassung(r1)))
     try:
         solver.solve_static(m, case="all")
         check("alle Lastfaelle ueber zwei Situationen werden abgewiesen", False, "lief durch")
@@ -403,18 +426,39 @@ def test_knicken_in_seiner_situation():
     rg = solver.solve_buckling(m, 2, case="D")
     close("Grundstellung: eingespannt-gelenkig N_cr = 20,1907 EI/L²",
           rg.buckling_factors[0] * P, 4.4934094579 ** 2 * E * I / L ** 2, 1e-3, "N")
-    rk = solver.solve_buckling(m, 2, case="D-frei")
+    check("Grundstellung: keine Zeile „Situation“ in der Zusammenfassung",
+          _situation_in_zusammenfassung(rg) is None, str(_situation_in_zusammenfassung(rg)))
+    # wie in der Oberflaeche: mit Fortschritt, danach die Zusammenfassung
+    zeilen: list = []
+    rk = solver.solve_buckling(m, 2, lambda text, *a: zeilen.append(str(text)), case="D-frei")
     close("Lastfall in der Situation: Kragstuetze N_cr = π²EI/(2L)²",
           rk.buckling_factors[0] * P, math.pi ** 2 * E * I / (2 * L) ** 2, 1e-4, "N")
     check("Knickergebnis nennt seine Situation", rk.info.get("situation") == "frei",
           str(rk.info.get("situation")))
+    # Das Benutzerhandbuch sagt, wo die Zeile steht: beim Knicken vor
+    # „Verzweigungsproblem wird gelöst“, nicht am Schluss
+    gl = "System gelöst – Situation frei"
+    vz = "Verzweigungsproblem wird gelöst"
+    check("Knicken: „System gelöst – Situation frei“ vor „Verzweigungsproblem …“",
+          gl in zeilen and vz in zeilen and zeilen.index(gl) < zeilen.index(vz),
+          str(zeilen[-3:]))
+    check("Knicken: die Zusammenfassung nennt die Situation",
+          _situation_in_zusammenfassung(rk) == "frei", str(_situation_in_zusammenfassung(rk)))
     rc = solver.solve_buckling(m, 2, combination="K")
     close("Kombination in der Situation: 1,5 · P gegen π²EI/(2L)²",
           rc.buckling_factors[0] * 1.5 * P, math.pi ** 2 * E * I / (2 * L) ** 2, 1e-4, "N")
+    check("Kombination: die Zusammenfassung nennt die Situation",
+          _situation_in_zusammenfassung(rc) == "frei", str(_situation_in_zusammenfassung(rc)))
     # Abgeschaltete Elemente: die aeussere Haelfte eines Stabes 2L wirkt in
-    # der Situation nicht. Ihr Endknoten wird festgehalten; ginge sie mit
-    # ihrer Verformung in die geometrische Steifigkeit ein, zoege sie die
-    # Stuetze (N = +P) und hoebe den Knickfaktor an.
+    # der Situation nicht; ihre Knoten ausser dem ersten haben kein wirksames
+    # Element und werden festgehalten. Ginge sie mit ihrer Verformung in die
+    # geometrische Steifigkeit ein, bekaeme ihr erstes Element (Laenge L/4)
+    # die ganze Verkuerzung der Stuetze als Dehnung: N = +4P = +4000 N, das
+    # naechste 0 N. Gemessen 24.09.2026 (system.aktiv bei geometric_stiffness
+    # weggelassen, sechs Faktoren): [-59,798; -239,192; 10850,028; 27039,519;
+    # ...] statt [959,576; 3838,305; ...] - der betragskleinste wird negativ, und
+    # darum faellt die Pruefung unten durch (-5,98e4 statt 9,595e5 N); der
+    # kleinste positive steigt von 959,5 auf 10850.
     m2, ids2, sec2 = _balken(8, 2 * L)
     m2.situationen["kurz"] = Situation("kurz", "", [4, 5, 6, 7], "aeussere Haelfte aus")
     m2.add_load_case("D", "G")

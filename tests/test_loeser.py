@@ -1321,9 +1321,10 @@ def test_singulaer_nach_ausweichen_nennt_den_grund():
     gehoert der Grund des Ausweichens in die Meldung - so, wie ihn das
     Scheitern der SuperLU-Faktorisierung schon anhaengt ("(vorher: ...)").
     Bis zum 23.09.2026 fehlte er in "Gleichungssystem numerisch singulaer
-    (Residuum ...)": ohne Fortschritt (Ketten, Pool, Farm, Skripte) stand
-    nirgends, dass nicht der eingestellte Loeser gerechnet hatte
-    (Nebenbefund 2)."""
+    (Residuum ...)" (Nebenbefund 2). Ein Skript ohne Fortschritt sah ihn nur
+    als RuntimeWarning von _log_einmal auf der Konsole, einmal je
+    Programmlauf - gemessen 24.09.2026 am Stand ec6448c mit diesem Aufbau;
+    in der Meldung, mit der die Rechnung abbricht, stand er nicht."""
     try:
         import pypardiso
     except Exception:                                           # noqa: BLE001

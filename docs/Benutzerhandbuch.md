@@ -3885,10 +3885,14 @@ davon nicht betroffen.
 * **Nur aktiver Lastfall**, **Eigenschwingungen**, **Knicken** (Grundzustand
   = aktiver Lastfall). Der aktive Lastfall und der Grundzustand des Knickens
   rechnen in der **Situation** des Lastfalls (Stellung, abgeschaltete
-  Elemente) – wie unter „Alle Lastfälle“; das Protokoll schließt dann mit
-  „System gelöst – Situation …“, und das Ergebnis nennt die Situation. Bis
-  zum 23.09.2026 rechneten beide still in der Grundstellung, ebenso
-  `--analyse lastfall` der Kommandozeile und der Webserver. Gemessen an einem
+  Elemente) – wie unter „Alle Lastfälle“. Im Protokoll steht dann die Zeile
+  „System gelöst – Situation …“ (beim Knicken vor „Verzweigungsproblem wird
+  gelöst“); danach folgt die Zusammenfassung des Ergebnisses (dieselbe steht
+  im Textfeld der Ergebnisse, in der Kommandozeile und im Webserver). Sie
+  nennt die Situation in einer eigenen Zeile „Situation“ – seit dem
+  24.09.2026; in der Grundstellung entfällt die Zeile. Bis zum 23.09.2026
+  rechneten beide still in der Grundstellung, ebenso `--analyse lastfall`
+  der Kommandozeile und der Webserver. Gemessen an einem
   eingespannten Balken (2 × 3 m, Rechteck 10 × 20 cm, 10 kN in der Mitte)
   mit einer Rolle am Ende, die die Stellung abbaut: Durchbiegung in der Mitte
   1,406 statt 6,429 mm (PL³/3EI). An einer Stütze (3 m, eingespannt), deren

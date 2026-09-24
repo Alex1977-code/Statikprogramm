@@ -1284,10 +1284,15 @@ class LinearSolver:
                         rueckfall=rueck)
                 if r > grenze:
                     # Der Grund des Ausweichens gehoert dazu, wie beim Scheitern
-                    # der SuperLU-Faktorisierung ("(vorher: ...)"): ohne
-                    # Fortschritt (Ketten, Pool, Farm, Skripte) stand bis zum
-                    # 23.09.2026 nirgends, dass ein anderer Loeser gerechnet
-                    # hatte als der eingestellte (Nebenbefund 2)
+                    # der SuperLU-Faktorisierung ("(vorher: ...)"). Bis zum
+                    # 23.09.2026 fehlte er in dieser Meldung (Nebenbefund 2).
+                    # Ein Skript ohne Fortschritt sah ihn nur als RuntimeWarning
+                    # von _log_einmal auf der Konsole (einmal je Programmlauf)
+                    # - gemessen 24.09.2026 am Stand ec6448c mit den zwei
+                    # Wuerfeln aus test_loeser, PARDISO zum Scheitern gebracht.
+                    # Ins Protokollfenster kommt eine Warnung nicht (statik3d
+                    # faengt warnings nirgends ab), und die exe hat keine
+                    # Konsole (console=False in packaging/Statik3D.spec).
                     raise RuntimeError(
                         f"Gleichungssystem numerisch singulaer (Residuum {r:.1e}, Schranke {grenze:g}"
                         + (f", nach {schritte} Nachiterationen" if schritte else "") + ")"
@@ -1549,6 +1554,15 @@ class Results:
                      f"({self.info.get('abbruch_iteration', '?')}) - kein Gleichgewicht, keine Auflagerkräfte")
         if self.name:
             s.append(f"Ergebnis                : {self.name} ({self.kind})")
+        # Die Situation gehoert in den Text, den Oberflaeche (Protokoll und
+        # Zusammenfassung), Kommandozeile und Webserver zeigen: am Stand
+        # b118805 stand sie nur in info['situation'], und die Zusammenfassung
+        # eines Lastfalls mit abgebautem Lager sah aus wie eine der
+        # Grundstellung (Gegenpruefung 24.09.2026, Balken der Pruefung
+        # test_situationen: kein Wort zur Situation 'offen').
+        sit = self.info.get("situation")
+        if sit and sit != GRUNDSTELLUNG:
+            s.append(f"Situation               : {sit}")
         s += [f"Freiheitsgrade gesamt   : {self.info.get('ndof', '?')}",
               f"davon aktiv             : {self.info.get('nfree', '?')}",
               f"Rechenzeit              : {self.info.get('time', 0):.3f} s"]
@@ -5924,8 +5938,16 @@ def _verzweigung(system: StaticSystem, Kgff, k: int) -> tuple:
     23.09.2026 am Zweigelenkrahmen unter Wind (tests/test_knicklaengen.py):
     in sechs Laeufen erste Faktoren zwischen 1,00 und 4,77 statt 77,3287
     (dichter Bezug).
-    K dagegen ist positiv definit, und seine Faktorisierung liegt aus dem
-    Grundzustand schon vor. Der Startvektor ist fest (Zufallszahlen mit
+    In diesem Modus (ohne sigma) verlangt ARPACK ein positiv definites M.
+    K ist das bei gehaltenem System, und seine Faktorisierung liegt aus dem
+    Grundzustand schon vor. Mit einer freien Bewegung ist K nur
+    semidefinit: an der Stuetze mit freier Torsion aus
+    tests/test_knicklaengen.py::test_knicken_mit_freier_torsion (PARDISO,
+    kein Rand) hat Kff den kleinsten Eigenwert 7,7e-8 gegen 1,6e4 den
+    naechsten und 1,24e10 den groessten. Die Wirkung ist dort gemessen:
+    die Eulerlast wird auf 0,039 % getroffen (24.09.2026); eine allgemeine
+    Zusage fuer freie Bewegungen ist das nicht.
+    Der Startvektor ist fest (Zufallszahlen mit
     festem Keim, nicht Einsen: ein symmetrischer Vektor kann auf
     antimetrische Formen senkrecht stehen). Bitgleich wird es damit nicht
     ganz: am Rahmen ist 77,3287 ein siebenfacher Eigenwert, und seine
