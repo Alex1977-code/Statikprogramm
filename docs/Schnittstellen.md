@@ -311,6 +311,19 @@ Small-, Large- und Free-Field-Format, Fortsetzungszeilen, Zahlen wie
 `LOAD`-Karten werden Kombinationen. Nastran-Ebene 1 entspricht der lokalen
 y-Achse (I1 → Iz, I2 → Iy); die Stabverdrehung folgt dem Orientierungsvektor.
 
+CHEXA mit 20 und CPENTA mit 15 Knoten zählen nach den Kantenmitten unten die
+**senkrechten** Kanten und dann die oberen; Statik3D (wie VTK und Abaqus) umgekehrt.
+Import und Export ordnen die Kantenmitten deshalb um. Bis zum 23.09.2026 blieb die
+Folge unverändert: ein regelmäßiger Würfel (CHEXA, 20 Knoten) kam mit 1,046 statt
+1,0 m³ herein, ein Keil (CPENTA, 15 Knoten) mit 0,405 statt 0,5 m³ – die Elemente
+waren still verzerrt. Export und Import in Statik3D hoben sich dabei auf; andere
+Programme lasen die exportierte Datei falsch.
+
+Ein CHEXA mit zusammenfallenden Knoten (zum Keil entartet) wird beim Import
+umgewandelt; das Protokoll nennt Anzahl und Genauigkeit der Zielart – beim
+Sechsflächner mit 20 Knoten die des quadratischen Keils (pent15), nicht die des
+linearen.
+
 ## CAD (gmsh)
 
 `pip install gmsh` (Linux zusätzlich `libglu1-mesa`). Optionen: `size`

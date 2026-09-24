@@ -357,6 +357,136 @@ def test_entarteter_sechsflaechner_beim_import():
            bool(zeile) and "Keils" in zeile[0], zeile[0][:120] if zeile else "–")
 
 
+BDF_KEIL_ALS_HEXA20 = textwrap.dedent("""    $ quadratischer Keil als entarteter CHEXA mit 20 Knoten: G4 = G3, G8 = G7,
+    $ die Mitte der zusammengefallenen Kanten ist deren Ecke (11 = 3, 19 = 7),
+    $ die Kante 4-8 faellt auf 3-7 und hat dieselbe Mitte (16 = 15)
+    BEGIN BULK
+    GRID,1,,0.0,0.0,0.0
+    GRID,2,,1.0,0.0,0.0
+    GRID,3,,0.0,1.0,0.0
+    GRID,5,,0.0,0.0,1.0
+    GRID,6,,1.0,0.0,1.0
+    GRID,7,,0.0,1.0,1.0
+    GRID,9,,0.5,0.0,0.0
+    GRID,10,,0.5,0.5,0.0
+    GRID,12,,0.0,0.5,0.0
+    GRID,13,,0.0,0.0,0.5
+    GRID,14,,1.0,0.0,0.5
+    GRID,15,,0.0,1.0,0.5
+    GRID,17,,0.5,0.0,1.0
+    GRID,18,,0.5,0.5,1.0
+    GRID,20,,0.0,0.5,1.0
+    CHEXA,1,1,1,2,3,3,5,6
+    ,7,7,9,10,3,12,13,14
+    ,15,15,17,18,7,20
+    PSOLID,1,1
+    MAT1,1,2.1+11,,0.3,7850.0
+    ENDDATA
+    """)
+
+
+def test_entarteter_hex20_nennt_die_richtige_genauigkeit():
+    """Ein zum Keil entarteter Sechsflaechner mit 20 Knoten wird beim Import
+    zum quadratischen Keil (pent15, VQ203) - und das Protokoll nennt dessen
+    Genauigkeit, nicht die des linearen Keils (23.09.2026).
+
+    Der Importaufruf nahm bis dahin die feste Zeile des linearen Keils
+    (diagnose.ENTARTUNG_GENAUIGKEIT, "-15,8 N/mm2"); fuer pent15 ist das
+    falsch (am Kragarm -0,02 N/mm2, Messung der Element-Sitzung).
+    """
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "keil20.bdf")
+        with open(p, "w") as f:
+            f.write(BDF_KEIL_ALS_HEXA20)
+        log = []
+        m = import_file(p, log=log)
+    expect("der entartete hex20 ist nach dem Import ein pent15",
+           [e.typ for e in m.elements] == ["pent15"], str([e.typ for e in m.elements]))
+    zeile = [z for z in log if "umgewandelt" in z]
+    expect("das Protokoll nennt hex20→pent15",
+           len(zeile) == 1 and "hex20→pent15: 1" in zeile[0], str(zeile))
+    expect("… mit der Genauigkeit des quadratischen Keils, nicht der des linearen",
+           bool(zeile) and "quadratische Keil" in zeile[0] and "15,8" not in zeile[0],
+           zeile[0][:160] if zeile else "–")
+
+
+def _nastran_wuerfel20_und_keil15() -> str:
+    """Wuerfel 1 m (CHEXA, 20 Knoten) und Keil (CPENTA, 15 Knoten) in der
+    Knotenfolge der Nastran-Beschreibung: beim CHEXA 9-12 Kanten unten,
+    13-16 senkrecht, 17-20 oben; beim CPENTA 7-9 unten, 10-12 senkrecht,
+    13-15 oben."""
+    import numpy as _np
+    ecken = {1: (0, 0, 0), 2: (1, 0, 0), 3: (1, 1, 0), 4: (0, 1, 0),
+             5: (0, 0, 1), 6: (1, 0, 1), 7: (1, 1, 1), 8: (0, 1, 1)}
+    kanten = [(1, 2), (2, 3), (3, 4), (4, 1), (1, 5), (2, 6), (3, 7), (4, 8),
+              (5, 6), (6, 7), (7, 8), (8, 5)]
+    gr = dict(ecken)
+    for k, (a, b) in enumerate(kanten):
+        gr[9 + k] = tuple((_np.array(ecken[a]) + _np.array(ecken[b])) / 2)
+    keil = {101: (2, 0, 0), 102: (3, 0, 0), 103: (2, 1, 0),
+            104: (2, 0, 1), 105: (3, 0, 1), 106: (2, 1, 1)}
+    kk = [(101, 102), (102, 103), (103, 101), (101, 104), (102, 105), (103, 106),
+          (104, 105), (105, 106), (106, 104)]
+    gr.update(keil)
+    for k, (a, b) in enumerate(kk):
+        gr[107 + k] = tuple((_np.array(keil[a]) + _np.array(keil[b])) / 2)
+    z = ["BEGIN BULK"] + [f"GRID,{i},,{x},{y},{w}" for i, (x, y, w) in gr.items()]
+    z += ["CHEXA,1,1,1,2,3,4,5,6", ",7,8,9,10,11,12,13,14", ",15,16,17,18,19,20",
+          "CPENTA,2,1,101,102,103,104,105,106", ",107,108,109,110,111,112,113,114", ",115",
+          "PSOLID,1,1", "MAT1,1,2.1+11,,0.3,7850.0", "ENDDATA"]
+    return "\n".join(z) + "\n"
+
+
+def test_nastran_quadratische_volumen_knotenfolge():
+    """CHEXA mit 20 und CPENTA mit 15 Knoten: Nastran zaehlt die senkrechten
+    Kantenmitten VOR den oberen, Statik3D (wie VTK/Abaqus) danach (23.09.2026).
+
+    Bis dahin nahmen Import und Export die Folge unveraendert: ein
+    regelmaessiger Wuerfel kam mit 1,046 statt 1,0 m3 herein - die oberen
+    und die senkrechten Kantenmitten vertauscht, das Element still verzerrt,
+    ohne Meldung. Der Export schrieb dieselbe Vertauschung hinaus; Import und
+    Export von Statik3D hoben sich darum auf, andere Programme lasen falsch.
+    """
+    from statik3d.elements import solid as SO
+    from statik3d.exporters import export_model
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "quadratisch.bdf")
+        with open(p, "w") as f:
+            f.write(_nastran_wuerfel20_und_keil15())
+        m = import_file(p, log=[])
+        typen = [e.typ for e in m.elements]
+        expect("CHEXA(20) -> hex20, CPENTA(15) -> pent15", typen == ["hex20", "pent15"], str(typen))
+        vol = [SO.solid_volume(e.typ, m.nodes[[int(x) for x in e.nodes]]) for e in m.elements]
+        expect("Wuerfel 1,0 m³ und Keil 0,5 m³ - die Kantenmitten sitzen richtig",
+               abs(vol[0] - 1.0) < 1e-12 and abs(vol[1] - 0.5) < 1e-12, str(vol))
+        X = m.nodes[[int(x) for x in m.elements[0].nodes]]
+        expect("hex20: Knoten 12-15 oben (z = 1), 16-19 senkrecht (z = 0,5)",
+               np.allclose(X[12:16, 2], 1.0) and np.allclose(X[16:20, 2], 0.5),
+               f"{X[12:16, 2]} / {X[16:20, 2]}")
+        # Export -> Nastran-Folge; und hin und zurueck wieder dieselben Elemente
+        q = os.path.join(d, "zurueck.bdf")
+        export_model(m, q)
+        m2 = import_file(q, log=[])
+        vol2 = [SO.solid_volume(e.typ, m2.nodes[[int(x) for x in e.nodes]]) for e in m2.elements]
+        expect("hin und zurueck: dieselben Volumina", np.allclose(vol2, vol), str(vol2))
+        with open(q, encoding="utf-8", errors="replace") as f:
+            zeilen = f.read().splitlines()
+    # Die Datei selbst in Nastran-Folge: der 13. Knoten der CHEXA-Karte ist eine
+    # senkrechte Kantenmitte (z = 0,5), der 17. eine obere (z = 1)
+    z_von = {int(w[8:16]): float(w[40:48]) for w in zeilen if w.startswith("GRID")}
+    karte = []
+    for i, w in enumerate(zeilen):
+        if w.startswith("CHEXA"):
+            karte = [w[8 * k:8 * k + 8] for k in range(3, 9)]
+            for f in zeilen[i + 1:i + 3]:
+                karte += [f[8 * k:8 * k + 8] for k in range(1, 9)]
+            break
+    gids = [int(x) for x in karte if x.strip()]
+    expect("Export schreibt die Nastran-Folge (13. Knoten senkrecht, 17. oben)",
+           len(gids) == 20 and abs(z_von[gids[12]] - 0.5) < 1e-9 and abs(z_von[gids[16]] - 1.0) < 1e-9,
+           str([z_von.get(g) for g in gids[12:20]]))
+
+
 # --------------------------------------------------------------------------
 # IFC4 Structural Analysis View
 # --------------------------------------------------------------------------
@@ -1888,7 +2018,9 @@ TESTS = [
          test_json_anhaengen_ermuedung_auf_kombination, test_json_anhaengen_koerpergruppe,
          test_json_anhaengen_stellung_des_ziels, test_json_anhaengen_stellung_protokoll,
          test_json_anhaengen_schluessel,
-         test_entarteter_sechsflaechner_beim_import]
+         test_entarteter_sechsflaechner_beim_import,
+         test_entarteter_hex20_nennt_die_richtige_genauigkeit,
+         test_nastran_quadratische_volumen_knotenfolge]
 
 
 def main() -> int:

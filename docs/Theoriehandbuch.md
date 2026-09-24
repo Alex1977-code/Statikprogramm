@@ -6584,6 +6584,65 @@ entarteten hex8 und der Hauptprozess mit pent6 — am Keil-Kragarm mit zwei Arbe
 brach die Rechnung so mit „Singular matrix“ ab; seither ist sie seriell und parallel
 bitgleich zum pent6-Netz.
 
+**VQ83 und VQ203: umwandeln statt entartet rechnen (23.09.2026).** InfoGraph rechnet
+seinen VQ83 als Sechsflächner, bei dem bis zu vier Knoten zusammenfallen dürfen. Ob
+das direkt gerechnete entartete Element (innere Moden, projizierte Volumendehnung,
+dieselbe Gaußregel; die Ecken an der zusammengefallenen Kante knapp innen
+ausgewertet, dort ist det J = 0) mithält, ist am Kragarm gemessen, σ_v gegen
+355 N/mm² in N/mm², w in mm:
+
+| FHG | hex8 regelmäßig | Keil, als pent6 umgewandelt | Keil, als hex8 entartet gerechnet |
+|---|---|---|---|
+| 90 | −1,6 (10,90) | −64,6 (9,53) | −246,6 (7,25) |
+| 405 | +0,2 (11,26) | −15,8 (10,77) | −122,2 (9,90) |
+| 2 295 | −0,03 (11,42) | −4,3 (11,27) | −55,3 (11,01) |
+
+Der entartet gerechnete Sechsflächner ist steifer und in der Spannung rund dreizehnmal
+schlechter als der umgewandelte Keil; zur Pyramide entartet scheitert er an der Spitze
+(det J ≤ 0). Beim quadratischen Gegenstück ist es dasselbe: der zum Keil entartete hex20,
+direkt gerechnet, liegt bei (4,1,2) / (8,2,4) −213,3 / −95,6 daneben (w 10,16 / 11,13),
+dieselben Keile als pent15 −4,7 / −0,02 (303 / 1 599 FHG) — so gut wie der hex20 (+6,2 /
+−0,02 bei 267 / 1 359 FHG) und besser als der tet10 (+4,7 / +4,1 bei 405 / 2 295 FHG).
+Darum sind **VQ83 und VQ203** in Statik3D keine eigenen Kinematiken, sondern hex8 und
+hex20, die entarten dürfen: sie rechnen als der Keil, die Pyramide oder der Tetraeder, der
+sie sind. Für den hex20 (`solid._entartung_quadratisch`) werden die Ecken wie beim hex8
+eingeordnet und die Kanten des Ziels auf ihre Kantenmitten abgebildet — hex20 → pent15
+oder tet10. Streng: die Mitte einer zusammengefallenen Kante muss derselbe Knoten wie
+ihre Ecke sein, und Kanten, die auf dieselbe Zielkante fallen, dieselbe Mitte haben;
+sonst bliebe ein Knoten ohne Element. Eine Pyramide aus einem hex20 hat kein
+quadratisches Gegenstück (kein pyr13) und ist ein FEHLER. Am Kragarm aus Keil-hex20
+(8,2,4) rechnet die Umwandlung wie das pent15-Netz (1,0·10⁻¹² relativ, die Rundung der
+anderen Knotennummerierung). Nebenbefund: die lineare Pyramide pyr5 ist schwach — sechs
+Pyramiden je Würfelzelle liegen am Kragarm −193 / −93 / −34 N/mm² daneben.
+
+**Verträglichkeit an einer gemeinsamen Seite** (`elemente.VERTRAEGLICH`, 23.09.2026).
+Welche Typen in einem Netz aneinanderstoßen dürfen, hängt an der Form ihrer Seiten:
+tri3/quad4 (linear), tri6/quad8 (mit Kantenmitten), die Seite des Tetraeders mit
+Ordnung p (ohne Mittenknoten). Gleiche Form und Ordnung passen **direkt**; linear gegen
+quadratisch passt mit **Bindung** der Kantenmitten (u_m = (u_a + u_b)/2, § 1.2, dort
+wirkt die Seite linear); tetp gegen eine lineare Seite passt, weil es die Seite
+**linear** hält; tetp gegen tet10 oder pent15 passt **nicht**, die Rechnung hält dort
+an. Dreieck gegen Viereck geht nur über Pyramiden als **Übergang** (Viereck unten,
+Dreiecke seitlich), die der Sweep setzt:
+
+| | tet4 | tet10 | tetp | hex8 | hex20 | pent6 | pent15 | pyr5 |
+|---|---|---|---|---|---|---|---|---|
+| tet4 | direkt | Bindung | linear | Übergang | Übergang | direkt | Bindung | direkt |
+| tet10 | Bindung | direkt | nein | Übergang | Übergang | Bindung | direkt | Bindung |
+| tetp | linear | nein | direkt | Übergang | Übergang | linear | nein | linear |
+| hex8 | Übergang | Übergang | Übergang | direkt | Bindung | direkt | Bindung | direkt |
+| hex20 | Übergang | Übergang | Übergang | Bindung | direkt | Bindung | direkt | Bindung |
+| pent6 | direkt | Bindung | linear | direkt | Bindung | direkt | Bindung | direkt |
+| pent15 | Bindung | direkt | nein | Bindung | direkt | Bindung | direkt | Bindung |
+| pyr5 | direkt | Bindung | linear | direkt | Bindung | direkt | Bindung | direkt |
+
+Die Vorgabe der Oberfläche, tet10 + VQ83, ist damit zulässig: tet10 neben dem hex8 über
+Pyramiden, neben dessen Keilen und Tetraedern mit Bindung. Geprüft wird die Tabelle
+gegen die Rechnung (`tests/test_vertraeglich.py`): für 50 Typpaare mit gleich geformter
+Seite ist die Spur der Verschiebung von beiden Seiten gleich, genau wo die Tabelle
+„direkt“ oder „Bindung“ sagt, mit den Bindungen, die die Assemblierung wirklich setzt;
+ohne sie klafft sie bei „Bindung“. tetp neben tet4 rechnet, neben tet10 hält es an.
+
 Ein Volumenkörper, der so nie ein Netz bekommen kann, gilt auch nicht als
 **unvernetzt** (`Model.koerper_traegt`). Sonst forderte die
 Rechenbarkeitsprüfung vor jeder Rechnung ein Netz, das nicht entstehen kann.
