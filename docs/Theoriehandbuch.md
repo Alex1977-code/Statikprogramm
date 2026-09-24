@@ -7655,6 +7655,19 @@ die Meldung für einen Freibrief hält.
 | `tests/test_tetp.py` | Tetraeder mit Ordnung p: Integrationsregeln gegen alle Monome, Vollständigkeit bis p = 4, sechs Starrkörpermoden, Patch-Test (verzerrt, gemischte Ordnung, lineare Pflichtseite, gekrümmt), Stapel gegen Einzelweg, Masse und Lasten, Kragarm auf 1 N/mm², umgeklapptes Element; am Modell Übergang zu tet4, Kontakt- und Lagerseiten, getrennte Fuge, laute Pflichtprüfung, Importreihenfolge, tet10-Nachbar, Jacobi-Prüfung gekrümmter Elemente, Pflichtprüfung ohne Suche je Seite (16.464 Elemente unter 0,5 s, vorher 3,1 s) |
 | `tests/test_tetp_rechnung.py` | dasselbe Element durch den Löser: Model.ndof mit und ohne tetp (ohne Lauf über die Elemente), laute Abweisung veralteter FHG-Zahlen, Kragarm-Knotenmittel auf 1 N/mm², Lastsummen, Patch-Test tet4/tetp3 gemischt, Symmetrieebenen, Temperatur; je Lastart tetp2/3/4 gegen geschlossene Lösung und tet10; Linienlager starr und federnd |
 
+**Gleichzeitige Prüfläufe.** `tests/test_report.py` schreibt seine Berichte in
+einen eigenen temporären Ordner je Prozess (`statik3d_report_test_…` im
+TEMP-Verzeichnis), der beim Beenden des Prozesses gelöscht wird. Am Stand vor
+dem 23.09.2026 war es der feste Ordner `statik3d_report_test`, in den alle
+gleichzeitig laufenden Suiten des Rechners dieselben Dateinamen schrieben. Der
+zeichengenaue Vergleich zweier Berichte in `test_fortschritt` las dann
+gelegentlich eine Datei, die ein anderer Prozess gerade neu schrieb. Gemessen
+am 23.09.2026 mit zwei gleichzeitigen Prozessen und je 150 Läufen von
+`test_fortschritt` im selben TEMP-Verzeichnis: mit dem festen Ordner 27 und 51
+Fehlschläge, in der Wiederholung 13 und 8; mit dem Ordner je Prozess zweimal
+0 und 0. Geprüft in `test_eigener_ordner_je_prozess`: Ein zweiter Prozess
+bekommt einen anderen Ordner und räumt ihn beim Beenden weg.
+
 ## 10 Tetraeder mit Ordnung p (`elements/tetp.py`, 22./23.09.2026)
 
 Der Anwender will ein eigenes Element, „schnell und im Toleranzbereich von
