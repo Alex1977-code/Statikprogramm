@@ -283,12 +283,17 @@ class Stellung:
         alt_weg = [(c.name, i) for c in m.combinations.values()
                    for i, a in enumerate(c.alternativen, 1)
                    if entfernt and set(a) <= set(entfernt)]
+        # remove_load_case nimmt seit dem 23.09.2026 die Ermuedungslasten
+        # schon selbst mit (Befund B105): Lasten aus zwei Zustaenden mit einem
+        # dieser Lastfaelle entfallen, ein Verlauf verliert das Glied. Fuer
+        # das Protokoll unten zaehlen sie trotzdem, und ob ein Verlauf in der
+        # Stellung bleibt, entscheiden seine Glieder **vor** dem Kuerzen
+        # (fehlt, unten) - darum der Stand davor
+        erm_vorher = {n: list(f.folge or []) for n, f in m.fatigue_loads.items()}
         for name in entfernt:
+            # nimmt den Lastfall auch aus den Faktoren und den Alternativen
+            # jeder Kombination (Combination.lastfall_entfernen, Befund B105)
             m.remove_load_case(name)
-            # remove_load_case bereinigt nur factors, nicht die Alternativen
-            # einer Ergebniskombination (model.py, remove_load_case)
-            for c in m.combinations.values():
-                c.lastfall_entfernen(name)
         # Eine Ergebniskombination hat factors leer und bleibt, solange ihr
         # eine Alternative bleibt. Bis ec6448c fiel hier jede Kombination mit
         # leeren factors ohne Meldung weg: am Kragarm mit EK1 = 1,35 LF1 oder
@@ -319,9 +324,14 @@ class Stellung:
         # (Gegenpruefung 23.09.2026).
         zustaende = behalten | set(m.combinations)
 
+        # Ein Verlauf mit einem Glied ausserhalb der Stellung entfaellt ganz,
+        # wie eine Last aus zwei Zustaenden; gekuerzt wird er hier nicht, denn
+        # ohne das Glied waere es eine andere Lastfolge (andere Schwingbreiten),
+        # die niemand angelegt hat. Darum die Glieder von vor remove_load_case.
         def fehlt(f) -> bool:
-            if getattr(f, "folge", None):
-                return not set(f.folge) <= zustaende
+            folge = erm_vorher.get(f.name) or getattr(f, "folge", None)
+            if folge:
+                return not set(folge) <= zustaende
             return (f.case_max not in behalten
                     or (f.case_min is not None and f.case_min not in behalten))
         weg = [f.name for f in m.fatigue_loads.values() if fehlt(f)]
@@ -339,6 +349,9 @@ class Stellung:
                     f.case_max = ""
                 if f.case_min and f.case_min not in m.load_cases and f.case_min not in m.combinations:
                     f.case_min = None
+        # Im Protokoll jede Ermuedungslast, die hier fehlt - auch die, die
+        # remove_load_case schon genommen hat (Befund B105)
+        weg = [n for n in erm_vorher if n not in m.fatigue_loads]
         if log is not None:
             log.append(f"  {self.name}: Lastfälle {', '.join(sorted(behalten))}")
             if k_weg:

@@ -49,7 +49,7 @@ from dataclasses import asdict, is_dataclass
 
 import numpy as np
 
-from ..model import Model, ACTION_CATEGORIES, GRUNDSTELLUNG, tetp_kantenmitten_gelesen
+from ..model import Model, ACTION_CATEGORIES, tetp_kantenmitten_gelesen
 from . import _common as C
 
 #: Uebertragene Schluessel von Model.to_dict() -> Bezeichnung im Protokoll
@@ -111,19 +111,17 @@ NICHT_UEBERTRAGEN: dict[str, tuple[str, str]] = {
                    "Situationen, die eine Stellung nennen, meldet die Modellprüfung"),
 }
 
-#: Zusatz zur Warnung ueber umbenannte Stellungsverweise, wenn die Stellung
-#: 'Grundstellung' heisst. Von ihr wirken in einer Situation nur die
-#: Abschaltungen (Model.aktive_elemente); Lage, Lager und Gelenke uebergeht
-#: situationen.situationsmodell. Wer sie ganz unter dem neuen Namen anlegt,
-#: rechnet anders als in der Quelle. Gemessen am 24.09.2026 (Rahmen 'frame',
+#: Einen eigenen Zusatz zur Warnung fuer eine Stellung namens 'Grundstellung'
+#: gibt es nicht mehr: seit acfd1c4 (Mangel zu B108) wendet
+#: situationen.situationsmodell eine echte Stellung dieses Namens ganz an -
+#: Lage, Lager, Gelenke und Abschaltungen wie jede andere. Unter dem neuen
+#: Namen ist also die ganze Stellung anzulegen, wie die Warnung allgemein
+#: sagt. Bis dahin wirkten von ihr nur die Abschaltungen, und der Zusatz
+#: (B076) riet, nur sie anzulegen; gemessen am 24.09.2026 (Rahmen 'frame',
 #: Stellung hebt um 1,0 m und schaltet den rechten Stiel ab, 10 kN
-#: waagerecht): allein |u| = 3,8300 mm, ganz angelegt 12,5294 mm, nur die
-#: Abschaltung angelegt 3,8300 mm.
-_GRUNDSTELLUNG_HINWEIS = (
-    f" Von einer Stellung namens '{GRUNDSTELLUNG}' wirken in einer Situation nur die "
-    "abgeschalteten Stäbe, Flächen und Volumen, nicht ihre Lage (Ausgangsstellung, "
-    "Verschiebung, Drehung), Lager und Gelenke - unter dem neuen Namen also nur die "
-    "Abschaltungen anlegen, sonst rechnet die Situation anders als in der Quelle.")
+#: waagerecht) jetzt allein |u| = 12,5294 mm, ganz angelegt ebenso, nur die
+#: Abschaltung angelegt 3,8300 mm (tests.test_importers,
+#: test_json_anhaengen_stellung_grundstellung).
 
 #: Die Lastlisten eines Lastfalls (Schluessel von LoadCase.to_dict())
 LASTLISTEN = ("nodal_loads", "beam_loads", "face_loads", "temp_loads", "geometrielasten",
@@ -367,10 +365,10 @@ class _Anhang:
                   | set(genannt))
         for n in genannt:
             # Aufgeloest wird wie in Model.aktive_elemente (Model.stellung),
-            # ohne Ausnahme fuer GRUNDSTELLUNG. situationen.situationsmodell
-            # uebergeht bei diesem Namen nur Lage, Lager und Gelenke
-            # (st.anwenden); die Abschaltung ihrer Staebe, Flaechen und
-            # Volumen holt Model.aktive_elemente ueber den Namen. Bliebe der
+            # ohne Ausnahme fuer GRUNDSTELLUNG: hat das Ziel eine Stellung
+            # dieses Namens, wenden situationen.situationsmodell und
+            # Model.aktive_elemente sie ganz an (Model.stellung_unbewegt,
+            # seit acfd1c4). Bliebe der
             # Verweis stehen, rechnete die Situation still mit der Abschaltung
             # der gleichnamigen Stellung des Ziels. Gemessen am 24.09.2026 am
             # Stand 159edab, der den Namen ausnahm: Kragarm aus HEB 300 mit
@@ -902,9 +900,7 @@ class _Anhang:
                         "Situationen nicht still in der Stellung des Ziels rechnen, zeigen sie "
                         "auf einen neuen Namen: " + "; ".join(teile) + ". Die Modellprüfung "
                         "meldet sie, bis die Stellung unter diesem Namen im Ziel angelegt oder "
-                        "die Situation auf eine Stellung des Ziels umgestellt ist."
-                        + (_GRUNDSTELLUNG_HINWEIS if GRUNDSTELLUNG in self.stellungsverweis
-                           else ""))
+                        "die Situation auf eine Stellung des Ziels umgestellt ist.")
         abw = [ZIEL_BEHAELT[k].split(" (")[0] for k in ZIEL_BEHAELT
                if k not in _OHNE_VERGLEICH and _einstellung(z, k) != _einstellung(q, k)]
         if abw:

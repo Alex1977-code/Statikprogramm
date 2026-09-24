@@ -1488,12 +1488,13 @@ def test_warntexte_mit_umlaut():
               " | ".join(warn)[:120])
         check(f"{art}: kein Warntext ohne Umlaut",
               not any("Ermuedung" in w for w in warn), " | ".join(warn)[:120])
-        # Die Modellpruefung liest nur case_max/case_min einer Last mit zwei
-        # Zustaenden (model.py; bei einem Verlauf seit B067 keines von
-        # beiden); das Glied des Verlaufs meldet sie nicht.
+        # Die Modellpruefung liest die Zustaende, die der Nachweis liest:
+        # case_max/case_min einer Last mit zwei Zustaenden, bei einem Verlauf
+        # nur seine Glieder (model.py; B067, seit B109 aus fix2/nb_model auch
+        # das unbekannte Glied 'FEHLT' des Verlaufs 'Folge').
         zeilen = [z for z in m.check() if "FEHLT" in z]
         check(f"{art}: Modellpruefung nennt die Ermüdungslast mit Umlaut",
-              sorted(z.split("'")[1] for z in zeilen) == ["Oben", "Unten"]
+              sorted(z.split("'")[1] for z in zeilen) == ["Folge", "Oben", "Unten"]
               and all(z.startswith("FEHLER: Ermüdungslast '") for z in zeilen),
               " | ".join(zeilen)[:120])
 
@@ -1681,16 +1682,25 @@ def test_maske_verlauf_ohne_zustaende():
           not fehler(m), "; ".join(fehler(m))[:100])
 
     # (2) Dateien aus der alten Maske tragen das case_max weiter: die
-    # Modellpruefung liest es bei einem Verlauf nicht mehr - eine Last aus
-    # zwei Zustaenden mit geloeschtem Zustand bleibt ein FEHLER
+    # Modellpruefung liest es bei einem Verlauf nicht mehr. Eine Last aus
+    # zwei Zustaenden mit dem geloeschten Zustand nimmt remove_load_case seit
+    # B105 (fix2/nb_model) selbst mit und nennt sie in der Rueckgabe; bis
+    # dahin blieb sie stehen und war ein FEHLER.
     m = hall()
     m.fatigue_loads["Alt"] = FatigueLoad("Alt", case_max="Kran", folge=["LF1", "S", "LF1"],
                                          wiederholungen=5e5)
     m.add_fatigue_load("Zwei", "Kran", None, 5e5)
-    m.remove_load_case("Kran")
+    aus = m.remove_load_case("Kran")
     zeilen = fehler(m)
-    check("alter Verlauf mit case_max 'Kran': kein FEHLER, zwei Zustände: FEHLER",
-          not [z for z in zeilen if "'Alt'" in z] and [z for z in zeilen if "'Zwei'" in z],
+    check("alter Verlauf mit case_max 'Kran': kein FEHLER; zwei Zustände: entfällt mit dem Lastfall",
+          not [z for z in zeilen if "'Alt'" in z] and "Alt" in m.fatigue_loads
+          and "Zwei" not in m.fatigue_loads and any("'Zwei' entfällt" in a for a in aus),
+          "; ".join(zeilen + aus)[:110])
+    # Gegenprobe: bei zwei Zustaenden liest die Modellpruefung case_max weiter
+    m.add_fatigue_load("Zwei", "Kran", None, 5e5)
+    zeilen = fehler(m)
+    check("… Gegenprobe: zwei Zustände mit unbekanntem 'Kran': FEHLER",
+          [z for z in zeilen if "'Zwei'" in z] and not [z for z in zeilen if "'Alt'" in z],
           "; ".join(zeilen)[:110])
 
     # (3) Modus Verlauf mit leerem Feld: frueher entstand still die Last
@@ -1724,6 +1734,120 @@ def test_maske_verlauf_ohne_zustaende():
           f"D = {dv:.6g}, S gegen null {D['S-Null']:.6g}, Kran gegen null {D['Kran-Null']:.6g}")
 
 
+def test_namenspruefung_liest_die_zustaende_des_nachweises():
+    """Befunde B109 und B110: die Modellpruefung prueft die Namen einer
+    Ermuedungslast an denselben Zustaenden, die der Nachweis liest - bei einem
+    Verlauf die Glieder von ``folge``, sonst case_max/case_min.
+
+    Am Stand ec6448c (23.09.2026) war es umgekehrt: ein unbekanntes Glied
+    ('WEG') in ``folge`` meldete die Pruefung nicht; erst die Rechnung sagte
+    "unvollständig" (D = 0,3833355, Warnung "Ergebnis 'WEG' fehlt"). Ein
+    unbekanntes case_max einer Verlaufs-Last, das der Nachweis nie liest,
+    meldete sie dagegen als FEHLER, obwohl die Rechnung D = 0,3833355
+    "erfüllt" ergab - der FEHLER hielt CLI (Exit 2) und Web-Rechenstart an.
+    """
+    def zeilen(m, last):
+        return [z for z in m.check() if z.startswith("FEHLER") and f"'{last}'" in z]
+
+    # B109: unbekanntes Glied im Verlauf
+    m = _zugstab_volumen(1000e3, -400e3)
+    m.fatigue_loads["V"] = FatigueLoad("V", folge=["LF1", "LF2", "WEG"], wiederholungen=1e5)
+    z = zeilen(m, "V")
+    check("Verlauf mit unbekanntem Glied 'WEG': FEHLER vor der Rechnung",
+          any("'WEG'" in x and "unbekannt" in x for x in z), "; ".join(z)[:90] or "(keine Zeile)")
+    # Gegenprobe: bekannte Glieder - keine Zeile
+    m.fatigue_loads["V"].folge = ["LF1", "LF2"]
+    z = zeilen(m, "V")
+    check("… Verlauf nur aus bekannten Gliedern: keine Zeile", not z, "; ".join(z)[:90])
+
+    # B110: unbekanntes case_max/case_min bei einem Verlauf - der Nachweis liest es nicht
+    m = _zugstab_volumen(1000e3, -400e3)
+    m.fatigue_loads["V"] = FatigueLoad("V", case_max="WEG", case_min="WEG2",
+                                       folge=["LF1", "LF2"], wiederholungen=1e5)
+    z = zeilen(m, "V")
+    check("Verlauf mit altem case_max 'WEG' / case_min 'WEG2': kein FEHLER", not z,
+          "; ".join(z)[:90])
+    fv = solver.solve_all(m, design=False, fatigue=True).fatigue.volumen["V1"]
+    check("… und die Rechnung liest es nicht: erfüllt, ohne Warnung",
+          fv.D > 0 and fv.status() == "erfüllt" and not fv.warnings,
+          f"D = {fv.D:.7f}, {fv.status()}, {fv.warnings}")
+    # Gegenprobe: ohne Verlauf ist case_max 'WEG' weiter ein FEHLER
+    m.fatigue_loads["V"] = FatigueLoad("V", case_max="WEG", cycles=1e5)
+    z = zeilen(m, "V")
+    check("Gegenprobe zwei Zustaende, case_max 'WEG': FEHLER",
+          any("'WEG'" in x and "unbekannt" in x for x in z), "; ".join(z)[:90] or "(keine Zeile)")
+    m.fatigue_loads["V"] = FatigueLoad("V", case_max="LF1", case_min="WEG2", cycles=1e5)
+    z = zeilen(m, "V")
+    check("Gegenprobe zwei Zustaende, case_min 'WEG2': FEHLER",
+          any("'WEG2'" in x and "unbekannt" in x for x in z), "; ".join(z)[:90] or "(keine Zeile)")
+
+
+def test_lastfall_loeschen_nimmt_umhuellende_und_ermuedung_mit():
+    """Befund B105: Model.remove_load_case nahm den Lastfall nur aus
+    Combination.factors - nicht aus den Alternativen einer oder-EK und nicht
+    aus den Ermuedungslasten.
+
+    Gemessen am Stand ec6448c (23.09.2026): nach remove_load_case('LF2')
+    standen die Alternativen [{LF1}, {LF2}, {LF3}] unveraendert da, eine
+    Ermuedungslast behielt case_max 'LF2', ein Verlauf ['LF1', 'LF2'];
+    check() meldete FEHLER, und solve_all brach mit KeyError "Lastfall 'LF2'
+    existiert nicht" ab.
+
+    Richtig: der Name faellt aus jeder Alternative und aus jedem Verlauf; eine
+    Last aus zwei Zustaenden, deren oberer oder unterer Zustand der geloeschte
+    Lastfall war, entfaellt ganz (kein stiller Ersatz durch den Nullzustand -
+    so haelt es auch die Stellung, bridges.positions); ein Verlauf, dem kein
+    Glied bleibt, ebenso. Der Rueckgabewert nennt alles, was mitging.
+    """
+    m = _zugstab_volumen(1000e3, -400e3)
+    m.add_load_case("LF3", "Q")
+    ek = _oder_ek(m)
+    ek.alternativen.append({"LF3": 1.0})
+    m.fatigue_loads["Z"] = FatigueLoad("Z", case_max="LF2", case_min="LF1", cycles=1e5)
+    m.fatigue_loads["Zmin"] = FatigueLoad("Zmin", case_max="LF1", case_min="LF2", cycles=1e5)
+    m.fatigue_loads["Bleibt"] = FatigueLoad("Bleibt", case_max="LF1", case_min="LF3", cycles=1e5)
+    m.fatigue_loads["V"] = FatigueLoad("V", folge=["LF1", "LF2", "LF3"], wiederholungen=1e5)
+    m.fatigue_loads["W"] = FatigueLoad("W", case_max="LF2", folge=["LF1", "LF3"], wiederholungen=1e5)
+    m.fatigue_loads["Nur2"] = FatigueLoad("Nur2", folge=["LF2"], wiederholungen=1e5)
+    vorher = [z for z in m.check() if z.startswith("FEHLER")]
+    check("vorher: Modellpruefung ohne FEHLER", not vorher, "; ".join(vorher)[:90])
+
+    mit = m.remove_load_case("LF2")
+    print("     mitgegangen:", mit)
+    check("LF2 ist geloescht", "LF2" not in m.load_cases, str(list(m.load_cases)))
+    check("LF2 in keiner Alternative der oder-EK mehr",
+          ek.alternativen == [{"LF1": 1.0}, {"LF3": 1.0}], str(ek.alternativen))
+    verweise = [(f.name, f.case_max, f.case_min, list(f.folge)) for f in m.fatigue_loads.values()
+                if "LF2" in (f.case_max, f.case_min) or "LF2" in (f.folge or [])]
+    check("LF2 in keinem case_max, case_min oder Verlauf mehr", not verweise, str(verweise))
+    check("Lasten aus zwei Zustaenden mit LF2 oben oder unten entfallen",
+          "Z" not in m.fatigue_loads and "Zmin" not in m.fatigue_loads, str(list(m.fatigue_loads)))
+    check("… eine Last ohne LF2 bleibt unveraendert",
+          "Bleibt" in m.fatigue_loads
+          and (m.fatigue_loads["Bleibt"].case_max, m.fatigue_loads["Bleibt"].case_min) == ("LF1", "LF3"))
+    check("Verlauf verliert nur das Glied LF2",
+          "V" in m.fatigue_loads and m.fatigue_loads["V"].folge == ["LF1", "LF3"],
+          str(getattr(m.fatigue_loads.get("V"), "folge", None)))
+    check("Verlauf mit altem case_max LF2: Glieder bleiben, case_max geleert",
+          "W" in m.fatigue_loads and m.fatigue_loads["W"].folge == ["LF1", "LF3"]
+          and not m.fatigue_loads["W"].case_max, str(m.fatigue_loads.get("W")))
+    check("Verlauf, dem kein Glied bleibt, entfaellt", "Nur2" not in m.fatigue_loads)
+    text = " ".join(mit or [])
+    check("Rueckgabe nennt die oder-EK und jede Ermuedungslast, die sich aendert",
+          all(f"'{n}'" in text for n in ("EK_oder", "Z", "Zmin", "V", "Nur2"))
+          and "'Bleibt'" not in text, text[:120])
+    nachher = [z for z in m.check() if z.startswith("FEHLER")]
+    check("nachher: Modellpruefung ohne FEHLER", not nachher, "; ".join(nachher)[:90])
+    try:
+        an = solver.solve_all(m, design=False, fatigue=True)
+        fv = an.fatigue.volumen["V1"]
+        gut = "EK_oder" in an.envelopes and fv.status() == "erfüllt"
+        detail = f"D = {fv.D:.5f}, {fv.status()}, {fv.warnings}"
+    except Exception as ex:          # noqa: BLE001
+        gut, detail = False, f"{type(ex).__name__}: {ex}"
+    check("solve_all laeuft durch, Umhuellende und Ermuedung gerechnet", gut, detail)
+
+
 def main():
     for t in (test_spanne, test_hauptspannungen, test_volumen, test_naht_beruehrung,
               test_kerbfall_vorschlaege,
@@ -1741,7 +1865,9 @@ def main():
               test_warntexte_mit_umlaut,
               test_maske_weist_oder_ek_im_verlauf_ab,
               test_etikett_nachweise_nennt_die_ermuedung,
-              test_maske_verlauf_ohne_zustaende):
+              test_maske_verlauf_ohne_zustaende,
+              test_namenspruefung_liest_die_zustaende_des_nachweises,
+              test_lastfall_loeschen_nimmt_umhuellende_und_ermuedung_mit):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

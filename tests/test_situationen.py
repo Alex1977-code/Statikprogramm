@@ -672,12 +672,122 @@ def test_abgeschalteter_stab_in_jeder_situation():
           np.allclose(r.u[k0], 0.0) and np.allclose(r.u[k1], 0.0) and r.info.get("inaktiv") == [e_los])
 
 
+def test_stellung_grundstellung_ist_unbewegt():
+    """Befund B108: eine Situation mit stellung = GRUNDSTELLUNG.
+
+    situationsmodell und aktive_elemente rechnen sie als unbewegt mit allen
+    Elementen. Model.check meldete sie am Stand ec6448c (23.09.2026) aber als
+    "FEHLER: Situation 'grund': Stellung 'Grundstellung' unbekannt" - und
+    dieser FEHLER haelt die Kommandozeile mit Exit 2 und den Web-Rechenstart
+    an, obwohl die Rechnung LF1 und LF2 liefert. Solange keine Stellung so
+    heisst, bietet die Maske den Wert nicht an; er kommt ueber JSON,
+    Anhaengen oder die Web-API herein. Gibt es eine Stellung dieses Namens,
+    gilt sie (test_echte_stellung_namens_grundstellung).
+    """
+    import tempfile
+    from statik3d.cli import main as cli_main
+    from statik3d.situationen import situationsmodell
+    m, ids, sec = _balken(2)
+    n0, n1, n2 = ids
+    EI = E * sec.Iy
+    m.add_load_case("LF1", "G")
+    m.load_node(n2, Fz=-F, case="LF1")
+    m.add_load_case("LF2", "G")
+    m.load_node(n2, Fz=-F, case="LF2")
+    m.situationen["grund"] = Situation("grund", stellung=GRUNDSTELLUNG)
+    m.load_cases["LF2"].situation = "grund"
+    zeilen = [z for z in m.check() if "Stellung" in z or "Situation" in z]
+    check("Stellung 'Grundstellung': kein FEHLER in der Modellpruefung", not zeilen, "; ".join(zeilen))
+    ms, aktiv, log = situationsmodell(m, "grund")
+    check("… situationsmodell: das Original, alle Elemente aktiv", ms is m and aktiv is None, str(log))
+    an = solver.solve_all(m)
+    close("LF2 in 'grund' rechnet wie unbewegt: w = PL³/3EI", an.cases["LF2"].u[n2, 2],
+          -F * (2 * L) ** 3 / (3 * EI), 1e-9, "m")
+    tmp = tempfile.mkdtemp()
+    try:
+        quelle = os.path.join(tmp, "grund.json")
+        m.save(quelle)
+        rc = cli_main([quelle, "--still"])
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+    check("Kommandozeile rechnet (kein Exit 2)", rc == 0, f"rc = {rc}")
+    # Gegenprobe: eine wirklich unbekannte Stellung bleibt ein FEHLER
+    m.situationen["grund"].stellung = "gibt es nicht"
+    zeilen = [z for z in m.check() if "Stellung" in z]
+    check("Gegenprobe: unbekannte Stellung bleibt FEHLER",
+          any(z.startswith("FEHLER") and "gibt es nicht" in z for z in zeilen), "; ".join(zeilen))
+
+
+def test_echte_stellung_namens_grundstellung():
+    """Gibt es eine Stellung, die 'Grundstellung' heisst, rechnet eine
+    Situation, die sie nennt, mit ihr - Lage, Lager und abgeschaltete Staebe.
+
+    Die Maske Stellung prueft nur auf leeren und doppelten Namen, und der
+    RFEM-Import benennt Stellungen nach den Strukturmodifikationen - so ein
+    Modell entsteht also auch in der Oberflaeche. Die Kur zu B108
+    (Stand b72e754) nahm 'Grundstellung' aber immer als unbewegt: Gegenprobe
+    24.09.2026 (zwei Kragarme HEA 200, Stellung 'Grundstellung' schaltet
+    Stab B ab) - aktive_elemente alle True, kein Protokoll, w am Ende von B
+    -11,8131 mm statt 0,0 mm am Stand ec6448c; check() meldete nichts.
+
+    Hier wirken Stab M2 und die Rolle unter der Balkenmitte in der Stellung
+    nicht. Der Kragarm der Laenge L traegt die Last in der Mitte allein,
+    w = FL³/3EI. Rechnete die Situation unbewegt, hielte die Rolle den
+    Lastpunkt (w = 0); nur die Staebe abschalten, ohne die Stellung
+    anzuwenden (so situationsmodell am Stand ec6448c: es gab das Original
+    zurueck), gaebe ebenfalls w = 0.
+    """
+    from statik3d.model import Member
+    from statik3d.situationen import situationsmodell
+    m, ids, sec = _balken(2, 2 * L)               # Knoten 0, 1, 2 bei x = 0, L, 2L
+    n0, n1, n2 = ids
+    EI = E * sec.Iy
+    m.members["M1"] = Member("M1", [0])
+    m.members["M2"] = Member("M2", [1])
+    m.supports.append(Support(node=n1, dofs=[2], name="Rolle"))
+    m.stellungen.append(Stellung(GRUNDSTELLUNG, 0.0, "heisst wie die unbewegte",
+                                 staebe_aus=["M2"], lager_aus=["Rolle"]))
+    m.situationen["s"] = Situation("s", stellung=GRUNDSTELLUNG)
+    m.add_load_case("LF1", "G")
+    m.load_node(n1, Fz=-F, case="LF1")
+    m.load_cases["LF1"].situation = "s"
+    m.add_load_case("LF2", "G")                   # daneben unbewegt: die Rolle haelt
+    m.load_node(n1, Fz=-F, case="LF2")
+    check("aktive_elemente: die Stellung schaltet M2 ab", m.aktive_elemente("s").tolist() == [True, False],
+          str(m.aktive_elemente("s").tolist()))
+    ms, aktiv, log = situationsmodell(m, "s")
+    check("situationsmodell wendet die Stellung an (Kopie ohne Rolle, M2 aus)",
+          ms is not m and len(ms.supports) == 1 and len(m.supports) == 2
+          and aktiv is not None and aktiv.tolist() == [True, False]
+          and any("1 Elemente ohne Wirkung" in z for z in log), "; ".join(log))
+    zeilen = [z for z in m.check() if "Stellung" in z or "Situation" in z]
+    check("Modellpruefung: keine Zeile zu Stellung oder Situation", not zeilen, "; ".join(zeilen))
+    an = solver.solve_all(m)
+    r1 = an.cases["LF1"]
+    close("in der Stellung: Kragarm L, w(L) = FL³/3EI", r1.u[n1, 2], -F * L ** 3 / (3 * EI), 1e-9, "m")
+    check("… M2 ohne Wirkung, sein Endknoten festgehalten",
+          list(r1.info.get("inaktiv") or []) == [1] and abs(r1.u[n2, 2]) < 1e-12,
+          f"inaktiv {r1.info.get('inaktiv')}")
+    check("LF2 unbewegt: die Rolle haelt den Lastpunkt", abs(an.cases["LF2"].u[n1, 2]) < 1e-12,
+          f"w = {an.cases['LF2'].u[n1, 2]:.3e} m")
+    # Gegenprobe: ohne Stellung dieses Namens ist 'Grundstellung' wieder die
+    # unbewegte (Befund B108) - kein FEHLER, das Original, alles aktiv
+    m.stellungen = []
+    zeilen = [z for z in m.check() if "Stellung" in z or "Situation" in z]
+    ms, aktiv, log = situationsmodell(m, "s")
+    check("Gegenprobe ohne Stellung 'Grundstellung': unbewegt, kein FEHLER",
+          not zeilen and ms is m and aktiv is None and bool(m.aktive_elemente("s").all()),
+          "; ".join(zeilen))
+
+
 def main():
     for t in (test_abgeschalteter_stab_in_jeder_situation, test_abgeschaltete_elemente, test_stellung,
               test_situationsmaske_unbekannte_stellung, test_stellung_lage_und_wirkung,
               test_stellung_texte_nennen_knotenlager,
               test_speichern, test_subsystem, test_kombinationen_je_situation,
-              test_einzelner_lastfall_in_seiner_situation, test_knicken_in_seiner_situation):
+              test_einzelner_lastfall_in_seiner_situation, test_knicken_in_seiner_situation,
+              test_stellung_grundstellung_ist_unbewegt, test_echte_stellung_namens_grundstellung):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

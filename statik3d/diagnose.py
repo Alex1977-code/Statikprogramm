@@ -141,6 +141,27 @@ GRENZE_FLAECHE = 1e-12      # m^2
 GRENZE_VOLUMEN = 1e-15      # m^3
 
 
+def _soll_knoten() -> dict:
+    """{Elementtyp: Knotenzahl} aus dem Elementverzeichnis."""
+    from . import elemente as _EL
+    return {t: a.knoten for t, a in _EL.ELEMENTE.items()}
+
+
+def knotenzahl_falsch(e, soll: dict = None) -> bool:
+    """Passt die Knotenzahl des Elements nicht zu seinem Typ?
+
+    So ein Element kommt nur ueber JSON oder Import herein (add_element weist
+    es ab) und steht in Model.check als eigener FEHLER. Die Pruefungen hier
+    lassen es aus: ein tet4 mit drei Knoten liess entartete_elemente mit
+    IndexError abbrechen, ein hex8 mit neun Knoten, deren neunter einen der
+    acht wiederholte, gab einen falschen FEHLER "zusammenfallende Knoten"
+    (Befund B106, 23.09.2026); mit einem neunten, eigenen Knoten kam keiner
+    (gemessen 24.09.2026 am Stand ec6448c, Netz aus zwei hex8). ``soll`` aus
+    :func:`_soll_knoten`, einmal je Durchgang statt je Element."""
+    k = (soll if soll is not None else _soll_knoten()).get(e.typ)
+    return k is not None and len(e.nodes) != k
+
+
 def entartete_elemente(model, hoechstens: int = 0) -> list:
     """Elemente ohne Ausdehnung: doppelte Knoten oder (nahezu) kein Mass.
 
@@ -155,7 +176,10 @@ def entartete_elemente(model, hoechstens: int = 0) -> list:
     treffer = []
     nn = int(getattr(model, "nn", 0))
     gruppen: dict = {}
+    soll = _soll_knoten()
     for i, e in enumerate(model.elements):
+        if knotenzahl_falsch(e, soll):
+            continue
         gruppen.setdefault(e.typ, []).append(i)
 
     for typ, idx in gruppen.items():
@@ -306,8 +330,11 @@ def entartete_einordnen(model) -> dict:
     Volumen) stehen in entartete_elemente und fallen weg."""
     import numpy as _np
     aus = {"umwandeln": [], "fehler": []}
+    soll = _soll_knoten()
     for i, e in enumerate(model.elements):
         if e.typ not in ("hex8", "pent6", "pyr5", "tet4", "tet10", "hex20", "pent15"):
+            continue
+        if knotenzahl_falsch(e, soll):
             continue
         kn = e.nodes
         if len(set(int(x) for x in kn)) == len(kn):

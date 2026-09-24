@@ -2225,23 +2225,22 @@ def test_json_anhaengen_stellung_protokoll():
 
 def test_json_anhaengen_stellung_grundstellung():
     """Eine Stellung darf 'Grundstellung' heissen (gui/main.py prueft den
-    Namen nur auf leer und doppelt). Beim Rechnen wirkt von ihr nur ein Teil:
-    situationen.situationsmodell uebergeht Lage, Lager und Gelenke
-    (``sit.stellung != GRUNDSTELLUNG``), Model.aktive_elemente loest den
-    Namen aber mit Model.stellung auf und schaltet ihre Staebe, Flaechen und
-    Volumen ab. Der Verweis bekommt deshalb wie jeder andere einen neuen
-    Namen, und die Warnung sagt, dass unter ihm nur die Abschaltungen
-    anzulegen sind.
+    Namen nur auf leer und doppelt). Gibt es eine Stellung dieses Namens,
+    wirkt sie ganz - Lage, Lager, Gelenke und Abschaltungen
+    (Model.stellung_unbewegt, seit acfd1c4 aus fix2/nb_model). Der Verweis
+    bekommt deshalb wie jeder andere einen neuen Namen (B076), und unter ihm
+    ist die ganze Stellung anzulegen, wie die Warnung allgemein sagt.
 
     Gemessen am 24.09.2026 an diesem Aufbau (Rahmen 'frame' als Quelle bei
     x = 50 m, 'Stiel rechts' = Elemente 4 bis 7; die Stellung 'Grundstellung'
     hebt um 1,0 m und schaltet 'Stiel rechts' ab; 10 kN waagerecht an
-    Knoten 2; das Ziel hat eine leere Stellung 'Grundstellung'): allein
-    |u| = 3,8300 mm. Stand 159edab liess den Verweis stehen: keine Meldung,
-    angehaengt 1,7876 mm, gerechnet mit der leeren Maske des Ziels. Stand
-    ec6448c benannte um und meldete FEHLER, empfahl aber, die Stellung unter
-    dem neuen Namen anzulegen; ganz angelegt ergab das 12,5294 mm, nur mit
-    der Abschaltung 3,8300 mm wie allein."""
+    Knoten 2; das Ziel hat eine leere Stellung 'Grundstellung'). Stand
+    159edab liess den Verweis stehen: keine Meldung, angehaengt 1,7876 mm,
+    gerechnet mit der leeren Maske des Ziels. Bis acfd1c4 wirkten von einer
+    Stellung dieses Namens nur die Abschaltungen: allein |u| = 3,8300 mm, und
+    die Warnung riet (B076), unter dem neuen Namen nur die Abschaltung
+    anzulegen. Beim Zusammenfuehren beider Zweige (24.09.2026): allein
+    12,5294 mm, ganz angelegt ebenso, nur mit der Abschaltung 3,8300 mm."""
     from statik3d import examples_lib
     from statik3d.model import Situation
     from statik3d.bridges.positions import Stellung
@@ -2276,8 +2275,8 @@ def test_json_anhaengen_stellung_grundstellung():
         z.stellungen = [Stellung("Grundstellung")]
         log = []
         z = import_file(p, model=z, log=log)
-    # Allein wirkt die Abschaltung, die Lage nicht - sonst pruefte "wie
-    # allein" unten nichts
+    # Allein wirkt die ganze Stellung, auch ihre Abschaltung - sonst
+    # pruefte "wie allein" unten nichts
     expect("Stellung 'Grundstellung' allein: ihre Abschaltung wirkt",
            abs(allein - ohne_maske) > 1e-4,
            f"mit Abschaltung {allein * 1e3:.4f} mm, ohne {ohne_maske * 1e3:.4f} mm")
@@ -2291,8 +2290,10 @@ def test_json_anhaengen_stellung_grundstellung():
            and "'Grundstellung_2' unbekannt" in chk[0]
            and len(zeile) == 1 and "'Grundstellung' → 'Grundstellung_2'" in zeile[0],
            f"Verweis {verweis!r}, Modellpruefung {chk}, Protokoll {zeile}")
-    expect("Anhaengen: Warnung sagt, dass von 'Grundstellung' nur die Abschaltungen wirken",
-           len(zeile) == 1 and "nur die abgeschalteten Stäbe, Flächen und Volumen" in zeile[0],
+    expect("Anhaengen: Warnung raet, die Stellung unter dem neuen Namen anzulegen, "
+           "ohne Sonderfall fuer 'Grundstellung'",
+           len(zeile) == 1 and "bis die Stellung unter diesem Namen im Ziel angelegt" in zeile[0]
+           and "nur die abgeschalteten Stäbe" not in zeile[0],
            "\n".join(zeile) or "keine Zeile")
     try:
         situationsmodell(z, "S-g")
@@ -2301,16 +2302,17 @@ def test_json_anhaengen_stellung_grundstellung():
         fehler = str(ex)
     expect("Anhaengen: Rechnung in der Situation der Quelle bricht mit Meldung ab",
            "Grundstellung_2" in fehler and "unbekannt" in fehler, fehler or "rechnet ohne Meldung")
-    # Wie die Warnung sagt: nur die Abschaltung unter dem neuen Namen anlegen
+    # Gegenprobe: nur die Abschaltung unter dem neuen Namen hebt den Rahmen
+    # nicht (so riet die Warnung bis acfd1c4)
     z.stellungen.append(Stellung("Grundstellung_2", staebe_aus=["Stiel rechts"]))
     nur_abschaltung = verschiebung(z)
-    # Gegenprobe: die ganze Stellung unter dem neuen Namen hebt den Rahmen
+    # Wie die Warnung sagt: die ganze Stellung unter dem neuen Namen anlegen
     z.stellungen[-1] = Stellung("Grundstellung_2", verschiebung=(0.0, 0.0, 1.0),
                                 staebe_aus=["Stiel rechts"])
     ganz = verschiebung(z)
-    expect("Anhaengen: nur mit der Abschaltung angelegt rechnet die Situation wie allein, "
-           "ganz angelegt nicht",
-           abs(nur_abschaltung - allein) <= 1e-9 * allein and abs(ganz - allein) > 1e-4,
+    expect("Anhaengen: ganz angelegt rechnet die Situation wie allein, "
+           "nur mit der Abschaltung nicht",
+           abs(ganz - allein) <= 1e-9 * allein and abs(nur_abschaltung - allein) > 1e-4,
            f"allein {allein * 1e3:.4f} mm, nur Abschaltung {nur_abschaltung * 1e3:.4f} mm, "
            f"ganz {ganz * 1e3:.4f} mm")
 
@@ -2951,6 +2953,38 @@ def test_json_anhaengen_schluessel():
            not ohne_grund, ", ".join(ohne_grund))
 
 
+def test_leerer_standardlastfall_bleibt_wenn_benutzt():
+    """drop_empty_default_case entfernt den leeren LF1 nur, wenn ihn nichts
+    nennt - auch keine Alternative einer oder-EK und kein Verlauf einer
+    Ermuedungslast. Seit dem 23.09.2026 nimmt remove_load_case den Namen dort
+    heraus (Befund B105); ohne diese Schranke fiele ein benutzter Lastfall der
+    Quelldatei samt seinen Verweisen still weg."""
+    from statik3d.importers import _common as C
+    from statik3d.model import FatigueLoad
+
+    def modell():
+        m = Model()
+        m.add_node(0, 0, 0)
+        m.add_load_case("LF-A", "Q")
+        m.load_node(0, Fz=-1.0, case="LF-A")
+        return m
+
+    m = modell()
+    ek = m.add_combination("EK", {}, "FAT")
+    ek.alternativen = [{"LF1": 1.0}, {"LF-A": 1.0}]
+    expect("leerer LF1 als Alternative einer oder-EK bleibt",
+           not C.drop_empty_default_case(m) and "LF1" in m.load_cases
+           and ek.alternativen == [{"LF1": 1.0}, {"LF-A": 1.0}], str(list(m.load_cases)))
+    m = modell()
+    m.fatigue_loads["V"] = FatigueLoad("V", folge=["LF1", "LF-A"], wiederholungen=1e5)
+    expect("leerer LF1 als Glied eines Verlaufs bleibt",
+           not C.drop_empty_default_case(m) and "LF1" in m.load_cases
+           and m.fatigue_loads["V"].folge == ["LF1", "LF-A"], str(list(m.load_cases)))
+    m = modell()
+    expect("Gegenprobe: unbenutzter leerer LF1 entfaellt",
+           C.drop_empty_default_case(m) and "LF1" not in m.load_cases, str(list(m.load_cases)))
+
+
 TESTS = [
     test_dicke_wird_nicht_still_geerbt, test_xlsx_roundtrip, test_dxf, test_abaqus_inp, test_nastran_bdf, test_ifc_parser,
          test_ifc, test_ifc2x3, test_ifc_physical_fallback, test_saf, test_rfem_xlsx,
@@ -2970,7 +3004,8 @@ TESTS = [
          test_json_anhaengen_schluessel,
          test_entarteter_sechsflaechner_beim_import,
          test_entarteter_hex20_nennt_die_richtige_genauigkeit,
-         test_nastran_quadratische_volumen_knotenfolge]
+         test_nastran_quadratische_volumen_knotenfolge,
+         test_leerer_standardlastfall_bleibt_wenn_benutzt]
 
 
 def main() -> int:

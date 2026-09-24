@@ -657,6 +657,22 @@ Linie noch braucht, bleiben und werden genannt. Beim Löschen eines Elements
 oder Knotens werden Stabzüge, Flächen, Volumen, Lager, Lasten, Anschlüsse und
 Beulfelder mitgeführt, die Nummern dahinter rücken auf — und alles ist mit
 Rückgängig zurückzunehmen.
+Mit den Nummern wandern seit dem 23.09.2026 auch die **Passungsangaben einer
+Kontaktfuge** (Einflussfläche je Knoten, Randknoten, die nicht haften) und die
+**Normalengruppen eines Flächenlagers** mit; ein gelöschter Knoten fällt dort
+samt seiner Einflussfläche heraus. Vorher blieben sie stehen: im Versuch
+(ein freier Knoten 0 vor einem Netz aus zwei Sechsflächnern gelöscht) hatte
+danach ein Knoten der Fuge keine Einflussfläche mehr — seine
+Lochleibungsgrenze wirkte nicht —, und als Randknoten galt ein anderer
+Knoten als vorher. Der Knopf *Knoten löschen* unter der Tabelle „Knoten“
+nummerierte bis zum 24.09.2026 selbst um und ließ die Kontaktfugen dabei ganz
+stehen: im selben Versuch zeigten danach auch die Slave-Knoten und die
+Master-Facette der Fuge auf die alten Nummern, einer davon auf einen Knoten,
+den es nicht mehr gab. Seitdem nummeriert der Knopf über denselben Weg um wie
+der Befehl.
+Nach einem neuen Vernetzen baut das Programm diese Angaben
+ohnehin neu auf; betroffen war das Löschen und Umnummerieren von Knoten im
+fertig vernetzten Modell.
 
 ### Die Geometriekette: Knoten → Linien → Flächen → Volumen
 
@@ -2295,6 +2311,21 @@ an), nicht mehr als getippte Namen.
 Kombinationen zu; nicht mehr genannte fallen in die Grundstellung zurück.
 Was in der Stellung nicht wirkt (Stäbe, Flächen, Volumen, Gelenke, Lager),
 steht in der Stellung selbst — die Maske der Situation zeigt es nur an.
+Nennt eine Situation als Stellung „Grundstellung“ und heißt keine Stellung so
+(dann bietet die Maske den Namen nicht an; er kommt aus einer Modelldatei,
+beim Anhängen oder über die Web-API herein), ist sie unbewegt mit allen
+Elementen — so rechnet das Programm sie, und seit dem 23.09.2026 sagt die
+Modellprüfung dasselbe. Vorher meldete sie „FEHLER: Situation '…': Stellung
+'Grundstellung' unbekannt“, und die Kommandozeile gab 2 zurück, obwohl die
+Rechnung durchlief. Heißt dagegen eine Stellung selbst „Grundstellung“ (die
+Maske „Stellung“ lässt den Namen zu, und der RFEM-Import benennt Stellungen
+nach den Strukturmodifikationen), rechnet eine Situation, die sie nennt, mit
+dieser Stellung — Lage, Lager, Gelenke und abgeschaltete Elemente wie bei
+jeder anderen. Bis zum 24.09.2026 schaltete das Programm in diesem Fall nur
+ihre Stäbe, Flächen und Volumen ab; Lage, Lager und Gelenke blieben wie
+unbewegt. Geprüft in `tests/test_situationen.py`
+(`test_echte_stellung_namens_grundstellung`: eine Rolle, die die Stellung
+abschaltet, hielt den Lastpunkt bis dahin fest).
 
 **Aus RFEM kommen Situationen von selbst mit.** Eine Strukturmodifikation in
 der Quelldatei ist ein Ausfallszenario: sie schaltet genannte Stäbe und Lager
@@ -3277,20 +3308,17 @@ jetzt kommen alle an. Was das Protokoll dabei sagt:
   Körper oder eine umbenannte Fläche. Im Versuch trugen beide Rahmen die
   Gruppe `default`, und eine Stellung mit dieser Gruppe hob alle 34 Knoten
   samt den Lagerknoten. Heißt die Stellung `Grundstellung`, zeigt die
-  Situation ebenso auf einen neuen Namen (`Grundstellung_2`), darunter ist
-  aber nur ein Teil der Stellung anzulegen. Von einer Stellung dieses
-  Namens wirken in einer Situation nur die abgeschalteten Stäbe, Flächen
-  und Volumen, nicht ihre Lage (Ausgangsstellung, Verschiebung, Drehung),
-  Lager und Gelenke. Die Warnung sagt das; bis zum 24.09.2026 empfahl sie
-  auch hier, die Stellung unter dem neuen Namen anzulegen. Im Versuch
-  schaltete die Stellung `Grundstellung` eines Winkels das Lager unter der
-  belasteten Spitze ab: allein ergab sich dort 0,0 mm, mit der ganzen
-  Stellung unter dem neuen Namen −16,264 mm, mit einer Stellung
-  `Grundstellung_2` ohne Inhalt (die Stellung schaltete nichts ab) 0,0 mm
-  wie allein. Schaltet sie dagegen einen Stab ab, gehört genau das unter
-  den neuen Namen: an einem Kragarm mit Stützstab ergab sich allein
-  −4,1412 mm und mit dem abgeschalteten Stützstab unter `Grundstellung_2`
-  ebenso.
+  Situation ebenso auf einen neuen Namen (`Grundstellung_2`), und darunter
+  ist wie bei jeder anderen die ganze Stellung anzulegen: Eine Stellung
+  dieses Namens wirkt mit Lage, Lagern, Gelenken und abgeschalteten
+  Elementen (siehe *Situationen: Stellung und ihre Lastfälle*). Bis zum
+  24.09.2026 wirkten von ihr nur die abgeschalteten Stäbe, Flächen und
+  Volumen, und die Warnung riet, unter dem neuen Namen nur diese
+  anzulegen. Im Versuch hob die Stellung `Grundstellung` des Rahmens um
+  1,0 m und schaltete seinen rechten Stiel ab (10 kN waagerecht): allein
+  ergab sich 12,5294 mm, mit der ganzen Stellung unter `Grundstellung_2`
+  ebenso, mit nur dem abgeschalteten Stiel darunter 3,8300 mm
+  (`tests/test_importers.py`).
 * **Anschluss:** Ein Knoten der Quelle, der auf einem Knoten des Ziels
   liegt, wird mit ihm zusammengeführt („1 Knoten der Quelle lag auf einem
   Knoten des Ziels …“); jeder Verweis darauf folgt, auch Ecken und integrierte
@@ -3446,6 +3474,44 @@ ohne dieses Glied: am Kragarm IPE 200 (`tests/test_ermuedung_verlauf.py`,
 eine Last mit zwei Zuständen und eine mit Verlauf über drei Lastfälle)
 D = 0,018 nach dem Umbenennen in der Oberfläche und 1,237 im Browser statt
 2,437.
+
+Dasselbe gilt seit dem 23.09.2026 für **Namen, die es nicht gibt**: ein Glied
+des Verlaufs, das weder Lastfall noch Kombination ist, meldet die
+Modellprüfung vor der Rechnung als FEHLER („Ermüdungslast 'V': Lastfall oder
+Kombination 'WEG' unbekannt“); bei zwei Zuständen gilt das für den oberen und
+den unteren Zustand. Vorher prüfte sie nur diese beiden, auch bei einer Last
+mit Verlauf: am Zugstab-Volumen blieb ein Verlauf LF1, LF2, WEG ohne Meldung
+und kam erst aus der Rechnung als „unvollständig“ (D = 0,3833355, „Ergebnis
+'WEG' fehlt“); ein nie gelesener oberer Zustand 'WEG' neben dem Verlauf LF1,
+LF2 war dagegen ein FEHLER, obwohl die Rechnung D = 0,3833355 „erfüllt“ ergab
+— die Kommandozeile gab 2 zurück, und der Rechenstart im Browser wurde
+abgewiesen.
+
+**Einen Lastfall löschen** (Knopf „Löschen“ unter den Lastfällen, Modellbaum, Web-API)
+nimmt ihn seit dem 23.09.2026 aus den Kombinationen und den
+Ermüdungslasten: aus den Faktoren **und den Alternativen** jeder Kombination
+und aus jedem Verlauf einer Ermüdungslast. Eine Ermüdungslast aus zwei
+Zuständen, deren oberer oder unterer Zustand er war, entfällt ganz — der fehlende Zustand wird nicht
+still durch den Nullzustand ersetzt, das änderte die Schwingbreite; ebenso
+ein Verlauf, dem kein Glied bleibt. Das Protokoll (in der Web-API die
+Antwort) nennt, was mitging („Ermüdungslast 'Z' entfällt: ihr oberer Zustand
+war Lastfall 'LF2'“). Nach dem Knopf steht diese Zeile auch in der
+Statuszeile; nach dem Löschen im Modellbaum steht dort die allgemeine Meldung
+(„Lastfall LF2 samt seinen Lasten … gelöscht“, bei mehreren Einträgen auf
+einmal „… von … Einträgen gelöscht“), die Zeile dazu nur im Protokoll
+(gemessen 24.09.2026). Vorher
+nahm der Knopf nur die Faktoren mit: am Zugstab-Volumen mit einer oder-EK über
+LF1, LF2, LF3 standen nach dem Löschen von LF2 die Alternativen und die
+Ermüdungslasten weiter auf LF2, die Modellprüfung meldete FEHLER, und die
+Rechnung brach mit „Lastfall 'LF2' existiert nicht“ ab. Andere Verweise auf
+den Namen fasst das Löschen nicht an, so die **Lastfallliste einer Stellung**:
+stand dort „LF1, LF2“, bleibt LF2 nach dem Löschen stehen, die Modellprüfung
+meldet nichts, und erst die Rechnung der Stellungen lässt diese Stellung ohne
+Ergebnis („Stellung 'S1': Lastfall 'LF2' gibt es im Modell nicht“, gemessen
+24.09.2026). Dann den Lastfall in der Stellung herausnehmen. Eine Stellung mit
+eigener Lastfallliste nennt im Protokoll jede Ermüdungslast, die dabei
+entfällt; einen Verlauf kürzt sie nicht, er entfällt dort ganz, sobald ein
+Glied fehlt (siehe *Stellungen anlegen*).
 
 **Grundlast.** Ein Lastfall mit dem Haken „Grundlast“ (Maske Lastfall) wirkt
 in jeder direkt gelösten Rechnung mit: in Modellen mit Kontakt oder
@@ -3663,9 +3729,10 @@ Die Hinweise zu einem fehlenden Ergebnis beginnen mit „Ermüdungslast *Name*:
 Ergebnis …“. Einen unbekannten oberen oder unteren Zustand meldet schon die
 Modellprüfung vor der Rechnung, als „FEHLER: Ermüdungslast '*Name*':
 Lastfall oder Kombination '…' unbekannt“ (bis zum 23.09.2026 beide ohne
-Umlaut). Ein unbekanntes Glied eines Verlaufs meldet sie nicht; das nennt
-erst der Nachweis nach der Rechnung, mit dem Hinweis „Ermüdungslast *Name*:
-Ergebnis '…' fehlt“.
+Umlaut). Ebenso meldet sie ein unbekanntes Glied eines Verlaufs (seit dem
+23.09.2026, siehe **Namen, die es nicht gibt** bei den Ermüdungslasten);
+vorher nannte es erst der Nachweis nach der Rechnung, mit dem Hinweis
+„Ermüdungslast *Name*: Ergebnis '…' fehlt“.
 
 In der Bedienung im Browser (Kap. 12) ist die Zeile „Ermüdung: …“ im
 Register *Nachweise* rot, wenn ein geführter Nachweis D > 1 hat, und gelb,
@@ -3734,8 +3801,25 @@ Zeile mit dem Status „nicht geführt“ und Ausnutzung „–“, und unter
 Werkstoff … ohne Streckgrenze“. Bis zum 23.09.2026 zeigten diese drei
 Stellen den Stab grün mit Ausnutzung 0,00 bzw. „Nachweis: Ausnutzung 0,000“
 (gemessen an einem Stab aus einem Werkstoff ohne f_y). Abhilfe:
-Streckgrenze am Werkstoff eintragen (Tabelle *Eigenschaften → Werkstoffe*) oder am
-Stab den Haken „Nachweis nach EC3“ herausnehmen.
+Streckgrenze oder Stahlsorte am Werkstoff eintragen (Tabelle *Eigenschaften →
+Werkstoffe*) oder am Stab den Haken „Nachweis nach EC3“ herausnehmen.
+
+**Stahlsorte ohne f_y.** Bleibt im Werkstoffdialog f_y leer („leer = aus der
+Stahlsorte“) und ist eine Sorte S235 … S460 eingetragen, nehmen die Nachweise
+die Werte der Sorte nach EN 1993-1-1 Tab. 3.1: bis 40 mm Erzeugnisdicke die
+obere Stufe (S235: f_y = 235 N/mm²), darüber die untere (S235: 215 N/mm²).
+Ist auch f_u
+leer, kommt f_u ebenso aus der Sorte (S235 bis 40 mm: 360 N/mm²). Ein
+eingetragenes f_y geht der Sorte nur **bis 40 mm** vor, mit leerem f_u gilt
+dort f_u = 1,3 · f_y. Über 40 mm gilt die untere Stufe der Sorte für f_y und
+f_u, auch wenn f_y eingetragen ist: ein Werkstoff mit f_y = 300 N/mm², leerem
+f_u und Sorte S235 ergibt bei 10,7 und 40 mm Erzeugnisdicke f_y = 300 und
+f_u = 390 N/mm², bei 41 mm f_y = 215 und f_u = 360 N/mm² (gemessen
+24.09.2026). Eine Tabelle „nach Dicke“ aus RFEM 6 geht beidem vor. Bis zum
+23.09.2026 galt die Sorte nur über 40 mm, darunter war f_y null: ein IPE 300 aus einem Werkstoff mit
+Sorte S235 und leerem f_y war „nicht geführt“; jetzt hat er dieselbe
+Ausnutzung wie derselbe Träger aus S235 (0,633 am Einfeldträger der
+EC3-Prüfung).
 
 ### Schwingungsnachweis des Verschlusses
 
@@ -4977,6 +5061,19 @@ davon nicht betroffen.
   Hilfsobjekte); und beim Zusammenlegen der Knoten auf gemeinsamen Flächen
   fallen flach gewordene Tetraeder heraus. Scheitert doch ein Element in der
   Elementschleife, nennt die Meldung Nummer, Art, Volumenkörper und Knoten.
+* **Falsche Knotenzahl** (seit 23.09.2026): Ein Element, dessen Knotenzahl
+  nicht zu seinem Typ passt (ein hex8 mit sieben Knoten), nimmt das Programm
+  beim Anlegen nicht an („hex8 braucht 8 Knoten, angegeben sind 7“). Kommt es
+  aus einer Modelldatei, meldet die Modellprüfung „FEHLER: Element 2 (hex8):
+  7 Knoten, erwartet 8“, und die Entartungsprüfung lässt es aus. Die übrigen
+  Zeilen zum selben Element kommen weiter, etwa „Element 2: Knoten 999
+  existiert nicht“ oder „Material 'WEG' unbekannt“ (gemessen 24.09.2026). Vorher
+  meldete die Prüfung dazu nichts, und erst die Rechnung brach mit „operands
+  could not be broadcast together“ ab. Ein hex8 mit neun Knoten, deren
+  neunter einen der acht wiederholte, gab einen falschen FEHLER
+  „zusammenfallende Knoten“; mit einem neunten, eigenen Knoten meldete die
+  Prüfung nichts (gemessen 24.09.2026 an einem Netz aus zwei hex8). Ein tet4
+  mit drei Knoten ließ die Prüfung selbst abbrechen.
 * **Volumen ohne Rauminhalt** gelten nicht als „unvernetzt“. Sie können gar
   kein Netz bekommen, und so fragte das Programm sonst vor jeder Rechnung
   nach einem Netz, das es nie geben kann. Statt der Warnung „ohne Netz“
@@ -5923,7 +6020,10 @@ Ermüdungslasten, deren Zustand in der Stellung fehlt, entfallen mit und
 stehen im Protokoll („Ermüdungslasten ohne Lastfall entfallen: …"). Bei
 einem Verlauf entscheiden seine Glieder (`folge`) und nicht `case_max` oder
 `case_min`. Ein Glied darf ein Lastfall oder eine Kombination sein; der
-Verlauf bleibt, wenn alle seine Glieder in der Stellung bleiben. Bis zum
+Verlauf bleibt, wenn alle seine Glieder in der Stellung bleiben; sonst
+entfällt er ganz. Gekürzt wird er in der Stellung nicht, anders als beim
+Löschen eines Lastfalls im Modell (siehe *Einen Lastfall löschen*): ohne das
+Glied wäre es eine andere Lastfolge mit anderen Schwingbreiten. Bis zum
 23.09.2026 entschieden `case_max` und `case_min`, die der Ermüdungsnachweis
 von Stäben und Volumen bei einem Verlauf nicht liest. Die Verläufe aus einer
 RFEM-6-Datei (.rf6) haben kein `case_max` und entfielen deshalb in jeder

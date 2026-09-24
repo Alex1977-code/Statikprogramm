@@ -1777,8 +1777,8 @@ def _op_remove_case(st, m, d):
     name = d.get("name")
     if name not in m.load_cases:
         raise ApiError(f"Lastfall '{name}' unbekannt")
-    m.remove_load_case(name)
-    return f"Lastfall {name} entfernt"
+    mit = m.remove_load_case(name)
+    return f"Lastfall {name} entfernt" + (" - " + "; ".join(mit) if mit else "")
 
 
 @op("copy_case")

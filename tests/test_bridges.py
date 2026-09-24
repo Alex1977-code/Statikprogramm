@@ -447,9 +447,49 @@ def test_ztv_ing():
           "Grenzmoment der Kupplung" not in p2, str(sorted(p2)))
 
 
+def test_stellung_ermuedungslasten_im_protokoll():
+    """Eine Stellung mit eigener Lastfallliste nennt im Protokoll jede
+    Ermuedungslast, die mit den fehlenden Lastfaellen entfaellt.
+
+    Seit dem 23.09.2026 nimmt Model.remove_load_case die Ermuedungslasten
+    selbst mit (Befund B105); die Stellung sah sie danach nicht mehr und
+    haette sie im Protokoll verschwiegen. Ein Verlauf mit einem Glied
+    ausserhalb der Stellung entfaellt dort ganz (test_ermuedung_in_stellung,
+    V_fehlt) - remove_load_case kuerzt ihn zwar, die Stellung entscheidet
+    aber nach den Gliedern davor. Im Zweig fix2/nb_model blieb er hier
+    gekuerzt auf LF1 stehen; beim Zusammenfuehren mit der Regel aus
+    fix2/nb_bridges_positions (Verlauf bleibt nur, wenn alle Glieder
+    bleiben) gilt diese.
+    """
+    from statik3d.model import FatigueLoad
+    m, n = _klappe()
+    m.add_load_case("Verkehr", "Q", activate=False)
+    m.fatigue_loads["Z"] = FatigueLoad("Z", case_max="Verkehr", case_min="LF1", cycles=1e5)
+    m.fatigue_loads["B"] = FatigueLoad("B", case_max="LF1", cycles=1e5)
+    # Verlauf mit altem case_max aus der Maske: 'Verkehr' fehlt, er entfaellt
+    m.fatigue_loads["V"] = FatigueLoad("V", case_max="LF1", folge=["LF1", "Verkehr"],
+                                       wiederholungen=1e5)
+    log: list = []
+    m2 = Stellung("S6", 0.0, faelle=["LF1"]).modell(m, log)
+    text = "\n".join(log)
+    print("     " + text.replace("\n", "\n     "))
+    check("Last mit 'Verkehr' als oberem Zustand entfaellt", "Z" not in m2.fatigue_loads,
+          str(list(m2.fatigue_loads)))
+    check("… und das Protokoll nennt sie",
+          any("entfallen" in z and "Z" in z.split(":")[-1] for z in log), text[-120:])
+    check("Last nur mit LF1 bleibt", "B" in m2.fatigue_loads)
+    check("Verlauf mit fehlendem Glied entfaellt ganz, das Protokoll nennt ihn",
+          "V" not in m2.fatigue_loads
+          and any("entfallen" in z and "V" in z.split(": ")[-1].split(", ") for z in log),
+          text[-120:])
+    check("Grundmodell unveraendert", sorted(m.fatigue_loads) == ["B", "V", "Z"]
+          and m.fatigue_loads["V"].folge == ["LF1", "Verkehr"])
+
+
 def main():
     for t in (test_drehung, test_stellungen, test_reihe, test_meldung_nach_allen_stellungen,
-              test_eta_ohne_nachweis, test_ermuedung_in_stellung, test_din19704, test_ztv_ing):
+              test_eta_ohne_nachweis, test_ermuedung_in_stellung, test_din19704, test_ztv_ing,
+              test_stellung_ermuedungslasten_im_protokoll):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

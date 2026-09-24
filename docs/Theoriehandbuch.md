@@ -752,10 +752,15 @@ breiten Deckel ist das p · A = 0,001 N. Beim fast verschlungenen Deckel
 Flächenvektoren der beiden Dreiecke auf; die Last wirkt gemessen mit
 577 350 N, und die Zeile heißt „in sich verschlungen" (p · A hätte 0,001 N
 genannt). Die Steifigkeit dieses Elements bricht ohnehin mit „negativer
-Jacobi-Determinante" ab. Elemente mit falscher Knotenzahl (`add_element` nimmt
-ein hex8 mit sieben Knoten an) übergeht die Prüfung; beim Stapeln der Knoten
-warfen sie `check()` in der ersten Fassung mit `ValueError` um, statt eine
-Liste zurückzugeben (Gegenprüfung, 23.09.2026).
+Jacobi-Determinante" ab. Elemente mit falscher Knotenzahl übergeht die
+Prüfung; beim Stapeln der Knoten warfen sie `check()` in der ersten Fassung
+mit `ValueError` um, statt eine Liste zurückzugeben (Gegenprüfung,
+23.09.2026). `add_element` weist eine falsche Knotenzahl seit dem 23.09.2026
+ab (vorher nahm es ein hex8 mit sieben Knoten an); aus einer Modelldatei
+kommt so ein Element weiter herein, `check()` nennt es als eigenen FEHLER
+(„Element 2 (hex8): 7 Knoten, erwartet 8“), und die Entartungsprüfung
+(`diagnose.knotenzahl_falsch`) lässt es aus — ein tet4 mit drei Knoten ließ
+sie vorher mit `IndexError` abbrechen.
 * Temperatur: gleichmäßige Änderung ΔT (Stäbe, Schalen, Volumen) und
   Temperaturdifferenz über die Stabhöhe ΔT_z (Krümmung α ΔT_z / h). Die
   Anfangsdehnung wird bei der Spannungsrückrechnung abgezogen.
