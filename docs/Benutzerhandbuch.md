@@ -4671,8 +4671,7 @@ die Kraft zwar in die Lager, das Moment um die Stabachse aber verloren.
 Beides meldet die Abnahme als FEHLER „Knoten ohne Element“, wie schon bis
 zum 23.09.2026, als sie jeden Knoten ohne Element so meldete (am 24.09.2026
 an beiden Fällen mit dem Slave in y und in z am damaligen Stand
-nachgemessen). Keinen Befund gab nur ein Zwischenstand der Entwicklung vom
-24.09.2026, der nicht übernommen wurde.
+nachgemessen).
 Die Slaves eines RBE3 zählt die Abnahme nicht als angeschlossen, auch
 wenn der Master ein Element hat: Ein RBE3 verteilt eine Last am Master auf
 die Slaves, ohne sie zu versteifen. Die Rechnung kann einen solchen Slave
