@@ -55,6 +55,10 @@ SPITZE_GRENZE = 5.0
 #: Anteil von sigma_v, ab dem sigma_3 als echter Zug gilt (Rechenrauschen)
 ZUG_SCHWELLE = 0.02
 
+#: So stand ein ausgeschalteter Bereich bis zum 23.09.2026 in
+#: ``VolumenCheck.fehler`` - nur noch zum Lesen alter Ergebnisdateien
+_AUSGESCHALTET_ALT = "Nachweis für diesen Bereich ausgeschaltet"
+
 
 def hauptspannungen(s) -> np.ndarray:
     """Hauptspannungen s1 >= s2 >= s3 aus [sx, sy, sz, txy, tyz, tzx]."""
@@ -129,8 +133,29 @@ class VolumenCheck:
     singular: bool = False
     hinweise: list = field(default_factory=list)
     fehler: str = ""
+    #: Der Nachweis ist am Bereich ausgeschaltet (``Volumenbereich.design``,
+    #: Schalter „Nachweis führen“) - **gewollt** nicht gefuehrt, anders als
+    #: ``fehler`` (konnte nicht gefuehrt werden). Wie ein Stab mit
+    #: design=False zaehlt er im Gesamturteil weder als erfuellt noch als
+    #: offen. Bis zum 23.09.2026 stand das in ``fehler``: am Zugkoerper
+    #: (N = 2500 kN) hiess es mit „Schaft“ und einem ausgeschalteten Bereich
+    #: „Alle **geführten** Nachweise erfüllt – nicht geführt wurden:
+    #: 1 Volumenbereiche“ statt „Alle Nachweise erfüllt.“, mit dem
+    #: ausgeschalteten allein ebenso, obwohl kein Nachweis lief (Befund B058).
+    ausgeschaltet: bool = False
+
+    def __setstate__(self, state):
+        # Ergebnisdatei (ergebnisse.py, Pickle) von vor dem 23.09.2026: dort
+        # fehlt das Feld, und der ausgeschaltete Bereich traegt den alten
+        # Fehlertext - er wuerde nach dem Laden wieder als "nicht geführt"
+        # gezaehlt
+        self.__dict__.update(state)
+        if "ausgeschaltet" not in state and state.get("fehler") == _AUSGESCHALTET_ALT:
+            self.ausgeschaltet, self.fehler = True, ""
 
     def status(self) -> str:
+        if self.ausgeschaltet:
+            return "ausgeschaltet"
         if self.fehler:
             return "nicht geführt"
         if self.singular:
@@ -159,10 +184,13 @@ class VolumenResults:
     def _summary(self) -> str:
         if not self.bereiche:
             return "Volumennachweise: keine Bereiche festgelegt"
-        gefuehrt = [c for c in self.bereiche.values() if not c.singular and not c.fehler]
+        gefuehrt = [c for c in self.bereiche.values()
+                    if not c.singular and not c.fehler and not c.ausgeschaltet]
         schlecht = [c.name for c in gefuehrt if c.util > 1.0]
         fehler = [c.name for c in self.bereiche.values() if c.fehler]
-        nur = [c.name for c in self.bereiche.values() if c.singular]
+        nur = [c.name for c in self.bereiche.values()
+               if c.singular and not c.ausgeschaltet]
+        aus = [c.name for c in self.bereiche.values() if c.ausgeschaltet]
         s = f"Volumen (EN 1993-1-1, 6.2.1(5)): {len(self.bereiche)} Bereiche"
         if gefuehrt:
             worst = max(gefuehrt, key=lambda c: c.util)
@@ -178,6 +206,8 @@ class VolumenResults:
             s += f" - {len(nur)} nur berichtet (Singularität): " + ", ".join(nur)
         if fehler:
             s += f" - {len(fehler)} nicht geführt: " + ", ".join(fehler)
+        if aus:
+            s += f" - {len(aus)} ausgeschaltet: " + ", ".join(aus)
         return s
 
     def table(self) -> list[list]:
@@ -398,7 +428,8 @@ def check_volumen(model, analysis, combos: list = None, progress=None) -> Volume
         c = VolumenCheck(name, beschreibung=vb.beschreibung,
                          n_elemente=len(vb.elemente), singular=bool(vb.singular))
         if not vb.design:
-            c.fehler = "Nachweis für diesen Bereich ausgeschaltet"
+            # gewollt nicht gefuehrt - kein Fehler, siehe VolumenCheck.ausgeschaltet
+            c.ausgeschaltet = True
             out.bereiche[name] = c
             continue
         # Die Erzeugnisdicke: entweder am Bereich angegeben oder aus dem

@@ -1568,14 +1568,15 @@ class Report:
                          fmt(c.fy / 1e6, 0), fmt(w.get("sigma_v", 0) / 1e6, 1),
                          fmt(w.get("s1", 0) / 1e6, 1), fmt(w.get("s3", 0) / 1e6, 1),
                          fmt(w.get("h", 0.0), 2),
-                         ("–" if c.singular else Util(c.util)),
+                         ("–" if c.singular or c.ausgeschaltet else Util(c.util)),
                          c.kombination, c.status()])
         b.append(("table", rows, "Volumenbereiche: Spannungen und Ausnutzung",
                   None, "t ist die Erzeugnisdicke für die Abminderung von f_y "
                   "nach EN 1993-1-1 Tab. 3.1; ohne * die kleinste Abmessung "
                   "des Körpers, mit * am Bereich angegeben."))
         if self.opt("figures"):
-            liste = [c for c in v.bereiche.values() if not c.fehler and not c.singular][:60]
+            liste = [c for c in v.bereiche.values()
+                     if not c.fehler and not c.singular and not c.ausgeschaltet][:60]
             if liste:
                 b.append(self._figure(
                     sv.draw_bar_chart([c.name for c in liste],
@@ -1586,6 +1587,12 @@ class Report:
         b.append(self._h(2, "Nachweise im Einzelnen"))
         for c in v.bereiche.values():
             b.append(self._h(3, f"Volumenbereich {c.name}"))
+            if c.ausgeschaltet:
+                # gewollt nicht gefuehrt: keine offene Warnung (wie ein Stab
+                # mit design=False, Befund B058)
+                b.append(("p", "Der Nachweis ist für diesen Bereich ausgeschaltet "
+                               "(„Nachweis führen“ nicht gesetzt)."))
+                continue
             if c.fehler:
                 b.append(("p", f"Der Nachweis konnte nicht geführt werden: {c.fehler}"))
                 self._warnings.append(f"Volumenbereich {c.name}: {c.fehler}")
@@ -4094,8 +4101,15 @@ class Report:
         # darum entweder "Es wurden keine Nachweise gefuehrt" oder "Alle
         # Nachweise erfuellt", waehrend der gefuehrte Volumennachweis riss.
         vo = self.volumen
-        if vo is not None and getattr(vo, "bereiche", None):
-            gefuehrte = [c for c in vo.bereiche.values() if not c.singular and not c.fehler]
+        # Ein ausgeschalteter Bereich (``ausgeschaltet``, Schalter „Nachweis
+        # führen“ aus) ist gewollt nicht gefuehrt und zaehlt hier gar nicht -
+        # wie ein Stab mit design=False, den check_members nicht aufnimmt. Bis
+        # zum 23.09.2026 stand er in ``fehler`` und kippte das Urteil auf
+        # "nicht geführt wurden: 1 Volumenbereiche" (Befund B058).
+        vo_aktiv = ([c for c in vo.bereiche.values() if not c.ausgeschaltet]
+                    if vo is not None and getattr(vo, "bereiche", None) else [])
+        if vo_aktiv:
+            gefuehrte = [c for c in vo_aktiv if not c.singular and not c.fehler]
             if gefuehrte:
                 schlimmster = max(gefuehrte, key=lambda c: c.util)
                 kv.append(("max. Ausnutzung Volumen", Util(schlimmster.util)))
@@ -4104,7 +4118,7 @@ class Report:
                            f"{schlimmster.kombination}"))
                 if any(c.util > 1.0 for c in gefuehrte):
                     status_ok = False
-            offen = [c.name for c in vo.bereiche.values() if c.fehler]
+            offen = [c.name for c in vo_aktiv if c.fehler]
             if offen:
                 nicht_gefuehrt.append(f"{len(offen)} Volumenbereiche")
         if f is not None and getattr(f, "volumen", None):
@@ -4128,7 +4142,7 @@ class Report:
                     or (gz is not None and getattr(gz, "checks", None))
                     or (bl is not None and getattr(bl, "felder", None))
                     or (li is not None and getattr(li, "stellen", None))
-                    or (vo is not None and getattr(vo, "bereiche", None)))
+                    or bool(vo_aktiv))
         if gefuehrt:
             if not status_ok:
                 b.append(("status", "Nachweise NICHT erfüllt – siehe die Nachweiskapitel.",

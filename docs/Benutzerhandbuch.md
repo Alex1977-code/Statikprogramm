@@ -3760,6 +3760,23 @@ brauchbaren und einem wertlosen Nachweis ausmachen:
   Bericht es als Hinweis. Bis zum 22.09.2026 rechnete der Volumennachweis
   immer mit der dünnsten Stufe — η fiel bei dicken Bauteilen 6 % zu klein aus.
 
+Ist **„Nachweis führen“** nicht gesetzt, bleibt der Bereich angelegt, sein
+Nachweis läuft aber nicht. In der Tabelle „Volumen“ und im Bericht steht er mit
+dem Status „ausgeschaltet“ (im Bericht mit η „–“), die Zusammenfassung der
+Volumennachweise endet mit „– 1 ausgeschaltet: *Name*“. Im Gesamturteil des
+Berichts zählt er nicht mit, wie ein Stab ohne Nachweis: er ist weder erfüllt
+noch „nicht geführt“ und steht nicht unter den offenen Hinweisen. „Nicht
+geführt“ heißt dagegen, dass ein verlangter Nachweis nicht geführt werden
+**konnte** — etwa weil kein Werkstoff im Bereich eine Streckgrenze hat —, und
+das nennt das Gesamturteil weiter. Bis zum 23.09.2026 zählte auch ein
+ausgeschalteter Bereich als nicht geführt. Am Zugkörper (100 × 100 mm, S355,
+N = 2500 kN) mit einem geführten und einem ausgeschalteten Bereich hieß das
+Gesamturteil „Alle **geführten** Nachweise erfüllt – nicht geführt wurden:
+1 Volumenbereiche“ statt „Alle Nachweise erfüllt.“. Mit dem ausgeschalteten
+Bereich allein stand dieselbe Zeile da, obwohl kein Nachweis lief; jetzt heißt
+es dort „Es wurden keine Nachweise geführt; …“. Eine Ergebnisdatei, die mit dem
+alten Stand gespeichert wurde, wird beim Öffnen ebenso gelesen.
+
 Ausgewertet wird an den **Eckknoten**, mit der **geglätteten** Spannung (seit
 22.09.2026): an jedem Knoten das Mittel der Elemente desselben Körpers und
 Werkstoffs, maßgebend ist der größte Knoten des Bereichs. Der Bericht nennt ihn

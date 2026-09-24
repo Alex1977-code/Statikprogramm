@@ -6525,6 +6525,30 @@ N = 2500 kN 0,746 und „Alle Nachweise erfüllt.". Mit dem alten Stand stand in
 beiden Fällen „Es wurden keine Nachweise geführt; …" mit grüner Kennung
 (`test_gesamturteil_reines_volumenmodell`).
 
+**Ein ausgeschalteter Volumenbereich galt als nicht geführt** (Befund B058,
+23.09.2026). `check_volumen` schrieb bei `Volumenbereich.design = False` den
+Text „Nachweis für diesen Bereich ausgeschaltet" in `VolumenCheck.fehler`, und
+das Gesamturteil zählt jeden Bereich mit `fehler` als „nicht geführt". Ein Stab
+mit `design = False` kommt dagegen gar nicht erst in `check_members`. Am
+Zugkörper (N = 2500 kN) mit „Schaft" und einem ausgeschalteten Bereich stand
+„Alle **geführten** Nachweise erfüllt – nicht geführt wurden: 1 Volumenbereiche"
+(Kennung `nok`) statt „Alle Nachweise erfüllt.". Mit dem ausgeschalteten Bereich allein
+stand dieselbe Zeile da, obwohl kein Nachweis lief. Jetzt trägt der Bereich ein
+eigenes Merkmal `VolumenCheck.ausgeschaltet` mit dem Status „ausgeschaltet"
+und keinen Fehler, und das Gesamturteil lässt ihn ganz weg. Mit dem
+ausgeschalteten Bereich allein heißt es darum „Es wurden keine Nachweise
+geführt; …" – dieselbe Zeile wie an einem Balkenmodell, dessen Stäbe alle ohne
+Nachweis sind (gemessen). Im Kapitel der Volumennachweise und in `summary()`
+bleibt er sichtbar („– 1 ausgeschaltet: Aus"). Gegenprobe im selben Test: ein
+Bereich ohne Werkstoff mit Streckgrenze zählt weiter als nicht geführt; neben
+einem ausgeschalteten Bereich heißt es „nicht geführt wurden: 1
+Volumenbereiche" (am alten Stand 2). Eine Ergebnisdatei vom alten Stand trägt
+noch den alten Fehlertext; `VolumenCheck.__setstate__` erkennt ihn am
+wörtlichen Text, wenn das Feld fehlt. Gemessen: eine mit `ec6448c`
+geschriebene Ergebnisdatei ergibt nach dem Lesen „ausgeschaltet" und „Alle
+Nachweise erfüllt." (`test_ausgeschalteter_bereich_im_gesamturteil` bildet die
+alte Datei nach).
+
 **Theorie II./III. Ordnung scheiterte still.** Der `ValueError` landete in
 `an.info["warnungen"]` — einem Schlüssel, der im ganzen Programm **einmal
 geschrieben und nirgends gelesen** wird. Das **lineare** Ergebnis blieb unter
