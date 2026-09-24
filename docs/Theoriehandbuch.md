@@ -6284,8 +6284,11 @@ gemessen.
 **Gescheiterte Kombinationen blieben still linear (B132).** Der Satz oben,
 der Kombinationszweig mache es „seit jeher richtig", stimmte nur halb:
 `check_theorie2`/`check_theorie3` tragen den Fehler ins Theoriekapitel ein und
-übernehmen das Ergebnis zu Recht nur ohne Fehler — das stehende
-Überlagerungsergebnis der Kombination markierten sie aber nicht. Die
+übernehmen das Ergebnis zu Recht nur ohne Fehler — das stehende Ergebnis
+der Kombination nach I. Ordnung aus `solve_combinations` markierten sie aber
+nicht. Das ist die Überlagerung der Lastfälle, wo `_nichtlinear` gilt
+(Kontakt, Ausfallstäbe oder Seile, Plastizität), aber die direkte Lösung der
+Kombination (`solve_combination` → `_solve_loads`). Die
 Kombinationstabelle des Berichts druckte `model.theorie_von`, also die
 Einstellung, und die GZT-Nachweise liefen ohne Warnung mit dem linearen
 Ergebnis. Gemessen am 23.09.2026 am Stand ec6448c, Kragarm aus zwei Stäben,
@@ -6315,12 +6318,19 @@ ist leer und das Gesamturteil lautet „Alle Nachweise erfüllt."; EK1 mit zwei
 Alternativen nach III. bzw. II. Ordnung — Zellen „III" bzw. „II",
 `_uls_results` liefert „EK1 [1]", „EK1 [2]" ohne Warnung. Den Grund nennt
 in diesen Fällen das Theoriekapitel. Das Benutzerhandbuch nennt beide
-Ausnahmen. Geprüft in
-`tests/test_theorie3.py`
+Ausnahmen. Im Kontaktmodell bleibt die direkte Lösung stehen, nicht die
+Überlagerung: gemessen am 24.09.2026 am Stand d55789c (zwei Läufe gleich),
+Kragarm 3 m mit Spaltelement an der Spitze (Spalt 2 mm), LF1 und LF2 je
+Fz = −12 kN schließen den Spalt je allein (2,0000 mm), K1 = LF1 + LF2 nach
+III. Ordnung scheitert mit „Theorie III. Ordnung nicht zusammen mit
+Kontakt" — K1 steht bei 2,0000 mm ohne `info["superposition"]`, die
+Überlagerung ergäbe 4,0000 mm; Zelle „I (statt III: nicht gerechnet)",
+`_uls_results` warnt. Geprüft in `tests/test_theorie3.py`
 (`test_gescheiterte_kombination_markiert_das_lineare_ergebnis`; den
-Einklang von Handbuchtext und Programm für beide Ausnahmen prüft
-`test_handbuch_nennt_die_ausnahmen_der_kombinationsmeldung`); an einem
-großen Modell nicht gemessen.
+Einklang von Handbuchtext und Programm prüfen für beide Ausnahmen
+`test_handbuch_nennt_die_ausnahmen_der_kombinationsmeldung` und für das
+Kontaktmodell `test_handbuch_kontaktmodell_rechnet_die_kombination_direkt`);
+an einem großen Modell nicht gemessen.
 
 **Ermüdung: ein fehlender Mindestzustand wurde still zu null.** `case_min`
 angegeben, aber nicht gerechnet, fiel in denselben Zweig wie „kein

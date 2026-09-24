@@ -3803,12 +3803,18 @@ ohne die Zusatzmomente aus der Verformung.
 Ebenso die Spalte **Theorie** der Kombinationstabelle — im Kapitel
 Einwirkungen und als eingefügte Tabelle „Kombinationen": Scheitert eine
 gewöhnliche Kombination nach II. oder III. Ordnung — eine GZT- ebenso wie
-eine GZG-Kombination —, bleibt ihre Überlagerung nach I. Ordnung stehen, und
+eine GZG-Kombination —, bleibt ihr Ergebnis nach I. Ordnung stehen, und
 die Spalte zeigt „I (statt II: nicht gerechnet)" bzw. „I (statt III: nicht
-gerechnet)". Die GZT-Nachweise der Stäbe, Beulfelder, Lasteinleitungen,
-Volumenbereiche und Anschlüsse werden mit diesem linearen Ergebnis geführt
-und sagen das: unter ihren Warnungen steht „Kombination … nur nach Theorie
-I. Ordnung nachgewiesen" mit dem Grund, und das Gesamturteil der
+gerechnet)". Dieses Ergebnis ist die Überlagerung der Lastfälle; in Modellen
+mit Kontakt, Ausfallstäben oder Seilen oder mit eingeschalteter Plastizität,
+deren Kombinationen direkt gerechnet werden, ist es die direkte Lösung der
+Kombination nach I. Ordnung. Am Kragarm mit Spaltelement (Spalt 2 mm, zwei
+Lastfälle, die den Spalt je allein schließen, Kombination nach III. Ordnung,
+die am Kontakt scheitert) steht so 2,0 mm, nicht die Summe 4,0 mm. Die
+GZT-Nachweise der Stäbe, Beulfelder, Lasteinleitungen, Volumenbereiche und
+Anschlüsse werden mit diesem Ergebnis nach I. Ordnung geführt und sagen
+das: unter ihren Warnungen steht „Kombination … nur nach Theorie I. Ordnung
+nachgewiesen" mit dem Grund, und das Gesamturteil der
 Zusammenfassung lautet nicht mehr „Alle Nachweise erfüllt." — sind die
 Nachweise sonst erfüllt, nennt es den Nachweis unter „nicht geführt wurden".
 Bleibt eine Kombination bei der Einstellung „automatisch" nach I. Ordnung,

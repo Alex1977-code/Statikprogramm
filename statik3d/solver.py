@@ -5498,9 +5498,13 @@ def _gescheiterte_kombinationen_markieren(model: Model, an, ergebnis, th: str) -
     einem Fehler endete, wie einen gescheiterten Lastfall markieren.
 
     check_theorie2/check_theorie3 uebernehmen das Ergebnis zu Recht nur ohne
-    Fehler, das Ueberlagerungsergebnis aus solve_combinations bleibt stehen.
-    Es blieb aber unmarkiert: die Kombinationstabelle des Berichts wies die
-    Einstellung aus, und die GZT-Nachweise liefen ohne Warnung mit dem
+    Fehler, das Ergebnis nach I. Ordnung aus solve_combinations bleibt
+    stehen: die Ueberlagerung, bei _nichtlinear (Kontakt, Ausfallstaebe und
+    Seile, Plastizitaet) aber die direkte Loesung der Kombination. Gemessen
+    24.09.2026 am Stand d55789c: Kragarm mit Spalt 2 mm, K1 = LF1 + LF2
+    nach III scheitert am Kontakt, K1 steht bei 2,0000 mm, die Ueberlagerung
+    ergaebe 4,0000 mm. Es blieb aber unmarkiert: die Kombinationstabelle
+    des Berichts wies die Einstellung aus, und die GZT-Nachweise liefen ohne Warnung mit dem
     linearen Ergebnis. Gemessen 23.09.2026 am Stand ec6448c (Befund B132):
     K1 = 1,35·LF nach Theorie III mit Zwangsverformung (ValueError im
     Kombinationszweig) bzw. nach Theorie II mit erzwungenem info.fehler -

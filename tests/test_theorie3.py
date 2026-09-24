@@ -397,7 +397,10 @@ def test_gescheiterte_kombination_markiert_das_lineare_ergebnis():
     22.09.2026 tut (test_theorie_mit_info_fehler_markiert_das_lineare_ergebnis).
 
     check_theorie2/check_theorie3 uebernehmen das Ergebnis nur ohne Fehler;
-    das stehende Ueberlagerungsergebnis blieb unmarkiert, die
+    das stehende Ergebnis nach I. Ordnung (hier die Ueberlagerung, im
+    Kontaktmodell die direkte Loesung - siehe
+    test_handbuch_kontaktmodell_rechnet_die_kombination_direkt) blieb
+    unmarkiert, die
     Kombinationstabelle druckte ``model.theorie_von``, also die Einstellung,
     und die GZT-Nachweise liefen ohne Warnung mit dem linearen Ergebnis.
     Gemessen 23.09.2026 am Stand ec6448c (Befund B132): K1 nach Theorie III
@@ -592,6 +595,87 @@ def test_handbuch_nennt_die_ausnahmen_der_kombinationsmeldung():
           nennt_ek != ek_meldet, f"{sorted(uls)} {zellen!r} {warn!r}")
 
 
+def _theoriehandbuch_absatz_b132() -> str:
+    """Der Absatz "Gescheiterte Kombinationen blieben still linear (B132)"
+    des Theoriehandbuchs, bis zur naechsten Leerzeile."""
+    pfad = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "docs", "Theoriehandbuch.md")
+    with open(pfad, encoding="utf-8") as f:
+        text = f.read()
+    anfang = text.find("**Gescheiterte Kombinationen blieben still linear (B132).**")
+    if anfang < 0:
+        return ""
+    ende = text.find("\n\n", anfang)
+    return text[anfang:ende if ende > 0 else len(text)]
+
+
+def test_handbuch_kontaktmodell_rechnet_die_kombination_direkt():
+    """Was nach einer gescheiterten Kombination stehen bleibt, ist nicht
+    immer die Ueberlagerung: im Kontaktmodell rechnet solve_combination die
+    Kombination direkt (_nichtlinear -> _solve_loads), und dieses Ergebnis
+    nach I. Ordnung bleibt stehen, wenn Theorie III am Kontakt scheitert
+    (theorie3.py: "nicht zusammen mit Kontakt").
+
+    Die Handbuchtexte von B132 sagten ohne Einschraenkung "bleibt ihre
+    Ueberlagerung nach I. Ordnung stehen" (Benutzerhandbuch) bzw. "das
+    stehende Ueberlagerungsergebnis" (Theoriehandbuch). Gemessen 24.09.2026
+    am Stand d55789c (zweite Gegenpruefung der Kur, zwei Laeufe gleich):
+    Kragarm 3 m mit Spaltelement (Spalt 2 mm) an der Spitze, LF1 und LF2 je
+    Fz = -12 kN, K1 = LF1 + LF2 nach III - Th3-Fehler "Theorie III. Ordnung
+    nicht zusammen mit Kontakt", K1 info theorie "I"/"III", ohne
+    "superposition", Endverschiebung K1 2,0000 mm, die Ueberlagerung
+    LF1 + LF2 ergaebe 4,0000 mm; Zelle "I (statt III: nicht gerechnet)".
+
+    Geprueft wird der Einklang: ist das stehende Ergebnis die direkte Loesung,
+    muessen beide Handbuecher sie fuer das Kontaktmodell nennen.
+    """
+    L, s = 3.0, 0.002
+    m = Model("Spalt")
+    m.add_material(Material("S"))
+    m.add_section(Section.rectangle("R", 0.1, 0.2))
+    ids = [m.add_node(L * i / 6, 0.0, 0.0) for i in range(7)]
+    for i in range(6):
+        m.add_element("beam", [ids[i], ids[i + 1]], "S", "R")
+    m.fix(ids[0], "all")
+    stop = m.add_node(L, 0.0, -s)
+    m.fix(stop, "all")
+    m.add_gap_element(ids[-1], stop, direction=(0, 0, -1), gap=s)
+    for lf, art in (("LF1", "G"), ("LF2", "Q")):
+        m.add_load_case(lf, art)
+        m.load_node(ids[-1], Fz=-12000.0, case=lf)
+    m.combinations["K1"] = Combination("K1", {"LF1": 1.0, "LF2": 1.0}, "ULS", theorie="III")
+    an = solver.solve_all(m)
+
+    info_t = (getattr(an.theorie3, "kombinationen", None) or {}).get("K1")
+    grund = str(getattr(info_t, "fehler", "") or "")
+    check("Kontaktmodell K1 nach III: die Rechnung scheitert am Kontakt",
+          "Kontakt" in grund, grund[:60])
+    res = an.combinations.get("K1")
+    info = (res.info if res is not None else None) or {}
+    check("Kontaktmodell K1: Ergebnis sagt Theorie I statt III",
+          info.get("theorie") == "I" and info.get("theorie_gewuenscht") == "III",
+          f"{info.get('theorie')!r} / {info.get('theorie_gewuenscht')!r}")
+    u_k = -float(res.u[ids[-1], 2]) if res is not None else float("nan")
+    u_sum = -float(an.cases["LF1"].u[ids[-1], 2] + an.cases["LF2"].u[ids[-1], 2])
+    direkt = not info.get("superposition") and abs(u_k - u_sum) > 1e-6
+    check("Kontaktmodell K1: stehendes Ergebnis ist die direkte Lösung (Spalt zu), "
+          "nicht die Überlagerung",
+          direkt and abs(u_k - s) < 1e-5 and abs(u_sum - 2 * s) < 1e-5,
+          f"superposition={info.get('superposition')!r} u_K1={u_k * 1000:.4f} mm "
+          f"LF1+LF2={u_sum * 1000:.4f} mm")
+    zellen = _theorie_der_kombinationstabellen(m, an)
+    check("Kontaktmodell K1: beide Kombinationstabellen 'I (statt III: nicht gerechnet)'",
+          zellen == ["I (statt III: nicht gerechnet)"] * 2, repr(zellen))
+
+    for wo, absatz in (("Benutzerhandbuch", _handbuchabschnitt_kombinationstabelle()),
+                       ("Theoriehandbuch", _theoriehandbuch_absatz_b132())):
+        nennt = "direkte Lösung" in absatz and "Kontakt" in absatz
+        check(f"{wo} und Programm einig: stehendes Ergebnis im Kontaktmodell "
+              f"{'direkt' if direkt else 'überlagert'} – Text nennt die direkte Lösung "
+              f"{'ja' if nennt else 'nicht'}",
+              bool(absatz) and nennt == direkt, f"{len(absatz)} Zeichen")
+
+
 def main():
     for t in (test_drehungen, test_kreisbogen, test_elastica, test_seil,
               test_druckstab_II_gegen_III, test_theoriewahl,
@@ -599,7 +683,8 @@ def main():
               test_gelungene_theorie_steht_schlicht_in_der_tabelle,
               test_theorie_mit_info_fehler_markiert_das_lineare_ergebnis,
               test_gescheiterte_kombination_markiert_das_lineare_ergebnis,
-              test_handbuch_nennt_die_ausnahmen_der_kombinationsmeldung):
+              test_handbuch_nennt_die_ausnahmen_der_kombinationsmeldung,
+              test_handbuch_kontaktmodell_rechnet_die_kombination_direkt):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
