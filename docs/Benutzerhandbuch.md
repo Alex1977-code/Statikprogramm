@@ -5172,10 +5172,11 @@ nichts stillschweigend Übergangenes:
 | **Netz gefaltet**: umgestülpte Tetraeder zwischen ihren Nachbarn | 0 |
 | Randtreue je Körper | ≥ 99 % |
 | **Volumenbilanz je Körper**: Elemente gegen Randflächen | ≤ 0,5 % (an windschiefen Flächen zuzüglich der Sehnen) |
-| **Seiten im Inneren**: freie Elementseiten, hinter denen der Körper weitergeht (verdrehtes Element, doppelte Knoten, Hohlraum) | 0 |
-| Lücke im Netzrand (Warnung, über 0,5 % des Körpers Fehler): an der Oberfläche fehlt dem Netz ein Stück, kein verdrehtes Element, keine doppelten Knoten | 0 |
+| **Seiten im Inneren**: freie Elementseiten, hinter denen der Körper weitergeht (verdrehtes Element, doppelte Knoten, hängende Knoten, Hohlraum, Netzrand, der die Randfläche verfehlt – der Text nennt, was gefunden wurde) | 0 |
+| Lücke im Netzrand (Warnung, über 0,5 % des Körpers Fehler): an der Oberfläche fehlt dem Netz ein Stück, kein verdrehtes Element, keine doppelten oder hängenden Knoten | 0 |
 | Netzrand neben der Hülle (Warnung): freie Seiten neben den Randflächen, außen oder als Beule | 0 |
 | Riss im Netz (Warnung): geschlossener Hohlraum, dünn gegen seine eigenen Seiten und gegen die Elemente daneben, so klein wie die Lücken des Vernetzers (höchstens 2 · 10⁻⁶ · L³ je vier Seiten, L die längste Elementkante des Körpers), kein verdrehtes Element, keine doppelten Knoten | 0 |
+| Volumenbilanz nicht geprüft (Warnung): Körper mit krummen Randlinien oder einer anderen Hülle, die sich nicht ohne Näherung darstellen lässt; Volumenelemente, die zu keinem Körper gehören | – |
 
 Die Volumenbilanz und die vier Prüfungen darunter gibt es seit dem
 23.09.2026, im Hauptzweig seit dem Merge an diesem Tag. Die Abnahme des
@@ -5240,6 +5241,18 @@ zusammen.
 **Nie ein Riss** sind ein verdrehtes Element und doppelte Knoten, gleich wie
 dünn der Hohlraum ist. Ein verdrehter Sechsflächner hat eine Seitenkante, die
 kein anderes Element hat, und doppelte Knoten sind zwei Nummern am selben Ort.
+„Am selben Ort“ heißt seit dem 23.09.2026: näher beieinander als 1 % der
+kürzesten Kante an den beiden Knoten. Vorher galt fest 0,001 mm, gleich wie
+groß die Elemente sind. Im Block 0,75 × 0,75 × 0,75 m aus 6 × 6 × 6 Zellen
+(125 mm), in Tetraeder zerlegt, war ein Tetraeder, der an einem Knoten
+losgelöst und 0,002 oder 0,01 mm versetzt war, deshalb nur ein „Riss im Netz“
+ohne Rückfrage vor dem Rechnen. Heute ist er ein FEHLER „Seiten im Inneren“.
+Ebenso ist ein Hohlraum nie ein Riss, wenn einen seiner Knoten im Körper nur
+ein einziges Element benutzt: Derselbe Tetraeder, 5 mm versetzt (4 % der
+Kante), ist gemessen ebenfalls ein FEHLER. In den 29 Rissen der Netze aus
+den Prüfsuiten lagen zwei verschiedene Knoten mindestens das 0,995-Fache der
+kürzesten Kante an ihnen auseinander, und keinen ihrer Knoten benutzte nur
+ein Element; ihre Befunde sind dieselben geblieben.
 Gemessen am 23.09.2026, alle FEHLER „Seiten im Inneren“: verdrehte
 Sechsflächner in gleichmäßigen Netzen mit Zellen von 100 × 100 × 100 bis
 100 × 100 × 300 mm und in abgestuften Netzen 5:1, 20:1 und 50:1 (je alle 512
@@ -5297,7 +5310,16 @@ Lücke 552 cm³) fand sie nichts, gemessen am 23.09.2026 mit demselben Netz.
 Geholfen hat
 an diesen fünf Prismen, gemessen: in den Netzeinstellungen „Sechsflächner
 sweepen“ (nur für Körper aus Grundfläche mal Weg) oder der Vernetzer gmsh bzw.
-Netgen, jeweils an allen fünf. Der Sweep ist ab Werk aus; warum, steht bei
+Netgen, jeweils an allen fünf. Mit derselben Netzweite ergeben gmsh und Netgen
+dort aber nur 22 bis 37 % der Elemente des eigenen Vernetzers (L-Prisma,
+Netzweite 0,25 m: 821 Tetraeder gegen 203 mit gmsh und 187 mit Netgen) –
+so war die Abhilfe zuerst gemessen. Nachgemessen am 23.09.2026 bei
+vergleichbarer Elementzahl (Netzweite 60 bis 70 % der eigenen, 0,87- bis
+1,05-mal so viele Elemente): alle fünf ohne Befund. Wer mit gmsh oder Netgen
+gleich fein rechnen will, stellt die Netzweite entsprechend kleiner. Die
+Elementzahlen des eigenen Vernetzers sind die vor seiner Änderung vom
+23.09.2026; seither gibt er am L-Prisma mit Netzweite 0,25 m 634 Tetraeder
+ohne Lücke (gemessen 24.09.2026). Der Sweep ist ab Werk aus; warum, steht bei
 den Netzeinstellungen. Seit 23.09.2026 sagt das auch die Warnung selbst („ab
 Werk aus, weil er am Drehlager entartete Keile erzeugte - nach dem
 Einschalten die Abnahme lesen“); vorher empfahl sie den Sweep ohne diesen
@@ -5335,7 +5357,12 @@ ist ein Element an der Oberfläche eine Lücke, das an Knoten losgelöst ist
 an seinen drei Knoten auf der Randfläche oder an allen vier losgelöst, hängt
 nur noch an einem Knoten oder schwebt. Seine freien Seiten und die der
 Nachbarn haben ihren Rand auf der Randfläche wie bei einer Lücke, es fehlt
-aber nichts. Gemessen: FEHLER „Seiten im Inneren 6“. Ebenfalls
+aber nichts. Gemessen: FEHLER „Seiten im Inneren 6“. Bis zum 23.09.2026
+galt das nur, solange die neuen Knoten genau am alten Ort lagen: schon bei
+0,01 mm Versatz stand nur eine „Lücke im Netzrand“ von 651 cm³ da, ohne
+Rückfrage. Heute ist es bis 2 mm Versatz (1,6 % der Kante) ein FEHLER mit 6 Seiten;
+bei 5 mm und 1 cm bleibt ein FEHLER mit 4 Seiten, daneben steht aber eine
+„Lücke“ von 326 cm³, obwohl nichts fehlt. Ebenfalls
 FEHLER bleiben Hohlräume, die ringsum von Nachbarseiten eingeschlossen sind,
 auch wenn sie die Oberfläche an einer Kante berühren. Gemessen an einem
 Würfel mit angehobener Ecke, frei mit Netzweite 0,1 m vernetzt: FEHLER
@@ -5385,6 +5412,203 @@ Fehlen die zwei Zellen der Platte 1 × 1 × 0,125 m dagegen mitten in der
 Platte, ist das Loch durch die ganze Dicke eine Lücke mit ihrem Volumen
 (488 cm³).
 
+**Auch eine dünne Lücke ist eine Lücke** (seit 23.09.2026). Ob einer offenen
+Gruppe an der Oberfläche ein Stück fehlt, entschied vorher ihre mittlere
+Dicke: War sie höchstens 5 % der längsten Kante, galt die Gruppe als „Ufer
+ohne Volumen“ und blieb ein FEHLER „Seiten im Inneren“. So wurde am frei
+vernetzten L-Prisma (Netzweite 0,2 m, 1493 Tetraeder, ohne Befund) ein von
+Hand gelöschter flacher Tetraeder am Deckel (164 cm³, Dicke 2,87 % der
+längsten Kante) ein FEHLER, ebenso zwei Nachbarn (250 und 224 cm³). Heute
+sind es Lücken mit genau diesen Volumina (am selben Netz, das die Prüfungen
+dafür festhalten; der Vernetzer vom 23.09.2026 gibt dort 1364 Tetraeder mit
+anderen Nummern). Dass hinter einer offenen Gruppe
+nichts fehlt, zeigt dagegen ein **Gegenüber**: Die Ufer einer Trennfläche aus
+doppelten Knoten oder eines T-Stoßes schließen jedes für sich mit der
+Randfläche den Block dahinter ein, obwohl er vernetzt ist. Das erkennt die
+Abnahme an den doppelten und hängenden Knoten. Gemessen an einem
+8 × 8 × 8-Netz des Würfels 1 × 1 × 1 m: die Eckzelle mit eigenen Knoten
+abgetrennt, 0,01 oder 1 mm versetzt, vorher „Lücke im Netzrand“ 1953 cm³
+(Warnung) neben FEHLER 3; die Eckzelle in 2 × 2 × 2 Zellen geteilt (T-Stoß),
+in Tetraeder zerlegt vorher nur „Lücke im Netzrand“ 3906 cm³ als Warnung,
+ohne Rückfrage vor dem Rechnen. Heute ist beides ein FEHLER „Seiten im
+Inneren“ mit der Ursache doppelte bzw. hängende Knoten. Eine Folge an einem
+Netz des eigenen Vernetzers: An der Platte 1 × 0,6 × 0,2 m mit einer Bohrung
+r 0,1 m, direkt mit dem freien Vernetzer vernetzt (Ziellänge 0,04 m, 30 013
+Tetraeder), sind 8 der 12 Seiten, die vorher FEHLER waren, jetzt zwei Lücken
+von zusammen 0,33 cm³; 4 Seiten bleiben ein FEHLER. Über „Netz → Vernetzen“
+(`mesher.modell_vernetzen`, 19 599 Tetraeder) hat dieselbe Platte keinen
+Befund.
+
+**Die Ursache im Text** (seit 23.09.2026). Der FEHLER „Seiten im Inneren“
+nennt, was an den Seiten gefunden wurde, und an wie vielen: ein verdrehtes
+Element (nur, wenn eine Kante des Elements über die Diagonale einer
+Nachbarseite läuft); doppelte Knoten, also
+ein losgelöstes Element oder ein losgelöster Bereich (zwei Nummern am selben
+Ort; ein Knoten, den nur ein Element benutzt und der nicht in einer Ecke des
+Körpers liegt – an einem Ufer, dessen Rand auf der Randfläche liegt, nur,
+wenn ein anderer Knoten näher liegt als die halbe kürzeste Kante an den
+beiden; eigene Knoten neben denen des Nachbarn, ohne dass die Ufer dort eine
+Ecke teilen; oder an einem solchen Ufer eine Seite, neben der eine Kopie aus
+eigenen Knoten liegt – an einem ringsum geschlossenen Hohlraum aber
+nur, wenn von ihm nach Abzug der losgelösten Bereiche darin höchstens das
+halbe mittlere Element an ihm bleibt, siehe unten); hängende Knoten (Knoten
+des einen Ufers liegen auf den Seiten des anderen, ohne deren Ecken zu sein,
+und die Ufer teilen dort Ecken, etwa an einem T-Stoß; oder Knoten liegen auf
+einer Kante zwischen ihren Enden, weil eine Zelle nur in einer oder zwei
+Richtungen feiner geteilt ist); einen
+Hohlraum im Netz; einen **Netzrand, der die Randfläche verfehlt**; oder
+**keine sicher bestimmte Ursache** mit den möglichen (siehe unten).
+Vorher stand immer „ein verdrehtes Element, doppelte Knoten oder ein
+Hohlraum“ da. Ein T-Stoß von Sechsflächnern – links ein Würfel
+1 × 1 × 1 m, rechts derselbe in 2 × 2 × 2 geteilt, die Knoten der feinen
+Seite liegen auf der Seite des groben – ist ein FEHLER mit 5 Seiten, in
+Tetraeder zerlegt mit 10; liegt die geteilte Zelle mitten in einem Netz aus
+3 × 3 × 3 Würfeln, sind es 30 bzw. 60 Seiten. Das war schon vorher so. Ein
+Riss ist das nicht, weil die Ufer offen sind (ihr Rand liegt auf der
+Randfläche) bzw. zu dick. Ob die Ufer eine Kante teilen, fragt die Abnahme
+dabei nicht: Im Schachbrett aus 8 × 8 × 8 Würfeln, jeder zweite in
+2 × 2 × 2 geteilt, gelten die feinen Ufer als „Riss im Netz“ (5376 Seiten)
+und nur die groben als FEHLER (1344 Seiten); mit 4 oder 6 Würfeln je Kante
+ist alles ein FEHLER (gemessen, vorher ebenso). Neu ist, dass der Text die
+hängenden Knoten nennt. Die erste Fassung dieser Ursachen (23.09.2026)
+suchte hängende Knoten nur an Ufern, deren Rand auf der Randfläche liegt,
+und Knoten, die nur ein Element benutzt, nur an geschlossenen Hohlräumen.
+So hieß der T-Stoß mitten im Netz „verdrehtes Element“ und „Hohlraum“, die
+groben Ufer des Schachbretts „Netzrand verfehlt die Randfläche“ mit dem Rat
+zum Sweep, und ein Element an der Seitenfläche des 8 × 8 × 8-Netzes (Kante
+125 mm), das an seinen Knoten auf der Randfläche losgelöst und um mehr als
+1 % der Kante versetzt war, hieß „hängende Knoten“ (Tetraeder, 1,25 bis
+2,5 mm; ebenso die abgetrennte Eckzelle bei 2 und 5 mm) oder „verdrehtes
+Element“ (Sechsflächner, 1,3 bis 5 mm). Seit dem 24.09.2026 heißen diese
+Fälle „hängende Knoten“ bzw. „doppelte Knoten“, gemessen an allen genannten
+Versätzen. Diese Fassung hatte noch zwei Grenzen, gemessen im selben Netz an
+einem inneren Block aus 2 × 2 × 2 Würfeln mit eigenen Knoten auf seiner
+Oberfläche. In Tetraeder zerlegt hieß der Block „hängende Knoten“ bei 2 und
+3 mm Versatz in Richtung (1 | 1 | 1)/√3 und bei 2 bis 10 mm in Richtung
+(0,6 | 0 | 0,8), obwohl kein Ufer feiner geteilt ist (bis 1 mm „doppelte
+Knoten“). Ab 4 mm in Richtung (1 | 1 | 1)/√3 hieß er an allen 96 Seiten
+„Hohlraum“: Liegen die Knoten weiter als 1 % der längsten Seitenkante von
+den Seiten des anderen Ufers entfernt, findet die Abnahme nicht mehr, dass
+sie auf diesen Seiten liegen. Ebenso hießen beim Sechsflächner 292 (an allen
+acht Knoten losgelöst) und beim Sechsflächner-Block ab 3 mm in Richtung
+(1 | 1 | 1)/√3 die Seiten der Nachbarn „Hohlraum“. Seit der Nachbesserung
+vom selben Tag heißen Knoten auf den Seiten des anderen Ufers nur dann
+„hängende Knoten“, wenn wenigstens eine dieser Seiten eine Ecke mit ihrem
+eigenen Ufer teilt; Seiten, die ringsum Elemente umschließen, sind kein
+Hohlraum; und ein Hohlraum, in dem ein losgelöster Bereich liegt, gehörte zu
+diesem. Beide Blöcke und der Sechsflächner 292 heißen seitdem an allen Seiten
+„doppelte Knoten“ (gemessen bei 1 bis 10 mm in Richtung (1 | 1 | 1)/√3 und
+2 bis 10 mm in Richtung (0,6 | 0 | 0,8)). Der fehlende Sechsflächner 292 und
+der fehlende Tetraeder-Block hießen dabei weiter „Hohlraum“, und Ufer, die
+verschieden geteilt sind und nur die Ecken ihrer Zellen teilen (2 × 2 gegen
+3 × 3), heißen weiter „hängende Knoten“. Hängt der Tetraeder-Block an einem
+seiner Knoten am übrigen Netz, teilen die Ufer dort eine Ecke: bei 2 mm in
+Richtung (1 | 1 | 1)/√3 heißt er „hängende Knoten“, bei 5 mm „doppelte
+Knoten“. Der Text beschreibt nur, was gefunden wurde, und nennt den T-Stoß
+als Beispiel.
+
+Auch diese Fassung hatte Grenzen (zweite Gegenprüfung vom 24.09.2026,
+gemessen im selben Netz). Ein Hohlraum, in dem ein losgelöster Bereich lag,
+hieß ganz „doppelte Knoten“, auch wenn der Bereich ihn nicht ausfüllte:
+Fehlte der Würfel 292 und war sein Nachbar 293 an allen acht Knoten
+losgelöst und 3 bis 10 mm versetzt, stand „doppelte Knoten an 16 Seiten“ da,
+und das fehlende Element kam im Text nicht vor; ebenso, wenn der Block aus
+3 × 3 × 3 Würfeln bis auf den mittleren fehlte, der frei darin schwebte
+(60 Seiten). Bei 0 und 1 mm Versatz hieß ein solcher Hohlraum schon vorher
+so, weil die doppelten Knoten auf seinen Seiten liegen. Fehlten Würfel so,
+dass ein anderer in den Hohlraum hineinragt – drei in L-Form, sieben als
+Kreuz, ein Block aus 2 × 2 × 2 ohne eine Ecke –, hieß der Hohlraum
+„verdrehtes Element“ oder „doppelte Knoten“: Eine Kante, die danach nur
+noch ein Element trägt, galt als verdreht, und die Ecke des hineinragenden
+Würfels benutzt nur ein Element. In Tetraeder zerlegt hießen dieselben
+Hohlräume richtig „Hohlraum“. Und war eine Zelle nur in einer oder zwei
+Richtungen feiner geteilt, sodass beide Ufer Kanten teilen, hieß dieser
+T-Stoß „verdrehtes Element“, in Tetraedern „Hohlraum“ oder „doppelte
+Knoten“. Seither gilt: Ein ringsum geschlossener Hohlraum heißt nur dann
+„doppelte Knoten“, wenn von ihm nach Abzug der losgelösten Bereiche darin
+höchstens das halbe mittlere Element an ihm bleibt, sonst „Hohlraum“ – auch
+wenn doppelte Knoten auf seinen Seiten liegen oder ein Knoten an ihm nur von
+einem Element benutzt wird (am Block aus 2 × 2 × 2 Würfeln ohne eine Ecke
+ist das die Ecke des Würfels, der hineinragt). An einem solchen Hohlraum ist
+ein Element nur verdreht, wenn seine Kante über die Diagonale einer
+Nachbarseite läuft. Knoten auf einer Kante zwischen ihren Enden, die mit
+beiden Enden über Kanten verbunden sind, heißen „hängende Knoten“. Gemessen
+am 24.09.2026: 292 fehlt und 293 losgelöst bei 0, 3 und 10 mm „doppelte
+Knoten an 6 Seiten; ein Hohlraum an 10 Seiten“, der schwebende mittlere
+Würfel „doppelt 6; Hohlraum 54“ (in Tetraedern 12 und 108), die Hohlräume in
+L-Form, als Kreuz und als Block ohne Ecke „Hohlraum“, die nur in einer oder
+zwei Richtungen geteilten Zellen „hängende Knoten“ (als Würfel und die
+beiden, die in Tetraedern ein FEHLER sind). Die losgelösten Bereiche, die
+ihren Hohlraum ausfüllen, heißen weiter „doppelte Knoten“, ebenso der Spalt
+an einem losgelösten Knoten, gemessen bis 30 mm Versatz; verdrehte Würfel
+heißen weiter „verdrehtes Element“. Die Zahlen stehen im Theoriehandbuch.
+Ein verdrehtes
+Element in der Ecke des Körpers bleibt
+„verdrehtes Element“: Den Eckknoten benutzt auch im richtigen Netz nur ein
+Element. Den Netzrand, der die Randfläche verfehlt, findet die
+Abnahme an konformen Netzen des eigenen Vernetzers (jede innere Seite genau
+zweimal): am U-Prisma 1,5 × 1 × 0,5 m mit Netzweite 0,3 m (1113 Tetraeder)
+laufen 4 freie Seiten an den einspringenden Kanten durch den Körper; an der
+Platte 0,6 × 0,6 × 0,035 m mit einer Bohrung r 6 mm (24-Eck, Ziellänge
+0,05 m, 24 712 Tetraeder) sind es 110 Seiten. Kein Element ist dort verdreht,
+kein Knoten doppelt, und „neu vernetzen“ allein ergibt dasselbe Netz (an
+beiden nachgemessen: dieselben Elemente, dieselben Knotenlagen, derselbe
+Befund). Der
+Text nennt darum die Abhilfe, die gemessen gewirkt hat: „Sechsflächner
+sweepen“ – das U-Prisma hat dann 32 Sechsflächner und 16 Keile, die Platte
+908 und 24, beide ohne Befund. Ein Halt vor dem Rechnen bleibt es: An der
+Bohrung fehlt dem Netz Material bis 3,17 mm hinter der Wand (gemessen an
+einem Netz derselben Platte, direkt mit dem freien Vernetzer, 14 242
+Tetraeder), und am U-Prisma hat das Netz 0,067 % mehr Volumen als der
+Körper.
+
+Die dritte Gegenprüfung vom 24.09.2026 fand zwei Fälle, in denen der Text
+eine falsche Ursache nannte, beide an Ufern, deren Rand auf der Randfläche
+liegt (gemessen am 8 × 8 × 8-Netz des Würfels 1 × 1 × 1 m, Kante 125 mm).
+Fehlen an der Seitenfläche Würfel so, dass eine **Mulde mit einspringender
+Kante** entsteht – drei in L-Form, vier als T, das L zwei Lagen tief, das L
+an einer Kante des Körpers –, hieß das „doppelte Knoten“ an 11, 14, 19 bzw.
+9 Seiten: Den Knoten an der einspringenden Kante benutzt danach nur noch der
+Würfel dahinter, und dessen Kante dort trägt kein anderes Element. In
+Tetraeder zerlegt ist dieselbe Mulde eine „Lücke im Netzrand“. Und war der
+Körper **ganz durchtrennt** – in Tetraedern, die Hälfte x > 0,5 mit eigenen
+Knoten auf der Schnittebene, 3 mm oder mehr versetzt –, hieß das „der
+Netzrand verfehlt die Randfläche … kein Knoten doppelt“ mit dem Rat zum
+Sweep: Die Knoten liegen weiter als 1 % der Kante auseinander, und jeden
+benutzen mehrere Elemente. Seither gilt an solchen Ufern: Ein Knoten, den nur
+ein Element benutzt, heißt nur dann losgelöst, wenn ein anderer Knoten
+näher liegt als die halbe kürzeste Kante (an der Mulde liegt der nächste
+eine ganze Kante weit weg, an losgelösten Elementen bis 30 mm Versatz
+höchstens beim 0,27-Fachen); verdreht heißt ein Element nur, wenn seine Kante
+über die Diagonale einer Nachbarseite läuft; und eine Seite, neben der eine
+Kopie aus eigenen Knoten liegt, heißt „doppelte Knoten“. Die Nähe allein
+entscheidet dabei nicht: An einem Netz des eigenen Vernetzers (Stufe
+d 0,45 mm, Dicke 0,02 m) liegen zwei Knoten beim 0,27-Fachen der Kante
+beieinander, eine Kopie einer Seite gibt es dort nicht. Lässt sich die
+Ursache so nicht sicher bestimmen, sagt der Text das und nennt die
+möglichen: eine Mulde, ein verdrehtes Element, dessen Kanten nicht über die
+Diagonalen der Nachbarseiten laufen, oder ein losgelöstes Element, weiter
+als die halbe Kante versetzt. Gemessen: die Mulden heißen „keine sicher
+bestimmte Ursache“, der durchtrennte Körper bei 3 bis 30 mm Versatz in
+beiden Richtungen „doppelte Knoten“, solange beide Hälften die Schnittfläche
+gleich in Dreiecke teilen (ist sie verschieden geteilt, heißt derselbe Schnitt
+weiter „der Netzrand verfehlt die Randfläche“, und der Text sagt, dass
+doppelte Knoten dann nicht ausgeschlossen sind), ebenso ein Körper, der von unten her
+bis zur Mitte eingerissen ist (10 und 30 mm); der Befund selbst ist in allen
+Fällen derselbe. Verdrehte Würfel an der Seitenfläche, deren Deckel um eine
+Ecke versetzt ist, heißen weiter „verdrehtes Element“, losgelöste Elemente
+an der Seitenfläche (bis 30 mm) weiter „doppelte Knoten“, die Netze des
+eigenen Vernetzers (U-Prisma, Platte mit Bohrung, Lochplatte, Stufe) weiter
+„Netzrand verfehlt die Randfläche“. Ist der Deckel eines Würfels an der
+Seitenfläche um zwei Ecken versetzt, laufen seine Kanten durch die
+Zellmitte statt über eine Diagonale; bis dahin hieß er „verdrehtes
+Element“, jetzt „keine sicher bestimmte Ursache“ – dieselben Merkmale hat
+die Mulde. Dass zwei Knoten näher als 1 % der Kante „doppelt“ sind, hält
+seither eine eigene Prüfung fest: Ein Körper, der in Tetraedern von unten
+bis zur Mitte eingerissen ist, 0,002 bis 1 mm versetzt, ist ein FEHLER und
+kein „Riss im Netz“, auch an Würfeln von 10 m und 0,1 m Kantenlänge
+(0,8 % der Zellkante).
+
 **Windschiefe Randflächen.** Ein Tetraedernetz liegt auf einer windschiefen
 (bilinearen) Fläche auf Sehnen, und der freie Vernetzer setzt Knoten auf Sehnen
 seines groben Dreiecksnetzes: am Würfel 1 × 1 × 1 m mit um 0,5 m angehobener
@@ -5425,10 +5649,13 @@ zwischen 3,5 und 4,0 mm (Ecke um 0,5 m angehoben) bzw. 3,6 und 5,2 mm (um
 Abstand des Knotens senkrecht zu ihr maßgebend, nicht die Richtung der
 Verschiebung: In z verschoben braucht es an den steileren Stellen mehr, bis
 4,8 bzw. 8,2 mm. Ab 5 mm (Ecke um 0,5 m) bzw. 7 mm senkrecht und 8,5 mm in z
-(um 1 m) warnt die Abnahme an allen 21 Knoten. Eine tiefere Delle melden
-auch andere Prüfungen: ab 15 bis 20 mm an vielen Knoten ein FEHLER „Seiten
-im Inneren“ oder eine Warnung „Lücke im Netzrand“, bei 100 mm an allen neun
-inneren Knoten dazu ein FEHLER „Volumenbilanz“. Bei um 1 m angehobener Ecke
+(um 1 m) warnt die Abnahme an allen 21 Knoten. Eine tiefere Delle meldet sie
+als Lücke im Netzrand: 20 mm senkrecht nach innen an allen neun inneren
+Deckelknoten (als Warnung, über 0,5 % des Körpers als FEHLER), an Randknoten
+zum Teil als FEHLER „Seiten im Inneren“; bei 100 mm steht an allen neun
+inneren Knoten dazu ein FEHLER „Volumenbilanz“ (gemessen am 24.09.2026 mit der
+Regel für dünne Lücken, die seit diesem Tag gilt, siehe „Lücke im Netzrand“).
+Bei um 1 m angehobener Ecke
 und 80 mm senkrecht nach außen kommt an den Randknoten (1|0,5), (1|0,75),
 (0,5|1) und (0,75|1) ein FEHLER „Seiten im Inneren“ dazu: Der Knoten
 verlässt dabei auch die ebene Seitenfläche, dort nach innen (an den zwölf
@@ -5437,10 +5664,24 @@ Würfel mit um 0,3, 0,5 und 1 m angehobener Ecke (Netzweite 0,25 m) und mit um
 1 m angehobener Ecke (Netzweite 0,5 m) meldet die Abnahme nichts.
 
 Geprüft werden Körper, deren Randlinien gerade sind und deren Randflächen eben
-sind oder Vierecke; Körper mit Bögen, Kreisen oder Splines prüft der freie
-Vernetzer schon beim Vernetzen selbst (Volumen gegen Hülle, Randtreue). Was
-tun: Stammt das Netz aus einem Import oder ist es von Hand geändert, den Körper
-neu vernetzen (Netz → Vernetzen). Am abgestuften Netz mit verdrehtem Element
+sind oder Vierecke. Für alle anderen steht seit dem 23.09.2026 eine Warnung
+„Volumenbilanz nicht geprüft“ mit dem Grund im Protokoll: Körper mit Bögen,
+Kreisen oder Splines („krumme Randlinie“), gewölbte Randflächen, die keine
+Vierecke sind, und Hüllen, die nicht dicht sind. Ebenso für Volumenelemente,
+die zu **keinem Körper** gehören, etwa nach dem Import eines reinen Netzes:
+Ohne Randflächen fehlt der Bezug. Vorher stand in beiden Fällen nichts da, und
+die Abnahme hieß „bestanden“ – gemessen am Würfelpaar mit verdrehtem zweitem
+Würfel: mit Körper FEHLER Volumenbilanz und Seiten im Inneren, dasselbe Netz
+ohne Körper oder mit einer Randlinie vom Typ Bogen kein einziger Befund. Die
+Warnung hält nichts an, die Überschrift lautet dann „bestanden, soweit
+geprüft“; sie steht je Körper da. In den Modellen der Prüfsuiten
+test_mesher3d und test_sweep trifft das 32 von 80 Körpern, 31 davon mit
+Bögen (gezählt am 23.09.2026); alle anderen Befunde der 80 Körper sind
+dieselben geblieben. Der freie Vernetzer nimmt Körper mit krummen Randlinien beim
+Vernetzen selbst ab (Volumen gegen Hülle, Randtreue); ob der Sweep oder ein
+abgebildetes Netz eines krummen Körpers einen verdrehten Sechsflächner
+meldet, ist nicht gemessen. Was tun: Stammt das Netz aus einem Import oder
+ist es von Hand geändert, den Körper neu vernetzen (Netz → Vernetzen). Am abgestuften Netz mit verdrehtem Element
 verschwand damit der Befund „Seiten im Inneren“. Bis zum 23.09.2026 blieben
 dabei die Knoten des alten Netzes ohne Element stehen und meldeten sich als
 „Knoten ohne Element“; seither entfernt Netz → Vernetzen sie (siehe oben bei
@@ -5578,8 +5819,8 @@ der Abnahme ausdrücklich „das Netz ist abgenommen". Ein Modell, dessen
 Lagerung in einer Richtung fast nicht hält, wurde damit mit „Abnahme des
 Netzes: bestanden" quittiert. Fällt eine Prüfung heute aus, steht sie als
 eigene Zeile im Protokoll (`Haltegüte nicht geprüft`, `Elementgüte nicht
-geprüft`) und die Überschrift lautet **„bestanden, soweit geprüft (N
-Prüfungen fielen aus)"**. Als Warnung und nicht als Fehler: eine ausgefallene
+geprüft`, `Volumenbilanz nicht geprüft`) und die Überschrift lautet
+**„bestanden, soweit geprüft (N Prüfungen fielen aus)"**. Als Warnung und nicht als Fehler: eine ausgefallene
 Messung ist keine Verletzung des Modells, sie hält den Lauf also nicht an.
 
 Zwei Einzelheiten dazu, beide gemessen:

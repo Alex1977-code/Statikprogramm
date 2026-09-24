@@ -1448,7 +1448,11 @@ def test_abnahme_warnstufe_splitter():
     fehler = [b for b in diagnose.abnahme(m) if b.pruefung in ("Elementgüte", "Splitter")]
     check("ohne warnungen=True kein Befund zur Guete (kein Element unter 0,05)", not fehler, str([b.pruefung for b in fehler]))
     alle = diagnose.abnahme(m, warnungen=True)
-    warn = [b for b in alle if b.stufe == "WARNUNG"]
+    # Die vier Randflaechen dieses Koerpers sind dieselbe (Huelle nicht
+    # dicht): seit dem 23.09.2026 steht dafuer auch die WARNUNG
+    # „Volumenbilanz nicht geprüft" da (B038) - sie gehoert nicht zu den
+    # Splittern, um die es hier geht
+    warn = [b for b in alle if b.stufe == "WARNUNG" and b.pruefung != "Volumenbilanz nicht geprüft"]
     check("mit warnungen=True eine WARNUNG 'Splitter' mit Zahl, Koerper und Elementnummer",
           len(warn) == 1 and warn[0].pruefung == "Splitter" and warn[0].objekt == "V1"
           and warn[0].element == e_flach and "1 von 2 Elementen" in warn[0].text, str([b.text for b in warn])[:160])

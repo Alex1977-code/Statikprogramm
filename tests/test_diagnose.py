@@ -2078,8 +2078,9 @@ def test_abnahme_beule_windschief_nach_richtung():
     ihr ist er an allen neun eine WARNUNG; die halbierten Grenzen als Abstand
     liegen in z und senkrecht je Knoten höchstens 0,2 mm auseinander. Eine
     tiefere Delle melden andere Prüfungen: 20 mm senkrecht nach innen
-    (dz = 0,5) sind an sieben Knoten FEHLER „Seiten im Inneren", an (0,25|0,75)
-    und (0,75|0,25) WARNUNG „Lücke im Netzrand".
+    (dz = 0,5) sind an allen neun Knoten eine WARNUNG „Lücke im Netzrand“
+    (seit B044; mit der Dünnregel t/L ≤ 5 % waren es an sieben Knoten FEHLER
+    „Seiten im Inneren", an (0,25|0,75) und (0,75|0,25) die Lücke).
 
     Abgebildetes 4 x 4 x 4-Netz (64 hex8), Deckel z = 1 + dz·x·y, geprüft
     an allen neun inneren Deckelknoten (x und y je 0,25, 0,5 und 0,75); die
@@ -2172,34 +2173,34 @@ def test_abnahme_beule_windschief_nach_richtung():
 
     # Eine tiefere Delle melden andere Prüfungen
     SEITEN4 = [("FEHLER", "Seiten im Inneren", 4.0)]
-    falsch, lu = [], []
+    falsch = []
     for x, y in KNOTEN:
         n_el, ist, _d = _deckelbeule(0.5, x, y, -0.02 * _deckelnormale(0.5, x, y), alle=True)
-        if [(s, p) for s, p, _w in ist] == [("WARNUNG", "Lücke im Netzrand")]:
-            lu.append((x, y))
-        elif ist != SEITEN4:
+        if [(s, p) for s, p, _w in ist] != [("WARNUNG", "Lücke im Netzrand")]:
             falsch.append(f"({x:g}|{y:g}): {text(ist)}")
-    check("  20 mm senkrecht nach innen (dz 0,5): sieben FEHLER Seiten im Inneren, "
-          "zwei WARNUNG Lücke im Netzrand",
-          not falsch and sorted(lu) == [(0.25, 0.75), (0.75, 0.25)],
-          " | ".join(falsch) + f" Lücke an {lu}")
+    check("  20 mm senkrecht nach innen (dz 0,5): an allen neun WARNUNG Lücke im Netzrand",
+          not falsch, " | ".join(falsch))
 
     # Die Zahlen des Theoriehandbuchs am Knoten (0,75|0,75), in z verschoben
     def paare(b):
         return [(s, p) for s, p, _w in b]
     reihe = []
+    LUECKE = ("WARNUNG", "Lücke im Netzrand")
     for dz, mm, soll in ((0.5, 4, lambda b: not b), (0.5, 5, lambda b: b == WARN4),
                          (0.5, -4, lambda b: not b), (0.5, -5, lambda b: b == WARN4),
-                         (0.5, -15, lambda b: b == WARN4), (0.5, -20, lambda b: b == SEITEN4),
+                         (0.5, -15, lambda b: b == WARN4), (0.5, -20, lambda b: paare(b) == [LUECKE]),
+                         (0.5, -40, lambda b: b == SEITEN4),
                          (1.0, 6, lambda b: not b), (1.0, 7, nur_netzrand),
                          (1.0, -6, lambda b: not b), (1.0, -7, nur_netzrand),
-                         (1.0, -25, lambda b: paare(b) == [("WARNUNG", "Lücke im Netzrand")]),
-                         (1.0, -30, lambda b: ("FEHLER", "Seiten im Inneren") in paare(b))):
+                         (1.0, -20, lambda b: b == WARN4),
+                         (1.0, -25, lambda b: LUECKE in paare(b)
+                          and ("FEHLER", "Seiten im Inneren") not in paare(b)),
+                         (1.0, -80, lambda b: b == SEITEN4)):
         ist = _deckelbeule(dz, 0.75, 0.75, [0.0, 0.0, mm * 1e-3], alle=True)[1]
         if not soll(ist):
             reihe.append(f"dz {dz:g}, {mm:+d} mm: {text(ist)}")
-    check("  (0,75|0,75) in z: dz 0,5 ab 5 mm WARNUNG, innen ab 20 mm FEHLER; dz 1,0 ab 7 mm, "
-          "innen 25 mm Lücke, 30 mm FEHLER", not reihe, " | ".join(reihe))
+    check("  (0,75|0,75) in z: dz 0,5 ab 5 mm WARNUNG, innen 20 mm Lücke, 40 mm FEHLER; "
+          "dz 1,0 ab 7 mm, innen 25 mm Lücke, 80 mm FEHLER", not reihe, " | ".join(reihe))
 
 
 def test_abnahme_beule_windschief_randknoten():
@@ -2478,34 +2479,35 @@ def test_abnahme_luecke_im_netzrand():
           any(b.pruefung == "Seiten im Inneren" and b.stufe == "FEHLER" for b in bef)
           and not [b for b in bef if b.pruefung == "Lücke im Netzrand"],
           "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g}" for b in bef))
-    # Den Fall halten zwei Regeln, und die Pruefung oben sah nur, dass eine
-    # von beiden greift: Ohne _verdrehte_elemente bestand sie weiter
-    # (Nebenbefund B144). Jede Regel allein, gemessen 23.09.2026:
-    # * die Erkennung des verdrehten Elements, mit ABNAHME_RISS_DICKE
-    #   voruebergehend 0,02 (die Duennregel der Luecke greift dann nicht) -
-    #   ohne die Erkennung „WARNUNG Lücke im Netzrand 1,212e-4 m³“;
-    # * die Duennregel (t/L <= ABNAHME_RISS_DICKE: ein Ufer ohne Volumen ist
-    #   keine Luecke), mit ausgeschalteter Erkennung. Das Ufer hat t/L
-    #   4,845 % - bis ABNAHME_RISS_DICKE 0,04845 war es die Luecke von eben.
-    #   Ohne die Duennregel bestand die Suite ganz (Nebenbefund NB2).
+    # Den Fall hielten bis zum 24.09.2026 zwei Regeln, und die Pruefung oben
+    # sah nur, dass eine von beiden greift: Ohne _verdrehte_elemente bestand
+    # sie weiter (Nebenbefund B144). Gemessen 23.09.2026:
+    # * die Erkennung des verdrehten Elements allein - ohne sie „WARNUNG
+    #   Lücke im Netzrand 1,212e-4 m³“;
+    # * die Duennregel (t/L <= ABNAHME_RISS_DICKE), mit ausgeschalteter
+    #   Erkennung: das Ufer hat t/L 4,845 %, also FEHLER (Nebenbefund NB2:
+    #   ohne die Duennregel bestand die Suite ganz).
+    # Seit B044 (Zweig nb_diagnose) ist die Duennregel der Luecke
+    # t/L <= ABNAHME_KNOTENNAEHE (1 %), damit eine duenne echte Luecke eine
+    # Luecke bleibt. Der verdrehte Sechsflaechner am Rand haengt jetzt an der
+    # Erkennung allein; ohne sie ist er die Luecke von eben. Die Duennregel
+    # selbst legt test_abnahme_luecke_duenn_mit_volumen fest (sie kippt am
+    # t/L der Gruppe).
     def rand_befunde():
         return [(b.stufe, b.pruefung) for b in dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)]
 
-    alt_dicke, echt_verdreht = dg.ABNAHME_RISS_DICKE, dg._verdrehte_elemente
-    dg.ABNAHME_RISS_DICKE = 0.02
-    try:
-        nur_verdreht = rand_befunde()
-    finally:
-        dg.ABNAHME_RISS_DICKE = alt_dicke
+    echt_verdreht = dg._verdrehte_elemente
+    nur_verdreht = rand_befunde()
     dg._verdrehte_elemente = lambda *a, **kw: set()
     try:
         nur_duenn = rand_befunde()
     finally:
         dg._verdrehte_elemente = echt_verdreht
-    check("  … allein erkannt als verdreht (ABNAHME_RISS_DICKE 0,02): FEHLER, keine Lücke",
+    check("  … erkannt als verdreht (die Dünnregel mit 1 % greift bei t/L 4,845 % nicht): "
+          "FEHLER, keine Lücke",
           nur_verdreht == [("FEHLER", "Seiten im Inneren")], str(nur_verdreht))
-    check("  … allein über die Dünnregel (Erkennung aus): FEHLER, keine Lücke",
-          nur_duenn == [("FEHLER", "Seiten im Inneren")], str(nur_duenn))
+    check("  … ohne die Erkennung seit B044 die Lücke: der Fall hängt an der Erkennung allein",
+          nur_duenn == [("WARNUNG", "Lücke im Netzrand")], str(nur_duenn))
     # ... und in der Ecke: dort liegt der Hohlraum an Randflaechen, und die
     # Volumenbilanz sieht ein Drittel von einem Tausendstel nicht. Im ersten
     # Entwurf dieser Nachbesserung galt der Fall als Luecke - die Seitenkante
@@ -2566,57 +2568,63 @@ def test_abnahme_luecke_im_netzrand():
 
 
 def test_abnahme_luecke_duenn_mit_volumen():
-    """Die Regel t/L der Lücke im Netzrand heißt „dünn gegen die eigenen
-    Seiten", nicht „ohne Volumen" (Befund B029, 23.09.2026). Das Handbuch
-    und der Kommentar in ``_gruppen_im_inneren`` sagten „kein Volumen".
+    """Die Regel t/L der Lücke im Netzrand misst die Dicke der Gruppe gegen
+    ihre eigenen Seiten, t = 2·V/A durch L (Befund B029, 23.09.2026: Handbuch
+    und Kommentar sagten nur „kein Volumen").
+
+    Seit Nebenbefund B044 (Zweig nb_diagnose, 24.09.2026) ist die Grenze
+    ABNAHME_KNOTENNAEHE (1 %) statt ABNAHME_RISS_DICKE (5 %): eine dünne
+    echte Lücke - ein von Hand gelöschtes Element an der Oberfläche mit t/L
+    2,9 bis 4,5 % - war mit 5 % ein FEHLER statt der Lücke. „Ohne Volumen“
+    heißt jetzt: die Seiten liegen im Rahmen der Knotennähe auf dem Fächer
+    über der Hülle.
 
     Geprüft wird die Regel allein: der verdrehte Sechsflächner am Rand des
     abgestuften Netzes 5:1 (Element 55) mit abgeschalteter Regel „verdreht"
     (die im Programm vorher greift). Seine offene Gruppe hat t/L 4,845 % und
-    1,21e-4 m³ - ein Drittel der Zelle (3,64e-4 m³). Mit der Grenze 5 % bleibt
-    sie ein FEHLER „Seiten im Inneren", mit der Grenze 0 wäre sie eine
-    WARNUNG „Lücke im Netzrand" mit diesem Volumen. Eine Regel, die nur
-    Gruppen ohne Volumen verwirft, machte daraus schon mit 5 % die Lücke.
-
-    Die Grenze kippt am t/L der Gruppe, nicht erst bei 0 (Gegenprüfung
-    24.09.2026: das Handbuch sagte „erst mit der Grenze 0"): 4,85 % lässt
-    den FEHLER, 4,84 % macht schon die Lücke. Durch Halbieren gemessen
-    t/L = 4,8455 %. Rechnete die Regel die Dicke falsch (etwa ohne den
-    Faktor 2 in t = 2·V/A, dann t/L 2,42 %), bestünden die Grenzen 5 % und 0
-    weiter, 4,84 % nicht.
+    1,21e-4 m³ - ein Drittel der Zelle (3,64e-4 m³). Mit der Grenze 1 % ist
+    sie eine WARNUNG „Lücke im Netzrand“ mit diesem Volumen (mit 5 % war sie
+    bis B044 ein FEHLER „Seiten im Inneren“). Die Grenze kippt am t/L der
+    Gruppe: ABNAHME_KNOTENNAEHE 4,85 % lässt den FEHLER, 4,84 % macht die
+    Lücke (gemessen 24.09.2026; durch Halbieren t/L = 4,8455 %). Rechnete die
+    Regel die Dicke falsch (etwa ohne den Faktor 2 in t = 2·V/A, dann t/L
+    2,42 %), fiele die Prüfung bei 4,84 % durch. ABNAHME_RISS_DICKE ändert
+    an der Lücke nichts mehr.
     """
     echt_verdreht = dg._verdrehte_elemente
-    echt_dicke = dg.ABNAHME_RISS_DICKE
+    echt_nah, echt_dicke = dg.ABNAHME_KNOTENNAEHE, dg.ABNAHME_RISS_DICKE
     try:
         dg._verdrehte_elemente = lambda *a, **kw: set()
         m, k = _gestuft(5)
         V_zelle = float(np.prod(np.ptp(m.nodes[m.elements[55].nodes], axis=0)))
         _verdrehen(m, 55)
         mit = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
-        dg.ABNAHME_RISS_DICKE = 0.0
-        ohne = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
-        dg.ABNAHME_RISS_DICKE = 0.0485
+        dg.ABNAHME_KNOTENNAEHE = 0.0485
         knapp_ueber = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
-        dg.ABNAHME_RISS_DICKE = 0.0484
+        dg.ABNAHME_KNOTENNAEHE = 0.0484
         knapp_unter = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        dg.ABNAHME_KNOTENNAEHE = echt_nah
+        dg.ABNAHME_RISS_DICKE = 0.0485
+        dicke_egal = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
     finally:
         dg._verdrehte_elemente = echt_verdreht
-        dg.ABNAHME_RISS_DICKE = echt_dicke
-    check("t/L 4,845 % ≤ 5 %: FEHLER „Seiten im Inneren“ an Element 55, keine Lücke",
-          [(b.stufe, b.pruefung, b.element) for b in mit]
-          == [("FEHLER", "Seiten im Inneren", 55)],
-          "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g} el {b.element}" for b in mit))
-    lu = [b for b in ohne if b.pruefung == "Lücke im Netzrand"]
-    check("  und die Gruppe hat Volumen: ohne t/L-Grenze eine Lücke von einem Drittel "
+        dg.ABNAHME_KNOTENNAEHE, dg.ABNAHME_RISS_DICKE = echt_nah, echt_dicke
+    lu = [b for b in mit if b.pruefung == "Lücke im Netzrand"]
+    check("t/L 4,845 % > 1 %: WARNUNG „Lücke im Netzrand“ an Element 55 mit einem Drittel "
           "der Zelle",
-          len(lu) == 1 and lu[0].stufe == "WARNUNG" and abs(lu[0].wert / V_zelle - 1.0 / 3.0) < 0.01,
-          "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g}" for b in ohne)
+          [(b.stufe, b.pruefung, b.element) for b in mit] == [("WARNUNG", "Lücke im Netzrand", 55)]
+          and abs(lu[0].wert / V_zelle - 1.0 / 3.0) < 0.01,
+          "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g} el {b.element}" for b in mit)
           + f" | Zelle {V_zelle:.4g} m³")
-    check("  die Grenze kippt am t/L der Gruppe: 4,85 % FEHLER, 4,84 % schon die Lücke",
+    check("  die Grenze kippt am t/L der Gruppe: ABNAHME_KNOTENNAEHE 4,85 % FEHLER, 4,84 % "
+          "die Lücke",
           [(b.stufe, b.pruefung) for b in knapp_ueber] == [("FEHLER", "Seiten im Inneren")]
           and [(b.stufe, b.pruefung) for b in knapp_unter] == [("WARNUNG", "Lücke im Netzrand")],
           "4,85 %: " + "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g}" for b in knapp_ueber)
           + " | 4,84 %: " + "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g}" for b in knapp_unter))
+    check("  ABNAHME_RISS_DICKE (die Grenze des Risses) ändert an der Lücke nichts",
+          [(b.stufe, b.pruefung) for b in dicke_egal] == [("WARNUNG", "Lücke im Netzrand")],
+          "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g}" for b in dicke_egal))
 
 
 def test_falsche_knotenzahl():
@@ -3357,6 +3365,1287 @@ def test_abnahme_luecke_je_regel():
           f"über die Aussparung: {punkte[0]}, um die Ecke: {punkte[1]}")
 
 
+def _kurz(bef):
+    return "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g}" for b in bef) or "kein Befund"
+
+
+def test_abnahme_nennt_nicht_gepruefte_volumenbilanz():
+    """B038 (Nebenbefund vom 22./23.09.2026): Die Volumenbilanz übersprang ohne
+    ein Wort Körper mit krummen Randlinien und Volumenelemente, die zu keinem
+    Körper gehören (etwa ein reiner Netzimport). Am verdrehten Würfelpaar
+    gemessen (ec6448c): mit Körper FEHLER Volumenbilanz und Seiten im Inneren;
+    dasselbe Netz ohne Körper ``abnahme(warnungen=True) == []``, also
+    „bestanden"; mit einer Randlinie vom Typ Bogen ebenso ``[]``.
+
+    Jetzt steht in beiden Fällen eine WARNUNG „Volumenbilanz nicht geprüft“
+    da - sie hält nichts an, aber die Überschrift lautet „bestanden, soweit
+    geprüft“.
+    """
+    from statik3d import mesher
+
+    def paar(verdreht=True):
+        m = Model("na")
+        m.add_material(Material.steel("S235"))
+        ids = mesher.grid_box(m, "S235", 2.0, 1.0, 1.0, 2, 1, 1, typ="hex8")
+        k = _quaderkoerper(m, [ids[0, 0, 0], ids[2, 0, 0], ids[2, 1, 0], ids[0, 1, 0],
+                               ids[0, 0, 1], ids[2, 0, 1], ids[2, 1, 1], ids[0, 1, 1]])
+        k.elemente = [0, 1]
+        for kn in ids[0].ravel():
+            m.fix(int(kn), "all")
+        if verdreht:
+            _verdrehen(m, 1)
+        return m
+
+    m = paar()
+    check("verdrehtes Würfelpaar mit Körper: FEHLER Volumenbilanz und Seiten im Inneren",
+          [b.pruefung for b in dg.abnahme(m)] == ["Volumenbilanz", "Seiten im Inneren"],
+          _kurz(dg.abnahme(m, warnungen=True)))
+    m = paar()
+    m.koerper.clear()
+    alle = dg.abnahme(m, warnungen=True)
+    ng = [b for b in alle if b.pruefung == "Volumenbilanz nicht geprüft"]
+    check("dasselbe Netz ohne Körper: WARNUNG „Volumenbilanz nicht geprüft“ mit der Elementzahl",
+          len(ng) == 1 and ng[0].stufe == "WARNUNG" and ng[0].wert == 2.0
+          and "keinem Körper" in ng[0].text and not dg.abnahme(m),
+          _kurz(alle) + " | " + (ng[0].text[:160] if ng else ""))
+    m = paar()
+    next(iter(m.lines.values())).typ = "arc"
+    alle = dg.abnahme(m, warnungen=True)
+    ng = [b for b in alle if b.pruefung == "Volumenbilanz nicht geprüft"]
+    check("mit einer Randlinie vom Typ Bogen: WARNUNG „nicht geprüft“ mit Körper und Grund",
+          len(ng) == 1 and ng[0].objekt == "K1" and "krumme Randlinie" in ng[0].text
+          and ng[0].stufe == "WARNUNG" and not dg.abnahme(m),
+          _kurz(alle) + " | " + (ng[0].text[:160] if ng else ""))
+    # Die Oberflaeche zaehlt jede Zeile, deren Pruefung auf „nicht geprüft"
+    # endet, in die Ueberschrift „bestanden, soweit geprüft (N Prüfungen fielen aus)"
+    check("  die Zeile zählt in „bestanden, soweit geprüft“",
+          bool(ng) and ng[0].pruefung.endswith("nicht geprüft"), str([b.pruefung for b in alle]))
+    # Gegenprobe: das richtige Paar mit Koerper bleibt ohne jede Zeile
+    m = paar(verdreht=False)
+    check("  Gegenprobe: das richtige Paar mit Körper hat keine Zeile",
+          not dg.abnahme(m, warnungen=True), _kurz(dg.abnahme(m, warnungen=True)))
+
+
+def _tstoss(art="hex8"):
+    """T-Stoß in einem Körper 2 x 1 x 1 m: links ein hex8 1 x 1 x 1, rechts
+    2 x 2 x 2 hex8 der Kante 0,5 - die Knoten der rechten Seite x = 1 liegen
+    auf der Seite des linken Elements (netz_r3/tstoss.py); ``tet4``: jede
+    Zelle in sechs Kuhn-Tetraeder zerlegt."""
+    m = Model("tstoss")
+    m.add_material(Material.steel("S235"))
+    kn = {}
+
+    def k(x, y, z):
+        key = (round(x, 9), round(y, 9), round(z, 9))
+        if key not in kn:
+            kn[key] = int(m.add_node(x, y, z))
+        return kn[key]
+
+    def hexa(x0, y0, z0, d):
+        P = [(x0, y0, z0), (x0 + d, y0, z0), (x0 + d, y0 + d, z0), (x0, y0 + d, z0),
+             (x0, y0, z0 + d), (x0 + d, y0, z0 + d), (x0 + d, y0 + d, z0 + d), (x0, y0 + d, z0 + d)]
+        m.add_element("hex8", [k(*p) for p in P], "S235")
+
+    hexa(0, 0, 0, 1.0)
+    for i in range(2):
+        for j in range(2):
+            for l_ in range(2):
+                hexa(1 + 0.5 * i, 0.5 * j, 0.5 * l_, 0.5)
+    kb = _quaderkoerper(m, [k(0, 0, 0), k(2, 0, 0), k(2, 1, 0), k(0, 1, 0),
+                            k(0, 0, 1), k(2, 0, 1), k(2, 1, 1), k(0, 1, 1)])
+    kb.elemente = list(range(len(m.elements)))
+    if art == "tet4":
+        _in_kuhn(m, kb)
+    return m, kb
+
+
+def _ecke_tstoss(n=8, art="hex8"):
+    """hex8-Netz n x n x n über dem Würfel 1 x 1 x 1 m, die Eckzelle (0, 0, 0)
+    in 2 x 2 x 2 Zellen geteilt: ihre Knoten auf den drei Seiten zu den
+    Nachbarzellen hängen, und der Rand dieser Seiten liegt auf der Hülle."""
+    m = Model("ecke")
+    m.add_material(Material.steel("S235"))
+    h = 1.0 / n
+    kn = {}
+
+    def k(x, y, z):
+        key = (round(x, 9), round(y, 9), round(z, 9))
+        if key not in kn:
+            kn[key] = int(m.add_node(x, y, z))
+        return kn[key]
+
+    def hexa(x0, y0, z0, d):
+        P = [(x0, y0, z0), (x0 + d, y0, z0), (x0 + d, y0 + d, z0), (x0, y0 + d, z0),
+             (x0, y0, z0 + d), (x0 + d, y0, z0 + d), (x0 + d, y0 + d, z0 + d), (x0, y0 + d, z0 + d)]
+        m.add_element("hex8", [k(*p) for p in P], "S235")
+
+    for i in range(n):
+        for j in range(n):
+            for l_ in range(n):
+                if i == j == l_ == 0:
+                    for a in range(2):
+                        for b in range(2):
+                            for c in range(2):
+                                hexa(a * h / 2, b * h / 2, c * h / 2, h / 2)
+                else:
+                    hexa(i * h, j * h, l_ * h, h)
+    kb = _quaderkoerper(m, [k(0, 0, 0), k(1, 0, 0), k(1, 1, 0), k(0, 1, 0),
+                            k(0, 0, 1), k(1, 0, 1), k(1, 1, 1), k(0, 1, 1)])
+    kb.elemente = list(range(len(m.elements)))
+    if art == "tet4":
+        _in_kuhn(m, kb)
+    return m, kb
+
+
+def _schach(n, fein=None):
+    """hex8-Netz n x n x n über dem Würfel 1 x 1 x 1 m; die Zellen in
+    ``fein`` (ohne Angabe jede Zelle mit gerader Indexsumme, ein Schachbrett)
+    in 2 x 2 x 2 Zellen geteilt - ein T-Stoß an jeder Seite zwischen einer
+    feinen und einer groben Zelle (Gegenprüfung vom 23.09.2026,
+    g2_nb_diagnose_1/p_schach.py)."""
+    m = Model("schach")
+    m.add_material(Material.steel("S235"))
+    h = 1.0 / n
+    kn = {}
+
+    def k(x, y, z):
+        key = (round(x, 9), round(y, 9), round(z, 9))
+        if key not in kn:
+            kn[key] = int(m.add_node(x, y, z))
+        return kn[key]
+
+    def hexa(x0, y0, z0, d):
+        P = [(x0, y0, z0), (x0 + d, y0, z0), (x0 + d, y0 + d, z0), (x0, y0 + d, z0),
+             (x0, y0, z0 + d), (x0 + d, y0, z0 + d), (x0 + d, y0 + d, z0 + d), (x0, y0 + d, z0 + d)]
+        m.add_element("hex8", [k(*p) for p in P], "S235")
+
+    for i in range(n):
+        for j in range(n):
+            for l_ in range(n):
+                if ((i + j + l_) % 2 == 0) if fein is None else ((i, j, l_) in fein):
+                    for a in range(2):
+                        for b in range(2):
+                            for c in range(2):
+                                hexa(i * h + a * h / 2, j * h + b * h / 2, l_ * h + c * h / 2, h / 2)
+                else:
+                    hexa(i * h, j * h, l_ * h, h)
+    kb = _quaderkoerper(m, [k(0, 0, 0), k(1, 0, 0), k(1, 1, 0), k(0, 1, 0),
+                            k(0, 0, 1), k(1, 0, 1), k(1, 1, 1), k(0, 1, 1)])
+    kb.elemente = list(range(len(m.elements)))
+    return m, kb
+
+
+def _gefunden(bef):
+    """Der Teil „Gefunden: …“ des FEHLERs „Seiten im Inneren“."""
+    for b in bef:
+        if b.pruefung == "Seiten im Inneren":
+            i = b.text.find("Gefunden:")
+            return b.text[i:b.text.find(". ", i)] if i >= 0 else ""
+    return ""
+
+
+def test_abnahme_t_stoss_nennt_haengende_knoten():
+    """B040 (Nebenbefund vom 22./23.09.2026): Ein T-Stoß - ein Ufer feiner
+    geteilt als das andere, seine Knoten liegen auf den Seiten des Nachbarn -
+    gibt zwei offene Gruppen ohne gemeinsame Kante und damit FEHLER „Seiten
+    im Inneren“ (hex8 1 gegen 2 x 2 x 2: 5 Seiten, dasselbe in Kuhn-Tetraedern:
+    10; ec6448c). Der Text nannte als Ursache aber nur verdrehtes Element,
+    doppelte Knoten oder Hohlraum - die hängenden Knoten fehlten.
+
+    Liegt der T-Stoß in einer Ecke, schließt der Rand beider Ufer an die
+    Hülle an. Am Stand ec6448c hielt die Abnahme in Kuhn-Tetraedern jedes
+    Ufer für eine „Lücke im Netzrand“ mit dem Volumen des Eckblocks (zwei
+    Lücken, zusammen 3906 cm³, nur WARNUNG, ``abnahme() == []``), in hex8
+    eines (Lücke 1953 cm³ neben FEHLER 12; nachgemessen am 24.09.2026) -
+    obwohl nichts fehlt. Ein Ufer mit Gegenüber ist keine Lücke.
+
+    Die erste Kur (70614f8) suchte die hängenden Knoten nur zwischen offenen
+    Gruppen (Gegenprüfung vom 23.09.2026, Mangel 1): der T-Stoß im Inneren -
+    zwei geschlossene Gruppen - hieß „verdrehtes Element an 24 Seiten; ein
+    Hohlraum im Netz an 6 Seiten“, in Kuhn-Tetraedern „Hohlraum an 60“, und
+    im Schachbrett 8 x 8 x 8, wo die feinen Ufer als Riss gelten, hießen die
+    groben „Netzrand verfehlt die Randfläche“ mit dem Rat zum Sweep.
+    """
+    for art, zahl in (("hex8", 5.0), ("tet4", 10.0)):
+        m, k = _tstoss(art)
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        check(f"T-Stoß {art}: FEHLER Seiten im Inneren {zahl:.0f}, Ursache hängende Knoten",
+              [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", zahl)]
+              and "hängende Knoten" in bef[0].text and "verdrehtes Element" not in bef[0].text,
+              _kurz(bef) + " | " + (bef[0].text[bef[0].text.find("Gefunden"):][:200] if bef else ""))
+    for art in ("hex8", "tet4"):
+        m, k = _ecke_tstoss(8, art)
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        check(f"T-Stoß in der Ecke ({art}): FEHLER hängende Knoten, keine Lücke",
+              [(b.stufe, b.pruefung) for b in bef] == [("FEHLER", "Seiten im Inneren")]
+              and "hängende Knoten" in bef[0].text
+              and [b.pruefung for b in dg.abnahme(m)] == ["Seiten im Inneren"],
+              _kurz(bef))
+    # T-Stoss im Inneren: die Mittelzelle eines 3 x 3 x 3-Netzes geteilt,
+    # Summe der Elementvolumina genau 1 - kein Hohlraum, nichts verdreht
+    for art, zahl in (("hex8", 30.0), ("tet4", 60.0)):
+        m, k = _schach(3, {(1, 1, 1)})
+        if art == "tet4":
+            _in_kuhn(m, k)
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        gef = _gefunden(bef)
+        check(f"T-Stoß im Inneren ({art}): FEHLER {zahl:.0f}, nur hängende Knoten",
+              [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", zahl)]
+              and "hängende Knoten" in gef and f"an {zahl:.0f} Seiten" in gef
+              and "verdreht" not in gef and "Hohlraum" not in gef,
+              _kurz(bef) + " | " + gef[:160])
+    # Schachbrett 8 x 8 x 8: die feinen Ufer gelten als Riss (ihr Rand 9,8 %
+    # der Seitenflaeche, unter ABNAHME_RISS_UFER), die groben bleiben FEHLER -
+    # ihr Gegenueber ist die Riss-Gruppe
+    m, k = _schach(8)
+    bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+    gef = _gefunden(bef)
+    fehler = [b for b in bef if b.pruefung == "Seiten im Inneren"]
+    check("Schachbrett 8 x 8 x 8: FEHLER 1344 hängende Knoten neben WARNUNG Riss 5376, kein Sweep-Rat",
+          [(b.stufe, b.pruefung, b.wert) for b in bef]
+          == [("FEHLER", "Seiten im Inneren", 1344.0), ("WARNUNG", "Riss im Netz", 5376.0)]
+          and "hängende Knoten" in gef and "an 1344 Seiten" in gef and "Netzrand" not in gef
+          and "sweepen" not in fehler[0].text,
+          _kurz(bef) + " | " + gef[:160])
+
+
+def test_abnahme_doppelte_knoten_relativ_zur_kante():
+    """B042 (Nebenbefund vom 22./23.09.2026): Doppelte Knoten galten nur bis
+    1e-6 m als „am selben Ort“, fest und unabhängig von der Elementgröße. Im
+    Block 6 x 6 x 6 über 0,75 m (Zelle 125 mm), in Kuhn-Tetraeder zerlegt, war
+    Tetraeder 554 an Knoten 0 oder 1 losgelöst, der neue Knoten 2e-6 oder
+    1e-5 m versetzt, nur eine WARNUNG „Riss im Netz 6“ mit ``abnahme() == []``
+    - keine Rückfrage vor dem Rechnen (r2_netz_1/r3/p2_doppelt.py, ec6448c).
+    Am losgelösten Knoten passt aber nichts zusammen.
+
+    Jetzt zählen zwei Nummern als doppelt, wenn sie näher beieinander liegen
+    als 1 % der kürzesten Kante an ihnen, und ein Knoten, den im Körper nur
+    ein Element benutzt, macht einen dünnen Hohlraum nie zum Riss - bei 5 mm
+    Versatz (4 % der Kante) findet ihn nur noch diese zweite Bedingung.
+    """
+    for versatz in (2e-6, 1e-5, 1e-3, 5e-3):
+        for stelle in (0, 1):
+            m, k = _gleichmaessig(0.75, 0.75, 0.75, 6)
+            _in_kuhn(m, k)
+            nd = list(m.elements[554].nodes)
+            nd[stelle] = int(m.add_node(*(m.nodes[nd[stelle]] + versatz * np.array([0.6, 0.0, 0.8]))))
+            m.elements[554].nodes = nd
+            bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+            check(f"Tetraeder 554 an Knoten {stelle} losgelöst, {versatz:g} m versetzt: FEHLER 6",
+                  [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", 6.0)]
+                  and "doppelte Knoten" in bef[0].text
+                  and [b.pruefung for b in dg.abnahme(m)] == ["Seiten im Inneren"],
+                  _kurz(bef))
+    # Dasselbe an der Oberflaeche: Kuhn-Tetraeder 164 an der Seite x = 0 des
+    # 8 x 8 x 8-Netzes (Zelle 125 mm), an seinen drei Huellknoten losgeloest.
+    # Bei ec6448c ab 1e-5 m Versatz nur WARNUNG „Lücke im Netzrand“ 651 cm³,
+    # abnahme() leer - obwohl nichts fehlt (gemessen 23.09.2026)
+    # Die Ursache im Text: ueber 1 % der Kante (1,25 mm) hiess es bei der
+    # ersten Kur (70614f8) „hängende Knoten (ein Ufer feiner geteilt …)“ -
+    # beide Ufer sind aber gleich geteilt (Gegenpruefung vom 23.09.2026)
+    for versatz in (1e-5, 1.3e-3, 2e-3):
+        m, k = _gleichmaessig(1.0, 1.0, 1.0, 8)
+        _in_kuhn(m, k)
+        nd = list(m.elements[164].nodes)
+        for j in (0, 1, 2):
+            nd[j] = int(m.add_node(*(m.nodes[nd[j]] + versatz * np.array([0.6, 0.0, 0.8]))))
+        m.elements[164].nodes = nd
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        gef = _gefunden(bef)
+        check(f"Tetraeder 164 an der Oberfläche an drei Knoten losgelöst, {versatz:g} m: "
+              "FEHLER 6 doppelte Knoten, keine Lücke",
+              [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", 6.0)]
+              and "doppelte Knoten" in gef and "an 6 Seiten" in gef and "hängende" not in gef
+              and [b.pruefung for b in dg.abnahme(m)] == ["Seiten im Inneren"],
+              _kurz(bef) + " | " + gef[:120])
+    # Sechsflaechner 27 an der Seite x = 0, an seinen vier Huellknoten
+    # losgeloest: bei der ersten Kur ab 1,3 mm „verdrehtes Element“ (seine
+    # Kanten teilt kein Nachbar mehr)
+    for versatz in (1e-5, 2e-3):
+        m, k = _gleichmaessig(1.0, 1.0, 1.0, 8)
+        el = m.elements[27]
+        P = m.nodes[el.nodes]
+        nd = list(el.nodes)
+        for j in [j for j in range(8) if abs(P[j][0]) < 1e-9]:
+            nd[j] = int(m.add_node(*(P[j] + versatz * np.array([0.6, 0.0, 0.8]))))
+        el.nodes = nd
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        gef = _gefunden(bef)
+        check(f"Sechsflächner 27 an vier Hüllknoten losgelöst, {versatz:g} m: FEHLER 8 doppelte Knoten",
+              [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", 8.0)]
+              and "doppelte Knoten" in gef and "an 8 Seiten" in gef and "verdreht" not in gef,
+              _kurz(bef) + " | " + gef[:120])
+    # Sechsflaechner 292 im Inneren an allen acht Knoten losgeloest: die
+    # Seiten der Nachbarn hiessen bei der ersten Kur „Hohlraum“
+    m, k = _gleichmaessig(1.0, 1.0, 1.0, 8)
+    nd = list(m.elements[292].nodes)
+    for j in range(8):
+        nd[j] = int(m.add_node(*(m.nodes[nd[j]] + 1e-5 * np.array([0.6, 0.0, 0.8]))))
+    m.elements[292].nodes = nd
+    bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+    gef = _gefunden(bef)
+    check("Sechsflächner 292 an allen acht Knoten losgelöst: FEHLER 12, nur doppelte Knoten",
+          [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", 12.0)]
+          and "doppelte Knoten" in gef and "an 12 Seiten" in gef and "Hohlraum" not in gef,
+          _kurz(bef) + " | " + gef[:160])
+    # Gegenprobe: das verdrehte Eckelement benutzt die Wuerfelecke allein wie
+    # im richtigen Netz - es bleibt „verdreht“, nicht „doppelt“
+    m, k = _gleichmaessig(1.0, 1.0, 1.0, 8)
+    _verdrehen(m, 0)
+    bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+    gef = _gefunden(bef)
+    check("  Gegenprobe: verdrehtes Eckelement 0 - Ursache verdreht, nicht doppelt",
+          [(b.stufe, b.pruefung) for b in bef] == [("FEHLER", "Seiten im Inneren")]
+          and "verdrehtes Element" in gef and "doppelte" not in gef,
+          _kurz(bef) + " | " + gef[:120])
+    # Innerer Block 2 x 2 x 2 mit eigenen Knoten auf seiner Oberflaeche: in
+    # Kuhn-Tetraedern benutzt jeden Knoten mehr als ein Element, dort findet
+    # nur die Suche nach doppelten Knoten die Ursache - bei der ersten Kur
+    # (70614f8) „Hohlraum an 96 Seiten“, hex8 „doppelt 24, Hohlraum 24“
+    for art, zahl in (("hex8", 48.0), ("tet4", 96.0)):
+        m, k = _block_getrennt(1e-5, art)
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        gef = _gefunden(bef)
+        check(f"innerer Block 2 x 2 x 2 abgetrennt ({art}, 1e-05 m): FEHLER {zahl:.0f}, nur doppelte Knoten",
+              [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", zahl)]
+              and "doppelte Knoten" in gef and f"an {zahl:.0f} Seiten" in gef,
+              _kurz(bef) + " | " + gef[:160])
+
+
+def _block_getrennt(versatz=0.0, art="hex8", lo=3, hi=5, n=8, richtung=(0.6, 0.0, 0.8),
+                    haengt_an=None):
+    """hex8-Netz n x n x n über dem Würfel 1 x 1 x 1 m, der innere Block der
+    Zellen lo..hi-1 je Richtung auf seiner Oberfläche mit eigenen Knoten, um
+    ``versatz`` in ``richtung`` (Einheitsvektor) verschoben: eine geschlossene
+    Trennfläche im Inneren; ``tet4``: danach in Kuhn-Tetraeder zerlegt.
+    ``haengt_an``: Lage eines Knotens der Blockoberfläche, den der Block mit
+    dem übrigen Netz teilt (er hängt dort an einem Knoten)."""
+    m, k = _gleichmaessig(1.0, 1.0, 1.0, n)
+    a, b = lo / n, hi / n
+    w = np.asarray(richtung, float)
+    neu = {}
+    for e in list(k.elemente):
+        el = m.elements[e]
+        c = m.nodes[el.nodes].mean(axis=0)
+        if not ((c > a) & (c < b)).all():
+            continue
+        nd = []
+        for x in el.nodes:
+            p = m.nodes[int(x)]
+            if haengt_an is not None and np.allclose(p, haengt_an):
+                nd.append(int(x))
+                continue
+            if ((p >= a - 1e-9) & (p <= b + 1e-9)).all() and (
+                    (np.abs(p - a) < 1e-9) | (np.abs(p - b) < 1e-9)).any():
+                if int(x) not in neu:
+                    neu[int(x)] = int(m.add_node(*(p + versatz * w)))
+                nd.append(neu[int(x)])
+            else:
+                nd.append(int(x))
+        el.nodes = nd
+    if art == "tet4":
+        _in_kuhn(m, k)
+    return m, k
+
+
+def _teilung(n, teil, standard=2):
+    """hex8-Netz n x n x n Zellen über dem Würfel 1 x 1 x 1 m, jede Zelle in
+    standard³ Elemente geteilt, die Zellen in ``teil`` ({(i, j, l): t}) in
+    t³ - gleiche Lagen haben eine Knotennummer, verschieden geteilte Nachbarn
+    teilen nur die Ecken ihrer Zellen."""
+    m = Model("teilung")
+    m.add_material(Material.steel("S235"))
+    h = 1.0 / n
+    kn = {}
+
+    def k(x, y, z):
+        key = (round(x, 9), round(y, 9), round(z, 9))
+        if key not in kn:
+            kn[key] = int(m.add_node(x, y, z))
+        return kn[key]
+
+    for i in range(n):
+        for j in range(n):
+            for l_ in range(n):
+                t = teil.get((i, j, l_), standard)
+                d = h / t
+                for a in range(t):
+                    for b in range(t):
+                        for c in range(t):
+                            x0, y0, z0 = i * h + a * d, j * h + b * d, l_ * h + c * d
+                            P = [(x0, y0, z0), (x0 + d, y0, z0), (x0 + d, y0 + d, z0),
+                                 (x0, y0 + d, z0), (x0, y0, z0 + d), (x0 + d, y0, z0 + d),
+                                 (x0 + d, y0 + d, z0 + d), (x0, y0 + d, z0 + d)]
+                            m.add_element("hex8", [k(*p) for p in P], "S235")
+    kb = _quaderkoerper(m, [k(0, 0, 0), k(1, 0, 0), k(1, 1, 0), k(0, 1, 0),
+                            k(0, 0, 1), k(1, 0, 1), k(1, 1, 1), k(0, 1, 1)])
+    kb.elemente = list(range(len(m.elements)))
+    return m, kb
+
+
+def test_abnahme_losgeloester_bereich_schraeg_versetzt():
+    """Gegenprüfung vom 24.09.2026 zu f2bf6c8 (Mängel M1 und M2): Alle
+    Prüfungen der losgelösten Bereiche verschoben in Richtung (0,6 | 0 | 0,8).
+    Deren y-Anteil 0 hält die Knoten für die Seiten quer zu y in der Ebene.
+    In Richtung (1 | 1 | 1)/√3, aus der Ebene jeder Seite heraus, fand die
+    Abnahme das Gegenüber nicht mehr, sobald die Knoten weiter als 1 % der
+    längsten Seitenkante von den Seiten entfernt lagen, und der Nachbar des
+    losgelösten Bereichs hieß „Hohlraum“. Gemessen an f2bf6c8 im
+    8 x 8 x 8-Netz (Kante 125 mm): innerer Block 2 x 2 x 2 in
+    Kuhn-Tetraedern bei 2 und 3 mm „hängende Knoten 96“, ab 4 mm „Hohlraum
+    96“; hex8 292 an allen acht Knoten ab 3 mm „doppelte Knoten 6; Hohlraum
+    6“, der hex8-Block ab 3 mm „doppelte Knoten 24; Hohlraum 24“. In
+    Richtung (0,6 | 0 | 0,8) hieß der Tetraeder-Block ab 2 mm „hängende
+    Knoten“, obwohl kein Ufer feiner geteilt ist.
+
+    Gegenproben: Ein echter Hohlraum (Element bzw. Block fehlt) heißt weiter
+    „Hohlraum“. Ufer, die verschieden geteilt sind und nur die Ecken ihrer
+    Zellen teilen (2 x 2 gegen 3 x 3), heißen weiter „hängende Knoten“; die
+    T-Stöße prüft test_abnahme_t_stoss_nennt_haengende_knoten.
+    """
+    r3 = (1 / np.sqrt(3.0),) * 3
+    faelle = []
+    for v in (2e-3, 3e-3, 5e-3, 1e-2):
+        faelle.append((f"Tetraeder-Block (1|1|1)/√3 {v * 1e3:g} mm", 96.0,
+                       lambda v=v: _block_getrennt(v, "tet4", richtung=r3)))
+    faelle.append(("Tetraeder-Block (0,6|0|0,8) 2 mm", 96.0,
+                   lambda: _block_getrennt(2e-3, "tet4")))
+    faelle.append(("Tetraeder-Block an einem Knoten hängend, (1|1|1)/√3 5 mm", 96.0,
+                   lambda: _block_getrennt(5e-3, "tet4", richtung=r3,
+                                           haengt_an=(0.375, 0.375, 0.375))))
+    for v in (3e-3, 5e-3):
+        faelle.append((f"hex8-Block (1|1|1)/√3 {v * 1e3:g} mm", 48.0,
+                       lambda v=v: _block_getrennt(v, "hex8", richtung=r3)))
+
+    def hex292(v, knoten=range(8)):
+        m, k = _gleichmaessig(1.0, 1.0, 1.0, 8)
+        nd = list(m.elements[292].nodes)
+        for j in knoten:
+            nd[j] = int(m.add_node(*(m.nodes[nd[j]] + v * np.asarray(r3))))
+        m.elements[292].nodes = nd
+        return m, k
+
+    for v in (3e-3, 5e-3):
+        faelle.append((f"hex8 292 an allen acht Knoten, (1|1|1)/√3 {v * 1e3:g} mm", 12.0,
+                       lambda v=v: hex292(v)))
+    faelle.append(("hex8 292 an sieben Knoten, (1|1|1)/√3 5 mm", 12.0,
+                   lambda: hex292(5e-3, range(1, 8))))
+    for titel, zahl, bau in faelle:
+        m, k = bau()
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        gef = _gefunden(bef)
+        check(f"{titel}: FEHLER {zahl:.0f}, nur doppelte Knoten",
+              [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", zahl)]
+              and "doppelte Knoten" in gef and f"an {zahl:.0f} Seiten" in gef
+              and "Hohlraum" not in gef and "hängende" not in gef,
+              _kurz(bef) + " | " + gef[:200])
+    # Gegenprobe: Ufer, die nur die Ecken der Zelle teilen und verschieden
+    # geteilt sind (2 x 2 gegen 3 x 3, keines verfeinert das andere), bleiben
+    # „hängende Knoten“ wie an f2bf6c8 - hiesse ein Gegenueber nur dann
+    # haengend, wenn alle Ecken der Seite Knoten des anderen Ufers sind,
+    # waeren es „doppelte Knoten“
+    for art, zahl, offen in (("hex8", 52.0, True), ("hex8", 78.0, False),
+                             ("tet4", 104.0, True), ("tet4", 156.0, False)):
+        if offen:
+            m, k = _teilung(2, {(1, j, l_): 3 for j in range(2) for l_ in range(2)})
+        else:
+            m, k = _teilung(3, {(1, 1, 1): 3})
+        if art == "tet4":
+            _in_kuhn(m, k)
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        gef = _gefunden(bef)
+        check(f"  Gegenprobe: Ufer 2 x 2 gegen 3 x 3 ({art}, {'an der Hülle' if offen else 'im Inneren'}): "
+              f"FEHLER {zahl:.0f}, hängende Knoten",
+              [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", zahl)]
+              and "hängende Knoten" in gef and f"an {zahl:.0f} Seiten" in gef and "doppelte" not in gef,
+              _kurz(bef) + " | " + gef[:160])
+    # Gegenprobe: echte Hohlraeume bleiben „Hohlraum"
+    m, k = _gleichmaessig(1.0, 1.0, 1.0, 8)
+    k.elemente = [e for e in k.elemente if e != 292]
+    bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+    gef = _gefunden(bef)
+    check("  Gegenprobe: hex8 292 fehlt - FEHLER 6, Hohlraum",
+          [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", 6.0)]
+          and "Hohlraum" in gef and "an 6 Seiten" in gef and "doppelte" not in gef,
+          _kurz(bef) + " | " + gef[:160])
+    m, k = _gleichmaessig(1.0, 1.0, 1.0, 8)
+    _in_kuhn(m, k)
+    weg = {e for e in k.elemente
+           if ((m.nodes[m.elements[e].nodes].mean(axis=0) > 0.375)
+               & (m.nodes[m.elements[e].nodes].mean(axis=0) < 0.625)).all()}
+    k.elemente = [e for e in k.elemente if e not in weg]
+    bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+    gef = _gefunden(bef)
+    check("  Gegenprobe: Tetraeder-Block 2 x 2 x 2 fehlt - Hohlraum an 48 Seiten",
+          len(weg) == 48 and [b.pruefung for b in bef] == ["Volumenbilanz", "Seiten im Inneren"]
+          and "Hohlraum" in gef and "an 48 Seiten" in gef and "doppelte" not in gef,
+          f"{len(weg)} entfernt | " + _kurz(bef) + " | " + gef[:160])
+
+
+def _anisotrop(n, teil):
+    """hex8-Netz n x n x n Zellen über dem Würfel 1 x 1 x 1 m, die Zellen in
+    ``teil`` ({(i, j, l): (tx, ty, tz)}) je Richtung in tx, ty, tz Elemente
+    geteilt - auch nur in einer oder zwei Richtungen. Dann teilen grobes und
+    feines Ufer Kanten (Gegenprüfung vom 24.09.2026, zweite Runde, M1:
+    g4_nb_diagnose_1/r2/aniso.py)."""
+    m = Model("anisotrop")
+    m.add_material(Material.steel("S235"))
+    h = 1.0 / n
+    kn = {}
+
+    def k(x, y, z):
+        key = (round(x, 9), round(y, 9), round(z, 9))
+        if key not in kn:
+            kn[key] = int(m.add_node(x, y, z))
+        return kn[key]
+
+    for i in range(n):
+        for j in range(n):
+            for l_ in range(n):
+                tx, ty, tz = teil.get((i, j, l_), (1, 1, 1))
+                dx, dy, dz = h / tx, h / ty, h / tz
+                for a in range(tx):
+                    for b in range(ty):
+                        for c in range(tz):
+                            x0, y0, z0 = i * h + a * dx, j * h + b * dy, l_ * h + c * dz
+                            P = [(x0, y0, z0), (x0 + dx, y0, z0), (x0 + dx, y0 + dy, z0),
+                                 (x0, y0 + dy, z0), (x0, y0, z0 + dz), (x0 + dx, y0, z0 + dz),
+                                 (x0 + dx, y0 + dy, z0 + dz), (x0, y0 + dy, z0 + dz)]
+                            m.add_element("hex8", [k(*p) for p in P], "S235")
+    kb = _quaderkoerper(m, [k(0, 0, 0), k(1, 0, 0), k(1, 1, 0), k(0, 1, 0),
+                            k(0, 0, 1), k(1, 0, 1), k(1, 1, 1), k(0, 1, 1)])
+    kb.elemente = list(range(len(m.elements)))
+    return m, kb
+
+
+def test_abnahme_t_stoss_mit_geteilter_kante():
+    """Gegenprüfung vom 24.09.2026, zweite Runde, M1 (B040 für T-Stöße mit
+    geteilten Kanten): Ist eine Zelle nur in einer oder zwei Richtungen
+    geteilt, teilen grobes und feines Ufer Kanten und liegen in derselben
+    Gruppe. Das Gegenüber wurde nur zwischen verschiedenen Gruppen gesucht,
+    und der FEHLER nannte eine Ursache, die nicht vorliegt. Gemessen am
+    24.09.2026 an 1afa712 (3 x 3 x 3 hex8 über dem Einheitswürfel, Volumen
+    genau 1, det J überall positiv): die Mittelzelle in 2 x 1 x 1 geteilt
+    „verdrehtes Element an 12 Seiten“, 2 x 2 x 1 an 22, 3 x 1 x 1 an 16,
+    3 x 2 x 1 an 28; in der Eckzelle 6 / 11 / 8 / 14. In Kuhn-Tetraedern die
+    Mitte 2 x 2 x 1 „Hohlraum an 44 Seiten“, 3 x 2 x 1 „doppelte Knoten an 56
+    Seiten“ (f2bf6c8: „Hohlraum an 56“).
+
+    Jetzt findet die Abnahme die geteilte Kante in der Gruppe selbst: eine
+    Kante a-b und eine Kette von Knoten darauf, mit a und b über Kanten der
+    Gruppe verbunden.
+    """
+    for wo, zelle in (("Mitte", (1, 1, 1)), ("Ecke", (0, 0, 0))):
+        for t, (mitte, ecke) in (((2, 1, 1), (12, 6)), ((1, 1, 2), (12, 6)), ((2, 2, 1), (22, 11)),
+                                 ((3, 1, 1), (16, 8)), ((3, 2, 1), (28, 14))):
+            zahl = float(mitte if wo == "Mitte" else ecke)
+            m, k = _anisotrop(3, {zelle: t})
+            bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+            gef = _gefunden(bef)
+            check(f"hex8 3 x 3 x 3, {wo} in {t} geteilt: FEHLER {zahl:.0f}, nur hängende Knoten",
+                  [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", zahl)]
+                  and "hängende Knoten" in gef and f"an {zahl:.0f} Seiten" in gef
+                  and "verdreht" not in gef and "Hohlraum" not in gef and "doppelte" not in gef,
+                  _kurz(bef) + " | " + gef[:120])
+    for t, zahl in (((2, 2, 1), 44.0), ((3, 2, 1), 56.0)):
+        m, k = _anisotrop(3, {(1, 1, 1): t})
+        _in_kuhn(m, k)
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        gef = _gefunden(bef)
+        check(f"Kuhn-Tetraeder 3 x 3 x 3, Mitte in {t} geteilt: FEHLER {zahl:.0f}, nur hängende Knoten",
+              [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", zahl)]
+              and "hängende Knoten" in gef and f"an {zahl:.0f} Seiten" in gef
+              and "Hohlraum" not in gef and "doppelte" not in gef,
+              _kurz(bef) + " | " + gef[:120])
+    # Die geteilte Kante selbst: ein grobes Dreieck a-b-c und zwei feine
+    # a-k-x, k-b-x, k die Mitte von a-b. Gegenprobe: ein flaches Dreieck
+    # a-k-b hat dieselben drei Kanten, ist aber kein T-Stoss
+    a, b, c, k, x = (np.array(p, float) for p in ((0, 0, 0), (1, 0, 0), (0.5, 1, 0), (0.5, 0, 0),
+                                                  (0.5, -1, 0.1)))
+    F = np.array([[0, 1, 2, -1], [0, 3, 4, -1], [3, 1, 4, -1]])
+    Xf = np.array([[a, b, c, a], [a, k, x, a], [k, b, x, k]])
+    check("geteilte Kante a-k-b mit Kanten der feinen Seiten: gefunden",
+          dg._halbierte_kante(F, Xf, np.arange(3)))
+    F = np.array([[0, 1, 2, -1], [0, 3, 1, -1]])
+    Xf = np.array([[a, b, c, a], [a, k, b, a]])
+    check("  Gegenprobe: flaches Dreieck a-k-b ist keine geteilte Kante",
+          not dg._halbierte_kante(F, Xf, np.arange(2)))
+    # Gegenprobe: dieselbe Teilung 2 x 1 x 1 in Kuhn-Tetraedern ist ein Riss
+    # ohne Weite (an 1afa712 ebenso) - die Ursache fragt nur, was weder Riss
+    # noch Luecke ist
+    m, k = _anisotrop(3, {(1, 1, 1): (2, 1, 1)})
+    _in_kuhn(m, k)
+    bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+    check("  Gegenprobe: Kuhn-Tetraeder, Mitte in (2, 1, 1) geteilt - WARNUNG Riss 24 wie vorher",
+          [(b.stufe, b.pruefung, b.wert) for b in bef] == [("WARNUNG", "Riss im Netz", 24.0)], _kurz(bef))
+
+
+def _zelle8(i, j, l_):
+    """Element der Zelle (i, j, l) im gleichmäßigen 8 x 8 x 8-Netz."""
+    return 64 * i + 8 * j + l_
+
+
+def _los8(m, e, v, richtung=(1.0, 1.0, 1.0), knoten=range(8)):
+    """Element e an den Knoten ``knoten`` losgelöst: eigene Knoten, um v in
+    ``richtung`` versetzt."""
+    r = np.asarray(richtung, float) / np.linalg.norm(richtung)
+    nd = list(m.elements[e].nodes)
+    for j in knoten:
+        nd[j] = int(m.add_node(*(m.nodes[nd[j]] + v * r)))
+    m.elements[e].nodes = nd
+
+
+def test_abnahme_hohlraum_neben_losgeloestem_bereich():
+    """Gegenprüfung vom 24.09.2026, zweite Runde, M2 (und M1 der zweiten
+    Gegenprüfung): Seit 1afa712 hieß ein Hohlraum, in dem ein losgelöster
+    Bereich liegt, ganz „doppelte Knoten“, ohne zu fragen, ob der Bereich ihn
+    ausfüllt. Fehlt ein Element neben einem losgelösten, verschwand der
+    Hohlraum aus dem Text. Gemessen an 1afa712 im 8 x 8 x 8-hex8-Netz (Kante
+    125 mm): 292 fehlt, 293 an allen acht Knoten losgelöst, 3 bis 10 mm in
+    Richtung (1 | 1 | 1)/√3 - „doppelte Knoten an 16 Seiten“ (f2bf6c8:
+    „doppelt 6; Hohlraum 10“); der Block 3 x 3 x 3 fehlt bis auf die
+    Mittelzelle, die frei darin schwebt - „doppelt 60“ (f2bf6c8: „doppelt 6;
+    Hohlraum 54“). Bei 0 und 1 mm (Knoten näher als 1 % der Kante) hieß der
+    Hohlraum schon an f2bf6c8 „doppelt“: die doppelten Knoten liegen auf
+    seinen Seiten.
+
+    Jetzt heißt ein Hohlraum nur „doppelt“, wenn die losgelösten Bereiche
+    darin ihn bis auf höchstens ABNAHME_HOHLRAUM_REST mal das mittlere
+    Element am Hohlraum ausfüllen, sonst „Hohlraum“.
+    """
+    def fall(v, weg, los, knoten=range(8), kuhn=False):
+        m, k = _gleichmaessig(1.0, 1.0, 1.0, 8)
+        for e in los:
+            _los8(m, e, v, knoten=knoten)
+        k.elemente = [e for e in k.elemente if e not in weg]
+        if kuhn:
+            hexe = [list(m.elements[e].nodes) for e in k.elemente]
+            m.elements.clear()
+            for c in hexe:
+                for t in _KUHN:
+                    m.add_element("tet4", [int(c[x]) for x in t], "S235")
+            k.elemente = list(range(len(m.elements)))
+        return m, k
+
+    kern_weg = {_zelle8(i, j, l_) for i in (2, 3, 4) for j in (2, 3, 4) for l_ in (2, 3, 4)} - {
+        _zelle8(3, 3, 3)}
+    faelle = []
+    for v in (0.0, 3e-3, 1e-2):
+        faelle.append((f"292 fehlt, 293 los {v * 1e3:g} mm", 16.0, 6, 10,
+                       lambda v=v: fall(v, {292}, {293})))
+    faelle.append(("292 und 293 fehlen, 294 los 5 mm", 20.0, 6, 14, lambda: fall(5e-3, {292, 293}, {294})))
+    faelle.append(("292 fehlt, 293 an sieben Knoten los 10 mm", 16.0, 6, 10,
+                   lambda: fall(1e-2, {292}, {293}, knoten=range(1, 8))))
+    faelle.append(("Block 3 x 3 x 3 fehlt, Mittelzelle schwebt (hex8)", 60.0, 6, 54,
+                   lambda: fall(0.0, kern_weg, set())))
+    faelle.append(("dasselbe in Kuhn-Tetraedern", 120.0, 12, 108,
+                   lambda: fall(0.0, kern_weg, set(), kuhn=True)))
+
+    def block_ohne_ecke(v):
+        m, k = _block_getrennt(v, "hex8", richtung=(1 / np.sqrt(3.0),) * 3)
+        k.elemente = [e for e in k.elemente if e != _zelle8(3, 3, 3)]
+        return m, k
+
+    for v in (0.0, 5e-3):
+        faelle.append((f"hex8-Block los {v * 1e3:g} mm, seine Zelle (3,3,3) fehlt", 48.0, 24, 24,
+                       lambda v=v: block_ohne_ecke(v)))
+
+    def tet_block_neben(v):
+        m, k = _block_getrennt(v, "tet4", richtung=(1 / np.sqrt(3.0),) * 3)
+        k.elemente = [e for e in k.elemente if e != 6 * _zelle8(5, 4, 4)]
+        return m, k
+
+    for v in (0.0, 5e-3):
+        faelle.append((f"Tetraeder-Block los {v * 1e3:g} mm, ein Tetraeder daneben fehlt", 100.0, 96, 4,
+                       lambda v=v: tet_block_neben(v)))
+    # Gegenproben, die an 1afa712 schon richtig waren: das losgeloeste
+    # Element liegt weit weg vom Hohlraum bzw. nur in seinem Kasten
+    faelle.append(("  Gegenprobe: 292 fehlt, (6,6,6) los 5 mm (weit weg)", 18.0, 12, 6,
+                   lambda: fall(5e-3, {292}, {_zelle8(6, 6, 6)})))
+    l_weg = {_zelle8(i, 1, 1) for i in (1, 2, 3)} | {_zelle8(1, j, 1) for j in (2, 3)}
+    faelle.append(("  Gegenprobe: L-Hohlraum in Kuhn-Tetraedern, (3,3,1) in seinem Kasten los", 68.0, 24, 44,
+                   lambda: fall(0.0, l_weg, {_zelle8(3, 3, 1)}, kuhn=True)))
+    # Die losgeloesten Zellen liegen im Kasten des Hohlraums, nicht in ihm,
+    # und haben zusammen sein Volumen: L aus 9 Zellen, die 3 x 3 x 1 Zellen
+    # in seiner Ecke je an allen acht Knoten losgeloest. Nur ueber den Kasten
+    # gefragt hiesse der L „doppelt" - es braucht die Windungszahl
+    l9 = {_zelle8(i, 1, 1) for i in range(1, 6)} | {_zelle8(1, j, 1) for j in range(2, 6)}
+    k9 = {_zelle8(i, j, 1) for i in (3, 4, 5) for j in (3, 4, 5)}
+    faelle.append(("  Gegenprobe: L aus 9 Zellen, 3 x 3 x 1 Zellen in seinem Kasten los", 122.0, 84, 38,
+                   lambda: fall(0.0, l9, k9)))
+    # die Faelle der Gegenpruefung genau so: der Nachbar 300 statt 293, und
+    # 292 selbst los, seine Nachbarn 293 und 294 fehlen
+    faelle.append(("292 fehlt, 300 los 5 mm", 16.0, 6, 10, lambda: fall(5e-3, {292}, {300})))
+    faelle.append(("292 los 3 mm, 293 und 294 fehlen", 20.0, 6, 14, lambda: fall(3e-3, {293, 294}, {292})))
+    for titel, zahl, n_d, n_h, bau in faelle:
+        m, k = bau()
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        gef = _gefunden(bef)
+        sn = [b for b in bef if b.pruefung == "Seiten im Inneren"]
+        check(f"{titel}: FEHLER {zahl:.0f}, doppelt {n_d}, Hohlraum {n_h}",
+              len(sn) == 1 and sn[0].stufe == "FEHLER" and sn[0].wert == zahl
+              and f"doppelte Knoten (" in gef and f") an {n_d} Seiten; ein Hohlraum" in gef
+              and gef.endswith(f"an {n_h} Seiten") and "verdreht" not in gef and "hängende" not in gef,
+              _kurz(bef) + " | " + gef[-120:])
+    # Gegenproben zur Grenze: ein ausgefuellter Hohlraum bleibt „doppelt" -
+    # auch der Spalt am losgeloesten Knoten (B042), 30 mm (24 % der Kante)
+    # in den Tetraeder hinein, V_rest 0,21 des mittleren Elements
+    m, k = _gleichmaessig(1.0, 1.0, 1.0, 8)
+    _los8(m, 293, 1e-2, knoten=range(1, 8))
+    bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+    gef = _gefunden(bef)
+    check("  Gegenprobe: 293 an sieben Knoten los 10 mm, nichts fehlt - nur doppelte Knoten 12",
+          [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", 12.0)]
+          and "doppelte Knoten" in gef and "an 12 Seiten" in gef and "Hohlraum" not in gef,
+          _kurz(bef) + " | " + gef[-80:])
+    m, k = _gleichmaessig(0.75, 0.75, 0.75, 6)
+    _in_kuhn(m, k)
+    nd = list(m.elements[554].nodes)
+    nd[1] = int(m.add_node(*(m.nodes[nd[1]] + 3e-2 * np.array([0.6, 0.0, 0.8]))))
+    m.elements[554].nodes = nd
+    bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+    gef = _gefunden(bef)
+    check("  Gegenprobe: Tetraeder 554 an Knoten 1 losgelöst, 30 mm - doppelte Knoten 6, kein Hohlraum",
+          [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", 6.0)]
+          and "doppelte Knoten" in gef and "Hohlraum" not in gef,
+          _kurz(bef) + " | " + gef[-80:])
+
+
+def test_abnahme_hohlraum_mit_einspringender_kante():
+    """Gegenprüfung vom 24.09.2026, zweite Runde, M2: In hex8 bekam ein
+    echter Hohlraum mit einspringender Kante oder Ecke die Ursache
+    „verdrehtes Element“ bzw. „doppelte Knoten“, obwohl kein Element verdreht
+    oder losgelöst ist. Eine Kante, die nach dem Entfernen nur noch ein
+    Element trägt, galt als verdreht, und ein Knoten, den nur ein Element
+    benutzt, machte die Gruppe „doppelt“. Gemessen an 1afa712 im
+    8 x 8 x 8-hex8-Netz, ganze Zellen entfernt: L aus 3 Zellen „verdrehtes
+    Element an 14 Seiten“, Kreuz aus 7 „verdreht an 30“, Block 2 x 2 x 2 ohne
+    eine Ecke „doppelte Knoten an 24“, L aus 5 Zellen in der Lage z = 1
+    „verdreht an 22“, die Lagen 2 und 3 des Blocks 3 x 3 x 3 ohne die
+    Mittelzelle, die an der Lage 4 hängt, „doppelt an 46“. In
+    Kuhn-Tetraedern hießen dieselben Hohlräume richtig „Hohlraum“.
+
+    Jetzt zählt für geschlossene Gruppen als verdreht nur, wessen einsame
+    Kante die Diagonale einer Nachbarseite ist, und ein Knoten in nur einem
+    Element macht einen dicken Hohlraum nicht mehr „doppelt“.
+    """
+    def ohne(zellen):
+        m, k = _gleichmaessig(1.0, 1.0, 1.0, 8)
+        weg = {_zelle8(*z) for z in zellen}
+        k.elemente = [e for e in k.elemente if e not in weg]
+        return m, k
+
+    blk = {(i, j, l_) for i in (3, 4) for j in (3, 4) for l_ in (3, 4)}
+    formen = (
+        ("L aus 3 Zellen", {(3, 3, 3), (4, 3, 3), (3, 4, 3)}, 14.0),
+        ("Kreuz aus 7 Zellen", {(4, 4, 4), (3, 4, 4), (5, 4, 4), (4, 3, 4), (4, 5, 4), (4, 4, 3), (4, 4, 5)},
+         30.0),
+        ("Block 2 x 2 x 2 ohne eine Ecke", blk - {(4, 4, 4)}, 24.0),
+        ("L aus 5 Zellen in der Lage z = 1", {(1, 1, 1), (2, 1, 1), (3, 1, 1), (1, 2, 1), (1, 3, 1)}, 22.0),
+        ("Lagen 2 und 3 des Blocks 3 x 3 x 3, Mittelzelle hängt an Lage 4",
+         {(i, j, l_) for i in (2, 3, 4) for j in (2, 3, 4) for l_ in (2, 3)} - {(3, 3, 3)}, 46.0),
+    )
+    for titel, zellen, zahl in formen:
+        m, k = ohne(zellen)
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        gef = _gefunden(bef)
+        sn = [b for b in bef if b.pruefung == "Seiten im Inneren"]
+        check(f"hex8, {titel} fehlt: FEHLER {zahl:.0f}, nur Hohlraum",
+              len(sn) == 1 and sn[0].wert == zahl and "Hohlraum" in gef and f"an {zahl:.0f} Seiten" in gef
+              and "verdreht" not in gef and "doppelte" not in gef,
+              _kurz(bef) + " | " + gef[:120])
+    # Das losgeloeste Element neben dem L bleibt „doppelt", der L „Hohlraum"
+    m, k = ohne({(1, 1, 1), (2, 1, 1), (3, 1, 1), (1, 2, 1), (1, 3, 1)})
+    _los8(m, _zelle8(3, 3, 1), 0.0)
+    bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+    gef = _gefunden(bef)
+    check("hex8, L aus 5 Zellen fehlt, (3,3,1) losgelöst: doppelt 12, Hohlraum 22",
+          "doppelte Knoten (" in gef and ") an 12 Seiten; ein Hohlraum" in gef and gef.endswith("an 22 Seiten")
+          and "verdreht" not in gef, _kurz(bef) + " | " + gef[-80:])
+    # Gegenproben: verdrehte Sechsflaechner bleiben „verdreht" - ihre einsame
+    # Kante ist die Diagonale einer Nachbarseite
+    for e in (292, 36, 0):
+        m, k = _gleichmaessig(1.0, 1.0, 1.0, 8)
+        _verdrehen(m, e)
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        gef = _gefunden(bef)
+        check(f"  Gegenprobe: hex8 {e} verdreht - nur verdrehtes Element",
+              [(b.stufe, b.pruefung) for b in bef] == [("FEHLER", "Seiten im Inneren")]
+              and "verdrehtes Element" in gef and "Hohlraum" not in gef and "doppelte" not in gef,
+              _kurz(bef) + " | " + gef[:120])
+
+
+def _ecke_getrennt(zellen=1, versatz=0.0, n=8):
+    """hex8-Netz n x n x n über dem Würfel 1 x 1 x 1 m, der Block der zellen³
+    Eckzellen bei (0, 0, 0) auf seinen drei Seiten zu den Nachbarn mit eigenen
+    Knoten, um ``versatz`` in Richtung (0,6 | 0 | 0,8) verschoben: eine
+    Trennfläche aus doppelten Knoten, deren Rand auf der Hülle liegt."""
+    m, k = _gleichmaessig(1.0, 1.0, 1.0, n)
+    grenze = zellen / n
+    neu = {}
+    for e in list(k.elemente):
+        el = m.elements[e]
+        if not (m.nodes[el.nodes].mean(axis=0) < grenze).all():
+            continue
+        nd = []
+        for x in el.nodes:
+            p = m.nodes[int(x)]
+            if (p <= grenze + 1e-9).all() and (np.abs(p - grenze) < 1e-9).any():
+                if int(x) not in neu:
+                    neu[int(x)] = int(m.add_node(*(p + versatz * np.array([0.6, 0.0, 0.8]))))
+                nd.append(neu[int(x)])
+            else:
+                nd.append(int(x))
+        el.nodes = nd
+    return m, k
+
+
+def test_abnahme_duenne_luecke_und_ufer_ohne_gegenueber():
+    """B044 (Nebenbefund vom 22./23.09.2026): Ob einer offenen Gruppe an der
+    Oberfläche ein Stück fehlt, entschied allein t/L ≤ 5 % („ein Ufer ohne
+    Volumen“) - dieselbe Längenabhängigkeit wie beim Riss. Am L-Prisma h 0,2
+    (1493 tet4, ohne Befund) wurde das von Hand gelöschte Element 62
+    (1,643e-4 m³, 2V/A/L der Lücke 2,87 %) ein FEHLER „Seiten im Inneren 3“
+    statt einer Lücke; ebenso die Elemente 69 und 70 (4,50 und 3,36 %).
+    Das Netz ist das des Vernetzers vom Stand ec6448c (_netz_ec6448c): der
+    Vernetzer vom 23.09.2026 gibt dort 1364 tet4 mit anderen Nummern.
+
+    Ein Ufer ohne Volumen gibt es an der Oberfläche nicht: Liegen die Seiten
+    weiter als 1 % neben der Hülle, schließen sie mit ihr ein Volumen ein.
+    Was „kein Stück fehlt“ wirklich trennt, ist das Gegenüber: Die Ufer einer
+    Trennfläche aus doppelten Knoten schließen jedes für sich mit der Hülle
+    den ganzen Block dahinter ein, obwohl er vernetzt ist. Um die Eckzelle
+    eines 8 x 8 x 8-Netzes, 1e-5 m versetzt: bei ec6448c WARNUNG „Lücke im
+    Netzrand“ 1953 cm³ neben FEHLER 3. Das Ufer bleibt ein FEHLER.
+    """
+    import contextlib
+    import io
+    from statik3d import mesher
+    L = [(0, 0), (2, 0), (2, 0.5), (0.5, 0.5), (0.5, 2), (0, 2)]
+    for weg, V_soll in ((62, 1.6426e-4), (69, 2.4951e-4), (70, 2.2450e-4)):
+        m = Model("L")
+        m.add_material(Material.steel("S235"))
+        k = _extrudiert(m, L, 0.0, 0.4)
+        _netz_ec6448c("L020", m, k)
+        n_el = len(k.elemente)
+        vorher = [b for b in dg.abnahme(m, warnungen=True) if b.pruefung in _NETZ_BEFUNDE]
+        m.elemente_loeschen([weg])
+        bef = [b for b in dg.abnahme(m, warnungen=True)
+               if b.pruefung in _NETZ_BEFUNDE or b.pruefung == "Lücke im Netzrand"]
+        check(f"L-Prisma h 0,2, Element {weg} gelöscht: WARNUNG Lücke {V_soll * 1e6:.0f} cm³, kein FEHLER",
+              n_el == 1493 and not vorher
+              and [(b.stufe, b.pruefung) for b in bef] == [("WARNUNG", "Lücke im Netzrand")]
+              and abs(bef[0].wert - V_soll) < 1e-3 * V_soll and not dg.abnahme(m),
+              f"{n_el} tet4, vorher {_kurz(vorher)}; gelöscht: {_kurz(bef)}")
+    # Ueber 1 % der Kante (1,25 mm) versetzt hiess die Ursache bei der ersten
+    # Kur (70614f8) „hängende Knoten (ein Ufer feiner geteilt …)“, obwohl
+    # beide Ufer gleich geteilt sind (Gegenpruefung vom 23.09.2026)
+    for versatz, zahl in ((0.0, 6.0), (1e-5, 6.0), (2e-3, 6.0), (5e-3, 8.0)):
+        m, k = _ecke_getrennt(1, versatz)
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        gef = _gefunden(bef)
+        check(f"Trennfläche um die Eckzelle, {versatz:g} m versetzt: FEHLER {zahl:.0f} "
+              "(doppelte Knoten), keine Lücke",
+              [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", zahl)]
+              and "doppelte Knoten" in gef and f"an {zahl:.0f} Seiten" in gef and "hängende" not in gef,
+              _kurz(bef) + " | " + gef[:120])
+
+
+def test_abnahme_netzrand_verfehlt_randflaeche():
+    """B046 (Nebenbefund vom 22./23.09.2026): Konforme Netze des eigenen
+    Vernetzers bekamen FEHLER „Seiten im Inneren“ mit der Ursache „verdrehtes
+    Element, doppelte Knoten oder Hohlraum“ - keine davon trifft zu - und
+    einer Abhilfe nur für importierte oder von Hand geänderte Netze. U-Prisma
+    h 0,3 auf dem Standardweg (1113 tet4, jede innere Seite genau zweimal):
+    FEHLER 4 und WARNUNG Netzrand 9; die freien Seiten laufen an den
+    einspringenden Kanten durch den Körper, ihr Rand schließt nicht an die
+    Randflächen an.
+
+    Jetzt nennt der Text diese Ursache und die Abhilfe, die gemessen wirkt:
+    mit „Sechsflächner sweepen“ ist dasselbe U-Prisma ohne Befund (32 hex8,
+    16 pent6). Die Abhilfe steht nur dort, wo diese Ursache vorliegt.
+
+    Das tet4-Netz ist das des Vernetzers vom Stand ec6448c (_netz_ec6448c);
+    der Vernetzer vom 23.09.2026 gibt am U-Prisma h 0,3 ein Netz aus 317 tet4
+    ohne Befund (gemessen 24.09.2026). Der Sweep laeuft wie bisher.
+    """
+    import contextlib
+    import io
+    from collections import Counter
+    from statik3d import mesher
+    U = [(0, 0), (1.5, 0), (1.5, 1), (1.1, 1), (1.1, 0.3), (0.4, 0.3), (0.4, 1), (0, 1)]
+    erg = []
+    for sweep in (False, True):
+        m = Model("U")
+        m.add_material(Material.steel("S235"))
+        k = _extrudiert(m, U, 0.0, 0.5)
+        m.netz.sweep = sweep
+        if not sweep:
+            _netz_ec6448c("U030", m, k)
+        else:
+            with contextlib.redirect_stdout(io.StringIO()):
+                mesher.modell_vernetzen(m, [], workers=1, hs={"K": 0.3})
+        erg.append((dict(Counter(m.elements[i].typ for i in k.elemente)),
+                    [b for b in dg.abnahme(m, warnungen=True)
+                     if b.pruefung in _NETZ_BEFUNDE or b.pruefung == "Lücke im Netzrand"]))
+    (typen, bef), (typen_s, bef_s) = erg
+    sn = [b for b in bef if b.pruefung == "Seiten im Inneren"]
+    text = sn[0].text if sn else ""
+    check("U-Prisma h 0,3, Standardweg: FEHLER 4 mit der Ursache „Netzrand verfehlt die Randfläche“",
+          typen == {"tet4": 1113} and len(sn) == 1 and sn[0].wert == 4.0
+          and "Netzrand verfehlt die Randfläche" in text
+          and "verdrehtes Element" not in text and "hängende Knoten" not in text,
+          f"{typen}: {_kurz(bef)} | {text[text.find('Gefunden'):][:220]}")
+    check("  und einer Abhilfe für eigene Netze: Sechsflächner sweepen",
+          "sweepen" in text and "U-Prisma" in text, text[-420:])
+    check("  gemessen: mit Sweep ohne Befund",
+          typen_s == {"hex8": 32, "pent6": 16} and not bef_s, f"{typen_s}: {_kurz(bef_s)}")
+    # Gegenprobe: am verdrehten Element steht diese Abhilfe nicht
+    m, k = _gleichmaessig(1.0, 1.0, 2.0, 10)
+    _verdrehen(m, 444)
+    bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+    check("  Gegenprobe: verdrehtes Element - Ursache verdreht, kein Rat zum Sweep",
+          len(bef) == 1 and "verdrehtes Element" in bef[0].text and "sweepen" not in bef[0].text
+          and "Netzrand verfehlt" not in bef[0].text,
+          bef[0].text[bef[0].text.find("Gefunden"):][:200] if bef else "kein Befund")
+
+
+def test_abnahme_luecke_abhilfe_bei_gleicher_elementzahl():
+    """B047 (Nebenbefund vom 22./23.09.2026): Die Abhilfe „der Vernetzer gmsh
+    bzw. Netgen“ der Lücke im Netzrand war mit rund viermal gröberen Netzen
+    gemessen: L-Prisma h 0,25 auf dem hs-Weg eigener Vernetzer 821 tet4, gmsh
+    203, Netgen 187 - dieselbe Netzweite ergibt bei ihnen weniger Elemente.
+
+    Nachgemessen bei vergleichbarer Elementzahl (Netzweite 60 bis 70 % der
+    eigenen; 0,87- bis 1,05-mal so viele Elemente) an allen fünf Prismen:
+    ohne Befund. Der Text sagt das jetzt so. Hier das L-Prisma: gmsh bei
+    h 0,15 843 tet4, Netgen 713, beide ohne Befund (23.09.2026).
+
+    Verglichen wird mit dem Netz des eigenen Vernetzers, an dem die Lücke
+    gemessen ist (Stand ec6448c, 821 tet4, _netz_ec6448c). Der Vernetzer vom
+    23.09.2026 gibt am L-Prisma h 0,25 634 tet4 ohne Lücke (gemessen
+    24.09.2026); gegen ihn sind gmsh und Netgen bei h 0,25 0,32- bzw. 0,29-mal
+    so fein, bei h 0,15 1,33- bzw. 1,12-mal.
+    """
+    import contextlib
+    import io
+    from statik3d import mesher
+    from statik3d import vernetzer_extern as vx
+    L = [(0, 0), (2, 0), (2, 0.5), (0.5, 0.5), (0.5, 2), (0, 2)]
+
+    def netz(h, vern=None):
+        m = Model("L")
+        m.add_material(Material.steel("S235"))
+        k = _extrudiert(m, L, 0.0, 0.4)
+        if vern:
+            m.netz.vernetzer = vern
+        if vern is None and h == 0.25:
+            _netz_ec6448c("L025", m, k)
+        else:
+            with contextlib.redirect_stdout(io.StringIO()):
+                mesher.modell_vernetzen(m, [], workers=1, hs={"K": h})
+        return len(k.elemente), [b for b in dg.abnahme(m, warnungen=True)
+                                 if b.pruefung in _NETZ_BEFUNDE or b.pruefung == "Lücke im Netzrand"]
+
+    n0, bef0 = netz(0.25)
+    lu = [b for b in bef0 if b.pruefung == "Lücke im Netzrand"]
+    text = lu[0].text if lu else ""
+    check("L-Prisma h 0,25: die Lücke nennt gmsh/Netgen mit dem Hinweis auf die Elementzahl",
+          n0 == 821 and len(lu) == 1 and "gmsh" in text and "Netgen" in text
+          and "gleich vielen Elementen" in text and "60 bis 70 % der Netzweite" in text,
+          text[text.find("Beseitigt"):][:400])
+    for vern in ("gmsh", "netgen"):
+        if not (vx.gmsh_verfuegbar() if vern == "gmsh" else vx.netgen_verfuegbar()):
+            print(f"    {vern}: nicht installiert, übersprungen")
+            continue
+        n_gleich, _b = netz(0.25, vern)
+        n, bef = netz(0.15, vern)
+        check(f"  {vern}: dieselbe Netzweite 22 bis 37 % der Elemente, bei 0,15 m vergleichbar und ohne Befund",
+              0.22 <= n_gleich / n0 <= 0.37 and 0.85 <= n / n0 <= 1.1 and not bef,
+              f"h 0,25: {n_gleich} tet4 ({n_gleich / n0:.2f}), h 0,15: {n} tet4 ({n / n0:.2f}) | {_kurz(bef)}")
+
+
+#: Netze des eigenen Vernetzers vom Stand ec6448c, festgehalten fuer
+#: Pruefungen der Abnahme, die an genau diesen Netzen gemessen sind (Merge
+#: der Nebenbefund-Zweige, 24.09.2026). Der Vernetzer vom 23.09.2026
+#: (Fable-Sitzung) gibt fuer dieselben Modelle andere Netze: L-Prisma h 0,2
+#: 1364 statt 1493 tet4, h 0,25 634 statt 821 tet4 ohne die Luecke, U-Prisma
+#: h 0,3 317 statt 1113 tet4 ohne Befund, die Stufe d 0,45 mm mit FEHLER
+#: „Seiten im Inneren 81" statt 5. Die Regeln der Abnahme, um die es in diesen
+#: Pruefungen geht, lassen sich an den neuen Netzen nicht mehr zeigen.
+#: Erzeugt mit dem Programmstand ec6448c (git archive), Aufbau wie in den
+#: Pruefungen: L020 und L025 _extrudiert + mesher.modell_vernetzen mit
+#: hs {"K": 0,2 bzw. 0,25}; U030 ebenso mit 0,3 und netz.sweep = False;
+#: stufe mesher3d.mesh_koerper_frei, Ziellaenge 0,05, intelligent.
+_NETZE_EC6448C = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "netze_vernetzer_ec6448c.npz")
+
+
+def _netz_ec6448c(name, m, k):
+    """Das festgehaltene Netz ``name`` (L020, L025, U030, stufe) in das Modell
+    ``m`` legen, dessen Koerper ``k`` mit seiner Geometrie schon steht: die
+    Knoten der Geometrie muessen gleich sein, dann folgen die Netzknoten und
+    die tet4 in derselben Reihenfolge wie damals (dieselben Elementnummern).
+    Gibt die Elementnummern zurueck (auch in ``k.elemente``)."""
+    d = np.load(_NETZE_EC6448C)
+    geo = d[name + "_geo"]
+    if m.nn != len(geo) or not np.array_equal(np.asarray(m.nodes, float), geo):
+        raise ValueError(f"Geometrie von {name} passt nicht zum festgehaltenen Netz")
+    for p in d[name + "_knoten"]:
+        m.add_node(*p)
+    werkstoff = next(iter(m.materials))
+    k.elemente = [int(m.add_element("tet4", [int(x) for x in t], werkstoff))
+                  for t in d[name + "_tet4"]]
+    return k.elemente
+
+
+def _ohne8(zellen, kuhn=False):
+    """8 x 8 x 8-hex8-Netz über dem Würfel 1 x 1 x 1 m ohne die Zellen
+    ``zellen`` ({(i, j, l)}); ``kuhn``: danach in Kuhn-Tetraeder zerlegt."""
+    m, k = _gleichmaessig(1.0, 1.0, 1.0, 8)
+    weg = {_zelle8(*z) for z in zellen}
+    k.elemente = [e for e in k.elemente if e not in weg]
+    if kuhn:
+        hexe = [list(m.elements[e].nodes) for e in k.elemente]
+        m.elements.clear()
+        for c in hexe:
+            for t in _KUHN:
+                m.add_element("tet4", [int(c[x]) for x in t], "S235")
+        k.elemente = list(range(len(m.elements)))
+    return m, k
+
+
+def _schnitt8(v, richtung=(0.6, 0.0, 0.8), zmax=1.0, kuhn=True, a=1.0, n=8, lage1=None):
+    """hex8-Netz n x n x n über dem Würfel a x a x a; die Zellen mit x > a/2
+    (bei ``zmax`` < 1 nur die mit z < zmax·a) bekommen auf der Ebene x = a/2
+    eigene Knoten, um v in ``richtung`` (Einheitsvektor) versetzt - bei
+    zmax = 1 ist der Körper ganz durchtrennt, sonst reißt er von unten ein;
+    ``kuhn``: danach in Kuhn-Tetraeder zerlegt (Gegenprüfung vom 24.09.2026,
+    dritte Runde, g6_nb_diagnose/p4c_schnitt.py)."""
+    m, k = _gleichmaessig(a, a, a, n)
+    if lage1 is not None:
+        # abgestuft: die erste Knotenebene ueber dem Boden auf z = lage1
+        m.nodes[np.abs(m.nodes[:, 2] - a / n) < 1e-9 * a, 2] = lage1
+    w = np.asarray(richtung, float)
+    neu = {}
+    for e in list(k.elemente):
+        el = m.elements[e]
+        c = m.nodes[el.nodes].mean(axis=0)
+        if not (c[0] > 0.5 * a and c[2] < zmax * a):
+            continue
+        nd = []
+        for x in el.nodes:
+            p = m.nodes[int(x)]
+            if abs(p[0] - 0.5 * a) < 1e-9 * a and (zmax >= 1.0 or p[2] < (zmax - 1e-9) * a):
+                if int(x) not in neu:
+                    neu[int(x)] = int(m.add_node(*(p + v * w)))
+                nd.append(neu[int(x)])
+            else:
+                nd.append(int(x))
+        el.nodes = nd
+    if kuhn:
+        _in_kuhn(m, k)
+    return m, k
+
+
+def test_abnahme_mulde_mit_einspringender_kante():
+    """Gegenprüfung vom 24.09.2026, dritte Runde, M1: Eine Mulde an der
+    Oberfläche eines hex8-Netzes mit einspringender Kante bekam die Ursache
+    „doppelte Knoten“, obwohl nichts losgelöst ist. Gemessen an 447a5f8 im
+    8 x 8 x 8-hex8-Netz (Kante 125 mm), nur Zellen an der Seite z = 0
+    entfernt: L aus 3 Zellen „doppelte Knoten an 11 Seiten“, T aus 4 an 14,
+    dasselbe L zwei Lagen tief an 19, L an der Kante x = 0 an 9 (70614f8:
+    „verdrehtes Element“). Den Knoten (0,5 | 0,5 | 0) benutzt nach dem
+    Entfernen nur noch die Zelle (4, 4, 0), und ihre senkrechte Kante dort
+    trägt kein anderes Element - beides galt an offenen Gruppen als sicheres
+    Zeichen. In Kuhn-Tetraedern ist dieselbe Mulde eine „Lücke im Netzrand“.
+
+    Jetzt gilt ein Knoten in nur einem Element an offenen Gruppen nur als
+    losgelöst, wenn ein anderer Knoten näher liegt als die halbe kürzeste
+    Kante (an der Mulde: eine ganze Kante), und verdreht heißt ein Element
+    dort wie an geschlossenen Gruppen nur, wenn seine einsame Kante die
+    Diagonale einer Nachbarseite ist. Was so übrig bleibt und nicht sicher zu
+    unterscheiden ist, heißt „keine sicher bestimmte Ursache“ und nennt die
+    möglichen - der FEHLER bleibt.
+    """
+    formen = (("L aus 3 Zellen", {(3, 3, 0), (4, 3, 0), (3, 4, 0)}, 11.0),
+              ("T aus 4 Zellen", {(3, 3, 0), (4, 3, 0), (5, 3, 0), (4, 4, 0)}, 14.0),
+              ("L aus 3 Zellen, zwei Lagen tief",
+               {(3, 3, 0), (4, 3, 0), (3, 4, 0), (3, 3, 1), (4, 3, 1), (3, 4, 1)}, 19.0),
+              ("L aus 3 Zellen an der Kante x = 0", {(0, 3, 0), (0, 4, 0), (1, 3, 0)}, 9.0))
+    for titel, zellen, zahl in formen:
+        m, k = _ohne8(zellen)
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        gef = _gefunden(bef)
+        sn = [b for b in bef if b.pruefung == "Seiten im Inneren"]
+        check(f"hex8, Mulde {titel} an z = 0: FEHLER {zahl:.0f}, keine sicher bestimmte Ursache",
+              [b.pruefung for b in bef] == ["Volumenbilanz", "Seiten im Inneren"] and sn[0].wert == zahl
+              and "keine sicher bestimmte Ursache" in gef and "Mulde" in gef and f"an {zahl:.0f} Seiten" in gef
+              and "doppelte Knoten (" not in gef and "ein verdrehtes Element (" not in gef
+              and "Netzrand verfehlt" not in gef and "sweepen" not in sn[0].text,
+              _kurz(bef) + " | " + gef[:160])
+        m, k = _ohne8(zellen, kuhn=True)
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        check(f"  Gegenprobe: dieselbe Mulde in Kuhn-Tetraedern - Lücke im Netzrand",
+              [b.pruefung for b in bef] == ["Volumenbilanz", "Lücke im Netzrand"], _kurz(bef))
+    # Gegenproben: Mulden ohne einspringende Kante bleiben Luecken
+    for titel, zellen in (("1 Zelle", {(3, 3, 0)}), ("2 Zellen in Reihe", {(3, 3, 0), (4, 3, 0)}),
+                          ("Block 2 x 2", {(3, 3, 0), (4, 3, 0), (3, 4, 0), (4, 4, 0)}),
+                          ("Eckzelle", {(0, 0, 0)})):
+        m, k = _ohne8(zellen)
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        check(f"  Gegenprobe: hex8, {titel} fehlt an z = 0 - Lücke im Netzrand, kein FEHLER Seiten im Inneren",
+              "Lücke im Netzrand" in [b.pruefung for b in bef]
+              and "Seiten im Inneren" not in [b.pruefung for b in bef], _kurz(bef))
+    # Gegenproben: verdrehte Sechsflaechner an der Oberflaeche bleiben
+    # „verdreht" - ihre einsame Kante ist die Diagonale einer Nachbarseite
+    for e in (0, 7, 9, 36, 63):
+        m, k = _gleichmaessig(1.0, 1.0, 1.0, 8)
+        _verdrehen(m, e)
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        gef = _gefunden(bef)
+        check(f"  Gegenprobe: hex8 {e} an der Oberfläche verdreht - verdrehtes Element",
+              [(b.stufe, b.pruefung) for b in bef] == [("FEHLER", "Seiten im Inneren")]
+              and "ein verdrehtes Element (" in gef and "sicher bestimmt" not in gef and "doppelte" not in gef,
+              _kurz(bef) + " | " + gef[:120])
+    # Gegenproben: an der Oberflaeche losgeloest und weit versetzt (bis 30 mm,
+    # 24 % der Kante) bleibt „doppelte Knoten" - der Knoten in nur einem
+    # Element hat den Knoten des Nachbarn daneben
+    for v in (1e-2, 3e-2):
+        m, k = _gleichmaessig(1.0, 1.0, 1.0, 8)
+        el = m.elements[27]
+        P = m.nodes[el.nodes]
+        nd = list(el.nodes)
+        for j in [j for j in range(8) if abs(P[j][0]) < 1e-9]:
+            nd[j] = int(m.add_node(*(P[j] + v * np.array([0.6, 0.0, 0.8]))))
+        el.nodes = nd
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        gef = _gefunden(bef)
+        check(f"  Gegenprobe: hex8 27 an vier Hüllknoten losgelöst, {v * 1e3:g} mm - doppelte Knoten 9",
+              [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", 9.0)]
+              and "doppelte Knoten (" in gef and "sicher bestimmt" not in gef, _kurz(bef) + " | " + gef[:120])
+        m, k = _ecke_getrennt(1, v)
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        gef = _gefunden(bef)
+        check(f"  Gegenprobe: Trennfläche um die Eckzelle, {v * 1e3:g} mm - doppelte Knoten 8",
+              [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", 8.0)]
+              and "doppelte Knoten (" in gef and "an 8 Seiten" in gef and "sicher bestimmt" not in gef,
+              _kurz(bef) + " | " + gef[:120])
+
+
+def test_abnahme_durchtrennter_koerper_heisst_doppelt():
+    """Gegenprüfung vom 24.09.2026, dritte Runde, M2: Ein Körper, den
+    doppelte Knoten in einem Tetraedernetz ganz durchtrennen, bekam die
+    Ursache „der Netzrand verfehlt die Randfläche … kein Knoten doppelt“ und
+    den Rat zum Sweep. Gemessen an 447a5f8 im 8 x 8 x 8-Netz (Kante 125 mm)
+    in Kuhn-Tetraedern, die Zellen x > 0,5 mit eigenen Knoten auf der Ebene
+    x = 0,5: bei 3 mm Versatz in Richtung (0,6 | 0 | 0,8) an 256 Seiten, bei
+    5 mm an 264, in Richtung (1 | 1 | 1)/√3 bei 5 mm an 272. Die Knoten liegen
+    weiter als 1 % der Kante auseinander, und jeden benutzt mehr als ein
+    Element. „Netzrand“ war der Rest für jede offene Gruppe ohne andere
+    Ursache.
+
+    Jetzt heißt eine offene Gruppe auch dann „doppelte Knoten“, wenn eine
+    ihrer Seiten eine Kopie aus eigenen Knoten neben sich hat: eine andere
+    freie Seite, deren Knoten je näher als die halbe kürzeste Kante an einem
+    Knoten der ersten liegen. Die Nähe allein
+    trennt nicht: an der Stufe unten (Netz des eigenen Vernetzers) liegt ein
+    Knoten bei 0,27 der Kante an einem anderen, wie der losgelöste Knoten bei
+    30 mm Versatz; eine Kopie hat sie nicht.
+    """
+    r3 = (1 / np.sqrt(3.0),) * 3
+    faelle = [(f"ganz, (0,6|0|0,8) {v * 1e3:g} mm", v, (0.6, 0.0, 0.8), 1.0, zahl)
+              for v, zahl in ((3e-3, 256.0), (5e-3, 264.0), (1e-2, 272.0), (3e-2, 272.0))]
+    faelle += [(f"ganz, (1|1|1)/√3 {v * 1e3:g} mm", v, r3, 1.0, zahl) for v, zahl in ((5e-3, 272.0), (1e-2, 288.0))]
+    faelle += [(f"von unten bis z = 0,5, (0,6|0|0,8) {v * 1e3:g} mm", v, (0.6, 0.0, 0.8), 0.5, 144.0)
+               for v in (1e-2, 3e-2)]
+    faelle.append(("von unten bis z = 0,5, (1|1|1)/√3 10 mm", 1e-2, r3, 0.5, 152.0))
+    for titel, v, richtung, zmax, zahl in faelle:
+        m, k = _schnitt8(v, richtung, zmax)
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        gef = _gefunden(bef)
+        sn = [b for b in bef if b.pruefung == "Seiten im Inneren"]
+        check(f"Kuhn-Tetraeder, Schnitt x = 0,5 {titel}: FEHLER {zahl:.0f}, doppelte Knoten, kein Rat zum Sweep",
+              len(sn) == 1 and sn[0].stufe == "FEHLER" and sn[0].wert == zahl
+              and "doppelte Knoten (" in gef and f"an {zahl:.0f} Seiten" in gef
+              and "Netzrand verfehlt" not in gef and "sweepen" not in sn[0].text
+              and [b.pruefung for b in dg.abnahme(m)] in (["Seiten im Inneren"],
+                                                            ["Volumenbilanz", "Seiten im Inneren"]),
+              _kurz(bef) + " | " + gef[:160])
+    # Gegenprobe: derselbe Schnitt in hex8 hiess schon an 447a5f8 so
+    m, k = _schnitt8(3e-3, kuhn=False)
+    gef = _gefunden(dg._abnahme_volumenbilanz(m, "K1", k, k.elemente))
+    check("  Gegenprobe: derselbe Schnitt in hex8, 3 mm - doppelte Knoten 128",
+          "doppelte Knoten (" in gef and "an 128 Seiten" in gef, gef[:120])
+    # Gegenprobe: ein Netz des eigenen Vernetzers mit zwei nahen Knoten (0,27
+    # der kuerzesten Kante), ohne Kopie einer Seite - bleibt „Netzrand". Das
+    # Netz vom Stand ec6448c (_netz_ec6448c): der Vernetzer vom 23.09.2026
+    # gibt fuer diese Stufe 1626 tet4 mit FEHLER „Seiten im Inneren 81"
+    # (gemessen 24.09.2026).
+    import contextlib
+    import io
+    from statik3d import mesher3d as M3
+    d, a, b = 0.00045, 0.2, 0.1
+    m = Model("stufe")
+    m.add_material(Material.steel("S235"))
+    k = _extrudiert(m, [(0, 0), (a, 0), (a, b * 0.5), (a - d * 0.8, b * 0.5 + d * 0.6), (a, b), (0, b)],
+                    0.0, 0.02)
+    m.netz.ziellaenge = 0.05
+    m.netz.intelligent = True
+    _netz_ec6448c("stufe", m, k)
+    bef = dg._abnahme_volumenbilanz(m, k.name, k, k.elemente)
+    gef = _gefunden(bef)
+    sn = [b for b in bef if b.pruefung == "Seiten im Inneren"]
+    check("  Gegenprobe: Stufe d 0,45 mm, t 0,02 m, frei vernetzt - FEHLER 5, Netzrand verfehlt die Randfläche",
+          len(sn) == 1 and sn[0].wert == 5.0 and "Netzrand verfehlt die Randfläche" in gef
+          and "doppelte Knoten (" not in gef and "sweepen" in sn[0].text,
+          f"{len(k.elemente)} tet4: " + _kurz(bef) + " | " + gef[:120])
+
+
+def test_abnahme_riss_mit_knoten_naeher_als_ein_prozent():
+    """Gegenprüfung vom 24.09.2026, dritte Runde, M3 (B042): Die relative
+    Knotennähe - doppelt heißen zwei Nummern näher als 1 % der kürzesten
+    Kante an ihnen, nicht mehr fest 1e-6 m - hielt keine Prüfung fest. Auf
+    fest 1e-6 m verfälscht (``paare[d <= 1e-6]``) bestand test_diagnose
+    ganz (214/214), die Prüfung von B042 fängt nur den Knoten in nur einem
+    Element. Messbar ändert sich aber das Verhalten: Ein Riss von unten
+    (Ebene x = 0,5 nur für z < 0,5, die Seite x > 0,5 mit eigenen Knoten) im
+    8 x 8 x 8-Netz in Kuhn-Tetraedern, 2e-6 bis 1e-3 m versetzt, ist an
+    447a5f8 FEHLER „Seiten im Inneren 128“ (doppelte Knoten), verfälscht nur
+    WARNUNG „Riss im Netz 128“ mit ``abnahme() == []`` - der stille Verlust
+    aus B042 (ec6448c ebenso).
+
+    Dazu dieselbe Form bei 10 m und 0,1 m Kantenlänge des Würfels, je 0,8 %
+    der Zellkante versetzt: fängt auch eine feste Grenze in anderer Größe.
+    """
+    for a, versaetze in ((1.0, (2e-6, 1e-5, 1e-4, 1e-3)), (10.0, (1e-2,)), (0.1, (1e-4,))):
+        for v in versaetze:
+            m, k = _schnitt8(v, zmax=0.5, a=a)
+            bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+            gef = _gefunden(bef)
+            check(f"Riss von unten, Würfel {a:g} m (Kante {a / 8 * 1e3:g} mm), {v:g} m versetzt "
+                  f"({v / (a / 8) * 100:.2g} %): FEHLER 128 doppelte Knoten",
+                  [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", 128.0)]
+                  and "doppelte Knoten (" in gef and "an 128 Seiten" in gef
+                  and [b.pruefung for b in dg.abnahme(m)] == ["Seiten im Inneren"],
+                  _kurz(bef) + " | " + gef[:100])
+    # Oertlich statt ueber den Koerper (vierte Gegenpruefung vom 24.09.2026,
+    # g7_nbd/p4b_gestuft.py): die unterste Zelllage am Riss nur 10 mm hoch,
+    # 1 mm versetzt - 0,8 % der Kante 125 mm, aber 10 % der 10 mm. Mit der
+    # kuerzesten Kante des ganzen Koerpers statt der an den beiden Knoten
+    # (Verfaelschung "naehe_global_min") hiess das nur WARNUNG "Riss im Netz"
+    # mit abnahme() == [], wie an ec6448c.
+    m, k = _schnitt8(1e-3, zmax=0.5, lage1=0.01)
+    bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+    gef = _gefunden(bef)
+    check("Riss von unten im abgestuften Netz (unterste Lage 10 mm), 1 mm versetzt: FEHLER "
+          "doppelte Knoten - die Naehe gilt an den beiden Knoten, nicht am Koerper",
+          [(b.stufe, b.pruefung) for b in bef] == [("FEHLER", "Seiten im Inneren")]
+          and "doppelte Knoten (" in gef
+          and [b.pruefung for b in dg.abnahme(m)] == ["Seiten im Inneren"],
+          _kurz(bef) + " | " + gef[:100])
+
+
 def main():
     for f in (test_falsche_knotenzahl,
               test_abnahme_findet_verdrehten_sechsflaechner,
@@ -3378,6 +4667,19 @@ def main():
               test_faltungsbefund_nur_mit_laufender_volumenbilanz,
               test_faltungsbefund_nennt_nur_gemessene_abhilfe,
               test_abnahme_luecke_je_regel,
+              test_abnahme_nennt_nicht_gepruefte_volumenbilanz,
+              test_abnahme_t_stoss_nennt_haengende_knoten,
+              test_abnahme_doppelte_knoten_relativ_zur_kante,
+              test_abnahme_losgeloester_bereich_schraeg_versetzt,
+              test_abnahme_t_stoss_mit_geteilter_kante,
+              test_abnahme_hohlraum_neben_losgeloestem_bereich,
+              test_abnahme_hohlraum_mit_einspringender_kante,
+              test_abnahme_duenne_luecke_und_ufer_ohne_gegenueber,
+              test_abnahme_netzrand_verfehlt_randflaeche,
+              test_abnahme_luecke_abhilfe_bei_gleicher_elementzahl,
+              test_abnahme_mulde_mit_einspringender_kante,
+              test_abnahme_durchtrennter_koerper_heisst_doppelt,
+              test_abnahme_riss_mit_knoten_naeher_als_ein_prozent,
               test_windschiefe_randflaechen_ohne_dreiecksschleife,
               test_abnahme_meldet_ausgefallene_pruefungen,
               test_nicht_messbare_formguete_gilt_nicht_als_beste,
