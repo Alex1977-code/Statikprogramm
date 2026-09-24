@@ -214,7 +214,12 @@ def anschluss_melden(log: Optional[list], n: int, unklar: list,
     Gemeinsam fuer das Anhaengen eines JSON-Modells (``quelle="Quelle"``) und
     einer anderen Datei (``quelle="Datei"``), damit beide Wege dieselbe
     Warnung fuer uneindeutige Stellen geben."""
-    if n:
+    # Einzahl bei einem Knoten (Befunde B075/B077): bis zum 24.09.2026 hiess es
+    # auch dann „1 Knoten der Quelle lagen auf Knoten des Ziels“.
+    if n == 1:
+        say(log, f"1 Knoten der {quelle} lag auf einem Knoten des Ziels und "
+                 "wurde zusammengeführt")
+    elif n:
         say(log, f"{n} Knoten der {quelle} lagen auf Knoten des Ziels und "
                  "wurden zusammengeführt")
     if unklar:

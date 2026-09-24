@@ -3120,7 +3120,16 @@ jetzt kommen alle an. Was das Protokoll dabei sagt:
   umbenannten Volumenkörpers (`V1` → `V1_2`); über sie findet eine
   Kontaktbedingung ihren Körper. Bis zum 23.09.2026 behielten die Elemente
   `V1`, und die Fuge der Quelle löste im Versuch den Block des anderen
-  Körpers. Ebenso folgen die Ermüdungslasten, deren Zustand eine Kombination
+  Körpers. Ein Volumenkörper oder eine Fläche der Quelle wird auch dann
+  umbenannt, wenn im Ziel nur eine Elementgruppe so heißt, ohne Körper oder
+  Fläche – etwa ein DXF-Layer. Bis zum 23.09.2026 trugen dann Elemente beider
+  Teile dieselbe Gruppe. Im Versuch lagen zwei Blöcke des Ziels, der untere
+  mit der Gruppe `V1`, an einer Quelle mit den Körpern `V1`/`V2` und einer
+  Fuge auf `V1`: die Fuge hängte auch den unteren Block des Ziels um, und er
+  teilte danach mit dem oberen nur noch 2 statt 4 Knoten, ohne Meldung.
+  Jetzt heißt der Körper der Quelle `V1_2`, die Fuge hängt nur ihn um, und
+  die Blöcke des Ziels teilen weiter 4 Knoten.
+  Ebenso folgen die Ermüdungslasten, deren Zustand eine Kombination
   ist (am CBG alle 20), der umbenannten Kombination; bis dahin zeigte eine
   solche Ermüdungslast ohne Meldung auf die gleichnamige Kombination des
   Ziels. Werkstoffe, Querschnitte, Dicken, Kombinationen und
@@ -3197,10 +3206,24 @@ jetzt kommen alle an. Was das Protokoll dabei sagt:
   behalten beim Anhängen ihren Namen, außer sie heißen wie ein umbenannter
   Körper oder eine umbenannte Fläche. Im Versuch trugen beide Rahmen die
   Gruppe `default`, und eine Stellung mit dieser Gruppe hob alle 34 Knoten
-  samt den Lagerknoten.
+  samt den Lagerknoten. Heißt die Stellung `Grundstellung`, zeigt die
+  Situation ebenso auf einen neuen Namen (`Grundstellung_2`), darunter ist
+  aber nur ein Teil der Stellung anzulegen. Von einer Stellung dieses
+  Namens wirken in einer Situation nur die abgeschalteten Stäbe, Flächen
+  und Volumen, nicht ihre Lage (Ausgangsstellung, Verschiebung, Drehung),
+  Lager und Gelenke. Die Warnung sagt das; bis zum 24.09.2026 empfahl sie
+  auch hier, die Stellung unter dem neuen Namen anzulegen. Im Versuch
+  schaltete die Stellung `Grundstellung` eines Winkels das Lager unter der
+  belasteten Spitze ab: allein ergab sich dort 0,0 mm, mit der ganzen
+  Stellung unter dem neuen Namen −16,264 mm, mit einer Stellung
+  `Grundstellung_2` ohne Inhalt (die Stellung schaltete nichts ab) 0,0 mm
+  wie allein. Schaltet sie dagegen einen Stab ab, gehört genau das unter
+  den neuen Namen: an einem Kragarm mit Stützstab ergab sich allein
+  −4,1412 mm und mit dem abgeschalteten Stützstab unter `Grundstellung_2`
+  ebenso.
 * **Anschluss:** Ein Knoten der Quelle, der auf einem Knoten des Ziels
-  liegt, wird mit ihm zusammengeführt („1 Knoten der Quelle lagen auf Knoten
-  des Ziels …“); jeder Verweis darauf folgt, auch Ecken und integrierte
+  liegt, wird mit ihm zusammengeführt („1 Knoten der Quelle lag auf einem
+  Knoten des Ziels …“); jeder Verweis darauf folgt, auch Ecken und integrierte
   Knoten von Flächen, Punktmassen, Starrkörper und Zwangsverformungen.
   Knoten, die innerhalb des Ziels oder innerhalb der Quelle schon
   aufeinanderliegen, bleiben getrennt, etwa die beiden Seiten einer
@@ -3225,7 +3248,7 @@ das ganze Modell. **Beim Anhängen an ein vorhandenes Modell** (seit
 23.09.2026) wird nur innerhalb der Datei zusammengeführt; an das vorhandene
 Modell schließt die Datei danach an wie ein angehängtes Statik3D-Modell
 („Anschluss“ oben): nur wo an der Stelle genau ein Knoten des Modells liegt
-(„1 Knoten der Datei lagen auf Knoten des Ziels …“). Liegen dort schon
+(„1 Knoten der Datei lag auf einem Knoten des Ziels …“). Liegen dort schon
 mehrere, bleibt der Knoten der Datei getrennt, und die Warnung „An … Stellen
 liegen in Ziel oder Datei schon mehrere Knoten aufeinander …“ nennt die Zahl
 und die erste Stelle. Bis dahin lief das Zusammenführen auch beim Anhängen

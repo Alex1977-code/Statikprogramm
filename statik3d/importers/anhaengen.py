@@ -27,10 +27,14 @@ innerhalb eines Teils: dort liegen Knoten absichtlich aufeinander (die
 Seiten einer Kontaktfuge). Namen: was es im Ziel schon gibt, bekommt einen
 eindeutigen neuen Namen (``S1`` -> ``S1_2``), und jeder Verweis der Quelle
 folgt ihm - auch die Gruppe der Elemente (sie nennt den Koerper) und die
-Zustaende der Ermuedungslasten, soweit sie Kombinationen sind. Stellungen
+Zustaende der Ermuedungslasten, soweit sie Kombinationen sind. Koerper- und
+Flaechennamen gelten auch dann als vergeben, wenn im Ziel nur eine
+Elementgruppe so heisst. Stellungen
 gehen nicht mit; nennt eine Situation der Quelle eine, die das Ziel unter
 demselben Namen hat, zeigt sie auf einen neuen Namen, den die
-Modellpruefung als unbekannt meldet (``_stellungsverweise``).
+Modellpruefung als unbekannt meldet (``_stellungsverweise``, auch bei einer
+Stellung namens 'Grundstellung': von ihr wirken in einer Situation die
+Abschaltungen, und die Warnung sagt, dass nur diese anzulegen sind).
 Werkstoffe, Querschnitte, Dicken, Kombinationen und Ermuedungslasten mit
 gleichem Namen **und** gleichem Inhalt werden nicht doppelt angelegt.
 Lastfaelle gleichen Namens werden wie bisher zusammengelegt; weichen ihre
@@ -45,7 +49,7 @@ from dataclasses import asdict, is_dataclass
 
 import numpy as np
 
-from ..model import Model, ACTION_CATEGORIES
+from ..model import Model, ACTION_CATEGORIES, GRUNDSTELLUNG
 from . import _common as C
 
 #: Uebertragene Schluessel von Model.to_dict() -> Bezeichnung im Protokoll
@@ -105,6 +109,20 @@ NICHT_UEBERTRAGEN: dict[str, tuple[str, str]] = {
                    "Gruppenangabe die Knoten dieser Elementgruppen) - im Ziel neu anlegen; "
                    "Situationen, die eine Stellung nennen, meldet die Modellprüfung"),
 }
+
+#: Zusatz zur Warnung ueber umbenannte Stellungsverweise, wenn die Stellung
+#: 'Grundstellung' heisst. Von ihr wirken in einer Situation nur die
+#: Abschaltungen (Model.aktive_elemente); Lage, Lager und Gelenke uebergeht
+#: situationen.situationsmodell. Wer sie ganz unter dem neuen Namen anlegt,
+#: rechnet anders als in der Quelle. Gemessen am 24.09.2026 (Rahmen 'frame',
+#: Stellung hebt um 1,0 m und schaltet den rechten Stiel ab, 10 kN
+#: waagerecht): allein |u| = 3,8300 mm, ganz angelegt 12,5294 mm, nur die
+#: Abschaltung angelegt 3,8300 mm.
+_GRUNDSTELLUNG_HINWEIS = (
+    f" Von einer Stellung namens '{GRUNDSTELLUNG}' wirken in einer Situation nur die "
+    "abgeschalteten Stäbe, Flächen und Volumen, nicht ihre Lage (Ausgangsstellung, "
+    "Verschiebung, Drehung), Lager und Gelenke - unter dem neuen Namen also nur die "
+    "Abschaltungen anlegen, sonst rechnet die Situation anders als in der Quelle.")
 
 #: Die Lastlisten eines Lastfalls (Schluessel von LoadCase.to_dict())
 LASTLISTEN = ("nodal_loads", "beam_loads", "face_loads", "temp_loads", "geometrielasten",
@@ -266,12 +284,24 @@ class _Anhang:
             zd, qd = getattr(z, art), getattr(q, art)
             self.namen_vergeben(art, zd, list(qd),
                                 lambda n, zd=zd, qd=qd: _inhalt(zd[n]) == _inhalt(qd[n]))
+        # Die Elemente eines Koerpers oder einer Flaeche tragen deren Namen als
+        # Gruppe (_netz), und fugen.py loest ueber die Gruppe. Also gilt ein
+        # Name auch dann als vergeben, wenn im Ziel nur eine Elementgruppe so
+        # heisst, ohne Koerper oder Flaeche (etwa ein DXF-Layer). Gemessen vor
+        # dieser Zeile (23.09.2026): Zielbloecke mit der Gruppe 'V1' links an
+        # einer Quelle mit Koerpern V1/V2 und Fuge KB1 auf V1 - KB1 haengte
+        # auch den Zielblock um (Elemente [0, 2] statt [2]), und die beiden
+        # Zielbloecke teilten danach 2 statt 4 Knoten, ohne Meldung.
+        gruppen_z = {str(e.group) for e in z.elements if e.group}
         for art in ("lines", "flaechen", "koerper", "members", "hinges", "situationen",
                     "joints", "verformungsgrenzen", "beulfelder", "volumenbereiche",
                     "lasteinleitungen", "subsysteme", "layer", "unterlagen",
                     "wasserdruecke", "winde", "schwingungen", "schweissnaehte",
                     "bemassungen"):
-            self.namen_vergeben(art, getattr(z, art) or {}, list(getattr(q, art) or {}))
+            vorhanden = set(getattr(z, art) or {})
+            if art in ("flaechen", "koerper"):
+                vorhanden |= gruppen_z
+            self.namen_vergeben(art, vorhanden, list(getattr(q, art) or {}))
         # Fugen: Kontaktbedingungen und Kontaktpaare teilen sich die Namen -
         # ein Uebermass, ein Spaltelement und eine Kopplung nennen die Fuge
         # beim Namen, gleich ob es eine Bedingung dazu gibt.
@@ -300,7 +330,8 @@ class _Anhang:
     def _stellungsverweise(self) -> None:
         """Stellungen gehen nicht mit (:data:`NICHT_UEBERTRAGEN`). Nennt eine
         Situation der Quelle eine Stellung, die das Ziel unter demselben Namen
-        hat, bekommt der Verweis einen neuen Namen, den es im Ziel nicht gibt.
+        hat, bekommt der Verweis einen neuen Namen, den es im Ziel nicht gibt -
+        auch der Name GRUNDSTELLUNG (siehe den Kommentar in der Schleife).
 
         Warum: sonst loeste ``Model.stellung`` ihn still auf die Stellung des
         Ziels auf, und ``Model.check`` meldete nichts (es prueft nur, ob der
@@ -332,7 +363,18 @@ class _Anhang:
                   | {str(getattr(s, "name", "")) for s in (q.stellungen or [])}
                   | set(genannt))
         for n in genannt:
-            # dieselbe Aufloesung wie beim Rechnen (Model.stellung)
+            # Aufgeloest wird wie in Model.aktive_elemente (Model.stellung),
+            # ohne Ausnahme fuer GRUNDSTELLUNG. situationen.situationsmodell
+            # uebergeht bei diesem Namen nur Lage, Lager und Gelenke
+            # (st.anwenden); die Abschaltung ihrer Staebe, Flaechen und
+            # Volumen holt Model.aktive_elemente ueber den Namen. Bliebe der
+            # Verweis stehen, rechnete die Situation still mit der Abschaltung
+            # der gleichnamigen Stellung des Ziels. Gemessen am 24.09.2026 am
+            # Stand 159edab, der den Namen ausnahm: Kragarm aus HEB 300 mit
+            # Stuetzstab, die Stellung 'Grundstellung' der Quelle schaltet den
+            # Stuetzstab ab, das Ziel hat eine leere 'Grundstellung'; allein
+            # uz = -4,1412 mm, angehaengt -0,0064 mm, ohne Meldung. Was unter
+            # dem neuen Namen anzulegen ist, sagt die Warnung in _melden.
             if z.stellung(n) is not None:
                 neu = C.unique_name(belegt, n)
                 belegt.add(neu)
@@ -828,14 +870,17 @@ class _Anhang:
             for name, s in q.situationen.items():
                 if s.stellung in self.stellungsverweis:
                     je.setdefault(s.stellung, []).append(self.neu("situationen", name))
-            teile = [f"Situation {', '.join(repr(x) for x in sits)}: Stellung '{alt}' → "
+            teile = [f"Situation{'en' if len(sits) > 1 else ''} "
+                     f"{', '.join(repr(x) for x in sits)}: Stellung '{alt}' → "
                      f"'{self.stellungsverweis[alt]}'" for alt, sits in je.items()]
             C.warn(log, "Situationen der Quelle nennen eine Stellung, die es im Ziel unter "
                         "demselben Namen gibt. Stellungen werden nicht übertragen; damit diese "
                         "Situationen nicht still in der Stellung des Ziels rechnen, zeigen sie "
                         "auf einen neuen Namen: " + "; ".join(teile) + ". Die Modellprüfung "
                         "meldet sie, bis die Stellung unter diesem Namen im Ziel angelegt oder "
-                        "die Situation auf eine Stellung des Ziels umgestellt ist.")
+                        "die Situation auf eine Stellung des Ziels umgestellt ist."
+                        + (_GRUNDSTELLUNG_HINWEIS if GRUNDSTELLUNG in self.stellungsverweis
+                           else ""))
         abw = [ZIEL_BEHAELT[k].split(" (")[0] for k in ZIEL_BEHAELT
                if k not in _OHNE_VERGLEICH and _einstellung(z, k) != _einstellung(q, k)]
         if abw:
