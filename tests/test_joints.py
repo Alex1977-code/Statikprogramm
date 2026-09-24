@@ -1263,7 +1263,7 @@ def test_anschluss_ermuedungslasten():
     check("Bericht: Anschluss unvollständig, nicht „Nachweis erfüllt“",
           "Nachweis unvollständig" in kap and "Nachweis erfüllt" not in kap)
     check("Bericht, Gesamturteil: der Anschluss ist nicht vollständig geführt",
-          "nicht vollständig geführt wurden: 1 Anschlüsse (Ermüdung)" in html
+          "nicht vollständig geführt wurden: 1 Anschluss (Ermüdung)" in html
           and "Alle Nachweise erfüllt." not in html)
     m.joints["K1"].kraefte = {}
 

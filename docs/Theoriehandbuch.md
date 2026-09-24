@@ -6549,7 +6549,8 @@ weiteren Wegen, jeweils gemessen am Stand 97df705:
   Nachweiskapitel, und das kehrt bei ausgeschalteter Option früh zurück. Die
   Zusammenfassung liest die Nachweisergebnisse aber unabhängig von der Option.
   Stütze S355 und Riegel ohne f_y, Umfang „kurz" und ebenso „lang": Statuszeile
-  „… nicht geführt wurden: 1 Stäbe (EC3) (siehe die Hinweise unten).",
+  „… nicht geführt wurden: 1 Stäbe (EC3) (siehe die Hinweise unten)." (Wortlaut
+  jenes Stands; seit dem 23.09.2026 „1 Stab (EC3)"),
   darunter „Es liegen keine offenen Hinweise oder Warnungen vor." Jetzt legt
   die Zusammenfassung den Hinweis an, an der Stelle, an der sie die nicht
   geführten Stäbe für die Statuszeile zählt — beides kommt aus derselben
@@ -6558,8 +6559,9 @@ weiteren Wegen, jeweils gemessen am Stand 97df705:
   größte Ausnutzung über alle Stäbe, auch über die nicht geführten. Mit einem
   einzigen Riegel ohne f_y standen dort „max. Ausnutzung Nachweise EC3" mit
   0.000 und „maßgebend" mit „Stab Riegel_ohne_fy: , Kombination , x = 0.00 m", die
-  Statuszeile sagte „Alle **geführten** Nachweise erfüllt – nicht geführt
-  wurden: 1 Stäbe (EC3)", obwohl kein Nachweis geführt war. Jetzt zählt nur
+  Statuszeile sagte „Alle \*\*geführten\*\* Nachweise erfüllt – nicht geführt
+  wurden: 1 Stäbe (EC3)" (Wortlaut jenes Stands, die Sternchen standen wörtlich
+  im Bericht), obwohl kein Nachweis geführt war. Jetzt zählt nur
   ein geführter Stab für Ausnutzung und maßgebende Stelle; ist keiner geführt
   und auch sonst kein Nachweis, fehlen beide Zeilen, und die Statuszeile heißt
   „Kein Nachweis geführt – nicht geführt wurden: …" (rot, nicht grün wie „Es
@@ -6593,13 +6595,71 @@ Bildunterschriften, denn sie hätten keinen Wert zu zeigen
 (`test_kein_stab_gefuehrt_keine_bilder`). Am Stand ec6448c waren an diesem
 Modell beide Bilder da, alle 12 Linien grün und zwei Balken „0.000".
 
+Weitere Befunde am Gesamturteil und seinen Hinweisen, gemessen am Stand
+ec6448c (23.09.2026), geprüft in `tests/test_report.py` und
+`tests/test_theorie3.py`:
+
+* **„… NICHT erfüllt für" nur im Kapitel.** Dasselbe Muster wie oben bei den
+  nicht geführten Stäben, jetzt bei den nicht erfüllten: der Hinweis
+  entstand im Nachweiskapitel, und das kehrt bei ausgeschalteter
+  Berichtsoption früh zurück. Einfeldträger IPE 300 mit Ausnutzung 9,5 und
+  „Nachweise EC3" aus: Statuszeile „Nachweise NICHT erfüllt – siehe die
+  Nachweiskapitel.", Hinweisliste leer, darunter „Es liegen keine offenen
+  Hinweise oder Warnungen vor."; mit „Ermüdung" aus am Kragarm (D = 12 185)
+  ebenso. Jetzt bildet die Zusammenfassung alle diese Hinweise (EC3, Beulen,
+  Volumen, Ermüdung, Anschlüsse, Verformung) aus denselben Listen, aus denen
+  sie das Gesamturteil bildet, und die Statuszeile verweist auf „die Hinweise
+  unten", sobald das Kapitel eines nicht erfüllten Nachweises aus ist. Geprüft
+  je Option einzeln an einem Träger, an dem jede Nachweisart reißt
+  (Beulen, Anschlüsse und Volumen als Ergebnisobjekte von Hand). Die
+  Lasteinleitung behält ihren Hinweis im Abschnitt: sie hat keine eigene
+  Option und steht auch bei ausgeschalteten Beulnachweisen im Bericht.
+* **Lauter nicht geführte Ermüdungseinträge zählten als geführt.** Als
+  geführt galt die Ermüdung, sobald es überhaupt Einträge gab. Mit der
+  einzigen Ermüdungslast auf einem nicht gerechneten Höchstzustand hieß es am
+  Kragarm „Alle \*\*geführten\*\* Nachweise erfüllt – nicht geführt wurden:
+  1 Stäbe (Ermüdung) …", am Zugstab-Volumen ebenso mit „1 Volumenkörper
+  (Ermüdung)" — geführt war keiner. Dasselbe galt für Volumenbereiche, die
+  alle nicht geführt oder alle nur berichtet (singulär) waren; ein
+  Modell ohne andere Nachweise mit nur einem singulären Bereich bekam „Alle
+  Nachweise erfüllt.". Jetzt zählt ein Eintrag nur ohne Fehler (Volumen: und
+  nicht singulär); die Statuszeile heißt dann „Kein Nachweis geführt – …"
+  bzw. „Es wurden keine Nachweise geführt; …".
+* **Wortlaut.** „1 Stäbe (EC3)", „1 Stäbe (Ermüdung)", „1 Volumenbereiche"
+  heißen jetzt „1 Stab", „1 Volumenbereich"; ebenso zählt die
+  Zusammenfassung die unvollständigen Anschlüsse (Ermüdung, Befund B094) als
+  „1 Anschluss". Die Sternchen um „geführten"
+  standen in HTML und PDF wörtlich und gaben in Markdown verschachteltes
+  Fett, ebenso „\*\*am Ort\*\*" (Ermüdung) und „\*\*Sehne\*\*" (Verformung)
+  in den Grundlagen. Absätze und Listenpunkte des Berichts tragen keine
+  Auszeichnung — sie gehen durch die Maskierung.
+* **Gescheiterte Theorie III. Ordnung fehlte in den offenen Hinweisen.** Mit
+  erzwungenem `info.fehler` am Kragarm aus zwei Stäben stand der Grund bei
+  II. Ordnung in den Hinweisen der Zusammenfassung, bei III. Ordnung nur in
+  der Spalte „Hinweis" des Theoriekapitels — und darunter „Es liegen keine
+  offenen Hinweise oder Warnungen vor.". Jetzt trägt chapter_theorie3 ihn
+  ein wie chapter_theorie2.
+* **Spalte „Löser" im Anhang.** Sie zeigte `info["solver"]`, den Löser der
+  letzten Faktorisierung, auch wenn das Ergebnis ein Ausweichen trug
+  („pardiso", während Anhangzeile und Hinweis „ausgewichen auf SuperLU"
+  nannten; Angaben am Ergebnis von Hand gesetzt, wie sie `ausweich_info` bei
+  einem Teilausfall hinterlässt). Jetzt: „pardiso – ausgewichen auf SuperLU
+  (direkt, einkernig)". Eine überlagerte Kombination hat keinen eigenen
+  Löser, trägt aber das Ausweichen ihrer Lastfälle; die erste Fassung der
+  Kur schrieb dort „– – ausgewichen auf SuperLU (direkt, einkernig)"
+  (gemessen 24.09.2026 an einer echten Rechnung mit werfendem
+  `factorize`). Jetzt steht dort nur „ausgewichen auf SuperLU (direkt,
+  einkernig)".
+
 **„Alle Nachweise erfüllt." galt auch bei gerissenem Volumennachweis.**
 `self.volumen` fehlte im Gesamturteil **doppelt**: in der Statusprüfung und in
 der Liste der geführten Nachweise. Ein Modell, das nur aus Volumen besteht — am
 Drehlager der Regelfall —, bekam entweder „Es wurden keine Nachweise geführt"
 oder „Alle Nachweise erfüllt", während der geführte Nachweis riss. Die eine
 Zeile, die ein Prüfer als Gesamturteil liest, sagt jetzt:
-*„Alle **geführten** Nachweise erfüllt – nicht geführt wurden: …"*
+*„Alle geführten Nachweise erfüllt – nicht geführt wurden: …"* (bis zum
+23.09.2026 mit Sternchen um „geführten", die in HTML und PDF wörtlich standen
+und in Markdown verschachteltes Fett ergaben).
 
 Geprüft wird das am reinen Volumenmodell selbst, nicht nur am Balken mit Stab:
 dort fällt ein fehlender Eintrag „Volumen" in der Liste der geführten

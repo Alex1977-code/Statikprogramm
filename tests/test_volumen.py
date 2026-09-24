@@ -615,11 +615,12 @@ def test_ausgeschalteter_bereich_im_gesamturteil():
           and "alle erfüllt" not in s2, s2)
 
     # Gegenprobe: nicht fuehrbar (kein f_y) bleibt "nicht geführt" - und nur
-    # dieser Bereich wird gezaehlt, der ausgeschaltete nicht
+    # dieser Bereich wird gezaehlt, der ausgeschaltete nicht. Seit B118 in der
+    # Einzahl („1 Volumenbereich“; vorher „1 Volumenbereiche“).
     an3, html3, zeilen3 = lauf(["Schaft", "Aus", "Ohne"], ohne_fy=True)
     klasse3, text3 = zeilen3[0] if zeilen3 else ("", "")
-    check("Gegenprobe ohne f_y: „nicht geführt wurden: 1 Volumenbereiche“, Klasse nok",
-          klasse3 == "nok" and "nicht geführt wurden: 1 Volumenbereiche" in text3,
+    check("Gegenprobe ohne f_y: „nicht geführt wurden: 1 Volumenbereich“, Klasse nok",
+          klasse3 == "nok" and "nicht geführt wurden: 1 Volumenbereich " in text3,
           f"{klasse3}: {text3}")
     s3 = an3.volumen.summary()
     check("... mit Warnung; die Zusammenfassung nennt nur „Ohne“ als nicht geführt",

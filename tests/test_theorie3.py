@@ -363,12 +363,72 @@ def test_theorie_mit_info_fehler_markiert_das_lineare_ergebnis():
               spalte == f"I (statt {th}: nicht gerechnet)", repr(spalte))
 
 
+def _offene_hinweise(html: str) -> list:
+    """Die Punkte der Liste "Offene Hinweise und Warnungen" der Zusammenfassung."""
+    import re
+    i = html.find("Offene Hinweise und Warnungen:")
+    if i < 0:
+        return []
+    j = html.find("<ul>", i)
+    k = html.find("</ul>", j)
+    if j < 0 or k < 0:
+        return []
+    return re.findall(r"<li>(.*?)</li>", html[j:k], re.S)
+
+
+def test_gescheiterte_theorie_in_den_offenen_hinweisen():
+    """Ein gescheiterter Lastfall nach Theorie II. **und** III. Ordnung gehört
+    in die offenen Hinweise der Zusammenfassung.
+
+    chapter_theorie2 trug ``info.fehler`` in die Hinweise ein,
+    chapter_theorie3 nur in die Spalte „Hinweis" seiner Tabelle. Gemessen
+    23.09.2026 an ec6448c mit erzwungenem ``info.fehler`` am Kragarm aus zwei
+    Stäben: bei II stand der Grund zweimal im Bericht und in den offenen
+    Hinweisen, bei III einmal (nur in der Spalte), und unter der
+    Zusammenfassung stand „Es liegen keine offenen Hinweise oder Warnungen
+    vor." - während die Lastfalltabelle „I (statt III: nicht gerechnet)"
+    auswies.
+    """
+    from statik3d import theorie2 as t2mod
+    from statik3d import theorie3 as t3mod
+    from statik3d.report.html import Report
+    for th, modul, fname in (("II", t2mod, "solve_theorie2"),
+                             ("III", t3mod, "solve_theorie3")):
+        grund = f"GRUND-{th}-erzwungen"
+        original = getattr(modul, fname)
+
+        def gescheitert(*a, _orig=original, _text=grund, **kw):
+            res, info = _orig(*a, **kw)
+            info.fehler = _text
+            info.gerechnet = False
+            return res, info
+
+        setattr(modul, fname, gescheitert)
+        try:
+            m, lc = _zweifeld_kragarm(th)
+            an = solver.solve_all(m)
+        finally:
+            setattr(modul, fname, original)
+        html = Report(m, an).html()
+        check(f"Theorie {th} gescheitert: Aufbau, die Spalte sagt 'nicht gerechnet'",
+              f"I (statt {th}: nicht gerechnet)" in html, "")
+        treffer = [h for h in _offene_hinweise(html) if grund in h]
+        check(f"Theorie {th} gescheitert: der Grund steht in den offenen Hinweisen",
+              len(treffer) == 1, f"{len(treffer)} Treffer")
+        check(f"Theorie {th} gescheitert: der Hinweis nennt Theorie und Lastfall",
+              bool(treffer) and f"Theorie {th}. Ordnung" in treffer[0]
+              and lc.name in treffer[0], treffer[0] if treffer else "–")
+        check(f"Theorie {th} gescheitert: nicht 'keine offenen Hinweise'",
+              "keine offenen Hinweise" not in html, "")
+
+
 def main():
     for t in (test_drehungen, test_kreisbogen, test_elastica, test_seil,
               test_druckstab_II_gegen_III, test_theoriewahl,
               test_gescheiterte_theorie_meldet_sich,
               test_gelungene_theorie_steht_schlicht_in_der_tabelle,
-              test_theorie_mit_info_fehler_markiert_das_lineare_ergebnis):
+              test_theorie_mit_info_fehler_markiert_das_lineare_ergebnis,
+              test_gescheiterte_theorie_in_den_offenen_hinweisen):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
