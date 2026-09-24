@@ -17494,8 +17494,13 @@ class MainWindow(QtWidgets.QMainWindow):
         r = self.current_result()
         self._lastwahl_nachziehen()     # die Glasleiste zeigt dasselbe an
         # Das Etikett der Maske Nachweise (Gruppe „Nachweise führen“) bei
-        # jedem Aufruf aus dem, was die Rechnung jetzt hat - EC3, Ermuedung,
-        # beides oder nichts. Bis zum 23.09.2026 wurde es nur mit einem EC3-
+        # jedem Aufruf aus dem, was die statische Analyse (self.analysis)
+        # jetzt hat - EC3, Ermuedung, beides oder nichts -, nicht aus dem
+        # gezeigten Ergebnis r. Eigenformen und Knicken setzen in _solve_done
+        # nur results und lassen analysis stehen; danach bleibt hier also die
+        # Zeile der letzten statischen Rechnung, mit der auch do_design und
+        # do_fatigue weiterrechnen (im Fenster gemessen 24.09.2026, IPE 300
+        # mit Druckkraft). Bis zum 23.09.2026 wurde es nur mit einem EC3-
         # oder Ermuedungsergebnis geschrieben: nach einer Rechnung mit EC3 und
         # einer ohne Nachweise blieb „Nachweise EC3: … max. Ausnutzung 0.633
         # … - alle erfuellt“ stehen, mit nur Ermuedung wurde es geleert

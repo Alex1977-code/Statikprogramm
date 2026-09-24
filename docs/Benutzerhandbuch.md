@@ -3384,15 +3384,21 @@ Kombination und Stelle; Färbung „Ausnutzung EC3“ im Viewport; alle Details
 im Bericht.
 
 Das Etikett der Maske *Nachweise* (Gruppe „Nachweise führen (nach der
-Berechnung)“) wird nach jeder Rechnung, nach „Nachweise EC3“ und
+Berechnung)“) zeigt die Nachweise der letzten statischen Rechnung („Alle
+Lastfälle + Kombinationen“ oder „Nur aktiver Lastfall“): die Zeile der
+Nachweise EC3 und darunter die der Ermüdung — jeweils nur, wenn diese
+Rechnung sie hat; ohne beide steht dort „noch keine Nachweise“. Neu
+geschrieben wird es nach jeder Rechnung, nach „Nachweise EC3“ und
 „Ermüdungsnachweis“, beim Wechsel des gezeigten Ergebnisses und nach einer
-Änderung aus dem Browser neu geschrieben. Es zeigt dann die Zeile der
-Nachweise EC3 und darunter die der Ermüdung — jeweils nur, wenn das Ergebnis
-sie hat; ohne beide steht dort „noch keine Nachweise“. Werden die Ergebnisse
-verworfen, ohne dass neu gerechnet wird — gemessen am 24.09.2026 mit „Lasten
-des aktiven Lastfalls löschen“, *Datei → Neu* und „Übernehmen“ in der Maske
-eines Lastfalls —, bleibt die alte Zeile stehen, bis einer der zuerst
-genannten Anlässe das Etikett neu schreibt. Bis zum 23.09.2026 blieb nach
+Änderung aus dem Browser. „Eigenschwingungen (Modalanalyse)“ und „Knicken /
+Beulen (Stabtragwerke)“ ersetzen die statische Rechnung nicht: Das Programm
+behält ihr Ergebnis, „Nachweise EC3“ und „Ermüdungsnachweis“ rechnen weiter
+damit, und das Etikett zeigt weiter ihre Zeile, auch während Eigenformen
+bzw. Knickfiguren gezeigt werden (gemessen am 24.09.2026). Werden die
+Ergebnisse verworfen, ohne dass neu gerechnet wird — gemessen am 24.09.2026
+mit „Lasten des aktiven Lastfalls löschen“, *Datei → Neu* und „Übernehmen“
+in der Maske eines Lastfalls —, bleibt die alte Zeile stehen, bis einer der
+oben genannten Anlässe das Etikett neu schreibt. Bis zum 23.09.2026 blieb nach
 einer Rechnung mit EC3 und einer zweiten ohne Nachweise die alte Zeile
 („Nachweise EC3: … max. Ausnutzung 0.633 … - alle erfuellt“ am Einfeldträger
 IPE 300 in `tests/test_ec3.py`) stehen, und mit nur Ermüdung war das Etikett
