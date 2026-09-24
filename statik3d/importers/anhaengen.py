@@ -49,12 +49,13 @@ from dataclasses import asdict, is_dataclass
 
 import numpy as np
 
-from ..model import Model, ACTION_CATEGORIES, GRUNDSTELLUNG
+from ..model import Model, ACTION_CATEGORIES, GRUNDSTELLUNG, tetp_kantenmitten_gelesen
 from . import _common as C
 
 #: Uebertragene Schluessel von Model.to_dict() -> Bezeichnung im Protokoll
 UEBERTRAGEN: dict[str, str] = {
     "nodes": "Knoten", "elements": "Elemente",
+    "tetp_kantenmitten": "gekrümmte Kanten (Tetraeder mit Ordnung p)",
     "materials": "Werkstoffe", "sections": "Querschnitte", "shells": "Flächendicken",
     "federn": "Federeigenschaften", "grenzschichten": "Grenzschichteigenschaften",
     "supports": "Knotenlager", "line_supports": "Linienlager",
@@ -275,7 +276,9 @@ class _Anhang:
         # stand weiter auf "ausgefuehrt" - fugen.kontaktfuge_ausfuehren lehnt
         # ein neues Trennen dann ab ("schon ausgeführt").
         # Jetzt schliesst nur die Quelle an das Ziel an.
-        n, unklar = C.anschluss_zusammenfuehren(self.z, self.base, tol)
+        # log: treffen zwei verschiedene gekruemmte Kantenmitten auf eine
+        # Kante, gilt die des Ziels - und das Protokoll sagt es
+        n, unklar = C.anschluss_zusammenfuehren(self.z, self.base, tol, log=self.log)
         C.anschluss_melden(self.log, n, unklar, "Quelle")
 
     def _namen(self) -> None:
@@ -458,6 +461,12 @@ class _Anhang:
         # anderen Koerpers (gemessen 23.09.2026: allein unten geloest,
         # angehaengt oben). Wie transformieren.kopieren: Koerper vor Flaeche.
         gruppen = {**self.umbenannt.get("flaechen", {}), **self.umbenannt.get("koerper", {})}
+        # Kantenmitten des Ziels: nur, was ein tetp-Element des Ziels liest -
+        # und zwar bevor die Elemente der Quelle dazukommen. Ein verwaister
+        # Eintrag (netzknoten_loeschen fuehrt sie nicht mit) traf sonst mit
+        # seinen Nummern die Kante eines angehaengten Elements und kruemmte
+        # es (siehe model.tetp_kantenmitten_gelesen)
+        km_z = tetp_kantenmitten_gelesen(getattr(z, "tetp_kantenmitten", None), z.elements)
         sec: dict = {}
         woelb = False
         for e in q.elements:
@@ -485,6 +494,15 @@ class _Anhang:
         if woelb:
             # wie add_element: der Zwischenspeicher der Woelbknoten gilt nicht mehr
             z._woelb_version = getattr(z, "_woelb_version", 0) + 1
+        # Die gekruemmte Geometrie der tetp-Elemente haengt an Knotennummern:
+        # mit demselben Versatz wie die Elemente, von der Quelle ebenso nur,
+        # was eines ihrer tetp-Elemente liest. Das Zusammenfuehren danach
+        # haengt sie um (_common._kantenmitten_umhaengen).
+        km_q = tetp_kantenmitten_gelesen(getattr(q, "tetp_kantenmitten", None), q.elements)
+        for (a, b), p in km_q.items():
+            km_z[(int(a) + base, int(b) + base)] = np.array(p, dtype=float)
+        z.tetp_kantenmitten = km_z
+        self.n_kantenmitten = len(km_q)          # fuer das Protokoll: was mitkam
 
     def _lager(self) -> None:
         z, q = self.z, self.q
@@ -834,7 +852,13 @@ class _Anhang:
         z, q, log = self.z, self.q, self.log
         teile = []
         for key, text in UEBERTRAGEN.items():
-            n = q.nn if key == "nodes" else _anzahl(getattr(q, key, None))
+            if key == "nodes":
+                n = q.nn
+            elif key == "tetp_kantenmitten":
+                # nur, was ein tetp-Element der Quelle liest, kam mit (_netz)
+                n = getattr(self, "n_kantenmitten", 0)
+            else:
+                n = _anzahl(getattr(q, key, None))
             n -= len(self.gleich.get(key, []))
             if n:
                 teile.append(f"{text} {n}")

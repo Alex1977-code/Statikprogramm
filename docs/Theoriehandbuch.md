@@ -7921,7 +7921,7 @@ die Meldung für einen Freibrief hält.
 | `tests/test_importers.py` | Import DXF, IFC, SAF, RFEM-Tabellen, INP, BDF |
 | `tests/test_report.py` | Berichtserzeugung |
 | `tests/test_tetp.py` | Tetraeder mit Ordnung p: Integrationsregeln gegen alle Monome, Vollständigkeit bis p = 4, sechs Starrkörpermoden, Patch-Test (verzerrt, gemischte Ordnung, lineare Pflichtseite, gekrümmt), Stapel gegen Einzelweg, Masse und Lasten, Kragarm auf 1 N/mm², umgeklapptes Element; am Modell Übergang zu tet4, Kontakt- und Lagerseiten, getrennte Fuge, laute Pflichtprüfung, Importreihenfolge, tet10-Nachbar, Jacobi-Prüfung gekrümmter Elemente, Pflichtprüfung ohne Suche je Seite (16.464 Elemente unter 0,5 s, vorher 3,1 s) |
-| `tests/test_tetp_rechnung.py` | dasselbe Element durch den Löser: Model.ndof mit und ohne tetp (ohne Lauf über die Elemente), laute Abweisung veralteter FHG-Zahlen, Kragarm-Knotenmittel auf 1 N/mm², Lastsummen, Patch-Test tet4/tetp3 gemischt, Symmetrieebenen, Temperatur; je Lastart tetp2/3/4 gegen geschlossene Lösung und tet10; Linienlager starr und federnd |
+| `tests/test_tetp_rechnung.py` | dasselbe Element durch den Löser: Model.ndof mit und ohne tetp (ohne Lauf über die Elemente), laute Abweisung veralteter FHG-Zahlen, Kragarm-Knotenmittel auf 1 N/mm², Lastsummen, Patch-Test tet4/tetp3 gemischt, Symmetrieebenen, Temperatur; je Lastart tetp2/3/4 gegen geschlossene Lösung und tet10; Linienlager starr und federnd; gekrümmte Geometrie (Hohlkugel aus tet10) über Speichern und Laden und als Auftrag bitgleich |
 
 **Gleichzeitige Prüfläufe.** `tests/test_report.py` schreibt seine Berichte in
 einen eigenen temporären Ordner je Prozess (`statik3d_report_test_…` im
@@ -8110,6 +8110,110 @@ Seite. Gemessen 23.09.2026 an der Hohlkugel der ersten Element-Sitzung
 (tet10 mit Kantenmitten auf der Kugel, 2 × 2, p = 3): 144 Elemente, 126
 gekrümmte Kanten, dieselbe Abweichung (−4,09 bis +8,17 N/mm²) wie der direkte
 Aufbau.
+
+**Gekrümmte Geometrie in der Modelldatei (23.09.2026).** Die Kantenmitten
+stehen in der Modelldatei unter `tetp_kantenmitten`: je gekrümmter Kante
+`[Knoten a, Knoten b, x, y, z]` (Knotennummern ab 0, Koordinaten in m) in der
+Reihenfolge des Modells. JSON schreibt jede Koordinate in der kürzesten
+Darstellung, die beim Lesen denselben Wert ergibt; der Umlauf ist bitgleich.
+Bis dahin lebte die Geometrie nur zur Laufzeit: Ein gespeichertes und wieder
+geladenes Modell rechnete still mit geraden Kanten, ebenso jeder Auftrag an
+Prozess-Pool oder Rechnerfarm, der das Modell auf demselben Weg verschickt
+(`to_dict`/`from_dict`, `jobs.py`). Gemessen an der Hohlkugel oben (zweimal,
+23.09.2026): nach dem Laden 0 statt 126 gekrümmte Kanten, Verschiebung bis
+4,87 µm anders bei größter Verschiebung 79,4 µm, Knotenspannung bis
+45,3 N/mm² anders. Jetzt sind Kantenmitten, Verschiebungen und
+Knotenspannungen vor und nach Speichern und Laden bitgleich, ebenso der
+Auftrag `solve_case` (`tests/test_tetp_rechnung.py`). Eine Datei ohne den
+Schlüssel lädt wie bisher mit geraden Kanten. Die Ergebnisdatei
+(`.ergebnisse`) trägt das Modell nicht – es steht dort nur als Marke – und
+bleibt, wie sie ist. Geschrieben und gelesen werden nur die Einträge, die
+ein tetp-Element liest (deren Kante Kante eines tetp-Elements ist); warum,
+steht unten bei den verwaisten Einträgen.
+
+Beim Anhängen einer Modelldatei kommen die gekrümmten Kanten mit dem
+Knotenversatz der Quelle mit; das Zusammenführen mit dem Ziel hängt sie auf
+die neuen Knotennummern um (`importers/_common._kantenmitten_umhaengen`,
+ebenso in `merge_duplicate_nodes`). Fallen dabei zwei Kanten von
+`tetp`-Elementen auf eine, gilt die Kante des `tetp`-Elements, das im Modell
+zuerst steht – beim Anhängen die des Ziels –, gerade oder gekrümmt. Eine
+gerade Kante hat keinen Eintrag; als ihre Kantenmitte zählt die Sehnenmitte.
+Liegen die beiden Kantenmitten weiter als 10⁻⁹ der Kantenlänge auseinander
+(die Grenze, mit der `aus_tet10` gekrümmt von gerade trennt), warnt das
+Protokoll und sagt, an wie vielen dieser Kanten eine Seite gerade war.
+Geprüft an der Hohlkugel mit einem Zielknoten auf einer Ecke einer
+gekrümmten Kante: die Geometrie jedes angehängten Elements ist bitgleich die
+der Quelle (`tests/test_importers.py`).
+
+Diese Regel gilt nur zwischen `tetp`-Elementen; das Zusammenführen sieht nur
+deren Kanten. Teilt die Kante danach ein Volumenelement ohne Anreicherung
+(etwa ein tet4), ist sie gerade (unten: Geometrie an der Grenze zum tet4),
+gleich welche Seite zuerst steht, und das Protokoll warnt nicht. Die
+Kantenmitte bleibt eingetragen, `geometrie_modell` übergeht sie dort. Gemessen
+(zweimal, 24.09.2026) am Viertel-Hohlzylinder 4 × 1 (tet10 mit Kantenmitten
+auf dem Kreisbogen, `aus_tet10`, p = 3) mit demselben Zylinder als tet4 um h
+darüber, in beiden Reihenfolgen: 10 Knoten zusammengeführt, 17
+Anschlusskanten, davon 8 gekrümmt; dort liegt die Geometrie genau auf der
+Sehnenmitte, die Kantenmitten der `tetp`-Elemente rücken um bis zu 3,843 mm
+(größte Koordinatenänderung 3,769 mm; die Pfeilhöhe b (1 − cos 11,25°) des
+Bogens am Außenradius b = 0,2 m), sonst bitgleich, keine Warnung (`tests/test_importers.py`). Mit
+demselben Zylinder als tet10 darüber bricht die Rechnung ab (Mittenknoten ohne
+Gegenüber, siehe oben unter Lager). Schalen und Stäbe zählen dabei nicht:
+`tetp.pflichtseiten` sieht nur Volumenelemente. Am selben gekrümmten Zylinder
+(zweimal, 24.09.2026) blieben die 8 gekrümmten Deckkanten gekrümmt mit einem
+shell3 auf jedem der 8 Deckdreiecke oder einem beam auf jeder dieser Kanten;
+mit einem tet4 auf jedem Deckdreieck oder einem hex8 an jeder dieser Kanten
+wurden sie gerade.
+
+Bis zur Nachbesserung vom 24.09.2026 galt der zuerst eingetragene Eintrag,
+und eine gerade Seite zählte nicht: Es galt still die gekrümmte Kante, auch
+wenn die des Ziels gerade war. Gemessen am Stand bc1dfe0 (zweimal am 23.09.,
+einmal am 24.09.2026): die Hohlkugel an sich selbst gehängt, eine Kante in
+einer der beiden Dateien gerade – je nach Seite die Elemente des Ziels oder
+die angehängten um bis zu 1,921 mm (größte Koordinatenänderung 1,885 mm)
+verschoben, ohne Warnung; ein Hohlzylinder mit geraden Kanten als Ziel und
+darüber derselbe Zylinder mit gekrümmten Kanten als Quelle (19 Knoten
+zusammengeführt) – die Elemente des Ziels um bis zu 3,843 mm (größte
+Koordinatenänderung 3,769 mm) verschoben, ohne Warnung. Jetzt bleiben in
+beiden Abläufen die Elemente des Ziels bitgleich, die angehängten nehmen an
+der Anschlusskante die Kante des Ziels an, und das Protokoll warnt
+(`tests/test_importers.py`).
+
+Mitgenommen werden beim Zusammenführen nur die Kantenmitten, deren Kante vor
+dem Zusammenführen Kante eines tetp-Elements ist; die übrigen fallen weg.
+Solche verwaisten Einträge lässt `Model.netzknoten_loeschen` stehen, das die
+Kantenmitten nicht mitführt – zum Teil mit Knotennummern hinter dem Ende der
+Knotenliste. An ihnen brach das Zusammenführen bis zur Nachbesserung vom
+23.09.2026 mit einem IndexError ab: gemessen (zweimal) beim Anhängen eines
+JSON-Modells an die gespeicherte Hohlkugel mit einem Stab, deren tetp-Netz
+entfernt war; vor der Speicherung der Kantenmitten (Stand ec6448c) lief
+derselbe Ablauf durch. Nur die Einträge hinter dem Ende zu verwerfen genügt
+nicht: Ein verwaister Eintrag mit gültigen Nummern wird zur Kante eines
+tetp-Elements, sobald beim Zusammenführen ein neuer Knoten auf deren Ecke
+fällt. Mit dieser Variante gemessen (zweimal, 23.09.2026) nach
+`netzknoten_loeschen` und sieben hinzugefügten Knoten, der letzte auf einer
+Ecke: eine gerade Kante lag danach 45,79 mm daneben, ohne Warnung.
+
+Das allein genügte beim Anhängen nicht. Der Filter sieht nur die Nummern vor
+dem Zusammenführen, und ohne zusammenfallende Knoten läuft er gar nicht. Ein
+verwaister Eintrag des Ziels, dessen Nummern die einer Kante eines
+angehängten Elements waren, galt dann dort. Gemessen am Stand bc1dfe0
+(zweimal am 23.09., einmal am 24.09.2026): Ziel die gespeicherte Hohlkugel
+mit Stab, geladen, tetp-Netz entfernt (38 Knoten, 126 Kantenmitten), Quelle
+ein Kragarm aus tetp3 ohne gekrümmte Kante – 8 angehängte Elemente bis
+5556 mm neben der Quelle, wenn kein Knoten zusammenfiel, bis 2556 mm, wenn
+einer auf das Stabende fiel, je 7 davon mit det J ≤ 0, ohne Warnung; Ziel
+ganz geleert, Quelle eine Hohlkugel aus geraden tetp3 – bis 89,90 mm
+daneben (größte Koordinatenänderung 87,12 mm), die Rechnung brach ab
+(Element umgeklappt). Am Stand ec6448c blieben dieselben Abläufe bei 0 mm.
+Seit der Nachbesserung vom 24.09.2026 nimmt das Anhängen von Ziel und Quelle
+nur die Einträge mit, die eines ihrer tetp-Elemente liest, bevor es die
+Quelle anfügt (`model.tetp_kantenmitten_gelesen`), und `to_dict` und
+`from_dict` schreiben und lesen nur diese: Ein verwaister Eintrag übersteht
+Speichern und Laden nicht mehr. In diesen Abläufen ist die Geometrie der
+angehängten Elemente jetzt bitgleich die der Quelle (`tests/test_importers.py`).
+Dass `netzknoten_loeschen` die Kantenmitten nicht mitführt, ist damit nicht
+behoben: im laufenden Modell entstehen verwaiste Einträge weiterhin.
 
 **Nachweisstellen auf Kontaktflächen.** Gemessen 23.09.2026 (Labor,
 Hohlzylinder h = 0,05 m, Bohrungsfläche als Kontaktseite, dort nur linearer

@@ -2454,6 +2454,475 @@ def test_json_anhaengen_einzahl_mehrzahl():
            and "Situationen 'S-offen'" not in st2[0], "\n".join(st2))
 
 
+def test_json_anhaengen_tetp_kantenmitten():
+    """Die gekruemmte Geometrie der Tetraeder mit Ordnung p (Modellschluessel
+    ``tetp_kantenmitten``, seit dem 23.09.2026 in der Datei) kommt beim
+    Anhaengen mit: die Knotennummern ihrer Kanten folgen dem Versatz und dem
+    Zusammenfuehren mit dem Ziel. Geprueft an der Geometrie jedes
+    angehaengten Elements (tetp.geometrie_modell) gegen die der Quelle -
+    bitgleich. Ein Zielknoten liegt auf einer Ecke einer gekruemmten Kante
+    der Quelle; das Zusammenfuehren nummeriert damit jeden spaeteren Knoten
+    der Quelle um.
+
+    Treffen beim Zusammenfuehren zwei verschiedene Kantenmitten auf dieselbe
+    Kante (die Quelle an sich selbst gehaengt, eine Kantenmitte um 1 mm
+    verschoben), gilt die des Ziels, und das Protokoll nennt die Kante."""
+    from statik3d.elements import tetp as tp
+    from tests import pruefkoerper as pk
+    hk = pk.Hohlkugel()
+    q0 = hk.modell("tet10", 2, 2)
+    q0.case().nodal_loads.clear()
+    tp.aus_tet10(q0, ordnung=3)
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "hohlkugel.json")
+        q0.save(p)
+        quelle = Model.load(p)                 # so, wie sie beim Anhaengen gelesen wird
+        km_q = getattr(quelle, "tetp_kantenmitten", None) or {}
+        a = next(iter(km_q))[0] if km_q else 0
+        ziel = Model("ziel")
+        ziel.add_node(5.0, 5.0, 5.0)
+        ziel.add_node(*[float(x) for x in quelle.nodes[a]])
+        log = []
+        ziel = import_file(p, model=ziel, log=log)
+
+        idx_q = [i for i, e in enumerate(quelle.elements) if tp.ist_tetp(e.typ)]
+        G_q = tp.geometrie_modell(quelle, idx_q)
+        G_z = tp.geometrie_modell(ziel, idx_q)       # das Ziel hatte keine Elemente
+        km_z = getattr(ziel, "tetp_kantenmitten", None) or {}
+        text = "\n".join(log)
+        expect("Anhaengen: gekruemmte Kanten der Quelle kommen an, Geometrie bitgleich",
+               len(km_q) > 0 and len(km_z) == len(km_q) and ziel.nn == 2 + quelle.nn - 1
+               and np.array_equal(G_q, G_z),
+               f"{len(km_z)} von {len(km_q)} Kanten, {ziel.nn} Knoten, "
+               f"max|dG| {float(np.abs(G_z - G_q).max()):.3e} m")
+        expect("Anhaengen: Protokoll nennt die gekruemmten Kanten, keine Warnung zum Feld",
+               "tetp_kantenmitten" not in text and "gekrümmte Kanten" in text, text[-400:])
+
+        # Konflikt: die Quelle an sich selbst, eine Kantenmitte um 1 mm verschoben
+        schl = next(iter(km_q))
+        q2 = Model.load(p)
+        q2.tetp_kantenmitten[schl] = np.asarray(q2.tetp_kantenmitten[schl], float) \
+            + np.array([0.0, 0.0, 1e-3])
+        p2 = os.path.join(d, "verschoben.json")
+        q2.save(p2)
+        ziel2 = Model.load(p)
+        log2 = []
+        ziel2 = import_file(p2, model=ziel2, log=log2)
+    km2 = ziel2.tetp_kantenmitten
+    zeile = [x for x in log2 if "Kantenmitte" in x]
+    expect("Anhaengen: zwei verschiedene Kantenmitten auf einer Kante - die des Ziels "
+           "gilt, das Protokoll nennt sie",
+           ziel2.nn == quelle.nn and len(km2) == len(km_q)
+           and np.array_equal(km2[schl], km_q[schl]) and len(zeile) == 1
+           and zeile[0].startswith("WARNUNG") and "1 Kante " in zeile[0]
+           and "1 mm" in zeile[0],
+           f"{ziel2.nn} Knoten, {len(km2)} Kanten; " + ("\n".join(zeile) or "keine Zeile"))
+
+
+def _tetp_hohlkugel():
+    """Hohlkugel tet10 2 x 2, zu tetp3 gemacht: gekruemmte Kanten in
+    ``tetp_kantenmitten``, die frei gewordenen Mittenknoten stehen noch."""
+    from statik3d.elements import tetp as tp
+    from tests import pruefkoerper as pk
+    m = pk.Hohlkugel().modell("tet10", 2, 2)
+    m.case().nodal_loads.clear()
+    tp.aus_tet10(m, ordnung=3)
+    return m
+
+
+def _tetp_kanten(model) -> set:
+    """Die Kanten (a < b) aller tetp-Elemente - nur deren Kantenmitten liest
+    tetp.geometrie_modell."""
+    from statik3d.elements import tetp as tp
+    aus = set()
+    for e in model.elements:
+        if tp.ist_tetp(e.typ):
+            kn = [int(n) for n in e.nodes[:4]]
+            aus |= {(min(kn[i], kn[j]), max(kn[i], kn[j])) for i, j in tp.TET10_KANTEN}
+    return aus
+
+
+def test_json_anhaengen_nach_netz_entfernen():
+    """Gegenpruefung vom 23.09.2026: Model.netzknoten_loeschen fuehrt
+    ``tetp_kantenmitten`` nicht mit - nach dem Entfernen eines tetp-Netzes
+    (wie beim Neuvernetzen: elemente_loeschen, dann netzknoten_loeschen)
+    bleiben Schluessel mit Knotennummern hinter dem Ende der Liste. Das
+    Zusammenfuehren beim Anhaengen indizierte sie und brach mit IndexError
+    ab ('index 46 is out of bounds for axis 0 with size 40'); vor der
+    Speicher-Kur (ec6448c) lief derselbe Ablauf durch: 39 Knoten,
+    2 Elemente, 1 Knoten zusammengefuehrt. So muss es wieder sein - und
+    ohne tetp-Element bleibt keine Kantenmitte stehen."""
+    from statik3d.elements import tetp as tp
+    m = _tetp_hohlkugel()
+    mat = next(iter(m.materials))
+    m.add_element("truss", [m.add_node(1.0, 0.0, 0.0), m.add_node(2.0, 0.0, 0.0)], mat, None)
+    q = Model("q")
+    q.materials = dict(m.materials)
+    q.add_element("truss", [q.add_node(2.0, 0.0, 0.0), q.add_node(3.0, 0.0, 0.0)], mat, None)
+    with tempfile.TemporaryDirectory() as d:
+        pz, pq = os.path.join(d, "z.json"), os.path.join(d, "q.json")
+        m.save(pz)
+        q.save(pq)
+        z = Model.load(pz)
+        z.elemente_loeschen([i for i, e in enumerate(z.elements) if tp.ist_tetp(e.typ)])
+        z.netzknoten_loeschen()
+        vorher = f"nach dem Entfernen {z.nn} Knoten, {len(z.tetp_kantenmitten)} Kantenmitten"
+        log = []
+        try:
+            z = import_file(pq, model=z, log=log)
+            fehler = ""
+        except Exception as ex:                 # noqa: BLE001 - der Befund ist der Abbruch
+            fehler = f"{type(ex).__name__}: {ex}"
+    if fehler:
+        expect("Anhaengen nach dem Entfernen eines tetp-Netzes laeuft durch", False,
+               f"{vorher}; {fehler}")
+        return
+    km = z.tetp_kantenmitten
+    expect("Anhaengen nach dem Entfernen eines tetp-Netzes laeuft durch wie vor der Kur",
+           z.nn == 39 and len(z.elements) == 2 and not km
+           and any("1 Knoten der Quelle lag auf einem Knoten des Ziels" in x for x in log),
+           f"{vorher}; danach {z.nn} Knoten, {len(z.elements)} Elemente, "
+           f"{len(km)} Kantenmitten")
+
+
+def test_zusammenfuehren_nach_netzknoten_loeschen():
+    """Gegenpruefung vom 23.09.2026: nach aus_tet10 und netzknoten_loeschen
+    (die frei gewordenen Mittenknoten gehen, 305 -> 57 Knoten) stehen
+    Kantenmitten mit Knotennummern bis hinter das Ende der Liste im Modell.
+    merge_duplicate_nodes danach brach ab, wenn so wenige Knoten dazukamen,
+    dass die hoechste Nummer einer Kantenmitte hinter dem neuen Ende lag -
+    etwa ein Import mit wenigen neuen Knoten oder joints.build.weld_couple
+    ('index 63 is out of bounds for axis 0 with size 58' mit einem neuen
+    Knoten; mit 247, 248 oder 400 neuen Knoten lief es durch, gemessen am
+    Stand ad5d527 am 23. und 24.09.2026, hoechste Nummer 276 bei 57
+    Knoten; ein Import ohne neue Knoten ruft merge_duplicate_nodes gar
+    nicht). Jetzt laeuft es durch, und die Geometrie jedes
+    tetp-Elements bleibt ueber das Zusammenfuehren bitgleich (was
+    netzknoten_loeschen selbst an ihr verschiebt, prueft diese Pruefung
+    nicht)."""
+    from statik3d.importers import _common as C
+    from statik3d.elements import tetp as tp
+    m = _tetp_hohlkugel()
+    idx = list(range(len(m.elements)))
+    m.netzknoten_loeschen()
+    G1 = tp.geometrie_modell(m, idx)
+    km1 = len(m.tetp_kantenmitten)
+    m.nodes = np.vstack([m.nodes, m.nodes[:1]])      # ein Doppel, wie ein Import es bringt
+    try:
+        n = C.merge_duplicate_nodes(m)
+    except Exception as ex:                     # noqa: BLE001 - der Befund ist der Abbruch
+        expect("merge_duplicate_nodes nach netzknoten_loeschen laeuft durch", False,
+               f"{km1} Kantenmitten; {type(ex).__name__}: {ex}")
+        return
+    G2 = tp.geometrie_modell(m, idx)
+    km = m.tetp_kantenmitten
+    fremd = [k for k in km if k not in _tetp_kanten(m)]
+    expect("merge_duplicate_nodes nach netzknoten_loeschen: laeuft durch, Geometrie bitgleich, "
+           "nur Kantenmitten an tetp-Kanten",
+           n == 1 and np.array_equal(G1, G2) and not fremd,
+           f"{n} zusammengefuehrt, max|dG| {float(np.abs(G2 - G1).max()):.3e} m, "
+           f"{km1} -> {len(km)} Kantenmitten, {len(fremd)} an keiner tetp-Kante")
+
+
+def test_zusammenfuehren_kantenmitte_ohne_element():
+    """Eine Kantenmitte, deren Kante zu keinem tetp-Element gehoert (wie die,
+    die netzknoten_loeschen hinter dem Ende der Knotenliste stehen laesst),
+    wirkt im Augenblick nirgends. Das Zusammenfuehren darf sie nicht auf eine tetp-Kante
+    heben: ein Import legt den Knoten ``nn`` genau auf die Ecke c einer
+    geraden Kante (x, c), und der verwaiste Schluessel (x, nn) wurde zu
+    (x, c) - die gerade Kante war danach still gekruemmt."""
+    from statik3d.importers import _common as C
+    from statik3d.elements import tetp as tp
+    m = _tetp_hohlkugel()
+    idx = list(range(len(m.elements)))
+    km = m.tetp_kantenmitten
+    x, c = next(k for k in sorted(_tetp_kanten(m)) if k not in km)       # eine gerade Kante
+    nn = m.nn
+    X = np.asarray(m.nodes, float)
+    km[(x, nn)] = 0.5 * (X[x] + X[c]) + np.array([0.0, 0.0, 0.05])        # verwaist
+    G1 = tp.geometrie_modell(m, idx)
+    n_km = len(km)
+    m.nodes = np.vstack([X, X[c:c + 1]])             # Knoten nn auf der Ecke c
+    try:
+        n = C.merge_duplicate_nodes(m)
+    except Exception as ex:                     # noqa: BLE001
+        expect("Zusammenfuehren mit verwaister Kantenmitte laeuft durch", False,
+               f"{type(ex).__name__}: {ex}")
+        return
+    G2 = tp.geometrie_modell(m, idx)
+    km2 = m.tetp_kantenmitten
+    expect("Zusammenfuehren hebt eine verwaiste Kantenmitte nicht auf eine gerade tetp-Kante",
+           n == 1 and np.array_equal(G1, G2) and (x, c) not in km2 and len(km2) == n_km - 1,
+           f"Kante ({x}, {c}): {n} zusammengefuehrt, max|dG| "
+           f"{float(np.abs(G2 - G1).max()) * 1e3:.4g} mm, {n_km} -> {len(km2)} Kantenmitten")
+
+
+def test_json_anhaengen_verwaiste_kantenmitten():
+    """Gegenpruefung vom 23.09.2026 zu bc1dfe0: verwaiste Kantenmitten des
+    Ziels (netzknoten_loeschen fuehrt sie nicht mit) kruemmten angehaengte
+    tetp-Elemente. Das Anhaengen setzte die Eintraege der Quelle mit Versatz
+    hinter die des Ziels; ein verwaister Schluessel des Ziels, der in den
+    neuen Nummern Kante eines angehaengten Elements ist, galt dann dort -
+    ohne Zusammenfuehren ohnehin (anschluss_zusammenfuehren kehrt bei 0
+    Knoten vorher zurueck), mit Zusammenfuehren, weil der Filter die alten
+    Nummern des angehaengten Elements sah. Gemessen an bc1dfe0 (zweimal am
+    23.09., einmal am 24.09.2026): Ziel die gespeicherte Hohlkugel mit Stab,
+    geladen, tetp-Netz entfernt (38 Knoten, 126 Kantenmitten); Quelle ein
+    Kragarm tet10 4 x 2 x 2 als tetp3 (keine gekruemmte Kante). Um (5, 0, 0)
+    versetzt: 8 angehaengte Elemente bis 5556 mm neben der Quelle, det J <= 0
+    an 7, keine Warnung; um (2, 0, 0) (1 Knoten auf dem Stabende): 2556 mm.
+    Ziel ganz geleert, Quelle eine gerade Hohlkugel als tetp3: 89,90 mm
+    (groesste Koordinatenaenderung 87,12 mm), die Rechnung brach ab (Element
+    umgeklappt). An ec6448c: 0 mm.
+
+    Jetzt ist die Geometrie jedes angehaengten Elements bitgleich die der
+    Quelle, kein Element klappt um."""
+    from statik3d.elements import tetp as tp
+    from tests import pruefkoerper as pk
+    m = _tetp_hohlkugel()
+    mat = next(iter(m.materials))
+    m.add_element("truss", [m.add_node(1.0, 0.0, 0.0), m.add_node(2.0, 0.0, 0.0)], mat, None)
+    zeilen, gut = [], True
+    with tempfile.TemporaryDirectory() as d:
+        pz = os.path.join(d, "z.json")
+        m.save(pz)
+        faelle = []
+        for versatz in ((5.0, 0.0, 0.0), (2.0, 0.0, 0.0)):
+            q, _ids = pk.Kragarm().modell("tet10", 4, 2, 2)
+            q.case().nodal_loads.clear()
+            tp.aus_tet10(q, ordnung=3)
+            q.nodes = np.asarray(q.nodes, float) + np.asarray(versatz)
+            faelle.append((f"Kragarm um {versatz[0]:g} m versetzt", q, False,
+                           versatz == (2.0, 0.0, 0.0)))
+        hg = pk.Hohlkugel().modell("tet4", 2, 2)
+        for e in hg.elements:
+            e.typ = "tetp3"
+        faelle.append(("Ziel geleert, gerade Hohlkugel tetp3", hg, True, False))
+        for name, q, leeren, verbunden in faelle:
+            z = Model.load(pz)
+            if leeren:
+                z.elemente_loeschen(list(range(len(z.elements))))
+                z.supports.clear()
+            else:
+                z.elemente_loeschen([i for i, e in enumerate(z.elements) if tp.ist_tetp(e.typ)])
+            z.netzknoten_loeschen()
+            vorher = f"Ziel {z.nn} Knoten, {len(z.tetp_kantenmitten)} Kantenmitten"
+            pq = os.path.join(d, "q.json")
+            q.save(pq)
+            q = Model.load(pq)
+            ne = len(z.elements)
+            log = []
+            z = import_file(pq, model=z, log=log)
+            idx = list(range(len(q.elements)))
+            G_q = tp.geometrie_modell(q, idx)
+            G_z = tp.geometrie_modell(z, [ne + i for i in idx])
+            dG = float(np.abs(G_z - G_q).max())
+            jac = tp.jacobi_pruefung(z, [ne + i for i in idx])
+            # Einzahl bei einem Knoten (B075/B077): "lag auf einem Knoten des Ziels"
+            zus = any("lagen auf Knoten des Ziels" in x or "lag auf einem Knoten des Ziels" in x
+                      for x in log)
+            ok = np.array_equal(G_z, G_q) and not jac and zus == verbunden
+            gut = gut and ok
+            zeilen.append(f"{name}: {vorher}; zusammengefuehrt {zus}; max|dG| {dG * 1e3:.4g} mm, "
+                          f"det J <= 0 an {len(jac)} von {len(idx)}")
+    expect("Anhaengen: verwaiste Kantenmitten des Ziels kruemmen keine angehaengten Elemente",
+           gut, " | ".join(zeilen))
+
+
+def test_speichern_ohne_verwaiste_kantenmitten():
+    """Gegenpruefung vom 23.09.2026 zu bc1dfe0: to_dict schrieb
+    ``tetp_kantenmitten`` ungefiltert, from_dict las es zurueck - verwaiste
+    Eintraege (an keiner Kante eines tetp-Elements) ueberstanden so Speichern
+    und Laden und konnten spaeter eine neue tetp-Kante kruemmen. Vor der
+    Speicher-Kur (ec6448c) ging mit der gekruemmten Geometrie auch jeder
+    verwaiste Eintrag beim Speichern verloren. Jetzt stehen in der Datei und
+    nach dem Laden nur die Eintraege, die ein tetp-Element liest (in der
+    Reihenfolge des Modells, bitgleich), und die Geometrie jedes
+    tetp-Elements bleibt bitgleich. Verwaist gemacht: die Haelfte der
+    tetp-Elemente entfernt, dazu ein Eintrag hinter dem Ende der
+    Knotenliste; ein weiterer steht nur in der Datei."""
+    import json
+    from statik3d.elements import tetp as tp
+    m = _tetp_hohlkugel()
+    idx_p = [i for i, e in enumerate(m.elements) if tp.ist_tetp(e.typ)]
+    m.elemente_loeschen(idx_p[len(idx_p) // 2:])
+    X = np.asarray(m.nodes, float)
+    km = m.tetp_kantenmitten
+    km[(0, m.nn + 5)] = X[0] + np.array([0.0, 0.0, 0.05])
+    liest = _tetp_kanten(m)
+    erwartet = [k for k in km if k in liest]
+    idx = [i for i, e in enumerate(m.elements) if tp.ist_tetp(e.typ)]
+    G1 = tp.geometrie_modell(m, idx)
+    with tempfile.TemporaryDirectory() as d:
+        pfad = os.path.join(d, "m.json")
+        m.save(pfad)
+        with open(pfad, encoding="utf-8") as f:
+            roh = json.load(f)
+        m2 = Model.load(pfad)
+    in_datei = [(int(a), int(b)) for a, b, *_ in roh.get("tetp_kantenmitten", [])]
+    km2 = m2.tetp_kantenmitten
+    G2 = tp.geometrie_modell(m2, idx)
+    expect("Speichern: nur Kantenmitten, die ein tetp-Element liest, in Datei und Modell",
+           len(erwartet) < len(km) and in_datei == erwartet and list(km2) == erwartet
+           and all(np.array_equal(km2[k], km[k]) for k in erwartet) and np.array_equal(G1, G2),
+           f"im Modell {len(km)}, davon gelesen {len(erwartet)}; in der Datei {len(in_datei)}, "
+           f"nach dem Laden {len(km2)}; max|dG| {float(np.abs(G2 - G1).max()):.3e} m")
+    # eine Datei mit verwaistem Eintrag (von Hand oder von einem Stand vor
+    # dieser Kur geschrieben) laedt ohne ihn
+    roh["tetp_kantenmitten"] = in_datei_roh = list(roh.get("tetp_kantenmitten", []))
+    in_datei_roh.append([1, m.nn + 3, 0.0, 0.0, 9.0])
+    m3 = Model.from_dict(roh)
+    expect("Laden: ein verwaister Eintrag der Datei faellt weg",
+           list(m3.tetp_kantenmitten) == erwartet,
+           f"{len(m3.tetp_kantenmitten)} Kantenmitten statt {len(erwartet)} ({m.nn} Knoten)")
+
+
+def test_json_anhaengen_gerade_gegen_gekruemmt():
+    """Gegenpruefung vom 23.09.2026 zu bc1dfe0: ist eine Anschlusskante auf
+    einer Seite gerade (kein Eintrag) und auf der anderen gekruemmt, galt
+    still die gekruemmte - auch fuer die Elemente, deren Kante gerade war.
+    Die Handbuecher sagten, es gelte die des Ziels und das Protokoll warne.
+    Gemessen an bc1dfe0 (zweimal am 23.09., einmal am 24.09.2026), die
+    Hohlkugel an sich selbst gehaengt, Kante (0, 1) in einer der Dateien
+    gerade: Ziel gerade - Ziel-Elemente bis 1,921 mm verschoben (groesste
+    Koordinatenaenderung 1,885 mm), keine Warnung; Ziel gekruemmt -
+    angehaengte Elemente bis 1,921 mm neben der Quelle (groesste
+    Koordinatenaenderung 1,885 mm), keine Warnung.
+
+    Jetzt gilt die Kante des Ziels, gerade oder gekruemmt: die Ziel-Elemente
+    bleiben bitgleich, die angehaengten nehmen dieselbe Geometrie an (sie
+    liegen auf denselben Knoten), und das Protokoll nennt die Kante."""
+    from statik3d.elements import tetp as tp
+    q0 = _tetp_hohlkugel()
+    ne = len(q0.elements)
+    zeilen, gut = [], True
+    with tempfile.TemporaryDirectory() as d:
+        voll = os.path.join(d, "voll.json")
+        q0.save(voll)
+        gerade = Model.load(voll)
+        k = next(iter(gerade.tetp_kantenmitten))
+        del gerade.tetp_kantenmitten[k]
+        pg = os.path.join(d, "gerade.json")
+        gerade.save(pg)
+        for fall, pz, pq in (("Ziel gerade, Quelle gekruemmt", pg, voll),
+                             ("Ziel gekruemmt, Quelle gerade", voll, pg)):
+            z = Model.load(pz)
+            G0 = tp.geometrie_modell(z, range(ne))
+            ziel_krumm = k in z.tetp_kantenmitten
+            log = []
+            z = import_file(pq, model=z, log=log)
+            G_ziel = tp.geometrie_modell(z, range(ne))
+            G_anh = tp.geometrie_modell(z, range(ne, 2 * ne))
+            warn = [x for x in log if "Kantenmitte" in x]
+            ok = (z.nn == q0.nn and np.array_equal(G_ziel, G0) and np.array_equal(G_anh, G0)
+                  and (k in z.tetp_kantenmitten) == ziel_krumm and len(warn) == 1
+                  and warn[0].startswith("WARNUNG") and "1 Kante " in warn[0]
+                  and "auf einer Seite gerade" in warn[0])
+            gut = gut and ok
+            d_ziel = float(np.abs(G_ziel - G0).max()) * 1e3
+            d_anh = float(np.abs(G_anh - G0).max()) * 1e3
+            zeilen.append(f"{fall}: Ziel-Elemente max|dG| {d_ziel:.4g} mm, angehaengte gegen "
+                          f"das Ziel {d_anh:.4g} mm; " + ("\n".join(warn) or "keine Warnung"))
+    expect("Anhaengen: gerade gegen gekruemmte Kante - es gilt die des Ziels, das Protokoll "
+           "nennt sie", gut, " | ".join(zeilen))
+
+
+def test_json_anhaengen_tet4_nachbar():
+    """Gegenpruefung vom 24.09.2026 zu d21fa80: die Handbuecher sagten
+    uneingeschraenkt, an einer Anschlusskante gelte die Kante des Ziels, und
+    die Warnung nenne sie. Das gilt nur zwischen zwei tetp-Elementen. Liegt
+    auf einer Seite ein tet4, ist die Kante gerade (tetp.pflichtseiten gibt
+    sie als gerade_kanten an geometrie_modell), gleich welche Seite zuerst
+    steht, und das Zusammenfuehren warnt nicht - es sieht nur Kanten von
+    tetp-Elementen. Gemessen (zweimal, 24.09.2026) am Viertel-Hohlzylinder
+    4 x 1 (tet10 mit Mitten auf dem Kreisbogen, aus_tet10, p = 3) mit
+    demselben Zylinder als tet4 um h darueber, in beiden Reihenfolgen: 10
+    Knoten zusammengefuehrt, 17 Anschlusskanten, davon 8 gekruemmt; die
+    Kantenmitten der tetp-Elemente ruecken dort um bis zu 3,843 mm (groesste
+    Koordinatenaenderung 3,769 mm), keine Warnung. Ein tet10 an einer
+    tetp-Kante bricht die Rechnung ab.
+
+    Die Pruefung haelt fest, was die Handbuecher jetzt sagen: an den
+    Anschlusskanten genau die Sehnenmitte, sonst bitgleich, keine Warnung zu
+    Kantenmitten; mit tet10 bricht die Anreicherung mit Element und Kante ab."""
+    from statik3d.elements import tetp as tp
+    from tests import pruefkoerper as pk
+    zyl = pk.Hohlzylinder()
+
+    def zylinder(typ, dz, p):
+        m = zyl.modell(typ, 4, 1)
+        m.case().nodal_loads.clear()
+        m.supports.clear()
+        m.nodes = np.asarray(m.nodes, float) + np.array([0.0, 0.0, dz])
+        if p:
+            tp.aus_tet10(m, ordnung=3)
+        return m
+
+    zeilen, gut = [], True
+    with tempfile.TemporaryDirectory() as d:
+        for fall, ziel, quelle in (
+                ("Ziel tetp3 gekruemmt, Quelle tet4", zylinder("tet10", 0.0, True),
+                 zylinder("tet4", zyl.h, False)),
+                ("Ziel tet4, Quelle tetp3 gekruemmt", zylinder("tet4", 0.0, False),
+                 zylinder("tet10", zyl.h, True))):
+            pq = os.path.join(d, "quelle.json")
+            quelle.save(pq)
+            ne = len(ziel.elements)
+            if any(tp.ist_tetp(e.typ) for e in ziel.elements):
+                idx, G0 = list(range(ne)), tp.geometrie_modell(ziel, range(ne))
+            else:
+                q = Model.load(pq)
+                idx = list(range(ne, ne + len(q.elements)))
+                G0 = tp.geometrie_modell(q, range(len(q.elements)))
+            log = []
+            z = import_file(pq, model=ziel, log=log)
+            G1 = tp.geometrie_modell(z, idx)
+            X = np.asarray(z.nodes, float)
+            vier = {(min(e.nodes[i], e.nodes[j]), max(e.nodes[i], e.nodes[j]))
+                    for e in z.elements if e.typ == "tet4" for i in range(4) for j in range(4)
+                    if i < j}
+            sehne = np.zeros_like(G0)
+            an_tet4 = np.zeros(G0.shape[:2], bool)
+            anschluss, krumm = set(), 0
+            for a, i_e in enumerate(idx):
+                kn = z.elements[i_e].nodes[:4]
+                for m_, (i, j) in enumerate(tp.TET10_KANTEN):
+                    s = (min(kn[i], kn[j]), max(kn[i], kn[j]))
+                    if s in vier:
+                        an_tet4[a, 4 + m_] = True
+                        sehne[a, 4 + m_] = 0.5 * (X[s[0]] + X[s[1]])
+                        if s not in anschluss:
+                            anschluss.add(s)
+                            krumm += int(s in z.tetp_kantenmitten)
+            gerade = np.array_equal(G1[an_tet4], sehne[an_tet4])
+            sonst = np.array_equal(G1[~an_tet4], G0[~an_tet4])
+            warn = [x for x in log if "Kantenmitte" in x]
+            ok = gerade and sonst and not warn and krumm > 0 and float(np.abs(G1 - G0).max()) > 0.0
+            gut = gut and ok
+            # der Weg euklidisch, wie ihn die Warnung beim Zusammenfuehren
+            # nennt, und daneben die groesste Koordinatenaenderung
+            zeilen.append(f"{fall}: {len(anschluss)} Anschlusskanten, davon {krumm} gekruemmt, "
+                          "dort " + ("Sehnenmitte" if gerade else "NICHT die Sehnenmitte")
+                          + ", tetp-Elemente um bis zu "
+                          f"{float(np.linalg.norm(G1 - G0, axis=2).max()) * 1e3:.4g} mm verschoben "
+                          f"(groesste Koordinatenaenderung {float(np.abs(G1 - G0).max()) * 1e3:.4g} mm), "
+                          "sonst " + ("bitgleich" if sonst else "ANDERS")
+                          + "; " + ("\n".join(warn) or "keine Warnung"))
+        pq = os.path.join(d, "quelle.json")
+        zylinder("tet10", zyl.h, False).save(pq)
+        z = import_file(pq, model=zylinder("tet10", 0.0, True), log=[])
+        try:
+            tp.anreicherung(z, streng=True)
+            meldung = "kein Abbruch"
+        except ValueError as ex:
+            meldung = str(ex)
+        ok = "(tet10) teilt die Kante" in meldung and "Ordnung p" in meldung
+        gut = gut and ok
+        zeilen.append(f"Ziel tetp3 gekruemmt, Quelle tet10: {meldung[:90]}")
+    expect("Anhaengen: an einer Kante zum tet4 ist die Kante gerade, ohne Warnung; ein tet10 "
+           "bricht ab", gut, " | ".join(zeilen))
+
+
 def test_json_anhaengen_schluessel():
     """Jeder Schluessel von Model.to_dict() und LoadCase.to_dict() ist beim
     Anhaengen eingeordnet: uebertragen, als Einstellung des Ziels behalten
@@ -2493,6 +2962,11 @@ TESTS = [
          test_json_anhaengen_stellung_des_ziels, test_json_anhaengen_stellung_protokoll,
          test_json_anhaengen_stellung_grundstellung, test_json_anhaengen_koerper_gegen_zielgruppe,
          test_json_anhaengen_einzahl_mehrzahl,
+         test_json_anhaengen_tetp_kantenmitten, test_json_anhaengen_nach_netz_entfernen,
+         test_zusammenfuehren_nach_netzknoten_loeschen,
+         test_zusammenfuehren_kantenmitte_ohne_element,
+         test_json_anhaengen_verwaiste_kantenmitten, test_speichern_ohne_verwaiste_kantenmitten,
+         test_json_anhaengen_gerade_gegen_gekruemmt, test_json_anhaengen_tet4_nachbar,
          test_json_anhaengen_schluessel,
          test_entarteter_sechsflaechner_beim_import,
          test_entarteter_hex20_nennt_die_richtige_genauigkeit,

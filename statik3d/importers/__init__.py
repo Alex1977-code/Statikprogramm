@@ -377,14 +377,16 @@ def import_file(path: str, model: Model = None, log: list = None, **options) -> 
     # 500,0 N statt 1000,0 N an (tests.test_importers,
     # test_datei_anhaengen_fuge_bleibt). An das Ziel schliesst die Datei
     # danach nur eindeutig an - wie beim JSON-Anhaengen (anhaengen.py).
-    n_merged = C.merge_duplicate_nodes(model, tol, ab=n_nodes0) if model.nn > n_nodes0 else 0
+    # log: fallen zwei verschiedene gekruemmte Kantenmitten auf eine Kante,
+    # sagt es das Protokoll (_kantenmitten_umhaengen).
+    n_merged = C.merge_duplicate_nodes(model, tol, ab=n_nodes0, log=log) if model.nn > n_nodes0 else 0
     if n_merged:
         kb = getattr(model, "kontaktbedingungen", None) or {}
         C.say(log, f"{n_merged} doppelte Knoten zusammengefuehrt"
                    + (f" - die Flaechen der {len(kb)} Kontaktbedingungen werden beim "
                       "Vernetzen wieder getrennt" if kb else ""))
     if not fresh and n_nodes0 > 0 and model.nn > n_nodes0:
-        n_an, unklar = C.anschluss_zusammenfuehren(model, n_nodes0, tol)
+        n_an, unklar = C.anschluss_zusammenfuehren(model, n_nodes0, tol, log=log)
         C.anschluss_melden(log, n_an, unklar, "Datei")
     # Zum Keil entartete Sechsflaechner (doppelte Knoten aus der Datei oder
     # aus dem Zusammenfuehren eben) wandelt die Rechnung ohnehin um
