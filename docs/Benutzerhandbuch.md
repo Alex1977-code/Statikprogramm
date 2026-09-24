@@ -4620,17 +4620,21 @@ Welche der Nachbarn die umgestülpten sind, entscheidet der Zusammenhang: in
 jedem zusammenhängenden Netz die kleinere der beiden Gruppen.
 
 Im Netzvolumen zählt jedes umgestülpte Tetraeder mit seinem Volumen, statt es
-abzuziehen; das Netz ist also um das Doppelte seines Volumens zu groß. In eine
-Volumenbilanz geht das nur ein, wo es eine gibt: für die Elemente eines
-Körpers, dessen Randlinien gerade und dessen Randflächen eben oder Vierecke
-ohne Öffnung sind. Im Würfel eben sind es 400 cm³ oder 0,04 %, unter ihrer
-Grenze 0,5 %; bei 4 × 4 × 4 Zellen macht derselbe Schub 0,625 %, und die
-Volumenbilanz meldet es neben der Faltung. Dasselbe Netz als Nastran-Datei
-gelesen, also ohne Körper, hat keine Volumenbilanz, ebenso ein frei
-vernetzter Zylinder aus Bogenlinien (1006 Tetraeder), in dem ein innerer
-Knoten um das 1,3-fache der Netzweite verschoben ist: 1,642 % zu viel, und
-nur „Netz gefaltet“ meldet etwas. An zwei Würfeln 1 × 1 × 1 m übereinander
-mit je eigener Trennfläche, der obere frei vernetzt mit Netzweite 0,15 m
+abzuziehen; das Netzvolumen ist also um das Doppelte seines Volumens größer
+als ohne die Faltung. In eine Volumenbilanz geht das nur ein, wo es eine
+gibt: für die Elemente eines Körpers, dessen Randlinien gerade und dessen
+Randflächen eben oder Vierecke ohne Öffnung sind. Im Würfel eben sind es
+400 cm³ oder 0,04 %, unter ihrer Grenze 0,5 %; bei 4 × 4 × 4 Zellen macht
+derselbe Schub 0,625 %, und die Volumenbilanz meldet es neben der Faltung.
+Dasselbe Netz als Nastran-Datei gelesen, also ohne Körper, hat keine
+Volumenbilanz, ebenso ein frei vernetzter Zylinder aus Bogenlinien
+(1006 Tetraeder), in dem ein innerer Knoten um das 1,3-fache der Netzweite
+verschoben ist: 1,642 % mehr als das ungefaltete Netz, und nur „Netz
+gefaltet“ meldet etwas. Gegen den Zylinder selbst ist dieses Netz dabei nicht
+zu groß: Seine Randseiten sind eben, und schon ungefaltet hat es 1,637 %
+weniger Volumen als der Zylinder, gefaltet noch 0,022 % weniger. An zwei
+Würfeln 1 × 1 × 1 m übereinander mit je eigener Trennfläche, der obere frei
+vernetzt mit Netzweite 0,15 m
 (4454 Tetraeder), fand die Abnahme 17 umgestülpte Tetraeder in sechs Gruppen,
 dazu „Volumenbilanz“ 0,767 % — genau das Doppelte ihres Volumens — und
 „Elementgüte“ 0,020 an einem von ihnen, das zugleich flach ist; die sechs

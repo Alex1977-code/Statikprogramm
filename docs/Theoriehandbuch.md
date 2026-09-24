@@ -6893,22 +6893,32 @@ den Elementen um Knoten 665 im unverschobenen Netz 281,0 bis 329,1 kPa,
 mittlere Verschiebung oben −0,055 %.
 
 Übervolumen und Volumenbilanz. Ein umgestülptes Tetraeder geht mit +|V|
-statt −|V| in Σ |V| ein; das Netz ist um 2 Σ |V_um| zu groß. In einer
-Volumenbilanz steht das nur, wo sie läuft: für Elemente eines Körpers
+statt −|V| in Σ |V| ein: Σ |V| liegt um 2 Σ |V_um| über Σ V, der Summe mit
+Vorzeichen. Σ V ist das Volumen innerhalb des Netzrands; ein verschobener
+innerer Knoten ändert es nicht (am Zylinder unten vor und nach dem Schub
+gleich bis auf 1,1 · 10⁻¹⁶ m³). Gegen den Körper ist das gefaltete Netz also
+nur dort um 2 Σ |V_um| zu groß, wo schon Σ V das Körpervolumen trifft. In
+einer Volumenbilanz steht das nur, wo sie läuft: für Elemente eines Körpers
 (`_abnahme_netz` geht `model.koerper` durch), dessen Hülle `_polyederhuelle`
 ohne Näherung liefert (nicht bei krummen Randlinien, siehe Volumenbilanz
-oben). Gemessen am 24.09.2026, jeweils Σ |V| − V_Körper = 2 Σ |V_um| bis auf
-höchstens 1,5 · 10⁻¹⁶ m³: Kuhn-Netz 10 × 10 × 10 im Quader K1, 1,2 h:
+oben). Gemessen am 24.09.2026, jeweils Σ |V| − Σ V = 2 Σ |V_um| bis auf
+höchstens 1,5 · 10⁻¹⁶ m³. Bei den Würfeln ist Σ V = V_Körper = 1 m³, die
+Anteile beziehen sich auf 1 m³: Kuhn-Netz 10 × 10 × 10 im Quader K1, 1,2 h:
 400 cm³ = 0,04 % < 0,5 %, kein Befund; Kuhn-Netz 4 × 4 × 4, derselbe Schub:
 6250 cm³ = 0,625 %, FEHLER „Volumenbilanz“ neben „Netz gefaltet“; dasselbe
 4 × 4 × 4-Netz als Nastran-BDF gelesen (`importers.nastran.import_bdf`:
-384 tet4, kein Körper): 0,625 %, nur „Netz gefaltet“; Zylinder aus
-Bogenlinien (`test_mesher3d.buchse`, r 0,5 m, H 1 m, h 0,3; 1006 tet4,
-`_polyederhuelle` = None), innerer Knoten 143 um 1,3 h: 8 umgestülpte,
-1,642 %, nur „Netz gefaltet“; freies Netz des oberen Würfels aus
-`test_fugen.zwei_bloecke` ("eigene", h 0,5, oben 0,15; 4454 tet4):
-17 umgestülpte in sechs Gruppen, Volumenbilanz 0,767 % = 7671 cm³, dazu
-„Elementgüte“ 0,020 an Element 2745, einem der 17, das zugleich flach ist.
+384 tet4, kein Körper): 0,625 %, nur „Netz gefaltet“; freies Netz des oberen
+Würfels aus `test_fugen.zwei_bloecke` ("eigene", h 0,5, oben 0,15;
+4454 tet4): 17 umgestülpte in sechs Gruppen, Volumenbilanz 0,767 % =
+7671 cm³, dazu „Elementgüte“ 0,020 an Element 2745, einem der 17, das
+zugleich flach ist. Beim Zylinder aus Bogenlinien (`test_mesher3d.buchse`,
+r 0,5 m, H 1 m, h 0,3; 1006 tet4, `_polyederhuelle` = None), innerer Knoten
+143 um 1,3 h, sind es 8 umgestülpte mit 2 Σ |V_um| = 12 685 cm³ = 1,642 %
+von Σ V = 0,772542 m³, nur „Netz gefaltet“. Hier liegt das Sehnennetz schon
+ungefaltet 1,637 % unter π r² H = 0,785398 m³, das gefaltete
+(Σ |V| = 0,785227 m³) noch 0,022 % darunter: Σ |V| − π r² H = −171 cm³
+statt 2 Σ |V_um|. Gegen den Körper gemessen ist dieses gefaltete Netz also
+nicht zu groß; sein Übervolumen gleicht das Sehnendefizit fast aus.
 Der Befund „Netz gefaltet“ nennt deshalb 2 Σ |V| seiner Gruppe und dazu, was
 die Volumenbilanz in dieser Abnahme tat: `_abnahme_volumenbilanz` trägt je
 Körper Abweichung und Grenze in das Wörterbuch `bilanz` ein, sobald beide

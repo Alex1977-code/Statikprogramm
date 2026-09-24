@@ -1402,9 +1402,11 @@ def test_faltungsbefund_nur_mit_laufender_volumenbilanz():
     über der Grenze 0,5 %: nur „Netz gefaltet“, dessen Text die Meldung der
     Volumenbilanz versprach, und kein Befund „Volumenbilanz“; Zylinder aus
     Bogenlinien (tests.test_mesher3d.buchse, h 0,3, 1006 tet4), Knoten 143
-    um 1,3·h - Übervolumen 1,642 %, ebenso. Der Befund
+    um 1,3·h - Übervolumen 1,642 % des ungefalteten Netzes, ebenso. Der Befund
     sagt jetzt je Fall, was ist: mit laufender Volumenbilanz deren Abweichung,
-    sonst dass es keine gab.
+    sonst dass es keine gab. Beim Zylinder liegt das Sehnennetz schon
+    ungefaltet 1,637 % unter π r² H, das gefaltete 0,022 % darunter (dritte
+    Gegenprüfung, 24.09.2026); die Prüfung hält auch diese Zahlen fest.
     """
     import tempfile
     from statik3d import mesher3d as M3
@@ -1489,9 +1491,32 @@ def test_faltungsbefund_nur_mit_laufender_volumenbilanz():
     innen = benutzt[(r < 0.5 - 0.6 * h) & (X[benutzt, 2] > 0.6 * h)
                     & (X[benutzt, 2] < 1 - 0.6 * h)]
     kn = int(innen[np.argmin(np.linalg.norm(X[innen] - np.array([0, 0, 0.5]), axis=1))])
+    V0 = _signierte_volumina(m, els)
     m.nodes[kn] = X[kn] + np.array([1.3 * h, 0.0, 0.0])
     V = _signierte_volumina(m, els)
     ueber = float((np.abs(V).sum() - V.sum()) / V.sum())
+    # Dritte Gegenpruefung vom 24.09.2026: die Handbuecher sagten fuer den
+    # Zylinder „Σ |V| − V_Körper = 2 Σ |V_um|“ und „1,642 % zu viel“. Am Stand
+    # af2fb40 gemessen: Σ|V| − π r² H − 2 Σ|V_um| = −1,286·10⁻² m³, denn das
+    # Sehnennetz liegt schon ungefaltet 1,637 % unter π r² H. Die 1,642 % sind
+    # auf das ungefaltete Netz Σ V bezogen, gegen den Zylinder ist das
+    # gefaltete Netz 0,022 % zu klein. Die Pruefung haelt diese Zahlen des
+    # Textes fest: aendert der Vernetzer sein Netz, faellt sie durch, und die
+    # Handbuecher sind nachzumessen.
+    vk = np.pi * 0.5 ** 2 * 1.0
+    s0, s_betrag = float(V0.sum()), float(np.abs(V).sum())
+    um2 = 2.0 * float(np.abs(V[V < 0]).sum())
+    check(f"  Zylinder: Σ|V| − Σ V = 2 Σ|V_um| = {um2 * 1e6:.1f} cm³ = "
+          f"{um2 / s0 * 100:.3f} % des ungefalteten Netzes (Σ V vor und nach dem Schub "
+          f"gleich); gegen π r² H liegt das Sehnennetz {(s0 - vk) / vk * 100:.3f} %, das "
+          f"gefaltete {(s_betrag - vk) / vk * 100:.3f} % - wie in Theorie- und "
+          "Benutzerhandbuch (1,642 %, −1,637 %, −0,022 %)",
+          abs(s_betrag - s0 - um2) <= 1e-12 and abs(float(V.sum()) - s0) <= 1e-12
+          and round(um2 / s0 * 100, 3) == 1.642 and round((s0 - vk) / vk * 100, 3) == -1.637
+          and round((s_betrag - vk) / vk * 100, 3) == -0.022,
+          f"Σ|V| − Σ V − 2 Σ|V_um| = {s_betrag - s0 - um2:.3e} m³, "
+          f"Σ V nachher − vorher = {float(V.sum()) - s0:.3e} m³, "
+          f"Σ|V| − π r² H − 2 Σ|V_um| = {s_betrag - vk - um2:.3e} m³")
     fa, vb = teile(dg.abnahme(m, warnungen=True))
     check(f"  Zylinder aus Bogenlinien ({len(els)} tet4), Knoten {kn} um 1,3·h: "
           f"Übervolumen {dezimal(ueber * 100)} %, keine Hülle ohne Näherung, keine "

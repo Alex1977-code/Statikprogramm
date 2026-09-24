@@ -486,14 +486,15 @@ def abnahme(model, guete: list = None, warnungen: bool = False) -> list:
        tet4 liegen beide Gegenknoten auf derselben Seite der Ebene
        (:func:`_abnahme_faltung`); Formguete, Volumen und die Rechnung selbst
        nehmen beim tet4 den Betrag des Volumens. Ein umgestuelptes Tetraeder
-       macht das Netzvolumen um 2 |V| zu gross. In eine Volumenbilanz
-       (Punkt 6) geht das nur ein, wo sie laeuft: fuer Elemente eines
-       Koerpers, dessen Huelle ohne Naeherung feststeht
+       macht das Netzvolumen um 2 |V| groesser als ohne Faltung. In eine
+       Volumenbilanz (Punkt 6) geht das nur ein, wo sie laeuft: fuer
+       Elemente eines Koerpers, dessen Huelle ohne Naeherung feststeht
        (:func:`_polyederhuelle`). Dort meldet sie es erst ueber ihrer Grenze
        (Kuhn-Netz 10 x 10 x 10 mit sechs umgestuelpten: 0,04 %, kein Befund;
        4 x 4 x 4: 0,625 %, FEHLER). Ohne Koerper (Nastran-Import, 0,625 %)
-       und am Zylinder aus Bogenlinien (1,642 %) gibt es keine Volumenbilanz
-       (24.09.2026). Der Befund sagt je Gruppe, welcher Fall vorliegt.
+       und am Zylinder aus Bogenlinien (1,642 % des ungefalteten Netzes) gibt
+       es keine Volumenbilanz (24.09.2026). Der Befund sagt je Gruppe,
+       welcher Fall vorliegt.
 
     Faellt eine der Teilpruefungen aus (die Halteguete, die Formguete oder die
     Faltung lassen sich nicht ermitteln), erscheint das als eigener Befund der Stufe
@@ -948,7 +949,8 @@ def _abnahme_faltung(model, bilanz: dict = None) -> list:
     Huelle ohne Naeherung feststeht): am Kuhn-Netz im Quader K1 0,04 % unter
     ihrer Grenze 0,5 %; am Kuhn-Netz 4 x 4 x 4 macht derselbe Schub 0,625 %,
     und sie meldet es neben diesem Befund. Dasselbe Netz ohne Koerper und ein
-    Zylinder aus Bogenlinien (1,642 %) haben keine Volumenbilanz (24.09.2026).
+    Zylinder aus Bogenlinien (1,642 % des ungefalteten Netzes) haben keine
+    Volumenbilanz (24.09.2026).
     ``bilanz`` ({Koerper: (abw, grenze, Sehnenanteil > 0)} aus
     :func:`_abnahme_netz`) sagt, fuer welche Koerper sie lief; der Befund
     nennt dann ihre Abweichung, sonst dass es keine gab. Ohne ``bilanz``
@@ -1087,8 +1089,11 @@ def _abnahme_faltung(model, bilanz: dict = None) -> list:
     grenzen = np.searchsorted(gruppe[ordnung], np.arange(ng + 1))
     # Uebervolumen je Gruppe. Ein umgestuelptes Tetraeder geht mit +|V| statt
     # -|V| ins Netzvolumen (elementvolumina) ein, das Netz ist also um 2 |V|
-    # zu gross. In einer Volumenbilanz steht das nur, wo sie lief (``bilanz``):
-    # fuer Elemente eines Koerpers, dessen Huelle ohne Naeherung feststeht.
+    # groesser als ohne Faltung (Summe V mit Vorzeichen; gegen den Koerper nur
+    # dort zu gross, wo schon das ungefaltete Netz ihn trifft - siehe den
+    # Zylinder unten). In einer Volumenbilanz steht das nur, wo sie lief
+    # (``bilanz``): fuer Elemente eines Koerpers, dessen Huelle ohne Naeherung
+    # feststeht.
     # Bis 24.09.2026 stand im Befund zuerst „Formgüte und Volumenbilanz sehen
     # das nicht“ (galt nur am Kuhn-Netz 10 x 10 x 10: 400 cm3 = 0,04 %), dann
     # „die Volumenbilanz meldet das erst über ihrer Grenze“ - auch das nur an
@@ -1098,7 +1103,10 @@ def _abnahme_faltung(model, bilanz: dict = None) -> list:
     # K1 FEHLER Volumenbilanz 0,625 %, als Nastran-BDF gelesen (384 tet4, kein
     # Koerper) nur „Netz gefaltet“. Zylinder aus Bogenlinien
     # (tests.test_mesher3d.buchse, h 0,3, 1006 tet4), Knoten 143 um 1,3 h:
-    # 1,642 %, _polyederhuelle = None, nur „Netz gefaltet“. Freies Netz
+    # 2 Summe |V_um| = 1,642 % des ungefalteten Netzes (Summe V), _polyederhuelle
+    # = None, nur „Netz gefaltet“. Das Sehnennetz liegt dort schon ungefaltet
+    # 1,637 % unter pi r^2 H, das gefaltete 0,022 % darunter (dritte
+    # Gegenpruefung, gemessen 24.09.2026 am Stand af2fb40). Freies Netz
     # tests.test_fugen.zwei_bloecke("eigene", 0.5, 0.15), Koerper Oben: 17
     # umgestuelpte in sechs Gruppen, Volumenbilanz 0,767 % = 2 Summe |V| der
     # 17, und eines davon (Element 2745, flach) meldet auch die Elementguete
