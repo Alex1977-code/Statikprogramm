@@ -5178,7 +5178,7 @@ nichts stillschweigend Übergangenes:
 | Riss im Netz (Warnung): geschlossener Hohlraum, dünn gegen seine eigenen Seiten und gegen die Elemente daneben, so klein wie die Lücken des Vernetzers (höchstens 2 · 10⁻⁶ · L³ je vier Seiten, L die längste Elementkante des Körpers), kein verdrehtes Element, keine doppelten Knoten | 0 |
 | Volumenbilanz nicht geprüft (Warnung): Körper mit krummen Randlinien oder einer anderen Hülle, die sich nicht ohne Näherung darstellen lässt; Volumenelemente, die zu keinem Körper gehören | – |
 
-Die Volumenbilanz und die vier Prüfungen darunter gibt es seit dem
+Die Volumenbilanz und die fünf Prüfungen darunter gibt es seit dem
 23.09.2026, im Hauptzweig seit dem Merge an diesem Tag. Die Abnahme des
 Hauptzweigs vom 22.09.2026 hatte keine davon.
 
@@ -5661,7 +5661,7 @@ zwischen 3,5 und 4,0 mm (Ecke um 0,5 m angehoben) bzw. 3,6 und 5,2 mm (um
 1 m), nach außen wie nach innen. Für die windschiefe Fläche ist dabei der
 Abstand des Knotens senkrecht zu ihr maßgebend, nicht die Richtung der
 Verschiebung: In z verschoben braucht es an den steileren Stellen mehr, bis
-4,8 bzw. 8,2 mm. Ab 5 mm (Ecke um 0,5 m) bzw. 7 mm senkrecht und 8,5 mm in z
+4,7 bzw. 8,2 mm. Ab 5 mm (Ecke um 0,5 m) bzw. 7 mm senkrecht und 8,5 mm in z
 (um 1 m) warnt die Abnahme an allen 21 Knoten. Eine tiefere Delle meldet sie
 als Lücke im Netzrand: 20 mm senkrecht nach innen an allen neun inneren
 Deckelknoten (als Warnung, über 0,5 % des Körpers als FEHLER), an Randknoten

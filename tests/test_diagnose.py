@@ -1308,8 +1308,9 @@ def test_abnahme_luecken_des_vernetzers_sind_risse():
     # 23.09.2026 (Fable-Sitzung) gibt fuer dieselbe Platte ein anderes Netz
     # (13 708 tet4) mit eigener Warnung „Lücke im Netzrand bleibt nach 4
     # Durchgängen“, und die Abnahme meldet dort „FEHLER Seiten im Inneren
-    # 376“ - an dem Netz ist die Grenze der Nachbardicke nicht festzulegen
-    # (gemessen 24.09.2026; ebenso mit h 0,04 und 0,06 m). Die Regel der
+    # 366“ (vor der Duennregel aus B044 376) - an dem Netz ist die Grenze der
+    # Nachbardicke nicht festzulegen (gemessen 24.09.2026; den FEHLER gibt es
+    # ebenso mit h 0,04 und 0,06 m). Die Regel der
     # Abnahme wird darum am festgehaltenen Netz geprueft: dort dieselben
     # Befunde wie am 23.09.2026 (0,65 und 0,58 WARNUNG Riss 133, 0,57 dazu
     # FEHLER Seiten im Inneren 8).
