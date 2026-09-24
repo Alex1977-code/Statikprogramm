@@ -546,6 +546,171 @@ def test_vorlagen():
           a_vor.bolt_range_factor() < 0.3, f"{a_vor.bolt_range_factor():.2f}")
 
 
+def test_kopfplatte_vorschlagsreihe():
+    """Die Reihe, die das Benutzerhandbuch zum Kopfplattenvorschlag beschreibt:
+    IPE 400, V_z = 90 kN, M_y in 10-kNm-Schritten von 10 bis 700 kNm, N = 0
+    und N = -100 kN (Befunde B010 bis B013, nachgemessen 23.09.2026).
+
+    Der Text sagte „bessert nach, bis die Nachweise erfuellt sind" (ab 340 kNm
+    endet der Vorschlag aber mit eta > 1), liess die Streckgrenze bei der
+    Anfangsdicke weg, nannte keinen Anfang der Reihe (ab 10 kNm wechselt die
+    Schraube sechsmal, nicht fuenfmal) und liess „Druckflansch massgebend"
+    erst dort beginnen, wo eta > 1 wird (massgebend ist er schon bei
+    erfuellten Nachweisen)."""
+    from statik3d.joints.templates import EndPlate
+
+    def traeger(grade):
+        m = Model("Traeger")
+        m.add_material(Material.steel(grade))
+        m.add_section(Section.from_profile("IPE 400"))
+        e = m.add_element("beam", [m.add_node(0, 0, 0), m.add_node(6, 0, 0)], grade, "IPE 400")
+        return m, e
+
+    momente = [k * 10e3 for k in range(1, 71)]
+    # Anfangsvorschlag ohne Nachbessern: propose ruft improve immer auf, der
+    # Anfangsstand ist nur mit abgeschaltetem improve zu sehen
+    nachbessern = EndPlate.improve
+    EndPlate.improve = lambda self, rounds=14, **f: self
+    try:
+        anfang = {}
+        for grade in ("S235", "S355"):
+            m, e = traeger(grade)
+            for My in momente:
+                a = EndPlate.propose(m, elem=e, end=1, N=0.0, Vz=90e3, My=My)
+                anfang.setdefault((grade, a.bolt.size), set()).add(round(a.tp * 1e3, 3))
+        m, e = traeger("S355")
+        a90 = EndPlate.propose(m, elem=e, end=1, N=0.0, Vz=90e3, My=90e3)
+        j90 = a90.design(N=0.0, Vz=90e3, My=90e3)
+    finally:
+        EndPlate.improve = nachbessern
+
+    # B011: die Anfangsdicke folgt aus Schraube, Profil und Streckgrenze -
+    # nicht aus dem Moment (je Schraube ein Wert ueber die ganze Reihe)
+    check("Anfangsdicke: je Stahlsorte und Schraube ein Wert über 10 bis 700 kNm",
+          all(len(v) == 1 for v in anfang.values()),
+          str({f"{g} {s}": sorted(v) for (g, s), v in anfang.items() if len(v) != 1}))
+    dicke = {k: min(v) for k, v in anfang.items()}
+    soll = {"M16": (13, 11), "M20": (16, 13), "M24": (19, 16)}
+    check("Anfangsdicke: S235 dicker als S355 (M16/M20/M24: 13/16/19 gegen 11/13/16 mm)",
+          all(dicke.get(("S235", s)) == t235 and dicke.get(("S355", s)) == t355
+              for s, (t235, t355) in soll.items()),
+          ", ".join(f"{s}: {dicke.get(('S235', s))} / {dicke.get(('S355', s))} mm"
+                    for s in soll))
+
+    # Die Reihe mit Nachbessern (S355)
+    m, e = traeger("S355")
+    reihe = {}
+    for N in (0.0, -100e3):
+        zeilen = []
+        for My in momente:
+            a = EndPlate.propose(m, elem=e, end=1, N=N, Vz=90e3, My=My)
+            j = a.design(N=N, Vz=90e3, My=My)
+            zeilen.append((round(My / 1e3), a.bolt.size, round(a.tp * 1e3), j, a.hinweise))
+        reihe[N] = zeilen
+    r0, r1 = reihe[0.0], reihe[-100e3]
+
+    # B010: das Nachbessern endet am Druckflansch mit eta > 1 und Hinweis
+    for N, zeilen, ab, anzahl in ((0.0, r0, 340, 37), (-100e3, r1, 330, 38)):
+        offen = [z for z in zeilen if not z[3].ok]
+        check(f"N = {N / 1e3:.0f} kN: ab {ab} kNm erfüllt der Vorschlag die Nachweise nicht "
+              f"({anzahl} von 70)",
+              [z[0] for z in offen] == list(range(ab, 701, 10)) and len(offen) == anzahl,
+              f"{len(offen)} von 70, ab {offen[0][0] if offen else '-'} kNm")
+        check(f"N = {N / 1e3:.0f} kN: dort maßgebend der Druckflansch, mit Hinweis",
+              bool(offen) and all("Druckflansch" in z[3].massgebend
+                                  and any(h.startswith("Vorschlag erreicht eta") for h in z[4])
+                                  for z in offen),
+              str(sorted({z[3].massgebend for z in offen})))
+    close("N = 0: eta bei 700 kNm", r0[-1][3].eta, 2.099, 5e-4)
+
+    # B012: ab 10 kNm wechselt die Schraube sechsmal; der erste Wechsel
+    # (80 -> 90 kNm, M12 -> M16) kommt aus dem Nachbessern, das Blech bleibt
+    wechsel = [(a[0], b[0], a[1], b[1], a[2], b[2]) for a, b in zip(r0, r0[1:])
+               if a[1] != b[1]]
+    check("N = 0: sechs Schraubenwechsel ab 10 kNm",
+          [(w[0], w[1]) for w in wechsel]
+          == [(80, 90), (170, 180), (270, 280), (390, 400), (510, 520), (620, 630)],
+          "; ".join(f"{w[0]}->{w[1]}: {w[2]}->{w[3]}, {w[4]}->{w[5]} mm" for w in wechsel))
+    check("erster Wechsel M12 -> M16, Blech bleibt 10 mm",
+          bool(wechsel) and wechsel[0][2:] == ("M12", "M16", 10, 10), str(wechsel[:1]))
+    check("bei 90 kNm wählt der Vorschlag zuerst M12 (eta 1,019, Interaktion)",
+          a90.bolt.size == "M12" and 1.018 < j90.eta < 1.020
+          and "Interaktion" in j90.massgebend,
+          f"{a90.bolt.size}, eta = {j90.eta:.3f}, {j90.massgebend}")
+    check("an den zwei folgenden Wechseln wird das Blech dünner, an den drei letzten nicht",
+          [w[5] < w[4] for w in wechsel[1:]] == [True, True, False, False, False],
+          str([(w[4], w[5]) for w in wechsel[1:]]))
+    check("die Abmessungen des Textes (170, 180-210, 270, 280-320 kNm)",
+          [(z[1], z[2]) for z in r0 if z[0] in (170, 180, 210, 270, 280, 320)]
+          == [("M16", 15), ("M20", 13), ("M20", 13), ("M20", 19), ("M24", 16), ("M24", 16)],
+          str([(z[0], z[1], z[2]) for z in r0 if z[0] in (170, 180, 210, 270, 280, 320)]))
+    check("mit N = -100 kN bis 320 kNm dieselben Abmessungen",
+          [(z[1], z[2]) for z in r0[:32]] == [(z[1], z[2]) for z in r1[:32]])
+
+    # B013: der Druckflansch ist schon bei erfuellten Nachweisen massgebend -
+    # 340/330 kNm sind die Stellen, ab denen eta > 1 wird
+    for N, zeilen, ab, voll in ((0.0, r0, 330, 340), (-100e3, r1, 300, 330)):
+        df = [z[0] for z in zeilen if "Druckflansch" in z[3].massgebend]
+        ok_df = [(z[0], round(z[3].eta, 3)) for z in zeilen
+                 if "Druckflansch" in z[3].massgebend and z[3].ok]
+        check(f"N = {N / 1e3:.0f} kN: Druckflansch maßgebend ab {ab} kNm, erfüllt bis "
+              f"{voll - 10} kNm",
+              df == list(range(ab, 701, 10))
+              and [x[0] for x in ok_df] == list(range(ab, voll, 10))
+              and all(x[1] <= 1.0 for x in ok_df),
+              f"ab {df[0] if df else '-'} kNm; erfüllt dabei {ok_df}")
+
+
+def test_nachbessern_verlaengert_keine_naht():
+    """Das Benutzerhandbuch zaehlt auf, was der Dialog beim Nachbessern
+    aendert: Blech dicker, Schraube groesser, mehr Schrauben oder Reihen, Naht
+    dicker. Seine erste Fassung zu B010 sagte „Naht dicker bzw. laenger"
+    (Mangel der Gegenpruefung, 24.09.2026) - verlaengert wird keine Naht.
+
+    Eine Nahtlaenge als Feld hat nur das Knotenblech (l_weld), und nur
+    Gusset.improve verlaengert sie, beim geschweissten Blech. Gusset.propose
+    kehrt beim geschweissten Blech aber vor dem Nachbessern zurueck, und der
+    Dialog legt gar keins an: update_proposal (gui/dialogs.py) uebergibt nur
+    N, V_z, M_y und die Schraube. Gemessen 24.09.2026 an HEB 200 S355: mit
+    welded=True wird improve nie gerufen, l_weld = 100/398/626 mm bei
+    N = 200/800/2000 kN stammt allein aus der Formel in propose (eta 0,994
+    bis 0,999, massgebend die Kehlnaht)."""
+    from statik3d.joints import templates as T
+
+    m = Model("Diagonale")
+    m.add_material(Material.steel("S355"))
+    m.add_section(Section.from_profile("HEB 200"))
+    e = m.add_element("beam", [m.add_node(0, 0, 0), m.add_node(0, 0, 4)], "S355", "HEB 200")
+
+    gerufen = []
+    nachbessern = T.Gusset.improve
+
+    def spion(self, *a, **k):
+        gerufen.append(self.welded)
+        return nachbessern(self, *a, **k)
+
+    T.Gusset.improve = spion
+    try:
+        laengen = []
+        for N in (200e3, 800e3, 2000e3):
+            g = T.propose("diagonale", m, e, 1, N=N, welded=True)
+            laengen.append(round(g.l_weld * 1e3))
+        geschweisst_gerufen = list(gerufen)
+        gerufen.clear()
+        # der Weg des Dialogs: N, V_z, M_y und die Schraube
+        dialog = [T.propose("diagonale", m, e, 1, bolt=None, N=N, Vz=0.0, My=0.0)
+                  for N in (200e3, 800e3, 2000e3)]
+    finally:
+        T.Gusset.improve = nachbessern
+
+    check("geschweißtes Knotenblech: kein Nachbessern, Nahtlänge aus propose",
+          geschweisst_gerufen == [] and laengen == [100, 398, 626],
+          f"improve {len(geschweisst_gerufen)}-mal gerufen, l = {laengen} mm")
+    check("Dialogweg: Knotenblech geschraubt, nachgebessert ohne Naht",
+          all(not g.welded for g in dialog) and gerufen == [False, False, False],
+          f"welded {[g.welded for g in dialog]}, improve bei welded {gerufen}")
+
+
 # --------------------------------------------------------------------------
 # Anschluss als Teil des Modells: speichern, ueber alle Kombinationen
 # nachweisen, Ermuedung aus den Ermuedungslasten, Bericht
@@ -889,7 +1054,8 @@ def test_gelenk_im_modell_und_bericht():
 
 def main():
     for t in (test_schrauben, test_naehte, test_tstub, test_fe_schraube,
-              test_bleche, test_nachweise, test_vorlagen, test_anschluss_im_modell,
+              test_bleche, test_nachweise, test_vorlagen, test_kopfplatte_vorschlagsreihe,
+              test_nachbessern_verlaengert_keine_naht, test_anschluss_im_modell,
               test_momenten_rotation, test_gelenk_in_der_rechnung,
               test_gelenk_im_modell_und_bericht):
         print(f"\n--- {t.__name__} ---")

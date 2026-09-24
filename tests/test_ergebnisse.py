@@ -94,8 +94,58 @@ def test_schreiben_lesen():
     check("unveraendertes Modell: Kennung passt", ok and grund == "")
 
 
+def test_alte_datei_ohne_alternativen():
+    """Eine Ergebnisdatei ohne die Gruppe 'alternativen' - so schrieb sie jeder
+    Stand vor fb59de1 (22.09.2026, 23:54), im Hauptzweig jeder vor dem Merge
+    21ce779 (23.09.2026, 10:07). Sie laedt, und die Alternativen, die sich
+    nicht aus den Lastfaellen ueberlagern lassen (hier Theorie II. Ordnung),
+    meldet der Nachweis als „nicht nachgewiesen" statt sie still linear zu
+    ueberlagern. Die Handbuecher nannten dafuer „von vor dem 22.09.2026"
+    (Befund B014). Gegenprobe am 23.09.2026 mit einer echten Datei des
+    Standes 54b6f9a an diesem Modell: dieselben zwei Warnungen, K2 bleibt."""
+    from statik3d.ec3.design import _uls_results
+    from tests.test_umhuellende import _druckkragarm
+    m, _ids = _druckkragarm("ein")
+    an = solver.solve_all(m)
+    check("volle Rechnung legt beide Alternativen ab",
+          sorted(an.alternativen) == ["EK1 [1]", "EK1 [2]"], str(sorted(an.alternativen)))
+    ordner = tempfile.mkdtemp()
+    neu = os.path.join(ordner, "neu.ergebnisse")
+    alt = os.path.join(ordner, "alt.ergebnisse")
+    erg.schreiben(neu, m, an)
+    # die alte Datei: derselbe Inhalt ohne die Gruppe 'alternativen'
+    with open(neu, "rb") as fh:
+        inhalt = erg._Leser(fh, m).load()
+    del inhalt["alternativen"]
+    with open(alt, "wb") as fh:
+        erg._Schreiber(fh, m).dump(inhalt)
+
+    an_neu = erg.lesen(neu, m)
+    w_neu: list = []
+    uls_neu = _uls_results(m, an_neu, warnungen=w_neu)
+    check("neue Datei: die Alternativen kommen zurück und werden nachgewiesen",
+          not w_neu and sorted(uls_neu) == ["EK1 [1]", "EK1 [2]", "K2"]
+          and np.array_equal(uls_neu["EK1 [2]"].u, an.alternativen["EK1 [2]"].u),
+          f"{sorted(uls_neu)} {w_neu}")
+    try:
+        an_alt = erg.lesen(alt, m)
+    except Exception as ex:  # noqa: BLE001
+        check("alte Datei ohne Gruppe 'alternativen' lädt", False, f"{type(ex).__name__}: {ex}")
+        return
+    check("alte Datei ohne Gruppe 'alternativen' lädt",
+          an_alt.alternativen == {} and sorted(an_alt.combinations) == sorted(an.combinations),
+          f"alternativen {sorted(an_alt.alternativen)}, combinations {sorted(an_alt.combinations)}")
+    w_alt: list = []
+    uls_alt = _uls_results(m, an_alt, warnungen=w_alt)
+    check("alte Datei: beide Alternativen „nicht nachgewiesen“, nicht linear überlagert",
+          sorted(uls_alt) == ["K2"] and len(w_alt) == 2
+          and all(any(f"EK1 [{k}]" in w and "nicht nachgewiesen" in w
+                      and "Theorie II. Ordnung" in w for w in w_alt) for k in (1, 2)),
+          f"{sorted(uls_alt)}; " + " | ".join(w[:70] for w in w_alt))
+
+
 def main():
-    for t in (test_schreiben_lesen,):
+    for t in (test_schreiben_lesen, test_alte_datei_ohne_alternativen):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
