@@ -6829,16 +6829,34 @@ drei Änderungen:
   ungenannt, bei 30 mm ist es eine WARNUNG, in z wie entlang der
   Flächennormale verschoben (an allen 21 Deckelknoten außer den Ecken). Bei
   dz = 1,0 bleiben an den neun inneren Deckelknoten 80 mm entlang der
-  Normalen ungenannt, 90 mm sind eine WARNUNG „Netzrand neben der Hülle" mit
-  4 Seiten. Ein Deckelknoten 100 mm in z liegt dort je nach Neigung des
+  Normalen nach außen ungenannt, 90 mm sind eine WARNUNG „Netzrand neben der
+  Hülle" mit 4 Seiten, ebenso in z nach oben bis 80 bzw. 90 mm Abstand. Ein
+  Deckelknoten 100 mm in z nach oben liegt dort je nach Neigung des
   Deckels 68 bis 94 mm neben der Fläche (gegengeprüft durch Abtasten der
   Fläche): an den sechs steileren Knoten 68 bis 81 mm, ungenannt; an
   (0,25|0,25), (0,25|0,5) und (0,5|0,25), zur waagerechten Ecke (0|0) hin,
   87 bis 94 mm, WARNUNG (nachgemessen mit der örtlichen Grenze an allen neun
   inneren Deckelknoten, 24.09.2026;
-  `test_abnahme_beule_windschief_nach_richtung`). Die zwölf Randknoten des
-  Deckels zwischen den Ecken verlassen, entlang der Deckelnormalen
-  verschoben, auch die ebene Seitenfläche, bei 80 mm um 13,9 bis 48,0 mm.
+  `test_abnahme_beule_windschief_nach_richtung`). Halbiert liegen die
+  Grenzen dort (dz = 1,0) nach außen als Abstand entlang der Normalen bei
+  82,9 bis 84,2 mm, in z bei 82,8 bis 83,6 mm, je Knoten höchstens 0,7 mm
+  auseinander. Für eine Delle (nach innen) gilt das nicht. Überschreitet
+  sie die Grenze, gelten ihre Seiten nicht als Netzrand neben der Hülle: Der
+  Punkt knapp hinter ihnen liegt im Körper (Windungszahl), sie zählen zu den
+  Seiten im Inneren. Bei 90 mm entlang der Normalen nach innen ist das ein FEHLER
+  „Seiten im Inneren" an (0,25|0,25) und ein FEHLER „Volumenbilanz" mit
+  „Lücke im Netzrand" an sieben Knoten. Und die Grenze hängt von der
+  Richtung ab: an (0,75|0,75) 100,2 mm entlang der Normalen und 133,4 mm
+  Abstand in z (190 mm Verschiebung) gegen 84,2 mm nach außen, an (0,5|0,75)
+  und (0,75|0,5) 83,6 mm entlang der Normalen gegen 99,1 mm in z. An
+  (0,75|0,75) liegt es an H in s_b·H²: Die Delle senkt den Knoten, die
+  Deckelseite zur Ecke (1|1) hin wird höher, bei 90 mm wächst ihr
+  Durchmesser und damit H an den vier Seiten des Knotens von 562,5 auf
+  611,8 mm, die Grenze von 83,8 bis 84,7 auf 98,4 bis 99,7 mm; nach außen
+  bleibt H bei 562,8 mm (24.09.2026, Grenzen auf zwei Wegen halbiert). Die
+  zwölf Randknoten des Deckels zwischen den Ecken verlassen, entlang der
+  Deckelnormalen nach außen verschoben, auch die ebene Seitenfläche, bei
+  80 mm um 13,9 bis 48,0 mm.
   Seiten auf ebenen Flächen prüft die Abnahme am Schwerpunkt gegen 1 % des
   Seitendurchmessers (`ABNAHME_HUELLABSTAND`); der Schwerpunkt einer
   anliegenden Seite wandert um ein Viertel des Anteils senkrecht zur

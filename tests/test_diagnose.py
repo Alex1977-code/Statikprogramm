@@ -1400,11 +1400,12 @@ def _deckelnormale(dz, x, y):
     return nrm / np.linalg.norm(nrm)
 
 
-def _deckelbeule(dz, x, y, v):
+def _deckelbeule(dz, x, y, v, alle=False):
     """Würfel 1 x 1 x 1 m, Deckel z = 1 + dz·x·y, abgebildetes 4 x 4 x 4-Netz
     (64 hex8); der Deckelknoten bei (x|y) wird um den Vektor v (m) verschoben
     und das Netz mit Warnungen abgenommen. Gibt Elementzahl, Netzbefunde
-    (Stufe, Prüfung, Wert) und den Abstand des Knotens zum Deckel in mm."""
+    (Stufe, Prüfung, Wert) und den Abstand des Knotens zum Deckel in mm.
+    Mit alle=True alle Befunde der Abnahme, auch „Lücke im Netzrand"."""
     from statik3d import mesher
     m = Model("beule")
     m.add_material(Material.steel("S235"))
@@ -1421,8 +1422,25 @@ def _deckelbeule(dz, x, y, v):
     m.nodes[kn] = m.nodes[kn] + np.asarray(v, float)
     deckel = np.array([[0, 0, 1], [1, 0, 1], [1, 1, 1 + dz], [0, 1, 1]], float)
     d_mm = 1e3 * float(dg._bilinear_abstand(m.nodes[kn][None, :], deckel)[0])
-    bef = [b for b in dg.abnahme(m, warnungen=True) if b.pruefung in _NETZ_BEFUNDE]
+    bef = [b for b in dg.abnahme(m, warnungen=True) if alle or b.pruefung in _NETZ_BEFUNDE]
     return len(els), [(b.stufe, b.pruefung, b.wert) for b in bef], d_mm
+
+
+def _z_fuer_abstand(dz, x, y, d, oben=True):
+    """Verschiebung in z (m, nach oben bzw. unten), nach der der Deckelknoten
+    bei (x|y) d (m) neben dem Deckel z = 1 + dz·x·y liegt (Halbieren über
+    ``_bilinear_abstand``)."""
+    deckel = np.array([[0, 0, 1], [1, 0, 1], [1, 1, 1 + dz], [0, 1, 1]], float)
+    p = np.array([x, y, 1 + dz * x * y])
+    e = np.array([0.0, 0.0, 1.0 if oben else -1.0])
+    lo, hi = 0.0, 4.0 * d
+    for _ in range(60):
+        t = 0.5 * (lo + hi)
+        if dg._bilinear_abstand((p + t * e)[None, :], deckel)[0] < d:
+            lo = t
+        else:
+            hi = t
+    return 0.5 * (lo + hi) * e
 
 
 def test_abnahme_beule_windschief_nach_richtung():
@@ -1431,19 +1449,45 @@ def test_abnahme_beule_windschief_nach_richtung():
     bis zum 23.09.2026 ohne Richtung, bei um 1 m angehobener Deckelecke
     bleibe „selbst eine Beule von 100 mm ungenannt" (Nebenbefund B020).
 
-    Maßgebend ist der Abstand der Knoten zur Fläche (``_bilinear_abstand``),
-    nicht die Richtung der Verschiebung. Senkrecht zur Fläche bleiben bei
-    dz = 1,0 an allen neun inneren Deckelknoten 80 mm ungenannt, 90 mm sind
-    eine WARNUNG „Netzrand neben der Hülle" mit 4 Seiten. Ein Knoten, der
-    100 mm in z verschoben ist, liegt je nach Neigung des Deckels
-    verschieden weit neben der Fläche: an den sechs steileren Knoten 68 bis
-    81 mm, kein Befund; an (0,25|0,25), (0,25|0,5) und (0,5|0,25), zur Ecke
-    (0|0) hin, wo der Deckel waagerecht ist, 87 bis 94 mm, WARNUNG. Die
-    Fassung vom 23.09.2026 prüfte nur vier Knoten mit 68 bis 81 mm und
-    schrieb „100 mm in z bleiben ungenannt" wie eine Regel für das ganze
-    Netz; an allen neun Knoten geprüft, fiel das am Stand 066395a an drei
-    Knoten durch (dritte Gegenprüfung, 24.09.2026; Abstände gegengeprüft
-    durch Abtasten der Fläche mit 2001 x 2001 Punkten).
+    Für die windschiefe Fläche selbst ist bei einem Knoten, der nach außen
+    verschoben ist, der Abstand zur Fläche (``_bilinear_abstand``)
+    maßgebend, nicht ob er in z oder senkrecht zur Fläche verschoben ist. Bei
+    dz = 1,0 bleiben an allen neun inneren Deckelknoten 80 mm senkrecht nach
+    außen ungenannt, 90 mm sind eine WARNUNG „Netzrand neben der Hülle" mit
+    4 Seiten, ebenso in z nach oben bis 80 bzw. 90 mm neben der Fläche. Ein
+    Knoten, der 100 mm in z nach oben verschoben ist, liegt je nach Neigung
+    des Deckels verschieden weit neben der Fläche: an den sechs steileren
+    Knoten 68 bis 81 mm, kein Befund; an (0,25|0,25), (0,25|0,5) und
+    (0,5|0,25), zur Ecke (0|0) hin, wo der Deckel waagerecht ist, 87 bis
+    94 mm, WARNUNG. Die Fassung vom 23.09.2026 prüfte nur vier Knoten mit 68
+    bis 81 mm und schrieb „100 mm in z bleiben ungenannt" wie eine Regel für
+    das ganze Netz; an allen neun Knoten geprüft, fiel das am Stand 066395a
+    an drei Knoten durch (dritte Gegenprüfung, 24.09.2026; Abstände
+    gegengeprüft durch Abtasten der Fläche mit 2001 x 2001 Punkten).
+
+    Nach innen verschoben (eine Delle) gilt das nicht. Die Seiten liegen
+    dann nicht neben der Hülle, sondern im Körper, und andere Prüfungen
+    melden sie: bei dz = 1,0 und 90 mm senkrecht nach innen FEHLER „Seiten im
+    Inneren" an (0,25|0,25), FEHLER „Volumenbilanz" und „Lücke im Netzrand"
+    an sieben Knoten. An (0,75|0,75) bleibt die Delle senkrecht zur Fläche
+    bis 100 mm ungenannt, in z nach unten bis rund 190 mm (133 mm neben der
+    Fläche); nach außen sind dort schon 90 mm eine WARNUNG. Ursache dort ist
+    die örtliche Grenze tol + s_b·H²: H ist der größte Seitendurchmesser bis
+    drei Ringe weit, und die Delle senkt den Knoten, so dass die Seite zur
+    Ecke (1|1) hin höher wird. 90 mm senkrecht nach innen heben ihren
+    Durchmesser und damit H an den vier Seiten des Knotens von 562,5 auf
+    611,8 mm, die Grenze von 83,8 bis 84,7 auf 98,4 bis 99,7 mm; nach außen
+    bleibt H bei 562,8 mm (gemessen 24.09.2026). Bis 90f1594 stand hier wie
+    im Benutzerhandbuch ohne Einschränkung „nicht die Richtung der
+    Verschiebung"; wörtlich genommen („90 mm senkrecht nach innen wie nach
+    außen WARNUNG") fiel das an allen neun Knoten durch (fünfte
+    Gegenprüfung, 24.09.2026). Halbiert bei dz = 1,0 (auf zwei Wegen, über
+    die Verschiebung und über den Abstand, auf 0,05 mm gleich) lagen die
+    Grenzen als Abstand nach außen senkrecht bei 82,9 bis 84,2 mm, in z bei
+    82,8 bis 83,6 mm, an keinem Knoten mehr als 0,7 mm auseinander; nach
+    innen senkrecht bei 82,9 bis 83,6 mm und 100,2 mm an (0,75|0,75), in z
+    bei 82,6 bis 82,9 mm, 99,1 mm an (0,5|0,75) und (0,75|0,5) und 133,4 mm
+    an (0,75|0,75).
 
     Abgebildetes 4 x 4 x 4-Netz (64 hex8), Deckel z = 1 + dz·x·y, geprüft
     an allen neun inneren Deckelknoten (x und y je 0,25, 0,5 und 0,75); die
@@ -1452,6 +1496,7 @@ def test_abnahme_beule_windschief_nach_richtung():
     Grenze, muss der Absatz mit.
     """
     def beule(dz, x, y, mm, richtung):
+        """Verschiebung nach außen: in z nach oben oder senkrecht zur Fläche."""
         v = (np.array([0.0, 0.0, 1.0]) if richtung == "z" else _deckelnormale(dz, x, y))
         return _deckelbeule(dz, x, y, mm * 1e-3 * v)
 
@@ -1463,17 +1508,17 @@ def test_abnahme_beule_windschief_nach_richtung():
     FLACH = frozenset({(0.25, 0.25), (0.25, 0.5), (0.5, 0.25)})
     abstand_z100 = {}
     for dz, mm, richtung, warn_an, text in (
-            (0.5, 25, "z", KEINE, "25 mm in z: kein Befund"),
-            (0.5, 25, "n", KEINE, "25 mm senkrecht zur Fläche: kein Befund"),
-            (0.5, 30, "z", ALLE, "30 mm in z: WARNUNG Netzrand 4"),
-            (0.5, 30, "n", ALLE, "30 mm senkrecht zur Fläche: WARNUNG Netzrand 4"),
-            (1.0, 100, "z", FLACH, "100 mm in z: WARNUNG Netzrand 4 an (0,25|0,25), "
+            (0.5, 25, "z", KEINE, "25 mm in z nach oben: kein Befund"),
+            (0.5, 25, "n", KEINE, "25 mm senkrecht nach außen: kein Befund"),
+            (0.5, 30, "z", ALLE, "30 mm in z nach oben: WARNUNG Netzrand 4"),
+            (0.5, 30, "n", ALLE, "30 mm senkrecht nach außen: WARNUNG Netzrand 4"),
+            (1.0, 100, "z", FLACH, "100 mm in z nach oben: WARNUNG Netzrand 4 an (0,25|0,25), "
                                    "(0,25|0,5) und (0,5|0,25), an den übrigen sechs kein Befund"),
-            (1.0, 60, "n", KEINE, "60 mm senkrecht zur Fläche: kein Befund"),
-            (1.0, 80, "n", KEINE, "80 mm senkrecht zur Fläche: kein Befund"),
-            (1.0, 90, "n", ALLE, "90 mm senkrecht zur Fläche: WARNUNG Netzrand 4"),
-            (1.0, 100, "n", ALLE, "100 mm senkrecht zur Fläche: WARNUNG Netzrand 4"),
-            (1.0, 150, "z", ALLE, "150 mm in z: WARNUNG Netzrand 4")):
+            (1.0, 60, "n", KEINE, "60 mm senkrecht nach außen: kein Befund"),
+            (1.0, 80, "n", KEINE, "80 mm senkrecht nach außen: kein Befund"),
+            (1.0, 90, "n", ALLE, "90 mm senkrecht nach außen: WARNUNG Netzrand 4"),
+            (1.0, 100, "n", ALLE, "100 mm senkrecht nach außen: WARNUNG Netzrand 4"),
+            (1.0, 150, "z", ALLE, "150 mm in z nach oben: WARNUNG Netzrand 4")):
         falsch = []
         for x, y in KNOTEN:
             n_el, ist, d_mm = beule(dz, x, y, mm, richtung)
@@ -1488,11 +1533,70 @@ def test_abnahme_beule_windschief_nach_richtung():
     # Die Abstände, die das Handbuch nennt: „68 bis 81 mm" und „87 bis 94 mm"
     steil = [abstand_z100[k] for k in KNOTEN if k not in FLACH]
     flach = [abstand_z100[k] for k in KNOTEN if k in FLACH]
-    check("  100 mm in z: steile Knoten 68 bis 81 mm, flache 87 bis 94 mm neben der Fläche",
+    check("  100 mm in z nach oben: steile Knoten 68 bis 81 mm, flache 87 bis 94 mm "
+          "neben der Fläche",
           (round(min(steil)), round(max(steil)), round(min(flach)), round(max(flach)))
           == (68, 81, 87, 94),
           f"steil {min(steil):.2f} bis {max(steil):.2f}, "
           f"flach {min(flach):.2f} bis {max(flach):.2f} mm")
+
+    def text(bef):
+        return "; ".join(f"{s} {p} {w:.0f}" for s, p, w in bef) or "kein Befund"
+
+    def pruefe(name, soll_von, verschiebung):
+        """Alle neun Knoten, alle Befunde der Abnahme; Vergleich über Stufe
+        und Prüfung, bei „Seiten im Inneren" und „Netzrand" auch die Zahl der
+        Seiten (Volumenbilanz und Lücke tragen Anteile als Wert)."""
+        falsch = []
+        for x, y in KNOTEN:
+            n_el, ist, _d = _deckelbeule(1.0, x, y, verschiebung(x, y), alle=True)
+            kurz = [(s, p, w if p in ("Seiten im Inneren", "Netzrand neben der Hülle") else None)
+                    for s, p, w in ist]
+            if n_el != 64 or kurz != soll_von(x, y):
+                falsch.append(f"({x:g}|{y:g}) {n_el} El.: {text(ist)}")
+        check(name, not falsch, " | ".join(falsch))
+
+    # Nach außen zählt der Abstand, nicht ob in z oder senkrecht: so weit in
+    # z nach oben, dass der Knoten 80 bzw. 90 mm neben der Fläche liegt
+    # (85 bis 118 bzw. 96 bis 133 mm Verschiebung), gibt dasselbe wie
+    # senkrecht zur Fläche
+    for d, soll in ((80, []), (90, WARN)):
+        pruefe(f"4x4x4, Ecke 1 m hoch, 9 Deckelknoten in z nach oben bis {d} mm neben der "
+               f"Fläche: " + (text(soll) if soll else "kein Befund"),
+               lambda x, y, s=soll: s,
+               lambda x, y, d=d: _z_fuer_abstand(1.0, x, y, d * 1e-3, oben=True))
+    # Nach innen (Delle) gilt das nicht, gemessen 24.09.2026
+    VB_LUECKE = [("FEHLER", "Volumenbilanz", None), ("FEHLER", "Lücke im Netzrand", None)]
+    SEITEN4 = [("FEHLER", "Seiten im Inneren", 4.0)]
+
+    def soll_innen_n90(x, y):
+        return (SEITEN4 if (x, y) == (0.25, 0.25) else [] if (x, y) == (0.75, 0.75)
+                else VB_LUECKE)
+    pruefe("  80 mm senkrecht nach innen (Delle): kein Befund",
+           lambda x, y: [], lambda x, y: -0.08 * _deckelnormale(1.0, x, y))
+    pruefe("  90 mm senkrecht nach innen: Seiten im Inneren an (0,25|0,25), Volumenbilanz "
+           "und Lücke an sieben, (0,75|0,75) kein Befund",
+           soll_innen_n90, lambda x, y: -0.09 * _deckelnormale(1.0, x, y))
+    # gleicher Abstand, andere Richtung: in z nach unten bis 90 mm neben der
+    # Fläche bleiben (0,5|0,75) und (0,75|0,5) ungenannt, senkrecht nicht
+    pruefe("  in z nach unten bis 90 mm neben der Fläche: wie senkrecht, aber (0,5|0,75) "
+           "und (0,75|0,5) kein Befund",
+           lambda x, y: [] if (x, y) in ((0.5, 0.75), (0.75, 0.5)) else soll_innen_n90(x, y),
+           lambda x, y: _z_fuer_abstand(1.0, x, y, 0.09, oben=False))
+    # (0,75|0,75): senkrecht nach innen bis 100 mm ungenannt, in z nach unten
+    # bis rund 190 mm (Grenze halbiert bei 100,2 bzw. 190,0 mm); nach außen
+    # sind dort 90 mm eine WARNUNG (oben)
+    ecke = []
+    for mm, v, soll in ((100, -_deckelnormale(1.0, 0.75, 0.75), []),
+                        (185, np.array([0.0, 0.0, -1.0]), []),
+                        (195, np.array([0.0, 0.0, -1.0]), [("FEHLER", "Seiten im Inneren", 3.0)])):
+        n_el, ist, d_mm = _deckelbeule(1.0, 0.75, 0.75, mm * 1e-3 * v, alle=True)
+        if n_el != 64 or ist != soll:
+            ecke.append(f"{mm} mm {'in z' if v[2] == -1.0 else 'senkrecht'}: {text(ist)}")
+    d190 = _deckelbeule(1.0, 0.75, 0.75, [0.0, 0.0, -0.19], alle=True)[2]
+    check("  (0,75|0,75) Delle: senkrecht 100 mm und in z 185 mm kein Befund, 195 mm FEHLER; "
+          "190 mm in z = 133 mm neben der Fläche",
+          not ecke and round(d190) == 133, " | ".join(ecke) + f" 190 mm in z: {d190:.2f} mm")
 
 
 def test_abnahme_beule_windschief_randknoten():
@@ -1507,11 +1611,11 @@ def test_abnahme_beule_windschief_randknoten():
     von zwölf einen Befund, bei 90 mm stand an sechs etwas anderes da
     (vierte Gegenprüfung).
 
-    Senkrecht zum Deckel verschoben, verlässt ein Randknoten auch die ebene
-    Seitenfläche, bei 80 mm um 13,9 bis 48,0 mm - nach außen auf den Rändern
-    x = 0 und y = 0 (WARNUNG „Netzrand neben der Hülle" mit 2 Seiten), nach
-    innen auf x = 1 und y = 1 (FEHLER „Seiten im Inneren" an (1|0,5),
-    (1|0,75), (0,5|1) und (0,75|1)). Dass es an der Seitenfläche liegt, zeigt
+    Senkrecht zum Deckel nach außen verschoben, verlässt ein Randknoten auch
+    die ebene Seitenfläche, bei 80 mm um 13,9 bis 48,0 mm - nach außen auf
+    den Rändern x = 0 und y = 0 (WARNUNG „Netzrand neben der Hülle" mit 2
+    Seiten), nach innen auf x = 1 und y = 1 (FEHLER „Seiten im Inneren" an
+    (1|0,5), (1|0,75), (0,5|1) und (0,75|1)). Dass es an der Seitenfläche liegt, zeigt
     die Zerlegung: der Anteil senkrecht zur Seitenfläche allein gibt bei 80 mm
     an allen zwölf denselben Befund, der Rest, der in der Ebene der
     Seitenfläche bleibt, bei 60 und 80 mm keinen. Bei dz = 0,5 gilt der
