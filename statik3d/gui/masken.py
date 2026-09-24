@@ -57,6 +57,61 @@ class Feld:
     hinweis: str = ""
 
 
+class Rollflaeche(QtWidgets.QScrollArea):
+    """Die rollbare Mitte einer Maske (24.09.2026).
+
+    Eine gewoehnliche QScrollArea meldet hoechstens 24 Schriftzeilen Hoehe als
+    Wunschgroesse; eine Maske mit 15 Feldern rollte dann schon in einem
+    leeren, hohen rechten Bereich. Diese hier wuenscht sich die volle Hoehe
+    ihres Inhalts - sie rollt nur, wenn der Platz wirklich fehlt - und
+    verlangt als Mindesthoehe nur wenige Zeilen. Die Mindestbreite bleibt die
+    des Inhalts (plus Rollbalken): waagerecht wird nie gerollt, so wie vorher.
+    """
+
+    #: Mindesthoehe der Mitte in Bildpunkten: etwa zwei Feldzeilen
+    MINDESTHOEHE = 56
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("maskenrolle")
+        self.setWidgetResizable(True)
+        self.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        # Die Flaeche selbst nimmt keinen Fokus: Tab geht von Feld zu Feld
+        self.setFocusPolicy(QtCore.Qt.NoFocus)
+        self.viewport().setAutoFillBackground(False)
+
+    def setWidget(self, w: QtWidgets.QWidget) -> None:
+        super().setWidget(w)
+        w.setAutoFillBackground(False)
+        # Aendert sich der Inhalt (Felder ein- oder ausgeblendet, eine
+        # abgeleitete Maske setzt ihren Teil ein), muss die Wunschhoehe neu
+        # gelesen werden - die QScrollArea selbst merkt das nicht
+        w.installEventFilter(self)
+
+    def eventFilter(self, obj, ev):
+        if obj is self.widget() and ev.type() == QtCore.QEvent.LayoutRequest:
+            self.updateGeometry()
+        return super().eventFilter(obj, ev)
+
+    def _balken(self) -> int:
+        return self.style().pixelMetric(QtWidgets.QStyle.PM_ScrollBarExtent, None, self)
+
+    def sizeHint(self) -> QtCore.QSize:
+        w = self.widget()
+        if w is None:
+            return super().sizeHint()
+        s = w.sizeHint().expandedTo(w.minimumSizeHint())
+        return QtCore.QSize(s.width() + self._balken(), s.height())
+
+    def minimumSizeHint(self) -> QtCore.QSize:
+        w = self.widget()
+        if w is None:
+            return super().minimumSizeHint()
+        return QtCore.QSize(w.minimumSizeHint().width() + self._balken(),
+                            min(self.MINDESTHOEHE, max(0, w.sizeHint().height())))
+
+
 class Maske(QtWidgets.QFrame):
     """Eine nicht-modale Eingabemaske.
 
@@ -104,6 +159,11 @@ class Maske(QtWidgets.QFrame):
         #: sich aendert (etwa weil Flaechen in der Ansicht angeklickt wurden).
         self._listen: dict[str, tuple] = {}
 
+        # Gemeinsamer Rahmen (24.09.2026, Paket 1 des Oberflaechenplans):
+        # fester Kopf (Titel, Hinweiszeile), rollbare Mitte (die Felder),
+        # fester Fuss (die Knoepfe). Ohne Rollbereich zog eine lange Maske
+        # (Wind, Wasserdruck, Knotenlager) das Hauptfenster bis 1749 px hoch
+        # und „Übernehmen“ lag unter dem Bildschirmrand.
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(10, 8, 10, 10)
         lay.setSpacing(6)
@@ -117,9 +177,30 @@ class Maske(QtWidgets.QFrame):
         zu.setText("✕")
         zu.setObjectName("maskezu")
         zu.setToolTip("Maske schließen (Esc)")
+        # Nicht in der Tab-Folge: Tab soll vom Kopf direkt ins erste Feld
+        # gehen, Esc schliesst ohnehin
+        zu.setFocusPolicy(QtCore.Qt.NoFocus)
         zu.clicked.connect(self.schliessen)
         kopf.addWidget(zu)
         lay.addLayout(kopf)
+
+        # Die Hinweiszeile steht unter dem Titel: dort liest man zuerst, was
+        # die Maske will - und sie rollt nicht mit weg
+        self.lbl_hinweis = QtWidgets.QLabel(hinweis or self._klickhinweis(), self)
+        self.lbl_hinweis.setObjectName("maskenhinweis")
+        self.lbl_hinweis.setWordWrap(True)
+        lay.addWidget(self.lbl_hinweis)
+
+        self.rolle = Rollflaeche(self)
+        self.mitte = QtWidgets.QWidget()
+        self.mitte.setObjectName("maskenmitte")
+        self.mitte_lay = QtWidgets.QVBoxLayout(self.mitte)
+        # 2 px oben und unten: der orange Rahmen eines scharfen Feldes bleibt
+        # auch am Rand der Rollflaeche ganz zu sehen
+        self.mitte_lay.setContentsMargins(0, 2, 0, 2)
+        self.mitte_lay.setSpacing(6)
+        self.rolle.setWidget(self.mitte)
+        lay.addWidget(self.rolle, 1)
 
         gitter = QtWidgets.QGridLayout()
         gitter.setContentsMargins(0, 0, 0, 0)
@@ -142,13 +223,12 @@ class Maske(QtWidgets.QFrame):
                     lb.setToolTip(f.hinweis or f.text)
                 gitter.addWidget(lb, i, 0)
                 gitter.addWidget(w, i, 1)
-        lay.addLayout(gitter)
+        self.mitte_lay.addLayout(gitter)
+        # Kurze Masken stehen oben, ihre Zeilen werden nicht auseinandergezogen
+        self.mitte_lay.addStretch(0)
 
-        self.lbl_hinweis = QtWidgets.QLabel(hinweis or self._klickhinweis())
-        self.lbl_hinweis.setObjectName("maskenhinweis")
-        self.lbl_hinweis.setWordWrap(True)
-        lay.addWidget(self.lbl_hinweis)
-
+        fuss = QtWidgets.QVBoxLayout()
+        fuss.setSpacing(6)
         knoepfe = QtWidgets.QHBoxLayout()
         self.btn_anwenden = QtWidgets.QPushButton(knopf, self)
         self.btn_anwenden.setDefault(True)
@@ -164,8 +244,9 @@ class Maske(QtWidgets.QFrame):
             b = QtWidgets.QPushButton("Auswahl leeren", self)
             b.clicked.connect(self.auswahl_leeren)
             knoepfe.addWidget(b)
-        lay.addLayout(knoepfe)
-        # Weitere Knoepfe (Situation: Auswahl deaktivieren / aktivieren)
+        fuss.addLayout(knoepfe)
+        # Weitere Knoepfe (Situation: Auswahl deaktivieren / aktivieren,
+        # Löschen …) - auch sie stehen im festen Fuss
         self.zusatzknoepfe: dict[str, QtWidgets.QPushButton] = {}
         if zusatz:
             zeile = QtWidgets.QHBoxLayout()
@@ -174,8 +255,63 @@ class Maske(QtWidgets.QFrame):
                 b.clicked.connect(lambda _c=False, r=ruf: r())
                 zeile.addWidget(b)
                 self.zusatzknoepfe[text] = b
-            lay.addLayout(zeile)
+            fuss.addLayout(zeile)
+        lay.addLayout(fuss)
         self.setMinimumWidth(232)
+        self.tabfolge_setzen()
+        # Das Feld mit dem Fokus in der Rollflaeche sichtbar halten - auch bei
+        # Klick, Programmfokus und Tab aus dem Fuss zurueck in die Felder
+        app = QtWidgets.QApplication.instance()
+        if app is not None:
+            app.focusChanged.connect(self._fokus_gewechselt)
+
+    # -- Rahmen ---------------------------------------------------------
+    def inhalt_einfuegen(self, w: QtWidgets.QWidget, dehnung: int = 0) -> QtWidgets.QWidget:
+        """Eigenen Inhalt einer abgeleiteten Maske in die rollbare Mitte setzen
+        (unter die Felder, ueber den Fuss). Die Tab-Folge wird nachgezogen."""
+        # vor den Abschlussstrecker, der kurze Masken oben haelt
+        self.mitte_lay.insertWidget(max(0, self.mitte_lay.count() - 1), w, dehnung)
+        self.tabfolge_setzen()
+        return w
+
+    def _fussknoepfe(self) -> list:
+        knoepfe = [self.btn_anwenden]
+        if self.btn_abbrechen is not None:
+            knoepfe.append(self.btn_abbrechen)
+        knoepfe += [b for b in self.findChildren(QtWidgets.QPushButton)
+                    if b.text() == "Auswahl leeren" and not self.rolle.isAncestorOf(b)]
+        knoepfe += list(self.zusatzknoepfe.values())
+        return knoepfe
+
+    def tabfolge_setzen(self) -> None:
+        """Tab von oben nach unten: erst alles in der Mitte in der Reihenfolge
+        des Aufbaus, dann die Knoepfe des Fusses (24.09.2026). Ohne das kam
+        bei der Ermuedungsmaske zuerst „Übernehmen“ und dann erst die Tabelle,
+        weil ihr Inhalt nach den Knoepfen gebaut wird."""
+        tab = QtCore.Qt.FocusPolicy.TabFocus.value
+        # isAncestorOf laesst die Aufklapplisten der Auswahlfelder weg: sie
+        # sind eigene Fenster und gehoeren nicht in die Tab-Folge der Maske
+        folge = [w for w in self.mitte.findChildren(QtWidgets.QWidget)
+                 if (w.focusPolicy().value & tab) == tab and self.mitte.isAncestorOf(w)]
+        folge += [b for b in self._fussknoepfe() if b not in folge]
+        for a, b in zip(folge, folge[1:]):
+            QtWidgets.QWidget.setTabOrder(a, b)
+
+    def _fokus_gewechselt(self, _alt, neu) -> None:
+        """Bekommt ein Widget der Mitte den Fokus, rollt die Mitte es ins Bild
+        (Tab, Klick oder Fokus aus dem Programm)."""
+        try:
+            if neu is not None and self.isVisible() and self.mitte.isAncestorOf(neu):
+                # Das ganze Feld, nicht nur die Schreibmarke: ensureWidgetVisible
+                # nimmt bei Textfeldern nur das Rechteck der Marke, und der
+                # untere Rand des Feldes blieb dann abgeschnitten
+                p = neu.mapTo(self.mitte, QtCore.QPoint(0, 0))
+                r = QtCore.QRect(p, neu.size())
+                halb = max(1, self.rolle.viewport().height() // 2)
+                self.rolle.ensureVisible(r.center().x(), r.center().y(), 0,
+                                         min(r.height() // 2 + 6, halb))
+        except RuntimeError:            # Maske schon freigegeben
+            pass
 
     # -- Aufbau ----------------------------------------------------------
     def _bauen(self, f: Feld) -> QtWidgets.QWidget:
@@ -367,7 +503,34 @@ class Maske(QtWidgets.QFrame):
                 return
             self.schliessen()
             return
+        if ev.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter) and self._enter():
+            return
         super().keyPressEvent(ev)
+
+    def _enter(self) -> bool:
+        """Enter = Hauptknopf, von jedem Feld aus (24.09.2026).
+
+        Hier kommt Enter nur an, wenn das Feld es nicht selbst braucht. Ein
+        Textfeld mit eigenem returnPressed hat den Hauptknopf schon ausgeloest
+        (QLineEdit reicht Enter danach weiter) - dort nichts tun, sonst liefe
+        „Anlegen“ zweimal. Ein Knopf mit dem Fokus wird selbst gedrueckt:
+        Enter auf „Abbrechen“ bricht ab.
+        """
+        fw = QtWidgets.QApplication.focusWidget()
+        if fw is not None and not self.isAncestorOf(fw):
+            fw = None
+        if isinstance(fw, QtWidgets.QLineEdit):
+            try:
+                if fw.receivers(QtCore.SIGNAL("returnPressed()")) > 0:
+                    return True
+            except (TypeError, RuntimeError):
+                return True
+        if isinstance(fw, QtWidgets.QPushButton) and fw is not self.btn_anwenden:
+            fw.click()
+            return True
+        if self.btn_anwenden.isEnabled():
+            self.btn_anwenden.click()
+        return True
 
     def eventFilter(self, obj, ev):
         if ev.type() == QtCore.QEvent.FocusIn:
@@ -426,10 +589,24 @@ class Maskenrand(QtCore.QObject):
         maske.geschlossen.connect(self._vergessen)
         if self.ziel is not None:
             # Eine lange Maske (Querschnitte) meldet eine Dehnung an und
-            # bekommt damit den groesseren Teil der Hoehe; die kurzen Masken
-            # bleiben bei ihrer natuerlichen Hoehe
-            self.ziel.insertWidget(0, maske, int(getattr(maske, "dehnung", 0)))
+            # bekommt damit den groesseren Teil der Hoehe. Alle anderen stehen
+            # oben buendig in ihrer natuerlichen Hoehe (24.09.2026): ohne
+            # AlignTop bekam die Maske den ganzen Bereich, und ihre Zeilen
+            # wurden auseinandergezogen. Fehlt Platz, rollt ihre Mitte -
+            # das Fenster waechst nicht mehr.
+            dehnung = int(getattr(maske, "dehnung", 0) or 0)
+            if dehnung:
+                self.ziel.insertWidget(0, maske, dehnung)
+            else:
+                self.ziel.insertWidget(0, maske, 0, QtCore.Qt.AlignTop)
             maske.show()
+            # Die Tab-Folge erst hier noch einmal setzen: allein (ohne
+            # Fenster) ist die Kette ein Ring, und Qt haelt „Übernehmen“ nach
+            # dem letzten Feld dann schon fuer richtig einsortiert - im
+            # Fenster folgten sonst auf das letzte Feld die Widgets dahinter
+            ordnen = getattr(maske, "tabfolge_setzen", None)
+            if callable(ordnen):
+                ordnen()
             if fokus:
                 maske.setFocus()
         else:
@@ -490,8 +667,10 @@ class Maskenrand(QtCore.QObject):
             return
         g = self.maske.sizeHint()
         b = self.ansicht.width()
-        self.maske.setGeometry(max(8, b - g.width() - 14), 12,
-                               g.width(), g.height())
+        # nie hoeher als die Ansicht - die Mitte der Maske rollt (24.09.2026)
+        h = max(self.maske.minimumSizeHint().height(),
+                min(g.height(), self.ansicht.height() - 24))
+        self.maske.setGeometry(max(8, b - g.width() - 14), 12, g.width(), h)
 
     def eventFilter(self, obj, ev):
         if obj is self.ansicht and ev.type() == QtCore.QEvent.Resize:
@@ -505,6 +684,9 @@ QFrame#maske {{ background: {flaeche}; border: 1px solid {linie};
     border-radius: 10px; }}
 QLabel#maskentitel {{ font-weight: 600; font-size: 13px; }}
 QLabel#maskenhinweis {{ color: {matt}; font-size: 11px; }}
+/* rollbare Mitte: durchsichtig, damit sie wie die Maske aussieht */
+QScrollArea#maskenrolle {{ background: transparent; border: 0; }}
+QWidget#maskenmitte {{ background: transparent; }}
 QToolButton#maskezu {{ border: 0; color: {matt}; font-size: 13px;
     padding: 0 4px; }}
 QToolButton#maskezu:hover {{ color: {schlecht}; }}

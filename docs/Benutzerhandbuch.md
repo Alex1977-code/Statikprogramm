@@ -202,7 +202,9 @@ Die Arbeitsfläche in drei Spalten:
 * **in der Mitte die 3D-Ansicht** — frei für die Grafik.
 * **rechts die Eingabemaske** — es ist immer genau **eine** sichtbar: die
   Maske des gewählten Objekts oder das Register zum Befehl im Ribbon; der Titel
-  nennt sie. Ist nichts gewählt und kein Befehl aktiv, ist der Bereich leer.
+  nennt sie. Eine Maske trägt ihren Titel selbst, die Titelzeile des Bereichs
+  darüber entfällt dann. Ist nichts gewählt und kein Befehl aktiv, ist der
+  Bereich leer.
   Die **Projektangaben** stehen nicht von selbst darunter: sie holt der oberste
   Punkt des Modellbaums (der Modellname) oder *Datei → Projektangaben*. Eine
   Registerleiste mit denselben Namen wie im Ribbon gibt es nicht.
@@ -2088,6 +2090,26 @@ Modell und blockiert nichts. Beide Wege führen zum selben Ziel:
 Querschnitt, Material, Dicke und Lastfall gelten für alle folgenden Objekte,
 bis man sie ändert. **Esc** schließt die Maske. Ein neuer Erzeuge-Befehl löst
 die vorige Maske ab — es ist immer höchstens eine offen.
+
+**Aufbau jeder Maske** (seit 24.09.2026): Oben stehen der Titel und darunter
+die Hinweiszeile, was die Maske erwartet. In der Mitte liegen die Felder.
+Reicht die Höhe nicht, rollt nur diese Mitte (Mausrad oder Rollbalken). Unten
+steht ein fester Fuß mit den Knöpfen der Maske: dem Hauptknopf („Übernehmen“,
+„Anlegen“, „Last aufbringen“ …), bei einem neuen Objekt „Abbrechen“ und, wo es
+sie gibt, „Löschen“ oder „Auswahl übernehmen“. Der Fuß rollt nie mit weg, der
+Hauptknopf bleibt immer zu sehen. Kurze Masken stehen oben im rechten Bereich,
+ihre Zeilen werden nicht auseinandergezogen. Eine lange Maske (Wind,
+Wasserdruck, Knotenlager, Kontaktbedingung) lässt das Programmfenster nicht
+mehr über den Bildschirm hinaus wachsen: fehlt Platz, wird zuerst der untere
+Bereich (Protokoll und Tabellen) kleiner, dann rollt die Mitte der Maske.
+
+Zur Tastatur: **Tab** geht von oben nach unten durch die Felder und zuletzt
+durch die Knöpfe des Fußes. Ein Feld, das den Fokus bekommt, rollt die Mitte
+von selbst ins Bild. Die **Eingabetaste** löst in jedem Feld den Hauptknopf
+aus, auch auf einem Haken oder in einer Auswahlliste. Steht der Fokus auf
+einem anderen Knopf, etwa „Abbrechen“, drückt die Eingabetaste diesen Knopf.
+**Esc** wirkt wie bisher in zwei Stufen: Ist ein Feld gerade orange (die
+Maus füllt es), beendet das erste Esc nur diese Auswahl per Maus.
 
 ### Verschieben, Kopieren, Drehen, Spiegeln
 
