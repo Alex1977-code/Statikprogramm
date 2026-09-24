@@ -5314,10 +5314,41 @@ Ein verdrehtes Element in der groben Ecke, wo die
 oberste Lage dünn ist gegen die Sehne, findet nur die Richtung: Seine Ecken
 liegen bei 20:1 17 bis 18 mm neben dem Deckel, seine Seiten stehen 57 bis 87°
 dagegen. Die Kehrseite: kleinere Abweichungen des Netzrands meldet
-die Abnahme an windschiefen Flächen nicht. Am abgebildeten 4 × 4 × 4-Netz
-desselben Würfels bleibt eine Beule von 25 mm ungenannt, eine von 30 mm steht
-als Warnung da. Ist die Ecke um 1 m angehoben, bleibt dort selbst eine Beule
-von 100 mm ungenannt.
+die Abnahme an windschiefen Flächen nicht. Für die windschiefe Fläche selbst
+ist dabei bei einem Knoten, der nach außen verschoben ist, sein Abstand
+senkrecht zu ihr maßgebend, nicht ob er in z oder senkrecht zur Fläche
+verschoben ist. Am abgebildeten 4 × 4 × 4-Netz desselben Würfels bleibt ein
+Deckelknoten, der 25 mm nach außen verschoben ist, ungenannt, bei 30 mm steht
+eine Warnung da, in z wie senkrecht zur Fläche verschoben (gemessen an allen
+21 Deckelknoten außer den vier Ecken). Ist die Ecke um 1 m angehoben, bleiben
+an den neun inneren Deckelknoten 80 mm **senkrecht nach außen** ungenannt,
+90 mm sind eine Warnung „Netzrand neben der Hülle“; ebenso, wenn der Knoten
+so weit in z nach oben verschoben ist, dass er 80 bzw. 90 mm neben der Fläche
+liegt. Ein Deckelknoten, der 100 mm **in z nach oben** verschoben ist, liegt
+je nach Neigung des Deckels verschieden weit neben der Fläche: an den
+steileren Stellen nur 68 bis 81 mm, er bleibt ungenannt; zur Ecke (0|0) hin,
+wo der Deckel waagerecht ist, 87 bis 94 mm, das ist eine Warnung (gemessen am
+24.09.2026 an allen neun inneren Deckelknoten: ungenannt an (0,5|0,5),
+(0,75|0,75), (0,25|0,75), (0,75|0,25), (0,5|0,75) und (0,75|0,5), Warnung an
+(0,25|0,25), (0,25|0,5) und (0,5|0,25)). Nach innen verschoben (eine Delle)
+gilt das nicht: Die Seiten liegen dann im Körper statt neben ihm, andere
+Prüfungen melden sie, und wann, hängt auch von der Richtung ab. Bei 1 m
+Anhebung bleiben 80 mm senkrecht nach innen an den neun inneren Deckelknoten
+ungenannt. Bei 90 mm steht an (0,25|0,25) ein FEHLER „Seiten im Inneren“, an
+sieben Knoten ein FEHLER „Volumenbilanz“ mit „Lücke im Netzrand“, an
+(0,75|0,75) nichts: Dort bleibt eine Delle senkrecht zur Fläche bis 100 mm
+ungenannt, in z nach unten bis rund 190 mm (133 mm neben der Fläche), nach
+außen sind dort schon 90 mm eine Warnung (gemessen am 24.09.2026).
+Die zwölf Randknoten des Deckels zwischen den Ecken meldet die Abnahme zum
+Teil früher: Senkrecht zum Deckel nach außen verschoben, verlassen sie auch
+die ebene Seitenfläche, bei 80 mm um 14 bis 48 mm. Bei 80 mm steht deshalb auf
+den Rändern x = 0 und y = 0 eine Warnung „Netzrand neben der Hülle“, an (1|0,5),
+(1|0,75), (0,5|1) und (0,75|1), wo der Knoten in den Körper hinein rückt, ein
+FEHLER „Seiten im Inneren“; ungenannt bleiben nur (1|0,25) und (0,25|1). An
+(0|0,5), (0|0,75), (0,5|0) und (0,75|0) warnt die Abnahme schon bei 60 mm.
+Nur um den Anteil senkrecht zur Seitenfläche verschoben, gibt es bei 80 mm an
+allen zwölf denselben Befund, mit dem übrigen Anteil allein, der in der Ebene
+der Seitenfläche bleibt, bei 60 und 80 mm keinen (gemessen am 24.09.2026).
 
 Geprüft werden Körper, deren Randlinien gerade sind und deren Randflächen eben
 sind oder Vierecke; Körper mit Bögen, Kreisen oder Splines prüft der freie
@@ -6067,6 +6098,32 @@ erfüllt; mit fünffachem Wasserdruck „eta = 2.419", nicht erfüllt). Mit nur
 GZG-Kombinationen wurde kein Stab nachgewiesen; an der Halle war η = 0 und
 die Stellung erfüllt, der Bericht nannte „eta = 0.000", und der Browser
 zeigte „η = 0,000" grün.
+
+**Ohne verlangten Nachweis gibt es keine Warnung.** Das gilt, wenn die
+Stellungen ohne Nachweis gerechnet werden oder bei keinem Stab „Nachweis
+führen" gesetzt ist (`design = False`). Ohne Nachweis rechnet in Python
+schon `reihe.rechnen()` ohne Argument, denn dort ist `nachweise=False` die
+Vorgabe; das Beispiel oben gibt `nachweise=True` ausdrücklich an. Im
+Browser geht es nur über die Operation `stellungen_rechnen` mit
+`"nachweise": false`: Ohne diese Angabe nimmt die Operation `true`, und die
+Knöpfe „Alle Stellungen rechnen" im Register und „rechnen" im Filmstreifen
+senden `true`. Die Desktop-Oberfläche („Alle Stellungen rechnen" im Register,
+„Alle Stellungen" im Ribbon *Berechnung*) rechnet immer mit Nachweis. In
+beiden Fällen ist η nicht bestimmt, wie oben beschrieben: keine Stellung ist
+`ok`, im Browser steht auf der Karte „η –" und „nicht geführt", in der
+Tabelle kein Wert und in der η-Kurve kein Punkt, in der Zeile der
+Umhüllenden und im Filmstreifen „η nicht bestimmt"; die Meldung nach dem
+Rechnen (`umh.kurztext()`) lautet „eta nicht bestimmt – kein Stabnachweis
+geführt", der Bericht (`umh.bericht()`) „Umhüllende: eta nicht bestimmt – in
+keiner Stellung wurde ein Stabnachweis geführt". Am Stand ec6448c stand dort
+in beiden Fällen η = 0 in der Farbe für erfüllt („η 0,00" auf der Karte,
+0,00 grün in der Tabelle, „eta = 0.000, maßgebend …"), obwohl nichts
+nachgewiesen war (im Browser gemessen am 23.09.2026 am Beispiel „gate" mit
+zwei und mit drei Stellungen, in Python am 24.09.2026 am selben Beispiel mit
+drei Stellungen, jeweils für beide Fälle; mit `nachweise=True` und Stäben
+mit Nachweis ergab sich in Python η = 0,515). Geprüft in
+`tests/test_bridges.py` (`test_reihe_ohne_verlangten_nachweis`) und
+`tests/test_web.py`.
 
 ### Lastfälle nach DIN 19704 anlegen und das Lastenheft
 

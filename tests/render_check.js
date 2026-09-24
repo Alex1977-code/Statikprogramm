@@ -186,6 +186,33 @@ pruefe('Filmstreifen: nicht vollständig nachgewiesen wird genannt',
        !B.gerechnet || !offen.length || /Umhüllende[^<]*nicht/.test(film),
        (film.match(/Umhüllende[^<]*/) || [''])[0]);
 
+// --- Stellungen ohne verlangten Nachweis ----------------------------------
+// Mit "nachweise": false oder mit allen Staeben ohne "Nachweis führen" gibt
+// es weder Warnungen noch einen nachgewiesenen Stab (positions.py:
+// warnungen leer, nachgewiesen False). Am Stand ec6448c zeigte app.js dann
+// η = 0 in der Farbe fuer erfuellt: Karte, Tabelle, Kurve, Umhuellende,
+// Filmstreifen (gemessen 23.09.2026 am Beispiel gate; Nebenbefund B021).
+// Seit B036 (fix2/nb_bridges_positions) ist η dort nicht bestimmt, wie bei
+// einer Stellung mit Warnungen; hier steht, dass gerade der Fall ohne
+// Warnung so erscheint - aendert sich die Anzeige, muss der Absatz
+// „Ohne verlangten Nachweis“ im Benutzerhandbuch mit.
+const ungefragt = gerechnet.filter(x => !(x.ergebnis.warnungen || []).length
+                                        && x.ergebnis.nachgewiesen === false);
+const alleUngefragt = B.gerechnet && gerechnet.length > 0 && ungefragt.length === gerechnet.length;
+pruefe('Ohne verlangten Nachweis: Karte „η –“ und „nicht geführt“, nicht grün',
+       ungefragt.every(x => { const k = karte(x);
+                              return !/η \d/.test(k) && k.includes('nicht geführt')
+                                     && !k.includes('background:var(--ok)'); }),
+       ungefragt.length ? karte(ungefragt[0]).replace(/\s+/g, ' ').slice(0, 160) : '');
+pruefe('Ohne verlangten Nachweis: Tabelle ohne η-Wert, kein Punkt in der Kurve',
+       ungefragt.every(x => !zeileTab(x).includes('class="util"') && !h.includes(`<title>${x.name}:`)),
+       ungefragt.length ? zeileTab(ungefragt[0]).replace(/\s+/g, ' ').slice(0, 160) : '');
+pruefe('Ohne jeden verlangten Nachweis: Umhüllende und Filmstreifen „η nicht bestimmt“, nicht grün',
+       !alleUngefragt
+       || (zeileUmh.includes('η nicht bestimmt') && !zeileUmh.startsWith('<div class="msg ok">')
+           && film.includes('η nicht bestimmt') && !/Umhüllende η = \d/.test(film)),
+       `${zeileUmh} / ${(film.match(/Umhüllende[^<]*/) || [''])[0]}`);
+
 ctx.window.innerWidth = 1440;
 ev('updateWerkbank()');
 pruefe('Werkbank ab 1100 px', doc.body.classList.contains('werkbank'));

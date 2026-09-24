@@ -567,6 +567,13 @@ def test_stellungen_din19704_export():
               and B["massgebende_stellung"] and B["bericht"])
         check("Jede Stellung hat ein Ergebnis",
               all(x["ergebnis"] and not x["ergebnis"]["fehler"] for x in B["liste"]))
+        # Ohne "nachweise" nimmt die Operation true - anders als
+        # Stellungsreihe.rechnen() in Python (Vorgabe False, siehe
+        # test_bridges.test_reihe_ohne_verlangten_nachweis). Das
+        # Benutzerhandbuch sagt beides seit dem 24.09.2026.
+        check("Operation ohne 'nachweise': jede Stellung nachgewiesen",
+              all((x["ergebnis"] or {}).get("nachgewiesen") is True for x in B["liste"]),
+              str([(x["ergebnis"] or {}).get("nachgewiesen") for x in B["liste"]]))
 
         st, j, _ = c.op(op="remove_stellung", name="offen")
         check("Stellung entfernt", st == 200 and len(j["state"]["stellungen"]["liste"]) == 2)
@@ -735,6 +742,42 @@ def test_oberflaeche_rendert():
               and all(not e.get("warnungen") and e.get("nachgewiesen") is False for e in erg),
               f"eta_bestimmt {B.get('eta_bestimmt')}, "
               f"{[(len(e.get('warnungen') or []), e.get('nachgewiesen')) for e in erg]}")
+
+        # Ohne verlangten Nachweis - "nachweise": false, danach alle Staebe
+        # ohne "Nachweis führen" (design = False): keine Warnung und kein
+        # Stab nachgewiesen. Am Stand ec6448c zeigte der Browser dann η = 0
+        # in der Farbe fuer erfuellt, und die Meldung nach dem Rechnen lautete
+        # "eta = 0.000" (Nebenbefund B021). Seit B036 (fix2/nb_bridges_
+        # positions, Pruefung oben) ist eta dort nicht bestimmt; beim
+        # Zusammenfuehren (24.09.2026) prueft diese Pruefung das auch fuer
+        # alle Staebe mit design = False. render_check.js prueft die Anzeige,
+        # hier steht, dass der Zustand den Fall wirklich enthaelt (sonst
+        # waeren jene Pruefungen leer bestanden).
+        def ungefragt(vorsatz, meldung, staebe_aus=True):
+            zustand = rendern(vorsatz)
+            B = zustand.get("stellungen") or {}
+            erg = [x.get("ergebnis") or {} for x in B.get("liste", [])]
+            check(f"{vorsatz}keine Warnung, kein Stab nachgewiesen, Meldung 'eta nicht bestimmt'",
+                  len(erg) == 3 and B.get("eta_bestimmt") is False
+                  and B.get("unvollstaendig") == []
+                  and all(e.get("warnungen") == [] and e.get("nachgewiesen") is False
+                          for e in erg)
+                  and "nicht bestimmt" in meldung and "eta = 0.000" not in meldung
+                  and staebe_aus,
+                  f"eta_bestimmt {B.get('eta_bestimmt')}, "
+                  f"{[(e.get('eta'), len(e.get('warnungen') or []), e.get('nachgewiesen')) for e in erg]}; "
+                  f"{meldung}")
+
+        st, j, _ = c.op(op="stellungen_rechnen", nachweise=False)
+        ungefragt("nachweise=false: ", j.get("message") or "")
+        st, z, _ = c.get("/api/state")
+        for x in z.get("members") or []:
+            c.op(op="set_member", name=x["name"], fields={"design": False})
+        st, z, _ = c.get("/api/state")
+        st, j, _ = c.op(op="stellungen_rechnen", nachweise=True)
+        ungefragt("alle Stäbe design=False: ", j.get("message") or "",
+                  len(z.get("members") or []) == 3
+                  and not any(x.get("design") for x in z["members"]))
     finally:
         server.shutdown()
         server.server_close()

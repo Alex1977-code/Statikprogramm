@@ -349,6 +349,63 @@ def test_ermuedung_in_stellung():
           str(zeile))
 
 
+def test_reihe_ohne_verlangten_nachweis():
+    """In Python fuehrt reihe.rechnen() ohne Argument keinen Nachweis, denn
+    nachweise=False ist die Vorgabe - anders als Knopf und Operation im
+    Browser, die true nehmen. Das Benutzerhandbuch sagte bis zum 24.09.2026,
+    ohne Nachweis gehe es "nur über die Operation". Gemessen am 24.09.2026
+    am Beispiel gate mit drei Stellungen (Stand ec6448c): ohne Argument je
+    Stellung eta 0.000, nicht nachgewiesen, keine Warnung, ok; mit
+    nachweise=True eta 0.515. Ebenso ohne Warnung: alle Staebe design = False.
+
+    Seit B036 (fix2/nb_bridges_positions, test_eta_ohne_nachweis) ist eta
+    ohne gefuehrten Stabnachweis nicht bestimmt und keine Stellung erfuellt;
+    beim Zusammenfuehren (24.09.2026) prueft diese Pruefung darum "eta nicht
+    bestimmt" statt "eta = 0.000" - weiter ohne Warnung."""
+    from statik3d.examples_lib import gate_example
+
+    def reihe_aus(m):
+        r = Stellungsreihe(m, m.name)
+        for name, w in (("geschlossen", 0.0), ("Zwischen", 40.0), ("offen", 82.0)):
+            r.add(Stellung(name, w, f"{w:g} Grad"))
+        return r
+
+    def ohne_nachweis(vorsatz, u):
+        erg = u.ergebnisse
+        kurz, b = u.kurztext(), u.bericht()
+        check(f"{vorsatz}: kein Stab nachgewiesen, keine Warnung, keine Stellung erfüllt",
+              len(erg) == 3 and not u.fehlerhaft
+              and all(not e.nachgewiesen and e.warnungen == [] and not e.ok for e in erg),
+              str([(round(e.eta, 3), e.nachgewiesen, len(e.warnungen), e.ok) for e in erg]))
+        check(f"{vorsatz}: kurztext und Bericht nennen 'eta nicht bestimmt', ohne Warnhinweis",
+              not u.eta_bestimmt
+              and kurz == "eta nicht bestimmt – kein Stabnachweis geführt"
+              and "Umhüllende: eta nicht bestimmt – in keiner Stellung wurde ein "
+                  "Stabnachweis geführt" in b
+              and "eta = 0.000" not in kurz + b and "NICHT VOLLSTÄNDIG" not in kurz + b,
+              f"{kurz!r}; {[z for z in b.splitlines() if z.startswith('Umhüllende')]}")
+
+    m = gate_example()
+    check("Voraussetzung: gate hat Kombinationen und Stäbe mit 'Nachweis führen'",
+          len(m.combinations) > 0 and len(m.members) == 3
+          and all(x.design for x in m.members.values()),
+          f"{len(m.combinations)} Kombinationen, "
+          f"{[(k, x.design) for k, x in m.members.items()]}")
+    ohne_nachweis("reihe.rechnen() ohne Argument", reihe_aus(m).rechnen())
+
+    u = reihe_aus(m).rechnen(nachweise=True)
+    check("Gegenfall rechnen(nachweise=True): alle Stellungen nachgewiesen, eta > 0",
+          len(u.ergebnisse) == 3 and u.eta_bestimmt
+          and all(e.nachgewiesen and e.eta > 0.0 and e.warnungen == [] for e in u.ergebnisse)
+          and u.kurztext().startswith("eta = ") and not u.kurztext().startswith("eta = 0.000"),
+          f"{u.kurztext()!r}, {[round(e.eta, 3) for e in u.ergebnisse]}")
+
+    for x in m.members.values():
+        x.design = False
+    ohne_nachweis("alle Stäbe design=False, rechnen(nachweise=True)",
+                  reihe_aus(m).rechnen(nachweise=True))
+
+
 # --------------------------------------------------------------------------
 # 4) DIN 19704: Lastfallklassen und Kombinationen
 # --------------------------------------------------------------------------
@@ -487,8 +544,9 @@ def test_stellung_ermuedungslasten_im_protokoll():
 
 
 def main():
-    for t in (test_drehung, test_stellungen, test_reihe, test_meldung_nach_allen_stellungen,
-              test_eta_ohne_nachweis, test_ermuedung_in_stellung, test_din19704, test_ztv_ing,
+    for t in (test_drehung, test_stellungen, test_reihe, test_reihe_ohne_verlangten_nachweis,
+              test_meldung_nach_allen_stellungen, test_eta_ohne_nachweis,
+              test_ermuedung_in_stellung, test_din19704, test_ztv_ing,
               test_stellung_ermuedungslasten_im_protokoll):
         print(f"\n--- {t.__name__} ---")
         try:
