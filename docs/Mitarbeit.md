@@ -112,6 +112,14 @@ bis 4,8 s gegenüber 0,9 bis 1,4 s. `statik3d.gui.main` ist seitdem das Modul,
 die Startfunktion heißt `statik3d.gui.main.main` (so rufen sie `run_gui.py`,
 `python -m statik3d.gui` und `pyproject.toml`).
 
+**node für die Weboberfläche.** `tests.test_web` führt
+`statik3d/web/static/app.js` mit `node` aus (`tests/render_check.js`,
+`tests/render_nachweiszeile.js`). Fehlt `node`, reißt die Suite mit
+„Renderpruefung …: node vorhanden“ — bis ec6448c zählte das Auslassen still
+als bestanden. Wer bewusst ohne `node` prüft, setzt `STATIK3D_OHNE_NODE=1`;
+die Suite nennt dann unter der Zusammenfassung „2 uebersprungen“, und die
+Oberfläche ist nicht geprüft.
+
 Beides muss **vollständig** durchlaufen (`ALLE TESTS BESTANDEN`). Die Prüfungen
 sind der eigentliche Schutz: Sie rechnen gegen geschlossene Lösungen
 (Balkenformeln, Gleichgewichtssätze, Volumen aus dem Gaußschen Satz), nicht
