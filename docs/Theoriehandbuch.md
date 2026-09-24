@@ -7382,15 +7382,30 @@ steht unten bei den verwaisten Einträgen.
 Beim Anhängen einer Modelldatei kommen die gekrümmten Kanten mit dem
 Knotenversatz der Quelle mit; das Zusammenführen mit dem Ziel hängt sie auf
 die neuen Knotennummern um (`importers/_common._kantenmitten_umhaengen`,
-ebenso in `merge_duplicate_nodes`). Fallen dabei zwei Kanten auf eine, gilt
-die Kante des Elements, das im Modell zuerst steht – beim Anhängen die des
-Ziels –, gerade oder gekrümmt. Eine gerade Kante hat keinen Eintrag; als
-ihre Kantenmitte zählt die Sehnenmitte. Liegen die beiden Kantenmitten
-weiter als 10⁻⁹ der Kantenlänge auseinander (die Grenze, mit der `aus_tet10`
-gekrümmt von gerade trennt), warnt das Protokoll und sagt, an wie vielen
-dieser Kanten eine Seite gerade war. Geprüft an der Hohlkugel mit einem
-Zielknoten auf einer Ecke einer gekrümmten Kante: die Geometrie jedes
-angehängten Elements ist bitgleich die der Quelle (`tests/test_importers.py`).
+ebenso in `merge_duplicate_nodes`). Fallen dabei zwei Kanten von
+`tetp`-Elementen auf eine, gilt die Kante des `tetp`-Elements, das im Modell
+zuerst steht – beim Anhängen die des Ziels –, gerade oder gekrümmt. Eine
+gerade Kante hat keinen Eintrag; als ihre Kantenmitte zählt die Sehnenmitte.
+Liegen die beiden Kantenmitten weiter als 10⁻⁹ der Kantenlänge auseinander
+(die Grenze, mit der `aus_tet10` gekrümmt von gerade trennt), warnt das
+Protokoll und sagt, an wie vielen dieser Kanten eine Seite gerade war.
+Geprüft an der Hohlkugel mit einem Zielknoten auf einer Ecke einer
+gekrümmten Kante: die Geometrie jedes angehängten Elements ist bitgleich die
+der Quelle (`tests/test_importers.py`).
+
+Diese Regel gilt nur zwischen `tetp`-Elementen; das Zusammenführen sieht nur
+deren Kanten. Teilt die Kante danach ein Element ohne Anreicherung (etwa ein
+tet4), ist sie gerade (unten: Geometrie an der Grenze zum tet4), gleich
+welche Seite zuerst steht, und das Protokoll warnt nicht. Die Kantenmitte
+bleibt eingetragen, `geometrie_modell` übergeht sie dort. Gemessen (zweimal,
+24.09.2026) am Viertel-Hohlzylinder 4 × 1 (tet10 mit Kantenmitten auf dem
+Kreisbogen, `aus_tet10`, p = 3) mit demselben Zylinder als tet4 um h darüber,
+in beiden Reihenfolgen: 10 Knoten zusammengeführt, 17 Anschlusskanten,
+davon 8 gekrümmt; dort liegt die Geometrie genau auf der Sehnenmitte, die
+`tetp`-Elemente weichen bis 3,769 mm von ihrer vorigen Geometrie ab, sonst
+bitgleich, keine Warnung (`tests/test_importers.py`). Mit demselben Zylinder
+als tet10 darüber bricht die Rechnung ab (Mittenknoten ohne Gegenüber, siehe
+oben unter Lager).
 
 Bis zur Nachbesserung vom 24.09.2026 galt der zuerst eingetragene Eintrag,
 und eine gerade Seite zählte nicht: Es galt still die gekrümmte Kante, auch

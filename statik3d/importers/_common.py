@@ -413,10 +413,16 @@ def _kantenmitten_umhaengen(model: Model, new_index, new_nodes,
     model.tetp_kantenmitten_gelesen; an bc1dfe0 sonst bis 5555 mm,
     Pruefung test_json_anhaengen_verwaiste_kantenmitten).
 
-    Fallen zwei Kanten auf eine, gilt die Kante des Elements, das im Modell
-    zuerst steht - beim Anhaengen die des Ziels, dessen Elemente vor denen
-    der Quelle stehen -, und zwar gerade oder gekruemmt: eine gerade Kante
-    hat keinen Eintrag, ihre Kantenmitte ist die Sehnenmitte. Bis zur
+    Fallen zwei Kanten von tetp-Elementen auf eine, gilt die Kante des
+    tetp-Elements, das im Modell zuerst steht - beim Anhaengen die des
+    Ziels, dessen Elemente vor denen der Quelle stehen -, und zwar gerade
+    oder gekruemmt: eine gerade Kante hat keinen Eintrag, ihre Kantenmitte
+    ist die Sehnenmitte. Kanten anderer Elemente sieht diese Funktion nicht:
+    teilt ein tet4 die Kante, ist sie dort gerade (tetp.pflichtseiten gibt
+    sie geometrie_modell als gerade_kanten), gleich welche Seite zuerst
+    steht, und hier kommt keine Warnung - gemessen 24.09.2026 am
+    Hohlzylinder, 8 gekruemmte Anschlusskanten, bis 3,769 mm (Pruefung
+    test_json_anhaengen_tet4_nachbar). Bis zur
     Nachbesserung vom 24.09.2026 galt der zuerst eingetragene Eintrag, und
     ein fehlender zaehlte nicht: war eine Seite gerade und die andere
     gekruemmt, galt still die gekruemmte (gemessen an bc1dfe0, Hohlkugel an

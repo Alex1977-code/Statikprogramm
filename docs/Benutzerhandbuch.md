@@ -3077,13 +3077,23 @@ jetzt kommen alle an. Was das Protokoll dabei sagt:
   übernommene gekrümmte Geometrie steht seit dem 23.09.2026 in der
   Modelldatei und kommt beim Anhängen mit (vorher ging sie schon beim
   Speichern verloren, und das Modell rechnete nach dem Öffnen still mit
-  geraden Kanten). Schließen Ziel und Quelle an einer Kante an, die in
-  beiden verschieden verläuft – zwei verschiedene Kantenmitten, oder auf
-  einer Seite gerade und auf der anderen gekrümmt –, gilt die Kante des
-  Ziels, gerade oder gekrümmt, und die Warnung „… zwei verschiedene
-  Kantenmitten …“ nennt die Zahl der Kanten (davon die auf einer Seite
-  geraden) und den größten Abstand – dann die Geometrie an der
-  Anschlussfläche prüfen.
+  geraden Kanten). Liegen an einer Anschlusskante auf beiden Seiten
+  Tetraeder mit Ordnung p und verläuft sie in Ziel und Quelle verschieden –
+  zwei verschiedene Kantenmitten, oder auf einer Seite gerade und auf der
+  anderen gekrümmt –, gilt die Kante des Ziels, gerade oder gekrümmt, und
+  die Warnung „… zwei verschiedene Kantenmitten …“ nennt die Zahl der
+  Kanten (davon die auf einer Seite geraden) und den größten Abstand – dann
+  die Geometrie an der Anschlussfläche prüfen. Liegt auf einer Seite ein
+  tet4, wird die Kante gerade, gleich ob Ziel oder Quelle dort gekrümmt
+  war, und zwar **ohne Warnung**: An der Grenze zum tet4 ist ein Tetraeder
+  mit Ordnung p auch geometrisch gerade, sonst klaffte die Geometrie. Im
+  Versuch (24.09.2026, zweimal) standen zwei gleiche Viertel-Hohlzylinder
+  übereinander, einer aus tet4, einer aus gekrümmten Tetraedern mit
+  Ordnung p, je einmal als Ziel und als Quelle: Die 8 gekrümmten Kanten der
+  Anschlussfläche wurden gerade, deren Kantenmitten rückten um bis zu
+  3,769 mm, und das Protokoll schwieg. Liegt auf einer Seite ein tet10, bricht die Rechnung mit der
+  Nummer des Elements und der Kante ab („… teilt die Kante … mit einem
+  Tetraeder mit Ordnung p …“).
 * **Nicht übertragen** und mit Anzahl gemeldet werden die Berichtseinträge
   (sie zeigen Ergebnisse des Quellmodells) und die Stellungen (eine
   Stellung, die verschiebt oder dreht, bewegt ohne Gruppenangabe alle Knoten

@@ -2219,6 +2219,97 @@ def test_json_anhaengen_gerade_gegen_gekruemmt():
            "nennt sie", gut, " | ".join(zeilen))
 
 
+def test_json_anhaengen_tet4_nachbar():
+    """Gegenpruefung vom 24.09.2026 zu d21fa80: die Handbuecher sagten
+    uneingeschraenkt, an einer Anschlusskante gelte die Kante des Ziels, und
+    die Warnung nenne sie. Das gilt nur zwischen zwei tetp-Elementen. Liegt
+    auf einer Seite ein tet4, ist die Kante gerade (tetp.pflichtseiten gibt
+    sie als gerade_kanten an geometrie_modell), gleich welche Seite zuerst
+    steht, und das Zusammenfuehren warnt nicht - es sieht nur Kanten von
+    tetp-Elementen. Gemessen (zweimal, 24.09.2026) am Viertel-Hohlzylinder
+    4 x 1 (tet10 mit Mitten auf dem Kreisbogen, aus_tet10, p = 3) mit
+    demselben Zylinder als tet4 um h darueber, in beiden Reihenfolgen: 10
+    Knoten zusammengefuehrt, 17 Anschlusskanten, davon 8 gekruemmt; die
+    tetp-Elemente weichen dort bis 3,769 mm von ihrer vorigen Geometrie ab,
+    keine Warnung. Ein tet10 an einer tetp-Kante bricht die Rechnung ab.
+
+    Die Pruefung haelt fest, was die Handbuecher jetzt sagen: an den
+    Anschlusskanten genau die Sehnenmitte, sonst bitgleich, keine Warnung zu
+    Kantenmitten; mit tet10 bricht die Anreicherung mit Element und Kante ab."""
+    from statik3d.elements import tetp as tp
+    from tests import pruefkoerper as pk
+    zyl = pk.Hohlzylinder()
+
+    def zylinder(typ, dz, p):
+        m = zyl.modell(typ, 4, 1)
+        m.case().nodal_loads.clear()
+        m.supports.clear()
+        m.nodes = np.asarray(m.nodes, float) + np.array([0.0, 0.0, dz])
+        if p:
+            tp.aus_tet10(m, ordnung=3)
+        return m
+
+    zeilen, gut = [], True
+    with tempfile.TemporaryDirectory() as d:
+        for fall, ziel, quelle in (
+                ("Ziel tetp3 gekruemmt, Quelle tet4", zylinder("tet10", 0.0, True),
+                 zylinder("tet4", zyl.h, False)),
+                ("Ziel tet4, Quelle tetp3 gekruemmt", zylinder("tet4", 0.0, False),
+                 zylinder("tet10", zyl.h, True))):
+            pq = os.path.join(d, "quelle.json")
+            quelle.save(pq)
+            ne = len(ziel.elements)
+            if any(tp.ist_tetp(e.typ) for e in ziel.elements):
+                idx, G0 = list(range(ne)), tp.geometrie_modell(ziel, range(ne))
+            else:
+                q = Model.load(pq)
+                idx = list(range(ne, ne + len(q.elements)))
+                G0 = tp.geometrie_modell(q, range(len(q.elements)))
+            log = []
+            z = import_file(pq, model=ziel, log=log)
+            G1 = tp.geometrie_modell(z, idx)
+            X = np.asarray(z.nodes, float)
+            vier = {(min(e.nodes[i], e.nodes[j]), max(e.nodes[i], e.nodes[j]))
+                    for e in z.elements if e.typ == "tet4" for i in range(4) for j in range(4)
+                    if i < j}
+            sehne = np.zeros_like(G0)
+            an_tet4 = np.zeros(G0.shape[:2], bool)
+            anschluss, krumm = set(), 0
+            for a, i_e in enumerate(idx):
+                kn = z.elements[i_e].nodes[:4]
+                for m_, (i, j) in enumerate(tp.TET10_KANTEN):
+                    s = (min(kn[i], kn[j]), max(kn[i], kn[j]))
+                    if s in vier:
+                        an_tet4[a, 4 + m_] = True
+                        sehne[a, 4 + m_] = 0.5 * (X[s[0]] + X[s[1]])
+                        if s not in anschluss:
+                            anschluss.add(s)
+                            krumm += int(s in z.tetp_kantenmitten)
+            gerade = np.array_equal(G1[an_tet4], sehne[an_tet4])
+            sonst = np.array_equal(G1[~an_tet4], G0[~an_tet4])
+            warn = [x for x in log if "Kantenmitte" in x]
+            ok = gerade and sonst and not warn and krumm > 0 and float(np.abs(G1 - G0).max()) > 0.0
+            gut = gut and ok
+            zeilen.append(f"{fall}: {len(anschluss)} Anschlusskanten, davon {krumm} gekruemmt, "
+                          "dort " + ("Sehnenmitte" if gerade else "NICHT die Sehnenmitte")
+                          + f", tetp-Elemente max|dG| {float(np.abs(G1 - G0).max()) * 1e3:.4g} mm, "
+                          "sonst " + ("bitgleich" if sonst else "ANDERS")
+                          + "; " + ("\n".join(warn) or "keine Warnung"))
+        pq = os.path.join(d, "quelle.json")
+        zylinder("tet10", zyl.h, False).save(pq)
+        z = import_file(pq, model=zylinder("tet10", 0.0, True), log=[])
+        try:
+            tp.anreicherung(z, streng=True)
+            meldung = "kein Abbruch"
+        except ValueError as ex:
+            meldung = str(ex)
+        ok = "(tet10) teilt die Kante" in meldung and "Ordnung p" in meldung
+        gut = gut and ok
+        zeilen.append(f"Ziel tetp3 gekruemmt, Quelle tet10: {meldung[:90]}")
+    expect("Anhaengen: an einer Kante zum tet4 ist die Kante gerade, ohne Warnung; ein tet10 "
+           "bricht ab", gut, " | ".join(zeilen))
+
+
 def test_json_anhaengen_schluessel():
     """Jeder Schluessel von Model.to_dict() und LoadCase.to_dict() ist beim
     Anhaengen eingeordnet: uebertragen, als Einstellung des Ziels behalten
@@ -2260,7 +2351,8 @@ TESTS = [
          test_zusammenfuehren_nach_netzknoten_loeschen,
          test_zusammenfuehren_kantenmitte_ohne_element,
          test_json_anhaengen_verwaiste_kantenmitten, test_speichern_ohne_verwaiste_kantenmitten,
-         test_json_anhaengen_gerade_gegen_gekruemmt, test_json_anhaengen_schluessel,
+         test_json_anhaengen_gerade_gegen_gekruemmt, test_json_anhaengen_tet4_nachbar,
+         test_json_anhaengen_schluessel,
          test_entarteter_sechsflaechner_beim_import]
 
 
