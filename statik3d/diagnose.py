@@ -1374,9 +1374,15 @@ def _freie_seiten_ecken(model, els, gruppen: dict = None):
 #:   13,5 %), und ihr Volumen rechnet sich zu 0 - das Volumen der feinen
 #:   Zellen und der Anteil der Huelle, der der Gruppe fehlt, heben sich auf.
 #:   Die Ursache der T-Stoesse heisst „hängende Knoten“ (_gruppen_im_inneren).
-#:   Ob ein T-Stoss mit halbierten Kanten, die beide Ufer teilen, ein Riss
-#:   wird, ist nicht gemessen. Gemessen an den 30 geschlossenen Gruppen, die die
-#:   Modelle der Suiten test_mesher3d und test_sweep bilden (23.09.2026):
+#:   Ein T-Stoss mit Kanten, die beide Ufer teilen (3 x 3 x 3 hex8 ueber dem
+#:   Einheitswuerfel, eine Zelle nur in einer oder zwei Richtungen geteilt,
+#:   gemessen 24.09.2026, an 1afa712 dieselben Befunde): in hex8 FEHLER
+#:   (Mittelzelle 2 x 1 x 1 bis 3 x 2 x 1 12 bis 28 Seiten, Eckzelle 6 bis
+#:   14); in Kuhn-Tetraedern WARNUNG „Riss im Netz" (12 bis 32 Seiten), nur
+#:   die Mittelzelle 2 x 2 x 1 und 3 x 2 x 1 FEHLER 44 bzw. 56. Die Ursache
+#:   dieser FEHLER heisst „haengende Knoten" (_halbierte_kante). Gemessen an
+#:   den 30 geschlossenen Gruppen, die die Modelle der Suiten test_mesher3d
+#:   und test_sweep bilden (23.09.2026):
 #:   Rand 0 bis 5,6 % der Seitenflaeche. Offen ist dagegen eine Trennflaeche
 #:   aus doppelten Knoten, die bis an die Huelle geht (Rand 100 %), und die
 #:   Gruppe um einen verdrehten Wuerfel in einer Reihe ist vorn und hinten
@@ -1464,6 +1470,39 @@ ABNAHME_RISS_NACHBAR = 0.65
 #: 326 cm3 (die Bedingung „nur ein Element" gilt dort nicht, siehe
 #: _gruppen_im_inneren). ABNAHME_FUGENNAEHE bleibt fuer die Fugenpruefung.
 ABNAHME_KNOTENNAEHE = 0.01
+#: Ursache „doppelt" oder „Hohlraum" einer geschlossenen Gruppe, deren Seiten
+#: in den umschlossenen Raum zeigen (_gruppen_im_inneren): Bleibt von ihrem
+#: Volumen nach Abzug der losgeloesten Bereiche darin hoechstens dieser
+#: Anteil des Medians der Elementvolumina an der Gruppe, fuellen die Bereiche
+#: sie aus („doppelt"), sonst fehlt dort etwas („Hohlraum"). Gemessen am
+#: 24.09.2026 im 8 x 8 x 8-hex8-Netz (Kante 125 mm) bzw. seiner
+#: Kuhn-Zerlegung, Rest durch Median:
+#:
+#: - losgeloeste Bereiche, die ihren Hohlraum ausfuellen (Versatz in
+#:   Richtung (1|1|1)/Wurzel 3, mit „beide" auch (0,6|0|0,8)): hex8 292 an
+#:   allen acht Knoten 1 bis 10 mm (beide ab 2 mm), an sieben Knoten 2 bis
+#:   10 mm (beide); der innere Tetraeder-Block 2 x 2 x 2 bei 2 bis 10 mm
+#:   (beide), an einem Knoten haengend bei 5 und 10 mm (nur in Richtung
+#:   (1|1|1)/Wurzel 3; sonst heisst er „haengend" und kommt nicht hierher);
+#:   der hex8-Block bei 3 bis 10 mm, an einem Knoten haengend bei 2 bis
+#:   10 mm (beide): -0,277 bis 0,000 (negativ: der verformte Bereich ist
+#:   groesser);
+#: - der Spalt am losgeloesten Knoten (B042, Kuhn-Tetraeder 554 im Block
+#:   6 x 6 x 6 ueber 0,75 m, Knoten 1, 1 bis 30 mm in Richtung (0,6|0|0,8)):
+#:   0,006 bis 0,212;
+#: - ein Element fehlt neben oder in dem losgeloesten Bereich (hex8 292
+#:   losgeloest 0 bis 10 mm, auch an sieben Knoten, und ein Nachbar fehlt;
+#:   hex8-Block mit fehlender Zelle oder fehlendem Nachbarn; ein Tetraeder
+#:   neben dem Tetraeder-Block; der Block 3 x 3 x 3 fehlt bis auf seine
+#:   Mittelzelle): 0,965 bis 156;
+#: - nichts ist losgeloest, ein Element ragt mit einer Ecke, die nur es
+#:   benutzt, in den Hohlraum (hex8: der Block 2 x 2 x 2 ohne eine Ecke
+#:   fehlt; die Lagen 2 und 3 des Blocks 3 x 3 x 3 fehlen bis auf die
+#:   Mittelzelle, die an der Lage 4 haengt): 7,0 und 17,0.
+#:
+#: Die Grenze liegt dazwischen, Faktor 2,4 ueber dem Spalt bei 30 mm und 1,9
+#: unter dem kleinsten Rest mit fehlendem Element.
+ABNAHME_HOHLRAUM_REST = 0.5
 #: Windschiefe Randflaechen: eine freie Seite liegt darauf, wenn ihre Ecken
 #: nicht weiter danebenliegen als eine Sehne der **oertlichen** Weite H, und
 #: wenn sie in die Richtung der Flaeche zeigt (siehe _abnahme_volumenbilanz).
@@ -1630,7 +1669,7 @@ def _schliesspunkt(P, huelle, tol) -> np.ndarray:
     return p0
 
 
-def _verdrehte_elemente(model, gruppen, els, kandidaten, huelle) -> set:
+def _verdrehte_elemente(model, gruppen, els, kandidaten, huelle, quer: set = None) -> set:
     """Welche der Kandidaten sind verdreht? Ein Sechsflaechner, Keil oder eine
     Pyramide, dessen Kante in keinem anderen Element des Koerpers vorkommt und
     nicht auf der Huelle liegt: beim verdrehten Sechsflaechner (Deckel um eine
@@ -1639,7 +1678,16 @@ def _verdrehte_elemente(model, gruppen, els, kandidaten, huelle) -> set:
     Knoten ist derselbe Tetraeder -, und ein Tetraedernetz mit Luecken hat
     Kanten, die nur noch ein Element traegt; sie bleiben darum aussen vor.
     Gefragt fuer offene Gruppen (Luecke im Netzrand oder nicht) und fuer
-    geschlossene duenne (Riss oder nicht)."""
+    geschlossene duenne (Riss oder nicht).
+
+    ``quer`` nimmt die Elemente auf, bei denen eine solche Kante die
+    Diagonale einer Viereckseite eines anderen Elements ist - das Merkmal des
+    verdrehten Elements selbst. Eine Kante, die nur noch ein Element traegt,
+    hat auch das Element, das in einen Hohlraum hineinragt (Gegenpruefung vom
+    24.09.2026, M2: im 8 x 8 x 8-hex8-Netz fehlt ein L aus 3 Zellen, an
+    1afa712 „verdrehtes Element an 14 Seiten"); dort ist sie keine Diagonale.
+    Fuer die Ursache geschlossener Gruppen zaehlt nur ``quer``
+    (_gruppen_im_inneren), fuer Riss und Luecke bleibt die Menge wie sie ist."""
     from .elements import solid as sl
     kandidaten = [int(e) for e in kandidaten
                   if not str(model.elements[int(e)].typ).startswith("tet")]
@@ -1665,26 +1713,40 @@ def _verdrehte_elemente(model, gruppen, els, kandidaten, huelle) -> set:
                 aus.add((min(a, b), max(a, b)))
         return aus
 
+    def diagonalen(e):
+        el = model.elements[e]
+        aus = set()
+        for s in sl.FLAECHEN_ECKEN.get(el.typ, ()):
+            if len(s) == 4:
+                kn = [int(el.nodes[j]) for j in s]
+                aus.add((min(kn[0], kn[2]), max(kn[0], kn[2])))
+                aus.add((min(kn[1], kn[3]), max(kn[1], kn[3])))
+        return aus
+
     aus = set()
     for e in kandidaten:
         for a, b in kanten(e):
             # Beide Knoten im selben Nachbarn genuegt nicht - beim Sechsflaechner
             # koennen sie diagonal liegen, und die Seitenkante des verdrehten
             # Elements ist genau die Diagonale der Nachbarseite
-            if any((a, b) in kanten(f)
-                   for f in (an_knoten.get(a, set()) & an_knoten.get(b, set())) - {e}):
+            nachbarn = (an_knoten.get(a, set()) & an_knoten.get(b, set())) - {e}
+            if any((a, b) in kanten(f) for f in nachbarn):
                 continue                    # ein Nachbar hat die Kante auch
             pa, pb = model.nodes[a], model.nodes[b]
             mitte = 0.5 * (pa + pb)[None]
             if float(_huelle_abstand(mitte, huelle)[0][0]) > ABNAHME_HUELLABSTAND * float(
                     np.linalg.norm(pb - pa)) + 1e-12:
                 aus.add(e)
-                break
+                if quer is None:
+                    break
+                if any((a, b) in diagonalen(f) for f in nachbarn):
+                    quer.add(e)
+                    break
     return aus
 
 
 def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T,
-                        ursachen: dict = None) -> tuple:
+                        ursachen: dict = None, V_f=None) -> tuple:
     """Die freien Seiten neben der Huelle (F, Xf, S ihr Flaechenvektor vom
     eigenen Element weg, E ihre Elemente, T die Dicke ihres Elements
     2 V / Summe seiner Seitenflaechen; ``innen``: der Koerper geht hinter
@@ -1716,7 +1778,9 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T,
     Luecken: [{"idx" (Stellen in F), "V", "ort", "element"}]. ``ursachen``
     nimmt je Seite im Inneren, die weder Riss noch Luecke ist, die Ursache
     auf ({Stelle in F: "verdreht" | "doppelt" | "haengend" | "hohlraum" |
-    "netzrand"}) - fuer den Text des FEHLERs (B040, B046).
+    "netzrand"}) - fuer den Text des FEHLERs (B040, B046). ``V_f``: Volumen
+    des eigenen Elements je Seite, fuer die Frage, ob ein losgeloester
+    Bereich seinen Hohlraum ausfuellt (:data:`ABNAHME_HOHLRAUM_REST`).
     """
     m = len(F)
     riss = np.zeros(m, bool)
@@ -1935,16 +1999,55 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T,
         * eine geschlossene Gruppe, deren Seiten aus dem umschlossenen Raum
           hinauszeigen, umschliesst Elemente: doppelt, kein Hohlraum;
         * ein Hohlraum, in dem eine doppelte Gruppe liegt (Windungszahl am
-          Schwerpunkt eines ihrer Elemente), ist deren Gegenstueck: doppelt.
+          Schwerpunkt eines ihrer Elemente), ist deren Gegenstueck: doppelt
+          (seit der Nachbesserung der dritten Fassung nur, wenn sie ihn
+          ausfuellt, siehe unten).
 
         Gemessen am 24.09.2026: der Tetraeder- und der hex8-Block bei 1 bis
         10 mm in Richtung (1|1|1)/Wurzel 3 und 2 bis 10 mm in Richtung
         (0,6|0|0,8), hex8 292 bei 1 bis 10 mm bzw. 2 bis 10 mm heissen
-        „doppelte Knoten" an allen Seiten; ein echter Hohlraum (hex8 292 bzw.
-        der Tetraeder-Block fehlt) bleibt „Hohlraum". Haengt der
-        Tetraeder-Block an einem Knoten, teilen die Seiten dort eine Ecke:
-        bei 2 mm in Richtung (1|1|1)/Wurzel 3 „haengende Knoten", bei 5 mm
-        „doppelte Knoten"."""
+        „doppelte Knoten" an allen Seiten; hex8 292 fehlt bzw. der
+        Tetraeder-Block fehlt bleibt „Hohlraum". Haengt der Tetraeder-Block
+        an einem Knoten, teilen die Seiten dort eine Ecke: bei 2 mm in
+        Richtung (1|1|1)/Wurzel 3 „haengende Knoten", bei 5 mm „doppelte
+        Knoten".
+
+        Die dritte Fassung (1afa712) hatte wieder Grenzen (Gegenpruefung vom
+        24.09.2026, zweite Runde; 8 x 8 x 8-hex8-Netz, Kante 125 mm):
+
+        * Der Hohlraum mit einer doppelten Gruppe darin hiess ganz
+          „doppelt", ohne zu fragen, ob sie ihn ausfuellt: 292 fehlt, 293 an
+          allen acht Knoten losgeloest, 3 bis 10 mm in Richtung
+          (1|1|1)/Wurzel 3, „doppelt 16" (f2bf6c8 „doppelt 6; Hohlraum 10");
+          der Block 3 x 3 x 3 fehlt bis auf die schwebende Mittelzelle,
+          „doppelt 60". Bei 0 und 1 mm hiess der Hohlraum schon an f2bf6c8
+          „doppelt" (doppelte Knoten auf seinen Seiten).
+        * Ein Hohlraum, in den ein Element hineinragt, hiess „verdreht"
+          (dessen Kante traegt nach dem Entfernen kein anderes Element: L aus
+          3 Zellen 14 Seiten, Kreuz aus 7 30) oder „doppelt" (dessen Ecke
+          benutzt nur es: Block 2 x 2 x 2 ohne eine Ecke 24 Seiten).
+        * Eine nur in einer oder zwei Richtungen geteilte Zelle (3 x 3 x 3,
+          Mitte in 2 x 1 x 1 bis 3 x 2 x 1) hiess „verdreht" (12 bis 28
+          Seiten), in Kuhn-Tetraedern „Hohlraum 44" bzw. „doppelt 56": grobe
+          und feine Seiten teilen Kanten und liegen in einer Gruppe, das
+          Gegenueber sucht nur zwischen verschiedenen.
+
+        Darum jetzt: haengend auch bei einer geteilten Kante in der Gruppe
+        (_halbierte_kante); verdreht bei geschlossenen Gruppen nur, wenn die
+        einsame Kante die Diagonale einer Nachbarseite ist
+        (_verdrehte_elemente, quer); und eine geschlossene Gruppe, deren
+        Seiten in den umschlossenen Raum zeigen, heisst nur doppelt, wenn die
+        losgeloesten Bereiche darin sie bis auf ABNAHME_HOHLRAUM_REST
+        ausfuellen, sonst „Hohlraum" - auch wenn doppelte Knoten, ein Knoten
+        in nur einem Element oder ein Gegenueber sie schon „doppelt" nannten.
+        Das faengt auch die Ecke des hineinragenden Elements: der Hohlraum
+        ist dick, und darin liegt nichts. Der Spalt am losgeloesten Knoten
+        (B042) bleibt doppelt: bis 30 mm Versatz bleiben von ihm hoechstens
+        0,21 des mittleren Elements (ABNAHME_HOHLRAUM_REST).
+        Gemessen am 24.09.2026: die Faelle oben heissen „doppelt 6; Hohlraum
+        10" (auch bei 0 mm), „doppelt 6; Hohlraum 54", „Hohlraum" bzw.
+        „haengend"; die Faelle der zweiten und dritten Fassung behalten ihre
+        Ursache (test_diagnose)."""
         if ursachen is None:
             return
         in_luecke = np.zeros(m, bool)
@@ -1956,11 +2059,25 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T,
             return
         rest_zu = [alle_gruppen[nr][0] for nr in rest_nr if alle_gruppen[nr][1]]
         verdreht_rest: set = set()
+        verdreht_quer: set = set()
         if rest_zu and model is not None:
             # auch der Hohlraum eines verdrehten Elements, der nicht duenn
-            # ist, heisst „verdreht" und nicht „Hohlraum"
+            # ist, heisst „verdreht" und nicht „Hohlraum" - bei geschlossenen
+            # Gruppen nur, wenn die einsame Kante die Diagonale einer
+            # Nachbarseite ist (verdreht_quer, siehe _verdrehte_elemente)
             verdreht_rest = _verdrehte_elemente(
-                model, gruppen, els, {int(e) for idx in rest_zu for e in E[idx]}, huelle)
+                model, gruppen, els, {int(e) for idx in rest_zu for e in E[idx]}, huelle,
+                quer=verdreht_quer)
+        # Ausrichtung je Gruppe: Summe (q - c) . S, S vom eigenen Element weg.
+        # Positiv: die Seiten zeigen aus dem umschlossenen Raum hinaus, darin
+        # liegen Elemente (3 mal ihr Volumen); negativ: ein Hohlraum.
+        fluss_g: dict = {}
+
+        def fluss(nr):
+            if nr not in fluss_g:
+                idx = alle_gruppen[nr][0]
+                fluss_g[nr] = float(np.einsum("ij,ij->", q[idx] - q[idx].mean(axis=0), S[idx]))
+            return fluss_g[nr]
         # Knoten in nur einem Element, die nicht an einer Ecke des Koerpers liegen
         los_offen = set(einzeln)
         ecken = huelle.get("ecken") if isinstance(huelle, dict) else None
@@ -2001,6 +2118,13 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T,
             for g in (a, b):
                 if gegen.get(g) != "doppelt":
                     gegen[g] = u
+        halbiert: dict = {}
+
+        def geteilt(nr):
+            if nr not in halbiert:
+                halbiert[nr] = _halbierte_kante(F, Xf, alle_gruppen[nr][0])
+            return halbiert[nr]
+
         u_von: dict = {}
         for nr in rest_nr:
             idx, zu = alle_gruppen[nr]
@@ -2011,11 +2135,12 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T,
             # in der Ecke, hex8: vier Elemente „verdreht")
             if los(nr) or gegen.get(nr) == "doppelt":
                 u = "doppelt"
-            elif gegen.get(nr) == "haengend":
+            elif gegen.get(nr) == "haengend" or geteilt(nr):
                 u = "haengend"
-            elif (verdreht | verdreht_zu | verdreht_rest) & {int(e) for e in E[idx]}:
+            elif (verdreht_quer if zu else verdreht | verdreht_zu | verdreht_rest) & {
+                    int(e) for e in E[idx]}:
                 u = "verdreht"
-            elif zu and float(np.einsum("ij,ij->", q[idx] - q[idx].mean(axis=0), S[idx])) > 0.0:
+            elif zu and fluss(nr) > 0.0:
                 # Die Seiten zeigen aus dem umschlossenen Raum hinaus (S weist
                 # vom eigenen Element weg): die Elemente liegen darin, ringsum
                 # von freien Seiten umgeben - ein losgeloester Bereich, kein
@@ -2026,40 +2151,60 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T,
             else:
                 u = "netzrand"
             u_von[nr] = u
-        # Ein „Hohlraum", in dem ein losgeloester Bereich liegt, ist sein
-        # Gegenstueck: das Gegenueber fehlt, wenn die Knoten weiter als
+        # Hohlraum oder Gegenstueck eines losgeloesten Bereichs? Je geschlossene
+        # Gruppe, deren Seiten in den umschlossenen Raum zeigen: was von ihm
+        # bleibt, wenn man die losgeloesten Bereiche darin abzieht (Gruppen
+        # „doppelt", deren Seiten Elemente umschliessen; darin heisst: die
+        # Windungszahl der Seiten, nach S ausgerichtet, am Schwerpunkt eines
+        # ihrer Elemente ist nicht 0). Bleibt hoechstens ABNAHME_HOHLRAUM_REST
+        # mal das mittlere Element am Hohlraum, fuellen sie ihn aus: „doppelt"
+        # - das Gegenueber fehlt, wenn die Knoten weiter als
         # ABNAHME_KNOTENNAEHE mal die laengste Seitenkante von den Seiten
-        # entfernt liegen (Versatz schraeg zu den Seiten). Bis zum 24.09.2026 hiessen so die Nachbarn von hex8 292
-        # (8 x 8 x 8-Netz, an allen acht Knoten losgeloest, ab 3 mm in Richtung
-        # (1|1|1)/Wurzel 3) „Hohlraum" (Gegenpruefung vom 24.09.2026, M1/M2).
-        # Geprueft am Schwerpunkt eines Elements je losgeloester Gruppe, mit der
-        # Windungszahl der Seiten (nach S ausgerichtet).
-        hohl = [nr for nr in rest_nr if u_von[nr] == "hohlraum"]
-        drin_nr = [nr for nr in rest_nr if u_von[nr] == "doppelt"]
-        if hohl and drin_nr and model is not None:
+        # entfernt liegen (hex8 292 an allen acht Knoten losgeloest, ab 3 mm in
+        # Richtung (1|1|1)/Wurzel 3, Gegenpruefung vom 24.09.2026, M1/M2).
+        # Bleibt mehr, fehlt dort etwas: „Hohlraum", auch wenn doppelte
+        # Knoten, ein Knoten in nur einem Element oder ein Gegenueber die
+        # Gruppe schon „doppelt" nannten. Bis zum 24.09.2026 (1afa712) hiess
+        # jeder Hohlraum mit einem losgeloesten Bereich darin „doppelt", und
+        # ein Hohlraum mit doppelten Knoten oder einem Gegenueber ohne
+        # gemeinsame Ecke hiess es schon an f2bf6c8 (Gegenpruefung vom
+        # 24.09.2026, zweite Runde: 8 x 8 x 8-hex8-Netz, 293 losgeloest und
+        # 292 fehlt, „doppelt 16" statt „doppelt 6; Hohlraum 10"); ebenso ein
+        # Hohlraum, in den ein Element mit einer Ecke hineinragt, die nur es
+        # benutzt (Block 2 x 2 x 2 ohne eine Ecke fehlt, „doppelt 24").
+        zu_rest = [nr for nr in rest_nr if alle_gruppen[nr][1]]
+        bereiche = [nr for nr in zu_rest if u_von[nr] == "doppelt" and fluss(nr) > 0.0]
+        raeume = [nr for nr in zu_rest if fluss(nr) < 0.0 and (
+            u_von[nr] == "doppelt" or (u_von[nr] == "hohlraum" and bereiche))]
+        if raeume and model is not None and V_f is not None:
             from . import mesher3d as M3
             punkt = np.array([
                 model.nodes[[int(x) for x in model.elements[int(E[alle_gruppen[nr][0][0]])].nodes]]
-                .mean(axis=0) for nr in drin_nr])
-            for nr in hohl:
+                .mean(axis=0) for nr in bereiche]).reshape(-1, 3)
+            V_b = np.array([fluss(nr) / 3.0 for nr in bereiche])
+            for nr in raeume:
                 idx = alle_gruppen[nr][0]
+                drin = np.zeros(0, np.int64)
                 Xg = Xf[idx]
                 gilt = F[idx] >= 0
                 lo_g, hi_g = Xg[gilt].min(axis=0), Xg[gilt].max(axis=0)
-                wahl = ((punkt >= lo_g) & (punkt <= hi_g)).all(axis=1)
-                if not wahl.any():
+                wahl = np.nonzero(((punkt >= lo_g) & (punkt <= hi_g)).all(axis=1))[0]
+                if len(wahl):
+                    n3 = np.cross(Xg[:, 1] - Xg[:, 0], Xg[:, 2] - Xg[:, 0])
+                    um = np.einsum("ij,ij->i", n3, S[idx]) < 0.0
+                    basis = 4 * np.arange(len(idx))
+                    T1 = np.stack([basis, basis + 1, basis + 2], axis=1)
+                    T1[um] = T1[um][:, [0, 2, 1]]
+                    vier = gilt[:, 3]
+                    T2 = np.stack([basis, basis + 2, basis + 3], axis=1)[vier]
+                    T2[um[vier]] = T2[um[vier]][:, [0, 2, 1]]
+                    wz = M3.windungszahl(punkt[wahl], Xg.reshape(-1, 3), np.concatenate([T1, T2]))
+                    drin = wahl[np.abs(wz) > 0.5]
+                if u_von[nr] == "hohlraum" and not len(drin):
                     continue
-                n3 = np.cross(Xg[:, 1] - Xg[:, 0], Xg[:, 2] - Xg[:, 0])
-                um = np.einsum("ij,ij->i", n3, S[idx]) < 0.0
-                basis = 4 * np.arange(len(idx))
-                T1 = np.stack([basis, basis + 1, basis + 2], axis=1)
-                T1[um] = T1[um][:, [0, 2, 1]]
-                vier = gilt[:, 3]
-                T2 = np.stack([basis, basis + 2, basis + 3], axis=1)[vier]
-                T2[um[vier]] = T2[um[vier]][:, [0, 2, 1]]
-                wz = M3.windungszahl(punkt[wahl], Xg.reshape(-1, 3), np.concatenate([T1, T2]))
-                if (np.abs(wz) > 0.5).any():
-                    u_von[nr] = "doppelt"
+                V_rest = -fluss(nr) / 3.0 - float(V_b[drin].sum())
+                u_von[nr] = ("doppelt" if V_rest <= ABNAHME_HOHLRAUM_REST * float(np.median(V_f[idx]))
+                             else "hohlraum")
         for nr in rest_nr:
             idx = alle_gruppen[nr][0]
             for i in idx[~fertig[idx]]:
@@ -2203,6 +2348,63 @@ def _haengende_gruppen(F, Xf, q, kante, ii, gruppe, offene, paare: list = None) 
         if paare is not None:
             paare.append((a, b, int(f)))
     return aus
+
+
+def _halbierte_kante(F, Xf, idx) -> bool:
+    """Hat die Gruppe (Stellen ``idx`` in F) eine geteilte Kante: eine Kante
+    a-b einer ihrer Seiten und eine Kette von Knoten k1 ... kn, die auf der
+    Strecke a-b liegen (naeher als ABNAHME_KNOTENNAEHE mal ihre Laenge) und
+    mit a und b ueber Kanten der Gruppe von a nach b verbunden sind, ohne
+    dass eine Seite a, b und einen dieser Knoten zugleich hat (sonst ist es
+    ein flaches Dreieck)? Das ist der T-Stoss, an dem ein Ufer nur in einer
+    oder zwei Richtungen feiner geteilt ist: grobe und feine Seiten teilen
+    Kanten und liegen in derselben Gruppe, und das Gegenueber
+    (_haengende_gruppen) sucht nur zwischen verschiedenen Gruppen.
+    Gegenpruefung vom 24.09.2026, M1: 3 x 3 x 3 hex8, die Mittelzelle nur in x
+    in 2 hex8 geteilt, an 1afa712 „verdrehtes Element an 12 Seiten"; in 3
+    geteilt liegen zwei Knoten auf der Kante (eine Kette)."""
+    kanten: set = set()
+    nachbarn: dict = {}
+    an_seite: dict = {}
+    lage: dict = {}
+    for i in idx:
+        r = [j for j in range(4) if F[i][j] >= 0]
+        kn = [int(F[i][j]) for j in r]
+        for j, k in zip(r, kn):
+            lage[k] = Xf[i][j]
+            an_seite.setdefault(k, set()).add(int(i))
+        for a, b in zip(kn, kn[1:] + kn[:1]):
+            kanten.add((min(a, b), max(a, b)))
+            nachbarn.setdefault(a, set()).add(b)
+            nachbarn.setdefault(b, set()).add(a)
+    for a, b in kanten:
+        pa, ab = lage[a], lage[b] - lage[a]
+        l2 = float(ab @ ab)
+        if l2 <= 0.0:
+            continue
+        tol = ABNAHME_KNOTENNAEHE * np.sqrt(l2)
+        ab_seiten = an_seite[a] & an_seite[b]
+        # Von a aus je zum naechsten Knoten auf der Strecke weitergehen
+        akt, t_akt, kette = a, 0.0, []
+        while True:
+            weiter, t_w = None, 1.0
+            for k in nachbarn[akt] - {a, b}:
+                t = float((lage[k] - pa) @ ab) / l2
+                if not t_akt < t < t_w:
+                    continue
+                if float(np.linalg.norm(lage[k] - pa - t * ab)) > tol:
+                    continue
+                weiter, t_w = k, t
+            if weiter is None:
+                break
+            kette.append(weiter)
+            akt, t_akt = weiter, t_w
+        if not kette or b not in nachbarn[akt]:
+            continue
+        if any(ab_seiten & an_seite[k] for k in kette):
+            continue                        # flaches Dreieck a, k, b
+        return True
+    return False
 
 
 def _elementdicke(model, gruppen, V_el, wahl) -> np.ndarray:
@@ -2519,7 +2721,7 @@ def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
             ursache_lok: dict = {}
             r, V_riss, luecken, _verdreht = _gruppen_im_inneren(
                 model, gruppen, els, F[neben], Xf[neben], S[neben], E[neben], drin, huelle, T_f,
-                ursache_lok)
+                ursache_lok, V_f=V_el[stelle[E[neben]]])
             riss[neben[r]] = True
             for lu in luecken:
                 lu["idx"] = neben[lu["idx"]]

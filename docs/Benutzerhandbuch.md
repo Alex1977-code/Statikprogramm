@@ -4602,15 +4602,21 @@ Befund.
 
 **Die Ursache im Text** (seit 23.09.2026). Der FEHLER „Seiten im Inneren“
 nennt, was an den Seiten gefunden wurde, und an wie vielen: ein verdrehtes
-Element; doppelte Knoten, also ein losgelöstes Element oder ein
-losgelöster Bereich (zwei Nummern am selben Ort; ein Knoten, den nur ein
-Element benutzt und der nicht in einer Ecke des Körpers liegt; oder eigene
-Knoten neben denen des Nachbarn, ohne dass die Ufer dort eine Ecke teilen);
-hängende Knoten (Knoten des einen Ufers liegen auf den Seiten des anderen,
-ohne deren Ecken zu sein, und die Ufer teilen dort Ecken, etwa an einem
-T-Stoß); einen Hohlraum im Netz; oder einen **Netzrand, der die Randfläche
-verfehlt**. Vorher stand immer „ein verdrehtes Element, doppelte Knoten oder
-ein Hohlraum“ da. Ein T-Stoß von Sechsflächnern – links ein Würfel
+Element (an einem ringsum geschlossenen Hohlraum nur, wenn eine Kante des
+Elements über die Diagonale einer Nachbarseite läuft); doppelte Knoten, also
+ein losgelöstes Element oder ein losgelöster Bereich (zwei Nummern am selben
+Ort; ein Knoten, den nur ein Element benutzt und der nicht in einer Ecke des
+Körpers liegt; oder eigene Knoten neben denen des Nachbarn, ohne dass die
+Ufer dort eine Ecke teilen – an einem ringsum geschlossenen Hohlraum aber
+nur, wenn von ihm nach Abzug der losgelösten Bereiche darin höchstens das
+halbe mittlere Element an ihm bleibt, siehe unten); hängende Knoten (Knoten
+des einen Ufers liegen auf den Seiten des anderen, ohne deren Ecken zu sein,
+und die Ufer teilen dort Ecken, etwa an einem T-Stoß; oder Knoten liegen auf
+einer Kante zwischen ihren Enden, weil eine Zelle nur in einer oder zwei
+Richtungen feiner geteilt ist); einen
+Hohlraum im Netz; oder einen **Netzrand, der die Randfläche verfehlt**.
+Vorher stand immer „ein verdrehtes Element, doppelte Knoten oder ein
+Hohlraum“ da. Ein T-Stoß von Sechsflächnern – links ein Würfel
 1 × 1 × 1 m, rechts derselbe in 2 × 2 × 2 geteilt, die Knoten der feinen
 Seite liegen auf der Seite des groben – ist ein FEHLER mit 5 Seiten, in
 Tetraeder zerlegt mit 10; liegt die geteilte Zelle mitten in einem Netz aus
@@ -4646,16 +4652,53 @@ acht Knoten losgelöst) und beim Sechsflächner-Block ab 3 mm in Richtung
 vom selben Tag heißen Knoten auf den Seiten des anderen Ufers nur dann
 „hängende Knoten“, wenn wenigstens eine dieser Seiten eine Ecke mit ihrem
 eigenen Ufer teilt; Seiten, die ringsum Elemente umschließen, sind kein
-Hohlraum; und ein Hohlraum, in dem ein losgelöster Bereich liegt, gehört zu
-diesem. Beide Blöcke und der Sechsflächner 292 heißen jetzt an allen Seiten
+Hohlraum; und ein Hohlraum, in dem ein losgelöster Bereich liegt, gehörte zu
+diesem. Beide Blöcke und der Sechsflächner 292 heißen seitdem an allen Seiten
 „doppelte Knoten“ (gemessen bei 1 bis 10 mm in Richtung (1 | 1 | 1)/√3 und
-2 bis 10 mm in Richtung (0,6 | 0 | 0,8)). Ein fehlender Sechsflächner oder
-Tetraeder-Block heißt weiter „Hohlraum“, und Ufer, die verschieden geteilt
-sind und nur die Ecken ihrer Zellen teilen (2 × 2 gegen 3 × 3), heißen
-weiter „hängende Knoten“. Hängt der Tetraeder-Block an einem seiner Knoten
-am übrigen Netz, teilen die Ufer dort eine Ecke: bei 2 mm in Richtung
-(1 | 1 | 1)/√3 heißt er „hängende Knoten“, bei 5 mm „doppelte Knoten“. Der
-Text beschreibt nur, was gefunden wurde, und nennt den T-Stoß als Beispiel.
+2 bis 10 mm in Richtung (0,6 | 0 | 0,8)). Der fehlende Sechsflächner 292 und
+der fehlende Tetraeder-Block hießen dabei weiter „Hohlraum“, und Ufer, die
+verschieden geteilt sind und nur die Ecken ihrer Zellen teilen (2 × 2 gegen
+3 × 3), heißen weiter „hängende Knoten“. Hängt der Tetraeder-Block an einem
+seiner Knoten am übrigen Netz, teilen die Ufer dort eine Ecke: bei 2 mm in
+Richtung (1 | 1 | 1)/√3 heißt er „hängende Knoten“, bei 5 mm „doppelte
+Knoten“. Der Text beschreibt nur, was gefunden wurde, und nennt den T-Stoß
+als Beispiel.
+
+Auch diese Fassung hatte Grenzen (zweite Gegenprüfung vom 24.09.2026,
+gemessen im selben Netz). Ein Hohlraum, in dem ein losgelöster Bereich lag,
+hieß ganz „doppelte Knoten“, auch wenn der Bereich ihn nicht ausfüllte:
+Fehlte der Würfel 292 und war sein Nachbar 293 an allen acht Knoten
+losgelöst und 3 bis 10 mm versetzt, stand „doppelte Knoten an 16 Seiten“ da,
+und das fehlende Element kam im Text nicht vor; ebenso, wenn der Block aus
+3 × 3 × 3 Würfeln bis auf den mittleren fehlte, der frei darin schwebte
+(60 Seiten). Bei 0 und 1 mm Versatz hieß ein solcher Hohlraum schon vorher
+so, weil die doppelten Knoten auf seinen Seiten liegen. Fehlten Würfel so,
+dass ein anderer in den Hohlraum hineinragt – drei in L-Form, sieben als
+Kreuz, ein Block aus 2 × 2 × 2 ohne eine Ecke –, hieß der Hohlraum
+„verdrehtes Element“ oder „doppelte Knoten“: Eine Kante, die danach nur
+noch ein Element trägt, galt als verdreht, und die Ecke des hineinragenden
+Würfels benutzt nur ein Element. In Tetraeder zerlegt hießen dieselben
+Hohlräume richtig „Hohlraum“. Und war eine Zelle nur in einer oder zwei
+Richtungen feiner geteilt, sodass beide Ufer Kanten teilen, hieß dieser
+T-Stoß „verdrehtes Element“, in Tetraedern „Hohlraum“ oder „doppelte
+Knoten“. Seither gilt: Ein ringsum geschlossener Hohlraum heißt nur dann
+„doppelte Knoten“, wenn von ihm nach Abzug der losgelösten Bereiche darin
+höchstens das halbe mittlere Element an ihm bleibt, sonst „Hohlraum“ – auch
+wenn doppelte Knoten auf seinen Seiten liegen oder ein Knoten an ihm nur von
+einem Element benutzt wird (am Block aus 2 × 2 × 2 Würfeln ohne eine Ecke
+ist das die Ecke des Würfels, der hineinragt). An einem solchen Hohlraum ist
+ein Element nur verdreht, wenn seine Kante über die Diagonale einer
+Nachbarseite läuft. Knoten auf einer Kante zwischen ihren Enden, die mit
+beiden Enden über Kanten verbunden sind, heißen „hängende Knoten“. Gemessen
+am 24.09.2026: 292 fehlt und 293 losgelöst bei 0, 3 und 10 mm „doppelte
+Knoten an 6 Seiten; ein Hohlraum an 10 Seiten“, der schwebende mittlere
+Würfel „doppelt 6; Hohlraum 54“ (in Tetraedern 12 und 108), die Hohlräume in
+L-Form, als Kreuz und als Block ohne Ecke „Hohlraum“, die nur in einer oder
+zwei Richtungen geteilten Zellen „hängende Knoten“ (als Würfel und die
+beiden, die in Tetraedern ein FEHLER sind). Die losgelösten Bereiche, die
+ihren Hohlraum ausfüllen, heißen weiter „doppelte Knoten“, ebenso der Spalt
+an einem losgelösten Knoten, gemessen bis 30 mm Versatz; verdrehte Würfel
+heißen weiter „verdrehtes Element“. Die Zahlen stehen im Theoriehandbuch.
 Ein verdrehtes
 Element in der Ecke des Körpers bleibt
 „verdrehtes Element“: Den Eckknoten benutzt auch im richtigen Netz nur ein
