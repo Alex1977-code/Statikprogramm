@@ -17553,6 +17553,10 @@ class MainWindow(QtWidgets.QMainWindow):
         return True
 
     def _solve_done(self, kind, r):
+        # der Modellstand dieser Rechnung - legt man danach Knoten oder Staebe
+        # an, erkennt die Ansicht, dass das Ergebnis nicht mehr passt
+        # (vp.ergebnis_passt, 24.09.2026)
+        self._ergebnis_stand = vp.modellstand(self.model)
         if kind == "all":
             self.analysis = r
             self.results = None
@@ -18274,6 +18278,19 @@ class MainWindow(QtWidgets.QMainWindow):
                 modal = True
             else:
                 u = vp.displacement_of(r)
+        # Ergebnis zu einem frueheren Modellstand (nach der Rechnung Knoten,
+        # Stab oder Flaeche angelegt): die neuen Knoten verformen sich nicht
+        # und bekommen keinen Wert (grau), die neuen Elemente keinen Verlauf.
+        # Bis zum 24.09.2026 brach hier u[kn] mit IndexError ab und die
+        # Ansicht blieb stehen. Weniger Knoten/Elemente als bei der Rechnung:
+        # die Nummern koennen verrutscht sein - dann kein Ergebnis im Bild.
+        # In beiden Faellen sagt es die Kopfzeile.
+        passt = vp.ergebnis_passt(self.model, r, getattr(self, "_ergebnis_stand", None))
+        self._ergebnis_veraltet = passt != "passt"
+        if passt == "anders":
+            r, u, modal = None, None, False
+        elif passt == "gewachsen" and u is not None:
+            u = vp.auf_laenge(u, m.nn, 0.0)
         s = 0.0
         if u is not None:
             s, umax = self._scale(u)
@@ -18329,6 +18346,12 @@ class MainWindow(QtWidgets.QMainWindow):
             seite = str(self.cb_seite.currentData() or "max") if getattr(self, "cb_seite", None) else "max"
             point_scalars, cell_scalars, name = vp.result_field(m, r, field, self._util_map(field),
                                                                 seite=seite)
+            if self._ergebnis_veraltet:
+                # Werte des frueheren Modellstands: neue Knoten und Elemente
+                # ohne Wert (NaN, grau) - sonst IndexError bei [kn]/[eidx]
+                # und in spn.grenzen (Maske der sichtbaren Knoten), 24.09.2026
+                point_scalars = vp.auf_laenge(point_scalars, m.nn)
+                cell_scalars = vp.auf_laenge(cell_scalars, len(m.elements))
             klassen = spn.kategorien(*spn.feld(field)) if spn.feld(field) else None
             if point_scalars is not None and klassen:
                 # Groesse in Klassen (Kontaktzustand): feste Farben, Beschriftung
@@ -18864,7 +18887,12 @@ class MainWindow(QtWidgets.QMainWindow):
             return []
         if not zeilen:
             return []
-        if r is None and self.current_result() is not None:
+        if getattr(self, "_ergebnis_veraltet", False):
+            # nach der Rechnung Knoten oder Elemente angelegt/geloescht
+            # (_aufbauen, vp.ergebnis_passt) - sonst saehe man graue neue
+            # Teile ohne Grund (24.09.2026)
+            zeilen = list(zeilen) + ["    " + vp.ERGEBNIS_VERALTET]
+        elif r is None and self.current_result() is not None:
             # Es gaebe ein Ergebnis, der Schalter zeigt es nur nicht - das
             # gehoert ins Bild, sonst sucht man den Fehler in der Rechnung
             # zwei Zeilen: in einer waere sie ueber 110 Zeichen breit und liefe in einer

@@ -5278,6 +5278,20 @@ class Envelope:
         for k, r in (results or {}).items():
             self.aufnehmen(k, r)
 
+    def __setstate__(self, state):
+        """Ergebnisdateien (Pickle), die vor dem 24.09.2026 (Stand e61b184)
+        geschrieben wurden, kennen _umag/_phimag nicht - ohne diesen Rueckfall
+        brach das Oeffnen solcher Modelle in summary() mit AttributeError ab
+        (Nachkontrolle 24.09.2026). |u| dann wie bis dahin aus u_min/u_max;
+        |phi| laesst sich daraus nicht ehrlich bilden: None, der Baum sagt
+        „neu rechnen“ statt einen falschen Wert zu zeigen."""
+        self.__dict__.update(state)
+        if "_umag" not in state:
+            self._umag = np.maximum(np.linalg.norm(self.u_max[:, :3], axis=1),
+                                    np.linalg.norm(self.u_min[:, :3], axis=1))
+        if "_phimag" not in state:
+            self._phimag = None
+
     # ---- Einfalten ------------------------------------------------------
     @staticmethod
     def _falten(mn, mx, imn, imx, wert, j):
@@ -5318,7 +5332,8 @@ class Envelope:
             self._umag, self._phimag = um, pm
         else:
             self._umag = np.maximum(self._umag, um)
-            self._phimag = np.maximum(self._phimag, pm)
+            # None: aus einer alten Ergebnisdatei, bleibt unbekannt (24.09.2026)
+            self._phimag = None if self._phimag is None else np.maximum(self._phimag, pm)
             self.u_min, self.u_max, self.u_min_src, self.u_max_src = self._falten(
                 self.u_min, self.u_max, self.u_min_src, self.u_max_src, u, j)
             self.r_min, self.r_max, self.r_min_src, self.r_max_src = self._falten(
@@ -5365,7 +5380,8 @@ class Envelope:
             self.r_min, self.r_max = env.r_min.copy(), env.r_max.copy()
             self.r_min_src, self.r_max_src = env.r_min_src.copy(), env.r_max_src.copy()
             self.node_vm_max, self.node_vm_src = env.node_vm_max.copy(), env.node_vm_src.copy()
-            self._umag, self._phimag = env.umag_max.copy(), env.phimag_max.copy()
+            pm = env.phimag_max          # None aus alter Ergebnisdatei (24.09.2026)
+            self._umag, self._phimag = env.umag_max.copy(), None if pm is None else pm.copy()
             self.beam = {i: {k: (tuple(np.array(x) for x in v) if k != "x" else v)
                              for k, v in d.items()} for i, d in env.beam.items()}
             self.util = dict(env.util)
@@ -5377,7 +5393,8 @@ class Envelope:
             (self.r_min, self.r_max, self.r_min_src, self.r_max_src),
             (env.r_min, env.r_max, env.r_min_src, env.r_max_src), versatz)
         self._umag = np.maximum(self.umag_max, env.umag_max)
-        self._phimag = np.maximum(self.phimag_max, env.phimag_max)
+        self._phimag = (None if self.phimag_max is None or env.phimag_max is None
+                        else np.maximum(self.phimag_max, env.phimag_max))
         gr = env.node_vm_max > self.node_vm_max
         self.node_vm_max = np.where(gr, env.node_vm_max, self.node_vm_max)
         self.node_vm_src = np.where(gr, env.node_vm_src + versatz, self.node_vm_src)
@@ -5428,7 +5445,9 @@ class Envelope:
     @property
     def phimag_max(self) -> np.ndarray:
         """Wie umag_max fuer die Verdrehungen (rx, ry, rz) [rad] - fuer die
-        Faerbung „|φ| Verdrehung“ der Umhuellenden."""
+        Faerbung „|φ| Verdrehung“ der Umhuellenden. None, wenn die Umhuellende
+        aus einer Ergebnisdatei von vor dem 24.09.2026 stammt (dort nicht
+        gespeichert, erst nach neuer Rechnung da)."""
         return self._phimag
 
     def extreme_table(self) -> list[list]:

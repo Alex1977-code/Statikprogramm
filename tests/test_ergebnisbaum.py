@@ -791,6 +791,224 @@ def test_winzige_verdrehung_im_fenster():
     w.cb_field.setCurrentText("|u| Verschiebung"); app.processEvents()
 
 
+# --------------------------------------------------------------------------
+# Alte Ergebnisdatei, Ergebnis zu einem frueheren Modellstand (24.09.2026)
+# --------------------------------------------------------------------------
+#: Ergebnisdatei, geschrieben mit dem Stand e61b184 (vor _umag/_phimag):
+#: git archive e61b184 statik3d, darin Kragarm 2 m aus 2 Staeben, LA (Fy, Fz
+#: am Ende) und LB (Mx) - |u| am Ende 21,591943 mm, |phi| 16,162441 mrad
+ALT_ORDNER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "daten",
+                          "ergebnisdatei_e61b184")
+PHI_ALT = "nicht in der Ergebnisdatei – neu rechnen"
+VERALTET = "Ergebnis passt nicht mehr zum Modell – neu rechnen"
+
+
+def _alte_dateien() -> str:
+    """Die alte Ergebnisdatei samt Modell in einen Wegwerfordner - Oeffnen
+    und Speichern duerfen die Vorlage in tests/ nicht veraendern."""
+    import shutil
+    ziel = tempfile.mkdtemp(prefix="statik3d_alt_")
+    for n in ("kragarm_alt.json", "kragarm_alt.ergebnisse"):
+        shutil.copy(os.path.join(ALT_ORDNER, n), ziel)
+    return os.path.join(ziel, "kragarm_alt.json")
+
+
+def test_alte_ergebnisdatei():
+    """Ergebnisdateien vom Stand e61b184 kennen _umag/_phimag nicht: das
+    Oeffnen brach in Envelope.summary ab (Nachkontrolle 24.09.2026)."""
+    from statik3d import ergebnisse
+    from statik3d.gui import viewport as vp
+    p = _alte_dateien()
+    m = Model.load(p)
+    an = ergebnisse.lesen(ergebnisse.pfad_zu(p), m)
+    env = an.envelopes["CASES"]
+    with open(ergebnisse.pfad_zu(p), "rb") as fh:
+        roh = fh.read()
+    check("Alte Ergebnisdatei: wirklich ohne _umag/_phimag geschrieben",
+          b"_umag" not in roh and b"_phimag" not in roh and b"u_max" in roh, f"{len(roh)} Bytes")
+    try:
+        um = np.asarray(env.umag_max)
+        fehler = ""
+    except Exception as ex:          # noqa: BLE001
+        um, fehler = None, f"{type(ex).__name__}: {ex}"
+    alt = np.maximum(np.linalg.norm(env.u_max[:, :3], axis=1), np.linalg.norm(env.u_min[:, :3], axis=1))
+    check("… umag_max ohne Ausnahme, wie bis dahin aus u_min/u_max",
+          um is not None and np.allclose(um, alt) and abs(um.max() * 1000 - 21.591943) < 1e-5,
+          fehler or f"{um.max() * 1000:.6f} mm")
+    try:
+        pm, fehler = env.phimag_max, ""
+    except Exception as ex:          # noqa: BLE001
+        pm, fehler = "Ausnahme", f"{type(ex).__name__}: {ex}"
+    check("… phimag_max: None (nicht gespeichert, nicht falsch klein)", pm is None, fehler or str(pm))
+    try:
+        s = an.summary()
+        fehler = ""
+    except Exception as ex:          # noqa: BLE001
+        s, fehler = "", f"{type(ex).__name__}: {ex}"
+    check("… Analysis.summary ohne Ausnahme", "max. Verschiebung" in s, fehler)
+    try:
+        w_, _c, name = vp.result_field(m, env, "|u| Verschiebung")
+        fehler = ""
+    except Exception as ex:          # noqa: BLE001
+        w_, name, fehler = None, "", f"{type(ex).__name__}: {ex}"
+    check("… Färbung |u| ohne Ausnahme", w_ is not None and name == "|u| max [mm]", fehler or name)
+    try:
+        liste, fehler = vp.verformungen_liste(m, env), ""
+    except Exception as ex:          # noqa: BLE001
+        liste, fehler = [], f"{type(ex).__name__}: {ex}"
+    phi = [e for e in liste if e[2] == "|φ| Verdrehung"]
+    check("… Baumliste: „φ gesamt“ grau mit „nicht in der Ergebnisdatei – neu rechnen“",
+          phi and phi[0][1] == PHI_ALT and phi[0][3] is True, fehler or str(phi))
+    uu = [e for e in liste if e[2] == "|u| Verschiebung"]
+    check("… „u gesamt“ mit Wert", uu and "21.6 mm" in uu[0][1] and not uu[0][3], str(uu))
+    achs = [e for e in liste if e[2] in ("φx", "φy", "φz")]
+    check("… φx, φy, φz mit Wert (aus u_min/u_max, dort ehrlich)",
+          len(achs) == 3 and all(e[1] and not e[3] for e in achs), str(achs))
+    # Einfalten einer alten Umhuellenden (Stellungen, Gesamtumhuellende):
+    # |phi| bleibt unbekannt statt TypeError
+    try:
+        ges = solver.Envelope(m, name="Gesamt")
+        ges.aufnehmen_umhuellende(env)
+        ges2 = solver.Envelope(m, an.cases, name="Neu")
+        ges2.aufnehmen_umhuellende(env)
+        fehler = ""
+    except Exception as ex:          # noqa: BLE001
+        ges = ges2 = None
+        fehler = f"{type(ex).__name__}: {ex}"
+    check("… alte Umhüllende einfalten: |φ| bleibt unbekannt, |u| da",
+          ges is not None and ges.phimag_max is None and ges2.phimag_max is None
+          and np.allclose(ges.umag_max, alt), fehler)
+
+
+def test_alte_ergebnisdatei_im_fenster():
+    """Dieselbe Datei ueber Datei → Oeffnen: Modell, Ergebnisse, Baum und
+    Faerbung |u| ohne Ausnahme."""
+    w, app = _fenster()
+    p = _alte_dateien()
+    fehler = ""
+    try:
+        ok = w.modell_laden(p); app.processEvents()
+    except Exception as ex:          # noqa: BLE001
+        ok, fehler = False, f"{type(ex).__name__}: {ex}"
+    check("Alte Ergebnisdatei öffnen: ohne Ausnahme, Ergebnisse geladen",
+          ok and not fehler and w.analysis is not None and "CASES" in w.analysis.envelopes,
+          fehler or str(ok))
+    if fehler:
+        return
+    ver = w._ergebnisliste().get("Verformungen", [])
+    phi = [e for e in ver if e[2] == "feld:|φ| Verdrehung"]
+    check("… Baum: „φ gesamt“ grau mit Hinweis „neu rechnen“",
+          phi and phi[0][1] == PHI_ALT and len(phi[0]) > 3, str(phi))
+    n0 = len(w.log.toPlainText().splitlines())
+    for feld in ("|u| Verschiebung", "|φ| Verdrehung", "φy"):
+        fehler = ""
+        try:
+            w._baum_geklickt("ergebnis", f"feld:{feld}"); app.processEvents()
+            w.redraw(); app.processEvents()
+        except Exception as ex:      # noqa: BLE001
+            fehler = f"{type(ex).__name__}: {ex}"
+        check(f"… Färbung {feld} ohne Ausnahme", not fehler and w.cb_field.currentText() == feld,
+              fehler or w.cb_field.currentText())
+    w._baum_geklickt("ergebnis", "feld:|u| Verschiebung"); app.processEvents()
+    kw = " ".join(getattr(w, "_kennwerte_zeilen", []) or [])
+    check("… |u|: Skala und Kennwerte da", len(w.plotter.scalar_bars) >= 1 and "Knoten" in kw, kw[:80])
+    fehl = [z for z in w.log.toPlainText().splitlines()[n0:]
+            if z.startswith("FEHLER") or "Darstellung:" in z or "Kennwerte:" in z]
+    check("… ohne Darstellungsfehler im Protokoll", not fehl, str(fehl[:2]))
+    w.load_example("frame"); app.processEvents()
+
+
+def test_ergebnis_passt_nicht_mehr():
+    """Nach der Rechnung bei gezeigten Ergebnissen Knoten, Stab (Stabzug und
+    Maske) oder Flaeche anlegen: das Ergebnis kennt die neuen Knoten und
+    Elemente nicht. Bis zum 24.09.2026 brach das Zeichnen mit IndexError ab
+    (u[kn] in _aufbauen). Die neuen Teile sind grau, die Kopfzeile sagt
+    „neu rechnen“ - fuer die Faerbungen |u|, φx, einen Schnittgroessenverlauf
+    und eine Spannung."""
+    from statik3d.model import ShellProp
+    w, app = _fenster()
+
+    def neu():
+        w.load_example("frame"); app.processEvents()
+        w.model.add_shell_prop(ShellProp("T10", 0.01))
+        w._solve_done("all", solver.solve_all(w.model, design=False)); app.processEvents()
+        return w._ergebnisliste()
+
+    erg = neu()
+    spannung = [e[2] for v in erg.values() for e in v if str(e[2]).startswith("spannung:")]
+    check("Nicht mehr passend: das Beispiel hat eine Spannungsfärbung", bool(spannung), str(list(erg)))
+    faerbungen = ["feld:|u| Verschiebung", "feld:φx", "schnittgroesse:My"] + spannung[:1]
+    mat, sec = list(w.model.materials)[0], list(w.model.sections)[0]
+    aktionen = {
+        "Knoten": lambda: w._maske_knoten_anlegen({"x": 30.0, "y": 9.0, "z": 9.0}),
+        "Stabzug": lambda: w._stabzug_erzeugen({"mat": mat, "sec": sec, "x1": 20, "y1": 0, "z1": 0,
+                                                "x2": 25, "y2": 0, "z2": 0, "n": 4}),
+        "Stab (Maske)": lambda: w._maske_stab_anlegen({"knoten": [0, 5], "mat": mat, "sec": sec}),
+        "Fläche": lambda: w._platte_erzeugen({"mat": mat, "dicke": "T10", "lx": 2, "ly": 2, "z": 20.0,
+                                             "nx": 2, "ny": 2, "vierecke": True}),
+    }
+    for akt, tun in aktionen.items():
+        for fb in faerbungen:
+            neu()
+            w._baum_geklickt("ergebnis", fb); app.processEvents()
+            nn0, ne0 = w.model.nn, len(w.model.elements)
+            n0 = len(w.log.toPlainText().splitlines())
+            fehler = ""
+            try:
+                tun(); app.processEvents()
+                w.redraw(); app.processEvents()
+            except Exception as ex:  # noqa: BLE001
+                fehler = f"{type(ex).__name__}: {ex}"
+            gewachsen = w.model.nn > nn0 or len(w.model.elements) > ne0
+            kopf = " ".join(getattr(w, "_kopfzeile_zeilen", []) or [])
+            fehl = [z for z in w.log.toPlainText().splitlines()[n0:]
+                    if z.startswith("FEHLER") or any(k in z for k in (
+                        "Darstellung:", "Kennwerte:", "Werte im Bild:", "Verlauf:", "Kopfzeile:"))]
+            check(f"{akt} nach der Rechnung, {fb.split(':', 1)[1]}: kein Absturz, "
+                  "Kopfzeile „neu rechnen“",
+                  not fehler and gewachsen and VERALTET in kopf and not fehl,
+                  fehler or (str(fehl[:1]) if fehl else kopf[-60:]))
+    # die alten Knoten behalten ihre Werte, die neuen sind grau (NaN)
+    neu()
+    w._baum_geklickt("ergebnis", "feld:|u| Verschiebung"); app.processEvents()
+    fehler = ""
+    try:
+        aktionen["Stabzug"](); app.processEvents()
+    except Exception as ex:          # noqa: BLE001
+        fehler = f"{type(ex).__name__}: {ex}"
+    # was die Ansicht gezeichnet hat: die Werte am verformten Netz
+    import pyvista as pv
+    gezeichnet = []
+    for nm, akt in w.plotter.actors.items():
+        if str(nm).startswith("result_") and akt.GetMapper() is not None:
+            ds = pv.wrap(akt.GetMapper().GetInput())
+            if "|u| max [mm]" in ds.point_data:
+                gezeichnet.append(np.asarray(ds.point_data["|u| max [mm]"], float))
+    werte = np.concatenate(gezeichnet) if gezeichnet else np.array([])
+    kw = " ".join(getattr(w, "_kennwerte_zeilen", []) or [])
+    check("… Stabzug, |u| im Bild: alte Knoten mit Wert, neue ohne (grau), Kennwerte bleiben",
+          not fehler and np.isfinite(werte).any() and np.isnan(werte).any() and "Knoten" in kw,
+          fehler or f"{int(np.isfinite(werte).sum())} mit Wert, {int(np.isnan(werte).sum())} ohne; {kw[:40]}")
+    # neu gerechnet: der Hinweis geht weg
+    w._solve_done("all", solver.solve_all(w.model, design=False)); app.processEvents()
+    kopf = " ".join(getattr(w, "_kopfzeile_zeilen", []) or [])
+    check("… neu gerechnet: kein Hinweis mehr", VERALTET not in kopf, kopf[-60:])
+    # weniger Elemente als bei der Rechnung: die Nummern koennen verrutscht
+    # sein - kein Ergebnis im Bild, aber der Hinweis
+    # wie der Knopf „Element löschen“ (element_loeschen): Model.elemente_loeschen
+    w.model.elemente_loeschen([len(w.model.elements) - 1])
+    fehler = ""
+    try:
+        w.refresh_all(); app.processEvents()
+    except Exception as ex:          # noqa: BLE001
+        fehler = f"{type(ex).__name__}: {ex}"
+    kopf = " ".join(getattr(w, "_kopfzeile_zeilen", []) or [])
+    check("… Element gelöscht: kein Absturz, keine Färbung, Hinweis „neu rechnen“",
+          not fehler and VERALTET in kopf and not w.plotter.scalar_bars
+          and "ausgeblendet" not in kopf, fehler or kopf[-60:])
+    w.load_example("frame"); app.processEvents()
+
+
 def main():
     # Haelt etwas an (ein Dialog offscreen), steht der Stapel im Protokoll
     # statt eines stummen Haengers
@@ -803,7 +1021,9 @@ def main():
               test_baum_und_klick, test_volumenmodell_im_fenster,
               test_gemischtes_beispiel_im_fenster, test_glasleiste,
               test_ergebniswechsel, test_knoten_nach_rechnung,
-              test_gelenke_nach_der_rechnung, test_winzige_verdrehung_im_fenster):
+              test_gelenke_nach_der_rechnung, test_winzige_verdrehung_im_fenster,
+              test_alte_ergebnisdatei, test_alte_ergebnisdatei_im_fenster,
+              test_ergebnis_passt_nicht_mehr):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

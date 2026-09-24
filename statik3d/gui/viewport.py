@@ -2856,6 +2856,8 @@ VERFORMUNGEN_BAUM = (("u gesamt |u|", "|u| Verschiebung"), ("ux", "ux"), ("uy", 
 OHNE_VERDREHUNG_VOLUMEN = "keine Verdrehungen: nur Volumenkörper (Knoten ohne Drehfreiheitsgrad)"
 OHNE_VERDREHUNG = ("keine Verdrehungen: kein Knoten mit Drehsteifigkeit (Fachwerkstäbe, Seile, "
                    "Scheiben und Volumenkörper haben keinen Drehfreiheitsgrad)")
+#: Zusatz fuer |phi| einer Umhuellenden aus einer alten Ergebnisdatei (24.09.2026)
+PHI_NICHT_GESPEICHERT = "nicht in der Ergebnisdatei – neu rechnen"
 _DREH_CACHE: dict = {}
 
 
@@ -2984,8 +2986,12 @@ def _verdrehung(model: Model, res, field: str):
     if len(w) != int(model.nn):
         # Ergebnis zu einem anderen Netz: nach der Rechnung einen Knoten
         # angelegt (die Rechnung bleibt stehen) - kein Wert statt ValueError
-        # in refresh_all (Befund 24.09.2026)
-        return None, name
+        # in refresh_all (Befund 24.09.2026). Nur hinzugekommene Knoten: die
+        # alten behalten ihren Wert, die neuen sind NaN (grau) - wie |u| in
+        # der Ansicht (_aufbauen, ergebnis_passt, 24.09.2026)
+        w = auf_laenge(w, int(model.nn))
+        if w is None:
+            return None, name
     return np.where(drehknoten(model), w * 1000, np.nan), name
 
 
@@ -3015,6 +3021,14 @@ def verformungen_liste(model: Model, res) -> list:
             continue
         einheit = "mrad" if phi else "mm"
         betrag = feld.startswith("|")
+        if (phi and betrag and getattr(res, "u", None) is None
+                and getattr(res, "u_max", None) is not None
+                and getattr(res, "phimag_max", None) is None):
+            # Umhuellende aus einer Ergebnisdatei von vor dem 24.09.2026: |phi|
+            # ist dort nicht gespeichert und laesst sich aus u_min/u_max nicht
+            # ehrlich bilden - grau mit Hinweis statt eines falschen Werts
+            out.append((text, PHI_NICHT_GESPEICHERT, feld, True))
+            continue
         w, _c, _n = result_field(model, res, feld)
         w = np.asarray(w, float) if w is not None else np.array([])
         if not np.isfinite(w).any():
@@ -3087,6 +3101,67 @@ def result_field(model: Model, res, field: str, util: dict = None, seite: str = 
                 c[i] = d["util"]
         return None, c, "Ausnutzung elastisch [-]"
     return None, None, ""
+
+
+#: Zeile der Kopfzeile, wenn das gezeigte Ergebnis zu einem anderen
+#: Modellstand gehoert (24.09.2026)
+ERGEBNIS_VERALTET = "Ergebnis passt nicht mehr zum Modell – neu rechnen"
+
+
+def modellstand(model) -> tuple:
+    """(Knotenzahl, Elementzahl) - woran ergebnis_passt einen Modellstand
+    erkennt; die Oberflaeche merkt ihn sich nach jeder Rechnung."""
+    return int(model.nn), len(model.elements)
+
+
+def ergebnis_passt(model, res, stand: tuple = None) -> str:
+    """Gehoert das Ergebnis noch zum Modell?
+
+    „passt“: gleiche Knoten- und Elementzahl. „gewachsen“: nach der Rechnung
+    nur Knoten oder Elemente hinzugekommen (Knoten, Stabzug, Flaeche) - die
+    alten behalten ihre Nummern und Werte, die neuen haben keinen. „anders“:
+    weniger Knoten oder Elemente als bei der Rechnung - die Nummern koennen
+    verrutscht sein, das Ergebnis ist dann nicht mehr zuzuordnen.
+
+    Bis zum 24.09.2026 nahm die Ansicht an, dass Ergebnis und Modell gleich
+    viele Knoten haben: ein Stabzug nach der Rechnung bei gezeigten
+    Ergebnissen brach das Zeichnen mit IndexError ab (u[kn] mit neuen
+    Knotennummern). ``stand`` ist modellstand() bei der Rechnung; die
+    Knotenzahl des Ergebnisses selbst (Laenge von u) geht vor.
+    """
+    if res is None:
+        return "passt"
+    nn, ne = modellstand(model)
+    n_res = None
+    for a in ("u", "u_max", "modes", "buckling_modes"):
+        x = getattr(res, a, None)
+        if x is None:
+            continue
+        x = np.asarray(x)
+        n_res = int(x.shape[1]) if a in ("modes", "buckling_modes") and x.ndim == 3 else int(len(x))
+        break
+    s_nn, s_ne = stand if stand is not None else (None, None)
+    r_nn = n_res if n_res is not None else s_nn
+    if (r_nn is None or r_nn == nn) and (s_ne is None or s_ne == ne):
+        return "passt"
+    if (r_nn is None or r_nn <= nn) and (s_ne is None or s_ne <= ne):
+        return "gewachsen"
+    return "anders"
+
+
+def auf_laenge(a, n: int, fuell: float = np.nan):
+    """Knoten- oder Elementwerte eines frueheren (kleineren) Modellstands auf
+    n Eintraege auffuellen - die neuen ohne Wert (NaN, in der Ansicht grau)
+    bzw. mit ``fuell``. Laenger als n: None, denn welche Nummer zu welchem
+    Wert gehoert, ist dann nicht mehr bekannt (24.09.2026)."""
+    if a is None:
+        return None
+    a = np.asarray(a, float)
+    if len(a) == n:
+        return a
+    if len(a) > n:
+        return None
+    return np.concatenate([a, np.full((n - len(a),) + a.shape[1:], fuell)])
 
 
 def displacement_of(res):
