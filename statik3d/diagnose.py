@@ -2587,9 +2587,11 @@ _URSACHEN = (
     ("hohlraum", "ein Hohlraum im Netz (ringsum von Elementseiten umschlossen und zu dick "
                  "für einen Riss)"),
     ("netzrand", "der Netzrand verfehlt die Randfläche (die freien Seiten laufen durch den "
-                 "Körper, statt auf der Randfläche zu liegen; kein Element verdreht, kein Knoten "
-                 "hängend, keine doppelten Knoten und keine Seite, neben der eine Kopie aus "
-                 "eigenen Knoten liegt - gesucht bis zur halben Kantenlänge)"),
+                 "Körper, statt auf der Randfläche zu liegen; gefunden wurde kein Element "
+                 "verdreht, kein Knoten hängend und keine Seite, neben der eine Kopie aus "
+                 "eigenen Knoten liegt - gesucht bis zur halben Kantenlänge. Doppelte Knoten "
+                 "an einer Schnittfläche, die beiderseits verschieden in Dreiecke geteilt ist, "
+                 "erkennt diese Suche nicht; auch sie erscheinen so)"),
     ("unbestimmt", "keine sicher bestimmte Ursache (möglich sind eine Mulde, wo an der "
                    "Oberfläche Elemente fehlen - an ihrer einspringenden Kante trägt eine Kante "
                    "nur noch ein Element und einen Knoten benutzt nur eines -, ein verdrehtes "

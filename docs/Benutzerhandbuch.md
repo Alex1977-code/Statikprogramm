@@ -4751,7 +4751,10 @@ möglichen: eine Mulde, ein verdrehtes Element, dessen Kanten nicht über die
 Diagonalen der Nachbarseiten laufen, oder ein losgelöstes Element, weiter
 als die halbe Kante versetzt. Gemessen: die Mulden heißen „keine sicher
 bestimmte Ursache“, der durchtrennte Körper bei 3 bis 30 mm Versatz in
-beiden Richtungen „doppelte Knoten“, ebenso ein Körper, der von unten her
+beiden Richtungen „doppelte Knoten“, solange beide Hälften die Schnittfläche
+gleich in Dreiecke teilen (ist sie verschieden geteilt, heißt derselbe Schnitt
+weiter „der Netzrand verfehlt die Randfläche“, und der Text sagt, dass
+doppelte Knoten dann nicht ausgeschlossen sind), ebenso ein Körper, der von unten her
 bis zur Mitte eingerissen ist (10 und 30 mm); der Befund selbst ist in allen
 Fällen derselbe. Verdrehte Würfel an der Seitenfläche, deren Deckel um eine
 Ecke versetzt ist, heißen weiter „verdrehtes Element“, losgelöste Elemente

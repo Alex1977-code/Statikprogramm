@@ -7066,6 +7066,7 @@ entscheidend ist der Knoten in nur einem Element bzw. die Kopie. Gemessen im
 | derselbe, (1 \| 1 \| 1)/√3, 5 / 10 / 30 mm | FEHLER 272 / 288 / 288 | Netzrand verfehlt die Randfläche, Rat zum Sweep | doppelte Knoten |
 | Kuhn, von unten bis z = 0,5 eingerissen, beide Richtungen, 10 / 30 mm | FEHLER 144 bzw. 152 | Netzrand verfehlt die Randfläche, Rat zum Sweep | doppelte Knoten |
 | derselbe Schnitt in hex8, 1 bis 30 mm; in Kuhn bis 2 mm, in Richtung (1 \| 1 \| 1)/√3 bis 3 mm | FEHLER | doppelte Knoten | doppelte Knoten |
+| derselbe Schnitt, rechts die Kuhn-Zerlegung in y gespiegelt (Schnittfläche beiderseits verschieden geteilt), 3 bis 30 mm | FEHLER 256 | Netzrand verfehlt die Randfläche, Rat zum Sweep | Netzrand verfehlt die Randfläche; der Text nennt doppelte Knoten an verschieden geteilter Schnittfläche als nicht ausgeschlossen (die Kopie einer Seite gibt es dort nicht) |
 | hex8 verdreht, Deckel um eine Ecke vor oder zurück (8 × 8 × 8 und abgestuft 20:1 mit windschiefem Deckel, jede siebte Zelle, an der Seitenfläche und im Inneren) | FEHLER 6 bis 8 | verdrehtes Element | verdrehtes Element |
 | dieselben Zellen, Deckel um zwei Ecken versetzt, offene Gruppe an der Seitenfläche (32 bzw. 39 Fälle) | FEHLER 6 / 7 | verdrehtes Element | keine sicher bestimmte Ursache |
 | dieselben Zellen, Deckel um zwei Ecken versetzt, geschlossene Gruppe (42 bzw. 104 Fälle) | FEHLER 7 / 8 | Hohlraum | Hohlraum (unverändert) |
@@ -7092,9 +7093,9 @@ Randfläche“ an U-Prisma und Stufe. Laufzeit von `_abnahme_volumenbilanz` am
 hex8-Schachbrett 10 × 10 × 10: Die Diagonale wird nur für die Gruppen
 gefragt, die bis dahin keine Ursache haben; über alle gefragt, waren es in
 einer Messung 6,79 bis 6,90 s gegen 5,96 bis 6,00 s an 447a5f8 (je drei
-Läufe abwechselnd). So ist in drei Messungen (je drei bzw. fünf Läufe
-abwechselnd) kein Unterschied zu sehen; die Läufe streuten dabei zwischen
-5,9 und 11,3 s (447a5f8) bzw. 5,9 und 9,6 s (jetzt).
+Läufe abwechselnd). So ist kein Unterschied zu sehen: vier Läufe
+abwechselnd (Gegenprüfung vom 24.09.2026) 5,88 bis 5,97 s an 447a5f8 gegen
+5,87 bis 6,01 s jetzt.
 
 Am U-Prisma liegen Netzknoten wie (0,404 | 0,23 | 0,083) im Körper neben der
 einspringenden Kante x = 0,4, y = 0,3; die Seiten von dort zu den Wänden der

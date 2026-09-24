@@ -2589,7 +2589,7 @@ def _ohne8(zellen, kuhn=False):
     return m, k
 
 
-def _schnitt8(v, richtung=(0.6, 0.0, 0.8), zmax=1.0, kuhn=True, a=1.0, n=8):
+def _schnitt8(v, richtung=(0.6, 0.0, 0.8), zmax=1.0, kuhn=True, a=1.0, n=8, lage1=None):
     """hex8-Netz n x n x n über dem Würfel a x a x a; die Zellen mit x > a/2
     (bei ``zmax`` < 1 nur die mit z < zmax·a) bekommen auf der Ebene x = a/2
     eigene Knoten, um v in ``richtung`` (Einheitsvektor) versetzt - bei
@@ -2597,6 +2597,9 @@ def _schnitt8(v, richtung=(0.6, 0.0, 0.8), zmax=1.0, kuhn=True, a=1.0, n=8):
     ``kuhn``: danach in Kuhn-Tetraeder zerlegt (Gegenprüfung vom 24.09.2026,
     dritte Runde, g6_nb_diagnose/p4c_schnitt.py)."""
     m, k = _gleichmaessig(a, a, a, n)
+    if lage1 is not None:
+        # abgestuft: die erste Knotenebene ueber dem Boden auf z = lage1
+        m.nodes[np.abs(m.nodes[:, 2] - a / n) < 1e-9 * a, 2] = lage1
     w = np.asarray(richtung, float)
     neu = {}
     for e in list(k.elemente):
@@ -2798,6 +2801,21 @@ def test_abnahme_riss_mit_knoten_naeher_als_ein_prozent():
                   and "doppelte Knoten (" in gef and "an 128 Seiten" in gef
                   and [b.pruefung for b in dg.abnahme(m)] == ["Seiten im Inneren"],
                   _kurz(bef) + " | " + gef[:100])
+    # Oertlich statt ueber den Koerper (vierte Gegenpruefung vom 24.09.2026,
+    # g7_nbd/p4b_gestuft.py): die unterste Zelllage am Riss nur 10 mm hoch,
+    # 1 mm versetzt - 0,8 % der Kante 125 mm, aber 10 % der 10 mm. Mit der
+    # kuerzesten Kante des ganzen Koerpers statt der an den beiden Knoten
+    # (Verfaelschung "naehe_global_min") hiess das nur WARNUNG "Riss im Netz"
+    # mit abnahme() == [], wie an ec6448c.
+    m, k = _schnitt8(1e-3, zmax=0.5, lage1=0.01)
+    bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+    gef = _gefunden(bef)
+    check("Riss von unten im abgestuften Netz (unterste Lage 10 mm), 1 mm versetzt: FEHLER "
+          "doppelte Knoten - die Naehe gilt an den beiden Knoten, nicht am Koerper",
+          [(b.stufe, b.pruefung) for b in bef] == [("FEHLER", "Seiten im Inneren")]
+          and "doppelte Knoten (" in gef
+          and [b.pruefung for b in dg.abnahme(m)] == ["Seiten im Inneren"],
+          _kurz(bef) + " | " + gef[:100])
 
 
 def main():
