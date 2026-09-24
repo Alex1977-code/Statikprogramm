@@ -1124,10 +1124,11 @@ mit Theorie II./III. ersetzt, und faltet die Umhüllende einer
 Ergebniskombination nach II./III. Ordnung damit (`lineare_cases`). Eine
 Alternative ist so entweder linear überlagert oder als Ganzes nach II./III.
 Ordnung gerechnet, nie ein Gemisch. Eine Zwischenfassung dieser Änderung
-(nicht ausgeliefert, Gegenprüfung 23.09.2026) faltete diese Umhüllende erst
-nach dem Ersetzen aus `Analysis.cases`: Mit einem Lastfall W auf Theorie
-II. Ordnung war eine linear gebliebene Alternative 1,35·G (linear) +
-1,5·W (II. Ordnung), und dieses Gemisch ging abgelegt in die Nachweise.
+(nicht ausgeliefert, gemessen an 9337a3c, Gegenprüfung 23.09.2026) faltete
+diese Umhüllende erst nach dem Ersetzen aus `Analysis.cases`: Mit einem
+Lastfall W auf Theorie II. Ordnung war eine linear gebliebene Alternative
+1,35·G (linear) + 1,5·W (II. Ordnung), und dieses Gemisch ging abgelegt in
+die Nachweise.
 Gemessen an einem Zweigelenkrahmen (Stiele HEB 200, 5 m, Riegel IPE 300,
 8 m; G 8 kN/m und Q 0,5 kN/m auf dem Riegel, W 25 kN am linken Stielkopf;
 „automatisch", α_cr der Alternative 19,23): Stielkopf 102,4519 statt
@@ -1139,7 +1140,7 @@ Lastfall-Alternative 1,0·LF2 1,562553 statt 1,526781 mm. Jetzt gleichen beide
 Modelle der gewöhnlichen Kombination. Die gewöhnlichen Kombinationen hatten
 das Gemisch nicht, sie entstehen vor dem Ersetzen (am Druckkragarm K2
 bitgleich 1,35·LF1 + 1,5·LF2 aus den linearen Lastfällen). Vor dieser
-Änderung (Stand bis 22.09.2026) gab es das Gemisch ebenfalls nicht:
+Änderung (Stand 54b6f9a, 22.09.2026) gab es das Gemisch ebenfalls nicht:
 `solve_all` faltete die Umhüllende einer Ergebniskombination vor
 `_lastfaelle_hoeherer_ordnung`, rechnete aber keine Alternative nach
 II. Ordnung und wies keine nach (siehe oben). Am Zweigelenkrahmen war die
@@ -1159,7 +1160,14 @@ statt 0,542323 aus EK [2]. An der Halle („ein“, alle 42 GZT-Kombinationen
 als eine Ergebniskombination, die 30 GZG-Kombinationen daneben) geht die
 Ergebniskombination mit dem Ergebnis null ein: alle drei Stäbe η = 0,0000,
 maßgebend „EK“, „alle erfuellt“ (jetzt Stiel links 0,6454, Stiel rechts
-0,6398, Riegel 0,9734).
+0,6398, Riegel 0,9734). Die Zahlen des heutigen Standes am Zweigelenkrahmen
+(jeweils nach „statt", dazu α_cr) rechnet `tests/test_theorie2.py` nach,
+ebenso die im Benutzerhandbuch. Die Zahlen der Stände 54b6f9a und 9337a3c
+sind Messungen an diesen Ständen; kein Test rechnet sie nach, weil der
+heutige Stand anders rechnet. Nachrechnen lassen sie sich, indem man diese
+Stände aus dem Repository holt und dort rechnet: Am Zweigelenkrahmen ergab
+das Modell aus `tests/test_theorie2.py` so am 24.09.2026 an beiden Ständen
+die hier genannten Zahlen.
 
 ### 3.1 Situationen: Stellung und wirksame Elemente
 
