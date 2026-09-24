@@ -1934,6 +1934,19 @@ DREHLAGER_NAMEN = [
 ]
 
 
+def _handbuch_situationsabsatz() -> str:
+    """Der Teil des Absatzes zum RFEM-6-Import im Benutzerhandbuch, der die
+    herausgenommenen Schreibweisen der Bemessungssituation aufzaehlt, mit
+    Zeilenumbruechen als Leerzeichen ('' wenn nicht gefunden)."""
+    pfad = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "docs", "Benutzerhandbuch.md")
+    with open(pfad, encoding="utf-8") as f:
+        text = " ".join(f.read().split())
+    a = text.find("Außerhalb von Klammern gilt")
+    e = text.find("Ein Lastfall, dessen Name „Ermüdung“", a)
+    return text[a:e] if 0 <= a < e else ""
+
+
 def test_bemessungssituation_ist_keine_einwirkungsart():
     """Die Bemessungssituation im Lastfallnamen ist keine Einwirkungsart
     (Befund B073).
@@ -2030,6 +2043,40 @@ def test_bemessungssituation_ist_keine_einwirkungsart():
                        ("Nutzlast (Erdbeben)", "Q")]:
         ist = _C.category_from_text(name, "Q")
         check(f"Ausnahme: {name} -> {soll}", ist == soll, ist)
+    # Schreibweisen, die der Import herausnimmt, und die Stelle, an der der
+    # Absatz im Benutzerhandbuch (RFEM-6-Import) sie nennt. Bis 33a96d5
+    # nannte er englisch nur Einzelformen, keine Mehrzahl und als Trenner nur
+    # Leerzeichen und Striche, und sagte „Andere Schreibweisen nimmt der
+    # Import nicht heraus“. Nach diesem Text blieben „Accidental or seismic
+    # design situation“ und „Erdbeben / Bemessungssituation“ A mit
+    # Protokolleintrag; tatsaechlich wurden sie still Q und standen in einem
+    # Modell aus drei Lastfaellen in 14 von 23 erzeugten Kombinationen (GZT
+    # 4x 1,5, 2x 1,2) statt wie am Stand ec6448c in 2 ACC mit 1,0 (gemessen
+    # am 24.09.2026). Faellt eine Form aus dem Filter oder aus dem Text,
+    # faellt der Punkt.
+    handbuch = _handbuch_situationsabsatz()
+    check("Handbuch: Absatz zur Bemessungssituation gefunden", bool(handbuch),
+          f"{len(handbuch)} Zeichen" if handbuch else
+          "Anfang „Außerhalb von Klammern gilt“ oder Ende „Ein Lastfall, dessen "
+          "Name „Ermüdung““ fehlt in docs/Benutzerhandbuch.md")
+    for name, soll, stelle in [
+            ("Nutzlast - seismic or accidental design situation", "Q", "„and“ oder „or“"),
+            ("Nutzlast - accidental and transient design situation", "Q", "„and“ oder „or“"),
+            ("Nutzlast - accidental design situations", "Q", "„design situations“"),
+            ("Nutzlast - ständige Bemessungssituationen", "Q", "„Bemessungssituationen“"),
+            ("Nutzlast - Bemessungssituationen bei Erdbeben", "Q", "„Bemessungssituationen“"),
+            ("Erdbeben / Bemessungssituation", "Q", "„/“"),
+            ("Erdbeben: Bemessungssituation", "Q", "„:“"),
+            ("Nutzlast, ständige, Bemessungssituation", "Q", "„,“"),
+            ("Nutzlast - STAENDIGE BEMESSUNGSSITUATION", "Q", "Groß- und Kleinschreibung"),
+            ("Nutzlast - aussergewoehnliche Bemessungssituation", "Q", "„ss“"),
+            # Gegenproben: ohne die Angabe bleibt das Einwirkungswort erkannt
+            ("Nutzlast - seismic", "A", None), ("Nutzlast - ständige", "G", None),
+            ("Nutzlast - accidental", "A", None)]:
+        ist = _C.category_from_text(name, "Q")
+        genannt = stelle is None or stelle in handbuch
+        check(f"Handbuch nennt: {name} -> {soll}", ist == soll and genannt,
+              f"{ist}" + ("" if genannt else f", {stelle} fehlt im Absatz"))
 
     # ueber den ganzen Import: Kennzahl 11 -> Q, der Name verfeinert
     tmp = tempfile.mkdtemp()
@@ -2043,7 +2090,8 @@ def test_bemessungssituation_ist_keine_einwirkungsart():
                ("Erdbeben - Erdbeben-Bemessungssituation", 11, 0.0),
                ("Ermüdungslast - Eigengewicht", 1, 1.0),
                ("Ständig - Bemessungssituation 1", 11, 0.0),
-               ("Bemessungssituation - Erdbeben", 11, 0.0)],
+               ("Bemessungssituation - Erdbeben", 11, 0.0),
+               ("Nutzlast - seismic or accidental design situation", 11, 0.0)],
         )
         log = []
         m = R6.read_rf6(f, log=log)
@@ -2086,6 +2134,14 @@ def test_bemessungssituation_ist_keine_einwirkungsart():
         check("„Bemessungssituation - Erdbeben“ mit Kennzahl 11 bleibt Q",
               m.load_cases["LF10"].category == "Q", m.load_cases["LF10"].category)
         check("das Protokoll nennt ihn nicht als umgestellt", "LF10" not in zeile,
+              zeile.strip())
+        # die englische Angabe mit „or“ faellt ganz heraus, „seismic“ mit ihr:
+        # Q und nicht genannt, so steht es jetzt im Benutzerhandbuch (am Stand
+        # ec6448c A und genannt, gemessen am 24.09.2026)
+        check("„Nutzlast - seismic or accidental design situation“ mit Kennzahl "
+              "11 bleibt Q", m.load_cases["LF11"].category == "Q",
+              m.load_cases["LF11"].category)
+        check("das Protokoll nennt ihn nicht als umgestellt", "LF11" not in zeile,
               zeile.strip())
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

@@ -2996,15 +2996,23 @@ zählt nicht als Einwirkung, wenn sie so geschrieben ist: „ständig“,
 also etwa „ständige“ oder „ständigen“) oder „Erdbeben“ unmittelbar vor
 „Bemessungssituation“ (zwei davon mit „und“, „u.“ oder „oder“ verbunden),
 „Bemessungssituation Erdbeben“, „Bemessungssituation bei Erdbeben“ oder
-englisch „persistent“,
-„transient“, „accidental“, „seismic design situation“. Leerzeichen,
-Bindestrich und Gedankenstrich gelten dabei gleich: „Erdbeben -
-Bemessungssituation 2“ ist wie „Erdbeben-Bemessungssituation 2“ eine
-Situation und bleibt Q, ebenso „Außergewöhnliche - Bemessungssituation“.
-Andere Schreibweisen nimmt der Import nicht heraus; „ständige/vorübergehende
-Bemessungssituation“, „Bemessungssituation ständig“, „Ständig -
+englisch „persistent“, „transient“, „accidental“ oder „seismic“ vor
+„design situation“ (zwei davon mit „and“ oder „or“ verbunden, etwa
+„seismic or accidental design situation“), jeweils auch in der Mehrzahl
+(„Bemessungssituationen“, „design situations“). Groß- und Kleinschreibung
+zählt dabei nicht, „ae“, „oe“, „ue“ und „ss“ gelten wie „ä“, „ö“, „ü“ und
+„ß“, und Satz- und Sonderzeichen gelten wie ein Leerzeichen: Bindestrich
+und Gedankenstrich ebenso wie „/“, „:“ oder „,“. „Erdbeben -
+Bemessungssituation 2“ und „Erdbeben / Bemessungssituation“ sind darum wie
+„Erdbeben-Bemessungssituation 2“ eine Situation und bleiben Q, ebenso
+„Außergewöhnliche - Bemessungssituation“ und „Nutzlast - seismic or
+accidental design situation“; das Protokoll nennt sie nicht unter
+„umgestellt“. Die genaue Regel steht im Schnittstellenhandbuch unter
+„Bemessungssituation und Ermüdung im Namen“. Nicht heraus nimmt der Import
+etwa „ständige/vorübergehende Bemessungssituation“ (ohne „und“ oder „oder“
+bleibt „ständige“ stehen), „Bemessungssituation ständig“, „Ständig -
 Bemessungssituation“ (ohne Endung) oder „Ständig und vorübergehend“ ohne
-das Wort „Bemessungssituation“ machen einen Lastfall weiter zu G,
+das Wort „Bemessungssituation“; sie machen einen Lastfall weiter zu G,
 „Bemessungssituation außergewöhnlich“ oder „Außergewöhnlich -
 Bemessungssituation“ zu A, und das Protokoll nennt ihn unter „umgestellt“.
 Ein Lastfall, dessen Name „Ermüdung“ außerhalb von Klammern enthält, wird
