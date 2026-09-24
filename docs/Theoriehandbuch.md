@@ -6827,7 +6827,8 @@ drei Änderungen:
   (`_bilinear_abstand`), nicht für die Verschiebung in z. Am abgebildeten
   4 × 4 × 4-Netz (dz = 0,5) bleibt ein Deckelknoten 25 mm außerhalb
   ungenannt, bei 30 mm ist es eine WARNUNG, in z wie entlang der
-  Flächennormale verschoben. Bei dz = 1,0 bleiben 80 mm entlang der
+  Flächennormale verschoben (an allen 21 Deckelknoten außer den Ecken). Bei
+  dz = 1,0 bleiben an den neun inneren Deckelknoten 80 mm entlang der
   Normalen ungenannt, 90 mm sind eine WARNUNG „Netzrand neben der Hülle" mit
   4 Seiten. Ein Deckelknoten 100 mm in z liegt dort je nach Neigung des
   Deckels 68 bis 94 mm neben der Fläche (gegengeprüft durch Abtasten der
@@ -6835,7 +6836,20 @@ drei Änderungen:
   (0,25|0,25), (0,25|0,5) und (0,5|0,25), zur waagerechten Ecke (0|0) hin,
   87 bis 94 mm, WARNUNG (nachgemessen mit der örtlichen Grenze an allen neun
   inneren Deckelknoten, 24.09.2026;
-  `test_abnahme_beule_windschief_nach_richtung`). Ein fehlender Tetraeder am
+  `test_abnahme_beule_windschief_nach_richtung`). Die zwölf Randknoten des
+  Deckels zwischen den Ecken verlassen, entlang der Deckelnormalen
+  verschoben, auch die ebene Seitenfläche, bei 80 mm um 13,9 bis 48,0 mm.
+  Seiten auf ebenen Flächen prüft die Abnahme am Schwerpunkt gegen 1 % des
+  Seitendurchmessers (`ABNAHME_HUELLABSTAND`); der Schwerpunkt einer
+  anliegenden Seite wandert um ein Viertel des Anteils senkrecht zur
+  Seitenfläche. Bei 80 mm: WARNUNG „Netzrand neben der Hülle" mit 2 Seiten
+  auf x = 0 und y = 0 (nach außen), FEHLER „Seiten im Inneren" mit 1 Seite
+  an (1|0,5) und (0,5|1), mit 2 an (1|0,75) und (0,75|1) (nach innen), kein
+  Befund nur an (1|0,25) und (0,25|1); an (0|0,5), (0|0,75), (0,5|0) und
+  (0,75|0) schon bei 60 mm WARNUNG mit 2 Seiten. Zerlegt gibt der Anteil
+  senkrecht zur Seitenfläche allein bei 80 mm an allen zwölf denselben
+  Befund, der Rest in ihrer Ebene bei 60 und 80 mm keinen (24.09.2026;
+  `test_abnahme_beule_windschief_randknoten`). Ein fehlender Tetraeder am
   windschiefen Deckel des freien Netzes ist eine Lücke im Netzrand
   (2,892e-4 m³ gemeldet, der Tetraeder hat 2,841e-4 m³; die Lücke reicht bis
   zur Fläche, der Tetraeder nur bis zu seiner Sehne).

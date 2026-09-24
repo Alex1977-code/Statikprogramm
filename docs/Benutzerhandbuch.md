@@ -4577,19 +4577,31 @@ Ein verdrehtes Element in der groben Ecke, wo die
 oberste Lage dünn ist gegen die Sehne, findet nur die Richtung: Seine Ecken
 liegen bei 20:1 17 bis 18 mm neben dem Deckel, seine Seiten stehen 57 bis 87°
 dagegen. Die Kehrseite: kleinere Abweichungen des Netzrands meldet
-die Abnahme an windschiefen Flächen nicht. Maßgebend ist dabei der Abstand
-senkrecht zur Fläche, nicht die Richtung, in die ein Knoten verschoben ist.
-Am abgebildeten 4 × 4 × 4-Netz desselben Würfels bleibt ein Deckelknoten, der
-25 mm nach außen verschoben ist, ungenannt, bei 30 mm steht eine Warnung da,
-in z wie senkrecht zur Fläche verschoben. Ist die Ecke um 1 m angehoben,
-bleiben dort 80 mm **senkrecht zur Fläche** ungenannt, 90 mm sind eine
-Warnung „Netzrand neben der Hülle“. Ein Deckelknoten, der 100 mm **in z**
+die Abnahme an windschiefen Flächen nicht. Für die windschiefe Fläche selbst
+ist dabei der Abstand senkrecht zu ihr maßgebend, nicht die Richtung, in die
+ein Knoten verschoben ist. Am abgebildeten 4 × 4 × 4-Netz desselben Würfels
+bleibt ein Deckelknoten, der 25 mm nach außen verschoben ist, ungenannt, bei
+30 mm steht eine Warnung da, in z wie senkrecht zur Fläche verschoben
+(gemessen an allen 21 Deckelknoten außer den vier Ecken). Ist die Ecke um
+1 m angehoben, bleiben an den neun inneren Deckelknoten 80 mm **senkrecht
+zur Fläche** ungenannt, 90 mm sind eine Warnung „Netzrand neben der Hülle“.
+Ein Deckelknoten, der 100 mm **in z**
 verschoben ist, liegt je nach Neigung des Deckels verschieden weit neben der
 Fläche: an den steileren Stellen nur 68 bis 81 mm, er bleibt ungenannt; zur
 Ecke (0|0) hin, wo der Deckel waagerecht ist, 87 bis 94 mm, das ist eine
 Warnung (gemessen am 24.09.2026 an allen neun inneren Deckelknoten:
 ungenannt an (0,5|0,5), (0,75|0,75), (0,25|0,75), (0,75|0,25), (0,5|0,75)
 und (0,75|0,5), Warnung an (0,25|0,25), (0,25|0,5) und (0,5|0,25)).
+Die zwölf Randknoten des Deckels zwischen den Ecken meldet die Abnahme zum
+Teil früher: Senkrecht zum Deckel verschoben, verlassen sie auch die ebene
+Seitenfläche, bei 80 mm um 14 bis 48 mm. Bei 80 mm steht deshalb auf den
+Rändern x = 0 und y = 0 eine Warnung „Netzrand neben der Hülle“, an (1|0,5),
+(1|0,75), (0,5|1) und (0,75|1), wo der Knoten in den Körper hinein rückt, ein
+FEHLER „Seiten im Inneren“; ungenannt bleiben nur (1|0,25) und (0,25|1). An
+(0|0,5), (0|0,75), (0,5|0) und (0,75|0) warnt die Abnahme schon bei 60 mm.
+Nur um den Anteil senkrecht zur Seitenfläche verschoben, gibt es bei 80 mm an
+allen zwölf denselben Befund, mit dem übrigen Anteil allein, der in der Ebene
+der Seitenfläche bleibt, bei 60 und 80 mm keinen (gemessen am 24.09.2026).
 
 Geprüft werden Körper, deren Randlinien gerade sind und deren Randflächen eben
 sind oder Vierecke; Körper mit Bögen, Kreisen oder Splines prüft der freie
