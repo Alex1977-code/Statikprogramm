@@ -28,6 +28,7 @@ zwei Wuerfeln uebereinander, deren Zugstab-Loesung in einer Zeile steht:
   deckt es nichts, darf keine Last entstehen; und jede belastete Elementseite
   muss mit ihrem Schwerpunkt im Fenster liegen.
 """
+import contextlib
 import os
 import sys
 
@@ -1915,6 +1916,34 @@ def test_gemeinsame_flaeche_konform():
           haengend > 0, f"{haengend} hängende Knoten")
 
 
+@contextlib.contextmanager
+def _arbeiterdateien_merken():
+    """Liefert die Liste der Modelldateien der Arbeiter (statik3d_netz_*), die
+    **dieser** Faden im Block ueber ``tempfile.mkstemp`` anlegt - so legt
+    ``koerper_vernetzen`` sie an.
+
+    Gezaehlt wird am Anlegen und nicht am Inhalt von %TEMP%: den Ordner teilen
+    sich alle Sitzungen. Nur dieser Faden, damit auch eine Pruefung, die im
+    selben Prozess nebenan vernetzt, nicht mitgezaehlt wird."""
+    import tempfile
+    import threading
+    echt = tempfile.mkstemp
+    faden = threading.get_ident()
+    angelegt = []
+
+    def gemerkt(*a, **kw):
+        fd, pfad = echt(*a, **kw)
+        if (threading.get_ident() == faden
+                and os.path.basename(pfad).startswith("statik3d_netz_")):
+            angelegt.append(pfad)
+        return fd, pfad
+    tempfile.mkstemp = gemerkt
+    try:
+        yield angelegt
+    finally:
+        tempfile.mkstemp = echt
+
+
 def test_arbeiter_laden_aus_datei():
     """Der Arbeitsprozess bekommt einen Dateipfad, kein Modell. Unter Windows
     (spawn) blockiert sonst jeder Prozessstart, bis das Kind die Startargumente
@@ -1941,17 +1970,117 @@ def test_arbeiter_laden_aus_datei():
     a = _zwei_prismen()
     MSH.koerper_vernetzen(a, list(a.koerper.values()), log=[], workers=1)
     b = _zwei_prismen()
-    # Nur die Dateien **dieses** Laufs zaehlen: laeuft nebenan die
-    # Oberflaechenpruefung, liegt deren Arbeiterdatei im selben Ordner
-    # (run_all23 vom 13.09.2026 fiel so ueber eine fremde Datei)
-    vorher = {f for f in os.listdir(tempfile.gettempdir()) if f.startswith("statik3d_netz_")}
-    erg = MSH.koerper_vernetzen(b, list(b.koerper.values()), log=[], workers=2)
+    # Nur die Datei **dieses** Laufs zaehlt, gemerkt beim Anlegen. Der
+    # Vergleich von %TEMP% vor und nach dem Lauf fiel ueber fremde Dateien:
+    # run_all23 vom 13.09.2026 ueber die der Oberflaechenpruefung, und am
+    # 23.09.2026 ueber drei, die parallel laufende Sitzungen waehrend des
+    # Laufs anlegten (B146, test_arbeiterdatei_nur_dieses_laufs).
+    with _arbeiterdateien_merken() as angelegt:
+        erg = MSH.koerper_vernetzen(b, list(b.koerper.values()), log=[], workers=2)
     check("parallel und seriell ergeben dieselbe Elementzahl",
           len(a.elements) == len(b.elements) and erg.get("prozesse") == 2,
           f"{len(a.elements)} / {len(b.elements)} auf {erg.get('prozesse')} Prozessen")
-    neue = [f for f in os.listdir(tempfile.gettempdir())
-            if f.startswith("statik3d_netz_") and f not in vorher]
-    check("die Modelldatei der Arbeiter ist danach geloescht", not neue, str(neue[:3]))
+    uebrig = [os.path.basename(p) for p in angelegt if os.path.exists(p)]
+    check("die Modelldatei der Arbeiter ist danach geloescht",
+          len(angelegt) == 1 and not uebrig,
+          f"{len(angelegt)} angelegt, liegen noch: {uebrig}")
+
+
+ARBEITERDATEI_GELOESCHT = "die Modelldatei der Arbeiter ist danach geloescht"
+
+
+def _arbeiter_pruefung_nachlaufen(**ersatz):
+    """Laesst :func:`test_arbeiter_laden_aus_datei` mit den Ersetzungen in
+    ``statik3d.mesher`` laufen und gibt (bestanden, Ausgabezeile) der Pruefung
+    ``ARBEITERDATEI_GELOESCHT`` zurueck. Ihre Ergebnisse und ihre Ausgabe
+    zaehlen nicht zu dieser Suite - bewertet wird hier nur die eine Pruefung."""
+    import io
+    from statik3d import mesher as MSH
+    echt = {n: getattr(MSH, n) for n in ersatz}
+    n0 = len(RESULTS)
+    puffer = io.StringIO()
+    try:
+        for n, f in ersatz.items():
+            setattr(MSH, n, f)
+        with contextlib.redirect_stdout(puffer):
+            test_arbeiter_laden_aus_datei()
+    finally:
+        for n, f in echt.items():
+            setattr(MSH, n, f)
+        teil = RESULTS[n0:]
+        del RESULTS[n0:]
+    ok = [o for n, o in teil if n == ARBEITERDATEI_GELOESCHT]
+    zeile = next((z for z in puffer.getvalue().splitlines()
+                  if ARBEITERDATEI_GELOESCHT in z), "")
+    return (ok[0] if ok else None), " ".join(zeile.split())
+
+
+def test_arbeiterdatei_nur_dieses_laufs():
+    """„Die Modelldatei der Arbeiter ist danach geloescht" muss die Datei
+    **dieses** Laufs pruefen. %TEMP% teilen sich alle Sitzungen, und
+    ``koerper_vernetzen`` legt seine Datei dort als statik3d_netz_*.pkl an.
+    Verglich die Pruefung den Ordner vor und nach dem Lauf, fiel sie durch,
+    sobald eine andere Sitzung waehrend des Laufs ihre eigene Datei anlegte -
+    obwohl dieser Lauf seine geloescht hatte (B146: am 23.09.2026 fiel sie so
+    im echten %TEMP% ueber drei Dateien, die parallel laufende Pruefungen
+    anderer Sitzungen waehrend des Laufs anlegten und danach loeschten).
+
+    Nachgestellt wird die andere Sitzung mit einem zweiten Prozess, der seine
+    Datei in denselben Ordner legt, waehrend die dieses Laufs geschrieben
+    wird. Und umgekehrt: raeumt der Vernetzer nicht auf, muss die Pruefung
+    durchfallen."""
+    import subprocess
+    import tempfile
+    from statik3d import mesher as MSH
+    echt_schreiben = MSH._modell_fuer_arbeiter_schreiben
+    # Der gemeinsame Ordner ist ein eigener, nicht das echte %TEMP%: dort
+    # risse die fremde Datei sonst die Pruefung einer Sitzung, die nebenan
+    # mit dem alten Ordnervergleich laeuft.
+    with tempfile.TemporaryDirectory(prefix="statik3d_b146_") as gemeinsam:
+        alt = tempfile.tempdir
+        tempfile.tempdir = gemeinsam
+        try:
+            fremde = []
+
+            def andere_sitzung_legt_an(model, karten, pfad):
+                # nur beim Lauf selbst (dessen Datei heisst statik3d_netz_*),
+                # nicht beim Einzelaufruf vorn in test_arbeiter_laden_aus_datei
+                if os.path.basename(pfad).startswith("statik3d_netz_"):
+                    aus = subprocess.run(
+                        [sys.executable, "-c",
+                         "import os, tempfile; "
+                         "fd, p = tempfile.mkstemp(prefix='statik3d_netz_', suffix='.pkl'); "
+                         "os.close(fd); print(p)"],
+                        env=dict(os.environ, TMPDIR=gemeinsam, TEMP=gemeinsam, TMP=gemeinsam),
+                        capture_output=True, text=True, timeout=120, check=True)
+                    fremde.append(aus.stdout.strip())
+                return echt_schreiben(model, karten, pfad)
+            ok, zeile = _arbeiter_pruefung_nachlaufen(
+                _modell_fuer_arbeiter_schreiben=andere_sitzung_legt_an)
+            check("eine andere Sitzung legt waehrend des Laufs ihre Datei in denselben Ordner - der Test greift",
+                  len(fremde) == 1 and os.path.isfile(fremde[0])
+                  and os.path.samefile(os.path.dirname(fremde[0]), tempfile.gettempdir())
+                  and os.path.basename(fremde[0]).startswith("statik3d_netz_"),
+                  str([os.path.basename(p) for p in fremde]))
+            check("die fremde Datei stoert die Pruefung dieses Laufs nicht", ok is True, zeile)
+            for p in fremde:
+                if os.path.isfile(p):
+                    os.remove(p)
+
+            liegen = []
+
+            def nicht_aufraeumen(pfad):
+                if pfad:
+                    liegen.append(pfad)
+            ok, zeile = _arbeiter_pruefung_nachlaufen(_datei_weg=nicht_aufraeumen)
+            check("raeumt der Vernetzer nicht auf, faellt sie durch - der Test greift",
+                  ok is False and len(liegen) == 1 and os.path.isfile(liegen[0]),
+                  f"{[os.path.basename(p) for p in liegen]}: {zeile}")
+            for p in liegen:
+                if os.path.isfile(p):
+                    os.remove(p)
+        finally:
+            tempfile.tempdir = alt
 
 
 def test_karten_einmal_je_lauf():
@@ -2367,7 +2496,8 @@ def main():
               test_durchdringung_nicht_als_spalt,
               test_freie_rechtecklast,
               test_projizierte_last_wuerfel, test_projizierte_last_bohrung,
-              test_gemeinsame_flaeche_konform, test_arbeiter_laden_aus_datei, test_karten_einmal_je_lauf):
+              test_gemeinsame_flaeche_konform, test_arbeiter_laden_aus_datei,
+              test_arbeiterdatei_nur_dieses_laufs, test_karten_einmal_je_lauf):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
