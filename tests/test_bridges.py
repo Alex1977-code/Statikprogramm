@@ -220,12 +220,14 @@ def test_eta_ohne_nachweis():
 def test_ermuedung_in_stellung():
     """Eine Ermuedungslast als Verlauf bleibt in einer Stellung, solange ihre
     Glieder da sind - Lastfaelle oder Kombinationen der Stellung; ihr case_max
-    liest der Ermuedungsnachweis von Staeben und Volumen (ec3.fatigue)
-    nicht. Vorher (bis ec6448c)
-    entschied case_max: ein Verlauf mit case_max '' (rfem6_db, berichtigte
-    Maske) entfiel in jeder Stellung mit 'faelle', einer mit Gliedern
+    und case_min liest der Ermuedungsnachweis von Staeben und Volumen
+    (ec3.fatigue) nicht. Vorher (bis ec6448c) entschieden case_max und
+    case_min: ein Verlauf mit case_max '' (rfem6_db, berichtigte Maske)
+    entfiel in jeder Stellung mit 'faelle', ebenso einer mit case_min
+    ausserhalb der Stellung (V_cmin, gemessen 24.09.2026); einer mit Gliedern
     ausserhalb der Stellung blieb stehen, wenn sein case_max ein Lastfall der
-    Stellung war (V_fehlt). 8daa37e pruefte die Glieder nur gegen die
+    Stellung war und sein case_min leer oder ebenfalls ein Lastfall der
+    Stellung (V_fehlt). 8daa37e pruefte die Glieder nur gegen die
     Lastfaelle: ein Verlauf mit einer Kombination als Glied (die Oberflaeche
     nimmt sie an, gui/main.py add_fatigue_load) entfiel, obwohl die
     Kombination in der Stellung bleibt (Gegenpruefung 23.09.2026)."""
@@ -245,6 +247,10 @@ def test_ermuedung_in_stellung():
     fl["V_kombi"] = FatigueLoad("V_kombi", "LF1", None, folge=["LF1", "K1"], wiederholungen=1e5)
     fl["V_kombi_weg"] = FatigueLoad("V_kombi_weg", "LF1", None, folge=["LF1", "K3"],
                                     wiederholungen=1e5)
+    # case_min liefert die Maske auch im Modus Verlauf (gui/dialogs.py
+    # values(), gui/main.py add_fatigue_load); beide Glieder liegen in der
+    # Stellung
+    fl["V_cmin"] = FatigueLoad("V_cmin", "LF1", "LF3", folge=["LF1", "LF2"], wiederholungen=1e5)
     fl["Z"] = FatigueLoad("Z", "LF2", "LF1")
     fl["Z3"] = FatigueLoad("Z3", "LF3", None)
     check("Grundmodell ohne Fehler", not [z for z in m.check() if z.startswith("FEHLER")])
@@ -252,14 +258,16 @@ def test_ermuedung_in_stellung():
     m2 = Stellung("S", 0.0, faelle=["LF1", "LF2"]).modell(m, log)
     check("Verlauf mit vorhandenen Gliedern bleibt, auch mit case_max '' oder veraltet",
           {"V_leer", "V_alt"} <= set(m2.fatigue_loads), str(sorted(m2.fatigue_loads)))
+    check("Verlauf mit vorhandenen Gliedern bleibt, auch mit case_min außerhalb der Stellung",
+          "V_cmin" in m2.fatigue_loads, str(sorted(m2.fatigue_loads)))
     check("Verlauf mit einer Kombination der Stellung als Glied bleibt",
           "V_kombi" in m2.fatigue_loads and "K1" in m2.combinations,
           f"{sorted(m2.fatigue_loads)}, Kombinationen {sorted(m2.combinations)}")
     check("Verlauf mit fehlendem Glied (Lastfall oder entfallene Kombination) "
           "entfällt, zwei Zustände wie bisher",
-          sorted(m2.fatigue_loads) == ["V_alt", "V_kombi", "V_leer", "Z"],
+          sorted(m2.fatigue_loads) == ["V_alt", "V_cmin", "V_kombi", "V_leer", "Z"],
           str(sorted(m2.fatigue_loads)))
-    check("das Stellungsmodell ist ohne Fehler (veraltetes case_max stört nicht)",
+    check("das Stellungsmodell ist ohne Fehler (veraltetes case_max oder case_min stört nicht)",
           not [z for z in m2.check() if z.startswith("FEHLER")],
           str([z for z in m2.check() if z.startswith("FEHLER")]))
     zeile = [z for z in log if "Ermüdungslasten" in z]

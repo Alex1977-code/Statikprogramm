@@ -5230,14 +5230,15 @@ liefern jetzt beide.
 
 Ermüdungslasten, deren Zustand in der Stellung fehlt, entfallen mit und
 stehen im Protokoll („Ermüdungslasten ohne Lastfall entfallen: …"). Bei
-einem Verlauf entscheiden seine Glieder (`folge`) und nicht `case_max`. Ein
-Glied darf ein Lastfall oder eine Kombination sein; der Verlauf bleibt, wenn
-alle seine Glieder in der Stellung bleiben. Bis zum 23.09.2026 entschied
-`case_max`, das der Ermüdungsnachweis von Stäben und Volumen bei einem
-Verlauf nicht liest. Die Verläufe aus einer RFEM-6-Datei (.rf6) haben kein
-`case_max` und entfielen deshalb in jeder Stellung mit `faelle`. Ein Verlauf
-mit Lastfällen außerhalb der Stellung blieb dagegen stehen, wenn sein
-`case_max` ein Lastfall der Stellung war.
+einem Verlauf entscheiden seine Glieder (`folge`) und nicht `case_max` oder
+`case_min`. Ein Glied darf ein Lastfall oder eine Kombination sein; der
+Verlauf bleibt, wenn alle seine Glieder in der Stellung bleiben. Bis zum
+23.09.2026 entschieden `case_max` und `case_min`, die der Ermüdungsnachweis
+von Stäben und Volumen bei einem Verlauf nicht liest. Die Verläufe aus einer
+RFEM-6-Datei (.rf6) haben kein `case_max` und entfielen deshalb in jeder
+Stellung mit `faelle`. Ein Verlauf mit Lastfällen außerhalb der Stellung
+blieb dagegen stehen, wenn sein `case_max` ein Lastfall der Stellung war und
+sein `case_min` leer oder ebenfalls ein Lastfall der Stellung.
 
 Die Nachweise einer Stellung brauchen die Ergebnisse ihrer Kombinationen.
 Mit `reihe.rechnen(kombinationen=False, nachweise=True)` fehlen sie – im
