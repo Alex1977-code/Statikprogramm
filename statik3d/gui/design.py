@@ -1049,8 +1049,10 @@ class Modellbaum(QtWidgets.QTreeWidget):
                 continue
             z = self._zweig(ew2, gruppe, len(eintraege), "ergebnisgruppe",
                             schluessel=gruppe)
-            self._liste(z, [(text, zusatz, key, text)
-                            for text, zusatz, key in eintraege],
+            # ein vierter Wert ist die Textfarbe (grau: kein Wert, der Zusatz
+            # sagt warum - er steht dann auch im Hinweis)
+            self._liste(z, [(e[0], e[1], e[2], e[1] if len(e) > 3 else e[0], *e[3:4])
+                            for e in eintraege],
                         "ergebnis", "ergebnisgruppe", sortieren=False)
         eintraege = list(getattr(model, "bericht", None) or [])
         bz = self._zweig(wurzel, "Bericht", len(eintraege), "bericht",

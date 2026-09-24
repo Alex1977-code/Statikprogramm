@@ -2327,8 +2327,9 @@ def main():
               f"{len(w.plotter.scalar_bars)} Skalen, {sum(1 for a in akt_ if a.startswith('contact_'))} Marken, "
               f"{sum(1 for a in akt_ if a.startswith('result_'))} Ergebnisdarsteller")
         check("… das Modell bleibt im Bild und die Kopfzeile sagt, dass die Ergebnisse ausgeblendet sind",
-              modell_ and "Ergebnisse ausgeblendet" in " ".join(w._kopfzeile_zeilen),
-              f"{modell_}, {str(w._kopfzeile_zeilen)[:100]}")
+              modell_ and "Ergebnisse ausgeblendet (Knopf „Ergebnisse“ in der Glasleiste oder Register"
+              in " ".join(w._kopfzeile_zeilen),
+              f"{modell_}, {str(w._kopfzeile_zeilen)[-120:]}")
         check("… und die Ergebnisse sind nur versteckt, nicht verworfen",
               w.current_result() is not None and not w.ergebnisse_sichtbar())
         w.act_ergebnisse.setChecked(True); app.processEvents()
@@ -2391,6 +2392,16 @@ def main():
         check("Schnittgrößen im Baum als normale Dezimalzahl (kein 2.33e-13 im Modellbaum)",
               sg and not any("e-" in z or "e+" in z for z in sg) and all("…" in z for z in sg[:-1]),
               str(sg[:2]))
+        # Verformungen und Verdrehungen, gesamt und je Achse (24.09.2026)
+        ver = erg.get("Verformungen", [])
+        check("Ergebnisliste: „Verformungen“ mit |u|, ux, uy, uz, |φ|, φx, φy, φz, ohne e+/e-",
+              [e[0] for e in ver] == ["u gesamt |u|", "ux", "uy", "uz", "φ gesamt |φ|", "φx", "φy", "φz"]
+              and not any("e-" in e[1] or "e+" in e[1] for e in ver), str([e[1] for e in ver][:2]))
+        w._baum_geklickt("ergebnis", "feld:φy"); app.processEvents()
+        check("Klick „φy“ im Baum stellt die Färbung ein, mit Skala",
+              w.cb_field.currentText() == "φy" and len(w.plotter.scalar_bars) >= 1,
+              w.cb_field.currentText())
+        w.cb_field.setCurrentText(FIELDS[0]); app.processEvents()
         namen = zweige(w.baum)
         check("Ergebnisse stehen im Modellbaum", "Ergebnisse" in namen)
         check("Bericht steht im Modellbaum", "Bericht" in namen)
@@ -7413,7 +7424,11 @@ def main():
               w.glasleiste.lay.itemAt(0).widget() is cbl
               and w.glasleiste.listen.get("lastwahl") is cbl,
               type(w.glasleiste.lay.itemAt(0).widget()).__name__)
-        eintr = [(cbl.itemText(i), cbl.itemData(i)) for i in range(cbl.count())]
+        check("Glasleiste: Knopf „Ergebnisse zeigen“ direkt dahinter, Aktion des Ribbons (24.09.2026)",
+              "ergebnisse" in kn and w.glasleiste.lay.itemAt(1).widget() is kn["ergebnisse"]
+              and kn["ergebnisse"].defaultAction() is w.act_ergebnisse,
+              type(w.glasleiste.lay.itemAt(1).widget()).__name__)
+        eintr =[(cbl.itemText(i), cbl.itemData(i)) for i in range(cbl.count())]
         check("sie führt jeden Lastfall und jede Kombination",
               len(eintr) == len(w.model.load_cases) + len(w.model.combinations)
               and eintr[0][1] == ("case", list(w.model.load_cases)[0])

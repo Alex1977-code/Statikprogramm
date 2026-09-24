@@ -57,10 +57,10 @@ from .. import skizze as sk
 from .. import spannungen as spn
 from .viewport import to_grid  # noqa: F401  (Kompatibilitaet)
 
-#: Faerbungen der Ansicht: Verschiebungen, Vergleichsspannung, dann die
+#: Faerbungen der Ansicht: Verschiebungen, Verdrehungen [mrad], Vergleichsspannung, dann die
 #: Spannungsgroessen je Art (spannungen.FELDER, analog ANSYS: Grund-, Haupt-,
 #: Vergleichs- und Kontaktspannungen), zuletzt die Ausnutzungen
-FIELDS = ["|u| Verschiebung", "ux", "uy", "uz", "Vergleichsspannung", *spn.FELDER,
+FIELDS = ["|u| Verschiebung", "ux", "uy", "uz", *vp.VERDREHUNGEN, "Vergleichsspannung", *spn.FELDER,
           "Ausnutzung EC3", "Ausnutzung Ermüdung", "Ausnutzung elastisch", "keine Färbung"]
 DIAGRAMS = ["kein Verlauf", "N", "Vy", "Vz", "Mt", "My", "Mz"]
 #: Zeilenhoehe der Kennwerte im Bild [Bildpunkte] bei Schriftgroesse 8
@@ -3189,6 +3189,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cb_lastwahl = leiste.liste(
             "Was die Ansicht zeigt: Lastfall oder Lastkombination", "lastwahl")
         self.cb_lastwahl.currentIndexChanged.connect(self._glas_last_gewaehlt)
+        # Gleich daneben Ergebnisse an/aus (24.09.2026) - dieselbe Aktion wie
+        # im Register Ergebnisse, damit beide immer gleich stehen
+        leiste.knopf(self.act_ergebnisse, "ergebnisse", "ergebnisse")
         leiste.trenner()
         # Darstellungsart
         for name in vp.DARSTELLUNGEN:
@@ -3869,7 +3872,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Ergebnis, Färbung, Verlauf und Überhöhung wählen")
         self.act_ergebnisse = g.schalter(
             "Ergebnisse zeigen", lambda _z: self.redraw(), True,
-            "Die Ergebnisdarstellung aus dem Bild nehmen: Färbung, verformtes System, "
+            "Ergebnisse zeigen / ausblenden – die Ergebnisdarstellung aus dem Bild "
+            "nehmen: Färbung, verformtes System, "
             "Werte, Kontaktmarken, Skala und Kopfzeile. Das Modell bleibt sichtbar, die "
             "Ergebnisse bleiben gerechnet - der Schalter holt sie zurück")
         self.act_kennwerte = g.schalter(
@@ -8425,6 +8429,18 @@ class MainWindow(QtWidgets.QMainWindow):
             if tabelle and self.tabelle_zeigen(tabelle):
                 return
             return self.show_design() if hasattr(self, "show_design") else None
+        if art == "feld":
+            # Verformung/Verdrehung: die Faerbung einstellen. Anders als bei den
+            # Spannungen bleibt eine Umhuellende vorn - sie fuehrt u und phi
+            # (u_min/u_max mit sechs Spalten, umag_max, phimag_max).
+            i = self.cb_field.findText(wert)
+            if i < 0:
+                return self.info(f"Färbung „{wert}“ ist nicht bekannt")
+            if vp.ist_verdrehung(wert) and not vp.drehknoten(self.model).any():
+                return self.info(vp.ohne_verdrehung(self.model))
+            self.cb_field.setCurrentIndex(i)     # zeichnet neu
+            self.maske_zeigen("Ergebnisse")
+            return self.info(f"Färbung {wert}")
         if art == "spannung":
             a, _, g = wert.partition(":")
             if a in spn.GROESSEN and g in spn.GROESSEN[a]:
@@ -9543,6 +9559,14 @@ class MainWindow(QtWidgets.QMainWindow):
             out.setdefault("Nachweise", []).append(
                 ("Schwingung Verschluss", sw_.summary()[:60], "nachweis:schwingung"))
         r = self.current_result() if an is not None else None
+        if (r is not None and getattr(r, "modes", None) is None
+                and getattr(r, "buckling_modes", None) is None and vp.displacement_of(r) is not None):
+            # Verformungen und Verdrehungen, gesamt und je Achse (24.09.2026);
+            # ein Klick stellt die Faerbung ein. Grau (vierter Wert: Farbe),
+            # wo kein Knoten eine Drehsteifigkeit hat.
+            out["Verformungen"] = [
+                (text, zusatz, f"feld:{feld}", *((dsg.FARBEN["matt"],) if grau else ()))
+                for text, zusatz, feld, grau in vp.verformungen_liste(self.model, r)]
         if r is not None and (getattr(r, "beam_end", None) or getattr(r, "beam", None)):
             # Die Schnittgroessen gehoeren in den Baum: dort sucht man sie,
             # und ein Klick stellt gleich den Verlauf in der Ansicht ein.
@@ -18331,6 +18355,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     point_scalars = None
                     if spn.feld(field) is not None:
                         self.statusBar().showMessage(f"{field}: in diesem Ergebnis ohne Werte", 8000)
+                    elif vp.ist_verdrehung(field):
+                        self.statusBar().showMessage(vp.ohne_verdrehung(m), 8000)
             elif cell_scalars is None and spn.feld(field) is not None:
                 self.statusBar().showMessage(f"{field}: gibt es zu Lastfall und Kombination, nicht zur Umhüllenden", 8000)
         # Netzguete faerbt nur, solange kein Ergebnis gezeigt wird - ein
@@ -18829,7 +18855,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if r is None and self.current_result() is not None:
             # Es gaebe ein Ergebnis, der Schalter zeigt es nur nicht - das
             # gehoert ins Bild, sonst sucht man den Fehler in der Rechnung
-            zeilen = list(zeilen) + ["    Ergebnisse ausgeblendet (Register Ergebnisse → „Ergebnisse zeigen“)"]
+            zeilen = list(zeilen) + ["    Ergebnisse ausgeblendet (Knopf „Ergebnisse“ in der Glasleiste "
+                                     "oder Register Ergebnisse → „Ergebnisse zeigen“)"]
         self._kopfzeile_zeilen = zeilen
         try:
             # Oben links, aber **unterhalb** der Glasleiste: in einem schmalen

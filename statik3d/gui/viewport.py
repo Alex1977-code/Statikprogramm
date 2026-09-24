@@ -2846,6 +2846,128 @@ def diagram_scale(model: Model, res, quantity: str, n: int = 9) -> float:
     return 0.08 * model.characteristic_size() / vmax
 
 
+#: Faerbungen der Verdrehungen, Einheit fest mrad (einheiten.faktor("winkel")
+#: rechnet nicht von rad um - wie im GZG-Nachweis und im Bericht)
+VERDREHUNGEN = ("|φ| Verdrehung", "φx", "φy", "φz")
+#: Eintraege der Gruppe „Verformungen“ im Modellbaum: (Text, Faerbung)
+VERFORMUNGEN_BAUM = (("u gesamt |u|", "|u| Verschiebung"), ("ux", "ux"), ("uy", "uy"),
+                     ("uz", "uz"), ("φ gesamt |φ|", "|φ| Verdrehung"), ("φx", "φx"),
+                     ("φy", "φy"), ("φz", "φz"))
+OHNE_VERDREHUNG_VOLUMEN = "keine Verdrehungen: nur Volumenkörper (Knoten ohne Drehfreiheitsgrad)"
+OHNE_VERDREHUNG = ("keine Verdrehungen: kein Knoten mit Drehsteifigkeit (Fachwerkstäbe, Seile, "
+                   "Scheiben und Volumenkörper haben keinen Drehfreiheitsgrad)")
+_DREH_CACHE: dict = {}
+
+
+def ist_verdrehung(feld: str) -> bool:
+    return str(feld or "") in VERDREHUNGEN
+
+
+def drehknoten(model: Model) -> np.ndarray:
+    """Welche Knoten eine Drehsteifigkeit haben: die an einem Balken, einer
+    Schale oder einer Feder mit Drehfedern.
+
+    Alle anderen - Volumen-, Scheiben-, Fachwerk- und Seilknoten - sperrt die
+    Assemblierung ohne Steifigkeit mit 0 (assemble.constrained_dofs; Fachwerk
+    und Seil: beam3d.k_local_truss laesst die Rotationen leer). Dort ist
+    phi genau 0, aber kein Ergebnis; die Faerbung zeigt sie grau statt als
+    Nullen (dem Anwender am 24.09.2026 zugesagt). Einmal je Netz bestimmt:
+    Baum, Faerbung und Kennwerte fragen bei jedem Neuzeichnen.
+    """
+    elemente = model.elements
+    federn = getattr(model, "federn", {}) or {}
+    schluessel = (id(model), id(elemente), len(elemente), int(model.nn), len(federn))
+    if schluessel in _DREH_CACHE:
+        return _DREH_CACHE[schluessel]
+    maske = np.zeros(int(model.nn), bool)
+    schalen = set(EL.SCHALEN_TYPEN)
+    for e in elemente:
+        t = e.typ
+        if t == "beam" or t in schalen:
+            maske[list(e.nodes)] = True
+        elif t == "feder":
+            fp = federn.get(e.sec)
+            if fp is not None and any(float(k) > 0 for k in list(fp.k)[3:6]):
+                maske[list(e.nodes)] = True
+    if len(_DREH_CACHE) >= 4:           # Grundmodell und Situationsmodelle
+        _DREH_CACHE.clear()
+    _DREH_CACHE[schluessel] = maske
+    return maske
+
+
+def ohne_verdrehung(model: Model) -> str:
+    """Warum ein Modell keine Verdrehungen hat - als Zusatz und Meldung."""
+    if model.elements and all(EL.familie(e.typ) == "volumen" for e in model.elements):
+        return OHNE_VERDREHUNG_VOLUMEN
+    return OHNE_VERDREHUNG
+
+
+def _verdrehung(model: Model, res, field: str):
+    """(Knotenwerte [mrad] oder None, Name) einer Verdrehungsfaerbung; NaN an
+    Knoten ohne Drehsteifigkeit."""
+    k = None if field.startswith("|") else 3 + "xyz".index(field[-1])
+    u = getattr(res, "u", None)
+    if u is not None:
+        u = np.asarray(u, float)
+        if u.ndim != 2 or u.shape[1] < 6:
+            return np.full(model.nn, np.nan), field + " [mrad]"
+        w = np.linalg.norm(u[:, 3:6], axis=1) if k is None else u[:, k]
+        name = "|φ| [mrad]" if k is None else f"{field} [mrad]"
+    elif getattr(res, "u_max", None) is not None:
+        if k is None:
+            pm = getattr(res, "phimag_max", None)
+            w = np.full(model.nn, np.nan) if pm is None else np.asarray(pm, float)
+            name = "|φ| max [mrad]"
+        else:
+            w = np.where(np.abs(res.u_max[:, k]) > np.abs(res.u_min[:, k]),
+                         res.u_max[:, k], res.u_min[:, k])
+            name = f"{field} extrem [mrad]"
+    else:
+        return None, ""
+    return np.where(drehknoten(model), np.asarray(w, float) * 1000, np.nan), name
+
+
+def verformungen_liste(model: Model, res) -> list:
+    """Die Gruppe „Verformungen“ fuer den Modellbaum: [(Text, Zusatz,
+    Faerbung, grau)].
+
+    Der Zusatz ist „min … max mm“ bzw. „mrad“ des gezeigten Ergebnisses, als
+    Dezimalzahl (spannungen.dezimal). Komponenten der Umhuellenden reichen
+    vom kleinsten u_min bis zum groessten u_max; die Betraege von min bis max
+    dessen, was die Faerbung zeigt. Hat kein Knoten eine Drehsteifigkeit,
+    stehen die phi-Eintraege grau mit der Erklaerung als Zusatz.
+    """
+    from .. import spannungen as spn
+    dreh = drehknoten(model)
+    ohne = not dreh.any()
+    env = getattr(res, "u", None) is None and getattr(res, "u_max", None) is not None
+    out = []
+    for text, feld in VERFORMUNGEN_BAUM:
+        phi = ist_verdrehung(feld)
+        if phi and ohne:
+            out.append((text, ohne_verdrehung(model), feld, True))
+            continue
+        einheit = "mrad" if phi else "mm"
+        betrag = feld.startswith("|")
+        if env and not betrag:
+            k = (3 if phi else 0) + "xyz".index(feld[-1])
+            lo_w, hi_w = res.u_min[:, k] * 1000, res.u_max[:, k] * 1000
+            if phi:
+                lo_w, hi_w = lo_w[dreh], hi_w[dreh]
+        else:
+            w, _c, _n = result_field(model, res, feld)
+            lo_w = hi_w = np.asarray(w, float) if w is not None else np.array([])
+        lo_w, hi_w = np.asarray(lo_w, float), np.asarray(hi_w, float)
+        if not (np.isfinite(lo_w).any() and np.isfinite(hi_w).any()):
+            out.append((text, "", feld, False))
+            continue
+        lo, hi = float(np.nanmin(lo_w)), float(np.nanmax(hi_w))
+        vz = not betrag
+        out.append((text, f"{spn.dezimal(lo, vorzeichen=vz)} … "
+                          f"{spn.dezimal(hi, vorzeichen=vz)} {einheit}", feld, False))
+    return out
+
+
 def result_field(model: Model, res, field: str, util: dict = None, seite: str = "max"):
     """(Knotenskalare oder None, Zellskalare oder None, Name).
 
@@ -2872,6 +2994,9 @@ def result_field(model: Model, res, field: str, util: dict = None, seite: str = 
             return res.u[:, k] * 1000, None, field + " [mm]"
         return np.where(np.abs(res.u_max[:, k]) > np.abs(res.u_min[:, k]),
                         res.u_max[:, k], res.u_min[:, k]) * 1000, None, field + " extrem [mm]"
+    if field in VERDREHUNGEN:
+        werte, name = _verdrehung(model, res, field)
+        return werte, None, name
     if field.startswith("Vergleich"):
         if hasattr(res, "node_vm_max"):
             return np.nan_to_num(res.node_vm_max) / 1e6, None, "σv max [MPa]"
@@ -3048,6 +3173,21 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
             if gewaehlt(nm):
                 zeilen.append(zeile(nm, z(np.nanmin(u[:, j]), "verformung"), "",
                                     z(np.nanmax(u[:, j]), "verformung"), "", E.einheit("verformung")))
+    if not alle and feld in VERDREHUNGEN:
+        # dieselben Werte wie die Faerbung (Umhuellende: |phi| aus phimag_max),
+        # mrad fest; Knoten ohne Drehsteifigkeit zaehlen nicht
+        phi, _name = _verdrehung(model, res, feld)
+        phi = nur_sicht(phi)
+        if phi is not None and len(phi) and np.isfinite(phi).any():
+            if feld.startswith("|"):
+                k = int(np.nanargmax(phi))
+                zeilen.append(zeile("phi", "", "", spn.dezimal(phi[k]), f"Knoten {k}", "mrad"))
+            else:
+                a, b = int(np.nanargmin(phi)), int(np.nanargmax(phi))
+                zeilen.append(zeile("phi" + feld[-1], spn.dezimal(phi[a]), f"Knoten {a}",
+                                    spn.dezimal(phi[b]), f"Knoten {b}", "mrad"))
+        elif phi is not None and not drehknoten(model).any():
+            zeilen.append(ohne_verdrehung(model))
     reihe = (groesse,) if verlauf else SCHNITTGROESSEN
     grenzen = schnittgroessen_grenzen(model, res, reihe, elemente=elemente) \
         if (alle or gewaehlt("schnitt")) else {}

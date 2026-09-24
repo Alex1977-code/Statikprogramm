@@ -5409,6 +5409,13 @@ class Envelope:
         return np.maximum(np.linalg.norm(self.u_max[:, :3], axis=1),
                           np.linalg.norm(self.u_min[:, :3], axis=1))
 
+    @property
+    def phimag_max(self) -> np.ndarray:
+        """Wie umag_max fuer die Verdrehungen (rx, ry, rz) [rad] - fuer die
+        Faerbung „|φ| Verdrehung“ der Umhuellenden."""
+        return np.maximum(np.linalg.norm(self.u_max[:, 3:6], axis=1),
+                          np.linalg.norm(self.u_min[:, 3:6], axis=1))
+
     def extreme_table(self) -> list[list]:
         """Zeilen: Element, Groesse, min, Kombination, max, Kombination."""
         rows = []
