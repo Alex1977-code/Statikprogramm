@@ -1948,7 +1948,8 @@ def test_bemessungssituation_ist_keine_einwirkungsart():
     ueber die Einwirkung, und die Kategorie wirkt ueber is_permanent und
     is_accidental auf die erzeugten Kombinationen (gamma_G statt gamma_Q).
     Eine Ermuedungslast ist FAT, was immer sie enthaelt - sofern die
-    Kennzahl Q ergibt; nur dann fragt rfem6_db den Namen.
+    Kennzahl Q ergibt (nur dann fragt rfem6_db den Namen) und „Ermuedung“
+    ausserhalb von Klammern steht (norm_key wirft Klammertext weg).
     """
     for name, soll in DREHLAGER_NAMEN:
         ist = _C.category_from_text(name, "Q")
@@ -1985,6 +1986,31 @@ def test_bemessungssituation_ist_keine_einwirkungsart():
                        ("Ständig - ständige Bemessungssituation", "G")]:
         ist = _C.category_from_text(name, "Q")
         check(f"Gegenprobe: {name} -> {soll}", ist == soll, ist)
+    # Gegenproben: ein Situationswort ohne Adjektivendung ist keine Angabe zur
+    # Bemessungssituation. Am Stand 28c9326 war die Endung freigestellt, und
+    # diese Namen wurden Q statt G bzw. A; am Stand ec6448c und hier G bzw. A
+    # (gemessen am 24.09.2026).
+    for name, soll in [("Ständig - Bemessungssituation 1", "G"),
+                       ("Ständig Bemessungssituation", "G"),
+                       ("Außergewöhnlich - Bemessungssituation", "A")]:
+        ist = _C.category_from_text(name, "Q")
+        check(f"ohne Endung: {name} -> {soll}", ist == soll, ist)
+    # Grenzen der Erkennung, so wie sie im Handbuch stehen: die Endung „-en“
+    # zaehlt; „Erdbeben“ mit Leerzeichen oder Strich vor „Bemessungssituation“
+    # ist die Situation (norm_key macht aus jedem Strich ein Leerzeichen); Text
+    # in runden oder eckigen Klammern wirft norm_key vorher weg, also auch
+    # „Ermuedung“ und eine Situationsangabe darin. Aendert sich eines davon,
+    # muss der Absatz im Benutzerhandbuch (RFEM-6-Import) mitgehen.
+    for name, soll in [("Nutzlast - ständigen Bemessungssituation", "Q"),
+                       ("Erdbeben - Bemessungssituation 2", "Q"),
+                       ("Kran (Ermüdung)", "Q_K"),
+                       ("Eigengewicht (Ermüdung)", "G"),
+                       ("Temperatur [Ermüdung]", "T"),
+                       ("Kran - Ermüdung", "FAT"),
+                       ("Nutzlast (Bemessungssituation außergewöhnlich)", "Q"),
+                       ("Nutzlast - Bemessungssituation außergewöhnlich", "A")]:
+        ist = _C.category_from_text(name, "Q")
+        check(f"Handbuch: {name} -> {soll}", ist == soll, ist)
 
     # ueber den ganzen Import: Kennzahl 11 -> Q, der Name verfeinert
     tmp = tempfile.mkdtemp()
@@ -1996,7 +2022,8 @@ def test_bemessungssituation_ist_keine_einwirkungsart():
             load_cases=[(n, 11, 0.0) for n, _ in DREHLAGER_NAMEN]
             + [("Eigengewicht", 11, 1.0),
                ("Erdbeben - Erdbeben-Bemessungssituation", 11, 0.0),
-               ("Ermüdungslast - Eigengewicht", 1, 1.0)],
+               ("Ermüdungslast - Eigengewicht", 1, 1.0),
+               ("Ständig - Bemessungssituation 1", 11, 0.0)],
         )
         log = []
         m = R6.read_rf6(f, log=log)
@@ -2027,6 +2054,12 @@ def test_bemessungssituation_ist_keine_einwirkungsart():
               "zu FAT: LF4, LF5" in zeile, zeile.strip())
         check("das Protokoll nennt den Erdbeben-Lastfall als umgestellt",
               "zu A: LF7" in zeile, zeile.strip())
+        # ohne Adjektivendung keine Situationsangabe: „Staendig“ bleibt G, und
+        # das Protokoll nennt den Lastfall (am Stand 28c9326 still Q)
+        check("„Ständig - Bemessungssituation 1“ mit Kennzahl 11 wird G",
+              m.load_cases["LF9"].category == "G", m.load_cases["LF9"].category)
+        check("das Protokoll nennt ihn als umgestellt", "zu G: LF6, LF9" in zeile,
+              zeile.strip())
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

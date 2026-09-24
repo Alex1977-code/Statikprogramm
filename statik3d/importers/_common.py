@@ -627,14 +627,23 @@ def expand_ranges(items: list[str]) -> list[str]:
 #: „aussergewoehnliche Bemessungssituation“ 16 zu A (gemessen am Stand
 #: ec6448c, 23.09.2026). Darum faellt die Angabe vor der Deutung heraus.
 #: Eng gefasst: hoechstens zwei Situationswoerter, mit „und/u./oder“
-#: verbunden, deutsche nur mit Adjektivendung, „erdbeben“ ohne Anhang. Die
-#: erste Fassung (Stand d5e565d) wiederholte die Gruppe und liess \w* zu;
+#: verbunden, deutsche nur mit Adjektivendung (-e/-en/-er/-es/-em, Pflicht),
+#: „erdbeben“ ohne Anhang. norm_key hat vorher jeden Strich zu einem
+#: Leerzeichen gemacht und Text in (innersten) runden oder eckigen Klammern
+#: weggeworfen: „Erdbeben -
+#: Bemessungssituation 2“ ist darum hier dasselbe wie „Erdbeben-
+#: Bemessungssituation 2“ (Situation, bleibt Q), und in Klammern wird weder
+#: eine Situation noch „Ermuedung“ gefunden.
+#: Die erste Fassung (Stand d5e565d) wiederholte die Gruppe und liess \w* zu;
 #: sie verschluckte dann ein Einwirkungswort direkt davor, das selbst ein
 #: Situationswort ist oder damit beginnt: „Erdbeben - Erdbeben-
 #: Bemessungssituation“, „Erdbebenlast Bemessungssituation“ und „Staendig -
 #: staendige Bemessungssituation“ wurden Q statt A bzw. G (gemessen am
-#: 24.09.2026, tests.test_rfem6).
-_SITUATION_DE = (r"(?:(?:staendig|voruebergehend|aussergewoehnlich)(?:e|en|er|es|em)?"
+#: 24.09.2026, tests.test_rfem6). Die zweite (Stand 28c9326) liess die
+#: Endung frei: „Staendig - Bemessungssituation 1“ und „Staendig
+#: Bemessungssituation“ wurden Q statt G, „Aussergewoehnlich -
+#: Bemessungssituation“ Q statt A (gemessen am 24.09.2026).
+_SITUATION_DE = (r"(?:(?:staendig|voruebergehend|aussergewoehnlich)(?:e|en|er|es|em)"
                  r"|erdbeben)")
 _SITUATION_EN = r"(?:persistent|transient|accidental|seismic)"
 _BEMESSUNGSSITUATION = re.compile(
@@ -648,8 +657,10 @@ def category_from_text(text, default: str = "Q") -> str:
     """Einwirkungskategorie (Schluessel in ACTION_CATEGORIES) aus Freitext.
 
     Eine Angabe zur Bemessungssituation in den Schreibweisen von
-    _BEMESSUNGSSITUATION zaehlt nicht als Einwirkung, und eine
-    Ermuedungslast ist FAT, was immer sie sonst nennt.
+    _BEMESSUNGSSITUATION zaehlt nicht als Einwirkung, und ein Text mit
+    „Ermuedung/fatigue“ ist FAT, was immer er sonst nennt. Beides nur
+    ausserhalb von Klammern: norm_key wirft Text in runden oder eckigen
+    Klammern vorher weg, „Kran (Ermuedung)“ ergibt Q_K.
     """
     s = _BEMESSUNGSSITUATION.sub(" ", norm_key(text)).strip()
     if not s:

@@ -2987,19 +2987,35 @@ belegt ist: das Protokoll nennt je Kennzahl die angenommene Kategorie und
 die Lastfälle, deren Name sie umgestellt hat, und warnt; prüfen Sie ψ und γ
 in der Lastfallmaske. Den Namen fragt der Import nur, wenn die Kennzahl Q
 ergibt; ergibt sie G (Kennzahl 1 oder 2), bleibt der Lastfall G, auch wenn
-er „Ermüdungslast …“ heißt. Ergibt sie Q, gilt: eine Angabe zur
-Bemessungssituation zählt nicht als Einwirkung, wenn sie so geschrieben
-ist: „ständige“, „vorübergehende“, „außergewöhnliche“ oder „Erdbeben-“
-unmittelbar vor „Bemessungssituation“ (zwei davon mit „und“, „u.“ oder
-„oder“ verbunden), „Bemessungssituation (bei) Erdbeben“ oder englisch
-„persistent“, „transient“, „accidental“, „seismic design situation“. Andere
-Schreibweisen nimmt der Import nicht heraus; „ständige/vorübergehende
-Bemessungssituation“, „Bemessungssituation ständig“ oder „Ständig und
-vorübergehend“ ohne das Wort „Bemessungssituation“ machen einen Lastfall
-weiter zu G, „Bemessungssituation außergewöhnlich“ zu A, und das Protokoll
-nennt ihn unter „umgestellt“. Ein Lastfall, dessen Name „Ermüdung“ enthält,
-wird FAT (nur für den Ermüdungsnachweis, in keiner erzeugten Kombination),
-auch wenn der Name daneben „Eigengewicht“ oder „Temperatur“ nennt. Am
+er „Ermüdungslast …“ heißt. Ergibt sie Q, wertet der Import den Namen aus,
+aber **ohne den Text in runden oder eckigen Klammern** (bei geschachtelten
+Klammern ohne den der innersten); was dort steht, zählt für die Kategorie
+nicht. Außerhalb von Klammern gilt: eine Angabe zur Bemessungssituation
+zählt nicht als Einwirkung, wenn sie so geschrieben ist: „ständig“,
+„vorübergehend“ oder „außergewöhnlich“ mit Endung (-e, -en, -er, -es, -em,
+also etwa „ständige“ oder „ständigen“) oder „Erdbeben“ unmittelbar vor
+„Bemessungssituation“ (zwei davon mit „und“, „u.“ oder „oder“ verbunden),
+„Bemessungssituation Erdbeben“, „Bemessungssituation bei Erdbeben“ oder
+englisch „persistent“,
+„transient“, „accidental“, „seismic design situation“. Leerzeichen,
+Bindestrich und Gedankenstrich gelten dabei gleich: „Erdbeben -
+Bemessungssituation 2“ ist wie „Erdbeben-Bemessungssituation 2“ eine
+Situation und bleibt Q, ebenso „Außergewöhnliche - Bemessungssituation“.
+Andere Schreibweisen nimmt der Import nicht heraus; „ständige/vorübergehende
+Bemessungssituation“, „Bemessungssituation ständig“, „Ständig -
+Bemessungssituation“ (ohne Endung) oder „Ständig und vorübergehend“ ohne
+das Wort „Bemessungssituation“ machen einen Lastfall weiter zu G,
+„Bemessungssituation außergewöhnlich“ oder „Außergewöhnlich -
+Bemessungssituation“ zu A, und das Protokoll nennt ihn unter „umgestellt“.
+Ein Lastfall, dessen Name „Ermüdung“ außerhalb von Klammern enthält, wird
+FAT (nur für den Ermüdungsnachweis, in keiner erzeugten Kombination), auch
+wenn der Name daneben „Eigengewicht“ oder „Temperatur“ nennt. In Klammern
+zählt „Ermüdung“ nicht: „Kran (Ermüdung)“ bleibt Q_K und geht in die
+erzeugten GZT-Kombinationen ein, „Eigengewicht (Ermüdung)“ wird G und
+„Temperatur [Ermüdung]“ T; ebenso bleibt „Nutzlast (Bemessungssituation
+außergewöhnlich)“ Q. Stellen Sie einen solchen Lastfall in der
+Lastfallmaske unter „Einwirkung“ auf FAT, oder schreiben Sie „Ermüdung“
+außerhalb der Klammern („Kran - Ermüdung“). Am
 Drehlager (422 Lastfälle, alle mit der Kennzahl 11) machte der Name bis zum
 23.09.2026 96 Lastfälle über „ständige Bemessungssituation“ zu G, 16 über
 „außergewöhnliche Bemessungssituation“ zu A und die 164 Ermüdungslastfälle
