@@ -3447,10 +3447,17 @@ Ausnutzung 0.000 mit Status „nicht geführt“, die Zeile nach *Nachweise EC3*
 (sie steht auch im Etikett der Maske *Nachweise*, Gruppe „Nachweise führen
 (nach der Berechnung)“) endet mit „- 1 nicht geführt: *Stab*
 (Werkstoff … ohne Streckgrenze)“ statt „- alle erfuellt“, und die größte
-Ausnutzung dort stammt nur von geführten Stäben. Im Bericht steht der Stab in
-jedem Umfang unter „Offene Hinweise und Warnungen“, auch wenn die
-Berichtsoption „Nachweise EC3“ ausgeschaltet ist. Sind die übrigen Nachweise
-erfüllt, sagt die Statuszeile „Alle geführten Nachweise erfüllt – nicht
+Ausnutzung dort stammt nur von geführten Stäben. In der Färbung
+„Ausnutzung EC3“ bekommt er keinen Wert und bleibt grau wie jedes Element
+ohne Wert; die Stabtabelle der Maske *Ergebnisse* zeigt in der Spalte
+Ausnutzung „-“. Im Bericht fehlt er im Balkendiagramm „Ausnutzung je Stab“
+und steht im Bild „Ausnutzung der Stäbe“ in Stabfarbe; beide
+Bildunterschriften nennen ihn. Bis zum 23.09.2026 ging er dort mit 0,000 ein
+und war im Bericht grün wie ein unbeanspruchter Stab. Ist gar kein Stab
+geführt, entfallen im Bericht beide Bilder, weil sie keinen Wert zu zeigen
+hätten. Im Bericht steht der Stab in jedem Umfang unter „Offene Hinweise
+und Warnungen“, auch wenn die Berichtsoption „Nachweise EC3“ ausgeschaltet
+ist. Sind die übrigen Nachweise erfüllt, sagt die Statuszeile „Alle geführten Nachweise erfüllt – nicht
 geführt wurden: …“. Ist gar kein Stab geführt (und kein anderer Nachweis),
 heißt sie „Kein Nachweis geführt – nicht geführt wurden: …“, und die
 Wesentlichen Ergebnisse nennen dann keine größte Ausnutzung EC3. In der
@@ -5023,7 +5030,22 @@ eigenen Skala: Bauteil wählen, *Selektion anzeigen*, ablesen. Geprüft in
   **Nachgewiesen** wird nicht die Umhüllende, sondern jede Alternative für
   sich: in den Nachweistabellen (Stäbe, Volumen, Beulen, Lasteinleitung,
   Anschlüsse, Verformungen) steht in der Spalte *Kombination* zum Beispiel
-  „EK1 [2]" – die zweite Alternative der Ergebniskombination EK1. Bis zum
+  „EK1 [2]" – die zweite Alternative der Ergebniskombination EK1. Steht
+  dieselbe Alternative in mehreren Ergebniskombinationen (derselbe Lastfall
+  mit Faktor 1 oder, im linearen Modell, dieselben Faktoren), weist der
+  Stabnachweis nach EC3 sie nur einmal nach und nennt alle Namen, etwa
+  „EK_A [1] = EK_B [1]"; ab fünf Namen wird gekürzt („EK1 [1] = EK2 [1] =
+  EK3 [1] = … (2 weitere)"). Die vollen Namenslisten stehen im Bericht unter
+  „Gleiche Ergebnisse, einmal nachgewiesen" (Berichtsoption „Nachweise
+  EC3"), aber nur für die ersten 40 zusammengefassten Einträge; sind es mehr,
+  endet die Zeile mit „…". Am Kragarm mit fünf Ergebniskombinationen zu je
+  42 gleichen Alternativen fehlte so gerade die volle Liste des maßgebenden
+  Eintrags, des 42., im Bericht. Die Ausnutzung bleibt dieselbe (am Kragarm
+  mit zwei solchen Ergebniskombinationen und einer gewöhnlichen Kombination 3 statt 5 Nachweisläufe je Stab, Ausnutzung
+  0,370 wie vorher). Direkt gelöste
+  Alternativen (Kontaktmodell, Theorie II./III. Ordnung) werden nur
+  zusammengefasst, wenn es dasselbe gespeicherte Ergebnis ist; die übrigen
+  Nachweise laufen weiter über jeden Namen. Bis zum
   22.09.2026 übergingen die Nachweise Ergebniskombinationen; hatte ein Modell
   nur solche, wurden still die Lastfälle mit Faktor 1 nachgewiesen (am
   Kragarm Ausnutzung 0,170 statt 0,370). Die Lastfälle selbst werden jetzt nur

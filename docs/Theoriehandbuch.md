@@ -1002,6 +1002,36 @@ LF1, „Alle Nachweise erfüllt."). Am jetzigen Stand, mit und ohne die
 GZG-Kombinationen: Riegel 0,9734 bei „ein", 0,9749 mit „EK" nach III.
 Ordnung, 0,9654 bei „aus" und „automatisch".
 
+**Gleiche Alternativen im Stabnachweis.** Steht ein Lastfall mit Faktor 1
+als Alternative in mehreren Ergebniskombinationen, liefert
+`ergebnisse_der_alternativen` unter jedem Namen dasselbe Lastfallergebnis. Der Stabnachweis nach EC3 lief
+bis zum 23.09.2026 über jeden Namen (Befund B055). Jetzt fasst
+`_gleiche_zusammenfassen` vor dem Nachweis zusammen, was sicher dasselbe
+Ergebnis ist: dasselbe Objekt, oder zwei neu überlagerte Alternativen mit
+denselben Faktoren. Überlagert wird nur im linearen Modell, und die
+Lastfälle einer Kombination gehören zu ihrer Situation; gleiche Faktoren
+heißen dort also gleiches Ergebnis. Abgelegte Alternativen (Theorie II./III.
+Ordnung, Kontaktmodell) und gewöhnliche Kombinationen werden nur über das
+Objekt verglichen. Ihr Ergebnis hängt auch an der Theorie der Kombination
+bzw. am Startzustand der direkten Lösung. Der Eintrag heißt „EK_A [1] =
+EK_B [1]" (ab fünf Namen gekürzt). Gemessen am Kragarm mit EK_A und EK_B,
+je {LF1} oder {1,35·LF1 + 1,5·LF2}, und K2 = 1,35·LF1 + 1,5·LF2: vorher 5 Einträge und 5
+Querschnittsnachweise je Stab, jetzt 3; die Ausnutzung bleibt 0,370213,
+maßgebend „EK_A [2] = EK_B [2]" statt „EK_A [2]". Im Kontaktmodell bleiben
+die beiden direkt gelösten EK_A [2] und EK_B [2] zwei Einträge
+(`test_gleiche_alternativen_einmal_nachgewiesen`). Die übrigen Nachweise
+(Volumen, Beulen, Lasteinleitung, Anschlüsse, Verformungen) laufen weiter
+über jeden Namen.
+
+Die vollen Namenslisten stehen vollständig nur in `DesignResults.gleiche`.
+Der Bericht nennt sie unter „Gleiche Ergebnisse, einmal nachgewiesen" nur
+für die ersten 40 zusammengefassten Einträge, danach „…", und nur mit der
+Berichtsoption „Nachweise EC3". Am Kragarm mit LF1 bis LF42 und EK1 bis
+EK5, jede mit den 42 Alternativen {LFi: 1}, sind es 42 Einträge mit je 5
+Namen; maßgebend ist der 42., „EK1 [42] = EK2 [42] = EK3 [42] = … (2
+weitere)", und „EK5 [42]" kommt im Bericht nicht vor
+(`test_gleiche_im_bericht_nur_die_ersten_40`).
+
 Neu überlagert wird eine Alternative nur, wenn die volle Rechnung es genauso
 täte. Ist sie nach der Theorie der Ergebniskombination nach II. oder III.
 Ordnung zu rechnen, kommt ihr Ergebnis aus `Analysis.alternativen`. Dorthin
@@ -6507,6 +6537,26 @@ weiteren Wegen, jeweils gemessen am Stand 97df705:
   Server das Urteil aus den Stabnachweisen mit (`err` bei Ausnutzung über 1,
   `warn` bei einem nicht geführten Stab, sonst `ok`), und die Oberfläche liest
   den Text nicht mehr aus (`test_nachweiszeile_nicht_gefuehrt_nicht_gruen`).
+
+Ein weiterer Weg, gemessen am Stand ec6448c (Befund B054): die Färbung
+„Ausnutzung EC3" und das Balkendiagramm. `DesignResults.util_by_element()`
+gab den Elementen eines nicht geführten Stabes dessen Ausnutzung 0,0 mit. Am
+Einfeldträger IPE 300 mit dem Stab „Ohne_fy" daneben waren im Bericht alle
+6 Linien dieses Stabes im Bild „Ausnutzung der Stäbe" grün (#2e8b57, Klasse
+< 0,50), und das Balkendiagramm „Ausnutzung je Stab" zeigte für ihn einen
+grünen Balken mit „0.000" — wie ein unbeanspruchter Stab. Jetzt bekommt ein
+nicht geführter Stab in `util_by_element()` keinen Eintrag. In der
+Oberfläche bleiben seine Zellen ohne Wert (NaN, grau wie jedes Element ohne
+Wert), die Stabtabelle der Maske *Ergebnisse* zeigt „-". Im Bericht stehen
+seine Linien in Stabfarbe, im Balkendiagramm fehlt er, und beide
+Bildunterschriften nennen ihn (`test_ec3`,
+`test_nicht_gefuehrt_ohne_ausnutzung_in_bildern`). Das gilt, solange
+mindestens ein Stab geführt ist: nur dann zeichnet der Bericht die beiden
+Bilder. Ist keiner geführt – am selben Modell, wenn auch der Träger aus dem
+Werkstoff ohne f_y ist –, entfallen Balkendiagramm und Bild samt
+Bildunterschriften, denn sie hätten keinen Wert zu zeigen
+(`test_kein_stab_gefuehrt_keine_bilder`). Am Stand ec6448c waren an diesem
+Modell beide Bilder da, alle 12 Linien grün und zwei Balken „0.000".
 
 **„Alle Nachweise erfüllt." galt auch bei gerissenem Volumennachweis.**
 `self.volumen` fehlte im Gesamturteil **doppelt**: in der Statusprüfung und in
