@@ -384,8 +384,10 @@ def _kantenmitten_umhaengen(model: Model, new_index, new_nodes,
     einem entfernten Doppel auf andere Knoten - eine Kantenmitte landete an
     einer fremden Kante oder wirkte nirgends mehr. Gemessen (zweimal,
     23.09.2026) an der Hohlkugel mit einem Zielknoten auf einer gekruemmten
-    Kante: Geometrie der angehaengten Elemente bis 75,3 mm neben der Quelle,
-    jetzt bitgleich (tests.test_importers,
+    Kante: Geometrie der angehaengten Elemente bis 75,3 mm (groesste
+    Koordinatenaenderung; euklidisch 76,7 mm, nachgemessen zweimal am
+    24.09.2026 an ad5d527 ohne diesen Aufruf in _umnummerieren) neben der
+    Quelle, jetzt bitgleich (tests.test_importers,
     test_json_anhaengen_tetp_kantenmitten).
 
     Mitgenommen wird nur die Kantenmitte einer Kante (a, b), a < b, die in
@@ -410,7 +412,7 @@ def _kantenmitten_umhaengen(model: Model, new_index, new_nodes,
     durch, und ohne zusammenfallende Knoten laeuft diese Funktion gar nicht.
     Darum nimmt das Anhaengen vorher nur mit, was ein tetp-Element des
     Ziels bzw. der Quelle liest (anhaengen._Anhang._netz,
-    model.tetp_kantenmitten_gelesen; an bc1dfe0 sonst bis 5555 mm,
+    model.tetp_kantenmitten_gelesen; an bc1dfe0 sonst bis 5556 mm,
     Pruefung test_json_anhaengen_verwaiste_kantenmitten).
 
     Fallen zwei Kanten von tetp-Elementen auf eine, gilt die Kante des
@@ -427,8 +429,9 @@ def _kantenmitten_umhaengen(model: Model, new_index, new_nodes,
     Nachbesserung vom 24.09.2026 galt der zuerst eingetragene Eintrag, und
     ein fehlender zaehlte nicht: war eine Seite gerade und die andere
     gekruemmt, galt still die gekruemmte (gemessen an bc1dfe0, Hohlkugel an
-    sich selbst gehaengt, eine Kante in einer der Dateien gerade: 1,885 mm,
-    keine Warnung; Pruefung test_json_anhaengen_gerade_gegen_gekruemmt).
+    sich selbst gehaengt, eine Kante in einer der Dateien gerade: bis
+    1,921 mm verschoben (groesste Koordinatenaenderung 1,885 mm), keine
+    Warnung; Pruefung test_json_anhaengen_gerade_gegen_gekruemmt).
     Liegen die beiden Kantenmitten weiter auseinander als 1e-9 der
     Kantenlaenge (die Grenze, mit der tetp.aus_tet10 gekruemmt von gerade
     trennt), sagt es das Protokoll: die Elemente der anderen Seite rechnen

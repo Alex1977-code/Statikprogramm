@@ -7418,13 +7418,14 @@ und eine gerade Seite zählte nicht: Es galt still die gekrümmte Kante, auch
 wenn die des Ziels gerade war. Gemessen am Stand bc1dfe0 (zweimal am 23.09.,
 einmal am 24.09.2026): die Hohlkugel an sich selbst gehängt, eine Kante in
 einer der beiden Dateien gerade – je nach Seite die Elemente des Ziels oder
-die angehängten um bis zu 1,885 mm (größte Koordinatenänderung) verschoben,
-ohne Warnung; ein Hohlzylinder mit geraden Kanten als Ziel und darüber
-derselbe Zylinder mit gekrümmten Kanten als Quelle (19 Knoten
-zusammengeführt) – die Elemente des Ziels um bis zu 3,769 mm verschoben,
-ohne Warnung. Jetzt bleiben in beiden Abläufen die Elemente des Ziels
-bitgleich, die angehängten nehmen an der Anschlusskante die Kante des Ziels
-an, und das Protokoll warnt (`tests/test_importers.py`).
+die angehängten um bis zu 1,921 mm (größte Koordinatenänderung 1,885 mm)
+verschoben, ohne Warnung; ein Hohlzylinder mit geraden Kanten als Ziel und
+darüber derselbe Zylinder mit gekrümmten Kanten als Quelle (19 Knoten
+zusammengeführt) – die Elemente des Ziels um bis zu 3,843 mm (größte
+Koordinatenänderung 3,769 mm) verschoben, ohne Warnung. Jetzt bleiben in
+beiden Abläufen die Elemente des Ziels bitgleich, die angehängten nehmen an
+der Anschlusskante die Kante des Ziels an, und das Protokoll warnt
+(`tests/test_importers.py`).
 
 Mitgenommen werden beim Zusammenführen nur die Kantenmitten, deren Kante vor
 dem Zusammenführen Kante eines tetp-Elements ist; die übrigen fallen weg.
@@ -7448,11 +7449,11 @@ angehängten Elements waren, galt dann dort. Gemessen am Stand bc1dfe0
 (zweimal am 23.09., einmal am 24.09.2026): Ziel die gespeicherte Hohlkugel
 mit Stab, geladen, tetp-Netz entfernt (38 Knoten, 126 Kantenmitten), Quelle
 ein Kragarm aus tetp3 ohne gekrümmte Kante – 8 angehängte Elemente bis
-5555 mm neben der Quelle, wenn kein Knoten zusammenfiel, bis 2555 mm, wenn
+5556 mm neben der Quelle, wenn kein Knoten zusammenfiel, bis 2556 mm, wenn
 einer auf das Stabende fiel, je 7 davon mit det J ≤ 0, ohne Warnung; Ziel
-ganz geleert, Quelle eine Hohlkugel aus geraden tetp3 – bis 87,12 mm
-daneben, die Rechnung brach ab (Element umgeklappt). Am Stand ec6448c
-blieben dieselben Abläufe bei 0 mm.
+ganz geleert, Quelle eine Hohlkugel aus geraden tetp3 – bis 89,90 mm
+daneben (größte Koordinatenänderung 87,12 mm), die Rechnung brach ab
+(Element umgeklappt). Am Stand ec6448c blieben dieselben Abläufe bei 0 mm.
 Seit der Nachbesserung vom 24.09.2026 nimmt das Anhängen von Ziel und Quelle
 nur die Einträge mit, die eines ihrer tetp-Elemente liest, bevor es die
 Quelle anfügt (`model.tetp_kantenmitten_gelesen`), und `to_dict` und

@@ -5768,7 +5768,7 @@ def tetp_kantenmitten_gelesen(km, elemente) -> dict:
     am 23.09., einmal am 24.09.2026, tests.test_importers
     test_json_anhaengen_verwaiste_kantenmitten): an eine Hohlkugel, deren
     tetp-Netz so entfernt war, einen Kragarm aus geraden tetp3 gehaengt -
-    8 Elemente bis 5555 mm neben der Quelle, 7 davon umgeklappt, ohne
+    8 Elemente bis 5556 mm neben der Quelle, 7 davon umgeklappt, ohne
     Warnung. Darum schreibt ``to_dict`` nur diese Eintraege, ``from_dict``
     liest nur sie, und das Anhaengen nimmt nur sie mit."""
     if not km:

@@ -2065,10 +2065,11 @@ def test_json_anhaengen_verwaiste_kantenmitten():
     23.09., einmal am 24.09.2026): Ziel die gespeicherte Hohlkugel mit Stab,
     geladen, tetp-Netz entfernt (38 Knoten, 126 Kantenmitten); Quelle ein
     Kragarm tet10 4 x 2 x 2 als tetp3 (keine gekruemmte Kante). Um (5, 0, 0)
-    versetzt: 8 angehaengte Elemente bis 5555 mm neben der Quelle, det J <= 0
-    an 7, keine Warnung; um (2, 0, 0) (1 Knoten auf dem Stabende): 2555 mm.
-    Ziel ganz geleert, Quelle eine gerade Hohlkugel als tetp3: 87,12 mm, die
-    Rechnung brach ab (Element umgeklappt). An ec6448c: 0 mm.
+    versetzt: 8 angehaengte Elemente bis 5556 mm neben der Quelle, det J <= 0
+    an 7, keine Warnung; um (2, 0, 0) (1 Knoten auf dem Stabende): 2556 mm.
+    Ziel ganz geleert, Quelle eine gerade Hohlkugel als tetp3: 89,90 mm
+    (groesste Koordinatenaenderung 87,12 mm), die Rechnung brach ab (Element
+    umgeklappt). An ec6448c: 0 mm.
 
     Jetzt ist die Geometrie jedes angehaengten Elements bitgleich die der
     Quelle, kein Element klappt um."""
@@ -2177,9 +2178,10 @@ def test_json_anhaengen_gerade_gegen_gekruemmt():
     Die Handbuecher sagten, es gelte die des Ziels und das Protokoll warne.
     Gemessen an bc1dfe0 (zweimal am 23.09., einmal am 24.09.2026), die
     Hohlkugel an sich selbst gehaengt, Kante (0, 1) in einer der Dateien
-    gerade: Ziel gerade - Ziel-Elemente 1,885 mm verschoben, keine Warnung;
-    Ziel gekruemmt - angehaengte Elemente 1,885 mm neben der Quelle, keine
-    Warnung.
+    gerade: Ziel gerade - Ziel-Elemente bis 1,921 mm verschoben (groesste
+    Koordinatenaenderung 1,885 mm), keine Warnung; Ziel gekruemmt -
+    angehaengte Elemente bis 1,921 mm neben der Quelle (groesste
+    Koordinatenaenderung 1,885 mm), keine Warnung.
 
     Jetzt gilt die Kante des Ziels, gerade oder gekruemmt: die Ziel-Elemente
     bleiben bitgleich, die angehaengten nehmen dieselbe Geometrie an (sie
