@@ -490,28 +490,27 @@ class TabellenModell(QtCore.QAbstractTableModel):
             return None
 
         zeilen = self.zeilen
+        absteigend = richtung == QtCore.Qt.DescendingOrder
+        # Absteigend stehen Zeilen ohne Zahl trotzdem hinten, wie in Excel:
+        # die Nachweistabellen starten absteigend nach Ausnutzung, und ein
+        # „–“ (nicht gefuehrt) oder eine leere Zelle (nicht gerechnet) stand
+        # sonst ueber dem groessten Wert (24.09.2026). Dafuer tauscht die
+        # Gruppenkennung - eine einzige Sortierung wie bisher; zwei Listen
+        # mit Tupeln je Zeile kosteten an 2 Mio. Zeilen rund die Haelfte mehr
+        # Zeit und ein Drittel mehr Speicher (Gegenpruefung 25.09.2026).
+        g_zahl, g_text = (1, 0) if absteigend else (0, 1)
 
         def schluessel(r):
             z = zeilen[r]
             wert = z[k] if k < len(z) else ""
             zahl = _zahl(wert)
             if zahl is not None:
-                return (0, zahl, [])
+                return (g_zahl, zahl, [])
             # Kein reiner Zahlwert: dann natuerlich sortieren, damit „V2“ vor
             # „V10“ steht und nicht dahinter.
-            return (1, 0.0, dsg.natuerlich(wert))
+            return (g_text, 0.0, dsg.natuerlich(wert))
 
-        if richtung != QtCore.Qt.DescendingOrder:
-            return sorted(range(len(zeilen)), key=schluessel)
-        # Absteigend stehen Zeilen ohne Zahl trotzdem hinten, wie in Excel:
-        # die Nachweistabellen starten absteigend nach Ausnutzung, und ein
-        # „–“ (nicht gefuehrt) oder eine leere Zelle (nicht gerechnet) stand
-        # sonst ueber dem groessten Wert (24.09.2026). Der Text selbst ist
-        # dabei absteigend geordnet wie bisher.
-        folge = [(schluessel(r), r) for r in range(len(zeilen))]
-        zahlen = sorted((x for x in folge if x[0][0] == 0), key=lambda x: x[0], reverse=True)
-        texte = sorted((x for x in folge if x[0][0] != 0), key=lambda x: x[0], reverse=True)
-        return [r for _s, r in zahlen + texte]
+        return sorted(range(len(zeilen)), key=schluessel, reverse=absteigend)
 
     def _sortieren(self):
         folge = self._sortfolge()
@@ -592,7 +591,11 @@ class Filtermodell(QtCore.QSortFilterProxyModel):
         q = self.sourceModel()
         if q is not None and hasattr(q, "sortieren"):
             q.sortieren(spalte, richtung)
-            super().sort(-1, richtung)
+            # Immer aufsteigend: bei Spalte -1 und absteigend kehrt Qt die
+            # Quellfolge um - die absteigend sortierte Quelle stand so
+            # sichtbar wieder aufsteigend da, der rote Wert unten
+            # (Gegenpruefung 25.09.2026, seit dem Sortieren in der Quelle)
+            super().sort(-1, QtCore.Qt.AscendingOrder)
             return
         super().sort(spalte, richtung)
 

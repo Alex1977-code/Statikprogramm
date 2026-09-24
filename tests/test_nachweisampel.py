@@ -175,6 +175,43 @@ def test_absteigend_text_hinten():
           str([z[0] for z in dt.modell.zeilen]))
 
 
+def _sichtbar(dt, k=0) -> list:
+    """Die Werte der Spalte k in der Folge, in der sie zu sehen sind (Proxy)."""
+    f = dt.filter
+    return [f.data(f.index(r, k)) for r in range(f.rowCount())]
+
+
+def test_sichtbare_folge():
+    """Gegenpruefung 25.09.2026: sortiert wird in der Quelle, der Proxy bekam
+    aber die Richtung mit - bei Spalte -1 und absteigend kehrte Qt die Folge
+    um. Sichtbar stand der rote Wert unten und „–“/leer oben, obwohl
+    modell.zeilen richtig lag; die Pruefungen oben lasen nur modell.zeilen.
+    Hier die Folge, wie sie in der Ansicht steht."""
+    from PySide6 import QtCore
+    from statik3d.gui import tabellen as tab
+    _app()
+    sp = [tab.Spalte("Stab"), tab.Spalte("Ausnutzung", "", "zahl", 3)]
+    zeilen = [["A", 0.5], ["B", "–"], ["C", 1.2], ["D", ""], ["E", 0.9]]
+    dt = tab.Datentabelle(sp, "Probe")
+    dt.absteigend_nach("Ausnutzung")
+    dt.setzen(zeilen)
+    s = _sichtbar(dt)
+    check("sichtbar absteigend: 1,200 oben, dann 0,900 und 0,500, Text unten",
+          s[:3] == ["C", "E", "A"] and set(s[3:]) == {"B", "D"}, str(s))
+    kopie = [z[0] for z in dt.sichtbare_zeilen()]
+    check("Kopieren/CSV (sichtbare Zeilen) in derselben Folge", kopie == s, str(kopie))
+    dt.view.sortByColumn(0, QtCore.Qt.AscendingOrder)
+    auf = _sichtbar(dt)
+    dt.view.sortByColumn(0, QtCore.Qt.DescendingOrder)
+    ab = _sichtbar(dt)
+    check("Klick auf „Stab“: sichtbar A…E, dann E…A",
+          auf == list("ABCDE") and ab == list("EDCBA"), f"{auf} / {ab}")
+    dt.view.sortByColumn(1, QtCore.Qt.AscendingOrder)
+    s = _sichtbar(dt)
+    check("aufsteigend nach Ausnutzung: sichtbar 0,500 oben, Text unten",
+          s[:3] == ["A", "E", "C"] and set(s[3:]) == {"B", "D"}, str(s))
+
+
 def test_urteil_der_oberflaeche():
     """Das Urteil der Ermuedung bildet gui/main.py (ec3/fatigue.py wird gerade
     von einer anderen Arbeit umgebaut). Es muss dasselbe sagen wie der
@@ -295,6 +332,17 @@ def test_nicht_erfuellt_faellt_auf():
     check("Tabelle Ermüdung startet mit dem größten D (Riegel 2)",
           [str(z[0]) for z in zeilen] == ["Riegel 2", "Riegel 3", "Riegel 1"],
           str([z[0] for z in zeilen]))
+    check("… auch sichtbar in der Ansicht (Proxy): Riegel 2 oben",
+          [str(x) for x in _sichtbar(w.tbl_fat)] == ["Riegel 2", "Riegel 3", "Riegel 1"],
+          str(_sichtbar(w.tbl_fat)))
+    # rechts (Maske Ergebnisse nach F5) und in der Maske Nachweise dasselbe
+    # Urteil wie im Protokoll (Gegenpruefung 25.09.2026)
+    res = [z for z in w.txt_res.toPlainText().splitlines() if z.startswith("Ermüdung:")]
+    check("Maske Ergebnisse: Ermüdungszeile endet mit „NICHT erfüllt“",
+          len(res) == 1 and res[0].endswith(" - NICHT erfüllt"), str(res))
+    eti = [z for z in w.lbl_design.text().splitlines() if z.startswith("Ermüdung:")]
+    check("Maske Nachweise: Ermüdungszeile endet mit „NICHT erfüllt“",
+          len(eti) == 1 and eti[0].endswith(" - NICHT erfüllt"), str(eti))
     check("Status je Zeile wie im Bericht",
           all(z[k_st] == an.fatigue.members[str(z[0])].status() for z in zeilen)
           and zeilen[0][k_st] == "NICHT erfüllt",
@@ -387,8 +435,10 @@ def test_ec3_und_ermuedung():
     check("Sammelzeile nennt beide", sammel == [
         "Nachweise: 2 NICHT erfüllt (EC3 Riegel 2, Ermüdung Riegel 2)"], str(sammel))
     check("vorn steht die Tabelle Nachweise EC3", w.tab_unten.currentWidget() is w.tbl_design)
-    check("… mit Riegel 2 oben", str(w.tbl_design.modell.zeilen[0][0]) == "Riegel 2",
-          str([z[0] for z in w.tbl_design.modell.zeilen]))
+    check("… mit Riegel 2 oben, auch sichtbar",
+          str(w.tbl_design.modell.zeilen[0][0]) == "Riegel 2"
+          and str(_sichtbar(w.tbl_design)[0]) == "Riegel 2",
+          f"{[z[0] for z in w.tbl_design.modell.zeilen]} / {_sichtbar(w.tbl_design)}")
 
 
 def test_ermuedung_einzeln():
@@ -412,13 +462,243 @@ def test_ermuedung_einzeln():
     check("… Tabelle Ermüdung vorn", w.tab_unten.currentWidget() is w.tbl_fat)
 
 
+# --------------------------------------------------------------------------
+# Nachbesserung nach der Gegenpruefung (25.09.2026)
+# --------------------------------------------------------------------------
+def _formate_ab(w, n0: int) -> list:
+    """[(Text, Farbe, fett)] der Protokollbloecke ab Blocknummer n0 - je Block
+    das Format des ersten Zeichens mit Text."""
+    doc = w.log.document()
+    aus = []
+    b = doc.findBlockByNumber(n0)
+    while b.isValid():
+        it = b.begin()
+        while not it.atEnd():
+            f = it.fragment()
+            if f.isValid() and f.text().strip():
+                cf = f.charFormat()
+                aus.append((b.text(), cf.foreground().color().name(), cf.fontWeight() > 400))
+                break
+            it += 1
+        b = b.next()
+    return aus
+
+
+def _block_markieren(w, nummer: int, rueckwaerts: bool = False) -> None:
+    """Einen Protokollblock markieren wie mit einem Dreifachklick."""
+    from PySide6 import QtGui
+    b = w.log.document().findBlockByNumber(nummer)
+    a, e = b.position(), b.position() + b.length() - 1
+    c = w.log.textCursor()
+    c.setPosition(e if rueckwaerts else a)
+    c.setPosition(a if rueckwaerts else e, QtGui.QTextCursor.KeepAnchor)
+    w.log.setTextCursor(c)
+
+
+def test_markierte_rote_zeile():
+    """Befund der Gegenpruefung: war die rote Sammelzeile markiert (zum
+    Kopieren), wurden alle folgenden Zeilen rot und fett - oder die naechste
+    Sammelzeile setzte die Markierung samt Rot auf Standard zurueck.
+    Jetzt schreibt das Protokoll mit eigenem Cursor."""
+    from statik3d.gui import tabellen as tab
+    from PySide6 import QtGui
+    w, app = _fenster()
+    rot = QtGui.QColor(tab.AMPEL_ROT).name()
+    for rueck in (False, True):
+        richtung = "rückwärts" if rueck else "vorwärts"
+        w._protokoll_rot("Probe rot A")
+        n_a = w.log.document().blockCount() - 1
+        _block_markieren(w, n_a, rueck)
+        w.log.appendPlainText("nach Markierung")
+        w.log.appendPlainText("noch eine Zeile")
+        w._protokoll_rot("Probe rot B")
+        w.log.appendPlainText("nach der zweiten")
+        f = _formate_ab(w, n_a)
+        check(f"Markierung {richtung}: die Zeilen danach schwarz und nicht fett",
+              [x[1:] for x in f if x[0] in ("nach Markierung", "noch eine Zeile",
+                                             "nach der zweiten")]
+              == [(QtGui.QColor("black").name(), False)] * 3, str(f))
+        check(f"Markierung {richtung}: beide roten Zeilen bleiben rot und fett",
+              [x[1:] for x in f if x[0].startswith("Probe rot")] == [(rot, True)] * 2, str(f))
+        check(f"Markierung {richtung}: die Markierung des Anwenders bleibt",
+              w.log.textCursor().hasSelection()
+              and w.log.textCursor().selectedText() == "Probe rot A",
+              repr(w.log.textCursor().selectedText()))
+        w.log.moveCursor(QtGui.QTextCursor.End)
+
+    # Der echte Weg: Sammelzeile markieren, dann rechnen - einmal ohne Befund
+    # (aktiver Lastfall), einmal wieder nicht erfuellt
+    m = _modell(N_ROT)
+    w._modell_setzen(m); app.processEvents()
+    an = solver.solve_all(m, design=True, fatigue=True)
+    w._solve_done("all", an); app.processEvents()
+    soll = "Nachweise: 1 NICHT erfüllt (Ermüdung Riegel 2)"
+    n_s = w.log.document().blockCount() - 1
+    check("Vorbedingung: letzte Zeile ist die Sammelzeile",
+          w.log.document().findBlockByNumber(n_s).text() == soll)
+    _block_markieren(w, n_s)
+    n0 = w.log.document().blockCount()
+    w._solve_done("case", solver.solve_static(m)); app.processEvents()
+    f = _formate_ab(w, n0)
+    check("nach „aktiver Lastfall“: keine der neuen Zeilen rot",
+          f and not any(x[1] == rot or x[2] for x in f), str([x for x in f if x[1] == rot][:3]))
+    n0 = w.log.document().blockCount()
+    w._solve_done("all", an); app.processEvents()
+    f = _formate_ab(w, n0)
+    check("wieder nicht erfüllt: die neue Sammelzeile rot und fett, die übrigen nicht",
+          [x[1:] for x in f if x[0] == soll] == [(rot, True)]
+          and not any(x[1] == rot for x in f if x[0] != soll), str([x for x in f if x[1] == rot]))
+    check("… und die markierte alte Sammelzeile bleibt rot",
+          _formate_ab(w, n_s)[0] == (soll, rot, True), str(_formate_ab(w, n_s)[:1]))
+    w.log.moveCursor(QtGui.QTextCursor.End)
+
+
+def test_modellwechsel_leert_nachweistabellen():
+    """Befund der Gegenpruefung: nach dem Wechsel auf ein Modell ohne
+    Ermuedungsnachweis standen die roten Zeilen des vorigen weiter da."""
+    w, app = _fenster()
+    m = _modell(N_ROT)
+    w._modell_setzen(m); app.processEvents()
+    w._solve_done("all", solver.solve_all(m, design=True, fatigue=True)); app.processEvents()
+    check("Vorbedingung: Nachweise EC3 und Ermüdung gefüllt",
+          w.tbl_fat.zeilenzahl() == 3 and w.tbl_design.zeilenzahl() == 3)
+    # dasselbe Modell ohne Nachweise gerechnet (F5 ohne EC3 und Ermuedung)
+    w._solve_done("all", solver.solve_all(m, design=False, fatigue=False)); app.processEvents()
+    check("Rechnung ohne Nachweise: beide Tabellen leer",
+          w.tbl_fat.zeilenzahl() == 0 and w.tbl_design.zeilenzahl() == 0,
+          f"{w.tbl_fat.zeilenzahl()} / {w.tbl_design.zeilenzahl()}")
+    w._solve_done("all", solver.solve_all(m, design=True, fatigue=True)); app.processEvents()
+    w.load_example("frame"); app.processEvents()
+    check("anderes Modell geladen (Beispiel): beide Tabellen leer",
+          w.tbl_fat.zeilenzahl() == 0 and w.tbl_design.zeilenzahl() == 0,
+          f"{w.tbl_fat.zeilenzahl()} / {w.tbl_design.zeilenzahl()}")
+
+
+def test_fuenf_weitere_nachweisarten():
+    """Befund der Gegenpruefung: Anschluesse, Verformungen, Beulfelder,
+    Volumen und Lasteinleitung haengen in _nachweise_nicht_erfuellt an
+    Feldnamen als Text - ein umbenanntes Feld schaltete die Sammelzeile still
+    ab. Die Attrappe steckt deshalb in den echten Ergebnisklassen."""
+    from statik3d.joints.anschluss import AnschlussResults
+    from statik3d.gzg import GZGResults
+    from statik3d.ec3.beulen import BeulResults, EinleitungResults
+    from statik3d.ec3.volumen import VolumenResults
+    w, app = _fenster()
+    x = SimpleNamespace(status=lambda: "NICHT erfüllt")
+    arten = [("joints", AnschlussResults(joints={"X1": x}), "Anschluss", w.tbl_joint),
+             ("gzg", GZGResults(checks={"X1": x}), "Verformung", w.tbl_gzg),
+             ("beulen", BeulResults(felder={"X1": x}), "Beulfeld", w.tbl_beul),
+             ("volumen", VolumenResults(bereiche={"X1": x}), "Volumen", w.tbl_vol),
+             ("lasteinleitung", EinleitungResults(stellen={"X1": x}), "Lasteinleitung", w.tbl_le)]
+    alt = w.analysis
+    try:
+        for attr, erg, vorsatz, tabelle in arten:
+            an = SimpleNamespace(design=None, fatigue=None, joints=None, gzg=None,
+                                 beulen=None, volumen=None, lasteinleitung=None)
+            setattr(an, attr, erg)
+            w.analysis = an
+            w.tabelle_zeigen("Knoten"); app.processEvents()
+            n0 = len(w.log.toPlainText().splitlines())
+            w._nachweise_melden(); app.processEvents()
+            sammel = [z for z in _neue_zeilen(w, n0) if z.startswith("Nachweise: ")]
+            vorn = w.tab_unten.currentWidget()
+            check(f"{vorsatz}: Sammelzeile und unten die richtige Tabelle",
+                  sammel == [f"Nachweise: 1 NICHT erfüllt ({vorsatz} X1)"]
+                  and vorn is not None and (vorn is tabelle or vorn.isAncestorOf(tabelle)),
+                  f"{sammel} / {w.tab_unten.tabText(w.tab_unten.currentIndex())}")
+    finally:
+        w.analysis = alt
+
+    # ein echter Fall: Verformungsgrenze L/30000 an der Halle
+    w.load_example("hall"); app.processEvents()
+    m = w.model
+    m.add_verformungsgrenze("Durchbiegung Riegel", "stab", stab="Riegel", groesse="uz",
+                            grenzart="L/x", wert=30000, situation="SLS_CH")
+    w.refresh_all(); app.processEvents()
+    an = solver.solve_all(m, design=True)
+    check("Vorbedingung: Verformung nicht erfüllt",
+          "NICHT" in an.gzg.checks["Durchbiegung Riegel"].status())
+    w.tabelle_zeigen("Knoten"); app.processEvents()
+    n0 = len(w.log.toPlainText().splitlines())
+    w._solve_done("all", an); app.processEvents()
+    sammel = [z for z in _neue_zeilen(w, n0) if z.startswith("Nachweise: ")]
+    vorn = w.tab_unten.currentWidget()
+    check("Halle mit L/30000: Sammelzeile nennt die Verformung, unten „Verformungen“",
+          len(sammel) == 1 and "Verformung Durchbiegung Riegel" in sammel[0]
+          and vorn is not None and (vorn is w.tbl_gzg or vorn.isAncestorOf(w.tbl_gzg)),
+          f"{sammel} / {w.tab_unten.tabText(w.tab_unten.currentIndex())}")
+
+
+def test_design_einzeln_und_eigenformen():
+    """Befund der Gegenpruefung: die Sammelzeile nach „Nachweise EC3“ aus dem
+    Menueband und ihr Ausbleiben nach Eigenformen/Knicken waren ungeprueft."""
+    from statik3d.ec3.design import check_members
+    w, app = _fenster()
+    m = _modell(1e5, f2=40e3)
+    w._modell_setzen(m); app.processEvents()
+    w._solve_done("all", solver.solve_all(m, design=False, fatigue=False)); app.processEvents()
+    w.tabelle_zeigen("Knoten"); app.processEvents()
+    n0 = len(w.log.toPlainText().splitlines())
+    w._design_done(check_members(m, w.analysis)); app.processEvents()
+    sammel = [z for z in _neue_zeilen(w, n0) if z.startswith("Nachweise: ")]
+    check("Nachweise EC3 einzeln: Sammelzeile, unten Nachweise EC3",
+          sammel == ["Nachweise: 1 NICHT erfüllt (EC3 Riegel 2)"]
+          and w.tab_unten.currentWidget() is w.tbl_design, str(sammel))
+    n0 = len(w.log.toPlainText().splitlines())
+    w._solve_done("modal", solver.solve_modal(m, 2)); app.processEvents()
+    check("danach Eigenformen: keine zweite Sammelzeile",
+          not [z for z in _neue_zeilen(w, n0) if z.startswith("Nachweise: ")]
+          and w.analysis.design is not None)
+
+
+def test_freie_bewegung_behaelt_statuszeile():
+    """Befund der Gegenpruefung: die Sammelzeile verdraengte die Warnung zu
+    freien Bewegungen mit Last aus der Statuszeile. Die Warnung bleibt; die
+    Sammelzeile steht im Protokoll, unten springt die Tabelle."""
+    from statik3d.model import Model, Material
+    from statik3d.profiles import make_section
+    w, app = _fenster()
+    m = Model("frei")
+    m.add_material(Material.steel("S235"))
+    m.add_section(make_section("IPE 200"))
+    m.case().category = "G"
+    ids = mesher.line_of_beams(m, "S235", "IPE 200", (0, 0, 0), (4, 0, 0), 4)
+    m.fix(ids[0], [0, 1, 2, 3, 4, 5])
+    m.load_node(ids[-1], Fz=-80e3)
+    m.add_member("Kragarm", list(range(4)))
+    ids2 = mesher.line_of_beams(m, "S235", "IPE 200", (0, 3, 0), (2, 3, 0), 2)   # schwebt frei
+    m.load_node(ids2[-1], Fz=-1e3)
+    m.add_combination("K1", {list(m.load_cases)[0]: 1.35}, "ULS")
+    w._modell_setzen(m); app.processEvents()
+    an = solver.solve_all(m, design=True)
+    check("Vorbedingung: EC3 Kragarm nicht erfüllt",
+          "NICHT" in an.design.members["Kragarm"].status())
+    n0 = len(w.log.toPlainText().splitlines())
+    w._solve_done("all", an); app.processEvents()
+    msg = w.statusBar().currentMessage()
+    check("Statuszeile: die Warnung zu freien Bewegungen bleibt", msg.startswith("⚠"), msg[:100])
+    check("… die Sammelzeile steht trotzdem im Protokoll",
+          [z for z in _neue_zeilen(w, n0) if z.startswith("Nachweise: ")]
+          == ["Nachweise: 1 NICHT erfüllt (EC3 Kragarm)"])
+    # Gegenprobe: ohne freie Bewegung steht die Sammelzeile in der Statuszeile
+    m2 = _modell(N_ROT)
+    w._modell_setzen(m2); app.processEvents()
+    w._solve_done("all", solver.solve_all(m2, design=True, fatigue=True)); app.processEvents()
+    check("ohne freie Bewegung: die Sammelzeile in der Statuszeile",
+          w.statusBar().currentMessage() == "Nachweise: 1 NICHT erfüllt (Ermüdung Riegel 2)",
+          w.statusBar().currentMessage()[:100])
+
+
 def main():
     import faulthandler
     faulthandler.dump_traceback_later(900, exit=True)
     for t in (test_ampelstufe, test_ampel_im_modell, test_absteigend_text_hinten,
+              test_sichtbare_folge,
               test_urteil_der_oberflaeche, test_spalten_und_sortierung,
               test_nicht_erfuellt_faellt_auf, test_ec3_und_ermuedung,
-              test_ermuedung_einzeln):
+              test_ermuedung_einzeln, test_markierte_rote_zeile,
+              test_modellwechsel_leert_nachweistabellen, test_fuenf_weitere_nachweisarten,
+              test_design_einzeln_und_eigenformen, test_freie_bewegung_behaelt_statuszeile):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

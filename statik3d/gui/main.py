@@ -98,14 +98,47 @@ class Protokollfeld(QtWidgets.QPlainTextEdit):
         super().__init__(*a, **kw)
         self.mitschrift = None
 
+    def zeile_anhaengen(self, text, fmt=None) -> None:
+        """Eine Zeile ans Ende, mit eigenem Cursor und eigenem Zeichenformat.
+
+        QPlainTextEdit.appendPlainText gibt der neuen Zeile das Format des
+        Textcursors des Anwenders: stand er nach einem Klick oder einer
+        Markierung in der roten Sammelzeile (MainWindow._protokoll_rot),
+        wurden alle folgenden Zeilen rot und fett; das Zuruecksetzen ueber
+        setCurrentCharFormat faerbte dagegen eine Markierung mit um, die
+        Sammelzeile eingeschlossen (Gegenpruefung 25.09.2026). Ein eigener
+        Cursor erbt kein Format. Mitrollen wie Qt: nur, wenn die Ansicht
+        unten stand."""
+        doc = self.document()
+        sb = self.verticalScrollBar()
+        stand = sb.value()
+        unten = stand >= sb.maximum()
+        # Eine Markierung bis ans Ende wuechse mit jeder Zeile mit, und
+        # Strg+C kopierte dann mehr als markiert - sie bleibt, wie sie war
+        uc = self.textCursor()
+        markiert = (uc.anchor(), uc.position()) if uc.hasSelection() else None
+        cur = QtGui.QTextCursor(doc)
+        cur.beginEditBlock()
+        cur.movePosition(QtGui.QTextCursor.End)
+        if not doc.isEmpty():
+            cur.insertBlock(QtGui.QTextBlockFormat(), QtGui.QTextCharFormat())
+        cur.insertText(str(text), fmt if fmt is not None else QtGui.QTextCharFormat())
+        cur.endEditBlock()
+        # am Zeilenlimit faellt oben eine Zeile weg, die Positionen stimmen
+        # dann nicht mehr - dort bleibt es bei Qt
+        voll = 0 < self.maximumBlockCount() <= doc.blockCount()
+        if markiert is not None and not voll:
+            uc = self.textCursor()
+            if (uc.anchor(), uc.position()) != markiert:
+                uc.setPosition(markiert[0])
+                uc.setPosition(markiert[1], QtGui.QTextCursor.KeepAnchor)
+                self.setTextCursor(uc)
+                sb.setValue(stand)       # setTextCursor rollte zur Markierung
+        if unten:
+            sb.setValue(sb.maximum())
+
     def appendPlainText(self, text):          # noqa: N802 - Qt-Schreibweise
-        # Die Zeile bekommt das Zeichenformat des Textcursors; steht er nach
-        # einem Klick in einer roten Zeile (MainWindow._protokoll_rot), liefe
-        # das Rot sonst in alle folgenden Zeilen weiter (24.09.2026). Mit
-        # Markierung nicht: setCurrentCharFormat faerbte sie um.
-        if not self.textCursor().hasSelection():
-            self.setCurrentCharFormat(QtGui.QTextCharFormat())
-        super().appendPlainText(text)
+        self.zeile_anhaengen(text)
         f = self.mitschrift
         if f is None:
             return
@@ -16807,24 +16840,27 @@ class MainWindow(QtWidgets.QMainWindow):
         text = (f"Nachweise: {len(fehl)} NICHT erfüllt ({', '.join(namen[:5])}"
                 + (f" und {len(namen) - 5} weitere" if len(namen) > 5 else "") + ")")
         self._protokoll_rot(text)
-        self.statusBar().showMessage(text, 10000)
+        # Tragen freie Bewegungen Last, bleibt deren Warnung in der
+        # Statuszeile (_bewegungen_melden): sie sagt, dass das Ergebnis dieser
+        # Bauteile nicht verwertbar ist - das wiegt schwerer als das Urteil
+        # eines Nachweises, das im Protokoll ohnehin rot steht (25.09.2026)
+        try:
+            last = any(x.kraft > 0.0 or x.moment > 0.0 for x in self.singularitaeten())
+        except Exception:                  # noqa: BLE001 - Anzeige darf nie sperren
+            last = False
+        if not last:
+            self.statusBar().showMessage(text, 10000)
         self.tabelle_zeigen(fehl[0][0])
 
     def _protokoll_rot(self, text: str) -> None:
         """Eine Zeile rot und fett ins Protokoll, dazu in die Protokolldatei.
-        Ueber einen eigenen Cursor mit eigenem Zeichenformat: die Zeilen
-        danach (appendPlainText) bleiben schwarz."""
-        doc = self.log.document()
-        cur = QtGui.QTextCursor(doc)
-        cur.movePosition(QtGui.QTextCursor.End)
-        if not doc.isEmpty():
-            cur.insertBlock(QtGui.QTextBlockFormat(), QtGui.QTextCharFormat())
+        Ueber einen eigenen Cursor mit eigenem Zeichenformat
+        (Protokollfeld.zeile_anhaengen): die Zeilen danach bleiben schwarz,
+        auch wenn der Anwender die rote Zeile markiert hat (25.09.2026)."""
         fmt = QtGui.QTextCharFormat()
         fmt.setForeground(QtGui.QColor(tab.AMPEL_ROT))
         fmt.setFontWeight(QtGui.QFont.Bold)
-        cur.insertText(text, fmt)
-        # sonst uebernaehme die naechste Zeile das Rot (Textcursor am Ende)
-        self.log.setCurrentCharFormat(QtGui.QTextCharFormat())
+        self.log.zeile_anhaengen(text, fmt)
         sb = self.log.verticalScrollBar()
         sb.setValue(sb.maximum())
         self._mitschreiben(text)
@@ -17889,8 +17925,12 @@ class MainWindow(QtWidgets.QMainWindow):
         # Befund B069, tests/test_ermuedung_verlauf.py,
         # test_etikett_nachweise_nennt_die_ermuedung).
         an = self.analysis
-        teile = [t.summary() for t in (getattr(an, "design", None),
-                                       getattr(an, "fatigue", None)) if t is not None]
+        # die Zeile zur Ermuedung mit Urteil wie im Protokoll: nach F5 steht
+        # rechts die Maske Ergebnisse, und dort stand D = 1.094 ohne Urteil
+        # unter „… - alle erfuellt“ (Gegenpruefung 25.09.2026)
+        teile = [t.summary() for t in (getattr(an, "design", None),) if t is not None]
+        if getattr(an, "fatigue", None) is not None:
+            teile.append(an.fatigue.summary() + self._ermuedung_zusatz(an.fatigue))
         self.lbl_design.setText("\n".join(teile) if teile else "noch keine Nachweise")
         self.cb_mode.blockSignals(True)
         self.cb_mode.clear()
@@ -17908,8 +17948,15 @@ class MainWindow(QtWidgets.QMainWindow):
             lines.append(an.design.summary())
             self._fill(self.tbl_design, an.design.table()[1:], an.design.table()[0])
         if an is not None and an.fatigue is not None:
-            lines.append(an.fatigue.summary())
+            lines.append(an.fatigue.summary() + self._ermuedung_zusatz(an.fatigue))
             self._fill(self.tbl_fat, self._ermuedung_zeilen(an.fatigue))
+        # Nachweistabellen, zu denen die gezeigte Rechnung nichts liefert,
+        # leeren: nach einer Rechnung ohne EC3 oder Ermuedung standen sonst
+        # die roten Zeilen der vorigen weiter da (Gegenpruefung 25.09.2026)
+        if getattr(an, "design", None) is None:
+            self._fill(self.tbl_design, [])
+        if getattr(an, "fatigue", None) is None:
+            self._fill(self.tbl_fat, [])
         if an is not None and an.joints is not None:
             lines.append(an.joints.summary())
         if an is not None and an.gzg is not None:
@@ -20351,6 +20398,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self.log.appendPlainText(f"--- {titel}  ({datetime.now():%d.%m.%Y %H:%M}) ---")
         except Exception:                   # noqa: BLE001
             pass
+        # Aus demselben Grund die Urteile des vorigen Modells: seit der Ampel
+        # standen dessen rote „NICHT erfüllt“-Zeilen sonst als Alarm unter
+        # einem Modell ohne diesen Nachweis (Gegenpruefung 25.09.2026)
+        for t in (getattr(self, "tbl_design", None), getattr(self, "tbl_fat", None)):
+            if t is not None:
+                self._fill(t, [])
         # Ein neues Modell hat keine Vergangenheit: der Rueckgaengig-Stapel des
         # vorigen darf nicht in dieses hineinreichen.
         self._undo_init()
