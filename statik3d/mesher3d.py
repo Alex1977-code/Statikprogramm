@@ -78,6 +78,17 @@ STANDARDLAENGE = 0.5
 #: So nah darf ein Punkt des ebenen Netzes an seinen Rand (Vielfaches von h)
 RANDABSTAND = 0.65
 
+#: So nah darf ein **innerer** Punkt der Huellflaeche kommen (Vielfaches von
+#: h) - derselbe Abstand, den die Verfeinerung fuer ihre Umkugelmittelpunkte
+#: haelt. Die Startpunkte des Gitters pruefen bislang nur den Abstand zu
+#: den Huell**punkten** (RANDABSTAND): mitten in einer Facette kann ein
+#: Gitterpunkt dann 0,85 mm vor der Huelle stehen (Buchse, h = 15 mm,
+#: 23.09.2026). Ein so flacher Tetraeder zwischen ihm und der Facette hat
+#: eine riesige Umkugel und ist nie Delaunay - das Huelldreieck wird nicht
+#: zurueckgewonnen, und im Netz bleibt eine Luecke (0,0015 % des Rauminhalts,
+#: eine Pyramide ueber dem Huellviereck).
+RANDABSTAND_FLAECHE = 0.4
+
 #: Ein Tetraeder unter diesem Anteil von h^3 gilt als flach und faellt weg
 FLACH = 1e-6
 
@@ -455,10 +466,40 @@ def innen(q: np.ndarray, P: np.ndarray, T: np.ndarray,
             l2 = ((c[:, 0] - px) * (a[:, 1] - py) - (a[:, 0] - px) * (c[:, 1] - py)) / d
             l3 = 1.0 - l1 - l2
             z = l1 * a[:, 2] + l2 * b[:, 2] + l3 * c[:, 2]
-            treffer = (l1 >= 0) & (l2 >= 0) & (l3 >= 0) & (z > pz)
+            # Trifft der Strahl genau eine Kante, die zwei Huelldreiecke
+            # teilen, darf nur **eines** ihn zaehlen - sonst wird aus einem
+            # Durchgang ein doppelter, die Paritaet kippt, und _innere wirft
+            # einen Tetraeder an der Oberflaeche hinaus (Statik3D-Sitzung,
+            # 23.09.2026: an 5 von 9 L-/T-/U-Prismen fehlten 0,003 bis 0,113 %
+            # des Koerpers; hier gemessen U-Prisma h = 0,1: 0,0153 %).
+            # Entschieden wird wie fuer einen um (eps, eps^2) verschobenen
+            # Punkt: eine Koordinate auf null zaehlt nach dem Vorzeichen ihrer
+            # Ableitung nach x, bei null nach y (Simulation of Simplicity).
+            # Das ist fuer alle Dreiecke derselbe verschobene Punkt, darum
+            # stimmt die Paritaet auch an Ecken und Faltkanten der Projektion.
+            treffer = (_seite_mit_ausweichung(l1, (b[:, 1] - c[:, 1]) / d, (c[:, 0] - b[:, 0]) / d)
+                       & _seite_mit_ausweichung(l2, (c[:, 1] - a[:, 1]) / d, (a[:, 0] - c[:, 0]) / d)
+                       & _seite_mit_ausweichung(l3, (a[:, 1] - b[:, 1]) / d, (b[:, 0] - a[:, 0]) / d)
+                       & (z > pz))
             if treffer.any():
                 np.add.at(zaehler, pi[treffer], 1)
     return (zaehler % 2).astype(bool)
+
+
+#: Unter diesem Betrag gilt eine baryzentrische Koordinate als **null** - der
+#: Strahl trifft die Kante. Zwei Dreiecke rechnen denselben Kantenpunkt in
+#: Gleitkommazahlen um Bits verschieden; erst die Schwelle macht beide zur
+#: selben Entscheidung (gemessen 23.09.2026: exakte Nullen und +-1e-17).
+KANTEN_NULL = 1e-12
+
+
+def _seite_mit_ausweichung(l: np.ndarray, dl_dx: np.ndarray, dl_dy: np.ndarray) -> np.ndarray:
+    """``l > 0`` - und auf der Kante (``|l| <= KANTEN_NULL``) so, wie es fuer
+    einen um (eps, eps^2) verschobenen Punkt waere: nach dem Vorzeichen der
+    Ableitung nach x, ist die null, nach y."""
+    null = np.abs(l) <= KANTEN_NULL
+    return ((l > KANTEN_NULL)
+            | (null & ((dl_dx > 0) | ((dl_dx == 0) & (dl_dy > 0)))))
 
 
 # --------------------------------------------------------------------------
@@ -1644,6 +1685,63 @@ def _feld_in_ebene(feld3, heben, ringe: list, h: float):
     return lambda K: np.asarray(feld3(heben(np.atleast_2d(np.asarray(K, float)))), float)
 
 
+def _zylinder_projektor(achse: tuple):
+    """Punkte radial auf den Zylinder (Achspunkt c, Richtung d, Halbmesser r)."""
+    c, d, r = (np.asarray(achse[0], float), np.asarray(achse[1], float), float(achse[2]))
+    d = d / max(float(np.linalg.norm(d)), 1e-300)
+
+    def proj(X):
+        X = np.atleast_2d(np.asarray(X, float))
+        rel = X - c
+        ax = rel @ d
+        rad = rel - ax[:, None] * d
+        ln = np.linalg.norm(rad, axis=1)
+        gut = ln > 1e-300
+        aus = X.copy()
+        aus[gut] = c + ax[gut, None] * d + r * rad[gut] / ln[gut, None]
+        return aus
+    return proj
+
+
+def flaechenprojektoren(model: Model, koerper) -> dict:
+    """Je Randflaeche des Koerpers die Abbildung auf ihre **wahre** Flaeche -
+    heute der Zylinder (:func:`zylinderpassung`); ebene Flaechen und alles
+    andere bekommen None.
+
+    Wozu: die Huelle sind Facetten; ein Punkt mitten auf einer Facette liegt
+    um den Sehnenpfeil neben der Geometrie (bei 18 Grad je Bogenabschnitt
+    r (1 - cos 9 Grad) = 1,23 % des Halbmessers). Fuer tet4 ist das die
+    uebliche Facettierung; fuer gekruemmte Elemente (tet10) muessen
+    Randknoten **und** Kantenmitten auf der Flaeche liegen - eine einzige
+    gerade gebliebene Bohrungskante liess das Element hoechster Ordnung an der
+    Nachweisstelle 23 N/mm^2 danebenliegen (Element-Sitzung, gemessen
+    23.09.2026). Angewandt in :func:`huelle_verfeinern` (neue Huellpunkte)
+    und :func:`koerper_einbauen` (Seitenmitten der tet10).
+    """
+    aus: dict = {}
+    for name in (koerper.flaechen or []):
+        f = model.flaechen.get(name)
+        if f is None:
+            aus[name] = None
+            continue
+        try:
+            from .sweep import _schleifenpunkte
+            punkte = np.vstack([_schleifenpunkte(model, list(f.linien or []))]
+                               + [_schleifenpunkte(model, list(o)) for o in (f.oeffnungen or []) if o])
+        except Exception:                   # noqa: BLE001
+            aus[name] = None
+            continue
+        if len(punkte) < 3 or ist_eben(punkte):
+            aus[name] = None
+            continue
+        try:
+            achse = zylinderpassung(model, f, punkte)
+        except Exception:                   # noqa: BLE001
+            achse = None
+        aus[name] = _zylinder_projektor(achse) if achse is not None else None
+    return aus
+
+
 def _zylindernetz(flaeche, ringe3: list, h: float, achse: tuple, feld=None) -> tuple:
     """Krumme Flaeche auf einem Zylinder: in der Abwicklung vernetzen.
 
@@ -1992,6 +2090,9 @@ def bcc_gitter(P: np.ndarray, T: np.ndarray, h: float,
     if not len(K):
         return np.zeros((0, 3))
     K = K[cKDTree(P).query(K)[0] > RANDABSTAND * h]
+    if not len(K):
+        return np.zeros((0, 3))
+    K = K[abstand_zur_huelle(K, P, T) > RANDABSTAND_FLAECHE * h]
     if not len(K):
         return np.zeros((0, 3))
     stoerung = np.random.default_rng(20240904).normal(scale=1e-3 * h, size=K.shape)
@@ -2470,6 +2571,19 @@ def tetraedern(P: np.ndarray, T: np.ndarray, h: float,
         if flach.any():
             bericht["flache"] = int(flach.sum())
             TET, V = TET[~flach], V[~flach]
+    # Was kein Tetraeder mehr benutzt - verwaiste innere Punkte -, kommt aus
+    # der Punktliste; die Huellpunkte behalten ihre Nummern. Ein Punkt ohne
+    # Element waere sonst ein "Knoten ohne Element" in der Abnahme.
+    if len(TET) and len(punkte) > len(P):
+        benutzt = np.zeros(len(punkte), bool)
+        benutzt[:len(P)] = True
+        benutzt[np.unique(TET)] = True
+        if not benutzt.all():
+            neu = np.cumsum(benutzt) - 1
+            punkte = punkte[benutzt]
+            TET = neu[TET]
+    elif len(punkte) > len(P) and not len(TET):
+        punkte = punkte[:len(P)]
     bericht["innenpunkte"] = len(punkte) - len(P)
     bericht["tetraeder"] = len(TET)
     bericht["volumen"] = float(V.sum())
@@ -2524,7 +2638,7 @@ MAX_HALBIERPFAD = 64
 
 def huelle_verfeinern(P: np.ndarray, T: np.ndarray, welche,
                       quelle: list = None, schutz=None,
-                      gesperrt: np.ndarray = None) -> tuple:
+                      gesperrt: np.ndarray = None, projektor: dict = None) -> tuple:
     """Genannte Huelldreiecke an ihrer laengsten Kante halbieren (Rivara).
 
     Frueher wurde im Schwerpunkt geteilt (1 -> 3). Das haelt die Geometrie,
@@ -2622,8 +2736,14 @@ def huelle_verfeinern(P: np.ndarray, T: np.ndarray, welche,
         for e in kanten(t):
             an_kante.setdefault(e, set()).add(k)
 
-    def neuer_punkt(x):
-        neue.append(np.asarray(x, float))
+    def neuer_punkt(x, q=None):
+        # Auf die wahre Flaeche, wenn die Herkunftsflaeche eine hat (Zylinder):
+        # die Kantenmitte liegt sonst auf der Sehne, um den Sehnenpfeil neben
+        # der Geometrie (flaechenprojektoren, 23.09.2026).
+        x = np.asarray(x, float)
+        if projektor and q in projektor and projektor[q] is not None:
+            x = projektor[q](x[None, :])[0]
+        neue.append(x)
         return n0 + len(neue) - 1
 
     def halbieren(k, e, m):
@@ -2640,7 +2760,7 @@ def huelle_verfeinern(P: np.ndarray, T: np.ndarray, welche,
 
     def schwerpunkt_teilen(k):
         a, b, c = dreiecke[k]
-        m = neuer_punkt((xyz(a) + xyz(b) + xyz(c)) / 3.0)
+        m = neuer_punkt((xyz(a) + xyz(b) + xyz(c)) / 3.0, quellen[k])
         q = quellen[k]
         entfernen(k)
         for t in ((a, b, m), (b, c, m), (c, a, m)):
@@ -2663,7 +2783,11 @@ def huelle_verfeinern(P: np.ndarray, T: np.ndarray, welche,
                 andere = an_kante.get(e, set()) - {k}
                 n = next(iter(andere)) if andere else None
                 if n is None or laengste_kante(n) == e:
-                    m = neuer_punkt(0.5 * (xyz(e[0]) + xyz(e[1])))
+                    q_ = quellen[k]
+                    if n is not None and projektor and projektor.get(q_) is None \
+                            and projektor.get(quellen[n]) is not None:
+                        q_ = quellen[n]     # der Nachbar ueber die Kante liegt auf dem Zylinder
+                    m = neuer_punkt(0.5 * (xyz(e[0]) + xyz(e[1])), q_)
                     halbieren(k, e, m)
                     if n is not None:
                         halbieren(n, e, m)
@@ -2679,11 +2803,170 @@ def huelle_verfeinern(P: np.ndarray, T: np.ndarray, welche,
     return P_neu, T_neu, q_neu
 
 
+#: Bis zu diesem Winkel zwischen den Normalen zweier Huelldreiecke an ihrer
+#: gemeinsamen Kante gelten zwei Herkunftsflaechen als **eine glatte**
+#: Flaeche der Geometrie, die das Modell nur in Stuecke teilt (RFEM legt
+#: einen Zylindermantel als zwei Halbzylinder an). Die Facetten eines
+#: 18-Grad-Bogens stehen um 18 Grad gegeneinander; die Grenze liegt darueber,
+#: aber weit unter der 90-Grad-Kante eines Prismas.
+FLECKEN_WINKEL = np.radians(30.0)
+
+
+def _glatte_flecken(P: np.ndarray, T: np.ndarray, quelle: list) -> "list | None":
+    """Je Huelldreieck die Nummer seines glatten Flecks - Herkunftsflaechen,
+    die an **allen** gemeinsamen Huellkanten fast eben aneinanderstossen,
+    fallen zusammen. Ueber ihre Naht darf die Zerlegung die andere Diagonale
+    nehmen, ohne dass etwas fehlt (Buchse aus zwei Halbzylindern: mit
+    getrennten Flaechen galten 10 solche Seiten als Delle, der Vernetzer
+    trieb 7 Runden auf 14 487 statt 7 003 Tetraeder; gemessen 23.09.2026)."""
+    T = np.asarray(T, int)
+    n = len(T)
+    if quelle is None or len(quelle) < n or n == 0:
+        return None
+    namen = sorted({str(q) for q in quelle[:n]})
+    nummer = {q: i for i, q in enumerate(namen)}
+    vater = list(range(len(namen)))
+
+    def wurzel(x):
+        while vater[x] != x:
+            vater[x] = vater[vater[x]]
+            x = vater[x]
+        return x
+    N = np.cross(P[T[:, 1]] - P[T[:, 0]], P[T[:, 2]] - P[T[:, 0]])
+    laenge = np.linalg.norm(N, axis=1)
+    N = N / np.where(laenge > 0, laenge, 1.0)[:, None]
+    kanten: dict = {}
+    for k, t in enumerate(T.tolist()):
+        for a, b in ((t[0], t[1]), (t[1], t[2]), (t[2], t[0])):
+            kanten.setdefault((min(a, b), max(a, b)), []).append(k)
+    schlecht: dict = {}
+    for ks in kanten.values():
+        if len(ks) != 2:
+            continue
+        qa, qb = str(quelle[ks[0]]), str(quelle[ks[1]])
+        if qa == qb:
+            continue
+        paar = (min(qa, qb), max(qa, qb))
+        cosw = abs(float(N[ks[0]] @ N[ks[1]]))
+        schlecht[paar] = min(schlecht.get(paar, 1.0), cosw)
+    for (qa, qb), cosw in schlecht.items():
+        if cosw >= np.cos(FLECKEN_WINKEL):
+            ra, rb = wurzel(nummer[qa]), wurzel(nummer[qb])
+            if ra != rb:
+                vater[ra] = rb
+    return [wurzel(nummer[str(q)]) for q in quelle[:n]]
+
+
+def echte_dellen(Pn: np.ndarray, TET: np.ndarray, P: np.ndarray, T: np.ndarray,
+                 quelle: list = None) -> tuple:
+    """Die freien Netzseiten, die eine **echte** Luecke anzeigen.
+
+    Nicht jede freie Seite neben der Huelle ist eine: ein Huellviereck auf
+    einer gekruemmten oder windschiefen Flaeche laesst sich ueber beide
+    Diagonalen teilen, und die Zerlegung nimmt nicht zwingend dieselbe wie
+    das Randnetz. Das ist erlaubt, aendert aber den Rauminhalt - am Wuerfel
+    mit angehobener Deckelecke trieb das exakte Volumenkriterium den
+    Vernetzer darum in acht Runden und 7 % mehr Elemente, ohne dass etwas
+    fehlte (gemessen 23.09.2026). Auf den Bohrungen des Drehlagers waere das
+    jeder Koerper.
+
+    Echt ist eine freie Seite, die kein Huelldreieck ist und (a) eine Ecke
+    hat, die nicht auf der Huelle liegt - der Netzrand laeuft dann durch den
+    Koerper -, oder (b) deren drei Ecken **keinen gemeinsamen glatten Fleck**
+    haben (Herkunftsflaechen, die fast eben aneinanderstossen, zaehlen als
+    eine - :func:`_glatte_flecken`): sie spannt ueber eine Kante der
+    Geometrie, an einer einspringenden hinaus in die Aussparung, an einer
+    vorspringenden hinein wie eine Fase.
+    Beides sind die Faelle der Statik3D-Sitzung (T-Prisma an der Kante
+    (1,2 | 0,4); fehlender Tetraeder unter dem Deckel des L-Prismas).
+
+    Rueckgabe (freie Seiten, Maske der echten).
+    """
+    frei = freie_seiten(TET) if len(TET) else np.zeros((0, 3), int)
+    if not len(frei):
+        return frei, np.zeros(0, bool)
+    huelle = {tuple(sorted(int(v) for v in t)) for t in np.asarray(T, int).tolist()}
+    n_h = len(P)
+    herkunft = None
+    flecken = _glatte_flecken(P, T, quelle)
+    if flecken is not None:
+        herkunft = [set() for _ in range(n_h)]
+        for k, t in enumerate(np.asarray(T, int).tolist()):
+            for v in t:
+                if v < n_h:
+                    herkunft[v].add(flecken[k])
+    # Ein Punkt mit innerer Nummer kann trotzdem **auf** der Huelle liegen:
+    # die Verfeinerung setzt Umkugelmittelpunkte, und einer davon faellt
+    # genau in die Deckelebene (Buchse h = 15 mm: r = 93,4 mm, z = 100,0 mm;
+    # gemessen 23.09.2026). Seine Seiten im Deckel sind Netzrand auf der
+    # Huelle, keine Delle. Er bekommt den Fleck des naechsten Huelldreiecks.
+    auf_huelle: dict = {}
+    innere = np.unique(frei[frei >= n_h]) if len(frei) else np.zeros(0, int)
+    if len(innere) and herkunft is not None:
+        from scipy.spatial import cKDTree
+        gr = float(np.linalg.norm(P - P.mean(axis=0), axis=1).max()) if len(P) else 1.0
+        tol = max(1e-9 * gr, 1e-12)
+        Tn = np.asarray(T, int)
+        baum = cKDTree(P[Tn].mean(axis=1))
+        k = min(24, len(Tn))
+        _, nn = baum.query(Pn[innere], k=k)
+        nn = np.atleast_2d(nn)
+        for j, v in enumerate(innere.tolist()):
+            kand = np.atleast_1d(nn[j])
+            t = Tn[kand]
+            d = punkt_dreieck_abstand(np.repeat(Pn[v][None, :], len(kand), axis=0),
+                                      P[t[:, 0]], P[t[:, 1]], P[t[:, 2]])
+            nah = kand[d <= tol]
+            if len(nah):
+                auf_huelle[v] = {flecken[int(x)] for x in nah}
+    echt = np.zeros(len(frei), bool)
+    for i, f in enumerate(frei.tolist()):
+        key = tuple(sorted(int(v) for v in f))
+        if key in huelle:
+            continue
+        if herkunft is None:
+            echt[i] = True
+            continue
+        flecken_je_ecke = []
+        for v in key:
+            fl = herkunft[v] if v < n_h else auf_huelle.get(v)
+            if not fl:
+                break                       # wirklich im Inneren: Netzrand im Koerper
+            flecken_je_ecke.append(fl)
+        else:
+            echt[i] = not (flecken_je_ecke[0] & flecken_je_ecke[1] & flecken_je_ecke[2])
+            continue
+        echt[i] = True
+    return frei, echt
+
+
+#: Hoechstzahl der Durchgaenge, in denen tetraedern_treu die Huelle an den
+#: Dellen nachfuehrt. Waren es drei, blieben an 4 von 10 Pruefkoerpern der
+#: Statik3D-Sitzung (L-/T-/U-Prismen, 23.09.2026) Luecken von 0,003 bis
+#: 0,113 % des Rauminhalts stehen (gemessen).
+TREU_RUNDEN = 8
+#: Bis zu diesem Anteil des Rauminhalts gilt das Netz als **deckungsgleich**
+#: mit der Huelle. Vorher 1e-4: das liess genau die Luecken durch, die die
+#: Abnahme dann als "Luecke im Netzrand" fand (kleinste gemessene 3e-5,
+#: Statik3D-Sitzung 23.09.2026). Die Summe der Tetraedervolumen ist gleich
+#: dem Huellvolumen (aus denselben Facetten), sobald der Netzrand auf der
+#: Huelle liegt - bis auf die flachen Tetraeder, die am Ende aussortiert
+#: werden: je hoechstens FLACH * h^3, an der Platte mit Bohrung 147 Stueck
+#: = 3,6e-7 des Koerpers (gemessen 23.09.2026). 1e-6 liegt darueber und
+#: dreissigfach unter der kleinsten echten Luecke.
+TREU_VOLUMEN = 1e-6
+#: So viele Runden ohne Verbesserung (weniger Dellen oder kleinerer
+#: Fehlbetrag) darf tetraedern_treu weitermachen, bevor der beste Stand
+#: stehen bleibt. Die Konvergenz ist nicht monoton - gemessen am L-Prisma
+#: h = 0,25: 1,37 -> 0,12 -> 0,12 -> 0,03 -> 0,06 -> 0,0076 % ueber die Runden.
+TREU_STILLSTAND = 4
+
+
 def tetraedern_treu(P: np.ndarray, T: np.ndarray, h: float,
-                    runden: int = 3, quelle: list = None,
+                    runden: int = TREU_RUNDEN, quelle: list = None,
                     splitter: float = SPLITTER, fortschritt=None,
                     gemeinsam: set = None, kennung: list = None,
-                    gem_linien=None, feld=None) -> tuple:
+                    gem_linien=None, feld=None, projektor: dict = None) -> tuple:
     """Tetraedern und dabei den Rand nachfuehren, wo er nicht getroffen wurde.
 
     Eine einspringende Kante - der Innenwinkel eines L-Koerpers, die Kehle
@@ -2704,6 +2987,7 @@ def tetraedern_treu(P: np.ndarray, T: np.ndarray, h: float,
     """
     from scipy.spatial import cKDTree
     bestes = None
+    bestes_mass, ohne_fortschritt = None, 0
     runden = max(1, runden)
     gesperrt = None
     if kennung:
@@ -2730,20 +3014,38 @@ def tetraedern_treu(P: np.ndarray, T: np.ndarray, h: float,
         bericht["volumenabweichung"] = fehl
         if bestes is None or fehl < bestes[3]:
             bestes = (Pn, TET, bericht, fehl, P, T, quelle)
-        if not len(TET) or (fehl <= 1e-4 and bericht.get("randtreue", 0) >= 0.999):
+        elif fehl <= TREU_VOLUMEN:
+            bestes = (Pn, TET, bericht, fehl, P, T, quelle)
+        # Abbruch, wenn der Rauminhalt **stimmt** oder keine echte Delle mehr
+        # da ist - nicht bei 99,9 % Randtreue und 0,01 % Fehlbetrag, wie bis
+        # zum 23.09.2026: das liess an der einspringenden Kante eines
+        # T-Prismas 0,113 % stehen. Der Rauminhalt allein reicht als Kriterium
+        # nicht, weil die andere Diagonale eines windschiefen Huellvierecks ihn
+        # aendert, ohne dass etwas fehlt (echte_dellen).
+        if not len(TET) or fehl <= TREU_VOLUMEN:
+            bericht["dellen"] = 0
             break
+        frei, echt = echte_dellen(Pn, TET, P, T, quelle)
+        bericht["dellen"] = int(echt.sum())
+        if not echt.any():
+            break
+        # Ohne Fortschritt aufhoeren: an manchen 90-Grad-Kanten divergiert
+        # das Halbieren - jede Runde teilt Dreiecke neben der Delle, die
+        # Zerlegung ueberbrueckt die Kante trotzdem, und die Dellen werden
+        # mehr statt weniger (L-Prisma h = 0,25: 3 Dellen nach 7 Runden,
+        # 1 417 nach 14, Elemente 1 082 -> 13 846; gemessen 23.09.2026).
+        # Zwei Runden ohne Verbesserung, und der beste Stand bleibt stehen.
+        mass = (bericht["dellen"], fehl)
+        if bestes_mass is None or mass < bestes_mass:
+            bestes_mass, ohne_fortschritt = mass, 0
+        else:
+            ohne_fortschritt += 1
+            if ohne_fortschritt >= TREU_STILLSTAND:
+                break
         if runde == runden - 1:
             break
-        # Wo liegt der Netzrand daneben?
-        frei = freie_seiten(TET)
-        if not len(frei):
-            break
-        schwer = Pn[frei].mean(axis=1)
-        gr = float(np.linalg.norm(P - P.mean(axis=0), axis=1).max())
-        d = abstand_zur_huelle(schwer, P, T)
-        daneben = schwer[d > max(1e-9 * gr, 1e-12)]
-        if not len(daneben):
-            break
+        # Wo liegt der Netzrand daneben? Nur an den echten Dellen verfeinern.
+        daneben = Pn[frei[echt]].mean(axis=1)
         # Die naechstliegenden Huelldreiecke teilen - aber keines, das auf
         # einer **gemeinsamen** Flaeche liegt: die gehoert auch dem Nachbarn,
         # und ein Punkt, den nur einer von beiden setzt, haengt hinterher frei
@@ -2758,10 +3060,16 @@ def tetraedern_treu(P: np.ndarray, T: np.ndarray, h: float,
         if not len(welche):
             break
         P, T, quelle = huelle_verfeinern(P, T, welche, quelle, schutz=schutz,
-                                         gesperrt=gesperrt)
+                                         gesperrt=gesperrt, projektor=projektor)
         if gesperrt is not None and len(P) > len(gesperrt):
             gesperrt = np.concatenate([gesperrt, np.zeros(len(P) - len(gesperrt), bool)])
-    Pn, TET, bericht, _, P, T, quelle = bestes
+    Pn, TET, bericht, fehl, P, T, quelle = bestes
+    if "dellen" not in bericht:
+        _frei, echt = echte_dellen(Pn, TET, P, T, quelle)
+        bericht["dellen"] = int(echt.sum())
+    # Was bleibt, wird gesagt - nicht still gelassen. Der Aufrufer schreibt
+    # es ins Protokoll, die Abnahme findet es als "Luecke im Netzrand".
+    bericht["randluecke"] = float(fehl) if (fehl > TREU_VOLUMEN and bericht["dellen"]) else 0.0
     return Pn, TET, bericht, P, T, quelle
 
 
@@ -3608,6 +3916,85 @@ def _tet10_knoten(model: Model, ecken: list, kanten: dict) -> list:
     return out
 
 
+def _seitenmitten_auf_flaeche(model: Model, koerper, els: list, kanten: dict, neu,
+                              n_huelle: int, T: np.ndarray, quelle: list, log: list) -> dict:
+    """Die Seitenmitten der tet10 auf Randkanten auf die **wahre** Flaeche
+    setzen (Anweisung V2 mit Nachtrag, 22./23.09.2026) und danach jedes
+    beruehrte Element pruefen: die Jacobi-Determinante muss an allen
+    Integrationspunkten positiv bleiben. Wo nicht, bleibt die Kante gerade -
+    und das Protokoll nennt das Element. Rueckgabe die Zahlen."""
+    from .importers import _common as C
+    from .elements.solid import jacobi_volumen
+    proj = flaechenprojektoren(model, koerper)
+    if not any(p is not None for p in proj.values()):
+        return {"verschoben": 0, "rueckfaelle": 0}
+    # Die Randkanten kommen aus dem **Netzrand** (freie Seiten der Tetraeder),
+    # nicht aus den Huelldreiecken: die Zerlegung darf ein Huellviereck ueber
+    # die andere Diagonale teilen, und diese Diagonale ist keine Huellkante -
+    # ihre Mitte gehoert trotzdem auf den Zylinder. Die Flaeche einer Kante
+    # ist die, die beide Endknoten ueber ihre Huelldreiecke gemeinsam haben.
+    flaechen_je_knoten: dict = {}
+    for k, t in enumerate(T.tolist()):
+        for a in t:
+            if a < n_huelle:
+                flaechen_je_knoten.setdefault(int(neu[a]), set()).add(quelle[k])
+    ecken = np.asarray([[int(x) for x in model.elements[e].nodes[:4]] for e in els], int)
+    randkanten: dict = {}
+    if len(ecken):
+        for f in freie_seiten(ecken).tolist():
+            for a, b in ((f[0], f[1]), (f[1], f[2]), (f[2], f[0])):
+                fa, fb = flaechen_je_knoten.get(int(a)), flaechen_je_knoten.get(int(b))
+                if fa and fb:
+                    gemeinsam = fa & fb
+                    if gemeinsam:
+                        randkanten[(min(int(a), int(b)), max(int(a), int(b)))] = gemeinsam
+    verschoben, weg_max, betroffen, alt_lage = 0, 0.0, set(), {}
+    an_mitte: dict = {}
+    for e in els:
+        for kn in model.elements[e].nodes[4:]:
+            an_mitte.setdefault(int(kn), []).append(e)
+    for key, flaechen in randkanten.items():
+        mitte = kanten.get(key)
+        if mitte is None:
+            continue
+        fn = next((f for f in sorted(flaechen) if proj.get(f) is not None), None)
+        if fn is None:
+            continue
+        alt = model.nodes[mitte].copy()
+        ziel = proj[fn](alt[None, :])[0]
+        d = float(np.linalg.norm(ziel - alt))
+        if d <= 0.0:
+            continue
+        alt_lage[int(mitte)] = alt
+        model.nodes[mitte] = ziel
+        verschoben += 1
+        weg_max = max(weg_max, d)
+        betroffen.update(an_mitte.get(int(mitte), []))
+    # Jacobi-Pruefung der beruehrten Elemente; Rueckfall auf die gerade Kante
+    rueckfaelle = []
+    det_min_rel = 1.0
+    for e in sorted(betroffen):
+        X = model.nodes[model.elements[e].nodes]
+        j = jacobi_volumen("tet10", X)
+        if j["det_max"] > 0:
+            det_min_rel = min(det_min_rel, j["det_min"] / j["det_max"])
+        if j["det_min"] <= 0.0:
+            for kn in model.elements[e].nodes[4:]:
+                if int(kn) in alt_lage:
+                    model.nodes[int(kn)] = alt_lage[int(kn)]
+            rueckfaelle.append(int(e))
+    if verschoben:
+        C.say(log, f"  Volumen {koerper.name}: {verschoben} tet10-Seitenmitten auf die Zylinderfläche "
+                   f"gesetzt (größter Weg {weg_max * 1e3:.3f} mm), kleinste bezogene Jacobi-Determinante "
+                   f"{det_min_rel:.3f}")
+    if rueckfaelle:
+        C.warn(log, f"  Volumen {koerper.name}: {len(rueckfaelle)} tet10 behalten gerade Kanten an der "
+                    f"gekrümmten Fläche (Jacobi-Determinante wäre negativ) - Elemente "
+                    f"{rueckfaelle[:12]}{' …' if len(rueckfaelle) > 12 else ''}; dort feiner vernetzen.")
+    return {"verschoben": verschoben, "rueckfaelle": len(rueckfaelle), "weg_max": weg_max,
+            "det_min_rel": det_min_rel}
+
+
 def _randseiten_merken(model: Model, koerper, T: np.ndarray, quelle: list,
                        neu: np.ndarray, els: list, ecken: list,
                        weite: float = 0.25) -> int:
@@ -3834,8 +4221,15 @@ def _netzbericht(Pn: np.ndarray, TET: np.ndarray, P: np.ndarray, T: np.ndarray) 
     tb["splitter"] = int(np.count_nonzero(q < 0.1))
     try:
         tb["randtreue"], tb["randabweichung"] = randtreue(Pn, TET, P, T)
-    except Exception:                       # noqa: BLE001 - ein Mass darf nie sperren
-        tb["randtreue"], tb["randabweichung"] = 1.0, 0.0
+    except Exception as ex:                 # noqa: BLE001 - ein Mass darf nie sperren
+        # 0.0 heisst im ganzen Programm "nicht gemessen"; 1.0 waere die
+        # Zusage, der Netzrand liege genau auf der Huelle - und die hat dann
+        # niemand geprueft. Mit 1.0 fiel "Randtreue 83,3 % unter der Grenze"
+        # aus netzguete()["gerissen"], der zweite Anlauf unterblieb, und beim
+        # Vergleich zweier Anlaeufe konnte das schlechtere Netz gewinnen
+        # (Statik3D-Sitzung, gemessen 22.09.2026).
+        tb["randtreue"], tb["randabweichung"] = 0.0, 0.0
+        tb["randtreue_fehler"] = f"{type(ex).__name__}: {str(ex)[:120]}"
     return tb
 
 
@@ -3880,6 +4274,9 @@ def _extern_tetraedern(model: Model, koerper, P, T, h: float, h_min: float, zeil
     C.say(zeilen, f"  Volumen {koerper.name}: {da[wahl][0]}: {len(TET)} Tetraeder aus {len(T)} "
                   f"Randdreiecken in {time.time() - t0:.1f} s, Güte min {tb['guete']:.3f} / "
                   f"Mittel {tb['guete_mittel']:.3f}, Randtreue {tb['randtreue'] * 100:.2f} %")
+    if tb.get("randtreue_fehler"):
+        C.warn(zeilen, f"  Volumen {koerper.name}: die Randtreue ließ sich nicht messen "
+                       f"({tb['randtreue_fehler']}) - das Netz ist an der Hülle ungeprüft.")
     feld = _feld_von(model)
     if feld is not None and feld.wirkt(P, h) and str(getattr(netz, "nachbessern", "keine") or "keine") != "mmg3d":
         # gmsh folgt dem Groessen-Rueckruf nur teilweise (Platte, Huelle
@@ -3916,6 +4313,9 @@ def _nachbessern(model: Model, koerper, Pn, TET, T, P, h: float, h_min: float, t
     tb2 = _netzbericht(Pn2, TET2, P, T)
     C.say(zeilen, f"  Volumen {koerper.name}: MMG3D: Güte min {tb['guete']:.3f} -> {tb2['guete']:.3f}, "
                   f"{len(TET)} -> {len(TET2)} Tetraeder in {time.time() - t0:.1f} s")
+    if tb2.get("randtreue_fehler"):
+        C.warn(zeilen, f"  Volumen {koerper.name}: die Randtreue ließ sich nicht messen "
+                       f"({tb2['randtreue_fehler']}) - das Netz ist an der Hülle ungeprüft.")
     return Pn2, TET2, tb2
 
 
@@ -4000,10 +4400,16 @@ def koerper_vorbereiten(model: Model, koerper, h: float = 0.0, log: list = None,
                 Pn, TET, tb = extern
             else:
                 Pn, TET, tb, P, T, quelle = tetraedern_treu(
-                    P, T, h, quelle=quelle, splitter=splitter, fortschritt=fortschritt,
+                    P, T, h, runden=TREU_RUNDEN, quelle=quelle, splitter=splitter,
+                    fortschritt=fortschritt, projektor=flaechenprojektoren(model, koerper),
                     gemeinsam=(gemeinsam or (frozenset(), frozenset()))[0],
                     kennung=bericht.get("kennung"),
                     gem_linien=(gemeinsam or (frozenset(), frozenset()))[1], feld=feld)
+                if tb.get("randluecke"):
+                    C.warn(zeilen, f"  Volumen {koerper.name}: Lücke im Netzrand bleibt nach "
+                                   f"{tb.get('runden', 0)} Durchgängen - "
+                                   f"{tb['randluecke'] * 100:.4f} % des Rauminhalts, "
+                                   f"{tb.get('dellen', 0)} freie Seiten neben der Hülle.")
             if tb.get("fehler"):
                 aus["fehler"] = str(tb["fehler"])
                 return aus
@@ -4128,6 +4534,8 @@ def koerper_einbauen(model: Model, koerper, aus: dict, log: list = None,
         kanten = cache.setdefault("_kanten", {}) if cache is not None else {}
         els = [model.add_element("tet10", _tet10_knoten(model, e, kanten), mat,
                                  group=koerper.name) for e in ecken]
+        _seitenmitten_auf_flaeche(model, koerper, els, kanten, neu, len(P),
+                                  np.asarray(T_schl, int), list(quelle_schl), log)
     else:
         els = [model.add_element("tet4", e, mat, group=koerper.name) for e in ecken]
     _randseiten_merken(model, koerper, np.asarray(T_schl, int), list(quelle_schl), neu, els, ecken)

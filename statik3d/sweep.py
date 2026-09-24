@@ -98,6 +98,13 @@ KAPPEN_MIN_FLAECHEN = 4
 #: Platte. Mehr Tiefe hat an den Pruefkoerpern nichts gebracht und kostet je
 #: Stufe einen Erkennungsdurchlauf ueber alle Flaechenpaare.
 ZERLEGEN_TIEFE = 2
+#: Zeit- und Versuchsbudget fuer das Zerlegen eines Koerpers. Ohne Grenze
+#: probierte der Fussabdruck an V30 des Drehlagers (144 Flaechen, 12
+#: Oeffnungen je Kappe) 255 s lang Schnitte durch, an V34 217 s - je zwei
+#: Erkennungen auf ueber hundert Flaechen je Versuch - und fand nichts
+#: (gemessen 23.09.2026). Und sweepbar() fragt vor dem Vernetzen noch einmal.
+ZERLEGEN_ZEIT_S = 20.0
+ZERLEGEN_VERSUCHE = 40
 
 
 def _ringpunkte(model: Model, f, teilung: int = 24) -> list:
@@ -1687,6 +1694,18 @@ class Schnittwerk:
         self.flaechen: list = []
         self.linien: list = []
         self.ersatz: dict = {}
+        self.zaehler = 0
+
+    def marke(self, koerper) -> str:
+        """Ein Name, der in diesem Lauf **nie wiederkehrt** - auch nicht nach
+        dem Zuruecknehmen eines Versuchs. Vorher hiess der Fussabdruck nach
+        der Zahl der Schnitte (``len(schnitte)``): nach einem verworfenen
+        Versuch war die Zahl wieder dieselbe, der neue Schnitt bekam den
+        alten Namen, und das Zuruecknehmen ueber ``schnitte.index(name)``
+        raeumte den gueltigen mit weg - KeyError 'V30§2' an fuenf der sechs
+        dicken Drehlagerkoerper (gemessen 23.09.2026)."""
+        self.zaehler += 1
+        return f"{koerper.name}§{self.zaehler}"
 
     def flaeche(self, f):
         self.model.flaechen[f.name] = f
@@ -1730,6 +1749,19 @@ class Schnittwerk:
             else:
                 self.ersatz.pop(orig)
 
+    def erschoepft(self) -> bool:
+        """Ist das Budget fuer diesen Koerper aufgebraucht (ZERLEGEN_ZEIT_S,
+        ZERLEGEN_VERSUCHE)? Dann wird nicht weiter probiert, sondern gemeldet."""
+        import time as _time
+        start = getattr(self, "start", None)
+        if start is not None and _time.time() - start > ZERLEGEN_ZEIT_S:
+            self.abgebrochen = f"Zeit ({ZERLEGEN_ZEIT_S:.0f} s)"
+            return True
+        if getattr(self, "versuche", 0) >= ZERLEGEN_VERSUCHE:
+            self.abgebrochen = f"{ZERLEGEN_VERSUCHE} Versuche"
+            return True
+        return False
+
     def zuruecknehmen(self, knoten_auch: bool = True) -> None:
         """Die Hilfsgeometrie wieder aus dem Modell nehmen."""
         netze = getattr(self.model, "flaechennetze", None) or {}
@@ -1743,7 +1775,13 @@ class Schnittwerk:
             # verschoeben sich fremde Nummern. Genau das ist der Fall, wenn
             # der Schnitt nichts gebracht hat und gar nicht vernetzt wurde.
             self.model.nodes = self.model.nodes[:self.n0]
-        self.flaechen, self.linien = [], []
+        # In place leeren, nicht neu binden: zerlegen() haelt ``schnitte`` als
+        # Alias auf diese Liste - neu gebunden lief der Fussabdruck nach dem
+        # Ebenenschnitt auf eine veraltete Liste ("'V30§16' is not in list",
+        # Drehlager 23.09.2026).
+        del self.flaechen[:]
+        del self.linien[:]
+        self.ersatz.clear()
 
     def randseiten_zurueck(self) -> int:
         """Die Randseiten der Teilflaechen auf die Ausgangsflaechen legen.
@@ -1798,18 +1836,40 @@ def schnittebenen(model: Model, koerper, tol: float) -> list:
     except Exception:                       # noqa: BLE001
         return []
     aus = []
-    for f in flaechen:
-        e = _ebene_der_flaeche(model, f)
-        if e is None:
-            continue
-        c, n = e
+
+    def dazu(c, n):
         d = (alle - c) @ n
         if float(d.max()) <= tol or float(d.min()) >= -tol:
-            continue                        # trennt nicht - der Koerper liegt auf einer Seite
+            return                          # trennt nicht - der Koerper liegt auf einer Seite
         if any(abs(float(n @ n2)) > 1.0 - 1e-9 and abs(float((c2 - c) @ n)) <= tol
                for c2, n2 in aus):
-            continue                        # dieselbe Ebene schon dabei
+            return                          # dieselbe Ebene schon dabei
         aus.append((c, n))
+    for f in flaechen:
+        e = _ebene_der_flaeche(model, f)
+        if e is not None:
+            dazu(*e)
+    # Und die Ebenen der **Boegen**: ein Zwischenkreis, an dem der Mantel eines
+    # Zylinders in zwei Ringe geteilt ist (weil dort ein Nachbar anliegt),
+    # gehoert keiner Flaeche - seine Ebene ist trotzdem die Trennung
+    # (23 von 40 nicht sweepbaren Drehlagerkoerpern, 23.09.2026).
+    for name in sorted({x for f in flaechen for sch in _randschleifen(f) for x in sch}):
+        ln = model.lines.get(name)
+        if ln is None or (ln.typ or "polyline") != "arc":
+            continue
+        try:
+            P = np.asarray(ln.punkte(model, 5), float).reshape(-1, 3)
+        except Exception:                   # noqa: BLE001
+            continue
+        if len(P) < 3:
+            continue
+        n = np.cross(P[2] - P[0], P[-1] - P[0])
+        if float(np.linalg.norm(n)) <= 1e-30:
+            n = np.cross(P[1] - P[0], P[-1] - P[0])
+        laenge = float(np.linalg.norm(n))
+        if laenge <= 1e-30:
+            continue
+        dazu(P.mean(axis=0), n / laenge)
     return aus
 
 
@@ -2166,6 +2226,9 @@ def zerlegen_ebene(model: Model, koerper, werk: "Schnittwerk", tol: float) -> "l
         return None
     schwer = {x for x in (koerper.flaechen or []) if x in gem_f}
     for ebene in schnittebenen(model, koerper, tol):
+        if werk.erschoepft():
+            return None
+        werk.versuche += 1
         aus = _an_ebene_teilen(model, koerper, flaechen, ebene, werk, tol, schwer)
         if aus is not None:
             return aus
@@ -2204,7 +2267,9 @@ def _an_ebene_teilen(model: Model, koerper, flaechen: list, ebene: tuple,
         else:
             lage[f.name] = None             # muss geschnitten werden
     if not any(l is None for l in lage.values()):
-        return None                         # die Ebene schneidet keine Flaeche
+        # Die Ebene schneidet keine Flaeche - dann trennt sie den Koerper
+        # hoechstens an einer **vorhandenen Schleife** von Linien
+        return _an_schleife_teilen(model, koerper, flaechen, ebene, werk, tol, lage)
     eben = [f.name for f in flaechen if lage[f.name] == 0]
     if len(eben) > 3:
         return None
@@ -2218,13 +2283,102 @@ def _an_ebene_teilen(model: Model, koerper, flaechen: list, ebene: tuple,
     return None
 
 
+def _an_schleife_teilen(model: Model, koerper, flaechen: list, ebene: tuple,
+                        werk: "Schnittwerk", tol: float, lage: dict) -> "list | None":
+    """Der Koerper zerfaellt an einer Ebene, in der **vorhandene** Linien einen
+    geschlossenen Zug bilden, ohne dass eine Flaeche geschnitten wuerde.
+
+    Der Fall: ein Zylinder, dessen Mantel axial in zwei Ringe geteilt ist -
+    an der Zwischenkreislinie liegt ein Nachbar an, eine Flaeche gibt es
+    dort nicht. Die Kappen passen, aber je Randlinie stehen **zwei** Waende
+    uebereinander („4 Wandflaechen zu 2 Randlinien": 23 der 40 nicht
+    sweepbaren Drehlagerkoerper, 23.09.2026). Die Schnittflaeche ist der
+    Kreis selbst, aus den vorhandenen Linien; jede Linie darin trennt zwei
+    Flaechen, die auf verschiedenen Seiten der Ebene liegen. Mehrere
+    Schleifen ergeben eine Schnittflaeche mit Oeffnungen (Buchse: Aussen-
+    und Innenkreis). Koplanare Flaechen gibt es hier nicht: sie laegen in
+    der Ebene, und dann schnitte die Ebene den Koerper nicht.
+    """
+    c, n = ebene
+    if any(l == 0 for l in lage.values()):
+        return None
+    nutzer: dict = {}
+    for f in flaechen:
+        for sch in _randschleifen(f):
+            for l in sch:
+                nutzer.setdefault(l, []).append(f.name)
+    kanten = []
+    for l, fl in nutzer.items():
+        if len(fl) != 2 or lage[fl[0]] == lage[fl[1]]:
+            continue
+        ln = model.lines.get(l)
+        if ln is None:
+            continue
+        try:
+            P = np.asarray(ln.punkte(model, 8), float).reshape(-1, 3)
+        except Exception:                   # noqa: BLE001
+            return None
+        if float(np.abs((P - c) @ n).max()) > tol:
+            continue                        # die Linie liegt nicht in der Ebene
+        kanten.append(l)
+    if len(kanten) < 2:
+        return None
+    # Zu Schleifen ordnen
+    from .mesher3d import seiten_im_umlauf
+    offen = set(kanten)
+    schleifen = []
+    while offen:
+        keim = offen.pop()
+        gruppe = [keim]
+        knoten = set(int(x) for x in _linienenden(model, keim) or ())
+        geaendert = True
+        while geaendert:
+            geaendert = False
+            for l in list(offen):
+                e = _linienenden(model, l)
+                if e is not None and (int(e[0]) in knoten or int(e[1]) in knoten):
+                    gruppe.append(l)
+                    knoten |= {int(e[0]), int(e[1])}
+                    offen.discard(l)
+                    geaendert = True
+        if not seiten_im_umlauf(model, gruppe):
+            return None                     # schliesst nicht
+        schleifen.append(gruppe)
+    # Aussenschleife: die mit der groessten Flaeche in der Ebene
+    def flaeche_von(sch):
+        P = _schleifenpunkte(model, sch)
+        return abs(float(np.linalg.norm(np.cross(P - P.mean(axis=0), np.roll(P, -1, axis=0) - P.mean(axis=0)).sum(axis=0)))) / 2.0
+    schleifen.sort(key=flaeche_von, reverse=True)
+    werk.art = "an einer vorhandenen Schleife"
+    name = werk.marke(koerper) + "S"
+    werk.flaeche(Flaeche(name, list(schleifen[0]), oeffnungen=[list(x) for x in schleifen[1:]],
+                         material=koerper.material))
+    seiten = {1: [f.name for f in flaechen if lage[f.name] == 1],
+              -1: [f.name for f in flaechen if lage[f.name] == -1]}
+    bloecke = []
+    for vorz in (1, -1):
+        namen = seiten[vorz] + [name]
+        if len(namen) < 4 or not _geschlossene_schale(model, namen):
+            return None
+        pseudo = Volumenkoerper(koerper.name, list(namen), material=koerper.material,
+                                teilung=list(koerper.teilung or [4, 4, 4]))
+        try:
+            erk = erkennen(model, pseudo)
+        except Exception:                   # noqa: BLE001
+            erk = None
+        bloecke.append((list(namen), erk))
+    if not any(e is not None for _n, e in bloecke):
+        return None
+    return bloecke
+
+
 def _ebene_versuch(model: Model, koerper, flaechen: list, ebene: tuple,
                    werk: "Schnittwerk", tol: float, gemeinsam: set,
                    lage: dict, wahl: dict) -> "list | None":
     """Eine Ebene und **eine** Zuordnung der koplanaren Flaechen."""
     from .mesher3d import seiten_im_umlauf
     c, n = ebene
-    marke = f"{koerper.name}§E{len(werk.flaechen) + len(werk.linien)}"
+    marke = werk.marke(koerper) + "E"
     knoten_cache: dict = {}
     linien_cache: dict = {}
     vorhandene_linien: dict = {}
@@ -2364,6 +2518,7 @@ def _ebene_versuch(model: Model, koerper, flaechen: list, ebene: tuple,
     if None in linien or len(set(linien)) != len(linien):
         return None
     schnitt = f"{marke}S1"
+    werk.art = "an einer Ebene"
     werk.flaeche(Flaeche(schnitt, linien, material=koerper.material))
     # ---- die beiden Bloecke -------------------------------------------------
     bloecke = []
@@ -2419,14 +2574,20 @@ def zerlegen(model: Model, koerper, tiefe: int = ZERLEGEN_TIEFE) -> tuple:
     Pruefkoerpern belegt: Platte mit Nabe und abgesetzte Welle werden zu je
     zwei gesweepten Bloecken (tests.test_sweep).
     """
+    import time as _time
     werk = Schnittwerk(model)
     schnitte = werk.flaechen
+    werk.start = _time.time()
+    werk.versuche = 0
 
     def block(namen):
         return Volumenkoerper(koerper.name, list(namen), material=koerper.material,
                               teilung=list(koerper.teilung or [4, 4, 4]))
 
     def versuch(namen, tiefe):
+        if werk.erschoepft():
+            return [(list(namen), None)]
+        werk.versuche += 1
         try:
             erk = erkennen(model, block(namen))
         except Exception:                   # noqa: BLE001
@@ -2440,6 +2601,7 @@ def zerlegen(model: Model, koerper, tiefe: int = ZERLEGEN_TIEFE) -> tuple:
             if F is None or not (F.oeffnungen or []):
                 continue
             for B_namen, S in _fussabdruecke(model, koerper, namen, F, len(schnitte)):
+                S.name = werk.marke(koerper)
                 werk.flaeche(S)
                 A_namen = [x for x in namen if x not in B_namen] + [S.name]
                 bl = versuch(A_namen, tiefe - 1) + versuch(list(B_namen) + [S.name], tiefe - 1)
@@ -2451,13 +2613,6 @@ def zerlegen(model: Model, koerper, tiefe: int = ZERLEGEN_TIEFE) -> tuple:
                     schnitte.remove(T_)
         return [(list(namen), None)]
 
-    bl = versuch(list(koerper.flaechen or []), tiefe)
-    if len(bl) > 1 and any(e is not None for _n, e in bl):
-        return bl, werk
-    # Kein Fussabdruck - dann der Schnitt an einer Ebene (zerlegen_ebene):
-    # eine Rippe, die bis an den Rand laeuft, haengt nicht ueber eine Oeffnung
-    # am Rest, und genau das verlangt _fussabdruecke.
-    werk.zuruecknehmen()
     try:
         alle = np.vstack([_schleifenpunkte(model, list(model.flaechen[x].linien or []))
                           for x in (koerper.flaechen or []) if x in model.flaechen])
@@ -2465,8 +2620,17 @@ def zerlegen(model: Model, koerper, tiefe: int = ZERLEGEN_TIEFE) -> tuple:
     except Exception:                       # noqa: BLE001
         gross = 1.0
     tol = max(TOL_REL * gross, 1e-12)
+    # Erst die billigen Schnitte - an einer Ebene oder an einer vorhandenen
+    # Schleife (zerlegen_ebene): sie probieren nichts durch. Die Fussabdruecke
+    # danach suchen kombinatorisch und kosteten an V30 des Drehlagers 255 s
+    # fuer nichts (gemessen 23.09.2026); sie bekommen den Rest des Budgets.
     bl = zerlegen_ebene(model, koerper, werk, tol)
     if bl:
+        return bl, werk
+    werk.zuruecknehmen()
+    bl = versuch(list(koerper.flaechen or []), tiefe)
+    if len(bl) > 1 and any(e is not None for _n, e in bl):
+        werk.art = "an Fußabdrücken"
         return bl, werk
     werk.zuruecknehmen()
     # Zuletzt: vielleicht ist er ganz sweepbar und nur seine beiden Kappen sind
@@ -2486,14 +2650,33 @@ def zerlegen(model: Model, koerper, tiefe: int = ZERLEGEN_TIEFE) -> tuple:
         if erk is not None:
             return [(list(neu_namen), erk)], werk
     werk.zuruecknehmen()
+    if getattr(werk, "abgebrochen", None):
+        abbrueche = getattr(model, "_zerlegen_abbruch", None)
+        if abbrueche is None:
+            abbrueche = model._zerlegen_abbruch = {}
+        abbrueche[koerper.name] = werk.abgebrochen
     return None, werk
 
 
 def zerlegbar(model: Model, koerper) -> bool:
-    """Ergibt das Zerlegen wenigstens einen sweepbaren Block?"""
+    """Ergibt das Zerlegen wenigstens einen sweepbaren Block?
+
+    Das Ergebnis wird je Koerper und Flaechenliste am Modell gemerkt:
+    sweepbar() fragt vor dem Vernetzen fuer die Reihenfolge, und
+    zerlegt_vernetzen zerlegt danach noch einmal - bei einem Koerper, an dem
+    das Budget (ZERLEGEN_ZEIT_S) ausgeschoepft wird, waere das zweimal die
+    volle Zeit.
+    """
+    speicher = getattr(model, "_zerlegbar_cache", None)
+    if speicher is None:
+        speicher = model._zerlegbar_cache = {}
+    schluessel = (koerper.name, tuple(koerper.flaechen or []), int(model.nn))
+    if schluessel in speicher:
+        return speicher[schluessel]
     bl, werk = zerlegen(model, koerper)
     schnitte_entfernen(model, werk)
-    return bool(bl)
+    speicher[schluessel] = bool(bl)
+    return speicher[schluessel]
 
 
 def zerlegen_warum_nicht(model: Model, koerper) -> str:
@@ -2520,8 +2703,9 @@ def zerlegen_warum_nicht(model: Model, koerper) -> str:
     if not n_abdruck:
         return (f"{len(mit_loch)} Randfläche(n) mit Öffnung, aber kein Aufsatz hängt nur über "
                 "eine ihrer Öffnungen am Rest")
+    ab = (getattr(model, "_zerlegen_abbruch", None) or {}).get(koerper.name)
     return (f"{n_abdruck} Fußabdruck/-abdrücke an {len(mit_loch)} Fläche(n) - aber kein Schnitt "
-            "ergab einen sweepbaren Block")
+            "ergab einen sweepbaren Block" + (f" (Zerlegen nach {ab} abgebrochen)" if ab else ""))
 
 
 def zerlegt_vernetzen(model: Model, koerper, h: float, log: list = None, cache: dict = None,
@@ -2538,7 +2722,7 @@ def zerlegt_vernetzen(model: Model, koerper, h: float, log: list = None, cache: 
         C.say(log, f"Volumen {koerper.name}: nicht zerlegt - {zerlegen_warum_nicht(model, koerper)}.")
         return []
     try:
-        art = "an Fußabdrücken" if not werk.ersatz else "an einer Ebene"
+        art = getattr(werk, "art", None) or ("an Fußabdrücken" if not werk.ersatz else "an einer Ebene")
         C.say(log, f"Volumen {koerper.name}: nicht als Ganzes sweepbar - {art} in {len(bl)} Blöcke "
                    f"zerlegt ({sum(1 for _n, e in bl if e is not None)} davon sweepbar)")
         els: list = []
@@ -2578,21 +2762,67 @@ def zerlegt_vernetzen(model: Model, koerper, h: float, log: list = None, cache: 
         schnitte_entfernen(model, werk, knoten_auch=False)
 
 
+#: Groesster zugelassener Winkelfehler eines Sechsflaechners fuer die Zaehlung
+#: "regelmaessig": Abweichung eines Seiteneckwinkels von 90 Grad. Die
+#: Element-Sitzung mass am Kragarm (22.09.2026): bei 45 Grad Trapez- bzw.
+#: Parallelogrammverzerrung liegt die Nachweisstelle 33 bzw. 13 N/mm^2
+#: daneben, regelmaessig 0,8 bzw. 0,2 N/mm^2. 15 Grad ist die Frage des
+#: Auftrags vom 23.09.2026.
+WINKELFEHLER_GRENZE = 15.0
+
+
+def winkelfehler(X: np.ndarray, typ: str) -> float:
+    """Groesste Abweichung eines Seiteneckwinkels vom Ideal - 90 Grad an
+    Vierecken, 60 Grad an Dreiecken - in Grad. Das misst Trapez-,
+    Parallelogramm- und Verwindungsverzerrung eines hex8 oder pent6 in
+    **einer** Zahl; ein Wuerfel hat 0, ein Keil aus einem gleichseitigen
+    Dreieck 0."""
+    from .elements.solid import FLAECHEN_ECKEN
+    X = np.asarray(X, float)
+    schlimmst = 0.0
+    for seite in FLAECHEN_ECKEN.get(typ, ()):
+        n = len(seite)
+        ideal = 90.0 if n == 4 else 60.0
+        for i in range(n):
+            a = X[seite[(i - 1) % n]] - X[seite[i]]
+            b = X[seite[(i + 1) % n]] - X[seite[i]]
+            la, lb = float(np.linalg.norm(a)), float(np.linalg.norm(b))
+            if la <= 0.0 or lb <= 0.0:
+                return 180.0
+            w = float(np.degrees(np.arccos(np.clip(float(a @ b) / (la * lb), -1.0, 1.0))))
+            schlimmst = max(schlimmst, abs(w - ideal))
+    return schlimmst
+
+
 def hexaederanteil(model: Model, koerper=None) -> dict:
     """{"hexaeder", "keile", "pyramiden", "tetraeder", "elemente", "knoten",
-    "anteil_hexaeder", "elemente_je_knoten"} ueber die genannten Koerper (alle)."""
+    "anteil_hexaeder", "elemente_je_knoten", "winkelfehler_max",
+    "hexaeder_regelmaessig"} ueber die genannten Koerper (alle).
+
+    ``hexaeder_regelmaessig`` zaehlt die hex8 mit Winkelfehler bis
+    WINKELFEHLER_GRENZE - das Mass, das die Element-Sitzung fuer V6 verlangt
+    (Nachtrag 22.09.2026): hex8 lohnt sich nur, wo die Verzerrung klein
+    bleibt. Am Drehlager: 54,8 % der 19 368 Hexaeder bis 15 Grad, die Deckel
+    V33/V35 bis 72 Grad (gemessen 23.09.2026)."""
     koerper = list(koerper if koerper is not None else model.koerper.values())
     zaehl = {"hex8": 0, "hex20": 0, "pent6": 0, "pent15": 0, "pyr5": 0, "tet4": 0, "tet10": 0}
     knoten = set()
+    wf_max, regel = 0.0, 0
     for k in koerper:
         for e in (k.elemente or []):
             el = model.elements[int(e)]
             if el.typ in zaehl:
                 zaehl[el.typ] += 1
             knoten.update(int(x) for x in el.nodes)
+            if el.typ in ("hex8", "pent6"):
+                w = winkelfehler(model.nodes[el.nodes], el.typ)
+                wf_max = max(wf_max, w)
+                if el.typ == "hex8" and w <= WINKELFEHLER_GRENZE:
+                    regel += 1
     n = sum(zaehl.values())
     hexa = zaehl["hex8"] + zaehl["hex20"]
     return {"hexaeder": hexa, "keile": zaehl["pent6"] + zaehl["pent15"], "pyramiden": zaehl["pyr5"],
             "tetraeder": zaehl["tet4"] + zaehl["tet10"], "elemente": n, "knoten": len(knoten),
             "anteil_hexaeder": hexa / n if n else 0.0,
-            "elemente_je_knoten": n / len(knoten) if knoten else 0.0}
+            "elemente_je_knoten": n / len(knoten) if knoten else 0.0,
+            "winkelfehler_max": wf_max, "hexaeder_regelmaessig": regel}
