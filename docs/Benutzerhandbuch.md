@@ -3749,10 +3749,12 @@ dann nicht erfüllt war. An einem Zweigelenkrahmen mit Wind am Stielkopf
 (ein Stiel gezogen, einer gedrückt) kam für den Windlastfall bei jedem
 Aufruf ein anderer Wert heraus, in zwei Läufen mit je 200 Aufrufen alle
 unter 3,6; richtig ist 77,33. Bei „automatisch“ wurde eine Kombination
-1,5·Wind nach II. Ordnung gerechnet, obwohl α_cr = 51,55 ist. Jetzt gibt
-dasselbe Modell immer denselben Wert, gleich dem dicht gerechneten.
-Kombinationen, in denen alle Stäbe gedrückt sind, hatten das nicht (an
-der Halle alle 42 GZT-Kombinationen unverändert).
+1,5·Wind nach II. Ordnung gerechnet, obwohl α_cr = 51,55 ist. Jetzt kommt
+der dicht gerechnete Wert heraus; in drei Läufen mit je 200 Aufrufen war es
+jedes Mal genau derselbe (gemessen an diesem Rahmen, nicht allgemein
+zugesagt). Kombinationen, in denen alle Stäbe gedrückt sind, hatten das
+nicht (an der Halle alle 42 GZT-Kombinationen in allen angezeigten Stellen
+unverändert).
 
 **Wichtig**: Nach Theorie II. Ordnung gilt keine Superposition mehr. Jede
 Kombination wird einzeln gerechnet — das dauert länger als eine lineare

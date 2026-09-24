@@ -209,9 +209,11 @@ def test_alpha_cr_zug_und_druck():
                   f"{int((ew < -1e-9 * abs(ew).max()).sum())} negative, "
                   f"{int((ew > 1e-9 * abs(ew).max()).sum())} positive Eigenwerte")
         close(f"α_cr {name} gleich dem dichten Bezug", a[0], bezug[name], 1e-8)
-        check(f"α_cr {name} fünfmal gerechnet, fünfmal derselbe Wert",
-              max(a) - min(a) <= 1e-12 * bezug[name],
-              ", ".join(f"{x:.6f}" for x in a))
+        # Bitgleich, nicht nur auf 12 Stellen: ohne den festen Startvektor
+        # gaben 200 Aufrufe unter K1 198 verschiedene Werte (Spanne 8,3e-12),
+        # mit ihm einen (gemessen 24.09.2026)
+        check(f"α_cr {name} fünfmal gerechnet, fünfmal bitgleich",
+              len(set(a)) == 1, ", ".join(repr(x) for x in a))
         v = werte[0].get("modus")
         vf = v[fi] if v is not None else np.zeros(len(fi))
         r = np.linalg.norm(K @ vf - a[0] * (G @ vf)) / max(np.linalg.norm(K @ vf), 1e-300)
@@ -251,6 +253,112 @@ def test_alpha_cr_zug_und_druck():
     check("nur Zug: α_cr = ∞, „kein positiver Verzweigungslastfaktor“",
           all(math.isinf(x["alpha_cr"]) and "kein positiver" in x["fehler"] for x in az),
           str([(x["alpha_cr"], x["fehler"]) for x in az]))
+
+
+def geschossrahmen(nx=3, nz=2, a=6.0, h=4.0, s=4):
+    """Symmetrischer Geschossrahmen: nx x nx Felder zu a, nz Geschosse zu h,
+    Stützen HEB 300, Riegel IPE 400, Verbände CHS 88.9X5 in den Außenwänden,
+    jeder Stab in s Elemente geteilt, Füße eingespannt; Lastfall G mit
+    150 kN lotrecht je Knotenpunkt. Die größten μ häufen sich (3 x 3 x 2:
+    27 innerhalb 10⁻³ von μ_max, dicht gerechnet 24.09.2026)."""
+    m = Model("Geschossrahmen")
+    m.add_material(Material.steel("S235"))
+    for p in ("HEB 300", "IPE 400", "CHS 88.9X5"):
+        m.add_section(make_section(p))
+    kn = {}
+    for k in range(nz + 1):
+        for j in range(nx + 1):
+            for i in range(nx + 1):
+                kn[i, j, k] = m.add_node(i * a, j * a, k * h)
+
+    def stab(p, q, sec):
+        A, B = np.array(m.nodes[p]), np.array(m.nodes[q])
+        ids = [p] + [m.add_node(*(A + (B - A) * t / s)) for t in range(1, s)] + [q]
+        for t in range(s):
+            m.add_element("beam", [ids[t], ids[t + 1]], "S235", sec)
+
+    for k in range(nz):
+        for j in range(nx + 1):
+            for i in range(nx + 1):
+                stab(kn[i, j, k], kn[i, j, k + 1], "HEB 300")
+    for k in range(1, nz + 1):
+        for j in range(nx + 1):
+            for i in range(nx):
+                stab(kn[i, j, k], kn[i + 1, j, k], "IPE 400")
+        for i in range(nx + 1):
+            for j in range(nx):
+                stab(kn[i, j, k], kn[i, j + 1, k], "IPE 400")
+    for k in range(nz):
+        for j in (0, nx):
+            stab(kn[0, j, k], kn[1, j, k + 1], "CHS 88.9X5")
+            stab(kn[1, j, k], kn[0, j, k + 1], "CHS 88.9X5")
+        for i in (0, nx):
+            stab(kn[i, 0, k], kn[i, 1, k + 1], "CHS 88.9X5")
+            stab(kn[i, 1, k], kn[i, 0, k + 1], "CHS 88.9X5")
+    for j in range(nx + 1):
+        for i in range(nx + 1):
+            m.fix(kn[i, j, 0], "all")
+    m.add_load_case("G", "G")
+    for k in range(1, nz + 1):
+        for j in range(nx + 1):
+            for i in range(nx + 1):
+                m.load_node(kn[i, j, k], Fz=-150e3, case="G")
+    return m
+
+
+def test_alpha_cr_haeufung():
+    """α_cr bei gehäuften größten μ: richtig und nicht langsam.
+
+    Mit eigsh(−K_g, M=K, 'LA') im Regelmodus (Stand 9dc88a3) brauchte ein
+    Aufruf am symmetrischen Geschossrahmen mit 5856 FHG 52,5 s (gemessen
+    24.09.2026), hier mit 1920 FHG 4,4 bis 5,6 s, das 81- bis 114-Fache
+    von Aufbau und Lösung des Systems (jetzt das 1,6- bis 2,1-Fache). Der
+    Grund: die 27 größten μ liegen innerhalb 10⁻³. Jetzt: Schätzwert,
+    Verschiebung s über μ_max, die der Trägheitssatz an s·K + K_g
+    bestätigt, dann Shift-invert um s.
+    """
+    import time
+    import scipy.linalg as sla
+    from statik3d import assemble as asm
+    m = geschossrahmen()
+    t_sys = []
+    for _ in range(3):
+        t0 = time.perf_counter()
+        system = solver.StaticSystem(m)
+        u = system.solve(solver.case_loads(m, {"G": 1.0})[0])
+        t_sys.append(time.perf_counter() - t0)
+    fi = system.fi
+    Kgff = asm.geometric_stiffness(m, u)[fi][:, fi].tocsc()
+    mu = np.sort(sla.eigh(-Kgff.toarray(), system.Kff.toarray(), eigvals_only=True))[::-1]
+    bezug = 1.0 / mu[0]
+    n_nah = int((mu >= mu[0] * (1 - 1e-3)).sum())
+    check("Voraussetzung: die größten μ häufen sich", n_nah >= 20,
+          f"{n_nah} μ innerhalb 10⁻³ von μ_max, {len(fi)} FHG")
+    t_a, werte = [], []
+    for _ in range(3):
+        t0 = time.perf_counter()
+        werte.append(T2.alpha_cr(m, system, u)["alpha_cr"])
+        t_a.append(time.perf_counter() - t0)
+    close("α_cr gleich dem dichten Bezug", werte[0], bezug, 1e-9)
+    # Ein Verhaeltnis, keine Sekunden: es haengt nicht daran, wie belastet
+    # die Maschine gerade ist
+    check("α_cr kostet höchstens das Zehnfache von Aufbau und Lösung",
+          min(t_a) <= 10.0 * min(t_sys),
+          f"α_cr {min(t_a):.3f} s, System {min(t_sys):.3f} s "
+          f"({min(t_a) / min(t_sys):.1f}-fach)")
+
+    # Die Verschiebung wird erzwungen, nicht erhofft: auch aus schlechten
+    # Schaetzwerten unter mu_max (statt Stufe 1) kommt mu_max heraus
+    f = getattr(T2, "groesstes_mu", None)
+    for faktor in (0.99, 0.3):
+        try:
+            r = f(system.Kff, Kgff, schaetzwert=faktor * mu[0]) if f else None
+        except Exception as exc:                  # pragma: no cover
+            r = None
+            print("   ", type(exc).__name__, exc)
+        got = 1.0 / r[0][0] if r is not None and r[0] is not None else math.nan
+        check(f"Schätzwert {faktor:g}·μ_max: trotzdem α_cr gleich dem Bezug",
+              abs(got / bezug - 1) <= 1e-9, f"{got:.10g} / {bezug:.10g}")
 
 
 def test_vergroesserung():
@@ -463,8 +571,8 @@ def main():
     print("STATIK3D - Verifikation Theorie II. Ordnung (DIN EN 1993-1-1, 5.2/5.3)")
     print("=" * 92)
     for t in (test_imperfektionsbeiwerte, test_alpha_cr, test_alpha_cr_zug_und_druck,
-              test_vergroesserung, test_ersatzlasten, test_vorkruemmung,
-              test_im_modell_und_bericht):
+              test_alpha_cr_haeufung, test_vergroesserung, test_ersatzlasten,
+              test_vorkruemmung, test_im_modell_und_bericht):
         print()
         t()
     ok = sum(1 for _n, o in RESULTS if o)

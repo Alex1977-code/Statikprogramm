@@ -352,48 +352,118 @@ def alpha_cr(model: Model, system, u: np.ndarray, nmodes: int = 1) -> dict:
 
     Rueckgabe {"alpha_cr": ..., "modus": Eigenvektor, "fehler": ""}.
     """
-    from scipy.sparse.linalg import eigsh
     Kg = asm.geometric_stiffness(model, u)
     fi = system.fi
     Kgff = Kg[fi][:, fi].tocsc()
     if Kgff.shape[0] < 3 or abs(Kgff).max() == 0:
         return {"alpha_cr": math.inf, "fehler": "keine Normalkräfte - "
                                                 "kein Verzweigungsproblem"}
-    # K ist das Skalarprodukt, nicht -K_g. Bis zum 23.09.2026 stand hier
-    # eigsh(K, M=-K_g, sigma=0): ARPACK setzt fuer M ein positiv
-    # (semi)definites Skalarprodukt voraus, mit gezogenen und gedrueckten
-    # Staeben zugleich ist -K_g aber indefinit. Am Zweigelenkrahmen
-    # (tests/test_theorie2.py, Lastfall W) gaben zwei Laeufe mit je 200
-    # Aufrufen je 200 verschiedene Werte, alle unter 3,6, statt 77,33 (dicht
-    # gerechnet); "auto" rechnete damit 1,5·W nach II. Ordnung, obwohl
-    # alpha_cr = 51,55 ist. Bei reinem Zug kam ein endlicher Wert statt
-    # "kein positiver". K ist nach dem Einbau der Lager positiv definit, die
-    # mu sind damit reell und der Loeser gilt. Die Nullraeume von K_g liegen
-    # K-orthogonal zum Krylovraum und kommen nicht als mu = 0 zurueck
-    # (Zugstab: dicht 12 von 71 mu mit |mu| < 1e-12, eigsh liefert die
-    # betragskleinsten negativen). Fester Startvektor: gleiches Modell,
-    # gleicher Wert. Vier Ritzwerte statt einem, weil die groessten mu oft
-    # mehrfach sind (Zweigelenkrahmen unter W: die sechs groessten gleich,
-    # dicht gerechnet 23.09.2026).
     try:
-        n = Kgff.shape[0]
-        k = max(1, min(max(nmodes, 4), n - 2))
-        v0 = np.random.default_rng(0).standard_normal(n)
-        mu, vecs = eigsh(-Kgff, k=k, M=system.Kff, which="LA", v0=v0)
+        mu, vecs = groesstes_mu(system.Kff, Kgff, k=nmodes)
     except Exception as exc:                       # pragma: no cover
         return {"alpha_cr": math.inf, "fehler": f"Eigenwertlöser: {exc}"}
-    mu = np.atleast_1d(mu)
-    j = int(np.argmax(mu))
-    # mu <= 1e-12 heisst alpha_cr >= 1e12: keine Verzweigung in Lastrichtung
-    if not mu[j] > 1e-12:
+    if mu is None:
         return {"alpha_cr": math.inf,
                 "fehler": "kein positiver Verzweigungslastfaktor"}
     modus = np.zeros(model.ndof)
-    modus[fi] = vecs[:, j]
+    modus[fi] = vecs[:, 0]
     mx = float(np.abs(modus).max())
     if mx > 0:
         modus /= mx
-    return {"alpha_cr": float(1.0 / mu[j]), "modus": modus, "fehler": ""}
+    return {"alpha_cr": float(1.0 / mu[0]), "modus": modus, "fehler": ""}
+
+
+def _definit_zerlegen(C):
+    """C symmetrisch ohne Zeilentausch zerlegen: (Zerlegung, positiv definit?).
+
+    Mit symmetrischer Umordnung und ohne Pivottausch ist P C P^T = L D L^T
+    und diag(U) = D; nach dem Traegheitssatz ist C genau dann positiv
+    definit, wenn alle Pivots positiv sind. Fuer positiv definites C ist die
+    Zerlegung ohne Tausch stabil - sie dient danach als Shift-invert.
+    """
+    from scipy.sparse.linalg import splu
+    try:
+        lu = splu(C.tocsc(), permc_spec="MMD_AT_PLUS_A", diag_pivot_thresh=0.0,
+                  options={"SymmetricMode": True})
+    except RuntimeError:                           # exakt singulaer
+        return None, False
+    definit = (np.array_equal(lu.perm_r, lu.perm_c)
+               and bool(np.all(lu.U.diagonal() > 0.0)))
+    return lu, definit
+
+
+def groesstes_mu(Kff, Kgff, k: int = 1, schaetzwert: float = None):
+    """Die ``k`` groessten mu von -K_g v = mu K v, das groesste zuerst.
+
+    Rueckgabe (mu, Eigenvektoren je Spalte) oder (None, None), wenn schon
+    der Schaetzwert aus Schritt 1 nicht ueber 1e-12 liegt (alpha_cr ueber
+    1e12: keine Verzweigung in Lastrichtung). ``schaetzwert`` ersetzt
+    Schritt 1 (nur fuer die Pruefung, ob ein schlechter Schaetzwert
+    trotzdem mu_max liefert).
+
+    K ist das Skalarprodukt, nicht -K_g. Bis zum 23.09.2026 stand in
+    alpha_cr eigsh(K, M=-K_g, sigma=0): ARPACK setzt fuer M ein positiv
+    (semi)definites Skalarprodukt voraus, mit gezogenen und gedrueckten
+    Staeben zugleich ist -K_g aber indefinit; am Zweigelenkrahmen
+    (tests/test_theorie2.py, Lastfall W) kamen 200 verschiedene Werte unter
+    3,6 statt 77,33 heraus. K ist nach dem Einbau der Lager positiv definit,
+    die mu sind reell.
+
+    Drei Schritte statt eines Aufrufs eigsh(-K_g, M=K, 'LA'): Der
+    Regelmodus trennt dicht beieinander liegende groesste mu nur muehsam. Am
+    symmetrischen Geschossrahmen (4 x 4 Felder, 4 Geschosse, 5856 FHG,
+    Lastfall G) liegen die 40 groessten mu innerhalb 3,1e-4 von mu_max
+    (dicht gerechnet), und der Regelmodus brauchte 52,5 s je Aufruf, mit
+    6 x 6 Feldern und 6 Geschossen (16992 FHG) 1527 s (gemessen 24.09.2026,
+    Stand 9dc88a3). Um eine Verschiebung s knapp ueber mu_max werden die
+    Abstaende zu 1/(mu - s) gespreizt:
+
+      1. Schaetzwert theta: Regelmodus mit lockerer Toleranz 1e-3. theta ist
+         ein Rayleigh-Quotient, also theta <= mu_max. Reiner Zug (Zugstab
+         der Pruefung): theta = -3,9e-4, dicht groesstes mu 4e-17, also
+         "kein positiver".
+      2. s = theta (1 + 1e-3); ob s wirklich ueber mu_max liegt, sagt der
+         Traegheitssatz: s K + K_g ist genau dann positiv definit, wenn kein
+         mu >= s ist. Sonst s schrittweise zehnmal weiter weg (am Rahmen mit
+         16992 FHG lag s = theta (1 + 1e-4) noch darunter).
+      3. Shift-invert um s: das mu naechst s ist mu_max.
+
+    Jetzt (24.09.2026, mit Aufbau von K_g): 5856 FHG 0,24 s, bis auf 8e-15
+    gleich dem dichten Bezug 11,25497228790; 16992 FHG 0,9 bis 1,0 s. Der
+    alte Aufruf eigsh(K, M=-K_g, sigma=0) allein brauchte 0,18 bzw. 0,7 s.
+    Toleranz der Stufe 3: 1e-10. Mit 0 dauerte das Verfahren am
+    16992-FHG-Rahmen 1,5 bis 1,6 statt 0,6 s (ohne K_g), und die groesste
+    Abweichung vom dichten Bezug an 46 Zustaenden (Halle, Zweigelenkrahmen)
+    blieb 5,3e-12. Der feste Startvektor macht den Rechenweg gleich; ohne
+    ihn gaben 200 Aufrufe unter K1 des Zweigelenkrahmens 198 verschiedene
+    Werte, mit ihm einen. Allgemein zugesagt ist Bitgleichheit nicht
+    (Theoriehandbuch 5.1a).
+    """
+    from scipy.sparse.linalg import eigsh, LinearOperator
+    n = Kgff.shape[0]
+    A = (-Kgff).tocsc()
+    v0 = np.random.default_rng(0).standard_normal(n)
+    if schaetzwert is None:
+        theta = float(np.max(eigsh(A, k=1, M=Kff, which="LA", v0=v0, tol=1e-3,
+                                   return_eigenvectors=False)))
+    else:
+        theta = float(schaetzwert)
+    if not theta > 1e-12:
+        return None, None
+    for stufe in range(9):
+        s = theta * (1.0 + 1e-3 * 10.0 ** stufe)
+        lu, definit = _definit_zerlegen(s * Kff + Kgff)
+        if definit:
+            break
+    else:
+        raise RuntimeError("keine Verschiebung über dem größten Eigenwert gefunden")
+    # (A - s K)^-1 = -(s K + K_g)^-1
+    op = LinearOperator((n, n), dtype=float,
+                        matvec=lambda x: -lu.solve(np.asarray(x, dtype=float).ravel()))
+    mu, vecs = eigsh(A, k=max(1, min(k, n - 2)), M=Kff, sigma=s, which="LM",
+                     v0=v0, OPinv=op, tol=1e-10)
+    folge = np.argsort(mu)[::-1]
+    return mu[folge], vecs[:, folge]
 
 
 def erforderlich(a_cr: float, plastisch: bool = False) -> dict:

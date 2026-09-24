@@ -2813,8 +2813,7 @@ System rechnen) und `ein` (immer).
 **Wie α_cr gelöst wird.** Gerechnet wird −K_g v = μ K v mit α = 1/μ;
 α_cr ist der Kehrwert des größten positiven μ. K ist nach dem Einbau der
 Lager positiv definit und dient dem Eigenwertlöser (ARPACK über `eigsh`)
-als Skalarprodukt; gerechnet werden vier Eigenwerte mit festem Startvektor,
-damit dasselbe Modell denselben Wert gibt. −K_g taugt als Skalarprodukt
+als Skalarprodukt. −K_g taugt als Skalarprodukt
 nicht: Sind Stäbe gezogen und andere gedrückt, ist −K_g indefinit. Genau
 so stand es bis zum 23.09.2026 im Aufruf (`eigsh(K, M=−K_g, sigma=0)`).
 Gemessen an einem Zweigelenkrahmen (Stiele HEB 200, 5 m, Riegel IPE 300,
@@ -2825,11 +2824,57 @@ Unter „automatisch“ wurde damit eine Kombination 1,5·W nach II. Ordnung
 gerechnet, obwohl α_cr = 51,55 ≥ 10 ist. Ein nur gezogener Stab gab einen
 endlichen Wert statt „kein positiver Verzweigungslastfaktor“. Nicht
 betroffen waren Zustände, in denen −K_g semidefinit ist: An der Halle
-(42 GZT-Kombinationen, keine mit indefinitem −K_g) liegen alter und neuer
-Aufruf höchstens 3·10⁻¹³ neben dem dichten Bezug; am Zweigelenkrahmen
+(42 GZT-Kombinationen, keine mit indefinitem −K_g) liegt der alte Aufruf
+höchstens 1,3·10⁻¹³ neben dem dichten Bezug, der jetzige höchstens
+5,3·10⁻¹² (24.09.2026); am Zweigelenkrahmen
 gaben 1,35·G + 1,5·Q und 1,35·G + 1,5·W (−K_g semidefinit) schon vorher
 200-mal den dichten Bezug 18,1837 bzw. 19,2341. Jetzt geben 200 Aufrufe
 für W 200-mal 77,3287, gleich dem dichten Bezug (`tests/test_theorie2.py`).
+
+**In drei Schritten, weil sich die größten μ häufen.** Knicken viele
+gleiche Stäbe fast gleichzeitig, liegen die größten μ dicht beieinander, und
+der Regelmodus (größte μ von −K_g gegen K) trennt sie nur mühsam. Am
+symmetrischen Geschossrahmen (4 × 4 Felder zu 6 m, 4 Geschosse zu 4 m,
+Stützen HEB 300, Riegel IPE 400, Verbände CHS 88,9 × 5 in den Außenwänden,
+jeder Stab in 4 Elemente geteilt, 5856 FHG, 150 kN lotrecht je
+Knotenpunkt) liegen die 40 größten μ innerhalb 3,1·10⁻⁴ von μ_max, dicht
+gerechnet. Der Regelmodus allein, so gerechnet in einer Zwischenfassung
+vom 23.09.2026, brauchte dort 52,5 und 53,5 s für ein α_cr, mit 6 × 6
+Feldern und 6 Geschossen (16992 FHG) 1527 s (gemessen 24.09.2026).
+Deshalb:
+
+1. Schätzwert θ im Regelmodus mit lockerer Toleranz (10⁻³). θ ist ein
+   Rayleigh-Quotient, also θ ≤ μ_max.
+2. Verschiebung s = θ·(1 + 10⁻³). Ob s wirklich über μ_max liegt, sagt der
+   Trägheitssatz: s·K + K_g ist genau dann positiv definit, wenn kein μ ≥ s
+   ist. Geprüft wird das an den Pivots einer Zerlegung ohne Zeilentausch;
+   ist einer nicht positiv, rückt s um eine Zehnerpotenz weiter. Das wird
+   erzwungen, nicht erhofft: Die Prüfung setzt absichtlich schlechte
+   Schätzwerte 0,99·μ_max und 0,3·μ_max ein und bekommt trotzdem μ_max.
+3. Shift-invert um s: Das μ nächst s ist μ_max, und über 1/(μ − s) liegen
+   die gehäuften μ weit auseinander.
+
+Am Rahmen oben gibt das α_cr = 11,254972 in 0,24 s (mit dem Aufbau von
+K_g), bis auf 8·10⁻¹⁵ gleich dem dichten Bezug; mit 16992 FHG
+α_cr = 7,503375 in 0,9 bis 1,0 s. Der alte Aufruf `eigsh(K, M=−K_g,
+sigma=0)` allein brauchte 0,18 bzw. 0,7 s, gab dort aber in je drei
+Aufrufen Werte zwischen 0,07 und 0,42 bzw. 0,16 und 0,32 statt 11,25 bzw.
+7,50. Die ganze Rechnung „automatisch“ mit drei
+Kombinationen (1,35·G, 1,35·G + 1,5·W, 1,0·G + 1,5·W) am 5856-FHG-Rahmen
+dauert 4,4 s, mit dem Regelmodus allein waren es 48,4 s (je einmal
+gemessen, 24.09.2026).
+
+**Wiederholbarkeit.** Der Startvektor ist fest, jeder Aufruf nimmt
+denselben Rechenweg. Gemessen am 24.09.2026: Am Zweigelenkrahmen gaben
+200 Aufrufe für W, 1,5·W und 1,35·G + 1,5·Q in drei Prozessen (einer mit
+einem BLAS-Thread) je Zustand einen einzigen Wert, an der Halle je 20
+Aufrufe für alle 42 GZT-Kombinationen ebenso. Ohne festen Startvektor
+waren es unter 1,35·G + 1,5·Q 198 verschiedene Werte in 200 Aufrufen
+(Spanne 8,3·10⁻¹²), an der Halle bei allen 42 Kombinationen mehr als einer.
+Bitgleich ist α_cr damit an diesen Modellen, allgemein zugesagt ist es
+nicht: Die Zwischenfassung (Regelmodus, vier Eigenwerte) gab trotz festem
+Startvektor unter 1,5·W 23 verschiedene Werte in 200 Aufrufen (Spanne
+8,4·10⁻¹⁵). An den angezeigten Stellen ändert das nichts.
 
 **Gleichgewicht am verformten System.** Gelöst wird (K + K_g(N)) u = F.
 Weil K_g von den Normalkräften abhängt und diese von u, wird iteriert, bis
@@ -7212,7 +7257,7 @@ die Meldung für einen Freibrief hält.
 | `tests/test_beulen.py` | Beulwerte k_σ und k_τ gegen Tab. 4.1/4.2 und A.3, σ_E = 190000 (t/b)², ρ und χ_w gegen 4.4(2) und Tab. 5.1, Schubbeulen, Methode der reduzierten Spannungen, Steifen nach A.1/A.2.2/A.3(2) und Abschnitt 9, Lasteinleitung nach Abschnitt 6, Schalenbeulen nach EN 1993-1-6, dazu der Patch-Test des Viereckelements |
 | `tests/test_joints.py` | Schrauben, Nähte, T-Stummel gegen EN-Zahlenwerte; Steifigkeitsbeiwerte Tab. 6.11, Klassifizierung 5.2.2.5, Drehfeder gegen die geschlossene Kragarmlösung |
 | `tests/test_volumen.py` | Vergleichsspannung, Hauptspannungen und Mehrachsigkeit gegen die geschlossenen Werte (einachsiger Zug, reiner Schub √3 τ, hydrostatischer Druck σ_v = 0, Tresca/Mises = 2/√3), σ_v = N/A am Zugkörper aus Hexaedern, Singularitäts- und Netzfeinheitshinweise |
-| `tests/test_theorie2.py` | α_cr der Kragstütze und des Pendelstabes gegen die Knicklast nach Engesser, α_cr bei Zug und Druck zugleich (Zweigelenkrahmen) und bei reinem Zug gegen das dicht gelöste Problem, wiederholbar, Vergrößerung der Verformung gegen 1/(1−N/N_cr), φ und e_0 gegen 5.3.2 und Tabelle 5.1, Gleichgewicht der Ersatzlastbilder, Feldmoment aus der Vorkrümmung, Kriterium 5.3.2(6) |
+| `tests/test_theorie2.py` | α_cr der Kragstütze und des Pendelstabes gegen die Knicklast nach Engesser, α_cr bei Zug und Druck zugleich (Zweigelenkrahmen) und bei reinem Zug gegen das dicht gelöste Problem, bitgleich wiederholbar, bei gehäuften größten μ (Geschossrahmen) richtig und höchstens das Zehnfache von Aufbau und Lösung, auch aus schlechten Schätzwerten, Vergrößerung der Verformung gegen 1/(1−N/N_cr), φ und e_0 gegen 5.3.2 und Tabelle 5.1, Gleichgewicht der Ersatzlastbilder, Feldmoment aus der Vorkrümmung, Kriterium 5.3.2(6) |
 | `tests/test_klasse4.py` | wirksame Querschnitte der Klasse 4: Beulwerte, Grenzschlankheiten und ρ nach 4.4(2), Aufteilung b_e1/b_e2, W_eff,y und A_eff eines geschweißten Blechträgers gegen eine unabhängige Handrechnung, Zusatzmoment aus e_N, Schalenbeulen schlanker Kreisrohre |
 | `tests/test_rfem.py` | native RFEM/RSTAB-Dateien (SQLite, ZIP, unbekanntes Binärformat) und erweiterter Tabellenimport |
 | `tests/test_solver_ext.py` | Gelenke, Trapezlasten, Temperatur, Zwischenstellen, Superposition, Umhüllende, Kombinationsgenerator, einseitige Lager, Spaltelement, Flächenkontakt mit Reibung, parallele Assemblierung, Rechnerfarm |
