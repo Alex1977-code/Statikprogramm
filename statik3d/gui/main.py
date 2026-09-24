@@ -10603,6 +10603,15 @@ class MainWindow(QtWidgets.QMainWindow):
         Ein Knoten mitten im Netz laesst sich nicht einfach herausnehmen: alle
         Elementnummern dahinter wuerden sich verschieben. Darum wird nur ein
         freier Knoten geloescht, und das wird auch gesagt.
+
+        Das Entfernen und Umnummerieren macht Model.knoten_loeschen, derselbe
+        Weg wie Befehl, Auswahl und Modellbaum. Bis zum 24.09.2026 nummerierte
+        der Knopf selbst um (Elemente, Linien, Lager, Knotenlasten) und liess
+        die Kontaktfugen stehen: gemessen an eb2fc71 nach dem Loeschen des
+        freien Knotens 0 vor zwei hex8 (tests.test_neuvernetzen) Slave-Knoten
+        [9, 11, 10, 12] und Master-Facette [[1, 3, 4]] bei nn = 12 - Knoten 12
+        gab es nicht mehr -, dazu Einflussflaechen, Randknoten und
+        Normalengruppe auf den alten Nummern.
         """
         i = self._zeilenzahl(self.tbl_knoten)
         m = self.model
@@ -10612,23 +10621,13 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.error(f"An Knoten {i} hängt mindestens ein Element - "
                               "erst das Element löschen.")
         self.merken(f"Knoten {i} gelöscht")
-        m.nodes = np.delete(m.nodes, i, axis=0)
-        for e in m.elements:
-            e.nodes = [(n - 1 if n > i else n) for n in e.nodes]
+        # Eine Linie verliert den Knoten wie bisher (Model.knoten_loeschen
+        # wiese ihn sonst ab); alles Uebrige samt Umnummerieren dort.
         for ln in m.lines.values():
-            ln.nodes = [(n - 1 if n > i else n) for n in ln.nodes if n != i]
-        m.supports = [sp for sp in m.supports if sp.node != i]
-        for sp in m.supports:
-            if sp.node > i:
-                sp.node -= 1
-        for grp in (m.line_supports, m.surface_supports):
-            for x in grp:
-                x.nodes = [(n - 1 if n > i else n) for n in x.nodes if n != i]
-        for lc in m.load_cases.values():
-            lc.nodal_loads = [l for l in lc.nodal_loads if l.node != i]
-            for l in lc.nodal_loads:
-                if l.node > i:
-                    l.node -= 1
+            ln.nodes = [n for n in ln.nodes if int(n) != i]
+        grund = m.knoten_loeschen(i)
+        if grund:
+            return self.error(grund)
         self.selection = np.array([], dtype=int)
         self.refresh_all()
 

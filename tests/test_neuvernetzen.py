@@ -373,6 +373,59 @@ def test_passung_und_lagergruppen_folgen_dem_knotenloeschen():
           f"gruppe {ss.gruppen[0][2]} / {ss.nodes}")
 
 
+def test_tabellenknopf_knoten_loeschen_nimmt_denselben_weg():
+    """Der Knopf „Knoten löschen“ der Tabelle Knoten (MainWindow.knoten_loeschen)
+    nummerierte bis zum 24.09.2026 selbst um (Elemente, Linien, Lager,
+    Knotenlasten) und ging nicht ueber Model.knoten_loeschen. Gemessen an
+    eb2fc71 (24.09.2026) mit dem Modell unten, Zeile 0 (der freie Knoten):
+    danach nn = 12, die Lagerknoten [8, 10, 9, 11], aber die Slave-Knoten
+    [9, 11, 10, 12], die Master-Facette [[1, 3, 4]], die Schluessel der
+    Einflussflaechen [9, 10, 11, 12], der Randknoten 9 und die Gruppenknoten
+    [9, 11, 10, 12] - die Fuge zeigte auf fremde und auf einen nicht mehr
+    vorhandenen Knoten. Hier ohne Fenster: der Knopf mit einer Attrappe fuer
+    self (Zeile, Modell, merken, error, refresh_all), wie in test_gzg.
+    """
+    import types
+    from statik3d.gui.main import MainWindow
+
+    def knopf(m, zeile):
+        meld = []
+        attrappe = types.SimpleNamespace(
+            model=m, tbl_knoten=None, selection=None,
+            _zeilenzahl=lambda _tbl: zeile,
+            error=lambda t: meld.append("error: " + t),
+            merken=lambda t: meld.append("merken: " + t),
+            refresh_all=lambda: None)
+        MainWindow.knoten_loeschen(attrappe)
+        return meld
+
+    m, frei, s, cp, ss = _passung_und_lagergruppen()
+    nn = m.nn
+    master = [list(map(int, f)) for f in cp.master_faces]
+    meld = knopf(m, frei)
+    check("Tabellenknopf: der freie Knoten 0 geht, ohne Fehlermeldung",
+          m.nn == nn - 1 and meld == [f"merken: Knoten {frei} gelöscht"], str(meld))
+    soll = [n - 1 for n in s]
+    check("**Tabellenknopf: die Slave-Knoten ruecken mit auf**", cp.slave_nodes == soll,
+          f"{cp.slave_nodes} statt {soll}")
+    check("**Tabellenknopf: die Master-Facette rueckt mit auf**",
+          [list(map(int, f)) for f in cp.master_faces] == [[n - 1 for n in f] for f in master],
+          f"{cp.master_faces} statt {[[n - 1 for n in f] for f in master]}")
+    check("**Tabellenknopf: Einflussflaechen, Randknoten und Gruppe folgen**",
+          sorted(cp.knotenflaechen) == sorted(cp.slave_nodes) and cp.rand_knoten == [soll[0]]
+          and ss.gruppen[0][2] == ss.nodes == soll,
+          f"kf {sorted(cp.knotenflaechen)}, rand {cp.rand_knoten}, "
+          f"gruppe {ss.gruppen[0][2]} / {ss.nodes}")
+
+    # Ein Knoten mit Element bleibt, wie bisher, und nichts wird gemerkt
+    m, frei, s, cp, ss = _passung_und_lagergruppen()
+    nn = m.nn
+    meld = knopf(m, s[0])
+    check("Tabellenknopf: ein Knoten mit Element bleibt und wird genannt",
+          m.nn == nn and len(meld) == 1 and meld[0].startswith("error: ")
+          and cp.slave_nodes == s, str(meld))
+
+
 def main():
     print("=" * 92)
     print("STATIK3D - ein neu vernetztes Modell muss dasselbe rechnen")
@@ -380,7 +433,8 @@ def main():
     for t in (test_neuvernetzen_rechnet_dasselbe,
               test_fuge_und_lager_ueberleben_das_neuvernetzen,
               test_master_facetten_folgen_dem_knotenloeschen,
-              test_passung_und_lagergruppen_folgen_dem_knotenloeschen):
+              test_passung_und_lagergruppen_folgen_dem_knotenloeschen,
+              test_tabellenknopf_knoten_loeschen_nimmt_denselben_weg):
         try:
             t()
         except Exception as ex:               # noqa: BLE001

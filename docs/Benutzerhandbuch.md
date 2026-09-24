@@ -664,7 +664,13 @@ samt seiner Einflussfläche heraus. Vorher blieben sie stehen: im Versuch
 (ein freier Knoten 0 vor einem Netz aus zwei Sechsflächnern gelöscht) hatte
 danach ein Knoten der Fuge keine Einflussfläche mehr — seine
 Lochleibungsgrenze wirkte nicht —, und als Randknoten galt ein anderer
-Knoten als vorher. Nach einem neuen Vernetzen baut das Programm diese Angaben
+Knoten als vorher. Der Knopf *Knoten löschen* unter der Tabelle „Knoten“
+nummerierte bis zum 24.09.2026 selbst um und ließ die Kontaktfugen dabei ganz
+stehen: im selben Versuch zeigten danach auch die Slave-Knoten und die
+Master-Facette der Fuge auf die alten Nummern, einer davon auf einen Knoten,
+den es nicht mehr gab. Seitdem nummeriert der Knopf über denselben Weg um wie
+der Befehl.
+Nach einem neuen Vernetzen baut das Programm diese Angaben
 ohnehin neu auf; betroffen war das Löschen und Umnummerieren von Knoten im
 fertig vernetzten Modell.
 
