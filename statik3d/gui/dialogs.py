@@ -2007,8 +2007,12 @@ class StellungDialog(QtWidgets.QDialog):
         gl = QtWidgets.QVBoxLayout(g)
         self.ed_dreh = NumEdit(s.dreh_winkel if s else 0.0, 80)
         self.ed_gruppen = QtWidgets.QLineEdit(", ".join(s.dreh_gruppen) if s else "")
+        # Stellung._bewegte_knoten haelt ohne Gruppen nur Knotenlager fest;
+        # "alles ohne Lager" stimmte nicht (23.09.2026, Beispiel 'frame':
+        # Knoten auf Linien- und Flaechenlager wurden um 1 m mitverschoben)
         gl.addWidget(row("Drehwinkel [°]", self.ed_dreh,
-                         "Gruppen (leer = alles ohne Lager)", self.ed_gruppen))
+                         "Gruppen (leer = alle Knoten ohne Knotenlager, auch die auf "
+                         "Linien- und Flächenlagern)", self.ed_gruppen))
         a = s.dreh_achse if s else (0.0, 1.0, 0.0)
         p = s.dreh_punkt if s else (0.0, 0.0, 0.0)
         self.ed_achse = [NumEdit(v, 60) for v in a]
