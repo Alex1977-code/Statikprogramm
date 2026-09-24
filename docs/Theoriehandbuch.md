@@ -4378,7 +4378,10 @@ maßgebend. Die Aufteilung der Schnittgrößen auf die Bauteile folgt der
 
 * Kopfplatte: Flanschkraft F_t = |M_y|/(h − t_f) + N·A_f/A auf die Schrauben
   der Zugzone, Querkraft gleichmäßig auf alle Schrauben, Druckflansch gegen
-  b·t_f·f_y.
+  b·t_f·f_y. Rippen setzt keiner dieser Nachweise an und auch nicht das
+  FE-Teilmodell; der Vorschlag schlägt darum keine vor. Bleibt der Druckflansch
+  maßgebend, endet das Nachbessern mit dem Hinweis auf das Profil (Voute oder
+  größeres Profil), denn Blech, Schrauben und Nähte ändern diesen Nachweis nicht.
 * Laschenstoß: Flanschlaschen tragen Normalkraft und Moment, Steglaschen die
   Querkraft (6.2.7).
 * Knotenblech: Stabkraft auf die Schrauben beziehungsweise die Naht; das Blech
