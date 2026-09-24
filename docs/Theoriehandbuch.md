@@ -6792,8 +6792,8 @@ beiden Regeln fest: ohne „verdreht“ bestanden 109, ohne „doppelte Knoten�
   aus der Raumdiagonale des
   Quaders um die Schleife und der längsten Seitenkante der Gruppe); dann
   gilt p₀ in halber Dicke als Punkt auf allen Ebenen. Gemessen am
-  24.09.2026 mit `tests._platte`, Kerbe am Rand y = 0: Blech
-  4 × 4 × 0,005 m aus 80 × 80 × 1 (w = 50 mm), Kerbe 0,2 × 0,2 m
+  24.09.2026 mit `_platte` aus `tests/test_diagnose.py`, Kerbe am
+  Rand y = 0: Blech 4 × 4 × 0,005 m aus 80 × 80 × 1 (w = 50 mm), Kerbe 0,2 × 0,2 m
   (2,0e-4 m³): „WARNUNG Lücke im Netzrand 1,333e-4 m³“, zwei Drittel. Im
   selben Blech offen und eine Lücke: Kerbe 0,1 × 0,3 m (Rand 14,29 %,
   1,0e-4 von 1,5e-4 m³) und 0,1 × 0,4 m (11,11 %, 1,333e-4 m³);
