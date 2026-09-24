@@ -37,11 +37,11 @@ def close(name, got, want, tol, unit=""):
     return check(name, err <= tol, f"num={got:.6g} ana={want:.6g} Abw={err * 100:.4f}% {unit}")
 
 
-def _haut(nx=6, nz=40, b=3.0, h=5.0, t=0.012):
+def _haut(nx=6, nz=40, b=3.0, h=5.0, t=0.012, z0=0.0):
     m = Model("Schütz")
     m.add_material(Material("S"))
     m.add_shell_prop(ShellProp("t", t))
-    ids = [[m.add_node(0.0, i * b / nx, k * h / nz) for k in range(nz + 1)] for i in range(nx + 1)]
+    ids = [[m.add_node(0.0, i * b / nx, z0 + k * h / nz) for k in range(nz + 1)] for i in range(nx + 1)]
     el = [m.add_element("shell4", [ids[i][k], ids[i + 1][k], ids[i + 1][k + 1], ids[i][k + 1]], "S", "t")
           for i in range(nx) for k in range(nz)]
     m.flaechen["Haut"] = Flaeche("Haut", dicke="t", material="S", elemente=el)
@@ -219,20 +219,20 @@ def test_ausweichen_erreicht_bericht():
     und den Druckschwankungs-Lastfall ueber solve_cases ohne Fortschritt. Der
     Grund stand nur in res_luft.info/res_wasser.info (die Oberflaeche zeigt
     ihn ueber _solve_done der Wasser-Modalanalyse); erg.log, das Kapitel und
-    die Hinweise des Berichts nach einer Berechnung (Report(m, an)) nannten
+    die Hinweise des Berichts aus einer Analyse (Report(m, an)) nannten
     ihn nicht - im ganzen Bericht 0-mal "ausgewichen", mit PARDISO im Prozess
     zum Scheitern gebracht wie in tests/test_loeser.py. Das Ausweichen des
     Druckschwankungs-Lastfalls ging ganz verloren (res_d wird nirgends
-    abgelegt). Den Bericht ohne Berechnung (aus res_wasser) prueft der Teil
-    "ohne Berechnung" vor der Gegenprobe.
+    abgelegt). Den Bericht ohne Analyse (aus res_wasser) prueft der Teil
+    "ohne Analyse" vor der Gegenprobe.
     """
     import re
     import pypardiso
     from statik3d import parallel
     from statik3d.report.html import Report
 
-    def aufbau():
-        m = _haut(nz=20)
+    def aufbau(z0=0.0):
+        m = _haut(nz=20, z0=z0)
         wd = Wasserdruck("S", flaechen=["Haut"], h_ow=4.0, richtung=[1.0, 0, 0], unterstroemt=True,
                          spalt=0.3, cp_dyn=0.1)
         wdm.lasten_erzeugen(m, wd)
@@ -256,11 +256,21 @@ def test_ausweichen_erreicht_bericht():
         m_a, wd_a, _an = aufbau()
         an_a = solver.solve_all(m_a)
         an_a.schwingung = sw.nachweis(m_a, sn, an_a)
-        # Nachweis ohne vorheriges "Berechnen" - wie die Oberflaeche ihn dann
-        # fuehrt (self.analysis ist None, die Angaben stehen im Modell)
+        # Nachweis ohne Analyse - wie die Oberflaeche ihn fuehrt, solange keine
+        # Ergebnisse von "Alle Lastfaelle + Kombinationen" oder "Nur aktiver
+        # Lastfall" vorliegen (self.analysis ist None, die Angaben stehen im Modell)
         m_o, wd_o, _an_o = aufbau()
         m_o.schwingungen[sn.name] = sn
         erg_o = sw.nachweis(m_o, sn, None)
+        # ... ohne Modalanalyse im Wasser: Haken "Hydrodynamische Masse" aus
+        # bzw. die benetzte Flaeche ganz ueber dem Wasserspiegel (m_hydro = 0)
+        from dataclasses import replace
+        sn_h = replace(sn, hydromasse=False)
+        ohne_wasser = {}
+        for fall, z0, sn_f in (("Haken aus", 0.0, sn_h), ("über dem Wasserspiegel", 5.0, sn)):
+            m_f, _wd_f, _an_f = aufbau(z0)
+            m_f.schwingungen[sn_f.name] = sn_f
+            ohne_wasser[fall] = (m_f, sw.nachweis(m_f, sn_f, None))
     finally:
         pypardiso.PyPardisoSolver.factorize = echt
         parallel.configure(solver_backend=alt_backend)
@@ -321,36 +331,67 @@ def test_ausweichen_erreicht_bericht():
           and "Schwingungsnachweis" not in punkte_a[0],
           punkte_a[0][:90] if punkte_a else "keine Zeile")
 
-    # Ohne "Berechnen" schreibt die Oberflaeche den Bericht aus der
-    # Modalanalyse im Wasser: _schwingung_rechnen legt den Nachweis nur an eine
+    # Ohne Analyse schreibt die Oberflaeche den Bericht aus der Modalanalyse
+    # des Nachweises: _schwingung_rechnen legt den Nachweis nur an eine
     # vorhandene Analyse ("if self.analysis is not None"), _solve_done("modal",
     # erg.res_wasser) setzt self.results, und make_report schreibt
-    # write_report(model, self.results) (gui/main.py). Der Nachweis steht dann
-    # nicht im Bericht, die Hinweiszeile nennt nur die Wasser-Modalanalyse;
-    # Luft und Druckschwankungs-Lastfall zaehlen nicht mit. So war es schon am
-    # Stand ec6448c (gemessen 24.09.2026, schwingung.py und report/html.py
+    # write_report(model, self.results) (gui/main.py). Eine Analyse entsteht
+    # nur aus "Alle Lastfaelle + Kombinationen" oder "Nur aktiver Lastfall";
+    # _solve_done("modal"/"buckling") laesst self.analysis unberuehrt, nach
+    # "Eigenschwingungen" oder "Knicken" gilt also dasselbe (gemessen
+    # 24.09.2026 an den Methoden des Hauptfensters, offscreen: nach
+    # _solve_done("modal", ...) steht der Nachweis 0-mal im Bericht, nach
+    # _solve_done("case", ...) 1-mal). Der Nachweis steht dann nicht im
+    # Bericht, die Hinweiszeile nennt nur die Wasser-Modalanalyse; Luft und
+    # Druckschwankungs-Lastfall zaehlen nicht mit. So war es schon am Stand
+    # ec6448c (gemessen 24.09.2026, schwingung.py und report/html.py
     # zurueckgenommen: dieselbe Zeile). Das Handbuch sagte am Stand 900d08c
     # ohne Einschraenkung, der Bericht nenne den Nachweis als
     # "Schwingungsnachweis Name" und habe bis zum 23.09.2026 kein Ausweichen
-    # genannt - beides gilt nur nach einer Berechnung (Mangel der zweiten
-    # Gegenpruefung).
+    # genannt - beides gilt nur mit einer Analyse (Mangel der zweiten
+    # Gegenpruefung); am Stand e5ef095 hing es dort an "Berechnen" (Mangel
+    # der dritten Gegenpruefung).
     zeilen_o = [z for z in erg_o.log if "ausgewichen" in z]
-    check("ohne Berechnung: erg.log nennt Luft, Wasser und den Druckschwankungs-Lastfall",
+    check("ohne Analyse: erg.log nennt Luft, Wasser und den Druckschwankungs-Lastfall",
           len(zeilen_o) == 1 and "bei 3 Ergebnissen" in zeilen_o[0] and wd_o.lastfall_dyn in zeilen_o[0],
           zeilen_o[0][:110] if zeilen_o else "keine Zeile")
     for umfang in ("lang", "kurz"):
         html_o = Report(m_o, erg_o.res_wasser, options={"umfang": umfang}).html()
         punkte_o = [re.sub("<[^>]+>", "", p) for p in re.findall(r"<li>(.*?)</li>", html_o, re.S)
                     if "ausgewichen" in p]
-        check(f"ohne Berechnung ({umfang}): eine Hinweiszeile, nur die Modalanalyse im Wasser",
+        check(f"ohne Analyse ({umfang}): eine Hinweiszeile, nur die Modalanalyse im Wasser",
               len(punkte_o) == 1 and "Probe: PARDISO verweigert" in punkte_o[0]
               and f"bei 1 Ergebnis (Eigenschwingungen im Wasser ({wd_o.name})): " in punkte_o[0],
               f"{len(punkte_o)} Zeilen: " + (punkte_o[0][:110] if punkte_o else ""))
-        check(f"ohne Berechnung ({umfang}): der Nachweis steht nicht im Bericht",
+        check(f"ohne Analyse ({umfang}): der Nachweis steht nicht im Bericht",
               f"Schwingungsnachweis {sn.name}" not in html_o
               and "Schwingungsnachweis des Verschlusses" not in html_o,
               f"{html_o.count('Schwingungsnachweis ' + sn.name)} / "
               f"{html_o.count('Schwingungsnachweis des Verschlusses')} mal")
+
+    # Rechnet der Nachweis keine Modalanalyse im Wasser (Haken aus oder
+    # m_hydro = 0), gilt res_wasser = res_luft (schwingung.py, "if M_add is not
+    # None and erg.m_hydro > 0"), umbenannt wird nicht: Die Oberflaeche zeigt
+    # und berichtet dann die Rechnung in Luft unter dem Namen "Modalanalyse"
+    # aus solver.solve_modal, und gerade deren Ausweichen zaehlt in der Zeile.
+    # Das Handbuch sagte am Stand e5ef095 ohne Einschraenkung "bei 1 Ergebnis
+    # (Eigenschwingungen im Wasser (Wasserdruck))" und "das Ausweichen der
+    # Eigenfrequenzen in Luft zaehlt dort nicht mit" (Maengel der dritten
+    # Gegenpruefung, gemessen 24.09.2026; am Stand ec6448c dieselbe Zeile).
+    for fall, (m_f, erg_f) in ohne_wasser.items():
+        check(f"ohne Wasser-Modalanalyse ({fall}): Vorbedingung res_wasser = res_luft",
+              erg_f.res_wasser is erg_f.res_luft and erg_f.m_hydro == 0.0
+              and erg_f.res_wasser.name == "Modalanalyse",
+              f"{erg_f.res_wasser is erg_f.res_luft} m_hydro={erg_f.m_hydro:g} {erg_f.res_wasser.name}")
+        for umfang in ("lang", "kurz"):
+            html_f = Report(m_f, erg_f.res_wasser, options={"umfang": umfang}).html()
+            punkte_f = [re.sub("<[^>]+>", "", p) for p in re.findall(r"<li>(.*?)</li>", html_f, re.S)
+                        if "ausgewichen" in p]
+            check(f"ohne Wasser-Modalanalyse ({fall}, {umfang}): eine Zeile, die Rechnung in Luft",
+                  len(punkte_f) == 1 and "Probe: PARDISO verweigert" in punkte_f[0]
+                  and "bei 1 Ergebnis (Modalanalyse): " in punkte_f[0]
+                  and f"Schwingungsnachweis {sn.name}" not in html_f,
+                  f"{len(punkte_f)} Zeilen: " + (punkte_f[0][:80] if punkte_f else ""))
 
     # Gegenprobe: ohne Ausfall steht nichts da
     m0, _wd0, an0 = aufbau()
