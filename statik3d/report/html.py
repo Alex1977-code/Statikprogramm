@@ -4100,8 +4100,10 @@ class Report:
         # eine Zeile je Grund ueber alle Ergebnisse. Bis zum 22.09.2026 stand
         # es nirgends im Bericht; der Anhang nannte nur den Loeser, der am Ende
         # gerechnet hat (Befund K2).
-        from ..solver import ausweichen_gebuendelt
+        from ..solver import ausweichen_gebuendelt, dilatation_gebuendelt
         self._warnings.extend(ausweichen_gebuendelt(self.all_results()))
+        # wo die Knotendilatation nicht greift (Befund B032, 24.09.2026)
+        self._warnings.extend(dilatation_gebuendelt(self.all_results()))
         warn = list(dict.fromkeys(self._warnings))
         chk = [s for s in self._modellpruefung() if s.startswith("FEHLER") or s.startswith("WARNUNG")]
         warn += [f"Modellprüfung: {s}" for s in chk]
