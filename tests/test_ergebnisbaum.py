@@ -735,6 +735,7 @@ def test_knoten_nach_rechnung():
     w.load_example("frame"); app.processEvents()
     an = solver.solve_all(w.model, design=False)
     w._solve_done("all", an); app.processEvents()
+    vorher = [e[:2] for e in w._ergebnisliste().get("Verformungen", [])]
     for sichtbar in (True, False):
         w.act_ergebnisse.setChecked(sichtbar); app.processEvents()
         nn = w.model.nn
@@ -748,8 +749,12 @@ def test_knoten_nach_rechnung():
               "keine Ausnahme, der Baum zählt ihn",
               not fehler and w.model.nn == nn + 1 and wurzel is not None
               and wurzel.text(1) == f"{nn + 1} Kn", fehler or (wurzel.text(1) if wurzel else ""))
-    check("… die Verformungen des alten Netzes stehen nicht mehr im Baum",
-          "Verformungen" not in w._ergebnisliste(), str(list(w._ergebnisliste())))
+    # Bis zur Gegenpruefung von 97be9ff (24.09.2026) verschwand die Gruppe
+    # hier ganz; nur angehaengt („gewachsen“) bleibt jetzt der Bereich ueber
+    # die alten Knoten stehen - die neuen haben keinen Wert
+    jetzt = [e[:2] for e in w._ergebnisliste().get("Verformungen", [])]
+    check("… die Verformungen zeigen den Bereich über die alten Knoten",
+          bool(vorher) and jetzt == vorher, f"{jetzt[:2]} statt {vorher[:2]}")
     w.act_ergebnisse.setChecked(True); app.processEvents()
 
 
@@ -1129,6 +1134,186 @@ def test_ergebnis_passt_nach_stand():
     w.load_example("frame"); app.processEvents()
 
 
+NICHT_GESPEICHERT = "Ergebnis nicht gespeichert: passt nicht mehr zum Modell – neu rechnen"
+
+
+def test_speichern_nur_passendes():
+    """Gegenpruefung von 97be9ff (24.09.2026, Punkt 1): ergebnisse_speichern
+    schrieb die Analyse auch, wenn sie nicht mehr zum Modell passte. Nach dem
+    Laden galt sie als „passt“ - Element 0 geloescht, Stab [0,5] angelegt:
+    gleiche Knoten, gleiche Anzahl, gleiche Koordinatensumme, und die Werte
+    standen an verschobenen Elementen (erg_pruef3/p7_laden_veraltet.py).
+    Jetzt: nicht passend -> keine Ergebnisdatei (eine alte daneben wird
+    entfernt), Hinweis im Protokoll; die Kennung der Datei traegt einen
+    Elementhash, alte Dateien ohne ihn bleiben lesbar."""
+    from statik3d import ergebnisse as erg
+    from statik3d.gui import viewport as vp
+    w, app = _fenster()
+    d = tempfile.mkdtemp(prefix="statik3d_speichern_")
+    pfad = os.path.join(d, "rahmen.json")
+    epfad = erg.pfad_zu(pfad)
+
+    def neu():
+        w.load_example("frame"); app.processEvents()
+        w._solve_done("all", solver.solve_all(w.model, design=False)); app.processEvents()
+        w._baum_geklickt("ergebnis", "feld:|u| Verschiebung"); app.processEvents()
+
+    def umbauen():
+        mat, sec = list(w.model.materials)[0], list(w.model.sections)[0]
+        w.model.elemente_loeschen([0])
+        w._maske_stab_anlegen({"knoten": [0, 5], "mat": mat, "sec": sec}); app.processEvents()
+        w.redraw(); app.processEvents()
+
+    # unveraendert: geschrieben, geladen, passt (die Gegenprobe zur Kur)
+    neu()
+    w.path = pfad
+    w.save_model(); app.processEvents()
+    check("Unverändert gespeichert: Ergebnisdatei geschrieben", os.path.exists(epfad))
+    w.load_example("frame"); app.processEvents()
+    w.modell_laden(pfad); app.processEvents()
+    check("… geladen: Ergebnis da und „passt“",
+          w.analysis is not None and vp.ergebnis_passt(
+              w.model, w.current_result(), w._ergebnis_stand) == "passt")
+
+    # umgebaut und gespeichert: die Datei von eben darf nicht bleiben
+    neu()
+    umbauen()
+    n0 = len(w.log.toPlainText().splitlines())
+    w.path = pfad
+    w.save_model(); app.processEvents()
+    neu_log = "\n".join(w.log.toPlainText().splitlines()[n0:])
+    check("Umgebaut (Element gelöscht, Stab [0,5]) gespeichert: keine Ergebnisdatei",
+          not os.path.exists(epfad), epfad)
+    check("… Hinweis „Ergebnis nicht gespeichert … neu rechnen“ im Protokoll",
+          NICHT_GESPEICHERT in neu_log, neu_log[-120:])
+    w.load_example("frame"); app.processEvents()
+    w.modell_laden(pfad); app.processEvents()
+    check("… geladen: kein Ergebnis (nicht still als „passt“ an verschobenen Elementen)",
+          w.analysis is None and w.current_result() is None and not w.plotter.scalar_bars,
+          f"analysis {'da' if w.analysis is not None else 'None'}")
+
+    # Kennung mit Elementhash: dieselbe Datei zu einem Modell mit gleicher
+    # Knoten-/Elementzahl und Koordinatensumme, aber anderen Elementen
+    w.load_example("frame"); app.processEvents()
+    ma = w.model
+    an = solver.solve_all(ma, design=False)
+    p2 = os.path.join(d, "a.ergebnisse")
+    erg.schreiben(p2, ma, an)
+    mb = ma.copy()
+    mat, sec = list(mb.materials)[0], list(mb.sections)[0]
+    mb.elemente_loeschen([0])
+    mb.add_element("beam", [0, 5], mat, sec)
+    grund = ""
+    try:
+        erg.lesen(p2, mb)
+    except ValueError as ex:
+        grund = str(ex)
+    check("Kennung: Datei zu anderen Elementen (gleiche Anzahl, gleiche Knoten) abgelehnt",
+          len(mb.elements) == len(ma.elements) and mb.nn == ma.nn and bool(grund), grund)
+    k = erg.kennung(ma)
+    ohne = {s: v for s, v in k.items() if s != "elemente"}
+    check("… eine alte Kennung ohne Elementhash passt weiter",
+          "elemente" in k and erg.passt(ohne, ma)[0], str(sorted(k)))
+    check("… der Elementhash ist über Prozesse gleich (kein hash() von Zeichenketten)",
+          isinstance(k.get("elemente"), str)
+          and k.get("elemente") == erg.kennung(ma.copy()).get("elemente"),
+          str(k.get("elemente")))
+    w.load_example("frame"); app.processEvents()
+
+
+def _rechnen_und_warten(w, app, kind, waehrenddessen):
+    """do_solve im Hintergrund starten, ``waehrenddessen`` ausfuehren, bevor
+    das Ergebnis ueber die Ereignisschleife zurueckkommt, dann warten."""
+    import time
+    w.do_solve(kind)
+    waehrenddessen()
+    t0 = time.time()
+    while w.worker is not None and w.worker.isRunning() and time.time() - t0 < 120:
+        app.processEvents(); time.sleep(0.02)
+    for _ in range(30):
+        app.processEvents(); time.sleep(0.01)
+
+
+def test_stand_bei_rechenstart():
+    """Gegenpruefung von 97be9ff (24.09.2026, Punkt 2): der Modellstand wurde
+    erst in _solve_done gezogen - was der Anwender waehrend der
+    Hintergrundrechnung aenderte, galt danach als „passt“. Jetzt zieht ihn
+    der Start der Rechnung; ein Undo waehrend der Rechnung (tauscht
+    self.model) ergibt ebenso „anders“."""
+    from statik3d.gui import viewport as vp
+    w, app = _fenster()
+    for kind in ("all", "case", "modal"):
+        w.load_example("frame"); app.processEvents()
+        w.refresh_modelltabellen(); app.processEvents()
+        zeile = [int(z[0]) for z in w.tbl_knoten.modell.zeilen].index(3)
+        z0 = float(w.model.nodes[3][2])
+        _rechnen_und_warten(w, app, kind, lambda: w._knoten_aendern(zeile, 3, z0 + 0.5))
+        r = w.current_result()
+        p = vp.ergebnis_passt(w.model, r, w._ergebnis_stand)
+        check(f"{kind}: Knoten während der Rechnung verschoben -> „anders“, kein Ergebnis im Bild",
+              r is not None and p == "anders" and not w.plotter.scalar_bars,
+              f"{p}, {len(w.plotter.scalar_bars)} Skalen")
+    # Undo waehrend der Rechnung: gerechnet wurde der verschobene Stand
+    w.load_example("frame"); app.processEvents()
+    w.refresh_modelltabellen(); app.processEvents()
+    zeile = [int(z[0]) for z in w.tbl_knoten.modell.zeilen].index(3)
+    w._knoten_aendern(zeile, 3, float(w.model.nodes[3][2]) + 0.5); app.processEvents()
+    _rechnen_und_warten(w, app, "all", w.undo)
+    r = w.current_result()
+    p = vp.ergebnis_passt(w.model, r, w._ergebnis_stand)
+    check("Undo während der Rechnung -> „anders“, kein Ergebnis im Bild",
+          r is not None and p == "anders" and not w.plotter.scalar_bars,
+          f"{p}, {len(w.plotter.scalar_bars)} Skalen")
+    # ohne Aenderung waehrend der Rechnung: „passt“ (die Gegenprobe)
+    w.load_example("frame"); app.processEvents()
+    _rechnen_und_warten(w, app, "all", lambda: None)
+    p = vp.ergebnis_passt(w.model, w.current_result(), w._ergebnis_stand)
+    check("Nichts geändert während der Rechnung -> „passt“", p == "passt", p)
+    w.load_example("frame"); app.processEvents()
+
+
+def test_zusaetze_nach_stand():
+    """Gegenpruefung von 97be9ff (24.09.2026, Punkt 3): die Zusaetze
+    „min … max“ unter Verformungen und Schnittgroessen im Baum prueften nur
+    len(u) == nn. „anders“ (Element geloescht, Stab angelegt) zeigte den
+    alten Bereich, „gewachsen“ gar keine Verformungen. Jetzt: „anders“ -
+    keine Zahlen, Zusatz „neu rechnen“ grau; „gewachsen“ - der Bereich ueber
+    die alten Knoten bzw. Elemente."""
+    from statik3d.gui import viewport as vp
+    w, app = _fenster()
+
+    def neu():
+        w.load_example("frame"); app.processEvents()
+        w._solve_done("all", solver.solve_all(w.model, design=False)); app.processEvents()
+
+    neu()
+    mat, sec = list(w.model.materials)[0], list(w.model.sections)[0]
+    w.model.elemente_loeschen([0])
+    w._maske_stab_anlegen({"knoten": [0, 5], "mat": mat, "sec": sec}); app.processEvents()
+    erg = w._ergebnisliste()
+    neu_rechnen = getattr(vp, "NEU_RECHNEN", "neu rechnen")
+    for gruppe in ("Verformungen", "Schnittgrößen"):
+        zeilen = [e for e in erg.get(gruppe, []) if not e[2].endswith("kein Verlauf")]
+        check(f"„anders“: {gruppe} ohne Zahlen, Zusatz „neu rechnen“ grau",
+              bool(zeilen) and all(e[1] == neu_rechnen and len(e) > 3 for e in zeilen),
+              str([e[1] for e in zeilen][:3]))
+
+    neu()
+    vorher = w._ergebnisliste()
+    nn0, ne0 = w.model.nn, len(w.model.elements)
+    w._stabzug_erzeugen({"mat": mat, "sec": sec, "x1": 20, "y1": 0, "z1": 0,
+                         "x2": 25, "y2": 0, "z2": 0, "n": 4}); app.processEvents()
+    p = vp.ergebnis_passt(w.model, w.current_result(), w._ergebnis_stand)
+    erg = w._ergebnisliste()
+    for gruppe in ("Verformungen", "Schnittgrößen"):
+        alt = [e[:2] for e in vorher.get(gruppe, [])]
+        jetzt = [e[:2] for e in erg.get(gruppe, [])]
+        check(f"„gewachsen“: {gruppe} mit dem Bereich über die alten Knoten/Elemente",
+              p == "gewachsen" and w.model.nn > nn0 and len(w.model.elements) > ne0
+              and bool(alt) and jetzt == alt, f"{p}: {jetzt[:2]} statt {alt[:2]}")
+    w.load_example("frame"); app.processEvents()
+
+
 def main():
     # Haelt etwas an (ein Dialog offscreen), steht der Stapel im Protokoll
     # statt eines stummen Haengers
@@ -1143,7 +1328,9 @@ def main():
               test_ergebniswechsel, test_knoten_nach_rechnung,
               test_gelenke_nach_der_rechnung, test_winzige_verdrehung_im_fenster,
               test_alte_ergebnisdatei, test_alte_ergebnisdatei_im_fenster,
-              test_ergebnis_passt_nicht_mehr, test_ergebnis_passt_nach_stand):
+              test_ergebnis_passt_nicht_mehr, test_ergebnis_passt_nach_stand,
+              test_speichern_nur_passendes, test_stand_bei_rechenstart,
+              test_zusaetze_nach_stand):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

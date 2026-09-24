@@ -2997,7 +2997,12 @@ def _verdrehung(model: Model, res, field: str):
     return np.where(drehknoten(model), w * 1000, np.nan), name
 
 
-def verformungen_liste(model: Model, res) -> list:
+#: Zusatz im Modellbaum statt „min … max“, wenn das Ergebnis zu einem
+#: anderen Modellstand gehoert (ergebnis_passt „anders“, 24.09.2026)
+NEU_RECHNEN = "neu rechnen"
+
+
+def verformungen_liste(model: Model, res, passt: str = None) -> list:
     """Die Gruppe „Verformungen“ fuer den Modellbaum: [(Text, Zusatz,
     Faerbung, grau)].
 
@@ -3007,13 +3012,24 @@ def verformungen_liste(model: Model, res) -> list:
     betragsgroessere Extrem je Knoten; bis zum 24.09.2026 stand hier min(u_min)
     … max(u_max), dessen eine Grenze dann nirgends im Bild zu finden war).
     Hat kein Knoten eine Drehsteifigkeit, stehen die phi-Eintraege grau mit
-    der Erklaerung als Zusatz. Gehoert das Ergebnis zu einem anderen Netz
-    (Knoten nach der Rechnung angelegt), gibt es keine Liste.
+    der Erklaerung als Zusatz.
+
+    ``passt`` ist ergebnis_passt(model, res, Stand der Rechnung); ohne ihn
+    entscheiden die Anzahlen. „anders“: keine Zahlen, jeder Eintrag grau mit
+    „neu rechnen“ - welche Nummer zu welchem Wert gehoert, ist nicht mehr
+    bekannt. „gewachsen“: der Bereich ueber die alten Knoten (die neuen
+    haben keinen Wert). Bis zur Gegenpruefung von 97be9ff (24.09.2026) galt
+    nur len(u) == nn: „anders“ bei gleicher Knotenzahl zeigte den alten
+    Bereich, „gewachsen“ gar keine Liste.
     """
     from .. import spannungen as spn
     u = displacement_of(res)
-    if u is None or len(u) != int(model.nn):
+    if u is None:
         return []
+    if passt is None:
+        passt = ergebnis_passt(model, res)
+    if passt == "anders":
+        return [(text, NEU_RECHNEN, feld, True) for text, feld in VERFORMUNGEN_BAUM]
     ohne = not drehknoten(model).any()
     out = []
     for text, feld in VERFORMUNGEN_BAUM:
