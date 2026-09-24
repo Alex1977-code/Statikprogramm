@@ -338,8 +338,9 @@ def test_kombination_unerkannter_teil():
 
     Gegenpruefung vom 23.09.2026 zu Befund SV10: Der Ausdruck in
     ``_formel_zerlegen`` griff nur LF/LC/CO/LK/EK heraus, der Rest der Formel
-    fiel ohne Meldung weg, sobald daneben ein LF-Anteil stand. Gemessen am
-    Stand 6cbc144: „1.35*LC1 + RC1“ wurde LK6 = {LF1: 1,35},
+    fiel ohne Meldung weg, sobald daneben ein LF-Anteil stand (oder ein
+    aufgeloester Verweis, siehe test_kombination_rest_neben_verweis). Gemessen
+    am Stand 6cbc144: „1.35*LC1 + RC1“ wurde LK6 = {LF1: 1,35},
     „1.35*LF1 + 1.5*LF2 + 0.9*RC2“ wurde {LF1: 1,35, LF2: 1,5},
     „1.35*LF1 + 1.5*Schnee“ wurde {LF1: 1,35} - zu keiner der Zeilen eine
     Protokollzeile. RC ist das englische Kuerzel der Ergebniskombination (wie
@@ -451,6 +452,74 @@ def test_kombination_verweis_auf_rest():
           next((z for z in log if z.strip().endswith("Lastkombinationen")), "keine Zeile"))
 
 
+def test_kombination_rest_neben_verweis():
+    """Ein nicht erkannter Teil neben einem aufgeloesten Verweis legt nicht halb an.
+
+    Befund B024 vom 23.09.2026: Schnittstellen.md und der Docstring von
+    _formel_zerlegen sagten, der Text sei vorher nur neben einem LF-Anteil
+    weggefallen. Gemessen am Stand 6cbc144 fiel er auch neben einem
+    aufgeloesten Verweis weg: ['1;GZT;1.35*LF1', '2;GZT;CO1 + Schnee'] ergab
+    LK2 = {LF1: 1,35} mit der Infozeile „Verweise ['CO1'] ... aufgeloest:
+    1.35*LF1“ und „2 von 2“, „Schnee“ stand in keiner Zeile;
+    '2;GZT;2*CO1 x' ergab LK2 = {LF1: 2,7}. Keine Pruefung deckte den Fall:
+    mit ``if offen or (rest and _f0)`` statt ``if offen or rest`` bestand
+    test_rfem 96/96 (Stand ec6448c). Formeln selbst gebaut; ob RFEM so etwas
+    schreibt, ist an keiner echten Datei gemessen.
+    """
+    for rest, zeile in ((["+ Schnee"], "2;GZT;CO1 + Schnee"), (["x"], "2;GZT;2*CO1 x")):
+        m, log = _kombinationstabelle("s3d_krv_", ["1;GZT;1.35*LF1", zeile], lastfaelle=1)
+        formel = zeile.split(";")[2]
+        check(f"„{formel}“: LK2 nicht mit dem aufgeloesten CO1 angelegt",
+              "LK2" not in m.combinations,
+              str(dict(m.combinations["LK2"].factors)) if "LK2" in m.combinations
+              else "nicht angelegt")
+        z = next((z for z in log if "LK2 " in z or "LK2:" in z), "keine Zeile")
+        check(f"„{formel}“: Warnung nennt den nicht erkannten Teil {rest}",
+              z.startswith("WARNUNG") and f"nicht erkannter Teil {rest}" in z, z)
+        check(f"„{formel}“: keine Infozeile „aufgeloest“ zu LK2",
+              not any("LK2" in x and "aufgeloest" in x for x in log))
+        check(f"„{formel}“: LK1 bleibt 1,35·LF1",
+              _gleich(dict(m.combinations["LK1"].factors) if "LK1" in m.combinations else {},
+                      {"LF1": 1.35}))
+        check(f"„{formel}“: „1 von 2 Lastkombinationen“",
+              "1 von 2 Lastkombinationen" in "\n".join(log),
+              next((z for z in log if z.strip().endswith("Lastkombinationen")), "keine Zeile"))
+
+
+def test_kombination_vorsatz_zusatz():
+    """Vorsatz, Zusatz oder Komma in der Formel: gewarnt und nicht angelegt.
+
+    Befund B092 vom 23.09.2026: Gemessen am Stand 6cbc144 wurden
+    „GZT-1: 1.35*LF1“ als {LF1: 1,35}, „LF1/p + 1.5*LF2“ als
+    {LF1: 1, LF2: 1,5}, „1.35*LF1 + 1.5*LF2 [GZT]“ und „1.35*LF1, 1.5*LF2“
+    als {LF1: 1,35, LF2: 1,5} angelegt, je „1 von 1“ ohne weitere Zeile. Am
+    Stand ec6448c wird jede gewarnt und nicht angelegt (nicht erkannter Teil
+    in _formel_zerlegen), das deckte aber keine Pruefung: mit „,“ in der
+    Zeichenklasse von ``luecke`` (Komma verbindet wie „+“) bestand test_rfem
+    96/96. Ob RFEM solche Zusaetze schreibt, ist nicht gemessen - es liegt
+    kein echter Tabellenexport mit Kombinationen vor; darum haelt die
+    Pruefung nur die Warnung fest, der Parser liest sie nicht.
+    """
+    faelle = [("GZT-1: 1.35*LF1", "GZT-1:"), ("LF1/p + 1.5*LF2", "/p"),
+              ("1.35*LF1 + 1.5*LF2 [GZT]", "[GZT]"), ("1.35*LF1, 1.5*LF2", ",")]
+    m, log = _kombinationstabelle(
+        "s3d_kvz_", [f"{i};GZT;{f}" for i, (f, _r) in enumerate(faelle, 1)]
+        + ["5;GZT;1.35*LF1 + 1.5*LF2"], lastfaelle=2)
+    for i, (formel, rest) in enumerate(faelle, 1):
+        check(f"„{formel}“ nicht angelegt", f"LK{i}" not in m.combinations,
+              str(dict(m.combinations[f"LK{i}"].factors)) if f"LK{i}" in m.combinations
+              else "nicht angelegt")
+        z = next((z for z in log if f"LK{i} " in z or f"LK{i}:" in z), "keine Zeile")
+        check(f"„{formel}“: Warnung nennt den nicht erkannten Teil ['{rest}']",
+              z.startswith("WARNUNG") and f"nicht erkannter Teil ['{rest}']" in z, z)
+    # Gegenprobe: dieselbe Tabelle legt eine Formel ohne Zusatz an.
+    check("Gegenprobe: „1.35*LF1 + 1.5*LF2“ angelegt",
+          _gleich(dict(m.combinations["LK5"].factors) if "LK5" in m.combinations else {},
+                  {"LF1": 1.35, "LF2": 1.5}))
+    check("„1 von 5 Lastkombinationen“", "1 von 5 Lastkombinationen" in "\n".join(log),
+          next((z for z in log if z.strip().endswith("Lastkombinationen")), "keine Zeile"))
+
+
 def test_kombination_verweis_grund():
     """Die Warnung zu einem offenen CO/LK-Verweis nennt den Grund dieses Verweises.
 
@@ -498,6 +567,19 @@ def test_kombination_verweis_grund():
           "LK3" not in m.combinations,
           str(dict(m.combinations["LK3"].factors)) if "LK3" in m.combinations
           else "nicht angelegt")
+    # Der ganze Weg der Kette, wie ihn Schnittstellen.md beschreibt: jede
+    # Warnung verweist auf die Zeile davor (LK3 -> LK2 -> LK1), den
+    # eigentlichen Grund nennt erst die Warnung zur ersten Zeile. Befund B023
+    # vom 23.09.2026: das Handbuch nannte nur den Fall mit einem Schritt.
+    z2 = warnung(log, 2)
+    check("(3) Kette: LK2 verweist auf LK1",
+          "(CO1: wird selbst nicht angelegt, siehe Warnung zu LK1)" in z2, z2)
+    z1 = warnung(log, 1)
+    check("(3) Kette: erst die Warnung zu LK1 nennt den Grund",
+          "nicht erkannter Teil ['+ x']" in z1, z1)
+    z = next((warnung(log, nr) for nr in (2, 3) if "nicht erkannter Teil" in warnung(log, nr)),
+             "")
+    check("(3) Kette: LK2 und LK3 nennen den Grund nicht selbst", not z, z)
 
     # (4) Kreis ueber zwei Zeilen
     m, log = tabelle(["1;GZT;LF1 + CO2", "2;GZT;LF2 + CO1"], 2)
@@ -678,7 +760,8 @@ def main():
     for t in (test_native_sqlite, test_native_zip_und_json, test_native_unbekannt,
               test_tabellen_erweitert, test_kombinationen_abgezaehlt,
               test_kombination_minus_vor_verweis, test_kombination_unerkannter_teil,
-              test_kombination_verweis_auf_rest, test_kombination_verweis_grund,
+              test_kombination_verweis_auf_rest, test_kombination_rest_neben_verweis,
+              test_kombination_vorsatz_zusatz, test_kombination_verweis_grund,
               test_kombination_ohne_nummer_name, test_kombination_abhilfe):
         print(f"\n--- {t.__name__} ---")
         try:

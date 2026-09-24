@@ -378,12 +378,15 @@ def _formel_zerlegen(text: str) -> tuple[dict[str, float], list[tuple[float, str
     Der dritte Rueckgabewert sind die Teile der Formel, die kein Anteil
     geworden sind (ohne Leerraum und „+“, die nur verbinden). Bis zum
     23.09.2026 fielen sie ohne Meldung weg, sobald daneben ein LF-Anteil
-    stand. Gemessen am Stand 6cbc144: „1.35*LC1 + RC1“ ergab LK = 1,35·LF1,
-    „1.35*LF1 + 1.5*Schnee“ ergab 1,35·LF1 und „1.35*(LF1 + LF2)“ ergab
-    LF1 + LF2 - jeweils ohne Protokollzeile. „RC“ ist das englische Kuerzel
-    der Ergebniskombination (wie „CO“ zu „LK“) und wird wie „EK“ als Verweis
-    gelesen; ob RFEM RC oder EK in eine Lastkombinationsformel schreibt, ist
-    an keiner echten Datei gemessen.
+    oder ein aufgeloester Verweis stand. Gemessen am Stand 6cbc144:
+    „1.35*LC1 + RC1“ ergab LK = 1,35·LF1, „1.35*LF1 + 1.5*Schnee“ ergab
+    1,35·LF1 und „1.35*(LF1 + LF2)“ ergab LF1 + LF2 - jeweils ohne
+    Protokollzeile; mit CO1 = 1,35·LF1 ergab „CO1 + Schnee“ LK2 = 1,35·LF1,
+    und die Infozeile zur Aufloesung nannte nur das Ergebnis, nicht „Schnee“
+    (Befund B024). „RC“ ist das englische Kuerzel der Ergebniskombination
+    (wie „CO“ zu „LK“) und wird wie „EK“ als Verweis gelesen; ob RFEM RC oder
+    EK in eine Lastkombinationsformel schreibt, ist an keiner echten Datei
+    gemessen.
     """
     factors: dict[str, float] = {}
     verweise: list[tuple[float, str, int]] = []
