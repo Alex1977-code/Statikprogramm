@@ -330,6 +330,11 @@ def test_im_modell_und_bericht():
           f"maßgebender Knoten {kn}")
     check("die Zusammenfassung nennt es",
           "Theorie II. Ordnung" in an2.summary())
+    # Analysis.summary haengte die Zeile bis zum 23.09.2026 zweimal an - einmal
+    # hinter den Umhuellenden, einmal am Ende (Befund B125)
+    check("… und zwar einmal",
+          an2.summary().count("Theorie II. Ordnung:") == 1,
+          f"{an2.summary().count('Theorie II. Ordnung:')} Zeilen")
 
     html = Report(m2, an2).html()
     for text in ("Berechnung nach Theorie II. Ordnung",

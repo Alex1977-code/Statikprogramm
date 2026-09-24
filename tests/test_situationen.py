@@ -485,6 +485,167 @@ def test_kombinationen_je_situation():
     check("alle Kombinationen gerechnet", set(an.combinations) == set(m.combinations))
 
 
+def _balken_mit_rolle() -> tuple:
+    """Balken 2L, eingespannt, Rolle 'Rolle' am Ende; Stellung 'offen' baut
+    die Rolle ab. LF1 (Grundstellung) und LF-S (Situation 'offen') tragen
+    dieselbe Last in Balkenmitte."""
+    m, ids, sec = _balken(2)
+    m.supports.append(Support(node=ids[2], dofs=[2], name="Rolle"))
+    m.stellungen.append(Stellung("offen", 0.0, "Rolle abgebaut", lager_aus=["Rolle"]))
+    m.situationen["offen"] = Situation("offen", "offen")
+    for lf in ("LF1", "LF-S"):
+        m.add_load_case(lf, "G")
+        m.load_node(ids[1], Fz=-F, case=lf)
+    m.load_cases["LF-S"].situation = "offen"
+    return m, ids, sec
+
+
+def _situation_in_zusammenfassung(res):
+    """Der Wert der Zeile „Situation : …“ in res.summary(), sonst None.
+
+    Die Zusammenfassung ist, was Oberflaeche (Protokoll und Feld
+    „Zusammenfassung“), Kommandozeile und Webserver nach der Rechnung
+    zeigen; res.info['situation'] zeigen sie nicht."""
+    for z in res.summary().splitlines():
+        kopf, _, wert = z.partition(":")
+        if kopf.strip() == "Situation":
+            return wert.strip()
+    return None
+
+
+def test_einzelner_lastfall_in_seiner_situation():
+    """„Nur aktiver Lastfall“ (Oberflaeche), ``--analyse lastfall`` (cli) und
+    der Webserver rufen solve_static. Das baute sein System bis zum 23.09.2026
+    ohne die Situation des Lastfalls und rechnete ihn still in der
+    Grundstellung (Befund B123; Winkelrahmen mit abgebauter Stuetze uz in
+    Kragarmmitte -0,2470 statt -3,5971 mm wie solve_cases)."""
+    m, ids, sec = _balken_mit_rolle()
+    n1 = ids[1]
+    EI = E * sec.Iy
+    check("Modellpruefung ohne Beanstandung", not m.check(), str(m.check()))
+    rs = solver.solve_static(m, case="LF-S")
+    close("Lastfall in seiner Situation: Rolle abgebaut -> Kragarm w = PL³/3EI",
+          rs.u[n1, 2], -F * L ** 3 / (3 * EI), 1e-9, "m")
+    rc = solver.solve_cases(m, ["LF-S"])["LF-S"]
+    check("bitgleich mit solve_cases (Verschiebungen und Lagerkraefte)",
+          np.array_equal(rs.u, rc.u) and np.array_equal(rs.reactions, rc.reactions),
+          f"{rs.u[n1, 2]:.9e} gegen {rc.u[n1, 2]:.9e}")
+    check("Ergebnis nennt seine Situation", rs.info.get("situation") == "offen",
+          str(rs.info.get("situation")))
+    # Was der Anwender nach der Rechnung liest, ist die Zusammenfassung. Am
+    # Stand b118805 stand die Situation nur in info, das Benutzerhandbuch
+    # sagte aber „das Ergebnis nennt die Situation“ (Gegenpruefung 24.09.2026)
+    check("die Zusammenfassung nennt die Situation", _situation_in_zusammenfassung(rs) == "offen",
+          str(_situation_in_zusammenfassung(rs)))
+    # aktiver Lastfall wie in der Oberflaeche: solve_static(model, progress)
+    m.active_case = "LF-S"
+    zeilen: list = []
+    ra = solver.solve_static(m, lambda text, *a: zeilen.append(str(text)))
+    check("aktiver Lastfall ebenso in seiner Situation", np.array_equal(ra.u, rc.u),
+          f"{ra.u[n1, 2]:.9e} gegen {rc.u[n1, 2]:.9e}")
+    # die Zeile, die das Benutzerhandbuch nennt, wortgleich
+    check("der Fortschritt hat die Zeile „System gelöst – Situation offen“",
+          "System gelöst – Situation offen" in zeilen, str(zeilen[-3:]))
+    check("... und die Zusammenfassung des aktiven Lastfalls die Situation",
+          _situation_in_zusammenfassung(ra) == "offen", str(_situation_in_zusammenfassung(ra)))
+    r1 = solver.solve_static(m, case="LF1")
+    close("Lastfall der Grundstellung unveraendert: eingespannt-gestuetzt w = 7PL³/96EI",
+          r1.u[n1, 2], -7 * F * L ** 3 / (96 * EI), 1e-9, "m")
+    check("Grundstellung: keine Zeile „Situation“ in der Zusammenfassung",
+          _situation_in_zusammenfassung(r1) is None, str(_situation_in_zusammenfassung(r1)))
+    try:
+        solver.solve_static(m, case="all")
+        check("alle Lastfaelle ueber zwei Situationen werden abgewiesen", False, "lief durch")
+    except ValueError as ex:
+        check("alle Lastfaelle ueber zwei Situationen werden abgewiesen",
+              GRUNDSTELLUNG in str(ex) and "offen" in str(ex), str(ex))
+    del m.load_cases["LF1"]
+    m.active_case = "LF-S"
+    rl = solver.solve_static(m, case="all")
+    check("alle Lastfaelle einer Situation: in dieser Situation",
+          np.array_equal(rl.u, rc.u) and rl.info.get("situation") == "offen",
+          f"{rl.u[n1, 2]:.9e} {rl.info.get('situation')}")
+
+
+def test_knicken_in_seiner_situation():
+    """solve_buckling baute sein System ebenso ohne Situation: Grundzustand,
+    Steifigkeit und geometrische Steifigkeit stammten aus der Grundstellung.
+    Gerechnet gegen die Eulerfaelle einer Stuetze laengs x (acht Elemente,
+    schubstarr): Kopf seitlich gehalten (eingespannt-gelenkig, (kL)² =
+    20,1907) oder in der Situation frei (Kragstuetze, π²/4)."""
+    m, ids, sec = _balken(8, L)
+    kopf = ids[-1]
+    I = min(sec.Iy, sec.Iz)
+    P = 1.0e3
+    m.supports.append(Support(node=kopf, dofs=[1, 2], name="Kopf"))
+    m.stellungen.append(Stellung("frei", 0.0, "Kopf frei", lager_aus=["Kopf"]))
+    m.situationen["frei"] = Situation("frei", "frei")
+    for lf in ("D", "D-frei"):
+        m.add_load_case(lf, "G")
+        m.load_node(kopf, Fx=-P, case=lf)
+    m.load_cases["D-frei"].situation = "frei"
+    m.combinations["K"] = Combination("K", {"D-frei": 1.5}, "ULS", situation="frei")
+    check("Modellpruefung ohne Beanstandung", not m.check(), str(m.check()))
+    rg = solver.solve_buckling(m, 2, case="D")
+    close("Grundstellung: eingespannt-gelenkig N_cr = 20,1907 EI/L²",
+          rg.buckling_factors[0] * P, 4.4934094579 ** 2 * E * I / L ** 2, 1e-3, "N")
+    check("Grundstellung: keine Zeile „Situation“ in der Zusammenfassung",
+          _situation_in_zusammenfassung(rg) is None, str(_situation_in_zusammenfassung(rg)))
+    # wie in der Oberflaeche: mit Fortschritt, danach die Zusammenfassung
+    zeilen: list = []
+    rk = solver.solve_buckling(m, 2, lambda text, *a: zeilen.append(str(text)), case="D-frei")
+    close("Lastfall in der Situation: Kragstuetze N_cr = π²EI/(2L)²",
+          rk.buckling_factors[0] * P, math.pi ** 2 * E * I / (2 * L) ** 2, 1e-4, "N")
+    check("Knickergebnis nennt seine Situation", rk.info.get("situation") == "frei",
+          str(rk.info.get("situation")))
+    # Das Benutzerhandbuch sagt, wo die Zeile steht: beim Knicken vor
+    # „Verzweigungsproblem wird gelöst“, nicht am Schluss
+    gl = "System gelöst – Situation frei"
+    vz = "Verzweigungsproblem wird gelöst"
+    check("Knicken: „System gelöst – Situation frei“ vor „Verzweigungsproblem …“",
+          gl in zeilen and vz in zeilen and zeilen.index(gl) < zeilen.index(vz),
+          str(zeilen[-3:]))
+    check("Knicken: die Zusammenfassung nennt die Situation",
+          _situation_in_zusammenfassung(rk) == "frei", str(_situation_in_zusammenfassung(rk)))
+    rc = solver.solve_buckling(m, 2, combination="K")
+    close("Kombination in der Situation: 1,5 · P gegen π²EI/(2L)²",
+          rc.buckling_factors[0] * 1.5 * P, math.pi ** 2 * E * I / (2 * L) ** 2, 1e-4, "N")
+    check("Kombination: die Zusammenfassung nennt die Situation",
+          _situation_in_zusammenfassung(rc) == "frei", str(_situation_in_zusammenfassung(rc)))
+    # case="all" wie in solve_static: ueber zwei Situationen abgewiesen (am
+    # Stand b7659cb kam hier KeyError "Lastfall 'all' existiert nicht",
+    # gemessen 24.09.2026)
+    try:
+        solver.solve_buckling(m, 2, case="all")
+        check("Knicken ueber alle Lastfaelle zweier Situationen wird abgewiesen", False,
+              "lief durch")
+    except ValueError as ex:
+        check("Knicken ueber alle Lastfaelle zweier Situationen wird abgewiesen",
+              "verschiedenen Situationen" in str(ex), str(ex)[:80])
+    except Exception as ex:          # noqa: BLE001
+        check("Knicken ueber alle Lastfaelle zweier Situationen wird abgewiesen", False,
+              f"{type(ex).__name__}: {ex}"[:80])
+    # Abgeschaltete Elemente: die aeussere Haelfte eines Stabes 2L wirkt in
+    # der Situation nicht; ihre Knoten ausser dem ersten haben kein wirksames
+    # Element und werden festgehalten. Ginge sie mit ihrer Verformung in die
+    # geometrische Steifigkeit ein, bekaeme ihr erstes Element (Laenge L/4)
+    # die ganze Verkuerzung der Stuetze als Dehnung: N = +4P = +4000 N, das
+    # naechste 0 N. Gemessen 24.09.2026 (system.aktiv bei geometric_stiffness
+    # weggelassen, sechs Faktoren): [-59,798; -239,192; 10850,028; 27039,519;
+    # ...] statt [959,576; 3838,305; ...] - der betragskleinste wird negativ, und
+    # darum faellt die Pruefung unten durch (-5,98e4 statt 9,595e5 N); der
+    # kleinste positive steigt von 959,5 auf 10850.
+    m2, ids2, sec2 = _balken(8, 2 * L)
+    m2.situationen["kurz"] = Situation("kurz", "", [4, 5, 6, 7], "aeussere Haelfte aus")
+    m2.add_load_case("D", "G")
+    m2.load_node(ids2[4], Fx=-P, case="D")
+    m2.load_cases["D"].situation = "kurz"
+    r2 = solver.solve_buckling(m2, 2, case="D")
+    close("abgeschaltete Haelfte: Kragstuetze der Laenge L, N_cr = π²EI/(2L)²",
+          r2.buckling_factors[0] * P, math.pi ** 2 * E * min(sec2.Iy, sec2.Iz) / (2 * L) ** 2,
+          1e-4, "N")
+
+
 def test_abgeschalteter_stab_in_jeder_situation():
     """Member.aus (RFEM deaktiviert) wirkt in der Grundstellung und in jeder
     Situation: kein Beitrag, keine Last, Knoten festgehalten."""
@@ -515,7 +676,8 @@ def main():
     for t in (test_abgeschalteter_stab_in_jeder_situation, test_abgeschaltete_elemente, test_stellung,
               test_situationsmaske_unbekannte_stellung, test_stellung_lage_und_wirkung,
               test_stellung_texte_nennen_knotenlager,
-              test_speichern, test_subsystem, test_kombinationen_je_situation):
+              test_speichern, test_subsystem, test_kombinationen_je_situation,
+              test_einzelner_lastfall_in_seiner_situation, test_knicken_in_seiner_situation):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

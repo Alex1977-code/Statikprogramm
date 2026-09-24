@@ -4088,7 +4088,10 @@ Der Bericht bekommt ein eigenes Kapitel: α_cr je Kombination mit dem
 Kriterium, das gewählte Verfahren, die Zahl der Iterationen, der
 Verformungszuwachs gegenüber Theorie I. Ordnung, dann φ mit α_h, α_m und der
 Richtung, die Ersatzhorizontalkraft je Stiel und die Vorkrümmung je Stab mit
-Knicklinie, e_0, q und V.
+Knicklinie, e_0, q und V. Protokoll und Zusammenfassung nach „Alle
+Lastfälle“ fassen es in **einer** Zeile „Theorie II. Ordnung: *n* von *m*
+Kombinationen am verformten System, min. α_cr …“ zusammen; bis zum
+23.09.2026 stand diese Zeile dort zweimal.
 
 **Wichtig**: Nach Theorie II. Ordnung gilt keine Superposition mehr. Jede
 Kombination wird einzeln gerechnet — das dauert länger als eine lineare
@@ -4140,10 +4143,16 @@ Ergebnisdatei nimmt die Alternativen erst seit dem späten Abend des
 Merge vom 23.09.2026, 10:07. Die Nachweise
 melden solche Alternativen dann als „nicht nachgewiesen" und überlagern sie
 nicht linear. Das gilt auch für eine Alternative mit einem Lastfall, der nach
-II. oder III. Ordnung gerechnet wird. Gemessen am Druckkragarm mit einer
-Ergebnisdatei, die der Hauptzweig-Stand vom 22.09.2026 geschrieben hat:
-beide Alternativen „nicht nachgewiesen“ mit dem Grund Theorie II. Ordnung,
-die gewöhnliche Kombination daneben wird nachgewiesen. Bis zum 22.09.2026 wurden die Stäbe
+II. oder III. Ordnung gerechnet wird: steht die Ergebniskombination selbst
+auf I. Ordnung, wäre ihr Ergebnis die lineare Überlagerung, doch das lineare
+Ergebnis des Lastfalls ist nach der Rechnung durch das nach II./III. Ordnung
+ersetzt. Die Meldung sagt darum „ihre lineare Überlagerung lässt sich nach
+dem Ersetzen nicht mehr aus den Lastfallergebnissen bilden“; bis zum
+23.09.2026 hieß es dort „Überlagerung nicht zulässig“, obwohl gerade sie das
+gesuchte Ergebnis ist. Gemessen am Druckkragarm mit einer Ergebnisdatei, die
+der Hauptzweig-Stand vom 22.09.2026 geschrieben hat: beide Alternativen
+„nicht nachgewiesen“ mit dem Grund Theorie II. Ordnung, die gewöhnliche
+Kombination daneben wird nachgewiesen. Bis zum 22.09.2026 wurden die Stäbe
 nach einer Rechnung nur der Lastfälle gegen die Lastfälle mit Faktor 1
 nachgewiesen, ohne Hinweis, dass die Kombinationen fehlten: an der Halle
 („ein", alle GZT-Kombinationen als eine Ergebniskombination) Riegel 0,2776
@@ -4281,7 +4290,24 @@ davon nicht betroffen.
 * **Alle Lastfälle + Kombinationen**: Standard. Eine Faktorisierung, alle
   Lastfälle, Superposition, Umhüllende, optional Nachweise.
 * **Nur aktiver Lastfall**, **Eigenschwingungen**, **Knicken** (Grundzustand
-  = aktiver Lastfall).
+  = aktiver Lastfall). Der aktive Lastfall und der Grundzustand des Knickens
+  rechnen in der **Situation** des Lastfalls (Stellung, abgeschaltete
+  Elemente) – wie unter „Alle Lastfälle“. Im Protokoll steht dann die Zeile
+  „System gelöst – Situation …“ (beim Knicken vor „Verzweigungsproblem wird
+  gelöst“); danach folgt die Zusammenfassung des Ergebnisses (dieselbe steht
+  im Textfeld der Ergebnisse, in der Kommandozeile und im Webserver). Sie
+  nennt die Situation in einer eigenen Zeile „Situation“ – seit dem
+  24.09.2026; in der Grundstellung entfällt die Zeile. Bis zum 23.09.2026
+  rechneten beide still in der Grundstellung, ebenso `--analyse lastfall`
+  der Kommandozeile und der Webserver. Gemessen an einem
+  eingespannten Balken (2 × 3 m, Rechteck 10 × 20 cm, 10 kN in der Mitte)
+  mit einer Rolle am Ende, die die Stellung abbaut: Durchbiegung in der Mitte
+  1,406 statt 6,429 mm (PL³/3EI). An einer Stütze (3 m, eingespannt), deren
+  Kopfhalterung die Stellung abbaut: Knicklast 7,853 statt 0,9595 MN
+  (π²EI/(2L)²). Die Knickfaktoren sind die betragskleinsten, auch negative
+  (Knicken bei umgekehrter Last), nach Betrag geordnet. Mit Zug und Druck im
+  Grundzustand wechselten sie bis zum 23.09.2026 von Lauf zu Lauf – an einem
+  Zweigelenkrahmen unter Wind 4,27, 3,03 und 2,49 in drei Läufen statt 77,33.
 * **Gleichungslöser** (Auswahl in *Berechnung → Einstellungen*): Vorgabe
   **automatisch** = MKL PARDISO, sonst CHOLMOD, sonst SuperLU. **Weicht
   „automatisch“ aus, steht der Grund im Protokoll** — bei der Grundfaktorisierung
@@ -4332,7 +4358,12 @@ davon nicht betroffen.
   anderen Grund als einer singulären Matrix, bricht die Rechnung mit **beiden**
   Gründen ab und nennt MUMPS oder ama als Ausweg — SuperLU reicht für große
   Modelle nicht. Eine singuläre Matrix wird weiter als solche gemeldet
-  („Lagerung prüfen“). Zur Wahl
+  („Lagerung prüfen“), mit dem Grund des Ausweichens: beim Scheitern der
+  Zerlegung als „(vorher: …)“, beim Verfehlen der Residuumsschranke als
+  „Gleichungssystem numerisch singulaer (Residuum …) (Löser ausgewichen - …)“.
+  Dort fehlte er bis zum 23.09.2026 (zwei Würfel mit nur einem gemeinsamen
+  Knoten, PARDISO zum Scheitern gebracht, SuperLU löste mit Residuum 1,5).
+  Zur Wahl
   stehen **MKL PARDISO** (direkt, mehrkernig — angefordert werden alle Kerne
   bis auf einen, MKL selbst kappt auf die physischen Kerne: 16 auf einem
   Rechner mit 16 Kernen / 32 Threads),
@@ -4347,6 +4378,14 @@ davon nicht betroffen.
   4e-10 relativ), **PyAMG** (iterativ:
   algebraisches Mehrgitter mit CG — speicherarm, aber je rechte Seite neu zu
   iterieren und einkernig) und **SuperLU** (direkt, einkernig, Rückfall).
+  Beim **Knicken** rechnet PyAMG nur den Grundzustand. Das
+  Verzweigungsproblem braucht viele Lösungen mit derselben Matrix und
+  zerlegt sie dafür direkt (Wahl wie „automatisch“); im Protokoll steht
+  „Verzweigungsproblem: PyAMG iteriert jede Lösung neu – K wird dafür direkt
+  zerlegt (…)“. Scheitert die direkte Zerlegung, iteriert PyAMG auch dort,
+  und das Protokoll sagt es. An einem Rahmen mit 17 430 Freiheitsgraden
+  (vier Knickformen, gemessen 24.09.2026) dauerte das Knicken mit PyAMG so
+  7,5 s, beim Iterieren in jedem Schritt 329 s.
   **In der exe stecken** MKL PARDISO, ama, PyAMG und SuperLU (PyAMG ist
   MIT-lizenziert, ama ist eigener Kern ohne Fremdlizenz); **MUMPS**
   (CeCILL-C) lädt das Programm beim Start nach (Kästchen im Dialog

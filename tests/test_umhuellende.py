@@ -725,6 +725,13 @@ def test_lastfall_hoeherer_ordnung_ohne_abgelegtes_ergebnis():
     check("fehlt sie, wird sie mit dem Lastfall gemeldet",
           list(uls) == ["EK1 [1]"] and any("EK1 [2]" in x and "Lastfall LF2" in x for x in w),
           f"{list(uls)} {[x[:100] for x in w]}")
+    # Gesucht ist die lineare Ueberlagerung - sie ist zulaessig (EK1 hat
+    # Theorie I), laesst sich nur aus analysis.cases nicht mehr bilden. Bis zum
+    # 23.09.2026 hiess es "Ueberlagerung nicht zulaessig" (Nebenbefund 5).
+    text = next((x for x in w if "EK1 [2]" in x), "")
+    check("die Meldung sagt, was fehlt: die lineare Ueberlagerung, nicht mehr zu bilden",
+          "lineare Überlagerung" in text and "nicht mehr aus den Lastfallergebnissen" in text
+          and "nicht zulässig" not in text, text[:220])
 
 
 def test_alternative_bei_theorie_I_aus_linearen_lastfaellen():
