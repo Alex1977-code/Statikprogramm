@@ -194,21 +194,25 @@ Geprüft in `tests/test_infocad.py`.
 **Lastkombinationen aus der Tabelle zählen sich ab** (seit 22.09.2026). Die
 Schlusszeile „n von m Lastkombinationen“ zählt jede Zeile von
 „2.5 Lastkombinationen“. Eine eigene Protokollzeile bekommt jede nicht
-übernommene Zeile (mit Grund), jede aufgelöste, jede ohne Nummer und jede,
-die einen Ausweichnamen bekommt, weil ihr Name schon vergeben ist (mit ihrem
-Ergebnis); eine Zeile, die nur aus eigenen Lastfall-Anteilen besteht und
-unter ihrer Tabellennummer angelegt wird, steht nur in dieser Zählung. Ein Verweis auf eine andere Lastkombination
-derselben Tabelle („CO3“ oder „LK3“, auch wenn sie weiter unten steht) wird
+übernommene Zeile (mit Grund), jede aufgelöste, jede ohne Nummer, jede mit
+einer Nummer, die die Tabelle mehrfach führt (seit 23.09.2026, siehe unten),
+und jede, die einen Ausweichnamen bekommt, weil ihr Name schon vergeben ist
+(mit ihrem Ergebnis); eine Zeile, die nur aus eigenen Lastfall-Anteilen
+besteht und unter ihrer Tabellennummer angelegt wird, die die Tabelle nur
+einmal führt, steht nur in dieser Zählung. Ein Verweis auf eine andere
+Lastkombination derselben Tabelle („CO3“ oder „LK3“, auch wenn sie weiter unten steht) wird
 mit deren Faktoren mal dem Vorfaktor aufgelöst: „LF1 + CO1“ mit
 CO1 = 1,35·LF1 + 1,5·LF2 ergibt 2,35·LF1 + 1,5·LF2, und das Protokoll sagt
 es. Nicht auflösbar sind ein Verweis auf eine **Ergebniskombination** („EK1“
 — eine Umhüllende, kein Summand), ein Kreis (CO2 → CO4 → CO2), eine
-Nummer, die die Tabelle nicht führt, und ein Verweis auf eine Kombination,
+Nummer, die die Tabelle nicht führt, eine Nummer, die sie mehrfach führt,
+und ein Verweis auf eine Kombination,
 die selbst nicht angelegt wird. Eine solche Kombination wird **nicht
 angelegt**, auch nicht mit ihren übrigen Anteilen — sie wäre zu klein und sähe
 im Nachweis vollständig aus —, sondern mit Formel und Grund als Warnung
 genannt; ebenso eine Formel ohne erkennbaren Lastfall. Der Grund steht je
-Verweis da: „CO9: die Tabelle führt keine Nummer 9“, „CO2: Kreis, führt über
+Verweis da: „CO9: die Tabelle führt keine Nummer 9“, „CO2: die Tabelle
+führt die Nummer 2 mehrfach“, „CO2: Kreis, führt über
 Verweise auf diese Kombination zurück“ (auf sich selbst: „CO1: Kreis,
 verweist auf diese Kombination selbst“) oder „CO1: wird selbst nicht
 angelegt, siehe Warnung zu LK1“ — dann nennt die Warnung zu LK1 den
@@ -228,7 +232,7 @@ mehr, die Nummer wird auch aus „CO5“ gelesen.
 **Ein Minus ohne Zahl zieht ab** (seit 23.09.2026). Das Vorzeichen wird
 getrennt von der Zahl gelesen: „LF1 - LF2“ ergibt LF1 − LF2, „LF2 - CO1“ mit
 CO1 = 1,35·LF1 ergibt LF2 − 1,35·LF1, und die Protokollzeile der Auflösung
-nennt das Ergebnis samt Vorzeichen („… aufgeloest: 1*LF2 - 1.35*LF1“).
+nennt das Ergebnis samt Vorzeichen („… aufgelöst: 1*LF2 - 1.35*LF1“).
 Vorher stand das Vorzeichen in derselben Gruppe wie die Ziffern und fiel ohne
 Zahl weg: „LF1 - LF2“ ergab LF1 + LF2, und „LF2 - CO1“ wurde mit der
 Auflösung der Verweise vom 22.09.2026 still zu LF2 + 1,35·LF1 — vorher war
@@ -241,10 +245,11 @@ gemessen.
 (seit 23.09.2026). Erkannt werden Anteile der Form „Zahl * LF n“ (auch LC)
 und Verweise CO, LK, EK und RC; RC ist das englische Kürzel der
 Ergebniskombination und wird wie EK behandelt. Bleibt daneben Text übrig,
-der kein Anteil ist (außer Leerzeichen und „+“), wird die Kombination nicht
+der kein Anteil ist (außer Leerzeichen und je einem „+“ zwischen zwei
+Anteilen, siehe unten), wird die Kombination nicht
 angelegt, sondern mit Formel und dem übrig gebliebenen Text gewarnt:
-„Kombination LK8 („1.35*LF1 + 1.5*Schnee“): Formel nicht vollstaendig gelesen
-- nicht uebernommen (nicht erkannter Teil ['+ 1.5*Schnee'])“. Vorher fiel
+„Kombination LK8 („1.35*LF1 + 1.5*Schnee“): Formel nicht vollständig gelesen
+– nicht übernommen (nicht erkannter Teil ['+ 1.5*Schnee'])“. Vorher fiel
 dieser Text ohne Meldung weg, sobald daneben ein Lastfall-Anteil oder ein
 aufgelöster Verweis stand. Gemessen am Stand vom 23.09.2026 vor dieser
 Änderung: „1.35*LC1 + RC1“ wurde 1,35·LF1, „1.35*LF1 + 1.5*LF2 + 0.9*RC2“
@@ -272,19 +277,71 @@ RC, EK, Klammern, Kommas oder solche Zusätze in eine Lastkombinationsformel
 schreibt, ist an keiner echten Datei gemessen; darum liest das Programm
 keinen dieser Zusätze, sondern warnt.
 
+**Ein „+“ verbindet nur zwei Anteile** (seit 23.09.2026). Vor dem ersten
+und nach dem letzten Anteil steht keines, zwischen zweien höchstens eines;
+„1.35*LF1+1.5*LF2“, „1.35*LF1 + -1.0*LF2“ und „-LF1 + LF2“ bleiben, wie
+sie waren. Ein „+“ am Ende, am Anfang oder doppelt ist ein nicht erkannter
+Teil: „1.35*LF1 + 1.5*LF2 +“ wird nicht angelegt, sondern gewarnt („…
+Formel nicht vollständig gelesen – nicht übernommen (nicht erkannter Teil
+['+'])“), ebenso „1.35*LF1 ++ 1.5*LF2“ (['++']) und „+ 1.35*LF1“ (['+']).
+Ein „+“ am Ende kann auf eine abgeschnittene Formel deuten. Vorher verwarf
+der Parser jedes Stück vor, zwischen oder nach den Anteilen, das nur aus
+Leerzeichen und „+“ bestand, gleich wie viele „+“ darin standen; gemessen am
+Stand ec6448c wurden die ersten beiden
+Formeln ohne Meldung 1,35·LF1 + 1,5·LF2 und die dritte 1,35·LF1 („3 von 3
+Lastkombinationen“). Ein „-“ am Ende wurde schon vorher gewarnt. Ob RFEM je
+eine abgeschnittene Formel schreibt, ist an keiner echten Datei gemessen.
+
 **Eine Zeile ohne Nummer bekommt eine freie Nummer** (seit 23.09.2026), und
 zwar die nächste nach der größten Nummer der Tabelle; das Protokoll nennt
-sie: „Kombination LK3 (Tabellenzeile 2 ohne Nummer): 1.5*LF2“. Vorher hieß
+sie: „Kombination LK3 (Zeile 3 in „2.5 Lastkombinationen“ ohne Nummer):
+1.5*LF2“. Vorher hieß
 sie LK(Zahl der bisher angelegten + 1) und konnte so den Namen einer
 nummerierten Zeile belegen, die das Protokoll unter diesem Namen warnte oder
 auflöste. Gemessen an den Zeilen „1: 1.35*LF1“, „(ohne Nummer): 1.5*LF2“,
-„2: 1.0*EK1“: das Protokoll warnte „LK2 … nicht uebernommen“, im Modell stand
+„2: 1.0*EK1“: das Protokoll warnte, LK2 werde nicht übernommen, im Modell stand
 aber LK2 = 1,5·LF2. Bei „(ohne Nummer): 1.5*LF2“, „1: 1.35*LF1 + CO2“,
 „2: LF2“ nannte die Infozeile LK1 = 1,35·LF1 + LF2, LK1 war aber 1,5·LF2 und
-die aufgelöste Kombination hieß LK1_2. Ist ein Name schon vergeben (doppelte
-Nummer in der Tabelle, oder das Modell hatte ihn vorher), nennt die
-Protokollzeile den Ausweichnamen: „Kombination LK2_2 (Tabellennummer 2; LK2
-gab es schon): …“.
+die aufgelöste Kombination hieß LK1_2. Ist ein Name schon vergeben, nennt die
+Protokollzeile den Ausweichnamen: hatte das Modell LK2 vorher, „Kombination
+LK2_2 (Tabellennummer 2; LK2 gab es schon): 1*LF2“; führt die Tabelle die
+Nummer 2 zweimal, „Kombination LK2_2 (Zeile 3 in „2.5 Lastkombinationen“;
+die Tabelle führt die Nummer 2 mehrfach; LK2 gab es schon): 1*LF2“.
+
+**Eine Nummer, die die Tabelle mehrfach führt, wird nicht still aufgelöst**
+(seit 23.09.2026). Ein Verweis CO n oder LK n auf sie bleibt offen, mit dem
+Grund „CO2: die Tabelle führt die Nummer 2 mehrfach“ — welche der Zeilen
+gemeint ist, steht nicht da. Die Zeilen selbst werden wie jede andere
+angelegt oder gewarnt; jede Meldung zu ihnen nennt ihre Zeile im Blatt, und
+jede angelegte bekommt eine eigene Protokollzeile. Bei „2: LF1“, „2: EK1“
+steht „Kombination LK2 (Zeile 2 in „2.5 Lastkombinationen“; die Tabelle
+führt die Nummer 2 mehrfach): 1*LF1“ neben der Warnung „Kombination LK2
+(Zeile 3 in „2.5 Lastkombinationen“; die Tabelle führt die Nummer 2
+mehrfach) („EK1“): …“. Vorher zeigte ein Verweis still auf die erste Zeile
+mit dieser Nummer. Gemessen am Stand ec6448c: „2: LF1“, „2: LF2 + CO2“,
+„(ohne Nummer): LF1“ ergab LK2_2 = LF2 + LF1 — der Verweis der Zeile auf
+ihre eigene Nummer galt nicht als Kreis —; bei „2: LF1“, „2: EK1“ warnte das
+Protokoll „Kombination LK2 („EK1“) …“, und im Modell stand LK2 = LF1 ohne
+eigene Zeile; bei „1: 1.35*LF1 + x“, „1: LF2“, „2: CO1“ meldete LK2 „CO1:
+wird selbst nicht angelegt, siehe Warnung zu LK1“, obwohl LK1 = LF2 angelegt
+war. Ob RFEM doppelte Nummern schreibt, ist an keiner echten Datei gemessen.
+
+**Die Meldung nennt die Zeile im Blatt** (seit 23.09.2026). „Zeile 5 in
+„2.5 Lastkombinationen““ ist die fünfte Zeile des Blatts bzw. der
+CSV-Datei, Kopf- und Leerzeilen mitgezählt; im xlsx-Blatt ist das die
+Zeilennummer am linken Rand. Eine Zelle, die in Anführungszeichen einen
+Zeilenumbruch enthält, zählt in der CSV-Datei als eine Zeile: gemessen heißt
+die Zeile danach „Zeile 3“, im Texteditor steht sie in Zeile 4. Vorher hieß
+es „Tabellenzeile k“, und k zählte nur die nicht leeren Datenzeilen.
+Gemessen am Stand ec6448c an einer CSV-Datei mit Kopfzeile, „1: 1.35*LF1“,
+zwei Leerzeilen, „(ohne Nummer): 1.5*LF2“ und „(ohne Nummer): Schnee“: die
+Zeile 5 der Datei hieß „Tabellenzeile 2“, die Zeile 6 „Tabellenzeile 3“.
+
+Die Meldungen zu Lastkombinationen schreiben seit 23.09.2026 durchgehend mit
+Umlauten („nicht auflösbar – nicht übernommen“, „Umhüllende“,
+„aufgelöst“). Vorher stand der Rahmen einer Warnung in ASCII-Umschrift
+(„nicht aufloesbar - nicht uebernommen“), die Gründe darin mit Umlauten
+(„führt“).
 
 ## IFC-Statikmodell – Details
 

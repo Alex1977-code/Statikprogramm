@@ -22,6 +22,7 @@ from __future__ import annotations
 import math
 import os
 import re
+from collections import Counter
 from typing import Optional
 
 from ..model import Model, Material, Section
@@ -270,15 +271,23 @@ class Table:
             return None
         return C.parse_number(row[j])
 
-    def data(self, bloecke: bool = True):
+    def data(self, bloecke: bool = True, zeilennummer: bool = False):
         """(Zeile, Blocktitel) - Blocktitel z.B. 'LF1' aus Zwischenzeilen.
 
         ``bloecke=False`` fuer Tabellen ohne Bloecke (Lastkombinationen): dort
         ist eine Zeile mit der Nummer „CO5“ und der Formel „LF1 + LF2“ eine
         Kombination und kein Titel. Als Titel gelesen fiel sie bis zum
         22.09.2026 wortlos weg (Befund SV10).
+
+        ``zeilennummer=True`` liefert als Drittes die Nummer der Zeile im
+        Blatt bzw. in der CSV-Datei (1 = erste Zeile, Kopf- und Leerzeilen
+        mitgezaehlt; ``read_xlsx`` und ``read_csv_table`` behalten Leerzeilen
+        als leere Listen). Eine Meldung, die Zeilen selbst abzaehlt, zaehlt
+        nur, was hier ankommt: bis zum 23.09.2026 nannte die
+        Kombinationstabelle darum die 4. Datenzeile nach zwei Leerzeilen
+        „Tabellenzeile 2“ (Befund B088, Stand ec6448c).
         """
-        for r in self.rows[self.start:]:
+        for i, r in enumerate(self.rows[self.start:], self.start + 1):
             cells = [C.clean_text(c) for c in r]
             if not any(cells):
                 continue
@@ -286,9 +295,10 @@ class Table:
             m = _BLOCK_TITLE.match(first) if bloecke else None
             if m and sum(1 for c in cells if c) <= 3 and \
                     all(C.parse_number(c) is None or c == first for c in cells if c):
-                yield None, m.group(0).upper().replace(" ", "")
+                titel = m.group(0).upper().replace(" ", "")
+                yield (None, titel, i) if zeilennummer else (None, titel)
                 continue
-            yield r, None
+            yield (r, None, i) if zeilennummer else (r, None)
 
     def id_list(self, row: list, key: str) -> list[int]:
         return [int(float(v)) for v in C.expand_ranges(C.split_list(self.text(row, key)))
@@ -387,19 +397,36 @@ def _formel_zerlegen(text: str) -> tuple[dict[str, float], list[tuple[float, str
     (wie „CO“ zu „LK“) und wird wie „EK“ als Verweis gelesen; ob RFEM RC oder
     EK in eine Lastkombinationsformel schreibt, ist an keiner echten Datei
     gemessen.
+
+    Ein „+“ verbindet nur zwei Anteile: vor dem ersten und nach dem letzten
+    steht keines, zwischen zweien hoechstens eines (das Vorzeichen des
+    Anteils zaehlt mit, „+ -1.0*LF2“ bleibt erlaubt). Ein ueberzaehliges geht
+    in den Rest. Bis zum 23.09.2026 verwarf ``luecke`` jedes Stueck aus
+    Leerraum und „+“, gleich wie viele „+“ darin standen und wo. Gemessen am
+    Stand ec6448c: „1.35*LF1 + 1.5*LF2 +“ und „1.35*LF1 ++ 1.5*LF2“ wurden
+    ohne Meldung 1,35·LF1 + 1,5·LF2, „+ 1.35*LF1“ wurde 1,35·LF1 (Befund
+    B085). Ein „+“ am Ende kann auf eine abgeschnittene Formel deuten; ob
+    RFEM je eine schreibt, ist nicht gemessen.
     """
     factors: dict[str, float] = {}
     verweise: list[tuple[float, str, int]] = []
     rest: list[str] = []
     pos = 0
 
-    def luecke(stueck: str) -> None:
+    def luecke(stueck: str) -> bool:
         if re.sub(r"[\s+]", "", stueck):
             rest.append(stueck.strip())
+            return True
+        return False
 
-    for m in re.finditer(r"([+-])?\s*(\d+(?:[.,]\d+)?)?\s*\*?\s*(LF|LC|CO|LK|EK|RC)\s*(\d+)",
-                         text, re.IGNORECASE):
-        luecke(text[pos:m.start()])
+    for n, m in enumerate(re.finditer(
+            r"([+-])?\s*(\d+(?:[.,]\d+)?)?\s*\*?\s*(LF|LC|CO|LK|EK|RC)\s*(\d+)",
+            text, re.IGNORECASE)):
+        if not luecke(text[pos:m.start()]):
+            plus = text[pos:m.start()].count("+") + (m.group(1) == "+")
+            if plus > (1 if n else 0):
+                ende = m.end(1) if m.group(1) == "+" else m.start()
+                rest.append(text[pos:ende].strip())
         pos = m.end()
         f = C.parse_number(m.group(2)) if m.group(2) else 1.0
         if f is None:
@@ -412,7 +439,8 @@ def _formel_zerlegen(text: str) -> tuple[dict[str, float], list[tuple[float, str
             factors[key] = factors.get(key, 0.0) + f
         else:
             verweise.append((f, kind, int(m.group(4))))
-    luecke(text[pos:])
+    if text[pos:].strip():               # auch ein „+“ am Ende ist ein Rest
+        rest.append(text[pos:].strip())
     return factors, verweise, rest
 
 
@@ -456,10 +484,22 @@ def _kombinationen_aufloesen(zeilen: list) -> list:
     zurueck (Kreis); sonst wird die verwiesene Zeile selbst nicht angelegt
     (offener Verweis, kein Lastfall oder nicht erkannter Teil - ihre eigene
     Warnung nennt den Grund).
+
+    Fuehrt die Tabelle eine Nummer mehrfach, bleibt ein Verweis auf sie
+    offen: welche der Zeilen gemeint ist, steht nicht da. Bis zum 23.09.2026
+    zeigte er still auf die erste (``setdefault``). Gemessen am Stand
+    ec6448c: ['2: LF1', '2: LF2 + CO2', '(ohne): LF1'] legte LK2_2 = LF2 + LF1
+    an, der Verweis der Zeile auf ihre eigene Nummer galt nicht als Kreis;
+    bei ['1: 1.35*LF1 + x', '1: LF2', '2: CO1'] meldete LK2 „CO1: wird selbst
+    nicht angelegt“, obwohl LK1 = LF2 angelegt war (Befund B086). Ob RFEM
+    doppelte Nummern schreibt, ist nicht gemessen.
     """
     nach_nummer: dict[int, int] = {}
+    mehrfach: set[int] = set()
     for i, (no, _f, _v, _r) in enumerate(zeilen):
         if no is not None:
+            if int(no) in nach_nummer:
+                mehrfach.add(int(no))
             nach_nummer.setdefault(int(no), i)
     fertig: dict[int, tuple] = {}
 
@@ -470,7 +510,7 @@ def _kombinationen_aufloesen(zeilen: list) -> list:
         f = dict(faktoren)
         offen: list[str] = []
         for vf, art, nr in verweise:
-            j = nach_nummer.get(nr) if art in ("CO", "LK") else None
+            j = ziel(art, nr)
             if j is None or j == i or j in pfad:
                 offen.append(f"{art}{nr}")
                 continue
@@ -484,7 +524,8 @@ def _kombinationen_aufloesen(zeilen: list) -> list:
         return fertig[i]
 
     def ziel(art: str, nr: int):
-        return nach_nummer.get(nr) if art in ("CO", "LK") else None
+        # Eine mehrfach gefuehrte Nummer hat kein Ziel (siehe oben).
+        return nach_nummer.get(nr) if art in ("CO", "LK") and nr not in mehrfach else None
 
     def fuehrt_zurueck(j: int, i: int) -> bool:
         """Erreicht Zeile j ueber CO/LK-Verweise die Zeile i?"""
@@ -505,6 +546,8 @@ def _kombinationen_aufloesen(zeilen: list) -> list:
 
     def grund(i: int, art: str, nr: int) -> str:
         ref = f"{art}{nr}"
+        if nr in mehrfach:
+            return f"{ref}: die Tabelle führt die Nummer {nr} mehrfach"
         j = ziel(art, nr)
         if j is None:
             return f"{ref}: die Tabelle führt keine Nummer {nr}"
@@ -998,7 +1041,7 @@ def import_rfem_tables(path: str, model: Model = None, log: list = None,
         # LK4, LK2 und LK3 ohne jede Zeile. Darum erst alle Zeilen lesen, dann
         # die Verweise aufloesen, dann anlegen oder mit Grund nennen.
         roh = []
-        for row, _ in t.data(bloecke=False):
+        for row, _, zeile in t.data(bloecke=False, zeilennummer=True):
             if row is None:
                 continue
             formula = t.text(row, "formula")
@@ -1009,10 +1052,22 @@ def import_rfem_tables(path: str, model: Model = None, log: list = None,
                 mn = re.match(r"^\s*(?:CO|LK)?\s*(\d+)\s*$", t.text(row, "no"),
                               re.IGNORECASE)
                 no = int(mn.group(1)) if mn else None
-            roh.append((row, formula, no, factors, verweise, rest))
+            roh.append((row, formula, no, factors, verweise, rest, zeile))
         # Der Rest geht mit in die Aufloesung: ein Verweis auf eine Zeile mit
         # nicht erkanntem Teil bleibt offen (siehe _kombinationen_aufloesen).
-        aufgeloest = _kombinationen_aufloesen([(no, f, v, x) for _r, _t, no, f, v, x in roh])
+        aufgeloest = _kombinationen_aufloesen([(no, f, v, x)
+                                               for _r, _t, no, f, v, x, _z in roh])
+        # Traegt die Tabelle eine Nummer mehrfach, heissen die gewarnte und die
+        # angelegte Zeile gleich (LK2). Darum nennt jede Meldung zu einer
+        # solchen Zeile ihre Zeile im Blatt, und jede angelegte bekommt eine
+        # eigene Protokollzeile. Bis zum 23.09.2026 warnte das Protokoll bei
+        # ['2: LF1', '2: EK1'] „Kombination LK2 („EK1“) ... nicht uebernommen“,
+        # im Modell stand LK2 = LF1 ohne eigene Zeile (Befund B086, ec6448c).
+        # Die Zeile im Blatt statt einer abgezaehlten Datenzeile: bis zum
+        # 23.09.2026 zaehlte „Tabellenzeile k“ nur nicht leere Datenzeilen und
+        # verfehlte die Zeile, sobald Leerzeilen dazwischen standen (B088).
+        nummern = Counter(int(z[2]) for z in roh if z[2] is not None)
+        mehrfach = {n for n, anzahl in nummern.items() if anzahl > 1}
         # Eine Zeile ohne Nummer bekommt eine Nummer, die keine Zeile der
         # Tabelle traegt. Bis zum 23.09.2026 hiess sie LK{angelegte + 1} und
         # konnte so den Namen einer nummerierten Zeile belegen, die das
@@ -1023,12 +1078,20 @@ def import_rfem_tables(path: str, model: Model = None, log: list = None,
         # aufgeloeste Kombination hiess aber LK1_2 (Gegenpruefung zu SV10).
         naechste = max((int(z[2]) for z in roh if z[2] is not None), default=0) + 1
         n_co = 0
-        for k, ((row, formula, no, _f0, verweise, rest), (factors, offen, warum)) in \
-                enumerate(zip(roh, aufgeloest), 1):
-            wer = f"LK{int(no)}" if no is not None else f"in Tabellenzeile {k} ohne Nummer"
+        for (row, formula, no, _f0, verweise, rest, zeile), (factors, offen, warum) in \
+                zip(roh, aufgeloest):
+            wo = f"Zeile {zeile} in „{t.name}“"
+            doppelt = f"die Tabelle führt die Nummer {int(no)} mehrfach" \
+                if no is not None and int(no) in mehrfach else ""
+            if no is None:
+                wer = f"aus {wo} ohne Nummer"
+            elif doppelt:
+                wer = f"LK{int(no)} ({wo}; {doppelt})"
+            else:
+                wer = f"LK{int(no)}"
             if not _f0 and not verweise:
                 C.warn(log, f"Kombination {wer}: Formel „{formula}“ ohne erkennbaren "
-                            "Lastfall - nicht uebernommen.")
+                            "Lastfall – nicht übernommen.")
                 continue
             if offen or rest:
                 # Eine Kombination ohne einen ihrer Anteile waere zu klein und
@@ -1038,14 +1101,19 @@ def import_rfem_tables(path: str, model: Model = None, log: list = None,
                 gruende = []
                 ek = any(x.startswith(("EK", "RC")) for x in offen)
                 if ek:
-                    gruende.append("EK/RC ist eine Ergebniskombination (Umhuellende), "
+                    gruende.append("EK/RC ist eine Ergebniskombination (Umhüllende), "
                                    "als Summand nicht darstellbar")
-                # CO/LK: je Verweis sein Grund (keine solche Nummer, Kreis,
-                # oder die verwiesene Zeile wird selbst nicht angelegt).
+                # CO/LK: je Verweis sein Grund (keine solche Nummer, mehrfach
+                # gefuehrte Nummer, Kreis, oder die verwiesene Zeile wird
+                # selbst nicht angelegt).
                 gruende += [warum[x] for x in dict.fromkeys(offen) if x in warum]
                 if rest:
                     gruende.append(f"nicht erkannter Teil {rest}")
                 alle = [f"{a}{n}" for _v, a, n in verweise]
+                # Rahmen mit Umlauten wie die Gruende darin: bis zum 23.09.2026
+                # stand er in ASCII („nicht aufloesbar - nicht uebernommen“),
+                # die Gruende mit („führt“) - eine Meldung, zwei Schreibweisen
+                # (Befund B090).
                 # Eine Umhuellende laesst sich von Hand nicht als eine
                 # Kombination anlegen: Dialog und Maske der Oberflaeche bauen
                 # nur Combination(name, faktoren) ohne alternativen
@@ -1061,9 +1129,9 @@ def import_rfem_tables(path: str, model: Model = None, log: list = None,
                 else:
                     abhilfe = " Bitte in RFEM nachsehen und die Kombination von Hand anlegen."
                 C.warn(log, f"Kombination {wer} („{formula}“): "
-                            + (f"Verweise {offen} nicht aufloesbar" if offen
-                               else "Formel nicht vollstaendig gelesen")
-                            + " - nicht uebernommen (" + "; ".join(gruende) + ")."
+                            + (f"Verweise {offen} nicht auflösbar" if offen
+                               else "Formel nicht vollständig gelesen")
+                            + " – nicht übernommen (" + "; ".join(gruende) + ")."
                             + (f" Die Zeile besteht nur aus Verweisen {alle}."
                                if not _f0 and not rest else "")
                             + abhilfe)
@@ -1074,7 +1142,9 @@ def import_rfem_tables(path: str, model: Model = None, log: list = None,
             if no is None:
                 no = naechste
                 naechste += 1
-                woher.append(f"Tabellenzeile {k} ohne Nummer")
+                woher.append(f"{wo} ohne Nummer")
+            elif doppelt:
+                woher += [wo, doppelt]
             soll = f"LK{int(no)}"
             name = C.unique_name(model.combinations, soll)
             if name != soll:
@@ -1088,7 +1158,7 @@ def import_rfem_tables(path: str, model: Model = None, log: list = None,
                 # nicht auf (Gegenpruefung vom 23.09.2026, „LF2 - CO1“).
                 C.say(log, f"Kombination {name}{herkunft}: Verweise "
                            f"{[f'{a}{n}' for _v, a, n in verweise]} auf die Faktoren "
-                           f"der Kombinationen aufgeloest: {_faktoren_text(factors)}")
+                           f"der Kombinationen aufgelöst: {_faktoren_text(factors)}")
             elif herkunft:
                 C.say(log, f"Kombination {name}{herkunft}: {_faktoren_text(factors)}")
             for key in factors:

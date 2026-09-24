@@ -5,6 +5,7 @@ Nichtlinearitaeten.
 Aufruf:  python -m tests.test_rfem
 """
 import os
+import re
 import shutil
 import sqlite3
 import sys
@@ -18,6 +19,7 @@ from statik3d import solver, supports  # noqa: E402
 from statik3d.importers import import_file, SUPPORTED  # noqa: E402
 from statik3d.importers import rfem_native as RN  # noqa: E402
 from statik3d.importers.rfem_tables import import_rfem_tables  # noqa: E402
+from statik3d.importers.xlsx_reader import write_xlsx  # noqa: E402
 
 RESULTS = []
 
@@ -605,11 +607,27 @@ def test_kombination_verweis_grund():
           "(CO1: Kreis, verweist auf diese Kombination selbst)" in z, z)
     z = warnung(log, 3)
     check("(7) je Verweis ein Grund: EK, CO2 nicht angelegt, CO9 fehlt",
-          "(EK/RC ist eine Ergebniskombination (Umhuellende), als Summand nicht "
+          "(EK/RC ist eine Ergebniskombination (Umhüllende), als Summand nicht "
           "darstellbar; CO2: wird selbst nicht angelegt, siehe Warnung zu LK2; "
           "CO9: die Tabelle führt keine Nummer 9)" in z, z)
     check("(1)-(7) der alte Sammelgrund steht in keiner Zeile",
           not any(alt in x for x in alle), next((x for x in alle if alt in x), ""))
+
+    # (8) eine aufgeloeste Kombination, damit auch die Infozeile geprueft wird.
+    # Befund B090: der Rahmen der Warnung stand in ASCII („nicht aufloesbar -
+    # nicht uebernommen“, „Umhuellende“), die Gruende darin mit Umlauten
+    # („führt“, „über“) - eine Meldung in zwei Schreibweisen (Stand ec6448c).
+    tabelle(["1;GZT;1.35*LF1", "2;GZT;LF2 + CO1"], 2)
+    ascii_formen = ("uebernommen", "aufloesbar", "Umhuellende", "vollstaendig",
+                    "aufgeloest", "fuehrt", "ueber", "zurueck")
+    gemischt = [x for x in alle if x.startswith(("Kombination", "WARNUNG: Kombination"))
+                and any(a in x for a in ascii_formen)]
+    check("(1)-(8) keine Kombinationsmeldung in ASCII-Umschrift", not gemischt,
+          gemischt[0] if gemischt else "")
+    check("(8) die Infozeile schreibt „aufgelöst“",
+          any(x.startswith("Kombination LK2") and "aufgelöst: 1*LF2 + 1.35*LF1" in x
+              for x in alle), next((x for x in alle if x.startswith("Kombination LK2")),
+                                   "keine Zeile"))
 
 
 def test_kombination_ohne_nummer_name():
@@ -626,10 +644,12 @@ def test_kombination_ohne_nummer_name():
 
     C und D: eine doppelte Tabellennummer bekommt einen Ausweichnamen, und
     die Protokollzeile nennt ihn samt Grund, mit Verweis (Aufloesezeile) und
-    ohne (elif-Zweig). Bis zum 23.09.2026 hielt das keine Pruefung (Befund
-    B089): am Stand ec6448c bestand diese Suite 96/96 auch mit ``{herkunft}``
-    aus der Aufloesezeile gestrichen, dann hiess die Zeile nur „Kombination
-    LK2_2: Verweise ['CO1'] ...“. Ebenso 96/96 ohne den Grund „LK2 gab es
+    ohne (elif-Zweig); seit B086/B088 heisst der Grund „Zeile n in <Blatt>;
+    die Tabelle führt die Nummer 2 mehrfach; LK2 gab es schon“ statt
+    „Tabellennummer 2; LK2 gab es schon“. Bis zum 23.09.2026 hielt das keine
+    Pruefung (Befund B089): am Stand ec6448c bestand diese Suite 96/96 auch
+    mit ``{herkunft}`` aus der Aufloesezeile gestrichen, dann hiess die Zeile
+    nur „Kombination LK2_2: Verweise ['CO1'] ...“. Ebenso 96/96 ohne den Grund „LK2 gab es
     schon“ und mit einem elif-Zweig nur fuer Zeilen ohne Nummer (dann bekam
     LK2_2 = LF3 gar keine Zeile).
     """
@@ -655,7 +675,11 @@ def test_kombination_ohne_nummer_name():
           f"{frei} / {z}")
     check("B: alle drei Zeilen angelegt", "3 von 3 Lastkombinationen" in "\n".join(log))
 
-    # C: doppelte Nummer 2, die zweite Zeile mit Verweis -> Aufloesezeile
+    # C: doppelte Nummer 2, die zweite Zeile mit Verweis -> Aufloesezeile.
+    # Seit B086/B088 nennt die Zeile statt „Tabellennummer 2“ ihre Zeile im
+    # Blatt und die mehrfach gefuehrte Nummer (Kopfzeile + drei Zeilen: die
+    # zweite Zeile 2 ist Zeile 4 der Datei).
+    doppelt = "Zeile 4 in „2.5 Lastkombinationen“; die Tabelle führt die Nummer 2 mehrfach"
     m, log = _kombinationstabelle("s3d_kn_", ["1;GZT;LF1", "2;GZT;LF2", "2;GZT;LF3 + CO1"],
                                   lastfaelle=3)
     fk = {k: dict(c.factors) for k, c in m.combinations.items()}
@@ -664,7 +688,7 @@ def test_kombination_ohne_nummer_name():
           and _gleich(fk.get("LK2_2", {}), {"LF3": 1.0, "LF1": 1.0}), str(fk))
     z = next((z for z in log if "Verweise ['CO1']" in z), "keine Zeile")
     check("C: die Aufloesezeile nennt den Ausweichnamen samt Grund",
-          z.startswith("Kombination LK2_2 (Tabellennummer 2; LK2 gab es schon): "
+          z.startswith(f"Kombination LK2_2 ({doppelt}; LK2 gab es schon): "
                        "Verweise ['CO1']") and z.endswith(": 1*LF3 + 1*LF1"), z)
 
     # D: dieselbe Doppelung ohne Verweis -> eigene Zeile nur wegen des Ausweichnamens
@@ -675,7 +699,7 @@ def test_kombination_ohne_nummer_name():
           str(fk))
     z = next((z for z in log if "LK2_2" in z), "keine Zeile")
     check("D: die Zeile ohne Verweis nennt den Ausweichnamen samt Grund",
-          z == "Kombination LK2_2 (Tabellennummer 2; LK2 gab es schon): 1*LF3", z)
+          z == f"Kombination LK2_2 ({doppelt}; LK2 gab es schon): 1*LF3", z)
 
 
 def test_kombination_abhilfe():
@@ -756,13 +780,309 @@ def test_kombination_abhilfe():
               f"im Protokoll {grund in txt}, im Handbuch „{satz}“ {satz in hb}")
 
 
+def _schlusszeile(log):
+    return next((z for z in log if z.strip().endswith("Lastkombinationen")), "keine Zeile")
+
+
+def test_kombination_plus_nur_verbindet():
+    """Ein „+“ verbindet nur zwei Anteile; am Ende, am Anfang oder doppelt ist es ein Rest.
+
+    Befund B085: ``luecke`` in ``_formel_zerlegen`` verwarf jedes Stueck, das
+    nach Entfernen von Leerraum und „+“ leer war. Gemessen am Stand ec6448c:
+    „1.35*LF1 + 1.5*LF2 +“ und „1.35*LF1 ++ 1.5*LF2“ wurden beide ohne
+    Meldung 1,35·LF1 + 1,5·LF2 („2 von 2 Lastkombinationen“), „+ 1.35*LF1“
+    wurde 1,35·LF1. Ein „-“ am Ende wurde schon als Rest gewarnt. Ein „+“ am
+    Ende kann auf eine abgeschnittene Formel deuten; ob RFEM je eine
+    schreibt, ist an keiner echten Datei gemessen.
+    """
+    m, log = _kombinationstabelle("s3d_kp_", ["1;GZT;1.35*LF1 + 1.5*LF2 +",
+                                              "2;GZT;1.35*LF1 ++ 1.5*LF2",
+                                              "3;GZT;+ 1.35*LF1"], lastfaelle=2)
+    for nr, teil in ((1, "['+']"), (2, "['++']"), (3, "['+']")):
+        check(f"LK{nr} mit überzähligem „+“ nicht angelegt", f"LK{nr}" not in m.combinations,
+              str(dict(m.combinations[f"LK{nr}"].factors)) if f"LK{nr}" in m.combinations
+              else "nicht angelegt")
+        z = next((z for z in log if z.startswith("WARNUNG") and f"LK{nr} " in z),
+                 "keine Zeile")
+        check(f"LK{nr} gewarnt, Rest {teil} genannt", f"nicht erkannter Teil {teil}" in z, z)
+    check("Schlusszeile „0 von 3 Lastkombinationen“",
+          "0 von 3 Lastkombinationen" in "\n".join(log), _schlusszeile(log))
+
+    # Gegenprobe: ein „+“ zwischen zwei Anteilen (auch ohne Leerzeichen und vor
+    # einem negativen Faktor) und ein Minus am Anfang bleiben, wie sie waren.
+    m, log = _kombinationstabelle("s3d_kp_", ["1;GZT;1.35*LF1 + 1.5*LF2",
+                                              "2;GZT;1.35*LF1+1.5*LF2",
+                                              "3;GZT;1.35*LF1 + -1.0*LF2",
+                                              "4;GZT;-LF1 + LF2"], lastfaelle=2)
+    for nr, soll in ((1, {"LF1": 1.35, "LF2": 1.5}), (2, {"LF1": 1.35, "LF2": 1.5}),
+                     (3, {"LF1": 1.35, "LF2": -1.0}), (4, {"LF1": -1.0, "LF2": 1.0})):
+        ist = dict(m.combinations[f"LK{nr}"].factors) if f"LK{nr}" in m.combinations else {}
+        check(f"Gegenprobe: LK{nr} = {soll}", _gleich(ist, soll), str(ist))
+    check("Gegenprobe: „4 von 4 Lastkombinationen“",
+          "4 von 4 Lastkombinationen" in "\n".join(log), _schlusszeile(log))
+
+    # Stichprobe statt Einzelfall: zufaellige gueltige Formeln (1-5 Anteile,
+    # mit/ohne Faktor, Stern, Leerzeichen, negativ als „- LF“ oder „+ -LF“)
+    # bleiben ohne Rest und richtig; dieselbe Formel mit einem „+“ mehr am
+    # Anfang, am Ende oder neben einem vorhandenen „+“ hat einen Rest.
+    # Gemessen am 23.09.2026 mit genau dieser Stichprobe: am Stand ec6448c
+    # alle 500 gueltigen richtig, aber alle 500 mit „+“ zu viel ohne Rest;
+    # mit der Regel 500/500 und 0 still.
+    import random
+    from statik3d.importers.rfem_tables import _formel_zerlegen
+    rnd = random.Random(20260923)
+    leer = ["", " ", "  "]
+    falsch_gut, still = [], []
+    for _ in range(500):
+        k = rnd.randint(1, 5)
+        soll, teile = {}, []
+        for j in range(k):
+            f = rnd.choice([None, 1.0, 1.35, 1.5, 0.9, 2.0])
+            neg = rnd.random() < 0.3
+            lf = rnd.randint(1, 9)
+            soll[f"LF{lf}"] = soll.get(f"LF{lf}", 0.0) + (f or 1.0) * (-1 if neg else 1)
+            zahl = "" if f is None else f"{f:g}" + rnd.choice(["*", " * ", " "])
+            if j == 0:
+                vor = ("-" + rnd.choice(leer)) if neg else ""
+            elif neg:
+                vor = rnd.choice(leer) + rnd.choice(["-" + rnd.choice(leer),
+                                                     "+" + rnd.choice(leer) + "-"])
+            else:
+                vor = rnd.choice(leer) + "+" + rnd.choice(leer)
+            teile.append(vor + zahl + rnd.choice(["LF", "LC", "lf"]) + str(lf))
+        formel = "".join(teile)
+        fac, ver, rest = _formel_zerlegen(formel)
+        if rest or ver or not _gleich(fac, soll):
+            falsch_gut.append((formel, fac, rest))
+        mit_plus = [j for j in range(1, k) if "+" in teile[j]]
+        wo = rnd.choice(["anfang", "ende"] + (["zwischen"] if mit_plus else []))
+        if wo == "anfang":
+            schlecht = "+" + rnd.choice(leer) + formel
+        elif wo == "ende":
+            schlecht = formel + rnd.choice(leer) + "+"
+        else:
+            j = rnd.choice(mit_plus)
+            schlecht = "".join(teile[:j]) + rnd.choice(leer) + "+" + "".join(teile[j:])
+        if not _formel_zerlegen(schlecht)[2]:
+            still.append(schlecht)
+    check("Stichprobe: 500 gültige Formeln ohne Rest und richtig", not falsch_gut,
+          str(falsch_gut[:2]))
+    check("Stichprobe: 500 Formeln mit einem „+“ zu viel haben einen Rest", not still,
+          f"{len(still)} still, z. B. {still[:2]}")
+
+
+def _ungeklaert(m, log):
+    """Warnungen zu einem Namen, der zugleich ohne eigene Protokollzeile im Modell steht.
+
+    Steht ein gewarnter Name (etwa LK2) auch im Modell, muss die Warnung ihre
+    Zeile im Blatt nennen und die angelegte Kombination eine eigene Zeile
+    haben - sonst liest der Anwender „LK2 nicht übernommen“ und findet LK2.
+    """
+    aus = []
+    for z in log:
+        mm = re.match(r"WARNUNG: Kombination (LK\d+)\b", z)
+        if mm and mm.group(1) in m.combinations:
+            name = mm.group(1)
+            eigene = [x for x in log if x.startswith(f"Kombination {name} (")]
+            if not eigene or "Zeile" not in z:
+                aus.append(z)
+    return aus
+
+
+def test_kombination_doppelte_nummer():
+    """Eine doppelt gefuehrte Tabellennummer loest keinen Verweis still auf.
+
+    Befund B086: ``nach_nummer.setdefault`` in ``_kombinationen_aufloesen``
+    liess einen Verweis immer auf die erste Zeile mit dieser Nummer zeigen,
+    und die gewarnte und die angelegte Zeile trugen denselben Namen.
+    Gemessen am Stand ec6448c:
+    (a) ['2;GZT;LF1', '2;GZT;LF2 + CO2', ';GZT;LF1'] legte LK2_2 = LF2 + LF1
+        an - der Verweis der Zeile auf ihre eigene Nummer ging still auf die
+        andere Zeile, als Kreis galt er nicht;
+    (b) ['2;GZT;LF1', '2;GZT;EK1'] legte LK2 = LF1 an und warnte
+        „Kombination LK2 („EK1“) ... nicht uebernommen“;
+    (c) ['1;GZT;1.35*LF1 + x', '1;GZT;LF2', '2;GZT;CO1'] warnte zu LK1, im
+        Modell stand LK1 = LF2 ohne eigene Zeile, und LK2 meldete „CO1: wird
+        selbst nicht angelegt, siehe Warnung zu LK1“.
+    Ob RFEM doppelte Nummern schreibt, ist an keiner echten Datei gemessen.
+    """
+    grund2 = "CO2: die Tabelle führt die Nummer 2 mehrfach"
+    # (a)
+    m, log = _kombinationstabelle("s3d_kd_", ["2;GZT;LF1", "2;GZT;LF2 + CO2", ";GZT;LF1"])
+    check("(a) kein still aufgeloestes LK2_2", "LK2_2" not in m.combinations,
+          str({k: dict(c.factors) for k, c in m.combinations.items()}))
+    z = next((z for z in log if z.startswith("WARNUNG") and "LF2 + CO2" in z), "keine Zeile")
+    check("(a) die Zeile mit CO2 wird mit Grund gewarnt", grund2 in z, z)
+    check("(a) ihre Warnung nennt die Zeile 3 des Blatts",
+          "Zeile 3 in „2.5 Lastkombinationen“" in z, z)
+    lk2 = dict(m.combinations["LK2"].factors) if "LK2" in m.combinations else {}
+    check("(a) LK2 ist die Zeile 2 = LF1", _gleich(lk2, {"LF1": 1.0}), str(lk2))
+    z = next((z for z in log if z.startswith("Kombination LK2 (")), "keine Zeile")
+    check("(a) die angelegte LK2 hat eine eigene Zeile mit ihrer Zeile im Blatt",
+          "Zeile 2 in „2.5 Lastkombinationen“" in z, z)
+    check("(a) kein gewarnter Name unkommentiert im Modell", not _ungeklaert(m, log),
+          str(_ungeklaert(m, log)))
+    check("(a) Schlusszeile „2 von 3 Lastkombinationen“",
+          "2 von 3 Lastkombinationen" in "\n".join(log), _schlusszeile(log))
+
+    # (b)
+    m, log = _kombinationstabelle("s3d_kd_", ["2;GZT;LF1", "2;GZT;EK1"])
+    z = next((z for z in log if z.startswith("WARNUNG") and "EK1" in z), "keine Zeile")
+    check("(b) die Warnung zu „EK1“ nennt die Zeile 3 des Blatts",
+          "Zeile 3 in „2.5 Lastkombinationen“" in z, z)
+    z = next((z for z in log if z.startswith("Kombination LK2 (")), "keine Zeile")
+    check("(b) die angelegte LK2 = LF1 nennt die Zeile 2 des Blatts",
+          "Zeile 2 in „2.5 Lastkombinationen“" in z and "1*LF1" in z, z)
+    check("(b) kein gewarnter Name unkommentiert im Modell", not _ungeklaert(m, log),
+          str(_ungeklaert(m, log)))
+
+    # (c)
+    m, log = _kombinationstabelle("s3d_kd_", ["1;GZT;1.35*LF1 + x", "1;GZT;LF2",
+                                              "2;GZT;CO1"])
+    lk1 = dict(m.combinations["LK1"].factors) if "LK1" in m.combinations else {}
+    check("(c) LK1 = LF2 aus Zeile 3", _gleich(lk1, {"LF2": 1.0}), str(lk1))
+    z = next((z for z in log if z.startswith("Kombination LK1 (")), "keine Zeile")
+    check("(c) die angelegte LK1 hat eine eigene Zeile (Zeile 3)",
+          "Zeile 3 in „2.5 Lastkombinationen“" in z, z)
+    z = next((z for z in log if z.startswith("WARNUNG") and "1.35*LF1 + x" in z),
+             "keine Zeile")
+    check("(c) die Warnung zu „1.35*LF1 + x“ nennt die Zeile 2",
+          "Zeile 2 in „2.5 Lastkombinationen“" in z, z)
+    z = next((z for z in log if z.startswith("WARNUNG: Kombination LK2 ")), "keine Zeile")
+    check("(c) LK2: CO1 zeigt auf eine mehrfach geführte Nummer",
+          "CO1: die Tabelle führt die Nummer 1 mehrfach" in z
+          and "wird selbst nicht angelegt" not in z, z)
+    check("(c) kein gewarnter Name unkommentiert im Modell", not _ungeklaert(m, log),
+          str(_ungeklaert(m, log)))
+
+    # (d) beide Zeilen mit derselben Nummer werden angelegt: jede mit eigener Zeile
+    m, log = _kombinationstabelle("s3d_kd_", ["2;GZT;LF1", "2;GZT;LF2"])
+    z2 = next((z for z in log if z.startswith("Kombination LK2 (")), "keine Zeile")
+    z22 = next((z for z in log if z.startswith("Kombination LK2_2 (")), "keine Zeile")
+    check("(d) LK2 nennt Zeile 2, LK2_2 nennt Zeile 3",
+          "Zeile 2 in „2.5 Lastkombinationen“" in z2
+          and "Zeile 3 in „2.5 Lastkombinationen“" in z22, f"{z2} / {z22}")
+
+
+def test_kombination_zeilennummer():
+    """Die Meldung nennt die Zeile im Blatt bzw. in der CSV-Datei, Kopf- und Leerzeilen mitgezaehlt.
+
+    Befund B088: die Zahl in „Tabellenzeile k“ zaehlte nur die nicht leeren
+    Datenzeilen, weil ``Table.data`` Leerzeilen ueberspringt. Gemessen am
+    Stand ec6448c mit ['1;GZT;1.35*LF1', ';;', ';;', ';GZT;1.5*LF2',
+    ';GZT;Schnee'] (Kopfzeile = Zeile 1 der Datei): „Kombination LK2
+    (Tabellenzeile 2 ohne Nummer): 1.5*LF2“ fuer Zeile 5 der Datei und
+    „Kombination in Tabellenzeile 3 ohne Nummer: Formel „Schnee“ …“ fuer
+    Zeile 6. Geprueft an CSV und an xlsx (dort mit einer Leerzeile ueber der
+    Kopfzeile, damit die Zahl der Zeilennummer am Blattrand entspricht).
+    """
+    m, log = _kombinationstabelle("s3d_kz_", ["1;GZT;1.35*LF1", ";;", ";;",
+                                              ";GZT;1.5*LF2", ";GZT;Schnee"], lastfaelle=2)
+    z = next((z for z in log if z.startswith("Kombination LK2 (")), "keine Zeile")
+    check("CSV: „1.5*LF2“ steht in Zeile 5 der Datei",
+          "Zeile 5 in „2.5 Lastkombinationen“" in z, z)
+    z = next((z for z in log if z.startswith("WARNUNG") and "Schnee" in z), "keine Zeile")
+    check("CSV: „Schnee“ steht in Zeile 6 der Datei",
+          "Zeile 6 in „2.5 Lastkombinationen“" in z, z)
+
+    d = tempfile.mkdtemp(prefix="s3d_kz_")
+    try:
+        p = os.path.join(d, "kombi.xlsx")
+        write_xlsx(p, {
+            "1.1 Knoten": [["Knoten Nr.", "X [m]", "Y [m]", "Z [m]"], [1, 0, 0, 0], [2, 2, 0, 0]],
+            "2.1 Lastfaelle": [["Lastfall Nr.", "Bezeichnung"], [1, "LF 1"], [2, "LF 2"]],
+            "2.5 Lastkombinationen": [
+                [],                                                   # Blattzeile 1
+                ["Lastkombination Nr.", "Bemessungssituation", "Belastung"],   # 2
+                [1, "GZT", "1.35*LF1"],                               # 3
+                [],                                                   # 4
+                [None, "GZT", "1.5*LF2"],                             # 5
+                [None, "GZT", "Schnee"],                              # 6
+            ]})
+        log = []
+        import_rfem_tables(p, Model("Kz"), log)
+        z = next((z for z in log if z.startswith("Kombination LK2 (")), "keine Zeile")
+        check("xlsx: „1.5*LF2“ steht in Blattzeile 5",
+              "Zeile 5 in „2.5 Lastkombinationen“" in z, z)
+        z = next((z for z in log if z.startswith("WARNUNG") and "Schnee" in z), "keine Zeile")
+        check("xlsx: „Schnee“ steht in Blattzeile 6",
+              "Zeile 6 in „2.5 Lastkombinationen“" in z, z)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_kombination_eigene_zeile():
+    """Welche Zeile der Tabelle eine eigene Protokollzeile bekommt, wie Schnittstellen.md sie aufzaehlt.
+
+    Schnittstellen.md, „Lastkombinationen aus der Tabelle zählen sich ab“:
+    eine eigene Zeile bekommt jede nicht übernommene, jede aufgelöste, jede
+    ohne Nummer, jede mit einer Nummer, die die Tabelle mehrfach führt, und
+    jede mit Ausweichnamen; eine Zeile nur aus eigenen Lastfall-Anteilen
+    unter ihrer nur einmal geführten Tabellennummer steht nur in der
+    Schlusszeile. Gegenpruefung vom 24.09.2026: seit der Kur zu B086
+    (e9aecb7) bekommt auch eine angelegte Zeile mit mehrfach gefuehrter
+    Nummer ohne Verweis und ohne Ausweichnamen eine eigene Zeile
+    (['2;GZT;LF1', '2;GZT;LF2'] -> „Kombination LK2 (Zeile 2 in
+    „2.5 Lastkombinationen“; die Tabelle führt die Nummer 2 mehrfach):
+    1*LF1“; am Stand ec6448c stand zu ihr keine Zeile), das Handbuch zaehlte
+    sie aber nicht auf und nannte sie unter „steht nur in dieser Zählung“.
+    Geprueft werden beide Haelften des Satzes.
+    """
+    d = tempfile.mkdtemp(prefix="s3d_ke_")
+    try:
+        def w(n, t):
+            with open(os.path.join(d, n), "w", encoding="utf-8") as f:
+                f.write(t)
+        w("1.1 Knoten.csv", "Knoten Nr.;X [m];Y [m];Z [m]\n1;0;0;0\n2;2;0;0\n")
+        w("2.1 Lastfaelle.csv", "Lastfall Nr.;Bezeichnung\n1;LF 1\n2;LF 2\n3;LF 3\n")
+        w("2.5 Lastkombinationen.csv",
+          "Lastkombination Nr.;Bemessungssituation;Belastung\n"
+          "1;GZT;1.35*LF1\n"      # Zeile 2: eindeutige Nummer, nur eigene Anteile
+          "2;GZT;LF1 + CO1\n"     # Zeile 3: aufgeloest
+          ";GZT;1.5*LF2\n"        # Zeile 4: ohne Nummer -> LK7
+          "3;GZT;LF1\n"           # Zeile 5: Nummer 3 mehrfach, unter LK3 angelegt
+          "3;GZT;LF2\n"           # Zeile 6: Nummer 3 mehrfach, Ausweichname LK3_2
+          "4;GZT;1.0*EK1\n"       # Zeile 7: nicht uebernommen
+          "5;GZT;LF3\n"           # Zeile 8: LK5 gab es im Modell schon -> LK5_2
+          "6;GZT;0.9*LF3\n")      # Zeile 9: eindeutige Nummer, nur eigene Anteile
+        m = Model("Ke")
+        m.add_combination("LK5", {"LF1": 1.0}, "ULS", "vorher")
+        log = []
+        m = import_rfem_tables(d, m, log)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    eigene = {}
+    for z in log:
+        mm = re.match(r"Kombination (LK\d+(?:_\d+)?)[ :]", z)
+        if mm:
+            eigene.setdefault(mm.group(1), []).append(z)
+    angelegt = sorted(k for k in m.combinations if k != "LK5")
+    check("sieben Zeilen angelegt", angelegt == ["LK1", "LK2", "LK3", "LK3_2", "LK5_2",
+                                                "LK6", "LK7"], str(angelegt))
+    for name, grund in (("LK2", "aufgelöst"), ("LK7", "ohne Nummer"),
+                        ("LK3", "mehrfach"), ("LK3_2", "mehrfach"),
+                        ("LK5_2", "gab es schon")):
+        z = eigene.get(name, [])
+        check(f"{name} hat genau eine eigene Zeile mit Ergebnis („{grund}“)",
+              len(z) == 1 and grund in z[0] and "*LF" in z[0], str(z))
+    for name in ("LK1", "LK6"):
+        check(f"{name} (eindeutige Nummer, nur eigene Anteile) steht nur in der Zählung",
+              name not in eigene, str(eigene.get(name)))
+    z = next((z for z in log if z.startswith("WARNUNG: Kombination LK4 ")), "keine Zeile")
+    check("LK4 wird mit Grund gewarnt", "Umhüllende" in z, z)
+    check("Schlusszeile „7 von 8 Lastkombinationen“",
+          "7 von 8 Lastkombinationen" in "\n".join(log), _schlusszeile(log))
+
+
 def main():
     for t in (test_native_sqlite, test_native_zip_und_json, test_native_unbekannt,
               test_tabellen_erweitert, test_kombinationen_abgezaehlt,
               test_kombination_minus_vor_verweis, test_kombination_unerkannter_teil,
               test_kombination_verweis_auf_rest, test_kombination_rest_neben_verweis,
               test_kombination_vorsatz_zusatz, test_kombination_verweis_grund,
-              test_kombination_ohne_nummer_name, test_kombination_abhilfe):
+              test_kombination_ohne_nummer_name, test_kombination_abhilfe,
+              test_kombination_plus_nur_verbindet, test_kombination_doppelte_nummer,
+              test_kombination_zeilennummer, test_kombination_eigene_zeile):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
