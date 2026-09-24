@@ -3186,12 +3186,13 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         central = self.centralWidget()
         leiste = msk.Glasleiste(central)
-        # Ganz links: was die Ansicht zeigt - Lastfall oder Kombination.
+        # Ganz links: was die Ansicht zeigt - Lastfall, Kombination,
+        # Umhuellende oder Form (Hinweistext nachgezogen 24.09.2026).
         # Es ist die Angabe, die man beim Durchsehen am haeufigsten wechselt,
         # und sie stand bisher nur in Tabellen und Masken; oben links im Bild
         # war sie zwar zu **lesen** (Kopfzeile), aber nicht zu aendern.
         self.cb_lastwahl = leiste.liste(
-            "Was die Ansicht zeigt: Lastfall oder Lastkombination", "lastwahl")
+            "Was die Ansicht zeigt: Lastfall, Kombination, Umhüllende oder Eigenform", "lastwahl")
         self.cb_lastwahl.currentIndexChanged.connect(self._glas_last_gewaehlt)
         # Gleich daneben Ergebnisse an/aus (24.09.2026) - dieselbe Aktion wie
         # im Register Ergebnisse, damit beide immer gleich stehen
@@ -3875,8 +3876,10 @@ class MainWindow(QtWidgets.QMainWindow):
         g = r.gruppe("Auswahl")
         g.gross("Ergebnisse", "∿", lambda: self.maske_zeigen("Ergebnisse"),
                 hinweis="Ergebnis, Färbung, Verlauf und Überhöhung wählen")
+        # die Glasleiste zieht mit: ausgeblendet steht sie auf dem aktiven
+        # Lastfall, dessen Lasten das Bild dann zeigt (24.09.2026)
         self.act_ergebnisse = g.schalter(
-            "Ergebnisse zeigen", lambda _z: self.redraw(), True,
+            "Ergebnisse zeigen", lambda _z: (self.redraw(), self._lastwahl_nachziehen()), True,
             "Ergebnisse zeigen / ausblenden – die Ergebnisdarstellung aus dem Bild "
             "nehmen: Färbung, verformtes System, "
             "Werte, Kontaktmarken, Skala und Kopfzeile. Das Modell bleibt sichtbar, die "
@@ -4031,7 +4034,10 @@ class MainWindow(QtWidgets.QMainWindow):
             "An jedem Knotenlager, was es hält: fest, gelenkig oder die gehaltenen "
             "Freiheitsgrade (u xyz, r xyz), Federn mit k, nichtlinear mit *", symbol="lager")
         self.act_loads = g.schalter("Lasten", lambda z: self.redraw(), True,
-                                    "Die Lasten des aktiven Lastfalls als Pfeile zeigen",
+                                    # seit 24.09.2026 haengt es am Ergebnis, welche Lasten
+                                    "Lasten als Pfeile – ohne Ergebnis die des aktiven Lastfalls, beim "
+                                    "Ergebnis eines Lastfalls dessen eigene; bei Kombination oder "
+                                    "Umhüllender nur mit Ergebnisse → Lasten im Ergebnisbild",
                                     symbol="lasten")
         self.act_lastwerte = g.schalter("Lastwerte", lambda z: self.redraw(), True,
                                         "Die Lastgröße als Zahl an jeder Last; die Einheit steht "
@@ -13596,6 +13602,23 @@ class MainWindow(QtWidgets.QMainWindow):
         offen = getattr(getattr(self, "maskenrand", None), "maske", None)
         if isinstance(offen, Ermuedungsmaske) and _lebt(offen):
             offen.tabelle_fuellen()
+        cbr = getattr(self, "cb_result", None)
+        if self.analysis is None and self.results is None and cbr is not None \
+                and _lebt(cbr) and cbr.count():
+            # Ergebnisse verworfen (Rueckgaengig, Modell geaendert): auch die
+            # Maske Ergebnisse leeren. Bis zur Nachbesserung vom 24.09.2026
+            # stand dort nach Rueckgaengig weiter „Kombination GZT4“, die
+            # Glasleiste zeigte „Lastfall LF1“.
+            self._fill_result_selector()
+            for w_ in (getattr(self, "cb_mode", None), getattr(self, "txt_res", None)):
+                if w_ is not None and _lebt(w_):
+                    w_.blockSignals(True)
+                    w_.clear()
+                    w_.blockSignals(False)
+        else:
+            # neuer aktiver Lastfall (Lastfall angelegt): ein gezeigtes
+            # Lastfall-Ergebnis folgt ihm (_ergebnis_zum_lastfall)
+            self._ergebnis_zum_lastfall()
         self._lastwahl_fuellen()
 
     def refresh_contact(self):
@@ -16317,7 +16340,14 @@ class MainWindow(QtWidgets.QMainWindow):
         faelle = [(f"Lastfall {n}", ("case", n)) for n in m.load_cases]
         kombis = [(f"Kombination {n}", ("combo", n)) for n in m.combinations]
         huellen, formen, formtitel = [], [], "Eigenformen"
-        if an is not None:
+        # Zeigt das Bild Eigen- oder Knickformen (self.results), fuehrt die
+        # Ergebnismaske nur sie - die Analyse der statischen Rechnung liegt
+        # zwar noch da, laesst sich aber nicht zeigen. Bis zur Nachbesserung
+        # vom 24.09.2026 standen ihre Umhuellenden hier, und die Wahl meldete
+        # „sobald gerechnet ist“, obwohl gerechnet war (Halle: solve_all,
+        # danach Eigenformen). Lastfaelle und Kombinationen des Modells
+        # bleiben: ueber die Leiste waehlt man auch den aktiven Lastfall.
+        if an is not None and self.results is None:
             # was die Rechnung darueber hinaus kennt (Teilergebnis nach
             # Abbruch, Ergebnisdatei) - sonst waere es rechts waehlbar, hier nicht
             faelle += [(f"Lastfall {n}", ("case", n)) for n in an.cases if n not in m.load_cases]
@@ -16383,11 +16413,16 @@ class MainWindow(QtWidgets.QMainWindow):
         """Was das Bild gerade zeigt, als Daten eines Listeneintrags.
 
         Mit Ergebnis ist es die Wahl der Ergebnismaske - Lastfall,
-        Kombination, Umhuellende oder die Form -, auch wenn der Knopf
-        „Ergebnisse“ sie gerade ausblendet: die Wahl bleibt dieselbe. Ohne
-        Ergebnis der aktive Lastfall.
+        Kombination, Umhuellende oder die Form. Ohne Ergebnis, und auch wenn
+        der Knopf „Ergebnisse“ sie ausblendet, der aktive Lastfall: dann
+        zeigt das Bild dessen Lasten (Nachbesserung 24.09.2026 - vorher blieb
+        die Leiste auf „Umhüllende SLS_CH“, Bild und Kopfzeile zeigten LF1).
+        Die Wahl der Ergebnismaske bleibt in cb_result stehen und kommt mit
+        dem Einschalten zurueck.
         """
         cbr = getattr(self, "cb_result", None)
+        if not self.ergebnisse_sichtbar():
+            return ("case", self.model.active_case)
         if self.results is not None:
             cbm = getattr(self, "cb_mode", None)
             if cbm is not None and _lebt(cbm) and cbm.count():
@@ -16429,6 +16464,15 @@ class MainWindow(QtWidgets.QMainWindow):
         Ergebnis vor, schaltet die Ergebnismaske mit um, sonst sagt das
         Protokoll, woran es liegt (kein Dialog - die Leiste soll nicht
         stehenbleiben).
+
+        Nachbesserung 24.09.2026: Ein Lastfall **ohne** Ergebnis (nach der
+        Rechnung angelegt, oder waehrend Eigenformen gezeigt werden) blendet
+        die Ergebnisse aus - das Bild zeigt dann seine Lasten, die Leiste
+        bleibt auf ihm, das Protokoll sagt es. Vorher sprang die Leiste ohne
+        Meldung auf die Umhuellende zurueck, der Lastfall wurde trotzdem
+        aktiv, und seine neuen Lasten erschienen nirgends. Umgekehrt blendet
+        die Wahl einer Kombination, Umhuellenden oder Form die Ergebnisse
+        wieder ein - die Leiste zeigt, was das Bild zeigt.
         """
         cb = getattr(self, "cb_lastwahl", None)
         if cb is None or not _lebt(cb):
@@ -16439,35 +16483,92 @@ class MainWindow(QtWidgets.QMainWindow):
             self._lastwahl_nachziehen()
             return
         art, name = daten
+        einblenden = getattr(self, "act_ergebnisse", None) is not None \
+            and not self.ergebnisse_sichtbar()
         if art in ("form", "single"):
             cbm = getattr(self, "cb_mode", None)
             if art == "form" and cbm is not None and _lebt(cbm) and 0 <= name < cbm.count() \
                     and cbm.currentIndex() != name:
                 cbm.setCurrentIndex(name)            # zeichnet selbst neu
+            if einblenden:
+                self.act_ergebnisse.setChecked(True)  # zeichnet neu, zieht nach
+            self._lastwahl_nachziehen()
             return
         if art == "case" and name in self.model.load_cases:
-            self.model.active_case = name
-            if getattr(self, "lbl_active", None) is not None and _lebt(self.lbl_active):
-                self.lbl_active.setText(f"aktiver Lastfall: {name} ({self.model.case().category})")
-            if getattr(self, "cb_lastfilter", None) is not None and _lebt(self.cb_lastfilter):
-                self.cb_lastfilter.setCurrentText(name)
+            self._aktiven_lastfall_setzen(name)
+            self._ergebnis_zum_lastfall()      # rechts kein anderer Lastfall
         # Liegt ein Ergebnis vor, zeigt die Ansicht es zu genau diesem Eintrag
-        if self.analysis is not None and getattr(self, "cb_result", None) is not None \
-                and _lebt(self.cb_result):
-            for i in range(self.cb_result.count()):
-                if self.cb_result.itemData(i) == (art, name):
-                    if self.cb_result.currentIndex() != i:
-                        self.cb_result.setCurrentIndex(i)   # zeichnet selbst neu
+        # (bei gezeigten Formen fuehrt cb_result nur sie - dann findet sich nichts)
+        cbr = getattr(self, "cb_result", None)
+        if self.analysis is not None and cbr is not None and _lebt(cbr):
+            for i in range(cbr.count()):
+                if cbr.itemData(i) == (art, name):
+                    if cbr.currentIndex() != i:
+                        cbr.setCurrentIndex(i)   # zeichnet selbst neu
+                    if einblenden and art != "case":
+                        self.act_ergebnisse.setChecked(True)
+                    self._lastwahl_nachziehen()
                     return
+        formen = self.results is not None
         if art in ("combo", "env"):
+            wort = "Kombination" if art == "combo" else "Umhüllende"
             self.log.appendPlainText(
-                f"{'Kombination' if art == 'combo' else 'Umhüllende'} {name}: sie zeigt sich, "
-                "sobald gerechnet ist (Berechnung → Berechnen).")
+                f"{wort} {name}: gezeigt werden die Eigen- bzw. Knickformen – die "
+                "statischen Ergebnisse zeigen sich wieder nach Berechnung → Berechnen."
+                if formen else
+                f"{wort} {name}: sie zeigt sich, sobald gerechnet ist (Berechnung → Berechnen).")
             # die Leiste zurueck auf das, was das Bild weiter zeigt (24.09.2026)
             self._lastwahl_nachziehen()
             return
+        if art == "case" and (formen or self.analysis is not None) and self.ergebnisse_sichtbar():
+            # ein Lastfall ohne Ergebnis: ausblenden, damit man seine Lasten sieht
+            self.log.appendPlainText(
+                f"Lastfall {name}: "
+                + ("gezeigt wurden die Eigen- bzw. Knickformen" if formen else "noch kein Ergebnis")
+                + " – aktiv für die Lasteingabe, im Bild seine Lasten. Ergebnisse "
+                "ausgeblendet; der Knopf „Ergebnisse“ holt sie zurück.")
+            self.act_ergebnisse.setChecked(False)    # zeichnet neu, zieht nach
+            return
         self.redraw()
         self._lastwahl_nachziehen()
+
+    def _aktiven_lastfall_setzen(self, name: str):
+        """Den aktiven Lastfall umstellen, samt Etikett und Lastfilter."""
+        self.model.active_case = name
+        if getattr(self, "lbl_active", None) is not None and _lebt(self.lbl_active):
+            self.lbl_active.setText(f"aktiver Lastfall: {name} ({self.model.case().category})")
+        if getattr(self, "cb_lastfilter", None) is not None and _lebt(self.cb_lastfilter):
+            self.cb_lastfilter.setCurrentText(name)
+
+    def _ergebnis_zum_lastfall(self) -> bool:
+        """Zeigt die Ergebnismaske einen anderen Lastfall als den aktiven,
+        stellt sie auf dessen Ergebnis - oder, hat er keins, auf die erste
+        Umhuellende. True, wenn umgestellt wurde.
+
+        Gezeigter Lastfall und aktiver Lastfall sind derselbe (Nachbesserung
+        24.09.2026): war rechts „Lastfall W_links“ gewaehlt und LF1 aktiv,
+        zeigte die Leiste „Lastfall W_links“ wie bei einem aktiven, neue
+        Lasten gingen aber still in LF1.
+        """
+        cbr = getattr(self, "cb_result", None)
+        if self.results is not None or self.analysis is None or cbr is None or not _lebt(cbr):
+            return False
+        d = cbr.currentData()
+        akt = self.model.active_case
+        if not d or d[0] != "case" or d[1] == akt:
+            return False
+        ziel = -1
+        for i in range(cbr.count()):
+            di = cbr.itemData(i)
+            if di and tuple(di) == ("case", akt):
+                ziel = i
+                break
+            if ziel < 0 and di and di[0] != "case":
+                ziel = i              # erste Umhuellende oder Kombination
+        if ziel < 0 or ziel == cbr.currentIndex():
+            return False
+        cbr.setCurrentIndex(ziel)     # zeichnet selbst neu
+        return True
 
     # ---- Lastfaelle --------------------------------------------------
     def _case_selected(self):
@@ -16479,6 +16580,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.cb_g.blockSignals(True)
             self.cb_g.setChecked(bool(np.any(self.model.gravity)))
             self.cb_g.blockSignals(False)
+            # ein gezeigtes Lastfall-Ergebnis folgt dem aktiven (24.09.2026)
+            self._ergebnis_zum_lastfall()
             self._lastwahl_nachziehen()
             self.redraw()
 
@@ -17814,6 +17917,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def show_results(self):
         r = self.current_result()
+        # Ein Lastfall-Ergebnis, rechts oder im Baum gewaehlt, macht ihn zum
+        # aktiven - wie die Wahl in der Glasleiste (Nachbesserung 24.09.2026):
+        # vorher blieb LF1 aktiv, die Leiste zeigte „Lastfall W_links“, und
+        # eine neue Streckenlast ging unsichtbar in LF1
+        d = self.cb_result.currentData() if self.results is None and self.cb_result.count() else None
+        if d and d[0] == "case" and d[1] in self.model.load_cases \
+                and d[1] != self.model.active_case:
+            self._aktiven_lastfall_setzen(d[1])
         self._lastwahl_nachziehen()     # die Glasleiste zeigt dasselbe an
         # Das Etikett der Maske Nachweise (Gruppe „Nachweise führen“) bei
         # jedem Aufruf aus dem, was die statische Analyse (self.analysis)
@@ -19025,7 +19136,15 @@ class MainWindow(QtWidgets.QMainWindow):
         LF1 im Bild der „Umhüllende ULS“); jetzt nur mit dem Schalter
         „Lasten im Ergebnisbild“ (Vorgabe aus), und die Kopfzeile nennt den
         Lastfall. Eigenformen haben keine Lasten.
+
+        Nachbesserung 24.09.2026: Eine Umhuellende aus genau einem Lastfall
+        („Umhüllende CASES“ eines Modells mit nur LF1 - sechs der acht
+        Beispiele) ist dieser Lastfall und zeigt seine Lasten; sonst waren
+        sie nach „Berechnen“ weg (Rahmen 33 -> 0 Lastsymbole). Fallen die
+        Lasten nur wegen des Schalters weg, merkt sich _lasten_weggelassen
+        das fuer die Kopfzeile.
         """
+        self._lasten_weggelassen = False
         if not self.act_loads.isChecked() or modal:
             return None
         m = self.model
@@ -19034,9 +19153,16 @@ class MainWindow(QtWidgets.QMainWindow):
         art, name = self._lastwahl_ziel()
         if art == "case":
             return name if name in m.load_cases else None
+        if art == "env" and self.analysis is not None:
+            env = self.analysis.envelopes.get(name)
+            namen = list(getattr(env, "names", None) or [])
+            if len(namen) == 1 and namen[0] in m.load_cases:
+                return namen[0]
         a = getattr(self, "act_lasten_ergebnis", None)
         if a is not None and a.isChecked() and m.active_case in m.load_cases:
             return m.active_case
+        self._lasten_weggelassen = art in ("combo", "env") and m.active_case in m.load_cases \
+            and m.case().n_loads > 0
         return None
 
     def _kopfzeile_zeichnen(self, r, faktor: float = 0.0) -> list:
@@ -19066,13 +19192,20 @@ class MainWindow(QtWidgets.QMainWindow):
                                   faktor, einheiten=list(getattr(self, "_lasteinheiten", []) or []),
                                   lastfall=(getattr(self, "_lastfall_im_bild", None) or "")
                                   if r is not None else "",
+                                  # nur mit verformter Figur (Ueberhoehung
+                                  # > 0) - sonst stand „Figur: GZT4“ ohne Figur
                                   figur=(getattr(self, "_bild_figur", ("", None))[0] or "")
-                                  if r is not None else "")
+                                  if r is not None and faktor > 0 else "")
         except Exception as ex:             # noqa: BLE001
             self.log.appendPlainText(f"Kopfzeile: {ex}")
             return []
         if not zeilen:
             return []
+        if r is not None and getattr(self, "_lasten_weggelassen", False):
+            # Schalter „Lasten“ ist an, im Bild einer Kombination/Umhuellenden
+            # stehen trotzdem keine - das muss dastehen, sonst sucht man eine
+            # gerade angelegte Last vergeblich (24.09.2026)
+            zeilen = list(zeilen) + ["  Lasten ausgeblendet (Ergebnisse → Lasten im Ergebnisbild)"]
         if getattr(self, "_ergebnis_veraltet", False):
             # nach der Rechnung Knoten oder Elemente angelegt/geloescht
             # (_aufbauen, vp.ergebnis_passt) - sonst saehe man graue neue

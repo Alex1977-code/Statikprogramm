@@ -7505,9 +7505,12 @@ def main():
         i_kombi = next(i for i, (_t, d) in enumerate(eintr) if d and d[0] == "combo")
         cbl.setCurrentIndex(i_kombi)
         app.processEvents()
-        check("eine Kombination ohne Ergebnis sagt, woran es liegt",
-              "sobald gerechnet ist" in w.log.toPlainText().splitlines()[-1],
-              w.log.toPlainText().splitlines()[-1][:80])
+        # ... und die Leiste springt auf das zurueck, was das Bild weiter
+        # zeigt (Nachbesserung 24.09.2026, tests/test_ergebnisbild.py)
+        check("eine Kombination ohne Ergebnis sagt, woran es liegt, die Leiste springt zurück",
+              "sobald gerechnet ist" in w.log.toPlainText().splitlines()[-1]
+              and cbl.currentData() == ("case", w.model.active_case),
+              f"{w.log.toPlainText().splitlines()[-1][:80]} / {cbl.currentData()}")
         an_ = _slv.solve_all(w.model, design=bool(w.model.members))
         w._solve_done("all", an_)
         app.processEvents()
