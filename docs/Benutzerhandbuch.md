@@ -2276,12 +2276,21 @@ an), nicht mehr als getippte Namen.
 Kombinationen zu; nicht mehr genannte fallen in die Grundstellung zurück.
 Was in der Stellung nicht wirkt (Stäbe, Flächen, Volumen, Gelenke, Lager),
 steht in der Stellung selbst — die Maske der Situation zeigt es nur an.
-Nennt eine Situation als Stellung „Grundstellung“ (die Maske lässt das nicht
-zu; es kommt aus einer Modelldatei, beim Anhängen oder über die Web-API
-herein), ist sie unbewegt mit allen Elementen — so rechnet das Programm sie,
-und seit dem 23.09.2026 sagt die Modellprüfung dasselbe. Vorher meldete sie
-„FEHLER: Situation '…': Stellung 'Grundstellung' unbekannt“, und die
-Kommandozeile gab 2 zurück, obwohl die Rechnung durchlief.
+Nennt eine Situation als Stellung „Grundstellung“ und heißt keine Stellung so
+(dann bietet die Maske den Namen nicht an; er kommt aus einer Modelldatei,
+beim Anhängen oder über die Web-API herein), ist sie unbewegt mit allen
+Elementen — so rechnet das Programm sie, und seit dem 23.09.2026 sagt die
+Modellprüfung dasselbe. Vorher meldete sie „FEHLER: Situation '…': Stellung
+'Grundstellung' unbekannt“, und die Kommandozeile gab 2 zurück, obwohl die
+Rechnung durchlief. Heißt dagegen eine Stellung selbst „Grundstellung“ (die
+Maske „Stellung“ lässt den Namen zu, und der RFEM-Import benennt Stellungen
+nach den Strukturmodifikationen), rechnet eine Situation, die sie nennt, mit
+dieser Stellung — Lage, Lager, Gelenke und abgeschaltete Elemente wie bei
+jeder anderen. Bis zum 24.09.2026 schaltete das Programm in diesem Fall nur
+ihre Stäbe, Flächen und Volumen ab; Lage, Lager und Gelenke blieben wie
+unbewegt. Geprüft in `tests/test_situationen.py`
+(`test_echte_stellung_namens_grundstellung`: eine Rolle, die die Stellung
+abschaltet, hielt den Lastpunkt bis dahin fest).
 
 **Aus RFEM kommen Situationen von selbst mit.** Eine Strukturmodifikation in
 der Quelldatei ist ein Ausfallszenario: sie schaltet genannte Stäbe und Lager

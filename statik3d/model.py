@@ -2920,15 +2920,6 @@ GRUNDSTELLUNG = "Grundstellung"
 GESAMTSYSTEM = "Gesamtsystem"
 
 
-def stellung_unbewegt(stellung: str) -> bool:
-    """Die Stellung einer Situation ist die unbewegte: leer oder
-    GRUNDSTELLUNG. An einer Stelle, weil situationsmodell, aktive_elemente
-    und Model.check dasselbe meinen muessen - bis zum 23.09.2026 rechneten
-    die ersten beiden 'Grundstellung' als unbewegt, und check() meldete sie
-    als unbekannte Stellung (FEHLER, CLI Exit 2; Befund B108)."""
-    return not stellung or stellung == GRUNDSTELLUNG
-
-
 @dataclass
 class Subsystem:
     """Ein Teil des Tragwerks mit allem, was dazugehoert.
@@ -4156,6 +4147,29 @@ class Model:
                 return s
         return None
 
+    def stellung_unbewegt(self, stellung: str) -> bool:
+        """Nennt eine Situation mit *stellung* die unbewegte Lage? Ja, wenn
+        der Name leer ist, oder wenn er GRUNDSTELLUNG ist und keine Stellung
+        so heisst.
+
+        An einer Stelle, weil situationsmodell, aktive_elemente und
+        Model.check dasselbe meinen muessen: bis zum 23.09.2026 rechneten die
+        ersten beiden 'Grundstellung' ohne Stellung dieses Namens als
+        unbewegt, und check() meldete sie als unbekannte Stellung (FEHLER,
+        CLI Exit 2; Befund B108).
+
+        Eine echte Stellung dieses Namens geht vor: die Maske Stellung prueft
+        nur auf leeren und doppelten Namen, und der RFEM-Import benennt
+        Stellungen nach den Strukturmodifikationen. Die erste Kur zu B108
+        (Stand b72e754) nahm 'Grundstellung' immer als unbewegt und uebersah
+        so eine Stellung still - gemessen 24.09.2026 an zwei Kragarmen
+        HEA 200, deren Stellung 'Grundstellung' Stab B abschaltet: w am Ende
+        von B -11,8131 mm statt 0,0 mm (Stand ec6448c), keine Zeile in
+        check() oder im Protokoll."""
+        if not stellung:
+            return True
+        return stellung == GRUNDSTELLUNG and self.stellung(stellung) is None
+
     def grundmaske(self):
         """Maske (n_elemente,) der Elemente, die ueberhaupt wirken: False fuer
         die Elemente abgeschalteter Staebe (Member.aus, in RFEM „deaktiviert");
@@ -4183,7 +4197,7 @@ class Model:
                 aktiv[int(i)] = False
         # Die Stellung der Situation schaltet ihre Staebe, Flaechen und
         # Volumen ab - das gehoert zur Wirkung des Systems in dieser Stellung
-        st = None if stellung_unbewegt(sit.stellung) else self.stellung(sit.stellung)
+        st = None if self.stellung_unbewegt(sit.stellung) else self.stellung(sit.stellung)
         if st is not None and hasattr(st, "deaktivierte_elemente"):
             for i in st.deaktivierte_elemente(self):
                 aktiv[int(i)] = False
@@ -5398,9 +5412,9 @@ class Model:
             if lc.situation and lc.situation not in namen:
                 msgs.append(f"FEHLER: Lastfall '{lc.name}': Situation '{lc.situation}' unbekannt")
         for sit in self.situationen.values():
-            # 'Grundstellung' ist die unbewegte Stellung, keine unbekannte
-            # (stellung_unbewegt, wie situationsmodell rechnet)
-            if not stellung_unbewegt(sit.stellung) and self.stellung(sit.stellung) is None:
+            # 'Grundstellung' ohne Stellung dieses Namens ist die unbewegte,
+            # keine unbekannte (stellung_unbewegt, wie situationsmodell rechnet)
+            if not self.stellung_unbewegt(sit.stellung) and self.stellung(sit.stellung) is None:
                 msgs.append(f"FEHLER: Situation '{sit.name}': Stellung '{sit.stellung}' unbekannt")
             if sit.deaktiviert and len(sit.deaktiviert) >= len(self.elements):
                 msgs.append(f"FEHLER: Situation '{sit.name}': alle Elemente deaktiviert")
