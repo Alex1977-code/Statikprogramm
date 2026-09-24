@@ -1889,6 +1889,19 @@ um 0,14 % und mit 20 × 4 × 4 Zellen um 1,1 % weiter durch. Ein früher erzeugt
 tet4-Quader steht mit seinen Elementen in der Modelldatei und behält die Risse:
 Elemente löschen und den Quader neu erzeugen. Mit **hex8** betrifft das nichts.
 
+**Quader nur mit hex8 oder tet4.** Der Quader kennt genau zwei Elementtypen:
+**hex8** (ein Hexaeder je Zelle) und **tet4** (fünf Tetraeder je Zelle). Die
+Maske und die Browser-Oberfläche bieten nur diese beiden an; über die
+Web-Schnittstelle (`POST /api/op` mit `"op": "box"`) oder ein Skript
+(`mesher.grid_box`) lässt sich aber jeder Text als Typ übergeben. Seit
+23.09.2026 bricht jeder andere Typ ab, bevor ein Knoten angelegt ist, mit der
+Meldung „Elementtyp 'hex20' für den Quader nicht möglich: nur hex8 oder tet4“
+(über die Web-Schnittstelle mit Status 400); das Modell bleibt, wie es war.
+Groß geschriebenes „HEX8“ zählt ebenfalls als anderer Typ. Vorher wurde jeder
+Typ außer hex8 still als tet4 gebaut: am Stand ec6448c ergaben „hex20“,
+„tet10“, „HEX8“ und „quatsch“ bei einer Zelle je fünf tet4 mit der Meldung
+„Quader erzeugt“. Ohne Typangabe baut die Web-Schnittstelle weiterhin hex8.
+
 **Rechtsklick auf die Auswahl.** Sind Knoten, Linien, Stäbe, Flächen,
 Volumen oder Elemente gewählt (mit ihren Lagern und Kontaktbedingungen),
 öffnet der Rechtsklick in der Ansicht ein Menü: oben *Selektiertes

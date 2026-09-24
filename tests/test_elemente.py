@@ -725,6 +725,43 @@ def test_quader_tet4_konform():
           not vol, "; ".join(vol))
 
 
+def test_quader_elementtyp_geprueft():
+    """„Quader erzeugen“ baut nur hex8 und tet4; jeder andere Typ wird abgewiesen.
+
+    Bis 23.09.2026 legte grid_box nur bei typ == "hex8" Hexaeder an, jeder
+    andere Wert fiel still in die Fuenferzerlegung: gemessen am Stand ec6448c
+    ergaben "hex20", "tet10", "HEX8" und "quatsch" bei 1x1x1 Zellen je 5 tet4
+    ohne jede Meldung. Verlangt ist jetzt ein ValueError, der den Typ und die
+    zulaessigen Typen nennt, bevor ein Knoten angelegt ist - das Modell bleibt
+    unveraendert.
+    """
+    from collections import Counter
+    falsch = []
+    for typ in ("hex20", "tet10", "HEX8", "quatsch"):
+        m = Model("Quader")
+        mat = stahl(m)
+        try:
+            mesher.grid_box(m, mat, 1.0, 1.0, 1.0, 1, 1, 1, typ=typ)
+        except ValueError as ex:
+            txt = str(ex)
+            if typ not in txt or "hex8" not in txt or "tet4" not in txt:
+                falsch.append(f"{typ}: Meldung ohne Typ/zulaessige Typen: {txt!r}")
+            elif m.nn or m.elements:
+                falsch.append(f"{typ}: Modell veraendert ({m.nn} Knoten, {len(m.elements)} Elemente)")
+            continue
+        falsch.append(f"{typ}: still gebaut {dict(Counter(e.typ for e in m.elements))}")
+    check("Quader: unbekannter Elementtyp abgewiesen, Modell unveraendert",
+          not falsch, "; ".join(falsch) or "hex20, tet10, HEX8, quatsch")
+    gebaut = {}
+    for typ in ("hex8", "tet4"):
+        m = Model("Quader")
+        mat = stahl(m)
+        mesher.grid_box(m, mat, 1.0, 1.0, 1.0, 1, 1, 1, typ=typ)
+        gebaut[typ] = dict(Counter(e.typ for e in m.elements))
+    check("Quader: hex8 ergibt 1 hex8, tet4 ergibt 5 tet4 je Zelle",
+          gebaut == {"hex8": {"hex8": 1}, "tet4": {"tet4": 5}}, str(gebaut))
+
+
 def test_bericht_und_export():
     """Bericht und Export kommen mit allen Typen zurecht."""
     from statik3d.exporters import vtk as vtk_ex, abaqus as abq_ex, nastran as nas_ex
@@ -766,7 +803,7 @@ def main():
               test_ebene, test_zugstab, test_exzentrizitaet, test_woelbkrafttorsion,
               test_feder_und_punktmasse, test_daempfer, test_starrkoerper, test_eigenformen_mit_kontakt, test_grenzschicht,
               test_speichern_laden, test_netz_quadratisch, test_quader_tet4_konform,
-              test_bericht_und_export):
+              test_quader_elementtyp_geprueft, test_bericht_und_export):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

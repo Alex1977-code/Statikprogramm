@@ -362,6 +362,46 @@ def test_contact_and_import():
     _assert_since(n0)
 
 
+def test_quader_elementtyp():
+    """Operation box: nur hex8 und tet4, jeder andere typ wird mit 400 abgewiesen.
+
+    Bis 23.09.2026 reichte _op_box d.get("typ") ungeprueft an grid_box, das
+    alles ausser "hex8" still als tet4 baute: gemessen am Stand ec6448c ergab
+    typ="hex20", "tet10", "HEX8" oder "quatsch" bei 1x1x1 Zellen je 5 tet4
+    mit der Meldung „Quader erzeugt“. Verlangt ist jetzt Status 400 mit dem
+    Typ im Fehlertext und ein unveraendertes Modell (0 Knoten, 0 Elemente).
+    """
+    n0 = len(RESULTS)
+    server, c = _server()
+    try:
+        st, j, _ = c.op(op="new", name="Quader")
+        st, j, _ = c.op(op="add_material", grade="S355")
+        falsch = []
+        for typ in ("hex20", "tet10", "HEX8", "quatsch"):
+            st, j, _ = c.op(op="box", lx=1, ly=1, lz=1, nx=1, ny=1, nz=1, mat="S355", typ=typ)
+            if st != 400 or typ not in str(j.get("error", "")):
+                falsch.append(f"{typ}: Status {st}, {j.get('error') or j.get('message')!r}, "
+                              f"Typen {(j.get('state') or {}).get('types')}")
+        st, s, _ = c.get("/api/state")
+        check("Quader: unbekannter typ abgewiesen (400, Typ in der Meldung)",
+              not falsch, "; ".join(falsch) or "hex20, tet10, HEX8, quatsch")
+        check("Quader: abgewiesener typ laesst das Modell leer",
+              st == 200 and s["nn"] == 0 and s["ne"] == 0, f"nn {s.get('nn')}, ne {s.get('ne')}")
+        typen = {}
+        for typ in (None, "hex8", "tet4"):
+            c.op(op="new", name="Quader")
+            c.op(op="add_material", grade="S355")
+            kw = {} if typ is None else {"typ": typ}
+            st, j, _ = c.op(op="box", lx=1, ly=1, lz=1, nx=1, ny=1, nz=1, mat="S355", **kw)
+            typen[str(typ)] = j["state"]["types"] if st == 200 else f"Status {st}"
+        check("Quader: ohne typ hex8, hex8 -> 1 hex8, tet4 -> 5 tet4",
+              typen == {"None": {"hex8": 1}, "hex8": {"hex8": 1}, "tet4": {"tet4": 5}}, str(typen))
+    finally:
+        server.shutdown()
+        server.server_close()
+    _assert_since(n0)
+
+
 def test_nichtlineare_lager_und_profile():
     """Neue Operationen: Lagerwirkung je FHG, Linien-/Flaechenlager, Gelenke,
     zusammengesetzte Querschnitte, Profilliste nach Land."""
@@ -772,7 +812,7 @@ def test_nachweiszeile_nicht_gefuehrt_nicht_gruen():
 
 def main():
     for t in (test_static_and_auth, test_model_editing, test_solve_results_report,
-              test_contact_and_import, test_nichtlineare_lager_und_profile,
+              test_contact_and_import, test_quader_elementtyp, test_nichtlineare_lager_und_profile,
               test_stellungen_din19704_export, test_oberflaeche_rendert,
               test_nachweiszeile_nicht_gefuehrt_nicht_gruen,
               test_bound_state):
