@@ -2230,8 +2230,9 @@ def test_json_anhaengen_tet4_nachbar():
     4 x 1 (tet10 mit Mitten auf dem Kreisbogen, aus_tet10, p = 3) mit
     demselben Zylinder als tet4 um h darueber, in beiden Reihenfolgen: 10
     Knoten zusammengefuehrt, 17 Anschlusskanten, davon 8 gekruemmt; die
-    tetp-Elemente weichen dort bis 3,769 mm von ihrer vorigen Geometrie ab,
-    keine Warnung. Ein tet10 an einer tetp-Kante bricht die Rechnung ab.
+    Kantenmitten der tetp-Elemente ruecken dort um bis zu 3,843 mm (groesste
+    Koordinatenaenderung 3,769 mm), keine Warnung. Ein tet10 an einer
+    tetp-Kante bricht die Rechnung ab.
 
     Die Pruefung haelt fest, was die Handbuecher jetzt sagen: an den
     Anschlusskanten genau die Sehnenmitte, sonst bitgleich, keine Warnung zu
@@ -2290,9 +2291,13 @@ def test_json_anhaengen_tet4_nachbar():
             warn = [x for x in log if "Kantenmitte" in x]
             ok = gerade and sonst and not warn and krumm > 0 and float(np.abs(G1 - G0).max()) > 0.0
             gut = gut and ok
+            # der Weg euklidisch, wie ihn die Warnung beim Zusammenfuehren
+            # nennt, und daneben die groesste Koordinatenaenderung
             zeilen.append(f"{fall}: {len(anschluss)} Anschlusskanten, davon {krumm} gekruemmt, "
                           "dort " + ("Sehnenmitte" if gerade else "NICHT die Sehnenmitte")
-                          + f", tetp-Elemente max|dG| {float(np.abs(G1 - G0).max()) * 1e3:.4g} mm, "
+                          + ", tetp-Elemente um bis zu "
+                          f"{float(np.linalg.norm(G1 - G0, axis=2).max()) * 1e3:.4g} mm verschoben "
+                          f"(groesste Koordinatenaenderung {float(np.abs(G1 - G0).max()) * 1e3:.4g} mm), "
                           "sonst " + ("bitgleich" if sonst else "ANDERS")
                           + "; " + ("\n".join(warn) or "keine Warnung"))
         pq = os.path.join(d, "quelle.json")

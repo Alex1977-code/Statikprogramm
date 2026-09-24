@@ -421,7 +421,8 @@ def _kantenmitten_umhaengen(model: Model, new_index, new_nodes,
     teilt ein tet4 die Kante, ist sie dort gerade (tetp.pflichtseiten gibt
     sie geometrie_modell als gerade_kanten), gleich welche Seite zuerst
     steht, und hier kommt keine Warnung - gemessen 24.09.2026 am
-    Hohlzylinder, 8 gekruemmte Anschlusskanten, bis 3,769 mm (Pruefung
+    Hohlzylinder, 8 gekruemmte Anschlusskanten, Kantenmitten um bis zu
+    3,843 mm verschoben (groesste Koordinatenaenderung 3,769 mm; Pruefung
     test_json_anhaengen_tet4_nachbar). Bis zur
     Nachbesserung vom 24.09.2026 galt der zuerst eingetragene Eintrag, und
     ein fehlender zaehlte nicht: war eine Seite gerade und die andere

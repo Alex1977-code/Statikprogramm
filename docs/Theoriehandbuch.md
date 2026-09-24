@@ -7394,18 +7394,24 @@ gekrümmten Kante: die Geometrie jedes angehängten Elements ist bitgleich die
 der Quelle (`tests/test_importers.py`).
 
 Diese Regel gilt nur zwischen `tetp`-Elementen; das Zusammenführen sieht nur
-deren Kanten. Teilt die Kante danach ein Element ohne Anreicherung (etwa ein
-tet4), ist sie gerade (unten: Geometrie an der Grenze zum tet4), gleich
-welche Seite zuerst steht, und das Protokoll warnt nicht. Die Kantenmitte
-bleibt eingetragen, `geometrie_modell` übergeht sie dort. Gemessen (zweimal,
-24.09.2026) am Viertel-Hohlzylinder 4 × 1 (tet10 mit Kantenmitten auf dem
-Kreisbogen, `aus_tet10`, p = 3) mit demselben Zylinder als tet4 um h darüber,
-in beiden Reihenfolgen: 10 Knoten zusammengeführt, 17 Anschlusskanten,
-davon 8 gekrümmt; dort liegt die Geometrie genau auf der Sehnenmitte, die
-`tetp`-Elemente weichen bis 3,769 mm von ihrer vorigen Geometrie ab, sonst
-bitgleich, keine Warnung (`tests/test_importers.py`). Mit demselben Zylinder
-als tet10 darüber bricht die Rechnung ab (Mittenknoten ohne Gegenüber, siehe
-oben unter Lager).
+deren Kanten. Teilt die Kante danach ein Volumenelement ohne Anreicherung
+(etwa ein tet4), ist sie gerade (unten: Geometrie an der Grenze zum tet4),
+gleich welche Seite zuerst steht, und das Protokoll warnt nicht. Die
+Kantenmitte bleibt eingetragen, `geometrie_modell` übergeht sie dort. Gemessen
+(zweimal, 24.09.2026) am Viertel-Hohlzylinder 4 × 1 (tet10 mit Kantenmitten
+auf dem Kreisbogen, `aus_tet10`, p = 3) mit demselben Zylinder als tet4 um h
+darüber, in beiden Reihenfolgen: 10 Knoten zusammengeführt, 17
+Anschlusskanten, davon 8 gekrümmt; dort liegt die Geometrie genau auf der
+Sehnenmitte, die Kantenmitten der `tetp`-Elemente rücken um bis zu 3,843 mm
+(größte Koordinatenänderung 3,769 mm; die Pfeilhöhe b (1 − cos 11,25°) des
+Bogens am Außenradius b = 0,2 m), sonst bitgleich, keine Warnung (`tests/test_importers.py`). Mit
+demselben Zylinder als tet10 darüber bricht die Rechnung ab (Mittenknoten ohne
+Gegenüber, siehe oben unter Lager). Schalen und Stäbe zählen dabei nicht:
+`tetp.pflichtseiten` sieht nur Volumenelemente. Am selben gekrümmten Zylinder
+(zweimal, 24.09.2026) blieben die 8 gekrümmten Deckkanten gekrümmt mit einem
+shell3 auf jedem der 8 Deckdreiecke oder einem beam auf jeder dieser Kanten;
+mit einem tet4 auf jedem Deckdreieck oder einem hex8 an jeder dieser Kanten
+wurden sie gerade.
 
 Bis zur Nachbesserung vom 24.09.2026 galt der zuerst eingetragene Eintrag,
 und eine gerade Seite zählte nicht: Es galt still die gekrümmte Kante, auch

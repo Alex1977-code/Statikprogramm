@@ -3091,9 +3091,10 @@ jetzt kommen alle an. Was das Protokoll dabei sagt:
   übereinander, einer aus tet4, einer aus gekrümmten Tetraedern mit
   Ordnung p, je einmal als Ziel und als Quelle: Die 8 gekrümmten Kanten der
   Anschlussfläche wurden gerade, deren Kantenmitten rückten um bis zu
-  3,769 mm, und das Protokoll schwieg. Liegt auf einer Seite ein tet10, bricht die Rechnung mit der
-  Nummer des Elements und der Kante ab („… teilt die Kante … mit einem
-  Tetraeder mit Ordnung p …“).
+  3,843 mm auf die Sehnenmitte (so weit weicht der Kreisbogen dort von der
+  Sehne ab), und das Protokoll schwieg. Liegt auf einer Seite ein tet10,
+  bricht die Rechnung mit der Nummer des Elements und der Kante ab („…
+  teilt die Kante … mit einem Tetraeder mit Ordnung p …“).
 * **Nicht übertragen** und mit Anzahl gemeldet werden die Berichtseinträge
   (sie zeigen Ergebnisse des Quellmodells) und die Stellungen (eine
   Stellung, die verschiebt oder dreht, bewegt ohne Gruppenangabe alle Knoten
