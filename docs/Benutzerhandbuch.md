@@ -3923,7 +3923,24 @@ Knicklinie, e_0, q und V.
 **Wichtig**: Nach Theorie II. Ordnung gilt keine Superposition mehr. Jede
 Kombination wird einzeln gerechnet — das dauert länger als eine lineare
 Überlagerung. Die Ergebnisse der einzelnen **Lastfälle** bleiben Ergebnisse
-nach Theorie I. Ordnung und dürfen nicht mehr von Hand überlagert werden.
+nach Theorie I. Ordnung, außer bei Lastfällen, deren Feld **Theorie** auf II.
+oder III. Ordnung steht (siehe „Theorie je Lastfall und Kombination“ unten):
+deren Ergebnis ist selbst am verformten System gerechnet. Von Hand überlagert
+werden dürfen beide nicht mehr. Ist im Kapitel zur Theorie II. Ordnung etwas
+nach II. Ordnung gerechnet – dazu zählt jeder Lastfall und jede Kombination
+mit dem Feld Theorie auf II. Ordnung, sofern die Rechnung gelingt –, nennt der
+Bericht dort diese Lastfälle, etwa „ausgenommen LF1 (II. Ordnung)“; ein
+Lastfall, dessen Rechnung nach II. oder III. Ordnung gescheitert ist, behält
+sein lineares Ergebnis und zählt dort zu Theorie I. Ordnung. Sonst steht ein
+Lastfall auf III. Ordnung nur in der Tabelle des Kapitels zur Theorie III.
+Ordnung und in der Spalte **Theorie** der Lastfalltabelle – etwa bei
+„automatisch“, wenn α_cr bei keiner Kombination unter der Grenze liegt und
+weder ein Lastfall noch eine Kombination auf II. Ordnung steht (das Kapitel
+zur Theorie II. Ordnung erscheint dann ohne diesen Satz), oder bei „aus“ ohne
+Lastfall und Kombination auf II. Ordnung (das Kapitel fehlt dann ganz). Bis
+zum 23.09.2026 nannte der Bericht an dieser Stelle alle Lastfälle Ergebnisse
+nach Theorie I. Ordnung, auch einen Lastfall auf II. Ordnung — am Druckkragarm
+(Druck 500 kN, Querlast 1 kN) mit 5,339 mm am Kragende statt linear 2,574 mm.
 
 Eine **Ergebniskombination** („A oder B oder …", aus RFEM) wird nicht als
 Ganzes gerechnet, sondern jede ihrer Alternativen: in der Tabelle des

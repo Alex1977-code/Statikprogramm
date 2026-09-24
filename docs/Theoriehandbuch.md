@@ -2934,8 +2934,12 @@ um z heißt Ausweichen in y) und nur für die nach 5.3.2(6) schlanken Stäbe:
 **Folge für die Ergebnisse**: nach Theorie II. Ordnung gilt die Superposition
 nicht mehr. Jede Kombination wird einzeln gerechnet und ersetzt das Ergebnis
 der linearen Überlagerung; die Umhüllenden werden erst danach gebildet. Die
-Lastfallergebnisse bleiben Ergebnisse nach Theorie I. Ordnung und dürfen nicht
-mehr überlagert werden — der Bericht sagt das.
+Lastfallergebnisse bleiben Ergebnisse nach Theorie I. Ordnung, außer bei
+Lastfällen mit eigener Theorie II. oder III. Ordnung (Feld ``theorie``, siehe
+5.1b): deren Ergebnis ersetzt das lineare. Überlagert werden dürfen beide nicht
+mehr — der Bericht sagt das und nennt die Lastfälle nach II./III. Ordnung
+namentlich; maßgebend ist dafür die gerechnete Theorie
+(``res.info["theorie"]``), nicht die eingestellte.
 
 **Grenzen**: keine Theorie III. Ordnung (große Verformungen), keine
 Fließgelenke, keine Imperfektionsform aus der Knickeigenform nach 5.3.2(11)

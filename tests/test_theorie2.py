@@ -347,12 +347,220 @@ def test_im_modell_und_bericht():
           "Gerechnet wird nach Theorie I. Ordnung" in h0)
 
 
+def _druckkragarm(theorie2="aus", druck=5.0e5):
+    """Kragarm unter Druck mit Querlast am Ende, drei Lastfaelle."""
+    from statik3d.model import Section
+    from statik3d import mesher
+    m = Model("Druckkragarm")
+    m.add_material(Material("S", E=2.1e11, rho=0.0))
+    m.add_section(Section.rectangle("R", 0.1, 0.2))
+    ids = mesher.line_of_beams(m, "S", "R", (0, 0, 0), (3.0, 0, 0), 4)
+    m.fix(ids[0], "all")
+    for name, fy in (("LF1", 1.0e3), ("LF2", 2.0e3), ("LF3", 1.5e3)):
+        m.add_load_case(name, "G")
+        m.load_node(ids[-1], Fx=-druck, Fy=fy, case=name)
+    m.design.theorie2 = theorie2
+    m.design.imperfektionen = False
+    return m, ids
+
+
+def _lastfallsatz(html):
+    import re
+    treffer = re.search(r"Die im Kapitel „Ergebnisse“ ausgewiesenen Lastfälle[^<]*", html)
+    return treffer.group(0) if treffer else ""
+
+
+def test_bericht_lastfaelle_hoeherer_ordnung():
+    """Das Theoriekapitel sagte bis zum 23.09.2026 ohne Ausnahme: „Die im
+    Kapitel Ergebnisse ausgewiesenen Lastfälle sind Ergebnisse nach Theorie I.
+    Ordnung" - auch fuer einen Lastfall, dessen Feld Theorie auf II./III.
+    steht und dessen Ergebnis in an.cases nach II./III. Ordnung gerechnet ist
+    (Druckkragarm: LF1 5,339 mm am Kragende statt linear 2,574 mm)."""
+    from statik3d.report import Report
+    m, ids = _druckkragarm("aus")
+    m.load_cases["LF1"].theorie = "II"
+    m.load_cases["LF2"].theorie = "III"
+    an = solver.solve_all(m, design=False)
+    lin = solver.solve_cases(m)
+    sp = ids[-1]
+    u_ii, u_lin = an.cases["LF1"].u[sp, 1] * 1e3, lin["LF1"].u[sp, 1] * 1e3
+    check("Voraussetzung: LF1 ist nach II. Ordnung gerechnet",
+          an.cases["LF1"].info.get("theorie") == "II. Ordnung" and u_ii > 1.5 * u_lin,
+          f"u_y {u_ii:.3f} mm, linear {u_lin:.3f} mm")
+    check("Voraussetzung: LF2 ist nach III. Ordnung gerechnet",
+          an.cases["LF2"].info.get("theorie") == "III. Ordnung")
+    satz = _lastfallsatz(Report(m, an).html())
+    check("Theoriekapitel enthält den Satz über die Lastfälle", bool(satz))
+    check("er nimmt LF1 als II. Ordnung aus", "LF1 (II. Ordnung)" in satz, satz[:160])
+    check("und LF2 als III. Ordnung", "LF2 (III. Ordnung)" in satz)
+    check("LF3 (linear) bleibt unter Theorie I. Ordnung",
+          "nach Theorie I. Ordnung" in satz and "LF3" not in satz)
+
+    m, ids = _druckkragarm("aus")
+    for lc in m.load_cases.values():
+        lc.theorie = "II"
+    satz = _lastfallsatz(Report(m, solver.solve_all(m, design=False)).html())
+    check("alle Lastfälle nach II. Ordnung: kein Wort von Theorie I. Ordnung",
+          bool(satz) and "Theorie I. Ordnung" not in satz
+          and all(f"LF{k} (II. Ordnung)" in satz for k in (1, 2, 3)), satz[:160])
+
+    # Scheitert die Rechnung nach II. Ordnung, bleibt das lineare Ergebnis
+    # (info["theorie"] = "I") - der Lastfall gehoert dann zu Theorie I.
+    m, ids = _druckkragarm("aus")
+    m.load_cases["LF1"].theorie = "II"
+    m.load_cases["LF2"].theorie = "II"
+    echt = T2.solve_theorie2
+
+    def lf2_scheitert(model, factors, name, *a, **k):
+        if name == "LF2":
+            raise ValueError("Probe: II. Ordnung verweigert")
+        return echt(model, factors, name, *a, **k)
+
+    T2.solve_theorie2 = lf2_scheitert
+    try:
+        an = solver.solve_all(m, design=False)
+    finally:
+        T2.solve_theorie2 = echt
+    satz = _lastfallsatz(Report(m, an).html())
+    check("gescheiterter Lastfall zählt zu Theorie I. Ordnung",
+          an.cases["LF2"].info.get("theorie") == "I" and "LF1 (II. Ordnung)" in satz
+          and "LF2" not in satz, satz[:160])
+
+    # Gegenprobe: lineare Lastfaelle, Kombination nach II. Ordnung - der Satz
+    # bleibt, wie er war
+    from statik3d.model import Combination
+    m, ids = _druckkragarm("ein")
+    m.combinations["K1"] = Combination("K1", {"LF1": 1.0, "LF2": 1.0}, "ULS")
+    satz = _lastfallsatz(Report(m, solver.solve_all(m, design=False)).html())
+    check("nur lineare Lastfälle: der Satz ist unverändert",
+          satz == "Die im Kapitel „Ergebnisse“ ausgewiesenen Lastfälle sind Ergebnisse "
+                  "nach Theorie I. Ordnung und dürfen nicht mehr überlagert werden; "
+                  "die Kombinationen und die Umhüllenden sind es nicht.", satz[:160])
+
+
+def _kapitel(html, titel):
+    """Text eines Kapitels (von seiner Ueberschrift bis zur naechsten) oder None."""
+    import re
+    for teil in re.split(r'(?=<h2 id="[^"]*" class="chapter">)', html):
+        if teil.startswith("<h2") and titel in teil[:300]:
+            return teil
+    return None
+
+
+def _zelle(html, text):
+    """Steht ``text`` als ganze Tabellenzelle in ``html``?"""
+    import re
+    return html is not None and re.search(r"<td[^>]*>" + re.escape(text) + "</td>", html) is not None
+
+
+def _theorie_in_lastfalltabelle(html, name):
+    """Spalte Theorie der Lastfalltabelle (Kapitel Einwirkungen) fuer ``name``."""
+    import re
+    tab = re.search(r"Lastfälle und Einwirkungskategorien.*?</table>", html, re.S)
+    if not tab:
+        return None
+    for zeile in re.findall(r"<tr>(.*?)</tr>", tab.group(0), re.S):
+        zellen = re.findall(r"<td[^>]*>(.*?)</td>", zeile, re.S)
+        if zellen and zellen[0] == name:
+            return zellen[11]
+    return None
+
+
+def test_bericht_lastfall_iii_ohne_rechnung_ii():
+    """Wo der Bericht einen Lastfall auf III. Ordnung nennt.
+
+    Das Benutzerhandbuch sagte in der Fassung vom 23.09.2026 (ad451de), der
+    Bericht nenne die Lastfaelle auf II. oder III. Ordnung im Kapitel zur
+    Theorie II. Ordnung. Den Satz dort gibt es aber nur, wenn in diesem
+    Kapitel etwas nach II. Ordnung gerechnet ist (report/html.py
+    chapter_theorie2, ``if gerechnet:``), und das Kapitel nur, wenn es
+    Th2-Ergebnisse gibt. Gemessen 24.09.2026 am Druckkragarm mit Druck 10 kN:
+    bei „automatisch“ hat K1 = LF1 + LF3 α_cr 47,9, bleibt ungerechnet, und
+    LF2 (III) fehlt im Kapitel zur Theorie II. Ordnung; bei „aus“ fehlt das
+    Kapitel ganz. Genannt ist LF2 dann in der Tabelle des Kapitels zur
+    Theorie III. Ordnung und in der Spalte Theorie der Lastfalltabelle - so
+    steht es jetzt im Handbuch, und diese Pruefung haelt es fest."""
+    from statik3d.model import Combination
+    from statik3d.report import Report
+    t2_titel = "Berechnung nach Theorie II. Ordnung"
+    t3_titel = "Berechnung nach Theorie III. Ordnung"
+
+    # (a) automatisch, keine Kombination verlangt II. Ordnung
+    m, ids = _druckkragarm("auto", druck=1.0e4)
+    m.load_cases["LF2"].theorie = "III"
+    m.combinations["K1"] = Combination("K1", {"LF1": 1.0, "LF3": 1.0}, "ULS")
+    an = solver.solve_all(m, design=False)
+    k1 = an.theorie2.kombinationen.get("K1") if an.theorie2 is not None else None
+    check("Voraussetzung (auto): LF2 nach III. Ordnung gerechnet",
+          an.cases["LF2"].info.get("theorie") == "III. Ordnung")
+    check("Voraussetzung (auto): K1 hält α_cr ein und ist nicht gerechnet",
+          k1 is not None and not k1.gerechnet and k1.alpha_cr >= k1.grenze
+          and not any(i.gerechnet for i in an.theorie2.kombinationen.values()),
+          f"α_cr {getattr(k1, 'alpha_cr', None)}")
+    h = Report(m, an).html()
+    kap2, kap3 = _kapitel(h, t2_titel), _kapitel(h, t3_titel)
+    check("auto: Kapitel Theorie II steht, aber ohne Satz über die Lastfälle",
+          kap2 is not None and not _lastfallsatz(kap2))
+    check("auto: LF2 wird im Kapitel Theorie II nicht genannt",
+          kap2 is not None and "LF2" not in kap2)
+    check("auto: LF2 steht in der Tabelle des Kapitels Theorie III",
+          _zelle(kap3, "LF2"))
+    check("auto: Lastfalltabelle, Spalte Theorie von LF2 ist III",
+          _theorie_in_lastfalltabelle(h, "LF2") == "III",
+          repr(_theorie_in_lastfalltabelle(h, "LF2")))
+
+    # (b) aus, nur ein Lastfall auf III: kein Kapitel zur Theorie II. Ordnung
+    m, ids = _druckkragarm("aus")
+    m.load_cases["LF2"].theorie = "III"
+    an = solver.solve_all(m, design=False)
+    h = Report(m, an).html()
+    check("aus: LF2 nach III. Ordnung, kein Kapitel Theorie II",
+          an.cases["LF2"].info.get("theorie") == "III. Ordnung"
+          and an.theorie2 is None and _kapitel(h, t2_titel) is None
+          and not _lastfallsatz(h))
+    check("aus: LF2 in Tabelle Theorie III und Spalte Theorie III",
+          _zelle(_kapitel(h, t3_titel), "LF2")
+          and _theorie_in_lastfalltabelle(h, "LF2") == "III",
+          repr(_theorie_in_lastfalltabelle(h, "LF2")))
+
+    # (c) automatisch wie (a), dazu LF1 auf II: ein gelungener Lastfall auf
+    # II. Ordnung ist selbst gerechnet (auch mit α_cr ueber der Grenze), also
+    # steht der Satz und nennt beide
+    m, ids = _druckkragarm("auto", druck=1.0e4)
+    m.load_cases["LF1"].theorie = "II"
+    m.load_cases["LF2"].theorie = "III"
+    m.combinations["K1"] = Combination("K1", {"LF1": 1.0, "LF3": 1.0}, "ULS")
+    an = solver.solve_all(m, design=False)
+    lf1 = an.theorie2.kombinationen.get("LF1") if an.theorie2 is not None else None
+    satz = _lastfallsatz(_kapitel(Report(m, an).html(), t2_titel) or "")
+    check("auto mit LF1 auf II: LF1 gerechnet, obwohl α_cr über der Grenze",
+          lf1 is not None and lf1.gerechnet and lf1.alpha_cr >= lf1.grenze,
+          f"α_cr {getattr(lf1, 'alpha_cr', None)}")
+    check("auto mit LF1 auf II: Satz nennt LF1 (II) und LF2 (III)",
+          "LF1 (II. Ordnung)" in satz and "LF2 (III. Ordnung)" in satz, satz[:160])
+
+    # (d) wie (a), aber K1 ausdruecklich auf II: gerechnet trotz α_cr 47,9,
+    # der Satz steht und nennt LF2 (gemessen 24.09.2026, auch bei „aus“)
+    m, ids = _druckkragarm("auto", druck=1.0e4)
+    m.load_cases["LF2"].theorie = "III"
+    m.combinations["K1"] = Combination("K1", {"LF1": 1.0, "LF3": 1.0}, "ULS")
+    m.combinations["K1"].theorie = "II"
+    an = solver.solve_all(m, design=False)
+    k1 = an.theorie2.kombinationen.get("K1") if an.theorie2 is not None else None
+    satz = _lastfallsatz(_kapitel(Report(m, an).html(), t2_titel) or "")
+    check("auto mit K1 auf II: K1 gerechnet, Satz nennt LF2 (III)",
+          k1 is not None and k1.gerechnet and "LF2 (III. Ordnung)" in satz,
+          f"α_cr {getattr(k1, 'alpha_cr', None)} {satz[:120]}")
+
+
 def main():
     print("=" * 92)
     print("STATIK3D - Verifikation Theorie II. Ordnung (DIN EN 1993-1-1, 5.2/5.3)")
     print("=" * 92)
     for t in (test_imperfektionsbeiwerte, test_alpha_cr, test_vergroesserung,
-              test_ersatzlasten, test_vorkruemmung, test_im_modell_und_bericht):
+              test_ersatzlasten, test_vorkruemmung, test_im_modell_und_bericht,
+              test_bericht_lastfaelle_hoeherer_ordnung,
+              test_bericht_lastfall_iii_ohne_rechnung_ii):
         print()
         t()
     ok = sum(1 for _n, o in RESULTS if o)
