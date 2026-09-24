@@ -4,7 +4,8 @@
 // gruen (ok), gelb (warn), rot (err). Die Pruefung steht in tests/test_web.py.
 // Aufruf:  node tests/render_nachweiszeile.js <app.js> <daten.json>
 //          daten.json = {"state": /api/state, "entries": /api/entries,
-//                        "result": /api/results, "design": /api/design}
+//                        "result": /api/results, "design": /api/design,
+//                        "member": {Stab: /api/member} (wahlweise)}
 // Der DOM-Ersatz ist derselbe wie in tests/render_check.js.
 'use strict';
 const fs = require('fs');
@@ -66,4 +67,35 @@ for (const [tab, fn] of [['ergebnisse', 'renderErgebnisse'], ['nachweise', 'rend
   ev(`S.tab = ${JSON.stringify(tab)}`);
   try { aus[tab] = zeilen(ev(`${fn}()`)); } catch (e) { aus[tab] = {fehler: e.message}; }
 }
+
+// Je Stab, was der Anwender ausser der Nachweiszeile sieht:
+//  stabzeilen  - die Zeile der Tabelle "Nachweise EC3" (Register Nachweise)
+//  stabdetail  - Ueberschrift mit Status und Ausnutzung des Fensters nach
+//                Antippen der Zeile (memberDetail schreibt in #modal-body)
+//  stabverlauf - die Meldungszeilen unter "Schnittgrößen am Stab" (memberChart)
+//                zu daten.member = {Stab: /api/member?which=...&name=Stab}
+aus.stabzeilen = {};
+aus.stabdetail = {};
+aus.stabverlauf = {};
+try {
+  ev('S.tab = "nachweise"');
+  const hn = ev('renderNachweise()');
+  const re = /<tr class="tap" data-action="member-detail" data-name="([^"]*)">([\s\S]*?)<\/tr>/g;
+  let t;
+  while ((t = re.exec(hn)) !== null) aus.stabzeilen[t[1]] = t[2];
+  const stabe = ((daten.design || {}).design || {}).members || {};
+  for (const name of Object.keys(stabe)) {
+    knoten['#modal-body'] = element('#modal-body');
+    ev(`memberDetail(${JSON.stringify(name)})`);
+    const h = knoten['#modal-body'].innerHTML;
+    aus.stabdetail[name] = {
+      kopf: (h.match(/<h2>[\s\S]*?<\/h2>/) || [''])[0],
+      ausnutzung: (h.match(/<b>Ausnutzung<\/b><span>([\s\S]*?)<\/span><\/div>/) || ['', ''])[1],
+    };
+  }
+  for (const [name, d] of Object.entries(daten.member || {})) {
+    ctx.__stab = d;
+    aus.stabverlauf[name] = zeilen(ev('memberChart(__stab)'));
+  }
+} catch (e) { aus.stabfehler = e.message; }
 console.log(JSON.stringify(aus));

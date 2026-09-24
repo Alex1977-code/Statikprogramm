@@ -3573,6 +3573,16 @@ Umlaut). Ein unbekanntes Glied eines Verlaufs meldet sie nicht; das nennt
 erst der Nachweis nach der Rechnung, mit dem Hinweis „Ermüdungslast *Name*:
 Ergebnis '…' fehlt“.
 
+In der Bedienung im Browser (Kap. 12) ist die Zeile „Ermüdung: …“ im
+Register *Nachweise* rot, wenn ein geführter Nachweis D > 1 hat, und gelb,
+wenn ein Nachweis nicht geführt oder unvollständig ist, ein Stab oder
+Volumen ohne wirksame Ermüdungslast bleibt oder kein Stab und kein Volumen
+einen Kerbfall hat. Grün ist sie nur, wenn alle Nachweise geführt,
+vollständig und erfüllt sind. Bis zum 23.09.2026 war sie grün, solange keine
+Ausnutzung in der Tabelle über 1 lag – gemessen etwa mit „Ermüdung: 2 Stäbe;
+nicht geführt: Stab Traeger, Stab Ohne_fy“ (Ermüdungslast auf einem nicht
+gerechneten Lastfall).
+
 Ergebnis: Tabelle „Nachweise EC3“ mit Ausnutzung, maßgebendem Nachweis,
 Kombination und Stelle; Färbung „Ausnutzung EC3“ im Viewport; alle Details
 im Bericht.
@@ -3622,7 +3632,14 @@ Wesentlichen Ergebnisse nennen dann keine größte Ausnutzung EC3. In der
 Bedienung im Browser (Kap. 12) ist die Nachweiszeile gelb hinterlegt statt
 grün, sobald ein Stab nicht geführt ist, auch wenn die übrigen Stäbe geführt
 und erfüllt sind; rot ist sie, sobald ein Stab eine Ausnutzung über 1 hat,
-auch neben einem nicht geführten. Abhilfe:
+auch neben einem nicht geführten. Der Stab selbst steht dort ebenfalls in
+Warnfarbe: in der Tabelle des Registers *Nachweise* mit Ausnutzung „–“ und
+„nicht geführt“ in der Spalte *maßgebend*, im Fenster nach Antippen der
+Zeile mit dem Status „nicht geführt“ und Ausnutzung „–“, und unter
+*Schnittgrößen am Stab* (Register *Ergebnisse*) als „Nachweis nicht geführt:
+Werkstoff … ohne Streckgrenze“. Bis zum 23.09.2026 zeigten diese drei
+Stellen den Stab grün mit Ausnutzung 0,00 bzw. „Nachweis: Ausnutzung 0,000“
+(gemessen an einem Stab aus einem Werkstoff ohne f_y). Abhilfe:
 Streckgrenze am Werkstoff eintragen (Tabelle *Eigenschaften → Werkstoffe*) oder am
 Stab den Haken „Nachweis nach EC3“ herausnehmen.
 
@@ -5701,6 +5718,11 @@ Kapitel 12). Das Register **⟳ Stellungen** führt den ganzen Ablauf:
 2. **▶ Alle Stellungen rechnen** rechnet jede Stellung einzeln und bildet die
    Umhüllende. Jede Karte zeigt danach ihr η, die maßgebende Stellung ist
    hervorgehoben, und die Kurve **η über den Stellungswinkel** steht darunter.
+   Die Meldung zur gewählten Stellung endet nur bei der Stellung, die das η
+   der Umhüllenden bestimmt, auf „· maßgebende Stellung“ – bei derselben,
+   deren Karte hervorgehoben ist. Bis zum 23.09.2026 stand der Zusatz an jeder
+   Stellung mit Stabnachweis (Stauwand, drei Stellungen mit Kombinationen: an
+   allen drei).
    Eine Stellung, die nicht rechenbar ist — etwa weil ein genannter Lastfall
    im Modell fehlt —, wird mit ihrer Fehlermeldung ausgewiesen; die übrigen
    Stellungen werden trotzdem gerechnet.
