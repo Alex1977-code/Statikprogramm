@@ -7241,6 +7241,7 @@ nach neun Minuten. `diagnose.abnahme(model)` prüft:
 | Haltegüte λ_min/λ_max je Teiltragwerk | ≥ 10⁻⁴ (`singular.HALTEGUETE_MIN`) | § 7b.1 |
 | Knoten im Rechennetz ohne Element | 0 | die Elementliste; nicht gezählt, was über Kopplungen (wirksame Richtungen) oder starre Körper (RBE2) in allen drei Richtungen am Netz gehalten ist, der Master eines RBE3, soweit seine gehaltenen Slaves ihn festlegen (`_rbe3_master_raum`), und ein in x, y, z gelagerter Anschlag am Spaltelement (`_angeschlossene_knoten`) |
 | Formgüte des schlechtesten Elements je Körper | ≥ 0,05 (`ABNAHME_ELEMENTGUETE`) | `netzguete.guete` |
+| Netz gefaltet: an einer gemeinsamen Seite zweier tet4 liegen beide Gegenknoten auf derselben Seite der Ebene | 0 | `_abnahme_faltung`, siehe unten |
 | Randtreue je Körper | ≥ 99 % (`ABNAHME_RANDTREUE`) | `Volumenkoerper.randtreue` |
 | Volumenbilanz je Körper | ≤ 0,5 % (`ABNAHME_VOLUMENBILANZ`), an windschiefen Flächen zuzüglich Σ A · Abstand der Netzseiten | `elementvolumina` gegen `_polyederhuelle` |
 | Seiten im Inneren (FEHLER) / Lücke im Netzrand (WARNUNG, über 0,5 % des Körpers FEHLER) / Riss im Netz, Netzrand neben der Hülle (WARNUNG) | 0 | freie Elementseiten gegen die Randflächen, Abstand ≤ 1 % der Seitengröße (`ABNAHME_HUELLABSTAND`), an windschiefen Flächen zuzüglich der örtlichen Sehnengrenze (`_sehnengrenze`, `ABNAHME_SCHIEF_RINGE`) und nur in Richtung der Fläche (`ABNAHME_SCHIEF_RICHTUNG`); Gruppen im Inneren: `_gruppen_im_inneren` (Riss: t/L ≤ 5 % `ABNAHME_RISS_DICKE`, t ≤ 0,65 · Dicke der Nachbarn `ABNAHME_RISS_NACHBAR`, V ≤ 2 · FLACH · L³ je vier Seiten `ABNAHME_RISS_FLACH`, kein verdrehtes Element, keine doppelten Knoten) |
@@ -7335,14 +7336,19 @@ Gemessen, t durch den Median der Nachbardicke:
 
 | Hohlraum | t / Dicke der Nachbarn |
 |---|---|
-| Lücken des freien Vernetzers (dieselben 30 Gruppen) | 0 bis 0,482 |
+| Lücken des freien Vernetzers (dieselben 30 Gruppen), als ganze Gruppe | 0 bis 0,482 |
+| Stücke solcher Gruppen: zerfällt eine Gruppe an einer Kante mit mehr als zwei Seiten in geschlossene Stücke, wird jedes für sich beurteilt (Platte mit Bohrung ohne „intelligent“, 12 925 tet4, Modell aus test_mantellinie_der_bohrung: je 4 Seiten 0,579 und 0,570, 6 Seiten 0,507) | bis 0,579 |
 | fehlender Sechsflächner, gleichmäßig 100 × 100 × 100 bis 500 mm und abgestuft wie oben | 1,00 bis 1,01 |
 | fehlender Kuhn-Tetraeder, gleichmäßig und abgestuft wie oben | 0,865 bis 1,07 |
 | verdrehter Sechsflächner, gleichmäßig und abgestuft wie oben | 0,21 bis 2,7 |
 | fehlender Tetraeder der Platte mit Bohrung, die 40 kleinsten mit V/L³ über 0,04 | 0,55 bis 1,34 |
 | fehlender flacher Tetraeder derselben Platte, Elemente 22584 / 2514 / 28444 (eigenes t/L 0,90 / 2,92 / 4,96 %) | 0,100 / 0,390 / 0,529 |
 
-Die Grenze 0,65 liegt zwischen 0,482 und 0,865 (Faktor 1,35 und 1,33). Die
+Die Grenze 0,65 liegt zwischen 0,579 und 0,865 (Faktor 1,12 und 1,33); nach
+unten bestimmen den Abstand die Stücke der zweiten Zeile, nicht die ganzen
+Gruppen (gemessen am 23.09.2026 an jeder Abnahme der beiden Suiten und an je
+einer Abnahme nach jedem freien Vernetzen darin — test_mantellinie_der_bohrung
+nimmt sein Netz selbst nicht ab). Die
 drei flachen Tetraeder der letzten Zeile liegen unter 0,65 und unter 5 % t/L;
 einzeln entfernt war jeder ein Riss (siehe die Kehrseite unten). Allein
 trägt auch Bedingung 3 nicht: An der Platte mit Bohrung sind die kleinsten
@@ -8004,6 +8010,106 @@ Trennung, die eben entstanden ist, und die Fuge wirkt dort nicht. Die Prüfung
 ist billig: für jedes getrennte Paar (alt, neu) darf kein Element beide
 Nummern enthalten; ein Durchgang über die Elemente genügt (0,44 s bei 489 376
 Elementen). Das ist der Fall, den man von außen als „halb vernetzt" sieht.
+
+**Gefaltetes Tetraedernetz** (23.09.2026, `_abnahme_faltung`). Beim tet4
+nehmen Formgüte q = 12 (3V)^(2/3) / Σ l², Netzvolumen und Steifigkeit
+(`solid.tet4_shape_grad`) den Betrag des Volumens. Ein Knoten, der durch die
+Gegenseite seiner Tetraeder geschoben ist, stülpt sie um; sie überdecken ihre
+Nachbarn. Am Kuhn-Netz 10 × 10 × 10 (Zellen 0,1 m, 6000 tet4), Knoten 665 um
+1,2 h verschoben, sechs Tetraeder mit det J < 0, sah es keine der übrigen
+Prüfungen: Abnahme ohne Befund (vor dieser Prüfung, 23.09.2026). Um 1,5 h
+verschoben, waagerechte Last oben: σ_v an den sechs 192,5 bis 247,3 kPa, an
+den Elementen um Knoten 665 im unverschobenen Netz 281,0 bis 329,1 kPa,
+mittlere Verschiebung oben −0,055 %.
+
+Übervolumen und Volumenbilanz. Ein umgestülptes Tetraeder geht mit +|V|
+statt −|V| in Σ |V| ein: Σ |V| liegt um 2 Σ |V_um| über Σ V, der Summe mit
+Vorzeichen. Σ V ist das Volumen innerhalb des Netzrands; ein verschobener
+innerer Knoten ändert es nicht (am Zylinder unten vor und nach dem Schub
+gleich bis auf 1,1 · 10⁻¹⁶ m³). Gegen den Körper ist das gefaltete Netz also
+nur dort um 2 Σ |V_um| zu groß, wo schon Σ V das Körpervolumen trifft. In
+einer Volumenbilanz steht das nur, wo sie läuft: für Elemente eines Körpers
+(`_abnahme_netz` geht `model.koerper` durch), dessen Hülle `_polyederhuelle`
+ohne Näherung liefert (nicht bei krummen Randlinien, siehe Volumenbilanz
+oben). Gemessen am 24.09.2026, jeweils Σ |V| − Σ V = 2 Σ |V_um| bis auf
+höchstens 1,5 · 10⁻¹⁶ m³. Bei den Würfeln ist Σ V = V_Körper = 1 m³, die
+Anteile beziehen sich auf 1 m³: Kuhn-Netz 10 × 10 × 10 im Quader K1, 1,2 h:
+400 cm³ = 0,04 % < 0,5 %, kein Befund; Kuhn-Netz 4 × 4 × 4, derselbe Schub:
+6250 cm³ = 0,625 %, FEHLER „Volumenbilanz“ neben „Netz gefaltet“; dasselbe
+4 × 4 × 4-Netz als Nastran-BDF gelesen (`importers.nastran.import_bdf`:
+384 tet4, kein Körper): 0,625 %, nur „Netz gefaltet“; freies Netz des oberen
+Würfels aus `test_fugen.zwei_bloecke` ("eigene", h 0,5, oben 0,15;
+4458 tet4): 17 umgestülpte in sechs Gruppen, Volumenbilanz 0,800 % =
+8004 cm³, dazu „Elementgüte“ 0,0195 an Element 2871, einem der 17, das
+zugleich flach ist. Beim Zylinder aus Bogenlinien (`test_mesher3d.buchse`,
+r 0,5 m, H 1 m, h 0,3; 1022 tet4, `_polyederhuelle` = None), innerer Knoten
+142 um 1,3 h, sind es 8 umgestülpte mit 2 Σ |V_um| = 12 693 cm³ = 1,643 %
+von Σ V = 0,772542 m³, nur „Netz gefaltet“. Hier liegt das Sehnennetz schon
+ungefaltet 1,637 % unter π r² H = 0,785398 m³, das gefaltete
+(Σ |V| = 0,785236 m³) noch 0,021 % darunter: Σ |V| − π r² H = −162 cm³
+statt 2 Σ |V_um|. Gemessen am 24.09.2026 mit dem Vernetzer vom 23.09.2026;
+am Stand af2fb40 (Vernetzer davor) waren es 4454 tet4, 0,767 % = 7671 cm³
+und „Elementgüte“ 0,020 an Element 2745 bzw. 1006 tet4, Knoten 143,
+12 685 cm³ = 1,642 %, Σ |V| = 0,785227 m³, −171 cm³ = −0,022 %. Gegen den
+Körper gemessen ist dieses gefaltete Netz also nicht zu groß; sein
+Übervolumen gleicht das Sehnendefizit fast aus.
+Der Befund „Netz gefaltet“ nennt deshalb 2 Σ |V| seiner Gruppe und dazu, was
+die Volumenbilanz in dieser Abnahme tat: `_abnahme_volumenbilanz` trägt je
+Körper Abweichung und Grenze in das Wörterbuch `bilanz` ein, sobald beide
+gerechnet sind (bricht sie danach ab, nimmt `_abnahme_netz` den Eintrag
+wieder heraus, denn ihr Befund ist dann verloren). Steht der Körper darin,
+nennt der Befund Abweichung und Grenze, sonst „für Volumen … lief keine
+Volumenbilanz“; ohne Körper „zu keiner Volumenbilanz“. Die Gruppen eines
+Körpers ergeben zusammen den Anteil der Faltung an der Volumenbilanz (bei
+den zwei Würfeln 3169 + 1337 + 285 + 169 + 1212 + 1833 ≈ 8004 cm³, je auf
+ganze cm³ gerundet; am Stand af2fb40 3167 + 1510 + 283 + 167 + 1336 + 1208 =
+7671 cm³).
+
+Abhilfe nennt der Befund nur, soweit gemessen. Bis 24.09.2026 stand dort
+„Die Knoten zurücksetzen oder neu vernetzen.“; das setzt einen von Hand
+verschobenen Knoten voraus. Eine Faltung des Vernetzers selbst bleibt: er
+rechnet mit fester Saat und gibt mit denselben Einstellungen dasselbe Netz.
+Gemessen am 24.09.2026 an `zwei_bloecke("eigene", 0,5, h_oben)`, jeder
+Aufbau zweimal, bitgleich samt Befunden: gefaltet bei h_oben 0,12 bis 0,18 (Schritt 0,01: 19, 20, 15, 17,
+12, 13, 14 umgestülpte), frei bei 0,19, 0,2 und 0,25; bei 0,15 mit gmsh und
+Netgen je 10, mit der Nachbesserung MMG3D 17 umgestülpte. Über
+`mesher.modell_vernetzen` ein Würfel mit aufgesetzter Pyramide (eigene
+Trennflächen, oben 0,15 bzw. 0,12: 11 bzw. 18 umgestülpte), zweimal vernetzt:
+dieselben Knoten und Befunde. Jede der sechs Gruppen bei 0,15 hängt an einem
+Knoten des Rings z = 1, den auch der untere Körper benutzt; auf der Kante
+y = 0 liegen dort die Teilungspunkte beider Körper ineinander (unten 0,25,
+0,5 und 0,75, dazwischen oben 0,5714, 0,7143 und 0,8571). Der Befund nennt
+die Zahlen der zwei Würfel für Tetraeder in einem Körper;
+`test_faltungsbefund_nennt_nur_gemessene_abhilfe` hält sie fest.
+
+Das Merkmal ist die Lage zu den Nachbarn, nicht det J je Element: zwei
+vertauschte Knoten geben det J < 0, sind aber dasselbe Tetraeder mit anderer
+Nummerierung und rechnen gleich (Element 3330, max |Δu| = 1,5 · 10⁻²⁰ m bei
+max |u| = 4,4 · 10⁻⁶ m). Für jede Seite (a, b, c), die genau zwei Tetraeder
+mit den Gegenknoten p und q teilen, ist mit n = (x_b − x_a) × (x_c − x_a)
+
+  h_p = n · (x_p − x_a),  h_q = n · (x_q − x_a).
+
+Haben h_p und h_q dasselbe Vorzeichen und sind beide dem Betrag nach größer
+als 10⁻⁹ · |n| · L, also |h_p|, |h_q| > 10⁻⁹ · |n| · L (beide Vorzeichen
+kommen vor: am Kuhn-Netz 10 × 10 × 10 mit 1,2 h sind von den 12 gefalteten
+Seiten 6 mit h_p, h_q > 0 und 6 mit h_p, h_q < 0, gemessen am 24.09.2026;
+L die längste Seitenkante; `ABNAHME_FALTUNG_EBENE`, nur gegen Rundung — ein
+Knoten so nahe an der Ebene gibt ohnehin Formgüte ≈ 0), liegen
+beide Tetraeder auf derselben Seite: das Netz ist dort gefaltet. Die Seiten
+werden wie in `_freie_seiten_ecken` sortiert gepackt und mit `lexsort`
+gepaart. Welche Tetraeder umgestülpt sind, folgt aus einer Zweifärbung über
+die Seiten (über einer gefalteten Seite verschiedene, sonst gleiche Farbe;
+Breitensuche und Parität durch Zeigerspringen); je zusammenhängendem Netz ist
+die seltenere Farbe die umgestülpte. Je Gruppe umgestülpter Tetraeder mit
+gemeinsamen Knoten ein FEHLER „Netz gefaltet“ mit allen Elementnummern
+(`Befund.elemente`) und den gemeinsamen Knoten. Am Kuhn-Netz: genau die sechs
+mit det J < 0 (3266, 3267, 3271, 3328, 3330, 3335, gemeinsam die Kante
+665–786), bei 0,5 h und beim Knotentausch kein Befund. Nur tet4:
+tet10 und die übrigen isoparametrischen Elemente brechen bei det J ≤ 0 laut
+Quelltext selbst ab (`solid._k_iso`, `solid._iso_an_punkten`). Aufwand am Kuhn-Netz
+48 × 48 × 48 (663 552 tet4) 1,45–1,50 s, am Drehlagermodell (645 934 tet4,
+kein Befund) 1,6–2,8 s bei 37,6 s für die ganze Abnahme (23.09.2026).
 
 Jede Verletzung nennt Prüfung, Bauteil, Element, Knoten, gemessenen Wert und
 Grenze — **einzeln**, ohne Sammelmeldung und ohne Auslassungspunkte: sind

@@ -5169,6 +5169,7 @@ nichts stillschweigend Übergangenes:
 | Haltegüte je Teiltragwerk | ≥ 10⁻⁴ |
 | Knoten im Rechennetz ohne Element (nicht gezählt: über Kopplungen oder einen starren Körper in allen drei Richtungen am Netz gehalten, Anschlag am Spaltelement) | 0 |
 | Formgüte des schlechtesten Elements je Körper | ≥ 0,05 |
+| **Netz gefaltet**: umgestülpte Tetraeder zwischen ihren Nachbarn | 0 |
 | Randtreue je Körper | ≥ 99 % |
 | **Volumenbilanz je Körper**: Elemente gegen Randflächen | ≤ 0,5 % (an windschiefen Flächen zuzüglich der Sehnen) |
 | **Seiten im Inneren**: freie Elementseiten, hinter denen der Körper weitergeht (verdrehtes Element, doppelte Knoten, Hohlraum) | 0 |
@@ -5220,9 +5221,14 @@ bleiben, wenn der freie Vernetzer flache Tetraeder aussortiert (Platte
 0,9 × 0,9 × 0,035 m mit Bohrung: 8 Seiten, zwei Hohlräume von zusammen
 0,056 mm³), oder wenn beiderseits einer Fläche dieselben Knoten verschieden in
 Dreiecke geteilt sind. Die 30 geschlossenen Gruppen in den Modellen der
-Prüfsuiten lagen bei höchstens 3,55 % der längsten Kante, waren höchstens
-0,48-mal so dick wie die Elemente daneben und hatten höchstens das 0,87-Fache
-von 10⁻⁶ · L³ je vier Seiten. Der Körper stimmt bis auf diese
+Prüfsuiten lagen bei höchstens 3,55 % der längsten Kante, waren als ganze
+Gruppe höchstens 0,48-mal so dick wie die Elemente daneben und hatten
+höchstens das 0,87-Fache von 10⁻⁶ · L³ je vier Seiten. Zerfällt eine
+Gruppe an einer Kante, an der mehr als zwei Seiten liegen, in geschlossene
+Stücke, beurteilt die Abnahme jedes Stück für sich; solche Stücke waren bis
+0,58-mal so dick (Platte mit Bohrung, frei vernetzt ohne „intelligent“,
+12 925 Tetraeder; gemessen am 23.09.2026). Bis zur Grenze 0,65 bleibt dort
+nur ein Abstand von Faktor 1,12. Der Körper stimmt bis auf diese
 Hohlräume, die Verschiebungen passen dort aber nur an Knoten und Kanten
 zusammen.
 
@@ -5448,6 +5454,74 @@ InfoCAD) ist das nicht gemessen. Der eigene Vernetzer ergibt mit denselben Einst
 dasselbe Netz, an fünf Prismen nachgemessen. Bei Befunden an seinen Netzen
 hilft neu vernetzen allein also nicht; was bei einer Lücke im Netzrand
 geholfen hat, steht oben.
+
+**Gefaltetes Tetraedernetz** (seit 23.09.2026). Wird ein Knoten durch die
+gegenüberliegende Seite seiner Tetraeder geschoben, stülpen sie sich um und
+überdecken ihre Nachbarn. Beim Tetraeder mit vier Knoten nehmen Formgüte,
+Elementvolumen und die Rechnung selbst den Betrag des Volumens. Am Würfel
+1 × 1 × 1 m, 10 × 10 × 10 Zellen in je sechs Tetraeder geteilt, den mittleren
+Knoten 665 um das 1,2-fache der Zellweite verschoben: sechs Tetraeder
+umgestülpt, und die Abnahme ohne diese Prüfung meldete nichts. Um das
+1,5-fache verschoben und oben waagerecht belastet, lag die Vergleichsspannung
+an diesen sechs bei 192,5 bis 247,3 kPa, an den Elementen um denselben Knoten
+im unverschobenen Netz bei 281,0 bis 329,1 kPa; die mittlere Verschiebung oben
+änderte sich nur um −0,055 %. Im Ganzen sieht man es dem Ergebnis also nicht
+an. Jetzt prüft die Abnahme jede Seite, die genau zwei Tetraeder teilen: die
+beiden Knoten, die ihr gegenüberliegen, müssen beiderseits ihrer Ebene
+liegen. Liegen sie auf derselben Seite, ist das Netz dort gefaltet („FEHLER: [Netz
+gefaltet] Volumen K1: 6 Tetraeder liegen umgestülpt zwischen ihren Nachbarn
+(Elemente 3266, 3267, 3271, 3328, 3330, 3335, alle an den Knoten 665, 786) …“).
+Welche der Nachbarn die umgestülpten sind, entscheidet der Zusammenhang: in
+jedem zusammenhängenden Netz die kleinere der beiden Gruppen.
+
+Im Netzvolumen zählt jedes umgestülpte Tetraeder mit seinem Volumen, statt es
+abzuziehen; das Netzvolumen ist also um das Doppelte seines Volumens größer
+als ohne die Faltung. In eine Volumenbilanz geht das nur ein, wo es eine
+gibt: für die Elemente eines Körpers, dessen Randlinien gerade und dessen
+Randflächen eben oder Vierecke ohne Öffnung sind. Im Würfel eben sind es
+400 cm³ oder 0,04 %, unter ihrer Grenze 0,5 %; bei 4 × 4 × 4 Zellen macht
+derselbe Schub 0,625 %, und die Volumenbilanz meldet es neben der Faltung.
+Dasselbe Netz als Nastran-Datei gelesen, also ohne Körper, hat keine
+Volumenbilanz, ebenso ein frei vernetzter Zylinder aus Bogenlinien
+(1022 Tetraeder), in dem ein innerer Knoten um das 1,3-fache der Netzweite
+verschoben ist: 1,643 % mehr als das ungefaltete Netz, und nur „Netz
+gefaltet“ meldet etwas. Gegen den Zylinder selbst ist dieses Netz dabei nicht
+zu groß: Seine Randseiten sind eben, und schon ungefaltet hat es 1,637 %
+weniger Volumen als der Zylinder, gefaltet noch 0,021 % weniger. An zwei
+Würfeln 1 × 1 × 1 m übereinander mit je eigener Trennfläche, der obere frei
+vernetzt mit Netzweite 0,15 m
+(4458 Tetraeder), fand die Abnahme 17 umgestülpte Tetraeder in sechs Gruppen,
+dazu „Volumenbilanz“ 0,800 % — genau das Doppelte ihres Volumens — und
+„Elementgüte“ 0,0195 an einem von ihnen, das zugleich flach ist; die sechs
+Befunde „Netz gefaltet“ dort ergeben zusammen die 8004 cm³, um die die
+Volumenbilanz zu hoch liegt (gemessen am 24.09.2026 mit dem Vernetzer vom
+23.09.2026; vorher 4454 Tetraeder, 0,767 %, 7671 cm³). Jeder Befund „Netz
+gefaltet“ nennt darum, wie viel seine Tetraeder zu viel ins Netzvolumen
+bringen, und dazu die Abweichung der Volumenbilanz ihres Körpers, oder dass
+für ihn keine lief bzw. die Tetraeder zu keinem Körper gehören.
+
+Die Faltung an den zwei Würfeln hat der eigene Vernetzer selbst erzeugt, von
+Hand war kein Knoten verschoben. Mit denselben Einstellungen gibt er dasselbe
+Netz mit derselben Faltung: jeder Aufbau zweimal, bitgleich samt Befunden;
+ebenso ein Würfel mit aufgesetzter Pyramide, zweimal über dieselbe Vernetzung
+wie „Netz → Vernetzen“ vernetzt. Neu vernetzen allein hilft dort also nicht.
+Bei Netzweite 0,5 m unten war der obere Würfel mit 0,12 bis 0,18 m gefaltet
+(in Schritten von 0,01 m, 12 bis 20 umgestülpte Tetraeder), mit 0,19, 0,2 und
+0,25 m nicht; bei 0,15 m blieb er auch mit dem Vernetzer gmsh oder Netgen
+(je 10 umgestülpte) und mit der Nachbesserung MMG3D (17) gefaltet (gemessen
+am 24.09.2026). Jede der sechs Gruppen hängt dort an einem Knoten auf dem
+gemeinsamen Rand beider Würfel (z = 1 m), den auch der untere benutzt. Was an
+diesem Modell half, nennt auch der Befund.
+
+Die Knotenfolge zählt dabei nicht. Sind in einem Tetraeder nur zwei Knoten
+vertauscht, ist seine Jacobi-Determinante negativ, es ist aber dasselbe
+Tetraeder mit anderer Nummerierung und rechnet gleich (am selben Netz
+Element 3330: die Verschiebungen weichen um höchstens 1,5 · 10⁻²⁰ m ab, bei
+4,4 · 10⁻⁶ m größter Verschiebung); die Abnahme bleibt dort still. Die Prüfung
+gilt für Netze aus Tetraedern mit vier Knoten. Am Drehlagermodell
+(645 934 Tetraeder) findet sie nichts und kostet 1,6 bis 2,8 s von 37,6 s für
+die ganze Abnahme (23.09.2026). Lässt sie sich nicht ausführen, steht
+`Faltung nicht geprüft` als Warnung im Protokoll.
 
 **„Bestanden" heißt nicht „nicht geprüft".** Zwei der Teilprüfungen fingen
 eine Ausnahme stumm ab und gaben eine leere Liste zurück — und leer heißt in
