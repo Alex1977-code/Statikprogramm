@@ -2563,7 +2563,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 return self._lager_umschalten(treffer) if treffer else self._klick_ins_leere()
             if art == "Last":
                 treffer = vp.last_at(point, getattr(self, "_lastpunkte", None), size)
-                return (self._last_waehlen(m.active_case, treffer[0], treffer[1]) if treffer
+                # der Lastfall, dessen Lasten im Bild stehen - beim Ergebnis
+                # eines Lastfalls ist das dieser, nicht der aktive (24.09.2026)
+                fall = getattr(self, "_lastfall_im_bild", None) or m.active_case
+                return (self._last_waehlen(fall, treffer[0], treffer[1]) if treffer
                         else self._klick_ins_leere())
         if self.model.nn == 0:
             return
@@ -3883,6 +3886,15 @@ class MainWindow(QtWidgets.QMainWindow):
             "Größte Ausnutzung, kleinste und größte Verformung und "
             "Schnittgrößen als Text in der Ansicht – sie kommen so auch in "
             "den Bericht")
+        # Vorgabe aus (24.09.2026): im Bild einer Kombination oder
+        # Umhuellenden standen die Lasten des aktiven Lastfalls, als
+        # gehoerten sie dazu. Ein Lastfall zeigt seine Lasten weiter.
+        self.act_lasten_ergebnis = g.schalter(
+            "Lasten im Ergebnisbild", lambda _z: self.redraw(), False,
+            "Bei einer Kombination oder Umhüllenden die Lasten des aktiven Lastfalls "
+            "ins Ergebnisbild – oben links steht, welcher Lastfall es ist. Das "
+            "Ergebnis eines Lastfalls zeigt immer seine eigenen Lasten (Schalter "
+            "„Lasten“ im Register Ansicht)", symbol="lasten")
         g = r.gruppe("Tabellen")
         for name in ("Stabkräfte", "Auflagerkräfte", "Umhüllende",
                      "Nachweise EC3", "Ermüdung", "Kontakt"):
@@ -12066,6 +12078,8 @@ class MainWindow(QtWidgets.QMainWindow):
         lay.addWidget(row("Schnittgrößenverlauf", self.cb_diagram))
         self.cb_mode = QtWidgets.QComboBox()
         self.cb_mode.currentIndexChanged.connect(self.redraw)
+        # die Glasleiste fuehrt die Formen mit (24.09.2026)
+        self.cb_mode.currentIndexChanged.connect(lambda _i: self._lastwahl_nachziehen())
         lay.addWidget(row("Eigenform", self.cb_mode))
         self.sl_scale = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.sl_scale.setRange(0, 100); self.sl_scale.setValue(30)
@@ -16288,45 +16302,112 @@ class MainWindow(QtWidgets.QMainWindow):
         self.model.supports.clear()
         self.refresh_all()
 
-    # ---- Lastfall/Kombination in der Glasleiste ------------------------
-    def _lastwahl_fuellen(self):
-        """Die Aufklappliste der Glasleiste mit Lastfaellen und Kombinationen.
+    # ---- Ergebnisauswahl in der Glasleiste ------------------------------
+    def _lastwahl_eintraege(self) -> list:
+        """[(Text, Daten)] der Glasleisten-Liste; Daten None = Ueberschrift.
 
-        Sie fuehrt genau das, was die Ansicht zeigen kann: jeden Lastfall und
-        jede Kombination. Die Auswahl wird nachgezogen, ohne dass dabei
-        wieder ein Wechsel gemeldet wird - sonst schaukelte sich
-        Liste -> Ansicht -> Liste auf.
+        Sie fuehrt alles, was die Ansicht zeigen kann, gegliedert: Lastfaelle,
+        Kombinationen, nach der Rechnung die Umhuellenden und nach einer
+        Eigenwert- oder Knickrechnung die Formen. Bis zum 24.09.2026 fehlten
+        die Umhuellenden: nach jeder Rechnung zeigte das Bild die „Umhüllende
+        ULS“ und die Leiste „Lastfall LF1“ (alle acht Beispiele).
+        """
+        m = self.model
+        an = self.analysis
+        faelle = [(f"Lastfall {n}", ("case", n)) for n in m.load_cases]
+        kombis = [(f"Kombination {n}", ("combo", n)) for n in m.combinations]
+        huellen, formen, formtitel = [], [], "Eigenformen"
+        if an is not None:
+            # was die Rechnung darueber hinaus kennt (Teilergebnis nach
+            # Abbruch, Ergebnisdatei) - sonst waere es rechts waehlbar, hier nicht
+            faelle += [(f"Lastfall {n}", ("case", n)) for n in an.cases if n not in m.load_cases]
+            kombis += [(f"Kombination {n}", ("combo", n)) for n in an.combinations
+                       if n not in m.combinations]
+            huellen = [(f"Umhüllende {k}", ("env", k)) for k in an.envelopes]
+        r = self.results
+        if r is not None:
+            texte = self._formtexte(r)
+            if getattr(r, "buckling_factors", None) is not None:
+                formtitel = "Knickformen"
+            formen = ([(t, ("form", i)) for i, t in enumerate(texte)] if texte
+                      else [(str(getattr(r, "name", "") or "Ergebnis"), ("single", None))])
+        eintraege = []
+        for titel, liste in (("Lastfälle", faelle), ("Kombinationen", kombis),
+                             ("Umhüllende", huellen), (formtitel, formen)):
+            if liste:
+                eintraege.append((titel, None))
+                eintraege += liste
+        return eintraege
+
+    @staticmethod
+    def _formtexte(r) -> list:
+        """Die Eintraege der Eigen- oder Knickformen - dieselben Texte in der
+        Ergebnismaske (cb_mode) und in der Glasleiste."""
+        if r is not None and getattr(r, "freqs", None) is not None:
+            return [f"{i+1}. Form  f = {f:.3f} Hz" for i, f in enumerate(r.freqs)]
+        if r is not None and getattr(r, "buckling_factors", None) is not None:
+            return [f"{i+1}. Form  η = {f:.3f}" for i, f in enumerate(r.buckling_factors)]
+        return []
+
+    def _lastwahl_fuellen(self):
+        """Die Aufklappliste der Glasleiste neu fuellen (_lastwahl_eintraege).
+
+        Die Auswahl wird nachgezogen, ohne dass dabei wieder ein Wechsel
+        gemeldet wird - sonst schaukelte sich Liste -> Ansicht -> Liste auf.
         """
         cb = getattr(self, "cb_lastwahl", None)
         if cb is None or not _lebt(cb):
             return
-        m = self.model
-        eintraege = [(f"Lastfall {n}", ("case", n)) for n in m.load_cases]
-        eintraege += [(f"Kombination {n}", ("combo", n)) for n in m.combinations]
+        eintraege = self._lastwahl_eintraege()
         alt = [(cb.itemText(i), cb.itemData(i)) for i in range(cb.count())]
         cb.blockSignals(True)
         try:
             if alt != eintraege:
                 cb.clear()
+                modell = cb.model()
                 for text, daten in eintraege:
                     cb.addItem(text, daten)
+                    if daten is None:
+                        # Ueberschrift: fett, nicht waehlbar
+                        it = modell.item(cb.count() - 1)
+                        it.setFlags(it.flags() & ~(QtCore.Qt.ItemIsEnabled
+                                                   | QtCore.Qt.ItemIsSelectable))
+                        f = it.font()
+                        f.setBold(True)
+                        it.setFont(f)
             self._lastwahl_nachziehen(sperren=False)
         finally:
             cb.blockSignals(False)
+
+    def _lastwahl_ziel(self):
+        """Was das Bild gerade zeigt, als Daten eines Listeneintrags.
+
+        Mit Ergebnis ist es die Wahl der Ergebnismaske - Lastfall,
+        Kombination, Umhuellende oder die Form -, auch wenn der Knopf
+        „Ergebnisse“ sie gerade ausblendet: die Wahl bleibt dieselbe. Ohne
+        Ergebnis der aktive Lastfall.
+        """
+        cbr = getattr(self, "cb_result", None)
+        if self.results is not None:
+            cbm = getattr(self, "cb_mode", None)
+            if cbm is not None and _lebt(cbm) and cbm.count():
+                return ("form", max(0, cbm.currentIndex()))
+            return ("single", None)
+        if self.analysis is not None and cbr is not None and _lebt(cbr):
+            d = cbr.currentData()
+            if d and d[0] in ("case", "combo", "env") and d[1]:
+                return (d[0], d[1])
+        return ("case", self.model.active_case)
 
     def _lastwahl_nachziehen(self, sperren: bool = True):
         """Die Liste auf das stellen, was gerade gezeigt wird."""
         cb = getattr(self, "cb_lastwahl", None)
         if cb is None or not _lebt(cb) or cb.count() == 0:
             return
-        ziel = ("case", self.model.active_case)
-        if self.analysis is not None and getattr(self, "cb_result", None) is not None \
-                and _lebt(self.cb_result):
-            d = self.cb_result.currentData()
-            if d and d[0] in ("case", "combo") and d[1]:
-                ziel = (d[0], d[1])
+        ziel = self._lastwahl_ziel()
         for i in range(cb.count()):
-            if cb.itemData(i) == ziel:
+            d = cb.itemData(i)
+            if d is not None and tuple(d) == ziel:
                 if cb.currentIndex() == i:
                     return
                 if sperren:
@@ -16337,11 +16418,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
 
     def _glas_last_gewaehlt(self, _i: int = -1):
-        """Aus der Glasleiste gewaehlt: Lastfall oder Kombination zeigen.
+        """Aus der Glasleiste gewaehlt: Lastfall, Kombination, Umhuellende
+        oder Form zeigen.
 
         Ein Lastfall wird zum aktiven - seine Lasten stehen im Bild. Eine
+        Umhuellende, eine Kombination oder eine Form stellt den aktiven
+        Lastfall **nicht** um (24.09.2026): an ihm haengen die Lasteingabe und
+        der Lastfilter, und mit einer Umhuellenden hat er nichts zu tun. Eine
         Kombination hat erst nach der Berechnung etwas zu zeigen; liegt ein
-        Ergebnis vor, schaltet die Ergebnisliste mit um, sonst sagt das
+        Ergebnis vor, schaltet die Ergebnismaske mit um, sonst sagt das
         Protokoll, woran es liegt (kein Dialog - die Leiste soll nicht
         stehenbleiben).
         """
@@ -16350,8 +16435,16 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         daten = cb.currentData()
         if not daten:
+            # eine Ueberschrift (per Tastatur erreichbar): zurueck auf das Gezeigte
+            self._lastwahl_nachziehen()
             return
         art, name = daten
+        if art in ("form", "single"):
+            cbm = getattr(self, "cb_mode", None)
+            if art == "form" and cbm is not None and _lebt(cbm) and 0 <= name < cbm.count() \
+                    and cbm.currentIndex() != name:
+                cbm.setCurrentIndex(name)            # zeichnet selbst neu
+            return
         if art == "case" and name in self.model.load_cases:
             self.model.active_case = name
             if getattr(self, "lbl_active", None) is not None and _lebt(self.lbl_active):
@@ -16366,12 +16459,15 @@ class MainWindow(QtWidgets.QMainWindow):
                     if self.cb_result.currentIndex() != i:
                         self.cb_result.setCurrentIndex(i)   # zeichnet selbst neu
                     return
-        if art == "combo":
+        if art in ("combo", "env"):
             self.log.appendPlainText(
-                f"Kombination {name}: sie zeigt sich, sobald gerechnet ist "
-                "(Berechnung → Berechnen).")
+                f"{'Kombination' if art == 'combo' else 'Umhüllende'} {name}: sie zeigt sich, "
+                "sobald gerechnet ist (Berechnung → Berechnen).")
+            # die Leiste zurueck auf das, was das Bild weiter zeigt (24.09.2026)
+            self._lastwahl_nachziehen()
             return
         self.redraw()
+        self._lastwahl_nachziehen()
 
     # ---- Lastfaelle --------------------------------------------------
     def _case_selected(self):
@@ -17675,7 +17771,9 @@ class MainWindow(QtWidgets.QMainWindow):
             for k in an.cases:
                 self.cb_result.addItem(f"Lastfall {k}", ("case", k))
         self.cb_result.blockSignals(False)
-        self._lastwahl_nachziehen()
+        # neu fuellen, nicht nur nachziehen: die Glasleiste fuehrt dieselben
+        # Umhuellenden und Formen (24.09.2026)
+        self._lastwahl_fuellen()
 
     def current_result(self):
         """Aktuell gewaehltes Ergebnisobjekt (Results oder Envelope) oder None."""
@@ -17737,11 +17835,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_design.setText("\n".join(teile) if teile else "noch keine Nachweise")
         self.cb_mode.blockSignals(True)
         self.cb_mode.clear()
-        if r is not None and getattr(r, "freqs", None) is not None:
-            self.cb_mode.addItems([f"{i+1}. Form  f = {f:.3f} Hz" for i, f in enumerate(r.freqs)])
-        elif r is not None and getattr(r, "buckling_factors", None) is not None:
-            self.cb_mode.addItems([f"{i+1}. Form  η = {f:.3f}" for i, f in enumerate(r.buckling_factors)])
+        self.cb_mode.addItems(self._formtexte(r))
         self.cb_mode.blockSignals(False)
+        self._lastwahl_nachziehen()     # die Form steht jetzt fest
         if r is None:
             self.txt_res.setPlainText("")
             self.redraw()
@@ -18323,6 +18419,7 @@ class MainWindow(QtWidgets.QMainWindow):
         r = self.current_result() if self.ergebnisse_sichtbar() else None
         u = None
         modal = False
+        self._bild_figur = ("", None)
         if r is not None:
             if getattr(r, "modes", None) is not None and self.cb_mode.count():
                 u = r.modes[min(self.cb_mode.currentIndex(), len(r.modes) - 1)]
@@ -18331,7 +18428,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 u = r.buckling_modes[min(self.cb_mode.currentIndex(), len(r.buckling_modes) - 1)]
                 modal = True
             else:
-                u = vp.displacement_of(r)
+                # bei einer Umhuellenden die Figur der massgebenden
+                # Kombination statt des Gemischs der Richtungen (vp.figur,
+                # 24.09.2026); die Kopfzeile nennt sie
+                u, name_figur = vp.figur(self.analysis, r)
+                self._bild_figur = (name_figur, u)
         # Ergebnis zu einem frueheren Modellstand (nach der Rechnung Knoten,
         # Stab oder Flaeche angelegt): die neuen Knoten verformen sich nicht
         # und bekommen keinen Wert (grau), die neuen Elemente keinen Verlauf.
@@ -18604,9 +18705,11 @@ class MainWindow(QtWidgets.QMainWindow):
                     vp.add_bemassungen(self.plotter, m, size, self._blick(), self.messungen)
                 except Exception as ex:          # noqa: BLE001 - ein Mass darf die Ansicht nicht sperren
                     self.log.appendPlainText(f"Bemaßung nicht gezeichnet: {ex}")
-            if self.act_loads.isChecked() and (u is None or not modal):
-                self._lastpunkte = []
-                self._lasteinheiten = vp.add_loads(self.plotter, m, m.case(), size, raender=self._raender(),
+            self._lastpunkte = []
+            fall = self._lastfall_fuers_bild(r, u is not None and modal)
+            self._lastfall_im_bild = fall
+            if fall is not None:
+                self._lasteinheiten = vp.add_loads(self.plotter, m, m.case(fall), size, raender=self._raender(),
                              seiten=self._randseiten(),
                              beschriften=getattr(self, 'act_lastwerte', None) is not None and self.act_lastwerte.isChecked(),
                              textgroesse=int(self.model.bemassung_einstellungen().textgroesse) - 1,
@@ -18614,7 +18717,7 @@ class MainWindow(QtWidgets.QMainWindow):
                              ausser_flaechen=self.verborgen["flaechen"],
                              ausser_linien=self.verborgen["linien"],
                              merker=self._lastpunkte,
-                             hervor={(l_, k_) for f_, l_, k_ in self.sel_lasten if f_ == m.active_case})
+                             hervor={(l_, k_) for f_, l_, k_ in self.sel_lasten if f_ == fall})
         except Exception as ex:
             self.log.appendPlainText(f"Darstellung: {ex}")
         self._nummern_zeichnen(m, sichtbare_knoten)
@@ -18912,6 +19015,30 @@ class MainWindow(QtWidgets.QMainWindow):
         self.redraw()
         self.info("Alle Nummern aus")
 
+    def _lastfall_fuers_bild(self, r, modal: bool = False):
+        """Der Lastfall, dessen Lasten ins Bild kommen - oder None.
+
+        Ohne Ergebnis der aktive Lastfall (wie bisher). Zum Ergebnis eines
+        Lastfalls dessen eigene Lasten, auch wenn ein anderer aktiv ist. Im
+        Bild einer Kombination oder Umhuellenden standen bis zum 24.09.2026
+        die Lasten des aktiven Lastfalls, als gehoerten sie dazu (Hallenrahmen:
+        LF1 im Bild der „Umhüllende ULS“); jetzt nur mit dem Schalter
+        „Lasten im Ergebnisbild“ (Vorgabe aus), und die Kopfzeile nennt den
+        Lastfall. Eigenformen haben keine Lasten.
+        """
+        if not self.act_loads.isChecked() or modal:
+            return None
+        m = self.model
+        if r is None:
+            return m.active_case if m.active_case in m.load_cases else None
+        art, name = self._lastwahl_ziel()
+        if art == "case":
+            return name if name in m.load_cases else None
+        a = getattr(self, "act_lasten_ergebnis", None)
+        if a is not None and a.isChecked() and m.active_case in m.load_cases:
+            return m.active_case
+        return None
+
     def _kopfzeile_zeichnen(self, r, faktor: float = 0.0) -> list:
         """Oben links: was die Ansicht zeigt.
 
@@ -18936,7 +19063,11 @@ class MainWindow(QtWidgets.QMainWindow):
                                    + self._werte_text() + self._sicht_text())
                                   if r is not None else "",
                                   self.cb_diagram.currentText() if r is not None else "",
-                                  faktor, einheiten=list(getattr(self, "_lasteinheiten", []) or []))
+                                  faktor, einheiten=list(getattr(self, "_lasteinheiten", []) or []),
+                                  lastfall=(getattr(self, "_lastfall_im_bild", None) or "")
+                                  if r is not None else "",
+                                  figur=(getattr(self, "_bild_figur", ("", None))[0] or "")
+                                  if r is not None else "")
         except Exception as ex:             # noqa: BLE001
             self.log.appendPlainText(f"Kopfzeile: {ex}")
             return []

@@ -3233,6 +3233,50 @@ def displacement_of(res):
     return None
 
 
+#: Kopfzeile, wenn sich die massgebende Kombination einer Umhuellenden nicht
+#: finden laesst (figur) - dann ist die Figur das Gemisch aus displacement_of
+FIGUR_GEMISCHT = "Extremwerte je Richtung (keine einzelne Kombination)"
+
+
+def figur(analysis, res) -> tuple:
+    """(u, Name) - die verformte Figur, die das Bild zu *res* zeigt.
+
+    Lastfall, Kombination, Eigenform: ihr eigenes u, Name "". Eine
+    Umhuellende hat keine Figur; displacement_of setzt sie je Richtung aus
+    verschiedenen Kombinationen zusammen - am Hallenrahmen ux aus GZT11 und
+    uz aus GZT4, ein Zustand, den es nie gibt (24.09.2026). Gezeigt wird
+    darum die Figur der **massgebenden** Kombination: der, aus der das
+    groesste |u| der Faerbung (umag_max) stammt. Gesucht wird nur am Knoten
+    dieses Groesstwerts, je Ergebnis ein Betrag - das kostet auch bei
+    tausenden Alternativen nichts. Steht ein Ergebnis nicht mehr zur
+    Verfuegung (verworfene Alternative einer Ergebniskombination, keine
+    Analyse) und laesst sich der Groesstwert darum nicht zuordnen, bleibt es
+    beim Gemisch, und der Name sagt es (FIGUR_GEMISCHT).
+    """
+    if res is None:
+        return None, ""
+    if getattr(res, "u", None) is not None or not hasattr(res, "u_max"):
+        return displacement_of(res), ""
+    umag = getattr(res, "umag_max", None)
+    namen = list(getattr(res, "names", None) or [])
+    if analysis is not None and umag is not None and len(umag) and namen:
+        k = int(np.argmax(umag))
+        ziel = float(umag[k])
+        quellen = (getattr(analysis, "combinations", None) or {},
+                   getattr(analysis, "cases", None) or {},
+                   getattr(analysis, "alternativen", None) or {})
+        for n in namen:              # Gleichstand: das erste, wie Envelope
+            r = next((q[n] for q in quellen if n in q), None)
+            u = getattr(r, "u", None) if r is not None else None
+            if u is None or len(u) != len(umag):
+                continue
+            # derselbe Rechenweg wie Envelope.aufnehmen (norm je Zeile)
+            b = float(np.linalg.norm(np.asarray(u[k:k + 1, :3], float), axis=1)[0])
+            if abs(b - ziel) <= 1e-12 * max(abs(ziel), 1e-300):
+                return u, str(n)
+    return displacement_of(res), FIGUR_GEMISCHT
+
+
 #: Schnittgroessen eines Stabes in der Reihenfolge, in der sie angezeigt werden
 SCHNITTGROESSEN = ("N", "Vy", "Vz", "Mt", "My", "Mz")
 
@@ -3358,16 +3402,25 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
 
     u = displacement_of(res)
     if u is not None and len(u) and (gewaehlt("u") or any(gewaehlt(c) for c in ("ux", "uy", "uz"))):
-        u = nur_sicht(np.asarray(u, float)) if sicht is not None else u
-        mag = np.linalg.norm(u[:, :3], axis=1)
-        k = int(np.nanargmax(mag)) if np.isfinite(mag).any() else 0
+        # Die Werte kommen aus demselben Feld wie die Faerbung (result_field,
+        # dort in mm). Bis zum 24.09.2026 wurde |u| hier aus displacement_of
+        # gebildet - bei einer Umhuellenden je Richtung das betragsgroessere
+        # Extrem aus verschiedenen Kombinationen: am Hallenrahmen 79,23 mm
+        # (ux aus GZT11, uz aus GZT4) unter einer Legende mit 73,52 mm, ein
+        # Wert, der in keiner Kombination vorkommt (tests/test_ergebnisbild.py)
         if gewaehlt("u"):
+            mag, _c, _n = result_field(model, res, "|u| Verschiebung")
+            mag = nur_sicht(np.asarray(mag, float) / 1000.0)
+            k = int(np.nanargmax(mag)) if np.isfinite(mag).any() else 0
             zeilen.append(zeile("u", "", "", z(mag[k], "verformung"),
                                 f"Knoten {k}", E.einheit("verformung")))
-        for j, nm in enumerate(("ux", "uy", "uz")):
+        for nm in ("ux", "uy", "uz"):
             if gewaehlt(nm):
-                zeilen.append(zeile(nm, z(np.nanmin(u[:, j]), "verformung"), "",
-                                    z(np.nanmax(u[:, j]), "verformung"), "", E.einheit("verformung")))
+                w_, _c, _n = result_field(model, res, nm)
+                w_ = nur_sicht(np.asarray(w_, float) / 1000.0)
+                zeilen.append(zeile(nm, z(np.nanmin(w_), "verformung"), "",
+                                    z(np.nanmax(w_), "verformung"), "", E.einheit("verformung")))
+        u = nur_sicht(np.asarray(u, float)) if sicht is not None else u
     formen = any(getattr(res, a, None) is not None for a in ("modes", "buckling_modes"))
     if not alle and feld in VERDREHUNGEN and not formen:
         # dieselben Werte wie die Faerbung (Umhuellende: |phi| aus phimag_max),
@@ -3464,13 +3517,19 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
 
 def kopfzeile(model: Model, res, ergebnisname: str = "", faerbung: str = "",
               verlauf: str = "", faktor: float = 0.0, lastfall: str = "",
-              einheiten: list = None) -> list:
+              einheiten: list = None, figur: str = "") -> list:
     """Was die Ansicht gerade zeigt - fuer die Ecke oben links.
 
     Ohne Ergebnis: das Modell und der aktive Lastfall mit seinen Lasten. Mit
     Ergebnis: der Lastfall, die Kombination oder die Umhuellende, danach die
     Faerbung, der Schnittgroessenverlauf und die Ueberhoehung. Ein Bild ohne
     diese Zeile ist im Statikdokument nicht pruefbar.
+
+    ``figur`` (24.09.2026): bei einer Umhuellenden die Kombination, deren
+    Verformung das Bild zeigt (viewport.figur) - eine eigene Zeile „Figur:
+    GZT4“. ``lastfall`` nennt mit Ergebnis den Lastfall, dessen Lasten im
+    Bild stehen („Lasten LF1 [kN/m]“): im Bild einer Kombination waren es
+    die des aktiven Lastfalls, ohne dass es dastand.
     """
     zeilen = []
     if res is None:
@@ -3505,6 +3564,9 @@ def kopfzeile(model: Model, res, ergebnisname: str = "", faerbung: str = "",
         teile.append(f"Überhöhung x{faktor:.1f}")
     if teile:
         zeilen.append("  " + " · ".join(teile))
+    if figur:
+        zeilen.append(f"  Figur: {figur}")
     if einheiten:
-        zeilen.append("  Lasten [" + ", ".join(einheiten) + "]")
+        zeilen.append("  Lasten " + (f"{lastfall} " if lastfall else "")
+                      + "[" + ", ".join(einheiten) + "]")
     return zeilen
