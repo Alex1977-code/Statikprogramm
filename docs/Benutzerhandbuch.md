@@ -3176,8 +3176,30 @@ Gegenprobe: Rahmen mit angehängtem Hallenrahmen, alter gegen neuen Weg (am
 dieselben Verschiebungen (Abweichung 0), dazu jetzt die 72 Kombinationen.
 
 Die Nachbereitung der übrigen Importe (RFEM 6, DXF, IFC, …) führt
-aufeinanderliegende Knoten weiterhin über das ganze Modell zusammen. Seit dem
-22.09.2026 folgen dabei auch die Ecken und integrierten Knoten der Flächen.
+aufeinanderliegende Knoten der Datei zusammen; bei einem neuen Modell ist das
+das ganze Modell. **Beim Anhängen an ein vorhandenes Modell** (seit
+23.09.2026) wird nur innerhalb der Datei zusammengeführt; an das vorhandene
+Modell schließt die Datei danach an wie ein angehängtes Statik3D-Modell
+(„Anschluss“ oben): nur wo an der Stelle genau ein Knoten des Modells liegt
+(„1 Knoten der Datei lagen auf Knoten des Ziels …“). Liegen dort schon
+mehrere, bleibt der Knoten der Datei getrennt, und die Warnung „An … Stellen
+liegen in Ziel oder Datei schon mehrere Knoten aufeinander …“ nennt die Zahl
+und die erste Stelle. Bis dahin lief das Zusammenführen auch beim Anhängen
+über das ganze Modell und verschweißte, was im vorhandenen Modell absichtlich
+aufeinanderliegt. Im Versuch (zwei Stäbe, dazwischen ein Spaltelement, außen
+eingespannt, 1 kN am Fugenende des linken Stabes zieht die Fuge auf; daran eine
+Abaqus-Datei mit einem Stab abseits angehängt) verband das Spaltelement danach
+einen Knoten mit sich selbst, und am linken Lager kamen 500,0 N statt
+1000,0 N an; das Protokoll sagte nur „1 doppelte Knoten zusammengefuehrt“.
+Jetzt sind es 1000,0 N wie ohne Anhang. **Einschränkung:** Der Leser für
+`.inp` schließt schon beim Lesen an vorhandene Knoten an. Liegt ein Knoten
+der Datei auf einer solchen Doppelstelle, hängt er am ersten Knoten dort,
+ohne Warnung – im Versuch am Ende des linken Stabes; die Fuge blieb
+getrennt. Die Leser für DXF, IFC, Nastran, SAF, SDNF und RFEM-Tabellen gehen
+nach dem Quelltext denselben Weg; gemessen ist das dort nicht.
+
+Seit dem 22.09.2026 folgen beim Zusammenführen auch die Ecken und
+integrierten Knoten der Flächen.
 Am `Drehlager_V15_4_export.rf6` lagen vorher 64 von 3128 Flächenecken
 neben den Knoten ihrer Randlinien (bis 1,8 m), weitere 1380 zeigten hinter
 das Ende der Knotenliste, ebenso 10 von 168 integrierten Knoten; jetzt

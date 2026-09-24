@@ -258,19 +258,7 @@ class _Anhang:
         # ein neues Trennen dann ab ("schon ausgeführt").
         # Jetzt schliesst nur die Quelle an das Ziel an.
         n, unklar = C.anschluss_zusammenfuehren(self.z, self.base, tol)
-        if n:
-            C.say(self.log, f"{n} Knoten der Quelle lagen auf Knoten des Ziels und "
-                            "wurden zusammengeführt")
-        if unklar:
-            x, y, z = unklar[0]
-            C.warn(self.log,
-                   f"An {len(unklar)} Stelle{'' if len(unklar) == 1 else 'n'} liegen in "
-                   "Ziel oder Quelle schon mehrere Knoten aufeinander (etwa die beiden "
-                   "Seiten einer Kontaktfuge), und ein Knoten des anderen Teils liegt "
-                   "dazu. Dort wurde nichts "
-                   "zusammengeführt, weil nicht eindeutig ist, welcher Knoten anschließen "
-                   f"soll - die erste bei ({x:g}, {y:g}, {z:g}) m. Bitte dort prüfen, ob "
-                   "Ziel und Quelle verbunden sein sollen.")
+        C.anschluss_melden(self.log, n, unklar, "Quelle")
 
     def _namen(self) -> None:
         z, q = self.z, self.q
