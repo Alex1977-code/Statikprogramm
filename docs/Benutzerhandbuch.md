@@ -3235,9 +3235,13 @@ Ermüdungslasten: aus den Faktoren **und den Alternativen** jeder Kombination
 und aus jedem Verlauf einer Ermüdungslast. Eine Ermüdungslast aus zwei
 Zuständen, deren oberer oder unterer Zustand er war, entfällt ganz — der fehlende Zustand wird nicht
 still durch den Nullzustand ersetzt, das änderte die Schwingbreite; ebenso
-ein Verlauf, dem kein Glied bleibt. Statuszeile und Protokoll (in der
-Web-API die Antwort) nennen, was mitging („Ermüdungslast 'Z' entfällt: ihr
-oberer Zustand war Lastfall 'LF2'“). Vorher
+ein Verlauf, dem kein Glied bleibt. Das Protokoll (in der Web-API die
+Antwort) nennt, was mitging („Ermüdungslast 'Z' entfällt: ihr oberer Zustand
+war Lastfall 'LF2'“). Nach dem Knopf steht diese Zeile auch in der
+Statuszeile; nach dem Löschen im Modellbaum steht dort die allgemeine Meldung
+(„Lastfall LF2 samt seinen Lasten … gelöscht“, bei mehreren Einträgen auf
+einmal „… von … Einträgen gelöscht“), die Zeile dazu nur im Protokoll
+(gemessen 24.09.2026). Vorher
 nahm der Knopf nur die Faktoren mit: am Zugstab-Volumen mit einer oder-EK über
 LF1, LF2, LF3 standen nach dem Löschen von LF2 die Alternativen und die
 Ermüdungslasten weiter auf LF2, die Modellprüfung meldete FEHLER, und die
@@ -3438,8 +3442,9 @@ Werkstoffe*) oder am Stab den Haken „Nachweis nach EC3“ herausnehmen.
 
 **Stahlsorte ohne f_y.** Bleibt im Werkstoffdialog f_y leer („leer = aus der
 Stahlsorte“) und ist eine Sorte S235 … S460 eingetragen, nehmen die Nachweise
-die Werte der Sorte nach EN 10025-2: bis 40 mm Erzeugnisdicke die obere Stufe
-(S235: f_y = 235 N/mm²), darüber die untere (S235: 215 N/mm²). Ist auch f_u
+die Werte der Sorte nach EN 1993-1-1 Tab. 3.1: bis 40 mm Erzeugnisdicke die
+obere Stufe (S235: f_y = 235 N/mm²), darüber die untere (S235: 215 N/mm²).
+Ist auch f_u
 leer, kommt f_u ebenso aus der Sorte (S235 bis 40 mm: 360 N/mm²). Ein
 eingetragenes f_y geht der Sorte nur **bis 40 mm** vor, mit leerem f_u gilt
 dort f_u = 1,3 · f_y. Über 40 mm gilt die untere Stufe der Sorte für f_y und
@@ -4409,7 +4414,9 @@ davon nicht betroffen.
   nicht zu seinem Typ passt (ein hex8 mit sieben Knoten), nimmt das Programm
   beim Anlegen nicht an („hex8 braucht 8 Knoten, angegeben sind 7“). Kommt es
   aus einer Modelldatei, meldet die Modellprüfung „FEHLER: Element 2 (hex8):
-  7 Knoten, erwartet 8“, und die übrigen Prüfungen lassen es aus. Vorher
+  7 Knoten, erwartet 8“, und die Entartungsprüfung lässt es aus. Die übrigen
+  Zeilen zum selben Element kommen weiter, etwa „Element 2: Knoten 999
+  existiert nicht“ oder „Material 'WEG' unbekannt“ (gemessen 24.09.2026). Vorher
   meldete die Prüfung dazu nichts, und erst die Rechnung brach mit „operands
   could not be broadcast together“ ab. Ein hex8 mit neun Knoten, deren
   neunter einen der acht wiederholte, gab einen falschen FEHLER

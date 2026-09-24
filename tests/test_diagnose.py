@@ -1604,7 +1604,11 @@ def test_falsche_knotenzahl():
     selbst mit IndexError abbrechen (diagnose.entartete_elemente), statt eine
     Liste zu liefern. Richtig: add_element weist die falsche Knotenzahl ab;
     ein so geladenes Element (JSON, Import) nennt check() als FEHLER mit Soll
-    und Ist, und die Diagnose laesst es aus - beide Arten von neun Knoten.
+    und Ist, und die Entartungspruefung laesst es aus - beide Arten von neun
+    Knoten. Die uebrigen Zeilen zum selben Element bleiben: das
+    Benutzerhandbuch sagte bis 24.09.2026 "die uebrigen Pruefungen lassen es
+    aus", gemessen kamen aber "Knoten 999 existiert nicht" und "Material
+    'WEG' unbekannt" weiter (zweite Gegenpruefung).
     """
     from statik3d import mesher
     from statik3d.model import Model as _M
@@ -1654,6 +1658,19 @@ def test_falsche_knotenzahl():
             ok, detail = False, f"check() warf {type(ex).__name__}: {ex}"
         check(f"geladen {typ} mit {titel}: check() nennt Soll und Ist, nichts anderes",
               ok, detail)
+    # Die Knotenzahl-Zeile ersetzt die uebrigen Pruefungen desselben Elements
+    # nicht: ein unbekannter Knoten oder Werkstoff steht weiter da (so sagt es
+    # das Benutzerhandbuch, Punkt "Falsche Knotenzahl")
+    for aend, erwartet in ((dict(nodes=e8[:6] + [999]), "FEHLER: Element 2: Knoten 999 existiert nicht"),
+                           (dict(nodes=e8[:7], mat="WEG"), "FEHLER: Element 2: Material 'WEG' unbekannt")):
+        d = netz().to_dict()
+        neu = dict(d["elements"][1])
+        neu.update(aend)
+        d["elements"].append(neu)
+        zeilen = _M.from_dict(d).check()
+        check(f"geladen hex8 mit 7 Knoten: auch '{erwartet.split(': ', 2)[-1]}'",
+              "FEHLER: Element 2 (hex8): 7 Knoten, erwartet 8" in zeilen and erwartet in zeilen,
+              "; ".join(z for z in zeilen if z.startswith("FEHLER"))[:140])
     # Gegenprobe: das unveraenderte Netz hat keine solche Zeile
     zeilen = [z for z in netz().check() if "erwartet" in z]
     check("Gegenprobe: richtiges Netz ohne Knotenzahl-FEHLER", not zeilen, "; ".join(zeilen))

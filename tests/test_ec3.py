@@ -423,7 +423,8 @@ def test_sorte_ohne_streckgrenze():
     ec6448c (23.09.2026) mit Sorte S235 und leerem f_y 0 N/mm² bei 0 / 10,7 /
     40 mm und 215 N/mm² bei 41 / 80 mm; ein IPE 300 aus diesem Werkstoff war
     "nicht geführt" ("Werkstoff Frei ohne Streckgrenze"), obwohl die Sorte
-    eingetragen ist. Richtig ist EN 10025-2 bis 40 mm: 235 / 360 N/mm².
+    eingetragen ist. Richtig ist EN 1993-1-1 Tab. 3.1 bis 40 mm: 235 / 360
+    N/mm² (die Zweistufenregel bei 40 mm; EN 10025-2 selbst stuft feiner).
     Ohne Sorte und ohne f_y bleibt der Stab nicht gefuehrt
     (test_stab_ohne_streckgrenze_nicht_gefuehrt).
     """
