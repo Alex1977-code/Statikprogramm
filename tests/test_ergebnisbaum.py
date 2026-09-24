@@ -1009,6 +1009,126 @@ def test_ergebnis_passt_nicht_mehr():
     w.load_example("frame"); app.processEvents()
 
 
+def _gezeichnet_je_knoten(w, spalte: str):
+    """Was die Ansicht an Knotenwerten ``spalte`` gezeichnet hat, je
+    Knotennummer (NaN: nicht gezeichnet oder ohne Wert). Die Gitterteile
+    tragen ihre Knotennummern in _netzteile_zwischen, der Stabkoerper in
+    point_data["knoten"]."""
+    import pyvista as pv
+    werte = np.full(w.model.nn, np.nan)
+    teile = {nm: kidx for _t, kidx, nm in (getattr(w, "_netzteile_zwischen", None) or [])}
+    for nm, akt in w.plotter.actors.items():
+        nm = str(nm)
+        if not nm.startswith("result_") or akt.GetMapper() is None:
+            continue
+        ds = pv.wrap(akt.GetMapper().GetInput())
+        if spalte not in ds.point_data:
+            continue
+        kn = (np.asarray(ds.point_data["knoten"], int) if "knoten" in ds.point_data
+              else teile.get(nm[len("result_"):]))
+        if kn is None or len(kn) != ds.n_points:
+            continue
+        werte[kn] = np.asarray(ds.point_data[spalte], float)
+    return werte
+
+
+def test_ergebnis_passt_nach_stand():
+    """Die Gegenpruefung von 5090fe2 (24.09.2026): ergebnis_passt verglich
+    nur Knoten- und Elementzahl. Ein Element loeschen und eines anlegen
+    ergab „passt“ - die Werte lagen dann an falschen Elementen ohne Hinweis;
+    loeschen und mehr anlegen ergab „gewachsen“ mit verschobenen Werten; ein
+    verschobener Knoten fiel gar nicht auf. Jetzt merkt sich die Oberflaeche
+    den Modellstand (Koordinaten, je Element Typ und Knoten): nur ein
+    unveraendert gebliebener Anfang mit Angehaengtem ist „gewachsen“ (alte
+    Werte an alten Knoten, auch φx - das Auffuellen in _verdrehung), alles
+    andere „anders“: kein Ergebnis im Bild, Hinweis „neu rechnen“."""
+    from statik3d.gui import viewport as vp
+    w, app = _fenster()
+    mat = sec = None
+
+    def neu(feld="feld:|u| Verschiebung"):
+        nonlocal mat, sec
+        w.load_example("frame"); app.processEvents()
+        mat, sec = list(w.model.materials)[0], list(w.model.sections)[0]
+        w._solve_done("all", solver.solve_all(w.model, design=False)); app.processEvents()
+        w._baum_geklickt("ergebnis", feld); app.processEvents()
+
+    def stabzug():
+        w._stabzug_erzeugen({"mat": mat, "sec": sec, "x1": 20, "y1": 0, "z1": 0,
+                             "x2": 25, "y2": 0, "z2": 0, "n": 4})
+
+    def zustand():
+        kopf = " ".join(getattr(w, "_kopfzeile_zeilen", []) or [])
+        passt = vp.ergebnis_passt(w.model, w.current_result(), getattr(w, "_ergebnis_stand", None))
+        return passt, kopf
+
+    # (a) ein Element loeschen, eines anlegen: gleiche Anzahl, andere Elemente
+    neu()
+    ne0, nn0 = len(w.model.elements), w.model.nn
+    w.model.elemente_loeschen([0])
+    w._maske_stab_anlegen({"knoten": [0, 5], "mat": mat, "sec": sec}); app.processEvents()
+    w.redraw(); app.processEvents()
+    passt, kopf = zustand()
+    check("Element gelöscht und eines angelegt (gleiche Anzahl): „anders“, kein Ergebnis "
+          "im Bild, Hinweis „neu rechnen“",
+          len(w.model.elements) == ne0 and w.model.nn == nn0 and passt == "anders"
+          and VERALTET in kopf and not w.plotter.scalar_bars,
+          f"{passt}, {len(w.plotter.scalar_bars)} Skalen, {kopf[-50:]}")
+
+    # (b) ein Element loeschen, mehrere anlegen: gewachsen der Zahl nach, die
+    # Nummern der alten Elemente sind aber verrutscht
+    neu()
+    ne0 = len(w.model.elements)
+    w.model.elemente_loeschen([0])
+    stabzug(); app.processEvents()
+    w.redraw(); app.processEvents()
+    passt, kopf = zustand()
+    check("Element gelöscht, Stabzug angelegt (mehr Elemente): „anders“, kein Ergebnis im Bild",
+          len(w.model.elements) > ne0 and passt == "anders" and VERALTET in kopf
+          and not w.plotter.scalar_bars, f"{passt}, {len(w.plotter.scalar_bars)} Skalen")
+
+    # Knoten verschoben: gleiche Anzahl, gleiche Elemente, andere Geometrie
+    neu()
+    w.model.nodes[3] = np.asarray(w.model.nodes[3], float) + [0.0, 0.0, 0.5]
+    w.refresh_all(); app.processEvents()
+    passt, kopf = zustand()
+    check("Knoten verschoben: „anders“, kein Ergebnis im Bild, Hinweis „neu rechnen“",
+          passt == "anders" and VERALTET in kopf and not w.plotter.scalar_bars,
+          f"{passt}, {len(w.plotter.scalar_bars)} Skalen, {kopf[-50:]}")
+
+    # reines Anhaengen: „gewachsen“, die alten Knoten zeigen genau ihre Werte
+    # von vorher, die neuen keinen - fuer φx sichert das das Auffuellen in
+    # vp._verdrehung (ohne es gaebe es nach dem Stabzug gar keine φ-Werte)
+    for feld in ("|u| Verschiebung", "φx"):
+        neu("feld:" + feld)
+        r = w.current_result()
+        vorher, _c, spalte = vp.result_field(w.model, r, feld)
+        vorher = np.asarray(vorher, float).copy()
+        nn0 = w.model.nn
+        gez0 = _gezeichnet_je_knoten(w, spalte)
+        stabzug(); app.processEvents()
+        w.redraw(); app.processEvents()
+        passt, kopf = zustand()
+        gez = _gezeichnet_je_knoten(w, spalte)
+        alt = np.isfinite(gez0[:nn0])     # vor dem Stabzug mit Wert gezeichnet
+        check(f"Stabzug angehängt, {feld}: „gewachsen“, alte Knoten mit dem Wert von vorher, "
+              "neue ohne",
+              passt == "gewachsen" and VERALTET in kopf and w.model.nn > nn0
+              and alt.sum() > 0 and np.allclose(gez[:nn0][alt], vorher[alt])
+              and np.isnan(gez[nn0:]).all(),
+              f"{passt}, {int(alt.sum())} alte mit Wert, "
+              f"{int(np.isfinite(gez[:nn0]).sum())} nachher, "
+              f"{int(np.isfinite(gez[nn0:]).sum())} neue mit Wert")
+
+    # ohne Aenderung neu gezeichnet: „passt“, kein Hinweis
+    neu()
+    w.redraw(); app.processEvents()
+    passt, kopf = zustand()
+    check("Unverändert: „passt“, kein Hinweis", passt == "passt" and VERALTET not in kopf,
+          f"{passt}, {kopf[-50:]}")
+    w.load_example("frame"); app.processEvents()
+
+
 def main():
     # Haelt etwas an (ein Dialog offscreen), steht der Stapel im Protokoll
     # statt eines stummen Haengers
@@ -1023,7 +1143,7 @@ def main():
               test_ergebniswechsel, test_knoten_nach_rechnung,
               test_gelenke_nach_der_rechnung, test_winzige_verdrehung_im_fenster,
               test_alte_ergebnisdatei, test_alte_ergebnisdatei_im_fenster,
-              test_ergebnis_passt_nicht_mehr):
+              test_ergebnis_passt_nicht_mehr, test_ergebnis_passt_nach_stand):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

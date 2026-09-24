@@ -1,6 +1,8 @@
 """Darstellung des Modells und der Ergebnisse im 3D-Viewport (pyvista)."""
 from __future__ import annotations
 
+from typing import NamedTuple
+
 import numpy as np
 import pyvista as pv
 
@@ -3108,30 +3110,65 @@ def result_field(model: Model, res, field: str, util: dict = None, seite: str = 
 ERGEBNIS_VERALTET = "Ergebnis passt nicht mehr zum Modell – neu rechnen"
 
 
-def modellstand(model) -> tuple:
-    """(Knotenzahl, Elementzahl) - woran ergebnis_passt einen Modellstand
-    erkennt; die Oberflaeche merkt ihn sich nach jeder Rechnung."""
-    return int(model.nn), len(model.elements)
+class Modellstand(NamedTuple):
+    """Fingerabdruck des Modells bei der Rechnung (modellstand)."""
+    nn: int
+    ne: int
+    #: Kopie der Knotenmatrix - eine Kopie, weil Knoten an Ort und Stelle
+    #: verschoben werden (model.nodes[i] = ..., Achsen spiegeln)
+    knoten: np.ndarray
+    #: hash der Elementliste als Tupel (Typ, Knoten) je Element
+    elemente: int
 
 
-def ergebnis_passt(model, res, stand: tuple = None) -> str:
+def _elementhash(elements, n: int) -> int:
+    """hash der ersten n Elemente als Tupel (Typ, Knoten...) - ein Tupel-Hash
+    statt einer Kopie der Liste. Gemessen am 24.09.2026: 29-46 ms fuer
+    196 608 tet4, 0,11-0,19 s fuer 650 000 (Drehlager-Groesse); redraw mit
+    gezeigtem Ergebnis bei 196 608 tet4 0,51 s -> 0,57 s. Schneller waren
+    weder map/attrgetter mit chain noch numpy (fromiter) - die Schleife ueber
+    die Element-Objekte bleibt. Ohne gezeigtes Ergebnis kostet es nichts
+    (ergebnis_passt kehrt bei res None vorher zurueck)."""
+    return hash(tuple([(e.typ, *e.nodes) for e in elements[:n]]))
+
+
+def modellstand(model) -> Modellstand:
+    """Woran ergebnis_passt einen Modellstand erkennt: Knoten- und
+    Elementzahl, die Knotenkoordinaten und je Element Typ und Knoten. Die
+    Oberflaeche merkt ihn sich nach jeder Rechnung und beim Laden einer
+    Ergebnisdatei (_solve_done).
+
+    Bis zum 24.09.2026 waren es nur die beiden Anzahlen: ein Element loeschen
+    und eines anlegen galt als „passt“ - die Werte lagen dann an anderen
+    Elementen, ohne Hinweis; einen Knoten verschieben bemerkte niemand
+    (Gegenpruefung von 5090fe2)."""
+    ne = len(model.elements)
+    return Modellstand(int(model.nn), ne, np.array(model.nodes, float, copy=True),
+                       _elementhash(model.elements, ne))
+
+
+def ergebnis_passt(model, res, stand: Modellstand = None) -> str:
     """Gehoert das Ergebnis noch zum Modell?
 
-    „passt“: gleiche Knoten- und Elementzahl. „gewachsen“: nach der Rechnung
-    nur Knoten oder Elemente hinzugekommen (Knoten, Stabzug, Flaeche) - die
-    alten behalten ihre Nummern und Werte, die neuen haben keinen. „anders“:
-    weniger Knoten oder Elemente als bei der Rechnung - die Nummern koennen
-    verrutscht sein, das Ergebnis ist dann nicht mehr zuzuordnen.
+    „passt“: das Modell ist genau der Stand der Rechnung (``stand``, siehe
+    modellstand). „gewachsen“: der Stand der Rechnung ist unveraendert der
+    Anfang des Modells - gleiche Koordinaten der alten Knoten, gleiche alte
+    Elemente an gleicher Nummer - und es wurde nur angehaengt (Knoten,
+    Stabzug, Flaeche): die alten behalten ihre Nummern und Werte, die neuen
+    haben keinen. „anders“: alles andere (geloescht, verschoben, umgebaut,
+    auch geloescht und wieder gleich viele angelegt) - welche Nummer zu
+    welchem Wert gehoert, ist dann nicht mehr bekannt, das Ergebnis kommt
+    nicht ins Bild.
 
     Bis zum 24.09.2026 nahm die Ansicht an, dass Ergebnis und Modell gleich
     viele Knoten haben: ein Stabzug nach der Rechnung bei gezeigten
     Ergebnissen brach das Zeichnen mit IndexError ab (u[kn] mit neuen
-    Knotennummern). ``stand`` ist modellstand() bei der Rechnung; die
-    Knotenzahl des Ergebnisses selbst (Laenge von u) geht vor.
+    Knotennummern). Mehr Knoten im Ergebnis (Laenge von u) als im Modell ist
+    immer „anders“; ohne ``stand`` entscheiden nur die Anzahlen.
     """
     if res is None:
         return "passt"
-    nn, ne = modellstand(model)
+    nn, ne = int(model.nn), len(model.elements)
     n_res = None
     for a in ("u", "u_max", "modes", "buckling_modes"):
         x = getattr(res, a, None)
@@ -3140,13 +3177,21 @@ def ergebnis_passt(model, res, stand: tuple = None) -> str:
         x = np.asarray(x)
         n_res = int(x.shape[1]) if a in ("modes", "buckling_modes") and x.ndim == 3 else int(len(x))
         break
-    s_nn, s_ne = stand if stand is not None else (None, None)
-    r_nn = n_res if n_res is not None else s_nn
-    if (r_nn is None or r_nn == nn) and (s_ne is None or s_ne == ne):
+    if n_res is not None and n_res > nn:
+        return "anders"
+    if stand is None:
+        return "passt" if n_res is None or n_res == nn else "gewachsen"
+    # die billigen Vergleiche zuerst, der Elementhash zuletzt
+    if stand.nn > nn or stand.ne > ne:
+        return "anders"
+    alt = np.asarray(model.nodes, float)[:stand.nn]
+    if alt.shape != stand.knoten.shape or not np.array_equal(alt, stand.knoten):
+        return "anders"
+    if _elementhash(model.elements, stand.ne) != stand.elemente:
+        return "anders"
+    if stand.nn == nn and stand.ne == ne and (n_res is None or n_res == nn):
         return "passt"
-    if (r_nn is None or r_nn <= nn) and (s_ne is None or s_ne <= ne):
-        return "gewachsen"
-    return "anders"
+    return "gewachsen"
 
 
 def auf_laenge(a, n: int, fuell: float = np.nan):

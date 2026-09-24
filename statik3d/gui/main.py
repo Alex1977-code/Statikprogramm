@@ -17553,9 +17553,11 @@ class MainWindow(QtWidgets.QMainWindow):
         return True
 
     def _solve_done(self, kind, r):
-        # der Modellstand dieser Rechnung - legt man danach Knoten oder Staebe
-        # an, erkennt die Ansicht, dass das Ergebnis nicht mehr passt
-        # (vp.ergebnis_passt, 24.09.2026)
+        # der Modellstand dieser Rechnung (bzw. beim Laden der Ergebnisdatei):
+        # Koordinaten und je Element Typ und Knoten - legt man danach Knoten
+        # oder Staebe an, loescht oder verschiebt man etwas, erkennt die
+        # Ansicht, dass das Ergebnis nicht mehr passt (vp.ergebnis_passt,
+        # 24.09.2026; bis zur Gegenpruefung von 5090fe2 nur die Anzahlen)
         self._ergebnis_stand = vp.modellstand(self.model)
         if kind == "all":
             self.analysis = r
@@ -18282,8 +18284,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # Stab oder Flaeche angelegt): die neuen Knoten verformen sich nicht
         # und bekommen keinen Wert (grau), die neuen Elemente keinen Verlauf.
         # Bis zum 24.09.2026 brach hier u[kn] mit IndexError ab und die
-        # Ansicht blieb stehen. Weniger Knoten/Elemente als bei der Rechnung:
-        # die Nummern koennen verrutscht sein - dann kein Ergebnis im Bild.
+        # Ansicht blieb stehen. Sonst etwas geaendert (geloescht, verschoben,
+        # umgebaut - auch bei gleicher Anzahl): welche Nummer zu welchem Wert
+        # gehoert, ist nicht mehr bekannt - dann kein Ergebnis im Bild.
         # In beiden Faellen sagt es die Kopfzeile.
         passt = vp.ergebnis_passt(self.model, r, getattr(self, "_ergebnis_stand", None))
         self._ergebnis_veraltet = passt != "passt"
