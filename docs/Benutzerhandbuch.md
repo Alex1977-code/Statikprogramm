@@ -3495,6 +3495,31 @@ Ergebnis, steht er dagegen als **nicht geführt** da, mit dem fehlenden
 Ergebnis als Grund, obwohl die Last auch mit diesem Ergebnis nichts
 beitrüge.
 
+In der Färbung „Ausnutzung Ermüdung“ hat ein **nicht geführter** Stab keinen
+Wert, wie ein nicht geführtes Volumen. Bis zum 23.09.2026 stand er dort mit 0
+und sah aus wie unbeansprucht (gemessen an einem Kragarm aus zwei Balken mit
+einer oder-verknüpften Ergebniskombination als Mindestzustand). Hat gar kein
+Stab und kein Volumen einen Wert — alle nicht geführt oder ohne wirksame
+Ermüdungslast —, bleibt das Modell in dieser Färbung grau (ohne Wert), ohne
+Farbskala, und die Kennwerte im Bild nennen keine „max. Ausnutzung“; ebenso
+„Ausnutzung EC3“, wenn die Nachweise gerechnet sind, aber kein Stab darin
+steht. Die elastische Ausnutzung der Stäbe zeigt die Färbung „Ausnutzung
+elastisch“; unter „Ausnutzung Ermüdung“ bzw. „Ausnutzung EC3“ erscheint sie
+nur, solange dieser Nachweis nicht gerechnet ist, und dann mit der Skala
+„Ausnutzung elastisch [-]“. Bis zum 24.09.2026 zeigte die Oberfläche auch bei
+gerechnetem Nachweis ohne einen Wert die elastische Ausnutzung aller Stäbe,
+auch der ohne Kerbfall, und nannte sie in den Kennwerten als „max.
+Ausnutzung“ (gemessen an einem Durchlaufträger aus vier Balken mit
+0 Lastspielen und bei „Ausnutzung EC3“ ohne Stab im Nachweis).
+
+Die Hinweise zu einem fehlenden Ergebnis beginnen mit „Ermüdungslast *Name*:
+Ergebnis …“. Einen unbekannten oberen oder unteren Zustand meldet schon die
+Modellprüfung vor der Rechnung, als „FEHLER: Ermüdungslast '*Name*':
+Lastfall oder Kombination '…' unbekannt“ (bis zum 23.09.2026 beide ohne
+Umlaut). Ein unbekanntes Glied eines Verlaufs meldet sie nicht; das nennt
+erst der Nachweis nach der Rechnung, mit dem Hinweis „Ermüdungslast *Name*:
+Ergebnis '…' fehlt“.
+
 Ergebnis: Tabelle „Nachweise EC3“ mit Ausnutzung, maßgebendem Nachweis,
 Kombination und Stelle; Färbung „Ausnutzung EC3“ im Viewport; alle Details
 im Bericht.

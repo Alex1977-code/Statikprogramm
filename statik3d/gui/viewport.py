@@ -2876,7 +2876,16 @@ def result_field(model: Model, res, field: str, util: dict = None, seite: str = 
         if hasattr(res, "node_vm_max"):
             return np.nan_to_num(res.node_vm_max) / 1e6, None, "σv max [MPa]"
         return np.nan_to_num(res.node_vm) / 1e6, None, "σv [MPa]"
-    if field.startswith("Ausnutzung") and util:
+    # Ist ein Nachweis da (util nicht None), bleibt es bei seinen Werten, auch
+    # wenn die Karte leer ist - dann hat keine Zelle einen Wert. Bis zum
+    # 24.09.2026 stand hier "and util": eine leere Karte (alle Staebe "nicht
+    # gefuehrt" oder ohne wirksame Ermuedungslast) fiel auf die elastische
+    # Ausnutzung zurueck, und "Ausnutzung Ermüdung" faerbte Werte, die nicht
+    # aus dem Ermuedungsnachweis stammen - gemessen am Durchlauftraeger aus
+    # vier Balken [0.3349, 0.1318, 0.0878, 0.0439], auch am Stab ohne
+    # Kerbfall. Die elastische Ausnutzung gibt es nur ohne Nachweis (None)
+    # und unter "Ausnutzung elastisch" (main._util_map gibt dort None).
+    if field.startswith("Ausnutzung") and util is not None:
         c = np.full(len(model.elements), np.nan)
         for i, v in util.items():
             c[i] = v
@@ -3086,7 +3095,11 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
         zeilen.append(zeile("sig_v", "", "", z(float(vm[k]), "spannung"),
                             f"Knoten {k}", E.einheit("spannung")))
     werte = dict(util or {}) if gewaehlt("ausnutzung") else {}
-    if not werte and gewaehlt("ausnutzung"):
+    # wie result_field: die elastische Ausnutzung nur ohne Nachweis (util
+    # None). Bis zum 24.09.2026 "if not werte": bei leerer Ermuedungskarte
+    # stand hier ohne Hinweis "max. Ausnutzung 0.335 an A" - der elastische
+    # Wert (gemessen am Durchlauftraeger aus vier Balken).
+    if util is None and gewaehlt("ausnutzung"):
         for i, d in (getattr(res, "beam_forces", None) or {}).items():
             if d.get("util") is not None:
                 werte[i] = d["util"]

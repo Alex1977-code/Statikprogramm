@@ -1300,6 +1300,214 @@ def test_volumen_ergebnis_aelterer_fassung():
     m.design.ermuedung_volumen = "knoten"
 
 
+def test_nicht_gefuehrt_nicht_gefaerbt():
+    """Befund B056 (Nebenbefund 22./23.09.2026): ein nicht gefuehrter Stab in
+    der Faerbung "Ausnutzung Ermüdung".
+
+    ``FatigueResults.util_by_element`` nahm jeden Stab aus ``members`` mit
+    seiner Ausnutzung auf - auch einen mit ``fehler``, dessen util 0.0 keine
+    Aussage ist. Am Stand ec6448c gemessen: M1 mit einer oder-EK als
+    Mindestzustand ist "nicht geführt", und die Karte lieferte {0: 0.0,
+    1: 0.0}; die Ansicht (main._util_map -> viewport.result_field) faerbte
+    ihn damit wie einen unbeanspruchten Stab. Volumen mit ``fehler`` fielen
+    schon heraus (D_je_element None). Erwartet: seine Elemente fehlen in der
+    Karte, haben also keinen Wert. Ist die Karte dadurch ganz leer - an
+    diesem Modell der Fall -, prueft die Ansicht
+    test_ansicht_ohne_wert_ungefaerbt.
+    """
+    ms = _stab_oben_unten()
+    ek = ms.add_combination("EK_oder", {}, "FAT")
+    ek.alternativen = [{"OBEN": 1.0}, {"UNTEN": 1.0}]
+    ms.add_fatigue_load("EL", "OBEN", "EK_oder", cycles=1e6)
+    fat = solver.solve_all(ms, fatigue=True).fatigue
+    fm = fat.members.get("M1")
+    check("Vorbedingung: M1 steht als nicht geführt im Nachweis",
+          fm is not None and fm.status() == "nicht geführt" and fm.util == 0.0,
+          repr(getattr(fm, "fehler", None))[:80])
+    karte = fat.util_by_element(ms)
+    check("nicht geführter Stab: seine Elemente fehlen in util_by_element",
+          not any(e in karte for e in ms.members["M1"].elements), str(karte))
+    # Gegenprobe, damit die Kur nicht zu scharf ist: derselbe Stab, OBEN
+    # gegen UNTEN, ist gefuehrt und behaelt seinen Wert in der Karte.
+    ms = _stab_oben_unten()
+    ms.add_fatigue_load("EL", "OBEN", "UNTEN", cycles=1e6)
+    fat = solver.solve_all(ms, fatigue=True).fatigue
+    fm = fat.members["M1"]
+    karte = fat.util_by_element(ms)
+    check("Gegenprobe: geführter Stab behält seine Ausnutzung je Element",
+          not fm.fehler and fm.util > 0
+          and all(karte.get(e) == fm.util for e in ms.members["M1"].elements),
+          f"D = {fm.util:.4f}, Karte {karte}")
+
+
+def _zwei_staebe(szenario: str):
+    """Durchlauftraeger aus vier Balken (Rechteck 0,1 x 0,1), Stab A (El. 0, 1)
+    mit Kerbfall 71, Stab B (El. 2, 3) ohne Kerbfall, Lastfaelle L1 und L2."""
+    from statik3d.model import Section
+    m = Model("zwei_staebe")
+    m.add_material(Material.steel("S235"))
+    m.add_section(Section.rectangle("R", 0.1, 0.1))
+    k = [m.add_node(i * 1.0, 0.0, 0.0) for i in range(5)]
+    for i in range(4):
+        m.add_element("beam", [k[i], k[i + 1]], "S235", "R")
+    m.fix(k[0], "all")
+    m.fix(k[4], [0, 1, 2])
+    m.add_member("A", [0, 1], detail_category=71e6)
+    m.add_member("B", [2, 3])
+    m.add_load_case("L1", "Q")
+    m.load_node(k[1], Fz=-2.0e4, case="L1")
+    m.add_load_case("L2", "Q")
+    m.load_node(k[3], Fz=-1.0e4, case="L2")
+    if szenario == "nicht_gefuehrt":
+        m.add_fatigue_load("F", "L1", "UNBEKANNT", cycles=1e6)
+    elif szenario == "null_spiele":
+        m.add_fatigue_load("F", "L1", "L2", cycles=0.0)
+    else:
+        m.add_fatigue_load("F", "L1", "L2", cycles=1e6)
+    return m
+
+
+def test_ansicht_ohne_wert_ungefaerbt():
+    """Mangel 1 der Gegenpruefung zu B056 (24.09.2026): leere Karte in der
+    Desktop-Ansicht.
+
+    Nicht gefuehrt ist ein Eintrag nur, wenn keine Last beitraegt - das haengt
+    an den Lasten und Ergebnissen, nicht am Stab; die Karte ist dann ganz
+    leer. viewport.result_field ("... and util:") und viewport.kennwerte
+    ("if not werte") wichen bei leerer Karte auf die elastische Ausnutzung
+    aus. Gemessen am Stand dc90b5e an diesem Modell: Feld "Ausnutzung
+    elastisch [-]" [0.3349, 0.1318, 0.0878, 0.0439], Kennwert "max.
+    Ausnutzung 0.335 an A" - auch fuer Stab B ohne Kerbfall, der bei ec6448c
+    ohne Wert blieb. Mit 0 Lastspielen stand es schon bei ec6448c so da.
+    Erwartet: ist ein Nachweis da (Karte nicht None), bleibt es bei seinen
+    Werten, eine leere Karte ergibt keine Zelle mit Wert und keinen Kennwert.
+    Ohne Nachweis (None) bleibt die elastische Ausnutzung.
+    """
+    from statik3d.gui import viewport as vp
+    FELD = "Ausnutzung Ermüdung"
+
+    def ansicht(m, an, karte, feld=FELD):
+        r = an.cases["L1"]
+        _ps, cs, name = vp.result_field(m, r, feld, karte)
+        kw = [z for z in vp.kennwerte(m, r, karte, feld=feld) if "Ausnutzung" in z]
+        return cs, name, kw
+
+    def mit_wert(cs):
+        return [] if cs is None else [i for i, v in enumerate(cs) if np.isfinite(v)]
+
+    for sz, text in (("nicht_gefuehrt", "nicht geführter Stab"),
+                     ("null_spiele", "ohne wirksame Last (0 Lastspiele)")):
+        m = _zwei_staebe(sz)
+        an = solver.solve_all(m, design=True, fatigue=True)
+        karte = an.fatigue.util_by_element(m)
+        cs, name, kw = ansicht(m, an, karte)
+        check(f"{text}: Vorbedingung leere Karte",
+              karte == {} and (sz != "nicht_gefuehrt"
+                               or an.fatigue.members["A"].status() == "nicht geführt"),
+              str(karte))
+        check(f"{text}: keine Zelle mit Wert, keine elastische Ausnutzung",
+              cs is not None and not mit_wert(cs) and "elastisch" not in name,
+              f"{name!r} Zellen mit Wert {mit_wert(cs)}")
+        check(f"{text}: kein Kennwert 'max. Ausnutzung'", not kw, str(kw))
+
+    # Gegenprobe: gefuehrt -> Stab A mit seinem Wert, Stab B ohne Kerbfall ohne
+    m = _zwei_staebe("gefuehrt")
+    an = solver.solve_all(m, design=True, fatigue=True)
+    karte = an.fatigue.util_by_element(m)
+    util = an.fatigue.members["A"].util
+    cs, name, kw = ansicht(m, an, karte)
+    check("Gegenprobe geführt: A mit D, B ohne Kerbfall ohne Wert",
+          mit_wert(cs) == [0, 1] and all(abs(cs[i] - util) < 1e-12 for i in (0, 1)),
+          f"{name!r} D = {util:.4f}, Zellen {[round(float(v), 4) for v in cs]}")
+    check("Gegenprobe geführt: Kennwert nennt D am Stab A",
+          kw == [f"max. Ausnutzung {util:.3f} an A"], str(kw))
+    # ohne Nachweis (Karte None): elastische Ausnutzung wie bisher
+    r = an.cases["L1"]
+    elast = {i: d["util"] for i, d in r.beam_forces.items() if d["util"] is not None}
+    for feld, karte_ in ((FELD, None), ("Ausnutzung elastisch", None)):
+        cs, name, kw = ansicht(m, an, karte_, feld)
+        check(f"ohne Nachweis, Feld {feld!r}: elastische Ausnutzung",
+              name == "Ausnutzung elastisch [-]" and mit_wert(cs) == sorted(elast)
+              and all(abs(cs[i] - elast[i]) < 1e-12 for i in elast) and len(kw) == 1,
+              f"{name!r} {kw}")
+    # EC3: Nachweis gerechnet, aber kein Stab darin -> leere Karte
+    m = _zwei_staebe("gefuehrt")
+    for mem in m.members.values():
+        mem.design = False
+    an = solver.solve_all(m, design=True, fatigue=False)
+    karte = an.design.util_by_element() if an.design is not None else None
+    cs, name, kw = ansicht(m, an, karte, "Ausnutzung EC3")
+    check("Ausnutzung EC3 mit leerer Karte: keine Zelle mit Wert, kein Kennwert",
+          karte == {} and cs is not None and not mit_wert(cs) and not kw,
+          f"Karte {karte} {name!r} {mit_wert(cs)} {kw}")
+    # reines Volumenmodell, nicht gefuehrt: ohne Stab gibt es keine elastische
+    # Ausnutzung, es blieb schon vorher ohne Wert (Gegenpruefung 23.09.2026)
+    mv = _zugstab_volumen(1000e3, -400e3)
+    mv.add_fatigue_load("EL", "FEHLT", "LF2", 1e5)
+    an = solver.solve_all(mv, fatigue=True)
+    karte = an.fatigue.util_by_element(mv)
+    r = an.cases["LF1"]
+    _ps, cs, name = vp.result_field(mv, r, FELD, karte)
+    kw = [z for z in vp.kennwerte(mv, r, karte, feld=FELD) if "Ausnutzung" in z]
+    check("Volumen nicht geführt: keine Zelle mit Wert, kein Kennwert",
+          an.fatigue.volumen["V1"].status() == "nicht geführt" and karte == {}
+          and cs is not None and not mit_wert(cs) and not kw,
+          f"{name!r} {mit_wert(cs)} {kw}")
+
+
+def test_warntexte_mit_umlaut():
+    """Befund B057 (Nebenbefund 22./23.09.2026): die Warntexte "Ermuedungslast
+    ...: Ergebnis ... fehlt" gehen als "Hinweis:", als "Der Nachweis konnte
+    nicht geführt werden: ..." und in die offenen Warnungen des Berichts,
+    ebenso die Modellpruefung "FEHLER: Ermuedungslast ...: ... unbekannt" -
+    beides stand am Stand ec6448c ohne Umlaut im Bericht.
+
+    Geprueft wird jede der sechs Stellen in fatigue.py, an denen der Text
+    entsteht (Stab und Volumen je: Hoechstzustand fehlt, Mindestzustand
+    fehlt, Glied eines Verlaufs fehlt), die Modellpruefung und der Bericht
+    zum Modell des Befunds (Last EL2 auf den unbekannten Fall "FEHLT").
+    """
+    from statik3d.report import Report
+
+    def drei_wege(m, oben, unten):
+        m.add_fatigue_load("Oben", "FEHLT", unten, 1e5)
+        m.add_fatigue_load("Unten", oben, "FEHLT", 1e5)
+        m.fatigue_loads["Folge"] = FatigueLoad("Folge", folge=[oben, "FEHLT", unten],
+                                               wiederholungen=1e5)
+        return m
+
+    ms = drei_wege(_stab_oben_unten(), "OBEN", "UNTEN")
+    mv = drei_wege(_zugstab_volumen(1000e3, -400e3), "LF1", "LF2")
+    for art, m, eintrag in (("Stab", ms, lambda f: f.members.get("M1")),
+                            ("Volumen", mv, lambda f: f.volumen.get("V1"))):
+        x = eintrag(solver.solve_all(m, design=False, fatigue=True).fatigue)
+        warn = list(getattr(x, "warnings", None) or [])
+        check(f"{art}: je Weg ein Warntext 'Ermüdungslast <Name>: Ergebnis ...'",
+              sorted(w.split(":")[0] for w in warn)
+              == ["Ermüdungslast Folge", "Ermüdungslast Oben", "Ermüdungslast Unten"],
+              " | ".join(warn)[:120])
+        check(f"{art}: kein Warntext ohne Umlaut",
+              not any("Ermuedung" in w for w in warn), " | ".join(warn)[:120])
+        # Die Modellpruefung liest nur case_max/case_min (model.py, "for k in
+        # (f.case_max, f.case_min)"); das Glied des Verlaufs meldet sie nicht.
+        zeilen = [z for z in m.check() if "FEHLT" in z]
+        check(f"{art}: Modellpruefung nennt die Ermüdungslast mit Umlaut",
+              sorted(z.split("'")[1] for z in zeilen) == ["Oben", "Unten"]
+              and all(z.startswith("FEHLER: Ermüdungslast '") for z in zeilen),
+              " | ".join(zeilen)[:120])
+
+    m = _stab_oben_unten()
+    m.add_fatigue_load("EL2", "FEHLT", None, cycles=1e6)
+    an = solver.solve_all(m, fatigue=True)
+    html = Report(m, an).html()
+    check("Bericht: Hinweis und Grund lauten 'Ermüdungslast EL2'",
+          "Hinweis: Ermüdungslast EL2" in html and "Ermüdung M1: Ermüdungslast EL2" in html
+          and "Modellprüfung: FEHLER: Ermüdungslast" in html,
+          f"{html.count('Ermüdungslast EL2')}x 'Ermüdungslast EL2'")
+    check("Bericht: nirgends 'Ermuedungslast'", "Ermuedungslast" not in html,
+          f"{html.count('Ermuedungslast')}x")
+
+
 def main():
     for t in (test_spanne, test_hauptspannungen, test_volumen, test_naht_beruehrung,
               test_kerbfall_vorschlaege,
@@ -1311,7 +1519,10 @@ def main():
               test_volumen_randspannung_kragarm,
               test_volumen_regel_rueckfall_und_fliessen,
               test_volumen_abgeschaltete_elemente,
-              test_volumen_ergebnis_aelterer_fassung):
+              test_volumen_ergebnis_aelterer_fassung,
+              test_nicht_gefuehrt_nicht_gefaerbt,
+              test_ansicht_ohne_wert_ungefaerbt,
+              test_warntexte_mit_umlaut):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

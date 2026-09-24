@@ -507,6 +507,19 @@ class FatigueResults:
     def util_by_element(self, model: Model) -> dict:
         out = {}
         for m in self.members.values():
+            if getattr(m, "fehler", ""):
+                # Nicht gefuehrt: util = 0.0 ist keine Aussage. Bis zum
+                # 23.09.2026 stand der Stab hier mit 0.0 und wurde in
+                # "Ausnutzung Ermüdung" wie ein unbeanspruchter gefaerbt
+                # (gemessen: M1 mit oder-EK als Mindestzustand -> {0: 0.0,
+                # 1: 0.0}). Ohne Eintrag hat er keinen Wert, wie ein nicht
+                # gefuehrtes Volumen (D_je_element None). Nicht gefuehrt ist
+                # ein Stab, wenn keine Last beitraegt; das haengt an Lasten
+                # und Ergebnissen, trifft also alle Staebe zugleich, und die
+                # Karte ist leer. Dann faerbt viewport.result_field nichts
+                # (seit 24.09.2026; vorher fiel es auf die elastische
+                # Ausnutzung zurueck, gemessen am Stand dc90b5e).
+                continue
             for e in model.members[m.member].elements:
                 out[e] = max(out.get(e, 0.0), m.util)
         for v in self.volumen.values():
@@ -542,7 +555,7 @@ def _verlauf(model: Model, all_res: dict, member: Member, fl, n: int, fm):
     for fall in fl.folge:
         if fall not in all_res:
             # ob die Last in D fehlt, entscheidet der Aufrufer (Wiederholungen)
-            fm.warnings.append(f"Ermuedungslast {fl.name}: Ergebnis '{fall}' fehlt")
+            fm.warnings.append(f"Ermüdungslast {fl.name}: Ergebnis '{fall}' fehlt")
             continue
         x, s_, t_ = _stress_points(model, all_res[fall], member, n)
         sig_t.append(s_)
@@ -1043,7 +1056,7 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
                 fehlt = [f for f in fl.folge if f not in all_res]
                 wdh = _wiederholungen(fl, ds)
                 if fehlt:
-                    _nicht_gerechnet(fv, fl, f"Ermuedungslast {fl.name}: Ergebnis '{fehlt[0]}' fehlt",
+                    _nicht_gerechnet(fv, fl, f"Ermüdungslast {fl.name}: Ergebnis '{fehlt[0]}' fehlt",
                                      wirksam=wdh > 0)
                 if len(namen) < 2 or wdh <= 0:
                     continue
@@ -1071,7 +1084,7 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
                 beitrag = True
                 continue
             if fl.case_max not in all_res:
-                _nicht_gerechnet(fv, fl, f"Ermuedungslast {fl.name}: Ergebnis '{fl.case_max}' fehlt",
+                _nicht_gerechnet(fv, fl, f"Ermüdungslast {fl.name}: Ergebnis '{fl.case_max}' fehlt",
                                  wirksam=_spiele(fl, ds) > 0)
                 continue
             spiele = _spiele(fl, ds)
@@ -1081,7 +1094,7 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
                 # Siehe den Stabzweig: angegeben und nicht gerechnet ist nicht
                 # null, sondern eine Last, die im Nachweis fehlt.
                 _nicht_gerechnet(fv, fl,
-                                 f"Ermuedungslast {fl.name}: Ergebnis '{fl.case_min}' des "
+                                 f"Ermüdungslast {fl.name}: Ergebnis '{fl.case_min}' des "
                                  f"Mindestzustands fehlt - die Last wird nicht gerechnet")
                 continue
             a = signal(fl.case_max)
@@ -1222,7 +1235,7 @@ def check_fatigue(model: Model, analysis, progress=None, n: int = None,
                     _groesste_stufe({(0, j): v for j, v in eigen_t.items()}, fl.name, x))
                 continue
             if fl.case_max not in all_res:
-                _nicht_gerechnet(fm, fl, f"Ermuedungslast {fl.name}: Ergebnis '{fl.case_max}' fehlt",
+                _nicht_gerechnet(fm, fl, f"Ermüdungslast {fl.name}: Ergebnis '{fl.case_max}' fehlt",
                                  wirksam=_spiele(fl, ds) > 0)
                 continue
             spiele = _spiele(fl, ds)
@@ -1243,7 +1256,7 @@ def check_fatigue(model: Model, analysis, progress=None, n: int = None,
                 # Traegt eine andere Last bei, ist der Nachweis damit nicht
                 # "nicht gefuehrt", sondern unvollstaendig (fehlende_lasten).
                 _nicht_gerechnet(fm, fl,
-                                 f"Ermuedungslast {fl.name}: Ergebnis '{fl.case_min}' des "
+                                 f"Ermüdungslast {fl.name}: Ergebnis '{fl.case_min}' des "
                                  f"Mindestzustands fehlt - die Last wird nicht gerechnet")
                 continue
             if fl.case_min:
