@@ -7591,6 +7591,22 @@ Hand gelöscht FEHLER „Seiten im Inneren 4“ mit Rückfrage
 (`test_abnahme_luecken_des_vernetzers_sind_risse`,
 `test_abnahme_luecke_im_netzrand`).
 
+Seit dem Nachtrag B101 des Vernetzers (24.09.2026) behält er an der Platte mit
+Keilen den Tetraeder 2478 (1,151e-10 m³ = 0,87 FLACH · L³, t/L 1,48 %), dessen
+Lücke bis dahin der Riss mit 4 Seiten war. Die Platte hat jetzt 2503 tet4 und
+ohne Eingriff keinen Befund. Ohne 58 allein meldet die Abnahme dort nur
+FEHLER „Seiten im Inneren 4“, ohne 2414 allein WARNUNG „Riss im Netz 4“. Die
+Befunde oben (FEHLER 4 mit den 4 Rissseiten, Riss 8) gelten mit dem von Hand
+entfernten 2478. So prüft es der Test: am festgehaltenen Netz
+`tests/netz_platte_keile_7ce5510.npz`, aus dem er 2478 nach seinen
+Eigenschaften herausnimmt (innen, t/L ≤ 5 %, V ≤ FLACH · h³). Dazu prüft er,
+dass der dünnste innere Tetraeder (1524, t/L 0,76 %, 88,9 FLACH · L³) ohne
+Größenregel ein Riss wäre, mit ihr aber ein FEHLER ist. Am L-Prisma wählt die
+Prüfung seither den größten inneren Tetraeder, dessen Hohlraum ohne
+Größenregel ein Riss wäre (heute 89 985 mm³, t/L 4,72 %). Mit anderen Phasen
+des BCC-Gitters lag unter der Deckelmitte nicht immer ein flacher Tetraeder.
+Alles gemessen am 24.09.2026, zweimal.
+
 Rand der Gruppen des Vernetzers 0 bis 5,6 % der Seitenfläche. Offene Gruppen:
 drei Würfel in einer Reihe mit verdrehtem mittlerem 41 %, verdrehter Boden
 26 %, verdrehtes Eckelement 30 %, eine Trennfläche aus doppelten Knoten, die

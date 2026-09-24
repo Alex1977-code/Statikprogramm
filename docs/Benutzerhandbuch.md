@@ -5211,16 +5211,22 @@ Elemente, an denen er liegt (Median, die Dicke eines Elements ebenso
 gerechnet). Das zweite Maß braucht es für längliche Elemente: Dort folgt die
 Dicke der kurzen Seite, die längste Kante aber der langen. Und der Hohlraum
 ist **klein** (seit 23.09.2026): höchstens 2 · 10⁻⁶ · L³ je vier seiner
-Seiten, L die längste Elementkante des Körpers. Der freie Vernetzer sortiert
-Tetraeder bis 10⁻⁶ · h³ aus, h seine Kantenlänge. An den gemessenen freien
+Seiten, L die längste Elementkante des Körpers. Der freie Vernetzer sortierte
+bis zum 24.09.2026 Tetraeder bis 10⁻⁶ · h³ aus, h seine Kantenlänge; seither
+bis 10⁻⁶ mal die dritte Potenz der eigenen längsten Kante des Tetraeders
+(Theoriehandbuch, Nachtrag B101). An den gemessenen freien
 Netzen war L das 1,02- bis 2,0-Fache von h (Platte mit Bohrung, h = 50 mm:
 L = 50,9 mm; Würfel und L-Prisma mit h = 0,1 bis 0,5 m: 1,68 h bis 2,0 h),
 die Grenze dort also das 2,1- bis 16-Fache von 10⁻⁶ · h³. Gesetzt ist sie an
 gemessenen Hohlräumen (siehe „Fehlt ein flacher Tetraeder“), nicht aus h
 hergeleitet. Solche Hohlräume
 bleiben, wenn der freie Vernetzer flache Tetraeder aussortiert (Platte
-0,9 × 0,9 × 0,035 m mit Bohrung: 8 Seiten, zwei Hohlräume von zusammen
-0,056 mm³), oder wenn beiderseits einer Fläche dieselben Knoten verschieden in
+0,9 × 0,9 × 0,035 m mit Bohrung r = 10 mm, Netzweite 50 mm: am 23.09.2026
+8 Seiten, zwei Hohlräume von zusammen 0,056 mm³; mit dem Vernetzer vom
+24.09.2026 sortiert er dort 54 Tetraeder aus, 216 Seiten, zusammen unter
+0,001 mm³. Die runde Scheibe R = 450 mm mit derselben Bohrung, von der das
+Theoriehandbuch beim Nachtrag B101 sagt, sie habe weder Riss noch Lücke, ist ein
+anderer Körper; gemessen 24.09.2026, zweimal), oder wenn beiderseits einer Fläche dieselben Knoten verschieden in
 Dreiecke geteilt sind. Die 30 geschlossenen Gruppen in den Modellen der
 Prüfsuiten lagen bei höchstens 3,55 % der längsten Kante, waren als ganze
 Gruppe höchstens 0,48-mal so dick wie die Elemente daneben und hatten
@@ -5295,6 +5301,13 @@ Einzelfälle: An der Platte mit Keilen sind der flache Tetraeder von 1,75 cm³
 und der von 0,145 mm³ geblieben, ohne den ersten ein FEHLER, ohne den zweiten
 ein Riss; am L-Prisma ist der flachste Tetraeder unter dem Deckel des langen
 Schenkels jetzt 36 097 mm³ groß, von Hand gelöscht ein FEHLER mit Rückfrage.
+Seit dem 24.09.2026 (Vernetzer, Nachtrag B101) behält der Vernetzer an der
+Platte mit Keilen auch den flachen Tetraeder von 0,115 mm³, dessen Lücke bis
+dahin der Riss neben den beiden war. Die Platte hat jetzt 2503 Tetraeder und
+ohne Eingriff keinen Befund. Ohne den großen flachen allein meldet die
+Abnahme nur den FEHLER, ohne den kleinen allein einen Riss mit 4 statt 8
+Seiten. Die Prüfung nimmt den Tetraeder von 0,115 mm³ deshalb von Hand heraus
+(gemessen 24.09.2026, zweimal).
 
 **Lücke im Netzrand** (Warnung, seit 23.09.2026). Fehlt dem Netz an der
 Oberfläche ein Stück, liegen die freien Seiten der Nachbarn im Inneren, und
