@@ -3178,19 +3178,107 @@ die Lastspielzahlen gelten für so viele Jahre), folgt daraus die rechnerische
 Bezugszeitraum gelten die Lastspielzahlen für die ganze Nutzungsdauer, und es
 gibt keine Lebensdauer zu nennen.
 
-#### 5.5-3 Volumen: Hauptspannung im Element
+#### 5.5-3 Volumen: Hauptspannung je Knoten
 
-Ein Volumen hat keine Nennspannung. Als Spannungsgröße je Element und Zustand
-dient die **vorzeichenbehaftete Hauptspannung mit dem größten Betrag** aus dem
-Spannungstensor der Elementmitte: σ₁, wenn |σ₁| ≥ |σ₃|, sonst σ₃. Ein
+Ein Volumen hat keine Nennspannung. Als Spannungsgröße je Ort und Zustand
+dient die **vorzeichenbehaftete Hauptspannung mit dem größten Betrag**: σ₁,
+wenn |σ₁| ≥ |σ₃|, sonst σ₃. Ein
 Zugkörper gibt +σ, ein Druckkörper −σ, und die Schwingbreite zwischen zwei
 Zuständen ist die Differenz dieser Größe — nicht die Differenz zweier Beträge,
 die einen Wechsel von Zug auf Druck verschluckte. Aus dem Verlauf der Größe
-entsteht je Element das Kollektiv wie beim Stab (spanne, Rainflow,
+entsteht je Ort das Kollektiv wie beim Stab (spanne, Rainflow,
 Reservoir), die Schädigung nach Palmgren-Miner mit der Wöhlerlinie für
 Normalspannungen und γMf nach Konzept und Schadensfolge des Körpers;
-maßgebend je Körper das Element mit dem größten D, und die Ausnutzung je
+maßgebend je Körper der Ort mit dem größten D, und die Ausnutzung je
 Element steht für die Färbung bereit.
+
+**Der Ort ist seit dem 23.09.2026 der Knoten** (Nachweiseinstellung
+`ermuedung_volumen`, Vorgabe „knoten“, `ec3/fatigue.py`, `VOLUMEN_REGELN`):
+der Spannungstensor ist die geglättete Knotenspannung des Lösers
+(`res.solid_knoten`) — das Mittel der Elementwerte gleichen Körpers und
+Werkstoffs am Knoten, an freien Oberflächen auf σ·n = 0 gezogen, wenn
+`Model.randspannung` „frei“ ist (§ 5d) —, also derselbe, den der statische
+Volumennachweis liest. Er ist linear in den Verschiebungen; Kombinationen
+tragen ihn überlagert. Die Färbung je Element zeigt das größte D an seinen
+Ecken. Mit „element“ rechnet der Nachweis wie bis dahin mit dem Elementwert
+`res.solid_res` (dem Element an seinem Auswertepunkt mit der größten
+Vergleichsspannung); die Zahlen sind dann bitgleich mit dem Stand vor der
+Umstellung (gemessen am Kragarm unten und am Zugstab mit Rainflow). Der
+Bericht nennt je Körper die gerechnete Regel. Ein Ergebnis aus der
+Ergebnisdatei einer Programmfassung ohne diese Einstellung (vor a4ec83f)
+kennt das Feld `regel` nicht (`volumen_regel_unbekannt`); der Bericht nennt
+es als Ergebnis einer älteren Programmfassung mit dem Elementwert, nicht neu
+gerechnet, und sagt, welche Einstellung beim Neurechnen gilt.
+
+Gemessen 23.09.2026 am Kragarm-Prüfkörper (`tests/pruefkoerper.Kragarm`,
+hex8, Endquerkraft; Körper mit Kerbfall sind die Elemente mit x ≥ L/2,
+Ermüdungslast 0 → F, Soll 355 N/mm² nach Saint-Venant am Schnitt x = L/2;
+`tests/test_ermuedung_verlauf.py`, `test_volumen_randspannung_kragarm`),
+größte Schwingbreite des Körpers in N/mm²:
+
+| Netz | FHG | Elementwert (Regel „element“) | Knoten (Regel „knoten“) | Knoten am Nachweispunkt (Oberkante, Breitenmitte) |
+|---|---|---|---|---|
+| 8 × 2 × 4 | 405 | 314,35 (−40,65) | 355,22 (+0,22) | 355,22 |
+| 16 × 4 × 8 | 2 295 | 333,31 (−21,69) | 355,02 (+0,02) | 354,96 |
+
+Die Schwingbreite 0 → F am Nachweispunkt ist gleich dem statischen Wert der
+geglätteten Knotenspannung dort. Die Elementregel lag an diesem Körper auf der
+unsicheren Seite. Der Elementwert ist der Tensor an einem Auswertepunkt des
+Elements, und der hex8 zeigt σxx hier über seine Länge fast gleich. Am
+Nachweisknoten (8 × 2 × 4) hat das Element rechts des Schnitts 314,35 N/mm²
+an seinem Auswertepunkt bei x = L/2, wo die Balkenlösung 355,00 gibt; das
+Element links des Schnitts, zur Einspannung hin, hat 401,94 an seinem
+Auswertepunkt bei x = 3L/8 und 400,07 bei x = L/2 — die Balkenlösung dort
+443,75 bzw. 355,00. Bei 16 × 4 × 8 sind es 333,26 gegen 355,00 und 377,61
+bei x = 7L/16 gegen 399,38. Gegen das Soll bei L/2 gehalten scheint das
+Element links des Schnitts zu viel zu zeigen; an seinem eigenen
+Auswertepunkt zeigt es weniger als die Balkenlösung.
+
+Andere Körperenden (gemessen 24.09.2026, zwei Läufe bitgleich; Körper = die
+Elemente mit x ≥ x₀, Ermüdungslast 0 → F, Soll die Balkenlösung an der
+Oberkante bei x₀; ein Netz 32 × 8 × 16 trifft sie dort mit dem Knotenwert
+355,00 / 443,75 / 532,48), größte Schwingbreite des Körpers in N/mm²:
+
+| Netz | Körper ab x₀ | Balkenlösung bei x₀ | Elementwert (Regel „element“) | Knoten (Regel „knoten“) |
+|---|---|---|---|---|
+| 8 × 2 × 4 | L/2 | 355,00 | 314,35 (−40,65) | 355,22 (+0,22) |
+| 8 × 2 × 4 | 3L/8 | 443,75 | 401,94 (−41,81) | 447,70 (+3,95) |
+| 8 × 2 × 4 | L/4 | 532,50 | 501,25 (−31,25) | 530,78 (−1,72) |
+| 16 × 4 × 8 | L/2 | 355,00 | 333,31 (−21,69) | 355,02 (+0,02) |
+| 16 × 4 × 8 | 3L/8 | 443,75 | 422,27 (−21,48) | 443,81 (+0,06) |
+| 16 × 4 × 8 | L/4 | 532,50 | 513,34 (−19,16) | 532,62 (+0,12) |
+
+An jedem dieser Körperenden lag die Elementregel unter der Balkenlösung. Die
+Knotenregel traf sie mit 16 × 4 × 8 auf 0,12 N/mm², mit 8 × 2 × 4 abseits
+von L/2 auf 3,95 bzw. 1,72 N/mm² (`test_volumen_randspannung_kragarm` prüft
+die Tabelle gegen die Rechnung).
+
+**Abgeschaltete Elemente** (Situationen): Die Knotentabelle eines Zustands
+mittelt nur über die wirkenden Elemente; ein Knoten, an dem nur abgeschaltete
+Elemente des Körpers liegen, fehlt darin. Er trägt in diesem Zustand die
+Spannung 0 — so rechnet auch die Elementregel das abgeschaltete Element
+(`solver.postprocess` gibt ihm Nullen) —, alle anderen Knoten die geglättete
+Spannung wie im statischen Nachweis. Bis zur Nachbesserung vom 23.09.2026 fiel
+der ganze Körper dann auf die Elementregel zurück, bei jedem Neurechnen wieder
+(gemessen am Kragarm 8 × 2 × 4, Körper = alle Elemente, Eckelement an der
+Einspannung abgeschaltet, 0 → F: größte Schwingbreite 1 141,55 N/mm² nach der
+Elementregel, jetzt 1 123,53 nach der Knotenregel;
+`test_volumen_abgeschaltete_elemente`).
+
+**Ohne Knotenwerte** rechnet der Körper nach der Elementregel, und der
+Hinweis nennt die Ursache, die vorliegt: ein Ergebnis aus einer
+Programmfassung vor dem 23.09.2026 (die Knotentabelle `res.solid_knoten` kam
+mit dem Merge 21ce779 am 23.09.2026 in das Programm; neu gerechnet gilt die
+Knotenregel), eine Überlagerung, deren Lastfälle verschiedene Knotentabellen
+führen (`Results.combine` verwirft sie dann), oder ein fehlender Knoten, an
+dem ein Element des Körpers wirkt (mit Nummer). Eine unbekannte Einstellung
+führt den Nachweis nicht („nicht geführt“ mit Grund). **Fließende Elemente**
+sind wie im statischen Nachweis von σ·n = 0 ausgenommen — sie tragen zum
+Knotenmittel den Wert ihres nächsten Integrationspunkts bei (§ 5d) —, und der
+Nachweis nennt Zustand und Zahl der fließenden Elemente des Körpers
+(`test_volumen_regel_rueckfall_und_fliessen`: Balken aus einer hex8-Lage unter
+1,20 M_el, 5 fließende Elemente; die Schwingbreite ist dort genau die
+Knotenspannung des Lösers).
 
 Die Hauptspannungen kommen geschlossen (Cardano, trigonometrisch) für alle
 Elemente auf einmal: 200 000 Tensoren in unter 2 s, gegen `eigvalsh` je
@@ -3200,16 +3288,16 @@ Drehlagers Minuten je Zustand. Geprüft an 2000 Zufallstensoren gegen
 10 × 2 × 2 Hexaedern: Δσ = ΔF/A = 60,0 N/mm² auf 10⁻⁶ genau, D wie die
 Handrechnung mit `sn_life`, Druck wie Zug (`tests/test_ermuedung_verlauf.py`).
 
-**Grenzen.** Es ist die Spannung in der Elementmitte: bei Biegung durch den
-Körper liegt der Rand höher (Kapitel 5d: 43,3 gegen 60,3 N/mm² am Kragarm aus
-Hexaedern) — für Ermüdung unter Biegung ist das Netz über die Höhe fein zu
-wählen. Die Größe ist eine Struktur- oder Kerbspannung, keine Nennspannung:
+**Grenzen.** Wie genau die Knotenspannung den Rand trifft, hängt am Netz
+(§ 5d: Kragarm, Kirsch-Loch); die Elementregel nahm bis zum 20.09.2026 die
+Elementmitte, beim Sechsflächner unter Biegung den schlechtesten Ort (§ 5d). Die
+Größe ist eine Struktur- oder Kerbspannung, keine Nennspannung:
 die Kerbfälle der Tabellen 8.1–8.10 gelten nur, wo das Element die
 Nennspannung abbildet (glatter Grundwerkstoff); an Nähten und Kerben gehört
 ein Kerbfall des Struktur- oder Kerbspannungskonzepts dazu (IIW: FAT 225 für
 die Kerbspannung mit r = 1 mm). Der Vorschlag des Programms (160,
 Grundwerkstoff; `ec3/kerbfaelle.py`) ist dafür ein Anfang, kein Befund.
-Rainflow und Reservoir zählen je Element einzeln und sind bei großen Körpern
+Rainflow und Reservoir zählen je Ort einzeln und sind bei großen Körpern
 langsam; die Spanne ist vektorisiert.
 
 **Verschweißte Berührungsstellen.** Ein Knoten, den zwei Körper teilen, ist
@@ -3217,12 +3305,13 @@ eine durchverbundene Stelle: der Vernetzer teilt Knoten nur über eine
 gemeinsame Fläche (RFEM: eine Fläche zwischen zwei Volumen), und eine
 ausgeführte Kontaktfuge verdoppelt sie (Kapitel 4.0). Ohne eingegebene
 Kontaktbedingung zwischen den beiden Körpern ist das ein Stoß, der in
-Wirklichkeit geschweißt ist (Anweisung des Anwenders vom 11.09.2026). Die
-Elemente mit einem solchen Knoten — eine Elementlage beiderseits — tragen den
-Kerbfall „Naht" ihres Körpers, Vorschlag 90 N/mm² nach Anhang B, Tabelle B.1,
+Wirklichkeit geschweißt ist (Anweisung des Anwenders vom 11.09.2026). Nach
+der Regel „knoten“ trägt ein solcher Knoten selbst, nach der Regel „element“
+jedes Element mit einem solchen Knoten — eine Elementlage beiderseits — den
+Kerbfall „Naht" seines Körpers, Vorschlag 90 N/mm² nach Anhang B, Tabelle B.1,
 Detail 7 (Kreuzstoß mit tragenden Kehlnähten, Strukturspannung); voll
 durchgeschweißt wäre Detail 3 mit 100. Die Wöhlerlinie läuft dafür mit einem
-Kerbfall je Element (`_n_vektor` mit Feld). Die Zuordnung ist ein Durchlauf
+Kerbfall je Ort (`_n_vektor` mit Feld). Die Zuordnung ist ein Durchlauf
 über alle Elementknoten (`nahtknoten`), am Drehlager 8 Mio. Einträge in
 Sekunden; Paare mit Kontaktbedingung (`kontaktpaare`, aus `koerpernamen` und
 Gegenkörpern bzw. den Besitzern der Gegenflächen) bleiben außen vor.
@@ -3232,9 +3321,9 @@ liegen dort auf getrennten, deckungsgleichen Flächen. Grenze: teilen zwei
 Körper nur eine Kante, zählt die Elementlage an der Kante mit — sie liegt
 ohnehin an einem Stoß. Geprüft an zwei Körpern aus einem Hexaedernetz
 (`test_naht_beruehrung`): 9 Nahtknoten in der Ebene x = 1 m, vier Elemente
-je Körper an der Naht, maßgebend eines davon mit D nach der Wöhlerlinie 90,
-der Nachbarkörper ohne Nahtkerbfall mit 160; mit Kontaktbedingung keine
-Nahtknoten.
+je Körper an der Naht, maßgebend (Regel „knoten“) ein Nahtknoten mit D nach
+der Wöhlerlinie 90 an einem Element der Nahtlage, der Nachbarkörper ohne
+Nahtkerbfall mit 160; mit Kontaktbedingung keine Nahtknoten.
 
 #### 5.5a Kerbfälle aus Schweißnähten (`schweissnaehte.py`)
 
@@ -3520,8 +3609,9 @@ dessen Wert ohnehin 260 N/mm² daneben liegt. Kosten: die Randseiten einmal je R
 (0,32 s bei 196 608 Tetraedern), danach 0,03 s je Lastfall. Die Einstellung
 `Model.randspannung` = "gemittelt" stellt das Knotenmittel wieder her; das Ergebnis
 nennt die gerechnete Art (`res.info["randspannung"]`), der Nachweis an der Stelle
-(„Knoten 812 (geglättet, σ·n = 0)“). Die **Ermüdung** der Volumen liest nicht die
-Randspannung, sondern `res.solid_res` je Element — sie ändert sich dadurch nicht.
+(„Knoten 812 (geglättet, σ·n = 0)“). Die **Ermüdung** der Volumen liest seit dem
+23.09.2026 dieselbe Knotenspannung (5.5-3); bis dahin las sie `res.solid_res` je
+Element, und so rechnet sie weiter mit der Einstellung `ermuedung_volumen` = „element“.
 
 `res.solid_res` bleibt je Element der maßgebende eigene Punkt (Anzeige, ältere
 Ergebnisse); der Fehlerschätzer liest das Elementmittel `res.solid_mittel` (§ 6c).
@@ -3590,7 +3680,7 @@ mittlere Elementgröße h ≤ r/3 ist — sonst liegen weniger als drei Elemente
 Steifigkeit ist nur für Stabelemente gebildet, ein Verzweigungsproblem für
 Volumen gibt es nicht. Kein Plastizieren, kein Kriechen und nicht der
 Sprödbruchnachweis nach EN 1993-1-10 selbst. Die Ermüdung der Volumen aus der
-Hauptspannung im Element steht in 5.5-3.
+Hauptspannung je Knoten steht in 5.5-3.
 
 ## 5d-2 Passungen: Spiel, Übergang, Presspassung (17.09.2026)
 

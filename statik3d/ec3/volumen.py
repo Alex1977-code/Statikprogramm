@@ -38,7 +38,8 @@ moegliche Singularitaet hin.
 **Nicht enthalten**: Stabilitaet des Volumenkoerpers (die geometrische
 Steifigkeit ist nur fuer Stabelemente gebildet), Plastizieren, Kriechen und
 der Sproedbruchnachweis nach EN 1993-1-10 selbst. Die Ermuedung der Volumen
-(Hauptspannung im Element) steht in ec3/fatigue.py.
+(Hauptspannung je Knoten aus derselben geglaetteten Spannung wie hier, seit
+23.09.2026) steht in ec3/fatigue.py.
 """
 from __future__ import annotations
 

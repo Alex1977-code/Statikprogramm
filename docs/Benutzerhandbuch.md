@@ -3302,25 +3302,51 @@ eingegeben sind.
 
 **Ermüdung für Volumen.** Ein Volumen mit Kerbfall (Maske Volumen, Feld
 „Kerbfall Ermüdung"; Tabelle Volumen, Spalte Kerbfall; Dialog Volumenkörper)
-wird mit nachgewiesen: je Element und Zustand die vorzeichenbehaftete
+wird mit nachgewiesen: je Knoten und Zustand die vorzeichenbehaftete
 Hauptspannung mit dem größten Betrag, daraus das Kollektiv wie beim Stab,
-Schädigung nach Miner mit der Wöhlerlinie für Normalspannungen, maßgebend das
-Element mit dem größten D. Das Ergebnis steht in der Tabelle Ermüdung
+Schädigung nach Miner mit der Wöhlerlinie für Normalspannungen, maßgebend der
+Knoten mit dem größten D. Die Spannung am Knoten ist seit dem 23.09.2026 die
+geglättete Knotenspannung — dieselbe, die der statische Volumennachweis liest,
+an freien Oberflächen mit σ·n = 0 (Vorgabe von `randspannung`). Am
+Kragarm-Prüfkörper (hex8, Schwingbreite 0 → F, Soll 355 N/mm² an der
+Oberkante bei L/2) traf sie mit 405 und 2 295 Freiheitsgraden auf 0,22 N/mm²
+genau. Der bis dahin gerechnete Elementwert lag bei diesem Körper (die
+Elemente mit x ≥ L/2, der Prüfaufbau) 40,65 bzw. 21,69 N/mm² darunter und
+mit dem Körperende bei 3L/8 oder L/4 ebenfalls, um 19,16 bis 41,81 N/mm²
+(gemessen 24.09.2026, Theoriehandbuch 5.5-3). Der Elementwert ist die
+Spannung an einem Auswertepunkt des Elements; am Kragarm zeigt der hex8 die
+Biegespannung über seine Länge fast gleich und erreicht den größeren Wert am
+Körperende nicht. Wer den Elementwert wie bis zum 23.09.2026 will, setzt die
+Nachweiseinstellung `ermuedung_volumen` auf „element“ (Modelldatei, Abschnitt
+„design“); der Bericht nennt je Körper die gerechnete Regel. Ein Knoten, an
+dem in einer Situation nur abgeschaltete Elemente des Körpers liegen, trägt in
+diesem Zustand die Spannung 0 — wie das abgeschaltete Element nach der
+Elementregel. Fehlen einem Ergebnis sonst Knotenwerte (etwa eine
+Ergebnisdatei aus einer Programmfassung vor dem 23.09.2026), rechnet der
+Körper mit dem Elementwert und nennt die Ursache als Hinweis; fließen
+Elemente des Körpers, nennt der Nachweis Zustand und Zahl. Ein
+Ermüdungsergebnis, das eine ältere Programmfassung ohne die Einstellung
+`ermuedung_volumen` gerechnet und in die Ergebnisdatei geschrieben hat, zeigt
+der Bericht nach dem Öffnen so, wie es gerechnet wurde — mit dem Elementwert
+—, und sagt das als Hinweis; neu gerechnet gilt die Einstellung.
+Das Ergebnis steht in der Tabelle Ermüdung
 („Volumen V1", ein Klick wählt den Körper), in der Färbung „Ausnutzung
-Ermüdung" je Element und im Bericht (Block „Ermüdungsnachweis Volumen"). Die
-Spannung im Element ist eine Struktur- oder Kerbspannung, keine Nennspannung
-— der Kerbfall muss dazu passen (Theoriehandbuch 5.5-3).
+Ermüdung" je Element (das größte D an seinen Ecken) und im Bericht (Block
+„Ermüdungsnachweis Volumen"). Die Spannung ist eine Struktur- oder
+Kerbspannung, keine Nennspannung — der Kerbfall muss dazu passen
+(Theoriehandbuch 5.5-3).
 
 **Berührungsstellen zwischen Volumen.** Wo zwei Volumen Knoten teilen — der
 Vernetzer teilt sie nur über eine gemeinsame Fläche, in RFEM ist das ein
 durchverbundener Stoß — und keine Kontaktbedingung zwischen beiden
-eingegeben ist, gilt die Stelle als verschweißt: die Elemente mit einem
-solchen Knoten rechnen mit dem Feld „Kerbfall Naht" des Volumens (Maske,
+eingegeben ist, gilt die Stelle als verschweißt: ein solcher Knoten (mit
+„element“: jedes Element mit einem solchen Knoten) rechnet mit dem Feld
+„Kerbfall Naht" des Volumens (Maske,
 Tabelle Volumen, Dialog; leer = wie Kerbfall). Eine eingegebene
 Kontaktbedingung zwischen den beiden Körpern macht die Stelle zur Fuge, eine
 ausgeführte verdoppelt die Knoten ohnehin. Tabelle und Bericht nennen beide
 Kerbfälle („160 / Naht 90"), die Zahl der Elemente an Berührungsstellen und
-ob das maßgebende Element dort liegt. Am Drehlager: 47 gemeinsame Flächen
+ob die maßgebende Stelle dort liegt. Am Drehlager: 47 gemeinsame Flächen
 zwischen 25 Körperpaaren, keine davon mit Kontaktbedingung.
 
 **Die Schädigung wird am Ort aufsummiert**, nicht über Orte hinweg: D wird an
