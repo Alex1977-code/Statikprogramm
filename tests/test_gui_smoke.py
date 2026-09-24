@@ -11,6 +11,12 @@ import os
 # nach jedem Lauf ein Browserfenster mit tests/_lastenheft_smoke.html, die der
 # Lauf gleich wieder geloescht hatte ("Zugriff auf die Datei nicht moeglich").
 os.environ.setdefault("STATIK3D_KEIN_BROWSER", "1")
+# Neu, Oeffnen, Beispiel und Beenden fragen seit dem 24.09.2026 nach
+# Ungespeichertem (Speichern/Verwerfen/Abbrechen). Dieser Lauf ruft sie weit
+# ueber hundertmal nach Aenderungen auf - der Testschalter antwortet
+# „verwerfen“, wie es vorher ohne Frage geschah (auch beim Aufruf als Skript,
+# ohne tests/__init__.py). Die Frage selbst prueft tests/test_ungespeichert.py.
+os.environ.setdefault("STATIK3D_UNGESPEICHERT", "verwerfen")
 import sys
 import time
 

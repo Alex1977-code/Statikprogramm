@@ -32,12 +32,41 @@ Gruppe und Beschriftung.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import design as dsg
 from . import symbole as sym
+
+
+#: Suchwoerter, die ein Befehl nicht im Namen traegt, mit denen man ihn aber
+#: sucht (24.09.2026): wer „Import“ sucht, meint „Übernehmen“. Sie zaehlen
+#: wie der Befehlsname.
+SYNONYME = {
+    "Übernehmen": "Import Importieren Einlesen RFEM IFC",
+    "Exportieren": "Export Ausgeben",
+    "Kombinationen automatisch…": "Kombination Lastkombination Überlagerung Überlagern",
+    "DIN 19704: Kombinationen": "Kombination Lastkombination Überlagerung Überlagern",
+    "Stellung anlegen…": "Stellung Situation Verschlussstellung",
+    "Alle Stellungen": "Stellung Situation Verschlussstellung",
+    "Modell leeren (Eigenschaften behalten)…": "Alle Elemente löschen",
+}
+#: Loeschende Befehle erkennt die Suche am Namen - sie laufen nie direkt aus ihr
+LOESCHWOERTER = re.compile(r"lösch|leeren|verwerf|entfern")
+
+
+def woerter(text: str) -> list:
+    return re.findall(r"\w+", (text or "").lower())
+
+
+def wort_passt(suchwort: str, wort: str) -> bool:
+    """Suche am Wortanfang: „spiel“ trifft „Spiel geben“, nicht „Beispiel“.
+    Ein Wort, das bis auf eine kurze Endung gleich ist, trifft auch
+    („Stellungen“ -> „Stellung“)."""
+    return wort.startswith(suchwort) or (len(wort) >= 5 and suchwort.startswith(wort)
+                                         and len(suchwort) - len(wort) <= 2)
 
 
 @dataclass
@@ -48,9 +77,20 @@ class Befehl:
     text: str
     aktion: QtGui.QAction
     hinweis: str = ""
+    #: ersetzt oder leert das Modell (Ribbon.vorsicht) - nie direkt aus der Suche
+    vorsicht: bool = False
 
     def suchtext(self) -> str:
         return f"{self.text} {self.register} {self.gruppe} {self.hinweis}".lower()
+
+    def namenswoerter(self) -> list:
+        return woerter(self.text) + woerter(SYNONYME.get(self.text, ""))
+
+    def alle_woerter(self) -> list:
+        return self.namenswoerter() + woerter(f"{self.register} {self.gruppe} {self.hinweis}")
+
+    def nicht_aus_suche(self) -> bool:
+        return self.vorsicht or bool(LOESCHWOERTER.search(self.text.lower()))
 
 
 #: Hoehe des Knopffelds einer Gruppe [px]. Jede Gruppe ist gleich hoch, und
@@ -165,6 +205,33 @@ class Gruppe(QtWidgets.QWidget):
             a.toggled.connect(lambda z, f=fn: f(z))
         return a
 
+    def menue(self, text: str, eintraege: list, hinweis: str = "", symbol: str = "") -> list:
+        """Ein grosser Knopf mit Menue: ``eintraege`` = [(Text, Befehl, Hinweis)].
+
+        Jeder Eintrag ist ein Befehl wie jeder andere (Suche, Menuedurchgang),
+        er hat nur keinen eigenen Knopf. Zurueck kommen die Aktionen."""
+        b = QtWidgets.QToolButton(self)
+        b.setText(text)
+        b.setIcon(sym.fuer_befehl(text, "", symbol))
+        b.setToolButtonStyle(QtCore.Qt.ToolButtonTextUnderIcon)
+        b.setIconSize(QtCore.QSize(SYMBOL_GROSS, SYMBOL_GROSS))
+        b.setObjectName("ribbongross")
+        b.setToolTip(hinweis or text)
+        b.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        menu = QtWidgets.QMenu(b)
+        aktionen = []
+        for t, fn, h in eintraege:
+            a = self._aktion(t, fn, "", h)
+            menu.addAction(a)
+            aktionen.append(a)
+        b.setMenu(menu)
+        b.setMinimumWidth(58)
+        b.setMaximumWidth(124)
+        b.setFixedHeight(INHALT_HOEHE)
+        self.spalte = None
+        self.reihe.addWidget(b, 0, QtCore.Qt.AlignTop)
+        return aktionen
+
     def widget(self, w: QtWidgets.QWidget):
         """Ein eigenes Bedienelement in die Gruppe stellen (z. B. Auswahlfeld)."""
         self.spalte = None
@@ -204,6 +271,8 @@ class Ribbon(QtWidgets.QWidget):
 
     #: ausgeloest, wenn die Suche einen Befehl ausfuehrt
     gesucht = QtCore.Signal(str)
+    #: ein Hinweis der Suche fuer die Statuszeile (Trefferliste, nicht ausgefuehrt)
+    meldung = QtCore.Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -242,10 +311,7 @@ class Ribbon(QtWidgets.QWidget):
         self.tabs.setDocumentMode(True)
         self.tabs.setUsesScrollButtons(True)
         aussen.addWidget(self.tabs)
-        self._vervollstaendigung = QtWidgets.QCompleter([], self)
-        self._vervollstaendigung.setCaseSensitivity(QtCore.Qt.CaseInsensitive)
-        self._vervollstaendigung.setFilterMode(QtCore.Qt.MatchContains)
-        self.suche.setCompleter(self._vervollstaendigung)
+        self._suche_einrichten()
 
     # -- Aufbau ----------------------------------------------------------
     def register(self, name: str) -> Register:
@@ -319,8 +385,13 @@ class Ribbon(QtWidgets.QWidget):
 
     def merken(self, b: Befehl):
         self.befehle.append(b)
-        self._vervollstaendigung.setModel(
-            QtCore.QStringListModel(sorted(x.text for x in self.befehle)))
+
+    def vorsicht(self, *aktionen: QtGui.QAction):
+        """Diese Befehle ersetzen oder leeren das Modell: die Suche fuehrt sie
+        nie aus, sie zeigt nur ihr Register."""
+        for b in self.befehle:
+            if b.aktion in aktionen:
+                b.vorsicht = True
 
     def zeigen(self, name: str) -> bool:
         """Ein Register nach vorn holen."""
@@ -337,21 +408,100 @@ class Ribbon(QtWidgets.QWidget):
                 self.schnellzugriff.addAction(a)
 
     # -- Suche -----------------------------------------------------------
-    def finden(self, text: str) -> list[Befehl]:
-        t = (text or "").strip().lower()
-        if not t:
+    # Bis zum 24.09.2026 fuehrte Enter den ersten Treffer irgendwo in Name,
+    # Register, Gruppe oder Hinweis aus: „Spiel“ lud das Beispiel Rahmen
+    # (Gruppe „Beispiele“ enthaelt „spiel“), „Kombination“ rechnete
+    # (Hinweis von „Berechnen“). Jetzt: Suche am Wortanfang, Treffer im
+    # Befehlsnamen zuerst, Enter nur bei genau einem Treffer im Namen, sonst
+    # die Trefferliste; Modellersetzendes und Loeschendes nie direkt.
+    def _suche_einrichten(self):
+        """Die Trefferliste: der vorhandene Vervollstaendiger, aber mit der
+        eigenen Treffermenge (Wortanfang, Synonyme) statt Qts Teiltext."""
+        self._anzeige: dict[str, Befehl] = {}
+        self._vervollstaendigung = QtWidgets.QCompleter([], self)
+        self._vervollstaendigung.setCaseSensitivity(QtCore.Qt.CaseInsensitive)
+        self._vervollstaendigung.setCompletionMode(QtWidgets.QCompleter.UnfilteredPopupCompletion)
+        self._vervollstaendigung.setMaxVisibleItems(14)
+        # setWidget statt setCompleter: das Feld soll den gewaehlten Text nicht
+        # uebernehmen und nicht selbst filtern, die Liste kommt von finden()
+        self._vervollstaendigung.setWidget(self.suche)
+        self._vervollstaendigung.activated[str].connect(self._treffer_gewaehlt)
+        self.suche.textEdited.connect(self._liste_nachziehen)
+
+    @staticmethod
+    def anzeige(b: Befehl) -> str:
+        """Die Zeile eines Befehls in der Trefferliste - mit Ort, denn manche
+        Namen gibt es mehrfach („Einstellungen“)."""
+        return f"{b.text}   ({b.register} › {b.gruppe})"
+
+    def namenstreffer(self, text: str) -> list:
+        """Befehle, in deren Namen (oder Synonymen) jedes Suchwort am
+        Wortanfang steht."""
+        such = woerter(text)
+        if not such:
             return []
+        return [b for b in self.befehle
+                if all(any(wort_passt(w, x) for x in b.namenswoerter()) for w in such)]
+
+    def finden(self, text: str) -> list[Befehl]:
+        """Alle Treffer: gleichlautender Name, dann Treffer im Namen, dann in
+        Register, Gruppe und Hinweis - jeweils am Wortanfang."""
+        such = woerter(text)
+        if not such:
+            return []
+        t = (text or "").strip().lower()
         genau = [b for b in self.befehle if b.text.lower() == t]
-        return genau or [b for b in self.befehle if t in b.suchtext()]
+        namen = [b for b in self.namenstreffer(text) if b not in genau]
+        rest = [b for b in self.befehle if b not in genau and b not in namen
+                and all(any(wort_passt(w, x) for x in b.alle_woerter()) for w in such)]
+        return genau + namen + rest
+
+    def _liste_nachziehen(self, text: str = None):
+        """Beim Tippen: die Trefferliste auf den eingegebenen Text setzen."""
+        text = self.suche.text() if text is None else text
+        treffer = self.finden(text)
+        self._anzeige = {self.anzeige(b): b for b in treffer}
+        self._vervollstaendigung.setModel(QtCore.QStringListModel(list(self._anzeige), self._vervollstaendigung))
+        if treffer:
+            self._vervollstaendigung.complete()
+        else:
+            self._vervollstaendigung.popup().hide()
+        return treffer
 
     def _suche_ausfuehren(self):
-        treffer = self.finden(self.suche.text())
+        """Enter im Suchfeld."""
+        text = self.suche.text().strip()
+        if not text:
+            return
+        if text in self._anzeige:                  # eine Zeile der Liste steht im Feld
+            return self._ausfuehren(self._anzeige[text])
+        treffer = self.finden(text)
         if not treffer:
+            self._vervollstaendigung.popup().hide()
             self.gesucht.emit("")
             return
-        b = treffer[0]
+        namen = self.namenstreffer(text)
+        if len(namen) == 1:
+            return self._ausfuehren(namen[0])
+        self._liste_nachziehen(text)
+        self.meldung.emit(f"Befehlssuche: {len(treffer)} Treffer für „{text}“ – "
+                          "den gemeinten in der Liste wählen")
+
+    def _treffer_gewaehlt(self, zeile: str):
+        """Eine Zeile der Trefferliste gewaehlt (Enter oder Klick)."""
+        b = self._anzeige.get(zeile) or next((x for x in self.befehle if self.anzeige(x) == zeile), None)
+        if b is not None:
+            self._ausfuehren(b)
+
+    def _ausfuehren(self, b: Befehl):
+        self._vervollstaendigung.popup().hide()
         self.zeigen(b.register)
         self.suche.clear()
+        self._anzeige = {}
+        if b.nicht_aus_suche():
+            self.meldung.emit(f"„{b.text}“ ersetzt oder löscht Modellinhalt und läuft darum nicht "
+                              f"direkt aus der Suche – der Knopf steht im Register {b.register} › {b.gruppe}")
+            return
         self.gesucht.emit(b.text)
         b.aktion.trigger()
 
@@ -372,6 +522,7 @@ QFrame#ribbontrenner {{ color: {linie}; margin: 4px 3px 2px; }}
 QToolButton#ribbongross {{ border: 1px solid transparent; border-radius: 8px;
     padding: 4px 6px; font-size: 11px; }}
 QToolButton#ribbongross:hover {{ background: {akzent_hell}; border-color: {linie}; }}
+QToolButton#ribbongross::menu-indicator {{ image: none; width: 0px; }}
 QToolButton#ribbongross[rolle="start"] {{ background: {akzent}; color: #fff;
     border-color: {akzent}; font-weight: 600; }}
 QToolButton#ribbongross[rolle="start"]:hover {{ background: #0f4f9a; }}
