@@ -249,17 +249,19 @@ class QuerschnittMaske(QtWidgets.QFrame):
         zu = QtWidgets.QToolButton(self)
         zu.setText("✕")
         zu.setObjectName("maskezu")
-        zu.setToolTip("Maske schließen (Esc)")
+        zu.setToolTip("Maske schließen")
         zu.clicked.connect(self.schliessen)
         kopf.addWidget(zu)
         aussen.addLayout(kopf)
         # Hinweiszeile unter dem Titel wie im gemeinsamen Maskenrahmen
-        # (24.09.2026) - vorher stand sie ganz unten unter der Rollflaeche
-        self.lbl_hinweis = QtWidgets.QLabel(
+        # (24.09.2026) - vorher stand sie ganz unten unter der Rollflaeche.
+        # Hinweiszeile: umbrochen ganz zu sehen; „✕ schließt“, weil Esc im
+        # Hauptfenster keine Maske schliesst
+        from .masken import Hinweiszeile
+        self.lbl_hinweis = Hinweiszeile(
             "Normprofil oder Parameterprofil wählen und „Anlegen“ - oder das Profil "
-            "frei zusammensetzen. Esc schließt.")
+            "frei zusammensetzen. ✕ schließt.", self)
         self.lbl_hinweis.setObjectName("maskenhinweis")
-        self.lbl_hinweis.setWordWrap(True)
         aussen.addWidget(self.lbl_hinweis)
 
         self.lbl_vorhanden = QtWidgets.QLabel("")

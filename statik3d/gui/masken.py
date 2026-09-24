@@ -104,12 +104,80 @@ class Rollflaeche(QtWidgets.QScrollArea):
         s = w.sizeHint().expandedTo(w.minimumSizeHint())
         return QtCore.QSize(s.width() + self._balken(), s.height())
 
+    #: True: die Mitte verlangt ihre volle Hoehe (rollt nicht). Das Fenster
+    #: setzt es, wenn die ganze Maske passt, sobald der untere Bereich bis auf
+    #: seine Mindesthoehe kleiner wird (MainWindow._fensterhoehe_halten)
+    ganz_zeigen = False
+
     def minimumSizeHint(self) -> QtCore.QSize:
         w = self.widget()
         if w is None:
             return super().minimumSizeHint()
+        voll = max(0, w.sizeHint().height())
         return QtCore.QSize(w.minimumSizeHint().width() + self._balken(),
-                            min(self.MINDESTHOEHE, max(0, w.sizeHint().height())))
+                            voll if self.ganz_zeigen else min(self.MINDESTHOEHE, voll))
+
+    #: Tasten, mit denen eine QScrollArea rollt, ein Feld sie aber nicht braucht
+    _ROLLTASTEN = (QtCore.Qt.Key_Up, QtCore.Qt.Key_Down,
+                   QtCore.Qt.Key_PageUp, QtCore.Qt.Key_PageDown)
+
+    def keyPressEvent(self, ev):
+        # Pfeil auf/ab in einem Textfeld rollte die Mitte weg, und das Feld mit
+        # der Schreibmarke verschwand aus dem Bild (24.09.2026). Steht der
+        # Fokus in der Mitte, rollen diese Tasten nicht - wie vor dem
+        # Rollbereich; Tab und Mausrad rollen weiter.
+        fw = QtWidgets.QApplication.focusWidget()
+        w = self.widget()
+        if (ev.key() in self._ROLLTASTEN and fw is not None and w is not None
+                and w.isAncestorOf(fw)):
+            ev.ignore()
+            return
+        super().keyPressEvent(ev)
+
+
+class Hinweiszeile(QtWidgets.QLabel):
+    """Umbrechende Hinweiszeile im Kopf einer Maske (24.09.2026).
+
+    Ein Dock rechnet nicht mit heightForWidth: die Mindesthoehe eines
+    umbrechenden QLabel ist die einer Zeile, bei Wind (1064 px breit) fehlte
+    so die dritte Zeile, und Qt quetschte den Fuss darunter, bis sich die
+    Knoepfe ueberlappten. Diese Zeile meldet als Mindesthoehe die Hoehe, die
+    sie bei ihrer jetzigen Breite wirklich braucht.
+    """
+
+    def __init__(self, text: str = "", parent=None):
+        super().__init__(text, parent)
+        self.setWordWrap(True)
+        self._hfw = -1
+
+    def _gelegt(self) -> bool:
+        # Erst wenn die Zeile sichtbar ist, hat sie eine vom Layout gesetzte
+        # Breite - vorher (100 px Vorgabe) waere die Hoehe viel zu gross
+        return self.wordWrap() and self.isVisible() and self.width() > 40
+
+    def minimumSizeHint(self) -> QtCore.QSize:
+        s = super().minimumSizeHint()
+        if self._gelegt():
+            s.setHeight(max(s.height(), self.heightForWidth(self.width())))
+        return s
+
+    def _pruefen(self) -> None:
+        h = self.heightForWidth(self.width()) if self._gelegt() else -1
+        if h != self._hfw:
+            self._hfw = h
+            self.updateGeometry()
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self._pruefen()
+
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        self._pruefen()
+
+    def setText(self, text: str) -> None:
+        super().setText(text)
+        self._pruefen()
 
 
 class Maske(QtWidgets.QFrame):
@@ -176,17 +244,26 @@ class Maske(QtWidgets.QFrame):
         zu = QtWidgets.QToolButton(self)
         zu.setText("✕")
         zu.setObjectName("maskezu")
-        zu.setToolTip("Maske schließen (Esc)")
-        # Nicht in der Tab-Folge: Tab soll vom Kopf direkt ins erste Feld
-        # gehen, Esc schliesst ohnehin
-        zu.setFocusPolicy(QtCore.Qt.NoFocus)
+        # Im Hauptfenster schliesst Esc die Maske nicht (Esc ist dort das
+        # Kuerzel „Alles deselektieren“) - darum ohne „(Esc)“ im Hinweis
+        # (24.09.2026)
+        zu.setToolTip("Maske schließen")
+        # Nur per Tab (nicht per Klick) fokussierbar und ans Ende der
+        # Tab-Folge gesetzt (tabfolge_setzen): Tab geht vom Kopf direkt ins
+        # erste Feld, und ohne Maus laesst sich die Maske trotzdem schliessen
+        # - Masken ohne „Abbrechen“ hatten sonst gar keinen Weg (24.09.2026)
+        zu.setFocusPolicy(QtCore.Qt.TabFocus)
         zu.clicked.connect(self.schliessen)
         kopf.addWidget(zu)
         lay.addLayout(kopf)
+        self.btn_zu = zu
+        #: Widget, das den Fokus zuletzt per Mausklick bekam (siehe
+        #: _fokus_gewechselt)
+        self._mausfokus = None
 
         # Die Hinweiszeile steht unter dem Titel: dort liest man zuerst, was
         # die Maske will - und sie rollt nicht mit weg
-        self.lbl_hinweis = QtWidgets.QLabel(hinweis or self._klickhinweis(), self)
+        self.lbl_hinweis = Hinweiszeile(hinweis or self._klickhinweis(), self)
         self.lbl_hinweis.setObjectName("maskenhinweis")
         self.lbl_hinweis.setWordWrap(True)
         lay.addWidget(self.lbl_hinweis)
@@ -293,14 +370,36 @@ class Maske(QtWidgets.QFrame):
         # sind eigene Fenster und gehoeren nicht in die Tab-Folge der Maske
         folge = [w for w in self.mitte.findChildren(QtWidgets.QWidget)
                  if (w.focusPolicy().value & tab) == tab and self.mitte.isAncestorOf(w)]
+        for w in folge:
+            # FocusIn mitlesen (Grund des Fokus, siehe _fokus_gewechselt)
+            w.installEventFilter(self)
+            if isinstance(w, self._RADWIDGETS):
+                # Das Mausrad ueber einer Auswahlliste verstellte ihren Wert
+                # stillschweigend, statt die Mitte zu rollen (24.09.2026:
+                # Windzone 2 -> 3). Ohne Fokus geht das Rad an die
+                # Rollflaeche (eventFilter); StrongFocus: das Rad allein
+                # gibt ihr keinen Fokus.
+                w.setFocusPolicy(QtCore.Qt.StrongFocus)
         folge += [b for b in self._fussknoepfe() if b not in folge]
+        # Das ✕ zuletzt: ohne Maus erreichbar, ohne Tab vom Kopf abzufangen
+        folge.append(self.btn_zu)
         for a, b in zip(folge, folge[1:]):
             QtWidgets.QWidget.setTabOrder(a, b)
 
+    #: Felder, die das Mausrad selbst verstellen wuerde
+    _RADWIDGETS = (QtWidgets.QComboBox, QtWidgets.QAbstractSpinBox)
+
     def _fokus_gewechselt(self, _alt, neu) -> None:
         """Bekommt ein Widget der Mitte den Fokus, rollt die Mitte es ins Bild
-        (Tab, Klick oder Fokus aus dem Programm)."""
+        (Tab, Enter, Fokus aus dem Programm) - nicht bei einem Mausklick.
+
+        Beim Klick auf ein halb sichtbares Feld rollte die Mitte es beim
+        Druecken ins Bild; das Loslassen traf dann neben das Feld, und ein
+        Haken blieb unverstellt (24.09.2026). Wer klickt, sieht das Feld
+        ohnehin."""
         try:
+            if neu is not None and neu is self._mausfokus:
+                return
             if neu is not None and self.isVisible() and self.mitte.isAncestorOf(neu):
                 # Das ganze Feld, nicht nur die Schreibmarke: ensureWidgetVisible
                 # nimmt bei Textfeldern nur das Rechteck der Marke, und der
@@ -364,16 +463,19 @@ class Maske(QtWidgets.QFrame):
         return w
 
     def _klickhinweis(self) -> str:
+        # „✕ schließt“ statt „Esc schließt“ (24.09.2026): im Hauptfenster ist
+        # Esc das Kuerzel „Alles deselektieren“ und schliesst keine Maske -
+        # der Hinweis steht jetzt oben, wo man ihn zuerst liest
         if not self.n_knoten:
             return "Werte eintragen und „Anwenden“ – die Maske bleibt offen."
         if self.punkte:
             if self.n_knoten >= 20:
                 return ("In der Ansicht Punkte der Reihe nach anklicken (Knoten, Kanten, "
-                        "Linien, Raster) – „Anwenden“ beendet. Esc schließt.")
+                        "Linien, Raster) – „Anwenden“ beendet. ✕ schließt.")
             return (f"In der Ansicht {self.n_knoten} Punkt{'e' if self.n_knoten > 1 else ''} "
-                    "anklicken (Knoten, Kanten, Linien, Raster, Arbeitsebene). Esc schließt.")
+                    "anklicken (Knoten, Kanten, Linien, Raster, Arbeitsebene). ✕ schließt.")
         return (f"In der Ansicht {self.n_knoten} Knoten anklicken – oder die "
-                "Nummern eintragen. Esc schließt.")
+                "Nummern eintragen. ✕ schließt.")
 
     # -- Werte -----------------------------------------------------------
     def werte(self) -> dict:
@@ -519,6 +621,12 @@ class Maske(QtWidgets.QFrame):
         fw = QtWidgets.QApplication.focusWidget()
         if fw is not None and not self.isAncestorOf(fw):
             fw = None
+        if isinstance(fw, QtWidgets.QAbstractItemView):
+            # Tabelle oder Liste (Ermuedungskollektiv, Mehrfachwahl): Enter
+            # blaettert dort nur und uebernimmt nichts - sonst lief ohne
+            # Aenderung eine Rueckgaengig-Sicherung und refresh_all
+            # (24.09.2026)
+            return False
         if isinstance(fw, QtWidgets.QLineEdit):
             try:
                 if fw.receivers(QtCore.SIGNAL("returnPressed()")) > 0:
@@ -534,9 +642,20 @@ class Maske(QtWidgets.QFrame):
 
     def eventFilter(self, obj, ev):
         if ev.type() == QtCore.QEvent.FocusIn:
+            # Vor focusChanged zugestellt: _fokus_gewechselt weiss so, ob der
+            # Fokus per Maus kam
+            self._mausfokus = obj if ev.reason() == QtCore.Qt.MouseFocusReason else None
             name = obj.property("feldname")
             if name:
                 self.feld_fokussiert.emit(str(name))
+        elif (ev.type() == QtCore.QEvent.Wheel and isinstance(obj, self._RADWIDGETS)
+              and not obj.hasFocus()):
+            # nicht verstellen, sondern die Mitte rollen: ausdruecklich an die
+            # Rollflaeche geben - ein nur ignoriertes Ereignis wandert bloss
+            # dann zu den Eltern, wenn es vom System kommt
+            if self.mitte.isAncestorOf(obj):
+                QtCore.QCoreApplication.sendEvent(self.rolle.viewport(), ev)
+            return True
         return super().eventFilter(obj, ev)
 
     def klickfeld_markieren(self, name) -> None:
