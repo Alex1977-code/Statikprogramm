@@ -6855,12 +6855,20 @@ Raum der gehaltenen Richtungen gesammelt, bis sich nichts mehr ändert
   dem, was am Partner gehalten ist; so auch über eine Kette.
 - RBE2: die Glieder bewegen sich als starrer Körper, u_s = u_m + θ_m × r_s.
   Die gehaltenen Richtungen der Glieder legen einen Teil dieser sechs
-  Freiheiten fest, dazu die Verdrehungen, die ein Element am Master hält
-  (`_drehsteife_knoten`: am Schalenknoten alle drei, am Stabende die
-  lokalen Achsen ohne Momentengelenk – Gelenk 3 + 6 j + k gibt am Ende j
-  die Drehung um die lokale Achse k frei, Achsen aus `beam3d.local_axes`
-  samt roll); gehalten ist an jedem Glied, was die festgelegten Freiheiten
-  bestimmen.
+  Freiheiten fest, dazu die Verdrehungen, die Elemente und Drehlager am
+  Master halten (`_drehsteife_knoten`, unter der Voraussetzung, dass jeder
+  Elementknoten in x, y, z gehalten ist): am Schalenknoten alle drei; ein
+  starres Knotenlager um die Achse, um die es sperrt; am Stabende die
+  Biegung um die lokalen Achsen y und z, soweit an diesem Ende kein
+  Momentengelenk sitzt – Gelenk 3 + 6 j + k gibt am Ende j die Drehung um
+  die lokale Achse k frei, Achsen aus `beam3d.local_axes` samt roll. Die
+  Torsion (lokal x) hält ein Stab nicht allein: Ohne Gelenk 3 und 9
+  koppelt er die Drehung beider Enden um seine Achse, mit einem davon gar
+  nicht (nach der Kondensation GJ/L − GJ/L = 0). Gehalten ist sie an einem
+  Ende erst, wenn sie am anderen gehalten ist – von einem Drehlager, einer
+  Schale, der Biegung eines weiteren Stabs oder so weiter über eine Kette;
+  gesammelt wird, bis sich nichts mehr ändert. Gehalten ist an jedem Glied,
+  was die festgelegten Freiheiten bestimmen.
 - RBE3: nur der Master, nur wenn alle Slaves mit Gewicht gehalten sind,
   und nur in den Richtungen, in denen sie ihn festlegen
   (`_rbe3_master_raum`). Mit gehaltenen Slaves bleibt von den sechs
@@ -6949,18 +6957,20 @@ Verdrehung, die ein zweites RBE2 an den Knoten weitergibt, bzw. ein RBE3
 und ein RBE2 am selben Master lassen je eine andere Drehung frei. Ohne den
 einen der beiden ist der Knoten in z nicht gehalten. Die Abnahme vereinigt
 die gehaltenen Richtungen je Verbindung und verfolgt Verdrehungen nur an
-Schalen- und Stabknoten; ein FEHLER dort ist eine unnötige Rückfrage, kein
-stiller Verlust.
+Schalen- und Stabknoten und an Drehlagern; ein FEHLER dort ist eine
+unnötige Rückfrage, kein stiller Verlust.
 
-Dazu RBE2 mit einem Slave 0,5 m neben dem Master: an einem Stabende
-(IPE 200) und an einem Schalenknoten tragen die Lasten in x, y und z bei
-jedem Versatz in x, y oder z, an einem Stabende mit den Gelenken 9, 10, 11
-nur die Last in Richtung des Versatzes. Mit einem Teil der Gelenke hält das
-Stabende die übrigen Drehungen; der Slave bleibt nur in Richtung
-Gelenkachse × Versatz frei. Bis zur 2. Gegenprüfung (Mangel 2) galt ein
-Stabende mit irgendeinem Momentengelenk als gar nicht drehsteif. Gemessen
-am 24.09.2026 (Stab in x, eingespannt am Anfang, RBE2 am Ende; getragen
-heißt: alle drei Lasten gehen in die Lager):
+Dazu RBE2 mit einem Slave 0,5 m neben dem Master: am Ende eines am
+Anfang eingespannten Stabs (IPE 200) und an einem Schalenknoten tragen die
+Lasten in x, y und z bei jedem Versatz in x, y oder z, an einem Stabende
+mit den Gelenken 9, 10, 11 nur die Last in Richtung des Versatzes. Mit
+einem Teil der Gelenke am Master-Ende hält das Stabende dort die übrigen
+Drehungen, der Slave bleibt nur in Richtung Gelenkachse × Versatz frei –
+aber nur, solange die Torsion am anderen Ende gehalten ist (unten). Bis
+zur 2. Gegenprüfung (Mangel 2) galt ein Stabende mit irgendeinem
+Momentengelenk als gar nicht drehsteif. Gemessen am 24.09.2026 (Stab in x,
+eingespannt am Anfang, RBE2 am Ende; getragen heißt: alle drei Lasten
+gehen in die Lager, ohne Hilfsfesselung des Lösers):
 
 | Gelenke am Ende | Slave in x | Slave in y | Slave in z |
 |---|---|---|---|
@@ -6976,11 +6986,70 @@ Gelenk 11 brach bei jedem Versatz in x, y oder z mindestens eine Last ab
 verschieblich ist: Mit Gelenk 5 am eingespannten Anfang bricht schon eine
 Last in y am Stabende ab, ohne RBE2; die Abnahme meldet dort nichts.
 
+Die Torsion eines Stabs hängt an beiden Enden (3. Gegenprüfung vom
+24.09.2026, Mangel 1). Bis dahin galt sie am Master-Ende schon als
+gehalten, wenn dort kein Torsionsgelenk saß; mit einem Torsionsgelenk am
+anderen Ende oder einem anderen Ende, das nur in x, y, z gelagert ist,
+dreht sich aber der ganze Stab frei um seine Achse. Gemessen am 24.09.2026
+(RBE2 am Ende, Slave 0,5 m daneben, 1000 N am Slave; wo nichts anderes
+steht, ist der Anfang (0|0|0) eingespannt und der Stab 2 m lang in x):
+
+| Stab | Slave in x | Slave in y | Slave in z |
+|---|---|---|---|
+| Gelenk 3 am Anfang | getragen – kein Befund | z bricht ab – FEHLER (8c4fb14: kein Befund) | y bricht ab – FEHLER (8c4fb14: kein Befund) |
+| Gelenke 3 und 11 | y bricht ab – FEHLER | x und z brechen ab – FEHLER | y bricht ab – FEHLER (8c4fb14: kein Befund) |
+| Gelenke 3 und 9 | getragen – kein Befund | z bricht ab – FEHLER | y bricht ab – FEHLER |
+| beide Enden nur in x, y, z gelagert | getragen – kein Befund | z: die Kraft geht in die Lager, das Moment 500 Nm um die Stabachse nimmt die Hilfsfesselung – FEHLER (8c4fb14: kein Befund) | y: ebenso, −500 Nm – FEHLER (8c4fb14: kein Befund) |
+| Gelenk 5 am Anfang, Ende in x, y, z gelagert | getragen – kein Befund | getragen – kein Befund | getragen – kein Befund |
+| zwei Stäbe hintereinander bis (4\|0\|0), RBE2 am freien Ende | getragen – kein Befund | getragen – kein Befund | getragen – kein Befund |
+| ebenso, Gelenk 3 am Anfang des ersten | getragen – kein Befund | z bricht ab – FEHLER (8c4fb14: kein Befund) | y bricht ab – FEHLER (8c4fb14: kein Befund) |
+| Rahmenecke: Gelenk 3 am Anfang, zweiter Stab von (2\|0\|0) nach (2\|2\|0), dort in x, y, z gelagert | getragen – kein Befund | getragen – kein Befund | getragen – kein Befund |
+| ebenso, Gelenk 4 am Anfang des zweiten Stabs | getragen – kein Befund | z bricht ab – FEHLER (8c4fb14: kein Befund) | y bricht ab – FEHLER (8c4fb14: kein Befund) |
+
+Die Biegung hält ein Stab dagegen selbst, sobald beide Enden in x, y, z
+gehalten sind: Mit festgehaltenen Verschiebungen bleibt von seiner
+Biegesteifigkeit um eine Achse (`beam3d.k_local_beam`) für die beiden
+Enddrehungen die Matrix EI/(L (1 + Φ)) · [[4 + Φ, 2 − Φ], [2 − Φ, 4 + Φ]]
+mit dem Schubparameter Φ ≥ 0. Sie ist regulär, und mit einem Gelenk um
+dieselbe Achse am anderen Ende bleibt am gehaltenen Ende eine positive
+Steifigkeit (ohne Schub 3 EI/L); gemessen ist das an der Zeile „Gelenk 5“.
+Die Torsion zählt `_drehsteife_knoten` darum nur an
+einem Stab ohne Gelenk 3 und 9 und nur, wenn sie am anderen Ende gehalten
+ist; in der Rahmenecke hält sie der zweite Stab über seine Biegung um die
+globale x-Achse, mit Gelenk 4 dort nicht mehr. Die „Hilfsfesselung“ ist
+die des Lösers (`solver.hilfsfesselung`): Sie hält eine Bewegung fest, die
+das Modell nicht hält, und nimmt den Teil der Last auf, der an ihr Arbeit
+leistet – die Lagerkräfte allein sehen dann vollständig aus. Die Prüfung
+zählt einen solchen Lauf darum als nicht getragen.
+
+Dass eine Schale die Torsion eines an ihr hängenden Stabs hält, zählt
+`_drehsteife_knoten` wie am Schalenknoten selbst, sauber nachgemessen ist
+es nicht. An einer Platte 1 × 1 m, t = 20 mm (`grid_plate` 2 × 2, Rand
+x = 0 eingespannt) mit einem IPE 200 daran, 2 m lang in der Ebene oder
+senkrecht dazu, RBE2 am Stabende, Slave 0,5 m daneben, brach die Rechnung
+ohne Gelenk bei 4 von 18 Lasten ab, als „numerisch singulär“. Bei zwei
+davon nachgesehen: Residuum 1,7 · 10⁻⁶ bzw. 2,0 · 10⁻⁶ bei der Schranke
+10⁻⁶; der Löser nannte einmal eine Bewegung des Stabs mit 5 % seiner
+mittleren Steifigkeit, einmal keine Ursache. Das traf auch eine Last, die
+nur die Biegung des Stabs beansprucht; ohne RBE2 trug das Stabende alle drei Lasten (gemessen
+24.09.2026). Mit Gelenk 3 an der Platte meldete die Abnahme die Slaves,
+deren Lasten quer brachen ab, die übrigen trugen.
+
+Die Zufallsprobe der 3. Gegenprüfung, hier nachgerechnet am 24.09.2026
+(je 1500 Modelle aus ein oder zwei Stäben IPE 200 in beliebiger Richtung
+und Rolllage mit zufälligen Momentengelenken, Anfang eingespannt, das Ende
+teils in x, y, z gelagert, dazu ein bis drei Knoten ohne Element an RBE2,
+RBE3 und Kopplungen; übersprungen, wo die Stabknoten schon ohne diese
+Verbindungen eine Last nicht tragen; Wahrheit aus der Rechnung und aus dem
+Nullraum wie oben), fand bei 8c4fb14 6 bzw. 5 Knoten ohne Befund, die
+nicht in allen drei Richtungen gehalten sind (Saat 3: 1596 Knoten, Saat 5:
+1640 Knoten), jetzt 0 bei beiden.
+
 Die Prüfung `test_abnahme_knoten_in_drei_richtungen` rechnet die Fälle der
-drei Tabellen und die am schrägen und am gerollten Stab nach: nennt die
-Abnahme den Knoten nicht, gehen alle drei Lasten in die Lager, nennt sie
-ihn, mindestens eine nicht (außer beim Slave eines RBE3 an einem gehaltenen
-Master). Eine Kopplung ohne wirksame Richtung oder
+vier Tabellen und die am schrägen und am gerollten Stab nach: nennt die
+Abnahme den Knoten nicht, gehen alle drei Lasten in die Lager, ohne
+Hilfsfesselung, nennt sie ihn, mindestens eine nicht (außer beim Slave
+eines RBE3 an einem gehaltenen Master). Eine Kopplung ohne wirksame Richtung oder
 eine, die nur lose Knoten verbindet, schließt nichts an. Einen Hohlraum,
 der ringsum von Nachbarseiten eingeschlossen ist, meldet die Abnahme
 weiter als „Seiten im Inneren", auch wenn er die Oberfläche an einer Kante

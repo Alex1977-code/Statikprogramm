@@ -1883,7 +1883,19 @@ def _getragen_je_richtung(bau) -> list:
     """Je 1000 N in x, y und z am Knoten ``ziel`` aus ``bau() -> (Modell,
     ziel)``: gehen sie ganz in die Lager? Gezählt werden nur die Lagerkräfte
     in gelagerten Richtungen: ein Freiheitsgrad ohne Steifigkeit wird beim
-    Rechnen gesperrt, und seine „Reaktion" ist die verlorene Last."""
+    Rechnen gesperrt, und seine „Reaktion" ist die verlorene Last.
+
+    Ganz heißt auch: ohne Hilfsfesselung des Lösers (Singularitaet mit
+    ``gefesselt``). Sie hält eine Bewegung fest, die das Modell nicht hält,
+    und nimmt den Anteil der Last auf, der an ihr Arbeit leistet. An einem
+    Stab mit beiden Enden nur in x, y, z gelagert (die Torsion ist frei) und
+    dem Slave eines RBE2 0,5 m daneben in y gingen die 1000 N in z als Kraft
+    ganz in die Lager, das Moment 500 Nm um die Stabachse nahm die
+    Fesselung (3. Gegenprüfung vom 24.09.2026, Mängel 1 und 2; bis dahin zählte
+    der Fall hier als getragen). Das Moment selbst taugt nicht als Maß: Eine
+    Kopplung zwischen zwei getrennten Knoten überträgt nur Kräfte, am Würfel
+    blieben so 250 bis 500 Nm offen, ohne dass Last verloren ging (gemessen
+    24.09.2026, beide Male ohne Fesselung)."""
     import contextlib
     import io
     aus = []
@@ -1902,7 +1914,9 @@ def _getragen_je_richtung(bau) -> list:
             for n_, ds in gel.items():
                 for d_ in ds:
                     R[d_] += RR[n_, d_]
-            aus.append(bool(np.allclose(R, -np.asarray(F), atol=1e-3)))
+            gefesselt = any(getattr(s_, "gefesselt", False)
+                            for s_ in (getattr(r, "singular", None) or []))
+            aus.append(bool(np.allclose(R, -np.asarray(F), atol=1e-3)) and not gefesselt)
         except Exception:                    # noqa: BLE001 - singulär, Kontakt bricht ab
             aus.append(False)
     return aus
@@ -1931,7 +1945,13 @@ def test_abnahme_knoten_in_drei_richtungen():
     bei d7553e4 ohne Befund, die Lasten quer brachen ab). Mangel 2 - der Text
     behauptete für jeden genannten Knoten, eine Last ginge verloren oder die
     Rechnung breche ab, auch für den RBE3-Slave oben und für das Stabende mit
-    einem Teil der Momentengelenke, wo alle drei Lasten in die Lager gingen."""
+    einem Teil der Momentengelenke, wo alle drei Lasten in die Lager gingen.
+
+    3. Gegenprüfung vom 24.09.2026, Mangel 1: Die Torsion am Master-Ende galt
+    als gehalten, sobald dort kein Gelenk saß - auch mit dem Torsionsgelenk
+    am anderen Ende oder einem anderen Ende, das nur in x, y, z gelagert ist.
+    Dazu zählt eine Last, deren Moment die Hilfsfesselung des Lösers nimmt,
+    nicht mehr als getragen (_getragen_je_richtung)."""
     faelle = ["RBE3, loser Master und loser Slave", "RBE3, loser Master an den Deckelknoten",
               "RBE3, Master am Deckelknoten, loser Slave",
               "RBE3, loser Master 0,3 m über einem Deckelknoten",
@@ -1979,42 +1999,81 @@ def test_abnahme_knoten_in_drei_richtungen():
     # Versatz in z trug in x, y, z, die Abnahme meldete FEHLER). Geprüft je
     # Versatz in x, y, z gegen die Rechnung, auch am schrägen und am um 30°
     # gerollten Stab.
+    #
+    # 3. Gegenprüfung vom 24.09.2026, Mangel 1: Die Torsion hält ein Stab nur
+    # zusammen mit seinem anderen Ende. Ein Torsionsgelenk dort (Gelenk 3 am
+    # eingespannten Anfang) oder ein anderes Ende, das nur in x, y, z
+    # gelagert ist, gibt sie auch am Master-Ende frei; bei 8c4fb14 meldete
+    # die Abnahme dort nichts, und die Last quer brach ab bzw. ging an die
+    # Hilfsfesselung. Dazu je eine Kette aus zwei Stäben (die Torsion kommt
+    # über den ersten Stab vom Lager) und eine Rahmenecke (der zweite Stab
+    # hält die Torsion des ersten über seine Biegung).
     from statik3d.profiles import make_section as _ms
 
-    def stab(gelenke, ende, roll, versatz):
+    def rahmen(punkte, staebe, lager, master, versatz):
+        """Stäbe IPE 200 zwischen ``punkte``, je (i, j, Gelenke, roll);
+        ``lager`` je (Knoten, Art); ein RBE2 am Knoten ``master`` mit einem
+        Slave im Abstand ``versatz``."""
         mb = Model("Stab")
         mb.add_material(Material.steel("S235"))
         mb.add_section(_ms("IPE 200"))
-        a, b = int(mb.add_node(0, 0, 0)), int(mb.add_node(*ende))
-        mb.add_element("beam", [a, b], "S235", "IPE 200")
-        mb.elements[-1].roll = roll
-        if gelenke:
-            mb.elements[-1].hinges = list(gelenke)
-        mb.fix(a, "all")
-        d = int(mb.add_node(*(np.asarray(mb.nodes[b], float) + versatz)))
-        mb.add_starrkoerper(b, [d])
-        return mb, d
+        for p_ in punkte:
+            mb.add_node(*p_)
+        for i, j, gel_, roll_ in staebe:
+            mb.add_element("beam", [i, j], "S235", "IPE 200")
+            mb.elements[-1].roll = roll_
+            if gel_:
+                mb.elements[-1].hinges = list(gel_)
+        for n_, art in lager:
+            mb.fix(n_, art)
+        d_ = int(mb.add_node(*(np.asarray(mb.nodes[master], float) + versatz)))
+        mb.add_starrkoerper(master, [d_])
+        return mb, d_
+
+    def stab(gelenke, ende, roll=0.0, lager_ende=None):
+        """Ein Stab von (0|0|0) nach ``ende``, der Anfang eingespannt."""
+        return ([(0.0, 0.0, 0.0), ende], [(0, 1, gelenke, roll)],
+                [(0, "all")] + ([(1, lager_ende)] if lager_ende else []), 1)
     # Versatz 0,5 m in x, y, z; am schrägen und am gerollten Stab dazu in
     # Richtung seiner lokalen z-Achse, um die Gelenk 11 dreht (von Hand:
     # Stab (1,1,1) - ez = (-1,-1,2)/√6; um 30° gerollt - ez = (0, -1/2, √3/2))
     achsen = [("x", (0.5, 0.0, 0.0)), ("y", (0.0, 0.5, 0.0)), ("z", (0.0, 0.0, 0.5))]
-    varianten = (("ohne Gelenk", [], (2.0, 0.0, 0.0), 0.0, achsen),
-                 ("Gelenke 9, 10, 11", [9, 10, 11], (2.0, 0.0, 0.0), 0.0, achsen),
-                 ("Gelenk 11", [11], (2.0, 0.0, 0.0), 0.0, achsen),
-                 ("Gelenk 10", [10], (2.0, 0.0, 0.0), 0.0, achsen),
-                 ("Gelenk 9", [9], (2.0, 0.0, 0.0), 0.0, achsen),
-                 ("Gelenke 10, 11", [10, 11], (2.0, 0.0, 0.0), 0.0, achsen),
-                 ("Gelenk 11, Stab schräg", [11], (1.2, 1.2, 1.2), 0.0,
+    x2 = (2.0, 0.0, 0.0)
+    gelenkig = stab([], x2, lager_ende="xyz")
+    gelenkig[2][0] = (0, "xyz")
+    varianten = (("ohne Gelenk", stab([], x2), achsen),
+                 ("Gelenke 9, 10, 11", stab([9, 10, 11], x2), achsen),
+                 ("Gelenk 11", stab([11], x2), achsen),
+                 ("Gelenk 10", stab([10], x2), achsen),
+                 ("Gelenk 9", stab([9], x2), achsen),
+                 ("Gelenke 10, 11", stab([10, 11], x2), achsen),
+                 ("Gelenk 11, Stab schräg", stab([11], (1.2, 1.2, 1.2)),
                   achsen + [("lokal z", tuple(0.5 * np.array([-1.0, -1.0, 2.0]) / np.sqrt(6.0)))]),
-                 ("Gelenk 11, um 30° gerollt", [11], (2.0, 0.0, 0.0), float(np.radians(30.0)),
-                  achsen + [("lokal z", (0.0, -0.25, 0.25 * np.sqrt(3.0)))]))
+                 ("Gelenk 11, um 30° gerollt", stab([11], x2, float(np.radians(30.0))),
+                  achsen + [("lokal z", (0.0, -0.25, 0.25 * np.sqrt(3.0)))]),
+                 ("Gelenk 3 am eingespannten Anfang", stab([3], x2), achsen),
+                 ("Gelenke 3 und 11", stab([3, 11], x2), achsen),
+                 ("Gelenke 3 und 9", stab([3, 9], x2), achsen),
+                 ("beide Enden nur in x, y, z gelagert", gelenkig, achsen),
+                 ("Gelenk 5 am eingespannten Anfang, Ende in x, y, z gelagert",
+                  stab([5], x2, lager_ende="xyz"), achsen),
+                 ("Kette aus zwei Stäben", ([(0.0, 0.0, 0.0), x2, (4.0, 0.0, 0.0)],
+                                            [(0, 1, [], 0.0), (1, 2, [], 0.0)], [(0, "all")], 2), achsen),
+                 ("Kette, Gelenk 3 am ersten Stab", ([(0.0, 0.0, 0.0), x2, (4.0, 0.0, 0.0)],
+                                                     [(0, 1, [3], 0.0), (1, 2, [], 0.0)], [(0, "all")], 2),
+                  achsen),
+                 ("Rahmenecke, Gelenk 3 am ersten Stab", ([(0.0, 0.0, 0.0), x2, (2.0, 2.0, 0.0)],
+                                                         [(0, 1, [3], 0.0), (1, 2, [], 0.0)],
+                                                         [(0, "all"), (2, "xyz")], 1), achsen),
+                 ("Rahmenecke, dazu Gelenk 4 am zweiten Stab", ([(0.0, 0.0, 0.0), x2, (2.0, 2.0, 0.0)],
+                                                               [(0, 1, [3], 0.0), (1, 2, [4], 0.0)],
+                                                               [(0, "all"), (2, "xyz")], 1), achsen))
     zaehl = {True: 0, False: 0}
-    for name, gel, ende, roll, versaetze in varianten:
+    for name, bau_, versaetze in varianten:
         for vname, v in versaetze:
-            mb, d = stab(gel, ende, roll, np.asarray(v))
+            mb, d = rahmen(*bau_, np.asarray(v))
             kb = [x for x in dg.abnahme(mb, warnungen=True) if x.pruefung == "Knoten ohne Element"]
-            getragen = _getragen_je_richtung(
-                lambda g=gel, e=ende, r=roll, w=np.asarray(v): stab(g, e, r, w))
+            getragen = _getragen_je_richtung(lambda b_=bau_, w=np.asarray(v): rahmen(*b_, w))
             zaehl[bool(kb)] += 1
             check(f"RBE2 am Stabende, {name}, Slave 0,5 m in {vname}: "
                   f"{'lose' if kb else 'angeschlossen'}, Rechnung passt dazu",

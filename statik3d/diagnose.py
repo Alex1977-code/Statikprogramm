@@ -825,34 +825,74 @@ def _schief(r) -> np.ndarray:
 
 
 def _drehsteife_knoten(model) -> dict:
-    """{Knoten: Orthonormalbasis (3, k) der Verdrehungen, die ein Element an
-    ihm haelt}: am Schalenknoten alle drei, am Stabende die lokalen Achsen
-    (beam3d.local_axes, samt roll) ohne Momentengelenk - Gelenk 3 + 6 j + k
-    gibt am Ende j die Verdrehung um die lokale Achse k frei.
+    """{Knoten: Orthonormalbasis (3, k) der Verdrehungen, die Elemente und
+    Drehlager an ihm halten} - unter der Voraussetzung dieser Pruefung, dass
+    jeder Elementknoten in x, y und z gehalten ist:
+
+    * am Schalenknoten alle drei;
+    * ein starres Knotenlager (ohne Ausfall, Schlupf, Reibung) um die
+      globale Achse, um die es sperrt;
+    * am Stabende die Biegung um die lokalen Achsen y und z (beam3d.
+      local_axes, samt roll), soweit dort kein Momentengelenk sitzt (Gelenk
+      3 + 6 j + k gibt am Ende j die Drehung um die lokale Achse k frei).
+      Sind beide Enden gehalten, haelt der Stab sie selbst, auch mit einem
+      Gelenk um dieselbe Achse am anderen Ende (ohne Schub 3 EI/L;
+      Gelenk 5 am eingespannten Anfang, Ende in x, y, z gelagert: alle neun
+      Lasten trugen);
+    * die Torsion (lokale Achse x) dagegen nur zusammen mit dem anderen
+      Ende: Ohne Gelenk 3 und 9 koppelt der Stab die Drehung beider Enden um
+      seine Achse, mit einem davon nichts (nach der Kondensation bleibt
+      GJ/L - GJ/L = 0). Gehalten ist sie an einem Ende erst, wenn sie am
+      anderen gehalten ist - von einem Drehlager, einer Schale, der Biegung
+      eines weiteren Stabs oder so weiter ueber eine Kette. Gesammelt wird,
+      bis sich nichts mehr aendert. (Die Schale ist dabei nicht sauber
+      nachgemessen: am Stab an einer Platte brach die Rechnung mit RBE2
+      auch ohne Gelenk numerisch ab, Theoriehandbuch 7a-2.)
 
     Gemessen am 24.09.2026 (RBE2 mit einem Slave, 0,5 m neben dem Master in
-    x, y oder z, 1000 N am Slave in x, y und z): am Stabende (IPE 200) und
-    am Schalenknoten (Platte aus grid_plate) gingen alle neun Lasten in die
-    Lager; am Stabende mit Gelenken 9, 10, 11 nur die Last in Richtung des
-    Versatzes, die anderen sechs Laeufe brachen ab (Gleichungssystem
-    singulaer) - wie an einem Volumenknoten. Bis zur 2. Gegenpruefung vom
-    24.09.2026 (Mangel 2) galt ein Stabende mit irgendeinem Momentengelenk
-    als gar nicht drehsteif; mit Gelenk 11 allein und dem Slave 0,5 m
-    daneben in z trugen aber alle drei Lasten, die Abnahme meldete FEHLER.
-    Frei ist dort nur die Verdrehung um die lokale z-Achse, und sie bewegt
-    einen Slave im Versatz r nur in Richtung z x r (am Stab in x: bei r in
-    z gar nicht). Nachgerechnet mit Gelenk 9, 10, 11, 10+11 und 9,10,11, am
-    schraegen und am um 30 Grad gerollten Stab: wo die Abnahme den Slave
-    jetzt nicht nennt, trugen alle drei Lasten, wo sie ihn nennt, brach
-    mindestens eine ab (tests.test_diagnose.
-    test_abnahme_knoten_in_drei_richtungen, Theoriehandbuch 7a-2).
-    Vorausgesetzt ist, dass der Stab selbst nicht verschieblich ist: mit
-    Gelenk 5 am eingespannten Anfang bricht schon eine Last in y am Stabende
-    ab, das prueft diese Funktion nicht."""
+    x, y oder z, 1000 N am Slave in x, y und z): am Stabende (IPE 200, Stab
+    in x, Anfang eingespannt) und am Schalenknoten (Platte aus grid_plate)
+    gingen alle neun Lasten in die Lager; am Stabende mit Gelenken 9, 10,
+    11 nur die Last in Richtung des Versatzes - wie an einem Volumenknoten.
+    Mit Gelenk 11 allein und dem Slave in z trugen alle drei (bis zur 2.
+    Gegenpruefung vom 24.09.2026, Mangel 2, galt ein Stabende mit
+    irgendeinem Momentengelenk als gar nicht drehsteif).
+
+    Bis zur 3. Gegenpruefung vom 24.09.2026 (Mangel 1) galt die Torsion am
+    Ende j schon als gehalten, wenn dort kein Gelenk sass. Mit Gelenk 3 am
+    eingespannten Anfang und dem Slave in y brach die Last in z ab
+    (Gleichungssystem singulaer), mit dem Slave in z die in y; ebenso mit
+    den Gelenken 3 und 11 und dem Slave in z. Mit beiden Enden nur in x, y,
+    z gelagert gingen die Kraefte in die Lager, das Moment 500 Nm um die
+    Stabachse nahm die Hilfsfesselung des Loesers. Die Abnahme meldete in
+    keinem dieser Faelle etwas. Jetzt meldet sie sie; ohne Befund bleiben
+    die Kette aus zwei Staeben am eingespannten Lager und die Rahmenecke,
+    an der ein zweiter Stab (anderes Ende in x, y, z gelagert) mit seiner
+    Biegung die Torsion des ersten haelt, und dort trugen alle drei Lasten
+    (tests.test_diagnose.test_abnahme_knoten_in_drei_richtungen,
+    Theoriehandbuch 7a-2).
+
+    Vorausgesetzt ist, dass die Elementknoten selbst gehalten sind: mit
+    Gelenk 5 am eingespannten Anfang bricht schon eine Last in y am
+    Stabende ab, ohne RBE2; das prueft diese Funktion nicht. Drehfedern im
+    Knotenlager zaehlen nicht (eher ein Befund zu viel); Exzentrizitaeten
+    der Stabenden und starre Koerper zwischen Elementknoten sieht sie nicht.
+    Ein Stab mit Woelbkrafttorsion kondensiert seine Gelenke nicht
+    (assemble.element_matrix gibt vorher zurueck), haelt also mehr, als hier
+    angenommen."""
     from .assemble import SHELL_TYPES
     from .elements import beam3d as _bm
     X = np.asarray(model.nodes, float)
     achsen: dict = {}
+    for s in (getattr(model, "supports", None) or []):
+        for d in (3, 4, 5):
+            try:
+                b = s.dof_behaviour(d)
+            except Exception:                     # noqa: BLE001 - fremdes Lager
+                continue
+            if b.typ == "rigid" and not b.nonlinear:
+                achsen.setdefault(int(s.node), []).append(np.eye(3)[:, [d - 3]])
+    torsion: dict = {}                    # Knoten -> [(anderes Stabende, Stabachse)]
     for e in model.elements:
         if e.typ in SHELL_TYPES:
             for n in e.nodes:
@@ -865,10 +905,28 @@ def _drehsteife_knoten(model) -> dict:
             except (ValueError, IndexError):
                 continue                      # Stab ohne Laenge haelt nichts
             for j, n in enumerate(e.nodes[:2]):
-                fest = [k for k in range(3) if 3 + 6 * j + k not in gel]
+                fest = [k for k in (1, 2) if 3 + 6 * j + k not in gel]
                 if fest:
                     achsen.setdefault(int(n), []).append(T3[fest].T)
-    return {n: _raum(np.hstack(v)) for n, v in achsen.items()}
+            if 3 not in gel and 9 not in gel:
+                a, b = int(e.nodes[0]), int(e.nodes[1])
+                torsion.setdefault(a, []).append((b, T3[0]))
+                torsion.setdefault(b, []).append((a, T3[0]))
+    raum = {n: _raum(np.hstack(v)) for n, v in achsen.items()}
+
+    def enthaelt(R, t) -> bool:
+        return R.shape[1] > 0 and float(np.linalg.norm(R.T @ t)) > 1.0 - 1e-9
+    # Arbeitsliste: nur die Staebe an einem Knoten, dessen Raum gewachsen
+    # ist, koennen etwas weitergeben (je Knoten hoechstens drei Mal)
+    offen = [n for n in raum if n in torsion]
+    while offen:
+        j = offen.pop()
+        for i, t in torsion.get(j, ()):
+            Ri = raum.get(i, _KEIN_RAUM)
+            if enthaelt(raum[j], t) and not enthaelt(Ri, t):
+                raum[i] = _raum(np.hstack([Ri, t[:, None]]))
+                offen.append(i)
+    return {n: R for n, R in raum.items() if R.shape[1]}
 
 
 def _rbe3_master_raum(P_m, P_s, gewichte=None) -> np.ndarray:
@@ -945,8 +1003,11 @@ def _angeschlossene_knoten(model, belegt: np.ndarray) -> np.ndarray:
     * ein RBE2: Master und Slaves bewegen sich als ein starrer Koerper
       (u_s = u_m + theta_m x r_s). Gehalten ist, was die gehaltenen
       Richtungen seiner Glieder von dieser Bewegung festlegen, dazu die
-      Verdrehungen, die am Master ein Element haelt (_drehsteife_knoten:
-      Schalenknoten, Stabende ohne Momentengelenk um die jeweilige Achse).
+      Verdrehungen, die am Master Elemente oder Drehlager halten
+      (_drehsteife_knoten: Schalenknoten alle drei; Stabende die Biegung um
+      jede lokale Achse ohne Momentengelenk an diesem Ende, die Torsion nur,
+      wenn der Stab kein Torsionsgelenk hat und sie am anderen Ende
+      gehalten ist).
       Ein Slave an einem Volumenknoten als einzigem Glied haengt deshalb nur
       in Richtung des Versatzes;
     * ein RBE3 haelt nur seinen Master, nur wenn alle Slaves mit Gewicht

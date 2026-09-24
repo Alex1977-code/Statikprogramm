@@ -4655,12 +4655,20 @@ einzigen Deckelknoten trägt nur in z, über zwei Deckelknoten oder über
 einer Reihe von drei nicht quer zur Reihe (steht er auf der Reihe, trägt er
 in allen drei Richtungen); ein RBE2 mit einem einzigen Slave an einem
 Volumenknoten hält nur in Richtung des Versatzes (an einem Schalenknoten
-und an einem Stabende ohne Gelenk in allen drei). An einem Stabende mit
-Momentengelenk hält ein RBE2 seinen Slave in allen Richtungen außer der,
-in die ihn die freie Drehung um die Gelenkachse bewegt: Mit dem Gelenk um
-die lokale z-Achse eines Stabs in x und dem Slave 0,5 m daneben in z
+und am Ende eines am Anfang eingespannten Stabs ohne Gelenk in allen drei).
+Am Stabende hält ein RBE2 seinen Slave nur so weit, wie sich das Stabende
+nicht verdrehen kann. Die Biegung um eine Achse hält der Stab, wenn an
+diesem Ende kein Momentengelenk um sie sitzt: Mit dem Gelenk um die lokale
+z-Achse eines Stabs in x am Master-Ende und dem Slave 0,5 m daneben in z
 trugen alle drei Lasten, mit dem Slave daneben in x oder in y brach je
-eine ab (in y bzw. in x).
+eine ab (in y bzw. in x). Die Drehung um die Stabachse (Torsion) hält der
+Stab dagegen nur, wenn er an keinem Ende ein Torsionsgelenk hat und sein
+anderes Ende sich nicht um die Achse drehen kann – etwa weil es
+eingespannt ist oder ein weiterer Stab es über seine Biegung hält. Mit dem
+Torsionsgelenk am eingespannten Anfang und dem Slave in y
+brach die Last in z ab; mit beiden Enden nur in x, y und z gelagert ging
+die Kraft zwar in die Lager, das Moment um die Stabachse aber verloren.
+Beides meldet die Abnahme seit dem 24.09.2026 (vorher nicht).
 Die Slaves eines RBE3 zählt die Abnahme nicht als angeschlossen, auch
 wenn der Master ein Element hat: Ein RBE3 verteilt eine Last am Master auf
 die Slaves, ohne sie zu versteifen. Die Rechnung kann einen solchen Slave
