@@ -219,10 +219,12 @@ def test_ausweichen_erreicht_bericht():
     und den Druckschwankungs-Lastfall ueber solve_cases ohne Fortschritt. Der
     Grund stand nur in res_luft.info/res_wasser.info (die Oberflaeche zeigt
     ihn ueber _solve_done der Wasser-Modalanalyse); erg.log, das Kapitel und
-    die Hinweise des Berichts nannten ihn nicht - im ganzen Bericht 0-mal
-    "ausgewichen", mit PARDISO im Prozess zum Scheitern gebracht wie in
-    tests/test_loeser.py. Das Ausweichen des Druckschwankungs-Lastfalls ging
-    ganz verloren (res_d wird nirgends abgelegt).
+    die Hinweise des Berichts nach einer Berechnung (Report(m, an)) nannten
+    ihn nicht - im ganzen Bericht 0-mal "ausgewichen", mit PARDISO im Prozess
+    zum Scheitern gebracht wie in tests/test_loeser.py. Das Ausweichen des
+    Druckschwankungs-Lastfalls ging ganz verloren (res_d wird nirgends
+    abgelegt). Den Bericht ohne Berechnung (aus res_wasser) prueft der Teil
+    "ohne Berechnung" vor der Gegenprobe.
     """
     import re
     import pypardiso
@@ -254,6 +256,11 @@ def test_ausweichen_erreicht_bericht():
         m_a, wd_a, _an = aufbau()
         an_a = solver.solve_all(m_a)
         an_a.schwingung = sw.nachweis(m_a, sn, an_a)
+        # Nachweis ohne vorheriges "Berechnen" - wie die Oberflaeche ihn dann
+        # fuehrt (self.analysis ist None, die Angaben stehen im Modell)
+        m_o, wd_o, _an_o = aufbau()
+        m_o.schwingungen[sn.name] = sn
+        erg_o = sw.nachweis(m_o, sn, None)
     finally:
         pypardiso.PyPardisoSolver.factorize = echt
         parallel.configure(solver_backend=alt_backend)
@@ -313,6 +320,37 @@ def test_ausweichen_erreicht_bericht():
           bool(punkte_a) and f"({', '.join(namen_a)} …)" in punkte_a[0]
           and "Schwingungsnachweis" not in punkte_a[0],
           punkte_a[0][:90] if punkte_a else "keine Zeile")
+
+    # Ohne "Berechnen" schreibt die Oberflaeche den Bericht aus der
+    # Modalanalyse im Wasser: _schwingung_rechnen legt den Nachweis nur an eine
+    # vorhandene Analyse ("if self.analysis is not None"), _solve_done("modal",
+    # erg.res_wasser) setzt self.results, und make_report schreibt
+    # write_report(model, self.results) (gui/main.py). Der Nachweis steht dann
+    # nicht im Bericht, die Hinweiszeile nennt nur die Wasser-Modalanalyse;
+    # Luft und Druckschwankungs-Lastfall zaehlen nicht mit. So war es schon am
+    # Stand ec6448c (gemessen 24.09.2026, schwingung.py und report/html.py
+    # zurueckgenommen: dieselbe Zeile). Das Handbuch sagte am Stand 900d08c
+    # ohne Einschraenkung, der Bericht nenne den Nachweis als
+    # "Schwingungsnachweis Name" und habe bis zum 23.09.2026 kein Ausweichen
+    # genannt - beides gilt nur nach einer Berechnung (Mangel der zweiten
+    # Gegenpruefung).
+    zeilen_o = [z for z in erg_o.log if "ausgewichen" in z]
+    check("ohne Berechnung: erg.log nennt Luft, Wasser und den Druckschwankungs-Lastfall",
+          len(zeilen_o) == 1 and "bei 3 Ergebnissen" in zeilen_o[0] and wd_o.lastfall_dyn in zeilen_o[0],
+          zeilen_o[0][:110] if zeilen_o else "keine Zeile")
+    for umfang in ("lang", "kurz"):
+        html_o = Report(m_o, erg_o.res_wasser, options={"umfang": umfang}).html()
+        punkte_o = [re.sub("<[^>]+>", "", p) for p in re.findall(r"<li>(.*?)</li>", html_o, re.S)
+                    if "ausgewichen" in p]
+        check(f"ohne Berechnung ({umfang}): eine Hinweiszeile, nur die Modalanalyse im Wasser",
+              len(punkte_o) == 1 and "Probe: PARDISO verweigert" in punkte_o[0]
+              and f"bei 1 Ergebnis (Eigenschwingungen im Wasser ({wd_o.name})): " in punkte_o[0],
+              f"{len(punkte_o)} Zeilen: " + (punkte_o[0][:110] if punkte_o else ""))
+        check(f"ohne Berechnung ({umfang}): der Nachweis steht nicht im Bericht",
+              f"Schwingungsnachweis {sn.name}" not in html_o
+              and "Schwingungsnachweis des Verschlusses" not in html_o,
+              f"{html_o.count('Schwingungsnachweis ' + sn.name)} / "
+              f"{html_o.count('Schwingungsnachweis des Verschlusses')} mal")
 
     # Gegenprobe: ohne Ausfall steht nichts da
     m0, _wd0, an0 = aufbau()

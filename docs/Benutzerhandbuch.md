@@ -3422,23 +3422,29 @@ Lastfall der Druckschwankung selbst. Weicht dabei „automatisch“ aus (siehe
 *Gleichungslöser* in Kapitel 9), steht im Protokoll des Nachweises vor der
 Erläuterung eine Zeile „Gleichungslöser ausgewichen bei *n* Ergebnissen
 (Eigenfrequenzen in Luft, Eigenfrequenzen im Wasser, Lastfall …): *Grund* –
-stattdessen rechnete …“. Im Bericht zählt der Nachweis unter „Offene Hinweise
-und Warnungen“ als ein Ergebnis „Schwingungsnachweis *Name*“, eingereiht hinter
-den Lastfällen und Kombinationen. Weicht nur er aus, lautet die Zeile „… bei 1
-Ergebnis (Schwingungsnachweis *Name*): *Grund* …“. Bei gleichem Grund steht er
-in derselben Zeile wie die Lastfälle und Kombinationen und zählt dort mit. Die
+stattdessen rechnete …“. Nach einer Berechnung („Berechnen“ vor dem Nachweis)
+zählt der Nachweis im Bericht unter „Offene Hinweise und Warnungen“ als ein
+Ergebnis „Schwingungsnachweis *Name*“, eingereiht hinter den Lastfällen und
+Kombinationen. Weicht nur er aus, lautet die Zeile „… bei 1 Ergebnis
+(Schwingungsnachweis *Name*): *Grund* …“. Bei gleichem Grund steht er in
+derselben Zeile wie die Lastfälle und Kombinationen und zählt dort mit. Die
 Zeile nennt aber nur die ersten drei Ergebnisse beim Namen, danach folgt „…“:
 Tragen drei oder mehr Lastfälle und Kombinationen denselben Grund, ist der
 Nachweis nur in der Zahl *n* enthalten, nicht mit seinem Namen (im Prüffall mit
 drei Lastfällen: „bei 4 Ergebnissen (LF1, Wasser S, Wasser S dyn …)“). Ein
 Druckschwankungs-Lastfall aus der Berechnung „Alle Lastfälle“ zählt in dieser
 Zeile bei den Lastfällen – beim Namen genannt nur, wenn er unter den ersten
-drei steht – und im Nachweis nicht noch einmal. Bis zum 23.09.2026 nannten weder das
-Protokoll des Nachweises noch der Bericht ein Ausweichen; zu sehen war es nur
-in der Zusammenfassung der Modalanalyse im Wasser, das des selbst gerechneten
-Druckschwankungs-Lastfalls nirgends (geprüft mit PARDISO im Prozess zum
-Scheitern gebracht: `test_ausweichen_erreicht_bericht` in
-`tests/test_schwingung.py`).
+drei steht – und im Nachweis nicht noch einmal. Ohne Berechnung schreibt die
+Oberfläche den Bericht aus der Modalanalyse im Wasser: Der Nachweis steht dann
+nicht darin, und die Zeile lautet „… bei 1 Ergebnis (Eigenschwingungen im
+Wasser (*Wasserdruck*)): *Grund* …“; das Ausweichen der Eigenfrequenzen in Luft
+und des Druckschwankungs-Lastfalls zählt dort nicht mit. So stand diese Zeile
+auch vor der Änderung vom 23.09.2026 im Bericht. Das Protokoll des Nachweises
+nannte sein Ausweichen bis zum 23.09.2026 nicht, der Bericht nach einer
+Berechnung ebenso wenig; zu sehen war es dann nur in der Zusammenfassung der
+Modalanalyse im Wasser, das des selbst gerechneten Druckschwankungs-Lastfalls
+nirgends (geprüft mit PARDISO im Prozess zum Scheitern gebracht:
+`test_ausweichen_erreicht_bericht` in `tests/test_schwingung.py`).
 
 ### Knicklängen aus der Knickfigur
 
