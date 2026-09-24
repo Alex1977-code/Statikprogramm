@@ -204,6 +204,13 @@ def test_meldung_nach_allen_stellungen():
             G.MainWindow.stellungen_rechnen(s)
         return s
 
+    def etikett(s):
+        # stellungen_rechnen endet mit refresh_all, und das ruft
+        # refresh_stellungen - hier von Hand, der echte
+        s.lbl_umh.setText.reset_mock()
+        G.MainWindow.refresh_stellungen(s)
+        return (texte(s.lbl_umh.setText) or [""])[-1]
+
     ohne_lager = dict(lager_aus=["Drehlager", "Endauflager"])
     s = rechne([Stellung("X", 0.0, **ohne_lager), Stellung("Y", 10.0, **ohne_lager)])
     u = s.umhuellende
@@ -220,6 +227,13 @@ def test_meldung_nach_allen_stellungen():
           f"eta_bestimmt {u.eta_bestimmt}, {u.kurztext()!r}")
     check("… auch im Bericht", "eta nicht bestimmt" in u.bericht() and "eta = 0.000" not in u.bericht(),
           [z for z in u.bericht().splitlines() if z.startswith("Umhüllende")][:1])
+    # Das Etikett unter „▶ Alle Stellungen rechnen“ (lbl_umh) zeigte bis zum
+    # 24.09.2026 trotzdem „η = 0,000; größte Verformung 0,000 mm“ - genau die
+    # Scheinausnutzung, die Schlusszeile und Bericht nicht mehr nannten
+    # (Gegenpruefung zu B064, gemessen mit dem echten refresh_stellungen).
+    lbl = etikett(s)
+    check("… und das Etikett im Register: kein „η = 0,000“, sondern „nicht bestimmt“",
+          "η = 0" not in lbl and "nicht bestimmt" in lbl and "2 mit FEHLER" in lbl, lbl)
 
     s = rechne([Stellung("S1", 0.0, "geschlossen"), Stellung("X", 0.0, **ohne_lager)])
     u = s.umhuellende
@@ -227,6 +241,9 @@ def test_meldung_nach_allen_stellungen():
     check("eine von zwei rechenbar: „1 von 2 Stellungen gerechnet (1 mit FEHLER)“",
           len(u.ergebnisse) == 1 and "1 von 2 Stellungen gerechnet" in letzte
           and "1 mit FEHLER" in letzte and f"eta = {u.eta:.3f}" in letzte, letzte)
+    lbl = etikett(s)
+    check("… das Etikett nennt dann das η der gerechneten Stellung",
+          f"η = {u.eta:.3f}".replace(".", ",") in lbl and "nicht bestimmt" not in lbl, lbl)
 
     s = rechne([Stellung("S1", 0.0, "geschlossen")])
     letzte = (texte(s.info) or [""])[-1]

@@ -11438,7 +11438,16 @@ class MainWindow(QtWidgets.QMainWindow):
                          or (e.warnungen and not e.nachgewiesen) else f"{e.eta:.3f}",
                          "–" if e is None or e.fehler else f"{e.u_max * 1e3:.3f}"])
         self._fill(self.tbl_stellung, rows)
-        if u is not None:
+        if u is not None and not u.ergebnisse:
+            # Ohne jedes Ergebnis ist η = 0 keine Ausnutzung. Bis zum
+            # 24.09.2026 stand hier nach zwei am FEHLER gescheiterten
+            # Stellungen „η = 0,000; größte Verformung 0,000 mm“, waehrend
+            # Schlusszeile und Bericht schon „nicht bestimmt“ sagten
+            # (Gegenpruefung zu B064).
+            self.lbl_umh.setText(
+                "Umhüllende über alle Stellungen: η nicht bestimmt – keine Stellung gerechnet"
+                + (f" ({len(u.fehlerhaft)} mit FEHLER, siehe Protokoll)" if u.fehlerhaft else ""))
+        elif u is not None:
             self.lbl_umh.setText(
                 (f"Umhüllende über alle Stellungen: η = {u.eta:.3f}"
                  + (f" – maßgebend {u.massgebende_stellung}"

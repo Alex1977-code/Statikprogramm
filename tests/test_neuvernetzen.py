@@ -356,9 +356,7 @@ def test_oberflaeche_entfernt_die_alten_knoten():
           any("Knoten des alten Netzes entfernt" in z for z in log),
           str([z for z in log if "Knoten" in z][:3]))
     # Lager und Fuge zeigen nach dem Umnummerieren auf Knoten des neuen
-    # Netzes. (Gerechnet wird hier nicht: die Kontaktrechnung dieses Modells
-    # braucht Minuten; dass es nach dem Neuvernetzen rechnet, pruefen die
-    # Faelle oben.)
+    # Netzes.
     am_netz = np.zeros(m.nn, bool)
     am_netz[[int(x) for e in m.elements for x in e.nodes]] = True
     lager = [int(k) for x in m.surface_supports for k in (x.nodes or [])]
@@ -368,6 +366,29 @@ def test_oberflaeche_entfernt_die_alten_knoten():
           lager and fuge and all(0 <= k < m.nn and am_netz[k] for k in lager + fuge),
           f"{len(lager)} Lagerknoten, {len(fuge)} Fugenverweise, "
           f"{sum(1 for k in lager + fuge if not (0 <= k < m.nn and am_netz[k]))} daneben")
+
+    # Und es rechnet danach dasselbe wie nach modell_vernetzen. Die Faelle
+    # oben vernetzen ueber modell_vernetzen, nicht ueber diesen Weg, der seit
+    # B062 die Knoten umnummeriert - dass er danach rechnet, prueft nur diese
+    # Stelle. Bis zum 24.09.2026 stand hier, die Kontaktrechnung brauche
+    # Minuten: gemessen sind es Sekunden (24.09.2026, Rechner durch andere
+    # Laeufe ausgelastet: 13 bis 23 s je Rechnung, in einem ruhigeren Lauf
+    # die ganze Pruefung 29 s). Beide Netze sind gleich (1911 tet4, 24
+    # Kontaktzeilen), also auch die Zahlen: max |u| 0,7123 µm auf beiden
+    # Wegen, Abweichung 0.
+    a = _kennzahlen(solver.solve_static(ref), ref)
+    b = _kennzahlen(solver.solve_static(m), m)
+    soll = 2.0 * 7850.0 * 9.81
+    check("… rechnet: die Fuge trägt, die Auflager tragen das Eigengewicht",
+          b["kontaktzeilen"] > 0 and abs(b["Rz"] - soll) <= 1e-6 * soll,
+          f"{b['kontaktzeilen']} Kontaktzeilen (modell_vernetzen {a['kontaktzeilen']}), "
+          f"Rz {b['Rz'] / 1e3:.3f} kN von {soll / 1e3:.3f} kN")
+    nahe("**… und rechnet dasselbe wie nach modell_vernetzen**: größte Verschiebung",
+         b["u_max"], a["u_max"], 1e-4, " m")
+    d = float(np.abs(np.asarray(b["u_mittel"]) - np.asarray(a["u_mittel"])).max())
+    check("… auch der Mittelvektor der Verschiebung",
+          d <= 1e-4 * max(a["u_max"], 1e-12),
+          f"Δ Mittel {d * 1e6:.4f} µm gegen max |u| {a['u_max'] * 1e6:.4f} µm")
 
 
 def main():

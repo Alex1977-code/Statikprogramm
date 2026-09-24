@@ -5365,9 +5365,13 @@ zeigt danach je Karte das η, die maßgebende mit ★. Die Schlusszeile zählt,
 was gerechnet ist: „1 von 2 Stellungen gerechnet (1 mit FEHLER, siehe
 Protokoll): eta = …“, wenn eine scheitert; scheitern alle, meldet die
 Oberfläche „Keine Stellung gerechnet – 2 von 2 mit FEHLER“, und η gilt als
-nicht bestimmt (auch im Bericht: „eta nicht bestimmt – keine Stellung
-gerechnet“). Bis zum 23.09.2026 stand dort immer „2 Stellungen gerechnet“,
-bei null Ergebnissen mit „eta = 0.000“.
+nicht bestimmt: Die Zeile unter dem Knopf lautet dann „Umhüllende über alle
+Stellungen: η nicht bestimmt – keine Stellung gerechnet (2 mit FEHLER, siehe
+Protokoll)“, die Tabelle zeigt bei η und Verformung „–“, der Bericht „eta
+nicht bestimmt – keine Stellung gerechnet“. Bis zum 23.09.2026 stand in der
+Schlusszeile immer „2 Stellungen gerechnet“, bei null Ergebnissen mit
+„eta = 0.000“; die Zeile unter dem Knopf zeigte in diesem Fall noch bis zum
+24.09.2026 „η = 0,000; größte Verformung 0,000 mm“.
 
 „Kombinationen nach DIN 19704 bilden" legt die Kombinationen der drei
 Lastfallklassen an und schreibt darunter **jeden Beiwert mit seinem Zustand**
