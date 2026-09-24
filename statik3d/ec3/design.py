@@ -286,8 +286,11 @@ def _uls_results(model: Model, analysis, combos=None, warnungen: list = None) ->
     Lastfaelle wird nur zurueckgegriffen, wenn das Modell **gar keine**
     Kombination hat. Fehlt das Ergebnis einer Kombination, steht sie in
     ``warnungen`` als "nicht nachgewiesen" - sie wird nicht still ersetzt.
-    Dasselbe Ergebnis kann so unter mehreren Namen stehen; check_members
-    fasst es danach zusammen (_gleiche_zusammenfassen).
+    Ist ihre Rechnung nach Theorie II./III. Ordnung gescheitert, wird mit dem
+    stehenden linearen Ergebnis nachgewiesen und das als Warnung genannt
+    (:func:`_nur_linear_melden`). Dasselbe Ergebnis kann so unter mehreren
+    Namen stehen; check_members fasst es danach zusammen
+    (_gleiche_zusammenfassen).
 
     Bis zum 22.09.2026 fiel die Funktion auf die Lastfaelle zurueck, sobald
     ``analysis.combinations`` leer war, und uebersah Ergebniskombinationen
@@ -309,6 +312,8 @@ def _uls_results(model: Model, analysis, combos=None, warnungen: list = None) ->
                 warn.extend(w)
             else:
                 out[k] = src[k]
+                if c is not None:
+                    _nur_linear_melden(k, out[k], warn)
         return out
     if not hasattr(analysis, "cases"):
         return dict(analysis)
@@ -326,6 +331,7 @@ def _uls_results(model: Model, analysis, combos=None, warnungen: list = None) ->
             warn.extend(w)
         elif n in ergebnisse:
             out[n] = ergebnisse[n]
+            _nur_linear_melden(n, out[n], warn)
         else:
             warn.append(f"Kombination {n} nicht nachgewiesen: kein Ergebnis in der "
                         "Berechnung – „Alle Lastfälle + Kombinationen“ rechnen")
@@ -404,6 +410,23 @@ def _gleiche_zusammenfassen(model: Model, analysis, results: dict) -> tuple:
         if len(namen) > 1:
             gleiche[eintrag] = list(namen)
     return out, gleiche
+
+
+def _nur_linear_melden(name: str, res, warn: list) -> None:
+    """Eine Kombination, deren Rechnung nach Theorie II./III. Ordnung
+    scheiterte, wird mit ihrem stehenden linearen Ergebnis nachgewiesen - das
+    muss in den Warnungen stehen (solver._gescheiterte_kombinationen_markieren
+    setzt ``info["theorie_gewuenscht"]``). Bis zum 23.09.2026 lief der
+    Nachweis still linear: K1 = 1,35·LF nach Theorie III mit
+    Zwangsverformung, _uls_results ["K1"] ohne Warnung (Befund B132)."""
+    info = getattr(res, "info", None) or {}
+    th = info.get("theorie_gewuenscht")
+    if not th:
+        return
+    grund = info.get("theorie_fehler") or "ohne Angabe"
+    warn.append(f"Kombination {name} nur nach Theorie I. Ordnung nachgewiesen: die Rechnung "
+                f"nach Theorie {th}. Ordnung ist gescheitert ({grund}); nachgewiesen wurde "
+                "mit dem linearen Ergebnis")
 
 
 def _melde(progress, text: str, anteil: float = None) -> None:

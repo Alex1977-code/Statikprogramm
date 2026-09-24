@@ -422,13 +422,329 @@ def test_gescheiterte_theorie_in_den_offenen_hinweisen():
               "keine offenen Hinweise" not in html, "")
 
 
+def _kombinationsmodell(theorie: str, zwang: bool = False):
+    """Der Kragarm aus _zweifeld_kragarm, der Lastfall nach Theorie I. Ordnung,
+    darauf die GZT-Kombination K1 = 1,35·LF mit der Theorie ``theorie``."""
+    m, lc = _zweifeld_kragarm("")
+    if zwang:
+        # Theorie III. Ordnung lehnt Zwangsverformungen ausdruecklich ab
+        m.add_zwangsverformung(2, [2], [0.0, 0.0, -0.001, 0.0, 0.0, 0.0])
+    m.combinations["K1"] = Combination("K1", {lc.name: 1.35}, "ULS", theorie=theorie)
+    return m, lc
+
+
+def _theorie_der_kombinationstabellen(m, an, name: str = "K1") -> list:
+    """Die Zelle "Theorie" der Zeile ``name`` in beiden Kombinationstabellen
+    des Berichts: im Kapitel Einwirkungen und als eingefuegte Tabelle."""
+    from types import SimpleNamespace
+    from statik3d.report.html import Report
+    r = Report(m, an)
+    tabellen = [bl[1] for bl in r.chapter_actions()
+                if bl[0] == "table" and "Lastfallkombinationen" in str(bl[2])]
+    tabellen += [bl[1] for bl in r._tabellenbloecke(
+        SimpleNamespace(tabelle="Kombinationen", quelle="")) if bl[0] == "table"]
+    zellen = []
+    for rows in tabellen:
+        spalte = list(rows[0]).index("Theorie")
+        zellen += [str(z[spalte]) for z in rows[1:] if z[0] == name]
+    return zellen
+
+
+def test_gescheiterte_kombination_markiert_das_lineare_ergebnis():
+    """Scheitert Theorie II/III einer **Kombination**, bleibt deren lineares
+    Ergebnis stehen - und muss das sagen, wie ein Lastfall es seit dem
+    22.09.2026 tut (test_theorie_mit_info_fehler_markiert_das_lineare_ergebnis).
+
+    check_theorie2/check_theorie3 uebernehmen das Ergebnis nur ohne Fehler;
+    das stehende Ergebnis nach I. Ordnung (hier die Ueberlagerung, im
+    Kontaktmodell die direkte Loesung - siehe
+    test_handbuch_kontaktmodell_rechnet_die_kombination_direkt) blieb
+    unmarkiert, die
+    Kombinationstabelle druckte ``model.theorie_von``, also die Einstellung,
+    und die GZT-Nachweise liefen ohne Warnung mit dem linearen Ergebnis.
+    Gemessen 23.09.2026 am Stand ec6448c (Befund B132): K1 nach Theorie III
+    mit Zwangsverformung (ValueError) bzw. nach Theorie II mit erzwungenem
+    ``info.fehler`` - Ergebnis ohne info["theorie"], Tabellenzelle "III"
+    bzw. "II", _uls_results ["K1"] ohne Warnung.
+    """
+    from statik3d import theorie2 as t2mod
+    from statik3d import theorie3 as t3mod
+    from statik3d.ec3.design import _uls_results
+
+    def gescheitert_mit(modul, fname, text):
+        original = getattr(modul, fname)
+
+        def gescheitert(*a, **kw):
+            res, info = original(*a, **kw)
+            info.fehler = text
+            info.gerechnet = False
+            return res, info
+        return original, gescheitert
+
+    singulaer = "Gleichungssystem singulär (α_cr ≈ 1?): erzwungen"
+    faelle = (("III", True, None, None, None),                # ValueError im Zweig
+              ("III", False, t3mod, "solve_theorie3", "keine Konvergenz"),
+              ("II", False, t2mod, "solve_theorie2", singulaer))
+    for th, zwang, modul, fname, text in faelle:
+        wie = "Zwangsverformung" if zwang else "info.fehler"
+        m, _lc = _kombinationsmodell(th, zwang=zwang)
+        if modul is not None:
+            original, ersatz = gescheitert_mit(modul, fname, text)
+            setattr(modul, fname, ersatz)
+        try:
+            an = solver.solve_all(m)
+        finally:
+            if modul is not None:
+                setattr(modul, fname, original)
+        t = an.theorie3 if th == "III" else an.theorie2
+        info_t = (getattr(t, "kombinationen", None) or {}).get("K1")
+        grund = str(getattr(info_t, "fehler", "") or "")
+        check(f"K1 Theorie {th} ({wie}): die Rechnung ist gescheitert", bool(grund), grund[:60])
+        res = an.combinations.get("K1")
+        info = (res.info if res is not None else None) or {}
+        check(f"K1 Theorie {th} ({wie}): Ergebnis sagt Theorie I",
+              info.get("theorie") == "I", repr(info.get("theorie")))
+        check(f"K1 Theorie {th} ({wie}): gewünschte Theorie und Grund stehen darin",
+              info.get("theorie_gewuenscht") == th and info.get("theorie_fehler") == grund
+              and bool(grund),
+              f"{info.get('theorie_gewuenscht')!r} / {str(info.get('theorie_fehler'))[:40]!r}")
+        zellen = _theorie_der_kombinationstabellen(m, an)
+        soll = f"I (statt {th}: nicht gerechnet)"
+        check(f"K1 Theorie {th} ({wie}): beide Kombinationstabellen '{soll}'",
+              len(zellen) == 2 and all(z == soll for z in zellen), repr(zellen))
+        warn: list = []
+        uls = _uls_results(m, an, warnungen=warn)
+        nur_linear = [w for w in warn if "K1" in w and "Theorie I. Ordnung" in w]
+        check(f"K1 Theorie {th} ({wie}): Nachweis nennt K1 als nur linear nachgewiesen",
+              "K1" in uls and len(nur_linear) == 1, repr([w[:90] for w in warn]))
+        warn_k: list = []
+        _uls_results(m, an, combos=["K1"], warnungen=warn_k)
+        check(f"K1 Theorie {th} ({wie}): auch mit ausgewählten Kombinationen",
+              len([w for w in warn_k if "K1" in w and "Theorie I. Ordnung" in w]) == 1,
+              repr([w[:90] for w in warn_k]))
+
+    # Gegenproben: eine gelungene Rechnung und alpha_cr >= 10 bei "auto"
+    # (Theorie I. Ordnung ist dort nach 5.2.1(3) zulaessig, kein Fehler)
+    # bleiben unmarkiert - die Markierung haengt an info.fehler, nicht an
+    # "nicht gerechnet"
+    for th in ("II", "III"):
+        m, _lc = _kombinationsmodell(th)
+        an = solver.solve_all(m)
+        res = an.combinations.get("K1")
+        info = (res.info if res is not None else None) or {}
+        zellen = _theorie_der_kombinationstabellen(m, an)
+        warn = []
+        _uls_results(m, an, warnungen=warn)
+        check(f"K1 Theorie {th} gelungen: Ergebnis '{th}. Ordnung', Zellen '{th}', "
+              "keine Warnung",
+              info.get("theorie") == f"{th}. Ordnung" and "theorie_gewuenscht" not in info
+              and zellen == [th, th] and not warn,
+              f"{info.get('theorie')!r} {zellen!r} {warn!r}")
+    # "auto" am Kragarm aus zehn Staeben: alpha_cr = 49,98 (Euler 67,47 kN
+    # durch 1,35 kN). Am Zweistabkragarm oben scheitert der Eigenwertloeser
+    # (ARPACK -9999) und alpha_cr kommt als unendlich zurueck - das waere
+    # keine saubere Gegenprobe.
+    m, _sec = kragarm(10, 2.0)
+    m.add_load_case("LF1", "G")
+    m.load_node(10, Fx=-1000.0, Fz=-100.0, case="LF1")
+    m.combinations["K1"] = Combination("K1", {"LF1": 1.35}, "ULS")
+    m.design.theorie2 = "auto"
+    an = solver.solve_all(m)
+    info_t = (getattr(an.theorie2, "kombinationen", None) or {}).get("K1")
+    res = an.combinations.get("K1")
+    info = (res.info if res is not None else None) or {}
+    zellen = _theorie_der_kombinationstabellen(m, an)
+    warn = []
+    _uls_results(m, an, warnungen=warn)
+    check("K1 auto, α_cr ≥ 10: linear ohne Fehler, unmarkiert, Zellen 'II', keine Warnung",
+          info_t is not None and not info_t.gerechnet and not info_t.fehler
+          and not info_t.hinweise and info_t.grenze <= info_t.alpha_cr < math.inf
+          and "theorie" not in info and zellen == ["II", "II"] and not warn,
+          f"α_cr={getattr(info_t, 'alpha_cr', None)} {info.get('theorie')!r} {zellen!r} {warn!r}")
+
+
+def _handbuchabschnitt_kombinationstabelle() -> str:
+    """Der Text des Benutzerhandbuchs zur Spalte Theorie der
+    Kombinationstabelle: ab "Ebenso die Spalte **Theorie** der
+    Kombinationstabelle" bis zur naechsten Ueberschrift."""
+    pfad = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "docs", "Benutzerhandbuch.md")
+    with open(pfad, encoding="utf-8") as f:
+        text = f.read()
+    anfang = text.find("Ebenso die Spalte **Theorie** der Kombinationstabelle")
+    if anfang < 0:
+        return ""
+    ende = text.find("\n#", anfang)
+    return text[anfang:ende if ende > 0 else len(text)]
+
+
+def test_handbuch_nennt_die_ausnahmen_der_kombinationsmeldung():
+    """Das Benutzerhandbuch sagt, was bei einer gescheiterten Kombination
+    gemeldet wird - und nennt die Faelle, in denen es (noch) nicht so ist.
+
+    Die Kur von B132 (d9f42db) meldet das lineare Ergebnis in den
+    GZT-Nachweisen (_uls_results). Ihr Handbuchabsatz sagte aber ohne
+    Einschraenkung "Scheitert eine Kombination nach II. oder III. Ordnung ...
+    Die Nachweise ... sagen das". Gemessen 24.09.2026 am Stand d9f42db,
+    Kragarm aus zwei Staeben mit Zwangsverformung: (1) GZG-Kombination
+    S1 = 1,0·LF nach III mit Verformungsgrenze - Zellen "I (statt III: nicht
+    gerechnet)", aber gzg.warnungen [], Verformungsnachweis mit S1 und
+    Gesamturteil "Alle Nachweise erfüllt."; (2) Ergebniskombination EK1 nach
+    III mit zwei Alternativen - Zellen "III", _uls_results ["EK1 [1]",
+    "EK1 [2]"] ohne Warnung (Gegenpruefung der Kur, Maengel 1 und 2).
+
+    Geprueft wird der Einklang: nennt das Handbuch eine Ausnahme, muss das
+    Programm sie haben, und umgekehrt. Wird die Meldung fuer GZG-Kombinationen
+    oder Ergebniskombinationen nachgeruestet, faellt diese Pruefung durch, bis
+    der Handbuchtext angepasst ist.
+    """
+    from statik3d.ec3.design import _uls_results
+    abschnitt = _handbuchabschnitt_kombinationstabelle()
+    check("Handbuch: Abschnitt zur Spalte Theorie der Kombinationstabelle gefunden",
+          bool(abschnitt), f"{len(abschnitt)} Zeichen")
+
+    # (1) GZG-Kombination nach III mit Zwangsverformung, dazu eine
+    # GZT-Kombination nach I, damit die GZT-Nachweise ohne Warnung laufen
+    m, lc = _kombinationsmodell("I", zwang=True)
+    m.combinations["S1"] = Combination("S1", {lc.name: 1.0}, "SLS_CH", theorie="III")
+    m.add_verformungsgrenze("w", "knoten", knoten=[2], groesse="uz", grenzart="absolut",
+                            wert=1.0)
+    an = solver.solve_all(m, design=True)
+    grund = str(getattr((getattr(an.theorie3, "kombinationen", None) or {}).get("S1"),
+                        "fehler", "") or "")
+    check("GZG S1 nach III mit Zwangsverformung: die Rechnung ist gescheitert",
+          bool(grund), grund[:60])
+    zellen = _theorie_der_kombinationstabellen(m, an, "S1")
+    check("GZG S1: beide Kombinationstabellen 'I (statt III: nicht gerechnet)'",
+          zellen == ["I (statt III: nicht gerechnet)"] * 2, repr(zellen))
+    gz = getattr(an, "gzg", None)
+    gzg_mit_s1 = any(c.kombination == "S1" for c in (getattr(gz, "checks", None) or {}).values())
+    gzg_meldet = any("S1" in w and "Theorie I. Ordnung" in w
+                     for w in (getattr(gz, "warnungen", None) or []))
+    check("GZG S1: der Verformungsnachweis läuft mit S1", gzg_mit_s1,
+          repr({k: c.kombination for k, c in (getattr(gz, "checks", None) or {}).items()}))
+    nennt_gzg = "Verformungsnachweis" in abschnitt
+    check("Handbuch und Programm einig: Verformungsnachweis meldet S1 "
+          f"{'ja' if gzg_meldet else 'nicht'} – Handbuch nennt die Ausnahme "
+          f"{'ja' if nennt_gzg else 'nicht'}",
+          nennt_gzg != gzg_meldet,
+          repr((getattr(gz, "warnungen", None) or [])[:2]))
+
+    # (2) Ergebniskombination nach III mit zwei Alternativen und
+    # Zwangsverformung
+    m, lc = _kombinationsmodell("I", zwang=True)
+    del m.combinations["K1"]
+    ek = Combination("EK1", {}, "ULS", theorie="III")
+    ek.alternativen = [{lc.name: 1.35}, {lc.name: 1.0}]
+    m.combinations["EK1"] = ek
+    an = solver.solve_all(m)
+    kz = getattr(an.theorie3, "kombinationen", None) or {}
+    check("EK1 nach III mit Zwangsverformung: beide Alternativen gescheitert",
+          len(kz) == 2 and all(getattr(v, "fehler", "") for v in kz.values()),
+          repr({k: str(getattr(v, "fehler", ""))[:40] for k, v in kz.items()}))
+    warn: list = []
+    uls = _uls_results(m, an, warnungen=warn)
+    zellen = _theorie_der_kombinationstabellen(m, an, "EK1")
+    ek_meldet = (any("EK1" in w and "Theorie I. Ordnung" in w for w in warn)
+                 or any("statt" in z for z in zellen))
+    nennt_ek = "Ergebniskombination" in abschnitt
+    check("Handbuch und Programm einig: EK1-Alternativen gemeldet "
+          f"{'ja' if ek_meldet else 'nicht'} – Handbuch nennt die Ausnahme "
+          f"{'ja' if nennt_ek else 'nicht'}",
+          nennt_ek != ek_meldet, f"{sorted(uls)} {zellen!r} {warn!r}")
+
+
+def _theoriehandbuch_absatz_b132() -> str:
+    """Der Absatz "Gescheiterte Kombinationen blieben still linear (B132)"
+    des Theoriehandbuchs, bis zur naechsten Leerzeile."""
+    pfad = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "docs", "Theoriehandbuch.md")
+    with open(pfad, encoding="utf-8") as f:
+        text = f.read()
+    anfang = text.find("**Gescheiterte Kombinationen blieben still linear (B132).**")
+    if anfang < 0:
+        return ""
+    ende = text.find("\n\n", anfang)
+    return text[anfang:ende if ende > 0 else len(text)]
+
+
+def test_handbuch_kontaktmodell_rechnet_die_kombination_direkt():
+    """Was nach einer gescheiterten Kombination stehen bleibt, ist nicht
+    immer die Ueberlagerung: im Kontaktmodell rechnet solve_combination die
+    Kombination direkt (_nichtlinear -> _solve_loads), und dieses Ergebnis
+    nach I. Ordnung bleibt stehen, wenn Theorie III am Kontakt scheitert
+    (theorie3.py: "nicht zusammen mit Kontakt").
+
+    Die Handbuchtexte von B132 sagten ohne Einschraenkung "bleibt ihre
+    Ueberlagerung nach I. Ordnung stehen" (Benutzerhandbuch) bzw. "das
+    stehende Ueberlagerungsergebnis" (Theoriehandbuch). Gemessen 24.09.2026
+    am Stand d55789c (zweite Gegenpruefung der Kur, zwei Laeufe gleich):
+    Kragarm 3 m mit Spaltelement (Spalt 2 mm) an der Spitze, LF1 und LF2 je
+    Fz = -12 kN, K1 = LF1 + LF2 nach III - Th3-Fehler "Theorie III. Ordnung
+    nicht zusammen mit Kontakt", K1 info theorie "I"/"III", ohne
+    "superposition", Endverschiebung K1 2,0000 mm, die Ueberlagerung
+    LF1 + LF2 ergaebe 4,0000 mm; Zelle "I (statt III: nicht gerechnet)".
+
+    Geprueft wird der Einklang: ist das stehende Ergebnis die direkte Loesung,
+    muessen beide Handbuecher sie fuer das Kontaktmodell nennen.
+    """
+    L, s = 3.0, 0.002
+    m = Model("Spalt")
+    m.add_material(Material("S"))
+    m.add_section(Section.rectangle("R", 0.1, 0.2))
+    ids = [m.add_node(L * i / 6, 0.0, 0.0) for i in range(7)]
+    for i in range(6):
+        m.add_element("beam", [ids[i], ids[i + 1]], "S", "R")
+    m.fix(ids[0], "all")
+    stop = m.add_node(L, 0.0, -s)
+    m.fix(stop, "all")
+    m.add_gap_element(ids[-1], stop, direction=(0, 0, -1), gap=s)
+    for lf, art in (("LF1", "G"), ("LF2", "Q")):
+        m.add_load_case(lf, art)
+        m.load_node(ids[-1], Fz=-12000.0, case=lf)
+    m.combinations["K1"] = Combination("K1", {"LF1": 1.0, "LF2": 1.0}, "ULS", theorie="III")
+    an = solver.solve_all(m)
+
+    info_t = (getattr(an.theorie3, "kombinationen", None) or {}).get("K1")
+    grund = str(getattr(info_t, "fehler", "") or "")
+    check("Kontaktmodell K1 nach III: die Rechnung scheitert am Kontakt",
+          "Kontakt" in grund, grund[:60])
+    res = an.combinations.get("K1")
+    info = (res.info if res is not None else None) or {}
+    check("Kontaktmodell K1: Ergebnis sagt Theorie I statt III",
+          info.get("theorie") == "I" and info.get("theorie_gewuenscht") == "III",
+          f"{info.get('theorie')!r} / {info.get('theorie_gewuenscht')!r}")
+    u_k = -float(res.u[ids[-1], 2]) if res is not None else float("nan")
+    u_sum = -float(an.cases["LF1"].u[ids[-1], 2] + an.cases["LF2"].u[ids[-1], 2])
+    direkt = not info.get("superposition") and abs(u_k - u_sum) > 1e-6
+    check("Kontaktmodell K1: stehendes Ergebnis ist die direkte Lösung (Spalt zu), "
+          "nicht die Überlagerung",
+          direkt and abs(u_k - s) < 1e-5 and abs(u_sum - 2 * s) < 1e-5,
+          f"superposition={info.get('superposition')!r} u_K1={u_k * 1000:.4f} mm "
+          f"LF1+LF2={u_sum * 1000:.4f} mm")
+    zellen = _theorie_der_kombinationstabellen(m, an)
+    check("Kontaktmodell K1: beide Kombinationstabellen 'I (statt III: nicht gerechnet)'",
+          zellen == ["I (statt III: nicht gerechnet)"] * 2, repr(zellen))
+
+    for wo, absatz in (("Benutzerhandbuch", _handbuchabschnitt_kombinationstabelle()),
+                       ("Theoriehandbuch", _theoriehandbuch_absatz_b132())):
+        nennt = "direkte Lösung" in absatz and "Kontakt" in absatz
+        check(f"{wo} und Programm einig: stehendes Ergebnis im Kontaktmodell "
+              f"{'direkt' if direkt else 'überlagert'} – Text nennt die direkte Lösung "
+              f"{'ja' if nennt else 'nicht'}",
+              bool(absatz) and nennt == direkt, f"{len(absatz)} Zeichen")
+
+
 def main():
     for t in (test_drehungen, test_kreisbogen, test_elastica, test_seil,
               test_druckstab_II_gegen_III, test_theoriewahl,
               test_gescheiterte_theorie_meldet_sich,
               test_gelungene_theorie_steht_schlicht_in_der_tabelle,
               test_theorie_mit_info_fehler_markiert_das_lineare_ergebnis,
-              test_gescheiterte_theorie_in_den_offenen_hinweisen):
+              test_gescheiterte_theorie_in_den_offenen_hinweisen,
+              test_gescheiterte_kombination_markiert_das_lineare_ergebnis,
+              test_handbuch_nennt_die_ausnahmen_der_kombinationsmeldung,
+              test_handbuch_kontaktmodell_rechnet_die_kombination_direkt):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

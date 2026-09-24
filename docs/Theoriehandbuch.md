@@ -6755,6 +6755,57 @@ Geprüft in `tests/test_theorie3.py` am Kragarm aus zwei Stäben (gelungen: II
 und III; gescheitert: erzwungenes `info.fehler`); an einem großen Modell nicht
 gemessen.
 
+**Gescheiterte Kombinationen blieben still linear (B132).** Der Satz oben,
+der Kombinationszweig mache es „seit jeher richtig", stimmte nur halb:
+`check_theorie2`/`check_theorie3` tragen den Fehler ins Theoriekapitel ein und
+übernehmen das Ergebnis zu Recht nur ohne Fehler — das stehende Ergebnis
+der Kombination nach I. Ordnung aus `solve_combinations` markierten sie aber
+nicht. Das ist die Überlagerung der Lastfälle, wo `_nichtlinear` gilt
+(Kontakt, Ausfallstäbe oder Seile, Plastizität), aber die direkte Lösung der
+Kombination (`solve_combination` → `_solve_loads`). Die
+Kombinationstabelle des Berichts druckte `model.theorie_von`, also die
+Einstellung, und die GZT-Nachweise liefen ohne Warnung mit dem linearen
+Ergebnis. Gemessen am 23.09.2026 am Stand ec6448c, Kragarm aus zwei Stäben,
+K1 = 1,35 · LF nach III. Ordnung mit Zwangsverformung (`ValueError`) bzw.
+nach II. Ordnung mit erzwungenem `info.fehler`: Tabelle „III" bzw. „II",
+`_uls_results` liefert K1 ohne Warnung; mit einem Stab mit Nachweis lautete
+das Gesamturteil „Alle Nachweise erfüllt." bei Ausnutzung 0,053 aus dem
+linearen Ergebnis. Jetzt markiert `solve_all` nach `check_theorie2` und
+`check_theorie3` jede gewöhnliche Kombination mit `info.fehler` wie einen
+Lastfall (`info["theorie"] = "I"`, `theorie_gewuenscht`, `theorie_fehler`;
+`_gescheiterte_kombinationen_markieren`), beide Kombinationstabellen des
+Berichts zeigen die gerechnete Theorie („I (statt III: nicht gerechnet)"),
+und `_uls_results` nennt die Kombination in den Warnungen als „nur nach
+Theorie I. Ordnung nachgewiesen". Am selben Kragarm lautet das Gesamturteil
+damit „Alle **geführten** Nachweise erfüllt – nicht geführt wurden: EC3
+(1 Warnung)". Maßgebend ist allein `info.fehler`, nicht „nicht gerechnet":
+bei `theorie2 = "auto"` und α_cr über der Grenze bleibt die Kombination nach
+5.2.1(3) zulässig linear und unmarkiert (Gegenprobe am Kragarm aus zehn
+Stäben, α_cr = 49,98). Die Alternativen einer Ergebniskombination („EK [k]")
+deckt diese Kur nicht ab, und auch der Verformungsnachweis meldet nichts:
+`gzg._sls_results` übernimmt eine GZG-Kombination ohne `_nur_linear_melden`.
+Gemessen am 24.09.2026 am Stand d9f42db, derselbe Kragarm mit
+Zwangsverformung bzw. erzwungenem `info.fehler`: S1 = 1,0 · LF (SLS_CH)
+nach III. bzw. II. Ordnung mit einer Verformungsgrenze am Endknoten — die
+Tabelle zeigt richtig „I (statt …: nicht gerechnet)", aber `gzg.warnungen`
+ist leer und das Gesamturteil lautet „Alle Nachweise erfüllt."; EK1 mit zwei
+Alternativen nach III. bzw. II. Ordnung — Zellen „III" bzw. „II",
+`_uls_results` liefert „EK1 [1]", „EK1 [2]" ohne Warnung. Den Grund nennt
+in diesen Fällen das Theoriekapitel. Das Benutzerhandbuch nennt beide
+Ausnahmen. Im Kontaktmodell bleibt die direkte Lösung stehen, nicht die
+Überlagerung: gemessen am 24.09.2026 am Stand d55789c (zwei Läufe gleich),
+Kragarm 3 m mit Spaltelement an der Spitze (Spalt 2 mm), LF1 und LF2 je
+Fz = −12 kN schließen den Spalt je allein (2,0000 mm), K1 = LF1 + LF2 nach
+III. Ordnung scheitert mit „Theorie III. Ordnung nicht zusammen mit
+Kontakt" — K1 steht bei 2,0000 mm ohne `info["superposition"]`, die
+Überlagerung ergäbe 4,0000 mm; Zelle „I (statt III: nicht gerechnet)",
+`_uls_results` warnt. Geprüft in `tests/test_theorie3.py`
+(`test_gescheiterte_kombination_markiert_das_lineare_ergebnis`; den
+Einklang von Handbuchtext und Programm prüfen für beide Ausnahmen
+`test_handbuch_nennt_die_ausnahmen_der_kombinationsmeldung` und für das
+Kontaktmodell `test_handbuch_kontaktmodell_rechnet_die_kombination_direkt`);
+an einem großen Modell nicht gemessen.
+
 **Ermüdung: ein fehlender Mindestzustand wurde still zu null.** `case_min`
 angegeben, aber nicht gerechnet, fiel in denselben Zweig wie „kein
 Mindestzustand angegeben". Gemessen an einem Kragarm:

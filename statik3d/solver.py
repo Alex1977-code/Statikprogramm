@@ -5549,8 +5549,11 @@ def _lastfaelle_hoeherer_ordnung(model: Model, an, systeme: dict, progress=None)
             # zu kleinen Momenten - unkonservativ und ohne jeden Hinweis
             # (gefunden 22.09.2026).
             #
-            # Der Kombinationszweig macht es seit jeher richtig
+            # Der Kombinationszweig traegt den Fehler seit jeher ein
             # (theorie3.py: Th3Info(name=n, fehler=str(ex))); hier fehlte es.
+            # Das stehende lineare Kombinationsergebnis markierte aber auch er
+            # nicht - das tut seit 23.09.2026 _gescheiterte_kombinationen_
+            # markieren (Befund B132).
             # Mit einem Eintrag in kombinationen steht der Fehler in der
             # Spalte "Hinweis" des Theoriekapitels, und res.info["theorie"]
             # sagt, was wirklich gerechnet wurde.
@@ -5586,16 +5589,50 @@ def _lastfaelle_hoeherer_ordnung(model: Model, an, systeme: dict, progress=None)
             _lineares_ergebnis_markieren(an, name, th, str(info.fehler))
 
 
-def _lineares_ergebnis_markieren(an, name: str, th: str, grund: str) -> None:
+def _lineares_ergebnis_markieren(an, name: str, th: str, grund: str,
+                                 ergebnisse: dict = None) -> None:
     """Ein Lastfall, dessen Rechnung nach Theorie ``th`` scheiterte, behaelt
     sein lineares Ergebnis - es ist ja gerechnet -, sagt aber ab jetzt selbst,
-    nach welcher Theorie (report/html.py, ``_theorie_spalte``)."""
-    alt_res = an.cases.get(name)
+    nach welcher Theorie (report/html.py, ``_theorie_spalte``).
+
+    ``ergebnisse``: wo das Ergebnis liegt - ohne Angabe ``an.cases``; fuer
+    eine Kombination ``an.combinations`` (_gescheiterte_kombinationen_markieren)."""
+    alt_res = (an.cases if ergebnisse is None else ergebnisse).get(name)
     if alt_res is None:
         return
     alt_res.info["theorie"] = "I"
     alt_res.info["theorie_gewuenscht"] = th
     alt_res.info["theorie_fehler"] = grund
+
+
+def _gescheiterte_kombinationen_markieren(model: Model, an, ergebnis, th: str) -> None:
+    """Gewoehnliche Kombinationen, deren Rechnung nach Theorie ``th`` mit
+    einem Fehler endete, wie einen gescheiterten Lastfall markieren.
+
+    check_theorie2/check_theorie3 uebernehmen das Ergebnis zu Recht nur ohne
+    Fehler, das Ergebnis nach I. Ordnung aus solve_combinations bleibt
+    stehen: die Ueberlagerung, bei _nichtlinear (Kontakt, Ausfallstaebe und
+    Seile, Plastizitaet) aber die direkte Loesung der Kombination. Gemessen
+    24.09.2026 am Stand d55789c: Kragarm mit Spalt 2 mm, K1 = LF1 + LF2
+    nach III scheitert am Kontakt, K1 steht bei 2,0000 mm, die Ueberlagerung
+    ergaebe 4,0000 mm. Es blieb aber unmarkiert: die Kombinationstabelle
+    des Berichts wies die Einstellung aus, und die GZT-Nachweise liefen ohne Warnung mit dem
+    linearen Ergebnis. Gemessen 23.09.2026 am Stand ec6448c (Befund B132):
+    K1 = 1,35·LF nach Theorie III mit Zwangsverformung (ValueError im
+    Kombinationszweig) bzw. nach Theorie II mit erzwungenem info.fehler -
+    Tabelle "III"/"II", _uls_results ["K1"] ohne Warnung; den Fehler nannte
+    nur das Theoriekapitel.
+
+    Nur der Fehler zaehlt, nicht "nicht gerechnet": bei theorie2 "auto" mit
+    alpha_cr >= Grenze bleibt die Kombination nach 5.2.1(3) zulaessig linear.
+    Alternativen einer Ergebniskombination ("EK [k]") stehen nicht in
+    model.combinations und bleiben hier aussen vor."""
+    for n, info in (getattr(ergebnis, "kombinationen", None) or {}).items():
+        c = model.combinations.get(n)
+        fehler = getattr(info, "fehler", "")
+        if c is None or c.ist_umhuellende or not fehler:
+            continue
+        _lineares_ergebnis_markieren(an, n, th, str(fehler), ergebnisse=an.combinations)
 
 
 def ermuedungsreferenzen(model: Model) -> dict:
@@ -5786,6 +5823,7 @@ def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progres
         erzwungen = {n for n in th2 if (model.combinations[n].theorie or "").upper() == "II"}
         t2 = check_theorie2(model, an, combos=th2, system=system, progress=progress,
                             systeme=systeme, erzwungen=erzwungen)
+        _gescheiterte_kombinationen_markieren(model, an, t2, "II")
         if an.theorie2 is None:
             an.theorie2 = t2
         else:                       # Lastfaelle nach II. Ordnung stehen schon darin
@@ -5796,6 +5834,7 @@ def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progres
     if th3:
         from .theorie3 import check_theorie3
         t3 = check_theorie3(model, an, combos=th3, progress=progress, systeme=systeme)
+        _gescheiterte_kombinationen_markieren(model, an, t3, "III")
         if an.theorie3 is None:
             an.theorie3 = t3
         else:
