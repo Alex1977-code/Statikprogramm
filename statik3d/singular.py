@@ -118,6 +118,21 @@ HOECHSTENS = 40
 DREH_ANTEIL = 1e-6
 
 
+class MatrixdiagnoseUnmoeglich(Exception):
+    """Stufe 2 konnte nicht rechnen: die Faktorisierung von K + eps·I oder ein
+    Schritt der inversen Iteration ist gescheitert. Der Text nennt den Grund.
+
+    **Keine leere Liste**: die hiesse „kein auffaellig weicher Modus", und
+    genau das schloss diagnose.singulaer_text bis zum 23.09.2026 daraus -
+    ueber eine Rechnung, die nie lief (gemessen am Wuerfelpaar aus
+    tests/test_singular.py: Hauptfaktorisierung ueber PARDISO, in der
+    Diagnose PARDISO und SuperLU verweigert - Meldung „… keinen auffaellig
+    weichen Modus"; ebenso bei einer Ausnahme oder NaN in der Iteration).
+    Bewusst keine RuntimeError, wie solver.LoeserAusfall: ein RuntimeError
+    wird als singulaere Matrix gedeutet.
+    """
+
+
 @dataclass
 class Halteguete:
     """Wie fest ein Teiltragwerk gehalten wird - nicht nur **ob**.
@@ -197,6 +212,12 @@ class Singularitaet:
     energie: float = 0.0
     #: dieselbe Energie dimensionslos: E_e / (a_e^2 * mittlere Diagonale K_e)
     anteil: float = 0.0
+    #: Nur bei art='numerisch': warum die Diagnose-Faktorisierung auf einen
+    #: anderen Loeser ausgewichen ist (LinearSolver.ausweichgrund) - leer,
+    #: wenn nicht. Bis zum 23.09.2026 stand das nur im Fortschritt (wenn es
+    #: einen gab) und in warnings.warn, das weder Protokollfenster noch exe
+    #: erreicht; die Meldung ohne Fortschritt nannte es nicht.
+    ausweichgrund: str = ""
 
     def verschiebung(self) -> bool:
         """Reine Verschiebung (kein nennenswerter Drehanteil)?"""
@@ -881,7 +902,10 @@ def weichster_modus(K, model, frei=None, schritte: int = 20,
 
     ``frei`` sind die Zeilen/Spalten, die nach dem Einbau der Lager bleiben
     (None = alle). Rueckgabe eine Liste von :class:`Singularitaet` mit
-    ``feld`` als Knotenvektorfeld.
+    ``feld`` als Knotenvektorfeld; ist die Diagnose-Faktorisierung
+    ausgewichen, steht der Grund in ``ausweichgrund`` - unabhaengig von
+    ``melden``. Scheitert die Faktorisierung oder die Iteration, geht
+    :class:`MatrixdiagnoseUnmoeglich` hinaus, keine leere Liste.
     """
     from scipy.sparse import identity
     K = K.tocsc()
@@ -900,15 +924,19 @@ def weichster_modus(K, model, frei=None, schritte: int = 20,
     from .solver import LinearSolver
     try:
         lu = LinearSolver((Kf + eps * identity(Kf.shape[0], format="csc")).tocsc())
-    except Exception:                     # noqa: BLE001 - auch das darf nicht sperren
-        return []
+    except Exception as ex:               # noqa: BLE001 - jede Art heisst: nicht gerechnet
+        # Nicht sperren heisst nicht schweigen: der Aufrufer
+        # (diagnose._matrixbefund) faengt das und schreibt „nicht möglich".
+        raise MatrixdiagnoseUnmoeglich(
+            f"die Faktorisierung von K + ε·I ({Kf.shape[0]} Freiheitsgrade) "
+            f"scheiterte - {type(ex).__name__}: {ex}") from ex
     if melden:
         melden(f"Diagnose: weichster Modus ueber {lu.beschreibung()} "
                f"({Kf.shape[0]} Freiheitsgrade, {schritte} Schritte)")
     rng = np.random.default_rng(0)
     v = rng.standard_normal(Kf.shape[0])
     v /= np.linalg.norm(v) or 1.0
-    for _ in range(schritte):
+    for schritt in range(1, schritte + 1):
         try:
             # **Ohne** Residuumspruefung. K + eps*I ist hier mit Absicht fast
             # singulaer - das ist der Sinn der inversen Iteration. Die Pruefung
@@ -917,11 +945,15 @@ def weichster_modus(K, model, frei=None, schritte: int = 20,
             # gemeinsamen Knoten stieg sie im ersten Schritt mit
             # "Residuum 2.3e-06" aus, und Stufe 2 lieferte nie einen Befund.
             v = lu.solve(v, check=False)
-        except Exception:                 # noqa: BLE001
-            return []
+        except Exception as ex:           # noqa: BLE001
+            raise MatrixdiagnoseUnmoeglich(
+                f"die inverse Iteration scheiterte in Schritt {schritt} über "
+                f"{lu.beschreibung()} - {type(ex).__name__}: {ex}") from ex
         nv = np.linalg.norm(v)
         if not np.isfinite(nv) or nv <= 0:
-            return []
+            raise MatrixdiagnoseUnmoeglich(
+                f"die inverse Iteration lieferte in Schritt {schritt} keinen "
+                f"endlichen Vektor (Norm {nv:g}) über {lu.beschreibung()}")
         v = v / nv
     voll = np.zeros(n)
     voll[idx] = v
@@ -941,6 +973,7 @@ def weichster_modus(K, model, frei=None, schritte: int = 20,
         t=(feld[gross].mean(axis=0) if len(gross) else np.zeros(3)),
         bezug=schwer, mitte=schwer, feld=feld,
         element=nr, ausschlag=ausschlag, energie=energie, anteil=anteil,
+        ausweichgrund=str(getattr(lu, "ausweichgrund", "") or ""),
         text=f"{wo}" + (f", Element {nr} ({art})" if nr >= 0 else "")
              + ": Bewegung fast ohne Steifigkeit",
         ursache="Die Steifigkeitsmatrix ist hier nahezu singulär. Die gezeigte "

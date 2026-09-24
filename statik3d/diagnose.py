@@ -2339,7 +2339,10 @@ def singulaer_text(model, ex=None, system=None) -> str:
     kommt ``system`` zum Zuge: die Matrixdiagnose (Stufe 2 in
     :mod:`statik3d.singular`) nennt das Bauteil, dessen Bewegung fast keine
     Energie kostet. Das ist der Fall, den die Topologie nicht sehen kann:
-    weiche Mechanismen, Splitterelemente, Nullsteifigkeit.
+    weiche Mechanismen, Splitterelemente, Nullsteifigkeit. Kann sie nicht
+    rechnen, steht „Matrixdiagnose nicht möglich" mit dem Grund da - nicht
+    „kein weicher Modus"; ist ihre Faktorisierung ausgewichen, steht auch das
+    da, mit oder ohne Fortschrittsempfänger.
     """
     d = diagnose(model)
     kopf = "Gleichungssystem singulär (kein statisches Gleichgewicht möglich)"
@@ -2350,8 +2353,21 @@ def singulaer_text(model, ex=None, system=None) -> str:
         # Stufe 1b: was sich bewegen kann, mit Bauteil und Richtung. Erst
         # danach die Matrix (Stufe 2) - sie faktorisiert ein zweites Mal.
         z += _bewegungsbefund(model)
+    nicht_moeglich = ""
     if not z and system is not None:
-        z += _matrixbefund(model, system)
+        befund, nicht_moeglich = _matrixbefund(model, system)
+        z += befund
+    if not z and nicht_moeglich:
+        # Stufe 2 lief nicht (zu Ende): dann ist „kein weicher Modus" keine
+        # Aussage, sondern eine Behauptung ohne Rechnung. Bis zum 23.09.2026
+        # stand sie hier trotzdem (Wuerfelpaar, Diagnose-Faktorisierung
+        # verweigert: „… keinen auffällig weichen Modus").
+        z.append("Ursache nicht feststellbar: die Topologie ist geschlossen, es gibt "
+                 "kein loses Teiltragwerk und keine freie Starrkörperbewegung; ob ein "
+                 "Bauteil fast ohne Steifigkeit ist, bleibt offen, weil die "
+                 "Matrixdiagnose nicht rechnen konnte. Gelenke, Lagersteifigkeiten "
+                 "und Nullwerte bei Querschnitt, Dicke und Werkstoff sind von Hand "
+                 f"zu prüfen. Matrixdiagnose nicht möglich: {nicht_moeglich}")
     if not z:
         z.append("Ursache nicht feststellbar: die Topologie ist geschlossen, es gibt "
                  "kein loses Teiltragwerk, keine freie Starrkörperbewegung und keinen "
@@ -2421,15 +2437,37 @@ def _bewegungsbefund(model) -> list:
     return out
 
 
-def _matrixbefund(model, system) -> list:
-    """Stufe 2: der weichste Modus der Steifigkeitsmatrix als Meldung."""
+def _matrixbefund(model, system) -> tuple:
+    """Stufe 2: der weichste Modus der Steifigkeitsmatrix als Meldung.
+
+    Rueckgabe ``(Zeilen, Grund)``: ``Grund`` ist leer, wenn die Diagnose
+    gerechnet hat, und sagt sonst, warum nicht. Eine leere Zeilenliste allein
+    hiesse „kein weicher Modus" - das schloss singulaer_text bis zum
+    23.09.2026 auch dann, wenn Stufe 2 gar nicht gelaufen war.
+    """
+    # Eine Diagnose darf nie sperren - aber auch nicht schweigen: jede
+    # Ausnahme wird zum Grund, keine zur leeren Liste.
     try:
-        from .singular import weichster_modus
+        from .singular import MatrixdiagnoseUnmoeglich, weichster_modus
+    except Exception as ex:               # noqa: BLE001
+        return [], f"{type(ex).__name__}: {ex}"
+    try:
         # Der Fortschrittsempfaenger des Systems, falls es einen hat: diese
         # Diagnose faktorisiert ein zweites Mal und darf nicht stumm laufen.
         melden = getattr(system, "_progress", None)
         moden = weichster_modus(getattr(system, "K", None), model,
                                 getattr(system, "fi", None), melden=melden)
-    except Exception:                     # noqa: BLE001 - eine Diagnose darf nie sperren
-        return []
-    return [f"FEHLER: {s.text} - {s.ursache}" for s in moden]
+    except MatrixdiagnoseUnmoeglich as ex:
+        return [], str(ex)
+    except Exception as ex:               # noqa: BLE001
+        return [], f"{type(ex).__name__}: {ex}"
+    zeilen = [f"FEHLER: {s.text} - {s.ursache}" for s in moden]
+    # Das Ausweichen der Diagnose-Faktorisierung gehoert in die Meldung
+    # selbst, nicht nur in ``melden``: system._progress ist in Rechenketten,
+    # Pool, Farm, Skripten und Auftraegen None, und warnings.warn erreicht
+    # weder Protokollfenster noch exe. Gemessen 23.09.2026 am Wuerfelpaar
+    # (Hauptfaktorisierung PARDISO, Diagnose verweigert): die Meldung von
+    # solve_static ohne Fortschritt nannte das Ausweichen nicht.
+    for grund in dict.fromkeys(s.ausweichgrund for s in moden if s.ausweichgrund):
+        zeilen.append(f"Hinweis: Diagnose-Faktorisierung: Gleichungslöser ausgewichen - {grund}")
+    return zeilen, ""

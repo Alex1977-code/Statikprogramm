@@ -7467,6 +7467,17 @@ den Elementen an den Knoten der Bewegung, und **K**_e wird nur für den
 Gewinner aufgestellt; über alle 489 376 Elemente eines Volumenmodells wäre es
 eine eigene Rechnung.
 
+**Wenn Stufe 2 nicht rechnen kann.** Scheitert die Faktorisierung von
+**K** + ε·**I**, wirft ein Schritt der inversen Iteration eine Ausnahme oder
+liefert er keinen endlichen Vektor, dann gibt es keinen Modus - und daraus
+folgt nicht, dass es keinen weichen Modus gibt. Die Meldung sagt dann
+„Matrixdiagnose nicht möglich“ mit dem Grund, statt auf „keinen auffällig
+weichen Modus“ zu schließen. Weicht die Faktorisierung nur auf einen anderen
+Löser aus (etwa von PARDISO auf SuperLU), rechnet dieser den Modus; der
+Ausweichgrund steht dann am Befund und als Hinweiszeile
+„Diagnose-Faktorisierung: Gleichungslöser ausgewichen - …“ in der Meldung,
+auch wenn kein Fortschrittsempfänger da ist (Rechenketten, Skripte, Aufträge).
+
 ### 7b.4 Die unausgeglichene Last: was wirklich ins Nichts geht
 
 Zu jeder Bewegung gehört die verallgemeinerte Kraft der Last:
