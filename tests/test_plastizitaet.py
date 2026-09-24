@@ -1521,16 +1521,42 @@ def test_gemeinsam_aendert_nichts_ohne_beides():
     """T5 (23.09.2026): die Einstellung wirkt nur, wo Fließen UND Kontakt
     zusammenkommen. Kontakt ohne Plastizität und Plastizität ohne Kontakt
     rechnen mit „gemeinsam“ und „verschachtelt“ bitgleich (Verschiebungen,
-    Auflagerkräfte, Kontaktkräfte), je an zwei Modellen. Dass beide auch
-    bitgleich zum Stand vor dem Umbau sind, belegt die Messung gegen 6a961e5
-    (sha256), nicht dieser Test - er läuft auf einem Stand."""
+    Auflagerkräfte, Kontaktkräfte), je an zwei Modellen.
+
+    Dazu (24.09.2026) die Werte des Stands **vor** dem Umbau, 6a961e5, fest
+    abgelegt - gemessen mit ``git archive 6a961e5``, einkernig: Zerlegungen,
+    Rückführungen (Aufrufe von plastizitaet.schritt), größte Verschiebung,
+    Urteil. Der Vergleich der beiden Einstellungen allein konnte auf keinem
+    Stand rot werden. Am Stand 77903e5 rechnete die Schlussabnahme auch ohne
+    Kontakt eine Rückführung mehr (Zugwürfel 5 statt 4, Kragträger 9 statt 8)."""
+    zaehler = {"schritt": 0}
+    alt_schritt = pl.schritt
+
+    def schritt(*a, **kw):
+        zaehler["schritt"] += 1
+        return alt_schritt(*a, **kw)
+
     def rechne(m, kontakt):
         m.plastizitaet.kontakt = kontakt
-        r = solver.solve_static(m)
+        zaehler["schritt"] = 0
+        pl.schritt = schritt
+        try:
+            r, n_z = _gezaehlt(m)
+        finally:
+            pl.schritt = alt_schritt
         cf = getattr(r, "contact_forces", None)
+        pz = r.info.get("plastizitaet") or {}
+        rechne.kennzahlen = (n_z, zaehler["schritt"], float(np.abs(np.asarray(r.u, float)[:, :3]).max()),
+                             pz.get("konvergiert"))
         return (np.asarray(r.u, float), np.asarray(r.reactions, float),
                 np.asarray(np.zeros((0, 3)) if cf is None else cf, float),
                 np.array(sorted((r.info.get("plastisch") or {}).items()), float).reshape(-1, 2))
+
+    # 6a961e5: (Zerlegungen, Rückführungen, max |u| in m, plastizitaet.konvergiert)
+    referenz = {"Kontakt ohne Plastizität: Block mit Reibung": (7, 0, 2.6374059202389813e-06, None),
+                "Kontakt ohne Plastizität: Stempel auf Sockel": (5, 0, 0.0003803567719446193, None),
+                "Plastizität ohne Kontakt: Zugwürfel hex8": (3, 4, 0.010142857142857335, True),
+                "Plastizität ohne Kontakt: Kragträger tet4": (6, 8, 0.00967601273071502, True)}
 
     def nur_kontakt_stempel():
         m = _drehlagerartiges_modell()
@@ -1561,7 +1587,9 @@ def test_gemeinsam_aendert_nichts_ohne_beides():
                        ("Plastizität ohne Kontakt: Zugwürfel hex8", zugwuerfel),
                        ("Plastizität ohne Kontakt: Kragträger tet4", kragtraeger_tet4)):
         a = rechne(bau(), "verschachtelt")
+        ka = rechne.kennzahlen
         b = rechne(bau(), "gemeinsam")
+        kb = rechne.kennzahlen
         # Ohne Kontakt sind die Kontaktkraefte NaN (nicht vorhanden) - NaN an
         # derselben Stelle gilt als gleich
         check(f"{titel}: gemeinsam und verschachtelt bitgleich "
@@ -1569,6 +1597,214 @@ def test_gemeinsam_aendert_nichts_ohne_beides():
               all(np.array_equal(x, y, equal_nan=True) for x, y in zip(a, b)),
               str([float(np.nanmax(np.abs(x - y))) if x.shape == y.shape and x.size else x.shape
                    for x, y in zip(a, b)]))
+        z, s, u, konv = referenz[titel]
+        check(f"{titel}: wie 6a961e5 - {z} Zerlegungen, {s} Rückführungen, max |u|, Urteil",
+              all(k[0] == z and k[1] == s and abs(k[2] - u) <= 1e-9 * u and k[3] == konv
+                  for k in (ka, kb)),
+              f"verschachtelt {ka}, gemeinsam {kb}")
+
+
+def _block_nahe_der_grenzlast(s=0.9, stufen=1):
+    """Block 0,4 m aus hex8 4 x 4 x 4 auf einer starren Platte, Fuge mit
+    mu 0,3; oben Fz = s fy A und quer 0,2 Fz, E_t/E 0,5 %, 25 Schritte,
+    Toleranz 1e-3 - fast der ganze Block fließt, und die Änderung der
+    Newton-Schritte steigt bis zum 43-fachen der Last (Gegenprüfung
+    24.09.2026, Modell „grenzlast“)."""
+    from statik3d.model import ShellProp
+    fy = 235e6
+    Fz = s * fy * 0.16
+    m = Model("grenzlast")
+    m.add_material(Material("S", E=210e9, nu=0.3, fy=fy))
+    m.add_material(Material("Starr", E=210e12))
+    m.add_shell_prop(ShellProp("t", 0.05))
+    p = mesher.grid_plate(m, "Starr", "t", 1.0, 1.0, 2, 2, origin=(-0.5, -0.5, 0))
+    for k in p.ravel():
+        m.fix(int(k), "all")
+    platte = list(range(len(m.elements)))
+    box = mesher.grid_box(m, "S", 0.4, 0.4, 0.4, 4, 4, 4, origin=(-0.2, -0.2, 0.0))
+    unten = [int(k) for k in box[:, :, 0].ravel()]
+    oben = [int(k) for k in box[:, :, -1].ravel()]
+    m.add_contact_pair("Block/Platte", unten, platte, mu=0.3)
+    for k in oben:
+        m.load_node(k, Fz=-Fz / len(oben), Fx=0.2 * Fz / len(oben))
+    m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.005, laststufen=stufen,
+                                     iterationen=25, toleranz=1e-3)
+    return m
+
+
+def _kippender_stempel():
+    """Stempel tet4 0,2 m mit gewölbter Unterseite auf einem Sockel wie
+    :func:`_drehlagerartiges_modell`, Fuge mu 0,4, oben nur quer gehalten,
+    Auflast P und 0,3 P quer: die Ausmitte 0,06 m liegt über b/6, die Fuge
+    hebt auf einer Seite ab. fy so, dass elastisch σ_v = fy/0,4; 1 %, eine
+    Laststufe, 25 Schritte, 1e-3 (Gegenprüfung 24.09.2026, „kippen_tet4“)."""
+    def aufbau(P):
+        m = Model("kippen")
+        m.add_material(Material("S", E=210e9, nu=0.3))
+        s = mesher.grid_box(m, "S", 0.6, 0.6, 0.3, 6, 6, 3, typ="tet4")
+        n_sockel = len(m.elements)
+        for k in s[:, :, 0].ravel():
+            m.fix(int(k), "all")
+        p = mesher.grid_box(m, "S", 0.2, 0.2, 0.2, 4, 4, 4, origin=(0.2, 0.2, 0.3), typ="tet4")
+        X = m.nodes
+        for k in p.ravel():
+            x, y, z = X[int(k)]
+            X[int(k), 2] = z + 5e-5 * ((x - 0.3) ** 2 + (y - 0.3) ** 2) / 0.01 * (1.0 - (z - 0.3) / 0.2)
+        m.add_contact_pair("Stempel/Sockel", [int(k) for k in p[:, :, 0].ravel()],
+                           list(range(n_sockel)), mu=0.4)
+        oben = [int(k) for k in p[:, :, -1].ravel()]
+        for k in oben:
+            m.fix(k, [1])
+            m.load_node(k, Fz=-P / len(oben), Fx=0.3 * P / len(oben))
+        return m
+
+    q0 = max(pl.vergleichsspannung(np.asarray(v, float))
+             for v in solver.solve_static(aufbau(1.0)).solid_res.values())
+    m = aufbau(235e6 / (0.4 * q0))
+    m.materials["S"].fy = 235e6
+    m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.01, laststufen=1,
+                                     iterationen=25, toleranz=1e-3)
+    return m
+
+
+def _beide(bau, **einst):
+    """(verschachtelt, gemeinsam) je als (Ergebnis, Zerlegungen)."""
+    aus = []
+    for kontakt in ("verschachtelt", "gemeinsam"):
+        m = bau()
+        for k, v in einst.items():
+            setattr(m.plastizitaet, k, v)
+        m.plastizitaet.kontakt = kontakt
+        aus.append(_gezaehlt(m))
+    return aus
+
+
+def test_gemeinsam_im_budget():
+    """Gegenprüfung 24.09.2026: die Abnahme mit vollem Kontakt - in der
+    letzten Stufe der Abschluss - zählt nicht gegen die Schritte je Stufe.
+    Bis dahin verbrauchte sie einen Newton-Schritt: traf eine Stufe die
+    Toleranz im letzten erlaubten, hieß das „Plastizität nicht konvergiert
+    (Änderung 0.00e+00 > 0.0001)“, und der Abschluss wurde mit demselben F_p
+    ein zweites Mal gerechnet. Verschachtelt meldete in denselben Fällen
+    „konvergiert“; die Oberfläche lässt 1 bis 200 Schritte zu.
+
+    (a) Block mit Reibung, nichts fließt (fy × 100), zwei Laststufen, ein
+    Schritt je Stufe; (b) Block mit Reibung, fließend, eine Laststufe, vier
+    Schritte - am Stand 77903e5 beide „NICHT konvergiert“ mit zwei
+    Abschlussläufen. (c) Zwei Körper, Fuge mit µ 0,1, eine Laststufe, neun
+    Schritte: der neunte erreicht die Toleranz nach einer abgekürzten Lösung,
+    abgenommen wird darüber hinaus - zehn Rückführungen."""
+    from statik3d.gui.rechenliste import zustand_aus_info
+
+    def nichts_fliesst():
+        m = _fliessendes_kontaktmodell()
+        m.materials["S235"].fy *= 100.0
+        return m
+
+    for titel, bau, einst in (("(a) nichts fließt, 1 Schritt je Stufe", nichts_fliesst,
+                               {"iterationen": 1}),
+                              ("(b) fließend, 1 Laststufe, 4 Schritte", _fliessendes_kontaktmodell,
+                               {"laststufen": 1, "iterationen": 4})):
+        (ra, _za), (rg, _zg) = _beide(bau, **einst)
+        arten = [e["art"] for e in rg.info.get("laeufe") or []]
+        log = (rg.info.get("plastizitaet") or {}).get("log") or []
+        check(f"{titel}: gemeinsam „konvergiert“ wie verschachtelt, ein Abschluss",
+              zustand_aus_info(rg.info) == "konvergiert" == zustand_aus_info(ra.info)
+              and arten.count("Abschluss") == 1
+              and not any("nicht konvergiert" in z for z in log),
+              f"{zustand_aus_info(rg.info)} / {zustand_aus_info(ra.info)}; {arten}")
+
+    m = _drehlagerartiges_modell()
+    m.plastizitaet.laststufen = 1
+    m.plastizitaet.iterationen = 9
+    m.plastizitaet.kontakt = "gemeinsam"
+    r = solver.solve_static(m)
+    pz = r.info.get("plastizitaet") or {}
+    laeufe = r.info.get("laeufe") or []
+    check("(c) die Abnahme nach dem 9. von 9 Schritten zählt nicht mit: „konvergiert“, "
+          "10 Rückführungen, der letzte Lauf der Abschluss",
+          zustand_aus_info(r.info) == "konvergiert" and pz.get("iterationen") == 10
+          and laeufe and laeufe[-1]["art"] == "Abschluss" and laeufe[-2].get("abgekuerzt"),
+          f"{zustand_aus_info(r.info)}, {pz.get('iterationen')} Rückführungen, "
+          f"{[(e['art'], e['grund']) for e in laeufe[-2:]]}")
+
+
+def test_gemeinsam_rueckfall_verschachtelt():
+    """Gegenprüfung 24.09.2026: läuft der abgekürzte Newton weg, wird die
+    Laststufe vom Startwert an **verschachtelt** wiederholt - das Urteil ist
+    dann das verschachtelte, und in der ersten Laststufe auch jede Zahl.
+    Bis dahin rechnete der Rest der Stufe nach der Hälfte der Schritte
+    verschachtelt weiter, vom weggelaufenen Stand aus, und kam nicht zurück:
+    (a) Block nahe der Grenzlast, eine Stufe: 197 statt 61 Zerlegungen,
+    „NICHT konvergiert“; (b) der gequetschte Block mit vier Laststufen: 327
+    statt 84, „NICHT konvergiert“; beide verschachtelt „konvergiert“.
+    Gezählt wird dazu, was der Rückfall kostet: höchstens die Zerlegungen der
+    verworfenen Läufe. (c) Der kippende Stempel: verschachtelt
+    „nicht konvergiert“ (die Schlussabnahme, 1,2e-3 > 1e-3) - gemeinsam mit
+    demselben Urteil und denselben Zahlen."""
+    from statik3d.gui.rechenliste import zustand_aus_info
+    from tests.test_kontakthalt import laufbuch_pruefen
+    for titel, bau, einst in (("(a) Block nahe der Grenzlast, 1 Stufe", _block_nahe_der_grenzlast, {}),
+                              ("(b) gequetschter Block, 4 Stufen", _gequetschter_block,
+                               {"laststufen": 4}),
+                              ("(c) kippender Stempel, 1 Stufe", _kippender_stempel, {})):
+        (ra, za), (rg, zg) = _beide(bau, **einst)
+        laeufe = laufbuch_pruefen(rg, titel, pruefe=check)
+        verworfen = [e for e in laeufe if e.get("verworfen")]
+        abgekuerzt = [e for e in verworfen if e.get("abgekuerzt")]
+        log = (rg.info.get("plastizitaet") or {}).get("log") or []
+        check(f"{titel}: gemeinsam dasselbe Urteil wie verschachtelt",
+              zustand_aus_info(rg.info) == zustand_aus_info(ra.info),
+              f"gemeinsam: {zustand_aus_info(rg.info)}; verschachtelt: {zustand_aus_info(ra.info)}")
+        check(f"{titel}: … und bitgleiche Verschiebungen, Auflager- und Kontaktkräfte",
+              np.array_equal(np.asarray(rg.u, float), np.asarray(ra.u, float))
+              and np.array_equal(np.asarray(rg.reactions, float), np.asarray(ra.reactions, float))
+              and np.array_equal(np.asarray(rg.contact_forces, float),
+                                 np.asarray(ra.contact_forces, float)),
+              f"max |Δu| {float(np.abs(np.asarray(rg.u) - np.asarray(ra.u)).max()):.2e}")
+        check(f"{titel}: der verworfene Versuch steht im Laufbuch und im Protokoll",
+              verworfen and any("verschachtelt wiederholt" in z for z in log)
+              and int(rg.info.get("contact_laeufe_verworfen", -1))
+              == len(verworfen) - len(abgekuerzt),
+              f"{len(verworfen)} verworfen, davon {len(abgekuerzt)} abgekürzt")
+        mehr = sum(int(e["faktorisierungen"] or 0) for e in verworfen)
+        check(f"{titel}: der Rückfall kostet höchstens die Zerlegungen der verworfenen Läufe mehr",
+              zg <= za + mehr, f"{zg} gegen {za} Zerlegungen, verworfen {mehr}")
+
+
+def test_hilfsfesselung_ohne_vorlauf():
+    """Gegenprüfung 24.09.2026: gemeinsam gibt es keinen elastischen Vorlauf,
+    der sonst die freien Bewegungen findet. Scheitert darum erst der erste
+    plastische Lauf, hält der Löser die freien Bewegungen fest und rechnet
+    neu (solver._solve_loads). Bis dahin von keinem Test durchlaufen. Modell:
+    der fließende Block mit Reibung und daneben ein frei schwebender,
+    quer belasteter Würfel ohne Lager und Kontakt."""
+    from statik3d.gui.rechenliste import zustand_aus_info
+
+    def modell():
+        m = _fliessendes_kontaktmodell()
+        g = mesher.grid_box(m, "S235", 0.2, 0.2, 0.2, 2, 2, 2, origin=(2.0, 2.0, 0.0))
+        oben = g[:, :, -1].ravel()
+        for k in oben:
+            m.load_node(int(k), Fx=1000.0 / len(oben))
+        return m
+
+    erg = {}
+    for kontakt in ("verschachtelt", "gemeinsam"):
+        m = modell()
+        m.plastizitaet.kontakt = kontakt
+        meld = []
+        r = solver.solve_static(m, progress=lambda s, *a, **k: meld.append(str(s)))
+        erg[kontakt] = (r, meld)
+    (ra, _ma), (rg, mg) = erg["verschachtelt"], erg["gemeinsam"]
+    arten = [e["art"] for e in rg.info.get("laeufe") or []]
+    check("gemeinsam: freie Bewegungen am ersten plastischen Lauf gefunden und festgehalten",
+          any("wird mit Hilfsfesselung gerechnet" in z for z in mg) and "Vorlauf" not in arten,
+          str([z for z in mg if "Hilfsfesselung" in z][:1]) + f" {arten[:2]}")
+    ua, ug = np.asarray(ra.u, float)[:, :3], np.asarray(rg.u, float)[:, :3]
+    du = float(np.abs(ua - ug).max()) / float(np.abs(ua).max())
+    check("… „konvergiert“, Verschiebungen wie verschachtelt auf 1e-6",
+          zustand_aus_info(rg.info) == "konvergiert" and du <= 1e-6, f"{zustand_aus_info(rg.info)}, {du:.1e}")
 
 
 def main():
@@ -1593,7 +1829,10 @@ def main():
               test_gemeinsame_iteration_rechnet_dasselbe,
               test_gemeinsame_iteration_kein_falsches_konvergiert,
               test_ruecknahme_der_schlussabnahme,
-              test_gemeinsam_aendert_nichts_ohne_beides):
+              test_gemeinsam_aendert_nichts_ohne_beides,
+              test_gemeinsam_im_budget,
+              test_gemeinsam_rueckfall_verschachtelt,
+              test_hilfsfesselung_ohne_vorlauf):
         try:
             t()
         except Exception as ex:      # noqa: BLE001

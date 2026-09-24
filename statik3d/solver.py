@@ -3057,9 +3057,9 @@ def _kontakt_info_sammeln(res, cinfo: dict, art: str = "", start_von_lauf=None) 
     # Loesersitzung vom 22.09.2026). Die Abbruchzeile traegt jetzt ihren
     # Lauf und wird nicht zusammengefasst.
     cinfo["contact_letzter_lauf_konvergiert"] = laeufe[-1]["konvergiert"]
-    cinfo["contact_laeufe_nicht_konvergiert"] = sum(1 for e in laeufe
-                                                    if not (e["konvergiert"] or e["abgekuerzt"]))
+    cinfo["contact_laeufe_nicht_konvergiert"] = sum(1 for e in laeufe if not _lauf_zaehlt_nicht(e))
     cinfo["contact_laeufe_abgekuerzt"] = sum(1 for e in laeufe if e["abgekuerzt"])
+    cinfo["contact_laeufe_verworfen"] = _verworfen_voll(laeufe)
     abbruch = cinfo.get("contact_abbruch")
     eigene = [f"{z} (Kontaktlauf {lauf})" if abbruch and z == abbruch else z
               for z in (cinfo.get("contact_log") or [])]
@@ -3067,6 +3067,34 @@ def _kontakt_info_sammeln(res, cinfo: dict, art: str = "", start_von_lauf=None) 
     neu_log = [z for z in eigene if z not in alt_log]
     cinfo["contact_log"] = alt_log + neu_log
     return cinfo
+
+
+def _lauf_zaehlt_nicht(e: dict) -> bool:
+    """Zaehlt dieser Laufbuch-Eintrag **nicht** als nicht konvergiert? Wahr,
+    wenn er konvergiert ist, abgekuerzt (mit Absicht nach einem Schritt
+    beendet) oder verworfen: die gemeinsame Iteration hat seine Laststufe
+    verschachtelt wiederholt, vom Zustand vor ihm aus (24.09.2026) - weder
+    sein u noch sein Kontaktzustand geht ins Ergebnis ein."""
+    return bool(e["konvergiert"] or e.get("abgekuerzt") or e.get("verworfen"))
+
+
+def _laufbuch_zaehlen(res) -> None:
+    """Die Kennzahlen des Laufbuchs neu ableiten, nachdem Eintraege als
+    verworfen markiert wurden (_KontaktImNewton.zurueck). Nur fuer die
+    gemeinsame Iteration: dort gibt es keinen Vorlauf, das Laufbuch haelt
+    also jeden Lauf des Lastfalls, und ``contact_converged`` ist genau das
+    Und ueber die Laeufe, die zaehlen."""
+    laeufe = res.info.get("laeufe") or []
+    res.info["contact_converged"] = all(_lauf_zaehlt_nicht(e) for e in laeufe)
+    res.info["contact_laeufe_nicht_konvergiert"] = sum(1 for e in laeufe
+                                                       if not _lauf_zaehlt_nicht(e))
+    res.info["contact_laeufe_verworfen"] = _verworfen_voll(laeufe)
+
+
+def _verworfen_voll(laeufe) -> int:
+    """Verworfene Laeufe, die nicht schon als abgekuerzt zaehlen - so bleibt
+    "N von M" (rechenliste.zustand_aus_info) eine einfache Differenz."""
+    return sum(1 for e in laeufe if e.get("verworfen") and not e.get("abgekuerzt"))
 
 
 def _fliessarten(info: dict, einst) -> list:
@@ -3159,6 +3187,148 @@ def _schlussabnahme_kontakt(res) -> None:
                                          and bool(res.info["laeufe"][-1]["konvergiert"]))
 
 
+class _KontaktImNewton:
+    """Was plastizitaet._newton vom Kontakt des Lastfalls braucht (24.09.2026):
+    die Loesung selbst und, in der gemeinsamen Iteration von Fliessen und
+    Kontakt, die Entscheidungen darueber. Die Schleife einer Laststufe steht
+    in plastizitaet._stufe_gemeinsam; **wann** abgekuerzt wird und wann eine
+    Stufe verschachtelt wiederholt wird, steht hier - so die Absprache mit
+    der Element-Sitzung (in plastizitaet.py nur die Schnittstelle).
+
+    * ``loesen(F, dK=None, voll=True)`` - eine Loesung des Lastfalls, warm
+      vom letzten Kontaktzustand; ``voll=False`` rechnet einen Kontaktschritt
+      und reicht den Zustand weiter (solve_with_contact(kurz=1));
+    * ``gemeinsam`` - ob ueberhaupt abgekuerzt werden darf;
+    * ``stufe_beginnt()`` - nach dem Startwert einer Laststufe: sein
+      Kontaktzustand wird gemerkt;
+    * ``abgekuerzt()`` - war die letzte Loesung abgekuerzt?
+    * ``naechster(aenderungen)`` - "kurz", "voll" oder "zurueck" fuer die
+      naechste Loesung der Stufe, nach den Aenderungen der Stufe bis hier;
+    * ``wiederholen()`` - war in dieser Stufe etwas abgekuerzt? Sonst ist sie
+      der verschachtelte Newton selbst, und eine Wiederholung rechnete
+      dasselbe noch einmal;
+    * ``zurueck()`` - den gemerkten Zustand wieder einsetzen; die Laeufe seit
+      dem Startwert sind verworfen.
+
+    Die Regeln (Stichprobe vom 24.09.2026, 32 Rechnungen, Theoriehandbuch
+    § 5e.3):
+
+    * abgekuerzt wird hoechstens :attr:`KURZ_MAX` mal je Stufe, und nur so
+      lange die Aenderung nicht zweimal hintereinander waechst, nachdem sie
+      einmal gefallen war - dann laeuft der abgekuerzte Newton weg (am
+      gequetschten Block mit vier Laststufen, Stufe 3: 0,79 / 1,01 / 2,41 /
+      7,25 / 18,0 ... bis 28);
+    * verfehlt die Abnahme die Toleranz um mehr als :attr:`ABNAHME_WEITER`
+      Toleranzen, hat der volle Kontakt den Zustand merklich verschoben: die
+      Stufe wird wiederholt. Am gequetschten Block mit drei Laststufen
+      (3,2e-3 bei Toleranz 1e-4) endete das Weiterrechnen in einem anderen
+      Zustand, 27,8 N/mm2 neben verschachtelt und "nicht konvergiert"; beim
+      abhebenden Block (3,5e-3 bei 1e-3) 0,001 N/mm2 neben verschachtelt;
+    * sonst, und nach :attr:`KURZ_MAX` abgekuerzten Schritten, wird voll
+      weitergerechnet, so lange die Aenderung von Schritt zu Schritt faellt;
+      faellt sie nicht, wird die Stufe wiederholt.
+
+    Wiederholt wird nur eine Stufe, in der etwas abgekuerzt war; die
+    Wiederholung ist der verschachtelte Newton vom Startwert der Stufe an.
+    Beginnt sie am selben Zustand wie verschachtelt - in der ersten
+    Laststufe immer -, ist ihr Ergebnis genau das verschachtelte (bitgleich
+    gemessen am Block nahe der Grenzlast, am gequetschten Block mit vier
+    Laststufen und am kippenden Stempel, tests/test_plastizitaet)."""
+
+    #: Hoechstens so viele abgekuerzte Newton-Schritte je Laststufe,
+    #: unabhaengig von ``iterationen`` (bis zu 12 brauchten Stufen, die
+    #: gemeinsam konvergierten: Stempel hex8 mit Gleiten, 1 und 3 Laststufen)
+    KURZ_MAX = 12
+    #: Eine Abnahme, die die Toleranz um mehr als so viele Toleranzen
+    #: verfehlt, beendet die gemeinsame Iteration der Stufe
+    ABNAHME_WEITER = 10.0
+
+    def __init__(self, rechnen, res, start, aktiv, log: list, gemeinsam: bool, tol: float = 1e-3):
+        self.rechnen, self.res, self.log = rechnen, res, log
+        self.gemeinsam = bool(gemeinsam)
+        self.tol = float(tol)
+        self.halter = {"start": start, "R": None, "aktiv": aktiv, "abgekuerzt": False}
+        self.aufrufe: list = []     # je Loeseraufruf (Index im Laufbuch oder None, mit Tangente)
+        self._stufe = None
+        self._stufen = 0
+
+    def loesen(self, Fg, dK=None, voll=True):
+        res, halter = self.res, self.halter
+        vor = len(res.info.get("laeufe") or [])
+        u_, R_, a_ = self.rechnen(Fg, halter["start"], dK, None if voll else 1)
+        laeufe = res.info.get("laeufe") or []
+        nach = len(laeufe)
+        self.aufrufe.append((vor if nach == vor + 1 else None, dK is not None))
+        halter["abgekuerzt"] = nach == vor + 1 and bool(laeufe[-1].get("abgekuerzt"))
+        halter["R"], halter["aktiv"] = R_, a_
+        if getattr(res, "kontaktzustand", None) is not None:
+            halter["start"] = res.kontaktzustand
+        s = self._stufe
+        if s is not None:
+            s["voll"] = s["voll"] or bool(voll)
+            s["abgekuerzt"] = s["abgekuerzt"] or halter["abgekuerzt"]
+        return u_
+
+    def stufe_beginnt(self):
+        self._stufen += 1
+        self._stufe = {"start": self.halter["start"], "lauf": len(self.res.info.get("laeufe") or []),
+                       "nr": self._stufen, "voll": False, "abgekuerzt": False, "kurz": 0,
+                       "gefallen": False, "bezug": None}
+
+    def abgekuerzt(self) -> bool:
+        return bool(self.halter["abgekuerzt"])
+
+    def wiederholen(self) -> bool:
+        return bool(self._stufe and self._stufe["abgekuerzt"])
+
+    def naechster(self, aenderungen) -> str:
+        s, d = self._stufe, list(aenderungen)
+        s["grund"] = None
+        if s["bezug"] is None and s["voll"]:
+            # Die Abnahme - die erste volle Loesung der Stufe nach
+            # abgekuerzten - hat die Toleranz verfehlt
+            if d[-1] > self.ABNAHME_WEITER * self.tol and self.wiederholen():
+                s["grund"] = (f"verfehlt die Abnahme mit vollem Kontakt die Toleranz "
+                              f"({d[-1]:.2e} > {self.ABNAHME_WEITER:g} × {self.tol:g})")
+                return "zurueck"
+            s["bezug"] = d[-1]
+            return "voll"
+        if s["bezug"] is None and s["kurz"] >= self.KURZ_MAX:
+            s["bezug"] = d[-1]
+            return "voll"
+        if s["bezug"] is not None:
+            # Voll weiter, gemessen an der Aenderung davor
+            if d[-1] < s["bezug"] or not self.wiederholen():
+                s["bezug"] = min(s["bezug"], d[-1])
+                return "voll"
+            s["grund"] = "fällt die Änderung mit vollem Kontakt nicht mehr"
+            return "zurueck"
+        if s["gefallen"] and len(d) >= 3 and d[-1] > d[-2] > d[-3]:
+            if self.wiederholen():
+                s["grund"] = "wächst die Änderung zweimal hintereinander"
+                return "zurueck"
+            s["bezug"] = d[-1]
+            return "voll"
+        if len(d) >= 2 and d[-1] < d[-2]:
+            s["gefallen"] = True
+        s["kurz"] += 1
+        return "kurz"
+
+    def zurueck(self):
+        s = self._stufe
+        self.halter["start"] = s["start"]
+        laeufe = self.res.info.get("laeufe") or []
+        verworfen = laeufe[s["lauf"]:]
+        for e in verworfen:
+            e["verworfen"] = True
+        _laufbuch_zaehlen(self.res)
+        grund = s.get("grund") or "ist das Budget der Stufe aufgebraucht"
+        self.log.append(f"Plastizität: Laststufe {s['nr']} - gemeinsam gerechnet {grund}; die "
+                        f"Stufe wird vom Startwert an verschachtelt wiederholt "
+                        f"({len(verworfen)} Kontaktläufe verworfen)")
+        self._stufe = None
+
+
 def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
                           gemeinsam: bool = False):
     """Fliessen der Volumen (plastizitaet.iteration) um den linearen
@@ -3167,38 +3337,22 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
     Rueckgabe (u, R, aktiv, temp); temp["sigma0"] traegt D eps_p, damit der
     Spannungsnachlauf sigma = D eps - D eps_p rechnet.
 
-    ``gemeinsam`` (:func:`_gemeinsam`): der Newton darf Loesungen mit
-    abgekuerztem Kontakt anfordern (``voll=False``) - dann rechnet der
-    Kontaktlauf einen Schritt und reicht seinen Zustand weiter, wie jeder Lauf
-    dieses Lastfalls. ``kontakt_abnahme`` sagt dem Newton, ob die letzte
-    Loesung abgekuerzt war."""
+    Iteriert der Loesungsweg selbst - Kontakt oder ausfallende Zugstaebe -,
+    bekommt der Newton :class:`_KontaktImNewton` mit: dann kann der
+    Abschlusslauf den Zustand noch aendern, und der Newton prueft F_p an
+    seiner Loesung (Schlussabnahme); mit ``gemeinsam`` (:func:`_gemeinsam`)
+    dazu die gemeinsame Iteration. Sonst rechnet er Aufruf fuer Aufruf wie
+    bis zum 23.09.2026."""
     from . import plastizitaet as pl
-    halter = {"start": start, "R": None, "aktiv": aktiv, "abgekuerzt": False}
-    aufrufe: list = []      # je Loeseraufruf (Index im Laufbuch oder None, mit Tangente)
-
-    def loesen(Fg, dK=None, voll=True):
-        vor = len(res.info.get("laeufe") or [])
-        u_, R_, a_ = rechnen(Fg, halter["start"], dK, None if voll else 1)
-        laeufe = res.info.get("laeufe") or []
-        nach = len(laeufe)
-        aufrufe.append((vor if nach == vor + 1 else None, dK is not None))
-        halter["abgekuerzt"] = nach == vor + 1 and bool(laeufe[-1].get("abgekuerzt"))
-        halter["R"], halter["aktiv"] = R_, a_
-        if getattr(res, "kontaktzustand", None) is not None:
-            halter["start"] = res.kontaktzustand
-        return u_
-
-    def kontakt_abnahme():
-        # Nicht abgekuerzt: der Lauf ist auskonvergiert oder nach den Regeln
-        # eines vollen Laufs zu Ende gegangen (Deckel, Schrittgrenze) - dann
-        # gilt, was bisher nach einem Newton-Schritt galt
-        return not halter["abgekuerzt"]
-
     log: list = []
-    u, zustand, F_p, info = pl.iteration(model, F, loesen, model.plastizitaet, aktiv, log=log,
+    kn = _KontaktImNewton(rechnen, res, start, aktiv, log, gemeinsam,
+                          float(model.plastizitaet.toleranz))
+    iteriert = model.has_contact or model.hat_ausfallstaebe()
+    u, zustand, F_p, info = pl.iteration(model, F, kn.loesen, model.plastizitaet, aktiv, log=log,
                                          progress=lambda t: _melde(progress, t),
-                                         loesen_tangente=loesen,
-                                         kontakt_abnahme=kontakt_abnahme if gemeinsam else None)
+                                         loesen_tangente=kn.loesen,
+                                         kontakt=kn if iteriert else None)
+    halter, aufrufe = kn.halter, kn.aufrufe
     _fliessarten_eintragen(res, info, model.plastizitaet, aufrufe)
     if gemeinsam:
         _schlussabnahme_kontakt(res)
@@ -4714,7 +4868,7 @@ def _teilergebnis_anhaengen(model, system, res, ex, F, feq=None, q=None, temp=No
         _eintrag["faktorisierungen"] = None      # nicht bekannt: der Lauf gab kein cinfo zurueck
         _laeufe_liste = _alte + [_eintrag]
         _laeufe = len(_laeufe_liste)
-        _nicht = sum(1 for e in _laeufe_liste if not (e["konvergiert"] or e.get("abgekuerzt")))
+        _nicht = sum(1 for e in _laeufe_liste if not _lauf_zaehlt_nicht(e))
         res.info.update({"abbruch": str(ex).splitlines()[0], "abbruch_iteration": int(ex.iteration),
                          "laeufe": _laeufe_liste,
                          "contact_laeufe": _laeufe, "contact_letzter_lauf_konvergiert": False,
