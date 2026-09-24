@@ -4433,7 +4433,7 @@ nichts stillschweigend Übergangenes:
 | Abdeckung der Kontaktseite | ≥ 95 % |
 | Gegenkörper der Kontaktbedingung ohne eine einzige Facette | 0 |
 | Haltegüte je Teiltragwerk | ≥ 10⁻⁴ |
-| Knoten im Rechennetz ohne Element (nicht gezählt: über Kopplung, starren Körper oder Spaltelement an einem Elementknoten angeschlossen) | 0 |
+| Knoten im Rechennetz ohne Element (nicht gezählt: über Kopplungen oder einen starren Körper in allen drei Richtungen am Netz gehalten, Anschlag am Spaltelement) | 0 |
 | Formgüte des schlechtesten Elements je Körper | ≥ 0,05 |
 | Randtreue je Körper | ≥ 99 % |
 | **Volumenbilanz je Körper**: Elemente gegen Randflächen | ≤ 0,5 % (an windschiefen Flächen zuzüglich der Sehnen) |
@@ -4472,8 +4472,12 @@ gerechnet). Das zweite Maß braucht es für längliche Elemente: Dort folgt die
 Dicke der kurzen Seite, die längste Kante aber der langen. Und der Hohlraum
 ist **klein** (seit 23.09.2026): höchstens 2 · 10⁻⁶ · L³ je vier seiner
 Seiten, L die längste Elementkante des Körpers. Der freie Vernetzer sortiert
-Tetraeder bis 10⁻⁶ · h³ aus, h seine Kantenlänge, und L liegt bei h (Platte
-mit Bohrung, h = 50 mm: L = 50,9 mm). Solche Hohlräume
+Tetraeder bis 10⁻⁶ · h³ aus, h seine Kantenlänge. An den gemessenen freien
+Netzen war L das 1,02- bis 2,0-Fache von h (Platte mit Bohrung, h = 50 mm:
+L = 50,9 mm; Würfel und L-Prisma mit h = 0,1 bis 0,5 m: 1,68 h bis 2,0 h),
+die Grenze dort also das 2,1- bis 16-Fache von 10⁻⁶ · h³. Gesetzt ist sie an
+gemessenen Hohlräumen (siehe „Fehlt ein flacher Tetraeder“), nicht aus h
+hergeleitet. Solche Hohlräume
 bleiben, wenn der freie Vernetzer flache Tetraeder aussortiert (Platte
 0,9 × 0,9 × 0,035 m mit Bohrung: 8 Seiten, zwei Hohlräume von zusammen
 0,056 mm³), oder wenn beiderseits einer Fläche dieselben Knoten verschieden in
@@ -4634,10 +4638,24 @@ Vernetzer koppelt sie starr an das neue Netz (306 Kopplungen). Bis zum
 Last darauf ginge verloren“, obwohl das Modell trägt (Fz = −100 kN und
 Fx = 100 kN an einer Deckelecke, Summe der Lagerkräfte in z 100 000,0 N).
 Seither zählt ein
-Knoten, der über eine Kopplung, einen starren Körper oder ein Spaltelement an
-einem Elementknoten hängt, auch über eine Kette solcher Verbindungen, nicht
-als „ohne Element“; eine Kopplung ohne wirksame Richtung schließt nichts an.
-Ein wirklich loser Knoten bleibt ein FEHLER. An echten Importen (RFEM,
+Knoten nicht als „ohne Element“, der über Kopplungen oder einen starren
+Körper (RBE2) in allen drei Richtungen am Netz gehalten ist, auch über eine
+Kette solcher Verbindungen, und ebenso der Master einer Verteilkopplung
+(RBE3), deren Slaves alle gehalten sind. Was nur in einem Teil der
+Richtungen hält, bleibt ein FEHLER: Dort ginge die Last verloren, oder die
+Rechnung bricht ab. Gemessen am 24.09.2026 an einem Würfel aus 2 × 2 × 2
+Elementen, 1000 N am Knoten: Eine Kopplung nur in z trägt die Last in z,
+die in x und y bleibt als Lagerkraft am Knoten selbst stehen; ebenso ein
+Spaltelement allein, dazu bricht Zug ab; am Slave eines RBE3 mit losem
+Master bricht jede Last ab (Gleichungssystem singulär); ein RBE2 mit einem
+einzigen Slave an einem Volumenknoten hält nur in Richtung des Versatzes
+(an einem Stabende ohne Gelenk oder einem Schalenknoten in allen drei).
+Ein RBE3 hält seine Slaves nicht, sie zählen als lose, auch wenn der
+Master ein Element hat. Ein Anschlag – ein Knoten, der in x, y und z starr
+gelagert ist und über ein Spaltelement am Tragwerk hängt, wie im Beispiel
+„Kontakt: abhebendes Lager“ – gilt als angeschlossen: Eine Last auf ihm geht
+in sein Lager. Eine Kopplung ohne wirksame Richtung schließt
+nichts an, ein wirklich loser Knoten bleibt ein FEHLER. An echten Importen (RFEM,
 InfoCAD) ist das nicht gemessen. Der eigene Vernetzer ergibt mit denselben Einstellungen
 dasselbe Netz, an fünf Prismen nachgemessen. Bei Befunden an seinen Netzen
 hilft neu vernetzen allein also nicht; was bei einer Lücke im Netzrand

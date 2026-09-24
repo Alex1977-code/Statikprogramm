@@ -792,49 +792,238 @@ def _abnahme_halteguete(model, guete: list = None) -> list:
     return aus
 
 
+_KEIN_RAUM = np.zeros((3, 0))
+
+
+def _raum(V) -> np.ndarray:
+    """Orthonormalbasis (3, k) des Raums, den die Spalten von ``V`` aufspannen."""
+    V = np.asarray(V, float).reshape(3, -1)
+    if not V.shape[1]:
+        return _KEIN_RAUM
+    U, s, _vt = np.linalg.svd(V, full_matrices=False)
+    if not len(s) or s[0] <= 0.0:
+        return _KEIN_RAUM
+    return U[:, s > 1e-9 * s[0]]
+
+
+def _schnittraum(U, V) -> np.ndarray:
+    """Orthonormalbasis des Schnitts zweier Raeume (Orthonormalbasen U, V)."""
+    if not U.shape[1] or not V.shape[1]:
+        return _KEIN_RAUM
+    if U.shape[1] == 3:
+        return V
+    if V.shape[1] == 3:
+        return U
+    _u, s, Wt = np.linalg.svd(np.hstack([U, -V]))
+    rang = int((s > 1e-9).sum())
+    return _raum(U @ Wt[rang:, :U.shape[1]].T)
+
+
+def _schief(r) -> np.ndarray:
+    """[r]x: _schief(r) @ t = r x t."""
+    return np.array([[0.0, -r[2], r[1]], [r[2], 0.0, -r[0]], [-r[1], r[0], 0.0]])
+
+
+def _drehsteife_knoten(model) -> set:
+    """Knoten, deren Verdrehung ein Element haelt: Schalenknoten und
+    Stabenden ohne Momentengelenk. Gemessen am 24.09.2026 (RBE2 mit einem
+    Slave, 0,5 m neben dem Master in x, y oder z, 1000 N am Slave in x, y
+    und z): am Stabende (IPE 200) und am Schalenknoten (Platte aus
+    grid_plate) gingen alle neun Lasten in die Lager; am Stabende mit
+    Gelenken 9, 10, 11 nur die Last in Richtung des Versatzes, die anderen
+    sechs Laeufe brachen ab (Gleichungssystem singulaer) - wie an einem
+    Volumenknoten."""
+    from .assemble import SHELL_TYPES
+    aus = set()
+    for e in model.elements:
+        if e.typ in SHELL_TYPES:
+            aus.update(int(n) for n in e.nodes)
+        elif e.typ == "beam":
+            gel = set(int(h) for h in (getattr(e, "hinges", None) or []))
+            for j, n in enumerate(e.nodes[:2]):
+                if not gel & set(range(3 + 6 * j, 6 + 6 * j)):
+                    aus.add(int(n))
+    return aus
+
+
+def _starr_gelagert(model) -> set:
+    """Knoten, die ein Knotenlager in x, y und z starr haelt (ohne Ausfall,
+    Schlupf, Reibung oder Grenzkraft)."""
+    richt: dict = {}
+    for s in (getattr(model, "supports", None) or []):
+        for d in range(3):
+            try:
+                b = s.dof_behaviour(d)
+            except Exception:                     # noqa: BLE001 - fremdes Lager
+                continue
+            if b.typ == "rigid" and not b.nonlinear:
+                richt.setdefault(int(s.node), set()).add(d)
+    return {n for n, r in richt.items() if len(r) == 3}
+
+
 def _angeschlossene_knoten(model, belegt: np.ndarray) -> np.ndarray:
-    """Knoten ohne Element, die ueber Kopplungen (mit wirksamer Richtung),
-    starre Koerper oder Spaltelemente an einem Elementknoten haengen - auch
-    ueber eine Kette solcher Verbindungen. ``belegt``: Maske der Knoten, die
-    ein Element tragen.
+    """Knoten ohne Element, die in allen drei Verschiebungsrichtungen am Netz
+    gehalten sind - ueber Kopplungen, starre Koerper (RBE2) oder als Master
+    einer Verteilkopplung (RBE3), auch ueber eine Kette -, dazu Anschlaege
+    (unten). ``belegt``: Maske der Knoten, die ein Element tragen.
 
-    Ein solcher Knoten traegt: eine Last darauf geht ueber die Verbindung ins
-    Netz. So koppelt der Vernetzer Knoten mit Knotenlager, die nach dem
-    Neuvernetzen neben dem Netz stehen (Model.netzknoten_loeschen schuetzt
-    sie); am abgestuften Netz 20:1 117 Knoten ueber 306 starre Kopplungen,
-    und das Modell rechnet (Fz = -100 kN, Summe der Reaktionen in z
-    100 000,0 N). Bis zum 23.09.2026 meldete die Abnahme sie als „FEHLER
-    Knoten ohne Element 117" (Nebenbefund B099).
+    Nur ein solcher Knoten traegt: eine Last darauf geht in jeder Richtung
+    ueber die Verbindung ins Netz. So koppelt der Vernetzer Knoten mit
+    Knotenlager, die nach dem Neuvernetzen neben dem Netz stehen
+    (Model.netzknoten_loeschen schuetzt sie, fugen.stabenden_koppeln koppelt
+    sie in x, y und z starr); am abgestuften Netz 20:1 117 Knoten ueber 306
+    Kopplungen, und das Modell rechnet (Fz = -100 kN, Summe der Reaktionen
+    in z 100 000,0 N). Bis zum 23.09.2026 meldete die Abnahme sie als
+    „FEHLER Knoten ohne Element 117" (Nebenbefund B099).
+
+    Gehalten ist eine Richtung, wenn eine dieser Verbindungen sie an einen
+    Knoten bindet, der in ihr gehalten ist (Elementknoten in allen dreien):
+
+    * eine Kopplung in ihren wirksamen Richtungen (Kopplung.paare) - der
+      Schnitt mit dem, was am Partner gehalten ist;
+    * ein RBE2: Master und Slaves bewegen sich als ein starrer Koerper
+      (u_s = u_m + theta_m x r_s). Gehalten ist, was die gehaltenen
+      Richtungen seiner Glieder von dieser Bewegung festlegen, dazu die
+      Verdrehung eines drehsteifen Masters (_drehsteife_knoten). Ein
+      Slave an einem Volumenknoten als einzigem Glied haengt deshalb nur
+      in Richtung des Versatzes;
+    * ein RBE3 haelt nur seinen Master, und nur wenn alle Slaves mit
+      Gewicht gehalten sind: der Master ist ihr gewichtetes Mittel, die
+      Slaves versteift er nicht (model.StarrKoerper).
+
+    Nicht gezaehlt werden Spaltelemente: sie halten nur in ihrer Richtung
+    und nur auf Druck. Ausgenommen ist der Anschlag: ein Knoten, der in x, y
+    und z starr gelagert ist und ueber ein Spaltelement an einem gehaltenen
+    Knoten haengt (examples_lib.contact_example,
+    tests.test_solver_ext.test_gap_element). Eine Last auf ihm geht in sein
+    Lager, und das Lager wirkt, wie das Spaltelement es vorgibt, nur auf
+    Druck in dessen Richtung. Ein gelagerter Knoten, der nur ueber eine
+    Kopplung in einem Teil der Richtungen haengt, bleibt dagegen lose: dort
+    hielte sein Lager das Tragwerk nur in diesen Richtungen, und ob das so
+    gewollt ist, sieht die Abnahme nicht (fugen.stabenden_koppeln koppelt
+    Lagerknoten in allen dreien).
+
+    Die Fassung vom 23.09.2026 zaehlte jede Verbindung, gleich in welcher
+    Richtung, und schwieg zu den folgenden Faellen (Gegenpruefung vom
+    24.09.2026, Maengel 1 und 4). Gemessen am 24.09.2026 (Wuerfel 2 x 2 x 2
+    hex8, unten gelagert, 1000 N am Knoten ohne Element in x, y, z;
+    tests.test_diagnose._knoten_am_wuerfel), jetzt jeder ein FEHLER:
+
+    * Kopplung nur in z an einem Deckelknoten: die Last in z geht in die
+      Lager, die in x und in y bleibt als Reaktion am Knoten selbst stehen
+      und erreicht das Tragwerk nie;
+    * RBE3 mit losem Master und einem losen Slave (neben den neun
+      Deckelknoten): jede Last am Slave bricht ab (Gleichungssystem
+      singulaer); ohne den losen Slave traegt der Master (Lagerkraefte
+      -1000 N);
+    * RBE2 am Deckelknoten mit einem Slave 0,5 m daneben in x: die Last in
+      x traegt, die in y und z brechen ab;
+    * Spaltelement allein: die Last in x und y bleibt am Knoten, Zug in
+      Richtung des Spalts bricht ab (KontaktAbbruch), nur Druck traegt.
+
+    Getragen und ohne Befund: RBE2 mit losem Master und losem Slave neben
+    den Deckelknoten, Kopplung in x, y und z, zwei Kopplungen in x+y, z und
+    x-y, Kopplung in x und y und in z ueber einen Zwischenknoten, der selbst
+    nur in z haengt (er bleibt lose: an ihm bleiben x und y stehen).
+
+    Ein Slave eines RBE3 an einem gehaltenen Master ist rechnerisch
+    festgelegt (am Wuerfel trugen alle drei Lasten), er zaehlt trotzdem als
+    lose: das RBE3 soll ihn nicht halten.
     """
-    from scipy import sparse
-    from scipy.sparse import csgraph
     nn = int(model.nn)
-    a, b = [], []
+    an = np.zeros(nn, bool)
+    offen = ~np.asarray(belegt[:nn], bool)
+    if not offen.any():
+        return an
+    X = np.asarray(model.nodes[:nn], float)
+    voll = np.eye(3)
+    halt: dict = {}                       # offener Knoten -> gehaltener Raum
 
-    def kante(i, j):
-        i, j = int(i), int(j)
-        if 0 <= i < nn and 0 <= j < nn and i != j:
-            a.append(i)
-            b.append(j)
+    def raum(i):
+        return voll if not offen[i] else halt.get(i, _KEIN_RAUM)
+    kopp = []
     for kp in (getattr(model, "kopplungen", None) or []):
+        a, b = int(getattr(kp, "node_a", -1)), int(getattr(kp, "node_b", -1))
+        if not (0 <= a < nn and 0 <= b < nn) or a == b or not (offen[a] or offen[b]):
+            continue
         paare = getattr(kp, "paare", None)
         # Eine Kopplung ohne wirksame Richtung (alle Steifigkeiten 0) haelt nichts
-        if paare is None or any(True for _p in paare()):
-            kante(getattr(kp, "node_a", -1), getattr(kp, "node_b", -1))
+        D = _raum(np.array([v for v, _k in paare()]).T) if paare else _KEIN_RAUM
+        if D.shape[1]:
+            kopp.append((a, b, D))
+    rbe2, rbe3 = [], []
     for sk in (getattr(model, "starrkoerper", None) or []):
-        for s in (getattr(sk, "slaves", None) or []):
-            kante(getattr(sk, "master", -1), s)
-    for g in (getattr(model, "gap_elements", None) or []):
-        kante(getattr(g, "node_a", -1), getattr(g, "node_b", -1))
-    an = np.zeros(nn, bool)
-    if not a:
-        return an
-    G = sparse.coo_matrix((np.ones(len(a), np.int8), (a, b)), shape=(nn, nn))
-    _n, marke = csgraph.connected_components(G, directed=False)
-    mit_element = np.zeros(int(marke.max()) + 1, bool)
-    mit_element[marke[belegt]] = True
-    an[:] = mit_element[marke] & ~belegt
-    return an
+        # dieselbe Auswahl der Slaves wie assemble.starrkoerper
+        mst = int(getattr(sk, "master", -1))
+        sl = [int(x) for x in (getattr(sk, "slaves", None) or [])
+              if 0 <= int(x) < nn and int(x) != mst]
+        if not sl or not 0 <= mst < nn or not offen[[mst] + sl].any():
+            continue
+        if str(getattr(sk, "art", "RBE2")).upper() == "RBE3":
+            gew = list(getattr(sk, "gewichte", None) or [])
+            gew = gew if len(gew) == len(sl) else [1.0] * len(sl)
+            if offen[mst]:
+                rbe3.append((mst, [s for s, w in zip(sl, gew) if float(w) != 0.0]))
+        else:
+            rbe2.append([mst] + sl)
+    dreh = _drehsteife_knoten(model) if rbe2 else set()
+    spalt = [(int(g.node_a), int(g.node_b)) for g in (getattr(model, "gap_elements", None) or [])
+             if 0 <= int(g.node_a) < nn and 0 <= int(g.node_b) < nn]
+    anschlag = _starr_gelagert(model) if spalt else set()
+    spalt = [(a, b) for a, b in spalt if (offen[a] and a in anschlag) or (offen[b] and b in anschlag)]
+
+    def starr(glieder):
+        """{Glied: gehaltener Raum} eines RBE2 aus seinen Gliedern."""
+        mst = glieder[0]
+        r = X[glieder] - X[mst]
+        Lr = float(np.linalg.norm(r, axis=1).max()) or 1.0
+        B = [np.hstack([voll, -_schief(ri / Lr)]) for ri in r]
+        zeilen = [raum(p).T @ Bp for p, Bp in zip(glieder, B) if raum(p).shape[1]]
+        if mst in dreh and not offen[mst]:
+            zeilen.append(np.hstack([np.zeros((3, 3)), voll]))
+        if not zeilen:
+            return {}
+        _u, s, Wt = np.linalg.svd(np.vstack(zeilen))
+        N = Wt[int((s > 1e-9 * s[0]).sum()):].T          # freie Starrkoerperbewegung
+        aus = {}
+        for p, Bp in zip(glieder, B):
+            if not offen[p] or an[p]:
+                continue
+            if not N.shape[1]:
+                aus[p] = voll
+                continue
+            U, sv, _vt = np.linalg.svd(Bp @ N)
+            aus[p] = U[:, int((sv > 1e-9).sum()):]
+        return aus
+    while True:
+        dazu: dict = {}
+        for a, b, D in kopp:
+            for i, j in ((a, b), (b, a)):
+                if offen[i] and not an[i]:
+                    S = _schnittraum(D, raum(j))
+                    if S.shape[1]:
+                        dazu.setdefault(i, []).append(S)
+        for glieder in rbe2:
+            for p, S in starr(glieder).items():
+                if S.shape[1]:
+                    dazu.setdefault(p, []).append(S)
+        for mst, sl in rbe3:
+            if sl and not an[mst] and all(not offen[s] or an[s] for s in sl):
+                dazu.setdefault(mst, []).append(voll)
+        for a, b in spalt:                  # Anschlag, siehe oben
+            for i, j in ((a, b), (b, a)):
+                if offen[i] and not an[i] and i in anschlag and (not offen[j] or an[j]):
+                    dazu.setdefault(i, []).append(voll)
+        weiter = False
+        for i, liste in dazu.items():
+            alt = raum(i)
+            neu = _raum(np.hstack([alt] + liste))
+            if neu.shape[1] > alt.shape[1]:
+                halt[i] = neu
+                an[i] = neu.shape[1] == 3
+                weiter = True
+        if not weiter:
+            return an
 
 
 def _abnahme_netz(model) -> list:
@@ -845,9 +1034,10 @@ def _abnahme_netz(model) -> list:
     kn = np.fromiter(itertools.chain.from_iterable(e.nodes for e in model.elements), np.int64)
     belegt = np.zeros(nn, bool)
     belegt[kn[(kn >= 0) & (kn < nn)]] = True
-    # Knoten, die ueber eine Kopplung, einen starren Koerper oder ein
-    # Spaltelement an einem Elementknoten haengen, tragen (siehe
-    # _angeschlossene_knoten) - sie sind nicht „ohne Element"
+    # Knoten, die ueber Kopplungen oder starre Koerper in allen drei
+    # Richtungen am Netz haengen, tragen (siehe _angeschlossene_knoten) -
+    # sie sind nicht „ohne Element". Was nur in einem Teil der Richtungen
+    # haelt, bleibt einer: dort ginge die Last verloren.
     lose = np.flatnonzero(~belegt & ~_angeschlossene_knoten(model, belegt)).tolist()
     if lose:
         aus.append(Befund(
@@ -855,8 +1045,11 @@ def _abnahme_netz(model) -> list:
             wert=float(len(lose)), grenze=0.0,
             text=f"{len(lose)} Knoten im Rechennetz hängen an keinem Element "
                  f"(z. B. {', '.join('K' + str(k) for k in lose[:6])}"
-                 + (" …" if len(lose) > 6 else "") + ") - sie tragen nichts, "
-                 "und eine Last darauf ginge verloren."))
+                 + (" …" if len(lose) > 6 else "") + ") und sind auch über "
+                 "Kopplungen oder starre Körper nicht in allen drei Richtungen "
+                 "am Netz gehalten - eine Last darauf ginge ganz oder zum Teil "
+                 "verloren, oder die Rechnung bricht ab (Gleichungssystem "
+                 "singulär)."))
     try:
         from .netzguete import guete as _formguete
         q = _formguete(model)
@@ -1421,8 +1614,13 @@ ABNAHME_RISS_NACHBAR = 0.65
 #:   hoechstens dieses Vielfache von FLACH * L^3 je vier Seiten (mindestens
 #:   einmal), L die laengste Elementkante des Koerpers. Der freie Vernetzer
 #:   sortiert Tetraeder mit V <= FLACH * h^3 aus (mesher3d.FLACH = 1e-6, h
-#:   seine Kantenlaenge), und L liegt bei h (Platte mit Bohrung, h 50 mm:
-#:   L 50,9 mm). Die beiden Masse davor sagen nur, dass der Hohlraum flach
+#:   seine Kantenlaenge). L ist nicht h: an den gemessenen freien Netzen lag
+#:   L beim 1,02- bis 2,00-Fachen von h (Platte mit Bohrung h 50 mm: L
+#:   50,9 mm; Wuerfel mit angehobener Ecke h 0,1 / 0,25 / 0,5 m und L-Prisma
+#:   h 0,1 / 0,12 / 0,25 m: 1,68 h bis 2,00 h; 24.09.2026), die Grenze
+#:   2 * FLACH * L^3 also beim 2,1- bis 16-Fachen von FLACH * h^3. Gesetzt
+#:   ist sie an den Messwerten unten, nicht aus h hergeleitet. Die beiden
+#:   Masse davor sagen nur, dass der Hohlraum flach
 #:   ist, nicht wie gross: fehlte ein Tetraeder, der selbst flach ist, blieb
 #:   es bei der WARNUNG Riss (Nebenbefund B050) - an der Platte mit Bohrung
 #:   (34 600 tet4) bei 1413 von 28 046 inneren Tetraedern, bis 2,05e-6 m^3
@@ -1844,10 +2042,12 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T,
     # und zwei offene aus 1 und 2 Seiten, und diese 3 Seiten wurden ein
     # FEHLER (gemessen 23.09.2026). Noetig ist das nur fuer eine Gruppe, die
     # im Ganzen duenn ist und eine Kante mit mehr als zwei Seiten hat. Die
-    # Groesse (ABNAHME_RISS_FLACH) entscheidet erst je Stueck: in einer
-    # Gegenprobe von test_fugen beruehrte ein Hohlraum von 3,6e-5 m^3 einen
-    # Riss ohne Volumen, und im Ganzen gemessen wurde der Riss mit zum FEHLER
-    # (8 statt 4 Seiten, 23.09.2026).
+    # Groesse (ABNAHME_RISS_FLACH) entscheidet erst je Stueck: in der
+    # seriellen Gegenprobe von test_fugen.test_gemeinsame_flaeche_konform
+    # (2288 tet4) beruehrte ein Hohlraum von 3,6e-5 m^3 einen Riss ohne
+    # Volumen, und im Ganzen gemessen wurde der Riss mit zum FEHLER: in
+    # V_oben „Seiten im Inneren 27" statt 23 und der Riss 16 statt 20 Seiten
+    # (nachgemessen 24.09.2026, die Bedingung mit „klein" im Ganzen).
     kandidaten = []                         # [(Stellen, Volumen)] geschlossen und duenn
     offen = []
     for g in _seitengruppen(F[ii]):

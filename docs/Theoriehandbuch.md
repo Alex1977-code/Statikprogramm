@@ -6534,7 +6534,7 @@ nach neun Minuten. `diagnose.abnahme(model)` prüft:
 | Abdeckung der Kontaktseite | ≥ 95 % (`ABNAHME_ABDECKUNG`) | `ContactPair.abdeckung` |
 | Gegenkörper der Kontaktbedingung ohne eine einzige Facette | 0 | `ContactPair.gegenkoerper` |
 | Haltegüte λ_min/λ_max je Teiltragwerk | ≥ 10⁻⁴ (`singular.HALTEGUETE_MIN`) | § 7b.1 |
-| Knoten im Rechennetz ohne Element | 0 | die Elementliste; nicht gezählt, was über Kopplungen (mit wirksamer Richtung), starre Körper oder Spaltelemente an einem Elementknoten hängt (`_angeschlossene_knoten`) |
+| Knoten im Rechennetz ohne Element | 0 | die Elementliste; nicht gezählt, was über Kopplungen (wirksame Richtungen) oder starre Körper (RBE2) in allen drei Richtungen am Netz gehalten ist, der Master eines RBE3 mit gehaltenen Slaves und ein in x, y, z gelagerter Anschlag am Spaltelement (`_angeschlossene_knoten`) |
 | Formgüte des schlechtesten Elements je Körper | ≥ 0,05 (`ABNAHME_ELEMENTGUETE`) | `netzguete.guete` |
 | Randtreue je Körper | ≥ 99 % (`ABNAHME_RANDTREUE`) | `Volumenkoerper.randtreue` |
 | Volumenbilanz je Körper | ≤ 0,5 % (`ABNAHME_VOLUMENBILANZ`), an windschiefen Flächen zuzüglich Σ A · Abstand der Netzseiten | `elementvolumina` gegen `_polyederhuelle` |
@@ -6675,7 +6675,14 @@ aussortiert (Nebenbefund B051). Das Volumen gegen den Median der
 Nachbarvolumina (je Seite) trennt nicht: die Lücken des Vernetzers erreichen
 das 1,65-Fache (ein Haufen aus 15 Seiten), mehr als ein fehlender Tetraeder
 so groß wie seine Nachbarn. Gemessen wird deshalb gegen die Regel des Vernetzers, V ≤ FLACH · h³ je
-Tetraeder, mit L für h. Gemessen am 23.09.2026, V / (FLACH · L³) je vier
+Tetraeder, mit L für h. L ist nicht h: An den gemessenen freien Netzen lag
+L beim 1,02- bis 2,00-Fachen von h (`_laengste_kante`, 24.09.2026: Platte
+mit Bohrung h 50 mm, L 50,9 mm; Würfel mit angehobener Ecke h 0,25 m bei
+dz 0,3 / 0,5 / 1,0: 1,72 / 1,72 / 1,68 h, h 0,5 m: 2,00 h, h 0,1 m bei dz
+0,3 / 1,0: 1,72 / 1,77 h; L-Prisma h 0,25 / 0,12 / 0,1 m: 2,00 / 1,76 /
+1,72 h). Die Grenze 2 · FLACH · L³ ist dort also das 2,1- bis 16-Fache von
+FLACH · h³; gesetzt ist sie an den Messwerten der Tabelle, nicht aus h
+hergeleitet. Gemessen am 23.09.2026, V / (FLACH · L³) je vier
 Seiten:
 
 | Hohlraum | V / (FLACH · L³) |
@@ -6753,8 +6760,19 @@ von 9,8 cm³ aus 11 Seiten (das 2700-Fache der Grenze), jetzt FEHLER
 „Seiten im Inneren 11“ statt Riss; test_elemente 46 von 47 – der Master
 eines RBE3 ohne Element ist kein „Knoten ohne Element“ mehr; test_diagnose
 63 von 68 – die neuen Fälle dieser Nachbesserung und das Beispiel „Kontakt:
-abhebendes Lager“, dessen Lagerknoten über ein Spaltelement am Netz hängt
-(vorher FEHLER „Knoten ohne Element 1“).
+abhebendes Lager“, dessen Anschlagknoten über ein Spaltelement am Träger
+hängt (vorher FEHLER „Knoten ohne Element 1“). Nach der Gegenprüfung vom
+24.09.2026 (siehe `_angeschlossene_knoten` unten) für diesen Befund
+nachgezählt, lose Knoten bei ec6448c, mit der Fassung vom 23.09. und jetzt:
+anders als mit der Fassung vom 23.09. nur die Fälle der neuen Prüfung
+`test_abnahme_knoten_in_drei_richtungen`. Gleich geblieben sind das
+Beispiel und `test_gap_element` (test_solver_ext; beide ein Anschlag, ohne
+Befund), der RBE3-Master (test_elemente), test_stabende (1 statt 3 lose
+Knoten), `test_abnahme_knoten_ueber_kopplung` und alle Modelle von
+test_joints, test_lasten, test_netzfeld, test_neuvernetzen,
+test_randspannung, test_importers, test_supports, test_singular,
+test_netzfehler, test_fugen, test_rfem6, test_mesher3d, test_sweep und
+test_tetp.
 
 **Lücke im Netzrand** (23.09.2026, Gegenprüfung Mangel 3). Ist eine Gruppe von
 Seiten im Inneren offen, und liegt jede ihrer Randschleifen auf der Hülle, fehlt
@@ -6828,11 +6846,64 @@ Kopplungen, und das Modell trägt (Fz = −100 kN und Fx = 100 kN an einer
 Deckelecke, Summe der Lagerkräfte in z
 100 000,0 N). Die Abnahme meldete sie bis zum 23.09.2026 als FEHLER „Knoten
 ohne Element 117“ (Nebenbefund B099). Seither zählt `_angeschlossene_knoten`
-Knoten, die über Kopplungen mit wirksamer Richtung, starre Körper (Master
-und Slaves) oder Spaltelemente an einem Elementknoten hängen, auch über eine
-Kette, als angeschlossen (Zusammenhangskomponenten über
-`scipy.sparse.csgraph`). Eine Kopplung ohne wirksame Richtung oder eine, die
-nur lose Knoten verbindet, schließt nichts an. Einen Hohlraum,
+einen Knoten ohne Element als angeschlossen, wenn er in allen drei
+Verschiebungsrichtungen am Netz gehalten ist. Je offenem Knoten wird der
+Raum der gehaltenen Richtungen gesammelt, bis sich nichts mehr ändert
+(Elementknoten: alle drei):
+
+- Kopplung: ihre wirksamen Richtungen (`Kopplung.paare`), geschnitten mit
+  dem, was am Partner gehalten ist; so auch über eine Kette.
+- RBE2: die Glieder bewegen sich als starrer Körper, u_s = u_m + θ_m × r_s.
+  Die gehaltenen Richtungen der Glieder legen einen Teil dieser sechs
+  Freiheiten fest, dazu die Verdrehung eines drehsteifen Masters
+  (Schalenknoten, Stabende ohne Momentengelenk: `_drehsteife_knoten`);
+  gehalten ist an jedem Glied, was die festgelegten Freiheiten bestimmen.
+- RBE3: nur der Master, und nur wenn alle Slaves mit Gewicht gehalten
+  sind. Er ist ihr gewichtetes Mittel und versteift sie nicht.
+- Spaltelemente zählen nicht: sie halten nur in ihrer Richtung und nur
+  auf Druck. Ausgenommen ist der Anschlag, ein Knoten, den ein Knotenlager
+  in x, y und z starr hält und der über ein Spaltelement an einem
+  gehaltenen Knoten hängt (`_starr_gelagert`; so im Beispiel „Kontakt:
+  abhebendes Lager“ und in `test_gap_element`): eine Last auf ihm geht in
+  sein Lager, und das Lager wirkt, wie das Spaltelement es vorgibt. Ein
+  gelagerter Knoten, der nur über eine Kopplung in einem Teil der
+  Richtungen hängt, bleibt dagegen lose – ob sein Lager das Tragwerk nur
+  in diesen Richtungen halten soll, sieht die Abnahme nicht
+  (`fugen.stabenden_koppeln` koppelt Lagerknoten in allen dreien).
+
+Bis zur Gegenprüfung vom 24.09.2026 (Mängel 1 und 4 zu B099) zählte jede
+Verbindung, gleich in welcher Richtung (Zusammenhangskomponenten über
+Kopplungen, starre Körper und Spaltelemente). Gemessen am 24.09.2026 an
+einem Würfel aus 2 × 2 × 2 hex8, unten gelagert, 1000 N in x, y und z am
+Knoten ohne Element (`tests.test_diagnose._knoten_am_wuerfel`):
+
+| Anschluss | Rechnung | Abnahme bis dahin | jetzt |
+|---|---|---|---|
+| Kopplung nur in z an einem Deckelknoten | z trägt; x und y bleiben als Reaktion am Knoten selbst | kein Befund | FEHLER |
+| RBE3, loser Master, Slaves: neun Deckelknoten und ein loser Knoten | jede Last am losen Slave: Gleichungssystem singulär | kein Befund | FEHLER, beide |
+| RBE2 am Deckelknoten, ein Slave 0,5 m daneben in x | x trägt; y und z: singulär | kein Befund | FEHLER |
+| Spaltelement allein, 0,2 m über einem Deckelknoten | x und y bleiben am Knoten; Zug: Kontakt bricht ab | kein Befund | FEHLER |
+| Kopplung in x und y, z über einen Zwischenknoten, der nur in z hängt | am Knoten trägt alles; am Zwischenknoten nur z | kein Befund | FEHLER für den Zwischenknoten |
+| Kopplung in x, y und z an einen Zwischenknoten, der nur in z hängt | z trägt; x und y: singulär | kein Befund | FEHLER, beide |
+| RBE3 mit losem Master an den neun Deckelknoten | trägt | kein Befund | kein Befund |
+| RBE2, loser Master und loser Slave neben den Deckelknoten | trägt | kein Befund | kein Befund |
+| Kopplungen in x+y und z, dazu x−y an einem zweiten Deckelknoten | trägt | kein Befund | kein Befund |
+| Anschlag: Knoten 0,2 m über einem Deckelknoten in x, y, z gelagert, Spaltelement | trägt (die Last geht in sein Lager) | kein Befund | kein Befund |
+| ebenso, Knoten nur in z gelagert | z geht in sein Lager; x und y bleiben am Knoten, in Richtungen ohne Lager | kein Befund | FEHLER |
+| loser Knoten 0,2 m über dem Anschlag, Spaltelement dorthin | x und y bleiben am Knoten; Zug: Kontakt bricht ab; Druck trägt | kein Befund | FEHLER |
+| RBE3 mit dem Master an einem Deckelknoten, ein loser Slave | trägt | kein Befund | FEHLER |
+
+Die letzte Zeile ist Absicht: Die sechs Gleichungen des RBE3 legen einen
+einzelnen losen Slave neben einem gehaltenen Master rechnerisch fest, das
+RBE3 soll ihn aber nicht halten. Dazu RBE2 mit einem Slave 0,5 m neben dem
+Master: an einem Stabende (IPE 200) und an einem Schalenknoten tragen die
+Lasten in x, y und z bei jedem Versatz in x, y oder z, an einem Stabende mit
+den Gelenken 9, 10, 11 nur die Last in Richtung des Versatzes. Die
+Prüfung `test_abnahme_knoten_in_drei_richtungen` rechnet die Fälle der
+Tabelle nach: nennt die Abnahme den Knoten nicht, gehen alle drei Lasten in
+die Lager, nennt sie ihn, mindestens eine nicht (außer in der letzten
+Zeile). Eine Kopplung ohne wirksame Richtung oder eine, die nur lose Knoten
+verbindet, schließt nichts an. Einen Hohlraum,
 der ringsum von Nachbarseiten eingeschlossen ist, meldet die Abnahme
 weiter als „Seiten im Inneren", auch wenn er die Oberfläche an einer Kante
 berührt. Gemessen am Würfel mit um 0,5 m angehobener Ecke, frei mit h = 0,1:

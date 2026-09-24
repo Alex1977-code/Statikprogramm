@@ -1723,12 +1723,14 @@ def test_abnahme_knoten_ueber_kopplung():
     ein Knotenlager (``Model.netzknoten_loeschen`` schützt sie) - und der
     Vernetzer koppelt sie starr an das neue Netz (306 Kopplungen). Das Modell
     rechnet: Fz = -100 kN, Summe der Reaktionen in z 100 000,0 N. Falsch war
-    die Meldung. Ein Knoten, der über eine Kopplung, einen starren Körper oder
-    ein Spaltelement an einem Elementknoten hängt, hat keinen Befund; ein
-    wirklich loser bleibt ein FEHLER.
+    die Meldung. Ein Knoten, der über Kopplungen in allen drei Richtungen an
+    Elementknoten hängt, hat keinen Befund; ein wirklich loser bleibt ein
+    FEHLER. Was nur in einem Teil der Richtungen hält (Kopplung in einer
+    Richtung, Spaltelement, RBE3-Slave), prüft
+    test_abnahme_knoten_in_drei_richtungen.
     """
     from statik3d import mesher
-    from statik3d.model import Kopplung, GapElement
+    from statik3d.model import Kopplung
     import contextlib
     import io
     m, k = _gestuft(20)
@@ -1759,17 +1761,195 @@ def test_abnahme_knoten_ueber_kopplung():
     m.kopplungen.append(Kopplung(a, b, [[1.0, 0.0, 0.0]], [float("inf")]))
     c = int(m.add_node(8.0, 5.0, 5.0))
     m.kopplungen.append(Kopplung(c, e0, [[1.0, 0.0, 0.0]], [0.0]))
-    # Ein starrer Körper und ein Spaltelement an einem Elementknoten schon,
-    # auch über eine Kette (d am Starrkörper, f über eine Kopplung an d)
-    d, f, g = (int(m.add_node(9.0 + i, 5.0, 5.0)) for i in range(3))
-    m.add_starrkoerper(e0, [d])
-    m.kopplungen.append(Kopplung(f, d, [[0.0, 0.0, 1.0]], [1e9]))
-    m.gap_elements.append(GapElement(g, e0))
+    # Eine Kopplung in x, y und z an einem Elementknoten schließt an, auch
+    # über eine Kette (f über d)
+    d, f = (int(m.add_node(9.0 + i, 5.0, 5.0)) for i in range(2))
+    xyz = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    m.kopplungen.append(Kopplung(d, e0, xyz, [float("inf")] * 3))
+    m.kopplungen.append(Kopplung(f, d, xyz, [1e9] * 3))
     kb = knoten_befund()
-    check("  Kopplung ohne Elementknoten oder ohne Richtung: lose; Starrkörper, Spaltelement "
+    check("  Kopplung ohne Elementknoten oder ohne Richtung: lose; Kopplung in x, y, z "
           "und Kette: angeschlossen",
           len(kb) == 1 and kb[0].wert == 4.0 and sorted(kb[0].knoten) == sorted([lose, a, b, c]),
           "; ".join(f"{b_.stufe} {b_.pruefung} {b_.wert:.0f} {b_.knoten}" for b_ in kb))
+
+
+def _knoten_am_wuerfel(fall):
+    """Würfel 1 x 1 x 1 m aus 2 x 2 x 2 hex8, unten gelagert, und ein Knoten
+    ohne Element, der auf die Art ``fall`` am Netz hängt (Gegenprüfung vom
+    24.09.2026 zu B099). Rückgabe (Modell, Knoten für die Last, Knoten, die
+    die Abnahme als lose nennen muss)."""
+    from statik3d import mesher
+    from statik3d.model import GapElement
+    m = Model("drei Richtungen")
+    m.add_material(Material.steel("S235"))
+    ids = mesher.grid_box(m, "S235", 1.0, 1.0, 1.0, 2, 2, 2, typ="hex8")
+    for kn in ids[:, :, 0].ravel():
+        m.fix(int(kn), "all")
+    oben = [int(x) for x in ids[:, :, 2].ravel()]
+    e0 = oben[8]                                            # Ecke (1|1|1)
+    starr = float("inf")
+    if fall == "RBE3, loser Master und loser Slave":
+        s, M = int(m.add_node(2.0, 0.5, 1.0)), int(m.add_node(0.5, 0.5, 1.2))
+        m.add_starrkoerper(M, oben + [s], art="RBE3")
+        return m, s, [s, M]
+    if fall == "RBE3, loser Master an den Deckelknoten":
+        M = int(m.add_node(0.5, 0.5, 1.2))
+        m.add_starrkoerper(M, oben, art="RBE3")
+        return m, M, []
+    if fall == "RBE3, Master am Deckelknoten, loser Slave":
+        s = int(m.add_node(2.0, 0.5, 1.0))
+        m.add_starrkoerper(oben[4], oben[:4] + oben[5:] + [s], art="RBE3")
+        return m, s, [s]
+    if fall == "RBE2, loser Master und loser Slave":
+        s, M = int(m.add_node(2.0, 0.5, 1.0)), int(m.add_node(0.5, 0.5, 1.2))
+        m.add_starrkoerper(M, oben + [s])
+        return m, s, []
+    if fall == "RBE2 am Deckelknoten, ein Slave 0,5 m daneben":
+        d = int(m.add_node(1.5, 1.0, 1.0))
+        m.add_starrkoerper(e0, [d])
+        return m, d, [d]
+    if fall == "Kopplung nur in z":
+        f = int(m.add_node(*m.nodes[e0]))
+        m.kopplungen.append(Kopplung(f, e0, [[0.0, 0.0, 1.0]], [starr]))
+        return m, f, [f]
+    if fall == "Kopplungen in x+y und z, dazu x-y":
+        f = int(m.add_node(*m.nodes[e0]))
+        m.kopplungen.append(Kopplung(f, e0, [[1.0, 1.0, 0.0], [0.0, 0.0, 1.0]], [starr] * 2))
+        m.kopplungen.append(Kopplung(f, oben[7], [[1.0, -1.0, 0.0]], [starr]))
+        return m, f, []
+    if fall.startswith("Kette: x, y direkt, z über h"):
+        f, h = int(m.add_node(*m.nodes[e0])), int(m.add_node(*m.nodes[e0]))
+        m.kopplungen.append(Kopplung(h, e0, [[0.0, 0.0, 1.0]], [starr]))
+        m.kopplungen.append(Kopplung(f, h, [[0.0, 0.0, 1.0]], [starr]))
+        m.kopplungen.append(Kopplung(f, e0, [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], [starr] * 2))
+        return m, (h if fall.endswith("Last an h") else f), [h]
+    if fall == "Kette: x, y, z an h, das nur in z hängt":
+        f, h = int(m.add_node(*m.nodes[e0])), int(m.add_node(*m.nodes[e0]))
+        m.kopplungen.append(Kopplung(h, e0, [[0.0, 0.0, 1.0]], [starr]))
+        m.kopplungen.append(Kopplung(f, h, [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                                     [starr] * 3))
+        return m, f, [f, h]
+    if fall == "Spaltelement an einem Anschlag":
+        g, q = int(m.add_node(1.0, 1.0, 1.2)), int(m.add_node(1.0, 1.0, 1.4))
+        m.fix(g, "all")
+        m.gap_elements.append(GapElement(g, e0))
+        m.gap_elements.append(GapElement(q, g))
+        return m, q, [q]
+    if fall == "Spaltelement allein":
+        g = int(m.add_node(1.0, 1.0, 1.2))
+        m.gap_elements.append(GapElement(g, e0))
+        return m, g, [g]
+    if fall == "Anschlag: in x, y, z gelagert, Spaltelement":
+        g = int(m.add_node(1.0, 1.0, 1.2))
+        m.fix(g, "all")
+        m.gap_elements.append(GapElement(g, e0))
+        return m, g, []
+    if fall == "Spaltelement, Knoten nur in z gelagert":
+        g = int(m.add_node(1.0, 1.0, 1.2))
+        m.fix(g, [2])
+        m.gap_elements.append(GapElement(g, e0))
+        return m, g, [g]
+    raise KeyError(fall)
+
+
+def test_abnahme_knoten_in_drei_richtungen():
+    """Gegenprüfung vom 24.09.2026 zu B099, Mängel 1 und 4: Die Kur vom
+    23.09.2026 zählte jeden Knoten als angeschlossen, der über irgendeine
+    Kopplung, einen starren Körper oder ein Spaltelement mit dem Netz
+    verbunden war. Ein Slave eines RBE3 (der Master ist nur das Mittel der
+    Slaves), eine Kopplung in nur einer Richtung und ein Spaltelement halten
+    aber nicht in allen drei Richtungen: Die Rechnung brach ab
+    (Gleichungssystem singulär), oder die Last blieb als Reaktion am Knoten
+    selbst stehen und erreichte das Tragwerk nie - ohne Befund der Abnahme.
+    Bis zur Kur (ec6448c) war jeder dieser Knoten ein FEHLER.
+
+    Geprüft wird die Abnahme gegen die Rechnung: Je Fall 1000 N am Knoten in
+    x, y und z. Nennt ihn die Abnahme nicht, müssen alle drei Lasten in die
+    Lager gehen, nennt sie ihn, mindestens eine nicht. Eine Ausnahme mit Absicht: Ein Slave eines
+    RBE3 an einem Master mit Element ist durch die Gleichungen festgelegt und
+    trägt, bleibt aber lose - das RBE3 soll ihn nicht halten."""
+    import contextlib
+    import io
+    faelle = ["RBE3, loser Master und loser Slave", "RBE3, loser Master an den Deckelknoten",
+              "RBE3, Master am Deckelknoten, loser Slave",
+              "RBE2, loser Master und loser Slave", "RBE2 am Deckelknoten, ein Slave 0,5 m daneben",
+              "Kopplung nur in z", "Kopplungen in x+y und z, dazu x-y",
+              "Kette: x, y direkt, z über h", "Kette: x, y direkt, z über h, Last an h",
+              "Kette: x, y, z an h, das nur in z hängt",
+              "Spaltelement allein", "Anschlag: in x, y, z gelagert, Spaltelement",
+              "Spaltelement, Knoten nur in z gelagert", "Spaltelement an einem Anschlag"]
+    for fall in faelle:
+        m, ziel, soll = _knoten_am_wuerfel(fall)
+        kb = [b for b in dg.abnahme(m, warnungen=True) if b.pruefung == "Knoten ohne Element"]
+        lose = sorted(kb[0].knoten) if kb else []
+        befund_ok = (lose == sorted(soll) and (not kb or (len(kb) == 1 and kb[0].stufe == "FEHLER")))
+        getragen = []
+        for F in (dict(Fx=1000.0), dict(Fy=1000.0), dict(Fz=1000.0)):
+            m2, ziel2, _s = _knoten_am_wuerfel(fall)
+            m2.add_load_case("LF1", "G")
+            m2.load_node(ziel2, case="LF1", **F)
+            # nur die Lagerkräfte in gelagerten Richtungen: ein Freiheitsgrad
+            # ohne Steifigkeit wird beim Rechnen gesperrt, und seine
+            # „Reaktion" ist die verlorene Last
+            gel: dict = {}
+            for s_ in m2.supports:
+                gel.setdefault(int(s_.node), set()).update(d for d in s_.dofs if d < 3)
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    r = solver.solve_static(m2, case="LF1", workers=1)
+                RR = np.asarray(r.reactions).reshape(-1, 6)
+                R = np.zeros(3)
+                for n_, ds in gel.items():
+                    for d_ in ds:
+                        R[d_] += RR[n_, d_]
+                getragen.append(bool(np.allclose(R, -np.array([F.get("Fx", 0.0), F.get("Fy", 0.0),
+                                                                F.get("Fz", 0.0)]), atol=1e-3)))
+            except Exception:                    # noqa: BLE001 - singulär, Kontakt bricht ab
+                getragen.append(False)
+        if fall == "RBE3, Master am Deckelknoten, loser Slave":
+            passt = all(getragen)
+        else:
+            passt = all(getragen) == (ziel not in lose)
+        check(f"{fall}: lose {len(soll)}, Rechnung passt dazu",
+              befund_ok and passt,
+              f"Abnahme {[(b.stufe, b.knoten) for b in kb]}, soll {soll}; x/y/z getragen {getragen}")
+    # Drehsteifer Master: am Stabende hält ein RBE2 auch einen einzelnen
+    # Slave in allen drei Richtungen, mit Momentengelenken am Ende nicht
+    from statik3d.profiles import make_section as _ms
+    for gelenk, soll_lose in ((False, False), (True, True)):
+        mb = Model("Stab")
+        mb.add_material(Material.steel("S235"))
+        mb.add_section(_ms("IPE 200"))
+        a, b = int(mb.add_node(0, 0, 0)), int(mb.add_node(2, 0, 0))
+        mb.add_element("beam", [a, b], "S235", "IPE 200")
+        if gelenk:
+            mb.elements[-1].hinges = [9, 10, 11]
+        mb.fix(a, "all")
+        d = int(mb.add_node(2.0, 0.5, 0.0))
+        mb.add_starrkoerper(b, [d])
+        kb = [x for x in dg.abnahme(mb, warnungen=True) if x.pruefung == "Knoten ohne Element"]
+        check(f"RBE2 am Stabende{' mit Momentengelenken' if gelenk else ''}, ein Slave: "
+              f"{'lose' if soll_lose else 'angeschlossen'}",
+              bool(kb) == soll_lose and (not kb or kb[0].knoten == [d]),
+              str([(x.stufe, x.knoten) for x in kb]))
+    from statik3d import mesher
+    ms = Model("Schale")
+    ms.add_material(Material.steel("S235"))
+    ms.add_shell_prop(ShellProp("t", 0.02))
+    ids = mesher.grid_plate(ms, "S235", "t", 1.0, 1.0, 2, 2)
+    for n in ids[0, :]:
+        ms.fix(int(n), "all")
+    d = int(ms.add_node(*(np.asarray(ms.nodes[int(ids[2, 2])]) + [0.0, 0.0, 0.5])))
+    ms.add_starrkoerper(int(ids[2, 2]), [d])
+    kb = [x for x in dg.abnahme(ms, warnungen=True) if x.pruefung == "Knoten ohne Element"]
+    check("RBE2 am Schalenknoten, ein Slave: angeschlossen", not kb,
+          str([(x.stufe, x.knoten) for x in kb]))
+    from statik3d import examples_lib
+    mk = examples_lib.contact_example()
+    kb = [x for x in dg.abnahme(mk, warnungen=True) if x.pruefung == "Knoten ohne Element"]
+    check("Beispiel „Kontakt: abhebendes Lager“: Anschlag am Spaltelement ohne Befund",
+          not kb and len(mk.gap_elements) == 1, str([(x.stufe, x.knoten) for x in kb]))
 
 
 def _randschleifen_alt(F, Xf, S) -> list:
@@ -1958,6 +2138,7 @@ def main():
               test_abnahme_windschief_misst_am_oertlichen_element,
               test_abnahme_luecke_im_netzrand,
               test_abnahme_knoten_ueber_kopplung,
+              test_abnahme_knoten_in_drei_richtungen,
               test_abnahme_riss_gestapelt,
               test_windschiefe_randflaechen_ohne_dreiecksschleife,
               test_abnahme_meldet_ausgefallene_pruefungen,
