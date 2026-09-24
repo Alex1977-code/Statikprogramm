@@ -2052,8 +2052,14 @@ des Auswahlfensters stehen in der eingestellten Einheit – in der Vorgabe
 kN, kNm, kN/m, kN/m², kN/m und m –, die Beschriftung nennt sie. Bis dahin
 rechnete das Register fest in N, die Masken in kN: dieselbe Zahl war dort
 tausendmal kleiner. Wird die Einheit umgestellt, zeigen die Felder dieselbe
-Größe in der neuen Einheit (aus −10 kN werden −10 000 N). Die Masken rechts
-sind weiter mit ihrer Einheit beschriftet (kN, kN/m). Die **Statusleiste**
+Größe in der neuen Einheit (aus −10 kN werden −10 000 N). Im Register
+Kontakt folgen auch die Liste „Kontaktdefinitionen“ (etwa „Spalt 0,002 m,
+k 3 kN/m“ – mit Komma und Einheit, nie „1e+09“) und der Dialog „Kontaktpaar
+definieren…“ (Steifigkeit, Spalt, Suchradius) dieser Einstellung. **Noch fest
+in kN** sind die Masken rechts (Lager, Lasten) und der Dialog
+„Nichtlinearität…“ (Schlupf, Reibung, Grenzkraft); sie nennen ihre Einheit in
+der Beschriftung. Wer die Kraft auf N stellt, sieht also im Register N/m und
+in der Lagermaske kN/m – beide beschriftet. Die **Statusleiste**
 nennt die gewählten Einheiten, etwa „kN · m · N/mm² · u in mm“, statt fest
 „m · N · Pa“.
 
@@ -2107,9 +2113,13 @@ die vorige Maske ab — es ist immer höchstens eine offen.
 
 ### Zahlen eingeben (seit 24.09.2026)
 
-Alle Zahlenfelder – in den Masken rechts, in den Registern und in den Dialogen –
+Die Zahlenfelder der Masken rechts (auch der Sammelmaske für mehrere
+gewählte Objekte), der Register Lager/Lasten und Kontakt und der Dialoge
 lesen nach derselben Regel. Sie gilt auch für die Ermüdungsmaske und die
-Zellen der Tabellen unten.
+Zellen der Tabellen unten. **Noch nicht umgestellt** sind die Drehfelder mit
+Pfeilen (z. B. Teilungen, Anzahl), die kleinen Abfragefenster für eine
+einzelne Zahl, die Faktorenliste einer Kombination und das ψ-Feld eines
+Lastfalls: dort gilt weiter nur Komma oder Punkt ohne Tausendertrennung.
 
 | Eingabe | gelesen | Anzeige |
 |---|---|---|
@@ -2129,6 +2139,32 @@ Tausender mit Leerzeichen, nie als „2e+06“ (die Ansicht bleibt beim Punkt).
 Bis zum 24.09.2026 wurde „33.000“ still zu 33 und „2.000.000“ zu 0 – der
 Qt-Validator folgte dem Gebietsschema des Systems.
 
+**Während des Tippens** bleibt ein Zwischenstand neutral, der mit weiteren
+Ziffern gültig wird: „-“ vor „-10“, „2 0“ auf dem Weg zu „2 000“, „1e“ vor
+„1e3“. Der Knopf ist dabei gesperrt, aber es erscheint weder roter Rahmen
+noch Meldung. Rot wird ein solcher Rest erst beim Verlassen des Feldes oder
+bei „Übernehmen“. „2.000.000“ ist kein Zwischenstand und wird sofort rot.
+**Wo die Meldung steht:** in der Maske in der Meldungszeile über dem Hinweis,
+im Dialog in einer Meldungszeile über OK und Abbrechen, im Register in der
+Statusleiste – ein gesperrter Knopf allein sagt nicht, warum.
+
+**Knöpfe, die Felder lesen**, fragen genauso nach wie „Übernehmen“:
+„Bettung übernehmen“ in der Lagermaske rechnet mit E_cm „33.000“ erst nach
+dem zweiten Klick (dann mit 33 N/mm²). Wer 33 000 meint, schreibt es mit
+Leerzeichen und klickt noch einmal: der Vorschlag wird damit neu gerechnet.
+Werte, die das Programm selbst in ein Feld schreibt (vorhandene Federn im
+Dialog Nichtlinearität, Normale und Ursprung der Schnittebene), sind nie
+mehrdeutig: 123,456 kN/m steht als „123,456“ da, OK bleibt frei.
+
+**Sammelmaske** (Rechtsklick → Bearbeiten… bei mehreren gewählten Objekten):
+Koordinaten, β, Knicklängen, Kerbfall und Teilungen sind Zahlenfelder nach
+dieser Regel. Ein leeres Feld lässt den Wert je Objekt, wie er ist.
+„Übernehmen“ schreibt nur Felder, die sich seit dem Öffnen geändert haben:
+eine Koordinate 4,1234567 bleibt genau so stehen, und ohne Änderung gibt es
+weder einen Rückgängig-Schritt noch verworfene Ergebnisse. Bis zum
+24.09.2026 schrieb die Sammelmaske jeden gemeinsamen Wert auf sechs Stellen
+gerundet zurück.
+
 **Welche Felder die Ergebnisse behalten.** Ein „Übernehmen“ verwirft die
 Ergebnisse, sobald sich an der Rechnung etwas ändert. Felder, die nur
 beschriften, behalten sie: Name, Bildunterschrift, Bemerkung, Text und Platz
@@ -2138,8 +2174,15 @@ Passmaß-Bezeichnung einer Vorspannung bzw. eines Übermaßes; in den Tabellen
 dieselben Spalten sowie Beschriftung und Bemerkung der Unterlagen. Nennt eine
 Stellung ein Lager beim Namen, verwirft sein Umbenennen die Ergebnisse, denn
 die Stellung schaltet dann ein anderes Lager ab. Alles andere verwirft wie
-bisher – im Zweifel wird verworfen. „Übernehmen“ ohne Änderung legt keinen
-Rückgängig-Schritt an.
+bisher – im Zweifel wird verworfen. In den eben genannten Masken
+(Berichtseintrag, Linie, Fläche, Volumen, Lastfall, Lager, Vorspannung und
+Übermaß), in der Sammelmaske und in den Tabellenzellen legt „Übernehmen“
+ohne Änderung keinen Rückgängig-Schritt an. Die übrigen Masken (etwa Knoten
+oder Werkstoff) legen auch dann einen Schritt an und verwerfen die
+Ergebnisse. **Rückgängig und Wiederholen** eines Schritts, der nur
+beschriftet hat, behalten die Ergebnisse ebenfalls. Wer einen vertippten
+Lagernamen zurücknimmt, muss also nicht neu rechnen. Jeder andere Schritt
+verwirft sie beim Zurücknehmen wie bisher.
 
 ### Verschieben, Kopieren, Drehen, Spiegeln
 

@@ -108,6 +108,10 @@ def test_eine_quelle():
     check("… „500.000“: Meldung nennt „500 000“", "500 000" in text, text)
     check("lastspiele_text ist zahl_text (eine Schreibweise)",
           all(lastspiele_text(x) == zl.zahl_text(x) for x in (2e6, 1.5, 1234.25, 0.1 + 0.2, 123.456789012)))
+    # Werte, bei denen die alte Schreibweise anders war (Gegenpruefung K15)
+    check("… auch 1234,123456789012 und 1e-12 (alte Schreibweise wich dort ab)",
+          all(lastspiele_text(x) == zl.zahl_text(x) for x in (1234.123456789012, 1e-12)),
+          f"{lastspiele_text(1234.123456789012)} {lastspiele_text(1e-12)}")
 
 
 # --------------------------------------------------------------------------
@@ -231,7 +235,89 @@ def test_dialog():
     check("… bestätigt: OK frei, fy = 355", ok.isEnabled() and d.fy.value() == 355.0)
     d.fy.setText("355 000")
     check("… „355 000“ ist 355 000", ok.isEnabled() and d.fy.value() == 355000.0)
+    d.E.setText("2.000.000")
+    zeile = getattr(d, "lbl_zahlmeldung", None)
+    check("… gesperrt mit sichtbarem Grund: Meldungszeile über den Knöpfen nennt „2 000 000“",
+          zeile is not None and not zeile.isHidden() and "2 000 000" in zeile.text(),
+          zeile.text() if zeile is not None else "-")
+    d.E.setText("210")
+    check("… gültig: Meldungszeile wieder weg", zeile is not None and zeile.isHidden())
     d.deleteLater()
+
+    # Volumendialog: Kerbfall „2.000.000“ sperrt OK und wird nie still 0
+    from statik3d.model import Model
+    kd = dg.KoerperDialog(None, Model())
+    ok = kd.findChild(QtWidgets.QDialogButtonBox).button(QtWidgets.QDialogButtonBox.Ok)
+    kd.kerbfall.setText("2.000.000")
+    check("Volumendialog: Kerbfall „2.000.000“ sperrt OK, werte() liefert nicht still 0",
+          not ok.isEnabled() and _wirft(kd.werte))
+    kd.deleteLater()
+
+
+def test_programmwerte():
+    """Werte, die das Programm selbst in ein Zahlenfeld schreibt, sind nie
+    mehrdeutig (f"{123.456:g}" ist 123,456, nicht „gemeint 123 456?“)."""
+    from PySide6 import QtWidgets
+    _app()
+    from statik3d.gui import dialogs as dg
+    from statik3d.gui import zahlenfeld as zf
+    from statik3d.model import DofBehaviour, Support
+    f = zf.Zahlenfeld(None)
+    f.setzen("123.456")
+    check("Zahlenfeld.setzen(„123.456“) zeigt 123,456 ohne Rückfrage",
+          f.text() == "123,456" and not f.offene_frage(), f.text())
+    s = Support(0, [])
+    s.behaviour = {2: DofBehaviour("spring", 123456.0, "", 0.001125, 0.0, None)}
+    d = dg.SupportNonlinearDialog(None, s, "Knotenlager")
+    ok = d.findChild(QtWidgets.QDialogButtonBox).button(QtWidgets.QDialogButtonBox.Ok)
+    typ, k, _fail, slip, _mu, _ref = d.rows[2]
+    check("Dialog Nichtlinearität: Feder 123 456 N/m steht als 123,456 kN/m, OK frei",
+          ok.isEnabled() and k.value() == 123.456 and slip.value() == 1.125 and not k.offene_frage(),
+          f"{k.text()!r} {slip.text()!r} OK={ok.isEnabled()}")
+    k.setText("2.000.000")
+    check("… „2.000.000“ als Steifigkeit sperrt OK", not ok.isEnabled())
+    d.deleteLater()
+
+
+def test_tippen():
+    """Zwischenstaende beim Tippen („-“, „2 0“, „1e“) sind neutral; rot wird
+    es erst beim Verlassen oder Uebernehmen."""
+    from PySide6 import QtTest
+    app = _app()
+    mk, gesendet = _maske()
+    e = mk._felder["x"]
+    meld = mk.lbl_zahlmeldung
+    e.clear()
+    e.setFocus()
+    QtTest.QTest.keyClicks(e, "-")
+    app.processEvents()
+    check("„-“ getippt: keine Meldungszeile, kein roter Rahmen",
+          meld.isHidden() and "#c0392b" not in e.styleSheet(), f"{meld.text()!r} {e.styleSheet()[:30]!r}")
+    check("… „Übernehmen“ bleibt dabei gesperrt", not mk.btn_anwenden.isEnabled())
+    QtTest.QTest.keyClicks(e, "10")
+    app.processEvents()
+    check("„-10“: gültig, frei", mk.btn_anwenden.isEnabled() and mk.werte()["x"] == -10.0)
+    e.clear()
+    QtTest.QTest.keyClicks(e, "2 0")
+    app.processEvents()
+    check("„2 0“ (auf dem Weg zu 2 000): keine Meldungszeile", meld.isHidden(), meld.text())
+    e.editingFinished.emit()
+    app.processEvents()
+    check("… Feld verlassen: jetzt rot mit Meldung",
+          not meld.isHidden() and "#c0392b" in e.styleSheet(), meld.text())
+    e.clear()
+    QtTest.QTest.keyClicks(e, "1e")
+    app.processEvents()
+    mk.anwenden()
+    app.processEvents()
+    check("„1e“ und „Übernehmen“: nichts übernommen, Meldung sichtbar",
+          not gesendet and not meld.isHidden(), meld.text())
+    e.clear()
+    QtTest.QTest.keyClicks(e, "2.000.000")
+    app.processEvents()
+    check("„2.000.000“ ist kein Zwischenstand: sofort rot",
+          not meld.isHidden() and "#c0392b" in e.styleSheet())
+    mk.hide()
 
 
 # --------------------------------------------------------------------------
@@ -263,6 +349,13 @@ def test_tabellenzelle():
     check("„2 000,5“ in der Zelle: 2000,5", ok and t.modell.zeilen[0][1] == 2000.5, str(t.modell.zeilen[0][1]))
     ok = t.modell.setData(idx, "= 2*3,5", QtCore.Qt.EditRole)
     check("Formel bleibt: „= 2*3,5“ = 7", ok and t.modell.zeilen[0][1] == 7.0)
+    tg = Datentabelle([Spalte("Knoten", "", "ganz"), Spalte("n", "", "ganz", 0, True)], "Teilung")
+    tg.setzen([[0, 4]])
+    aufrufe_g = []
+    tg.modell.aendern = lambda z, k, v: aufrufe_g.append(v) or True
+    ok = tg.modell.setData(tg.modell.index(0, 1), "1.5", QtCore.Qt.EditRole)
+    check("Spalte „ganz“: „1.5“ wird abgewiesen (nicht still 2)",
+          not ok and not aufrufe_g and tg.modell.zeilen[0][1] == 4, f"{aufrufe_g} {tg.modell.zeilen[0][1]}")
 
 
 # --------------------------------------------------------------------------
@@ -293,7 +386,14 @@ def _label(w, anfang: str) -> str:
     return ""
 
 
+def _letzte_kontaktzeile(w) -> str:
+    tb = w.tbl_cdef
+    it = tb.item(tb.rowCount() - 1, tb.columnCount() - 1) if tb.rowCount() else None
+    return it.text() if it is not None else ""
+
+
 def test_register_einheiten():
+    from PySide6 import QtWidgets
     w, app = _fenster()
     w.new_model()
     app.processEvents()
@@ -344,15 +444,51 @@ def test_register_einheiten():
     check("Register Kontakt: Steifigkeit 3 = 3000 N/m, Spalt 0,002 m",
           cs is not None and cs.stiffness == 3000.0 and abs(cs.gap - 0.002) < 1e-12,
           f"{cs.stiffness if cs else None} {cs.gap if cs else None}")
+    zeile = _letzte_kontaktzeile(w)
+    check("… die Liste darunter nennt k in kN/m mit Komma: „k 3 kN/m“, „Spalt 0,002 m“, kein „e+“",
+          "k 3 kN/m" in zeile and "Spalt 0,002 m" in zeile and "e+" not in zeile, zeile)
+    w.cs_k.set(1000000)
+    w.add_contact_support()
+    zeile = _letzte_kontaktzeile(w)
+    check("… 1 000 000 kN/m steht als „1 000 000 kN/m“ (bis 24.09.: „k 1e+09“)",
+          "k 1 000 000 kN/m" in zeile, zeile)
+    # Kontaktpaar-Dialog: dieselbe Einheit wie das Register
+    import statik3d.gui.main as gm
+    alt_dialog = gm.ContactPairDialog
+    beschriftung = []
+
+    class _Probe(alt_dialog):
+        def exec(self):                     # noqa: A003 - Qt-Name
+            beschriftung.extend(lb.text() for lb in self.findChildren(QtWidgets.QLabel))
+            self.master.setCurrentIndex(self.master.count() - 1)
+            self.elist.setText("0")
+            self.k.setText("3")
+            self.gap.setText("0,002")
+            return True
+    gm.ContactPairDialog = _Probe
+    try:
+        n_cp = len(w.model.contact_pairs)
+        w.add_contact_pair()
+    finally:
+        gm.ContactPairDialog = alt_dialog
+    cp = w.model.contact_pairs[-1] if len(w.model.contact_pairs) > n_cp else None
+    check("Kontaktpaar: Steifigkeit 3 im Dialog = 3000 N/m, Beschriftung [kN/m]",
+          cp is not None and cp.stiffness == 3000.0 and abs(cp.gap - 0.002) < 1e-12
+          and any("[kN/m]" in t for t in beschriftung),
+          f"{cp.stiffness if cp else None} {[t for t in beschriftung if 'steif' in t]}")
     w.sel[0].setText("6"); w.sel[1].setText("6"); w.do_select()
 
     n0 = len(lc.nodal_loads)
+    w.statusBar().clearMessage()
     w.ld[2].setText("2.000.000")
     app.processEvents()
+    # vor add_load: den gesperrten Knopf kann niemand druecken, also muss
+    # der Grund schon beim Tippen in der Statusleiste stehen
+    check("„2.000.000“ im Register: die Statusleiste nennt sofort den Grund („2 000 000“)",
+          "2 000 000" in w.statusBar().currentMessage(), w.statusBar().currentMessage())
     w.add_load()
     check("„2.000.000“ im Register: keine Last (bis 24.09.: still eine Last 0)",
           len(lc.nodal_loads) == n0, f"{len(lc.nodal_loads) - n0} Lasten dazu")
-    from PySide6 import QtWidgets
     knopf = next((b for b in w.findChildren(QtWidgets.QPushButton) if b.text() == "Knotenlast aufbringen"), None)
     check("… „Knotenlast aufbringen“ gesperrt", knopf is not None and not knopf.isEnabled())
     w.ld[2].setText("1.500")
@@ -412,6 +548,17 @@ def test_ergebnisse_behalten():
         app.processEvents()
     check("„Übernehmen“ ohne Änderung: kein Rückgängig-Schritt, Ergebnisse bleiben",
           mk is not None and _undo_n(w) == u0 and w.analysis is not None, f"{_undo_n(w) - u0}")
+    w.undo()
+    app.processEvents()
+    check("Rückgängig der Beschriftung: Name zurück, die Ergebnisse bleiben (bis 24.09.: verworfen)",
+          w.model.supports[0].name != "Fuß links" and w.analysis is not None,
+          f"{w.model.supports[0].name!r} {w.analysis is not None}")
+    w.redo()
+    app.processEvents()
+    check("… Wiederholen: Name wieder da, die Ergebnisse bleiben",
+          w.model.supports[0].name == "Fuß links" and w.analysis is not None)
+    w._objektmaske("lager_einzeln", "0")
+    app.processEvents()
     mk = w.maskenrand.maske
     if mk is not None:
         mk.setzen("typ0", "frei")
@@ -512,6 +659,196 @@ def test_ergebnisse_behalten():
           f"{x_alt} → {w.model.nodes[int(tm.zeilen[1][0])][0]}")
 
 
+def _geometrie_dazu(w):
+    """Ein Tetraeder weit neben dem Rahmen (Linien, Flaechen, Volumen) und
+    eine Unterlage - ohne Netz, die Rechnung beruehrt beides nicht."""
+    import numpy as np
+    from statik3d.model import Unterlage
+    m = w.model
+    n0 = m.nn
+    m.add_nodes(np.array([[100, 0, 0], [101, 0, 0], [100, 1, 0], [100, 0, 1.]]))
+    for nm, (a, b) in {"T1": (0, 1), "T2": (1, 2), "T3": (2, 0), "T4": (0, 3),
+                       "T5": (1, 3), "T6": (2, 3)}.items():
+        m.add_line(nm, [n0 + a, n0 + b])
+    for nm, ls in {"FT1": ["T1", "T2", "T3"], "FT2": ["T1", "T5", "T4"],
+                   "FT3": ["T2", "T6", "T5"], "FT4": ["T3", "T4", "T6"]}.items():
+        m.add_flaeche(nm, ls)
+    m.add_koerper("VT", ["FT1", "FT2", "FT3", "FT4"])
+    m.unterlagen["U1"] = Unterlage("U1")
+    w.refresh_all()
+
+
+def test_nachbesserung():
+    """Befunde der Gegenpruefung zu Paket 4 (24.09.2026)."""
+    from statik3d import solver
+    from statik3d.gui import masken as msk
+    from statik3d.model import STANDARDKONTAKTE
+    w, app = _fenster()
+
+    # Bettung: „33.000“ in E_cm fragt erst, statt eine 1000-fach zu weiche
+    # Feder in k2 zu schreiben
+    w.load_example("frame")
+    app.processEvents()
+    mk = w._objektmaske("lager_einzeln", "0")
+    mk.setzen("beton", "auf Beton (Druckkontakt)")
+    mk._felder["E_cm"].setText("33.000")
+    k2_vorher = mk._felder["k2"].text()
+    knopf = mk.zusatzknoepfe["Bettung übernehmen"]
+    knopf.click()
+    app.processEvents()
+    check("Bettung übernehmen, E_cm „33.000“: k2 bleibt, Meldung „gemeint 33 000?“",
+          mk._felder["k2"].text() == k2_vorher and "gemeint 33 000" in mk.lbl_zahlmeldung.text(),
+          f"k2 {mk._felder['k2'].text()!r} / {mk.lbl_zahlmeldung.text()!r}")
+    knopf.click()
+    app.processEvents()
+    check("… zweiter Klick bestätigt 33 N/mm²: k2 = 3 300 kN/m", mk._felder["k2"].text() == "3 300",
+          mk._felder["k2"].text())
+    mk._felder["E_cm"].setText("33 000")
+    knopf.click()
+    app.processEvents()
+    check("… „33 000“ gilt sofort: k2 = 3 300 000 kN/m", mk._felder["k2"].text() == "3 300 000",
+          mk._felder["k2"].text())
+
+    # Kontaktmaske: ungueltiges μ, dann ein Standardkontakt
+    F = msk.Feld
+    km = msk.Maske("Kontakt", [
+        F("standard", "Standard", "wahl", "Benutzerdefiniert", ["Benutzerdefiniert"] + list(STANDARDKONTAKTE)),
+        F("zug", "Zug", "wahl", "", list(w.KONTAKT_ZUG.values())),
+        F("schub_x", "Schub x", "wahl", "", list(w.KONTAKT_SCHUB.values())),
+        F("schub_y", "Schub y", "wahl", "", list(w.KONTAKT_SCHUB.values())),
+        F("dreh", "Drehung", "wahl", "", list(w.KONTAKT_DREH.values())),
+        F("mu", "μ", "zahl", 0.3)])
+    w._kontaktmaske_verbinden(km)
+    km._felder["mu"].setText("0,2.5")
+    km._felder["standard"].setCurrentText("Verbund")
+    app.processEvents()
+    check("Kontaktmaske: μ „0,2.5“, dann „Verbund“: μ = 0, Hinweis nachgeführt (bis 24.09.: ValueError)",
+          km._felder["mu"].text() == "0" and km.lbl_hinweis.text().startswith("Verbund"),
+          f"{km._felder['mu'].text()!r} {km.lbl_hinweis.text()[:30]!r}")
+    km.deleteLater()
+
+    # Sammelmaske: Zahlenfelder, nur Geaendertes wird geschrieben
+    m = w.model
+    zmax = max(float(p[2]) for p in m.nodes)
+    a, b = [i for i in range(m.nn) if float(m.nodes[i][2]) == zmax][:2]
+    m.nodes[a][2] = m.nodes[b][2] = 4.1234567
+    w._solve_done("all", solver.solve_all(m, design=False))
+    app.processEvents()
+    u0 = _undo_n(w)
+    w.sammelmaske("knoten", [a, b])
+    app.processEvents()
+    mk = w.maskenrand.maske
+    check("Sammelmaske Knoten: z als Zahlenfeld „4,1234567“ (bis 24.09.: „4.12346“)",
+          mk._felder["z"].text() == "4,1234567", mk._felder["z"].text())
+    mk.anwenden()
+    app.processEvents()
+    check("… „Übernehmen“ ohne Änderung: z unverändert, kein Rückgängig-Schritt, Ergebnisse bleiben",
+          m.nodes[a][2] == 4.1234567 and m.nodes[b][2] == 4.1234567 and _undo_n(w) == u0
+          and w.analysis is not None, f"{m.nodes[a][2]} {_undo_n(w) - u0} {w.analysis is not None}")
+    mk._felder["z"].setText("4,5")
+    mk.anwenden()
+    app.processEvents()
+    check("… „4,5“ ergibt 4,5 an beiden Knoten (bis 24.09.: Fehler)",
+          m.nodes[a][2] == 4.5 and m.nodes[b][2] == 4.5, f"{m.nodes[a][2]} {m.nodes[b][2]}")
+    w.sammelmaske("knoten", [a, b])
+    app.processEvents()
+    mk = w.maskenrand.maske
+    mk._felder["z"].setText("7.500")
+    mk.anwenden()
+    app.processEvents()
+    check("… „7.500“ fragt erst nach (bis 24.09.: still 7,5)",
+          m.nodes[a][2] == 4.5 and "gemeint 7 500" in mk.lbl_zahlmeldung.text(), mk.lbl_zahlmeldung.text())
+    mk.anwenden()
+    app.processEvents()
+    check("… zweites „Übernehmen“ bestätigt 7,5", m.nodes[a][2] == 7.5 and m.nodes[b][2] == 7.5)
+    m.nodes[a][2] = m.nodes[b][2] = 1e-5
+    w.sammelmaske("knoten", [a, b])
+    app.processEvents()
+    mk = w.maskenrand.maske
+    check("… 1e-5 steht als „0,00001“ (bis 24.09.: „1e-05“)", mk._felder["z"].text() == "0,00001",
+          mk._felder["z"].text())
+
+    # Schnittebene: Programmwerte sind keine Rueckfrage
+    w.schnitt_frei = {"normale": (0.0, 1.0, 0.0), "ursprung": (123.4567, 1.5678, 0.9)}
+    w.maske_schnittebene()
+    app.processEvents()
+    mk = w.maskenrand.maske
+    felder = [mk._felder[k] for k in ("nx", "ny", "nz", "ox", "oy", "oz")]
+    check("Schnittebene: Ursprung 123,4567 öffnet als „123,457“ ohne gelbe Rückfrage",
+          not any(f.offene_frage() for f in felder) and mk._felder["ox"].text() == "123,457",
+          mk._felder["ox"].text())
+    w.schnitt_frei["ursprung"] = (2.3456, 1.5678, 0.9)
+    w._schnitt_maske_nachfuehren()
+    geschnitten = []
+    mk.angewendet.connect(lambda _w: geschnitten.append(1))
+    check("… nach dem Nachführen keine offene Rückfrage", not any(f.offene_frage() for f in felder),
+          mk._felder["ox"].text())
+    mk.anwenden()
+    app.processEvents()
+    check("… erstes „Schneiden“ schneidet", geschnitten == [1], str(geschnitten))
+    w.act_schnitt.setChecked(False)
+    w.maskenrand.schliessen()
+    app.processEvents()
+
+    # Beschriftungsweg: Linie, Lastfall, Flaeche, Volumen, Unterlage
+    check("neu gerechnet", _gerechnet(w, app))
+    _geometrie_dazu(w)
+    app.processEvents()
+    check("… Tetraeder und Unterlage dazu, die Ergebnisse sind noch da", w.analysis is not None)
+    mk = w._objektmaske("linie", "T1")
+    mk.setzen("kommentar", "Kante")
+    mk.anwenden()
+    app.processEvents()
+    check("Linienmaske: nur Bemerkung, die Ergebnisse bleiben",
+          w.model.lines["T1"].comment == "Kante" and w.analysis is not None)
+    lf = str(w.model.active_case)
+    mk = w._objektmaske("lastfall", lf)
+    mk.setzen("beschreibung", "Eigenlast und Dach")
+    mk.anwenden()
+    app.processEvents()
+    check("Lastfallmaske: nur Beschreibung, die Ergebnisse bleiben",
+          w.model.load_cases[lf].description == "Eigenlast und Dach" and w.analysis is not None)
+    for art, name, attr in (("geoflaeche", "FT1", "flaechen"), ("geokoerper_einzeln", "VT", "koerper")):
+        try:
+            w._objekt_uebernehmen(art, name, {"kommentar": "Deckel", "vernetzen": False}, False,
+                                  geaendert={"kommentar"})
+        except Exception as ex:             # noqa: BLE001
+            print("   ", art, ex)
+        app.processEvents()
+        check(f"Maske {art}: nur Bemerkung, die Ergebnisse bleiben",
+              getattr(w.model, attr)[name].kommentar == "Deckel" and w.analysis is not None)
+    mk = w._objektmaske("geokoerper_einzeln", "VT")
+    kf = mk._felder.get("kerbfall")
+    if kf is not None:
+        kf.setText("2.000.000")
+    check("Volumenmaske: Kerbfall „2.000.000“ sperrt „Übernehmen“ (bis 24.09.: Textfeld, Fehler beim Lesen)",
+          kf is not None and not mk.btn_anwenden.isEnabled())
+    if kf is not None:
+        kf.setText("71,5")
+    check("… „71,5“ wird 71,5", kf is not None and mk.werte().get("kerbfall") == 71.5,
+          str(mk.werte().get("kerbfall")))
+    w.maskenrand.schliessen()
+    tf = w.tbl_geoflaeche.modell
+    z = next((i for i, r in enumerate(tf.zeilen) if str(r[0]) == "FT2"), -1)
+    ok = z >= 0 and w._geoflaeche_aendern(z, 7, "Seite")
+    check("Tabelle Flächen: Bemerkung (Spalte 7) behält die Ergebnisse", ok and w.analysis is not None, str(z))
+    tk = w.tbl_geokoerper.modell
+    z = next((i for i, r in enumerate(tk.zeilen) if str(r[0]) == "VT"), -1)
+    ok = z >= 0 and w._geokoerper_aendern(z, 8, "Block")
+    check("Tabelle Volumen: Bemerkung (Spalte 8) behält die Ergebnisse", ok and w.analysis is not None, str(z))
+    tu = w.tbl_unterlagen.modell
+    z = next((i for i, r in enumerate(tu.zeilen) if str(r[1]) == "U1"), -1)
+    ok = z >= 0 and w._unterlage_aendern(z, 6, "Skizze A") and w._unterlage_aendern(z, 7, "zur Prüfung")
+    u = w.model.unterlagen.get("U1")
+    check("Tabelle Unterlagen: Beschriftung und Bemerkung behalten die Ergebnisse",
+          ok and u is not None and u.beschriftung == "Skizze A" and u.bemerkung == "zur Prüfung"
+          and w.analysis is not None, str(z))
+    w.undo()
+    app.processEvents()
+    check("… Rückgängig der Unterlagen-Bemerkung behält die Ergebnisse",
+          w.model.unterlagen["U1"].bemerkung == "" and w.analysis is not None)
+
+
 def test_bemerkung_mit_vernetzen():
     """Gegenprobe: steht „gleich vernetzen“ an, vernetzt „Übernehmen“ auch
     dann, wenn nur die Bemerkung geändert ist - der Beschriftungsweg darf
@@ -543,8 +880,8 @@ def main():
     import faulthandler
     faulthandler.dump_traceback_later(900, exit=True)
     for t in (test_regel, test_eine_quelle, test_maske, test_geaenderte_felder, test_dialog,
-              test_tabellenzelle, test_register_einheiten, test_ergebnisse_behalten,
-              test_bemerkung_mit_vernetzen):
+              test_programmwerte, test_tippen, test_tabellenzelle, test_register_einheiten,
+              test_ergebnisse_behalten, test_nachbesserung, test_bemerkung_mit_vernetzen):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

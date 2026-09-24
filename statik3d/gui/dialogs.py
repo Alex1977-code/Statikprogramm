@@ -43,14 +43,29 @@ def row(*widgets) -> QtWidgets.QWidget:
     return w
 
 
-def buttons(dialog: QtWidgets.QDialog) -> QtWidgets.QDialogButtonBox:
+def buttons(dialog: QtWidgets.QDialog) -> QtWidgets.QWidget:
     bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
     bb.accepted.connect(dialog.accept)
     bb.rejected.connect(dialog.reject)
-    # OK bleibt gesperrt, solange ein Zahlenfeld ungueltig oder noch
-    # mehrdeutig ist (24.09.2026) - im Dialog laesst sich OK nicht abfangen
-    zf.Waechter(dialog, [bb.button(QtWidgets.QDialogButtonBox.Ok)], frage_sperrt=True)
-    return bb
+    return knopfkasten(dialog, bb)
+
+
+def knopfkasten(dialog: QtWidgets.QDialog, bb: QtWidgets.QDialogButtonBox) -> QtWidgets.QWidget:
+    """Knopfleiste mit Meldungszeile darueber.
+
+    OK bleibt gesperrt, solange ein Zahlenfeld ungueltig oder noch
+    mehrdeutig ist - im Dialog laesst sich OK nicht abfangen. Die
+    Meldungszeile nennt den Grund (24.09.2026; bis dahin stand er nur im
+    Hinweis am Feld, OK war ohne sichtbaren Grund gesperrt)."""
+    kasten = QtWidgets.QWidget(dialog)
+    lay = QtWidgets.QVBoxLayout(kasten)
+    lay.setContentsMargins(0, 0, 0, 0)
+    zeile = zf.meldungszeile(kasten)
+    lay.addWidget(zeile)
+    lay.addWidget(bb)
+    dialog.lbl_zahlmeldung = zeile
+    zf.Waechter(dialog, [bb.button(QtWidgets.QDialogButtonBox.Ok)], frage_sperrt=True, meldung=zeile)
+    return kasten
 
 
 # ==========================================================================
@@ -571,7 +586,11 @@ class DesignSettingsDialog(QtWidgets.QDialog):
 
 # ==========================================================================
 class ContactPairDialog(QtWidgets.QDialog):
-    def __init__(self, parent=None, model: Model = None, n_selected: int = 0):
+    def __init__(self, parent=None, model: Model = None, n_selected: int = 0, einheiten=None):
+        """``einheiten()`` liefert die Einheiteneinstellung: Steifigkeit,
+        Spalt und Suchradius stehen dann in derselben Einheit wie die Felder
+        im Register Kontakt (24.09.2026, bis dahin fest N/m neben kN/m);
+        gelesen wird mit si()."""
         super().__init__(parent)
         self.setWindowTitle("Kontaktpaar Knoten - Fläche")
         self.name = QtWidgets.QLineEdit(f"Kontakt{len(model.contact_pairs)+1}")
@@ -588,16 +607,22 @@ class ContactPairDialog(QtWidgets.QDialog):
         self.mu = NumEdit(0.0, 70)
         self.gap = NumEdit(0.0, 70)
         self.radius = NumEdit(0.0, 70)
+        e_k, e_l = "N/m", "m"
+        if callable(einheiten):
+            self.k.einheit_binden("strecke", einheiten)
+            self.gap.einheit_binden("laenge", einheiten)
+            self.radius.einheit_binden("laenge", einheiten)
+            e_k, e_l = self.k.einheit() or e_k, self.gap.einheit() or e_l
         self.flip = QtWidgets.QCheckBox("Normale umkehren")
         f = QtWidgets.QFormLayout(self)
         f.addRow(QtWidgets.QLabel(f"Slave-Knoten: aktuelle Auswahl ({n_selected} Knoten)"))
         f.addRow("Name", self.name)
         f.addRow("Master-Fläche", self.master)
         f.addRow("Element-Liste", self.elist)
-        f.addRow("Kontaktsteifigkeit [N/m] (0 = automatisch)", self.k)
+        f.addRow(f"Kontaktsteifigkeit [{e_k}] (0 = automatisch)", self.k)
         f.addRow("Reibungsbeiwert μ", self.mu)
-        f.addRow("Spalt / Versatz [m]", self.gap)
-        f.addRow("Suchradius [m] (0 = automatisch)", self.radius)
+        f.addRow(f"Spalt / Versatz [{e_l}]", self.gap)
+        f.addRow(f"Suchradius [{e_l}] (0 = automatisch)", self.radius)
         f.addRow(self.flip)
         f.addRow(buttons(self))
 
@@ -684,8 +709,7 @@ class SupportNonlinearDialog(QtWidgets.QDialog):
         bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok
                                         | QtWidgets.QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
-        zf.Waechter(self, [bb.button(QtWidgets.QDialogButtonBox.Ok)], frage_sperrt=True)
-        lay.addWidget(bb)
+        lay.addWidget(knopfkasten(self, bb))
         if support is not None:
             self.load(support)
 
@@ -693,10 +717,12 @@ class SupportNonlinearDialog(QtWidgets.QDialog):
         for d, (typ, k, fail, slip, mu, ref) in enumerate(self.rows):
             b = support.dof_behaviour(d)
             typ.setCurrentIndex({"free": 0, "rigid": 1, "spring": 2}[b.typ])
-            k.setText(f"{b.stiffness / 1e3:g}")
+            # als Zahl setzen (24.09.2026): der Text f"{123.456:g}" war im
+            # Zahlenfeld mehrdeutig („gemeint 123 456?“) und rundete auf 6 Stellen
+            k.set(float(b.stiffness) / 1e3)
             fail.setCurrentIndex({"": 0, "zug": 1, "druck": 2}[b.failure])
-            slip.setText(f"{b.slip * 1000:g}")
-            mu.setText(f"{b.mu:g}")
+            slip.set(float(b.slip) * 1000)
+            mu.set(float(b.mu))
             ref.setCurrentIndex(0 if b.mu_ref is None else int(b.mu_ref) + 1)
 
     def behaviours(self) -> dict:
@@ -1392,8 +1418,7 @@ class JointDialog(QtWidgets.QDialog):
                                         | QtWidgets.QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
-        zf.Waechter(self, [bb.button(QtWidgets.QDialogButtonBox.Ok)], frage_sperrt=True)
-        zeile.addWidget(bb)
+        zeile.addWidget(knopfkasten(self, bb))
         lay.addLayout(zeile)
         self.cb_typ.currentIndexChanged.connect(self.update_proposal)
         self.update_proposal()
@@ -1567,8 +1592,7 @@ class BeulfeldDialog(QtWidgets.QDialog):
                                         | QtWidgets.QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
-        zf.Waechter(self, [bb.button(QtWidgets.QDialogButtonBox.Ok)], frage_sperrt=True)
-        lay.addWidget(bb)
+        lay.addWidget(knopfkasten(self, bb))
         self.cb_art.currentIndexChanged.connect(self._umschalten)
         self._umschalten()
 
@@ -1686,8 +1710,7 @@ class LasteinleitungDialog(QtWidgets.QDialog):
                                         | QtWidgets.QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
-        zf.Waechter(self, [bb.button(QtWidgets.QDialogButtonBox.Ok)], frage_sperrt=True)
-        lay.addWidget(bb)
+        lay.addWidget(knopfkasten(self, bb))
 
     def result(self) -> tuple:
         return self.ed_name.text().strip(), {
@@ -1754,8 +1777,7 @@ class VolumenbereichDialog(QtWidgets.QDialog):
                                         | QtWidgets.QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
-        zf.Waechter(self, [bb.button(QtWidgets.QDialogButtonBox.Ok)], frage_sperrt=True)
-        lay.addWidget(bb)
+        lay.addWidget(knopfkasten(self, bb))
 
     def result(self) -> tuple:
         return self.ed_name.text().strip(), {
@@ -1852,8 +1874,7 @@ class VerformungsgrenzeDialog(QtWidgets.QDialog):
                                         | QtWidgets.QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
-        zf.Waechter(self, [bb.button(QtWidgets.QDialogButtonBox.Ok)], frage_sperrt=True)
-        lay.addWidget(bb)
+        lay.addWidget(knopfkasten(self, bb))
         for w in (self.cb_art, self.cb_grenzart):
             w.currentIndexChanged.connect(self._umschalten)
         self._umschalten()

@@ -4813,7 +4813,10 @@ def main():
         w.sammelmaske("knoten", [k0, k1])
         app.processEvents()
         mk = w.maskenrand.maske
-        check("Sammelmaske Knoten: x verschieden (leer), z gleich", mk.werte()["x"] == "" and mk.werte()["z"] == "0", str(mk.werte()))
+        # seit 24.09.2026 Zahlenfelder: leer = unveraendert, am Feldtext zu sehen
+        check("Sammelmaske Knoten: x verschieden (leer), z gleich",
+              mk._felder["x"].text() == "" and mk._felder["z"].text() == "0",
+              f"{mk._felder['x'].text()!r} {mk._felder['z'].text()!r}")
         mk.setzen("z", "1.5")
         mk.anwenden()
         app.processEvents()
@@ -4821,7 +4824,8 @@ def main():
         w.sammelmaske("stab", ["S1", "S2"])
         app.processEvents()
         mk = w.maskenrand.maske
-        check("Sammelmaske Stäbe: β_y verschieden, β_z gleich", mk.werte()["beta_y"] == "" and mk.werte()["beta_z"] == "1")
+        check("Sammelmaske Stäbe: β_y verschieden, β_z gleich",
+              mk._felder["beta_y"].text() == "" and mk._felder["beta_z"].text() == "1")
         mk.setzen("beta_y", "0.7")
         mk.setzen("lt_check", "nein")
         mk.anwenden()

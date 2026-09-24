@@ -108,10 +108,17 @@ class Zahlenfeld(QtWidgets.QLineEdit):
         elif isinstance(wert, (int, float)) and not isinstance(wert, bool):
             self.setText(zl.zahl_text(int(round(wert)) if self.ganz else wert))
         else:
-            # Ein Text vom Programm („1e-05“, numpy-Zahl): gilt er eindeutig,
-            # steht er formatiert da - nie wissenschaftlich
+            # Ein Text vom Programm („1e-05“, f"{x:g}"): steht formatiert da -
+            # nie wissenschaftlich. Das Programm schreibt den Punkt immer als
+            # Dezimaltrenner; „123.456“ aus f"{123.456:g}" ist also 123,456
+            # und keine Rueckfrage (24.09.2026: der Dialog Nichtlinearitaet
+            # zeigte eine vorhandene Feder gelb, OK gesperrt, und schlug die
+            # 1000-fache Feder vor)
             les = zl.lesen(str(wert), self.ganz)
-            self.setText(zl.zahl_text(les.wert) if les.status == zl.GUELTIG else str(wert))
+            if les.status in (zl.GUELTIG, zl.FRAGE):
+                self.setText(zl.zahl_text(les.wert))
+            else:
+                self.setText(str(wert))
 
     def wert(self, leer=0.0) -> float:
         """Die Zahl; ein leeres Feld liefert ``leer``. Eingabefehler bei einer
@@ -128,6 +135,14 @@ class Zahlenfeld(QtWidgets.QLineEdit):
     def ungueltig(self) -> bool:
         return self.lesung.status == zl.UNGUELTIG
 
+    def unfertig(self) -> bool:
+        """Wird gerade getippt und ist nur ein Zwischenstand („-“, „1e“,
+        „2 0“)? Dann neutral statt rot, ohne Meldung - gesperrt bleibt der
+        Knopf trotzdem (ungueltig). Rot wird es beim Verlassen oder beim
+        Uebernehmen (24.09.2026). ``isModified`` ist nur nach Tippen wahr,
+        setText des Programms setzt es zurueck."""
+        return self.isModified() and zl.ergaenzbar(self.text(), self.ganz)
+
     def offene_frage(self) -> bool:
         """Mehrdeutig und noch nicht bestaetigt?"""
         return self.lesung.status == zl.FRAGE and self.text() != self._bestaetigt
@@ -140,7 +155,7 @@ class Zahlenfeld(QtWidgets.QLineEdit):
 
     def meldung(self) -> str:
         if self.ungueltig():
-            return self.lesung.meldung
+            return "" if self.unfertig() else self.lesung.meldung
         if self.offene_frage():
             return (f"{self.lesung.meldung} Gelesen wird {zl.zahl_text(self.lesung.wert)}. "
                     "Noch einmal bestätigen (Haken im Feld, Eingabetaste oder Knopf) – oder "
@@ -211,7 +226,7 @@ class Zahlenfeld(QtWidgets.QLineEdit):
         self._stil()
 
     def _stil(self) -> None:
-        if self.ungueltig():
+        if self.ungueltig() and not self.unfertig():
             stil = f"border: 2px solid {ROT}; background: #fdecea;"
         elif self.offene_frage():
             stil = f"border: 2px solid {GELB}; background: #fff6d0;"
@@ -232,14 +247,22 @@ class Zahlenfeld(QtWidgets.QLineEdit):
             self._gewarnt = None
         # auch eine neue Meldung zaehlt: aus „2.000.“ wird beim Weitertippen
         # „2.000.000“, und die Maske soll dann „2 000 000“ vorschlagen
-        zustand = (self.lesung.status, self.offene_frage(), self.lesung.meldung)
+        zustand = (self.lesung.status, self.offene_frage(), self.lesung.meldung, self.unfertig())
         self._stil()
         if zustand != self._zustand:
             self._zustand = zustand
             self.zustand_geaendert.emit()
             self._waechter_rufen()
 
+    def fertig(self) -> None:
+        """Das Tippen ist vorbei (Feld verlassen, Uebernehmen): ein
+        Zwischenstand gilt jetzt als ungueltig und wird rot gemeldet."""
+        if self.isModified():
+            self.setModified(False)
+            self._pruefen()
+
     def _formatieren(self) -> None:
+        self.fertig()
         if self.lesung.status == zl.GUELTIG:
             text = zl.zahl_text(self.lesung.wert)
             if text != self.text():
@@ -270,6 +293,26 @@ def _zeigen(feld: QtWidgets.QWidget, text: str) -> None:
         pass
 
 
+def meldungszeile(parent=None) -> QtWidgets.QLabel:
+    """Eine (zunaechst verborgene) Meldungszeile fuer Masken und Dialoge."""
+    lb = QtWidgets.QLabel("", parent)
+    lb.setObjectName("zahlmeldung")
+    lb.setWordWrap(True)
+    lb.hide()
+    return lb
+
+
+def meldungszeile_setzen(lb: QtWidgets.QLabel, text: str, farbe: str = None) -> None:
+    """Rot bei einer ungueltigen, gelb bei einer mehrdeutigen Eingabe."""
+    lb.setText(text)
+    if farbe:
+        lb.setStyleSheet(
+            f"color: {'#8a1f11' if farbe == ROT else '#6b5000'}; "
+            f"background: {'#fdecea' if farbe == ROT else '#fff6d0'}; "
+            f"border: 1px solid {farbe}; border-radius: 4px; padding: 3px;")
+    lb.setVisible(bool(text))
+
+
 def felder_in(bereich) -> list:
     """Die Zahlenfelder eines Bereichs (Widget) oder einer Liste."""
     if isinstance(bereich, QtWidgets.QWidget):
@@ -296,6 +339,7 @@ def freigeben(bereich, melden=None) -> bool:
             melden(text)
     for f in felder:
         if f.ungueltig():
+            f.fertig()                      # ein Zwischenstand ist jetzt rot
             f.setFocus()
             sagen(f, f.meldung())
             return False
@@ -321,11 +365,18 @@ class Waechter(QtCore.QObject):
     zweite Eingabetaste). Die Felder werden bei jeder Pruefung neu gesucht;
     ein Feld meldet sich bei allen Waechtern seiner Eltern."""
 
-    def __init__(self, bereich: QtWidgets.QWidget, knoepfe: list, frage_sperrt: bool = False):
+    def __init__(self, bereich: QtWidgets.QWidget, knoepfe: list, frage_sperrt: bool = False,
+                 meldung: QtWidgets.QLabel = None, melden=None):
+        """``meldung``: Meldungszeile (Dialog) - sie nennt den Grund der
+        Sperre; ``melden(text)``: zeigt ihn woanders (Register: Statusleiste).
+        Bis 24.09.2026 stand der Grund nur im Hinweis am Feld."""
         super().__init__(bereich)
         self.bereich = bereich
         self.knoepfe = [k for k in knoepfe if k is not None]
         self.frage_sperrt = bool(frage_sperrt)
+        self.meldung = meldung
+        self.melden = melden
+        self._gemeldet = ""
         self._gesperrt: set = set()
         liste = list(getattr(bereich, "_zahlwaechter", []) or [])
         liste.append(self)
@@ -340,7 +391,33 @@ class Waechter(QtCore.QObject):
                 return True
         return False
 
+    def grund(self) -> tuple:
+        """(Text, Farbe) der ersten Meldung im Bereich - ("", None) ohne."""
+        felder = [f for f in felder_in(self.bereich) if f.isEnabled()]
+        for f in felder:
+            if f.ungueltig() and f.meldung():
+                return f.meldung(), ROT
+        if self.frage_sperrt:
+            for f in felder:
+                if f.offene_frage():
+                    return f.meldung(), GELB
+        return "", None
+
+    def _melden(self) -> None:
+        if self.meldung is None and not callable(self.melden):
+            return
+        text, farbe = self.grund()
+        if self.meldung is not None:
+            try:
+                meldungszeile_setzen(self.meldung, text, farbe)
+            except RuntimeError:
+                pass
+        if callable(self.melden) and text and text != self._gemeldet:
+            self.melden(text)
+        self._gemeldet = text
+
     def aktualisieren(self) -> None:
+        self._melden()
         sperre = self.gesperrt()
         for k in self.knoepfe:
             try:

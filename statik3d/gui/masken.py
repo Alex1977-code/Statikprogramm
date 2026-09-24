@@ -311,7 +311,8 @@ class Maske(QtWidgets.QFrame):
 
     def _zahlmeldung_nachfuehren(self) -> None:
         felder = [w for w in self._felder.values() if isinstance(w, zf.Zahlenfeld)]
-        schlecht = next((w for w in felder if w.ungueltig()), None)
+        # ein Zwischenstand beim Tippen („-“) meldet nichts (meldung leer)
+        schlecht = next((w for w in felder if w.ungueltig() and w.meldung()), None)
         frage = next((w for w in felder if w.offene_frage()), None)
         if schlecht is not None:
             self._zahlmeldung_setzen(schlecht.meldung(), zf.ROT)
@@ -321,13 +322,7 @@ class Maske(QtWidgets.QFrame):
             self._zahlmeldung_setzen("")
 
     def _zahlmeldung_setzen(self, text: str, farbe: str = None) -> None:
-        self.lbl_zahlmeldung.setText(text)
-        if farbe:
-            self.lbl_zahlmeldung.setStyleSheet(
-                f"color: {'#8a1f11' if farbe == zf.ROT else '#6b5000'}; "
-                f"background: {'#fdecea' if farbe == zf.ROT else '#fff6d0'}; "
-                f"border: 1px solid {farbe}; border-radius: 4px; padding: 3px;")
-        self.lbl_zahlmeldung.setVisible(bool(text))
+        zf.meldungszeile_setzen(self.lbl_zahlmeldung, text, farbe)
 
     def setzen(self, name: str, wert):
         w = self._felder.get(name)

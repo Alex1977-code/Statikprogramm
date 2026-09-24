@@ -140,6 +140,18 @@ def lesen(text, ganz: bool = False) -> Lesung:
     return Lesung(GUELTIG, wert)
 
 
+def ergaenzbar(text, ganz: bool = False) -> bool:
+    """Ist eine ungueltige Eingabe nur unfertig - wird sie mit weiteren
+    Ziffern gueltig („-“, „1e“, „2 0“, „2 000 0“)?
+
+    Beim Tippen zeigt das Zahlenfeld solche Zwischenstaende neutral statt
+    rot (24.09.2026: bei jeder negativen Last flackerten Rahmen und
+    Meldung). „2.000.000“ bleibt rot: keine Ziffer macht es gueltig."""
+    if lesen(text, ganz).status != UNGUELTIG:
+        return False
+    return any(lesen(f"{text}{z}", ganz).status in (GUELTIG, FRAGE) for z in ("0", "00", "000"))
+
+
 def zahl_wert(text, ganz: bool = False) -> float:
     """Die Zahl einer Eingabe; ValueError, wenn sie leer oder ungueltig ist.
 
