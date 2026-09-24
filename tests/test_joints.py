@@ -411,8 +411,6 @@ def _rahmen():
     m.add_material(Material.steel("S355"))
     m.add_section(Section.from_profile("IPE 400"))
     m.add_section(Section.from_profile("HEB 300"))
-    m.add_section(Section.from_profile("L 100x100x10")
-                  if "L 100x100x10" in [] else Section.from_profile("HEB 300"))
     n0 = m.add_node(0, 0, 0)
     n1 = m.add_node(6, 0, 0)
     n2 = m.add_node(0, 0, 4)
