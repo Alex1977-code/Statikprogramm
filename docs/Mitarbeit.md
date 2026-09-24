@@ -99,8 +99,12 @@ jedes `from statik3d.gui import tabellen` (ebenso `viewport`, `start`,
 `rechenliste` …) das ganze Hauptfenster mit. Was eine fensterlose Prüfung aus
 der Oberfläche braucht, gehört in ein Modul ohne `gui.main`, wie
 `gui/gzg_tabelle.py` für die Tabelle „Verformungen“. `tests/test_gzg.py` prüft,
-dass `statik3d.gui.main` danach nicht geladen ist, und am Quelltext, dass
-`MainWindow` genau diese Zeilen und Spalten in die Tabelle gibt. Gemessen am
+dass `statik3d.gui.main` danach nicht geladen ist, und am Quelltext von
+`gui/main.py`, ohne ihn zu laden: `_build_ergebnistabellen` legt `tbl_gzg` genau
+einmal an, mit `gzg_spalten()` als Spalten; `gzg_spalten` gibt
+`gzg_tabelle.spalten()` zurück; `refresh_verformungen` füllt `tbl_gzg` mit
+`gzg_tabelle.zeilen(…)`. Die Anlage gehört dazu, weil eine Datentabelle ihre
+Spalten beim Anlegen festlegt und das Füllen sie nicht mehr ändert. Gemessen am
 23.09.2026 auf einem durch parallele Sitzungen belasteten Rechner, je drei Läufe
 abwechselnd: `python -m tests.test_gzg` brauchte am Stand ec6448c 4,7 bis 5,7 s,
 danach 1,6 bis 1,8 s; `import statik3d.gui.tabellen` im frischen Prozess 3,5
