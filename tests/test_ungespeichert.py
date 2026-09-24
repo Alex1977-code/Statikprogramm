@@ -20,6 +20,15 @@ Geprueft wird mit dem echten Hauptfenster offscreen:
 * Doppelklick auf einen Zweig im Modellbaum: rechte Anlegemaske „Neu …“,
   nichts wird angelegt (Antwort 11 des Anwenders).
 
+Nachbesserung nach der Gegenpruefung (25.09.2026): die Suche mit echten
+Tasten (Enter lief doppelt bzw. auf der ersten Zeile), die Loeschfragen mit
+echtem Fenster und Enter (Vorgabe Abbrechen) und ihr Text (was wirklich
+verschwindet, ungespeicherte Ergebnisse), keine Modellwechsel waehrend einer
+Rechnung (auch unveraendert) und kein fremdes Ergebnis danach, Speichern bei
+gescheiterter Ergebnisdatei, Projektangaben am grossen Modell ohne
+Modellkopie, und je Rueckgaengig-/Vermerk-Weg eine Pruefung, die ohne ihn
+reisst (Ruecknahme: scratchpad p3_mutanten.py).
+
 Aufruf:  python -m tests.test_ungespeichert
 """
 import json
@@ -85,9 +94,59 @@ class _Fragen:
 def _knopf_fragen(w, antwort: bool):
     """_fragen_knoepfe ersetzen: aufzeichnen und mit ``antwort`` antworten."""
     gefragt = []
-    w._fragen_knoepfe = lambda titel, text, ja="Ja", nein="Abbrechen": (
-        gefragt.append((titel, text, ja, nein)), antwort)[1]
+    w._fragen_knoepfe = lambda titel, text, ja="Ja", nein="Abbrechen", vorgabe="ja": (
+        gefragt.append((titel, text, ja, nein, vorgabe)), antwort)[1]
     return gefragt
+
+
+def _modal_taste(app, taste, protokoll, versuche=100):
+    """Sobald ein modales Fenster offen ist: Titel und Vorgabeknopf merken,
+    dann ``taste`` druecken - wie am Desktop. Nach ``versuche`` x 30 ms ohne
+    Fenster gibt der Zeitgeber auf, damit er keine spaetere Frage trifft."""
+    from PySide6 import QtCore, QtTest, QtWidgets
+
+    def los(rest=versuche):
+        d = QtWidgets.QApplication.activeModalWidget()
+        if d is None:
+            if rest > 0:
+                QtCore.QTimer.singleShot(30, lambda: los(rest - 1))
+            return
+        vorgabe = (d.defaultButton().text() if isinstance(d, QtWidgets.QMessageBox) and d.defaultButton()
+                   else None)
+        protokoll.append((d.windowTitle(), vorgabe, getattr(d, "text", lambda: "")()))
+        QtTest.QTest.keyClick(d, taste)
+    QtCore.QTimer.singleShot(30, los)
+
+
+def _tippen(w, app, text, taste=None, runter=0):
+    """Befehlssuche mit echten Tasten: ``text`` tippen, ``runter`` mal Pfeil
+    runter, dann ``taste`` (Vorgabe Enter). Jede Taste geht dorthin, wo sie
+    am Desktop ankommt: an die offene Trefferliste, sonst ans Suchfeld.
+    Rueckgabe: (Liste vor Enter aktiv?, Liste danach offen?)."""
+    from PySide6 import QtCore, QtGui, QtTest, QtWidgets
+    rb = w.ribbon
+    taste = QtCore.Qt.Key_Return if taste is None else taste
+    rb.suche.setFocus(); rb.suche.clear(); app.processEvents()
+    for ch in text:
+        ziel = QtWidgets.QApplication.activePopupWidget() or rb.suche
+        if ch.isascii():
+            QtTest.QTest.keyClicks(ziel, ch)
+        else:
+            # QTest.keyClicks bricht an Umlauten hart ab (Prozessende) - ein
+            # Tastenereignis mit Text, wie es die Tastatur liefert
+            for typ in (QtCore.QEvent.KeyPress, QtCore.QEvent.KeyRelease):
+                QtWidgets.QApplication.sendEvent(ziel, QtGui.QKeyEvent(typ, 0, QtCore.Qt.NoModifier, ch))
+        app.processEvents()
+    for _ in range(runter):
+        QtTest.QTest.keyClick(QtWidgets.QApplication.activePopupWidget() or rb.suche, QtCore.Qt.Key_Down)
+        app.processEvents()
+    pop = rb._vervollstaendigung.popup()
+    aktiv = QtWidgets.QApplication.activePopupWidget() is pop
+    QtTest.QTest.keyClick(QtWidgets.QApplication.activePopupWidget() or rb.suche, taste)
+    app.processEvents()
+    offen = pop.isVisible()
+    pop.hide(); app.processEvents()
+    return aktiv, offen
 
 
 def _stern(w) -> bool:
@@ -252,7 +311,17 @@ def test_rueckfrage():
     check("Testschalter STATIK3D_UNGESPEICHERT=abbrechen: kein Fenster, Neu unterbleibt",
           gefragt == [] and w.model.nn == nn3, str(gefragt))
     w.new_model(); app.processEvents()
-    check("Testschalter =verwerfen: Neu ohne Fenster", w.model.nn == 0)
+    check("Testschalter =verwerfen: Neu ohne Fenster, danach kein Stern",
+          w.model.nn == 0 and not w.ungespeichert() and not _stern(w), w.windowTitle())
+    # Oeffnen nach Verwerfen: das Modell der Datei ist nichts Ungespeichertes
+    w.load_example("frame"); app.processEvents()
+    w.model.add_node(8.0, 1.0, 0.0); w.refresh_all(); app.processEvents()
+    p_auf = os.path.join(TMP, "oeffnen.json")
+    from statik3d.examples_lib import build_example
+    build_example("truss").save(p_auf)
+    ok = w.modell_laden(p_auf); app.processEvents()
+    check("Öffnen nach Verwerfen: kein Stern, nichts ungespeichert",
+          ok and not w.ungespeichert() and not _stern(w), w.windowTitle())
 
 
 def test_rueckfrage_fenster():
@@ -410,6 +479,66 @@ def test_modell_leeren():
     w.__dict__.pop("_fragen_knoepfe", None)
 
 
+def test_modell_leeren_rueckfrage():
+    """Gegenpruefung 25.09.2026: Enter leerte das Modell (Vorgabeknopf
+    „Modell leeren“, auch ohne Rueckgaengig), und der Text verschwieg Stäbe
+    mit Nachweis, Ermüdungslasten, Kontakte und ungespeicherte Ergebnisse."""
+    w, app = _fenster()
+    from PySide6 import QtCore
+    from statik3d import solver
+    from statik3d.model import Model
+    w.__dict__.pop("_fragen_knoepfe", None)
+    w.load_example("hall"); app.processEvents()
+    ne = len(w.model.elements)
+    for grenze in (None, 5):
+        if grenze:
+            w.MODELL_LEEREN_KOPIE_BIS = grenze
+        prot = []
+        _modal_taste(app, QtCore.Qt.Key_Return, prot)
+        try:
+            w.clear_mesh(); app.processEvents()
+        finally:
+            w.__dict__.pop("MODELL_LEEREN_KOPIE_BIS", None)
+        art = "ohne Rückgängig" if grenze else "mit Rückgängig"
+        check(f"Modell leeren ({art}), echtes Fenster + Enter: Vorgabe Abbrechen, das Modell bleibt",
+              len(prot) == 1 and prot[0][1] == "Abbrechen" and len(w.model.elements) == ne,
+              f"{[p[:2] for p in prot]}, Elemente {ne} -> {len(w.model.elements)}")
+    prot = []
+    n_l = len(w.model.supports)
+    _modal_taste(app, QtCore.Qt.Key_Return, prot)
+    w.clear_supports(); app.processEvents()
+    check("Alle Lager löschen, echtes Fenster + Enter: die Lager bleiben",
+          len(prot) == 1 and prot[0][1] == "Abbrechen" and len(w.model.supports) == n_l,
+          f"{[p[:2] for p in prot]}")
+    w.load_example("contact"); app.processEvents()
+    gefragt = _knopf_fragen(w, False)
+    w.clear_contact(); app.processEvents()
+    check("Alle Kontakte löschen: Vorgabe Abbrechen", gefragt and gefragt[0][4] == "nein", str(gefragt[:1])[:80])
+    w.clear_mesh(); app.processEvents()
+    text = gefragt[-1][1] if len(gefragt) == 2 else ""
+    check("Text nennt einseitige Lager und Spaltelemente", "einseitige Lager (1)" in text
+          and "Spaltelemente (1)" in text, text[:160])
+    w.load_example("gate"); app.processEvents()
+    gefragt = _knopf_fragen(w, False)
+    w.clear_mesh(); app.processEvents()
+    text = gefragt[0][1] if gefragt else ""
+    check("Text nennt Stäbe mit Nachweis und Ermüdungslasten",
+          "Stäbe mit Nachweis (3)" in text and "Ermüdungslasten (1)" in text and gefragt[0][4] == "nein",
+          text[:200])
+    check("… ohne Rechnung kein Wort von Ergebnissen", "Ergebnis" not in text)
+    an = solver.solve_all(w.model, design=False)
+    w._bg_done(lambda r: w._solve_done("all", r), an); app.processEvents()
+    w.clear_mesh(); app.processEvents()
+    text = gefragt[-1][1] if len(gefragt) == 2 else ""
+    check("ungespeicherte Ergebnisse: der Text sagt, dass sie verloren gehen",
+          "nicht gespeichert" in text and "Rückgängig holt sie nicht" in text, text[-160:])
+    w.__dict__.pop("_fragen_knoepfe", None)
+    m = Model("Groß")
+    m.nodes = np.zeros((158780, 3))
+    text = w._leeren_text(m, True)
+    check("Knotenzahl mit Leerzeichen gegliedert", "158 780 Knoten" in text, text[:80])
+
+
 def test_kontakte_und_lager_loeschen():
     w, app = _fenster()
     texte = [b.text for b in w.ribbon.befehle]
@@ -438,6 +567,16 @@ def test_kontakte_und_lager_loeschen():
     check("… bestätigt: gelöscht und ungespeichert", len(w.model.supports) == 0 and w.ungespeichert())
     w.undo(); app.processEvents()
     check("… und rückgängig zu machen", len(w.model.supports) == n_l)
+    # frisches Beispiel: kein voriger Rueckgaengig-Punkt, der die Lager schon
+    # enthielte - die Pruefung darueber bestand auch ohne merken()
+    w.load_example("frame"); app.processEvents()
+    n_l = len(w.model.supports)
+    _knopf_fragen(w, True)
+    w.clear_supports(); app.processEvents()
+    check("frisches Beispiel: Alle Lager löschen, Rückgängig nennt es und holt sie zurück",
+          w.act_undo.toolTip().startswith("Rückgängig: Alle Knotenlager gelöscht"), w.act_undo.toolTip())
+    w.undo(); app.processEvents()
+    check("… die Lager sind wieder da", n_l > 0 and len(w.model.supports) == n_l, f"{n_l} / {len(w.model.supports)}")
     w.__dict__.pop("_fragen_knoepfe", None)
 
 
@@ -503,26 +642,98 @@ def test_befehlssuche():
     rb._suche_ausfuehren(); app.processEvents()
     check("genau ein Treffer im Befehlsnamen: Enter führt ihn aus",
           ausgeloest == ["Projektangaben…"], str(ausgeloest))
-    # modellersetzend / loeschend: nie direkt
+    # modellersetzend / loeschend: nie direkt. Die Rueckfrage mit Knoepfen
+    # ist ersetzt und stimmt zu: liefe ein Befehl doch, risse die Pruefung,
+    # statt an einem modalen Fenster zu haengen (Gegenpruefung 25.09.2026)
     ausgeloest.clear()
     fp = _fingerabdruck(w.model)
-    for text in ("Neu", "Modell leeren", "Alle Kontakte löschen…", "Rahmen"):
-        rb.suche.setText(text)
-        rb._suche_ausfuehren(); app.processEvents()
-        rb._vervollstaendigung.popup().hide()
+    _knopf_fragen(w, True)
+    try:
+        for text in ("Neu", "Modell leeren", "Alle Kontakte löschen…", "Rahmen"):
+            rb.suche.setText(text)
+            rb._suche_ausfuehren(); app.processEvents()
+            rb._vervollstaendigung.popup().hide()
+    finally:
+        w.__dict__.pop("_fragen_knoepfe", None)
     check("„Neu“, „Modell leeren“, „Alle Kontakte löschen…“, Beispiel: nie direkt aus der Suche",
           ausgeloest == [] and _fingerabdruck(w.model) == fp, str(ausgeloest))
     check("… das Register des Befehls steht vorn, die Statuszeile sagt warum",
           "Suche" in w.statusBar().currentMessage(), w.statusBar().currentMessage()[:90])
     # aus der Trefferliste gewaehlt: ein gewoehnlicher Befehl laeuft
     ausgeloest.clear()
+    rb._liste_nachziehen("Projektangaben")
     eintrag = rb.anzeige(next(b for b in rb.befehle if b.text == "Projektangaben…"))
     rb._treffer_gewaehlt(eintrag); app.processEvents()
     check("aus der Trefferliste gewählt: der Befehl läuft", ausgeloest == ["Projektangaben…"], str(ausgeloest))
     ausgeloest.clear()
+    rb._liste_nachziehen("Neu")
     eintrag = rb.anzeige(next(b for b in rb.befehle if b.text == "Neu"))
     rb._treffer_gewaehlt(eintrag); app.processEvents()
     check("… „Neu“ aus der Liste gewählt: läuft trotzdem nicht", ausgeloest == [], str(ausgeloest))
+    rb._vervollstaendigung.popup().hide()
+    # reine Ansichtsbefehle mit „löschen/leeren“ im Namen laufen aus der Suche
+    # (bis zum 25.09.2026 gesperrt: „ersetzt oder löscht Modellinhalt“)
+    befehle = {b.text: b for b in rb.befehle}
+    ansicht = [t for t in ("Filter leeren", "Sonden löschen", "Messungen löschen") if t in befehle]
+    check("„Filter leeren“, „Sonden löschen“, „Messungen löschen“ sind nicht gesperrt",
+          len(ansicht) == 3 and not any(befehle[t].nicht_aus_suche() for t in ansicht), str(ansicht))
+    check("… „Alle Kontakte löschen…“ bleibt gesperrt",
+          "Alle Kontakte löschen…" in befehle and befehle["Alle Kontakte löschen…"].nicht_aus_suche())
+
+
+def test_befehlssuche_tastatur():
+    """Die Suche mit echten Tasten (Gegenpruefung 25.09.2026): Enter bei
+    offener Liste ging erst ans Suchfeld, dann an die aktuelle Listenzeile -
+    ein Befehl lief zweimal (Schalter blieb aus, zwei Schritte zurueck), bei
+    mehreren Treffern lief die erste Zeile."""
+    w, app = _fenster()
+    from PySide6 import QtCore
+    rb = w.ribbon
+    w.load_example("frame"); app.processEvents()
+    ausgeloest = []
+    zaehler = []
+    for b in rb.befehle:
+        f = (lambda _c=False, t=b.text: ausgeloest.append(t))
+        b.aktion.triggered.connect(f)
+        zaehler.append((b.aktion, f))
+    try:
+        aktiv, offen = _tippen(w, app, "Lager")
+        check("„Lager“ + Enter (mehrere Treffer): nichts ausgeführt, die Liste bleibt offen",
+              aktiv and ausgeloest == [] and offen, f"Liste aktiv {aktiv}, {ausgeloest}, offen {offen}")
+        vorher = w.act_kontakte.isChecked()
+        ausgeloest.clear()
+        aktiv, _o = _tippen(w, app, "Kontakte zeigen")
+        check("„Kontakte zeigen“ + Enter: genau einmal ausgelöst, der Schalter ist umgelegt",
+              aktiv and ausgeloest == ["Kontakte zeigen"] and w.act_kontakte.isChecked() != vorher,
+              f"{ausgeloest}, {vorher} -> {w.act_kontakte.isChecked()}")
+        if w.act_kontakte.isChecked() != vorher:
+            w.act_kontakte.setChecked(vorher)
+        for t in ("Schritt 1", "Schritt 2", "Schritt 3"):
+            w._meta_setzen("projekt", t)
+        n_undo = len(w._undo)
+        ausgeloest.clear()
+        _tippen(w, app, "Rückgängig")
+        check("„Rückgängig“ + Enter nimmt genau einen Schritt zurück",
+              ausgeloest == ["Rückgängig"] and len(w._undo) == n_undo - 1
+              and w.model.meta.get("projekt") == "Schritt 2",
+              f"{ausgeloest}, Stapel {n_undo} -> {len(w._undo)}, {w.model.meta.get('projekt')!r}")
+        ausgeloest.clear()
+        # eine Zeile unterhalb der ersten, deren Befehl aus der Suche laufen darf
+        treffer = rb.finden("Lager")
+        i = next(i for i, b in enumerate(treffer) if i > 0 and not b.nicht_aus_suche())
+        _tippen(w, app, "Lager", runter=i + 1)
+        check(f"{i + 1}x Pfeil runter + Enter führt genau die gewählte Zeile einmal aus",
+              ausgeloest == [treffer[i].text], f"{ausgeloest} (erwartet {treffer[i].text!r})")
+        ausgeloest.clear()
+        _tippen(w, app, "Neu", taste=QtCore.Qt.Key_Enter)
+        check("… „Neu“ + Enter (Zifferblock): nichts ausgeführt", ausgeloest == [], str(ausgeloest))
+    finally:
+        for a, f in zaehler:
+            try:
+                a.triggered.disconnect(f)
+            except (RuntimeError, TypeError):
+                pass
+        w.ribbon.suche.clear()
 
 
 def test_doppelklick_zweig():
@@ -578,13 +789,332 @@ def test_doppelklick_zweig():
     check("… nach allen Doppelklicks nichts ungespeichert", not w.ungespeichert(), w.ungespeichert())
 
 
+def _laufende_rechnung():
+    """Ein Rechenfaden, der laeuft, bis ``halt`` gesetzt wird."""
+    from PySide6 import QtCore
+
+    class _Rechnung(QtCore.QThread):
+        def __init__(self):
+            super().__init__()
+            self.halt = False
+            self.abbruch_angefordert = False
+
+        def abbrechen(self):
+            self.abbruch_angefordert = True
+            self.halt = True
+
+        def run(self):
+            while not self.halt:
+                self.msleep(5)
+    return _Rechnung()
+
+
+def test_waehrend_rechnung_kein_neues_modell():
+    """Gegenpruefung 25.09.2026: bei unveraendertem Modell liefen Neu,
+    Beispiel, Oeffnen und Import waehrend einer Rechnung ohne Rueckfrage -
+    die Rechnung ging verloren, ihr Ergebnis traf das neue Modell. Der
+    Testschalter steht dabei auf „verwerfen“ (tests/__init__.py): auch er
+    darf das nicht erlauben."""
+    w, app = _fenster()
+    from PySide6 import QtWidgets
+    from statik3d.gui import main as G
+    os.environ["STATIK3D_UNGESPEICHERT"] = "verwerfen"
+    w.load_example("gate"); app.processEvents()
+    fp, name = _fingerabdruck(w.model), w.model.name
+    check("Vorbereitung: nichts ungespeichert", not w.ungespeichert())
+    r = _laufende_rechnung()
+    alt_worker = w.worker
+    w.worker = r
+    r.start()
+    dialoge = []
+    alt_open = QtWidgets.QFileDialog.getOpenFileName
+    alt_dlg = G.ImportDialog
+    p = os.path.join(TMP, "waehrend.json")
+    from statik3d.examples_lib import build_example
+    build_example("truss").save(p)
+
+    class _Dlg:
+        def __init__(self, *a, **k):
+            self.append = type("_H", (), {"isChecked": lambda s: False})()
+            self.members = type("_H", (), {"isChecked": lambda s: False})()
+
+        def exec(self):
+            return 1
+
+        def options(self):
+            return {}
+    QtWidgets.QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: (dialoge.append(1), (p, ""))[1])
+    G.ImportDialog = _Dlg
+    try:
+        w.new_model(); app.processEvents()
+        ok_neu = _fingerabdruck(w.model) == fp
+        w.load_example("truss"); app.processEvents()
+        ok_bsp = _fingerabdruck(w.model) == fp
+        w.open_model(); app.processEvents()
+        ok_auf = _fingerabdruck(w.model) == fp and not dialoge
+        n_dlg = len(dialoge)
+        w.import_file(); app.processEvents()
+        ok_imp = _fingerabdruck(w.model) == fp
+    finally:
+        QtWidgets.QFileDialog.getOpenFileName = alt_open
+        G.ImportDialog = alt_dlg
+        r.abbrechen()
+        r.wait(3000)
+        w.worker = alt_worker
+    check("Neu während der Rechnung: unterbleibt, das Modell bleibt", ok_neu and w.model.name == name)
+    check("… Beispiel öffnen ebenso", ok_bsp)
+    check("… Öffnen ebenso, ohne Dateidialog", ok_auf, f"{n_dlg} Dateidialoge")
+    check("… Import (ersetzend) ebenso", ok_imp)
+    check("… die Statuszeile sagt warum", "nach der Rechnung" in w.statusBar().currentMessage(),
+          w.statusBar().currentMessage()[:90])
+
+
+def test_fremdes_ergebnis_verworfen():
+    """Zweite Sicherung: eine Rechnung, deren Modell inzwischen ersetzt ist,
+    liefert kein Ergebnis an das neue Modell (vorher KeyError und fremde
+    „ungespeicherte Ergebnisse“ am neuen Modell)."""
+    w, app = _fenster()
+    from statik3d import solver
+    w.load_example("gate"); app.processEvents()
+    an = solver.solve_all(w.model, design=False)
+    w._rechnung_modellwechsel = w._modellwechsel      # wie _run_background beim Start
+    w.load_example("frame"); app.processEvents()
+    zeilen = w.log.toPlainText().count("FEHLER")
+    w._bg_done(lambda r: w._solve_done("all", r), an); app.processEvents()
+    check("Ergebnis zu einem ersetzten Modell: verworfen, kein Fehler, nichts ungespeichert",
+          w.analysis is None and not w.ungespeichert() and w.log.toPlainText().count("FEHLER") == zeilen,
+          w.ungespeichert())
+    check("… das Protokoll sagt es", "Ergebnis verworfen" in w.log.toPlainText())
+    an2 = solver.solve_all(w.model, design=False)
+    w._rechnung_modellwechsel = w._modellwechsel
+    w._bg_done(lambda r: w._solve_done("all", r), an2); app.processEvents()
+    check("… zum offenen Modell kommt es an", w.analysis is not None and "Ergebnis" in w.ungespeichert())
+
+
+def test_teilergebnis_ungespeichert():
+    w, app = _fenster()
+    import time
+    from statik3d import solver
+    w.load_example("frame"); app.processEvents()
+    an = solver.solve_all(w.model, design=False)
+    ex = type("_Ausnahme", (), {"teilanalyse": an})()
+    alt = w.worker
+    w.worker = type("_ProbeWorker", (), {"ausnahme": ex, "abbruch_angefordert": True})()
+    w._rechnung_name = "Probe-Teillauf"
+    w._rechnung_t0 = time.time()
+    w._rechnet_gerade = True
+    try:
+        w._bg_abgebrochen(1.0); app.processEvents()
+    finally:
+        w.worker = alt
+    check("Teilergebnis nach Abbruch gilt als ungespeichert", "Ergebnis" in w.ungespeichert() and _stern(w),
+          w.ungespeichert())
+
+
+def test_speichern_ergebnis_scheitert():
+    """Gegenpruefung 25.09.2026: scheiterte die Ergebnisdatei, galt alles als
+    gespeichert - „Speichern“ in der Rueckfrage beendete danach ohne sie."""
+    w, app = _fenster()
+    from statik3d import ergebnisse as erg
+    from statik3d import solver
+    w.load_example("frame"); app.processEvents()
+    an = solver.solve_all(w.model, design=False)
+    w._bg_done(lambda r: w._solve_done("all", r), an); app.processEvents()
+    w.path = os.path.join(TMP, "voll.json")
+    alt = erg.schreiben
+
+    def voll(*a, **k):
+        raise OSError("Datenträger voll")
+    erg.schreiben = voll
+    # kein echter Dateidialog: ohne die Kur ginge „Neu“ unten durch, und das
+    # letzte Speichern stuende ohne Pfad da - die Pruefung soll reissen, nicht haengen
+    from PySide6 import QtWidgets
+    alt_s = QtWidgets.QFileDialog.getSaveFileName
+    QtWidgets.QFileDialog.getSaveFileName = staticmethod(lambda *a, **k: ("", ""))
+    try:
+        ok = w.save_model(); app.processEvents()
+        check("Ergebnisdatei gescheitert: save_model meldet False, Ergebnisse bleiben ungespeichert (Stern)",
+              ok is False and "Ergebnis" in w.ungespeichert() and _stern(w), f"{ok} {w.ungespeichert()!r}")
+        with _Fragen(w, "speichern") as f:
+            w.new_model(); app.processEvents()
+        check("… „Speichern“ in der Rückfrage vor Neu hält dann an, die Ergebnisse bleiben",
+              len(f.gefragt) == 1 and w.analysis is not None and w.model.nn > 0)
+    finally:
+        erg.schreiben = alt
+    try:
+        ok = w.save_model(); app.processEvents()
+    finally:
+        QtWidgets.QFileDialog.getSaveFileName = alt_s
+    check("… gelingt das Speichern, ist nichts mehr ungespeichert", ok is True and not w.ungespeichert())
+
+
+def test_projektangabe_grosses_modell():
+    """Projektangaben kopieren oberhalb PROJEKTANGABE_KOPIE_BIS nicht das
+    ganze Modell (Drehlager: 11 s und Verdraengung der Rueckgaengig-Punkte)."""
+    w, app = _fenster()
+    w.load_example("frame"); app.processEvents()
+    n_undo = len(w._undo)
+    w.PROJEKTANGABE_KOPIE_BIS = 5
+    try:
+        w._meta_setzen("projekt", "Großes Modell")
+    finally:
+        del w.PROJEKTANGABE_KOPIE_BIS
+    check("großes Modell: kein Rückgängig-Punkt, aber ungespeichert",
+          len(w._undo) == n_undo and w.ungespeichert() and w.model.meta.get("projekt") == "Großes Modell",
+          f"Stapel {n_undo} -> {len(w._undo)}")
+
+
+def test_rueckgaengig_wege():
+    """Die Wege, die seit Paket 3 einen Rueckgaengig-Punkt anlegen: jeder
+    nennt seinen Schritt und nimmt ihn zurueck - je auf einem frischen
+    Beispiel, damit kein aelterer Punkt die Pruefung traegt."""
+    w, app = _fenster()
+    import copy
+    from PySide6 import QtWidgets
+    from statik3d.gui import main as G
+
+    def frisch(bsp):
+        w.load_example(bsp); app.processEvents()
+        return w.model
+
+    def geprueft(name, anfang, zustand, vorher):
+        tip = w.act_undo.toolTip()
+        w.undo(); app.processEvents()
+        check(f"{name}: Rückgängig nennt „{anfang}“ und nimmt es zurück",
+              tip.startswith("Rückgängig: " + anfang) and zustand() == vorher, f"{tip!r}")
+
+    def lasten():
+        lc = w.model.case()
+        return sum(len(getattr(lc, a, []) or []) for a in ("nodal_loads", "beam_loads", "face_loads",
+                                                          "temp_loads", "linienlasten"))
+    m = frisch("frame")
+    vorher = lasten()
+    w.clear_loads(); app.processEvents()
+    geprueft("Lasten löschen", "Lasten von", lasten, vorher)
+    m = frisch("frame")
+    n = len(m.supports)
+    w.selection = np.array([m.supports[0].node])
+    w.remove_support(); app.processEvents()
+    geprueft("Lager entfernen", "Lager entfernt", lambda: len(w.model.supports), n)
+    m = frisch("hall")
+    namen = list(m.combinations)
+    w.clear_combinations(); app.processEvents()
+    geprueft("Alle Kombinationen löschen", "Alle Kombinationen gelöscht",
+             lambda: list(w.model.combinations), namen)
+    frisch("hall")
+    w.refresh_all(); app.processEvents()
+    w.tbl_comb.setCurrentCell(0, 0)
+    w.remove_combination(); app.processEvents()
+    geprueft("Kombination löschen", f"Kombination {namen[0]} gelöscht", lambda: list(w.model.combinations), namen)
+    m = frisch("hall")
+    w.tbl_comb.setCurrentCell(0, 0)
+    neu = copy.deepcopy(m.combinations[namen[0]])
+    neu.name = "KNEU"
+
+    class _Dlg:
+        def __init__(self, *a, **k):
+            pass
+
+        def exec(self):
+            return 1
+
+        def result(self):
+            return neu
+    alt = G.CombinationDialog
+    G.CombinationDialog = _Dlg
+    try:
+        w.edit_combination(); app.processEvents()
+    finally:
+        G.CombinationDialog = alt
+    geprueft("Kombination ändern", "Kombination KNEU", lambda: sorted(w.model.combinations), sorted(namen))
+    m = frisch("gate")
+    vorher = sorted(m.combinations)
+    w.din19704_bilden(); app.processEvents()
+    geaendert = sorted(w.model.combinations) != vorher
+    geprueft("DIN 19704", "Kombinationen nach DIN 19704", lambda: sorted(w.model.combinations), vorher)
+    check("… (DIN 19704 hat Kombinationen gebildet)", geaendert)
+    w.new_model(); app.processEvents()
+    m = w.model
+    mat, sec = next(iter(m.materials)), next(iter(m.sections))
+    k = [m.add_node(0, 0, 0), m.add_node(0, 0, 2), m.add_node(0.03, 0, 1), m.add_node(1, 0, 1)]
+    m.add_element("beam", [k[0], k[1]], mat, sec)
+    m.add_element("beam", [k[2], k[3]], mat, sec)
+    w.refresh_all(); w._undo_init(); w._undo_knoepfe()
+    n_el = len(m.elements)
+    alt_d = QtWidgets.QInputDialog.getDouble
+    QtWidgets.QInputDialog.getDouble = staticmethod(lambda *a, **k: (60.0, True))
+    try:
+        w.staebe_anschliessen(); app.processEvents()
+    finally:
+        QtWidgets.QInputDialog.getDouble = alt_d
+    angeschlossen = len(w.model.elements) != n_el
+    geprueft("Freie Stabenden anschließen", "Freie Stabenden angeschlossen",
+             lambda: len(w.model.elements), n_el)
+    check("… (ein Stabende wurde angeschlossen)", angeschlossen)
+
+
+def test_weitere_wege():
+    """Wege der Pruefliste, die in der Rueckgaengig-Pruefung nicht vorkommen:
+    leere Punkte werden zurueckgenommen, Plastizitaet, Berichtsdialog und
+    Browser vermerken die Aenderung (Gegenpruefung 25.09.2026: ohne Pruefung)."""
+    w, app = _fenster()
+    import types
+    from statik3d.gui import main as G
+    w.load_example("hall"); app.processEvents()
+    w.auto_members(); app.processEvents()          # die Staebe gibt es schon
+    check("Stäbe erkennen ohne neue Stäbe: kein Rückgängig-Punkt, nichts ungespeichert",
+          len(w._undo) == 0 and not w.ungespeichert(), f"{len(w._undo)} {w.ungespeichert()!r}")
+    w.load_example("plate"); app.processEvents()
+    w.do_kerbfaelle(); app.processEvents()
+    check("Kerbfälle ohne Vorschlag: kein Rückgängig-Punkt, nichts ungespeichert",
+          len(w._undo) == 0 and not w.ungespeichert(), f"{len(w._undo)} {w.ungespeichert()!r}")
+    w.cb_plast.setChecked(not w.cb_plast.isChecked())
+    w._plast_uebernehmen(); app.processEvents()
+    check("Plastizität umgeschaltet: ungespeichert", w.ungespeichert())
+    w.cb_plast.setChecked(not w.cb_plast.isChecked())
+    w.load_example("plate"); app.processEvents()
+
+    class _Bericht:
+        def __init__(self, *a, **k):
+            self.path = types.SimpleNamespace(text=lambda: "")
+
+        def exec(self):
+            return 1
+
+        def apply_meta(self, m):
+            m.meta["projekt"] = "Aus dem Berichtsdialog"
+    alt = G.ReportDialog
+    G.ReportDialog = _Bericht
+    try:
+        w.make_report(); app.processEvents()
+    finally:
+        G.ReportDialog = alt
+    check("Projektangabe aus dem Berichtsdialog: ungespeichert",
+          w.model.meta.get("projekt") == "Aus dem Berichtsdialog" and w.ungespeichert())
+    w.load_example("plate"); app.processEvents()
+    alt = {k: w.__dict__[k] for k in ("web_state", "web_version") if k in w.__dict__}
+    w.web_version = 0
+    w.web_state = types.SimpleNamespace(version=1)
+    try:
+        w._web_poll(); app.processEvents()
+    finally:
+        for k in ("web_state", "web_version"):
+            w.__dict__.pop(k, None)
+        w.__dict__.update(alt)
+    check("Änderung aus dem Browser: ungespeichert", w.ungespeichert())
+
+
 def main():
     import faulthandler
     faulthandler.dump_traceback_later(900, exit=True)
     for t in (test_merker_und_stern, test_ergebnis_ungespeichert, test_rueckfrage, test_rueckfrage_fenster,
-              test_import_fragt, test_beispiel_knopf, test_modell_leeren,
+              test_import_fragt, test_beispiel_knopf, test_modell_leeren, test_modell_leeren_rueckfrage,
               test_kontakte_und_lager_loeschen, test_rueckgaengig_knopf_nennt, test_befehlssuche,
-              test_doppelklick_zweig, test_beenden_waehrend_rechnung):
+              test_befehlssuche_tastatur, test_doppelklick_zweig, test_waehrend_rechnung_kein_neues_modell,
+              test_fremdes_ergebnis_verworfen, test_teilergebnis_ungespeichert,
+              test_speichern_ergebnis_scheitert, test_projektangabe_grosses_modell, test_rueckgaengig_wege,
+              test_weitere_wege,
+              test_beenden_waehrend_rechnung):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

@@ -111,10 +111,18 @@ Befehlsname passt**; sonst bleibt die Liste offen und man wählt den gemeinten
 (Pfeiltasten und Eingabe oder Klick). Befehle, die das Modell ersetzen oder
 etwas löschen — Neu, Öffnen, Übernehmen, die Beispiele, Modell leeren, alles
 mit „löschen“ im Namen, Beenden — **laufen nie aus der Suche**: sie holen nur
-ihr Register nach vorn, die Statuszeile sagt, wo der Knopf steht. Bis zum
+ihr Register nach vorn, die Statuszeile sagt, wo der Knopf steht. Ausgenommen
+sind *Filter leeren*, *Sonden löschen* und *Messungen löschen*: sie leeren nur
+Ansicht oder Tabelle und laufen wie andere Befehle. Bis zum
 24.09.2026 führte die Eingabetaste den ersten Treffer irgendwo in Name, Gruppe
 oder Hinweis aus: „Spiel“ lud das Beispiel Rahmen und verwarf das offene
-Modell. Geprüft in `tests/test_ungespeichert.py`.
+Modell. Am 24.09.2026 gab es noch einen zweiten Weg: bei offener Liste führte
+die Eingabetaste einen Befehl mit genau einem Namenstreffer **zweimal** aus
+(ein Schalter wie *Kontakte zeigen* blieb dadurch aus, *Rückgängig* nahm zwei
+Schritte zurück), bei mehreren Treffern die erste Zeile. Seit dem 25.09.2026
+ist in der Liste keine Zeile vorgewählt; die Eingabetaste führt die mit den
+Pfeiltasten gewählte Zeile genau einmal aus, sonst gilt die Regel oben.
+Geprüft in `tests/test_ungespeichert.py`, dort auch mit echten Tastendrücken.
 
 Die Arbeitsfläche in drei Spalten:
 
@@ -221,8 +229,10 @@ Die Arbeitsfläche in drei Spalten:
   zu. Bis zum 24.09.2026 führte der Doppelklick einen Befehl aus: „Stäbe mit
   Nachweis“ legte ohne Rückfrage Stäbe an (Rahmen: 0 → 3), „Bericht“ nahm die
   Ansicht auf, andere Zweige öffneten modale Dialoge. Der Doppelklick auf
-  einen **Ergebniseintrag** übernimmt die Ansicht weiter in den Bericht
-  (siehe *Ergebnisse und Bericht*).
+  einen **Ergebniseintrag** zeigt das Ergebnis wie ein Klick und legt **kein
+  Berichtsbild** mehr an (seit 25.09.2026, Plan Paket 3: ein Doppelklick legt
+  nichts an); in den Bericht übernimmt *Bericht → Ansicht übernehmen*
+  (**Strg+B**) oder „+ Ansicht übernehmen“ im Modellbaum.
   Zweige mit sehr vielen Einträgen zeigen die ersten 20 000 und verweisen für
   den Rest auf die Tabelle unten, wo gefiltert werden kann.
   Die **Stellungen stehen nur hier**, mit „+ Stellung anlegen" am Ende des
@@ -1324,7 +1334,7 @@ Volumenkörper (Knoten ohne Drehfreiheitsgrad)“, bei einem Fachwerk-, Seil- od
 Scheibenmodell ohne Balken und Schalen „keine Verdrehungen: kein Knoten mit
 Drehsteifigkeit (Fachwerkstäbe, Seile, Scheiben und Volumenkörper haben keinen
 Drehfreiheitsgrad)“. Ein Klick meldet das in der Statuszeile und färbt nicht,
-ein Doppelklick übernimmt dann auch nichts in den Bericht. Geprüft in `tests/test_ergebnisbaum.py`, dort auch die
+ein Doppelklick färbt dann ebenfalls nicht. Geprüft in `tests/test_ergebnisbaum.py`, dort auch die
 Handrechnung am Kragarm: φ am Ende = F·L²/(2EI).
 
 Der Zweig **Schnittgrößen** führt N, Vy, Vz, Mt, My und Mz, jede mit ihren
@@ -1346,8 +1356,9 @@ den Bericht, wenn man die Ansicht übernimmt. Abschalten: *Ergebnisse →
 Kennwerte im Bild*.
 
 **Ergebnisse in den Bericht übernehmen**: Ansicht einstellen, dann
-*Bericht → Ansicht übernehmen* (**Strg+B**), ein Doppelklick auf den
-Ergebniszweig oder „+ Ansicht übernehmen" im Modellbaum. Aufgenommen wird das
+*Bericht → Ansicht übernehmen* (**Strg+B**) oder „+ Ansicht übernehmen" im
+Modellbaum. Ein Doppelklick auf einen Ergebniseintrag nimmt seit dem
+25.09.2026 nichts mehr auf, er zeigt nur. Aufgenommen wird das
 Bild **und** die Einstellung, aus der es entstanden ist — welches Ergebnis,
 wonach eingefärbt, welcher Verlauf, welche Überhöhung. Ohne diese Angabe wäre
 eine Farbgrafik im Statikdokument nicht prüfbar.
@@ -2182,9 +2193,22 @@ Knöpfen: **Speichern** (danach geht es weiter; bricht man den Dateidialog ab,
 bleibt alles, wie es war), **Verwerfen** (die Änderungen gehen verloren) und
 **Abbrechen** (nichts geschieht). Bei *Übernehmen* fragt es nur, wenn der Import
 das Modell ersetzt, nicht beim Anhängen. Bei *Öffnen* kommt die Frage vor dem
-Dateidialog. Ohne Änderungen wird nicht gefragt. Während einer Rechnung
-unterbleiben Neu, Öffnen und Beispiel, solange etwas ungespeichert ist — die
-Statuszeile sagt es.
+Dateidialog. Ohne Änderungen wird nicht gefragt. **Während einer Rechnung
+unterbleiben Neu, Öffnen, Beispiel und ein ersetzendes Übernehmen immer**, auch
+wenn nichts ungespeichert ist: die Rechnung gehört zum offenen Modell. Die
+Statuszeile sagt „… erst nach der Rechnung“; wer nicht warten will, hält die
+Rechnung an (Esc). Bis zum 25.09.2026 galt die Sperre nur bei ungespeicherten
+Änderungen — ein Fehlgriff auf ein Beispiel verwarf dann eine laufende
+Rechnung ohne Frage, und ihr Ergebnis landete mit einer Fehlermeldung am neuen
+Modell. Ein Ergebnis, dessen Modell inzwischen ersetzt wurde, verwirft das
+Programm seitdem (Protokoll: „Ergebnis verworfen …“).
+
+**Speichern, wenn die Ergebnisdatei nicht geschrieben werden kann** (Platte
+voll, keine Rechte): Die Modelldatei ist gespeichert, die Ergebnisse gelten
+aber weiter als ungespeichert — der Stern bleibt, und wer in der Rückfrage
+vor Neu oder Beenden *Speichern* gewählt hat, sieht die Fehlermeldung, und das
+Programm hält an, statt ohne die Ergebnisse weiterzumachen. Bis zum
+25.09.2026 galt das als gespeichert.
 
 **Beenden während einer Rechnung** fragt „Rechnung abbrechen und beenden?“
 (*Abbrechen und beenden* / *Weiterrechnen*). Mit Ja hält die Rechnung beim
@@ -2195,10 +2219,20 @@ noch sichern lässt. Bis zum 24.09.2026 ging das Fenster mit laufendem
 Rechenfaden einfach zu.
 
 **Modell leeren (Eigenschaften behalten)…** (Register Datei, früher „Alle
-Elemente löschen“ im Register Netz, zwischen den Netzbefehlen) entfernt
-Geometrie, Netz, Lager, Lastfälle, Lasten und Kombinationen; Werkstoffe,
-Querschnitte, Dicken und Projektangaben bleiben. Das Programm fragt vorher und
-nennt, was verschwindet. Bis 1 000 000 Elemente lässt es sich mit Strg+Z
+Elemente löschen“ im Register Netz, zwischen den Netzbefehlen) entfernt alles
+außer Werkstoffen, Querschnitten, Dicken und Projektangaben. Das Programm fragt
+vorher und **nennt mit Anzahl, was tatsächlich verschwindet**, etwa „Netz
+(221 Knoten, 240 Elemente), Knotenlager (43), Lastfälle mit ihren Lasten (3),
+Kombinationen (23), Stäbe mit Nachweis (3), Ermüdungslasten (1)“ — dazu
+Kontakte, Berichtsbilder, Stellungen, Unterlagen oder Layer, wenn es sie gibt;
+die Modelleinstellungen (Bemessung, Netzvorgaben, Einheiten, Plastizität,
+Berichtsrahmen) gehen auf die Vorgabe zurück. Sind die **Ergebnisse der
+letzten Rechnung nicht gespeichert**, sagt die Rückfrage, dass sie verloren
+gehen: Rückgängig holt das Modell zurück, die Ergebnisse nicht. Vorgabeknopf
+ist **Abbrechen** — die Eingabetaste leert nichts; ebenso bei *Alle Kontakte
+löschen…* und *Alle Lager löschen*. Bis zum 25.09.2026 nannte der Text nur
+Geometrie, Netz, Lager, Lastfälle, Lasten und Kombinationen, und die
+Eingabetaste leerte das Modell, auch ohne Rückgängig. Bis 1 000 000 Elemente lässt es sich mit Strg+Z
 zurücknehmen. Darüber sagt die Rückfrage ausdrücklich, dass es **nicht
 rückgängig** zu machen ist: die Sicherung wäre eine ganze Modellkopie — am
 Drehlager (2 064 422 Elemente) 1,38 GB und 11 s —, und wer ein Modell leert,
@@ -2209,8 +2243,16 @@ dann ebenfalls weg, sie hielten dasselbe Modell fest.
 löschen“) nennt vorher die Anzahl der einseitigen Lager, Spaltelemente und
 Kontaktpaare; die Kontaktbedingungen bleiben. **Alle Lager löschen** im
 Register Lager/Lasten fragt ebenso und lässt sich jetzt rückgängig machen,
-ebenso *Lasten des aktiven Lastfalls löschen* und das Löschen von
-Kombinationen dort.
+ebenso *Lasten des aktiven Lastfalls löschen*, *Lager entfernen*, das Ändern
+und Löschen von Kombinationen dort, *DIN 19704: Kombinationen* und *Freie
+Stabenden anschließen*; der Rückgängig-Knopf nennt jeweils den Schritt.
+
+**Projektangaben** (Projekt, Bauteil, Position, Bearbeiter) lassen sich bis
+100 000 Elemente rückgängig machen. Darüber gelten sie nur als ungespeichert
+(Stern), wie Eigengewicht und Temperaturlast: ein Rückgängig-Schritt kopiert
+das ganze Modell — am Drehlager rund 11 s je geändertem Textfeld —, und dort
+passen nur zwei Sicherungen in den Speicher; zwei geänderte Projektfelder
+hätten die echten Rückgängig-Schritte verdrängt (seit 25.09.2026).
 
 **Beispiele** stehen in einem Knopf *Beispiel öffnen ▾* statt in acht
 Knöpfen, von denen jeder das Modell ersetzte.

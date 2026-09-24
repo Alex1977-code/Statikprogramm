@@ -54,8 +54,10 @@ UEBERSPRINGEN = {
     "Eigenschwingungen": "Rechnung", "Knicken": "Rechnung", "Alle Stellungen": "Rechnung",
     "Vernetzen": "Vernetzung 4 min", "Flächen vernetzen": "Vernetzung", "Volumen vernetzen": "Vernetzung",
     "Netz löschen": "zerstoert das Netz",
-    "Modell leeren (Eigenschaften behalten)…": "leert das Modell (frueher „Alle Elemente löschen“)",
-    "Alle Kontakte löschen…": "loescht die Kontakte",
+    # „Modell leeren…“ und „Alle Kontakte löschen…“ laufen mit (25.09.2026):
+    # ihre Rueckfrage ist ein QMessageBox, und QMessageBox.exec ist
+    # QDialog.exec, das oben auf 0 steht - sie wird verneint, am Drehlager
+    # auch im Zweig ohne Rueckgaengig (ueber 1 Mio. Elemente).
     "Kontaktfugen ausführen": "aendert das Netz",
     "Doppelte Knoten zusammenführen": "aendert das Modell (400 000 Knoten)",
     "Freie Bewegungen suchen": "Gleichungssystem 2 Mio. Elemente",

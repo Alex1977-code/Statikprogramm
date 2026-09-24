@@ -55,6 +55,10 @@ SYNONYME = {
 }
 #: Loeschende Befehle erkennt die Suche am Namen - sie laufen nie direkt aus ihr
 LOESCHWOERTER = re.compile(r"lösch|leeren|verwerf|entfern")
+#: Befehle, die trotz Loeschwort im Namen nur Ansicht oder Tabelle leeren und
+#: darum aus der Suche laufen duerfen (Gegenpruefung 25.09.2026: die Suche
+#: sperrte sie mit der Begruendung „ersetzt oder löscht Modellinhalt“)
+NUR_ANSICHT = frozenset({"Filter leeren", "Sonden löschen", "Messungen löschen"})
 
 
 def woerter(text: str) -> list:
@@ -90,7 +94,8 @@ class Befehl:
         return self.namenswoerter() + woerter(f"{self.register} {self.gruppe} {self.hinweis}")
 
     def nicht_aus_suche(self) -> bool:
-        return self.vorsicht or bool(LOESCHWOERTER.search(self.text.lower()))
+        return self.vorsicht or (self.text not in NUR_ANSICHT
+                                 and bool(LOESCHWOERTER.search(self.text.lower())))
 
 
 #: Hoehe des Knopffelds einer Gruppe [px]. Jede Gruppe ist gleich hoch, und
@@ -427,6 +432,36 @@ class Ribbon(QtWidgets.QWidget):
         self._vervollstaendigung.setWidget(self.suche)
         self._vervollstaendigung.activated[str].connect(self._treffer_gewaehlt)
         self.suche.textEdited.connect(self._liste_nachziehen)
+        # Enter bei offener Liste behandelt allein _popup_taste (25.09.2026):
+        # QCompleter gab die Taste zuerst ans Suchfeld (returnPressed ->
+        # _suche_ausfuehren) und aktivierte danach die aktuelle Zeile - ein
+        # Befehl mit einem Namenstreffer lief zweimal (Schalter blieb aus),
+        # bei mehreren Treffern lief die erste Listenzeile. Ein spaeter
+        # installierter Filter kommt vor dem des Vervollstaendigers dran.
+        self._zeile_gewaehlt = False
+        self._vervollstaendigung.popup().installEventFilter(self)
+
+    def eventFilter(self, obj, ev):
+        popup = getattr(self, "_vervollstaendigung", None)
+        popup = popup.popup() if popup is not None else None
+        if obj is popup and ev.type() == QtCore.QEvent.KeyPress:
+            k = ev.key()
+            if k in (QtCore.Qt.Key_Up, QtCore.Qt.Key_Down, QtCore.Qt.Key_PageUp,
+                     QtCore.Qt.Key_PageDown):
+                self._zeile_gewaehlt = True          # der Anwender waehlt eine Zeile
+            elif k in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
+                self._popup_taste()
+                return True
+        return super().eventFilter(obj, ev)
+
+    def _popup_taste(self):
+        """Enter bei offener Trefferliste: die mit den Pfeiltasten gewaehlte
+        Zeile ausfuehren, sonst wie Enter im Suchfeld (nur bei genau einem
+        Namenstreffer, sonst bleibt die Liste stehen)."""
+        idx = self._vervollstaendigung.popup().currentIndex()
+        if self._zeile_gewaehlt and idx.isValid():
+            return self._treffer_gewaehlt(str(idx.data()))
+        return self._suche_ausfuehren()
 
     @staticmethod
     def anzeige(b: Befehl) -> str:
@@ -462,8 +497,12 @@ class Ribbon(QtWidgets.QWidget):
         treffer = self.finden(text)
         self._anzeige = {self.anzeige(b): b for b in treffer}
         self._vervollstaendigung.setModel(QtCore.QStringListModel(list(self._anzeige), self._vervollstaendigung))
+        self._zeile_gewaehlt = False
         if treffer:
             self._vervollstaendigung.complete()
+            # complete() macht Zeile 0 zur aktuellen - keine Zeile ist gewaehlt,
+            # bis der Anwender eine mit den Pfeiltasten oder der Maus nimmt
+            self._vervollstaendigung.popup().setCurrentIndex(QtCore.QModelIndex())
         else:
             self._vervollstaendigung.popup().hide()
         return treffer
@@ -488,8 +527,10 @@ class Ribbon(QtWidgets.QWidget):
                           "den gemeinten in der Liste wählen")
 
     def _treffer_gewaehlt(self, zeile: str):
-        """Eine Zeile der Trefferliste gewaehlt (Enter oder Klick)."""
-        b = self._anzeige.get(zeile) or next((x for x in self.befehle if self.anzeige(x) == zeile), None)
+        """Eine Zeile der Trefferliste gewaehlt (Enter oder Klick) - nur aus
+        der gezeigten Liste: der Rueckgriff ueber alle Befehle fand den
+        Befehl auch nach einer schon ausgefuehrten Suche noch einmal."""
+        b = self._anzeige.get(zeile)
         if b is not None:
             self._ausfuehren(b)
 

@@ -8365,10 +8365,13 @@ class MainWindow(QtWidgets.QMainWindow):
             if art == "geokoerper_einzeln":
                 return self.koerper_bearbeiten(name)
             if art == "ergebnis":
-                # nur aufnehmen, was wirklich eingestellt wurde (grauer phi-Eintrag: nichts)
-                if self.ergebnis_zeigen(name) is False:
-                    return None
-                return self.ansicht_in_bericht()
+                # Nur zeigen, kein Berichtsbild (25.09.2026, Plan Paket 3 „kein
+                # Berichtsbild“, Antwort 11: ein Doppelklick legt nichts an).
+                # Bis dahin nahm jeder Doppelklick auf einen Ergebniseintrag die
+                # Ansicht in den Bericht auf. Aufnehmen: Strg+B oder
+                # „+ Ansicht übernehmen“ im Zweig Bericht.
+                self.ergebnis_zeigen(name)
+                return None
             if art in ("werkstoff", "dicke", "lastfall", "kombination", "querschnitt", "gelenk",
                        "berichtseintrag", "kontaktbedingung", "stellung"):
                 self._baum_objekt_waehlen(art, name)
@@ -11193,8 +11196,23 @@ class MainWindow(QtWidgets.QMainWindow):
         Text noch einmal bestaetigt (Fokuswechsel) ist keine Aenderung."""
         if self.model.meta.get(k, "") == text:
             return
-        self.merken(f"Projektangabe {k.capitalize()}")
+        if len(self.model.elements) <= self.PROJEKTANGABE_KOPIE_BIS:
+            self.merken(f"Projektangabe {k.capitalize()}")
+        else:
+            self._aenderung()
         self.model.meta[k] = text
+
+    #: Bis zu so vielen Elementen legt eine Projektangabe einen
+    #: Rueckgaengig-Punkt an (25.09.2026). merken() kopiert das ganze Modell,
+    #: rund 5 µs je Element (gemessen 1,12 s bei 216 000 Elementen, am
+    #: Drehlager 11 s), und UNDO_ELEMENTE laesst dort nur zwei Sicherungen:
+    #: zwei geaenderte Textfelder haetten die echten Rueckgaengig-Schritte
+    #: verdraengt. Ein Projekttext ist schnell neu getippt - darueber gilt er
+    #: nur als ungespeichert, wie Eigengewicht und Temperatur. Lasten, Lager,
+    #: Kombinationen, DIN 19704 und Stabenden sichern dagegen weiter bei jeder
+    #: Groesse: sie aendern das Tragwerk, und ihre Nachbarn (Kombination
+    #: anlegen, Lager setzen) taten es schon vorher.
+    PROJEKTANGABE_KOPIE_BIS = 100_000
 
     # ---- Tab 1: Modell ------------------------------------------------
     def _tab_model(self):
@@ -14229,6 +14247,59 @@ class MainWindow(QtWidgets.QMainWindow):
     #: aelteren Sicherungen, die dasselbe Modell festhielten).
     MODELL_LEEREN_KOPIE_BIS = 1_000_000
 
+    #: Modelllisten, die „Modell leeren“ entfernt, mit ihrem Namen in der
+    #: Rueckfrage. Was hier fehlt, nennt die Rueckfrage mit dem Attributnamen -
+    #: eine kuenftige Liste geht also nicht stillschweigend verloren.
+    LEEREN_NAMEN = {
+        "supports": "Knotenlager", "line_supports": "Linienlager",
+        "surface_supports": "Flächenlager", "lines": "Linien", "hinges": "Gelenke",
+        "load_cases": "Lastfälle mit ihren Lasten", "combinations": "Kombinationen",
+        "fatigue_loads": "Ermüdungslasten", "members": "Stäbe mit Nachweis",
+        "joints": "Anschlüsse", "verformungsgrenzen": "Verformungsnachweise",
+        "beulfelder": "Beulfelder", "volumenbereiche": "Volumenbereiche",
+        "lasteinleitungen": "Lasteinleitungen", "kontaktbedingungen": "Kontaktbedingungen",
+        "kopplungen": "Kopplungen", "punktmassen": "Punktmassen", "daempfer": "Dämpfer",
+        "federn": "Federn", "starrkoerper": "Starrkörper", "grenzschichten": "Grenzschichten",
+        "flaechen": "Flächen", "koerper": "Volumenkörper", "bericht": "Berichtsbilder",
+        "contact_supports": "einseitige Lager", "gap_elements": "Spaltelemente",
+        "contact_pairs": "Kontaktpaare", "getrennte_knoten": "getrennte Knoten (Kontaktfugen)",
+        "kontakt_ausnahmen": "Kontaktausnahmen", "importhinweise": "Importhinweise",
+        "subsysteme": "Subsysteme", "situationen": "Situationen", "layer": "Layer",
+        "unterlagen": "Unterlagen", "stellungen": "Stellungen", "wasserdruecke": "Wasserdrücke",
+        "winde": "Windlasten", "schwingungen": "Schwingungsnachweise",
+        "schweissnaehte": "Schweißnähte", "bemassungen": "Bemaßungen"}
+    #: behaelt „Modell leeren“ (siehe clear_mesh); das Netz nennt der Text eigens
+    LEEREN_BLEIBT = ("materials", "sections", "shells", "meta", "elements", "tetp_kantenmitten")
+
+    def _leeren_text(self, m0, rueck: bool) -> str:
+        """Text der Rueckfrage „Modell leeren“ aus dem, was wirklich
+        verschwindet. Bis zum 25.09.2026 nannte er nur „Geometrie, Netz,
+        Lager, Lastfälle, Lasten und Kombinationen“ - Stäbe mit Nachweis,
+        Ermüdungslasten, Kontakte, Berichtsbilder und ungespeicherte
+        Ergebnisse gingen ungenannt mit."""
+        def zahl(n):
+            return f"{int(n):,}".replace(",", " ")
+        ne = len(m0.elements)
+        teile = [f"Netz ({zahl(m0.nn)} Knoten, {zahl(ne)} Elemente)"]
+        for k, v in vars(m0).items():
+            if k.startswith("_") or k in self.LEEREN_BLEIBT or not isinstance(v, (list, dict)) or not v:
+                continue
+            teile.append(f"{self.LEEREN_NAMEN.get(k, k)} ({zahl(len(v))})")
+        text = (f"„{m0.name}“ leeren. Entfernt werden: " + ", ".join(teile) + ". "
+                "Die Einstellungen des Modells (Bemessung, Netzvorgaben, Einheiten, Plastizität, "
+                "Berichtsrahmen) gehen auf "
+                "die Vorgabe zurück. Werkstoffe, Querschnitte, Dicken und Projektangaben bleiben.")
+        if "Ergebnis" in self.ungespeichert():
+            text += ("\n\nDie Ergebnisse der letzten Rechnung sind nicht gespeichert und gehen "
+                     "verloren – auch Rückgängig holt sie nicht zurück.")
+        elif self.analysis is not None or self.results is not None:
+            text += "\n\nDie Ergebnisse verschwinden aus der Ansicht."
+        text += "\n\n" + ("Rückgängig (Strg+Z) holt das Modell zurück." if rueck else
+                          f"Das lässt sich nicht rückgängig machen: die Sicherung von {zahl(ne)} Elementen "
+                          f"hielte rund {ne * 669 / 1e9:.1f} GB Speicher fest. ".replace(".", ",", 1)
+                          + "Vorher speichern, wenn das Modell noch gebraucht wird.")
+        return text
+
     def clear_mesh(self):
         """„Modell leeren (Eigenschaften behalten)…“ - frueher „Alle Elemente
         löschen“ im Register Netz: ein Klick, und das ganze Modell war weg,
@@ -14236,15 +14307,9 @@ class MainWindow(QtWidgets.QMainWindow):
         m0 = self.model
         ne = len(m0.elements)
         rueck = ne <= self.MODELL_LEEREN_KOPIE_BIS
-        zahl = f"{ne:,}".replace(",", " ")
-        text = (f"„{m0.name}“ leeren: Geometrie, Netz ({m0.nn} Knoten, {zahl} Elemente), Lager, "
-                "Lastfälle, Lasten und Kombinationen werden entfernt. Werkstoffe, Querschnitte, "
-                "Dicken und Projektangaben bleiben.\n\n"
-                + ("Rückgängig (Strg+Z) holt das Modell zurück." if rueck else
-                   f"Das lässt sich nicht rückgängig machen: die Sicherung von {zahl} Elementen "
-                   f"hielte rund {ne * 669 / 1e9:.1f} GB Speicher fest. ".replace(".", ",", 1)
-                   + "Vorher speichern, wenn das Modell noch gebraucht wird."))
-        if not self._fragen_knoepfe("Modell leeren", text, "Modell leeren", "Abbrechen"):
+        text = self._leeren_text(m0, rueck)
+        # Vorgabe Abbrechen: Enter leert nicht (Gegenpruefung 25.09.2026)
+        if not self._fragen_knoepfe("Modell leeren", text, "Modell leeren", "Abbrechen", vorgabe="nein"):
             return
         if rueck:
             self.merken("Modell geleert")
@@ -14448,8 +14513,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self._refresh_title()
 
     def _rechnung_laeuft(self) -> bool:
-        w = getattr(self, "worker", None)
-        return w is not None and w.isRunning()
+        # Tests setzen Ersatz-Worker ohne isRunning ein
+        laeuft = getattr(getattr(self, "worker", None), "isRunning", None)
+        return callable(laeuft) and bool(laeuft())
 
     def _ungespeichert_box(self, anlass: str, grund: str):
         """Das Fenster der Rueckfrage: (Box, {Antwort: Knopf})."""
@@ -14485,19 +14551,23 @@ class MainWindow(QtWidgets.QMainWindow):
 
         Gefragt wird nur, wenn etwas ungespeichert ist. „Speichern“ macht nur
         weiter, wenn das Speichern gelang - ein abgebrochener Dateidialog
-        haelt an. Waehrend einer Rechnung oeffnet sich nichts Modales
-        (:meth:`_modal_gesperrt`); dann unterbleibt der Befehl, statt das
-        Modell ungefragt zu verwerfen."""
+        haelt an. Waehrend einer Rechnung unterbleibt der Befehl immer, auch
+        wenn nichts ungespeichert ist (Gegenpruefung 25.09.2026): die Rechnung
+        gehoert zum offenen Modell - „Neu“ oder ein Beispiel haetten sie
+        ungefragt verworfen (am Drehlager Stunden), und ihr Ergebnis waere
+        danach auf das neue Modell getroffen. Beenden fragt eigens
+        (closeEvent). Der Testschalter aendert daran nichts, er ersetzt nur
+        das Fenster."""
+        if self._rechnung_laeuft() and anlass != "Beenden":
+            text = f"„{anlass}“ erst nach der Rechnung – sie gehört zum offenen Modell (anhalten: Esc)"
+            self.log.appendPlainText(text)
+            self.statusBar().showMessage(text, 8000)
+            return False
         grund = self.ungespeichert()
         if not grund:
             return True
         antwort = os.environ.get(self.TESTSCHALTER_UNGESPEICHERT, "").strip().lower()
         if antwort not in ("speichern", "verwerfen", "abbrechen"):
-            if self._rechnung_laeuft() and anlass != "Beenden":
-                text = f"„{anlass}“ erst nach der Rechnung – {grund} sind ungespeichert"
-                self.log.appendPlainText(text)
-                self.statusBar().showMessage(text, 8000)
-                return False
             antwort = self._frage_speichern_verwerfen(anlass, grund)
         if antwort == "speichern":
             return bool(self.save_model())
@@ -16549,7 +16619,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self._fragen_knoepfe(
                 "Alle Lager löschen",
                 f"Alle {n} Knotenlager löschen? Linien- und Flächenlager bleiben.\n\n"
-                "Rückgängig (Strg+Z) holt sie zurück.", "Alle löschen", "Abbrechen"):
+                "Rückgängig (Strg+Z) holt sie zurück.", "Alle löschen", "Abbrechen", vorgabe="nein"):
             return
         self.merken("Alle Knotenlager gelöscht")
         self.model.supports.clear()
@@ -16860,7 +16930,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Alle Kontakte löschen",
                 f"Alle Kontakte löschen: {n[0]} einseitige Lager, {n[1]} Spaltelemente und "
                 f"{n[2]} Kontaktpaare? Die Kontaktbedingungen bleiben.\n\n"
-                "Rückgängig (Strg+Z) holt sie zurück.", "Alle löschen", "Abbrechen"):
+                "Rückgängig (Strg+Z) holt sie zurück.", "Alle löschen", "Abbrechen", vorgabe="nein"):
             return
         self.merken("Kontakte gelöscht")
         self.model.contact_supports.clear(); self.model.gap_elements.clear(); self.model.contact_pairs.clear()
@@ -17274,6 +17344,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.worker is not None and self.worker.isRunning():
             return self.error("Es läuft bereits eine Berechnung")
         self._rechnung_stand = stand
+        self._rechnung_modellwechsel = self._modellwechsel
         self.btn_solve.setEnabled(False)
         # Bestimmter Balken, sobald der Rechenkern meldet, wie weit er ist
         # (:meth:`_rechnung_fortschritt`). Bis dahin - und fuer Laeufe, die
@@ -17425,10 +17496,33 @@ class MainWindow(QtWidgets.QMainWindow):
             meldung or f"{getattr(self, '_rechnung_name', 'Berechnung')} beendet ({dt:.0f} s)",
             int(dauer))
 
+    #: zaehlt Neu/Oeffnen/Beispiel/Import (_protokoll_neu); eine Rechnung
+    #: merkt sich den Zaehler beim Start (_run_background)
+    _modellwechsel = 0
+    _rechnung_modellwechsel = None
+
+    def _rechnung_gehoert_zum_modell(self) -> bool:
+        """Am Ende einer Hintergrundrechnung: rechnete sie das offene Modell?
+
+        Seit 25.09.2026 laesst _ungespeichert_fragen waehrend einer Rechnung
+        kein neues Modell mehr zu. Dies ist die zweite Sicherung: vorher lief
+        das Stauwand-Ergebnis nach „Neu“ gegen das leere Modell
+        (KeyError in _fill_result_selector) und galt dort als ungespeichert.
+        Ohne gemerkten Start (Tests rufen _bg_done direkt) gilt es als passend."""
+        start, self._rechnung_modellwechsel = self._rechnung_modellwechsel, None
+        if start is None or start == self._modellwechsel:
+            return True
+        text = "Ergebnis verworfen: während der Rechnung wurde ein anderes Modell geöffnet"
+        self.log.appendPlainText(text)
+        self.statusBar().showMessage(text, 0)
+        return False
+
     def _bg_done(self, on_done, result):
         self._rechnet_gerade = False
         self.btn_solve.setEnabled(True)
         self._rechnung_ende()
+        if not self._rechnung_gehoert_zum_modell():
+            return
         vorher = (self.analysis, self.results)
         try:
             on_done(result)
@@ -17459,6 +17553,7 @@ class MainWindow(QtWidgets.QMainWindow):
         im Protokoll, und das liegt seit diesem Stand auch als Datei vor. Also
         Protokoll aufschlagen, Statuszeile setzen - kein Dialog.
         """
+        self._rechnung_modellwechsel = None
         w = getattr(self, "worker", None)
         if w is not None and getattr(w, "abbruch_angefordert", False):
             # Der Worker meldet einen Abbruch als ``abgebrochen``; kommt er
@@ -17543,6 +17638,8 @@ class MainWindow(QtWidgets.QMainWindow):
         name = getattr(self, "_rechnung_name", "Berechnung")
         teil = getattr(getattr(self, "worker", None), "ausnahme", None)
         teil = getattr(teil, "teilanalyse", None)
+        if not self._rechnung_gehoert_zum_modell():
+            teil = None
         if teil is not None and (teil.cases or teil.combinations):
             vorher = (self.analysis, self.results)
             self._abbruch_teil_zeigen(teil, dauer)
@@ -17617,10 +17714,15 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.Yes)
         return antwort == QtWidgets.QMessageBox.Yes
 
-    def _fragen_knoepfe(self, titel: str, text: str, ja: str = "Ja", nein: str = "Abbrechen") -> bool:
+    def _fragen_knoepfe(self, titel: str, text: str, ja: str = "Ja", nein: str = "Abbrechen",
+                        vorgabe: str = "ja") -> bool:
         """Rueckfrage mit benannten Knoepfen („Vernetzen" / „Abbrechen") - die
         Tests ueberschreiben sie. Waehrend einer Rechnung wird wie bei
-        :meth:`_fragen` verneint, nicht gefragt."""
+        :meth:`_fragen` verneint, nicht gefragt.
+
+        ``vorgabe="nein"``: Enter drueckt „Abbrechen“ - fuer Fragen vor dem
+        Loeschen (Modell leeren, alle Kontakte, alle Lager). Bis zum
+        25.09.2026 leerte Enter dort das Modell, auch ohne Rueckgaengig."""
         if self._modal_gesperrt(
                 f"Rückfrage \u201e{titel}\u201c während der Rechnung verneint", text):
             return False
@@ -17629,8 +17731,9 @@ class MainWindow(QtWidgets.QMainWindow):
         box.setWindowTitle(titel)
         box.setText(text)
         b_ja = box.addButton(ja, QtWidgets.QMessageBox.AcceptRole)
-        box.addButton(nein, QtWidgets.QMessageBox.RejectRole)
-        box.setDefaultButton(b_ja)
+        b_nein = box.addButton(nein, QtWidgets.QMessageBox.RejectRole)
+        box.setDefaultButton(b_nein if vorgabe == "nein" else b_ja)
+        box.setEscapeButton(b_nein)
         box.exec()
         return box.clickedButton() is b_ja
 
@@ -20500,6 +20603,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.log.appendPlainText(f"--- {titel}  ({datetime.now():%d.%m.%Y %H:%M}) ---")
         except Exception:                   # noqa: BLE001
             pass
+        self._modellwechsel += 1          # siehe _rechnung_gehoert_zum_modell
         # Ein neues Modell hat keine Vergangenheit: der Rueckgaengig-Stapel des
         # vorigen darf nicht in dieses hineinreichen.
         self._undo_init()
@@ -20653,6 +20757,9 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             n = erg.schreiben(epfad, self.model, self.analysis, fortschritt=self._dateifortschritt)
         except Exception as ex:              # noqa: BLE001
+            # gescheitert, nicht „nicht noetig“: save_model laesst die
+            # Ergebnisse dann ungespeichert (Gegenpruefung 25.09.2026)
+            self._ergebnis_schreiben_gescheitert = True
             self.error(f"Ergebnisse nicht gespeichert: {ex}")
             return ""
         finally:
@@ -20681,10 +20788,19 @@ class MainWindow(QtWidgets.QMainWindow):
             self._fortschritt_ende()
         self.path = p
         self.info(f"gespeichert: {p}")
+        self._ergebnis_schreiben_gescheitert = False
         self.ergebnisse_speichern(p)
+        gescheitert = self._ergebnis_schreiben_gescheitert
         self._als_gespeichert()
+        if gescheitert:
+            # Bis zum 25.09.2026 galt das als gespeichert: Stern weg, und
+            # „Speichern“ in der Rueckfrage vor dem Beenden schloss danach das
+            # Programm - die Ergebnisse waren verloren. Jetzt bleiben sie
+            # ungespeichert, und die Rueckfrage haelt an (Rueckgabe False).
+            self._ergebnis_ungespeichert = True
+            self._titel_nachziehen()
         self._refresh_title()
-        return True
+        return not gescheitert
 
     def export_model(self):
         """Modell in ein fremdes Format schreiben (Endung bestimmt das Format)."""
