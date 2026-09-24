@@ -2011,6 +2011,25 @@ def test_bemessungssituation_ist_keine_einwirkungsart():
                        ("Nutzlast - Bemessungssituation außergewöhnlich", "A")]:
         ist = _C.category_from_text(name, "Q")
         check(f"Handbuch: {name} -> {soll}", ist == soll, ist)
+    # Die vier Faelle, in denen ein Einwirkungswort mit der Angabe herausfaellt
+    # und es bei Q bleibt, so wie sie in docs/Schnittstellen.md stehen
+    # („Ausgenommen sind vier Faelle“): mit und/u./oder bzw. and/or gebunden,
+    # unmittelbar vor „Bemessungssituation“/„design situation“, „Erdbeben“
+    # unmittelbar danach (auch mit „bei“ oder Strich), in Klammern. Am Stand
+    # ec6448c gaben die ersten drei A, die Klammer schon Q (gemessen am
+    # 24.09.2026; eine Durchmusterung von 245446 Namen fand keine weitere Art).
+    # Aendert sich einer, muss der Satz dort mitgehen.
+    for name, soll in [("Erdbeben und außergewöhnliche Bemessungssituation", "Q"),
+                       ("Erdbeben u. außergewöhnliche Bemessungssituation", "Q"),
+                       ("Seismic and accidental design situation", "Q"),
+                       ("Außergewöhnliche - Bemessungssituation", "Q"),
+                       ("Seismic design situation", "Q"),
+                       ("Bemessungssituation - Erdbeben", "Q"),
+                       ("Bemessungssituation bei Erdbeben", "Q"),
+                       ("Lastfall 3 - Bemessungssituation Erdbeben", "Q"),
+                       ("Nutzlast (Erdbeben)", "Q")]:
+        ist = _C.category_from_text(name, "Q")
+        check(f"Ausnahme: {name} -> {soll}", ist == soll, ist)
 
     # ueber den ganzen Import: Kennzahl 11 -> Q, der Name verfeinert
     tmp = tempfile.mkdtemp()
@@ -2023,7 +2042,8 @@ def test_bemessungssituation_ist_keine_einwirkungsart():
             + [("Eigengewicht", 11, 1.0),
                ("Erdbeben - Erdbeben-Bemessungssituation", 11, 0.0),
                ("Ermüdungslast - Eigengewicht", 1, 1.0),
-               ("Ständig - Bemessungssituation 1", 11, 0.0)],
+               ("Ständig - Bemessungssituation 1", 11, 0.0),
+               ("Bemessungssituation - Erdbeben", 11, 0.0)],
         )
         log = []
         m = R6.read_rf6(f, log=log)
@@ -2059,6 +2079,13 @@ def test_bemessungssituation_ist_keine_einwirkungsart():
         check("„Ständig - Bemessungssituation 1“ mit Kennzahl 11 wird G",
               m.load_cases["LF9"].category == "G", m.load_cases["LF9"].category)
         check("das Protokoll nennt ihn als umgestellt", "zu G: LF6, LF9" in zeile,
+              zeile.strip())
+        # „Erdbeben“ nach „Bemessungssituation“ faellt mit der Angabe heraus:
+        # Q wie aus der Kennzahl, darum nennt das Protokoll ihn nicht (so steht
+        # es in docs/Schnittstellen.md; am Stand ec6448c A und genannt)
+        check("„Bemessungssituation - Erdbeben“ mit Kennzahl 11 bleibt Q",
+              m.load_cases["LF10"].category == "Q", m.load_cases["LF10"].category)
+        check("das Protokoll nennt ihn nicht als umgestellt", "LF10" not in zeile,
               zeile.strip())
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

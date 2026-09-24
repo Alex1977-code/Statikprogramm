@@ -873,14 +873,22 @@ diese Namen wieder A bzw. G: steht die Einwirkung selbst im Namen
 außergewöhnliche Bemessungssituation“, „Erdbeben -
 Erdbeben-Bemessungssituation“, „Ständig - ständige Bemessungssituation“,
 „Ständig - Bemessungssituation 1“), bleibt sie erkannt (`tests.test_rfem6`,
-`test_bemessungssituation_ist_keine_einwirkungsart`). Ausgenommen sind drei
+`test_bemessungssituation_ist_keine_einwirkungsart`). Ausgenommen sind vier
 Fälle, in denen die Einwirkung nicht erkannt wird und es ohne ein weiteres
-Einwirkungswort bei Q bleibt: sie ist mit „und“ oder „oder“ an die
-Angabe gebunden („Erdbeben und außergewöhnliche Bemessungssituation“) und
-zählt als Teil davon; sie steht selbst in der erkannten Form unmittelbar
-vor „Bemessungssituation“ („Erdbeben - Bemessungssituation 2“,
-„Außergewöhnliche - Bemessungssituation“, siehe oben); oder sie steht in
-Klammern.
+Einwirkungswort bei Q bleibt: sie ist mit „und“, „u.“ oder „oder“
+(englisch „and“, „or“) an die Angabe gebunden („Erdbeben und
+außergewöhnliche Bemessungssituation“) und zählt als Teil davon; sie steht
+selbst in der erkannten Form unmittelbar vor „Bemessungssituation“ bzw.
+„design situation“ („Erdbeben - Bemessungssituation 2“, „Außergewöhnliche -
+Bemessungssituation“, „Seismic design situation“, siehe oben); sie heißt
+„Erdbeben“ und steht unmittelbar nach „Bemessungssituation(en)“, auch mit
+„bei“ oder einem Strich dazwischen („Bemessungssituation - Erdbeben“,
+„Bemessungssituation bei Erdbeben“); oder sie steht in Klammern
+(„Nutzlast (Erdbeben)“). Am Stand ec6448c gaben die Beispiele der ersten
+drei Fälle A; die Klammern wirkten dort schon so. Das Protokoll nennt einen
+solchen Lastfall nicht unter „umgestellt“, weil Q der Kategorie aus der
+Kennzahl entspricht; mit Kennzahl 11 geht er als Q in die erzeugten
+GZT-Kombinationen ein (gemessen am 24.09.2026).
 
 **Freie Rechtecklasten.** RFEM legt das Lastfenster in die uv-Ebene eines
 eigenen Koordinatensystems (`coordinateSystem_id` → `CoordinateSystem…
