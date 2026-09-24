@@ -6797,12 +6797,19 @@ bekommt je Gruppe eine Ursache, und der Text nennt sie mit der Zahl der
 Seiten (`_URSACHEN`), in dieser Reihenfolge der Prüfung: doppelte Knoten
 (zwei Nummern näher als 1 % der kürzesten Kante; ein Knoten in nur einem
 Element, bei offenen Gruppen nur, wenn er weiter als 1 % seiner kürzesten
-Kante von jedem Punkt der Randlinien liegt; oder ein Gegenüber über einen
-solchen Knoten); hängende Knoten (Gegenüber, siehe oben, ohne losgelösten
-Knoten); verdrehtes Element; bei geschlossenen Gruppen Hohlraum; bei offenen
-**Netzrand verfehlt die Randfläche**. Das Gegenüber wird dafür an allen
-Gruppen ohne Ursache gesucht und an den Gruppen, die mit ihnen Knoten
-teilen, nicht nur an offenen. Die Reihenfolge ist nötig, weil
+Kante von jedem Punkt der Randlinien liegt; ein Gegenüber über einen
+solchen Knoten; oder ein Gegenüber, bei dem keine der Seiten, auf denen die
+Knoten liegen, eine Ecke mit dem Ufer des Knotens teilt); hängende Knoten
+(Gegenüber, siehe oben, ohne losgelösten Knoten, und wenigstens eine dieser
+Seiten teilt eine Ecke mit dem Ufer des Knotens); verdrehtes Element; bei
+geschlossenen Gruppen doppelte Knoten, wenn ihre Seiten aus dem
+umschlossenen Raum hinauszeigen (Σ (q − c) · S > 0 mit S vom eigenen
+Element weg: sie umschließen Elemente), sonst Hohlraum – außer in ihm liegt
+eine Gruppe mit doppelten Knoten (Windungszahl der Gruppe, nach S
+ausgerichtet, am Schwerpunkt eines Elements dieser Gruppe), dann doppelte
+Knoten; bei offenen **Netzrand verfehlt die Randfläche**. Das Gegenüber
+wird dafür an allen Gruppen ohne Ursache gesucht und an den Gruppen, die mit
+ihnen Knoten teilen, nicht nur an offenen. Die Reihenfolge ist nötig, weil
 `_verdrehte_elemente` auch ein losgelöstes Element und die feinen Elemente
 eines T-Stoßes nennt: Ihre Kanten teilt kein anderes Element (T-Stoß in der
 Ecke, hex8: vier Elemente „verdreht“). Vorher stand für jede Gruppe
@@ -6825,7 +6832,7 @@ gemessen, die Befunde sind in beiden gleich, nur die Ursache ändert sich
 (8 × 8 × 8-Netz des Würfels 1 × 1 × 1 m, Kante 125 mm; Versatz in Richtung
 (0,6 | 0 | 0,8)):
 
-| Fall | Befund | Ursache 70614f8 | Ursache jetzt |
+| Fall | Befund | Ursache 70614f8 | Ursache f2bf6c8 |
 |---|---|---|---|
 | T-Stoß im Inneren: 3 × 3 × 3 hex8, Mittelzelle 2 × 2 × 2, Σ V = 1 | FEHLER 30 | verdrehtes Element 24, Hohlraum 6 | hängende Knoten 30 |
 | derselbe in Kuhn-Tetraedern | FEHLER 60 | Hohlraum 60 | hängende Knoten 60 |
@@ -6841,16 +6848,17 @@ gemessen, die Befunde sind in beiden gleich, nur die Ursache ändert sich
 
 Das verdrehte Eckelement benutzt die Würfelecke allein, wie im richtigen
 Netz; ohne die Ausnahme für die Punkte der Randlinien hieße es „doppelte
-Knoten“ (gezielt verfälscht gemessen). Den Tetraeder-Block findet bis 1 mm
-nur die Suche nach doppelten Knoten, die dafür an allen Gruppen läuft (vorher
-nur, wenn eine Gruppe sonst Riss oder Lücke hätte werden können; ohne sie
-hieße er „hängende Knoten“). Bei 2 mm (1,6 % der Kante) liegen die Knoten
-weiter auseinander als `ABNAHME_KNOTENNAEHE`, und jeden benutzen mindestens
-zwei Elemente; es bleibt das Gegenüber, der Text sagt „hängende Knoten“.
-Er beschreibt darum nur, was gefunden wurde – Knoten des einen Ufers auf
-den Seiten des anderen, ohne deren Ecken zu sein –, und nennt den T-Stoß nur
-als Beispiel. Im hex8-Block benutzt jede der acht Blockecken nur ein Element;
-er heißt bei allen vier gemessenen Versätzen „doppelte Knoten“. Alle Zeilen der ersten Tabelle behielten Befund und Ursache
+Knoten“ (gezielt verfälscht gemessen). Den Tetraeder-Block fand an f2bf6c8
+bis 1 mm nur die Suche nach doppelten Knoten, die dafür an allen Gruppen
+läuft (vorher nur, wenn eine Gruppe sonst Riss oder Lücke hätte werden
+können; ohne sie hieß er „hängende Knoten“, gezielt verfälscht gemessen;
+heute heißt er auch ohne sie „doppelte Knoten“, siehe unten). Bei 2 mm
+(1,6 % der Kante) liegen die Knoten weiter auseinander als
+`ABNAHME_KNOTENNAEHE`, und jeden benutzen mindestens zwei Elemente; an
+f2bf6c8 blieb das Gegenüber, der Text sagte „hängende Knoten“ (heute
+„doppelte Knoten“, siehe unten). Im hex8-Block benutzt jede der acht
+Blockecken nur ein Element; er heißt bei allen vier gemessenen Versätzen
+„doppelte Knoten“. Alle Zeilen der ersten Tabelle behielten Befund und Ursache
 (nachgemessen am 24.09.2026), ebenso verdrehte hex8 an der Seite und im
 Inneren (Elemente 36 und 292), ein fehlender hex8 und ein fehlender
 Kuhn-Tetraeder im Inneren (Hohlraum), die Lochplatte r 0,1
@@ -6858,6 +6866,57 @@ Kuhn-Tetraeder im Inneren (Hohlraum), die Lochplatte r 0,1
 164 Körpern, die test_diagnose (84), test_mesher3d (30) und test_sweep (50)
 bauen, blieben alle Befunde gleich; die Ursache änderte sich nur an den 11
 Körpern der Fälle dieser Tabelle, die test_diagnose jetzt prüft.
+
+Die zweite Fassung (f2bf6c8) prüfte nur Versätze in Richtung
+(0,6 | 0 | 0,8); deren y-Anteil 0 hält die Knoten für die Seiten quer zu y
+in der Ebene (Gegenprüfung vom 24.09.2026, M1/M2). Zwei Grenzen blieben:
+Jedes Gegenüber ohne losgelösten Knoten hieß „hängend“, und lagen die
+Knoten weiter als `ABNAHME_KNOTENNAEHE` mal die längste Seitenkante von den
+Seiten des anderen Ufers entfernt, fand sich kein Gegenüber, und der Nachbar
+eines losgelösten Bereichs hieß „Hohlraum“. Seither teilen hängende Knoten eine Ecke mit der
+Seite (siehe oben), eine geschlossene Gruppe, deren Seiten aus dem
+umschlossenen Raum hinauszeigen, heißt „doppelt“, und ebenso ein Hohlraum,
+in dem eine solche Gruppe liegt. Gemessen am 24.09.2026 im selben Netz
+(Befund in beiden Ständen gleich):
+
+| Fall | Befund | Ursache f2bf6c8 | Ursache jetzt |
+|---|---|---|---|
+| innerer Block 2 × 2 × 2, Kuhn-Tetraeder, (1 \| 1 \| 1)/√3, 1 mm | FEHLER 96 | doppelte Knoten 96 | doppelte Knoten 96 |
+| derselbe, 2 / 3 mm | FEHLER 96 | hängende Knoten 96 | doppelte Knoten 96 |
+| derselbe, 4 / 5 / 10 mm | FEHLER 96 | Hohlraum 96 | doppelte Knoten 96 |
+| derselbe, (0,6 \| 0 \| 0,8), 2 / 5 / 10 mm | FEHLER 96 | hängende Knoten 96 | doppelte Knoten 96 |
+| derselbe, an einem Knoten (0,375 \| 0,375 \| 0,375) hängend, (1 \| 1 \| 1)/√3, 2 mm | FEHLER 96 | hängende Knoten 96 | hängende Knoten 96 |
+| derselbe, an einem Knoten hängend, 5 mm | FEHLER 96 | Hohlraum 96 | doppelte Knoten 96 |
+| derselbe Block in hex8, (1 \| 1 \| 1)/√3, 1 / 2 mm, (0,6 \| 0 \| 0,8), 2 / 5 / 10 mm | FEHLER 48 | doppelte Knoten 48 | doppelte Knoten 48 |
+| derselbe in hex8, (1 \| 1 \| 1)/√3, 3 / 4 / 5 / 10 mm | FEHLER 48 | doppelte Knoten 24, Hohlraum 24 | doppelte Knoten 48 |
+| derselbe in hex8, an einem Knoten hängend, (1 \| 1 \| 1)/√3, 2 / 5 mm | FEHLER 48 | doppelte Knoten 48 / doppelte Knoten 24, Hohlraum 24 | doppelte Knoten 48 |
+| hex8 292 an allen acht Knoten, (1 \| 1 \| 1)/√3, 1 / 2 mm, (0,6 \| 0 \| 0,8), 2 / 5 / 10 mm | FEHLER 12 | doppelte Knoten 12 | doppelte Knoten 12 |
+| derselbe, (1 \| 1 \| 1)/√3, 3 / 5 / 10 mm | FEHLER 12 | doppelte Knoten 6, Hohlraum 6 | doppelte Knoten 12 |
+| hex8 292 an sieben Knoten, (1 \| 1 \| 1)/√3, 2 / 5 mm | FEHLER 12 | doppelte Knoten 12 / doppelte Knoten 6, Hohlraum 6 | doppelte Knoten 12 |
+| hex8 292 fehlt | FEHLER 6 | Hohlraum 6 | Hohlraum 6 |
+| Tetraeder-Block 2 × 2 × 2 fehlt (48 Tetraeder) | FEHLER Volumenbilanz, Seiten im Inneren 48 | Hohlraum 48 | Hohlraum 48 |
+| Ufer 2 × 2 gegen 3 × 3 an x = 0,5 (Körper aus 2 × 2 × 2 Zellen, die vier Zellen x > 0,5 in 3 × 3 × 3), hex8 / Kuhn-Tetraeder | FEHLER 52 / 104 | hängende Knoten | hängende Knoten |
+| 3 × 3 × 3 Zellen, die mittlere in 3 × 3 × 3 geteilt, die übrigen in 2 × 2 × 2, hex8 / Kuhn-Tetraeder | FEHLER 78 / 156 | hängende Knoten | hängende Knoten |
+| Tetraeder 164 (drei Hüllknoten), hex8 27 (vier Hüllknoten), Eckzelle abgetrennt; 0,01 bis 5 mm, beide Richtungen | unverändert | doppelte Knoten | doppelte Knoten |
+
+Hängt der Tetraeder-Block an einem Knoten, ist das der einzige Knoten, den
+beide Ufer haben; bei 2 mm liegen Knoten des einen Ufers auf Seiten des
+anderen, die ihn als Ecke haben, und es bleibt „hängend“. Die Ufer 2 × 2
+gegen 3 × 3 teilen nur die Ecken ihrer Zellen; verlangte die Regel, dass
+**alle** Ecken der Seite Knoten des anderen Ufers sind, hießen sie
+„doppelt“ (gezielt verfälscht gemessen), die Regel verlangt darum nur eine.
+Gezielt verfälscht gemessen auch die beiden anderen Teile: Ohne die
+Ausrichtung heißt der Tetraeder-Block bei 5 und 10 mm, auch an einem Knoten
+hängend bei 5 mm, an allen 96 Seiten „Hohlraum“. Ohne den Hohlraum mit
+losgelöstem Bereich darin heißen die Seiten der Nachbarn „Hohlraum“: am
+Tetraeder-Block 48 von 96, am hex8-Block bei 3 mm 24 von 48, an hex8 292
+bei 3 mm (an sieben Knoten bei 5 mm) 6 von 12. An den Körpern, die
+test_diagnose (84 gemeinsame), test_mesher3d (30), test_sweep (50),
+test_netzfehler (7) und test_netzfeld (2) bauen, blieben alle Befunde und
+alle Ursachen gleich; an 26 Körpern von test_diagnose änderte sich nur die
+Beschreibung der doppelten Knoten. Laufzeit von `_abnahme_volumenbilanz` am
+hex8-Schachbrett 10 × 10 × 10 (4500 hex8), je drei Läufe abwechselnd: 9,2
+bis 10,7 s an f2bf6c8, 9,6 bis 9,9 s jetzt.
 
 Am U-Prisma liegen Netzknoten wie (0,404 | 0,23 | 0,083) im Körper neben der
 einspringenden Kante x = 0,4, y = 0,3; die Seiten von dort zu den Wänden der

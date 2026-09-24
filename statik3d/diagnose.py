@@ -1818,8 +1818,11 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T,
     # Gemessen am 24.09.2026: der innere Block 2 x 2 x 2 des 8 x 8 x 8-Netzes
     # in Kuhn-Tetraedern, auf seiner Oberflaeche mit eigenen Knoten (jeder
     # von mehreren Elementen benutzt), 0 bis 1 mm versetzt, hiess am Stand
-    # 70614f8 „Hohlraum an 96 Seiten"; ohne diese Suche hiesse er
-    # „hängende Knoten", mit ihr „doppelte Knoten".
+    # 70614f8 „Hohlraum an 96 Seiten"; an f2bf6c8 hiess er ohne diese Suche
+    # „hängende Knoten", mit ihr „doppelte Knoten". Seit das Gegenueber ohne
+    # gemeinsame Ecke „doppelt" heisst (ursachen_eintragen), heisst er auch
+    # ohne sie so (beides gezielt verfaelscht gemessen bei 0 / 0,01 / 1 mm,
+    # 24.09.2026).
     doppelt = np.zeros(m, bool)
     kn = F[ii]
     da = kn >= 0
@@ -1909,16 +1912,39 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T,
         * das Gegenueber auch fuer geschlossene Gruppen und fuer die Gruppen,
           die mit einer Gruppe ohne Ursache Knoten teilen; ist eine der
           beiden Gruppen losgeloest (doppelte Knoten oder ein Knoten in nur
-          einem Element), heissen beide „doppelt", sonst beide „haengend".
+          einem Element), heissen beide „doppelt", sonst beide „haengend"
+          (seit der Nachbesserung unten nur, wenn sie Ecken teilen).
 
-        Grenze (gemessen 24.09.2026): benutzt jeden Knoten beider Ufer mehr
-        als ein Element und liegen sie weiter als ABNAHME_KNOTENNAEHE
-        auseinander, bleibt nur das Gegenueber - der innere Block 2 x 2 x 2
-        des 8 x 8 x 8-Netzes in Kuhn-Tetraedern, mit eigenen Knoten 2 mm
-        versetzt, heisst „haengende Knoten an 96 Seiten" (in hex8 „doppelt":
-        die Ecken des Blocks benutzt dort nur ein Element). Der Text nennt
-        darum nur, was gefunden wurde (Knoten des einen Ufers auf den Seiten
-        des anderen), den T-Stoss nur als Beispiel."""
+        Die zweite Fassung (f2bf6c8) hatte zwei Grenzen (Gegenpruefung vom
+        24.09.2026, M1/M2; gemessen im 8 x 8 x 8-Netz, Kante 125 mm, am
+        inneren Block 2 x 2 x 2 mit eigenen Knoten auf seiner Oberflaeche).
+        Jedes Gegenueber ohne losgeloesten Knoten hiess „haengend": der Block
+        in Kuhn-Tetraedern bei 2 und 3 mm Versatz in Richtung (1|1|1)/Wurzel 3
+        und bei 2 bis 10 mm in Richtung (0,6|0|0,8). Und lagen die Knoten
+        weiter als ABNAHME_KNOTENNAEHE mal die laengste Seitenkante von den
+        Seiten des anderen Ufers entfernt, fand sich kein Gegenueber, und der Nachbar hiess „Hohlraum":
+        derselbe Block ab 4 mm in Richtung (1|1|1)/Wurzel 3 an allen 96
+        Seiten, hex8 292 (an allen acht Knoten losgeloest) und der hex8-Block
+        ab 3 mm an den 6 bzw. 24 Seiten der Nachbarn. Darum jetzt auch:
+
+        * haengend nur, wenn eine der Seiten, auf denen die Knoten liegen,
+          eine Ecke mit dem Ufer des Knotens teilt (T-Stoss) - sonst doppelt.
+          Verschieden geteilte Ufer (2 x 2 gegen 3 x 3), die nur die Ecken
+          ihrer Zellen teilen, bleiben haengend; verlangte man alle Ecken
+          der Seite, hiessen sie doppelt;
+        * eine geschlossene Gruppe, deren Seiten aus dem umschlossenen Raum
+          hinauszeigen, umschliesst Elemente: doppelt, kein Hohlraum;
+        * ein Hohlraum, in dem eine doppelte Gruppe liegt (Windungszahl am
+          Schwerpunkt eines ihrer Elemente), ist deren Gegenstueck: doppelt.
+
+        Gemessen am 24.09.2026: der Tetraeder- und der hex8-Block bei 1 bis
+        10 mm in Richtung (1|1|1)/Wurzel 3 und 2 bis 10 mm in Richtung
+        (0,6|0|0,8), hex8 292 bei 1 bis 10 mm bzw. 2 bis 10 mm heissen
+        „doppelte Knoten" an allen Seiten; ein echter Hohlraum (hex8 292 bzw.
+        der Tetraeder-Block fehlt) bleibt „Hohlraum". Haengt der
+        Tetraeder-Block an einem Knoten, teilen die Seiten dort eine Ecke:
+        bei 2 mm in Richtung (1|1|1)/Wurzel 3 „haengende Knoten", bei 5 mm
+        „doppelte Knoten"."""
         if ursachen is None:
             return
         in_luecke = np.zeros(m, bool)
@@ -1956,15 +1982,28 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T,
                    if nr in rest_set or knoten_g[nr] & kn_rest]
         paare: list = []
         _haengende_gruppen(F, Xf, q, kante, ii, gruppe, pruefen, paare=paare)
+        # Haengend ist ein Gegenueber nur, wenn die Seite, auf der der Knoten
+        # liegt, eine Ecke mit seinem Ufer teilt (T-Stoss: die Ecken der
+        # groben Seite sind Knoten des feinen Ufers). Teilt keine der Seiten
+        # eines Paars eine Ecke mit dem anderen Ufer, hat jedes Ufer eigene
+        # Knoten - ein Bereich ist losgeloest. Bis zum 24.09.2026 hiess jedes
+        # Gegenueber ohne Knoten in nur einem Element „haengend": der innere
+        # Block 2 x 2 x 2 des 8 x 8 x 8-Netzes in Kuhn-Tetraedern, mit eigenen
+        # Knoten 2 oder 3 mm versetzt (Gegenpruefung vom 24.09.2026, M1/M2).
+        teilt: dict = {}                    # (Gruppe, Gruppe) -> T-Stoss?
+        for a, b, f in paare:
+            ecken_f = {int(x) for x in F[f] if x >= 0}
+            schl_ab = (min(a, b), max(a, b))
+            teilt[schl_ab] = teilt.get(schl_ab, False) or bool(ecken_f & knoten_g[a])
         gegen: dict = {}                    # Gruppe -> "doppelt" | "haengend"
-        for a, b in paare:
-            u = "doppelt" if los(a) or los(b) else "haengend"
+        for (a, b), t_stoss in teilt.items():
+            u = "haengend" if t_stoss and not (los(a) or los(b)) else "doppelt"
             for g in (a, b):
                 if gegen.get(g) != "doppelt":
                     gegen[g] = u
+        u_von: dict = {}
         for nr in rest_nr:
             idx, zu = alle_gruppen[nr]
-            rest = idx[~fertig[idx]]
             # Reihenfolge: ein losgeloestes Element hat auch „verdrehte"
             # Kanten (keine teilt es mit einem Nachbarn), und ein doppelter
             # Knoten liegt auch auf der Seite des Nachbarn; der T-Stoss hat
@@ -1976,12 +2015,55 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T,
                 u = "haengend"
             elif (verdreht | verdreht_zu | verdreht_rest) & {int(e) for e in E[idx]}:
                 u = "verdreht"
+            elif zu and float(np.einsum("ij,ij->", q[idx] - q[idx].mean(axis=0), S[idx])) > 0.0:
+                # Die Seiten zeigen aus dem umschlossenen Raum hinaus (S weist
+                # vom eigenen Element weg): die Elemente liegen darin, ringsum
+                # von freien Seiten umgeben - ein losgeloester Bereich, kein
+                # Hohlraum. Um einen Hohlraum liegen die Elemente aussen.
+                u = "doppelt"
             elif zu:
                 u = "hohlraum"
             else:
                 u = "netzrand"
-            for i in rest:
-                ursachen[int(i)] = u
+            u_von[nr] = u
+        # Ein „Hohlraum", in dem ein losgeloester Bereich liegt, ist sein
+        # Gegenstueck: das Gegenueber fehlt, wenn die Knoten weiter als
+        # ABNAHME_KNOTENNAEHE mal die laengste Seitenkante von den Seiten
+        # entfernt liegen (Versatz schraeg zu den Seiten). Bis zum 24.09.2026 hiessen so die Nachbarn von hex8 292
+        # (8 x 8 x 8-Netz, an allen acht Knoten losgeloest, ab 3 mm in Richtung
+        # (1|1|1)/Wurzel 3) „Hohlraum" (Gegenpruefung vom 24.09.2026, M1/M2).
+        # Geprueft am Schwerpunkt eines Elements je losgeloester Gruppe, mit der
+        # Windungszahl der Seiten (nach S ausgerichtet).
+        hohl = [nr for nr in rest_nr if u_von[nr] == "hohlraum"]
+        drin_nr = [nr for nr in rest_nr if u_von[nr] == "doppelt"]
+        if hohl and drin_nr and model is not None:
+            from . import mesher3d as M3
+            punkt = np.array([
+                model.nodes[[int(x) for x in model.elements[int(E[alle_gruppen[nr][0][0]])].nodes]]
+                .mean(axis=0) for nr in drin_nr])
+            for nr in hohl:
+                idx = alle_gruppen[nr][0]
+                Xg = Xf[idx]
+                gilt = F[idx] >= 0
+                lo_g, hi_g = Xg[gilt].min(axis=0), Xg[gilt].max(axis=0)
+                wahl = ((punkt >= lo_g) & (punkt <= hi_g)).all(axis=1)
+                if not wahl.any():
+                    continue
+                n3 = np.cross(Xg[:, 1] - Xg[:, 0], Xg[:, 2] - Xg[:, 0])
+                um = np.einsum("ij,ij->i", n3, S[idx]) < 0.0
+                basis = 4 * np.arange(len(idx))
+                T1 = np.stack([basis, basis + 1, basis + 2], axis=1)
+                T1[um] = T1[um][:, [0, 2, 1]]
+                vier = gilt[:, 3]
+                T2 = np.stack([basis, basis + 2, basis + 3], axis=1)[vier]
+                T2[um[vier]] = T2[um[vier]][:, [0, 2, 1]]
+                wz = M3.windungszahl(punkt[wahl], Xg.reshape(-1, 3), np.concatenate([T1, T2]))
+                if (np.abs(wz) > 0.5).any():
+                    u_von[nr] = "doppelt"
+        for nr in rest_nr:
+            idx = alle_gruppen[nr][0]
+            for i in idx[~fertig[idx]]:
+                ursachen[int(i)] = u_von[nr]
 
     if not offen:
         ursachen_eintragen()
@@ -2060,9 +2142,9 @@ def _haengende_gruppen(F, Xf, q, kante, ii, gruppe, offene, paare: list = None) 
     ABNAHME_KNOTENNAEHE mal ihre laengste Kante). Beide Gruppen sind dann
     Ufer derselben Stelle - ein T-Stoss mit haengenden Knoten oder eine
     Trennflaeche -, und hinter keiner von beiden fehlt etwas. ``paare``
-    nimmt je Fund (Gruppe des Knotens, Gruppe der Seite) auf - fuer die
-    Ursache im Text (_gruppen_im_inneren, dort auch mit geschlossenen
-    Gruppen).
+    nimmt je Fund (Gruppe des Knotens, Gruppe der Seite, Stelle der Seite in
+    F) auf - fuer die Ursache im Text (_gruppen_im_inneren, dort auch mit
+    geschlossenen Gruppen; die Seite trennt T-Stoss und Trennflaeche).
 
     Gemessen am 23.09.2026 (B040, B044): der T-Stoss in der Ecke eines
     8 x 8 x 8-Netzes (Eckzelle in 2 x 2 x 2 geteilt) hat zwei offene Ufer,
@@ -2119,7 +2201,7 @@ def _haengende_gruppen(F, Xf, q, kante, ii, gruppe, offene, paare: list = None) 
         aus.add(a)
         aus.add(b)
         if paare is not None:
-            paare.append((a, b))
+            paare.append((a, b, int(f)))
     return aus
 
 
@@ -2166,8 +2248,9 @@ def _ringmax(F, werte, ringe: int) -> np.ndarray:
 #: (_gruppen_im_inneren bestimmt sie je Gruppe von Seiten).
 _URSACHEN = (
     ("verdreht", "ein verdrehtes Element (Deckel um eine Ecke versetzt)"),
-    ("doppelt", "doppelte Knoten (ein Element ist dort vom Nachbarn gelöst: zwei "
-                "Knotennummern am selben Ort oder ein Knoten, den nur dieses Element benutzt)"),
+    ("doppelt", "doppelte Knoten (ein Element oder ein Bereich ist dort vom Nachbarn gelöst: "
+                "er hat eigene Knoten am Ort der Knoten des Nachbarn oder daneben, oder einen "
+                "Knoten, den nur dieses Element benutzt)"),
     ("haengend", "hängende Knoten (Knoten des einen Ufers liegen auf den Seiten des anderen, "
                  "ohne deren Ecken zu sein - etwa an einem T-Stoß, an dem ein Ufer feiner "
                  "geteilt ist als das andere)"),

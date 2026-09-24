@@ -4602,10 +4602,12 @@ Befund.
 
 **Die Ursache im Text** (seit 23.09.2026). Der FEHLER „Seiten im Inneren“
 nennt, was an den Seiten gefunden wurde, und an wie vielen: ein verdrehtes
-Element; doppelte Knoten, also ein losgelöstes Element (zwei Nummern am
-selben Ort, oder ein Knoten, den nur ein Element benutzt und der nicht in
-einer Ecke des Körpers liegt); hängende Knoten (Knoten des einen Ufers
-liegen auf den Seiten des anderen, ohne deren Ecken zu sein, etwa an einem
+Element; doppelte Knoten, also ein losgelöstes Element oder ein
+losgelöster Bereich (zwei Nummern am selben Ort; ein Knoten, den nur ein
+Element benutzt und der nicht in einer Ecke des Körpers liegt; oder eigene
+Knoten neben denen des Nachbarn, ohne dass die Ufer dort eine Ecke teilen);
+hängende Knoten (Knoten des einen Ufers liegen auf den Seiten des anderen,
+ohne deren Ecken zu sein, und die Ufer teilen dort Ecken, etwa an einem
 T-Stoß); einen Hohlraum im Netz; oder einen **Netzrand, der die Randfläche
 verfehlt**. Vorher stand immer „ein verdrehtes Element, doppelte Knoten oder
 ein Hohlraum“ da. Ein T-Stoß von Sechsflächnern – links ein Würfel
@@ -4630,13 +4632,31 @@ zum Sweep, und ein Element an der Seitenfläche des 8 × 8 × 8-Netzes (Kante
 2,5 mm; ebenso die abgetrennte Eckzelle bei 2 und 5 mm) oder „verdrehtes
 Element“ (Sechsflächner, 1,3 bis 5 mm). Seit dem 24.09.2026 heißen diese
 Fälle „hängende Knoten“ bzw. „doppelte Knoten“, gemessen an allen genannten
-Versätzen. Eine Grenze bleibt: Liegen die Knoten eines abgetrennten Bereichs
-weiter als 1 % der Kante auseinander und benutzt jeden mehr als ein Element,
-findet die Abnahme nur noch, dass Knoten des einen Ufers auf den Seiten des
-anderen liegen, und nennt „hängende Knoten“ – gemessen an einem inneren
-Block aus 2 × 2 × 2 Würfeln, in Tetraeder zerlegt und mit eigenen Knoten
-2 mm versetzt (bis 1 mm „doppelte Knoten“). Der Text beschreibt darum nur,
-was gefunden wurde, und nennt den T-Stoß als Beispiel. Ein verdrehtes
+Versätzen. Diese Fassung hatte noch zwei Grenzen, gemessen im selben Netz an
+einem inneren Block aus 2 × 2 × 2 Würfeln mit eigenen Knoten auf seiner
+Oberfläche. In Tetraeder zerlegt hieß der Block „hängende Knoten“ bei 2 und
+3 mm Versatz in Richtung (1 | 1 | 1)/√3 und bei 2 bis 10 mm in Richtung
+(0,6 | 0 | 0,8), obwohl kein Ufer feiner geteilt ist (bis 1 mm „doppelte
+Knoten“). Ab 4 mm in Richtung (1 | 1 | 1)/√3 hieß er an allen 96 Seiten
+„Hohlraum“: Liegen die Knoten weiter als 1 % der längsten Seitenkante von
+den Seiten des anderen Ufers entfernt, findet die Abnahme nicht mehr, dass
+sie auf diesen Seiten liegen. Ebenso hießen beim Sechsflächner 292 (an allen
+acht Knoten losgelöst) und beim Sechsflächner-Block ab 3 mm in Richtung
+(1 | 1 | 1)/√3 die Seiten der Nachbarn „Hohlraum“. Seit der Nachbesserung
+vom selben Tag heißen Knoten auf den Seiten des anderen Ufers nur dann
+„hängende Knoten“, wenn wenigstens eine dieser Seiten eine Ecke mit ihrem
+eigenen Ufer teilt; Seiten, die ringsum Elemente umschließen, sind kein
+Hohlraum; und ein Hohlraum, in dem ein losgelöster Bereich liegt, gehört zu
+diesem. Beide Blöcke und der Sechsflächner 292 heißen jetzt an allen Seiten
+„doppelte Knoten“ (gemessen bei 1 bis 10 mm in Richtung (1 | 1 | 1)/√3 und
+2 bis 10 mm in Richtung (0,6 | 0 | 0,8)). Ein fehlender Sechsflächner oder
+Tetraeder-Block heißt weiter „Hohlraum“, und Ufer, die verschieden geteilt
+sind und nur die Ecken ihrer Zellen teilen (2 × 2 gegen 3 × 3), heißen
+weiter „hängende Knoten“. Hängt der Tetraeder-Block an einem seiner Knoten
+am übrigen Netz, teilen die Ufer dort eine Ecke: bei 2 mm in Richtung
+(1 | 1 | 1)/√3 heißt er „hängende Knoten“, bei 5 mm „doppelte Knoten“. Der
+Text beschreibt nur, was gefunden wurde, und nennt den T-Stoß als Beispiel.
+Ein verdrehtes
 Element in der Ecke des Körpers bleibt
 „verdrehtes Element“: Den Eckknoten benutzt auch im richtigen Netz nur ein
 Element. Den Netzrand, der die Randfläche verfehlt, findet die

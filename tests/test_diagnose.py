@@ -1937,13 +1937,17 @@ def test_abnahme_doppelte_knoten_relativ_zur_kante():
               _kurz(bef) + " | " + gef[:160])
 
 
-def _block_getrennt(versatz=0.0, art="hex8", lo=3, hi=5, n=8):
+def _block_getrennt(versatz=0.0, art="hex8", lo=3, hi=5, n=8, richtung=(0.6, 0.0, 0.8),
+                    haengt_an=None):
     """hex8-Netz n x n x n über dem Würfel 1 x 1 x 1 m, der innere Block der
     Zellen lo..hi-1 je Richtung auf seiner Oberfläche mit eigenen Knoten, um
-    ``versatz`` in Richtung (0,6 | 0 | 0,8) verschoben: eine geschlossene
-    Trennfläche im Inneren; ``tet4``: danach in Kuhn-Tetraeder zerlegt."""
+    ``versatz`` in ``richtung`` (Einheitsvektor) verschoben: eine geschlossene
+    Trennfläche im Inneren; ``tet4``: danach in Kuhn-Tetraeder zerlegt.
+    ``haengt_an``: Lage eines Knotens der Blockoberfläche, den der Block mit
+    dem übrigen Netz teilt (er hängt dort an einem Knoten)."""
     m, k = _gleichmaessig(1.0, 1.0, 1.0, n)
     a, b = lo / n, hi / n
+    w = np.asarray(richtung, float)
     neu = {}
     for e in list(k.elemente):
         el = m.elements[e]
@@ -1953,10 +1957,13 @@ def _block_getrennt(versatz=0.0, art="hex8", lo=3, hi=5, n=8):
         nd = []
         for x in el.nodes:
             p = m.nodes[int(x)]
+            if haengt_an is not None and np.allclose(p, haengt_an):
+                nd.append(int(x))
+                continue
             if ((p >= a - 1e-9) & (p <= b + 1e-9)).all() and (
                     (np.abs(p - a) < 1e-9) | (np.abs(p - b) < 1e-9)).any():
                 if int(x) not in neu:
-                    neu[int(x)] = int(m.add_node(*(p + versatz * np.array([0.6, 0.0, 0.8]))))
+                    neu[int(x)] = int(m.add_node(*(p + versatz * w)))
                 nd.append(neu[int(x)])
             else:
                 nd.append(int(x))
@@ -1964,6 +1971,140 @@ def _block_getrennt(versatz=0.0, art="hex8", lo=3, hi=5, n=8):
     if art == "tet4":
         _in_kuhn(m, k)
     return m, k
+
+
+def _teilung(n, teil, standard=2):
+    """hex8-Netz n x n x n Zellen über dem Würfel 1 x 1 x 1 m, jede Zelle in
+    standard³ Elemente geteilt, die Zellen in ``teil`` ({(i, j, l): t}) in
+    t³ - gleiche Lagen haben eine Knotennummer, verschieden geteilte Nachbarn
+    teilen nur die Ecken ihrer Zellen."""
+    m = Model("teilung")
+    m.add_material(Material.steel("S235"))
+    h = 1.0 / n
+    kn = {}
+
+    def k(x, y, z):
+        key = (round(x, 9), round(y, 9), round(z, 9))
+        if key not in kn:
+            kn[key] = int(m.add_node(x, y, z))
+        return kn[key]
+
+    for i in range(n):
+        for j in range(n):
+            for l_ in range(n):
+                t = teil.get((i, j, l_), standard)
+                d = h / t
+                for a in range(t):
+                    for b in range(t):
+                        for c in range(t):
+                            x0, y0, z0 = i * h + a * d, j * h + b * d, l_ * h + c * d
+                            P = [(x0, y0, z0), (x0 + d, y0, z0), (x0 + d, y0 + d, z0),
+                                 (x0, y0 + d, z0), (x0, y0, z0 + d), (x0 + d, y0, z0 + d),
+                                 (x0 + d, y0 + d, z0 + d), (x0, y0 + d, z0 + d)]
+                            m.add_element("hex8", [k(*p) for p in P], "S235")
+    kb = _quaderkoerper(m, [k(0, 0, 0), k(1, 0, 0), k(1, 1, 0), k(0, 1, 0),
+                            k(0, 0, 1), k(1, 0, 1), k(1, 1, 1), k(0, 1, 1)])
+    kb.elemente = list(range(len(m.elements)))
+    return m, kb
+
+
+def test_abnahme_losgeloester_bereich_schraeg_versetzt():
+    """Gegenprüfung vom 24.09.2026 zu f2bf6c8 (Mängel M1 und M2): Alle
+    Prüfungen der losgelösten Bereiche verschoben in Richtung (0,6 | 0 | 0,8).
+    Deren y-Anteil 0 hält die Knoten für die Seiten quer zu y in der Ebene.
+    In Richtung (1 | 1 | 1)/√3, aus der Ebene jeder Seite heraus, fand die
+    Abnahme das Gegenüber nicht mehr, sobald die Knoten weiter als 1 % der
+    längsten Seitenkante von den Seiten entfernt lagen, und der Nachbar des
+    losgelösten Bereichs hieß „Hohlraum“. Gemessen an f2bf6c8 im
+    8 x 8 x 8-Netz (Kante 125 mm): innerer Block 2 x 2 x 2 in
+    Kuhn-Tetraedern bei 2 und 3 mm „hängende Knoten 96“, ab 4 mm „Hohlraum
+    96“; hex8 292 an allen acht Knoten ab 3 mm „doppelte Knoten 6; Hohlraum
+    6“, der hex8-Block ab 3 mm „doppelte Knoten 24; Hohlraum 24“. In
+    Richtung (0,6 | 0 | 0,8) hieß der Tetraeder-Block ab 2 mm „hängende
+    Knoten“, obwohl kein Ufer feiner geteilt ist.
+
+    Gegenproben: Ein echter Hohlraum (Element bzw. Block fehlt) heißt weiter
+    „Hohlraum“. Ufer, die verschieden geteilt sind und nur die Ecken ihrer
+    Zellen teilen (2 x 2 gegen 3 x 3), heißen weiter „hängende Knoten“; die
+    T-Stöße prüft test_abnahme_t_stoss_nennt_haengende_knoten.
+    """
+    r3 = (1 / np.sqrt(3.0),) * 3
+    faelle = []
+    for v in (2e-3, 3e-3, 5e-3, 1e-2):
+        faelle.append((f"Tetraeder-Block (1|1|1)/√3 {v * 1e3:g} mm", 96.0,
+                       lambda v=v: _block_getrennt(v, "tet4", richtung=r3)))
+    faelle.append(("Tetraeder-Block (0,6|0|0,8) 2 mm", 96.0,
+                   lambda: _block_getrennt(2e-3, "tet4")))
+    faelle.append(("Tetraeder-Block an einem Knoten hängend, (1|1|1)/√3 5 mm", 96.0,
+                   lambda: _block_getrennt(5e-3, "tet4", richtung=r3,
+                                           haengt_an=(0.375, 0.375, 0.375))))
+    for v in (3e-3, 5e-3):
+        faelle.append((f"hex8-Block (1|1|1)/√3 {v * 1e3:g} mm", 48.0,
+                       lambda v=v: _block_getrennt(v, "hex8", richtung=r3)))
+
+    def hex292(v, knoten=range(8)):
+        m, k = _gleichmaessig(1.0, 1.0, 1.0, 8)
+        nd = list(m.elements[292].nodes)
+        for j in knoten:
+            nd[j] = int(m.add_node(*(m.nodes[nd[j]] + v * np.asarray(r3))))
+        m.elements[292].nodes = nd
+        return m, k
+
+    for v in (3e-3, 5e-3):
+        faelle.append((f"hex8 292 an allen acht Knoten, (1|1|1)/√3 {v * 1e3:g} mm", 12.0,
+                       lambda v=v: hex292(v)))
+    faelle.append(("hex8 292 an sieben Knoten, (1|1|1)/√3 5 mm", 12.0,
+                   lambda: hex292(5e-3, range(1, 8))))
+    for titel, zahl, bau in faelle:
+        m, k = bau()
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        gef = _gefunden(bef)
+        check(f"{titel}: FEHLER {zahl:.0f}, nur doppelte Knoten",
+              [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", zahl)]
+              and "doppelte Knoten" in gef and f"an {zahl:.0f} Seiten" in gef
+              and "Hohlraum" not in gef and "hängende" not in gef,
+              _kurz(bef) + " | " + gef[:200])
+    # Gegenprobe: Ufer, die nur die Ecken der Zelle teilen und verschieden
+    # geteilt sind (2 x 2 gegen 3 x 3, keines verfeinert das andere), bleiben
+    # „hängende Knoten“ wie an f2bf6c8 - hiesse ein Gegenueber nur dann
+    # haengend, wenn alle Ecken der Seite Knoten des anderen Ufers sind,
+    # waeren es „doppelte Knoten“
+    for art, zahl, offen in (("hex8", 52.0, True), ("hex8", 78.0, False),
+                             ("tet4", 104.0, True), ("tet4", 156.0, False)):
+        if offen:
+            m, k = _teilung(2, {(1, j, l_): 3 for j in range(2) for l_ in range(2)})
+        else:
+            m, k = _teilung(3, {(1, 1, 1): 3})
+        if art == "tet4":
+            _in_kuhn(m, k)
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        gef = _gefunden(bef)
+        check(f"  Gegenprobe: Ufer 2 x 2 gegen 3 x 3 ({art}, {'an der Hülle' if offen else 'im Inneren'}): "
+              f"FEHLER {zahl:.0f}, hängende Knoten",
+              [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", zahl)]
+              and "hängende Knoten" in gef and f"an {zahl:.0f} Seiten" in gef and "doppelte" not in gef,
+              _kurz(bef) + " | " + gef[:160])
+    # Gegenprobe: echte Hohlraeume bleiben „Hohlraum"
+    m, k = _gleichmaessig(1.0, 1.0, 1.0, 8)
+    k.elemente = [e for e in k.elemente if e != 292]
+    bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+    gef = _gefunden(bef)
+    check("  Gegenprobe: hex8 292 fehlt - FEHLER 6, Hohlraum",
+          [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", 6.0)]
+          and "Hohlraum" in gef and "an 6 Seiten" in gef and "doppelte" not in gef,
+          _kurz(bef) + " | " + gef[:160])
+    m, k = _gleichmaessig(1.0, 1.0, 1.0, 8)
+    _in_kuhn(m, k)
+    weg = {e for e in k.elemente
+           if ((m.nodes[m.elements[e].nodes].mean(axis=0) > 0.375)
+               & (m.nodes[m.elements[e].nodes].mean(axis=0) < 0.625)).all()}
+    k.elemente = [e for e in k.elemente if e not in weg]
+    bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+    gef = _gefunden(bef)
+    check("  Gegenprobe: Tetraeder-Block 2 x 2 x 2 fehlt - Hohlraum an 48 Seiten",
+          len(weg) == 48 and [b.pruefung for b in bef] == ["Volumenbilanz", "Seiten im Inneren"]
+          and "Hohlraum" in gef and "an 48 Seiten" in gef and "doppelte" not in gef,
+          f"{len(weg)} entfernt | " + _kurz(bef) + " | " + gef[:160])
 
 
 def _ecke_getrennt(zellen=1, versatz=0.0, n=8):
@@ -2151,6 +2292,7 @@ def main():
               test_abnahme_nennt_nicht_gepruefte_volumenbilanz,
               test_abnahme_t_stoss_nennt_haengende_knoten,
               test_abnahme_doppelte_knoten_relativ_zur_kante,
+              test_abnahme_losgeloester_bereich_schraeg_versetzt,
               test_abnahme_duenne_luecke_und_ufer_ohne_gegenueber,
               test_abnahme_netzrand_verfehlt_randflaeche,
               test_abnahme_luecke_abhilfe_bei_gleicher_elementzahl,
