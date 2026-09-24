@@ -695,8 +695,16 @@ def test_nachweiszeile_nicht_gefuehrt_nicht_gruen():
     ein nicht gefuehrter Stab hat Ausnutzung 0. Gemessen 23.09.2026 an
     97df705: beide Zeilen gruen (Klasse ok). Der Server liefert das Urteil
     jetzt als Klasse mit, die Oberflaeche liest den Text nicht mehr aus.
+
+    Am Ende wird der Satz des Benutzerhandbuchs („Stab ohne Streckgrenze“)
+    gegen die gemessenen Klassen geprueft: am Stand ec6448c stand „in diesem
+    Fall gelb“ direkt hinter „Ist gar kein Stab geführt …“ und las sich, als
+    gelte gelb nur dann - gelb ist die Zeile aber auch neben einem geführten
+    Träger mit 0,633 (Nebenbefund der Fehlerrunden 22./23.09.2026).
     """
+    from tests import handbuch
     n0 = len(RESULTS)
+    gemessen = {}
     node = _node()
     hier = os.path.dirname(os.path.abspath(__file__))
     app_js = os.path.join(os.path.dirname(hier), "statik3d", "web", "static", "app.js")
@@ -718,6 +726,7 @@ def test_nachweiszeile_nicht_gefuehrt_nicht_gruen():
             server.shutdown()
             server.server_close()
         text = r.get("design_summary", "")
+        gemessen[name] = r.get("design_status")
         check(f"{name}: gerechnet, Nachweiszeile da", job["status"] == "fertig" and bool(text),
               job.get("error", "") or text)
         check(f"{name}: /api/results design_status = {soll}",
@@ -747,6 +756,17 @@ def test_nachweiszeile_nicht_gefuehrt_nicht_gruen():
                   str(zeilen) if zeilen else (p.stderr or p.stdout)[-300:])
     if not node:
         check("node nicht vorhanden - Renderpruefung der Nachweiszeile entfaellt", True)
+    hb = handbuch.absatz("**Stab ohne Streckgrenze.**")
+    check("Handbuch: gelb, sobald ein Stab nicht geführt ist, auch neben geführten",
+          gemessen.get("Traeger 0,633 und Stab ohne f_y") == "warn"
+          and gemessen.get("nur Stab ohne f_y") == "warn"
+          and "gelb hinterlegt statt grün, sobald ein Stab nicht geführt ist, auch wenn "
+              "die übrigen Stäbe geführt und erfüllt sind" in hb
+          and "in diesem Fall gelb" not in hb, f"{gemessen}; {hb[-420:]}")
+    check("Handbuch: rot, sobald ein Stab über 1 liegt, auch neben einem nicht geführten",
+          gemessen.get("Traeger ueber 1 und Stab ohne f_y") == "err"
+          and "rot ist sie, sobald ein Stab eine Ausnutzung über 1 hat, auch neben einem "
+              "nicht geführten" in hb, f"{gemessen}; {hb[-420:]}")
     _assert_since(n0)
 
 

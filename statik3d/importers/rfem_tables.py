@@ -1033,7 +1033,8 @@ def import_rfem_tables(path: str, model: Model = None, log: list = None,
                 # halb anlegen, sondern nennen. Das gilt auch fuer einen nicht
                 # erkannten Teil der Formel (``rest``, siehe _formel_zerlegen).
                 gruende = []
-                if any(x.startswith(("EK", "RC")) for x in offen):
+                ek = any(x.startswith(("EK", "RC")) for x in offen)
+                if ek:
                     gruende.append("EK/RC ist eine Ergebniskombination (Umhuellende), "
                                    "als Summand nicht darstellbar")
                 # CO/LK: je Verweis sein Grund (keine solche Nummer, Kreis,
@@ -1042,14 +1043,27 @@ def import_rfem_tables(path: str, model: Model = None, log: list = None,
                 if rest:
                     gruende.append(f"nicht erkannter Teil {rest}")
                 alle = [f"{a}{n}" for _v, a, n in verweise]
+                # Eine Umhuellende laesst sich von Hand nicht als eine
+                # Kombination anlegen: Dialog und Maske der Oberflaeche bauen
+                # nur Combination(name, faktoren) ohne alternativen
+                # (dialogs.CombinationDialog uebernimmt Alternativen nur aus
+                # einer bestehenden Kombination). Bis zum 23.09.2026 riet die
+                # Warnung auch hier „die Kombination von Hand anlegen“.
+                if ek:
+                    abhilfe = (" Bitte in RFEM nachsehen, aus welchen Alternativen die "
+                               "Ergebniskombination besteht, und je Alternative eine eigene "
+                               "Kombination aus den übrigen Anteilen und dieser Alternative "
+                               "anlegen - als eine Kombination lässt sich diese Zeile nicht "
+                               "anlegen.")
+                else:
+                    abhilfe = " Bitte in RFEM nachsehen und die Kombination von Hand anlegen."
                 C.warn(log, f"Kombination {wer} („{formula}“): "
                             + (f"Verweise {offen} nicht aufloesbar" if offen
                                else "Formel nicht vollstaendig gelesen")
                             + " - nicht uebernommen (" + "; ".join(gruende) + ")."
                             + (f" Die Zeile besteht nur aus Verweisen {alle}."
                                if not _f0 and not rest else "")
-                            + " Bitte in RFEM nachsehen und die Kombination von "
-                              "Hand anlegen.")
+                            + abhilfe)
                 continue
             # Hier ist ``factors`` nie leer: ein eigener LF-Anteil bleibt
             # erhalten, und ein Verweis ohne Faktoren waere in ``offen``.

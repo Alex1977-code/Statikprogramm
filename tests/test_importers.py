@@ -1808,17 +1808,35 @@ def test_json_anhaengen_koerpergruppe():
 def test_json_anhaengen_stellung_des_ziels():
     """Stellungen werden nicht uebertragen; eine Situation der Quelle, die
     eine nennt, darf dann nicht still die gleichnamige Stellung des Ziels
-    benutzen. Gemessen vor der Nachbesserung vom 23.09.2026: Rahmen als
-    Quelle bei x = 50 m, Stellung 'Offen' hebt die ungelagerten Knoten um
-    1,0 m, Lastfall LF-S (10 kN waagerecht) in Situation 'S-offen'; das Ziel
-    ist der Rahmen bei x = 0 mit eigener Stellung 'Offen' ohne Verschiebung.
-    Allein |u| = 4,7572 mm am Lastknoten, angehaengt 1,7876 mm - die
-    Situation S-offen_2 nannte 'Offen' des Ziels, und weder Modellpruefung
-    noch Protokoll sagten etwas (das Protokoll versprach es sogar)."""
+    benutzen. Versuch: Rahmen als Quelle bei x = 50 m, Stellung 'Offen' hebt
+    die ungelagerten Knoten um 1,0 m (15 von 17, die Lagerknoten 0 und 5
+    bleiben liegen), Lastfall LF-S (10 kN waagerecht) in Situation
+    'S-offen'; das Ziel ist der Rahmen bei x = 0 mit eigener Stellung 'Offen'
+    ohne Verschiebung. Allein |u| = 4,7572 mm am Lastknoten.
+    Gemessen am ausgelieferten Stand 54b6f9a (Inhalt von main 5eb21e6, vor
+    der Nachbesserung vom 23.09.2026): die Situation kam beim Anhaengen gar
+    nicht mit - LF-S hatte die Situation '' (Grundstellung), die Situationen
+    des Ziels waren nur {'S-offen': 'Offen'}, weder Modellpruefung noch
+    Protokoll sagten etwas, angehaengt 1,7876 mm. Am Zwischenstand 94c6863
+    des Zweigs fix/anhaengen nannte die Situation S-offen_2 dagegen 'Offen'
+    des Ziels, ebenfalls 1,7876 mm ohne Fehler der Modellpruefung, obwohl das
+    Protokoll versprach, die Modellpruefung melde solche Situationen. Gleich
+    gross sind beide Zahlen nur, weil 'Offen' des Ziels nichts bewegt.
+
+    Die Handbuchsaetze zu diesem Versuch (Benutzerhandbuch, Punkt
+    „Situationen mit Stellung“) werden am Ende gegen die Messung geprueft:
+    am Stand ec6448c schrieben sie „rechnete sie still in der Stellung des
+    Ziels“ (Zweigstand, nicht der ausgelieferte), „die Knoten eines Rahmens“
+    (15 von 17), sagten nicht, dass die neu angelegte Stellung ohne
+    Gruppenangabe auch die Knoten des Ziels hebt (30 von 34), und nannten nur
+    zwei der Wege, auf denen ein Skript die Vorgabe ketten aendert
+    (Nebenbefunde der Fehlerrunden 22./23.09.2026)."""
+    import json
     from statik3d import examples_lib
     from statik3d.model import Situation
     from statik3d.bridges.positions import Stellung
     from statik3d.situationen import situationsmodell
+    from tests import handbuch
 
     def rahmen(dz, x0, mit_last):
         m = examples_lib.build_example("frame")
@@ -1839,10 +1857,22 @@ def test_json_anhaengen_stellung_des_ziels():
         r = solver.solve_cases(m, ["LF-S"], workers=1)["LF-S"]
         return float(np.linalg.norm(np.asarray(r.u).reshape(-1, 6)[i, :3]))
 
+    def bewegte(m, sit):
+        """Knoten, die die Stellung der Situation sit bewegt (Lagevergleich)."""
+        mm = situationsmodell(m, sit)[0]
+        return np.where(np.abs(np.asarray(mm.nodes) - np.asarray(m.nodes)).max(axis=1) > 1e-12)[0]
+
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, "q.json")
         rahmen(1.0, 50.0, True).save(p)
         allein = verschiebung(Model.load(p))
+        quelle = Model.load(p)
+        bewegt_q = bewegte(quelle, "S-offen")
+        lager_q = sorted({s.node for s in quelle.supports})
+        expect("Quelle allein: 'Offen' hebt die ungelagerten Knoten, die Lagerknoten bleiben",
+               sorted(bewegt_q.tolist()) == sorted(set(range(quelle.nn)) - set(lager_q))
+               and len(lager_q) > 0,
+               f"{len(bewegt_q)} von {quelle.nn} bewegt, Lagerknoten {lager_q}")
         # Ziel ohne Stellung: die Situation behaelt ihren Verweis, die
         # Modellpruefung meldet ihn (so, wie das Protokoll es sagt)
         z = examples_lib.build_example("frame")
@@ -1915,6 +1945,43 @@ def test_json_anhaengen_stellung_des_ziels():
            fehler2.startswith("RuntimeError: Kette") and "'S-offen_2'" in fehler2
            and "unbekannt" in fehler2 and teil2 == ["LF1"],
            f"solve_all: {fehler2}, Teilergebnis {teil2}")
+    # Die Vorgabe nacheinander gilt in einem Skript nur, solange es die
+    # Einstellung ketten nicht aendert. Jeder dieser Wege aendert, was
+    # solver.ketten_zahl liest; einstellungen_laden ruft auch
+    # MainWindow.__init__ (gui/main.py), das Hauptfenster ist hier nicht
+    # erzeugt, weil diese Suite ohne Oberflaeche laeuft.
+    wege = {}
+    alt_datei = os.environ.get("STATIK3D_EINSTELLUNGEN")
+    try:
+        parallel.configure(ketten=1)
+        parallel.configure(ketten=2)
+        wege["configure"] = solver.ketten_zahl(5)
+        parallel.configure(ketten=1)
+        parallel.settings().ketten = 2
+        wege["settings().ketten"] = solver.ketten_zahl(5)
+        parallel.configure(ketten=1)
+        with tempfile.TemporaryDirectory() as d:
+            datei = os.path.join(d, "einstellungen.json")
+            with open(datei, "w", encoding="utf-8") as f:
+                json.dump({"ketten": 2}, f)
+            os.environ["STATIK3D_EINSTELLUNGEN"] = datei
+            parallel.einstellungen_laden()
+            wege["einstellungen_laden"] = solver.ketten_zahl(5)
+    finally:
+        if alt_datei is None:
+            os.environ.pop("STATIK3D_EINSTELLUNGEN", None)
+        else:
+            os.environ["STATIK3D_EINSTELLUNGEN"] = alt_datei
+        parallel.configure(ketten=alt_k)
+    expect("Skript: configure, Zuweisen an settings().ketten und einstellungen_laden "
+           "aendern die Ketten",
+           wege == {"configure": 2, "settings().ketten": 2, "einstellungen_laden": 2}, str(wege))
+    # Bis zum 23.09.2026 kam die Situation beim Anhaengen nicht mit (gemessen
+    # an 54b6f9a, siehe oben): LF-S rechnete in der Grundstellung. Dieselbe
+    # Rechnung am jetzigen Stand, damit die Handbuchzahl belegt bleibt.
+    zg = z.copy()
+    zg.load_cases["LF-S"].situation = ""
+    grundstellung = verschiebung(zg)
     # Legt der Anwender die Stellung der Quelle unter dem neuen Namen an,
     # rechnet der Lastfall der Quelle wie allein
     z.stellungen.append(Stellung("Offen_2", verschiebung=(0.0, 0.0, 1.0)))
@@ -1922,6 +1989,48 @@ def test_json_anhaengen_stellung_des_ziels():
     expect("Anhaengen: mit der Stellung der Quelle unter neuem Namen rechnet LF-S wie allein",
            abs(angehaengt - allein) <= 1e-9 * max(allein, 1e-12) + 1e-15,
            f"allein {allein * 1e3:.4f} mm, angehaengt {angehaengt * 1e3:.4f} mm")
+    # ... hebt dabei aber ohne Gruppenangabe auch die ungelagerten Knoten des
+    # Ziels (Stellung._bewegte_knoten: alle ausser den Knotenlagerknoten)
+    x = np.asarray(z.nodes)[:, 0]
+    bewegt_z = bewegte(z, "S-offen_2")
+    lager_z = {s.node for s in z.supports}
+    im_ziel = int((x[bewegt_z] < 25.0).sum())
+    ziel_frei = [n for n in range(z.nn) if x[n] < 25.0 and n not in lager_z]
+    expect("Anhaengen: Offen_2 ohne Gruppe hebt auch die ungelagerten Knoten des Ziels",
+           len(bewegt_z) == z.nn - len(lager_z) and im_ziel == len(ziel_frei) > 0,
+           f"{len(bewegt_z)} von {z.nn}, davon {im_ziel} im Ziel")
+    # Mit Gruppenangabe grenzt sie nur ein, wenn die Quelle eine eigene Gruppe
+    # hat: Elementgruppen behalten beim Anhaengen ihren Namen (anhaengen.py
+    # benennt nur Gruppen um, die wie ein umbenannter Koerper oder eine
+    # umbenannte Flaeche heissen), hier heissen beide Rahmen 'default'.
+    n_ziel_el = len(examples_lib.build_example("frame").elements)
+    gruppen_q = sorted({e.group for e in z.elements[n_ziel_el:]})
+    gruppen_z = sorted({e.group for e in z.elements[:n_ziel_el]})
+    z.stellungen[-1] = Stellung("Offen_2", verschiebung=(0.0, 0.0, 1.0), dreh_gruppen=gruppen_q)
+    bewegt_g = bewegte(z, "S-offen_2")
+    expect("Anhaengen: Gruppe der Quelle heisst wie die des Ziels, die Stellung hebt alles",
+           gruppen_q == gruppen_z and len(bewegt_g) == z.nn,
+           f"Gruppen Quelle {gruppen_q}, Ziel {gruppen_z}; {len(bewegt_g)} von {z.nn} bewegt")
+
+    # Das Handbuch nennt diese Messungen (Punkt „Situationen mit Stellung“)
+    text = handbuch.absatz("* **Situationen mit Stellung:**")
+    expect("Handbuch: frueher rechnete LF-S in der Grundstellung (nicht in der des Ziels)",
+           "in der Stellung des Ziels" not in text
+           and "in der Grundstellung" in text
+           and f"allein {handbuch.zahl(allein * 1e3)} mm, angehängt "
+               f"{handbuch.zahl(grundstellung * 1e3)} mm" in text,
+           f"Grundstellung {grundstellung * 1e3:.4f} mm; {text[:420]}")
+    expect("Handbuch: die ungelagerten Knoten, mit Zahl",
+           f"die ungelagerten Knoten eines Rahmens um 1,0 m ({len(bewegt_q)} von {quelle.nn};"
+           in text, text[:600])
+    expect("Handbuch: neu angelegte Stellung hebt auch das Ziel, mit Zahl und Verweis",
+           f"{len(bewegt_z)} von {z.nn} Knoten, {im_ziel} davon im Ziel" in text
+           and "siehe „Nicht übertragen“" in text
+           and f"hob alle {len(bewegt_g)} Knoten samt den Lagerknoten" in text, text[-900:])
+    expect("Handbuch: alle Wege, auf denen ein Skript die Ketten aendert",
+           all(w in text for w in ("`parallel.configure(ketten=…)`", "`parallel.settings().ketten`",
+                                   "`parallel.einstellungen_laden()`", "Hauptfenster")),
+           text[-1500:])
 
 
 def test_json_anhaengen_stellung_protokoll():
