@@ -36,8 +36,9 @@ def spalten() -> list:
                hinweis="größte Verdrehung über alle GZG-Kombinationen "
                        "(φx, φy, φz)"),
         Spalte("Grenzwert"),
-        Spalte("Ausnutzung", "", "zahl", 3, hinweis="Filter z. B. > 1"),
-        Spalte("Kombination"), Spalte("Stelle"), Spalte("Status")]
+        # Ampel wie in allen Nachweistabellen (24.09.2026, tabellen.ampelstufe)
+        Spalte("Ausnutzung", "", "zahl", 3, hinweis="Filter z. B. > 1", ampel=True),
+        Spalte("Kombination"), Spalte("Stelle"), Spalte("Status", ampel=True)]
 
 
 def zeilen(model, analysis) -> list:

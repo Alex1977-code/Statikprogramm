@@ -1239,7 +1239,9 @@ def main():
         app.processEvents()
         check("Verformungen werden mit gerechnet",
               an.gzg is not None and len(an.gzg.checks) == 2)
-        z = w.tbl_gzg.modell.zeilen[0]
+        # die Zeile der Durchbiegung beim Namen: seit dem 24.09.2026 steht
+        # die Tabelle absteigend nach Ausnutzung, nicht mehr nach Namen
+        z = next(z for z in w.tbl_gzg.modell.zeilen if z[0] == "Durchbiegung Riegel")
         # Spalte 4 ist die Verschiebung [mm], Spalte 5 die Verdrehung [mrad] -
         # zwei getrennte Zahlenspalten, seit eine Verdrehung nicht mehr unter
         # dem Kopf "mm" steht. Die Grenze rueckt damit auf 6, die Ausnutzung
