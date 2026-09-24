@@ -1460,6 +1460,27 @@ ZAEHLVERFAHREN_TEXT = {
 }
 
 
+def lastspiele_text(n) -> str:
+    """Lastspiel- oder Beiwertzahl zum Lesen: Tausender mit Leerzeichen,
+    Dezimalkomma, nie „2e+06“ (Anwender, 12.09.2026: wissenschaftliche
+    Schreibweise ist unlesbar). 2e6 -> „2 000 000“, 1.5 -> „1,5“.
+
+    Steht im Modell und nicht in der Oberflaeche, weil Maske, Register,
+    Modellbaum (FatigueLoad.bezug) und Bericht dieselbe Schreibweise brauchen
+    und der Bericht die Oberflaeche nicht laden darf."""
+    import math
+    try:
+        x = float(n)
+    except (TypeError, ValueError):
+        return str(n)
+    if not math.isfinite(x):
+        return "–"
+    if x == round(x) and abs(x) < 1e18:
+        return f"{int(round(x)):,}".replace(",", " ")
+    ganz, _, rest = format(x, ",.10f").rstrip("0").partition(".")
+    return ganz.replace(",", " ") + ("," + rest if rest else "")
+
+
 @dataclass
 class FatigueLoad:
     """Ermuedungsbeanspruchung - auf zwei Wegen zu beschreiben.
@@ -1514,9 +1535,9 @@ class FatigueLoad:
 
     def bezug(self) -> str:
         if self.folge:
-            w = "global" if self.wiederholungen is None else f"{self.wiederholungen:g}"
+            w = "global" if self.wiederholungen is None else lastspiele_text(self.wiederholungen)
             return f"Verlauf über {len(self.folge)} Lastfälle, {w}× ({self.zaehlung})"
-        n = "globale Lastspielzahl" if self.cycles is None else f"{self.cycles:g} Spiele"
+        n = "globale Lastspielzahl" if self.cycles is None else f"{lastspiele_text(self.cycles)} Spiele"
         return f"{self.case_max} gegen {self.case_min or 'Nullzustand'}, {n}"
 
 

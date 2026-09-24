@@ -614,7 +614,20 @@ def test_gliederung_und_rahmen():
     m.fatigue_loads["Zglobal"] = FatigueLoad("Zglobal", case_max=lf, case_min="", cycles=None)
     hg = Report(m, an, options={"umfang": "kurz"}).html()
     check("Ermuedungslasten mit globaler Lastspielzahl stehen im Bericht als „(global)“",
-          "2e+06 (global)" in hg and hg.count("(global)") >= 2, str(hg.count("(global)")))
+          "2 000 000 (global)" in hg and hg.count("(global)") >= 2, str(hg.count("(global)")))
+    # Lastspiele nie wissenschaftlich (Anwender 12.09.2026; bis 24.09.2026
+    # schrieb der Bericht „2e+06 (global)“ und eigene Zahlen mit :.3g)
+    m.fatigue_loads["Zeigen"] = FatigueLoad("Zeigen", case_max=lf, case_min="", cycles=500000.0)
+    hz = Report(m, an, options={"umfang": "kurz"}).html()
+    # die Tabelle, in der die Zeile „Zeigen“ steht (nicht das Inhaltsverzeichnis)
+    iz = hz.find(">Zeigen<")
+    ab = hz[hz.rfind("<table", 0, iz):hz.find("</table>", iz)] if iz >= 0 else ""
+    check("Lastspiele im Bericht ausgeschrieben: „500 000“, kein „e+“",
+          "500 000" in ab and "e+" not in ab, ab[:400])
+    check("FatigueLoad.bezug schreibt die Lastspiele aus",
+          m.fatigue_loads["Zeigen"].bezug() == f"{lf} gegen Nullzustand, 500 000 Spiele",
+          m.fatigue_loads["Zeigen"].bezug())
+    del m.fatigue_loads["Zeigen"]
     del m.fatigue_loads["Eglobal"], m.fatigue_loads["Zglobal"]
     d = Model.from_dict(m.to_dict())
     check("Eintraege ueberleben Speichern und Laden (Art, Text, Platz)",

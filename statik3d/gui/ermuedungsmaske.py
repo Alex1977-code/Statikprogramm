@@ -67,21 +67,8 @@ _LEER = (" ", " ", " ", " ", "_")
 # --------------------------------------------------------------------------
 # Zahlen: nie wissenschaftlich (Anwender, 12.09.2026: „2e+06“ ist unlesbar)
 # --------------------------------------------------------------------------
-def lastspiele_text(n) -> str:
-    """Zahl zum Lesen: Tausender mit Leerzeichen, Dezimalkomma, nie „2e+06“.
-
-    2e6 -> „2 000 000“, 1.5 -> „1,5“, 1.2 -> „1,2“.
-    """
-    try:
-        x = float(n)
-    except (TypeError, ValueError):
-        return str(n)
-    if not math.isfinite(x):
-        return "–"
-    if x == round(x) and abs(x) < 1e18:
-        return f"{int(round(x)):,}".replace(",", " ")
-    ganz, _, rest = format(x, ",.10f").rstrip("0").partition(".")
-    return ganz.replace(",", " ") + ("," + rest if rest else "")
+# Eine Schreibweise fuer Maske, Register, Baum und Bericht: im Modell.
+from ..model import lastspiele_text  # noqa: E402,F401
 
 
 def _ohne_leer(text) -> str:
