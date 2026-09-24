@@ -1801,6 +1801,32 @@ def _knoten_am_wuerfel(fall):
         s = int(m.add_node(2.0, 0.5, 1.0))
         m.add_starrkoerper(oben[4], oben[:4] + oben[5:] + [s], art="RBE3")
         return m, s, [s]
+    # RBE3 mit losem Master an gehaltenen Slaves, die ihn nicht festlegen (2.
+    # Gegenprüfung vom 24.09.2026, Mangel 1): ein Slave, zwei Slaves, drei
+    # Slaves auf einer Linie, der Master jeweils daneben. Die Deckelreihe
+    # y = 1 (x = 0 / 0,5 / 1) sind oben[2], oben[5], oben[8].
+    reihe = [oben[2], oben[5], oben[8]]
+    if fall == "RBE3, loser Master 0,3 m über drei Deckelknoten, nicht auf einer Linie":
+        M = int(m.add_node(0.5, 0.75, 1.3))
+        m.add_starrkoerper(M, [reihe[0], reihe[2], oben[4]], art="RBE3")
+        return m, M, []
+    if fall.startswith("RBE3, loser Master 0,3 m über"):
+        M = int(m.add_node(0.5, 1.0, 1.3))
+        sl = {"einem Deckelknoten": [reihe[1]], "zwei Deckelknoten": [reihe[0], reihe[2]],
+              "einer Deckelreihe": reihe}[fall.split(" über ")[1].split(",")[0]]
+        m.add_starrkoerper(M, sl, art="RBE3")
+        if fall.endswith("in x und y angekoppelt"):
+            m.kopplungen.append(Kopplung(M, reihe[2], [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], [starr] * 2))
+            return m, M, []
+        return m, M, [M]
+    if fall == "RBE3, loser Master auf einer Deckelreihe":
+        M = int(m.add_node(0.25, 1.0, 1.0))
+        m.add_starrkoerper(M, reihe, art="RBE3")
+        return m, M, []
+    if fall == "RBE3, loser Master auf seinem einzigen Slave":
+        M = int(m.add_node(*m.nodes[reihe[1]]))
+        m.add_starrkoerper(M, [reihe[1]], art="RBE3")
+        return m, M, []
     if fall == "RBE2, loser Master und loser Slave":
         s, M = int(m.add_node(2.0, 0.5, 1.0)), int(m.add_node(0.5, 0.5, 1.2))
         m.add_starrkoerper(M, oben + [s])
@@ -1853,6 +1879,35 @@ def _knoten_am_wuerfel(fall):
     raise KeyError(fall)
 
 
+def _getragen_je_richtung(bau) -> list:
+    """Je 1000 N in x, y und z am Knoten ``ziel`` aus ``bau() -> (Modell,
+    ziel)``: gehen sie ganz in die Lager? Gezählt werden nur die Lagerkräfte
+    in gelagerten Richtungen: ein Freiheitsgrad ohne Steifigkeit wird beim
+    Rechnen gesperrt, und seine „Reaktion" ist die verlorene Last."""
+    import contextlib
+    import io
+    aus = []
+    for F in ((1000.0, 0.0, 0.0), (0.0, 1000.0, 0.0), (0.0, 0.0, 1000.0)):
+        m2, ziel2 = bau()
+        m2.add_load_case("LF1", "G")
+        m2.load_node(ziel2, case="LF1", Fx=F[0], Fy=F[1], Fz=F[2])
+        gel: dict = {}
+        for s_ in m2.supports:
+            gel.setdefault(int(s_.node), set()).update(d for d in s_.dofs if d < 3)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                r = solver.solve_static(m2, case="LF1", workers=1)
+            RR = np.asarray(r.reactions).reshape(-1, 6)
+            R = np.zeros(3)
+            for n_, ds in gel.items():
+                for d_ in ds:
+                    R[d_] += RR[n_, d_]
+            aus.append(bool(np.allclose(R, -np.asarray(F), atol=1e-3)))
+        except Exception:                    # noqa: BLE001 - singulär, Kontakt bricht ab
+            aus.append(False)
+    return aus
+
+
 def test_abnahme_knoten_in_drei_richtungen():
     """Gegenprüfung vom 24.09.2026 zu B099, Mängel 1 und 4: Die Kur vom
     23.09.2026 zählte jeden Knoten als angeschlossen, der über irgendeine
@@ -1868,45 +1923,38 @@ def test_abnahme_knoten_in_drei_richtungen():
     x, y und z. Nennt ihn die Abnahme nicht, müssen alle drei Lasten in die
     Lager gehen, nennt sie ihn, mindestens eine nicht. Eine Ausnahme mit Absicht: Ein Slave eines
     RBE3 an einem Master mit Element ist durch die Gleichungen festgelegt und
-    trägt, bleibt aber lose - das RBE3 soll ihn nicht halten."""
-    import contextlib
-    import io
+    trägt, bleibt aber lose - das RBE3 soll ihn nicht halten.
+
+    2. Gegenprüfung vom 24.09.2026: Mangel 1 - ein RBE3 hält seinen losen
+    Master nur, wenn die gehaltenen Slaves ihn festlegen (nicht bei einem
+    Slave, zwei Slaves oder Slaves auf einer Linie mit dem Master daneben;
+    bei d7553e4 ohne Befund, die Lasten quer brachen ab). Mangel 2 - der Text
+    behauptete für jeden genannten Knoten, eine Last ginge verloren oder die
+    Rechnung breche ab, auch für den RBE3-Slave oben und für das Stabende mit
+    einem Teil der Momentengelenke, wo alle drei Lasten in die Lager gingen."""
     faelle = ["RBE3, loser Master und loser Slave", "RBE3, loser Master an den Deckelknoten",
               "RBE3, Master am Deckelknoten, loser Slave",
+              "RBE3, loser Master 0,3 m über einem Deckelknoten",
+              "RBE3, loser Master 0,3 m über zwei Deckelknoten",
+              "RBE3, loser Master 0,3 m über einer Deckelreihe",
+              "RBE3, loser Master auf einer Deckelreihe", "RBE3, loser Master auf seinem einzigen Slave",
+              "RBE3, loser Master 0,3 m über drei Deckelknoten, nicht auf einer Linie",
+              "RBE3, loser Master 0,3 m über einem Deckelknoten, in x und y angekoppelt",
               "RBE2, loser Master und loser Slave", "RBE2 am Deckelknoten, ein Slave 0,5 m daneben",
               "Kopplung nur in z", "Kopplungen in x+y und z, dazu x-y",
               "Kette: x, y direkt, z über h", "Kette: x, y direkt, z über h, Last an h",
               "Kette: x, y, z an h, das nur in z hängt",
               "Spaltelement allein", "Anschlag: in x, y, z gelagert, Spaltelement",
               "Spaltelement, Knoten nur in z gelagert", "Spaltelement an einem Anschlag"]
+    texte = {}
     for fall in faelle:
         m, ziel, soll = _knoten_am_wuerfel(fall)
         kb = [b for b in dg.abnahme(m, warnungen=True) if b.pruefung == "Knoten ohne Element"]
         lose = sorted(kb[0].knoten) if kb else []
         befund_ok = (lose == sorted(soll) and (not kb or (len(kb) == 1 and kb[0].stufe == "FEHLER")))
-        getragen = []
-        for F in (dict(Fx=1000.0), dict(Fy=1000.0), dict(Fz=1000.0)):
-            m2, ziel2, _s = _knoten_am_wuerfel(fall)
-            m2.add_load_case("LF1", "G")
-            m2.load_node(ziel2, case="LF1", **F)
-            # nur die Lagerkräfte in gelagerten Richtungen: ein Freiheitsgrad
-            # ohne Steifigkeit wird beim Rechnen gesperrt, und seine
-            # „Reaktion" ist die verlorene Last
-            gel: dict = {}
-            for s_ in m2.supports:
-                gel.setdefault(int(s_.node), set()).update(d for d in s_.dofs if d < 3)
-            try:
-                with contextlib.redirect_stdout(io.StringIO()):
-                    r = solver.solve_static(m2, case="LF1", workers=1)
-                RR = np.asarray(r.reactions).reshape(-1, 6)
-                R = np.zeros(3)
-                for n_, ds in gel.items():
-                    for d_ in ds:
-                        R[d_] += RR[n_, d_]
-                getragen.append(bool(np.allclose(R, -np.array([F.get("Fx", 0.0), F.get("Fy", 0.0),
-                                                                F.get("Fz", 0.0)]), atol=1e-3)))
-            except Exception:                    # noqa: BLE001 - singulär, Kontakt bricht ab
-                getragen.append(False)
+        if kb:
+            texte[fall] = kb[0].text
+        getragen = _getragen_je_richtung(lambda f=fall: _knoten_am_wuerfel(f)[:2])
         if fall == "RBE3, Master am Deckelknoten, loser Slave":
             passt = all(getragen)
         else:
@@ -1914,25 +1962,67 @@ def test_abnahme_knoten_in_drei_richtungen():
         check(f"{fall}: lose {len(soll)}, Rechnung passt dazu",
               befund_ok and passt,
               f"Abnahme {[(b.stufe, b.knoten) for b in kb]}, soll {soll}; x/y/z getragen {getragen}")
+    # Mangel 2: Der Text behauptet keinen Verlust als Tatsache - er sagt, was
+    # die Abnahme nicht findet, und was folgt, wo der Halt wirklich fehlt. Den
+    # RBE3-Slave, der trägt, nennt er als solchen; andere Fälle nicht.
+    rbe3 = "RBE3, Master am Deckelknoten, loser Slave"
+    ohne_rbe3 = [t for f, t in texte.items() if not f.startswith("RBE3")]
+    check("Text: kein Verlust als Tatsache, RBE3-Slave als solcher genannt",
+          all("keinen Halt" in t and "ginge" not in t and "Wo der Halt" in t for t in texte.values())
+          and "Slave eines RBE3" in texte.get(rbe3, "") and "festlegt" in texte.get(rbe3, "")
+          and ohne_rbe3 and not any("RBE3" in t for t in ohne_rbe3),
+          texte.get(rbe3, "(kein Befund)")[-260:])
     # Drehsteifer Master: am Stabende hält ein RBE2 auch einen einzelnen
-    # Slave in allen drei Richtungen, mit Momentengelenken am Ende nicht
+    # Slave, soweit das Stabende die Verdrehung hält. Ein Momentengelenk gibt
+    # die Verdrehung um seine lokale Achse frei; der Slave wird dann nur in
+    # Richtung (Achse x Versatz) nicht gehalten (Mangel 2: Gelenk 11 mit
+    # Versatz in z trug in x, y, z, die Abnahme meldete FEHLER). Geprüft je
+    # Versatz in x, y, z gegen die Rechnung, auch am schrägen und am um 30°
+    # gerollten Stab.
     from statik3d.profiles import make_section as _ms
-    for gelenk, soll_lose in ((False, False), (True, True)):
+
+    def stab(gelenke, ende, roll, versatz):
         mb = Model("Stab")
         mb.add_material(Material.steel("S235"))
         mb.add_section(_ms("IPE 200"))
-        a, b = int(mb.add_node(0, 0, 0)), int(mb.add_node(2, 0, 0))
+        a, b = int(mb.add_node(0, 0, 0)), int(mb.add_node(*ende))
         mb.add_element("beam", [a, b], "S235", "IPE 200")
-        if gelenk:
-            mb.elements[-1].hinges = [9, 10, 11]
+        mb.elements[-1].roll = roll
+        if gelenke:
+            mb.elements[-1].hinges = list(gelenke)
         mb.fix(a, "all")
-        d = int(mb.add_node(2.0, 0.5, 0.0))
+        d = int(mb.add_node(*(np.asarray(mb.nodes[b], float) + versatz)))
         mb.add_starrkoerper(b, [d])
-        kb = [x for x in dg.abnahme(mb, warnungen=True) if x.pruefung == "Knoten ohne Element"]
-        check(f"RBE2 am Stabende{' mit Momentengelenken' if gelenk else ''}, ein Slave: "
-              f"{'lose' if soll_lose else 'angeschlossen'}",
-              bool(kb) == soll_lose and (not kb or kb[0].knoten == [d]),
-              str([(x.stufe, x.knoten) for x in kb]))
+        return mb, d
+    # Versatz 0,5 m in x, y, z; am schrägen und am gerollten Stab dazu in
+    # Richtung seiner lokalen z-Achse, um die Gelenk 11 dreht (von Hand:
+    # Stab (1,1,1) - ez = (-1,-1,2)/√6; um 30° gerollt - ez = (0, -1/2, √3/2))
+    achsen = [("x", (0.5, 0.0, 0.0)), ("y", (0.0, 0.5, 0.0)), ("z", (0.0, 0.0, 0.5))]
+    varianten = (("ohne Gelenk", [], (2.0, 0.0, 0.0), 0.0, achsen),
+                 ("Gelenke 9, 10, 11", [9, 10, 11], (2.0, 0.0, 0.0), 0.0, achsen),
+                 ("Gelenk 11", [11], (2.0, 0.0, 0.0), 0.0, achsen),
+                 ("Gelenk 10", [10], (2.0, 0.0, 0.0), 0.0, achsen),
+                 ("Gelenk 9", [9], (2.0, 0.0, 0.0), 0.0, achsen),
+                 ("Gelenke 10, 11", [10, 11], (2.0, 0.0, 0.0), 0.0, achsen),
+                 ("Gelenk 11, Stab schräg", [11], (1.2, 1.2, 1.2), 0.0,
+                  achsen + [("lokal z", tuple(0.5 * np.array([-1.0, -1.0, 2.0]) / np.sqrt(6.0)))]),
+                 ("Gelenk 11, um 30° gerollt", [11], (2.0, 0.0, 0.0), float(np.radians(30.0)),
+                  achsen + [("lokal z", (0.0, -0.25, 0.25 * np.sqrt(3.0)))]))
+    zaehl = {True: 0, False: 0}
+    for name, gel, ende, roll, versaetze in varianten:
+        for vname, v in versaetze:
+            mb, d = stab(gel, ende, roll, np.asarray(v))
+            kb = [x for x in dg.abnahme(mb, warnungen=True) if x.pruefung == "Knoten ohne Element"]
+            getragen = _getragen_je_richtung(
+                lambda g=gel, e=ende, r=roll, w=np.asarray(v): stab(g, e, r, w))
+            zaehl[bool(kb)] += 1
+            check(f"RBE2 am Stabende, {name}, Slave 0,5 m in {vname}: "
+                  f"{'lose' if kb else 'angeschlossen'}, Rechnung passt dazu",
+                  (not kb) == all(getragen) and (not kb or kb[0].knoten == [d]),
+                  f"Abnahme {[(x.stufe, x.knoten) for x in kb]}; x/y/z getragen {getragen}")
+    # beide Seiten müssen vorkommen, sonst prüft die Schleife nichts
+    check("  Stabenden: gemeldete und nicht gemeldete Fälle kommen vor",
+          zaehl[True] >= 3 and zaehl[False] >= 3, str(zaehl))
     from statik3d import mesher
     ms = Model("Schale")
     ms.add_material(Material.steel("S235"))

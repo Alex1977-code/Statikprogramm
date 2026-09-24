@@ -6534,7 +6534,7 @@ nach neun Minuten. `diagnose.abnahme(model)` prüft:
 | Abdeckung der Kontaktseite | ≥ 95 % (`ABNAHME_ABDECKUNG`) | `ContactPair.abdeckung` |
 | Gegenkörper der Kontaktbedingung ohne eine einzige Facette | 0 | `ContactPair.gegenkoerper` |
 | Haltegüte λ_min/λ_max je Teiltragwerk | ≥ 10⁻⁴ (`singular.HALTEGUETE_MIN`) | § 7b.1 |
-| Knoten im Rechennetz ohne Element | 0 | die Elementliste; nicht gezählt, was über Kopplungen (wirksame Richtungen) oder starre Körper (RBE2) in allen drei Richtungen am Netz gehalten ist, der Master eines RBE3 mit gehaltenen Slaves und ein in x, y, z gelagerter Anschlag am Spaltelement (`_angeschlossene_knoten`) |
+| Knoten im Rechennetz ohne Element | 0 | die Elementliste; nicht gezählt, was über Kopplungen (wirksame Richtungen) oder starre Körper (RBE2) in allen drei Richtungen am Netz gehalten ist, der Master eines RBE3, soweit seine gehaltenen Slaves ihn festlegen (`_rbe3_master_raum`), und ein in x, y, z gelagerter Anschlag am Spaltelement (`_angeschlossene_knoten`) |
 | Formgüte des schlechtesten Elements je Körper | ≥ 0,05 (`ABNAHME_ELEMENTGUETE`) | `netzguete.guete` |
 | Randtreue je Körper | ≥ 99 % (`ABNAHME_RANDTREUE`) | `Volumenkoerper.randtreue` |
 | Volumenbilanz je Körper | ≤ 0,5 % (`ABNAHME_VOLUMENBILANZ`), an windschiefen Flächen zuzüglich Σ A · Abstand der Netzseiten | `elementvolumina` gegen `_polyederhuelle` |
@@ -6855,11 +6855,23 @@ Raum der gehaltenen Richtungen gesammelt, bis sich nichts mehr ändert
   dem, was am Partner gehalten ist; so auch über eine Kette.
 - RBE2: die Glieder bewegen sich als starrer Körper, u_s = u_m + θ_m × r_s.
   Die gehaltenen Richtungen der Glieder legen einen Teil dieser sechs
-  Freiheiten fest, dazu die Verdrehung eines drehsteifen Masters
-  (Schalenknoten, Stabende ohne Momentengelenk: `_drehsteife_knoten`);
-  gehalten ist an jedem Glied, was die festgelegten Freiheiten bestimmen.
-- RBE3: nur der Master, und nur wenn alle Slaves mit Gewicht gehalten
-  sind. Er ist ihr gewichtetes Mittel und versteift sie nicht.
+  Freiheiten fest, dazu die Verdrehungen, die ein Element am Master hält
+  (`_drehsteife_knoten`: am Schalenknoten alle drei, am Stabende die
+  lokalen Achsen ohne Momentengelenk – Gelenk 3 + 6 j + k gibt am Ende j
+  die Drehung um die lokale Achse k frei, Achsen aus `beam3d.local_axes`
+  samt roll); gehalten ist an jedem Glied, was die festgelegten Freiheiten
+  bestimmen.
+- RBE3: nur der Master, nur wenn alle Slaves mit Gewicht gehalten sind,
+  und nur in den Richtungen, in denen sie ihn festlegen
+  (`_rbe3_master_raum`). Mit gehaltenen Slaves bleibt von den sechs
+  Gleichungen des RBE3 (`verbindung.starrkoerper_matrix`, dieselben wie
+  beim Rechnen) G_m · [u_m, θ_m] = 0 mit den sechs Spalten des Masters;
+  gehalten ist das Komplement der Verschiebungsanteile des Nullraums von
+  G_m. Drei Slaves, die nicht auf einer Linie liegen, machen G_m regulär.
+  Ein einziger Slave neben dem Master, zwei Slaves und Slaves auf einer
+  Linie legen die Drehung um ihre Linie nicht fest; steht der Master neben
+  der Linie, bewegt ihn diese Drehung quer dazu, steht er auf ihr, nicht.
+  Der Master ist das gewichtete Mittel der Slaves und versteift sie nicht.
 - Spaltelemente zählen nicht: sie halten nur in ihrer Richtung und nur
   auf Druck. Ausgenommen ist der Anschlag, ein Knoten, den ein Knotenlager
   in x, y und z starr hält und der über ein Spaltelement an einem
@@ -6894,16 +6906,82 @@ Knoten ohne Element (`tests.test_diagnose._knoten_am_wuerfel`):
 | RBE3 mit dem Master an einem Deckelknoten, ein loser Slave | trägt | kein Befund | FEHLER |
 
 Die letzte Zeile ist Absicht: Die sechs Gleichungen des RBE3 legen einen
-einzelnen losen Slave neben einem gehaltenen Master rechnerisch fest, das
-RBE3 soll ihn aber nicht halten. Dazu RBE2 mit einem Slave 0,5 m neben dem
-Master: an einem Stabende (IPE 200) und an einem Schalenknoten tragen die
-Lasten in x, y und z bei jedem Versatz in x, y oder z, an einem Stabende mit
-den Gelenken 9, 10, 11 nur die Last in Richtung des Versatzes. Die
-Prüfung `test_abnahme_knoten_in_drei_richtungen` rechnet die Fälle der
-Tabelle nach: nennt die Abnahme den Knoten nicht, gehen alle drei Lasten in
-die Lager, nennt sie ihn, mindestens eine nicht (außer in der letzten
-Zeile). Eine Kopplung ohne wirksame Richtung oder eine, die nur lose Knoten
-verbindet, schließt nichts an. Einen Hohlraum,
+einzelnen losen Slave neben einem gehaltenen Master rechnerisch fest (Lasten
+in +x, +y, +z, −z und −x gingen ganz in die Lager, am Knoten selbst blieb
+0), das RBE3 soll ihn aber nicht halten: Es verteilt eine Last am Master
+auf die Slaves, ohne sie zu versteifen (`model.StarrKoerper`). Der Text des
+Befunds nennt solche Knoten darum eigens („Davon als Slave eines RBE3 …
+auch wo die Rechnung ihn über einen gehaltenen Master festlegt“). Bis zur
+2. Gegenprüfung vom 24.09.2026 (Mangel 2) sagte er für jeden genannten
+Knoten, er sei „nicht in allen drei Richtungen am Netz gehalten – eine Last
+darauf ginge ganz oder zum Teil verloren“; jetzt sagt er, dass die Abnahme
+keinen Halt in allen drei Richtungen findet, und was folgt, wo der Halt
+wirklich fehlt.
+
+Die Fassung d7553e4 ließ den Master eines RBE3 gelten, sobald alle Slaves
+gehalten waren, auch wo sie ihn nicht festlegen (2. Gegenprüfung vom
+24.09.2026, Mangel 1). Gemessen am 24.09.2026 am selben Würfel, loser
+Master, Slaves aus der Deckelreihe y = 1 (x = 0 / 0,5 / 1), 1000 N am
+Master in x, y und z:
+
+| Slaves, Master | Rechnung | ec6448c | d7553e4 | jetzt |
+|---|---|---|---|---|
+| ein Slave (x = 0,5), Master 0,3 m darüber | z trägt; x und y: singulär | FEHLER | kein Befund | FEHLER |
+| zwei Slaves (x = 0 und 1), Master 0,3 m über der Mitte | x und z tragen; y: singulär | FEHLER | kein Befund | FEHLER |
+| drei Slaves auf der Reihe, Master 0,3 m darüber | x und z tragen; y: singulär | FEHLER | kein Befund | FEHLER |
+| drei Slaves auf der Reihe, Master auf ihr (x = 0,25) | trägt | FEHLER | kein Befund | kein Befund |
+| ein Slave, Master auf dem Slave | trägt | FEHLER | kein Befund | kein Befund |
+| drei Slaves nicht auf einer Linie, Master 0,3 m darüber | trägt | FEHLER | kein Befund | kein Befund |
+| ein Slave, Master 0,3 m darüber, dazu in x und y an einen Deckelknoten gekoppelt | trägt | FEHLER | kein Befund | kein Befund |
+
+Die Zufallsprobe der 2. Gegenprüfung, hier nachgerechnet (400 Modelle aus
+dem Würfel mit 1 bis 4 Knoten ohne Element, Kopplungen in Achsen- und schrägen Richtungen, RBE2 und
+RBE3, auch mit Slaves auf einer Deckelreihe; Wahrheit aus dem Nullraum der
+Zeilen von Elementsteifigkeit, Kopplungsrichtungen und
+`starrkoerper_matrix`) ergab bei d7553e4 42 bzw. 47 Knoten ohne Befund, die
+nicht in allen drei Richtungen gehalten sind (Saat 7: 981 Knoten, Saat 11:
+1000 Knoten), jetzt 0 bei beiden. Die andere Seite: gemeldet, obwohl in
+allen drei Richtungen gehalten, bei d7553e4 24 bzw. 35, jetzt 31 bzw. 40
+Knoten, davon 13 bzw. 14 keine RBE3-Slaves. Einzeln nachgestellt sind
+zwei davon; dort legen erst zwei starre Körper zusammen den Knoten fest,
+über eine gemeinsame Verdrehung: ein RBE2 unter Elementknoten hält deren
+Verdrehung, die ein zweites RBE2 an den Knoten weitergibt, bzw. ein RBE3
+und ein RBE2 am selben Master lassen je eine andere Drehung frei. Ohne den
+einen der beiden ist der Knoten in z nicht gehalten. Die Abnahme vereinigt
+die gehaltenen Richtungen je Verbindung und verfolgt Verdrehungen nur an
+Schalen- und Stabknoten; ein FEHLER dort ist eine unnötige Rückfrage, kein
+stiller Verlust.
+
+Dazu RBE2 mit einem Slave 0,5 m neben dem Master: an einem Stabende
+(IPE 200) und an einem Schalenknoten tragen die Lasten in x, y und z bei
+jedem Versatz in x, y oder z, an einem Stabende mit den Gelenken 9, 10, 11
+nur die Last in Richtung des Versatzes. Mit einem Teil der Gelenke hält das
+Stabende die übrigen Drehungen; der Slave bleibt nur in Richtung
+Gelenkachse × Versatz frei. Bis zur 2. Gegenprüfung (Mangel 2) galt ein
+Stabende mit irgendeinem Momentengelenk als gar nicht drehsteif. Gemessen
+am 24.09.2026 (Stab in x, eingespannt am Anfang, RBE2 am Ende; getragen
+heißt: alle drei Lasten gehen in die Lager):
+
+| Gelenke am Ende | Slave in x | Slave in y | Slave in z |
+|---|---|---|---|
+| 11 (lokal z) | y bricht ab – FEHLER | x bricht ab – FEHLER | getragen – kein Befund (d7553e4: FEHLER) |
+| 10 (lokal y) | z bricht ab – FEHLER | getragen – kein Befund (d7553e4: FEHLER) | x bricht ab – FEHLER |
+| 9 (Torsion) | getragen – kein Befund (d7553e4: FEHLER) | z bricht ab – FEHLER | y bricht ab – FEHLER |
+| 10 und 11 | y und z brechen ab – FEHLER | x bricht ab – FEHLER | x bricht ab – FEHLER |
+
+Am schrägen Stab (Richtung (1, 1, 1)) und am um 30° gerollten Stab mit
+Gelenk 11 brach bei jedem Versatz in x, y oder z mindestens eine Last ab
+(FEHLER), mit dem Slave in Richtung der lokalen z-Achse trugen alle drei
+(kein Befund). Nicht Sache dieser Prüfung ist ein Stab, der selbst
+verschieblich ist: Mit Gelenk 5 am eingespannten Anfang bricht schon eine
+Last in y am Stabende ab, ohne RBE2; die Abnahme meldet dort nichts.
+
+Die Prüfung `test_abnahme_knoten_in_drei_richtungen` rechnet die Fälle der
+drei Tabellen und die am schrägen und am gerollten Stab nach: nennt die
+Abnahme den Knoten nicht, gehen alle drei Lasten in die Lager, nennt sie
+ihn, mindestens eine nicht (außer beim Slave eines RBE3 an einem gehaltenen
+Master). Eine Kopplung ohne wirksame Richtung oder
+eine, die nur lose Knoten verbindet, schließt nichts an. Einen Hohlraum,
 der ringsum von Nachbarseiten eingeschlossen ist, meldet die Abnahme
 weiter als „Seiten im Inneren", auch wenn er die Oberfläche an einer Kante
 berührt. Gemessen am Würfel mit um 0,5 m angehobener Ecke, frei mit h = 0,1:

@@ -824,26 +824,87 @@ def _schief(r) -> np.ndarray:
     return np.array([[0.0, -r[2], r[1]], [r[2], 0.0, -r[0]], [-r[1], r[0], 0.0]])
 
 
-def _drehsteife_knoten(model) -> set:
-    """Knoten, deren Verdrehung ein Element haelt: Schalenknoten und
-    Stabenden ohne Momentengelenk. Gemessen am 24.09.2026 (RBE2 mit einem
-    Slave, 0,5 m neben dem Master in x, y oder z, 1000 N am Slave in x, y
-    und z): am Stabende (IPE 200) und am Schalenknoten (Platte aus
-    grid_plate) gingen alle neun Lasten in die Lager; am Stabende mit
-    Gelenken 9, 10, 11 nur die Last in Richtung des Versatzes, die anderen
-    sechs Laeufe brachen ab (Gleichungssystem singulaer) - wie an einem
-    Volumenknoten."""
+def _drehsteife_knoten(model) -> dict:
+    """{Knoten: Orthonormalbasis (3, k) der Verdrehungen, die ein Element an
+    ihm haelt}: am Schalenknoten alle drei, am Stabende die lokalen Achsen
+    (beam3d.local_axes, samt roll) ohne Momentengelenk - Gelenk 3 + 6 j + k
+    gibt am Ende j die Verdrehung um die lokale Achse k frei.
+
+    Gemessen am 24.09.2026 (RBE2 mit einem Slave, 0,5 m neben dem Master in
+    x, y oder z, 1000 N am Slave in x, y und z): am Stabende (IPE 200) und
+    am Schalenknoten (Platte aus grid_plate) gingen alle neun Lasten in die
+    Lager; am Stabende mit Gelenken 9, 10, 11 nur die Last in Richtung des
+    Versatzes, die anderen sechs Laeufe brachen ab (Gleichungssystem
+    singulaer) - wie an einem Volumenknoten. Bis zur 2. Gegenpruefung vom
+    24.09.2026 (Mangel 2) galt ein Stabende mit irgendeinem Momentengelenk
+    als gar nicht drehsteif; mit Gelenk 11 allein und dem Slave 0,5 m
+    daneben in z trugen aber alle drei Lasten, die Abnahme meldete FEHLER.
+    Frei ist dort nur die Verdrehung um die lokale z-Achse, und sie bewegt
+    einen Slave im Versatz r nur in Richtung z x r (am Stab in x: bei r in
+    z gar nicht). Nachgerechnet mit Gelenk 9, 10, 11, 10+11 und 9,10,11, am
+    schraegen und am um 30 Grad gerollten Stab: wo die Abnahme den Slave
+    jetzt nicht nennt, trugen alle drei Lasten, wo sie ihn nennt, brach
+    mindestens eine ab (tests.test_diagnose.
+    test_abnahme_knoten_in_drei_richtungen, Theoriehandbuch 7a-2).
+    Vorausgesetzt ist, dass der Stab selbst nicht verschieblich ist: mit
+    Gelenk 5 am eingespannten Anfang bricht schon eine Last in y am Stabende
+    ab, das prueft diese Funktion nicht."""
     from .assemble import SHELL_TYPES
-    aus = set()
+    from .elements import beam3d as _bm
+    X = np.asarray(model.nodes, float)
+    achsen: dict = {}
     for e in model.elements:
         if e.typ in SHELL_TYPES:
-            aus.update(int(n) for n in e.nodes)
+            for n in e.nodes:
+                achsen.setdefault(int(n), []).append(np.eye(3))
         elif e.typ == "beam":
             gel = set(int(h) for h in (getattr(e, "hinges", None) or []))
+            try:
+                T3, _L = _bm.local_axes(X[int(e.nodes[0])], X[int(e.nodes[1])],
+                                        float(getattr(e, "roll", 0.0) or 0.0))
+            except (ValueError, IndexError):
+                continue                      # Stab ohne Laenge haelt nichts
             for j, n in enumerate(e.nodes[:2]):
-                if not gel & set(range(3 + 6 * j, 6 + 6 * j)):
-                    aus.add(int(n))
-    return aus
+                fest = [k for k in range(3) if 3 + 6 * j + k not in gel]
+                if fest:
+                    achsen.setdefault(int(n), []).append(T3[fest].T)
+    return {n: _raum(np.hstack(v)) for n, v in achsen.items()}
+
+
+def _rbe3_master_raum(P_m, P_s, gewichte=None) -> np.ndarray:
+    """Richtungen, in denen die Slaves eines RBE3 seinen Master festlegen,
+    wenn sie selbst in allen drei Richtungen gehalten sind (Orthonormalbasis
+    (3, k)).
+
+    Mit gehaltenen Slaves bleiben von den sechs Gleichungen des RBE3
+    (verbindung.starrkoerper_matrix, dieselben wie beim Rechnen) nur die
+    sechs Spalten des Masters, G_m [u_m, theta_m] = 0. Gehalten ist eine
+    Richtung, in der sich u_m in keiner Loesung davon bewegt: das
+    Komplement der Verschiebungsanteile des Nullraums von G_m. Bei drei
+    Slaves, die nicht auf einer Linie liegen, ist G_m regulaer. Ein einziger
+    Slave neben dem Master, zwei Slaves und Slaves auf einer Linie legen die
+    Drehung um ihre Linie nicht fest; steht der Master neben der Linie,
+    bewegt ihn diese Drehung quer dazu. Gemessen am 24.09.2026 (Wuerfel
+    2 x 2 x 2 hex8, loser Master 0,3 m ueber der Deckelreihe y = 1, 1000 N am
+    Master; 2. Gegenpruefung, Mangel 1): ein Slave - x und y brechen ab
+    (Gleichungssystem singulaer), zwei Slaves oder drei auf der Linie - y
+    bricht ab, z und x tragen. Der Master auf der Linie (bei x = 0,25) oder
+    auf seinem einzigen Slave, und drei Slaves nicht auf einer Linie: alle
+    drei Lasten tragen."""
+    from .elements import verbindung as _vb
+    r = np.atleast_2d(np.asarray(P_s, float)) - np.asarray(P_m, float)
+    Lr = float(np.linalg.norm(r, axis=1).max()) or 1.0
+    # auf die groesste Entfernung bezogen: Rang und Verschiebungsanteil des
+    # Nullraums aendern sich damit nicht, die Schwelle gilt fuer jede Groesse
+    Gm = _vb.starrkoerper_matrix(np.zeros(3), r / Lr, "RBE3", gewichte)[:, :6]
+    _u, s, Wt = np.linalg.svd(Gm)
+    if not len(s) or s[0] <= 0.0:
+        return _KEIN_RAUM
+    N = Wt[int((s > 1e-9 * s[0]).sum()):].T
+    if not N.shape[1]:
+        return np.eye(3)
+    U, sv, _vt = np.linalg.svd(N[:3])
+    return U[:, int((sv > 1e-9).sum()):]
 
 
 def _starr_gelagert(model) -> set:
@@ -884,12 +945,16 @@ def _angeschlossene_knoten(model, belegt: np.ndarray) -> np.ndarray:
     * ein RBE2: Master und Slaves bewegen sich als ein starrer Koerper
       (u_s = u_m + theta_m x r_s). Gehalten ist, was die gehaltenen
       Richtungen seiner Glieder von dieser Bewegung festlegen, dazu die
-      Verdrehung eines drehsteifen Masters (_drehsteife_knoten). Ein
-      Slave an einem Volumenknoten als einzigem Glied haengt deshalb nur
+      Verdrehungen, die am Master ein Element haelt (_drehsteife_knoten:
+      Schalenknoten, Stabende ohne Momentengelenk um die jeweilige Achse).
+      Ein Slave an einem Volumenknoten als einzigem Glied haengt deshalb nur
       in Richtung des Versatzes;
-    * ein RBE3 haelt nur seinen Master, und nur wenn alle Slaves mit
-      Gewicht gehalten sind: der Master ist ihr gewichtetes Mittel, die
-      Slaves versteift er nicht (model.StarrKoerper).
+    * ein RBE3 haelt nur seinen Master, nur wenn alle Slaves mit Gewicht
+      gehalten sind, und nur in den Richtungen, in denen sie ihn festlegen
+      (_rbe3_master_raum): ein einziger Slave neben dem Master, zwei Slaves
+      oder Slaves auf einer Linie mit dem Master daneben legen ihn quer
+      dazu nicht fest. Der Master ist ihr gewichtetes Mittel, die Slaves
+      versteift er nicht (model.StarrKoerper).
 
     Nicht gezaehlt werden Spaltelemente: sie halten nur in ihrer Richtung
     und nur auf Druck. Ausgenommen ist der Anschlag: ein Knoten, der in x, y
@@ -928,7 +993,14 @@ def _angeschlossene_knoten(model, belegt: np.ndarray) -> np.ndarray:
 
     Ein Slave eines RBE3 an einem gehaltenen Master ist rechnerisch
     festgelegt (am Wuerfel trugen alle drei Lasten), er zaehlt trotzdem als
-    lose: das RBE3 soll ihn nicht halten.
+    lose: das RBE3 soll ihn nicht halten. Der Text des Befunds sagt das
+    (_abnahme_netz).
+
+    Die Fassung d7553e4 liess den Master eines RBE3 schon gelten, wenn alle
+    Slaves gehalten waren, auch wo sie ihn nicht festlegen; bei einem
+    Slave, zwei Slaves und drei Slaves auf einer Linie, der Master 0,3 m
+    daneben, schwieg sie, und Lasten quer brachen ab (2. Gegenpruefung vom
+    24.09.2026, Mangel 1; bei ec6448c war jeder dieser Master ein FEHLER).
     """
     nn = int(model.nn)
     an = np.zeros(nn, bool)
@@ -963,10 +1035,11 @@ def _angeschlossene_knoten(model, belegt: np.ndarray) -> np.ndarray:
             gew = list(getattr(sk, "gewichte", None) or [])
             gew = gew if len(gew) == len(sl) else [1.0] * len(sl)
             if offen[mst]:
-                rbe3.append((mst, [s for s, w in zip(sl, gew) if float(w) != 0.0]))
+                rbe3.append((mst, [s for s, w in zip(sl, gew) if float(w) != 0.0],
+                             _rbe3_master_raum(X[mst], X[sl], gew)))
         else:
             rbe2.append([mst] + sl)
-    dreh = _drehsteife_knoten(model) if rbe2 else set()
+    dreh = _drehsteife_knoten(model) if rbe2 else {}
     spalt = [(int(g.node_a), int(g.node_b)) for g in (getattr(model, "gap_elements", None) or [])
              if 0 <= int(g.node_a) < nn and 0 <= int(g.node_b) < nn]
     anschlag = _starr_gelagert(model) if spalt else set()
@@ -979,8 +1052,9 @@ def _angeschlossene_knoten(model, belegt: np.ndarray) -> np.ndarray:
         Lr = float(np.linalg.norm(r, axis=1).max()) or 1.0
         B = [np.hstack([voll, -_schief(ri / Lr)]) for ri in r]
         zeilen = [raum(p).T @ Bp for p, Bp in zip(glieder, B) if raum(p).shape[1]]
-        if mst in dreh and not offen[mst]:
-            zeilen.append(np.hstack([np.zeros((3, 3)), voll]))
+        Rd = dreh.get(mst, _KEIN_RAUM) if not offen[mst] else _KEIN_RAUM
+        if Rd.shape[1]:                     # vom Element gehaltene Verdrehungen
+            zeilen.append(np.hstack([np.zeros((Rd.shape[1], 3)), Rd.T]))
         if not zeilen:
             return {}
         _u, s, Wt = np.linalg.svd(np.vstack(zeilen))
@@ -1007,9 +1081,9 @@ def _angeschlossene_knoten(model, belegt: np.ndarray) -> np.ndarray:
             for p, S in starr(glieder).items():
                 if S.shape[1]:
                     dazu.setdefault(p, []).append(S)
-        for mst, sl in rbe3:
-            if sl and not an[mst] and all(not offen[s] or an[s] for s in sl):
-                dazu.setdefault(mst, []).append(voll)
+        for mst, sl, S in rbe3:
+            if sl and S.shape[1] and not an[mst] and all(not offen[s] or an[s] for s in sl):
+                dazu.setdefault(mst, []).append(S)
         for a, b in spalt:                  # Anschlag, siehe oben
             for i, j in ((a, b), (b, a)):
                 if offen[i] and not an[i] and i in anschlag and (not offen[j] or an[j]):
@@ -1036,20 +1110,38 @@ def _abnahme_netz(model) -> list:
     belegt[kn[(kn >= 0) & (kn < nn)]] = True
     # Knoten, die ueber Kopplungen oder starre Koerper in allen drei
     # Richtungen am Netz haengen, tragen (siehe _angeschlossene_knoten) -
-    # sie sind nicht „ohne Element". Was nur in einem Teil der Richtungen
-    # haelt, bleibt einer: dort ginge die Last verloren.
+    # sie sind nicht „ohne Element". Was die Abnahme nicht in allen dreien
+    # gehalten findet, bleibt einer. Der Text sagt nur das und was folgt, wo
+    # der Halt wirklich fehlt: Den Slave eines RBE3 an einem gehaltenen
+    # Master legt die Rechnung fest (am Wuerfel trugen Lasten in +x, +y, +z,
+    # -z, -x, 24.09.2026), er bleibt mit Absicht lose, und der Text nennt ihn
+    # als solchen (2. Gegenpruefung vom 24.09.2026, Mangel 2; bis dahin hiess
+    # es fuer jeden Knoten „eine Last darauf ginge ganz oder zum Teil
+    # verloren").
     lose = np.flatnonzero(~belegt & ~_angeschlossene_knoten(model, belegt)).tolist()
     if lose:
+        rbe3_slaves = {int(x) for sk in (getattr(model, "starrkoerper", None) or [])
+                       if str(getattr(sk, "art", "RBE2")).upper() == "RBE3"
+                       for x in (getattr(sk, "slaves", None) or [])
+                       if int(x) != int(getattr(sk, "master", -1))}
+        als_rbe3 = [k for k in lose if k in rbe3_slaves]
         aus.append(Befund(
             pruefung="Knoten ohne Element", knoten=lose[:8],
             wert=float(len(lose)), grenze=0.0,
             text=f"{len(lose)} Knoten im Rechennetz hängen an keinem Element "
                  f"(z. B. {', '.join('K' + str(k) for k in lose[:6])}"
-                 + (" …" if len(lose) > 6 else "") + ") und sind auch über "
-                 "Kopplungen oder starre Körper nicht in allen drei Richtungen "
-                 "am Netz gehalten - eine Last darauf ginge ganz oder zum Teil "
-                 "verloren, oder die Rechnung bricht ab (Gleichungssystem "
-                 "singulär)."))
+                 + (" …" if len(lose) > 6 else "") + "), und die Abnahme findet "
+                 "auch über Kopplungen oder starre Körper keinen Halt in allen "
+                 "drei Richtungen. Wo der Halt in einer Richtung fehlt, geht "
+                 "eine Last darauf ganz oder zum Teil verloren, oder die "
+                 "Rechnung bricht ab (Gleichungssystem singulär)."
+                 + (f" Davon als Slave eines RBE3: "
+                    f"{', '.join('K' + str(k) for k in als_rbe3[:6])}"
+                    + (" …" if len(als_rbe3) > 6 else "") + ". Ein RBE3 "
+                    "verteilt eine Last am Master auf seine Slaves, ohne sie "
+                    "zu versteifen; die Abnahme zählt es darum nicht als Halt "
+                    "eines Slaves, auch wo die Rechnung ihn über einen "
+                    "gehaltenen Master festlegt." if als_rbe3 else "")))
     try:
         from .netzguete import guete as _formguete
         q = _formguete(model)

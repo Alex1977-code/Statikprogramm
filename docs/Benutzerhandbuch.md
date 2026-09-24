@@ -4640,18 +4640,35 @@ Fx = 100 kN an einer Deckelecke, Summe der Lagerkräfte in z 100 000,0 N).
 Seither zählt ein
 Knoten nicht als „ohne Element“, der über Kopplungen oder einen starren
 Körper (RBE2) in allen drei Richtungen am Netz gehalten ist, auch über eine
-Kette solcher Verbindungen, und ebenso der Master einer Verteilkopplung
-(RBE3), deren Slaves alle gehalten sind. Was nur in einem Teil der
-Richtungen hält, bleibt ein FEHLER: Dort ginge die Last verloren, oder die
-Rechnung bricht ab. Gemessen am 24.09.2026 an einem Würfel aus 2 × 2 × 2
-Elementen, 1000 N am Knoten: Eine Kopplung nur in z trägt die Last in z,
-die in x und y bleibt als Lagerkraft am Knoten selbst stehen; ebenso ein
-Spaltelement allein, dazu bricht Zug ab; am Slave eines RBE3 mit losem
-Master bricht jede Last ab (Gleichungssystem singulär); ein RBE2 mit einem
-einzigen Slave an einem Volumenknoten hält nur in Richtung des Versatzes
-(an einem Stabende ohne Gelenk oder einem Schalenknoten in allen drei).
-Ein RBE3 hält seine Slaves nicht, sie zählen als lose, auch wenn der
-Master ein Element hat. Ein Anschlag – ein Knoten, der in x, y und z starr
+Kette solcher Verbindungen. Der Master einer Verteilkopplung (RBE3) zählt
+nur, wenn seine Slaves alle gehalten sind und ihn festlegen – nicht bei
+einem einzigen Slave neben dem Master, bei zwei Slaves oder bei Slaves auf
+einer Linie, wenn der Master neben dieser Linie steht. Was die Abnahme
+nicht in allen drei Richtungen gehalten findet, bleibt ein FEHLER; wo der
+Halt wirklich fehlt, geht die Last verloren, oder die Rechnung bricht ab.
+Gemessen am 24.09.2026 an einem Würfel aus 2 × 2 × 2 Elementen, 1000 N am
+Knoten: Eine Kopplung nur in z trägt die Last in z, die in x und y bleibt
+als Lagerkraft am Knoten selbst stehen; ebenso ein Spaltelement allein,
+dazu bricht Zug ab; am Slave eines RBE3 mit losem Master bricht jede Last
+ab (Gleichungssystem singulär); ein loser RBE3-Master 0,3 m über einem
+einzigen Deckelknoten trägt nur in z, über zwei Deckelknoten oder über
+einer Reihe von drei nicht quer zur Reihe (steht er auf der Reihe, trägt er
+in allen drei Richtungen); ein RBE2 mit einem einzigen Slave an einem
+Volumenknoten hält nur in Richtung des Versatzes (an einem Schalenknoten
+und an einem Stabende ohne Gelenk in allen drei). An einem Stabende mit
+Momentengelenk hält ein RBE2 seinen Slave in allen Richtungen außer der,
+in die ihn die freie Drehung um die Gelenkachse bewegt: Mit dem Gelenk um
+die lokale z-Achse eines Stabs in x und dem Slave 0,5 m daneben in z
+trugen alle drei Lasten, mit dem Slave daneben in x oder in y brach je
+eine ab (in y bzw. in x).
+Die Slaves eines RBE3 zählt die Abnahme nicht als angeschlossen, auch
+wenn der Master ein Element hat: Ein RBE3 verteilt eine Last am Master auf
+die Slaves, ohne sie zu versteifen. Die Rechnung kann einen solchen Slave
+trotzdem festlegen – am Würfel (Master am mittleren Deckelknoten, Slaves
+die acht übrigen Deckelknoten und ein loser Knoten daneben) gingen Lasten
+in +x, +y, +z, −z und −x am losen Slave ganz in die Lager. Die Meldung
+nennt solche Knoten darum eigens („Davon als Slave eines RBE3 …“) und sagt
+nicht, dass die Last verloren geht. Ein Anschlag – ein Knoten, der in x, y und z starr
 gelagert ist und über ein Spaltelement am Tragwerk hängt, wie im Beispiel
 „Kontakt: abhebendes Lager“ – gilt als angeschlossen: Eine Last auf ihm geht
 in sein Lager. Eine Kopplung ohne wirksame Richtung schließt
