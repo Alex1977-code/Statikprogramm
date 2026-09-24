@@ -7143,6 +7143,23 @@ an einer waagerechten hing das Vorzeichen am Umlaufsinn des Randes
 (ΣR_z = +8000 N gegen −8000 N). Am jetzigen Stand bestehen beide Prüfungen,
 `tests.test_rfem6` meldet 318 von 318.
 
+### 7.7 Objekt-Nummern reisen nicht mit (24.09.2026)
+
+Der stehende Pool (`parallel.Arbeiter`) pickelt das Modell beim Öffnen, samt seinen
+Zwischenspeichern. Ein Zwischenspeicher, der Elemente über `id(Objekt)` findet, ist im
+Arbeitsprozess wertlos: dort sind es andere Objekte, auch wenn Größen und
+Versionszähler gleich bleiben. So geschah es beim Tetraeder mit Ordnung p
+(`tetp.index_von`, Zuordnung `_nach_id` in der Anreicherung): Rechnete der
+Hauptprozess dasselbe Modell schon einmal — Fables adaptive Messung V5 wiederholt die
+Rechnung nach „Kante gerade gelassen“ —, brach die nächste parallele Rechnung mit
+„tetp: Element gehoert nicht zum Modell“ ab, im Nachlauf mit Pythons leerem
+„max() iterable argument is empty“. Seitdem prüft `index_von`, ob die gefundene
+Nummer noch dasselbe Objekt meint, und baut die Zuordnung sonst einmal neu; der
+Nachlauf nennt ein Element ohne Auswertepunkte mit Nummer und Typ. Geprüft an der
+Hohlkugel mit tetp4 innen und tetp2 außen (1 152 Elemente, acht Blöcke, zwei Arbeiter):
+erst seriell, dann parallel, die geglättete Knotenspannung bitgleich; ohne die
+Behebung bricht die parallele Rechnung ab (`tests/test_nachlauf_parallel.py`).
+
 ## 7a Entartete Elemente
 
 Ein Element ohne Ausdehnung hat keine Steifigkeit; seine Jacobi-Matrix ist

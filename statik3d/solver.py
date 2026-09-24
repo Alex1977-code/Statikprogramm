@@ -2294,6 +2294,16 @@ def case_prescribed(model: Model, factors: dict, warn=None):
 # ==========================================================================
 # Nachlaufrechnung
 # ==========================================================================
+def _ohne_punkte(e, i: int, was: str) -> str:
+    """Meldung, wenn ein Volumenelement im Nachlauf keine Spannung liefert.
+    Bis zum 24.09.2026 stand dort nur Pythons "max() iterable argument is
+    empty" - ohne Element, ohne Grund (Fables Messung V5 im parallelen
+    Nachlauf mit tetp; Ursache war eine veraltete Elementzuordnung im
+    Arbeitsprozess, tetp.index_von)."""
+    return (f"Element {i + 1} ({e.typ}): keine {was} im Nachlauf - die Spannung "
+            f"dieses Elements fehlt; bitte mit dem Modell melden")
+
+
 def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
     u = extra["u"]
     feq = extra["feq"]
@@ -2477,6 +2487,8 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
                 if vor is not None:
                     rest = np.asarray(vor, float) if rest is None else rest + np.asarray(vor, float)
                 werte_p = [np.asarray(x, float) - (0.0 if rest is None else rest) for x in sig_p]
+                if not werte_p:
+                    raise ValueError(_ohne_punkte(e, i, "Integrationspunkte des fließenden Elements"))
                 s_ = max(werte_p, key=sl.von_mises)
                 if ecken_nr is not None and xi_p is not None:
                     en = np.asarray(sl.ECKEN_NATUERLICH[e.typ], float)
@@ -2490,6 +2502,8 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
                     # Plastischer Zustand ohne Punktspannungen (etwa ein Typ ohne
                     # Dehnungsoperator): die Mitte, wie bis zum 22.09.2026
                     werte = werte[:1]
+                if not werte:
+                    raise ValueError(_ohne_punkte(e, i, "Auswertepunkte"))
                 s_ = werte[0] if len(werte) == 1 else max(werte, key=sl.von_mises)
                 ecken = None
                 if ecken_nr is not None:
