@@ -667,6 +667,11 @@ class Modellbaum(QtWidgets.QTreeWidget):
             it.setForeground(0, QtGui.QColor(farbe))
         if hinweis:
             it.setToolTip(0, hinweis)
+        if str(zahl):
+            # Spalte 1 ist auf 120 px gedeckelt und wird mit … gekuerzt - wer
+            # den Zusatz ueberfaehrt, liest ihn ganz (24.09.2026: die
+            # Erklaerung an grauen phi-Eintraegen war sonst nicht zu lesen)
+            it.setToolTip(1, str(zahl))
         return it
 
     def _liste(self, eltern, eintraege, art, sammelart="", sortieren=True, gesamt=None):
@@ -697,6 +702,50 @@ class Modellbaum(QtWidgets.QTreeWidget):
                                     "Tabelle unten – dort mit Filter.")
                 break
             self._zweig(eltern, text, zahl, art, schluessel=key, hinweis=tip, farbe=farbe)
+
+    def ergebnisse_nachziehen(self, ergebnisse: dict) -> bool:
+        """Nach einem Ergebniswechsel nur die Zusaetze (Spalte 1), Hinweise
+        und Farben der Ergebniseintraege neu setzen, ohne den Baum neu
+        aufzubauen.
+
+        Das geht nur, wenn Gruppen und Schluessel dieselben geblieben sind
+        (etwa Umhuellende -> Lastfall: „Verformungen“ und „Schnittgrößen“
+        bleiben, ihre Werte nicht). Sonst ``False`` - dann baut der Aufrufer
+        den Baum neu (:meth:`fuellen`). Befund 24.09.2026: der Zusatz blieb
+        beim alten Ergebnis stehen.
+        """
+        ew = None
+        for i in range(self.topLevelItemCount()):
+            w = self.topLevelItem(i)
+            for j in range(w.childCount()):
+                if w.child(j).data(0, QtCore.Qt.UserRole) == "ergebnisse":
+                    ew = w.child(j)
+        if ew is None:
+            return False
+        erg = {k: v for k, v in (ergebnisse or {}).items() if v}
+        gruppen = [ew.child(i) for i in range(ew.childCount())
+                   if ew.child(i).data(0, QtCore.Qt.UserRole) == "ergebnisgruppe"]
+        if [g.text(0) for g in gruppen] != list(erg):
+            return False
+        paare = []
+        for g in gruppen:
+            eintraege = erg[g.text(0)]
+            kinder = [g.child(i) for i in range(g.childCount()) if self._ist_eintrag(g.child(i))]
+            if g.text(1) != str(len(eintraege)) or                     [k.data(0, QtCore.Qt.UserRole + 1) for k in kinder]                     != [str(e[2]) for e in eintraege[:BAUM_MAX]]:
+                return False
+            paare.extend(zip(kinder, eintraege))
+        for it, e in paare:
+            # wie fuellen: ein vierter Wert ist die Textfarbe (grau), der
+            # Zusatz steht dann auch im Hinweis
+            zusatz, tip = str(e[1]), (e[1] if len(e) > 3 else e[0])
+            it.setText(1, zusatz)
+            it.setToolTip(0, tip)
+            it.setToolTip(1, zusatz)
+            if len(e) > 3 and e[3]:
+                it.setForeground(0, QtGui.QColor(e[3]))
+            else:
+                it.setData(0, QtCore.Qt.ForegroundRole, None)
+        return True
 
     # -- Beschriftungen ---------------------------------------------------
     @staticmethod

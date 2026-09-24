@@ -1271,21 +1271,32 @@ Der Zweig **Verformungen** (seit 24.09.2026) steht nach Lastfällen und
 Nachweisen, vor den Schnittgrößen, und führt acht Einträge: **u gesamt |u|**,
 **ux**, **uy**, **uz**, **φ gesamt |φ|**, **φx**, **φy**, **φz**. Daneben stehen
 kleinster und größter Wert des gezeigten Ergebnisses als Dezimalzahl, „min …
-max mm“ bzw. „min … max mrad“; bei einer Umhüllenden reichen die Richtungen
-vom kleinsten Minimum bis zum größten Maximum aller Ergebnisse. Ein Klick
+max mm“ bzw. „min … max mrad“ — genau die Grenzen der Färbung, die ein Klick
+einstellt, auch bei einer Umhüllenden (dort je Knoten das betragsgrößere
+Extrem; das volle Minimum und Maximum aller Ergebnisse steht im Register
+*Umhüllende*). Wechselt man das Ergebnis — in der Ergebnismaske oder in der
+Glasleiste —, ziehen die Werte mit. Ein Klick
 stellt die Färbung ein — eine Umhüllende bleibt dabei vorn, denn sie führt
 Verschiebungen und Verdrehungen (anders als die Spannungen). Den Zweig gibt es
-nur mit einem Ergebnis, nicht zu Eigenformen oder Knickfiguren.
+nur mit einem Ergebnis, nicht zu Eigenformen oder Knickfiguren, und nicht,
+wenn nach der Rechnung Knoten angelegt wurden (das Ergebnis gehört dann zum
+alten Netz). Ist der Zusatz zu lang für die Spalte, zeigt ihn der Hinweis beim
+Überfahren ganz.
 
-**Verdrehungen gibt es nur an Knoten mit Drehsteifigkeit** — an Balken,
-Schalen und Federn mit Drehfedern. Volumen-, Scheiben-, Fachwerk- und
+**Verdrehungen gibt es nur an Knoten mit Drehsteifigkeit** — an Balken
+(außer an einem Stabende, dessen Momentengelenke den Knoten ganz freigeben,
+etwa bei einem Pendelstab), Schalen, Federn mit Drehfedern und starren
+Körpern (Master; bei RBE2 auch die Slaves). Volumen-, Scheiben-, Fachwerk- und
 Seilknoten haben keinen Drehfreiheitsgrad; die Rechnung hält ihn dort bei
 genau 0. Diese Knoten zeigt die Färbung **grau** (ohne Wert) statt als
-Nullen, die Farbskala reicht nur über die Stab- und Schalenknoten. Hat ein
-Modell gar keinen solchen Knoten (reines Volumenmodell), stehen die vier
-φ-Einträge grau mit dem Zusatz „keine Verdrehungen: nur Volumenkörper
-(Knoten ohne Drehfreiheitsgrad)“; ein Klick meldet das in der Statuszeile und
-färbt nicht. Geprüft in `tests/test_ergebnisbaum.py`, dort auch die
+Nullen, die Farbskala reicht nur über die Knoten mit Drehsteifigkeit. Hat ein
+Modell gar keinen solchen Knoten, stehen die vier φ-Einträge grau mit einer
+Erklärung als Zusatz: beim reinen Volumenmodell „keine Verdrehungen: nur
+Volumenkörper (Knoten ohne Drehfreiheitsgrad)“, bei einem Fachwerk-, Seil- oder
+Scheibenmodell ohne Balken und Schalen „keine Verdrehungen: kein Knoten mit
+Drehsteifigkeit (Fachwerkstäbe, Seile, Scheiben und Volumenkörper haben keinen
+Drehfreiheitsgrad)“. Ein Klick meldet das in der Statuszeile und färbt nicht,
+ein Doppelklick übernimmt dann auch nichts in den Bericht. Geprüft in `tests/test_ergebnisbaum.py`, dort auch die
 Handrechnung am Kragarm: φ am Ende = F·L²/(2EI).
 
 Der Zweig **Schnittgrößen** führt N, Vy, Vz, Mt, My und Mz, jede mit ihren
@@ -5607,8 +5618,10 @@ schwersten zuerst: erst die, in denen wirklich Last ins Nichts geht.
 
   **Verdrehungen** φ sind die Drehfreiheitsgrade der Knoten, |φ| ihr Betrag, in
   mrad (fest, wie im Verformungsnachweis). Zur Umhüllenden färbt φx/φy/φz das
-  betragsgrößere Extrem, |φ| den größeren Betrag aus Minimum und Maximum (wie
-  bei |u|). **Volumenknoten haben keine eigenen Verdrehungen**: ein
+  betragsgrößere Extrem, |φ| den größten Betrag, den ein einzelnes Ergebnis
+  am Knoten hat (ebenso |u|; bis 24.09.2026 wurde der Betrag aus Minimum und
+  Maximum gebildet, deren Richtungen aus verschiedenen Ergebnissen stammen
+  können — das ergab zu viel oder zu wenig). **Volumenknoten haben keine eigenen Verdrehungen**: ein
   Volumenelement hat nur Verschiebungen, die Rechnung hält den Drehfreiheitsgrad
   dort bei 0. Diese Knoten — ebenso Scheiben-, Fachwerk- und Seilknoten —
   stehen grau statt mit Nullen; in einem gemischten Modell trägt die Skala nur
@@ -5627,7 +5640,9 @@ grau offen, blau Kontakt ohne Reibung) erscheinen nur noch mit dem Schalter
 *Ergebnisse → Kontaktmarken* — vorher lagen sie über jedem Ergebnis, am
 Drehlager 21 586 Kugeln, die man für Kontaktergebnisse hielt, die „nicht
 weggehen". Die **Skala** schreibt ihre Zahlen aus („2390" statt „2.39e+03"),
-mit Nachkommastellen nach der Spanne (unter 100: eine, unter 10: zwei).
+mit Nachkommastellen nach der Spanne (unter 100: eine, unter 10: zwei); unter
+0.01 so viele, dass zwei geltende Ziffern stehen („0.0014“ statt „1.43e-03“,
+seit 24.09.2026 — kleine Verdrehungen in mrad).
 
 **Zahlen als Dezimalzahl.** Ergebniswerte stehen überall als normale
 Dezimalzahl mit Punkt — Skala, Modellbaum (Schnittgrößen „−0.00 … +943 kN"),

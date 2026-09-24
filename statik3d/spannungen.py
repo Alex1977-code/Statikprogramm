@@ -72,7 +72,10 @@ def dezimal(v, nk: int = None, vorzeichen: bool = False) -> str:
 
 def skalenformat(lo: float, hi: float) -> str:
     """Zahlenformat der Farbskala: ausgeschrieben statt „2.39e+03“ - die
-    Nachkommastellen nach der Spanne (12.09.2026)."""
+    Nachkommastellen nach der Spanne (12.09.2026). Unter 0.01 so viele
+    Nachkommastellen, dass zwei geltende Ziffern stehen (0.0014 statt
+    „1.43e-03“, 24.09.2026: die Verdrehungen in mrad sind bei steifen
+    Tragwerken so klein), hoechstens zwoelf."""
     try:
         spanne = max(abs(float(lo)), abs(float(hi)))
     except (TypeError, ValueError):
@@ -85,9 +88,10 @@ def skalenformat(lo: float, hi: float) -> str:
         return "%.1f"
     if spanne >= 1:
         return "%.2f"
-    if spanne >= 0.01:
+    if spanne >= 0.01 or spanne <= 0:
         return "%.3f"
-    return "%.2e"
+    nk = min(12, 1 - int(np.floor(np.log10(spanne))))
+    return f"%.{nk}f"
 
 
 def schluessel(art: str, groesse: str) -> str:

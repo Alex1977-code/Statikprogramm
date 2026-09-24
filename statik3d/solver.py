@@ -5268,6 +5268,12 @@ class Envelope:
         self.beam: dict = {}
         self.node_vm_max = np.zeros(nn)
         self.node_vm_src = np.zeros(nn, int)
+        #: laufendes Maximum von |u| und |phi| je Knoten ueber die Ergebnisse
+        #: (umag_max, phimag_max) - aus u_min/u_max laesst es sich nicht
+        #: bilden: deren Komponenten stammen aus verschiedenen Ergebnissen
+        #: (Befund 24.09.2026: |phi| bis 29 % zu klein oder zu gross)
+        self._umag = np.zeros(nn)
+        self._phimag = np.zeros(nn)
         self.util: dict = {}
         for k, r in (results or {}).items():
             self.aufnehmen(k, r)
@@ -5304,11 +5310,15 @@ class Envelope:
         u = np.asarray(r.u, float)
         R = np.asarray(r.reactions, float)
         vm = np.nan_to_num(np.asarray(r.node_vm, float))
+        um, pm = np.linalg.norm(u[:, :3], axis=1), np.linalg.norm(u[:, 3:6], axis=1)
         if j == 0:
             self.u_min, self.u_max = u.copy(), u.copy()
             self.r_min, self.r_max = R.copy(), R.copy()
             self.node_vm_max = vm.copy()
+            self._umag, self._phimag = um, pm
         else:
+            self._umag = np.maximum(self._umag, um)
+            self._phimag = np.maximum(self._phimag, pm)
             self.u_min, self.u_max, self.u_min_src, self.u_max_src = self._falten(
                 self.u_min, self.u_max, self.u_min_src, self.u_max_src, u, j)
             self.r_min, self.r_max, self.r_min_src, self.r_max_src = self._falten(
@@ -5355,6 +5365,7 @@ class Envelope:
             self.r_min, self.r_max = env.r_min.copy(), env.r_max.copy()
             self.r_min_src, self.r_max_src = env.r_min_src.copy(), env.r_max_src.copy()
             self.node_vm_max, self.node_vm_src = env.node_vm_max.copy(), env.node_vm_src.copy()
+            self._umag, self._phimag = env.umag_max.copy(), env.phimag_max.copy()
             self.beam = {i: {k: (tuple(np.array(x) for x in v) if k != "x" else v)
                              for k, v in d.items()} for i, d in env.beam.items()}
             self.util = dict(env.util)
@@ -5365,6 +5376,8 @@ class Envelope:
         self.r_min, self.r_max, self.r_min_src, self.r_max_src = self._falten_umhuellende(
             (self.r_min, self.r_max, self.r_min_src, self.r_max_src),
             (env.r_min, env.r_max, env.r_min_src, env.r_max_src), versatz)
+        self._umag = np.maximum(self.umag_max, env.umag_max)
+        self._phimag = np.maximum(self.phimag_max, env.phimag_max)
         gr = env.node_vm_max > self.node_vm_max
         self.node_vm_max = np.where(gr, env.node_vm_max, self.node_vm_max)
         self.node_vm_src = np.where(gr, env.node_vm_src + versatz, self.node_vm_src)
@@ -5406,15 +5419,17 @@ class Envelope:
     # ---- Auswertung ------------------------------------------------------
     @property
     def umag_max(self) -> np.ndarray:
-        return np.maximum(np.linalg.norm(self.u_max[:, :3], axis=1),
-                          np.linalg.norm(self.u_min[:, :3], axis=1))
+        """Groesste Verschiebung |u| je Knoten ueber alle Ergebnisse [m] -
+        das laufende Maximum der Betraege, nicht der Betrag von u_max/u_min
+        (deren Komponenten stammen aus verschiedenen Ergebnissen; bis zum
+        24.09.2026 so gebildet)."""
+        return self._umag
 
     @property
     def phimag_max(self) -> np.ndarray:
         """Wie umag_max fuer die Verdrehungen (rx, ry, rz) [rad] - fuer die
         Faerbung „|φ| Verdrehung“ der Umhuellenden."""
-        return np.maximum(np.linalg.norm(self.u_max[:, 3:6], axis=1),
-                          np.linalg.norm(self.u_min[:, 3:6], axis=1))
+        return self._phimag
 
     def extreme_table(self) -> list[list]:
         """Zeilen: Element, Groesse, min, Kombination, max, Kombination."""

@@ -8320,7 +8320,9 @@ class MainWindow(QtWidgets.QMainWindow):
             if art == "geokoerper_einzeln":
                 return self.koerper_bearbeiten(name)
             if art == "ergebnis":
-                self.ergebnis_zeigen(name)
+                # nur aufnehmen, was wirklich eingestellt wurde (grauer phi-Eintrag: nichts)
+                if self.ergebnis_zeigen(name) is False:
+                    return None
                 return self.ansicht_in_bericht()
             if art in ("werkstoff", "dicke", "lastfall", "kombination", "querschnitt", "gelenk",
                        "berichtseintrag", "kontaktbedingung", "stellung"):
@@ -8435,9 +8437,11 @@ class MainWindow(QtWidgets.QMainWindow):
             # (u_min/u_max mit sechs Spalten, umag_max, phimag_max).
             i = self.cb_field.findText(wert)
             if i < 0:
-                return self.info(f"Färbung „{wert}“ ist nicht bekannt")
+                self.info(f"Färbung „{wert}“ ist nicht bekannt")
+                return False
             if vp.ist_verdrehung(wert) and not vp.drehknoten(self.model).any():
-                return self.info(vp.ohne_verdrehung(self.model))
+                self.info(vp.ohne_verdrehung(self.model))
+                return False                     # nichts eingestellt
             self.cb_field.setCurrentIndex(i)     # zeichnet neu
             self.maske_zeigen("Ergebnisse")
             return self.info(f"Färbung {wert}")
@@ -17566,9 +17570,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._fill_result_selector()
         self._bewegungen_melden()
         self.maske_zeigen("Ergebnisse")
-        self.show_results()
-        # Die Ergebnisse stehen jetzt auch im Modellbaum - er muss davon wissen.
+        vp.drehknoten_vergessen()       # die Maske gehoert zum gerechneten Modell
+        # Die Ergebnisse stehen jetzt auch im Modellbaum - er muss davon wissen
+        # (vor show_results: das zieht dann nur noch die Zusaetze nach)
         self._refresh_baum()
+        self.show_results()
         self._refresh_kopf()
         self._refresh_status()
 
@@ -17761,6 +17767,12 @@ class MainWindow(QtWidgets.QMainWindow):
             for s in sorted({s.node for s in self.model.supports}):
                 react.append([s] + [f"{r.r_min[s, i]/1e3:.2f} / {r.r_max[s, i]/1e3:.2f}" for i in range(6)])
             self._fill(self.tbl_react, react)
+        # Zusaetze im Modellbaum (Verformungen, Schnittgroessen) zum gezeigten
+        # Ergebnis - sie blieben beim alten stehen (Befund 24.09.2026). Aendern
+        # sich die Gruppen, wird neu aufgebaut, aber erst nach dem laufenden
+        # Ereignis: der Aufruf kann aus einem Klick in den Baum selbst kommen.
+        if hasattr(self, "baum") and not self.baum.ergebnisse_nachziehen(self._ergebnisliste()):
+            QtCore.QTimer.singleShot(0, self._refresh_baum)
         self.redraw()
 
     def _raender(self) -> dict:
@@ -18855,8 +18867,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if r is None and self.current_result() is not None:
             # Es gaebe ein Ergebnis, der Schalter zeigt es nur nicht - das
             # gehoert ins Bild, sonst sucht man den Fehler in der Rechnung
-            zeilen = list(zeilen) + ["    Ergebnisse ausgeblendet (Knopf „Ergebnisse“ in der Glasleiste "
-                                     "oder Register Ergebnisse → „Ergebnisse zeigen“)"]
+            # zwei Zeilen: in einer waere sie ueber 110 Zeichen breit und liefe in einer
+            # schmalen Ansicht rechts aus dem Bild (Befund 24.09.2026)
+            zeilen = list(zeilen) + ["    Ergebnisse ausgeblendet (Knopf „Ergebnisse“ in der Glasleiste",
+                                     "      oder Register Ergebnisse → „Ergebnisse zeigen“)"]
         self._kopfzeile_zeilen = zeilen
         try:
             # Oben links, aber **unterhalb** der Glasleiste: in einem schmalen

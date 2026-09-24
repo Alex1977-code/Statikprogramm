@@ -42,6 +42,26 @@ FELDER = ["|u| Verschiebung", "ux", "uy", "uz", "|φ| Verdrehung", "φx", "φy",
 OHNE_VOLUMEN = "keine Verdrehungen: nur Volumenkörper (Knoten ohne Drehfreiheitsgrad)"
 KOPF_AUS = ("Ergebnisse ausgeblendet (Knopf „Ergebnisse“ in der Glasleiste oder "
             "Register Ergebnisse → „Ergebnisse zeigen“)")
+#: so lang war die Zeile vor dem Knopf - laenger laeuft sie in einer schmalen
+#: Ansicht rechts aus dem Bild (die Kopfzeile wird nicht umbrochen)
+KOPF_BREIT = len("    Ergebnisse ausgeblendet (Register Ergebnisse → „Ergebnisse zeigen“)")
+
+
+def _kopf_aus(w) -> bool:
+    """Nennt die Kopfzeile beide Wege, und ist keine Zeile breiter als frueher?"""
+    zeilen = list(w._kopfzeile_zeilen or [])
+    text = " ".join(" ".join(zeilen).split())
+    return KOPF_AUS in text and max(len(z) for z in zeilen) <= KOPF_BREIT
+
+
+def _dreh_aus_assemblierung(m):
+    """Knoten mit Drehsteifigkeit so, wie die Assemblierung sie sieht: nicht
+    alle drei Dreh-FHG unter 1e-12 der groessten Hauptdiagonale (wie „weak“
+    in assemble.constrained_dofs) - unabhaengig von viewport.drehknoten."""
+    from statik3d import assemble as asm
+    d = np.abs(asm.stiffness(m).diagonal())
+    schwach = (d < d.max() * 1e-12)[: m.nn * 6].reshape(m.nn, 6)[:, 3:6]
+    return ~schwach.all(axis=1)
 
 
 def check(name, ok, detail=""):
@@ -261,19 +281,160 @@ def test_umhuellende():
     check("… das ist die Torsion aus LF3",
           ps is not None and np.allclose(ps, np.asarray(cases["LF3"].u)[:, 3] * 1000, atol=1e-9)
           and np.abs(ps).max() > 0)
-    check("Umhüllende führt phimag_max wie umag_max",
-          hasattr(env, "phimag_max") and np.allclose(
-              env.phimag_max, np.maximum(np.linalg.norm(env.u_max[:, 3:6], axis=1),
-                                         np.linalg.norm(env.u_min[:, 3:6], axis=1))))
+    # |phi| und |u| je Knoten: das Maximum ueber die Einzelergebnisse - nicht
+    # der Betrag aus u_max/u_min, deren Komponenten aus verschiedenen
+    # Lastfaellen stammen (dort an der Spitze +13 %, Befund 24.09.2026)
+    soll_phi = np.max([np.linalg.norm(np.asarray(c.u)[:, 3:6], axis=1) for c in cases.values()], axis=0)
+    soll_u = np.max([np.linalg.norm(np.asarray(c.u)[:, :3], axis=1) for c in cases.values()], axis=0)
+    alt_phi = np.maximum(np.linalg.norm(env.u_max[:, 3:6], axis=1),
+                         np.linalg.norm(env.u_min[:, 3:6], axis=1))
+    check("Umhüllende: phimag_max = max über die Lastfälle von |φ|",
+          hasattr(env, "phimag_max") and np.allclose(env.phimag_max, soll_phi, rtol=1e-12, atol=0),
+          f"Spitze {env.phimag_max[-1] * 1000:.6f} mrad, Soll {soll_phi[-1] * 1000:.6f}, "
+          f"aus u_max/u_min {alt_phi[-1] * 1000:.6f}")
+    check("… der Kragarm unterscheidet beides (sonst prüfte das nichts)",
+          abs(alt_phi[-1] - soll_phi[-1]) > 1e-3 * soll_phi[-1])
+    check("… umag_max = max über die Lastfälle von |u|",
+          np.allclose(env.umag_max, soll_u, rtol=1e-12, atol=0))
+    # ueber aufnehmen_umhuellende (Umhuellende aus Umhuellenden) dasselbe
+    teil = solver.Envelope(m, {"LF1": cases["LF1"]}, "A")
+    rest = solver.Envelope(m, {k: v for k, v in cases.items() if k != "LF1"}, "B")
+    ges = solver.Envelope(m, {}, "G")
+    ges.aufnehmen_umhuellende(teil)
+    ges.aufnehmen_umhuellende(rest)
+    check("… auch eingefaltet aus zwei Umhüllenden",
+          np.allclose(ges.phimag_max, soll_phi, rtol=1e-12, atol=0)
+          and np.allclose(ges.umag_max, soll_u, rtol=1e-12, atol=0))
     ps, _cs, name = vp.result_field(m, env, "|φ| Verdrehung")
     check("… |φ| der Umhüllenden = phimag_max·1000",
           ps is not None and hasattr(env, "phimag_max")
           and np.allclose(ps, env.phimag_max * 1000) and name == "|φ| max [mrad]", name)
     zus = [e[1] for e in vp.verformungen_liste(m, env)]
-    soll_x = (f"{spn.dezimal(env.u_min[:, 3].min() * 1000, vorzeichen=True)} … "
-              f"{spn.dezimal(env.u_max[:, 3].max() * 1000, vorzeichen=True)} mrad")
-    check("… Liste: φx von min(u_min) bis max(u_max)", len(zus) == 8 and zus[5] == soll_x,
-          f"{zus[5] if len(zus) == 8 else zus} / {soll_x}")
+    ok = len(zus) == 8
+    for i, (f, z) in enumerate(zip(FELDER, zus)):
+        # der Zusatz nennt die Grenzen dessen, was der Klick zeigt
+        w, _c, _n = vp.result_field(m, env, f)
+        vz = not f.startswith("|")
+        soll = (f"{spn.dezimal(np.nanmin(w), vorzeichen=vz)} … "
+                f"{spn.dezimal(np.nanmax(w), vorzeichen=vz)} {'mrad' if 'φ' in f else 'mm'}")
+        ok = ok and z == soll
+    check("… Liste: jeder Zusatz = Grenzen der Färbung, die der Klick zeigt", ok, str(zus))
+    # Gegenlaeufige Lastfaelle (Fz nach unten und nach oben): min(u_min) …
+    # max(u_max) naennte +0.96 mm, das Bild zeigt je Knoten das
+    # betragsgroessere Extrem - der Zusatz muss dem Bild folgen
+    m2, ids2, _sec2 = _kragarm()
+    m2.add_load_case("LF4", "Q")
+    m2.load_node(ids2[-1], Fz=0.5 * F, case="LF4")
+    env2 = solver.Envelope(m2, solver.solve_cases(m2), "U2")
+    w, _c, _n = vp.result_field(m2, env2, "uz")
+    z = vp.verformungen_liste(m2, env2)[3][1]
+    soll = f"{spn.dezimal(np.nanmin(w), vorzeichen=True)} … {spn.dezimal(np.nanmax(w), vorzeichen=True)} mm"
+    alt = (f"{spn.dezimal(env2.u_min[:, 2].min() * 1000, vorzeichen=True)} … "
+           f"{spn.dezimal(env2.u_max[:, 2].max() * 1000, vorzeichen=True)} mm")
+    check("… gegenläufige Lastfälle: uz-Zusatz = Skala, nicht min(u_min) … max(u_max)",
+          z == soll and z != alt, f"{z} (alt {alt})")
+
+
+def _pendelfachwerk(gelenke):
+    """Dreieckfachwerk aus Balken mit Stabendgelenken *gelenke*."""
+    m = Model("Pendel")
+    m.add_material(Material("S", E=E, rho=0.0))
+    m.add_section(Section.rectangle("R", 0.1, 0.1))
+    a = m.add_node(0, 0, 0)
+    b = m.add_node(4, 0, 0)
+    c = m.add_node(2, 0, 2)
+    for p_, q_ in ((a, b), (b, c), (c, a)):
+        m.add_element("beam", [p_, q_], "S", "R", hinges=list(gelenke))
+    m.fix(a, [0, 1, 2])
+    m.fix(b, [1, 2])
+    m.fix(c, [1])
+    m.add_load_case("LF1", "G")
+    m.load_node(c, Fz=-10e3, Fx=2e3, case="LF1")
+    return m
+
+
+def _wuerfel_starr(art: str):
+    """Wuerfel 2x2x2 hex8, Starrkoerper vom Punkt ueber der Oberseite zu den
+    neun oberen Knoten, Moment am Master."""
+    m = Model("Starr")
+    m.add_material(Material("S", E=E, rho=0.0))
+    ids = mesher.grid_box(m, "S", 1.0, 1.0, 1.0, 2, 2, 2)
+    for i in ids[:, :, 0].ravel():
+        m.fix(int(i), [0, 1, 2])
+    master = m.add_node(0.5, 0.5, 1.5)
+    m.add_starrkoerper(master, [int(i) for i in ids[:, :, 2].ravel()], art)
+    m.add_load_case("LF1", "G")
+    m.load_node(master, My=5e6, case="LF1")
+    return m, master
+
+
+def _feder(k_dreh: float):
+    """Hexaeder, Feder vom oberen Knoten zu einem eingespannten Punkt."""
+    m = Model("Feder")
+    m.add_material(Material("S", E=E, rho=0.0))
+    ids = mesher.grid_box(m, "S", 1.0, 1.0, 1.0, 1, 1, 1)
+    for i in ids[:, :, 0].ravel():
+        m.fix(int(i), [0, 1, 2])
+    oben = int(ids[1, 1, 1])
+    p_ = m.add_node(1.0, 1.0, 2.0)
+    m.fix(p_, "all")
+    m.add_feder_prop("F1", [1e7] * 3 + [k_dreh] * 3)
+    m.add_element("feder", [oben, p_], "S", "F1")
+    m.add_load_case("LF1", "G")
+    m.load_node(oben, Mx=1e3, Fz=-1e3, case="LF1")
+    return m, oben
+
+
+def test_drehknoten_wie_assemblierung():
+    """drehknoten entscheidet grau oder Wert - es muss dieselben Knoten nennen,
+    die die Assemblierung drehsteif sieht (Befunde 24.09.2026: Pendelstab
+    zeigte Nullen, RBE2 versteckte die Master-Drehung, eine nachtraeglich
+    gesetzte Drehfeder blieb grau)."""
+    from statik3d.gui import viewport as vp
+    faelle = [("Kragarm", _kragarm()[0]), ("Würfel", _wuerfel()[0]),
+              ("gemischt", _gemischt()[0]),
+              ("Pendelstäbe [3,4,5,10,11]", _pendelfachwerk([3, 4, 5, 10, 11])),
+              ("Gelenke nur My [4,10]", _pendelfachwerk([4, 10])),
+              ("Gelenke Anfang [3,4,5]", _pendelfachwerk([3, 4, 5])),
+              ("RBE2", _wuerfel_starr("RBE2")[0]), ("RBE3", _wuerfel_starr("RBE3")[0]),
+              ("Feder ohne Drehfeder", _feder(0.0)[0]), ("Feder mit Drehfeder", _feder(1e5)[0])]
+    for name, m in faelle:
+        vp.drehknoten_vergessen()
+        ist, soll = vp.drehknoten(m), _dreh_aus_assemblierung(m)
+        check(f"drehknoten = Assemblierung: {name}", np.array_equal(ist, soll),
+              f"{np.flatnonzero(ist).tolist()[:12]} / {np.flatnonzero(soll).tolist()[:12]}")
+    m = _pendelfachwerk([3, 4, 5, 10, 11])
+    r = solver.solve_static(m, case="LF1")
+    ps, _c, _n = vp.result_field(m, r, "φy")
+    check("Pendelstäbe: φy grau statt Nullen, Zusatz erklärt es",
+          not np.isfinite(ps).any() and all(e[3] for e in vp.verformungen_liste(m, r)[4:]),
+          str(ps))
+    m, master = _wuerfel_starr("RBE2")
+    r = solver.solve_static(m, case="LF1")
+    ps, _c, _n = vp.result_field(m, r, "φy")
+    check("RBE2 am Volumen: φy des Masters = u·1000 (nicht grau)",
+          np.isfinite(ps[master]) and abs(ps[master] - np.asarray(r.u)[master, 4] * 1000) < 1e-12
+          and abs(ps[master]) > 0, f"{ps[master]}")
+    # Feder an Ort und Stelle mit Drehfeder versehen (so uebernimmt der
+    # Federdialog): der Zwischenspeicher darf nicht die alte Maske liefern
+    m, oben = _feder(0.0)
+    vp.drehknoten_vergessen()
+    vorher = bool(vp.drehknoten(m)[oben])
+    m.federn["F1"].k = [1e7] * 3 + [1e5] * 3
+    r = solver.solve_static(m, case="LF1")
+    ps, _c, _n = vp.result_field(m, r, "φx")
+    check("Feder nachträglich mit Drehfeder: φx am Federknoten mit Wert",
+          not vorher and np.isfinite(ps[oben]) and abs(ps[oben]) > 0,
+          f"vorher {vorher}, φx {ps[oben]}")
+
+
+def test_winzige_verdrehung_skala():
+    """Skalenformat unter 0,01 (hier mrad): ausgeschrieben, kein 1.43e-03."""
+    for lo, hi in ((0.0, 1.43e-3), (-3.91e-3, 0.0), (0.0, 1.3e-6), (0.0, 0.0)):
+        fmt = spn.skalenformat(lo, hi)
+        check(f"Skalenformat {lo}…{hi}: {fmt} ohne e±",
+              not _wissenschaftlich(fmt % hi) and not _wissenschaftlich(fmt % lo)
+              and (hi == 0 or float(fmt % hi) != 0.0), f"{fmt % lo} … {fmt % hi}")
 
 
 # --------------------------------------------------------------------------
@@ -381,6 +542,12 @@ def test_baum_und_klick():
     w._solve_done("modal", rm); app.processEvents()
     check("bei Eigenformen keine Gruppe „Verformungen“",
           "Verformungen" not in w._ergebnisliste(), str(list(w._ergebnisliste())))
+    # Kennwerte zu phi bei einer Eigenform: keine Zeile (sie waeren Nullen
+    # bzw. bei einer Knickfigur die statischen Werte)
+    for f in ("φy", "|φ| Verdrehung"):
+        z = vp.kennwerte(w.model, rm, feld=f)
+        check(f"Eigenform, Färbung {f}: keine phi-Zeile in den Kennwerten",
+              not any(x.startswith("phi") for x in z), str(z))
 
 
 def test_volumenmodell_im_fenster():
@@ -404,12 +571,31 @@ def test_volumenmodell_im_fenster():
     check("… im Baum grau, die u-Einträge nicht",
           all(farben.get(t) == matt for t in TEXTE[4:])
           and all(farben.get(t) != matt for t in TEXTE[:4]), str(farben))
+    tips = [it.child(i).toolTip(1) for i in range(it.childCount())] if it is not None else []
+    check("… wer den gekürzten Zusatz überfährt, liest die ganze Erklärung",
+          len(tips) == 8 and all(t == OHNE_VOLUMEN for t in tips[4:]), str(tips[4:5]))
     feld0 = w.cb_field.currentText()
     w._baum_geklickt("ergebnis", "feld:φx"); app.processEvents()
     check("… Klick: Meldung in der Statuszeile, Färbung bleibt",
           w.statusBar().currentMessage() == OHNE_VOLUMEN and w.cb_field.currentText() == feld0,
           f"{w.statusBar().currentMessage()[:70]!r}, {w.cb_field.currentText()}")
-    # wer φ trotzdem in der Ergebnismaske waehlt, sieht keine Faerbung aus Nullen
+    # Doppelklick auf den grauen Eintrag: nichts in den Bericht (es wurde
+    # nichts eingestellt - sonst landete ein Bild von |u| im Bericht)
+    aufnahmen = []
+    w.ansicht_in_bericht = lambda: aufnahmen.append(w.cb_field.currentText())
+    n_bericht = len(w.model.bericht)
+    try:
+        w._baum_bearbeiten("ergebnis", "feld:φx"); app.processEvents()
+    finally:
+        del w.ansicht_in_bericht
+    check("… Doppelklick auf grauen φ-Eintrag: kein Bild, die Statuszeile erklärt",
+          aufnahmen == [] and len(w.model.bericht) == n_bericht
+          and w.statusBar().currentMessage() == OHNE_VOLUMEN, str(aufnahmen))
+    # wer φ trotzdem in der Ergebnismaske waehlt, sieht keine Faerbung aus
+    # Nullen; die Statuszeile vorher leeren - sonst stuende dort noch die
+    # Meldung des Klicks, und die Pruefung hinge nicht am Zeichnen
+    w.cb_field.setCurrentText("uz"); app.processEvents()
+    w.statusBar().clearMessage()
     w.cb_field.setCurrentText("φx"); app.processEvents()
     akt = w.plotter.renderer.actors
     check("… φ in der Maske gewählt: keine Skala, keine Färbung mit Nullen",
@@ -446,9 +632,9 @@ def test_glasleiste():
     w._solve_done("all", an); app.processEvents()
     w.cb_field.setCurrentText("|u| Verschiebung"); app.processEvents()
     w.act_ergebnisse.setChecked(False); app.processEvents()
-    zeilen = [z.strip() for z in (w._kopfzeile_zeilen or [])]
-    check("Kopfzeile bei „aus“ nennt beide Wege (Glasleiste und Register)",
-          KOPF_AUS in zeilen, str(zeilen)[-120:])
+    zeilen = list(w._kopfzeile_zeilen or [])
+    check("Kopfzeile bei „aus“ nennt beide Wege (Glasleiste und Register), keine Zeile breiter als früher",
+          _kopf_aus(w), str(zeilen)[-160:])
     w.act_ergebnisse.setChecked(True); app.processEvents()
     kn = w.glasleiste.knoepfe
     b = kn.get("ergebnisse")
@@ -477,8 +663,8 @@ def test_glasleiste():
           f"{n_skalen} -> {len(w.plotter.scalar_bars)} Skalen")
     check("… Ribbon und Glasleiste stehen gleich",
           b.isChecked() is False and all(x.isChecked() is False for x in rib))
-    zeilen = [z.strip() for z in (w._kopfzeile_zeilen or [])]
-    check("… Kopfzeile nennt beide Wege", KOPF_AUS in zeilen, str(zeilen)[-120:])
+    zeilen = list(w._kopfzeile_zeilen or [])
+    check("… Kopfzeile nennt beide Wege", _kopf_aus(w), str(zeilen)[-160:])
     check("… das Ergebnis ist nur versteckt", w.current_result() is not None)
     b.click(); app.processEvents()
     check("Klick: wieder an - Färbung und Skala zurück",
@@ -490,6 +676,121 @@ def test_glasleiste():
     w.act_ergebnisse.setChecked(True); app.processEvents()
 
 
+def _spalte1(w, gruppe: str) -> list:
+    it = _baumgruppe(w, gruppe)
+    return [it.child(i).text(1) for i in range(it.childCount())] if it is not None else []
+
+
+def test_ergebniswechsel():
+    """Der Zusatz gehoert zum gerade gezeigten Ergebnis - auch nach einem
+    Wechsel in der Ergebnismaske oder der Glasleiste (Befund 24.09.2026: er
+    blieb bei der Umhuellenden stehen)."""
+    from statik3d.gui import viewport as vp
+    w, app = _fenster()
+    w._modell_setzen(_kragarm()[0]); app.processEvents()   # drei Lastfaelle
+    an = solver.solve_all(w.model, design=False)
+    w._solve_done("all", an); app.processEvents()
+    check("Wechsel: nach der Rechnung steht die Umhüllende vorn",
+          w.cb_result.currentText().startswith("Umhüllende"), w.cb_result.currentText())
+    env_werte = _spalte1(w, "Verformungen")
+    faelle = [i for i in range(w.cb_result.count()) if w.cb_result.itemData(i)[0] == "case"]
+    if not faelle:
+        check("Wechsel: Lastfälle vorhanden", False)
+        return
+    w.cb_result.setCurrentIndex(faelle[0]); app.processEvents()
+    r = w.current_result()
+    soll = [e[1] for e in vp.verformungen_liste(w.model, r)]
+    check("… Ergebnismaske auf einen Lastfall: Zusätze „Verformungen“ ziehen nach",
+          _spalte1(w, "Verformungen") == soll and soll != env_werte,
+          f"{w.cb_result.currentText()}: {_spalte1(w, 'Verformungen')[:3]} / {soll[:3]}")
+    sg = [e[1] for e in w._ergebnisliste().get("Schnittgrößen", [])]
+    check("… und „Schnittgrößen“", sg and _spalte1(w, "Schnittgrößen") == sg,
+          str(_spalte1(w, "Schnittgrößen")[:2]))
+    # zurueck zur Umhuellenden
+    w.cb_result.setCurrentIndex(0); app.processEvents()
+    soll = [e[1] for e in vp.verformungen_liste(w.model, w.current_result())]
+    check("… zurück zur Umhüllenden: wieder deren Werte", _spalte1(w, "Verformungen") == soll)
+    # ueber die Glasleiste auf den Lastfall (derselbe Weg wie ihr Signal)
+    cb = w.cb_lastwahl
+    ziel = [i for i in range(cb.count()) if cb.itemData(i) and tuple(cb.itemData(i))[0] == "case"]
+    if ziel:
+        cb.blockSignals(True)
+        cb.setCurrentIndex(ziel[0])
+        cb.blockSignals(False)
+        w._glas_last_gewaehlt(ziel[0]); app.processEvents()
+        r = w.current_result()
+        soll = [e[1] for e in vp.verformungen_liste(w.model, r)]
+        check("… Glasleiste auf den Lastfall: Zusätze ziehen nach",
+              w.cb_result.currentData()[0] == "case" and _spalte1(w, "Verformungen") == soll,
+              f"{w.cb_result.currentText()}: {_spalte1(w, 'Verformungen')[:3]} / {soll[:3]}")
+    else:
+        check("… Glasleiste: Lastfall zum Wählen", False, str([cb.itemText(i) for i in range(cb.count())]))
+
+
+def test_knoten_nach_rechnung():
+    """Nach der Rechnung einen Knoten anlegen: das Ergebnis gehoert zum alten
+    Netz - der Baum darf daran nicht abbrechen (Befund 24.09.2026: ValueError
+    in refresh_all, Baum und Ansicht blieben stehen)."""
+    w, app = _fenster()
+    w.load_example("frame"); app.processEvents()
+    an = solver.solve_all(w.model, design=False)
+    w._solve_done("all", an); app.processEvents()
+    for sichtbar in (True, False):
+        w.act_ergebnisse.setChecked(sichtbar); app.processEvents()
+        nn = w.model.nn
+        fehler = ""
+        try:
+            w._maske_knoten_anlegen({"x": 9.0 + nn, "y": 9.0, "z": 9.0}); app.processEvents()
+        except Exception as ex:      # noqa: BLE001
+            fehler = f"{type(ex).__name__}: {ex}"
+        wurzel = w.baum.topLevelItem(0)
+        check(f"Knoten nach der Rechnung angelegt (Ergebnisse {'an' if sichtbar else 'aus'}): "
+              "keine Ausnahme, der Baum zählt ihn",
+              not fehler and w.model.nn == nn + 1 and wurzel is not None
+              and wurzel.text(1) == f"{nn + 1} Kn", fehler or (wurzel.text(1) if wurzel else ""))
+    check("… die Verformungen des alten Netzes stehen nicht mehr im Baum",
+          "Verformungen" not in w._ergebnisliste(), str(list(w._ergebnisliste())))
+    w.act_ergebnisse.setChecked(True); app.processEvents()
+
+
+def test_gelenke_nach_der_rechnung():
+    """Gelenke an Ort und Stelle geaendert, neu gerechnet: die Maske gehoert
+    zur neuen Rechnung (_solve_done leert den Zwischenspeicher)."""
+    from statik3d.gui import viewport as vp
+    w, app = _fenster()
+    w._modell_setzen(_pendelfachwerk([3, 4, 5, 10, 11])); app.processEvents()
+    w._solve_done("all", solver.solve_all(w.model, design=False)); app.processEvents()
+    grau = [len(e) > 3 for e in w._ergebnisliste().get("Verformungen", [])][4:]
+    check("Pendelstäbe im Fenster: φ-Einträge grau", bool(grau) and all(grau), str(grau))
+    for e in w.model.elements:
+        e.hinges = []
+    w._solve_done("all", solver.solve_all(w.model, design=False)); app.processEvents()
+    grau = [len(e) > 3 for e in w._ergebnisliste().get("Verformungen", [])][4:]
+    check("… Gelenke entfernt, neu gerechnet: φ-Einträge mit Wert",
+          bool(grau) and not any(grau)
+          and np.array_equal(vp.drehknoten(w.model), _dreh_aus_assemblierung(w.model)), str(grau))
+
+
+def test_winzige_verdrehung_im_fenster():
+    """Kragarm mit 10 N: phi um 0,001 mrad - die Skala schreibt es aus."""
+    w, app = _fenster()
+    m = Model("Klein")
+    m.add_material(Material("S", E=E, rho=0.0))
+    m.add_section(Section.rectangle("R", 0.1, 0.2))
+    ids = mesher.line_of_beams(m, "S", "R", (0, 0, 0), (L, 0, 0), 4)
+    m.fix(ids[0], "all")
+    m.add_load_case("LF1", "G")
+    m.load_node(ids[-1], Fz=-10.0, case="LF1")
+    w._modell_setzen(m); app.processEvents()
+    w._solve_done("all", solver.solve_all(w.model, design=False)); app.processEvents()
+    for f in ("φy", "|φ| Verdrehung"):
+        w.cb_field.setCurrentText(f); app.processEvents()
+        bars = list(w.plotter.scalar_bars.values())
+        fmt = bars[0].GetLabelFormat() if bars else ""
+        check(f"φ ≈ 0,001 mrad, Färbung {f}: Skala ausgeschrieben", bool(fmt) and "e" not in fmt, fmt)
+    w.cb_field.setCurrentText("|u| Verschiebung"); app.processEvents()
+
+
 def main():
     # Haelt etwas an (ein Dialog offscreen), steht der Stapel im Protokoll
     # statt eines stummen Haengers
@@ -498,8 +799,11 @@ def main():
     for t in (test_felder, test_kragarm_verdrehung, test_liste_fuer_den_baum,
               test_reines_volumenmodell, test_gemischtes_modell,
               test_fachwerk_ohne_drehsteifigkeit, test_umhuellende,
+              test_drehknoten_wie_assemblierung, test_winzige_verdrehung_skala,
               test_baum_und_klick, test_volumenmodell_im_fenster,
-              test_gemischtes_beispiel_im_fenster, test_glasleiste):
+              test_gemischtes_beispiel_im_fenster, test_glasleiste,
+              test_ergebniswechsel, test_knoten_nach_rechnung,
+              test_gelenke_nach_der_rechnung, test_winzige_verdrehung_im_fenster):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

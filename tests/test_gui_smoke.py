@@ -2328,7 +2328,7 @@ def main():
               f"{sum(1 for a in akt_ if a.startswith('result_'))} Ergebnisdarsteller")
         check("… das Modell bleibt im Bild und die Kopfzeile sagt, dass die Ergebnisse ausgeblendet sind",
               modell_ and "Ergebnisse ausgeblendet (Knopf „Ergebnisse“ in der Glasleiste oder Register"
-              in " ".join(w._kopfzeile_zeilen),
+              in " ".join(" ".join(w._kopfzeile_zeilen).split()),   # zwei Zeilen
               f"{modell_}, {str(w._kopfzeile_zeilen)[-120:]}")
         check("… und die Ergebnisse sind nur versteckt, nicht verworfen",
               w.current_result() is not None and not w.ergebnisse_sichtbar())

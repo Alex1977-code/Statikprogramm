@@ -2863,32 +2863,88 @@ def ist_verdrehung(feld: str) -> bool:
     return str(feld or "") in VERDREHUNGEN
 
 
+def _balkenenden_drehsteif(e) -> tuple:
+    """(Anfang, Ende): bekommt der Knoten am Stabanfang bzw. -ende aus diesem
+    Balken eine Drehsteifigkeit?
+
+    Stabendgelenke (``e.hinges``, lokale FHG 3..5 am Anfang, 9..11 am Ende)
+    kondensiert assemble.condense heraus - ihre Zeilen werden null. Torsion
+    traegt der Stab nur, wenn keines der beiden Enden sie freigibt (3 und 9);
+    Biegung um y bzw. z haelt ein Ende, dessen eigenes Gelenk (4/5 bzw.
+    10/11) fehlt. Ein Pendelstab [3, 4, 5, 10, 11] haelt also keinen seiner
+    Knoten (Befund 24.09.2026: er zeigte Nullen statt grau). Mit Versatz
+    (exzentrizitaet) oder Woelbkrafttorsion rechnet die Assemblierung anders
+    - dort zaehlt der Stab wie bisher als drehsteif.
+    """
+    h = set(int(x) for x in (e.hinges or ()))
+    if not h or getattr(e, "exzentrizitaet", None) or getattr(e, "woelb", False):
+        return True, True
+    torsion = 3 not in h and 9 not in h
+    return (torsion or 4 not in h or 5 not in h,
+            torsion or 10 not in h or 11 not in h)
+
+
+def drehknoten_vergessen() -> None:
+    """Den Zwischenspeicher von :func:`drehknoten` leeren - nach jeder
+    Rechnung, damit die Maske zu dem Modell gehoert, das gerechnet wurde
+    (Federn, Gelenke und Starrkoerper aendern sich an Ort und Stelle)."""
+    _DREH_CACHE.clear()
+
+
 def drehknoten(model: Model) -> np.ndarray:
-    """Welche Knoten eine Drehsteifigkeit haben: die an einem Balken, einer
-    Schale oder einer Feder mit Drehfedern.
+    """Welche Knoten eine Drehsteifigkeit haben: die an einem Balken (ohne
+    Momentengelenke an diesem Ende), einer Schale, einer Feder mit
+    Drehfedern oder einem Starrkoerper (Master; bei RBE2 auch die Slaves).
 
     Alle anderen - Volumen-, Scheiben-, Fachwerk- und Seilknoten - sperrt die
     Assemblierung ohne Steifigkeit mit 0 (assemble.constrained_dofs; Fachwerk
     und Seil: beam3d.k_local_truss laesst die Rotationen leer). Dort ist
     phi genau 0, aber kein Ergebnis; die Faerbung zeigt sie grau statt als
     Nullen (dem Anwender am 24.09.2026 zugesagt). Einmal je Netz bestimmt:
-    Baum, Faerbung und Kennwerte fragen bei jedem Neuzeichnen.
+    Baum, Faerbung und Kennwerte fragen bei jedem Neuzeichnen. Der Schluessel
+    enthaelt die Drehfedern und Starrkoerper; Gelenke und alles andere, was
+    sich an Ort und Stelle aendert, erfasst :func:`drehknoten_vergessen` nach
+    der Rechnung.
     """
     elemente = model.elements
     federn = getattr(model, "federn", {}) or {}
-    schluessel = (id(model), id(elemente), len(elemente), int(model.nn), len(federn))
+    starr = getattr(model, "starrkoerper", None) or []
+    try:
+        drehfedern = tuple(sorted((str(n), tuple(float(k) for k in list(fp.k)[3:6]))
+                                  for n, fp in federn.items()))
+    except (TypeError, ValueError, AttributeError):
+        drehfedern = (len(federn),)
+    schluessel = (id(model), id(elemente), len(elemente), int(model.nn), drehfedern,
+                  tuple((int(sk.master), str(sk.art), len(sk.slaves)) for sk in starr))
     if schluessel in _DREH_CACHE:
         return _DREH_CACHE[schluessel]
     maske = np.zeros(int(model.nn), bool)
     schalen = set(EL.SCHALEN_TYPEN)
     for e in elemente:
         t = e.typ
-        if t == "beam" or t in schalen:
+        if t == "beam":
+            a, b = _balkenenden_drehsteif(e)
+            if a:
+                maske[int(e.nodes[0])] = True
+            if b:
+                maske[int(e.nodes[-1])] = True
+        elif t in schalen:
             maske[list(e.nodes)] = True
         elif t == "feder":
             fp = federn.get(e.sec)
             if fp is not None and any(float(k) > 0 for k in list(fp.k)[3:6]):
                 maske[list(e.nodes)] = True
+    nn = int(model.nn)
+    for sk in starr:
+        # RBE2: theta_s = theta_m und u_s = u_m + theta_m x r - Master und
+        # Slaves drehen mit; RBE3: nur der Master (assemble.starrkoerper)
+        m_ = int(sk.master)
+        slaves = [int(x) for x in sk.slaves if 0 <= int(x) < nn and int(x) != m_]
+        if not slaves or not 0 <= m_ < nn:
+            continue
+        maske[m_] = True
+        if str(sk.art).upper() == "RBE2":
+            maske[slaves] = True
     if len(_DREH_CACHE) >= 4:           # Grundmodell und Situationsmodelle
         _DREH_CACHE.clear()
     _DREH_CACHE[schluessel] = maske
@@ -2924,7 +2980,13 @@ def _verdrehung(model: Model, res, field: str):
             name = f"{field} extrem [mrad]"
     else:
         return None, ""
-    return np.where(drehknoten(model), np.asarray(w, float) * 1000, np.nan), name
+    w = np.asarray(w, float)
+    if len(w) != int(model.nn):
+        # Ergebnis zu einem anderen Netz: nach der Rechnung einen Knoten
+        # angelegt (die Rechnung bleibt stehen) - kein Wert statt ValueError
+        # in refresh_all (Befund 24.09.2026)
+        return None, name
+    return np.where(drehknoten(model), w * 1000, np.nan), name
 
 
 def verformungen_liste(model: Model, res) -> list:
@@ -2932,15 +2994,19 @@ def verformungen_liste(model: Model, res) -> list:
     Faerbung, grau)].
 
     Der Zusatz ist „min … max mm“ bzw. „mrad“ des gezeigten Ergebnisses, als
-    Dezimalzahl (spannungen.dezimal). Komponenten der Umhuellenden reichen
-    vom kleinsten u_min bis zum groessten u_max; die Betraege von min bis max
-    dessen, was die Faerbung zeigt. Hat kein Knoten eine Drehsteifigkeit,
-    stehen die phi-Eintraege grau mit der Erklaerung als Zusatz.
+    Dezimalzahl (spannungen.dezimal) - genau die Grenzen dessen, was die
+    Faerbung nach dem Klick zeigt, auch bei der Umhuellenden (dort das
+    betragsgroessere Extrem je Knoten; bis zum 24.09.2026 stand hier min(u_min)
+    … max(u_max), dessen eine Grenze dann nirgends im Bild zu finden war).
+    Hat kein Knoten eine Drehsteifigkeit, stehen die phi-Eintraege grau mit
+    der Erklaerung als Zusatz. Gehoert das Ergebnis zu einem anderen Netz
+    (Knoten nach der Rechnung angelegt), gibt es keine Liste.
     """
     from .. import spannungen as spn
-    dreh = drehknoten(model)
-    ohne = not dreh.any()
-    env = getattr(res, "u", None) is None and getattr(res, "u_max", None) is not None
+    u = displacement_of(res)
+    if u is None or len(u) != int(model.nn):
+        return []
+    ohne = not drehknoten(model).any()
     out = []
     for text, feld in VERFORMUNGEN_BAUM:
         phi = ist_verdrehung(feld)
@@ -2949,19 +3015,12 @@ def verformungen_liste(model: Model, res) -> list:
             continue
         einheit = "mrad" if phi else "mm"
         betrag = feld.startswith("|")
-        if env and not betrag:
-            k = (3 if phi else 0) + "xyz".index(feld[-1])
-            lo_w, hi_w = res.u_min[:, k] * 1000, res.u_max[:, k] * 1000
-            if phi:
-                lo_w, hi_w = lo_w[dreh], hi_w[dreh]
-        else:
-            w, _c, _n = result_field(model, res, feld)
-            lo_w = hi_w = np.asarray(w, float) if w is not None else np.array([])
-        lo_w, hi_w = np.asarray(lo_w, float), np.asarray(hi_w, float)
-        if not (np.isfinite(lo_w).any() and np.isfinite(hi_w).any()):
+        w, _c, _n = result_field(model, res, feld)
+        w = np.asarray(w, float) if w is not None else np.array([])
+        if not np.isfinite(w).any():
             out.append((text, "", feld, False))
             continue
-        lo, hi = float(np.nanmin(lo_w)), float(np.nanmax(hi_w))
+        lo, hi = float(np.nanmin(w)), float(np.nanmax(w))
         vz = not betrag
         out.append((text, f"{spn.dezimal(lo, vorzeichen=vz)} … "
                           f"{spn.dezimal(hi, vorzeichen=vz)} {einheit}", feld, False))
@@ -3173,9 +3232,12 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
             if gewaehlt(nm):
                 zeilen.append(zeile(nm, z(np.nanmin(u[:, j]), "verformung"), "",
                                     z(np.nanmax(u[:, j]), "verformung"), "", E.einheit("verformung")))
-    if not alle and feld in VERDREHUNGEN:
+    formen = any(getattr(res, a, None) is not None for a in ("modes", "buckling_modes"))
+    if not alle and feld in VERDREHUNGEN and not formen:
         # dieselben Werte wie die Faerbung (Umhuellende: |phi| aus phimag_max),
-        # mrad fest; Knoten ohne Drehsteifigkeit zaehlen nicht
+        # mrad fest; Knoten ohne Drehsteifigkeit zaehlen nicht. Zu einer
+        # Eigen- oder Knickform keine Zeile: ihre Drehungen sind keine mrad,
+        # und res.u waeren die statischen Werte (Befund 24.09.2026)
         phi, _name = _verdrehung(model, res, feld)
         phi = nur_sicht(phi)
         if phi is not None and len(phi) and np.isfinite(phi).any():
