@@ -58,10 +58,10 @@ from .. import skizze as sk
 from .. import spannungen as spn
 from .viewport import to_grid  # noqa: F401  (Kompatibilitaet)
 
-#: Faerbungen der Ansicht: Verschiebungen, Vergleichsspannung, dann die
+#: Faerbungen der Ansicht: Verschiebungen, Verdrehungen [mrad], Vergleichsspannung, dann die
 #: Spannungsgroessen je Art (spannungen.FELDER, analog ANSYS: Grund-, Haupt-,
 #: Vergleichs- und Kontaktspannungen), zuletzt die Ausnutzungen
-FIELDS = ["|u| Verschiebung", "ux", "uy", "uz", "Vergleichsspannung", *spn.FELDER,
+FIELDS = ["|u| Verschiebung", "ux", "uy", "uz", *vp.VERDREHUNGEN, "Vergleichsspannung", *spn.FELDER,
           "Ausnutzung EC3", "Ausnutzung Ermüdung", "Ausnutzung elastisch", "keine Färbung"]
 DIAGRAMS = ["kein Verlauf", "N", "Vy", "Vz", "Mt", "My", "Mz"]
 #: Zeilenhoehe der Kennwerte im Bild [Bildpunkte] bei Schriftgroesse 8
@@ -3190,6 +3190,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cb_lastwahl = leiste.liste(
             "Was die Ansicht zeigt: Lastfall oder Lastkombination", "lastwahl")
         self.cb_lastwahl.currentIndexChanged.connect(self._glas_last_gewaehlt)
+        # Gleich daneben Ergebnisse an/aus (24.09.2026) - dieselbe Aktion wie
+        # im Register Ergebnisse, damit beide immer gleich stehen
+        leiste.knopf(self.act_ergebnisse, "ergebnisse", "ergebnisse")
         leiste.trenner()
         # Darstellungsart
         for name in vp.DARSTELLUNGEN:
@@ -3871,7 +3874,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Ergebnis, Färbung, Verlauf und Überhöhung wählen")
         self.act_ergebnisse = g.schalter(
             "Ergebnisse zeigen", lambda _z: self.redraw(), True,
-            "Die Ergebnisdarstellung aus dem Bild nehmen: Färbung, verformtes System, "
+            "Ergebnisse zeigen / ausblenden – die Ergebnisdarstellung aus dem Bild "
+            "nehmen: Färbung, verformtes System, "
             "Werte, Kontaktmarken, Skala und Kopfzeile. Das Modell bleibt sichtbar, die "
             "Ergebnisse bleiben gerechnet - der Schalter holt sie zurück")
         self.act_kennwerte = g.schalter(
@@ -8335,7 +8339,9 @@ class MainWindow(QtWidgets.QMainWindow):
             if art == "geokoerper_einzeln":
                 return self.koerper_bearbeiten(name)
             if art == "ergebnis":
-                self.ergebnis_zeigen(name)
+                # nur aufnehmen, was wirklich eingestellt wurde (grauer phi-Eintrag: nichts)
+                if self.ergebnis_zeigen(name) is False:
+                    return None
                 return self.ansicht_in_bericht()
             if art in ("werkstoff", "dicke", "lastfall", "kombination", "querschnitt", "gelenk",
                        "berichtseintrag", "kontaktbedingung", "stellung"):
@@ -8444,6 +8450,20 @@ class MainWindow(QtWidgets.QMainWindow):
             if tabelle and self.tabelle_zeigen(tabelle):
                 return
             return self.show_design() if hasattr(self, "show_design") else None
+        if art == "feld":
+            # Verformung/Verdrehung: die Faerbung einstellen. Anders als bei den
+            # Spannungen bleibt eine Umhuellende vorn - sie fuehrt u und phi
+            # (u_min/u_max mit sechs Spalten, umag_max, phimag_max).
+            i = self.cb_field.findText(wert)
+            if i < 0:
+                self.info(f"Färbung „{wert}“ ist nicht bekannt")
+                return False
+            if vp.ist_verdrehung(wert) and not vp.drehknoten(self.model).any():
+                self.info(vp.ohne_verdrehung(self.model))
+                return False                     # nichts eingestellt
+            self.cb_field.setCurrentIndex(i)     # zeichnet neu
+            self.maske_zeigen("Ergebnisse")
+            return self.info(f"Färbung {wert}")
         if art == "spannung":
             a, _, g = wert.partition(":")
             if a in spn.GROESSEN and g in spn.GROESSEN[a]:
@@ -9562,12 +9582,33 @@ class MainWindow(QtWidgets.QMainWindow):
             out.setdefault("Nachweise", []).append(
                 ("Schwingung Verschluss", sw_.summary()[:60], "nachweis:schwingung"))
         r = self.current_result() if an is not None else None
+        # Gehoert das Ergebnis noch zum Modell? Die Zusaetze „min … max“
+        # folgen dem wie das Bild (24.09.2026, Gegenpruefung von 97be9ff:
+        # vorher nur len(u) == nn, „anders“ zeigte den alten Bereich)
+        stand = getattr(self, "_ergebnis_stand", None)
+        passt = vp.ergebnis_passt(self.model, r, stand) if r is not None else "passt"
+        grau_ = (dsg.FARBEN["matt"],)
+        if (r is not None and getattr(r, "modes", None) is None
+                and getattr(r, "buckling_modes", None) is None and vp.displacement_of(r) is not None):
+            # Verformungen und Verdrehungen, gesamt und je Achse (24.09.2026);
+            # ein Klick stellt die Faerbung ein. Grau (vierter Wert: Farbe),
+            # wo kein Knoten eine Drehsteifigkeit hat.
+            out["Verformungen"] = [
+                (text, zusatz, f"feld:{feld}", *(grau_ if grau else ()))
+                for text, zusatz, feld, grau in vp.verformungen_liste(self.model, r, passt)]
         if r is not None and (getattr(r, "beam_end", None) or getattr(r, "beam", None)):
             # Die Schnittgroessen gehoeren in den Baum: dort sucht man sie,
             # und ein Klick stellt gleich den Verlauf in der Ansicht ein.
-            grenzen = vp.schnittgroessen_grenzen(self.model, r)
+            # „gewachsen“: nur ueber die Elemente der Rechnung (die neuen
+            # haben keine Werte); „anders“: keine Zahlen, „neu rechnen“ grau
+            elemente = range(stand.ne) if passt == "gewachsen" and stand is not None else None
+            grenzen = ({} if passt == "anders"
+                       else vp.schnittgroessen_grenzen(self.model, r, elemente=elemente))
             reihe = []
             for q in vp.SCHNITTGROESSEN:
+                if passt == "anders":
+                    reihe.append((q, vp.NEU_RECHNEN, f"schnittgroesse:{q}", *grau_))
+                    continue
                 if q not in grenzen:
                     continue
                 lo, _e1, hi, _e2 = grenzen[q]
@@ -12597,10 +12638,13 @@ class MainWindow(QtWidgets.QMainWindow):
             func = lambda p: solver.solve_buckling(m, nmodes, p, case=None if combo else m.active_case,
                                                    combination=combo)
 
+            # Stand beim Start der Rechnung (wie do_solve, 24.09.2026)
+            stand = vp.modellstand(m)
+
             def fertig(res):
-                self._solve_done("buckling", res)
+                self._solve_done("buckling", res, stand)
                 self._knicklaengen_auswerten(res)
-            self._run_background(func, fertig, "Knicken für Knicklängen")
+            self._run_background(func, fertig, "Knicken für Knicklängen", stand=stand)
             return None
         return self._knicklaengen_auswerten(r)
 
@@ -16926,13 +16970,18 @@ class MainWindow(QtWidgets.QMainWindow):
         f.raise_()
         return f
 
-    def _run_background(self, func, on_done, label, posten=None):
+    def _run_background(self, func, on_done, label, posten=None, stand=None):
         """`posten`: [(Name, Art)] der Lastfaelle und Kombinationen dieser
         Rechnung. Ist die Liste da, oeffnet sich das Fenster mit einer Zeile
         je Posten (gui.rechenliste) - bei 422 Lastfaellen sagen Balken und
-        Protokoll allein zu wenig. Ohne Liste bleibt alles wie bisher."""
+        Protokoll allein zu wenig. Ohne Liste bleibt alles wie bisher.
+
+        `stand`: der Modellstand beim Start dieser Rechnung (vp.modellstand)
+        - die Wege nach einem Abbruch (_abbruch_zeigen, _abbruch_teil_zeigen)
+        geben ihn an _solve_done weiter wie on_done selbst (24.09.2026)."""
         if self.worker is not None and self.worker.isRunning():
             return self.error("Es läuft bereits eine Berechnung")
+        self._rechnung_stand = stand
         self.btn_solve.setEnabled(False)
         # Bestimmter Balken, sobald der Rechenkern meldet, wie weit er ist
         # (:meth:`_rechnung_fortschritt`). Bis dahin - und fuer Laeufe, die
@@ -17149,7 +17198,7 @@ class MainWindow(QtWidgets.QMainWindow):
         it = res.info.get("abbruch_iteration", 0)
         res.name = f"{res.name} - Abbruch (Iteration {it})"
         try:
-            self._solve_done("case", res)
+            self._solve_done("case", res, getattr(self, "_rechnung_stand", None))
             # Keine Umhuellende ueber ein Teilergebnis ohne Gleichgewicht: die
             # Auswahl steht auf dem Lastfall selbst, sonst zeigte sie
             # "Umhuellende CASES" ohne Zeiger und ohne Abbruch-Zusammenfassung.
@@ -17235,7 +17284,7 @@ class MainWindow(QtWidgets.QMainWindow):
                    if alt is not None and n_alt > len(an.cases) + len(an.combinations) else "")
         self._rechnung_ende(kurz, dauer=0)
         try:
-            self._solve_done("all", an)
+            self._solve_done("all", an, getattr(self, "_rechnung_stand", None))
         except Exception as ex:            # noqa: BLE001 - die Anzeige darf den Abbruch nicht ueberdecken
             self.log.appendPlainText(f"Teilergebnis nicht anzeigbar: {ex}")
             self.log.appendPlainText(kurz)
@@ -17448,8 +17497,15 @@ class MainWindow(QtWidgets.QMainWindow):
             posten = posten_aus_modell(model, kind)
         except Exception:                      # noqa: BLE001
             posten = []                        # die Liste ist Beiwerk - ohne sie wird gerechnet
-        self._run_background(func, lambda r: self._solve_done(kind, r), "Berechnung",
-                             posten=posten)
+        # Der Modellstand beim Start, nicht nach der Rechnung: die Oberflaeche
+        # bleibt waehrend der Rechnung bedienbar, und was der Anwender
+        # inzwischen verschiebt, loescht oder per Undo zuruecknimmt, gehoert
+        # nicht zu diesem Ergebnis. Bis zum 24.09.2026 zog _solve_done den
+        # Stand erst am Ende - solche Aenderungen galten dann als „passt“
+        # (Gegenpruefung von 97be9ff)
+        stand = vp.modellstand(model)
+        self._run_background(func, lambda r: self._solve_done(kind, r, stand), "Berechnung",
+                             posten=posten, stand=stand)
 
     def _kontaktzustand_zuletzt(self):
         """Der Kontaktzustand der gerade gezeigten statischen Loesung - die
@@ -17540,7 +17596,21 @@ class MainWindow(QtWidgets.QMainWindow):
                                  + "\nEs wird trotzdem gerechnet - mit Hilfsfesselung.")
         return True
 
-    def _solve_done(self, kind, r):
+    def _solve_done(self, kind, r, stand=None):
+        # der Modellstand dieser Rechnung: Koordinaten und je Element Typ und
+        # Knoten - legt man danach Knoten oder Staebe an, loescht oder
+        # verschiebt man etwas, erkennt die Ansicht, dass das Ergebnis nicht
+        # mehr passt (vp.ergebnis_passt, 24.09.2026; bis zur Gegenpruefung von
+        # 5090fe2 nur die Anzahlen). ``stand`` kommt vom Start einer
+        # Hintergrundrechnung (do_solve); ohne ihn - Ergebnisdatei geladen,
+        # Rechnung im Oberflaechen-Thread - gilt das Modell von jetzt.
+        self._ergebnis_stand = stand if stand is not None else vp.modellstand(self.model)
+        if kind in ("all", "case"):
+            # der Stand, zu dem self.analysis gehoert: nach Eigenformen oder
+            # Knicken bleibt die Analyse der letzten statischen Rechnung
+            # stehen, _ergebnis_stand zeigt dann auf die neuere Rechnung -
+            # ergebnisse_speichern prueft die Analyse gegen ihren eigenen
+            self._analyse_stand = self._ergebnis_stand
         if kind == "all":
             self.analysis = r
             self.results = None
@@ -17558,9 +17628,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._fill_result_selector()
         self._bewegungen_melden()
         self.maske_zeigen("Ergebnisse")
-        self.show_results()
-        # Die Ergebnisse stehen jetzt auch im Modellbaum - er muss davon wissen.
+        vp.drehknoten_vergessen()       # die Maske gehoert zum gerechneten Modell
+        # Die Ergebnisse stehen jetzt auch im Modellbaum - er muss davon wissen
+        # (vor show_results: das zieht dann nur noch die Zusaetze nach)
         self._refresh_baum()
+        self.show_results()
         self._refresh_kopf()
         self._refresh_status()
 
@@ -17753,6 +17825,12 @@ class MainWindow(QtWidgets.QMainWindow):
             for s in sorted({s.node for s in self.model.supports}):
                 react.append([s] + [f"{r.r_min[s, i]/1e3:.2f} / {r.r_max[s, i]/1e3:.2f}" for i in range(6)])
             self._fill(self.tbl_react, react)
+        # Zusaetze im Modellbaum (Verformungen, Schnittgroessen) zum gezeigten
+        # Ergebnis - sie blieben beim alten stehen (Befund 24.09.2026). Aendern
+        # sich die Gruppen, wird neu aufgebaut, aber erst nach dem laufenden
+        # Ereignis: der Aufruf kann aus einem Klick in den Baum selbst kommen.
+        if hasattr(self, "baum") and not self.baum.ergebnisse_nachziehen(self._ergebnisliste()):
+            QtCore.QTimer.singleShot(0, self._refresh_baum)
         self.redraw()
 
     def _raender(self) -> dict:
@@ -18254,6 +18332,20 @@ class MainWindow(QtWidgets.QMainWindow):
                 modal = True
             else:
                 u = vp.displacement_of(r)
+        # Ergebnis zu einem frueheren Modellstand (nach der Rechnung Knoten,
+        # Stab oder Flaeche angelegt): die neuen Knoten verformen sich nicht
+        # und bekommen keinen Wert (grau), die neuen Elemente keinen Verlauf.
+        # Bis zum 24.09.2026 brach hier u[kn] mit IndexError ab und die
+        # Ansicht blieb stehen. Sonst etwas geaendert (geloescht, verschoben,
+        # umgebaut - auch bei gleicher Anzahl): welche Nummer zu welchem Wert
+        # gehoert, ist nicht mehr bekannt - dann kein Ergebnis im Bild.
+        # In beiden Faellen sagt es die Kopfzeile.
+        passt = vp.ergebnis_passt(self.model, r, getattr(self, "_ergebnis_stand", None))
+        self._ergebnis_veraltet = passt != "passt"
+        if passt == "anders":
+            r, u, modal = None, None, False
+        elif passt == "gewachsen" and u is not None:
+            u = vp.auf_laenge(u, m.nn, 0.0)
         s = 0.0
         if u is not None:
             s, umax = self._scale(u)
@@ -18309,6 +18401,12 @@ class MainWindow(QtWidgets.QMainWindow):
             seite = str(self.cb_seite.currentData() or "max") if getattr(self, "cb_seite", None) else "max"
             point_scalars, cell_scalars, name = vp.result_field(m, r, field, self._util_map(field),
                                                                 seite=seite)
+            if self._ergebnis_veraltet:
+                # Werte des frueheren Modellstands: neue Knoten und Elemente
+                # ohne Wert (NaN, grau) - sonst IndexError bei [kn]/[eidx]
+                # und in spn.grenzen (Maske der sichtbaren Knoten), 24.09.2026
+                point_scalars = vp.auf_laenge(point_scalars, m.nn)
+                cell_scalars = vp.auf_laenge(cell_scalars, len(m.elements))
             klassen = spn.kategorien(*spn.feld(field)) if spn.feld(field) else None
             if point_scalars is not None and klassen:
                 # Groesse in Klassen (Kontaktzustand): feste Farben, Beschriftung
@@ -18347,6 +18445,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     point_scalars = None
                     if spn.feld(field) is not None:
                         self.statusBar().showMessage(f"{field}: in diesem Ergebnis ohne Werte", 8000)
+                    elif vp.ist_verdrehung(field):
+                        self.statusBar().showMessage(vp.ohne_verdrehung(m), 8000)
             elif cell_scalars is None and spn.feld(field) is not None:
                 self.statusBar().showMessage(f"{field}: gibt es zu Lastfall und Kombination, nicht zur Umhüllenden", 8000)
         # Netzguete faerbt nur, solange kein Ergebnis gezeigt wird - ein
@@ -18842,10 +18942,18 @@ class MainWindow(QtWidgets.QMainWindow):
             return []
         if not zeilen:
             return []
-        if r is None and self.current_result() is not None:
+        if getattr(self, "_ergebnis_veraltet", False):
+            # nach der Rechnung Knoten oder Elemente angelegt/geloescht
+            # (_aufbauen, vp.ergebnis_passt) - sonst saehe man graue neue
+            # Teile ohne Grund (24.09.2026)
+            zeilen = list(zeilen) + ["    " + vp.ERGEBNIS_VERALTET]
+        elif r is None and self.current_result() is not None:
             # Es gaebe ein Ergebnis, der Schalter zeigt es nur nicht - das
             # gehoert ins Bild, sonst sucht man den Fehler in der Rechnung
-            zeilen = list(zeilen) + ["    Ergebnisse ausgeblendet (Register Ergebnisse → „Ergebnisse zeigen“)"]
+            # zwei Zeilen: in einer waere sie ueber 110 Zeichen breit und liefe in einer
+            # schmalen Ansicht rechts aus dem Bild (Befund 24.09.2026)
+            zeilen = list(zeilen) + ["    Ergebnisse ausgeblendet (Knopf „Ergebnisse“ in der Glasleiste",
+                                     "      oder Register Ergebnisse → „Ergebnisse zeigen“)"]
         self._kopfzeile_zeilen = zeilen
         try:
             # Oben links, aber **unterhalb** der Glasleiste: in einem schmalen
@@ -20177,6 +20285,19 @@ class MainWindow(QtWidgets.QMainWindow):
                           f"{len(an.combinations)} Kombinationen ({os.path.basename(epfad)})")
         return True
 
+    def _analyse_passt(self) -> str:
+        """vp.ergebnis_passt fuer self.analysis gegen ihren eigenen Stand
+        (_analyse_stand aus _solve_done); „passt“ ohne Analyse."""
+        an = self.analysis
+        if an is None:
+            return "passt"
+        stand = getattr(self, "_analyse_stand", None)
+        # ein Vertreter mit Verschiebungen fuer den Laengenvergleich; ohne
+        # einen (leere Analyse) entscheidet der Stand allein
+        vertreter = next(iter(list(an.cases.values()) + list(an.combinations.values())
+                              + list(an.envelopes.values())), an)
+        return vp.ergebnis_passt(self.model, vertreter, stand)
+
     def ergebnisse_speichern(self, p: str = None) -> str:
         """Die Analyse neben die Modelldatei schreiben (<modell>.ergebnisse);
         ohne Analyse wird eine alte Ergebnisdatei entfernt, damit beim
@@ -20186,13 +20307,27 @@ class MainWindow(QtWidgets.QMainWindow):
         if not p:
             return ""
         epfad = erg.pfad_zu(p)
-        if self.analysis is None:
+        passt = self._analyse_passt()
+        if self.analysis is None or passt != "passt":
+            if self.analysis is not None:
+                # Ein Ergebnis zu einem frueheren Modellstand gehoert nicht in
+                # die Datei: nach dem Laden galt es als „passt“, und die Werte
+                # standen an verschobenen Elementen - Element 0 geloescht,
+                # Stab [0,5] angelegt: gleiche Anzahlen, gleiche
+                # Koordinatensumme (Gegenpruefung von 97be9ff, 24.09.2026).
+                # „gewachsen“ auch nicht: beim Laden waere der Stand der
+                # Datei das ganze Modell, die neuen Teile saehen gerechnet aus.
+                text = "Ergebnis nicht gespeichert: passt nicht mehr zum Modell – neu rechnen"
+                self.log.appendPlainText(text)
+                self.statusBar().showMessage(text, 0)
             if os.path.exists(epfad):
+                # die alte Datei daneben darf beim naechsten Oeffnen nicht zum
+                # neuen Modell gelesen werden
                 try:
                     os.remove(epfad)
                     self.log.appendPlainText(f"Alte Ergebnisdatei entfernt: {epfad}")
-                except OSError:
-                    pass
+                except OSError as ex:
+                    self.log.appendPlainText(f"WARNUNG: alte Ergebnisdatei nicht entfernt: {ex}")
             return ""
         self._fortschritt_beginnen(1000, f"Ergebnisse speichern: {os.path.basename(epfad)} …",
                                    abbrechbar=False)

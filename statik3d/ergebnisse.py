@@ -5,7 +5,8 @@ jede Rechnung weg - am Drehlager 18 Minuten je Lastfall. Jetzt schreibt das
 Programm beim Speichern die Analyse (Lastfälle, Kombinationen, Umhüllende,
 Nachweise) in eine zweite Datei ``<modell>.ergebnisse`` und liest sie beim
 Öffnen wieder ein, wenn sie zum Modell passt (Kennung: Knoten- und
-Elementzahl, Summe der Koordinaten, Lastfallnamen).
+Elementzahl, Summe der Koordinaten, Lastfallnamen, seit dem 24.09.2026 ein
+Hash der Elemente).
 
 Form: ein Pickle (Protokoll 5). Das Modell selbst steht nicht in der Datei -
 jede Referenz auf das Modell (Results.model, Envelope.model, Nachweise) wird
@@ -17,6 +18,7 @@ Rechenzwischenwerte (Results._cache) werden nicht geschrieben.
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import os
 import pickle
@@ -38,13 +40,34 @@ def pfad_zu(modellpfad: str) -> str:
     return os.path.splitext(str(modellpfad))[0] + DATEIENDUNG
 
 
+def elementhash(model) -> str:
+    """Hash je Element (Typ, Knoten) in Reihenfolge, als Hex-Text.
+
+    hashlib statt hash(): hash() von Zeichenketten wechselt mit jedem
+    Programmstart (PYTHONHASHSEED), die Kennung muss aber beim naechsten
+    Oeffnen dieselbe sein. Gemessen wird hier nur beim Speichern und Laden,
+    nicht bei jedem Neuzeichnen (dafuer viewport._elementhash)."""
+    h = hashlib.blake2b(digest_size=16)
+    for e in model.elements:
+        h.update(f"{e.typ}:{','.join(str(int(k)) for k in e.nodes)};".encode())
+    return h.hexdigest()
+
+
 def kennung(model) -> dict:
-    """Woran die Ergebnisdatei erkennt, dass sie zu diesem Modell gehoert."""
+    """Woran die Ergebnisdatei erkennt, dass sie zu diesem Modell gehoert.
+
+    „elemente“ (24.09.2026): Element 0 loeschen und einen Stab [0,5] anlegen
+    aendert weder Knoten- und Elementzahl noch die Koordinatensumme - die
+    alte Datei passte dann zum neuen Modell, die Werte standen an anderen
+    Elementen (Gegenpruefung von 97be9ff). Die Dateiversion bleibt 1: alte
+    Dateien ohne den Eintrag werden weiter gelesen (passt prueft ihn nur, wo
+    er steht), und ein aelteres Programm uebergeht den zusaetzlichen."""
     knoten = np.asarray(model.nodes, float).reshape(-1, 3) if model.nn else np.zeros((0, 3))
     return {"version": VERSION, "name": str(model.name), "nn": int(model.nn),
             "ne": int(len(model.elements)),
             "koordinaten": float(np.round(knoten.sum(), 6)) if knoten.size else 0.0,
-            "lastfaelle": sorted(model.load_cases)}
+            "lastfaelle": sorted(model.load_cases),
+            "elemente": elementhash(model)}
 
 
 def passt(k: dict, model) -> tuple:
@@ -61,6 +84,8 @@ def passt(k: dict, model) -> tuple:
         return False, "die Knotenkoordinaten sind andere"
     if list(k.get("lastfaelle", [])) != jetzt["lastfaelle"]:
         return False, "die Lastfaelle sind andere"
+    if "elemente" in k and k["elemente"] != jetzt["elemente"]:
+        return False, "die Elemente sind andere (Typ oder Knoten)"
     return True, ""
 
 

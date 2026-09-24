@@ -1267,6 +1267,38 @@ Knickfiguren. Ein Klick stellt das Ergebnis in der Ansicht ein — dieselbe
 Auswahl, die auch die Maske *Ergebnisse* rechts führt. Dort werden Färbung,
 Schnittgrößenverlauf und Überhöhung eingestellt.
 
+Der Zweig **Verformungen** (seit 24.09.2026) steht nach Lastfällen und
+Nachweisen, vor den Schnittgrößen, und führt acht Einträge: **u gesamt |u|**,
+**ux**, **uy**, **uz**, **φ gesamt |φ|**, **φx**, **φy**, **φz**. Daneben stehen
+kleinster und größter Wert des gezeigten Ergebnisses als Dezimalzahl, „min …
+max mm“ bzw. „min … max mrad“ — genau die Grenzen der Färbung, die ein Klick
+einstellt, auch bei einer Umhüllenden (dort je Knoten das betragsgrößere
+Extrem; das volle Minimum und Maximum aller Ergebnisse steht im Register
+*Umhüllende*). Wechselt man das Ergebnis — in der Ergebnismaske oder in der
+Glasleiste —, ziehen die Werte mit. Ein Klick
+stellt die Färbung ein — eine Umhüllende bleibt dabei vorn, denn sie führt
+Verschiebungen und Verdrehungen (anders als die Spannungen). Den Zweig gibt es
+nur mit einem Ergebnis, nicht zu Eigenformen oder Knickfiguren, und nicht,
+wenn nach der Rechnung Knoten angelegt wurden (das Ergebnis gehört dann zum
+alten Netz). Ist der Zusatz zu lang für die Spalte, zeigt ihn der Hinweis beim
+Überfahren ganz.
+
+**Verdrehungen gibt es nur an Knoten mit Drehsteifigkeit** — an Balken
+(außer an einem Stabende, dessen Momentengelenke den Knoten ganz freigeben,
+etwa bei einem Pendelstab), Schalen, Federn mit Drehfedern und starren
+Körpern (Master; bei RBE2 auch die Slaves). Volumen-, Scheiben-, Fachwerk- und
+Seilknoten haben keinen Drehfreiheitsgrad; die Rechnung hält ihn dort bei
+genau 0. Diese Knoten zeigt die Färbung **grau** (ohne Wert) statt als
+Nullen, die Farbskala reicht nur über die Knoten mit Drehsteifigkeit. Hat ein
+Modell gar keinen solchen Knoten, stehen die vier φ-Einträge grau mit einer
+Erklärung als Zusatz: beim reinen Volumenmodell „keine Verdrehungen: nur
+Volumenkörper (Knoten ohne Drehfreiheitsgrad)“, bei einem Fachwerk-, Seil- oder
+Scheibenmodell ohne Balken und Schalen „keine Verdrehungen: kein Knoten mit
+Drehsteifigkeit (Fachwerkstäbe, Seile, Scheiben und Volumenkörper haben keinen
+Drehfreiheitsgrad)“. Ein Klick meldet das in der Statuszeile und färbt nicht,
+ein Doppelklick übernimmt dann auch nichts in den Bericht. Geprüft in `tests/test_ergebnisbaum.py`, dort auch die
+Handrechnung am Kragarm: φ am Ende = F·L²/(2EI).
+
 Der Zweig **Schnittgrößen** führt N, Vy, Vz, Mt, My und Mz, jede mit ihren
 Grenzwerten daneben; ein Klick stellt den Verlauf in der Ansicht ein, „kein
 Verlauf" blendet ihn wieder aus.
@@ -1274,7 +1306,9 @@ Verlauf" blendet ihn wieder aus.
 **Kennwerte im Bild.** Unten links in der Ansicht stehen die Zahlen des
 **gewählten Ergebnisses** (seit 15.09.2026; vorher alles zugleich): zur Färbung
 |u| die größte Verformung mit Knoten, zu ux, uy oder uz die kleinste und
-größte Verformung dieser Richtung, zur Vergleichsspannung die größte mit
+größte Verformung dieser Richtung, zu |φ| die größte Verdrehung mit Knoten, zu
+φx, φy oder φz die kleinste und größte mit Knoten (in mrad, nur Knoten mit
+Drehsteifigkeit), zur Vergleichsspannung die größte mit
 Knoten, zu einer Ausnutzung die größte mit ihrem Ort, zu einer
 Spannungsgröße (Volumen, Flächen, Stäbe, Kontakt) ihr kleinster und größter
 Wert mit Knoten in der Einheit der Farbskala. Steht ein Schnittgrößenverlauf
@@ -1378,7 +1412,9 @@ einzelne Knotenlasten“). Sie folgt dem Schalter *Lasten*. Geprüft in
 ganze Ergebnisdarstellung aus dem Bild: Färbung, verformtes System, Werte,
 Kontaktmarken, Skala und Kopfzeile. Zurück bleibt das Modell, wie es vor der
 Rechnung aussah; die Ergebnisse bleiben gerechnet und kommen mit demselben
-Schalter zurück. Die Kopfzeile sagt, dass sie ausgeblendet sind. Für die
+Schalter zurück. Die Kopfzeile sagt, dass sie ausgeblendet sind, und nennt
+beide Wege zurück: den Knopf *Ergebnisse* in der Glasleiste (seit
+24.09.2026, gleich hinter der Lastfall-Liste) und das Register. Für die
 Färbung allein gibt es weiterhin den Eintrag *keine Färbung* in der Liste.
 
 Die Elementkanten des FE-Netzes sind **1 px** breit. Bis 13.09.2026 waren
@@ -1434,11 +1470,10 @@ Klartext erscheint beim Überfahren mit der Maus. Von links nach rechts:
 
 | Gruppe | Knöpfe |
 |---|---|
-| ganz links | **Aufklappliste Lastfall / Kombination** — was die Ansicht zeigt |
+| ganz links | **Aufklappliste Lastfall / Kombination** — was die Ansicht zeigt; gleich dahinter **Ergebnisse zeigen / ausblenden** (Schalter, seit 24.09.2026) |
 | Darstellung | Voll, Transparent, Hidden-Line, Drahtmodell |
 | Sichtbarkeit | Knoten (der Konstruktion; Netzknoten: *Netz → Netzknoten*), Linien, Stäbe, Flächen, Volumen, **Lager**, FE-Netz, Lasten — jedes einzeln schaltbar |
-| Sicht | Selektion anzeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen, **Verborgenes im Hintergrund** (Schalter), **Schnittebene** (Schalter mit Achse und Schieber), **Intelligente Auswahl** (Schalter) |
-| Layer | **Aufklappliste** (einen Layer allein zeigen, „Alle Layer“), **Layerliste** (Fenster: sichtbar und gesperrt je Layer, neu aus der Auswahl, Objekte wählen), **Layer aus Auswahl** — seit 16.09.2026 |
+| Sicht | Selektion anzeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen, **Verborgenes im Hintergrund** (Schalter), **Intelligente Auswahl** (Schalter) |
 | Fang | Fang ein/aus (die Fangarten einzeln: Ribbon *Geometrie → Arbeitsebene*) |
 | Auswahlart | was ein Klick trifft, als Knöpfe: Knoten, Linie, Stab, Fläche, Volumen, **Netz** (einzelne Elemente), **Lager** (Knoten-, Linien- und Flächenlager), **Last** — genau einer ist gedrückt |
 | ganz rechts | **Alles deselektieren** (✕, auch Esc) — der Griff, der jede Auswahl beendet |
@@ -1452,6 +1487,18 @@ Kombination hat erst nach der Berechnung etwas zu zeigen: liegt ein Ergebnis
 vor, schaltet die Ergebnisliste mit um, sonst sagt das Protokoll, woran es
 liegt. Umgekehrt zieht die Leiste nach, wenn das Ergebnis woanders gewählt
 wird — beides zeigt immer dasselbe.
+
+**Ergebnisse an und aus aus der Leiste** (seit 24.09.2026). Direkt hinter der
+Aufklappliste sitzt der Knopf **Ergebnisse zeigen / ausblenden**. Er ist
+derselbe Schalter wie *Ergebnisse → Ergebnisse zeigen* im Ribbon — beide
+stehen immer gleich, ein Klick auf den einen schaltet auch den anderen. Aus
+heißt: keine Färbung, kein verformtes System, keine Skala; das Modell bleibt
+im Bild, gerechnet bleibt alles. Die Kopfzeile nennt dann beide Wege zurück.
+Ein eigenes Tastenkürzel hat er nicht.
+
+**Schnittebene und Layer** stehen nicht in der Glasleiste (bis 24.09.2026
+führte diese Tabelle sie dort): die Schnittebene liegt im Register *Ansicht*,
+die Layer im Register *Ansicht* und im Modellbaum.
 
 **Verborgenes im Hintergrund.** Der Schalter (Register *Ansicht → Sicht*,
 auch in der Glasleiste) zeigt alles Ausgeblendete blass und durchscheinend
@@ -6089,7 +6136,9 @@ schwersten zuerst: erst die, in denen wirklich Last ins Nichts geht.
 
 ## 10 Ergebnisse und Bericht
 
-* **Färbung**: |u|, ux/uy/uz, Vergleichsspannung (Schalen/Volumen, Randspannung
+* **Färbung**: |u|, ux/uy/uz [mm], **|φ|, φx/φy/φz** [mrad] (Verdrehungen, seit
+  24.09.2026; auch im Modellbaum unter „Ergebnisse → Verformungen“),
+  Vergleichsspannung (Schalen/Volumen, Randspannung
   bei Stäben), Ausnutzung EC3 / Ermüdung / elastisch — und die **Spannungen je
   Art** analog ANSYS Mechanical, auch im Modellbaum unter „Ergebnisse →
   Spannungen Volumen / Spannungen Flächen / Spannungen Stäbe /
@@ -6115,6 +6164,19 @@ schwersten zuerst: erst die, in denen wirklich Last ins Nichts geht.
   nicht — sie führt Extremwerte, keine Tensoren; die Statuszeile sagt es, und
   gefärbt wird nichts. Die Größen und ihre Prüfung an geschlossenen Werten:
   `tests/test_spannungen.py`.
+
+  **Verdrehungen** φ sind die Drehfreiheitsgrade der Knoten, |φ| ihr Betrag, in
+  mrad (fest, wie im Verformungsnachweis). Zur Umhüllenden färbt φx/φy/φz das
+  betragsgrößere Extrem, |φ| den größten Betrag, den ein einzelnes Ergebnis
+  am Knoten hat (ebenso |u|; bis 24.09.2026 wurde der Betrag aus Minimum und
+  Maximum gebildet, deren Richtungen aus verschiedenen Ergebnissen stammen
+  können — das ergab zu viel oder zu wenig). **Volumenknoten haben keine eigenen Verdrehungen**: ein
+  Volumenelement hat nur Verschiebungen, die Rechnung hält den Drehfreiheitsgrad
+  dort bei 0. Diese Knoten — ebenso Scheiben-, Fachwerk- und Seilknoten —
+  stehen grau statt mit Nullen; in einem gemischten Modell trägt die Skala nur
+  die Stab- und Schalenknoten. Ein reines Volumenmodell färbt bei φ gar nicht,
+  die Statuszeile sagt warum. Die Kennwerte im Bild nennen zu |φ| die größte
+  Verdrehung mit Knoten, zu φx/φy/φz die kleinste und größte mit Knoten.
 **Kontaktergebnisse lesen** (12.09.2026, „ich sehe nicht, dass die Kontakte da
 wirken, wo sie sollen"): Die Färbung **Kontakt Zustand** zeigt je Kontaktknoten
 eine von vier Klassen in festen Farben — grau offen, grün haftet, orange
@@ -6127,7 +6189,9 @@ grau offen, blau Kontakt ohne Reibung) erscheinen nur noch mit dem Schalter
 *Ergebnisse → Kontaktmarken* — vorher lagen sie über jedem Ergebnis, am
 Drehlager 21 586 Kugeln, die man für Kontaktergebnisse hielt, die „nicht
 weggehen". Die **Skala** schreibt ihre Zahlen aus („2390" statt „2.39e+03"),
-mit Nachkommastellen nach der Spanne (unter 100: eine, unter 10: zwei).
+mit Nachkommastellen nach der Spanne (unter 100: eine, unter 10: zwei); unter
+0.01 so viele, dass zwei geltende Ziffern stehen („0.0014“ statt „1.43e-03“,
+seit 24.09.2026 — kleine Verdrehungen in mrad).
 
 **Zahlen als Dezimalzahl.** Ergebniswerte stehen überall als normale
 Dezimalzahl mit Punkt — Skala, Modellbaum (Schnittgrößen „−0.00 … +943 kN"),
