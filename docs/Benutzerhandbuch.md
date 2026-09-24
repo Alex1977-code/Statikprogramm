@@ -3126,7 +3126,10 @@ jetzt kommen alle an. Was das Protokoll dabei sagt:
 * **Nicht übertragen** und mit Anzahl gemeldet werden die Berichtseinträge
   (sie zeigen Ergebnisse des Quellmodells) und die Stellungen (eine
   Stellung, die verschiebt oder dreht, bewegt ohne Gruppenangabe alle Knoten
-  ohne Knotenlager – auch die auf Linienlagern –, also auch die des Ziels).
+  ohne Knotenlager – auch die auf Linienlagern –, also auch die des Ziels;
+  mit Gruppenangabe bewegt sie alle Knoten der Elemente dieser Gruppen, auch
+  solche mit Knotenlager – im Beispiel „frame“ verschiebt eine Gruppe aus
+  Element 0 dessen Knoten 0 und 1, obwohl an Knoten 0 ein Knotenlager sitzt).
   Einstellungen – Netz, Nachweise, Plastizität, Einheiten, Bericht – bleiben
   die des Ziels; weichen die der Quelle ab, steht es im Protokoll.
 * **Situationen mit Stellung:** Eine Situation der Quelle behält den Namen
