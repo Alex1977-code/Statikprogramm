@@ -12586,6 +12586,15 @@ class MainWindow(QtWidgets.QMainWindow):
         if alt and alt != sn.name and alt in m.schwingungen:
             del m.schwingungen[alt]
         m.schwingungen[sn.name] = sn
+        # Die Einstellungen der Maske Berechnung gelten auch hier, wie bei
+        # "Berechnen" und den Knicklaengen. Ohne diesen Aufruf erreichte die
+        # Wahl im Feld Gleichungsloeser den Nachweis nicht: Die Protokollzeile
+        # "Gleichungsloeser ausgewichen ..." raet, dort einen Loeser zu waehlen,
+        # nach der Wahl von SuperLU stand dieselbe Zeile wieder da, und mit MKL
+        # PARDISO brach der Nachweis nicht ab (gemessen 24.09.2026 am Stand
+        # 5f077d8 mit PARDISO im Prozess zum Scheitern gebracht;
+        # test_loeserwahl_gilt_im_nachweis in tests/test_schwingung.py).
+        self._apply_parallel_settings()
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
         try:
             erg = swm.nachweis(m, sn, self.analysis,

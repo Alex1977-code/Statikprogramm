@@ -404,9 +404,143 @@ def test_ausweichen_erreicht_bericht():
           "ausgewichen" not in html0, f"{html0.count('ausgewichen')} mal")
 
 
+def test_loeserwahl_gilt_im_nachweis():
+    """Die Abhilfe der Hinweiszeile gilt auch fuer den Nachweis aus der Maske.
+
+    Mangel zu B121 (24.09.2026): Die Zeile "Gleichungsloeser ausgewichen ..."
+    (solver.ausweichen_gebuendelt) raet, unter Berechnung -> Einstellungen ->
+    Gleichungsloeser einen Loeser zu waehlen; ein ausdruecklich gewaehlter
+    breche ab, statt auszuweichen. MainWindow._schwingung_rechnen rief
+    swm.nachweis aber, ohne vorher _apply_parallel_settings aufzurufen (die
+    Knicklaengen und "Berechnen" tun das), die Wahl im Feld erreichte
+    parallel.settings() nicht: Mit PARDISO im Prozess zum Scheitern gebracht
+    stand nach der Wahl von SuperLU dieselbe Zeile wieder im Protokoll, und mit
+    MKL PARDISO brach der Nachweis nicht ab (gemessen 24.09.2026 am Stand
+    5f077d8, Hauptfenster offscreen). Hier ohne Fenster: die Methoden des
+    Hauptfensters mit einer Attrappe fuer self; das Feld "Gleichungsloeser" und
+    die uebrigen Felder der Einstellungen sind Attrappen mit den Werten von
+    parallel.settings(), die Einstellungsdatei liegt in einem eigenen Ordner.
+    """
+    import dataclasses
+    import tempfile
+    import types
+    import pypardiso
+    from statik3d import parallel
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6 import QtWidgets
+    from statik3d.gui.main import MainWindow
+
+    # _schwingung_rechnen setzt den Wartezeiger (QApplication.setOverrideCursor)
+    _app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    class Feld:
+        def __init__(self, daten=None, wert=0, text="", index=0):
+            self.daten, self.wert, self.text_, self.index = daten, wert, text, index
+
+        def currentData(self):
+            return self.daten
+
+        def value(self):
+            return self.wert
+
+        def text(self):
+            return self.text_
+
+        def currentIndex(self):
+            return self.index
+
+    class Protokoll:
+        def __init__(self):
+            self.zeilen = []
+
+        def appendPlainText(self, s):
+            self.zeilen.append(str(s))
+
+    def modell():
+        m = _haut(nz=20)
+        wd = Wasserdruck("S", flaechen=["Haut"], h_ow=4.0, richtung=[1.0, 0, 0], unterstroemt=True,
+                         spalt=0.3, cp_dyn=0.1)
+        wdm.lasten_erzeugen(m, wd)
+        m.wasserdruecke["S"] = wd
+        return m
+
+    felder = {"name": "N1", "wasserdruck": "S", "n_moden": 2, "hydromasse": True, "zeta": 0.02,
+              "strouhal": 0.2, "d_kante": "0.2", "vr_grenz": 1.0, "band": 20.0,
+              "betriebsstunden": 100.0, "jahre": 50.0, "kerbfall": "71", "gamma_Mf": 1.15, "gamma_Ff": 1.0}
+    vorlage = sw.Schwingungsnachweis("N1", wasserdruck="S")
+    st = parallel.settings()
+    alt = dataclasses.asdict(st)
+    alt_datei = os.environ.get("STATIK3D_EINSTELLUNGEN")
+    os.environ["STATIK3D_EINSTELLUNGEN"] = os.path.join(tempfile.mkdtemp(prefix="test_schwingung_"),
+                                                        "einstellungen.json")
+    echt_fak, echt_nachweis = pypardiso.PyPardisoSolver.factorize, sw.nachweis
+
+    def wirft(self, A):
+        raise RuntimeError("Probe: PARDISO verweigert")
+
+    def fuehren(wahl):
+        """Den Nachweis wie aus der Maske fuehren, im Feld Gleichungsloeser
+        'wahl', die Rechnung vorher auf automatisch; ohne Analyse."""
+        parallel.configure(solver_backend="auto")
+        fehler, beim_nachweis = [], []
+        a = types.SimpleNamespace(
+            model=modell(), analysis=None, results=None, schwingung=None, log=Protokoll(),
+            tbl_schwing=object(), cb_loeser=Feld(daten=wahl), sp_workers=Feld(wert=st.workers),
+            cb_threads=Feld(daten=st.solver_threads), cb_genau=Feld(daten=st.solver_residuum),
+            cb_nachit=Feld(daten=st.solver_nachiterationen), cb_ketten=Feld(daten=st.ketten),
+            cb_kettenarb=Feld(daten=st.ketten_arbeiter), cb_backend=Feld(index=0),
+            ed_farm_host=Feld(text=st.farm_host), ed_farm_port=Feld(text=str(st.farm_port)),
+            ed_farm_key=Feld(text=st.farm_key),
+            error=lambda msg: fehler.append(str(msg)), info=lambda *_a: None, _fill=lambda *_a: None,
+            _solve_done=lambda *_a: None, tabelle_zeigen=lambda *_a: None, _refresh_baum=lambda: None,
+            _schwingung_aus_maske=MainWindow._schwingung_aus_maske)
+        a._plast_uebernehmen = lambda: MainWindow._plast_uebernehmen(a)
+        a._apply_parallel_settings = lambda: MainWindow._apply_parallel_settings(a)
+
+        def nachweis(*args, **kw):
+            beim_nachweis.append(parallel.settings().solver_backend)
+            return echt_nachweis(*args, **kw)
+
+        sw.nachweis = nachweis
+        pypardiso.PyPardisoSolver.factorize = wirft
+        try:
+            erg = MainWindow._schwingung_rechnen(a, felder, vorlage)
+        finally:
+            pypardiso.PyPardisoSolver.factorize = echt_fak
+            sw.nachweis = echt_nachweis
+        return erg, fehler, beim_nachweis, [z.strip() for z in a.log.zeilen if "ausgewichen" in z]
+
+    try:
+        ergebnisse = {wahl: fuehren(wahl) for wahl in ("auto", "superlu", "pardiso")}
+    finally:
+        parallel.configure(**alt)
+        if alt_datei is None:
+            os.environ.pop("STATIK3D_EINSTELLUNGEN", None)
+        else:
+            os.environ["STATIK3D_EINSTELLUNGEN"] = alt_datei
+
+    erg, fehler, beim, zeilen = ergebnisse["auto"]
+    check("Vorgabe automatisch: der Nachweis weicht aus, eine Zeile mit Grund und Abhilfe",
+          erg is not None and not fehler and beim == ["auto"] and len(zeilen) == 1
+          and "Probe: PARDISO verweigert" in zeilen[0] and "einen Löser wählen" in zeilen[0],
+          f"{beim} {len(zeilen)} Zeilen: " + (zeilen[0][:70] if zeilen else ""))
+    erg, fehler, beim, zeilen = ergebnisse["superlu"]
+    check("SuperLU im Feld: der Nachweis rechnet mit der Wahl",
+          beim == ["superlu"], f"parallel.settings().solver_backend beim Nachweis: {beim}")
+    check("… und das Protokoll nennt kein Ausweichen mehr",
+          erg is not None and not fehler and not zeilen,
+          f"{type(erg).__name__}, {len(zeilen)} Zeilen: " + (zeilen[0][:60] if zeilen else "") + " ".join(fehler)[:60])
+    erg, fehler, beim, zeilen = ergebnisse["pardiso"]
+    check("MKL PARDISO im Feld: der Nachweis rechnet mit der Wahl",
+          beim == ["pardiso"], f"parallel.settings().solver_backend beim Nachweis: {beim}")
+    check("… und bricht mit dem Grund ab, statt auszuweichen",
+          erg is None and len(fehler) == 1 and "Probe: PARDISO verweigert" in fehler[0] and not zeilen,
+          f"{type(erg).__name__}, Fehler {fehler[:1]}, {len(zeilen)} Zeilen 'ausgewichen'")
+
+
 def main():
     for f in (test_formeln, test_zusatzmasse_auf_dem_netz, test_eigenfrequenzen, test_nachweis, test_bericht,
-              test_ausweichen_erreicht_bericht):
+              test_ausweichen_erreicht_bericht, test_loeserwahl_gilt_im_nachweis):
         print(f"\n--- {f.__name__} ---")
         try:
             f()
