@@ -76,13 +76,14 @@ for (const [tab, fn] of [['modell', 'renderModell'], ['lasten', 'renderLasten'],
 ev("S.tab = 'bruecke'");
 const h = ev('renderBruecke()');
 const B = zustand.stellungen;
-// Gerechnete Stellungen; "ohne": mit Warnungen des Stabnachweises und ohne
-// einen gefuehrten Nachweis - deren eta = 0 ist keine Ausnutzung. Fehlt das
-// Feld "nachgewiesen" (Server von vor dem 23.09.2026), gilt eine Stellung mit
-// Warnungen als ohne Nachweis.
+// Gerechnete Stellungen; "ohne": ohne einen gefuehrten Stabnachweis, mit oder
+// ohne Warnungen - deren eta = 0 ist keine Ausnutzung. Bis ec6448c zaehlte
+// hier eine Stellung ohne Warnung als bestimmt, und der Fall nachweise=false
+// blieb ungeprueft. Fehlt das Feld "nachgewiesen" (Server von vor dem
+// 23.09.2026), gilt die Stellung als ohne Nachweis, wie in app.js.
 const gerechnet = B.liste.filter(x => x.ergebnis && !x.ergebnis.fehler);
 const offen = gerechnet.filter(x => (x.ergebnis.warnungen || []).length);
-const ohne = offen.filter(x => !x.ergebnis.nachgewiesen);
+const ohne = gerechnet.filter(x => !x.ergebnis.nachgewiesen);
 const bestimmt = gerechnet.filter(x => !ohne.includes(x));
 const nichtBestimmt = B.eta_bestimmt === false || (ohne.length > 0 && !bestimmt.length);
 pruefe('Stellungen als Karten', B.liste.every(x => h.includes(x.name)));
@@ -147,6 +148,17 @@ if (offen.length) {
   pruefe('Gewählte Stellung: die Warnungen sind aufklappbar',
          hs.includes(`<summary>Nicht nachgewiesen <span class="n">${n}</span></summary>`)
          && hs.includes(esc0(offen[0].ergebnis.warnungen[0]).slice(0, 40)));
+}
+// ohne Nachweis und ohne Warnung (nachweise=false, kein Stab mit Nachweis):
+// die Meldung der gewaehlten Stellung nennt kein η und ist nicht gruen
+const ohneWarnung = ohne.filter(x => !offen.includes(x));
+if (ohneWarnung.length) {
+  ev(`S.stellung = ${JSON.stringify(ohneWarnung[0].name)}`);
+  const hs = ev('renderBruecke()');
+  const meldung = (hs.match(/<div class="msg [a-z]+">η[^<]*<\/div>/) || [''])[0];
+  pruefe('Gewählte Stellung ohne Nachweis und ohne Warnung: kein η-Wert, nicht grün',
+         meldung && !meldung.includes('msg ok') && meldung.includes('kein Nachweis geführt')
+         && !/η = \d/.test(meldung) && !meldung.includes('0 Warnungen'), meldung);
 }
 function esc0(s) { return ev(`esc(${JSON.stringify(s)})`); }
 

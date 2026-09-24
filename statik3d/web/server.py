@@ -1507,12 +1507,15 @@ def _op_stellungen_rechnen(st, m, d):
     st.umhuellende = umh
     for z in reihe.log:
         st.log.append(z)
-    # kurztext meldet "eta nicht bestimmt - kein Nachweis gefuehrt" nur, wenn
-    # der Stabnachweis in einer Stellung Warnungen hat und in keiner Stellung
-    # einen Stab nachweisen konnte (Umhuellende.eta_bestimmt). Ohne Warnungen
-    # sagt er es nicht: ein Modell ohne Staebe meldet "eta = 0.000", obwohl
-    # nichts nachgewiesen wurde (Stauwand ohne ihre 3 Staebe, 2 Stellungen,
-    # mit und ohne Kombinationen, gemessen 24.09.2026 an 54b6f9a und 042fb81).
+    # kurztext meldet "eta nicht bestimmt - kein Stabnachweis gefuehrt",
+    # wenn in keiner Stellung ein Stab nachgewiesen wurde
+    # (Umhuellende.eta_bestimmt), mit oder ohne Warnungen, also auch in einem
+    # Modell ohne Staebe (Befund B036), und "eta nicht bestimmt - keine
+    # Stellung gerechnet", wenn jede Stellung scheiterte (B064). Vorher hing
+    # eta_bestimmt an den Warnungen: ein Modell ohne Staebe meldete
+    # "eta = 0.000", obwohl nichts nachgewiesen wurde (Stauwand ohne ihre 3
+    # Staebe, 2 Stellungen, mit und ohne Kombinationen, gemessen 24.09.2026
+    # an 54b6f9a und 042fb81).
     # Modelle mit Staeben, gemessen ueber diese Operation 23./24.09.2026: am
     # Stand 54b6f9a (von 5eb21e6 nach main gemergt) ergab die Stauwand mit 3
     # Stellungen und "kombinationen": false "eta = 0.291" (Stabnachweis aus
@@ -1522,8 +1525,9 @@ def _op_stellungen_rechnen(st, m, d):
     # gab von den gemessenen Staenden (54b6f9a, fb59de1, ec6448c, 042fb81) nur
     # fb59de1 mit "kombinationen": false "eta = 0.000" aus - eine
     # Zwischenfassung, die nie Spitze von main war. An ec6448c und 042fb81
-    # meldet diese Operation fuer die Stauwand ohne Kombinationen und die
-    # Halle ohne GZT "eta nicht bestimmt - kein Nachweis gefuehrt".
+    # meldete diese Operation fuer die Stauwand ohne Kombinationen und die
+    # Halle ohne GZT "eta nicht bestimmt - kein Nachweis gefuehrt" (seit
+    # B036 heisst es "kein Stabnachweis gefuehrt").
     return f"{len(liste)} Stellungen gerechnet: " + umh.kurztext()
 
 

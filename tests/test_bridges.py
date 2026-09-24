@@ -251,6 +251,102 @@ def test_meldung_nach_allen_stellungen():
           letzte.startswith("1 Stellungen gerechnet: eta = ") and not texte(s.error), letzte)
 
 
+def test_eta_ohne_nachweis():
+    """Ohne einen gefuehrten Stabnachweis ist eta = 0 keine Ausnutzung - auch
+    dann, wenn keine Warnung kommt: mit nachweise=False und in einem Modell
+    ohne Stab mit Nachweis. Vorher (bis ec6448c) galt eta = 0 in beiden
+    Faellen als bestimmt: kurztext 'eta = 0.000, maßgebend S1 …', jede
+    Stellung ok (Klappe, zwei Stellungen, gemessen 23.09.2026)."""
+    m, n = _klappe()
+    m.add_combination("K1", {"LF1": 1.35})
+    for titel, nachweise, ohne_staebe in (("nachweise=False", False, False),
+                                          ("ohne Stab, nachweise=True", True, True)):
+        mm = m.copy()
+        if ohne_staebe:
+            mm.members.clear()
+        r = Stellungsreihe(mm, "Klappe")
+        r.add(Stellung("S1", 0.0, "geschlossen"))
+        r.add(Stellung("S2", 30.0, "offen", lager_aus=["Endauflager"]))
+        u = r.rechnen(kombinationen=True, nachweise=nachweise)
+        kurz = u.kurztext()
+        check(f"{titel}: eta nicht bestimmt, kein 'eta = 0.000'",
+              not u.eta_bestimmt and "eta = 0.000" not in kurz and "nicht bestimmt" in kurz,
+              kurz)
+        check(f"{titel}: keine Stellung gilt als erfüllt",
+              len(u.ergebnisse) == 2 and not any(e.ok for e in u.ergebnisse),
+              str([(e.stellung.name, e.ok, e.nachgewiesen) for e in u.ergebnisse]))
+        b = u.bericht()
+        zeilen = [z for z in b.splitlines() if z.startswith(("S1 ", "S2 ", "Umhüllende"))]
+        check(f"{titel}: Bericht ohne eta-Wert",
+              "Umhüllende: eta nicht bestimmt" in b and "0.000" not in "".join(zeilen), str(zeilen))
+    # Gegenprobe: mit Stab und Nachweis bleibt eta bestimmt
+    r = Stellungsreihe(m, "Klappe")
+    r.add(Stellung("S1", 0.0, "geschlossen"))
+    u = r.rechnen(kombinationen=True, nachweise=True)
+    check("mit Stabnachweis: eta bestimmt und ok",
+          u.eta_bestimmt and u.eta > 0 and u.kurztext().startswith("eta = ")
+          and r.ergebnis("S1").ok, u.kurztext())
+
+
+def test_ermuedung_in_stellung():
+    """Eine Ermuedungslast als Verlauf bleibt in einer Stellung, solange ihre
+    Glieder da sind - Lastfaelle oder Kombinationen der Stellung; ihr case_max
+    und case_min liest der Ermuedungsnachweis von Staeben und Volumen
+    (ec3.fatigue) nicht. Vorher (bis ec6448c) entschieden case_max und
+    case_min: ein Verlauf mit case_max '' (rfem6_db, berichtigte Maske)
+    entfiel in jeder Stellung mit 'faelle', ebenso einer mit case_min
+    ausserhalb der Stellung (V_cmin, gemessen 24.09.2026); einer mit Gliedern
+    ausserhalb der Stellung blieb stehen, wenn sein case_max ein Lastfall der
+    Stellung war und sein case_min leer oder ebenfalls ein Lastfall der
+    Stellung (V_fehlt). 8daa37e pruefte die Glieder nur gegen die
+    Lastfaelle: ein Verlauf mit einer Kombination als Glied (die Oberflaeche
+    nimmt sie an, gui/main.py add_fatigue_load) entfiel, obwohl die
+    Kombination in der Stellung bleibt (Gegenpruefung 23.09.2026)."""
+    from statik3d.model import FatigueLoad
+    m, n = _klappe()
+    m.add_load_case("LF2", "Q", activate=False)
+    m.add_load_case("LF3", "Q", activate=False)
+    m.load_node(n[1], Fz=-1e4, case="LF2")
+    m.load_node(n[1], Fz=-2e4, case="LF3")
+    m.add_combination("K1", {"LF1": 1.0, "LF2": 1.0})
+    m.add_combination("K3", {"LF3": 1.0})
+    fl = m.fatigue_loads
+    fl["V_leer"] = FatigueLoad("V_leer", "", None, folge=["LF1", "LF2"], wiederholungen=1e5)
+    fl["V_alt"] = FatigueLoad("V_alt", "LF3", None, folge=["LF1", "LF2"], wiederholungen=1e5)
+    fl["V_fehlt"] = FatigueLoad("V_fehlt", "LF1", None, folge=["LF1", "LF3"], wiederholungen=1e5)
+    # case_max wie die Maske ihn setzt: den ersten Eintrag der Liste
+    fl["V_kombi"] = FatigueLoad("V_kombi", "LF1", None, folge=["LF1", "K1"], wiederholungen=1e5)
+    fl["V_kombi_weg"] = FatigueLoad("V_kombi_weg", "LF1", None, folge=["LF1", "K3"],
+                                    wiederholungen=1e5)
+    # case_min liefert die Maske auch im Modus Verlauf (gui/dialogs.py
+    # values(), gui/main.py add_fatigue_load); beide Glieder liegen in der
+    # Stellung
+    fl["V_cmin"] = FatigueLoad("V_cmin", "LF1", "LF3", folge=["LF1", "LF2"], wiederholungen=1e5)
+    fl["Z"] = FatigueLoad("Z", "LF2", "LF1")
+    fl["Z3"] = FatigueLoad("Z3", "LF3", None)
+    check("Grundmodell ohne Fehler", not [z for z in m.check() if z.startswith("FEHLER")])
+    log = []
+    m2 = Stellung("S", 0.0, faelle=["LF1", "LF2"]).modell(m, log)
+    check("Verlauf mit vorhandenen Gliedern bleibt, auch mit case_max '' oder veraltet",
+          {"V_leer", "V_alt"} <= set(m2.fatigue_loads), str(sorted(m2.fatigue_loads)))
+    check("Verlauf mit vorhandenen Gliedern bleibt, auch mit case_min außerhalb der Stellung",
+          "V_cmin" in m2.fatigue_loads, str(sorted(m2.fatigue_loads)))
+    check("Verlauf mit einer Kombination der Stellung als Glied bleibt",
+          "V_kombi" in m2.fatigue_loads and "K1" in m2.combinations,
+          f"{sorted(m2.fatigue_loads)}, Kombinationen {sorted(m2.combinations)}")
+    check("Verlauf mit fehlendem Glied (Lastfall oder entfallene Kombination) "
+          "entfällt, zwei Zustände wie bisher",
+          sorted(m2.fatigue_loads) == ["V_alt", "V_cmin", "V_kombi", "V_leer", "Z"],
+          str(sorted(m2.fatigue_loads)))
+    check("das Stellungsmodell ist ohne Fehler (veraltetes case_max oder case_min stört nicht)",
+          not [z for z in m2.check() if z.startswith("FEHLER")],
+          str([z for z in m2.check() if z.startswith("FEHLER")]))
+    zeile = [z for z in log if "Ermüdungslasten" in z]
+    check("das Protokoll nennt genau die entfallenen",
+          len(zeile) == 1 and zeile[0].split(": ")[-1].split(", ") == ["V_fehlt", "V_kombi_weg", "Z3"],
+          str(zeile))
+
+
 # --------------------------------------------------------------------------
 # 4) DIN 19704: Lastfallklassen und Kombinationen
 # --------------------------------------------------------------------------
@@ -351,7 +447,7 @@ def test_ztv_ing():
 
 def main():
     for t in (test_drehung, test_stellungen, test_reihe, test_meldung_nach_allen_stellungen,
-              test_din19704, test_ztv_ing):
+              test_eta_ohne_nachweis, test_ermuedung_in_stellung, test_din19704, test_ztv_ing):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
