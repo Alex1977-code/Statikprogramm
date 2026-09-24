@@ -7337,7 +7337,7 @@ Gemessen, t durch den Median der Nachbardicke:
 | Hohlraum | t / Dicke der Nachbarn |
 |---|---|
 | Lücken des freien Vernetzers (dieselben 30 Gruppen), als ganze Gruppe | 0 bis 0,482 |
-| Stücke solcher Gruppen: zerfällt eine Gruppe an einer Kante mit mehr als zwei Seiten in geschlossene Stücke, wird jedes für sich beurteilt (Platte mit Bohrung ohne „intelligent“, 12 925 tet4, Modell aus test_mantellinie_der_bohrung: je 4 Seiten 0,579 und 0,570, 6 Seiten 0,507) | bis 0,579 |
+| Stücke solcher Gruppen: zerfällt eine Gruppe an einer Kante mit mehr als zwei Seiten in geschlossene Stücke, wird jedes für sich beurteilt (Platte mit Bohrung ohne „intelligent“, 12 925 tet4, Modell aus test_mantellinie_der_bohrung: sechs Haufen, geteilt in 12 Stücke; die beiden dicksten aus zwei verschiedenen Haufen, je 4 Seiten, 0,579 und 0,570, eines aus 6 Seiten 0,507) | 0,074 bis 0,579 |
 | fehlender Sechsflächner, gleichmäßig 100 × 100 × 100 bis 500 mm und abgestuft wie oben | 1,00 bis 1,01 |
 | fehlender Kuhn-Tetraeder, gleichmäßig und abgestuft wie oben | 0,865 bis 1,07 |
 | verdrehter Sechsflächner, gleichmäßig und abgestuft wie oben | 0,21 bis 2,7 |
@@ -7348,7 +7348,20 @@ Die Grenze 0,65 liegt zwischen 0,579 und 0,865 (Faktor 1,12 und 1,33); nach
 unten bestimmen den Abstand die Stücke der zweiten Zeile, nicht die ganzen
 Gruppen (gemessen am 23.09.2026 an jeder Abnahme der beiden Suiten und an je
 einer Abnahme nach jedem freien Vernetzen darin — test_mantellinie_der_bohrung
-nimmt sein Netz selbst nicht ab). Die
+nimmt sein Netz selbst nicht ab). Bis zum 23.09.2026 stand hier 0,482 und
+Faktor 1,35: gemessen an den ganzen Gruppen, nicht an den Stücken, in die die
+Abnahme einen Haufen teilt (siehe unten). Beide Enden legt `test_diagnose`
+fest: die Platte mit Bohrung ohne „intelligent“ als WARNUNG Riss (mit der
+Grenze 0,58 noch so, mit 0,57 dazu „FEHLER Seiten im Inneren 8“) - geprüft
+am Netz des Vernetzers vom Stand ec6448c, das dafür in
+`tests/netz_platte_bohrung_ec6448c.npz` festgehalten ist. Der Vernetzer vom
+23.09.2026 gibt für dieselbe Platte ein anderes Netz (13 708 tet4), an dem er
+selbst eine verbliebene Lücke im Netzrand meldet und die Abnahme „FEHLER
+Seiten im Inneren 376“ (gemessen 24.09.2026, ebenso mit h 0,04 und 0,06 m);
+an ihm ist die Grenze nicht festzulegen. Das andere Ende ist der
+fehlende Kuhn-Tetraeder mit 0,865 (abgestuft 50:1, Element 710, t/L 0,79 %)
+als FEHLER. Ebenso, dass der Median zählt und nicht der dickste oder dünnste
+Nachbar. Die
 drei flachen Tetraeder der letzten Zeile liegen unter 0,65 und unter 5 % t/L;
 einzeln entfernt war jeder ein Riss (siehe die Kehrseite unten). Allein
 trägt auch Bedingung 3 nicht: An der Platte mit Bohrung sind die kleinsten
@@ -7566,6 +7579,97 @@ die Aussparung; die Bilanz sind 1,17e-5 m³. Keine Lücke ist die Gruppe,
   der FEHLER; `test_abnahme_luecke_duenn_mit_volumen`);
 * wenn sich kein p₀ findet: Die Schleife um einen Körper, den doppelte Knoten
   zerschneiden, läuft über gegenüberliegende Flächen.
+
+Jede dieser Regeln entscheidet in `test_diagnose` mindestens einen Fall
+allein. Gemessen mit Verfälschungen in `luecke()` bzw. `_schliesspunkt` am
+Stand 84b41ea (121 Prüfungen, 24.09.2026): ohne „verdreht“ bestehen 117,
+ohne „doppelte Knoten“ 120, ohne „kein Volumen“ 120 und ohne „kein p₀“ 120.
+„Kein p₀“ ist dabei nur als Ganzes festgelegt: Von ihren zwei Abweisungen,
+„kein gemeinsamer Punkt“ und „Fächer nicht auf der Hülle“, fängt jede die
+Kerbe unten auch allein, und fehlt nur eine von beiden, besteht die Suite
+ganz (121). Die alte Suite (ec6448c, 112 Prüfungen) legte nur die ersten
+beiden Regeln fest: ohne „verdreht“ bestanden 109, ohne „doppelte Knoten“
+111; ohne „kein Volumen“ oder ohne „kein p₀“ bestand sie ganz. Gemessen am
+23.09.2026:
+
+* Eine Kerbe durch die ganze Dicke am Rand einer Platte (1 × 1 × 0,125 m,
+  16 × 16 × 2 Sechsflächner, zwei Zellen entfernt) hat eine Schleife über
+  Deckel, Boden und Seitenfläche, deren Ebenen keinen gemeinsamen Punkt
+  haben: FEHLER „Seiten im Inneren 6“. Ohne die beiden Abweisungen „kein
+  gemeinsamer Punkt“ und „Fächer nicht auf der Hülle“ wäre sie eine Lücke
+  von 3,255e-4 m³, zwei Drittel der fehlenden 4,883e-4 m³, weil der Fächer
+  von p₀ in halber Höhe durch den Körper läuft. Jede der beiden
+  Abweisungen allein fängt diesen Fall. An dünnen Platten kann eine Kerbe
+  durch die ganze Dicke auch eine Lücke sein oder gar nicht gemeldet
+  werden. Am Quelltext entscheiden drei Stellen nacheinander.
+  (1) `_abnahme_volumenbilanz` zählt eine Seite zur Randfläche, wenn ihr
+  Schwerpunkt höchstens `ABNAHME_HUELLABSTAND` mal ihren Durchmesser neben
+  der Ebene liegt. Eine Kerbseite der obersten oder untersten Lage
+  (Zellweite w, Lagendicke t_L) liegt t_L/2 neben Deckel bzw. Boden, und
+  t_L/2 ≤ 0,01·√(w² + t_L²) gilt für w ≥ 49,99·t_L (gemessen an einer
+  Lage mit w = 250 mm, Kerbe 0,5 × 0,5 m: bei w/t_L 49 eine Lücke, bei
+  50,5 und 51 kein Befund). Solche Seiten kommen nicht zu den Seiten im
+  Inneren; liegen alle Kerbseiten so, bleibt nur die Volumenbilanz.
+  (2) Die übrigen Seiten bilden eine Gruppe; sie ist geschlossen, wenn
+  die Summe der Beträge der Flächenvektoren ihrer
+  Randschleifen höchstens `ABNAHME_RISS_UFER` = 10 % ihrer Fläche ist. Bei
+  einer rechteckigen Kerbe heben sich die Anteile der Schleife oben und
+  unten auf, es bleibt die Öffnung in der Seitenfläche, b·t, gegen die
+  Fläche (b + 2a)·t (Breite b, Tiefe a, t die Dicke der Lagen mit Seiten
+  im Inneren; gemessen war der Rand in allen Fällen unten genau b·t):
+  geschlossen für a > 4,5·b, dann FEHLER „Seiten im Inneren“, ohne dass
+  `_schliesspunkt` gefragt wird. Bei a = 4,5·b stehen beide Seiten
+  gleich; gemessen war die Kerbe 0,1 × 0,45 m offen und eine Lücke von
+  1,5e-4 m³. (3) Eine offene Gruppe hat einen Schließpunkt, wenn die
+  halbe Dicke höchstens die Toleranz von `luecke()` ist (1 % des Größeren
+  aus der Raumdiagonale des
+  Quaders um die Schleife und der längsten Seitenkante der Gruppe); dann
+  gilt p₀ in halber Dicke als Punkt auf allen Ebenen. Gemessen am
+  24.09.2026 mit `_platte` aus `tests/test_diagnose.py`, Kerbe am
+  Rand y = 0: Blech 4 × 4 × 0,005 m aus 80 × 80 × 1 (w = 50 mm), Kerbe 0,2 × 0,2 m
+  (2,0e-4 m³): „WARNUNG Lücke im Netzrand 1,333e-4 m³“, zwei Drittel. Im
+  selben Blech offen und eine Lücke: Kerbe 0,1 × 0,3 m (Rand 14,29 %,
+  1,0e-4 von 1,5e-4 m³) und 0,1 × 0,4 m (11,11 %, 1,333e-4 m³);
+  geschlossen und FEHLER, obwohl die halbe Dicke (2,5 mm) unter der
+  Toleranz liegt: 0,1 × 0,5 m (9,09 %, „Seiten im Inneren 22“) und
+  0,05 × 0,3 m (7,69 %, 13). Blech 2 × 2 × 0,005 m (40 × 40 × 1), Kerbe
+  0,1 × 0,1 m: Toleranz 1,42 mm, FEHLER „Seiten im Inneren 6“. Platte
+  10 × 10 × 0,01 m, Kerbe 0,5 × 0,5 m (2,5e-3 m³, Toleranz 7,07 mm): bei
+  w = 125 mm (80 × 80) mit einer, zwei und drei Lagen je Lücke
+  1,667e-3 m³ (w/t_L 12,5 bis 37,5; 12, 24 bzw. 36 Kerbseiten im
+  Inneren); bei w = 250 mm (40 × 40) mit einer Lage ebenso (w/t_L 25),
+  mit zwei Lagen kein Befund (w/t_L 50, Schwerpunkt 2,5 mm neben der Ebene
+  bei 2,5005 mm Toleranz), mit drei Lagen Lücke 5,556e-4 m³ (nur die sechs
+  Seiten der mittleren Lage im Inneren, zwei Drittel ihrer 8,333e-4 m³);
+  bei w = 500 mm (20 × 20) mit einer, zwei und drei Lagen kein Befund
+  (eine Lage: 5 mm bei 5,001 mm Toleranz; bei drei Lagen die mittlere
+  Lage 5 mm neben Deckel und Boden bei 5,0001 mm). Die Zahl der Lagen
+  wirkt nur über den Abstand der Seitenschwerpunkte zu Deckel und Boden; den
+  Ausschlag gibt dieser Abstand gegen 1 % des Seitendurchmessers, also die
+  Zellweite gegen die Lagendicke. Kerbe 0,25 × 0,25 m bei w = 250 mm, eine
+  Lage: Toleranz 3,54 mm, FEHLER „Seiten im Inneren 3“. Mit
+  `ABNAHME_HUELLABSTAND` 0,001 statt 0,01 waren es bei w = 250 mm und
+  einer, zwei und drei Lagen FEHLER „Seiten im Inneren“ (6, 12, 18).
+* Ein Loch durch die ganze Dicke mitten in derselben Platte hat zwei
+  Schleifen, im Deckel und im Boden: Lücke 4,883e-4 m³, das Volumen der
+  zwei Zellen. Ohne den Fächer der zweiten Schleife wären es 3,255e-4 m³.
+* Eine Schleife im Deckel des L-Prismas, deren eine Kante über die
+  Aussparung läuft (Kantenmitte 50 mm neben dem Deckel), hat keinen
+  Schließpunkt. Das entscheidet allein die Regel „jede Kante in einer
+  Randfläche“: Ohne sie läge p₀ bei (0,34 | 1,04 | 0,4) auf dem Deckel, und
+  die Schwerpunkte der fünf Fächerdreiecke lägen auf dem Deckel (Abstand 0).
+  Nur diese Schwerpunkte misst die Abweisung „Fächer nicht auf der Hülle“,
+  sie ließe die Schleife also durch. Der Fächer selbst liegt nicht ganz auf
+  dem Deckel: Zwei seiner Dreiecke reichen über die Aussparung, bis 50 mm
+  neben die Hülle bei einer Toleranz von 16,9 mm (gemessen 24.09.2026).
+* Den verdrehten Sechsflächner am Rand (abgestuft 5:1, Element 55) hält
+  jede der beiden Regeln allein: die Erkennung des verdrehten Elements auch
+  mit der Dickengrenze 0,02, die Dünnregel ohne die Erkennung. Diese knapp:
+  Das Ufer hat t/L 4,845 %, mit einer Dickengrenze bis 0,04845 wäre es eine
+  Lücke von 1,212e-4 m³.
+* Doppelt sind Knoten bis `ABNAHME_FUGENNAEHE` = 10⁻⁶ m Abstand, nicht nur
+  deckungsgleiche: Ein innerer Kuhn-Tetraeder des 8 × 8 × 8-Netzes, an einem
+  Knoten 5 · 10⁻⁷ m daneben losgelöst, bleibt FEHLER „Seiten im Inneren 6“.
 
 Die Lücken eines Körpers sind eine WARNUNG mit Ort (Mitte der größten
 Schleife), Volumen und Anteil am Körper. Ein FEHLER werden sie, wenn sie

@@ -2098,19 +2098,24 @@ ABNAHME_RISS_DICKE = 0.05
 #:     wird aber nicht immer die ganze Gruppe: zerfaellt sie an einer Kante
 #:     mit mehr als zwei Seiten in geschlossene Stuecke, wird jedes Stueck
 #:     fuer sich gemessen (_gruppen_im_inneren), und die Stuecke reichen
-#:     hoeher - bis 0,579 an der Platte mit Bohrung ohne „intelligent"
-#:     (12 925 tet4, Modell aus test_mantellinie_der_bohrung: zwei Stuecke
-#:     aus je 4 Seiten 0,579 und 0,570, eines aus 6 Seiten 0,507). Gemessen
-#:     am 23.09.2026 an jeder Abnahme beider Suiten und an je einer Abnahme
-#:     nach jedem freien Vernetzen darin (die Suite nimmt dieses Netz selbst
-#:     nicht ab);
+#:     hoeher - an der Platte mit Bohrung ohne „intelligent" (12 925 tet4,
+#:     Modell aus test_mantellinie_der_bohrung: sechs Haufen in 12 Stuecke
+#:     geteilt) 0,074 bis 0,579, die beiden dicksten (0,579 und 0,570, je
+#:     aus 4 Seiten) aus zwei verschiedenen Haufen, eines aus 6 Seiten
+#:     0,507. Gemessen am 23. und 24.09.2026 an jeder Abnahme beider Suiten
+#:     und an je einer Abnahme nach jedem freien Vernetzen darin (die Suite
+#:     nimmt dieses Netz selbst nicht ab);
 #:   - fehlender Sechsflaechner (gleichmaessig 100 x 100 x 100 bis 500 mm und
 #:     abgestuft 5:1, 20:1, 50:1, je 512 innere Zellen): 1,00 bis 1,01;
 #:   - fehlender Kuhn-Tetraeder (gleichmaessig 100 x 100 x 100 bis 300 mm,
 #:     abgestuft 5:1, 20:1, 50:1): 0,865 bis 1,07.
 #:
 #:   Die Grenze liegt dazwischen, Abstand Faktor 1,12 nach unten (0,65 zu
-#:   0,579) und 1,33 nach oben. Allein traegt auch dieses Mass nicht: an der Platte mit
+#:   0,579) und 1,33 nach oben (bis zum 23.09.2026 stand hier 1,35 nach
+#:   unten, gemessen an den ganzen Gruppen statt an den Stuecken). Beide
+#:   Enden legt test_diagnose fest: mit 0,57 wird die Platte mit Bohrung ein
+#:   FEHLER, mit 0,87 der fehlende Kuhn-Tetraeder mit 0,865 ein Riss
+#:   (gemessen 23.09.2026). Allein traegt auch dieses Mass nicht: an der Platte mit
 #:   Bohrung sind die kleinsten fehlenden Tetraeder kleiner als ihre
 #:   Nachbarn (Median 0,55 bis 1,34) - dort trennt t/L.
 ABNAHME_RISS_NACHBAR = 0.65
