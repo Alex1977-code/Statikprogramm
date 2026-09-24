@@ -3621,7 +3621,7 @@ def _ermuedungslasten_aus_fat(m: Model, log: list) -> None:
                    "RFEM). Die Datei führt keine Lastspielzahlen: es gilt die globale "
                    f"Lastspielzahl ({dezimal(m.design.ermuedung_lastspiele)}, "
                    "Nachweise → Konfiguration), "
-                   "je Last im Dialog Ermüdungslast überschreibbar - zu bestätigen.")
+                   "je Last in der Maske Ermüdungslasten überschreibbar - zu bestätigen.")
     if einzeln:
         C.say(log, f"  {len(einzeln)} davon haben nur einen Zustand und werden gegen den "
                    "Nullzustand angesetzt (ein Spiel): " + ", ".join(einzeln[:8])

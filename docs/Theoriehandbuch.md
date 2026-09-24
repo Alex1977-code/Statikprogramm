@@ -3325,6 +3325,26 @@ jedem der vier Eckpunkte des Querschnitts; maßgebend ist der größte Wert, und
 der Ort steht im Nachweis. Die Übersichtstabelle „größte Schwingbreite je
 Ermüdungslast" bleibt daneben stehen — als Übersicht, nicht als Summand.
 
+**Palmgren-Miner über das Lastkollektiv.** Jede Ermüdungslast ist eine
+Zeile z des Kollektivs, und jede Zeile liefert am Ort x Stufen i mit der
+Schwingbreite Δσ_z,i(x) und der Spielzahl n_z,i. Summiert wird über **alle**
+Zeilen und Stufen am selben Ort:
+
+  D(x) = Σ_z Σ_i n_z,i / N_R(Δσ_z,i(x)),  maßgebend max_x D(x) ≤ 1.
+
+Ort heißt beim Stab jede Nachweisstelle mit ihren vier Eckpunkten, beim
+Volumen jeder Knoten bzw. jedes Element (Regel `ermuedung_volumen`). Die
+Spielzahl einer Zeile mit zwei Zuständen ist ihr n. Beim Verlauf ist es die
+Spielzahl der gezählten Stufe mal die Durchläufe. Die **eigene Zahl einer
+Zeile ersetzt die globale Lastspielzahl** (Nachweise → Konfiguration), sie
+kommt nicht dazu. Die Reihenfolge der Zeilen spielt keine Rolle; die lineare
+Summe kennt keinen Reihenfolgeeinfluss. Soll jeder Lastfall seine eigene
+Lastspielzahl bekommen, ist das eine Zeile je Lastfall gegen den
+Nullzustand, jede mit ihrem n (Maske Ermüdungslasten, „Zeile je
+Lastfall…“). Geprüft am Kragarm IPE 200 (Kerbfall 71): zwei Zeilen am
+selben Stab ergeben D = 2,83695, die Einzelrechnungen 2,37999 und 0,456958,
+zusammen also dasselbe (`tests/test_ermuedungsmaske.py`).
+
 #### 5.5-1 Zählverfahren: aus dem Verlauf wird ein Kollektiv (Anhang A)
 
 Zwei Zustände reichen, solange die Beanspruchung zwischen zwei Zuständen

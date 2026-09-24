@@ -26,7 +26,7 @@ from ..model import (Model, Material, Section, ShellProp, DOF_NAMES, Member, GRU
 from .. import solver, mesher, parallel, supports, __version__
 from .. import passungen as pss
 from .dialogs import (NumEdit, row, MaterialDialog, SectionDialog, LoadCaseDialog,
-                      CombinationDialog, AutoCombinationDialog, FatigueLoadDialog, MemberDialog,
+                      CombinationDialog, AutoCombinationDialog, MemberDialog,
                       DesignSettingsDialog, ContactPairDialog, ImportDialog, ReportDialog,
                       SupportNonlinearDialog, JointDialog,
                       VerformungsgrenzeDialog, BeulfeldDialog,
@@ -36,6 +36,7 @@ from . import dialogs as dg
 from .worker import SolveWorker
 from . import ribbon as rib
 from . import masken as msk
+from .ermuedungsmaske import Ermuedungsmaske
 from . import tabellen as tab
 
 
@@ -3682,8 +3683,9 @@ class MainWindow(QtWidgets.QMainWindow):
         g.klein("Lastfälle nach DIN 19704…", self.maske_din19704_lastfaelle,
                 hinweis="Stahlwasserbau: die üblichen Lastfälle (Eigengewicht, Wasserdruck, Wind, "
                         "Temperatur, Eis, Betriebslast, Antrieb …) mit Einwirkungsart und Nummer anlegen")
-        g.klein("Ermüdungslast…", self.fatigue_load_dialog,
-                hinweis="Lastspiel für den Ermüdungsnachweis: Lastfälle für Ober- und Unterlast, Zyklenzahl")
+        g.klein("Ermüdungslasten…", self.maske_ermuedungslasten,
+                hinweis="Lastkollektiv für den Ermüdungsnachweis (Palmgren-Miner): je Zeile zwei "
+                        "Zustände oder ein Verlauf mit Lastspielzahl - rechts als Maske")
         g = r.gruppe("Lasten")
         g.gross("Knotenlast", "", self.maske_knotenlast, "",
                 "Knoten wählen, Kräfte und Momente eintragen", symbol="knotenlast")
@@ -4461,7 +4463,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     "bemassungen", "bemassung", "bemassung_neu",
                     "situationen", "situation", "situation_neu",
                     "generierer", "wasserdruck", "wasserdruck_neu", "wind", "wind_neu",
-                    "schweissnaehte", "schweissnaht", "schweissnaht_neu"}
+                    "schweissnaehte", "schweissnaht", "schweissnaht_neu",
+                    "ermuedungslasten", "ermuedungslast", "ermuedungslast_neu"}
 
     def _baum_geklickt(self, art: str, name: str):
         if art in self.SYSTEM_ARTEN:
@@ -7483,6 +7486,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.maske_wasserdruck()
         if zweigart == "schweissnaehte":
             return self.maske_schweissnaht()
+        if zweigart == "ermuedungslasten":
+            return self.maske_ermuedungslasten(neu=True)
         if zweigart == "bemassungen":
             return self.bemassung_neu("linear")
         if zweigart == "knoten":
@@ -7521,6 +7526,14 @@ class MainWindow(QtWidgets.QMainWindow):
     # Subsysteme und Situationen
     # ------------------------------------------------------------------
     def _baum_system_geklickt(self, art: str, name: str):
+        # Ein Klick im Baum ist nur die Folge einer Auswahl: die Tastatur
+        # bleibt im Baum (fokus=False, wie maske_erzeugen es beschreibt)
+        if art == "ermuedungslasten":
+            return self.maske_ermuedungslasten(fokus=False)
+        if art == "ermuedungslast":
+            return self.maske_ermuedungslasten(name=name, fokus=False)
+        if art == "ermuedungslast_neu":
+            return self.maske_ermuedungslasten(neu=True)
         if art in ("bemassungen", "bemassung_neu"):
             return self.bemassung_neu("linear")
         if art == "bemassung":
@@ -7922,6 +7935,7 @@ class MainWindow(QtWidgets.QMainWindow):
                "lastfall": f"Lastfall {name} samt seinen Lasten (Kombinationen und "
                            "Ermüdungslasten verlieren ihn)",
                "kombination": f"Kombination {name}",
+               "ermuedungslast": f"Ermüdungslast {name}",
                "werkstoff": f"Werkstoff {name}", "dicke": f"Dicke {name}"}.get(art)
         if was is None:
             return
@@ -7965,6 +7979,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 grund = "gibt es nicht"
             else:
                 del m.combinations[name]
+        elif art == "ermuedungslast":
+            if name not in m.fatigue_loads:
+                grund = "gibt es nicht"
+            else:
+                del m.fatigue_loads[name]
         elif art == "werkstoff":
             benutzt = (sum(1 for e in m.elements if e.mat == name)
                        + sum(1 for f in m.flaechen.values() if getattr(f, "material", "") == name)
@@ -11357,10 +11376,14 @@ class MainWindow(QtWidgets.QMainWindow):
         b8 = QtWidgets.QPushButton("Alle löschen"); b8.clicked.connect(self.clear_combinations)
         lay.addWidget(row(b5, b6, b7, b8))
 
-        lay.addWidget(QtWidgets.QLabel("<b>Ermüdungslasten</b> (zwei Zustände oder ein Verlauf)"))
-        self.tbl_fatl = QtWidgets.QTableWidget(0, 4)
-        self.tbl_fatl.setHorizontalHeaderLabels(["Name", "Beanspruchung", "Zählung", "Faktor"])
+        lay.addWidget(QtWidgets.QLabel("<b>Ermüdungslasten</b> (Lastkollektiv, Doppelklick = "
+                                       "bearbeiten in der Maske)"))
+        self.tbl_fatl = QtWidgets.QTableWidget(0, 5)
+        self.tbl_fatl.setHorizontalHeaderLabels(["Name", "Beanspruchung", "Lastspiele n",
+                                                 "Zählverfahren", "Schwingbeiwert"])
         self.tbl_fatl.horizontalHeader().setStretchLastSection(True)
+        self.tbl_fatl.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.tbl_fatl.itemDoubleClicked.connect(self._ermuedungslast_doppelklick)
         self.tbl_fatl.setMaximumHeight(110)
         lay.addWidget(self.tbl_fatl)
         b9 = QtWidgets.QPushButton("Neu…"); b9.clicked.connect(self.add_fatigue_load)
@@ -13500,9 +13523,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cb_g.blockSignals(False)
         self._fill(self.tbl_comb, [[c.name, c.typ, c.formula(), c.description]
                                    for c in m.combinations.values()])
-        self._fill(self.tbl_fatl, [[f.name, f.bezug(), getattr(f, "zaehlung", "") if f.folge
-                                    else "zwei Zustände", f"{f.factor:g}"]
+        from . import ermuedungsmaske as erm
+        # Dieselben Texte wie in der Maske: Lastspiele ausgeschrieben (bezug()
+        # schrieb „2e+06 Spiele“), das Zaehlverfahren im Klartext
+        self._fill(self.tbl_fatl, [[f.name, (f"Verlauf {erm.zustand_text(f)}" if f.folge else
+                                             f"{f.case_max} gegen {f.case_min or 'Nullzustand'}"),
+                                    erm.n_text(f, m), erm.zaehlung_text(f) if f.folge else "zwei Zustände",
+                                    erm.lastspiele_text(f.factor)]
                                    for f in m.fatigue_loads.values()])
+        # Eine offene Maske Ermuedungslasten zieht nach (Rueckgaengig, Lastfall
+        # geloescht oder umbenannt). Ihr Editor laedt neu, wenn seine Zeile weg
+        # oder das Modell getauscht ist (Rueckgaengig), sonst bleibt er stehen
+        # (Ermuedungsmaske._editor_nachziehen)
+        offen = getattr(getattr(self, "maskenrand", None), "maske", None)
+        if isinstance(offen, Ermuedungsmaske) and _lebt(offen):
+            offen.tabelle_fuellen()
         self._lastwahl_fuellen()
 
     def refresh_contact(self):
@@ -15860,9 +15895,6 @@ class MainWindow(QtWidgets.QMainWindow):
     def surface_support_dialog(self):
         self.add_surface_support()
 
-    def fatigue_load_dialog(self):
-        self.add_fatigue_load()
-
     def aktive_tabelle(self):
         """Die Datentabelle, die unten gerade vorn liegt (oder None)."""
         w = self.tab_unten.currentWidget() if hasattr(self, "tab_unten") else None
@@ -16411,51 +16443,35 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_all()
 
     def add_fatigue_load(self):
-        d = FatigueLoadDialog(self, self.model)
-        if d.exec():
-            name, cmax, cmin, n, f = d.values()
-            verlauf = d.art.currentIndex() == 1
-            folge = d.folge_namen() if verlauf else []
-            if verlauf:
-                # Die Zustaende eines Verlaufs stehen nur in der Folge. Bis zum
-                # 23.09.2026 kam hier der erste Eintrag der gesperrten Auswahl
-                # „Oberer Zustand“ als case_max mit (Hallenrahmen: 'Kran'): der
-                # Anschlussnachweis rechnete damit (D = 3,04294 statt 7,12871),
-                # und nach dem Loeschen von 'Kran' meldete die Modellpruefung
-                # einen FEHLER (Befund B067). Ein leeres Verlaufsfeld ergab
-                # still die Last „Kran gegen Nullzustand“.
-                cmax, cmin = "", None
-            unbekannt = [x for x in folge
-                         if x not in self.model.load_cases and x not in self.model.combinations]
-            if folge and unbekannt:
-                return self.error("Der Verlauf nennt Lastfälle, die es nicht gibt: "
-                                  + ", ".join(unbekannt))
-            # Eine oder-verknuepfte Ergebniskombination hat kein
-            # Einzelergebnis und fehlt darum im Nachweis (Model.check,
-            # model.ermuedungszustaende). Die Auswahl „Zwei Zustände“ bietet
-            # sie nicht an; das Textfeld des Verlaufs nahm sie bis zum
-            # 23.09.2026 an, gemeldet hat es erst die Modellpruefung vor der
-            # Rechnung (Befund B066).
-            taugt = set(self.model.ermuedungszustaende())
-            oder = [x for x in dict.fromkeys(folge) if x not in taugt and x in self.model.combinations]
-            if oder:
-                return self.error(
-                    "Der Verlauf nennt oder-verknüpfte Ergebniskombinationen: "
-                    + ", ".join(f"{x} ({len(self.model.combinations[x].alternativen)} Alternativen)"
-                                for x in oder)
-                    + ". Sie haben kein Einzelergebnis und fehlten sonst im Ermüdungsnachweis. "
-                      "Stattdessen die Lastfälle ihrer Alternativen in den Verlauf schreiben.")
-            if verlauf and len(folge) < 2:
-                return self.error("Ein Verlauf braucht mindestens zwei Lastfälle - "
-                                  "sonst gibt es nichts zu zählen.")
-            self.merken("Ermüdungslast")
-            fl = self.model.add_fatigue_load(
-                name or f"E{len(self.model.fatigue_loads)+1}", cmax, cmin, n, f)
-            if folge:
-                fl.folge = folge
-                fl.wiederholungen = n          # None = globale Lastspielzahl
-                fl.zaehlung = d.zaehlung.currentText()
+        """Register Lastfaelle „Neu…“: die Maske mit einer neuen Zeile.
+
+        Bis zum 24.09.2026 stand hier der modale Dialog „Ermüdungslast“,
+        der nur anlegen konnte. Seine Pruefungen (Verlauf ohne oder-EK, mit
+        mindestens zwei bekannten Gliedern, B066/B067) stehen jetzt in
+        ermuedungsmaske.pruefen, dazu doppelter Name, n <= 0, Beiwert <= 0."""
+        return self.maske_ermuedungslasten(neu=True)
+
+    def maske_ermuedungslasten(self, name: str = None, neu: bool = False, fokus: bool = True):
+        """Rechte Maske „Ermüdungslasten (Lastkollektiv)“: die Tabelle aller
+        Ermuedungslasten, darunter die Zeile ``name`` (oder eine neue)."""
+        maske = Ermuedungsmaske(lambda: self.model, aendern=self._ermuedung_aendern,
+                                protokoll=self.log.appendPlainText, auswahl=name, neu=neu)
+        return self.maske_erzeugen(maske, fokus=fokus)
+
+    def _ermuedung_aendern(self, was: str, fn):
+        """Jede Aenderung aus der Maske: Stand merken (Rueckgaengig), schreiben,
+        alles nachziehen (Tabelle, Modellbaum, Register)."""
+        self.merken(was)
+        try:
+            return fn()
+        finally:
             self.refresh_all()
+
+    def _ermuedungslast_doppelklick(self, item):
+        namen = list(self.model.fatigue_loads)
+        r = item.row() if item is not None else -1
+        if 0 <= r < len(namen):
+            self.maske_ermuedungslasten(name=namen[r])
 
     def remove_fatigue_load(self):
         r = self.tbl_fatl.currentRow()

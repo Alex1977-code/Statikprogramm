@@ -1484,17 +1484,23 @@ class Report:
             # None = globale Lastspielzahl der Nachweiseinstellungen (seit 11.09.2026);
             # ":.3g" auf None riss den Bericht am Drehlager (12.09.2026)
             from ..ec3.fatigue import _spiele, _wiederholungen
+            from ..model import ZAEHLVERFAHREN_TEXT, lastspiele_text
             ds = m.design
             for f in m.fatigue_loads.values():
                 if getattr(f, "folge", None):
                     w = getattr(f, "wiederholungen", 1.0)
-                    text = (f"{_wiederholungen(f, ds):.3g} (global)" if w is None
-                            else f"{float(w or 0.0):.3g}")
+                    text = (f"{lastspiele_text(_wiederholungen(f, ds))} (global)" if w is None
+                            else lastspiele_text(float(w or 0.0)))
+                    # Derselbe Klartext wie in der Maske; der Rueckfall ist
+                    # die Klassenvorgabe "spanne" (bis 24.09.2026 stand hier
+                    # "rainflow", obwohl FatigueLoad seit 11.09. "spanne" vorgibt)
+                    z = getattr(f, "zaehlung", "spanne") or "spanne"
                     rows.append([f.name, " → ".join(f.folge), text,
-                                 getattr(f, "zaehlung", "rainflow"), fmt(f.factor, 2)])
+                                 ZAEHLVERFAHREN_TEXT.get(z, z), fmt(f.factor, 2)])
                 else:
                     c = getattr(f, "cycles", 2e6)
-                    text = f"{_spiele(f, ds):.3g} (global)" if c is None else f"{float(c or 0.0):.3g}"
+                    text = (f"{lastspiele_text(_spiele(f, ds))} (global)" if c is None
+                            else lastspiele_text(float(c or 0.0)))
                     rows.append([f.name,
                                  f"{f.case_max} gegen {f.case_min or 'Nullzustand'}",
                                  text, "zwei Zustände", fmt(f.factor, 2)])

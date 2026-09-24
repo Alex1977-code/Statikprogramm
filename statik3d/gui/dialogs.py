@@ -397,85 +397,6 @@ class AutoCombinationDialog(QtWidgets.QDialog):
         f.addRow(buttons(self))
 
 
-class FatigueLoadDialog(QtWidgets.QDialog):
-    """Eine Ermuedungsbeanspruchung - auf zwei Wegen zu beschreiben.
-
-    **Zwei Zustaende**: der Lastwechsel pendelt zwischen oben und unten.
-    **Ein Verlauf**: eine Folge von Lastfaellen (Ueberfahrt, Oeffnungsvorgang);
-    daraus zaehlt Statik3D das Kollektiv selbst. Der zweite Weg ist der
-    ehrlichere, sobald mehr als zwei Zustaende vorkommen - die
-    Zwischenstufen tragen eigene Spiele bei, und die zaehlen mit.
-    """
-
-    def __init__(self, parent=None, model: Model = None):
-        super().__init__(parent)
-        self.setWindowTitle("Ermüdungslast (Lastwechsel oder Verlauf)")
-        self.name = QtWidgets.QLineEdit(f"E{len(model.fatigue_loads)+1}")
-        # Nur Zustaende mit Einzelergebnis: eine oder-verknuepfte
-        # Ergebniskombination hat keines (Model.ermuedungszustaende, Befund
-        # FE13) - als unterer Zustand wurde sie bis zum 22.09.2026 still zu
-        # sigma_min = 0. Reihenfolge wie bisher: Lastfaelle, dann Kombinationen.
-        taugt = set(model.ermuedungszustaende())
-        cases = [n for n in _namen(model.load_cases) + _namen(model.combinations)
-                 if n in taugt]
-        self.art = QtWidgets.QComboBox()
-        self.art.addItems(["Zwei Zustände", "Verlauf (Folge von Lastfällen)"])
-        self.cmax = QtWidgets.QComboBox(); self.cmax.addItems(cases)
-        self.cmin = QtWidgets.QComboBox(); self.cmin.addItems(["(Nullzustand)"] + cases)
-        self.cycles = NumEdit(float(model.design.ermuedung_lastspiele or 2e6), 100)
-        self.global_n = QtWidgets.QCheckBox("globale Lastspielzahl (Nachweise → Konfiguration)")
-        self.global_n.setChecked(True)
-        self.global_n.toggled.connect(lambda ein: (self.cycles.setEnabled(not ein and self.art.currentIndex() == 0),
-                                                  self.wdh.setEnabled(not ein and self.art.currentIndex() == 1)))
-        self.folge = QtWidgets.QLineEdit()
-        self.folge.setPlaceholderText("Lastfälle in zeitlicher Reihenfolge, z. B. LF0, LF1, LF2, LF1, LF0")
-        self.wdh = NumEdit(float(model.design.ermuedung_lastspiele or 2e6), 100)
-        self.zaehlung = QtWidgets.QComboBox(); self.zaehlung.addItems(["spanne", "rainflow", "reservoir"])
-        self.factor = NumEdit(1.0, 80)
-        f = QtWidgets.QFormLayout(self)
-        f.addRow("Name", self.name)
-        f.addRow("Art", self.art)
-        f.addRow("Oberer Zustand (Lastfall/Kombination)", self.cmax)
-        f.addRow("Unterer Zustand", self.cmin)
-        f.addRow(self.global_n)
-        f.addRow("Lastspiele n", self.cycles)
-        f.addRow("Verlauf (Lastfälle, durch Komma)", self.folge)
-        f.addRow("Wiederholungen des Verlaufs", self.wdh)
-        self.zaehlung.setToolTip(
-            "spanne: Schwingbreite Maximum minus Minimum über die Zustände, ein Spiel je "
-            "Wiederholung (wie die Ergebniskombination in RFEM)\n"
-            "rainflow / reservoir: Zählung einer echten Zeitfolge nach EN 1993-1-9, Anhang A")
-        f.addRow("Zählverfahren", self.zaehlung)
-        f.addRow("Faktor (z.B. dynamischer Beiwert)", self.factor)
-        f.addRow(buttons(self))
-        self.art.currentIndexChanged.connect(self._umschalten)
-        self._umschalten()
-
-    def _umschalten(self):
-        verlauf = self.art.currentIndex() == 1
-        eigene = not self.global_n.isChecked()
-        for w in (self.cmax, self.cmin):
-            w.setEnabled(not verlauf)
-        self.cycles.setEnabled(not verlauf and eigene)
-        for w in (self.folge, self.zaehlung):
-            w.setEnabled(verlauf)
-        self.wdh.setEnabled(verlauf and eigene)
-
-    def lastspiele(self):
-        """Eigene Lastspielzahl - None heisst: die globale gilt."""
-        if self.global_n.isChecked():
-            return None
-        return float(self.cycles.value() if self.art.currentIndex() == 0 else self.wdh.value())
-
-    def folge_namen(self) -> list:
-        return [t.strip() for t in str(self.folge.text() or "").split(",") if t.strip()]
-
-    def values(self):
-        cmin = self.cmin.currentText()
-        return (self.name.text().strip(), self.cmax.currentText(),
-                None if cmin.startswith("(") else cmin, self.lastspiele(), self.factor.value())
-
-
 # ==========================================================================
 class MemberDialog(QtWidgets.QDialog):
     """Nachweisparameter eines Stabes."""
@@ -577,7 +498,7 @@ class DesignSettingsDialog(QtWidgets.QDialog):
         f.addRow("γFf (Ermüdung)", self.gFf)
         self.lastspiele = NumEdit(float(getattr(ds, "ermuedung_lastspiele", 2e6) or 2e6), 100)
         self.lastspiele.setToolTip("gilt für jede Ermüdungslast ohne eigene Lastspielzahl "
-                                   "(Dialog Ermüdungslast: Haken „globale Lastspielzahl“)")
+                                   "(Maske Ermüdungslasten: Haken „globale Lastspielzahl“)")
         f.addRow("Lastspielzahl global (Ermüdung)", self.lastspiele)
         self.bezugsjahre = NumEdit(float(getattr(ds, "ermuedung_bezugsjahre", 0.0) or 0.0), 100)
         self.bezugsjahre.setToolTip("Bezugszeitraum der Lastspielzahlen in Jahren; 0 = ganze "

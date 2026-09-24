@@ -653,20 +653,25 @@ def test_mindestzustand_volumen_und_oder_ek():
     check("Auswahl der Zustaende: Lastfaelle und gewoehnliche Kombinationen, keine oder-EK",
           namen is not None and "EK_oder" not in namen
           and {"LF1", "LF2", "EK_summe"} <= set(namen), str(namen))
+    # Seit 24.09.2026 die rechte Maske Ermuedungslasten statt des Dialogs;
+    # dazu die Liste „verfügbare Zustände“ des Verlaufs.
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6 import QtWidgets
-    from statik3d.gui.dialogs import FatigueLoadDialog
+    from statik3d.gui.ermuedungsmaske import Ermuedungsmaske
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    maske = FatigueLoadDialog(None, m)
-    oben = [maske.cmax.itemText(i) for i in range(maske.cmax.count())]
-    unten = [maske.cmin.itemText(i) for i in range(maske.cmin.count())]
+    maske = Ermuedungsmaske(lambda: m, neu=True)
+    oben = [maske.oben.itemText(i) for i in range(maske.oben.count())]
+    unten = [maske.unten.itemText(i) for i in range(maske.unten.count())]
+    verf = [maske.verfuegbar.item(i).text() for i in range(maske.verfuegbar.count())]
     maske.deleteLater()
     app.processEvents()
     check("Maske: oberer Zustand ohne oder-EK, mit Lastfaellen und EK_summe",
           "EK_oder" not in oben and {"LF1", "LF2", "EK_summe"} <= set(oben), str(oben))
     check("Maske: unterer Zustand ohne oder-EK, Nullzustand zuerst",
-          "EK_oder" not in unten and unten[:1] == ["(Nullzustand)"]
+          "EK_oder" not in unten and unten[:1] == ["Nullzustand"]
           and {"LF1", "LF2", "EK_summe"} <= set(unten), str(unten))
+    check("Maske: verfügbare Zustände des Verlaufs ohne oder-EK",
+          "EK_oder" not in verf and {"LF1", "LF2", "EK_summe"} <= set(verf), str(verf))
 
     # (5) Ein Verlauf liest nur seine Glieder (fatigue.py: "if folge: ...
     # continue"). Ein case_max, das eine Verlaufs-Last aus der alten Maske
@@ -1519,55 +1524,62 @@ def _texte(aufrufe):
     return [str(c.args[0]) for c in aufrufe.call_args_list if c.args]
 
 
+def _maske_verlauf(m, text, n=None, meldungen=None):
+    """Eine Ermuedungslast im Modus Verlauf ueber das Hauptfenster anlegen:
+    MainWindow.add_fatigue_load (Register Lastfaelle „Neu…“) oeffnet die
+    echte Maske Ermuedungslasten (offscreen), der Verlauf wird als
+    Komma-Liste getippt, „Übernehmen“. Bis zum 24.09.2026 stand hier der
+    modale Dialog; die Aussagen der Tests bleiben dieselben.
+
+    ``n`` None = globale Lastspielzahl, sonst eigene Durchlaeufe.
+    Rueckgabe: (neue Last oder None, Maske)."""
+    import types
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6 import QtWidgets
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    G = _gui()
+    log = meldungen if meldungen is not None else []
+    s = types.SimpleNamespace(model=m, merken=lambda _was: None, refresh_all=lambda: None,
+                              maske_erzeugen=lambda mk, fokus=True: mk,
+                              log=types.SimpleNamespace(appendPlainText=log.append))
+    s._ermuedung_aendern = lambda was, fn: G.MainWindow._ermuedung_aendern(s, was, fn)
+    s.maske_ermuedungslasten = lambda **k: G.MainWindow.maske_ermuedungslasten(s, **k)
+    vorher = set(m.fatigue_loads)
+    mk = G.MainWindow.add_fatigue_load(s)
+    mk.art.setCurrentIndex(mk.art.findData("verlauf"))
+    mk.folge_text.setText(text)
+    mk.folge_text.textEdited.emit(text)
+    mk.zaehlung.setCurrentIndex(mk.zaehlung.findData("spanne"))
+    mk.global_n.setChecked(n is None)
+    if n is not None:
+        mk.n.setText(str(n))
+    mk.anwenden()
+    app.processEvents()
+    neue = [x for x in m.fatigue_loads if x not in vorher]
+    return (m.fatigue_loads[neue[0]] if neue else None), mk
+
+
 def test_maske_weist_oder_ek_im_verlauf_ab():
     """Befund B066 (23.09.2026): Die Eingabe einer Ermuedungslast als Verlauf
     (MainWindow.add_fatigue_load) wies nur unbekannte Namen ab; eine
     oder-verknuepfte Ergebniskombination nahm sie an. Gemeldet hat es erst
     die Modellpruefung vor der Rechnung („Zustand 'EK-oder' ist eine
     oder-verknüpfte Ergebniskombination …“). Die Auswahl „Zwei Zustände“
-    bietet sie gar nicht an (model.ermuedungszustaende). Hier der echte
-    add_fatigue_load mit einem Ersatz fuer den Dialog im Modus Verlauf."""
-    from unittest import mock
-    G = _gui()
-
-    class Dialog:
-        """Liefert, was FatigueLoadDialog im Modus Verlauf liefert."""
-        folge: list = []
-
-        def __init__(self, _parent, _model):
-            self.art = mock.MagicMock()
-            self.art.currentIndex.return_value = 1            # Verlauf
-            self.zaehlung = mock.MagicMock()
-            self.zaehlung.currentText.return_value = "spanne"
-
-        def exec(self):
-            return True
-
-        def folge_namen(self):
-            return list(Dialog.folge)
-
-        def values(self):
-            return ("", "LF1", None, None, 1.0)
-
-    def eingeben(m, folge):
-        Dialog.folge = folge
-        s = mock.MagicMock()
-        s.model = m
-        with mock.patch.object(G, "FatigueLoadDialog", Dialog):
-            G.MainWindow.add_fatigue_load(s)
-        return s
-
+    bietet sie gar nicht an (model.ermuedungszustaende). Seit 24.09.2026
+    ueber add_fatigue_load mit der echten Maske Ermuedungslasten."""
     m = _kragarm()
     _oder_ek(m, "EK-oder")
-    s = eingeben(m, ["LF1", "EK-oder"])
+    fl, mk = _maske_verlauf(m, "LF1, EK-oder")
+    meldung = mk.lbl_meldung.text()
     check("Verlauf mit oder-EK: die Eingabe meldet es",
-          any("EK-oder" in t and "oder-verknüpft" in t for t in _texte(s.error)), str(_texte(s.error))[:160])
-    check("… und legt keine Ermüdungslast an", not m.fatigue_loads, str(list(m.fatigue_loads)))
-    s = eingeben(m, ["LF1", "LF2", "LF3"])
+          "EK-oder" in meldung and "oder-verknüpft" in meldung, meldung[:160])
+    check("… und legt keine Ermüdungslast an", fl is None and not m.fatigue_loads,
+          str(list(m.fatigue_loads)))
+    fl, mk = _maske_verlauf(m, "LF1, LF2, LF3")
     check("Gegenprobe, Verlauf aus Lastfällen: angelegt, ohne Meldung",
-          len(m.fatigue_loads) == 1 and not _texte(s.error)
-          and list(m.fatigue_loads.values())[0].folge == ["LF1", "LF2", "LF3"],
-          f"{list(m.fatigue_loads)}, error {_texte(s.error)}")
+          len(m.fatigue_loads) == 1 and "übernommen" in mk.lbl_meldung.text()
+          and fl is not None and fl.folge == ["LF1", "LF2", "LF3"],
+          f"{list(m.fatigue_loads)}, Meldung {mk.lbl_meldung.text()!r}")
 
 
 def test_etikett_nachweise_nennt_die_ermuedung():
@@ -1617,50 +1629,21 @@ def test_maske_verlauf_ohne_zustaende():
     Kopfplatte K1 D = 3,04294 (Kran gegen null) statt 7,12871 (S gegen null).
     Und nach dem Loeschen von 'Kran' meldete die Modellpruefung einen FEHLER
     fuer eine Last, die 'Kran' gar nicht nennt. Geprueft ueber den echten
-    MainWindow.add_fatigue_load mit der echten Maske (offscreen, exec ersetzt).
+    MainWindow.add_fatigue_load mit der echten Maske (offscreen; seit
+    24.09.2026 die rechte Maske Ermuedungslasten statt des Dialogs).
     """
-    import importlib
-    import types
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6 import QtWidgets
     from statik3d import examples_lib
-    # das Modul, nicht die gleichnamige Startfunktion aus statik3d.gui
-    G = importlib.import_module("statik3d.gui.main")
-    from statik3d.gui.dialogs import FatigueLoadDialog
     from statik3d.joints import anschluss as A
     from statik3d.joints.templates import propose
-    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-
-    class Maske(FatigueLoadDialog):
-        """Die echte Maske im Modus Verlauf, eigene Wiederholungen 5e5."""
-        text = ""
-
-        def __init__(self, _parent, model):
-            super().__init__(None, model)
-            self.art.setCurrentIndex(1)
-            self.folge.setText(Maske.text)
-            self.global_n.setChecked(False)
-            self.wdh.set(5e5)
-
-        def exec(self):
-            return True
 
     meldungen = []
 
     def neu(m, text):
-        Maske.text = text
-        vorher = set(m.fatigue_loads)
-        s = types.SimpleNamespace(model=m, error=meldungen.append,
-                                  merken=lambda _was: None, refresh_all=lambda: None)
-        alt = G.FatigueLoadDialog
-        G.FatigueLoadDialog = Maske
-        try:
-            G.MainWindow.add_fatigue_load(s)
-        finally:
-            G.FatigueLoadDialog = alt
-        app.processEvents()
-        neue = [n for n in m.fatigue_loads if n not in vorher]
-        return m.fatigue_loads[neue[0]] if neue else None
+        """Die echte Maske im Modus Verlauf, eigene Wiederholungen 5e5."""
+        fl, mk = _maske_verlauf(m, text, n=5e5)
+        if fl is None and mk.lbl_meldung.text():
+            meldungen.append(mk.lbl_meldung.text())
+        return fl
 
     def fehler(m):
         return [z for z in m.check() if z.startswith("FEHLER")]

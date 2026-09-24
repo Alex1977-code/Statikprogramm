@@ -419,14 +419,16 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "staebe": "Stab mit Nachweis", "geoflaechen": "Fläche",
                  "geokoerper": "Volumen", "schweissnaehte": "Schweißnaht",
                  "bemassungen": "Linearmaß", "lastfaelle": "Lastfall",
-                 "kombinationen": "Kombination", "werkstoffe": "Werkstoff", "dicken": "Dicke",
+                 "kombinationen": "Kombination", "ermuedungslasten": "Ermüdungslast",
+                 "werkstoffe": "Werkstoff", "dicken": "Dicke",
                  "gelenke": "Gelenk", "stellungen": "Stellung",
                  "kontaktbedingungen": "Kontaktbedingung",
                  "lager": "Knotenlager", "linienlager": "Linienlager", "flaechenlager": "Flächenlager"}
     #: Eintraege, die sich per Rechtsklick oder Entf loeschen lassen
     LOESCH_ARTEN = {"querschnitt", "knoten", "linie", "stabelement", "stab", "geoflaeche",
                     "geokoerper_einzeln", "subsystem", "layer", "unterlage", "situation", "wasserdruck", "wind",
-                    "schweissnaht", "bemassung", "lastfall", "kombination", "werkstoff", "dicke",
+                    "schweissnaht", "bemassung", "lastfall", "kombination", "ermuedungslast",
+                    "werkstoff", "dicke",
                     "gelenk", "stellung", "berichtseintrag", "kontaktbedingung",
                     "lager_einzeln", "linienlager_einzeln", "flaechenlager_einzeln"}
     #: Eintragsart -> Zweigart (fuer "Neu" aus einem Eintrag heraus)
@@ -438,6 +440,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                  "wasserdruck": "generierer", "wind": "generierer",
                  "schweissnaht": "schweissnaehte", "bemassung": "bemassungen",
                  "lastfall": "lastfaelle", "kombination": "kombinationen",
+                 "ermuedungslast": "ermuedungslasten",
                  "werkstoff": "werkstoffe", "dicke": "dicken",
                  "gelenk": "gelenke", "stellung": "stellungen", "berichtseintrag": "bericht",
                  "kontaktbedingung": "kontaktbedingungen",
@@ -1015,6 +1018,20 @@ class Modellbaum(QtWidgets.QTreeWidget):
                           name + (f": Situation {c.situation}" if getattr(c, "situation", "") else ""))
                          for name, c in model.combinations.items()], "kombination",
                     "kombinationen")
+        # Ermuedungslasten neben Lastfaellen und Kombinationen: bis zum
+        # 24.09.2026 fehlten sie im Baum ganz, und der Anwender fand das Menue
+        # nicht („wo definiere ich … die zuweisung zu den ermüdungslasten“).
+        # Reihenfolge wie in der Maske (dort mit ↑/↓ geordnet), nicht sortiert.
+        from .ermuedungsmaske import kurztext, n_text
+        fls = getattr(model, "fatigue_loads", {}) or {}
+        el = self._zweig(ew, "Ermüdungslasten", len(fls), "ermuedungslasten",
+                         hinweis="Lastkollektiv für den Ermüdungsnachweis (Palmgren-Miner: "
+                                 "D = Σ nᵢ / Nᵢ über alle Zeilen am selben Ort). Klick öffnet "
+                                 "die Maske; Rechtsklick: Neu, Löschen.")
+        self._liste(el, [(name, n_text(f, model), name, f"Ermüdungslast {name}: {kurztext(f, model)}")
+                         for name, f in fls.items()], "ermuedungslast", "ermuedungslasten",
+                    sortieren=False)
+        self._zweig(el, "+ Ermüdungslast anlegen", "", "ermuedungslast_neu", farbe=FARBEN["akzent"])
 
         # ---- Lastgenerierer -------------------------------------------------
         wds = getattr(model, "wasserdruecke", {}) or {}
