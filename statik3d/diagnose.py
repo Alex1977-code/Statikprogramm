@@ -1503,6 +1503,43 @@ ABNAHME_KNOTENNAEHE = 0.01
 #: Die Grenze liegt dazwischen, Faktor 2,4 ueber dem Spalt bei 30 mm und 1,9
 #: unter dem kleinsten Rest mit fehlendem Element.
 ABNAHME_HOHLRAUM_REST = 0.5
+#: Ursache offener Gruppen (_gruppen_im_inneren): „daneben" liegt ein anderer
+#: Knoten der Seiten im Inneren, wenn er naeher ist als dieser Anteil der
+#: kuerzeren der beiden kuerzesten Kanten an den Knoten. Gebraucht fuer zwei
+#: Fragen, beide nur an offenen Gruppen (dritte Gegenpruefung vom 24.09.2026):
+#:
+#: * ein Knoten, den nur ein Element benutzt, ist losgeloest nur, wenn ein
+#:   anderer Knoten daneben liegt (M1). Bis dahin genuegte der Knoten allein,
+#:   und eine Mulde an der Oberflaeche eines hex8-Netzes hiess „doppelte
+#:   Knoten": an ihrer einspringenden Kante benutzt nur die Zelle dahinter
+#:   den Knoten;
+#: * eine Seite hat eine Kopie aus eigenen Knoten, wenn jeder ihrer Knoten
+#:   einen anderen daneben hat und diese Knoten eine andere freie Seite
+#:   bilden (M2). Bis dahin hiess ein Koerper, den
+#:   um mehr als 1 % der Kante versetzte doppelte Knoten in einem
+#:   Tetraedernetz ganz durchtrennen, „Netzrand verfehlt die Randflaeche".
+#:
+#: Gemessen am 24.09.2026 (447a5f8), kleinster Abstand eines Knotens der
+#: Gruppe zu einem anderen Knoten durch diese Kante, im 8 x 8 x 8-Netz ueber
+#: 1 m (Kante 125 mm), Versatz 0,01 bis 30 mm in Richtung (0,6 | 0 | 0,8)
+#: bzw. (1 | 1 | 1)/Wurzel 3:
+#:
+#: - losgeloest an der Oberflaeche (Knoten in nur einem Element): hex8 27
+#:   an vier Huellknoten 8e-5 bis 0,274, die Eckzelle abgetrennt 0 bis 0,24,
+#:   Kuhn-Tetraeder 164 an drei Huellknoten (0,01 bis 2 mm) bis 0,016;
+#: - Koerper bei x = 0,5 durchtrennt, Kuhn-Tetraeder und hex8, ganz oder nur
+#:   unten (1 bis 30 mm): 0,008 bis 0,24;
+#: - Mulden in hex8 (L aus 3 Zellen, T aus 4, L zwei Lagen tief, L an der
+#:   Kante; der Knoten in nur einem Element liegt an der einspringenden
+#:   Kante): 1,0;
+#: - richtige Netze des eigenen Vernetzers, offene Gruppen ohne Knoten in nur
+#:   einem Element: U-Prisma h 0,3 1,0, Lochplatte r 0,1 1,0, Platte mit
+#:   Bohrung r 6 mm 0,80 bis 1,0, Stufe d 0,45 mm, t 0,02 m 0,27 - darum
+#:   entscheidet dort nicht die Naehe allein, sondern die Kopie einer ganzen
+#:   Seite (an der Stufe keine).
+#:
+#: Die Grenze liegt zwischen 0,274 und 1,0 (Faktor 1,8 und 2).
+ABNAHME_GEGENSTUECK = 0.5
 #: Windschiefe Randflaechen: eine freie Seite liegt darauf, wenn ihre Ecken
 #: nicht weiter danebenliegen als eine Sehne der **oertlichen** Weite H, und
 #: wenn sie in die Richtung der Flaeche zeigt (siehe _abnahme_volumenbilanz).
@@ -1778,7 +1815,9 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T,
     Luecken: [{"idx" (Stellen in F), "V", "ort", "element"}]. ``ursachen``
     nimmt je Seite im Inneren, die weder Riss noch Luecke ist, die Ursache
     auf ({Stelle in F: "verdreht" | "doppelt" | "haengend" | "hohlraum" |
-    "netzrand"}) - fuer den Text des FEHLERs (B040, B046). ``V_f``: Volumen
+    "netzrand" | "unbestimmt"}) - fuer den Text des FEHLERs (B040, B046;
+    „unbestimmt": offene Gruppen, deren Ursache sich nicht sicher bestimmen
+    laesst, dritte Gegenpruefung vom 24.09.2026, M1). ``V_f``: Volumen
     des eigenen Elements je Seite, fuer die Frage, ob ein losgeloester
     Bereich seinen Hohlraum ausfuellt (:data:`ABNAHME_HOHLRAUM_REST`).
     """
@@ -2047,7 +2086,44 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T,
         Gemessen am 24.09.2026: die Faelle oben heissen „doppelt 6; Hohlraum
         10" (auch bei 0 mm), „doppelt 6; Hohlraum 54", „Hohlraum" bzw.
         „haengend"; die Faelle der zweiten und dritten Fassung behalten ihre
-        Ursache (test_diagnose)."""
+        Ursache (test_diagnose).
+
+        Die vierte Fassung (447a5f8) behandelte so nur geschlossene Gruppen
+        (dritte Gegenpruefung vom 24.09.2026; 8 x 8 x 8-Netz, Kante 125 mm):
+
+        * M1: eine Mulde an der Oberflaeche eines hex8-Netzes mit
+          einspringender Kante (Zellen an z = 0 entfernt: L aus 3, T aus 4,
+          L zwei Lagen tief, L an der Kante x = 0) hiess „doppelte Knoten an
+          11 / 14 / 19 / 9 Seiten" (70614f8: „verdrehtes Element"). Den
+          Knoten an der einspringenden Kante benutzt nur die Zelle dahinter,
+          und ihre Kante dort traegt kein anderes Element. In
+          Kuhn-Tetraedern ist dieselbe Mulde eine Luecke im Netzrand.
+        * M2: ein Koerper, den eigene Knoten der Zellen x > 0,5 in
+          Kuhn-Tetraedern ganz durchtrennen, hiess ab 3 mm Versatz (2,4 %
+          der Kante) „Netzrand verfehlt die Randflaeche" mit dem Rat zum
+          Sweep: kein Knoten naeher als 1 %, keiner in nur einem Element,
+          und „netzrand" war der Rest jeder offenen Gruppe.
+
+        Darum jetzt fuer offene Gruppen: ein Knoten in nur einem Element
+        macht sie nur „doppelt", wenn ein anderer Knoten daneben liegt
+        (ABNAHME_GEGENSTUECK); verdreht heisst ein Element wie bei
+        geschlossenen nur, wenn seine einsame Kante die Diagonale einer
+        Nachbarseite ist; eine Seite mit einer Kopie aus eigenen Knoten
+        daneben macht sie „doppelt"; „netzrand" nur ohne diese Merkmale.
+        Bleibt eine einsame Kante oder ein Knoten in nur einem Element ohne
+        Knoten daneben, laesst sich die Ursache nicht sicher bestimmen:
+        „unbestimmt", der Text nennt die moeglichen. Gemessen am 24.09.2026:
+        die Mulden „unbestimmt" (Befund
+        gleich), der durchtrennte Koerper bei 3 bis 30 mm in beiden
+        Richtungen „doppelt", auch nur von unten eingerissen bei 10 und
+        30 mm; verdrehte hex8 an der Oberflaeche (0, 7, 9, 36, 63) bleiben
+        „verdreht", losgeloeste an der Oberflaeche bis 30 mm „doppelt", die
+        Netze des eigenen Vernetzers (U-Prisma, Platte mit Bohrung,
+        Lochplatte, Stufe) „netzrand". Verloren geht dabei der Deckel um
+        zwei Ecken an der Oberflaeche (8 x 8 x 8 und abgestuft 20:1, 32 bzw.
+        39 Faelle): vorher „verdreht", jetzt „unbestimmt" - seine
+        Seitenkanten laufen durch die Zellmitte, nicht ueber eine Diagonale,
+        und die einsame Kante allein trennt ihn nicht von der Mulde."""
         if ursachen is None:
             return
         in_luecke = np.zeros(m, bool)
@@ -2057,17 +2133,6 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T,
         rest_nr = [nr for nr, (idx, _zu) in enumerate(alle_gruppen) if not fertig[idx].all()]
         if not rest_nr:
             return
-        rest_zu = [alle_gruppen[nr][0] for nr in rest_nr if alle_gruppen[nr][1]]
-        verdreht_rest: set = set()
-        verdreht_quer: set = set()
-        if rest_zu and model is not None:
-            # auch der Hohlraum eines verdrehten Elements, der nicht duenn
-            # ist, heisst „verdreht" und nicht „Hohlraum" - bei geschlossenen
-            # Gruppen nur, wenn die einsame Kante die Diagonale einer
-            # Nachbarseite ist (verdreht_quer, siehe _verdrehte_elemente)
-            verdreht_rest = _verdrehte_elemente(
-                model, gruppen, els, {int(e) for idx in rest_zu for e in E[idx]}, huelle,
-                quer=verdreht_quer)
         # Ausrichtung je Gruppe: Summe (q - c) . S, S vom eigenen Element weg.
         # Positiv: die Seiten zeigen aus dem umschlossenen Raum hinaus, darin
         # liegen Elemente (3 mal ihr Volumen); negativ: ein Hohlraum.
@@ -2078,15 +2143,31 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T,
                 idx = alle_gruppen[nr][0]
                 fluss_g[nr] = float(np.einsum("ij,ij->", q[idx] - q[idx].mean(axis=0), S[idx]))
             return fluss_g[nr]
-        # Knoten in nur einem Element, die nicht an einer Ecke des Koerpers liegen
-        los_offen = set(einzeln)
-        ecken = huelle.get("ecken") if isinstance(huelle, dict) else None
-        if los_offen and ecken is not None and len(ecken):
+        # Je Knoten der Seiten im Inneren der naechste andere, wenn er naeher
+        # liegt als ABNAHME_GEGENSTUECK mal die kuerzere der beiden kuerzesten
+        # Kanten (sonst -1) - fuer die offenen Gruppen unten
+        daneben = np.full(len(nummern), -1, np.int64)
+        if len(nummern) > 1:
             from scipy.spatial import cKDTree
-            nr_l = np.array(sorted(los_offen))
+            d_nn, j_nn = cKDTree(P_kn).query(P_kn, k=2)
+            d_nn, j_nn = d_nn[:, 1], j_nn[:, 1]
+            nah = d_nn <= ABNAHME_GEGENSTUECK * np.minimum(kmin, kmin[j_nn])
+            daneben[nah] = nummern[j_nn[nah]]
+        # Knoten in nur einem Element, die nicht an einer Ecke des Koerpers liegen
+        einzeln_offen = set(einzeln)
+        ecken = huelle.get("ecken") if isinstance(huelle, dict) else None
+        if einzeln_offen and ecken is not None and len(ecken):
+            from scipy.spatial import cKDTree
+            nr_l = np.array(sorted(einzeln_offen))
             j = np.searchsorted(nummern, nr_l)
             d_e = cKDTree(ecken).query(P_kn[j])[0]
-            los_offen = {int(x) for x in nr_l[d_e > ABNAHME_KNOTENNAEHE * kmin[j]]}
+            einzeln_offen = {int(x) for x in nr_l[d_e > ABNAHME_KNOTENNAEHE * kmin[j]]}
+        # ... und von diesen die mit einem anderen Knoten daneben: losgeloest.
+        # Ohne Knoten daneben ist es auch die einspringende Kante einer Mulde
+        # (dritte Gegenpruefung vom 24.09.2026, M1: der Knoten (0,5|0,5|0) des
+        # 8 x 8 x 8-hex8-Netzes ohne die Zellen (3,3,0), (4,3,0), (3,4,0), der
+        # naechste Knoten eine ganze Kante weit weg)
+        los_offen = {x for x in einzeln_offen if daneben[np.searchsorted(nummern, x)] >= 0}
         knoten_g = [{int(x) for x in F[idx].ravel() if x >= 0} for idx, _zu in alle_gruppen]
 
         def los(nr):
@@ -2125,20 +2206,58 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T,
                 halbiert[nr] = _halbierte_kante(F, Xf, alle_gruppen[nr][0])
             return halbiert[nr]
 
+        # Seiten mit einer Kopie aus eigenen Knoten daneben (offene Gruppen,
+        # M2): jeder Knoten hat einen anderen daneben, und diese bilden eine
+        # andere freie Seite (an Dreiecken ist keiner davon ein Knoten der
+        # Seite selbst: die sind ueber Kanten verbunden, mindestens kmin
+        # lang). Die Naehe allein trennt nicht (Stufe des eigenen Vernetzers
+        # 0,27, siehe ABNAHME_GEGENSTUECK)
+        seiten_ii: set = set()
+
+        def kopie(nr):
+            if not seiten_ii:
+                seiten_ii.update(tuple(sorted(int(x) for x in F[i] if x >= 0)) for i in ii)
+            for i in alle_gruppen[nr][0]:
+                gg = [int(daneben[np.searchsorted(nummern, int(x))]) for x in F[i] if x >= 0]
+                if min(gg) >= 0 and tuple(sorted(gg)) in seiten_ii:
+                    return True
+            return False
+
+        # Reihenfolge: ein losgeloestes Element hat auch „verdrehte" Kanten
+        # (keine teilt es mit einem Nachbarn), und ein doppelter Knoten liegt
+        # auch auf der Seite des Nachbarn; der T-Stoss hat ebenso Kanten, die
+        # kein anderes Element hat (gemessen am T-Stoss in der Ecke, hex8:
+        # vier Elemente „verdreht")
         u_von: dict = {}
+        noch = []
         for nr in rest_nr:
-            idx, zu = alle_gruppen[nr]
-            # Reihenfolge: ein losgeloestes Element hat auch „verdrehte"
-            # Kanten (keine teilt es mit einem Nachbarn), und ein doppelter
-            # Knoten liegt auch auf der Seite des Nachbarn; der T-Stoss hat
-            # ebenso Kanten, die kein anderes Element hat (gemessen am T-Stoss
-            # in der Ecke, hex8: vier Elemente „verdreht")
             if los(nr) or gegen.get(nr) == "doppelt":
-                u = "doppelt"
+                u_von[nr] = "doppelt"
             elif gegen.get(nr) == "haengend" or geteilt(nr):
-                u = "haengend"
-            elif (verdreht_quer if zu else verdreht | verdreht_zu | verdreht_rest) & {
-                    int(e) for e in E[idx]}:
+                u_von[nr] = "haengend"
+            else:
+                noch.append(nr)
+        verdreht_rest: set = set()
+        verdreht_quer: set = set()
+        if noch and model is not None:
+            # auch der Hohlraum eines verdrehten Elements, der nicht duenn
+            # ist, heisst „verdreht" und nicht „Hohlraum" - nur, wenn die
+            # einsame Kante die Diagonale einer Nachbarseite ist
+            # (verdreht_quer, siehe _verdrehte_elemente). Seit der dritten
+            # Gegenpruefung vom 24.09.2026 (M1) auch bei offenen Gruppen: die
+            # einspringende Kante einer Mulde traegt nur noch ein Element.
+            # Nur fuer die Gruppen ohne Ursache bis hier: ueber alle Gruppen
+            # gefragt, brauchte _abnahme_volumenbilanz am hex8-Schachbrett
+            # 10 x 10 x 10 in einer Messung 6,79 bis 6,90 s statt 5,96 bis
+            # 6,00 s (447a5f8, je drei Laeufe abwechselnd); so ist in drei
+            # Messungen kein Unterschied zu sehen (24.09.2026)
+            verdreht_rest = _verdrehte_elemente(
+                model, gruppen, els, {int(e) for nr in noch for e in E[alle_gruppen[nr][0]]},
+                huelle, quer=verdreht_quer)
+        for nr in noch:
+            idx, zu = alle_gruppen[nr]
+            els_g = {int(e) for e in E[idx]}
+            if verdreht_quer & els_g:
                 u = "verdreht"
             elif zu and fluss(nr) > 0.0:
                 # Die Seiten zeigen aus dem umschlossenen Raum hinaus (S weist
@@ -2148,6 +2267,15 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T,
                 u = "doppelt"
             elif zu:
                 u = "hohlraum"
+            elif kopie(nr):
+                u = "doppelt"
+            elif (verdreht | verdreht_zu | verdreht_rest) & els_g or einzeln_offen & knoten_g[nr]:
+                # Eine einsame Kante, die keine Diagonale ist, oder ein Knoten
+                # in nur einem Element ohne Knoten daneben: so an der
+                # einspringenden Kante einer Mulde (M1), aber nicht davon zu
+                # trennen, ob ein Element anders verdreht oder weiter
+                # versetzt losgeloest ist
+                u = "unbestimmt"
             else:
                 u = "netzrand"
             u_von[nr] = u
@@ -2459,8 +2587,15 @@ _URSACHEN = (
     ("hohlraum", "ein Hohlraum im Netz (ringsum von Elementseiten umschlossen und zu dick "
                  "für einen Riss)"),
     ("netzrand", "der Netzrand verfehlt die Randfläche (die freien Seiten laufen durch den "
-                 "Körper, statt auf der Randfläche zu liegen; kein Element verdreht, kein "
-                 "Knoten doppelt oder hängend)"),
+                 "Körper, statt auf der Randfläche zu liegen; kein Element verdreht, kein Knoten "
+                 "hängend, keine doppelten Knoten und keine Seite, neben der eine Kopie aus "
+                 "eigenen Knoten liegt - gesucht bis zur halben Kantenlänge)"),
+    ("unbestimmt", "keine sicher bestimmte Ursache (möglich sind eine Mulde, wo an der "
+                   "Oberfläche Elemente fehlen - an ihrer einspringenden Kante trägt eine Kante "
+                   "nur noch ein Element und einen Knoten benutzt nur eines -, ein verdrehtes "
+                   "Element, dessen Kanten nicht über die Diagonalen der Nachbarseiten laufen, "
+                   "oder ein losgelöstes Element, dessen Knoten weiter als die halbe Kante "
+                   "versetzt sind)"),
 )
 #: Abhilfe, wenn der Netzrand die Randflaeche verfehlt (B046). Gemessen am
 #: 23.09.2026 auf dem Standardweg (mesher.modell_vernetzen): U-Prisma
@@ -2520,7 +2655,8 @@ def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
          (0,5 % des Koerpers), sonst FEHLER;
        * alles andere - verdrehtes Element, doppelte Knoten, haengende
          Knoten, Hohlraum im Innern, Netzrand, der die Randflaeche verfehlt:
-         FEHLER „Seiten im Inneren", mit der gefundenen Ursache im Text.
+         FEHLER „Seiten im Inneren", mit der gefundenen Ursache im Text,
+         oder „keine sicher bestimmte Ursache" mit den moeglichen.
 
        Steht eine Seite dagegen ueber die Huelle hinaus (eine abgeschnittene
        Ecke, eine Beule), ist es eine WARNUNG („Netzrand neben der Hülle").

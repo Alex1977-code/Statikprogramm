@@ -2573,6 +2573,233 @@ def test_abnahme_luecke_abhilfe_bei_gleicher_elementzahl():
               f"h 0,25: {n_gleich} tet4 ({n_gleich / n0:.2f}), h 0,15: {n} tet4 ({n / n0:.2f}) | {_kurz(bef)}")
 
 
+def _ohne8(zellen, kuhn=False):
+    """8 x 8 x 8-hex8-Netz über dem Würfel 1 x 1 x 1 m ohne die Zellen
+    ``zellen`` ({(i, j, l)}); ``kuhn``: danach in Kuhn-Tetraeder zerlegt."""
+    m, k = _gleichmaessig(1.0, 1.0, 1.0, 8)
+    weg = {_zelle8(*z) for z in zellen}
+    k.elemente = [e for e in k.elemente if e not in weg]
+    if kuhn:
+        hexe = [list(m.elements[e].nodes) for e in k.elemente]
+        m.elements.clear()
+        for c in hexe:
+            for t in _KUHN:
+                m.add_element("tet4", [int(c[x]) for x in t], "S235")
+        k.elemente = list(range(len(m.elements)))
+    return m, k
+
+
+def _schnitt8(v, richtung=(0.6, 0.0, 0.8), zmax=1.0, kuhn=True, a=1.0, n=8):
+    """hex8-Netz n x n x n über dem Würfel a x a x a; die Zellen mit x > a/2
+    (bei ``zmax`` < 1 nur die mit z < zmax·a) bekommen auf der Ebene x = a/2
+    eigene Knoten, um v in ``richtung`` (Einheitsvektor) versetzt - bei
+    zmax = 1 ist der Körper ganz durchtrennt, sonst reißt er von unten ein;
+    ``kuhn``: danach in Kuhn-Tetraeder zerlegt (Gegenprüfung vom 24.09.2026,
+    dritte Runde, g6_nb_diagnose/p4c_schnitt.py)."""
+    m, k = _gleichmaessig(a, a, a, n)
+    w = np.asarray(richtung, float)
+    neu = {}
+    for e in list(k.elemente):
+        el = m.elements[e]
+        c = m.nodes[el.nodes].mean(axis=0)
+        if not (c[0] > 0.5 * a and c[2] < zmax * a):
+            continue
+        nd = []
+        for x in el.nodes:
+            p = m.nodes[int(x)]
+            if abs(p[0] - 0.5 * a) < 1e-9 * a and (zmax >= 1.0 or p[2] < (zmax - 1e-9) * a):
+                if int(x) not in neu:
+                    neu[int(x)] = int(m.add_node(*(p + v * w)))
+                nd.append(neu[int(x)])
+            else:
+                nd.append(int(x))
+        el.nodes = nd
+    if kuhn:
+        _in_kuhn(m, k)
+    return m, k
+
+
+def test_abnahme_mulde_mit_einspringender_kante():
+    """Gegenprüfung vom 24.09.2026, dritte Runde, M1: Eine Mulde an der
+    Oberfläche eines hex8-Netzes mit einspringender Kante bekam die Ursache
+    „doppelte Knoten“, obwohl nichts losgelöst ist. Gemessen an 447a5f8 im
+    8 x 8 x 8-hex8-Netz (Kante 125 mm), nur Zellen an der Seite z = 0
+    entfernt: L aus 3 Zellen „doppelte Knoten an 11 Seiten“, T aus 4 an 14,
+    dasselbe L zwei Lagen tief an 19, L an der Kante x = 0 an 9 (70614f8:
+    „verdrehtes Element“). Den Knoten (0,5 | 0,5 | 0) benutzt nach dem
+    Entfernen nur noch die Zelle (4, 4, 0), und ihre senkrechte Kante dort
+    trägt kein anderes Element - beides galt an offenen Gruppen als sicheres
+    Zeichen. In Kuhn-Tetraedern ist dieselbe Mulde eine „Lücke im Netzrand“.
+
+    Jetzt gilt ein Knoten in nur einem Element an offenen Gruppen nur als
+    losgelöst, wenn ein anderer Knoten näher liegt als die halbe kürzeste
+    Kante (an der Mulde: eine ganze Kante), und verdreht heißt ein Element
+    dort wie an geschlossenen Gruppen nur, wenn seine einsame Kante die
+    Diagonale einer Nachbarseite ist. Was so übrig bleibt und nicht sicher zu
+    unterscheiden ist, heißt „keine sicher bestimmte Ursache“ und nennt die
+    möglichen - der FEHLER bleibt.
+    """
+    formen = (("L aus 3 Zellen", {(3, 3, 0), (4, 3, 0), (3, 4, 0)}, 11.0),
+              ("T aus 4 Zellen", {(3, 3, 0), (4, 3, 0), (5, 3, 0), (4, 4, 0)}, 14.0),
+              ("L aus 3 Zellen, zwei Lagen tief",
+               {(3, 3, 0), (4, 3, 0), (3, 4, 0), (3, 3, 1), (4, 3, 1), (3, 4, 1)}, 19.0),
+              ("L aus 3 Zellen an der Kante x = 0", {(0, 3, 0), (0, 4, 0), (1, 3, 0)}, 9.0))
+    for titel, zellen, zahl in formen:
+        m, k = _ohne8(zellen)
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        gef = _gefunden(bef)
+        sn = [b for b in bef if b.pruefung == "Seiten im Inneren"]
+        check(f"hex8, Mulde {titel} an z = 0: FEHLER {zahl:.0f}, keine sicher bestimmte Ursache",
+              [b.pruefung for b in bef] == ["Volumenbilanz", "Seiten im Inneren"] and sn[0].wert == zahl
+              and "keine sicher bestimmte Ursache" in gef and "Mulde" in gef and f"an {zahl:.0f} Seiten" in gef
+              and "doppelte Knoten (" not in gef and "ein verdrehtes Element (" not in gef
+              and "Netzrand verfehlt" not in gef and "sweepen" not in sn[0].text,
+              _kurz(bef) + " | " + gef[:160])
+        m, k = _ohne8(zellen, kuhn=True)
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        check(f"  Gegenprobe: dieselbe Mulde in Kuhn-Tetraedern - Lücke im Netzrand",
+              [b.pruefung for b in bef] == ["Volumenbilanz", "Lücke im Netzrand"], _kurz(bef))
+    # Gegenproben: Mulden ohne einspringende Kante bleiben Luecken
+    for titel, zellen in (("1 Zelle", {(3, 3, 0)}), ("2 Zellen in Reihe", {(3, 3, 0), (4, 3, 0)}),
+                          ("Block 2 x 2", {(3, 3, 0), (4, 3, 0), (3, 4, 0), (4, 4, 0)}),
+                          ("Eckzelle", {(0, 0, 0)})):
+        m, k = _ohne8(zellen)
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        check(f"  Gegenprobe: hex8, {titel} fehlt an z = 0 - Lücke im Netzrand, kein FEHLER Seiten im Inneren",
+              "Lücke im Netzrand" in [b.pruefung for b in bef]
+              and "Seiten im Inneren" not in [b.pruefung for b in bef], _kurz(bef))
+    # Gegenproben: verdrehte Sechsflaechner an der Oberflaeche bleiben
+    # „verdreht" - ihre einsame Kante ist die Diagonale einer Nachbarseite
+    for e in (0, 7, 9, 36, 63):
+        m, k = _gleichmaessig(1.0, 1.0, 1.0, 8)
+        _verdrehen(m, e)
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        gef = _gefunden(bef)
+        check(f"  Gegenprobe: hex8 {e} an der Oberfläche verdreht - verdrehtes Element",
+              [(b.stufe, b.pruefung) for b in bef] == [("FEHLER", "Seiten im Inneren")]
+              and "ein verdrehtes Element (" in gef and "sicher bestimmt" not in gef and "doppelte" not in gef,
+              _kurz(bef) + " | " + gef[:120])
+    # Gegenproben: an der Oberflaeche losgeloest und weit versetzt (bis 30 mm,
+    # 24 % der Kante) bleibt „doppelte Knoten" - der Knoten in nur einem
+    # Element hat den Knoten des Nachbarn daneben
+    for v in (1e-2, 3e-2):
+        m, k = _gleichmaessig(1.0, 1.0, 1.0, 8)
+        el = m.elements[27]
+        P = m.nodes[el.nodes]
+        nd = list(el.nodes)
+        for j in [j for j in range(8) if abs(P[j][0]) < 1e-9]:
+            nd[j] = int(m.add_node(*(P[j] + v * np.array([0.6, 0.0, 0.8]))))
+        el.nodes = nd
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        gef = _gefunden(bef)
+        check(f"  Gegenprobe: hex8 27 an vier Hüllknoten losgelöst, {v * 1e3:g} mm - doppelte Knoten 9",
+              [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", 9.0)]
+              and "doppelte Knoten (" in gef and "sicher bestimmt" not in gef, _kurz(bef) + " | " + gef[:120])
+        m, k = _ecke_getrennt(1, v)
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        gef = _gefunden(bef)
+        check(f"  Gegenprobe: Trennfläche um die Eckzelle, {v * 1e3:g} mm - doppelte Knoten 8",
+              [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", 8.0)]
+              and "doppelte Knoten (" in gef and "an 8 Seiten" in gef and "sicher bestimmt" not in gef,
+              _kurz(bef) + " | " + gef[:120])
+
+
+def test_abnahme_durchtrennter_koerper_heisst_doppelt():
+    """Gegenprüfung vom 24.09.2026, dritte Runde, M2: Ein Körper, den
+    doppelte Knoten in einem Tetraedernetz ganz durchtrennen, bekam die
+    Ursache „der Netzrand verfehlt die Randfläche … kein Knoten doppelt“ und
+    den Rat zum Sweep. Gemessen an 447a5f8 im 8 x 8 x 8-Netz (Kante 125 mm)
+    in Kuhn-Tetraedern, die Zellen x > 0,5 mit eigenen Knoten auf der Ebene
+    x = 0,5: bei 3 mm Versatz in Richtung (0,6 | 0 | 0,8) an 256 Seiten, bei
+    5 mm an 264, in Richtung (1 | 1 | 1)/√3 bei 5 mm an 272. Die Knoten liegen
+    weiter als 1 % der Kante auseinander, und jeden benutzt mehr als ein
+    Element. „Netzrand“ war der Rest für jede offene Gruppe ohne andere
+    Ursache.
+
+    Jetzt heißt eine offene Gruppe auch dann „doppelte Knoten“, wenn eine
+    ihrer Seiten eine Kopie aus eigenen Knoten neben sich hat: eine andere
+    freie Seite, deren Knoten je näher als die halbe kürzeste Kante an einem
+    Knoten der ersten liegen. Die Nähe allein
+    trennt nicht: an der Stufe unten (Netz des eigenen Vernetzers) liegt ein
+    Knoten bei 0,27 der Kante an einem anderen, wie der losgelöste Knoten bei
+    30 mm Versatz; eine Kopie hat sie nicht.
+    """
+    r3 = (1 / np.sqrt(3.0),) * 3
+    faelle = [(f"ganz, (0,6|0|0,8) {v * 1e3:g} mm", v, (0.6, 0.0, 0.8), 1.0, zahl)
+              for v, zahl in ((3e-3, 256.0), (5e-3, 264.0), (1e-2, 272.0), (3e-2, 272.0))]
+    faelle += [(f"ganz, (1|1|1)/√3 {v * 1e3:g} mm", v, r3, 1.0, zahl) for v, zahl in ((5e-3, 272.0), (1e-2, 288.0))]
+    faelle += [(f"von unten bis z = 0,5, (0,6|0|0,8) {v * 1e3:g} mm", v, (0.6, 0.0, 0.8), 0.5, 144.0)
+               for v in (1e-2, 3e-2)]
+    faelle.append(("von unten bis z = 0,5, (1|1|1)/√3 10 mm", 1e-2, r3, 0.5, 152.0))
+    for titel, v, richtung, zmax, zahl in faelle:
+        m, k = _schnitt8(v, richtung, zmax)
+        bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        gef = _gefunden(bef)
+        sn = [b for b in bef if b.pruefung == "Seiten im Inneren"]
+        check(f"Kuhn-Tetraeder, Schnitt x = 0,5 {titel}: FEHLER {zahl:.0f}, doppelte Knoten, kein Rat zum Sweep",
+              len(sn) == 1 and sn[0].stufe == "FEHLER" and sn[0].wert == zahl
+              and "doppelte Knoten (" in gef and f"an {zahl:.0f} Seiten" in gef
+              and "Netzrand verfehlt" not in gef and "sweepen" not in sn[0].text
+              and [b.pruefung for b in dg.abnahme(m)] in (["Seiten im Inneren"],
+                                                            ["Volumenbilanz", "Seiten im Inneren"]),
+              _kurz(bef) + " | " + gef[:160])
+    # Gegenprobe: derselbe Schnitt in hex8 hiess schon an 447a5f8 so
+    m, k = _schnitt8(3e-3, kuhn=False)
+    gef = _gefunden(dg._abnahme_volumenbilanz(m, "K1", k, k.elemente))
+    check("  Gegenprobe: derselbe Schnitt in hex8, 3 mm - doppelte Knoten 128",
+          "doppelte Knoten (" in gef and "an 128 Seiten" in gef, gef[:120])
+    # Gegenprobe: ein Netz des eigenen Vernetzers mit zwei nahen Knoten (0,27
+    # der kuerzesten Kante), ohne Kopie einer Seite - bleibt „Netzrand"
+    import contextlib
+    import io
+    from statik3d import mesher3d as M3
+    d, a, b = 0.00045, 0.2, 0.1
+    m = Model("stufe")
+    m.add_material(Material.steel("S235"))
+    k = _extrudiert(m, [(0, 0), (a, 0), (a, b * 0.5), (a - d * 0.8, b * 0.5 + d * 0.6), (a, b), (0, b)],
+                    0.0, 0.02)
+    m.netz.ziellaenge = 0.05
+    m.netz.intelligent = True
+    with contextlib.redirect_stdout(io.StringIO()):
+        k.elemente = [int(e) for e in M3.mesh_koerper_frei(m, k, log=[])]
+    bef = dg._abnahme_volumenbilanz(m, k.name, k, k.elemente)
+    gef = _gefunden(bef)
+    sn = [b for b in bef if b.pruefung == "Seiten im Inneren"]
+    check("  Gegenprobe: Stufe d 0,45 mm, t 0,02 m, frei vernetzt - FEHLER 5, Netzrand verfehlt die Randfläche",
+          len(sn) == 1 and sn[0].wert == 5.0 and "Netzrand verfehlt die Randfläche" in gef
+          and "doppelte Knoten (" not in gef and "sweepen" in sn[0].text,
+          f"{len(k.elemente)} tet4: " + _kurz(bef) + " | " + gef[:120])
+
+
+def test_abnahme_riss_mit_knoten_naeher_als_ein_prozent():
+    """Gegenprüfung vom 24.09.2026, dritte Runde, M3 (B042): Die relative
+    Knotennähe - doppelt heißen zwei Nummern näher als 1 % der kürzesten
+    Kante an ihnen, nicht mehr fest 1e-6 m - hielt keine Prüfung fest. Auf
+    fest 1e-6 m verfälscht (``paare[d <= 1e-6]``) bestand test_diagnose
+    ganz (214/214), die Prüfung von B042 fängt nur den Knoten in nur einem
+    Element. Messbar ändert sich aber das Verhalten: Ein Riss von unten
+    (Ebene x = 0,5 nur für z < 0,5, die Seite x > 0,5 mit eigenen Knoten) im
+    8 x 8 x 8-Netz in Kuhn-Tetraedern, 2e-6 bis 1e-3 m versetzt, ist an
+    447a5f8 FEHLER „Seiten im Inneren 128“ (doppelte Knoten), verfälscht nur
+    WARNUNG „Riss im Netz 128“ mit ``abnahme() == []`` - der stille Verlust
+    aus B042 (ec6448c ebenso).
+
+    Dazu dieselbe Form bei 10 m und 0,1 m Kantenlänge des Würfels, je 0,8 %
+    der Zellkante versetzt: fängt auch eine feste Grenze in anderer Größe.
+    """
+    for a, versaetze in ((1.0, (2e-6, 1e-5, 1e-4, 1e-3)), (10.0, (1e-2,)), (0.1, (1e-4,))):
+        for v in versaetze:
+            m, k = _schnitt8(v, zmax=0.5, a=a)
+            bef = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+            gef = _gefunden(bef)
+            check(f"Riss von unten, Würfel {a:g} m (Kante {a / 8 * 1e3:g} mm), {v:g} m versetzt "
+                  f"({v / (a / 8) * 100:.2g} %): FEHLER 128 doppelte Knoten",
+                  [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", 128.0)]
+                  and "doppelte Knoten (" in gef and "an 128 Seiten" in gef
+                  and [b.pruefung for b in dg.abnahme(m)] == ["Seiten im Inneren"],
+                  _kurz(bef) + " | " + gef[:100])
+
+
 def main():
     for f in (test_abnahme_findet_verdrehten_sechsflaechner,
               test_abnahme_ohne_fehlalarm_am_freien_netz,
@@ -2592,6 +2819,9 @@ def main():
               test_abnahme_duenne_luecke_und_ufer_ohne_gegenueber,
               test_abnahme_netzrand_verfehlt_randflaeche,
               test_abnahme_luecke_abhilfe_bei_gleicher_elementzahl,
+              test_abnahme_mulde_mit_einspringender_kante,
+              test_abnahme_durchtrennter_koerper_heisst_doppelt,
+              test_abnahme_riss_mit_knoten_naeher_als_ein_prozent,
               test_windschiefe_randflaechen_ohne_dreiecksschleife,
               test_abnahme_meldet_ausgefallene_pruefungen,
               test_nicht_messbare_formguete_gilt_nicht_als_beste,

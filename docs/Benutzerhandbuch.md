@@ -4602,19 +4602,23 @@ Befund.
 
 **Die Ursache im Text** (seit 23.09.2026). Der FEHLER „Seiten im Inneren“
 nennt, was an den Seiten gefunden wurde, und an wie vielen: ein verdrehtes
-Element (an einem ringsum geschlossenen Hohlraum nur, wenn eine Kante des
-Elements über die Diagonale einer Nachbarseite läuft); doppelte Knoten, also
+Element (nur, wenn eine Kante des Elements über die Diagonale einer
+Nachbarseite läuft); doppelte Knoten, also
 ein losgelöstes Element oder ein losgelöster Bereich (zwei Nummern am selben
 Ort; ein Knoten, den nur ein Element benutzt und der nicht in einer Ecke des
-Körpers liegt; oder eigene Knoten neben denen des Nachbarn, ohne dass die
-Ufer dort eine Ecke teilen – an einem ringsum geschlossenen Hohlraum aber
+Körpers liegt – an einem Ufer, dessen Rand auf der Randfläche liegt, nur,
+wenn ein anderer Knoten näher liegt als die halbe kürzeste Kante an den
+beiden; eigene Knoten neben denen des Nachbarn, ohne dass die Ufer dort eine
+Ecke teilen; oder an einem solchen Ufer eine Seite, neben der eine Kopie aus
+eigenen Knoten liegt – an einem ringsum geschlossenen Hohlraum aber
 nur, wenn von ihm nach Abzug der losgelösten Bereiche darin höchstens das
 halbe mittlere Element an ihm bleibt, siehe unten); hängende Knoten (Knoten
 des einen Ufers liegen auf den Seiten des anderen, ohne deren Ecken zu sein,
 und die Ufer teilen dort Ecken, etwa an einem T-Stoß; oder Knoten liegen auf
 einer Kante zwischen ihren Enden, weil eine Zelle nur in einer oder zwei
 Richtungen feiner geteilt ist); einen
-Hohlraum im Netz; oder einen **Netzrand, der die Randfläche verfehlt**.
+Hohlraum im Netz; einen **Netzrand, der die Randfläche verfehlt**; oder
+**keine sicher bestimmte Ursache** mit den möglichen (siehe unten).
 Vorher stand immer „ein verdrehtes Element, doppelte Knoten oder ein
 Hohlraum“ da. Ein T-Stoß von Sechsflächnern – links ein Würfel
 1 × 1 × 1 m, rechts derselbe in 2 × 2 × 2 geteilt, die Knoten der feinen
@@ -4718,6 +4722,50 @@ Bohrung fehlt dem Netz Material bis 3,17 mm hinter der Wand (gemessen an
 einem Netz derselben Platte, direkt mit dem freien Vernetzer, 14 242
 Tetraeder), und am U-Prisma hat das Netz 0,067 % mehr Volumen als der
 Körper.
+
+Die dritte Gegenprüfung vom 24.09.2026 fand zwei Fälle, in denen der Text
+eine falsche Ursache nannte, beide an Ufern, deren Rand auf der Randfläche
+liegt (gemessen am 8 × 8 × 8-Netz des Würfels 1 × 1 × 1 m, Kante 125 mm).
+Fehlen an der Seitenfläche Würfel so, dass eine **Mulde mit einspringender
+Kante** entsteht – drei in L-Form, vier als T, das L zwei Lagen tief, das L
+an einer Kante des Körpers –, hieß das „doppelte Knoten“ an 11, 14, 19 bzw.
+9 Seiten: Den Knoten an der einspringenden Kante benutzt danach nur noch der
+Würfel dahinter, und dessen Kante dort trägt kein anderes Element. In
+Tetraeder zerlegt ist dieselbe Mulde eine „Lücke im Netzrand“. Und war der
+Körper **ganz durchtrennt** – in Tetraedern, die Hälfte x > 0,5 mit eigenen
+Knoten auf der Schnittebene, 3 mm oder mehr versetzt –, hieß das „der
+Netzrand verfehlt die Randfläche … kein Knoten doppelt“ mit dem Rat zum
+Sweep: Die Knoten liegen weiter als 1 % der Kante auseinander, und jeden
+benutzen mehrere Elemente. Seither gilt an solchen Ufern: Ein Knoten, den nur
+ein Element benutzt, heißt nur dann losgelöst, wenn ein anderer Knoten
+näher liegt als die halbe kürzeste Kante (an der Mulde liegt der nächste
+eine ganze Kante weit weg, an losgelösten Elementen bis 30 mm Versatz
+höchstens beim 0,27-Fachen); verdreht heißt ein Element nur, wenn seine Kante
+über die Diagonale einer Nachbarseite läuft; und eine Seite, neben der eine
+Kopie aus eigenen Knoten liegt, heißt „doppelte Knoten“. Die Nähe allein
+entscheidet dabei nicht: An einem Netz des eigenen Vernetzers (Stufe
+d 0,45 mm, Dicke 0,02 m) liegen zwei Knoten beim 0,27-Fachen der Kante
+beieinander, eine Kopie einer Seite gibt es dort nicht. Lässt sich die
+Ursache so nicht sicher bestimmen, sagt der Text das und nennt die
+möglichen: eine Mulde, ein verdrehtes Element, dessen Kanten nicht über die
+Diagonalen der Nachbarseiten laufen, oder ein losgelöstes Element, weiter
+als die halbe Kante versetzt. Gemessen: die Mulden heißen „keine sicher
+bestimmte Ursache“, der durchtrennte Körper bei 3 bis 30 mm Versatz in
+beiden Richtungen „doppelte Knoten“, ebenso ein Körper, der von unten her
+bis zur Mitte eingerissen ist (10 und 30 mm); der Befund selbst ist in allen
+Fällen derselbe. Verdrehte Würfel an der Seitenfläche, deren Deckel um eine
+Ecke versetzt ist, heißen weiter „verdrehtes Element“, losgelöste Elemente
+an der Seitenfläche (bis 30 mm) weiter „doppelte Knoten“, die Netze des
+eigenen Vernetzers (U-Prisma, Platte mit Bohrung, Lochplatte, Stufe) weiter
+„Netzrand verfehlt die Randfläche“. Ist der Deckel eines Würfels an der
+Seitenfläche um zwei Ecken versetzt, laufen seine Kanten durch die
+Zellmitte statt über eine Diagonale; bis dahin hieß er „verdrehtes
+Element“, jetzt „keine sicher bestimmte Ursache“ – dieselben Merkmale hat
+die Mulde. Dass zwei Knoten näher als 1 % der Kante „doppelt“ sind, hält
+seither eine eigene Prüfung fest: Ein Körper, der in Tetraedern von unten
+bis zur Mitte eingerissen ist, 0,002 bis 1 mm versetzt, ist ein FEHLER und
+kein „Riss im Netz“, auch an Würfeln von 10 m und 0,1 m Kantenlänge
+(0,8 % der Zellkante).
 
 **Windschiefe Randflächen.** Ein Tetraedernetz liegt auf einer windschiefen
 (bilinearen) Fläche auf Sehnen, und der freie Vernetzer setzt Knoten auf Sehnen
