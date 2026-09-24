@@ -1787,8 +1787,15 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T) -> t
             fluss = float(np.einsum("ij,ij->", q[idx[drin]] - c, S[idx[drin]]))
             A_in = float(A[idx[drin]].sum())
         V_l = abs(fluss) / 3.0
+        # Duenn gegen die eigenen Seiten (t/L <= ABNAHME_RISS_DICKE): ein Ufer
+        # mit Rand auf der Huelle wie ein Schnitt, keine Luecke - die Seiten
+        # bleiben FEHLER „Seiten im Inneren“. Das heisst nicht „ohne
+        # Volumen“: der verdrehte Sechsflaechner 55 am Rand des abgestuften
+        # Netzes 5:1, Regel „verdreht“ abgeschaltet, hat t/L 4,85 % bei
+        # 1,21e-4 m^3, einem Drittel der Zelle (23.09.2026,
+        # test_abnahme_luecke_duenn_mit_volumen).
         if 2.0 * V_l / A_in <= ABNAHME_RISS_DICKE * L_g:
-            return None                     # ein Ufer ohne Volumen: kein Stueck fehlt
+            return None
         gross = max(range(len(schleifen)),
                     key=lambda j: np.linalg.norm(_flaechenvektor(schleifen[j][1])))
         el, zahl = np.unique(E[idx], return_counts=True)

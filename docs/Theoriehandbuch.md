@@ -970,15 +970,37 @@ Lastfälle selbst fällt ein Nachweis nur zurück, wenn das Modell **gar keine**
 Kombination hat; fehlt das Ergebnis einer Kombination oder Alternative, wird
 sie als „nicht nachgewiesen" gemeldet (Protokoll, Nachweiszeile, Bericht,
 Gesamturteil) und nicht ersetzt. Bis zum 22.09.2026 lasen die Nachweise nur
-`Analysis.combinations`, in dem Ergebniskombinationen nicht stehen, und
-wichen bei leerem `combinations` auf die Lastfälle aus. Gemessen am Kragarm
+`Analysis.combinations` und wichen bei leerem `combinations` auf die
+Lastfälle aus. Eine Ergebniskombination stand darin nur, wenn das Modell
+daneben eine gewöhnliche Kombination hatte (nur dann liefen
+`check_theorie2`/`check_theorie3`) und sie dort nach II. oder III. Ordnung
+gerechnet wurde, und dann als Nullergebnis (siehe „Theorie II./III. Ordnung
+einer Ergebniskombination" unten). Bei „automatisch" entschied darüber das
+α_cr ihrer leeren Faktoren. Gemessen am Kragarm
 (LF1 Fz = 10 kN, LF2 Fz = 20 kN an der Spitze), nur mit der
 Ergebniskombination {1,35·LF1} oder {1,35·LF1 + 1,5·LF2}: Ausnutzung des
 Stabes vorher 0,170 (nachgewiesen gegen LF1 und LF2 mit Faktor 1), jetzt
 0,370 wie mit der gewöhnlichen Kombination 1,35·LF1 + 1,5·LF2; das Verhältnis
 2,175 ist 4,35e4/2e4. Verformungsnachweis (0,1152) und Volumennachweis
 (0,3619, Hexaederstab) stimmen ebenso mit der gewöhnlichen Kombination
-überein (`test_umhuellende`).
+überein (`test_umhuellende`). Gemessen an der Halle (alle 42
+GZT-Kombinationen als eine Ergebniskombination „EK") an einer Kopie des
+Standes 54b6f9a (24.09.2026): Mit den 30 GZG-Kombinationen daneben stand
+„EK" bei „ein" in `Analysis.combinations`, ebenso bei „aus" mit „EK"
+ausdrücklich nach III. Ordnung; in beiden Fällen hatten alle drei Stäbe
+η = 0,0000, maßgebend „EK", ohne Warnung, und das Gesamturteil des Berichts
+lautete „Alle Nachweise erfüllt.". Bei „automatisch" war α_cr der „EK"
+unendlich; sie wurde nicht nach II. Ordnung gerechnet und stand nicht in
+`Analysis.combinations`, wie bei „aus". Bei „automatisch" und „aus" wurde
+darum kein Stab nachgewiesen („Nachweise EC3: keine Staebe"), weil keine
+GZT-Kombination in `Analysis.combinations` stand, und das Gesamturteil
+lautete „Es wurden keine Nachweise geführt; die Ergebnisse dienen der
+Schnittgrößen- und Verformungsermittlung.". Ohne die GZG-Kombinationen
+blieb `Analysis.combinations` in allen vier Fällen leer, und die Stäbe
+wurden gegen die Lastfälle mit Faktor 1 nachgewiesen (Riegel 0,2776 aus
+LF1, „Alle Nachweise erfüllt."). Am jetzigen Stand, mit und ohne die
+GZG-Kombinationen: Riegel 0,9734 bei „ein", 0,9749 mit „EK" nach III.
+Ordnung, 0,9654 bei „aus" und „automatisch".
 
 Neu überlagert wird eine Alternative nur, wenn die volle Rechnung es genauso
 täte. Ist sie nach der Theorie der Ergebniskombination nach II. oder III.
@@ -1015,14 +1037,23 @@ Lasteinleitungsnachweisen auf 1e-9, ohne Warnung.
 Gemeldet wird nur, was ein Bauteil verlangt. Hat kein Stab, Volumenbereich
 oder Anschluss einen Nachweis und gibt es kein Beulfeld und keine
 Lasteinleitungsstelle, wird `_uls_results` gar nicht gefragt. In der ersten
-Fassung der Kur kippte ein Modell nur mit GZG-Kombinationen und Stäben ohne
-Nachweis im Gesamturteil von „Alle Nachweise erfüllt." auf „nicht geführt:
-EC3 (1 Warnung)" (Kragarm und Halle, Gegenprüfung 23.09.2026). Am Stand bis
-22.09.2026 meldeten die Stabnachweise keine fehlenden Kombinationen, und das
-Gesamturteil kannte den Eintrag „EC3 (n Warnungen)" nicht. An einem Kragarm
-(IPE 300, 3 m, nur eine GZG-Kombination mit Verformungsgrenze, Stab ohne
-Nachweis) und an der Halle (nur GZG-Kombinationen, Stäbe ohne Nachweis, eine
-Verformungsgrenze) stand dort „Alle Nachweise erfüllt.".
+Fassung der Kur (fb59de1) kippte ein Modell nur mit GZG-Kombinationen, Stäben
+ohne Nachweis und einem anderen geführten Nachweis (hier einer
+Verformungsgrenze) im Gesamturteil von „Alle Nachweise erfüllt." auf „Alle
+geführten Nachweise erfüllt – nicht geführt wurden: EC3 (1 Warnung)". Ohne
+einen solchen Nachweis stand dort „Es wurden keine Nachweise geführt – nicht
+nachgewiesen: EC3 (1 Warnung)" statt „Es wurden keine Nachweise geführt; die
+Ergebnisse dienen der Schnittgrößen- und Verformungsermittlung." (Kragarm und
+Halle, Gegenprüfung 23.09.2026, nachgemessen an Kopien von fb59de1 und
+54b6f9a). Am Stand bis 22.09.2026 meldeten die Stabnachweise keine fehlenden
+Kombinationen, und das Gesamturteil kannte den Eintrag „EC3 (n Warnungen)"
+nicht. An einem Kragarm (IPE 300, 3 m, nur eine GZG-Kombination mit
+Verformungsgrenze, Stab ohne Nachweis) und an der Halle (nur
+GZG-Kombinationen, Stäbe ohne Nachweis, eine Verformungsgrenze) stand dort
+„Alle Nachweise erfüllt.", ohne die Verformungsgrenze an beiden „Es wurden
+keine Nachweise geführt; die Ergebnisse dienen der Schnittgrößen- und
+Verformungsermittlung.". Der jetzige Stand gibt in allen vier Fällen
+dasselbe Urteil wie der Stand bis 22.09.2026.
 
 **Theorie II./III. Ordnung einer Ergebniskombination.** Nach II. Ordnung gilt
 keine Superposition (EN 1993-1-1, 5.2); das gilt auch innerhalb einer
@@ -6609,12 +6640,24 @@ Rechenstelle war behoben, drei Dinge nicht:
   den fehlenden Höchstzustand). `test_unvollstaendig_je_weg` rechnet jetzt
   jeden der vier Wege an Stab und Volumen neben einer gerechneten Last.
 
-**Die übrigen 31 Befunde sind nicht behoben**, aber aufgeschrieben (mit Datei,
-Zeile und der Gegenprüfung, die sie nicht widerlegen konnte). Darunter: die
-Netzabnahme meldet „bestanden", obwohl Prüfungen ausgefallen sind; der
-RFEM-6-Import lässt Stablasten still weg und wirft die Lastrichtung von
-Flächenlasten weg; eine Viereckfuge wird nur zur Hälfte gezählt; der
-Volumennachweis rechnet ohne Dickenabminderung.
+**Die übrigen 31 Befunde waren mit dieser Runde nicht behoben** (250de7a),
+aber aufgeschrieben (mit Datei, Zeile und der Gegenprüfung, die sie nicht
+widerlegen konnte). Darunter: die Netzabnahme meldet „bestanden", obwohl
+Prüfungen ausgefallen sind; der RFEM-6-Import lässt Stablasten still weg und
+wirft die Lastrichtung von Flächenlasten weg; eine Viereckfuge wird nur zur
+Hälfte gezählt; der Volumennachweis rechnet ohne Dickenabminderung.
+
+Die beiden Punkte zum RFEM-6-Import sind noch am 22.09.2026 behoben worden:
+die Stablasten in db19cf2, die Lastrichtung der Flächenlasten in 83671bd, das
+Abzählen der Stablasten in 2f0427c (beschrieben in `docs/Schnittstellen.md`,
+RFEM 6, „Lastfälle und Lasten"). Nachgemessen am 23.09.2026 mit den
+Prüfungen `test_stab_und_knotenlasten` und `test_flaechenlast_richtung` aus
+`tests.test_rfem6` gegen den Importer von 250de7a: Von 2 Stabgleichlasten
+kam keine an. Die Last einer senkrechten Fläche (global Z, 12 000 N) wirkte
+ganz in der Flächennormalen (Lagerkräfte ΣR_y = −12 000 N, ΣR_z = 0 N), und
+an einer waagerechten hing das Vorzeichen am Umlaufsinn des Randes
+(ΣR_z = +8000 N gegen −8000 N). Am jetzigen Stand bestehen beide Prüfungen,
+`tests.test_rfem6` meldet 318 von 318.
 
 ## 7a Entartete Elemente
 
@@ -7047,8 +7090,17 @@ die Aussparung; die Bilanz sind 1,17e-5 m³. Keine Lücke ist die Gruppe,
   mit je dem Volumen des Elements (326 cm³). Mit dieser Bedingung ist das
   ein FEHLER „Seiten im Inneren 6“, ebenso der Sechsflächner der Zelle 27 an
   allen acht Knoten (10 Seiten);
-* wenn sie **kein Volumen** hat (t/L ≤ 5 %, Bedingung 2 des Risses): ein
-  Ufer, dessen Rand auf der Hülle liegt, ist ein Schnitt;
+* wenn sie **dünn gegen ihre eigenen Seiten** ist (t/L ≤ 5 %, Bedingung 2
+  des Risses), auch wenn sie Volumen hat: Sie wird wie ein Schnitt behandelt
+  (ein Ufer, dessen Rand auf der Hülle liegt), und ihre Seiten bleiben ein
+  FEHLER „Seiten im Inneren". Gemessen am 23.09.2026 am verdrehten
+  Sechsflächner am Rand des abgestuften Netzes 5:1 (Element 55, Zelle
+  3,64e-4 m³), mit abgeschalteter Regel „verdreht", die im Programm bei ihm
+  vorher greift: t/L der Gruppe 4,845 % bei 1,21e-4 m³, einem Drittel der
+  Zelle – FEHLER „Seiten im Inneren 7". Mit einer Grenze unter 4,845 % statt
+  5 % wäre es eine WARNUNG „Lücke im Netzrand" mit 1,21e-4 m³ (gemessen am
+  24.09.2026 mit 4,844 %, 4 %, 3 %, 1 % und 0; mit 4,846 % und 4,85 % noch
+  der FEHLER; `test_abnahme_luecke_duenn_mit_volumen`);
 * wenn sich kein p₀ findet: Die Schleife um einen Körper, den doppelte Knoten
   zerschneiden, läuft über gegenüberliegende Flächen.
 

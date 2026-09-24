@@ -1592,6 +1592,60 @@ def test_abnahme_luecke_im_netzrand():
           "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g}" for b in bef))
 
 
+def test_abnahme_luecke_duenn_mit_volumen():
+    """Die Regel t/L der Lücke im Netzrand heißt „dünn gegen die eigenen
+    Seiten", nicht „ohne Volumen" (Befund B029, 23.09.2026). Das Handbuch
+    und der Kommentar in ``_gruppen_im_inneren`` sagten „kein Volumen".
+
+    Geprüft wird die Regel allein: der verdrehte Sechsflächner am Rand des
+    abgestuften Netzes 5:1 (Element 55) mit abgeschalteter Regel „verdreht"
+    (die im Programm vorher greift). Seine offene Gruppe hat t/L 4,845 % und
+    1,21e-4 m³ - ein Drittel der Zelle (3,64e-4 m³). Mit der Grenze 5 % bleibt
+    sie ein FEHLER „Seiten im Inneren", mit der Grenze 0 wäre sie eine
+    WARNUNG „Lücke im Netzrand" mit diesem Volumen. Eine Regel, die nur
+    Gruppen ohne Volumen verwirft, machte daraus schon mit 5 % die Lücke.
+
+    Die Grenze kippt am t/L der Gruppe, nicht erst bei 0 (Gegenprüfung
+    24.09.2026: das Handbuch sagte „erst mit der Grenze 0"): 4,85 % lässt
+    den FEHLER, 4,84 % macht schon die Lücke. Durch Halbieren gemessen
+    t/L = 4,8455 %. Rechnete die Regel die Dicke falsch (etwa ohne den
+    Faktor 2 in t = 2·V/A, dann t/L 2,42 %), bestünden die Grenzen 5 % und 0
+    weiter, 4,84 % nicht.
+    """
+    echt_verdreht = dg._verdrehte_elemente
+    echt_dicke = dg.ABNAHME_RISS_DICKE
+    try:
+        dg._verdrehte_elemente = lambda *a, **kw: set()
+        m, k = _gestuft(5)
+        V_zelle = float(np.prod(np.ptp(m.nodes[m.elements[55].nodes], axis=0)))
+        _verdrehen(m, 55)
+        mit = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        dg.ABNAHME_RISS_DICKE = 0.0
+        ohne = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        dg.ABNAHME_RISS_DICKE = 0.0485
+        knapp_ueber = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+        dg.ABNAHME_RISS_DICKE = 0.0484
+        knapp_unter = dg._abnahme_volumenbilanz(m, "K1", k, k.elemente)
+    finally:
+        dg._verdrehte_elemente = echt_verdreht
+        dg.ABNAHME_RISS_DICKE = echt_dicke
+    check("t/L 4,845 % ≤ 5 %: FEHLER „Seiten im Inneren“ an Element 55, keine Lücke",
+          [(b.stufe, b.pruefung, b.element) for b in mit]
+          == [("FEHLER", "Seiten im Inneren", 55)],
+          "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g} el {b.element}" for b in mit))
+    lu = [b for b in ohne if b.pruefung == "Lücke im Netzrand"]
+    check("  und die Gruppe hat Volumen: ohne t/L-Grenze eine Lücke von einem Drittel "
+          "der Zelle",
+          len(lu) == 1 and lu[0].stufe == "WARNUNG" and abs(lu[0].wert / V_zelle - 1.0 / 3.0) < 0.01,
+          "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g}" for b in ohne)
+          + f" | Zelle {V_zelle:.4g} m³")
+    check("  die Grenze kippt am t/L der Gruppe: 4,85 % FEHLER, 4,84 % schon die Lücke",
+          [(b.stufe, b.pruefung) for b in knapp_ueber] == [("FEHLER", "Seiten im Inneren")]
+          and [(b.stufe, b.pruefung) for b in knapp_unter] == [("WARNUNG", "Lücke im Netzrand")],
+          "4,85 %: " + "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g}" for b in knapp_ueber)
+          + " | 4,84 %: " + "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g}" for b in knapp_unter))
+
+
 def main():
     for f in (test_abnahme_findet_verdrehten_sechsflaechner,
               test_abnahme_ohne_fehlalarm_am_freien_netz,
@@ -1601,6 +1655,7 @@ def main():
               test_abnahme_riss_an_laenglichen_zellen,
               test_abnahme_windschief_misst_am_oertlichen_element,
               test_abnahme_luecke_im_netzrand,
+              test_abnahme_luecke_duenn_mit_volumen,
               test_windschiefe_randflaechen_ohne_dreiecksschleife,
               test_abnahme_meldet_ausgefallene_pruefungen,
               test_nicht_messbare_formguete_gilt_nicht_als_beste,
