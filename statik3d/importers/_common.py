@@ -795,11 +795,59 @@ def expand_ranges(items: list[str]) -> list[str]:
     return out
 
 
+#: Angaben zur Bemessungssituation (DIN EN 1990, 3.2 (2)P) im normierten
+#: Text. Sie sagen, in welcher Situation ein Lastfall nachgewiesen wird,
+#: nicht welche Einwirkung er traegt (Befund B073): am Drehlager machte
+#: „staendige Bemessungssituation“ 96 von 422 Lastfaellen zu G und
+#: „aussergewoehnliche Bemessungssituation“ 16 zu A (gemessen am Stand
+#: ec6448c, 23.09.2026). Darum faellt die Angabe vor der Deutung heraus.
+#: Eng gefasst: hoechstens zwei Situationswoerter, mit „und/u./oder“
+#: verbunden, deutsche nur mit Adjektivendung (-e/-en/-er/-es/-em, Pflicht),
+#: „erdbeben“ ohne Anhang. norm_key hat vorher jeden Strich zu einem
+#: Leerzeichen gemacht und Text in (innersten) runden oder eckigen Klammern
+#: weggeworfen: „Erdbeben -
+#: Bemessungssituation 2“ ist darum hier dasselbe wie „Erdbeben-
+#: Bemessungssituation 2“ (Situation, bleibt Q), und in Klammern wird weder
+#: eine Situation noch „Ermuedung“ gefunden.
+#: Die erste Fassung (Stand d5e565d) wiederholte die Gruppe und liess \w* zu;
+#: sie verschluckte dann ein Einwirkungswort direkt davor, das selbst ein
+#: Situationswort ist oder damit beginnt: „Erdbeben - Erdbeben-
+#: Bemessungssituation“, „Erdbebenlast Bemessungssituation“ und „Staendig -
+#: staendige Bemessungssituation“ wurden Q statt A bzw. G (gemessen am
+#: 24.09.2026, tests.test_rfem6). Die zweite (Stand 28c9326) liess die
+#: Endung frei: „Staendig - Bemessungssituation 1“ und „Staendig
+#: Bemessungssituation“ wurden Q statt G, „Aussergewoehnlich -
+#: Bemessungssituation“ Q statt A (gemessen am 24.09.2026).
+_SITUATION_DE = (r"(?:(?:staendig|voruebergehend|aussergewoehnlich)(?:e|en|er|es|em)"
+                 r"|erdbeben)")
+_SITUATION_EN = r"(?:persistent|transient|accidental|seismic)"
+_BEMESSUNGSSITUATION = re.compile(
+    rf"\b{_SITUATION_DE}(?:\s+(?:und|u|oder)\s+{_SITUATION_DE})?"
+    r"\s+bemessungssituation(?:en)?\b"
+    rf"|\b{_SITUATION_EN}(?:\s+(?:and|or)\s+{_SITUATION_EN})?\s+design\s+situations?\b"
+    r"|\bbemessungssituation(?:en)?\s+(?:bei\s+)?erdbeben\b")
+
+
 def category_from_text(text, default: str = "Q") -> str:
-    """Einwirkungskategorie (Schluessel in ACTION_CATEGORIES) aus Freitext."""
-    s = norm_key(text)
+    """Einwirkungskategorie (Schluessel in ACTION_CATEGORIES) aus Freitext.
+
+    Eine Angabe zur Bemessungssituation in den Schreibweisen von
+    _BEMESSUNGSSITUATION zaehlt nicht als Einwirkung, und ein Text mit
+    „Ermuedung/fatigue“ ist FAT, was immer er sonst nennt. Beides nur
+    ausserhalb von Klammern: norm_key wirft Text in runden oder eckigen
+    Klammern vorher weg, „Kran (Ermuedung)“ ergibt Q_K.
+    """
+    s = _BEMESSUNGSSITUATION.sub(" ", norm_key(text)).strip()
     if not s:
         return default
+    # Ermuedung zuerst: am Drehlager heissen 164 Lastfaelle „Ermuedungslast
+    # - ... - Eigengewicht ...“ bzw. „... Temperatur“ und wurden ueber diese
+    # Woerter zu G (160) und T (4), gemessen am Stand ec6448c, 23.09.2026.
+    # Als G oder T gehen sie in die erzeugten Kombinationen ein
+    # (combinations._kombinationen_bilden); FAT ist weder staendig noch
+    # veraenderlich und bleibt dem Ermuedungsnachweis.
+    if re.search(r"ermued|fatigue", s):
+        return "FAT"
     if re.search(r"staendig|permanent|dead|eigengewicht|self ?weight|\bg\b", s):
         return "G"
     if re.search(r"vorspann|prestress|\bp\b", s):
@@ -814,8 +862,6 @@ def category_from_text(text, default: str = "Q") -> str:
         return "H"
     if re.search(r"setzung|settlement", s):
         return "SET"
-    if re.search(r"ermued|fatigue", s):
-        return "FAT"
     if re.search(r"aussergew|accident|erdbeben|seismic|seism|anprall|explosion|fire|brand", s):
         return "A"
     if re.search(r"kran|crane", s):

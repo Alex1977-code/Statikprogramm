@@ -902,6 +902,99 @@ und warnt, ψ und γ in der Lastfallmaske nachzusehen. Die erste Zeile sagt
 nicht mehr „Einwirkungskategorie übernommen“, sondern „aus der Kennzahl
 angenommen“.
 
+**Bemessungssituation und Ermüdung im Namen** (Befund B073).
+`category_from_text` nimmt Angaben zur Bemessungssituation (Einteilung nach
+DIN EN 1990, 3.2 (2)P) aus dem Text, bevor es die Einwirkung sucht, und
+prüft „Ermüdung/fatigue“ vor allen anderen Wörtern. `rfem6_db` fragt den
+Namen nur, wenn die Kennzahl Q ergibt; mit Kennzahl 1 oder 2 bleibt auch
+„Ermüdungslast - Eigengewicht“ G (gemessen am 24.09.2026).
+
+Erkannt werden nur diese Schreibweisen (`_BEMESSUNGSSITUATION`, angewandt
+auf den Text nach `norm_key`): „ständig“, „vorübergehend“,
+„außergewöhnlich“ mit einer der Endungen -e, -en, -er, -es, -em (Pflicht)
+oder „Erdbeben“ ohne Anhang unmittelbar vor „Bemessungssituation(en)“, zwei
+davon mit „und“, „u.“ oder „oder“ verbunden; „Bemessungssituation
+Erdbeben“ und „Bemessungssituation bei Erdbeben“ (auch in der Mehrzahl);
+englisch „persistent“, „transient“, „accidental“, „seismic“ vor
+„design situation(s)“, zwei davon mit „and“ oder „or“ verbunden. Nicht
+erkannt und damit weiter G bzw. A (im Protokoll unter „umgestellt“):
+„ständige/vorübergehende Bemessungssituation“, „Bemessungssituation
+ständig“, „Ständig - Bemessungssituation“ und „Ständig
+Bemessungssituation“ (ohne Endung), „Ständig und vorübergehend“ ohne
+„Bemessungssituation“, „Bemessungssituation außergewöhnlich“,
+„Außergewöhnlich - Bemessungssituation“ (gemessen am 24.09.2026).
+
+Zwei Eigenschaften von `norm_key` gelten für die ganze Deutung. Erstens
+wird jedes Zeichen außer Buchstaben und Ziffern zum Leerzeichen:
+Leerzeichen, Bindestrich und Gedankenstrich sind gleich. „Erdbeben -
+Bemessungssituation 2“ ist darum nicht von „Erdbeben-Bemessungssituation
+2“ zu unterscheiden und gilt als Situation (bleibt Q; am Stand ec6448c A),
+ebenso „Außergewöhnliche - Bemessungssituation“. Zweitens wirft `norm_key`
+Text in einem Paar runder oder eckiger Klammern weg, bevor gesucht wird
+(gedacht für Einheiten in Spaltenköpfen; ein Durchgang mit
+`[\[(][^\[\]()]*[\])]`). „Kran (Ermüdung)“ gibt Q_K, „Eigengewicht
+(Ermüdung)“ G, „Temperatur [Ermüdung]“ T und „Nutzlast
+(Bemessungssituation außergewöhnlich)“ Q. Bei geschachtelten Klammern
+fällt nur die innerste weg („Kran (Ermüdung (LM3))“ gibt FAT), eine
+offene Klammer bleibt stehen („Kran (Ermüdung“ gibt FAT). Mit Kennzahl 11
+steht „Kran (Ermüdung)“ darum als Q_K in den erzeugten Kombinationen; in
+einem Modell aus vier Lastfällen (Eigengewicht, Nutzlast, „Kran
+(Ermüdung)“, „Kran - Ermüdung“) in 14 von 23, davon 6 GZT mit 1,5, während
+„Kran - Ermüdung“ als FAT in keiner steht (gemessen am 24.09.2026). Am
+Stand ec6448c ergeben die Klammernamen dieselben Kategorien, das ist kein
+Rückschritt der Kur. In den Lastfallnamen der drei RFEM-Dateien
+stehen in Klammern nur „(+)“, „(-)“, „(+Fy)“ und „(-Fy)“ (Drehlager) bzw.
+nichts (CBG-Trolley).
+
+Gemessen am Drehlager am Stand ec6448c (23.09.2026): 96 Lastfälle wurden
+über „ständige Bemessungssituation“ zu G (48 „Bemessungslast im GZT …“,
+48 „char.Last …“), 16 über „außergewöhnliche Bemessungssituation“ zu A, und
+von den 164 „Ermüdungslast …“ 160 über „Eigengewicht“ zu G und 4 über
+„Temperatur“ zu T. Mit der Kur: 256× Q, 164× FAT, 2× P; das Protokoll
+nennt die 164 unter „zu FAT“. Die zweite Drehlager-Datei
+(…_Netz_abgestimmt_Passstifte_Kopfbolzen22) wechselt genauso, der
+CBG-Trolley gar nicht (10× G, 45× Q, 3× P vorher wie nachher). Mit den
+beiden engeren Fassungen vom 24.09.2026 (Stand 28c9326 und die jetzige mit
+Pflichtendung) an allen drei Dateien nachgemessen: dieselben Zahlen, kein
+Lastfall anders.
+
+Die erste Fassung vom 23.09.2026 (Stand d5e565d) wiederholte die
+Adjektivgruppe auch ohne Bindewort und ließ nach jedem Wort beliebige
+Buchstaben zu. Sie verschluckte dann ein Einwirkungswort direkt vor der
+Angabe, das selbst ein Situationswort ist oder damit beginnt: „Erdbeben -
+Erdbeben-Bemessungssituation“, „Erdbebenlast Bemessungssituation“ und
+„Accidental - accidental design situation“ wurden Q statt A, „Ständig -
+ständige Bemessungssituation“ Q statt G. In einem Modell aus fünf
+Lastfällen stand „Erdbeben - Erdbeben-Bemessungssituation“ (Kennzahl 11)
+damit in 16 von 26 erzeugten GZT-Kombinationen (Faktor 1,5 bzw. 1,2) statt
+in 2 außergewöhnlichen (Faktor 1,0), und das Protokoll nannte ihn nicht,
+weil Q der Kennzahl entspricht (gemessen am 23. und 24.09.2026). Die
+zweite Fassung (Stand 28c9326) ließ die Adjektivendung frei: „Ständig -
+Bemessungssituation 1“ und „Ständig Bemessungssituation“ wurden Q statt G,
+„Außergewöhnlich - Bemessungssituation“ Q statt A, ebenfalls ohne Nennung
+im Protokoll (gemessen am 24.09.2026). Mit der jetzigen Fassung geben
+diese Namen wieder A bzw. G: steht die Einwirkung selbst im Namen
+(„Eigengewicht - ständige Bemessungssituation“, „Anprall -
+außergewöhnliche Bemessungssituation“, „Erdbeben -
+Erdbeben-Bemessungssituation“, „Ständig - ständige Bemessungssituation“,
+„Ständig - Bemessungssituation 1“), bleibt sie erkannt (`tests.test_rfem6`,
+`test_bemessungssituation_ist_keine_einwirkungsart`). Ausgenommen sind vier
+Fälle, in denen die Einwirkung nicht erkannt wird und es ohne ein weiteres
+Einwirkungswort bei Q bleibt: sie ist mit „und“, „u.“ oder „oder“
+(englisch „and“, „or“) an die Angabe gebunden („Erdbeben und
+außergewöhnliche Bemessungssituation“) und zählt als Teil davon; sie steht
+selbst in der erkannten Form unmittelbar vor „Bemessungssituation“ bzw.
+„design situation“ („Erdbeben - Bemessungssituation 2“, „Außergewöhnliche -
+Bemessungssituation“, „Seismic design situation“, siehe oben); sie heißt
+„Erdbeben“ und steht unmittelbar nach „Bemessungssituation(en)“, auch mit
+„bei“ oder einem Strich dazwischen („Bemessungssituation - Erdbeben“,
+„Bemessungssituation bei Erdbeben“); oder sie steht in Klammern
+(„Nutzlast (Erdbeben)“). Am Stand ec6448c gaben die Beispiele der ersten
+drei Fälle A; die Klammern wirkten dort schon so. Das Protokoll nennt einen
+solchen Lastfall nicht unter „umgestellt“, weil Q der Kategorie aus der
+Kennzahl entspricht; mit Kennzahl 11 geht er als Q in die erzeugten
+GZT-Kombinationen ein (gemessen am 24.09.2026).
+
 **Freie Rechtecklasten.** RFEM legt das Lastfenster in die uv-Ebene eines
 eigenen Koordinatensystems (`coordinateSystem_id` → `CoordinateSystem…
 2PointsAndAngle`: Ursprung, ein Punkt auf der u-Achse, Drehwinkel der

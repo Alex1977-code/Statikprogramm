@@ -3034,7 +3034,50 @@ bzw. der CSV-Datei, Kopf- und Leerzeilen mitgezählt. Die
 RFEM-6-Lastfalls ist aus einer Kennzahl angenommen, die an keiner Datei
 belegt ist: das Protokoll nennt je Kennzahl die angenommene Kategorie und
 die Lastfälle, deren Name sie umgestellt hat, und warnt; prüfen Sie ψ und γ
-in der Lastfallmaske. Ein Volumenkörper aus sechs Vierecken wird als
+in der Lastfallmaske. Den Namen fragt der Import nur, wenn die Kennzahl Q
+ergibt; ergibt sie G (Kennzahl 1 oder 2), bleibt der Lastfall G, auch wenn
+er „Ermüdungslast …“ heißt. Ergibt sie Q, wertet der Import den Namen aus,
+aber **ohne den Text in runden oder eckigen Klammern** (bei geschachtelten
+Klammern ohne den der innersten); was dort steht, zählt für die Kategorie
+nicht. Außerhalb von Klammern gilt: eine Angabe zur Bemessungssituation
+zählt nicht als Einwirkung, wenn sie so geschrieben ist: „ständig“,
+„vorübergehend“ oder „außergewöhnlich“ mit Endung (-e, -en, -er, -es, -em,
+also etwa „ständige“ oder „ständigen“) oder „Erdbeben“ unmittelbar vor
+„Bemessungssituation“ (zwei davon mit „und“, „u.“ oder „oder“ verbunden),
+„Bemessungssituation Erdbeben“, „Bemessungssituation bei Erdbeben“ oder
+englisch „persistent“, „transient“, „accidental“ oder „seismic“ vor
+„design situation“ (zwei davon mit „and“ oder „or“ verbunden, etwa
+„seismic or accidental design situation“), jeweils auch in der Mehrzahl
+(„Bemessungssituationen“, „design situations“). Groß- und Kleinschreibung
+zählt dabei nicht, „ae“, „oe“, „ue“ und „ss“ gelten wie „ä“, „ö“, „ü“ und
+„ß“, und Satz- und Sonderzeichen gelten wie ein Leerzeichen: Bindestrich
+und Gedankenstrich ebenso wie „/“, „:“ oder „,“. „Erdbeben -
+Bemessungssituation 2“ und „Erdbeben / Bemessungssituation“ sind darum wie
+„Erdbeben-Bemessungssituation 2“ eine Situation und bleiben Q, ebenso
+„Außergewöhnliche - Bemessungssituation“ und „Nutzlast - seismic or
+accidental design situation“; das Protokoll nennt sie nicht unter
+„umgestellt“. Die genaue Regel steht im Schnittstellenhandbuch unter
+„Bemessungssituation und Ermüdung im Namen“. Nicht heraus nimmt der Import
+etwa „ständige/vorübergehende Bemessungssituation“ (ohne „und“ oder „oder“
+bleibt „ständige“ stehen), „Bemessungssituation ständig“, „Ständig -
+Bemessungssituation“ (ohne Endung) oder „Ständig und vorübergehend“ ohne
+das Wort „Bemessungssituation“; sie machen einen Lastfall weiter zu G,
+„Bemessungssituation außergewöhnlich“ oder „Außergewöhnlich -
+Bemessungssituation“ zu A, und das Protokoll nennt ihn unter „umgestellt“.
+Ein Lastfall, dessen Name „Ermüdung“ außerhalb von Klammern enthält, wird
+FAT (nur für den Ermüdungsnachweis, in keiner erzeugten Kombination), auch
+wenn der Name daneben „Eigengewicht“ oder „Temperatur“ nennt. In Klammern
+zählt „Ermüdung“ nicht: „Kran (Ermüdung)“ bleibt Q_K und geht in die
+erzeugten GZT-Kombinationen ein, „Eigengewicht (Ermüdung)“ wird G und
+„Temperatur [Ermüdung]“ T; ebenso bleibt „Nutzlast (Bemessungssituation
+außergewöhnlich)“ Q. Stellen Sie einen solchen Lastfall in der
+Lastfallmaske unter „Einwirkung“ auf FAT, oder schreiben Sie „Ermüdung“
+außerhalb der Klammern („Kran - Ermüdung“). Am
+Drehlager (422 Lastfälle, alle mit der Kennzahl 11) machte der Name bis zum
+23.09.2026 96 Lastfälle über „ständige Bemessungssituation“ zu G, 16 über
+„außergewöhnliche Bemessungssituation“ zu A und die 164 Ermüdungslastfälle
+zu G (160) bzw. T (4); jetzt sind es 256× Q, 164× FAT und 2× P.
+Ein Volumenkörper aus sechs Vierecken wird als
 Sechsflächner nur dann unmittelbar vernetzt, wenn seine Knotenfolge genau
 die sechs Randflächen ergibt; sonst geht er an den freien Vernetzer (Einzelheiten im
 Schnittstellenhandbuch).
