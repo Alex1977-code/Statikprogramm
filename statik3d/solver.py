@@ -268,6 +268,10 @@ LOESER_MODUL = {"pardiso": "pypardiso", "cholmod": "sksparse.cholmod",
                 "superlu": "scipy.sparse.linalg"}
 #: Loeser, die mehrere Threads nutzen (die uebrigen rechnen einkernig)
 MEHRKERNIG = ("pardiso", "mumps", "ama")
+#: Loeser ohne Faktorisierung: jede rechte Seite wird neu iteriert. Wer viele
+#: Loesungen mit derselben Matrix braucht (das Verzweigungsproblem,
+#: :func:`_verzweigung`), zerlegt dafuer selbst direkt.
+ITERATIV = ("pyamg",)
 
 
 def loeser_da(key: str) -> bool:
@@ -3597,13 +3601,7 @@ def _solve_static_innen(model: Model, progress=None, case: str = None,
     Lastfall mit abgebautem Lager das Ergebnis mit Lager (Befund B123,
     Winkelrahmen: uz in Kragarmmitte -0,2470 statt -3,5971 mm wie
     solve_cases). Ein uebergebenes System gilt, wie es ist."""
-    if case == "all":
-        factors = {k: 1.0 for k in model.load_cases}
-        name = "alle Lastfaelle"
-    else:
-        lc = model.case(case)
-        factors = {lc.name: 1.0}
-        name = lc.name
+    factors, name = _lastfall_faktoren(model, case)
     if system is None:
         sit = _situation_der_faelle(model, list(factors))
         if sit != GRUNDSTELLUNG:
@@ -3616,6 +3614,23 @@ def _solve_static_innen(model: Model, progress=None, case: str = None,
     _melde(progress, "System gelöst" + (f" – Situation {sit}" if sit != GRUNDSTELLUNG else ""),
            1.0)
     return res
+
+
+def _lastfall_faktoren(model: Model, case: str = None) -> tuple:
+    """({Lastfall: Faktor}, Name) des Grundzustands ``case``: None = der
+    aktive Lastfall, "all" = alle Lastfaelle mit Faktor 1 ueberlagert.
+
+    Eine Stelle fuer solve_static und solve_buckling. Seit b118805 fragte
+    solve_buckling fuer die Situation ``model.case(case)``; am Stand b7659cb
+    brach es bei "all" mit KeyError "Lastfall 'all' existiert nicht" ab,
+    auch mit --analyse knicken --lastfall all, waehrend solve_static "all"
+    weiter kannte. Am Stand ec6448c gab eine gelenkige Stuetze (4 m, 16
+    Elemente, Rechteck 10 x 20 cm) mit zwei Lastfaellen je 500 N mit "all"
+    2158,98, die Eulerlast fuer 1000 N (gemessen 24.09.2026)."""
+    if case == "all":
+        return {k: 1.0 for k in model.load_cases}, "alle Lastfaelle"
+    lc = model.case(case)
+    return {lc.name: 1.0}, lc.name
 
 
 def _situation_der_faelle(model: Model, namen: list) -> str:
@@ -5926,7 +5941,34 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
 # ==========================================================================
 # Lineares Knicken
 # ==========================================================================
-def _verzweigung(system: StaticSystem, Kgff, k: int) -> tuple:
+def _direkt_zerlegen(system: StaticSystem, iterativ: LinearSolver,
+                     progress=None) -> Optional[LinearSolver]:
+    """Eine direkte Zerlegung von K (samt Lagrange-Rand) fuer das
+    Verzweigungsproblem, wenn der Loeser des Systems iteriert (ITERATIV).
+
+    Waehlt wie "automatisch" (MKL PARDISO, sonst CHOLMOD, sonst SuperLU).
+    Scheitert sie (Speicher, kein Loeser), kommt None: dann iteriert der
+    Loeser des Systems jede Lanczos-Loesung neu - langsam, aber es rechnet,
+    und das Protokoll sagt es."""
+    name = NAMEN.get(iterativ.backend, iterativ.backend)
+    try:
+        direkt = LinearSolver(system.gerandet(system.Kff), backend="auto")
+    except (RuntimeError, ValueError, MemoryError, LoeserAusfall) as ex:
+        _melde(progress, f"Verzweigungsproblem: K ließ sich nicht direkt zerlegen "
+                         f"({str(ex)[:160]}) – {name} iteriert jede Lösung neu, "
+                         f"das dauert")
+        return None
+    # Nicht beschreibung(): deren Genauigkeit und Nachiterationen gelten hier
+    # nicht, die Lanczos-Loesungen laufen ohne Residuumspruefung (check=False)
+    wie = NAMEN.get(direkt.backend, direkt.backend) + (
+        f", {direkt.threads} Threads" if direkt.threads > 1 else ", einkernig") + (
+        f", ausgewichen - {direkt.ausweichgrund}" if direkt.ausweichgrund else "")
+    _melde(progress, f"Verzweigungsproblem: {name} iteriert jede Lösung neu – "
+                     f"K wird dafür direkt zerlegt ({wie})")
+    return direkt
+
+
+def _verzweigung(system: StaticSystem, Kgff, k: int, progress=None) -> tuple:
     """(lambda, Eigenvektoren) von K v = lambda (-K_g) v - die ``k``
     betragskleinsten lambda, aufsteigend nach Betrag.
 
@@ -5940,7 +5982,19 @@ def _verzweigung(system: StaticSystem, Kgff, k: int) -> tuple:
     (dichter Bezug).
     In diesem Modus (ohne sigma) verlangt ARPACK ein positiv definites M.
     K ist das bei gehaltenem System, und seine Faktorisierung liegt aus dem
-    Grundzustand schon vor. Mit einer freien Bewegung ist K nur
+    Grundzustand schon vor - bei einem direkten Loeser. Ein iterativer
+    (ITERATIV: PyAMG) hat keine: jede Lanczos-Loesung waere eine volle
+    AMG-CG-Iteration. Dann wird K hier eigens direkt zerlegt
+    (:func:`_direkt_zerlegen`), und der gewaehlte Loeser rechnet nur den
+    Grundzustand - wie bis zum 23.09.2026, als eigsh(sigma=0) K selbst mit
+    SuperLU zerlegte. Gemessen 24.09.2026 am Portal 6 x 6 x 4 (17 430 FHG,
+    vier Moden, workers=2, MKL_NUM_THREADS=2) mit PyAMG, solve_buckling
+    gesamt: mit dem AMG-CG als Inverse (Stand b7659cb) 125 AMG-Loesungen und
+    316,6 s; direkt zerlegt eine AMG-Loesung (Grundzustand) und 124 mit
+    PARDISO, 7,45 und 7,57 s; am Stand ec6448c 7,14 und 6,40 s. Die Faktoren
+    sind in allen Laeufen auf sechs Stellen gleich (26,22673 / 27,732762 /
+    28,383426 / 29,214281).
+    Mit einer freien Bewegung ist K nur
     semidefinit: an der Stuetze mit freier Torsion aus
     tests/test_knicklaengen.py::test_knicken_mit_freier_torsion (PARDISO,
     kein Rand) hat Kff den kleinsten Eigenwert 7,7e-8 gegen 1,6e4 den
@@ -5955,6 +6009,9 @@ def _verzweigung(system: StaticSystem, Kgff, k: int) -> tuple:
     erste war in allen Laeufen bitgleich (gemessen 23.09.2026)."""
     from scipy.sparse.linalg import LinearOperator
     ls = system.solver
+    eigen = _direkt_zerlegen(system, ls, progress) if ls.backend in ITERATIV else None
+    if eigen is not None:
+        ls = eigen
     n = Kgff.shape[0]
     rand = system._rand
 
@@ -5967,7 +6024,11 @@ def _verzweigung(system: StaticSystem, Kgff, k: int) -> tuple:
 
     op = LinearOperator((n, n), dtype=float, matvec=k_inv)
     v0 = np.random.default_rng(0).standard_normal(n)
-    mu, vecs = eigsh(-Kgff, k=k, M=system.Kff, Minv=op, which="LM", v0=v0)
+    try:
+        mu, vecs = eigsh(-Kgff, k=k, M=system.Kff, Minv=op, which="LM", v0=v0)
+    finally:
+        if eigen is not None:
+            eigen.freigeben()
     lam = np.full(len(mu), np.inf)
     np.divide(1.0, mu, out=lam, where=mu != 0.0)
     order = np.argsort(np.abs(lam), kind="stable")
@@ -5977,7 +6038,8 @@ def _verzweigung(system: StaticSystem, Kgff, k: int) -> tuple:
 def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = None,
                    combination: str = None, workers: int = None) -> Results:
     """Lineares Verzweigungsproblem: (K + lambda*Kg) v = 0 (Stabtragwerke).
-    Grundzustand: Lastfall (default aktiver) oder Kombination.
+    Grundzustand: Lastfall (default aktiver; "all" = alle Lastfaelle mit
+    Faktor 1, wie solve_static) oder Kombination.
 
     Gerechnet wird in der **Situation** des Grundzustands: Steifigkeit,
     Grundzustand und geometrische Steifigkeit (nur wirksame Elemente) aus
@@ -5991,7 +6053,7 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
     if combination:
         sit = _kombination_pruefen(model, model.combinations[combination])
     else:
-        sit = _situation_der_faelle(model, [model.case(case).name])
+        sit = _situation_der_faelle(model, list(_lastfall_faktoren(model, case)[0]))
     if sit != GRUNDSTELLUNG:
         model, system = situationssystem(model, sit, workers, progress)
     else:
@@ -6011,7 +6073,7 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
         _melde(progress, "Verzweigungsproblem wird gelöst", 0.45)
 
     k = min(nmodes, Kff.shape[0] - 2)
-    vals_, vecs = _verzweigung(system, Kgff, k)
+    vals_, vecs = _verzweigung(system, Kgff, k, progress)
 
     modes = np.zeros((k, model.ndof))
     for i in range(k):

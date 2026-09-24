@@ -449,6 +449,19 @@ def test_knicken_in_seiner_situation():
           rc.buckling_factors[0] * 1.5 * P, math.pi ** 2 * E * I / (2 * L) ** 2, 1e-4, "N")
     check("Kombination: die Zusammenfassung nennt die Situation",
           _situation_in_zusammenfassung(rc) == "frei", str(_situation_in_zusammenfassung(rc)))
+    # case="all" wie in solve_static: ueber zwei Situationen abgewiesen (am
+    # Stand b7659cb kam hier KeyError "Lastfall 'all' existiert nicht",
+    # gemessen 24.09.2026)
+    try:
+        solver.solve_buckling(m, 2, case="all")
+        check("Knicken ueber alle Lastfaelle zweier Situationen wird abgewiesen", False,
+              "lief durch")
+    except ValueError as ex:
+        check("Knicken ueber alle Lastfaelle zweier Situationen wird abgewiesen",
+              "verschiedenen Situationen" in str(ex), str(ex)[:80])
+    except Exception as ex:          # noqa: BLE001
+        check("Knicken ueber alle Lastfaelle zweier Situationen wird abgewiesen", False,
+              f"{type(ex).__name__}: {ex}"[:80])
     # Abgeschaltete Elemente: die aeussere Haelfte eines Stabes 2L wirkt in
     # der Situation nicht; ihre Knoten ausser dem ersten haben kein wirksames
     # Element und werden festgehalten. Ginge sie mit ihrer Verformung in die

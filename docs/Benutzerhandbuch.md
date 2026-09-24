@@ -3960,6 +3960,14 @@ davon nicht betroffen.
   4e-10 relativ), **PyAMG** (iterativ:
   algebraisches Mehrgitter mit CG — speicherarm, aber je rechte Seite neu zu
   iterieren und einkernig) und **SuperLU** (direkt, einkernig, Rückfall).
+  Beim **Knicken** rechnet PyAMG nur den Grundzustand. Das
+  Verzweigungsproblem braucht viele Lösungen mit derselben Matrix und
+  zerlegt sie dafür direkt (Wahl wie „automatisch“); im Protokoll steht
+  „Verzweigungsproblem: PyAMG iteriert jede Lösung neu – K wird dafür direkt
+  zerlegt (…)“. Scheitert die direkte Zerlegung, iteriert PyAMG auch dort,
+  und das Protokoll sagt es. An einem Rahmen mit 17 430 Freiheitsgraden
+  (vier Knickformen, gemessen 24.09.2026) dauerte das Knicken mit PyAMG so
+  7,5 s, beim Iterieren in jedem Schritt 329 s.
   **In der exe stecken** MKL PARDISO, ama, PyAMG und SuperLU (PyAMG ist
   MIT-lizenziert, ama ist eigener Kern ohne Fremdlizenz); **MUMPS**
   (CeCILL-C) lädt das Programm beim Start nach (Kästchen im Dialog

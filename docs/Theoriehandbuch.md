@@ -1105,9 +1105,9 @@ in der ein Lastfall steht, wird ein eigenes Gleichungssystem aufgestellt:
   bauen ihr System ebenso je Situation (`situationssystem`); die
   geometrische Steifigkeit des Knickens nimmt nur die wirksamen Elemente.
   Bis zum 23.09.2026 bauten beide `StaticSystem(model)` ohne Situation und
-  rechneten still in der Grundstellung. `solve_static(case="all")` über
-  Lastfälle verschiedener Situationen wird abgewiesen – ein gemeinsames
-  System gibt es nicht.
+  rechneten still in der Grundstellung. `solve_static(case="all")` und
+  `solve_buckling(case="all")` über Lastfälle verschiedener Situationen
+  werden abgewiesen – ein gemeinsames System gibt es nicht.
 
 `tests/test_situationen.py` prüft das gegen geschlossene Lösungen:
 eingespannt-gestützter Balken (7PL³/96EI) gegen den Kragarm nach Abschalten
@@ -4368,9 +4368,17 @@ gesagt — es wird nichts ersatzweise eingesetzt.
   Kombination, im System seiner Situation (Abschnitt 3.1). Der
   Knicklastfaktor λ multipliziert die Lasten des Grundzustands.
   Gelöst wird mit K als Metrik: (−K_g) φ = μ K φ, λ = 1/μ, die
-  betragsgrößten μ (Lanczos, ARPACK) mit der Faktorisierung des
-  Grundzustands – auch mit dem Lagrange-Rand der Hilfsfesselung – und einem
-  festen Startvektor. Ausgegeben werden die betragskleinsten λ beider
+  betragsgrößten μ (Lanczos, ARPACK) mit einem festen Startvektor. Jeder
+  Lanczos-Schritt löst mit K; dafür dient die Faktorisierung des
+  Grundzustands, auch mit dem Lagrange-Rand der Hilfsfesselung. Ein
+  iterativer Löser (PyAMG) hat keine Faktorisierung, jeder Schritt wäre eine
+  volle Iteration. Dann wird K für das Verzweigungsproblem eigens direkt
+  zerlegt (Wahl wie „automatisch“), und PyAMG rechnet nur den Grundzustand.
+  Am Portal mit 17 430 Freiheitsgraden (vier Moden, gemessen 24.09.2026)
+  dauerte das Knicken mit PyAMG so 7,5 s; mit einer AMG-Iteration in jedem
+  Schritt (125 Lösungen) waren es 316,6 s, bei denselben Faktoren auf sechs
+  Stellen. Scheitert die direkte Zerlegung, iteriert PyAMG jeden Schritt,
+  und das Protokoll sagt es. Ausgegeben werden die betragskleinsten λ beider
   Vorzeichen (negativ: Knicken unter umgekehrter Last), nach Betrag geordnet.
   Bis zum 23.09.2026 stand dort eigsh(K, M = −K_g, σ = 0): ARPACK verlangt in
   diesem Modus ein positiv semidefinites M, und mit Zug und Druck im

@@ -270,9 +270,127 @@ def test_knicken_mit_freier_torsion():
     close("mit Hilfsfesselung (Rand): Eulerlast", lam[0] * 1000.0, euler, 1e-3)
 
 
+def _stuetze_zwei_lastfaelle():
+    """Gelenkig gelagerte Stuetze (4 m, 12 Elemente), zwei Lastfaelle mit je
+    500 N am Kopf; Eulerlast pi^2 EI/L^2."""
+    m, sec = _stuetze(L=4.0, ne=12)
+    m.fix(0, [0, 1, 2, 5])
+    m.fix(12, [0, 1])
+    m.case().gravity = [0.0, 0.0, 0.0]
+    m.load_node(12, Fz=-500.0, case=m.case().name)
+    lc = m.add_load_case("LF2", "Q", activate=False)
+    lc.gravity = [0.0, 0.0, 0.0]
+    m.load_node(12, Fz=-500.0, case="LF2")
+    return m, math.pi ** 2 * E * min(sec.Iy, sec.Iz) / 4.0 ** 2
+
+
+def test_knicken_alle_lastfaelle():
+    """Grundzustand case='all': alle Lastfaelle mit Faktor 1 ueberlagert, wie
+    in solve_static. Gemessen 24.09.2026 an dieser Stuetze: am Stand ec6448c
+    134,883 fuer 2 x 500 N (Eulerlast 134 936 N, 12 Elemente), auch in der
+    Kommandozeile (--analyse knicken --lastfall all, rc 0); am Stand b7659cb
+    beide Male KeyError "Lastfall 'all' existiert nicht"."""
+    import contextlib
+    import io
+    import tempfile
+    from statik3d import cli
+    m, euler = _stuetze_zwei_lastfaelle()
+    try:
+        r = solver.solve_buckling(m, 2, case="all")
+        close("case='all': Knicklast der Summe (2 x 500 N) = Eulerlast",
+              r.buckling_factors[0] * 1000.0, euler, 1e-3)
+        check("case='all': Grundzustand heisst 'alle Lastfaelle'",
+              r.name == "alle Lastfaelle", r.name)
+        r2 = solver.solve_buckling(m, 2, case="LF2")
+        close("ein Lastfall (500 N) knickt beim doppelten Faktor",
+              r2.buckling_factors[0], 2.0 * r.buckling_factors[0], 1e-9)
+    except Exception as ex:          # noqa: BLE001
+        check("case='all': Knicklast der Summe (2 x 500 N) = Eulerlast", False,
+              f"{type(ex).__name__}: {ex}"[:100])
+    with tempfile.TemporaryDirectory() as tmp:
+        pfad = os.path.join(tmp, "stuetze.json")
+        m.save(pfad)
+        aus = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(aus):
+                rc = cli.main([pfad, "--analyse", "knicken", "--lastfall", "all",
+                               "--moden", "2"])
+        except Exception as ex:      # noqa: BLE001
+            rc = f"{type(ex).__name__}: {ex}"[:100]
+        check("Kommandozeile --analyse knicken --lastfall all rechnet", rc == 0,
+              f"rc={rc}")
+
+
+def test_knicken_mit_iterativem_loeser():
+    """Mit PyAMG rechnet der Loeser des Systems nur den Grundzustand; das
+    Verzweigungsproblem zerlegt K direkt. Mit dem AMG-CG als Inverse war
+    jeder Lanczos-Schritt eine volle iterative Loesung: am Portal mit
+    17 430 FHG 125 Loesungen statt 1 (gemessen 24.09.2026, siehe
+    solver._verzweigung), an diesem Rahmen am Stand b7659cb 191.
+    Gezaehlt wird, welcher Loeser wie oft loest.
+    Scheitert die direkte Zerlegung, iteriert PyAMG weiter (und sagt es)."""
+    from statik3d import parallel
+    if not solver.loeser_da("pyamg"):
+        print("    pyamg: nicht vorhanden, uebersprungen")
+        return
+    m = _zweigelenkrahmen_w()
+    bezug = np.asarray(solver.solve_buckling(m, 3, case="W").buckling_factors, float)
+    alt_backend = parallel.settings().solver_backend
+    orig_solve = solver.LinearSolver.solve
+    orig_init = solver.LinearSolver.__init__
+    zaehler: dict = {}
+
+    def gezaehlt(self, b, check=True):
+        zaehler[self.backend] = zaehler.get(self.backend, 0) + 1
+        return orig_solve(self, b, check)
+
+    try:
+        parallel.configure(solver_backend="pyamg")
+        solver.LinearSolver.solve = gezaehlt
+        zeilen = []
+        r = solver.solve_buckling(m, 3, lambda t, *a: zeilen.append(str(t)), case="W")
+        # Das Benutzerhandbuch nennt diese Zeile im Protokoll
+        check("Protokoll: „PyAMG iteriert jede Lösung neu – K wird dafür direkt zerlegt“",
+              any(z.startswith("Verzweigungsproblem: PyAMG iteriert jede Lösung neu – "
+                               "K wird dafür direkt zerlegt (") for z in zeilen),
+              str([z for z in zeilen if "Verzweigung" in z])[:160])
+        f = np.asarray(r.buckling_factors, float)
+        check("PyAMG: dieselben Knickfaktoren wie der direkte Loeser",
+              np.allclose(f, bezug, rtol=1e-6, atol=0),
+              f"{[round(float(x), 4) for x in f]} gegen {[round(float(x), 4) for x in bezug]}")
+        n_iter = zaehler.get("pyamg", 0)
+        n_direkt = sum(v for k, v in zaehler.items() if k != "pyamg")
+        check("PyAMG loest nur den Grundzustand (1 Loesung), das Eigenproblem "
+              "loest direkt", n_iter == 1 and n_direkt > 0, str(zaehler))
+
+        # Scheitert die direkte Zerlegung (zu wenig Speicher, ...), rechnet
+        # es iterativ weiter statt abzubrechen - und sagt es
+        def ohne_direkt(self, K, backend=None):
+            if backend is not None:
+                raise RuntimeError("Probe: der Speicher reichte für die Faktorisierung nicht")
+            orig_init(self, K, backend)
+
+        solver.LinearSolver.__init__ = ohne_direkt
+        zaehler.clear()
+        zeilen = []
+        r = solver.solve_buckling(m, 3, lambda t, *a: zeilen.append(str(t)), case="W")
+        f = np.asarray(r.buckling_factors, float)
+        check("direkte Zerlegung gescheitert: PyAMG iteriert, Faktoren gleich",
+              np.allclose(f, bezug, rtol=1e-6, atol=0) and zaehler.get("pyamg", 0) > 1,
+              f"{[round(float(x), 4) for x in f]}, {zaehler}")
+        check("... und das Protokoll sagt es",
+              any("Probe: der Speicher" in z and "PyAMG" in z for z in zeilen),
+              str([z for z in zeilen if "Verzweigung" in z])[:160])
+    finally:
+        solver.LinearSolver.solve = orig_solve
+        solver.LinearSolver.__init__ = orig_init
+        parallel.configure(solver_backend=alt_backend)
+
+
 def main():
     for t in (test_eulerfaelle, test_achse_und_uebernahme, test_rahmen,
-              test_zug_und_druck_im_grundzustand, test_knicken_mit_freier_torsion):
+              test_zug_und_druck_im_grundzustand, test_knicken_mit_freier_torsion,
+              test_knicken_alle_lastfaelle, test_knicken_mit_iterativem_loeser):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
