@@ -5167,14 +5167,14 @@ nichts stillschweigend Übergangenes:
 | Abdeckung der Kontaktseite | ≥ 95 % |
 | Gegenkörper der Kontaktbedingung ohne eine einzige Facette | 0 |
 | Haltegüte je Teiltragwerk | ≥ 10⁻⁴ |
-| Knoten im Rechennetz ohne Element | 0 |
+| Knoten im Rechennetz ohne Element (nicht gezählt: über Kopplungen oder einen starren Körper in allen drei Richtungen am Netz gehalten, Anschlag am Spaltelement) | 0 |
 | Formgüte des schlechtesten Elements je Körper | ≥ 0,05 |
 | Randtreue je Körper | ≥ 99 % |
 | **Volumenbilanz je Körper**: Elemente gegen Randflächen | ≤ 0,5 % (an windschiefen Flächen zuzüglich der Sehnen) |
 | **Seiten im Inneren**: freie Elementseiten, hinter denen der Körper weitergeht (verdrehtes Element, doppelte Knoten, Hohlraum) | 0 |
 | Lücke im Netzrand (Warnung, über 0,5 % des Körpers Fehler): an der Oberfläche fehlt dem Netz ein Stück, kein verdrehtes Element, keine doppelten Knoten | 0 |
 | Netzrand neben der Hülle (Warnung): freie Seiten neben den Randflächen, außen oder als Beule | 0 |
-| Riss im Netz (Warnung): geschlossener Hohlraum, dünn gegen seine eigenen Seiten und gegen die Elemente daneben, kein verdrehtes Element, keine doppelten Knoten | 0 |
+| Riss im Netz (Warnung): geschlossener Hohlraum, dünn gegen seine eigenen Seiten und gegen die Elemente daneben, so klein wie die Lücken des Vernetzers (höchstens 2 · 10⁻⁶ · L³ je vier Seiten, L die längste Elementkante des Körpers), kein verdrehtes Element, keine doppelten Knoten | 0 |
 
 Die Volumenbilanz und die vier Prüfungen darunter gibt es seit dem
 23.09.2026, im Hauptzweig seit dem Merge an diesem Tag. Die Abnahme des
@@ -5207,13 +5207,22 @@ Prisma mit eckigem Loch eine einspringende Ecke ab (3 von 1024 Seiten,
 seiner Seiten, und sie ist höchstens 0,65-mal so groß wie die Dicke der
 Elemente, an denen er liegt (Median, die Dicke eines Elements ebenso
 gerechnet). Das zweite Maß braucht es für längliche Elemente: Dort folgt die
-Dicke der kurzen Seite, die längste Kante aber der langen. Solche Hohlräume
+Dicke der kurzen Seite, die längste Kante aber der langen. Und der Hohlraum
+ist **klein** (seit 23.09.2026): höchstens 2 · 10⁻⁶ · L³ je vier seiner
+Seiten, L die längste Elementkante des Körpers. Der freie Vernetzer sortiert
+Tetraeder bis 10⁻⁶ · h³ aus, h seine Kantenlänge. An den gemessenen freien
+Netzen war L das 1,02- bis 2,0-Fache von h (Platte mit Bohrung, h = 50 mm:
+L = 50,9 mm; Würfel und L-Prisma mit h = 0,1 bis 0,5 m: 1,68 h bis 2,0 h),
+die Grenze dort also das 2,1- bis 16-Fache von 10⁻⁶ · h³. Gesetzt ist sie an
+gemessenen Hohlräumen (siehe „Fehlt ein flacher Tetraeder“), nicht aus h
+hergeleitet. Solche Hohlräume
 bleiben, wenn der freie Vernetzer flache Tetraeder aussortiert (Platte
 0,9 × 0,9 × 0,035 m mit Bohrung: 8 Seiten, zwei Hohlräume von zusammen
 0,056 mm³), oder wenn beiderseits einer Fläche dieselben Knoten verschieden in
 Dreiecke geteilt sind. Die 30 geschlossenen Gruppen in den Modellen der
-Prüfsuiten lagen bei höchstens 3,55 % der längsten Kante und waren höchstens
-0,48-mal so dick wie die Elemente daneben. Der Körper stimmt bis auf diese
+Prüfsuiten lagen bei höchstens 3,55 % der längsten Kante, waren höchstens
+0,48-mal so dick wie die Elemente daneben und hatten höchstens das 0,87-Fache
+von 10⁻⁶ · L³ je vier Seiten. Der Körper stimmt bis auf diese
 Hohlräume, die Verschiebungen passen dort aber nur an Knoten und Kanten
 zusammen.
 
@@ -5228,15 +5237,40 @@ denselben abgestuften Netzen; ein Element, das an Knoten losgelöst ist, im
 gleichmäßigen 8 × 8 × 8-Netz: jeder der sechs Tetraeder einer inneren Zelle
 und einer Zelle an der Seitenfläche, an einem bis vier Knoten losgelöst, der
 Sechsflächner innen an einem bis vier und an allen acht Knoten, an der
-Seitenfläche an einem, zwei, vier und acht Knoten. Die Kehrseite: Fehlt ein
-Tetraeder, der selbst so flach ist wie die, die der Vernetzer
-aussortiert, ist auch das ein Riss. Einzeln entfernt war das am frei
-vernetzten Würfel mit angehobener Ecke (1483 Tetraeder) bei 20 von 541
-inneren Tetraedern so, an der Platte mit Keilen (2701 Tetraeder) bei 75 von
-947; als innen zählen dabei die Tetraeder ohne Knoten auf der Hülle. Die
-Dicke dieser Tetraeder war höchstens 4,98 % ihrer längsten Kante.
-Jeder fehlende Tetraeder mit einer Dicke über 5 % seiner längsten Kante war in
-diesen Messungen ein FEHLER.
+Seitenfläche an einem, zwei, vier und acht Knoten.
+
+**Fehlt ein flacher Tetraeder**, ist sein Hohlraum so dünn wie die Lücken
+des Vernetzers, aber nicht unbedingt so klein. Bis zum 23.09.2026 war auch das
+ein Riss, gleich wie groß, und vor dem Rechnen kam keine Rückfrage. An der
+frei vernetzten Platte mit Bohrung (34 600 Tetraeder, Netzweite 50 mm) traf
+das 1413 von 28 046 inneren Tetraedern (innen: alle vier Seiten mit einem
+Nachbarn), bis 2,05 cm³. Die Zahl ist aus
+den beiden Dicken vorhergesagt und an Stichproben mit der Abnahme bestätigt.
+Der Text des Risses nannte dazu als Grund den Vernetzer, auch bei einem von
+Hand gelöschten Tetraeder von 35 728 mm³ am L-Prisma (Netzweite 0,12 m); der
+Vernetzer sortiert dort nur bis 1,7 mm³ aus. Seither ist ein solcher
+Hohlraum über 2 · 10⁻⁶ · L³ ein FEHLER „Seiten im Inneren“, dessen Text ein
+fehlendes Element nennt, etwa von Hand gelöscht oder beim Import verloren.
+Gemessen: die Platte ohne ihren Tetraeder 17625 (2,05 cm³) und das L-Prisma
+ohne den gelöschten, beide FEHLER mit Rückfrage. Die Kehrseite: Kleinere
+fehlende flache Tetraeder bleiben ein Riss. Sie sind so klein wie die Lücken
+des Vernetzers und von ihnen nicht zu unterscheiden. Vorhergesagt: an der
+Platte mit Bohrung 48 der 1413 (bis 0,26 mm³), an der Platte mit Keilen
+(2701 Tetraeder) 7 von 183, am L-Prisma (6173 Tetraeder) keiner von 306 und
+am Würfel mit angehobener Ecke (1483 Tetraeder) keiner von 58. Mit der
+Abnahme gerechnet lag die Grenze genau bei 2: das 1,97- und 1,99-Fache ein
+Riss, das 2,01- und 2,03-Fache ein FEHLER. Der Text des Risses nennt deshalb
+nur die Größe der Hohlräume, nicht ihre Herkunft. Die Dicke der fehlenden
+flachen Tetraeder war höchstens 4,98 % ihrer längsten Kante; jeder fehlende
+Tetraeder mit einer Dicke über 5 % seiner längsten Kante war in diesen
+Messungen ein FEHLER. Gezählt ist das an den Netzen des eigenen Vernetzers vor
+seiner Änderung vom 23.09.2026. Seither hat die Platte mit Keilen 2502 statt
+2701 Tetraeder, das L-Prisma 6155 statt 6173 und der Würfel 1085 statt 1483;
+die Zählungen sind daran nicht wiederholt. Nachgemessen am 24.09.2026 sind nur
+Einzelfälle: An der Platte mit Keilen sind der flache Tetraeder von 1,75 cm³
+und der von 0,145 mm³ geblieben, ohne den ersten ein FEHLER, ohne den zweiten
+ein Riss; am L-Prisma ist der flachste Tetraeder unter dem Deckel des langen
+Schenkels jetzt 36 097 mm³ groß, von Hand gelöscht ein FEHLER mit Rückfrage.
 
 **Lücke im Netzrand** (Warnung, seit 23.09.2026). Fehlt dem Netz an der
 Oberfläche ein Stück, liegen die freien Seiten der Nachbarn im Inneren, und
@@ -5253,7 +5287,11 @@ Geholfen hat
 an diesen fünf Prismen, gemessen: in den Netzeinstellungen „Sechsflächner
 sweepen“ (nur für Körper aus Grundfläche mal Weg) oder der Vernetzer gmsh bzw.
 Netgen, jeweils an allen fünf. Der Sweep ist ab Werk aus; warum, steht bei
-den Netzeinstellungen. Eine um 5 bis 10 % andere Ziellänge half nur an drei
+den Netzeinstellungen. Seit 23.09.2026 sagt das auch die Warnung selbst („ab
+Werk aus, weil er am Drehlager entartete Keile erzeugte - nach dem
+Einschalten die Abnahme lesen“); vorher empfahl sie den Sweep ohne diesen
+Hinweis. Gemessen ist die Abhilfe nur an den fünf Prismen, am Drehlager
+nicht. Eine um 5 bis 10 % andere Ziellänge half nur an drei
 oder vier, die Nachbesserung mit MMG3D an keinem. Das gilt für Netze, die
 unverändert vom eigenen Vernetzer stammen. Ist das Netz importiert oder von
 Hand geändert, rät der Text, neu zu vernetzen. Gemessen an einem von Hand
@@ -5313,42 +5351,35 @@ war jeder ein FEHLER.
 Ein verdrehtes Element in der groben Ecke, wo die
 oberste Lage dünn ist gegen die Sehne, findet nur die Richtung: Seine Ecken
 liegen bei 20:1 17 bis 18 mm neben dem Deckel, seine Seiten stehen 57 bis 87°
-dagegen. Die Kehrseite: kleinere Abweichungen des Netzrands meldet
-die Abnahme an windschiefen Flächen nicht. Für die windschiefe Fläche selbst
-ist dabei bei einem Knoten, der nach außen verschoben ist, sein Abstand
-senkrecht zu ihr maßgebend, nicht ob er in z oder senkrecht zur Fläche
-verschoben ist. Am abgebildeten 4 × 4 × 4-Netz desselben Würfels bleibt ein
-Deckelknoten, der 25 mm nach außen verschoben ist, ungenannt, bei 30 mm steht
-eine Warnung da, in z wie senkrecht zur Fläche verschoben (gemessen an allen
-21 Deckelknoten außer den vier Ecken). Ist die Ecke um 1 m angehoben, bleiben
-an den neun inneren Deckelknoten 80 mm **senkrecht nach außen** ungenannt,
-90 mm sind eine Warnung „Netzrand neben der Hülle“; ebenso, wenn der Knoten
-so weit in z nach oben verschoben ist, dass er 80 bzw. 90 mm neben der Fläche
-liegt. Ein Deckelknoten, der 100 mm **in z nach oben** verschoben ist, liegt
-je nach Neigung des Deckels verschieden weit neben der Fläche: an den
-steileren Stellen nur 68 bis 81 mm, er bleibt ungenannt; zur Ecke (0|0) hin,
-wo der Deckel waagerecht ist, 87 bis 94 mm, das ist eine Warnung (gemessen am
-24.09.2026 an allen neun inneren Deckelknoten: ungenannt an (0,5|0,5),
-(0,75|0,75), (0,25|0,75), (0,75|0,25), (0,5|0,75) und (0,75|0,5), Warnung an
-(0,25|0,25), (0,25|0,5) und (0,5|0,25)). Nach innen verschoben (eine Delle)
-gilt das nicht: Die Seiten liegen dann im Körper statt neben ihm, andere
-Prüfungen melden sie, und wann, hängt auch von der Richtung ab. Bei 1 m
-Anhebung bleiben 80 mm senkrecht nach innen an den neun inneren Deckelknoten
-ungenannt. Bei 90 mm steht an (0,25|0,25) ein FEHLER „Seiten im Inneren“, an
-sieben Knoten ein FEHLER „Volumenbilanz“ mit „Lücke im Netzrand“, an
-(0,75|0,75) nichts: Dort bleibt eine Delle senkrecht zur Fläche bis 100 mm
-ungenannt, in z nach unten bis rund 190 mm (133 mm neben der Fläche), nach
-außen sind dort schon 90 mm eine Warnung (gemessen am 24.09.2026).
-Die zwölf Randknoten des Deckels zwischen den Ecken meldet die Abnahme zum
-Teil früher: Senkrecht zum Deckel nach außen verschoben, verlassen sie auch
-die ebene Seitenfläche, bei 80 mm um 14 bis 48 mm. Bei 80 mm steht deshalb auf
-den Rändern x = 0 und y = 0 eine Warnung „Netzrand neben der Hülle“, an (1|0,5),
-(1|0,75), (0,5|1) und (0,75|1), wo der Knoten in den Körper hinein rückt, ein
-FEHLER „Seiten im Inneren“; ungenannt bleiben nur (1|0,25) und (0,25|1). An
-(0|0,5), (0|0,75), (0,5|0) und (0,75|0) warnt die Abnahme schon bei 60 mm.
-Nur um den Anteil senkrecht zur Seitenfläche verschoben, gibt es bei 80 mm an
-allen zwölf denselben Befund, mit dem übrigen Anteil allein, der in der Ebene
-der Seitenfläche bleibt, bei 60 und 80 mm keinen (gemessen am 24.09.2026).
+dagegen. Die Kehrseite: Kleinere Abweichungen des Netzrands meldet die
+Abnahme an windschiefen Flächen nicht, soweit sie in die Sehne fallen. Die
+Sehne liegt aber zwischen den Knoten. Seit 23.09.2026 gilt die Grenze
+deshalb nur noch für Ecken von Dreiecksseiten, deren Knoten der freie
+Vernetzer auf Sehnen setzt. Die Ecken von Viereckseiten (Sechsflächner,
+Keile, Pyramiden aus dem abgebildeten Netz oder dem Sweep) dürfen nur 1 %
+der Seitengröße danebenliegen; am abgebildeten 4 × 4 × 4-Netz liegen sie
+gemessen 0,0000 mm neben dem Deckel. Vorher blieb an diesem Netz ein
+Deckelknoten, der 25 mm nach außen verschoben war, ungenannt; bei einer um
+1 m angehobenen Ecke waren es an den neun inneren Deckelknoten 80 mm
+senkrecht nach außen und an sechs von ihnen 100 mm in z nach oben. Jetzt gilt
+am selben Netz, gemessen am 24.09.2026 an allen 21 Deckelknoten außer den
+vier Ecken: Ein Knoten 3,5 mm neben dem Deckel bleibt ungenannt. Die erste
+Warnung „Netzrand neben der Hülle“ kommt senkrecht zur Fläche verschoben
+zwischen 3,5 und 4,0 mm (Ecke um 0,5 m angehoben) bzw. 3,6 und 5,2 mm (um
+1 m), nach außen wie nach innen. Für die windschiefe Fläche ist dabei der
+Abstand des Knotens senkrecht zu ihr maßgebend, nicht die Richtung der
+Verschiebung: In z verschoben braucht es an den steileren Stellen mehr, bis
+4,8 bzw. 8,2 mm. Ab 5 mm (Ecke um 0,5 m) bzw. 7 mm senkrecht und 8,5 mm in z
+(um 1 m) warnt die Abnahme an allen 21 Knoten. Eine tiefere Delle melden
+auch andere Prüfungen: ab 15 bis 20 mm an vielen Knoten ein FEHLER „Seiten
+im Inneren“ oder eine Warnung „Lücke im Netzrand“, bei 100 mm an allen neun
+inneren Knoten dazu ein FEHLER „Volumenbilanz“. Bei um 1 m angehobener Ecke
+und 80 mm senkrecht nach außen kommt an den Randknoten (1|0,5), (1|0,75),
+(0,5|1) und (0,75|1) ein FEHLER „Seiten im Inneren“ dazu: Der Knoten
+verlässt dabei auch die ebene Seitenfläche, dort nach innen (an den zwölf
+Randknoten um 14 bis 48 mm). Am freien Netz bleibt es bei der Grenze: Am
+Würfel mit um 0,3, 0,5 und 1 m angehobener Ecke (Netzweite 0,25 m) und mit um
+1 m angehobener Ecke (Netzweite 0,5 m) meldet die Abnahme nichts.
 
 Geprüft werden Körper, deren Randlinien gerade sind und deren Randflächen eben
 sind oder Vierecke; Körper mit Bögen, Kreisen oder Splines prüft der freie
@@ -5358,7 +5389,62 @@ neu vernetzen (Netz → Vernetzen). Am abgestuften Netz mit verdrehtem Element
 verschwand damit der Befund „Seiten im Inneren“. Bis zum 23.09.2026 blieben
 dabei die Knoten des alten Netzes ohne Element stehen und meldeten sich als
 „Knoten ohne Element“; seither entfernt Netz → Vernetzen sie (siehe oben bei
-der Lücke im Netzrand). Der eigene Vernetzer ergibt mit denselben Einstellungen
+der Lücke im Netzrand). Stehen bleiben Knoten, an denen noch etwas hängt: Am
+abgestuften Netz 20:1, neu vernetzt mit der Funktion hinter
+`statik3d --vernetzen` (`mesher.modell_vernetzen`), blieben 117 Knoten des
+alten Netzes ohne Element stehen: Sie tragen ein Knotenlager, und der
+Vernetzer koppelt sie starr an das neue Netz (306 Kopplungen). Bis zum
+23.09.2026 meldete die Abnahme sie als FEHLER „Knoten ohne Element … eine
+Last darauf ginge verloren“, obwohl das Modell trägt (Fz = −100 kN und
+Fx = 100 kN an einer Deckelecke, Summe der Lagerkräfte in z 100 000,0 N).
+Seither zählt ein
+Knoten nicht als „ohne Element“, der über Kopplungen oder einen starren
+Körper (RBE2) in allen drei Richtungen am Netz gehalten ist, auch über eine
+Kette solcher Verbindungen. Der Master einer Verteilkopplung (RBE3) zählt
+nur, wenn seine Slaves alle gehalten sind und ihn festlegen – nicht bei
+einem einzigen Slave neben dem Master, bei zwei Slaves oder bei Slaves auf
+einer Linie, wenn der Master neben dieser Linie steht. Was die Abnahme
+nicht in allen drei Richtungen gehalten findet, bleibt ein FEHLER; wo der
+Halt wirklich fehlt, geht die Last verloren, oder die Rechnung bricht ab.
+Gemessen am 24.09.2026 an einem Würfel aus 2 × 2 × 2 Elementen, 1000 N am
+Knoten: Eine Kopplung nur in z trägt die Last in z, die in x und y bleibt
+als Lagerkraft am Knoten selbst stehen; ebenso ein Spaltelement allein,
+dazu bricht Zug ab; am Slave eines RBE3 mit losem Master bricht jede Last
+ab (Gleichungssystem singulär); ein loser RBE3-Master 0,3 m über einem
+einzigen Deckelknoten trägt nur in z, über zwei Deckelknoten oder über
+einer Reihe von drei nicht quer zur Reihe (steht er auf der Reihe, trägt er
+in allen drei Richtungen); ein RBE2 mit einem einzigen Slave an einem
+Volumenknoten hält nur in Richtung des Versatzes (an einem Schalenknoten
+und am Ende eines am Anfang eingespannten Stabs ohne Gelenk in allen drei).
+Am Stabende hält ein RBE2 seinen Slave nur so weit, wie sich das Stabende
+nicht verdrehen kann. Die Biegung um eine Achse hält der Stab, wenn an
+diesem Ende kein Momentengelenk um sie sitzt: Mit dem Gelenk um die lokale
+z-Achse eines Stabs in x am Master-Ende und dem Slave 0,5 m daneben in z
+trugen alle drei Lasten, mit dem Slave daneben in x oder in y brach je
+eine ab (in y bzw. in x). Die Drehung um die Stabachse (Torsion) hält der
+Stab dagegen nur, wenn er an keinem Ende ein Torsionsgelenk hat und sein
+anderes Ende sich nicht um die Achse drehen kann – etwa weil es
+eingespannt ist oder ein weiterer Stab es über seine Biegung hält. Mit dem
+Torsionsgelenk am eingespannten Anfang und dem Slave in y
+brach die Last in z ab; mit beiden Enden nur in x, y und z gelagert ging
+die Kraft zwar in die Lager, das Moment um die Stabachse aber verloren.
+Beides meldet die Abnahme als FEHLER „Knoten ohne Element“, wie schon bis
+zum 23.09.2026, als sie jeden Knoten ohne Element so meldete (am 24.09.2026
+an beiden Fällen mit dem Slave in y und in z am damaligen Stand
+nachgemessen).
+Die Slaves eines RBE3 zählt die Abnahme nicht als angeschlossen, auch
+wenn der Master ein Element hat: Ein RBE3 verteilt eine Last am Master auf
+die Slaves, ohne sie zu versteifen. Die Rechnung kann einen solchen Slave
+trotzdem festlegen – am Würfel (Master am mittleren Deckelknoten, Slaves
+die acht übrigen Deckelknoten und ein loser Knoten daneben) gingen Lasten
+in +x, +y, +z, −z und −x am losen Slave ganz in die Lager. Die Meldung
+nennt solche Knoten darum eigens („Davon als Slave eines RBE3 …“) und sagt
+nicht, dass die Last verloren geht. Ein Anschlag – ein Knoten, der in x, y und z starr
+gelagert ist und über ein Spaltelement am Tragwerk hängt, wie im Beispiel
+„Kontakt: abhebendes Lager“ – gilt als angeschlossen: Eine Last auf ihm geht
+in sein Lager. Eine Kopplung ohne wirksame Richtung schließt
+nichts an, ein wirklich loser Knoten bleibt ein FEHLER. An echten Importen (RFEM,
+InfoCAD) ist das nicht gemessen. Der eigene Vernetzer ergibt mit denselben Einstellungen
 dasselbe Netz, an fünf Prismen nachgemessen. Bei Befunden an seinen Netzen
 hilft neu vernetzen allein also nicht; was bei einer Lücke im Netzrand
 geholfen hat, steht oben.

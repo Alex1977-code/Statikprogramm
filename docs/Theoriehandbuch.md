@@ -7239,11 +7239,11 @@ nach neun Minuten. `diagnose.abnahme(model)` prüft:
 | Abdeckung der Kontaktseite | ≥ 95 % (`ABNAHME_ABDECKUNG`) | `ContactPair.abdeckung` |
 | Gegenkörper der Kontaktbedingung ohne eine einzige Facette | 0 | `ContactPair.gegenkoerper` |
 | Haltegüte λ_min/λ_max je Teiltragwerk | ≥ 10⁻⁴ (`singular.HALTEGUETE_MIN`) | § 7b.1 |
-| Knoten im Rechennetz ohne Element | 0 | die Elementliste |
+| Knoten im Rechennetz ohne Element | 0 | die Elementliste; nicht gezählt, was über Kopplungen (wirksame Richtungen) oder starre Körper (RBE2) in allen drei Richtungen am Netz gehalten ist, der Master eines RBE3, soweit seine gehaltenen Slaves ihn festlegen (`_rbe3_master_raum`), und ein in x, y, z gelagerter Anschlag am Spaltelement (`_angeschlossene_knoten`) |
 | Formgüte des schlechtesten Elements je Körper | ≥ 0,05 (`ABNAHME_ELEMENTGUETE`) | `netzguete.guete` |
 | Randtreue je Körper | ≥ 99 % (`ABNAHME_RANDTREUE`) | `Volumenkoerper.randtreue` |
 | Volumenbilanz je Körper | ≤ 0,5 % (`ABNAHME_VOLUMENBILANZ`), an windschiefen Flächen zuzüglich Σ A · Abstand der Netzseiten | `elementvolumina` gegen `_polyederhuelle` |
-| Seiten im Inneren (FEHLER) / Lücke im Netzrand (WARNUNG, über 0,5 % des Körpers FEHLER) / Riss im Netz, Netzrand neben der Hülle (WARNUNG) | 0 | freie Elementseiten gegen die Randflächen, Abstand ≤ 1 % der Seitengröße (`ABNAHME_HUELLABSTAND`), an windschiefen Flächen zuzüglich der örtlichen Sehnengrenze (`_sehnengrenze`, `ABNAHME_SCHIEF_RINGE`) und nur in Richtung der Fläche (`ABNAHME_SCHIEF_RICHTUNG`); Gruppen im Inneren: `_gruppen_im_inneren` (Riss: t/L ≤ 5 % `ABNAHME_RISS_DICKE`, t ≤ 0,65 · Dicke der Nachbarn `ABNAHME_RISS_NACHBAR`, kein verdrehtes Element, keine doppelten Knoten) |
+| Seiten im Inneren (FEHLER) / Lücke im Netzrand (WARNUNG, über 0,5 % des Körpers FEHLER) / Riss im Netz, Netzrand neben der Hülle (WARNUNG) | 0 | freie Elementseiten gegen die Randflächen, Abstand ≤ 1 % der Seitengröße (`ABNAHME_HUELLABSTAND`), an windschiefen Flächen zuzüglich der örtlichen Sehnengrenze (`_sehnengrenze`, `ABNAHME_SCHIEF_RINGE`) und nur in Richtung der Fläche (`ABNAHME_SCHIEF_RICHTUNG`); Gruppen im Inneren: `_gruppen_im_inneren` (Riss: t/L ≤ 5 % `ABNAHME_RISS_DICKE`, t ≤ 0,65 · Dicke der Nachbarn `ABNAHME_RISS_NACHBAR`, V ≤ 2 · FLACH · L³ je vier Seiten `ABNAHME_RISS_FLACH`, kein verdrehtes Element, keine doppelten Knoten) |
 
 **Volumenbilanz und freie Seiten gegen die Randflächen** (22.09.2026). Ein
 Sechsflächner, dessen Deckel um eine Ecke verdreht ist (4, 5, 6, 7 → 5, 6, 7,
@@ -7303,13 +7303,17 @@ Kanten eine Gruppe bilden, die
    5 % der längsten Kante L der Gruppe (`ABNAHME_RISS_DICKE`),
 3. **dünn gegen die Elemente daneben** ist: t ist höchstens 0,65-mal der
    Median der Dicken 2 V_e / Σ A_e der Elemente, deren Seiten die Gruppe
-   bilden, je Seite gezählt (`ABNAHME_RISS_NACHBAR`, `_elementdicke`), und
+   bilden, je Seite gezählt (`ABNAHME_RISS_NACHBAR`, `_elementdicke`),
 4. **kein verdrehtes Element und keine doppelten Knoten** enthält: kein
    Sechsflächner, Keil oder keine Pyramide der Gruppe mit einer Kante, die
    kein anderes Element hat und nicht auf der Hülle liegt
    (`_verdrehte_elemente`, dieselbe Prüfung wie bei der Lücke im Netzrand),
    und keine zwei Knoten der Seiten im Inneren mit verschiedener Nummer am
-   selben Ort (`ABNAHME_FUGENNAEHE` = 10⁻⁶ m).
+   selben Ort (`ABNAHME_FUGENNAEHE` = 10⁻⁶ m), und
+5. **klein wie die Lücken des Vernetzers** ist (seit 23.09.2026): V höchstens
+   2 · FLACH · L³ je vier Seiten der Gruppe, mindestens einmal
+   (`ABNAHME_RISS_FLACH`, FLACH = 10⁻⁶ aus `mesher3d`), L die längste
+   Elementkante des Körpers (`_laengste_kante`).
 
 Bedingung 2 allein trägt an länglichen Zellen nicht: Die Dicke eines
 Hohlraums folgt der kurzen Seite, L der langen. Gemessen am 23.09.2026, t/L:
@@ -7361,15 +7365,75 @@ test_mesher3d und test_sweep geben dieselben Befunde wie vorher, ebenso die
 Anwendermodelle modell.json (eine WARNUNG Riss 4, Hohlraum 3,6e-19 m³) und
 drehlager.json (keiner).
 
-Die Kehrseite: Fehlt ein Tetraeder, der selbst so flach ist wie die, die der
-Vernetzer aussortiert, ist auch das ein Riss. Einzeln entfernt am frei
-vernetzten Würfel mit um 0,5 m angehobener Ecke (h 0,25, 1483 tet4) bei 20 von
-541 inneren Tetraedern, an der Platte mit Keilen (2701 tet4) bei 75 von 947
-(innen heißt hier: kein Knoten auf der Hülle),
-an der Platte mit Bohrung bei 4 von 40 zufällig gezogenen und bei den 15
-flachsten (eigenes t/L 0,44 bis 0,71 %). Die so entfernten Tetraeder hatten
-ein eigenes t/L von höchstens 4,98 %; jeder entfernte Tetraeder mit eigenem
-t/L über 5 % war in diesen Messungen ein FEHLER.
+Bedingung 5 misst die Größe. Die Bedingungen 1 bis 4 sagen nur, dass der
+Hohlraum dünn und geschlossen ist, und so ist auch der Hohlraum eines
+fehlenden Tetraeders, der selbst so flach ist wie die, die der Vernetzer
+aussortiert – gleich wie groß (Nebenbefund B050). An der Platte mit Bohrung
+(34 600 tet4, h 50 mm) waren das 1413 von 28 046 inneren Tetraedern (innen:
+alle vier Seiten mit einem Nachbarn), bis 2,05e-6 m³ (Element 17625), das
+43-Fache des Medians der inneren Tetraeder. Einzeln entfernt war das ebenso
+ein Riss am frei vernetzten Würfel mit um 0,5 m angehobener Ecke (h 0,25,
+1483 tet4) bei 20 von 541 inneren Tetraedern, an der Platte mit Keilen (2701
+tet4) bei 75 von 947 (innen heißt dort: kein Knoten auf der Hülle), an der
+Platte mit Bohrung bei 4 von 40 zufällig gezogenen und bei den 15 flachsten
+(eigenes t/L 0,44 bis 0,71 %). Die Zahl ist aus t/L und t/T_med
+vorhergesagt, mit der Abnahme sind je Modell sechs Fälle bestätigt (alle
+„WARNUNG Riss“, `abnahme()` leer). Und der Text nannte als Herkunft den
+Vernetzer, auch für einen von Hand gelöschten Tetraeder (L-Prisma h 0,12,
+35 728 mm³, t/L 3,65 %), wo der Vernetzer nur V ≤ FLACH · h³ = 1,7 mm³
+aussortiert (Nebenbefund B051). Das Volumen gegen den Median der
+Nachbarvolumina (je Seite) trennt nicht: die Lücken des Vernetzers erreichen
+das 1,65-Fache (ein Haufen aus 15 Seiten), mehr als ein fehlender Tetraeder
+so groß wie seine Nachbarn. Gemessen wird deshalb gegen die Regel des Vernetzers, V ≤ FLACH · h³ je
+Tetraeder, mit L für h. L ist nicht h: An den gemessenen freien Netzen lag
+L beim 1,02- bis 2,00-Fachen von h (`_laengste_kante`, 24.09.2026: Platte
+mit Bohrung h 50 mm, L 50,9 mm; Würfel mit angehobener Ecke h 0,25 m bei
+dz 0,3 / 0,5 / 1,0: 1,72 / 1,72 / 1,68 h, h 0,5 m: 2,00 h, h 0,1 m bei dz
+0,3 / 1,0: 1,72 / 1,77 h; L-Prisma h 0,25 / 0,12 / 0,1 m: 2,00 / 1,76 /
+1,72 h). Die Grenze 2 · FLACH · L³ ist dort also das 2,1- bis 16-Fache von
+FLACH · h³; gesetzt ist sie an den Messwerten der Tabelle, nicht aus h
+hergeleitet. Gemessen am 23.09.2026, V / (FLACH · L³) je vier
+Seiten:
+
+| Hohlraum | V / (FLACH · L³) |
+|---|---|
+| Lücken des freien Vernetzers (dieselben 30 Gruppen; L 50,9 bis 257 mm) | 0 bis 0,87 (Haufen aus 8 bis 15 Seiten bis 0,26) |
+| fehlender flacher Tetraeder, Platte mit Bohrung (1413, vorhergesagt) | 0,35 bis 15 490, 48 bis 2 |
+| ebenso Platte mit Keilen (2701 tet4, 183 von 2099) | 1,10 bis 13 250, 7 bis 2 |
+| ebenso L-Prisma h 0,12 (6173 tet4, 306 von 5275) | 525 bis 10 261 |
+| ebenso Würfel mit angehobener Ecke, h 0,25 (1483 tet4, 58 von 1208) | 560 bis 11 496 |
+
+Die Grenze 2 liegt um den Faktor 2,3 über den Lücken des Vernetzers. Mit der
+Abnahme gerechnet: die Platte ohne Element 17625 FEHLER „Seiten im Inneren 4“
+(dazu die 8 Rissseiten des Vernetzers), an der Grenze das 1,97- und
+1,99-Fache ein Riss, das 2,01- und 2,03-Fache ein FEHLER; am L-Prisma und am
+Würfel jeder der je sechs gerechneten ein FEHLER. Die Kehrseite: Fehlende flache Tetraeder
+bis 2 · FLACH · L³ bleiben ein Riss, so klein wie die Lücken des Vernetzers
+und von ihnen nicht zu trennen (an der Platte mit Bohrung bis 0,26 mm³). Der
+Text des Risses nennt deshalb die Größe (2 · 10⁻⁶ · L³ mit dem Wert von L),
+nicht die Herkunft; der Text von „Seiten im Inneren“ nennt als eine Ursache
+ein fehlendes Element, etwa von Hand gelöscht oder beim Import verloren. L ist
+die längste Kante im ganzen Körper: In einem abgestuften Netz ist die Grenze
+dort, wo die Elemente viel kleiner als L sind, entsprechend weit. Die
+Bedingung macht einen Riss nur strenger, kein FEHLER der Messungen oben wird
+dadurch ein Riss. Die fehlenden flachen Tetraeder hatten ein eigenes t/L von
+höchstens 4,98 %; jeder entfernte Tetraeder mit eigenem t/L über 5 % war ein
+FEHLER.
+
+Die Netze dieser Messungen stammen vom eigenen Vernetzer vor seiner Änderung
+vom 23.09.2026 (Vernetzer-Sitzung: Startpunkte mit Abstand zur Hülle,
+`tetraedern_treu`). Seither hat die Platte mit Keilen 2502 statt 2701 tet4,
+das L-Prisma h 0,12 6155 statt 6173 und der Würfel 1085 statt 1483; die
+Zählungen der Tabelle sind daran nicht wiederholt. Nachgemessen am 24.09.2026
+sind die Einzelfälle der Prüfungen: An der Platte mit Keilen heißen die
+beiden flachen Tetraeder jetzt 58 (1,752e-6 m³, t/L 4,06 %, ohne ihn FEHLER
+„Seiten im Inneren 4“ und die 4 Rissseiten des Vernetzers) und 2414
+(1,454e-10 m³ = 1,10 FLACH · L³, ohne ihn WARNUNG „Riss im Netz 8“), mit
+unverändertem Volumen und t/L; am L-Prisma h 0,12 ist der flachste Tetraeder
+unter der Deckelmitte des langen Schenkels 36 097 mm³ groß (t/L 3,67 %), von
+Hand gelöscht FEHLER „Seiten im Inneren 4“ mit Rückfrage
+(`test_abnahme_luecken_des_vernetzers_sind_risse`,
+`test_abnahme_luecke_im_netzrand`).
 
 Rand der Gruppen des Vernetzers 0 bis 5,6 % der Seitenfläche. Offene Gruppen:
 drei Würfel in einer Reihe mit verdrehtem mittlerem 41 %, verdrehter Boden
@@ -7416,7 +7480,37 @@ geschlossen ist. An der Platte mit Bohrung berührte ein fehlender Tetraeder
 (4,27e-10 m³) eine Lücke des Vernetzers (3,4e-11 m³); zusammengezählt war
 t/L = 4,8 %, ein Riss. Ohne die Bedingung zerfiel dagegen ein Haufen aus
 15 Seiten (Rand 5,6 %) in drei geschlossene und zwei offene Stücke, und
-3 Seiten wurden ein FEHLER.
+3 Seiten wurden ein FEHLER. Getrennt wird nach der Form (Bedingungen 2 und
+3); die Größe (Bedingung 5) gilt je Stück. In der seriellen Gegenprobe von
+`test_gemeinsame_flaeche_konform` (test_fugen, 2288 tet4) berührte ein
+Hohlraum von 3,6e-5 m³ einen Riss ohne Volumen; im Ganzen an der Größe
+gemessen, wurde der Riss mit zum FEHLER (27 statt 23 Seiten).
+
+Vorher/nachher an allen Modellen, die die Testfunktionen der Suiten bauen
+(Stand am Ende jeder Funktion, `_abnahme_netz` gegen ec6448c, 23.09.2026):
+gleich in test_mesher3d (26), test_sweep (42), test_netzfeld (2),
+test_netzverfeinerung (2), test_neuvernetzen (3), test_netzdichte (2),
+test_vernetzer_extern (3), test_supports (28), test_netzfehler (7),
+test_geometrie_kette (5), test_singular (38) und test_lasten (32). Anders
+nur, wo es gemeint ist: test_fugen 62 von 63 gleich – die parallele
+Gegenprobe ohne modellweite Karten (2655 tet4) hat in V_oben einen Hohlraum
+von 9,8 cm³ aus 11 Seiten (das 2700-Fache der Grenze), jetzt FEHLER
+„Seiten im Inneren 11“ statt Riss; test_elemente 46 von 47 – der Master
+eines RBE3 ohne Element ist kein „Knoten ohne Element“ mehr; test_diagnose
+63 von 68 – die neuen Fälle dieser Nachbesserung und das Beispiel „Kontakt:
+abhebendes Lager“, dessen Anschlagknoten über ein Spaltelement am Träger
+hängt (vorher FEHLER „Knoten ohne Element 1“). Nach der Gegenprüfung vom
+24.09.2026 (siehe `_angeschlossene_knoten` unten) für diesen Befund
+nachgezählt, lose Knoten bei ec6448c, mit der Fassung vom 23.09. und jetzt:
+anders als mit der Fassung vom 23.09. nur die Fälle der neuen Prüfung
+`test_abnahme_knoten_in_drei_richtungen`. Gleich geblieben sind das
+Beispiel und `test_gap_element` (test_solver_ext; beide ein Anschlag, ohne
+Befund), der RBE3-Master (test_elemente), test_stabende (1 statt 3 lose
+Knoten), `test_abnahme_knoten_ueber_kopplung` und alle Modelle von
+test_joints, test_lasten, test_netzfeld, test_neuvernetzen,
+test_randspannung, test_importers, test_supports, test_singular,
+test_netzfehler, test_fugen, test_rfem6, test_mesher3d, test_sweep und
+test_tetp.
 
 **Lücke im Netzrand** (23.09.2026, Gegenprüfung Mangel 3). Ist eine Gruppe von
 Seiten im Inneren offen, und liegt jede ihrer Randschleifen auf der Hülle, fehlt
@@ -7474,7 +7568,11 @@ Gemessen an den Netzen des eigenen Vernetzers mit Lücke (L-, T- und
 U-Prismen, Standardweg): Lücken von 0,006 bis 0,113 % des Körpers. Der
 Text nennt die Abhilfen, die an diesen fünf Prismen gemessen halfen (Sweep,
 gmsh, Netgen: 5 von 5; andere
-Ziellänge 3 bis 4 von 5; MMG3D 0 von 5), und dass neu vernetzen mit denselben
+Ziellänge 3 bis 4 von 5; MMG3D 0 von 5), beim Sweep seit 23.09.2026 mit dem
+Hinweis, dass er ab Werk aus ist, weil er am Drehlager entartete Keile
+erzeugte, und dass nach dem Einschalten die Abnahme zu lesen ist
+(Nebenbefund B049: die Abhilfe ist nur an den Prismen gemessen, am
+Drehlager nicht), und dass neu vernetzen mit denselben
 Einstellungen dasselbe Netz ergibt: Der Vernetzer rechnet mit fester Saat,
 und gemessen wurden dieselbe Elementzahl und derselbe Befund. Das gilt nur
 für Netze, die unverändert vom eigenen Vernetzer stammen; der Text rät darum
@@ -7492,7 +7590,219 @@ Seither ruft auch `_vernetzen` nach dem Löschen der alten Netze
 `Model.netzknoten_loeschen` - mit den Knoten der gelöschten Elemente als
 Kandidaten, damit ein gesetzter Knoten ohne Anschluss stehen bleibt: zweites
 Netz 1241 Knoten wie das erste, ohne „Knoten ohne Element" (Befund B062,
-ebenso ohne Qt nachgestellt). Einen Hohlraum,
+ebenso ohne Qt nachgestellt). Knoten mit Knotenlager
+schützt `netzknoten_loeschen` auf beiden Wegen; liegen sie neben dem neuen Netz, koppelt der
+Vernetzer sie starr daran. Am abgestuften hex8-Netz 20:1 (121 gelagerte
+Bodenknoten) neu vernetzt: 117 Knoten ohne Element, alle in 306 starren
+Kopplungen, und das Modell trägt (Fz = −100 kN und Fx = 100 kN an einer
+Deckelecke, Summe der Lagerkräfte in z
+100 000,0 N). Die Abnahme meldete sie bis zum 23.09.2026 als FEHLER „Knoten
+ohne Element 117“ (Nebenbefund B099). Seither zählt `_angeschlossene_knoten`
+einen Knoten ohne Element als angeschlossen, wenn er in allen drei
+Verschiebungsrichtungen am Netz gehalten ist. Je offenem Knoten wird der
+Raum der gehaltenen Richtungen gesammelt, bis sich nichts mehr ändert
+(Elementknoten: alle drei):
+
+- Kopplung: ihre wirksamen Richtungen (`Kopplung.paare`), geschnitten mit
+  dem, was am Partner gehalten ist; so auch über eine Kette.
+- RBE2: die Glieder bewegen sich als starrer Körper, u_s = u_m + θ_m × r_s.
+  Die gehaltenen Richtungen der Glieder legen einen Teil dieser sechs
+  Freiheiten fest, dazu die Verdrehungen, die Elemente und Drehlager am
+  Master halten (`_drehsteife_knoten`, unter der Voraussetzung, dass jeder
+  Elementknoten in x, y, z gehalten ist): am Schalenknoten alle drei; ein
+  starres Knotenlager um die Achse, um die es sperrt; am Stabende die
+  Biegung um die lokalen Achsen y und z, soweit an diesem Ende kein
+  Momentengelenk sitzt – Gelenk 3 + 6 j + k gibt am Ende j die Drehung um
+  die lokale Achse k frei, Achsen aus `beam3d.local_axes` samt roll. Die
+  Torsion (lokal x) hält ein Stab nicht allein: Ohne Gelenk 3 und 9
+  koppelt er die Drehung beider Enden um seine Achse, mit einem davon gar
+  nicht (nach der Kondensation GJ/L − GJ/L = 0). Gehalten ist sie an einem
+  Ende erst, wenn sie am anderen gehalten ist – von einem Drehlager, einer
+  Schale, der Biegung eines weiteren Stabs oder so weiter über eine Kette;
+  gesammelt wird, bis sich nichts mehr ändert. Gehalten ist an jedem Glied,
+  was die festgelegten Freiheiten bestimmen.
+- RBE3: nur der Master, nur wenn alle Slaves mit Gewicht gehalten sind,
+  und nur in den Richtungen, in denen sie ihn festlegen
+  (`_rbe3_master_raum`). Mit gehaltenen Slaves bleibt von den sechs
+  Gleichungen des RBE3 (`verbindung.starrkoerper_matrix`, dieselben wie
+  beim Rechnen) G_m · [u_m, θ_m] = 0 mit den sechs Spalten des Masters;
+  gehalten ist das Komplement der Verschiebungsanteile des Nullraums von
+  G_m. Drei Slaves, die nicht auf einer Linie liegen, machen G_m regulär.
+  Ein einziger Slave neben dem Master, zwei Slaves und Slaves auf einer
+  Linie legen die Drehung um ihre Linie nicht fest; steht der Master neben
+  der Linie, bewegt ihn diese Drehung quer dazu, steht er auf ihr, nicht.
+  Der Master ist das gewichtete Mittel der Slaves und versteift sie nicht.
+- Spaltelemente zählen nicht: sie halten nur in ihrer Richtung und nur
+  auf Druck. Ausgenommen ist der Anschlag, ein Knoten, den ein Knotenlager
+  in x, y und z starr hält und der über ein Spaltelement an einem
+  gehaltenen Knoten hängt (`_starr_gelagert`; so im Beispiel „Kontakt:
+  abhebendes Lager“ und in `test_gap_element`): eine Last auf ihm geht in
+  sein Lager, und das Lager wirkt, wie das Spaltelement es vorgibt. Ein
+  gelagerter Knoten, der nur über eine Kopplung in einem Teil der
+  Richtungen hängt, bleibt dagegen lose – ob sein Lager das Tragwerk nur
+  in diesen Richtungen halten soll, sieht die Abnahme nicht
+  (`fugen.stabenden_koppeln` koppelt Lagerknoten in allen dreien).
+
+Bis zur Gegenprüfung vom 24.09.2026 (Mängel 1 und 4 zu B099) zählte jede
+Verbindung, gleich in welcher Richtung (Zusammenhangskomponenten über
+Kopplungen, starre Körper und Spaltelemente). Gemessen am 24.09.2026 an
+einem Würfel aus 2 × 2 × 2 hex8, unten gelagert, 1000 N in x, y und z am
+Knoten ohne Element (`tests.test_diagnose._knoten_am_wuerfel`):
+
+| Anschluss | Rechnung | Abnahme bis dahin | jetzt |
+|---|---|---|---|
+| Kopplung nur in z an einem Deckelknoten | z trägt; x und y bleiben als Reaktion am Knoten selbst | kein Befund | FEHLER |
+| RBE3, loser Master, Slaves: neun Deckelknoten und ein loser Knoten | jede Last am losen Slave: Gleichungssystem singulär | kein Befund | FEHLER, beide |
+| RBE2 am Deckelknoten, ein Slave 0,5 m daneben in x | x trägt; y und z: singulär | kein Befund | FEHLER |
+| Spaltelement allein, 0,2 m über einem Deckelknoten | x und y bleiben am Knoten; Zug: Kontakt bricht ab | kein Befund | FEHLER |
+| Kopplung in x und y, z über einen Zwischenknoten, der nur in z hängt | am Knoten trägt alles; am Zwischenknoten nur z | kein Befund | FEHLER für den Zwischenknoten |
+| Kopplung in x, y und z an einen Zwischenknoten, der nur in z hängt | z trägt; x und y: singulär | kein Befund | FEHLER, beide |
+| RBE3 mit losem Master an den neun Deckelknoten | trägt | kein Befund | kein Befund |
+| RBE2, loser Master und loser Slave neben den Deckelknoten | trägt | kein Befund | kein Befund |
+| Kopplungen in x+y und z, dazu x−y an einem zweiten Deckelknoten | trägt | kein Befund | kein Befund |
+| Anschlag: Knoten 0,2 m über einem Deckelknoten in x, y, z gelagert, Spaltelement | trägt (die Last geht in sein Lager) | kein Befund | kein Befund |
+| ebenso, Knoten nur in z gelagert | z geht in sein Lager; x und y bleiben am Knoten, in Richtungen ohne Lager | kein Befund | FEHLER |
+| loser Knoten 0,2 m über dem Anschlag, Spaltelement dorthin | x und y bleiben am Knoten; Zug: Kontakt bricht ab; Druck trägt | kein Befund | FEHLER |
+| RBE3 mit dem Master an einem Deckelknoten, ein loser Slave | trägt | kein Befund | FEHLER |
+
+Die letzte Zeile ist Absicht: Die sechs Gleichungen des RBE3 legen einen
+einzelnen losen Slave neben einem gehaltenen Master rechnerisch fest (Lasten
+in +x, +y, +z, −z und −x gingen ganz in die Lager, am Knoten selbst blieb
+0), das RBE3 soll ihn aber nicht halten: Es verteilt eine Last am Master
+auf die Slaves, ohne sie zu versteifen (`model.StarrKoerper`). Der Text des
+Befunds nennt solche Knoten darum eigens („Davon als Slave eines RBE3 …
+auch wo die Rechnung ihn über einen gehaltenen Master festlegt“). Bis zur
+2. Gegenprüfung vom 24.09.2026 (Mangel 2) sagte er für jeden genannten
+Knoten, er sei „nicht in allen drei Richtungen am Netz gehalten – eine Last
+darauf ginge ganz oder zum Teil verloren“; jetzt sagt er, dass die Abnahme
+keinen Halt in allen drei Richtungen findet, und was folgt, wo der Halt
+wirklich fehlt.
+
+Die Fassung d7553e4 ließ den Master eines RBE3 gelten, sobald alle Slaves
+gehalten waren, auch wo sie ihn nicht festlegen (2. Gegenprüfung vom
+24.09.2026, Mangel 1). Gemessen am 24.09.2026 am selben Würfel, loser
+Master, Slaves aus der Deckelreihe y = 1 (x = 0 / 0,5 / 1), 1000 N am
+Master in x, y und z:
+
+| Slaves, Master | Rechnung | ec6448c | d7553e4 | jetzt |
+|---|---|---|---|---|
+| ein Slave (x = 0,5), Master 0,3 m darüber | z trägt; x und y: singulär | FEHLER | kein Befund | FEHLER |
+| zwei Slaves (x = 0 und 1), Master 0,3 m über der Mitte | x und z tragen; y: singulär | FEHLER | kein Befund | FEHLER |
+| drei Slaves auf der Reihe, Master 0,3 m darüber | x und z tragen; y: singulär | FEHLER | kein Befund | FEHLER |
+| drei Slaves auf der Reihe, Master auf ihr (x = 0,25) | trägt | FEHLER | kein Befund | kein Befund |
+| ein Slave, Master auf dem Slave | trägt | FEHLER | kein Befund | kein Befund |
+| drei Slaves nicht auf einer Linie, Master 0,3 m darüber | trägt | FEHLER | kein Befund | kein Befund |
+| ein Slave, Master 0,3 m darüber, dazu in x und y an einen Deckelknoten gekoppelt | trägt | FEHLER | kein Befund | kein Befund |
+
+Die Zufallsprobe der 2. Gegenprüfung, hier nachgerechnet (400 Modelle aus
+dem Würfel mit 1 bis 4 Knoten ohne Element, Kopplungen in Achsen- und schrägen Richtungen, RBE2 und
+RBE3, auch mit Slaves auf einer Deckelreihe; Wahrheit aus dem Nullraum der
+Zeilen von Elementsteifigkeit, Kopplungsrichtungen und
+`starrkoerper_matrix`) ergab bei d7553e4 42 bzw. 47 Knoten ohne Befund, die
+nicht in allen drei Richtungen gehalten sind (Saat 7: 981 Knoten, Saat 11:
+1000 Knoten), jetzt 0 bei beiden. Die andere Seite: gemeldet, obwohl in
+allen drei Richtungen gehalten, bei d7553e4 24 bzw. 35, jetzt 31 bzw. 40
+Knoten, davon 13 bzw. 14 keine RBE3-Slaves. Einzeln nachgestellt sind
+zwei davon; dort legen erst zwei starre Körper zusammen den Knoten fest,
+über eine gemeinsame Verdrehung: ein RBE2 unter Elementknoten hält deren
+Verdrehung, die ein zweites RBE2 an den Knoten weitergibt, bzw. ein RBE3
+und ein RBE2 am selben Master lassen je eine andere Drehung frei. Ohne den
+einen der beiden ist der Knoten in z nicht gehalten. Die Abnahme vereinigt
+die gehaltenen Richtungen je Verbindung und verfolgt Verdrehungen nur an
+Schalen- und Stabknoten und an Drehlagern; ein FEHLER dort ist eine
+unnötige Rückfrage, kein stiller Verlust.
+
+Dazu RBE2 mit einem Slave 0,5 m neben dem Master: am Ende eines am
+Anfang eingespannten Stabs (IPE 200) und an einem Schalenknoten tragen die
+Lasten in x, y und z bei jedem Versatz in x, y oder z, an einem Stabende
+mit den Gelenken 9, 10, 11 nur die Last in Richtung des Versatzes. Mit
+einem Teil der Gelenke am Master-Ende hält das Stabende dort die übrigen
+Drehungen, der Slave bleibt nur in Richtung Gelenkachse × Versatz frei –
+aber nur, solange die Torsion am anderen Ende gehalten ist (unten). Bis
+zur 2. Gegenprüfung (Mangel 2) galt ein Stabende mit irgendeinem
+Momentengelenk als gar nicht drehsteif. Gemessen am 24.09.2026 (Stab in x,
+eingespannt am Anfang, RBE2 am Ende; getragen heißt: alle drei Lasten
+gehen in die Lager, ohne Hilfsfesselung des Lösers):
+
+| Gelenke am Ende | Slave in x | Slave in y | Slave in z |
+|---|---|---|---|
+| 11 (lokal z) | y bricht ab – FEHLER | x bricht ab – FEHLER | getragen – kein Befund (d7553e4: FEHLER) |
+| 10 (lokal y) | z bricht ab – FEHLER | getragen – kein Befund (d7553e4: FEHLER) | x bricht ab – FEHLER |
+| 9 (Torsion) | getragen – kein Befund (d7553e4: FEHLER) | z bricht ab – FEHLER | y bricht ab – FEHLER |
+| 10 und 11 | y und z brechen ab – FEHLER | x bricht ab – FEHLER | x bricht ab – FEHLER |
+
+Am schrägen Stab (Richtung (1, 1, 1)) und am um 30° gerollten Stab mit
+Gelenk 11 brach bei jedem Versatz in x, y oder z mindestens eine Last ab
+(FEHLER), mit dem Slave in Richtung der lokalen z-Achse trugen alle drei
+(kein Befund). Nicht Sache dieser Prüfung ist ein Stab, der selbst
+verschieblich ist: Mit Gelenk 5 am eingespannten Anfang bricht schon eine
+Last in y am Stabende ab, ohne RBE2; die Abnahme meldet dort nichts.
+
+Die Torsion eines Stabs hängt an beiden Enden (3. Gegenprüfung vom
+24.09.2026, Mangel 1). Bis dahin galt sie am Master-Ende schon als
+gehalten, wenn dort kein Torsionsgelenk saß; mit einem Torsionsgelenk am
+anderen Ende oder einem anderen Ende, das nur in x, y, z gelagert ist,
+dreht sich aber der ganze Stab frei um seine Achse. Gemessen am 24.09.2026
+(RBE2 am Ende, Slave 0,5 m daneben, 1000 N am Slave; wo nichts anderes
+steht, ist der Anfang (0|0|0) eingespannt und der Stab 2 m lang in x):
+
+| Stab | Slave in x | Slave in y | Slave in z |
+|---|---|---|---|
+| Gelenk 3 am Anfang | getragen – kein Befund | z bricht ab – FEHLER (8c4fb14: kein Befund) | y bricht ab – FEHLER (8c4fb14: kein Befund) |
+| Gelenke 3 und 11 | y bricht ab – FEHLER | x und z brechen ab – FEHLER | y bricht ab – FEHLER (8c4fb14: kein Befund) |
+| Gelenke 3 und 9 | getragen – kein Befund | z bricht ab – FEHLER | y bricht ab – FEHLER |
+| beide Enden nur in x, y, z gelagert | getragen – kein Befund | z: die Kraft geht in die Lager, das Moment 500 Nm um die Stabachse nimmt die Hilfsfesselung – FEHLER (8c4fb14: kein Befund) | y: ebenso, −500 Nm – FEHLER (8c4fb14: kein Befund) |
+| Gelenk 5 am Anfang, Ende in x, y, z gelagert | getragen – kein Befund | getragen – kein Befund | getragen – kein Befund |
+| zwei Stäbe hintereinander bis (4\|0\|0), RBE2 am freien Ende | getragen – kein Befund | getragen – kein Befund | getragen – kein Befund |
+| ebenso, Gelenk 3 am Anfang des ersten | getragen – kein Befund | z bricht ab – FEHLER (8c4fb14: kein Befund) | y bricht ab – FEHLER (8c4fb14: kein Befund) |
+| Rahmenecke: Gelenk 3 am Anfang, zweiter Stab von (2\|0\|0) nach (2\|2\|0), dort in x, y, z gelagert | getragen – kein Befund | getragen – kein Befund | getragen – kein Befund |
+| ebenso, Gelenk 4 am Anfang des zweiten Stabs | getragen – kein Befund | z bricht ab – FEHLER (8c4fb14: kein Befund) | y bricht ab – FEHLER (8c4fb14: kein Befund) |
+
+Die Biegung hält ein Stab dagegen selbst, sobald beide Enden in x, y, z
+gehalten sind: Mit festgehaltenen Verschiebungen bleibt von seiner
+Biegesteifigkeit um eine Achse (`beam3d.k_local_beam`) für die beiden
+Enddrehungen die Matrix EI/(L (1 + Φ)) · [[4 + Φ, 2 − Φ], [2 − Φ, 4 + Φ]]
+mit dem Schubparameter Φ ≥ 0. Sie ist regulär, und mit einem Gelenk um
+dieselbe Achse am anderen Ende bleibt am gehaltenen Ende eine positive
+Steifigkeit (ohne Schub 3 EI/L); gemessen ist das an der Zeile „Gelenk 5“.
+Die Torsion zählt `_drehsteife_knoten` darum nur an
+einem Stab ohne Gelenk 3 und 9 und nur, wenn sie am anderen Ende gehalten
+ist; in der Rahmenecke hält sie der zweite Stab über seine Biegung um die
+globale x-Achse, mit Gelenk 4 dort nicht mehr. Die „Hilfsfesselung“ ist
+die des Lösers (`solver.hilfsfesselung`): Sie hält eine Bewegung fest, die
+das Modell nicht hält, und nimmt den Teil der Last auf, der an ihr Arbeit
+leistet – die Lagerkräfte allein sehen dann vollständig aus. Die Prüfung
+zählt einen solchen Lauf darum als nicht getragen.
+
+Dass eine Schale die Torsion eines an ihr hängenden Stabs hält, zählt
+`_drehsteife_knoten` wie am Schalenknoten selbst, sauber nachgemessen ist
+es nicht. An einer Platte 1 × 1 m, t = 20 mm (`grid_plate` 2 × 2, Rand
+x = 0 eingespannt) mit einem IPE 200 daran, 2 m lang in der Ebene oder
+senkrecht dazu, RBE2 am Stabende, Slave 0,5 m daneben, brach die Rechnung
+ohne Gelenk bei 4 von 18 Lasten ab, als „numerisch singulär“. Bei zwei
+davon nachgesehen: Residuum 1,7 · 10⁻⁶ bzw. 2,0 · 10⁻⁶ bei der Schranke
+10⁻⁶; der Löser nannte einmal eine Bewegung des Stabs mit 5 % seiner
+mittleren Steifigkeit, einmal keine Ursache. Das traf auch eine Last, die
+nur die Biegung des Stabs beansprucht; ohne RBE2 trug das Stabende alle drei Lasten (gemessen
+24.09.2026). Mit Gelenk 3 an der Platte meldete die Abnahme die Slaves,
+deren Lasten quer brachen ab, die übrigen trugen.
+
+Die Zufallsprobe der 3. Gegenprüfung, hier nachgerechnet am 24.09.2026
+(je 1500 Modelle aus ein oder zwei Stäben IPE 200 in beliebiger Richtung
+und Rolllage mit zufälligen Momentengelenken, Anfang eingespannt, das Ende
+teils in x, y, z gelagert, dazu ein bis drei Knoten ohne Element an RBE2,
+RBE3 und Kopplungen; übersprungen, wo die Stabknoten schon ohne diese
+Verbindungen eine Last nicht tragen; Wahrheit aus der Rechnung und aus dem
+Nullraum wie oben), fand bei 8c4fb14 6 bzw. 5 Knoten ohne Befund, die
+nicht in allen drei Richtungen gehalten sind (Saat 3: 1596 Knoten, Saat 5:
+1640 Knoten), jetzt 0 bei beiden.
+
+Die Prüfung `test_abnahme_knoten_in_drei_richtungen` rechnet die Fälle der
+vier Tabellen und die am schrägen und am gerollten Stab nach: nennt die
+Abnahme den Knoten nicht, gehen alle drei Lasten in die Lager, ohne
+Hilfsfesselung, nennt sie ihn, mindestens eine nicht (außer beim Slave
+eines RBE3 an einem gehaltenen Master). Eine Kopplung ohne wirksame Richtung oder
+eine, die nur lose Knoten verbindet, schließt nichts an. Einen Hohlraum,
 der ringsum von Nachbarseiten eingeschlossen ist, meldet die Abnahme
 weiter als „Seiten im Inneren", auch wenn er die Oberfläche an einer Kante
 berührt. Gemessen am Würfel mit um 0,5 m angehobener Ecke, frei mit h = 0,1:
@@ -7525,19 +7835,37 @@ drei Änderungen:
 * Eine flache Seite über die Parameterweiten Δu, Δv weicht um höchstens
   |d| Δu Δv / 4 von der Fläche ab, und Δu, Δv ≤ D / σ_min (σ_min kleinster
   Singulärwert von [x_u, x_v] auf 9 × 9 Punkten). Eine Seite gilt als auf der
-  windschiefen Fläche, wenn Schwerpunkt **und Ecken** höchstens 1 % ihres
-  Durchmessers plus s_b H² danebenliegen, s_b = |d| / (4 σ_min²). H ist
+  windschiefen Fläche, wenn ihr Schwerpunkt und – bei Dreiecksseiten – ihre
+  Ecken höchstens 1 % ihres Durchmessers plus s_b H² danebenliegen,
+  s_b = |d| / (4 σ_min²); die Ecken einer Viereckseite höchstens 1 % (siehe
+  unten, *Der Preis*). H ist
   **örtlich**: der größte Seitendurchmesser unter den Seiten dieser Fläche,
   die höchstens drei Ringe (Nachbarn über gemeinsame Knoten) entfernt sind
   (`ABNAHME_SCHIEF_RINGE`, `_ringmax`). Gezählt werden dabei nur Seiten, die
   eine Vorauswahl bestehen: Schwerpunkt nicht weiter als s_b (2 D_e)² daneben
   (D_e die Diagonale des eigenen Elements) und die Richtung stimmt. Die Knoten
   liegen auf Sehnen des groben Netzes, das größer ist als die Seiten, die
-  daraus werden. Am freien Würfel (dz 0,3 / 0,5 / 1,0 bei h 0,25, dz 1,0 bei
-  h 0,5, dz 0,3 und 1,0 bei h 0,1), Ecken-Abstand weniger 1 % durch s_b H²:
-  mit H aus der eigenen Seite bis 1,83, aus einem Ring 1,33, aus zwei 1,21,
-  aus drei 0,46. Die Grenze liegt dort bei dz = 0,5 zwischen 13,2 und
-  19,7 mm, gegen Ecken bis 7,55 mm.
+  daraus werden. Am freien Würfel, an den Seiten des Deckels, Ecken-Abstand
+  weniger 1 % durch s_b H² (größter Wert je Netz, H aus der eigenen Seite /
+  einem / zwei / drei Ringen; nachgemessen 23.09.2026):
+
+  | Netz | Abnahme | eigene Seite / 1 / 2 / 3 Ringe |
+  |---|---|---|
+  | dz 0,3, h 0,25 (1384 tet4) | ohne Befund | 1,22 / 1,17 / 0,47 / 0,45 |
+  | dz 0,5, h 0,25 (1483 tet4) | ohne Befund | 1,83 / 1,33 / 1,21 / 0,46 |
+  | dz 1,0, h 0,25 (2533 tet4) | ohne Befund | 1,46 / 1,07 / 0,45 / 0,36 |
+  | dz 1,0, h 0,5 (209 tet4) | ohne Befund | 0,66 / 0,61 / 0,28 / 0,18 |
+  | dz 0,3, h 0,1 (15 846 tet4) | ohne Befund | −0,01 / −0,01 / −0,01 / 0,00 |
+  | dz 1,0, h 0,1 (19 181 tet4) | Lücke 177 cm³, Netzrand 40 mm | 0,30 / 0,30 / 0,18 / 0,17 |
+
+  Größter Wert: 1,83 / 1,33 / 1,21 / 0,46, mit und ohne das letzte Netz
+  derselbe (alle vier am Netz dz 0,5, h 0,25). Das Netz dz 1,0, h 0,1 zählte
+  bis zum 23.09.2026 unter den richtigen, hat aber am ebenen Boden eine Beule
+  (Knoten 3601 bei (0,065 | 0,25 | −0,040)) und daneben eine Delle von
+  177 cm³ (Nebenbefund B104; bei 3f5ae87 meldete die Abnahme dort „Seiten im
+  Inneren 4“). Die Eichung misst nur Seiten am windschiefen Deckel, und dort
+  ist es unauffällig; als richtiges Netz gilt es nicht mehr. Die Grenze liegt
+  bei dz = 0,5 (h 0,25) zwischen 13,2 und 19,7 mm, gegen Ecken bis 7,55 mm.
 * Eine Seite auf der Fläche muss auch in ihre Richtung zeigen: der Winkel
   zwischen Seite und Fläche (Normale am Fußpunkt ihres Schwerpunkts) höchstens
   arctan(0,577 + 2 s_b D_e) (`ABNAHME_SCHIEF_RICHTUNG`, 30° und mehr); 2 s_b D
@@ -7557,53 +7885,65 @@ drei Änderungen:
   verschwand (die Schwerpunkte ihrer vier Seiten wandern nur 12,5 mm). Der
   Preis: kleinere Abweichungen des Netzrands meldet die Abnahme an
   windschiefen Flächen nicht. Die Grenze gilt für den Abstand zur Fläche
-  (`_bilinear_abstand`), nicht für die Verschiebung in z. Am abgebildeten
-  4 × 4 × 4-Netz (dz = 0,5) bleibt ein Deckelknoten 25 mm außerhalb
-  ungenannt, bei 30 mm ist es eine WARNUNG, in z wie entlang der
-  Flächennormale verschoben (an allen 21 Deckelknoten außer den Ecken). Bei
-  dz = 1,0 bleiben an den neun inneren Deckelknoten 80 mm entlang der
-  Normalen nach außen ungenannt, 90 mm sind eine WARNUNG „Netzrand neben der
-  Hülle" mit 4 Seiten, ebenso in z nach oben bis 80 bzw. 90 mm Abstand. Ein
-  Deckelknoten 100 mm in z nach oben liegt dort je nach Neigung des
-  Deckels 68 bis 94 mm neben der Fläche (gegengeprüft durch Abtasten der
-  Fläche): an den sechs steileren Knoten 68 bis 81 mm, ungenannt; an
-  (0,25|0,25), (0,25|0,5) und (0,5|0,25), zur waagerechten Ecke (0|0) hin,
-  87 bis 94 mm, WARNUNG (nachgemessen mit der örtlichen Grenze an allen neun
-  inneren Deckelknoten, 24.09.2026;
-  `test_abnahme_beule_windschief_nach_richtung`). Halbiert liegen die
-  Grenzen dort (dz = 1,0) nach außen als Abstand entlang der Normalen bei
-  82,9 bis 84,2 mm, in z bei 82,8 bis 83,6 mm, je Knoten höchstens 0,7 mm
-  auseinander. Für eine Delle (nach innen) gilt das nicht. Überschreitet
-  sie die Grenze, gelten ihre Seiten nicht als Netzrand neben der Hülle: Der
-  Punkt knapp hinter ihnen liegt im Körper (Windungszahl), sie zählen zu den
-  Seiten im Inneren. Bei 90 mm entlang der Normalen nach innen ist das ein FEHLER
-  „Seiten im Inneren" an (0,25|0,25) und ein FEHLER „Volumenbilanz" mit
-  „Lücke im Netzrand" an sieben Knoten. Und die Grenze hängt von der
-  Richtung ab: an (0,75|0,75) 100,2 mm entlang der Normalen und 133,4 mm
-  Abstand in z (190 mm Verschiebung) gegen 84,2 mm nach außen, an (0,5|0,75)
-  und (0,75|0,5) 83,6 mm entlang der Normalen gegen 99,1 mm in z. An
-  (0,75|0,75) liegt es an H in s_b·H²: Die Delle senkt den Knoten, die
-  Deckelseite zur Ecke (1|1) hin wird höher, bei 90 mm wächst ihr
-  Durchmesser und damit H an den vier Seiten des Knotens von 562,5 auf
-  611,8 mm, die Grenze von 83,8 bis 84,7 auf 98,4 bis 99,7 mm; nach außen
-  bleibt H bei 562,8 mm (24.09.2026, Grenzen auf zwei Wegen halbiert). Die
-  zwölf Randknoten des Deckels zwischen den Ecken verlassen, entlang der
-  Deckelnormalen nach außen verschoben, auch die ebene Seitenfläche, bei
-  80 mm um 13,9 bis 48,0 mm.
-  Seiten auf ebenen Flächen prüft die Abnahme am Schwerpunkt gegen 1 % des
-  Seitendurchmessers (`ABNAHME_HUELLABSTAND`); der Schwerpunkt einer
-  anliegenden Seite wandert um ein Viertel des Anteils senkrecht zur
-  Seitenfläche. Bei 80 mm: WARNUNG „Netzrand neben der Hülle" mit 2 Seiten
-  auf x = 0 und y = 0 (nach außen), FEHLER „Seiten im Inneren" mit 1 Seite
-  an (1|0,5) und (0,5|1), mit 2 an (1|0,75) und (0,75|1) (nach innen), kein
-  Befund nur an (1|0,25) und (0,25|1); an (0|0,5), (0|0,75), (0,5|0) und
-  (0,75|0) schon bei 60 mm WARNUNG mit 2 Seiten. Zerlegt gibt der Anteil
-  senkrecht zur Seitenfläche allein bei 80 mm an allen zwölf denselben
-  Befund, der Rest in ihrer Ebene bei 60 und 80 mm keinen (24.09.2026;
-  `test_abnahme_beule_windschief_randknoten`). Ein fehlender Tetraeder am
-  windschiefen Deckel des freien Netzes ist eine Lücke im Netzrand
-  (2,892e-4 m³ gemeldet, der Tetraeder hat 2,841e-4 m³; die Lücke reicht bis
-  zur Fläche, der Tetraeder nur bis zu seiner Sehne).
+  (`_bilinear_abstand`), nicht für die Verschiebung in z. Die Sehnenzulage
+  gehört aber nur zwischen die Knoten (Schwerpunkt) und an die Ecken von
+  Dreiecksseiten, deren Knoten der freie Vernetzer auf Sehnen setzt. Bis zum
+  23.09.2026 galt sie auch für die Ecken abgebildeter Netze, deren Knoten
+  gemessen 0,0000 mm neben der Fläche liegen (Nebenbefund B053). Am
+  abgebildeten 4 × 4 × 4-Netz blieb so bei dz = 0,5 ein Deckelknoten 25 mm
+  außerhalb ungenannt, bei 30 mm war es eine WARNUNG (an allen 21
+  Deckelknoten außer den Ecken, in z wie entlang der Flächennormale). Bei
+  dz = 1,0 blieben an den neun inneren Deckelknoten 80 mm entlang der
+  Normalen nach außen ungenannt (Grenze halbiert 82,9 bis 84,2 mm), ein
+  Knoten 100 mm in z nach oben an den sechs steileren (68 bis 81 mm neben der
+  Fläche); eine Delle entlang der Normalen bis 82,9 bis 83,6 mm, an
+  (0,75|0,75) bis 100,2 mm, dort in z bis 133,4 mm Abstand, weil die Delle
+  H in s_b·H² wachsen ließ (Messungen zu Nebenbefund B020 am 24.09.2026,
+  Code ohne die Kur von B053). Seither gilt für die Ecken von Viereckseiten (Sechsflächner,
+  Keil, Pyramide) die 1-%-Grenze (`ABNAHME_HUELLABSTAND` mal
+  Seitendurchmesser). Gemessen am 24.09.2026, Grenzen halbiert an allen neun
+  inneren Deckelknoten (`test_abnahme_beule_windschief_nach_richtung`): Die
+  erste WARNUNG „Netzrand neben der Hülle" kommt entlang der Normalen nach
+  außen wie nach innen bei dz = 0,5 bei 3,55 bis 3,88 mm, bei dz = 1,0 bei
+  3,60 bis 4,74 mm; in z nach oben bei 3,61 bis 4,40 bzw. 3,82 bis 6,95 mm.
+  Als Abstand zur Fläche liegen die Grenzen in z und entlang der Normalen je
+  Knoten höchstens 0,2 mm auseinander; in z so weit verschoben, dass der
+  Knoten 3,5 mm neben der Fläche liegt, bleibt er an allen neun ungenannt,
+  bei 5 mm ist er an allen neun eine WARNUNG. Am Knoten (0,75 | 0,75) in z
+  verschoben: nach außen ab 5 mm (dz 0,5) bzw. 7 mm (dz 1,0) WARNUNG, 4 bzw.
+  6 mm ohne Befund; nach innen ebenso, ab 20 bzw. 30 mm FEHLER „Seiten im
+  Inneren“, bei dz 1,0 und 25 mm WARNUNG „Lücke im Netzrand“ (bei ec6448c:
+  nach außen erst ab 30 bzw. 150 mm, nach innen bei dz 0,5 ab 60 mm, bei dz
+  1,0 bis 100 mm nichts). Eine Delle, die deutlich über die Grenze geht, zählt
+  nicht als Netzrand neben der Hülle: Der Punkt knapp hinter ihren Seiten
+  liegt im Körper (Windungszahl), sie zählen zu den Seiten im Inneren. 20 mm
+  entlang der Normalen nach innen (dz = 0,5) sind an sieben der neun inneren
+  Knoten ein FEHLER „Seiten im Inneren", an (0,25|0,75) und (0,75|0,25) eine
+  WARNUNG „Lücke im Netzrand". Die zwölf Randknoten des Deckels zwischen den
+  Ecken haben dieselbe kleine Grenze: 3,5 mm entlang der Normalen oder in z
+  nach außen ohne Befund, 5 mm (dz 0,5) bzw. 7 mm entlang der Normalen und
+  8,5 mm in z (dz 1,0) an allen zwölf WARNUNG mit 2 Seiten
+  (`test_abnahme_beule_windschief_randknoten`). Entlang der Deckelnormalen
+  nach außen verschoben, verlassen sie auch die ebene Seitenfläche, bei
+  80 mm um 13,9 bis 48,0 mm. Seiten auf ebenen Flächen prüft die Abnahme am
+  Schwerpunkt gegen 1 % des Seitendurchmessers (`ABNAHME_HUELLABSTAND`); der
+  Schwerpunkt einer anliegenden Seite wandert um ein Viertel des Anteils
+  senkrecht zur Seitenfläche. Bei dz = 1,0 und 80 mm: WARNUNG „Netzrand neben
+  der Hülle" mit 4 Seiten auf x = 0 und y = 0 (nach außen, Deckel- und
+  Seitenfläche), mit 2 Seiten an (1|0,25) und (0,25|1), dazu FEHLER „Seiten
+  im Inneren" mit 1 Seite an (1|0,5) und (0,5|1), mit 2 an (1|0,75) und
+  (0,75|1) (nach innen). Zerlegt gibt der Anteil senkrecht zur Seitenfläche
+  allein bei 80 mm an allen zwölf denselben Befund, außer an (1|0,25) und
+  (0,25|1), wo er ohne Befund bleibt; der Rest in ihrer Ebene gibt bei 60 und
+  80 mm an allen zwölf nur die WARNUNG mit 2 Seiten (24.09.2026). Vor der
+  Kur von B053 waren es bei 80 mm WARNUNG mit 2 Seiten auf x = 0 und y = 0,
+  die beiden FEHLER nach innen und kein Befund an (1|0,25) und (0,25|1). Die
+  freien Würfelnetze der Tabelle oben mit h 0,25 und 0,5 bleiben ohne
+  Befund, ebenso die Modelle der Suiten (Vorher/nachher-Vergleich beim Riss
+  oben). Ein fehlender Tetraeder am windschiefen Deckel des freien Netzes
+  ist eine Lücke im Netzrand (2,892e-4 m³ gemeldet, der Tetraeder hat
+  2,841e-4 m³; die Lücke reicht bis zur Fläche, der Tetraeder nur bis zu
+  seiner Sehne).
 * Die Volumenbilanz lässt zu den 0,5 % das Volumen zu, das der Netzrand an
   windschiefen Flächen erklären kann: Σ A · (größter Abstand von Ecken,
   Kantenmitten und Schwerpunkt zur Fläche), eine obere Schranke. Gerechnet
@@ -7631,11 +7971,27 @@ neuer Stand nacheinander, je dreimal: 64 000 hex8 eben 0,15–0,16 s (alt
 ebenso), windschief 0,23–0,24 s (alt 0,22–0,25 s); 216 000 hex8 eben
 0,54–0,56 s (alt 0,54–0,55 s), windschief 0,74–0,78 s (alt ebenso). Die
 Gruppen im Inneren kosten nur, wo es Seiten im Inneren gibt. Am nicht
-konformen tet4-Netz aus `grid_box` (40 000 Elemente, jede innere Zellseite
-ein Riss, 91 200 Seiten) braucht `_abnahme_netz` 7,6–7,7 s gegen 7,0–7,1 s
-im alten Stand. Mit Dicke der Nachbarn, verdrehten Elementen und doppelten
-Knoten (vierte Fassung) nachgemessen, je viermal: 7,72–7,87 s gegen
-7,59–7,72 s. Die Dicke wird nur für die Elemente an Seiten im Inneren
+konformen tet4-Netz n = 20 (40 000 Elemente, dieselbe Fünferzerlegung in
+jeder Zelle, jede innere Zellseite ein Riss, 91 200 Seiten) braucht
+`_abnahme_netz` 7,6–7,7 s gegen 7,0–7,1 s im alten Stand. Mit Dicke der
+Nachbarn, verdrehten Elementen und doppelten Knoten (vierte Fassung)
+nachgemessen, je viermal: 7,72–7,87 s gegen 7,59–7,72 s. Das Netz baute
+damals `grid_box`; seit c85b9cc ist `grid_box` konform (n = 20: kein Befund,
+0,41 s), das Messnetz steht darum als `_nicht_konform` in
+`tests/test_diagnose.py` (Nebenbefund B052). Im Profil bei ec6448c (n = 20)
+entfielen 23,2 von 28,5 s auf `_randschleifen` (782 Aufrufe) – je Seite eine
+Python-Schleife mit np.cross, 282 985 Aufrufe mit 18,5 s – und 2,8 s auf
+`_seitengruppen`. Beide sind jetzt
+gestapelt: die Ringnormalen aller Seiten einer Gruppe mit einem np.cross, die
+gerichteten Kanten mit np.unique gezählt, in Python verkettet wird nur der
+Rand; die Gruppen über `scipy.sparse.csgraph.connected_components`. Dieselben
+Gruppen und Randschleifen wie vorher, in derselben Reihenfolge (verglichen an
+11 364 Gruppen, Test `test_abnahme_riss_gestapelt`). Gemessen im selben
+Prozess, abwechselnd, zweimal (die Maschine geteilt): 2,3 / 2,7 s gegen
+15,0 / 14,7 s bei ec6448c, derselbe Befund „Riss im Netz 91 200“; n = 10
+(5000 Elemente) 0,31–0,36 s gegen 1,68–1,83 s. Im Profil danach bleiben
+0,9 s für die Schwerpunkte der Elemente an den Seiten neben der Hülle, je
+Seite in Python (91 219 Aufrufe). Für 1 Mio Elemente **nicht gemessen**. Die Dicke wird nur für die Elemente an Seiten im Inneren
 gerechnet, die Suche nach doppelten Knoten und verdrehten Elementen nur, wenn
 eine Gruppe sonst ein Riss wäre. Ein Körper mit krummen Randlinien wird an der
 ersten krummen Linie verlassen, bevor ein Element angefasst wird.

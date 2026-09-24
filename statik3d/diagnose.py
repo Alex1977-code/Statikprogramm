@@ -835,19 +835,417 @@ def _abnahme_halteguete(model, guete: list = None) -> list:
     return aus
 
 
+_KEIN_RAUM = np.zeros((3, 0))
+
+
+def _raum(V) -> np.ndarray:
+    """Orthonormalbasis (3, k) des Raums, den die Spalten von ``V`` aufspannen."""
+    V = np.asarray(V, float).reshape(3, -1)
+    if not V.shape[1]:
+        return _KEIN_RAUM
+    U, s, _vt = np.linalg.svd(V, full_matrices=False)
+    if not len(s) or s[0] <= 0.0:
+        return _KEIN_RAUM
+    return U[:, s > 1e-9 * s[0]]
+
+
+def _schnittraum(U, V) -> np.ndarray:
+    """Orthonormalbasis des Schnitts zweier Raeume (Orthonormalbasen U, V)."""
+    if not U.shape[1] or not V.shape[1]:
+        return _KEIN_RAUM
+    if U.shape[1] == 3:
+        return V
+    if V.shape[1] == 3:
+        return U
+    _u, s, Wt = np.linalg.svd(np.hstack([U, -V]))
+    rang = int((s > 1e-9).sum())
+    return _raum(U @ Wt[rang:, :U.shape[1]].T)
+
+
+def _schief(r) -> np.ndarray:
+    """[r]x: _schief(r) @ t = r x t."""
+    return np.array([[0.0, -r[2], r[1]], [r[2], 0.0, -r[0]], [-r[1], r[0], 0.0]])
+
+
+def _drehsteife_knoten(model) -> dict:
+    """{Knoten: Orthonormalbasis (3, k) der Verdrehungen, die Elemente und
+    Drehlager an ihm halten} - unter der Voraussetzung dieser Pruefung, dass
+    jeder Elementknoten in x, y und z gehalten ist:
+
+    * am Schalenknoten alle drei;
+    * ein starres Knotenlager (ohne Ausfall, Schlupf, Reibung) um die
+      globale Achse, um die es sperrt;
+    * am Stabende die Biegung um die lokalen Achsen y und z (beam3d.
+      local_axes, samt roll), soweit dort kein Momentengelenk sitzt (Gelenk
+      3 + 6 j + k gibt am Ende j die Drehung um die lokale Achse k frei).
+      Sind beide Enden gehalten, haelt der Stab sie selbst, auch mit einem
+      Gelenk um dieselbe Achse am anderen Ende (ohne Schub 3 EI/L;
+      Gelenk 5 am eingespannten Anfang, Ende in x, y, z gelagert: alle neun
+      Lasten trugen);
+    * die Torsion (lokale Achse x) dagegen nur zusammen mit dem anderen
+      Ende: Ohne Gelenk 3 und 9 koppelt der Stab die Drehung beider Enden um
+      seine Achse, mit einem davon nichts (nach der Kondensation bleibt
+      GJ/L - GJ/L = 0). Gehalten ist sie an einem Ende erst, wenn sie am
+      anderen gehalten ist - von einem Drehlager, einer Schale, der Biegung
+      eines weiteren Stabs oder so weiter ueber eine Kette. Gesammelt wird,
+      bis sich nichts mehr aendert. (Die Schale ist dabei nicht sauber
+      nachgemessen: am Stab an einer Platte brach die Rechnung mit RBE2
+      auch ohne Gelenk numerisch ab, Theoriehandbuch 7a-2.)
+
+    Gemessen am 24.09.2026 (RBE2 mit einem Slave, 0,5 m neben dem Master in
+    x, y oder z, 1000 N am Slave in x, y und z): am Stabende (IPE 200, Stab
+    in x, Anfang eingespannt) und am Schalenknoten (Platte aus grid_plate)
+    gingen alle neun Lasten in die Lager; am Stabende mit Gelenken 9, 10,
+    11 nur die Last in Richtung des Versatzes - wie an einem Volumenknoten.
+    Mit Gelenk 11 allein und dem Slave in z trugen alle drei (bis zur 2.
+    Gegenpruefung vom 24.09.2026, Mangel 2, galt ein Stabende mit
+    irgendeinem Momentengelenk als gar nicht drehsteif).
+
+    Bis zur 3. Gegenpruefung vom 24.09.2026 (Mangel 1) galt die Torsion am
+    Ende j schon als gehalten, wenn dort kein Gelenk sass. Mit Gelenk 3 am
+    eingespannten Anfang und dem Slave in y brach die Last in z ab
+    (Gleichungssystem singulaer), mit dem Slave in z die in y; ebenso mit
+    den Gelenken 3 und 11 und dem Slave in z. Mit beiden Enden nur in x, y,
+    z gelagert gingen die Kraefte in die Lager, das Moment 500 Nm um die
+    Stabachse nahm die Hilfsfesselung des Loesers. Die Abnahme meldete in
+    keinem dieser Faelle etwas. Jetzt meldet sie sie; ohne Befund bleiben
+    die Kette aus zwei Staeben am eingespannten Lager und die Rahmenecke,
+    an der ein zweiter Stab (anderes Ende in x, y, z gelagert) mit seiner
+    Biegung die Torsion des ersten haelt, und dort trugen alle drei Lasten
+    (tests.test_diagnose.test_abnahme_knoten_in_drei_richtungen,
+    Theoriehandbuch 7a-2).
+
+    Vorausgesetzt ist, dass die Elementknoten selbst gehalten sind: mit
+    Gelenk 5 am eingespannten Anfang bricht schon eine Last in y am
+    Stabende ab, ohne RBE2; das prueft diese Funktion nicht. Drehfedern im
+    Knotenlager zaehlen nicht (eher ein Befund zu viel); Exzentrizitaeten
+    der Stabenden und starre Koerper zwischen Elementknoten sieht sie nicht.
+    Ein Stab mit Woelbkrafttorsion kondensiert seine Gelenke nicht
+    (assemble.element_matrix gibt vorher zurueck), haelt also mehr, als hier
+    angenommen."""
+    from .assemble import SHELL_TYPES
+    from .elements import beam3d as _bm
+    X = np.asarray(model.nodes, float)
+    achsen: dict = {}
+    for s in (getattr(model, "supports", None) or []):
+        for d in (3, 4, 5):
+            try:
+                b = s.dof_behaviour(d)
+            except Exception:                     # noqa: BLE001 - fremdes Lager
+                continue
+            if b.typ == "rigid" and not b.nonlinear:
+                achsen.setdefault(int(s.node), []).append(np.eye(3)[:, [d - 3]])
+    torsion: dict = {}                    # Knoten -> [(anderes Stabende, Stabachse)]
+    for e in model.elements:
+        if e.typ in SHELL_TYPES:
+            for n in e.nodes:
+                achsen.setdefault(int(n), []).append(np.eye(3))
+        elif e.typ == "beam":
+            gel = set(int(h) for h in (getattr(e, "hinges", None) or []))
+            try:
+                T3, _L = _bm.local_axes(X[int(e.nodes[0])], X[int(e.nodes[1])],
+                                        float(getattr(e, "roll", 0.0) or 0.0))
+            except (ValueError, IndexError):
+                continue                      # Stab ohne Laenge haelt nichts
+            for j, n in enumerate(e.nodes[:2]):
+                fest = [k for k in (1, 2) if 3 + 6 * j + k not in gel]
+                if fest:
+                    achsen.setdefault(int(n), []).append(T3[fest].T)
+            if 3 not in gel and 9 not in gel:
+                a, b = int(e.nodes[0]), int(e.nodes[1])
+                torsion.setdefault(a, []).append((b, T3[0]))
+                torsion.setdefault(b, []).append((a, T3[0]))
+    raum = {n: _raum(np.hstack(v)) for n, v in achsen.items()}
+
+    def enthaelt(R, t) -> bool:
+        return R.shape[1] > 0 and float(np.linalg.norm(R.T @ t)) > 1.0 - 1e-9
+    # Arbeitsliste: nur die Staebe an einem Knoten, dessen Raum gewachsen
+    # ist, koennen etwas weitergeben (je Knoten hoechstens drei Mal)
+    offen = [n for n in raum if n in torsion]
+    while offen:
+        j = offen.pop()
+        for i, t in torsion.get(j, ()):
+            Ri = raum.get(i, _KEIN_RAUM)
+            if enthaelt(raum[j], t) and not enthaelt(Ri, t):
+                raum[i] = _raum(np.hstack([Ri, t[:, None]]))
+                offen.append(i)
+    return {n: R for n, R in raum.items() if R.shape[1]}
+
+
+def _rbe3_master_raum(P_m, P_s, gewichte=None) -> np.ndarray:
+    """Richtungen, in denen die Slaves eines RBE3 seinen Master festlegen,
+    wenn sie selbst in allen drei Richtungen gehalten sind (Orthonormalbasis
+    (3, k)).
+
+    Mit gehaltenen Slaves bleiben von den sechs Gleichungen des RBE3
+    (verbindung.starrkoerper_matrix, dieselben wie beim Rechnen) nur die
+    sechs Spalten des Masters, G_m [u_m, theta_m] = 0. Gehalten ist eine
+    Richtung, in der sich u_m in keiner Loesung davon bewegt: das
+    Komplement der Verschiebungsanteile des Nullraums von G_m. Bei drei
+    Slaves, die nicht auf einer Linie liegen, ist G_m regulaer. Ein einziger
+    Slave neben dem Master, zwei Slaves und Slaves auf einer Linie legen die
+    Drehung um ihre Linie nicht fest; steht der Master neben der Linie,
+    bewegt ihn diese Drehung quer dazu. Gemessen am 24.09.2026 (Wuerfel
+    2 x 2 x 2 hex8, loser Master 0,3 m ueber der Deckelreihe y = 1, 1000 N am
+    Master; 2. Gegenpruefung, Mangel 1): ein Slave - x und y brechen ab
+    (Gleichungssystem singulaer), zwei Slaves oder drei auf der Linie - y
+    bricht ab, z und x tragen. Der Master auf der Linie (bei x = 0,25) oder
+    auf seinem einzigen Slave, und drei Slaves nicht auf einer Linie: alle
+    drei Lasten tragen."""
+    from .elements import verbindung as _vb
+    r = np.atleast_2d(np.asarray(P_s, float)) - np.asarray(P_m, float)
+    Lr = float(np.linalg.norm(r, axis=1).max()) or 1.0
+    # auf die groesste Entfernung bezogen: Rang und Verschiebungsanteil des
+    # Nullraums aendern sich damit nicht, die Schwelle gilt fuer jede Groesse
+    Gm = _vb.starrkoerper_matrix(np.zeros(3), r / Lr, "RBE3", gewichte)[:, :6]
+    _u, s, Wt = np.linalg.svd(Gm)
+    if not len(s) or s[0] <= 0.0:
+        return _KEIN_RAUM
+    N = Wt[int((s > 1e-9 * s[0]).sum()):].T
+    if not N.shape[1]:
+        return np.eye(3)
+    U, sv, _vt = np.linalg.svd(N[:3])
+    return U[:, int((sv > 1e-9).sum()):]
+
+
+def _starr_gelagert(model) -> set:
+    """Knoten, die ein Knotenlager in x, y und z starr haelt (ohne Ausfall,
+    Schlupf, Reibung oder Grenzkraft)."""
+    richt: dict = {}
+    for s in (getattr(model, "supports", None) or []):
+        for d in range(3):
+            try:
+                b = s.dof_behaviour(d)
+            except Exception:                     # noqa: BLE001 - fremdes Lager
+                continue
+            if b.typ == "rigid" and not b.nonlinear:
+                richt.setdefault(int(s.node), set()).add(d)
+    return {n for n, r in richt.items() if len(r) == 3}
+
+
+def _angeschlossene_knoten(model, belegt: np.ndarray) -> np.ndarray:
+    """Knoten ohne Element, die in allen drei Verschiebungsrichtungen am Netz
+    gehalten sind - ueber Kopplungen, starre Koerper (RBE2) oder als Master
+    einer Verteilkopplung (RBE3), auch ueber eine Kette -, dazu Anschlaege
+    (unten). ``belegt``: Maske der Knoten, die ein Element tragen.
+
+    Nur ein solcher Knoten traegt: eine Last darauf geht in jeder Richtung
+    ueber die Verbindung ins Netz. So koppelt der Vernetzer Knoten mit
+    Knotenlager, die nach dem Neuvernetzen neben dem Netz stehen
+    (Model.netzknoten_loeschen schuetzt sie, fugen.stabenden_koppeln koppelt
+    sie in x, y und z starr); am abgestuften Netz 20:1 117 Knoten ueber 306
+    Kopplungen, und das Modell rechnet (Fz = -100 kN, Summe der Reaktionen
+    in z 100 000,0 N). Bis zum 23.09.2026 meldete die Abnahme sie als
+    „FEHLER Knoten ohne Element 117" (Nebenbefund B099).
+
+    Gehalten ist eine Richtung, wenn eine dieser Verbindungen sie an einen
+    Knoten bindet, der in ihr gehalten ist (Elementknoten in allen dreien):
+
+    * eine Kopplung in ihren wirksamen Richtungen (Kopplung.paare) - der
+      Schnitt mit dem, was am Partner gehalten ist;
+    * ein RBE2: Master und Slaves bewegen sich als ein starrer Koerper
+      (u_s = u_m + theta_m x r_s). Gehalten ist, was die gehaltenen
+      Richtungen seiner Glieder von dieser Bewegung festlegen, dazu die
+      Verdrehungen, die am Master Elemente oder Drehlager halten
+      (_drehsteife_knoten: Schalenknoten alle drei; Stabende die Biegung um
+      jede lokale Achse ohne Momentengelenk an diesem Ende, die Torsion nur,
+      wenn der Stab kein Torsionsgelenk hat und sie am anderen Ende
+      gehalten ist).
+      Ein Slave an einem Volumenknoten als einzigem Glied haengt deshalb nur
+      in Richtung des Versatzes;
+    * ein RBE3 haelt nur seinen Master, nur wenn alle Slaves mit Gewicht
+      gehalten sind, und nur in den Richtungen, in denen sie ihn festlegen
+      (_rbe3_master_raum): ein einziger Slave neben dem Master, zwei Slaves
+      oder Slaves auf einer Linie mit dem Master daneben legen ihn quer
+      dazu nicht fest. Der Master ist ihr gewichtetes Mittel, die Slaves
+      versteift er nicht (model.StarrKoerper).
+
+    Nicht gezaehlt werden Spaltelemente: sie halten nur in ihrer Richtung
+    und nur auf Druck. Ausgenommen ist der Anschlag: ein Knoten, der in x, y
+    und z starr gelagert ist und ueber ein Spaltelement an einem gehaltenen
+    Knoten haengt (examples_lib.contact_example,
+    tests.test_solver_ext.test_gap_element). Eine Last auf ihm geht in sein
+    Lager, und das Lager wirkt, wie das Spaltelement es vorgibt, nur auf
+    Druck in dessen Richtung. Ein gelagerter Knoten, der nur ueber eine
+    Kopplung in einem Teil der Richtungen haengt, bleibt dagegen lose: dort
+    hielte sein Lager das Tragwerk nur in diesen Richtungen, und ob das so
+    gewollt ist, sieht die Abnahme nicht (fugen.stabenden_koppeln koppelt
+    Lagerknoten in allen dreien).
+
+    Die Fassung vom 23.09.2026 zaehlte jede Verbindung, gleich in welcher
+    Richtung, und schwieg zu den folgenden Faellen (Gegenpruefung vom
+    24.09.2026, Maengel 1 und 4). Gemessen am 24.09.2026 (Wuerfel 2 x 2 x 2
+    hex8, unten gelagert, 1000 N am Knoten ohne Element in x, y, z;
+    tests.test_diagnose._knoten_am_wuerfel), jetzt jeder ein FEHLER:
+
+    * Kopplung nur in z an einem Deckelknoten: die Last in z geht in die
+      Lager, die in x und in y bleibt als Reaktion am Knoten selbst stehen
+      und erreicht das Tragwerk nie;
+    * RBE3 mit losem Master und einem losen Slave (neben den neun
+      Deckelknoten): jede Last am Slave bricht ab (Gleichungssystem
+      singulaer); ohne den losen Slave traegt der Master (Lagerkraefte
+      -1000 N);
+    * RBE2 am Deckelknoten mit einem Slave 0,5 m daneben in x: die Last in
+      x traegt, die in y und z brechen ab;
+    * Spaltelement allein: die Last in x und y bleibt am Knoten, Zug in
+      Richtung des Spalts bricht ab (KontaktAbbruch), nur Druck traegt.
+
+    Getragen und ohne Befund: RBE2 mit losem Master und losem Slave neben
+    den Deckelknoten, Kopplung in x, y und z, zwei Kopplungen in x+y, z und
+    x-y, Kopplung in x und y und in z ueber einen Zwischenknoten, der selbst
+    nur in z haengt (er bleibt lose: an ihm bleiben x und y stehen).
+
+    Ein Slave eines RBE3 an einem gehaltenen Master ist rechnerisch
+    festgelegt (am Wuerfel trugen alle drei Lasten), er zaehlt trotzdem als
+    lose: das RBE3 soll ihn nicht halten. Der Text des Befunds sagt das
+    (_abnahme_netz).
+
+    Die Fassung d7553e4 liess den Master eines RBE3 schon gelten, wenn alle
+    Slaves gehalten waren, auch wo sie ihn nicht festlegen; bei einem
+    Slave, zwei Slaves und drei Slaves auf einer Linie, der Master 0,3 m
+    daneben, schwieg sie, und Lasten quer brachen ab (2. Gegenpruefung vom
+    24.09.2026, Mangel 1; bei ec6448c war jeder dieser Master ein FEHLER).
+    """
+    nn = int(model.nn)
+    an = np.zeros(nn, bool)
+    offen = ~np.asarray(belegt[:nn], bool)
+    if not offen.any():
+        return an
+    X = np.asarray(model.nodes[:nn], float)
+    voll = np.eye(3)
+    halt: dict = {}                       # offener Knoten -> gehaltener Raum
+
+    def raum(i):
+        return voll if not offen[i] else halt.get(i, _KEIN_RAUM)
+    kopp = []
+    for kp in (getattr(model, "kopplungen", None) or []):
+        a, b = int(getattr(kp, "node_a", -1)), int(getattr(kp, "node_b", -1))
+        if not (0 <= a < nn and 0 <= b < nn) or a == b or not (offen[a] or offen[b]):
+            continue
+        paare = getattr(kp, "paare", None)
+        # Eine Kopplung ohne wirksame Richtung (alle Steifigkeiten 0) haelt nichts
+        D = _raum(np.array([v for v, _k in paare()]).T) if paare else _KEIN_RAUM
+        if D.shape[1]:
+            kopp.append((a, b, D))
+    rbe2, rbe3 = [], []
+    for sk in (getattr(model, "starrkoerper", None) or []):
+        # dieselbe Auswahl der Slaves wie assemble.starrkoerper
+        mst = int(getattr(sk, "master", -1))
+        sl = [int(x) for x in (getattr(sk, "slaves", None) or [])
+              if 0 <= int(x) < nn and int(x) != mst]
+        if not sl or not 0 <= mst < nn or not offen[[mst] + sl].any():
+            continue
+        if str(getattr(sk, "art", "RBE2")).upper() == "RBE3":
+            gew = list(getattr(sk, "gewichte", None) or [])
+            gew = gew if len(gew) == len(sl) else [1.0] * len(sl)
+            if offen[mst]:
+                rbe3.append((mst, [s for s, w in zip(sl, gew) if float(w) != 0.0],
+                             _rbe3_master_raum(X[mst], X[sl], gew)))
+        else:
+            rbe2.append([mst] + sl)
+    dreh = _drehsteife_knoten(model) if rbe2 else {}
+    spalt = [(int(g.node_a), int(g.node_b)) for g in (getattr(model, "gap_elements", None) or [])
+             if 0 <= int(g.node_a) < nn and 0 <= int(g.node_b) < nn]
+    anschlag = _starr_gelagert(model) if spalt else set()
+    spalt = [(a, b) for a, b in spalt if (offen[a] and a in anschlag) or (offen[b] and b in anschlag)]
+
+    def starr(glieder):
+        """{Glied: gehaltener Raum} eines RBE2 aus seinen Gliedern."""
+        mst = glieder[0]
+        r = X[glieder] - X[mst]
+        Lr = float(np.linalg.norm(r, axis=1).max()) or 1.0
+        B = [np.hstack([voll, -_schief(ri / Lr)]) for ri in r]
+        zeilen = [raum(p).T @ Bp for p, Bp in zip(glieder, B) if raum(p).shape[1]]
+        Rd = dreh.get(mst, _KEIN_RAUM) if not offen[mst] else _KEIN_RAUM
+        if Rd.shape[1]:                     # vom Element gehaltene Verdrehungen
+            zeilen.append(np.hstack([np.zeros((Rd.shape[1], 3)), Rd.T]))
+        if not zeilen:
+            return {}
+        _u, s, Wt = np.linalg.svd(np.vstack(zeilen))
+        N = Wt[int((s > 1e-9 * s[0]).sum()):].T          # freie Starrkoerperbewegung
+        aus = {}
+        for p, Bp in zip(glieder, B):
+            if not offen[p] or an[p]:
+                continue
+            if not N.shape[1]:
+                aus[p] = voll
+                continue
+            U, sv, _vt = np.linalg.svd(Bp @ N)
+            aus[p] = U[:, int((sv > 1e-9).sum()):]
+        return aus
+    while True:
+        dazu: dict = {}
+        for a, b, D in kopp:
+            for i, j in ((a, b), (b, a)):
+                if offen[i] and not an[i]:
+                    S = _schnittraum(D, raum(j))
+                    if S.shape[1]:
+                        dazu.setdefault(i, []).append(S)
+        for glieder in rbe2:
+            for p, S in starr(glieder).items():
+                if S.shape[1]:
+                    dazu.setdefault(p, []).append(S)
+        for mst, sl, S in rbe3:
+            if sl and S.shape[1] and not an[mst] and all(not offen[s] or an[s] for s in sl):
+                dazu.setdefault(mst, []).append(S)
+        for a, b in spalt:                  # Anschlag, siehe oben
+            for i, j in ((a, b), (b, a)):
+                if offen[i] and not an[i] and i in anschlag and (not offen[j] or an[j]):
+                    dazu.setdefault(i, []).append(voll)
+        weiter = False
+        for i, liste in dazu.items():
+            alt = raum(i)
+            neu = _raum(np.hstack([alt] + liste))
+            if neu.shape[1] > alt.shape[1]:
+                halt[i] = neu
+                an[i] = neu.shape[1] == 3
+                weiter = True
+        if not weiter:
+            return an
+
+
 def _abnahme_netz(model) -> list:
     """Knoten ohne Element, Elementgueete, Randtreue und Volumenbilanz je Koerper."""
+    import itertools
     aus = []
-    belegt = {int(n) for e in model.elements for n in e.nodes}
-    lose = [k for k in range(model.nn) if k not in belegt]
+    nn = int(model.nn)
+    kn = np.fromiter(itertools.chain.from_iterable(e.nodes for e in model.elements), np.int64)
+    belegt = np.zeros(nn, bool)
+    belegt[kn[(kn >= 0) & (kn < nn)]] = True
+    # Knoten, die ueber Kopplungen oder starre Koerper in allen drei
+    # Richtungen am Netz haengen, tragen (siehe _angeschlossene_knoten) -
+    # sie sind nicht „ohne Element". Was die Abnahme nicht in allen dreien
+    # gehalten findet, bleibt einer. Der Text sagt nur das und was folgt, wo
+    # der Halt wirklich fehlt: Den Slave eines RBE3 an einem gehaltenen
+    # Master legt die Rechnung fest (am Wuerfel trugen Lasten in +x, +y, +z,
+    # -z, -x, 24.09.2026), er bleibt mit Absicht lose, und der Text nennt ihn
+    # als solchen (2. Gegenpruefung vom 24.09.2026, Mangel 2; bis dahin hiess
+    # es fuer jeden Knoten „eine Last darauf ginge ganz oder zum Teil
+    # verloren").
+    lose = np.flatnonzero(~belegt & ~_angeschlossene_knoten(model, belegt)).tolist()
     if lose:
+        rbe3_slaves = {int(x) for sk in (getattr(model, "starrkoerper", None) or [])
+                       if str(getattr(sk, "art", "RBE2")).upper() == "RBE3"
+                       for x in (getattr(sk, "slaves", None) or [])
+                       if int(x) != int(getattr(sk, "master", -1))}
+        als_rbe3 = [k for k in lose if k in rbe3_slaves]
         aus.append(Befund(
             pruefung="Knoten ohne Element", knoten=lose[:8],
             wert=float(len(lose)), grenze=0.0,
             text=f"{len(lose)} Knoten im Rechennetz hängen an keinem Element "
                  f"(z. B. {', '.join('K' + str(k) for k in lose[:6])}"
-                 + (" …" if len(lose) > 6 else "") + ") - sie tragen nichts, "
-                 "und eine Last darauf ginge verloren."))
+                 + (" …" if len(lose) > 6 else "") + "), und die Abnahme findet "
+                 "auch über Kopplungen oder starre Körper keinen Halt in allen "
+                 "drei Richtungen. Wo der Halt in einer Richtung fehlt, geht "
+                 "eine Last darauf ganz oder zum Teil verloren, oder die "
+                 "Rechnung bricht ab (Gleichungssystem singulär)."
+                 + (f" Davon als Slave eines RBE3: "
+                    f"{', '.join('K' + str(k) for k in als_rbe3[:6])}"
+                    + (" …" if len(als_rbe3) > 6 else "") + ". Ein RBE3 "
+                    "verteilt eine Last am Master auf seine Slaves, ohne sie "
+                    "zu versteifen; die Abnahme zählt es darum nicht als Halt "
+                    "eines Slaves, auch wo die Rechnung ihn über einen "
+                    "gehaltenen Master festlegt." if als_rbe3 else "")))
     try:
         from .netzguete import guete as _formguete
         q = _formguete(model)
@@ -1408,6 +1806,40 @@ ABNAHME_RISS_DICKE = 0.05
 #:   Bohrung sind die kleinsten fehlenden Tetraeder kleiner als ihre
 #:   Nachbarn (Median 0,55 bis 1,34) - dort trennt t/L.
 ABNAHME_RISS_NACHBAR = 0.65
+#: * **klein wie die Luecken des Vernetzers**: das Volumen der Gruppe
+#:   hoechstens dieses Vielfache von FLACH * L^3 je vier Seiten (mindestens
+#:   einmal), L die laengste Elementkante des Koerpers. Der freie Vernetzer
+#:   sortiert Tetraeder mit V <= FLACH * h^3 aus (mesher3d.FLACH = 1e-6, h
+#:   seine Kantenlaenge). L ist nicht h: an den gemessenen freien Netzen lag
+#:   L beim 1,02- bis 2,00-Fachen von h (Platte mit Bohrung h 50 mm: L
+#:   50,9 mm; Wuerfel mit angehobener Ecke h 0,1 / 0,25 / 0,5 m und L-Prisma
+#:   h 0,1 / 0,12 / 0,25 m: 1,68 h bis 2,00 h; 24.09.2026), die Grenze
+#:   2 * FLACH * L^3 also beim 2,1- bis 16-Fachen von FLACH * h^3. Gesetzt
+#:   ist sie an den Messwerten unten, nicht aus h hergeleitet. Die beiden
+#:   Masse davor sagen nur, dass der Hohlraum flach
+#:   ist, nicht wie gross: fehlte ein Tetraeder, der selbst flach ist, blieb
+#:   es bei der WARNUNG Riss (Nebenbefund B050) - an der Platte mit Bohrung
+#:   (34 600 tet4) bei 1413 von 28 046 inneren Tetraedern, bis 2,05e-6 m^3
+#:   (Element 17625; die Zahl aus Dicke und Nachbardicke vorhergesagt, an
+#:   Stichproben mit der Abnahme bestaetigt). Gemessen am 23.09.2026, V durch
+#:   FLACH * L^3:
+#:
+#:   - die 30 Luecken des Vernetzers (Gruppen der Modelle der Suiten
+#:     test_mesher3d und test_sweep): 0 bis 0,87 je vier Seiten (die
+#:     einzelnen aus 4 Seiten bis 0,87, die Haufen aus 8 bis 15 Seiten bis
+#:     0,26);
+#:   - einzeln fehlende flache Tetraeder, die sonst ein Riss waeren
+#:     (vorhergesagt): Platte mit Bohrung 0,35 bis 15 490 (48 von 1413 bis
+#:     2), Keile am feinen Rand 1,10 bis 13 250 (7 von 183 bis 2), L-Prisma
+#:     h 0,12 525 bis 10 261, Wuerfel mit angehobener Ecke h 0,25 560 bis
+#:     11 496.
+#:
+#:   Unterhalb von 2 sind sie von den Luecken des Vernetzers nicht zu
+#:   trennen - und ebenso klein. Darueber sind sie ein FEHLER; mit der
+#:   Abnahme gerechnet: die Platte ohne Element 17625 FEHLER „Seiten im
+#:   Inneren 4", an der Grenze 1,97 und 1,99 ein Riss, 2,01 und 2,03 ein
+#:   FEHLER.
+ABNAHME_RISS_FLACH = 2.0
 #: * **kein verdrehtes Element**: kein Sechsflaechner, Keil oder keine
 #:   Pyramide der Gruppe mit einer Kante, die in keinem anderen Element
 #:   vorkommt und nicht auf der Huelle liegt (:func:`_verdrehte_elemente`,
@@ -1421,16 +1853,24 @@ ABNAHME_RISS_NACHBAR = 0.65
 #:   Gegenpruefung, Mangel 2: WARNUNG Riss 10), hat an diesen Knoten aber
 #:   keine Verbindung. Gesucht wird auch fuer die Luecke im Netzrand (siehe
 #:   _gruppen_im_inneren).
-#: Windschiefe Randflaechen: eine freie Seite liegt darauf, wenn ihre Ecken
-#: nicht weiter danebenliegen als eine Sehne der **oertlichen** Weite H, und
-#: wenn sie in die Richtung der Flaeche zeigt (siehe _abnahme_volumenbilanz).
+#: Windschiefe Randflaechen: eine freie Seite liegt darauf, wenn ihr
+#: Schwerpunkt und - bei Dreiecksseiten - ihre Ecken nicht weiter
+#: danebenliegen als eine Sehne der **oertlichen** Weite H (die Ecken von
+#: Viereckseiten hoechstens 1 % des Seitendurchmessers), und wenn sie in die
+#: Richtung der Flaeche zeigt (siehe _abnahme_volumenbilanz).
 #: H ist der groesste Seitendurchmesser unter den Seiten dieser Flaeche, die
 #: hoechstens so viele Ringe (Nachbarn ueber gemeinsame Knoten) entfernt
 #: liegen. Gemessen am 23.09.2026 an freien Netzen des Wuerfels mit
-#: angehobener Deckelecke (dz 0,3 / 0,5 / 1,0 bei h 0,25, dz 1,0 bei h 0,5,
-#: dz 0,3 und 1,0 bei h 0,1), (Ecken-Abstand - 1 % des Seitendurchmessers)
-#: durch s_b * H^2, groesster Wert: die eigene Seite allein 1,83, ein Ring
-#: 1,33, zwei Ringe 1,21, drei Ringe 0,46.
+#: angehobener Deckelecke, die die Abnahme ohne Befund bestehen (dz 0,3 /
+#: 0,5 / 1,0 bei h 0,25, dz 1,0 bei h 0,5, dz 0,3 bei h 0,1), an den Seiten
+#: des Deckels (Ecken-Abstand - 1 % des Seitendurchmessers) durch s_b * H^2,
+#: groesster Wert: die eigene Seite allein 1,83, ein Ring 1,33, zwei Ringe
+#: 1,21, drei Ringe 0,46 (alle vier am Netz dz 0,5 bei h 0,25). Das Netz
+#: dz 1,0 bei h 0,1 (19 181 tet4) zaehlte bis zum 23.09.2026 als richtiges
+#: mit, hat aber am ebenen Boden eine Beule (Knoten 40 mm unter z = 0) und
+#: eine Delle (177 cm^3) - WARNUNG „Lücke im Netzrand" und „Netzrand neben
+#: der Hülle" (Nebenbefund B104). An seinem Deckel 0,30 / 0,30 / 0,18 / 0,17;
+#: mit und ohne es dieselben vier Zahlen (nachgemessen 23.09.2026).
 #: Der freie Vernetzer legt die Knoten auf Sehnen seiner groben
 #: Huelldreiecke (bis 7,55 mm bei dz 0,5, h 0,25), und die sind groesser als
 #: die Seiten, die daraus werden.
@@ -1445,36 +1885,61 @@ ABNAHME_SCHIEF_RINGE = 3
 ABNAHME_SCHIEF_RICHTUNG = 0.577            # tan 30 Grad
 
 
+def _seitenringe(F) -> tuple:
+    """Die Ecken jeder Seite als Ring: (Ecken, die gueltigen vorn, (m, 4);
+    Zahl der Ecken je Seite; Stellung der naechsten Ecke im Ring, (m, 4);
+    Maske der Kanten, (m, 4)). Kante j einer Seite laeuft von Ecke j zu Ecke
+    naechste[j] - bei Dreiecken (0, 1), (1, 2), (2, 0), wie in der
+    Python-Schleife ueber die gueltigen Ecken bis zum 23.09.2026."""
+    F = np.asarray(F)
+    gueltig = F >= 0
+    folge = np.argsort(~gueltig, axis=1, kind="stable")
+    Fc = np.take_along_axis(F, folge, axis=1)
+    c = gueltig.sum(axis=1)[:, None]
+    j = np.arange(4)[None, :]
+    naechste = np.where(j + 1 < c, j + 1, 0)
+    return Fc, c[:, 0], naechste, j < c
+
+
 def _seitengruppen(F, nur_paare: bool = False) -> list:
     """Seiten, die ueber gemeinsame Kanten zusammenhaengen, als Gruppen
-    (Liste von Stellen in F). ``nur_paare``: nur ueber Kanten, an denen genau
+    (Liste von Stellen in F, jede aufsteigend, die Gruppen nach ihrer
+    kleinsten Stelle). ``nur_paare``: nur ueber Kanten, an denen genau
     zwei der Seiten liegen - so zerfallen zwei Hohlraeume, die sich nur an
-    einer Kante beruehren (dort liegen vier Seiten)."""
+    einer Kante beruehren (dort liegen vier Seiten).
+
+    Gestapelt: Kanten als ein int64-Schluessel, gleiche Schluessel
+    nebeneinander sortiert, die Zusammenhangskomponenten ueber
+    scipy.sparse.csgraph. Die Vereinigungs-Suche in Python je Seite und Kante
+    kostete am nicht konformen tet4-Netz n = 20 (91 200 Rissseiten) 2,8 s
+    von 28,5 s im Profil (Nebenbefund B052, gemessen bei ec6448c am
+    23.09.2026).
+    """
+    from scipy import sparse
+    from scipy.sparse import csgraph
+    F = np.asarray(F)
     m = len(F)
-    an_kante: dict = {}
-    for i in range(m):
-        ecken = [int(k) for k in F[i] if k >= 0]
-        for a, b in zip(ecken, ecken[1:] + ecken[:1]):
-            an_kante.setdefault((min(a, b), max(a, b)), []).append(i)
-    wurzel = list(range(m))
-
-    def finde(i):
-        while wurzel[i] != i:
-            wurzel[i] = wurzel[wurzel[i]]
-            i = wurzel[i]
-        return i
-
-    for seiten in an_kante.values():
-        if nur_paare and len(seiten) != 2:
-            continue
-        for j in seiten[1:]:
-            ra, rb = finde(seiten[0]), finde(j)
-            if ra != rb:
-                wurzel[rb] = ra
-    gruppen: dict = {}
-    for i in range(m):
-        gruppen.setdefault(finde(i), []).append(i)
-    return [np.asarray(g) for g in gruppen.values()]
+    if not m:
+        return []
+    Fc, _c, naechste, echt = _seitenringe(F)
+    a = Fc[echt].astype(np.int64)
+    b = np.take_along_axis(Fc, naechste, axis=1)[echt].astype(np.int64)
+    seite = np.broadcast_to(np.arange(m)[:, None], Fc.shape)[echt]
+    n = np.int64(max(int(Fc.max()), 0) + 2)
+    schluessel = np.minimum(a, b) * n + np.maximum(a, b)
+    o = np.argsort(schluessel, kind="stable")
+    ks, ss = schluessel[o], seite[o]
+    gleich = ks[1:] == ks[:-1]
+    if nur_paare:
+        _u, inv, zahl = np.unique(ks, return_inverse=True, return_counts=True)
+        gleich &= zahl[inv[1:]] == 2
+    zeilen, spalten = ss[:-1][gleich], ss[1:][gleich]
+    G = sparse.coo_matrix((np.ones(len(zeilen), np.int8), (zeilen, spalten)), shape=(m, m))
+    _n, marke = csgraph.connected_components(G, directed=False)
+    o = np.argsort(marke, kind="stable")
+    gruppen = np.split(o, np.flatnonzero(np.diff(marke[o])) + 1)
+    gruppen.sort(key=lambda g: int(g[0]))
+    return gruppen
 
 
 def _randschleifen(F, Xf, S) -> list:
@@ -1484,41 +1949,72 @@ def _randschleifen(F, Xf, S) -> list:
     gerichteten Kanten werden gezaehlt (a -> b plus, b -> a minus); was sich
     nicht aufhebt, ist der Rand, verkettet zu Schleifen. Er laeuft so, dass
     1/2 sum p_i x p_i+1 ueber alle Schleifen die Summe der S ist.
+
+    Gestapelt: die Ringnormalen aller Seiten mit einem np.cross, die
+    gerichteten Kanten mit np.unique gezaehlt; in Python verkettet wird nur
+    der Rand, in derselben Reihenfolge wie die Schleife je Seite bis zum
+    23.09.2026 (erstes Auftreten der Kante). Die rechnete je Seite ein
+    np.cross: am nicht konformen tet4-Netz n = 20 (40 000 Elemente, 91 200
+    Rissseiten) 23,2 von 28,5 s im Profil, davon 18,5 s in 282 985 Aufrufen
+    von np.cross (Nebenbefund B052, gemessen bei ec6448c).
     """
-    zahl: dict = {}
-    for i in range(len(F)):
-        r = [j for j in range(4) if F[i][j] >= 0]
-        P = Xf[i][r]
-        n_ring = 0.5 * sum(np.cross(P[j], P[(j + 1) % len(r)]) for j in range(len(r)))
-        kn = [int(F[i][j]) for j in r]
-        if float(n_ring @ S[i]) < 0.0:
-            kn = kn[::-1]
-        for j in range(len(kn)):
-            a, b = kn[j], kn[(j + 1) % len(kn)]
-            zahl[(a, b)] = zahl.get((a, b), 0) + 1
-            zahl[(b, a)] = zahl.get((b, a), 0) - 1
-    lage: dict = {}
-    for i in range(len(F)):
-        for j in range(4):
-            if F[i][j] >= 0:
-                lage[int(F[i][j])] = Xf[i][j]
+    F = np.asarray(F)
+    Xf = np.asarray(Xf, float)
+    S = np.asarray(S, float)
+    m = len(F)
+    if not m:
+        return []
+    Fc, c, naechste, echt = _seitenringe(F)
+    folge = np.argsort(~(F >= 0), axis=1, kind="stable")
+    Xc = np.take_along_axis(Xf, folge[:, :, None], axis=1)
+    Xn = np.take_along_axis(Xc, naechste[:, :, None], axis=1)
+    n_ring = 0.5 * (np.cross(Xc, Xn) * echt[:, :, None]).sum(axis=1)
+    kehren = np.einsum("ij,ij->i", n_ring, S) < 0.0
+    # Umgekehrt laeuft der Ring ueber die gueltigen Ecken rueckwaerts
+    j = np.arange(4)[None, :]
+    rueck = np.where(echt & kehren[:, None], c[:, None] - 1 - j, j)
+    Fr = np.take_along_axis(Fc, rueck, axis=1)
+    a = Fr[echt].astype(np.int64)
+    b = np.take_along_axis(Fr, naechste, axis=1)[echt].astype(np.int64)
+    # Kanten a -> a heben sich auf der Stelle auf
+    w = a != b
+    a, b = a[w], b[w]
+    rand_a, rand_b, vielfach = [], [], []
+    if len(a):
+        n = np.int64(max(int(Fc.max()), 0) + 2)
+        lo, hi = np.minimum(a, b), np.maximum(a, b)
+        _u, erst, inv = np.unique(lo * n + hi, return_index=True, return_inverse=True)
+        netto = np.rint(np.bincount(inv, weights=np.where(a < b, 1.0, -1.0))).astype(np.int64)
+        for k in np.flatnonzero(netto)[np.argsort(erst[netto != 0], kind="stable")]:
+            p = erst[k]
+            if netto[k] > 0:
+                rand_a.append(int(lo[p]))
+                rand_b.append(int(hi[p]))
+            else:
+                rand_a.append(int(hi[p]))
+                rand_b.append(int(lo[p]))
+            vielfach.append(int(abs(netto[k])))
+    # Lage je Knoten (wie bisher: das letzte Vorkommen)
+    g = F >= 0
+    kn_alle, X_alle = F[g][::-1], Xf[g][::-1]
+    uniq, stelle = np.unique(kn_alle, return_index=True)
+    lagen = X_alle[stelle]
     weiter: dict = {}
-    for (a, b), k in zahl.items():
-        for _ in range(max(k, 0)):
-            weiter.setdefault(a, []).append(b)
+    for a_, b_, k in zip(rand_a, rand_b, vielfach):
+        weiter.setdefault(a_, []).extend([b_] * k)
     schleifen = []
     while weiter:
         start = next(iter(weiter))
-        schleife, a = [start], start
+        schleife, a_ = [start], start
         while True:
-            b = weiter[a].pop()
-            if not weiter[a]:
-                del weiter[a]
-            if b == start or b not in weiter:
+            b_ = weiter[a_].pop()
+            if not weiter[a_]:
+                del weiter[a_]
+            if b_ == start or b_ not in weiter:
                 break
-            schleife.append(b)
-            a = b
-        schleifen.append((schleife, np.array([lage[k] for k in schleife])))
+            schleife.append(b_)
+            a_ = b_
+        schleifen.append((schleife, lagen[np.searchsorted(uniq, schleife)]))
     return schleifen
 
 
@@ -1640,17 +2136,23 @@ def _verdrehte_elemente(model, gruppen, els, kandidaten, huelle) -> set:
     return aus
 
 
-def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T) -> tuple:
+def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T,
+                        L_koerper: float = 0.0) -> tuple:
     """Die freien Seiten neben der Huelle (F, Xf, S ihr Flaechenvektor vom
     eigenen Element weg, E ihre Elemente, T die Dicke ihres Elements
     2 V / Summe seiner Seitenflaechen; ``innen``: der Koerper geht hinter
     der Seite weiter), die im Inneren in Gruppen eingeteilt ->
     (Riss-Maske, Volumen der Risse, Luecken, verdrehte Elemente).
+    ``L_koerper``: die laengste Elementkante des Koerpers, der Massstab fuer
+    :data:`ABNAHME_RISS_FLACH`; 0 nur beim Aufruf fuer einzelne Gruppen ohne
+    Koerper (Pruefungen), dann entfaellt diese Bedingung.
 
     * **geschlossen und duenn**, gegen die eigenen Seiten und gegen die
-      Elemente daneben, **ohne verdrehtes Element und ohne doppelte Knoten**
+      Elemente daneben, **klein wie die Luecken des Vernetzers**, **ohne
+      verdrehtes Element und ohne doppelte Knoten**
       (:data:`ABNAHME_RISS_UFER`, :data:`ABNAHME_RISS_DICKE`,
-      :data:`ABNAHME_RISS_NACHBAR`): ein Riss ohne Weite. Dazu gehoeren ein
+      :data:`ABNAHME_RISS_NACHBAR`, :data:`ABNAHME_RISS_FLACH`): ein Riss
+      ohne Weite. Dazu gehoeren ein
       Riss zwischen zwei verschieden in Dreiecke geteilten Haelften einer
       ebenen Flaeche (Volumen 0), ein Riss mit Knoten nur auf einer Seite (am
       Modell test_nachbar_mit_verschiedener_teilung 8 Seiten, 1e-19 m^3), die
@@ -1683,9 +2185,14 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T) -> t
     # Laengste Kante je Seite und Kanten, an denen mehr als zwei Seiten
     # liegen - gestapelt fuer alle Seiten auf einmal. Je Gruppe in Python
     # gerechnet (und die Trennung fuer jede geschlossene Gruppe versucht)
-    # kostete _abnahme_netz am nicht konformen tet4-Netz aus grid_box
-    # (40 000 Elemente, 91 200 Rissseiten) 15,8 s, so 7,6 bis 7,7 s; der
-    # Stand vor dieser Nachbesserung brauchte 7,0 bis 7,1 s (23.09.2026).
+    # kostete _abnahme_netz am nicht konformen tet4-Netz n = 20 (40 000
+    # Elemente, dieselbe Fuenferzerlegung in jeder Zelle, 91 200 Rissseiten)
+    # 15,8 s, so 7,6 bis 7,7 s; der Stand vor dieser Nachbesserung brauchte
+    # 7,0 bis 7,1 s (23.09.2026). Das Netz baute damals grid_box; seit
+    # c85b9cc ist grid_box konform, das Netz steht jetzt als
+    # tests.test_diagnose._nicht_konform (Nebenbefund B052). Mit
+    # _randschleifen und _seitengruppen gestapelt 2,3 bis 2,7 s gegen 14,7
+    # bis 15,0 s bei ec6448c, im selben Prozess abwechselnd gemessen.
     dreieck = F[:, 3] < 0
     Xz = Xf.copy()
     Xz[dreieck, 3] = Xf[dreieck, 0]
@@ -1707,12 +2214,18 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T) -> t
         rand = sum(float(np.linalg.norm(_flaechenvektor(P))) for _k, P in schleifen)
         return rand <= ABNAHME_RISS_UFER * float(A[idx].sum()), schleifen
 
+    from .mesher3d import FLACH
+    V_flach = ABNAHME_RISS_FLACH * FLACH * float(L_koerper) ** 3
+
     def duenn(idx):
+        """(duenn gegen Seiten und Nachbarn, klein wie die Luecken des
+        Vernetzers, Volumen)"""
         c = q[idx].mean(axis=0)
         V_g = abs(float(np.einsum("ij,ij->", q[idx] - c, S[idx]))) / 3.0
         t = 2.0 * V_g / float(A[idx].sum())
+        klein = L_koerper <= 0.0 or V_g <= V_flach * max(1.0, len(idx) / 4.0)
         return (t <= ABNAHME_RISS_DICKE * float(kante[idx].max())
-                and t <= ABNAHME_RISS_NACHBAR * float(np.median(T[idx]))), V_g
+                and t <= ABNAHME_RISS_NACHBAR * float(np.median(T[idx]))), klein, V_g
 
     # Gruppen ueber gemeinsame Kanten. Beruehren sich zwei geschlossene
     # Hohlraeume nur an einer Kante, werden sie getrennt beurteilt: an der
@@ -1724,7 +2237,13 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T) -> t
     # (12 925 tet4, Rand 5,6 %) zerfiel sonst in drei geschlossene Stuecke
     # und zwei offene aus 1 und 2 Seiten, und diese 3 Seiten wurden ein
     # FEHLER (gemessen 23.09.2026). Noetig ist das nur fuer eine Gruppe, die
-    # im Ganzen ein Riss waere und eine Kante mit mehr als zwei Seiten hat.
+    # im Ganzen duenn ist und eine Kante mit mehr als zwei Seiten hat. Die
+    # Groesse (ABNAHME_RISS_FLACH) entscheidet erst je Stueck: in der
+    # seriellen Gegenprobe von test_fugen.test_gemeinsame_flaeche_konform
+    # (2288 tet4) beruehrte ein Hohlraum von 3,6e-5 m^3 einen Riss ohne
+    # Volumen, und im Ganzen gemessen wurde der Riss mit zum FEHLER: in
+    # V_oben „Seiten im Inneren 27" statt 23 und der Riss 16 statt 20 Seiten
+    # (nachgemessen 24.09.2026, die Bedingung mit „klein" im Ganzen).
     kandidaten = []                         # [(Stellen, Volumen)] geschlossen und duenn
     offen = []
     for g in _seitengruppen(F[ii]):
@@ -1733,16 +2252,16 @@ def _gruppen_im_inneren(model, gruppen, els, F, Xf, S, E, innen, huelle, T) -> t
         if not zu:
             offen.append((idx, schleifen, float(A[idx].sum()), float(kante[idx].max())))
             continue
-        ist_riss, V_g = duenn(idx)
-        if ist_riss and mehrfach[idx].any():
+        flach, klein, V_g = duenn(idx)
+        if flach and mehrfach[idx].any():
             stuecke = [idx[h] for h in _seitengruppen(F[idx], nur_paare=True)]
             if len(stuecke) > 1 and all(geschlossen(st)[0] for st in stuecke):
                 for st in stuecke:
-                    r_st, V_st = duenn(st)
-                    if r_st:
+                    f_st, k_st, V_st = duenn(st)
+                    if f_st and k_st:
                         kandidaten.append((st, V_st))
                 continue
-        if ist_riss:
+        if flach and klein:
             kandidaten.append((idx, V_g))
     # Doppelte Knoten und verdrehte Elemente sind kein Riss, wie duenn der
     # Hohlraum auch ist (Mass-unabhaengig, siehe ABNAHME_RISS_NACHBAR), und
@@ -1866,6 +2385,23 @@ def _elementdicke(model, gruppen, V_el, wahl) -> np.ndarray:
     return T
 
 
+def _laengste_kante(model, gruppen) -> float:
+    """Die laengste Elementkante eines Koerpers (Kanten der Seiten jedes
+    Elements, gestapelt je Elementart) - der Massstab fuer
+    :data:`ABNAHME_RISS_FLACH`."""
+    from .elements import solid as sl
+    L = 0.0
+    for typ, (_pos, K) in gruppen.items():
+        kanten = {(min(a, b), max(a, b)) for s in sl.FLAECHEN_ECKEN.get(typ, ())
+                  for a, b in zip(s, s[1:] + s[:1])}
+        if not kanten or not len(K):
+            continue
+        a, b = (np.array(x) for x in zip(*sorted(kanten)))
+        X = model.nodes[K]
+        L = max(L, float(np.linalg.norm(X[:, a] - X[:, b], axis=2).max()))
+    return L
+
+
 def _ringmax(F, werte, ringe: int) -> np.ndarray:
     """Groesster Wert unter den Seiten, die hoechstens ``ringe`` Ringe
     (Nachbarn ueber gemeinsame Knoten) entfernt sind - je Seite."""
@@ -1916,8 +2452,9 @@ def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
        im Inneren werden zu Gruppen verbunden (:func:`_gruppen_im_inneren`):
 
        * ein Riss ohne Weite (geschlossen, duenn gegen die eigenen Seiten und
-         gegen die Elemente daneben, kein Element verdreht, keine doppelten
-         Knoten): WARNUNG „Riss im Netz";
+         gegen die Elemente daneben, so klein wie die Luecken des Vernetzers,
+         kein Element verdreht, keine doppelten Knoten): WARNUNG „Riss im
+         Netz";
        * eine Luecke im Netzrand (offen zur Huelle, kein Element verdreht):
          WARNUNG „Lücke im Netzrand" mit Ort und Volumen, solange alle Luecken
          des Koerpers zusammen unter der Grenze der Volumenbilanz bleiben
@@ -2065,18 +2602,30 @@ def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
         # Deckelknoten des abgebildeten 4 x 4 x 4-Netzes 50 mm aus dem
         # windschiefen Deckel (dz = 0,5) verschiebt die Schwerpunkte seiner
         # vier Seiten nur um 12,5 mm, die Grenze dort ist 21,6 mm.
+        #
+        # Die Sehne liegt aber **zwischen** den Knoten. Auf die Ecken gehoert
+        # die Zulage nur, wo der Vernetzer die Knoten selbst auf Sehnen setzt:
+        # der freie Vernetzer (Dreiecksseiten). Viereckseiten (Sechsflaechner,
+        # Keil, Pyramide) stammen aus dem abgebildeten Netz oder dem Sweep, und
+        # die legen ihre Knoten auf die Flaeche - am abgebildeten 4 x 4 x 4-Netz
+        # gemessen 0,0000 mm neben dem Deckel (dz 0,5 und 1,0). Dort gilt fuer
+        # die Ecken die 1-%-Grenze. Mit der Zulage auch an ihren Ecken blieb
+        # dort eine Beule von 25 mm (dz 0,5) bzw. 100 mm (dz 1,0) ungenannt
+        # (Nebenbefund B053, 23.09.2026).
         kn = F[rest]
         gueltig = kn >= 0
         uniq, inv = np.unique(kn[gueltig], return_inverse=True)
         d_ecke = np.zeros(kn.shape)
         d_ecke[gueltig] = _bilinear_abstand(model.nodes[uniq], X4)[inv]
-        nah = rest[d_ecke.max(axis=1) <= grenze_b]
+        grenze_e = np.where(viereck[rest], tol[rest], grenze_b)
+        nah = rest[d_ecke.max(axis=1) <= grenze_e]
         auf[nah] = True
         schief_nr[nah] = nr
     neben = np.nonzero(~auf)[0]
     innen = np.zeros(m, bool)
     riss = np.zeros(m, bool)
     V_riss = 0.0
+    L_koerper = 0.0
     luecken: list = []
     if len(neben):
         # Auf welcher Seite geht der Koerper weiter? Die Aussenrichtung wird
@@ -2109,8 +2658,10 @@ def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
             wahl = np.zeros(len(els), bool)
             wahl[stelle[E[neben[drin]]]] = True
             T_f = _elementdicke(model, gruppen, V_el, wahl)[stelle[E[neben]]]
+            L_koerper = _laengste_kante(model, gruppen)
             r, V_riss, luecken, _verdreht = _gruppen_im_inneren(
-                model, gruppen, els, F[neben], Xf[neben], S[neben], E[neben], drin, huelle, T_f)
+                model, gruppen, els, F[neben], Xf[neben], S[neben], E[neben], drin, huelle, T_f,
+                L_koerper=L_koerper)
             riss[neben[r]] = True
             for lu in luecken:
                 lu["idx"] = neben[lu["idx"]]
@@ -2197,7 +2748,8 @@ def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
                  "- der Körper geht dort weiter, aber kein Nachbarelement schließt an. "
                  "Über diese Seiten gehen keine Kräfte. Ursache ist ein verdrehtes "
                  "Element (Deckel um eine Ecke versetzt), doppelte Knoten oder ein "
-                 "Hohlraum im Netz. " + neu_vernetzen))
+                 "Hohlraum im Netz, etwa ein fehlendes Element (von Hand gelöscht oder "
+                 "beim Import verloren). " + neu_vernetzen))
     if luecken:
         V_lu = float(sum(lu["V"] for lu in luecken))
         grenze_lu = ABNAHME_VOLUMENBILANZ * V_h
@@ -2224,22 +2776,33 @@ def _abnahme_volumenbilanz(model, name, koerper, els) -> list:
                     "würde ein anderer Körper als der gezeichnete. ")
                  + neu_vernetzen + " Beseitigt hat eine Lücke des eigenen Vernetzers an L-, "
                  "T- und U-Prismen (gemessen 23.09.2026): Netzeinstellungen → „Sechsflächner "
-                 "sweepen“ (für Körper aus Grundfläche mal Weg) oder der Vernetzer gmsh bzw. "
-                 "Netgen, je an allen fünf; eine andere Ziellänge nur an drei oder vier "
-                 "von fünf."))
+                 "sweepen“ (für Körper aus Grundfläche mal Weg; ab Werk aus, weil er am "
+                 "Drehlager entartete Keile erzeugte - nach dem Einschalten die Abnahme "
+                 "lesen) oder der Vernetzer gmsh bzw. Netgen, je an allen fünf; eine andere "
+                 "Ziellänge nur an drei oder vier von fünf."))
     if len(riss_idx):
         schlimm, bsp = beispiele(riss_idx)
         aus.append(Befund(
             pruefung="Riss im Netz", objekt=str(name), element=schlimm,
             knoten=[int(x) for x in model.elements[schlimm].nodes],
             wert=float(len(riss_idx)), grenze=0.0, stufe="WARNUNG",
+            # Der Text sagt, wie klein die Hohlraeume sind, und nicht, woher
+            # sie stammen: bis zum 23.09.2026 schrieb er jeden Riss dem
+            # Vernetzer zu, auch einen von Hand geloeschten Tetraeder von
+            # 35 728 mm^3 (L-Prisma h 0,12), waehrend der Vernetzer nur
+            # V <= FLACH * h^3 = 1,7 mm^3 aussortiert (Nebenbefund B051). Ein
+            # Hohlraum dieser Groesse ist heute kein Riss mehr
+            # (ABNAHME_RISS_FLACH).
             text=f"Volumen {name}: {len(riss_idx)} freie Elementseiten im Inneren "
                  f"umschließen dünne Hohlräume (zusammen "
-                 f"{dezimal(V_riss * 1e9)} mm³; z. B. {bsp}) - Risse ohne Weite, wie sie "
-                 "bleiben, wenn der Vernetzer flache Tetraeder aussortiert oder beiderseits "
-                 "einer Fläche verschieden in Dreiecke teilt. Der Körper stimmt bis auf diese "
-                 "Hohlräume, die Verschiebungen passen dort aber nur an Knoten und Kanten "
-                 "zusammen. " + neu_vernetzen))
+                 f"{dezimal(V_riss * 1e9)} mm³; z. B. {bsp}) - Risse ohne Weite, je Stelle "
+                 f"höchstens {dezimal(ABNAHME_RISS_FLACH, 1)} · 10⁻⁶ · L³ je vier Seiten "
+                 f"(L = {dezimal(L_koerper * 1e3, 1)} mm, die längste Elementkante des "
+                 "Körpers), so klein wie die Lücken, die bleiben, wenn der Vernetzer flache "
+                 "Tetraeder aussortiert oder beiderseits einer Fläche verschieden in "
+                 "Dreiecke teilt. Der Körper stimmt bis auf diese Hohlräume, die "
+                 "Verschiebungen passen dort aber nur an Knoten und Kanten zusammen. "
+                 + neu_vernetzen))
     if len(rand_idx):
         schlimm, bsp = beispiele(rand_idx)
         aus.append(Befund(

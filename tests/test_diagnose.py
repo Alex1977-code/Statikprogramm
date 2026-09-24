@@ -818,7 +818,9 @@ def test_abnahme_ohne_fehlalarm_am_freien_netz():
     """
     from collections import Counter
     from statik3d.elements import solid as sl
-    for dz, h in ((0.5, 0.25), (1.0, 0.5)):
+    # dz 0,3 und 1,0 bei h 0,25 dazu seit B053 (22./23.09.2026): die Ecken
+    # freier Netze behalten die Sehnenzulage, die abgebildeter nicht
+    for dz, h in ((0.5, 0.25), (1.0, 0.5), (0.3, 0.25), (1.0, 0.25)):
         m, k, els = _wuerfel_angehoben(dz, h)
         zahl = Counter()
         for i in els:
@@ -912,6 +914,36 @@ def test_abnahme_ohne_fehlalarm_am_freien_netz():
           and bef4[0].stufe == "WARNUNG" and bef4[0].wert == 4.0,
           "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.0f}" for b in bef4) or "kein Befund")
 
+    # Nebenbefund B053 (22./23.09.2026): die Sehnenzulage galt auch für die
+    # Ecken der Seiten eines abgebildeten Netzes, dessen Knoten gemessen genau
+    # auf der windschiefen Fläche liegen (0,0000 mm). So blieb eine Beule von
+    # 25 mm (dz = 0,5) bzw. 100 mm (dz = 1,0) ungenannt, erst 30 bzw. 150 mm
+    # waren eine WARNUNG. Die Sehne liegt zwischen den Knoten, nicht an ihnen.
+    for dz, beule in ((0.5, 0.025), (1.0, 0.100)):
+        m5 = Model("beule")
+        m5.add_material(Material.steel("S235"))
+        W5 = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [0, 0, 1], [1, 0, 1], [1, 1, 1 + dz],
+              [0, 1, 1]]
+        ecken5 = [int(m5.add_node(*p)) for p in W5]
+        k5 = _quaderkoerper(m5, ecken5)
+        mesher.mesh_koerper(m5, k5, log=[], frei=False)
+        for i in range(4):
+            m5.fix(ecken5[i], "all")
+        X4 = dg._polyederhuelle(m5, k5)["bilinear"][0]
+        oben = [i for i in range(m5.nn)
+                if abs(m5.nodes[i, 2] - (1 + dz * m5.nodes[i, 0] * m5.nodes[i, 1])) < 1e-9]
+        d_oben = float(dg._bilinear_abstand(m5.nodes[oben], X4).max())
+        kn = int(np.argmin(np.linalg.norm(m5.nodes - [0.75, 0.75, 1 + dz * 0.5625], axis=1)))
+        m5.nodes[kn, 2] += beule
+        bef5 = [b for b in dg.abnahme(m5, warnungen=True) if b.pruefung in _NETZ_BEFUNDE]
+        check(f"abgebildetes Netz, Deckelecke {dz} m angehoben, Beule {beule * 1e3:.0f} mm: "
+              "WARNUNG Netzrand",
+              len(oben) == 25 and d_oben < 1e-9
+              and [(b.stufe, b.pruefung, b.wert) for b in bef5]
+              == [("WARNUNG", "Netzrand neben der Hülle", 4.0)],
+              f"Deckelknoten bis {d_oben * 1e3:.4f} mm neben der Fläche; "
+              + ("; ".join(f"{b.stufe} {b.pruefung} {b.wert:.0f}" for b in bef5) or "kein Befund"))
+
 
 def test_abnahme_luecken_des_vernetzers_sind_risse():
     """Der freie Vernetzer sortiert Tetraeder mit V <= FLACH·h³ aus, und ihre
@@ -957,6 +989,8 @@ def test_abnahme_luecken_des_vernetzers_sind_risse():
           "von Hand geändert" in text and "dasselbe Netz" in text
           and "Neu vernetzen mit denselben Einstellungen ergibt dasselbe Netz" not in text,
           text[-300:])
+    check("  und nennt als Herkunft den Vernetzer, der flache Tetraeder aussortiert",
+          "Vernetzer flache Tetraeder aussortiert" in text, text[:420])
     # Gegenprobe: fehlt ein Tetraeder, der nicht flach ist, ist es kein Riss -
     # die Regel winkt nicht jeden Hohlraum durch. Die Platte ist eine
     # Tetraederlage dick: der fehlende Tetraeder hinterlaesst eine Delle in
@@ -979,6 +1013,46 @@ def test_abnahme_luecken_des_vernetzers_sind_risse():
           and not [b for b in bef if b.pruefung == "Seiten im Inneren"],
           f"Element {mittel[0]} ({V_weg:.4g} m³): "
           + ("; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g}" for b in bef) or "kein Befund"))
+
+    # Nebenbefund B050 (22./23.09.2026): fehlt ein Tetraeder, der selbst flach
+    # ist (t/L ≤ 5 %, dünn gegen die Nachbarn), blieb es bei der WARNUNG Riss
+    # ohne Rückfrage - gleich wie groß der Hohlraum ist. Element 58 dieses
+    # Netzes: t/L 4,06 %, 1,752e-6 m³, das 13 250-Fache von FLACH·L³ (L die
+    # längste Elementkante des Körpers, 50,9 mm). Die Lücke des Vernetzers
+    # daneben hat das 0,87-Fache, die größte der 30 Lücken in den Modellen der
+    # Suiten test_mesher3d und test_sweep ebenso (gemessen 23.09.2026). Seit
+    # dem Vernetzer vom 23.09.2026 (Fable-Sitzung) hat die Platte 2502 statt
+    # 2701 tet4; derselbe Tetraeder heißt jetzt 58 statt 53, der kleine
+    # flache unten 2414 statt 2179 (gleiches Volumen und t/L, nachgemessen
+    # 24.09.2026).
+    def eigen(i):
+        P = m.nodes[m.elements[i].nodes]
+        V_i = abs(float(np.linalg.det(P[1:] - P[0]))) / 6.0
+        A_i = sum(0.5 * np.linalg.norm(np.cross(P[b] - P[a], P[c] - P[a]))
+                  for a, b, c in ((0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3)))
+        L_i = max(np.linalg.norm(P[a] - P[b]) for a in range(4) for b in range(a + 1, 4))
+        return V_i, 2.0 * V_i / A_i / L_i
+
+    def kurz(bef):
+        return [(b.stufe, b.pruefung, b.wert) for b in bef]
+    V53, tl53 = eigen(58)
+    k.elemente = [i for i in els if i != 58]
+    bef = dg._abnahme_volumenbilanz(m, k.name, k, k.elemente)
+    check("  ein fehlender flacher Tetraeder in Elementgröße (t/L 4,1 %, 1,75 cm³): FEHLER, "
+          "die Lücke des Vernetzers bleibt ein Riss",
+          len(els) == 2502 and abs(V53 - 1.752e-6) < 1e-9 and 0.040 < tl53 < 0.041
+          and kurz(bef) == [("FEHLER", "Seiten im Inneren", 4.0), ("WARNUNG", "Riss im Netz", 4.0)],
+          f"V {V53:.4g} m³, t/L {tl53 * 100:.2f} %: {kurz(bef)}")
+    # Gegenprobe und Grenze: ein flacher Tetraeder so klein wie die, die der
+    # Vernetzer aussortiert (Element 2414, 1,454e-10 m³ = 1,10 FLACH·L³),
+    # bleibt ein Riss - an dieser Größe ist er von ihnen nicht zu trennen
+    V2179, _tl = eigen(2414)
+    k.elemente = [i for i in els if i != 2414]
+    bef = dg._abnahme_volumenbilanz(m, k.name, k, k.elemente)
+    check("  ein fehlender flacher Tetraeder so klein wie die aussortierten bleibt ein Riss",
+          abs(V2179 - 1.454e-10) < 1e-12 and kurz(bef) == [("WARNUNG", "Riss im Netz", 8.0)],
+          f"V {V2179:.4g} m³: {kurz(bef)}")
+    k.elemente = els
 
 
 def test_abnahme_offene_gruppen_sind_kein_riss():
@@ -1209,6 +1283,17 @@ def test_abnahme_riss_misst_am_oertlichen_element():
                                               np.ones(8, bool), None, np.full(8, t_a))
     check("  zwei Hohlräume an einer Kante: der Tetraeder kein Riss, der flache ein Riss",
           not riss[:4].any() and riss[4:].all(), str(riss.astype(int).tolist()))
+    # Mit der Größe (ABNAHME_RISS_FLACH, Nebenbefund B050): L = 30 lässt je
+    # vier Seiten 2e-6 · 30³ = 0,054 zu - der flache Hohlraum (0,027) bleibt
+    # ein Riss, obwohl beide zusammen (0,142) zu groß sind; getrennt wird nach
+    # der Form, die Größe zählt je Stück. Mit L = 20 (0,016) ist auch er zu groß.
+    r30 = dg._gruppen_im_inneren(None, {}, [], F, Xf, S, np.zeros(8, int), np.ones(8, bool),
+                                 None, np.full(8, t_a), L_koerper=30.0)[0]
+    r20 = dg._gruppen_im_inneren(None, {}, [], F, Xf, S, np.zeros(8, int), np.ones(8, bool),
+                                 None, np.full(8, t_a), L_koerper=20.0)[0]
+    check("  mit der Größe: getrennt nach der Form, die Größe je Stück",
+          not r30[:4].any() and r30[4:].all() and not r20.any(),
+          f"L 30: {r30.astype(int).tolist()}, L 20: {r20.astype(int).tolist()}")
 
 
 _KUHN = ((0, 1, 2, 6), (0, 2, 3, 6), (0, 3, 7, 6), (0, 7, 4, 6), (0, 4, 5, 6), (0, 5, 1, 6))
@@ -1452,45 +1537,24 @@ def test_abnahme_beule_windschief_nach_richtung():
     bis zum 23.09.2026 ohne Richtung, bei um 1 m angehobener Deckelecke
     bleibe „selbst eine Beule von 100 mm ungenannt" (Nebenbefund B020).
 
-    Für die windschiefe Fläche selbst ist bei einem Knoten, der nach außen
-    verschoben ist, der Abstand zur Fläche (``_bilinear_abstand``)
-    maßgebend, nicht ob er in z oder senkrecht zur Fläche verschoben ist. Bei
-    dz = 1,0 bleiben an allen neun inneren Deckelknoten 80 mm senkrecht nach
-    außen ungenannt, 90 mm sind eine WARNUNG „Netzrand neben der Hülle" mit
-    4 Seiten, ebenso in z nach oben bis 80 bzw. 90 mm neben der Fläche. Ein
-    Knoten, der 100 mm in z nach oben verschoben ist, liegt je nach Neigung
-    des Deckels verschieden weit neben der Fläche: an den sechs steileren
-    Knoten 68 bis 81 mm, kein Befund; an (0,25|0,25), (0,25|0,5) und
-    (0,5|0,25), zur Ecke (0|0) hin, wo der Deckel waagerecht ist, 87 bis
-    94 mm, WARNUNG. Die Fassung vom 23.09.2026 prüfte nur vier Knoten mit 68
-    bis 81 mm und schrieb „100 mm in z bleiben ungenannt" wie eine Regel für
-    das ganze Netz; an allen neun Knoten geprüft, fiel das am Stand 066395a
-    an drei Knoten durch (dritte Gegenprüfung, 24.09.2026; Abstände
-    gegengeprüft durch Abtasten der Fläche mit 2001 x 2001 Punkten).
+    Die Antwort hat sich mit Nebenbefund B053 geändert: die Sehnenzulage gilt
+    an den Ecken von Viereckseiten nicht mehr, dort ist die Grenze 1 % des
+    Seitendurchmessers. Vorher (Stand der Messungen zu B020, 24.09.2026)
+    blieben bei dz = 1,0 an den neun inneren Deckelknoten 80 mm senkrecht
+    nach außen ungenannt, 100 mm in z an sechs von ihnen; nach innen 80 mm.
 
-    Nach innen verschoben (eine Delle) gilt das nicht. Die Seiten liegen
-    dann nicht neben der Hülle, sondern im Körper, und andere Prüfungen
-    melden sie: bei dz = 1,0 und 90 mm senkrecht nach innen FEHLER „Seiten im
-    Inneren" an (0,25|0,25), FEHLER „Volumenbilanz" und „Lücke im Netzrand"
-    an sieben Knoten. An (0,75|0,75) bleibt die Delle senkrecht zur Fläche
-    bis 100 mm ungenannt, in z nach unten bis rund 190 mm (133 mm neben der
-    Fläche); nach außen sind dort schon 90 mm eine WARNUNG. Ursache dort ist
-    die örtliche Grenze tol + s_b·H²: H ist der größte Seitendurchmesser bis
-    drei Ringe weit, und die Delle senkt den Knoten, so dass die Seite zur
-    Ecke (1|1) hin höher wird. 90 mm senkrecht nach innen heben ihren
-    Durchmesser und damit H an den vier Seiten des Knotens von 562,5 auf
-    611,8 mm, die Grenze von 83,8 bis 84,7 auf 98,4 bis 99,7 mm; nach außen
-    bleibt H bei 562,8 mm (gemessen 24.09.2026). Bis 90f1594 stand hier wie
-    im Benutzerhandbuch ohne Einschränkung „nicht die Richtung der
-    Verschiebung"; wörtlich genommen („90 mm senkrecht nach innen wie nach
-    außen WARNUNG") fiel das an allen neun Knoten durch (fünfte
-    Gegenprüfung, 24.09.2026). Halbiert bei dz = 1,0 (auf zwei Wegen, über
-    die Verschiebung und über den Abstand, auf 0,05 mm gleich) lagen die
-    Grenzen als Abstand nach außen senkrecht bei 82,9 bis 84,2 mm, in z bei
-    82,8 bis 83,6 mm, an keinem Knoten mehr als 0,7 mm auseinander; nach
-    innen senkrecht bei 82,9 bis 83,6 mm und 100,2 mm an (0,75|0,75), in z
-    bei 82,6 bis 82,9 mm, 99,1 mm an (0,5|0,75) und (0,75|0,5) und 133,4 mm
-    an (0,75|0,75).
+    Seither, gemessen am 24.09.2026 an allen neun inneren Deckelknoten
+    (Grenzen halbiert): die erste WARNUNG „Netzrand neben der Hülle" kommt
+    senkrecht zur Fläche nach außen wie nach innen bei dz = 0,5 zwischen
+    3,55 und 3,88 mm, bei dz = 1,0 zwischen 3,60 und 4,74 mm; in z nach oben
+    verschoben erst bei 3,61 bis 4,40 bzw. 3,82 bis 6,95 mm. Maßgebend ist
+    der Abstand zur Fläche, nicht die Richtung: in z so weit verschoben, dass
+    der Knoten 3,5 mm neben der Fläche liegt, bleibt er ungenannt, 5 mm neben
+    ihr ist er an allen neun eine WARNUNG; die halbierten Grenzen als Abstand
+    liegen in z und senkrecht je Knoten höchstens 0,2 mm auseinander. Eine
+    tiefere Delle melden andere Prüfungen: 20 mm senkrecht nach innen
+    (dz = 0,5) sind an sieben Knoten FEHLER „Seiten im Inneren", an (0,25|0,75)
+    und (0,75|0,25) WARNUNG „Lücke im Netzrand".
 
     Abgebildetes 4 x 4 x 4-Netz (64 hex8), Deckel z = 1 + dz·x·y, geprüft
     an allen neun inneren Deckelknoten (x und y je 0,25, 0,5 und 0,75); die
@@ -1498,108 +1562,119 @@ def test_abnahme_beule_windschief_nach_richtung():
     Die Prüfung hält die Zahlen des Handbuchabsatzes fest: ändert sich die
     Grenze, muss der Absatz mit.
     """
-    def beule(dz, x, y, mm, richtung):
-        """Verschiebung nach außen: in z nach oben oder senkrecht zur Fläche."""
-        v = (np.array([0.0, 0.0, 1.0]) if richtung == "z" else _deckelnormale(dz, x, y))
-        return _deckelbeule(dz, x, y, mm * 1e-3 * v)
-
-    WARN = [("WARNUNG", "Netzrand neben der Hülle", 4.0)]
     KNOTEN = tuple((x, y) for x in (0.25, 0.5, 0.75) for y in (0.25, 0.5, 0.75))
-    ALLE, KEINE = frozenset(KNOTEN), frozenset()
-    # 100 mm in z liegen hier 86,61 bis 93,78 mm neben der Fläche, an den
-    # übrigen sechs Knoten 67,75 bis 80,72 mm (gemessen 24.09.2026)
-    FLACH = frozenset({(0.25, 0.25), (0.25, 0.5), (0.5, 0.25)})
-    abstand_z100 = {}
-    for dz, mm, richtung, warn_an, text in (
-            (0.5, 25, "z", KEINE, "25 mm in z nach oben: kein Befund"),
-            (0.5, 25, "n", KEINE, "25 mm senkrecht nach außen: kein Befund"),
-            (0.5, 30, "z", ALLE, "30 mm in z nach oben: WARNUNG Netzrand 4"),
-            (0.5, 30, "n", ALLE, "30 mm senkrecht nach außen: WARNUNG Netzrand 4"),
-            (1.0, 100, "z", FLACH, "100 mm in z nach oben: WARNUNG Netzrand 4 an (0,25|0,25), "
-                                   "(0,25|0,5) und (0,5|0,25), an den übrigen sechs kein Befund"),
-            (1.0, 60, "n", KEINE, "60 mm senkrecht nach außen: kein Befund"),
-            (1.0, 80, "n", KEINE, "80 mm senkrecht nach außen: kein Befund"),
-            (1.0, 90, "n", ALLE, "90 mm senkrecht nach außen: WARNUNG Netzrand 4"),
-            (1.0, 100, "n", ALLE, "100 mm senkrecht nach außen: WARNUNG Netzrand 4"),
-            (1.0, 150, "z", ALLE, "150 mm in z nach oben: WARNUNG Netzrand 4")):
-        falsch = []
-        for x, y in KNOTEN:
-            n_el, ist, d_mm = beule(dz, x, y, mm, richtung)
-            if (dz, mm, richtung) == (1.0, 100, "z"):
-                abstand_z100[(x, y)] = d_mm
-            soll = WARN if (x, y) in warn_an else []
-            if n_el != 64 or ist != soll:
-                falsch.append(f"({x}|{y}) {n_el} El.: "
-                              + ("; ".join(f"{s} {p} {w:.0f}" for s, p, w in ist) or "kein Befund"))
-        check(f"4x4x4, Ecke {dz:g} m hoch, 9 Deckelknoten {text}".replace(".", ","),
-              not falsch, " | ".join(falsch))
-    # Die Abstände, die das Handbuch nennt: „68 bis 81 mm" und „87 bis 94 mm"
-    steil = [abstand_z100[k] for k in KNOTEN if k not in FLACH]
-    flach = [abstand_z100[k] for k in KNOTEN if k in FLACH]
-    check("  100 mm in z nach oben: steile Knoten 68 bis 81 mm, flache 87 bis 94 mm "
-          "neben der Fläche",
-          (round(min(steil)), round(max(steil)), round(min(flach)), round(max(flach)))
-          == (68, 81, 87, 94),
-          f"steil {min(steil):.2f} bis {max(steil):.2f}, "
-          f"flach {min(flach):.2f} bis {max(flach):.2f} mm")
+
+    def richtung(dz, x, y, r):
+        """außen/innen, senkrecht zur Fläche ("n") oder in z ("z")"""
+        v = _deckelnormale(dz, x, y) if r[0] == "n" else np.array([0.0, 0.0, 1.0])
+        return v if r[1] == "+" else -v
 
     def text(bef):
-        return "; ".join(f"{s} {p} {w:.0f}" for s, p, w in bef) or "kein Befund"
+        return "; ".join(f"{s} {p} {w:.3g}" for s, p, w in bef) or "kein Befund"
 
-    def pruefe(name, soll_von, verschiebung):
-        """Alle neun Knoten, alle Befunde der Abnahme; Vergleich über Stufe
-        und Prüfung, bei „Seiten im Inneren" und „Netzrand" auch die Zahl der
-        Seiten (Volumenbilanz und Lücke tragen Anteile als Wert)."""
+    def nur_netzrand(bef):
+        return bool(bef) and all(s == "WARNUNG" and p == "Netzrand neben der Hülle"
+                                 for s, p, _w in bef)
+
+    WARN4 = [("WARNUNG", "Netzrand neben der Hülle", 4.0)]
+    NAME = {"n+": "senkrecht nach außen", "z+": "in z nach oben",
+            "n-": "senkrecht nach innen", "z-": "in z nach unten"}
+    # 3,5 mm bleiben überall ungenannt; 5 mm (dz 0,5) bzw. 7 mm senkrecht und
+    # 8,5 mm in z (dz 1,0) sind überall die WARNUNG mit allen vier Seiten
+    for dz, r, mm, soll in ((0.5, "n+", 3.5, []), (0.5, "z+", 3.5, []),
+                            (0.5, "n-", 3.5, []), (0.5, "z-", 3.5, []),
+                            (1.0, "n+", 3.5, []), (1.0, "z+", 3.5, []),
+                            (1.0, "n-", 3.5, []), (1.0, "z-", 3.5, []),
+                            (0.5, "n+", 5.0, WARN4), (0.5, "z+", 5.0, WARN4),
+                            (0.5, "n-", 5.0, WARN4), (0.5, "z-", 5.0, WARN4),
+                            (1.0, "n+", 7.0, WARN4), (1.0, "n-", 7.0, WARN4),
+                            (1.0, "z+", 8.5, WARN4), (1.0, "z-", 8.5, WARN4)):
         falsch = []
         for x, y in KNOTEN:
-            n_el, ist, _d = _deckelbeule(1.0, x, y, verschiebung(x, y), alle=True)
-            kurz = [(s, p, w if p in ("Seiten im Inneren", "Netzrand neben der Hülle") else None)
-                    for s, p, w in ist]
-            if n_el != 64 or kurz != soll_von(x, y):
+            n_el, ist, _d = _deckelbeule(dz, x, y, mm * 1e-3 * richtung(dz, x, y, r), alle=True)
+            if n_el != 64 or ist != soll:
                 falsch.append(f"({x:g}|{y:g}) {n_el} El.: {text(ist)}")
-        check(name, not falsch, " | ".join(falsch))
+        check(f"4x4x4, Ecke {dz:g} m hoch, 9 Deckelknoten {mm:g} mm {NAME[r]}: "
+              f"{'WARNUNG Netzrand 4' if soll else 'kein Befund'}".replace(".", ","),
+              not falsch, " | ".join(falsch))
 
-    # Nach außen zählt der Abstand, nicht ob in z oder senkrecht: so weit in
-    # z nach oben, dass der Knoten 80 bzw. 90 mm neben der Fläche liegt
-    # (85 bis 118 bzw. 96 bis 133 mm Verschiebung), gibt dasselbe wie
-    # senkrecht zur Fläche
-    for d, soll in ((80, []), (90, WARN)):
-        pruefe(f"4x4x4, Ecke 1 m hoch, 9 Deckelknoten in z nach oben bis {d} mm neben der "
-               f"Fläche: " + (text(soll) if soll else "kein Befund"),
-               lambda x, y, s=soll: s,
-               lambda x, y, d=d: _z_fuer_abstand(1.0, x, y, d * 1e-3, oben=True))
-    # Nach innen (Delle) gilt das nicht, gemessen 24.09.2026
-    VB_LUECKE = [("FEHLER", "Volumenbilanz", None), ("FEHLER", "Lücke im Netzrand", None)]
+    # Der Abstand zählt: in z nach oben und unten bis 3,5 bzw. 5 mm neben der Fläche
+    for d_mm, ok in ((3.5, lambda b: not b), (5.0, nur_netzrand)):
+        falsch = []
+        for oben in (True, False):
+            for x, y in KNOTEN:
+                v = _z_fuer_abstand(1.0, x, y, d_mm * 1e-3, oben=oben)
+                n_el, ist, _d = _deckelbeule(1.0, x, y, v, alle=True)
+                if n_el != 64 or not ok(ist):
+                    falsch.append(f"({x:g}|{y:g}) {'oben' if oben else 'unten'}: {text(ist)}")
+        check(f"4x4x4, Ecke 1 m hoch, 9 Deckelknoten in z bis {d_mm:g} mm neben der "
+              f"Fläche: ".replace(".", ",") + ("kein Befund" if d_mm < 4 else "WARNUNG Netzrand"),
+              not falsch, " | ".join(falsch))
+
+    def grenze(dz, x, y, r):
+        """kleinste Verschiebung mit Befund (mm) und ihr Abstand zur Fläche (mm)"""
+        e = richtung(dz, x, y, r)
+        lo, hi = 0.0, 0.012
+        for _ in range(12):
+            mitte = 0.5 * (lo + hi)
+            if _deckelbeule(dz, x, y, mitte * e, alle=True)[1]:
+                hi = mitte
+            else:
+                lo = mitte
+        return hi * 1e3, _deckelbeule(dz, x, y, hi * e, alle=True)[2]
+    verschiebung, abstand, auseinander = {}, {}, []
+    for dz in (0.5, 1.0):
+        for r in ("n+", "n-", "z+"):
+            for x, y in KNOTEN:
+                v, d = grenze(dz, x, y, r)
+                verschiebung.setdefault((dz, r), []).append(v)
+                abstand.setdefault((dz, r), []).append(d)
+        for i, (x, y) in enumerate(KNOTEN):
+            dn, dzz = abstand[(dz, "n+")][i], abstand[(dz, "z+")][i]
+            if abs(dn - dzz) > 0.2:
+                auseinander.append(f"dz {dz:g} ({x:g}|{y:g}): senkrecht {dn:.2f}, in z {dzz:.2f} mm")
+    check("  Grenze als Abstand: in z und senkrecht je Knoten höchstens 0,2 mm auseinander",
+          not auseinander, " | ".join(auseinander))
+    soll_spanne = {(0.5, "n+"): (3.55, 3.88), (0.5, "n-"): (3.55, 3.88),
+                   (0.5, "z+"): (3.61, 4.40), (1.0, "n+"): (3.60, 4.74),
+                   (1.0, "n-"): (3.60, 4.74), (1.0, "z+"): (3.82, 6.95)}
+    check("  erste WARNUNG: dz 0,5 senkrecht 3,55 bis 3,88 mm, in z 3,61 bis 4,40 mm; "
+          "dz 1,0 senkrecht 3,60 bis 4,74 mm, in z 3,82 bis 6,95 mm",
+          all(abs(min(verschiebung[k]) - a) <= 0.02 and abs(max(verschiebung[k]) - b) <= 0.02
+              for k, (a, b) in soll_spanne.items()),
+          "; ".join(f"dz {k[0]:g} {k[1]}: {min(w):.2f} bis {max(w):.2f} mm"
+                    for k, w in sorted(verschiebung.items())))
+
+    # Eine tiefere Delle melden andere Prüfungen
     SEITEN4 = [("FEHLER", "Seiten im Inneren", 4.0)]
+    falsch, lu = [], []
+    for x, y in KNOTEN:
+        n_el, ist, _d = _deckelbeule(0.5, x, y, -0.02 * _deckelnormale(0.5, x, y), alle=True)
+        if [(s, p) for s, p, _w in ist] == [("WARNUNG", "Lücke im Netzrand")]:
+            lu.append((x, y))
+        elif ist != SEITEN4:
+            falsch.append(f"({x:g}|{y:g}): {text(ist)}")
+    check("  20 mm senkrecht nach innen (dz 0,5): sieben FEHLER Seiten im Inneren, "
+          "zwei WARNUNG Lücke im Netzrand",
+          not falsch and sorted(lu) == [(0.25, 0.75), (0.75, 0.25)],
+          " | ".join(falsch) + f" Lücke an {lu}")
 
-    def soll_innen_n90(x, y):
-        return (SEITEN4 if (x, y) == (0.25, 0.25) else [] if (x, y) == (0.75, 0.75)
-                else VB_LUECKE)
-    pruefe("  80 mm senkrecht nach innen (Delle): kein Befund",
-           lambda x, y: [], lambda x, y: -0.08 * _deckelnormale(1.0, x, y))
-    pruefe("  90 mm senkrecht nach innen: Seiten im Inneren an (0,25|0,25), Volumenbilanz "
-           "und Lücke an sieben, (0,75|0,75) kein Befund",
-           soll_innen_n90, lambda x, y: -0.09 * _deckelnormale(1.0, x, y))
-    # gleicher Abstand, andere Richtung: in z nach unten bis 90 mm neben der
-    # Fläche bleiben (0,5|0,75) und (0,75|0,5) ungenannt, senkrecht nicht
-    pruefe("  in z nach unten bis 90 mm neben der Fläche: wie senkrecht, aber (0,5|0,75) "
-           "und (0,75|0,5) kein Befund",
-           lambda x, y: [] if (x, y) in ((0.5, 0.75), (0.75, 0.5)) else soll_innen_n90(x, y),
-           lambda x, y: _z_fuer_abstand(1.0, x, y, 0.09, oben=False))
-    # (0,75|0,75): senkrecht nach innen bis 100 mm ungenannt, in z nach unten
-    # bis rund 190 mm (Grenze halbiert bei 100,2 bzw. 190,0 mm); nach außen
-    # sind dort 90 mm eine WARNUNG (oben)
-    ecke = []
-    for mm, v, soll in ((100, -_deckelnormale(1.0, 0.75, 0.75), []),
-                        (185, np.array([0.0, 0.0, -1.0]), []),
-                        (195, np.array([0.0, 0.0, -1.0]), [("FEHLER", "Seiten im Inneren", 3.0)])):
-        n_el, ist, d_mm = _deckelbeule(1.0, 0.75, 0.75, mm * 1e-3 * v, alle=True)
-        if n_el != 64 or ist != soll:
-            ecke.append(f"{mm} mm {'in z' if v[2] == -1.0 else 'senkrecht'}: {text(ist)}")
-    d190 = _deckelbeule(1.0, 0.75, 0.75, [0.0, 0.0, -0.19], alle=True)[2]
-    check("  (0,75|0,75) Delle: senkrecht 100 mm und in z 185 mm kein Befund, 195 mm FEHLER; "
-          "190 mm in z = 133 mm neben der Fläche",
-          not ecke and round(d190) == 133, " | ".join(ecke) + f" 190 mm in z: {d190:.2f} mm")
+    # Die Zahlen des Theoriehandbuchs am Knoten (0,75|0,75), in z verschoben
+    def paare(b):
+        return [(s, p) for s, p, _w in b]
+    reihe = []
+    for dz, mm, soll in ((0.5, 4, lambda b: not b), (0.5, 5, lambda b: b == WARN4),
+                         (0.5, -4, lambda b: not b), (0.5, -5, lambda b: b == WARN4),
+                         (0.5, -15, lambda b: b == WARN4), (0.5, -20, lambda b: b == SEITEN4),
+                         (1.0, 6, lambda b: not b), (1.0, 7, nur_netzrand),
+                         (1.0, -6, lambda b: not b), (1.0, -7, nur_netzrand),
+                         (1.0, -25, lambda b: paare(b) == [("WARNUNG", "Lücke im Netzrand")]),
+                         (1.0, -30, lambda b: ("FEHLER", "Seiten im Inneren") in paare(b))):
+        ist = _deckelbeule(dz, 0.75, 0.75, [0.0, 0.0, mm * 1e-3], alle=True)[1]
+        if not soll(ist):
+            reihe.append(f"dz {dz:g}, {mm:+d} mm: {text(ist)}")
+    check("  (0,75|0,75) in z: dz 0,5 ab 5 mm WARNUNG, innen ab 20 mm FEHLER; dz 1,0 ab 7 mm, "
+          "innen 25 mm Lücke, 30 mm FEHLER", not reihe, " | ".join(reihe))
 
 
 def test_abnahme_beule_windschief_randknoten():
@@ -1609,21 +1684,23 @@ def test_abnahme_beule_windschief_randknoten():
     Benutzer- und Theoriehandbuch sagten am Stand 99847bf ohne Einschränkung,
     bei um 1 m angehobener Ecke blieben 80 mm senkrecht zur Fläche ungenannt
     und 90 mm seien eine WARNUNG „Netzrand neben der Hülle" (mit 4 Seiten).
-    Gemessen war das nur an den neun inneren Deckelknoten. Wörtlich auf die
-    Randknoten angewandt, fiel es am 24.09.2026 durch: bei 80 mm hatten zehn
-    von zwölf einen Befund, bei 90 mm stand an sechs etwas anderes da
-    (vierte Gegenprüfung).
+    Gemessen war das nur an den neun inneren Deckelknoten (vierte
+    Gegenprüfung, 24.09.2026). Seit Nebenbefund B053 (Ecken von Viereckseiten
+    ohne Sehnenzulage) gilt an den Randknoten dieselbe kleine Grenze wie
+    innen: 3,5 mm senkrecht oder in z nach außen bleiben ungenannt, 5 mm
+    (dz 0,5) bzw. 7 mm senkrecht und 8,5 mm in z (dz 1,0) sind an allen zwölf
+    eine WARNUNG mit 2 Seiten (gemessen 24.09.2026).
 
     Senkrecht zum Deckel nach außen verschoben, verlässt ein Randknoten auch
     die ebene Seitenfläche, bei 80 mm um 13,9 bis 48,0 mm - nach außen auf
-    den Rändern x = 0 und y = 0 (WARNUNG „Netzrand neben der Hülle" mit 2
-    Seiten), nach innen auf x = 1 und y = 1 (FEHLER „Seiten im Inneren" an
-    (1|0,5), (1|0,75), (0,5|1) und (0,75|1)). Dass es an der Seitenfläche liegt, zeigt
-    die Zerlegung: der Anteil senkrecht zur Seitenfläche allein gibt bei 80 mm
-    an allen zwölf denselben Befund, der Rest, der in der Ebene der
-    Seitenfläche bleibt, bei 60 und 80 mm keinen. Bei dz = 0,5 gilt der
-    Absatz dagegen auch an den Randknoten: 25 mm ungenannt, 30 mm WARNUNG, in
-    z wie senkrecht (hier mit 2 statt 4 Seiten).
+    den Rändern x = 0 und y = 0 (dort WARNUNG „Netzrand neben der Hülle" mit
+    4 statt 2 Seiten), nach innen auf x = 1 und y = 1 (FEHLER „Seiten im
+    Inneren" an (1|0,5), (1|0,75), (0,5|1) und (0,75|1)). Dass es an der
+    Seitenfläche liegt, zeigt die Zerlegung: der Anteil senkrecht zur
+    Seitenfläche allein gibt bei 80 mm an allen zwölf denselben Befund bis
+    auf die WARNUNG mit 2 Seiten an (1|0,25) und (0,25|1), der Rest, der in
+    der Ebene der Seitenfläche bleibt, bei 60 und 80 mm nur die WARNUNG mit
+    2 Seiten.
 
     Die Prüfung hält die Zahlen des Handbuchabsatzes fest: ändert sich die
     Abnahme an ebenen oder windschiefen Flächen, muss der Absatz mit.
@@ -1631,6 +1708,7 @@ def test_abnahme_beule_windschief_randknoten():
     RAND = tuple([(0.0, t) for t in (0.25, 0.5, 0.75)] + [(t, 0.0) for t in (0.25, 0.5, 0.75)]
                  + [(1.0, t) for t in (0.25, 0.5, 0.75)] + [(t, 1.0) for t in (0.25, 0.5, 0.75)])
     WARN2 = [("WARNUNG", "Netzrand neben der Hülle", 2.0)]
+    WARN4 = [("WARNUNG", "Netzrand neben der Hülle", 4.0)]
 
     def text(bef):
         return "; ".join(f"{s} {p} {w:.0f}" for s, p, w in bef) or "kein Befund"
@@ -1652,39 +1730,38 @@ def test_abnahme_beule_windschief_randknoten():
                 falsch.append(f"({x:g}|{y:g}) {n_el} El.: {text(ist)}")
         check(name.replace(".", ","), not falsch, " | ".join(falsch))
 
-    # dz 0,5: der Satz „25 mm ungenannt, 30 mm Warnung" gilt auch hier
-    for mm, soll in ((25, []), (30, WARN2)):
-        for r, v in (("in z", lambda x, y: np.array([0.0, 0.0, 1.0])),
-                     ("senkrecht", lambda x, y: _deckelnormale(0.5, x, y))):
-            pruefe(f"4x4x4, Ecke 0,5 m hoch, 12 Randknoten {mm} mm {r}: "
-                   + ("kein Befund" if not soll else "WARNUNG Netzrand 2"),
-                   lambda x, y, s=soll: s, lambda x, y, v=v, mm=mm: mm * 1e-3 * v(x, y), dz=0.5)
+    Z = np.array([0.0, 0.0, 1.0])
+    for dz, mm, r, soll in ((0.5, 3.5, "senkrecht", []), (0.5, 3.5, "in z", []),
+                            (1.0, 3.5, "senkrecht", []), (1.0, 3.5, "in z", []),
+                            (0.5, 5.0, "senkrecht", WARN2), (0.5, 5.0, "in z", WARN2),
+                            (1.0, 7.0, "senkrecht", WARN2), (1.0, 8.5, "in z", WARN2)):
+        pruefe(f"4x4x4, Ecke {dz:g} m hoch, 12 Randknoten {mm:g} mm {r} nach außen: "
+               + ("kein Befund" if not soll else "WARNUNG Netzrand 2"),
+               lambda x, y, s=soll: s,
+               lambda x, y, dz=dz, mm=mm, r=r: mm * 1e-3 * (Z if r == "in z"
+                                                           else _deckelnormale(dz, x, y)),
+               dz=dz)
 
     # dz 1,0, 80 mm senkrecht zum Deckel, gemessen 24.09.2026
     def soll_80(x, y):
         if x == 0.0 or y == 0.0:
-            return WARN2
+            return WARN4
         if (x, y) in ((1.0, 0.5), (0.5, 1.0)):
-            return [("FEHLER", "Seiten im Inneren", 1.0)]
+            return [("FEHLER", "Seiten im Inneren", 1.0)] + WARN2
         if (x, y) in ((1.0, 0.75), (0.75, 1.0)):
-            return [("FEHLER", "Seiten im Inneren", 2.0)]
-        return []                                  # (1|0,25) und (0,25|1)
+            return [("FEHLER", "Seiten im Inneren", 2.0)] + WARN2
+        return WARN2                               # (1|0,25) und (0,25|1)
     pruefe("4x4x4, Ecke 1 m hoch, 12 Randknoten 80 mm senkrecht: Befund je Rand",
            soll_80, lambda x, y: zerlegt(1.0, x, y, 80)[0])
-    # schon bei 60 mm: die vier Randknoten auf x = 0 und y = 0 mit dem
-    # größten Anteil senkrecht zur Seitenfläche (26,8 und 36,0 mm)
-    FRUEH = ((0.0, 0.5), (0.0, 0.75), (0.5, 0.0), (0.75, 0.0))
-    pruefe("4x4x4, Ecke 1 m hoch, 12 Randknoten 60 mm senkrecht: WARNUNG an (0|0.5), "
-           "(0|0.75), (0.5|0), (0.75|0)",
-           lambda x, y: WARN2 if (x, y) in FRUEH else [],
-           lambda x, y: zerlegt(1.0, x, y, 60)[0])
-    # Ursache Seitenfläche: ihr Anteil allein gibt bei 80 mm denselben Befund,
-    # der Rest in ihrer Ebene bei 60 und 80 mm keinen
+    # Ursache Seitenfläche: ihr Anteil allein gibt bei 80 mm denselben Befund
+    # (ohne die WARNUNG an (1|0,25) und (0,25|1)), der Rest in ihrer Ebene bei
+    # 60 und 80 mm nur die WARNUNG mit 2 Seiten
     pruefe("  80 mm zerlegt: nur der Anteil senkrecht zur Seitenfläche, derselbe Befund",
-           soll_80, lambda x, y: zerlegt(1.0, x, y, 80)[1])
+           lambda x, y: [] if (x, y) in ((1.0, 0.25), (0.25, 1.0)) else soll_80(x, y),
+           lambda x, y: zerlegt(1.0, x, y, 80)[1])
     for mm in (60, 80):
-        pruefe(f"  {mm} mm zerlegt: nur der Rest in der Ebene der Seitenfläche, kein Befund",
-               lambda x, y: [], lambda x, y, mm=mm: zerlegt(1.0, x, y, mm)[2])
+        pruefe(f"  {mm} mm zerlegt: nur der Rest in der Ebene der Seitenfläche, WARNUNG "
+               "Netzrand 2", lambda x, y: WARN2, lambda x, y, mm=mm: zerlegt(1.0, x, y, mm)[2])
     # Die Zahl im Handbuch: bei 80 mm verlässt der Knoten die Seitenfläche
     # um 14 bis 48 mm
     anteil = [1e3 * np.linalg.norm(zerlegt(1.0, x, y, 80)[1]) for x, y in RAND]
@@ -1801,6 +1878,57 @@ def test_abnahme_luecke_im_netzrand():
     text = lu[0].text if lu else ""
     check("  der Text nennt neu vernetzen für importierte oder von Hand geänderte Netze",
           "von Hand geändert" in text and "Neu vernetzen mit denselben" not in text, text[-420:])
+    # Nebenbefund B049 (22./23.09.2026): die Abhilfe „Sechsflächner sweepen“
+    # ist nur an den fünf Prismen gemessen, und ab Werk ist der Sweep aus,
+    # weil er am Drehlager 992 entartete Keile erzeugte (Benutzerhandbuch,
+    # Netzeinstellungen). Die Meldung empfahl ihn, ohne das zu sagen. Seit
+    # dem Vernetzer vom 23.09.2026 hat das L-Prisma h 0,25 keine Luecke
+    # mehr; geprueft wird am Text der von Hand erzeugten Luecke, der
+    # dieselbe Abhilfe traegt.
+    check("  die Abhilfe Sweep sagt, dass er ab Werk aus ist, warum, und dass danach die "
+          "Abnahme zu lesen ist",
+          "sweepen" in text and "ab Werk aus" in text and "entartete Keile" in text
+          and "Abnahme lesen" in text,
+          text[-520:])
+
+    # Nebenbefunde B050/B051 (22./23.09.2026): ein flacher Tetraeder im
+    # Inneren desselben Netzes von Hand gelöscht - der flachste unter der
+    # Deckelmitte des langen Schenkels, 35 728 mm³, t/L 3,65 %. Das war eine
+    # WARNUNG „Riss im Netz 4“ ohne Rückfrage, und der Text nannte als Grund
+    # den Vernetzer, der flache Tetraeder aussortiere; der sortiert aber nur
+    # V ≤ FLACH·h³ = 1,7 mm³ aus. Ein Hohlraum in Elementgröße ist kein Riss.
+    # Seit dem Vernetzer vom 23.09.2026 (6155 statt 6173 tet4) ist der
+    # flachste dort 36 097 mm³ mit t/L 3,67 % (nachgemessen 24.09.2026).
+    def t_l(i):
+        P = m.nodes[m.elements[i].nodes]
+        V = abs(float(np.linalg.det(P[1:] - P[0]))) / 6.0
+        A = sum(0.5 * np.linalg.norm(np.cross(P[b] - P[a], P[c] - P[a]))
+                for a, b, c in ((0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3)))
+        L = max(np.linalg.norm(P[a] - P[b]) for a in range(4) for b in range(a + 1, 4))
+        return 2.0 * V / A / L, V
+    innen_l = [i for i in k.elemente
+               if 0.1 < m.nodes[m.elements[i].nodes][:, 0].mean() < 0.4
+               and 0.3 < m.nodes[m.elements[i].nodes][:, 1].mean() < 1.7
+               and 0.12 < m.nodes[m.elements[i].nodes][:, 2].mean() < 0.28]
+    flach = min(innen_l, key=lambda i: t_l(i)[0])
+    tl_f, V_f = t_l(flach)
+    m.elemente_loeschen([flach])
+    bef = [b for b in dg.abnahme(m, warnungen=True) if b.pruefung in _NETZ_BEFUNDE
+           or b.pruefung == "Lücke im Netzrand"]
+    sn = [b for b in bef if b.pruefung == "Seiten im Inneren"]
+    check("  flacher Tetraeder in Elementgröße von Hand gelöscht (36 097 mm³): FEHLER mit "
+          "Rückfrage, kein Riss",
+          abs(V_f - 3.6097e-5) < 1e-8 and 0.036 < tl_f < 0.037
+          and [(b.stufe, b.pruefung, b.wert) for b in bef] == [("FEHLER", "Seiten im Inneren", 4.0)]
+          and [b.pruefung for b in dg.abnahme(m)] == ["Seiten im Inneren"],
+          f"Element {flach}, V {V_f * 1e9:.0f} mm³, t/L {tl_f * 100:.2f} %: "
+          + "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.4g}" for b in bef))
+    text_sn = sn[0].text if sn else ""
+    check("  der Text schreibt die Lücke nicht dem Vernetzer zu und nennt ein fehlendes Element",
+          "Vernetzer flache Tetraeder aussortiert" not in text_sn
+          and "fehlendes Element" in text_sn and "von Hand gelöscht" in text_sn,
+          text_sn[-380:])
+
     # T-Prisma, h = 0,1: bis zum 23.09.2026 lag hier die Luecke an der
     # einspringenden Kante (1,2 | 0,4): zwei Seiten im Inneren, zwei in die
     # Aussparung hinaus (bis 29,2 mm), 2,43e-5 m^3 fehlten (Bilanz 1,17e-5).
@@ -2028,6 +2156,568 @@ def test_falsche_knotenzahl():
     check("Gegenprobe: richtiges Netz ohne Knotenzahl-FEHLER", not zeilen, "; ".join(zeilen))
 
 
+def test_abnahme_knoten_ueber_kopplung():
+    """Nebenbefund B099 (22./23.09.2026): das abgestufte Netz 20:1 (Knotenlager
+    an den 121 Bodenknoten) neu vernetzt mit ``mesher.modell_vernetzen`` ergab
+    „FEHLER Knoten ohne Element 117 … sie tragen nichts, und eine Last darauf
+    ginge verloren". Die 117 Knoten bleiben mit Absicht stehen - sie tragen
+    ein Knotenlager (``Model.netzknoten_loeschen`` schützt sie) - und der
+    Vernetzer koppelt sie starr an das neue Netz (306 Kopplungen). Das Modell
+    rechnet: Fz = -100 kN, Summe der Reaktionen in z 100 000,0 N. Falsch war
+    die Meldung. Ein Knoten, der über Kopplungen in allen drei Richtungen an
+    Elementknoten hängt, hat keinen Befund; ein wirklich loser bleibt ein
+    FEHLER. Was nur in einem Teil der Richtungen hält (Kopplung in einer
+    Richtung, Spaltelement, RBE3-Slave), prüft
+    test_abnahme_knoten_in_drei_richtungen.
+    """
+    from statik3d import mesher
+    from statik3d.model import Kopplung
+    import contextlib
+    import io
+    m, k = _gestuft(20)
+    with contextlib.redirect_stdout(io.StringIO()):
+        mesher.modell_vernetzen(m, [], workers=1)
+    belegt = {int(n) for e in m.elements for n in e.nodes}
+    ohne = [i for i in range(m.nn) if i not in belegt]
+    gekoppelt = {int(x) for kp in m.kopplungen for x in (kp.node_a, kp.node_b)}
+    gelagert = {int(s.node) for s in m.supports}
+
+    def knoten_befund():
+        return [b for b in dg.abnahme(m, warnungen=True) if b.pruefung == "Knoten ohne Element"]
+    kb = knoten_befund()
+    check("20:1 neu vernetzt: 117 gelagerte Knoten ohne Element, angekoppelt - kein Befund",
+          len(ohne) == 117 and set(ohne) <= gekoppelt and set(ohne) <= gelagert and not kb,
+          f"{len(ohne)} ohne Element, {len(m.kopplungen)} Kopplungen; "
+          + "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.0f}" for b in kb))
+
+    e0 = int(m.elements[k.elemente[0]].nodes[0])
+    lose = int(m.add_node(5.0, 5.0, 5.0))
+    kb = knoten_befund()
+    check("  ein wirklich loser Knoten bleibt ein FEHLER",
+          len(kb) == 1 and kb[0].stufe == "FEHLER" and kb[0].wert == 1.0 and kb[0].knoten == [lose],
+          "; ".join(f"{b.stufe} {b.pruefung} {b.wert:.0f} {b.knoten}" for b in kb))
+    # Eine Kopplung unter losen Knoten, die an kein Element reicht, und eine
+    # Kopplung ohne wirksame Richtung schließen nichts an
+    a, b = int(m.add_node(6.0, 5.0, 5.0)), int(m.add_node(7.0, 5.0, 5.0))
+    m.kopplungen.append(Kopplung(a, b, [[1.0, 0.0, 0.0]], [float("inf")]))
+    c = int(m.add_node(8.0, 5.0, 5.0))
+    m.kopplungen.append(Kopplung(c, e0, [[1.0, 0.0, 0.0]], [0.0]))
+    # Eine Kopplung in x, y und z an einem Elementknoten schließt an, auch
+    # über eine Kette (f über d)
+    d, f = (int(m.add_node(9.0 + i, 5.0, 5.0)) for i in range(2))
+    xyz = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    m.kopplungen.append(Kopplung(d, e0, xyz, [float("inf")] * 3))
+    m.kopplungen.append(Kopplung(f, d, xyz, [1e9] * 3))
+    kb = knoten_befund()
+    check("  Kopplung ohne Elementknoten oder ohne Richtung: lose; Kopplung in x, y, z "
+          "und Kette: angeschlossen",
+          len(kb) == 1 and kb[0].wert == 4.0 and sorted(kb[0].knoten) == sorted([lose, a, b, c]),
+          "; ".join(f"{b_.stufe} {b_.pruefung} {b_.wert:.0f} {b_.knoten}" for b_ in kb))
+
+
+def _knoten_am_wuerfel(fall):
+    """Würfel 1 x 1 x 1 m aus 2 x 2 x 2 hex8, unten gelagert, und ein Knoten
+    ohne Element, der auf die Art ``fall`` am Netz hängt (Gegenprüfung vom
+    24.09.2026 zu B099). Rückgabe (Modell, Knoten für die Last, Knoten, die
+    die Abnahme als lose nennen muss)."""
+    from statik3d import mesher
+    from statik3d.model import GapElement
+    m = Model("drei Richtungen")
+    m.add_material(Material.steel("S235"))
+    ids = mesher.grid_box(m, "S235", 1.0, 1.0, 1.0, 2, 2, 2, typ="hex8")
+    for kn in ids[:, :, 0].ravel():
+        m.fix(int(kn), "all")
+    oben = [int(x) for x in ids[:, :, 2].ravel()]
+    e0 = oben[8]                                            # Ecke (1|1|1)
+    starr = float("inf")
+    if fall == "RBE3, loser Master und loser Slave":
+        s, M = int(m.add_node(2.0, 0.5, 1.0)), int(m.add_node(0.5, 0.5, 1.2))
+        m.add_starrkoerper(M, oben + [s], art="RBE3")
+        return m, s, [s, M]
+    if fall == "RBE3, loser Master an den Deckelknoten":
+        M = int(m.add_node(0.5, 0.5, 1.2))
+        m.add_starrkoerper(M, oben, art="RBE3")
+        return m, M, []
+    if fall == "RBE3, Master am Deckelknoten, loser Slave":
+        s = int(m.add_node(2.0, 0.5, 1.0))
+        m.add_starrkoerper(oben[4], oben[:4] + oben[5:] + [s], art="RBE3")
+        return m, s, [s]
+    # RBE3 mit losem Master an gehaltenen Slaves, die ihn nicht festlegen (2.
+    # Gegenprüfung vom 24.09.2026, Mangel 1): ein Slave, zwei Slaves, drei
+    # Slaves auf einer Linie, der Master jeweils daneben. Die Deckelreihe
+    # y = 1 (x = 0 / 0,5 / 1) sind oben[2], oben[5], oben[8].
+    reihe = [oben[2], oben[5], oben[8]]
+    if fall == "RBE3, loser Master 0,3 m über drei Deckelknoten, nicht auf einer Linie":
+        M = int(m.add_node(0.5, 0.75, 1.3))
+        m.add_starrkoerper(M, [reihe[0], reihe[2], oben[4]], art="RBE3")
+        return m, M, []
+    if fall.startswith("RBE3, loser Master 0,3 m über"):
+        M = int(m.add_node(0.5, 1.0, 1.3))
+        sl = {"einem Deckelknoten": [reihe[1]], "zwei Deckelknoten": [reihe[0], reihe[2]],
+              "einer Deckelreihe": reihe}[fall.split(" über ")[1].split(",")[0]]
+        m.add_starrkoerper(M, sl, art="RBE3")
+        if fall.endswith("in x und y angekoppelt"):
+            m.kopplungen.append(Kopplung(M, reihe[2], [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], [starr] * 2))
+            return m, M, []
+        return m, M, [M]
+    if fall == "RBE3, loser Master auf einer Deckelreihe":
+        M = int(m.add_node(0.25, 1.0, 1.0))
+        m.add_starrkoerper(M, reihe, art="RBE3")
+        return m, M, []
+    if fall == "RBE3, loser Master auf seinem einzigen Slave":
+        M = int(m.add_node(*m.nodes[reihe[1]]))
+        m.add_starrkoerper(M, [reihe[1]], art="RBE3")
+        return m, M, []
+    if fall == "RBE2, loser Master und loser Slave":
+        s, M = int(m.add_node(2.0, 0.5, 1.0)), int(m.add_node(0.5, 0.5, 1.2))
+        m.add_starrkoerper(M, oben + [s])
+        return m, s, []
+    if fall == "RBE2 am Deckelknoten, ein Slave 0,5 m daneben":
+        d = int(m.add_node(1.5, 1.0, 1.0))
+        m.add_starrkoerper(e0, [d])
+        return m, d, [d]
+    if fall == "Kopplung nur in z":
+        f = int(m.add_node(*m.nodes[e0]))
+        m.kopplungen.append(Kopplung(f, e0, [[0.0, 0.0, 1.0]], [starr]))
+        return m, f, [f]
+    if fall == "Kopplungen in x+y und z, dazu x-y":
+        f = int(m.add_node(*m.nodes[e0]))
+        m.kopplungen.append(Kopplung(f, e0, [[1.0, 1.0, 0.0], [0.0, 0.0, 1.0]], [starr] * 2))
+        m.kopplungen.append(Kopplung(f, oben[7], [[1.0, -1.0, 0.0]], [starr]))
+        return m, f, []
+    if fall.startswith("Kette: x, y direkt, z über h"):
+        f, h = int(m.add_node(*m.nodes[e0])), int(m.add_node(*m.nodes[e0]))
+        m.kopplungen.append(Kopplung(h, e0, [[0.0, 0.0, 1.0]], [starr]))
+        m.kopplungen.append(Kopplung(f, h, [[0.0, 0.0, 1.0]], [starr]))
+        m.kopplungen.append(Kopplung(f, e0, [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], [starr] * 2))
+        return m, (h if fall.endswith("Last an h") else f), [h]
+    if fall == "Kette: x, y, z an h, das nur in z hängt":
+        f, h = int(m.add_node(*m.nodes[e0])), int(m.add_node(*m.nodes[e0]))
+        m.kopplungen.append(Kopplung(h, e0, [[0.0, 0.0, 1.0]], [starr]))
+        m.kopplungen.append(Kopplung(f, h, [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                                     [starr] * 3))
+        return m, f, [f, h]
+    if fall == "Spaltelement an einem Anschlag":
+        g, q = int(m.add_node(1.0, 1.0, 1.2)), int(m.add_node(1.0, 1.0, 1.4))
+        m.fix(g, "all")
+        m.gap_elements.append(GapElement(g, e0))
+        m.gap_elements.append(GapElement(q, g))
+        return m, q, [q]
+    if fall == "Spaltelement allein":
+        g = int(m.add_node(1.0, 1.0, 1.2))
+        m.gap_elements.append(GapElement(g, e0))
+        return m, g, [g]
+    if fall == "Anschlag: in x, y, z gelagert, Spaltelement":
+        g = int(m.add_node(1.0, 1.0, 1.2))
+        m.fix(g, "all")
+        m.gap_elements.append(GapElement(g, e0))
+        return m, g, []
+    if fall == "Spaltelement, Knoten nur in z gelagert":
+        g = int(m.add_node(1.0, 1.0, 1.2))
+        m.fix(g, [2])
+        m.gap_elements.append(GapElement(g, e0))
+        return m, g, [g]
+    raise KeyError(fall)
+
+
+def _getragen_je_richtung(bau) -> list:
+    """Je 1000 N in x, y und z am Knoten ``ziel`` aus ``bau() -> (Modell,
+    ziel)``: gehen sie ganz in die Lager? Gezählt werden nur die Lagerkräfte
+    in gelagerten Richtungen: ein Freiheitsgrad ohne Steifigkeit wird beim
+    Rechnen gesperrt, und seine „Reaktion" ist die verlorene Last.
+
+    Ganz heißt auch: ohne Hilfsfesselung des Lösers (Singularitaet mit
+    ``gefesselt``). Sie hält eine Bewegung fest, die das Modell nicht hält,
+    und nimmt den Anteil der Last auf, der an ihr Arbeit leistet. An einem
+    Stab mit beiden Enden nur in x, y, z gelagert (die Torsion ist frei) und
+    dem Slave eines RBE2 0,5 m daneben in y gingen die 1000 N in z als Kraft
+    ganz in die Lager, das Moment 500 Nm um die Stabachse nahm die
+    Fesselung (3. Gegenprüfung vom 24.09.2026, Mängel 1 und 2; bis dahin zählte
+    der Fall hier als getragen). Das Moment selbst taugt nicht als Maß: Eine
+    Kopplung zwischen zwei getrennten Knoten überträgt nur Kräfte, am Würfel
+    blieben so 250 bis 500 Nm offen, ohne dass Last verloren ging (gemessen
+    24.09.2026, beide Male ohne Fesselung)."""
+    import contextlib
+    import io
+    aus = []
+    for F in ((1000.0, 0.0, 0.0), (0.0, 1000.0, 0.0), (0.0, 0.0, 1000.0)):
+        m2, ziel2 = bau()
+        m2.add_load_case("LF1", "G")
+        m2.load_node(ziel2, case="LF1", Fx=F[0], Fy=F[1], Fz=F[2])
+        gel: dict = {}
+        for s_ in m2.supports:
+            gel.setdefault(int(s_.node), set()).update(d for d in s_.dofs if d < 3)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                r = solver.solve_static(m2, case="LF1", workers=1)
+            RR = np.asarray(r.reactions).reshape(-1, 6)
+            R = np.zeros(3)
+            for n_, ds in gel.items():
+                for d_ in ds:
+                    R[d_] += RR[n_, d_]
+            gefesselt = any(getattr(s_, "gefesselt", False)
+                            for s_ in (getattr(r, "singular", None) or []))
+            aus.append(bool(np.allclose(R, -np.asarray(F), atol=1e-3)) and not gefesselt)
+        except Exception:                    # noqa: BLE001 - singulär, Kontakt bricht ab
+            aus.append(False)
+    return aus
+
+
+def test_abnahme_knoten_in_drei_richtungen():
+    """Gegenprüfung vom 24.09.2026 zu B099, Mängel 1 und 4: Die Kur vom
+    23.09.2026 zählte jeden Knoten als angeschlossen, der über irgendeine
+    Kopplung, einen starren Körper oder ein Spaltelement mit dem Netz
+    verbunden war. Ein Slave eines RBE3 (der Master ist nur das Mittel der
+    Slaves), eine Kopplung in nur einer Richtung und ein Spaltelement halten
+    aber nicht in allen drei Richtungen: Die Rechnung brach ab
+    (Gleichungssystem singulär), oder die Last blieb als Reaktion am Knoten
+    selbst stehen und erreichte das Tragwerk nie - ohne Befund der Abnahme.
+    Bis zur Kur (ec6448c) war jeder dieser Knoten ein FEHLER.
+
+    Geprüft wird die Abnahme gegen die Rechnung: Je Fall 1000 N am Knoten in
+    x, y und z. Nennt ihn die Abnahme nicht, müssen alle drei Lasten in die
+    Lager gehen, nennt sie ihn, mindestens eine nicht. Eine Ausnahme mit Absicht: Ein Slave eines
+    RBE3 an einem Master mit Element ist durch die Gleichungen festgelegt und
+    trägt, bleibt aber lose - das RBE3 soll ihn nicht halten.
+
+    2. Gegenprüfung vom 24.09.2026: Mangel 1 - ein RBE3 hält seinen losen
+    Master nur, wenn die gehaltenen Slaves ihn festlegen (nicht bei einem
+    Slave, zwei Slaves oder Slaves auf einer Linie mit dem Master daneben;
+    bei d7553e4 ohne Befund, die Lasten quer brachen ab). Mangel 2 - der Text
+    behauptete für jeden genannten Knoten, eine Last ginge verloren oder die
+    Rechnung breche ab, auch für den RBE3-Slave oben und für das Stabende mit
+    einem Teil der Momentengelenke, wo alle drei Lasten in die Lager gingen.
+
+    3. Gegenprüfung vom 24.09.2026, Mangel 1: Die Torsion am Master-Ende galt
+    als gehalten, sobald dort kein Gelenk saß - auch mit dem Torsionsgelenk
+    am anderen Ende oder einem anderen Ende, das nur in x, y, z gelagert ist.
+    Dazu zählt eine Last, deren Moment die Hilfsfesselung des Lösers nimmt,
+    nicht mehr als getragen (_getragen_je_richtung)."""
+    faelle = ["RBE3, loser Master und loser Slave", "RBE3, loser Master an den Deckelknoten",
+              "RBE3, Master am Deckelknoten, loser Slave",
+              "RBE3, loser Master 0,3 m über einem Deckelknoten",
+              "RBE3, loser Master 0,3 m über zwei Deckelknoten",
+              "RBE3, loser Master 0,3 m über einer Deckelreihe",
+              "RBE3, loser Master auf einer Deckelreihe", "RBE3, loser Master auf seinem einzigen Slave",
+              "RBE3, loser Master 0,3 m über drei Deckelknoten, nicht auf einer Linie",
+              "RBE3, loser Master 0,3 m über einem Deckelknoten, in x und y angekoppelt",
+              "RBE2, loser Master und loser Slave", "RBE2 am Deckelknoten, ein Slave 0,5 m daneben",
+              "Kopplung nur in z", "Kopplungen in x+y und z, dazu x-y",
+              "Kette: x, y direkt, z über h", "Kette: x, y direkt, z über h, Last an h",
+              "Kette: x, y, z an h, das nur in z hängt",
+              "Spaltelement allein", "Anschlag: in x, y, z gelagert, Spaltelement",
+              "Spaltelement, Knoten nur in z gelagert", "Spaltelement an einem Anschlag"]
+    texte = {}
+    for fall in faelle:
+        m, ziel, soll = _knoten_am_wuerfel(fall)
+        kb = [b for b in dg.abnahme(m, warnungen=True) if b.pruefung == "Knoten ohne Element"]
+        lose = sorted(kb[0].knoten) if kb else []
+        befund_ok = (lose == sorted(soll) and (not kb or (len(kb) == 1 and kb[0].stufe == "FEHLER")))
+        if kb:
+            texte[fall] = kb[0].text
+        getragen = _getragen_je_richtung(lambda f=fall: _knoten_am_wuerfel(f)[:2])
+        if fall == "RBE3, Master am Deckelknoten, loser Slave":
+            passt = all(getragen)
+        else:
+            passt = all(getragen) == (ziel not in lose)
+        check(f"{fall}: lose {len(soll)}, Rechnung passt dazu",
+              befund_ok and passt,
+              f"Abnahme {[(b.stufe, b.knoten) for b in kb]}, soll {soll}; x/y/z getragen {getragen}")
+    # Mangel 2: Der Text behauptet keinen Verlust als Tatsache - er sagt, was
+    # die Abnahme nicht findet, und was folgt, wo der Halt wirklich fehlt. Den
+    # RBE3-Slave, der trägt, nennt er als solchen; andere Fälle nicht.
+    rbe3 = "RBE3, Master am Deckelknoten, loser Slave"
+    ohne_rbe3 = [t for f, t in texte.items() if not f.startswith("RBE3")]
+    check("Text: kein Verlust als Tatsache, RBE3-Slave als solcher genannt",
+          all("keinen Halt" in t and "ginge" not in t and "Wo der Halt" in t for t in texte.values())
+          and "Slave eines RBE3" in texte.get(rbe3, "") and "festlegt" in texte.get(rbe3, "")
+          and ohne_rbe3 and not any("RBE3" in t for t in ohne_rbe3),
+          texte.get(rbe3, "(kein Befund)")[-260:])
+    # Drehsteifer Master: am Stabende hält ein RBE2 auch einen einzelnen
+    # Slave, soweit das Stabende die Verdrehung hält. Ein Momentengelenk gibt
+    # die Verdrehung um seine lokale Achse frei; der Slave wird dann nur in
+    # Richtung (Achse x Versatz) nicht gehalten (Mangel 2: Gelenk 11 mit
+    # Versatz in z trug in x, y, z, die Abnahme meldete FEHLER). Geprüft je
+    # Versatz in x, y, z gegen die Rechnung, auch am schrägen und am um 30°
+    # gerollten Stab.
+    #
+    # 3. Gegenprüfung vom 24.09.2026, Mangel 1: Die Torsion hält ein Stab nur
+    # zusammen mit seinem anderen Ende. Ein Torsionsgelenk dort (Gelenk 3 am
+    # eingespannten Anfang) oder ein anderes Ende, das nur in x, y, z
+    # gelagert ist, gibt sie auch am Master-Ende frei; bei 8c4fb14 meldete
+    # die Abnahme dort nichts, und die Last quer brach ab bzw. ging an die
+    # Hilfsfesselung. Dazu je eine Kette aus zwei Stäben (die Torsion kommt
+    # über den ersten Stab vom Lager) und eine Rahmenecke (der zweite Stab
+    # hält die Torsion des ersten über seine Biegung).
+    from statik3d.profiles import make_section as _ms
+
+    def rahmen(punkte, staebe, lager, master, versatz):
+        """Stäbe IPE 200 zwischen ``punkte``, je (i, j, Gelenke, roll);
+        ``lager`` je (Knoten, Art); ein RBE2 am Knoten ``master`` mit einem
+        Slave im Abstand ``versatz``."""
+        mb = Model("Stab")
+        mb.add_material(Material.steel("S235"))
+        mb.add_section(_ms("IPE 200"))
+        for p_ in punkte:
+            mb.add_node(*p_)
+        for i, j, gel_, roll_ in staebe:
+            mb.add_element("beam", [i, j], "S235", "IPE 200")
+            mb.elements[-1].roll = roll_
+            if gel_:
+                mb.elements[-1].hinges = list(gel_)
+        for n_, art in lager:
+            mb.fix(n_, art)
+        d_ = int(mb.add_node(*(np.asarray(mb.nodes[master], float) + versatz)))
+        mb.add_starrkoerper(master, [d_])
+        return mb, d_
+
+    def stab(gelenke, ende, roll=0.0, lager_ende=None):
+        """Ein Stab von (0|0|0) nach ``ende``, der Anfang eingespannt."""
+        return ([(0.0, 0.0, 0.0), ende], [(0, 1, gelenke, roll)],
+                [(0, "all")] + ([(1, lager_ende)] if lager_ende else []), 1)
+    # Versatz 0,5 m in x, y, z; am schrägen und am gerollten Stab dazu in
+    # Richtung seiner lokalen z-Achse, um die Gelenk 11 dreht (von Hand:
+    # Stab (1,1,1) - ez = (-1,-1,2)/√6; um 30° gerollt - ez = (0, -1/2, √3/2))
+    achsen = [("x", (0.5, 0.0, 0.0)), ("y", (0.0, 0.5, 0.0)), ("z", (0.0, 0.0, 0.5))]
+    x2 = (2.0, 0.0, 0.0)
+    gelenkig = stab([], x2, lager_ende="xyz")
+    gelenkig[2][0] = (0, "xyz")
+    varianten = (("ohne Gelenk", stab([], x2), achsen),
+                 ("Gelenke 9, 10, 11", stab([9, 10, 11], x2), achsen),
+                 ("Gelenk 11", stab([11], x2), achsen),
+                 ("Gelenk 10", stab([10], x2), achsen),
+                 ("Gelenk 9", stab([9], x2), achsen),
+                 ("Gelenke 10, 11", stab([10, 11], x2), achsen),
+                 ("Gelenk 11, Stab schräg", stab([11], (1.2, 1.2, 1.2)),
+                  achsen + [("lokal z", tuple(0.5 * np.array([-1.0, -1.0, 2.0]) / np.sqrt(6.0)))]),
+                 ("Gelenk 11, um 30° gerollt", stab([11], x2, float(np.radians(30.0))),
+                  achsen + [("lokal z", (0.0, -0.25, 0.25 * np.sqrt(3.0)))]),
+                 ("Gelenk 3 am eingespannten Anfang", stab([3], x2), achsen),
+                 ("Gelenke 3 und 11", stab([3, 11], x2), achsen),
+                 ("Gelenke 3 und 9", stab([3, 9], x2), achsen),
+                 ("beide Enden nur in x, y, z gelagert", gelenkig, achsen),
+                 ("Gelenk 5 am eingespannten Anfang, Ende in x, y, z gelagert",
+                  stab([5], x2, lager_ende="xyz"), achsen),
+                 ("Kette aus zwei Stäben", ([(0.0, 0.0, 0.0), x2, (4.0, 0.0, 0.0)],
+                                            [(0, 1, [], 0.0), (1, 2, [], 0.0)], [(0, "all")], 2), achsen),
+                 ("Kette, Gelenk 3 am ersten Stab", ([(0.0, 0.0, 0.0), x2, (4.0, 0.0, 0.0)],
+                                                     [(0, 1, [3], 0.0), (1, 2, [], 0.0)], [(0, "all")], 2),
+                  achsen),
+                 ("Rahmenecke, Gelenk 3 am ersten Stab", ([(0.0, 0.0, 0.0), x2, (2.0, 2.0, 0.0)],
+                                                         [(0, 1, [3], 0.0), (1, 2, [], 0.0)],
+                                                         [(0, "all"), (2, "xyz")], 1), achsen),
+                 ("Rahmenecke, dazu Gelenk 4 am zweiten Stab", ([(0.0, 0.0, 0.0), x2, (2.0, 2.0, 0.0)],
+                                                               [(0, 1, [3], 0.0), (1, 2, [4], 0.0)],
+                                                               [(0, "all"), (2, "xyz")], 1), achsen))
+    zaehl = {True: 0, False: 0}
+    for name, bau_, versaetze in varianten:
+        for vname, v in versaetze:
+            mb, d = rahmen(*bau_, np.asarray(v))
+            kb = [x for x in dg.abnahme(mb, warnungen=True) if x.pruefung == "Knoten ohne Element"]
+            getragen = _getragen_je_richtung(lambda b_=bau_, w=np.asarray(v): rahmen(*b_, w))
+            zaehl[bool(kb)] += 1
+            check(f"RBE2 am Stabende, {name}, Slave 0,5 m in {vname}: "
+                  f"{'lose' if kb else 'angeschlossen'}, Rechnung passt dazu",
+                  (not kb) == all(getragen) and (not kb or kb[0].knoten == [d]),
+                  f"Abnahme {[(x.stufe, x.knoten) for x in kb]}; x/y/z getragen {getragen}")
+    # beide Seiten müssen vorkommen, sonst prüft die Schleife nichts
+    check("  Stabenden: gemeldete und nicht gemeldete Fälle kommen vor",
+          zaehl[True] >= 3 and zaehl[False] >= 3, str(zaehl))
+    from statik3d import mesher
+    ms = Model("Schale")
+    ms.add_material(Material.steel("S235"))
+    ms.add_shell_prop(ShellProp("t", 0.02))
+    ids = mesher.grid_plate(ms, "S235", "t", 1.0, 1.0, 2, 2)
+    for n in ids[0, :]:
+        ms.fix(int(n), "all")
+    d = int(ms.add_node(*(np.asarray(ms.nodes[int(ids[2, 2])]) + [0.0, 0.0, 0.5])))
+    ms.add_starrkoerper(int(ids[2, 2]), [d])
+    kb = [x for x in dg.abnahme(ms, warnungen=True) if x.pruefung == "Knoten ohne Element"]
+    check("RBE2 am Schalenknoten, ein Slave: angeschlossen", not kb,
+          str([(x.stufe, x.knoten) for x in kb]))
+    from statik3d import examples_lib
+    mk = examples_lib.contact_example()
+    kb = [x for x in dg.abnahme(mk, warnungen=True) if x.pruefung == "Knoten ohne Element"]
+    check("Beispiel „Kontakt: abhebendes Lager“: Anschlag am Spaltelement ohne Befund",
+          not kb and len(mk.gap_elements) == 1, str([(x.stufe, x.knoten) for x in kb]))
+
+
+def _randschleifen_alt(F, Xf, S) -> list:
+    """diagnose._randschleifen bis zum 23.09.2026 (je Seite eine
+    Python-Schleife mit np.cross) - als Vergleich."""
+    zahl: dict = {}
+    for i in range(len(F)):
+        r = [j for j in range(4) if F[i][j] >= 0]
+        P = Xf[i][r]
+        n_ring = 0.5 * sum(np.cross(P[j], P[(j + 1) % len(r)]) for j in range(len(r)))
+        kn = [int(F[i][j]) for j in r]
+        if float(n_ring @ S[i]) < 0.0:
+            kn = kn[::-1]
+        for j in range(len(kn)):
+            a, b = kn[j], kn[(j + 1) % len(kn)]
+            zahl[(a, b)] = zahl.get((a, b), 0) + 1
+            zahl[(b, a)] = zahl.get((b, a), 0) - 1
+    lage: dict = {}
+    for i in range(len(F)):
+        for j in range(4):
+            if F[i][j] >= 0:
+                lage[int(F[i][j])] = Xf[i][j]
+    weiter: dict = {}
+    for (a, b), k in zahl.items():
+        for _ in range(max(k, 0)):
+            weiter.setdefault(a, []).append(b)
+    schleifen = []
+    while weiter:
+        start = next(iter(weiter))
+        schleife, a = [start], start
+        while True:
+            b = weiter[a].pop()
+            if not weiter[a]:
+                del weiter[a]
+            if b == start or b not in weiter:
+                break
+            schleife.append(b)
+            a = b
+        schleifen.append((schleife, np.array([lage[k] for k in schleife])))
+    return schleifen
+
+
+def _seitengruppen_alt(F, nur_paare: bool = False) -> list:
+    """diagnose._seitengruppen bis zum 23.09.2026 (Vereinigungs-Suche in
+    Python) - als Vergleich."""
+    m = len(F)
+    an_kante: dict = {}
+    for i in range(m):
+        ecken = [int(k) for k in F[i] if k >= 0]
+        for a, b in zip(ecken, ecken[1:] + ecken[:1]):
+            an_kante.setdefault((min(a, b), max(a, b)), []).append(i)
+    wurzel = list(range(m))
+
+    def finde(i):
+        while wurzel[i] != i:
+            wurzel[i] = wurzel[wurzel[i]]
+            i = wurzel[i]
+        return i
+
+    for seiten in an_kante.values():
+        if nur_paare and len(seiten) != 2:
+            continue
+        for j in seiten[1:]:
+            ra, rb = finde(seiten[0]), finde(j)
+            if ra != rb:
+                wurzel[rb] = ra
+    gruppen: dict = {}
+    for i in range(m):
+        gruppen.setdefault(finde(i), []).append(i)
+    return [np.asarray(g) for g in gruppen.values()]
+
+
+def _nicht_konform(n):
+    """tet4-Netz n x n x n über den Einheitswürfel mit derselben Fünferzerlegung
+    in jeder Zelle - nicht konform: jede innere Zellseite ist beiderseits
+    verschieden in Dreiecke geteilt, ein Riss (so baute grid_box bis c85b9cc)."""
+    m = Model("riss")
+    m.add_material(Material.steel("S235"))
+    ids = np.zeros((n + 1,) * 3, int)
+    for i in range(n + 1):
+        for j in range(n + 1):
+            for kk in range(n + 1):
+                ids[i, j, kk] = m.add_node(i / n, j / n, kk / n)
+    for i in range(n):
+        for j in range(n):
+            for kk in range(n):
+                c = [ids[i, j, kk], ids[i + 1, j, kk], ids[i + 1, j + 1, kk], ids[i, j + 1, kk],
+                     ids[i, j, kk + 1], ids[i + 1, j, kk + 1], ids[i + 1, j + 1, kk + 1],
+                     ids[i, j + 1, kk + 1]]
+                for t in ((0, 1, 3, 4), (1, 2, 3, 6), (1, 3, 4, 6), (1, 4, 5, 6), (3, 4, 6, 7)):
+                    m.add_element("tet4", [int(c[x]) for x in t], "S235")
+    k = _quaderkoerper(m, [ids[0, 0, 0], ids[n, 0, 0], ids[n, n, 0], ids[0, n, 0],
+                           ids[0, 0, n], ids[n, 0, n], ids[n, n, n], ids[0, n, n]])
+    k.elemente = list(range(len(m.elements)))
+    return m, k
+
+
+def test_abnahme_riss_gestapelt():
+    """Nebenbefund B052 (22./23.09.2026): _randschleifen lief je Seite in
+    Python mit einem np.cross je Seite, _seitengruppen je Seite und Kante.
+    Am nicht konformen tet4-Netz n = 20 (40 000 Elemente, 91 200 Rissseiten)
+    brauchte _abnahme_netz bei ec6448c 14,7 bis 15,0 s; im Profil entfielen
+    23,2 von 28,5 s auf _randschleifen (282 985 Aufrufe von np.cross). Jetzt
+    gestapelt: ein np.cross je Gruppe, gezählt mit np.unique, verkettet wird
+    nur der Rand; die Gruppen über scipy.sparse.csgraph.connected_components.
+    Neu 2,3 bis 2,7 s im selben Prozess.
+
+    Geprüft: dieselben Gruppen und Randschleifen wie der alte Stand (Reihenfolge
+    eingeschlossen), derselbe Befund, und im selben Lauf höchstens die Hälfte
+    der Zeit des alten Stands (n = 10, 5000 Elemente, 10 800 Rissseiten).
+    """
+    import time
+    m, k = _nicht_konform(10)
+    els = k.elemente
+    F, _E = dg._freie_seiten_ecken(m, els)
+    Xf = m.nodes[np.maximum(F, 0)]
+    viereck = F[:, 3] >= 0
+    S = 0.5 * np.cross(Xf[:, 1] - Xf[:, 0], Xf[:, 2] - Xf[:, 0])
+    S[viereck] = 0.5 * np.cross(Xf[viereck, 2] - Xf[viereck, 0], Xf[viereck, 3] - Xf[viereck, 1])
+    # Wechselnde Richtung der Flächenvektoren, damit auch das Umkehren der
+    # Seiten verglichen wird
+    S[::3] *= -1.0
+
+    def gleich_gruppen(a, b):
+        return len(a) == len(b) and all(np.array_equal(x, y) for x, y in zip(a, b))
+
+    def gleich_schleifen(a, b):
+        return len(a) == len(b) and all(ka == kb and np.array_equal(Pa, Pb)
+                                        for (ka, Pa), (kb, Pb) in zip(a, b))
+    # Alle freien Seiten hängen zusammen (eine Gruppe); in viele Gruppen
+    # zerfallen sie, wenn nur ein Teil davon genommen wird - zufällig
+    # gezogen, fest gesät
+    rng = np.random.default_rng(7)
+    teile = [np.arange(len(F))] + [np.sort(rng.choice(len(F), z, replace=False))
+                                   for z in (600, 2000, 5000)]
+    abweichend, n_gruppen = [], 0
+    for t_i, auswahl in enumerate(teile):
+        Ft = F[auswahl]
+        for paare in (False, True):
+            g_neu, g_alt = dg._seitengruppen(Ft, nur_paare=paare), _seitengruppen_alt(Ft, paare)
+            n_gruppen += len(g_alt)
+            if not gleich_gruppen(g_neu, g_alt):
+                abweichend.append(f"Gruppen {t_i} {paare}")
+            for g in g_alt[:300]:
+                idx = auswahl[g]
+                if not gleich_schleifen(dg._randschleifen(F[idx], Xf[idx], S[idx]),
+                                        _randschleifen_alt(F[idx], Xf[idx], S[idx])):
+                    abweichend.append(f"Schleifen {t_i} {g[:3]}")
+    # dazu Stücke von je 40 Seiten am Stück, auch aus mehreren Hohlräumen
+    for s in range(0, len(F), 40):
+        idx = np.arange(s, min(s + 40, len(F)))
+        if not gleich_schleifen(dg._randschleifen(F[idx], Xf[idx], S[idx]),
+                                _randschleifen_alt(F[idx], Xf[idx], S[idx])):
+            abweichend.append(f"Stück {s}")
+    check("gestapelt: dieselben Gruppen und Randschleifen wie der alte Stand",
+          len(F) == 12000 and n_gruppen > 1000 and not abweichend,
+          f"{len(F)} freie Seiten, {n_gruppen} Gruppen verglichen; abweichend {abweichend[:5]}")
+
+    def lauf():
+        dauer, bef = [], None
+        for _ in range(2):
+            t = time.perf_counter()
+            bef = dg._abnahme_volumenbilanz(m, "K1", k, els)
+            dauer.append(time.perf_counter() - t)
+        return min(dauer), [(b.stufe, b.pruefung, b.wert, b.text) for b in bef]
+    t_neu, b_neu = lauf()
+    echt = dg._randschleifen, dg._seitengruppen
+    dg._randschleifen, dg._seitengruppen = _randschleifen_alt, _seitengruppen_alt
+    try:
+        t_alt, b_alt = lauf()
+    finally:
+        dg._randschleifen, dg._seitengruppen = echt
+    check("  derselbe Befund (WARNUNG Riss im Netz 10 800), in höchstens der halben Zeit",
+          b_neu == b_alt and [x[:3] for x in b_neu] == [("WARNUNG", "Riss im Netz", 10800.0)]
+          and t_neu <= 0.5 * t_alt,
+          f"neu {t_neu:.2f} s, alt {t_alt:.2f} s; {[x[:3] for x in b_neu]}")
+
+
 def main():
     for f in (test_falsche_knotenzahl,
               test_abnahme_findet_verdrehten_sechsflaechner,
@@ -2041,6 +2731,9 @@ def main():
               test_abnahme_beule_windschief_randknoten,
               test_abnahme_luecke_im_netzrand,
               test_abnahme_luecke_duenn_mit_volumen,
+              test_abnahme_knoten_ueber_kopplung,
+              test_abnahme_knoten_in_drei_richtungen,
+              test_abnahme_riss_gestapelt,
               test_windschiefe_randflaechen_ohne_dreiecksschleife,
               test_abnahme_meldet_ausgefallene_pruefungen,
               test_nicht_messbare_formguete_gilt_nicht_als_beste,
