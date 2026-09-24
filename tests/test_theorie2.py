@@ -142,6 +142,225 @@ def test_alpha_cr():
     check("α_cr = 8 verlangt sie immer", T2.erforderlich(8.0)["noetig"])
 
 
+def zweigelenkrahmen():
+    """Zweigelenkrahmen: Stiele HEB 200, 5 m, Riegel IPE 300, 8 m, Fuesse
+    gelenkig, die Riegelhoehe aus der Ebene gehalten; G 8 kN/m und Q 0,5 kN/m
+    auf dem Riegel, W 25 kN waagerecht am linken Stielkopf. Unter W allein
+    ist ein Stiel gezogen, der andere gedrueckt (N_W = ±15,625 kN)."""
+    from statik3d import mesher
+    from statik3d.model import Section
+    m = Model("Zweigelenkrahmen")
+    m.add_material(Material.steel("S235"))
+    m.add_section(Section.from_profile("HEB 200"))
+    m.add_section(Section.from_profile("IPE 300"))
+    mesher.line_of_beams(m, "S235", "HEB 200", (0, 0, 0), (0, 0, 5.0), 5)
+    a = len(m.elements)
+    mesher.line_of_beams(m, "S235", "IPE 300", (0, 0, 5.0), (8.0, 0, 5.0), 8)
+    b = len(m.elements)
+    mesher.line_of_beams(m, "S235", "HEB 200", (8.0, 0, 5.0), (8.0, 0, 0), 5)
+    mesher.merge_nodes(m)
+    m.add_member("StielL", list(range(0, a)))
+    m.add_member("Riegel", list(range(a, b)))
+    m.add_member("StielR", list(range(b, len(m.elements))))
+    for i in range(m.nn):
+        if abs(m.nodes[i][2]) < 1e-9:
+            m.fix(i, [0, 1, 2, 3, 5])
+        elif abs(m.nodes[i][2] - 5.0) < 1e-9:
+            m.fix(i, [1])
+    for lf in ("G", "Q", "W"):
+        m.add_load_case(lf, lf)
+    for e in range(a, b):
+        m.load_beam(e, qz=-8e3, case="G")
+        m.load_beam(e, qz=-0.5e3, case="Q")
+    kopf = min((i for i in range(m.nn) if abs(m.nodes[i][2] - 5.0) < 1e-9),
+               key=lambda i: m.nodes[i][0])
+    m.load_node(kopf, Fx=25e3, case="W")
+    return m
+
+
+def test_alpha_cr_zug_und_druck():
+    """α_cr bei gezogenen und gedrückten Stäben zugleich (Befund B130).
+
+    Bis zum 23.09.2026 rief alpha_cr eigsh(K, M=−K_g, sigma=0): ARPACK setzt
+    für M ein positiv (semi)definites Skalarprodukt voraus, mit Zug und Druck
+    ist −K_g aber indefinit. Am Zweigelenkrahmen gab W in 200 Aufrufen 200
+    verschiedene Werte, alle unter 3,6, statt 77,33 - und „auto“ rechnete
+    1,5·W nach II. Ordnung, obwohl α_cr = 51,55 ist. Bezug hier: das dichte
+    Problem −K_g v = μ K v (scipy.linalg.eigh, K positiv definit), α = 1/μ_max.
+    """
+    import scipy.linalg as sla
+    from statik3d import assemble as asm
+    m = zweigelenkrahmen()
+    system = solver.StaticSystem(m)
+    fi = system.fi
+    K = system.Kff.toarray()
+    bezug = {}
+    for name, fak in (("W", {"W": 1.0}), ("K1", {"G": 1.35, "Q": 1.5})):
+        u = system.solve(solver.case_loads(m, fak)[0])
+        G = -asm.geometric_stiffness(m, u)[fi][:, fi].toarray()
+        mu = sla.eigh(G, K, eigvals_only=True)
+        bezug[name] = 1.0 / mu.max()
+        werte = [T2.alpha_cr(m, system, u) for _ in range(5)]
+        a = [w["alpha_cr"] for w in werte]
+        if name == "W":
+            ew = np.linalg.eigvalsh(G)
+            check("Voraussetzung: unter W ist −K_g indefinit (Zug und Druck)",
+                  ew.min() < -1e-9 * abs(ew).max() and ew.max() > 1e-9 * abs(ew).max(),
+                  f"{int((ew < -1e-9 * abs(ew).max()).sum())} negative, "
+                  f"{int((ew > 1e-9 * abs(ew).max()).sum())} positive Eigenwerte")
+        close(f"α_cr {name} gleich dem dichten Bezug", a[0], bezug[name], 1e-8)
+        # Bitgleich, nicht nur auf 12 Stellen: ohne den festen Startvektor
+        # gaben 200 Aufrufe unter K1 198 verschiedene Werte (Spanne 8,3e-12),
+        # mit ihm einen (gemessen 24.09.2026)
+        check(f"α_cr {name} fünfmal gerechnet, fünfmal bitgleich",
+              len(set(a)) == 1, ", ".join(repr(x) for x in a))
+        v = werte[0].get("modus")
+        vf = v[fi] if v is not None else np.zeros(len(fi))
+        r = np.linalg.norm(K @ vf - a[0] * (G @ vf)) / max(np.linalg.norm(K @ vf), 1e-300)
+        check(f"die Eigenform {name} erfüllt K v = α_cr (−K_g) v", r < 1e-6,
+              f"Residuum {r:.1e}")
+
+    # Unter „auto“: der Lastfall W auf II. Ordnung und KW = 1,5·W
+    m.load_cases["W"].theorie = "II"
+    m.design.theorie2 = "auto"
+    m.add_combination("KW", {"W": 1.5}, typ="ULS")
+    an = solver.solve_all(m, design=False)
+    kz = an.theorie2.kombinationen
+    close("Lastfall W auf II. Ordnung: α_cr wie der Bezug",
+          kz["W"].alpha_cr, bezug["W"], 1e-8)
+    close("KW = 1,5·W: α_cr = α_cr(W)/1,5", kz["KW"].alpha_cr, bezug["W"] / 1.5, 1e-8)
+    check("KW bleibt unter „auto“ bei I. Ordnung (α_cr ≥ 10)",
+          not kz["KW"].gerechnet
+          and an.combinations["KW"].info.get("theorie") != "II. Ordnung",
+          kz["KW"].text())
+
+    # Nur Zug: es gibt keinen positiven Verzweigungslastfaktor
+    sec = make_section("HEB 300")
+    mz = Model("Zugstab")
+    mz.add_material(Material.steel("S355"))
+    mz.add_section(sec)
+    n = 12
+    iz = [mz.add_node(0.0, 0.0, 6.0 * i / n) for i in range(n + 1)]
+    for i in range(n):
+        mz.add_element("beam", [iz[i], iz[i + 1]], "S355", sec.name)
+    mz.fix(iz[0], [0, 1, 2, 5])
+    mz.fix(iz[-1], [0, 1, 5])
+    mz.add_load_case("LF1", "G", "")
+    mz.load_node(iz[-1], Fz=+1000e3, Fy=1e3, case="LF1")
+    sz = solver.StaticSystem(mz)
+    az = [T2.alpha_cr(mz, sz, sz.solve(solver.case_loads(mz, {"LF1": 1.0})[0]))
+          for _ in range(3)]
+    check("nur Zug: α_cr = ∞, „kein positiver Verzweigungslastfaktor“",
+          all(math.isinf(x["alpha_cr"]) and "kein positiver" in x["fehler"] for x in az),
+          str([(x["alpha_cr"], x["fehler"]) for x in az]))
+
+
+def geschossrahmen(nx=3, nz=2, a=6.0, h=4.0, s=4):
+    """Symmetrischer Geschossrahmen: nx x nx Felder zu a, nz Geschosse zu h,
+    Stützen HEB 300, Riegel IPE 400, Verbände CHS 88.9X5 in den Außenwänden,
+    jeder Stab in s Elemente geteilt, Füße eingespannt; Lastfall G mit
+    150 kN lotrecht je Knotenpunkt. Die größten μ häufen sich (3 x 3 x 2:
+    27 innerhalb 10⁻³ von μ_max, dicht gerechnet 24.09.2026)."""
+    m = Model("Geschossrahmen")
+    m.add_material(Material.steel("S235"))
+    for p in ("HEB 300", "IPE 400", "CHS 88.9X5"):
+        m.add_section(make_section(p))
+    kn = {}
+    for k in range(nz + 1):
+        for j in range(nx + 1):
+            for i in range(nx + 1):
+                kn[i, j, k] = m.add_node(i * a, j * a, k * h)
+
+    def stab(p, q, sec):
+        A, B = np.array(m.nodes[p]), np.array(m.nodes[q])
+        ids = [p] + [m.add_node(*(A + (B - A) * t / s)) for t in range(1, s)] + [q]
+        for t in range(s):
+            m.add_element("beam", [ids[t], ids[t + 1]], "S235", sec)
+
+    for k in range(nz):
+        for j in range(nx + 1):
+            for i in range(nx + 1):
+                stab(kn[i, j, k], kn[i, j, k + 1], "HEB 300")
+    for k in range(1, nz + 1):
+        for j in range(nx + 1):
+            for i in range(nx):
+                stab(kn[i, j, k], kn[i + 1, j, k], "IPE 400")
+        for i in range(nx + 1):
+            for j in range(nx):
+                stab(kn[i, j, k], kn[i, j + 1, k], "IPE 400")
+    for k in range(nz):
+        for j in (0, nx):
+            stab(kn[0, j, k], kn[1, j, k + 1], "CHS 88.9X5")
+            stab(kn[1, j, k], kn[0, j, k + 1], "CHS 88.9X5")
+        for i in (0, nx):
+            stab(kn[i, 0, k], kn[i, 1, k + 1], "CHS 88.9X5")
+            stab(kn[i, 1, k], kn[i, 0, k + 1], "CHS 88.9X5")
+    for j in range(nx + 1):
+        for i in range(nx + 1):
+            m.fix(kn[i, j, 0], "all")
+    m.add_load_case("G", "G")
+    for k in range(1, nz + 1):
+        for j in range(nx + 1):
+            for i in range(nx + 1):
+                m.load_node(kn[i, j, k], Fz=-150e3, case="G")
+    return m
+
+
+def test_alpha_cr_haeufung():
+    """α_cr bei gehäuften größten μ: richtig und nicht langsam.
+
+    Mit eigsh(−K_g, M=K, 'LA') im Regelmodus (Stand 9dc88a3) brauchte ein
+    Aufruf am symmetrischen Geschossrahmen mit 5856 FHG 52,5 s (gemessen
+    24.09.2026), hier mit 1920 FHG 4,4 bis 5,6 s, das 81- bis 114-Fache
+    von Aufbau und Lösung des Systems (jetzt das 1,6- bis 2,1-Fache). Der
+    Grund: die 27 größten μ liegen innerhalb 10⁻³. Jetzt: Schätzwert,
+    Verschiebung s über μ_max, die der Trägheitssatz an s·K + K_g
+    bestätigt, dann Shift-invert um s.
+    """
+    import time
+    import scipy.linalg as sla
+    from statik3d import assemble as asm
+    m = geschossrahmen()
+    t_sys = []
+    for _ in range(3):
+        t0 = time.perf_counter()
+        system = solver.StaticSystem(m)
+        u = system.solve(solver.case_loads(m, {"G": 1.0})[0])
+        t_sys.append(time.perf_counter() - t0)
+    fi = system.fi
+    Kgff = asm.geometric_stiffness(m, u)[fi][:, fi].tocsc()
+    mu = np.sort(sla.eigh(-Kgff.toarray(), system.Kff.toarray(), eigvals_only=True))[::-1]
+    bezug = 1.0 / mu[0]
+    n_nah = int((mu >= mu[0] * (1 - 1e-3)).sum())
+    check("Voraussetzung: die größten μ häufen sich", n_nah >= 20,
+          f"{n_nah} μ innerhalb 10⁻³ von μ_max, {len(fi)} FHG")
+    t_a, werte = [], []
+    for _ in range(3):
+        t0 = time.perf_counter()
+        werte.append(T2.alpha_cr(m, system, u)["alpha_cr"])
+        t_a.append(time.perf_counter() - t0)
+    close("α_cr gleich dem dichten Bezug", werte[0], bezug, 1e-9)
+    # Ein Verhaeltnis, keine Sekunden: es haengt nicht daran, wie belastet
+    # die Maschine gerade ist
+    check("α_cr kostet höchstens das Zehnfache von Aufbau und Lösung",
+          min(t_a) <= 10.0 * min(t_sys),
+          f"α_cr {min(t_a):.3f} s, System {min(t_sys):.3f} s "
+          f"({min(t_a) / min(t_sys):.1f}-fach)")
+
+    # Die Verschiebung wird erzwungen, nicht erhofft: auch aus schlechten
+    # Schaetzwerten unter mu_max (statt Stufe 1) kommt mu_max heraus
+    f = getattr(T2, "groesstes_mu", None)
+    for faktor in (0.99, 0.3):
+        try:
+            r = f(system.Kff, Kgff, schaetzwert=faktor * mu[0]) if f else None
+        except Exception as exc:                  # pragma: no cover
+            r = None
+            print("   ", type(exc).__name__, exc)
+        got = 1.0 / r[0][0] if r is not None and r[0] is not None else math.nan
+        check(f"Schätzwert {faktor:g}·μ_max: trotzdem α_cr gleich dem Bezug",
+              abs(got / bezug - 1) <= 1e-9, f"{got:.10g} / {bezug:.10g}")
+
+
 def test_vergroesserung():
     """Verformung nach Theorie II. Ordnung gegen 1/(1 − N/N_cr)."""
     m, sec, ids, _els = kragstuetze()
@@ -432,9 +651,13 @@ def test_bericht_lastfaelle_hoeherer_ordnung():
           and "LF2" not in satz, satz[:160])
 
     # Gegenprobe: lineare Lastfaelle, Kombination nach II. Ordnung - der Satz
-    # bleibt, wie er war
+    # bleibt, wie er war. Mit halbem Druck: K1 = LF1 + LF2 traegt sonst
+    # 2 x 5e5 N, alpha_cr = 0,96 <= 1, und seit B131 wird K1 dann nicht nach
+    # II. Ordnung gerechnet (Fehler statt Ergebnis) - ohne gerechnete
+    # Kombination steht der Satz gar nicht im Kapitel. Mit 2,5e5 N je
+    # Lastfall alpha_cr = 1,92, K1 gerechnet (gemessen 24.09.2026).
     from statik3d.model import Combination
-    m, ids = _druckkragarm("ein")
+    m, ids = _druckkragarm("ein", druck=2.5e5)
     m.combinations["K1"] = Combination("K1", {"LF1": 1.0, "LF2": 1.0}, "ULS")
     satz = _lastfallsatz(Report(m, solver.solve_all(m, design=False)).html())
     check("nur lineare Lastfälle: der Satz ist unverändert",
@@ -562,8 +785,9 @@ def main():
     print("=" * 92)
     print("STATIK3D - Verifikation Theorie II. Ordnung (DIN EN 1993-1-1, 5.2/5.3)")
     print("=" * 92)
-    for t in (test_imperfektionsbeiwerte, test_alpha_cr, test_vergroesserung,
-              test_ersatzlasten, test_vorkruemmung, test_im_modell_und_bericht,
+    for t in (test_imperfektionsbeiwerte, test_alpha_cr, test_alpha_cr_zug_und_druck,
+              test_alpha_cr_haeufung, test_vergroesserung, test_ersatzlasten,
+              test_vorkruemmung, test_im_modell_und_bericht,
               test_bericht_lastfaelle_hoeherer_ordnung,
               test_bericht_lastfall_iii_ohne_rechnung_ii):
         print()
