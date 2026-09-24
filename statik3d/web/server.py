@@ -1704,11 +1704,10 @@ def _op_edit_case(st, m, d):
         m.load_cases = {(new if k == old else k): v for k, v in m.load_cases.items()}
         for c in m.combinations.values():
             c.lastfall_umbenennen(old, new)
+        # beide Zustaende und der Verlauf - bis zum 23.09.2026 blieb der
+        # Verlauf beim alten Namen (tests/test_ermuedung_verlauf.py)
         for fl in m.fatigue_loads.values():
-            if fl.case_max == old:
-                fl.case_max = new
-            if fl.case_min == old:
-                fl.case_min = new
+            fl.lastfall_umbenennen(old, new)
         if m.active_case == old:
             m.active_case = new
     return f"Lastfall {lc.name} geändert"

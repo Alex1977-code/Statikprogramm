@@ -574,6 +574,143 @@ def test_nachweisauftrag_traegt_kein_modell():
           float(all(j.payload.get("paket") for j in gefangen)), 1.0, 0)
 
 
+def test_nachweisetikett_folgt_dem_ergebnis():
+    """Das Etikett der Maske Nachweise (Gruppe „Nachweise führen“) zeigt,
+    was die statische Analyse (self.analysis: das Ergebnis der letzten
+    Rechnung „Alle Lastfaelle + Kombinationen“ oder „Nur aktiver Lastfall“)
+    an Nachweisen hat - nicht, was eine fruehere statische Rechnung hatte.
+    Eigenformen und Knicken lassen diese Analyse stehen (_solve_done setzt
+    dann nur results): danach bleibt ihre Zeile, obwohl das gezeigte
+    Ergebnis selbst keine Nachweise hat. Gemessen am 24.09.2026 im Fenster
+    (offscreen), Einfeldtraeger IPE 300 mit Druckkraft: EC3-Zeile nach
+    do_solve('modal') und do_solve('buckling') unveraendert.
+
+    MainWindow.show_results setzte das Etikett bis zum 23.09.2026 nur, wenn
+    ein EC3- oder Ermuedungsergebnis vorlag. Nach einer Rechnung mit EC3 und
+    einer zweiten ohne Nachweise blieb die alte Zeile „Nachweise EC3: …
+    max. Ausnutzung …“ stehen (Nebenbefund NB1, Probe np_6/p68: am
+    Hallenrahmen 0 setText-Aufrufe bei der zweiten Rechnung); mit nur
+    Ermuedung wurde es geleert (B069).
+    Ohne Fenster: echte Methoden, self als Attrappe, das Etikett merkt sich
+    seinen Text wie das QLabel.
+    Geprueft sind show_results und _solve_done (Eigenformen, Knicken,
+    aktiver Lastfall nach einer Rechnung mit Nachweisen). Wege, die das
+    Ergebnis verwerfen, ohne show_results aufzurufen (clear_loads,
+    new_model, Uebernehmen in der Lastfallmaske), lassen die alte Zeile
+    stehen - gemessen am 24.09.2026,
+    clear_loads und new_model im Fenster (offscreen), das Uebernehmen mit
+    Attrappe; noch offen.
+    """
+    from unittest import mock
+    from statik3d.gui.main import MainWindow
+
+    class Etikett:
+        def __init__(self):
+            self.text = "noch keine Nachweise"      # wie beim Anlegen der Maske
+
+        def setText(self, t):
+            self.text = str(t)
+
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    m.add_section(make_section("IPE 300"))
+    ids = mesher.line_of_beams(m, "S235", "IPE 300", (0, 0, 0), (6, 0, 0), 6)
+    m.fix(ids[0], [0, 1, 2, 3]); m.fix(ids[-1], [1, 2, 3])
+    m.case().category = "G"
+    for e in range(6):
+        m.load_beam(e, qz=-10000.0)
+    m.add_member("Traeger", list(range(6)), detail_category=71e6)
+    m.add_combination("K1", {"LF1": 1.0}, "ULS")
+    m.add_fatigue_load("Ermuedung", "LF1", None, 2e6)
+    an_ec3 = solver.solve_all(m, design=True, fatigue=False)
+    an_fat = solver.solve_all(m, design=False, fatigue=True)
+    an_beide = solver.solve_all(m, design=True, fatigue=True)
+    an_ohne = solver.solve_all(m, design=False, fatigue=False)
+
+    fenster = mock.MagicMock()
+    fenster.model = m
+    fenster.results = None
+    fenster.lbl_design = Etikett()
+
+    def zeige(an):
+        fenster.analysis = an
+        fenster.current_result.return_value = (
+            None if an is None else next(iter(an.combinations.values())))
+        try:
+            MainWindow.show_results(fenster)
+        except Exception as ex:      # noqa: BLE001 - als Fehlschlag zaehlen
+            print(f"     show_results: {type(ex).__name__}: {ex}")
+            return f"(Ausnahme {type(ex).__name__})"
+        return fenster.lbl_design.text
+
+    t = zeige(an_ec3)
+    print("     mit EC3:", t)
+    check("Etikett: mit EC3 steht die Zeile der Nachweise EC3",
+          float(t == an_ec3.design.summary()), 1.0, 0)
+    t = zeige(an_ohne)
+    print("     danach ohne Nachweise:", t)
+    check("Etikett: danach ohne Nachweise keine EC3-Zeile mehr",
+          float("Nachweise EC3" not in t), 1.0, 0)
+    check("Etikett: ohne Nachweise 'noch keine Nachweise'",
+          float(t == "noch keine Nachweise"), 1.0, 0)
+    t = zeige(an_fat)
+    print("     nur Ermuedung:", t)
+    check("Etikett: nur Ermuedung zeigt die Zeile der Ermuedung",
+          float(t == an_fat.fatigue.summary() and "Nachweise EC3" not in t), 1.0, 0)
+    t = zeige(an_beide)
+    check("Etikett: EC3 und Ermuedung untereinander",
+          float(t == an_beide.design.summary() + "\n" + an_beide.fatigue.summary()), 1.0, 0)
+    t = zeige(None)
+    check("Etikett: ohne Ergebnis 'noch keine Nachweise'",
+          float(t == "noch keine Nachweise"), 1.0, 0)
+
+    # Nach der statischen Rechnung eine weitere Rechnung ueber den echten
+    # _solve_done: Eigenformen und Knicken setzen nur results und lassen
+    # analysis stehen - gezeigt werden dann Eigenformen bzw. Knickfiguren,
+    # das Etikett behaelt die Zeile der statischen Rechnung. Der Einzellastfall
+    # ersetzt analysis und hat keine Nachweise. Bis zum 24.09.2026 sagten
+    # Docstring und Handbuch „das gezeigte Ergebnis“ - nach Eigenformen falsch
+    # (Gegenpruefung, im Fenster gemessen).
+    import copy
+    m_druck = copy.deepcopy(m)
+    m_druck.load_node(ids[-1], Fx=-100000.0)     # Normalkraft fuer das Verzweigungsproblem
+    fenster.show_results = lambda: MainWindow.show_results(fenster)
+
+    def danach(an, art, r):
+        zeige(an)                                # die statische Rechnung vorher
+        fenster.results = None
+        fenster.current_result.return_value = r
+        if art != "case":                        # results gesetzt: die echte Auswahl
+            fenster.current_result.side_effect = lambda: MainWindow.current_result(fenster)
+        try:
+            MainWindow._solve_done(fenster, art, r)
+        except Exception as ex:      # noqa: BLE001 - als Fehlschlag zaehlen
+            print(f"     _solve_done({art!r}): {type(ex).__name__}: {ex}")
+            return f"(Ausnahme {type(ex).__name__})"
+        finally:
+            fenster.current_result.side_effect = None
+        return fenster.lbl_design.text
+
+    r_modal = solver.solve_modal(m, 2)
+    t = danach(an_ec3, "modal", r_modal)
+    print("     EC3, danach Eigenformen:", t)
+    check("Etikett: nach Eigenformen sind die Eigenformen gezeigt",
+          float(fenster.results is r_modal and r_modal.freqs is not None), 1.0, 0)
+    check("Etikett: nach Eigenformen bleibt die EC3-Zeile der statischen Rechnung",
+          float(t == an_ec3.design.summary()), 1.0, 0)
+    r_knick = solver.solve_buckling(m_druck, 2)
+    t = danach(an_beide, "buckling", r_knick)
+    print("     EC3 + Ermuedung, danach Knicken:", t.replace("\n", " | "))
+    check("Etikett: nach Knicken sind die Knickfiguren gezeigt",
+          float(fenster.results is r_knick and r_knick.buckling_factors is not None), 1.0, 0)
+    check("Etikett: nach Knicken bleiben EC3- und Ermuedungszeile",
+          float(t == an_beide.design.summary() + "\n" + an_beide.fatigue.summary()), 1.0, 0)
+    t = danach(an_ec3, "case", solver.solve_static(m))
+    print("     EC3, danach aktiver Lastfall:", t)
+    check("Etikett: nach dem aktiven Lastfall 'noch keine Nachweise'",
+          float(t == "noch keine Nachweise"), 1.0, 0)
+
+
 def main():
     print("=" * 100)
     print("STATIK3D - Verifikation EC3 (Klassifizierung, Querschnitt, Stabilitaet, Ermuedung)")
@@ -593,7 +730,8 @@ def main():
     test_kein_stab_gefuehrt_keine_bilder()
     test_frame_parallel_design()
     test_nachweisauftrag_traegt_kein_modell()
-    nok = sum(1 for r in RESULTS if r[4])
+    test_nachweisetikett_folgt_dem_ergebnis()
+    nok =sum(1 for r in RESULTS if r[4])
     print("=" * 100)
     print(f"Ergebnis: {nok}/{len(RESULTS)} Tests bestanden")
     return 0 if nok == len(RESULTS) else 1

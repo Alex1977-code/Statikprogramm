@@ -3247,6 +3247,21 @@ nur sie gehen in den Nachweis ein; einen oberen oder unteren Zustand, den eine
 solche Last aus einer älteren Datei noch mitführt, liest der Nachweis nicht,
 und die Prüfung meldet ihn nicht.
 
+**Lastfall umbenennen.** Bekommt ein Lastfall einen neuen Namen — im Register
+Lastfälle, per Doppelklick in der Tabelle „Lastfälle“ unten (Gruppe Lasten),
+in seiner Maske rechts (die auch ein Doppelklick im Modellbaum öffnet) oder
+in der Bedienung im Browser —, heißt er auch in jeder Ermüdungslast neu: als
+oberer und unterer Zustand und als Glied eines Verlaufs. Bis zum 23.09.2026
+zog die Oberfläche nur die Kombinationen nach, die Bedienung im Browser dazu die
+beiden Zustände, den Verlauf aber nicht. Die Modellprüfung meldete den alten
+Namen dann als „Lastfall oder Kombination '…' unbekannt“ (nur bei einem
+Zustand, nicht bei einem Glied des Verlaufs), und der Nachweis meldete
+„unvollständig (Ergebnis einer Last fehlt)“ und rechnete ohne die Last bzw.
+ohne dieses Glied: am Kragarm IPE 200 (`tests/test_ermuedung_verlauf.py`,
+eine Last mit zwei Zuständen und eine mit Verlauf über drei Lastfälle)
+D = 0,018 nach dem Umbenennen in der Oberfläche und 1,237 im Browser statt
+2,437.
+
 **Grundlast.** Ein Lastfall mit dem Haken „Grundlast“ (Maske Lastfall) wirkt
 in jeder direkt gelösten Rechnung mit: in Modellen mit Kontakt oder
 Ausfallstäben bei jedem Lastfall, jeder Kombination und jedem Zustand einer
@@ -3439,6 +3454,27 @@ beitrüge.
 Ergebnis: Tabelle „Nachweise EC3“ mit Ausnutzung, maßgebendem Nachweis,
 Kombination und Stelle; Färbung „Ausnutzung EC3“ im Viewport; alle Details
 im Bericht.
+
+Das Etikett der Maske *Nachweise* (Gruppe „Nachweise führen (nach der
+Berechnung)“) zeigt die Nachweise der letzten statischen Rechnung („Alle
+Lastfälle + Kombinationen“ oder „Nur aktiver Lastfall“): die Zeile der
+Nachweise EC3 und darunter die der Ermüdung — jeweils nur, wenn diese
+Rechnung sie hat; ohne beide steht dort „noch keine Nachweise“. Neu
+geschrieben wird es nach jeder Rechnung, nach „Nachweise EC3“ und
+„Ermüdungsnachweis“, beim Wechsel des gezeigten Ergebnisses und nach einer
+Änderung aus dem Browser. „Eigenschwingungen (Modalanalyse)“ und „Knicken /
+Beulen (Stabtragwerke)“ ersetzen die statische Rechnung nicht: Das Programm
+behält ihr Ergebnis, „Nachweise EC3“ und „Ermüdungsnachweis“ rechnen weiter
+damit, und das Etikett zeigt weiter ihre Zeile, auch während Eigenformen
+bzw. Knickfiguren gezeigt werden (gemessen am 24.09.2026). Werden die
+Ergebnisse verworfen, ohne dass neu gerechnet wird — gemessen am 24.09.2026
+mit „Lasten des aktiven Lastfalls löschen“, *Datei → Neu* und „Übernehmen“
+in der Maske eines Lastfalls —, bleibt die alte Zeile stehen, bis einer der
+oben genannten Anlässe das Etikett neu schreibt. Bis zum 23.09.2026 blieb nach
+einer Rechnung mit EC3 und einer zweiten ohne Nachweise die alte Zeile
+(„Nachweise EC3: … max. Ausnutzung 0.633 … - alle erfuellt“ am Einfeldträger
+IPE 300 in `tests/test_ec3.py`) stehen, und mit nur Ermüdung war das Etikett
+leer.
 
 **Stab ohne Streckgrenze.** Hat der Werkstoff eines Stabes keine
 Streckgrenze f_y — das kommt bei Importen vor, wenn die Stahlsorte nicht

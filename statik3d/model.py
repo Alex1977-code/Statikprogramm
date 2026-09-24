@@ -1475,6 +1475,20 @@ class FatigueLoad:
     #: "reservoir". Aeltere Dateien fuehren ihren gespeicherten Wert mit.
     zaehlung: str = "spanne"
 
+    def lastfall_umbenennen(self, alt: str, neu: str) -> None:
+        """Ein umbenannter Lastfall heisst auch in beiden Zustaenden und in
+        jedem Glied des Verlaufs neu. Bis zum 23.09.2026 zog die Oberflaeche
+        nur die Kombinationen nach, der Webserver dazu case_max/case_min,
+        den Verlauf nicht: die Modellpruefung meldete den alten Namen als
+        „unbekannt“, und dem Nachweis fehlte die Last - am Kragarm D = 0,018
+        statt 2,437 (tests/test_ermuedung_verlauf.py)."""
+        if self.case_max == alt:
+            self.case_max = neu
+        if self.case_min == alt:
+            self.case_min = neu
+        if self.folge:
+            self.folge = [neu if k == alt else k for k in self.folge]
+
     def bezug(self) -> str:
         if self.folge:
             w = "global" if self.wiederholungen is None else f"{self.wiederholungen:g}"

@@ -7083,6 +7083,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     lc.name = neuname
                     for c in m.combinations.values():
                         c.lastfall_umbenennen(name, neuname)
+                    for fl in m.fatigue_loads.values():
+                        fl.lastfall_umbenennen(name, neuname)
                     if m.active_case == name:
                         m.active_case = neuname
                 lc.category = kat
@@ -9269,6 +9271,8 @@ class MainWindow(QtWidgets.QMainWindow):
             lc.name = nm
             for c in self.model.combinations.values():
                 c.lastfall_umbenennen(name, nm)
+            for fl in self.model.fatigue_loads.values():
+                fl.lastfall_umbenennen(name, nm)
             if self.model.active_case == name:
                 self.model.active_case = nm
         self.refresh_all()
@@ -16226,6 +16230,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 lc.name = name
                 for c in self.model.combinations.values():
                     c.lastfall_umbenennen(old, name)
+                for fl in self.model.fatigue_loads.values():
+                    fl.lastfall_umbenennen(old, name)
                 self.model.active_case = name
             self.refresh_all()
 
@@ -17487,6 +17493,22 @@ class MainWindow(QtWidgets.QMainWindow):
     def show_results(self):
         r = self.current_result()
         self._lastwahl_nachziehen()     # die Glasleiste zeigt dasselbe an
+        # Das Etikett der Maske Nachweise (Gruppe „Nachweise führen“) bei
+        # jedem Aufruf aus dem, was die statische Analyse (self.analysis)
+        # jetzt hat - EC3, Ermuedung, beides oder nichts -, nicht aus dem
+        # gezeigten Ergebnis r. Eigenformen und Knicken setzen in _solve_done
+        # nur results und lassen analysis stehen; danach bleibt hier also die
+        # Zeile der letzten statischen Rechnung, mit der auch do_design und
+        # do_fatigue weiterrechnen (im Fenster gemessen 24.09.2026, IPE 300
+        # mit Druckkraft). Bis zum 23.09.2026 wurde es nur mit einem EC3-
+        # oder Ermuedungsergebnis geschrieben: nach einer Rechnung mit EC3 und
+        # einer ohne Nachweise blieb „Nachweise EC3: … max. Ausnutzung 0.633
+        # … - alle erfuellt“ stehen, mit nur Ermuedung wurde es geleert
+        # (IPE 300, tests/test_ec3.py, test_nachweisetikett_folgt_dem_ergebnis).
+        an = self.analysis
+        teile = [t.summary() for t in (getattr(an, "design", None),
+                                       getattr(an, "fatigue", None)) if t is not None]
+        self.lbl_design.setText("\n".join(teile) if teile else "noch keine Nachweise")
         self.cb_mode.blockSignals(True)
         self.cb_mode.clear()
         if r is not None and getattr(r, "freqs", None) is not None:
@@ -17499,16 +17521,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self.redraw()
             return
         lines = [r.summary()]
-        an = self.analysis
         if an is not None and an.design is not None:
             lines.append(an.design.summary())
             self._fill(self.tbl_design, an.design.table()[1:], an.design.table()[0])
         if an is not None and an.fatigue is not None:
             lines.append(an.fatigue.summary())
             self._fill(self.tbl_fat, an.fatigue.table()[1:], an.fatigue.table()[0])
-            self.lbl_design.setText(an.design.summary() if an.design else "")
-        if an is not None and an.design is not None:
-            self.lbl_design.setText(an.design.summary() + ("\n" + an.fatigue.summary() if an.fatigue else ""))
         if an is not None and an.joints is not None:
             lines.append(an.joints.summary())
         if an is not None and an.gzg is not None:
