@@ -16402,7 +16402,17 @@ class MainWindow(QtWidgets.QMainWindow):
         d = FatigueLoadDialog(self, self.model)
         if d.exec():
             name, cmax, cmin, n, f = d.values()
-            folge = d.folge_namen() if d.art.currentIndex() == 1 else []
+            verlauf = d.art.currentIndex() == 1
+            folge = d.folge_namen() if verlauf else []
+            if verlauf:
+                # Die Zustaende eines Verlaufs stehen nur in der Folge. Bis zum
+                # 23.09.2026 kam hier der erste Eintrag der gesperrten Auswahl
+                # „Oberer Zustand“ als case_max mit (Hallenrahmen: 'Kran'): der
+                # Anschlussnachweis rechnete damit (D = 3,04294 statt 7,12871),
+                # und nach dem Loeschen von 'Kran' meldete die Modellpruefung
+                # einen FEHLER (Befund B067). Ein leeres Verlaufsfeld ergab
+                # still die Last „Kran gegen Nullzustand“.
+                cmax, cmin = "", None
             unbekannt = [x for x in folge
                          if x not in self.model.load_cases and x not in self.model.combinations]
             if folge and unbekannt:
@@ -16423,7 +16433,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                 for x in oder)
                     + ". Sie haben kein Einzelergebnis und fehlten sonst im Ermüdungsnachweis. "
                       "Stattdessen die Lastfälle ihrer Alternativen in den Verlauf schreiben.")
-            if folge and len(folge) < 2:
+            if verlauf and len(folge) < 2:
                 return self.error("Ein Verlauf braucht mindestens zwei Lastfälle - "
                                   "sonst gibt es nichts zu zählen.")
             self.merken("Ermüdungslast")

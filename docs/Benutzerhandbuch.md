@@ -3342,7 +3342,16 @@ Lastfälle ihrer Alternativen — so legt sie auch der RFEM-Import an. Bei einer
 Last mit Verlauf prüft die Modellprüfung nur die Glieder des Verlaufs, denn
 nur sie gehen in den Nachweis ein; einen oberen oder unteren Zustand, den eine
 solche Last aus einer älteren Datei noch mitführt, liest der Nachweis nicht,
-und die Prüfung meldet ihn nicht.
+und die Prüfung meldet ihn nicht — seit 23.09.2026 auch dann nicht, wenn
+dieser Lastfall inzwischen gelöscht ist (vorher kam dafür „FEHLER: …
+unbekannt“).
+
+**Maske im Modus Verlauf.** Die Maske übernimmt dann nur die Folge; oberer
+und unterer Zustand bleiben leer. Bis zum 23.09.2026 kam der erste Eintrag der
+gesperrten Auswahl „Oberer Zustand“ mit (im Hallenrahmen „Kran“), und der
+Anschlussnachweis rechnete mit ihm. Ein Verlauf braucht mindestens zwei
+Lastfälle; ein leeres Verlaufsfeld weist die Maske ab. Vorher legte sie
+still die Last „Kran gegen Nullzustand“ an.
 
 **Im Browser** (Register *Lasten → Ermüdungslasten*) bietet das Formular
 „+ Ermüdungslast“ dieselben Zustände an wie die Maske: Lastfälle und
@@ -3830,6 +3839,30 @@ EN 1993-1-9 Tab. 8.1 (Schrauben, Bleche mit Loch) und 8.5 (Nähte); die
 Schädigungen werden nach Palmgren-Miner **über alle Ermüdungslasten**
 aufsummiert. Wichtig: eine nicht vorgespannte Schraube bekommt die volle
 äußere Schwingbreite ab — das Programm sagt das als Hinweis dazu.
+
+Gezählt wird wie beim Stab: bei *zwei Zuständen* die Differenz oben minus
+unten mit der Lastspielzahl, bei einem *Verlauf* das Kollektiv nach dem
+Zählverfahren der Last (spanne, rainflow, reservoir) mal die Wiederholungen.
+„Globale Lastspielzahl“ gilt auch am Anschluss, und die Schwingbreite geht
+mit dem Faktor der Last und mit γ_Ff (Nachweise → Konfiguration) ein. Fehlt
+das Ergebnis des oberen oder des unteren Zustands, rechnet das Programm die
+Last nicht. Fehlt einem Verlauf ein Glied, zählen wie beim Stab seine übrigen
+Glieder (Hallenrahmen, Verlauf [Kran, fehlender Lastfall, LF1] mit
+10⁵ Wiederholungen: D = 0,305 wie beim Verlauf [Kran, LF1]). In beiden Fällen
+nennt der Hinweis das fehlende Ergebnis, und der Anschluss heißt
+„unvollständig“ statt „erfüllt“ (Tabelle, „Nachweise zeigen“, Bericht). Eine
+Last mit 0 Lastspielen bzw. Wiederholungen ist unwirksam und fehlt nicht.
+
+Bis zum 23.09.2026 las der Anschluss nur den oberen und unteren Zustand.
+Gemessen am Hallenrahmen mit der vorgeschlagenen Kopfplatte am Riegelanfang
+(Vorschlag für N = −50 kN, V_z = 150 kN, M_y = 300 kNm), Kran gegen LF1 mit
+2·10⁶ Spielen als zwei Zustände: D = 6,097. Der Verlauf [Kran, LF1] ergab mit
+dem oberen Zustand, den die Maske mitgab, D = 12,17 (Kran gegen null), mit
+leerem oberen Zustand wie aus dem RFEM-Import D = 0. Ein nicht gerechneter
+unterer Zustand zählte als Nullzustand (D = 12,17 ohne Hinweis), die globale
+Lastspielzahl ergab D = 0, und γ_Ff = 1,5 änderte nichts (D = 6,097). Jetzt
+ergeben beide Verläufe und die globale Lastspielzahl D = 6,097, γ_Ff = 1,5
+ergibt D = 20,58 (1,5³-fach), und der fehlende untere Zustand wird gemeldet.
 
 **Momenten-Rotations-Verhalten**: Statik3D bestimmt für jeden Anschluss die
 Anfangssteifigkeit S_j,ini nach dem Komponentenverfahren (6.3.1), die

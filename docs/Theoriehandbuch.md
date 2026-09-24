@@ -4407,6 +4407,17 @@ Kerbfälle nach Tab. 8.1 und 8.5 — Schraube auf Zug 50, Schraube auf Abscheren
 Kopfplattenanschluss 71. Die Schädigungen werden nach Palmgren–Miner **über
 alle Ermüdungslasten** aufsummiert, getrennt je Kerbfall.
 
+Die Schwingbreiten entstehen wie im Stabnachweis, nur aus der
+Stabendschnittgröße (M_y bei der Kopfplatte, N bei Laschenstoß und
+Knotenblech) statt aus der Spannung: zwei Zustände geben eine Stufe
+|S_max − S_min| mit n Spielen, ein Verlauf das Kollektiv nach seinem
+Zählverfahren (Spanne, Rainflow, Reservoir) mal den Wiederholungen. Jede Stufe
+geht einzeln in die Wöhlerlinie, und die Anteile n_i/N_Ri werden addiert. Die
+Schwingbreite trägt den Faktor der Last und γ_Ff. Fehlt der obere oder der
+untere Zustand einer wirksamen Last in den Ergebnissen, geht die Last nicht
+in D ein; fehlt einem Verlauf ein Glied, wird die Folge ohne dieses Glied
+gezählt. In beiden Fällen gilt der Anschluss als unvollständig nachgewiesen.
+
 Bei vorgespannten Schrauben hält die Vorspannung die Fuge geschlossen; in der
 Schraube kommt dann nur ein Bruchteil der äußeren Schwingbreite an. Das
 Programm rechnet mit dem Steifigkeitsverhältnis Schraube/Blech (Voreinstellung

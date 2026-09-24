@@ -314,13 +314,15 @@ def test_ermuedung_in_stellung():
     fl["V_leer"] = FatigueLoad("V_leer", "", None, folge=["LF1", "LF2"], wiederholungen=1e5)
     fl["V_alt"] = FatigueLoad("V_alt", "LF3", None, folge=["LF1", "LF2"], wiederholungen=1e5)
     fl["V_fehlt"] = FatigueLoad("V_fehlt", "LF1", None, folge=["LF1", "LF3"], wiederholungen=1e5)
-    # case_max wie die Maske ihn setzt: den ersten Eintrag der Liste
+    # case_max, wie ihn die Maske bis B067 setzte: den ersten Eintrag der
+    # Liste (seither laesst sie case_max bei einem Verlauf leer; Dateien aus
+    # der alten Maske tragen ihn weiter)
     fl["V_kombi"] = FatigueLoad("V_kombi", "LF1", None, folge=["LF1", "K1"], wiederholungen=1e5)
     fl["V_kombi_weg"] = FatigueLoad("V_kombi_weg", "LF1", None, folge=["LF1", "K3"],
                                     wiederholungen=1e5)
-    # case_min liefert die Maske auch im Modus Verlauf (gui/dialogs.py
-    # values(), gui/main.py add_fatigue_load); beide Glieder liegen in der
-    # Stellung
+    # case_min lieferte die Maske bis B067 auch im Modus Verlauf
+    # (gui/dialogs.py values(), gui/main.py add_fatigue_load); beide Glieder
+    # liegen in der Stellung
     fl["V_cmin"] = FatigueLoad("V_cmin", "LF1", "LF3", folge=["LF1", "LF2"], wiederholungen=1e5)
     fl["Z"] = FatigueLoad("Z", "LF2", "LF1")
     fl["Z3"] = FatigueLoad("Z3", "LF3", None)

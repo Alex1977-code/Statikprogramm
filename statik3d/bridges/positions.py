@@ -308,8 +308,9 @@ class Stellung:
         # case_max/case_min eines Verlaufs liest er nicht; bis ec6448c
         # entschieden sie hier: ein Verlauf mit case_max "" (rfem6_db)
         # entfiel in jeder solchen Stellung. (Der Ermuedungsnachweis der
-        # Anschluesse, joints/anschluss.py, liest case_max auch bei einem
-        # Verlauf; die Stellungsreihe rechnet aber keine Ermuedung.) Ein Glied
+        # Anschluesse, joints/anschluss.py, zaehlt einen Verlauf seit B094
+        # ebenfalls nach seinen Gliedern; die Stellungsreihe rechnet ohnehin
+        # keine Ermuedung.) Ein Glied
         # darf eine Kombination sein (die Oberflaeche nimmt sie an, gui/main.py
         # add_fatigue_load; ec3.fatigue liest sie aus all_results) - darum
         # gelten auch die Kombinationen, die oben stehen blieben. 8daa37e
@@ -329,9 +330,11 @@ class Stellung:
         for f in m.fatigue_loads.values():
             if getattr(f, "folge", None):
                 # ein stehengebliebenes case_max/case_min eines Verlaufs, dessen
-                # Lastfall hier fehlt, meldete Model.check als FEHLER und
-                # wiese die Stellung ab, obwohl ec3.fatigue es bei einem
-                # Verlauf nicht liest
+                # Lastfall hier fehlt, meldete Model.check bis B067 als FEHLER
+                # und wies die Stellung ab, obwohl kein Nachweis es bei einem
+                # Verlauf liest; seither prueft Model.check es nicht mehr.
+                # Geleert wird es trotzdem, damit die Kopie keinen Verweis
+                # auf einen Lastfall traegt, den es in ihr nicht gibt.
                 if f.case_max and f.case_max not in m.load_cases and f.case_max not in m.combinations:
                     f.case_max = ""
                 if f.case_min and f.case_min not in m.load_cases and f.case_min not in m.combinations:
