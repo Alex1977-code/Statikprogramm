@@ -6809,8 +6809,9 @@ beiden Regeln fest: ohne „verdreht“ bestanden 109, ohne „doppelte Knoten�
   bei 2,5005 mm Toleranz), mit drei Lagen Lücke 5,556e-4 m³ (nur die sechs
   Seiten der mittleren Lage im Inneren, zwei Drittel ihrer 8,333e-4 m³);
   bei w = 500 mm (20 × 20) mit einer, zwei und drei Lagen kein Befund
-  (eine Lage: 5 mm bei 5,0001 mm Toleranz). Die Zahl der Lagen wirkt nur
-  über den Abstand der Seitenschwerpunkte zu Deckel und Boden; den
+  (eine Lage: 5 mm bei 5,001 mm Toleranz; bei drei Lagen die mittlere
+  Lage 5 mm neben Deckel und Boden bei 5,0001 mm). Die Zahl der Lagen
+  wirkt nur über den Abstand der Seitenschwerpunkte zu Deckel und Boden; den
   Ausschlag gibt dieser Abstand gegen 1 % des Seitendurchmessers, also die
   Zellweite gegen die Lagendicke. Kerbe 0,25 × 0,25 m bei w = 250 mm, eine
   Lage: Toleranz 3,54 mm, FEHLER „Seiten im Inneren 3“. Mit
