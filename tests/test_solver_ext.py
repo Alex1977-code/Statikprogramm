@@ -892,10 +892,10 @@ def test_probelauf_und_kennzahlen():
     m = aufbau()
     # Verglichen wird mit der verschachtelten Iteration, in der jeder
     # Fliessschritt den Kontakt auskonvergiert - daran misst sich "ein
-    # Kontaktschritt je Fliessschritt". Die gemeinsame Iteration (Vorgabe seit
-    # dem 23.09.2026) kuerzt selbst ab: an diesem Block 78 Kontaktschritte auf
-    # 39 Fliessschritte, weniger als der Probelauf (93); dass sie trotzdem mit
-    # auskonvergiertem Kontakt endet, prueft tests/test_plastizitaet (T3).
+    # Kontaktschritt je Fliessschritt" - seit dem 24.09.2026 wieder die
+    # Vorgabe. Die gemeinsame Iteration (waehlbar) kuerzt selbst ab; dass sie
+    # trotzdem mit auskonvergiertem Kontakt endet, prueft
+    # tests/test_plastizitaet (T3).
     m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.02, laststufen=2,
                                      iterationen=40, toleranz=1e-4, kontakt="verschachtelt")
     voll = solver.solve_static(m)

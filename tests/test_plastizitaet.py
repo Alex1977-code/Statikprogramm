@@ -220,8 +220,9 @@ def test_kontakt():
         check("die Einstellung reist mit dem Modell (an, 5 %, 2 Laststufen)",
               e3 is not None and e3.an and abs(e3.verfestigung - 0.05) < 1e-12 and e3.laststufen == 2, str(e3))
         # Die Wahl "mit Kontakt" (23.09.2026) ebenso - und eine Datei von
-        # vorher ohne sie laedt mit der Vorgabe
-        m.plastizitaet.kontakt = "verschachtelt"
+        # vorher ohne sie laedt mit der Vorgabe, seit dem 24.09.2026
+        # "verschachtelt"
+        m.plastizitaet.kontakt = "gemeinsam"
         m.save(pf)
         e4 = Model.load(pf).plastizitaet
         import json as _json
@@ -231,8 +232,8 @@ def test_kontakt():
         with open(pf, "w", encoding="utf-8") as f:
             _json.dump(daten, f)
         e5 = Model.load(pf).plastizitaet
-        check("… auch „mit Kontakt: verschachtelt“; ältere Dateien laden mit „gemeinsam“",
-              e4.kontakt == "verschachtelt" and e5.kontakt == "gemeinsam", f"{e4.kontakt} / {e5.kontakt}")
+        check("… auch „mit Kontakt: gemeinsam“; ältere Dateien laden mit der Vorgabe „verschachtelt“",
+              e4.kontakt == "gemeinsam" and e5.kontakt == "verschachtelt", f"{e4.kontakt} / {e5.kontakt}")
 
 
 def _tet4_netz(n=6):
@@ -880,8 +881,8 @@ def test_laufbuch_mit_fliessen():
     der Fließ-Iteration, ohne deren Signatur zu ändern."""
     from statik3d import contact as ct
     from tests.test_kontakthalt import laufbuch_pruefen
-    # Die verschachtelte Iteration mit ihrem Vorlauf; die gemeinsame (Vorgabe
-    # seit dem 23.09.2026) steht unten
+    # Die verschachtelte Iteration (Vorgabe) mit ihrem Vorlauf; die
+    # gemeinsame (waehlbar seit dem 23.09.2026) steht unten
     m = _fliessendes_kontaktmodell()
     m.plastizitaet.kontakt = "verschachtelt"
     r = solver.solve_static(m)
@@ -907,9 +908,10 @@ def test_laufbuch_mit_fliessen():
           and not any(e["start_von_lauf"] == 1 for e in laeufe),
           str([e["start_von_lauf"] for e in laeufe]))
 
-    # Gemeinsam (Vorgabe): kein Vorlauf, die Arten schreibt der Newton selbst
-    # mit (plastizitaet._newton, info['aufrufe']) - auch die "Abnahme"
+    # Gemeinsam: kein Vorlauf, die Arten schreibt der Newton selbst mit
+    # (plastizitaet._newton, info['aufrufe']) - auch die "Abnahme"
     mg = _fliessendes_kontaktmodell()
+    mg.plastizitaet.kontakt = "gemeinsam"
     rg = solver.solve_static(mg)
     lg = laufbuch_pruefen(rg, "Fließen gemeinsam", pruefe=check)
     ag = [e["art"] for e in lg]
@@ -938,10 +940,11 @@ def test_laufbuch_mit_fliessen():
           and len(a3) == int(pz3.get("iterationen", -9)) + 2
           and a3.count("Laststufe") == pz3.get("laststufen") and "Fliessschritt" in a3,
           f"{len(a3)} Läufe, {pz3.get('iterationen')} Schritte: {a3[:5]}")
-    # ... und gemeinsam (Vorgabe): abgekuerzt wird dort nichts, aber der
-    # Vorlauf entfaellt auch hier - bei bitgleichem Ergebnis
+    # ... und gemeinsam: abgekuerzt wird dort nichts, aber der Vorlauf
+    # entfaellt auch hier - bei bitgleichem Ergebnis
     m4 = _fliessendes_kontaktmodell()
     m4.plastizitaet.verfahren = "anfangsdehnung"
+    m4.plastizitaet.kontakt = "gemeinsam"
     r4 = solver.solve_static(m4)
     l4 = laufbuch_pruefen(r4, "Anfangsdehnung gemeinsam", pruefe=check)
     a4 = [e["art"] for e in l4]
@@ -1344,7 +1347,9 @@ def _gemeinsam_gegen_verschachtelt():
             m_alt = bau()
             m_alt.plastizitaet.kontakt = "verschachtelt"
             alt = _gezaehlt(m_alt)
-            neu = _gezaehlt(bau())
+            m_neu = bau()
+            m_neu.plastizitaet.kontakt = "gemeinsam"
+            neu = _gezaehlt(m_neu)
             _VERGLEICH[titel] = (alt, neu)
     return _VERGLEICH
 
@@ -1470,6 +1475,7 @@ def test_gemeinsame_iteration_kein_falsches_konvergiert():
           str([(e["nr"], e["art"], e["grund"]) for e in stufenende + [laeufe[-1]]]))
 
     m2 = _drehlagerartiges_modell()          # vor dem Deckel bauen: es rechnet selbst
+    m2.plastizitaet.kontakt = "gemeinsam"
     alt_max = ct.MAX_CYCLES
     ct.MAX_CYCLES = 2
     try:
@@ -1772,6 +1778,36 @@ def test_gemeinsam_rueckfall_verschachtelt():
               zg <= za + mehr, f"{zg} gegen {za} Zerlegungen, verworfen {mehr}")
 
 
+def test_vorgabe_verschachtelt_und_unbekannter_wert():
+    """Gegenprüfung 24.09.2026: die gemeinsame Iteration rechnet an Reibung
+    nahe der Grenzlast einen anderen Zustand als die verschachtelte - bis
+    78 N/mm² Unterschied der Vergleichsspannung, beide „konvergiert“
+    (Theoriehandbuch § 5e.3). Sie ist darum nicht die Vorgabe, bis der
+    Anwender entscheidet. Ein unbekannter Wert in plastizitaet.kontakt
+    (Tippfehler, Großschreibung, Leerzeichen aus einer Datei) rechnet die
+    Vorgabe und steht im Protokoll; bis dahin rechnete er still
+    verschachtelt, während die Oberfläche „gemeinsam (Vorgabe)“ zeigte."""
+    check("Vorgabe „mit Kontakt“: verschachtelt",
+          pl.Plastizitaet().kontakt == "verschachtelt" == pl.KONTAKT_WEGE[0],
+          f"{pl.Plastizitaet().kontakt} / {pl.KONTAKT_WEGE}")
+    ref = _fliessendes_kontaktmodell()
+    ref.plastizitaet.kontakt = "verschachtelt"
+    u_ref = np.asarray(solver.solve_static(ref).u, float)
+    r = solver.solve_static(_fliessendes_kontaktmodell())
+    arten = [e["art"] for e in r.info.get("laeufe") or []]
+    check("ohne Einstellung wird verschachtelt gerechnet (mit Vorlauf, bitgleich)",
+          arten[:1] == ["Vorlauf"] and np.array_equal(np.asarray(r.u, float), u_ref), str(arten[:2]))
+    for wert in ("Gemeinsam", "gemeinsam ", "xyz"):
+        m = _fliessendes_kontaktmodell()
+        m.plastizitaet.kontakt = wert
+        r = solver.solve_static(m)
+        log = (r.info.get("plastizitaet") or {}).get("log") or []
+        zeile = [z for z in log if "unbekannte Einstellung" in z]
+        check(f"unbekannter Wert {wert!r}: gerechnet wie die Vorgabe (bitgleich), im Protokoll gemeldet",
+              np.array_equal(np.asarray(r.u, float), u_ref) and zeile and repr(wert) in zeile[0],
+              zeile[0] if zeile else "keine Meldung")
+
+
 def test_hilfsfesselung_ohne_vorlauf():
     """Gegenprüfung 24.09.2026: gemeinsam gibt es keinen elastischen Vorlauf,
     der sonst die freien Bewegungen findet. Scheitert darum erst der erste
@@ -1832,7 +1868,8 @@ def main():
               test_gemeinsam_aendert_nichts_ohne_beides,
               test_gemeinsam_im_budget,
               test_gemeinsam_rueckfall_verschachtelt,
-              test_hilfsfesselung_ohne_vorlauf):
+              test_hilfsfesselung_ohne_vorlauf,
+              test_vorgabe_verschachtelt_und_unbekannter_wert):
         try:
             t()
         except Exception as ex:      # noqa: BLE001

@@ -3159,8 +3159,10 @@ def _fliessarten_eintragen(res, info: dict, einst, aufrufe: list) -> None:
 
 def _gemeinsam(model, probelauf: bool = False, einfrieren=None) -> bool:
     """Rechnet der Lastfall Fliessen und Kontakt gemeinsam (Einstellung
-    ``Plastizitaet.kontakt``, Vorgabe seit dem 23.09.2026) - siehe
-    plastizitaet._newton und :func:`_plastizitaet_rechnen`?
+    ``Plastizitaet.kontakt``, waehlbar seit dem 23.09.2026, Vorgabe ist
+    "verschachtelt") - siehe plastizitaet._newton und
+    :func:`_plastizitaet_rechnen`? Ein unbekannter Wert rechnet wie die
+    Vorgabe, gemeldet wird er dort (_kontakt_weg_melden).
 
     Nur mit Kontakt. Der Probelauf rechnet ohnehin einen Kontaktschritt je
     Loesung, ein eingefrorener Zustand iteriert nicht, und der Ausfallweg
@@ -3173,7 +3175,22 @@ def _gemeinsam(model, probelauf: bool = False, einfrieren=None) -> bool:
     pz = getattr(model, "plastizitaet", None)
     return bool(_plastisch(model) and model.has_contact and not model.hat_ausfallstaebe()
                 and not probelauf and einfrieren is None
-                and str(getattr(pz, "kontakt", "gemeinsam")) == "gemeinsam")
+                and str(getattr(pz, "kontakt", "verschachtelt")) == "gemeinsam")
+
+
+def _kontakt_weg_melden(model, log: list) -> None:
+    """Ein unbekannter Wert in ``Plastizitaet.kontakt`` (Tippfehler,
+    Grossschreibung, Leerzeichen aus einer Datei) rechnete bis zum 24.09.2026
+    still verschachtelt, waehrend die Oberflaeche dafuer die Vorgabe
+    "gemeinsam" anzeigte (Gegenpruefung). Seitdem ist die Vorgabe
+    verschachtelt - Oberflaeche und Loeser tun dasselbe -, und der Wert
+    steht im Protokoll der Plastizitaet."""
+    from . import plastizitaet as pl
+    wert = getattr(getattr(model, "plastizitaet", None), "kontakt", pl.KONTAKT_WEGE[0])
+    if model.has_contact and str(wert) not in pl.KONTAKT_WEGE:
+        log.append(f"Plastizität: unbekannte Einstellung „mit Kontakt“ = {str(wert)!r} - "
+                   f"gerechnet wird „{pl.KONTAKT_WEGE[0]}“ (Vorgabe; möglich: "
+                   + ", ".join(f"„{w}“" for w in pl.KONTAKT_WEGE) + ")")
 
 
 def _schlussabnahme_kontakt(res) -> None:
@@ -3345,6 +3362,7 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
     bis zum 23.09.2026."""
     from . import plastizitaet as pl
     log: list = []
+    _kontakt_weg_melden(model, log)
     kn = _KontaktImNewton(rechnen, res, start, aktiv, log, gemeinsam,
                           float(model.plastizitaet.toleranz))
     iteriert = model.has_contact or model.hat_ausfallstaebe()

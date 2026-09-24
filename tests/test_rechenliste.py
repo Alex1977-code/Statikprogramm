@@ -320,8 +320,8 @@ def test_vorlauf_mit_deckel():
                  if m0.elements[i].mat == "S235")
         m = block_friction_example()
         m.materials["S235"].fy = 0.6 * q0
-        # Den Vorlauf hat nur die verschachtelte Iteration; die gemeinsame
-        # (Vorgabe seit dem 23.09.2026) laesst ihn weg
+        # Den Vorlauf hat nur die verschachtelte Iteration (die Vorgabe); die
+        # gemeinsame (waehlbar seit dem 23.09.2026) laesst ihn weg
         m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.05, laststufen=2,
                                          iterationen=40, toleranz=1e-4, kontakt="verschachtelt")
         return m

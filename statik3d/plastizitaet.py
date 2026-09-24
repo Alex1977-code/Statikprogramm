@@ -89,8 +89,9 @@ _P_DEV = np.array([
 #: Die beiden Wege durch die Plastizitaet - siehe :func:`iteration`
 WEGE = ("tangente", "anfangsdehnung")
 
-#: Wie Newton und Kontakt zusammen iterieren - siehe :func:`_newton`
-KONTAKT_WEGE = ("gemeinsam", "verschachtelt")
+#: Wie Newton und Kontakt zusammen iterieren - siehe :func:`_newton`; der
+#: erste ist die Vorgabe
+KONTAKT_WEGE = ("verschachtelt", "gemeinsam")
 
 #: Kleinster Verfestigungsmodul **der Tangente**, bezogen auf 3G. Bei sehr
 #: kleiner Verfestigung ist D_ep in Fliessrichtung fast singulaer (Eigenwert
@@ -118,11 +119,13 @@ class Plastizitaet:
     ``"anfangsdehnung"`` die Anfangsdehnungs-Iteration bei fester Steifigkeit
     (eine Faktorisierung je Rechnung, dafuer linear mit dem Faktor 1 − E_t/E).
 
-    ``kontakt`` gilt nur mit Kontakt: ``"gemeinsam"`` laesst den Loeser im
-    Newton die Kontaktiteration innerhalb einer Laststufe abkuerzen (und in
-    beiden Wegen den elastischen Vorlauf weg), ``"verschachtelt"`` iteriert
-    den Kontakt in jedem Schritt aus (der Weg bis zum 23.09.2026) - siehe
-    :func:`_newton`.
+    ``kontakt`` gilt nur mit Kontakt: ``"verschachtelt"`` (Vorgabe) iteriert
+    den Kontakt in jedem Newton-Schritt aus, ``"gemeinsam"`` laesst den
+    Loeser die Kontaktiteration innerhalb einer Laststufe abkuerzen (und in
+    beiden Wegen den elastischen Vorlauf weg) - weniger Zerlegungen, an
+    Reibung nahe der Grenzlast aber ein anderes Ergebnis; siehe
+    :func:`_newton`. Ein unbekannter Wert rechnet verschachtelt, und der
+    Loeser meldet ihn.
     """
     an: bool = False
     verfestigung: float = 0.01
@@ -144,7 +147,7 @@ class Plastizitaet:
     #: plastische Moment auf die Randfaser). Fuer Parallelepipede ist die
     #: elastische Steifigkeit mit jeder Regel >= 2 Punkten dieselbe.
     dicke_punkte: int = 5
-    kontakt: str = "gemeinsam"
+    kontakt: str = KONTAKT_WEGE[0]
 
     def H(self, E: float) -> float:
         """Verfestigungsmodul H aus der Tangente E_t = r E: H = E r / (1 - r)."""
@@ -1068,7 +1071,8 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
     Die gemeinsame Iteration rechnet einen **anderen** Weg durch die
     Reibung: an Modellen nahe der Grenzlast lag die Vergleichsspannung bis zu
     78 N/mm2 neben der verschachtelten, beide "konvergiert"
-    (Theoriehandbuch § 5e.3).
+    (Theoriehandbuch § 5e.3). Darum ist sie nicht die Vorgabe; ob sie es
+    wird, entscheidet der Anwender.
 
     Mit Kontakt steht jeder Loeseraufruf mit seiner Art in ``info["aufrufe"]``
     (Art, Laststufe, Schritt) - daraus baut der Loeser das Laufbuch.
