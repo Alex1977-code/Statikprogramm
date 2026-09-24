@@ -6827,12 +6827,14 @@ drei Änderungen:
   (`_bilinear_abstand`), nicht für die Verschiebung in z. Am abgebildeten
   4 × 4 × 4-Netz (dz = 0,5) bleibt ein Deckelknoten 25 mm außerhalb
   ungenannt, bei 30 mm ist es eine WARNUNG, in z wie entlang der
-  Flächennormale verschoben. Bei dz = 1,0 bleibt ein Deckelknoten ungenannt,
-  der 100 mm in z verschoben ist; er liegt nur 68 bis 81 mm neben der Fläche
-  (gegengeprüft durch Abtasten der Fläche). 100 mm entlang der Normalen sind
-  eine WARNUNG „Netzrand neben der Hülle" mit 4 Seiten, 60 mm bleiben
-  ungenannt (nachgemessen mit der örtlichen Grenze an den Deckelknoten
-  (0,5|0,5), (0,75|0,75), (0,25|0,75) und (0,75|0,25), 23.09.2026;
+  Flächennormale verschoben. Bei dz = 1,0 bleiben 80 mm entlang der
+  Normalen ungenannt, 90 mm sind eine WARNUNG „Netzrand neben der Hülle" mit
+  4 Seiten. Ein Deckelknoten 100 mm in z liegt dort je nach Neigung des
+  Deckels 68 bis 94 mm neben der Fläche (gegengeprüft durch Abtasten der
+  Fläche): an den sechs steileren Knoten 68 bis 81 mm, ungenannt; an
+  (0,25|0,25), (0,25|0,5) und (0,5|0,25), zur waagerechten Ecke (0|0) hin,
+  87 bis 94 mm, WARNUNG (nachgemessen mit der örtlichen Grenze an allen neun
+  inneren Deckelknoten, 24.09.2026;
   `test_abnahme_beule_windschief_nach_richtung`). Ein fehlender Tetraeder am
   windschiefen Deckel des freien Netzes ist eine Lücke im Netzrand
   (2,892e-4 m³ gemeldet, der Tetraeder hat 2,841e-4 m³; die Lücke reicht bis

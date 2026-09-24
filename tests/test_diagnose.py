@@ -1398,14 +1398,24 @@ def test_abnahme_beule_windschief_nach_richtung():
     """Wie groß darf eine Beule im windschiefen Deckel sein, bis die Abnahme
     sie nennt - und in welche Richtung gemessen? Das Benutzerhandbuch sagte
     bis zum 23.09.2026 ohne Richtung, bei um 1 m angehobener Deckelecke
-    bleibe „selbst eine Beule von 100 mm ungenannt" (Nebenbefund B020). Das
-    gilt für einen Deckelknoten, der 100 mm **in z** verschoben ist: er
-    liegt nur 68 bis 81 mm neben der Fläche (Abstand zur bilinearen Fläche,
-    gegengeprüft durch Abtasten, 23.09.2026). 100 mm **senkrecht zur
-    Fläche** sind eine WARNUNG „Netzrand neben der Hülle" mit 4 Seiten.
+    bleibe „selbst eine Beule von 100 mm ungenannt" (Nebenbefund B020).
+
+    Maßgebend ist der Abstand der Knoten zur Fläche (``_bilinear_abstand``),
+    nicht die Richtung der Verschiebung. Senkrecht zur Fläche bleiben bei
+    dz = 1,0 an allen neun inneren Deckelknoten 80 mm ungenannt, 90 mm sind
+    eine WARNUNG „Netzrand neben der Hülle" mit 4 Seiten. Ein Knoten, der
+    100 mm in z verschoben ist, liegt je nach Neigung des Deckels
+    verschieden weit neben der Fläche: an den sechs steileren Knoten 68 bis
+    81 mm, kein Befund; an (0,25|0,25), (0,25|0,5) und (0,5|0,25), zur Ecke
+    (0|0) hin, wo der Deckel waagerecht ist, 87 bis 94 mm, WARNUNG. Die
+    Fassung vom 23.09.2026 prüfte nur vier Knoten mit 68 bis 81 mm und
+    schrieb „100 mm in z bleiben ungenannt" wie eine Regel für das ganze
+    Netz; an allen neun Knoten geprüft, fiel das am Stand 066395a an drei
+    Knoten durch (dritte Gegenprüfung, 24.09.2026; Abstände gegengeprüft
+    durch Abtasten der Fläche mit 2001 x 2001 Punkten).
 
     Abgebildetes 4 x 4 x 4-Netz (64 hex8), Deckel z = 1 + dz·x·y, geprüft
-    an den Deckelknoten (0,5|0,5), (0,75|0,75), (0,25|0,75) und (0,75|0,25).
+    an allen neun inneren Deckelknoten (x und y je 0,25, 0,5 und 0,75).
     Die Prüfung hält die Zahlen des Handbuchabsatzes fest: ändert sich die
     Grenze, muss der Absatz mit.
     """
@@ -1426,28 +1436,49 @@ def test_abnahme_beule_windschief_nach_richtung():
         else:
             nrm = np.array([-dz * y, -dz * x, 1.0])
             m.nodes[kn] = m.nodes[kn] + mm * 1e-3 * nrm / np.linalg.norm(nrm)
+        deckel = np.array([[0, 0, 1], [1, 0, 1], [1, 1, 1 + dz], [0, 1, 1]], float)
+        d_mm = 1e3 * float(dg._bilinear_abstand(m.nodes[kn][None, :], deckel)[0])
         bef = [b for b in dg.abnahme(m, warnungen=True) if b.pruefung in _NETZ_BEFUNDE]
-        return len(els), [(b.stufe, b.pruefung, b.wert) for b in bef]
+        return len(els), [(b.stufe, b.pruefung, b.wert) for b in bef], d_mm
 
     WARN = [("WARNUNG", "Netzrand neben der Hülle", 4.0)]
-    KNOTEN = ((0.5, 0.5), (0.75, 0.75), (0.25, 0.75), (0.75, 0.25))
-    for dz, mm, richtung, soll, text in (
-            (0.5, 25, "z", [], "25 mm in z: kein Befund"),
-            (0.5, 25, "n", [], "25 mm senkrecht zur Fläche: kein Befund"),
-            (0.5, 30, "z", WARN, "30 mm in z: WARNUNG Netzrand 4"),
-            (0.5, 30, "n", WARN, "30 mm senkrecht zur Fläche: WARNUNG Netzrand 4"),
-            (1.0, 100, "z", [], "100 mm in z: kein Befund"),
-            (1.0, 60, "n", [], "60 mm senkrecht zur Fläche: kein Befund"),
-            (1.0, 100, "n", WARN, "100 mm senkrecht zur Fläche: WARNUNG Netzrand 4"),
-            (1.0, 150, "z", WARN, "150 mm in z: WARNUNG Netzrand 4")):
+    KNOTEN = tuple((x, y) for x in (0.25, 0.5, 0.75) for y in (0.25, 0.5, 0.75))
+    ALLE, KEINE = frozenset(KNOTEN), frozenset()
+    # 100 mm in z liegen hier 86,61 bis 93,78 mm neben der Fläche, an den
+    # übrigen sechs Knoten 67,75 bis 80,72 mm (gemessen 24.09.2026)
+    FLACH = frozenset({(0.25, 0.25), (0.25, 0.5), (0.5, 0.25)})
+    abstand_z100 = {}
+    for dz, mm, richtung, warn_an, text in (
+            (0.5, 25, "z", KEINE, "25 mm in z: kein Befund"),
+            (0.5, 25, "n", KEINE, "25 mm senkrecht zur Fläche: kein Befund"),
+            (0.5, 30, "z", ALLE, "30 mm in z: WARNUNG Netzrand 4"),
+            (0.5, 30, "n", ALLE, "30 mm senkrecht zur Fläche: WARNUNG Netzrand 4"),
+            (1.0, 100, "z", FLACH, "100 mm in z: WARNUNG Netzrand 4 an (0,25|0,25), "
+                                   "(0,25|0,5) und (0,5|0,25), an den übrigen sechs kein Befund"),
+            (1.0, 60, "n", KEINE, "60 mm senkrecht zur Fläche: kein Befund"),
+            (1.0, 80, "n", KEINE, "80 mm senkrecht zur Fläche: kein Befund"),
+            (1.0, 90, "n", ALLE, "90 mm senkrecht zur Fläche: WARNUNG Netzrand 4"),
+            (1.0, 100, "n", ALLE, "100 mm senkrecht zur Fläche: WARNUNG Netzrand 4"),
+            (1.0, 150, "z", ALLE, "150 mm in z: WARNUNG Netzrand 4")):
         falsch = []
         for x, y in KNOTEN:
-            n_el, ist = beule(dz, x, y, mm, richtung)
+            n_el, ist, d_mm = beule(dz, x, y, mm, richtung)
+            if (dz, mm, richtung) == (1.0, 100, "z"):
+                abstand_z100[(x, y)] = d_mm
+            soll = WARN if (x, y) in warn_an else []
             if n_el != 64 or ist != soll:
                 falsch.append(f"({x}|{y}) {n_el} El.: "
                               + ("; ".join(f"{s} {p} {w:.0f}" for s, p, w in ist) or "kein Befund"))
-        check(f"4x4x4, Ecke {dz:g} m hoch, Deckelknoten {text}".replace(".", ","),
+        check(f"4x4x4, Ecke {dz:g} m hoch, 9 Deckelknoten {text}".replace(".", ","),
               not falsch, " | ".join(falsch))
+    # Die Abstände, die das Handbuch nennt: „68 bis 81 mm" und „87 bis 94 mm"
+    steil = [abstand_z100[k] for k in KNOTEN if k not in FLACH]
+    flach = [abstand_z100[k] for k in KNOTEN if k in FLACH]
+    check("  100 mm in z: steile Knoten 68 bis 81 mm, flache 87 bis 94 mm neben der Fläche",
+          (round(min(steil)), round(max(steil)), round(min(flach)), round(max(flach)))
+          == (68, 81, 87, 94),
+          f"steil {min(steil):.2f} bis {max(steil):.2f}, "
+          f"flach {min(flach):.2f} bis {max(flach):.2f} mm")
 
 
 def _extrudiert(m, P2, z0, z1, name="K"):

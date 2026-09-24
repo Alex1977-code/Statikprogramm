@@ -4577,15 +4577,19 @@ Ein verdrehtes Element in der groben Ecke, wo die
 oberste Lage dünn ist gegen die Sehne, findet nur die Richtung: Seine Ecken
 liegen bei 20:1 17 bis 18 mm neben dem Deckel, seine Seiten stehen 57 bis 87°
 dagegen. Die Kehrseite: kleinere Abweichungen des Netzrands meldet
-die Abnahme an windschiefen Flächen nicht. Gemessen wird dabei der Abstand
-senkrecht zur Fläche. Am abgebildeten 4 × 4 × 4-Netz desselben Würfels bleibt
-ein Deckelknoten, der 25 mm nach außen verschoben ist, ungenannt, bei 30 mm
-steht eine Warnung da, in z wie senkrecht zur Fläche verschoben. Ist die Ecke
-um 1 m angehoben, bleibt dort ein Deckelknoten ungenannt, der 100 mm **in z**
-verschoben ist: Er liegt nur 68 bis 81 mm neben der Fläche. 100 mm
-**senkrecht zur Fläche** sind dort eine Warnung „Netzrand neben der Hülle“,
-60 mm bleiben ungenannt (gemessen am 23.09.2026 an den Deckelknoten
-(0,5|0,5), (0,75|0,75), (0,25|0,75) und (0,75|0,25)).
+die Abnahme an windschiefen Flächen nicht. Maßgebend ist dabei der Abstand
+senkrecht zur Fläche, nicht die Richtung, in die ein Knoten verschoben ist.
+Am abgebildeten 4 × 4 × 4-Netz desselben Würfels bleibt ein Deckelknoten, der
+25 mm nach außen verschoben ist, ungenannt, bei 30 mm steht eine Warnung da,
+in z wie senkrecht zur Fläche verschoben. Ist die Ecke um 1 m angehoben,
+bleiben dort 80 mm **senkrecht zur Fläche** ungenannt, 90 mm sind eine
+Warnung „Netzrand neben der Hülle“. Ein Deckelknoten, der 100 mm **in z**
+verschoben ist, liegt je nach Neigung des Deckels verschieden weit neben der
+Fläche: an den steileren Stellen nur 68 bis 81 mm, er bleibt ungenannt; zur
+Ecke (0|0) hin, wo der Deckel waagerecht ist, 87 bis 94 mm, das ist eine
+Warnung (gemessen am 24.09.2026 an allen neun inneren Deckelknoten:
+ungenannt an (0,5|0,5), (0,75|0,75), (0,25|0,75), (0,75|0,25), (0,5|0,75)
+und (0,75|0,5), Warnung an (0,25|0,25), (0,25|0,5) und (0,5|0,25)).
 
 Geprüft werden Körper, deren Randlinien gerade sind und deren Randflächen eben
 sind oder Vierecke; Körper mit Bögen, Kreisen oder Splines prüft der freie
