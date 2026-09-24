@@ -36,7 +36,7 @@ def _fenster(n, gemessen, anteil=0.10):
     gegen 6155, T-Prisma 5465 bis 5862 gegen 5886; die Bezugswerte liegen am
     oberen Rand). Mit ±5 % rissen daran vier von sieben Phasen am T-Prisma.
     Echte Aenderungen bleiben draussen: doppelte Dichte (h·0,79) +85 bis
-    +120 %, h·1,26 -50 bis -57 %, das L-Netz mit Luecke (821) +29,5 %.
+    +120 %, h·1,26 -44 bis -57 %, das L-Netz mit Luecke (821) +29,5 %.
     Gemessen 24.09.2026, zweimal (Gegenpruefung und Nachbesserung)."""
     return abs(n - gemessen) <= anteil * gemessen
 
