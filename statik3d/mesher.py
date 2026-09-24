@@ -965,6 +965,13 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
     # Arbeitsprozesse (netzfeld.aufbauen).
     from . import netzfeld
     model.groessenfeld = netzfeld.aufbauen(model, log=log)
+    # Der Bogenwinkel je Linie aus den Vorgaben der Koerper - einmal je Lauf,
+    # vor den Karten, und mit dem Modell in die Arbeitsprozesse
+    from . import mesher3d as _M3
+    _je_linie = _M3.bogenwinkel_je_linie(model)
+    if _je_linie or _M3.bogenwinkel_vorgabe(model) != _M3.BOGENWINKEL:
+        C.say(log, f"Bogenwinkel: Vorgabe {_M3.bogenwinkel_vorgabe(model):.0f}° je Abschnitt"
+                   + (f", an {len(_je_linie)} Linien nach der Vorgabe eines Körpers" if _je_linie else ""))
     # Vorgegebene Flaechennetze (Sweep) - je Lauf neu; die abgebildeten und
     # gesweepten Koerper fuellen sie, die freien Koerper lesen sie.
     model.flaechennetze = {}

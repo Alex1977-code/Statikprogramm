@@ -1075,7 +1075,11 @@ def test_rippe_am_rand_ueber_ebene_zerlegt():
     # Zum Vergleich gemessen (22.09.2026): der Tetraeder braucht h = 6 mm,
     # 39 891 Elemente und 7 459 Knoten fuer 1,9674 mm - der gesweepte Block
     # steht mit 124 Elementen und 239 Knoten bei 2,0161 mm schon darueber.
-    check("der lineare Tetraeder ist hier dreimal zu steif", w_hex > 3.0 * w_tet,
+    # Der tet4-Wert hing an den Splittern des groben Netzes: mit 0,5811 mm war
+    # er dreimal zu steif; seit die Kappenpunkte Abstand zur Huelle halten
+    # (mesher3d.KAPPEN_RANDABSTAND, 23.09.2026) sind es 1,1397 mm - immer noch
+    # 1,8-mal zu steif gegen 2,0254 mm.
+    check("der lineare Tetraeder ist hier deutlich zu steif (gemessen 1,8-mal)", w_hex > 1.5 * w_tet,
           f"{w_hex * 1e3:.4f} mm gegen {w_tet * 1e3:.4f} mm")
     check("und das mit weniger Elementen", ne_hex < 0.25 * ne_tet, f"{ne_hex} gegen {ne_tet}")
 

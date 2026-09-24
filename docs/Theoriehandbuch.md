@@ -5002,9 +5002,110 @@ außerhalb der Kante wurden gebaut und **verworfen**: 0,2 L vor der Wand liegen 
 den Umkugeln der Wanddreiecke, und die Wand geht verloren (34 → 237 Dellen). Der
 Neustart mit anderer Gitterphase ebenso (0,99 und 1,75 % statt 0,0076 %). Was bleibt,
 wird **gemeldet** („Lücke im Netzrand bleibt nach N Durchgängen — x % des Rauminhalts,
-k freie Seiten neben der Hülle"), nicht still gelassen. Das Heilmittel ist eine
-bedingte Zerlegung: Steiner-Punkte **auf** der Hülle, wo Netzkanten sie kreuzen
-(Segment- und Facettenrückgewinnung wie in TetGen) — offen.
+k freie Seiten neben der Hülle"), nicht still gelassen.
+
+**Kantenkippen an der Hülle (zweiter Auftrag, 23.09.2026 abends).** Die Lücke an der
+rechtwinklig einspringenden Kante hat eine einfache Gestalt, gemessen an jedem der
+69 Netze der Stichprobe: in der **ersten** Zerlegung fehlt genau **ein** Hülldreieck,
+und genau eine Netzkante durchstößt es, an der genau drei Tetraeder hängen, deren
+übrige Ecken die drei Ecken des Dreiecks sind. Das ist der Gleichstand von fünf
+Punkten auf einer Kugel (Thales: der Kantenpunkt sieht jede Sehne quer durch die
+Kerbe unter 90°); Qhull darf die drei Tetraeder um die Kante nehmen oder die zwei
+mit dem Dreieck als Seite. `mesher3d.huelle_kippen` nimmt vor der Frage innen/außen
+die zweite Antwort (Kantenkippen 3 → 2, kein neuer Punkt, derselbe Rauminhalt) —
+die bedingte Delaunay-Zerlegung für genau den Fall, der vorkommt. Gemessen
+23.09.2026: Stichprobe 3 Prismen × 23 Ziellängen **11 → 2 von 69** mit Fehlbetrag,
+die Stichprobe der Statik3D-Sitzung (ihre L-, T-, U-Prismen) **1 → 0 von 69**; das
+T-Prisma der Statik3D-Sitzung mit h = 0,09 exakt im ersten Durchgang statt 0,0003 %
+nach acht. Was bleibt (L h = 0,24: −0,065 %, T h = 0,16: +0,0012 %): dort fehlt eine
+**Hüllkante** (das Dreieck wird von einer Tetraederseite gekreuzt, nicht von einer
+Kante) oder die Kante trägt vier bis fünf Tetraeder — Segmentrückgewinnung und
+4-4-Kippen, offen. Ein Versuch mit Steiner-Punkten an den Durchstoßstellen
+(Segment- und Facettenrückgewinnung wie in TetGen) wurde gebaut, gemessen und
+zurückgenommen: 11 → 5 an der eigenen Stichprobe, aber 1 → 3 an der der
+Statik3D-Sitzung und 3,4-mal so viele Elemente an der Bohrung
+(`test_mantellinie_der_bohrung`). Test `test_huelle_kippen`, Schalter `KIPP_RUNDEN`.
+
+**Kappenpunkte halten Abstand (23.09.2026 abends).** An der Bohrung der Buchse r 50/100
+mit h = 20 mm behielten vier tet10 gerade Kanten, dazu stand eine Lücke von 0,0023 %
+im Protokoll. Die Ursache war kein Bohrungsproblem: eine **Kappe im ebenen Deckel** —
+vier Hüllpunkte, zwei am Bohrungsrand, zwei im Deckel, ein Splitter ohne Volumen —
+bekam ihren Auflösepunkt um die halbe Kappenkante (bis 36 mm) senkrecht zum Deckel
+nach innen geschoben; er landete 0,08 bis 2 mm neben der Bohrungswand, dort
+entstanden Splitter mit Höhe 0,04 h, eine Delle im Netzrand und Tetraeder, deren
+gekrümmte Bohrungskante die Jacobi-Determinante umklappte. Jetzt geht der Punkt
+höchstens `KAPPEN_WEG` = 0,5 Sollgrößen weit und hält wie jeder Gitterpunkt
+`KAPPEN_RANDABSTAND` = 0,4 Sollgrößen zur **ganzen** Hülle (`_kappenpunkte`). Damit
+ohne weitere Nachhilfe: Hohlzylinder r 50/100, h = 35, 20, 10 mm — **0 Rückfälle**
+auf gerade Kanten, kleinste bezogene Jacobi-Determinante 0,16 / 0,065 / 0,067, keine
+Lücke (gemessen 23.09.2026). Test `test_kappenpunkte_halten_abstand`.
+
+**Gekrümmte tet10-Kanten: örtlich feiner, bis sie gültig sind (V2, 23.09.2026
+abends).** Bevor ein tet10-Körper eingebaut wird, prüft `krumme_kanten_pruefen` im
+Arbeitsprozess dasselbe wie der Einbau: die Randkanten des Netzrands auf Zylinder,
+Kegel, Kugel oder windschiefer Fläche bekommen ihre Mitte auf die wahre Fläche, und
+jedes Tetraeder daran muss als tet10 an allen Integrationspunkten und Ecken eine
+positive Jacobi-Determinante behalten (`jacobi_volumen_stapel`). Reißt nur das, wird
+**nicht der Körper** feiner, sondern die betroffene Fläche: ihre Kantenlänge und die
+ihrer nicht gemeinsamen Linien um `VERFEINERN_FAKTOR`, bis zu `KRUMM_ANLAEUFE` = 3
+örtliche Anläufe (`koerper_vorbereiten`, „örtlich feiner vernetzt (MantelI1 13,3
+statt 20,0 mm …)"). Eine gemeinsame Fläche gehört auch dem Nachbarn und kann ein
+Arbeitsprozess nicht allein ändern — dort bleibt beim Einbau die gerade Kante, mit
+Warnung und Grund. Gemessen 23.09.2026 an der Buchse mit **groben** Bögen (36° je
+Abschnitt): h = 35 mm 5 ungültige tet10 → 0 (872 → 2 615 Elemente, Mantel 35 →
+23,3 mm), h = 20 mm 5 → 0 (Bohrung 20 → 13,3 mm). Test
+`test_krumme_kanten_oertlich_feiner`.
+
+**Alle Hüllknoten auf der wahren Fläche (V2, tetp).** Gemessen 23.09.2026 an der
+Buchse r 50/100 für 18° und 36° je Abschnitt und h = 50, 70, 100 mm: der größte
+Abstand eines Hüllknotens von den Zylinderflächen ist **0,000 µm** — die Randpunkte
+kommen von der Abwicklung (`_zylindernetz`), neue Hüllpunkte der Verfeinerung vom
+Projektor. Für Kugelflächen (Achtel der Hohlkugel, drei Großkreisbögen) legte das
+harmonische Heben die inneren Flächenpunkte bis **45 mm** (a = 100 mm) neben die Kugel —
+die Fläche ist weit von jeder Ebene entfernt; seit 23.09.2026 werden alle ihre Punkte auf
+die Kugel gesetzt (`_kugelpassung`). Und mit Größenfeld teilt die Linienteilung Bögen
+ungleich: die Punkte kommen jetzt **genau** vom Kreis (Parameter = Bogenlänge) statt von
+der feinen Näherung, die bis 7·10⁻⁸ m danebenlag (`_linienpunkte`, gemessen 24.09.2026).
+
+**Projektoren: Zylinder, Kegel, Kugel, windschiefes Viereck (23.09.2026 abends).**
+`flaechenprojektoren` kannte den Zylinder. `drehlager.json` hat daneben (gezählt
+23.09.2026, `projektorarten`): **770 Zylinder, 8 Kegel** (Fasen und Senkungen: zwei
+Bögen verschiedener Halbmesser um dieselbe Achse, `_kegelpassung`, Fußpunkt auf der
+Mantellinie), **8 windschiefe Vierecke** aus vier Geraden (die bilineare Fläche, die
+auch der Coons-Fleck aufspannt, Gauß-Newton in (u, v)) und 525 ebene Flächen; Kugel
+oder Torus kommen nicht vor. Jede vorkommende Art ist abgebildet: die tet10-Seitenmitten
+liegen auf Kegel und bilinearer Fläche (Kegelstumpf r 100 → 60 mm: 1,23 mm Sehnenpfeil
+→ 0,000 mm; windschiefer Deckel z = 1 + 0,1 xy: 1,56 → 0,000 mm). Test
+`test_projektor_kegel_und_windschief`.
+
+**Bogenwinkel je Körper (V3, 23.09.2026 abends).** Der Winkel je Bogenabschnitt
+(bisher fest 18°) ist einstellbar: `Netzeinstellungen.bogenwinkel` für das Modell,
+`Volumenkoerper.bogenwinkel` je Körper; die Vorgabe des Körpers geht vor — auch nach
+oben (36 statt 18°) —, an einer Linie zweier Körper mit verschiedener Vorgabe gilt
+der **kleinere** Winkel, denn beide brauchen dieselbe Teilung; ein Körper ohne eigene
+Vorgabe zählt dabei mit der des Modells (`bogenwinkel_je_linie`). Vorgabe bleibt 18°. Und
+eine abgebildete Vierseitfläche (Zylindermantel) bindet ihre gegenüberliegenden Kreise an
+dieselbe Teilung — der feinere zieht den gröberen mit (zwei gestapelte Zylinder, unten 36°,
+oben 12°: alle drei Kreise 30 Knoten; `test_bogenwinkel_je_koerper`). Zylinder r = 100 mm: 20 Knoten auf dem
+Grundkreis bei 18°, 10 bei 36°, 30 bei 12° (Test `test_bogenwinkel_je_koerper`).
+Nebenbei: 180/36 ist in Gleitkommazahlen 5,000000000000001; ohne Toleranz bekam der
+Halbkreis sechs statt fünf Abschnitte.
+
+**Flache Tetraeder nach eigener Größe (Nachtrag B101, 24.09.2026).** Was nach der
+Glättung noch flach ist, fliegt heraus — bisher alles mit V ≤ FLACH·h³, h die Kantenlänge
+des **Körpers**. An einer feinen Bohrung (Sehnen 2–7 mm bei h = 50 mm) traf das kleine,
+gesunde Tetraeder mit 1,7 bis 11 % Dicke, und die Abnahme meldete dort einen Riss (Befund der
+Statik3D-Sitzung am Stand `ec6448c`). Jetzt zählt die Form: V ≤ FLACH·L³ mit der eigenen
+längsten Kante L (`flache_tetraeder`); V/L³ ist beim regelmäßigen Tetraeder 0,118, bei einem
+Splitter der Dicke t etwa 0,14 t/L, unter 10⁻⁶ liegt nur, was wirklich flach ist. Ein
+3-mm-Tetraeder mit 2 % Dicke bleibt, einer mit 10⁻⁷ Dicke fliegt (Test
+`test_flache_tetraeder_nach_eigener_groesse`; die Platte R 450 / Bohrung r 10 / t 35 mm mit
+h = 50 mm hat auf diesem Stand weder Riss noch Lücke). Zu den beiden anderen Nachtragspunkten:
+die neuen Hüllpunkte der Verfeinerung liegen mit den Projektoren auf der Fläche — am Würfel mit
+windschiefem Deckel (dz 0,5, h 0,25 und 0,1) 0,000 mm daneben statt 7,55 mm (B102); der Würfel
+mit stark angehobener Deckelecke (dz 1,2 / 1,5 / 2,0 / 3,0, h 0,1) hat auf diesem Stand keine
+Löcher mehr — 15 625 Stichprobenpunkte im Körper, jeder in einem Tetraeder, Rauminhalt bis
+0,03 % neben dem exakten 1 + dz/4 (B103, beides gemessen 24.09.2026).
 
 **Einbaufolge (23.09.2026).** Die Körper werden parallel vernetzt, eingebaut aber in
 der **festen** Folge der Körperliste, nicht in der des Fertigwerdens: die Knoten- und
