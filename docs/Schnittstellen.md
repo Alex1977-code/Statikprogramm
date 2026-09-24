@@ -1177,7 +1177,7 @@ Nachweiseinstellungen (`ermuedung_lastspiele`, Nachweise → Konfiguration;
 daneben `ermuedung_kontakt_einfrieren`, Vorgabe ein: in Kontaktmodellen wird
 nur der erste Zustand jeder Ermüdungslast nichtlinear gelöst, die weiteren
 linear mit seinem eingefrorenen Kontaktzustand),
-je Last im Dialog Ermüdungslast überschreibbar. Das Protokoll nennt ihren
+je Last in der Maske Ermüdungslasten überschreibbar. Das Protokoll nennt ihren
 Wert ausgeschrieben („globale Lastspielzahl (2000000, …)“); bis zum
 23.09.2026 stand dort „2e+06“. Enthält die Zustandsmenge
 einer Kombination die einer anderen mit mindestens zwei Zuständen

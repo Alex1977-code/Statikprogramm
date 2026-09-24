@@ -3394,7 +3394,71 @@ kollineare Elemente gleichen Querschnitts). Je Stab:
   Drillknicken, Biegedrillknicken (L_LT, kz, kw, C1 automatisch aus dem
   Momentenverlauf, Lastangriff oben/unten), Interaktion Gl. 6.61/6.62,
 * Ermüdung: Kerbfall wählen (Δσc mit Beispielen aus den Tabellen 8.1–8.5),
-  Schadensfolge/Konzept für γMf; Ermüdungslasten im Register Lastfälle.
+  Schadensfolge/Konzept für γMf; Ermüdungslasten in der Maske
+  **Ermüdungslasten (Lastkollektiv)**, siehe unten.
+
+**Maske Ermüdungslasten (Lastkollektiv).** Lasten → Lastfälle →
+„Ermüdungslasten…“, im Modellbaum der Knoten *Ermüdungslasten* unter
+Einwirkungen (Klick auf einen Eintrag öffnet die Maske mit dieser Zeile,
+Rechtsklick: Neu, Löschen) oder im Register Lastfälle „Neu…“ bzw. ein
+Doppelklick auf eine Zeile. Die Maske steht rechts und bleibt offen, während
+man im Modell weiterarbeitet.
+
+* **Kopfzeile:** „Schadenssumme linear nach Palmgren-Miner (EN 1993-1-9,
+  Anhang A): D = Σ nᵢ / Nᵢ über alle Zeilen und Stufen am selben Ort; Nachweis
+  D ≤ 1.“ Hier steht Palmgren-Miner: jede Zeile der Tabelle ist ein Beitrag
+  zum Kollektiv, und das Programm summiert alle Zeilen an jedem Ort.
+* **Tabelle** mit einer Zeile je Ermüdungslast: Name, Art („zwei Zustände“
+  oder „Verlauf“), oberer Zustand bzw. Verlauf, unterer Zustand
+  („Nullzustand“, wenn leer), Lastspiele n, Zählverfahren und
+  Schwingbeiwert. Die Lastspiele stehen ausgeschrieben („2 000 000“, bei der
+  globalen Zahl „global (2 000 000)“), nie als „2e+06“.
+* **„Zeile je Lastfall…“** öffnet in der Maske eine Liste der Lastfälle und
+  Kombinationen (ohne oder-verknüpfte). Je angehaktem Eintrag entsteht eine
+  Zeile „Lastfall gegen Nullzustand, n = global“; danach trägt man je Zeile
+  die eigene Lastspielzahl ein. So bekommt **jeder Lastfall seine
+  Lastspielzahl**. Gibt es für einen Lastfall schon eine Zeile gegen den
+  Nullzustand, entsteht keine zweite, weil sie seine Schädigung doppelt
+  zählen würde. Die Meldung nennt die vorhandene Zeile.
+* **„Neue Zeile“**, **„Zeile löschen“**, **↑ / ↓**: die Pfeile ordnen nur die
+  Anzeige, die Summe hängt nicht an der Reihenfolge.
+
+Unter der Tabelle wird die **gewählte Zeile** bearbeitet: Name, Art („Zwei
+Zustände (Spannungsschwingbreite zwischen oberem und unterem Zustand)“ oder
+„Zeitverlauf (Folge von Lastfällen, gezählt)“), bei zwei Zuständen oberer
+und unterer Zustand („Nullzustand“ steht zuerst). Einen **Verlauf** stellt
+man grafisch zusammen: links die verfügbaren Zustände, rechts der Verlauf,
+dazwischen „anfügen →“ (auch Doppelklick links), „← entfernen“ (auch
+Doppelklick rechts), ↑ und ↓. Darunter steht derselbe Verlauf als
+Komma-Liste. Beide sind gekoppelt: was man in der Liste ändert, steht sofort
+im Textfeld, und was man tippt, steht sofort in der Liste. Unbekannte Namen
+und oder-verknüpfte Kombinationen werden rot markiert und darunter genannt.
+Das Feld für n heißt beim Verlauf „Durchläufe des Verlaufs“; der Haken
+„globale Lastspielzahl (n = … aus Nachweise → Konfiguration)“ nennt die
+geltende Zahl. Eingaben wie „2 000 000“, „2000000“ oder „2e6“ gelten gleich.
+Der „Schwingbeiwert / dynamischer Faktor“ (früher „Faktor“) multipliziert
+die Schwingbreite dieser Zeile.
+
+**„Übernehmen“** schreibt die Zeile ins Modell, rückgängig zu machen wie jede
+Änderung. Vorher prüft die Maske und schreibt bei einem Fehler nichts. Die
+Meldung steht rot in der Maske:
+
+* Name leer, oder ein Name, den schon eine andere Zeile trägt. Der alte
+  Dialog überschrieb eine gleichnamige Last bis zum 24.09.2026 still.
+* Zwei Zustände ohne oberen Zustand, oder ein Zustand, der kein Lastfall
+  bzw. keine Kombination ist oder eine oder-verknüpfte Kombination.
+* Ein Verlauf mit weniger als zwei Gliedern, mit einem unbekannten Glied oder
+  mit einer oder-verknüpften Kombination.
+* n ≤ 0 oder Schwingbeiwert ≤ 0. Wer eine Last abschalten will, löscht die
+  Zeile; die 0 Wiederholungen der Sammlungen aus dem RFEM-Import zeigt die
+  Tabelle als „0 (unwirksam)“.
+
+Beim Umbenennen einer Zeile nennen die Anschlüsse, die sie in ihrer Liste
+der Ermüdungslasten führen, sie beim neuen Namen; sonst fiele sie dort still
+aus dem Nachweis. Beim Verlauf speichert die Maske n nur als Durchläufe. Der
+Dialog schrieb es bis zum 24.09.2026 zusätzlich in die Lastspiele zweier
+Zustände, die beim Verlauf niemand liest. Geprüft in
+`tests/test_ermuedungsmaske.py`.
 
 **Eine Ermüdungslast beschreibt entweder zwei Zustände oder einen Verlauf.**
 Ein Zustand darf ein Lastfall **oder eine Kombination** sein — die
@@ -3404,14 +3468,19 @@ als „Lastfall unbekannt“ ab; am CBG-Trolley 20 Meldungen).
 *Zwei Zustände*: der Lastwechsel pendelt zwischen oben und unten, mit einer
 Lastspielzahl — das reicht, solange es wirklich nur zwei Zustände gibt.
 *Verlauf*: eine **Folge von Lastfällen** (oder Kombinationen) und die Zahl
-der Wiederholungen. Das **Zählverfahren** bestimmt, was aus dem Verlauf wird:
+der Wiederholungen. Das **Zählverfahren** bestimmt, was aus dem Verlauf wird.
+Maske und Bericht nennen es im Klartext; gespeichert wird weiter der kurze
+Wert in Klammern:
 
-* **spanne** (Vorgabe): eine Stufe mit der Schwingbreite Maximum minus
+* **Größte Spanne je Durchlauf (ein Spiel: Maximum − Minimum)** („spanne“,
+  Vorgabe): eine Stufe mit der Schwingbreite Maximum minus
   Minimum über alle Zustände, ein Spiel je Wiederholung — so bildet RFEM die
   Ermüdungsschwingbreite einer Ergebniskombination, und so kommen die
   Ermüdungslasten aus dem RFEM-Import. Die Reihenfolge der Zustände spielt
   keine Rolle; bei zwei Zuständen ist es dasselbe wie „zwei Zustände".
-* **rainflow** / **reservoir** (EN 1993-1-9, Anhang A): für eine echte
+* **Rainflow-Zählung (Rinnenzählung, EN 1993-1-9 Anhang A)** („rainflow“) und
+  **Reservoir-Zählung (Speicherverfahren, EN 1993-1-9 Anhang A)**
+  („reservoir“): für eine echte
   Zeitfolge (Überfahrt, Öffnungsvorgang, Betriebszyklus). Die Zwischenstufen
   tragen eigene, kleinere Spiele bei, und die zählen mit. Lassen Sie den
   Verlauf am größten Wert beginnen und enden — dann liefern beide dasselbe
@@ -3424,7 +3493,7 @@ Die Schadensakkumulation ist immer Palmgren-Miner über alle Lasten am Ort.
 **Keine oder-verknüpfte Ergebniskombination als Zustand.** Eine Kombination
 mit Alternativen (so kommen die FAT-Kombinationen aus RFEM herein) wird nur
 als Umhüllende gerechnet und hat kein Einzelergebnis, aus dem sich σ_max oder
-σ_min lesen ließe. Die Maske der Ermüdungslast bietet sie darum nicht mehr als
+σ_min lesen ließe. Die Maske Ermüdungslasten bietet sie darum nicht mehr als
 oberen oder unteren Zustand an, und die Modellprüfung meldet sie vor der
 Rechnung als FEHLER („Zustand '…' ist eine oder-verknüpfte
 Ergebniskombination“). Nennt der Verlauf eine, weist die Maske ihn schon bei
@@ -3440,7 +3509,7 @@ dieser Lastfall inzwischen gelöscht ist (vorher kam dafür „FEHLER: …
 unbekannt“).
 
 **Maske im Modus Verlauf.** Die Maske übernimmt dann nur die Folge; oberer
-und unterer Zustand bleiben leer. Bis zum 23.09.2026 kam der erste Eintrag der
+und unterer Zustand bleiben leer (auch in der Maske Ermüdungslasten). Bis zum 23.09.2026 kam der erste Eintrag der
 gesperrten Auswahl „Oberer Zustand“ mit (im Hallenrahmen „Kran“), und der
 Anschlussnachweis rechnete mit ihm. Ein Verlauf braucht mindestens zwei
 Lastfälle; ein leeres Verlaufsfeld weist die Maske ab. Vorher legte sie
@@ -3581,11 +3650,14 @@ schnelle Weg ohne Faktorisierung. Wie viele der eingefrorenen Zustände am
 Drehlager nachgerechnet werden müssen, ist noch nicht gemessen.
 
 **Lastspielzahl.** Die Lastspiele bzw. Wiederholungen jeder Ermüdungslast
-sind entweder eigene Werte oder — Haken „globale Lastspielzahl" im Dialog —
+sind entweder eigene Werte oder — Haken „globale Lastspielzahl“ in der
+Maske Ermüdungslasten —
 die **globale Lastspielzahl** aus Nachweise → Konfiguration (Vorgabe 2·10⁶;
 dort steht auch der Bezugszeitraum in Jahren für die Lebensdauer). So wird
-die Zahl einmal für alle Lasten gesetzt und je Nachweis überschrieben; die
-Tabelle Ermüdungslasten zeigt „global", wo die globale gilt. 0
+die Zahl einmal für alle Lasten gesetzt und je Zeile überschrieben: die
+eigene Zahl einer Zeile **ersetzt** die globale, sie kommt nicht dazu. Die
+Tabelle der Maske und das Register Lastfälle zeigen „global (2 000 000)“, wo
+die globale gilt, sonst die eigene Zahl ausgeschrieben. 0
 Wiederholungen heißt: die Last ist unwirksam — so bleiben die Sammlungen aus
 dem RFEM-Import stehen, ohne doppelt zu zählen.
 
@@ -4052,7 +4124,8 @@ aufsummiert. Wichtig: eine nicht vorgespannte Schraube bekommt die volle
 
 Gezählt wird wie beim Stab: bei *zwei Zuständen* die Differenz oben minus
 unten mit der Lastspielzahl, bei einem *Verlauf* das Kollektiv nach dem
-Zählverfahren der Last (spanne, rainflow, reservoir) mal die Wiederholungen.
+Zählverfahren der Last (größte Spanne, Rainflow, Reservoir) mal die
+Wiederholungen.
 „Globale Lastspielzahl“ gilt auch am Anschluss, und die Schwingbreite geht
 mit dem Faktor der Last und mit γ_Ff (Nachweise → Konfiguration) ein. Fehlt
 das Ergebnis des oberen oder des unteren Zustands, rechnet das Programm die
