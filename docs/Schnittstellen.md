@@ -762,7 +762,13 @@ verschwanden besonders leise, weil sie schon beim Auflösen der Umsetzung
 wegfielen, bevor die Leseschleife sie sah; gezählt wird deshalb gegen die
 Zahl der Rohzeilen. Vorher nannte das Protokoll bei Linien- und Volumenlasten
 je eine Zeile, bei den Flächen aber nichts — der Anwender durfte daraus
-schließen, dort sei nichts weggefallen.
+schließen, dort sei nichts weggefallen. Eine Flächenlast, deren Lastfall sich
+nicht auflösen lässt (der Lastfall fehlt in der Datei oder ist keiner, den der
+Import liest), hat seit 23.09.2026 eine eigene Warnung „k Flaechenlasten ohne
+aufloesbaren Lastfall“, wie bei den Stablasten. Vorher zählte der Leser sie
+nicht, und der Abgleich meldete sie mit dem falschen Grund „die Datei führt
+ihre Umsetzungstabelle nicht“ (gemessen an zwei Flächenlasten, eine davon am
+Lastfall 99, den es nicht gibt).
 
 **Die Stablasten zählen sich ab** (seit 22.09.2026). Jede Zeile der Tabelle
 `MemberLoad` hat genau einen gezählten Ausgang — übernommen (Gleichlast,
@@ -772,13 +778,28 @@ die Summe wird gegen die Zahl der Rohzeilen abgeglichen; was dabei fehlt,
 meldet die Warnung „k von n Stablasten waren nicht zu lesen“. Gezählt wird
 **je Lastzeile**, nicht je Stab: eine Gleichlast auf zwei Stäben ist eine
 Stablast („(2 Stabzuordnungen)“), eine Vorspannung auf drei Stäben eine
-Stabvorspannung („auf 3 Staebe“). Vorher zählte die Gleichlast je Stab und
+Stabvorspannung („auf 3 verschiedene Staebe“). Vorher zählte die Gleichlast je Stab und
 die Vorspannung je Stabelement, und zwei Wege fehlten ganz: eine Stablast,
 deren Umsetzungstabelle die Datei nicht führt, und eine ohne auflösbaren
 Lastfall. An vier Zeilen (Gleichlast, Einzellast, Temperatur, fehlende
 Umsetzung) nannte das Protokoll 3. Am CBG-Trolley geht die Abzählung auf:
 198 Zeilen = 62 Gleichlasten (944 Stabzuordnungen) + 136 nicht übernommen
 (129× Verteilung 2, 7× Verteilung 7).
+
+**Stablasten auf Stäben, die das Modell nicht führt** (seit 23.09.2026).
+Nennt eine Gleichlast mehrere Stäbe und fehlt einer davon im Modell — seine
+Linie hat keine Knoten, sein Stabtyp trägt nicht (Ergebnisstab,
+Bemessungsstreifen, Lastverteilungsstab, Flächenmodell) oder die Datei führt
+ihn gar nicht —, kommt die Last auf den übrigen Stäben an, und die Warnung
+„dabei k Stabzuordnungen auf Staeben, die das Modell nicht fuehrt (Stab …) -
+dieser Anteil der Last fehlt“ nennt den fehlenden Anteil mit den
+RFEM-Stabnummern. Vorher fiel er wortlos weg, und die Lastzeile zählte als
+übernommen; die Abzählung gegen die Rohzeilen fängt das nicht, weil sie
+Lastzeilen zählt. Gemessen an zwei Gleichlasten auf den Stäben [1, 2] und
+[1, 77] mit Stab 2 als Ergebnisstab: das Protokoll sagte nur „2 Stablasten
+(Gleichlast) an ihre Staebe gehaengt“, jetzt steht dazu „2
+Stabzuordnungen … (Stab 2, 77)“. Fehlen einer Lastzeile alle Stäbe, zählt sie
+wie bisher unter „ohne Ziel oder ohne Betrag“.
 
 **Einwirkungskategorie.** `ACTION_CATEGORY` führt nur wenige Kennzahlen;
 alles Übrige wurde still zu „Q" (veränderlich, allgemein, ψ₀ = 0,80), und das
@@ -834,7 +855,18 @@ Am voll behinderten Stab kommt damit genau N₀ heraus; im statisch
 unbestimmten System verteilt die Rechnung die Kraft richtig um. So kommt die
 Vorspannung an, ohne dass das Programm eine eigene Vorspannlast bräuchte —
 und das Protokoll sagt es, damit niemand die Temperaturlast für ein Versehen
-hält.
+hält. Die Zeile nennt die Zahl der Lastfälle, die **verschiedenen** Stäbe,
+N₀ je Stab und die Summe der Vorspannkräfte **je Lastfall** — am Drehlager
+(gemessen 23.09.2026):
+
+    422 Stabvorspannungen als gleichwertige Temperaturlast uebernommen
+      (dT = -N_0/(E*A*alpha)) - in 422 Lastfaellen auf 16 verschiedene Staebe,
+      N_0 805 bis 952 kN je Stab, je Lastfall zusammen 12880 bis 15232 kN
+
+Bis zum 23.09.2026 stand dort „auf 6752 Staebe, zusammen 5738768 kN, im
+Mittel 850 kN je Stab“: gezählt waren die Stabzuordnungen aller Lastzeilen
+(6752 = 422 × 16) und summiert N₀ über alle 422 Lastfälle, von denen jeder
+seine eigene Vorspannung trägt — eine Zahl ohne Bedeutung.
 
 ### Strukturmodifikation: das Ausfallszenario
 
@@ -981,7 +1013,9 @@ Nachweiseinstellungen (`ermuedung_lastspiele`, Nachweise → Konfiguration;
 daneben `ermuedung_kontakt_einfrieren`, Vorgabe ein: in Kontaktmodellen wird
 nur der erste Zustand jeder Ermüdungslast nichtlinear gelöst, die weiteren
 linear mit seinem eingefrorenen Kontaktzustand),
-je Last im Dialog Ermüdungslast überschreibbar. Enthält die Zustandsmenge
+je Last im Dialog Ermüdungslast überschreibbar. Das Protokoll nennt ihren
+Wert ausgeschrieben („globale Lastspielzahl (2000000, …)“); bis zum
+23.09.2026 stand dort „2e+06“. Enthält die Zustandsmenge
 einer Kombination die einer anderen mit mindestens zwei Zuständen
 vollständig, ist sie eine **Sammlung** von Ereignissen und bekommt 0
 Wiederholungen (unwirksam), damit nichts doppelt zählt; ein einzelner
