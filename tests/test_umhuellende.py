@@ -610,11 +610,17 @@ def test_lastfall_hoeherer_ordnung_ohne_abgelegtes_ergebnis():
 def test_alternative_bei_theorie_I_aus_linearen_lastfaellen():
     """Eine Alternative einer EK nach II. Ordnung, die bei I. Ordnung bleibt
     (theorie2 "auto", alpha_cr >= 10), ist die Ueberlagerung der LINEAREN
-    Lastfaelle - wie die gewoehnliche Kombination. Vorher faltete solve_all
-    die EK erst nach _lastfaelle_hoeherer_ordnung: mit LF2 auf theorie "II"
-    kam ein Gemisch heraus (1,35·LF1 linear + 1,5·LF2 nach II. Ordnung),
-    wurde abgelegt und nachgewiesen - gemessen 23.09.2026 an diesem Modell
-    EK1 [2] 3,374407 statt 3,320749 mm, EK1 [3] 1,562553 statt 1,526781 mm."""
+    Lastfaelle - wie die gewoehnliche Kombination. In der ersten Fassung der
+    Kur (fb59de1 und 9337a3c, nur auf dem Zweig) faltete solve_all die EK
+    nach II./III. Ordnung erst nach _lastfaelle_hoeherer_ordnung aus
+    an.cases: mit LF2 auf theorie "II" kam ein Gemisch heraus (1,35·LF1
+    linear + 1,5·LF2 nach II. Ordnung), wurde abgelegt und nachgewiesen -
+    gemessen 23.09.2026 an diesem Modell EK1 [2] 3,374407 statt 3,320749 mm,
+    EK1 [3] 1,562553 statt 1,526781 mm. Am Stand bis 22.09.2026 (54b6f9a)
+    faltete solve_all die EK vor _lastfaelle_hoeherer_ordnung aus den
+    linearen Lastfaellen (Umhuellende 3,320749 mm wie K2); die Alternativen
+    wurden weder abgelegt noch einzeln nachgewiesen (_uls_results nur K2
+    3,320749 und K3 1,526781 mm, gemessen 23.09.2026)."""
     from statik3d.ec3.design import _uls_results
     from statik3d.solver import Results
     m, ids = _druckkragarm("auto", druck=5.0e4)
@@ -693,9 +699,13 @@ def test_stellungsreihe_ohne_kombinationen():
 
 def test_keine_warnung_ohne_verlangten_nachweis():
     """Verlangt kein Stab (Bereich, Beulfeld, Anschluss) einen Nachweis, darf
-    keine fehlende GZT-Kombination gemeldet werden. Vorher kippte ein Modell
-    nur mit GZG-Kombinationen und Staeben ohne Nachweis im Gesamturteil von
-    'Alle Nachweise erfüllt.' auf 'nicht geführt: EC3 (1 Warnung)'."""
+    keine fehlende GZT-Kombination gemeldet werden. In der ersten Fassung
+    der Kur (fb59de1, nur auf dem Zweig) kippte ein Modell nur mit
+    GZG-Kombinationen und Staeben ohne Nachweis im Gesamturteil von 'Alle
+    Nachweise erfüllt.' auf 'nicht geführt: EC3 (1 Warnung)'. Am Stand bis
+    22.09.2026 (54b6f9a) meldeten die Stabnachweise keine fehlenden
+    Kombinationen, der Bericht sagte 'Alle Nachweise erfüllt.'; ebenso an
+    9337a3c und ec6448c (gemessen 23.09.2026 an diesem Kragarm)."""
     from statik3d.report import Report
     from statik3d.ec3.volumen import check_volumen
     from statik3d.ec3.beulen import check_beulen, check_lasteinleitungen
