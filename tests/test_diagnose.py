@@ -2585,10 +2585,10 @@ def test_abnahme_luecke_im_netzrand():
     # dem Vernetzer vom 23.09.2026 hat das L-Prisma h 0,25 keine Luecke
     # mehr; geprueft wird am Text der von Hand erzeugten Luecke, der
     # dieselbe Abhilfe traegt.
-    check("  die Abhilfe Sweep sagt, dass er ab Werk aus ist, warum, und dass danach die "
-          "Abnahme zu lesen ist",
-          "sweepen" in text and "ab Werk aus" in text and "entartete Keile" in text
-          and "Abnahme lesen" in text,
+    # Seit 25.09.2026 gibt es die Option „Sechsflaechner sweepen“ in der
+    # Oberflaeche nicht mehr - die Meldung darf sie nicht mehr empfehlen
+    check("  die Abhilfe nennt gmsh/Netgen und nicht mehr den Sweep",
+          "gmsh" in text and "Netgen" in text and "sweepen" not in text,
           text[-520:])
 
     # Nebenbefunde B050/B051 (22./23.09.2026): ein flacher Tetraeder im
@@ -4494,8 +4494,8 @@ def test_abnahme_netzrand_verfehlt_randflaeche():
           and "Netzrand verfehlt die Randfläche" in text
           and "verdrehtes Element" not in text and "hängende Knoten" not in text,
           f"{typen}: {_kurz(bef)} | {text[text.find('Gefunden'):][:220]}")
-    check("  und einer Abhilfe für eigene Netze: Sechsflächner sweepen",
-          "sweepen" in text and "U-Prisma" in text, text[-420:])
+    check("  und einer Abhilfe für eigene Netze (seit 25.09.2026 ohne Sweep: anderer Vernetzer)",
+          "gmsh" in text and "sweepen" not in text, text[-420:])
     check("  gemessen: mit Sweep ohne Befund",
           typen_s == {"hex8": 32, "pent6": 16} and not bef_s, f"{typen_s}: {_kurz(bef_s)}")
     # Gegenprobe: am verdrehten Element steht diese Abhilfe nicht
@@ -4796,7 +4796,7 @@ def test_abnahme_durchtrennter_koerper_heisst_doppelt():
     sn = [b for b in bef if b.pruefung == "Seiten im Inneren"]
     check("  Gegenprobe: Stufe d 0,45 mm, t 0,02 m, frei vernetzt - FEHLER 5, Netzrand verfehlt die Randfläche",
           len(sn) == 1 and sn[0].wert == 5.0 and "Netzrand verfehlt die Randfläche" in gef
-          and "doppelte Knoten (" not in gef and "sweepen" in sn[0].text,
+          and "doppelte Knoten (" not in gef and "gmsh" in sn[0].text and "sweepen" not in sn[0].text,
           f"{len(k.elemente)} tet4: " + _kurz(bef) + " | " + gef[:120])
 
 

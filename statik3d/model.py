@@ -5790,6 +5790,10 @@ class Model:
         m.bericht = [_dc(Berichtseintrag, x) for x in d.get("bericht", [])]
         if "netz" in d:
             m.netz = _dc(Netzeinstellungen, d["netz"])
+            # „Sechsflaechner sweepen“ ist seit 25.09.2026 keine Option der
+            # Oberflaeche mehr (verzerrte hex8 und flache Keile am Drehlager, LF1
+            # nicht konvergiert); eine aeltere Datei mit „an“ vernetzt wieder frei
+            m.netz.sweep = False
         if "design" in d:
             m.design = _dc(DesignSettings, d["design"])
         if "plastizitaet" in d:
