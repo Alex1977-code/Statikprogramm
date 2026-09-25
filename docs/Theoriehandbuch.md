@@ -5968,6 +5968,22 @@ vor der die Statik3D-Sitzung in ihrem Vertrag gewarnt hat. Der Quaderpfad verlan
 zusätzlich, dass **alle zwölf Kanten gerade** sind (`mesher._gerade_kanten`); krumme gehen
 an den Sweep, und das Protokoll sagt es.
 
+**Ein zweiter stiller Fehler desselben Pfads, quadratisch (25.09.2026).** Mit `ordnung = 2`
+bekommt der abgebildete Quader Hexaeder mit 20 Knoten; die Kantenmitten merkt sich der
+Vernetzer im gemeinsamen Zwischenspeicher unter dem Knotenpaar, damit der Nachbar an einer
+gemeinsamen Fläche dieselben trifft (wie beim `tet10`, Abschnitt oben). Der Aufruf reichte
+den Zwischenspeicher aber als `(cache or {})` weiter — ein noch **leerer** Zwischenspeicher,
+wie ihn `modell_vernetzen` anlegt, zählt in Python als falsch, und der erste Körper schrieb
+seine Kantenmitten in ein Wegwerf-Dict. Jede Kantenmitte der gemeinsamen Fläche gab es
+darum zweimal, die Körper hingen dort nur an den Ecken zusammen. Gemessen (Prüfmatrix,
+Kragarm 1,0 × 0,1 × 0,2 m aus zwei Körpern, 4 × 4 Felder je Fläche): 40 Orte mit zwei
+Knoten, σ_v an der Nachweisstelle **+610 N/mm²** neben der Balkenlösung; aus einem Körper
+oder mit geteilten Mitten +0,01 N/mm². Hülle, Randtreue und Formgüte meldeten nichts, nur
+die Zählung doppelter Knoten in der Abnahme. `test_sweep.test_quader_hex20_gemeinsame_flaeche`
+vernetzt zwei Einheitswürfel mit gemeinsamer Fläche über `modell_vernetzen` und verlangt
+0 doppelte Knoten und genau 65 Knoten auf der Fläche (25 Ecken, 40 Mitten); vor der
+Berichtigung waren es 40 Paare und 105 Knoten.
+
 **Woran die Erkennung sonst scheitert, sagt sie jetzt selbst** (`erkennen_warum_nicht`,
 eine Zeile je Körper im Protokoll): zu wenige Randflächen, keine zwei ebenen Kappen,
 Kappen ohne gemeinsamen Weg, „decken sich weder verschoben (x mm daneben) noch skaliert
