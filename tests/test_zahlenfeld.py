@@ -876,12 +876,317 @@ def test_bemerkung_mit_vernetzen():
           f.kommentar == "Deckblech" and bool(f.elemente), f"{f.kommentar!r} {len(f.elemente or [])} Elemente")
 
 
+# --------------------------------------------------------------------------
+# Nachkontrolle 25.09.2026: Verlassen mit Tab, Textfelder mit Zahlen,
+# Anzeige nie wissenschaftlich
+# --------------------------------------------------------------------------
+def _rot(feld) -> bool:
+    return "#c0392b" in feld.styleSheet()
+
+
+def _tippen(feld, text):
+    from PySide6 import QtCore, QtTest
+    feld.setFocus()
+    feld.selectAll()
+    QtTest.QTest.keyClick(feld, QtCore.Qt.Key_Delete)
+    QtTest.QTest.keyClicks(feld, text)
+    _app().processEvents()
+
+
+def _tab(feld):
+    """Das Feld mit einer echten Tab-Taste verlassen (kein editingFinished.emit:
+    Qt sendet es beim Fokusverlust nur bei annehmbarer Eingabe)."""
+    from PySide6 import QtCore, QtTest
+    QtTest.QTest.keyClick(feld, QtCore.Qt.Key_Tab)
+    _app().processEvents()
+
+
+def test_verlassen_mit_tab():
+    """Ein unfertiger Rest („12 5“, „-“, „1e“) wird beim Verlassen rot und
+    gemeldet - auch mit Tab (bis 25.09.2026 blieb er neutral, der Knopf war
+    ohne Meldung gesperrt)."""
+    from PySide6 import QtWidgets
+    app = _app()
+    mk, _g = _maske()
+    mk.activateWindow()
+    app.processEvents()
+    e = mk._felder["x"]
+    for eingabe in ("12 5", "-", "1e"):
+        _tippen(e, eingabe)
+        neutral = not _rot(e) and mk.lbl_zahlmeldung.isHidden()
+        _tab(e)
+        check(f"Maske: „{eingabe}“ getippt neutral, Tab: Fokus weg, roter Rahmen, Meldungszeile",
+              neutral and not e.hasFocus() and _rot(e) and not mk.lbl_zahlmeldung.isHidden()
+              and bool(mk.lbl_zahlmeldung.text()) and not mk.btn_anwenden.isEnabled(),
+              f"neutral {neutral} Fokus {e.hasFocus()} rot {_rot(e)} "
+              f"Meldung {mk.lbl_zahlmeldung.text()[:50]!r}")
+    _tippen(e, "2,5")
+    _tab(e)
+    check("… danach „2,5“ + Tab: gültig, frei, kein Rot", not _rot(e) and mk.btn_anwenden.isEnabled())
+    mk.hide()
+
+    from statik3d.gui import dialogs as dg
+    d = dg.MaterialDialog(None)
+    d.show()
+    d.activateWindow()
+    app.processEvents()
+    ok = d.findChild(QtWidgets.QDialogButtonBox).button(QtWidgets.QDialogButtonBox.Ok)
+    _tippen(d.E, "12 5")
+    _tab(d.E)
+    check("Werkstoffdialog: „12 5“ + Tab: rot, Meldungszeile über OK, OK gesperrt",
+          _rot(d.E) and not d.lbl_zahlmeldung.isHidden() and "Leerzeichen" in d.lbl_zahlmeldung.text()
+          and not ok.isEnabled(), d.lbl_zahlmeldung.text())
+    d.reject()
+    d.deleteLater()
+
+    w, app = _fenster()
+    w.load_example("frame")
+    w.activateWindow()
+    app.processEvents()
+    w.sel[0].setText("1")
+    w.sel[1].setText("1")
+    w.do_select()
+    w.statusBar().clearMessage()
+    _tippen(w.ld[2], "-")
+    _tab(w.ld[2])
+    check("Register Lasten: „-“ + Tab: rot, Statusleiste nennt den Grund",
+          _rot(w.ld[2]) and "keine Zahl" in w.statusBar().currentMessage(),
+          w.statusBar().currentMessage()[:60])
+    _tippen(w.ld[2], "0")
+    _tab(w.ld[2])
+
+
+def test_textfelder_zahlenregel():
+    """Felder, die bis 25.09.2026 als Text mit float(text.replace(',', '.'))
+    gelesen wurden, nahmen „1.000“ still als 1 (Werkstoffmaske f_y: 1 N/mm²).
+    Jetzt Zahlenfelder bzw. dieselbe Regel: „1.000“ fragt nach oder wird
+    abgewiesen."""
+    from PySide6 import QtWidgets
+    from statik3d import zahlen as zl
+    from statik3d.gui import zahlenfeld as zf
+    w, app = _fenster()
+    fehler = []
+    alt_error = w.error
+    w.error = lambda text, *a, **k: (fehler.append(str(text)), w.info("FEHLER " + str(text)))
+
+    # die Regel fuer Werte aus Masken, Listen und Zellen
+    fw = getattr(zl, "feldwert", None)
+    check("zahlen.feldwert: „1.000“ abgewiesen, „1 000“ = 1000, 2.5 bleibt, leer = Vorgabe",
+          callable(fw) and _wirft(fw, "1.000") and fw("1 000") == 1000.0 and fw(2.5) == 2.5
+          and fw("", 7.0) == 7.0 and fw(None) is None and _wirft(fw, "2.000.000"))
+    liste = getattr(zl, "zahlenliste", None)
+    check("zahlen.zahlenliste: „1,5, 2“ = [1,5; 2], „1.000, 0“ abgewiesen",
+          callable(liste) and liste("1,5, 2") == [1.5, 2.0] and _wirft(liste, "1.000, 0")
+          and liste("") == [])
+
+    # Werkstoffmaske f_y / f_u (gemessen 25.09.: „1.000“ -> 1 N/mm²)
+    w.new_model()
+    app.processEvents()
+    name = next(iter(w.model.materials))
+    fy_vorher = w.model.materials[name].fy
+    mk = w._objektmaske("werkstoff", name) or w.maskenrand.maske
+    for key in ("fy", "fu"):
+        check(f"Werkstoffmaske {key}: Zahlenfeld", isinstance(mk._felder.get(key), zf.Zahlenfeld),
+              type(mk._felder.get(key)).__name__)
+    if isinstance(mk._felder.get("fy"), zf.Zahlenfeld):
+        mk._felder["fy"].setText("1.000")
+        mk.anwenden()
+        app.processEvents()
+        mt = w.model.materials.get(name)
+        check("… f_y „1.000“ + Übernehmen: nichts geschrieben, Meldung „gemeint 1 000?“",
+              mt is not None and mt.fy == fy_vorher and "gemeint 1 000" in mk.lbl_zahlmeldung.text(),
+              f"fy {getattr(mt, 'fy', None)} {mk.lbl_zahlmeldung.text()[:40]!r}")
+        mk._felder["fy"].setText("")
+        mk._felder["fu"].setText("")
+        mk.anwenden()
+        app.processEvents()
+        mt = w.model.materials.get(name)
+        check("… leer bleibt „aus der Stahlsorte“ (None), nicht 0",
+              mt is not None and mt.fy is None and mt.fu is None,
+              f"{getattr(mt, 'fy', '-')} {getattr(mt, 'fu', '-')}")
+        mk = w.maskenrand.maske
+        mk._felder["fy"].setText("355")
+        mk.anwenden()
+        app.processEvents()
+        check("… „355“ = 355 N/mm²", w.model.materials[name].fy == 355e6, str(w.model.materials[name].fy))
+
+    # die uebrigen Masken: Feld ist ein Zahlenfeld, „1.000“ fragt nach
+    from statik3d.wasserdruck import Wasserdruck
+    w.load_example("frame")
+    app.processEvents()
+    m = w.model
+    m.add_kontaktbedingung("Fuge T")
+    m.wasserdruecke["WT"] = Wasserdruck("WT")
+    faelle = [("Bemaßung", lambda: w.bemassung_neu("linear"), ("versatz", "nachkomma")),
+              ("Schweißnaht", lambda: w.maske_schweissnaht(), ("kf_vorgabe",)),
+              ("Netz", lambda: w.maske_netzeinstellungen(), ("h_min", "h_max")),
+              ("Passung", lambda: w.maske_passung(), ("mu",)),
+              ("Wasserdruck", lambda: w.maske_wasserdruck(), ("h_uw", "z_sohle", "z_uk", "z_ok", "breite")),
+              ("Wind", lambda: w.maske_wind(), ("z_schnitt", "z_boden", "cf")),
+              ("Schwingung", lambda: w.maske_schwingung(), ("d_kante",))]
+    for titel, oeffnen, keys in faelle:
+        try:
+            oeffnen()
+            app.processEvents()
+            mk = w.maskenrand.maske
+            felder = {k: (mk._felder.get(k) if mk is not None else None) for k in keys}
+        except Exception as ex:          # noqa: BLE001
+            check(f"{titel}: Maske öffnet", False, repr(ex))
+            continue
+        art = {k: type(f).__name__ for k, f in felder.items()}
+        gut = all(isinstance(f, zf.Zahlenfeld) for f in felder.values())
+        frage = []
+        if gut:
+            for k, f in felder.items():
+                f.setText("1.000")
+                frage.append(f.offene_frage() or f.ungueltig())
+                f.setText("")
+        check(f"{titel}: {', '.join(keys)} sind Zahlenfelder, „1.000“ fragt nach",
+              gut and all(frage), str(art))
+
+    # Stab-Versatz (Liste y, z): „1.000, 0“ wird abgewiesen, nicht 1 mm
+    e0 = 0
+    ex_vorher = list(getattr(m.elements[e0], "exzentrizitaet", []) or [])
+    mk = w._objektmaske("stabelement", str(e0)) or w.maskenrand.maske
+    fehler.clear()
+    if mk is not None and "ex_a" in mk._felder:
+        mk.setzen("ex_a", "1.000, 0")
+        mk.anwenden()
+        app.processEvents()
+        check("Stab-Versatz „1.000, 0“: abgewiesen mit Meldung, Versatz unverändert",
+              list(getattr(m.elements[e0], "exzentrizitaet", []) or []) == ex_vorher
+              and any("1.000" in t for t in fehler), f"{m.elements[e0].exzentrizitaet} {fehler[-1:]}")
+        mk = w._objektmaske("stabelement", str(e0)) or w.maskenrand.maske
+        mk.setzen("ex_a", "12,5, 0")
+        mk.anwenden()
+        app.processEvents()
+        ex = getattr(m.elements[e0], "exzentrizitaet", []) or []
+        check("… „12,5, 0“ = 12,5 mm in y", bool(ex) and abs(ex[0][1] - 0.0125) < 1e-12, str(ex))
+    else:
+        check("Stab-Versatz: Maske mit ex_a", False)
+    check("Liste Achse/Gewichte (_zahlenliste): „1.000, 0, 0“ abgewiesen, „0,5, 1“ gelesen",
+          _wirft(lambda: w._zahlenliste("1.000, 0, 0", zahl=float))
+          and w._zahlenliste("0,5, 1", zahl=float) == [0.5, 1.0])
+
+    # ψ eines Lastfalls
+    lf = next(iter(m.load_cases))
+    psi_vorher = m.load_cases[lf].psi
+    mk = w._objektmaske("lastfall", lf) or w.maskenrand.maske
+    fehler.clear()
+    mk.setzen("psi", "1.000/0,5/0,3")
+    mk.anwenden()
+    app.processEvents()
+    check("Lastfall ψ „1.000/0,5/0,3“: abgewiesen, ψ unverändert",
+          m.load_cases[lf].psi == psi_vorher and any("1.000" in t for t in fehler),
+          f"{m.load_cases[lf].psi} {fehler[-1:]}")
+
+    # Beulfeld: Steifentabelle
+    from statik3d.gui import dialogs as dg
+    d = dg.BeulfeldDialog(None, m)
+    d._zeile("laengs")
+    d.tbl.item(0, 1).setText("1.000")
+    d.show()
+    app.processEvents()
+    d.accept()                  # wie der OK-Knopf (bb.accepted -> self.accept)
+    app.processEvents()
+    zeile = getattr(d, "lbl_zahlmeldung", None)
+    check("Beulfeld: Steifenlage „1.000“: OK schließt nicht, Meldung nennt „1.000“",
+          d.isVisible() and zeile is not None and "1.000" in zeile.text(),
+          zeile.text() if zeile is not None else "-")
+    d.tbl.item(0, 1).setText("1 000")
+    try:
+        lage = d.steifen()[0].lage
+    except ValueError as ex:
+        lage = repr(ex)
+    check("… „1 000“ = 1 m", lage == 1.0, str(lage))
+    d.deleteLater()
+
+    # Stellung: Antriebsknoten
+    sd = dg.StellungDialog(None, None, m)
+    ok = sd.findChild(QtWidgets.QDialogButtonBox).button(QtWidgets.QDialogButtonBox.Ok)
+    ist_feld = isinstance(sd.ed_knoten, zf.Zahlenfeld)
+    sd.ed_knoten.setText("1.000")
+    check("Stellung: Antriebsknoten ist ein ganzes Zahlenfeld, „1.000“ sperrt OK",
+          ist_feld and not ok.isEnabled(), f"{type(sd.ed_knoten).__name__} OK {ok.isEnabled()}")
+    sd.deleteLater()
+
+    # Profileditor: Knotenkoordinate „1.000“ - OK gesperrt, rote Meldung
+    from statik3d.gui.profilmaske import ProfilEditor
+    pe = ProfilEditor(None)
+    pe.knoten_zufuegen(1, 0.0, 0.0)
+    pe.knoten_zufuegen(2, 100.0, 0.0)
+    pe.element_zufuegen(1, 2, 10.0)
+    ok_vorher = pe.knoepfe.button(QtWidgets.QDialogButtonBox.Ok).isEnabled()
+    try:
+        pe.tb_knoten.item(1, 1).setText("1.000")
+        pe.aktualisieren()
+        info = pe.lbl_werte.text()
+    except Exception as ex:              # noqa: BLE001
+        info = f"Ausnahme {ex!r}"
+    check("Profileditor: y „1.000“ sperrt OK, Meldung nennt „1.000“",
+          ok_vorher and not pe.knoepfe.button(QtWidgets.QDialogButtonBox.Ok).isEnabled()
+          and "1.000" in info, info[:80])
+    pe.deleteLater()
+    w.error = alt_error
+
+
+def test_anzeige_nie_wissenschaftlich():
+    """Hinweise und Masken zeigen Zahlen ausgeschrieben (Anwender 12.09.2026:
+    „2e+06“ ist unlesbar). Bis 25.09.2026 zeigte der Bettungshinweis
+    „3.3e+06 kN/m“."""
+    import re
+    w, app = _fenster()
+    w.load_example("frame")
+    app.processEvents()
+    mk = w._objektmaske("lager_einzeln", "0")
+    mk.setzen("beton", "auf Beton (Druckkontakt)")
+    mk._felder["E_cm"].setText("33 000")
+    mk.zusatzknoepfe["Bettung übernehmen"].click()
+    app.processEvents()
+    text = mk.lbl_hinweis.text()
+    check("Bettungshinweis: „330 000 MN/m³“ und „3 300 000 kN/m“, kein e+",
+          "330 000 MN/m³" in text and "3 300 000 kN/m" in text and not re.search(r"\de[+-]", text), text[:120])
+    status = w.statusBar().currentMessage()
+    check("… Statusleiste ebenso", "3 300 000" in status and not re.search(r"\de[+-]", status), status[:120])
+
+    # Lager-Wirkung in der Tabelle: Feder 3,3e9 N/m
+    from statik3d.model import DofBehaviour
+    s = w.model.supports[0]
+    s.behaviour = {2: DofBehaviour("spring", 3.3e9, "", 0.0, 0.0, None)}
+    try:
+        texte = " ".join(w._wirkung(s))
+    except Exception as ex:              # noqa: BLE001
+        texte = f"Ausnahme {ex!r}"
+    check("Lager-Wirkung mit Feder 3,3e9 N/m ohne e+", "Ausnahme" not in texte
+          and not re.search(r"\de[+-]", texte), texte[:120])
+
+    # Quelltext: keine Formate mit wenigen geltenden Stellen oder Exponent in
+    # Texten der Oberflaeche (.3g schreibt 3300 als „3.3e+03“)
+    gui = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "statik3d", "gui")
+    muster = re.compile(r"\{[^{}]*:[+ ]?\.?\d*[eE]\}|\{[^{}]*:[+ ]?\.\d+[gG]\}")
+    # Rundung fuer ein Zahlenfeld (float(f"...")) und die CSV-Ausgabe
+    erlaubt = ('float(f"', ';".join(f"{v:.6e}"')
+    treffer = []
+    for dat in sorted(os.listdir(gui)):
+        if not dat.endswith(".py"):
+            continue
+        with open(os.path.join(gui, dat), encoding="utf-8") as fh:
+            for nr, zeile in enumerate(fh, 1):
+                if zeile.lstrip().startswith("#") or not muster.search(zeile):
+                    continue
+                if any(x in zeile for x in erlaubt):
+                    continue
+                treffer.append(f"{dat}:{nr}")
+    check("Oberfläche: keine :.3g/:.4g/:e-Formate in Anzeigetexten", not treffer, ", ".join(treffer[:12]))
+
+
 def main():
     import faulthandler
     faulthandler.dump_traceback_later(900, exit=True)
     for t in (test_regel, test_eine_quelle, test_maske, test_geaenderte_felder, test_dialog,
               test_programmwerte, test_tippen, test_tabellenzelle, test_register_einheiten,
-              test_ergebnisse_behalten, test_nachbesserung, test_bemerkung_mit_vernetzen):
+              test_ergebnisse_behalten, test_nachbesserung, test_bemerkung_mit_vernetzen,
+              test_verlassen_mit_tab, test_textfelder_zahlenregel, test_anzeige_nie_wissenschaftlich):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

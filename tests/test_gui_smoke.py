@@ -3791,7 +3791,7 @@ def main():
         app.processEvents()
         mk = w.maskenrand.maske
         check("Schwingungs-Maske zum Bearbeiten vorbelegt",
-              mk.titel == "Schwingung Schwingung1" and mk.werte()["d_kante"] == "0.2", str(mk.werte().get("d_kante")))
+              mk.titel == "Schwingung Schwingung1" and float(mk.werte()["d_kante"]) == 0.2, str(mk.werte().get("d_kante")))
         an_ = w.analysis if w.analysis is not None else solver.Analysis(m_)
         an_.schwingung = erg_
         bl_ = Rep(m_, an_).chapter_schwingung()
@@ -4616,7 +4616,7 @@ def main():
         w.maske_netzeinstellungen(); app.processEvents()
         mk2 = w.maskenrand.maske
         check("die Maske zeigt die Längen in mm", float(mk2.werte()["ziellaenge"]) == 500.0
-              and str(mk2.werte()["h_min"]).strip() == "100", str((mk2.werte()["ziellaenge"], mk2.werte()["h_min"])))
+              and float(mk2.werte()["h_min"]) == 100.0, str((mk2.werte()["ziellaenge"], mk2.werte()["h_min"])))
         # Gleichungsloeser zur Auswahl (Berechnung -> Einstellungen)
         from statik3d import solver as slv_
         from statik3d import parallel as parallel_

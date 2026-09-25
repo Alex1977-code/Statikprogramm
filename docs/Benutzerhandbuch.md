@@ -2116,10 +2116,40 @@ die vorige Maske ab — es ist immer höchstens eine offen.
 Die Zahlenfelder der Masken rechts (auch der Sammelmaske für mehrere
 gewählte Objekte), der Register Lager/Lasten und Kontakt und der Dialoge
 lesen nach derselben Regel. Sie gilt auch für die Ermüdungsmaske und die
-Zellen der Tabellen unten. **Noch nicht umgestellt** sind die Drehfelder mit
-Pfeilen (z. B. Teilungen, Anzahl), die kleinen Abfragefenster für eine
-einzelne Zahl, die Faktorenliste einer Kombination und das ψ-Feld eines
-Lastfalls: dort gilt weiter nur Komma oder Punkt ohne Tausendertrennung.
+Zellen der Tabellen unten. Seit 25.09.2026 auch für die Felder, die leer
+bleiben dürfen und bis dahin Textfelder waren – „1.000“ wurde dort still 1:
+f_y und f_u der Werkstoffmaske, Kerbfall-Vorgabe der Schweißnaht, kleinste
+und größte Elementgröße der Netzeinstellungen, Versatz und
+Nachkommastellen einer Bemaßung, Reibbeiwert μ der Passung, Kantenbreite d
+der Schwingung, die Höhen des Wasserdrucks (Unterwasser, Sohle, Dichtung,
+Oberkante, Breite) und des Winds (Schnitthöhe, Geländeoberkante, c_f).
+Leer bleibt dort leer („aus der Stahlsorte“, „Norm“ …), nicht 0. Ebenso der
+Antriebsknoten einer Stellung (ganze Zahl), die Zellen der Beulsteifen im
+Dialog Beulfeld und die Maße im Profileditor: dort gibt es keine zweite
+Bestätigung, darum wird „1.000“ abgewiesen – die Meldung steht über OK
+bzw. rot unter dem Bild, OK bleibt gesperrt.
+
+**Listenfelder** – Versatz y, z eines Stabs, Ersatzachse einer Feder,
+Gewichte eines starren Körpers, ψ0/ψ1/ψ2 eines Lastfalls – lesen jede Zahl
+nach derselben Regel, aber ohne Tausender: das Leerzeichen trennt dort die
+Einträge (Komma mit Leerzeichen oder Semikolon ebenso, „1,5, 2“ sind zwei
+Zahlen). „1.000“ wird abgewiesen, der Stab bleibt, wie er war.
+
+**Ausnahmen**, die bewusst anders lesen:
+
+* die **Faktoren einer Kombination** („LF1: 1,35, Wind: 1,5“) sind eine
+  Formel – das Komma zwischen Ziffern ist Dezimaltrenner, „1,350“ ist 1,35;
+* der **Schwingbeiwert** der Ermüdungsmaske: „1.000“ ist dort 1 (ein
+  Beiwert von tausend kommt nicht vor), die Lastspielzahl daneben weist
+  „500.000“ dagegen ab;
+* **Nummernlisten** in den Masken (Knoten einer Linie oder eines Stabs,
+  Elemente, angeschlossene Knoten, Teilung) lesen nur ganze Nummern,
+  anderes fällt weg;
+* **Formeln** in Tabellenzellen („= 2*3,5“) und die **Filterzeile** der
+  Tabellen („> 1000“, „2..5“) lesen Komma oder Punkt ohne Tausender;
+* **noch nicht umgestellt** sind die Drehfelder mit Pfeilen (z. B. Teilungen,
+  Anzahl) und die kleinen Abfragefenster für eine einzelne Zahl sowie der
+  Port der Rechenfarm (Einstellungen).
 
 | Eingabe | gelesen | Anzeige |
 |---|---|---|
@@ -2142,8 +2172,11 @@ Qt-Validator folgte dem Gebietsschema des Systems.
 **Während des Tippens** bleibt ein Zwischenstand neutral, der mit weiteren
 Ziffern gültig wird: „-“ vor „-10“, „2 0“ auf dem Weg zu „2 000“, „1e“ vor
 „1e3“. Der Knopf ist dabei gesperrt, aber es erscheint weder roter Rahmen
-noch Meldung. Rot wird ein solcher Rest erst beim Verlassen des Feldes oder
-bei „Übernehmen“. „2.000.000“ ist kein Zwischenstand und wird sofort rot.
+noch Meldung. Rot wird ein solcher Rest erst beim Verlassen des Feldes –
+mit Tab oder einem Klick woanders – oder bei „Übernehmen“; dann erscheint
+auch die Meldung. (Bis 25.09.2026 blieb ein Rest wie „12 5“ nach Tab
+neutral, der Knopf war ohne Meldung gesperrt.) „2.000.000“ ist kein
+Zwischenstand und wird sofort rot.
 **Wo die Meldung steht:** in der Maske in der Meldungszeile über dem Hinweis,
 im Dialog in einer Meldungszeile über OK und Abbrechen, im Register in der
 Statusleiste – ein gesperrter Knopf allein sagt nicht, warum.
@@ -2152,6 +2185,12 @@ Statusleiste – ein gesperrter Knopf allein sagt nicht, warum.
 „Bettung übernehmen“ in der Lagermaske rechnet mit E_cm „33.000“ erst nach
 dem zweiten Klick (dann mit 33 N/mm²). Wer 33 000 meint, schreibt es mit
 Leerzeichen und klickt noch einmal: der Vorschlag wird damit neu gerechnet.
+Der Hinweis dazu schreibt die Zahlen aus, „k = E_cm/d = 330 000 MN/m³ → uz
+Feder 3 300 000 kN/m“ (bis 25.09.2026 „3.3e+06 kN/m“). Dasselbe gilt seit
+25.09.2026 für die übrigen Hinweise und Texte der Oberfläche: Lasttexte der
+Lastfallmaske (Komponenten durch Semikolon getrennt, „F = (0; 0; -10) kN“),
+Wirkung und Federn der Lager und Gelenke, Federn und Grenzschichten im
+Modellbaum, Querschnittswerte, Übermaß, freie Bewegungen.
 Werte, die das Programm selbst in ein Feld schreibt (vorhandene Federn im
 Dialog Nichtlinearität, Normale und Ursprung der Schnittebene), sind nie
 mehrdeutig: 123,456 kN/m steht als „123,456“ da, OK bleibt frei.

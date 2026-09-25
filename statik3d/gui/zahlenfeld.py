@@ -139,7 +139,8 @@ class Zahlenfeld(QtWidgets.QLineEdit):
         """Wird gerade getippt und ist nur ein Zwischenstand („-“, „1e“,
         „2 0“)? Dann neutral statt rot, ohne Meldung - gesperrt bleibt der
         Knopf trotzdem (ungueltig). Rot wird es beim Verlassen oder beim
-        Uebernehmen (24.09.2026). ``isModified`` ist nur nach Tippen wahr,
+        Uebernehmen (24.09.2026), auch mit Tab (focusOutEvent, 25.09.2026).
+        ``isModified`` ist nur nach Tippen wahr,
         setText des Programms setzt es zurueck."""
         return self.isModified() and zl.ergaenzbar(self.text(), self.ganz)
 
@@ -260,6 +261,19 @@ class Zahlenfeld(QtWidgets.QLineEdit):
         if self.isModified():
             self.setModified(False)
             self._pruefen()
+
+    def focusOutEvent(self, ev):                        # noqa: N802 - Qt-Name
+        """Feld verlassen (Tab, Klick woanders): ein Zwischenstand wird jetzt
+        rot gemeldet.
+
+        25.09.2026: Qt sendet editingFinished beim Fokusverlust nur bei
+        annehmbarer Eingabe (hasAcceptableInput) - „12 5“, „-“ oder „1e“
+        blieben nach Tab neutral, Maske, Register und Dialog sperrten den
+        Knopf ohne Meldung. Ein Kontextmenue (PopupFocusReason) ist kein
+        Verlassen: dort wird weitergetippt."""
+        super().focusOutEvent(ev)
+        if ev.reason() != QtCore.Qt.PopupFocusReason:
+            self.fertig()
 
     def _formatieren(self) -> None:
         self.fertig()

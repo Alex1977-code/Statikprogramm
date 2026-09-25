@@ -13,6 +13,7 @@ from ..ec3.fatigue import DETAIL_CATEGORIES, DETAIL_EXAMPLES
 from .. import elemente as EL
 from .design import namen as _namen
 from . import zahlenfeld as zf
+from .. import zahlen as zl
 
 
 class NumEdit(zf.Zahlenfeld):
@@ -1615,7 +1616,7 @@ class BeulfeldDialog(QtWidgets.QDialog):
                  (st.I_sl * 1e8 if st else 0.0), (st.I_T * 1e8 if st else 0.0),
                  (st.I_p * 1e8 if st else 0.0)]
         for k, v in enumerate(werte, start=1):
-            self.tbl.setItem(r, k, QtWidgets.QTableWidgetItem(f"{v:g}"))
+            self.tbl.setItem(r, k, QtWidgets.QTableWidgetItem(zl.zahl_text(v, tausender=False)))
         self.tbl.setItem(r, 6, QtWidgets.QTableWidgetItem(
             (st.name if st else "") or f"S{r + 1}"))
 
@@ -1624,16 +1625,31 @@ class BeulfeldDialog(QtWidgets.QDialog):
         if r >= 0:
             self.tbl.removeRow(r)
 
+    def accept(self):
+        """OK nur mit lesbaren Steifenwerten (25.09.2026): die Zellen haben
+        keine zweite Bestaetigung, darum wird „1.000“ hier abgewiesen und die
+        Meldungszeile nennt die Zelle - bis dahin wurde es still 1 mm, ein
+        Tippfehler („abc“) still 0."""
+        try:
+            self.steifen()
+        except ValueError as ex:
+            zf.meldungszeile_setzen(self.lbl_zahlmeldung, str(ex), zf.ROT)
+            return
+        zf.meldungszeile_setzen(self.lbl_zahlmeldung, "")
+        super().accept()
+
     def steifen(self) -> list:
         from ..model import Beulsteife
         out = []
+        spalten = {1: "Lage", 2: "A_sl", 3: "I_sl", 4: "I_T", 5: "I_p"}
         for r in range(self.tbl.rowCount()):
             def z(k):
+                # Regel der Zahlenfelder (25.09.2026); leer = 0 wie bisher
                 it = self.tbl.item(r, k)
                 try:
-                    return float((it.text() if it else "0").replace(",", "."))
-                except ValueError:
-                    return 0.0
+                    return zl.feldwert(it.text() if it else "", 0.0)
+                except ValueError as ex:
+                    raise ValueError(f"Steife {r + 1}, {spalten[k]}: {ex}") from None
             cb = self.tbl.cellWidget(r, 0)
             nm = self.tbl.item(r, 6)
             out.append(Beulsteife(cb.currentText() if cb else "laengs",
@@ -1971,7 +1987,10 @@ class StellungDialog(QtWidgets.QDialog):
         g = QtWidgets.QGroupBox("Antriebsmoment (hält die Stellung)")
         gl = QtWidgets.QVBoxLayout(g)
         kn, mv = (s.antrieb if (s and s.antrieb) else (None, (0.0, 0.0, 0.0)))
-        self.ed_knoten = QtWidgets.QLineEdit("" if kn is None else str(int(kn) + 1))
+        # Ganzes Zahlenfeld (25.09.2026): bis dahin Text mit
+        # int(float(t.replace(",", "."))) - „1.000“ wurde still Knoten 1,
+        # „abc“ liess den Antrieb still weg. Jetzt sperrt beides OK.
+        self.ed_knoten = zf.Zahlenfeld(None if kn is None else int(kn) + 1, 80, ganz=True)
         self.ed_moment = [NumEdit(v / 1e3, 80) for v in mv]
         gl.addWidget(row("Knoten (Nummer, leer = kein Antrieb)", self.ed_knoten))
         gl.addWidget(row("Mx [kNm]", self.ed_moment[0], "My", self.ed_moment[1],
@@ -1986,13 +2005,9 @@ class StellungDialog(QtWidgets.QDialog):
     def stellung(self):
         from ..bridges.positions import Stellung
         antrieb = None
-        t = self.ed_knoten.text().strip()
-        if t:
-            try:
-                antrieb = (int(float(t.replace(",", "."))) - 1,
-                           [e.value() * 1e3 for e in self.ed_moment])
-            except ValueError:
-                antrieb = None
+        nr = self.ed_knoten.wert(None)
+        if nr is not None:
+            antrieb = (int(nr) - 1, [e.value() * 1e3 for e in self.ed_moment])
         return Stellung(
             name=self.ed_name.text().strip() or "Stellung",
             winkel=self.ed_winkel.value(),

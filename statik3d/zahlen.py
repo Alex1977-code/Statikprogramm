@@ -165,6 +165,48 @@ def zahl_wert(text, ganz: bool = False) -> float:
     return float(lesung.wert)
 
 
+def feldwert(wert, vorgabe=None, ganz: bool = False):
+    """Eine Zahl aus einem Maskenwert, einer Liste oder einer Zelle (25.09.2026).
+
+    Eine Zahl bleibt, wie sie ist (das Zahlenfeld hat sie schon gelesen und
+    eine Mehrdeutigkeit bestaetigen lassen); leer oder None liefert
+    ``vorgabe``; Text wird nach der Regel gelesen. Anders als
+    :func:`zahl_wert` wird eine mehrdeutige Eingabe („1.000“) hier
+    **abgewiesen**: an diesen Stellen gibt es keine zweite Bestaetigung, und
+    bis 25.09.2026 wurde sie still 1 (``float(text.replace(",", "."))``,
+    Werkstoffmaske f_y „1.000“ -> 1 N/mm²)."""
+    if wert is None or isinstance(wert, bool):
+        return vorgabe
+    if isinstance(wert, (int, float, np.integer, np.floating)):
+        return float(wert)
+    les = lesen(wert, ganz)
+    if les.status == LEER:
+        return vorgabe
+    if les.status == UNGUELTIG:
+        raise ValueError(les.meldung)
+    if les.status == FRAGE:
+        roh = str(wert).strip()
+        raise ValueError(f"„{roh}“ ist mehrdeutig ({les.meldung}) – "
+                         f"{zahl_text(les.wert, tausender=False)} oder {zahl_text(les.vorschlag)} schreiben.")
+    return float(les.wert)
+
+
+#: Trenner einer Zahlenliste („1,5, 2“, „1; 2“, „1 2“): Semikolon,
+#: Leerraum oder ein Komma, dem keine Ziffer folgt - „1,5“ bleibt eine Zahl
+LISTENTRENNER = re.compile(r"[;\s]+|,(?![0-9])")
+
+
+def zahlenliste(text) -> list:
+    """Mehrere Zahlen in einem Textfeld (Stab-Versatz y, z; Ersatzachse;
+    Gewichte), jede nach :func:`feldwert` (25.09.2026).
+
+    In einer Liste trennen Leerzeichen die Eintraege - Tausender mit
+    Leerzeichen gibt es hier nicht. Ein mehrdeutiger oder ungueltiger Eintrag
+    wirft ValueError, statt still wegzufallen oder 1 zu werden."""
+    teile = [t.strip() for t in LISTENTRENNER.split(str(text or "").strip()) if t.strip()]
+    return [feldwert(t) for t in teile]
+
+
 def zahl_text(x, tausender: bool = True, stellen: int = STELLEN) -> str:
     """Eine Zahl zum Lesen: Dezimalkomma, nie wissenschaftlich, Tausender mit
     Leerzeichen (``tausender``), bis ``stellen`` gueltige Ziffern.

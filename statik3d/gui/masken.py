@@ -25,6 +25,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import design as dsg
 from . import zahlenfeld as zf
+from .. import zahlen as zl
 
 
 def listeneintraege(text: str) -> list:
@@ -56,6 +57,10 @@ class Feld:
     werte: list = field(default_factory=list)   # fuer art="wahl" und "mehrfach"
     breite: int = 78
     hinweis: str = ""
+    #: Zahlenfeld, das leer bleiben darf („leer = aus der Stahlsorte“,
+    #: „leer = Norm“): werte() liefert dann "" statt 0. Bis 25.09.2026 waren
+    #: solche Felder Textfelder und lasen „1.000“ still als 1.
+    leer: bool = False
 
 
 class Maske(QtWidgets.QFrame):
@@ -104,6 +109,8 @@ class Maske(QtWidgets.QFrame):
         #: wird die Anzahl in der Beschriftung nachgefuehrt, wenn der Wert
         #: sich aendert (etwa weil Flaechen in der Ansicht angeklickt wurden).
         self._listen: dict[str, tuple] = {}
+        #: Zahlenfelder, die leer bleiben duerfen (Feld.leer, 25.09.2026)
+        self._leer_erlaubt = {f.name for f in felder if getattr(f, "leer", False)}
 
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(10, 8, 10, 10)
@@ -264,14 +271,15 @@ class Maske(QtWidgets.QFrame):
 
     # -- Werte -----------------------------------------------------------
     def werte(self) -> dict:
-        """Die Feldwerte. Ein Zahlenfeld liefert seine Zahl (leer = 0); ein
-        ungueltiges liefert seinen Text - nie still 0. „Anwenden“ laesst
-        ungueltige Felder gar nicht erst durch."""
+        """Die Feldwerte. Ein Zahlenfeld liefert seine Zahl (leer = 0, bei
+        Feld.leer ""); ein ungueltiges liefert seinen Text - nie still 0.
+        „Anwenden“ laesst ungueltige Felder gar nicht erst durch."""
         out: dict = {}
+        leer_erlaubt = getattr(self, "_leer_erlaubt", ())
         for name, w in self._felder.items():
             if isinstance(w, zf.Zahlenfeld):
                 try:
-                    out[name] = w.wert()
+                    out[name] = w.wert("" if name in leer_erlaubt else 0.0)
                 except zf.Eingabefehler:
                     out[name] = w.text()
             elif isinstance(w, QtWidgets.QLabel):
@@ -342,7 +350,9 @@ class Maske(QtWidgets.QFrame):
         elif isinstance(w, QtWidgets.QLabel):
             w.setText(str(wert))
         else:
-            w.setText(f"{wert:g}" if isinstance(wert, float) else str(wert))
+            # ohne Tausender: ein Textfeld kann eine Liste sein, dort trennt
+            # das Leerzeichen Eintraege; nie „1e-05“ (25.09.2026)
+            w.setText(zl.zahl_text(wert, tausender=False) if isinstance(wert, float) else str(wert))
             eintrag = self._listen.get(name)
             if eintrag is not None:
                 lb, titel, hinweis = eintrag

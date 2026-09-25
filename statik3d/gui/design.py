@@ -16,6 +16,7 @@ from __future__ import annotations
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 from .. import elemente as EL
+from .. import zahlen as zl
 
 #: Farben des Entwurfs
 FARBEN = {
@@ -343,7 +344,7 @@ def _kurz(punkt) -> str:
     teile = []
     for v in np.asarray(punkt, float).ravel()[:3]:
         v = 0.0 if abs(v) < 1e-12 else float(v)
-        teile.append(f"{v:.4g}")
+        teile.append(zl.zahl_text(v, stellen=4))       # nie „1.235e+04“ (25.09.2026)
     return " | ".join(teile)
 
 
@@ -920,12 +921,13 @@ class Modellbaum(QtWidgets.QTreeWidget):
                 self._liste(z, [(x.name or f"Dämpfer {i + 1}",
                                  f"K{x.node_a}" + (f"–K{x.node_b}" if int(x.node_b) >= 0 else ""),
                                  str(i),
-                                 f"c = {', '.join(f'{v:g}' for v in (x.c or []))}")
+                                 f"c = {', '.join(zl.zahl_text(v) for v in (x.c or []))}")
                                 for i, x in enumerate(dp)], "daempfer", "daempfer")
             if fed:
                 z = self._zweig(vb, "Federn", len(fed), "kontakt")
-                self._liste(z, [(name, ", ".join(f"{v:g}" for v in (x.k or [])[:3]), name,
-                                 f"{name}: k = {', '.join(f'{v:g}' for v in (x.k or []))}")
+                # Federn in N/m sind gross: ausgeschrieben statt „1e+08“ (25.09.2026)
+                self._liste(z, [(name, "; ".join(zl.zahl_text(v) for v in (x.k or [])[:3]), name,
+                                 f"{name}: k = {'; '.join(zl.zahl_text(v) for v in (x.k or []))}")
                                 for name, x in fed.items()], "feder", "federn")
             if sk:
                 z = self._zweig(vb, "Starre Körper", len(sk), "kontakt")
@@ -936,8 +938,8 @@ class Modellbaum(QtWidgets.QTreeWidget):
                                 for i, x in enumerate(sk)], "starrkoerper", "starrkoerper")
             if gs:
                 z = self._zweig(vb, "Grenzschichten", len(gs), "kontakt")
-                self._liste(z, [(name, f"kn = {x.kn:g}", name,
-                                 f"{name}: kn = {x.kn:g} N/m je m², kt = {x.kt:g}")
+                self._liste(z, [(name, f"kn = {zl.zahl_text(x.kn)}", name,
+                                 f"{name}: kn = {zl.zahl_text(x.kn)} N/m je m², kt = {zl.zahl_text(x.kt)}")
                                 for name, x in gs.items()], "grenzschicht", "grenzschichten")
 
         # Der Zweig steht immer (16.09.2026, „im Modellbaum muessen auch Gelenke
