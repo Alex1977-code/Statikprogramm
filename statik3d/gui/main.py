@@ -198,6 +198,25 @@ def _stellung_fehlt_text(name: str) -> str:
 _STAENDE = itertools.count(1)
 
 
+class _UeberhoehungValidator(zf.Zahlvalidator):
+    """Wie der Zahlvalidator, dazu die Woerter „auto“, „1:1“ und „aus“ und
+    ihre Anfaenge. Bis 25.09.2026 verschluckte das Feld den Doppelpunkt:
+    „1:1“ getippt wurde Faktor 11, ohne Warnung (Gegenpruefung)."""
+
+    WOERTER = ("auto", "1:1", "aus")
+
+    def validate(self, text, pos):
+        erg = super().validate(text, pos)
+        if erg[0] == QtGui.QValidator.Acceptable:
+            return erg               # eine Zahl („1“ ist auch der Anfang von „1:1“)
+        t = str(text).strip().lower()
+        if t in self.WOERTER:
+            return QtGui.QValidator.Acceptable, text, pos
+        if t and any(w.startswith(t) for w in self.WOERTER):
+            return QtGui.QValidator.Intermediate, text, pos
+        return erg
+
+
 # ==========================================================================
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
@@ -9030,7 +9049,9 @@ class MainWindow(QtWidgets.QMainWindow):
             # der Faktor, mit dem das Bild gezeichnet ist (25.09.2026) - bis
             # dahin die Stellung des Schiebers (Vorgabe 30), die im Bericht
             # als „Überhöhung 30“ stand, bei 1480-facher Zeichnung
-            ueberhoehung=round(float(getattr(self, "_ueberhoehung_faktor", 0.0) or 0.0), 1),
+            # auf geltende Ziffern, nicht auf eine Nachkommastelle - ein
+            # Faktor 0,03 wurde sonst 0, und die Zeile fehlte (25.09.2026)
+            ueberhoehung=vp.faktor_runden(getattr(self, "_ueberhoehung_faktor", 0.0)),
             bild=bild)
         e.beschriftung = e.bezug()
         self.merken("Ansicht in den Bericht übernommen")
@@ -12693,24 +12714,44 @@ class MainWindow(QtWidgets.QMainWindow):
         rahmen.setProperty("bleibt_oben", True)
         rahmen.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Maximum)
         gl = QtWidgets.QGridLayout(rahmen)
-        gl.setContentsMargins(8, 6, 8, 6)
+        gl.setContentsMargins(6, 2, 6, 2)
         gl.setHorizontalSpacing(6)
-        gl.setVerticalSpacing(4)
-        titel = QtWidgets.QLabel("Ergebnisdarstellung")
-        titel.setStyleSheet("font-weight: bold;")
-        gl.addWidget(titel, 0, 0, 1, 2)
+        gl.setVerticalSpacing(1)
+        # Drei Zeilen ohne Titelzeile und ohne umbrechende Hinweiszeile
+        # (Gegenpruefung 25.09.2026: 157 px ueber jeder Maske liessen bei
+        # 1366 x 768 alle 43 Masken das Fenster wachsen). Der Name steht als
+        # Tooltip am Rahmen.
+        rahmen.setToolTip("Ergebnisdarstellung: Ergebnis, Färbung und Überhöhung")
+        rahmen.setAccessibleName("Ergebnisdarstellung")
         gl.addWidget(QtWidgets.QLabel("Ergebnis"), 1, 0)
         gl.addWidget(self.cb_result, 1, 1)
         gl.addWidget(QtWidgets.QLabel("Färbung"), 2, 0)
         gl.addWidget(self.cb_field, 2, 1)
+        # Die Auswahllisten bestimmen die Breite des rechten Bereichs nicht
+        # (Gegenpruefung 25.09.2026): ausserhalb der Rollflaeche des Registers
+        # nahm die QComboBox den laengsten Eintrag als Mindestbreite - eine
+        # Kombination aus 8 Lastfaellen machte rechts 993 px breit, die
+        # Ansicht bei 1366 x 768 noch 139 px. Jetzt reicht eine Mindestlaenge
+        # von 18 Zeichen, die Aufklappliste ist breit genug fuer den ganzen
+        # Namen, der Tooltip nennt ihn auch.
+        for cb in (self.cb_result, self.cb_field):
+            cb.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
+            cb.setMinimumContentsLength(18)
+            cb.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+            cb.view().setTextElideMode(QtCore.Qt.ElideNone)
+            cb.currentIndexChanged.connect(lambda _i, c=cb: c.setToolTip(c.currentText()))
         self._ueberhoehung_art = "auto"
         self._ueberhoehung_wert = 0.0
         self._ueberhoehung_faktor = 0.0
         self.ed_ueberhoehung = zf.Zahlenfeld(None, 90)
+        # „auto“, „1:1“ und „aus“ darf man auch tippen - der Zahlvalidator
+        # verschluckte den Doppelpunkt, aus „1:1“ wurde Faktor 11 (25.09.2026)
+        self.ed_ueberhoehung.setValidator(_UeberhoehungValidator(self.ed_ueberhoehung))
         self.ed_ueberhoehung.setToolTip(
             "Faktor, mit dem die Verformung gezeichnet wird. Eine Zahl tippen und Enter: "
             "fester Faktor. „auto“: die größte Verschiebung erscheint mit 8 % der Modellgröße; "
-            "„1:1“: wahre Größe; „aus“: keine Verformung. Der Bericht übernimmt den Faktor.")
+            "„1:1“: wahre Größe; „aus“: keine Verformung (auch als Wort zu tippen). "
+            "Der Bericht übernimmt den Faktor.")
         self.ed_ueberhoehung.editingFinished.connect(self._ueberhoehung_eingegeben)
         self.btn_ueberhoehung = {}
         zeile = QtWidgets.QHBoxLayout()
@@ -12727,13 +12768,15 @@ class MainWindow(QtWidgets.QMainWindow):
             b.clicked.connect(lambda _c=False, a=art: self.ueberhoehung_setzen(a))
             self.btn_ueberhoehung[art] = b
             zeile.addWidget(b)
-        zeile.addStretch(1)
-        gl.addWidget(QtWidgets.QLabel("Überhöhung"), 3, 0)
-        gl.addLayout(zeile, 3, 1)
+        # kurzer Hinweis in derselben Zeile („max 73,52 mm“), der ganze Satz
+        # als Tooltip; er verlangt keine Breite (Ignored)
         self.lbl_scale = QtWidgets.QLabel("")
         self.lbl_scale.setStyleSheet("color: #5a6470;")
-        self.lbl_scale.setWordWrap(True)
-        gl.addWidget(self.lbl_scale, 4, 0, 1, 2)
+        self.lbl_scale.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
+        self.lbl_scale.setMinimumWidth(0)
+        zeile.addWidget(self.lbl_scale, 1)
+        gl.addWidget(QtWidgets.QLabel("Überhöhung"), 3, 0)
+        gl.addLayout(zeile, 3, 1)
         gl.setColumnStretch(1, 1)
         self.ergebnissteuerung = rahmen
         self._ueberhoehung_knoepfe()
@@ -12752,7 +12795,85 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if platz.indexOf(st) < 0:
             platz.insertWidget(0, st, 0, QtCore.Qt.AlignTop)
-        st.setVisible(bool(self.cb_result.count()) or self.results is not None)
+            if hasattr(self, "tabs"):
+                # ein anderes Register darunter: die Tab-Kette dorthin fuehren
+                self.tabs.currentChanged.connect(lambda _i: self._tabfolge_ergebnissteuerung())
+        zeigen =bool(self.cb_result.count()) or self.results is not None
+        if zeigen and not st.isVisible():
+            # Das Fenster waechst nicht durch die Steuerung (Gegenpruefung
+            # 25.09.2026: ohne Paket 5 wurde es nach F5 bei 1366 x 768 85 px
+            # hoeher als der Bildschirm) - wie bei einer Maske
+            hoehe_vorher = self.height()
+            st.setVisible(True)
+            self._fensterhoehe_halten(hoehe_vorher)
+        else:
+            st.setVisible(zeigen)
+        for cb in (self.cb_result, self.cb_field):
+            self._aufklappliste_breit(cb)
+        self._tabfolge_ergebnissteuerung()
+
+    @staticmethod
+    def _aufklappliste_breit(cb) -> None:
+        """Die Aufklappliste so breit wie der laengste Eintrag (hoechstens
+        die Bildschirmbreite), jeder Eintrag mit sich selbst als Tooltip: die
+        Auswahl selbst ist schmal (18 Zeichen), die Namen sollen trotzdem
+        ganz lesbar sein - etwa „Kombination GZT19: 1.35·LF1 + 1.5·W_rechts
+        + …“ (25.09.2026)."""
+        fm = cb.fontMetrics()
+        breit = 0
+        for i in range(cb.count()):
+            t = cb.itemText(i)
+            breit = max(breit, fm.horizontalAdvance(t))
+            cb.setItemData(i, t, QtCore.Qt.ToolTipRole)
+        try:
+            grenze = cb.screen().availableGeometry().width() - 40
+        except Exception:                   # noqa: BLE001
+            grenze = 1200
+        cb.view().setMinimumWidth(max(0, min(breit + 48, grenze)))
+        cb.setToolTip(cb.currentText())
+
+    def _tabfolge_ergebnissteuerung(self) -> None:
+        """Tab laeuft von der Steuerung in das Register darunter.
+
+        Das Einsetzen in den rechten Bereich haengt die Steuerung an das
+        Ende der Tab-Kette des Fensters: von „aus“ sprang Tab in die 3D-
+        Ansicht und blieb dort, das Register Ergebnisse darunter war per
+        Tastatur nicht mehr erreichbar (Gegenpruefung 25.09.2026). Hier
+        wird die Steuerung vor das erste Feld des sichtbaren Registers
+        gehaengt. Eine Maske darunter setzt ihre Kette selbst (Maskenrand)."""
+        st = getattr(self, "ergebnissteuerung", None)
+        if st is None or not _lebt(st) or not hasattr(self, "tabs"):
+            return
+        seite = self.tabs.currentWidget()
+        if seite is None:
+            return
+        erstes = None
+        w = seite.nextInFocusChain()
+        for _ in range(4000):
+            if w is None or w is seite:
+                break
+            if (seite.isAncestorOf(w) and not st.isAncestorOf(w)
+                    and w.focusPolicy() & QtCore.Qt.TabFocus):
+                erstes = w
+                break
+            w = w.nextInFocusChain()
+        if erstes is None:
+            return
+        kette = [self.cb_result, self.cb_field, self.ed_ueberhoehung,
+                 *[self.btn_ueberhoehung[a] for a in ("auto", "1:1", "aus")]]
+        # das vorige Glied mit Fokus: setTabOrder tut nichts, wenn eines der
+        # beiden Widgets keinen Fokus nimmt (etwa das Schild davor)
+        vor = erstes.previousInFocusChain()
+        for _ in range(4000):
+            if vor is None or vor is erstes or vor.focusPolicy() != QtCore.Qt.NoFocus:
+                break
+            vor = vor.previousInFocusChain()
+        if vor is None or vor is erstes or vor in kette:
+            return
+        # jeweils das naechste Glied hinter das vorige: die Steuerung steht
+        # danach als Block vor dem ersten Feld des Registers
+        for a, b in zip([vor] + kette[:-1], kette):
+            QtWidgets.QWidget.setTabOrder(a, b)
 
     def _ueberhoehung_knoepfe(self) -> None:
         for art, b in (getattr(self, "btn_ueberhoehung", None) or {}).items():
@@ -12771,14 +12892,28 @@ class MainWindow(QtWidgets.QMainWindow):
             self._ueberhoehung_wert = wert
         self._ueberhoehung_art = art
         self._ueberhoehung_knoepfe()
+        # Das Feld zeigt danach den neuen Faktor, auch wenn es den Fokus hat:
+        # ein QToolButton nimmt ihn dem Feld nicht, und ein getippter Rest
+        # („250“ ohne Enter) wurde beim Verlassen des Feldes zum festen
+        # Faktor und ueberschrieb den Knopf 1:1 (Gegenpruefung 25.09.2026)
+        self._ueberhoehung_schreiben = True
         self.redraw()
+        self._ueberhoehung_schreiben = False
+
+    #: getippte Woerter im Feld Ueberhoehung (25.09.2026)
+    UEBERHOEHUNG_WOERTER = {"auto": "auto", "1:1": "1:1", "aus": "aus"}
 
     def _ueberhoehung_eingegeben(self) -> None:
-        """Enter oder Verlassen des Feldes: ein getippter Faktor gilt fest.
+        """Enter oder Verlassen des Feldes: ein getippter Faktor gilt fest,
+        die Woerter „auto“, „1:1“ und „aus“ wie die Knoepfe.
         Eine ungueltige Eingabe bleibt rot im Feld (Zahlenfeld) und aendert
         nichts; der unveraenderte angezeigte Faktor auch nicht."""
         f = self.ed_ueberhoehung
         if not f.isModified() and f.text() == getattr(self, "_ueberhoehung_text", None):
+            return
+        wort = self.UEBERHOEHUNG_WOERTER.get(f.text().strip().lower())
+        if wort:
+            self.ueberhoehung_setzen(wort)
             return
         try:
             wert = f.wert(None)
@@ -12790,20 +12925,31 @@ class MainWindow(QtWidgets.QMainWindow):
             wert = abs(wert)
         self.ueberhoehung_setzen("fest", wert)
 
-    def _ueberhoehung_anzeigen(self, s: float) -> None:
-        """Den wirksamen Faktor ins Feld schreiben - nicht, waehrend getippt wird."""
+    def _ueberhoehung_anzeigen(self, s: float, verlauf: bool = False) -> None:
+        """Den wirksamen Faktor ins Feld schreiben - nicht, waehrend getippt
+        wird (ausser nach einem Knopf, ueberhoehung_setzen).
+
+        ``verlauf``: ein Schnittgroessenverlauf ist gewaehlt, die Figur steht
+        unverformt - das Feld zeigt 0 und ist gesperrt, die Knoepfe auch; die
+        Zeile darunter sagt, warum (Gegenpruefung 25.09.2026: dort stand
+        „17,6“ bei Faktor 0)."""
         f = getattr(self, "ed_ueberhoehung", None)
-        if f is None or f.hasFocus():
+        if f is None:
             return
-        text = zl.zahl_text(round(float(s), 1)) if s else "0"
-        f.blockSignals(True)
+        for b in (getattr(self, "btn_ueberhoehung", None) or {}).values():
+            b.setEnabled(not verlauf)
+        f.setEnabled(not verlauf)
+        if f.hasFocus() and not getattr(self, "_ueberhoehung_schreiben", False):
+            return
+        text = zl.zahl_text(vp.faktor_runden(s)) if s and not verlauf else "0"
+        # ohne blockSignals: das Zahlenfeld soll den neuen Text pruefen (ein
+        # vorher rot gezeigter Text waere sonst rot geblieben)
         f.setText(text)
         f.setModified(False)
-        f.blockSignals(False)
         self._ueberhoehung_text = text
 
     # ---- Werte im Bild ------------------------------------------------
-    WERTE_FILTER =(("nur Extremwerte je Stab", "extrem"), ("alle Stellen", "alle"),
+    WERTE_FILTER = (("nur Extremwerte je Stab", "extrem"), ("alle Stellen", "alle"),
                     ("nur die Stabenden", "enden"), ("nur Auswahl", "auswahl"))
 
     def _werte_maske(self) -> QtWidgets.QWidget:
@@ -13065,9 +13211,13 @@ class MainWindow(QtWidgets.QMainWindow):
             ed.setKeyboardTracking(False)
         self.ed_skala_oben.setValue(100.0)
         self.ed_skala_grenze.setValue(355.0)
-        # die Legende folgt seit 25.09.2026 Ansicht → Einheiten
-        self.ed_skala_grenze.setToolTip("Grenze in der Einheit der Legende (Ansicht → Einheiten; "
-                                        "Vorgabe: Spannungen N/mm², Verschiebungen mm)")
+        # Die Legende folgt seit 25.09.2026 Ansicht → Einheiten, die Grenzen
+        # nicht: sie sind mit dem Modell gespeichert und behalten so ihre
+        # Bedeutung (Gegenpruefung 25.09.2026). Die Felder zeigen die Einheit.
+        for ed in (self.ed_skala_unten, self.ed_skala_oben, self.ed_skala_grenze):
+            ed.setToolTip("In der festen Einheit der Größe, unabhängig von Ansicht → Einheiten: "
+                          "Spannungen N/mm², Verschiebungen mm, Verdrehungen mrad "
+                          "(355 für S355 gilt also immer als 355 N/mm²)")
         f.addRow("unten / oben", row(self.ed_skala_unten, self.ed_skala_oben))
         f.addRow("Grenze", self.ed_skala_grenze)
         self.sp_stufen = QtWidgets.QSpinBox()
@@ -13138,18 +13288,36 @@ class MainWindow(QtWidgets.QMainWindow):
         finally:
             self._werteskala_sperre = False
 
+    def _werteskala_einheit_zeigen(self) -> None:
+        """Die feste Einheit der Werteskala an ihren Feldern (Suffix).
+
+        Grenzen und Grenzwert gelten in der festen Einheit der Groesse
+        (Spannungen N/mm², Verschiebungen mm, Verdrehungen mrad), nicht in
+        der Einheit der Legende - das Feld muss es sagen (25.09.2026)."""
+        e = getattr(self, "_werteskala_einheit", "") or ""
+        zusatz = f" {e}" if e else ""
+        for ed in (getattr(self, "ed_skala_unten", None), getattr(self, "ed_skala_oben", None),
+                   getattr(self, "ed_skala_grenze", None)):
+            if ed is not None and _lebt(ed) and ed.suffix() != zusatz:
+                ed.setSuffix(zusatz)
+
     def _werteskala_text(self) -> str:
         """Zusatz zur Faerbung in Kopfzeile und Bericht, wenn die Skala nicht
-        automatisch ist."""
+        automatisch ist - mit der Einheit, in der die Grenzen gelten
+        (25.09.2026: „Skala bis 20“ stand ohne Einheit neben einer Legende
+        in kN/cm²)."""
         s = getattr(self.model, "werteskala", None)
         if s is None or s.modus == "auto":
             return ""
+        e = getattr(self, "_werteskala_einheit", "") or ""
+        e = f" {vp.bildtext(e)}" if e else ""
         if s.modus == "fest":
-            text = f" · Skala {zl.zahl_text(s.unten, punkt=True)} … {zl.zahl_text(s.oben, punkt=True)}"
+            text = (f" · Skala {zl.zahl_text(s.unten, punkt=True)} … "
+                    f"{zl.zahl_text(s.oben, punkt=True)}{e}")
         else:
-            text = f" · Skala bis {zl.zahl_text(s.grenze, punkt=True)}, darüber magenta"
+            text = f" · Skala bis {zl.zahl_text(s.grenze, punkt=True)}{e}, darüber magenta"
             if s.nur_ueber:
-                text = f" · nur Überschreitungen über {zl.zahl_text(s.grenze, punkt=True)}"
+                text = f" · nur Überschreitungen über {zl.zahl_text(s.grenze, punkt=True)}{e}"
         return text
 
     def _werteskala_melden(self, name: str, skala: dict) -> None:
@@ -19897,19 +20065,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self._verlauf_hinweis = ""
         if u is not None:
             s, umax = self._scale(u)
-            self._ueberhoehung_anzeigen(s)
+            # beim Verlauf zeigt das Feld 0 (gesperrt) - gezeichnet wird ohne
+            # Verformung (Gegenpruefung 25.09.2026)
+            self._ueberhoehung_anzeigen(s, verlauf=verlauf_an)
             E_ = self._einheiten_modell()
+            # kurz in der Zeile, ganz als Tooltip (Steuerung kompakt, 25.09.2026)
             if verlauf_an:
                 s = 0.0
-                self.lbl_scale.setText(f"Verlauf {q}: Figur unverformt - die Überhöhung gilt "
-                                       "ohne Verlauf")
+                kurz, lang = "unverformt", (f"Verlauf {q}: Figur unverformt - die Überhöhung gilt "
+                                            "ohne Verlauf")
             elif modal:
-                self.lbl_scale.setText(f"Faktor {zl.zahl_text(round(s, 1))} (normierte Eigenform)")
+                kurz = "normierte Form"
+                lang = f"Faktor {zl.zahl_text(vp.faktor_runden(s))} (normierte Eigenform)"
             else:
                 # Komma wie in den Masken (Antwort 6 des Anwenders)
                 v_ = round(E_.aus_si(umax, "verformung"), E_.nk("verformung"))
-                self.lbl_scale.setText(f"Faktor {zl.zahl_text(round(s, 1))} · größte Verschiebung "
-                                       f"{zl.zahl_text(v_)} {E_.einheit('verformung')}")
+                kurz = f"max {zl.zahl_text(v_)} {E_.einheit('verformung')}"
+                lang = (f"Faktor {zl.zahl_text(vp.faktor_runden(s))} · größte Verschiebung "
+                        f"{zl.zahl_text(v_)} {E_.einheit('verformung')}")
+            self.lbl_scale.setText(kurz)
+            self.lbl_scale.setToolTip(lang)
         self._ueberhoehung_faktor = s
         # Knoten, Lager, Auswahl und Werte sitzen an der Lage der gezeichneten
         # Figur (25.09.2026) - vorher schwebten die Knoten ueber dem verformten
@@ -19980,6 +20155,16 @@ class MainWindow(QtWidgets.QMainWindow):
             # Legende in der Einheit der Einstellung und mit einer Bezeichnung
             # ohne verlierbare Zeichen (vp.skalentitel, 25.09.2026)
             faktor_e, titel = vp.skalentitel(field, name, self._einheiten_modell())
+            # Die Grenzen der Werteskala (fest, Grenzwert) gelten in der festen
+            # Einheit der Groesse (N/mm², mm, mrad) - so sind sie gespeichert.
+            # Erst danach wird in die Einheit der Legende umgerechnet
+            # (vp.skala_umrechnen). Vorher rechnete die Skala in der Legenden-
+            # einheit: nach Umstellen auf kN/cm² wirkte die Grenze 20 als
+            # 200 N/mm², die Ueberschreitungen verschwanden still
+            # (Gegenpruefung 25.09.2026).
+            self._werteskala_einheit = vp.einheit_aus_name(name)
+            self._werteskala_einheit_zeigen()
+            ps_fest = point_scalars
             if point_scalars is not None and faktor_e != 1.0:
                 point_scalars = np.asarray(point_scalars, float) * faktor_e
             ps_wahr = point_scalars
@@ -20003,7 +20188,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     # Werteskala: automatisch, fest oder Grenzwert - darueber
                     # eigene Farbe und der Groesstwert an der Skala
                     # (spannungen.grenzen); Grenzen nur aus den sichtbaren Knoten
-                    skala = spn.grenzen(self._werteskala(), ps, maske=sicht_maske)
+                    skala = spn.grenzen(self._werteskala(), np.asarray(ps_fest, float),
+                                        maske=sicht_maske)
+                    skala = vp.skala_umrechnen(skala, faktor_e)
                     point_scalars = skala["werte"]
                     clim = list(skala["clim"])
                     farben = {"n_colors": skala["n_colors"], "nan_color": vp.FARBE_OHNE_WERT}
@@ -20016,7 +20203,9 @@ class MainWindow(QtWidgets.QMainWindow):
                         balken["above_label"] = skala["above_label"]
                     if skala["below_label"]:
                         balken["below_label"] = skala["below_label"]
-                    self._werteskala_melden(name, skala)
+                    # mit dem Titel der Legende: Zahl und Einheit passen
+                    # zusammen (vorher „[MPa]“ vor einer Zahl in kN/cm²)
+                    self._werteskala_melden(titel, skala)
                 else:
                     point_scalars = None
                     if spn.feld(field) is not None:

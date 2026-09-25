@@ -139,6 +139,7 @@ def test_bericht_nennt_den_faktor():
     from statik3d import examples_lib
     from statik3d.model import Berichtseintrag
     from statik3d.report.html import Report
+    from statik3d.gui import viewport as vp
     m = examples_lib.frame_example()
     r = solver.solve_static(m)
     m.bericht.append(Berichtseintrag(name="Bild 1", quelle="case:LF1", feld="uz",
@@ -147,6 +148,57 @@ def test_bericht_nennt_den_faktor():
     check("Bericht: „Überhöhung x1480123.4“, nicht „1.48012e+06“",
           "x1480123.4" in html and "1.48012e+06" not in html,
           " ".join(html[html.find("Überhöhung"):html.find("Überhöhung") + 80].split()))
+    # Gegenpruefung 25.09.2026: round(…, 1) machte einen Faktor unter 0,05
+    # zu 0 - die Zeile fiel weg; der Bericht schrieb „x30.0“ fuer 30
+    check("ein kleiner Faktor behält zwei geltende Ziffern (0,034 statt 0)",
+          vp.faktor_runden(0.0344) == 0.034 and vp.faktor_runden(17.63) == 17.6
+          and vp.faktor_runden(0.0) == 0.0, f"{vp.faktor_runden(0.0344)} {vp.faktor_runden(17.63)}")
+    m.bericht[-1].ueberhoehung = 0.034
+    m.bericht.append(Berichtseintrag(name="Bild 2", quelle="case:LF1", feld="uz",
+                                     ueberhoehung=30.0, bild=""))
+    html = Report(m, results=r).html()
+    check("Bericht: „x0.034“ und „x30“ (geltende Ziffern, kein angehängtes „.0“)",
+          "x0.034" in html and "x30<" in html.replace(" ", "") and "x30.0" not in html,
+          " | ".join(" ".join(html[i:i + 60].split()) for i in
+                     [j for j in range(len(html)) if html.startswith("Überhöhung", j)][:2]))
+
+
+def test_marken_kleiner_werte():
+    """Gegenpruefung 25.09.2026: die Marken rundeten auf die Nachkommastellen
+    der Kennwerte - „max 0.00 mm“ bei uy = 0,0015 mm, das Minuszeichen fiel
+    weg. Unter einer halben Einheit der letzten Stelle: zwei geltende Ziffern."""
+    from statik3d.gui import viewport as vp
+    t_max = vp.marken_text("max", 0.0015, "mm", 2)
+    t_min = vp.marken_text("min", -0.0015, "mm", 2)
+    check("uy ±0,0015 mm mit 2 Nachkommastellen: „max 0.0015 mm“, „min -0.0015 mm“",
+          t_max == "max 0.0015 mm" and t_min == "min -0.0015 mm", f"{t_max} / {t_min}")
+    t = vp.marken_text("max", 0.063e-3, "m", 2)
+    check("0,063 mm in m: „max 0.000063 m“ statt „max 0.00 m“", t == "max 0.000063 m", t)
+    t = vp.marken_text("max", 73.5249, "mm", 2)
+    check("… große Werte wie bisher mit den Nachkommastellen der Kennwerte", t == "max 73.52 mm", t)
+
+
+def test_kennwerte_spannung_in_der_legendeneinheit():
+    """Die Spannungszeile der Kennwerte steht in der Einheit der Legende und
+    ohne Zeichen, die im Bild verloren gehen (Rücknahme: _einheit_umrechnen
+    oder bildtext in vp.kennwerte weglassen)."""
+    from statik3d import examples_lib
+    from statik3d import spannungen as spn
+    from statik3d.einheiten import Einheiten
+    from statik3d.gui import viewport as vp
+    m = examples_lib.solid_example()
+    r = solver.solve_static(m)
+    feld = spn.feldname("volumen", next(g for g in spn.GROESSEN["volumen"]
+                                        if spn.kategorien("volumen", g) is None))
+    ak = spn.feld(feld)
+    werte = np.asarray(spn.je_knoten(m, r, ak[0], ak[1], "max"), float)
+    zeilen = vp.kennwerte(m, r, feld=feld, einheiten=Einheiten(spannung="kN/cm²"))
+    z = [x for x in zeilen if "Knoten" in x and "[" in x]
+    soll = spn.dezimal(float(np.nanmax(werte)) * 0.1)
+    check("Kennwert der Spannung in kN/cm² (Legendeneinheit), Wert ein Zehntel der N/mm²",
+          bool(z) and z[-1].endswith("[kN/cm²]") and f"max {soll} " in z[-1], f"{z} / {soll}")
+    check("… ohne σ, τ, φ (im Bild verloren)", bool(z) and not any(c in z[-1] for c in "στφ"),
+          z[-1] if z else "")
 
 
 # --------------------------------------------------------------------------
@@ -500,16 +552,407 @@ def test_nach_f5_ribbon_ergebnisse():
     check("nach der Rechnung steht das Ribbon auf „Ergebnisse“", t == "Ergebnisse", t)
 
 
+# --------------------------------------------------------------------------
+# Nachbesserung nach der Gegenpruefung (25.09.2026)
+# --------------------------------------------------------------------------
+def _lage_soll(w):
+    """Die Knotenlage der gezeichneten Figur, unabhaengig nachgerechnet."""
+    u = np.asarray(w._bild_figur[1], float)
+    s = float(w._ueberhoehung_faktor)
+    return np.asarray(w.model.nodes, float) + s * u[:, :3], s
+
+
+class _Mitschnitt:
+    """Eine Funktion in viewport ersetzen und ihre Schluesselwort-Argumente
+    mitschreiben - fuer Zeichenwege ohne pruefbaren Darsteller am
+    Hallenrahmen (feste Lager bewegen sich nicht, Netzknoten gibt es nicht)."""
+
+    def __init__(self, name):
+        from statik3d.gui import viewport as vp
+        self.vp, self.name, self.alt, self.aufrufe = vp, name, getattr(vp, name), []
+
+    def __enter__(self):
+        def ersatz(*a, **k):
+            self.aufrufe.append(k)
+            return self.alt(*a, **k)
+        setattr(self.vp, self.name, ersatz)
+        return self
+
+    def __exit__(self, *_a):
+        setattr(self.vp, self.name, self.alt)
+
+
+def _auf_lage(P, lage) -> bool:
+    """Liegt jeder Punkt von P auf einem Knoten der Lage?"""
+    from scipy.spatial import cKDTree
+    P = np.asarray(P, float)
+    if not len(P):
+        return False
+    d, _j = cKDTree(np.asarray(lage, float)).query(P)
+    return bool(np.all(d < 1e-9))
+
+
+def test_zeichenwege_an_der_bildlage():
+    """Gegenpruefung 25.09.2026: 14 Verhaltensaenderungen ohne Pruefung im
+    Fenster. Hier je Zeichenweg die Lage, an der er zeichnet."""
+    from statik3d.gui import viewport as vp
+    w, app, an = _halle()
+    _waehle(w, app, ("env", "ULS"))
+    lage, s = _lage_soll(w)
+    check("Ausgangslage: verformte Figur mit Faktor > 0", s > 0 and w._bildlage is not None, f"{s}")
+    # Lager: die Lager der Halle sind fest und bewegen sich nicht - geprueft
+    # wird, welche Lage das Fenster uebergibt
+    with _Mitschnitt("add_supports") as ms:
+        w.redraw(); app.processEvents()
+    lg = ms.aufrufe[-1].get("lage") if ms.aufrufe else None
+    check("Lagersymbole: das Fenster zeichnet sie an der verformten Lage",
+          lg is not None and np.allclose(lg, lage, atol=1e-9), str(None if lg is None else len(lg)))
+    # Netzknoten: dasselbe (die Halle hat keine)
+    w.act_edges.setChecked(True); w.act_netzknoten.setChecked(True)
+    with _Mitschnitt("add_netzknoten") as ms:
+        w.redraw(); app.processEvents()
+    lg = ms.aufrufe[-1].get("lage") if ms.aufrufe else None
+    check("Netzknoten: an der verformten Lage", lg is not None and np.allclose(lg, lage, atol=1e-9))
+    w.act_netzknoten.setChecked(False)
+    # Werte im Bild: Lage und Einheiten
+    w.act_werte_staebe.setChecked(True)
+    with _Mitschnitt("ergebniswerte") as ms:
+        w.redraw(); app.processEvents()
+    k_ = ms.aufrufe[-1] if ms.aufrufe else {}
+    check("Werte im Bild: an der verformten Lage", k_.get("lage") is not None
+          and np.allclose(k_["lage"], lage, atol=1e-9))
+    check("Werte im Bild: in der Einheiteneinstellung des Modells",
+          k_.get("einheiten") is w._einheiten_modell())
+    w.act_werte_staebe.setChecked(False)
+    # Knotennummern
+    w.act_nummern["Knoten"].setChecked(True); app.processEvents()
+    a = _akteure(w).get("nummern:Knoten-points")
+    check("Knotennummern an der verformten Lage", a is not None and _auf_lage(pv_punkte(a), lage)
+          and not _auf_lage(pv_punkte(a), w.model.nodes), "kein Darsteller" if a is None else "")
+    w.act_nummern["Knoten"].setChecked(False); app.processEvents()
+    # Sonde: ein Knoten, dessen verformte Lage einem anderen Modellknoten
+    # naeher liegt als dem eigenen - der Klick muss ihn trotzdem treffen
+    from scipy.spatial import cKDTree
+    # mit grossem Faktor: am Hallenrahmen liegt sonst jeder verformte
+    # Knoten noch seinem eigenen Modellknoten am naechsten
+    w.ueberhoehung_setzen("fest", 20.0 * s); app.processEvents()
+    lage, _s = _lage_soll(w)
+    _d, naechst = cKDTree(np.asarray(w.model.nodes, float)).query(lage)
+    kand = [i for i in vp.konstruktionsknoten(w.model) if int(naechst[i]) != int(i)]
+    check("Prüfknoten für die Sonde gefunden (verformt näher an einem anderen Knoten)", bool(kand))
+    if kand:
+        k = int(kand[0])
+        fang = w._fangpunkt
+        w._fangpunkt = lambda: (None, "", None)
+        w.sonden = []
+        try:
+            w._sonde_setzen(lage[k])
+        finally:
+            w._fangpunkt = fang
+        app.processEvents()
+        check("Sonde am verformt gezeichneten Knoten gesetzt (nicht am Modellknoten daneben)",
+              bool(w.sonden) and int(w.sonden[-1]["knoten"]) == k,
+              f"{w.sonden[-1]['knoten'] if w.sonden else None} / {k}")
+        a = _akteure(w).get("sonden-points")
+        check("… und an der verformten Lage gezeichnet",
+              a is not None and np.allclose(pv_punkte(a)[0], lage[k], atol=1e-9))
+        w.sonden = []
+    w.ueberhoehung_setzen("auto"); app.processEvents()
+    lage, _s = _lage_soll(w)
+    # Auswahl eines Stabs: die orange Linie liegt auf der verformten Figur
+    stab = max(w.model.members, key=lambda n: float(np.max(np.abs(np.asarray(
+        w._bild_figur[1])[[int(x) for e in w.model.members[n].elements
+                           for x in w.model.elements[e].nodes], :3]))))
+    w.sel_staebe = {stab}; w.redraw(); app.processEvents()
+    a = _akteure(w).get("auswahl")
+    check(f"gewählter Stab {stab}: die Hervorhebung liegt auf der verformten Figur",
+          a is not None and _auf_lage(pv_punkte(a), lage) and not _auf_lage(pv_punkte(a), w.model.nodes))
+    w.sel_staebe = set(); w.redraw(); app.processEvents()
+
+
+def test_umriss_marke_verlauf_sichtbar():
+    import pyvista as pv
+    w, app, an = _halle()
+    _waehle(w, app, ("env", "ULS"))
+    w.cb_undeformed.setChecked(True); app.processEvents()
+    mit = any(k.startswith("undeformed_") for k in _akteure(w))
+    w.btn_ueberhoehung["aus"].click(); app.processEvents()
+    ohne = not any(k.startswith("undeformed_") for k in _akteure(w))
+    check("Überhöhung aus: kein Umriss des unverformten Systems (läge auf der Figur)",
+          mit and ohne, f"mit auto {mit}, bei aus weg {ohne}")
+    w.btn_ueberhoehung["auto"].click(); app.processEvents()
+    # Max-Marke nur in sichtbaren Teilen: den Knoten des Groesstwerts mit
+    # allen seinen Elementen ausblenden
+    from statik3d.gui import viewport as vp
+    ps, _c, _n = vp.result_field(w.model, an.envelopes["ULS"], "|u| Verschiebung")
+    k = int(np.nanargmax(ps))
+    weg = {i for i, e in enumerate(w.model.elements) if k in [int(n) for n in e.nodes]}
+    w.verborgen["elemente"] = set(weg); w.redraw(); app.processEvents()
+    lage, _s = _lage_soll(w)
+    sicht = w._sichtbare_knoten()
+    a = _akteure(w).get("marke_max-points")
+    P = np.asarray(_daten(a).GetPoints().GetPoint(0)) if a is not None else None
+    check("Max-Marke bei ausgeblendetem Größtwert-Knoten: an einem sichtbaren Knoten",
+          P is not None and sicht is not None and k not in set(int(i) for i in sicht)
+          and _auf_lage([P], lage[np.asarray(sorted(sicht), int)]),
+          f"Knoten {k} ausgeblendet, Marke bei {P}")
+    w.verborgen["elemente"] = set(); w.redraw(); app.processEvents()
+    # Verlauf nur an sichtbaren Staeben
+    _waehle(w, app, ("combo", "GZT4"))
+    stab = next(iter(w.model.members))
+    weg = {int(e) for e in w.model.members[stab].elements}
+    w.verborgen["elemente"] = set(weg)
+    w.cb_diagram.setCurrentText("My"); app.processEvents()
+    a = _akteure(w).get("diagram")
+    el = set(int(x) for x in np.asarray(pv.wrap(_daten(a)).point_data["elem"])) if a is not None else None
+    check(f"Stab {stab} ausgeblendet: sein Verlauf fehlt, die anderen sind da",
+          el is not None and not (el & weg) and len(el) > 0, f"{None if el is None else len(el)} Elemente")
+    w.verborgen["elemente"] = set()
+    w.cb_diagram.setCurrentText("kein Verlauf"); app.processEvents()
+
+
+def test_bildtext_kopfzeile():
+    w, app, an = _halle()
+    _waehle(w, app, ("env", "ULS"))
+    kz = " ".join(w._kopfzeile_zeilen)
+    check("Kopfzeile: „Färbung Verschiebung u gesamt“, kein „|u|“",
+          "Färbung Verschiebung u gesamt" in kz and "|u|" not in kz, kz[:160])
+
+
+def test_breite_mit_langer_kombination():
+    """Gegenpruefung 25.09.2026 (hoch): die Auswahl „Ergebnis“ machte den
+    rechten Bereich so breit wie ihren laengsten Eintrag - mit einer
+    Kombination aus 8 Lastfaellen 993 px, die Ansicht bei 1366 x 768 139 px,
+    jede Maske liess das Fenster wachsen."""
+    w, app = _fenster()
+    w.resize(1366, 768)
+    for _ in range(4):
+        app.processEvents()
+    w.load_example("hall"); app.processEvents()
+    lang = ("1.35·Eigengewicht + 1.5·Schnee + 0.9·Wind links + 1.5·Nutzlast Bühne + "
+            "1.5·Ausbaulast Dach + 1.5·Temperatur Sommer + 1.5·Anprall Stapler + 1.5·Kran")
+    k0 = next(iter(w.model.combinations))
+    w.model.combinations[k0].formula = lambda: lang
+    an = solver.solve_all(w.model, design=bool(w.model.members))
+    w._solve_done("all", an)
+    for _ in range(6):
+        app.processEvents()
+    ansicht = w.maskenrand.ansicht
+    texte = [w.cb_result.itemText(i) for i in range(w.cb_result.count())]
+    check("die lange Kombination steht in der Auswahl", any(lang in t for t in texte))
+    check("die Auswahl „Ergebnis“ verlangt höchstens die Breite von 18 Zeichen",
+          w.cb_result.minimumSizeHint().width() < 300, f"{w.cb_result.minimumSizeHint().width()} px")
+    werte = []
+    for schritt in ("F5", "Knoten", "Netz", "Wind"):
+        if w.maskenrand.offen():
+            w.maskenrand.schliessen()
+        w.resize(1366, 768)
+        for _ in range(4):
+            app.processEvents()
+        if schritt == "Wind":
+            w.maske_wind()
+        elif schritt == "Knoten":
+            w.maske_knoten()
+        elif schritt == "Netz":
+            w.maske_zeigen("Netz")
+        for _ in range(6):
+            app.processEvents()
+        werte.append((schritt, w.eingaben_dock.width(), ansicht.visibleRegion().boundingRect().width(),
+                      w.width(), w.height()))
+    # Wind ist auch ohne Ergebnis breiter (Maske 1119 px Mindestbreite) -
+    # geprueft wird, dass die Steuerung nichts dazu tut
+    ok = all(r <= 480 and s >= 500 and b <= 1366 for n, r, s, b, _h in werte if n != "Wind")
+    check("1366 x 768, lange Kombination: rechts ≤ 480 px, Ansicht ≥ 500 px, Fenster nicht breiter "
+          "(F5, Knoten, Netz)",
+          ok, "; ".join(f"{n}: rechts {r}, Ansicht {s}, Fenster {b}x{h}" for n, r, s, b, h in werte))
+    check("… Wind: das Fenster wird nicht breiter", werte[-1][3] <= 1366, str(werte[-1]))
+    # Die Hoehe: ohne die Aufteilung aus Paket 5 (rechter Bereich ueber die
+    # ganze Hoehe) laesst jede Steuerung ueber einer Maske das Fenster bei
+    # 1366 x 768 wachsen - der rechte Bereich ist dort schon ohne sie bis
+    # auf 23 px voll. Die Pruefung gilt darum erst nach dem Zusammenfuehren.
+    try:
+        import statik3d.gui.fenster  # noqa: F401 - Paket 5
+        mit_p5 = True
+    except ImportError:
+        mit_p5 = False
+    if mit_p5:
+        check("… mit Paket 5: keine der Masken lässt das Fenster höher werden",
+              all(h <= 768 for _n, _r, _s, _b, h in werte), str(werte))
+    else:
+        print("     Höhe mit Masken: erst mit Paket 5 prüfbar (statik3d.gui.fenster fehlt) - "
+              + "; ".join(f"{n} {h} px" for n, _r, _s, _b, h in werte))
+    cb = w.cb_result
+    i = next((j for j, t in enumerate(texte) if lang in t), -1)
+    check("… die Aufklappliste ist breit genug für den ganzen Namen, der Tooltip nennt ihn",
+          i >= 0 and cb.view().minimumWidth() >= min(cb.fontMetrics().horizontalAdvance(texte[i]),
+                                                      cb.screen().availableGeometry().width() - 40)
+          and cb.itemData(i, QtCore_ToolTipRole()) == texte[i],
+          f"Liste {cb.view().minimumWidth()} px")
+    if w.maskenrand.offen():
+        w.maskenrand.schliessen()
+    w.resize(1600, 1000)
+    for _ in range(4):
+        app.processEvents()
+
+
+def QtCore_ToolTipRole():
+    from PySide6 import QtCore
+    return QtCore.Qt.ToolTipRole
+
+
+def test_fensterhoehe_nach_f5():
+    """Gegenpruefung 25.09.2026: die Steuerung (157 px) wurde nach F5 ohne
+    _fensterhoehe_halten eingeblendet - bei 1366 x 768 85 px ueber dem
+    Bildschirm."""
+    w, app = _fenster()
+    w.new_model()
+    for _ in range(4):
+        app.processEvents()
+    w.resize(1366, 768)
+    for _ in range(4):
+        app.processEvents()
+    w.load_example("hall"); app.processEvents()
+    h0 = w.height()
+    an = solver.solve_all(w.model, design=bool(w.model.members))
+    w._solve_done("all", an)
+    for _ in range(6):
+        app.processEvents()
+    check("nach F5 bei 1366 x 768: das Fenster bleibt so hoch (Steuerung sichtbar)",
+          w.ergebnissteuerung.isVisible() and w.height() <= h0, f"{h0} -> {w.height()}")
+    w.resize(1600, 1000)
+    for _ in range(4):
+        app.processEvents()
+
+
+def test_werteskala_in_fester_einheit():
+    """Gegenpruefung 25.09.2026 (mittel): die gespeicherten Grenzen galten
+    nach dem Umstellen der Einheit in der neuen Einheit - 875 Ueberschreitungen
+    verschwanden still, die Statuszeile nannte [MPa] vor einer Zahl in kN/cm²."""
+    import re
+    from statik3d import spannungen as spn
+    w, app, an = _halle()
+    _waehle(w, app, ("env", "ULS"))
+    E = w.model.einheiten
+    alt = E.verformung
+    w.model.werteskala = spn.Werteskala()
+    w.model.werteskala.modus = "grenze"
+    w.model.werteskala.grenze = 50.0             # mm
+    w._werteskala_anzeigen()
+
+    def zaehlen():
+        w.statusBar().clearMessage()
+        w.redraw(); app.processEvents()
+        t = w.statusBar().currentMessage()
+        z = re.search(r"(\d+) Knoten über", t)
+        return (int(z.group(1)) if z else 0), t
+    try:
+        n_mm, t_mm = zaehlen()
+        E.verformung = "cm"
+        w.einheiten_anwenden(); app.processEvents()
+        n_cm, t_cm = zaehlen()
+        check("Grenze 50 mm: in mm und nach Umstellen auf cm gleich viele Knoten darüber",
+              n_mm > 0 and n_cm == n_mm, f"{n_mm} / {n_cm}")
+        check("… die Statuszeile nennt die Einheit ihrer Zahlen („[cm]“, „über 5“)",
+              "[cm]" in t_cm and re.search(r"über 5(\.0+)? ", t_cm) is not None
+              and "[mm]" not in t_cm, t_cm)
+        check("… das Feld Grenze zeigt die feste Einheit „mm“",
+              w.ed_skala_grenze.suffix().strip() == "mm", w.ed_skala_grenze.suffix())
+        kz = " ".join(w._kopfzeile_zeilen)
+        check("… die Kopfzeile sagt „Skala bis 50 mm“", "Skala bis 50 mm" in kz, kz[:200])
+    finally:
+        E.verformung = alt
+        w.model.werteskala = spn.Werteskala()
+        w._werteskala_anzeigen()
+        w.einheiten_anwenden(); app.processEvents()
+
+
+def test_ueberhoehungsfeld_nachbesserung():
+    from PySide6 import QtCore
+    from PySide6.QtTest import QTest
+    w, app, an = _halle()
+    _waehle(w, app, ("env", "ULS"))
+    ed = w.ed_ueberhoehung
+    w.btn_ueberhoehung["auto"].click(); app.processEvents()
+    # getippter Rest ohne Enter, dann ein Knopf
+    ed.setFocus(); app.processEvents()
+    ed.setText("250"); ed.setModified(True)
+    w.btn_ueberhoehung["1:1"].click(); app.processEvents()
+    check("„250“ getippt ohne Enter, dann Knopf 1:1: Faktor 1, das Feld zeigt 1",
+          w._ueberhoehung_faktor == 1.0 and ed.text() == "1", f"{w._ueberhoehung_faktor} „{ed.text()}“")
+    ed.editingFinished.emit(); ed.clearFocus(); app.processEvents()
+    check("… das Feld verlassen: es bleibt bei 1:1 (kein fester Faktor 250)",
+          w._ueberhoehung_art == "1:1" and w._ueberhoehung_faktor == 1.0,
+          f"{w._ueberhoehung_art} {w._ueberhoehung_faktor}")
+    # Woerter tippen
+    w.btn_ueberhoehung["auto"].click(); app.processEvents()
+    ed.setFocus(); ed.selectAll()
+    QTest.keyClicks(ed, "1:1")
+    check("„1:1“ getippt steht als „1:1“ im Feld (nicht „11“)", ed.text() == "1:1", ed.text())
+    QTest.keyClick(ed, QtCore.Qt.Key_Return); app.processEvents()
+    check("… Enter: wahre Größe (Faktor 1), nicht Faktor 11",
+          w._ueberhoehung_art == "1:1" and w._ueberhoehung_faktor == 1.0,
+          f"{w._ueberhoehung_art} {w._ueberhoehung_faktor}")
+    ed.selectAll(); QTest.keyClicks(ed, "aus"); QTest.keyClick(ed, QtCore.Qt.Key_Return)
+    app.processEvents()
+    check("„aus“ getippt und Enter: keine Verformung", w._ueberhoehung_art == "aus"
+          and w._ueberhoehung_faktor == 0.0, f"{w._ueberhoehung_art}")
+    ed.clearFocus()
+    w.btn_ueberhoehung["auto"].click(); app.processEvents()
+    # Verlauf: gezeichnet mit 0 - das Feld sagt es
+    _waehle(w, app, ("combo", "GZT4"))
+    w.cb_diagram.setCurrentText("My"); app.processEvents()
+    check("Verlauf My: das Feld zeigt 0 und ist gesperrt (gezeichnet wird unverformt)",
+          ed.text() == "0" and not ed.isEnabled() and w._ueberhoehung_faktor == 0.0,
+          f"„{ed.text()}“ enabled={ed.isEnabled()}")
+    w.cb_diagram.setCurrentText("kein Verlauf"); app.processEvents()
+    check("kein Verlauf: das Feld ist wieder frei und zeigt den Faktor",
+          ed.isEnabled() and ed.text() not in ("", "0") and w._ueberhoehung_faktor > 0, ed.text())
+
+
+def test_tabfolge_steuerung_register():
+    """Gegenpruefung 25.09.2026: von „aus“ sprang Tab in die 3D-Ansicht und
+    blieb dort - das Register Ergebnisse darunter (Schnittgrößenverlauf,
+    Werte am Verlauf, Max/Min-Marken) war per Tastatur nicht erreichbar."""
+    from PySide6 import QtCore, QtWidgets
+    from PySide6.QtTest import QTest
+    w, app, an = _halle()
+    w.maske_zeigen("Ergebnisse"); app.processEvents()
+    w.activateWindow(); app.processEvents()
+    b = w.btn_ueberhoehung["aus"]
+    b.setFocus(QtCore.Qt.TabFocusReason); app.processEvents()
+    seite = w.tabs.currentWidget()
+    weg = []
+    erreicht = False
+    for _ in range(25):
+        fw = QtWidgets.QApplication.focusWidget() or b
+        QTest.keyClick(fw, QtCore.Qt.Key_Tab); app.processEvents()
+        fw = QtWidgets.QApplication.focusWidget()
+        weg.append(type(fw).__name__ if fw is not None else "None")
+        if fw is w.cb_diagram:
+            erreicht = True
+            break
+    erstes = weg[0] if weg else ""
+    check("Tab nach „aus“ führt ins Register Ergebnisse, weiter bis „Schnittgrößenverlauf“",
+          erreicht and "QtInteractor" not in weg, " → ".join(weg[:12]))
+    w.maske_knoten(); app.processEvents()
+    w.maskenrand.schliessen(); app.processEvents()
+
+
 def main():
     import faulthandler
     faulthandler.dump_traceback_later(900, exit=True)
     for t in (test_bezeichnungen_ohne_verlierbare_zeichen, test_einheiten_der_legende,
               test_extremstellen_und_marken, test_lager_an_der_verformten_lage,
-              test_bericht_nennt_den_faktor,
+              test_bericht_nennt_den_faktor, test_marken_kleiner_werte,
+              test_kennwerte_spannung_in_der_legendeneinheit,
               test_umhuellende_zwei_linien, test_skala_des_verlaufs_symmetrisch,
               test_max_min_marken, test_werte_am_verlauf, test_verlauf_am_unverformten_stab,
               test_knoten_und_auswahl_an_der_verformten_lage, test_legende_folgt_den_einheiten,
-              test_ueberhoehung, test_ergebnissteuerung_oben_rechts, test_nach_f5_ribbon_ergebnisse):
+              test_ueberhoehung, test_ergebnissteuerung_oben_rechts, test_nach_f5_ribbon_ergebnisse,
+              test_zeichenwege_an_der_bildlage, test_umriss_marke_verlauf_sichtbar,
+              test_bildtext_kopfzeile, test_werteskala_in_fester_einheit,
+              test_ueberhoehungsfeld_nachbesserung, test_tabfolge_steuerung_register,
+              test_fensterhoehe_nach_f5, test_breite_mit_langer_kombination):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

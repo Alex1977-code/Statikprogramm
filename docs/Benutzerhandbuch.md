@@ -1403,19 +1403,43 @@ Rahmen nach *Berechnen* alle 33 Lastpfeile weg). Der Schalter *Lasten*
 #### Ergebnisdarstellung (seit 25.09.2026)
 
 **Ergebnissteuerung oben rechts.** Sobald es ein Ergebnis gibt, steht oben im
-rechten Bereich ein kleiner Kasten *Ergebnisdarstellung* mit **Ergebnis**,
-**Färbung** und **Überhöhung**. Er bleibt stehen, wenn man ein Objekt anklickt
-oder einen Befehl wählt: rechts steht dann die Steuerung und darunter die
-Maske des Objekts. Ohne Ergebnis (neues Modell, nach *Rückgängig*) ist er weg.
-Nach dem Rechnen (F5) steht das Ribbon auf dem Register **Ergebnisse**.
+rechten Bereich ein kleiner Kasten *Ergebnisdarstellung* mit drei Zeilen:
+**Ergebnis**, **Färbung** und **Überhöhung**. Er bleibt stehen, wenn man ein
+Objekt anklickt oder einen Befehl wählt: rechts steht dann die Steuerung und
+darunter die Maske des Objekts. Ohne Ergebnis (neues Modell, nach *Rückgängig*)
+ist er weg. Nach dem Rechnen (F5) steht das Ribbon auf dem Register
+**Ergebnisse**; das Fenster wird dabei nicht höher.
+
+Die Auswahllisten *Ergebnis* und *Färbung* sind schmal (etwa 18 Zeichen) und
+bestimmen die Breite des rechten Bereichs nicht: eine lange Kombination wie
+„GZT19: 1.35·LF1 + 1.5·W_rechts + …“ steht in der aufgeklappten Liste ganz da,
+der Tooltip nennt den gewählten Namen vollständig. Bis zur Nachbesserung am
+25.09.2026 machte ein RFEM-Import mit Kombinationen aus acht Lastfällen den
+rechten Bereich fast 1000 px breit, und von der Ansicht blieb bei 1366 × 768
+ein Streifen.
+
+Mit der Tastatur: **Tab** läuft von *Ergebnis* über *Färbung*, das
+Überhöhungsfeld und die drei Knöpfe in das Register darunter (bei der Maske
+*Ergebnisse* also weiter zu *Schnittgrößenverlauf*, *Werte am Verlauf*,
+*Max/Min-Marken*) bzw. in die Maske darunter.
 
 **Überhöhung.** Ein Zahlenfeld mit drei Knöpfen: **auto** (Vorgabe; die größte
 Verschiebung erscheint mit 8 % der Modellgröße), **1:1** (wahre Größe) und
 **aus** (keine Verformung). Eine getippte Zahl mit Enter gilt als fester
-Faktor; eine ungültige Eingabe wird rot und ändert nichts. Das Feld zeigt immer
-den Faktor, mit dem gerade gezeichnet wird, die Zeile darunter die größte
-Verschiebung. *Ansicht in den Bericht* übernimmt genau diesen Faktor („Überhöhung
-x17.6“); bis dahin stand dort die Stellung des früheren Schiebers (30).
+Faktor; eine ungültige Eingabe wird rot und ändert nichts. Die Wörter
+**auto**, **1:1** und **aus** kann man auch tippen. Ein Knopf gilt sofort,
+auch wenn im Feld noch ein getippter Rest ohne Enter stand – das Feld zeigt
+danach den Faktor des Knopfs. Das Feld zeigt den Faktor, mit dem gerade
+gezeichnet wird; neben den Knöpfen steht kurz die größte Verschiebung („max
+73,52 mm“), der Tooltip nennt Faktor und Verschiebung ausführlich. Ist ein
+**Schnittgrößenverlauf** gewählt, steht im Feld **0** und Feld und Knöpfe sind
+gesperrt: gezeichnet wird dann unverformt (siehe unten), die gewählte Art gilt
+wieder ohne Verlauf. *Ansicht in den Bericht* übernimmt genau diesen Faktor
+(„Überhöhung x17.6“, ein sehr kleiner Faktor mit zwei geltenden Ziffern, etwa
+„x0.034“); bis dahin stand dort die Stellung des früheren Schiebers (30).
+Berichtsbilder, die vor dem 25.09.2026 übernommen wurden, tragen weiter diese
+Stellung – ihre Zeile „Überhöhung x30“ nennt also nicht den Faktor, mit dem das
+Bild gezeichnet ist.
 
 **Knoten, Lager und Auswahl an der verformten Lage.** Im Ergebnisbild sitzen
 Knoten, Knotennummern, Lagersymbole, gewählte Knoten, Stäbe, Flächen und
@@ -1439,7 +1463,10 @@ kleinsten Werts steht eine Marke mit Wert und Einheit („max 73.52 mm“,
 „min −393.11 kNm“, als Dezimalzahl, nie mit Exponent) — für die Färbung (nur
 sichtbare Teile, an der verformten Lage) und für den Verlauf. Bei einem Betrag
 wie *u gesamt* oder der Vergleichsspannung gibt es nur die Max-Marke, bei uz
-einer nach unten verformten Decke nur die Min-Marke. **Werte am Verlauf** sind
+einer nach unten verformten Decke nur die Min-Marke. Ein Wert, der mit den
+eingestellten Nachkommastellen zu 0 würde (uy = 0,0015 mm bei zwei Stellen),
+steht mit zwei geltenden Ziffern da („max 0.0015 mm“, „min -0.0015 mm“ statt
+zweimal „0.00 mm“). **Werte am Verlauf** sind
 vorab an: je Stab der größte und der kleinste Wert an der Spitze des Verlaufs.
 Beides lässt sich in der Maske *Ergebnisse* abschalten (*Werte am Verlauf*,
 *Max/Min-Marken*). Ist *Werte im Bild: Stäbe* an, beschriftet das die Stellen
@@ -1450,9 +1477,20 @@ verloren gehen: **„u gesamt [mm]“** statt „|u| [mm]“ (das als „u max�
 war), „phi gesamt [mrad]“, „Vergleichsspannung [N/mm²]“, „Volumen sigma_v …“.
 Legende, Marken und Verlauf folgen der Einstellung *Ansicht → Einheiten* wie
 die Kennwerte: Verformung in mm, cm oder m, Spannung in N/mm² oder kN/cm²,
-Schnittgrößen in N, kN oder MN bzw. kNm, kNcm … Feste Grenzen und der
-Grenzwert der Werteskala gelten in der Einheit der Legende. Geprüft in
-`tests/test_ergebnisdarstellung.py`.
+Schnittgrößen in N, kN oder MN bzw. kNm, kNcm …
+
+**Werteskala und Einheiten.** Die festen Grenzen (*unten / oben*) und der
+**Grenzwert** der Werteskala gelten dagegen immer in der **festen Einheit der
+Größe**: Spannungen N/mm², Verschiebungen mm, Verdrehungen mrad – so sind sie
+mit dem Modell gespeichert, und „355 für S355“ bleibt 355 N/mm², auch wenn die
+Legende in kN/cm² steht. Die Felder zeigen diese Einheit an, die Kopfzeile
+ebenso („Skala bis 355 N/mm²“). Umgerechnet wird erst für das Bild: die Skala
+reicht dann bis 35,5 kN/cm², die Zahl der Knoten über der Grenze bleibt beim
+Umstellen der Einheit gleich, und die Statuszeile nennt ihre Zahlen mit dem
+Titel der Legende („u gesamt max [cm]: 5 Knoten über 5.00 (max 7.35)“). Bis zur
+Nachbesserung am 25.09.2026 galt die Grenze nach dem Umstellen in der neuen
+Einheit – aus 20 N/mm² wurden still 20 kN/cm², Überschreitungen verschwanden.
+Geprüft in `tests/test_ergebnisdarstellung.py`.
 
 **Ergebnisse in den Bericht übernehmen**: Ansicht einstellen, dann
 *Bericht → Ansicht übernehmen* (**Strg+B**) oder „+ Ansicht übernehmen" im
@@ -6783,7 +6821,9 @@ eigenen Skala: Bauteil wählen, *Selektion anzeigen*, ablesen. Geprüft in
   — oder sagt, dass **nichts** über der Grenze liegt und deshalb alles grau
   bleibt (mit dem Größtwert, damit man weiß, wie weit die Grenze weg ist).
   Kopfzeile und Berichtsbild nennen die Skala. Die Einstellung wird mit dem
-  Modell gespeichert.
+  Modell gespeichert. Grenzen und Grenzwert gelten in der festen Einheit der
+  Größe (N/mm², mm, mrad), auch wenn die Legende in einer anderen Einheit steht
+  (siehe *Ergebnisdarstellung*, Absatz *Werteskala und Einheiten*).
 * **Umhüllende einer Kombination.** Eine Kombination mit Alternativen (aus
   einer RFEM-Ergebniskombination „LF1 oder LF2 oder …") hat kein einzelnes
   Ergebnis, sondern eine Umhüllende: Minimum und Maximum je Größe über ihre

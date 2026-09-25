@@ -2973,6 +2973,19 @@ def extremstellen(werte, maske=None) -> tuple:
     return (i_hi if w[i_hi] > 0 else None), (i_lo if w[i_lo] < 0 else None)
 
 
+def faktor_runden(s: float) -> float:
+    """Ein Ueberhoehungsfaktor zum Zeigen: ab 1 auf eine Nachkommastelle,
+    darunter auf zwei geltende Ziffern. Bis 25.09.2026 immer round(…, 1) -
+    ein Faktor unter 0,05 (sehr grosse Verformung) wurde 0, und die Zeile
+    „Überhöhung“ fiel im Bericht ganz weg (Gegenpruefung 25.09.2026)."""
+    s = float(s or 0.0)
+    if not np.isfinite(s) or s == 0.0:
+        return 0.0
+    if abs(s) >= 1.0:
+        return round(s, 1)
+    return round(s, int(1 - np.floor(np.log10(abs(s)))))
+
+
 def marken_text(art: str, wert: float, einheit: str, nk: int = None) -> str:
     """„max 73.52 mm“ - Wert als Dezimalzahl mit Punkt wie alle Texte der
     Ansicht, nie wissenschaftlich (2.39e+03 las der Anwender nicht,
@@ -2980,8 +2993,10 @@ def marken_text(art: str, wert: float, einheit: str, nk: int = None) -> str:
     nach dem Betrag (spannungen.dezimal)."""
     from ..spannungen import dezimal
     a = abs(float(wert)) if np.isfinite(wert) else 0.0
-    if nk is None and 0.0 < a < 0.01:
-        # zwei geltende Ziffern statt „0.000“ (wie spannungen.skalenformat)
+    if 0.0 < a and ((nk is None and a < 0.01) or (nk is not None and a < 0.5 * 10.0 ** -int(nk))):
+        # zwei geltende Ziffern statt „0.000“ (wie spannungen.skalenformat).
+        # Auch mit ``nk``: die Marke „max 0.00 mm“ bei uy = 0,0015 mm sagte
+        # nichts, und das Minuszeichen fiel weg (Gegenpruefung 25.09.2026)
         nk = min(12, int(-np.floor(np.log10(a))) + 1)
     zahl = dezimal(wert, nk) if nk is not None else dezimal(wert)
     return f"{art} {zahl}" + (f" {einheit}" if einheit and einheit != "-" else "")
@@ -3044,6 +3059,45 @@ def skalentitel(feld: str, name: str, einheiten=None) -> tuple:
     else:
         titel = bildtext(name)
     return faktor, titel
+
+
+def einheit_aus_name(name: str) -> str:
+    """Die Einheit in eckigen Klammern am Ende eines Namens aus result_field
+    („|u| max [mm]“ -> „mm“), sonst leer."""
+    name = str(name or "")
+    if name.endswith("]") and "[" in name:
+        return name[:-1].rpartition("[")[2].strip()
+    return ""
+
+
+def skala_umrechnen(skala: dict, faktor: float) -> dict:
+    """Eine Werteskala (spannungen.grenzen, gerechnet in der festen Einheit
+    der Groesse) in die Einheit der Legende umrechnen: Werte, Grenzen,
+    Extremwerte und Beschriftungen ueber und unter der Skala.
+
+    Die Grenzen der Werteskala sind im Modell ohne Einheit gespeichert und
+    galten immer in N/mm², mm, mrad. Seit die Legende Ansicht → Einheiten
+    folgt (25.09.2026), wurde erst umgerechnet und dann begrenzt - nach dem
+    Umstellen auf kN/cm² wirkte die Grenze 20 als 200 N/mm², und 875
+    Ueberschreitungen verschwanden ohne Hinweis (Gegenpruefung 25.09.2026).
+    Jetzt: erst begrenzen, dann umrechnen - die Zahl der Ueberschreitungen
+    haengt nicht von der Einheit ab."""
+    f = float(faktor)
+    if f == 1.0:
+        return skala
+    from ..spannungen import _text
+    out = dict(skala)
+    if out.get("werte") is not None:
+        out["werte"] = np.asarray(out["werte"], float) * f
+    out["clim"] = [float(c) * f for c in (out.get("clim") or [0.0, 1.0])]
+    for k in ("wmin", "wmax", "grenze"):
+        if out.get(k) is not None:
+            out[k] = float(out[k]) * f
+    if out.get("above_label") and out.get("wmax") is not None:
+        out["above_label"] = _text(out["wmax"])
+    if out.get("below_label") and out.get("wmin") is not None:
+        out["below_label"] = _text(out["wmin"])
+    return out
 
 
 def verlauf_einheit(quantity: str, einheiten=None) -> tuple:
