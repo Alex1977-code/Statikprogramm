@@ -89,7 +89,7 @@ Vierzehn Register nach Arbeitsschritt:
 | **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, Stabzug, Stäbe für Nachweise, automatisch erkennen, Querschnitt zuweisen), **Flächen** (Schale, Fläche aus Linien, Rechteckplatte, vernetzen, verschneiden, Dicke zuweisen), **Volumen** (Volumen aus Flächen, Quader, vernetzen), **Gelenke** (Gelenk anlegen, Gelenke setzen, Tabelle), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
 | **Lager / Kontakt** | Knoten-, Linien-, Flächenlager, Nichtlinearität, Kontakt (mit *Alle Kontakte löschen…*), Anschlüsse (anlegen, zeigen, löschen) |
 | **Lasten** | Lastfälle, Kombinationen, Lastfälle nach DIN 19704, Knoten-, Stab-, Flächen-, Temperaturlast, Zwangsverformung, Vorspannung, Eigengewicht, Generierer Wasserdruck und Wind |
-| **Netz** | Vernetzen (Flächen und Volumen), Netzeinstellungen (Netzdichte, Elementform, intelligente Anpassung), Netzqualität, **Netzknoten** (Schalter), Netz löschen, Kontaktfugen |
+| **Netz** | Vernetzen (Flächen und Volumen), Netzeinstellungen (Netzdichte, Elementform, intelligente Anpassung), **Elemente wählen**, **Elementübersicht**, Netzqualität, **Netzknoten** (Schalter), Netz löschen, Kontaktfugen |
 | **Berechnung** | Berechnen (F5), einzelner Lastfall, Eigenschwingungen, Knicken, alle Stellungen, DIN 19704, Einstellungen, Bedienung im Browser |
 | **Nachweise** | EC3, Ermüdung, Verformung (GZG), Beulen (EC3-1-5/-1-6), Lasteinleitung, Konfiguration |
 | **Ergebnisse** | Ergebniswahl und die Tabellen |
@@ -876,6 +876,53 @@ Kennwerte und die zwanzig schlechtesten Elemente stehen im Protokoll.
 **Schlechte wählen** markiert alle Elemente unter der eingestellten Grenze in
 der Ansicht, **Aus** nimmt die Einfärbung wieder weg. Stäbe, Federn und
 Grenzschichten haben keine Form in diesem Sinn und bleiben grau.
+
+### Elemente wählen und Elementübersicht (seit 25.09.2026)
+
+**Netz → Elemente wählen…** zeigt rechts je Familie die Elemente zum
+Anhaken: *Volumen – Tetraeder* (tet4, tet10, tetp), *Volumen – Sechsflächner*
+(VQ83 = hex8, VQ203 = hex20), *Volumen – Übergang* (Pyramiden pyr5) und
+*Schalen* (linear, quadratisch). Was nicht zur Wahl passt, ist **grau**; der
+Grund steht am Zeiger, bei Unverträglichem der Text der
+Verträglichkeitstabelle (Theoriehandbuch, „Verträglichkeit an einer
+gemeinsamen Seite“), etwa bei tetp neben tet10 „passen nicht aneinander“.
+Unter den Haken steht „So wird vernetzt“: je Weg des Vernetzers, welches
+Element dort entsteht. **Statik3D-Vorgabe (tet10 + VQ83)** setzt die Vorgabe,
+**Übernehmen** schreibt sie in die Netzeinstellungen; sie wirkt beim nächsten
+Vernetzen, das vorhandene Netz bleibt, bis neu vernetzt wird (die Meldung
+nennt, wie viele Elemente noch den anderen Ansatz haben). Rückgängig nimmt
+die Wahl zurück.
+
+Anhakbar sind nur **tet4 oder tet10** und die **Pyramiden** — mehr kann der
+Vernetzer nicht getrennt einstellen, und die Maske tut nicht so, als ob:
+
+| Haken | wirkt auf | grau, weil |
+|---|---|---|
+| tet4 / tet10 | Elementansatz der Netzeinstellungen (eine Ordnung für alle frei vernetzten Körper) | der andere ist angehakt – erst ihn abhaken; gemischt gibt es sie nur je Körper |
+| tetp | – | der Vernetzer erzeugt keine tetp (sie entstehen nur aus einem tet10-Netz); neben tet10 außerdem unverträglich |
+| VQ83 (hex8) | immer an: jeder hex8 mit zusammenfallenden Knoten wird als Keil, Pyramide oder Tetraeder gerechnet | neue hex8 entstehen nur im Sweep (eigener Schalter **Sechsflächner sweepen**, den die Maske daneben anzeigt und **nicht** einschaltet) und bei tet4 in abgebildeten Sechsflächnern |
+| VQ203 (hex20) | folgt dem tet10: abgebildete Sechsflächner (sechs Vierecke, acht Ecken, gerade Kanten) werden mit tet10 hex20 | eine Ordnung für Tetraeder und abgebildete Sechsflächner; gesweepte Körper bleiben hex8 |
+| Pyramiden | Netzeinstellungen *Pyramiden*: Übergang von Vierecken des Nachbarn zu Tetraedern | – |
+| Schalen linear / quadratisch | folgen dem Tetraeder (shell3/shell4 bzw. shell6/shell8) | eine Ordnung für das ganze Netz |
+
+Die Vorgabe tet10 + VQ83 heißt damit: frei vernetzte Körper tet10, gesweepte
+hex8/pent6 (wenn der Sweep an ist), abgebildete Sechsflächner hex20.
+
+**Netz → Elementübersicht…** zeigt, womit das Netz **wirklich** vernetzt ist:
+je Elementtyp eine Zeile mit Ansatz (linear, quadratisch, p = k), Anzahl,
+Anteil und Körpern, aufklappbar je Körper. Ein **Klick auf eine Zeile** zeigt
+nur diese Elemente (*Alles zeigen* holt den Rest zurück). **Im Bild nach
+Elementtyp färben** färbt die Ansicht je Typ mit Legende (Typ und Anzahl);
+die Farben sind auch in Graustufen verschieden hell (Ausdruck, Kopie). Ein
+gezeigtes Ergebnis wird dafür ausgeblendet, nicht verworfen (Schalter
+*Ergebnisse zeigen*); die Netzqualität färbt nicht zugleich. **Färbung aus**
+nimmt sie weg. Oben steht der **Netz-Fingerabdruck** (bei mehr als 300 000
+Elementen auf Knopfdruck, er kostet dort Sekunden): derselbe Hash über Typ
+und Knoten jedes Elements, den die Ergebnisdatei trägt.
+
+Nach jeder Rechnung nennt das Protokoll die Elemente, etwa
+„Elemente dieser Rechnung (24): 12 tet4 (linear, 50 %), 6 tet10 (quadratisch,
+25 %), …“, und der Bericht hat das Kapitel **Netz und Elemente** (Abschnitt 10 dieses Handbuchs).
 
 **Speichern und Öffnen** zeigen ebenfalls einen Fortschrittsbalken mit
 Prozentzahl und Laufzeit: „Modell speichern: Drehlager.json …“ mit den
@@ -3517,6 +3564,26 @@ Lager, Flächen, Volumen, Freigaben, Lastfälle, Lasten, Kombinationen, Modell
 prüfen, Ansicht aufbauen); das Drehlager ist in rund einer Sekunde gelesen,
 das Vernetzen danach ist die eigentliche Arbeit und hat seinen eigenen
 Balken.
+
+**Elementwahl beim Import (seit 25.09.2026).** `mesh.xml` gibt **keine
+Elementordnung** vor – es gibt dort keinen Schlüssel für lineare oder
+quadratische Elemente (nachgesehen an beiden Drehlager-Dateien V15_4). Die
+Zeile „lineare Elemente (shell3/shell4, tet4, hex8) (aus mesh.xml der
+RFEM-Datei)“ im Protokoll früherer Importe war die Vorgabe des Datenmodells,
+nicht die der Datei; das Protokoll sagt das jetzt ausdrücklich. Nach dem
+Import in ein neues Modell setzt die Oberfläche die **Statik3D-Vorgabe
+tet10 + VQ83**. Gibt die Datei ein Elementfeld anders vor – heute die
+Elementform der Flächen (etwa „Vierecke“ gegen die Vorgabe „Vierecke, sonst
+Dreiecke“) –, fragt sie: „Die RFEM-Datei gibt … vor. Statik3D-Vorgabe:
+tet10 + VQ83 (…). Welche verwenden?“ mit **Datei-Vorgabe** und
+**Statik3D-Vorgabe** (Enter und Esc nehmen die Statik3D-Vorgabe). Was die
+Datei nicht vorgibt, bekommt immer die Statik3D-Vorgabe; die Protokollzeile
+„Elementwahl nach dem Import: …“ nennt je Feld, woher es kommt, und die
+Netzeinstellungen tragen es in ihrer Quelle. Statik3D-Dateien (.json) behalten
+ihre eigene Wahl; beim Anhängen an ein Modell bleibt dessen Wahl. Ein
+eingelesenes **Netz** (Abaqus, Nastran, InfoCAD) bleibt, wie es ist – die Wahl
+gilt für das nächste Vernetzen der Geometrie. Der Import ohne Oberfläche
+(`cli.py`) setzt die Vorgabe nicht; dort bleibt das Datenmodell bei linear.
 
 **Krumme Linien** kommen mit ihrer wahren Form: Bögen, Kreise, Parabeln,
 Ellipsen und NURBS werden über ihre Kontrollpunkte gelesen, nicht als Sehne
@@ -6805,6 +6872,21 @@ Modell nicht (es steht in der Modelldatei) und kann groß werden: je
 Lastfall die Verschiebungen aller Knoten und die Spannungen aller Elemente
 (Drehlager: rund 90 MB je Lastfall). Geprüft in `tests/test_ergebnisse.py`.
 
+**Netz und Elemente im Bericht (seit 25.09.2026).** Für den Prüfer — „wie kann
+ich dem Prüfer beweisen, dass an dieser Stelle dieses Element verwendet wurde“
+— hat jeder Bericht eines Modells mit Flächen- oder Volumennetz hinter *System*
+das Kapitel **Netz und Elemente**: die Gesamtübersicht (Elementtyp, Bezeichnung,
+Ansatz, Anzahl, Anteil), eine Tabelle **je Körper** (Elementtyp, Ansatz, Anzahl
+und die im Netz gemessene Kantenlänge min / Mittel / max der Eckkanten), ein
+**Bild nach Elementtyp** mit Legende (dieselben Farben wie in der Ansicht, ab
+200 000 Elementen je Körper der Umriss in der Farbe seines häufigsten Typs)
+und den **Netz-Fingerabdruck**: ein Hash über Typ und Knoten jedes Elements,
+derselbe, den die Ergebnisdatei in ihrer Kennung trägt und beim Öffnen
+vergleicht. Die Ergebnisse gehören damit zu genau diesem Netz; hätte ein
+Ergebnis eine andere Knotenzahl, sagt das Kapitel es. Ein reines Stabwerk hat
+das Kapitel nicht (seine Kapitelnummern bleiben); die Berichtsoption `netz`
+schaltet es ab. Geprüft in `tests/test_elementuebersicht.py`.
+
 **Kontaktkräfte im Bericht.** Das Kapitel *Kontakt* nennt je
 **Kontaktpaar** (Kontaktbedingung, Kontaktpaar Knoten–Fläche, einseitiges
 Lager) die **Kontaktkräfte** als Zahl statt nur als Liste der Knoten: die
@@ -6915,7 +6997,7 @@ Bericht → Gliederung, oder die Knöpfe an der Tabelle):
   ist als Anlage beizulegen.
 
 Jeder Eintrag hat einen **Platz im Bericht** (Spalte „Nach Kapitel" oder die
-Maske per Doppelklick): hinter Allgemeines, System, Einwirkungen,
+Maske per Doppelklick): hinter Allgemeines, System, Netz und Elemente, Einwirkungen,
 Ergebnisse, Nachweise EC3, Volumen, Ermüdung, Anschlüsse, Verformungen oder
 Zusammenfassung; ohne Angabe stehen die Einträge am Ende unter „Übernommene
 Ergebnisse". Reihenfolge, Name, Bildunterschrift und Bemerkung sind in der

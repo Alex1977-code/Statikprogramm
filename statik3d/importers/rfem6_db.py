@@ -983,6 +983,14 @@ def read_rf6(path: str, model: Model = None, log: list = None,
             m.netz = Netzeinstellungen(quelle="aus mesh.xml der RFEM-Datei", **netz)
             m.netz.dichte = "eigene"          # die Ziellaenge der Datei gilt absolut
             C.say(log, "Netzeinstellungen übernommen: " + m.netz.beschreibung())
+            # mesh.xml hat keinen Schluessel fuer lineare/quadratische Elemente
+            # (beide Drehlager-Dateien V15_4, 25.09.2026): „lineare Elemente“
+            # in der Zeile davor ist die Vorgabe des Datenmodells, nicht der
+            # Datei - der Anwender las es als Vorgabe von RFEM
+            if "ordnung" not in netz:
+                C.say(log, "    Die Elementordnung (linear/quadratisch) gibt mesh.xml nicht vor - "
+                           "sie ist die Vorgabe des Programms; die Oberfläche setzt beim Import "
+                           "die Statik3D-Vorgabe (tet10 + VQ83).")
         else:
             C.say(log, "Keine mesh.xml im Behälter - es gilt die Vorgabe des "
                        f"Programms ({m.netz.beschreibung()}).")
