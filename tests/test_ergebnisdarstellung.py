@@ -801,24 +801,30 @@ def QtCore_ToolTipRole():
 
 
 def test_fensterhoehe_nach_f5():
-    """Gegenpruefung 25.09.2026: die Steuerung (157 px) wurde nach F5 ohne
-    _fensterhoehe_halten eingeblendet - bei 1366 x 768 85 px ueber dem
-    Bildschirm."""
+    """Gegenpruefung 25.09.2026: die Steuerung (157 px) machte das Fenster
+    nach F5 hoeher - bei 1366 x 768 85 px ueber dem Bildschirm. Ohne
+    Paket 5 steht der rechte Bereich ueber dem unteren, jede Zeile der
+    Steuerung hebt die Mindesthoehe des Fensters; darum hat sie nur drei
+    Zeilen (Mindesthoehe mit Steuerung 704 px statt vorher 760 px).
+    Ruecknahme: Steuerung wieder 157 px hoch."""
     w, app = _fenster()
-    w.new_model()
-    for _ in range(4):
-        app.processEvents()
-    w.resize(1366, 768)
-    for _ in range(4):
-        app.processEvents()
-    w.load_example("hall"); app.processEvents()
-    h0 = w.height()
-    an = solver.solve_all(w.model, design=bool(w.model.members))
-    w._solve_done("all", an)
-    for _ in range(6):
-        app.processEvents()
-    check("nach F5 bei 1366 x 768: das Fenster bleibt so hoch (Steuerung sichtbar)",
-          w.ergebnissteuerung.isVisible() and w.height() <= h0, f"{h0} -> {w.height()}")
+    for groesse in ((1366, 768), (1280, 720)):
+        w.new_model()
+        for _ in range(4):
+            app.processEvents()
+        w.resize(*groesse)
+        for _ in range(4):
+            app.processEvents()
+        w.load_example("hall"); app.processEvents()
+        h0 = w.height()
+        an = solver.solve_all(w.model, design=bool(w.model.members))
+        w._solve_done("all", an)
+        for _ in range(6):
+            app.processEvents()
+        check(f"nach F5 bei {groesse[0]} x {groesse[1]}: das Fenster bleibt so hoch (Steuerung sichtbar)",
+              w.ergebnissteuerung.isVisible() and w.height() <= h0, f"{h0} -> {w.height()}")
+    check("die Steuerung ist höchstens 110 px hoch (drei Zeilen)",
+          w.ergebnissteuerung.height() <= 110, f"{w.ergebnissteuerung.height()} px")
     w.resize(1600, 1000)
     for _ in range(4):
         app.processEvents()

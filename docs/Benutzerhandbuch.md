@@ -1408,7 +1408,8 @@ rechten Bereich ein kleiner Kasten *Ergebnisdarstellung* mit drei Zeilen:
 Objekt anklickt oder einen Befehl wählt: rechts steht dann die Steuerung und
 darunter die Maske des Objekts. Ohne Ergebnis (neues Modell, nach *Rückgängig*)
 ist er weg. Nach dem Rechnen (F5) steht das Ribbon auf dem Register
-**Ergebnisse**; das Fenster wird dabei nicht höher.
+**Ergebnisse**; bei 1366 × 768 und 1280 × 720 wird das Fenster dabei nicht
+höher (die Steuerung hat darum nur drei Zeilen, etwa 96 px).
 
 Die Auswahllisten *Ergebnis* und *Färbung* sind schmal (etwa 18 Zeichen) und
 bestimmen die Breite des rechten Bereichs nicht: eine lange Kombination wie

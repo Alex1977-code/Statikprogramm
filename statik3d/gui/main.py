@@ -12798,16 +12798,13 @@ class MainWindow(QtWidgets.QMainWindow):
             if hasattr(self, "tabs"):
                 # ein anderes Register darunter: die Tab-Kette dorthin fuehren
                 self.tabs.currentChanged.connect(lambda _i: self._tabfolge_ergebnissteuerung())
-        zeigen =bool(self.cb_result.count()) or self.results is not None
-        if zeigen and not st.isVisible():
-            # Das Fenster waechst nicht durch die Steuerung (Gegenpruefung
-            # 25.09.2026: ohne Paket 5 wurde es nach F5 bei 1366 x 768 85 px
-            # hoeher als der Bildschirm) - wie bei einer Maske
-            hoehe_vorher = self.height()
-            st.setVisible(True)
-            self._fensterhoehe_halten(hoehe_vorher)
-        else:
-            st.setVisible(zeigen)
+        # Ohne die Aufteilung aus Paket 5 steht der rechte Bereich ueber dem
+        # unteren: die Hoehe der Steuerung hebt die Mindesthoehe des Fensters
+        # (Gegenpruefung 25.09.2026: mit 157 px nach F5 bei 1366 x 768 85 px
+        # ueber dem Bildschirm). Darum hat sie nur drei Zeilen (~96 px, das
+        # Fenster braucht dann mindestens 704 px). _fensterhoehe_halten hilft
+        # hier nicht - es kann nicht unter die Mindesthoehe (gemessen).
+        st.setVisible(bool(self.cb_result.count()) or self.results is not None)
         for cb in (self.cb_result, self.cb_field):
             self._aufklappliste_breit(cb)
         self._tabfolge_ergebnissteuerung()
