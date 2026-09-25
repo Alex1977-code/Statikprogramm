@@ -2545,6 +2545,9 @@ def _ausduennen(X: np.ndarray, abstand: np.ndarray) -> np.ndarray:
 #: (2 -> 3) und Huelldreiecke (3 -> 2, 4 -> 4) zurueck; was eine Runde freilegt,
 #: holt die naechste. 0 schaltet das Kippen ab (Ruecknahmeprobe in test_mesher3d).
 KIPP_RUNDEN = 6
+#: Diagonalfall des Kantenkippens (huelle_kippen, 25.09.2026) - Schalter fuer
+#: die Ruecknahmeprobe in den Tests
+KIPP_DIAGONALE = True
 
 
 def _kante_durch_dreieck(p0, p1, a, b, c, eps: float = 1e-9) -> bool:
@@ -2606,6 +2609,19 @@ def huelle_kippen(punkte: np.ndarray, TET: np.ndarray, P: np.ndarray, T: np.ndar
     * **2 -> 3** (Segment): zu einer fehlenden Huellkante a-b die Seite p-q-r,
       die die Strecke durchstoesst; sind die beiden Tetraeder an ihr
       (p, q, r, a) und (p, q, r, b), werden sie durch die drei um a-b ersetzt.
+    * **Diagonale** (n -> 2(n-1), seit 25.09.2026): vier Huellpunkte einer
+      ebenen Zelle liegen auf einem Kreis (Rechteckzelle eines
+      Flaechennetzes), die Zerlegung hat zwei gleichwertige Diagonalen, und
+      Qhull nahm die andere als das Flaechennetz. Die fehlende Huellkante a-b
+      kreuzt dann keine Seite, sondern die Huellkante c1-c2 selbst - 2 -> 3
+      greift nicht. Zwei Koerper mit gemeinsamer Flaeche kamen so auf
+      verschiedene Diagonalen (zwei Wuerfel, 25.09.2026: vier offene
+      Innenseiten, tet10 mit haengender Kantenmitte), obwohl beide dasselbe
+      Flaechennetz vorgeschrieben bekamen. Die Kante c1-c2 wird entfernt: der
+      offene Faecher a, r1, ..., b der Tetraeder um sie wird von a aus (sonst
+      von b aus) in Dreiecke geteilt, jedes gibt zwei Tetraeder mit c1 und
+      mit c2. Gueltig, wenn alle Rauminhalte positiv sind und ihre Summe der
+      des Faechers gleicht.
 
     Was eine Runde freilegt, holt die naechste (KIPP_RUNDEN). Rueckgabe
     (TET, Zahl der Kippungen); ``bericht`` bekommt die Zaehlung je Art und
@@ -2614,7 +2630,7 @@ def huelle_kippen(punkte: np.ndarray, TET: np.ndarray, P: np.ndarray, T: np.ndar
     runden = KIPP_RUNDEN if runden is None else int(runden)
     TET = np.asarray(TET, int)
     n_h = len(P)
-    zaehl = {"3-2": 0, "4-4": 0, "2-3": 0, "offene_dreiecke": 0, "offene_kanten": 0}
+    zaehl = {"3-2": 0, "4-4": 0, "2-3": 0, "diag": 0, "offene_dreiecke": 0, "offene_kanten": 0}
     if runden <= 0 or not len(TET) or not len(T) or n_h == 0:
         if bericht is not None:
             bericht.update(zaehl)
@@ -2667,6 +2683,53 @@ def huelle_kippen(punkte: np.ndarray, TET: np.ndarray, P: np.ndarray, T: np.ndar
                         neu += [(a, b, f[0], f[1]), (a, b, f[1], f[2]), (a, b, f[2], f[0])]
                         zaehl["2-3"] += 1
                 break                        # die Strecke verlaesst a durch genau eine Seite
+        # ---- Diagonale einer ebenen Huellzelle: n -> 2(n-1) um die Randkante ------
+        # (siehe Docstring). Die beiden Huelldreiecke an a-b nennen c1 und c2;
+        # steht im Netz statt a-b die Kante c1-c2, wird deren Faecher umgebaut.
+        for a, b in (fehlt_k.tolist() if KIPP_DIAGONALE else []):
+            an_ab = huelle[(huelle == a).any(axis=1) & (huelle == b).any(axis=1)]
+            dritte = [int(v) for t in an_ab.tolist() for v in t if v not in (a, b)]
+            if len(dritte) != 2 or dritte[0] == dritte[1]:
+                continue
+            c1, c2 = dritte
+            ring = [int(i) for i in _tets_mit(TET, c1, c2).tolist()]
+            if len(ring) < 2 or any(i in weg for i in ring):
+                continue
+            nachbar: dict = {}
+            for i in ring:
+                paar = [int(v) for v in TET[i].tolist() if int(v) not in (c1, c2)]
+                if len(paar) != 2:
+                    nachbar = None
+                    break
+                nachbar.setdefault(paar[0], []).append(paar[1])
+                nachbar.setdefault(paar[1], []).append(paar[0])
+            if (nachbar is None or a not in nachbar or b not in nachbar
+                    or len(nachbar[a]) != 1 or len(nachbar[b]) != 1):
+                continue                     # kein offener Faecher von a nach b
+            kette = [a]
+            while kette[-1] != b:
+                weiter = [v for v in nachbar[kette[-1]] if v not in kette]
+                if len(weiter) != 1:
+                    kette = None
+                    break
+                kette.append(weiter[0])
+            if kette is None or len(kette) != len(ring) + 1 or len(kette) < 3:
+                continue
+            V_alt = float(volumen([TET[i] for i in ring]).sum())
+            gefunden = None
+            for start, folge in ((a, kette), (b, kette[::-1])):
+                kand = []
+                for i in range(1, len(folge) - 1):
+                    kand += [(start, folge[i], folge[i + 1], c1), (start, folge[i], folge[i + 1], c2)]
+                V_neu = volumen(kand)
+                if V_neu.min() > 1e-12 * V_alt and abs(float(V_neu.sum()) - V_alt) <= 1e-9 * V_alt:
+                    gefunden = kand
+                    break
+            if gefunden is None:
+                continue
+            weg.update(ring)
+            neu += gefunden
+            zaehl["diag"] += 1
         # ---- Facetten: 3 -> 2 und 4 -> 4 ------------------------------------------
         ecken = np.unique(fehlt) if len(fehlt) else np.zeros(0, int)
         beruehrt = np.flatnonzero(np.isin(TET, ecken).any(axis=1)) if len(ecken) else np.zeros(0, int)
@@ -2735,7 +2798,7 @@ def huelle_kippen(punkte: np.ndarray, TET: np.ndarray, P: np.ndarray, T: np.ndar
             zaehl["offene_dreiecke"] = int((~np.isin(schluessel(huelle), schluessel(seiten))).sum())
         kn = np.sort(np.vstack([TET[:, [i, j]] for i in range(4) for j in range(i + 1, 4)]), axis=1)
         zaehl["offene_kanten"] = int((~np.isin(hk_key, kn[:, 0].astype(np.int64) * n + kn[:, 1])).sum())
-    gekippt = zaehl["3-2"] + zaehl["4-4"] + zaehl["2-3"]
+    gekippt = zaehl["3-2"] + zaehl["4-4"] + zaehl["2-3"] + zaehl["diag"]
     if bericht is not None:
         bericht.update(zaehl)
     return TET, gekippt
@@ -2762,8 +2825,19 @@ def flache_tetraeder(V: np.ndarray, punkte: np.ndarray, TET: np.ndarray) -> np.n
     return V <= FLACH * L2 ** 1.5
 
 
-def flache_aufloesen(punkte: np.ndarray, TET: np.ndarray) -> tuple:
+def flache_aufloesen(punkte: np.ndarray, TET: np.ndarray, T: np.ndarray = None) -> tuple:
     """Tetraeder ohne Rauminhalt durch einen **Diagonaltausch 2-2** aufloesen.
+
+    ``T`` (Huelldreiecke, seit 25.09.2026): liegt der flache Tetraeder **in
+    einer Huellflaeche** - zwei seiner Seiten nach aussen, zwei nach innen -,
+    entscheidet die vorgeschriebene Huelle, welche Diagonale bleibt. Sind die
+    beiden Innenseiten die vorgeschriebenen Dreiecke, faellt der flache
+    Tetraeder einfach weg, und sie werden zur Huelle; der Tausch haette sie
+    durch die andere Diagonale ersetzt. So kamen zwei Koerper mit gemeinsamer
+    Flaeche auf verschiedene Diagonalen, obwohl beide dasselbe Flaechennetz
+    vorgeschrieben bekamen (zwei Wuerfel, 25.09.2026: vier offene Innenseiten,
+    tet10 mit haengender Kantenmitte; die Huellenpruefung sah nichts, weil sie
+    vor dem Aufloesen lief).
 
     Vier Punkte in einer Ebene - zwei oben, zwei unten in einer Platte, die
     eine Tetraederlage dick ist, oder vier in einer Deckflaeche - gibt Qhull
@@ -2791,6 +2865,8 @@ def flache_aufloesen(punkte: np.ndarray, TET: np.ndarray) -> tuple:
     weg: set = set()
     neu: list = []
     aufgeloest = 0
+    huellset = ({tuple(sorted(int(v) for v in d)) for d in np.asarray(T, int).tolist()}
+                if T is not None and len(T) else None)
     for i in flach.tolist():
         if i in weg:
             continue
@@ -2824,6 +2900,17 @@ def flache_aufloesen(punkte: np.ndarray, TET: np.ndarray) -> tuple:
                 seiten.append((f, None, None, 0))
         if not ok:
             continue
+        if huellset is not None:
+            innen = [w for w in seiten if w[1] is not None]
+            aussen = [w for w in seiten if w[1] is None]
+            if (len(innen) == 2 and len(aussen) == 2
+                    and all(tuple(sorted(w[0])) in huellset for w in innen)
+                    and not any(tuple(sorted(w[0])) in huellset for w in aussen)):
+                # Die vorgeschriebene Diagonale liegt schon unter dem flachen
+                # Tetraeder: er faellt weg, seine Innenseiten werden Huelle.
+                weg.add(i)
+                aufgeloest += 1
+                continue
         getan = False
         for vz in (1, -1):
             paar = [w for w in seiten if w[3] == vz]
@@ -2850,7 +2937,8 @@ def flache_aufloesen(punkte: np.ndarray, TET: np.ndarray) -> tuple:
         return TET, 0
     behalt = np.ones(len(TET), bool)
     behalt[list(weg)] = False
-    return np.vstack([TET[behalt], np.asarray(neu, int)]), aufgeloest
+    # reshape: fallen nur flache Tetraeder weg (Huellfall), ist neu leer
+    return np.vstack([TET[behalt], np.asarray(neu, int).reshape(-1, 4)]), aufgeloest
 
 
 def _innere(punkte: np.ndarray, simplices: np.ndarray, P: np.ndarray,
@@ -3367,13 +3455,14 @@ def tetraedern(P: np.ndarray, T: np.ndarray, h: float,
             simplices, gekippt = huelle_kippen(punkte, np.asarray(tri.simplices, int), P, T, bericht=kipp)
             if gekippt:
                 bericht["gekippt"] = gekippt
-                bericht["gekippt_je_art"] = {k: v for k, v in kipp.items() if v and k in ("3-2", "4-4", "2-3")}
+                bericht["gekippt_je_art"] = {k: v for k, v in kipp.items()
+                                             if v and k in ("3-2", "4-4", "2-3", "diag")}
             if kipp.get("offene_dreiecke") or kipp.get("offene_kanten"):
                 bericht["huelle_offen"] = (int(kipp.get("offene_dreiecke", 0)), int(kipp.get("offene_kanten", 0)))
             # Tetraeder ohne Rauminhalt (vier Punkte in einer Ebene) durch den
             # Diagonaltausch aufloesen, statt sie spaeter als flach herauszunehmen
             # und einen Hohlraum ohne Rauminhalt zu hinterlassen
-            simplices, aufgeloest = flache_aufloesen(punkte, simplices)
+            simplices, aufgeloest = flache_aufloesen(punkte, simplices, T)
             if aufgeloest:
                 bericht["flache_aufgeloest"] = aufgeloest
             _melden(fortschritt, a0 + 0.6 * spanne, "Tetraeder außerhalb des Körpers aussortieren")

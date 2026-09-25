@@ -5384,6 +5384,33 @@ exakt im ersten Durchgang; beide Stichproben **0 von 69** (gemessen 24.09.2026).
 fehlenden Hülldreiecken bleibt, sind Diagonaltausche ebener Vierecke — kein Rauminhalt, keine
 Delle.
 
+**Diagonaltausche ebener Vierecke sind an gemeinsamen Flächen nicht harmlos (25.09.2026).**
+Für einen Körper allein stimmt der Satz: Rauminhalt und Randtreue bleiben exakt. Teilen zwei
+verschweißte Körper eine Fläche, bekommen beide dasselbe Flächennetz vorgeschrieben
+(`flaechennetz`, an zwei Würfeln gemessen: 30 Dreiecke, beide Mengen gleich), und jeder darf
+es nur einhalten, nicht neu würfeln — sonst hängen die Körper dort nur noch an den Ecken.
+Genau das geschah an Rechteckzellen, deren vier Punkte auf einem Kreis liegen (regelmäßige
+Teilung des Randes gegen das Dreiecksgitter im Inneren), auf zwei Wegen: Qhull nahm die andere
+Diagonale, und `huelle_kippen` kannte den Fall nicht — die fehlende Hüllkante kreuzt keine
+Tetraederseite, sondern die Hüllkante selbst, 2 → 3 greift nicht; oder Qhull gab die vier
+Punkte als **flachen Tetraeder** aus, und `flache_aufloesen` tauschte ihn blind auf die andere
+Diagonale — nach der Hüllenprüfung, die darum nichts sah. Gemessen an zwei Einheitswürfeln
+mit gemeinsamer Fläche (eigener Vernetzer, h = 250 mm, `modell_vernetzen`): **4 offene
+Innenseiten** bei `tet4` und bei `tet10` dazu eine hängende Kantenmitte; die Prüfmatrix fand an
+denselben Netzen σ_v bis +162 N/mm² neben der Lösung (`tet10`, verschweißt). gmsh + MMG3D
+hielten die Hülle ein (0 offene Seiten). Zwei Ergänzungen, beide ohne neuen Punkt:
+**Diagonale** in `huelle_kippen` — zur fehlenden Hüllkante a–b nennen die beiden Hülldreiecke
+c1 und c2; steht im Netz die Kante c1–c2, wird ihr offener Fächer a, r₁, …, b von a aus (sonst
+von b aus) in Dreiecke geteilt, jedes gibt zwei Tetraeder mit c1 und mit c2 (n → 2(n − 1)),
+gültig bei positiven Rauminhalten mit derselben Summe; und `flache_aufloesen` bekommt die
+Hülle: liegt der flache Tetraeder in einer Hüllfläche und tragen seine Innenseiten schon die
+vorgeschriebene Diagonale, fällt er weg, statt getauscht zu werden. Beides zusammen: 0 offene
+Innenseiten, `tet4` und `tet10`; jede Ergänzung allein lässt 4 bzw. 8 offen (gemessen
+25.09.2026). Am Doppelwürfel kippt der Diagonalfall 9 bzw. 8 Kanten je Körper, auch an den
+Außenflächen — dort war er bisher unbemerkt geblieben. Prüfungen `test_huelle_kippen` (2-2 und
+3 → 4 am Fächer, Rücknahmeprobe über `KIPP_DIAGONALE`), `test_flache_aufloesen_huelle`,
+`test_gemeinsame_flaeche_eigener_vernetzer` (Programmweg, `tet4` und `tet10`, Rücknahmeprobe).
+
 **Gekrümmte tet10 am Drehlager (dritter Auftrag, 24.09.2026).** Verlangt war das gekrümmte
 tet10-Netz des ganzen Drehlagers bei 18° und 36° — Seitenmitten auf der wahren Fläche,
 Jacobi-Prüfung, örtliche Anläufe — mit Elementen, Knoten, ungültigen tet10 vor den Anläufen,

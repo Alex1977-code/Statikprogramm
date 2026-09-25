@@ -1626,6 +1626,50 @@ def test_huelle_kippen():
     TET5b, n5 = M3.huelle_kippen(Pn5, TET5, Pn5[:3], T)
     check("  auch wenn der vierte Tetraeder keine Ecke des Dreiecks traegt", n5 == 0 and len(TET5b) == 4,
           f"{n5} gekippt")
+
+    def _seiten(TETx):
+        return {tuple(sorted(x)) for t in TETx.tolist() for x in
+                ((t[0], t[1], t[2]), (t[0], t[1], t[3]), (t[0], t[2], t[3]), (t[1], t[2], t[3]))}
+
+    def _vol(Px, TETx):
+        return sum(abs(np.linalg.det(Px[t][1:] - Px[t][0])) / 6 for t in TETx.tolist())
+    # 2c) Diagonale einer ebenen Huellzelle (25.09.2026): vier Huellpunkte auf
+    #     einem Kreis, das Flaechennetz verlangt a-b, das Netz hat c1-c2 mit
+    #     zwei Tetraedern gemeinsamer Spitze - 2-2 um die Randkante
+    Pd = np.array([[0, 0, 0], [1, 1, 0], [1, 0, 0], [0, 1, 0], [0.5, 0.5, 1.0]], float)
+    ad, bd, c1, c2, xd = 0, 1, 2, 3, 4
+    TETd = np.array([[c1, c2, ad, xd], [c1, c2, bd, xd]], int)
+    Td = np.array([[ad, bd, c1], [ad, bd, c2]], int)
+    kippd: dict = {}
+    TETdb, nd = M3.huelle_kippen(Pd, TETd, Pd[:4], Td, bericht=kippd)
+    sd = _seiten(TETdb)
+    check("Diagonale einer ebenen Huellzelle, zwei Tetraeder: die Kante wird gekippt, beide Huelldreiecke sind da",
+          nd == 1 and kippd.get("diag") == 1 and len(TETdb) == 2 and (0, 1, 2) in sd and (0, 1, 3) in sd
+          and abs(_vol(Pd, TETdb) - _vol(Pd, TETd)) < 1e-12,
+          f"{nd} gekippt {kippd}, {len(TETdb)} Tetraeder")
+    # 2d) drei Tetraeder um c1-c2 (Faecher a, p1, p2, b): der Faecher wird von
+    #     a aus geteilt, vier Tetraeder, derselbe Rauminhalt
+    Pe = np.array([[0, 0, 0], [1, 1, 0], [1, 0, 0], [0, 1, 0], [0.3, 0.3, 1.0], [0.7, 0.7, 1.0]], float)
+    p1, p2 = 4, 5
+    TETe = np.array([[c1, c2, ad, p1], [c1, c2, p1, p2], [c1, c2, p2, bd]], int)
+    kippe: dict = {}
+    TETeb, ne = M3.huelle_kippen(Pe, TETe, Pe[:4], Td, bericht=kippe)
+    se = _seiten(TETeb)
+    kanten_e = {tuple(sorted(x)) for t in TETeb.tolist() for x in
+                ((t[0], t[1]), (t[0], t[2]), (t[0], t[3]), (t[1], t[2]), (t[1], t[3]), (t[2], t[3]))}
+    check("Diagonale mit drei Tetraedern um die Kante: Faecher zu vier Tetraedern, Kante c1-c2 weg, Rauminhalt gleich",
+          ne == 1 and kippe.get("diag") == 1 and len(TETeb) == 4 and (0, 1, 2) in se and (0, 1, 3) in se
+          and (c1, c2) not in kanten_e and abs(_vol(Pe, TETeb) - _vol(Pe, TETe)) < 1e-12,
+          f"{ne} gekippt {kippe}, {len(TETeb)} Tetraeder")
+    # 2e) Ruecknahmeprobe: ohne den Diagonalfall bleibt die Kante offen
+    M3.KIPP_DIAGONALE = False
+    try:
+        kipp0: dict = {}
+        _TET0, n0 = M3.huelle_kippen(Pd, TETd, Pd[:4], Td, bericht=kipp0)
+    finally:
+        M3.KIPP_DIAGONALE = True
+    check("  Ruecknahmeprobe: ohne den Diagonalfall bleibt die Huellkante offen",
+          n0 == 0 and kipp0.get("offene_kanten") == 1, f"{n0} gekippt {kipp0}")
     # 3) am Prisma der Statik3D-Sitzung: T-Prisma (test_diagnose._extrudiert),
     #    h = 0,09 - der Fall fuer test_diagnose: ohne Kippen 0,0003 %
     #    Fehlbetrag nach acht Durchgaengen (10 751 Tetraeder), mit Kippen
@@ -1659,6 +1703,136 @@ def test_huelle_kippen():
     check("  Ruecknahmeprobe: ohne Kippen bleibt die Luecke (gemessen 0,0003 bis 0,0024 %) und wird gemeldet",
           abs(fehl_ohne) > 1e-5 and any("Lücke im Netzrand" in z for z in log_ohne),
           f"{n_ohne} tet4, {fehl_ohne:+.5f} %")
+
+
+def test_flache_aufloesen_huelle():
+    """Ein flacher Tetraeder in einer Huellflaeche (vier Huellpunkte auf einem
+    Kreis): welche Diagonale bleibt, entscheidet seit dem 25.09.2026 die
+    vorgeschriebene Huelle, nicht die Lage der Nachbarn. Vorher tauschte
+    ``flache_aufloesen`` immer auf die andere Diagonale und ersetzte so an
+    einer gemeinsamen Flaeche das Netz des Nachbarn."""
+    Pf = np.array([[0, 0, 0], [1, 1, 0], [1, 0, 0], [0, 1, 0], [0.5, 0.5, -1.0]], float)
+    a, b, c1, c2, x = 0, 1, 2, 3, 4
+    T = np.array([[a, b, c1], [a, b, c2]], int)          # die Huelle verlangt a-b
+
+    def seiten(TETx):
+        return {tuple(sorted(s)) for t in TETx.tolist() for s in
+                ((t[0], t[1], t[2]), (t[0], t[1], t[3]), (t[0], t[2], t[3]), (t[1], t[2], t[3]))}
+    # Fall 1: die Innenseiten tragen schon a-b - der flache Tetraeder faellt weg
+    TET1 = np.array([[a, b, c1, c2], [a, b, c1, x], [a, b, c2, x]], int)
+    TET1b, n1 = M3.flache_aufloesen(Pf, TET1, T)
+    s1 = seiten(TET1b)
+    check("flacher Tetraeder ueber der vorgeschriebenen Diagonale: er faellt weg, die Huelle zeigt a-b",
+          n1 == 1 and len(TET1b) == 2 and (0, 1, 2) in s1 and (0, 1, 3) in s1, f"{n1} aufgeloest, {len(TET1b)} Tetraeder")
+    TET1c, n1c = M3.flache_aufloesen(Pf, TET1)           # ohne Huelle: wie vor dem 25.09.2026
+    s1c = seiten(TET1c)
+    check("  Ruecknahmeprobe: ohne die Huelle tauscht er auf die andere Diagonale (c1-c2 an der Huelle)",
+          n1c == 1 and (0, 1, 2) not in s1c and (0, 2, 3) in s1c, f"{n1c} aufgeloest, {sorted(s1c)}")
+    # Fall 2: die Innenseiten tragen c1-c2 - der Tausch auf a-b (wie bisher)
+    TET2 = np.array([[a, b, c1, c2], [c1, c2, a, x], [c1, c2, b, x]], int)
+    TET2b, n2 = M3.flache_aufloesen(Pf, TET2, T)
+    s2 = seiten(TET2b)
+    check("flacher Tetraeder ueber der anderen Diagonale: Tausch 2-2, die Huelle zeigt a-b",
+          n2 == 1 and len(TET2b) == 2 and (0, 1, 2) in s2 and (0, 1, 3) in s2, f"{n2} aufgeloest, {len(TET2b)} Tetraeder")
+
+
+def _zwei_wuerfel_sieben_flaechen(h: float, ordnung: int) -> tuple:
+    """Zwei Einheitswuerfel uebereinander mit gemeinsamer Flaeche z = 1; Boden
+    und Dach je in zwei Flaechen geteilt, damit beide Koerper sieben
+    Randflaechen haben und im Programmweg an den freien Vernetzer gehen
+    (sonst naehme sie der abgebildete Quaderpfad)."""
+    from statik3d.model import Model, Material
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    m.netz.sweep = False
+    m.netz.ordnung = ordnung
+    m.netz.dichte = "eigene"
+    m.netz.ziellaenge = h
+    m.netz.intelligent = False
+    P = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1),
+         (0, 0, 2), (1, 0, 2), (1, 1, 2), (0, 1, 2), (0.5, 0, 0), (0.5, 1, 0), (0.5, 0, 2), (0.5, 1, 2)]
+    n = [m.add_node(*p) for p in P]
+    L: dict = {}
+
+    def li(a, b):
+        key = (min(a, b), max(a, b))
+        if key not in L:
+            L[key] = f"L{len(L) + 1}"
+            m.add_line(L[key], [n[key[0]], n[key[1]]])
+        return L[key]
+
+    def fl(name, e):
+        m.add_flaeche(name, [li(e[i], e[(i + 1) % len(e)]) for i in range(len(e))], material="S235")
+        return name
+    fl("Fuge", [4, 5, 6, 7])
+    fl("Boden1", [0, 12, 13, 3]); fl("Boden2", [12, 1, 2, 13])
+    fl("Dach1", [8, 14, 15, 11]); fl("Dach2", [14, 9, 10, 15])
+    fl("MU0", [0, 12, 1, 5, 4]); fl("MO0", [4, 5, 9, 14, 8])
+    fl("MU2", [2, 13, 3, 7, 6]); fl("MO2", [6, 7, 11, 15, 10])
+    fl("MU1", [1, 2, 6, 5]); fl("MO1", [5, 6, 10, 9])
+    fl("MU3", [3, 0, 4, 7]); fl("MO3", [7, 4, 8, 11])
+    k1 = m.add_koerper("Unten", ["Boden1", "Boden2", "Fuge", "MU0", "MU1", "MU2", "MU3"], material="S235")
+    k2 = m.add_koerper("Oben", ["Fuge", "Dach1", "Dach2", "MO0", "MO1", "MO2", "MO3"], material="S235")
+    return m, k1, k2
+
+
+def _offene_innenseiten(m) -> int:
+    """Tetraederseiten, die nur einem Element gehoeren und nicht auf der
+    Aussenhuelle des Doppelwuerfels [0,1] x [0,1] x [0,2] liegen."""
+    seiten: dict = {}
+    for e in m.elements:
+        c = [int(v) for v in e.nodes[:4]]
+        for s in ((0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3)):
+            key = tuple(sorted(c[i] for i in s))
+            seiten[key] = seiten.get(key, 0) + 1
+    X = np.asarray(m.nodes, float)
+    n = 0
+    for key, k in seiten.items():
+        if k != 1:
+            continue
+        Q = X[list(key)]
+        if not any(np.all(np.abs(Q[:, ax] - w) < 1e-9) for ax, w in ((0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (2, 2))):
+            n += 1
+    return n
+
+
+def test_gemeinsame_flaeche_eigener_vernetzer():
+    """Zwei verschweisste Wuerfel, eigener Vernetzer, Programmweg
+    (mesher.modell_vernetzen): das Netz der gemeinsamen Flaeche muss auf beiden
+    Seiten dasselbe sein. Bis zum 25.09.2026 bekamen beide Koerper dasselbe
+    Flaechennetz vorgeschrieben (30 Dreiecke, gemessen gleich), hielten es
+    aber nicht ein: an Rechteckzellen mit vier Punkten auf einem Kreis kippte
+    die Zerlegung die Diagonale je Koerper anders (huelle_kippen kannte den
+    Fall nicht) oder loeste einen flachen Tetraeder in der Flaeche ueber die
+    falsche Diagonale auf (flache_aufloesen ohne Huelle). Gemessen: 4 offene
+    Innenseiten bei tet4, dazu eine haengende Kantenmitte bei tet10; die
+    Pruefmatrix fand dieselben Netze mit sigma_v bis +162 N/mm2 (tet10) neben
+    der Loesung. gmsh + MMG3D hielten die Huelle ein (0 offene Seiten)."""
+    from scipy.spatial import cKDTree
+    from statik3d import mesher
+    for ordnung, typ in ((1, "tet4"), (2, "tet10")):
+        m, k1, k2 = _zwei_wuerfel_sieben_flaechen(0.25, ordnung)
+        m.netz.vernetzer = "eigener"
+        m.netz.nachbessern = "keine"
+        mesher.modell_vernetzen(m, log=[], workers=1)
+        typen = {e.typ for e in m.elements}
+        offen = _offene_innenseiten(m)
+        doppelt = len(cKDTree(np.asarray(m.nodes, float)).query_pairs(1e-9))
+        check(f"{typ}: beide Koerper vernetzt, nur {typ}", typen == {typ} and len(k1.elemente or []) > 100
+              and len(k2.elemente or []) > 100, f"{sorted(typen)}, {len(k1.elemente or [])}/{len(k2.elemente or [])}")
+        check(f"{typ}: keine offene Innenseite an der gemeinsamen Flaeche", offen == 0, f"{offen} offen")
+        check(f"{typ}: kein Ort mit zwei Knoten", doppelt == 0, f"{doppelt} Paare")
+    # Ruecknahmeprobe: ohne den Diagonalfall des Kantenkippens reisst die Flaeche
+    M3.KIPP_DIAGONALE = False
+    try:
+        m, k1, k2 = _zwei_wuerfel_sieben_flaechen(0.25, 1)
+        m.netz.vernetzer = "eigener"
+        m.netz.nachbessern = "keine"
+        mesher.modell_vernetzen(m, log=[], workers=1)
+        offen0 = _offene_innenseiten(m)
+    finally:
+        M3.KIPP_DIAGONALE = True
+    check("  Ruecknahmeprobe: ohne den Diagonalfall bleiben offene Innenseiten", offen0 > 0, f"{offen0} offen")
 
 
 def test_kappenpunkte_halten_abstand():
@@ -2495,7 +2669,8 @@ def main():
               test_luecke_im_netzrand_geschlossen, test_innen_zaehlt_die_kante_einmal,
               test_randtreue_nicht_messbar_meldet_null, test_nummern_haengen_nicht_am_prozess,
               test_ordnung_je_koerper, test_seitenmitten_auf_der_zylinderflaeche,
-              test_huelle_kippen, test_kappenpunkte_halten_abstand, test_krumme_kanten_oertlich_feiner,
+              test_huelle_kippen, test_flache_aufloesen_huelle, test_gemeinsame_flaeche_eigener_vernetzer,
+              test_kappenpunkte_halten_abstand, test_krumme_kanten_oertlich_feiner,
               test_gemeinsame_gekruemmte_flaeche_ohne_rueckfall,
               test_projektor_kegel_und_windschief, test_kugelflaeche, test_bogenwinkel_je_koerper,
               test_flache_tetraeder_nach_eigener_groesse):
