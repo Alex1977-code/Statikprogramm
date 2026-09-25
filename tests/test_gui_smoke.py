@@ -290,14 +290,18 @@ def main():
     # Eingabe-Aktionen: Auswahl, Lager, Lasten, Lastfaelle, Kontakt, Staebe
     w.new_model(); app.processEvents()
     w.beam_p2[0].set(6.0); w.beam_n.setValue(6); w.make_beams(); app.processEvents()
+    # Das Register rechnet seit 24.09.2026 in der Einheiteneinstellung
+    # (Vorgabe kN, kN/m) wie die Masken - vorher in N: -10 kN = -10 000 N
     w.sel[0].setText("0"); w.sel[1].setText("0"); w.do_select(); w.set_support(all_dofs=True)
-    w.sel[0].setText("6"); w.sel[1].setText("6"); w.do_select(); w.ld[2].set(-10000); w.add_load()
-    w.q[2].set(-2000); w.add_beam_load()
+    w.sel[0].setText("6"); w.sel[1].setText("6"); w.do_select(); w.ld[2].set(-10); w.add_load()
+    check("Register Lager/Lasten in kN: −10 kN kommen als −10 000 N an",
+          abs(w.model.case().nodal_loads[-1].F[2] + 10000.0) < 1e-9, str(w.model.case().nodal_loads[-1].F))
+    w.q[2].set(-2); w.add_beam_load()
     w.cb_g.setChecked(True)
     w.model.add_load_case("Q", "Q_B"); w.refresh_all()
     w.tbl_lc.selectRow(1); app.processEvents()
     check("aktiver Lastfall umgeschaltet", w.model.active_case == "Q", w.model.active_case)
-    w.ld[2].set(-5000); w.add_load()
+    w.ld[2].set(-5); w.add_load()
     from statik3d.combinations import generate_combinations
     generate_combinations(w.model); w.refresh_all()
     w.sel[0].setText("3"); w.sel[1].setText("3"); w.do_select(); w.add_contact_support()
@@ -3795,7 +3799,7 @@ def main():
         app.processEvents()
         mk = w.maskenrand.maske
         check("Schwingungs-Maske zum Bearbeiten vorbelegt",
-              mk.titel == "Schwingung Schwingung1" and mk.werte()["d_kante"] == "0.2", str(mk.werte().get("d_kante")))
+              mk.titel == "Schwingung Schwingung1" and float(mk.werte()["d_kante"]) == 0.2, str(mk.werte().get("d_kante")))
         an_ = w.analysis if w.analysis is not None else solver.Analysis(m_)
         an_.schwingung = erg_
         bl_ = Rep(m_, an_).chapter_schwingung()
@@ -4354,12 +4358,15 @@ def main():
         kn_ = mk_s._felder["knoten"].text()
         mem_s = ms_.members[stabname_]
         sec_s = ms_.sections[ms_.elements[mem_s.elements[0]].sec]
+        from statik3d import zahlen as _zl_
         check("Stabmaske nennt Knoten (Anfang → Ende mit Koordinaten) und Länge",
               kn_.startswith("K") and "→" in kn_ and " m" in kn_ and " m (" in mk_s._felder["laenge"].text(),
               kn_[:80] + " | " + mk_s._felder["laenge"].text())
         check("… den Querschnitt mit Bezeichnung, Maßen in mm und Kennwerten in cm-Einheiten",
               qs_.startswith(sec_s.name) and "mm)" in qs_ and "A " in qs_ and "cm²" in qs_ and "I_y" in qs_ and "cm⁴" in qs_
-              and f"h {sec_s.h * 1e3:g}" in qs_, qs_[:120])
+              # Masse wie die Kennwerte daneben nach zahlen.zahl_text (25.09.2026:
+              # bis dahin :g, das grosse Werte mit Exponent schrieb)
+              and f"h {_zl_.zahl_text(sec_s.h * 1e3)}" in qs_, qs_[:120])
         check("… und den Werkstoff mit E und f_y",
               "E " in mk_s._felder["mat_info"].text() and "GPa" in mk_s._felder["mat_info"].text()
               and "f_y" in mk_s._felder["mat_info"].text(), mk_s._felder["mat_info"].text()[:80])
@@ -4620,7 +4627,7 @@ def main():
         w.maske_netzeinstellungen(); app.processEvents()
         mk2 = w.maskenrand.maske
         check("die Maske zeigt die Längen in mm", float(mk2.werte()["ziellaenge"]) == 500.0
-              and str(mk2.werte()["h_min"]).strip() == "100", str((mk2.werte()["ziellaenge"], mk2.werte()["h_min"])))
+              and float(mk2.werte()["h_min"]) == 100.0, str((mk2.werte()["ziellaenge"], mk2.werte()["h_min"])))
         # Gleichungsloeser zur Auswahl (Berechnung -> Einstellungen)
         from statik3d import solver as slv_
         from statik3d import parallel as parallel_
@@ -4817,7 +4824,10 @@ def main():
         w.sammelmaske("knoten", [k0, k1])
         app.processEvents()
         mk = w.maskenrand.maske
-        check("Sammelmaske Knoten: x verschieden (leer), z gleich", mk.werte()["x"] == "" and mk.werte()["z"] == "0", str(mk.werte()))
+        # seit 24.09.2026 Zahlenfelder: leer = unveraendert, am Feldtext zu sehen
+        check("Sammelmaske Knoten: x verschieden (leer), z gleich",
+              mk._felder["x"].text() == "" and mk._felder["z"].text() == "0",
+              f"{mk._felder['x'].text()!r} {mk._felder['z'].text()!r}")
         mk.setzen("z", "1.5")
         mk.anwenden()
         app.processEvents()
@@ -4825,7 +4835,8 @@ def main():
         w.sammelmaske("stab", ["S1", "S2"])
         app.processEvents()
         mk = w.maskenrand.maske
-        check("Sammelmaske Stäbe: β_y verschieden, β_z gleich", mk.werte()["beta_y"] == "" and mk.werte()["beta_z"] == "1")
+        check("Sammelmaske Stäbe: β_y verschieden, β_z gleich",
+              mk._felder["beta_y"].text() == "" and mk._felder["beta_z"].text() == "1")
         mk.setzen("beta_y", "0.7")
         mk.setzen("lt_check", "nein")
         mk.anwenden()

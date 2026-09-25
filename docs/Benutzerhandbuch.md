@@ -1914,7 +1914,12 @@ Werkstoff, Teilung und Bemerkung, bei Schweißnähten Nahtart, Lage, a, t, ℓ,
 Ausführung und „gilt für“. Wo eine Auswahl besteht (Werkstoff, Querschnitt,
 Dicke, Nahtart, Lage, Ausführung), öffnet die Zelle eine **Aufklappliste**;
 Unzulässiges (unbekannter Knoten, fehlende Linie) wird mit Hinweis
-abgewiesen, jede Änderung ist rückgängig machbar. **Mehrfachauswahl:** mit
+abgewiesen, jede Änderung ist rückgängig machbar. Eine Zahlenzelle öffnet
+seit 24.09.2026 mit **voller Genauigkeit** und Komma (1234,5678 statt
+1234,57); wer sie öffnet und ohne Änderung verlässt, ändert nichts – kein
+Rückgängig-Schritt, die Ergebnisse bleiben. Getippte Zahlen folgen der Regel
+unter „Zahlen eingeben“: „2.000.000“ und „33.000“ werden nicht übernommen,
+der Grund steht am Zeiger. **Mehrfachauswahl:** mit
 **Umschalt** markiert ein Klick einen Bereich von Zeilen, mit **Strg** kommen
 einzelne Zeilen dazu oder gehen heraus; die Ansicht wählt dann alles
 zusammen, was die Zeilen einzeln gewählt hätten (die Knoten mehrerer Stäbe,
@@ -2193,6 +2198,23 @@ Die Maße im Bild haben eigene Angaben (*Messen → Bemaßung: Einstellungen*),
 der Bericht bleibt bei kN, m, mm und N/mm². „Rückgängig“ nimmt auch eine
 Einheitenumstellung zurück.
 
+**Register Lager/Lasten und Kontakt** (seit 24.09.2026): Kräfte, Momente,
+Strecken- und Flächenlasten, Federsteifigkeiten, Spalte und die Koordinaten
+des Auswahlfensters stehen in der eingestellten Einheit – in der Vorgabe
+kN, kNm, kN/m, kN/m², kN/m und m –, die Beschriftung nennt sie. Bis dahin
+rechnete das Register fest in N, die Masken in kN: dieselbe Zahl war dort
+tausendmal kleiner. Wird die Einheit umgestellt, zeigen die Felder dieselbe
+Größe in der neuen Einheit (aus −10 kN werden −10 000 N). Im Register
+Kontakt folgen auch die Liste „Kontaktdefinitionen“ (etwa „Spalt 0,002 m,
+k 3 kN/m“ – mit Komma und Einheit, nie „1e+09“) und der Dialog „Kontaktpaar
+definieren…“ (Steifigkeit, Spalt, Suchradius) dieser Einstellung. **Noch fest
+in kN** sind die Masken rechts (Lager, Lasten) und der Dialog
+„Nichtlinearität…“ (Schlupf, Reibung, Grenzkraft); sie nennen ihre Einheit in
+der Beschriftung. Wer die Kraft auf N stellt, sieht also im Register N/m und
+in der Lagermaske kN/m – beide beschriftet. Die **Statusleiste**
+nennt die gewählten Einheiten, etwa „kN · m · N/mm² · u in mm“, statt fest
+„m · N · Pa“.
+
 ### Messen und Bemaßen (Register Messen)
 
 **Messen** beantwortet eine Frage sofort: *Abstand* (zwei Punkte: Länge,
@@ -2280,6 +2302,151 @@ nichts wird übernommen. Steht der Fokus auf einem anderen Knopf, etwa
 Programmfenster keine Maske: Ist ein Feld gerade orange (die Maus füllt es),
 beendet das erste Esc nur diese Auswahl per Maus; jedes weitere Esc hebt wie
 überall die Auswahl in der Ansicht auf („Alles deselektieren“).
+
+### Zahlen eingeben (seit 24.09.2026)
+
+Die Zahlenfelder der Masken rechts (auch der Sammelmaske für mehrere
+gewählte Objekte), der Register Lager/Lasten und Kontakt und der Dialoge
+lesen nach derselben Regel. Sie gilt auch für die Ermüdungsmaske und die
+Zellen der Tabellen unten. Seit 25.09.2026 auch für die Felder, die leer
+bleiben dürfen und bis dahin Textfelder waren – „1.000“ wurde dort still 1:
+f_y und f_u der Werkstoffmaske, Kerbfall-Vorgabe der Schweißnaht, kleinste
+und größte Elementgröße der Netzeinstellungen, Versatz und
+Nachkommastellen einer Bemaßung, Reibbeiwert μ der Passung, Kantenbreite d
+der Schwingung, die Höhen des Wasserdrucks (Unterwasser, Sohle, Dichtung,
+Oberkante, Breite) und des Winds (Schnitthöhe, Geländeoberkante, c_f).
+Leer bleibt dort leer („aus der Stahlsorte“, „Norm“ …), nicht 0. Ebenso der
+Antriebsknoten einer Stellung (ganze Zahl), die Zellen der Beulsteifen im
+Dialog Beulfeld und die Maße im Profileditor: dort gibt es keine zweite
+Bestätigung, darum wird „1.000“ abgewiesen – die Meldung steht über OK
+bzw. rot unter dem Bild, OK bleibt gesperrt.
+
+**Listenfelder** – Versatz y, z eines Stabs, Ersatzachse einer Feder,
+Gewichte eines starren Körpers, ψ0/ψ1/ψ2 eines Lastfalls – lesen jede Zahl
+nach derselben Regel. Getrennt wird so:
+
+* **mit Semikolon**: steht ein „;“ im Feld, trennt nur das Semikolon, und
+  ein Leerzeichen in einem Eintrag ist Tausendertrennung – „12,5; 1 000“
+  ist 12,5 und 1 000;
+* **ohne Semikolon** trennen Leerzeichen und Komma mit Leerzeichen die
+  Einträge („1,5, 2“ und „1 0 0“ sind zwei bzw. drei Zahlen). „1 000“ ist
+  dann nicht eindeutig – eine Zahl oder zwei Einträge? – und wird mit
+  Meldung abgewiesen: mit „;“ trennen oder „1000“ schreiben;
+* ψ0/ψ1/ψ2 trennt der Schrägstrich („0,7/0,5/0,3“).
+
+Jedes dieser Felder hat eine **feste Anzahl**: Versatz zwei Werte (y, z),
+Ersatzachse drei, ψ drei, Gewichte eines je angeschlossenem Knoten. Zu
+viele oder zu wenige Einträge werden mit Meldung abgewiesen (Feld,
+erwartete und gefundene Anzahl, etwa „Ersatzachse x, y, z: 3 Werte
+erwartet, 4 gefunden“); ein leeres Feld gilt als Vorgabe (kein Versatz,
+Achse x, Gewichte alle gleich, ψ aus der Kategorie). Ebenso wird „1.000“
+abgewiesen. Das Objekt bleibt dann, wie es war, und es entsteht kein
+Rückgängig-Schritt. Bis 25.09.2026 wurden überzählige Einträge still
+weggelassen – „12,5; 1 000“ wurde Versatz z = 1 mm, Gewichte mit falscher
+Anzahl still „alle gleich“.
+
+**Ausnahmen**, die bewusst anders lesen:
+
+* die **Faktoren einer Kombination** („LF1: 1,35, Wind: 1,5“) sind eine
+  Formel – das Komma zwischen Ziffern ist Dezimaltrenner, „1,350“ ist 1,35;
+* der **Schwingbeiwert** der Ermüdungsmaske: „1.000“ ist dort 1 (ein
+  Beiwert von tausend kommt nicht vor), die Lastspielzahl daneben weist
+  „500.000“ dagegen ab;
+* **Nummernlisten** in den Masken (Knoten einer Linie, Elemente eines
+  Stabs, angeschlossene Knoten) lesen nur ganze Nummern, anderes fällt
+  weg. Nummernlisten fester Länge – die zwei Knoten eines Stabelements,
+  die Knoten eines Elements in der Tabelle, die Teilung (eine Zahl für
+  alle Richtungen oder zwei bei einer Fläche, drei bei einem Volumen,
+  „4 × 4“ geht auch) – weisen seit 25.09.2026 einen Eintrag, der keine
+  ganze Zahl ist, und eine falsche Anzahl mit Meldung ab;
+* **Formeln** in Tabellenzellen („= 2*3,5“) und die **Filterzeile** der
+  Tabellen („> 1000“, „2..5“) lesen Komma oder Punkt ohne Tausender;
+* **noch nicht umgestellt** sind die Drehfelder mit Pfeilen (z. B. Teilungen,
+  Anzahl) und die kleinen Abfragefenster für eine einzelne Zahl sowie der
+  Port der Rechenfarm (Einstellungen).
+
+| Eingabe | gelesen | Anzeige |
+|---|---|---|
+| `2,5` oder `2.5` | 2,5 – Komma und Punkt sind Dezimaltrenner, höchstens einer je Zahl | normal, nach dem Verlassen „2,5“ |
+| `2 000 000` | 2 000 000 – Leerzeichen (auch schmale) trennen Tausender, nur in Dreiergruppen | normal |
+| `2e6`, `1,5e5` | 2 000 000, 150 000 | nach dem Verlassen ausgeschrieben |
+| `2.000.000`, `1.000,5`, `12 5` | **ungültig** – höchstens ein Dezimaltrenner, Leerzeichen nur als Tausendertrennung | roter Rahmen, Meldung, „Übernehmen“ gesperrt |
+| `33.000` | **mehrdeutig**: 33,000 oder 33 000? | gelber Hinweis „33,000 – gemeint 33 000?“, bis bestätigt |
+
+Eine mehrdeutige Eingabe gilt erst, wenn sie bestätigt ist: in der Maske mit
+einem zweiten „Übernehmen“ oder einer zweiten Eingabetaste, im Dialog mit dem
+Haken im Feld oder zweimal Eingabetaste, im Register mit einem zweiten Klick
+auf den Knopf. Wer 33 000 meint, schreibt es mit Leerzeichen. Eine ungültige
+Eingabe wird nie still zu 0 oder zu einer anderen Zahl; ein leeres Feld zählt
+wie bisher als 0. Nach dem Verlassen steht die Zahl formatiert da: mit Komma,
+Tausender mit Leerzeichen, nie als „2e+06“ (die Ansicht bleibt beim Punkt).
+Bis zum 24.09.2026 wurde „33.000“ still zu 33 und „2.000.000“ zu 0 – der
+Qt-Validator folgte dem Gebietsschema des Systems.
+
+**Während des Tippens** bleibt ein Zwischenstand neutral, der mit weiteren
+Ziffern gültig wird: „-“ vor „-10“, „2 0“ auf dem Weg zu „2 000“, „1e“ vor
+„1e3“. Der Knopf ist dabei gesperrt, aber es erscheint weder roter Rahmen
+noch Meldung. Rot wird ein solcher Rest erst beim Verlassen des Feldes –
+mit Tab oder einem Klick woanders – oder bei „Übernehmen“; dann erscheint
+auch die Meldung. (Bis 25.09.2026 blieb ein Rest wie „12 5“ nach Tab
+neutral, der Knopf war ohne Meldung gesperrt.) „2.000.000“ ist kein
+Zwischenstand und wird sofort rot.
+**Wo die Meldung steht:** in der Maske in der Meldungszeile über dem Hinweis,
+im Dialog in einer Meldungszeile über OK und Abbrechen, im Register in der
+Statusleiste – ein gesperrter Knopf allein sagt nicht, warum.
+
+**Knöpfe, die Felder lesen**, fragen genauso nach wie „Übernehmen“:
+„Bettung übernehmen“ in der Lagermaske rechnet mit E_cm „33.000“ erst nach
+dem zweiten Klick (dann mit 33 N/mm²). Wer 33 000 meint, schreibt es mit
+Leerzeichen und klickt noch einmal: der Vorschlag wird damit neu gerechnet.
+Der Hinweis dazu schreibt die Zahlen aus, „k = E_cm/d = 330 000 MN/m³ → uz
+Feder 3 300 000 kN/m“ (bis 25.09.2026 „3.3e+06 kN/m“). Dasselbe gilt seit
+25.09.2026 für die übrigen Hinweise und Texte der Oberfläche: Lasttexte der
+Lastfallmaske (Komponenten durch Semikolon getrennt, „F = (0; 0; -10) kN“),
+Wirkung und Federn der Lager und Gelenke, Federn und Grenzschichten im
+Modellbaum, Querschnittswerte, Übermaß, freie Bewegungen – und, nach einer
+Quelltextprüfung aller Anzeigetexte der Oberfläche, auch Punktmassen,
+Dicken und Eigengewicht im Modellbaum („2 500 000 kg“ statt „2.5e+06 kg“),
+die Lasttabelle (Abschnitte, Richtungen, Vorspannkraft, Übermaß), ψ in der
+Lastfalltabelle, β und Kipplänge in der Stabtabelle, Winkel der Stellungen,
+Suchweite der Kontakte, die Skala in der Kopfzeile sowie die Meldungen in
+Statusleiste und Protokoll. Diese Texte behalten ihr bisheriges
+Trennzeichen (dort, wo bisher ein Punkt stand, bleibt er), nur der
+Exponent fällt weg. Bewusst unverändert bleiben Texte, die wieder gelesen
+oder als Name benutzt werden: die Faktoren der Kombinationsformel, die
+Kerbfall-Wahl der Schwingungsmaske, der Name einer Dicke („t = 12 mm“)
+und eines Parameterprofils („R 200x100“) sowie die CSV-Ausgabe.
+Werte, die das Programm selbst in ein Feld schreibt (vorhandene Federn im
+Dialog Nichtlinearität, Normale und Ursprung der Schnittebene), sind nie
+mehrdeutig: 123,456 kN/m steht als „123,456“ da, OK bleibt frei.
+
+**Sammelmaske** (Rechtsklick → Bearbeiten… bei mehreren gewählten Objekten):
+Koordinaten, β, Knicklängen, Kerbfall und Teilungen sind Zahlenfelder nach
+dieser Regel. Ein leeres Feld lässt den Wert je Objekt, wie er ist.
+„Übernehmen“ schreibt nur Felder, die sich seit dem Öffnen geändert haben:
+eine Koordinate 4,1234567 bleibt genau so stehen, und ohne Änderung gibt es
+weder einen Rückgängig-Schritt noch verworfene Ergebnisse. Bis zum
+24.09.2026 schrieb die Sammelmaske jeden gemeinsamen Wert auf sechs Stellen
+gerundet zurück.
+
+**Welche Felder die Ergebnisse behalten.** Ein „Übernehmen“ verwirft die
+Ergebnisse, sobald sich an der Rechnung etwas ändert. Felder, die nur
+beschriften, behalten sie: Name, Bildunterschrift, Bemerkung, Text und Platz
+eines Berichtseintrags; Bemerkung von Linie, Fläche und Volumen; Beschreibung
+eines Lastfalls; Name und Symbolgröße eines Lagers; Bemerkung und
+Passmaß-Bezeichnung einer Vorspannung bzw. eines Übermaßes; in den Tabellen
+dieselben Spalten sowie Beschriftung und Bemerkung der Unterlagen. Nennt eine
+Stellung ein Lager beim Namen, verwirft sein Umbenennen die Ergebnisse, denn
+die Stellung schaltet dann ein anderes Lager ab. Alles andere verwirft wie
+bisher – im Zweifel wird verworfen. In den eben genannten Masken
+(Berichtseintrag, Linie, Fläche, Volumen, Lastfall, Lager, Vorspannung und
+Übermaß), in der Sammelmaske und in den Tabellenzellen legt „Übernehmen“
+ohne Änderung keinen Rückgängig-Schritt an. Die übrigen Masken (etwa Knoten
+oder Werkstoff) legen auch dann einen Schritt an und verwerfen die
+Ergebnisse. **Rückgängig und Wiederholen** eines Schritts, der nur
+beschriftet hat, behalten die Ergebnisse ebenfalls. Wer einen vertippten
+Lagernamen zurücknimmt, muss also nicht neu rechnen. Jeder andere Schritt
+verwirft sie beim Zurücknehmen wie bisher.
 
 ### Verschieben, Kopieren, Drehen, Spiegeln
 

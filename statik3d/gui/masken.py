@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import design as dsg
+from . import zahlenfeld as zf
+from .. import zahlen as zl
 
 
 def listeneintraege(text: str) -> list:
@@ -55,6 +57,10 @@ class Feld:
     werte: list = field(default_factory=list)   # fuer art="wahl" und "mehrfach"
     breite: int = 78
     hinweis: str = ""
+    #: Zahlenfeld, das leer bleiben darf („leer = aus der Stahlsorte“,
+    #: „leer = Norm“): werte() liefert dann "" statt 0. Bis 25.09.2026 waren
+    #: solche Felder Textfelder und lasen „1.000“ still als 1.
+    leer: bool = False
 
 
 class Rollflaeche(QtWidgets.QScrollArea):
@@ -226,6 +232,8 @@ class Maske(QtWidgets.QFrame):
         #: wird die Anzahl in der Beschriftung nachgefuehrt, wenn der Wert
         #: sich aendert (etwa weil Flaechen in der Ansicht angeklickt wurden).
         self._listen: dict[str, tuple] = {}
+        #: Zahlenfelder, die leer bleiben duerfen (Feld.leer, 25.09.2026)
+        self._leer_erlaubt = {f.name for f in felder if getattr(f, "leer", False)}
 
         # Gemeinsamer Rahmen (24.09.2026, Paket 1 des Oberflaechenplans):
         # fester Kopf (Titel, Hinweiszeile), rollbare Mitte (die Felder),
@@ -306,6 +314,21 @@ class Maske(QtWidgets.QFrame):
 
         fuss = QtWidgets.QVBoxLayout()
         fuss.setSpacing(6)
+        # Meldung der Zahlenfelder (24.09.2026): rot bei einer ungueltigen,
+        # gelb bei einer mehrdeutigen Eingabe. Sie steht im festen Fuss direkt
+        # ueber den Knoepfen - rollt also nie weg - und gehoert zu dem Knopf,
+        # den sie erklaert: „Übernehmen“ ist gesperrt bzw. will ein zweites
+        # Mal gedrueckt werden. Im Kopf wuerde ihr Erscheinen die ganze Mitte
+        # samt dem Feld, in dem man gerade tippt, um eine Zeile nach unten
+        # schieben; im Fuss wird die Rollflaeche nur unten kuerzer. Den
+        # Hinweis, den manche Masken selbst beschreiben, ueberdeckt sie nicht.
+        # Eine Hinweiszeile (meldet ihre umbrochene Hoehe): eine zweizeilige
+        # Meldung wuerde sonst wie der Hinweis bei Wind den Fuss zerquetschen.
+        self.lbl_zahlmeldung = Hinweiszeile("", self)
+        self.lbl_zahlmeldung.setObjectName("zahlmeldung")
+        self.lbl_zahlmeldung.setWordWrap(True)
+        self.lbl_zahlmeldung.hide()
+        fuss.addWidget(self.lbl_zahlmeldung)
         knoepfe = QtWidgets.QHBoxLayout()
         self.btn_anwenden = QtWidgets.QPushButton(knopf, self)
         self.btn_anwenden.setDefault(True)
@@ -335,6 +358,14 @@ class Maske(QtWidgets.QFrame):
             fuss.addLayout(zeile)
         lay.addLayout(fuss)
         self.setMinimumWidth(232)
+        # „Übernehmen“ gesperrt, solange ein Zahlenfeld ungueltig ist; eine
+        # Mehrdeutigkeit bestaetigt das zweite „Übernehmen“ (anwenden)
+        self._zahlwaechter_obj = zf.Waechter(self, [self.btn_anwenden])
+        for w in self._felder.values():
+            if isinstance(w, zf.Zahlenfeld):
+                w.zustand_geaendert.connect(self._zahlmeldung_nachfuehren)
+        #: Stand beim Oeffnen - geaenderte_felder() vergleicht dagegen
+        self._anfang = self._werte_roh()
         self.tabfolge_setzen()
         # Das Feld mit dem Fokus in der Rollflaeche sichtbar halten - auch bei
         # Klick, Programmfokus und Tab aus dem Fuss zurueck in die Felder
@@ -445,11 +476,16 @@ class Maske(QtWidgets.QFrame):
             w.setMaximumHeight(min(21 * max(len(f.werte), 1) + 8, 150))
             w.setToolTip(f.hinweis or "Anklicken wählt aus, noch einmal wählt ab")
             return w
+        if f.art in ("zahl", "ganz"):
+            # Eigenes Zahlenfeld statt QDoubleValidator (24.09.2026): Komma
+            # und Punkt, Tausender mit Leerzeichen, „33.000“ fragt nach,
+            # „2.000.000“ ist ungueltig - nie still 0 (statik3d/zahlen.py)
+            w = zf.Zahlenfeld(f.wert, f.breite, ganz=f.art == "ganz", parent=self)
+            w.selbst_bestaetigen = False      # das zweite „Anwenden“ bestaetigt
+            w.returnPressed.connect(self.anwenden)
+            return w
         w = QtWidgets.QLineEdit(str(f.wert), self)
         w.setFixedWidth(f.breite)
-        if f.art in ("zahl", "ganz"):
-            w.setValidator(QtGui.QIntValidator() if f.art == "ganz"
-                           else QtGui.QDoubleValidator(-1e30, 1e30, 10))
         if f.art == "liste":
             # Ein einzeiliges Feld steht sonst am **Ende** der Zeile: aus
             # „F249, F236, ..., F69, F64, F71, F98, F46, F52" bleibt
@@ -479,9 +515,18 @@ class Maske(QtWidgets.QFrame):
 
     # -- Werte -----------------------------------------------------------
     def werte(self) -> dict:
+        """Die Feldwerte. Ein Zahlenfeld liefert seine Zahl (leer = 0, bei
+        Feld.leer ""); ein ungueltiges liefert seinen Text - nie still 0.
+        „Anwenden“ laesst ungueltige Felder gar nicht erst durch."""
         out: dict = {}
+        leer_erlaubt = getattr(self, "_leer_erlaubt", ())
         for name, w in self._felder.items():
-            if isinstance(w, QtWidgets.QLabel):
+            if isinstance(w, zf.Zahlenfeld):
+                try:
+                    out[name] = w.wert("" if name in leer_erlaubt else 0.0)
+                except zf.Eingabefehler:
+                    out[name] = w.text()
+            elif isinstance(w, QtWidgets.QLabel):
                 out[name] = w.text()
             elif isinstance(w, QtWidgets.QCheckBox):
                 out[name] = w.isChecked()
@@ -491,24 +536,53 @@ class Maske(QtWidgets.QFrame):
                 out[name] = ", ".join(w.item(i).text() for i in range(w.count())
                                       if w.item(i).checkState() == QtCore.Qt.Checked)
             else:
-                t = w.text().replace(",", ".").strip()
-                if w.validator() is None:
-                    out[name] = w.text().strip()
-                else:
-                    try:
-                        out[name] = float(t) if t else 0.0
-                    except ValueError:
-                        out[name] = 0.0
+                out[name] = w.text().strip()
         out["knoten"] = list(self.gewaehlt)
         if self.punkte:
             out["punkte"] = [[float(x) for x in p] for p in self.gewaehlt_punkte]
         return out
 
+    def _werte_roh(self) -> dict:
+        """Wie werte(), fuer den Vergleich mit dem Stand beim Oeffnen - immer
+        die Felder dieser Klasse: eine abgeleitete Maske (Ermuedungsmaske)
+        hat eigene werte() und ist beim Aufbau noch nicht fertig."""
+        w = Maske.werte(self)
+        w.pop("knoten", None)
+        w.pop("punkte", None)
+        return w
+
+    def geaenderte_felder(self) -> set:
+        """Namen der Felder, die seit dem Oeffnen anders sind (24.09.2026).
+
+        Danach entscheidet das Fenster Feld fuer Feld, ob ein „Übernehmen“
+        die Ergebnisse verwerfen muss: eine Bemerkung oder Symbolgroesse
+        aendert die Rechnung nicht."""
+        jetzt = self._werte_roh()
+        anfang = getattr(self, "_anfang", {}) or {}
+        return {k for k in set(jetzt) | set(anfang) if jetzt.get(k) != anfang.get(k)}
+
+    def _zahlmeldung_nachfuehren(self) -> None:
+        felder = [w for w in self._felder.values() if isinstance(w, zf.Zahlenfeld)]
+        # ein Zwischenstand beim Tippen („-“) meldet nichts (meldung leer)
+        schlecht = next((w for w in felder if w.ungueltig() and w.meldung()), None)
+        frage = next((w for w in felder if w.offene_frage()), None)
+        if schlecht is not None:
+            self._zahlmeldung_setzen(schlecht.meldung(), zf.ROT)
+        elif frage is not None:
+            self._zahlmeldung_setzen(frage.meldung(), zf.GELB)
+        else:
+            self._zahlmeldung_setzen("")
+
+    def _zahlmeldung_setzen(self, text: str, farbe: str = None) -> None:
+        zf.meldungszeile_setzen(self.lbl_zahlmeldung, text, farbe)
+
     def setzen(self, name: str, wert):
         w = self._felder.get(name)
         if w is None:
             return
-        if isinstance(w, QtWidgets.QCheckBox):
+        if isinstance(w, zf.Zahlenfeld):
+            w.setzen(wert)
+        elif isinstance(w, QtWidgets.QCheckBox):
             w.setChecked(bool(wert))
         elif isinstance(w, QtWidgets.QComboBox):
             w.setCurrentText(str(wert))
@@ -520,7 +594,9 @@ class Maske(QtWidgets.QFrame):
         elif isinstance(w, QtWidgets.QLabel):
             w.setText(str(wert))
         else:
-            w.setText(f"{wert:g}" if isinstance(wert, float) else str(wert))
+            # ohne Tausender: ein Textfeld kann eine Liste sein, dort trennt
+            # das Leerzeichen Eintraege; nie „1e-05“ (25.09.2026)
+            w.setText(zl.zahl_text(wert, tausender=False) if isinstance(wert, float) else str(wert))
             eintrag = self._listen.get(name)
             if eintrag is not None:
                 lb, titel, hinweis = eintrag
@@ -584,6 +660,13 @@ class Maske(QtWidgets.QFrame):
 
     # -- Bedienung -------------------------------------------------------
     def anwenden(self):
+        # Ungueltige Zahl: nichts uebernehmen. Mehrdeutige („33.000“): beim
+        # ersten Mal nachfragen, beim zweiten Mal gilt sie (24.09.2026)
+        felder = [w for w in self._felder.values() if isinstance(w, zf.Zahlenfeld)]
+        if felder and not zf.freigeben(felder):
+            self._zahlmeldung_nachfuehren()
+            return
+        self._zahlmeldung_nachfuehren()
         self.angewendet.emit(self.werte())
 
     def abbrechen(self):
@@ -663,6 +746,10 @@ class Maske(QtWidgets.QFrame):
         einrahmen - alle anderen normal. ``None`` nimmt jeden Rahmen weg."""
         for feld, w in self._felder.items():
             if isinstance(w, QtWidgets.QLabel):
+                continue
+            if isinstance(w, zf.Zahlenfeld):
+                # der rote/gelbe Rahmen einer Fehleingabe geht vor
+                w.markieren(feld == name)
                 continue
             w.setStyleSheet("border: 2px solid #ff8800; background: #fff6e5;"
                             if feld == name else "")

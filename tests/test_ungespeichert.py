@@ -911,6 +911,57 @@ def test_teilergebnis_ungespeichert():
           w.ungespeichert())
 
 
+def test_beschriftung_rueckgaengig():
+    """Zusammenfuehrung Paket 3 + Paket 4 (25.09.2026): ein reiner
+    Beschriftungsschritt (Lagername in der Tabelle) traegt im Rueckgaengig-
+    Stapel wie jeder Schritt den Aenderungsstand. Rueckgaengig setzt den Stand
+    zurueck UND behaelt die Ergebnisse - und damit auch deren Merker
+    „ungespeichert“; erst ein Schritt, der die Ergebnisse verwirft, loescht ihn."""
+    w, app = _fenster()
+    from statik3d import solver
+    from statik3d.gui.main import _Beschriftungsschritt
+    w.load_example("frame"); app.processEvents()
+    an = solver.solve_all(w.model, design=False)
+    w._bg_done(lambda r: w._solve_done("all", r), an)
+    app.processEvents()
+    w.path = os.path.join(TMP, "beschriftung.json")
+    w.save_model(); app.processEvents()
+    check("gerechnet und gespeichert: nichts ungespeichert",
+          w.analysis is not None and not w.ungespeichert(), w.ungespeichert())
+    ok = w._lager_aendern(0, 2, "Fuß Probe")
+    app.processEvents()
+    e = w._undo[-1] if w._undo else ()
+    check("Lagername in der Tabelle: Eintrag (was, modell, stand), als Beschriftung markiert",
+          ok and len(e) == 3 and isinstance(e[0], _Beschriftungsschritt), repr(e[:1]) + f" {len(e)}")
+    check("… Ergebnisse bleiben, das Modell ist geändert",
+          w.analysis is not None and w.ungespeichert() == "Änderungen am Modell", w.ungespeichert())
+    w.undo(); app.processEvents()
+    check("Rückgängig der Beschriftung: Ergebnisse bleiben, Stand wieder „gespeichert“",
+          w.analysis is not None and not w.ungespeichert() and not _stern(w), repr(w.ungespeichert()))
+    r = w._redo[-1] if w._redo else ()
+    check("… der Wiederholen-Eintrag ist dreiteilig und bleibt Beschriftung",
+          len(r) == 3 and isinstance(r[0], _Beschriftungsschritt), f"{len(r)}")
+    w.redo(); app.processEvents()
+    check("Wiederholen: Ergebnisse bleiben, wieder ungespeichert",
+          w.analysis is not None and w.ungespeichert() == "Änderungen am Modell", w.ungespeichert())
+    w.undo(); app.processEvents()
+    # frische, ungespeicherte Ergebnisse: Rueckgaengig einer Beschriftung
+    # darf ihren Merker nicht loeschen
+    an = solver.solve_all(w.model, design=False)
+    w._bg_done(lambda r_: w._solve_done("all", r_), an)
+    app.processEvents()
+    w._lager_aendern(0, 2, "Fuß Probe 2"); app.processEvents()
+    w.undo(); app.processEvents()
+    check("ungespeicherte Ergebnisse: nach Rückgängig der Beschriftung weiter „ungespeichert“",
+          w.analysis is not None and "Ergebnis" in w.ungespeichert(), repr(w.ungespeichert()))
+    # ein rechnender Schritt verwirft die Ergebnisse samt Merker
+    w.merken("Probe: rechnender Schritt")
+    w.model.add_node(7.0, 7.0, 7.0)
+    w.undo(); app.processEvents()
+    check("Rückgängig eines rechnenden Schritts: Ergebnisse und ihr Merker verworfen",
+          w.analysis is None and not w._ergebnis_ungespeichert, repr(w.ungespeichert()))
+
+
 def test_speichern_ergebnis_scheitert():
     """Gegenpruefung 25.09.2026: scheiterte die Ergebnisdatei, galt alles als
     gespeichert - „Speichern“ in der Rueckfrage beendete danach ohne sie."""
@@ -1113,7 +1164,7 @@ def main():
               test_befehlssuche_tastatur, test_doppelklick_zweig, test_waehrend_rechnung_kein_neues_modell,
               test_fremdes_ergebnis_verworfen, test_teilergebnis_ungespeichert,
               test_speichern_ergebnis_scheitert, test_projektangabe_grosses_modell, test_rueckgaengig_wege,
-              test_weitere_wege,
+              test_weitere_wege, test_beschriftung_rueckgaengig,
               test_beenden_waehrend_rechnung):
         print(f"\n--- {t.__name__} ---")
         try:

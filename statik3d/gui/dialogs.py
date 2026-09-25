@@ -12,23 +12,26 @@ from .. import profiles
 from ..ec3.fatigue import DETAIL_CATEGORIES, DETAIL_EXAMPLES
 from .. import elemente as EL
 from .design import namen as _namen
+from . import zahlenfeld as zf
+from .. import zahlen as zl
 
 
-class NumEdit(QtWidgets.QLineEdit):
+class NumEdit(zf.Zahlenfeld):
+    """Zahlenfeld der Dialoge und Register - die Regel steht in
+    statik3d/zahlen.py (24.09.2026). Bis dahin QDoubleValidator mit dem
+    Gebietsschema des Systems und ``float(text.replace(",", "."))``, das bei
+    „2.000.000“ still 0 lieferte."""
+
     def __init__(self, value=0.0, width=80):
-        super().__init__(f"{value:g}")
-        self.setValidator(QtGui.QDoubleValidator(-1e30, 1e30, 12))
-        self.setFixedWidth(width)
+        super().__init__(value, width)
 
     def value(self) -> float:
-        t = self.text().replace(",", ".").strip()
-        try:
-            return float(t)
-        except ValueError:
-            return 0.0
+        """Die Zahl (leer = 0). Eine ungueltige Eingabe wirft Eingabefehler:
+        der OK-Knopf ist dann gesperrt, im Register prueft freigeben()."""
+        return self.wert()
 
     def set(self, v):
-        self.setText(f"{v:g}")
+        self.setzen(v)
 
 
 def row(*widgets) -> QtWidgets.QWidget:
@@ -41,11 +44,29 @@ def row(*widgets) -> QtWidgets.QWidget:
     return w
 
 
-def buttons(dialog: QtWidgets.QDialog) -> QtWidgets.QDialogButtonBox:
+def buttons(dialog: QtWidgets.QDialog) -> QtWidgets.QWidget:
     bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
     bb.accepted.connect(dialog.accept)
     bb.rejected.connect(dialog.reject)
-    return bb
+    return knopfkasten(dialog, bb)
+
+
+def knopfkasten(dialog: QtWidgets.QDialog, bb: QtWidgets.QDialogButtonBox) -> QtWidgets.QWidget:
+    """Knopfleiste mit Meldungszeile darueber.
+
+    OK bleibt gesperrt, solange ein Zahlenfeld ungueltig oder noch
+    mehrdeutig ist - im Dialog laesst sich OK nicht abfangen. Die
+    Meldungszeile nennt den Grund (24.09.2026; bis dahin stand er nur im
+    Hinweis am Feld, OK war ohne sichtbaren Grund gesperrt)."""
+    kasten = QtWidgets.QWidget(dialog)
+    lay = QtWidgets.QVBoxLayout(kasten)
+    lay.setContentsMargins(0, 0, 0, 0)
+    zeile = zf.meldungszeile(kasten)
+    lay.addWidget(zeile)
+    lay.addWidget(bb)
+    dialog.lbl_zahlmeldung = zeile
+    zf.Waechter(dialog, [bb.button(QtWidgets.QDialogButtonBox.Ok)], frage_sperrt=True, meldung=zeile)
+    return kasten
 
 
 # ==========================================================================
@@ -566,7 +587,11 @@ class DesignSettingsDialog(QtWidgets.QDialog):
 
 # ==========================================================================
 class ContactPairDialog(QtWidgets.QDialog):
-    def __init__(self, parent=None, model: Model = None, n_selected: int = 0):
+    def __init__(self, parent=None, model: Model = None, n_selected: int = 0, einheiten=None):
+        """``einheiten()`` liefert die Einheiteneinstellung: Steifigkeit,
+        Spalt und Suchradius stehen dann in derselben Einheit wie die Felder
+        im Register Kontakt (24.09.2026, bis dahin fest N/m neben kN/m);
+        gelesen wird mit si()."""
         super().__init__(parent)
         self.setWindowTitle("Kontaktpaar Knoten - Fläche")
         self.name = QtWidgets.QLineEdit(f"Kontakt{len(model.contact_pairs)+1}")
@@ -583,16 +608,22 @@ class ContactPairDialog(QtWidgets.QDialog):
         self.mu = NumEdit(0.0, 70)
         self.gap = NumEdit(0.0, 70)
         self.radius = NumEdit(0.0, 70)
+        e_k, e_l = "N/m", "m"
+        if callable(einheiten):
+            self.k.einheit_binden("strecke", einheiten)
+            self.gap.einheit_binden("laenge", einheiten)
+            self.radius.einheit_binden("laenge", einheiten)
+            e_k, e_l = self.k.einheit() or e_k, self.gap.einheit() or e_l
         self.flip = QtWidgets.QCheckBox("Normale umkehren")
         f = QtWidgets.QFormLayout(self)
         f.addRow(QtWidgets.QLabel(f"Slave-Knoten: aktuelle Auswahl ({n_selected} Knoten)"))
         f.addRow("Name", self.name)
         f.addRow("Master-Fläche", self.master)
         f.addRow("Element-Liste", self.elist)
-        f.addRow("Kontaktsteifigkeit [N/m] (0 = automatisch)", self.k)
+        f.addRow(f"Kontaktsteifigkeit [{e_k}] (0 = automatisch)", self.k)
         f.addRow("Reibungsbeiwert μ", self.mu)
-        f.addRow("Spalt / Versatz [m]", self.gap)
-        f.addRow("Suchradius [m] (0 = automatisch)", self.radius)
+        f.addRow(f"Spalt / Versatz [{e_l}]", self.gap)
+        f.addRow(f"Suchradius [{e_l}] (0 = automatisch)", self.radius)
         f.addRow(self.flip)
         f.addRow(buttons(self))
 
@@ -679,7 +710,7 @@ class SupportNonlinearDialog(QtWidgets.QDialog):
         bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok
                                         | QtWidgets.QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
-        lay.addWidget(bb)
+        lay.addWidget(knopfkasten(self, bb))
         if support is not None:
             self.load(support)
 
@@ -687,10 +718,12 @@ class SupportNonlinearDialog(QtWidgets.QDialog):
         for d, (typ, k, fail, slip, mu, ref) in enumerate(self.rows):
             b = support.dof_behaviour(d)
             typ.setCurrentIndex({"free": 0, "rigid": 1, "spring": 2}[b.typ])
-            k.setText(f"{b.stiffness / 1e3:g}")
+            # als Zahl setzen (24.09.2026): der Text f"{123.456:g}" war im
+            # Zahlenfeld mehrdeutig („gemeint 123 456?“) und rundete auf 6 Stellen
+            k.set(float(b.stiffness) / 1e3)
             fail.setCurrentIndex({"": 0, "zug": 1, "druck": 2}[b.failure])
-            slip.setText(f"{b.slip * 1000:g}")
-            mu.setText(f"{b.mu:g}")
+            slip.set(float(b.slip) * 1000)
+            mu.set(float(b.mu))
             ref.setCurrentIndex(0 if b.mu_ref is None else int(b.mu_ref) + 1)
 
     def behaviours(self) -> dict:
@@ -880,15 +913,15 @@ class KoerperDialog(QtWidgets.QDialog):
             sp.setValue(int(t[i] if i < len(t) else 4))
             self.n.append(sp)
         self.kommentar = QtWidgets.QLineEdit(getattr(koerper, "kommentar", "") or "")
-        self.kerbfall = QtWidgets.QLineEdit(
-            f"{koerper.kerbfall / 1e6:g}" if getattr(koerper, "kerbfall", 0.0) else "")
+        self.kerbfall = zf.Zahlenfeld(
+            koerper.kerbfall / 1e6 if getattr(koerper, "kerbfall", 0.0) else None)
         self.kerbfall.setPlaceholderText("leer = kein Ermüdungsnachweis")
         self.kerbfall.setToolTip("Kerbfall Δσ_C [N/mm²] für den Ermüdungsnachweis des Volumens "
                                  "(Hauptspannung je Knoten, EN 1993-1-9)"
                                  + (" - Vorschlag des Programms, zu prüfen"
                                     if getattr(koerper, "kerbfall_vorschlag", False) else ""))
-        self.kerbfall_naht = QtWidgets.QLineEdit(
-            f"{koerper.kerbfall_naht / 1e6:g}" if getattr(koerper, "kerbfall_naht", 0.0) else "")
+        self.kerbfall_naht = zf.Zahlenfeld(
+            koerper.kerbfall_naht / 1e6 if getattr(koerper, "kerbfall_naht", 0.0) else None)
         self.kerbfall_naht.setPlaceholderText("leer = wie Kerbfall")
         self.kerbfall_naht.setToolTip("Kerbfall an verschweißten Berührungsstellen mit anderen "
                                       "Volumen (gemeinsame Knoten ohne Kontaktbedingung)")
@@ -909,16 +942,10 @@ class KoerperDialog(QtWidgets.QDialog):
         f.addRow(buttons(self))
 
     def werte(self) -> dict:
-        kt = self.kerbfall.text().strip().replace(",", ".")
-        nt = self.kerbfall_naht.text().strip().replace(",", ".")
-        try:
-            kerbfall = float(kt) * 1e6 if kt else 0.0
-        except ValueError:
-            kerbfall = 0.0
-        try:
-            kerbfall_naht = float(nt) * 1e6 if nt else 0.0
-        except ValueError:
-            kerbfall_naht = 0.0
+        # Zahlenfelder (24.09.2026): leer = keiner; eine ungueltige Eingabe
+        # sperrt OK, statt wie bisher still 0 (kein Nachweis) zu werden
+        kerbfall = self.kerbfall.wert() * 1e6
+        kerbfall_naht = self.kerbfall_naht.wert() * 1e6
         return {"name": self.name.text().strip() or "V",
                 "flaechen": [i.text() for i in self.liste.selectedItems()],
                 "material": self.material.currentText(),
@@ -1392,7 +1419,7 @@ class JointDialog(QtWidgets.QDialog):
                                         | QtWidgets.QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
-        zeile.addWidget(bb)
+        zeile.addWidget(knopfkasten(self, bb))
         lay.addLayout(zeile)
         self.cb_typ.currentIndexChanged.connect(self.update_proposal)
         self.update_proposal()
@@ -1451,7 +1478,7 @@ class JointDialog(QtWidgets.QDialog):
         z = ["Momenten-Rotations-Verhalten (EN 1993-1-8, Kap. 5 und 6.3)",
              "=" * 78,
              f"S_j,ini = {S}"
-             + (f", Rechenwert S_j = {g.S_j / 1e6:.1f} MNm/rad (eta = {g.eta:g})"
+             + (f", Rechenwert S_j = {g.S_j / 1e6:.1f} MNm/rad (eta = {zl.zahl_text(g.eta, punkt=True)})"
                 if math.isfinite(g.S_j) and g.S_j > 0 else ""),
              f"Klasse:  {g.beschreibung()}",
              f"M_j,Rd = {g.M_j_Rd / 1e3:.1f} kNm ({g.tragklasse or '-'})",
@@ -1519,7 +1546,7 @@ class BeulfeldDialog(QtWidgets.QDialog):
         form.addRow(self.lbl_l, self.ed_l)
         self.cb_qual = QtWidgets.QComboBox()
         for k, (q, text) in QUALITAET.items():
-            self.cb_qual.addItem(f"{text} (Q = {q:g})", k)
+            self.cb_qual.addItem(f"{text} (Q = {zl.zahl_text(q, punkt=True)})", k)
         if f:
             self.cb_qual.setCurrentIndex(max(0, self.cb_qual.findData(f.qualitaet)))
         else:
@@ -1566,7 +1593,7 @@ class BeulfeldDialog(QtWidgets.QDialog):
                                         | QtWidgets.QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
-        lay.addWidget(bb)
+        lay.addWidget(knopfkasten(self, bb))
         self.cb_art.currentIndexChanged.connect(self._umschalten)
         self._umschalten()
 
@@ -1589,7 +1616,7 @@ class BeulfeldDialog(QtWidgets.QDialog):
                  (st.I_sl * 1e8 if st else 0.0), (st.I_T * 1e8 if st else 0.0),
                  (st.I_p * 1e8 if st else 0.0)]
         for k, v in enumerate(werte, start=1):
-            self.tbl.setItem(r, k, QtWidgets.QTableWidgetItem(f"{v:g}"))
+            self.tbl.setItem(r, k, QtWidgets.QTableWidgetItem(zl.zahl_text(v, tausender=False)))
         self.tbl.setItem(r, 6, QtWidgets.QTableWidgetItem(
             (st.name if st else "") or f"S{r + 1}"))
 
@@ -1598,16 +1625,31 @@ class BeulfeldDialog(QtWidgets.QDialog):
         if r >= 0:
             self.tbl.removeRow(r)
 
+    def accept(self):
+        """OK nur mit lesbaren Steifenwerten (25.09.2026): die Zellen haben
+        keine zweite Bestaetigung, darum wird „1.000“ hier abgewiesen und die
+        Meldungszeile nennt die Zelle - bis dahin wurde es still 1 mm, ein
+        Tippfehler („abc“) still 0."""
+        try:
+            self.steifen()
+        except ValueError as ex:
+            zf.meldungszeile_setzen(self.lbl_zahlmeldung, str(ex), zf.ROT)
+            return
+        zf.meldungszeile_setzen(self.lbl_zahlmeldung, "")
+        super().accept()
+
     def steifen(self) -> list:
         from ..model import Beulsteife
         out = []
+        spalten = {1: "Lage", 2: "A_sl", 3: "I_sl", 4: "I_T", 5: "I_p"}
         for r in range(self.tbl.rowCount()):
             def z(k):
+                # Regel der Zahlenfelder (25.09.2026); leer = 0 wie bisher
                 it = self.tbl.item(r, k)
                 try:
-                    return float((it.text() if it else "0").replace(",", "."))
-                except ValueError:
-                    return 0.0
+                    return zl.feldwert(it.text() if it else "", 0.0)
+                except ValueError as ex:
+                    raise ValueError(f"Steife {r + 1}, {spalten[k]}: {ex}") from None
             cb = self.tbl.cellWidget(r, 0)
             nm = self.tbl.item(r, 6)
             out.append(Beulsteife(cb.currentText() if cb else "laengs",
@@ -1684,7 +1726,7 @@ class LasteinleitungDialog(QtWidgets.QDialog):
                                         | QtWidgets.QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
-        lay.addWidget(bb)
+        lay.addWidget(knopfkasten(self, bb))
 
     def result(self) -> tuple:
         return self.ed_name.text().strip(), {
@@ -1751,7 +1793,7 @@ class VolumenbereichDialog(QtWidgets.QDialog):
                                         | QtWidgets.QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
-        lay.addWidget(bb)
+        lay.addWidget(knopfkasten(self, bb))
 
     def result(self) -> tuple:
         return self.ed_name.text().strip(), {
@@ -1848,7 +1890,7 @@ class VerformungsgrenzeDialog(QtWidgets.QDialog):
                                         | QtWidgets.QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
-        lay.addWidget(bb)
+        lay.addWidget(knopfkasten(self, bb))
         for w in (self.cb_art, self.cb_grenzart):
             w.currentIndexChanged.connect(self._umschalten)
         self._umschalten()
@@ -1945,7 +1987,10 @@ class StellungDialog(QtWidgets.QDialog):
         g = QtWidgets.QGroupBox("Antriebsmoment (hält die Stellung)")
         gl = QtWidgets.QVBoxLayout(g)
         kn, mv = (s.antrieb if (s and s.antrieb) else (None, (0.0, 0.0, 0.0)))
-        self.ed_knoten = QtWidgets.QLineEdit("" if kn is None else str(int(kn) + 1))
+        # Ganzes Zahlenfeld (25.09.2026): bis dahin Text mit
+        # int(float(t.replace(",", "."))) - „1.000“ wurde still Knoten 1,
+        # „abc“ liess den Antrieb still weg. Jetzt sperrt beides OK.
+        self.ed_knoten = zf.Zahlenfeld(None if kn is None else int(kn) + 1, 80, ganz=True)
         self.ed_moment = [NumEdit(v / 1e3, 80) for v in mv]
         gl.addWidget(row("Knoten (Nummer, leer = kein Antrieb)", self.ed_knoten))
         gl.addWidget(row("Mx [kNm]", self.ed_moment[0], "My", self.ed_moment[1],
@@ -1960,13 +2005,9 @@ class StellungDialog(QtWidgets.QDialog):
     def stellung(self):
         from ..bridges.positions import Stellung
         antrieb = None
-        t = self.ed_knoten.text().strip()
-        if t:
-            try:
-                antrieb = (int(float(t.replace(",", "."))) - 1,
-                           [e.value() * 1e3 for e in self.ed_moment])
-            except ValueError:
-                antrieb = None
+        nr = self.ed_knoten.wert(None)
+        if nr is not None:
+            antrieb = (int(nr) - 1, [e.value() * 1e3 for e in self.ed_moment])
         return Stellung(
             name=self.ed_name.text().strip() or "Stellung",
             winkel=self.ed_winkel.value(),

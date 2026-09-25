@@ -570,12 +570,17 @@ def _fenster(m):
     s._fill = lambda t, rows, header=None: G.MainWindow._fill(s, t, rows, header)
     s.refresh_cases = lambda: G.MainWindow.refresh_cases(s)
     s.refresh_all = s.refresh_cases
-    s.merken = lambda was: G.MainWindow.merken(s, was)
+    s.merken = lambda was, beschriftung=False: G.MainWindow.merken(s, was, beschriftung)
     s.undo = lambda: G.MainWindow.undo(s)
     s.redo = lambda: G.MainWindow.redo(s)
 
-    def modell_setzen(mm):              # wie _modell_setzen: Objekt tauschen, nachziehen
+    def modell_setzen(mm, ergebnisse_behalten=False):
+        # wie _modell_setzen (Signatur seit Paket 4, 24.09.2026): Objekt
+        # tauschen, Ergebnisse verwerfen ausser bei Beschriftungsschritten,
+        # nachziehen
         s.model = mm
+        if not ergebnisse_behalten:
+            s.analysis = s.results = None
         s.refresh_all()
     s._modell_setzen = modell_setzen
     s._ermuedung_aendern = lambda was, fn: G.MainWindow._ermuedung_aendern(s, was, fn)
