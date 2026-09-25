@@ -1916,6 +1916,54 @@ def test_hilfsfesselung_ohne_vorlauf():
           zustand_aus_info(rg.info) == "konvergiert" and du <= 1e-6, f"{zustand_aus_info(rg.info)}, {du:.1e}")
 
 
+def test_uebermass_als_einzige_last():
+    """Presspassung ohne aeussere Last, plastisch (Pruefmatrix KP2, 25.09.2026):
+    zwei Wuerfel mit ebener Fuge, das Uebermass allein bringt beide bis
+    300 N/mm2 (fy 235, E_t/E 5 %). Das Ergebnis war exakt, die Plastizitaet
+    meldete trotzdem nach 3 x 60 Newton-Schritten "nicht konvergiert": ihr
+    Bezug war ||F|| = 0, ersetzt durch 1, und die Aenderung 0,0972 N stand
+    als absolute Zahl gegen die Toleranz. Jetzt ist der Bezug ohne aeussere
+    Last die plastische Last selbst (plastizitaet._bezug)."""
+    try:
+        from test_uebermass import zwei_wuerfel, E_STAHL, L_WUERFEL
+    except ImportError:
+        from tests.test_uebermass import zwei_wuerfel, E_STAHL, L_WUERFEL
+    fy, sigma, verf = 235e6, 300e6, 0.05
+    H = E_STAHL * verf / (1.0 - verf)
+    # Dehnung bei 300 N/mm2, bilinear: elastisch sigma/E (nicht fy/E - die
+    # elastische Dehnung waechst mit sigma weiter), plastisch (sigma - fy)/H.
+    # Mit fy/E stand hier 14,0 mm, und der Test verlangte 300 N/mm2, wo das
+    # Programm richtig 296,75 rechnete (gemessen 25.09.2026).
+    eps = sigma / E_STAHL + (sigma - fy) / H
+    delta = 2.0 * L_WUERFEL * eps                       # jeder Wuerfel wird um L*eps gestaucht: 14,619 mm
+
+    def rechnen():
+        m = zwei_wuerfel(ueber=delta, oben_gehalten=True)
+        m.materials["S235"].fy = fy
+        m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=verf, laststufen=3, iterationen=25, toleranz=1e-3)
+        r = solver.solve_static(m, case="LF1")
+        return m, r, (r.info.get("plastizitaet") or {})
+    m, r, info = rechnen()
+    F = np.array([l.F[:3] for l in m.case("LF1").nodal_loads], float) if m.case("LF1").nodal_loads else np.zeros((1, 3))
+    check("keine aeussere Last im Lastfall (nur das Uebermass)", float(np.abs(F).sum()) == 0.0, str(F.sum(axis=0)))
+    szz = [float(np.asarray(r.solid_res[i], float).ravel()[2]) / 1e6 for i in range(2)]
+    check("beide Wuerfel fliessen bis 300 N/mm2 (sigma_zz, bilinear exakt)",
+          all(abs(s + 300.0) < 0.5 for s in szz), f"sigma_zz {szz[0]:.2f} / {szz[1]:.2f} N/mm2")
+    check("die Plastizitaet meldet konvergiert",
+          info.get("konvergiert") is True and info.get("fliessend", 0) == 2,
+          f"konvergiert {info.get('konvergiert')}, {info.get('fliessend')} fliessen, {info.get('iterationen')} Schritte")
+    check("  und braucht dafuer nicht das ganze Budget (3 x 25)",
+          0 < int(info.get("iterationen", 0)) < 30, f"{info.get('iterationen')} Schritte")
+    # Ruecknahmeprobe: mit dem Bezug 1 (wie bis 25.09.2026) bleibt es "nicht konvergiert"
+    pl.BEZUG_PLASTISCHE_LAST = False
+    try:
+        _m0, _r0, info0 = rechnen()
+    finally:
+        pl.BEZUG_PLASTISCHE_LAST = True
+    check("  Ruecknahmeprobe: mit Bezug 1 N nie konvergiert, obwohl das Ergebnis dasselbe ist",
+          info0.get("konvergiert") is False, f"konvergiert {info0.get('konvergiert')}, {info0.get('iterationen')} Schritte")
+
+
 def main():
     for t in (test_rueckfuehrung, test_tangente_ist_die_ableitung_der_rueckfuehrung,
               test_blockweise_wie_die_schleife,
@@ -1942,7 +1990,8 @@ def main():
               test_gemeinsam_im_budget,
               test_gemeinsam_rueckfall_verschachtelt,
               test_hilfsfesselung_ohne_vorlauf,
-              test_vorgabe_verschachtelt_und_unbekannter_wert):
+              test_vorgabe_verschachtelt_und_unbekannter_wert,
+              test_uebermass_als_einzige_last):
         try:
             t()
         except Exception as ex:      # noqa: BLE001

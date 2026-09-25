@@ -4593,6 +4593,21 @@ Newton-Lauf nach 40 Zustandswechseln gedeckelt.
    konvergiert. Wiederholt wird nur, wenn in der Stufe etwas abgekürzt war;
    sonst war der Versuch der verschachtelte Newton selbst.
 
+**Der Bezug der Änderung (25.09.2026).** Die „Änderung“ eines Schritts ist ‖F_p,neu − F_p‖
+geteilt durch die äußere Last ‖F‖. Fehlt die äußere Last ganz — ein Übermaß, eine Vorspannung
+oder eine Lagerverschiebung als einzige Last, F = 0 —, war der Bezug bis zum 25.09.2026 die
+Zahl 1, und die Änderung stand als absolute Zahl in Newton gegen die Toleranz. Die Presspassung
+der Prüfmatrix (zwei Würfel, Übermaß bis 300 N/mm²) rechnete exakt und meldete nach 3 × 60
+Newton-Schritten trotzdem „nicht konvergiert“: letzte Änderung 0,0972 N gegen Knotenkräfte
+von 10⁸ N. Ohne äußere Last ist der Bezug jetzt die plastische Last ‖F_p,neu‖ selbst
+(`plastizitaet._bezug`); gibt es auch die nicht, fließt nichts, und jede Änderung ist 0. Mit
+äußerer Last ändert sich nichts — der Bezug bleibt ‖F‖, alle Zahlen dieses Kapitels gelten
+unverändert. Gemessen am selben Modell: konvergiert in 5 Schritten (drei Stufen) bzw. 3 (eine
+Stufe), Rest im Abschluss 4 · 10⁻¹³, σ_zz −296,75 N/mm² bilinear exakt; mit Bezug 1 nach 29
+Schritten „nicht konvergiert“ bei demselben Ergebnis. Prüfung
+`test_plastizitaet.test_uebermass_als_einzige_last`, Schalter `BEZUG_PLASTISCHE_LAST` für die
+Rücknahmeprobe.
+
 Warum der Rückfall die Stufe **wiederholt**, statt vom erreichten Stand mit
 vollem Kontakt weiterzurechnen: so rechnete die Fassung vom 23.09.2026 nach
 der Hälfte der Schritte weiter — und kam vom weggelaufenen Stand nicht mehr

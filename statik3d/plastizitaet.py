@@ -957,6 +957,30 @@ def _schlussabnahme(rest: float, toleranz: float) -> bool:
     return rest <= toleranz
 
 
+#: Bezug der Aenderung ohne aeussere Last: die plastische Last selbst (seit
+#: 25.09.2026). Schalter fuer die Ruecknahmeprobe in den Tests.
+BEZUG_PLASTISCHE_LAST = True
+
+
+def _bezug(norm_F: float, F_p_neu: np.ndarray) -> float:
+    """Bezugsgroesse der Aenderung ||F_p,neu - F_p||: die aeussere Last ||F||.
+
+    Fehlt sie - ein Uebermass, eine Vorspannung oder eine Lagerverschiebung
+    als einzige Last, F = 0 -, war der Bezug bis zum 25.09.2026 die Zahl 1,
+    und die Aenderung stand als absolute Zahl in Newton gegen die Toleranz:
+    die Presspassung der Pruefmatrix (zwei Wuerfel, Uebermass bis 300 N/mm2)
+    rechnete exakt (sigma_v 0,000 N/mm2 neben der Loesung) und meldete
+    nach 3 x 60 Newton-Schritten trotzdem "nicht konvergiert" - die letzte
+    Aenderung 0,0972 N gegen Knotenkraefte von 1e8 N. Ohne aeussere Last ist
+    der Bezug jetzt die plastische Last selbst; gibt es auch die nicht,
+    fliesst nichts, und jede Aenderung ist 0. Mit aeusserer Last aendert
+    sich nichts (Bezug wie bisher ||F||).
+    """
+    if norm_F > 0.0 or not BEZUG_PLASTISCHE_LAST:
+        return norm_F or 1.0
+    return float(np.linalg.norm(F_p_neu)) or 1.0
+
+
 def _stufe_gemeinsam(model, F, k: int, stufen: int, u, basis: "Zustand", F_p, einst: "Plastizitaet",
                      elemente: list, norm_F: float, info: dict, log, progress, _loesen,
                      kontakt):
@@ -989,7 +1013,7 @@ def _stufe_gemeinsam(model, F, k: int, stufen: int, u, basis: "Zustand", F_p, ei
         it += 1
         F_p_neu, zustand_neu, s_info = schritt(model, u, basis, einst, elemente, log,
                                                tangente=True)
-        diff = float(np.linalg.norm(F_p_neu - F_p_stufe)) / norm_F
+        diff = float(np.linalg.norm(F_p_neu - F_p_stufe)) / _bezug(norm_F, F_p_neu)
         info["iterationen"] += 1
         info["verlauf"].append((k, it, diff, s_info["fliessend"]))
         if progress is not None:
@@ -1128,7 +1152,7 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
         for it in range(1, int(max(1, einst.iterationen)) + 1):
             F_p_neu, zustand_neu, s_info = schritt(model, u, basis, einst, elemente, log,
                                                    tangente=True)
-            diff = float(np.linalg.norm(F_p_neu - F_p_stufe)) / norm_F
+            diff = float(np.linalg.norm(F_p_neu - F_p_stufe)) / _bezug(norm_F, F_p_neu)
             F_p_stufe, zustand_stufe = F_p_neu, zustand_neu
             info["iterationen"] += 1
             info["verlauf"].append((k, it, diff, s_info["fliessend"]))
@@ -1157,7 +1181,7 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
         u = _loesen(F + F_p, None, "Abschluss", None, None)
         if kontakt is not None:
             F_p_ende, _z, _i = schritt(model, u, basis_anfang, einst, elemente, None)
-            rest = float(np.linalg.norm(F_p_ende - F_p)) / norm_F
+            rest = float(np.linalg.norm(F_p_ende - F_p)) / _bezug(norm_F, F_p_ende)
     if rest is not None:
         info["rest_abschluss"] = rest
         if info["konvergiert"] and not _schlussabnahme(rest, float(einst.toleranz)):
@@ -1213,7 +1237,7 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
     elemente = _solid_elemente(model, aktiv)
     zustand = Zustand()
     F = np.asarray(F, float)
-    norm_F = float(np.linalg.norm(F)) or 1.0
+    norm_F = float(np.linalg.norm(F))      # 0 ohne aeussere Last - dann greift _bezug
     F_p = np.zeros(model.ndof)
     u = None
     info = {"laststufen": int(max(1, einst.laststufen)), "iterationen": 0, "konvergiert": True,
@@ -1263,7 +1287,7 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
             u = loesen(F_k + F_p)
             F_p_neu, zustand_neu, s_info = schritt(model, u, basis, einst, elemente, log)
             r = F_p_neu - F_p
-            diff = float(np.linalg.norm(r)) / norm_F
+            diff = float(np.linalg.norm(r)) / _bezug(norm_F, F_p_neu)
             info["iterationen"] += 1
             info["verlauf"].append((k, it, diff, s_info["fliessend"]))
             if progress is not None:
@@ -1333,7 +1357,7 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
         # Umspringen des Kontakts genau im Abschluss aber nicht; die Pruefung
         # kostet eine Rueckfuehrung je Lastfall.
         F_p_ende, _z, _i = schritt(model, u, basis, einst, elemente, None)
-        rest = float(np.linalg.norm(F_p_ende - F_p)) / norm_F
+        rest = float(np.linalg.norm(F_p_ende - F_p)) / _bezug(norm_F, F_p_ende)
         info["rest_abschluss"] = rest
         if info["konvergiert"] and not _schlussabnahme(rest, float(einst.toleranz)):
             info["konvergiert"] = False
