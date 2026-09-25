@@ -12,7 +12,7 @@ SUITES = ["tests.test_verification", "tests.test_elemente_volumen", "tests.test_
           "tests.test_lastenheft", "tests.test_ausgabe", "tests.test_umhuellende", "tests.test_kopie",
           "tests.test_ermuedung_verlauf", "tests.test_ermuedungsmaske", "tests.test_kontaktzustand", "tests.test_worker", "tests.test_rechenliste",
           "tests.test_spannungen", "tests.test_ergebnisse", "tests.test_ergebnisbaum", "tests.test_maskenrahmen", "tests.test_nachweisampel", "tests.test_ergebnisbild", "tests.test_ungespeichert", "tests.test_zahlenfeld",
-          "tests.test_netzfeld", "tests.test_netzfehler", "tests.test_sweep",
+          "tests.test_netzfeld", "tests.test_netzfehler", "tests.test_sweep", "tests.test_sweep_feld",
            "tests.test_neuvernetzen", "tests.test_elementwahl", "tests.test_randspannung",
            "tests.test_tetp", "tests.test_tetp_rechnung", "tests.test_entartung",
            "tests.test_vertraeglich", "tests.test_nachlauf_parallel"]

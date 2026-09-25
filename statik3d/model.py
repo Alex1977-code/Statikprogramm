@@ -1776,6 +1776,26 @@ class Lasteinleitung:
         return f"Knoten {self.knoten}" + (f", Stab {self.stab}" if self.stab else "")
 
 
+#: Die Werte von Netzeinstellungen.sweep (25.09.2026, sweep.betriebsart)
+SWEEP_BETRIEBSARTEN = ("aus", "sauber", "immer")
+
+
+def sweep_aus_datei(wert) -> str:
+    """Netzeinstellungen.sweep beim Laden einer Datei (25.09.2026).
+
+    Bis zum 24.09.2026 war das Feld ein Haken (True/False). sweep.betriebsart
+    liest True als "immer" - so lief der Sweep damals. Beim Laden wird ein
+    Haken aber zu "aus": der Anwender hat den Sweep nie bewusst gewollt, er
+    war fuer ihn nicht als Problem erkennbar (am Drehlager 926 verzerrte hex8
+    und 242 flache Keile, LF1 nicht konvergiert); so hat es der Zweig
+    ui/pS-2509 fuer den Haken bereits festgelegt. Ein unbekanntes Wort wird
+    ebenfalls "aus" (betriebsart laese es als "immer")."""
+    if isinstance(wert, str):
+        w = wert.strip().lower()
+        return w if w in SWEEP_BETRIEBSARTEN else "aus"
+    return "aus"
+
+
 @dataclass
 class Netzeinstellungen:
     """Vorgaben fuer die Vernetzung (RFEM: Netzeinstellungen, mesh.xml).
@@ -1877,7 +1897,14 @@ class Netzeinstellungen:
     #: verlangt Guete >= 0,3, ein Splitterdreieck erfuellt das nie und bleibt
     #: als Keil uebrig. Bis die Flaechenteilung eine Mindestweite kennt, wird
     #: der Sweep von Hand eingeschaltet (Netz -> Netzeinstellungen).
-    sweep: bool = False
+    #:
+    #: **Seit 25.09.2026 ein Wort statt eines Hakens:** "aus" | "sauber" |
+    #: "immer" (dritte Lieferung der Vernetzer-Sitzung). Der Vernetzer liest
+    #: es nur ueber sweep.betriebsart(model); "sauber" sweept einen Koerper
+    #: nur, wenn jedes hex8/pent6 den Trapezfehler TRAPEZ_GRENZE einhaelt.
+    #: True/False aelterer Dateien werden beim Laden zu "aus"
+    #: (sweep_aus_datei): den Haken hat der Anwender nie bewusst gewollt.
+    sweep: str = "aus"
     #: **Pyramiden** (pyr5) als Uebergang: wo ein frei vernetzter Koerper an
     #: die Vierecke eines gesweepten oder abgebildeten Nachbarn stoesst,
     #: bekommt jedes Viereck eine Pyramide mit Spitze im Inneren, die
@@ -5790,6 +5817,9 @@ class Model:
         m.bericht = [_dc(Berichtseintrag, x) for x in d.get("bericht", [])]
         if "netz" in d:
             m.netz = _dc(Netzeinstellungen, d["netz"])
+            # Das Feld ist seit 25.09.2026 ein Wort; eine aeltere Datei fuehrt
+            # True/False (sweep_aus_datei)
+            m.netz.sweep = sweep_aus_datei(getattr(m.netz, "sweep", "aus"))
         if "design" in d:
             m.design = _dc(DesignSettings, d["design"])
         if "plastizitaet" in d:

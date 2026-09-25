@@ -1509,7 +1509,8 @@ def test_vorgabe_aus():
     sondern das Verhalten: derselbe Koerper einmal ohne und einmal mit Haken.
     """
     from statik3d.model import Netzeinstellungen
-    check("die Vorgabe ist aus", Netzeinstellungen().sweep is False,
+    # Seit 25.09.2026 ein Wort ("aus" | "sauber" | "immer") statt False
+    check("die Vorgabe ist aus", Netzeinstellungen().sweep == "aus",
           "sweep = %r" % Netzeinstellungen().sweep)
 
     def netz(an):

@@ -14330,6 +14330,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def maske_netzeinstellungen(self):
         from .. import netzdichte as nd
+        from ..sweep import betriebsart as sweep_betriebsart
         n = self.model.netz
         F = msk.Feld
 
@@ -14379,7 +14380,7 @@ class MainWindow(QtWidgets.QMainWindow):
                   F("uebersteuern", "Teilung je Fläche aus der Netzdichte", "haken", bool(n.teilung_uebersteuern),
                     hinweis="aus: die eigene Teilung jeder Fläche (z. B. aus RFEM) bleibt"),
                   F("sweep", "Sechsflächner sweepen (Hexaeder statt Tetraeder)", "haken",
-                    bool(getattr(n, "sweep", False)),
+                    sweep_betriebsart(self.model) != "aus",       # Wort seit 25.09.2026
                     hinweis="Körper, die Grundfläche mal Weg sind (Bolzen, Scheiben, Platten), werden "
                             "in Lagen aus hex8 und pent6 vernetzt statt in Tetraeder - an der "
                             "Kragplatte 97,6 % der Balkenlösung gegen 68,4 %, bei weniger als der "
@@ -14504,6 +14505,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _netz_aus_maske(self, w: dict):
         from dataclasses import replace
+        from ..sweep import betriebsart as sweep_betriebsart
 
         def zahl(key):
             # Maske in mm, Modell in m; Regel der Zahlenfelder (25.09.2026)
@@ -14534,7 +14536,10 @@ class MainWindow(QtWidgets.QMainWindow):
                        form=self.NETZFORMEN.get(str(w.get("form", "")), n.form),
                        ordnung=self.NETZORDNUNG.get(str(w.get("ordnung", "")), n.ordnung),
                        abgebildet=bool(w.get("abgebildet", n.abgebildet)),
-                       sweep=bool(w.get("sweep", getattr(n, "sweep", False))),
+                       # Haken an: das bisherige Wort bleiben ("sauber"), sonst "immer" (25.09.2026)
+                       sweep=((sweep_betriebsart(self.model) if sweep_betriebsart(self.model) != "aus"
+                               else "immer") if w.get("sweep", sweep_betriebsart(self.model) != "aus")
+                              else "aus"),
                        teilung_uebersteuern=bool(w.get("uebersteuern", True)))
 
     def werkzeuge_dialog(self):
