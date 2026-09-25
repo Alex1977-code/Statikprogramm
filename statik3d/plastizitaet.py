@@ -1203,8 +1203,9 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
     Ohne ``loesen_tangente`` (etwa aus einem Test, der nur ``system.solve``
     hergibt) faellt "tangente" auf "anfangsdehnung" zurueck.
 
-    ``kontakt`` (nur der Newton; vom Loeser, wenn sein Loesungsweg selbst
-    iteriert - Kontakt, ausfallende Zugstaebe): Schlussabnahme und, wenn
+    ``kontakt`` (vom Loeser, wenn sein Loesungsweg selbst iteriert - Kontakt,
+    ausfallende Zugstaebe): die Schlussabnahme in beiden Wegen (seit dem
+    25.09.2026 auch in der Anfangsdehnung) und, nur im Newton und wenn
     gewaehlt, die gemeinsame Iteration von Fliessen und Kontakt - siehe
     :func:`_newton`. Ohne ihn, und im Weg "anfangsdehnung" immer, bleibt
     jeder Aufruf ein voller Kontaktlauf.
@@ -1320,6 +1321,25 @@ def iteration(model, F, loesen, einst: Plastizitaet, aktiv=None, log: list = Non
                            f"(Änderung {diff:.2e}, geschätzter Fehler {fehler:.2e} > {einst.toleranz:g})")
     # Die letzte Loesung gehoert zum letzten Zustand
     u = loesen(F + F_p)
+    if kontakt is not None:
+        # Schlussabnahme wie im Newton (_schlussabnahme, 25.09.2026): mit
+        # Kontakt ist der Abschluss ein eigener voller Kontaktlauf und kann den
+        # Kontaktzustand noch aendern. In der Anfangsdehnung ist das seltener
+        # als im Newton - jeder ihrer Schritte loest genau so wie der Abschluss,
+        # und ihr Abbruch am geschaetzten Fehler haelt die naechste Aenderung
+        # unter der Toleranz: gemessen am gequetschten Block und am ideal
+        # plastischen Block mit Reibung (Stand 7163f37) lag der Rest an allen
+        # "konvergiert" bei <= 6,1e-6 gegen 1e-4. Ausgeschlossen ist ein
+        # Umspringen des Kontakts genau im Abschluss aber nicht; die Pruefung
+        # kostet eine Rueckfuehrung je Lastfall.
+        F_p_ende, _z, _i = schritt(model, u, basis, einst, elemente, None)
+        rest = float(np.linalg.norm(F_p_ende - F_p)) / norm_F
+        info["rest_abschluss"] = rest
+        if info["konvergiert"] and not _schlussabnahme(rest, float(einst.toleranz)):
+            info["konvergiert"] = False
+            if log is not None:
+                log.append(f"Plastizität: an der Lösung des Abschlusses passt F_p nicht mehr "
+                           f"(Änderung {rest:.2e} > {einst.toleranz:g}) - nicht konvergiert")
     info["fliessend"] = len(zustand.fliessend())
     info["eps_p_max"] = zustand.eq_max()
     if log is not None:

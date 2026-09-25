@@ -1523,6 +1523,79 @@ def test_ruecknahme_der_schlussabnahme():
           f"{zustand_aus_info(r.info)}; Rest {rest:.2e} > 1e-4")
 
 
+def _block_mit_reibung(fz, fx):
+    """Wie _gequetschter_block, aber ideal plastisch (Verfestigung 0, also
+    Anfangsdehnung) und mit einer Last unter der Grenzlast."""
+    from statik3d.model import ShellProp
+    m = Model()
+    m.add_material(Material("S", fy=235e6))
+    m.add_material(Material("Starr", E=210e12))
+    m.add_shell_prop(ShellProp("t", 0.05))
+    pl_ = mesher.grid_plate(m, "Starr", "t", 2.0, 2.0, 2, 2, origin=(-1, -1, 0))
+    for n in pl_.ravel():
+        m.fix(int(n), "all")
+    platte = list(range(len(m.elements)))
+    box = mesher.grid_box(m, "S", 0.4, 0.4, 0.4, 2, 2, 2, origin=(-0.2, -0.2, 0.0))
+    unten = [int(n) for n in box[:, :, 0].ravel()]
+    oben = [int(n) for n in box[:, :, -1].ravel()]
+    m.add_contact_pair("Block/Platte", unten, platte, mu=0.3)
+    for n in oben:
+        m.load_node(n, Fz=fz / len(oben), Fx=fx / len(oben))
+    m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.0, laststufen=2,
+                                     iterationen=200, toleranz=1e-4)
+    return m
+
+
+def test_schlussabnahme_anfangsdehnung():
+    """Schlussabnahme auch im Weg Anfangsdehnung (25.09.2026, Anmerkung der
+    Element-Sitzung zum Umbau der Loeser-Sitzung): mit Kontakt ist der
+    Abschluss ein eigener voller Kontaktlauf und kann den Kontaktzustand noch
+    aendern. (a) Am ideal plastischen Block mit Reibung (20 MN Auflast, 4 MN
+    quer; ideal plastisch rechnet die Anfangsdehnung) laeuft sie und besteht -
+    gemessen Rest 1,3e-6. (b) Ein gestoerter Abschluss (der letzte
+    Loeseraufruf verschiebt u um 1 %, wie ein umspringender Kontakt) wird
+    "nicht konvergiert"; ohne die Abnahme hiesse er "konvergiert"
+    (Ruecknahmeprobe). Ein natuerlicher Fall dafuer fand sich nicht: jeder
+    Schritt der Anfangsdehnung loest wie der Abschluss."""
+    r = solver.solve_static(_block_mit_reibung(-20e6, 4e6))
+    pz = r.info.get("plastizitaet") or {}
+    rest = pz.get("rest_abschluss")
+    check("ideal plastisch mit Reibung: Anfangsdehnung, Schlussabnahme gerechnet und bestanden",
+          pz.get("verfahren") == "anfangsdehnung" and pz.get("konvergiert") and rest is not None
+          and rest <= 1e-4, f"Rest {rest if rest is None else f'{rest:.1e}'}, {pz.get('iterationen')} Schritte")
+
+    def rechnen(stoeren_bei=None, abnahme=True):
+        m, _ende, _L = _zugstab(1.2 * FY)
+        einst = pl.Plastizitaet(an=True, verfestigung=0.3, laststufen=2, iterationen=200,
+                                toleranz=1e-6, verfahren="anfangsdehnung")
+        system = solver.StaticSystem(m)
+        F = solver.case_loads(m, {"LF1": 1.0})[0]
+        aufrufe = {"n": 0}
+
+        def loesen(Fg):
+            aufrufe["n"] += 1
+            u = system.solve(Fg)
+            return u * 1.01 if aufrufe["n"] == stoeren_bei else u
+        alt = pl._schlussabnahme
+        if not abnahme:
+            pl._schlussabnahme = lambda rest_, toleranz: True
+        try:
+            _u, _z, _F_p, info = pl.iteration(m, F, loesen, einst, kontakt=object())
+        finally:
+            pl._schlussabnahme = alt
+        return info, aufrufe["n"]
+    info0, n = rechnen()
+    check("… ungestört (Zugstab, Anfangsdehnung, Kontakt gemeldet): konvergiert, Abnahme bestanden",
+          info0["konvergiert"] and info0.get("rest_abschluss", 1.0) <= 1e-6,
+          f"Rest {info0.get('rest_abschluss', float('nan')):.1e}, {n} Lösungen")
+    info1, _n = rechnen(stoeren_bei=n)
+    check("… Abschluss gestört: „nicht konvergiert“", not info1["konvergiert"]
+          and info1.get("rest_abschluss", 0.0) > 1e-6, f"Rest {info1.get('rest_abschluss', 0.0):.1e}")
+    info2, _n = rechnen(stoeren_bei=n, abnahme=False)
+    check("Rücknahmeprobe: ohne Schlussabnahme hieße der gestörte Abschluss „konvergiert“",
+          info2["konvergiert"], f"Rest {info2.get('rest_abschluss', 0.0):.1e}")
+
+
 def test_gemeinsam_aendert_nichts_ohne_beides():
     """T5 (23.09.2026): die Einstellung wirkt nur, wo Fließen UND Kontakt
     zusammenkommen. Kontakt ohne Plastizität und Plastizität ohne Kontakt
@@ -1864,7 +1937,7 @@ def main():
               test_gemeinsame_iteration_spart_zerlegungen,
               test_gemeinsame_iteration_rechnet_dasselbe,
               test_gemeinsame_iteration_kein_falsches_konvergiert,
-              test_ruecknahme_der_schlussabnahme,
+              test_ruecknahme_der_schlussabnahme, test_schlussabnahme_anfangsdehnung,
               test_gemeinsam_aendert_nichts_ohne_beides,
               test_gemeinsam_im_budget,
               test_gemeinsam_rueckfall_verschachtelt,
