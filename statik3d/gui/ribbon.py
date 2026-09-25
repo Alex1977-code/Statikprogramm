@@ -310,6 +310,7 @@ class Ribbon(QtWidgets.QWidget):
         self.suche.returnPressed.connect(self._suche_ausfuehren)
         kopf.addWidget(self.suche)
         aussen.addLayout(kopf)
+        self._aussen, self._kopfreihe = aussen, kopf
 
         self.tabs = QtWidgets.QTabWidget(self)
         self.tabs.setObjectName("ribbontabs")
@@ -317,6 +318,88 @@ class Ribbon(QtWidgets.QWidget):
         self.tabs.setUsesScrollButtons(True)
         aussen.addWidget(self.tabs)
         self._suche_einrichten()
+        self._einklappen_einrichten()
+
+    def kopf_abgeben(self):
+        """Schnellzugriff und Suche aus der eigenen Zeile herausgeben (25.09.2026).
+
+        Das Programmfenster stellt beide in die dunkle Kopfzeile: die eigene
+        Zeile ueber den Registern kostete 31 px Hoehe, in denen links vier
+        Symbole und rechts ein Suchfeld standen. Es bleiben dieselben Objekte
+        (ribbon.schnellzugriff, ribbon.suche) - Kuerzel, Suche und Pruefungen
+        finden sie weiter. Rueckgabe: (Schnellzugriff, Suche)."""
+        reihe = getattr(self, "_kopfreihe", None)
+        if reihe is not None:
+            for w in (self.schnellzugriff, self.suche):
+                reihe.removeWidget(w)
+            self._aussen.removeItem(reihe)
+            reihe.deleteLater()
+            self._kopfreihe = None
+        return self.schnellzugriff, self.suche
+
+    # -- Einklappen (25.09.2026) -------------------------------------------
+    # Das eingeklappte Ribbon zeigt nur die Registerzeile: 99 px mehr fuer
+    # die Ansicht. Wie in Office: Doppelklick auf einen Reiter oder Strg+F1
+    # schaltet um; ein einfacher Klick auf einen Reiter klappt das Register
+    # nur vorlaeufig auf, bis ein Befehl daraus gelaufen ist.
+    #: ausgeloest, wenn das Ribbon ein- oder ausgeklappt wird (bleibend)
+    eingeklappt_geaendert = QtCore.Signal(bool)
+
+    def _einklappen_einrichten(self):
+        self._eingeklappt = False
+        self._vorlaeufig = False
+        # Der Stapel der Register ist ein Kind des QTabWidget ohne eigenen
+        # Zugriff - ausgeblendet bleibt nur die Reiterzeile
+        self._stapel = self.tabs.findChild(QtWidgets.QStackedWidget)
+        self.tabs.tabBarDoubleClicked.connect(lambda _i: self.einklappen(not self._eingeklappt))
+        self.tabs.tabBarClicked.connect(self._reiter_geklickt)
+
+    def eingeklappt(self) -> bool:
+        """Bleibend eingeklappt (ein vorlaeufig offenes Register zaehlt nicht)."""
+        return self._eingeklappt
+
+    def einklappen(self, an: bool = True) -> None:
+        """Das Ribbon bleibend ein- (an) oder ausklappen."""
+        an = bool(an)
+        self._vorlaeufig = False
+        geaendert = an != self._eingeklappt
+        self._eingeklappt = an
+        self._stapel_zeigen(not an)
+        if geaendert:
+            self.eingeklappt_geaendert.emit(an)
+
+    def _stapel_zeigen(self, sichtbar: bool) -> None:
+        if self._stapel is None:
+            return
+        self._stapel.setVisible(sichtbar)
+        if sichtbar:
+            self.tabs.setMaximumHeight(16777215)
+        else:
+            # QTabWidget rechnet seine Wunschhoehe mit dem verborgenen Stapel
+            self.tabs.setMaximumHeight(self.tabs.tabBar().sizeHint().height())
+        self.updateGeometry()
+
+    def _reiter_geklickt(self, _i: int) -> None:
+        """Eingeklappt: ein Klick auf einen Reiter zeigt das Register, bis ein
+        Befehl daraus laeuft (oder ein zweiter Klick es wieder schliesst)."""
+        if not self._eingeklappt:
+            return
+        if self._vorlaeufig and _i == self.tabs.currentIndex():
+            self._vorlaeufig = False
+            self._stapel_zeigen(False)
+            return
+        self._vorlaeufig = True
+        self._stapel_zeigen(True)
+
+    def vorlaeufig_offen(self) -> bool:
+        return self._eingeklappt and self._vorlaeufig
+
+    def _nach_befehl(self) -> None:
+        """Ein Befehl ist gelaufen: ein vorlaeufig aufgeklapptes Register klappt
+        wieder zu."""
+        if self._eingeklappt and self._vorlaeufig:
+            self._vorlaeufig = False
+            self._stapel_zeigen(False)
 
     # -- Aufbau ----------------------------------------------------------
     def register(self, name: str) -> Register:
@@ -390,6 +473,8 @@ class Ribbon(QtWidgets.QWidget):
 
     def merken(self, b: Befehl):
         self.befehle.append(b)
+        # ein vorlaeufig aufgeklapptes Register klappt nach dem Befehl zu
+        b.aktion.triggered.connect(lambda *_a: self._nach_befehl())
 
     def vorsicht(self, *aktionen: QtGui.QAction):
         """Diese Befehle ersetzen oder leeren das Modell: die Suche fuehrt sie

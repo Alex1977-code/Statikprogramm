@@ -72,9 +72,13 @@ kNm, MPa und mm angezeigt.
 
 ## 2 Die Oberfläche
 
-Oben eine dunkle Kopfzeile: links **Statik3D**, daneben Bauteil und Fassung,
-rechts zwei Marken mit dem Umfang des Modells und dem Zustand („bereit",
-„rechnet…", „berechnet · 12,4 s").
+Oben eine dunkle Kopfzeile, seit 25.09.2026 in einer einzigen Zeile: links
+**Statik3D** und die **Schnellzugriffsleiste**, daneben Bauteil und Fassung,
+rechts die **Befehlssuche** und die Marke mit dem Zustand („bereit",
+„rechnet…", „berechnet · 12,4 s"). Der Umfang des Modells (Knoten, Elemente,
+Stellungen) steht nur noch in der Statusleiste unten; bis zum 24.09.2026
+stand er als zweite Marke oben, und Schnellzugriff und Suche hatten eine
+eigene Zeile über den Registern.
 
 Darunter das **Ribbon** — die Befehlsleiste. Jeder Befehl steht dort genau
 einmal; es gibt keine Menüleiste und keine zweite Werkzeugleiste daneben.
@@ -98,7 +102,7 @@ Vierzehn Register nach Arbeitsschritt:
 | **Messen** | Abstand, Winkel, Koordinaten, Fläche eines Polygons, Länge/Fläche der Auswahl; Bemaßung (Linearmaß, Maßkette, Höhenkote, Winkelmaß, Radius) mit Einstellungen |
 | **Extras** | Handbücher, Info, Update |
 
-Links über dem Ribbon die **Schnellzugriffsleiste** (Speichern, Rückgängig,
+Links in der Kopfzeile die **Schnellzugriffsleiste** (Speichern, Rückgängig,
 Wiederholen, Berechnen) — dieselben Befehle, nur schneller erreichbar;
 „Alles deselektieren“ steht in der Glasleiste über der Ansicht. Rechts die
 **Befehlssuche**: Namen eintippen, darunter erscheint die Trefferliste mit
@@ -123,6 +127,51 @@ Schritte zurück), bei mehreren Treffern die erste Zeile. Seit dem 25.09.2026
 ist in der Liste keine Zeile vorgewählt; die Eingabetaste führt die mit den
 Pfeiltasten gewählte Zeile genau einmal aus, sonst gilt die Regel oben.
 Geprüft in `tests/test_ungespeichert.py`, dort auch mit echten Tastendrücken.
+
+**Fensteraufteilung** (seit 25.09.2026). Das Programm startet **maximiert**
+und im Register **Start**. Der Modellbaum bekommt 16 % der Fensterbreite,
+der rechte Bereich 460 px, der untere Bereich 25 % der Höhe; Baum und
+rechter Bereich reichen über die **volle Höhe** vom Ribbon bis zur
+Statusleiste, der untere Bereich steht nur unter der Ansicht und hat keine
+eigene Titelzeile mehr („Protokoll und Tabellen“) — die Gruppenleiste sagt
+dasselbe. Solange man keine Trennlinie zwischen den Bereichen zieht, folgen
+die Maße der Fenstergröße; wer eine zieht, behält seine Maße. Bei 1920 × 1080
+hat die Ansicht so 1137 × 610 px statt 1142 × 470 px (maximiert), bei
+1366 × 768 672 × 639 px statt 588 × 158 px (offscreen gemessen, Prüfung
+`tests/test_fensteraufteilung.py`). Eine Maske mit breiten Zeilen (Wind,
+Kontaktbedingung) macht den rechten Bereich nicht mehr breiter: ihre Mitte
+rollt dann auch waagerecht — bis zum 24.09.2026 zog die Windmaske ihn auf
+1170 px, die Ansicht blieb bei 128 px. Reicht die Breite unten nicht für die
+Knopfzeilen der Tabellen, rollt der untere Bereich waagerecht.
+
+**Ansicht → Fenster** (Knopf „Fenster ▾“ im Register Ansicht): Schalter
+*Modellbaum zeigen*, *Rechten Bereich zeigen*, *Unteren Bereich zeigen*;
+*Ribbon einklappen* (auch **Strg+F1** oder **Doppelklick** auf einen Reiter —
+eingeklappt steht nur die Registerzeile da, ein einfacher Klick auf einen
+Reiter öffnet das Register, bis ein Befehl daraus gelaufen ist); *Nur
+Ansicht* blendet Baum, rechten und unteren Bereich aus und klappt das Ribbon
+ein, noch einmal gewählt ist alles wie vorher; *Anordnung zurücksetzen* zeigt
+alle Bereiche wieder in den Maßen oben. Ein Doppelklick auf die Gruppenleiste
+unten klappt den unteren Bereich auf die Registerzeile zusammen und wieder
+auf. Größe, Lage und Aufteilung merkt sich das Programm beim Beenden in
+`einstellungen.json` (Benutzerdaten\Statik3D, Schlüssel „fenster“ mit einer
+Fassungskennung). Beim Start wird geprüft, ob das Fenster noch auf einen
+Bildschirm passt: sonst — Bildschirm abgezogen, kleinere Auflösung, höhere
+Skalierung — startet es maximiert, und Dockmaße von einem anderen Bildschirm
+gelten nicht.
+
+**Kompaktstufe**: Ist das Fenster niedriger als 900 px oder bliebe die
+Ansicht mit diesen Maßen kleiner als 700 × 400 px (1366 × 768, ein
+1920er-Bildschirm mit 125 % oder 150 % Skalierung, ein schmal gezogenes
+Fenster), ist das Ribbon eingeklappt, unten steht nur die Registerzeile
+(ein Klick auf eine Gruppe klappt den Bereich auf), der Würfel ist kleiner
+und die Farbskala liegt waagerecht unten in der Ansicht. Wird das Fenster
+wieder groß genug, ist alles wie vorher. Die Ansicht hat so bei 1366 × 768
+41 % der Fensterfläche, bei 1280 × 720 39 %.
+
+Für Prüfungen und den Bildvergleich hält die Umgebungsvariable
+`STATIK3D_FENSTER=fest` die Aufteilung beim Stand bis 24.09.2026: 1600 × 980,
+nicht maximiert, feste Dockmaße, keine Kompaktstufe, nichts gemerkt.
 
 Die Arbeitsfläche in drei Spalten:
 

@@ -47,6 +47,10 @@ QMainWindow, QWidget {{ background: {grund}; color: {text};
 QWidget#kopfhalter {{ background: {kopf}; }}
 Kopfzeile {{ background: {kopf}; }}
 Kopfzeile QLabel {{ background: transparent; color: {kopf_matt}; }}
+/* Schnellzugriff in der dunklen Kopfzeile (25.09.2026): die Symbole sind
+   dunkel gezeichnet, darum ein heller Streifen darunter */
+Kopfzeile QToolBar#schnellzugriff {{ background: {grund}; border: 0;
+    border-radius: 7px; padding: 1px 3px; }}
 Filmstreifen {{ background: {flaeche}; border-top: 1px solid {linie}; }}
 Filmstreifen > QLabel {{ background: transparent; }}
 QMenuBar {{ background: {kopf}; color: {kopf_matt}; border: 0; padding: 2px 6px; }}
@@ -196,12 +200,32 @@ class Kopfzeile(QtWidgets.QWidget):
         self.marke_zustand = Marke("bereit", "matt")
         lay.addWidget(self.marke_modell)
         lay.addWidget(self.marke_zustand)
+        self._lay = lay
+        self._eingebettet = False
+
+    def einbetten(self, schnellzugriff: QtWidgets.QWidget, suche: QtWidgets.QWidget) -> None:
+        """Schnellzugriff und Befehlssuche in diese Zeile nehmen (25.09.2026).
+
+        Eine Zeile statt zwei: Name, Schnellzugriff, Titel, Suche, Zustand.
+        Die eigene Zeile des Ribbons darueber kostete 31 px Hoehe. Der
+        Modellumfang steht nur noch in der Statusleiste - die Marke bleibt als
+        Objekt, wird aber nicht mehr gezeigt."""
+        lay = self._lay
+        # Der Titel gibt nach, wenn die Zeile knapp wird: Suche und Zustand
+        # bleiben stehen, der Titel wird abgeschnitten (er steht ganz am Zeiger)
+        self.titel.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
+        self.titel.setMinimumWidth(0)
+        lay.insertWidget(1, schnellzugriff)
+        lay.insertWidget(lay.indexOf(self.marke_modell), suche)
+        self.marke_modell.setVisible(False)
+        self._eingebettet = True
 
     def setzen(self, titel: str, modell: str = "", zustand: str = "",
                art: str = "matt"):
         self.titel.setText(titel)
+        self.titel.setToolTip(titel)
         self.marke_modell.setText(modell)
-        self.marke_modell.setVisible(bool(modell))
+        self.marke_modell.setVisible(bool(modell) and not self._eingebettet)
         if zustand:
             self.marke_zustand.setText(zustand)
             self.marke_zustand.setArt(art)

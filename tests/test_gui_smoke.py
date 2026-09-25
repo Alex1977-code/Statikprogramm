@@ -151,6 +151,11 @@ def main():
     # Statusleiste" an einer richtigen Meldung statt an einem Fehler. Der Test
     # soll das Fenster pruefen, nicht den Stand des Netzes.
     os.environ["STATIK3D_NO_UPDATE_CHECK"] = "1"
+    # Fensteraufteilung wie bis 24.09.2026 (Paket 5, 25.09.2026): 1600 x 980,
+    # feste Dockmasse, keine Kompaktstufe - die Pruefungen hier und das
+    # Vergleichsbild tests/_gui_fenster.png rechnen damit (290/616/376 px);
+    # die neue Aufteilung prueft tests/test_fensteraufteilung.py
+    os.environ.setdefault("STATIK3D_FENSTER", "fest")
     from PySide6 import QtWidgets, QtGui
     from statik3d import solver
     from statik3d.gui.main import MainWindow, FIELDS, DIAGRAMS
@@ -583,8 +588,14 @@ def main():
         check("Kopfzeile nennt Bauteil und Version",
               "Klappbruecke" in w.kopf.titel.text() and "Statik3D" in w.kopf.titel.text(),
               w.kopf.titel.text()[:60])
-        check("Kopfzeile nennt Knoten, Elemente und Stellungen",
-              "Stellungen" in w.kopf.marke_modell.text(), w.kopf.marke_modell.text())
+        # Seit Paket 5 (25.09.2026) steht der Modellumfang nur noch in der
+        # Statusleiste; die Kopfzeile traegt Schnellzugriff und Suche
+        check("Statusleiste nennt Knoten, Elemente und Stellungen (nicht mehr die Kopfzeile)",
+              "Knoten" in w.lbl_netz.text() and "Elemente" in w.lbl_netz.text()
+              and "3 Stellungen" in w.lbl_netz.text() and not w.kopf.marke_modell.isVisible(),
+              w.lbl_netz.text())
+        check("Schnellzugriff und Befehlssuche stehen in der Kopfzeile",
+              w.kopf.isAncestorOf(w.ribbon.schnellzugriff) and w.kopf.isAncestorOf(w.ribbon.suche))
         check("Ribbon sitzt neben der Kopfzeile im Menuewidget",
               w.menuWidget() is not None and w.ribbon.parent() is w.menuWidget(),
               str(type(w.ribbon.parent()).__name__))

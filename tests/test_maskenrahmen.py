@@ -497,8 +497,13 @@ def _fenster():
     mb.question = staticmethod(lambda *a, **k: mb.StandardButton.No)
     w.load_example("frame")
     _ruhe()
-    # Hoehe des unteren Bereichs vor der ersten Maske (test_unten_bleibt)
-    _FENSTER.update(w=w, app=app, unten0=w.unten_dock.height())
+    # Hoehe des unteren Bereichs vor der ersten Maske (test_unten_bleibt) -
+    # bei der Sollgroesse gemessen: seit Paket 5 (25.09.2026) folgt der
+    # untere Bereich der Fenstergroesse, bei 1366 x 768 steht dort die
+    # Kompaktstufe (nur die Registerzeile), beim Start 1600 x 980 ein Viertel
+    _FENSTER.update(w=w, app=app)
+    _zuruecksetzen(w)
+    _FENSTER["unten0"] = w.unten_dock.height()
     return w, app
 
 

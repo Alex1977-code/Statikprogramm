@@ -14,6 +14,21 @@ from .. import elemente as EL
 VTK_LINE, VTK_TRI, VTK_QUAD, VTK_TETRA, VTK_HEX, VTK_TET10 = 3, 5, 9, 10, 12, 24
 
 
+def farbskala_waagerecht(skala: dict, zweite: bool = False) -> dict:
+    """Lage der Farbskala in der Kompaktstufe des Fensters (Paket 5, 25.09.2026).
+
+    In einer kleinen Ansicht (unter etwa 700 x 400 px) nimmt eine senkrechte
+    Skala am rechten Rand ein Zehntel der Breite und liegt unter dem Wuerfel;
+    waagerecht unten steht sie ueber die halbe Breite. Nur die Lage aendert
+    sich - Titel, Format und Schrift (der Inhalt) bleiben, wie sie sind.
+    ``zweite``: die Skala des Schnittgroessenverlaufs steht ueber der ersten.
+    """
+    s = dict(skala)
+    s.update(vertical=False, position_x=0.30, position_y=0.13 if zweite else 0.02,
+             width=0.45, height=0.08)
+    return s
+
+
 def kanten_vor_flaechen() -> bool:
     """Linien gewinnen gegen die Flaeche, auf der sie liegen.
 

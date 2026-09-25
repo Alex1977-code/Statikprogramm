@@ -115,8 +115,19 @@ def einstellungen_speichern() -> str:
     import json
     p = einstellungsdatei()
     os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
+    # Andere Schluessel der Datei bleiben stehen (25.09.2026): die Oberflaeche
+    # merkt dort Groesse und Aufteilung des Fensters („fenster“, gui/fenster.py),
+    # und ein Druck auf „Übernehmen“ im Register Berechnung loeschte sie sonst
+    try:
+        with open(p, encoding="utf-8") as f:
+            d = json.load(f)
+        if not isinstance(d, dict):
+            d = {}
+    except (OSError, ValueError):
+        d = {}
+    d.update({k: getattr(_settings, k) for k in GESPEICHERT})
     with open(p, "w", encoding="utf-8") as f:
-        json.dump({k: getattr(_settings, k) for k in GESPEICHERT}, f, ensure_ascii=False, indent=1)
+        json.dump(d, f, ensure_ascii=False, indent=1)
     return p
 
 
