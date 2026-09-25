@@ -98,8 +98,47 @@ class Protokollfeld(QtWidgets.QPlainTextEdit):
         super().__init__(*a, **kw)
         self.mitschrift = None
 
+    def zeile_anhaengen(self, text, fmt=None) -> None:
+        """Eine Zeile ans Ende, mit eigenem Cursor und eigenem Zeichenformat.
+
+        QPlainTextEdit.appendPlainText gibt der neuen Zeile das Format des
+        Textcursors des Anwenders: stand er nach einem Klick oder einer
+        Markierung in der roten Sammelzeile (MainWindow._protokoll_rot),
+        wurden alle folgenden Zeilen rot und fett; das Zuruecksetzen ueber
+        setCurrentCharFormat faerbte dagegen eine Markierung mit um, die
+        Sammelzeile eingeschlossen (Gegenpruefung 25.09.2026). Ein eigener
+        Cursor erbt kein Format. Mitrollen wie Qt: nur, wenn die Ansicht
+        unten stand."""
+        doc = self.document()
+        sb = self.verticalScrollBar()
+        stand = sb.value()
+        unten = stand >= sb.maximum()
+        # Eine Markierung bis ans Ende wuechse mit jeder Zeile mit, und
+        # Strg+C kopierte dann mehr als markiert - sie bleibt, wie sie war
+        uc = self.textCursor()
+        markiert = (uc.anchor(), uc.position()) if uc.hasSelection() else None
+        cur = QtGui.QTextCursor(doc)
+        cur.beginEditBlock()
+        cur.movePosition(QtGui.QTextCursor.End)
+        if not doc.isEmpty():
+            cur.insertBlock(QtGui.QTextBlockFormat(), QtGui.QTextCharFormat())
+        cur.insertText(str(text), fmt if fmt is not None else QtGui.QTextCharFormat())
+        cur.endEditBlock()
+        # am Zeilenlimit faellt oben eine Zeile weg, die Positionen stimmen
+        # dann nicht mehr - dort bleibt es bei Qt
+        voll = 0 < self.maximumBlockCount() <= doc.blockCount()
+        if markiert is not None and not voll:
+            uc = self.textCursor()
+            if (uc.anchor(), uc.position()) != markiert:
+                uc.setPosition(markiert[0])
+                uc.setPosition(markiert[1], QtGui.QTextCursor.KeepAnchor)
+                self.setTextCursor(uc)
+                sb.setValue(stand)       # setTextCursor rollte zur Markierung
+        if unten:
+            sb.setValue(sb.maximum())
+
     def appendPlainText(self, text):          # noqa: N802 - Qt-Schreibweise
-        super().appendPlainText(text)
+        self.zeile_anhaengen(text)
         f = self.mitschrift
         if f is None:
             return
@@ -11011,9 +11050,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tbl_design = tab.Datentabelle([
             Spalte("Stab"), Spalte("Querschnitt"), Spalte("Material"),
             Spalte("L", "m", "zahl", 2), Spalte("Klasse", "", "ganz"),
-            Spalte("Ausnutzung", "", "zahl", 3, hinweis="Filter z. B. > 1 zeigt alle Überschreitungen"),
+            Spalte("Ausnutzung", "", "zahl", 3, hinweis="Filter z. B. > 1 zeigt alle Überschreitungen",
+                   ampel=True),
             Spalte("maßgebender Nachweis"), Spalte("Kombination"),
-            Spalte("x", "m", "zahl", 2), Spalte("Status")],
+            Spalte("x", "m", "zahl", 2), Spalte("Status", ampel=True)],
             "Nachweise_EC3", self, mit_kennwerten=True)
         self.tbl_design.zeile_gewaehlt.connect(self._tabelle_stab)
         tabs.addTab(self.tbl_design, "Nachweise EC3")
@@ -11022,8 +11062,12 @@ class MainWindow(QtWidgets.QMainWindow):
             Spalte("Stab"), Spalte("Kerbfall", "MPa", "zahl", 0),
             Spalte("γ_Mf", "", "zahl", 2),
             Spalte("max Δσ", "MPa", "zahl", 1), Spalte("Δσ_E,2", "MPa", "zahl", 1),
-            Spalte("D (Miner)", "", "zahl", 3), Spalte("D Schub", "", "zahl", 3),
-            Spalte("Ausnutzung", "", "zahl", 3), Spalte("maßgebend")],
+            Spalte("D (Miner)", "", "zahl", 3, ampel=True),
+            Spalte("D Schub", "", "zahl", 3, ampel=True),
+            Spalte("Ausnutzung", "", "zahl", 3, ampel=True),
+            # Status vorletzt, „maßgebend“ bleibt letzte Spalte wie in
+            # fatigue.table() (24.09.2026); die Zeilen setzt _ermuedung_zeilen
+            Spalte("Status", ampel=True), Spalte("maßgebend")],
             "Ermuedung", self, mit_kennwerten=True)
         self.tbl_fat.zeile_gewaehlt.connect(self._tabelle_stab)
         tabs.addTab(self.tbl_fat, "Ermüdung")
@@ -11099,11 +11143,11 @@ class MainWindow(QtWidgets.QMainWindow):
             Spalte("in der Rechnung",
                    hinweis="wie der Anschluss im Modell sitzt: starr, Drehfeder, Gelenk"),
             Spalte("Ausnutzung", "", "zahl", 3,
-                   hinweis="Tragfähigkeit nach EN 1993-1-8; Filter z. B. > 1"),
+                   hinweis="Tragfähigkeit nach EN 1993-1-8; Filter z. B. > 1", ampel=True),
             Spalte("maßgebender Nachweis"), Spalte("Kombination"),
             Spalte("D (Ermüdung)", "", "zahl", 3,
-                   hinweis="Schädigungssumme nach Palmgren-Miner"),
-            Spalte("Status")], "Anschluesse", self, mit_kennwerten=True)
+                   hinweis="Schädigungssumme nach Palmgren-Miner", ampel=True),
+            Spalte("Status", ampel=True)], "Anschluesse", self, mit_kennwerten=True)
         self.tbl_joint.zeile_gewaehlt.connect(self._tabelle_anschluss)
         b_neu = QtWidgets.QPushButton("Anschluss anlegen…")
         b_neu.clicked.connect(self.add_joint)
@@ -11137,8 +11181,8 @@ class MainWindow(QtWidgets.QMainWindow):
             Spalte("σ_x", "MPa", "zahl", 1), Spalte("σ_z", "MPa", "zahl", 1),
             Spalte("τ", "MPa", "zahl", 1),
             Spalte("λ̄_p", "", "zahl", 3, hinweis="Schlankheit des Beulfeldes"),
-            Spalte("Ausnutzung", "", "zahl", 3, hinweis="Gl. (10.5); Filter z. B. > 1"),
-            Spalte("Kombination"), Spalte("Status")],
+            Spalte("Ausnutzung", "", "zahl", 3, hinweis="Gl. (10.5); Filter z. B. > 1", ampel=True),
+            Spalte("Kombination"), Spalte("Status", ampel=True)],
             "Beulfelder", self, mit_kennwerten=True)
         self.tbl_beul.zeile_gewaehlt.connect(self._tabelle_beulfeld)
         c1 = QtWidgets.QPushButton("Beulfeld aus Auswahl…")
@@ -11159,8 +11203,9 @@ class MainWindow(QtWidgets.QMainWindow):
                    hinweis="Vergleichsspannung nach von Mises"),
             Spalte("h", "", "zahl", 2,
                    hinweis="Mehrachsigkeit σ_m/σ_v; bei dreiachsigem Zug kritisch"),
-            Spalte("Ausnutzung", "", "zahl", 3, hinweis="σ_v/(f_y/γ_M0); Filter z. B. > 1"),
-            Spalte("Kombination"), Spalte("Status")],
+            Spalte("Ausnutzung", "", "zahl", 3, hinweis="σ_v/(f_y/γ_M0); Filter z. B. > 1",
+                   ampel=True),
+            Spalte("Kombination"), Spalte("Status", ampel=True)],
             "Volumen", self, mit_kennwerten=True)
         self.tbl_vol.zeile_gewaehlt.connect(self._tabelle_volumen)
         w1 = QtWidgets.QPushButton("Bereich aus Auswahl…")
@@ -11178,8 +11223,8 @@ class MainWindow(QtWidgets.QMainWindow):
             Spalte("F_Ed", "kN", "zahl", 1), Spalte("F_Rd", "kN", "zahl", 1),
             Spalte("l_y", "mm", "zahl", 0),
             Spalte("λ̄_F", "", "zahl", 3), Spalte("χ_F", "", "zahl", 3),
-            Spalte("Ausnutzung", "", "zahl", 3), Spalte("Kombination"),
-            Spalte("Status")], "Lasteinleitung", self, mit_kennwerten=True)
+            Spalte("Ausnutzung", "", "zahl", 3, ampel=True), Spalte("Kombination"),
+            Spalte("Status", ampel=True)], "Lasteinleitung", self, mit_kennwerten=True)
         self.tbl_le.zeile_gewaehlt.connect(self._tabelle_lasteinleitung)
         d1 = QtWidgets.QPushButton("Lasteinleitung…")
         d1.clicked.connect(self.add_lasteinleitung)
@@ -11188,6 +11233,11 @@ class MainWindow(QtWidgets.QMainWindow):
         d3 = QtWidgets.QPushButton("Löschen")
         d3.clicked.connect(self.delete_lasteinleitung)
         tabs.addTab(self._eingabetabelle(self.tbl_le, d1, d2, d3), "Lasteinleitung")
+        # Die Nachweistabellen starten absteigend nach Ausnutzung: der
+        # groesste Wert steht oben, nicht der alphabetisch erste Stab
+        # (24.09.2026, Paket 2 des Oberflaechenplans)
+        for t in self._nachweistabellen():
+            t.absteigend_nach("Ausnutzung")
 
     #: Ergebnistabellen in der Reihenfolge des unteren Bereichs
     ERGEBNISTABELLEN = ("tbl_beam", "tbl_react", "tbl_env", "tbl_design",
@@ -16725,6 +16775,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.analysis.design = res
         self.info(res.summary())
         self.show_results()
+        self._nachweise_melden()
 
     def do_fatigue(self):
         if self.analysis is None:
@@ -16755,8 +16806,141 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _fatigue_done(self, res):
         self.analysis.fatigue = res
-        self.info(res.summary())
+        self.info(res.summary() + self._ermuedung_zusatz(res))
         self.show_results()
+        self._nachweise_melden()
+
+    # ---- Nicht erfuellte Nachweise fallen auf ---------------------------
+    # 24.09.2026, Paket 2 des Oberflaechenplans: an der Stauwand stand
+    # D = 1,094 in der Tabelle wie 0,035, und das Protokoll meldete es ohne
+    # Urteil direkt unter „Nachweise EC3: … - alle erfuellt“. Das Urteil der
+    # Ermuedung bildet die Oberflaeche selbst: ec3/fatigue.py wird gerade von
+    # einer anderen Arbeit umgebaut (Randspannung) und bleibt unberuehrt,
+    # ebenso fatigue.table() und damit der Bericht.
+    def _nachweistabellen(self) -> list:
+        """Die Nachweistabellen mit Ampel, in der Folge des unteren Bereichs."""
+        return [self.tbl_design, self.tbl_fat, self.tbl_joint, self.tbl_gzg,
+                self.tbl_beul, self.tbl_vol, self.tbl_le]
+
+    @staticmethod
+    def _ermuedung_urteil(x) -> str:
+        """Urteil eines Ermuedungsnachweises (Stab oder Volumen): dieselbe
+        Regel wie der Status im Bericht (ec3.fatigue._status, Stand
+        24.09.2026) - tests/test_nachweisampel.py haelt beide gleich.
+        getattr: Ergebnisse aus aelteren Dateien kennen die Felder nicht."""
+        if getattr(x, "fehler", ""):
+            return "nicht geführt"
+        if float(getattr(x, "util", 0.0) or 0.0) > 1.0:
+            return "NICHT erfüllt"
+        if getattr(x, "fehlende_lasten", None):
+            return "unvollständig"
+        return "erfüllt"
+
+    @classmethod
+    def _ermuedung_zusatz(cls, fat) -> str:
+        """Das Ende der Protokollzeile zur Ermuedung: „ - NICHT erfüllt“, wenn
+        ein Nachweis D > 1,0 hat; „ - erfüllt“ nur, wenn alle erfuellt sind.
+        Fehlt etwas (nicht gefuehrt, Last fehlt), heisst die Zeile nicht
+        „erfüllt“ - wie bei „alle erfuellt“ der EC3-Zeile."""
+        eintraege = (list((getattr(fat, "members", None) or {}).values())
+                     + list((getattr(fat, "volumen", None) or {}).values()))
+        if not eintraege:
+            return ""
+        urteile = [cls._ermuedung_urteil(x) for x in eintraege]
+        if "NICHT erfüllt" in urteile:
+            return " - NICHT erfüllt"
+        if all(u == "erfüllt" for u in urteile):
+            return " - erfüllt"
+        if all(u == "nicht geführt" for u in urteile):
+            return " - nicht geführt"
+        return " - unvollständig"
+
+    def _ermuedung_zeilen(self, fat) -> list:
+        """Zeilen der Tabelle Ermuedung: fatigue.table() mit dem Urteil als
+        vorletzter Spalte. Die letzte bleibt „maßgebend“ - so liest sie
+        tests/test_ermuedung_verlauf.py. table() fuehrt erst die Staebe, dann
+        die Volumen, je eine Zeile."""
+        zeilen = fat.table()[1:]
+        eintraege = (list((getattr(fat, "members", None) or {}).values())
+                     + list((getattr(fat, "volumen", None) or {}).values()))
+        urteile = ([self._ermuedung_urteil(x) for x in eintraege]
+                   if len(eintraege) == len(zeilen) else [""] * len(zeilen))
+        return [list(z[:-1]) + [u, z[-1]] for z, u in zip(zeilen, urteile)]
+
+    def _nachweise_nicht_erfuellt(self) -> list:
+        """[(Tabelle unten, „Ermüdung Riegel 2“)] fuer jeden nicht erfuellten
+        Nachweis der Analyse, in der Folge der Nachweistabellen. Gelesen aus
+        den Ergebnissen, nicht aus den Tabellen: eine Tabelle, zu der die
+        Rechnung nichts mehr liefert, kann noch alte Zeilen tragen."""
+        an = self.analysis
+        if an is None:
+            return []
+        aus: list = []
+
+        def dazu(tabelle, vorsatz, eintraege, urteil=lambda x: x.status()):
+            for name, x in eintraege:
+                try:
+                    if "NICHT" in str(urteil(x)):
+                        aus.append((tabelle, f"{vorsatz} {name}"))
+                except Exception:          # noqa: BLE001 - Anzeige darf nie sperren
+                    pass
+
+        d = getattr(an, "design", None)
+        if d is not None:
+            dazu("Nachweise EC3", "EC3", d.members.items())
+        f = getattr(an, "fatigue", None)
+        if f is not None:
+            dazu("Ermüdung", "Ermüdung",
+                 list((getattr(f, "members", None) or {}).items())
+                 + [(f"Volumen {k}", v) for k, v in (getattr(f, "volumen", None) or {}).items()],
+                 self._ermuedung_urteil)
+        for attr, feld, tabelle, vorsatz in (
+                ("joints", "joints", "Anschlüsse", "Anschluss"),
+                ("gzg", "checks", "Verformungen", "Verformung"),
+                ("beulen", "felder", "Beulfelder", "Beulfeld"),
+                ("volumen", "bereiche", "Volumen", "Volumen"),
+                ("lasteinleitung", "stellen", "Lasteinleitung", "Lasteinleitung")):
+            erg = getattr(an, attr, None)
+            if erg is not None:
+                dazu(tabelle, vorsatz, (getattr(erg, feld, None) or {}).items())
+        return aus
+
+    def _nachweise_melden(self) -> None:
+        """Nach einer Rechnung: sind Nachweise nicht erfuellt, eine rote
+        Sammelzeile ins Protokoll und die erste betroffene Nachweistabelle
+        unten nach vorn - nicht das Protokoll (Plan 4b). Sonst nichts: unten
+        bleibt, was offen war."""
+        fehl = self._nachweise_nicht_erfuellt()
+        if not fehl:
+            return
+        namen = [n for _t, n in fehl]
+        text = (f"Nachweise: {len(fehl)} NICHT erfüllt ({', '.join(namen[:5])}"
+                + (f" und {len(namen) - 5} weitere" if len(namen) > 5 else "") + ")")
+        self._protokoll_rot(text)
+        # Tragen freie Bewegungen Last, bleibt deren Warnung in der
+        # Statuszeile (_bewegungen_melden): sie sagt, dass das Ergebnis dieser
+        # Bauteile nicht verwertbar ist - das wiegt schwerer als das Urteil
+        # eines Nachweises, das im Protokoll ohnehin rot steht (25.09.2026)
+        try:
+            last = any(x.kraft > 0.0 or x.moment > 0.0 for x in self.singularitaeten())
+        except Exception:                  # noqa: BLE001 - Anzeige darf nie sperren
+            last = False
+        if not last:
+            self.statusBar().showMessage(text, 10000)
+        self.tabelle_zeigen(fehl[0][0])
+
+    def _protokoll_rot(self, text: str) -> None:
+        """Eine Zeile rot und fett ins Protokoll, dazu in die Protokolldatei.
+        Ueber einen eigenen Cursor mit eigenem Zeichenformat
+        (Protokollfeld.zeile_anhaengen): die Zeilen danach bleiben schwarz,
+        auch wenn der Anwender die rote Zeile markiert hat (25.09.2026)."""
+        fmt = QtGui.QTextCharFormat()
+        fmt.setForeground(QtGui.QColor(tab.AMPEL_ROT))
+        fmt.setFontWeight(QtGui.QFont.Bold)
+        self.log.zeile_anhaengen(text, fmt)
+        sb = self.log.verticalScrollBar()
+        sb.setValue(sb.maximum())
+        self._mitschreiben(text)
 
     # ---- Berechnung --------------------------------------------------
     def do_check(self):
@@ -17692,6 +17876,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.analysis = r
             self.results = None
             text = r.summary()
+            # die Protokollzeile zur Ermuedung mit Urteil (24.09.2026)
+            fat = getattr(r, "fatigue", None)
+            if fat is not None:
+                zeile = fat.summary()
+                text = text.replace(zeile, zeile + self._ermuedung_zusatz(fat), 1)
         else:
             self.results = r
             if kind == "case":
@@ -17712,6 +17901,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.show_results()
         self._refresh_kopf()
         self._refresh_status()
+        if kind in ("all", "case"):
+            # nach Eigenformen und Knicken bleibt die Analyse dieselbe - die
+            # Sammelzeile stuende sonst nach jeder solchen Rechnung erneut da
+            self._nachweise_melden()
 
     def _bewegungen_melden(self):
         """Freie Bewegungen aus der Rechnung ins Protokoll und in die Statuszeile."""
@@ -17809,8 +18002,12 @@ class MainWindow(QtWidgets.QMainWindow):
         # Befund B069, tests/test_ermuedung_verlauf.py,
         # test_etikett_nachweise_nennt_die_ermuedung).
         an = self.analysis
-        teile = [t.summary() for t in (getattr(an, "design", None),
-                                       getattr(an, "fatigue", None)) if t is not None]
+        # die Zeile zur Ermuedung mit Urteil wie im Protokoll: nach F5 steht
+        # rechts die Maske Ergebnisse, und dort stand D = 1.094 ohne Urteil
+        # unter „… - alle erfuellt“ (Gegenpruefung 25.09.2026)
+        teile = [t.summary() for t in (getattr(an, "design", None),) if t is not None]
+        if getattr(an, "fatigue", None) is not None:
+            teile.append(an.fatigue.summary() + self._ermuedung_zusatz(an.fatigue))
         self.lbl_design.setText("\n".join(teile) if teile else "noch keine Nachweise")
         self.cb_mode.blockSignals(True)
         self.cb_mode.clear()
@@ -17828,8 +18025,15 @@ class MainWindow(QtWidgets.QMainWindow):
             lines.append(an.design.summary())
             self._fill(self.tbl_design, an.design.table()[1:], an.design.table()[0])
         if an is not None and an.fatigue is not None:
-            lines.append(an.fatigue.summary())
-            self._fill(self.tbl_fat, an.fatigue.table()[1:], an.fatigue.table()[0])
+            lines.append(an.fatigue.summary() + self._ermuedung_zusatz(an.fatigue))
+            self._fill(self.tbl_fat, self._ermuedung_zeilen(an.fatigue))
+        # Nachweistabellen, zu denen die gezeigte Rechnung nichts liefert,
+        # leeren: nach einer Rechnung ohne EC3 oder Ermuedung standen sonst
+        # die roten Zeilen der vorigen weiter da (Gegenpruefung 25.09.2026)
+        if getattr(an, "design", None) is None:
+            self._fill(self.tbl_design, [])
+        if getattr(an, "fatigue", None) is None:
+            self._fill(self.tbl_fat, [])
         if an is not None and an.joints is not None:
             lines.append(an.joints.summary())
         if an is not None and an.gzg is not None:
@@ -20271,6 +20475,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self.log.appendPlainText(f"--- {titel}  ({datetime.now():%d.%m.%Y %H:%M}) ---")
         except Exception:                   # noqa: BLE001
             pass
+        # Aus demselben Grund die Urteile des vorigen Modells: seit der Ampel
+        # standen dessen rote „NICHT erfüllt“-Zeilen sonst als Alarm unter
+        # einem Modell ohne diesen Nachweis (Gegenpruefung 25.09.2026)
+        for t in (getattr(self, "tbl_design", None), getattr(self, "tbl_fat", None)):
+            if t is not None:
+                self._fill(t, [])
         # Ein neues Modell hat keine Vergangenheit: der Rueckgaengig-Stapel des
         # vorigen darf nicht in dieses hineinreichen.
         self._undo_init()

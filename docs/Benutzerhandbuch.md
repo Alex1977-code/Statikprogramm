@@ -1833,6 +1833,42 @@ Unter jeder Ergebnistabelle steht eine feste **Zeile „Max"/„Min"**. Sie
 bezieht sich auf das, was der Filter gerade übrig lässt, und bleibt beim
 Sortieren an ihrem Platz.
 
+**Nicht erfüllte Nachweise fallen auf** (seit 24.09.2026). In den
+Nachweistabellen – Nachweise EC3, Ermüdung, Anschlüsse, Verformungen,
+Beulfelder, Volumen, Lasteinleitung – gilt für Ausnutzung, D und Status eine
+Ampel: bis 0,9 bleibt die Zelle, wie sie ist; über 0,9 bis 1,0 ist sie gelb
+hinterlegt; über 1,0 steht der Wert **rot und fett**, und „NICHT erfüllt“ steht
+rot. „nicht geführt“ und „nicht gerechnet“ bleiben ohne Farbe – sie sind
+offen, nicht überschritten. Die Grenze 1,0 ist dieselbe wie beim Status
+(1,000 ist noch erfüllt). Die Farbe gilt nur in der Anzeige: Kopieren, CSV und
+Excel geben dieselben Zahlen aus wie vorher, der Bericht bleibt unverändert.
+Die Nachweistabellen stehen von Anfang an **absteigend nach Ausnutzung** –
+der größte Wert oben, nicht der alphabetisch erste Stab. Zeilen ohne Zahl
+(„–“, leer vor der Rechnung) stehen dabei unten, auch beim Sortieren per
+Klick auf eine Spaltenüberschrift. Nach jeder Rechnung mit einem nicht
+erfüllten Nachweis schreibt das Programm eine rote Sammelzeile ins
+Protokoll, etwa „Nachweise: 1 NICHT erfüllt (Ermüdung Riegel 2)“ (bis zu fünf
+Namen, dann „und n weitere“), und holt unten die Nachweistabelle nach vorn,
+in der er steht – nicht das Protokoll. Sind alle erfüllt, gibt es keine
+Sammelzeile, und unten bleibt, was offen war. Anlass: an der Stauwand stand
+D = 1,094 in der Tabelle Ermüdung genauso da wie 0,035, und das Protokoll
+meldete die Schädigung ohne Urteil direkt unter „… alle erfuellt“ der
+EC3-Zeile.
+
+*Nachgebessert am 25.09.2026:* Eine absteigend sortierte Tabelle stand bis
+dahin **sichtbar aufsteigend** da – in jeder Tabelle, auch beim Klick auf eine
+Spaltenüberschrift; in den Nachweistabellen stand der rote Wert also unten und
+„–“ oben. Jetzt steht in der Ansicht, was der Pfeil im Kopf sagt; auch
+Strg+Umschalt+C kopiert in dieser Folge. Markiert man die rote Sammelzeile
+(etwa zum Kopieren), bleiben die folgenden Protokollzeilen schwarz, die
+Sammelzeile bleibt rot, und die Markierung wächst nicht mit neuen Zeilen mit.
+Die Statuszeile zeigt die Sammelzeile nur, wenn keine freie Bewegung Last
+trägt – sonst bleibt dort die Warnung „⚠ … freie Bewegungen tragen Last“, denn
+für diese Bauteile ist das Ergebnis nicht verwertbar; die Sammelzeile steht
+dann im Protokoll. Rechnet man ohne EC3- oder Ermüdungsnachweis oder lädt ein
+anderes Modell, sind die Tabellen Nachweise EC3 und Ermüdung leer – vorher
+standen dort die roten Zeilen der vorigen Rechnung weiter.
+
 **Ausgeben** — „Kopieren", „CSV…", „Excel…" in der Tabelle selbst oder die
 Gruppe „Tabelle ausgeben" im Register *Ergebnisse* (Strg+Umschalt+C kopiert).
 Ausgegeben wird immer nur das, was gerade zu sehen ist, samt Max- und
@@ -3839,6 +3875,17 @@ sind nicht verschwiegen, sondern nachweislich unschädlich. Ist ein
 Bezugszeitraum eingestellt (die Lastspielzahlen gelten für so viele Jahre),
 weist der Bericht zusätzlich die rechnerische **Lebensdauer** aus:
 Bezugszeitraum / D.
+
+**Urteil in Tabelle und Protokoll** (seit 24.09.2026). Die Tabelle Ermüdung
+hat als vorletzte Spalte „Status“ (erfüllt, NICHT erfüllt, unvollständig,
+nicht geführt – dieselben Wörter wie im Bericht); die letzte bleibt
+„maßgebend“. Die Protokollzeile „Ermüdung: … max. Schädigung D = …“ endet mit
+dem Urteil: „- NICHT erfüllt“, sobald ein Eintrag D > 1,0 hat, „- erfüllt“
+nur, wenn alle erfüllt sind, sonst „- unvollständig“ bzw. „- nicht geführt“.
+Bis dahin stand D = 1,094 dort ohne Urteil. Seit dem 25.09.2026 trägt dieselbe
+Zeile das Urteil auch rechts in der Maske **Ergebnisse** (sie öffnet sich nach
+F5) und in der Maske **Nachweise** unter „Nachweise führen“ – dort stand es
+vorher ohne Urteil direkt unter „Nachweise EC3: … - alle erfuellt“.
 
 **Fehlt das Ergebnis eines Zustands**, wird diese Ermüdungslast nicht
 gerechnet — auch dann nicht, wenn nur der untere Zustand fehlt (bis zum
