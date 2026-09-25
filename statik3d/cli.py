@@ -109,7 +109,12 @@ def main(argv=None) -> int:
         log(f"{n} Kombinationen erzeugt")
     if a.adaptiv is not None:
         from . import adaptiv as _ad, netzfehler as _nf
+        from . import elementstufe as _es
         zeilen: list[str] = []
+        # Sperre der Elementstufe wie in der Oberflaeche (25.09.2026)
+        _sperre = _es.sperre_anwenden(m)
+        if _sperre:
+            zeilen.append(_sperre)
         probelauf = {"auto": None, "ja": True, "nein": False}[a.probelauf]
         rechnen_standard = _ad._rechnen_standard(a.kerne, probelauf, zeilen)
         gesperrt: list = []
@@ -142,9 +147,13 @@ def main(argv=None) -> int:
         for s in zeilen:
             log("  " + s)
     elif a.vernetzen:
+        from . import elementstufe as _es
         from . import mesher as _mesher
         zeilen = []
-        _mesher.modell_vernetzen(m, zeilen, workers=a.kerne)
+        # wie Netz -> Vernetzen (25.09.2026): Sperre der Elementstufe am
+        # Kontaktmodell (Entwurf, gesagt) und bei Fein die halbe Kantenlaenge
+        with _es.beim_vernetzen(m, zeilen):
+            _mesher.modell_vernetzen(m, zeilen, workers=a.kerne)
         for s in zeilen:
             log("  " + s)
     if a.speichern:

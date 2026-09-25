@@ -162,6 +162,13 @@ def main():
     os.environ["STATIK3D_EINSTELLUNGEN"] = os.path.join(_tempfile.mkdtemp(prefix="statik3d_smoke_einst_"),
                                                         "einstellungen.json")
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
+    # Seit 25.09.2026 beginnt ein neues Modell der Oberflaeche mit der
+    # Elementstufe Mittel (tet10, hex20, Schalen quadratisch, Sweep „sauber“).
+    # Die Zahlen dieser Pruefung (Elementzahlen, shell3/shell4, Tetraeder im
+    # Protokoll, Ermuedung am Volumen) stehen auf dem linearen Datenmodell;
+    # sie laufen darum weiter damit. Die Vorgabe Mittel, die Maske und die
+    # Sperre am Kontaktmodell prueft tests/test_elementstufe.py.
+    MainWindow.STUFE_NEUES_MODELL = None
     w = MainWindow()
     w.show()
     app.processEvents()
@@ -7780,10 +7787,11 @@ def main():
         w._objekt_uebernehmen("lager_einzeln", "0", mk.werte(), False)
         check("Wölbeinspannung übernommen", bool(w.model.supports[0].woelb))
 
-        # --- Netzeinstellungen: Elementansatz --------------------------------------
-        check("Netzmaske: quadratisch nennt shell6/shell8 und hex20",
-              any("shell8" in k and "hex20" in k for k in w.NETZORDNUNG),
-              str(list(w.NETZORDNUNG)))
+        # --- Netzeinstellungen: Elemente (Stufe statt Elementansatz, 25.09.2026) ----
+        from statik3d import elementstufe as _es_
+        check("Netzmaske: Stufe Mittel nennt shell6/shell8 und hex20",
+              "shell8" in _es_.ELEMENTE["mittel"] and "hex20" in _es_.ELEMENTE["mittel"]
+              and not hasattr(w, "NETZORDNUNG"), _es_.ELEMENTE["mittel"])
         w.new_model()
 
     except Exception as ex:      # noqa: BLE001

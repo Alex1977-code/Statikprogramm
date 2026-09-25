@@ -957,7 +957,12 @@ def test_abnahme_ohne_fehlalarm_am_freien_netz():
             k.elemente = [i for i in els if i != weg]
             bef = dg._abnahme_volumenbilanz(m, "K", k, k.elemente)
             k.elemente = els
-            # Die Elementzahl als Fenster: gemessen 1091 (24.09.2026).
+            # Die Elementzahl als Fenster: gemessen 1091 (24.09.2026), 1085
+            # nach der dritten Lieferung der Vernetzer-Sitzung (Kantenkippen
+            # 2-3/4-4, 25.09.2026) - im Fenster, darum bleibt der Bezug. Die
+            # Nummer 765 traegt dort ein anderes Element (t/L 11,96 %); der
+            # Pruefling kommt deshalb nur aus der Eigenschaftssuche oben
+            # (am 25.09.2026 Element 759, t/L 5,03 %, 0,508-mal so dick).
             check("  ein fehlender kleiner Tetraeder, der nicht flach ist (t/L 5 … 10 %, dünner "
                   "als die Nachbarn): FEHLER",
                   _fenster(len(els), 1091) and weg >= 0
@@ -2585,10 +2590,10 @@ def test_abnahme_luecke_im_netzrand():
     # dem Vernetzer vom 23.09.2026 hat das L-Prisma h 0,25 keine Luecke
     # mehr; geprueft wird am Text der von Hand erzeugten Luecke, der
     # dieselbe Abhilfe traegt.
-    check("  die Abhilfe Sweep sagt, dass er ab Werk aus ist, warum, und dass danach die "
-          "Abnahme zu lesen ist",
-          "sweepen" in text and "ab Werk aus" in text and "entartete Keile" in text
-          and "Abnahme lesen" in text,
+    # Seit 25.09.2026 gibt es die Option „Sechsflaechner sweepen“ in der
+    # Oberflaeche nicht mehr - die Meldung darf sie nicht mehr empfehlen
+    check("  die Abhilfe nennt gmsh/Netgen und nicht mehr den Sweep",
+          "gmsh" in text and "Netgen" in text and "sweepen" not in text,
           text[-520:])
 
     # Nebenbefunde B050/B051 (22./23.09.2026): ein flacher Tetraeder im
@@ -2661,7 +2666,8 @@ def test_abnahme_luecke_im_netzrand():
         mesher.modell_vernetzen(m, [], workers=1, hs={"K": 0.1})
     bef = [b for b in dg.abnahme(m, warnungen=True) if b.pruefung in _NETZ_BEFUNDE]
     # Die Elementzahl als Fenster: gemessen 5825 (23.09.2026), 5886 (Vernetzer
-    # vom 24.09.2026)
+    # vom 24.09.2026), 5817 (dritte Lieferung, 25.09.2026: 4-4-Kippen schliesst
+    # die Luecke im ersten Durchgang; -1,2 % gegen 5886, im Fenster)
     check("T-Prisma h = 0,1, Standardweg: keine Lücke mehr an der einspringenden Kante, kein Befund",
           _fenster(len(k.elemente), 5886) and not bef,
           f"{len(k.elemente)} Elemente; "
@@ -4494,8 +4500,8 @@ def test_abnahme_netzrand_verfehlt_randflaeche():
           and "Netzrand verfehlt die Randfläche" in text
           and "verdrehtes Element" not in text and "hängende Knoten" not in text,
           f"{typen}: {_kurz(bef)} | {text[text.find('Gefunden'):][:220]}")
-    check("  und einer Abhilfe für eigene Netze: Sechsflächner sweepen",
-          "sweepen" in text and "U-Prisma" in text, text[-420:])
+    check("  und einer Abhilfe für eigene Netze (seit 25.09.2026 ohne Sweep: anderer Vernetzer)",
+          "gmsh" in text and "sweepen" not in text, text[-420:])
     check("  gemessen: mit Sweep ohne Befund",
           typen_s == {"hex8": 32, "pent6": 16} and not bef_s, f"{typen_s}: {_kurz(bef_s)}")
     # Gegenprobe: am verdrehten Element steht diese Abhilfe nicht
@@ -4796,7 +4802,7 @@ def test_abnahme_durchtrennter_koerper_heisst_doppelt():
     sn = [b for b in bef if b.pruefung == "Seiten im Inneren"]
     check("  Gegenprobe: Stufe d 0,45 mm, t 0,02 m, frei vernetzt - FEHLER 5, Netzrand verfehlt die Randfläche",
           len(sn) == 1 and sn[0].wert == 5.0 and "Netzrand verfehlt die Randfläche" in gef
-          and "doppelte Knoten (" not in gef and "sweepen" in sn[0].text,
+          and "doppelte Knoten (" not in gef and "gmsh" in sn[0].text and "sweepen" not in sn[0].text,
           f"{len(k.elemente)} tet4: " + _kurz(bef) + " | " + gef[:120])
 
 

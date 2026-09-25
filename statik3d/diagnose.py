@@ -3501,12 +3501,11 @@ _URSACHEN = (
 #: Sweep 908 hex8 und 24 pent6 ohne Befund. „Neu vernetzen" allein ergibt
 #: dasselbe Netz (an beiden zweimal vernetzt: dieselben Elemente, dieselben
 #: Knotenlagen, derselbe Befund).
-_NETZRAND_ABHILFE = ("Ist das Netz unverändert vom eigenen Vernetzer: Netzeinstellungen → "
-                     "„Sechsflächner sweepen“ (für Körper aus Grundfläche mal Weg; ab Werk "
-                     "aus, weil er am Drehlager entartete Keile erzeugte - nach dem "
-                     "Einschalten die Abnahme lesen) beseitigte "
-                     "das am U-Prisma (Netzweite 300 mm) und an einer Platte mit Bohrung "
-                     "(r 6 mm, Ziellänge 50 mm), gemessen 23.09.2026.")
+#: Seit 25.09.2026 ohne den Rat „Sechsflaechner sweepen“: die Option gibt es in
+#: der Oberflaeche nicht mehr (verzerrte hex8 und flache Keile am Drehlager).
+_NETZRAND_ABHILFE = ("Ist das Netz unverändert vom eigenen Vernetzer: in den Netzeinstellungen "
+                     "einen anderen Vernetzer (gmsh oder Netgen) oder eine andere Ziellänge "
+                     "wählen und die Abnahme erneut lesen.")
 
 
 def _abnahme_volumenbilanz(model, name, koerper, els, bilanz: dict = None) -> list:
@@ -3899,10 +3898,8 @@ def _abnahme_volumenbilanz(model, name, koerper, els, bilanz: dict = None) -> li
                     f"({dezimal(ABNAHME_VOLUMENBILANZ * 100, 1)} % des Körpers) - gerechnet "
                     "würde ein anderer Körper als der gezeichnete. ")
                  + neu_vernetzen + " Beseitigt hat eine Lücke des eigenen Vernetzers an L-, "
-                 "T- und U-Prismen (gemessen 23.09.2026): Netzeinstellungen → „Sechsflächner "
-                 "sweepen“ (für Körper aus Grundfläche mal Weg; ab Werk aus, weil er am "
-                 "Drehlager entartete Keile erzeugte - nach dem Einschalten die Abnahme "
-                 "lesen) oder der Vernetzer gmsh bzw. Netgen, je an allen fünf, auch bei "
+                 "T- und U-Prismen (gemessen 23.09.2026): Netzeinstellungen → Vernetzer "
+                 "gmsh bzw. Netgen, je an allen fünf, auch bei "
                  "gleich vielen Elementen - mit derselben Netzweite ergeben gmsh und Netgen "
                  "dort nur 22 bis 37 % der Elemente des eigenen Vernetzers, gleich viele bei "
                  "60 bis 70 % der Netzweite; eine andere "

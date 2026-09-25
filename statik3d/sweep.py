@@ -837,12 +837,48 @@ def _waende_pruefen(model: Model, la: list, lb: list, abb: tuple, tol: float, re
     return {"linien": paare, "waende": waende, "mantel": mantel}
 
 
-def sweepbar(model: Model, koerper) -> bool:
+def sweepbar(model: Model, koerper, h: float = 0.0, karten: tuple = None, log: list = None) -> bool:
     """Laesst sich der Koerper sweepen - unmittelbar oder nach dem Zerlegen an
-    Fussabdruecken - (und ist das eingeschaltet)?"""
-    if not bool(getattr(getattr(model, "netz", None), "sweep", True)):
+    Fussabdruecken - (und ist das eingeschaltet)?
+
+    In der Betriebsart "sauber" heisst das: er wird **wirklich** gesweept,
+    also besteht seine Probe (:func:`vernetzen` mit ``nur_pruefen``); ein
+    abgelehnter Koerper gilt als frei und geht in einen Arbeitsprozess. Ohne
+    diese Vorpruefung liefen die abgelehnten Koerper - am Drehlager fast
+    alle sweepbaren - als "abgebildet" im Hauptprozess durch den freien
+    Vernetzer, nacheinander, mit MMG3D: ueber 14 Minuten fuer einen Koerper
+    (gemessen 24.09.2026). Zerlegen an Fussabdruecken gibt es in "sauber"
+    nicht: die Bloecke sind gepflasterte Grundflaechen, die die Probe nicht
+    bestehen."""
+    from .importers import _common as C
+    art = betriebsart(model)
+    if art == "aus":
         return False
     try:
+        if art == "sauber":
+            # Das Protokoll nennt je Koerper, ob er gesweept wird und wenn
+            # nicht, warum; die Ablehnung merkt sich das Modell fuer den Lauf,
+            # damit mesh_koerper den Sweep nicht noch einmal versucht
+            abgelehnt = getattr(model, "_sauber_abgelehnt", None)
+            if abgelehnt is None:
+                abgelehnt = model._sauber_abgelehnt = {}
+            erk = erkennen(model, koerper)
+            if erk is None:
+                grund = erkennen_warum_nicht(model, koerper)
+                abgelehnt[koerper.name] = grund
+                if log is not None:
+                    C.say(log, f"Volumen {koerper.name}: nicht gesweept - {grund}; in der Betriebsart „sauber“ "
+                               "wird nicht zerlegt, der freie Vernetzer übernimmt.")
+                return False
+            probe = vernetzen(model, koerper, erk, h, log=None, cache=None, karten=karten, nur_pruefen=True)
+            if isinstance(probe, tuple) and probe[0]:
+                return True
+            grund = probe[1] if isinstance(probe, tuple) else "der Sweep geht hier nicht"
+            abgelehnt[koerper.name] = grund
+            if log is not None:
+                C.say(log, f"Volumen {koerper.name}: nicht gesweept (Betriebsart „sauber“) - {grund}; "
+                           "der freie Vernetzer übernimmt, Übergang über Pyramiden.")
+            return False
         if erkennen(model, koerper) is not None:
             return True
         return zerlegbar(model, koerper)
@@ -1104,7 +1140,7 @@ def lagenvorgabe(model: Model, koerper, hs: dict = None, karten: tuple = None,
     """
     from .importers import _common as C
     from . import mesher3d as M3
-    if not bool(getattr(getattr(model, "netz", None), "sweep", True)):
+    if betriebsart(model) == "aus":
         return {}
     hs = hs or {}
     if karten:
@@ -1308,11 +1344,18 @@ def _grundnetz(model: Model, koerper, gruppe: list, teilung, erk: dict, log: lis
 
 
 def vernetzen(model: Model, koerper, erk: dict, h: float, log: list = None, cache: dict = None,
-              karten: tuple = None) -> list:
+              karten: tuple = None, nur_pruefen: bool = False) -> list:
     """Den erkannten Koerper sweepen: Grundflaechennetz, Lagen, Elemente,
     Randseiten, vorgegebene Flaechennetze fuer die Nachbarn. Rueckgabe die
     Elementnummern; leer, wenn der Sweep nicht geht (der Grund steht im
-    Protokoll, der Aufrufer nimmt den freien Vernetzer)."""
+    Protokoll, der Aufrufer nimmt den freien Vernetzer).
+
+    ``nur_pruefen`` (Betriebsart "sauber"): nur bis zur Pruefung der
+    Elemente rechnen, nichts ins Modell schreiben, und (sauber, Grund,
+    Trapezfehler, Winkelfehler) zurueckgeben - bzw. [] wo der Sweep schon
+    vorher nicht geht. Damit entscheidet :func:`sweepbar`, ob der Koerper im
+    Hauptprozess gesweept wird oder als freier Koerper in einen
+    Arbeitsprozess geht."""
     from .importers import _common as C
     from . import mesher3d as M3
     from scipy.spatial import cKDTree
@@ -1402,6 +1445,19 @@ def vernetzen(model: Model, koerper, erk: dict, h: float, log: list = None, cach
     wand_von_punkt = {}
     for (i, j), lin in kante_wand.items():
         wand_von_punkt.setdefault(i, erk["waende"][lin].name)
+    # Betriebsart "sauber": erst pruefen, dann einbauen - ein Koerper mit
+    # einem verzerrten oder umgeklappten Element wird gar nicht gesweept
+    if betriebsart(model) == "sauber" or nur_pruefen:
+        X_lagen = np.stack([_abbilden(P, abb, k / float(L)) for k in range(L + 1)])
+        sauber, grund_s, tf, wf = sauber_pruefen(X_lagen, vierecke, dreiecke)
+        if nur_pruefen:
+            return (sauber, grund_s, tf, wf)
+        if not sauber:
+            C.say(log, f"Volumen {koerper.name}: nicht gesweept (Betriebsart „sauber“) - {grund_s}; "
+                       "der freie Vernetzer übernimmt, Übergang über Pyramiden.")
+            return []
+        C.say(log, f"Volumen {koerper.name}: sauber gesweept - größter Trapezfehler {tf:.1f}° "
+                   f"(Grenze {TRAPEZ_GRENZE:.1f}°), Winkelfehler {wf:.1f}°")
     for k in range(L + 1):
         X = _abbilden(P, abb, k / float(L))
         if k == 0:
@@ -2746,7 +2802,8 @@ def zerlegt_vernetzen(model: Model, koerper, h: float, log: list = None, cache: 
             typ = model.elements[e].typ
             z[typ] = z.get(typ, 0) + 1
         koerper.kommentar = (f"{z.get('hex8', 0)} Hexaeder + {z.get('pent6', 0)} Keile + "
-                             f"{z.get('tet4', 0) + z.get('tet10', 0)} Tetraeder (zerlegt in {len(bl)} Blöcke)")
+                             + (f"{z['pyr5']} Pyramiden + " if z.get("pyr5") else "")
+                             + f"{z.get('tet4', 0) + z.get('tet10', 0)} Tetraeder (zerlegt in {len(bl)} Blöcke)")
         koerper.randtreue = randtreue
         koerper.netzgrund = ""
         koerper.netzkanten = []
@@ -2768,7 +2825,98 @@ def zerlegt_vernetzen(model: Model, koerper, h: float, log: list = None, cache: 
 #: Parallelogrammverzerrung liegt die Nachweisstelle 33 bzw. 13 N/mm^2
 #: daneben, regelmaessig 0,8 bzw. 0,2 N/mm^2. 15 Grad ist die Frage des
 #: Auftrags vom 23.09.2026.
-WINKELFEHLER_GRENZE = 15.0
+WINKELFEHLER_GRENZE = 2.5
+#: Gemessen 24.09.2026 (tests/messung_winkelfehler.py, Kragarm wie V5, hex8):
+#: das regelmaessige Netz erreicht 1 N/mm2 schon mit 8 x 2 x 4 Elementen
+#: (+0,77). Parallelogrammverzerrung (Zickzack ueber die Lagen) ist bis 30
+#: Grad unkritisch (Zuwachs +0,37 N/mm2 grob, +0,01 fein); Trapezverzerrung
+#: nicht: am 16 x 4 x 8-Netz 2,5 Grad -0,48, 5 Grad -1,53, 10 Grad -5,4,
+#: 15 Grad -11,6 N/mm2 Zuwachs, am 8 x 2 x 4-Netz 2,5 Grad schon -2,05. Der
+#: Winkelfehler unterscheidet Trapez und Parallelogramm nicht, also gilt das
+#: Trapez: hoechstens 2,5 Grad. Vorher standen hier 15 Grad ohne Messung.
+
+
+#: Grenze fuer den Trapezfehler in der Betriebsart "sauber" (Grad): der Winkel
+#: zwischen gegenueberliegenden Kanten einer Viereckseite. Ein Zickzack-Trapez
+#: mit dem Eckwinkelfehler theta hat zwischen seinen Schenkeln 2 theta, also
+#: ist die Grenze das Doppelte von WINKELFEHLER_GRENZE. Parallelogramme haben
+#: den Trapezfehler 0 und sind nach der Messung vom 24.09.2026 bis 30 Grad
+#: Eckwinkelfehler unkritisch (tests/messung_winkelfehler.py).
+TRAPEZ_GRENZE = 2.0 * WINKELFEHLER_GRENZE
+
+
+def trapezfehler(X: np.ndarray, typ: str) -> float:
+    """Groesster Winkel zwischen **gegenueberliegenden** Kanten einer
+    Viereckseite eines hex8 oder pent6, in Grad. Null fuer Rechtecke **und**
+    Parallelogramme; ein Trapez mit den Schenkelwinkeln 90 +- theta gibt
+    2 theta. Das ist das Mass, das den hex8 trifft: Parallelogrammverzerrung
+    kostet am Kragarm bis 30 Grad nichts, Trapezverzerrung ab 2,5 Grad mehr
+    als 1 N/mm2 (gemessen 24.09.2026)."""
+    from .elements.solid import FLAECHEN_ECKEN
+    X = np.asarray(X, float)
+    schlimmst = 0.0
+
+    def winkel(a, b):
+        la, lb = float(np.linalg.norm(a)), float(np.linalg.norm(b))
+        if la <= 0.0 or lb <= 0.0:
+            return 180.0
+        return float(np.degrees(np.arccos(np.clip(float(a @ b) / (la * lb), -1.0, 1.0))))
+    for seite in FLAECHEN_ECKEN.get(typ, ()):
+        if len(seite) != 4:
+            continue
+        s0, s1, s2, s3 = (X[i] for i in seite)
+        schlimmst = max(schlimmst, winkel(s1 - s0, s2 - s3), winkel(s2 - s1, s3 - s0))
+    return schlimmst
+
+
+def betriebsart(model) -> str:
+    """Die Betriebsart des Sweeps aus ``Netzeinstellungen.sweep``: "aus",
+    "sauber" oder "immer". Alte Dateien fuehren True/False: True heisst
+    "immer" (so lief der Sweep bisher), False "aus"; unbekannte Woerter
+    gelten als "immer". "sauber" (dritter Auftrag, 24.09.2026, Entscheidung des
+    Anwenders: hex8 nur dort, wo der Sweep heute schon sauber geht) sweept
+    einen Koerper nur, wenn jedes hex8 und pent6 hoechstens WINKELFEHLER_GRENZE
+    Winkelfehler und eine positive Jacobi-Determinante hat - sonst Tetraeder,
+    und der Uebergang zum Nachbarn immer ueber Pyramiden."""
+    w = getattr(getattr(model, "netz", None), "sweep", False)
+    if isinstance(w, str):
+        w = w.strip().lower()
+        return w if w in ("aus", "sauber", "immer") else "immer"
+    return "immer" if bool(w) else "aus"
+
+
+def sauber_pruefen(X_lagen: np.ndarray, vierecke, dreiecke) -> tuple:
+    """Die Elemente eines Sweeps **vor** dem Einbau pruefen: Trapezfehler
+    hoechstens TRAPEZ_GRENZE (das Mass, das den hex8 trifft) und
+    Jacobi-Determinante positiv an allen Integrationspunkten und Ecken.
+    ``X_lagen`` ist (L+1, n, 3), die Punkte je Lage. Rueckgabe (sauber, Grund,
+    groesster Trapezfehler, groesster Winkelfehler)."""
+    from .elements.solid import jacobi_volumen_stapel
+    L = len(X_lagen) - 1
+    trapez, winkel = 0.0, 0.0
+    umgeklappt = 0
+    for typ, muster in (("hex8", vierecke), ("pent6", dreiecke)):
+        if not len(muster):
+            continue
+        for k in range(L):
+            u, o = X_lagen[k], X_lagen[k + 1]
+            X = np.concatenate([u[np.asarray(muster, int)], o[np.asarray(muster, int)]], axis=1)
+            d = jacobi_volumen_stapel(typ, X)
+            umgeklappt += int((d["det_min"] <= 0.0).sum())
+            for e in range(len(X)):
+                trapez = max(trapez, trapezfehler(X[e], typ))
+                winkel = max(winkel, winkelfehler(X[e], typ))
+                if trapez > TRAPEZ_GRENZE:
+                    break
+            if trapez > TRAPEZ_GRENZE or umgeklappt:
+                break
+        if trapez > TRAPEZ_GRENZE or umgeklappt:
+            break
+    if umgeklappt:
+        return False, f"Jacobi-Determinante ≤ 0 in {umgeklappt} Element(en)", trapez, winkel
+    if trapez > TRAPEZ_GRENZE:
+        return False, f"Trapezfehler {trapez:.1f}° > {TRAPEZ_GRENZE:.1f}° (Winkelfehler {winkel:.0f}°)", trapez, winkel
+    return True, "", trapez, winkel
 
 
 def winkelfehler(X: np.ndarray, typ: str) -> float:

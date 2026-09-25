@@ -761,8 +761,8 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
     # Sweep: Grundflaeche mal Weg -> Hexaeder und Keile (statik3d.sweep).
     # Vor dem freien Vernetzer, denn er liefert das bessere Netz: rund ein
     # Element je Knoten statt vier (Auftrag Sechsflaechner, 20.09.2026).
-    if bool(getattr(getattr(model, "netz", None), "sweep", True)):
-        from . import sweep as SW
+    from . import sweep as SW
+    if SW.betriebsart(model) != "aus" and koerper.name not in (getattr(model, "_sauber_abgelehnt", None) or {}):
         try:
             erk = SW.erkennen(model, koerper)
         except Exception as ex:               # noqa: BLE001 - dann der freie Vernetzer
@@ -773,7 +773,7 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
             els = SW.vernetzen(model, koerper, erk, h, log, cache, karten)
             if els:
                 return els
-        elif frei:
+        elif frei and SW.betriebsart(model) != "sauber":
             # Nicht als Ganzes Grundflaeche mal Weg: an Fussabdruecken in
             # Bloecke zerlegen - gesweepte Bloecke, wo es geht, Tetraeder fuer
             # den Rest, knotenkonform ueber die Schnittflaechen (statik3d.sweep).
@@ -804,10 +804,12 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
     return []
 
 
-def abgebildet(model: Model, koerper) -> bool:
+def abgebildet(model: Model, koerper, h: float = 0.0, karten: tuple = None, log: list = None) -> bool:
     """Wird der Koerper abgebildet vernetzt (Sechsflaechner, einzelner
     Tetraeder)? Das ist billig und bleibt im Hauptprozess; alles andere geht
-    an den freien Vernetzer und darf in einen Arbeitsprozess."""
+    an den freien Vernetzer und darf in einen Arbeitsprozess. ``h``,
+    ``karten`` und ``log`` braucht nur die Vorpruefung des Sweeps in der
+    Betriebsart "sauber" (sweep.sweepbar)."""
     flaechen = [model.flaechen.get(x) for x in (koerper.flaechen or [])]
     if not flaechen or any(f is None for f in flaechen):
         return True
@@ -822,7 +824,7 @@ def abgebildet(model: Model, koerper) -> bool:
     # vorgegeben (model.flaechennetze), die Arbeitsprozesse lesen das Modell
     # erst danach.
     from . import sweep as SW
-    return SW.sweepbar(model, koerper)
+    return SW.sweepbar(model, koerper, h=h, karten=karten, log=log)
 
 
 # --------------------------------------------------------------------------
@@ -961,10 +963,9 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
                        f"({z['anteil_hexaeder'] * 100:.1f} %), Keile {z['keile']}, "
                        f"Pyramiden {z['pyramiden']}, Tetraeder {z['tetraeder']}"
                        + (f"; Winkelfehler bis {z['winkelfehler_max']:.0f}°, "
-                          f"{z['hexaeder_regelmaessig']} Hexaeder regelmäßig (≤ {SW.WINKELFEHLER_GRENZE:.0f}°)"
+                          f"{z['hexaeder_regelmaessig']} Hexaeder regelmäßig (≤ {SW.WINKELFEHLER_GRENZE:.1f}°)"
                           if z["hexaeder"] or z["keile"] else ""))
 
-    frei = [k for k in koerper if not abgebildet(model, k)]
     # 1) Abgebildete Koerper gleich hier - das kostet nichts
     # Das Groessenfeld einmal je Lauf und **vor** den Karten: die
     # Linienteilung liest es schon beim Kartieren (Bogenwinkel an
@@ -983,6 +984,7 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
     # gesweepten Koerper fuellen sie, die freien Koerper lesen sie.
     model.flaechennetze = {}
     model.linienvorgabe = {}
+    model._sauber_abgelehnt = {}
     # Die modellweiten Netzkarten einmal je Lauf - fuer alle Pfade. Je Koerper
     # gebildet kosteten sie am Drehlager 48 x 1,5 s in der seriellen Phase.
     karten = netzkarten(model)
@@ -993,6 +995,11 @@ def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
     # erst danach an sie).
     from . import sweep as SW
     model.linienvorgabe = SW.lagenvorgabe(model, koerper, hs, karten, log)
+    # Erst jetzt, mit den Karten: in der Betriebsart "sauber" prueft
+    # sweep.sweepbar den Koerper vor, und nur ein sauber gesweepter bleibt
+    # im Hauptprozess - der Rest ist frei und geht in die Arbeitsprozesse
+    frei = [k for k in koerper if not abgebildet(model, k, h=float(hs.get(k.name, 0.0) or 0.0),
+                                                 karten=karten, log=log)]
     for k in koerper:
         if k in frei:
             continue

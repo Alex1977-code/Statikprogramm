@@ -40,6 +40,8 @@ from . import masken as msk
 from . import zahlenfeld as zf
 from .. import zahlen as zl
 from .ermuedungsmaske import Ermuedungsmaske
+from . import elementmasken as elm
+from .. import elementauswahl as ea
 from . import tabellen as tab
 
 
@@ -207,6 +209,7 @@ class MainWindow(QtWidgets.QMainWindow):
         parallel.einstellungen_laden()
         self.resize(1600, 980)
         self.model = Model("Neues Modell")
+        self._stufe_vorgabe()
         self.__init_defaults()
         self.analysis: solver.Analysis | None = None
         self.results: solver.Results | None = None     # Modal/Knicken
@@ -347,6 +350,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.schwingung = None        # Schwingungsnachweis des Verschlusses
         self.messungen = []           # voruebergehende Messungen in der Ansicht
         self.sonden = []              # Wertmarken der Sonde (Knoten, Punkt)
+        self.elementtyp_faerben = False   # Faerbung nach Elementtyp gilt je Modell
         if not self.model.materials:
             self.model.add_material(Material.steel("S235"))
             self.model.add_material(Material.steel("S355"))
@@ -3930,8 +3934,16 @@ class MainWindow(QtWidgets.QMainWindow):
                         "Elementform aus den Netzeinstellungen, Fortschritt in der Statuszeile, "
                         "Esc bricht ab", symbol="vernetzen")
         g.klein("Netzeinstellungen…", self.maske_netzeinstellungen,
-                hinweis="Netzdichte (grob, mittel, fein, eigene Ziellänge), Elementform, intelligente "
-                        "Anpassung an kleine Kanten, kleinste/größte Elementgröße, Höchstzahl je Objekt")
+                hinweis="Elemente Entwurf, Mittel (Vorgabe) oder Fein; Netzdichte (grob, mittel, fein, "
+                        "eigene Ziellänge), Elementform, intelligente Anpassung an kleine Kanten, "
+                        "kleinste/größte Elementgröße, Höchstzahl je Objekt")
+        # Paket E (25.09.2026): verwendete Elemente zeigen. „Elemente wählen…“
+        # mit Haken ist am selben Tag entfallen - Stufen statt Haken im
+        # Auswahlfeld „Elemente“ der Netzeinstellungen (Anwender: „keep it simple“)
+        g.klein("Elementübersicht…", self.maske_elementuebersicht,
+                hinweis="Welche Elemente das Netz hat: Typ, Ansatz, Anzahl, Anteil je Körper; "
+                        "Klick zeigt nur diese Elemente, die Ansicht nach Elementtyp färben "
+                        "(mit Legende), Netz-Fingerabdruck für den Prüfer")
         g.klein("Adaptiv vernetzen…", self.geometrie_adaptiv_vernetzen,
                 hinweis="Vernetzen, den aktiven Lastfall rechnen, den Fehler je Element schätzen "
                         "(Spannungssprung), nur dort feiner und im Feld gröber - so viele Runden wie "
@@ -9454,6 +9466,30 @@ class MainWindow(QtWidgets.QMainWindow):
         self._fortschritt_laeuft = False
 
     def _vernetzen(self, flaechen: list, koerper: list) -> int:
+        """Vernetzen mit der Elementstufe (25.09.2026, statik3d.elementstufe).
+
+        Vorweg: ein „immer“ aus einer alten Sitzung wird „aus“ (siehe unten),
+        dann die Sperre - Mittel oder Fein an einem Modell mit Kontakt wird
+        Entwurf, mit Zeile im Protokoll statt Abbruch in fugen.py -, und bei
+        Fein vernetzt :meth:`_vernetzen_netz` mit halber Kantenlaenge; die
+        gespeicherten Netzeinstellungen stehen danach wieder da."""
+        from .. import elementstufe as es
+        from ..sweep import betriebsart as sweep_betriebsart
+        vorab: list = []
+        if sweep_betriebsart(self.model) == "immer":
+            # aeltere Sitzung mit eingeschaltetem Sweep (Option entfaellt,
+            # 25.09.2026). Seit das Feld ein Wort ist, waere getattr(...) auch
+            # fuer "aus" wahr; darum ueber betriebsart. "sauber" bleibt: es
+            # sweept nur Koerper, die die Probe bestehen, und setzt die Stufe.
+            # Vor dem Tausch der Netzeinstellungen fuer Fein, damit es bleibt.
+            self.model.netz.sweep = "aus"
+            vorab.append("Sechsflächner-Sweep ausgeschaltet: die Option gibt es nicht mehr, "
+                         "weil sie an Bohrungen und schrägen Kanten verzerrte Elemente erzeugt. "
+                         "Vernetzt wird mit Tetraedern.")
+        with es.beim_vernetzen(self.model, vorab):
+            return self._vernetzen_netz(flaechen, koerper, vorab)
+
+    def _vernetzen_netz(self, flaechen: list, koerper: list, vorab: list = None) -> int:
         """Flaechen und Koerper vernetzen und das Protokoll fuehren.
 
         Der Balken ist nach der **geschaetzten Elementzahl** gewichtet, nicht
@@ -9464,7 +9500,8 @@ class MainWindow(QtWidgets.QMainWindow):
         behaelt das bisher Erzeugte.
         """
         from .. import fugen
-        log = []
+        # Zeilen von _vernetzen (Sweep „immer“, Sperre der Stufe, Fein) vorn
+        log = list(vorab or [])
         n = 0
         prozesse = 1
         zeiten: dict = {}          # Sekunden je Phase, fuer die Schlusszeile
@@ -9727,6 +9764,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.results = None
         lastfall = m.active_case if m.active_case in m.load_cases else next(iter(m.load_cases))
         log: list = []
+        # Die Sperre der Elementstufe gilt auch hier (25.09.2026): Mittel/Fein an
+        # einem Modell mit Kontakt wird Entwurf, gesagt. Die halbe Kantenlaenge
+        # von Fein nicht - die Schleife bestimmt die Kantenlaenge selbst.
+        from .. import elementstufe as _es
+        _sperre = _es.sperre_anwenden(m)
+        if _sperre:
+            log.append(_sperre)
         self._fortschritt_beginnen(1000, f"Adaptiv vernetzen: {runden} Runden, Lastfall {lastfall} …")
 
         def fortschritt(anteil, text):
@@ -14342,13 +14386,23 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ---- Netzeinstellungen und Generatoren als Masken --------------------
     NETZFORMEN = {"Dreiecke": 0, "Vierecke": 1, "Vierecke, sonst Dreiecke": 2}
-    NETZORDNUNG = {"linear (shell3/shell4, tet4, hex8)": 1,
-                   "quadratisch (shell6/shell8, tet10, hex20)": 2}
+    # NETZORDNUNG („Elementansatz linear/quadratisch“) ist am 25.09.2026 dem
+    # Auswahlfeld „Elemente“ gewichen (Stufen Entwurf/Mittel/Fein,
+    # statik3d.elementstufe)
 
     def maske_netzeinstellungen(self):
+        from .. import elementstufe as es
         from .. import netzdichte as nd
         n = self.model.netz
         F = msk.Feld
+        # Die Stufe (25.09.2026, Anwender: Presets statt Haken, „keep it
+        # simple“). An einem Modell mit Kontakt sind Mittel und Fein sichtbar,
+        # aber gesperrt, und die Maske steht auf Entwurf (elementstufe)
+        gruende = es.quadratisch_gesperrt(self.model)
+        stufe_jetzt = es.wirksame_stufe(self.model, gruende)
+
+        def stufentext(s):
+            return f"{es.ELEMENTE[s]} – {es.ZWECK[s]}"
 
         def mm(v):
             # Laengen in mm - so denkt man beim Vernetzen („Netzeinstellungen
@@ -14357,8 +14411,6 @@ class MainWindow(QtWidgets.QMainWindow):
             return None if not v else float(v) * 1e3
 
         form = next((k for k, v in self.NETZFORMEN.items() if v == int(n.form)), "Vierecke, sonst Dreiecke")
-        ordnung = next((k for k, v in self.NETZORDNUNG.items() if v == int(n.ordnung)),
-                       next(iter(self.NETZORDNUNG)))
         from .. import vernetzer_extern as vx
         da = vx.verfuegbar(getattr(n, "mmg_pfad", ""))
 
@@ -14373,7 +14425,21 @@ class MainWindow(QtWidgets.QMainWindow):
 
         vernetzer_liste = [vernetzer_text(k) for k in ("eigener", "gmsh", "netgen")]
         nachbessern_liste = ["keine", vernetzer_text("mmg3d")]
-        felder = [F("dichte", "Netzdichte", "wahl", n.dichte if n.dichte in nd.STUFEN else "mittel", list(nd.STUFEN),
+        felder = [F("elemente", "Elemente", "wahl", es.AUSWAHL[stufe_jetzt], [es.AUSWAHL[s] for s in es.STUFEN],
+                    hinweis="Entwurf: tet4, hex8 (VQ83), Schalen linear – schnell, Spannungen zu niedrig. "
+                            "Mittel (Vorgabe): tet10, hex20 (VQ203), Schalen quadratisch – für die "
+                            "Nachweise. Fein: wie Mittel mit halber Kantenlänge – Bohrungen, Kerben, "
+                            "Ermüdung. Sechsflächner entstehen automatisch nur dort, wo sie sauber "
+                            "werden (Sweep „sauber“); welche Elemente wirklich entstanden sind, zeigt "
+                            "Netz → Elementübersicht"),
+                  F("elemente_info", "", "info", stufentext(stufe_jetzt)),
+                  F("kantenlaenge", "Kantenlänge (wirksam)", "info",
+                    es.kantenlaenge_text(es.setzen(n, stufe_jetzt), self.model),
+                    hinweis="die Kantenlänge, mit der vernetzt wird - bei Fein die Hälfte der "
+                            "eingestellten; die Einstellungen darunter bleiben die für Mittel")]
+        if gruende:
+            felder.append(F("sperre", "Kontakt", "info", es.sperrtext(gruende)))
+        felder += [F("dichte", "Netzdichte", "wahl", n.dichte if n.dichte in nd.STUFEN else "mittel", list(nd.STUFEN),
                     hinweis="grob 8, mittel 16, fein 32 Elemente über die größte Abmessung jedes Objekts; "
                             "eigene = die Ziellänge gilt absolut"),
                   F("ziellaenge", "Ziellänge [mm] (eigene)", "zahl", float(n.ziellaenge) * 1e3),
@@ -14384,10 +14450,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     hinweis="leer = das Vierfache der Dichte-Länge"),
                   F("max_elemente", "Höchstzahl Elemente je Objekt", "ganz", int(n.max_elemente)),
                   F("form", "Elementform Flächen", "wahl", form, list(self.NETZFORMEN)),
-                  F("ordnung", "Elementansatz", "wahl", ordnung, list(self.NETZORDNUNG),
-                    hinweis="quadratisch: Flächen bekommen Mittenknoten (shell6/shell8), "
-                            "abgebildete Volumen hex20, freie Volumen tet10 - weniger Elemente "
-                            "für dieselbe Genauigkeit, je Element aber mehr Rechenzeit"),
+                  # „Elementansatz linear/quadratisch“ stand hier bis 25.09.2026;
+                  # die Ordnung setzt jetzt die Stufe (Feld „Elemente“ oben)
                   # „Abgebildetes Netz bevorzugen" stand hier als Haken, den nichts las:
                   # der Wert kommt aus der RFEM-Datei (mapped mesh preferred) und wird
                   # nur mitgefuehrt. Abgebildet wird immer, wo die Form es hergibt
@@ -14395,15 +14459,12 @@ class MainWindow(QtWidgets.QMainWindow):
                   # Eckknoten); alles andere geht an den freien Vernetzer (13.09.2026).
                   F("uebersteuern", "Teilung je Fläche aus der Netzdichte", "haken", bool(n.teilung_uebersteuern),
                     hinweis="aus: die eigene Teilung jeder Fläche (z. B. aus RFEM) bleibt"),
-                  F("sweep", "Sechsflächner sweepen (Hexaeder statt Tetraeder)", "haken",
-                    bool(getattr(n, "sweep", False)),
-                    hinweis="Körper, die Grundfläche mal Weg sind (Bolzen, Scheiben, Platten), werden "
-                            "in Lagen aus hex8 und pent6 vernetzt statt in Tetraeder - an der "
-                            "Kragplatte 97,6 % der Balkenlösung gegen 68,4 %, bei weniger als der "
-                            "halben Knotenzahl. Vorgabe aus: am Drehlager entstanden dabei 992 "
-                            "entartete Keile (Formgüte bis 0,025), und die Verformung lag um "
-                            "Faktor 4,5 daneben (21.09.2026). Die Abnahme meldet solche Netze vor "
-                            "dem Rechnen; wer einschaltet, sollte sie lesen."),
+                  # „Sechsflaechner sweepen“ ist seit 25.09.2026 keine Option mehr: am
+                  # Drehlager entstanden damit 926 hex8 mit fast entarteter Ecke und 242
+                  # flache Keile (Element-Sitzung, gemessen), LF1 konvergierte nicht mehr.
+                  # Der Anwender: „er war als option da und für mich als user nicht
+                  # erkennbar dass das ein problem ist“ - „keep it simple“. Hexaeder kommen
+                  # zurueck, wenn der Vernetzer sie nur dort setzt, wo sie sauber sind.
                   F("vernetzer", "Vernetzer (Volumen)", "wahl", vernetzer_text(n.vernetzer), vernetzer_liste,
                     hinweis="eigener Vernetzer, gmsh (GPL) oder Netgen (LGPL) - beide tetraedern dieselbe "
                             "Hülle, die Randknoten bleiben; keiner wird mit der exe ausgeliefert, "
@@ -14431,8 +14492,37 @@ class MainWindow(QtWidgets.QMainWindow):
                                   "und ihren Grund.",
                           zusatz=[("Vernetzer installieren…", self.werkzeuge_dialog)])
         halter["m"] = maske
+        cb = maske._felder["elemente"]
+        if gruende:
+            # sichtbar, aber gesperrt, mit dem Hinweis am Eintrag (25.09.2026:
+            # nicht still herabstufen, nicht abbrechen lassen)
+            for i, s in enumerate(es.STUFEN):
+                if not es.frei(self.model, s, gruende):
+                    cb.model().item(i).setEnabled(False)
+                    cb.setItemData(i, f"{es.NAME[s]}: {es.SPERRHINWEIS} ({es.gruende_text(gruende)})",
+                                   QtCore.Qt.ToolTipRole)
+
+        def nachfuehren(*_a):
+            # Elemente, Zweck und wirksame Kantenlaenge folgen der Wahl und der
+            # Netzdichte - aus den Werten der Maske, wie Übernehmen sie laese
+            s = es.aus_text(cb.currentText()) or stufe_jetzt
+            maske.setzen("elemente_info", stufentext(s))
+            try:
+                netz_ = self._netz_aus_maske(maske.werte())
+            except (ValueError, TypeError):
+                return
+            maske.setzen("kantenlaenge", es.kantenlaenge_text(es.setzen(netz_, s), self.model))
+        cb.currentTextChanged.connect(nachfuehren)
+        maske._felder["dichte"].currentTextChanged.connect(nachfuehren)
         maske.angewendet.connect(self._netzeinstellungen_setzen)
         return self.maske_erzeugen(maske)
+
+    def maske_elementuebersicht(self):
+        """Netz → Elementübersicht… (Paket E, gui/elementmasken.py)."""
+        return elm.maske_elementuebersicht(self)
+
+    #: Ansicht nach Elementtyp faerben (Elementuebersicht, 25.09.2026)
+    elementtyp_faerben = False
 
     def maske_netzguete(self):
         """Netzqualität: bewerten, einfärben, die schlechtesten finden.
@@ -14485,6 +14575,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.bottom_tabs.setCurrentIndex(0)
             if anzeigen:
                 self.netzguete_feld = {"werte": werte, "mass": mass}
+                self.elementtyp_faerben = False     # eine Faerbung zur Zeit (25.09.2026)
                 self.results = None
                 self.redraw()
             return werte, d
@@ -14521,6 +14612,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _netz_aus_maske(self, w: dict):
         from dataclasses import replace
+        from .. import elementstufe as es
 
         def zahl(key):
             # Maske in mm, Modell in m; Regel der Zahlenfelder (25.09.2026)
@@ -14541,18 +14633,23 @@ class MainWindow(QtWidgets.QMainWindow):
         nachbessern = wahl(w.get("nachbessern"), ("keine", "mmg3d"), n.nachbessern)
         if "nicht installiert" in str(w.get("vernetzer", "")) or "nicht installiert" in str(w.get("nachbessern", "")):
             raise ValueError("Der gewählte Vernetzer bzw. die Nachbesserung ist nicht installiert")
-        return replace(n, dichte=str(w.get("dichte", n.dichte)),
-                       ziellaenge=max(1e-4, ziel),
-                       intelligent=bool(w.get("intelligent", True)),
-                       h_min=zahl("h_min"), h_max=zahl("h_max"),
-                       vernetzer=vernetzer, nachbessern=nachbessern,
-                       mmg_pfad=n.mmg_pfad,
-                       max_elemente=max(0, int(float(w.get("max_elemente", n.max_elemente) or 0))),
-                       form=self.NETZFORMEN.get(str(w.get("form", "")), n.form),
-                       ordnung=self.NETZORDNUNG.get(str(w.get("ordnung", "")), n.ordnung),
-                       abgebildet=bool(w.get("abgebildet", n.abgebildet)),
-                       sweep=bool(w.get("sweep", getattr(n, "sweep", False))),
-                       teilung_uebersteuern=bool(w.get("uebersteuern", True)))
+        neu = replace(n, dichte=str(w.get("dichte", n.dichte)),
+                      ziellaenge=max(1e-4, ziel),
+                      intelligent=bool(w.get("intelligent", True)),
+                      h_min=zahl("h_min"), h_max=zahl("h_max"),
+                      vernetzer=vernetzer, nachbessern=nachbessern,
+                      mmg_pfad=n.mmg_pfad,
+                      max_elemente=max(0, int(float(w.get("max_elemente", n.max_elemente) or 0))),
+                      form=self.NETZFORMEN.get(str(w.get("form", "")), n.form),
+                      abgebildet=bool(w.get("abgebildet", n.abgebildet)),
+                      teilung_uebersteuern=bool(w.get("uebersteuern", True)))
+        # Die Stufe setzt Ordnung und Sweep (25.09.2026): Sweep immer „sauber“ -
+        # Sechsflaechner nur, wo sie sauber werden, automatisch („dass kann der
+        # user doch nicht wissen“). Ein „immer“ aus einer alten Sitzung wird
+        # damit ebenfalls „sauber“. Ohne Feld (Aufruf mit Teilwerten) bleibt die
+        # Stufe, wie sie ist.
+        stufe = es.aus_text(w.get("elemente")) or es.stufe(n)
+        return es.setzen(neu, stufe)
 
     def werkzeuge_dialog(self):
         """gmsh, Netgen und MMG3D nachladen oder entfernen (Vernetzer und
@@ -14589,9 +14686,14 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.error(f"Eingabe: {ex}")
         self.merken("Netzeinstellungen")
         self.model.netz = netz
-        self.info("Netzeinstellungen: " + netz.beschreibung())
+        # Mittel/Fein an einem Modell mit Kontakt: Entwurf, gesagt (25.09.2026)
+        from .. import elementstufe as es
+        sperre = es.sperre_anwenden(self.model)
+        if sperre:
+            self.log.appendPlainText(sperre)
+        self.info("Netzeinstellungen: " + self.model.netz.beschreibung())
         self.refresh_all()
-        return netz
+        return self.model.netz
 
     def maske_stabzug(self):
         m = self.model
@@ -14794,6 +14896,12 @@ class MainWindow(QtWidgets.QMainWindow):
                       f"{len(m.load_cases)} Lastfälle, {len(m.members)} Stäbe")
             self._fortschritt_ende()
             QtWidgets.QApplication.restoreOverrideCursor()
+            if target is None:
+                # Elementwahl nach dem Import (Paket E, 25.09.2026): die
+                # Rueckfrage erst nach Balken und Sanduhr
+                zeile = elm.elementwahl_nach_import(self, m, path)
+                if zeile:
+                    self.log.appendPlainText(zeile)
         except Exception as ex:
             self._fortschritt_ende()               # kein Balken hinter der Meldung
             self.log.appendPlainText(traceback.format_exc())
@@ -14892,6 +15000,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.netzguete_feld = None
         old = self.model
         self.model = Model(old.name)
+        self._stufe_vorgabe()
         self.model.materials = dict(old.materials)
         self.model.sections = dict(old.sections)
         self.model.shells = dict(old.shells)
@@ -18946,6 +19055,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.results = None
             text = r.summary()
         self.log.appendPlainText(text)
+        # welche Elemente gerechnet wurden (25.09.2026: „nach der Berechnung
+        # sehe ich das auch nirgendwo“)
+        self.log.appendPlainText(ea.protokollzeile(self.model))
         self.txt_summary.setPlainText(text)
         self._fill_result_selector()
         self._bewegungen_melden()
@@ -19816,6 +19928,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 guete_clim = [float(endlich.min()), float(max(endlich.max(), endlich.min() + 1e-12))]
             elif len(endlich):
                 guete_clim = [float(min(0.0, endlich.min())), 1.0]
+        # Faerbung nach Elementtyp (Elementuebersicht, 25.09.2026) - wie die
+        # Netzguete nur ohne gezeigtes Ergebnis
+        typfarbe = elm.faerbung_fuer_ansicht(self, m) if u is None and guete is None else None
         col = None
         if u is None and self.act_members.isChecked() and m.members:
             col = np.full(len(m.elements), np.nan)
@@ -19889,6 +20004,9 @@ class MainWindow(QtWidgets.QMainWindow):
                                       name=f"model_{nm}",
                                       **dict({"line_width": 4 if dick else 1},
                                              **vp.darstellung(modus, show_edges, True)))
+            elif typfarbe is not None:
+                elm.faerbung_zeichnen(self, netz, eidx, typfarbe, nm, 4 if dick else 1,
+                                      vp.darstellung(modus, show_edges, True))
             elif col is not None:
                 farbig = netz.copy()
                 farbig.cell_data["Stab"] = col[eidx]
@@ -21610,11 +21728,28 @@ class MainWindow(QtWidgets.QMainWindow):
         self._undo_init()
         self._undo_knoepfe()
 
+    #: Elementstufe eines neuen Modells der Oberflaeche (25.09.2026); None
+    #: laesst das Datenmodell, wie es ist (ordnung 1, Sweep „aus“) - das
+    #: setzt tests/test_gui_smoke.py, dessen Zahlen auf linearen Netzen stehen
+    STUFE_NEUES_MODELL = "mittel"
+
+    def _stufe_vorgabe(self):
+        """Ein neues Modell der Oberflaeche bekommt die Elementstufe Mittel
+        (tet10, hex20, Schalen quadratisch; Sweep „sauber“) - die
+        Statik3D-Vorgabe (Anwender 23.09.2026: „standard sollte tet10 und
+        vq83 sein“, 25.09.2026: Stufen mit Mittel als Vorgabe). Das
+        Datenmodell selbst bleibt bei ordnung 1: Skripte, Befehlszeile und
+        aeltere Dateien rechnen weiter, wie sie es taten."""
+        from .. import elementstufe as es
+        if self.STUFE_NEUES_MODELL:
+            self.model.netz = es.setzen(self.model.netz, self.STUFE_NEUES_MODELL)
+
     def new_model(self):
         if not self._ungespeichert_fragen("Neu"):
             return
         self._protokoll_neu("Neues Modell")
         self.model = Model("Neues Modell")
+        self._stufe_vorgabe()
         self.__init_defaults()
         self.analysis = None
         self.results = None

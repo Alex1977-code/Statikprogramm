@@ -5373,6 +5373,119 @@ Kante) oder die Kante trägt vier bis fünf Tetraeder — Segmentrückgewinnung 
 zurückgenommen: 11 → 5 an der eigenen Stichprobe, aber 1 → 3 an der der
 Statik3D-Sitzung und 3,4-mal so viele Elemente an der Bohrung
 (`test_mantellinie_der_bohrung`). Test `test_huelle_kippen`, Schalter `KIPP_RUNDEN`.
+**Dritter Auftrag (24.09.2026):** die beiden verbliebenen Netze brauchten zwei weitere
+Kippungen, beide ohne neuen Punkt — **2 → 3** für eine fehlende Hüllkante, die eine
+Tetraederseite kreuzt, deren zwei Tetraeder die Kantenenden als Spitzen haben
+(Segmentrückgewinnung), und **4 → 4** für ein Hülldreieck, dessen stechende Kante vier
+Tetraeder trägt und dessen drei Ecken unter den vier Ringecken sind: das Achtflach um die
+Kante wird über die Diagonale des Dreiecks neu geteilt, gültig, wenn der Rauminhalt der vier
+neuen gleich dem der vier alten ist. Damit L h = 0,24 (368 Tetraeder) und T h = 0,16 (1 212)
+exakt im ersten Durchgang; beide Stichproben **0 von 69** (gemessen 24.09.2026). Was an
+fehlenden Hülldreiecken bleibt, sind Diagonaltausche ebener Vierecke — kein Rauminhalt, keine
+Delle.
+
+**Gekrümmte tet10 am Drehlager (dritter Auftrag, 24.09.2026).** Verlangt war das gekrümmte
+tet10-Netz des ganzen Drehlagers bei 18° und 36° — Seitenmitten auf der wahren Fläche,
+Jacobi-Prüfung, örtliche Anläufe — mit Elementen, Knoten, ungültigen tet10 vor den Anläufen,
+Rückfällen auf gerade Kanten (getrennt nach eigener und gemeinsamer Fläche), kleinster bezogener
+Jacobi-Determinante und Zeit. Der erste Lauf (alter Stand, 18°) ergab 687 807 Elemente mit
+**626 Rückfällen** (5 an gemeinsamen Flächen) und einer kleinsten bezogenen Determinante von
+**−11,4** — Werte, die keine Krümmung erklärt. Die Diagnose an V30 (227 Rückfälle, 594 gekrümmte
+Kanten) zeigte die Ursache: die gekrümmten Kanten waren **Sehnen über 36° bis 180°** auf Zylindern
+mit r = 10 mm. Das sind keine Mantelkanten, sondern Kanten der **ebenen Stirnflächen** kleiner
+Bohrungen — ein Dreiecksfächer aus Randkreispunkten, jede Kante mit beiden Enden auf dem Kreis.
+Die Zuordnung „Kante gehört zur Fläche F, wenn beide Endpunkte über ihre Hülldreiecke zu F
+gehören“ hielt sie für Mantelkanten und projizierte ihre Mitten radial auf den Zylinder; ein
+Durchmesser bekam seine Mitte auf den Rand. Feiner vernetzen konnte das nie heilen (die drei
+örtlichen Anläufe machten aus 899 ungültigen tet10 in V15 immer noch 144), und V30 bekam gar
+keinen Anlauf, weil daneben die Güte riss und die Grenze der Elementzahl den ganzen Körper nicht
+feiner ließ.
+
+Drei Änderungen (`mesher3d.py`): (1) **Die Zuordnung über die Hülldreiecke**
+(`randkanten_flaechen`): eine Kante gehört zu F, wenn sie Kante eines Hülldreiecks von F ist oder
+die andere Diagonale eines Hüllvierecks aus zwei F-Dreiecken (die Zerlegung darf ein Viereck anders
+teilen); alles andere ist eine Sehne durch das Innere und bleibt gerade. Arbeits- und Hauptprozess
+rechnen damit dieselbe Menge. (2) **Innere Punkte gegen umklappende tet10**
+(`_krumme_kappenpunkte`): was danach noch umklappt, ist flach gegen den Sehnenpfeil — am Zylinder
+in Hohlzylinder (r 50, 36°, h 35 mm) zwei Tetraeder mit Höhe 1,6 mm über einer Sehne mit Pfeil
+1,7 mm, zwei innere Ecken und eine Randsehne fast in einer Ebene. Ein Punkt im Schwerpunkt, von der
+gekrümmten Mitte weg nach innen geschoben und so weit, dass er in der **Umkugel** des Tetraeders
+bleibt (nur dann nimmt die Delaunay-Zerlegung es gewiss heraus — 12 mm tief lag er außerhalb der
+Kugel eines 1,6 mm flachen Tetraeders, und das blieb durch drei Durchgänge), löst es auf; er hält
+`KRUMM_KAPPEN_RANDABSTAND = 0,25` Sollgrößen Abstand zur Hülle (mit 0,4 wie die Kappen blieb am
+Deckelrand kein Punkt übrig) und ändert die **Randfläche nicht** — darum wirkt das auch an einer
+mit dem Nachbarn gemeinsamen Fläche, die kein Arbeitsprozess allein feiner machen darf, und die
+gemeinsamen Knoten bleiben. Ein zweiter Durchgang im Hauptprozess mit beidseitiger Verfeinerung
+ist damit nicht nötig. An eigenen Flächen kommen die Punkte erst nach den örtlichen Anläufen, weil
+das feinere Netz die Form besser hält (Buchse r 50/100, 36°, h 35: 2 566 tet10 mit kleinster
+bezogener Determinante 0,403 gegen 3 425 mit 0,028, wenn die Punkte zuerst kommen); an
+gemeinsamen sofort. Weil Glättung und MMG3D innere Ecken danach wieder an die Fläche rücken
+können, kommt am fertigen Netz noch das **Entzerren** (`krumme_entzerren`): jede innere Ecke
+eines Tetraeders, das als tet10 umklappen würde, wird vom Ort der gekrümmten Mitte weg
+verschoben, in Schritten von 1 bis 6 Sehnenpfeilen, bis das Element gültig ist und kein vorher
+gültiges Element am Punkt seinen Rauminhalt verliert; Hüllpunkte bleiben stehen. Auch das
+gehorcht der Reihenfolge: gemeinsame Flächen sofort, eigene erst nach den örtlichen Anläufen.
+(3) **Die Anlaufschleife**: die örtlichen Anläufe laufen auch, wenn daneben
+die Güte reißt; der beste Anlauf ist erst der ohne Lücke im Netzrand, dann der mit den wenigsten
+ungültigen tet10, dann der mit dem kleinsten Abstandsmaß; und der Rückfall im Hauptprozess läuft
+bis zum Stillstand, weil eine zurückgesetzte Mitte auch den Nachbarelementen gehört (ein tet10
+mit det J = −6,9e-7 blieb sonst im Modell). Das Protokoll nennt seither auch die kleinste
+bezogene Determinante **im fertigen Netz**. Nebenbei: die Seitenmittenknoten werden gesammelt
+angelegt (`_tet10_kanten_anlegen`) — je Knoten ein `np.vstack` an das ganze Knotenfeld war bei
+900 000 Kanten quadratisch.
+
+Prüfkörper `test_gemeinsame_gekruemmte_flaeche_ohne_rueckfall`: Zylinder r 50 in Hohlzylinder
+r 50/100, fest verbunden (gemeinsame Mantelfläche), 36°, h 35 mm, beide tet10 — **0 Rückfälle**,
+größter Weg einer Seitenmitte der Sehnenpfeil 1,704 mm, 2 innere Punkte im Zylinder; ohne die
+Punkte 2 Rückfälle an der gemeinsamen Fläche; mit der alten Zuordnung am Bolzen r 10 in Buchse
+r 30 wandern Sehnen der Stirnfläche auf den Mantel (größter Weg 1,91 mm gegen den Pfeil 1,022 mm)
+und 3 tet10 bleiben gerade. Die Hohlzylinder-Tabelle des zweiten Auftrags bleibt bei 0: h 35 / 20 /
+10 mm → 1 758 / 4 972 / 34 327 tet10, 0 Rückfälle, kleinste bezogene Determinante 0,162 / 0,065 /
+0,067, keine inneren Punkte nötig.
+
+Am Drehlager (nur vernetzt und gezählt, 3 Arbeitsprozesse, Kontaktfugen-Sperre für quadratische
+Elemente umgangen — siehe Befund unten; gemessen 24.09.2026):
+
+| | 18° | 36° |
+|---|---|---|
+| Elemente (tet10 + 64 Stäbe) | 670 185 | 496 617 |
+| Knoten / Unbekannte (3 je Knoten, hergeleitet) | 1 100 877 / 3 302 631 | 805 993 / 2 417 979 |
+| ungültige tet10 vor den örtlichen Anläufen (Körper) | 22 (3 Körper) | 160 (10 Körper) |
+| örtliche Anläufe | 4 | 22 |
+| Rückfälle auf gerade Kanten, eigene / gemeinsame Fläche | **0** / **0** | **17** / **0** |
+| kleinste bezogene Jacobi-Determinante, vor Rückfall / im fertigen Netz | 0,001 / 0,001 | −7,0 / 0,000 (positiv, unter 0,0005; V35) |
+| Lücken im Netzrand | 0 | 1 |
+| Zeit | 334 s | 588 s |
+
+Die sechs großen Platten (Elemente; ungültig je Anlauf; örtliche Anläufe; Rückfälle eigene /
+gemeinsame; kleinste bezogene Determinante im fertigen Netz):
+
+| Körper | 18° | 36° |
+|---|---|---|
+| V14 | 53 783; 0; 0; 0 / 0; 0,222 | 41 879; 5/4; 2; 0 / 0; 0,124 |
+| V36 | 38 872; 0; 0; 0 / 0; 0,342 | 94 428; 2/5/3/3/3; 3; 0 / 0; 0,017 |
+| V30 | 116 094; 0; 0; 0 / 0; 0,003 | 76 437; 6/2/5/5/3/2; 3; 2 / 0; 0,005 |
+| V34 | 52 133; 2; 1; 0 / 0; 0,001 | 10 972; 1/1/1/2/1; 0; 0 / 0; 0,007 |
+| V15 | 49 189; 1; 1; 0 / 0; 0,001 | 47 965; 30/7/8/12/3/3; 3; 3 / 0; 0,001 |
+| V31 | 78 536; 0; 0; 0 / 0; 0,003 | 46 286; 16/10/8/8/1/1; 3; 1 / 0; 0,001 |
+
+Zum Vergleich der Stand vor den drei Änderungen bei 18°: 687 807 Elemente, 1 126 316 Knoten,
+572 ungültig in 4 Körpern, 11 Anläufe, 626 Rückfälle (5 gemeinsam), −11,4, 498 s; bei 36°:
+491 511 Elemente, 588 ungültig in 9 Körpern, 279 Rückfälle (10 gemeinsam), −7,4, 290 s.
+Bei 18° ist damit die Abnahme erreicht; bei 36° bleiben 17 Rückfälle an eigenen Flächen
+(keine an gemeinsamen): 9 davon in fünf kleinen Körpern (V22, V28, V20, V25, V7), in denen der
+Arbeitsprozess **kein** ungültiges tet10 sah — der Hauptprozess prüft nach dem Zusammenlegen der
+Knoten auf gemeinsamen Flächen, und dort liegen die Ecken um Rundungsbeträge anders —, der Rest in
+V30, V15, V31 und V35 nach drei örtlichen Anläufen, inneren Punkten und Entzerren. Und eine
+Nebenwirkung der Reihung „erst ohne ungültige tet10“: für V36 wird bei 36° der feinste Anlauf
+gewählt, weil erst er ohne ungültiges Element ist — 94 428 statt 11 304 Elemente; das ganze Netz
+wächst so von 384 202 (Stand vor dem Entzerren, 19 Rückfälle) auf 496 617 Elemente. Ob ein
+gültiges gekrümmtes Netz acht mal so viele Elemente eines Körpers wert ist, ist eine Entscheidung
+für die Statik3D-Sitzung; die Stellschraube ist die Reihung in `koerper_vorbereiten`. Kleinste
+bezogene Determinanten um 0,001–0,003 bleiben in den Platten mit den kleinen Bohrungen: gültig, aber
+knapp — die Stelle für die adaptive Verfeinerung oder einen feineren Bogenwinkel an diesen Linien. **Befund für die Statik3D-Sitzung:** `fugen.QuadratischeSeiten`
+bricht die Vernetzung des Drehlagers mit tet10 ab (Kontaktbedingung Lagerbock-Grundplatte an
+3 065 quadratischen Elementen); für die Zählung wurde die Sperre umgangen, gerechnet wurde nichts.
 
 **Kappenpunkte halten Abstand (23.09.2026 abends).** An der Bohrung der Buchse r 50/100
 mit h = 20 mm behielten vier tet10 gerade Kanten, dazu stand eine Lücke von 0,0023 %
@@ -5438,6 +5551,27 @@ oben 12°: alle drei Kreise 30 Knoten; `test_bogenwinkel_je_koerper`). Zylinder 
 Grundkreis bei 18°, 10 bei 36°, 30 bei 12° (Test `test_bogenwinkel_je_koerper`).
 Nebenbei: 180/36 ist in Gleitkommazahlen 5,000000000000001; ohne Toleranz bekam der
 Halbkreis sechs statt fünf Abschnitte.
+
+**Die Bohrungsplatte (Nachtrag zum dritten Auftrag, 24.09.2026).** Die Statik3D-Sitzung maß
+an der Platte R 450 / t 35 mm mit Bohrung r 10 (24 Punkte) für h = 40 mm ohne „intelligent“
+FEHLER „Seiten im Inneren 30“ und für h = 50 / 60 mm mit „intelligent“ WARNUNG „Riss im Netz“
+mit 216 bzw. 440 Seiten. Drei Ursachen, drei Kuren: (1) `tetraedern_treu` wählte den besten
+Durchgang nach dem **Fehlbetrag** — an der Bohrungswand nehmen weggenommene Kappen den
+Rauminhalt ihrer Sehnenpfeile mit, und so gewann die vierte Runde mit 32 Dellen gegen die
+sechste ohne Delle; jetzt zählen erst die echten Dellen, dann der Fehlbetrag. Ein Fehlbetrag
+ohne Delle, den auch die Kappen nicht erklären, steht seither als eigene Warnung im Protokoll.
+(2) Die **Rissseiten** waren die vier Seiten von Tetraedern ohne Rauminhalt (54 · 4 = 216,
+110 · 4 = 440): vier Punkte in einer Ebene — zwei oben, zwei unten in der einlagigen Platte —,
+die Qhull als Tetraeder ausgibt und die nach der Glättung als flach herausflogen, ihre Seiten
+blieben als Hohlraum ohne Rauminhalt. `flache_aufloesen` teilt statt dessen die Pyramide
+der beiden Nachbarn über die **andere Diagonale** (2-2-Tausch) — kein Hohlraum, kein Riss
+(„kein Befund“ in allen drei „intelligent“-Zeilen). (3) Der **Kappenpunkt** hielt Abstand
+nach der Sollgröße am Ort (an der Bohrung 3 mm) und stand 1,4 mm neben der Bohrungswand; jetzt
+zählt die Größe der Kappe selbst (6 mm → 2,6 mm Abstand) — 16 statt 3 Kappen aufgelöst, 4
+statt 17 entfernt. Ergebnis (gemessen 24.09.2026, Abnahme der Statik3D-Sitzung vom
+23.09.): h 40 / 50 / 60 mm ohne „intelligent“ nur noch WARNUNG „Netzrand neben der Hülle“
+(die Diagonaltausche der entfernten Kappen an der gewölbten Wand, 153 / 128 / 153 Seiten,
+ohne Rauminhalt), mit „intelligent“ kein Befund.
 
 **Flache Tetraeder nach eigener Größe (Nachtrag B101, 24.09.2026).** Was nach der
 Glättung noch flach ist, fliegt heraus — bisher alles mit V ≤ FLACH·h³, h die Kantenlänge
@@ -6206,6 +6340,81 @@ hat nichts zu beanstanden. Darum ist der Schalter **aus** als Vorgabe: er kostet
 und senkt die kleinste Formgüte, und die Rechnung gewinnt an diesem Beispiel nichts. Wer
 den Übergang formgleich haben will — etwa weil eine Kontaktfuge genau dort liegt —,
 schaltet ihn ein (`test_pyramiden_als_uebergang`).
+
+**Betriebsart „sauber“ (dritter Auftrag, 24.09.2026).** Der Sweep ist kein Schalter mehr,
+sondern ein Feld mit drei Werten: `Netzeinstellungen.sweep = "aus" | "sauber" | "immer"`
+(`sweep.betriebsart`; `True`/`False` alter Dateien heißen „immer“/„aus“, ein unbekanntes Wort
+„immer“, die Vorgabe bleibt „aus“). In „sauber“ wird ein Körper **nur** als Hexaeder vernetzt,
+wenn jedes seiner hex8 und pent6 höchstens `TRAPEZ_GRENZE` Trapezfehler hat und an allen
+Integrationspunkten und Ecken eine positive Jacobi-Determinante (`sauber_pruefen`, vor dem
+Einbau am Lagenstapel); sonst wird er frei mit Tetraedern vernetzt, das Protokoll nennt den Grund
+(„nicht gesweept (Betriebsart „sauber“) – Trapezfehler 27,0° > 5,0° (Winkelfehler 57°)“), und
+der Übergang zu jedem gesweepten oder abgebildeten Nachbarn geht **immer über Pyramiden**
+(`netz.pyramiden` braucht es dafür nicht). Zerlegen an Fußabdrücken gibt es in „sauber“ nicht: die
+Blöcke wären gepflasterte Grundflächen, die die Probe nicht bestehen. Die Probe entscheidet schon
+die Verteilung (`sweep.sweepbar` mit `nur_pruefen`): nur ein sauber gesweepter Körper bleibt im
+Hauptprozess, ein abgelehnter geht als freier Körper in einen Arbeitsprozess — ohne diese
+Vorprüfung liefen die abgelehnten Körper nacheinander im Hauptprozess durch den freien Vernetzer,
+mit MMG3D über 14 Minuten für einen einzigen (gemessen 24.09.2026).
+
+**Die Grenze gemessen: Trapez gegen Parallelogramm.** `sweep.WINKELFEHLER_GRENZE` stand mit 15°
+ohne Messung. Gemessen am Kragarm wie V5 (`tests/messung_winkelfehler.py`, 1,0 × 0,1 × 0,2 m,
+Soll 355 N/mm² an der Nachweisstelle): das regelmäßige hex8-Netz erreicht 1 N/mm² schon mit
+8 × 2 × 4 Elementen (+0,77); dann dasselbe Netz mit Parallelogramm- und mit Trapezverzerrung im
+Zickzack über die Lagen — jedes Element bekommt den Eckwinkel 90° ± θ, das Trapez dazu je Spalte
+wechselnde Vorzeichen, sodass gegenüberliegende Kanten um 2 θ gegeneinander kippen. Fehler an der
+Nachweisstelle in N/mm² (Zuwachs gegen 0°):
+
+| θ | 2,5° | 5° | 7,5° | 10° | 15° | 20° | 30° |
+|---|---|---|---|---|---|---|---|
+| Parallelogramm, 8 × 2 × 4 | −0,06 | −0,10 | −0,13 | −0,14 | −0,10 | +0,01 | +0,37 |
+| Trapez, 8 × 2 × 4 | **−2,05** | −6,06 | −11,95 | −19,65 | −39,99 | −65,91 | −128,80 |
+| Parallelogramm, 16 × 4 × 8 | 0,00 | 0,00 | 0,00 | −0,01 | −0,01 | −0,01 | +0,01 |
+| Trapez, 16 × 4 × 8 | −0,48 | **−1,53** | −3,15 | −5,35 | −11,58 | −20,39 | −46,92 |
+
+Die **Parallelogrammverzerrung ist bis 30° unkritisch**, die **Trapezverzerrung kostet ab 2,5°
+mehr als 1 N/mm²** am groben Netz und ab 5° am feinen — der bekannte Trapezlock des hex8. Der
+Eckwinkelfehler unterscheidet die beiden nicht (beide θ). Darum zwei Konstanten:
+`WINKELFEHLER_GRENZE = 2,5°` (der größte Winkel, bei dem beide Verzerrungen unter 1 N/mm²
+bleiben — die Frage des Auftrags, wörtlich; die Netzabnahme liest sie weiter) und das Maß, das den
+hex8 wirklich trifft, `sweep.trapezfehler`: der Winkel zwischen **gegenüberliegenden** Kanten
+einer Viereckseite, 0 für Rechtecke und Parallelogramme, 2 θ für das Zickzack-Trapez, mit
+`TRAPEZ_GRENZE = 2 · WINKELFEHLER_GRENZE = 5°`. Die Betriebsart „sauber“ prüft den Trapezfehler.
+Empfehlung an die Netzabnahme: für die Warnung „verzerrte hex8“ ebenfalls `trapezfehler` gegen
+`TRAPEZ_GRENZE` lesen, sonst warnt sie vor Parallelogrammen, die nichts kosten.
+
+**Was der Übergang kostet.** Ein pyr5 ist für sich schwach (Element-Sitzung, 23.09.: der Kragarm
+als reines Pyramidennetz −193 / −93 / −34 N/mm²). Gemessen mit `tests/messung_uebergang_pyramiden.py`
+am zweiteiligen Kragarm, Fuge genau an der Nachweisstelle x = L/2: A der abgebildete hex8-Quader,
+B frei mit angehobener Deckelecke (weder abgebildet noch sweepbar), h = 25 mm, Fehler an der
+Nachweisstelle und ein Element daneben:
+
+| Netz | Elemente | Unbekannte | Fehler an der Fuge | ein Element in A / in B |
+|---|---|---|---|---|
+| hex8 durchgehend (V5) | 640 hex8 | 5 535 | +0,26 | +0,24 / +0,27 |
+| **Übergang** A hex8, B Tetraeder mit 32 Pyramiden | 640 hex8 + 32 pyr5 + 9 664 tet4 | 8 268 | **−25,9** | +2,0 / +12,4 |
+| Tetraeder durchgehend | 18 856 tet4 | 10 662 | −35,9 | −9,7 / +18,2 |
+
+Die Übergangslage kostet an der Fuge 26 N/mm² (7 %) — fast so viel wie das reine tet4-Netz, ein
+Element weiter im hex8-Teil noch 2. Wer den Übergang braucht, legt ihn nicht an die Nachweisstelle.
+Dabei fiel ein Fehler auf: an der Fuge zum **abgebildeten** Quader kamen alle 32 Pyramiden
+**umgestülpt** in den Löser (det J = −9,8e-7 an jedem Punkt), weil `solid_volume` den Betrag nimmt
+und den Umlaufsinn nie sah; seit dem 24.09.2026 richtet das Vorzeichen der Jacobi-Determinante
+das Grundviereck aus (`test_pyramiden_ausrichtung_am_abgebildeten_nachbarn`: 8 Pyramiden, alle
+det J > 0, Abnahme ohne Befund).
+
+**Am Drehlager in der Betriebsart „sauber“** (18°, 3 Arbeitsprozesse, nur vernetzt; gemessen
+24.09.2026): von 108 Körpern sind 68 sweepbar, und **keiner** besteht die Probe — Trapezfehler
+7,5° bis 72,2° (Median 26,4°), Eckwinkelfehler 5° bis 72° (Median 40°); die drei besten (V101,
+V70, V96) liegen mit 7,5° noch anderthalbmal über der Grenze. Der Grund ist der Sweep selbst:
+seine Grundfläche ist immer aus gepaarten Dreiecken gepflastert (`_grundnetz`), auch ein
+Rechteck — der Quader mit geteilter Deckelkante kommt so auf 30° Trapezfehler, ein 100 × 50 mm-Grund
+auf 5,9°, ein Zylinder mit gepflasterter Kreisscheibe auf 70°. Ergebnis: 584 614 tet4 auf
+141 466 Knoten (429 666 Unbekannte), 0 Hexaeder, 0 Pyramiden, 188 s; gegen das reine tet10-Netz bei
+18° (670 185 Elemente, 3 302 631 Unbekannte) und gegen das tet4-Netz mit `sweep = "aus"`
+(672 575 Elemente). Was die Betriebsart mit Hexaedern füllen würde, ist ein **abgebildetes
+Grundnetz für vierseitige Grundflächen** (Rechtecke, Ringsektoren mit feiner Winkelteilung) — das
+gehört zum Plan des hex8-Vernetzers für die dicken Platten, nicht in diesen Auftrag.
 
 **Am Drehlager** (Zählung der Löser-Sitzung mit `sweep.erkennen` und `netzfeld.bedeutung`,
 21.09.2026; 108 Körper, 1 375 Flächen, 2 807 Linien, 645 934 Volumenelemente):
@@ -7642,12 +7851,30 @@ Dreiecke seitlich), die der Sweep setzt:
 | pent15 | Bindung | direkt | nein | Bindung | direkt | Bindung | direkt | Bindung |
 | pyr5 | direkt | Bindung | linear | direkt | Bindung | direkt | Bindung | direkt |
 
-Die Vorgabe der Oberfläche, tet10 + VQ83, ist damit zulässig: tet10 neben dem hex8 über
-Pyramiden, neben dessen Keilen und Tetraedern mit Bindung. Geprüft wird die Tabelle
+Die Elementstufen der Oberfläche (25.09.2026) sind damit zulässig: Entwurf (tet4 neben
+hex8/pent6/pyr5 direkt) und Mittel/Fein (tet10 neben hex20/pent15 direkt oder mit
+Bindung); ein gesweeptes hex8 neben tet10 geht über Pyramiden, neben dessen Keilen und
+Tetraedern mit Bindung. Geprüft wird die Tabelle
 gegen die Rechnung (`tests/test_vertraeglich.py`): für 50 Typpaare mit gleich geformter
 Seite ist die Spur der Verschiebung von beiden Seiten gleich, genau wo die Tabelle
 „direkt“ oder „Bindung“ sagt, mit den Bindungen, die die Assemblierung wirklich setzt;
 ohne sie klafft sie bei „Bindung“. tetp neben tet4 rechnet, neben tet10 hält es an.
+
+**Elementstufe in der Oberfläche: was der Vernetzer daraus macht** (25.09.2026). Der
+Vernetzer hat **eine** Ordnung (`Netzeinstellungen.ordnung`) für frei vernetzte Körper
+(tet4/tet10), abgebildete Sechsflächner (hex8/hex20) und Flächen (shell3/4 bzw.
+shell6/8); der Sweep erzeugt immer hex8/pent6; tetp entstehen nur durch Umwandlung eines
+tet10-Netzes (`tetp.aus_tet10`). Die Haken der Maske *Elemente wählen* (am Vormittag des
+25.09.2026, nach dieser Tabelle ausgegraut) sind darum den Stufen gewichen
+(`statik3d.elementstufe`): **Entwurf** = `ordnung 1` (tet4, hex8 als VQ83, Schalen
+linear), **Mittel** = `ordnung 2` (tet10, hex20 als VQ203, Schalen quadratisch),
+**Fein** = Mittel mit halber Kantenlänge beim Vernetzen (`elementstufe.wirksam`); jede
+Stufe setzt den Sweep „sauber“. An einem Modell mit Kontaktbedingung, Kontaktpaar oder
+Flächenlager sind Mittel und Fein gesperrt (`elementstufe.quadratisch_gesperrt`, die
+eine Stelle), solange Kontakt nur die Eckknoten einer Seite nimmt
+(`fugen.QuadratischeSeiten`); das Modell wird mit Entwurf vernetzt, mit Zeile im
+Protokoll. Messwerte zu den Stufen: Benutzerhandbuch, „Elementstufe: Entwurf, Mittel,
+Fein“.
 
 Ein Volumenkörper, der so nie ein Netz bekommen kann, gilt auch nicht als
 **unvernetzt** (`Model.koerper_traegt`). Sonst forderte die

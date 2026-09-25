@@ -2541,11 +2541,10 @@ def _ausduennen(X: np.ndarray, abstand: np.ndarray) -> np.ndarray:
     return X[behalten]
 
 
-#: Wie oft huelle_kippen ueber die Zerlegung geht: jede Runde holt die
-#: Huelldreiecke zurueck, die eine Kante mit genau drei Tetraedern durchstoesst;
-#: was eine Runde freilegt, holt die naechste. 0 schaltet das Kippen ab
-#: (Ruecknahmeprobe in test_mesher3d).
-KIPP_RUNDEN = 4
+#: Wie oft huelle_kippen ueber die Zerlegung geht: jede Runde holt Huellkanten
+#: (2 -> 3) und Huelldreiecke (3 -> 2, 4 -> 4) zurueck; was eine Runde freilegt,
+#: holt die naechste. 0 schaltet das Kippen ab (Ruecknahmeprobe in test_mesher3d).
+KIPP_RUNDEN = 6
 
 
 def _kante_durch_dreieck(p0, p1, a, b, c, eps: float = 1e-9) -> bool:
@@ -2569,12 +2568,18 @@ def _kante_durch_dreieck(p0, p1, a, b, c, eps: float = 1e-9) -> bool:
     return eps < t < 1.0 - eps
 
 
-def huelle_kippen(punkte: np.ndarray, TET: np.ndarray, P: np.ndarray, T: np.ndarray,
-                  runden: int = None) -> tuple:
-    """Fehlende Huelldreiecke durch **Kantenkippen 3 -> 2** zurueckholen.
+def _tets_mit(TET: np.ndarray, *ecken) -> np.ndarray:
+    """Indizes der Tetraeder, die alle genannten Ecken enthalten."""
+    treffer = np.isin(TET, np.asarray(ecken, int)).sum(axis=1)
+    return np.flatnonzero(treffer == len(ecken))
 
-    Die Delaunay-Zerlegung der Punktwolke enthaelt die Huelldreiecke nicht
-    von selbst. An einer rechtwinklig einspringenden Kante liegen fuenf
+
+def huelle_kippen(punkte: np.ndarray, TET: np.ndarray, P: np.ndarray, T: np.ndarray,
+                  runden: int = None, bericht: dict = None) -> tuple:
+    """Fehlende Huellkanten und Huelldreiecke durch **Kantenkippen** zurueckholen.
+
+    Die Delaunay-Zerlegung der Punktwolke enthaelt die Huelle nicht von
+    selbst. An einer rechtwinklig einspringenden Kante liegen fuenf
     Huellpunkte genau auf einer Kugel (Thaleskreis: der Kantenpunkt sieht
     jede Sehne quer durch die Kerbe unter 90 Grad), und die Zerlegung hat
     dort zwei gleichberechtigte Antworten: zwei Tetraeder mit dem Huelldreieck
@@ -2585,20 +2590,34 @@ def huelle_kippen(punkte: np.ndarray, TET: np.ndarray, P: np.ndarray, T: np.ndar
     und U-Prismen). Kein neuer Huellpunkt hilft dagegen: die Verfeinerung
     stellt dieselbe Lage in der halben Groesse wieder her.
 
-    Hier wird die andere Antwort genommen, ohne einen Punkt zu setzen: zu
-    jedem fehlenden Huelldreieck (a, b, c) die Kante u-w, die es durchstoesst;
-    haengen an ihr genau drei Tetraeder, deren uebrige Ecken a, b, c sind,
-    werden sie durch (a, b, c, u) und (a, b, c, w) ersetzt. Das ist die
-    bedingte Delaunay-Zerlegung fuer den Fall, der hier vorkommt; die Kante
-    im Netzrand (Segment) und das Dreieck (Facette) sind danach da. Rueckgabe
-    (TET, Zahl der gekippten Kanten). Gemessen 23.09.2026: an den 69 Netzen
-    der Gitterphasen-Stichprobe fehlte in der ersten Zerlegung stets genau
-    **ein** Dreieck, stets von einer Kante mit drei Tetraedern durchstossen.
+    Hier wird die andere Antwort genommen, ohne einen Punkt zu setzen - die
+    bedingte Delaunay-Zerlegung fuer die Faelle, die vorkommen (gemessen
+    23./24.09.2026 an 138 Prismennetzen und der Platte mit Bohrung):
+
+    * **3 -> 2** (Facette): zu einem fehlenden Huelldreieck (a, b, c) die Kante
+      u-w, die es durchstoesst; haengen an ihr genau drei Tetraeder mit den
+      uebrigen Ecken a, b, c, werden sie durch (a, b, c, u) und (a, b, c, w)
+      ersetzt.
+    * **4 -> 4** (Facette): haengen an der Kante vier Tetraeder und liegen a, b, c
+      unter ihren vier Ringecken, wird das Achtflach um die Kante ueber die
+      Diagonale des Dreiecks neu geteilt - vier Tetraeder um die Diagonale,
+      das Dreieck ist eine Seite davon. Gueltig, wenn der Rauminhalt der vier
+      neuen gleich dem der vier alten ist (sonst ueberlappten sie).
+    * **2 -> 3** (Segment): zu einer fehlenden Huellkante a-b die Seite p-q-r,
+      die die Strecke durchstoesst; sind die beiden Tetraeder an ihr
+      (p, q, r, a) und (p, q, r, b), werden sie durch die drei um a-b ersetzt.
+
+    Was eine Runde freilegt, holt die naechste (KIPP_RUNDEN). Rueckgabe
+    (TET, Zahl der Kippungen); ``bericht`` bekommt die Zaehlung je Art und
+    was offen blieb.
     """
     runden = KIPP_RUNDEN if runden is None else int(runden)
     TET = np.asarray(TET, int)
     n_h = len(P)
+    zaehl = {"3-2": 0, "4-4": 0, "2-3": 0, "offene_dreiecke": 0, "offene_kanten": 0}
     if runden <= 0 or not len(TET) or not len(T) or n_h == 0:
+        if bericht is not None:
+            bericht.update(zaehl)
         return TET, 0
     n = len(punkte)
     huelle = np.sort(np.asarray(T, int), axis=1)
@@ -2608,7 +2627,11 @@ def huelle_kippen(punkte: np.ndarray, TET: np.ndarray, P: np.ndarray, T: np.ndar
 
     def schluessel(D):
         return (D[:, 0].astype(np.int64) * n + D[:, 1]) * n + D[:, 2]
-    gekippt = 0
+    hk = np.unique(np.sort(np.vstack([huelle[:, [0, 1]], huelle[:, [1, 2]], huelle[:, [0, 2]]]), axis=1), axis=0)
+    hk_key = hk[:, 0].astype(np.int64) * n + hk[:, 1]
+
+    def volumen(tets):
+        return np.abs(tetraedervolumen(punkte, np.asarray(tets, int)))
     for _runde in range(runden):
         seiten = np.sort(np.vstack([TET[:, [0, 1, 2]], TET[:, [0, 1, 3]],
                                     TET[:, [0, 2, 3]], TET[:, [1, 2, 3]]]), axis=1)
@@ -2617,16 +2640,40 @@ def huelle_kippen(punkte: np.ndarray, TET: np.ndarray, P: np.ndarray, T: np.ndar
         else:
             vorhanden = {tuple(z) for z in np.unique(seiten, axis=0).tolist()}
             fehlt = np.asarray([t for t in huelle.tolist() if tuple(t) not in vorhanden], int).reshape(-1, 3)
-        if not len(fehlt):
+        kn = np.sort(np.vstack([TET[:, [i, j]] for i in range(4) for j in range(i + 1, 4)]), axis=1)
+        kn_key = kn[:, 0].astype(np.int64) * n + kn[:, 1]
+        fehlt_k = hk[~np.isin(hk_key, kn_key)]
+        if not len(fehlt) and not len(fehlt_k):
             break
-        ecken = np.unique(fehlt)
-        beruehrt = np.flatnonzero(np.isin(TET, ecken).any(axis=1))
+        weg: set = set()
+        neu: list = []
+        vorher = dict(zaehl)
+        # ---- Segmente: 2 -> 3 --------------------------------------------------
+        for a, b in fehlt_k.tolist():
+            for i in _tets_mit(TET, a).tolist():
+                if i in weg:
+                    continue
+                f = [int(v) for v in TET[i] if int(v) != a]
+                if b in f:
+                    continue
+                if not _kante_durch_dreieck(punkte[a], punkte[b], punkte[f[0]], punkte[f[1]], punkte[f[2]]):
+                    continue
+                nachbarn = [int(j) for j in _tets_mit(TET, *f).tolist() if j != i and int(j) not in weg]
+                if len(nachbarn) == 1:
+                    j = nachbarn[0]
+                    x = int(next(v for v in TET[j] if int(v) not in f))
+                    if x == b:
+                        weg.update({i, j})
+                        neu += [(a, b, f[0], f[1]), (a, b, f[1], f[2]), (a, b, f[2], f[0])]
+                        zaehl["2-3"] += 1
+                break                        # die Strecke verlaesst a durch genau eine Seite
+        # ---- Facetten: 3 -> 2 und 4 -> 4 ------------------------------------------
+        ecken = np.unique(fehlt) if len(fehlt) else np.zeros(0, int)
+        beruehrt = np.flatnonzero(np.isin(TET, ecken).any(axis=1)) if len(ecken) else np.zeros(0, int)
         an: dict = {}
         for i in beruehrt.tolist():
             for v in TET[i].tolist():
                 an.setdefault(v, []).append(i)
-        weg: set = set()
-        neu: list = []
         for a, b, c in fehlt.tolist():
             kanten = set()
             for v in (a, b, c):
@@ -2643,27 +2690,55 @@ def huelle_kippen(punkte: np.ndarray, TET: np.ndarray, P: np.ndarray, T: np.ndar
                 if not _kante_durch_dreieck(punkte[u], punkte[w], punkte[a], punkte[b], punkte[c]):
                     continue
                 # Der Ring um die Kante u-w aus **allen** Tetraedern - nicht nur
-                # aus denen an a, b, c: ein vierter Tetraeder um die Kante, der
+                # aus denen an a, b, c: ein weiterer Tetraeder um die Kante, der
                 # keine der drei Ecken traegt, macht das Kippen unzulaessig.
-                ring = [int(i) for i in np.flatnonzero(((TET == u) | (TET == w)).sum(axis=1) == 2)
-                        if int(i) not in weg]
-                if len(ring) != 3:
-                    continue
+                ring = [int(i) for i in _tets_mit(TET, u, w).tolist() if int(i) not in weg]
                 uebrige = set(int(v) for i in ring for v in TET[i].tolist()) - {u, w}
-                if uebrige != {a, b, c}:
-                    continue
-                weg.update(ring)
-                neu.append((a, b, c, u))
-                neu.append((a, b, c, w))
-                gekippt += 1
-                break
+                if len(ring) == 3 and uebrige == {a, b, c}:
+                    weg.update(ring)
+                    neu += [(a, b, c, u), (a, b, c, w)]
+                    zaehl["3-2"] += 1
+                elif len(ring) == 4 and {a, b, c} <= uebrige and len(uebrige) == 4:
+                    d = (uebrige - {a, b, c}).pop()
+                    nachbar: dict = {v: set() for v in uebrige}
+                    for i in ring:
+                        paar = [int(v) for v in TET[i].tolist() if int(v) not in (u, w)]
+                        if len(paar) == 2:
+                            nachbar[paar[0]].add(paar[1])
+                            nachbar[paar[1]].add(paar[0])
+                    diag = sorted(nachbar[d])
+                    if len(diag) == 2 and all(v in (a, b, c) for v in diag):
+                        mitte = next(v for v in (a, b, c) if v not in diag)
+                        kand = [(diag[0], diag[1], mitte, u), (diag[0], diag[1], mitte, w),
+                                (diag[0], diag[1], d, u), (diag[0], diag[1], d, w)]
+                        V_alt = float(volumen([TET[i] for i in ring]).sum())
+                        V_neu = volumen(kand)
+                        if V_neu.min() > 1e-12 * V_alt and abs(float(V_neu.sum()) - V_alt) <= 1e-9 * V_alt:
+                            weg.update(ring)
+                            neu += kand
+                            zaehl["4-4"] += 1
+                break                        # je Dreieck genau eine stechende Kante
         if not neu:
+            zaehl["offene_dreiecke"] = int(len(fehlt))
+            zaehl["offene_kanten"] = int(len(fehlt_k))
             break
         behalt = np.ones(len(TET), bool)
         behalt[list(weg)] = False
         TET = np.vstack([TET[behalt], np.asarray(neu, int)])
+        if zaehl == vorher:
+            break
+    else:
+        # Runden erschoepft: was jetzt noch fehlt, ist offen
+        seiten = np.sort(np.vstack([TET[:, [0, 1, 2]], TET[:, [0, 1, 3]],
+                                    TET[:, [0, 2, 3]], TET[:, [1, 2, 3]]]), axis=1)
+        if schnell:
+            zaehl["offene_dreiecke"] = int((~np.isin(schluessel(huelle), schluessel(seiten))).sum())
+        kn = np.sort(np.vstack([TET[:, [i, j]] for i in range(4) for j in range(i + 1, 4)]), axis=1)
+        zaehl["offene_kanten"] = int((~np.isin(hk_key, kn[:, 0].astype(np.int64) * n + kn[:, 1])).sum())
+    gekippt = zaehl["3-2"] + zaehl["4-4"] + zaehl["2-3"]
+    if bericht is not None:
+        bericht.update(zaehl)
     return TET, gekippt
-
 
 def flache_tetraeder(V: np.ndarray, punkte: np.ndarray, TET: np.ndarray) -> np.ndarray:
     """Maske der Tetraeder, die nichts tragen: Volumen unter FLACH mal der
@@ -2685,6 +2760,97 @@ def flache_tetraeder(V: np.ndarray, punkte: np.ndarray, TET: np.ndarray) -> np.n
     for a, b in ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)):
         L2 = np.maximum(L2, np.sum((X[:, a] - X[:, b]) ** 2, axis=1))
     return V <= FLACH * L2 ** 1.5
+
+
+def flache_aufloesen(punkte: np.ndarray, TET: np.ndarray) -> tuple:
+    """Tetraeder ohne Rauminhalt durch einen **Diagonaltausch 2-2** aufloesen.
+
+    Vier Punkte in einer Ebene - zwei oben, zwei unten in einer Platte, die
+    eine Tetraederlage dick ist, oder vier in einer Deckflaeche - gibt Qhull
+    als Tetraeder ohne Rauminhalt aus (Triangulierung kosphaerischer Punkte,
+    Option Qt). Bisher flogen sie nach der Glaettung als flach heraus, und
+    ihre vier Seiten blieben als **geschlossener Hohlraum ohne Rauminhalt**
+    im Netz: die Abnahme meldete WARNUNG "Riss im Netz" - 54 Tetraeder, 216
+    Seiten an der Platte mit Bohrung, h = 50 mm (Nachtrag der Statik3D-
+    Sitzung, gemessen 24.09.2026).
+
+    Ein flacher Tetraeder a b c d ist ein ebenes Viereck, auf jeder Seite der
+    Ebene mit zwei Seiten ueberdeckt (eine Diagonale je Seite). Haben die
+    beiden Nachbarn auf einer Seite dieselbe vierte Ecke x, sind sie zusammen
+    die Pyramide ueber dem Viereck; sie wird ueber die **andere** Diagonale
+    geteilt, und der flache Tetraeder verschwindet, ohne dass eine Seite
+    frei bleibt. Rueckgabe (TET, Zahl der aufgeloesten).
+    """
+    TET = np.asarray(TET, int)
+    if not len(TET):
+        return TET, 0
+    V = np.abs(tetraedervolumen(punkte, TET))
+    flach = np.flatnonzero(flache_tetraeder(V, punkte, TET))
+    if not len(flach):
+        return TET, 0
+    weg: set = set()
+    neu: list = []
+    aufgeloest = 0
+    for i in flach.tolist():
+        if i in weg:
+            continue
+        t = [int(v) for v in TET[i]]
+        X = punkte[t]
+        # Ebene des flachen Tetraeders: Normale aus dem bestkonditionierten Dreieck
+        nrm = None
+        for a, b, c in ((0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3)):
+            n_ = np.cross(X[b] - X[a], X[c] - X[a])
+            if nrm is None or np.linalg.norm(n_) > np.linalg.norm(nrm):
+                nrm = n_
+        if nrm is None or np.linalg.norm(nrm) < 1e-300:
+            continue
+        nrm = nrm / np.linalg.norm(nrm)
+        mitte = X.mean(axis=0)
+        seiten = []                          # (Seite, Nachbar, Apex, Vorzeichen)
+        ok = True
+        for a, b, c in ((0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3)):
+            f = (t[a], t[b], t[c])
+            kand = np.flatnonzero(np.isin(TET, f).sum(axis=1) == 3)
+            kand = [int(j) for j in kand if j != i and int(j) not in weg]
+            if len(kand) > 1:
+                ok = False
+                break
+            if kand:
+                j = kand[0]
+                x = int(next(v for v in TET[j] if int(v) not in f))
+                s_ = float((punkte[x] - mitte) @ nrm)
+                seiten.append((f, j, x, 1 if s_ > 0 else -1))
+            else:
+                seiten.append((f, None, None, 0))
+        if not ok:
+            continue
+        getan = False
+        for vz in (1, -1):
+            paar = [w for w in seiten if w[3] == vz]
+            if len(paar) != 2 or paar[0][2] != paar[1][2]:
+                continue
+            x = paar[0][2]
+            andere = [w[0] for w in seiten if w[3] != vz]
+            if len(andere) != 2:
+                continue
+            # Die beiden Seiten des Paars muessen die eine Diagonale bilden
+            # (gemeinsame Kante = Diagonale), die anderen beiden die andere
+            gem = set(paar[0][0]) & set(paar[1][0])
+            if len(gem) != 2 or gem == set(andere[0]) & set(andere[1]):
+                continue
+            weg.update({i, paar[0][1], paar[1][1]})
+            for f in andere:
+                neu.append((f[0], f[1], f[2], x))
+            aufgeloest += 1
+            getan = True
+            break
+        if not getan:
+            continue
+    if not aufgeloest:
+        return TET, 0
+    behalt = np.ones(len(TET), bool)
+    behalt[list(weg)] = False
+    return np.vstack([TET[behalt], np.asarray(neu, int)]), aufgeloest
 
 
 def _innere(punkte: np.ndarray, simplices: np.ndarray, P: np.ndarray,
@@ -2850,14 +3016,20 @@ def _kappenpunkte(punkte: np.ndarray, TET: np.ndarray, n_huelle: int, P: np.ndar
     # gemessen 23.09.2026).
     weg = np.minimum(0.5 * L, KAPPEN_WEG * np.asarray(sollgroesse(c), float))
     K = c - nrm[j] * weg[:, None]
-    K = K[innen(K, P, T, index)]
+    drin = innen(K, P, T, index)
+    K, L = K[drin], L[drin]
     if not len(K):
         return leer
-    # Und wie jeder innere Punkt haelt er Abstand zur **ganzen** Huelle
-    # (RANDABSTAND_FLAECHE, wie im Gitter): neben einer anderen Flaeche als
-    # der, von der er kommt, entstuende sonst der naechste Splitter.
+    # Und wie jeder innere Punkt haelt er Abstand zur **ganzen** Huelle -
+    # gemessen an der **Kappe**, nicht an der Sollgroesse am Ort: an der
+    # Bohrung einer duennen Platte ist die Sollgroesse 3 mm, die Kappe am
+    # Bohrungsrand 6 mm gross, und ihr Punkt stand 1,4 mm neben der
+    # Bohrungswand (Dellen, FEHLER "Seiten im Inneren"; Nachtrag der
+    # Statik3D-Sitzung, gemessen 24.09.2026). Neben einer anderen Flaeche
+    # als der, von der er kommt, entstuende sonst der naechste Splitter.
     if KAPPEN_RANDABSTAND > 0:
-        K = K[abstand_zur_huelle(K, P, T) > KAPPEN_RANDABSTAND * sollgroesse(K)]
+        nah = abstand_zur_huelle(K, P, T) > KAPPEN_RANDABSTAND * L
+        K = K[nah]
         if not len(K):
             return leer
     d_alt, _ = cKDTree(punkte).query(K)
@@ -2865,6 +3037,133 @@ def _kappenpunkte(punkte: np.ndarray, TET: np.ndarray, n_huelle: int, P: np.ndar
     if not len(K):
         return leer
     return _ausduennen(K, 0.5 * sollgroesse(K))
+
+
+#: Durchgaenge, in denen Tetraeder, die als tet10 mit gekruemmter Randkante
+#: umklappen wuerden, durch einen inneren Punkt aufgeloest werden (dritter
+#: Auftrag, 24.09.2026). Der Punkt liegt im Inneren, die Randflaeche bleibt,
+#: wie sie ist - darum wirkt das auch an einer mit dem Nachbarn gemeinsamen
+#: Flaeche, die kein Arbeitsprozess allein feiner machen darf.
+KRUMM_KAPPEN_RUNDEN = 3
+#: Abstand eines solchen Punkts zur ganzen Huelle, in Sollgroessen. Kleiner
+#: als KAPPEN_RANDABSTAND (0,4): das umklappende Tetraeder sitzt oft am Rand
+#: zweier Flaechen (Mantel und Deckel), und der Punkt, der ihm ausweicht,
+#: kommt der anderen Flaeche naeher - am Zylinder in Hohlzylinder (h 25 mm)
+#: 7,2 mm bei verlangten 9,8; mit 0,4 blieb das Tetraeder (24.09.2026).
+KRUMM_KAPPEN_RANDABSTAND = 0.25
+
+
+def _krumme_kappenpunkte(punkte: np.ndarray, TET: np.ndarray, P: np.ndarray, T: np.ndarray,
+                         index: "Gitterindex", sollgroesse, quelle: list, proj: dict,
+                         erlaubt=None) -> tuple:
+    """Je Tetraeder, das als tet10 mit gekruemmter Randkante umklappen
+    wuerde, ein Punkt knapp innerhalb der Huelle, der es aufloest.
+
+    Solche Tetraeder sind flach gegen den Sehnenpfeil ihrer Randkante: am
+    Zylinder in Hohlzylinder (r 50, 36 Grad, h 35 mm) zwei Tetraeder mit
+    Hoehe 1,6 mm ueber einer Sehne mit Pfeil 1,7 mm - zwei innere Ecken und
+    eine Randsehne fast in einer Ebene (gemessen 24.09.2026). Feiner
+    vernetzen hilft nicht (Pfeil und Hoehe schrumpfen gleich), und an einer
+    gemeinsamen Flaeche darf der Arbeitsprozess die Flaeche gar nicht
+    aendern. Ein innerer Punkt im Schwerpunkt, um die halbe Kantenlaenge
+    (hoechstens KAPPEN_WEG mal Sollgroesse) nach innen geschoben, liegt in
+    der riesigen Umkugel des flachen Tetraeders und zerlegt es; wie ein
+    Kappenpunkt haelt er Abstand zur Huelle und zu vorhandenen Punkten.
+
+    ``erlaubt``: nur Tetraeder, deren gekruemmte Kante auf einer dieser
+    Flaechen liegt (None: alle). An eigenen Flaechen ist das oertlich feinere
+    Netz die bessere Kur - es haelt die Form (Buchse r 50/100, 36 Grad, h 35:
+    2 566 tet10 mit kleinster bezogener Determinante 0,403 gegen 3 425 mit
+    0,028, wenn die Punkte zuerst kommen; gemessen 24.09.2026) -, darum
+    kommen die Punkte dort erst, wenn die oertlichen Anlaeufe ausgeschoepft
+    sind; an gemeinsamen Flaechen sofort, weil dort nichts feiner werden darf.
+    Rueckgabe (Punkte, Zahl der ungueltigen Tetraeder an erlaubten Flaechen).
+    """
+    from scipy.spatial import cKDTree
+    leer = np.zeros((0, 3))
+    if not len(TET) or not proj or not any(p is not None for p in proj.values()):
+        return leer, 0
+    krumm = krumme_kanten_pruefen(punkte, TET, P, T, quelle, proj)
+    welche = np.asarray(krumm.get("welche", ()), int)
+    if not len(welche):
+        return leer, 0
+    if erlaubt is not None:
+        erlaubt = set(erlaubt)
+        mitten_e = krumm.get("mitten") or {}
+        TETi = np.asarray(TET, int)
+        behalten = []
+        for i in welche.tolist():
+            t = TETi[i]
+            fl = {mitten_e[(min(t[u], t[v]), max(t[u], t[v]))][1] for u, v in TET10_KANTEN
+                  if (min(t[u], t[v]), max(t[u], t[v])) in mitten_e}
+            if fl & erlaubt:
+                behalten.append(i)
+        welche = np.asarray(behalten, int)
+        if not len(welche):
+            return leer, 0
+    kand = np.asarray(TET, int)[welche]
+    c = punkte[kand].mean(axis=1)
+    X = punkte[kand]
+    L = np.mean([np.linalg.norm(X[:, a] - X[:, b], axis=1)
+                 for a, b in ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))], axis=0)
+    # Richtung: vom Ort der gekruemmten Mitte(n) weg durch den Schwerpunkt -
+    # von der Flaeche weg **und** von der Kante weg, die das Element kippt
+    # (die Normale des naechsten Huelldreiecks fuehrte am Rand zweier
+    # Flaechen laengs der einen auf die andere zu). Wo das nicht geht, die
+    # Normale wie bei den Kappen.
+    a, b, d = P[T[:, 0]], P[T[:, 1]], P[T[:, 2]]
+    nrm = np.cross(b - a, d - a)
+    nrm /= np.maximum(np.linalg.norm(nrm, axis=1), 1e-300)[:, None]
+    _, j = cKDTree(P[T].mean(axis=1)).query(c)
+    richtung = -nrm[j]
+    mitten = krumm.get("mitten") or {}
+    for i, t in enumerate(kand.tolist()):
+        ziele = [mitten[(min(t[u], t[v]), max(t[u], t[v]))][0] for u, v in TET10_KANTEN
+                 if (min(t[u], t[v]), max(t[u], t[v])) in mitten]
+        if ziele:
+            r = c[i] - np.mean(ziele, axis=0)
+            nr = float(np.linalg.norm(r))
+            if nr > 1e-12 * max(L[i], 1e-300):
+                richtung[i] = r / nr
+    # Weite: hoechstens die halbe Kantenlaenge und KAPPEN_WEG Sollgroessen -
+    # und so, dass der Punkt in der **Umkugel** des Tetraeders bleibt: nur
+    # dann nimmt die Delaunay-Zerlegung das Tetraeder gewiss heraus. Ein
+    # Punkt 12 mm tief neben einem 1,6 mm flachen Tetraeder lag ausserhalb
+    # seiner Kugel, und das Tetraeder blieb durch drei Durchgaenge stehen
+    # (Zylinder in Hohlzylinder, gemessen 24.09.2026).
+    M, R = umkugel(punkte, kand)
+    weg = np.minimum(0.5 * L, KAPPEN_WEG * np.asarray(sollgroesse(c), float))
+    cm = c - M
+    bb = np.einsum("ij,ij->i", richtung, cm)
+    cc = np.einsum("ij,ij->i", cm, cm) - R ** 2
+    disk = np.maximum(bb ** 2 - cc, 0.0)
+    t2 = -bb + np.sqrt(disk)                      # der Austritt aus der Kugel laengs der Richtung
+    weg = np.minimum(weg, np.maximum(0.9 * t2, 0.0))
+    K = c + richtung * weg[:, None]
+    gueltig = weg > 1e-9 * np.maximum(L, 1e-300)
+    K, L = K[gueltig], L[gueltig]
+    if not len(K):
+        return leer, int(len(welche))
+    drin = innen(K, P, T, index)
+    K, L = K[drin], L[drin]
+    if not len(K):
+        return leer, int(len(welche))
+    # Abstand zur Huelle wie ein Kappenpunkt - aber gemessen an der
+    # Sollgroesse, wo das Tetraeder laenger ist als sie: die umklappenden
+    # Tetraeder sind lang und flach (Kanten 48-68 mm bei Sollgroesse 25 mm am
+    # Zylinder in Hohlzylinder), und ein Punkt kann nie weiter als die halbe
+    # Sollgroesse von seiner Flaeche weg liegen. Gegen L gemessen blieb kein
+    # Punkt uebrig (gemessen 24.09.2026).
+    if KRUMM_KAPPEN_RANDABSTAND > 0:
+        nah = abstand_zur_huelle(K, P, T) > KRUMM_KAPPEN_RANDABSTAND * np.minimum(L, np.asarray(sollgroesse(K), float))
+        K = K[nah]
+        if not len(K):
+            return leer, int(len(welche))
+    d_alt, _ = cKDTree(punkte).query(K)
+    K = K[d_alt > 0.3 * sollgroesse(K)]
+    if not len(K):
+        return leer, int(len(welche))
+    return _ausduennen(K, 0.5 * sollgroesse(K)), int(len(welche))
 
 
 def _kappen_entfernen(punkte: np.ndarray, TET: np.ndarray, n_huelle: int, splitter: float) -> tuple:
@@ -2922,7 +3221,7 @@ def _kappen_entfernen(punkte: np.ndarray, TET: np.ndarray, n_huelle: int, splitt
 
 def tetraedern(P: np.ndarray, T: np.ndarray, h: float,
                splitter: float = SPLITTER, fortschritt=None,
-               anteil: tuple = (0.15, 0.9), feld=None) -> tuple:
+               anteil: tuple = (0.15, 0.9), feld=None, krumm: tuple = None) -> tuple:
     """Aus der geschlossenen Huelle (P, T) ein Tetraedernetz machen.
 
     **Delaunay-Verfeinerung.** Begonnen wird mit den Randpunkten allein. Dann
@@ -2949,6 +3248,12 @@ def tetraedern(P: np.ndarray, T: np.ndarray, h: float,
     dass die Huelle davon etwas weiss. Die Verfeinerung selbst bleibt
     dieselbe - sie fuegt Umkugelmittelpunkte ein, wo ein Tetraeder groesser
     ist als seine Sollgroesse, und die Sollgroesse liest jetzt drei Quellen.
+
+    ``krumm`` = (quelle, Projektoren) fuer einen tet10-Koerper: Tetraeder,
+    die mit ihrer gekruemmten Randkante umklappen wuerden, werden durch
+    innere Punkte aufgeloest (:func:`_krumme_kappenpunkte`), bis zu
+    KRUMM_KAPPEN_RUNDEN mal; der Bericht fuehrt ``krumme_kappen`` (Punkte)
+    und ``krumm_ungueltig`` (was danach noch umklappen wuerde).
 
     Rueckgabe (Punkte, Tetraeder, Bericht).
     """
@@ -3051,17 +3356,45 @@ def tetraedern(P: np.ndarray, T: np.ndarray, h: float,
                     bericht["hinweis"] = f"Kappen nicht aufgelöst: {ex}"
                     break
                 bericht["kappen"] = bericht.get("kappen", 0) + len(K)
-        punkte = np.asarray(tri.points, float)
-        # Die Huelle zurueckholen, wo Qhull an einer Kugel mit fuenf Punkten
-        # die Kante quer durch die Kerbe gewaehlt hat (huelle_kippen) - vor
-        # der Frage innen/aussen, denn die entscheidet am Schwerpunkt
-        _melden(fortschritt, a0 + 0.58 * spanne, "Netzrand an der Hülle prüfen")
-        simplices, gekippt = huelle_kippen(punkte, np.asarray(tri.simplices, int), P, T)
-        if gekippt:
-            bericht["gekippt"] = gekippt
-        _melden(fortschritt, a0 + 0.6 * spanne, "Tetraeder außerhalb des Körpers aussortieren")
-        TET, V = _innere(punkte, simplices, P, T, index, h, fortschritt,
-                         flache_behalten=True)
+        krumm_runden = KRUMM_KAPPEN_RUNDEN if krumm is not None else 0
+        for krumm_runde in range(krumm_runden + 1):
+            punkte = np.asarray(tri.points, float)
+            # Die Huelle zurueckholen, wo Qhull an einer Kugel mit fuenf Punkten
+            # die Kante quer durch die Kerbe gewaehlt hat (huelle_kippen) - vor
+            # der Frage innen/aussen, denn die entscheidet am Schwerpunkt
+            _melden(fortschritt, a0 + 0.58 * spanne, "Netzrand an der Hülle prüfen")
+            kipp: dict = {}
+            simplices, gekippt = huelle_kippen(punkte, np.asarray(tri.simplices, int), P, T, bericht=kipp)
+            if gekippt:
+                bericht["gekippt"] = gekippt
+                bericht["gekippt_je_art"] = {k: v for k, v in kipp.items() if v and k in ("3-2", "4-4", "2-3")}
+            if kipp.get("offene_dreiecke") or kipp.get("offene_kanten"):
+                bericht["huelle_offen"] = (int(kipp.get("offene_dreiecke", 0)), int(kipp.get("offene_kanten", 0)))
+            # Tetraeder ohne Rauminhalt (vier Punkte in einer Ebene) durch den
+            # Diagonaltausch aufloesen, statt sie spaeter als flach herauszunehmen
+            # und einen Hohlraum ohne Rauminhalt zu hinterlassen
+            simplices, aufgeloest = flache_aufloesen(punkte, simplices)
+            if aufgeloest:
+                bericht["flache_aufgeloest"] = aufgeloest
+            _melden(fortschritt, a0 + 0.6 * spanne, "Tetraeder außerhalb des Körpers aussortieren")
+            TET, V = _innere(punkte, simplices, P, T, index, h, fortschritt,
+                             flache_behalten=True)
+            if krumm_runde >= krumm_runden or not len(TET):
+                break
+            # tet10: Tetraeder, die mit gekruemmter Randkante umklappen
+            # wuerden, durch einen inneren Punkt aufloesen - und noch einmal
+            # zerlegen (siehe _krumme_kappenpunkte)
+            K, ungueltig = _krumme_kappenpunkte(punkte, TET, P, T, index, sollgroesse, krumm[0], krumm[1],
+                                                krumm[2] if len(krumm) > 2 else None)
+            bericht["krumm_ungueltig"] = int(ungueltig)
+            if not len(K):
+                break
+            try:
+                tri.add_points(K)
+            except Exception as ex:         # noqa: BLE001 - dann bleibt es beim Rueckfall auf gerade Kanten
+                bericht["hinweis"] = f"gekrümmte Kappen nicht aufgelöst: {ex}"
+                break
+            bericht["krumme_kappen"] = bericht.get("krumme_kappen", 0) + len(K)
     except Abgebrochen:
         raise
     except Exception as ex:                 # noqa: BLE001
@@ -3497,7 +3830,8 @@ def tetraedern_treu(P: np.ndarray, T: np.ndarray, h: float,
                     runden: int = TREU_RUNDEN, quelle: list = None,
                     splitter: float = SPLITTER, fortschritt=None,
                     gemeinsam: set = None, kennung: list = None,
-                    gem_linien=None, feld=None, projektor: dict = None) -> tuple:
+                    gem_linien=None, feld=None, projektor: dict = None,
+                    krumm_kappen=False) -> tuple:
     """Tetraedern und dabei den Rand nachfuehren, wo er nicht getroffen wurde.
 
     Eine einspringende Kante - der Innenwinkel eines L-Koerpers, die Kehle
@@ -3537,16 +3871,17 @@ def tetraedern_treu(P: np.ndarray, T: np.ndarray, h: float,
         else:
             a0 = 0.85 + 0.10 * (runde - 1) / max(1, runden - 1)
             a1 = a0 + 0.10 / max(1, runden - 1)
-        Pn, TET, bericht = tetraedern(P, T, h, splitter, fortschritt, (a0, a1), feld=feld)
+        # krumm_kappen: False - nichts; True - innere Punkte gegen jedes
+        # umklappende tet10; eine Menge - nur an diesen (gemeinsamen) Flaechen
+        krumm = None
+        if krumm_kappen and projektor:
+            krumm = (list(quelle or []), projektor, None if krumm_kappen is True else set(krumm_kappen))
+        Pn, TET, bericht = tetraedern(P, T, h, splitter, fortschritt, (a0, a1), feld=feld, krumm=krumm)
         bericht["runden"] = runde + 1
         bericht["huelldreiecke"] = len(T)
         soll = bericht["sollvolumen"]
         fehl = abs(bericht["volumen"] - soll) / soll if soll > 0 else 1.0
         bericht["volumenabweichung"] = fehl
-        if bestes is None or fehl < bestes[3]:
-            bestes = (Pn, TET, bericht, fehl, P, T, quelle)
-        elif fehl <= TREU_VOLUMEN:
-            bestes = (Pn, TET, bericht, fehl, P, T, quelle)
         # Abbruch, wenn der Rauminhalt **stimmt** oder keine echte Delle mehr
         # da ist - nicht bei 99,9 % Randtreue und 0,01 % Fehlbetrag, wie bis
         # zum 23.09.2026: das liess an der einspringenden Kante eines
@@ -3554,11 +3889,21 @@ def tetraedern_treu(P: np.ndarray, T: np.ndarray, h: float,
         # nicht, weil die andere Diagonale eines windschiefen Huellvierecks ihn
         # aendert, ohne dass etwas fehlt (echte_dellen).
         if not len(TET) or fehl <= TREU_VOLUMEN:
-            bericht["dellen"] = 0
-            break
-        frei, echt = echte_dellen(Pn, TET, P, T, quelle)
+            frei, echt = np.zeros((0, 3), int), np.zeros(0, bool)
+        else:
+            frei, echt = echte_dellen(Pn, TET, P, T, quelle)
         bericht["dellen"] = int(echt.sum())
-        if not echt.any():
+        # Der beste Durchgang: erst nach den echten Dellen, dann nach dem
+        # Fehlbetrag. Nach dem Fehlbetrag allein gewann an der Platte mit
+        # Bohrung (h = 40 mm) die vierte Runde mit 32 Dellen gegen die sechste
+        # ohne Delle, weil dort weggenommene Kappen an der Bohrungswand den
+        # Rauminhalt um ihre Sehnenpfeile aenderten - und die Abnahme meldete
+        # FEHLER "Seiten im Inneren" (Nachtrag der Statik3D-Sitzung, gemessen
+        # 24.09.2026).
+        mass = (bericht["dellen"], fehl)
+        if bestes is None or mass < bestes[7]:
+            bestes = (Pn, TET, bericht, fehl, P, T, quelle, mass)
+        if not len(TET) or fehl <= TREU_VOLUMEN or not echt.any():
             break
         # Ohne Fortschritt aufhoeren: an manchen 90-Grad-Kanten divergiert
         # das Halbieren - jede Runde teilt Dreiecke neben der Delle, die
@@ -3566,7 +3911,6 @@ def tetraedern_treu(P: np.ndarray, T: np.ndarray, h: float,
         # mehr statt weniger (L-Prisma h = 0,25: 3 Dellen nach 7 Runden,
         # 1 417 nach 14, Elemente 1 082 -> 13 846; gemessen 23.09.2026).
         # Zwei Runden ohne Verbesserung, und der beste Stand bleibt stehen.
-        mass = (bericht["dellen"], fehl)
         if bestes_mass is None or mass < bestes_mass:
             bestes_mass, ohne_fortschritt = mass, 0
         else:
@@ -3594,13 +3938,21 @@ def tetraedern_treu(P: np.ndarray, T: np.ndarray, h: float,
                                          gesperrt=gesperrt, projektor=projektor)
         if gesperrt is not None and len(P) > len(gesperrt):
             gesperrt = np.concatenate([gesperrt, np.zeros(len(P) - len(gesperrt), bool)])
-    Pn, TET, bericht, fehl, P, T, quelle = bestes
+    Pn, TET, bericht, fehl, P, T, quelle, _mass = bestes
     if "dellen" not in bericht:
         _frei, echt = echte_dellen(Pn, TET, P, T, quelle)
         bericht["dellen"] = int(echt.sum())
     # Was bleibt, wird gesagt - nicht still gelassen. Der Aufrufer schreibt
     # es ins Protokoll, die Abnahme findet es als "Luecke im Netzrand".
     bericht["randluecke"] = float(fehl) if (fehl > TREU_VOLUMEN and bericht["dellen"]) else 0.0
+    # Und ein Fehlbetrag **ohne** Delle, den auch die weggenommenen Kappen
+    # nicht erklaeren (deren Rauminhalt fuehrt tetraedern als kappen_volumen):
+    # etwa ein Tetraeder quer durch eine Kerbe, der als innen gilt - der
+    # Aufrufer sagt es (seit 24.09.2026, dritter Auftrag).
+    soll = float(bericht.get("sollvolumen", 0.0) or 0.0)
+    kappen = float(bericht.get("kappen_volumen", 0.0) or 0.0) / soll if soll > 0 else 0.0
+    rest = abs(fehl - kappen) if not bericht["dellen"] else 0.0
+    bericht["volumenrest"] = float(rest) if rest > 10 * TREU_VOLUMEN else 0.0
     return Pn, TET, bericht, P, T, quelle
 
 
@@ -4283,7 +4635,9 @@ def randschale(model: Model, koerper, h: float, log: list = None,
     # (netz.pyramiden): nur auf einer dichten Huelle, sonst bleibt es bei den
     # geteilten Vierecken.
     bericht["pyramiden"] = []
-    if (bool(getattr(getattr(model, "netz", None), "pyramiden", False))
+    from .sweep import betriebsart as _sweep_betriebsart
+    if ((bool(getattr(getattr(model, "netz", None), "pyramiden", False))
+         or _sweep_betriebsart(model) == "sauber")
             and not bericht.get("offen") and bericht.get("teile", 1) == 1):
         P, T, quelle, kennung, pyr, T_flaechen, quelle_flaechen = _pyramiden_einziehen(
             model, koerper, P, T, quelle, kennung, log)
@@ -4420,6 +4774,28 @@ def _knoten_anlegen(model: Model, koerper, Pn: np.ndarray, benutzt: np.ndarray,
 TET10_KANTEN = ((0, 1), (1, 2), (0, 2), (0, 3), (1, 3), (2, 3))
 
 
+def _tet10_kanten_anlegen(model: Model, ecken: list, kanten: dict) -> int:
+    """Alle Kanten der Tetraeder ``ecken`` (n, 4), die noch keinen
+    Mittenknoten im Woerterbuch ``kanten`` haben, bekommen ihn - mit **einem**
+    add_nodes fuer alle. Rueckgabe: Zahl der neuen Knoten."""
+    E = np.asarray(ecken, int).reshape(-1, 4)
+    if not len(E):
+        return 0
+    paare = np.vstack([np.stack([np.minimum(E[:, a], E[:, b]), np.maximum(E[:, a], E[:, b])], axis=1)
+                       for a, b in TET10_KANTEN])
+    paare = np.unique(paare, axis=0)
+    neu = [(int(a), int(b)) for a, b in paare.tolist() if (int(a), int(b)) not in kanten]
+    if not neu:
+        return 0
+    X = np.asarray(model.nodes, float)
+    A = np.asarray([a for a, _b in neu], int)
+    B = np.asarray([b for _a, b in neu], int)
+    ids = model.add_nodes(0.5 * (X[A] + X[B]))
+    for key, i in zip(neu, np.asarray(ids, int).tolist()):
+        kanten[key] = int(i)
+    return len(neu)
+
+
 def _tet10_knoten(model: Model, ecken: list, kanten: dict) -> list:
     """Die zehn Knoten eines quadratischen Tetraeders zu vier Ecken.
 
@@ -4458,50 +4834,236 @@ KRUMM_ANLAEUFE = 3
 KRUMM_GEWICHT = 1e-3
 
 
+#: Schrittweiten, in Sehnenpfeilen des Tetraeders, mit denen krumme_entzerren
+#: eine innere Ecke von der gekruemmten Flaeche wegschiebt (die kleinste, die
+#: das Element gueltig macht, gewinnt)
+ENTZERREN_SCHRITTE = (1.0, 2.0, 3.0, 4.0, 6.0)
+
+
+def krumme_entzerren(Pn: np.ndarray, TET: np.ndarray, P: np.ndarray, T: np.ndarray,
+                     quelle: list, proj: dict, erlaubt=None) -> tuple:
+    """Tetraeder, die als tet10 mit gekruemmter Randkante umklappen wuerden,
+    durch Verschieben ihrer **inneren** Ecken retten - am fertigen Netz, nach
+    Glaettung und Nachbesserung.
+
+    Die inneren Punkte gegen umklappende tet10 (:func:`_krumme_kappenpunkte`)
+    wirken in der Delaunay-Zerlegung; Glaettung und MMG3D danach ruecken
+    innere Ecken wieder an die Flaeche (V15 am Drehlager bei 36 Grad: 12
+    ungueltige tet10 nach dem Anlauf mit inneren Punkten, gemessen
+    24.09.2026). Hier wird jede innere Ecke eines solchen Tetraeders vom Ort
+    der gekruemmten Mitte(n) weg verschoben, in Schritten von
+    ENTZERREN_SCHRITTE Sehnenpfeilen, und der kleinste Schritt genommen, bei
+    dem das Tetraeder als tet10 gueltig wird und **alle** Tetraeder an dieser
+    Ecke ihren Rauminhalt behalten (gerade und, wo sie gekruemmte Kanten
+    haben, gekruemmt). Huellpunkte bleiben stehen - die Randflaeche, auch die
+    mit dem Nachbarn gemeinsame, aendert sich nicht. ``erlaubt`` wie bei
+    :func:`_krumme_kappenpunkte`: nur Tetraeder mit gekruemmter Kante auf
+    einer dieser Flaechen (None: alle) - an eigenen Flaechen ist das oertlich
+    feinere Netz die bessere Kur (Buchse r 50/100, 36 Grad: 2 566 tet10 mit
+    kleinster bezogener Determinante 0,403 gegen 1 951 mit 0,035, wenn das
+    Entzerren zuerst kommt; gemessen 24.09.2026). Rueckgabe (Punkte, behobene
+    Tetraeder, verbleibende).
+    """
+    from .elements.solid import jacobi_volumen_stapel
+    Pn = np.asarray(Pn, float).copy()
+    TET = np.asarray(TET, int)
+    n_h = len(P)
+    krumm = krumme_kanten_pruefen(Pn, TET, P, T, quelle, proj)
+    welche = np.asarray(krumm.get("welche", ()), int)
+    if not len(welche):
+        return Pn, 0, 0
+    mitten = krumm.get("mitten") or {}
+    if erlaubt is not None:
+        erlaubt = set(erlaubt)
+        behalten = []
+        for i in welche.tolist():
+            t = TET[i]
+            fl = {mitten[(min(int(t[u]), int(t[v])), max(int(t[u]), int(t[v])))][1] for u, v in TET10_KANTEN
+                  if (min(int(t[u]), int(t[v])), max(int(t[u]), int(t[v]))) in mitten}
+            if fl & erlaubt:
+                behalten.append(i)
+        welche = np.asarray(behalten, int)
+        if not len(welche):
+            return Pn, 0, 0
+    # Sterne: Tetraeder je Punkt (nur fuer die inneren Ecken der Kandidaten)
+    kandidaten_ecken = set()
+    for i in welche.tolist():
+        for v in TET[i].tolist():
+            if v >= n_h:
+                kandidaten_ecken.add(int(v))
+    if not kandidaten_ecken:
+        return Pn, 0, int(len(welche))
+    stern: dict = {v: [] for v in kandidaten_ecken}
+    for k, t in enumerate(TET.tolist()):
+        for v in t:
+            if v in stern:
+                stern[v].append(k)
+
+    def x10(idx):
+        """Die 10 Knoten der Tetraeder idx mit den gekruemmten Mitten."""
+        X = np.zeros((len(idx), 10, 3))
+        X[:, :4] = Pn[TET[idx]]
+        for j, (a, b) in enumerate(TET10_KANTEN):
+            X[:, 4 + j] = 0.5 * (X[:, a] + X[:, b])
+        for row, i in enumerate(idx):
+            t = TET[i]
+            for j, (a, b) in enumerate(TET10_KANTEN):
+                m = mitten.get((min(int(t[a]), int(t[b])), max(int(t[a]), int(t[b]))))
+                if m is not None:
+                    X[row, 4 + j] = m[0]
+        return X
+
+    def gueltig(idx):
+        d = jacobi_volumen_stapel("tet10", x10(list(idx)))
+        return bool((d["det_min"] > 0.0).all())
+
+    behoben, offen = 0, 0
+    for i in welche.tolist():
+        if gueltig([i]):
+            behoben += 0         # schon durch eine fruehere Verschiebung gerettet
+            continue
+        t = TET[i]
+        ziele = [mitten[(min(int(t[a]), int(t[b])), max(int(t[a]), int(t[b])))][0] for a, b in TET10_KANTEN
+                 if (min(int(t[a]), int(t[b])), max(int(t[a]), int(t[b]))) in mitten]
+        pfeile = [float(np.linalg.norm(mitten[(min(int(t[a]), int(t[b])), max(int(t[a]), int(t[b])))][0]
+                                       - 0.5 * (Pn[t[a]] + Pn[t[b]])))
+                  for a, b in TET10_KANTEN if (min(int(t[a]), int(t[b])), max(int(t[a]), int(t[b]))) in mitten]
+        innere = [int(v) for v in t.tolist() if v >= n_h]
+        if not ziele or not innere or not pfeile:
+            offen += 1
+            continue
+        m_bar = np.mean(ziele, axis=0)
+        pfeil = max(pfeile)
+        gerettet = False
+        for v in innere:
+            r = Pn[v] - m_bar
+            nr = float(np.linalg.norm(r))
+            if nr <= 0.0:
+                continue
+            r /= nr
+            alt = Pn[v].copy()
+            nachbarn = stern[v]
+            # was am Punkt vorher schon gueltig war, muss es bleiben; was
+            # vorher ungueltig war, darf es bleiben (es kommt selbst dran)
+            vorher = jacobi_volumen_stapel("tet10", x10(nachbarn))["det_min"] > 0.0
+            for schritt in ENTZERREN_SCHRITTE:
+                Pn[v] = alt + r * (schritt * pfeil)
+                d = jacobi_volumen_stapel("tet10", x10(nachbarn))
+                jetzt = d["det_min"] > 0.0
+                if gueltig([i]) and bool(np.all(jetzt | ~vorher)):
+                    gerettet = True
+                    break
+            if gerettet:
+                break
+            Pn[v] = alt
+        if gerettet:
+            behoben += 1
+        else:
+            offen += 1
+    return Pn, behoben, offen
+
+
+def randkanten_flaechen(TET: np.ndarray, T: np.ndarray, quelle: list) -> dict:
+    """{(a, b): Flaechen} fuer die Kanten der **freien Seiten** von ``TET``,
+    die auf der Huelle liegen - zugeordnet ueber die **Huelldreiecke**, nicht
+    ueber die Flaechen ihrer Endpunkte.
+
+    Bis 24.09.2026 galt eine Kante als Kante der Flaeche F, wenn beide
+    Endpunkte ueber ihre Huelldreiecke zu F gehoerten. Das trifft auch
+    Sehnen, die gar nicht auf F liegen: die Stirnflaeche einer Bohrung r =
+    10 mm ist ein Dreiecksfaecher aus Randkreispunkten, jede ihrer Kanten
+    hat beide Enden auf dem Kreis - und wurde als Mantelkante auf den
+    Zylinder projiziert. Eine 180-Grad-Sehne (der Durchmesser) bekam ihre
+    Mitte auf den Rand, det J -11 (V30 am Drehlager: 594 solcher Kanten in
+    227 Rueckfaellen, davon 319 ueber 36 Grad; gemessen 24.09.2026). Feiner
+    vernetzen konnte das nie heilen.
+
+    Jetzt gehoert eine Kante zu F, wenn sie **Kante eines Huelldreiecks** von
+    F ist - oder die **andere Diagonale** eines Huellvierecks aus zwei
+    F-Dreiecken (die Zerlegung darf ein Viereck anders teilen; die Kante
+    liegt dann zwar nicht in T, aber auf F). Alles andere ist eine Sehne
+    durch das Innere und bleibt gerade. ``TET`` und ``T`` zaehlen dieselben
+    Punkte (im Arbeitsprozess die lokalen, im Hauptprozess die Modellknoten).
+    """
+    TET = np.asarray(TET, int)
+    T = np.asarray(T, int)
+    aus: dict = {}
+    if not len(TET) or not len(T):
+        return aus
+    kante_fl: dict = {}
+    dreiecke: dict = {}
+    for k, t in enumerate(T.tolist()):
+        q = quelle[k]
+        a, b, c = int(t[0]), int(t[1]), int(t[2])
+        for u, v in ((a, b), (b, c), (a, c)):
+            kante_fl.setdefault((min(u, v), max(u, v)), set()).add(q)
+        for u in (a, b, c):
+            dreiecke.setdefault(u, []).append(k)
+    for f in freie_seiten(TET).tolist():
+        for u, v in ((f[0], f[1]), (f[1], f[2]), (f[2], f[0])):
+            key = (min(int(u), int(v)), max(int(u), int(v)))
+            if key in aus:
+                continue
+            fl = kante_fl.get(key)
+            if fl:
+                aus[key] = set(fl)
+                continue
+            # Die andere Diagonale eines Huellvierecks: zwei Dreiecke
+            # (u, c, d) und (v, c, d) derselben Flaeche
+            ku, kv = dreiecke.get(key[0]), dreiecke.get(key[1])
+            if not ku or not kv:
+                continue
+            gegen = {}
+            for k in ku:
+                t = T[k]
+                rest = frozenset(int(x) for x in t if int(x) != key[0])
+                gegen[rest] = quelle[k]
+            for k in kv:
+                t = T[k]
+                rest = frozenset(int(x) for x in t if int(x) != key[1])
+                q = gegen.get(rest)
+                if q is not None and q == quelle[k]:
+                    aus[key] = {q}
+                    break
+    return aus
+
+
 def krumme_kanten_pruefen(Pn: np.ndarray, TET: np.ndarray, P: np.ndarray, T: np.ndarray,
                           quelle: list, proj: dict) -> dict:
     """Die tet10-Probe **vor** dem Einbau: welche Tetraeder wuerden mit ihrer
     gekruemmten Randkante ungueltig?
 
     Dieselbe Rechnung wie :func:`_seitenmitten_auf_flaeche`, nur am Netz des
-    Arbeitsprozesses: die Randkanten des Netzrands (freie Seiten), deren beide
-    Ecken Huellpunkte einer Flaeche mit Projektor sind, bekommen ihre Mitte auf
-    der wahren Flaeche; jedes Tetraeder an einer solchen Kante wird als tet10
-    mit :func:`elements.solid.jacobi_volumen_stapel` geprueft. Rueckgabe
+    Arbeitsprozesses: die Randkanten des Netzrands (freie Seiten), die Kante
+    eines Huelldreiecks einer Flaeche mit Projektor sind
+    (:func:`randkanten_flaechen`), bekommen ihre Mitte auf der wahren
+    Flaeche; jedes Tetraeder an einer solchen Kante wird als tet10 mit
+    :func:`elements.solid.jacobi_volumen_stapel` geprueft. Rueckgabe
     {"kanten": gekruemmte Kanten, "rueckfaelle": Tetraeder mit det <= 0,
-    "flaechen": {Flaeche: Zahl}, "det_min_rel": kleinstes det_min/det_max}.
+    "flaechen": {Flaeche: Zahl}, "det_min_rel": kleinstes det_min/det_max,
+    "welche": Nummern der ungueltigen Tetraeder}.
     Damit kann :func:`koerper_vorbereiten` an genau diesen Flaechen feiner
     vernetzen, statt dass der Einbau die Kante gerade laesst.
     """
-    aus = {"kanten": 0, "rueckfaelle": 0, "flaechen": {}, "det_min_rel": 1.0}
+    aus = {"kanten": 0, "rueckfaelle": 0, "flaechen": {}, "det_min_rel": 1.0,
+           "welche": np.zeros(0, int)}
     if not len(TET) or not proj or not any(p is not None for p in proj.values()):
         return aus
     from .elements.solid import jacobi_volumen_stapel
     Pn = np.asarray(Pn, float)
     TET = np.asarray(TET, int)
-    n_h = len(P)
-    fl = [set() for _ in range(n_h)]
-    for k, t in enumerate(np.asarray(T, int).tolist()):
-        for a in t:
-            if a < n_h:
-                fl[a].add(quelle[k])
     mitten: dict = {}
-    for f in freie_seiten(TET).tolist():
-        for a, b in ((f[0], f[1]), (f[1], f[2]), (f[2], f[0])):
-            if a >= n_h or b >= n_h:
-                continue
-            key = (min(a, b), max(a, b))
-            if key in mitten:
-                continue
-            gem = fl[a] & fl[b]
-            fn = next((g for g in sorted(gem) if proj.get(g) is not None), None)
-            if fn is None:
-                continue
-            alt = 0.5 * (Pn[a] + Pn[b])
-            ziel = np.asarray(proj[fn](alt[None, :]), float)[0]
-            if float(np.linalg.norm(ziel - alt)) > 0.0:
-                mitten[key] = (ziel, fn)
+    for key, gem in randkanten_flaechen(TET, T, quelle).items():
+        fn = next((g for g in sorted(gem) if proj.get(g) is not None), None)
+        if fn is None:
+            continue
+        a, b = key
+        alt = 0.5 * (Pn[a] + Pn[b])
+        ziel = np.asarray(proj[fn](alt[None, :]), float)[0]
+        if float(np.linalg.norm(ziel - alt)) > 0.0:
+            mitten[key] = (ziel, fn)
     aus["kanten"] = len(mitten)
+    aus["mitten"] = mitten
     if not mitten:
         return aus
     n = len(Pn)
@@ -4529,6 +5091,7 @@ def krumme_kanten_pruefen(Pn: np.ndarray, TET: np.ndarray, P: np.ndarray, T: np.
         aus["det_min_rel"] = float((d["det_min"][gut] / d["det_max"][gut]).min())
     schlecht = np.flatnonzero(d["det_min"] <= 0.0)
     aus["rueckfaelle"] = int(len(schlecht))
+    aus["welche"] = welche[schlecht]
     for row in schlecht.tolist():
         t = TET[welche[row]]
         for a, b in TET10_KANTEN:
@@ -4539,7 +5102,8 @@ def krumme_kanten_pruefen(Pn: np.ndarray, TET: np.ndarray, P: np.ndarray, T: np.
 
 
 def _seitenmitten_auf_flaeche(model: Model, koerper, els: list, kanten: dict, neu,
-                              n_huelle: int, T: np.ndarray, quelle: list, log: list) -> dict:
+                              n_huelle: int, T: np.ndarray, quelle: list, log: list,
+                              gemeinsam=None) -> dict:
     """Die Seitenmitten der tet10 auf Randkanten auf die **wahre** Flaeche
     setzen (Anweisung V2 mit Nachtrag, 22./23.09.2026) und danach jedes
     beruehrte Element pruefen: die Jacobi-Determinante muss an allen
@@ -4550,26 +5114,15 @@ def _seitenmitten_auf_flaeche(model: Model, koerper, els: list, kanten: dict, ne
     proj = flaechenprojektoren(model, koerper)
     if not any(p is not None for p in proj.values()):
         return {"verschoben": 0, "rueckfaelle": 0}
-    # Die Randkanten kommen aus dem **Netzrand** (freie Seiten der Tetraeder),
-    # nicht aus den Huelldreiecken: die Zerlegung darf ein Huellviereck ueber
-    # die andere Diagonale teilen, und diese Diagonale ist keine Huellkante -
-    # ihre Mitte gehoert trotzdem auf den Zylinder. Die Flaeche einer Kante
-    # ist die, die beide Endknoten ueber ihre Huelldreiecke gemeinsam haben.
-    flaechen_je_knoten: dict = {}
-    for k, t in enumerate(T.tolist()):
-        for a in t:
-            if a < n_huelle:
-                flaechen_je_knoten.setdefault(int(neu[a]), set()).add(quelle[k])
+    # Die Randkanten kommen aus dem **Netzrand** (freie Seiten der Tetraeder)
+    # und bekommen ihre Flaeche ueber die Huelldreiecke, in Modellknoten
+    # (randkanten_flaechen; die andere Diagonale eines Huellvierecks zaehlt
+    # mit). Nicht ueber die Flaechen der Endknoten: so wurde die Sehne einer
+    # ebenen Bohrungsstirn auf den Zylinder projiziert (24.09.2026).
     ecken = np.asarray([[int(x) for x in model.elements[e].nodes[:4]] for e in els], int)
-    randkanten: dict = {}
-    if len(ecken):
-        for f in freie_seiten(ecken).tolist():
-            for a, b in ((f[0], f[1]), (f[1], f[2]), (f[2], f[0])):
-                fa, fb = flaechen_je_knoten.get(int(a)), flaechen_je_knoten.get(int(b))
-                if fa and fb:
-                    gemeinsam = fa & fb
-                    if gemeinsam:
-                        randkanten[(min(int(a), int(b)), max(int(a), int(b)))] = gemeinsam
+    neu_arr = np.asarray(neu, int)
+    T_ids = neu_arr[np.asarray(T, int)] if len(T) else np.zeros((0, 3), int)
+    randkanten = randkanten_flaechen(ecken, T_ids, list(quelle)) if len(ecken) else {}
     verschoben, weg_max, betroffen, alt_lage = 0, 0.0, set(), {}
     an_mitte: dict = {}
     for e in els:
@@ -4592,29 +5145,63 @@ def _seitenmitten_auf_flaeche(model: Model, koerper, els: list, kanten: dict, ne
         verschoben += 1
         weg_max = max(weg_max, d)
         betroffen.update(an_mitte.get(int(mitte), []))
-    # Jacobi-Pruefung der beruehrten Elemente; Rueckfall auf die gerade Kante
+    # Jacobi-Pruefung der beruehrten Elemente; Rueckfall auf die gerade Kante.
+    # Bis zum Stillstand: eine zurueckgesetzte Mitte gehoert auch den
+    # Nachbarelementen, und ein schon geprueftes Element kann mit einer
+    # geraden und einer gekruemmten Kante umklappen, das mit zwei gekruemmten
+    # gueltig war (Zylinder in Hohlzylinder, 36 Grad: ein tet10 mit det J
+    # -6,9e-7 blieb so im Modell; gemessen 24.09.2026).
     rueckfaelle = []
     det_min_rel = 1.0
-    for e in sorted(betroffen):
+    gemeinsam = set(gemeinsam or ())
+    an_gemeinsam = 0
+    det_min_rel_nach = 1.0
+    zu_pruefen = set(betroffen)
+    geprueft_gerade: set = set()
+    while zu_pruefen:
+        e = min(zu_pruefen)
+        zu_pruefen.discard(e)
         X = model.nodes[model.elements[e].nodes]
         j = jacobi_volumen("tet10", X)
-        if j["det_max"] > 0:
+        if j["det_max"] > 0 and e not in geprueft_gerade:
             det_min_rel = min(det_min_rel, j["det_min"] / j["det_max"])
-        if j["det_min"] <= 0.0:
+        if j["det_min"] <= 0.0 and e not in rueckfaelle:
+            zurueck = []
             for kn in model.elements[e].nodes[4:]:
-                if int(kn) in alt_lage:
+                if int(kn) in alt_lage and not np.array_equal(model.nodes[int(kn)], alt_lage[int(kn)]):
                     model.nodes[int(kn)] = alt_lage[int(kn)]
+                    zurueck.append(int(kn))
             rueckfaelle.append(int(e))
+            # Liegt eine seiner gekruemmten Kanten auf einer gemeinsamen Flaeche?
+            ecken_e = [int(x) for x in model.elements[e].nodes[:4]]
+            fl_e = set()
+            for a, b in TET10_KANTEN:
+                fl_e |= randkanten.get((min(ecken_e[a], ecken_e[b]), max(ecken_e[a], ecken_e[b])), set())
+            if fl_e & gemeinsam:
+                an_gemeinsam += 1
+            # die Nachbarn an den zurueckgesetzten Mitten noch einmal
+            for kn in zurueck:
+                for e2 in an_mitte.get(kn, []):
+                    if e2 != e:
+                        zu_pruefen.add(e2)
+                        geprueft_gerade.add(e2)
+    for e in sorted(betroffen):
+        j = jacobi_volumen("tet10", model.nodes[model.elements[e].nodes])
+        if j["det_max"] > 0 and j["det_min"] > 0.0:
+            det_min_rel_nach = min(det_min_rel_nach, j["det_min"] / j["det_max"])
     if verschoben:
         C.say(log, f"  Volumen {koerper.name}: {verschoben} tet10-Seitenmitten auf die gekrümmte Fläche "
                    f"gesetzt (größter Weg {weg_max * 1e3:.3f} mm), kleinste bezogene Jacobi-Determinante "
-                   f"{det_min_rel:.3f}")
+                   f"{det_min_rel:.3f}"
+                   + (f" (im fertigen Netz {det_min_rel_nach:.3f})" if rueckfaelle else ""))
     if rueckfaelle:
         C.warn(log, f"  Volumen {koerper.name}: {len(rueckfaelle)} tet10 behalten gerade Kanten an der "
-                    f"gekrümmten Fläche (Jacobi-Determinante wäre negativ) - Elemente "
+                    f"gekrümmten Fläche (Jacobi-Determinante wäre negativ), davon {an_gemeinsam} an "
+                    f"gemeinsamen Flächen - Elemente "
                     f"{rueckfaelle[:12]}{' …' if len(rueckfaelle) > 12 else ''}; dort feiner vernetzen.")
     return {"verschoben": verschoben, "rueckfaelle": len(rueckfaelle), "weg_max": weg_max,
-            "det_min_rel": det_min_rel}
+            "det_min_rel": det_min_rel, "det_min_rel_nach": det_min_rel_nach,
+            "an_gemeinsam": an_gemeinsam}
 
 
 def _randseiten_merken(model: Model, koerper, T: np.ndarray, quelle: list,
@@ -4982,7 +5569,11 @@ def koerper_vorbereiten(model: Model, koerper, h: float = 0.0, log: list = None,
         proj = flaechenprojektoren(model, koerper)
         lokal = 0
         gem_f, gem_l = (gemeinsam or (frozenset(), frozenset()))
-        for anlauf in range(1, anlaeufe + (KRUMM_ANLAEUFE if ordnung_k >= 2 else 0) + 1):
+        # Innere Punkte gegen umklappende tet10 (_krumme_kappenpunkte): an
+        # gemeinsamen Flaechen von Anfang an, an eigenen erst nach den
+        # oertlichen Anlaeufen (ein eigener Anlauf dafuer)
+        kappen_an = (set(gem_f) if gem_f else False) if ordnung_k >= 2 else False
+        for anlauf in range(1, anlaeufe + (KRUMM_ANLAEUFE + 1 if ordnung_k >= 2 else 0) + 1):
             _melden(fortschritt, 0.0, "Randhülle bilden")
             # h_linien bleibt ueber alle Anlaeufe dasselbe: die Randflaechen
             # gehoeren auch dem Nachbarn, nur das Innere wird feiner.
@@ -5036,10 +5627,20 @@ def koerper_vorbereiten(model: Model, koerper, h: float = 0.0, log: list = None,
                     fortschritt=fortschritt, projektor=proj,
                     gemeinsam=(gemeinsam or (frozenset(), frozenset()))[0],
                     kennung=bericht.get("kennung"),
-                    gem_linien=(gemeinsam or (frozenset(), frozenset()))[1], feld=feld)
+                    gem_linien=(gemeinsam or (frozenset(), frozenset()))[1], feld=feld,
+                    krumm_kappen=kappen_an)
+                if tb.get("krumme_kappen"):
+                    C.say(zeilen, f"  Volumen {koerper.name}: {tb['krumme_kappen']} innere Punkte gegen "
+                                  "tet10 eingefügt, die mit gekrümmter Kante umklappen würden")
                 if tb.get("gekippt"):
+                    arten = tb.get("gekippt_je_art") or {}
                     C.say(zeilen, f"  Volumen {koerper.name}: {tb['gekippt']} Kante(n) an der Hülle "
-                                  "gekippt - der Netzrand ist ohne neuen Punkt zurückgeholt")
+                                  "gekippt - der Netzrand ist ohne neuen Punkt zurückgeholt"
+                                  + (" (" + ", ".join(f"{k} {v}" for k, v in arten.items()) + ")" if arten else ""))
+                if tb.get("volumenrest"):
+                    C.warn(zeilen, f"  Volumen {koerper.name}: der Rauminhalt weicht um "
+                                   f"{tb['volumenrest'] * 100:.4f} % von der Hülle ab, ohne freie Seite "
+                                   "daneben - das erklären weder Dellen noch weggenommene Kappen.")
                 if tb.get("randluecke"):
                     C.warn(zeilen, f"  Volumen {koerper.name}: Lücke im Netzrand bleibt nach "
                                    f"{tb.get('runden', 0)} Durchgängen - "
@@ -5056,25 +5657,52 @@ def koerper_vorbereiten(model: Model, koerper, h: float = 0.0, log: list = None,
             mass = netzguete(tb, bericht)
             krumm = None
             if ordnung_k >= 2 and len(TET):
+                # Was nach Glaettung und Nachbesserung als tet10 noch umklappen
+                # wuerde, durch Verschieben innerer Ecken retten - die Huelle
+                # bleibt, wie sie ist (krumme_entzerren)
+                erlaubt_e = None if kappen_an is True else (set(kappen_an) if kappen_an else set())
+                Pn, entzerrt, entzerr_offen = krumme_entzerren(Pn, TET, P, T, quelle, proj, erlaubt=erlaubt_e)
+                if entzerrt:
+                    C.say(zeilen, f"  Volumen {koerper.name}: {entzerrt} tet10 durch Verschieben innerer "
+                                  f"Ecken gültig gemacht" + (f", {entzerr_offen} bleiben" if entzerr_offen else ""))
                 krumm = krumme_kanten_pruefen(Pn, TET, P, T, quelle, proj)
                 mass["krumm"] = int(krumm["rueckfaelle"])
+                aus.setdefault("krumm_verlauf", []).append(
+                    {"anlauf": anlauf, "oertlich": lokal, "ungueltig": int(krumm["rueckfaelle"]),
+                     "kanten": int(krumm["kanten"]), "det_min_rel": float(krumm["det_min_rel"]),
+                     "flaechen": dict(krumm["flaechen"])})
                 if krumm["rueckfaelle"]:
                     mass["gerissen"].append(
                         f"{krumm['rueckfaelle']} tet10 mit gekrümmter Kante ungültig "
                         f"(Jacobi-Determinante ≤ 0 an {', '.join(sorted(krumm['flaechen']))})")
                     mass["abstand"] += KRUMM_GEWICHT * krumm["rueckfaelle"]
             stand = (h, P, T, quelle, Pn, TET, tb, bericht, mass, anlauf)
-            if bestes is None or mass["abstand"] < bestes[8]["abstand"]:
+            # Der beste Anlauf: zuerst ohne Luecke im Netzrand (die ist der
+            # schlimmere Fehler), dann der mit den wenigsten ungueltigen tet10
+            # - ein Netz, das beim Einbau gerade Kanten behalten muss, ist
+            # kein besseres Netz, auch wenn Randtreue und Volumen etwas besser
+            # ausfallen -, dann das Abstandsmass wie bisher. (Am Drehlager bei
+            # 36 Grad waehlte die Reihung ohne die Luecke fuer V36 einen
+            # Anlauf mit 0,0035 % Luecke statt einen mit zwei ungueltigen
+            # tet10; gemessen 24.09.2026.)
+            mass["luecke"] = bool(tb.get("randluecke"))
+            if bestes is None or ((mass["luecke"], mass.get("krumm", 0), mass["abstand"])
+                                  < (bestes[8].get("luecke", False), bestes[8].get("krumm", 0), bestes[8]["abstand"])):
                 bestes = stand
             if not mass["gerissen"]:
                 break
             grund = ", ".join(mass["gerissen"])
-            # Reissen **nur** die gekruemmten Kanten, wird nicht der Koerper
+            # Reissen die gekruemmten Kanten, wird **zuerst** nicht der Koerper
             # feiner, sondern die Flaeche, an der es reisst - oertlich, mit
-            # ihren nicht gemeinsamen Linien. Eine gemeinsame Flaeche gehoert
-            # auch dem Nachbarn; die kann ein Arbeitsprozess allein nicht
-            # aendern, dort bleibt beim Einbau die gerade Kante (mit Warnung).
-            if krumm is not None and krumm["rueckfaelle"] and len(mass["gerissen"]) == 1:
+            # ihren nicht gemeinsamen Linien; auch dann, wenn daneben noch die
+            # Guete reisst (bis 24.09.2026 nur, wenn die Kanten das einzige
+            # waren: V30 am Drehlager blieb so ohne jeden oertlichen Anlauf,
+            # weil zugleich ein Splitter unter der Guetegrenze lag und die
+            # Grenze der Elementzahl den ganzen Koerper nicht feiner liess).
+            # Eine gemeinsame Flaeche gehoert auch dem Nachbarn; die kann ein
+            # Arbeitsprozess allein nicht aendern, dort bleibt beim Einbau die
+            # gerade Kante (mit Warnung).
+            if krumm is not None and krumm["rueckfaelle"] and lokal < KRUMM_ANLAEUFE:
                 eigene = sorted(f for f in krumm["flaechen"] if f not in gem_f)
                 fremd = sorted(f for f in krumm["flaechen"] if f in gem_f)
                 if not eigene:
@@ -5082,11 +5710,13 @@ def koerper_vorbereiten(model: Model, koerper, h: float = 0.0, log: list = None,
                                    f"{', '.join(fremd)} sind gemeinsam mit einem Nachbarn und "
                                    "können hier nicht allein feiner werden; beim Einbau bleibt "
                                    "die Kante gerade.")
-                    break
-                if lokal >= KRUMM_ANLAEUFE:
-                    C.warn(zeilen, f"  Volumen {koerper.name}: {grund} - nach {lokal} örtlichen "
-                                   "Anläufen nicht behoben; das beste Netz bleibt stehen.")
-                    break
+                    if len(mass["gerissen"]) == 1:
+                        break
+                    lokal = KRUMM_ANLAEUFE      # keine oertlichen Anlaeufe mehr, weiter wie sonst
+            if (krumm is not None and krumm["rueckfaelle"] and lokal < KRUMM_ANLAEUFE
+                    and any(f not in gem_f for f in krumm["flaechen"])):
+                eigene = sorted(f for f in krumm["flaechen"] if f not in gem_f)
+                fremd = sorted(f for f in krumm["flaechen"] if f in gem_f)
                 lokal += 1
                 fremde_linien = set(gem_l)
                 for fn in gem_f:
@@ -5114,6 +5744,18 @@ def koerper_vorbereiten(model: Model, koerper, h: float = 0.0, log: list = None,
                               f"({'; '.join(worte)}" + (f"; {', '.join(fremd)} gemeinsam, bleibt" if fremd else "")
                               + f"; örtlicher Anlauf {lokal} von {KRUMM_ANLAEUFE})")
                 continue
+            if krumm is not None and krumm["rueckfaelle"] and kappen_an is not True:
+                # Die oertlichen Anlaeufe sind ausgeschoepft: jetzt innere
+                # Punkte gegen jedes umklappende tet10, einmal, bei gleichem h
+                kappen_an = True
+                lokal += 1                  # zaehlt als oertlicher Anlauf, nicht als Anlauf des ganzen Koerpers
+                C.say(zeilen, f"  Volumen {koerper.name}: {grund} - nach {lokal - 1} örtlichen Anläufen; "
+                              "jetzt mit inneren Punkten gegen die umklappenden Tetraeder.")
+                continue
+            if krumm is not None and krumm["rueckfaelle"] and len(mass["gerissen"]) == 1:
+                C.warn(zeilen, f"  Volumen {koerper.name}: {grund} - nach {lokal} örtlichen "
+                               "Anläufen und inneren Punkten nicht behoben; das beste Netz bleibt stehen.")
+                break
             # Lohnt ein weiterer Anlauf?
             h_neu = h / VERFEINERN_FAKTOR
             if anlauf - lokal >= anlaeufe:
@@ -5146,6 +5788,7 @@ def koerper_vorbereiten(model: Model, koerper, h: float = 0.0, log: list = None,
         aus["anlaeufe"] = anlauf
         aus["mass"] = mass
         aus["oertlich"] = lokal
+        aus["gemeinsame_flaechen"] = sorted(gem_f)
         _melden(fortschritt, 0.97, f"{len(TET)} Tetraeder ins Modell übernehmen")
         aus.update({"P": np.asarray(P, float), "T": np.asarray(T, int), "quelle": list(quelle),
                     "Pn": np.asarray(Pn, float), "TET": np.asarray(TET, int),
@@ -5222,10 +5865,16 @@ def koerper_einbauen(model: Model, koerper, aus: dict, log: list = None,
         # bekaeme jedes Element eigene Seitenmittenknoten und das Netz fiele
         # an ihnen auseinander.
         kanten = cache.setdefault("_kanten", {}) if cache is not None else {}
+        # Die Seitenmittenknoten **gesammelt** anlegen: add_node haengt je
+        # Knoten ein np.vstack an das ganze Knotenfeld - bei 900 000 Kanten
+        # eines Drehlagerkoerpers waere das quadratisch (Stunden statt
+        # Sekunden; dritter Auftrag, 24.09.2026).
+        _tet10_kanten_anlegen(model, ecken, kanten)
         els = [model.add_element("tet10", _tet10_knoten(model, e, kanten), mat,
                                  group=koerper.name) for e in ecken]
         _seitenmitten_auf_flaeche(model, koerper, els, kanten, neu, len(P),
-                                  np.asarray(T_schl, int), list(quelle_schl), log)
+                                  np.asarray(T_schl, int), list(quelle_schl), log,
+                                  gemeinsam=aus.get("gemeinsame_flaechen"))
     else:
         els = [model.add_element("tet4", e, mat, group=koerper.name) for e in ecken]
     _randseiten_merken(model, koerper, np.asarray(T_schl, int), list(quelle_schl), neu, els, ecken)
@@ -5233,12 +5882,17 @@ def koerper_einbauen(model: Model, koerper, aus: dict, log: list = None,
     # im Inneren; Knotenreihenfolge so, dass das Volumen positiv ist
     els_pyr: list = []
     if pyramiden:
-        from .elements.solid import solid_volume as _vol
+        from .elements.solid import jacobi_volumen as _jac
         for a_, b_, c_, d_, sp, fname in pyramiden:
             kn = [int(neu[a_]), int(neu[b_]), int(neu[c_]), int(neu[d_]), int(neu[sp])]
             if len(set(kn)) != 5:
                 continue
-            if _vol("pyr5", model.nodes[kn]) < 0:
+            # Die Umlaufrichtung des Grundvierecks nach dem **Vorzeichen** der
+            # Jacobi-Determinante richten - solid_volume nimmt den Betrag und
+            # sah nie etwas: an der Fuge zu einem abgebildeten Quader kamen alle
+            # 32 Pyramiden umgestuelpt in den Loeser (det J = -9,8e-7 an jedem
+            # Punkt; dritter Auftrag, gemessen 24.09.2026).
+            if _jac("pyr5", model.nodes[kn])["V"] < 0:
                 kn = [kn[0], kn[3], kn[2], kn[1], kn[4]]
             e = model.add_element("pyr5", kn, mat, group=koerper.name)
             els_pyr.append(e)
