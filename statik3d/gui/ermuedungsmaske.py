@@ -350,8 +350,6 @@ class Ermuedungsmaske(msk.Maske):
 
     # -- Aufbau ------------------------------------------------------------
     def _aufbauen(self):
-        lay = self.layout()
-        pos = lay.indexOf(self.lbl_hinweis)
         inhalt = QtWidgets.QWidget(self)
         v = QtWidgets.QVBoxLayout(inhalt)
         v.setContentsMargins(0, 0, 0, 0)
@@ -513,7 +511,9 @@ class Ermuedungsmaske(msk.Maske):
         self.lbl_meldung = QtWidgets.QLabel("", inhalt)
         self.lbl_meldung.setWordWrap(True)
         v.addWidget(self.lbl_meldung)
-        lay.insertWidget(pos, inhalt, 1)
+        # In die rollbare Mitte des gemeinsamen Maskenrahmens (24.09.2026) -
+        # frueher vor die Hinweiszeile am Ende der Maske, die steht jetzt oben
+        self.inhalt_einfuegen(inhalt, 1)
 
     # -- Tabelle -----------------------------------------------------------
     def tabelle_fuellen(self):

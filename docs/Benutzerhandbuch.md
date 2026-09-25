@@ -202,7 +202,9 @@ Die Arbeitsfläche in drei Spalten:
 * **in der Mitte die 3D-Ansicht** — frei für die Grafik.
 * **rechts die Eingabemaske** — es ist immer genau **eine** sichtbar: die
   Maske des gewählten Objekts oder das Register zum Befehl im Ribbon; der Titel
-  nennt sie. Ist nichts gewählt und kein Befehl aktiv, ist der Bereich leer.
+  nennt sie. Eine Maske trägt ihren Titel selbst, die Titelzeile des Bereichs
+  darüber entfällt dann. Ist nichts gewählt und kein Befehl aktiv, ist der
+  Bereich leer.
   Die **Projektangaben** stehen nicht von selbst darunter: sie holt der oberste
   Punkt des Modellbaums (der Modellname) oder *Datei → Projektangaben*. Eine
   Registerleiste mit denselben Namen wie im Ribbon gibt es nicht.
@@ -2086,8 +2088,48 @@ Modell und blockiert nichts. Beide Wege führen zum selben Ziel:
   zweiter Klick auf denselben Knoten nimmt ihn wieder heraus.
 
 Querschnitt, Material, Dicke und Lastfall gelten für alle folgenden Objekte,
-bis man sie ändert. **Esc** schließt die Maske. Ein neuer Erzeuge-Befehl löst
-die vorige Maske ab — es ist immer höchstens eine offen.
+bis man sie ändert. Geschlossen wird die Maske mit **✕** oben rechts. Ein
+neuer Erzeuge-Befehl löst die vorige Maske ab — es ist immer höchstens eine
+offen.
+
+**Aufbau jeder Maske** (seit 24.09.2026): Oben stehen der Titel und darunter
+die Hinweiszeile, was die Maske erwartet; sie ist immer ganz zu lesen, auch
+wenn sie auf mehrere Zeilen umbricht. In der Mitte liegen die Felder. Reicht
+die Höhe nicht, rollt nur diese Mitte (Mausrad oder Rollbalken). Unten steht
+ein fester Fuß mit den Knöpfen der Maske: dem Hauptknopf („Übernehmen“,
+„Anlegen“, „Last aufbringen“ …), bei einem neuen Objekt „Abbrechen“ und, wo es
+sie gibt, „Löschen“ oder „Auswahl übernehmen“. Der Fuß rollt nie mit weg, der
+Hauptknopf bleibt immer zu sehen. Kurze Masken stehen oben im rechten Bereich,
+ihre Zeilen werden nicht auseinandergezogen. Eine lange Maske (Wind,
+Wasserdruck, Knotenlager, Kontaktbedingung) lässt das Programmfenster nicht
+mehr über den Bildschirm hinaus wachsen, auch nicht im maximierten Fenster.
+Fehlt Platz, gilt: Passt die ganze Maske, wenn der untere Bereich (Protokoll
+und Tabellen) bis auf seine Mindesthöhe kleiner wird, wird er so weit kleiner,
+und die Maske rollt nicht — so zeigt die Knotenmaske auch bei 1366 × 768 alle
+Felder. Eine längere Maske rollt dagegen bis herunter auf etwa zwei Feldzeilen,
+erst dann nimmt sie dem unteren Bereich Höhe. Schließt man die Maske, bekommt
+der untere Bereich seine Höhe zurück, und eine breite Maske gibt der 3D-Ansicht
+die Breite wieder, sobald eine schmale Maske oder ein Register folgt.
+
+Das **Mausrad** über der Mitte rollt immer die Mitte. Über einer Auswahlliste
+verstellt es deren Wert nur, wenn die Liste den Fokus hat (angeklickt oder per
+Tab erreicht) — sonst würde beim Rollen etwa die Windzone unbemerkt springen.
+Ein Klick auf ein halb sichtbares Feld wirkt sofort auf dieses Feld (ein Haken
+schaltet um); die Mitte rollt dabei nicht.
+
+Zur Tastatur: **Tab** geht von oben nach unten durch die Felder, dann durch
+die Knöpfe des Fußes und zuletzt auf **✕** — die Leertaste schließt die Maske
+dann, auch ohne Maus. Ein Feld, das per Tab oder vom Programm den Fokus
+bekommt, rollt die Mitte von selbst ins Bild. **Pfeil auf/ab** und **Bild
+auf/ab** rollen die Mitte nicht; das Feld mit der Schreibmarke bleibt zu
+sehen. Die **Eingabetaste** löst in jedem Feld den Hauptknopf aus, auch auf
+einem Haken oder in einer Auswahlliste — nicht aber in einer Tabelle oder
+Liste (etwa dem Kollektiv der Ermüdungsmaske): dort blättert man nur, und
+nichts wird übernommen. Steht der Fokus auf einem anderen Knopf, etwa
+„Abbrechen“, drückt die Eingabetaste diesen Knopf. **Esc** schließt im
+Programmfenster keine Maske: Ist ein Feld gerade orange (die Maus füllt es),
+beendet das erste Esc nur diese Auswahl per Maus; jedes weitere Esc hebt wie
+überall die Auswahl in der Ansicht auf („Alles deselektieren“).
 
 ### Verschieben, Kopieren, Drehen, Spiegeln
 

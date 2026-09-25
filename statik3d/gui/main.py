@@ -4288,6 +4288,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.tabs.setCurrentIndex(i)
                 if hasattr(self, "eingaben_dock"):
                     self.eingaben_dock.setWindowTitle(name)
+                    self._docktitel_zeigen(True)
                     self.eingaben_dock.show()
                     self.eingaben_dock.raise_()
                 return True
@@ -4303,6 +4304,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         if getattr(self, "_auswahl_sammeln", False):
             return maske                    # Mehrfachauswahl: keine Maske je Zeile
+        hoehe_vorher = self.height()
         self.maskenrand.zeigen(maske, fokus=fokus)
         # Rechts steht nur die Maske: die Register darunter - zuletzt standen
         # dort immer die Projektangaben - verschwinden, solange sie offen ist.
@@ -4316,9 +4318,63 @@ class MainWindow(QtWidgets.QMainWindow):
             self.rechts_leer.hide()
         if hasattr(self, "eingaben_dock"):
             self.eingaben_dock.setWindowTitle(getattr(maske, "titel", "") or "Erzeugen")
+            # Die Maske traegt ihren Titel selbst: der Docktitel darueber
+            # sagte dasselbe noch einmal (24.09.2026) - der Name bleibt am
+            # Dock, nur die Zeile entfaellt
+            self._docktitel_zeigen(False)
             self.eingaben_dock.show()
             self.eingaben_dock.raise_()
+        self._fensterhoehe_halten(hoehe_vorher, maske)
         return maske
+
+    def _fensterhoehe_halten(self, hoehe: int, maske=None) -> None:
+        """Das Fenster waechst nie durch eine Maske (24.09.2026).
+
+        Die Mitte der Maske rollt, ihre Mindesthoehe ist klein. Reicht der
+        rechte Bereich trotzdem nicht (bei 1366 x 768 hat er 162 px), zog Qt
+        das ganze Fenster hoeher, statt den unteren Bereich kleiner zu
+        machen. Darum hier: Layouts sofort rechnen lassen und, falls das
+        Fenster gewachsen ist, die alte Hoehe wiederherstellen - den unteren
+        Bereich kuerzt Qt dann selbst.
+
+        Kein resizeDocks (Nachbesserung 24.09.2026): danach hielt Qt die
+        Breite des rechten Bereichs auf der langen Maske fest (Wind 1064 px,
+        die Ansicht blieb bei 61 px auch fuer die Knotenmaske), und der untere
+        Bereich schrumpfte bei jeder langen Maske weiter (357 -> 318 ->
+        229 px). Auch ein maximiertes Fenster bekommt seine Hoehe zurueck -
+        es wuchs sonst ueber den Bildschirm.
+        """
+        if self.isFullScreen() or not self.isVisible():
+            return
+
+        def rechnen():
+            for lay in (getattr(self, "maskenplatz", None),
+                        getattr(getattr(self, "eingaben_dock", None), "layout", lambda: None)(),
+                        self.layout()):
+                if lay is not None:
+                    lay.activate()
+            if self.height() > int(hoehe):
+                maximiert = self.isMaximized()
+                self.resize(self.width(), max(int(hoehe), self.minimumSizeHint().height()))
+                if maximiert and not self.isMaximized():
+                    # resize hebt „maximiert“ auf - wieder herstellen
+                    self.setWindowState(self.windowState() | QtCore.Qt.WindowMaximized)
+
+        rechnen()
+        # Passt die ganze Maske, wenn der untere Bereich bis auf seine
+        # Mindesthoehe kleiner wird, rollt sie nicht: bei 1366 x 768 sah man
+        # von der Knotenmaske sonst nur x und y. Eine laengere Maske rollt
+        # und laesst den unteren Bereich, wie er ist.
+        rolle = getattr(maske, "rolle", None)
+        unten = getattr(self, "unten_dock", None)
+        if rolle is None or unten is None or not unten.isVisible() or rolle.widget() is None:
+            return
+        fehlt = rolle.widget().sizeHint().height() - rolle.viewport().height()
+        frei = unten.height() - max(unten.minimumHeight(), unten.minimumSizeHint().height())
+        if 0 < fehlt <= frei - 4:
+            rolle.ganz_zeigen = True
+            rolle.updateGeometry()
+            rechnen()
 
     def rechts_leeren(self):
         """Rechts nichts zeigen: kein Register, keine Maske - nur den Hinweis.
@@ -4333,6 +4389,27 @@ class MainWindow(QtWidgets.QMainWindow):
             self.rechts_leer.show()
         if hasattr(self, "eingaben_dock"):
             self.eingaben_dock.setWindowTitle("Eingaben")
+            self._docktitel_zeigen(True)
+
+    def _docktitel_zeigen(self, sichtbar: bool) -> None:
+        """Titelzeile des rechten Bereichs zeigen (Register, leer) oder durch
+        ein leeres Widget ersetzen (Maske mit eigenem Titel)."""
+        dock = getattr(self, "eingaben_dock", None)
+        if dock is None:
+            return
+        if sichtbar:
+            if dock.titleBarWidget() is not None:
+                dock.setTitleBarWidget(None)
+        elif dock.titleBarWidget() is None:
+            # immer dasselbe leere Widget - Qt gibt ein ersetztes nicht frei
+            leer = getattr(self, "_docktitel_leer", None)
+            if leer is None:
+                leer = self._docktitel_leer = QtWidgets.QWidget(dock)
+                # Leeres Layout: Wunschhoehe 0 statt -1 - das Dock zaehlt die
+                # Titelhoehe sonst mit -1, und der Maske fehlte 1 px
+                QtWidgets.QHBoxLayout(leer).setContentsMargins(0, 0, 0, 0)
+            dock.setTitleBarWidget(leer)
+            leer.show()
 
     def rechts_zeigt(self) -> str:
         """Was rechts steht: "maske", "leer" oder der Name des Registers."""

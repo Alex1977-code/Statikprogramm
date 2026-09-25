@@ -249,10 +249,20 @@ class QuerschnittMaske(QtWidgets.QFrame):
         zu = QtWidgets.QToolButton(self)
         zu.setText("✕")
         zu.setObjectName("maskezu")
-        zu.setToolTip("Maske schließen (Esc)")
+        zu.setToolTip("Maske schließen")
         zu.clicked.connect(self.schliessen)
         kopf.addWidget(zu)
         aussen.addLayout(kopf)
+        # Hinweiszeile unter dem Titel wie im gemeinsamen Maskenrahmen
+        # (24.09.2026) - vorher stand sie ganz unten unter der Rollflaeche.
+        # Hinweiszeile: umbrochen ganz zu sehen; „✕ schließt“, weil Esc im
+        # Hauptfenster keine Maske schliesst
+        from .masken import Hinweiszeile
+        self.lbl_hinweis = Hinweiszeile(
+            "Normprofil oder Parameterprofil wählen und „Anlegen“ - oder das Profil "
+            "frei zusammensetzen. ✕ schließt.", self)
+        self.lbl_hinweis.setObjectName("maskenhinweis")
+        aussen.addWidget(self.lbl_hinweis)
 
         self.lbl_vorhanden = QtWidgets.QLabel("")
         self.lbl_vorhanden.setObjectName("maskenhinweis")
@@ -272,7 +282,9 @@ class QuerschnittMaske(QtWidgets.QFrame):
         rolle.setWidgetResizable(True)
         rolle.setFrameShape(QtWidgets.QFrame.NoFrame)
         rolle.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        rolle.setMinimumHeight(340)
+        # Mindesthoehe klein halten (24.09.2026): mit 340 px zog die Maske das
+        # Fenster bei 1366 x 768 auf 1032 px - rollen kann der Inhalt ohnehin
+        rolle.setMinimumHeight(80)
         inhalt = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(inhalt)
         lay.setContentsMargins(0, 0, 4, 0)
@@ -303,13 +315,6 @@ class QuerschnittMaske(QtWidgets.QFrame):
         lay.addStretch(1)
         rolle.setWidget(inhalt)
         aussen.addWidget(rolle, 1)
-
-        self.lbl_hinweis = QtWidgets.QLabel(
-            "Normprofil oder Parameterprofil wählen und „Anlegen“ - oder das Profil "
-            "frei zusammensetzen. Esc schließt.")
-        self.lbl_hinweis.setObjectName("maskenhinweis")
-        self.lbl_hinweis.setWordWrap(True)
-        aussen.addWidget(self.lbl_hinweis)
         self.setMinimumWidth(300)
         self._typ_gewaehlt()
         self._art_gewechselt()
