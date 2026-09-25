@@ -215,8 +215,11 @@ class Kopfzeile(QtWidgets.QWidget):
         # bleiben stehen, der Titel wird abgeschnitten (er steht ganz am Zeiger)
         self.titel.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
         self.titel.setMinimumWidth(0)
-        lay.insertWidget(1, schnellzugriff)
-        lay.insertWidget(lay.indexOf(self.marke_modell), suche)
+        # so hoch wie die Suche, mittig: sonst fuellte der helle Streifen die
+        # ganze Hoehe der Zeile
+        schnellzugriff.setFixedHeight(30)
+        lay.insertWidget(1, schnellzugriff, 0, QtCore.Qt.AlignVCenter)
+        lay.insertWidget(lay.indexOf(self.marke_modell), suche, 0, QtCore.Qt.AlignVCenter)
         self.marke_modell.setVisible(False)
         self._eingebettet = True
 
