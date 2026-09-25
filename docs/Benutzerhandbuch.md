@@ -1304,8 +1304,10 @@ sagt - die Abweichung geht zur vorsichtigen Seite.
 Was gerechnet wurde, steht im **Modellbaum unter „Ergebnisse"**: Umhüllende,
 Kombinationen, Lastfälle, die **Schnittgrößen**, die Nachweise, Eigenformen und
 Knickfiguren. Ein Klick stellt das Ergebnis in der Ansicht ein — dieselbe
-Auswahl, die auch die Maske *Ergebnisse* rechts führt. Dort werden Färbung,
-Schnittgrößenverlauf und Überhöhung eingestellt.
+Auswahl, die auch die Maske *Ergebnisse* rechts führt. Ergebnis, Färbung und
+Überhöhung stehen seit 25.09.2026 in der **Ergebnissteuerung** oben im rechten
+Bereich, der Schnittgrößenverlauf und die übrigen Einstellungen in der Maske
+*Ergebnisse* (siehe *Ergebnisdarstellung* weiter unten).
 
 Der Zweig **Verformungen** (seit 24.09.2026) steht nach Lastfällen und
 Nachweisen, vor den Schnittgrößen, und führt acht Einträge: **u gesamt |u|**,
@@ -1397,6 +1399,60 @@ einem Lastfall**, etwa „Umhüllende CASES“ eines Modells mit nur LF1: sie is
 dieser Lastfall und zeigt seine Lasten (bis zur Nachbesserung waren am
 Rahmen nach *Berechnen* alle 33 Lastpfeile weg). Der Schalter *Lasten*
 (Register *Ansicht*, Glasleiste) nimmt wie bisher alle Lasten aus dem Bild.
+
+#### Ergebnisdarstellung (seit 25.09.2026)
+
+**Ergebnissteuerung oben rechts.** Sobald es ein Ergebnis gibt, steht oben im
+rechten Bereich ein kleiner Kasten *Ergebnisdarstellung* mit **Ergebnis**,
+**Färbung** und **Überhöhung**. Er bleibt stehen, wenn man ein Objekt anklickt
+oder einen Befehl wählt: rechts steht dann die Steuerung und darunter die
+Maske des Objekts. Ohne Ergebnis (neues Modell, nach *Rückgängig*) ist er weg.
+Nach dem Rechnen (F5) steht das Ribbon auf dem Register **Ergebnisse**.
+
+**Überhöhung.** Ein Zahlenfeld mit drei Knöpfen: **auto** (Vorgabe; die größte
+Verschiebung erscheint mit 8 % der Modellgröße), **1:1** (wahre Größe) und
+**aus** (keine Verformung). Eine getippte Zahl mit Enter gilt als fester
+Faktor; eine ungültige Eingabe wird rot und ändert nichts. Das Feld zeigt immer
+den Faktor, mit dem gerade gezeichnet wird, die Zeile darunter die größte
+Verschiebung. *Ansicht in den Bericht* übernimmt genau diesen Faktor („Überhöhung
+x17.6“); bis dahin stand dort die Stellung des früheren Schiebers (30).
+
+**Knoten, Lager und Auswahl an der verformten Lage.** Im Ergebnisbild sitzen
+Knoten, Knotennummern, Lagersymbole, gewählte Knoten, Stäbe, Flächen und
+Elemente sowie Sonden und Werte im Bild an der gezeichneten Figur. Vorher
+schwebten die Knoten am unverformten Ort über dem verformten Körper. Ein Klick
+auf einen verformt gezeichneten Knoten trifft diesen Knoten.
+
+**Schnittgrößenverlauf am unverformten Stab.** Ist ein Verlauf gewählt, wird
+die ganze Figur **unverformt** gezeichnet, der Verlauf sitzt auf dem Stab (wie
+in RFEM); die Kopfzeile sagt „Verlauf My am unverformten System“. Die
+eingestellte Überhöhung gilt wieder, sobald *kein Verlauf* gewählt ist. Die
+Farbskala eines Lastfalls oder einer Kombination liegt **symmetrisch um 0**
+(−393 … 393 kNm statt −393 … 291 kNm), Weiß heißt also immer null. Eine
+**Umhüllende** zeigt zwei Linien: **rot die größten, blau die kleinsten** Werte
+je Stelle; die Kopfzeile nennt die Farben und die Einheit („Verlauf My [kNm]:
+rot max, blau min“). Bis dahin stand dort eine Linie mit dem betragsgrößeren
+Extrem je Stelle, die aus wechselnden Kombinationen stammte.
+
+**Max/Min-Marken und Werte am Verlauf.** An der Stelle des größten und des
+kleinsten Werts steht eine Marke mit Wert und Einheit („max 73.52 mm“,
+„min −393.11 kNm“, als Dezimalzahl, nie mit Exponent) — für die Färbung (nur
+sichtbare Teile, an der verformten Lage) und für den Verlauf. Bei einem Betrag
+wie *u gesamt* oder der Vergleichsspannung gibt es nur die Max-Marke, bei uz
+einer nach unten verformten Decke nur die Min-Marke. **Werte am Verlauf** sind
+vorab an: je Stab der größte und der kleinste Wert an der Spitze des Verlaufs.
+Beides lässt sich in der Maske *Ergebnisse* abschalten (*Werte am Verlauf*,
+*Max/Min-Marken*). Ist *Werte im Bild: Stäbe* an, beschriftet das die Stellen
+und die Werte am Verlauf entfallen.
+
+**Legende.** Die Farbskala trägt eine Bezeichnung ohne Zeichen, die im Bild
+verloren gehen: **„u gesamt [mm]“** statt „|u| [mm]“ (das als „u max“ zu lesen
+war), „phi gesamt [mrad]“, „Vergleichsspannung [N/mm²]“, „Volumen sigma_v …“.
+Legende, Marken und Verlauf folgen der Einstellung *Ansicht → Einheiten* wie
+die Kennwerte: Verformung in mm, cm oder m, Spannung in N/mm² oder kN/cm²,
+Schnittgrößen in N, kN oder MN bzw. kNm, kNcm … Feste Grenzen und der
+Grenzwert der Werteskala gelten in der Einheit der Legende. Geprüft in
+`tests/test_ergebnisdarstellung.py`.
 
 **Ergebnisse in den Bericht übernehmen**: Ansicht einstellen, dann
 *Bericht → Ansicht übernehmen* (**Strg+B**) oder „+ Ansicht übernehmen" im
