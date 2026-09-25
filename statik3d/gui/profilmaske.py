@@ -27,6 +27,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from . import design as dsg
 from .dialogs import NumEdit
 from .. import profiles, sections
+from .. import zahlen as zl
 from ..model import Section
 
 MM = 1e-3
@@ -249,10 +250,20 @@ class QuerschnittMaske(QtWidgets.QFrame):
         zu = QtWidgets.QToolButton(self)
         zu.setText("✕")
         zu.setObjectName("maskezu")
-        zu.setToolTip("Maske schließen (Esc)")
+        zu.setToolTip("Maske schließen")
         zu.clicked.connect(self.schliessen)
         kopf.addWidget(zu)
         aussen.addLayout(kopf)
+        # Hinweiszeile unter dem Titel wie im gemeinsamen Maskenrahmen
+        # (24.09.2026) - vorher stand sie ganz unten unter der Rollflaeche.
+        # Hinweiszeile: umbrochen ganz zu sehen; „✕ schließt“, weil Esc im
+        # Hauptfenster keine Maske schliesst
+        from .masken import Hinweiszeile
+        self.lbl_hinweis = Hinweiszeile(
+            "Normprofil oder Parameterprofil wählen und „Anlegen“ - oder das Profil "
+            "frei zusammensetzen. ✕ schließt.", self)
+        self.lbl_hinweis.setObjectName("maskenhinweis")
+        aussen.addWidget(self.lbl_hinweis)
 
         self.lbl_vorhanden = QtWidgets.QLabel("")
         self.lbl_vorhanden.setObjectName("maskenhinweis")
@@ -272,7 +283,9 @@ class QuerschnittMaske(QtWidgets.QFrame):
         rolle.setWidgetResizable(True)
         rolle.setFrameShape(QtWidgets.QFrame.NoFrame)
         rolle.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        rolle.setMinimumHeight(340)
+        # Mindesthoehe klein halten (24.09.2026): mit 340 px zog die Maske das
+        # Fenster bei 1366 x 768 auf 1032 px - rollen kann der Inhalt ohnehin
+        rolle.setMinimumHeight(80)
         inhalt = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(inhalt)
         lay.setContentsMargins(0, 0, 4, 0)
@@ -303,13 +316,6 @@ class QuerschnittMaske(QtWidgets.QFrame):
         lay.addStretch(1)
         rolle.setWidget(inhalt)
         aussen.addWidget(rolle, 1)
-
-        self.lbl_hinweis = QtWidgets.QLabel(
-            "Normprofil oder Parameterprofil wählen und „Anlegen“ - oder das Profil "
-            "frei zusammensetzen. Esc schließt.")
-        self.lbl_hinweis.setObjectName("maskenhinweis")
-        self.lbl_hinweis.setWordWrap(True)
-        aussen.addWidget(self.lbl_hinweis)
         self.setMinimumWidth(300)
         self._typ_gewaehlt()
         self._art_gewechselt()
@@ -598,10 +604,23 @@ def _tabelle(spalten: list[str], hoehe: int = 96) -> QtWidgets.QTableWidget:
 
 
 def _zahl(text: str, vorgabe: float = 0.0) -> float:
-    try:
-        return float(str(text).replace(",", ".").strip())
-    except ValueError:
-        return vorgabe
+    """Ein Mass aus einer Zelle nach der Regel der Zahlenfelder (25.09.2026):
+    leer = ``vorgabe``; „1.000“ (mehrdeutig) und „abc“ werfen ValueError -
+    bis dahin wurde „1.000“ still 1 mm und „abc“ still 0. Die Kennwerte
+    zeigen dann die Meldung rot, OK ist gesperrt (aktualisieren)."""
+    return zl.feldwert(text, vorgabe)
+
+
+def _nummer(text: str, vorgabe: int = 0) -> int:
+    """Eine Knotennummer aus einer Zelle (Nummer, keine Masszahl): was keine
+    ganze Zahl ist, liefert ``vorgabe`` - nur zum Weiterzaehlen."""
+    t = str(text or "").strip()
+    return int(t) if t.lstrip("-").isdigit() else int(vorgabe)
+
+
+def _zelle(x) -> str:
+    """Ein Mass fuer eine Zelle: Komma, nie wissenschaftlich (25.09.2026)."""
+    return zl.zahl_text(x, tausender=False)
 
 
 class ProfilEditor(QtWidgets.QDialog):
@@ -739,30 +758,30 @@ class ProfilEditor(QtWidgets.QDialog):
         name = profil or self.cb_profilwahl.currentText().strip()
         if not name:
             return
-        self._zeile(self.tb_teile, [name, f"{dy:g}", f"{dz:g}", f"{drehung:g}", ""], 4, spiegeln)
+        self._zeile(self.tb_teile, [name, _zelle(dy), _zelle(dz), _zelle(drehung), ""], 4, spiegeln)
         self.aktualisieren()
 
     def knoten_zufuegen(self, nr=None, y: float = 0.0, z: float = 0.0):
         if nr is None:
-            vorhanden = [int(_zahl(self.tb_knoten.item(r, 0).text(), 0))
+            vorhanden = [_nummer(self.tb_knoten.item(r, 0).text(), 0)
                          for r in range(self.tb_knoten.rowCount()) if self.tb_knoten.item(r, 0)]
             nr = (max(vorhanden) + 1) if vorhanden else 1
-        self._zeile(self.tb_knoten, [str(int(nr)), f"{y:g}", f"{z:g}"])
+        self._zeile(self.tb_knoten, [str(int(nr)), _zelle(y), _zelle(z)])
         self.aktualisieren()
 
     def element_zufuegen(self, von=None, bis=None, t: float = 10.0):
-        nrn = [int(_zahl(self.tb_knoten.item(r, 0).text(), 0))
+        nrn = [_nummer(self.tb_knoten.item(r, 0).text(), 0)
                for r in range(self.tb_knoten.rowCount()) if self.tb_knoten.item(r, 0)]
         if von is None:
             von = nrn[-2] if len(nrn) >= 2 else (nrn[0] if nrn else 1)
         if bis is None:
             bis = nrn[-1] if nrn else 2
-        self._zeile(self.tb_elemente, [str(int(von)), str(int(bis)), f"{t:g}"])
+        self._zeile(self.tb_elemente, [str(int(von)), str(int(bis)), _zelle(t)])
         self.aktualisieren()
 
     def flaeche_zufuegen(self, knoten=None, loch: bool = False):
         if knoten is None:
-            knoten = [int(_zahl(self.tb_knoten.item(r, 0).text(), 0))
+            knoten = [_nummer(self.tb_knoten.item(r, 0).text(), 0)
                       for r in range(self.tb_knoten.rowCount()) if self.tb_knoten.item(r, 0)]
         text = ", ".join(str(int(k)) for k in knoten)
         self._zeile(self.tb_flaechen, [text, ""], 1, loch)
@@ -847,9 +866,11 @@ class ProfilEditor(QtWidgets.QDialog):
     def aktualisieren(self):
         if self._still:
             return
-        inhalt = self.inhalt()
         name = self.ed_name.text().strip() or "Profil"
         try:
+            # im try (25.09.2026): eine unlesbare Zelle („1.000“) wird rot
+            # gemeldet und sperrt OK, statt still 1 zu werden
+            inhalt = self.inhalt()
             self.sec = sections.build_free(name, inhalt["teile"], inhalt["knoten"],
                                            inhalt["elemente"], inhalt["flaechen"],
                                            nachschlagen=self.vorhandene.get)

@@ -16,6 +16,7 @@ from __future__ import annotations
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 from .. import elemente as EL
+from .. import zahlen as zl
 
 #: Farben des Entwurfs
 FARBEN = {
@@ -343,7 +344,7 @@ def _kurz(punkt) -> str:
     teile = []
     for v in np.asarray(punkt, float).ravel()[:3]:
         v = 0.0 if abs(v) < 1e-12 else float(v)
-        teile.append(f"{v:.4g}")
+        teile.append(zl.zahl_text(v, stellen=4))       # nie „1.235e+04“ (25.09.2026)
     return " | ".join(teile)
 
 
@@ -868,8 +869,8 @@ class Modellbaum(QtWidgets.QTreeWidget):
                          for name, x in model.materials.items()], "werkstoff",
                     "werkstoffe")
         dk = self._zweig(eig, "Dicken", len(model.shells), "dicken")
-        self._liste(dk, [(name, f"{getattr(x, 't', 0) * 1e3:g} mm", name,
-                          f"{name}: t = {getattr(x, 't', 0) * 1e3:g} mm")
+        self._liste(dk, [(name, f"{zl.zahl_text(getattr(x, 't', 0) * 1e3, punkt=True)} mm", name,
+                          f"{name}: t = {zl.zahl_text(getattr(x, 't', 0) * 1e3, punkt=True)} mm")
                          for name, x in model.shells.items()], "dicke", "dicken")
 
         # ---- Lager und Kopplungen ---------------------------------------
@@ -911,21 +912,22 @@ class Modellbaum(QtWidgets.QTreeWidget):
             if pm:
                 z = self._zweig(vb, "Punktmassen", len(pm), "kontakt")
                 self._liste(z, [(x.name or f"Punktmasse {i + 1}",
-                                 f"{x.masse:g} kg", str(i),
-                                 f"Knoten {x.node}: m = {x.masse:g} kg, "
-                                 f"J = {', '.join(f'{v:g}' for v in (x.traegheit or []))} kg m²")
+                                 f"{zl.zahl_text(x.masse, punkt=True)} kg", str(i),
+                                 f"Knoten {x.node}: m = {zl.zahl_text(x.masse, punkt=True)} kg, "
+                                 f"J = {', '.join(zl.zahl_text(v, punkt=True) for v in (x.traegheit or []))} kg m²")
                                 for i, x in enumerate(pm)], "punktmasse", "punktmassen")
             if dp:
                 z = self._zweig(vb, "Dämpfer", len(dp), "kontakt")
                 self._liste(z, [(x.name or f"Dämpfer {i + 1}",
                                  f"K{x.node_a}" + (f"–K{x.node_b}" if int(x.node_b) >= 0 else ""),
                                  str(i),
-                                 f"c = {', '.join(f'{v:g}' for v in (x.c or []))}")
+                                 f"c = {', '.join(zl.zahl_text(v) for v in (x.c or []))}")
                                 for i, x in enumerate(dp)], "daempfer", "daempfer")
             if fed:
                 z = self._zweig(vb, "Federn", len(fed), "kontakt")
-                self._liste(z, [(name, ", ".join(f"{v:g}" for v in (x.k or [])[:3]), name,
-                                 f"{name}: k = {', '.join(f'{v:g}' for v in (x.k or []))}")
+                # Federn in N/m sind gross: ausgeschrieben statt „1e+08“ (25.09.2026)
+                self._liste(z, [(name, "; ".join(zl.zahl_text(v) for v in (x.k or [])[:3]), name,
+                                 f"{name}: k = {'; '.join(zl.zahl_text(v) for v in (x.k or []))}")
                                 for name, x in fed.items()], "feder", "federn")
             if sk:
                 z = self._zweig(vb, "Starre Körper", len(sk), "kontakt")
@@ -936,8 +938,8 @@ class Modellbaum(QtWidgets.QTreeWidget):
                                 for i, x in enumerate(sk)], "starrkoerper", "starrkoerper")
             if gs:
                 z = self._zweig(vb, "Grenzschichten", len(gs), "kontakt")
-                self._liste(z, [(name, f"kn = {x.kn:g}", name,
-                                 f"{name}: kn = {x.kn:g} N/m je m², kt = {x.kt:g}")
+                self._liste(z, [(name, f"kn = {zl.zahl_text(x.kn)}", name,
+                                 f"{name}: kn = {zl.zahl_text(x.kn)} N/m je m², kt = {zl.zahl_text(x.kt)}")
                                 for name, x in gs.items()], "grenzschicht", "grenzschichten")
 
         # Der Zweig steht immer (16.09.2026, „im Modellbaum muessen auch Gelenke
@@ -1052,8 +1054,8 @@ class Modellbaum(QtWidgets.QTreeWidget):
                     continue
                 if art == "eigengewicht":
                     g = lasten[0]
-                    zahl = (f"g = ({g[0]:g}, {g[1]:g}, {g[2]:g}) m/s²" if (g[0] or g[1])
-                            else f"g_z = {g[2]:g} m/s²")
+                    zahl = (f"g = ({zl.zahl_text(g[0], punkt=True)}, {zl.zahl_text(g[1], punkt=True)}, {zl.zahl_text(g[2], punkt=True)}) m/s²" if (g[0] or g[1])
+                            else f"g_z = {zl.zahl_text(g[2], punkt=True)} m/s²")
                 else:
                     zahl = len(lasten)
                 self._zweig(it, titel, zahl, "lastart", schluessel=f"{name}|{art}",

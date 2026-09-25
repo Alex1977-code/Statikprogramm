@@ -679,6 +679,11 @@ def test_nachweisetikett_folgt_dem_ergebnis():
     fenster.model = m
     fenster.results = None
     fenster.lbl_design = Etikett()
+    # die Ermuedungszeile traegt seit 25.09.2026 das Urteil wie im Protokoll
+    fenster._ermuedung_zusatz = MainWindow._ermuedung_zusatz
+
+    def erm(an):
+        return an.fatigue.summary() + MainWindow._ermuedung_zusatz(an.fatigue)
 
     def zeige(an):
         fenster.analysis = an
@@ -704,10 +709,10 @@ def test_nachweisetikett_folgt_dem_ergebnis():
     t = zeige(an_fat)
     print("     nur Ermuedung:", t)
     check("Etikett: nur Ermuedung zeigt die Zeile der Ermuedung",
-          float(t == an_fat.fatigue.summary() and "Nachweise EC3" not in t), 1.0, 0)
+          float(t == erm(an_fat) and "Nachweise EC3" not in t), 1.0, 0)
     t = zeige(an_beide)
     check("Etikett: EC3 und Ermuedung untereinander",
-          float(t == an_beide.design.summary() + "\n" + an_beide.fatigue.summary()), 1.0, 0)
+          float(t == an_beide.design.summary() + "\n" + erm(an_beide)), 1.0, 0)
     t = zeige(None)
     check("Etikett: ohne Ergebnis 'noch keine Nachweise'",
           float(t == "noch keine Nachweise"), 1.0, 0)
@@ -752,7 +757,7 @@ def test_nachweisetikett_folgt_dem_ergebnis():
     check("Etikett: nach Knicken sind die Knickfiguren gezeigt",
           float(fenster.results is r_knick and r_knick.buckling_factors is not None), 1.0, 0)
     check("Etikett: nach Knicken bleiben EC3- und Ermuedungszeile",
-          float(t == an_beide.design.summary() + "\n" + an_beide.fatigue.summary()), 1.0, 0)
+          float(t == an_beide.design.summary() + "\n" + erm(an_beide)), 1.0, 0)
     t = danach(an_ec3, "case", solver.solve_static(m))
     print("     EC3, danach aktiver Lastfall:", t)
     check("Etikett: nach dem aktiven Lastfall 'noch keine Nachweise'",

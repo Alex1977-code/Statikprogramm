@@ -554,20 +554,33 @@ def _fenster(m):
                               UNDO_ELEMENTE=G.MainWindow.UNDO_ELEMENTE,
                               tbl_lc=QtWidgets.QTableWidget(0, 5), tbl_comb=QtWidgets.QTableWidget(0, 4),
                               tbl_fatl=QtWidgets.QTableWidget(0, 5), lbl_active=QtWidgets.QLabel(),
-                              cb_g=QtWidgets.QCheckBox(), maskenrand=types.SimpleNamespace(maske=None))
+                              cb_g=QtWidgets.QCheckBox(), maskenrand=types.SimpleNamespace(maske=None),
+                              # refresh_cases leert seit Paket 6a (25.09.2026) die Ergebnisauswahl,
+                              # wenn kein Ergebnis da ist - das echte Fenster hat beide Felder
+                              analysis=None, results=None)
     s._undo_knoepfe = lambda: None
+    # merken() vermerkt seit dem 24.09.2026 den Aenderungsstand (Stern im
+    # Titel, Rueckfrage vor Neu/Beenden) - die Attrappe hat keinen Titel
+    s._stand = 0
+    s._aenderung = lambda: None
     s._undo_init = lambda: G.MainWindow._undo_init(s)
     s.info = lambda t: None
     s._lastwahl_fuellen = lambda: None
+    s._ergebnis_zum_lastfall = lambda: G.MainWindow._ergebnis_zum_lastfall(s)
     s._fill = lambda t, rows, header=None: G.MainWindow._fill(s, t, rows, header)
     s.refresh_cases = lambda: G.MainWindow.refresh_cases(s)
     s.refresh_all = s.refresh_cases
-    s.merken = lambda was: G.MainWindow.merken(s, was)
+    s.merken = lambda was, beschriftung=False: G.MainWindow.merken(s, was, beschriftung)
     s.undo = lambda: G.MainWindow.undo(s)
     s.redo = lambda: G.MainWindow.redo(s)
 
-    def modell_setzen(mm):              # wie _modell_setzen: Objekt tauschen, nachziehen
+    def modell_setzen(mm, ergebnisse_behalten=False):
+        # wie _modell_setzen (Signatur seit Paket 4, 24.09.2026): Objekt
+        # tauschen, Ergebnisse verwerfen ausser bei Beschriftungsschritten,
+        # nachziehen
         s.model = mm
+        if not ergebnisse_behalten:
+            s.analysis = s.results = None
         s.refresh_all()
     s._modell_setzen = modell_setzen
     s._ermuedung_aendern = lambda was, fn: G.MainWindow._ermuedung_aendern(s, was, fn)

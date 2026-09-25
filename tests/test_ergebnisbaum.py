@@ -527,16 +527,17 @@ def test_baum_und_klick():
     check("… ohne Darstellungsfehler", not fehler, str(fehler[:2]))
     w._baum_geklickt("ergebnis", "feld:|u| Verschiebung"); app.processEvents()
     check("Klick „u gesamt“: Färbung |u|", w.cb_field.currentText() == "|u| Verschiebung")
-    # Doppelklick uebernimmt in den Bericht (wie jedes Ergebnis). Die Aufnahme
-    # selbst (Bildschirmfoto) haelt offscreen an - geprueft wird der Weg.
+    # Doppelklick zeigt nur, kein Berichtsbild mehr (25.09.2026, Paket 3 des
+    # Oberflaechenplans: ein Doppelklick legt nichts an). Die Aufnahme selbst
+    # (Bildschirmfoto) haelt offscreen an - geprueft wird der Weg.
     aufnahmen = []
     w.ansicht_in_bericht = lambda: aufnahmen.append(w.cb_field.currentText())
     try:
         w._baum_bearbeiten("ergebnis", "feld:uz"); app.processEvents()
     finally:
         del w.ansicht_in_bericht
-    check("Doppelklick „uz“: Färbung uz, dann in den Bericht",
-          w.cb_field.currentText() == "uz" and aufnahmen == ["uz"], str(aufnahmen))
+    check("Doppelklick „uz“: Färbung uz, kein Berichtsbild",
+          w.cb_field.currentText() == "uz" and aufnahmen == [], str(aufnahmen))
     # Eigenformen: keine Gruppe
     rm = solver.solve_modal(w.model, 2)
     w._solve_done("modal", rm); app.processEvents()

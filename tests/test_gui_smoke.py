@@ -11,6 +11,12 @@ import os
 # nach jedem Lauf ein Browserfenster mit tests/_lastenheft_smoke.html, die der
 # Lauf gleich wieder geloescht hatte ("Zugriff auf die Datei nicht moeglich").
 os.environ.setdefault("STATIK3D_KEIN_BROWSER", "1")
+# Neu, Oeffnen, Beispiel und Beenden fragen seit dem 24.09.2026 nach
+# Ungespeichertem (Speichern/Verwerfen/Abbrechen). Dieser Lauf ruft sie weit
+# ueber hundertmal nach Aenderungen auf - der Testschalter antwortet
+# „verwerfen“, wie es vorher ohne Frage geschah (auch beim Aufruf als Skript,
+# ohne tests/__init__.py). Die Frage selbst prueft tests/test_ungespeichert.py.
+os.environ.setdefault("STATIK3D_UNGESPEICHERT", "verwerfen")
 import sys
 import time
 
@@ -162,7 +168,7 @@ def main():
     check("Fenster erzeugt", w.isVisible())
     # Netz aendern bei vorhandenen Ergebnissen fragt (Vernetzen / Abbrechen) -
     # im Durchlauf stimmt die Antwort zu; der eigene Abschnitt prueft die Frage
-    w._fragen_knoepfe = lambda titel, text, ja="Ja", nein="Abbrechen": True
+    w._fragen_knoepfe = lambda titel, text, ja="Ja", nein="Abbrechen", **_k: True
 
     for ex in ("frame", "truss", "plate", "solid", "hall", "gate", "contact", "friction"):
         t0 = time.time()
@@ -242,7 +248,7 @@ def main():
     mg_.load_node(1, Fz=-1000.0)
     w._solve_done("case", solver.solve_static(mg_)); app.processEvents()
     fragen_n = []
-    w._fragen_knoepfe = lambda titel, text, ja="Ja", nein="Abbrechen": (fragen_n.append((titel, ja, nein, text)), False)[1]
+    w._fragen_knoepfe = lambda titel, text, ja="Ja", nein="Abbrechen", **_k: (fragen_n.append((titel, ja, nein, text)), False)[1]
     n_el = len(mg_.elements)
     w.geometrie_vernetzen(); app.processEvents()
     check("Vernetzen mit Ergebnissen: Rückfrage „Netz ändern“, Knöpfe Vernetzen/Abbrechen, sie nennt die Löschung",
@@ -253,7 +259,7 @@ def main():
     check("Netz löschen fragt ebenso (Knopf „Netz löschen“) und lässt bei Abbrechen alles stehen",
           len(fragen_n) == 2 and fragen_n[1][1] == "Netz löschen" and w.analysis is not None
           and len(mg_.elements) == n_el, str(fragen_n[1:2])[:80])
-    w._fragen_knoepfe = lambda titel, text, ja="Ja", nein="Abbrechen": True
+    w._fragen_knoepfe = lambda titel, text, ja="Ja", nein="Abbrechen", **_k: True
     w.geometrie_vernetzen(); app.processEvents()
     check("Vernetzen bestätigt: die Ergebnisse sind verworfen (auch aus der Auswahl), das Netz neu",
           w.analysis is None and w.results is None and w.cb_result.count() == 0 and len(mg_.elements) > 0,
@@ -284,14 +290,18 @@ def main():
     # Eingabe-Aktionen: Auswahl, Lager, Lasten, Lastfaelle, Kontakt, Staebe
     w.new_model(); app.processEvents()
     w.beam_p2[0].set(6.0); w.beam_n.setValue(6); w.make_beams(); app.processEvents()
+    # Das Register rechnet seit 24.09.2026 in der Einheiteneinstellung
+    # (Vorgabe kN, kN/m) wie die Masken - vorher in N: -10 kN = -10 000 N
     w.sel[0].setText("0"); w.sel[1].setText("0"); w.do_select(); w.set_support(all_dofs=True)
-    w.sel[0].setText("6"); w.sel[1].setText("6"); w.do_select(); w.ld[2].set(-10000); w.add_load()
-    w.q[2].set(-2000); w.add_beam_load()
+    w.sel[0].setText("6"); w.sel[1].setText("6"); w.do_select(); w.ld[2].set(-10); w.add_load()
+    check("Register Lager/Lasten in kN: −10 kN kommen als −10 000 N an",
+          abs(w.model.case().nodal_loads[-1].F[2] + 10000.0) < 1e-9, str(w.model.case().nodal_loads[-1].F))
+    w.q[2].set(-2); w.add_beam_load()
     w.cb_g.setChecked(True)
     w.model.add_load_case("Q", "Q_B"); w.refresh_all()
     w.tbl_lc.selectRow(1); app.processEvents()
     check("aktiver Lastfall umgeschaltet", w.model.active_case == "Q", w.model.active_case)
-    w.ld[2].set(-5000); w.add_load()
+    w.ld[2].set(-5); w.add_load()
     from statik3d.combinations import generate_combinations
     generate_combinations(w.model); w.refresh_all()
     w.sel[0].setText("3"); w.sel[1].setText("3"); w.do_select(); w.add_contact_support()
@@ -1239,7 +1249,9 @@ def main():
         app.processEvents()
         check("Verformungen werden mit gerechnet",
               an.gzg is not None and len(an.gzg.checks) == 2)
-        z = w.tbl_gzg.modell.zeilen[0]
+        # die Zeile der Durchbiegung beim Namen: seit dem 24.09.2026 steht
+        # die Tabelle absteigend nach Ausnutzung, nicht mehr nach Namen
+        z = next(z for z in w.tbl_gzg.modell.zeilen if z[0] == "Durchbiegung Riegel")
         # Spalte 4 ist die Verschiebung [mm], Spalte 5 die Verdrehung [mrad] -
         # zwei getrennte Zahlenspalten, seit eine Verdrehung nicht mehr unter
         # dem Kopf "mm" steht. Die Grenze rueckt damit auf 6, die Ausnutzung
@@ -3787,7 +3799,7 @@ def main():
         app.processEvents()
         mk = w.maskenrand.maske
         check("Schwingungs-Maske zum Bearbeiten vorbelegt",
-              mk.titel == "Schwingung Schwingung1" and mk.werte()["d_kante"] == "0.2", str(mk.werte().get("d_kante")))
+              mk.titel == "Schwingung Schwingung1" and float(mk.werte()["d_kante"]) == 0.2, str(mk.werte().get("d_kante")))
         an_ = w.analysis if w.analysis is not None else solver.Analysis(m_)
         an_.schwingung = erg_
         bl_ = Rep(m_, an_).chapter_schwingung()
@@ -4346,12 +4358,15 @@ def main():
         kn_ = mk_s._felder["knoten"].text()
         mem_s = ms_.members[stabname_]
         sec_s = ms_.sections[ms_.elements[mem_s.elements[0]].sec]
+        from statik3d import zahlen as _zl_
         check("Stabmaske nennt Knoten (Anfang → Ende mit Koordinaten) und Länge",
               kn_.startswith("K") and "→" in kn_ and " m" in kn_ and " m (" in mk_s._felder["laenge"].text(),
               kn_[:80] + " | " + mk_s._felder["laenge"].text())
         check("… den Querschnitt mit Bezeichnung, Maßen in mm und Kennwerten in cm-Einheiten",
               qs_.startswith(sec_s.name) and "mm)" in qs_ and "A " in qs_ and "cm²" in qs_ and "I_y" in qs_ and "cm⁴" in qs_
-              and f"h {sec_s.h * 1e3:g}" in qs_, qs_[:120])
+              # Masse wie die Kennwerte daneben nach zahlen.zahl_text (25.09.2026:
+              # bis dahin :g, das grosse Werte mit Exponent schrieb)
+              and f"h {_zl_.zahl_text(sec_s.h * 1e3)}" in qs_, qs_[:120])
         check("… und den Werkstoff mit E und f_y",
               "E " in mk_s._felder["mat_info"].text() and "GPa" in mk_s._felder["mat_info"].text()
               and "f_y" in mk_s._felder["mat_info"].text(), mk_s._felder["mat_info"].text()[:80])
@@ -4612,7 +4627,7 @@ def main():
         w.maske_netzeinstellungen(); app.processEvents()
         mk2 = w.maskenrand.maske
         check("die Maske zeigt die Längen in mm", float(mk2.werte()["ziellaenge"]) == 500.0
-              and str(mk2.werte()["h_min"]).strip() == "100", str((mk2.werte()["ziellaenge"], mk2.werte()["h_min"])))
+              and float(mk2.werte()["h_min"]) == 100.0, str((mk2.werte()["ziellaenge"], mk2.werte()["h_min"])))
         # Gleichungsloeser zur Auswahl (Berechnung -> Einstellungen)
         from statik3d import solver as slv_
         from statik3d import parallel as parallel_
@@ -4809,7 +4824,10 @@ def main():
         w.sammelmaske("knoten", [k0, k1])
         app.processEvents()
         mk = w.maskenrand.maske
-        check("Sammelmaske Knoten: x verschieden (leer), z gleich", mk.werte()["x"] == "" and mk.werte()["z"] == "0", str(mk.werte()))
+        # seit 24.09.2026 Zahlenfelder: leer = unveraendert, am Feldtext zu sehen
+        check("Sammelmaske Knoten: x verschieden (leer), z gleich",
+              mk._felder["x"].text() == "" and mk._felder["z"].text() == "0",
+              f"{mk._felder['x'].text()!r} {mk._felder['z'].text()!r}")
         mk.setzen("z", "1.5")
         mk.anwenden()
         app.processEvents()
@@ -4817,7 +4835,8 @@ def main():
         w.sammelmaske("stab", ["S1", "S2"])
         app.processEvents()
         mk = w.maskenrand.maske
-        check("Sammelmaske Stäbe: β_y verschieden, β_z gleich", mk.werte()["beta_y"] == "" and mk.werte()["beta_z"] == "1")
+        check("Sammelmaske Stäbe: β_y verschieden, β_z gleich",
+              mk._felder["beta_y"].text() == "" and mk._felder["beta_z"].text() == "1")
         mk.setzen("beta_y", "0.7")
         mk.setzen("lt_check", "nein")
         mk.anwenden()
@@ -5332,7 +5351,7 @@ def main():
         gefragt_t = []
         alt_fk_t = w.__dict__.get("_fragen_knoepfe")
         alt_netz_t = w._vernetzen
-        w._fragen_knoepfe = lambda titel, text, ja="Ja", nein="Abbrechen": (
+        w._fragen_knoepfe = lambda titel, text, ja="Ja", nein="Abbrechen", **_k: (
             gefragt_t.append((titel, text)), False)[1]
         w._vernetzen = lambda f, k: (len(f), len(k)) and 0
         try:
@@ -7413,8 +7432,17 @@ def main():
               csv_[0].startswith("Knoten;Rx [N];Ry [N];Rz [N];Mx [Nmm]")
               and abs(float(csv_[1].split(";")[3].split("/")[0].replace(",", ".")) - rz_kN * 1000) < 1e-6,
               str(csv_[:2]))
+        # Seit 24.09.2026 stehen im Bild der Umhuellenden (hier „Umhüllende
+        # Lastfälle“) keine Lasten mehr (Schalter „Lasten im Ergebnisbild“,
+        # Vorgabe aus) - geprueft wird darum am Ergebnis des Lastfalls, das
+        # seine Lasten zeigt; die Zeile nennt ihn (tests/test_ergebnisbild.py)
+        for i_ in range(w.cb_result.count()):
+            if (w.cb_result.itemData(i_) or ("",))[0] == "case":
+                w.cb_result.setCurrentIndex(i_)
+                break
+        app.processEvents()
         check("Lasten oben links in [N, N/mm], Kennwerte u in [cm]",
-              any("[N, N/mm]" in z for z in w._kopfzeile_zeilen)
+              any("[N, N/mm]" in z and f"Lasten {m_.active_case} " in z for z in w._kopfzeile_zeilen)
               and any(z.startswith("u ") and "[cm]" in z for z in w._kennwerte_zeilen),
               str((w._kopfzeile_zeilen, w._kennwerte_zeilen[:2])))
         ok_ = mk_.setData(mk_.index(1, 1), "4500", QtCore.Qt.EditRole)
@@ -7475,29 +7503,42 @@ def main():
               and kn["ergebnisse"].defaultAction() is w.act_ergebnisse,
               type(w.glasleiste.lay.itemAt(1).widget()).__name__)
         eintr =[(cbl.itemText(i), cbl.itemData(i)) for i in range(cbl.count())]
-        check("sie führt jeden Lastfall und jede Kombination",
-              len(eintr) == len(w.model.load_cases) + len(w.model.combinations)
-              and eintr[0][1] == ("case", list(w.model.load_cases)[0])
-              and any(d[0] == "combo" for _t, d in eintr),
-              f"{len(eintr)} Einträge zu {len(w.model.load_cases)} Lastfällen "
+        # Seit 24.09.2026 gegliedert: Ueberschriften (Daten None) „Lastfälle“
+        # und „Kombinationen“, danach die Eintraege (tests/test_ergebnisbild.py)
+        daten_ = [d for _t, d in eintr if d is not None]
+        check("sie führt jeden Lastfall und jede Kombination, unter zwei Überschriften",
+              len(daten_) == len(w.model.load_cases) + len(w.model.combinations)
+              and [t for t, d in eintr if d is None] == ["Lastfälle", "Kombinationen"]
+              and daten_[0] == ("case", list(w.model.load_cases)[0])
+              and any(d[0] == "combo" for d in daten_),
+              f"{len(daten_)} Einträge zu {len(w.model.load_cases)} Lastfällen "
               f"und {len(w.model.combinations)} Kombinationen")
         check("und steht auf dem, was die Ansicht zeigt",
               cbl.currentData() == ("case", w.model.active_case), str(cbl.currentData()))
         zweiter = next(i for i, (_t, d) in enumerate(eintr)
-                       if d[0] == "case" and d[1] != w.model.active_case)
+                       if d and d[0] == "case" and d[1] != w.model.active_case)
         cbl.setCurrentIndex(zweiter)
         app.processEvents()
         check("ein Lastfall daraus wird der aktive",
               w.model.active_case == eintr[zweiter][1][1], w.model.active_case)
-        i_kombi = next(i for i, (_t, d) in enumerate(eintr) if d[0] == "combo")
+        i_kombi = next(i for i, (_t, d) in enumerate(eintr) if d and d[0] == "combo")
         cbl.setCurrentIndex(i_kombi)
         app.processEvents()
-        check("eine Kombination ohne Ergebnis sagt, woran es liegt",
-              "sobald gerechnet ist" in w.log.toPlainText().splitlines()[-1],
-              w.log.toPlainText().splitlines()[-1][:80])
+        # ... und die Leiste springt auf das zurueck, was das Bild weiter
+        # zeigt (Nachbesserung 24.09.2026, tests/test_ergebnisbild.py)
+        check("eine Kombination ohne Ergebnis sagt, woran es liegt, die Leiste springt zurück",
+              "sobald gerechnet ist" in w.log.toPlainText().splitlines()[-1]
+              and cbl.currentData() == ("case", w.model.active_case),
+              f"{w.log.toPlainText().splitlines()[-1][:80]} / {cbl.currentData()}")
         an_ = _slv.solve_all(w.model, design=bool(w.model.members))
         w._solve_done("all", an_)
         app.processEvents()
+        # nach der Rechnung zeigt das Bild die Umhuellende - die Leiste auch
+        # (bis 24.09.2026 blieb sie auf dem Lastfall stehen)
+        check("nach der Rechnung steht die Leiste auf der gezeigten Umhüllenden",
+              cbl.currentData() == w.cb_result.currentData()
+              and tuple(w.cb_result.currentData())[0] == "env",
+              f"{cbl.currentData()} / {w.cb_result.currentData()}")
         cbl.setCurrentIndex(i_kombi)
         app.processEvents()
         check("mit Ergebnis schaltet sie die Ergebnisliste mit um",

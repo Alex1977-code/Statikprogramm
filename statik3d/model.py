@@ -1467,18 +1467,12 @@ def lastspiele_text(n) -> str:
 
     Steht im Modell und nicht in der Oberflaeche, weil Maske, Register,
     Modellbaum (FatigueLoad.bezug) und Bericht dieselbe Schreibweise brauchen
-    und der Bericht die Oberflaeche nicht laden darf."""
-    import math
-    try:
-        x = float(n)
-    except (TypeError, ValueError):
-        return str(n)
-    if not math.isfinite(x):
-        return "–"
-    if x == round(x) and abs(x) < 1e18:
-        return f"{int(round(x)):,}".replace(",", " ")
-    ganz, _, rest = format(x, ",.10f").rstrip("0").partition(".")
-    return ganz.replace(",", " ") + ("," + rest if rest else "")
+    und der Bericht die Oberflaeche nicht laden darf.
+
+    Seit 24.09.2026 steht die Schreibweise in statik3d/zahlen.py, zusammen
+    mit der Leseregel aller Zahlenfelder - eine Quelle fuer beides."""
+    from .zahlen import zahl_text
+    return zahl_text(n)
 
 
 @dataclass

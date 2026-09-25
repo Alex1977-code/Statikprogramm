@@ -21,7 +21,6 @@ davor und refresh_all() dahinter.
 from __future__ import annotations
 
 import math
-import re
 import weakref
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -59,40 +58,25 @@ SPALTEN = ["Name", "Art", "Oberer Zustand / Verlauf", "Unterer Zustand", "Lastsp
 ROT = "#c0392b"
 GRUEN = "#2e7d32"
 
-#: Leerzeichen, die beim Lesen einer Zahl wegfallen: normales, schmales
-#: geschuetztes (U+202F), schmales (U+2009), geschuetztes (U+00A0)
-_LEER = (" ", " ", " ", " ", "_")
-
-
 # --------------------------------------------------------------------------
 # Zahlen: nie wissenschaftlich (Anwender, 12.09.2026: „2e+06“ ist unlesbar)
 # --------------------------------------------------------------------------
 # Eine Schreibweise fuer Maske, Register, Baum und Bericht: im Modell.
 from ..model import lastspiele_text  # noqa: E402,F401
-
-
-def _ohne_leer(text) -> str:
-    t = str(text or "")
-    for z in _LEER:
-        t = t.replace(z, "")
-    return t
+# Eine Leseregel fuer alle Zahlenfelder (24.09.2026): statik3d/zahlen.py. Die
+# Maske war das Vorbild; bis dahin fielen hier alle Leerzeichen weg, „12 5“
+# wurde still 125.
+from .. import zahlen as _zl  # noqa: E402
 
 
 def zahl_lesen(text) -> float:
-    """Eine Zahl lesen: Leerzeichen fallen weg, Komma ist Dezimalzeichen.
+    """Eine Zahl lesen (Komma oder Punkt, Tausender mit Leerzeichen, „2e6“).
     ValueError, wenn es keine Zahl ist."""
-    t = _ohne_leer(text).replace(",", ".")
-    if not t:
-        raise ValueError("leer")
-    return float(t)
+    return _zl.zahl_wert(text)
 
 
 class TausenderpunktFehler(ValueError):
     """„500.000“ im Lastspielfeld: deutsch geschriebene Tausenderpunkte."""
-
-
-#: „500.000“, „2.000.000“: Punkte als Tausendertrennung (ohne Komma, ohne e)
-_TAUSENDERPUNKT = re.compile(r"^[+-]?\d{1,3}(\.\d{3})+$")
 
 
 def lastspiele_lesen(text) -> float:
@@ -103,9 +87,14 @@ def lastspiele_lesen(text) -> float:
     Punkt die uebliche Tausendertrennung, float() naehme ihn als
     Dezimalpunkt - die Zeile zaehlte dann 1000-mal zu wenig Spiele (unsichere
     Seite), „2.000.000“ dagegen waere ein Fehler. Beides gleich behandeln.
+    Die allgemeine Regel fragt bei „500.000“ nach; eine Lastspielzahl mit
+    drei Nachkommastellen gibt es nicht, darum hier gleich die Abweisung.
     """
-    if _TAUSENDERPUNKT.match(_ohne_leer(text)):
-        raise TausenderpunktFehler("Tausender bitte mit Leerzeichen schreiben, z. B. 500 000 "
+    les = _zl.lesen(text)
+    roh = str(text or "").strip().replace(" ", "")
+    if les.status == _zl.FRAGE or (les.status == _zl.UNGUELTIG and _zl.TAUSENDERPUNKT.match(roh)):
+        beispiel = _zl.zahl_text(float(roh.replace(".", "")))
+        raise TausenderpunktFehler(f"Tausender bitte mit Leerzeichen schreiben, z. B. {beispiel} "
                                    "(der Punkt ist mehrdeutig)")
     return zahl_lesen(text)
 
@@ -350,8 +339,6 @@ class Ermuedungsmaske(msk.Maske):
 
     # -- Aufbau ------------------------------------------------------------
     def _aufbauen(self):
-        lay = self.layout()
-        pos = lay.indexOf(self.lbl_hinweis)
         inhalt = QtWidgets.QWidget(self)
         v = QtWidgets.QVBoxLayout(inhalt)
         v.setContentsMargins(0, 0, 0, 0)
@@ -513,7 +500,9 @@ class Ermuedungsmaske(msk.Maske):
         self.lbl_meldung = QtWidgets.QLabel("", inhalt)
         self.lbl_meldung.setWordWrap(True)
         v.addWidget(self.lbl_meldung)
-        lay.insertWidget(pos, inhalt, 1)
+        # In die rollbare Mitte des gemeinsamen Maskenrahmens (24.09.2026) -
+        # frueher vor die Hinweiszeile am Ende der Maske, die steht jetzt oben
+        self.inhalt_einfuegen(inhalt, 1)
 
     # -- Tabelle -----------------------------------------------------------
     def tabelle_fuellen(self):

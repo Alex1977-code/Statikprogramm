@@ -22,3 +22,11 @@ for _strom in (sys.stdout, sys.stderr):
     if (_strom is not None and hasattr(_strom, "reconfigure")
             and (_strom.encoding or "").replace("-", "").lower() != "utf8"):
         _strom.reconfigure(encoding="utf-8", errors="replace")
+
+# Die Oberflaeche fragt vor Neu, Oeffnen, Beispiel, Import und Beenden nach
+# Ungespeichertem (Speichern/Verwerfen/Abbrechen, 24.09.2026). Der Rauchtest
+# ruft diese Befehle weit ueber hundertmal nach Aenderungen auf; eine modale
+# Frage hielte jede Pruefung mit Hauptfenster an. Der Testschalter antwortet
+# „verwerfen“ - wie sich die Pruefungen vorher verhielten. Die Frage selbst
+# prueft tests/test_ungespeichert.py, dort ist der Schalter jeweils aus.
+os.environ.setdefault("STATIK3D_UNGESPEICHERT", "verwerfen")

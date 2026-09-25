@@ -1024,8 +1024,13 @@ def index_von(model, e) -> int:
     if zuordnung is None:
         zuordnung = an._nach_id = {id(model.elements[int(i)]): int(i) for i in an.idx}
     i = zuordnung.get(id(e))
-    if i is None:
-        raise ValueError("tetp: Element gehoert nicht zum Modell")
+    if i is None or model.elements[i] is not e:
+        # Die Zuordnung haengt an Objekt-ids und reist beim Pickeln mit
+        # (model._tetp_zwischen) - im Arbeitsprozess sind es andere Objekte
+        zuordnung = an._nach_id = {id(model.elements[int(k)]): int(k) for k in an.idx}
+        i = zuordnung.get(id(e))
+        if i is None or model.elements[i] is not e:
+            raise ValueError("tetp: Element gehoert nicht zum Modell")
     return i
 
 

@@ -82,12 +82,12 @@ Vierzehn Register nach Arbeitsschritt:
 
 | Register | Inhalt |
 |---|---|
-| **Datei** | Neu, Öffnen, Speichern, Projektangaben, Übernehmen aus fremden Formaten, Exportieren, Beispiele |
+| **Datei** | Neu, Öffnen, Speichern, Projektangaben, **Modell leeren (Eigenschaften behalten)…**, Übernehmen aus fremden Formaten, Exportieren, **Beispiel öffnen ▾** (die acht Beispiele in einem Knopf) |
 | **Start** | Auswahl, Modellprüfung, doppelte Knoten, freie Stabenden anschließen, Berechnen |
 | **Unterlagen** | **Dateien** (Datei hinzufügen: PDF, Bild, Word, Excel …; Unterlage öffnen; Entfernen), **Ansichten** (Ansicht aufnehmen, Skizze aus Ansicht), **Skizze** (Neue Skizze, Bearbeiten), **Bericht** (In den Bericht, Unterlagen zeigen) — seit 16.09.2026, siehe *Unterlagen* |
 | **Geometrie** | Knoten, Linien, **Ändern** (Verschieben, Kopieren, Drehen, Spiegeln der Auswahl), **Konstruktion** (Lot / Projektion), Auswahlart in der Ansicht, Koordinatensysteme, Arbeitsebene und Fang (auch „Lot“) |
 | **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, Stabzug, Stäbe für Nachweise, automatisch erkennen, Querschnitt zuweisen), **Flächen** (Schale, Fläche aus Linien, Rechteckplatte, vernetzen, verschneiden, Dicke zuweisen), **Volumen** (Volumen aus Flächen, Quader, vernetzen), **Gelenke** (Gelenk anlegen, Gelenke setzen, Tabelle), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
-| **Lager / Kontakt** | Knoten-, Linien-, Flächenlager, Nichtlinearität, Kontakt, Anschlüsse (anlegen, zeigen, löschen) |
+| **Lager / Kontakt** | Knoten-, Linien-, Flächenlager, Nichtlinearität, Kontakt (mit *Alle Kontakte löschen…*), Anschlüsse (anlegen, zeigen, löschen) |
 | **Lasten** | Lastfälle, Kombinationen, Lastfälle nach DIN 19704, Knoten-, Stab-, Flächen-, Temperaturlast, Zwangsverformung, Vorspannung, Eigengewicht, Generierer Wasserdruck und Wind |
 | **Netz** | Vernetzen (Flächen und Volumen), Netzeinstellungen (Netzdichte, Elementform, intelligente Anpassung), Netzqualität, **Netzknoten** (Schalter), Netz löschen, Kontaktfugen |
 | **Berechnung** | Berechnen (F5), einzelner Lastfall, Eigenschwingungen, Knicken, alle Stellungen, DIN 19704, Einstellungen, Bedienung im Browser |
@@ -101,8 +101,28 @@ Vierzehn Register nach Arbeitsschritt:
 Links über dem Ribbon die **Schnellzugriffsleiste** (Speichern, Rückgängig,
 Wiederholen, Berechnen) — dieselben Befehle, nur schneller erreichbar;
 „Alles deselektieren“ steht in der Glasleiste über der Ansicht. Rechts die
-**Befehlssuche**: Namen eintippen, Eingabetaste, der Befehl läuft und sein
-Register kommt nach vorn.
+**Befehlssuche**: Namen eintippen, darunter erscheint die Trefferliste mit
+dem Ort jedes Befehls („Spiel geben   (Lasten › Lasten)“). Gesucht wird
+am **Wortanfang** — „spiel“ findet „Spiel geben“, aber nicht die Gruppe
+„Beispiele“ — und nach gängigen anderen Wörtern: „Import“ findet
+*Übernehmen*, „Überlagerung“ die Kombinationen nach EN 1990 und DIN 19704,
+„Situation“ die Stellungen. Die **Eingabetaste führt nur aus, wenn genau ein
+Befehlsname passt**; sonst bleibt die Liste offen und man wählt den gemeinten
+(Pfeiltasten und Eingabe oder Klick). Befehle, die das Modell ersetzen oder
+etwas löschen — Neu, Öffnen, Übernehmen, die Beispiele, Modell leeren, alles
+mit „löschen“ im Namen, Beenden — **laufen nie aus der Suche**: sie holen nur
+ihr Register nach vorn, die Statuszeile sagt, wo der Knopf steht. Ausgenommen
+sind *Filter leeren*, *Sonden löschen* und *Messungen löschen*: sie leeren nur
+Ansicht oder Tabelle und laufen wie andere Befehle. Bis zum
+24.09.2026 führte die Eingabetaste den ersten Treffer irgendwo in Name, Gruppe
+oder Hinweis aus: „Spiel“ lud das Beispiel Rahmen und verwarf das offene
+Modell. Am 24.09.2026 gab es noch einen zweiten Weg: bei offener Liste führte
+die Eingabetaste einen Befehl mit genau einem Namenstreffer **zweimal** aus
+(ein Schalter wie *Kontakte zeigen* blieb dadurch aus, *Rückgängig* nahm zwei
+Schritte zurück), bei mehreren Treffern die erste Zeile. Seit dem 25.09.2026
+ist in der Liste keine Zeile vorgewählt; die Eingabetaste führt die mit den
+Pfeiltasten gewählte Zeile genau einmal aus, sonst gilt die Regel oben.
+Geprüft in `tests/test_ungespeichert.py`, dort auch mit echten Tastendrücken.
 
 Die Arbeitsfläche in drei Spalten:
 
@@ -195,6 +215,24 @@ Die Arbeitsfläche in drei Spalten:
   (Querschnitt mit seinen Kennwerten in cm und mm, Werkstoff, Dicke, Gelenk
   mit Wirkung je Freiheitsgrad, Lastfall, Kombination, Stellung,
   Situation, Berichtsbild, Kontaktbedingung …); Lager öffnen ihren Dialog.
+
+  **Ein Doppelklick auf einen Zweig** (die Art, etwa „Werkstoffe“ oder
+  „Stäbe mit Nachweis“) öffnet rechts die **Anlegemaske „Neu …“** — dieselbe
+  wie Rechtsklick → *Neu*, nicht modal. **Angelegt wird erst mit OK**,
+  *Abbrechen* legt nichts an. Das gilt für Querschnitte, Werkstoffe, Dicken,
+  Linien, Stäbe, Stäbe mit Nachweis, Flächen, Volumen, Gelenke, Knotenlager,
+  Kontaktbedingungen, Lastfälle, Kombinationen, Ermüdungslasten, Stellungen,
+  Situationen, Subsysteme, Schweißnähte, Bemaßungen und den Wasserdruck.
+  Zweige ohne Anlegemaske — darunter Knoten (dort legt *Neu* sofort einen
+  Knoten an), Linien- und Flächenlager (brauchen erst eine Auswahl), Bericht,
+  Anschlüsse und die Nachweisobjekte — klappen beim Doppelklick nur auf und
+  zu. Bis zum 24.09.2026 führte der Doppelklick einen Befehl aus: „Stäbe mit
+  Nachweis“ legte ohne Rückfrage Stäbe an (Rahmen: 0 → 3), „Bericht“ nahm die
+  Ansicht auf, andere Zweige öffneten modale Dialoge. Der Doppelklick auf
+  einen **Ergebniseintrag** zeigt das Ergebnis wie ein Klick und legt **kein
+  Berichtsbild** mehr an (seit 25.09.2026, Plan Paket 3: ein Doppelklick legt
+  nichts an); in den Bericht übernimmt *Bericht → Ansicht übernehmen*
+  (**Strg+B**) oder „+ Ansicht übernehmen“ im Modellbaum.
   Zweige mit sehr vielen Einträgen zeigen die ersten 20 000 und verweisen für
   den Rest auf die Tabelle unten, wo gefiltert werden kann.
   Die **Stellungen stehen nur hier**, mit „+ Stellung anlegen" am Ende des
@@ -202,7 +240,9 @@ Die Arbeitsfläche in drei Spalten:
 * **in der Mitte die 3D-Ansicht** — frei für die Grafik.
 * **rechts die Eingabemaske** — es ist immer genau **eine** sichtbar: die
   Maske des gewählten Objekts oder das Register zum Befehl im Ribbon; der Titel
-  nennt sie. Ist nichts gewählt und kein Befehl aktiv, ist der Bereich leer.
+  nennt sie. Eine Maske trägt ihren Titel selbst, die Titelzeile des Bereichs
+  darüber entfällt dann. Ist nichts gewählt und kein Befehl aktiv, ist der
+  Bereich leer.
   Die **Projektangaben** stehen nicht von selbst darunter: sie holt der oberste
   Punkt des Modellbaums (der Modellname) oder *Datei → Projektangaben*. Eine
   Registerleiste mit denselben Namen wie im Ribbon gibt es nicht.
@@ -1296,7 +1336,7 @@ Volumenkörper (Knoten ohne Drehfreiheitsgrad)“, bei einem Fachwerk-, Seil- od
 Scheibenmodell ohne Balken und Schalen „keine Verdrehungen: kein Knoten mit
 Drehsteifigkeit (Fachwerkstäbe, Seile, Scheiben und Volumenkörper haben keinen
 Drehfreiheitsgrad)“. Ein Klick meldet das in der Statuszeile und färbt nicht,
-ein Doppelklick übernimmt dann auch nichts in den Bericht. Geprüft in `tests/test_ergebnisbaum.py`, dort auch die
+ein Doppelklick färbt dann ebenfalls nicht. Geprüft in `tests/test_ergebnisbaum.py`, dort auch die
 Handrechnung am Kragarm: φ am Ende = F·L²/(2EI).
 
 Der Zweig **Schnittgrößen** führt N, Vy, Vz, Mt, My und Mz, jede mit ihren
@@ -1317,9 +1357,51 @@ Verlauf bleibt die Ecke leer. Der Text gehört zum Bild und kommt darum mit in
 den Bericht, wenn man die Ansicht übernimmt. Abschalten: *Ergebnisse →
 Kennwerte im Bild*.
 
+Die Kennwerte kommen aus **demselben Feld wie Färbung und Legende**, auch bei
+einer Umhüllenden: zu |u| das größte |u| einer einzelnen Kombination, dieselbe
+Zahl wie oben an der Legende. Bis zum 24.09.2026 bildeten sie |u| aus den
+Extremwerten je Richtung, die aus verschiedenen Kombinationen stammen: am
+Hallenrahmen standen 79,23 mm unter einer Legende mit 73,5 mm (ux = 29,71 mm
+aus GZT11 und uz = −73,45 mm aus GZT4) — ein Wert, den es in keiner
+Kombination gibt; richtig sind 73,52 mm aus GZT4.
+
+**Figur der Umhüllenden.** Eine Umhüllende hat keine eigene Verformung — ihre
+Extremwerte stammen je Knoten und Richtung aus verschiedenen Kombinationen.
+Das verformte System zeigt darum die Figur der **maßgebenden Kombination**:
+der, aus der das größte |u| der Färbung stammt. Die Kopfzeile oben links nennt
+sie in einer eigenen Zeile, zum Beispiel **„Figur: GZT4“**; die Färbung bleibt
+die der Umhüllenden. Lässt sich die maßgebende Kombination nicht zuordnen
+(etwa bei einer Alternative einer Ergebniskombination, deren Ergebnis nach
+dem Einfalten verworfen wurde), bleibt es bei den Extremwerten je Richtung,
+und die Zeile sagt es: „Figur: Extremwerte je Richtung (keine einzelne
+Kombination)“. An der Rechnung ändert das nichts.
+
+**Lasten im Ergebnisbild.** Das Ergebnis eines Lastfalls zeigt dessen eigene
+Lasten, und die Kopfzeile nennt ihn („Lasten W_links [kN/m]“). Gleich wo man
+es wählt — in der Glasleiste, in der Maske Ergebnisse rechts oder im
+Modellbaum —, der Lastfall wird damit der **aktive**: eine neue Last landet
+in dem Lastfall, den man sieht. Wechselt man umgekehrt den aktiven Lastfall
+in der Lastfalltabelle, folgt ein gezeigtes Lastfall-Ergebnis ihm (hat er
+keins, zeigt die Maske die erste Umhüllende). Bis zur Nachbesserung vom
+24.09.2026 konnte rechts „Lastfall W_links“ gewählt und LF1 aktiv sein — eine
+neue Windlast ging dann unsichtbar in LF1. Ein Klick auf einen Lastpfeil
+(Auswahlart *Last*) trifft die Last des gezeigten Lastfalls.
+
+Im Bild einer Kombination oder Umhüllenden stehen seit 24.09.2026 **keine
+Lasten**: vorher standen dort die Lasten des aktiven Lastfalls, als gehörten
+sie dazu. Die Kopfzeile sagt es in einer eigenen Zeile: „Lasten ausgeblendet
+(Ergebnisse → Lasten im Ergebnisbild)“. Wer sie sehen will, schaltet
+*Ergebnisse → Lasten im Ergebnisbild* ein; die Kopfzeile nennt dann den
+Lastfall („Lasten LF1 [kN/m]“). Ausgenommen ist eine **Umhüllende aus genau
+einem Lastfall**, etwa „Umhüllende CASES“ eines Modells mit nur LF1: sie ist
+dieser Lastfall und zeigt seine Lasten (bis zur Nachbesserung waren am
+Rahmen nach *Berechnen* alle 33 Lastpfeile weg). Der Schalter *Lasten*
+(Register *Ansicht*, Glasleiste) nimmt wie bisher alle Lasten aus dem Bild.
+
 **Ergebnisse in den Bericht übernehmen**: Ansicht einstellen, dann
-*Bericht → Ansicht übernehmen* (**Strg+B**), ein Doppelklick auf den
-Ergebniszweig oder „+ Ansicht übernehmen" im Modellbaum. Aufgenommen wird das
+*Bericht → Ansicht übernehmen* (**Strg+B**) oder „+ Ansicht übernehmen" im
+Modellbaum. Ein Doppelklick auf einen Ergebniseintrag nimmt seit dem
+25.09.2026 nichts mehr auf, er zeigt nur. Aufgenommen wird das
 Bild **und** die Einstellung, aus der es entstanden ist — welches Ergebnis,
 wonach eingefärbt, welcher Verlauf, welche Überhöhung. Ohne diese Angabe wäre
 eine Farbgrafik im Statikdokument nicht prüfbar.
@@ -1470,7 +1552,7 @@ Klartext erscheint beim Überfahren mit der Maus. Von links nach rechts:
 
 | Gruppe | Knöpfe |
 |---|---|
-| ganz links | **Aufklappliste Lastfall / Kombination** — was die Ansicht zeigt; gleich dahinter **Ergebnisse zeigen / ausblenden** (Schalter, seit 24.09.2026) |
+| ganz links | **Ergebnisauswahl** — Lastfälle, Kombinationen, Umhüllende, Eigenformen: was die Ansicht zeigt; gleich dahinter **Ergebnisse zeigen / ausblenden** (Schalter, seit 24.09.2026) |
 | Darstellung | Voll, Transparent, Hidden-Line, Drahtmodell |
 | Sichtbarkeit | Knoten (der Konstruktion; Netzknoten: *Netz → Netzknoten*), Linien, Stäbe, Flächen, Volumen, **Lager**, FE-Netz, Lasten — jedes einzeln schaltbar |
 | Sicht | Selektion anzeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen, **Verborgenes im Hintergrund** (Schalter), **Intelligente Auswahl** (Schalter) |
@@ -1478,15 +1560,47 @@ Klartext erscheint beim Überfahren mit der Maus. Von links nach rechts:
 | Auswahlart | was ein Klick trifft, als Knöpfe: Knoten, Linie, Stab, Fläche, Volumen, **Netz** (einzelne Elemente), **Lager** (Knoten-, Linien- und Flächenlager), **Last** — genau einer ist gedrückt |
 | ganz rechts | **Alles deselektieren** (✕, auch Esc) — der Griff, der jede Auswahl beendet |
 
-**Lastfall und Kombination aus der Leiste.** Ganz links steht eine
-Aufklappliste mit **jedem Lastfall und jeder Kombination**. Sie ist die
-Angabe, die man beim Durchsehen am häufigsten wechselt; oben links im Bild
-war sie bisher nur zu *lesen*. Ein Lastfall daraus wird der aktive — seine
-Lasten stehen im Bild und die Lastentabelle unten zeigt ihn. Eine
-Kombination hat erst nach der Berechnung etwas zu zeigen: liegt ein Ergebnis
-vor, schaltet die Ergebnisliste mit um, sonst sagt das Protokoll, woran es
-liegt. Umgekehrt zieht die Leiste nach, wenn das Ergebnis woanders gewählt
-wird — beides zeigt immer dasselbe.
+**Ergebnisauswahl in der Leiste.** Ganz links steht eine Aufklappliste mit
+allem, was die Ansicht zeigen kann, unter fetten Überschriften, die sich
+nicht wählen lassen: **Lastfälle**, **Kombinationen**, nach der Berechnung
+die **Umhüllenden** und nach einer Eigenwert- oder Knickrechnung die
+**Eigenformen** bzw. **Knickformen**. Sie führt dieselben Ergebnisse wie die
+Liste *Ergebnis* der Maske Ergebnisse rechts, dazu immer die Lastfälle und
+Kombinationen des Modells (über die Leiste wählt man auch den aktiven
+Lastfall). Die Leiste steht immer auf dem, was das Bild zeigt, gleich wo man
+wählt. Bis zum 24.09.2026 fehlten die Umhüllenden: nach jeder Rechnung zeigte
+das Bild die „Umhüllende ULS“ und die Leiste „Lastfall LF1“.
+
+Ein Lastfall daraus wird der aktive — seine Lasten stehen im Bild und die
+Lastentabelle unten zeigt ihn. Hat er **kein Ergebnis** (nach der Rechnung
+angelegt oder nicht mitgerechnet), blendet die Wahl die Ergebnisse aus: das
+Bild zeigt das Modell mit seinen Lasten, die Leiste bleibt auf ihm, und das
+Protokoll sagt es („Lastfall W_neu: noch kein Ergebnis – aktiv für die
+Lasteingabe …“); der Knopf *Ergebnisse* holt sie zurück. Bis zur
+Nachbesserung vom 24.09.2026 sprang die Leiste ohne Meldung auf die
+Umhüllende zurück, und eine Last im neuen Lastfall erschien nirgends.
+
+Eine Umhüllende, eine Kombination oder eine Form stellt den aktiven Lastfall
+**nicht** um; an ihm hängen Lasteingabe und Lastfilter. Eine Kombination hat
+erst nach der Berechnung etwas zu zeigen: vorher sagt das Protokoll, woran es
+liegt, und die Leiste springt auf das zurück, was das Bild weiter zeigt.
+Werden gerade **Eigen- oder Knickformen** gezeigt, führt die Leiste keine
+Umhüllenden (die Maske Ergebnisse führt dann nur die Formen); eine
+Kombination sagt im Protokoll, dass die Formen gezeigt werden und die
+statischen Ergebnisse nach *Berechnung → Berechnen* wiederkommen, ein
+Lastfall blendet wie oben die Ergebnisse aus.
+
+**Bei ausgeblendeten Ergebnissen** (Knopf dahinter) zeigt das Bild den
+aktiven Lastfall mit seinen Lasten — und die Leiste steht auf ihm. Die Wahl
+der Maske Ergebnisse bleibt gemerkt und kommt mit dem Einschalten zurück.
+Wählt man ausgeblendet eine Kombination, Umhüllende oder Form in der Leiste,
+schaltet das die Ergebnisse wieder ein. Bis zur Nachbesserung vom 24.09.2026
+blieb die Leiste auf der Ergebniswahl stehen, während Bild und Kopfzeile den
+Lastfall zeigten.
+
+Nach **Rückgängig** und jeder anderen Änderung, die die Ergebnisse verwirft,
+ist auch die Liste *Ergebnis* der Maske Ergebnisse leer (bis zur
+Nachbesserung stand dort weiter die zuletzt gewählte Kombination).
 
 **Ergebnisse an und aus aus der Leiste** (seit 24.09.2026). Direkt hinter der
 Aufklappliste sitzt der Knopf **Ergebnisse zeigen / ausblenden**. Er ist
@@ -1589,7 +1703,9 @@ im Bild).
 **Texte im Bild.** Oben links steht, was die Ansicht zeigt: ohne Ergebnis der
 aktive Lastfall mit seiner Lastzahl, mit Ergebnis der Lastfall, die
 Kombination oder die Umhüllende samt Färbung, Schnittgrößenverlauf und
-Überhöhung. Unten links stehen die **Kennwerte** des gewählten Ergebnisses
+Überhöhung, bei einer Umhüllenden dazu die Figur („Figur: GZT4“ — nur wenn
+das verformte System gezeigt wird, also bei einer Überhöhung über 0) und,
+wenn Lasten im Ergebnisbild stehen, deren Lastfall. Unten links stehen die **Kennwerte** des gewählten Ergebnisses
 (Färbung und Schnittgrößenverlauf, siehe *Kennwerte im Bild*); Auflagerkräfte
 stehen in der Tabelle *Auflagerkräfte*. Die Farbskalen stehen rechts, das
 Achsenkreuz unten
@@ -1798,7 +1914,12 @@ Werkstoff, Teilung und Bemerkung, bei Schweißnähten Nahtart, Lage, a, t, ℓ,
 Ausführung und „gilt für“. Wo eine Auswahl besteht (Werkstoff, Querschnitt,
 Dicke, Nahtart, Lage, Ausführung), öffnet die Zelle eine **Aufklappliste**;
 Unzulässiges (unbekannter Knoten, fehlende Linie) wird mit Hinweis
-abgewiesen, jede Änderung ist rückgängig machbar. **Mehrfachauswahl:** mit
+abgewiesen, jede Änderung ist rückgängig machbar. Eine Zahlenzelle öffnet
+seit 24.09.2026 mit **voller Genauigkeit** und Komma (1234,5678 statt
+1234,57); wer sie öffnet und ohne Änderung verlässt, ändert nichts – kein
+Rückgängig-Schritt, die Ergebnisse bleiben. Getippte Zahlen folgen der Regel
+unter „Zahlen eingeben“: „2.000.000“ und „33.000“ werden nicht übernommen,
+der Grund steht am Zeiger. **Mehrfachauswahl:** mit
 **Umschalt** markiert ein Klick einen Bereich von Zeilen, mit **Strg** kommen
 einzelne Zeilen dazu oder gehen heraus; die Ansicht wählt dann alles
 zusammen, was die Zeilen einzeln gewählt hätten (die Knoten mehrerer Stäbe,
@@ -1830,6 +1951,42 @@ ausblenden und mit der Maus verschieben.
 Unter jeder Ergebnistabelle steht eine feste **Zeile „Max"/„Min"**. Sie
 bezieht sich auf das, was der Filter gerade übrig lässt, und bleibt beim
 Sortieren an ihrem Platz.
+
+**Nicht erfüllte Nachweise fallen auf** (seit 24.09.2026). In den
+Nachweistabellen – Nachweise EC3, Ermüdung, Anschlüsse, Verformungen,
+Beulfelder, Volumen, Lasteinleitung – gilt für Ausnutzung, D und Status eine
+Ampel: bis 0,9 bleibt die Zelle, wie sie ist; über 0,9 bis 1,0 ist sie gelb
+hinterlegt; über 1,0 steht der Wert **rot und fett**, und „NICHT erfüllt“ steht
+rot. „nicht geführt“ und „nicht gerechnet“ bleiben ohne Farbe – sie sind
+offen, nicht überschritten. Die Grenze 1,0 ist dieselbe wie beim Status
+(1,000 ist noch erfüllt). Die Farbe gilt nur in der Anzeige: Kopieren, CSV und
+Excel geben dieselben Zahlen aus wie vorher, der Bericht bleibt unverändert.
+Die Nachweistabellen stehen von Anfang an **absteigend nach Ausnutzung** –
+der größte Wert oben, nicht der alphabetisch erste Stab. Zeilen ohne Zahl
+(„–“, leer vor der Rechnung) stehen dabei unten, auch beim Sortieren per
+Klick auf eine Spaltenüberschrift. Nach jeder Rechnung mit einem nicht
+erfüllten Nachweis schreibt das Programm eine rote Sammelzeile ins
+Protokoll, etwa „Nachweise: 1 NICHT erfüllt (Ermüdung Riegel 2)“ (bis zu fünf
+Namen, dann „und n weitere“), und holt unten die Nachweistabelle nach vorn,
+in der er steht – nicht das Protokoll. Sind alle erfüllt, gibt es keine
+Sammelzeile, und unten bleibt, was offen war. Anlass: an der Stauwand stand
+D = 1,094 in der Tabelle Ermüdung genauso da wie 0,035, und das Protokoll
+meldete die Schädigung ohne Urteil direkt unter „… alle erfuellt“ der
+EC3-Zeile.
+
+*Nachgebessert am 25.09.2026:* Eine absteigend sortierte Tabelle stand bis
+dahin **sichtbar aufsteigend** da – in jeder Tabelle, auch beim Klick auf eine
+Spaltenüberschrift; in den Nachweistabellen stand der rote Wert also unten und
+„–“ oben. Jetzt steht in der Ansicht, was der Pfeil im Kopf sagt; auch
+Strg+Umschalt+C kopiert in dieser Folge. Markiert man die rote Sammelzeile
+(etwa zum Kopieren), bleiben die folgenden Protokollzeilen schwarz, die
+Sammelzeile bleibt rot, und die Markierung wächst nicht mit neuen Zeilen mit.
+Die Statuszeile zeigt die Sammelzeile nur, wenn keine freie Bewegung Last
+trägt – sonst bleibt dort die Warnung „⚠ … freie Bewegungen tragen Last“, denn
+für diese Bauteile ist das Ergebnis nicht verwertbar; die Sammelzeile steht
+dann im Protokoll. Rechnet man ohne EC3- oder Ermüdungsnachweis oder lädt ein
+anderes Modell, sind die Tabellen Nachweise EC3 und Ermüdung leer – vorher
+standen dort die roten Zeilen der vorigen Rechnung weiter.
 
 **Ausgeben** — „Kopieren", „CSV…", „Excel…" in der Tabelle selbst oder die
 Gruppe „Tabelle ausgeben" im Register *Ergebnisse* (Strg+Umschalt+C kopiert).
@@ -2041,6 +2198,23 @@ Die Maße im Bild haben eigene Angaben (*Messen → Bemaßung: Einstellungen*),
 der Bericht bleibt bei kN, m, mm und N/mm². „Rückgängig“ nimmt auch eine
 Einheitenumstellung zurück.
 
+**Register Lager/Lasten und Kontakt** (seit 24.09.2026): Kräfte, Momente,
+Strecken- und Flächenlasten, Federsteifigkeiten, Spalte und die Koordinaten
+des Auswahlfensters stehen in der eingestellten Einheit – in der Vorgabe
+kN, kNm, kN/m, kN/m², kN/m und m –, die Beschriftung nennt sie. Bis dahin
+rechnete das Register fest in N, die Masken in kN: dieselbe Zahl war dort
+tausendmal kleiner. Wird die Einheit umgestellt, zeigen die Felder dieselbe
+Größe in der neuen Einheit (aus −10 kN werden −10 000 N). Im Register
+Kontakt folgen auch die Liste „Kontaktdefinitionen“ (etwa „Spalt 0,002 m,
+k 3 kN/m“ – mit Komma und Einheit, nie „1e+09“) und der Dialog „Kontaktpaar
+definieren…“ (Steifigkeit, Spalt, Suchradius) dieser Einstellung. **Noch fest
+in kN** sind die Masken rechts (Lager, Lasten) und der Dialog
+„Nichtlinearität…“ (Schlupf, Reibung, Grenzkraft); sie nennen ihre Einheit in
+der Beschriftung. Wer die Kraft auf N stellt, sieht also im Register N/m und
+in der Lagermaske kN/m – beide beschriftet. Die **Statusleiste**
+nennt die gewählten Einheiten, etwa „kN · m · N/mm² · u in mm“, statt fest
+„m · N · Pa“.
+
 ### Messen und Bemaßen (Register Messen)
 
 **Messen** beantwortet eine Frage sofort: *Abstand* (zwei Punkte: Länge,
@@ -2086,8 +2260,193 @@ Modell und blockiert nichts. Beide Wege führen zum selben Ziel:
   zweiter Klick auf denselben Knoten nimmt ihn wieder heraus.
 
 Querschnitt, Material, Dicke und Lastfall gelten für alle folgenden Objekte,
-bis man sie ändert. **Esc** schließt die Maske. Ein neuer Erzeuge-Befehl löst
-die vorige Maske ab — es ist immer höchstens eine offen.
+bis man sie ändert. Geschlossen wird die Maske mit **✕** oben rechts. Ein
+neuer Erzeuge-Befehl löst die vorige Maske ab — es ist immer höchstens eine
+offen.
+
+**Aufbau jeder Maske** (seit 24.09.2026): Oben stehen der Titel und darunter
+die Hinweiszeile, was die Maske erwartet; sie ist immer ganz zu lesen, auch
+wenn sie auf mehrere Zeilen umbricht. In der Mitte liegen die Felder. Reicht
+die Höhe nicht, rollt nur diese Mitte (Mausrad oder Rollbalken). Unten steht
+ein fester Fuß mit den Knöpfen der Maske: dem Hauptknopf („Übernehmen“,
+„Anlegen“, „Last aufbringen“ …), bei einem neuen Objekt „Abbrechen“ und, wo es
+sie gibt, „Löschen“ oder „Auswahl übernehmen“. Der Fuß rollt nie mit weg, der
+Hauptknopf bleibt immer zu sehen. Kurze Masken stehen oben im rechten Bereich,
+ihre Zeilen werden nicht auseinandergezogen. Eine lange Maske (Wind,
+Wasserdruck, Knotenlager, Kontaktbedingung) lässt das Programmfenster nicht
+mehr über den Bildschirm hinaus wachsen, auch nicht im maximierten Fenster.
+Fehlt Platz, gilt: Passt die ganze Maske, wenn der untere Bereich (Protokoll
+und Tabellen) bis auf seine Mindesthöhe kleiner wird, wird er so weit kleiner,
+und die Maske rollt nicht — so zeigt die Knotenmaske auch bei 1366 × 768 alle
+Felder. Eine längere Maske rollt dagegen bis herunter auf etwa zwei Feldzeilen,
+erst dann nimmt sie dem unteren Bereich Höhe. Schließt man die Maske, bekommt
+der untere Bereich seine Höhe zurück, und eine breite Maske gibt der 3D-Ansicht
+die Breite wieder, sobald eine schmale Maske oder ein Register folgt.
+
+Das **Mausrad** über der Mitte rollt immer die Mitte. Über einer Auswahlliste
+verstellt es deren Wert nur, wenn die Liste den Fokus hat (angeklickt oder per
+Tab erreicht) — sonst würde beim Rollen etwa die Windzone unbemerkt springen.
+Ein Klick auf ein halb sichtbares Feld wirkt sofort auf dieses Feld (ein Haken
+schaltet um); die Mitte rollt dabei nicht.
+
+Zur Tastatur: **Tab** geht von oben nach unten durch die Felder, dann durch
+die Knöpfe des Fußes und zuletzt auf **✕** — die Leertaste schließt die Maske
+dann, auch ohne Maus. Ein Feld, das per Tab oder vom Programm den Fokus
+bekommt, rollt die Mitte von selbst ins Bild. **Pfeil auf/ab** und **Bild
+auf/ab** rollen die Mitte nicht; das Feld mit der Schreibmarke bleibt zu
+sehen. Die **Eingabetaste** löst in jedem Feld den Hauptknopf aus, auch auf
+einem Haken oder in einer Auswahlliste — nicht aber in einer Tabelle oder
+Liste (etwa dem Kollektiv der Ermüdungsmaske): dort blättert man nur, und
+nichts wird übernommen. Steht der Fokus auf einem anderen Knopf, etwa
+„Abbrechen“, drückt die Eingabetaste diesen Knopf. **Esc** schließt im
+Programmfenster keine Maske: Ist ein Feld gerade orange (die Maus füllt es),
+beendet das erste Esc nur diese Auswahl per Maus; jedes weitere Esc hebt wie
+überall die Auswahl in der Ansicht auf („Alles deselektieren“).
+
+### Zahlen eingeben (seit 24.09.2026)
+
+Die Zahlenfelder der Masken rechts (auch der Sammelmaske für mehrere
+gewählte Objekte), der Register Lager/Lasten und Kontakt und der Dialoge
+lesen nach derselben Regel. Sie gilt auch für die Ermüdungsmaske und die
+Zellen der Tabellen unten. Seit 25.09.2026 auch für die Felder, die leer
+bleiben dürfen und bis dahin Textfelder waren – „1.000“ wurde dort still 1:
+f_y und f_u der Werkstoffmaske, Kerbfall-Vorgabe der Schweißnaht, kleinste
+und größte Elementgröße der Netzeinstellungen, Versatz und
+Nachkommastellen einer Bemaßung, Reibbeiwert μ der Passung, Kantenbreite d
+der Schwingung, die Höhen des Wasserdrucks (Unterwasser, Sohle, Dichtung,
+Oberkante, Breite) und des Winds (Schnitthöhe, Geländeoberkante, c_f).
+Leer bleibt dort leer („aus der Stahlsorte“, „Norm“ …), nicht 0. Ebenso der
+Antriebsknoten einer Stellung (ganze Zahl), die Zellen der Beulsteifen im
+Dialog Beulfeld und die Maße im Profileditor: dort gibt es keine zweite
+Bestätigung, darum wird „1.000“ abgewiesen – die Meldung steht über OK
+bzw. rot unter dem Bild, OK bleibt gesperrt.
+
+**Listenfelder** – Versatz y, z eines Stabs, Ersatzachse einer Feder,
+Gewichte eines starren Körpers, ψ0/ψ1/ψ2 eines Lastfalls – lesen jede Zahl
+nach derselben Regel. Getrennt wird so:
+
+* **mit Semikolon**: steht ein „;“ im Feld, trennt nur das Semikolon, und
+  ein Leerzeichen in einem Eintrag ist Tausendertrennung – „12,5; 1 000“
+  ist 12,5 und 1 000;
+* **ohne Semikolon** trennen Leerzeichen und Komma mit Leerzeichen die
+  Einträge („1,5, 2“ und „1 0 0“ sind zwei bzw. drei Zahlen). „1 000“ ist
+  dann nicht eindeutig – eine Zahl oder zwei Einträge? – und wird mit
+  Meldung abgewiesen: mit „;“ trennen oder „1000“ schreiben;
+* ψ0/ψ1/ψ2 trennt der Schrägstrich („0,7/0,5/0,3“).
+
+Jedes dieser Felder hat eine **feste Anzahl**: Versatz zwei Werte (y, z),
+Ersatzachse drei, ψ drei, Gewichte eines je angeschlossenem Knoten. Zu
+viele oder zu wenige Einträge werden mit Meldung abgewiesen (Feld,
+erwartete und gefundene Anzahl, etwa „Ersatzachse x, y, z: 3 Werte
+erwartet, 4 gefunden“); ein leeres Feld gilt als Vorgabe (kein Versatz,
+Achse x, Gewichte alle gleich, ψ aus der Kategorie). Ebenso wird „1.000“
+abgewiesen. Das Objekt bleibt dann, wie es war, und es entsteht kein
+Rückgängig-Schritt. Bis 25.09.2026 wurden überzählige Einträge still
+weggelassen – „12,5; 1 000“ wurde Versatz z = 1 mm, Gewichte mit falscher
+Anzahl still „alle gleich“.
+
+**Ausnahmen**, die bewusst anders lesen:
+
+* die **Faktoren einer Kombination** („LF1: 1,35, Wind: 1,5“) sind eine
+  Formel – das Komma zwischen Ziffern ist Dezimaltrenner, „1,350“ ist 1,35;
+* der **Schwingbeiwert** der Ermüdungsmaske: „1.000“ ist dort 1 (ein
+  Beiwert von tausend kommt nicht vor), die Lastspielzahl daneben weist
+  „500.000“ dagegen ab;
+* **Nummernlisten** in den Masken (Knoten einer Linie, Elemente eines
+  Stabs, angeschlossene Knoten) lesen nur ganze Nummern, anderes fällt
+  weg. Nummernlisten fester Länge – die zwei Knoten eines Stabelements,
+  die Knoten eines Elements in der Tabelle, die Teilung (eine Zahl für
+  alle Richtungen oder zwei bei einer Fläche, drei bei einem Volumen,
+  „4 × 4“ geht auch) – weisen seit 25.09.2026 einen Eintrag, der keine
+  ganze Zahl ist, und eine falsche Anzahl mit Meldung ab;
+* **Formeln** in Tabellenzellen („= 2*3,5“) und die **Filterzeile** der
+  Tabellen („> 1000“, „2..5“) lesen Komma oder Punkt ohne Tausender;
+* **noch nicht umgestellt** sind die Drehfelder mit Pfeilen (z. B. Teilungen,
+  Anzahl) und die kleinen Abfragefenster für eine einzelne Zahl sowie der
+  Port der Rechenfarm (Einstellungen).
+
+| Eingabe | gelesen | Anzeige |
+|---|---|---|
+| `2,5` oder `2.5` | 2,5 – Komma und Punkt sind Dezimaltrenner, höchstens einer je Zahl | normal, nach dem Verlassen „2,5“ |
+| `2 000 000` | 2 000 000 – Leerzeichen (auch schmale) trennen Tausender, nur in Dreiergruppen | normal |
+| `2e6`, `1,5e5` | 2 000 000, 150 000 | nach dem Verlassen ausgeschrieben |
+| `2.000.000`, `1.000,5`, `12 5` | **ungültig** – höchstens ein Dezimaltrenner, Leerzeichen nur als Tausendertrennung | roter Rahmen, Meldung, „Übernehmen“ gesperrt |
+| `33.000` | **mehrdeutig**: 33,000 oder 33 000? | gelber Hinweis „33,000 – gemeint 33 000?“, bis bestätigt |
+
+Eine mehrdeutige Eingabe gilt erst, wenn sie bestätigt ist: in der Maske mit
+einem zweiten „Übernehmen“ oder einer zweiten Eingabetaste, im Dialog mit dem
+Haken im Feld oder zweimal Eingabetaste, im Register mit einem zweiten Klick
+auf den Knopf. Wer 33 000 meint, schreibt es mit Leerzeichen. Eine ungültige
+Eingabe wird nie still zu 0 oder zu einer anderen Zahl; ein leeres Feld zählt
+wie bisher als 0. Nach dem Verlassen steht die Zahl formatiert da: mit Komma,
+Tausender mit Leerzeichen, nie als „2e+06“ (die Ansicht bleibt beim Punkt).
+Bis zum 24.09.2026 wurde „33.000“ still zu 33 und „2.000.000“ zu 0 – der
+Qt-Validator folgte dem Gebietsschema des Systems.
+
+**Während des Tippens** bleibt ein Zwischenstand neutral, der mit weiteren
+Ziffern gültig wird: „-“ vor „-10“, „2 0“ auf dem Weg zu „2 000“, „1e“ vor
+„1e3“. Der Knopf ist dabei gesperrt, aber es erscheint weder roter Rahmen
+noch Meldung. Rot wird ein solcher Rest erst beim Verlassen des Feldes –
+mit Tab oder einem Klick woanders – oder bei „Übernehmen“; dann erscheint
+auch die Meldung. (Bis 25.09.2026 blieb ein Rest wie „12 5“ nach Tab
+neutral, der Knopf war ohne Meldung gesperrt.) „2.000.000“ ist kein
+Zwischenstand und wird sofort rot.
+**Wo die Meldung steht:** in der Maske in der Meldungszeile über dem Hinweis,
+im Dialog in einer Meldungszeile über OK und Abbrechen, im Register in der
+Statusleiste – ein gesperrter Knopf allein sagt nicht, warum.
+
+**Knöpfe, die Felder lesen**, fragen genauso nach wie „Übernehmen“:
+„Bettung übernehmen“ in der Lagermaske rechnet mit E_cm „33.000“ erst nach
+dem zweiten Klick (dann mit 33 N/mm²). Wer 33 000 meint, schreibt es mit
+Leerzeichen und klickt noch einmal: der Vorschlag wird damit neu gerechnet.
+Der Hinweis dazu schreibt die Zahlen aus, „k = E_cm/d = 330 000 MN/m³ → uz
+Feder 3 300 000 kN/m“ (bis 25.09.2026 „3.3e+06 kN/m“). Dasselbe gilt seit
+25.09.2026 für die übrigen Hinweise und Texte der Oberfläche: Lasttexte der
+Lastfallmaske (Komponenten durch Semikolon getrennt, „F = (0; 0; -10) kN“),
+Wirkung und Federn der Lager und Gelenke, Federn und Grenzschichten im
+Modellbaum, Querschnittswerte, Übermaß, freie Bewegungen – und, nach einer
+Quelltextprüfung aller Anzeigetexte der Oberfläche, auch Punktmassen,
+Dicken und Eigengewicht im Modellbaum („2 500 000 kg“ statt „2.5e+06 kg“),
+die Lasttabelle (Abschnitte, Richtungen, Vorspannkraft, Übermaß), ψ in der
+Lastfalltabelle, β und Kipplänge in der Stabtabelle, Winkel der Stellungen,
+Suchweite der Kontakte, die Skala in der Kopfzeile sowie die Meldungen in
+Statusleiste und Protokoll. Diese Texte behalten ihr bisheriges
+Trennzeichen (dort, wo bisher ein Punkt stand, bleibt er), nur der
+Exponent fällt weg. Bewusst unverändert bleiben Texte, die wieder gelesen
+oder als Name benutzt werden: die Faktoren der Kombinationsformel, die
+Kerbfall-Wahl der Schwingungsmaske, der Name einer Dicke („t = 12 mm“)
+und eines Parameterprofils („R 200x100“) sowie die CSV-Ausgabe.
+Werte, die das Programm selbst in ein Feld schreibt (vorhandene Federn im
+Dialog Nichtlinearität, Normale und Ursprung der Schnittebene), sind nie
+mehrdeutig: 123,456 kN/m steht als „123,456“ da, OK bleibt frei.
+
+**Sammelmaske** (Rechtsklick → Bearbeiten… bei mehreren gewählten Objekten):
+Koordinaten, β, Knicklängen, Kerbfall und Teilungen sind Zahlenfelder nach
+dieser Regel. Ein leeres Feld lässt den Wert je Objekt, wie er ist.
+„Übernehmen“ schreibt nur Felder, die sich seit dem Öffnen geändert haben:
+eine Koordinate 4,1234567 bleibt genau so stehen, und ohne Änderung gibt es
+weder einen Rückgängig-Schritt noch verworfene Ergebnisse. Bis zum
+24.09.2026 schrieb die Sammelmaske jeden gemeinsamen Wert auf sechs Stellen
+gerundet zurück.
+
+**Welche Felder die Ergebnisse behalten.** Ein „Übernehmen“ verwirft die
+Ergebnisse, sobald sich an der Rechnung etwas ändert. Felder, die nur
+beschriften, behalten sie: Name, Bildunterschrift, Bemerkung, Text und Platz
+eines Berichtseintrags; Bemerkung von Linie, Fläche und Volumen; Beschreibung
+eines Lastfalls; Name und Symbolgröße eines Lagers; Bemerkung und
+Passmaß-Bezeichnung einer Vorspannung bzw. eines Übermaßes; in den Tabellen
+dieselben Spalten sowie Beschriftung und Bemerkung der Unterlagen. Nennt eine
+Stellung ein Lager beim Namen, verwirft sein Umbenennen die Ergebnisse, denn
+die Stellung schaltet dann ein anderes Lager ab. Alles andere verwirft wie
+bisher – im Zweifel wird verworfen. In den eben genannten Masken
+(Berichtseintrag, Linie, Fläche, Volumen, Lastfall, Lager, Vorspannung und
+Übermaß), in der Sammelmaske und in den Tabellenzellen legt „Übernehmen“
+ohne Änderung keinen Rückgängig-Schritt an. Die übrigen Masken (etwa Knoten
+oder Werkstoff) legen auch dann einen Schritt an und verwerfen die
+Ergebnisse. **Rückgängig und Wiederholen** eines Schritts, der nur
+beschriftet hat, behalten die Ergebnisse ebenfalls. Wer einen vertippten
+Lagernamen zurücknimmt, muss also nicht neu rechnen. Jeder andere Schritt
+verwirft sie beim Zurücknehmen wie bisher.
 
 ### Verschieben, Kopieren, Drehen, Spiegeln
 
@@ -2124,8 +2483,104 @@ Geprüft in `tests/test_transformieren.py` und der Oberflächenprüfung.
 **Strg+Z** nimmt die letzte Änderung zurück, **Strg+Y** stellt sie wieder her —
 für alles: Geometrie, Netz, Lager, Lasten, Linien. Gesichert wird jeweils das
 ganze Modell, darum bleibt auch eine Änderung umkehrbar, die viele Stellen auf
-einmal betrifft. Die letzten 50 Schritte werden vorgehalten; die Schnellzugriffs-
-leiste zeigt im Hinweistext, worum es beim nächsten Schritt geht.
+einmal betrifft. Die letzten 50 Schritte werden vorgehalten. Der Knopf
+**nennt, was er zurücknimmt**: der Hinweis beim Überfahren lautet etwa
+„Rückgängig: Kontakte gelöscht   (Strg+Z)“, ebenso die Statuszeile. Scheitert
+ein Befehl, nachdem er seinen Schritt schon vermerkt hatte (ein Löschen wird
+abgewiesen, der Wasserdruck abgebrochen), fällt der Schritt wieder weg, und
+der Knopf nennt wieder den vorigen — bis zum 24.09.2026 nannte er an 13 von 15
+solchen Stellen noch den verworfenen.
+
+### Nichts geht ungefragt verloren (seit 24.09.2026)
+
+**Stern im Fenstertitel.** Sobald das Modell vom gespeicherten Stand abweicht,
+steht hinter seinem Namen im Fenstertitel ein `*`. Nach *Speichern*, *Öffnen*,
+*Neu* und dem Laden eines Beispiels ist er weg; *Rückgängig* bis zum
+gespeicherten Stand nimmt ihn ebenfalls weg. Als Änderung zählt alles, was mit
+dem Modell gespeichert wird: jeder Befehl mit Rückgängig-Schritt, jede
+Eingabe in einer Tabellenzelle, die Projektangaben (auch aus dem
+Berichtsdialog), die Knöpfe des Registers Lager/Lasten (Eigengewicht,
+Temperaturlast, Linien- und Flächenlager, Kombinationen), Vernetzen, ein
+Import, Änderungen aus dem Browser — und **eine fertige Rechnung**: ihre
+Ergebnisse stehen erst nach dem Speichern in der Ergebnisdatei. Keine Änderung
+sind Anzeige, Auswahl, der gezeigte Lastfall und die Werteskala der Färbung.
+Was an keinem dieser Wege vorbeikommt, fängt ein Vergleich der Anzahlen aller
+Modellobjekte, der Lasten je Lastfall und der Knotenkoordinaten.
+
+**Rückfrage vor Neu, Öffnen, Beispiel, Übernehmen und Beenden.** Ist etwas
+ungespeichert, fragt das Programm, bevor es das Modell ersetzt — mit drei
+Knöpfen: **Speichern** (danach geht es weiter; bricht man den Dateidialog ab,
+bleibt alles, wie es war), **Verwerfen** (die Änderungen gehen verloren) und
+**Abbrechen** (nichts geschieht). Bei *Übernehmen* fragt es nur, wenn der Import
+das Modell ersetzt, nicht beim Anhängen. Bei *Öffnen* kommt die Frage vor dem
+Dateidialog. Ohne Änderungen wird nicht gefragt. **Während einer Rechnung
+unterbleiben Neu, Öffnen, Beispiel und ein ersetzendes Übernehmen immer**, auch
+wenn nichts ungespeichert ist: die Rechnung gehört zum offenen Modell. Die
+Statuszeile sagt „… erst nach der Rechnung“; wer nicht warten will, hält die
+Rechnung an (Esc). Bis zum 25.09.2026 galt die Sperre nur bei ungespeicherten
+Änderungen — ein Fehlgriff auf ein Beispiel verwarf dann eine laufende
+Rechnung ohne Frage, und ihr Ergebnis landete mit einer Fehlermeldung am neuen
+Modell. Ein Ergebnis, dessen Modell inzwischen ersetzt wurde, verwirft das
+Programm seitdem (Protokoll: „Ergebnis verworfen …“).
+
+**Speichern, wenn die Ergebnisdatei nicht geschrieben werden kann** (Platte
+voll, keine Rechte): Die Modelldatei ist gespeichert, die Ergebnisse gelten
+aber weiter als ungespeichert — der Stern bleibt, und wer in der Rückfrage
+vor Neu oder Beenden *Speichern* gewählt hat, sieht die Fehlermeldung, und das
+Programm hält an, statt ohne die Ergebnisse weiterzumachen. Bis zum
+25.09.2026 galt das als gespeichert.
+
+**Beenden während einer Rechnung** fragt „Rechnung abbrechen und beenden?“
+(*Abbrechen und beenden* / *Weiterrechnen*). Mit Ja hält die Rechnung beim
+nächsten Rechenschritt an (eine laufende Faktorisierung läuft zu Ende),
+fertige Lastfälle und Kombinationen bleiben erhalten, und erst dann schließt
+das Fenster — mit der Frage nach dem Speichern, sodass sich das Teilergebnis
+noch sichern lässt. Bis zum 24.09.2026 ging das Fenster mit laufendem
+Rechenfaden einfach zu.
+
+**Modell leeren (Eigenschaften behalten)…** (Register Datei, früher „Alle
+Elemente löschen“ im Register Netz, zwischen den Netzbefehlen) entfernt alles
+außer Werkstoffen, Querschnitten, Dicken und Projektangaben. Das Programm fragt
+vorher und **nennt mit Anzahl, was tatsächlich verschwindet**, etwa „Netz
+(221 Knoten, 240 Elemente), Knotenlager (43), Lastfälle mit ihren Lasten (3),
+Kombinationen (23), Stäbe mit Nachweis (3), Ermüdungslasten (1)“ — dazu
+Kontakte, Berichtsbilder, Stellungen, Unterlagen oder Layer, wenn es sie gibt;
+die Modelleinstellungen (Bemessung, Netzvorgaben, Einheiten, Plastizität,
+Berichtsrahmen) gehen auf die Vorgabe zurück. Sind die **Ergebnisse der
+letzten Rechnung nicht gespeichert**, sagt die Rückfrage, dass sie verloren
+gehen: Rückgängig holt das Modell zurück, die Ergebnisse nicht. Vorgabeknopf
+ist **Abbrechen** — die Eingabetaste leert nichts; ebenso bei *Alle Kontakte
+löschen…* und *Alle Lager löschen*. Bis zum 25.09.2026 nannte der Text nur
+Geometrie, Netz, Lager, Lastfälle, Lasten und Kombinationen, und die
+Eingabetaste leerte das Modell, auch ohne Rückgängig. Bis 1 000 000 Elemente lässt es sich mit Strg+Z
+zurücknehmen. Darüber sagt die Rückfrage ausdrücklich, dass es **nicht
+rückgängig** zu machen ist: die Sicherung wäre eine ganze Modellkopie — am
+Drehlager (2 064 422 Elemente) 1,38 GB und 11 s —, und wer ein Modell leert,
+will den Speicher meist gerade zurück. Die älteren Rückgängig-Schritte fallen
+dann ebenfalls weg, sie hielten dasselbe Modell fest.
+
+**Alle Kontakte löschen…** (Register Lager / Kontakt, früher „Kontakt
+löschen“) nennt vorher die Anzahl der einseitigen Lager, Spaltelemente und
+Kontaktpaare; die Kontaktbedingungen bleiben. **Alle Lager löschen** im
+Register Lager/Lasten fragt ebenso und lässt sich jetzt rückgängig machen,
+ebenso *Lasten des aktiven Lastfalls löschen*, *Lager entfernen*, das Ändern
+und Löschen von Kombinationen dort, *DIN 19704: Kombinationen* und *Freie
+Stabenden anschließen*; der Rückgängig-Knopf nennt jeweils den Schritt.
+
+**Projektangaben** (Projekt, Bauteil, Position, Bearbeiter) lassen sich bis
+100 000 Elemente rückgängig machen. Darüber gelten sie nur als ungespeichert
+(Stern), wie Eigengewicht und Temperaturlast: ein Rückgängig-Schritt kopiert
+das ganze Modell — am Drehlager rund 11 s je geändertem Textfeld —, und dort
+passen nur zwei Sicherungen in den Speicher; zwei geänderte Projektfelder
+hätten die echten Rückgängig-Schritte verdrängt (seit 25.09.2026).
+
+**Beispiele** stehen in einem Knopf *Beispiel öffnen ▾* statt in acht
+Knöpfen, von denen jeder das Modell ersetzte.
+
+Geprüft in `tests/test_ungespeichert.py` (mit dem echten Hauptfenster). Die
+übrigen Prüfungen mit Hauptfenster beantworten die Rückfrage über den
+Testschalter `STATIK3D_UNGESPEICHERT=verwerfen` (gesetzt in
+`tests/__init__.py`) ohne Fenster.
 
 ### Koordinatensysteme, Arbeitsebene, Fang
 
@@ -2436,7 +2891,7 @@ auf ein Update erscheint nur, wenn wirklich eines vorliegt.
 8. **Bericht**: Bericht → Bericht (HTML, im Browser druckbar/als PDF
    speichern; PDF direkt bei installiertem reportlab).
 
-Beispiele im Menü **Beispiele** zeigen jeden dieser Schritte fertig
+Beispiele unter **Datei → Beispiel öffnen ▾** zeigen jeden dieser Schritte fertig
 aufgebaut, u. a. der Hallenrahmen (Kombinationen, EC3, Ermüdung), die
 Stauwand (Stahlwasserbau, Schalen + Riegel, Wasserdruck) und zwei
 Kontaktbeispiele.
@@ -3797,6 +4252,17 @@ sind nicht verschwiegen, sondern nachweislich unschädlich. Ist ein
 Bezugszeitraum eingestellt (die Lastspielzahlen gelten für so viele Jahre),
 weist der Bericht zusätzlich die rechnerische **Lebensdauer** aus:
 Bezugszeitraum / D.
+
+**Urteil in Tabelle und Protokoll** (seit 24.09.2026). Die Tabelle Ermüdung
+hat als vorletzte Spalte „Status“ (erfüllt, NICHT erfüllt, unvollständig,
+nicht geführt – dieselben Wörter wie im Bericht); die letzte bleibt
+„maßgebend“. Die Protokollzeile „Ermüdung: … max. Schädigung D = …“ endet mit
+dem Urteil: „- NICHT erfüllt“, sobald ein Eintrag D > 1,0 hat, „- erfüllt“
+nur, wenn alle erfüllt sind, sonst „- unvollständig“ bzw. „- nicht geführt“.
+Bis dahin stand D = 1,094 dort ohne Urteil. Seit dem 25.09.2026 trägt dieselbe
+Zeile das Urteil auch rechts in der Maske **Ergebnisse** (sie öffnet sich nach
+F5) und in der Maske **Nachweise** unter „Nachweise führen“ – dort stand es
+vorher ohne Urteil direkt unter „Nachweise EC3: … - alle erfuellt“.
 
 **Fehlt das Ergebnis eines Zustands**, wird diese Ermüdungslast nicht
 gerechnet — auch dann nicht, wenn nur der untere Zustand fehlt (bis zum

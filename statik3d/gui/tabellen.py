@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import design as dsg
+from .. import zahlen as zl
 
 
 # --------------------------------------------------------------------------
@@ -77,6 +78,36 @@ def _zahl(x):
         return float(t)
     except ValueError:
         return None
+
+
+#: Ampel der Nachweistabellen (24.09.2026, Paket 2 des Oberflaechenplans):
+#: bis AMPEL_GRENZE_GELB normal, darueber bis 1,0 gelb hinterlegt, ueber 1,0
+#: rot und fett. Anlass: an der Stauwand stand D = 1,094 in der Tabelle
+#: Ermuedung genauso da wie 0,035 - sicherheitsrelevant und leicht zu
+#: uebersehen. „ueber 1,0“ wie die Status der Nachweise (util <= 1.0 ist
+#: „erfüllt“), damit Farbe und Status nie verschiedenes sagen.
+AMPEL_GRENZE_GELB = 0.9
+AMPEL_ROT = "#c62828"
+AMPEL_GELB = "#fff0b3"
+
+
+def ampelstufe(wert) -> str:
+    """„rot“, „gelb“ oder „“ fuer eine Zelle einer Ampelspalte.
+
+    Zahlen: ueber 1,0 rot, ueber 0,9 bis 1,0 gelb. Text: rot, wenn „NICHT“
+    darin steht (Status „NICHT erfüllt“) - gross geschrieben, damit „nicht
+    geführt“ und „nicht gerechnet“ ohne Farbe bleiben: sie sind offen, nicht
+    ueberschritten."""
+    if isinstance(wert, str) and "NICHT" in wert:
+        return "rot"
+    z = _zahl(wert) if wert is not None else None
+    if z is None or not math.isfinite(z):
+        return ""
+    if z > 1.0:
+        return "rot"
+    if z > AMPEL_GRENZE_GELB:
+        return "gelb"
+    return ""
 
 
 def passt(wert, ausdruck: str) -> bool:
@@ -254,6 +285,8 @@ class Spalte:
     #: fn(zeile) -> Liste der Wahlwerte, wenn sie von der Zeile oder vom
     #: Modellstand abhaengen (Werkstoffe, Querschnitte, Dicken)
     werte_fn: object = None
+    #: Ampel in Nachweistabellen (Ausnutzung, D, Status): siehe ampelstufe
+    ampel: bool = False
 
     def wahlwerte(self, zeile=None) -> list:
         if self.werte_fn is not None:
@@ -272,6 +305,9 @@ class TabellenModell(QtCore.QAbstractTableModel):
 
     #: (Zeile, Spalte, neuer Wert) - der Rueckruf liefert True, wenn uebernommen
     geaendert = QtCore.Signal(int, int, object)
+    #: Eine Eingabe wurde nicht uebernommen - warum (24.09.2026: vorher
+    #: schluckte die Zelle „2.000.000“ ohne ein Wort)
+    meldung = QtCore.Signal(str)
 
     def __init__(self, spalten: list, zeilen: list = None, parent=None):
         super().__init__(parent)
@@ -353,7 +389,10 @@ class TabellenModell(QtCore.QAbstractTableModel):
             if sp.art == "zahl" and isinstance(wert, (int, float)):
                 f, _e, nk = self.anzeige(k)
                 if rolle == QtCore.Qt.EditRole:
-                    return f"{self.angezeigt(k, wert):g}"
+                    # Volle Genauigkeit mit Komma (24.09.2026): „:g“ kuerzte
+                    # auf sechs Stellen - F2 und Enter machten aus 1234,5678 m
+                    # still 1234,57 m (gui_analyse/unten/editrolle2.py)
+                    return zl.zahl_text(float(wert) * f, tausender=False)
                 return f"{float(wert) * f:.{nk}f}".replace(".", ",")
             if sp.art == "zahl" and rolle == QtCore.Qt.DisplayRole and _paar(wert) is not None:
                 f, _e, nk = self.anzeige(k)
@@ -364,6 +403,22 @@ class TabellenModell(QtCore.QAbstractTableModel):
             if sp.art == "ganz" and isinstance(wert, (int, float)):
                 return str(int(wert))
             return str(wert)
+        if rolle in (QtCore.Qt.ForegroundRole, QtCore.Qt.BackgroundRole, QtCore.Qt.FontRole):
+            # Nur die Anzeige: Zwischenablage, CSV und Excel lesen die Zeilen
+            # und bleiben ohne Farbe (24.09.2026)
+            if not self.spalten[k].ampel:
+                return None
+            stufe = ampelstufe(wert)
+            if stufe == "rot":
+                if rolle == QtCore.Qt.ForegroundRole:
+                    return QtGui.QBrush(QtGui.QColor(AMPEL_ROT))
+                if rolle == QtCore.Qt.FontRole:
+                    f = QtGui.QFont()
+                    f.setBold(True)
+                    return f
+            elif stufe == "gelb" and rolle == QtCore.Qt.BackgroundRole:
+                return QtGui.QBrush(QtGui.QColor(AMPEL_GELB))
+            return None
         if rolle == QtCore.Qt.TextAlignmentRole and self.spalten[k].art != "text":
             return int(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
         if rolle == QtCore.Qt.UserRole:
@@ -385,9 +440,34 @@ class TabellenModell(QtCore.QAbstractTableModel):
             return False
         z, k = index.row(), index.column()
         sp = self.spalten[k]
+        if str(wert) == str(self.data(index, QtCore.Qt.EditRole)):
+            # Zelle geoeffnet und ohne Aenderung verlassen: nichts tun - kein
+            # Rueckgaengig-Schritt, keine verworfenen Ergebnisse (24.09.2026)
+            return False
+        text = str(wert).strip()
+        if sp.art in ("zahl", "ganz") and text and not text.startswith("="):
+            # Dieselbe Regel wie in Masken und Dialogen (statik3d/zahlen.py):
+            # „2.000.000“ ist ungueltig, „33.000“ mehrdeutig - beides wird
+            # nicht still zu einer anderen Zahl
+            les = zl.lesen(text, sp.art == "ganz")
+            if les.status == zl.UNGUELTIG:
+                self.meldung.emit(f"{sp.name}: {les.meldung} Nicht übernommen.")
+                return False
+            if les.status == zl.FRAGE:
+                self.meldung.emit(f"{sp.name}: {les.meldung} Nicht übernommen – bitte "
+                                  f"{zl.zahl_text(les.wert, tausender=False)} oder "
+                                  f"{zl.zahl_text(les.vorschlag)} schreiben.")
+                return False
         try:
-            neu = formel(str(wert)) if sp.art in ("zahl", "ganz") else str(wert)
-        except ValueError:
+            if sp.art not in ("zahl", "ganz"):
+                neu = str(wert)
+            elif not text or text.startswith("="):
+                neu = formel(text)          # leer = 0 wie bisher, „= 2*3,5“
+            else:
+                neu = zl.zahl_wert(text, sp.art == "ganz")
+        except ValueError as ex:
+            if sp.art in ("zahl", "ganz"):
+                self.meldung.emit(f"{sp.name}: {ex} Nicht übernommen.")
             return False
         if sp.art == "ganz":
             neu = int(round(neu))
@@ -442,19 +522,27 @@ class TabellenModell(QtCore.QAbstractTableModel):
             return None
 
         zeilen = self.zeilen
+        absteigend = richtung == QtCore.Qt.DescendingOrder
+        # Absteigend stehen Zeilen ohne Zahl trotzdem hinten, wie in Excel:
+        # die Nachweistabellen starten absteigend nach Ausnutzung, und ein
+        # „–“ (nicht gefuehrt) oder eine leere Zelle (nicht gerechnet) stand
+        # sonst ueber dem groessten Wert (24.09.2026). Dafuer tauscht die
+        # Gruppenkennung - eine einzige Sortierung wie bisher; zwei Listen
+        # mit Tupeln je Zeile kosteten an 2 Mio. Zeilen rund die Haelfte mehr
+        # Zeit und ein Drittel mehr Speicher (Gegenpruefung 25.09.2026).
+        g_zahl, g_text = (1, 0) if absteigend else (0, 1)
 
         def schluessel(r):
             z = zeilen[r]
             wert = z[k] if k < len(z) else ""
             zahl = _zahl(wert)
             if zahl is not None:
-                return (0, zahl, [])
+                return (g_zahl, zahl, [])
             # Kein reiner Zahlwert: dann natuerlich sortieren, damit „V2“ vor
             # „V10“ steht und nicht dahinter.
-            return (1, 0.0, dsg.natuerlich(wert))
+            return (g_text, 0.0, dsg.natuerlich(wert))
 
-        return sorted(range(len(zeilen)), key=schluessel,
-                      reverse=(richtung == QtCore.Qt.DescendingOrder))
+        return sorted(range(len(zeilen)), key=schluessel, reverse=absteigend)
 
     def _sortieren(self):
         folge = self._sortfolge()
@@ -535,7 +623,11 @@ class Filtermodell(QtCore.QSortFilterProxyModel):
         q = self.sourceModel()
         if q is not None and hasattr(q, "sortieren"):
             q.sortieren(spalte, richtung)
-            super().sort(-1, richtung)
+            # Immer aufsteigend: bei Spalte -1 und absteigend kehrt Qt die
+            # Quellfolge um - die absteigend sortierte Quelle stand so
+            # sichtbar wieder aufsteigend da, der rote Wert unten
+            # (Gegenpruefung 25.09.2026, seit dem Sortieren in der Quelle)
+            super().sort(-1, QtCore.Qt.AscendingOrder)
             return
         super().sort(spalte, richtung)
 
@@ -594,6 +686,9 @@ class Datentabelle(QtWidgets.QWidget):
         super().__init__(parent)
         self.titel = titel
         self.modell = TabellenModell(spalten, [], self)
+        self.modell.meldung.connect(self._meldung)
+        #: die zuletzt gezeigte Meldung einer abgewiesenen Eingabe
+        self.letzte_meldung = ""
         self.filter = Filtermodell(self)
         self.filter.setSourceModel(self.modell)
 
@@ -782,6 +877,17 @@ class Datentabelle(QtWidgets.QWidget):
             out.append(list(self.modell.zeilen[q.row()]))
         return out
 
+    def absteigend_nach(self, name: str) -> bool:
+        """Die Tabelle nach der Spalte *name* absteigend ordnen - auch alle
+        Zeilen, die spaeter kommen. Die Nachweistabellen starten so nach
+        Ausnutzung, der groesste Wert oben (24.09.2026). False, wenn es die
+        Spalte nicht gibt."""
+        namen = [sp.name for sp in self.modell.spalten]
+        if name not in namen:
+            return False
+        self.view.sortByColumn(namen.index(name), QtCore.Qt.DescendingOrder)
+        return True
+
     def zeilenzahl(self) -> int:
         """Wie viele Zeilen die Tabelle enthaelt (ohne Ruecksicht auf den Filter)."""
         return self.modell.rowCount()
@@ -864,6 +970,17 @@ class Datentabelle(QtWidgets.QWidget):
             e.blockSignals(False)
         self.filter.leeren()
         self._nachfuehren()
+
+    def _meldung(self, text: str) -> None:
+        """Eine abgewiesene Zelleingabe erklaeren - am Zeiger ueber der Zelle."""
+        self.letzte_meldung = str(text)
+        try:
+            idx = self.view.currentIndex()
+            rect = self.view.visualRect(idx) if idx.isValid() else QtCore.QRect()
+            QtWidgets.QToolTip.showText(self.view.viewport().mapToGlobal(rect.bottomLeft()),
+                                        self.letzte_meldung, self.view)
+        except Exception:                   # noqa: BLE001
+            pass
 
     def hinweis_setzen(self, text: str = "") -> None:
         """Ein Satz neben der Zeilenzahl, solange die Tabelle leer ist - warum

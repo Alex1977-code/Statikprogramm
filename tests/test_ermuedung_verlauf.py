@@ -1601,6 +1601,8 @@ def test_etikett_nachweise_nennt_die_ermuedung():
         s.analysis = an
         s._util_map.return_value = {}
         s.current_result.return_value = next(iter(an.cases.values()))
+        # das Urteil hinter der Ermuedungszeile (25.09.2026) - echt, nicht Attrappe
+        s._ermuedung_zusatz = G.MainWindow._ermuedung_zusatz
         with mock.patch.object(G, "QtWidgets"):
             G.MainWindow.show_results(s)
         return _texte(s.lbl_design.setText)
