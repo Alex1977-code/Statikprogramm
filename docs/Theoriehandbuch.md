@@ -1318,7 +1318,26 @@ aufgebrachte Lasten geeignet. Die Iteration läuft in zwei Phasen:
    vermerkt.
 2. **Nachprüfung.** Die Reststeifigkeit wird auf 10⁻⁸ k_t abgesenkt, so
    dass an gleitenden Knoten exakt μ F_n wirkt; die Gleitrichtungen bleiben
-   fest. Je Runde geht nur der am stärksten über der Reibgrenze liegende
+   fest. „Exakt“ war das bis zum 25.09.2026 nicht: k_t ist
+   eine Penalty-Steifigkeit von der Größenordnung 10¹⁵ N/m, und 10⁻⁸ k_t
+   mal dem Gleitweg trug am Ende Kraft, die in keiner Kontaktkraft stand —
+   am Klotz K4 der Prüfmatrix (hex8, 14,5 mm Schlupf gegen Federn) 693 kN
+   oder 2,3 % von μ N, gemessen als K u an den Gleitknoten gegen
+   `contact_forces`; die Federkraft lag darum 3,5 % (tet4: 10 %) unter
+   H − μ N. Seither wirkt die feine Reststeifigkeit nur auf die **Änderung**
+   der Tangentialverschiebung seit dem letzten Zustand (`Constraint.dt_last`,
+   Ausgleich im Kraftvektor): am Ende trägt sie nichts, K u und
+   `contact_forces` stimmen überein (K4: 29 826 kN beide, Federkraft +1,2 %).
+   Die grobe Feder der Phase 1 und ganz gleitender Gruppen bleibt ohne
+   Ausgleich — sie hält das Bauteil, und ihr Fixpunkt wäre mit Ausgleich zu
+   langsam; dort steht weiter die Warnung „Bauteil rutscht“ (K5: die Feder
+   trägt 79 % dessen, was die Federn tragen sollten — offen). Ebenso offen:
+   die festgehaltene Gleitrichtung lag an einem Eckknoten von K4 20° neben
+   der Bewegung (2,5 % von μ N quer zur Last, 0,7 mm Seitenwanderung); eine
+   Nachführung in Phase 2 ist als Fixpunkt instabil (weiche Querhaltung:
+   der Fehler verdoppelt sich je Runde) und braucht die konsistente Tangente
+   μ F_n/|Δt| quer zur Gleitrichtung. Schalter `AUSGLEICH_RESTSTEIFIGKEIT`
+   für die Rücknahmeprobe (`test_solver_ext`). Je Runde geht nur der am stärksten über der Reibgrenze liegende
    haftende Knoten ins Gleiten über (monoton, deshalb ohne Flattern), bis
    |F_t| ≤ μ F_n an allen haftenden Knoten gilt. Anschließend laufen
    Setzrunden, bis sich die Normalkräfte in μ F_n nicht mehr ändern.
