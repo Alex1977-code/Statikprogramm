@@ -651,6 +651,12 @@ def test_glasleiste():
     check("… Index 0 die Lastfall-Liste, Index 1 der Knopf",
           lay.itemAt(0).widget() is w.cb_lastwahl and lay.itemAt(1).widget() is b,
           type(lay.itemAt(1).widget()).__name__)
+    # Seit 25.09.2026 (Paket 7) weichen Knoepfe bei schmaler Ansicht in die
+    # Ueberlaufliste „»“ - dieser als letzter; die Klicks unten gelten dem
+    # sichtbaren Knopf
+    check("… sichtbar in der Leiste, nicht in der Überlaufliste „»“",
+          b.isVisibleTo(w.glasleiste) and b not in w.glasleiste.versteckt(),
+          f"Ansicht {w.glasleiste.parentWidget().width()} px")
     check("… kein neues Tastenkürzel", w.act_ergebnisse.shortcut().isEmpty(),
           w.act_ergebnisse.shortcut().toString())
     rib = [x for x in w.ribbon.findChildren(QtWidgets.QToolButton)

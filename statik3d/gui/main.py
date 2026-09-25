@@ -781,6 +781,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.sl_lagerdichte.blockSignals(True)
             self.sl_lagerdichte.setValue(10)
             self.sl_lagerdichte.blockSignals(False)
+        self._darstellungsmaske_nachziehen()
         self.redraw()
 
     def lagerdichte_einstellen(self):
@@ -795,6 +796,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.sl_lagerdichte.blockSignals(True)
             self.sl_lagerdichte.setValue(int(round(wert * 10)))
             self.sl_lagerdichte.blockSignals(False)
+        self._darstellungsmaske_nachziehen()
         self.redraw()
 
     def lagergroesse_zuruecksetzen(self):
@@ -806,6 +808,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.sl_lager.blockSignals(True)
             self.sl_lager.setValue(10)
             self.sl_lager.blockSignals(False)
+        self._darstellungsmaske_nachziehen()
         self.redraw()
 
     def _weltpunkt(self, x: int, y: int):
@@ -1455,6 +1458,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 a.blockSignals(True)
                 a.setChecked(name == art)
                 a.blockSignals(False)
+        self._glas_klickart_nachziehen()
         self.statusBar().showMessage(f"Auswahl: {art} - {self.AUSWAHLART_HINWEIS.get(art, '')}", 3000)
 
     def _objekt_umschalten(self, liste: list, name: str, was: str):
@@ -3347,6 +3351,7 @@ class MainWindow(QtWidgets.QMainWindow):
         Modellieren staendig braucht. Alles als Symbol; der Klartext kommt
         beim Ueberfahren.
         """
+        from . import symbole as sym
         central = self.centralWidget()
         leiste = msk.Glasleiste(central)
         # Ganz links: was die Ansicht zeigt - Lastfall, Kombination,
@@ -3359,38 +3364,42 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cb_lastwahl.currentIndexChanged.connect(self._glas_last_gewaehlt)
         # Gleich daneben Ergebnisse an/aus (24.09.2026) - dieselbe Aktion wie
         # im Register Ergebnisse, damit beide immer gleich stehen
-        leiste.knopf(self.act_ergebnisse, "ergebnisse", "ergebnisse")
+        leiste.knopf(self.act_ergebnisse, "ergebnisse", "ergebnisse", weicht=1)
         leiste.trenner()
-        # Darstellungsart
-        for name in vp.DARSTELLUNGEN:
-            leiste.knopf(self.act_darstellung[name], vp.DARSTELLUNG_SYMBOL[name], name)
-        leiste.trenner()
-        # Was sichtbar ist
-        for a, symbol, schluessel in ((self.act_knoten, "knoten", "knoten"),
-                                      (self.act_linien, "linien", "linien"),
-                                      (self.act_staebe, "staebe", "staebe"),
-                                      (self.act_flaechen, "flaechen", "flaechen"),
-                                      (self.act_volumen, "volumen", "volumen"),
-                                      (self.act_lager, "lager", "lager"),
-                                      (self.act_edges, "netz", "netz"),
-                                      (self.act_loads, "lasten", "lasten")):
-            leiste.knopf(a, symbol, schluessel)
+        # Seit 25.09.2026 (Paket 7) je Schar ein Menueknopf statt 20 Einzel-
+        # knoepfen: die Leiste war 1133 px breit bei 1002 px Ansicht. Dieselben
+        # Aktionen wie im Ribbon; der Rang (weicht) sagt, was bei Platzmangel
+        # zuerst in die Ueberlaufliste „»“ geht - die Nebenknoepfe (ab 10)
+        # vor den Hauptknoepfen.
+        self._glas_darstellung = leiste.menueknopf(
+            "Darstellung ▾", [(name, self.act_darstellung[name], vp.DARSTELLUNG_SYMBOL[name])
+                              for name in vp.DARSTELLUNGEN], "darstellung",
+            "Darstellungsart: Voll, Transparent, verdeckte Kanten, Drahtmodell (Strg+1 … Strg+4)",
+            symbol=vp.DARSTELLUNG_SYMBOL.get(self.darstellung, "voll"), weicht=3)
+        for name, a in self.act_darstellung.items():
+            a.toggled.connect(lambda an, n=name: an and self._glas_darstellung.setIcon(
+                sym.symbol(vp.DARSTELLUNG_SYMBOL[n])))
+        # Was sichtbar ist - „Lager“ zwischen Volumen und FE-Netz wie vorher
+        leiste.menueknopf(
+            "Zeigen ▾", [("knoten", self.act_knoten, "knoten"), ("linien", self.act_linien, "linien"),
+                         ("staebe", self.act_staebe, "staebe"), ("flaechen", self.act_flaechen, "flaechen"),
+                         ("volumen", self.act_volumen, "volumen"), ("lager", self.act_lager, "lager"),
+                         ("netz", self.act_edges, "netz"), ("lasten", self.act_loads, "lasten")],
+            "zeigen", "Was die Ansicht zeigt: Knoten, Linien, Stäbe, Flächen, Volumen, Lager, "
+                      "FE-Netz (F9), Lasten", symbol="ansicht", weicht=2)
         leiste.trenner()
         # Sicht: nur die Selektion, Auswahl weg, zurueck, alles, Verborgenes
-        # als Geist im Hintergrund
-        for a, symbol, schluessel in ((self.act_nur_auswahl, "sicht_nur_auswahl", "nur_auswahl"),
-                                      (self.act_auswahl_weg_sicht, "sicht_ausblenden", "ausblenden"),
-                                      (self.act_sicht_zurueck, "sicht_zurueck", "zurueck"),
-                                      (self.act_alles_zeigen, "sicht_alles", "alles"),
-                                      (self.act_geist, "sicht_geist", "geist")):
-            leiste.knopf(a, symbol, schluessel)
-        leiste.knopf(self.act_klug, "auswahl_klug", "auswahl_klug")
+        # als Geist im Hintergrund - Nebenknoepfe, sie weichen zuerst
+        for rang, (a, symbol, schluessel) in enumerate((
+                (self.act_nur_auswahl, "sicht_nur_auswahl", "nur_auswahl"),
+                (self.act_auswahl_weg_sicht, "sicht_ausblenden", "ausblenden"),
+                (self.act_sicht_zurueck, "sicht_zurueck", "zurueck"),
+                (self.act_alles_zeigen, "sicht_alles", "alles"),
+                (self.act_geist, "sicht_geist", "geist"))):
+            leiste.knopf(a, symbol, schluessel, weicht=10 + rang)
         leiste.trenner()
-        # Fang: Hauptschalter (die Arten stehen im Ribbon)
-        leiste.knopf(self.act_fang, "fang", "fang")
-        leiste.trenner()
-        # Auswahlart: was ein Klick oder ein Fenster trifft - ein Knopf je Art,
-        # genau einer ist an. "Netz" trifft einzelne Elemente.
+        # Auswahlart: was ein Klick oder ein Fenster trifft - genau eine ist
+        # an, die Beschriftung nennt sie. "Netz" trifft einzelne Elemente.
         self.act_auswahlart = {}
         gruppe = QtGui.QActionGroup(self)
         gruppe.setExclusive(True)
@@ -3402,8 +3411,18 @@ class MainWindow(QtWidgets.QMainWindow):
             a.triggered.connect(lambda _c=False, n=art: self.auswahlart_setzen(n))
             gruppe.addAction(a)
             self.act_auswahlart[art] = a
-            leiste.knopf(a, self.AUSWAHLART_SYMBOL[art], f"auswahl_{art}")
-        # Ganz rechts: alles deselektieren - der Griff, der jede Auswahl beendet
+        self._glas_klickart = leiste.menueknopf(
+            f"Klick wählt: {self.auswahlart} ▾",
+            [(f"auswahl_{art}", self.act_auswahlart[art], self.AUSWAHLART_SYMBOL[art])
+             for art in self.AUSWAHLARTEN], "klickart",
+            "Was ein Klick oder ein Auswahlfenster in der Ansicht trifft",
+            symbol=self.AUSWAHLART_SYMBOL.get(self.auswahlart, "fang_knoten"), weicht=4)
+        leiste.knopf(self.act_klug, "auswahl_klug", "auswahl_klug", weicht=15)
+        # Fang: Hauptschalter (die Arten stehen im Ribbon)
+        leiste.knopf(self.act_fang, "fang", "fang", weicht=5)
+        # „»“ vor dem letzten Knopf; ganz rechts: alles deselektieren - der
+        # Griff, der jede Auswahl beendet
+        leiste.ueberlauf_knopf()
         leiste.trenner()
         leiste.knopf(self.act_auswahl_weg, "auswahl_weg", "auswahl_weg")
         self.cb_auswahlart_glas = None
@@ -3415,6 +3434,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.glasleiste = leiste
         self.ansichtswuerfel = wuerfel
         self.ansichtsrand = msk.Ansichtsrand(central, leiste, wuerfel)
+        # nie breiter als die Ansicht: vor jedem Platzieren einpassen
+        leiste.an_ansicht_binden(self.ansichtsrand.platzieren)
         # Der Wuerfel dreht sich mit der Ansicht: ein leichter Takt schaut
         # nach, ob sich die Kamera bewegt hat, und zeichnet ihn dann neu.
         self._kamera_stand = None
@@ -3422,6 +3443,89 @@ class MainWindow(QtWidgets.QMainWindow):
         self._wuerfel_takt.setInterval(120)
         self._wuerfel_takt.timeout.connect(self._wuerfel_nachfuehren)
         self._wuerfel_takt.start()
+
+    def _glas_klickart_nachziehen(self):
+        """„Klick wählt: … ▾“ in der Glasleiste nennt die Auswahlart - auch
+        wenn sie aus dem Ribbon, dem Kontextmenue oder einer Maske kommt."""
+        knopf = getattr(self, "_glas_klickart", None)
+        if knopf is None:
+            return
+        from . import symbole as sym
+        knopf.setText(f"Klick wählt: {self.auswahlart} ▾")
+        knopf.setIcon(sym.symbol(self.AUSWAHLART_SYMBOL.get(self.auswahlart, "fang_knoten")))
+
+    def maske_darstellung(self):
+        """Rechte Maske „Darstellung“: Symbolgroesse der Lager und Lagerdichte.
+
+        Die beiden Schieber standen bis 25.09.2026 im Register Ansicht (Gruppe
+        „Symbole“, 666 px) - dort kuerzten sie zusammen mit 38 weiteren
+        Knoepfen jede Beschriftung. Hier wirken sie wie vorher sofort; die
+        Schieber des Fensters (sl_lager, sl_lagerdichte) bleiben die Quelle
+        des Wertes und ziehen die der Maske mit."""
+        maske = msk.Maske("Darstellung", [], knopf="Schließen",
+                          hinweis="Größe der Lagersymbole und Dichte der Symbole auf Linien- "
+                                  "und Flächenlagern – wirkt sofort auf die Ansicht.")
+        feld = QtWidgets.QWidget()
+        gitter = QtWidgets.QGridLayout(feld)
+        gitter.setContentsMargins(0, 0, 0, 0)
+        gitter.setHorizontalSpacing(8)
+        schieber = {}
+        for zeile, (quelle, text, hinweis, zurueck) in enumerate((
+                (self.sl_lager, "Lagergröße", "Größe aller Lagersymbole (1,0 = Grundgröße)",
+                 self.lagergroesse_zuruecksetzen),
+                (self.sl_lagerdichte, "Lagerdichte", "Wie dicht die Symbole der Linien- und "
+                                                     "Flächenlager über Linie und Fläche stehen",
+                 self.lagerdichte_zuruecksetzen))):
+            lb = QtWidgets.QLabel(text)
+            lb.setToolTip(hinweis)
+            sl = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+            sl.setRange(quelle.minimum(), quelle.maximum())
+            sl.setValue(quelle.value())
+            sl.setToolTip(hinweis)
+            wert = QtWidgets.QLabel(zl.zahl_text(quelle.value() / 10.0))
+            wert.setMinimumWidth(28)
+            sl.valueChanged.connect(quelle.setValue)
+            sl.valueChanged.connect(lambda v, lw=wert: lw.setText(zl.zahl_text(v / 10.0)))
+
+            def mitziehen(v, s=sl):
+                if s.value() != v:
+                    s.blockSignals(True)
+                    s.setValue(v)
+                    s.blockSignals(False)
+            quelle.valueChanged.connect(mitziehen)
+            knopf = QtWidgets.QPushButton("Zurücksetzen")
+            knopf.setToolTip(f"{text} auf 1,0")
+            knopf.clicked.connect(zurueck)
+            gitter.addWidget(lb, zeile, 0)
+            gitter.addWidget(sl, zeile, 1)
+            gitter.addWidget(wert, zeile, 2)
+            gitter.addWidget(knopf, zeile, 3)
+            schieber[text] = (sl, wert, quelle, mitziehen)
+        maske.inhalt_einfuegen(feld)
+        maske.schieber = schieber
+
+        def trennen():
+            for _sl, _w, quelle, fn in schieber.values():
+                try:
+                    quelle.valueChanged.disconnect(fn)
+                except (RuntimeError, TypeError):
+                    pass
+        maske.destroyed.connect(lambda *_: trennen())
+        maske.angewendet.connect(lambda _w: self.maskenrand.schliessen())
+        return self.maske_erzeugen(maske)
+
+    def _darstellungsmaske_nachziehen(self):
+        """Nach „Zurücksetzen“ (Signale des Fensterschiebers gesperrt) die
+        Schieber und Zahlen einer offenen Maske „Darstellung“ nachziehen."""
+        for mk in self.findChildren(msk.Maske):
+            for sl, wert, quelle, _fn in (getattr(mk, "schieber", None) or {}).values():
+                try:
+                    sl.blockSignals(True)
+                    sl.setValue(quelle.value())
+                    sl.blockSignals(False)
+                    wert.setText(zl.zahl_text(quelle.value() / 10.0))
+                except RuntimeError:
+                    pass
 
     def _kamera_matrix(self):
         """Die 3x3-Drehmatrix Welt -> Bild der Kamera - fuer den Wuerfel."""
@@ -3683,14 +3787,15 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # -- Geometrie ---------------------------------------------------
         r = rb.register("Geometrie")
-        g = r.gruppe("Knoten")
+        # Knoten und Linien in einer Gruppe, ihre zwei kleinen Befehle in einer
+        # Spalte (25.09.2026, Paket 7: zwei Gruppen brauchten 410 px)
+        g = r.gruppe("Knoten / Linien")
         g.gross("Knoten", "•", self.maske_knoten, "",
                 "Knoten über Koordinaten anlegen oder in der Ansicht klicken")
-        g.klein("Knoten löschen", self.delete_nodes,
-                hinweis="Die gewählten Knoten mit den daran hängenden Elementen entfernen - Knoten, die eine Linie braucht, bleiben")
-        g = r.gruppe("Linien")
         g.gross("Linie", "◜", self.maske_linie, "",
                 "Polylinie, Bogen, Kreis, Spline oder Parabel")
+        g.klein("Knoten löschen", self.delete_nodes,
+                hinweis="Die gewählten Knoten mit den daran hängenden Elementen entfernen - Knoten, die eine Linie braucht, bleiben")
         g.klein("Linie aus Knoten…", self.add_linie,
                 hinweis="Aus den ausgewählten Knoten eine Linie machen")
         # Aendern der Auswahl - dieselben Befehle wie im Rechtsklickmenue
@@ -3719,17 +3824,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 "beide verteilen. Die Bohrung wird über ihre ganze Länge angepasst, in jedem "
                 "Bauteil, durch das sie geht - sonst bliebe ein Kegel stehen")
         g = r.gruppe("Auswahl in der Ansicht")
+        # Seit 25.09.2026 (Paket 7) in der Spalte der kleinen Knoepfe, die
+        # Auswahlfelder so hoch wie diese: „Geometrie“ brauchte 1748 px und
+        # kuerzte bei 1366 px 13 Beschriftungen
         self.cb_auswahlart = QtWidgets.QComboBox()
         self.cb_auswahlart.addItems(self.AUSWAHLARTEN)
-        self.cb_auswahlart.setMinimumWidth(110)
-        self.cb_auswahlart.setToolTip("Was ein Klick in der Ansicht trifft")
+        self.cb_auswahlart.setMinimumWidth(96)
+        self.cb_auswahlart.setToolTip("Was ein Klick in der Ansicht trifft (wie „Klick wählt“ "
+                                      "in der Leiste über der Ansicht)")
         self.cb_auswahlart.currentTextChanged.connect(self.auswahlart_setzen)
-        g.widget(self.cb_auswahlart)
+        g.in_spalte(self.cb_auswahlart)
         g = r.gruppe("Koordinatensystem")
         self.cb_ks = QtWidgets.QComboBox()
         self.cb_ks.setMinimumWidth(120)
         self.cb_ks.currentTextChanged.connect(self.ks_waehlen)
-        g.widget(self.cb_ks)
+        g.in_spalte(self.cb_ks)
         g.klein("Neues KS…", self.ks_neu,
                 hinweis="Ein Koordinatensystem über Ursprung und Drehwinkel anlegen - kartesisch, zylindrisch oder sphärisch")
         g.klein("Aus drei Knoten", self.ks_aus_auswahl,
@@ -3737,9 +3846,10 @@ class MainWindow(QtWidgets.QMainWindow):
         g = r.gruppe("Arbeitsebene")
         self.cb_ebene = QtWidgets.QComboBox()
         self.cb_ebene.addItems(list(ks.EBENEN))
+        self.cb_ebene.setToolTip("Arbeitsebene, auf der Klicks in die Ansicht Punkte setzen")
         self.cb_ebene.currentTextChanged.connect(
             lambda t: self.arbeitsebene_setzen(ebene=t))
-        g.widget(self.cb_ebene)
+        g.in_spalte(self.cb_ebene)
         self.sp_raster = QtWidgets.QDoubleSpinBox()
         self.sp_raster.setRange(0.0, 100.0)
         self.sp_raster.setSingleStep(0.1)
@@ -3748,9 +3858,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sp_raster.setToolTip("Rasterweite der Arbeitsebene (0 = kein Raster)")
         self.sp_raster.valueChanged.connect(
             lambda v: self.arbeitsebene_setzen(raster=v))
-        g.widget(self.sp_raster)
-        self.act_fang = g.schalter("Fang", self.fang_umschalten, True,
-                                   "Fang ein- und ausschalten", kuerzel="F3")
+        g.in_spalte(self.sp_raster)
+        g = r.gruppe("Fang")
+        # Hauptschalter gross, die acht Fangarten in einem Menue - jede mit
+        # ihrer Taste wie vorher (vorher drei Spalten, 360 px)
+        self.act_fang = g.gross("Fang", "", None, "F3", "Fang ein- und ausschalten", symbol="fang")
+        self.act_fang.setCheckable(True)
+        self.act_fang.setChecked(True)
+        self.act_fang.toggled.connect(lambda z: self.fang_umschalten(z))
+        menu = g.menueknopf("Fangarten ▾", "Was gefangen wird: Knoten, Kantenmitte, Lot, Raster, "
+                                           "Linien, Stäbe, Flächen, Volumen (Umschalt+F1 … F8)",
+                            symbol="fang_knoten")
         # Was gefangen wird, muss man beim Modellieren staendig umstellen -
         # darum je Fangart ein eigener Schalter mit Taste, nicht ein Dialog.
         self.act_fangart = {}
@@ -3763,9 +3881,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 ("stab", "auf Stäbe", "Shift+F5", "fang_stab"),
                 ("flaeche", "auf Flächen", "Shift+F6", "fang_flaeche"),
                 ("volumen", "auf Volumen", "Shift+F7", "fang_volumen")):
-            a = g.schalter(text, lambda z, k=art: self.fangart_umschalten(k, z),
-                           art in self.fang_arten, f"Fang {text}",
-                           symbol=symbol, kuerzel=kuerzel)
+            a = g.eintrag(menu, text, lambda z, k=art: self.fangart_umschalten(k, z),
+                          kuerzel, f"Fang {text}", symbol=symbol, schalter=True,
+                          an=art in self.fang_arten)
             self.act_fangart[art] = a
 
         # -- Struktur ----------------------------------------------------
@@ -3777,41 +3895,48 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Zwei Knoten anklicken oder ihre Nummern eintragen")
         g.gross("Stabzug", "╱", self.maske_stabzug,
                 hinweis="Stabzug zwischen zwei Punkten, in n Elemente geteilt")
-        g.klein("Stäbe für Nachweise", lambda: self.maske_zeigen("Nachweise"),
-                hinweis="Stäbe mit Knick- und Kipplängen")
-        g.klein("Stäbe automatisch erkennen", self.auto_members,
-                hinweis="Zusammenhängende Stabelemente gleicher Richtung zu Stäben mit Nachweis zusammenfassen")
-        g.klein("Querschnitt zuweisen…", lambda: self.zuweisen_zeigen("querschnitt"),
-                hinweis="Querschnitt und Werkstoff an die gewählten Elemente - im Register "
-                        "„Auswahl“, das erscheint, sobald etwas gewählt ist")
+        # beide Befehle zu den Staeben mit Nachweis in einem Menue - die Spalte
+        # mit „Stäbe automatisch erkennen“ war 192 px breit (25.09.2026)
+        menu = g.menueknopf("Nachweisstäbe ▾", "Stäbe mit Nachweis: Maske mit Knick- und "
+                                              "Kipplängen, automatisch erkennen", symbol="staebe")
+        g.eintrag(menu, "Stäbe für Nachweise", lambda: self.maske_zeigen("Nachweise"),
+                  hinweis="Stäbe mit Knick- und Kipplängen")
+        g.eintrag(menu, "Stäbe automatisch erkennen", self.auto_members,
+                  hinweis="Zusammenhängende Stabelemente gleicher Richtung zu Stäben mit Nachweis zusammenfassen")
+        # Doppelungen nur noch in der Suche (25.09.2026, Paket 7): Zuweisen und
+        # Gelenke setzen fuehren nur ins Kontextregister „Auswahl“, Vernetzen
+        # ist Netz → Vernetzen, die Tabellen haben unten ihren Reiter
+        g.nur_suche("Querschnitt zuweisen…", lambda: self.zuweisen_zeigen("querschnitt"),
+                    hinweis="Querschnitt und Werkstoff an die gewählten Elemente - im Register "
+                            "„Auswahl“, das erscheint, sobald etwas gewählt ist")
         g = r.gruppe("Flächen")
         g.gross("Schale", "◫", self.maske_schale, "",
                 "Drei oder vier Knoten in der Ansicht anklicken")
         g.gross("Fläche aus Linien", "▱", self.add_flaeche_aus_auswahl, "",
                 "Die gewählten Linien beranden die Fläche - Randlinien auch in der Maske anklicken")
         g.klein("Rechteckplatte", self.maske_platte, hinweis="Rechteckplatte aus Schalen, gleich vernetzt")
-        g.klein("Flächen vernetzen", self.geometrie_vernetzen,
-                hinweis="Die gewählten - sonst alle - Flächen nach den Netzeinstellungen vernetzen")
+        g.nur_suche("Flächen vernetzen", self.geometrie_vernetzen, symbol="vernetzen",
+                    hinweis="Die gewählten - sonst alle - Flächen nach den Netzeinstellungen vernetzen")
         g.klein("Flächen verschneiden", self.flaechen_verschneiden,
                 hinweis="Zwei gewählte Flächen verschneiden: die Schnittlinie wird als Linie mit Knoten "
                         "angelegt - auch bei gewölbten Flächen und Spline-Rändern")
-        g.klein("Dicke zuweisen…", lambda: self.zuweisen_zeigen("dicke"),
-                hinweis="Schalendicke und Werkstoff an die gewählten Flächenelemente - im Register "
-                        "„Auswahl“, das erscheint, sobald etwas gewählt ist")
+        g.nur_suche("Dicke zuweisen…", lambda: self.zuweisen_zeigen("dicke"),
+                    hinweis="Schalendicke und Werkstoff an die gewählten Flächenelemente - im Register "
+                            "„Auswahl“, das erscheint, sobald etwas gewählt ist")
         g = r.gruppe("Volumen")
         g.gross("Volumen aus Flächen", "▣", self.add_koerper_aus_auswahl, "",
                 "Die gewählten Flächen beranden den Volumenkörper - Randflächen auch in der Maske anklicken")
         g.klein("Quader", self.maske_quader, hinweis="Quader, gleich vernetzt")
-        g.klein("Volumen vernetzen", self.geometrie_vernetzen,
-                hinweis="Die gewählten - sonst alle - Volumenkörper nach den Netzeinstellungen vernetzen")
+        g.nur_suche("Volumen vernetzen", self.geometrie_vernetzen, symbol="vernetzen",
+                    hinweis="Die gewählten - sonst alle - Volumenkörper nach den Netzeinstellungen vernetzen")
         g = r.gruppe("Gelenke")
         g.gross("Gelenk", "○", self.add_hinge,
                 hinweis="Stabendgelenk anlegen: je Freiheitsgrad biegesteif, gelenkig oder Feder "
                         "- rechts in der Maske")
-        g.klein("Gelenke setzen…", lambda: self.zuweisen_zeigen("gelenke"),
-                hinweis="Gelenke an den Stabenden der gewählten Elemente setzen")
-        g.klein("Tabelle Gelenke", lambda: self.tabelle_zeigen("Gelenke"),
-                hinweis="Alle Gelenke unten in der Tabelle")
+        g.nur_suche("Gelenke setzen…", lambda: self.zuweisen_zeigen("gelenke"),
+                    hinweis="Gelenke an den Stabenden der gewählten Elemente setzen")
+        g.nur_suche("Tabelle Gelenke", lambda: self.tabelle_zeigen("Gelenke"), symbol="tabelle",
+                    hinweis="Alle Gelenke unten in der Tabelle")
         g = r.gruppe("Eigenschaften")
         g.gross("Querschnitte", "⌶", lambda: self.tabelle_zeigen("Querschnitte"),
                 hinweis="Querschnitte aus der Profildatenbank")
@@ -3819,8 +3944,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Werkstoffe und ihre Kennwerte")
         g.klein("Schalendicken", lambda: self.tabelle_zeigen("Dicken"),
                 hinweis="Tabelle der Schalendicken - dort anlegen und ändern")
-        g.klein("Elemente löschen", self.delete_elements,
-                hinweis="Alle Elemente entfernen, deren Knoten sämtlich gewählt sind")
+        # wie „Knoten löschen“ im Kontextregister „Auswahl“ - dort, wo die
+        # Auswahl ist; hier nur noch fuer die Suche (25.09.2026)
+        g.nur_suche("Elemente löschen", self.delete_elements, symbol="loeschen",
+                    hinweis="Alle Elemente entfernen, deren Knoten sämtlich gewählt sind")
 
         # -- Lager / Gelenke / Kontakt -----------------------------------
         r = rb.register("Lager / Kontakt")
@@ -3854,8 +3981,8 @@ class MainWindow(QtWidgets.QMainWindow):
                         "wird bei jeder Berechnung nachgewiesen.")
         g.klein("Anschlüsse zeigen", self.show_joints,
                 hinweis="Alle Anschlüsse mit ihren Nachweisen im Klartext")
-        g.klein("Tabelle Anschlüsse", lambda: self.tabelle_zeigen("Anschlüsse"),
-                hinweis="Alle Anschlüsse mit ihren Nachweisen unten in der Tabelle")
+        g.nur_suche("Tabelle Anschlüsse", lambda: self.tabelle_zeigen("Anschlüsse"), symbol="tabelle",
+                    hinweis="Alle Anschlüsse mit ihren Nachweisen unten in der Tabelle")
         g.klein("Anschluss löschen", self.delete_joint,
                 hinweis="Den in der Tabelle gewählten Anschluss entfernen")
 
@@ -3885,26 +4012,28 @@ class MainWindow(QtWidgets.QMainWindow):
         g.gross("Temperatur", "", self.maske_temperaturlast, "",
                 "Temperaturänderung auf gewählte Stäbe, Flächen oder Volumen",
                 symbol="temperatur")
-        g.gross("Zwangsverformung", "", self.maske_zwangsverformung, "",
-                "Vorgegebene Verschiebung oder Verdrehung an gewählten gelagerten "
-                "Knoten (Setzung)", symbol="zwang")
-        g.gross("Vorspannung", "", self.maske_vorspannung, "",
-                "Vorspannkraft in gewählten Stäben (Zugstange, Seil, Anker) oder Volumen "
-                "(Schraube) - als Anfangsdehnung: das Bauteil trägt F_v als Zug und klemmt "
-                "die Umgebung", symbol="lasten")
-        g.gross("Übermaß", "", self.maske_uebermass, "",
-                "Presspassung als Last: Übermaß einer Kontaktfuge (Passstift, "
-                "Unterlegblech). Daraus entstehen Pressspannung und - über den "
-                "Reibbeiwert der Fuge - Schubtragfähigkeit", symbol="lasten")
-        g.gross("Spiel geben", "", self.maske_spiel, "",
-                "Gewählte zylindrische Volumen (Passstifte, Bolzen) geometrisch um das "
-                "Durchmesserspiel verkleinern oder gewählte ebene Flächen um einen Spalt nach "
-                "innen versetzen - erst von den Nachbarn getrennt, dann neu vernetzt: das Spiel "
-                "steht im Modell, ohne Sonderbedingung an der Fuge", symbol="lasten")
-        g.gross("Passung", "", self.maske_passung, "",
-                "Spiel, Lochleibungsgrenze und Randabminderung für alle Kontaktfugen der "
-                "gewählten Volumen auf einmal (Passstifte, Bolzen): Einstellungen, die "
-                "RFEM nicht kennt und die hier nach dem Import gesetzt werden", symbol="lasten")
+        # Die selteneren Lasten in zwei Spalten kleiner Knoepfe (25.09.2026,
+        # Paket 7): neun grosse Knoepfe brauchten 750 px, das Register 1376 px
+        g.klein("Zwangsverformung", self.maske_zwangsverformung,
+                hinweis="Vorgegebene Verschiebung oder Verdrehung an gewählten gelagerten "
+                        "Knoten (Setzung)", symbol="zwang")
+        g.klein("Vorspannung", self.maske_vorspannung,
+                hinweis="Vorspannkraft in gewählten Stäben (Zugstange, Seil, Anker) oder Volumen "
+                        "(Schraube) - als Anfangsdehnung: das Bauteil trägt F_v als Zug und klemmt "
+                        "die Umgebung", symbol="lasten")
+        g.klein("Übermaß", self.maske_uebermass,
+                hinweis="Presspassung als Last: Übermaß einer Kontaktfuge (Passstift, "
+                        "Unterlegblech). Daraus entstehen Pressspannung und - über den "
+                        "Reibbeiwert der Fuge - Schubtragfähigkeit", symbol="lasten")
+        g.klein("Spiel geben", self.maske_spiel,
+                hinweis="Gewählte zylindrische Volumen (Passstifte, Bolzen) geometrisch um das "
+                        "Durchmesserspiel verkleinern oder gewählte ebene Flächen um einen Spalt nach "
+                        "innen versetzen - erst von den Nachbarn getrennt, dann neu vernetzt: das Spiel "
+                        "steht im Modell, ohne Sonderbedingung an der Fuge", symbol="lasten")
+        g.klein("Passung", self.maske_passung,
+                hinweis="Spiel, Lochleibungsgrenze und Randabminderung für alle Kontaktfugen der "
+                        "gewählten Volumen auf einmal (Passstifte, Bolzen): Einstellungen, die "
+                        "RFEM nicht kennt und die hier nach dem Import gesetzt werden", symbol="lasten")
         g = r.gruppe("Generierer")
         g.gross("Wasserdruck", "", lambda: self.maske_wasserdruck(), "",
                 "Wasserdruck auf einen Verschluss je Situation: Ober- und Unterwasser, "
@@ -3919,8 +4048,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Eigengewicht im aktiven Lastfall ein- und ausschalten")
         g.klein("Stablast auf Elemente", lambda: self.maske_zeigen("Lager/Lasten"),
                 hinweis="Streckenlast unmittelbar auf Stabelemente (Elementnummern)")
-        g.klein("Tabelle Lasten", lambda: self.tabelle_zeigen("Lasten"),
-                hinweis="Alle Lasten des Modells unten in der Tabelle")
+        g.nur_suche("Tabelle Lasten", lambda: self.tabelle_zeigen("Lasten"), symbol="tabelle",
+                    hinweis="Alle Lasten des Modells unten in der Tabelle")
 
         # -- Netz --------------------------------------------------------
         r = rb.register("Netz")
@@ -3993,61 +4122,82 @@ class MainWindow(QtWidgets.QMainWindow):
         g = r.gruppe("Einstellungen")
         g.gross("Konfiguration", "⚙", self.design_settings,
                 hinweis="Teilsicherheitsbeiwerte und Nachweisstellen")
-        g.klein("Stäbe und Knicklängen…", lambda: self.maske_zeigen("Nachweise"),
-                hinweis="Maske Nachweise: Stäbe mit Knick- und Kipplängen, Beiwerten und Kerbfall")
         g = r.gruppe("Knicklängen")
         g.gross("Aus Knickfigur", "β", self.do_knicklaengen,
                 hinweis="Knicklängenbeiwerte β aus Verzweigungslastfaktor und Eigenform: "
                         "N_cr = α_cr·|N_Ed|, L_cr = π·√(EI/N_cr); die Knickfigur sagt, um "
                         "welche Achse und ob der Stab beteiligt ist")
+        # „Stäbe und Knicklängen…“ stand allein unter Einstellungen - hier
+        # teilt es sich die Spalte mit „β übernehmen“ (25.09.2026, Paket 7)
+        g.klein("Stäbe und Knicklängen…", lambda: self.maske_zeigen("Nachweise"),
+                hinweis="Maske Nachweise: Stäbe mit Knick- und Kipplängen, Beiwerten und Kerbfall")
         g.klein("β übernehmen", self.knicklaengen_uebernehmen,
                 hinweis="Die aus der Knickfigur ermittelten Beiwerte β in die Stäbe schreiben")
-        g.klein("Tabelle Knicklängen", lambda: self.tabelle_zeigen("Knicklängen"),
-                hinweis="Die Knicklängenermittlung unten in der Tabelle")
+        g.nur_suche("Tabelle Knicklängen", lambda: self.tabelle_zeigen("Knicklängen"), symbol="tabelle",
+                    hinweis="Die Knicklängenermittlung unten in der Tabelle")
         g = r.gruppe("Schwingung")
         g.gross("Verschluss", "f₁", lambda: self.maske_schwingung(),
                 hinweis="Strömungsinduzierte Schwingungen eines Verschlusses aus dem Wasserdruck: "
                         "Eigenfrequenzen in Luft und im Wasser (hydrodynamische Masse nach "
                         "Westergaard), Wirbelablösung (Strouhal), reduzierte Geschwindigkeit, "
                         "Antwort auf die Druckschwankung und Ermüdung")
-        g.klein("Tabelle Schwingung", lambda: self.tabelle_zeigen("Schwingung"),
-                hinweis="Eigenfrequenzen, Wirbelablösung und Beurteilung unten in der Tabelle")
+        g.nur_suche("Tabelle Schwingung", lambda: self.tabelle_zeigen("Schwingung"), symbol="tabelle",
+                    hinweis="Eigenfrequenzen, Wirbelablösung und Beurteilung unten in der Tabelle")
 
-        # -- Ergebnisse --------------------------------------------------
+        # Je Nachweisobjekt ein grosser Knopf mit Menue „Neu | Ändern |
+        # Löschen | Tabelle“ (25.09.2026, Paket 7) statt eines grossen und
+        # drei kleiner Knoepfe: das Register brauchte 2138 px und kuerzte bei
+        # 1920 px „Na…C3“. In der Suche heissen die Eintraege wie vorher
+        # („Beulfeld ändern…“), im Menue kurz.
+        def nachweisobjekt(g, knopf, symbol, eintraege):
+            menu = g.menueknopf(f"{knopf} ▾", eintraege[0][3], symbol)
+            for (name, fn, anzeige, hinweis) in eintraege:
+                g.eintrag(menu, name, fn, hinweis=hinweis, anzeige=anzeige)
+
         g = r.gruppe("Verformung (GZG)")
-        g.gross("Verformung", "↧", self.add_verformungsgrenze,
-                hinweis="Grenzwert der Verformung festlegen: Durchbiegung eines Stabes, "
-                        "Verschiebung eines Knotens oder zweier Knoten gegeneinander")
-        g.klein("Tabelle Verformungen", lambda: self.tabelle_zeigen("Verformungen"),
-                hinweis="Die Verformungsnachweise (GZG) unten in der Tabelle")
-        g.klein("Grenze ändern…", self.edit_verformungsgrenze,
-                hinweis="Den in der Tabelle gewählten Verformungsnachweis ändern")
-        g.klein("Grenze löschen", self.delete_verformungsgrenze,
-                hinweis="Den in der Tabelle gewählten Verformungsnachweis entfernen")
+        nachweisobjekt(g, "Verformung", "verformung", [
+            ("Verformung", self.add_verformungsgrenze, "Neu …",
+             "Grenzwert der Verformung festlegen: Durchbiegung eines Stabes, "
+             "Verschiebung eines Knotens oder zweier Knoten gegeneinander"),
+            ("Grenze ändern…", self.edit_verformungsgrenze, "Ändern …",
+             "Den in der Tabelle gewählten Verformungsnachweis ändern"),
+            ("Grenze löschen", self.delete_verformungsgrenze, "Löschen",
+             "Den in der Tabelle gewählten Verformungsnachweis entfernen"),
+            ("Tabelle Verformungen", lambda: self.tabelle_zeigen("Verformungen"), "Tabelle",
+             "Die Verformungsnachweise (GZG) unten in der Tabelle")])
         g = r.gruppe("Beulen (EC3-1-5)")
-        g.gross("Beulfeld", "▦", self.add_beulfeld,
-                hinweis="Die gewählten Flächenelemente zu einem Beulfeld "
-                        "zusammenfassen und nach Abschnitt 10 nachweisen")
-        g.klein("Tabelle Beulfelder", lambda: self.tabelle_zeigen("Beulfelder"),
-                hinweis="Die Beulnachweise unten in der Tabelle")
-        g.klein("Beulfeld ändern…", self.edit_beulfeld,
-                hinweis="Das in der Tabelle gewählte Beulfeld ändern")
-        g.klein("Beulfeld löschen", self.delete_beulfeld,
-                hinweis="Das in der Tabelle gewählte Beulfeld entfernen")
-        g.gross("Volumenbereich", "◧", self.add_volumenbereich,
-                hinweis="Die gewählten Volumenelemente zu einem Bereich für den "
-                        "Spannungsnachweis zusammenfassen (6.2.1(5))")
-        g.klein("Tabelle Volumen", lambda: self.tabelle_zeigen("Volumen"),
-                hinweis="Die Spannungsnachweise der Volumenbereiche unten in der Tabelle")
-        g.klein("Volumenbereich ändern…", self.edit_volumenbereich,
-                hinweis="Den in der Tabelle gewählten Volumenbereich ändern")
-        g.klein("Volumenbereich löschen", self.delete_volumenbereich,
-                hinweis="Den in der Tabelle gewählten Volumenbereich entfernen")
-        g.gross("Lasteinleitung", "↡", self.add_lasteinleitung,
-                hinweis="Beulnachweis des Stegs unter einer örtlich eingeleiteten "
-                        "Querkraft (Abschnitt 6)")
-        g.klein("Tabelle Lasteinleitung", lambda: self.tabelle_zeigen("Lasteinleitung"),
-                hinweis="Die Nachweise der Lasteinleitung unten in der Tabelle")
+        nachweisobjekt(g, "Beulfeld", "beulen", [
+            ("Beulfeld", self.add_beulfeld, "Neu …",
+             "Die gewählten Flächenelemente zu einem Beulfeld "
+             "zusammenfassen und nach Abschnitt 10 nachweisen"),
+            ("Beulfeld ändern…", self.edit_beulfeld, "Ändern …",
+             "Das in der Tabelle gewählte Beulfeld ändern"),
+            ("Beulfeld löschen", self.delete_beulfeld, "Löschen",
+             "Das in der Tabelle gewählte Beulfeld entfernen"),
+            ("Tabelle Beulfelder", lambda: self.tabelle_zeigen("Beulfelder"), "Tabelle",
+             "Die Beulnachweise unten in der Tabelle")])
+        nachweisobjekt(g, "Volumenbereich", "volumen", [
+            ("Volumenbereich", self.add_volumenbereich, "Neu …",
+             "Die gewählten Volumenelemente zu einem Bereich für den "
+             "Spannungsnachweis zusammenfassen (6.2.1(5))"),
+            ("Volumenbereich ändern…", self.edit_volumenbereich, "Ändern …",
+             "Den in der Tabelle gewählten Volumenbereich ändern"),
+            ("Volumenbereich löschen", self.delete_volumenbereich, "Löschen",
+             "Den in der Tabelle gewählten Volumenbereich entfernen"),
+            ("Tabelle Volumen", lambda: self.tabelle_zeigen("Volumen"), "Tabelle",
+             "Die Spannungsnachweise der Volumenbereiche unten in der Tabelle")])
+        # Ändern und Löschen gab es bisher nur unter der Tabelle - jetzt wie
+        # bei den anderen Nachweisobjekten auch hier
+        nachweisobjekt(g, "Lasteinleitung", "last", [
+            ("Lasteinleitung", self.add_lasteinleitung, "Neu …",
+             "Beulnachweis des Stegs unter einer örtlich eingeleiteten "
+             "Querkraft (Abschnitt 6)"),
+            ("Lasteinleitung ändern…", self.edit_lasteinleitung, "Ändern …",
+             "Die in der Tabelle gewählte Lasteinleitung ändern"),
+            ("Lasteinleitung löschen", self.delete_lasteinleitung, "Löschen",
+             "Die in der Tabelle gewählte Lasteinleitung entfernen"),
+            ("Tabelle Lasteinleitung", lambda: self.tabelle_zeigen("Lasteinleitung"), "Tabelle",
+             "Die Nachweise der Lasteinleitung unten in der Tabelle")])
 
         r = rb.register("Ergebnisse")
         g = r.gruppe("Auswahl")
@@ -4075,11 +4225,13 @@ class MainWindow(QtWidgets.QMainWindow):
             "ins Ergebnisbild – oben links steht, welcher Lastfall es ist. Das "
             "Ergebnis eines Lastfalls zeigt immer seine eigenen Lasten (Schalter "
             "„Lasten“ im Register Ansicht)", symbol="lasten")
-        g = r.gruppe("Tabellen")
+        g = r.gruppe("Tabellen", sichtbar=False)
+        # Die Tabellen haben unten ihre Reiter: im Ribbon waren das sechs
+        # Doppelungen - die Suche findet sie weiter (25.09.2026, Paket 7)
         for name in ("Stabkräfte", "Auflagerkräfte", "Umhüllende",
                      "Nachweise EC3", "Ermüdung", "Kontakt"):
-            g.klein(f"Tabelle {name}", lambda n=name: self.tabelle_zeigen(n),
-                    hinweis=f"Tabelle {name} unten zeigen")
+            g.nur_suche(f"Tabelle {name}", lambda n=name: self.tabelle_zeigen(n), symbol="tabelle",
+                        hinweis=f"Tabelle {name} unten zeigen")
         g = r.gruppe("Werte im Bild")
         self.act_werte_staebe = g.schalter(
             "Werte Stäbe", lambda _z: self.redraw(), False,
@@ -4152,86 +4304,128 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # -- Ansicht -----------------------------------------------------
         r = rb.register("Ansicht")
+        # Seit 25.09.2026 (Paket 7) Menueknoepfe statt 40 Einzelknoepfen: das
+        # Register brauchte 3341 px und kuerzte bei 1366 px 39 Beschriftungen
+        # („F…z“, „Kn…rn“). Jeder Schalter bleibt ein Befehl mit Suche, Kuerzel
+        # und Hinweis; dieselben Aktionen stehen in der Glasleiste.
         g = r.gruppe("Blickrichtung")
         g.gross("Isometrisch", "◲", lambda: self.blickrichtung("iso"), symbol="iso",
                 hinweis="Schräg von oben auf das Modell - die Grundansicht")
-        g.klein("XY (Draufsicht)", lambda: self.blickrichtung("+z"), symbol="wuerfel",
-                hinweis="Von oben auf die xy-Ebene")
-        g.klein("XZ (Ansicht)", lambda: self.blickrichtung("-y"), symbol="wuerfel",
-                hinweis="Von vorn auf die xz-Ebene")
-        g.klein("YZ (Seitenansicht)", lambda: self.blickrichtung("+x"), symbol="wuerfel",
-                hinweis="Von der Seite auf die yz-Ebene")
-        g.klein("Rückseite (180°)", lambda: self.blickrichtung("kehren"),
-                hinweis="Die laufende Ansicht umkehren – zeigt die Rückseite",
-                symbol="kehren")
-        g.klein("Zoom alles", self.zoom_alles, symbol="zoom",
+        menu = g.menueknopf("Richtung ▾", "Senkrecht auf eine Ebene schauen oder die Ansicht "
+                                          "umkehren (Rückseite)", symbol="wuerfel")
+        g.eintrag(menu, "XY (Draufsicht)", lambda: self.blickrichtung("+z"), symbol="wuerfel",
+                  hinweis="Von oben auf die xy-Ebene")
+        g.eintrag(menu, "XZ (Ansicht)", lambda: self.blickrichtung("-y"), symbol="wuerfel",
+                  hinweis="Von vorn auf die xz-Ebene")
+        g.eintrag(menu, "YZ (Seitenansicht)", lambda: self.blickrichtung("+x"), symbol="wuerfel",
+                  hinweis="Von der Seite auf die yz-Ebene")
+        menu.addSeparator()
+        g.eintrag(menu, "Rückseite (180°)", lambda: self.blickrichtung("kehren"),
+                  hinweis="Die laufende Ansicht umkehren – zeigt die Rückseite", symbol="kehren")
+        g.gross("Zoom alles", "", self.zoom_alles, symbol="zoom",
                 hinweis="Das ganze Modell ins Bild")
         g = r.gruppe("Darstellung")
-        # Die vier Darstellungsarten liegen als eigene Knoepfe nebeneinander und
-        # auf Strg+1..Strg+4 - Umschalten soll ein Griff sein, kein Klickweg
-        # durch ein Auswahlfeld. (F5 ist „Berechnen", F9 das FE-Netz.)
+        # Die vier Darstellungsarten auf Strg+1..Strg+4 - Umschalten ist ein
+        # Griff, kein Klickweg. (F5 ist „Berechnen", F9 das FE-Netz.) Darunter
+        # die rechte Maske „Darstellung“ mit Symbolgroesse und Lagerdichte
+        # (vorher zwei Schieber im Register, 666 px).
+        menu = g.menueknopf("Darstellung ▾", "Darstellungsart (Strg+1 … Strg+4) und "
+                                             "Symbolgrößen", symbol=vp.DARSTELLUNG_SYMBOL.get(
+                                                 self.darstellung, "voll"))
+        knopf_darstellung = menu.parentWidget()
         self.act_darstellung = {}
         gruppe = QtGui.QActionGroup(self)
         gruppe.setExclusive(True)
-        for i, (name, (zeichen, hinweis)) in enumerate(vp.DARSTELLUNGEN.items()):
-            a = g.gross(name, zeichen,
-                        lambda n=name: self.darstellung_setzen(n),
-                        f"Ctrl+{1 + i}", hinweis)
+        for i, (name, (_zeichen, hinweis)) in enumerate(vp.DARSTELLUNGEN.items()):
+            a = g.eintrag(menu, name, lambda n=name: self.darstellung_setzen(n),
+                          f"Ctrl+{1 + i}", hinweis, symbol=vp.DARSTELLUNG_SYMBOL[name])
             a.setCheckable(True)
             a.setChecked(name == self.darstellung)
+            a.toggled.connect(lambda an, n=name, k=knopf_darstellung: an and k.setIcon(
+                rib.sym.symbol(vp.DARSTELLUNG_SYMBOL[n])))
             gruppe.addAction(a)
             self.act_darstellung[name] = a
+        menu.addSeparator()
+        g.eintrag(menu, "Symbolgrößen…", self.maske_darstellung, symbol="symbolgroesse",
+                  hinweis="Rechts die Maske „Darstellung“: Größe der Lagersymbole und Dichte der "
+                          "Symbole auf Linien- und Flächenlagern - wirkt sofort")
+        # Die Schieber sind die Quelle der Werte (Einstellungen, Maske
+        # „Darstellung“); sie stehen nicht mehr im Ribbon
+        self.sl_lager = QtWidgets.QSlider(QtCore.Qt.Horizontal, self)
+        self.sl_lager.setRange(2, 60)
+        self.sl_lager.setValue(int(round(self.lagergroesse * 10)))
+        self.sl_lager.setToolTip("Größe aller Lagersymbole")
+        self.sl_lager.valueChanged.connect(self._lagergroesse_geschoben)
+        self.sl_lager.hide()
+        self.sl_lagerdichte = QtWidgets.QSlider(QtCore.Qt.Horizontal, self)
+        self.sl_lagerdichte.setRange(2, 60)
+        self.sl_lagerdichte.setValue(int(round(self.lagerdichte * 10)))
+        self.sl_lagerdichte.setToolTip("Lagerdichte: wie dicht die Symbole der Linien- und "
+                                       "Flächenlager über Linie und Fläche verteilt sind")
+        self.sl_lagerdichte.valueChanged.connect(self._lagerdichte_geschoben)
+        self.sl_lagerdichte.hide()
+        g.nur_suche("Lagergröße zurücksetzen", self.lagergroesse_zuruecksetzen, symbol="lager",
+                    hinweis="Alle Lagersymbole auf die Grundgröße")
+        g.nur_suche("Lagerdichte zurücksetzen", self.lagerdichte_zuruecksetzen, symbol="lager",
+                    hinweis="Symbole der Linien- und Flächenlager auf den Grundabstand")
         g = r.gruppe("Anzeigen")
-        self.act_edges = g.schalter("FE-Netz", lambda z: self.redraw(), True,
-                                    "Die Elementkanten des Netzes zeigen", kuerzel="F9")
-        self.act_knoten = g.schalter("Knoten", lambda z: self.redraw(), True,
-                                     "Die Knoten der Konstruktion als Punkte zeigen - Linienknoten, "
-                                     "Stabenden, frei gesetzte Knoten; die Netzknoten schaltet "
-                                     "Netz → Netzknoten",
-                                     symbol="knoten")
-        self.act_linien = g.schalter("Linien", lambda z: self.redraw(), True,
-                                     "Die Linien des Modells zeigen (Geometrie, "
-                                     "keine Elemente)", symbol="linien")
-        self.act_staebe = g.schalter("Stäbe", lambda z: self.redraw(), True,
-                                     "Stabelemente zeigen - bei Voll und Transparent "
-                                     "mit ihrer Querschnittskontur", symbol="staebe")
-        self.act_flaechen = g.schalter("Flächen", lambda z: self.redraw(), True,
-                                       "Flächen und Schalenelemente zeigen",
-                                       symbol="flaechen")
-        self.act_volumen = g.schalter("Volumen", lambda z: self.redraw(), True,
-                                      "Volumenkörper und Volumenelemente zeigen",
-                                      symbol="volumen")
+        menu = g.menueknopf("Anzeigen ▾", "Was die Ansicht zeigt: FE-Netz, Knoten, Linien, Stäbe, "
+                                          "Flächen, Volumen, Lager, Lasten …", symbol="ansicht")
+        self.act_edges = g.eintrag(menu, "FE-Netz", lambda z: self.redraw(), "F9",
+                                   "Die Elementkanten des Netzes zeigen", symbol="netz",
+                                   schalter=True, an=True)
+        self.act_knoten = g.eintrag(menu, "Knoten", lambda z: self.redraw(), "",
+                                    "Die Knoten der Konstruktion als Punkte zeigen - Linienknoten, "
+                                    "Stabenden, frei gesetzte Knoten; die Netzknoten schaltet "
+                                    "Netz → Netzknoten", symbol="knoten", schalter=True, an=True)
+        self.act_linien = g.eintrag(menu, "Linien", lambda z: self.redraw(), "",
+                                    "Die Linien des Modells zeigen (Geometrie, keine Elemente)",
+                                    symbol="linien", schalter=True, an=True)
+        self.act_staebe = g.eintrag(menu, "Stäbe", lambda z: self.redraw(), "",
+                                    "Stabelemente zeigen - bei Voll und Transparent mit ihrer "
+                                    "Querschnittskontur", symbol="staebe", schalter=True, an=True)
+        self.act_flaechen = g.eintrag(menu, "Flächen", lambda z: self.redraw(), "",
+                                      "Flächen und Schalenelemente zeigen", symbol="flaechen",
+                                      schalter=True, an=True)
+        self.act_volumen = g.eintrag(menu, "Volumen", lambda z: self.redraw(), "",
+                                     "Volumenkörper und Volumenelemente zeigen", symbol="volumen",
+                                     schalter=True, an=True)
         # Lager ein- und ausblendbar (Wunsch 12.09.2026): am Drehlager mit
         # 50 Lagerflaechen verdecken die Symbole das Bauteil
-        self.act_lager = g.schalter("Lager", lambda z: self.redraw(), True,
-                                    "Knoten-, Linien- und Flächenlager als Symbole zeigen",
-                                    symbol="lager")
-        self.act_lagertext = g.schalter(
-            "Lagerbeschriftung", lambda z: self.redraw(), False,
+        self.act_lager = g.eintrag(menu, "Lager", lambda z: self.redraw(), "",
+                                   "Knoten-, Linien- und Flächenlager als Symbole zeigen",
+                                   symbol="lager", schalter=True, an=True)
+        self.act_lagertext = g.eintrag(
+            menu, "Lagerbeschriftung", lambda z: self.redraw(), "",
             "An jedem Knotenlager, was es hält: fest, gelenkig oder die gehaltenen "
-            "Freiheitsgrade (u xyz, r xyz), Federn mit k, nichtlinear mit *", symbol="lager")
-        self.act_loads = g.schalter("Lasten", lambda z: self.redraw(), True,
-                                    # seit 24.09.2026 haengt es am Ergebnis, welche Lasten
-                                    "Lasten als Pfeile – ohne Ergebnis die des aktiven Lastfalls, beim "
-                                    "Ergebnis eines Lastfalls dessen eigene; bei Kombination oder "
-                                    "Umhüllender nur mit Ergebnisse → Lasten im Ergebnisbild",
-                                    symbol="lasten")
-        self.act_lastwerte = g.schalter("Lastwerte", lambda z: self.redraw(), True,
-                                        "Die Lastgröße als Zahl an jeder Last; die Einheit steht "
-                                        "oben links unter dem Lastfall", symbol="lasten")
-        self.act_members = g.schalter("Stäbe farbig", lambda z: self.redraw(),
-                                    hinweis="Jeden Stab mit Nachweis in eigener Farbe zeigen", symbol="farbig")
-        g = r.gruppe("Nummern")
+            "Freiheitsgrade (u xyz, r xyz), Federn mit k, nichtlinear mit *", symbol="lager",
+            schalter=True, an=False)
+        # seit 24.09.2026 haengt es am Ergebnis, welche Lasten
+        self.act_loads = g.eintrag(menu, "Lasten", lambda z: self.redraw(), "",
+                                   "Lasten als Pfeile – ohne Ergebnis die des aktiven Lastfalls, beim "
+                                   "Ergebnis eines Lastfalls dessen eigene; bei Kombination oder "
+                                   "Umhüllender nur mit Ergebnisse → Lasten im Ergebnisbild",
+                                   symbol="lasten", schalter=True, an=True)
+        self.act_lastwerte = g.eintrag(menu, "Lastwerte", lambda z: self.redraw(), "",
+                                       "Die Lastgröße als Zahl an jeder Last; die Einheit steht "
+                                       "oben links unter dem Lastfall", symbol="lasten",
+                                       schalter=True, an=True)
+        self.act_members = g.eintrag(menu, "Stäbe farbig", lambda z: self.redraw(), "",
+                                     "Jeden Stab mit Nachweis in eigener Farbe zeigen", symbol="farbig",
+                                     schalter=True, an=False)
         # Jede Objektart hat ihren eigenen Schalter. An einem grossen Modell
         # will man die Namen der Volumen sehen und nicht die Nummern von
         # 380 000 Elementen; ein gemeinsamer Schalter koennte das nicht
         # trennen. Dieselben Schalter stehen im Rechtsklickmenue des
         # Viewports, damit sie sich beim Arbeiten schnell umlegen lassen.
+        g = r.gruppe("Nummern")
+        menu = g.menueknopf("Nummern ▾", "Nummern und Namen je Objektart in der Ansicht",
+                            symbol="nummern")
         self.act_nummern = {}
         for art, (_farbe, _groesse, _grenze, hinweis, beschriftung) in self.NUMMERN.items():
-            self.act_nummern[art] = g.schalter(
-                beschriftung, lambda z, a=art: self._nummern_umschalten(a),
-                hinweis=hinweis, symbol="nummern")
+            self.act_nummern[art] = g.eintrag(
+                menu, beschriftung, lambda z, a=art: self._nummern_umschalten(a),
+                hinweis=hinweis, symbol="nummern", schalter=True, an=False)
         # Die frueheren Einzelschalter heissen weiter so - sie sind jetzt
         # die Eintraege "Knoten" und "Elemente" dieser Gruppe.
         self.act_nodes = self.act_nummern["Knoten"]
@@ -4239,31 +4433,38 @@ class MainWindow(QtWidgets.QMainWindow):
         g = r.gruppe("Sicht")
         # Was man nicht sieht, stoert nicht: die Auswahl allein zeigen, die
         # Auswahl ausblenden, einen Schritt zurueck, alles wieder her.
-        self.act_nur_auswahl = g.klein("Selektion anzeigen", self.nur_auswahl_zeigen,
-                                       hinweis="Alles außer der Selektion ausblenden - auch Knoten, "
-                                               "Stäbe, Linien, Flächen, Lager und Lasten des Restes",
-                                       symbol="sicht_nur_auswahl")
-        self.act_auswahl_weg_sicht = g.klein("Auswahl ausblenden", self.auswahl_ausblenden,
-                                             hinweis="Die ausgewählten Objekte ausblenden",
-                                             symbol="sicht_ausblenden")
-        self.act_sicht_zurueck = g.klein("Vorherige Sicht", self.sicht_zurueck,
-                                         hinweis="Den letzten Ausblendeschritt zurücknehmen",
-                                         symbol="sicht_zurueck")
-        self.act_alles_zeigen = g.klein("Alles zeigen", self.alles_zeigen,
-                                        hinweis="Alle ausgeblendeten Objekte wieder zeigen",
-                                        symbol="sicht_alles")
-        self.act_geist = g.schalter("Verborgenes im Hintergrund", self._geist_umschalten, False,
-                                    "Ausgeblendete Objekte blass als Geist im Hintergrund zeigen - "
-                                    "sie bleiben dort unwählbar; nur was dargestellt ist, lässt "
-                                    "sich wählen", symbol="sicht_geist")
+        menu = g.menueknopf("Sicht ▾", "Auswahl allein zeigen, ausblenden, einen Schritt zurück, "
+                                       "alles zeigen; Verborgenes im Hintergrund",
+                            symbol="sicht_nur_auswahl")
+        self.act_nur_auswahl = g.eintrag(menu, "Selektion anzeigen", self.nur_auswahl_zeigen,
+                                         hinweis="Alles außer der Selektion ausblenden - auch Knoten, "
+                                                 "Stäbe, Linien, Flächen, Lager und Lasten des Restes",
+                                         symbol="sicht_nur_auswahl")
+        self.act_auswahl_weg_sicht = g.eintrag(menu, "Auswahl ausblenden", self.auswahl_ausblenden,
+                                               hinweis="Die ausgewählten Objekte ausblenden",
+                                               symbol="sicht_ausblenden")
+        self.act_sicht_zurueck = g.eintrag(menu, "Vorherige Sicht", self.sicht_zurueck,
+                                           hinweis="Den letzten Ausblendeschritt zurücknehmen",
+                                           symbol="sicht_zurueck")
+        self.act_alles_zeigen = g.eintrag(menu, "Alles zeigen", self.alles_zeigen,
+                                          hinweis="Alle ausgeblendeten Objekte wieder zeigen",
+                                          symbol="sicht_alles")
+        menu.addSeparator()
+        self.act_geist = g.eintrag(menu, "Verborgenes im Hintergrund", self._geist_umschalten,
+                                   hinweis="Ausgeblendete Objekte blass als Geist im Hintergrund zeigen - "
+                                           "sie bleiben dort unwählbar; nur was dargestellt ist, lässt "
+                                           "sich wählen", symbol="sicht_geist", schalter=True, an=False)
         self.act_schnitt = g.schalter("Schnittebene", self._schnitt_umschalten, False,
                                       "Das Netz an einer Ebene aufschneiden und hineinsehen - "
                                       "Füllung, Netzdichte und Elementform im Inneren. Gezeichnet "
                                       "wird sonst nur die Außenhaut", symbol="sicht_schnitt")
+        self.act_schnittseite = g.schalter("Andere Seite", self._schnitt_seite, False,
+                                           "Die andere Hälfte stehen lassen",
+                                           symbol="sicht_schnittseite")
         self.cb_schnittachse = QtWidgets.QComboBox()
         self.cb_schnittachse.addItems(["x", "y", "z", "frei"])
         self.cb_schnittachse.setCurrentText("y")
-        self.cb_schnittachse.setFixedWidth(56)
+        self.cb_schnittachse.setFixedWidth(72)
         self.cb_schnittachse.setToolTip("Achse, senkrecht zu der geschnitten wird - „frei“: beliebige "
                                         "Ebene (Normale und Ursprung in der Maske rechts, aus der "
                                         "Ansicht oder der Arbeitsebene, oder im Bild gezogen)")
@@ -4275,49 +4476,24 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sl_schnitt.setToolTip("Lage der Schnittebene im Bauteil; bei der freien Ebene die "
                                    "Verschiebung längs der Normalen (Mitte = durch den Ursprung)")
         self.sl_schnitt.valueChanged.connect(lambda _v: self._schnitt_nachziehen())
-        self.act_schnittseite = g.schalter("Andere Seite", self._schnitt_seite, False,
-                                           "Die andere Hälfte stehen lassen",
-                                           symbol="sicht_schnittseite")
-        g.widget(self.cb_schnittachse)
-        g.widget(self.sl_schnitt)
+        g.in_spalte(self.cb_schnittachse, neue_spalte=True)
+        g.in_spalte(self.sl_schnitt)
         g = r.gruppe("Layer")
         # Layer sind benannte Objektgruppen - in RFEM die Objektselektionen
         # (16.09.2026): die Liste zeigt einen allein, das Fenster haelt je
         # Layer sichtbar und gesperrt.
-        self.cb_layer = QtWidgets.QComboBox()
-        self.cb_layer.setMinimumWidth(150)
-        self.cb_layer.setToolTip("Nur diesen Layer im Bild zeigen (RFEM: Objektselektion); "
-                                 "„Alle Layer“ zeigt wieder alles")
-        self.cb_layer.currentIndexChanged.connect(self._layer_gewaehlt)
-        g.widget(self.cb_layer)
         self.act_layerliste = g.gross("Layerliste", "≡", self.layerliste_zeigen,
                                       hinweis="Alle Layer in einem Fenster: sichtbar und gesperrt anhaken, "
                                               "neue aus der Auswahl, Objekte eines Layers wählen")
+        self.cb_layer = QtWidgets.QComboBox()
+        self.cb_layer.setMinimumWidth(130)
+        self.cb_layer.setToolTip("Nur diesen Layer im Bild zeigen (RFEM: Objektselektion); "
+                                 "„Alle Layer“ zeigt wieder alles")
+        self.cb_layer.currentIndexChanged.connect(self._layer_gewaehlt)
+        g.in_spalte(self.cb_layer)
         self.act_layer_neu = g.klein("Layer aus Auswahl", self.layer_aus_auswahl, zeichen="+",
                                      hinweis="Die Auswahl in der Ansicht als neuen Layer anlegen")
         self._layer_combo_fuellen()
-        g = r.gruppe("Symbole")
-        self.sl_lager = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self.sl_lager.setRange(2, 60)
-        self.sl_lager.setValue(int(round(self.lagergroesse * 10)))
-        self.sl_lager.setFixedWidth(110)
-        self.sl_lager.setToolTip("Größe aller Lagersymbole")
-        self.sl_lager.valueChanged.connect(self._lagergroesse_geschoben)
-        g.widget(QtWidgets.QLabel("Lager"))
-        g.widget(self.sl_lager)
-        g.klein("Lagergröße zurücksetzen", self.lagergroesse_zuruecksetzen,
-                hinweis="Alle Lagersymbole auf die Grundgröße")
-        self.sl_lagerdichte = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self.sl_lagerdichte.setRange(2, 60)
-        self.sl_lagerdichte.setValue(int(round(self.lagerdichte * 10)))
-        self.sl_lagerdichte.setFixedWidth(110)
-        self.sl_lagerdichte.setToolTip("Lagerdichte: wie dicht die Symbole der Linien- und "
-                                       "Flächenlager über Linie und Fläche verteilt sind")
-        self.sl_lagerdichte.valueChanged.connect(self._lagerdichte_geschoben)
-        g.widget(QtWidgets.QLabel("Dichte"))
-        g.widget(self.sl_lagerdichte)
-        g.klein("Lagerdichte zurücksetzen", self.lagerdichte_zuruecksetzen,
-                hinweis="Symbole der Linien- und Flächenlager auf den Grundabstand")
         g = r.gruppe("Einheiten")
         self.act_einheiten = g.gross("Einheiten", "㎪", self.maske_einheiten,
                                      hinweis="Einheiten und Nachkommastellen für Ansicht und "
@@ -4397,7 +4573,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _ribbon_knopf(aktion, zeichen: str, rolle: str = ""):
         """Denselben Befehl ein zweites Mal als Knopf zeigen (kein neuer Befehl)."""
         from . import symbole as sym
-        b = QtWidgets.QToolButton()
+        # der blaue Startknopf traegt ein weisses Symbol (25.09.2026)
+        b = rib.Startknopf() if rolle == "start" else QtWidgets.QToolButton()
         if aktion.icon().isNull():
             aktion.setIcon(sym.fuer_befehl(aktion.text(), zeichen))
         b.setDefaultAction(aktion)

@@ -904,7 +904,15 @@ QFrame#glasleiste {{ background: rgba(255, 255, 255, 200);
 QToolButton#glasknopf {{ background: transparent; border: 0; border-radius: 6px;
     padding: 3px; color: {text}; }}
 QToolButton#glasknopf:hover {{ background: {akzent_hell}; color: {akzent}; }}
-QToolButton#glasknopf:checked {{ background: {akzent}; color: #fff; }}
+/* Eingeschaltet hellblau mit blauem Rand (25.09.2026): das Symbol ist dann
+   blau mit Haken - vorher weiss auf Blau, und dasselbe weisse Symbol war im
+   Ribbon und in Menues auf hellem Grund unsichtbar. */
+QToolButton#glasknopf:checked {{ background: {akzent_hell}; color: {akzent};
+    border: 1px solid {akzent}; padding: 2px; }}
+QToolButton#glasmenue {{ background: transparent; border: 0; border-radius: 6px;
+    padding: 3px 6px; color: {text}; font-size: 12px; }}
+QToolButton#glasmenue:hover {{ background: {akzent_hell}; color: {akzent}; }}
+QToolButton#glasmenue::menu-indicator {{ image: none; width: 0px; }}
 QFrame#glastrenner {{ color: rgba(0, 0, 0, 40); }}
 QComboBox#glasliste {{ background: rgba(255, 255, 255, 230); color: {text};
     border: 1px solid rgba(0, 0, 0, 40); border-radius: 6px;
@@ -925,15 +933,26 @@ def stil() -> str:
 class Glasleiste(QtWidgets.QFrame):
     """Schmale, durchscheinende Leiste **mittig oben** ueber der Ansicht.
 
-    Sie traegt als Symbole, was man beim Modellieren staendig umschaltet -
-    Darstellungsart, was sichtbar ist, was gefangen wird, was ein Klick
-    trifft - und liegt dabei ueber dem Bild, statt Platz wegzunehmen. Alle
-    Knoepfe fuehren dieselben Aktionsobjekte wie das Ribbon; hier stehen sie
-    nur naeher an der Maus. Der Klartext erscheint beim Ueberfahren.
+    Sie traegt, was man beim Modellieren staendig umschaltet - Ergebnis,
+    Darstellungsart, was sichtbar ist, was ein Klick trifft, Fang - und liegt
+    dabei ueber dem Bild, statt Platz wegzunehmen. Alle Knoepfe fuehren
+    dieselben Aktionsobjekte wie das Ribbon; hier stehen sie nur naeher an der
+    Maus. Der Klartext erscheint beim Ueberfahren.
+
+    Seit 25.09.2026 (Paket 7): Scharen gleichartiger Schalter stehen als ein
+    Menueknopf („Darstellung ▾“, „Zeigen ▾“, „Klick wählt: Knoten ▾“), und die
+    Leiste wird **nie breiter als die Ansicht**: was nicht passt, wandert in
+    die Ueberlaufliste „»“ vor „Alles deselektieren“. Vorher war sie 1133 px
+    breit - bei 1002 px Ansicht (1920 x 1080) und 448 px (1366 x 768) lagen
+    „Alles deselektieren“ und die Auswahlart „Lager“ ausserhalb.
     """
 
     #: Symbolgroesse der Knoepfe
     SYMBOL = 20
+    #: Abstand der Leiste zu den Seiten der Ansicht (Ansichtsrand.platzieren)
+    RAND = 12
+    #: So schmal darf die Ergebnisauswahl werden, bevor Hauptknoepfe weichen
+    LISTE_MIN = 120
 
     def __init__(self, ansicht: QtWidgets.QWidget):
         super().__init__(ansicht)
@@ -942,13 +961,38 @@ class Glasleiste(QtWidgets.QFrame):
         self.lay = QtWidgets.QHBoxLayout(self)
         self.lay.setContentsMargins(6, 3, 6, 3)
         self.lay.setSpacing(2)
+        #: Symbolknoepfe (je eine Aktion) nach Schluessel
         self.knoepfe: dict[str, QtWidgets.QToolButton] = {}
         self.listen: dict[str, QtWidgets.QComboBox] = {}
+        #: Menueknoepfe nach Schluessel („darstellung“, „zeigen“, „klickart“)
+        self.menues: dict[str, QtWidgets.QToolButton] = {}
+        #: die Aktionen in den Menueknoepfen nach Schluessel (frueher je ein
+        #: eigener Knopf: „Voll“, „knoten“, „auswahl_Lager“ …)
+        self.eintraege: dict[str, QtGui.QAction] = {}
+        #: Rang je beweglichem Teil: groesser = weicht frueher in „»“
+        self._weicht: dict = {}
+        #: (Trenner oder None, Teile) - ein Trenner steht vor seiner Gruppe
+        self._gruppen: list = [(None, [])]
+        self._listenbreite: dict = {}
+        self.ueberlauf: QtWidgets.QToolButton | None = None
+        self._stand = None
+        self._geplant = False
+        #: Rueckruf nach dem Einpassen (die Leiste neu platzieren)
+        self.platziert = None
+
+    # -- Aufbau ----------------------------------------------------------
+    def _teil(self, w: QtWidgets.QWidget, weicht: int = 0):
+        self.lay.addWidget(w)
+        self._gruppen[-1][1].append(w)
+        if weicht:
+            self._weicht[w] = int(weicht)
 
     def knopf(self, aktion: QtGui.QAction, symbol: str = "",
-              schluessel: str = "") -> QtWidgets.QToolButton:
+              schluessel: str = "", weicht: int = 0) -> QtWidgets.QToolButton:
         """Ein Symbolknopf fuer eine Aktion. ``symbol`` ist der Name aus
-        :mod:`symbole`; fehlt er, wird er aus der Beschriftung geraten."""
+        :mod:`symbole`; fehlt er, wird er aus der Beschriftung geraten.
+        ``weicht`` > 0: der Knopf darf in die Ueberlaufliste - je groesser,
+        desto frueher."""
         from . import symbole as sym
         if symbol or aktion.icon().isNull():
             aktion.setIcon(sym.fuer_befehl(aktion.text(), "", symbol))
@@ -960,8 +1004,38 @@ class Glasleiste(QtWidgets.QFrame):
         b.setAutoRaise(True)
         if not aktion.toolTip():
             aktion.setToolTip(aktion.text())
-        self.lay.addWidget(b)
+        self._teil(b, weicht)
         self.knoepfe[schluessel or aktion.text()] = b
+        return b
+
+    def menueknopf(self, text: str, eintraege: list, schluessel: str, hinweis: str = "",
+                   symbol: str = "", weicht: int = 0) -> QtWidgets.QToolButton:
+        """Ein Knopf mit Menue fuer eine Schar von Aktionen.
+
+        ``eintraege`` = [(Schluessel, Aktion, Symbolname)]; es sind dieselben
+        Aktionen wie im Ribbon (Haken, Kuerzel und Zustand gleich)."""
+        from . import symbole as sym
+        b = QtWidgets.QToolButton(self)
+        b.setObjectName("glasmenue")
+        b.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        b.setIconSize(QtCore.QSize(self.SYMBOL, self.SYMBOL))
+        b.setAutoRaise(True)
+        b.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        b.setText(text)
+        if symbol:
+            b.setIcon(sym.symbol(symbol))
+        b.setToolTip(hinweis or text)
+        menu = QtWidgets.QMenu(b)
+        menu.setTitle(text.replace("▾", "").strip())
+        menu.setToolTipsVisible(True)
+        for sl, a, sy in eintraege:
+            if sy or a.icon().isNull():
+                a.setIcon(sym.fuer_befehl(a.text(), "", sy))
+            menu.addAction(a)
+            self.eintraege[sl] = a
+        b.setMenu(menu)
+        self._teil(b, weicht)
+        self.menues[schluessel] = b
         return b
 
     def liste(self, hinweis: str = "", schluessel: str = "",
@@ -971,7 +1045,8 @@ class Glasleiste(QtWidgets.QFrame):
 
         Ein Symbolknopf kann nur an oder aus; ein Lastfall unter dreissig
         braucht eine Liste. Sie sieht aus wie die Knoepfe daneben (flach,
-        durchscheinend) und traegt denselben Namen im Formularblatt.
+        durchscheinend) und traegt denselben Namen im Formularblatt. Wird die
+        Ansicht schmal, schrumpft sie bis LISTE_MIN, bevor Hauptknoepfe weichen.
         """
         cb = QtWidgets.QComboBox(self)
         cb.setObjectName("glasliste")
@@ -979,20 +1054,159 @@ class Glasleiste(QtWidgets.QFrame):
         cb.setMinimumWidth(breite)
         cb.setMaxVisibleItems(24)
         cb.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
-        self.lay.addWidget(cb)
+        self._teil(cb)
         self.listen[schluessel or hinweis] = cb
+        self._listenbreite[cb] = int(breite)
         return cb
+
+    def ueberlauf_knopf(self) -> QtWidgets.QToolButton:
+        """Die Ueberlaufliste „»“ an dieser Stelle - sichtbar nur, wenn etwas
+        in ihr steht."""
+        b = QtWidgets.QToolButton(self)
+        b.setObjectName("glasmenue")
+        b.setText("»")
+        b.setAutoRaise(True)
+        b.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        b.setToolTip("Weitere Knöpfe der Leiste – für sie ist die Ansicht gerade zu schmal")
+        menu = QtWidgets.QMenu(b)
+        menu.setToolTipsVisible(True)
+        b.setMenu(menu)
+        self.lay.addWidget(b)
+        self._gruppen[-1][1].append(b)
+        b.hide()
+        self.ueberlauf = b
+        return b
 
     def trenner(self):
         f = QtWidgets.QFrame(self)
         f.setFrameShape(QtWidgets.QFrame.VLine)
         f.setObjectName("glastrenner")
         self.lay.addWidget(f)
+        self._gruppen.append((f, []))
 
     def widget(self, w: QtWidgets.QWidget) -> QtWidgets.QWidget:
         w.setParent(self)
-        self.lay.addWidget(w)
+        self._teil(w)
         return w
+
+    # -- Einpassen -------------------------------------------------------
+    def an_ansicht_binden(self, platzieren=None):
+        """Bei jeder Groessenaenderung der Ansicht einpassen, danach
+        ``platzieren`` rufen. Dieser Filter wird nach dem des Ansichtsrands
+        installiert und laeuft darum vor ihm."""
+        self.platziert = platzieren
+        self.parentWidget().installEventFilter(self)
+        self.nachziehen()
+
+    def eventFilter(self, obj, ev):
+        if obj is self.parentWidget() and ev.type() == QtCore.QEvent.Resize:
+            self.nachziehen()
+        return False
+
+    def event(self, ev):
+        # Ein Knopf wird breiter („Klick wählt: Fläche ▾“): neu einpassen,
+        # gebuendelt nach dem laufenden Ereignis
+        if ev.type() == QtCore.QEvent.LayoutRequest and not self._geplant:
+            self._geplant = True
+            QtCore.QTimer.singleShot(0, self.nachziehen)
+        return super().event(ev)
+
+    def nachziehen(self):
+        self._geplant = False
+        try:
+            eltern = self.parentWidget()
+            if eltern is None:
+                return
+            self.einpassen(eltern.width() - 2 * self.RAND)
+            if callable(self.platziert):
+                self.platziert()
+        except RuntimeError:            # beim Schliessen schon freigegeben
+            pass
+
+    def _wunschbreite(self) -> int:
+        self.lay.invalidate()
+        return self.sizeHint().width()
+
+    def _trenner_nachziehen(self):
+        """Ein Trenner steht nur zwischen zwei sichtbaren Gruppen."""
+        vorher = False
+        for trenner, teile in self._gruppen:
+            da = any(not w.isHidden() for w in teile)
+            if trenner is not None:
+                trenner.setVisible(vorher and da)
+            vorher = vorher or da
+
+    def einpassen(self, breite: int) -> None:
+        """Die Leiste auf hoechstens ``breite`` Bildpunkte bringen.
+
+        Stufen: erst weichen die Nebenknoepfe (Rang ab 10) in die
+        Ueberlaufliste, der hoechste Rang zuerst; reicht das nicht, schrumpft
+        die Ergebnisauswahl bis LISTE_MIN, danach weichen die Hauptknoepfe.
+        Die Ergebnisauswahl, „»“ und „Alles deselektieren“ bleiben immer
+        stehen. Gerechnet wird nur, wenn sich Breite oder Inhalt geaendert
+        haben - sonst stiesse jeder Aufruf ueber die Layoutanfrage den
+        naechsten an."""
+        teile = [w for _t, ws in self._gruppen for w in ws if w is not self.ueberlauf]
+        stand = (int(breite), tuple(w.sizeHint().width() for w in teile))
+        if stand == self._stand:
+            return
+        rangfolge = sorted(self._weicht, key=lambda w: -self._weicht[w])
+        neben = [w for w in rangfolge if self._weicht[w] >= 10]
+        haupt = [w for w in rangfolge if self._weicht[w] < 10]
+        for w in rangfolge:
+            w.setVisible(True)
+        for cb, b in self._listenbreite.items():
+            cb.setMinimumWidth(b)
+        if self.ueberlauf is not None:
+            self.ueberlauf.setVisible(False)
+        self._trenner_nachziehen()
+        versteckt = []
+
+        def weg(w):
+            w.setVisible(False)
+            versteckt.append(w)
+            if self.ueberlauf is not None:
+                self.ueberlauf.setVisible(True)
+            self._trenner_nachziehen()
+
+        for w in neben:
+            if self._wunschbreite() <= breite:
+                break
+            weg(w)
+        for cb, b in self._listenbreite.items():
+            ueber = self._wunschbreite() - breite
+            if ueber > 0:
+                cb.setMinimumWidth(max(self.LISTE_MIN, cb.minimumWidth() - ueber))
+        for w in haupt:
+            if self._wunschbreite() <= breite:
+                break
+            weg(w)
+        self._ueberlauf_fuellen(versteckt)
+        self.resize(self.sizeHint())
+        self._stand = (int(breite), tuple(w.sizeHint().width() for w in teile))
+
+    def _ueberlauf_fuellen(self, versteckt: list):
+        """Die Ueberlaufliste in der Reihenfolge der Leiste, Gruppen durch
+        Striche getrennt; ein Menueknopf wird zum Untermenue."""
+        if self.ueberlauf is None:
+            return
+        m = self.ueberlauf.menu()
+        m.clear()
+        for _trenner, ws in self._gruppen:
+            drin = [w for w in ws if w in versteckt]
+            if not drin:
+                continue
+            if m.actions():
+                m.addSeparator()
+            for w in drin:
+                if w.menu() is not None:
+                    m.addMenu(w.menu())
+                elif w.defaultAction() is not None:
+                    m.addAction(w.defaultAction())
+
+    def versteckt(self) -> list:
+        """Die Teile, die gerade in der Ueberlaufliste stehen."""
+        return [w for w in self._weicht if w.isHidden()]
 
 
 class Ansichtswuerfel(QtWidgets.QWidget):
