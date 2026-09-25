@@ -957,7 +957,12 @@ def test_abnahme_ohne_fehlalarm_am_freien_netz():
             k.elemente = [i for i in els if i != weg]
             bef = dg._abnahme_volumenbilanz(m, "K", k, k.elemente)
             k.elemente = els
-            # Die Elementzahl als Fenster: gemessen 1091 (24.09.2026).
+            # Die Elementzahl als Fenster: gemessen 1091 (24.09.2026), 1085
+            # nach der dritten Lieferung der Vernetzer-Sitzung (Kantenkippen
+            # 2-3/4-4, 25.09.2026) - im Fenster, darum bleibt der Bezug. Die
+            # Nummer 765 traegt dort ein anderes Element (t/L 11,96 %); der
+            # Pruefling kommt deshalb nur aus der Eigenschaftssuche oben
+            # (am 25.09.2026 Element 759, t/L 5,03 %, 0,508-mal so dick).
             check("  ein fehlender kleiner Tetraeder, der nicht flach ist (t/L 5 … 10 %, dünner "
                   "als die Nachbarn): FEHLER",
                   _fenster(len(els), 1091) and weg >= 0
@@ -2661,7 +2666,8 @@ def test_abnahme_luecke_im_netzrand():
         mesher.modell_vernetzen(m, [], workers=1, hs={"K": 0.1})
     bef = [b for b in dg.abnahme(m, warnungen=True) if b.pruefung in _NETZ_BEFUNDE]
     # Die Elementzahl als Fenster: gemessen 5825 (23.09.2026), 5886 (Vernetzer
-    # vom 24.09.2026)
+    # vom 24.09.2026), 5817 (dritte Lieferung, 25.09.2026: 4-4-Kippen schliesst
+    # die Luecke im ersten Durchgang; -1,2 % gegen 5886, im Fenster)
     check("T-Prisma h = 0,1, Standardweg: keine Lücke mehr an der einspringenden Kante, kein Befund",
           _fenster(len(k.elemente), 5886) and not bef,
           f"{len(k.elemente)} Elemente; "
