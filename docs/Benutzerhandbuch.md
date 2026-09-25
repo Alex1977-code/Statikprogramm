@@ -1291,7 +1291,14 @@ der letzte konvergiert ist - mit einer Ausnahme: dem elastischen Vorlauf einer
 Rechnung mit Fließen, der das Ergebnis nachweislich nicht beeinflusst
 (Theoriehandbuch § 4.0, „Welcher gedeckelte Lauf zählt“). Eine Zwischenstufe
 „eingeschränkt“ gibt es nicht; ob ein Lastfall mit einem gedeckelten
-Zwischenlauf als Nachweis taugt, entscheidet der Anwender. **Noch nicht
+Zwischenlauf als Nachweis taugt, entscheidet der Anwender. Seit dem
+23.09.2026 zählen auch die **abgekürzten** Läufe der gemeinsamen Iteration von
+Fließen und Kontakt nicht (siehe „Fließen und Kontakt: verschachtelt oder
+gemeinsam“ unter *Berechnung → Einstellungen*) - weder als nicht konvergiert
+noch in „N von M“;
+der letzte Lauf muss trotzdem konvergiert sein. Seit dem 24.09.2026 ebenso die
+**verworfenen**: Läufe einer Laststufe, die die gemeinsame Iteration
+aufgegeben und vom Startwert an verschachtelt wiederholt hat. **Noch nicht
 angeschlossen**: Zusammenfassung und Bericht zeigen weiter
 `contact_converged`, das über alle Läufe klebt, den Vorlauf eingeschlossen.
 Ebenso die Rechenliste während des Laufs: sie liest die Meldungen, und die
@@ -3385,9 +3392,10 @@ Block mit Reibung im Test, kalt gestartet, bricht keine der Prüfungen ab:
 `tests/test_kontakthalt.py`.)
 ### Laufbuch: jeder Kontaktlauf einzeln (seit 22.09.2026)
 
-Mit Fließen rechnet ein Lastfall viele Kontaktläufe — einen Vorlauf, je
-Laststufe einen, je Newton-Schritt einen und einen Abschluss (am Drehlager
-zwölf). Bisher standen im Ergebnis nur Summen. Jetzt hat jeder Lauf einen
+Mit Fließen rechnet ein Lastfall viele Kontaktläufe — verschachtelt einen
+Vorlauf, je Laststufe einen, je Newton-Schritt einen und einen Abschluss (am
+Drehlager zwölf); gemeinsam (wählbar seit 23.09.2026) keinen Vorlauf, dafür
+je Newton-Schritt einen abgekürzten. Bisher standen im Ergebnis nur Summen. Jetzt hat jeder Lauf einen
 eigenen Eintrag in `res.info["laeufe"]`, in der Reihenfolge der Rechnung und
 nie zusammengefasst. An der Rechnung ändert das nichts: gemessen an 13
 Rechnungen mit Reibung sind Verschiebungen, Auflagerkräfte, Spannungen und
@@ -3396,12 +3404,19 @@ Kontaktkräfte vorher und nachher bitgleich.
 Was ein Eintrag sagt:
 
 * **Art und Nummer**: `nr`, `art` (`Lastfall`, `Vorlauf`, `Laststufe`,
-  `Newton`, `Fliessschritt`, `Abschluss`), bei Fließen dazu `stufe` und
-  `schritt`.
+  `Newton`, `Abnahme` — der Newton-Schritt mit vollem Kontakt am Ende einer
+  Laststufe, nur gemeinsam —, `Fliessschritt`, `Abschluss`), bei Fließen dazu
+  `stufe` und `schritt`.
 * **Ob er konvergiert ist, und wenn nicht, warum**: `konvergiert` und
   `grund` — leer, oder `deckel` (die Nachprüfung der Reibung hat nach 40
   Runden aufgegeben), `max_iter` (Schrittgrenze), `probelauf`, `abbruch`
-  (kein Gleichgewicht). `eingefroren` heißt: kein eigener Lauf, sondern der
+  (kein Gleichgewicht), `abgekuerzt` (gemeinsame Iteration: mit Absicht nach
+  einem Kontaktschritt beendet, der nächste Lauf macht weiter; zählt nicht als
+  Fehler, `abgekuerzt` steht dann auch als eigenes Feld auf wahr). Das Feld
+  `verworfen` (seit 24.09.2026, nur wenn wahr) heißt: die gemeinsame
+  Iteration hat die Laststufe dieses Laufs aufgegeben und vom Startwert an
+  verschachtelt wiederholt; der Lauf zählt nicht.
+  `eingefroren` heißt: kein eigener Lauf, sondern der
   eingefrorene Kontaktzustand der Referenz. Konvergiert heißt er nur, weil
   geprüft ist, dass der Zustand zur Last passt. Passt er nicht, wird der
   Zustand nachgerechnet, und der Lauf ist ein gewöhnlicher (siehe
@@ -5360,6 +5375,59 @@ davon nicht betroffen.
   Die Tangente ist seit dem 20.09.2026 für **jeden** Volumentyp die exakte
   Ableitung (nachgemessen am 22.09.2026, auch tet10 und hex8); frühere
   Hinweise, beim tet10 sei sie nur genähert, gelten nicht mehr.
+* **Fließen und Kontakt: verschachtelt oder gemeinsam** (seit 23.09.2026
+  wählbar; *Berechnung → Einstellungen*, „mit Kontakt“ neben dem Verfahren;
+  eine Einstellung am Modell, `plastizitaet.kontakt`; gilt nur mit Kontakt).
+  **Vorgabe ist „verschachtelt“** (seit dem 24.09.2026 wieder): jeder
+  Newton-Schritt der Plastizität iteriert den Kontakt aus, genau wie vor dem
+  23.09.2026 — bitgleiche Zahlen, dieselbe Zahl Faktorisierungen; neu ist
+  dort nur die Schlussabnahme (nächster Punkt).
+  **Gemeinsam**: jede Laststufe beginnt mit voll auskonvergiertem Kontakt,
+  die Newton-Schritte der Stufe rechnen je **einen** Kontaktschritt
+  (höchstens zwölf), und die Stufe endet erst mit voll auskonvergiertem
+  Kontakt; der elastische Vorlauf entfällt. Läuft das weg, oder bewegt der
+  volle Kontakt am Stufenende den Zustand noch merklich, wird die Stufe vom
+  Startwert an verschachtelt wiederholt — das Protokoll sagt dann „Laststufe
+  k - gemeinsam gerechnet …; die Stufe wird vom Startwert an verschachtelt
+  wiederholt“. (Mit Anfangsdehnung wird nichts abgekürzt, nur der Vorlauf
+  entfällt — das Ergebnis bleibt bitgleich.)
+  Was man gemeinsam merkt — gemessen an 69 Probeläufen mit Reibung und
+  Fließen, das Drehlager ist nicht nachgemessen (Theoriehandbuch § 5e.3):
+  an Modellen wie dem der Tests „zwei Körper, Fuge mit µ 0,1“ weniger
+  Faktorisierungen (dort 78 statt 129) bei höchstens 0,05 N/mm² Unterschied;
+  an Reibung nahe der Grenzlast und an weit über die Quetschlast gedrückten
+  Blöcken dagegen oft **mehr** Faktorisierungen (bis 79 % mehr) und ein
+  **anderes Ergebnis**, beide „konvergiert“: bis 78 N/mm² Unterschied in der
+  Vergleichsspannung, dazu ein Klotz auf Reiblager mit 1,6 und 1,4 N/mm².
+  Welches Ergebnis dort „richtig“ ist, sagt keine der beiden Rechnungen:
+  auch die verschachtelte ändert sich an diesen Modellen um bis zu 25 N/mm²,
+  wenn man die Zahl der Laststufen ändert. Darum ist „gemeinsam“ nicht die
+  Vorgabe; der Anwender entscheidet, ob es das wird. Im Laufbuch stehen die
+  abgekürzten Läufe mit dem Grund „abgekuerzt“, die Newton-Schritte mit
+  vollem Kontakt am Stufenende als Art „Abnahme“ und die Läufe einer
+  wiederholten Stufe als „verworfen“; die Zusammenfassung sagt „… in N
+  Läufen (M davon abgekürzt)“. Abgekürzte und verworfene Läufe machen den
+  Lastfall nicht „nicht konvergiert“, ein gedeckelter voller Lauf wie bisher
+  schon. Die Schritte je Stufe zählen nur die Newton-Schritte; der Schritt,
+  der am Stufenende mit vollem Kontakt abnimmt, kommt dazu. Ein unbekannter
+  Wert der Einstellung (etwa „Gemeinsam“ aus einer Datei) rechnet die
+  Vorgabe, die Maske zeigt sie, und das Protokoll der Plastizität nennt den
+  Wert.
+* **Schlussabnahme der Plastizität** (23.09.2026, in beiden Einstellungen,
+  wenn der Lösungsweg selbst iteriert — Kontakt oder ausfallende Zugstäbe):
+  „konvergiert“ heißt jetzt auch, dass die plastischen Knotenlasten zur
+  Verschiebung des Endergebnisses passen (Änderung höchstens die Toleranz).
+  Mit Kontakt kann der letzte Kontaktlauf den Zustand noch ändern; bisher
+  prüfte das niemand. Am gequetschten Block der Tests blieb danach 2,5·10⁻⁴
+  bei Toleranz 10⁻⁴, gemeldet wurde „konvergiert“ — jetzt heißt das
+  „nicht konvergiert“, und das Protokoll sagt „an der Lösung des Abschlusses
+  passt F_p nicht mehr“. Die Zahlen ändern sich dadurch nicht, weitergerechnet
+  wird nicht. In den Probeläufen traf das fünf bisher „konvergierte“
+  Rechnungen von 74: den gequetschten Block mit 1 und 2 Laststufen und einen
+  kippenden Stempel mit 1, 3 und 5 (Rest 1,06·10⁻³ bis 1,21·10⁻³ bei
+  Toleranz 10⁻³). Ohne Kontakt und Ausfall wird die
+  Prüfung nicht gerechnet — dort ist sie überflüssig und kostete je Lastfall
+  eine Rückführung.
 * **Punkte über die Dicke beim Sechsflächner** (22.09.2026, eine Einstellung
   am Modell, `plastizitaet.dicke_punkte`, Vorgabe 5): mit Fließen rechnet der
   `hex8` in Lagenrichtung fünf Gauss-Lobatto-Punkte statt zwei Gaußpunkten; die

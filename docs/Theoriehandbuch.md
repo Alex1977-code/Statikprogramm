@@ -2022,6 +2022,18 @@ konvergiert ist. Der Löser führt die Zahlen des Vorlaufs eigens in `res.info`
 `rechenliste.zustand_aus_info` sie herausrechnen kann. `contact_converged`
 bleibt, wie es war, und klebt über alle Läufe, den Vorlauf eingeschlossen.
 
+Seit dem 23.09.2026 gibt es den Vorlauf nur noch in der verschachtelten
+Iteration (der Vorgabe); die gemeinsame (wählbar, § 5e.3) lässt ihn weg. Dort
+gibt es stattdessen **abgekürzte** Läufe: mitten in einer Laststufe mit
+Absicht nach einem Kontaktschritt beendet, der nächste setzt ihren Zustand
+fort. Sie zählen nicht als „nicht konvergiert“ — entschieden wird an dem
+Lauf, mit dem die Stufe endet, und am letzten, und beide sind volle Läufe.
+Ebenso **verworfene** Läufe (24.09.2026): gibt die gemeinsame Iteration eine
+Laststufe auf, wird die Stufe vom Kontaktzustand nach ihrem Startwert an
+verschachtelt wiederholt; weder das u noch der Kontaktzustand der Läufe
+dazwischen geht ins Ergebnis ein. Ein gedeckelter voller Lauf, der zählt,
+zählt wie bisher, auch mitten im Lastfall.
+
 Eine Zwischenstufe „eingeschränkt“ (letzter Lauf konvergiert, ein
 Zwischenlauf gedeckelt) gibt es mit Absicht nicht. Ob ein solcher Lastfall
 als Nachweis taugt, ist eine Entscheidung des Anwenders; bis sie getroffen
@@ -2239,10 +2251,12 @@ aus dem `cinfo` genau dieses Laufs. Felder:
 | Feld | Bedeutung |
 |---|---|
 | `nr` | 1, 2, … in der Reihenfolge der Läufe |
-| `art` | `Lastfall` (ohne Fließen), sonst `Vorlauf`, `Laststufe`, `Newton`, `Fliessschritt` (Anfangsdehnung), `Abschluss`; bei einem Abbruch in der Fließ-Iteration vorläufig `Fliessen` |
+| `art` | `Lastfall` (ohne Fließen), sonst `Vorlauf` (nur verschachtelt, § 5e.3), `Laststufe`, `Newton`, `Abnahme` (gemeinsam: Newton-Schritt mit vollem Kontakt am Ende einer Stufe), `Fliessschritt` (Anfangsdehnung), `Abschluss`; bei einem Abbruch in der Fließ-Iteration vorläufig `Fliessen` |
 | `stufe`, `schritt`, `tangente` | nur bei Fließen: Laststufe, Schritt darin, ob mit der konsistenten Tangente gelöst wurde |
 | `schritte`, `faktorisierungen` | dieses Laufs (Summe über alle = die bisherigen Summenwerte) |
-| `konvergiert`, `grund` | `grund` ist `''` oder `deckel`, `max_iter`, `probelauf`, `eingefroren`, `abbruch` |
+| `konvergiert`, `grund` | `grund` ist `''` oder `deckel`, `max_iter`, `probelauf`, `eingefroren`, `abbruch`, `abgekuerzt` (seit 23.09.2026) |
+| `abgekuerzt` | wahr, wenn die gemeinsame Iteration den Lauf mit Absicht nach einem Schritt beendet hat (§ 5e.3) |
+| `verworfen` | nur vorhanden, wenn wahr (seit 24.09.2026): die gemeinsame Iteration hat die Laststufe dieses Laufs aufgegeben und vom Startwert an verschachtelt wiederholt (§ 5e.3) |
 | `warm`, `neustart` | Start aus einem Kontaktzustand angenommen; Warmstart verworfen oder zurückgesetzt und neu gerechnet |
 | `start_von_lauf` | Nummer des Laufs, dessen Zustand der Start war; 0 = der dem Lastfall angebotene Start; `None` = kalt; −1 = ein von außen übergebener Zustand unbekannter Herkunft |
 | `zyklen`, `phase`, `n_aktiv`, `n_gleitet` | Zustand am Ende des Laufs (`cycles`, Phase, geschlossene und gleitende Bedingungen) |
@@ -2253,7 +2267,15 @@ aus dem `cinfo` genau dieses Laufs. Felder:
 `contact_laeufe`, `contact_letzter_lauf_konvergiert` und
 `contact_laeufe_nicht_konvergiert` werden seitdem aus dem Laufbuch
 **abgeleitet** (Länge, letzter Eintrag, Zahl der nicht konvergierten), nicht
-mehr getrennt hochgezählt. Ein Kontaktabbruch (`KontaktAbbruch`) bekommt in
+mehr getrennt hochgezählt. Seit dem 23.09.2026 zählen abgekürzte Läufe nicht
+unter den nicht konvergierten und kleben nicht an `contact_converged`; ihre
+Zahl steht in `contact_laeufe_abgekuerzt`, und der letzte Lauf muss
+konvergiert sein (§ 5e.3). Seit dem 24.09.2026 ebenso die verworfenen; wird
+eine Stufe wiederholt, leitet `_laufbuch_zaehlen` `contact_converged` und die
+Zahl der nicht konvergierten neu aus dem Laufbuch ab, und
+`contact_laeufe_verworfen` zählt die verworfenen, die nicht schon als
+abgekürzt zählen (damit „N von M“ der Rechenliste eine einfache Differenz
+bleibt). Ein Kontaktabbruch (`KontaktAbbruch`) bekommt in
 `_teilergebnis_anhaengen` einen eigenen Eintrag mit Grund `abbruch`;
 `faktorisierungen` ist dort `None`, weil der Lauf kein `cinfo` zurückgab.
 
@@ -2265,7 +2287,13 @@ bei der Referenz (`contact_frozen_from`). Der Grund folgt demselben Entscheid
 wie der Meldetext am Ende von `solve_with_contact` (Probelauf vor Deckel vor
 Schrittgrenze).
 
-**Die Art ohne neue Signatur.** `plastizitaet.iteration` wird aus Tests mit
+**Die Art ohne neue Signatur.** (Seit dem 23.09.2026 schreibt der Newton
+mit Kontakt selbst mit, was er ruft — `info["aufrufe"]`, je Aufruf Art,
+Laststufe, Schritt —, denn gemeinsam mit dem Kontakt gibt es Aufrufe, die
+sich aus dem Verlauf nicht nachzeichnen lassen: die `Abnahme`, den Abschluss
+mitten in der letzten Stufe und die Wiederholung einer Stufe. Liegt die Liste
+vor, gilt sie; das Nachzeichnen bleibt für den Anfangsdehnungsweg und den
+Newton ohne Kontakt.) `plastizitaet.iteration` wird aus Tests mit
 einem einfachen `loesen` gerufen; ein zusätzlicher Rückruf hätte jede dieser
 Stellen berührt. Stattdessen merkt sich `_plastizitaet_rechnen` je
 Löseraufruf, welcher Laufbuch-Eintrag entstand und ob eine Tangente `dK`
@@ -4496,6 +4524,295 @@ Anfangsdehnungsschritt eine volle Kontakt-Iteration. Entschieden wird das mit
 dem Umbau der verschachtelten Iteration Plastizität × Kontakt, nicht hier.
 Nachweis `tests/test_plastizitaet.py::test_rohr_ideal_plastisch_nach_hill` und
 `::test_anfangsdehnung_trifft_den_newton`.
+
+### 5e.3 Fließen und Kontakt gemeinsam iteriert (23./24.09.2026)
+
+**Stand 24.09.2026: wählbar, nicht die Vorgabe.** Vorgabe ist wieder
+`Plastizitaet.kontakt = "verschachtelt"`; die gemeinsame Iteration wählt man
+unter *Berechnung → Einstellungen*, „mit Kontakt“. Grund (Gegenprüfung vom
+24.09.2026, Messung unten): an Reibung nahe der Grenzlast endet sie in einem
+anderen Zustand als die verschachtelte — bis 78 N/mm² Unterschied der
+Vergleichsspannung, beide „konvergiert“ —, und dort ist sie auch teurer. Das
+Ziel des Anwenders, höchstens 1 N/mm² gegen die verschachtelte Iteration,
+hält sie an diesen Modellen nicht. Ob sie Vorgabe wird, entscheidet der
+Anwender, frühestens nach einer Messung am Drehlager. Ein unbekannter Wert
+der Einstellung rechnet verschachtelt und steht im Protokoll der
+Plastizität (`solver._kontakt_weg_melden`).
+
+**Das Problem.** Bis hierher war jede Lösung der Fließ-Iteration eine volle
+Kontakt-Iteration: der Newton ruft `loesen`, der Löser iteriert den Kontakt
+aus (warm vom letzten Zustand), erst dann kommt der nächste Newton-Schritt.
+Vor dem ersten plastischen Lauf stand zudem ein elastischer Vorlauf bei voller
+Last, dessen Zustand nie weiterging (§ 4.0b). Am Drehlager, LF1 (cProfile der
+Löser-Sitzung, 23.09.2026, Stand 54b6f9a, ruhige Maschine): 965 s, zwölf
+Kontaktläufe mit 144 Schritten und **139 Zerlegungen** zu 3,41 s (474,6 s,
+49 %) für zehn Newton-Schritte; Vorlauf und Laststufe 1 kalt, der erste
+Newton-Lauf nach 40 Zustandswechseln gedeckelt.
+
+**Das Verfahren** (`Plastizitaet.kontakt = "gemeinsam"`;
+`plastizitaet._stufe_gemeinsam`, die Regeln in `solver._KontaktImNewton`):
+
+1. Kein elastischer Vorlauf. Was er nebenbei tat — freie Bewegungen finden
+   und festhalten — geschieht um den ersten plastischen Lauf. Das gilt auch,
+   wenn die Fließ-Iteration mit Anfangsdehnung rechnet (gewählt, ohne
+   Verfestigung, Elementtyp ohne Stapel); abgekürzt wird dort nichts, das
+   Ergebnis bleibt bitgleich (Block mit Reibung ohne Verfestigung: 9 statt 16
+   Zerlegungen, mit Anfangsdehnung und 5 %: Laufbuch ohne den Vorlauf,
+   `test_laufbuch_mit_fliessen`).
+2. Der Startwert jeder Laststufe (elastisch mit dem bisherigen F_p) wie
+   bisher mit **voll auskonvergiertem** Kontakt.
+3. Die Newton-Schritte der Stufe mit **abgekürztem** Kontakt: ein
+   Kontaktschritt, der Zustand geht an die nächste Lösung weiter
+   (`solve_with_contact(kurz=1)`). Gleitende Knoten gegen ihre Richtung
+   werden dort auf Haften zurückgesetzt statt neu zu starten; der Lauf gilt
+   dann als abgekürzt. Abgekürzt wird höchstens zwölfmal je Stufe
+   (`KURZ_MAX`, unabhängig von `iterationen`) und nur, solange die Änderung
+   nicht zweimal hintereinander wächst, nachdem sie einmal gefallen war.
+4. Eine Stufe endet erst, wenn die Änderung unter der Toleranz liegt **und**
+   die Lösung dazu nicht abgekürzt war. Sonst folgt ein Newton-Schritt mit
+   vollem Kontakt („Abnahme“), in der letzten Stufe statt dessen der
+   **Abschluss** (voller Kontakt, elastisch mit F + F_p), und die Prüfung an
+   seiner Lösung. Die Abnahme zählt **nicht** gegen die Schritte je Stufe:
+   bis zum 24.09.2026 verbrauchte sie einen, und eine Stufe, die im letzten
+   erlaubten Schritt die Toleranz traf, hieß „Plastizität: Laststufe 2 nach
+   1 Newton-Schritten nicht konvergiert (Änderung 0.00e+00 > 0.0001)“ — mit
+   einem zweiten Abschluss auf demselben F_p (Block mit Reibung, nichts
+   fließt, ein Schritt je Stufe; verschachtelt „konvergiert“). Ein
+   abgekürzter Lauf, der in seinem einen Schritt auskonvergiert ist, ist
+   genau der volle Lauf und zählt als solcher.
+5. Verfehlt die Abnahme die Toleranz um mehr als das Zehnfache
+   (`ABNAHME_WEITER`), hat der volle Kontakt den Zustand merklich verschoben:
+   die Stufe wird wiederholt (6.). Sonst, und nach zwölf abgekürzten
+   Schritten, rechnet die Stufe mit vollem Kontakt weiter, solange die
+   Änderung von Schritt zu Schritt fällt; fällt sie nicht, oder ist das
+   Budget aufgebraucht, wird wiederholt.
+6. **Wiederholen** heißt: die Stufe vom Startwert an **verschachtelt** —
+   Kontaktzustand nach dem Startwert, F_p und Basis vom Stufenanfang, das
+   volle Budget, Schritt für Schritt wie in der Vorgabe. Die Läufe des
+   Versuchs heißen im Laufbuch `verworfen` und zählen nicht als nicht
+   konvergiert. Wiederholt wird nur, wenn in der Stufe etwas abgekürzt war;
+   sonst war der Versuch der verschachtelte Newton selbst.
+
+Warum der Rückfall die Stufe **wiederholt**, statt vom erreichten Stand mit
+vollem Kontakt weiterzurechnen: so rechnete die Fassung vom 23.09.2026 nach
+der Hälfte der Schritte weiter — und kam vom weggelaufenen Stand nicht mehr
+zurück. Am Block nahe der Grenzlast (unten) 197 statt 61 Zerlegungen, am
+gequetschten Block mit vier Laststufen 327 statt 84, beide „nicht
+konvergiert“, wo verschachtelt konvergiert; mit Wiederholung 67 und 101,
+beide „konvergiert“ und bitgleich mit verschachtelt. Beginnt die
+Wiederholung am selben Zustand wie die verschachtelte Rechnung — in der
+ersten Laststufe immer —, rechnet sie deren Zahlen; die Mehrkosten sind die
+Zerlegungen der verworfenen Läufe (Test
+`test_gemeinsam_rueckfall_verschachtelt`). Warum das Zehnfache: am
+gequetschten Block mit drei Laststufen verfehlte die Abnahme die Toleranz
+10⁻⁴ mit 3,2·10⁻³, und das Weiterrechnen endete in einem anderen Zustand
+(27,8 N/mm² neben verschachtelt, „nicht konvergiert“); am abhebenden Block
+3,5·10⁻³ bei 10⁻³, und es endete 0,001 N/mm² neben verschachtelt.
+**Untersucht, nicht übernommen:** eine lockerere Regel (Weglaufen erst ab
+10 % der größten Änderung der Stufe, danach höchstens acht volle Schritte)
+spart mehr — 3978 statt 4543 von 5645 Zerlegungen in beiden Stichproben
+unten —, aber 9 statt 5 Rechnungen lagen über 1 N/mm², und zweimal statt
+einmal war das Urteil schlechter als verschachtelt.
+
+„Konvergiert“ gibt es damit nur, wenn der letzte Schritt mit voll
+auskonvergiertem Kontakt gerechnet ist und Plastizität und Kontakt dort ihre
+Kriterien erfüllen. Abgekürzte und verworfene Läufe stehen im Laufbuch
+(Grund `abgekuerzt`, Feld `verworfen`), kleben aber nicht an
+`contact_converged` und zählen nicht unter
+`contact_laeufe_nicht_konvergiert`; gedeckelte oder an der Schrittgrenze
+beendete Läufe, die zählen, zählen wie bisher, auch unterwegs.
+
+**Absprache mit der Element-Sitzung.** Verabredet war: in `plastizitaet.py`
+nur eine Schnittstelle und die Abnahme, die Schleife im Löser. Die Schleife
+einer gemeinsamen Laststufe (`_stufe_gemeinsam`) steht trotzdem in
+`plastizitaet.py`, weil sie die Newton-Fortschreibung
+(K + ΔK) u = F_k + F_p + ΔK u mit der Rückführung von der Basis der Stufe
+ist; im Löser wäre sie ein zweiter Newton. **Wann** abgekürzt und wann
+wiederholt wird, steht im Löser (`_KontaktImNewton.naechster`). Die
+verschachtelte Schleife ist die vom Stand 6a961e5 (nur `loesen` →
+`_loesen`, fürs Laufbuch), die drei geschützten Stellen sind unverändert
+(Textblöcke gleich, sha256), und ohne Kontakt rechnet `_newton` Aufruf für
+Aufruf wie vorher.
+
+**Die Schlussabnahme gilt in beiden Verfahren** — wenn der Lösungsweg selbst
+iteriert (Kontakt, ausfallende Zugstäbe). Verschachtelt löste der Abschluss
+elastisch mit dem F_p des letzten Newton-Schritts, in einem eigenen vollen
+Kontaktlauf — der den Kontaktzustand noch ändern kann, oft als kalter
+Neustart („Warmstart verworfen … Neustart von der Geometrie“) —, und niemand
+prüfte, ob F_p zu dieser Verschiebung passt. Am gequetschten Block
+(`tests/test_solver_ext`, µ 0,3, 60 MN auf 0,4 × 0,4 m, ε_p 12 %) blieb ein
+Rest von 2,5·10⁻⁴ bei Toleranz 10⁻⁴, gemeldet wurde „konvergiert“; jetzt
+heißt das „nicht konvergiert“, in beiden Verfahren (die Zahlen bleiben
+bitgleich). Nachweis
+`tests/test_plastizitaet.py::test_gemeinsame_iteration_kein_falsches_konvergiert`
+(c) und die Rücknahmeprobe `::test_ruecknahme_der_schlussabnahme`: ohne die
+Prüfung meldet derselbe Block wieder „konvergiert“. Das ist nicht der einzige
+Fall: in den 74 Rechnungen der beiden Stichproben unten (69 mit Kontakt,
+5 ohne) wechselt das Urteil der verschachtelten Rechnung gegen 6a961e5 in
+fünf von „konvergiert“ zu „nicht konvergiert“ — der gequetschte Block mit 1
+und 2 Laststufen (Rest 2,5·10⁻⁴ > 10⁻⁴) und der kippende Stempel mit 1, 3
+und 5 (1,06·10⁻³ bis 1,21·10⁻³ > 10⁻³). Geprüft wird einmal: besteht die
+Schlussabnahme nicht, heißt es „nicht konvergiert“, weitergerechnet wird
+nicht. (Die Fassung vom 23.09.2026 rechnete gemeinsam weiter; am kippenden
+Stempel blieb der Rest dabei stehen, weil jeder volle Abschluss kalt im
+selben Zustand endete — dasselbe Urteil mit 171 statt 93 Zerlegungen.) Ohne
+Kontakt und Ausfall wird sie nicht gerechnet: dort ist der Abschluss die
+Newton-Lösung selbst, der Rest lag in 14 Fällen höchstens bei 1,5·10⁻⁷, und
+die Zahl der Rückführungen ist wieder die von 6a961e5 (Zugwürfel 4,
+Kragträger 8; `test_gemeinsam_aendert_nichts_ohne_beides`).
+
+**Warum der Startwert der Stufe voll auskonvergiert.** Die erste Fassung
+(Bau, 23.09.2026) kürzte auch ihn ab (und nahm die letzte Tangente dazu).
+Sie sparte mehr (3015 → 1405 Zerlegungen in der Stichprobe des Bauers), lag
+aber in neun von 45 Fällen über 1 N/mm²: Block mit Reibung (M1, zwei
+Laststufen) 89,6, Stempel mittig (E5) mit einer und zwei Stufen 3,1 und 6,0,
+M3 mit einer Stufe 3,3, Klotz M5 mit einer 2,1, K4 mit einer und zwei 1,8,
+der gequetschte Block C mit zwei Stufen 26,8, mit drei konvergierte er
+nicht. Im Startwert legt die Kontaktiteration Haften, Gleiten und die
+Gleitrichtungen fest (Phase 1 führt die Richtungen nach, Phase 2 hält sie
+fest und lässt nur Haften → Gleiten zu); rechnet das Fließen schon dort mit,
+kommt die Iteration an einem anderen zulässigen Zustand an.
+
+**Warum auch mit vollem Startwert ein anderes Ergebnis möglich ist.** Dieselbe
+Ursache wirkt in den abgekürzten Schritten: ein Knoten, der dort ins Gleiten
+geht, bekommt seine Richtung aus einer Zwischenlösung und behält sie; die
+Prüfung am Ende verwirft sie nur, wenn er **gegen** sie gleitet. Am Block
+nahe der Grenzlast (s = 0,8, eine Stufe) endete die Fassung vom 23.09.2026
+mit einem gleitenden Knoten, der 89° neben seiner Gleitrichtung glitt
+(cos 0,011, verschachtelt kleinster Wert 0,738) — 14,0 N/mm² Unterschied im
+Element darüber. Welcher Zustand „richtiger“ ist, entscheidet keine der
+beiden Rechnungen: auch die verschachtelte hängt dort am Weg. Mit der
+Laststufenzahl ändert sie sich an demselben Block um bis zu 24,6 N/mm² (1
+gegen 2, 3, 4, 6, 8 Laststufen: 0,14 / 4,19 / 12,5 / 20,8 / 24,6), mit
+s = 0,9 um 13,3 und 24,6 N/mm² (1 gegen 3 und 5 Laststufen), jeweils
+„konvergiert“ (Stand 6a961e5); am gequetschten Block um 15 bis 34 N/mm²
+(Gegenprüfung). Gleiten gegen die Richtung kommt in beiden Richtungen vor:
+am Ende des gequetschten Blocks mit 6 Stufen gemeinsam ein Knoten
+(verschachtelt keiner), mit 1 und 2 Stufen verschachtelt einer (gemeinsam
+ebenso, die Stufen wurden dort wiederholt), und die Fassung vom 23.09.2026
+hatte ihn mit 3 Stufen gemeinsam, verschachtelt nicht.
+
+**Messung** (24.09.2026, einkernig, `OMP_NUM_THREADS=1`, jede Rechnung in
+einem eigenen Prozess; alt = `git archive 6a961e5`, neu = Stand 85f1976 mit
+beiden Einstellungen; gezählt werden die Aufrufe von `LinearSolver`, nicht
+das Laufbuch; Skripte in `%TEMP%\nachb_iter`). Zwei Stichproben.
+
+*Die Stichprobe des Bauers* (23.09.2026): fünfzehn Modelle, jedes mit 1, 2
+und 3 Laststufen, 45 Rechnungen:
+
+* A: Block mit Reibung (`examples_lib`), fy = 60 % der elastischen
+  Vergleichsspannung, E_t/E 5 %, Toleranz 10⁻⁴ (wie `test_plastizitaet`);
+* C: gequetschter Block (oben), 2 %, Toleranz 10⁻⁴;
+* sonst fy = 235 N/mm², Last so, dass elastisch σ_v = fy/a, E_t/E 1 %,
+  Toleranz 10⁻³, 25 Schritte (die Vorgaben): M1/M3 Block mit Reibung
+  (a = 0,3/0,4); M2/M6 Stempel hex8 mit gewölbter Unterseite auf Sockel,
+  Fuge µ 0,1 bzw. 0, Last zu 60 % außermittig (a = 0,4/0,3); M4 ebener
+  Stempel, µ 0,2 (a = 0,4); E1 wie M2 aus tet4 (das Modell „zwei Körper“ der
+  Tests), E2 feiner, E5 hex8 feiner und mittig (a = 0,35), E6 hex8 feiner,
+  D1 wie E1 mit 5 % Querlast, der Stempel oben nur quer dazu gehalten;
+  M5/K1/K4 Klotz aus tet4 auf einem Lager wie
+  „Starr“ am Drehlager (µ 0,1 in der Fläche, Bettung mit Ausfall bei Zug,
+  Knagge), 8 × 4 × 4 (a = 0,4), 12 × 6 × 4 (a = 0,4), 16 × 8 × 4 (a = 0,3).
+
+Zerlegungen verschachtelt → gemeinsam, größte Abweichung der
+Vergleichsspannung je Element (N/mm²; „bitgleich“: Verschiebungen und
+Spannungen gleich), Urteil verschachtelt / gemeinsam und wie viele Stufen
+wiederholt wurden, drei Laststufen:
+
+| Modell | Zerlegungen | Anteil | max &#124;Δσ_v&#124; | Urteil | wiederholt |
+|---|---|---|---|---|---|
+| A | 22 → 15 | 68 % | bitgleich | konv. / konv. | 0 |
+| C | 44 → 68 | 155 % | 0,000 | konv. / konv. | 2 |
+| M1 | 155 → 169 | 109 % | 0,000 | konv. / konv. | 1 |
+| M2 | 121 → 119 | 98 % | 0,000 | konv. / konv. | 1 |
+| M3 | 30 → 22 | 73 % | 0,001 | konv. / konv. | 0 |
+| M4 | 29 → 22 | 76 % | 0,011 | konv. / konv. | 0 |
+| M5 | 27 → 21 | 78 % | 0,000 | konv. / konv. | 0 |
+| M6 | 20 → 16 | 80 % | 0,000 | konv. / konv. | 0 |
+| E1 | 129 → 78 | 60 % | 0,011 | konv. / konv. | 0 |
+| E2 | 141 → 125 | 89 % | 0,000 | konv. / konv. | 1 |
+| E5 | 39 → 25 | 64 % | 0,000 | konv. / konv. | 0 |
+| E6 | 211 → 199 | 94 % | 0,000 | konv. / konv. | 1 |
+| D1 | 137 → 97 | 71 % | 0,000 | konv. / konv. | 1 |
+| K1 | 35 → 29 | 83 % | 0,037 | konv. / konv. | 0 |
+| K4 | 45 → 32 | 71 % | 0,922 | konv. / konv. | 0 |
+
+Über alle 45 Rechnungen 3015 → 2392 Zerlegungen (79 %; die Fassung vom
+23.09.2026 hatte 1741, 58 %). Teurer als verschachtelt sind sieben: M1 mit 2
+und 3 Stufen, M2 mit 1 und 2, C mit 1, 2 und 3. Über 1 N/mm² liegen zwei, K4
+mit 1 und 2 Stufen (1,58 / 1,37 N/mm²); C, bei der Fassung vom 23.09.2026
+noch 27,7 bis 31,1, rechnet jetzt wie verschachtelt, weil seine Stufen
+wiederholt werden. Das Urteil ist in allen 45 dasselbe wie verschachtelt.
+
+*Die Gegenprüfung* (24.09.2026): 32 Rechnungen an Modellen, die die
+gemeinsame Iteration herausfordern — der gequetschte Block mit 1 bis 8
+Laststufen; ein Block 0,4 m aus hex8 4 × 4 × 4 auf einer starren Platte
+(µ 0,3) mit Fz = s fy A und 0,2 Fz quer, E_t/E 0,5 %, nahe der Grenzlast
+(s = 0,8 und 0,9); derselbe Block unter Querlast 0,25 P, der auf einer Seite
+abhebt; ein Stempel tet4 auf Sockel mit µ 0,4 und Querlast 0,3 P, der kippt;
+ein Stempel hex8 mit µ 0,15, der gleitet; zwei Lastfälle hintereinander;
+dazu der Block mit Reibung, das Modell „zwei Körper“ der Tests und knappe
+Schrittzahlen. Auswahl:
+
+| Rechnung | Zerlegungen | Anteil | max &#124;Δσ_v&#124; | Urteil | wiederholt |
+|---|---|---|---|---|---|
+| C, 4 Stufen | 84 → 101 | 120 % | bitgleich | konv. / konv. | 3 |
+| C, 6 Stufen | 115 → 206 | 179 % | 29,45 | konv. / nicht konv. | 4 |
+| C, 8 Stufen | 101 → 125 | 124 % | 78,16 | konv. / konv. | 2 |
+| Grenzlast s = 0,9, 1 Stufe | 61 → 67 | 110 % | bitgleich | konv. / konv. | 1 |
+| … 3 Stufen | 53 → 66 | 125 % | 0,000 | konv. / konv. | 1 |
+| … 5 Stufen | 125 → 46 | 37 % | 45,29 | konv. / konv. | 0 |
+| Grenzlast s = 0,8, 1 Stufe | 29 → 39 | 134 % | bitgleich | konv. / konv. | 1 |
+| abhebender Block, 1 Stufe | 97 → 64 | 66 % | 0,000 | konv. / konv. | 0 |
+| kippender Stempel, 1 Stufe | 93 → 108 | 116 % | bitgleich | nicht / nicht | 1 |
+| … 5 Stufen | 128 → 155 | 121 % | 0,000 | nicht / nicht | 2 |
+| gleitender Stempel, 1 Stufe | 164 → 69 | 42 % | 0,044 | konv. / konv. | 0 |
+| … 3 Stufen | 324 → 116 | 36 % | 0,000 | nicht / konv. | 0 |
+| zwei Lastfälle | 246 → 208 | 85 % | 0,001 | konv. / konv. | 1 |
+
+Über alle 32: 3101 → 2559 Zerlegungen (83 %); teurer als verschachtelt 15,
+über 1 N/mm² drei (C mit 6 und 8 Stufen, Grenzlast s = 0,9 mit 5), das
+Urteil einmal schlechter (C mit 6 Stufen: die Schlussabnahme scheitert,
+Rest 2,0·10⁻⁴ > 10⁻⁴) und einmal besser (gleitender Stempel, 3 Stufen:
+verschachtelt ist ein Lauf gedeckelt). Die Fassung vom 23.09.2026 kam hier
+auf 3180 Zerlegungen, lag in 13 Rechnungen über 1 N/mm² (bei den
+konvergierten bis 47,3 N/mm²) und meldete in sieben „nicht konvergiert“, wo
+verschachtelt konvergiert.
+Über beide Stichproben (69 verschiedene Rechnungen) 10 265 → 7 637
+Kontaktschritte und 870 → 1 348 Rückführungen.
+
+**Was das für das Drehlager heißt — nicht gemessen.** Die Stichproben zeigen
+beides: an den zweikörprigen Modellen mit Fuge µ 0,1 (E1, E2, E6, D1, je 1
+bis 3 Laststufen) 26 bis 99 % der Zerlegungen bei höchstens 0,053 N/mm²
+Unterschied, an Reibung nahe der Grenzlast Mehrkosten bis 79 % und
+Abweichungen bis 78 N/mm². Welches
+Bild LF1 zeigt, sagt erst eine Messung dort; die Herleitung der Fassung vom
+23.09.2026 (139 → 80 bis 110 Zerlegungen) galt für eine Fassung ohne
+Wiederholung und wird hier nicht fortgeschrieben.
+
+**Unverändert.** Verschachtelt (die Vorgabe) rechnet bitgleich wie 6a961e5:
+in allen 74 Rechnungen beider Stichproben (69 mit Kontakt, 5 ohne)
+dieselben Verschiebungen, Auflager- und Kontaktkräfte, Spannungen und
+dieselbe Zahl Zerlegungen; mit Kontakt eine Rückführung mehr je Lastfall
+(die Schlussabnahme), ohne Kontakt dieselbe Zahl. Ebenso Kontakt ohne
+Fließen und Fließen ohne Kontakt in beiden Einstellungen (Block mit Reibung,
+Stempel auf Sockel, Zugwürfel hex8, Kragträger tet4 mit 48 fließenden
+Elementen; die Werte von 6a961e5 fest im Test).
+Nachweise in `tests/test_plastizitaet.py`: `test_gemeinsame_iteration_spart_zerlegungen`
+(A 20 → 13, E1 129 → 78), `…_rechnet_dasselbe` (A 0,0000, E1 0,011 N/mm²),
+`…_kein_falsches_konvergiert`, `test_ruecknahme_der_schlussabnahme`,
+`test_gemeinsam_aendert_nichts_ohne_beides`, `test_gemeinsam_im_budget`,
+`test_gemeinsam_rueckfall_verschachtelt`, `test_hilfsfesselung_ohne_vorlauf`,
+`test_vorgabe_verschachtelt_und_unbekannter_wert`.
+
+**Offen, vorbestehend und nicht Teil dieses Umbaus:** kalte Kontaktläufe
+werden am Ende nicht darauf geprüft, ob gleitende Knoten gegen ihre
+festgehaltene Richtung gleiten — nur warme (`warmstart_verstoesse`). Der
+Abschluss endet oft kalt, und dann steht „konvergiert“ an einem Zustand mit
+solchen Knoten, in beiden Einstellungen gleich: am Ende des abhebenden
+Blocks sechs, des kippenden Stempels fünf, des gleitenden Stempels vier, des
+Modells „zwei Körper“ zwei (`zustand_verstoesse` am End-u, 24.09.2026). Ob
+das in die Abnahme gehört, entscheiden Anwender und Löser-Sitzung.
 
 ## 5a Anschlüsse (DIN EN 1993-1-8)
 

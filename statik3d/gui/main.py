@@ -12564,6 +12564,23 @@ class MainWindow(QtWidgets.QMainWindow):
             "ab 10 %, wo acht bis zehn Rückwärtseinsetzungen genügen.\n\n"
             "Ohne Verfestigung (ideal-plastisch) wird immer mit Anfangsdehnung gerechnet: die "
             "Tangente wäre dort singulär.")
+        self.cb_plast_kontakt = QtWidgets.QComboBox()
+        # Erster Eintrag = Vorgabe (plastizitaet.KONTAKT_WEGE[0]); ein
+        # unbekannter Wert aus einer Datei zeigt ihn an, und der Loeser
+        # rechnet ihn auch (24.09.2026)
+        for t_, v_ in (("verschachtelt (Vorgabe)", "verschachtelt"),
+                       ("gemeinsam", "gemeinsam")):
+            self.cb_plast_kontakt.addItem(t_, v_)
+        self.cb_plast_kontakt.setToolTip(
+            "Nur mit Kontakt.\n\n"
+            "Verschachtelt (Vorgabe): jeder Newton-Schritt iteriert den Kontakt aus.\n\n"
+            "Gemeinsam: jede Laststufe beginnt mit voll auskonvergiertem Kontakt, die "
+            "Newton-Schritte der Stufe rechnen je einen Kontaktschritt, und die Stufe endet "
+            "erst mit voll auskonvergiertem Kontakt (abgekürzt wird nur mit der konsistenten "
+            "Tangente). Läuft das weg, wird die Stufe verschachtelt wiederholt. Der elastische "
+            "Vorlauf entfällt. Weniger Faktorisierungen an vielen Modellen, aber mit Reibung "
+            "nahe der Grenzlast ein anderes Ergebnis (in den Proben bis 78 N/mm², beide "
+            "„konvergiert“) und dort auch teurer - siehe Benutzerhandbuch.")
         self.sp_plast_verf = QtWidgets.QDoubleSpinBox()
         self.sp_plast_verf.setRange(0.0, 50.0)
         self.sp_plast_verf.setDecimals(2)
@@ -12584,7 +12601,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cb_plast_tol.setCurrentIndex(1)
         self.cb_plast_tol.setToolTip("Änderung der plastischen Knotenlasten gegen die Last, bis zu der es konvergiert gilt")
         gpl.addWidget(self.cb_plast)
-        gpl.addWidget(row("Verfahren", self.cb_plast_weg))
+        gpl.addWidget(row("Verfahren", self.cb_plast_weg, "   mit Kontakt", self.cb_plast_kontakt))
         gpl.addWidget(row("Verfestigung E_t/E", self.sp_plast_verf, "   Laststufen", self.sp_plast_stufen,
                           "   Schritte je Stufe", self.sp_plast_it, "   Toleranz", self.cb_plast_tol))
         lay.addWidget(gp)
@@ -18117,6 +18134,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cb_plast_tol.setCurrentIndex(k if k >= 0 else 1)
         w = self.cb_plast_weg.findData(str(getattr(pz, "verfahren", "tangente")))
         self.cb_plast_weg.setCurrentIndex(w if w >= 0 else 0)
+        w = self.cb_plast_kontakt.findData(str(getattr(pz, "kontakt", "verschachtelt")))
+        self.cb_plast_kontakt.setCurrentIndex(w if w >= 0 else 0)
 
     def _plast_uebernehmen(self):
         """Die Maske Berechnung ins Modell - mit dem Uebernehmen der
@@ -18141,6 +18160,7 @@ class MainWindow(QtWidgets.QMainWindow):
         pz.iterationen = int(self.sp_plast_it.value())
         pz.toleranz = float(self.cb_plast_tol.currentData() or 1e-3)
         pz.verfahren = str(self.cb_plast_weg.currentData() or "tangente")
+        pz.kontakt = str(self.cb_plast_kontakt.currentData() or "verschachtelt")
 
     def _apply_parallel_settings(self):
         self._plast_uebernehmen()
