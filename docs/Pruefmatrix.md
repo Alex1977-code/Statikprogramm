@@ -573,3 +573,50 @@ Soll: δ = 2 L ε(300 N/mm²) = 14,62 mm (ε_p 0,588 %): σ_v = 300 N/mm² über
 | Fein | hex20 | 0,2500 | gesperrt | – | – | – | – | 2.550 | 0,1 | fugen.QuadratischeSeiten: Kontaktpaar Fuge |
 
 Laufzeit gesamt 5,1 min (einkernig, 25.09.2026).
+
+## Nachtrag 25.09.2026, Stand `integration/rechnung-2509` (39dfe55)
+
+Gerechnet 25.09.2026 mittags, einkernig, 4,3 min, mit `python -m tests.pruefmatrix`; die Tabellen
+oben stammen vom Vormittag (0b17b12 bzw. 45c69c0) und bleiben als Beleg der Befunde stehen. Was
+sich geändert hat:
+
+| Rechenart | Entwurf | Mittel | Fein |
+|---|---|---|---|
+| linear | 1 grün, 5 gelb | 3 grün, 3 gelb | 4 grün, 2 gelb |
+| Kontakt | 8 grün, 6 **rot** | 14 gesperrt | 14 gesperrt |
+| Plastizität | 2 grün, 2 gelb | 2 grün, 2 gelb | 2 grün, 2 gelb |
+| Kontakt + Plastizität | 4 grün | 4 gesperrt | 4 gesperrt |
+
+Behoben (je mit Prüfung, Rücknahmeprobe und Absatz im Theoriehandbuch):
+
+* **F1** hex20 an gemeinsamen Flächen (`mesher.py`, leerer Kanten-Cache): L3 Mittel/Fein hex20
+  +0,12 / +0,03 statt +610 / +515 N/mm² — grün.
+* **F2** eigener Vernetzer an verschweißten Flächen: nicht der Vernetzer der Fläche, sondern der
+  Volumenvernetzer kippte Diagonalen um (Kantenkippen kannte den Fall nicht; flache Tetraeder in
+  der Hüllfläche wurden blind aufgelöst). K1, KP1 tet4 +0,00 statt +10,32 / +6,02 N/mm² — grün;
+  L3 tet4/tet10 ohne Netzfehler. Die zweite Aussage von F2, „h wirkt nicht“, war kein Fehler:
+  h = 0,5 m wird an einem 1-m-Körper auf 0,25 m gedeckelt (Protokoll „zu grob — mit 250 mm
+  vernetzt“). gmsh + MMG3D, wie am Drehlager, hielten die Hülle schon vorher ein.
+* **F3** Plastizität ohne äußere Last: Bezug der Änderung ist die plastische Last
+  (`plastizitaet._bezug`). KP2 tet4/hex8 grün, konvergiert in 5 Schritten.
+* **K4, erster Teil:** die Reststeifigkeit gleitender Knoten trug am Ende Kraft, die in keiner
+  Kontaktkraft stand (K·u an den Gleitknoten 30 518 kN gegen `contact_forces` 29 825 kN);
+  ausgeglichen (`contact.AUSGLEICH_RESTSTEIFIGKEIT`). Die Zelle bleibt rot, siehe unten.
+
+Bleibt rot, gemessen, offen:
+
+* **K4** Feder B +1,16 % (hex8) / +0,87 % (tet4), Reibung B quer 2,5 / 3,6 % von μ N: die in Phase 1
+  festgehaltenen Gleitrichtungen liegen an Eck- und Randknoten 20° (K4, 4 × 4) bis 40° (2 × 2-Klotz
+  in `test_solver_ext`) neben der Bewegung; am 2 × 2-Klotz liegt die Reibkraft dadurch 6,7 % unter
+  μ N. Eine Nachführung in Phase 2 ist als Fixpunkt instabil (der Fehler verdoppelt sich je Runde bei
+  weicher Querhaltung); sie braucht die konsistente Tangente μ F_n/|Δt| quer zur Gleitrichtung —
+  ein eigener Schritt, gehört zum Löser (jetzt diese Sitzung).
+* **K5** ganz gleitende Gruppe: die grobe Reststeifigkeit hält den Klotz, Feder B −86 / −91 %; das
+  Programm warnt „Bauteil rutscht“. Ein Ausgleich mit grober Feder wäre als Fixpunkt zu langsam
+  (Faktor 0,999 je Runde); die Lösung ist, die feine Feder auch dort zu nehmen und ein Rutschen ohne
+  Halt an der wachsenden Verschiebung zu erkennen — Löser.
+* **K6** Kontaktpaar mit ungleichen Netzen: hex8 +74 N/mm², tet4 −13,6 N/mm² neben dem homogenen
+  Zustand. Der Knoten-gegen-Fläche-Kontakt verteilt die Slave-Knotenkräfte mit den Formfunktionen
+  auf die Master-Knoten; für ungleiche Netze ist das nicht die konsistente Knotenlast eines
+  gleichmäßigen Drucks — Mortar-Übertragung fehlt. Nicht nachgestellt; betrifft jede Fuge des
+  Drehlagers mit ungleichen Netzen.
