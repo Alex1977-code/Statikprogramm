@@ -50,7 +50,8 @@ Kopfzeile QLabel {{ background: transparent; color: {kopf_matt}; }}
 /* Schnellzugriff in der dunklen Kopfzeile (25.09.2026): die Symbole sind
    dunkel gezeichnet, darum ein heller Streifen darunter */
 Kopfzeile QToolBar#schnellzugriff {{ background: {grund}; border: 0;
-    border-radius: 7px; padding: 1px 3px; }}
+    border-radius: 7px; padding: 0px 2px; spacing: 1px; }}
+Kopfzeile QToolBar#schnellzugriff QToolButton {{ padding: 2px; margin: 0px; }}
 Filmstreifen {{ background: {flaeche}; border-top: 1px solid {linie}; }}
 Filmstreifen > QLabel {{ background: transparent; }}
 QMenuBar {{ background: {kopf}; color: {kopf_matt}; border: 0; padding: 2px 6px; }}
@@ -215,10 +216,21 @@ class Kopfzeile(QtWidgets.QWidget):
         # bleiben stehen, der Titel wird abgeschnitten (er steht ganz am Zeiger)
         self.titel.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
         self.titel.setMinimumWidth(0)
-        # so hoch wie die Suche, mittig: sonst fuellte der helle Streifen die
-        # ganze Hoehe der Zeile
-        schnellzugriff.setFixedHeight(30)
+        # Mittig in ihrer Wunschhoehe, damit der helle Streifen nicht die ganze
+        # Zeile fuellt. Keine feste Hoehe (Gegenpruefung 25.09.2026): die Leiste
+        # braucht 20 px fuer Rand und Abstand, bei setFixedHeight(30) blieben
+        # den Knoepfen 10 px und von den Symbolen nur Punkte. Kleiner wird sie
+        # ueber die Stilregel (Kopfzeile QToolBar#schnellzugriff, ohne Rand).
+        # Die Leiste rechnet ihre Raender nur bei einer Stilaenderung neu; ohne
+        # sie behielt sie die 10 px Rand der Regel fuer QToolBar aus der Zeit
+        # im Ribbon (offscreen gemessen: Leiste 47 statt 31 px hoch).
         lay.insertWidget(1, schnellzugriff, 0, QtCore.Qt.AlignVCenter)
+        if isinstance(schnellzugriff, QtWidgets.QToolBar):
+            schnellzugriff.setMovable(False)
+        st = schnellzugriff.style()
+        st.unpolish(schnellzugriff)
+        st.polish(schnellzugriff)
+        QtWidgets.QApplication.sendEvent(schnellzugriff, QtCore.QEvent(QtCore.QEvent.StyleChange))
         lay.insertWidget(lay.indexOf(self.marke_modell), suche, 0, QtCore.Qt.AlignVCenter)
         self.marke_modell.setVisible(False)
         self._eingebettet = True

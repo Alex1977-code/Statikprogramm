@@ -16881,9 +16881,19 @@ class MainWindow(QtWidgets.QMainWindow):
     def tabelle_zeigen(self, name: str) -> bool:
         """Eine Tabelle im unteren Bereich nach vorn holen (die Gruppe folgt)."""
         if self.tab_unten.zeigen(name):
-            self.unten_dock.show()
+            self._unten_zeigen()
             return True
         return False
+
+    def _unten_zeigen(self):
+        """Den unteren Bereich zeigen - in der Kompaktstufe auch aufklappen
+        (Paket 5, Gegenpruefung 25.09.2026: sonst blieb die Tabelle hinter
+        der Registerzeile, und der Befehl wirkte tot)."""
+        anordnung = getattr(self, "anordnung", None)
+        if anordnung is not None:
+            anordnung.unten_zeigen()
+        else:
+            self.unten_dock.show()
 
     # ---- Auswahl / Randbedingungen -----------------------------------
     def _sel_val(self, i):
@@ -18471,7 +18481,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log.appendPlainText(tb)
         self.log.appendPlainText("FEHLER: " + str(msg))
         try:
-            self.tab_unten.setCurrentWidget(self.log)
+            # Die Gruppenleiste unten (design.py) kennt kein setCurrentWidget:
+            # der Aufruf scheiterte still, das Protokoll kam nie nach vorn
+            # (Gegenpruefung Paket 5, 25.09.2026). In der Kompaktstufe muss
+            # der Bereich ausserdem aufklappen.
+            self.tabelle_zeigen("Protokoll")
         except Exception:                  # noqa: BLE001 - Anzeige darf nie sperren
             pass
         self.statusBar().showMessage(f"Berechnung gescheitert: {str(msg).splitlines()[0]}"

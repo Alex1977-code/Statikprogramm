@@ -44,11 +44,20 @@ FASSUNG = 1
 ANTEIL_BAUM = 0.16
 RECHTS = 460
 ANTEIL_UNTEN = 0.25
-#: Mindestmasse ohne „fest“: 16 % von 1280 px sind 205 px (vorher 290 px
-#: Mindestbreite des Baums), 25 % von 716 px sind 179 px (vorher 215 px unten)
-BAUM_MIN = 200
+#: Mindestmasse ohne „fest“ (vorher 290 px Baum, 215 px unten). Baum 260 px
+#: statt 16 % (Gegenpruefung 25.09.2026, Beispiel hall, alles aufgeklappt,
+#: Segoe UI, 1366 x 768): bei 218 px waren 95 von 196 Namen abgeschnitten,
+#: „Stiel…“ zweimal; mit 260 px und der begrenzten Zusatzspalte sind es 3
+#: („+ … anlegen“), am Stand 562dc3a mit 290 px waren es 6. Die Ansicht
+#: bleibt bei 1366 x 768 bei 630 x 627 px (38 % der Flaeche).
+BAUM_MIN = 260
 RECHTS_MIN = 400
 UNTEN_MIN = 120
+#: Zusatzspalte des Modellbaums: hoechstens dieser Anteil der Baumbreite,
+#: zwischen 50 und 120 px (120 px ist der Deckel aus design.Modellbaum)
+BAUMSPALTE_ANTEIL = 0.25
+BAUMSPALTE_MIN = 50
+BAUMSPALTE_MAX = 120
 #: Kompaktstufe: Fensterhoehe darunter, oder Ansicht mit Sollmassen kleiner
 KOMPAKT_HOEHE = 900
 KOMPAKT_ANSICHT = (700, 400)
@@ -163,6 +172,20 @@ def _bildschirme() -> list:
     return out
 
 
+def normalgroesse_begrenzen(w, anteil: float = 0.9) -> None:
+    """Das (noch nicht maximierte) Fenster auf hoechstens ``anteil`` der freien
+    Bildschirmflaeche verkleinern und mittig setzen; passt es, bleibt es."""
+    scr = w.screen() or QtWidgets.QApplication.primaryScreen()
+    if scr is None:
+        return
+    a = scr.availableGeometry()
+    b = min(w.width(), int(anteil * a.width()))
+    h = min(w.height(), int(anteil * a.height()))
+    if (b, h) == (w.width(), w.height()):
+        return
+    w.setGeometry(a.x() + (a.width() - b) // 2, a.y() + (a.height() - h) // 2, b, h)
+
+
 def starten(w) -> None:
     """Das Hauptfenster zeigen: maximiert oder wie zuletzt gespeichert.
 
@@ -176,6 +199,15 @@ def starten(w) -> None:
         w.setGeometry(*g["geometrie"])
         w.show()
     else:
+        # Die Groesse fuer „Verkleinern“ vorher setzen (Gegenpruefung
+        # 25.09.2026): sonst blieb es bei den 1600 x 980 aus dem Aufbau - auf
+        # 1366 x 768 hoeher als der Bildschirm, und eine gemerkte Normalgroesse
+        # galt nicht. Die gemerkte, wenn pruefen() sie gelten laesst, sonst
+        # hoechstens 90 % der freien Flaeche, mittig.
+        if g is not None and g["geometrie"] is not None:
+            w.setGeometry(*g["geometrie"])
+        else:
+            normalgroesse_begrenzen(w)
         w.showMaximized()
     if anordnung is not None and g is not None:
         anordnung.gespeichertes_anwenden(g)
@@ -231,8 +263,13 @@ class Fensteranordnung(QtCore.QObject):
         # haeufigsten Befehle stehen dort, nicht Neu/Oeffnen/Speichern
         w.ribbon.zeigen("Start")
         leiste = w.tab_unten.leiste
+        #: Doppelklick auf die Leiste: der Zustand vor dessen erstem Klick und
+        #: ein Merker fuer den Klick, den QTabBar danach noch sendet
+        self._unten_vor_klick: tuple | None = None
+        self._unten_doppel = False
+        self._klickuhr = QtCore.QElapsedTimer()
         leiste.tabBarClicked.connect(self._unten_geklickt)
-        leiste.tabBarDoubleClicked.connect(lambda _i: self.unten_einklappen(not self.unten_eingeklappt()))
+        leiste.tabBarDoubleClicked.connect(self._unten_doppelt)
         if self.fest:
             return
         # Baum und rechter Bereich ueber die volle Hoehe: die Ecken gehoeren
@@ -260,6 +297,20 @@ class Fensteranordnung(QtCore.QObject):
         w.baum_dock.setMinimumWidth(BAUM_MIN)
         w.unten_dock.setMinimumHeight(UNTEN_MIN)
         w.installEventFilter(self)
+        # Kompaktstufe: die waagerechte Farbskala steht ueber den Kennwerten
+        # unten links, nicht auf ihnen (viewport.farbskalen_heben)
+        plotter = getattr(w, "plotter", None)
+        if plotter is not None:
+            from . import viewport as vp
+            vp.farbskalen_heben_einrichten(plotter, lambda: bool(getattr(w, "_farbskala_waagerecht", False)))
+        # Die Zusatzspalte des Baums (Anzahl, Koordinaten) darf bis 120 px
+        # breit werden; in einem schmalen Baum blieb vom Namen dann nichts
+        # („Stiel…“ zweimal bei 1366 x 768). Sie bekommt hoechstens ein
+        # Viertel der Baumbreite.
+        baum = getattr(w, "baum", None)
+        if baum is not None:
+            baum.installEventFilter(self)
+            self._baumspalte_begrenzen()
 
     # -- Kopfzeile ---------------------------------------------------------
     def _kopfzeile_zusammenlegen(self):
@@ -345,8 +396,12 @@ class Fensteranordnung(QtCore.QObject):
         rb = self.w.ribbon
         if an:
             if self._vor_nur_ansicht is None:
+                # Gemerkt wird der Wunsch des Anwenders, nicht der Zustand der
+                # Kompaktstufe (Gegenpruefung 25.09.2026: sonst blieb das Ribbon
+                # nach „Nur Ansicht“ ueber die Kompaktgrenze hinweg eingeklappt)
                 self._vor_nur_ansicht = {"zonen": {n: self.zone_sichtbar(n) for n in self._docks()},
-                                         "ribbon": rb.eingeklappt()}
+                                         "ribbon": (self._ribbon_vor_kompakt if self.kompakt
+                                                    else rb.eingeklappt())}
             for n, dock in self._docks().items():
                 dock.hide()
                 self._zone_nachziehen(n)
@@ -358,13 +413,18 @@ class Fensteranordnung(QtCore.QObject):
         else:
             vorher, self._vor_nur_ansicht = self._vor_nur_ansicht, None
             if vorher is None:
-                vorher = {"zonen": {n: True for n in self._docks()}, "ribbon": self.kompakt}
+                vorher = {"zonen": {n: True for n in self._docks()}, "ribbon": False}
             for n, dock in self._docks().items():
                 dock.setVisible(vorher["zonen"].get(n, True))
                 self._zone_nachziehen(n)
             self._selbst += 1
             try:
-                rb.einklappen(vorher["ribbon"])
+                if self.kompakt:
+                    # die Kompaktstufe gilt weiter; der Wunsch gilt nach ihr
+                    self._ribbon_vor_kompakt = bool(vorher["ribbon"])
+                    rb.einklappen(True)
+                else:
+                    rb.einklappen(vorher["ribbon"])
             finally:
                 self._selbst -= 1
             if self.automatisch:
@@ -419,9 +479,46 @@ class Fensteranordnung(QtCore.QObject):
             ziel = (self._ziel or {}).get("unten") or soll(w.width(), w.height())["unten"]
             w.resizeDocks([dock], [int(ziel)], QtCore.Qt.Vertical)
 
+    def unten_zeigen(self) -> None:
+        """Den unteren Bereich zeigen und aufklappen - fuer Befehle, die dort
+        eine Tabelle oder das Protokoll nach vorn holen (Gegenpruefung
+        25.09.2026: in der Kompaktstufe wechselte sonst nur die Gruppe in der
+        Leiste, die Tabelle blieb unsichtbar, der Befehl wirkte tot)."""
+        dock = self.w.unten_dock
+        if dock.isHidden():
+            dock.show()
+            self._zone_nachziehen("unten")
+        self.unten_einklappen(False)
+
     def _unten_geklickt(self, _i: int):
+        if self._unten_doppel:
+            # der Klick, den QTabBar nach einem Doppelklick selbst sendet
+            self._unten_doppel = False
+            return
+        self._unten_vor_klick = (self.unten_eingeklappt(), _i)
+        self._klickuhr.start()
         if self.unten_eingeklappt():
             self.unten_einklappen(False)
+
+    def _unten_doppelt(self, _i: int):
+        """Doppelklick auf die Leiste schaltet um (Gegenpruefung 25.09.2026).
+
+        Ein echter Doppelklick kommt als Klick, Doppelklick, Klick: der erste
+        Klick klappte auf, der Doppelklick wieder zu, und der Klick danach
+        wieder auf - sichtbar aenderte sich nichts. Massgebend ist darum der
+        Zustand vor dem ersten Klick, und der Klick danach zaehlt nicht."""
+        vorher = self.unten_eingeklappt()
+        vk = self._unten_vor_klick
+        if (vk is not None and vk[1] == _i and self._klickuhr.isValid()
+                and self._klickuhr.elapsed() <= QtWidgets.QApplication.doubleClickInterval()):
+            vorher = vk[0]
+        self._unten_vor_klick = None
+        self._unten_doppel = True
+        QtCore.QTimer.singleShot(0, self._unten_doppel_vergessen)
+        self.unten_einklappen(not vorher)
+
+    def _unten_doppel_vergessen(self):
+        self._unten_doppel = False
 
     # -- Masse ------------------------------------------------------------
     def masse_anwenden(self) -> None:
@@ -489,7 +586,18 @@ class Fensteranordnung(QtCore.QObject):
             return None
 
     # -- Ereignisse -----------------------------------------------------------
+    def _baumspalte_begrenzen(self):
+        baum = self.w.baum
+        grenze = max(BAUMSPALTE_MIN, min(BAUMSPALTE_MAX, int(BAUMSPALTE_ANTEIL * baum.width())))
+        kopf = baum.header()
+        if kopf.maximumSectionSize() != grenze:
+            kopf.setMaximumSectionSize(grenze)
+
     def eventFilter(self, obj, ev):
+        if obj is getattr(self.w, "baum", None):
+            if ev.type() == QtCore.QEvent.Resize:
+                self._baumspalte_begrenzen()
+            return False
         if obj is self.w:
             t = ev.type()
             if t in (QtCore.QEvent.Resize, QtCore.QEvent.Show):
@@ -538,7 +646,8 @@ class Fensteranordnung(QtCore.QObject):
         self._selbst += 1
         try:
             if an:
-                self._ribbon_vor_kompakt = rb.eingeklappt()
+                vor = self._vor_nur_ansicht
+                self._ribbon_vor_kompakt = bool(vor["ribbon"]) if vor is not None else rb.eingeklappt()
                 self.kompakt = True
                 if self._vor_nur_ansicht is None:
                     rb.einklappen(True)

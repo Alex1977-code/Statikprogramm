@@ -279,6 +279,11 @@ def main():
           "gescheitert" in w.txt_res.toPlainText() and "Probefehler" in w.txt_res.toPlainText()
           and w.tabs.tabText(w.tabs.currentIndex()) == "Ergebnisse" and not w._rechnet_gerade,
           w.txt_res.toPlainText()[:60])
+    # Paket 5, Gegenpruefung 25.09.2026: tab_unten.setCurrentWidget gab es an
+    # der Gruppenleiste nicht, das Protokoll kam nie nach vorn
+    check("… und unten steht das Protokoll mit der FEHLER-Zeile vorn",
+          w.tab_unten.currentWidget() is w.log and "FEHLER: Probefehler" in w.log.toPlainText(),
+          w.tab_unten.currentGroup())
     w.statusBar().clearMessage()
 
     # Hintergrund-Berechnung ueber den Worker

@@ -29,10 +29,14 @@ Geprueft wird:
 
 Zur Abnahme „Ansicht >= 45 % der Fensterflaeche bei 1920 x 1080“ (Plan 4a):
 mit den Sollmassen der Antwort 9 (Baum 16 %, rechts 460 px, unten 25 %)
-bleiben bei 1916 x 1076 hoechstens 1137 x 610 px = 34 %; 45 % der Flaeche
-gingen nur mit einem unteren Bereich von rund 110 px. Geprueft wird darum das
-Zielbild aus Kap. 2 (mindestens 50 % der Breite und 45 % der Hoehe) und
-mindestens 30 % der Flaeche auf allen Bildschirmen.
+bleiben bei 1916 x 1076 hoechstens 1137 x 610 px = 34 %. 45 % der Flaeche
+verlangen bei 1137 px Breite 0,45 * 1916 * 1076 / 1137 = 816 px Hoehe; da
+sind 610 + 6 (Trennlinie) + 269 = 885 px, unten blieben also rund 63 px -
+weniger als eine Tabellenzeile (berichtigt 25.09.2026, vorher stand hier
+„rund 110 px“). Das Planmass steht darum als OFFEN in der Ausgabe, bis der
+Anwender entscheidet; geprueft wird bis dahin das Zielbild aus Kap. 2
+(mindestens 50 % der Breite und 45 % der Hoehe) und mindestens 30 % der
+Flaeche auf allen Bildschirmen.
 
 Aufruf:  python -m tests.test_fensteraufteilung
 """
@@ -48,7 +52,8 @@ os.environ.setdefault("STATIK3D_NO_UPDATE_CHECK", "1")
 os.environ.setdefault("STATIK3D_KEIN_BROWSER", "1")
 #: Kindprozesse (eigener Bildschirm) bekommen Umgebung und Einstellungsdatei
 #: vom Elternprozess - nur der Elternprozess setzt sie hier
-KIND = any(a in sys.argv for a in ("--messen", "--fest", "--gespeichert"))
+KINDER = ("--messen", "--fest", "--gespeichert", "--normal", "--hauptstart", "--baum")
+KIND = any(a in sys.argv for a in KINDER)
 if not KIND:
     os.environ.pop("STATIK3D_FENSTER", None)
     _TMP = tempfile.mkdtemp(prefix="statik3d_fenster_")
@@ -62,6 +67,21 @@ def check(name, ok, detail=""):
     RESULTS.append((name, bool(ok)))
     print(f"{'OK ' if ok else 'FAIL'} {name:84s} {detail}")
     return ok
+
+
+#: Planmasse, ueber die der Anwender noch entscheidet: sie stehen sichtbar
+#: als OFFEN in der Ausgabe und in der Zusammenfassung, zaehlen aber nicht
+#: als Fehler der Suite
+OFFEN = []
+
+
+def offen(name, erfuellt, detail=""):
+    if erfuellt:
+        print(f"OK   {name:84s} {detail}")
+    else:
+        OFFEN.append(f"{name} ({detail})")
+        print(f"OFFEN {name:83s} {detail}  - nicht erfüllt, Entscheidung des Anwenders steht aus")
+    return erfuellt
 
 
 def _app():
@@ -178,6 +198,24 @@ def test_kopfzeile():
     check("Befehlssuche und Schnellzugriff: dieselben Objekte wie zuvor",
           rb.suche.objectName() == "befehlssuche" and rb.schnellzugriff.objectName() == "schnellzugriff"
           and len(rb.schnellzugriff.actions()) == 4)
+    # Gegenpruefung 25.09.2026: mit setFixedHeight(30) waren die Knoepfe 10 px
+    # hoch, von den 18-px-Symbolen blieben Punkte - isVisible() sah das nicht
+    sz = rb.schnellzugriff
+    symbol = sz.iconSize().height()
+    bild = sz.grab().toImage()
+    grund = bild.pixelColor(1, bild.height() // 2)
+    knoepfe = []
+    for a in sz.actions():
+        b = sz.widgetForAction(a)
+        g = b.geometry()
+        n = sum(1 for x in range(max(0, g.left()), min(bild.width(), g.right() + 1))
+                for y in range(max(0, g.top()), min(bild.height(), g.bottom() + 1))
+                if abs(bild.pixelColor(x, y).lightness() - grund.lightness()) > 25)
+        knoepfe.append((a.text(), b.height(), n))
+    check(f"Schnellzugriff: jeder Knopf mindestens Symbolhöhe + 4 px ({symbol + 4} px), "
+          "im Bild je Knopf ein Symbol (≥ 20 Bildpunkte)",
+          all(h >= symbol + 4 and n >= 20 for _t, h, n in knoepfe),
+          "; ".join(f"{t} {h} px/{n}" for t, h, n in knoepfe))
     bild = w.kopf.grab().toImage()
     farbe = bild.pixelColor(max(1, rb.suche.x() - 20), bild.height() // 2)
     check("die Kopfzeile bleibt dunkel (neben der Suche)",
@@ -239,24 +277,40 @@ def test_sollmasse_im_fenster():
     _groesse(w, 1920, 1080)
 
 
+def _reiter_klick(leiste, i: int, doppelt: bool = False):
+    """Ein echter (Doppel-)Klick auf den Reiter i einer QTabBar. Gegenpruefung
+    25.09.2026: tabBarDoubleClicked.emit() allein verbarg, dass QTabBar nach
+    dem Doppelklick selbst noch einen Klick sendet."""
+    from PySide6 import QtCore, QtTest
+    p = leiste.tabRect(i).center()
+    if doppelt:
+        # wie vom Betriebssystem: Druecken, Loslassen, Doppelklick, Loslassen -
+        # QTest.mouseDClick allein sendet nur das Doppelklick-Ereignis
+        QtTest.QTest.mousePress(leiste, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, p)
+        QtTest.QTest.mouseRelease(leiste, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, p)
+        QtTest.QTest.mouseDClick(leiste, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, p)
+        QtTest.QTest.mouseRelease(leiste, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, p)
+    else:
+        QtTest.QTest.mouseClick(leiste, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, p)
+    _ruhe(6)
+
+
 def test_ribbon_einklappen():
-    from PySide6 import QtGui
+    from PySide6 import QtCore, QtGui, QtTest
     w = _fenster()
     _groesse(w, 1920, 1080)
     rb = w.ribbon
     rb.einklappen(False)
     _ruhe()
     h0, a0 = w.menuWidget().height(), _ansicht(w)[1]
-    rb.tabs.tabBarDoubleClicked.emit(rb.tabs.currentIndex())
-    _ruhe(6)
+    _reiter_klick(rb.tabs.tabBar(), rb.tabs.currentIndex(), doppelt=True)
     h1, a1 = w.menuWidget().height(), _ansicht(w)[1]
-    check("Doppelklick auf einen Reiter klappt das Ribbon ein: mindestens 80 px mehr für die Ansicht",
-          rb.eingeklappt() and h0 - h1 >= 80 and a1 - a0 >= 80, f"Kopf {h0} -> {h1}, Ansicht {a0} -> {a1}")
+    check("echter Doppelklick auf einen Reiter klappt das Ribbon ein: mindestens 80 px mehr für die Ansicht",
+          rb.eingeklappt() and not rb.vorlaeufig_offen() and h0 - h1 >= 80 and a1 - a0 >= 80,
+          f"Kopf {h0} -> {h1}, Ansicht {a0} -> {a1}, vorläufig offen {rb.vorlaeufig_offen()}")
     check("… Schalter „Ribbon einklappen“ zieht mit", w.anordnung.act_ribbon.isChecked())
     i = rb.tabs.indexOf(rb._register["Geometrie"])
-    rb.tabs.setCurrentIndex(i)
-    rb.tabs.tabBarClicked.emit(i)
-    _ruhe()
+    _reiter_klick(rb.tabs.tabBar(), i)
     offen = rb.vorlaeufig_offen() and w.menuWidget().height() >= h0 - 2
     befehl = next(b for b in rb.befehle if b.register == "Geometrie" and b.text == "Knoten")
     befehl.aktion.trigger()
@@ -266,6 +320,21 @@ def test_ribbon_einklappen():
           and w.menuWidget().height() <= h1 + 2, f"offen {offen}, danach {w.menuWidget().height()}")
     if w.maskenrand.offen():
         w.maskenrand.schliessen()
+    # Gegenpruefung 25.09.2026: ein Klick in die Ansicht liess das vorlaeufig
+    # offene Register stehen (Kopf 170 statt 71 px bei 1366 x 768)
+    _reiter_klick(rb.tabs.tabBar(), i)
+    offen = rb.vorlaeufig_offen()
+    ziel = w.plotter if isinstance(w.plotter, QtCore.QObject) else w.centralWidget()
+    QtTest.QTest.mouseClick(ziel, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, QtCore.QPoint(40, 40))
+    _ruhe(4)
+    check("… ein Klick daneben (in die Ansicht) klappt das vorläufig offene Register wieder zu",
+          offen and not rb.vorlaeufig_offen() and rb.eingeklappt() and w.menuWidget().height() <= h1 + 2,
+          f"vorher offen {offen}, danach Kopf {w.menuWidget().height()} px")
+    _reiter_klick(rb.tabs.tabBar(), i, doppelt=True)
+    check("echter Doppelklick auf einen Reiter im eingeklappten Ribbon klappt es wieder aus",
+          not rb.eingeklappt() and abs(w.menuWidget().height() - h0) <= 2, f"Kopf {w.menuWidget().height()} px")
+    rb.einklappen(True)
+    _ruhe(4)
     a = w.anordnung.act_ribbon
     check("Strg+F1 gehört dem Schalter „Ribbon einklappen“",
           a.shortcut() == QtGui.QKeySequence("Ctrl+F1") and a in w.actions(), a.shortcut().toString())
@@ -346,14 +415,53 @@ def test_kompaktstufe():
     bb, hh = _ansicht(w)
     check("… die Ansicht hat mindestens 30 % der Fensterfläche",
           bb * hh >= 0.30 * w.width() * w.height(), f"{bb} x {hh} = {100 * bb * hh / (w.width() * w.height()):.1f} %")
-    w.tab_unten.leiste.tabBarClicked.emit(1)
-    _ruhe(6)
+    leiste = w.tab_unten.leiste
+    _reiter_klick(leiste, 1)
     check("ein Klick auf eine Gruppe unten klappt den Bereich auf",
           not an.unten_eingeklappt() and w.unten_dock.height() >= 150, f"{w.unten_dock.height()} px")
-    w.tab_unten.leiste.tabBarDoubleClicked.emit(1)
+    _reiter_klick(leiste, 1, doppelt=True)
+    check("… ein echter Doppelklick auf die Leiste wieder zu",
+          an.unten_eingeklappt() and w.unten_dock.height() <= 40, f"{w.unten_dock.height()} px")
+    _reiter_klick(leiste, 1, doppelt=True)
+    check("… und ein echter Doppelklick auf die eingeklappte Leiste wieder auf",
+          not an.unten_eingeklappt() and w.unten_dock.height() >= 150, f"{w.unten_dock.height()} px")
+    an.unten_einklappen(True)
     _ruhe(6)
-    check("… ein Doppelklick auf die Leiste wieder zu", an.unten_eingeklappt() and w.unten_dock.height() <= 40,
-          f"{w.unten_dock.height()} px")
+    # Gegenpruefung 25.09.2026: Befehle, die unten eine Tabelle oder das
+    # Protokoll nach vorn holen, liessen den Bereich eingeklappt - die Tabelle
+    # blieb unsichtbar, der Befehl wirkte tot
+    ok = w.tabelle_zeigen("Werkstoffe")
+    _ruhe(6)
+    t = w.tab_unten.stapel.currentWidget()
+    check("Kompaktstufe: „Werkstoffe“ (tabelle_zeigen) klappt unten auf, die Tabelle ist sichtbar",
+          ok and not an.unten_eingeklappt() and w.unten_dock.height() >= 150 and t is not None and t.isVisible(),
+          f"unten {w.unten_dock.height()} px")
+    an.unten_einklappen(True)
+    _ruhe(6)
+    w._rechnet_gerade = True
+    w._bg_failed("Probe: Rechnung gescheitert", "Traceback (Probe)")
+    _ruhe(6)
+    check("Kompaktstufe: nach einer gescheiterten Rechnung steht das Protokoll sichtbar unten",
+          not an.unten_eingeklappt() and w.log.isVisible() and w.unten_dock.height() >= 150,
+          f"unten {w.unten_dock.height()} px, Protokoll sichtbar {w.log.isVisible()}")
+    an.unten_einklappen(True)
+    _ruhe(6)
+    # „Nur Ansicht“ ueber die Kompaktgrenze hinweg: danach gilt der Wunsch
+    # des Anwenders (Ribbon offen), nicht der Zustand der Kompaktstufe
+    an.nur_ansicht(True)
+    _ruhe(6)
+    _groesse(w, 1900, 1040)
+    an.nur_ansicht(False)
+    _ruhe(6)
+    check("„Nur Ansicht“ in der Kompaktstufe an, im großen Fenster aus: das Ribbon ist wieder offen",
+          not an.kompakt and not w.ribbon.eingeklappt(), f"kompakt {an.kompakt}, eingeklappt {w.ribbon.eingeklappt()}")
+    _groesse(w, 1366, 768)
+    an.nur_ansicht(True)
+    _ruhe(6)
+    an.nur_ansicht(False)
+    _ruhe(6)
+    check("… und „Nur Ansicht“ aus in der Kompaktstufe: das Ribbon bleibt eingeklappt, solange sie gilt",
+          an.kompakt and w.ribbon.eingeklappt(), f"kompakt {an.kompakt}")
     _groesse(w, 1920, 1080)
     check("zurück auf 1920 x 1080: Ribbon offen, unten wieder da, Würfel und Farbskala wie vorher",
           not an.kompakt and not w.ribbon.eingeklappt() and not an.unten_eingeklappt()
@@ -363,6 +471,59 @@ def test_kompaktstufe():
     check("schmales Fenster (1200 x 1000): die Ansicht bliebe unter 700 px breit - Kompaktstufe",
           an.kompakt, f"Ansicht {_ansicht(w)}")
     _groesse(w, 1920, 1080)
+
+
+def test_farbskala_ueber_kennwerten():
+    """Gegenpruefung 25.09.2026: die waagerechte Skala der Kompaktstufe lag auf
+    den Kennwerten unten links. Nachgezeichnet mit pyvista offscreen und den
+    Konstanten des Programms (im Hauptfenster hat VTK offscreen 0 x 0 px)."""
+    import numpy as np
+    import pyvista as pv
+    from statik3d.gui import viewport as vp
+    from statik3d.gui.main import MainWindow as MW
+    eine = ["u                                73.52 Knoten 14  [mm]"]
+    zwei = ["max u                            73.52 Knoten 14  [mm]",
+            "min u                             0.00 Knoten 1   [mm]"]
+
+    def lauf(groesse, zeilen, verlauf, heben):
+        p = pv.Plotter(off_screen=True, window_size=groesse)
+        try:
+            m = pv.Sphere(radius=0.01)
+            m["s"] = np.linspace(0.0, 73.52, m.n_points)
+            p.add_mesh(m, scalars="s", show_scalar_bar=False)
+            p.add_scalar_bar(**dict(vp.farbskala_waagerecht(dict(MW.FARBSKALA)), title="|u| [mm]"))
+            if verlauf:
+                p.add_scalar_bar(**dict(vp.farbskala_waagerecht(dict(MW.FARBSKALA_VERLAUF), zweite=True),
+                                        title="N [kN]"))
+            p.add_text("\n".join(zeilen), position=(12, 10), font_size=MW.SCHRIFT_KENNWERTE, font="courier",
+                       color="#203040", name="kennwerte")
+            if heben:
+                vp.farbskalen_heben_einrichten(p, lambda: True)
+            p.screenshot(return_img=True)
+            ren = p.renderer
+            t = vp.kennwerte_rahmen(ren, ren.actors["kennwerte"])
+            schnitte = 0
+            for b in p.scalar_bars.values():
+                x, y = b.GetPositionCoordinate().GetValue()[:2]
+                bw, bh = b.GetPosition2Coordinate().GetValue()[:2]
+                r = (x * groesse[0], (x + bw) * groesse[0], y * groesse[1], (y + bh) * groesse[1])
+                if r[0] < t[1] and t[0] < r[1] and r[2] < t[3] and t[2] < r[3]:
+                    schnitte += 1
+            return schnitte, t
+        finally:
+            p.close()
+    fehler, ohne = [], 0
+    for groesse in ((672, 627), (600, 579)):
+        for zeilen, verlauf in ((eine, False), (zwei, True)):
+            n, t = lauf(groesse, zeilen, verlauf, True)
+            ohne += lauf(groesse, zeilen, verlauf, False)[0]
+            if n:
+                fehler.append(f"{groesse[0]}x{groesse[1]} {len(zeilen)} Zeilen: Text bis y {t[3]:.0f} px")
+    check("Kompaktstufe: waagerechte Farbskala(n) und Kennwerte schneiden sich bei 672 x 627 und "
+          "600 x 579 px nicht (1 und 2 Zeilen)", not fehler, "; ".join(fehler))
+    check("… ohne das Anheben schnitten sie sich (die Prüfung sieht den Fehler)", ohne >= 3, f"{ohne} Schnitte")
+    w = _fenster()
+    check("… das Anheben hängt am Renderer des Hauptfensters", vp.farbskalen_heben_aktiv(w.plotter.renderer))
 
 
 def test_breite_maske_rollt():
@@ -546,8 +707,11 @@ def test_abnahme_bildschirme():
         check(f"{text}: startet maximiert, nicht höher als der Bildschirm",
               st["maximiert"] and fh <= sh and st["rahmen_h"] <= sh + 2, detail)
         if (sb, sh) == (1920, 1080):
-            check(f"{text}: Ansicht ≥ 50 % der Breite und ≥ 45 % der Höhe (Zielbild Kap. 2)",
-                  ab >= 0.5 * fb and ah >= 0.45 * fh, detail)
+            # Planmass 4a sichtbar fuehren (Gegenpruefung 25.09.2026), bis der
+            # Anwender entscheidet - nicht still durch das Ersatzmass ersetzen
+            offen(f"{text}: Planmaß 4a „Ansicht ≥ 45 % der Fensterfläche“", anteil >= 0.45, detail)
+            check(f"{text}: Ersatzmaß bis zur Entscheidung - Ansicht ≥ 50 % der Breite und ≥ 45 % der Höhe "
+                  "(Zielbild Kap. 2)", ab >= 0.5 * fb and ah >= 0.45 * fh, detail)
         check(f"{text}: Ansicht ≥ 30 % der Fensterfläche", anteil >= 0.30, detail)
         maengel = []
         for m in e["masken"]:
@@ -627,6 +791,132 @@ def test_start_aus_gespeichertem():
           e is not None and e["maximiert"] and e["baum_sichtbar"] and not e["ribbon"], str(e))
 
 
+def _kind_normal():
+    """Start wie main(), danach „Verkleinern“ (showNormal)."""
+    from statik3d.gui import main as gm
+    _app()
+    w = gm.MainWindow()
+    gm.fenster_starten(w)
+    _ruhe(12)
+    erg = {"maximiert": w.isMaximized()}
+    w.showNormal()
+    _ruhe(12)
+    scr = w.screen().availableGeometry()
+    erg.update(schirm=[scr.width(), scr.height()], normal=[w.width(), w.height()],
+               rahmen_h=w.frameGeometry().height(), maximiert_danach=w.isMaximized())
+    print("MESSUNG " + json.dumps(erg), flush=True)
+
+
+def test_verkleinern_aus_maximiert():
+    """Gegenpruefung 25.09.2026: nach dem maximierten Start ergab „Verkleinern“
+    1600 x 980 - auf 1366 x 768 hoeher als der Bildschirm -, und eine gemerkte
+    Normalgroesse galt nicht."""
+    e = _bildschirm_lauf(1366, 768, arg="--normal")
+    check("1366 x 768: maximiert gestartet, „Verkleinern“ ergibt ein Fenster nicht höher als der Bildschirm",
+          e is not None and e["maximiert"] and not e["maximiert_danach"] and e["rahmen_h"] <= e["schirm"][1]
+          and e["normal"][0] <= e["schirm"][0], str(e))
+    eintrag = {"fassung": 1, "geometrie": [100, 60, 1300, 800], "maximiert": True, "bildschirm": [1920, 1080]}
+    e = _bildschirm_lauf(1920, 1080, arg="--normal", einstellungen={"fenster": eintrag})
+    check("gemerkt „maximiert“ mit Normalgröße 1300 x 800: maximiert gestartet, „Verkleinern“ ergibt 1300 x 800",
+          e is not None and e["maximiert"] and e["normal"] == [1300, 800], str(e))
+
+
+def _kind_hauptstart():
+    """Der echte Startweg: main() bis app.exec, dann Beenden wie der Anwender."""
+    from PySide6 import QtWidgets
+    from statik3d.gui import main as gm
+    erg = {}
+
+    class App(QtWidgets.QApplication):
+        def exec(self):                       # noqa: A003 - wie QApplication.exec
+            _ruhe(12)
+            fenster = [x for x in self.topLevelWidgets() if isinstance(x, gm.MainWindow)]
+            w = fenster[0]
+            erg["maximiert"] = w.isMaximized()
+            w.close()
+            _ruhe(4)
+            try:
+                with open(os.environ["STATIK3D_EINSTELLUNGEN"], encoding="utf-8") as f:
+                    erg["fenster"] = json.load(f).get("fenster")
+            except (OSError, ValueError) as ex:
+                erg["fenster"] = f"nicht lesbar: {ex}"
+            return 0
+    app = App([])
+    try:
+        gm.main(app)
+    except SystemExit:
+        pass
+    print("MESSUNG " + json.dumps(erg), flush=True)
+
+
+def test_startweg_und_beenden():
+    """Gegenpruefung 25.09.2026: die Pruefungen riefen fenster_starten und
+    speichern selbst auf - ob main() maximiert startet und das Beenden die
+    Aufteilung merkt, sah keine."""
+    e = _bildschirm_lauf(1920, 1080, arg="--hauptstart")
+    check("main(): das Programm startet maximiert", e is not None and e.get("maximiert") is True, str(e)[:160])
+    f = (e or {}).get("fenster")
+    check("Beenden (closeEvent) merkt Größe und Aufteilung in einstellungen.json",
+          isinstance(f, dict) and f.get("fassung") == 1 and f.get("maximiert") is True, str(f)[:160])
+
+
+def _kind_baum():
+    """Beispiel hall, Baum ganz aufgeklappt: wie viele Namen sind abgeschnitten?"""
+    from PySide6 import QtWidgets
+    from statik3d.gui import main as gm
+    _app()
+    w = gm.MainWindow()
+    w._fragen_knoepfe = lambda *a, **k: True
+    w.error = lambda *a, **k: None
+    gm.fenster_starten(w)
+    _ruhe(12)
+    w.load_example("hall")
+    _ruhe(8)
+    b = w.baum
+    b.expandAll()
+    _ruhe(6)
+    n = ab = 0
+    beispiele = []
+    it = QtWidgets.QTreeWidgetItemIterator(b)
+    while it.value():
+        item = it.value()
+        text = item.text(0)
+        if text:
+            n += 1
+            platz = b.visualRect(b.indexFromItem(item, 0)).width()
+            braucht = b.fontMetrics().horizontalAdvance(text) + (22 if not item.icon(0).isNull() else 0) + 8
+            if braucht > platz:
+                ab += 1
+                beispiele.append(text)
+        it += 1
+    print("MESSUNG " + json.dumps({"baum": b.width(), "eintraege": n, "abgeschnitten": ab,
+                                   "beispiele": beispiele[:6], "ansicht": list(_ansicht(w)),
+                                   "fenster": [w.width(), w.height()]}), flush=True)
+
+
+#: am Stand 562dc3a (Baum 290 px) bei 1366 x 768 mit Segoe UI: 6 von 196
+#: Namen abgeschnitten, alle „+ … anlegen“ (Gegenpruefung 25.09.2026)
+BAUM_ABGESCHNITTEN_ALT = 6
+
+
+def test_baum_namen_lesbar():
+    """Gegenpruefung 25.09.2026: mit 16 % Breite (218 px bei 1366) waren 95
+    von 196 Namen abgeschnitten, „Stiel…“ zweimal. Gemessen mit der
+    Windows-Schrift, wenn es sie gibt - die Zahl des alten Stands gilt fuer sie."""
+    fonts = r"C:\Windows\Fonts"
+    extra = {"QT_QPA_FONTDIR": fonts} if os.path.isdir(fonts) else {}
+    e = _bildschirm_lauf(1366, 768, arg="--baum", env_extra=extra)
+    ok = e is not None and e["eintraege"] >= 150 and e["abgeschnitten"] <= BAUM_ABGESCHNITTEN_ALT
+    check(f"1366 x 768, Beispiel hall aufgeklappt: höchstens {BAUM_ABGESCHNITTEN_ALT} Namen abgeschnitten "
+          "(so viele wie am Stand 562dc3a)", ok and all("anlegen" in t or t.startswith("+") for t in e["beispiele"]),
+          str(e)[:200])
+    if e is not None:
+        fb, fh = e["fenster"]
+        ab, ah = e["ansicht"]
+        check("… die Ansicht behält dabei mindestens 30 % der Fensterfläche", ab * ah >= 0.30 * fb * fh,
+              f"{ab} x {ah} = {100 * ab * ah / (fb * fh):.1f} %")
+
+
 def test_handbuch():
     from tests.handbuch import absatz
     a = absatz("**Fensteraufteilung**")
@@ -641,6 +931,13 @@ def test_handbuch():
     check("Handbuch: Kompaktstufe unter 900 px oder 700 × 400 px, Registerzeile, Würfel, Farbskala",
           "900 px" in c and "700 × 400" in c and "Registerzeile" in c and "Würfel" in c
           and "waagerecht" in c, c[:80])
+    # Nachbesserung nach der Gegenpruefung (25.09.2026)
+    check("Handbuch: Baum mindestens 260 px, Zusatzspalte höchstens ein Viertel",
+          "260 px" in a and "ein Viertel" in a, a[:80])
+    check("Handbuch: Klick daneben schließt das Register, Tabellenbefehle klappen unten auf, "
+          "Verkleinern höchstens 90 %",
+          "daneben klickt" in b and "klappen den Bereich" in b and "Protokoll" in b and "90 %" in b, b[:80])
+    check("Handbuch: waagerechte Farbskala über den Kennwerten", "über den Kennwerten" in c, c[:80])
     d = absatz("Oben eine dunkle Kopfzeile")
     check("Handbuch: Kopfzeile mit Schnellzugriff und Suche, Modellumfang in der Statusleiste",
           "Schnellzugriff" in d and "Befehlssuche" in d and "Statusleiste" in d, d[:80])
@@ -655,14 +952,21 @@ def main():
     if "--fest" in sys.argv:
         _kind_fest()
         return 0
-    if "--gespeichert" in sys.argv:
-        _kind_gespeichert()
-        return 0
+    for arg, kind in (("--gespeichert", _kind_gespeichert), ("--normal", _kind_normal),
+                      ("--hauptstart", _kind_hauptstart), ("--baum", _kind_baum)):
+        if arg in sys.argv:
+            kind()
+            return 0
+    #: ``-k teil``: nur Pruefungen, deren Name den Teil enthaelt (zum Nacharbeiten)
+    nur = sys.argv[sys.argv.index("-k") + 1] if "-k" in sys.argv[:-1] else ""
     for t in (test_sollmasse_und_pruefen, test_einstellungen_behalten_schluessel, test_startregister,
               test_kopfzeile, test_ecken_und_titel, test_sollmasse_im_fenster, test_ribbon_einklappen,
-              test_fenstermenue, test_kompaktstufe, test_breite_maske_rollt, test_trennlinie_des_anwenders,
-              test_fest_haelt_alten_stand, test_start_aus_gespeichertem, test_abnahme_bildschirme,
-              test_handbuch):
+              test_fenstermenue, test_kompaktstufe, test_farbskala_ueber_kennwerten, test_breite_maske_rollt,
+              test_trennlinie_des_anwenders, test_fest_haelt_alten_stand, test_start_aus_gespeichertem,
+              test_verkleinern_aus_maximiert, test_startweg_und_beenden, test_baum_namen_lesbar,
+              test_abnahme_bildschirme, test_handbuch):
+        if nur and nur not in t.__name__:
+            continue
         print(f"\n--- {t.__name__} ---", flush=True)
         try:
             t()
@@ -672,6 +976,8 @@ def main():
             RESULTS.append((t.__name__ + f" (Ausnahme: {ex})", False))
     n_ok = sum(1 for _, ok in RESULTS if ok)
     print(f"\n{'=' * 60}\nErgebnis: {n_ok}/{len(RESULTS)} Pruefungen bestanden")
+    for o in OFFEN:
+        print("OFFEN (Planmass, Entscheidung des Anwenders):", o)
     failed = [n for n, ok in RESULTS if not ok]
     if failed:
         print("FEHLGESCHLAGEN:", failed)

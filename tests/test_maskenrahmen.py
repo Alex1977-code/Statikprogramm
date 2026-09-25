@@ -503,8 +503,20 @@ def _fenster():
     # Kompaktstufe (nur die Registerzeile), beim Start 1600 x 980 ein Viertel
     _FENSTER.update(w=w, app=app)
     _zuruecksetzen(w)
+    # Gegenpruefung 25.09.2026: in der Kompaktstufe war unten auf die
+    # Registerzeile (27 px) gedeckelt - die Pruefungen zum unteren Bereich
+    # verglichen „27 -> 27“ und konnten nicht reissen. Unten ist darum fuer
+    # alle folgenden Pruefungen aufgeklappt.
+    _unten_auf(w)
     _FENSTER["unten0"] = w.unten_dock.height()
     return w, app
+
+
+def _unten_auf(w):
+    anordnung = getattr(w, "anordnung", None)
+    if anordnung is not None:
+        anordnung.unten_einklappen(False)
+        _ruhe()
 
 
 def _zuruecksetzen(w, groesse=SOLL):
@@ -632,8 +644,8 @@ def test_unten_bleibt():
     h0 = w.unten_dock.height()
     # Alle Masken der Pruefungen davor (51 in test_fenster_waechst_nie) sind
     # zu: unten muss so hoch sein wie vor der ersten Maske
-    check("nach allen vorigen Masken: unten so hoch wie vor der ersten Maske (±5 px)",
-          abs(h0 - _FENSTER["unten0"]) <= 5, f"{_FENSTER['unten0']} -> {h0}")
+    check("nach allen vorigen Masken: unten so hoch wie vor der ersten Maske (±5 px), und aufgeklappt",
+          abs(h0 - _FENSTER["unten0"]) <= 5 and h0 > 60, f"{_FENSTER['unten0']} -> {h0}")
     hoehen = [h0]
     for s in ("Wind", "zu", "Wasserdruck", "zu", "Wind", "Wasserdruck", "zu", "Netz"):
         _oeffnen(w, s)
@@ -695,9 +707,10 @@ def test_kurze_maske_rollt_nicht():
           rollweg == 0 and w.height() == SOLL[1], f"Rollweg {rollweg}, Fenster {w.height()}")
     _oeffnen(w, "Wind")
     mk = w.maskenrand.maske
-    check("Windmaske: die Mitte rollt, der untere Bereich bleibt über seiner Mindesthöhe",
+    check("Windmaske: die Mitte rollt, der untere Bereich bleibt über seiner Mindesthöhe und wie er war (±5 px)",
           mk.rolle.verticalScrollBar().maximum() > 0
-          and w.unten_dock.height() > w.unten_dock.minimumHeight() + 20,
+          and w.unten_dock.height() > w.unten_dock.minimumHeight() + 20
+          and abs(w.unten_dock.height() - h0) <= 5 and h0 > 60,
           f"unten {w.unten_dock.height()} (vorher {h0})")
     _zuruecksetzen(w)
 
@@ -944,13 +957,17 @@ def test_handbuch():
     check("Handbuch: Hinweiszeile oben, nur die Mitte rollt, fester Fuß mit Hauptknopf",
           "Hinweiszeile" in aufbau and "rollt nur diese Mitte" in aufbau
           and "fester Fuß" in aufbau and "nicht auseinandergezogen" in aufbau, aufbau[:80])
-    check("Handbuch: das Fenster wächst nicht (auch maximiert); passt die Maske, wird unten "
-          "kleiner, sonst rollt sie bis etwa zwei Feldzeilen",
+    # Seit Paket 5 (25.09.2026) reicht der rechte Bereich ueber die volle
+    # Hoehe: eine Maske nimmt dem unteren Bereich keine Hoehe mehr; der alte
+    # Ablauf gilt nur noch mit STATIK3D_FENSTER=fest
+    check("Handbuch: das Fenster wächst nicht (auch maximiert); die Maske rollt bis etwa zwei "
+          "Feldzeilen, unten bleibt, wie er ist; der alte Ablauf nur noch mit „fest“",
           "nicht mehr über den Bildschirm hinaus wachsen" in aufbau
           and "auch nicht im maximierten Fenster" in aufbau
-          and "bis auf seine Mindesthöhe kleiner" in aufbau
+          and "volle Fensterhöhe" in aufbau and "bleibt, wie er ist" in aufbau
           and "bis herunter auf etwa zwei Feldzeilen" in aufbau
-          and "bekommt der untere Bereich seine Höhe zurück" in aufbau, aufbau[:80])
+          and "STATIK3D_FENSTER=fest" in aufbau
+          and "bis auf seine Mindesthöhe kleiner" in aufbau, aufbau[:80])
     rad = absatz("Das **Mausrad** über der Mitte")
     check("Handbuch: Mausrad rollt, verstellt Auswahllisten nur mit Fokus; Klick auf halb sichtbares Feld",
           "nur, wenn die Liste den Fokus hat" in rad and "halb sichtbares Feld" in rad, rad[:80])

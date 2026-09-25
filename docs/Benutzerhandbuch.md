@@ -130,15 +130,22 @@ Geprüft in `tests/test_ungespeichert.py`, dort auch mit echten Tastendrücken.
 
 **Fensteraufteilung** (seit 25.09.2026). Das Programm startet **maximiert**
 und im Register **Start**. Der Modellbaum bekommt 16 % der Fensterbreite,
-der rechte Bereich 460 px, der untere Bereich 25 % der Höhe; Baum und
+mindestens aber 260 px, und seine Zusatzspalte (Anzahl, Koordinaten)
+höchstens ein Viertel davon — mit 16 % allein waren bei 1366 × 768 am
+Hallenrahmen 95 von 196 Namen abgeschnitten („Stiel…“ zweimal), jetzt sind es
+drei „+ … anlegen“. Der rechte Bereich bekommt 460 px, der untere Bereich
+25 % der Höhe; Baum und
 rechter Bereich reichen über die **volle Höhe** vom Ribbon bis zur
 Statusleiste, der untere Bereich steht nur unter der Ansicht und hat keine
 eigene Titelzeile mehr („Protokoll und Tabellen“) — die Gruppenleiste sagt
 dasselbe. Solange man keine Trennlinie zwischen den Bereichen zieht, folgen
 die Maße der Fenstergröße; wer eine zieht, behält seine Maße. Bei 1920 × 1080
 hat die Ansicht so 1137 × 610 px statt 1142 × 470 px (maximiert), bei
-1366 × 768 672 × 639 px statt 588 × 158 px (offscreen gemessen, Prüfung
-`tests/test_fensteraufteilung.py`). Eine Maske mit breiten Zeilen (Wind,
+1366 × 768 630 × 639 px statt 588 × 158 px (offscreen gemessen, Prüfung
+`tests/test_fensteraufteilung.py`). Das Planmaß „Ansicht mindestens 45 % der
+Fensterfläche bei 1920 × 1080“ ist damit nicht erreicht (34 %); dafür bliebe
+unten nur rund 63 px Platz. Darüber entscheidet noch der Anwender, die Prüfung
+führt es bis dahin als offen. Eine Maske mit breiten Zeilen (Wind,
 Kontaktbedingung) macht den rechten Bereich nicht mehr breiter: ihre Mitte
 rollt dann auch waagerecht — bis zum 24.09.2026 zog die Windmaske ihn auf
 1170 px, die Ansicht blieb bei 128 px. Reicht die Breite unten nicht für die
@@ -148,12 +155,22 @@ Knopfzeilen der Tabellen, rollt der untere Bereich waagerecht.
 *Modellbaum zeigen*, *Rechten Bereich zeigen*, *Unteren Bereich zeigen*;
 *Ribbon einklappen* (auch **Strg+F1** oder **Doppelklick** auf einen Reiter —
 eingeklappt steht nur die Registerzeile da, ein einfacher Klick auf einen
-Reiter öffnet das Register, bis ein Befehl daraus gelaufen ist); *Nur
+Reiter öffnet das Register, bis ein Befehl daraus gelaufen ist oder man
+daneben klickt, etwa in die Ansicht); *Nur
 Ansicht* blendet Baum, rechten und unteren Bereich aus und klappt das Ribbon
-ein, noch einmal gewählt ist alles wie vorher; *Anordnung zurücksetzen* zeigt
+ein, noch einmal gewählt ist alles wie vorher (auch wenn das Fenster
+inzwischen größer oder kleiner geworden ist); *Anordnung zurücksetzen* zeigt
 alle Bereiche wieder in den Maßen oben. Ein Doppelklick auf die Gruppenleiste
 unten klappt den unteren Bereich auf die Registerzeile zusammen und wieder
-auf. Größe, Lage und Aufteilung merkt sich das Programm beim Beenden in
+auf. Befehle, die unten eine Tabelle nach vorn holen („Tabelle …“,
+Querschnitte, Werkstoffe, ein Klick auf einen Baumzweig), klappen den Bereich
+auf; nach einer gescheiterten Rechnung steht dort das Protokoll mit der
+FEHLER-Zeile. Bis zum 25.09.2026 wechselte eingeklappt nur die Gruppe in der
+Leiste, und ein echter Doppelklick änderte nichts (der Klick, den er mit sich
+bringt, klappte gleich wieder um). Wer das maximierte Fenster verkleinert,
+bekommt die gemerkte Normalgröße oder höchstens 90 % der Bildschirmfläche,
+mittig — bis dahin waren es 1600 × 980 px, auch auf einem 768 px hohen
+Bildschirm. Größe, Lage und Aufteilung merkt sich das Programm beim Beenden in
 `einstellungen.json` (Benutzerdaten\Statik3D, Schlüssel „fenster“ mit einer
 Fassungskennung). Beim Start wird geprüft, ob das Fenster noch auf einen
 Bildschirm passt: sonst — Bildschirm abgezogen, kleinere Auflösung, höhere
@@ -165,9 +182,12 @@ Ansicht mit diesen Maßen kleiner als 700 × 400 px (1366 × 768, ein
 1920er-Bildschirm mit 125 % oder 150 % Skalierung, ein schmal gezogenes
 Fenster), ist das Ribbon eingeklappt, unten steht nur die Registerzeile
 (ein Klick auf eine Gruppe klappt den Bereich auf), der Würfel ist kleiner
-und die Farbskala liegt waagerecht unten in der Ansicht. Wird das Fenster
+und die Farbskala liegt waagerecht unten in der Ansicht, über den Kennwerten
+unten links (bis zum 25.09.2026 lag sie auf ihnen, „73.52 Knoten 14“ war
+nicht zu lesen — auch im Berichtsbild aus der Ansicht). Wird das Fenster
 wieder groß genug, ist alles wie vorher. Die Ansicht hat so bei 1366 × 768
-41 % der Fensterfläche, bei 1280 × 720 39 %.
+39 % der Fensterfläche, bei 1280 × 720 35 % (mit dem breiteren Modellbaum,
+Stand 25.09.2026).
 
 Für Prüfungen und den Bildvergleich hält die Umgebungsvariable
 `STATIK3D_FENSTER=fest` die Aufteilung beim Stand bis 24.09.2026: 1600 × 980,
@@ -2324,13 +2344,17 @@ Hauptknopf bleibt immer zu sehen. Kurze Masken stehen oben im rechten Bereich,
 ihre Zeilen werden nicht auseinandergezogen. Eine lange Maske (Wind,
 Wasserdruck, Knotenlager, Kontaktbedingung) lässt das Programmfenster nicht
 mehr über den Bildschirm hinaus wachsen, auch nicht im maximierten Fenster.
-Fehlt Platz, gilt: Passt die ganze Maske, wenn der untere Bereich (Protokoll
-und Tabellen) bis auf seine Mindesthöhe kleiner wird, wird er so weit kleiner,
-und die Maske rollt nicht — so zeigt die Knotenmaske auch bei 1366 × 768 alle
-Felder. Eine längere Maske rollt dagegen bis herunter auf etwa zwei Feldzeilen,
-erst dann nimmt sie dem unteren Bereich Höhe. Schließt man die Maske, bekommt
-der untere Bereich seine Höhe zurück, und eine breite Maske gibt der 3D-Ansicht
-die Breite wieder, sobald eine schmale Maske oder ein Register folgt.
+Seit dem 25.09.2026 reicht der rechte Bereich über die volle Fensterhöhe
+(siehe *Fensteraufteilung* in Kapitel 2), die Knotenmaske zeigt so auch bei
+1366 × 768 alle Felder. Eine Maske nimmt dem unteren Bereich (Protokoll und
+Tabellen) darum keine Höhe mehr: Fehlt Platz, rollt ihre Mitte bis herunter
+auf etwa zwei Feldzeilen, und der untere Bereich bleibt, wie er ist. Eine
+Maske mit breiten Zeilen macht den rechten Bereich nicht breiter, ihre Mitte
+rollt dann auch waagerecht. Nur mit `STATIK3D_FENSTER=fest` gilt der Ablauf
+bis zum 24.09.2026: Passt die ganze Maske, wenn der untere Bereich bis auf
+seine Mindesthöhe kleiner wird, wird er so weit kleiner; schließt man sie,
+bekommt er seine Höhe zurück, und eine breite Maske gibt der 3D-Ansicht die
+Breite wieder, sobald eine schmale Maske oder ein Register folgt.
 
 Das **Mausrad** über der Mitte rollt immer die Mitte. Über einer Auswahlliste
 verstellt es deren Wert nur, wenn die Liste den Fokus hat (angeklickt oder per
