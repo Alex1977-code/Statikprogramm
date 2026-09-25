@@ -1,37 +1,21 @@
 """
-Elementwahl zum Anhaken und Elementuebersicht (Paket E, 25.09.2026).
+Rueckfrage beim Import und Elementuebersicht (Paket E, 25.09.2026).
 
 Wuensche des Anwenders:
 
-* 23.09.2026: „ich möchte die zu verwendenden elemente anhaken können und je
-  nach kompatibilität der elemente sollen dann die anhakmöglichkeiten
-  ausgegraut werden … standard sollte tet10 und vq83 sein.“
+* 23.09.2026: „ich möchte die zu verwendenden elemente anhaken können …
+  standard sollte tet10 und vq83 sein.“
 * 25.09.2026, nach einem Drehlager-Lauf mit tet4: „auswahl der zu
   verwendenden elemente bei berechnung war nicht vorhanden; und nach der
   Berechnung sehe ich das auch nirgendwo … wie kann ich dem prüfer beweisen
   dass an dieser stelle dieses element verwendet wurde“.
-
-Dieses Modul ist die Logik ohne Oberflaeche: welche Haken es gibt, welche
-gesetzt und welche grau sind (mit Grund), wie die Wahl auf die **vorhandenen**
-Netzeinstellungen abbildet, was der Import fragt, und die Zaehlung und
-Faerbung des fertigen Netzes nach Elementtyp fuer Ansicht, Protokoll und
-Bericht.
-
-**Was die Wahl einstellen kann - und was nicht.** Der Vernetzer kennt eine
-Ordnung fuer alles, was er selbst erzeugt (``Netzeinstellungen.ordnung``):
-frei vernetzte Koerper werden tet4 oder tet10, abgebildete Sechsflaechner
-(sechs Vierecke, acht Ecken, gerade Kanten) hex8 oder hex20, Flaechen
-shell3/shell4 oder shell6/shell8 - alles mit derselben Ordnung. Der Sweep
-(``Netzeinstellungen.sweep``, seit 25.09.2026 ein Wort "aus" | "sauber" |
-"immer" und keine Option der Oberflaeche mehr) macht hex8/pent6.
-Pyramiden als Uebergang schaltet ``Netzeinstellungen.pyramiden``. Ein
-Tetraeder mit Ordnung p (tetp) entsteht nur durch Umwandlung eines tet10-
-Netzes (elements.tetp.aus_tet10), nicht beim Vernetzen. Darum sind hier nur
-tet4/tet10 und die Pyramiden anhakbar; VQ83, VQ203, tetp und die Schalen
-folgen daraus und stehen grau mit ihrem Grund da. Die Vorgabe des Anwenders
-„tet10 + VQ83“ heisst damit: tet10 frei, hex8 aus dem Sweep und jeder hex8
-als VQ83 gerechnet - abgebildete Sechsflaechner werden bei tet10 aber hex20
-(VQ203), das kann die Wahl ohne Aenderung am Vernetzer nicht trennen.
+* 25.09.2026, danach: Stufen statt Haken („keep it simple“, „viel zu
+  fummelig“). **Die Haken der Elementwahl sind damit ersetzt** durch das
+  Auswahlfeld „Elemente“ (Entwurf / Mittel / Fein) in den
+  Netzeinstellungen - Logik in :mod:`statik3d.elementstufe`. Hier bleiben
+  die Rueckfrage beim Import (jetzt nach der Stufe) und die Zaehlung und
+  Faerbung des fertigen Netzes nach Elementtyp fuer Ansicht, Protokoll und
+  Bericht.
 
 **Warum die RFEM-Datei keine Elementordnung vorgibt.** Die mesh.xml einer
 .rf6 enthaelt Ziellaenge, Knotenabstand, Stabteilung, Seitenverhaeltnis,
@@ -40,8 +24,9 @@ Schluessel fuer lineare oder quadratische Elemente (nachgesehen am
 25.09.2026 in beiden Drehlager-Dateien V15_4). Die Zeile „lineare Elemente
 (shell3/shell4, tet4, hex8) (aus mesh.xml der RFEM-Datei)“ im Protokoll des
 Drehlager-Laufs war die Vorgabe des Datenmodells (``ordnung = 1``), nicht die
-der Datei. Die Rueckfrage beim Import fragt darum nur nach dem, was die Datei
-wirklich vorgibt; die Ordnung ist die Statik3D-Vorgabe.
+der Datei. Die Rueckfrage beim Import fragt darum nur nach dem, was eine
+Datei wirklich vorgibt; gibt sie eine Ordnung vor, ist das eine Stufe (1
+Entwurf, 2 Mittel).
 """
 from __future__ import annotations
 
@@ -50,188 +35,45 @@ from dataclasses import replace
 import numpy as np
 
 from . import elemente as EL
+from . import elementstufe as es
 
-#: Statik3D-Vorgabe der Elementwahl (Anwender 23.09.2026): tet10 + VQ83
-VORGABE = frozenset({"tet10", "hex8"})
-VORGABE_TEXT = "tet10 + VQ83"
-#: ... und was sie in den Netzeinstellungen heisst
-VORGABE_ORDNUNG = 2
-
-#: Die Haken der Maske: (Schluessel, Gruppe, Beschriftung). Die Gruppen sind
-#: die Familien, in denen der Anwender denkt.
-HAKEN = (
-    ("tet4", "Volumen – Tetraeder", "tet4 – linear, 4 Knoten"),
-    ("tet10", "Volumen – Tetraeder", "tet10 – quadratisch, 10 Knoten"),
-    ("tetp", "Volumen – Tetraeder", "tetp – Ordnung p = 2 … 4 (hierarchisch)"),
-    ("hex8", "Volumen – Sechsflächner", "VQ83 – hex8, entartet als pent6/pyr5/tet4"),
-    ("hex20", "Volumen – Sechsflächner", "VQ203 – hex20, entartet als pent15/tet10"),
-    ("pyr5", "Volumen – Übergang", "Pyramiden (pyr5) zwischen Vierecken und Tetraedern"),
-    ("schale1", "Schalen", "linear – shell3/shell4"),
-    ("schale2", "Schalen", "quadratisch – shell6/shell8"),
-)
-#: Haken, die der Anwender selbst setzt - die uebrigen folgen aus ihnen
-ANHAKBAR = ("tet4", "tet10", "pyr5")
-#: Haken -> Elementtyp fuer die Vertraeglichkeitstabelle (elemente.VERTRAEGLICH)
-TYP = {"tet4": "tet4", "tet10": "tet10", "tetp": "tetp2", "hex8": "hex8", "hex20": "hex20",
-       "pyr5": "pyr5"}
-
-
-def _vertraeglich_text(a: str, b: str) -> str:
-    """„neben tet10: passen nicht aneinander“ aus elemente.VERTRAEGLICH."""
-    art = EL.VERTRAEGLICH.get((TYP[a], TYP[b]), "nein")
-    return f"neben {a}: {EL.VERTRAEGLICH_TEXT[art]}"
-
-
-def wahl_aus_netz(netz) -> set:
-    """Die angehakten Elemente zu den Netzeinstellungen."""
-    wahl = {"tet10" if int(getattr(netz, "ordnung", 1) or 1) >= 2 else "tet4"}
-    if bool(getattr(netz, "pyramiden", False)):
-        wahl.add("pyr5")
-    return wahl
-
-
-def sweep_an(netz) -> bool:
-    """Ob der Sweep in diesen Netzeinstellungen an ist (25.09.2026).
-
-    Seit das Feld ein Wort ist, waere bool(netz.sweep) auch fuer "aus" wahr -
-    die Elementwahl zeigte dann „an“. Gelesen wie im Vernetzer
-    (sweep.betriebsart): alles ausser "aus" sweept."""
-    from types import SimpleNamespace
-    from .sweep import betriebsart
-    return betriebsart(SimpleNamespace(netz=netz)) != "aus"
-
-
-def tetraeder(wahl) -> str:
-    """Der gewaehlte Tetraeder: "tet10", "tet4" oder "" (keiner)."""
-    return "tet10" if "tet10" in wahl else ("tet4" if "tet4" in wahl else "")
-
-
-def zustand(wahl, sweep: bool = False) -> dict:
-    """Je Haken {"an": angehakt, "frei": anklickbar, "grund": Klartext}.
-
-    ``grund`` erklaert bei einem grauen Haken, warum er grau ist (Tooltip),
-    bei einem freien, was er bewirkt. Grau ist, was nicht zur Wahl passt -
-    nach der Vertraeglichkeitstabelle (elemente.VERTRAEGLICH) - oder was der
-    Vernetzer nicht getrennt einstellen kann."""
-    wahl = set(wahl or ())
-    tet = tetraeder(wahl)
-    z: dict = {}
-    eine_ordnung = ("Eine Ordnung für alle frei vernetzten Körper (Netzeinstellungen → "
-                    "Elementansatz): tet4 und tet10 gemischt gibt es nur je Körper "
-                    "(Ordnung am Volumenkörper), nicht über diese Wahl")
-    for a, b in (("tet4", "tet10"), ("tet10", "tet4")):
-        if b in wahl:
-            z[a] = {"an": False, "frei": False,
-                    "grund": f"{eine_ordnung} – erst {b} abhaken ({_vertraeglich_text(b, a)})."}
-        elif a == "tet4":
-            z[a] = {"an": a in wahl, "frei": True,
-                    "grund": "Konstante Dehnung je Element: die Spannung stimmt erst bei sehr "
-                             "feinem Netz (Kragarm 22.09.2026: −266 / −166 / −70 N/mm² Abweichung "
-                             "vom Sollwert 355 bei 90 / 405 / 2 295 FHG)."}
-        else:
-            z[a] = {"an": a in wahl, "frei": True,
-                    "grund": "Statik3D-Vorgabe. Quadratischer Ansatz: am Kragarm +14 / +4 / +1 N/mm² "
-                             "bei 405 / 2 295 / 15 147 FHG (22.09.2026); Flächen bekommen dann "
-                             "shell6/shell8, abgebildete Sechsflächner hex20."}
-    kein_weg = ("Der Vernetzer erzeugt keine tetp - sie entstehen nur aus einem tet10-Netz "
-                "(elements.tetp.aus_tet10); in der Oberfläche noch nicht wählbar.")
-    z["tetp"] = {"an": False, "frei": False,
-                 "grund": (_vertraeglich_text(tet, "tetp") + " (die Rechnung hält dort an). "
-                           if tet == "tet10" else "") + kein_weg}
-    if tet == "tet4":
-        neu = ("Neue hex8 entstehen in abgebildeten Sechsflächnern (sechs Vierecke, acht Ecken, "
-               "gerade Kanten)" + (" und im Sweep." if sweep else
-                                   "; der Sweep ist aus (seit 25.09.2026 keine Option der "
-                                   "Oberfläche)."))
-    else:
-        neu = ("Neue hex8 entstehen nur im Sweep - " + (
-            "der Sweep ist an (aus der Datei)." if sweep else
-            "der Sweep ist aus (seit 25.09.2026 keine Option der Oberfläche), und die "
-            "Elementwahl schaltet ihn nicht ein."))
-    z["hex8"] = {"an": True, "frei": False,
-                 "grund": "Jeder hex8 im Netz wird als VQ83 gerechnet: mit zusammenfallenden Knoten "
-                          "als der Keil, die Pyramide oder der Tetraeder, der er ist (immer an). "
-                          + neu + (f" {_vertraeglich_text(tet, 'hex8')}." if tet else "")}
-    if tet == "tet10":
-        z["hex20"] = {"an": True, "frei": False,
-                      "grund": "Folgt dem Tetraeder: mit tet10 bekommen abgebildete Sechsflächner "
-                               "(sechs Vierecke, acht Ecken, gerade Kanten) hex20 - der Vernetzer hat "
-                               "eine Ordnung für beide. Mit zusammenfallenden Knoten wird ein hex20 "
-                               "als pent15 oder tet10 gerechnet (VQ203). Gesweepte Körper bleiben hex8."}
-    else:
-        z["hex20"] = {"an": False, "frei": False,
-                      "grund": "hex20 entsteht nur mit dem quadratischen Ansatz (tet10). "
-                               + (_vertraeglich_text(tet, "hex20") + "." if tet else "")}
-    z["pyr5"] = {"an": "pyr5" in wahl, "frei": True,
-                 "grund": "Wo ein frei vernetzter Körper an die Vierecke eines gesweepten oder "
-                          "abgebildeten Nachbarn stößt, bekommt jedes Viereck eine Pyramide "
-                          "(Netzeinstellungen.pyramiden); ohne sie teilt der Tetraeder das Viereck "
-                          "in zwei Dreiecke. " + (_vertraeglich_text(tet, "pyr5") + "." if tet else "")}
-    folgt = ("Flächen folgen dem Ansatz der Tetraeder (Netzeinstellungen → Elementansatz): "
-             "eine Ordnung für das ganze Netz.")
-    z["schale1"] = {"an": tet == "tet4", "frei": False, "grund": folgt}
-    z["schale2"] = {"an": tet == "tet10", "frei": False, "grund": folgt}
-    return z
-
-
-def auf_netz(netz, wahl):
-    """Die Wahl in die Netzeinstellungen: nur ``ordnung`` und ``pyramiden``.
-
-    Den Sweep und alles andere laesst sie, wie es ist. ValueError, wenn kein
-    Tetraeder gewaehlt ist - frei vernetzte Koerper braeuchten einen."""
-    tet = tetraeder(wahl)
-    if not tet:
-        raise ValueError("Für frei vernetzte Körper ist ein Tetraeder nötig: tet4 oder tet10 anhaken")
-    return replace(netz, ordnung=2 if tet == "tet10" else 1, pyramiden="pyr5" in set(wahl))
-
-
-def vorschau(wahl, sweep: bool = False) -> list:
-    """So wird vernetzt - eine Zeile je Weg des Vernetzers."""
-    tet = tetraeder(wahl)
-    if not tet:
-        return ["Kein Tetraeder gewählt - frei vernetzte Körper bekämen kein Element."]
-    q = tet == "tet10"
-    zeilen = [f"frei vernetzte Körper: {tet}"
-              + (", Pyramiden (pyr5) an Vierecken der Nachbarn" if "pyr5" in wahl else ""),
-              "abgebildete Sechsflächner: " + ("hex20 (VQ203)" if q else "hex8 (VQ83)"),
-              "gesweepte Körper: " + ("hex8 und pent6 (VQ83)" if sweep else
-                                      "keine - der Sweep ist aus"),
-              "Flächen: " + ("shell6/shell8 (quadratisch)" if q else "shell3/shell4 (linear)"),
-              "zusammenfallende Knoten: als pent6, pyr5, tet4 bzw. pent15, tet10 gerechnet"]
-    return zeilen
-
-
-def wahl_text(wahl) -> str:
-    """Kurzname der Wahl fuer Protokoll und Rueckfrage: „tet10 + VQ83“."""
-    tet = tetraeder(wahl) or "kein Tetraeder"
-    return f"{tet} + VQ83" + (" + pyr5" if "pyr5" in set(wahl) else "")
+#: Statik3D-Vorgabe als Text fuer Rueckfrage und Hinweise (seit den Stufen
+#: am 25.09.2026 die Stufe Mittel: tet10, hex20 (VQ203), Schalen quadratisch)
+VORGABE_TEXT = es.NAME[es.VORGABE]
 
 
 # --------------------------------------------------------------------------
 # Rueckfrage beim Import
 # --------------------------------------------------------------------------
 #: Felder der Netzeinstellungen, die eine Elementwahl sind (was eine Datei
-#: vorgeben kann): Elementordnung und Elementform der Flaechen
+#: vorgeben kann): Elementordnung (= Stufe Entwurf oder Mittel) und
+#: Elementform der Flaechen
 ELEMENTFELDER = ("ordnung", "form")
+
+
+def _stufe_der_ordnung(wert) -> str:
+    return "mittel" if int(wert) >= 2 else "entwurf"
 
 
 def _feldtext(feld: str, wert) -> str:
     if feld == "ordnung":
-        return ("quadratische Elemente (shell6/shell8, tet10, hex20)" if int(wert) >= 2
-                else "lineare Elemente (shell3/shell4, tet4, hex8)")
+        s = _stufe_der_ordnung(wert)
+        return f"{es.NAME[s]} ({'quadratische' if es.ORDNUNG[s] >= 2 else 'lineare'} Elemente)"
     from .netzdichte import FORMEN
     return "Flächen " + FORMEN.get(int(wert), str(wert))
 
 
-def statik3d_vorgabe(feld: str):
-    """Die Statik3D-Vorgabe eines Elementfeldes."""
+def statik3d_vorgabe(feld: str, gesperrt: bool = False):
+    """Die Statik3D-Vorgabe eines Elementfeldes. ``gesperrt``: das Modell hat
+    Kontakt (elementstufe.quadratisch_gesperrt) - dann ist die Vorgabe
+    Entwurf."""
     if feld == "ordnung":
-        return VORGABE_ORDNUNG
+        return es.ORDNUNG["entwurf" if gesperrt else es.VORGABE]
     from .model import Netzeinstellungen
     return getattr(Netzeinstellungen(), feld)
 
 
-def abweichungen(aus_datei: dict) -> list:
+def abweichungen(aus_datei: dict, gesperrt: bool = False) -> list:
     """[(Feld, Text der Datei, Text der Statik3D-Vorgabe)] fuer jedes
     Elementfeld, das die Datei vorgibt und das anders ist als die Vorgabe.
     ``aus_datei`` sind die Felder, die der Import wirklich aus der Datei
@@ -241,29 +83,38 @@ def abweichungen(aus_datei: dict) -> list:
     for feld in ELEMENTFELDER:
         if feld not in (aus_datei or {}):
             continue
-        soll = statik3d_vorgabe(feld)
-        if int(aus_datei[feld]) != int(soll):
+        soll = statik3d_vorgabe(feld, gesperrt)
+        if feld == "ordnung":
+            gleich = _stufe_der_ordnung(aus_datei[feld]) == _stufe_der_ordnung(soll)
+        else:
+            gleich = int(aus_datei[feld]) == int(soll)
+        if not gleich:
             aus.append((feld, _feldtext(feld, aus_datei[feld]), _feldtext(feld, soll)))
     return aus
 
 
 def frage_text(datei: str, abw: list) -> str:
-    """Text der Rueckfrage: was die Datei vorgibt, was Statik3D vorgibt."""
+    """Text der Rueckfrage (25.09.2026): „Die Datei gibt Entwurf (lineare
+    Elemente) vor. Statik3D-Vorgabe: Mittel. Welche verwenden?“"""
     teile = ", ".join(d for _f, d, _s in abw)
-    vorgabe = ", ".join(s for _f, _d, s in abw)
+    vorgaben = []
+    for f, _d, s in abw:
+        # die Stufe mit ihrem Namen allein, wie im Auswahlfeld
+        vorgaben.append(s.split(" (")[0] if f == "ordnung" else s)
     return (f"Die {datei} gibt {teile} vor.\n"
-            f"Statik3D-Vorgabe: {VORGABE_TEXT} ({vorgabe}).\n\n"
+            f"Statik3D-Vorgabe: {', '.join(vorgaben)}.\n\n"
             "Welche verwenden?")
 
 
-def nach_import(netz, aus_datei: dict, datei_waehlen: bool, datei: str = "Datei") -> tuple:
+def nach_import(netz, aus_datei: dict, datei_waehlen: bool, datei: str = "Datei",
+                gesperrt: bool = False) -> tuple:
     """(Netzeinstellungen, Protokollzeile) nach dem Import.
 
     Elementfelder, die die Datei nicht vorgibt, bekommen die Statik3D-
     Vorgabe; die, die sie vorgibt, je nach Antwort die der Datei
-    (``datei_waehlen``) oder die Statik3D-Vorgabe. ``quelle`` sagt danach,
-    woher die Elementwahl kommt - vorher stand dort nur „aus mesh.xml“, auch
-    hinter der Ordnung, die gar nicht aus der Datei kam."""
+    (``datei_waehlen``) oder die Statik3D-Vorgabe. Die Ordnung wird als
+    Stufe gesetzt (elementstufe.setzen: Ordnung, Sweep „sauber“). ``quelle``
+    sagt danach, woher die Elemente kommen."""
     aus_datei = dict(aus_datei or {})
     werte = {}
     herkunft = []
@@ -272,15 +123,15 @@ def nach_import(netz, aus_datei: dict, datei_waehlen: bool, datei: str = "Datei"
             werte[feld] = int(aus_datei[feld])
             herkunft.append(f"{_feldtext(feld, werte[feld])} aus der {datei}")
         else:
-            werte[feld] = int(statik3d_vorgabe(feld))
+            werte[feld] = int(statik3d_vorgabe(feld, gesperrt))
             herkunft.append(f"{_feldtext(feld, werte[feld])} (Statik3D-Vorgabe"
                             + (", die Datei gibt es nicht vor)" if feld not in aus_datei else ")"))
-    neu = replace(netz, **werte)
+    neu = es.setzen(replace(netz, form=werte["form"]), _stufe_der_ordnung(werte["ordnung"]))
     quelle = str(getattr(netz, "quelle", "") or "")
-    zusatz = ("Elementwahl der Datei" if datei_waehlen and any(f in aus_datei for f in ELEMENTFELDER)
-              else f"Elementwahl Statik3D-Vorgabe {VORGABE_TEXT}")
+    zusatz = ("Elemente der Datei" if datei_waehlen and any(f in aus_datei for f in ELEMENTFELDER)
+              else f"Elemente Statik3D-Vorgabe {VORGABE_TEXT}")
     neu.quelle = f"{quelle}; {zusatz}" if quelle else zusatz
-    zeile = "Elementwahl nach dem Import: " + "; ".join(herkunft)
+    zeile = "Elemente nach dem Import: " + "; ".join(herkunft)
     return neu, zeile
 
 

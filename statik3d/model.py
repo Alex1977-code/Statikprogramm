@@ -1929,12 +1929,24 @@ class Netzeinstellungen:
     #: es aendert die Kerbspannung an unbelasteten Bohrungen; die adaptive
     #: Vernetzung schaltet es fuer ihren ersten, groben Durchgang ein.
     nebenflaechen_grob: bool = False
+    #: **Elementstufe** (25.09.2026, statik3d.elementstufe): "entwurf" |
+    #: "mittel" | "fein" - das Auswahlfeld „Elemente“ der Netzeinstellungen,
+    #: das den Elementansatz und die Haken der Elementwahl ersetzt. Optional:
+    #: leer (aeltere Dateien) heisst „aus der Ordnung“, 1 Entwurf, 2 Mittel.
+    #: Noetig ist das Feld nur, weil Fein dieselbe Ordnung wie Mittel hat
+    #: und sich allein in der (beim Vernetzen halbierten) Kantenlaenge
+    #: unterscheidet.
+    stufe: str = ""
 
     def teilung(self, laenge: float) -> int:
         """Elementzahl fuer eine Kante dieser Laenge nach der Ziellaenge."""
         if self.ziellaenge <= 0:
             return 1
         return max(1, int(round(float(laenge) / self.ziellaenge)))
+
+    def _stufenname(self) -> str:
+        from .elementstufe import NAME, stufe
+        return NAME[stufe(self)]
 
     def beschreibung(self) -> str:
         from .netzdichte import DICHTEN, FORMEN
@@ -1946,6 +1958,9 @@ class Netzeinstellungen:
                 + ("intelligent angepasst, " if getattr(self, "intelligent", True) else "")
                 + f"Stabteilung {self.stabteilung}, "
                 f"Seitenverhältnis ≤ {self.seitenverhaeltnis:g}, "
+                # die Stufe vorn (25.09.2026): Protokoll und Bericht nennen, womit
+                # vernetzt wurde, so wie es in der Maske heisst
+                + f"Elemente {self._stufenname()}: "
                 + ("quadratische Elemente (shell6/shell8, tet10, hex20)"
                    if self.ordnung >= 2 else "lineare Elemente (shell3/shell4, tet4, hex8)")
                 + (f", Vernetzer {getattr(self, 'vernetzer', 'eigener')}"

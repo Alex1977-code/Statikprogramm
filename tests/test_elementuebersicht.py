@@ -1,7 +1,10 @@
 """
-Paket E (25.09.2026): Elementwahl zum Anhaken, Rueckfrage beim Import,
-Elementuebersicht mit Faerbung nach Elementtyp, Berichtskapitel „Netz und
-Elemente“.
+Paket E (25.09.2026): Rueckfrage beim Import, Elementuebersicht mit Faerbung
+nach Elementtyp, Berichtskapitel „Netz und Elemente“.
+
+Die Elementwahl zum Anhaken ist am selben Tag den Stufen Entwurf / Mittel /
+Fein gewichen („keep it simple“, „viel zu fummelig“); ihre Pruefungen sind
+hier entfallen, die der Stufen stehen in tests/test_elementstufe.py.
 
 Wuensche des Anwenders: „ich möchte die zu verwendenden elemente anhaken
 können und je nach kompatibilität der elemente sollen dann die
@@ -104,92 +107,6 @@ def modell():
 
 
 # --------------------------------------------------------------------------
-# 1) Elementwahl ohne Fenster
-# --------------------------------------------------------------------------
-def test_zustand_vorgabe():
-    """Vorgabe tet10 + VQ83: was an, was grau und mit welchem Grund."""
-    z = ea.zustand(ea.VORGABE & set(ea.ANHAKBAR), sweep=False)
-    check("Vorgabe: tet10 angehakt und frei", z["tet10"]["an"] and z["tet10"]["frei"])
-    check("Vorgabe: tet4 grau, Grund nennt die eine Ordnung und „erst tet10 abhaken“",
-          not z["tet4"]["frei"] and not z["tet4"]["an"]
-          and "erst tet10 abhaken" in z["tet4"]["grund"] and "Ordnung" in z["tet4"]["grund"],
-          z["tet4"]["grund"][:80])
-    check("Vorgabe: tetp grau mit dem Text der Verträglichkeitstabelle (tet10–tetp: nein)",
-          not z["tetp"]["frei"] and EL.VERTRAEGLICH_TEXT["nein"] in z["tetp"]["grund"],
-          z["tetp"]["grund"][:80])
-    check("Vorgabe: VQ83 (hex8) angehakt, grau (immer an), Grund sagt, dass der Sweep aus bleibt",
-          z["hex8"]["an"] and not z["hex8"]["frei"] and "schaltet ihn nicht ein" in z["hex8"]["grund"],
-          z["hex8"]["grund"][-90:])
-    check("… und nennt die Verträglichkeit tet10–hex8 aus der Tabelle (Übergang)",
-          EL.VERTRAEGLICH_TEXT[EL.VERTRAEGLICH[("tet10", "hex8")]] in z["hex8"]["grund"])
-    check("Vorgabe: VQ203 folgt dem tet10 (abgebildete Sechsflächner), grau",
-          z["hex20"]["an"] and not z["hex20"]["frei"] and "abgebildete" in z["hex20"]["grund"])
-    check("Vorgabe: Schalen quadratisch an, linear aus, beide grau",
-          z["schale2"]["an"] and not z["schale1"]["an"]
-          and not z["schale1"]["frei"] and not z["schale2"]["frei"])
-    check("Pyramiden frei anhakbar, Grund nennt die Bindung neben tet10",
-          z["pyr5"]["frei"] and EL.VERTRAEGLICH_TEXT["bindung"] in z["pyr5"]["grund"])
-    z4 = ea.zustand({"tet4"}, sweep=True)
-    check("tet4: tet10 grau, VQ203 aus und grau, Schalen linear",
-          not z4["tet10"]["frei"] and not z4["hex20"]["an"] and z4["schale1"]["an"],
-          z4["hex20"]["grund"][:80])
-    check("tet4: tetp bleibt grau (kein Weg im Vernetzer), ohne „passen nicht“",
-          not z4["tetp"]["frei"] and EL.VERTRAEGLICH_TEXT["nein"] not in z4["tetp"]["grund"]
-          and "aus_tet10" in z4["tetp"]["grund"])
-    z0 = ea.zustand(set(), sweep=False)
-    check("nichts gewählt: tet4 und tet10 beide frei", z0["tet4"]["frei"] and z0["tet10"]["frei"])
-    alle = [d["grund"] for zz in (z, z4, z0) for d in zz.values()]
-    check("kein Grund mit wissenschaftlicher Zahl", not any(_wissenschaftlich(g) for g in alle))
-
-
-def test_grau_liest_die_tabelle():
-    """Das Ausgrauen kommt aus elemente.VERTRAEGLICH, nicht aus einem eigenen
-    Text: eine andere Tabelle gibt einen anderen Grund."""
-    alt = EL.VERTRAEGLICH[("tet10", "tetp2")]
-    try:
-        EL.VERTRAEGLICH[("tet10", "tetp2")] = "linear"
-        z = ea.zustand({"tet10"})
-        check("mit „linear“ in der Tabelle steht deren Text im Grund, nicht „passen nicht“",
-              EL.VERTRAEGLICH_TEXT["linear"] in z["tetp"]["grund"]
-              and EL.VERTRAEGLICH_TEXT["nein"] not in z["tetp"]["grund"], z["tetp"]["grund"][:90])
-    finally:
-        EL.VERTRAEGLICH[("tet10", "tetp2")] = alt
-
-
-def test_auf_netz():
-    """Die Wahl setzt nur Elementansatz und Pyramiden - nie den Sweep."""
-    n0 = Netzeinstellungen(ziellaenge=0.05, dichte="eigene", vernetzer="gmsh")
-    n = ea.auf_netz(n0, {"tet10"})
-    check("tet10 → ordnung 2", n.ordnung == 2)
-    # Netzeinstellungen.sweep ist seit 25.09.2026 ein Wort ("aus" | "sauber" | "immer")
-    check("der Sweep bleibt aus, auch mit VQ83 in der Vorgabe", n.sweep == "aus", repr(n.sweep))
-    n_s = ea.auf_netz(Netzeinstellungen(sweep="sauber"), {"tet4"})
-    check("ein eingeschalteter Sweep bleibt an", n_s.sweep == "sauber" and n_s.ordnung == 1)
-    check("sweep_an liest das Wort: „aus“ ist aus, „sauber“/„immer“/True an",
-          not ea.sweep_an(Netzeinstellungen()) and ea.sweep_an(Netzeinstellungen(sweep="sauber"))
-          and ea.sweep_an(Netzeinstellungen(sweep="immer")) and ea.sweep_an(Netzeinstellungen(sweep=True)))
-    check("die übrigen Einstellungen bleiben", n.ziellaenge == 0.05 and n.vernetzer == "gmsh"
-          and n.dichte == "eigene")
-    check("Pyramiden an, wenn angehakt", ea.auf_netz(n0, {"tet10", "pyr5"}).pyramiden is True)
-    check("… und aus, wenn nicht", ea.auf_netz(Netzeinstellungen(pyramiden=True), {"tet4"}).pyramiden
-          is False)
-    try:
-        ea.auf_netz(n0, set())
-        check("ohne Tetraeder: Fehler", False)
-    except ValueError as ex:
-        check("ohne Tetraeder: Fehler im Klartext", "Tetraeder" in str(ex), str(ex))
-    check("wahl_aus_netz ist die Umkehrung",
-          ea.wahl_aus_netz(ea.auf_netz(n0, {"tet10", "pyr5"})) == {"tet10", "pyr5"}
-          and ea.wahl_aus_netz(ea.auf_netz(n0, {"tet4"})) == {"tet4"})
-    from dataclasses import asdict
-    check("kein neues Feld im Speicherformat", set(asdict(n)) == set(asdict(Netzeinstellungen())))
-    m = Model("x")
-    m.netz = n
-    m2 = Model.from_dict(m.to_dict())
-    check("Umlauf to_dict/from_dict behält die Wahl", ea.wahl_aus_netz(m2.netz) == {"tet10"})
-
-
-# --------------------------------------------------------------------------
 # 2) Rueckfrage beim Import
 # --------------------------------------------------------------------------
 def test_import_vorgabe():
@@ -205,8 +122,10 @@ def test_import_vorgabe():
     check("Abweichung nur in der Elementform (Vierecke gegen Vierecke, sonst Dreiecke)",
           [a[0] for a in abw] == ["form"], str(abw))
     text = ea.frage_text("RFEM-Datei", abw)
-    check("Frage nennt Datei-Vorgabe und Statik3D-Vorgabe tet10 + VQ83",
-          "Die RFEM-Datei gibt Flächen Vierecke vor" in text and "Statik3D-Vorgabe: tet10 + VQ83" in text,
+    # seit den Stufen (25.09.2026) nennt die Frage nur, was die Datei vorgibt
+    check("Frage nennt Datei-Vorgabe und Statik3D-Vorgabe der Flächenform",
+          "Die RFEM-Datei gibt Flächen Vierecke vor" in text
+          and "Statik3D-Vorgabe: Flächen Vierecke, sonst Dreiecke" in text,
           text.replace("\n", " | "))
     check("ohne Elementfelder aus der Datei: keine Frage", ea.abweichungen({"ziellaenge": 0.05}) == [])
     check("eine Datei mit „linear“ (ordnung 1) wird gefragt",
@@ -217,9 +136,9 @@ def test_import_vorgabe():
     n_d, z_d = ea.nach_import(netz, aus, datei_waehlen=True, datei="RFEM-Datei")
     check("Datei-Vorgabe: Form der Datei, Ordnung trotzdem Statik3D (die Datei gibt keine vor)",
           n_d.form == 1 and n_d.ordnung == 2 and "die Datei gibt es nicht vor" in z_d, z_d)
-    check("quelle sagt, woher die Elementwahl kommt",
-          "Statik3D-Vorgabe tet10 + VQ83" in n_s.quelle and "aus mesh.xml" in n_s.quelle
-          and "Elementwahl der Datei" in n_d.quelle, n_s.quelle)
+    check("quelle sagt, woher die Elemente kommen",
+          "Statik3D-Vorgabe Mittel" in n_s.quelle and "aus mesh.xml" in n_s.quelle
+          and "Elemente der Datei" in n_d.quelle, n_s.quelle)
     check("beschreibung nennt danach quadratische Elemente",
           "quadratische Elemente" in n_s.beschreibung(), n_s.beschreibung())
     # Die echten Drehlager-Dateien (nur auf dem Rechner des Anwenders)
@@ -376,59 +295,10 @@ def _modell_ins_fenster(w, app, m):
 def test_ribbon():
     w, _app = _fenster()
     netz = {b.text: b for b in w.ribbon.befehle if b.register == "Netz"}
-    check("Ribbon Netz: „Elemente wählen…“ und „Elementübersicht…“ mit Hinweis",
-          "Elemente wählen…" in netz and "Elementübersicht…" in netz
-          and netz["Elemente wählen…"].hinweis and netz["Elementübersicht…"].hinweis,
+    # „Elemente wählen…“ ist den Stufen gewichen (25.09.2026)
+    check("Ribbon Netz: „Elementübersicht…“ mit Hinweis",
+          "Elementübersicht…" in netz and netz["Elementübersicht…"].hinweis,
           str(sorted(netz))[:120])
-
-
-def test_maske_elementwahl():
-    from PySide6 import QtWidgets
-    w, app = _fenster()
-    m = modell()
-    _modell_ins_fenster(w, app, m)
-    check("Modell ohne Wahl: Netzeinstellungen linear (Vorgabe des Datenmodells)", m.netz.ordnung == 1)
-    w.maske_elementwahl()
-    app.processEvents()
-    mk = w.maskenrand.maske
-    h = mk.haken
-    check("Maske: je Familie eine Gruppe mit Haken",
-          {g.title() for g in mk.findChildren(QtWidgets.QGroupBox)} >= {
-              "Volumen – Tetraeder", "Volumen – Sechsflächner", "Schalen"})
-    check("Stand aus den Netzeinstellungen: tet4 an, tet10 grau",
-          h["tet4"].isChecked() and not h["tet10"].isEnabled() and h["tet4"].isEnabled())
-    check("grauer Haken trägt den Grund am Zeiger", "erst tet4 abhaken" in h["tet10"].toolTip(),
-          h["tet10"].toolTip()[:80])
-    check("Sweep-Schalter steht daneben (aus), nicht als Haken",
-          "aus" in mk.lbl_sweep.text() and "nicht ein" in mk.lbl_sweep.text())
-    mk.zusatzknoepfe[f"Statik3D-Vorgabe ({ea.VORGABE_TEXT})"].click()
-    app.processEvents()
-    check("Knopf Statik3D-Vorgabe: tet10 an, tet4 grau, VQ83 und VQ203 an",
-          h["tet10"].isChecked() and not h["tet4"].isEnabled() and h["hex8"].isChecked()
-          and h["hex20"].isChecked() and not h["hex8"].isEnabled())
-    check("Vorschau nennt tet10 und die abgebildeten hex20", "frei vernetzte Körper: tet10" in
-          mk.lbl_vorschau.text() and "hex20 (VQ203)" in mk.lbl_vorschau.text())
-    h["tet10"].setChecked(False)
-    app.processEvents()
-    check("tet10 abgehakt: tet4 wird frei", h["tet4"].isEnabled() and h["tet10"].isEnabled())
-    FEHLER.clear()
-    mk.anwenden()
-    app.processEvents()
-    check("ohne Tetraeder übernimmt die Maske nichts und sagt warum",
-          w.model.netz.ordnung == 1 and FEHLER and "Tetraeder" in FEHLER[-1], str(FEHLER))
-    h["tet10"].setChecked(True)
-    h["pyr5"].setChecked(True)
-    mk.anwenden()
-    app.processEvents()
-    check("Übernehmen: ordnung 2, Pyramiden an, Sweep bleibt aus",
-          w.model.netz.ordnung == 2 and w.model.netz.pyramiden and w.model.netz.sweep == "aus")
-    check("Meldung nennt die Wahl und das vorhandene Netz",
-          "Elementwahl: tet10 + VQ83 + pyr5" in w.statusBar().currentMessage()
-          or "Elementwahl: tet10 + VQ83 + pyr5" in w.log.toPlainText())
-    w.undo()
-    app.processEvents()
-    check("Rückgängig nimmt die Wahl zurück", w.model.netz.ordnung == 1 and not w.model.netz.pyramiden)
-    w.maskenrand.schliessen()
 
 
 def test_uebersicht_und_faerbung():
@@ -545,11 +415,11 @@ def test_import_im_fenster():
         app.processEvents()
         check("Import RFEM-Datei: eine Rückfrage mit Datei-Vorgabe / Statik3D-Vorgabe",
               len(fragen) == 1 and fragen[0][2] == "Datei-Vorgabe" and fragen[0][3] == "Statik3D-Vorgabe"
-              and "tet10 + VQ83" in fragen[0][1], str(fragen)[:160])
+              and "Statik3D-Vorgabe:" in fragen[0][1], str(fragen)[:160])
         check("Enter und Esc nehmen die Statik3D-Vorgabe", fragen and fragen[0][4] == "nein")
         check("Antwort Statik3D-Vorgabe: ordnung 2, Form 2",
               w.model.netz.ordnung == 2 and w.model.netz.form == 2, w.model.netz.beschreibung())
-        check("Protokollzeile nennt die Wahl", "Elementwahl nach dem Import:" in w.log.toPlainText())
+        check("Protokollzeile nennt die Wahl", "Elemente nach dem Import:" in w.log.toPlainText())
         antwort["v"] = True
         fragen.clear()
         w.import_file()
@@ -578,8 +448,7 @@ def test_import_im_fenster():
 def main():
     import faulthandler
     faulthandler.dump_traceback_later(900, exit=True)
-    for t in (test_zustand_vorgabe, test_grau_liest_die_tabelle, test_auf_netz, test_import_vorgabe,
-              test_zaehlung, test_farben, test_bericht, test_ribbon, test_maske_elementwahl,
+    for t in (test_import_vorgabe, test_zaehlung, test_farben, test_bericht, test_ribbon,
               test_uebersicht_und_faerbung, test_nach_der_rechnung, test_import_im_fenster):
         print(f"\n--- {t.__name__} ---")
         try:

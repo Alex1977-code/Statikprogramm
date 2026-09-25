@@ -990,7 +990,8 @@ def read_rf6(path: str, model: Model = None, log: list = None,
             if "ordnung" not in netz:
                 C.say(log, "    Die Elementordnung (linear/quadratisch) gibt mesh.xml nicht vor - "
                            "sie ist die Vorgabe des Programms; die Oberfläche setzt beim Import "
-                           "die Statik3D-Vorgabe (tet10 + VQ83).")
+                           "die Statik3D-Vorgabe (Elemente Mittel: tet10, hex20, Schalen "
+                           "quadratisch; an einem Modell mit Kontakt Entwurf).")
         else:
             C.say(log, "Keine mesh.xml im Behälter - es gilt die Vorgabe des "
                        f"Programms ({m.netz.beschreibung()}).")

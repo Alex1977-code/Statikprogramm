@@ -89,7 +89,7 @@ Vierzehn Register nach Arbeitsschritt:
 | **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, Stabzug, Stäbe für Nachweise, automatisch erkennen, Querschnitt zuweisen), **Flächen** (Schale, Fläche aus Linien, Rechteckplatte, vernetzen, verschneiden, Dicke zuweisen), **Volumen** (Volumen aus Flächen, Quader, vernetzen), **Gelenke** (Gelenk anlegen, Gelenke setzen, Tabelle), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
 | **Lager / Kontakt** | Knoten-, Linien-, Flächenlager, Nichtlinearität, Kontakt (mit *Alle Kontakte löschen…*), Anschlüsse (anlegen, zeigen, löschen) |
 | **Lasten** | Lastfälle, Kombinationen, Lastfälle nach DIN 19704, Knoten-, Stab-, Flächen-, Temperaturlast, Zwangsverformung, Vorspannung, Eigengewicht, Generierer Wasserdruck und Wind |
-| **Netz** | Vernetzen (Flächen und Volumen), Netzeinstellungen (Netzdichte, Elementform, intelligente Anpassung), **Elemente wählen**, **Elementübersicht**, Netzqualität, **Netzknoten** (Schalter), Netz löschen, Kontaktfugen |
+| **Netz** | Vernetzen (Flächen und Volumen), Netzeinstellungen (**Elemente Entwurf / Mittel / Fein**, Netzdichte, Elementform, intelligente Anpassung), **Elementübersicht**, Netzqualität, **Netzknoten** (Schalter), Netz löschen, Kontaktfugen |
 | **Berechnung** | Berechnen (F5), einzelner Lastfall, Eigenschwingungen, Knicken, alle Stellungen, DIN 19704, Einstellungen, Bedienung im Browser |
 | **Nachweise** | EC3, Ermüdung, Verformung (GZG), Beulen (EC3-1-5/-1-6), Lasteinleitung, Konfiguration |
 | **Ergebnisse** | Ergebniswahl und die Tabellen |
@@ -762,12 +762,12 @@ Netzeinstellungen…*, mit der Datei gespeichert):
 
 | Angabe | Bedeutung |
 |---|---|
+| Elemente | **Entwurf**, **Mittel** (Vorgabe) oder **Fein** – welche Elemente das Netz bekommt, in drei Stufen, die in Genauigkeit und Rechenzeit zusammenpassen (seit 25.09.2026; ersetzt den Elementansatz linear/quadratisch und die Haken „Elemente wählen“). Das erste Feld der Maske; darunter stehen Elemente und Zweck der gewählten Stufe und die **wirksame Kantenlänge**. Einzelheiten im Abschnitt „Elementstufe: Entwurf, Mittel, Fein“ unten |
 | Netzdichte | **grob / mittel / fein**: 8 / 16 / 32 Elemente über die größte Abmessung jedes Objekts - ein 4 m langer Träger und eine 8 cm dicke Lasche bekommen so je ihr passendes Netz; **eigene**: die Ziellänge gilt absolut (so übernimmt sie der RFEM-Import) |
 | Ziellänge, kleinste und größte Elementgröße | in **mm** (seit 13.09.2026; vorher in m) - so, wie man beim Vernetzen denkt; gespeichert und gerechnet wird in m. Auch die Netzqualität *Kantenlänge* färbt in mm |
 | Intelligent anpassen | kleine Kanten (Löcher, Stege, schmale Flächen) verfeinern das Netz **der Flächen** dort, bis zur kleinsten Elementgröße; die größte Elementgröße deckelt nach oben (leer = ¼ bzw. 4-fache der Dichte-Länge). Bei **Volumen** bleibt die Kantenlänge im Feld: eine ganze Platte auf ihre Bohrung herunterzuteilen gäbe nur das Vielfache an Tetraedern. Fein wird es **örtlich**, an drei zusammengehörenden Stellen: die Bohrungsränder nach ihrer Krümmung, eine Linie neben einer viel feineren (die **Mantellinie** einer Bohrung stand sonst mit *einem* Abschnitt über der ganzen Bohrtiefe), Kränze um jede Öffnung in der Fläche, und von dort wachsend ins Innere. Gemessen an einer 20-mm-Bohrung von 35 mm Tiefe in einer 900-mm-Platte: der Anteil der Tetraeder unter der Güte 0,3 an der Bohrungswand fällt von 6,8 % auf 1,0 % — für doppelt so viele Elemente. Ohne den Haken bleibt es bei ⌈L/h⌉ je Linie |
 | Höchstzahl Elemente je Objekt | vergröbert, was sonst zu viele Elemente gäbe (Schätzung A/h² bzw. V/(0,12·h³)) |
 | Elementform | Dreiecke, Vierecke oder Vierecke mit Dreiecken als Rückfall |
-| Elementansatz | **linear** (shell3/shell4, tet4, hex8) oder **quadratisch**: Flächen bekommen Mittenknoten (shell6/shell8), abgebildete Volumen hex20, freie Volumen tet10. Quadratisch braucht für dieselbe Genauigkeit deutlich weniger Elemente, je Element aber mehr Rechenzeit |
 | Teilung je Fläche aus der Netzdichte | an (Vorgabe): die Netzdichte bestimmt die Teilung aller Flächen; aus: die eigene Teilung jeder Fläche (Flächenmaske, RFEM) gilt |
 | Vernetzer (Volumen) | **eigener Vernetzer** (Vorgabe), **gmsh** oder **Netgen**. Alle drei tetraedern dieselbe geschlossene Hülle, die der eigene Vernetzer aus den Randflächen bildet — die Randknoten bleiben Punkt für Punkt erhalten, gemeinsame Flächen zweier Körper und Kontaktbedingungen greifen wie bisher. Gemessen an einer Platte 1 × 0,6 × 0,2 m mit Bohrung (h = 50 mm, Hülle 870 Punkte): gmsh 4 411 Tetraeder, Güte min 0,418, Netgen 5 811, Güte min 0,493; der eigene Vernetzer kam an V5 des Drehlagers auf 0,001. gmsh rechnet mehrkernig (HXT), beide laufen je Körper in den Arbeitsprozessen. Was nicht installiert ist, steht als „(nicht installiert)“ in der Auswahl; der Knopf **Vernetzer installieren…** unter der Maske (auch *Extras → Vernetzer installieren…*) lädt es nach (Abschnitt „Vernetzer und Nachbesserer nachladen“, Kap. 9). Ein nicht verfügbarer Vernetzer wird abgewiesen, und scheitert der fremde an einem Körper, übernimmt der eigene (Protokoll) |
 | Nachbesserung | **MMG3D** optimiert das fertige Tetraedernetz bei fester Hülle (`-nosurf -optim`) — der Weg zu einer Mindestgüte aller Elemente, denn die schlechten Tetraeder sitzen auf der Hülle (V5: alle 55 unter 0,1 mit vier Hüllknoten). Das Programm `mmg3d_O3` (mmgtools.org) lädt **Vernetzer installieren…** nach; es läuft als getrennter Prozess über Dateien im Medit-Format — **ohne
@@ -778,7 +778,7 @@ Konsole gibt (behoben 14.09.2026). Wo es liegt, weiß Statik3D selbst (nachgelad
 | Nebenflächen grob (`nebenflaechen_grob`, seit 20.09.2026) | Bögen an **Nebenflächen** — Flächen ohne Last, Lager, Kontaktbedingung, integrierten Knoten, Netzverfeinerung und ohne zweiten Körper — werden mit 45° statt 18° je Abschnitt geteilt: acht statt zwanzig Abschnitte je Vollkreis. Eine Durchgangsbohrung ohne Bolzen, eine Ausrundung tragen nichts; ihre Form muss stimmen, nicht ihre Kerbspannung. Gemessen an einer Platte 1 × 0,6 × 0,2 m mit fünf Bohrungen: 40 364 → 17 969 Tetraeder. **Vorgabe aus**, weil es die Spannung an unbelasteten Bohrungen ändert (dort 490 → 343 N/mm²); die adaptive Vernetzung schaltet es für ihre Dauer ein und holt zurück, was trägt. Heute nur in der Datei (`netz.nebenflaechen_grob`), kein Feld in der Maske |
 | Netzverfeinerungen (`verfeinerungen`) | Wo das Netz fein sein soll, unabhängig von der Geometrie: eine **Kugel** um einen Punkt (`{“art”: “kugel”, “mitte”: [x, y, z], “radius”: r, “h”: h}`), eine **Fläche**, **Linie** oder ein **Körper** mit Namen (`{“art”: “flaeche”, “name”: “F12”, “h”: 0.005}`). Die Kantenlänge wächst von dort mit 0,35 je Meter ins Umfeld. Gemessen (Kugel 5 mm, r = 30 mm am Bohrungsrand): 4,2 mm Kanten in der Kugel, 24 mm im Feld, Abnahme ohne Befund. Heute nur in der Datei |
 | Eigene Kantenlänge je Körper (`koerper_h`) | `{Körpername: Kantenlänge in m}` — geht vor Dichte und Ziellänge; die Deckel (kleinste Kante, Dickenmaß, Höchstzahl) gelten weiter. So lässt sich ein Körper gröber lassen als der Rest. Die adaptive Vernetzung schreibt hier ihre Werte hinein |
-| Sweep (`sweep`) | **keine Option der Oberfläche mehr** (seit 25.09.2026). Der Haken „Sechsflächner sweepen“ ist entfallen: an Bohrungen und schrägen Kanten entstanden verzerrte Sechsflächner und flache Keile (am Drehlager 926 hex8 mit fast entarteter Ecke und 242 flache Keile), und die Rechnung konvergierte nicht mehr – ob ein Körper dafür taugt, war für den Anwender nicht zu erkennen. Vernetzt wird mit Tetraedern; eine ältere Datei mit „an“ lädt mit „aus“, und das Vernetzen sagt es im Protokoll. Im Modell ist das Feld seit 25.09.2026 ein Wort mit drei Werten: **`"aus"`** (Vorgabe), **`"sauber"`** und **`"immer"`**. Beim Laden werden `True`/`False` älterer Dateien, „immer“ und ein unbekanntes Wort zu „aus“; „sauber“ bleibt. „Übernehmen“ in den Netzeinstellungen und das Vernetzen lassen „sauber“ stehen – das setzt künftig die Stufe –, schalten „immer“ aber aus („Sechsflächner-Sweep ausgeschaltet …“ im Protokoll). „Sauber“ vernetzt einen Körper nur dann als Hexaeder, wenn jedes hex8 und pent6 höchstens 5° Trapezfehler (Winkel zwischen gegenüberliegenden Kanten einer Seite; gemessen am Kragarm: Trapezverzerrung kostet ab 2,5° Eckwinkel mehr als 1 N/mm², Parallelogramme bis 30° nichts) und eine positive Jacobi-Determinante hat — sonst Tetraeder, mit Grund im Protokoll („nicht gesweept (Betriebsart „sauber“) – Trapezfehler 27,0° > 5,0° …“), und der Übergang zu Hexaeder-Nachbarn immer über Pyramiden. Am Drehlager besteht heute **kein** Körper die Probe (68 sweepbare, Trapezfehler 7,5° bis 72°), weil der Sweep jede Grundfläche aus gepaarten Dreiecken pflastert; „sauber“ ist damit die Betriebsart für die Zukunft mit abgebildetem Grundnetz. „Immer“ ist der Sweep wie bisher: ein Körper, der Grundfläche mal Weg ist — Platte, Ring, Flansch, Rippe, Lasche mit Bohrungen — wird in Lagen durchgezogen und besteht aus Hexaedern (hex8) und Keilen (pent6) statt Tetraedern (Theoriehandbuch § 6a, Sweep). Das Protokoll nennt Lagen, Hexaederanteil und Rauminhalt („3 450 Hexaeder (hex8) + 660 Keile (pent6) gesweept — Grundfläche Boden → Deckel, 10 Lagen à 20,0 mm … Hexaederanteil 83,9 %“) und am Ende die Bilanz aller Volumen („0,87 je Knoten — Hexaeder …, Tetraeder …“). Warum: der lineare Tetraeder sperrt, weil vier Elemente je Knoten je eine Volumenbedingung stellen; ein Hexaedernetz hat eines. Die Lagen: aus Weg und Kantenlänge, mindestens zwei — **mit Fließen mindestens vier** (mit einer und zwei Lagen fließt kein Element, Messung 21.09.2026), sechs bis acht über die Kantenlänge. Mantellinien, die Nachbarn gehören, bekommen ihre Teilung vorab und modellweit („Sweep: Lagen für 2 Körper vorab festgelegt …"), damit der Sweep nicht an verschieden geteilten Nachbarn scheitert. Seit 22.09.2026 auch **verjüngte Züge** (Kegelstumpf, konische Rippe, Nabe mit Anzug): der Deckel darf die skalierte Kopie des Grundes sein, die Lagen führen den Maßstab mit. Und **Drehkörper** (Rohrbogen, Ringsegment): Grund und Deckel stehen um den Drehwinkel gegeneinander, die Lagen liegen auf dem Bogen, der Rauminhalt wird nach Guldin geprüft (Ringsegment 90°: 99,5 %). Ein Körper mit sechs Vierecken und acht Ecken, aber **krummen** Kanten geht nicht mehr in den abgebildeten Quaderpfad — der schnitt die Rundung ab und verlor am 90°-Bogen 36 % des Rauminhalts, ohne eine Meldung. Woran ein Körper sonst scheitert, steht als eine Zeile je Körper im Protokoll („nicht gesweept — Kappen F1 → F2 decken sich weder verschoben (12,3 mm daneben) noch skaliert (0,4 mm, Maßstab 0,830) …"). Seit 21.09.2026 abends: **Zylinder** (vier Flächen: Bolzen, Stifte, Achsen) werden gesweept; der Grund darf aus **mehreren ebenen Flächen** bestehen (Platte mit Fußabdruck einer Nabe); ein Körper, der nicht als Ganzes Grundfläche mal Weg ist, wird an **Fußabdrücken zerlegt** („Volumen V1: nicht als Ganzes sweepbar — an 1 Fußabdruck(en) in 2 Blöcke zerlegt (2 davon sweepbar)"), gesweepte Blöcke wo es geht, Tetraeder für den Rest, knotengenau an der Schnittfläche. Seit 22.09.2026 auch an einer **Ebene**, wenn kein Fußabdruck greift — eine Rippe, die bis an den Rand der Platte läuft, hängt nicht über einer Öffnung; geschnitten wird an der Ebene der Deckfläche („an einer Ebene in 2 Blöcke zerlegt (2 davon sweepbar)“). Und Grund und Deckel dürfen ihren Rand **verschieden in Linien teilen**: die fehlenden Ecken werden übertragen und die Wand dazwischen mitgeteilt, sodass auch ein von Hand gebauter Körper sweepbar wird, dessen Deckel eine Kante in zwei Linien führt. Gemessen: Platte mit Nabe 441 hex8 + 108 pent6 statt 7 595 tet4; abgesetzte Welle 446 hex8 + 28 pent6 statt 2 415 gemischt. Seit 23.09.2026 auch an einer **vorhandenen Schleife** (ein Zylinder, dessen Mantel an einer Zwischenkreislinie geteilt ist: 23 von 40 nicht sweepbaren Drehlagerkörpern) und mit einem Zeitbudget von 20 s je Körper, dessen Abbruch das Protokoll nennt. Die **Lücke im Netzrand** des freien Vernetzers (ein fehlender Tetraeder an der Oberfläche, 0,003 bis 0,113 % des Körpers) ist seit 23.09.2026 geschlossen; an rechtwinkligen einspringenden Kanten holt seit dem Abend das **Kantenkippen** das fehlende Hülldreieck zurück („1 Kante(n) an der Hülle gekippt"), was bleibt, steht als WARNUNG im Protokoll (Stichprobe: 2 von 69 Netzen, Theoriehandbuch § 6a). Bei **tet10** werden gekrümmte Kanten, die das Element ungültig machten, nicht mehr gerade gelassen: die betroffene Fläche wird örtlich feiner vernetzt („örtlich feiner vernetzt (MantelI1 13,3 statt 20,0 mm …)"); was danach noch umklappen würde, löst seit 24.09.2026 ein **innerer Punkt** auf („2 innere Punkte gegen tet10 eingefügt, die mit gekrümmter Kante umklappen würden") oder das **Verschieben innerer Ecken** am fertigen Netz („3 tet10 durch Verschieben innerer Ecken gültig gemacht") — auch an einer mit dem Nachbarn gemeinsamen Fläche, denn die Fläche selbst bleibt unverändert; erst was auch dann bleibt, behält die gerade Kante, mit Warnung. Kanten der ebenen Stirnfläche einer kleinen Bohrung werden nicht mehr auf den Zylinder gebogen (das gab am Drehlager 626 Rückfälle und Jacobi-Determinanten bis −11; jetzt bei 18° 0 Rückfälle an eigenen und 0 an gemeinsamen Flächen). Der **Bogenwinkel** je Abschnitt (Vorgabe 18°) lässt sich am Modell (`bogenwinkel` in den Netzeinstellungen) und je Körper (`Volumenkoerper.bogenwinkel`) setzen; an einer Linie zweier Körper gilt der kleinere. Knoten- und Elementnummern hängen nicht mehr davon ab, welcher Arbeitsprozess zuerst fertig wird. Ein Körper mit `Volumenkoerper.ordnung` = 2 bekommt tet10, der Rest tet4. Platte mit Randrippe: **124 Elemente und 239 Knoten** statt 685 tet4 — und die Verschiebung 2,0161 mm gegen 0,5811 mm; ein Tetraedernetz braucht dafür 39 891 Elemente und 7 459 Knoten (1,9674 mm). **Warum die Vorgabe trotzdem aus ist:** am Drehlager erzeugte der Sweep am 21.09.2026 **992 entartete Keile** (10,6 % aller pent6, schlechteste Formgüte 0,025 — von 31.108 Hexaedern lag keiner unter 0,10), und derselbe Lastfall rechnete darauf max |u| 1,2335 statt 0,2716 mm, also **Faktor 4,5** daneben. Die Ursache war ein Band feiner Randstrecken gegen ein grobes Flächeninneres; seither folgt das Innennetz dem Rand (`mesher3d.RANDFELD`), und am Prüfkörper fielen die schlechten Keile von 34 auf **null**. **Am Drehlager selbst ist das noch nicht nachgemessen**; darum bleibt „immer“ ohne Schalter in der Oberfläche. |
+| Sweep (`sweep`) | **keine Option der Oberfläche mehr** (seit 25.09.2026). Der Haken „Sechsflächner sweepen“ ist entfallen: an Bohrungen und schrägen Kanten entstanden verzerrte Sechsflächner und flache Keile (am Drehlager 926 hex8 mit fast entarteter Ecke und 242 flache Keile), und die Rechnung konvergierte nicht mehr – ob ein Körper dafür taugt, war für den Anwender nicht zu erkennen. Vernetzt wird mit Tetraedern; eine ältere Datei mit „an“ lädt mit „aus“, und das Vernetzen sagt es im Protokoll. Im Modell ist das Feld seit 25.09.2026 ein Wort mit drei Werten: **`"aus"`** (Vorgabe), **`"sauber"`** und **`"immer"`**. Beim Laden werden `True`/`False` älterer Dateien, „immer“ und ein unbekanntes Wort zu „aus“; „sauber“ bleibt. Seit den Elementstufen (25.09.2026) setzt **jede Stufe „sauber“**: „Übernehmen“ in den Netzeinstellungen macht aus jedem Wort „sauber“ (auch aus „immer“), ein neues Modell der Oberfläche und der Import beginnen mit „sauber“; Sechsflächner entstehen damit automatisch dort, wo sie sauber werden – einen Schalter dafür braucht es nicht. Das Vernetzen schaltet ein noch gesetztes „immer“ aus („Sechsflächner-Sweep ausgeschaltet …“ im Protokoll). „Sauber“ vernetzt einen Körper nur dann als Hexaeder, wenn jedes hex8 und pent6 höchstens 5° Trapezfehler (Winkel zwischen gegenüberliegenden Kanten einer Seite; gemessen am Kragarm: Trapezverzerrung kostet ab 2,5° Eckwinkel mehr als 1 N/mm², Parallelogramme bis 30° nichts) und eine positive Jacobi-Determinante hat — sonst Tetraeder, mit Grund im Protokoll („nicht gesweept (Betriebsart „sauber“) – Trapezfehler 27,0° > 5,0° …“), und der Übergang zu Hexaeder-Nachbarn immer über Pyramiden. Am Drehlager besteht heute **kein** Körper die Probe (68 sweepbare, Trapezfehler 7,5° bis 72°), weil der Sweep jede Grundfläche aus gepaarten Dreiecken pflastert; „sauber“ ist damit die Betriebsart für die Zukunft mit abgebildetem Grundnetz. „Immer“ ist der Sweep wie bisher: ein Körper, der Grundfläche mal Weg ist — Platte, Ring, Flansch, Rippe, Lasche mit Bohrungen — wird in Lagen durchgezogen und besteht aus Hexaedern (hex8) und Keilen (pent6) statt Tetraedern (Theoriehandbuch § 6a, Sweep). Das Protokoll nennt Lagen, Hexaederanteil und Rauminhalt („3 450 Hexaeder (hex8) + 660 Keile (pent6) gesweept — Grundfläche Boden → Deckel, 10 Lagen à 20,0 mm … Hexaederanteil 83,9 %“) und am Ende die Bilanz aller Volumen („0,87 je Knoten — Hexaeder …, Tetraeder …“). Warum: der lineare Tetraeder sperrt, weil vier Elemente je Knoten je eine Volumenbedingung stellen; ein Hexaedernetz hat eines. Die Lagen: aus Weg und Kantenlänge, mindestens zwei — **mit Fließen mindestens vier** (mit einer und zwei Lagen fließt kein Element, Messung 21.09.2026), sechs bis acht über die Kantenlänge. Mantellinien, die Nachbarn gehören, bekommen ihre Teilung vorab und modellweit („Sweep: Lagen für 2 Körper vorab festgelegt …"), damit der Sweep nicht an verschieden geteilten Nachbarn scheitert. Seit 22.09.2026 auch **verjüngte Züge** (Kegelstumpf, konische Rippe, Nabe mit Anzug): der Deckel darf die skalierte Kopie des Grundes sein, die Lagen führen den Maßstab mit. Und **Drehkörper** (Rohrbogen, Ringsegment): Grund und Deckel stehen um den Drehwinkel gegeneinander, die Lagen liegen auf dem Bogen, der Rauminhalt wird nach Guldin geprüft (Ringsegment 90°: 99,5 %). Ein Körper mit sechs Vierecken und acht Ecken, aber **krummen** Kanten geht nicht mehr in den abgebildeten Quaderpfad — der schnitt die Rundung ab und verlor am 90°-Bogen 36 % des Rauminhalts, ohne eine Meldung. Woran ein Körper sonst scheitert, steht als eine Zeile je Körper im Protokoll („nicht gesweept — Kappen F1 → F2 decken sich weder verschoben (12,3 mm daneben) noch skaliert (0,4 mm, Maßstab 0,830) …"). Seit 21.09.2026 abends: **Zylinder** (vier Flächen: Bolzen, Stifte, Achsen) werden gesweept; der Grund darf aus **mehreren ebenen Flächen** bestehen (Platte mit Fußabdruck einer Nabe); ein Körper, der nicht als Ganzes Grundfläche mal Weg ist, wird an **Fußabdrücken zerlegt** („Volumen V1: nicht als Ganzes sweepbar — an 1 Fußabdruck(en) in 2 Blöcke zerlegt (2 davon sweepbar)"), gesweepte Blöcke wo es geht, Tetraeder für den Rest, knotengenau an der Schnittfläche. Seit 22.09.2026 auch an einer **Ebene**, wenn kein Fußabdruck greift — eine Rippe, die bis an den Rand der Platte läuft, hängt nicht über einer Öffnung; geschnitten wird an der Ebene der Deckfläche („an einer Ebene in 2 Blöcke zerlegt (2 davon sweepbar)“). Und Grund und Deckel dürfen ihren Rand **verschieden in Linien teilen**: die fehlenden Ecken werden übertragen und die Wand dazwischen mitgeteilt, sodass auch ein von Hand gebauter Körper sweepbar wird, dessen Deckel eine Kante in zwei Linien führt. Gemessen: Platte mit Nabe 441 hex8 + 108 pent6 statt 7 595 tet4; abgesetzte Welle 446 hex8 + 28 pent6 statt 2 415 gemischt. Seit 23.09.2026 auch an einer **vorhandenen Schleife** (ein Zylinder, dessen Mantel an einer Zwischenkreislinie geteilt ist: 23 von 40 nicht sweepbaren Drehlagerkörpern) und mit einem Zeitbudget von 20 s je Körper, dessen Abbruch das Protokoll nennt. Die **Lücke im Netzrand** des freien Vernetzers (ein fehlender Tetraeder an der Oberfläche, 0,003 bis 0,113 % des Körpers) ist seit 23.09.2026 geschlossen; an rechtwinkligen einspringenden Kanten holt seit dem Abend das **Kantenkippen** das fehlende Hülldreieck zurück („1 Kante(n) an der Hülle gekippt"), was bleibt, steht als WARNUNG im Protokoll (Stichprobe: 2 von 69 Netzen, Theoriehandbuch § 6a). Bei **tet10** werden gekrümmte Kanten, die das Element ungültig machten, nicht mehr gerade gelassen: die betroffene Fläche wird örtlich feiner vernetzt („örtlich feiner vernetzt (MantelI1 13,3 statt 20,0 mm …)"); was danach noch umklappen würde, löst seit 24.09.2026 ein **innerer Punkt** auf („2 innere Punkte gegen tet10 eingefügt, die mit gekrümmter Kante umklappen würden") oder das **Verschieben innerer Ecken** am fertigen Netz („3 tet10 durch Verschieben innerer Ecken gültig gemacht") — auch an einer mit dem Nachbarn gemeinsamen Fläche, denn die Fläche selbst bleibt unverändert; erst was auch dann bleibt, behält die gerade Kante, mit Warnung. Kanten der ebenen Stirnfläche einer kleinen Bohrung werden nicht mehr auf den Zylinder gebogen (das gab am Drehlager 626 Rückfälle und Jacobi-Determinanten bis −11; jetzt bei 18° 0 Rückfälle an eigenen und 0 an gemeinsamen Flächen). Der **Bogenwinkel** je Abschnitt (Vorgabe 18°) lässt sich am Modell (`bogenwinkel` in den Netzeinstellungen) und je Körper (`Volumenkoerper.bogenwinkel`) setzen; an einer Linie zweier Körper gilt der kleinere. Knoten- und Elementnummern hängen nicht mehr davon ab, welcher Arbeitsprozess zuerst fertig wird. Ein Körper mit `Volumenkoerper.ordnung` = 2 bekommt tet10, der Rest tet4. Platte mit Randrippe: **124 Elemente und 239 Knoten** statt 685 tet4 — und die Verschiebung 2,0161 mm gegen 0,5811 mm; ein Tetraedernetz braucht dafür 39 891 Elemente und 7 459 Knoten (1,9674 mm). **Warum die Vorgabe trotzdem aus ist:** am Drehlager erzeugte der Sweep am 21.09.2026 **992 entartete Keile** (10,6 % aller pent6, schlechteste Formgüte 0,025 — von 31.108 Hexaedern lag keiner unter 0,10), und derselbe Lastfall rechnete darauf max |u| 1,2335 statt 0,2716 mm, also **Faktor 4,5** daneben. Die Ursache war ein Band feiner Randstrecken gegen ein grobes Flächeninneres; seither folgt das Innennetz dem Rand (`mesher3d.RANDFELD`), und am Prüfkörper fielen die schlechten Keile von 34 auf **null**. **Am Drehlager selbst ist das noch nicht nachgemessen**; darum bleibt „immer“ ohne Schalter in der Oberfläche. |
 | Pyramiden am Übergang (`pyramiden`, seit 21.09.2026) | **Aus** (Vorgabe); in der Sweep-Betriebsart „sauber“ immer an. Ein Tetraeder-Körper, der an die Vierecke eines gesweepten oder abgebildeten Nachbarn stößt, teilt heute jedes Viereck in zwei Dreiecke — knotengleich, aber mit anderer Interpolation auf der Diagonale. Eingeschaltet bekommt jedes Viereck eine **Pyramide** (pyr5) mit Spitze im Inneren, die Tetraeder folgen dahinter. Gemessen an der Platte mit Pyramidenkörper: 12 Pyramiden statt 33 Tetraeder, Rauminhalt gleich, Verschiebung 0,3588 → 0,3589 mm, Formgüte min 0,185 → 0,154. Aus, weil die Rechnung nichts gewinnt und die Formgüte sinkt; ein für den Kontakt sauberer Übergang ist der Grund, ihn einzuschalten. Heute nur in der Datei |
 | Feldpunkte (`feldpunkte`) | `[x, y, z, h]` oder `[x, y, z, h, r]` je Punkt — das, was der Fehlerschätzer aus einem Ergebnis ableitet (Theoriehandbuch § 6c). Werden mit dem Modell gespeichert; beim nächsten Vernetzen entsteht daraus dasselbe Größenfeld |
 
@@ -877,36 +877,86 @@ Kennwerte und die zwanzig schlechtesten Elemente stehen im Protokoll.
 der Ansicht, **Aus** nimmt die Einfärbung wieder weg. Stäbe, Federn und
 Grenzschichten haben keine Form in diesem Sinn und bleiben grau.
 
-### Elemente wählen und Elementübersicht (seit 25.09.2026)
+### Elementstufe: Entwurf, Mittel, Fein (seit 25.09.2026)
 
-**Netz → Elemente wählen…** zeigt rechts je Familie die Elemente zum
-Anhaken: *Volumen – Tetraeder* (tet4, tet10, tetp), *Volumen – Sechsflächner*
-(VQ83 = hex8, VQ203 = hex20), *Volumen – Übergang* (Pyramiden pyr5) und
-*Schalen* (linear, quadratisch). Was nicht zur Wahl passt, ist **grau**; der
-Grund steht am Zeiger, bei Unverträglichem der Text der
-Verträglichkeitstabelle (Theoriehandbuch, „Verträglichkeit an einer
-gemeinsamen Seite“), etwa bei tetp neben tet10 „passen nicht aneinander“.
-Unter den Haken steht „So wird vernetzt“: je Weg des Vernetzers, welches
-Element dort entsteht. **Statik3D-Vorgabe (tet10 + VQ83)** setzt die Vorgabe,
-**Übernehmen** schreibt sie in die Netzeinstellungen; sie wirkt beim nächsten
-Vernetzen, das vorhandene Netz bleibt, bis neu vernetzt wird (die Meldung
-nennt, wie viele Elemente noch den anderen Ansatz haben). Rückgängig nimmt
-die Wahl zurück.
+Das erste Feld der **Netzeinstellungen** heißt **Elemente**. Es hat drei
+Stufen, deren Elemente in Genauigkeit und Rechenzeit zusammenpassen; darunter
+stehen Elemente und Zweck der gewählten Stufe und die **wirksame
+Kantenlänge** (bei bis zu 300 Körpern und Flächen mit Dicke die Kantenlänge im
+Feld je Objekt, kleinste bis größte, sonst die Regel). Die Stufe ersetzt den
+früheren Elementansatz linear/quadratisch und die Haken der Maske „Elemente
+wählen“, die es seit dem 25.09.2026 nicht mehr gibt.
 
-Anhakbar sind nur **tet4 oder tet10** und die **Pyramiden** — mehr kann der
-Vernetzer nicht getrennt einstellen, und die Maske tut nicht so, als ob:
+| Stufe | Elemente | wofür | gemessen (Quelle im Theoriehandbuch) |
+|---|---|---|---|
+| **Entwurf** | tet4, Sechsflächner hex8 (VQ83; entartete rechnen als Keil, Pyramide oder Tetraeder), Schalen linear (shell3/shell4) | schnell; für Vorbemessung und Verformungen – Spannungen fallen zu niedrig aus | tet4 verfehlt 1 N/mm² an einer Bohrung auch nach sechs Verfeinerungen: Lamé-Hohlzylinder, 888 → 132 185 Freiheitsgrade, Fehler 121,0 → 31,3 N/mm² (§ 10, „Wie genau ist tet4 an einer Bohrung?“). Am Kragarm −266 / −166 / −70 N/mm² bei 90 / 405 / 2 295 Freiheitsgraden (§ 6b-2) |
+| **Mittel** (Vorgabe) | tet10, Sechsflächner hex20 (VQ203; entartete als pent15 oder tet10), Schalen quadratisch (shell6/shell8) | für die Nachweise | Kragarm: tet10 +14 / +4 / +1 N/mm² bei 405 / 2 295 / 15 147 Freiheitsgraden (§ 6b-2); hex20 −0,02 N/mm² bei 1 359 Freiheitsgraden (§ 7a) |
+| **Fein** | wie Mittel, mit **halber Kantenlänge** (ohne tetp) | für Bohrungen, Kerben und Ermüdung | Kragarm tet10: von 2 295 auf 15 147 Freiheitsgrade (feineres Netz) +4 → +1 N/mm² (§ 6b-2) |
 
-| Haken | wirkt auf | grau, weil |
-|---|---|---|
-| tet4 / tet10 | Elementansatz der Netzeinstellungen (eine Ordnung für alle frei vernetzten Körper) | der andere ist angehakt – erst ihn abhaken; gemischt gibt es sie nur je Körper |
-| tetp | – | der Vernetzer erzeugt keine tetp (sie entstehen nur aus einem tet10-Netz); neben tet10 außerdem unverträglich |
-| VQ83 (hex8) | immer an: jeder hex8 mit zusammenfallenden Knoten wird als Keil, Pyramide oder Tetraeder gerechnet | neue hex8 entstehen nur im Sweep (`Netzeinstellungen.sweep`; seit 25.09.2026 keine Option der Oberfläche mehr, nur „sauber“ aus der Datei oder künftig aus der Stufe – die Maske zeigt daneben „Sweep (Sechsflächner): aus“ bzw. „an“ und schaltet ihn **nicht** ein) und bei tet4 in abgebildeten Sechsflächnern |
-| VQ203 (hex20) | folgt dem tet10: abgebildete Sechsflächner (sechs Vierecke, acht Ecken, gerade Kanten) werden mit tet10 hex20 | eine Ordnung für Tetraeder und abgebildete Sechsflächner; gesweepte Körper bleiben hex8 |
-| Pyramiden | Netzeinstellungen *Pyramiden*: Übergang von Vierecken des Nachbarn zu Tetraedern | – |
-| Schalen linear / quadratisch | folgen dem Tetraeder (shell3/shell4 bzw. shell6/shell8) | eine Ordnung für das ganze Netz |
+*Gemessen gegen den Sollwert 355 N/mm² an der Nachweisstelle des
+Kragarm-Prüfkörpers bzw. gegen die Lamé-Lösung am Innenrand; Freiheitsgrade =
+Unbekannte des Gleichungssystems.*
 
-Die Vorgabe tet10 + VQ83 heißt damit: frei vernetzte Körper tet10, gesweepte
-hex8/pent6 (wenn der Sweep an ist – seit 25.09.2026 ab Werk und nach dem Laden aus), abgebildete Sechsflächner hex20.
+**Was jede Stufe einstellt.** Die Elementordnung (Entwurf linear, Mittel und
+Fein quadratisch) und den Sweep „sauber“: Sechsflächner entstehen
+**automatisch** nur dort, wo jedes Element sauber wird, sonst Tetraeder (Zeile
+*Sweep* oben). Welche Elemente wirklich entstanden sind, zeigt danach
+*Netz → Elementübersicht…* – am Drehlager etwa 0 Hexaeder, weil heute kein
+Körper die Probe besteht.
+
+**Fein** halbiert beim Vernetzen die Kantenlänge: die Netzdichte eine Stufe
+feiner (grob → mittel → fein, also 8 → 16 → 32 Elemente über die
+Objektgröße; steht sie schon auf fein, bekommt jeder Körper die Hälfte seiner
+Dichte-Länge als eigene Kantenlänge), die Ziellänge, die kleinste und größte
+Elementgröße, die Kantenlänge je Körper, Netzverfeinerungen und Feldpunkte
+halb, die Teilung abgebildeter Sechsflächner und von Flächen mit eigener
+Teilung doppelt. Gespeichert bleiben die Werte, die man eingetragen hat – das
+Protokoll nennt beim Vernetzen „Elemente Fein: vernetzt mit halber
+Kantenlänge – …“. Gemessen am Würfel 1 m mit Teilung 2 × 2 × 2: Mittel 8 hex20,
+Fein 64 hex20. Die Höchstzahl Elemente je Objekt bleibt; sie kann Fein an
+einem großen Körper begrenzen (das Protokoll nennt es je Körper). Die adaptive
+Vernetzung bestimmt ihre Kantenlänge selbst; dort halbiert Fein nichts.
+
+**Kontakt: Mittel und Fein noch gesperrt.** Kontakt, Fugen und Flächenlager
+nehmen von einer Elementseite heute nur die Eckknoten; an quadratischen
+Elementen bräche die Rechnung ab (Abschnitt „Quadratische Elemente an Fugen …“
+unten). Damit Kontakt und Plastizität in jeder wählbaren Stufe rechnen, sind
+**Mittel und Fein an einem Modell mit Kontaktbedingung, Kontaktpaar oder
+Flächenlager sichtbar, aber gesperrt**, mit dem Hinweis „mit Kontakt noch nicht
+verfügbar – Kontakt für quadratische Elemente folgt“ am Eintrag. Die Maske
+steht dann auf Entwurf und sagt in der Zeile *Kontakt*, woran es liegt
+(„Kontaktbedingung Fuge …“). Eine verschweißte Bedingung an gemeinsamer
+Fläche (starr in allen Richtungen) und eine abgeschaltete sperren nicht. Steht
+ein solches Modell noch auf Mittel oder Fein – aus einer Datei, oder weil die
+Kontaktbedingung erst danach dazukam –, stellt das Vernetzen es auf Entwurf und
+schreibt es ins Protokoll („Elemente: Entwurf statt Mittel – Mittel ist mit
+Kontakt noch nicht verfügbar – … (Kontaktbedingung Fuge). Vernetzt wird mit
+tet4/hex8; die Stufe steht jetzt auf Entwurf.“); still herabgestuft wird
+nicht, abgebrochen auch nicht. Dasselbe gilt für *Adaptiv vernetzen* und die
+Befehlszeile. Kommt der Kontakt für quadratische Seiten, fällt die Sperre an
+einer Stelle weg (`elementstufe.quadratisch_gesperrt`). Geprüft
+(`tests/test_elementstufe.py`): zwei Würfel mit Kontaktfuge rechnen in jeder
+wählbaren Stufe, die Kontaktfuge trägt den Druck (Auflager = Last); ohne die
+Sperre bräche das Vernetzen mit Mittel ab.
+
+**Plastizität** rechnet mit tet4, tet10, hex8, hex20, pent6, pent15 und pyr5
+– also in jeder Stufe; ihr Haken bleibt, wie er ist. Geprüft am Würfel
+(hex8 / hex20, 8 / 8 / 64 Elemente) und an einer Pyramide (frei vernetzt:
+306 tet4 / 306 tet10 / 2 509 tet10) unter Druck über der Streckgrenze: in
+jeder Stufe konvergiert, es fließt; zwei Würfel mit Kontaktfuge und
+Fließen unter einer mittigen Last (Mittel gewählt, Entwurf gerechnet):
+konvergiert, das Fundament trägt die Last über die Fuge.
+
+**Vorgabe und ältere Dateien.** Ein neues Modell der Oberfläche beginnt mit
+Mittel. Eine ältere Datei ohne Stufe liest sie aus der Ordnung: linear →
+Entwurf, quadratisch → Mittel; ihr Sweep bleibt, wie er geladen wurde, bis
+„Übernehmen“. Das Datenmodell ohne Oberfläche (Skripte, `statik3d
+modell.json --vernetzen`) bleibt bei linear, rechnet aber Sperre und Fein wie
+die Oberfläche. Beim Import fragt das Programm, wenn die Datei eine andere
+Stufe vorgibt: „Die Datei gibt Entwurf (lineare Elemente) vor.
+Statik3D-Vorgabe: Mittel. Welche verwenden?“ (Absatz „Elemente beim Import“ im Kapitel Import).
+
+### Elementübersicht (seit 25.09.2026)
 
 **Netz → Elementübersicht…** zeigt, womit das Netz **wirklich** vernetzt ist:
 je Elementtyp eine Zeile mit Ansatz (linear, quadratisch, p = k), Anzahl,
@@ -1018,10 +1068,13 @@ des Zuges (bei eigenen Fugenflächen 37 %), ein starres Flächenlager ließ 41 %
 Setzung zu als festgehaltene Bodenknoten. Mit linearen Elementen stimmt beides
 exakt. Deshalb bricht das Programm ab, sobald eine Kontaktbedingung, ein
 Kontaktpaar oder ein Flächenlager an einem quadratischen Element liegt. Die
-Meldung nennt Bedingung, Elementtyp und Elementnummern. Abhilfe: diese Körper
-linear vernetzen (*Netzeinstellungen → Elementansatz linear*). Erlaubt bleibt
-eine verschweißte Fuge (starr in allen Richtungen, passende Netze), denn sie
-trennt nichts. Der Kontakt über quadratische Seiten ist in Arbeit.
+Meldung nennt Bedingung, Elementtyp und Elementnummern. Seit den
+Elementstufen (25.09.2026) kommt es dazu über die Oberfläche nicht mehr: an
+einem Modell mit Kontakt sind Mittel und Fein gesperrt, und es wird mit
+Entwurf vernetzt, mit Hinweis in Maske und Protokoll (Abschnitt
+„Elementstufe: Entwurf, Mittel, Fein“). Erlaubt bleibt eine verschweißte Fuge
+(starr in allen Richtungen, passende Netze), denn sie trennt nichts. Der
+Kontakt über quadratische Seiten ist in Arbeit.
 
 **Ordnung je Körper** (23.09.2026, im Aufbau): Jeder Volumenkörper trägt im Modell
 und in der Datei eine eigene Ordnung (`Volumenkoerper.ordnung`): leer heißt „wie das
@@ -3565,22 +3618,25 @@ prüfen, Ansicht aufbauen); das Drehlager ist in rund einer Sekunde gelesen,
 das Vernetzen danach ist die eigentliche Arbeit und hat seinen eigenen
 Balken.
 
-**Elementwahl beim Import (seit 25.09.2026).** `mesh.xml` gibt **keine
+**Elemente beim Import (seit 25.09.2026).** `mesh.xml` gibt **keine
 Elementordnung** vor – es gibt dort keinen Schlüssel für lineare oder
 quadratische Elemente (nachgesehen an beiden Drehlager-Dateien V15_4). Die
 Zeile „lineare Elemente (shell3/shell4, tet4, hex8) (aus mesh.xml der
 RFEM-Datei)“ im Protokoll früherer Importe war die Vorgabe des Datenmodells,
 nicht die der Datei; das Protokoll sagt das jetzt ausdrücklich. Nach dem
-Import in ein neues Modell setzt die Oberfläche die **Statik3D-Vorgabe
-tet10 + VQ83**. Gibt die Datei ein Elementfeld anders vor – heute die
-Elementform der Flächen (etwa „Vierecke“ gegen die Vorgabe „Vierecke, sonst
-Dreiecke“) –, fragt sie: „Die RFEM-Datei gibt … vor. Statik3D-Vorgabe:
-tet10 + VQ83 (…). Welche verwenden?“ mit **Datei-Vorgabe** und
-**Statik3D-Vorgabe** (Enter und Esc nehmen die Statik3D-Vorgabe). Was die
-Datei nicht vorgibt, bekommt immer die Statik3D-Vorgabe; die Protokollzeile
-„Elementwahl nach dem Import: …“ nennt je Feld, woher es kommt, und die
-Netzeinstellungen tragen es in ihrer Quelle. Statik3D-Dateien (.json) behalten
-ihre eigene Wahl; beim Anhängen an ein Modell bleibt dessen Wahl. Ein
+Import in ein neues Modell setzt die Oberfläche die **Statik3D-Vorgabe:
+Elemente Mittel** (tet10, hex20, Schalen quadratisch; Sweep „sauber“), an einem
+Modell mit Kontakt **Entwurf** mit Hinweis („Mittel und Fein: mit Kontakt noch
+nicht verfügbar – …“). Gibt die Datei eine andere Stufe vor (eine Ordnung:
+„lineare Elemente“ = Entwurf), fragt sie: „Die Datei gibt Entwurf (lineare
+Elemente) vor. Statik3D-Vorgabe: Mittel. Welche verwenden?“; gibt sie die
+Elementform der Flächen anders vor (etwa „Vierecke“ gegen die Vorgabe
+„Vierecke, sonst Dreiecke“), fragt sie ebenso danach. Knöpfe **Datei-Vorgabe**
+und **Statik3D-Vorgabe** (Enter und Esc nehmen die Statik3D-Vorgabe;
+abschaltbar wie die übrigen Rückfragen). Was die Datei nicht vorgibt, bekommt
+immer die Statik3D-Vorgabe; die Protokollzeile „Elemente nach dem Import: …“
+nennt je Feld, woher es kommt, und die Netzeinstellungen tragen es in ihrer
+Quelle. Statik3D-Dateien (.json) behalten ihre eigene Stufe; beim Anhängen an ein Modell bleibt dessen Wahl. Ein
 eingelesenes **Netz** (Abaqus, Nastran, InfoCAD) bleibt, wie es ist – die Wahl
 gilt für das nächste Vernetzen der Geometrie. Der Import ohne Oberfläche
 (`cli.py`) setzt die Vorgabe nicht; dort bleibt das Datenmodell bei linear.
@@ -5715,7 +5771,8 @@ davon nicht betroffen.
   Unbekannten: −4,3 statt −55,3 N/mm²; quadratisch −0,02 statt −95,6); ein zur Pyramide
   entarteter hex20 hat kein quadratisches Gegenstück und ist ein FEHLER. Welche
   Elementtypen in einem Netz aneinanderstoßen dürfen, steht im Theoriehandbuch § 7a
-  (Verträglichkeit an einer gemeinsamen Seite); die Vorgabe tet10 + VQ83 ist zulässig.
+  (Verträglichkeit an einer gemeinsamen Seite); die Stufen Entwurf (tet4 + hex8) und Mittel
+  (tet10 + hex20) sind zulässig.
   Beim **Import** geschieht die Umwandlung schon im Anschluss an das
   Zusammenführen doppelter Knoten, und das Importprotokoll nennt sie
   („Entartete Volumenelemente umgewandelt (hex8→pent6: 2) …“) – dort, wo

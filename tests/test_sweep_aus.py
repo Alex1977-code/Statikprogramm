@@ -13,8 +13,14 @@ Vernetzer-Sitzung setzen model.netz.sweep direkt).
 Seit 25.09.2026 ist das Feld ein Wort ("aus" | "sauber" | "immer", dritte
 Lieferung der Vernetzer-Sitzung). „An“ heißt hier True oder „immer“: beide
 laden als „aus“, Übernehmen und Vernetzen machen daraus „aus“. „Sauber“
-bleibt überall stehen – es sweept nur Körper, die die Probe bestehen, und
-wird künftig von der Stufe gesetzt.
+bleibt überall stehen – es sweept nur Körper, die die Probe bestehen.
+
+Seit den Elementstufen (25.09.2026, statik3d.elementstufe) setzt jede Stufe
+„sauber“: „sweepen muss das programm doch automatisch wenn das entsprechende
+element das verlangt … dass kann der user doch nicht wissen“. Übernehmen der
+Netzeinstellungen macht darum aus jedem Wort „sauber“ – auch aus „immer“, dem
+Sweep, der am Drehlager die verzerrten Elemente erzeugte. Laden und Vernetzen
+bleiben, wie oben.
 """
 from __future__ import annotations
 
@@ -80,8 +86,10 @@ def test_maske_ohne_haken():
         check("Netzeinstellungen: kein Haken „Sechsflächner sweepen“", "sweep" not in felder,
               ", ".join(felder))
         n = w._netz_aus_maske(mk.werte())
-        check("Übernehmen der Netzeinstellungen schaltet den Sweep aus", n.sweep == "aus", str(n.sweep))
-        for wert, soll in (("immer", "aus"), ("sauber", "sauber"), ("aus", "aus")):
+        # Stufe setzt „sauber“ (25.09.2026): nie mehr „immer“ oder True
+        check("Übernehmen der Netzeinstellungen setzt den Sweep „sauber“ (die Stufe)", n.sweep == "sauber",
+              str(n.sweep))
+        for wert, soll in (("immer", "sauber"), ("sauber", "sauber"), ("aus", "sauber")):
             w.model.netz.sweep = wert
             n = w._netz_aus_maske(mk.werte())
             check(f"  Übernehmen: „{wert}“ → „{soll}“", n.sweep == soll, str(n.sweep))

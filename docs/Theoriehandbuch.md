@@ -7507,24 +7507,30 @@ Dreiecke seitlich), die der Sweep setzt:
 | pent15 | Bindung | direkt | nein | Bindung | direkt | Bindung | direkt | Bindung |
 | pyr5 | direkt | Bindung | linear | direkt | Bindung | direkt | Bindung | direkt |
 
-Die Vorgabe der Oberfläche, tet10 + VQ83, ist damit zulässig: tet10 neben dem hex8 über
-Pyramiden, neben dessen Keilen und Tetraedern mit Bindung. Geprüft wird die Tabelle
+Die Elementstufen der Oberfläche (25.09.2026) sind damit zulässig: Entwurf (tet4 neben
+hex8/pent6/pyr5 direkt) und Mittel/Fein (tet10 neben hex20/pent15 direkt oder mit
+Bindung); ein gesweeptes hex8 neben tet10 geht über Pyramiden, neben dessen Keilen und
+Tetraedern mit Bindung. Geprüft wird die Tabelle
 gegen die Rechnung (`tests/test_vertraeglich.py`): für 50 Typpaare mit gleich geformter
 Seite ist die Spur der Verschiebung von beiden Seiten gleich, genau wo die Tabelle
 „direkt“ oder „Bindung“ sagt, mit den Bindungen, die die Assemblierung wirklich setzt;
 ohne sie klafft sie bei „Bindung“. tetp neben tet4 rechnet, neben tet10 hält es an.
 
-**Elementwahl in der Oberfläche: was der Vernetzer daraus macht** (25.09.2026). Die
-Maske *Elemente wählen* graut nach dieser Tabelle aus (`elementauswahl.zustand` liest
-`elemente.VERTRAEGLICH`; ein Test setzt einen Eintrag um und sieht den anderen Grund).
-Ausgegraut wird außerdem, was der Vernetzer nicht getrennt einstellen kann: er hat **eine**
-Ordnung (`Netzeinstellungen.ordnung`) für frei vernetzte Körper (tet4/tet10), abgebildete
-Sechsflächner (hex8/hex20) und Flächen (shell3/4 bzw. shell6/8); der Sweep erzeugt immer
-hex8/pent6; tetp entstehen nur durch Umwandlung eines tet10-Netzes (`tetp.aus_tet10`).
-Die Vorgabe tet10 + VQ83 bildet darum auf `ordnung = 2` ab, und abgebildete
-Sechsflächner werden dabei hex20 (VQ203) – verträglich („direkt“ bzw. „Bindung“ neben
-tet10 und pent15), aber nicht der hex8, den „VQ83“ nahelegt. Getrennt einstellbar wäre
-das nur im Vernetzer (eine eigene Ordnung für abgebildete Sechsflächner).
+**Elementstufe in der Oberfläche: was der Vernetzer daraus macht** (25.09.2026). Der
+Vernetzer hat **eine** Ordnung (`Netzeinstellungen.ordnung`) für frei vernetzte Körper
+(tet4/tet10), abgebildete Sechsflächner (hex8/hex20) und Flächen (shell3/4 bzw.
+shell6/8); der Sweep erzeugt immer hex8/pent6; tetp entstehen nur durch Umwandlung eines
+tet10-Netzes (`tetp.aus_tet10`). Die Haken der Maske *Elemente wählen* (am Vormittag des
+25.09.2026, nach dieser Tabelle ausgegraut) sind darum den Stufen gewichen
+(`statik3d.elementstufe`): **Entwurf** = `ordnung 1` (tet4, hex8 als VQ83, Schalen
+linear), **Mittel** = `ordnung 2` (tet10, hex20 als VQ203, Schalen quadratisch),
+**Fein** = Mittel mit halber Kantenlänge beim Vernetzen (`elementstufe.wirksam`); jede
+Stufe setzt den Sweep „sauber“. An einem Modell mit Kontaktbedingung, Kontaktpaar oder
+Flächenlager sind Mittel und Fein gesperrt (`elementstufe.quadratisch_gesperrt`, die
+eine Stelle), solange Kontakt nur die Eckknoten einer Seite nimmt
+(`fugen.QuadratischeSeiten`); das Modell wird mit Entwurf vernetzt, mit Zeile im
+Protokoll. Messwerte zu den Stufen: Benutzerhandbuch, „Elementstufe: Entwurf, Mittel,
+Fein“.
 
 Ein Volumenkörper, der so nie ein Netz bekommen kann, gilt auch nicht als
 **unvernetzt** (`Model.koerper_traegt`). Sonst forderte die

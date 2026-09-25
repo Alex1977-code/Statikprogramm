@@ -1,7 +1,11 @@
 """
-Masken „Elemente wählen“ und „Elementübersicht“ im Register Netz, die
-Rueckfrage beim Import und die Faerbung der Ansicht nach Elementtyp
-(Paket E, 25.09.2026).
+Maske „Elementübersicht“ im Register Netz, die Rueckfrage beim Import und
+die Faerbung der Ansicht nach Elementtyp (Paket E, 25.09.2026).
+
+Die Maske „Elemente wählen“ mit ihren Haken ist am 25.09.2026 entfallen:
+der Anwender wollte Stufen statt Haken („keep it simple“, „viel zu
+fummelig“) - das Auswahlfeld „Elemente“ (Entwurf / Mittel / Fein) steht in
+den Netzeinstellungen (gui/main.py, statik3d.elementstufe).
 
 Die Logik ohne Oberflaeche steht in :mod:`statik3d.elementauswahl`; hier nur
 der Aufbau in den Rahmen der rechten Masken (gui/masken.py) und die
@@ -19,7 +23,6 @@ from .. import elementauswahl as ea
 from .. import elemente as EL
 from . import masken as msk
 
-TITEL_WAHL = "Elemente wählen"
 TITEL_UEBERSICHT = "Elementübersicht"
 #: Spalten der Uebersicht
 SPALTEN = ["Elementtyp", "Ansatz", "Anzahl", "Anteil", "Körper"]
@@ -27,129 +30,6 @@ SPALTEN = ["Elementtyp", "Ansatz", "Anzahl", "Anteil", "Körper"]
 ROLLE = QtCore.Qt.UserRole
 #: Bis zu so vielen Elementen steht der Fingerabdruck beim Oeffnen da
 FINGERABDRUCK_SOFORT = 300_000
-
-
-# --------------------------------------------------------------------------
-# Elemente waehlen
-# --------------------------------------------------------------------------
-class Elementwahl(msk.Maske):
-    """Die Haken je Familie; Unvertraegliches und Abgeleitetes grau mit Grund.
-
-    ``haken`` {Schluessel: QCheckBox}; ``wahl()`` die angehakten
-    anhakbaren Schluessel. „Übernehmen“ schreibt nur Elementansatz und
-    Pyramiden in die Netzeinstellungen (elementauswahl.auf_netz)."""
-
-    def __init__(self, netz, parent=None):
-        # Wort seit 25.09.2026: bool("aus") waere wahr (ea.sweep_an)
-        self.sweep = ea.sweep_an(netz)
-        super().__init__(
-            TITEL_WAHL, [], parent, knopf="Übernehmen",
-            hinweis="Anhaken, was gerechnet werden soll - Unverträgliches wird grau, der Grund "
-                    "steht am Zeiger. Die Wahl stellt den Elementansatz und die Pyramiden der "
-                    "Netzeinstellungen und wirkt beim nächsten Vernetzen.",
-            zusatz=[(f"Statik3D-Vorgabe ({ea.VORGABE_TEXT})", self.vorgabe_setzen)])
-        inhalt = QtWidgets.QWidget(self)
-        lay = QtWidgets.QVBoxLayout(inhalt)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(6)
-        self.haken: dict = {}
-        gruppen: dict = {}
-        for key, gruppe, text in ea.HAKEN:
-            g = gruppen.get(gruppe)
-            if g is None:
-                g = gruppen[gruppe] = QtWidgets.QGroupBox(gruppe, inhalt)
-                QtWidgets.QVBoxLayout(g).setSpacing(2)
-                lay.addWidget(g)
-            cb = QtWidgets.QCheckBox(text, g)
-            cb.setObjectName(f"haken_{key}")
-            g.layout().addWidget(cb)
-            self.haken[key] = cb
-            if key == "hex20":
-                # Der Sweep steht daneben, lesbar, nicht verstellbar: die
-                # Elementwahl darf ihn nicht einschalten (Auftrag Paket E); einen
-                # Haken in den Netzeinstellungen gibt es seit 25.09.2026 nicht mehr
-                self.lbl_sweep = QtWidgets.QLabel(g)
-                self.lbl_sweep.setObjectName("maskeninfo")
-                self.lbl_sweep.setWordWrap(True)
-                self.lbl_sweep.setText(
-                    "Sweep (Sechsflächner): "
-                    + ("an (aus der Datei) - gesweepte Körper werden hex8/pent6." if self.sweep else
-                       "aus - keine Option der Oberfläche mehr; diese Wahl schaltet ihn "
-                       "nicht ein."))
-                g.layout().addWidget(self.lbl_sweep)
-        self.lbl_vorschau = QtWidgets.QLabel(inhalt)
-        self.lbl_vorschau.setObjectName("maskeninfo")
-        self.lbl_vorschau.setWordWrap(True)
-        lay.addWidget(self.lbl_vorschau)
-        self.inhalt_einfuegen(inhalt)
-        self._setzen(ea.wahl_aus_netz(netz))
-        for key in ea.ANHAKBAR:
-            self.haken[key].toggled.connect(lambda _an: self._nachfuehren())
-        self._anfang = self._werte_roh()
-
-    # -- Zustand ---------------------------------------------------------
-    def wahl(self) -> set:
-        return {k for k in ea.ANHAKBAR if self.haken[k].isChecked()}
-
-    def _setzen(self, wahl: set) -> None:
-        for k in ea.ANHAKBAR:
-            cb = self.haken[k]
-            cb.blockSignals(True)
-            cb.setChecked(k in wahl)
-            cb.blockSignals(False)
-        self._nachfuehren()
-
-    def _nachfuehren(self) -> None:
-        """Grau, Haken und Tooltip aus elementauswahl.zustand."""
-        z = ea.zustand(self.wahl(), self.sweep)
-        for k, cb in self.haken.items():
-            d = z[k]
-            cb.blockSignals(True)
-            if k not in ea.ANHAKBAR or not d["frei"]:
-                cb.setChecked(bool(d["an"]))
-            cb.setEnabled(bool(d["frei"]))
-            cb.blockSignals(False)
-            cb.setToolTip(d["grund"])
-        self.lbl_vorschau.setText("So wird vernetzt:\n" + "\n".join(
-            "• " + z_ for z_ in ea.vorschau(self.wahl(), self.sweep)))
-
-    def vorgabe_setzen(self) -> None:
-        """tet10 + VQ83: tet10 an, tet4 aus, Pyramiden wie bisher."""
-        self._setzen({"tet10"} | ({"pyr5"} & self.wahl()))
-
-    def werte(self) -> dict:
-        w = super().werte()
-        w["wahl"] = sorted(self.wahl())
-        return w
-
-    def _werte_roh(self) -> dict:
-        w = msk.Maske._werte_roh(self)
-        w["wahl"] = sorted(self.wahl()) if hasattr(self, "haken") else []
-        return w
-
-
-def maske_elementwahl(w):
-    """Netz → Elemente wählen… (rechte Maske)."""
-    maske = Elementwahl(w.model.netz)
-
-    def uebernehmen(werte: dict):
-        try:
-            netz = ea.auf_netz(w.model.netz, set(werte.get("wahl") or ()))
-        except ValueError as ex:
-            return w.error(str(ex))
-        w.merken("Elementwahl")
-        w.model.netz = netz
-        text = ea.wahl_text(ea.wahl_aus_netz(netz))
-        z = ea.typen_zaehlen(w.model)
-        vol = {t: n for t, n in z["typen"].items() if t in ("tet4", "tet10")}
-        soll = "tet10" if netz.ordnung >= 2 else "tet4"
-        rest = sum(n for t, n in vol.items() if t != soll)
-        w.info(f"Elementwahl: {text} - wirkt beim nächsten Vernetzen"
-               + (f"; das vorhandene Netz hat noch {rest} {'tet4' if soll == 'tet10' else 'tet10'}"
-                  if rest else ""))
-        w.refresh_all()
-    maske.angewendet.connect(uebernehmen)
-    return w.maske_erzeugen(maske)
 
 
 # --------------------------------------------------------------------------
@@ -302,13 +182,17 @@ def faerbung_zeichnen(w, netz, eidx, f: dict, nm: str, breite: int, darstellung:
 # Rueckfrage beim Import
 # --------------------------------------------------------------------------
 def elementwahl_nach_import(w, m, path: str) -> str:
-    """Nach dem Import in ein neues Modell: die Elementwahl festlegen.
+    """Nach dem Import in ein neues Modell: die Elementstufe festlegen.
 
-    Gibt die Datei ein Elementfeld anders vor als Statik3D (heute nur die
-    RFEM-6-Datei: die Elementform der Flaechen in mesh.xml), fragt das
-    Programm - abschaltbar wie jede Rueckfrage (``w._fragen_knoepfe``).
-    Was die Datei nicht vorgibt, bekommt die Statik3D-Vorgabe. Rueckgabe die
-    Protokollzeile. Statik3D-Dateien (.json) behalten ihre eigene Wahl."""
+    Gibt die Datei ein Elementfeld anders vor als Statik3D (eine Ordnung ist
+    eine Stufe: „lineare Elemente“ = Entwurf; die RFEM-6-Datei gibt heute
+    nur die Elementform der Flaechen in mesh.xml vor), fragt das Programm -
+    abschaltbar wie jede Rueckfrage (``w._fragen_knoepfe``). Was die Datei
+    nicht vorgibt, bekommt die Statik3D-Vorgabe Mittel; ein Modell mit
+    Kontakt Entwurf, mit dem Hinweis in der Zeile
+    (elementstufe.quadratisch_gesperrt, 25.09.2026). Rueckgabe die
+    Protokollzeile. Statik3D-Dateien (.json) behalten ihre eigene Stufe."""
+    from .. import elementstufe as es
     ext = os.path.splitext(str(path))[1].lower()
     if ext == ".json":
         return ""
@@ -318,15 +202,23 @@ def elementwahl_nach_import(w, m, path: str) -> str:
         from ..importers import rfem6_db
         aus_datei = rfem6_db.mesh_info(path)
         datei = "RFEM-Datei"
-    abw = ea.abweichungen(aus_datei)
+    gruende = es.quadratisch_gesperrt(m)
+    abw = ea.abweichungen(aus_datei, gesperrt=bool(gruende))
     datei_waehlen = False
     if abw:
         # Enter und Esc nehmen die Statik3D-Vorgabe (Anwender 23.09.2026:
-        # „standard sollte tet10 und vq83 sein“)
-        datei_waehlen = w._fragen_knoepfe("Elementwahl beim Import", ea.frage_text(datei, abw),
+        # „standard sollte tet10 und vq83 sein“; 25.09.2026 „Beim Import
+        # fragen“)
+        datei_waehlen = w._fragen_knoepfe("Elemente beim Import", ea.frage_text(datei, abw),
                                           ja="Datei-Vorgabe", nein="Statik3D-Vorgabe",
                                           vorgabe="nein")
-    m.netz, zeile = ea.nach_import(m.netz, aus_datei, datei_waehlen, datei)
+    m.netz, zeile = ea.nach_import(m.netz, aus_datei, datei_waehlen, datei, gesperrt=bool(gruende))
+    if gruende:
+        # Die Vorgabe waere Mittel - an diesem Modell gesperrt, nie still
+        zeile += f" - Mittel und Fein: {es.SPERRHINWEIS} ({es.gruende_text(gruende)}), daher Entwurf"
+    sperre = es.sperre_anwenden(m)          # die Datei-Vorgabe Mittel an einem Kontaktmodell
+    if sperre:
+        zeile += " - " + sperre
     if m.elements:
         z = ea.typen_zaehlen(m)
         zeile += (" - das eingelesene Netz bleibt, wie es ist: "
