@@ -4333,6 +4333,17 @@ Newton-Lösung selbst, der Rest lag in 14 Fällen höchstens bei 1,5·10⁻⁷, 
 die Zahl der Rückführungen ist wieder die von 6a961e5 (Zugwürfel 4,
 Kragträger 8; `test_gemeinsam_aendert_nichts_ohne_beides`).
 
+**Auch im Weg Anfangsdehnung** (25.09.2026, ideal plastisch immer dieser Weg): mit
+Kontakt rechnet sie dieselbe Schlussabnahme. Dort ist das falsche „konvergiert“
+seltener — jeder ihrer Schritte löst genau so wie der Abschluss (elastisch, voller
+Kontakt), und ihr Abbruch am geschätzten Fehler hält die nächste Änderung unter der
+Toleranz; gemessen lag der Rest an allen „konvergiert“ bei höchstens 6,1·10⁻⁶ gegen
+10⁻⁴ (gequetschter Block mit Anfangsdehnung, ideal plastischer Block mit Reibung
+unter der Grenzlast). Ein Umspringen des Kontakts genau im Abschluss ist aber nicht
+ausgeschlossen; ein so gestörter Abschluss (u um 1 % verschoben) heißt jetzt „nicht
+konvergiert“, ohne die Prüfung hieße er „konvergiert“
+(`tests/test_plastizitaet.py::test_schlussabnahme_anfangsdehnung`).
+
 **Warum der Startwert der Stufe voll auskonvergiert.** Die erste Fassung
 (Bau, 23.09.2026) kürzte auch ihn ab (und nahm die letzte Tangente dazu).
 Sie sparte mehr (3015 → 1405 Zerlegungen in der Stichprobe des Bauers), lag

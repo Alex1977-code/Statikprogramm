@@ -4102,7 +4102,8 @@ davon nicht betroffen.
   kippenden Stempel mit 1, 3 und 5 (Rest 1,06·10⁻³ bis 1,21·10⁻³ bei
   Toleranz 10⁻³). Ohne Kontakt und Ausfall wird die
   Prüfung nicht gerechnet — dort ist sie überflüssig und kostete je Lastfall
-  eine Rückführung.
+  eine Rückführung. Seit dem 25.09.2026 gilt sie auch für die Rechnung ohne
+  Verfestigung (Anfangsdehnung) mit Kontakt.
 * **Punkte über die Dicke beim Sechsflächner** (22.09.2026, eine Einstellung
   am Modell, `plastizitaet.dicke_punkte`, Vorgabe 5): mit Fließen rechnet der
   `hex8` in Lagenrichtung fünf Gauss-Lobatto-Punkte statt zwei Gaußpunkten; die
