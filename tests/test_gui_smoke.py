@@ -7415,8 +7415,17 @@ def main():
               csv_[0].startswith("Knoten;Rx [N];Ry [N];Rz [N];Mx [Nmm]")
               and abs(float(csv_[1].split(";")[3].split("/")[0].replace(",", ".")) - rz_kN * 1000) < 1e-6,
               str(csv_[:2]))
+        # Seit 24.09.2026 stehen im Bild der Umhuellenden (hier „Umhüllende
+        # Lastfälle“) keine Lasten mehr (Schalter „Lasten im Ergebnisbild“,
+        # Vorgabe aus) - geprueft wird darum am Ergebnis des Lastfalls, das
+        # seine Lasten zeigt; die Zeile nennt ihn (tests/test_ergebnisbild.py)
+        for i_ in range(w.cb_result.count()):
+            if (w.cb_result.itemData(i_) or ("",))[0] == "case":
+                w.cb_result.setCurrentIndex(i_)
+                break
+        app.processEvents()
         check("Lasten oben links in [N, N/mm], Kennwerte u in [cm]",
-              any("[N, N/mm]" in z for z in w._kopfzeile_zeilen)
+              any("[N, N/mm]" in z and f"Lasten {m_.active_case} " in z for z in w._kopfzeile_zeilen)
               and any(z.startswith("u ") and "[cm]" in z for z in w._kennwerte_zeilen),
               str((w._kopfzeile_zeilen, w._kennwerte_zeilen[:2])))
         ok_ = mk_.setData(mk_.index(1, 1), "4500", QtCore.Qt.EditRole)
@@ -7477,29 +7486,42 @@ def main():
               and kn["ergebnisse"].defaultAction() is w.act_ergebnisse,
               type(w.glasleiste.lay.itemAt(1).widget()).__name__)
         eintr =[(cbl.itemText(i), cbl.itemData(i)) for i in range(cbl.count())]
-        check("sie führt jeden Lastfall und jede Kombination",
-              len(eintr) == len(w.model.load_cases) + len(w.model.combinations)
-              and eintr[0][1] == ("case", list(w.model.load_cases)[0])
-              and any(d[0] == "combo" for _t, d in eintr),
-              f"{len(eintr)} Einträge zu {len(w.model.load_cases)} Lastfällen "
+        # Seit 24.09.2026 gegliedert: Ueberschriften (Daten None) „Lastfälle“
+        # und „Kombinationen“, danach die Eintraege (tests/test_ergebnisbild.py)
+        daten_ = [d for _t, d in eintr if d is not None]
+        check("sie führt jeden Lastfall und jede Kombination, unter zwei Überschriften",
+              len(daten_) == len(w.model.load_cases) + len(w.model.combinations)
+              and [t for t, d in eintr if d is None] == ["Lastfälle", "Kombinationen"]
+              and daten_[0] == ("case", list(w.model.load_cases)[0])
+              and any(d[0] == "combo" for d in daten_),
+              f"{len(daten_)} Einträge zu {len(w.model.load_cases)} Lastfällen "
               f"und {len(w.model.combinations)} Kombinationen")
         check("und steht auf dem, was die Ansicht zeigt",
               cbl.currentData() == ("case", w.model.active_case), str(cbl.currentData()))
         zweiter = next(i for i, (_t, d) in enumerate(eintr)
-                       if d[0] == "case" and d[1] != w.model.active_case)
+                       if d and d[0] == "case" and d[1] != w.model.active_case)
         cbl.setCurrentIndex(zweiter)
         app.processEvents()
         check("ein Lastfall daraus wird der aktive",
               w.model.active_case == eintr[zweiter][1][1], w.model.active_case)
-        i_kombi = next(i for i, (_t, d) in enumerate(eintr) if d[0] == "combo")
+        i_kombi = next(i for i, (_t, d) in enumerate(eintr) if d and d[0] == "combo")
         cbl.setCurrentIndex(i_kombi)
         app.processEvents()
-        check("eine Kombination ohne Ergebnis sagt, woran es liegt",
-              "sobald gerechnet ist" in w.log.toPlainText().splitlines()[-1],
-              w.log.toPlainText().splitlines()[-1][:80])
+        # ... und die Leiste springt auf das zurueck, was das Bild weiter
+        # zeigt (Nachbesserung 24.09.2026, tests/test_ergebnisbild.py)
+        check("eine Kombination ohne Ergebnis sagt, woran es liegt, die Leiste springt zurück",
+              "sobald gerechnet ist" in w.log.toPlainText().splitlines()[-1]
+              and cbl.currentData() == ("case", w.model.active_case),
+              f"{w.log.toPlainText().splitlines()[-1][:80]} / {cbl.currentData()}")
         an_ = _slv.solve_all(w.model, design=bool(w.model.members))
         w._solve_done("all", an_)
         app.processEvents()
+        # nach der Rechnung zeigt das Bild die Umhuellende - die Leiste auch
+        # (bis 24.09.2026 blieb sie auf dem Lastfall stehen)
+        check("nach der Rechnung steht die Leiste auf der gezeigten Umhüllenden",
+              cbl.currentData() == w.cb_result.currentData()
+              and tuple(w.cb_result.currentData())[0] == "env",
+              f"{cbl.currentData()} / {w.cb_result.currentData()}")
         cbl.setCurrentIndex(i_kombi)
         app.processEvents()
         check("mit Ergebnis schaltet sie die Ergebnisliste mit um",

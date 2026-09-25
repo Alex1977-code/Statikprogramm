@@ -1319,6 +1319,47 @@ Verlauf bleibt die Ecke leer. Der Text gehört zum Bild und kommt darum mit in
 den Bericht, wenn man die Ansicht übernimmt. Abschalten: *Ergebnisse →
 Kennwerte im Bild*.
 
+Die Kennwerte kommen aus **demselben Feld wie Färbung und Legende**, auch bei
+einer Umhüllenden: zu |u| das größte |u| einer einzelnen Kombination, dieselbe
+Zahl wie oben an der Legende. Bis zum 24.09.2026 bildeten sie |u| aus den
+Extremwerten je Richtung, die aus verschiedenen Kombinationen stammen: am
+Hallenrahmen standen 79,23 mm unter einer Legende mit 73,5 mm (ux = 29,71 mm
+aus GZT11 und uz = −73,45 mm aus GZT4) — ein Wert, den es in keiner
+Kombination gibt; richtig sind 73,52 mm aus GZT4.
+
+**Figur der Umhüllenden.** Eine Umhüllende hat keine eigene Verformung — ihre
+Extremwerte stammen je Knoten und Richtung aus verschiedenen Kombinationen.
+Das verformte System zeigt darum die Figur der **maßgebenden Kombination**:
+der, aus der das größte |u| der Färbung stammt. Die Kopfzeile oben links nennt
+sie in einer eigenen Zeile, zum Beispiel **„Figur: GZT4“**; die Färbung bleibt
+die der Umhüllenden. Lässt sich die maßgebende Kombination nicht zuordnen
+(etwa bei einer Alternative einer Ergebniskombination, deren Ergebnis nach
+dem Einfalten verworfen wurde), bleibt es bei den Extremwerten je Richtung,
+und die Zeile sagt es: „Figur: Extremwerte je Richtung (keine einzelne
+Kombination)“. An der Rechnung ändert das nichts.
+
+**Lasten im Ergebnisbild.** Das Ergebnis eines Lastfalls zeigt dessen eigene
+Lasten, und die Kopfzeile nennt ihn („Lasten W_links [kN/m]“). Gleich wo man
+es wählt — in der Glasleiste, in der Maske Ergebnisse rechts oder im
+Modellbaum —, der Lastfall wird damit der **aktive**: eine neue Last landet
+in dem Lastfall, den man sieht. Wechselt man umgekehrt den aktiven Lastfall
+in der Lastfalltabelle, folgt ein gezeigtes Lastfall-Ergebnis ihm (hat er
+keins, zeigt die Maske die erste Umhüllende). Bis zur Nachbesserung vom
+24.09.2026 konnte rechts „Lastfall W_links“ gewählt und LF1 aktiv sein — eine
+neue Windlast ging dann unsichtbar in LF1. Ein Klick auf einen Lastpfeil
+(Auswahlart *Last*) trifft die Last des gezeigten Lastfalls.
+
+Im Bild einer Kombination oder Umhüllenden stehen seit 24.09.2026 **keine
+Lasten**: vorher standen dort die Lasten des aktiven Lastfalls, als gehörten
+sie dazu. Die Kopfzeile sagt es in einer eigenen Zeile: „Lasten ausgeblendet
+(Ergebnisse → Lasten im Ergebnisbild)“. Wer sie sehen will, schaltet
+*Ergebnisse → Lasten im Ergebnisbild* ein; die Kopfzeile nennt dann den
+Lastfall („Lasten LF1 [kN/m]“). Ausgenommen ist eine **Umhüllende aus genau
+einem Lastfall**, etwa „Umhüllende CASES“ eines Modells mit nur LF1: sie ist
+dieser Lastfall und zeigt seine Lasten (bis zur Nachbesserung waren am
+Rahmen nach *Berechnen* alle 33 Lastpfeile weg). Der Schalter *Lasten*
+(Register *Ansicht*, Glasleiste) nimmt wie bisher alle Lasten aus dem Bild.
+
 **Ergebnisse in den Bericht übernehmen**: Ansicht einstellen, dann
 *Bericht → Ansicht übernehmen* (**Strg+B**), ein Doppelklick auf den
 Ergebniszweig oder „+ Ansicht übernehmen" im Modellbaum. Aufgenommen wird das
@@ -1472,7 +1513,7 @@ Klartext erscheint beim Überfahren mit der Maus. Von links nach rechts:
 
 | Gruppe | Knöpfe |
 |---|---|
-| ganz links | **Aufklappliste Lastfall / Kombination** — was die Ansicht zeigt; gleich dahinter **Ergebnisse zeigen / ausblenden** (Schalter, seit 24.09.2026) |
+| ganz links | **Ergebnisauswahl** — Lastfälle, Kombinationen, Umhüllende, Eigenformen: was die Ansicht zeigt; gleich dahinter **Ergebnisse zeigen / ausblenden** (Schalter, seit 24.09.2026) |
 | Darstellung | Voll, Transparent, Hidden-Line, Drahtmodell |
 | Sichtbarkeit | Knoten (der Konstruktion; Netzknoten: *Netz → Netzknoten*), Linien, Stäbe, Flächen, Volumen, **Lager**, FE-Netz, Lasten — jedes einzeln schaltbar |
 | Sicht | Selektion anzeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen, **Verborgenes im Hintergrund** (Schalter), **Intelligente Auswahl** (Schalter) |
@@ -1480,15 +1521,47 @@ Klartext erscheint beim Überfahren mit der Maus. Von links nach rechts:
 | Auswahlart | was ein Klick trifft, als Knöpfe: Knoten, Linie, Stab, Fläche, Volumen, **Netz** (einzelne Elemente), **Lager** (Knoten-, Linien- und Flächenlager), **Last** — genau einer ist gedrückt |
 | ganz rechts | **Alles deselektieren** (✕, auch Esc) — der Griff, der jede Auswahl beendet |
 
-**Lastfall und Kombination aus der Leiste.** Ganz links steht eine
-Aufklappliste mit **jedem Lastfall und jeder Kombination**. Sie ist die
-Angabe, die man beim Durchsehen am häufigsten wechselt; oben links im Bild
-war sie bisher nur zu *lesen*. Ein Lastfall daraus wird der aktive — seine
-Lasten stehen im Bild und die Lastentabelle unten zeigt ihn. Eine
-Kombination hat erst nach der Berechnung etwas zu zeigen: liegt ein Ergebnis
-vor, schaltet die Ergebnisliste mit um, sonst sagt das Protokoll, woran es
-liegt. Umgekehrt zieht die Leiste nach, wenn das Ergebnis woanders gewählt
-wird — beides zeigt immer dasselbe.
+**Ergebnisauswahl in der Leiste.** Ganz links steht eine Aufklappliste mit
+allem, was die Ansicht zeigen kann, unter fetten Überschriften, die sich
+nicht wählen lassen: **Lastfälle**, **Kombinationen**, nach der Berechnung
+die **Umhüllenden** und nach einer Eigenwert- oder Knickrechnung die
+**Eigenformen** bzw. **Knickformen**. Sie führt dieselben Ergebnisse wie die
+Liste *Ergebnis* der Maske Ergebnisse rechts, dazu immer die Lastfälle und
+Kombinationen des Modells (über die Leiste wählt man auch den aktiven
+Lastfall). Die Leiste steht immer auf dem, was das Bild zeigt, gleich wo man
+wählt. Bis zum 24.09.2026 fehlten die Umhüllenden: nach jeder Rechnung zeigte
+das Bild die „Umhüllende ULS“ und die Leiste „Lastfall LF1“.
+
+Ein Lastfall daraus wird der aktive — seine Lasten stehen im Bild und die
+Lastentabelle unten zeigt ihn. Hat er **kein Ergebnis** (nach der Rechnung
+angelegt oder nicht mitgerechnet), blendet die Wahl die Ergebnisse aus: das
+Bild zeigt das Modell mit seinen Lasten, die Leiste bleibt auf ihm, und das
+Protokoll sagt es („Lastfall W_neu: noch kein Ergebnis – aktiv für die
+Lasteingabe …“); der Knopf *Ergebnisse* holt sie zurück. Bis zur
+Nachbesserung vom 24.09.2026 sprang die Leiste ohne Meldung auf die
+Umhüllende zurück, und eine Last im neuen Lastfall erschien nirgends.
+
+Eine Umhüllende, eine Kombination oder eine Form stellt den aktiven Lastfall
+**nicht** um; an ihm hängen Lasteingabe und Lastfilter. Eine Kombination hat
+erst nach der Berechnung etwas zu zeigen: vorher sagt das Protokoll, woran es
+liegt, und die Leiste springt auf das zurück, was das Bild weiter zeigt.
+Werden gerade **Eigen- oder Knickformen** gezeigt, führt die Leiste keine
+Umhüllenden (die Maske Ergebnisse führt dann nur die Formen); eine
+Kombination sagt im Protokoll, dass die Formen gezeigt werden und die
+statischen Ergebnisse nach *Berechnung → Berechnen* wiederkommen, ein
+Lastfall blendet wie oben die Ergebnisse aus.
+
+**Bei ausgeblendeten Ergebnissen** (Knopf dahinter) zeigt das Bild den
+aktiven Lastfall mit seinen Lasten — und die Leiste steht auf ihm. Die Wahl
+der Maske Ergebnisse bleibt gemerkt und kommt mit dem Einschalten zurück.
+Wählt man ausgeblendet eine Kombination, Umhüllende oder Form in der Leiste,
+schaltet das die Ergebnisse wieder ein. Bis zur Nachbesserung vom 24.09.2026
+blieb die Leiste auf der Ergebniswahl stehen, während Bild und Kopfzeile den
+Lastfall zeigten.
+
+Nach **Rückgängig** und jeder anderen Änderung, die die Ergebnisse verwirft,
+ist auch die Liste *Ergebnis* der Maske Ergebnisse leer (bis zur
+Nachbesserung stand dort weiter die zuletzt gewählte Kombination).
 
 **Ergebnisse an und aus aus der Leiste** (seit 24.09.2026). Direkt hinter der
 Aufklappliste sitzt der Knopf **Ergebnisse zeigen / ausblenden**. Er ist
@@ -1591,7 +1664,9 @@ im Bild).
 **Texte im Bild.** Oben links steht, was die Ansicht zeigt: ohne Ergebnis der
 aktive Lastfall mit seiner Lastzahl, mit Ergebnis der Lastfall, die
 Kombination oder die Umhüllende samt Färbung, Schnittgrößenverlauf und
-Überhöhung. Unten links stehen die **Kennwerte** des gewählten Ergebnisses
+Überhöhung, bei einer Umhüllenden dazu die Figur („Figur: GZT4“ — nur wenn
+das verformte System gezeigt wird, also bei einer Überhöhung über 0) und,
+wenn Lasten im Ergebnisbild stehen, deren Lastfall. Unten links stehen die **Kennwerte** des gewählten Ergebnisses
 (Färbung und Schnittgrößenverlauf, siehe *Kennwerte im Bild*); Auflagerkräfte
 stehen in der Tabelle *Auflagerkräfte*. Die Farbskalen stehen rechts, das
 Achsenkreuz unten
