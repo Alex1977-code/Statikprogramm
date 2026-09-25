@@ -600,8 +600,13 @@ def test_splitter_glaetten():
     # Die Elementzahl waechst darum um mindestens die reparierten flachen
     # Tetraeder, und der Rauminhalt aendert sich hoechstens um das, was den
     # flachen fehlte, plus den Kappen (gemessen: 5,8e-6 von 1,40 m^3).
-    check("die Elementzahl wächst mindestens um die reparierten flachen Tetraeder",
-          mit[3] - ohne[3] >= flache[0.0] - flache[0.1] and flache[0.0] > 0,
+    # Seit 24.09.2026 loest flache_aufloesen Tetraeder ohne Rauminhalt schon
+    # vor der Innen-aussen-Frage durch einen Diagonaltausch auf (drei
+    # Tetraeder werden zwei); die Elementzahl waechst darum nicht mehr um die
+    # reparierten flachen - es bleiben mit Glaettung nur weniger zum
+    # Aussortieren (gemessen: 146 -> 38, Elemente 26 881 -> 26 887).
+    check("mit Glättung bleiben weniger flache Tetraeder zum Aussortieren",
+          flache[0.1] < flache[0.0] and flache[0.0] > 0,
           f"{ohne[3]} -> {mit[3]}; flach aussortiert {flache[0.0]} -> {flache[0.1]}")
     schranke = (flache[0.0] + flache[0.1]) * M3.FLACH * 0.15 ** 3 + 1e-5 * ohne[2]
     check("und das Volumen nur um das, was den flachen fehlte, und um die entfernten Kappen",
@@ -1525,13 +1530,16 @@ def test_luecke_im_netzrand_geschlossen():
     # allein laesst sich nicht zuruecknehmen: die anderen beiden aendern die
     # Punktmenge, und der Gleichstand an der Kante tritt dann nicht ein
     # (gemessen 23.09.2026 - "nur Kante zurueck" 634 Tetraeder, 0,0000 %).
-    # Das Kantenkippen (huelle_kippen) aendert an dieser Luecke nichts - sie
-    # kommt aus der Gitterphase, nicht aus dem Gleichstand an der Kugel
-    # (mit und ohne KIPP_RUNDEN dieselben Zahlen).
-    alt = (M3._seite_mit_ausweichung, M3.RANDABSTAND_FLAECHE, M3.TREU_VOLUMEN, M3.TREU_RUNDEN)
+    # Das Kantenkippen der ersten Fassung (nur 3 -> 2) aenderte an dieser
+    # Luecke nichts; seit den Kippungen 2 -> 3 und 4 -> 4 (24.09.2026) heilt
+    # sie auch ohne die drei Kuren (786 Tetraeder, 0,0000 %). Darum wird auch
+    # das Kippen zurueckgenommen - dann sind die alten Zahlen wieder da.
+    alt = (M3._seite_mit_ausweichung, M3.RANDABSTAND_FLAECHE, M3.TREU_VOLUMEN, M3.TREU_RUNDEN,
+           M3.KIPP_RUNDEN)
     M3._seite_mit_ausweichung = lambda l, gx, gy: l >= 0
     M3.RANDABSTAND_FLAECHE = 0.0
     M3.TREU_VOLUMEN, M3.TREU_RUNDEN = 1e-4, 3
+    M3.KIPP_RUNDEN = 0
     try:
         zurueck = {}
         for name, P, z1, h in (("L", L, 0.4, 0.25), ("T", T, 0.3, 0.2)):
@@ -1544,8 +1552,8 @@ def test_luecke_im_netzrand_geschlossen():
             zurueck[name] = (len(k.elemente), (soll - netzvolumen(m, k.elemente)) / soll * 100)
     finally:
         (M3._seite_mit_ausweichung, M3.RANDABSTAND_FLAECHE, M3.TREU_VOLUMEN,
-         M3.TREU_RUNDEN) = alt
-    check("Ruecknahmeprobe: ohne die drei Kuren fehlen am L-Prisma wieder 0,079 %",
+         M3.TREU_RUNDEN, M3.KIPP_RUNDEN) = alt
+    check("Ruecknahmeprobe: ohne die drei Kuren und ohne Kippen fehlen am L-Prisma wieder 0,079 %",
           abs(zurueck["L"][1] - 0.0788) < 0.001,
           f"{zurueck['L'][0]} tet4, {zurueck['L'][1]:+.4f} %")
     check("  und am T-Prisma 0,113 % an der einspringenden Kante",
@@ -1581,13 +1589,36 @@ def test_huelle_kippen():
     V = sum(abs(np.linalg.det(Pn[t][1:] - Pn[t][0])) / 6 for t in TET2.tolist())
     V0 = sum(abs(np.linalg.det(Pn[t][1:] - Pn[t][0])) / 6 for t in TET.tolist())
     close("  und der Rauminhalt bleibt derselbe", V, V0, 1e-12)
-    # 2) vier Tetraeder um die Kante: kein 3-2-Kippen moeglich, nichts geschieht
+    # 2) vier Tetraeder um die Kante, a, b, c unter den vier Ringecken: das
+    #    4-4-Kippen teilt das Achtflach ueber die Diagonale a-c des Dreiecks
+    #    (seit 24.09.2026, dritter Auftrag) - vorher blieb die Kante stehen
     Pn4 = np.vstack([Pn, [[-0.5, -0.5, 0.0]]])
     d = 6
     TET4 = np.array([[u, w, a, b], [u, w, b, c], [u, w, c, d], [u, w, d, a]], int)
-    TET4b, n4 = M3.huelle_kippen(Pn4, TET4, Pn4[:3], T)
-    check("eine Kante mit vier Tetraedern bleibt stehen (kein 3-2-Kippen)", n4 == 0 and len(TET4b) == 4,
-          f"{n4} gekippt")
+    kipp4: dict = {}
+    TET4b, n4 = M3.huelle_kippen(Pn4, TET4, Pn4[:3], T, bericht=kipp4)
+    seiten4 = {tuple(sorted(x)) for t in TET4b.tolist() for x in
+               ((t[0], t[1], t[2]), (t[0], t[1], t[3]), (t[0], t[2], t[3]), (t[1], t[2], t[3]))}
+    V4 = sum(abs(np.linalg.det(Pn4[t][1:] - Pn4[t][0])) / 6 for t in TET4b.tolist())
+    V40 = sum(abs(np.linalg.det(Pn4[t][1:] - Pn4[t][0])) / 6 for t in TET4.tolist())
+    check("eine Kante mit vier Tetraedern wird 4-4 gekippt: das Dreieck ist danach eine Seite, der Rauminhalt bleibt",
+          n4 == 1 and kipp4.get("4-4") == 1 and len(TET4b) == 4 and (a, b, c) in seiten4 and abs(V4 - V40) < 1e-12,
+          f"{n4} gekippt {kipp4}, {len(TET4b)} Tetraeder")
+    # 2a) eine fehlende Huellkante a-b, von der Seite p-q-r gekreuzt, deren
+    #     zwei Tetraeder a und b als Spitze haben: 2-3-Kippen (Segment)
+    Ps = np.array([[0, 0, 0], [1, 0, 0], [0.3, 0.3, 0.5], [0.3, -0.3, 0.5], [0.6, 0.0, -0.4]], float)
+    a2, b2, p_, q_, r_ = 0, 1, 2, 3, 4
+    TETs = np.array([[p_, q_, r_, a2], [p_, q_, r_, b2]], int)
+    Ts = np.array([[a2, b2, p_]], int)          # Huelldreieck mit der Kante a-b
+    kipp23: dict = {}
+    TETsb, n23 = M3.huelle_kippen(Ps, TETs, Ps[:2], Ts, bericht=kipp23)
+    kanten_s = {tuple(sorted(x)) for t in TETsb.tolist() for x in
+                ((t[0], t[1]), (t[0], t[2]), (t[0], t[3]), (t[1], t[2]), (t[1], t[3]), (t[2], t[3]))}
+    Vs = sum(abs(np.linalg.det(Ps[t][1:] - Ps[t][0])) / 6 for t in TETsb.tolist())
+    Vs0 = sum(abs(np.linalg.det(Ps[t][1:] - Ps[t][0])) / 6 for t in TETs.tolist())
+    check("eine fehlende Huellkante, die eine Seite kreuzt, wird 2-3 gekippt: die Kante ist danach da",
+          n23 >= 1 and kipp23.get("2-3") == 1 and (a2, b2) in kanten_s and abs(Vs - Vs0) < 1e-12,
+          f"{n23} gekippt {kipp23}, {len(TETsb)} Tetraeder")
     # 2b) drei Tetraeder an a, b, c und ein vierter um dieselbe Kante, der
     #     keine der drei Ecken traegt: der Ring hat vier, nichts wird gekippt
     Pn5 = np.vstack([Pn, [[-0.5, -0.5, 0.0], [-0.6, -0.4, 0.3]]])
@@ -1595,6 +1626,50 @@ def test_huelle_kippen():
     TET5b, n5 = M3.huelle_kippen(Pn5, TET5, Pn5[:3], T)
     check("  auch wenn der vierte Tetraeder keine Ecke des Dreiecks traegt", n5 == 0 and len(TET5b) == 4,
           f"{n5} gekippt")
+
+    def _seiten(TETx):
+        return {tuple(sorted(x)) for t in TETx.tolist() for x in
+                ((t[0], t[1], t[2]), (t[0], t[1], t[3]), (t[0], t[2], t[3]), (t[1], t[2], t[3]))}
+
+    def _vol(Px, TETx):
+        return sum(abs(np.linalg.det(Px[t][1:] - Px[t][0])) / 6 for t in TETx.tolist())
+    # 2c) Diagonale einer ebenen Huellzelle (25.09.2026): vier Huellpunkte auf
+    #     einem Kreis, das Flaechennetz verlangt a-b, das Netz hat c1-c2 mit
+    #     zwei Tetraedern gemeinsamer Spitze - 2-2 um die Randkante
+    Pd = np.array([[0, 0, 0], [1, 1, 0], [1, 0, 0], [0, 1, 0], [0.5, 0.5, 1.0]], float)
+    ad, bd, c1, c2, xd = 0, 1, 2, 3, 4
+    TETd = np.array([[c1, c2, ad, xd], [c1, c2, bd, xd]], int)
+    Td = np.array([[ad, bd, c1], [ad, bd, c2]], int)
+    kippd: dict = {}
+    TETdb, nd = M3.huelle_kippen(Pd, TETd, Pd[:4], Td, bericht=kippd)
+    sd = _seiten(TETdb)
+    check("Diagonale einer ebenen Huellzelle, zwei Tetraeder: die Kante wird gekippt, beide Huelldreiecke sind da",
+          nd == 1 and kippd.get("diag") == 1 and len(TETdb) == 2 and (0, 1, 2) in sd and (0, 1, 3) in sd
+          and abs(_vol(Pd, TETdb) - _vol(Pd, TETd)) < 1e-12,
+          f"{nd} gekippt {kippd}, {len(TETdb)} Tetraeder")
+    # 2d) drei Tetraeder um c1-c2 (Faecher a, p1, p2, b): der Faecher wird von
+    #     a aus geteilt, vier Tetraeder, derselbe Rauminhalt
+    Pe = np.array([[0, 0, 0], [1, 1, 0], [1, 0, 0], [0, 1, 0], [0.3, 0.3, 1.0], [0.7, 0.7, 1.0]], float)
+    p1, p2 = 4, 5
+    TETe = np.array([[c1, c2, ad, p1], [c1, c2, p1, p2], [c1, c2, p2, bd]], int)
+    kippe: dict = {}
+    TETeb, ne = M3.huelle_kippen(Pe, TETe, Pe[:4], Td, bericht=kippe)
+    se = _seiten(TETeb)
+    kanten_e = {tuple(sorted(x)) for t in TETeb.tolist() for x in
+                ((t[0], t[1]), (t[0], t[2]), (t[0], t[3]), (t[1], t[2]), (t[1], t[3]), (t[2], t[3]))}
+    check("Diagonale mit drei Tetraedern um die Kante: Faecher zu vier Tetraedern, Kante c1-c2 weg, Rauminhalt gleich",
+          ne == 1 and kippe.get("diag") == 1 and len(TETeb) == 4 and (0, 1, 2) in se and (0, 1, 3) in se
+          and (c1, c2) not in kanten_e and abs(_vol(Pe, TETeb) - _vol(Pe, TETe)) < 1e-12,
+          f"{ne} gekippt {kippe}, {len(TETeb)} Tetraeder")
+    # 2e) Ruecknahmeprobe: ohne den Diagonalfall bleibt die Kante offen
+    M3.KIPP_DIAGONALE = False
+    try:
+        kipp0: dict = {}
+        _TET0, n0 = M3.huelle_kippen(Pd, TETd, Pd[:4], Td, bericht=kipp0)
+    finally:
+        M3.KIPP_DIAGONALE = True
+    check("  Ruecknahmeprobe: ohne den Diagonalfall bleibt die Huellkante offen",
+          n0 == 0 and kipp0.get("offene_kanten") == 1, f"{n0} gekippt {kipp0}")
     # 3) am Prisma der Statik3D-Sitzung: T-Prisma (test_diagnose._extrudiert),
     #    h = 0,09 - der Fall fuer test_diagnose: ohne Kippen 0,0003 %
     #    Fehlbetrag nach acht Durchgaengen (10 751 Tetraeder), mit Kippen
@@ -1623,9 +1698,141 @@ def test_huelle_kippen():
         n_ohne, fehl_ohne, log_ohne = lauf()
     finally:
         M3.KIPP_RUNDEN = alt
-    check("  Ruecknahmeprobe: ohne Kippen bleibt die Luecke (gemessen 0,0003 %) und wird gemeldet",
-          fehl_ohne > 1e-5 and any("Lücke im Netzrand" in z for z in log_ohne),
+    # (der Fehlbetrag kann als Ueberschuss erscheinen - ein Tetraeder quer durch
+    # die Kerbe, der als innen gilt -, gemessen 24.09.2026 -0,0024 %)
+    check("  Ruecknahmeprobe: ohne Kippen bleibt die Luecke (gemessen 0,0003 bis 0,0024 %) und wird gemeldet",
+          abs(fehl_ohne) > 1e-5 and any("Lücke im Netzrand" in z for z in log_ohne),
           f"{n_ohne} tet4, {fehl_ohne:+.5f} %")
+
+
+def test_flache_aufloesen_huelle():
+    """Ein flacher Tetraeder in einer Huellflaeche (vier Huellpunkte auf einem
+    Kreis): welche Diagonale bleibt, entscheidet seit dem 25.09.2026 die
+    vorgeschriebene Huelle, nicht die Lage der Nachbarn. Vorher tauschte
+    ``flache_aufloesen`` immer auf die andere Diagonale und ersetzte so an
+    einer gemeinsamen Flaeche das Netz des Nachbarn."""
+    Pf = np.array([[0, 0, 0], [1, 1, 0], [1, 0, 0], [0, 1, 0], [0.5, 0.5, -1.0]], float)
+    a, b, c1, c2, x = 0, 1, 2, 3, 4
+    T = np.array([[a, b, c1], [a, b, c2]], int)          # die Huelle verlangt a-b
+
+    def seiten(TETx):
+        return {tuple(sorted(s)) for t in TETx.tolist() for s in
+                ((t[0], t[1], t[2]), (t[0], t[1], t[3]), (t[0], t[2], t[3]), (t[1], t[2], t[3]))}
+    # Fall 1: die Innenseiten tragen schon a-b - der flache Tetraeder faellt weg
+    TET1 = np.array([[a, b, c1, c2], [a, b, c1, x], [a, b, c2, x]], int)
+    TET1b, n1 = M3.flache_aufloesen(Pf, TET1, T)
+    s1 = seiten(TET1b)
+    check("flacher Tetraeder ueber der vorgeschriebenen Diagonale: er faellt weg, die Huelle zeigt a-b",
+          n1 == 1 and len(TET1b) == 2 and (0, 1, 2) in s1 and (0, 1, 3) in s1, f"{n1} aufgeloest, {len(TET1b)} Tetraeder")
+    TET1c, n1c = M3.flache_aufloesen(Pf, TET1)           # ohne Huelle: wie vor dem 25.09.2026
+    s1c = seiten(TET1c)
+    check("  Ruecknahmeprobe: ohne die Huelle tauscht er auf die andere Diagonale (c1-c2 an der Huelle)",
+          n1c == 1 and (0, 1, 2) not in s1c and (0, 2, 3) in s1c, f"{n1c} aufgeloest, {sorted(s1c)}")
+    # Fall 2: die Innenseiten tragen c1-c2 - der Tausch auf a-b (wie bisher)
+    TET2 = np.array([[a, b, c1, c2], [c1, c2, a, x], [c1, c2, b, x]], int)
+    TET2b, n2 = M3.flache_aufloesen(Pf, TET2, T)
+    s2 = seiten(TET2b)
+    check("flacher Tetraeder ueber der anderen Diagonale: Tausch 2-2, die Huelle zeigt a-b",
+          n2 == 1 and len(TET2b) == 2 and (0, 1, 2) in s2 and (0, 1, 3) in s2, f"{n2} aufgeloest, {len(TET2b)} Tetraeder")
+
+
+def _zwei_wuerfel_sieben_flaechen(h: float, ordnung: int) -> tuple:
+    """Zwei Einheitswuerfel uebereinander mit gemeinsamer Flaeche z = 1; Boden
+    und Dach je in zwei Flaechen geteilt, damit beide Koerper sieben
+    Randflaechen haben und im Programmweg an den freien Vernetzer gehen
+    (sonst naehme sie der abgebildete Quaderpfad)."""
+    from statik3d.model import Model, Material
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    m.netz.sweep = False
+    m.netz.ordnung = ordnung
+    m.netz.dichte = "eigene"
+    m.netz.ziellaenge = h
+    m.netz.intelligent = False
+    P = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1),
+         (0, 0, 2), (1, 0, 2), (1, 1, 2), (0, 1, 2), (0.5, 0, 0), (0.5, 1, 0), (0.5, 0, 2), (0.5, 1, 2)]
+    n = [m.add_node(*p) for p in P]
+    L: dict = {}
+
+    def li(a, b):
+        key = (min(a, b), max(a, b))
+        if key not in L:
+            L[key] = f"L{len(L) + 1}"
+            m.add_line(L[key], [n[key[0]], n[key[1]]])
+        return L[key]
+
+    def fl(name, e):
+        m.add_flaeche(name, [li(e[i], e[(i + 1) % len(e)]) for i in range(len(e))], material="S235")
+        return name
+    fl("Fuge", [4, 5, 6, 7])
+    fl("Boden1", [0, 12, 13, 3]); fl("Boden2", [12, 1, 2, 13])
+    fl("Dach1", [8, 14, 15, 11]); fl("Dach2", [14, 9, 10, 15])
+    fl("MU0", [0, 12, 1, 5, 4]); fl("MO0", [4, 5, 9, 14, 8])
+    fl("MU2", [2, 13, 3, 7, 6]); fl("MO2", [6, 7, 11, 15, 10])
+    fl("MU1", [1, 2, 6, 5]); fl("MO1", [5, 6, 10, 9])
+    fl("MU3", [3, 0, 4, 7]); fl("MO3", [7, 4, 8, 11])
+    k1 = m.add_koerper("Unten", ["Boden1", "Boden2", "Fuge", "MU0", "MU1", "MU2", "MU3"], material="S235")
+    k2 = m.add_koerper("Oben", ["Fuge", "Dach1", "Dach2", "MO0", "MO1", "MO2", "MO3"], material="S235")
+    return m, k1, k2
+
+
+def _offene_innenseiten(m) -> int:
+    """Tetraederseiten, die nur einem Element gehoeren und nicht auf der
+    Aussenhuelle des Doppelwuerfels [0,1] x [0,1] x [0,2] liegen."""
+    seiten: dict = {}
+    for e in m.elements:
+        c = [int(v) for v in e.nodes[:4]]
+        for s in ((0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3)):
+            key = tuple(sorted(c[i] for i in s))
+            seiten[key] = seiten.get(key, 0) + 1
+    X = np.asarray(m.nodes, float)
+    n = 0
+    for key, k in seiten.items():
+        if k != 1:
+            continue
+        Q = X[list(key)]
+        if not any(np.all(np.abs(Q[:, ax] - w) < 1e-9) for ax, w in ((0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (2, 2))):
+            n += 1
+    return n
+
+
+def test_gemeinsame_flaeche_eigener_vernetzer():
+    """Zwei verschweisste Wuerfel, eigener Vernetzer, Programmweg
+    (mesher.modell_vernetzen): das Netz der gemeinsamen Flaeche muss auf beiden
+    Seiten dasselbe sein. Bis zum 25.09.2026 bekamen beide Koerper dasselbe
+    Flaechennetz vorgeschrieben (30 Dreiecke, gemessen gleich), hielten es
+    aber nicht ein: an Rechteckzellen mit vier Punkten auf einem Kreis kippte
+    die Zerlegung die Diagonale je Koerper anders (huelle_kippen kannte den
+    Fall nicht) oder loeste einen flachen Tetraeder in der Flaeche ueber die
+    falsche Diagonale auf (flache_aufloesen ohne Huelle). Gemessen: 4 offene
+    Innenseiten bei tet4, dazu eine haengende Kantenmitte bei tet10; die
+    Pruefmatrix fand dieselben Netze mit sigma_v bis +162 N/mm2 (tet10) neben
+    der Loesung. gmsh + MMG3D hielten die Huelle ein (0 offene Seiten)."""
+    from scipy.spatial import cKDTree
+    from statik3d import mesher
+    for ordnung, typ in ((1, "tet4"), (2, "tet10")):
+        m, k1, k2 = _zwei_wuerfel_sieben_flaechen(0.25, ordnung)
+        m.netz.vernetzer = "eigener"
+        m.netz.nachbessern = "keine"
+        mesher.modell_vernetzen(m, log=[], workers=1)
+        typen = {e.typ for e in m.elements}
+        offen = _offene_innenseiten(m)
+        doppelt = len(cKDTree(np.asarray(m.nodes, float)).query_pairs(1e-9))
+        check(f"{typ}: beide Koerper vernetzt, nur {typ}", typen == {typ} and len(k1.elemente or []) > 100
+              and len(k2.elemente or []) > 100, f"{sorted(typen)}, {len(k1.elemente or [])}/{len(k2.elemente or [])}")
+        check(f"{typ}: keine offene Innenseite an der gemeinsamen Flaeche", offen == 0, f"{offen} offen")
+        check(f"{typ}: kein Ort mit zwei Knoten", doppelt == 0, f"{doppelt} Paare")
+    # Ruecknahmeprobe: ohne den Diagonalfall des Kantenkippens reisst die Flaeche
+    M3.KIPP_DIAGONALE = False
+    try:
+        m, k1, k2 = _zwei_wuerfel_sieben_flaechen(0.25, 1)
+        m.netz.vernetzer = "eigener"
+        m.netz.nachbessern = "keine"
+        mesher.modell_vernetzen(m, log=[], workers=1)
+        offen0 = _offene_innenseiten(m)
+    finally:
+        M3.KIPP_DIAGONALE = True
+    check("  Ruecknahmeprobe: ohne den Diagonalfall bleiben offene Innenseiten", offen0 > 0, f"{offen0} offen")
 
 
 def test_kappenpunkte_halten_abstand():
@@ -1663,8 +1870,11 @@ def test_kappenpunkte_halten_abstand():
         M3.KRUMM_ANLAEUFE, M3.KAPPEN_RANDABSTAND, M3.KAPPEN_WEG = alt
     check("Buchse r 50/100, h = 20 mm, tet10: keine gerade Kante, keine Luecke - ohne oertliche Verfeinerung",
           not rueck_neu and not luecke_neu, f"{n_neu} tet10; " + "; ".join(z.strip()[:80] for z in rueck_neu + luecke_neu))
-    check("  Ruecknahmeprobe: mit der alten Kappenregel kommen die geraden Kanten und die Luecke wieder",
-          rueck_alt and luecke_alt, f"{n_alt} tet10; " + "; ".join(z.strip()[:90] for z in rueck_alt + luecke_alt))
+    # Die Luecke an der Bohrung heilt seit 24.09.2026 auch mit der alten Regel
+    # (der beste Durchgang wird nach den Dellen gewaehlt) - die geraden Kanten
+    # kommen wieder, gemessen 3 tet10
+    check("  Ruecknahmeprobe: mit der alten Kappenregel kommen die geraden Kanten wieder",
+          bool(rueck_alt), f"{n_alt} tet10; " + "; ".join(z.strip()[:90] for z in rueck_alt + luecke_alt))
 
 
 def test_krumme_kanten_oertlich_feiner():
@@ -1698,14 +1908,173 @@ def test_krumme_kanten_oertlich_feiner():
     check("Buchse 36 Grad, h = 35 mm: die Mantelflaechen werden oertlich feiner, keine gerade Kante bleibt",
           not rueck_mit and oertlich and det_mit > 0,
           f"{n_mit} tet10, kleinste bezogene Determinante {det_mit:.3f}; " + "; ".join(z.strip()[:150] for z in oertlich))
-    alt = M3.KRUMM_ANLAEUFE
-    M3.KRUMM_ANLAEUFE = 0
+    # Ruecknahmeprobe: ohne die drei Kuren - oertliche Anlaeufe, innere Punkte
+    # (_krumme_kappenpunkte) und Entzerren (krumme_entzerren) - behalten
+    # 5 tet10 gerade Kanten bei 872 Elementen (gemessen 23./24.09.2026)
+    alt = (M3.KRUMM_ANLAEUFE, M3.KRUMM_KAPPEN_RUNDEN, M3.ENTZERREN_SCHRITTE)
+    M3.KRUMM_ANLAEUFE, M3.KRUMM_KAPPEN_RUNDEN, M3.ENTZERREN_SCHRITTE = 0, 0, ()
     try:
         n_ohne, rueck_ohne, _o, _d = lauf()
     finally:
-        M3.KRUMM_ANLAEUFE = alt
-    check("  Ruecknahmeprobe: ohne die oertlichen Anlaeufe behalten 5 tet10 gerade Kanten (872 Elemente)",
+        M3.KRUMM_ANLAEUFE, M3.KRUMM_KAPPEN_RUNDEN, M3.ENTZERREN_SCHRITTE = alt
+    check("  Ruecknahmeprobe: ohne oertliche Anlaeufe, innere Punkte und Entzerren behalten 5 tet10 gerade Kanten (872 Elemente)",
           rueck_ohne and n_ohne < n_mit, f"{n_ohne} tet10; " + "; ".join(z.strip()[:110] for z in rueck_ohne))
+    # Und die Reihenfolge der Kuren: an eigenen Flaechen zuerst das oertlich
+    # feinere Netz - es haelt die Form (kleinste bezogene Determinante 0,403);
+    # innere Punkte und Entzerren allein retten die Elemente, aber schlechter
+    alt = M3.KRUMM_ANLAEUFE
+    M3.KRUMM_ANLAEUFE = 0
+    try:
+        n_nur, rueck_nur, _o, det_nur = lauf()
+    finally:
+        M3.KRUMM_ANLAEUFE = alt
+    check("  ohne oertliche Anlaeufe retten innere Punkte und Entzerren die Elemente, aber mit schlechterer Form",
+          not rueck_nur and det_nur > 0 and det_nur < det_mit, f"{n_nur} tet10, kleinste bezogene Determinante {det_nur:.3f} gegen {det_mit:.3f}")
+
+
+def _zylinder_in_hohlzylinder(m: Model, ra: float, ri: float, hoehe: float, ordnung: int = 2):
+    """Buchse r_a/r_i und darin der Zylinder r_i, **fest verbunden**: die
+    Mantelflaechen MantelI1/MantelI2 gehoeren beiden Koerpern (gemeinsame
+    gekruemmte Flaeche), der Zylinder bekommt Boden und Deckel aus den
+    Innenkreisen."""
+    kb = buchse(m, ra, ri, hoehe, "Buchse")
+    m.add_flaeche("ZBoden", ["IU1", "IU2"], material="S235")
+    m.add_flaeche("ZDeckel", ["IO1", "IO2"], material="S235")
+    kz = m.add_koerper("Zylinder", ["MantelI1", "MantelI2", "ZBoden", "ZDeckel"], material="S235")
+    for k in (kb, kz):
+        k.ordnung = ordnung
+    return kb, kz
+
+
+def test_gemeinsame_gekruemmte_flaeche_ohne_rueckfall():
+    """Dritter Auftrag (24.09.2026), Aufgabe 3: Zylinder in Hohlzylinder, fest
+    verbunden, grober Bogen 36 Grad, beide tet10 - die gemeinsame
+    Mantelflaeche darf keinen Rueckfall auf gerade Kanten kosten.
+
+    Der Rueckfall kam nicht von der Kruemmung, sondern von der **Zuordnung**
+    der Kanten: eine Kante galt als Kante der Flaeche F, wenn beide Endpunkte
+    ueber ihre Huelldreiecke zu F gehoerten. Die Stirnflaeche des Zylinders
+    ist ein Dreiecksfaecher aus Randkreispunkten; jede ihrer Sehnen hat beide
+    Enden auf dem Kreis und wurde auf den Mantel projiziert - ein
+    Durchmesser bekam seine Mitte auf den Rand (det J bis -11 am Drehlager,
+    V30: 594 solche Kanten in 227 Rueckfaellen). Jetzt entscheiden die
+    Huelldreiecke (randkanten_flaechen); der Weg zum Nachbarn bleibt
+    unberuehrt, die gemeinsamen Knoten bleiben.
+    """
+    import contextlib
+    import io as _io
+    from statik3d import mesher
+    from statik3d.elements.solid import jacobi_volumen
+
+    def lauf(ra=0.1, ri=0.05, hoehe=0.1, h=0.035):
+        m = neues_modell()
+        kb, kz = _zylinder_in_hohlzylinder(m, ra, ri, hoehe)
+        m.netz.sweep = False
+        m.netz.ziellaenge = h
+        m.netz.dichte = "eigene"
+        m.netz.bogenwinkel = 36.0
+        log = []
+        with contextlib.redirect_stdout(_io.StringIO()):
+            mesher.modell_vernetzen(m, log, workers=1)
+        det = {k.name: min((jacobi_volumen("tet10", m.nodes[m.elements[i].nodes])["det_min"]
+                            for i in k.elemente), default=1.0) for k in (kb, kz)}
+        return m, kb, kz, log, det
+
+    def weg_max(log):
+        import re
+        w = [float(mo.group(1)) for z in log for mo in [re.search(r"größter Weg ([0-9.]+) mm", z)] if mo]
+        return max(w) if w else 0.0
+    m, kb, kz, log, det = lauf()
+    rueck = [z for z in log if "behalten gerade Kanten" in z]
+    check("Zylinder in Hohlzylinder, 36 Grad, tet10: kein Rueckfall auf gerade Kanten",
+          not rueck and all(v > 0 for v in det.values()),
+          f"{len(kb.elemente)} + {len(kz.elemente)} tet10, det_min {det}; " + "; ".join(z.strip()[:120] for z in rueck))
+    # Der groesste Weg einer Seitenmitte ist der Sehnenpfeil der Innenkreise:
+    # der Halbkreis r 50 bekommt bei 36 Grad Vorgabe 6 Abschnitte a 30 Grad,
+    # r (1 - cos 15 Grad) = 1,704 mm (der Aussenkreis ist nach h feiner geteilt).
+    # Keine Sehne der Stirnflaeche wandert mehr auf den Mantel (bis 50 mm).
+    check("  der groesste Weg einer Seitenmitte ist der Sehnenpfeil (1,704 mm)",
+          abs(weg_max(log) - 1.704) < 0.01, f"{weg_max(log):.3f} mm")
+    # Die gemeinsame Flaeche: die Seitenmitten beider Koerper auf r_i liegen auf dem Zylinder
+    X = np.asarray(m.nodes, float)
+    innen_kn = set()
+    for k in (kb, kz):
+        for i in k.elemente:
+            for kn in m.elements[i].nodes[4:]:
+                r = float(np.hypot(X[kn, 0], X[kn, 1]))
+                if abs(r - 0.05) < 0.05 * (1 - np.cos(np.radians(18.0))) + 1e-9 and 1e-6 < X[kn, 2] < 0.1 - 1e-6:
+                    innen_kn.add(int(kn))
+    r = np.hypot(X[sorted(innen_kn), 0], X[sorted(innen_kn), 1]) if innen_kn else np.zeros(0)
+    check("die Seitenmitten an der gemeinsamen Mantelflaeche liegen auf r = 50 mm (beide Koerper dieselben Knoten)",
+          len(r) and np.all(np.abs(r - 0.05) < 1e-9), f"{len(r)} Knoten, groesster Abstand {np.abs(r - 0.05).max() * 1e3 if len(r) else 0:.4f} mm")
+    # Die gemeinsamen Knoten bleiben: jede Ecke des Zylinders auf r_i ist
+    # auch eine Ecke der Buchse (die Kur setzt nur **innere** Punkte)
+    ecken_b = {int(x) for i in kb.elemente for x in m.elements[i].nodes[:4]}
+    ecken_z = [int(x) for i in kz.elemente for x in m.elements[i].nodes[:4]
+               if abs(float(np.hypot(X[int(x), 0], X[int(x), 1])) - 0.05) < 1e-9]
+    check("  die Eckknoten des Zylinders auf der Mantelflaeche sind Knoten der Buchse (gemeinsame Knoten bleiben)",
+          ecken_z and all(kn in ecken_b for kn in ecken_z), f"{len(set(ecken_z))} Ecken")
+    check("  die Kur setzt innere Punkte (Protokoll), keine neuen Huellpunkte",
+          any("innere Punkte gegen tet10" in z for z in log) and len(kb.elemente) + len(kz.elemente) > 0,
+          "; ".join(z.strip()[:120] for z in log if "innere Punkte" in z)[:240])
+    # Ruecknahmeprobe: die alte Zuordnung ueber die Flaechen der Endpunkte
+    alt = M3.randkanten_flaechen
+
+    def alte_regel(TET, T, quelle):
+        fl = {}
+        for k, t in enumerate(np.asarray(T, int).tolist()):
+            for a in t:
+                fl.setdefault(int(a), set()).add(quelle[k])
+        aus = {}
+        for f in M3.freie_seiten(np.asarray(TET, int)).tolist():
+            for a, b in ((f[0], f[1]), (f[1], f[2]), (f[2], f[0])):
+                key = (min(int(a), int(b)), max(int(a), int(b)))
+                g = fl.get(key[0], set()) & fl.get(key[1], set())
+                if g:
+                    aus[key] = g
+        return aus
+    # Der Fall des Drehlagers: eine **kleine** Bohrung (Bolzen r 10 in Buchse
+    # r 30, h 25 mm) - die Stirnflaeche des Bolzens hat keinen inneren Punkt,
+    # ihre Kanten sind Sehnen ueber 30 bis 180 Grad des Randkreises
+    m2, kb2, kz2, log2, det2 = lauf(0.03, 0.01, 0.05, 0.025)
+    rueck2 = [z for z in log2 if "behalten gerade Kanten" in z]
+    # groesster Weg: der Sehnenpfeil des Aussenkreises r 30 bei 30-Grad-Abschnitten, 30 (1 - cos 15 Grad) = 1,022 mm
+    check("Bolzen r 10 in Buchse r 30 (h 25 mm, 36 Grad): kein Rueckfall, groesster Weg der Sehnenpfeil 1,022 mm",
+          not rueck2 and all(v > 0 for v in det2.values()) and abs(weg_max(log2) - 30.0 * (1 - np.cos(np.radians(15.0)))) < 0.01,
+          f"{len(kb2.elemente)} + {len(kz2.elemente)} tet10, Weg {weg_max(log2):.3f} mm; " + "; ".join(z.strip()[:100] for z in rueck2))
+    # Ruecknahmeprobe 1: die alte Zuordnung ueber die Flaechen der Endpunkte
+    # (ohne die inneren Punkte, die sonst auch diese falsch gekruemmten
+    # Tetraeder gueltig rechnen wuerden - mit falscher Geometrie)
+    M3.randkanten_flaechen = alte_regel
+    alt_r = M3.KRUMM_KAPPEN_RUNDEN
+    M3.KRUMM_KAPPEN_RUNDEN = 0
+    try:
+        _m, _kb, _kz, log_alt, _det = lauf(0.03, 0.01, 0.05, 0.025)
+    finally:
+        M3.randkanten_flaechen = alt
+        M3.KRUMM_KAPPEN_RUNDEN = alt_r
+    rueck_alt = [z for z in log_alt if "behalten gerade Kanten" in z]
+    # (eine 60-Grad-Sehne der Stirnflaeche r 10 bekaeme 1,34 mm Weg, eine
+    # 90-Grad-Sehne 2,93 mm - beides ueber jedem echten Sehnenpfeil, 1,022 mm)
+    check("  Ruecknahmeprobe 1: mit der alten Zuordnung (Flaechen der Endpunkte) wandern Sehnen der Stirnflaeche auf den Mantel "
+          "(groesster Weg ueber dem Sehnenpfeil 1,022 mm) und Kanten an der gemeinsamen Flaeche bleiben gerade",
+          weg_max(log_alt) > 1.3 and rueck_alt and any("an gemeinsamen" in z and "davon 0 an" not in z for z in rueck_alt),
+          f"Weg {weg_max(log_alt):.2f} mm; " + "; ".join(z.strip()[:160] for z in rueck_alt)[:300])
+    # Ruecknahmeprobe 2: ohne die inneren Punkte gegen umklappende tet10
+    # (_krumme_kappenpunkte) bleiben zwei flache Tetraeder am Deckelrand des
+    # Zylinders - zwei innere Ecken und eine 36-Grad-Sehne mit 1,7 mm Pfeil,
+    # Hoehe 1,6 mm - und fallen an der gemeinsamen Flaeche auf gerade Kanten
+    # zurueck (gemessen 24.09.2026)
+    alt_r = M3.KRUMM_KAPPEN_RUNDEN
+    M3.KRUMM_KAPPEN_RUNDEN = 0
+    try:
+        _m, _kb, _kz, log_ohne, _det = lauf()
+    finally:
+        M3.KRUMM_KAPPEN_RUNDEN = alt_r
+    rueck_ohne = [z for z in log_ohne if "behalten gerade Kanten" in z]
+    check("  Ruecknahmeprobe 2: ohne die inneren Punkte faellt der Zylinder an der gemeinsamen Flaeche auf gerade Kanten zurueck",
+          rueck_ohne and any("Zylinder" in z and "an gemeinsamen" in z and "davon 0 an" not in z for z in rueck_ohne),
+          "; ".join(z.strip()[:160] for z in rueck_ohne)[:300])
 
 
 def test_bogenwinkel_je_koerper():
@@ -2300,7 +2669,9 @@ def main():
               test_luecke_im_netzrand_geschlossen, test_innen_zaehlt_die_kante_einmal,
               test_randtreue_nicht_messbar_meldet_null, test_nummern_haengen_nicht_am_prozess,
               test_ordnung_je_koerper, test_seitenmitten_auf_der_zylinderflaeche,
-              test_huelle_kippen, test_kappenpunkte_halten_abstand, test_krumme_kanten_oertlich_feiner,
+              test_huelle_kippen, test_flache_aufloesen_huelle, test_gemeinsame_flaeche_eigener_vernetzer,
+              test_kappenpunkte_halten_abstand, test_krumme_kanten_oertlich_feiner,
+              test_gemeinsame_gekruemmte_flaeche_ohne_rueckfall,
               test_projektor_kegel_und_windschief, test_kugelflaeche, test_bogenwinkel_je_koerper,
               test_flache_tetraeder_nach_eigener_groesse):
         print(f"\n--- {t.__name__} ---")

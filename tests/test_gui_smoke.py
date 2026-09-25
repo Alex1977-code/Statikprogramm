@@ -162,6 +162,13 @@ def main():
     os.environ["STATIK3D_EINSTELLUNGEN"] = os.path.join(_tempfile.mkdtemp(prefix="statik3d_smoke_einst_"),
                                                         "einstellungen.json")
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
+    # Seit 25.09.2026 beginnt ein neues Modell der Oberflaeche mit der
+    # Elementstufe Mittel (tet10, hex20, Schalen quadratisch, Sweep „sauber“).
+    # Die Zahlen dieser Pruefung (Elementzahlen, shell3/shell4, Tetraeder im
+    # Protokoll, Ermuedung am Volumen) stehen auf dem linearen Datenmodell;
+    # sie laufen darum weiter damit. Die Vorgabe Mittel, die Maske und die
+    # Sperre am Kontaktmodell prueft tests/test_elementstufe.py.
+    MainWindow.STUFE_NEUES_MODELL = None
     w = MainWindow()
     w.show()
     app.processEvents()
@@ -5274,20 +5281,34 @@ def main():
               and w.sp_plast_it.value() == 25 and w.cb_plast_tol.currentData() == 1e-3
               and "Vorgabe" in w.cb_plast_tol.currentText(),
               f"{w.cb_plast.isChecked()} {w.sp_plast_verf.value()} {w.sp_plast_stufen.value()} {w.sp_plast_it.value()}")
+        check("… mit Kontakt: verschachtelt (wieder Vorgabe seit 24.09.2026)",
+              w.cb_plast_kontakt.currentData() == "verschachtelt"
+              and "Vorgabe" in w.cb_plast_kontakt.currentText(), str(w.cb_plast_kontakt.currentData()))
         w.cb_plast.setChecked(True)
         w.sp_plast_verf.setValue(2.5)
         w.sp_plast_stufen.setValue(4)
         w.cb_plast_tol.setCurrentIndex(w.cb_plast_tol.findData(1e-4))
+        w.cb_plast_kontakt.setCurrentIndex(w.cb_plast_kontakt.findData("gemeinsam"))
         w._apply_parallel_settings()
         pz_ = w.model.plastizitaet
-        check("Übernehmen schreibt ans Modell: an, E_t/E = 2,5 %, 4 Laststufen, Toleranz 1e-4",
-              pz_.an and abs(pz_.verfestigung - 0.025) < 1e-12 and pz_.laststufen == 4 and pz_.toleranz == 1e-4, str(pz_))
+        check("Übernehmen schreibt ans Modell: an, E_t/E = 2,5 %, 4 Laststufen, Toleranz 1e-4, gemeinsam",
+              pz_.an and abs(pz_.verfestigung - 0.025) < 1e-12 and pz_.laststufen == 4 and pz_.toleranz == 1e-4
+              and pz_.kontakt == "gemeinsam", str(pz_))
         m_p = Model_p("anderes")
         m_p.plastizitaet = Pl_p(an=False, verfestigung=0.03, laststufen=5)
         w._modell_setzen(m_p)
         check("ein anderes Modell bringt seine Einstellung mit in die Maske (aus, 3 %, 5 Laststufen)",
               not w.cb_plast.isChecked() and abs(w.sp_plast_verf.value() - 3.0) < 1e-9 and w.sp_plast_stufen.value() == 5,
               f"{w.cb_plast.isChecked()} {w.sp_plast_verf.value()} {w.sp_plast_stufen.value()}")
+        check("… und seine Wahl mit Kontakt (Vorgabe verschachtelt)",
+              w.cb_plast_kontakt.currentData() == "verschachtelt", str(w.cb_plast_kontakt.currentData()))
+        # Ein unbekannter Wert (Tippfehler in einer Datei): die Maske zeigt, was
+        # der Loeser rechnet - die Vorgabe (Gegenpruefung 24.09.2026)
+        m_x = Model_p("unbekannt")
+        m_x.plastizitaet = Pl_p(an=True, kontakt="Gemeinsam")
+        w._modell_setzen(m_x)
+        check("… ein unbekannter Wert („Gemeinsam“) zeigt die Vorgabe verschachtelt - wie der Löser rechnet",
+              w.cb_plast_kontakt.currentData() == "verschachtelt", str(w.cb_plast_kontakt.currentData()))
         w.sp_plast_verf.setValue(1.0)
         w.sp_plast_stufen.setValue(3)
         w.cb_plast_tol.setCurrentIndex(1)
@@ -7766,10 +7787,11 @@ def main():
         w._objekt_uebernehmen("lager_einzeln", "0", mk.werte(), False)
         check("Wölbeinspannung übernommen", bool(w.model.supports[0].woelb))
 
-        # --- Netzeinstellungen: Elementansatz --------------------------------------
-        check("Netzmaske: quadratisch nennt shell6/shell8 und hex20",
-              any("shell8" in k and "hex20" in k for k in w.NETZORDNUNG),
-              str(list(w.NETZORDNUNG)))
+        # --- Netzeinstellungen: Elemente (Stufe statt Elementansatz, 25.09.2026) ----
+        from statik3d import elementstufe as _es_
+        check("Netzmaske: Stufe Mittel nennt shell6/shell8 und hex20",
+              "shell8" in _es_.ELEMENTE["mittel"] and "hex20" in _es_.ELEMENTE["mittel"]
+              and not hasattr(w, "NETZORDNUNG"), _es_.ELEMENTE["mittel"])
         w.new_model()
 
     except Exception as ex:      # noqa: BLE001

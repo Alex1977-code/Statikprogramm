@@ -295,7 +295,7 @@ class Report:
         "load_cases": True, "combinations": True, "figures": True, "results_cases": True,
         "results_combinations": True, "envelopes": True, "member_diagrams": True,
         "design": True, "fatigue": True, "joints": True, "gzg": True, "beulen": True,
-        "volumen": True, "contact": True, "uebernommen": True,
+        "volumen": True, "contact": True, "uebernommen": True, "netz": True,
         "contact_nodes": True,                               # Kontakt je Knoten (Langform)
         "max_contact_results": 0,                            # 0 = alle Ergebnisse
         "modal": True, "buckling": True,
@@ -325,7 +325,8 @@ class Report:
     }
     #: Kapitel, hinter die ein Berichtseintrag gestellt werden kann (Schluessel, Text)
     KAPITEL_WAHL = [("", "am Ende (Übernommene Ergebnisse)"), ("general", "nach Allgemeines"),
-                    ("system", "nach System"), ("actions", "nach Einwirkungen"),
+                    ("system", "nach System"), ("netz", "nach Netz und Elemente"),
+                    ("actions", "nach Einwirkungen"),
                     ("results", "nach Ergebnisse"), ("design", "nach Nachweise EC3"),
                     ("volumen", "nach Volumen"), ("fatigue", "nach Ermüdung"),
                     ("joints", "nach Anschlüsse"), ("gzg", "nach Verformungen"),
@@ -502,7 +503,8 @@ class Report:
     UMFANG_TEXT = {"kurz": "Kurzform", "mittel": "mittlerer Umfang", "lang": "Langform"}
     #: Namen der Kapitel fuer die Statuszeile
     KAPITELNAMEN = {
-        "general": "Allgemeines", "system": "System", "actions": "Einwirkungen",
+        "general": "Allgemeines", "system": "System", "netz": "Netz und Elemente",
+        "actions": "Einwirkungen",
         "lastgenerierer": "Lastgenerierer", "theorie2": "Theorie II. Ordnung",
         "theorie3": "Theorie III. Ordnung", "results": "Ergebnisse",
         "knicklaengen": "Knicklängen", "schwingung": "Schwingung",
@@ -827,7 +829,8 @@ class Report:
             self._appendix = False
             self._warnings = []
             self._blocks = self._kapitel_bauen((
-                self.chapter_general, self.chapter_system, self.chapter_actions,
+                self.chapter_general, self.chapter_system, self.chapter_netz,
+                self.chapter_actions,
                 self.chapter_lastgenerierer,
                 self.chapter_theorie2, self.chapter_theorie3,
                 self.chapter_results, self.chapter_knicklaengen,
@@ -1237,6 +1240,86 @@ class Report:
                 b.append(self._figure(svg_text, f"Statisches System, {sv.Projection.LABELS[view]}"
                                       + (" (mit Knoten- und Elementnummern)"
                                          if small and k == 0 else "") + sv.figur_hinweis(m)))
+        return b
+
+    # ============================================================ Netz
+    #: Tabelle je Koerper erst ab so vielen Zeilen kuerzen - der Pruefer soll
+    #: jeden Koerper finden (Drehlager: rund 200 Koerper)
+    NETZ_ZEILEN = 2000
+
+    def chapter_netz(self) -> list:
+        """Netz und Elemente (Paket E, 25.09.2026).
+
+        Der Anwender: „wie kann ich dem prüfer beweisen dass an dieser stelle
+        dieses element verwendet wurde“. Darum: Gesamtuebersicht, je Koerper
+        Typ, Ansatz, Anzahl und die im Netz gemessene Kantenlaenge, ein Bild
+        nach Elementtyp mit Legende und der Fingerabdruck des Netzes, den
+        auch die Ergebnisdatei in ihrer Kennung traegt."""
+        m = self.model
+        # Nur mit einem FE-Netz aus Flaechen oder Volumen: ein reines
+        # Stabwerk hat Stabelemente, kein Netz, dessen Elementwahl zu belegen
+        # waere - und sein Bericht behaelt seine Kapitelnummern
+        _st, schalen, volumen = sv._element_groups(m)
+        if not self.opt("netz") or not (schalen or volumen):
+            return []
+        from .. import elementauswahl as ea
+        from ..zahlen import zahl_text
+        b = [self._h(1, "Netz und Elemente")]
+        z = ea.zaehlung(m)
+        b.append(("p", esc("Mit welchen finiten Elementen gerechnet wurde - je Elementtyp, je Körper "
+                           "und im Bild, wo sie liegen. Eingestellt für das Vernetzen: "
+                           + m.netz.beschreibung() + ".")))
+        b.append(self._h(2, "Gesamtübersicht"))
+        rows = [["Elementtyp", "Bezeichnung", "Ansatz", "Anzahl", "Anteil"]]
+        for zeile in ea.zeilen(m, z):
+            rows.append([zeile["name"], ELEMENT_TYPES.get(zeile["typ"], zeile["typ"]), zeile["ansatz"],
+                         zahl_text(zeile["anzahl"]), zeile["anteil"]])
+        rows.append(["Summe", "", "", zahl_text(z["gesamt"]), "100 %"])
+        b.append(("table", rows, "Elemente im Netz", None, "compact"))
+        b.append(self._h(2, "Elemente je Körper"))
+        je: dict = {}
+        for i, e in enumerate(m.elements):
+            g = str(getattr(e, "group", "") or "") or ea.OHNE_KOERPER
+            je.setdefault((g, e.typ), []).append(i)
+        rang = {t: k for k, t in enumerate(z["typen"])}
+        rows = [["Körper / Fläche", "Elementtyp", "Ansatz", "Anzahl",
+                 "Kantenlänge min / Mittel / max [mm]"]]
+        for (g, t), ids in sorted(je.items(), key=lambda kv: (kv[0][0], rang.get(kv[0][1], 99))):
+            kmin, kmit, kmax = ea.kantenlaengen(m, ids)
+            rows.append([g, ea.kurzname(t), ea.ansatz(t), zahl_text(len(ids)),
+                         f"{fmt(kmin * 1e3, 1)} / {fmt(kmit * 1e3, 1)} / {fmt(kmax * 1e3, 1)}"])
+        rows, note = self._truncate(rows, self.NETZ_ZEILEN)
+        b.append(("table", rows, "Elementtyp, Ansatz, Anzahl und Netzfeinheit je Körper "
+                                 "(Kantenlänge: gemessen an den Eckkanten der Elemente)",
+                  None, "compact"))
+        if note:
+            b.append(("note", note))
+        if self.opt("figures") and m.nn:
+            b.append(self._h(2, "Bild nach Elementtyp"))
+            W, H = self.opt("figure_width"), self.opt("figure_height")
+            view = self._views()[0]
+            svg_text = sv.draw_elementtypen(m, view, W, H,
+                                            title=f"Netz nach Elementtyp – {sv.Projection.LABELS[view]}")
+            b.append(self._figure(svg_text, f"Netz nach Elementtyp, {sv.Projection.LABELS[view]}"
+                                  + (" – vereinfachte Darstellung: je Volumenkörper der Umriss in "
+                                     "der Farbe seines häufigsten Elementtyps" if sv.ist_gross(m) else "")
+                                  + ". Die Farben sind auch in Graustufen verschieden hell."))
+        b.append(self._h(2, "Netz-Fingerabdruck"))
+        b.append(("kv", [("Netz-Fingerabdruck", ea.fingerabdruck(m)),
+                         ("Knoten", zahl_text(m.nn)), ("Elemente", zahl_text(len(m.elements)))],
+                  "Kennung des gerechneten Netzes"))
+        b.append(("p", "Der Fingerabdruck ist ein Hash (BLAKE2b, 128 bit) über Typ und Knotennummern "
+                       "jedes Elements in ihrer Reihenfolge. Derselbe Wert steht in der Kennung der "
+                       "Ergebnisdatei (Modellname.ergebnisse); Statik3D lädt Ergebnisse nur zu "
+                       "einem Netz mit demselben Fingerabdruck. Die Ergebnisse dieses Berichts gehören "
+                       "damit zu genau diesem Netz: ein anderes Element an irgendeiner Stelle ergäbe "
+                       "einen anderen Wert."))
+        falsch = [n for n, r in self.all_results()
+                  if getattr(r, "u", None) is not None and len(r.u) != m.nn]
+        if falsch:
+            b.append(("note", "Achtung: " + ", ".join(falsch[:5]) + (" …" if len(falsch) > 5 else "")
+                              + " hat eine andere Knotenzahl als dieses Netz - diese Ergebnisse "
+                                "gehören nicht zu ihm."))
         return b
 
     # ============================================================ Kapitel 3

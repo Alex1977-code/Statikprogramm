@@ -1776,6 +1776,32 @@ class Lasteinleitung:
         return f"Knoten {self.knoten}" + (f", Stab {self.stab}" if self.stab else "")
 
 
+#: Die Werte von Netzeinstellungen.sweep (25.09.2026, sweep.betriebsart)
+SWEEP_BETRIEBSARTEN = ("aus", "sauber", "immer")
+
+
+def sweep_aus_datei(wert) -> str:
+    """Netzeinstellungen.sweep beim Laden einer Datei (25.09.2026).
+
+    Bis zum 24.09.2026 war das Feld ein Haken (True/False). sweep.betriebsart
+    liest True als "immer" - so lief der Sweep damals. Beim Laden wird ein
+    Haken aber zu "aus": der Anwender hat den Sweep nie bewusst gewollt, er
+    war fuer ihn nicht als Problem erkennbar (am Drehlager 926 verzerrte hex8
+    und 242 flache Keile, LF1 nicht konvergiert); so hat es der Zweig
+    ui/pS-2509 fuer den Haken bereits festgelegt. Ein unbekanntes Wort wird
+    ebenfalls "aus" (betriebsart laese es als "immer").
+
+    Auch "immer" wird "aus" (Zusammenfuehren mit ui/pS-2509, 25.09.2026):
+    die Oberflaeche bietet keinen Sweep-Schalter mehr, und "immer" ist
+    genau der Sweep, der am Drehlager die verzerrten Elemente erzeugte.
+    "sauber" bleibt - es sweept nur Koerper, die die Probe bestehen, und
+    wird kuenftig von der Stufe gesetzt."""
+    if isinstance(wert, str):
+        w = wert.strip().lower()
+        return w if w in ("aus", "sauber") else "aus"
+    return "aus"
+
+
 @dataclass
 class Netzeinstellungen:
     """Vorgaben fuer die Vernetzung (RFEM: Netzeinstellungen, mesh.xml).
@@ -1877,7 +1903,15 @@ class Netzeinstellungen:
     #: verlangt Guete >= 0,3, ein Splitterdreieck erfuellt das nie und bleibt
     #: als Keil uebrig. Bis die Flaechenteilung eine Mindestweite kennt, wird
     #: der Sweep von Hand eingeschaltet (Netz -> Netzeinstellungen).
-    sweep: bool = False
+    #:
+    #: **Seit 25.09.2026 ein Wort statt eines Hakens:** "aus" | "sauber" |
+    #: "immer" (dritte Lieferung der Vernetzer-Sitzung). Der Vernetzer liest
+    #: es nur ueber sweep.betriebsart(model); "sauber" sweept einen Koerper
+    #: nur, wenn jedes hex8/pent6 den Trapezfehler TRAPEZ_GRENZE einhaelt.
+    #: True/False aelterer Dateien und "immer" werden beim Laden zu "aus"
+    #: (sweep_aus_datei): den Haken hat der Anwender nie bewusst gewollt,
+    #: und die Oberflaeche bietet keinen Sweep-Schalter mehr (ui/pS-2509).
+    sweep: str = "aus"
     #: **Pyramiden** (pyr5) als Uebergang: wo ein frei vernetzter Koerper an
     #: die Vierecke eines gesweepten oder abgebildeten Nachbarn stoesst,
     #: bekommt jedes Viereck eine Pyramide mit Spitze im Inneren, die
@@ -1895,12 +1929,24 @@ class Netzeinstellungen:
     #: es aendert die Kerbspannung an unbelasteten Bohrungen; die adaptive
     #: Vernetzung schaltet es fuer ihren ersten, groben Durchgang ein.
     nebenflaechen_grob: bool = False
+    #: **Elementstufe** (25.09.2026, statik3d.elementstufe): "entwurf" |
+    #: "mittel" | "fein" - das Auswahlfeld „Elemente“ der Netzeinstellungen,
+    #: das den Elementansatz und die Haken der Elementwahl ersetzt. Optional:
+    #: leer (aeltere Dateien) heisst „aus der Ordnung“, 1 Entwurf, 2 Mittel.
+    #: Noetig ist das Feld nur, weil Fein dieselbe Ordnung wie Mittel hat
+    #: und sich allein in der (beim Vernetzen halbierten) Kantenlaenge
+    #: unterscheidet.
+    stufe: str = ""
 
     def teilung(self, laenge: float) -> int:
         """Elementzahl fuer eine Kante dieser Laenge nach der Ziellaenge."""
         if self.ziellaenge <= 0:
             return 1
         return max(1, int(round(float(laenge) / self.ziellaenge)))
+
+    def _stufenname(self) -> str:
+        from .elementstufe import NAME, stufe
+        return NAME[stufe(self)]
 
     def beschreibung(self) -> str:
         from .netzdichte import DICHTEN, FORMEN
@@ -1912,6 +1958,9 @@ class Netzeinstellungen:
                 + ("intelligent angepasst, " if getattr(self, "intelligent", True) else "")
                 + f"Stabteilung {self.stabteilung}, "
                 f"Seitenverhältnis ≤ {self.seitenverhaeltnis:g}, "
+                # die Stufe vorn (25.09.2026): Protokoll und Bericht nennen, womit
+                # vernetzt wurde, so wie es in der Maske heisst
+                + f"Elemente {self._stufenname()}: "
                 + ("quadratische Elemente (shell6/shell8, tet10, hex20)"
                    if self.ordnung >= 2 else "lineare Elemente (shell3/shell4, tet4, hex8)")
                 + (f", Vernetzer {getattr(self, 'vernetzer', 'eigener')}"
@@ -5790,6 +5839,12 @@ class Model:
         m.bericht = [_dc(Berichtseintrag, x) for x in d.get("bericht", [])]
         if "netz" in d:
             m.netz = _dc(Netzeinstellungen, d["netz"])
+            # Das Feld ist seit 25.09.2026 ein Wort; eine aeltere Datei fuehrt
+            # True/False. „Sechsflaechner sweepen“ ist zugleich keine Option
+            # der Oberflaeche mehr (ui/pS-2509: verzerrte hex8 und flache Keile
+            # am Drehlager, LF1 nicht konvergiert): ein Haken und „immer“ laden
+            # als „aus“, „sauber“ bleibt (sweep_aus_datei)
+            m.netz.sweep = sweep_aus_datei(getattr(m.netz, "sweep", "aus"))
         if "design" in d:
             m.design = _dc(DesignSettings, d["design"])
         if "plastizitaet" in d:

@@ -554,10 +554,15 @@ def laufbuch_pruefen(r, titel="", pruefe=None):
     schief = [e["nr"] for e in laeufe
               if e["grund"] != "eingefroren" and e["konvergiert"] != (e["grund"] == "")]
     check(f"{titel}: konvergiert genau dann, wenn kein Grund dasteht", not schief, str(schief))
+    # Abgekuerzte Laeufe (gemeinsame Iteration von Fliessen und Kontakt,
+    # 23.09.2026) sind nicht konvergiert, zaehlen aber nicht als Fehler;
+    # ebenso verworfene (die Stufe wurde verschachtelt wiederholt, 24.09.2026)
     check(f"{titel}: 'letzter Lauf konvergiert' ist der letzte Eintrag",
           r.info.get("contact_letzter_lauf_konvergiert") is laeufe[-1]["konvergiert"]
+          and not laeufe[-1].get("verworfen")
           and int(r.info.get("contact_laeufe_nicht_konvergiert", -1))
-          == sum(1 for e in laeufe if not e["konvergiert"]),
+          == sum(1 for e in laeufe if not e["konvergiert"] and not e.get("abgekuerzt")
+                 and not e.get("verworfen")),
           f"{r.info.get('contact_letzter_lauf_konvergiert')} / {laeufe[-1]['konvergiert']}")
     ohne = [e["nr"] for e in laeufe if len(e["runden"]) != e["schritte"]]
     check(f"{titel}: je Kontaktschritt eine Runde im Eintrag", not ohne, str(ohne))

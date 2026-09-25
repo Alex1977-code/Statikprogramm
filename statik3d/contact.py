@@ -32,6 +32,10 @@ TANGENT_FACTOR = 1.0         # k_t = TANGENT_FACTOR * k_n
 ZUG_ANTEIL = 0.05
 SLIP_STIFFNESS = 1.0e-3      # Reststeifigkeit beim Gleiten (Regularisierung, Anteil von k_t)
 SLIP_STIFFNESS_FINE = 1.0e-8  # Phase 2: haftende Nachbarn halten das Bauteil, Feder nur noch formal
+#: Die Reststeifigkeit gleitender Knoten traegt am Ende keine Kraft: ihr
+#: Kraftanteil aus der Tangentialverschiebung des letzten Zustands wird im
+#: Kraftvektor ausgeglichen (25.09.2026). Schalter fuer die Ruecknahmeprobe.
+AUSGLEICH_RESTSTEIFIGKEIT = True
 SETTLE_ROUNDS = 8             # Phase 2: Nachlaufen der Normalkraefte in der Reibkraft mu*Fn
 MAX_CYCLES = 40               # Phase 2: hoechstens so viele Zustandswechsel-Runden
 #: Phase 2: so viel von den haftenden Knoten geht je Runde ins Gleiten,
@@ -142,6 +146,8 @@ class Constraint:
     slip: bool = False
     slip_dir: Optional[np.ndarray] = None   # Gleitrichtung (2,) im Tangentialsystem
     dir_updates: int = 0
+    dt_last: Optional[np.ndarray] = None    # Tangentialverschiebung (2,) des letzten Zustands,
+                                            # nur gleitend: Ausgleich der Reststeifigkeit (25.09.2026)
     Fn: float = 0.0
     Ft: np.ndarray = field(default_factory=lambda: np.zeros(2))
     g: float = 0.0
@@ -1167,6 +1173,7 @@ class ContactSystem:
             c.active = True if c.zug else c.g0 <= self.tol
             c.slip = False
             c.slip_dir = None
+            c.dt_last = None
             c.dir_updates = 0
             c.toggles = 0
             c.frozen = False
@@ -1203,7 +1210,12 @@ class ContactSystem:
                 "eingefroren": np.array([c.frozen for c in self.cons], bool),
                 "wechsel": np.array([c.toggles for c in self.cons], int),
                 "richtung": [None if c.slip_dir is None else np.array(c.slip_dir, float)
-                             for c in self.cons]}
+                             for c in self.cons],
+                # Tangentialverschiebung des Zustands (Ausgleich der
+                # Reststeifigkeit): gehoert zur Sicherung, sonst rechnet eine
+                # wiederholte Laststufe nicht bitgleich (25.09.2026)
+                "dt_last": [None if c.dt_last is None else np.array(c.dt_last, float)
+                            for c in self.cons]}
 
     def zustand_setzen(self, z) -> bool:
         """Eine Sicherung uebernehmen - der Startpunkt der Iteration statt der
@@ -1234,6 +1246,8 @@ class ContactSystem:
             c.Fn = float(z["Fn"][i])
             r = z["richtung"][i]
             c.slip_dir = None if r is None else np.array(r, float)
+            d = (z.get("dt_last") or [None] * len(self.cons))[i]
+            c.dt_last = None if d is None else np.array(d, float)
             c.dir_updates = 0
             # eingefrorene Bedingungen (oszillierten) bleiben eingefroren -
             # sonst wechseln sie gleich wieder und die Iteration beginnt von vorn
@@ -1264,6 +1278,7 @@ class ContactSystem:
                     if zuruecksetzen:
                         c.slip = False
                         c.slip_dir = None
+                        c.dt_last = None
                         c.dir_updates = 0
                         c.Ft = np.zeros(2)
         return n
@@ -1512,6 +1527,19 @@ class ContactSystem:
                     k_res = self._k_res(c, full_slip)
                     f_t = fr * c.slip_dir
                     Fc[c.dofs] += -(f_t[0] * c.ct[0] + f_t[1] * c.ct[1])
+                    if (AUSGLEICH_RESTSTEIFIGKEIT and c.dt_last is not None
+                            and k_res < SLIP_STIFFNESS * c.kt):
+                        # Ausgleich (nur bei der feinen Reststeifigkeit der Phase 2):
+                        # die Feder wirkt nur auf die Aenderung der Tangential-
+                        # verschiebung seit dem letzten Zustand, nicht auf sie
+                        # selbst. Sonst traegt sie am Ende Kraft, die in keiner
+                        # Kontaktkraft steht: Pruefmatrix K4 (hex8, 14,5 mm Schlupf)
+                        # 693 kN = 2,3 % von mu N (gemessen 25.09.2026 aus K u an
+                        # den Gleitknoten gegen contact_forces). Die grobe Feder der
+                        # Phase 1 und ganz gleitender Gruppen (K5) bleibt, wie sie
+                        # ist: sie haelt das Bauteil (Warnung "Bauteil rutscht"),
+                        # und mit Ausgleich waere ihr Fixpunkt zu langsam.
+                        Fc[c.dofs] += k_res * (c.dt_last[0] * c.ct[0] + c.dt_last[1] * c.ct[1])
                     kmat = kmat + k_res * (np.outer(c.ct[0], c.ct[0]) + np.outer(c.ct[1], c.ct[1]))
             rows.append(r.ravel())
             cols.append(cc.ravel())
@@ -1657,6 +1685,7 @@ class ContactSystem:
                 if not c.active:
                     c.slip = False
                     c.slip_dir = None
+                    c.dt_last = None
                     c.yielding = False
                     c.Ft[:] = 0
             if c.active and c.ct is not None and c.haften:
@@ -1708,7 +1737,20 @@ class ContactSystem:
                                 betroffen.add(id(c))
                         c.Ft = limit * c.slip_dir
                 else:
-                    c.Ft = limit * c.slip_dir      # Phase 2: Gleiten bleibt, Richtung fest
+                    # Phase 2: Gleiten bleibt, Richtung fest. Offen (25.09.2026,
+                    # gemessen am symmetrischen Klotz K4, hex8): die in Phase 1
+                    # nach hoechstens zwoelf unterrelaxierten Anpassungen mit
+                    # 3 Grad Spiel festgehaltene Richtung lag an einem Eckknoten
+                    # 20 Grad neben der Bewegung, die Reibkraft des Klotzes hatte
+                    # 2,5 % von mu N quer zur Last, der Klotz wanderte 0,7 mm zur
+                    # Seite. Eine Nachfuehrung hier ist als Fixpunkt instabil
+                    # (weiche Querhaltung: der Fehler verdoppelt sich je Runde)
+                    # und braucht die konsistente Tangente mu Fn/|dt| quer zur
+                    # Gleitrichtung - ein eigener Schritt.
+                    c.Ft = limit * c.slip_dir
+                # Fuer den Ausgleich der Reststeifigkeit (assemble): die
+                # Tangentialverschiebung dieses Zustands, nur solange geglitten wird
+                c.dt_last = dt.copy() if c.slip else None
             elif not c.active:
                 c.Ft = np.zeros(2)
             # Dieselbe Zaehlung wie `haftend` unten: jede Bedingung aendert

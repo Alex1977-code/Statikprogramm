@@ -1522,11 +1522,31 @@ def starre_flaechen_koppeln(model: Model, log: list = None) -> dict:
 STABENDE_GRUPPE = "Stabende "
 
 
-def _tetraeder_der_koerper(model: Model) -> tuple:
+#: Zerlegung je Volumentyp in Tetraeder ueber die Eckknoten (quadratische Typen
+#: fuehren ihre Ecken zuerst). Hexaeder: sechs um die Raumdiagonale 0-6; Keil
+#: (Ecken 0-1-2 unten, 3-4-5 darueber): drei; Pyramide (Grundflaeche 0-3,
+#: Spitze 4): zwei. Keil und Pyramide fehlten bis zum 25.09.2026 - ein
+#: Stabende in einem Keil fand kein Element und blieb still frei. Am
+#: Drehlager mit Sweep (gemessen von der Statik3D-Sitzung) waren das 6
+#: Stabenden, 12 singulaere FHG und gestoerte Pivots in jeder Zerlegung.
+_TET_ZERLEGUNG = {
+    "tet": ((0, 1, 2, 3),),
+    "hex": ((0, 1, 2, 6), (0, 2, 3, 6), (0, 3, 7, 6), (0, 7, 4, 6), (0, 4, 5, 6), (0, 5, 1, 6)),
+    "keil": ((0, 1, 2, 3), (1, 2, 3, 4), (2, 3, 4, 5)),
+    "pyramide": ((0, 1, 2, 4), (0, 2, 3, 4)),
+}
+_TET_FORM = {"tet4": "tet", "tet10": "tet", "hex8": "hex", "hex20": "hex",
+             "pent6": "keil", "pent15": "keil", "pyr5": "pyramide"}
+
+
+def _tetraeder_der_koerper(model: Model, unbekannt: dict = None) -> tuple:
     """(T, wer, name): Tetraeder aller Koerper als Knotenvierer, dazu je
-    Tetraeder das Element und der Koerpername. Hexaeder zerfallen in sechs
-    Tetraeder um die Raumdiagonale 0-6 - fuer die Frage "liegt der Punkt
-    darin" reicht das, die Kopplung geht ohnehin an die Knoten des Elements."""
+    Tetraeder das Element und der Koerpername. Jeder Volumentyp zerfaellt nach
+    _TET_ZERLEGUNG - fuer die Frage "liegt der Punkt darin" reicht das, die
+    Kopplung geht ohnehin an die Knoten des Elements. Typen mit vier
+    Eckknoten und eigenem Namen (etwa das p-Element tetp*) gelten als
+    Tetraeder. Ein Elementtyp, den die Zerlegung nicht kennt, faellt nicht
+    still heraus: er wird in ``unbekannt`` (Typ -> Anzahl) gezaehlt."""
     T, wer, name = [], [], []
     ne = len(model.elements)
     for kname, k in (getattr(model, "koerper", None) or {}).items():
@@ -1534,13 +1554,15 @@ def _tetraeder_der_koerper(model: Model) -> tuple:
             i = int(i)
             if not 0 <= i < ne:
                 continue
-            nd = [int(x) for x in model.elements[i].nodes]
-            if len(nd) in (4, 10):
-                T.append(nd[:4]); wer.append(i); name.append(kname)
-            elif len(nd) in (8, 20):
-                for a, b, c, d in ((0, 1, 2, 6), (0, 2, 3, 6), (0, 3, 7, 6),
-                                   (0, 7, 4, 6), (0, 4, 5, 6), (0, 5, 1, 6)):
-                    T.append([nd[a], nd[b], nd[c], nd[d]]); wer.append(i); name.append(kname)
+            el = model.elements[i]
+            nd = [int(x) for x in el.nodes]
+            form = _TET_FORM.get(el.typ) or ("tet" if len(nd) == 4 else None)
+            if form is None:
+                if unbekannt is not None:
+                    unbekannt[el.typ] = unbekannt.get(el.typ, 0) + 1
+                continue
+            for a, b, c, d in _TET_ZERLEGUNG[form]:
+                T.append([nd[a], nd[b], nd[c], nd[d]]); wer.append(i); name.append(kname)
     return np.asarray(T, int).reshape(-1, 4), np.asarray(wer, int), name
 
 
@@ -1609,7 +1631,14 @@ def stabenden_koppeln(model: Model, log: list = None, toleranz: float = 1e-4) ->
     kandidaten = [n for n in grund if 0 <= n < model.nn and n not in andere and n not in schon]
     if not kandidaten:
         return bericht
-    T, wer, kname = _tetraeder_der_koerper(model)
+    unbekannt: dict = {}
+    T, wer, kname = _tetraeder_der_koerper(model, unbekannt)
+    if unbekannt:
+        # Laut statt still: ein Stabende in einem solchen Element bliebe frei
+        bericht["unbekannte_elementtypen"] = dict(unbekannt)
+        if log is not None:
+            C.say(log, "Stabenden: die Punktsuche kennt diese Volumentypen nicht - ein Stabende "
+                       "darin bliebe frei: " + ", ".join(f"{t} ({n})" for t, n in sorted(unbekannt.items())))
     if not len(T):
         return bericht
     N = np.asarray(model.nodes[:model.nn], float)

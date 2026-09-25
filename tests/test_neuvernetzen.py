@@ -313,6 +313,9 @@ def test_oberflaeche_entfernt_die_alten_knoten():
         s.model = m
         s._fortschritt_t0 = time.time()
         s._netz_loeschen = G.MainWindow._netz_loeschen.__get__(s)
+        # seit 25.09.2026 ruft _vernetzen (Elementstufe: Sperre, Fein) den
+        # eigentlichen Lauf _vernetzen_netz - an der Attrappe wirklich
+        s._vernetzen_netz = G.MainWindow._vernetzen_netz.__get__(s)
         with mock.patch.object(G, "QtWidgets"):       # nur processEvents im Weg
             G.MainWindow._vernetzen(s, list(m.flaechen.values()), list(m.koerper.values()))
         return [str(c.args[0]) for c in s.log.appendPlainText.call_args_list if c.args]

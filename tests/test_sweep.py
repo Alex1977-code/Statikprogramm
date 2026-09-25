@@ -15,7 +15,12 @@ Geprueft wird
   * die Lagenzahl bei Fliessen (LAGEN_MIN_PLASTISCH, Messung der Loeser-Sitzung);
   * Speichern und Laden;
   * die Probe, um die es geht: Kragplatte unter Endlast, tet4 gegen gesweepte
-    hex8, gegen die Balkenloesung.
+    hex8, gegen die Balkenloesung;
+  * die Betriebsart "sauber" (dritter Auftrag, 24.09.2026): das Feld
+    ``sweep = "aus" | "sauber" | "immer"`` (True/False alter Dateien gehen
+    weiter), Trapez- gegen Winkelfehler, die Pruefung vor dem Einbau, der
+    Kegelstumpf faellt an die Tetraeder und das Protokoll sagt warum, der
+    Uebergang zum abgebildeten Nachbarn ueber richtig ausgerichtete Pyramiden.
 
 Aufruf: python -m tests.test_sweep
 """
@@ -401,6 +406,60 @@ def test_quader_randseiten_und_nachbar():
     check("das Netz ueberlebt Speichern und Laden", _typen(m2) == _typen(m))
 
 
+def test_quader_hex20_gemeinsame_flaeche():
+    """Zwei abgebildete Quader mit gemeinsamer Flaeche, quadratisch (hex20):
+    die Kantenmitten der gemeinsamen Flaeche gehoeren beiden Koerpern.
+
+    Bis zum 25.09.2026 legte jeder Koerper sie fuer sich an. mesher.mesh_koerper
+    reichte ``(cache or {}).setdefault("kanten", {})`` weiter, und ein noch
+    leerer Cache - so uebergibt ihn modell_vernetzen - ist falsch-wertig: der
+    erste Koerper schrieb seine Kantenmitten in ein Wegwerf-Dict, der zweite
+    fand sie nicht. Gemessen (Pruefmatrix 25.09.2026, Kragarm aus zwei Koerpern,
+    4 x 4 Felder): 40 Orte mit zwei Knoten, sigma_v +610 N/mm2 neben der
+    Balkenloesung; mit geteilten Mitten +0,01 N/mm2. Das Netz sah dabei von
+    aussen richtig aus, nur die Abnahme zaehlte doppelte Knoten.
+    """
+    m = Model()
+    m.netz.sweep = False
+    m.netz.ordnung = 2
+    m.add_material(Material.steel("S235"))
+    # zwei Einheitswuerfel uebereinander; die Flaeche z = 1 gehoert beiden
+    P = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+         (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1),
+         (0, 0, 2), (1, 0, 2), (1, 1, 2), (0, 1, 2)]
+    n = [m.add_node(*p) for p in P]
+    L = {}
+
+    def li(a, b):
+        key = (min(a, b), max(a, b))
+        if key not in L:
+            L[key] = f"L{len(L) + 1}"
+            m.add_line(L[key], [n[key[0]], n[key[1]]])
+        return L[key]
+
+    def fl(name, ecken):
+        m.add_flaeche(name, [li(ecken[i], ecken[(i + 1) % 4]) for i in range(4)],
+                      material="S235")
+        return name
+
+    for name, o in (("Boden", 0), ("Fuge", 4), ("Dach", 8)):
+        fl(name, [o, o + 1, o + 2, o + 3])
+    unten = [fl(f"MU{i}", [i, (i + 1) % 4, (i + 1) % 4 + 4, i + 4]) for i in range(4)]
+    oben = [fl(f"MO{i}", [i + 4, (i + 1) % 4 + 4, (i + 1) % 4 + 8, i + 8]) for i in range(4)]
+    m.add_koerper("Unten", ["Boden", "Fuge"] + unten, material="S235", teilung=[4, 4, 4])
+    m.add_koerper("Oben", ["Fuge", "Dach"] + oben, material="S235", teilung=[4, 4, 4])
+    log = []
+    mesher.modell_vernetzen(m, log=log, workers=1)
+    typen = {e.typ for e in m.elements}
+    check("beide Quader sind hex20", typen == {"hex20"}, str(sorted(typen)))
+    doppelt = _doppelte_knoten(m, list(range(m.nn)))
+    check("kein Ort mit zwei Knoten - die Kantenmitten der Fuge sind geteilt",
+          doppelt == 0, f"{doppelt} Paare")
+    auf = [i for i in range(m.nn) if abs(float(m.nodes[i][2]) - 1.0) < 1e-9]
+    check("Fuge: 25 Ecken und 40 Kantenmitten, jeder Knoten einmal",
+          len(auf) == 65, f"{len(auf)} Knoten auf z = 1")
+
+
 def _kreis(m, tag, cx, cy, z, r):
     """Ein Kreis aus zwei Halbboegen zwischen zwei Knoten - wie aus RFEM.
     Rueckgabe (Knoten p, Knoten q, Linie 1, Linie 2)."""
@@ -620,9 +679,11 @@ def test_pyramiden_als_uebergang():
                        "u": float(np.abs(res.u[:, :3]).max()), "log": log, "m": m, "k2": k2}
     aus, an = zahlen[False], zahlen[True]
     check("ohne Schalter keine Pyramide", not aus["typen"].get("pyr5"), str(aus["typen"]))
+    # Die Tetraederzahl mit Pyramiden liegt nicht zwingend unter der ohne:
+    # das freie Netz des Nachbarn faellt anders aus, sobald die Randseiten
+    # Vierecke bleiben (gemessen 24.09.2026: 332 -> 346 tet4 bei 12 pyr5)
     check("mit Schalter Pyramiden am Uebergang, Rest Tetraeder",
-          an["typen"].get("pyr5", 0) > 0 and an["typen"].get("tet4", 0) > 0
-          and an["typen"].get("tet4", 0) < aus["typen"].get("tet4", 0),
+          an["typen"].get("pyr5", 0) > 0 and an["typen"].get("tet4", 0) > 0,
           f"{aus['typen']} -> {an['typen']}")
     check("das Protokoll nennt die Nachbarflaeche",
           any("Pyramiden (pyr5) als Übergang" in z and "M2" in z for z in an["log"]))
@@ -1081,7 +1142,10 @@ def test_rippe_am_rand_ueber_ebene_zerlegt():
     # 1,8-mal zu steif gegen 2,0254 mm.
     check("der lineare Tetraeder ist hier deutlich zu steif (gemessen 1,8-mal)", w_hex > 1.5 * w_tet,
           f"{w_hex * 1e3:.4f} mm gegen {w_tet * 1e3:.4f} mm")
-    check("und das mit weniger Elementen", ne_hex < 0.25 * ne_tet, f"{ne_hex} gegen {ne_tet}")
+    # (tet4 685 Elemente am 22.09., 471 seit den Kippungen und Kappenregeln
+    # vom 24.09.2026 - der freie Vernetzer braucht weniger, die Schranke ist
+    # darum ein Drittel statt ein Viertel)
+    check("und das mit weniger Elementen (hoechstens ein Drittel)", ne_hex < 0.35 * ne_tet, f"{ne_hex} gegen {ne_tet}")
 
 
 def _quader_mit_geteilter_kante(a=0.3, b=0.2, t=0.1, h=0.05):
@@ -1499,7 +1563,8 @@ def test_vorgabe_aus():
     sondern das Verhalten: derselbe Koerper einmal ohne und einmal mit Haken.
     """
     from statik3d.model import Netzeinstellungen
-    check("die Vorgabe ist aus", Netzeinstellungen().sweep is False,
+    # Seit 25.09.2026 ein Wort ("aus" | "sauber" | "immer") statt False
+    check("die Vorgabe ist aus", Netzeinstellungen().sweep == "aus",
           "sweep = %r" % Netzeinstellungen().sweep)
 
     def netz(an):
@@ -1519,10 +1584,160 @@ def test_vorgabe_aus():
           str(an))
 
 
+def test_betriebsart_sauber():
+    """Dritter Auftrag (24.09.2026), Aufgabe 4: ``Netzeinstellungen.sweep``
+    kennt "aus", "sauber" und "immer"; True/False alter Dateien heissen
+    "immer"/"aus". In der Betriebsart "sauber" wird ein Koerper nur gesweept,
+    wenn jedes hex8 und pent6 hoechstens TRAPEZ_GRENZE Trapezfehler und eine
+    positive Jacobi-Determinante hat - sonst Tetraeder, mit Grund im
+    Protokoll. Das Mass ist der **Trapezfehler** (Winkel zwischen
+    gegenueberliegenden Kanten einer Viereckseite), nicht der Eckwinkel:
+    am Kragarm kostet Parallelogrammverzerrung bis 30 Grad nichts,
+    Trapezverzerrung ab 2,5 Grad mehr als 1 N/mm2 (tests/messung_winkelfehler.py)."""
+    def art(wert):
+        m = Model()
+        m.netz.sweep = wert
+        return sweep.betriebsart(m)
+    check("True heisst immer, False aus (alte Dateien)", art(True) == "immer" and art(False) == "aus",
+          f"{art(True)}, {art(False)}")
+    check("die drei Woerter, auch mit Grossbuchstaben und Leerzeichen",
+          art("aus") == "aus" and art("sauber") == "sauber" and art("immer") == "immer" and art(" Sauber ") == "sauber")
+    check("ein unbekanntes Wort gilt als immer", art("hexaeder") == "immer", art("hexaeder"))
+    check("die Vorgabe ist aus", sweep.betriebsart(Model()) == "aus", sweep.betriebsart(Model()))
+    check("die Grenzen: Trapez 5 Grad = 2 x Winkelfehler 2,5 Grad (gemessen 24.09.2026)",
+          abs(sweep.WINKELFEHLER_GRENZE - 2.5) < 1e-12 and abs(sweep.TRAPEZ_GRENZE - 5.0) < 1e-12,
+          f"{sweep.WINKELFEHLER_GRENZE}, {sweep.TRAPEZ_GRENZE}")
+    # Trapez- gegen Winkelfehler am Einheitswuerfel, Deckel um 10 Grad verzerrt
+    X0 = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+                   [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]], float)
+    t = float(np.tan(np.radians(10.0)))
+    Xp = X0.copy()
+    Xp[4:, 0] += t                                   # Parallelogramm: Deckel verschoben
+    Xt = X0.copy()
+    Xt[4:, 0] = 0.5 + (Xt[4:, 0] - 0.5) * (1.0 - 2.0 * t)   # Trapez: Deckel schmaler
+    wf_p, tf_p = sweep.winkelfehler(Xp, "hex8"), sweep.trapezfehler(Xp, "hex8")
+    wf_t, tf_t = sweep.winkelfehler(Xt, "hex8"), sweep.trapezfehler(Xt, "hex8")
+    check("Parallelogramm: Winkelfehler 10 Grad, Trapezfehler 0", abs(wf_p - 10.0) < 0.5 and tf_p < 1e-6,
+          f"Winkel {wf_p:.2f}, Trapez {tf_p:.2e}")
+    check("Trapez: Winkelfehler 10 Grad, Trapezfehler 20 Grad", abs(wf_t - 10.0) < 0.5 and abs(tf_t - 20.0) < 0.5,
+          f"Winkel {wf_t:.2f}, Trapez {tf_t:.2f}")
+    check("ein regelmaessiger Wuerfel hat beides 0",
+          sweep.winkelfehler(X0, "hex8") < 1e-9 and sweep.trapezfehler(X0, "hex8") < 1e-9)
+    # Die Pruefung vor dem Einbau an einem Lagenstapel (ein Viereck, eine Lage)
+    vierecke, dreiecke = np.array([[0, 1, 2, 3]]), np.zeros((0, 3), int)
+    ok0, _g0, tf0, wf0 = sweep.sauber_pruefen(np.stack([X0[:4], X0[4:]]), vierecke, dreiecke)
+    okp, _gp, tfp, wfp = sweep.sauber_pruefen(np.stack([X0[:4], Xp[4:]]), vierecke, dreiecke)
+    okt, gt, tft, wft = sweep.sauber_pruefen(np.stack([X0[:4], Xt[4:]]), vierecke, dreiecke)
+    oki, gi, _tfi, _wfi = sweep.sauber_pruefen(np.stack([X0[4:], X0[:4]]), vierecke, dreiecke)
+    check("regelmaessig: sauber", ok0 and tf0 < 1e-9 and wf0 < 1e-9)
+    check("Parallelogramm 10 Grad: sauber (Trapezfehler 0, Winkelfehler 10)", okp and tfp < 1e-6 and abs(wfp - 10) < 0.5,
+          f"Trapez {tfp:.2e}, Winkel {wfp:.2f}")
+    check("Trapez 10 Grad: nicht sauber, der Grund nennt den Trapezfehler",
+          not okt and "Trapezfehler" in gt and abs(tft - 20) < 0.5, gt)
+    check("umgestuelpt (Deckel unter dem Boden): nicht sauber, der Grund nennt die Jacobi-Determinante",
+          not oki and "Jacobi" in gi, gi)
+    # Das Verhalten: Kegelstumpf und Zylinder (gepflasterte Kreisscheibe) gegen
+    # den Quader mit geteilter Deckelkante (abgebildetes Vierecknetz als Grund)
+    aus = {}
+    for r2, wert in ((0.03, "sauber"), (0.05, "sauber"), (0.03, True), (0.03, "aus")):
+        m, k = _kegelstumpf(0.05, r2)
+        m.netz.sweep = wert
+        log = []
+        mesher.modell_vernetzen(m, log, workers=1)
+        aus[(r2, wert)] = (_typen(m), log)
+    typen, log = aus[(0.03, "sauber")]
+    check("Kegelstumpf, sauber: der Sweep lehnt ab, Tetraeder", set(typen) == {"tet4"}, str(typen))
+    check("  und das Protokoll sagt warum (Trapezfehler ueber der Grenze)",
+          any("nicht gesweept (Betriebsart „sauber“)" in z and "Trapezfehler" in z and "Pyramiden" in z for z in log),
+          "; ".join(z.strip()[:150] for z in log if "sauber" in z)[:200])
+    # Auch der Zylinder: seine Kreisscheibe ist aus gepaarten Dreiecken
+    # gepflastert, die Vierecke haben bis 72 Grad Winkel- und rund 70 Grad
+    # Trapezfehler (gemessen 24.09.2026) - kein sauberer Hexaeder
+    typen, log = aus[(0.05, "sauber")]
+    check("Zylinder, sauber: die gepflasterte Kreisscheibe ist kein sauberer Hexaeder - Tetraeder",
+          set(typen) == {"tet4"} and any("nicht gesweept (Betriebsart „sauber“)" in z and "Trapezfehler" in z for z in log),
+          str(typen) + "; " + "; ".join(z.strip()[60:150] for z in log if "sauber" in z)[:150])
+    # Und der Befund, der die Betriebsart heute bestimmt: auch ein
+    # **Rechteck** als Grund wird aus gepaarten Dreiecken gepflastert
+    # (sweep._grundnetz), nicht als abgebildetes Vierecknetz - der Block des
+    # Quaders mit geteilter Deckelkante (Kappen X0 -> XA, 100 x 200 mm bei
+    # h = 50 mm) kam auf 30 Grad Trapezfehler (gemessen 24.09.2026; ein
+    # 100 x 50 mm-Grund auf 5,9 Grad). Ein abgebildetes Grundnetz fuer
+    # vierseitige Grundflaechen ist der Weg, die Betriebsart mit Hexaedern
+    # zu fuellen - er gehoert zum Plan des hex8-Vernetzers. In "sauber" wird
+    # nicht zerlegt: der Koerper ist als Ganzes nicht sweepbar (zwei Waende
+    # nicht aus vier Linien) und geht mit Grund im Protokoll an die Tetraeder.
+    m, k = _quader_mit_geteilter_kante()
+    m.netz.sweep = "sauber"
+    log = []
+    mesher.modell_vernetzen(m, log, workers=1)
+    typen = _typen(m)
+    check("Quader mit geteilter Deckelkante, sauber: nicht als Ganzes sweepbar, kein Zerlegen - Tetraeder mit Grund",
+          set(typen) == {"tet4"} and any("nicht gesweept - " in z and "wird nicht zerlegt" in z for z in log),
+          str(typen) + "; " + "; ".join(z.strip()[:150] for z in log if "nicht gesweept" in z)[:200])
+    check("  die Ablehnung steht genau einmal im Protokoll",
+          sum(1 for z in log if "nicht gesweept" in z) == 1, f"{sum(1 for z in log if 'nicht gesweept' in z)} Zeilen")
+    m, k = _quader_mit_geteilter_kante()
+    m.netz.sweep = True
+    mesher.modell_vernetzen(m, [], workers=1)
+    check("  mit True wird derselbe Koerper gesweept (Hexaeder und Keile, wie bisher)",
+          set(_typen(m)) <= {"hex8", "pent6"} and "hex8" in _typen(m), str(_typen(m)))
+    typen, _log = aus[(0.03, True)]
+    check("Kegelstumpf mit True (alte Datei): weiter gesweept wie bisher", set(typen) <= {"hex8", "pent6"} and typen,
+          str(typen))
+    typen, _log = aus[(0.03, "aus")]
+    check("Kegelstumpf mit \"aus\": Tetraeder", set(typen) == {"tet4"}, str(typen))
+
+
+def test_pyramiden_ausrichtung_am_abgebildeten_nachbarn():
+    """Dritter Auftrag (24.09.2026), Aufgabe 4: in der Betriebsart "sauber"
+    geht der Uebergang zum Tetraeder-Nachbarn immer ueber Pyramiden (pyr5),
+    auch ohne ``netz.pyramiden``. An der Fuge zu einem **abgebildeten**
+    Quader kamen alle 32 Pyramiden umgestuelpt in den Loeser (det J = -9,8e-7
+    an jedem Punkt; solid_volume nimmt den Betrag und sah nichts) - jetzt
+    richtet das Vorzeichen der Jacobi-Determinante die Grundflaeche aus.
+    Pruefkoerper: der zweiteilige Kragarm aus tests/messung_uebergang_pyramiden."""
+    import pruefkoerper as pk
+    from messung_uebergang_pyramiden import geometrie
+    from statik3d.elements.solid import jacobi_volumen
+    kr = pk.Kragarm()
+    h = 0.05
+    m = Model("uebergang")
+    m.add_material(Material("S", E=pk.E_ST, nu=pk.NU_ST, rho=0.0))
+    kA, kB = geometrie(m, kr, h_teilung=h)
+    m.netz.sweep = "sauber"
+    m.netz.ziellaenge = h
+    m.netz.dichte = "eigene"
+    check("netz.pyramiden ist aus - die Pyramiden kommen aus der Betriebsart", not getattr(m.netz, "pyramiden", False))
+    log = []
+    mesher.modell_vernetzen(m, log, workers=1)
+    tA = {m.elements[e].typ for e in kA.elemente}
+    tB = {m.elements[e].typ for e in kB.elemente}
+    check("A ist das abgebildete hex8-Gitter, B Tetraeder mit Pyramiden", tA == {"hex8"} and tB == {"tet4", "pyr5"},
+          f"{tA} / {tB}")
+    pyr = [m.elements[e] for e in kB.elemente if m.elements[e].typ == "pyr5"]
+    n_soll = int(round(kr.B / h)) * int(round(kr.H / h))
+    check(f"je Viereck der Fuge eine Pyramide ({n_soll})", len(pyr) == n_soll, f"{len(pyr)} Pyramiden")
+    dets = [jacobi_volumen("pyr5", m.nodes[e.nodes]) for e in pyr]
+    check("jede Pyramide hat positives Volumen und det J > 0 an allen Punkten (vorher alle umgestuelpt)",
+          dets and all(d["V"] > 0 and d["det_min"] > 0 for d in dets),
+          f"det_min {min(d['det_min'] for d in dets):.3e}, V min {min(d['V'] for d in dets):.3e} m^3" if dets else "keine")
+    V_hex = sum(solid_volume("hex8", m.nodes[m.elements[e].nodes]) for e in kA.elemente)
+    V_B = sum(solid_volume(m.elements[e].typ, m.nodes[m.elements[e].nodes]) for e in kB.elemente)
+    V_soll_A = kr.L / 2 * kr.B * kr.H
+    # B: Quader plus der bilineare Deckel mit einer um 20 mm angehobenen Ecke (mittlere Hoehe dz / 4)
+    V_soll_B = kr.L / 2 * kr.B * kr.H + (kr.L / 4) * kr.B * 0.02 / 4
+    check("Rauminhalt A exakt, B innerhalb 1 %", abs(V_hex - V_soll_A) < 1e-9 * V_soll_A and abs(V_B - V_soll_B) < 0.01 * V_soll_B,
+          f"A {V_hex * 1e6:.1f} cm3 (Soll {V_soll_A * 1e6:.1f}), B {V_B * 1e6:.1f} cm3 (Soll {V_soll_B * 1e6:.1f})")
+    bef = diagnose.abnahme(m)
+    check("Abnahme ohne Befund", not bef, str([(b.pruefung, b.text[:60]) for b in bef])[:200])
+
+
 def main():
     for t in (test_vorgabe_aus, test_erkennung, test_netz_platte, test_quader_bleibt_abgebildet, test_nachbar_mit_tetraedern,
               test_nachbar_mit_verschiedener_teilung, test_lagen_bei_fliessen,
-              test_quader_randseiten_und_nachbar, test_zylinder_wird_gesweept,
+              test_quader_randseiten_und_nachbar, test_quader_hex20_gemeinsame_flaeche,
+              test_zylinder_wird_gesweept,
               test_platte_mit_nabe_zerlegt, test_abgesetzte_welle_zerlegt,
               test_pyramiden_als_uebergang, test_zerlegen_sagt_warum_nicht,
               test_keile_am_feinen_rand, test_verjuengter_zug, test_drehkoerper,
@@ -1530,7 +1745,8 @@ def main():
               test_rippe_am_rand_ueber_ebene_zerlegt, test_kappen_verschieden_geteilt,
               test_angleichen_schont_den_nachbarn, test_zerlegen_an_vorhandener_schleife,
               test_zerlegen_namen_und_budget,
-              test_kragplatte_tet4_gegen_hex8):
+              test_kragplatte_tet4_gegen_hex8, test_betriebsart_sauber,
+              test_pyramiden_ausrichtung_am_abgebildeten_nachbarn):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

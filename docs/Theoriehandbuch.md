@@ -1318,7 +1318,26 @@ aufgebrachte Lasten geeignet. Die Iteration läuft in zwei Phasen:
    vermerkt.
 2. **Nachprüfung.** Die Reststeifigkeit wird auf 10⁻⁸ k_t abgesenkt, so
    dass an gleitenden Knoten exakt μ F_n wirkt; die Gleitrichtungen bleiben
-   fest. Je Runde geht nur der am stärksten über der Reibgrenze liegende
+   fest. „Exakt“ war das bis zum 25.09.2026 nicht: k_t ist
+   eine Penalty-Steifigkeit von der Größenordnung 10¹⁵ N/m, und 10⁻⁸ k_t
+   mal dem Gleitweg trug am Ende Kraft, die in keiner Kontaktkraft stand —
+   am Klotz K4 der Prüfmatrix (hex8, 14,5 mm Schlupf gegen Federn) 693 kN
+   oder 2,3 % von μ N, gemessen als K u an den Gleitknoten gegen
+   `contact_forces`; die Federkraft lag darum 3,5 % (tet4: 10 %) unter
+   H − μ N. Seither wirkt die feine Reststeifigkeit nur auf die **Änderung**
+   der Tangentialverschiebung seit dem letzten Zustand (`Constraint.dt_last`,
+   Ausgleich im Kraftvektor): am Ende trägt sie nichts, K u und
+   `contact_forces` stimmen überein (K4: 29 826 kN beide, Federkraft +1,2 %).
+   Die grobe Feder der Phase 1 und ganz gleitender Gruppen bleibt ohne
+   Ausgleich — sie hält das Bauteil, und ihr Fixpunkt wäre mit Ausgleich zu
+   langsam; dort steht weiter die Warnung „Bauteil rutscht“ (K5: die Feder
+   trägt 79 % dessen, was die Federn tragen sollten — offen). Ebenso offen:
+   die festgehaltene Gleitrichtung lag an einem Eckknoten von K4 20° neben
+   der Bewegung (2,5 % von μ N quer zur Last, 0,7 mm Seitenwanderung); eine
+   Nachführung in Phase 2 ist als Fixpunkt instabil (weiche Querhaltung:
+   der Fehler verdoppelt sich je Runde) und braucht die konsistente Tangente
+   μ F_n/|Δt| quer zur Gleitrichtung. Schalter `AUSGLEICH_RESTSTEIFIGKEIT`
+   für die Rücknahmeprobe (`test_solver_ext`). Je Runde geht nur der am stärksten über der Reibgrenze liegende
    haftende Knoten ins Gleiten über (monoton, deshalb ohne Flattern), bis
    |F_t| ≤ μ F_n an allen haftenden Knoten gilt. Anschließend laufen
    Setzrunden, bis sich die Normalkräfte in μ F_n nicht mehr ändern.
@@ -2022,6 +2041,18 @@ konvergiert ist. Der Löser führt die Zahlen des Vorlaufs eigens in `res.info`
 `rechenliste.zustand_aus_info` sie herausrechnen kann. `contact_converged`
 bleibt, wie es war, und klebt über alle Läufe, den Vorlauf eingeschlossen.
 
+Seit dem 23.09.2026 gibt es den Vorlauf nur noch in der verschachtelten
+Iteration (der Vorgabe); die gemeinsame (wählbar, § 5e.3) lässt ihn weg. Dort
+gibt es stattdessen **abgekürzte** Läufe: mitten in einer Laststufe mit
+Absicht nach einem Kontaktschritt beendet, der nächste setzt ihren Zustand
+fort. Sie zählen nicht als „nicht konvergiert“ — entschieden wird an dem
+Lauf, mit dem die Stufe endet, und am letzten, und beide sind volle Läufe.
+Ebenso **verworfene** Läufe (24.09.2026): gibt die gemeinsame Iteration eine
+Laststufe auf, wird die Stufe vom Kontaktzustand nach ihrem Startwert an
+verschachtelt wiederholt; weder das u noch der Kontaktzustand der Läufe
+dazwischen geht ins Ergebnis ein. Ein gedeckelter voller Lauf, der zählt,
+zählt wie bisher, auch mitten im Lastfall.
+
 Eine Zwischenstufe „eingeschränkt“ (letzter Lauf konvergiert, ein
 Zwischenlauf gedeckelt) gibt es mit Absicht nicht. Ob ein solcher Lastfall
 als Nachweis taugt, ist eine Entscheidung des Anwenders; bis sie getroffen
@@ -2239,10 +2270,12 @@ aus dem `cinfo` genau dieses Laufs. Felder:
 | Feld | Bedeutung |
 |---|---|
 | `nr` | 1, 2, … in der Reihenfolge der Läufe |
-| `art` | `Lastfall` (ohne Fließen), sonst `Vorlauf`, `Laststufe`, `Newton`, `Fliessschritt` (Anfangsdehnung), `Abschluss`; bei einem Abbruch in der Fließ-Iteration vorläufig `Fliessen` |
+| `art` | `Lastfall` (ohne Fließen), sonst `Vorlauf` (nur verschachtelt, § 5e.3), `Laststufe`, `Newton`, `Abnahme` (gemeinsam: Newton-Schritt mit vollem Kontakt am Ende einer Stufe), `Fliessschritt` (Anfangsdehnung), `Abschluss`; bei einem Abbruch in der Fließ-Iteration vorläufig `Fliessen` |
 | `stufe`, `schritt`, `tangente` | nur bei Fließen: Laststufe, Schritt darin, ob mit der konsistenten Tangente gelöst wurde |
 | `schritte`, `faktorisierungen` | dieses Laufs (Summe über alle = die bisherigen Summenwerte) |
-| `konvergiert`, `grund` | `grund` ist `''` oder `deckel`, `max_iter`, `probelauf`, `eingefroren`, `abbruch` |
+| `konvergiert`, `grund` | `grund` ist `''` oder `deckel`, `max_iter`, `probelauf`, `eingefroren`, `abbruch`, `abgekuerzt` (seit 23.09.2026) |
+| `abgekuerzt` | wahr, wenn die gemeinsame Iteration den Lauf mit Absicht nach einem Schritt beendet hat (§ 5e.3) |
+| `verworfen` | nur vorhanden, wenn wahr (seit 24.09.2026): die gemeinsame Iteration hat die Laststufe dieses Laufs aufgegeben und vom Startwert an verschachtelt wiederholt (§ 5e.3) |
 | `warm`, `neustart` | Start aus einem Kontaktzustand angenommen; Warmstart verworfen oder zurückgesetzt und neu gerechnet |
 | `start_von_lauf` | Nummer des Laufs, dessen Zustand der Start war; 0 = der dem Lastfall angebotene Start; `None` = kalt; −1 = ein von außen übergebener Zustand unbekannter Herkunft |
 | `zyklen`, `phase`, `n_aktiv`, `n_gleitet` | Zustand am Ende des Laufs (`cycles`, Phase, geschlossene und gleitende Bedingungen) |
@@ -2253,7 +2286,15 @@ aus dem `cinfo` genau dieses Laufs. Felder:
 `contact_laeufe`, `contact_letzter_lauf_konvergiert` und
 `contact_laeufe_nicht_konvergiert` werden seitdem aus dem Laufbuch
 **abgeleitet** (Länge, letzter Eintrag, Zahl der nicht konvergierten), nicht
-mehr getrennt hochgezählt. Ein Kontaktabbruch (`KontaktAbbruch`) bekommt in
+mehr getrennt hochgezählt. Seit dem 23.09.2026 zählen abgekürzte Läufe nicht
+unter den nicht konvergierten und kleben nicht an `contact_converged`; ihre
+Zahl steht in `contact_laeufe_abgekuerzt`, und der letzte Lauf muss
+konvergiert sein (§ 5e.3). Seit dem 24.09.2026 ebenso die verworfenen; wird
+eine Stufe wiederholt, leitet `_laufbuch_zaehlen` `contact_converged` und die
+Zahl der nicht konvergierten neu aus dem Laufbuch ab, und
+`contact_laeufe_verworfen` zählt die verworfenen, die nicht schon als
+abgekürzt zählen (damit „N von M“ der Rechenliste eine einfache Differenz
+bleibt). Ein Kontaktabbruch (`KontaktAbbruch`) bekommt in
 `_teilergebnis_anhaengen` einen eigenen Eintrag mit Grund `abbruch`;
 `faktorisierungen` ist dort `None`, weil der Lauf kein `cinfo` zurückgab.
 
@@ -2265,7 +2306,13 @@ bei der Referenz (`contact_frozen_from`). Der Grund folgt demselben Entscheid
 wie der Meldetext am Ende von `solve_with_contact` (Probelauf vor Deckel vor
 Schrittgrenze).
 
-**Die Art ohne neue Signatur.** `plastizitaet.iteration` wird aus Tests mit
+**Die Art ohne neue Signatur.** (Seit dem 23.09.2026 schreibt der Newton
+mit Kontakt selbst mit, was er ruft — `info["aufrufe"]`, je Aufruf Art,
+Laststufe, Schritt —, denn gemeinsam mit dem Kontakt gibt es Aufrufe, die
+sich aus dem Verlauf nicht nachzeichnen lassen: die `Abnahme`, den Abschluss
+mitten in der letzten Stufe und die Wiederholung einer Stufe. Liegt die Liste
+vor, gilt sie; das Nachzeichnen bleibt für den Anfangsdehnungsweg und den
+Newton ohne Kontakt.) `plastizitaet.iteration` wird aus Tests mit
 einem einfachen `loesen` gerufen; ein zusätzlicher Rückruf hätte jede dieser
 Stellen berührt. Stattdessen merkt sich `_plastizitaet_rechnen` je
 Löseraufruf, welcher Laufbuch-Eintrag entstand und ob eine Tangente `dK`
@@ -4497,6 +4544,321 @@ dem Umbau der verschachtelten Iteration Plastizität × Kontakt, nicht hier.
 Nachweis `tests/test_plastizitaet.py::test_rohr_ideal_plastisch_nach_hill` und
 `::test_anfangsdehnung_trifft_den_newton`.
 
+### 5e.3 Fließen und Kontakt gemeinsam iteriert (23./24.09.2026)
+
+**Stand 24.09.2026: wählbar, nicht die Vorgabe.** Vorgabe ist wieder
+`Plastizitaet.kontakt = "verschachtelt"`; die gemeinsame Iteration wählt man
+unter *Berechnung → Einstellungen*, „mit Kontakt“. Grund (Gegenprüfung vom
+24.09.2026, Messung unten): an Reibung nahe der Grenzlast endet sie in einem
+anderen Zustand als die verschachtelte — bis 78 N/mm² Unterschied der
+Vergleichsspannung, beide „konvergiert“ —, und dort ist sie auch teurer. Das
+Ziel des Anwenders, höchstens 1 N/mm² gegen die verschachtelte Iteration,
+hält sie an diesen Modellen nicht. Ob sie Vorgabe wird, entscheidet der
+Anwender, frühestens nach einer Messung am Drehlager. Ein unbekannter Wert
+der Einstellung rechnet verschachtelt und steht im Protokoll der
+Plastizität (`solver._kontakt_weg_melden`).
+
+**Das Problem.** Bis hierher war jede Lösung der Fließ-Iteration eine volle
+Kontakt-Iteration: der Newton ruft `loesen`, der Löser iteriert den Kontakt
+aus (warm vom letzten Zustand), erst dann kommt der nächste Newton-Schritt.
+Vor dem ersten plastischen Lauf stand zudem ein elastischer Vorlauf bei voller
+Last, dessen Zustand nie weiterging (§ 4.0b). Am Drehlager, LF1 (cProfile der
+Löser-Sitzung, 23.09.2026, Stand 54b6f9a, ruhige Maschine): 965 s, zwölf
+Kontaktläufe mit 144 Schritten und **139 Zerlegungen** zu 3,41 s (474,6 s,
+49 %) für zehn Newton-Schritte; Vorlauf und Laststufe 1 kalt, der erste
+Newton-Lauf nach 40 Zustandswechseln gedeckelt.
+
+**Das Verfahren** (`Plastizitaet.kontakt = "gemeinsam"`;
+`plastizitaet._stufe_gemeinsam`, die Regeln in `solver._KontaktImNewton`):
+
+1. Kein elastischer Vorlauf. Was er nebenbei tat — freie Bewegungen finden
+   und festhalten — geschieht um den ersten plastischen Lauf. Das gilt auch,
+   wenn die Fließ-Iteration mit Anfangsdehnung rechnet (gewählt, ohne
+   Verfestigung, Elementtyp ohne Stapel); abgekürzt wird dort nichts, das
+   Ergebnis bleibt bitgleich (Block mit Reibung ohne Verfestigung: 9 statt 16
+   Zerlegungen, mit Anfangsdehnung und 5 %: Laufbuch ohne den Vorlauf,
+   `test_laufbuch_mit_fliessen`).
+2. Der Startwert jeder Laststufe (elastisch mit dem bisherigen F_p) wie
+   bisher mit **voll auskonvergiertem** Kontakt.
+3. Die Newton-Schritte der Stufe mit **abgekürztem** Kontakt: ein
+   Kontaktschritt, der Zustand geht an die nächste Lösung weiter
+   (`solve_with_contact(kurz=1)`). Gleitende Knoten gegen ihre Richtung
+   werden dort auf Haften zurückgesetzt statt neu zu starten; der Lauf gilt
+   dann als abgekürzt. Abgekürzt wird höchstens zwölfmal je Stufe
+   (`KURZ_MAX`, unabhängig von `iterationen`) und nur, solange die Änderung
+   nicht zweimal hintereinander wächst, nachdem sie einmal gefallen war.
+4. Eine Stufe endet erst, wenn die Änderung unter der Toleranz liegt **und**
+   die Lösung dazu nicht abgekürzt war. Sonst folgt ein Newton-Schritt mit
+   vollem Kontakt („Abnahme“), in der letzten Stufe statt dessen der
+   **Abschluss** (voller Kontakt, elastisch mit F + F_p), und die Prüfung an
+   seiner Lösung. Die Abnahme zählt **nicht** gegen die Schritte je Stufe:
+   bis zum 24.09.2026 verbrauchte sie einen, und eine Stufe, die im letzten
+   erlaubten Schritt die Toleranz traf, hieß „Plastizität: Laststufe 2 nach
+   1 Newton-Schritten nicht konvergiert (Änderung 0.00e+00 > 0.0001)“ — mit
+   einem zweiten Abschluss auf demselben F_p (Block mit Reibung, nichts
+   fließt, ein Schritt je Stufe; verschachtelt „konvergiert“). Ein
+   abgekürzter Lauf, der in seinem einen Schritt auskonvergiert ist, ist
+   genau der volle Lauf und zählt als solcher.
+5. Verfehlt die Abnahme die Toleranz um mehr als das Zehnfache
+   (`ABNAHME_WEITER`), hat der volle Kontakt den Zustand merklich verschoben:
+   die Stufe wird wiederholt (6.). Sonst, und nach zwölf abgekürzten
+   Schritten, rechnet die Stufe mit vollem Kontakt weiter, solange die
+   Änderung von Schritt zu Schritt fällt; fällt sie nicht, oder ist das
+   Budget aufgebraucht, wird wiederholt.
+6. **Wiederholen** heißt: die Stufe vom Startwert an **verschachtelt** —
+   Kontaktzustand nach dem Startwert, F_p und Basis vom Stufenanfang, das
+   volle Budget, Schritt für Schritt wie in der Vorgabe. Die Läufe des
+   Versuchs heißen im Laufbuch `verworfen` und zählen nicht als nicht
+   konvergiert. Wiederholt wird nur, wenn in der Stufe etwas abgekürzt war;
+   sonst war der Versuch der verschachtelte Newton selbst.
+
+**Der Bezug der Änderung (25.09.2026).** Die „Änderung“ eines Schritts ist ‖F_p,neu − F_p‖
+geteilt durch die äußere Last ‖F‖. Fehlt die äußere Last ganz — ein Übermaß, eine Vorspannung
+oder eine Lagerverschiebung als einzige Last, F = 0 —, war der Bezug bis zum 25.09.2026 die
+Zahl 1, und die Änderung stand als absolute Zahl in Newton gegen die Toleranz. Die Presspassung
+der Prüfmatrix (zwei Würfel, Übermaß bis 300 N/mm²) rechnete exakt und meldete nach 3 × 60
+Newton-Schritten trotzdem „nicht konvergiert“: letzte Änderung 0,0972 N gegen Knotenkräfte
+von 10⁸ N. Ohne äußere Last ist der Bezug jetzt die plastische Last ‖F_p,neu‖ selbst
+(`plastizitaet._bezug`); gibt es auch die nicht, fließt nichts, und jede Änderung ist 0. Mit
+äußerer Last ändert sich nichts — der Bezug bleibt ‖F‖, alle Zahlen dieses Kapitels gelten
+unverändert. Gemessen am selben Modell: konvergiert in 5 Schritten (drei Stufen) bzw. 3 (eine
+Stufe), Rest im Abschluss 4 · 10⁻¹³, σ_zz −296,75 N/mm² bilinear exakt; mit Bezug 1 nach 29
+Schritten „nicht konvergiert“ bei demselben Ergebnis. Prüfung
+`test_plastizitaet.test_uebermass_als_einzige_last`, Schalter `BEZUG_PLASTISCHE_LAST` für die
+Rücknahmeprobe.
+
+Warum der Rückfall die Stufe **wiederholt**, statt vom erreichten Stand mit
+vollem Kontakt weiterzurechnen: so rechnete die Fassung vom 23.09.2026 nach
+der Hälfte der Schritte weiter — und kam vom weggelaufenen Stand nicht mehr
+zurück. Am Block nahe der Grenzlast (unten) 197 statt 61 Zerlegungen, am
+gequetschten Block mit vier Laststufen 327 statt 84, beide „nicht
+konvergiert“, wo verschachtelt konvergiert; mit Wiederholung 67 und 101,
+beide „konvergiert“ und bitgleich mit verschachtelt. Beginnt die
+Wiederholung am selben Zustand wie die verschachtelte Rechnung — in der
+ersten Laststufe immer —, rechnet sie deren Zahlen; die Mehrkosten sind die
+Zerlegungen der verworfenen Läufe (Test
+`test_gemeinsam_rueckfall_verschachtelt`). Warum das Zehnfache: am
+gequetschten Block mit drei Laststufen verfehlte die Abnahme die Toleranz
+10⁻⁴ mit 3,2·10⁻³, und das Weiterrechnen endete in einem anderen Zustand
+(27,8 N/mm² neben verschachtelt, „nicht konvergiert“); am abhebenden Block
+3,5·10⁻³ bei 10⁻³, und es endete 0,001 N/mm² neben verschachtelt.
+**Untersucht, nicht übernommen:** eine lockerere Regel (Weglaufen erst ab
+10 % der größten Änderung der Stufe, danach höchstens acht volle Schritte)
+spart mehr — 3978 statt 4543 von 5645 Zerlegungen in beiden Stichproben
+unten —, aber 9 statt 5 Rechnungen lagen über 1 N/mm², und zweimal statt
+einmal war das Urteil schlechter als verschachtelt.
+
+„Konvergiert“ gibt es damit nur, wenn der letzte Schritt mit voll
+auskonvergiertem Kontakt gerechnet ist und Plastizität und Kontakt dort ihre
+Kriterien erfüllen. Abgekürzte und verworfene Läufe stehen im Laufbuch
+(Grund `abgekuerzt`, Feld `verworfen`), kleben aber nicht an
+`contact_converged` und zählen nicht unter
+`contact_laeufe_nicht_konvergiert`; gedeckelte oder an der Schrittgrenze
+beendete Läufe, die zählen, zählen wie bisher, auch unterwegs.
+
+**Absprache mit der Element-Sitzung.** Verabredet war: in `plastizitaet.py`
+nur eine Schnittstelle und die Abnahme, die Schleife im Löser. Die Schleife
+einer gemeinsamen Laststufe (`_stufe_gemeinsam`) steht trotzdem in
+`plastizitaet.py`, weil sie die Newton-Fortschreibung
+(K + ΔK) u = F_k + F_p + ΔK u mit der Rückführung von der Basis der Stufe
+ist; im Löser wäre sie ein zweiter Newton. **Wann** abgekürzt und wann
+wiederholt wird, steht im Löser (`_KontaktImNewton.naechster`). Die
+verschachtelte Schleife ist die vom Stand 6a961e5 (nur `loesen` →
+`_loesen`, fürs Laufbuch), die drei geschützten Stellen sind unverändert
+(Textblöcke gleich, sha256), und ohne Kontakt rechnet `_newton` Aufruf für
+Aufruf wie vorher.
+
+**Die Schlussabnahme gilt in beiden Verfahren** — wenn der Lösungsweg selbst
+iteriert (Kontakt, ausfallende Zugstäbe). Verschachtelt löste der Abschluss
+elastisch mit dem F_p des letzten Newton-Schritts, in einem eigenen vollen
+Kontaktlauf — der den Kontaktzustand noch ändern kann, oft als kalter
+Neustart („Warmstart verworfen … Neustart von der Geometrie“) —, und niemand
+prüfte, ob F_p zu dieser Verschiebung passt. Am gequetschten Block
+(`tests/test_solver_ext`, µ 0,3, 60 MN auf 0,4 × 0,4 m, ε_p 12 %) blieb ein
+Rest von 2,5·10⁻⁴ bei Toleranz 10⁻⁴, gemeldet wurde „konvergiert“; jetzt
+heißt das „nicht konvergiert“, in beiden Verfahren (die Zahlen bleiben
+bitgleich). Nachweis
+`tests/test_plastizitaet.py::test_gemeinsame_iteration_kein_falsches_konvergiert`
+(c) und die Rücknahmeprobe `::test_ruecknahme_der_schlussabnahme`: ohne die
+Prüfung meldet derselbe Block wieder „konvergiert“. Das ist nicht der einzige
+Fall: in den 74 Rechnungen der beiden Stichproben unten (69 mit Kontakt,
+5 ohne) wechselt das Urteil der verschachtelten Rechnung gegen 6a961e5 in
+fünf von „konvergiert“ zu „nicht konvergiert“ — der gequetschte Block mit 1
+und 2 Laststufen (Rest 2,5·10⁻⁴ > 10⁻⁴) und der kippende Stempel mit 1, 3
+und 5 (1,06·10⁻³ bis 1,21·10⁻³ > 10⁻³). Geprüft wird einmal: besteht die
+Schlussabnahme nicht, heißt es „nicht konvergiert“, weitergerechnet wird
+nicht. (Die Fassung vom 23.09.2026 rechnete gemeinsam weiter; am kippenden
+Stempel blieb der Rest dabei stehen, weil jeder volle Abschluss kalt im
+selben Zustand endete — dasselbe Urteil mit 171 statt 93 Zerlegungen.) Ohne
+Kontakt und Ausfall wird sie nicht gerechnet: dort ist der Abschluss die
+Newton-Lösung selbst, der Rest lag in 14 Fällen höchstens bei 1,5·10⁻⁷, und
+die Zahl der Rückführungen ist wieder die von 6a961e5 (Zugwürfel 4,
+Kragträger 8; `test_gemeinsam_aendert_nichts_ohne_beides`).
+
+**Auch im Weg Anfangsdehnung** (25.09.2026, ideal plastisch immer dieser Weg): mit
+Kontakt rechnet sie dieselbe Schlussabnahme. Dort ist das falsche „konvergiert“
+seltener — jeder ihrer Schritte löst genau so wie der Abschluss (elastisch, voller
+Kontakt), und ihr Abbruch am geschätzten Fehler hält die nächste Änderung unter der
+Toleranz; gemessen lag der Rest an allen „konvergiert“ bei höchstens 6,1·10⁻⁶ gegen
+10⁻⁴ (gequetschter Block mit Anfangsdehnung, ideal plastischer Block mit Reibung
+unter der Grenzlast). Ein Umspringen des Kontakts genau im Abschluss ist aber nicht
+ausgeschlossen; ein so gestörter Abschluss (u um 1 % verschoben) heißt jetzt „nicht
+konvergiert“, ohne die Prüfung hieße er „konvergiert“
+(`tests/test_plastizitaet.py::test_schlussabnahme_anfangsdehnung`).
+
+**Warum der Startwert der Stufe voll auskonvergiert.** Die erste Fassung
+(Bau, 23.09.2026) kürzte auch ihn ab (und nahm die letzte Tangente dazu).
+Sie sparte mehr (3015 → 1405 Zerlegungen in der Stichprobe des Bauers), lag
+aber in neun von 45 Fällen über 1 N/mm²: Block mit Reibung (M1, zwei
+Laststufen) 89,6, Stempel mittig (E5) mit einer und zwei Stufen 3,1 und 6,0,
+M3 mit einer Stufe 3,3, Klotz M5 mit einer 2,1, K4 mit einer und zwei 1,8,
+der gequetschte Block C mit zwei Stufen 26,8, mit drei konvergierte er
+nicht. Im Startwert legt die Kontaktiteration Haften, Gleiten und die
+Gleitrichtungen fest (Phase 1 führt die Richtungen nach, Phase 2 hält sie
+fest und lässt nur Haften → Gleiten zu); rechnet das Fließen schon dort mit,
+kommt die Iteration an einem anderen zulässigen Zustand an.
+
+**Warum auch mit vollem Startwert ein anderes Ergebnis möglich ist.** Dieselbe
+Ursache wirkt in den abgekürzten Schritten: ein Knoten, der dort ins Gleiten
+geht, bekommt seine Richtung aus einer Zwischenlösung und behält sie; die
+Prüfung am Ende verwirft sie nur, wenn er **gegen** sie gleitet. Am Block
+nahe der Grenzlast (s = 0,8, eine Stufe) endete die Fassung vom 23.09.2026
+mit einem gleitenden Knoten, der 89° neben seiner Gleitrichtung glitt
+(cos 0,011, verschachtelt kleinster Wert 0,738) — 14,0 N/mm² Unterschied im
+Element darüber. Welcher Zustand „richtiger“ ist, entscheidet keine der
+beiden Rechnungen: auch die verschachtelte hängt dort am Weg. Mit der
+Laststufenzahl ändert sie sich an demselben Block um bis zu 24,6 N/mm² (1
+gegen 2, 3, 4, 6, 8 Laststufen: 0,14 / 4,19 / 12,5 / 20,8 / 24,6), mit
+s = 0,9 um 13,3 und 24,6 N/mm² (1 gegen 3 und 5 Laststufen), jeweils
+„konvergiert“ (Stand 6a961e5); am gequetschten Block um 15 bis 34 N/mm²
+(Gegenprüfung). Gleiten gegen die Richtung kommt in beiden Richtungen vor:
+am Ende des gequetschten Blocks mit 6 Stufen gemeinsam ein Knoten
+(verschachtelt keiner), mit 1 und 2 Stufen verschachtelt einer (gemeinsam
+ebenso, die Stufen wurden dort wiederholt), und die Fassung vom 23.09.2026
+hatte ihn mit 3 Stufen gemeinsam, verschachtelt nicht.
+
+**Messung** (24.09.2026, einkernig, `OMP_NUM_THREADS=1`, jede Rechnung in
+einem eigenen Prozess; alt = `git archive 6a961e5`, neu = Stand 85f1976 mit
+beiden Einstellungen; gezählt werden die Aufrufe von `LinearSolver`, nicht
+das Laufbuch; Skripte in `%TEMP%\nachb_iter`). Zwei Stichproben.
+
+*Die Stichprobe des Bauers* (23.09.2026): fünfzehn Modelle, jedes mit 1, 2
+und 3 Laststufen, 45 Rechnungen:
+
+* A: Block mit Reibung (`examples_lib`), fy = 60 % der elastischen
+  Vergleichsspannung, E_t/E 5 %, Toleranz 10⁻⁴ (wie `test_plastizitaet`);
+* C: gequetschter Block (oben), 2 %, Toleranz 10⁻⁴;
+* sonst fy = 235 N/mm², Last so, dass elastisch σ_v = fy/a, E_t/E 1 %,
+  Toleranz 10⁻³, 25 Schritte (die Vorgaben): M1/M3 Block mit Reibung
+  (a = 0,3/0,4); M2/M6 Stempel hex8 mit gewölbter Unterseite auf Sockel,
+  Fuge µ 0,1 bzw. 0, Last zu 60 % außermittig (a = 0,4/0,3); M4 ebener
+  Stempel, µ 0,2 (a = 0,4); E1 wie M2 aus tet4 (das Modell „zwei Körper“ der
+  Tests), E2 feiner, E5 hex8 feiner und mittig (a = 0,35), E6 hex8 feiner,
+  D1 wie E1 mit 5 % Querlast, der Stempel oben nur quer dazu gehalten;
+  M5/K1/K4 Klotz aus tet4 auf einem Lager wie
+  „Starr“ am Drehlager (µ 0,1 in der Fläche, Bettung mit Ausfall bei Zug,
+  Knagge), 8 × 4 × 4 (a = 0,4), 12 × 6 × 4 (a = 0,4), 16 × 8 × 4 (a = 0,3).
+
+Zerlegungen verschachtelt → gemeinsam, größte Abweichung der
+Vergleichsspannung je Element (N/mm²; „bitgleich“: Verschiebungen und
+Spannungen gleich), Urteil verschachtelt / gemeinsam und wie viele Stufen
+wiederholt wurden, drei Laststufen:
+
+| Modell | Zerlegungen | Anteil | max &#124;Δσ_v&#124; | Urteil | wiederholt |
+|---|---|---|---|---|---|
+| A | 22 → 15 | 68 % | bitgleich | konv. / konv. | 0 |
+| C | 44 → 68 | 155 % | 0,000 | konv. / konv. | 2 |
+| M1 | 155 → 169 | 109 % | 0,000 | konv. / konv. | 1 |
+| M2 | 121 → 119 | 98 % | 0,000 | konv. / konv. | 1 |
+| M3 | 30 → 22 | 73 % | 0,001 | konv. / konv. | 0 |
+| M4 | 29 → 22 | 76 % | 0,011 | konv. / konv. | 0 |
+| M5 | 27 → 21 | 78 % | 0,000 | konv. / konv. | 0 |
+| M6 | 20 → 16 | 80 % | 0,000 | konv. / konv. | 0 |
+| E1 | 129 → 78 | 60 % | 0,011 | konv. / konv. | 0 |
+| E2 | 141 → 125 | 89 % | 0,000 | konv. / konv. | 1 |
+| E5 | 39 → 25 | 64 % | 0,000 | konv. / konv. | 0 |
+| E6 | 211 → 199 | 94 % | 0,000 | konv. / konv. | 1 |
+| D1 | 137 → 97 | 71 % | 0,000 | konv. / konv. | 1 |
+| K1 | 35 → 29 | 83 % | 0,037 | konv. / konv. | 0 |
+| K4 | 45 → 32 | 71 % | 0,922 | konv. / konv. | 0 |
+
+Über alle 45 Rechnungen 3015 → 2392 Zerlegungen (79 %; die Fassung vom
+23.09.2026 hatte 1741, 58 %). Teurer als verschachtelt sind sieben: M1 mit 2
+und 3 Stufen, M2 mit 1 und 2, C mit 1, 2 und 3. Über 1 N/mm² liegen zwei, K4
+mit 1 und 2 Stufen (1,58 / 1,37 N/mm²); C, bei der Fassung vom 23.09.2026
+noch 27,7 bis 31,1, rechnet jetzt wie verschachtelt, weil seine Stufen
+wiederholt werden. Das Urteil ist in allen 45 dasselbe wie verschachtelt.
+
+*Die Gegenprüfung* (24.09.2026): 32 Rechnungen an Modellen, die die
+gemeinsame Iteration herausfordern — der gequetschte Block mit 1 bis 8
+Laststufen; ein Block 0,4 m aus hex8 4 × 4 × 4 auf einer starren Platte
+(µ 0,3) mit Fz = s fy A und 0,2 Fz quer, E_t/E 0,5 %, nahe der Grenzlast
+(s = 0,8 und 0,9); derselbe Block unter Querlast 0,25 P, der auf einer Seite
+abhebt; ein Stempel tet4 auf Sockel mit µ 0,4 und Querlast 0,3 P, der kippt;
+ein Stempel hex8 mit µ 0,15, der gleitet; zwei Lastfälle hintereinander;
+dazu der Block mit Reibung, das Modell „zwei Körper“ der Tests und knappe
+Schrittzahlen. Auswahl:
+
+| Rechnung | Zerlegungen | Anteil | max &#124;Δσ_v&#124; | Urteil | wiederholt |
+|---|---|---|---|---|---|
+| C, 4 Stufen | 84 → 101 | 120 % | bitgleich | konv. / konv. | 3 |
+| C, 6 Stufen | 115 → 206 | 179 % | 29,45 | konv. / nicht konv. | 4 |
+| C, 8 Stufen | 101 → 125 | 124 % | 78,16 | konv. / konv. | 2 |
+| Grenzlast s = 0,9, 1 Stufe | 61 → 67 | 110 % | bitgleich | konv. / konv. | 1 |
+| … 3 Stufen | 53 → 66 | 125 % | 0,000 | konv. / konv. | 1 |
+| … 5 Stufen | 125 → 46 | 37 % | 45,29 | konv. / konv. | 0 |
+| Grenzlast s = 0,8, 1 Stufe | 29 → 39 | 134 % | bitgleich | konv. / konv. | 1 |
+| abhebender Block, 1 Stufe | 97 → 64 | 66 % | 0,000 | konv. / konv. | 0 |
+| kippender Stempel, 1 Stufe | 93 → 108 | 116 % | bitgleich | nicht / nicht | 1 |
+| … 5 Stufen | 128 → 155 | 121 % | 0,000 | nicht / nicht | 2 |
+| gleitender Stempel, 1 Stufe | 164 → 69 | 42 % | 0,044 | konv. / konv. | 0 |
+| … 3 Stufen | 324 → 116 | 36 % | 0,000 | nicht / konv. | 0 |
+| zwei Lastfälle | 246 → 208 | 85 % | 0,001 | konv. / konv. | 1 |
+
+Über alle 32: 3101 → 2559 Zerlegungen (83 %); teurer als verschachtelt 15,
+über 1 N/mm² drei (C mit 6 und 8 Stufen, Grenzlast s = 0,9 mit 5), das
+Urteil einmal schlechter (C mit 6 Stufen: die Schlussabnahme scheitert,
+Rest 2,0·10⁻⁴ > 10⁻⁴) und einmal besser (gleitender Stempel, 3 Stufen:
+verschachtelt ist ein Lauf gedeckelt). Die Fassung vom 23.09.2026 kam hier
+auf 3180 Zerlegungen, lag in 13 Rechnungen über 1 N/mm² (bei den
+konvergierten bis 47,3 N/mm²) und meldete in sieben „nicht konvergiert“, wo
+verschachtelt konvergiert.
+Über beide Stichproben (69 verschiedene Rechnungen) 10 265 → 7 637
+Kontaktschritte und 870 → 1 348 Rückführungen.
+
+**Was das für das Drehlager heißt — nicht gemessen.** Die Stichproben zeigen
+beides: an den zweikörprigen Modellen mit Fuge µ 0,1 (E1, E2, E6, D1, je 1
+bis 3 Laststufen) 26 bis 99 % der Zerlegungen bei höchstens 0,053 N/mm²
+Unterschied, an Reibung nahe der Grenzlast Mehrkosten bis 79 % und
+Abweichungen bis 78 N/mm². Welches
+Bild LF1 zeigt, sagt erst eine Messung dort; die Herleitung der Fassung vom
+23.09.2026 (139 → 80 bis 110 Zerlegungen) galt für eine Fassung ohne
+Wiederholung und wird hier nicht fortgeschrieben.
+
+**Unverändert.** Verschachtelt (die Vorgabe) rechnet bitgleich wie 6a961e5:
+in allen 74 Rechnungen beider Stichproben (69 mit Kontakt, 5 ohne)
+dieselben Verschiebungen, Auflager- und Kontaktkräfte, Spannungen und
+dieselbe Zahl Zerlegungen; mit Kontakt eine Rückführung mehr je Lastfall
+(die Schlussabnahme), ohne Kontakt dieselbe Zahl. Ebenso Kontakt ohne
+Fließen und Fließen ohne Kontakt in beiden Einstellungen (Block mit Reibung,
+Stempel auf Sockel, Zugwürfel hex8, Kragträger tet4 mit 48 fließenden
+Elementen; die Werte von 6a961e5 fest im Test).
+Nachweise in `tests/test_plastizitaet.py`: `test_gemeinsame_iteration_spart_zerlegungen`
+(A 20 → 13, E1 129 → 78), `…_rechnet_dasselbe` (A 0,0000, E1 0,011 N/mm²),
+`…_kein_falsches_konvergiert`, `test_ruecknahme_der_schlussabnahme`,
+`test_gemeinsam_aendert_nichts_ohne_beides`, `test_gemeinsam_im_budget`,
+`test_gemeinsam_rueckfall_verschachtelt`, `test_hilfsfesselung_ohne_vorlauf`,
+`test_vorgabe_verschachtelt_und_unbekannter_wert`.
+
+**Offen, vorbestehend und nicht Teil dieses Umbaus:** kalte Kontaktläufe
+werden am Ende nicht darauf geprüft, ob gleitende Knoten gegen ihre
+festgehaltene Richtung gleiten — nur warme (`warmstart_verstoesse`). Der
+Abschluss endet oft kalt, und dann steht „konvergiert“ an einem Zustand mit
+solchen Knoten, in beiden Einstellungen gleich: am Ende des abhebenden
+Blocks sechs, des kippenden Stempels fünf, des gleitenden Stempels vier, des
+Modells „zwei Körper“ zwei (`zustand_verstoesse` am End-u, 24.09.2026). Ob
+das in die Abnahme gehört, entscheiden Anwender und Löser-Sitzung.
+
 ## 5a Anschlüsse (DIN EN 1993-1-8)
 
 Ein Anschluss sitzt an einem Stabende. Die Beanspruchung sind die
@@ -5045,6 +5407,146 @@ Kante) oder die Kante trägt vier bis fünf Tetraeder — Segmentrückgewinnung 
 zurückgenommen: 11 → 5 an der eigenen Stichprobe, aber 1 → 3 an der der
 Statik3D-Sitzung und 3,4-mal so viele Elemente an der Bohrung
 (`test_mantellinie_der_bohrung`). Test `test_huelle_kippen`, Schalter `KIPP_RUNDEN`.
+**Dritter Auftrag (24.09.2026):** die beiden verbliebenen Netze brauchten zwei weitere
+Kippungen, beide ohne neuen Punkt — **2 → 3** für eine fehlende Hüllkante, die eine
+Tetraederseite kreuzt, deren zwei Tetraeder die Kantenenden als Spitzen haben
+(Segmentrückgewinnung), und **4 → 4** für ein Hülldreieck, dessen stechende Kante vier
+Tetraeder trägt und dessen drei Ecken unter den vier Ringecken sind: das Achtflach um die
+Kante wird über die Diagonale des Dreiecks neu geteilt, gültig, wenn der Rauminhalt der vier
+neuen gleich dem der vier alten ist. Damit L h = 0,24 (368 Tetraeder) und T h = 0,16 (1 212)
+exakt im ersten Durchgang; beide Stichproben **0 von 69** (gemessen 24.09.2026). Was an
+fehlenden Hülldreiecken bleibt, sind Diagonaltausche ebener Vierecke — kein Rauminhalt, keine
+Delle.
+
+**Diagonaltausche ebener Vierecke sind an gemeinsamen Flächen nicht harmlos (25.09.2026).**
+Für einen Körper allein stimmt der Satz: Rauminhalt und Randtreue bleiben exakt. Teilen zwei
+verschweißte Körper eine Fläche, bekommen beide dasselbe Flächennetz vorgeschrieben
+(`flaechennetz`, an zwei Würfeln gemessen: 30 Dreiecke, beide Mengen gleich), und jeder darf
+es nur einhalten, nicht neu würfeln — sonst hängen die Körper dort nur noch an den Ecken.
+Genau das geschah an Rechteckzellen, deren vier Punkte auf einem Kreis liegen (regelmäßige
+Teilung des Randes gegen das Dreiecksgitter im Inneren), auf zwei Wegen: Qhull nahm die andere
+Diagonale, und `huelle_kippen` kannte den Fall nicht — die fehlende Hüllkante kreuzt keine
+Tetraederseite, sondern die Hüllkante selbst, 2 → 3 greift nicht; oder Qhull gab die vier
+Punkte als **flachen Tetraeder** aus, und `flache_aufloesen` tauschte ihn blind auf die andere
+Diagonale — nach der Hüllenprüfung, die darum nichts sah. Gemessen an zwei Einheitswürfeln
+mit gemeinsamer Fläche (eigener Vernetzer, h = 250 mm, `modell_vernetzen`): **4 offene
+Innenseiten** bei `tet4` und bei `tet10` dazu eine hängende Kantenmitte; die Prüfmatrix fand an
+denselben Netzen σ_v bis +162 N/mm² neben der Lösung (`tet10`, verschweißt). gmsh + MMG3D
+hielten die Hülle ein (0 offene Seiten). Zwei Ergänzungen, beide ohne neuen Punkt:
+**Diagonale** in `huelle_kippen` — zur fehlenden Hüllkante a–b nennen die beiden Hülldreiecke
+c1 und c2; steht im Netz die Kante c1–c2, wird ihr offener Fächer a, r₁, …, b von a aus (sonst
+von b aus) in Dreiecke geteilt, jedes gibt zwei Tetraeder mit c1 und mit c2 (n → 2(n − 1)),
+gültig bei positiven Rauminhalten mit derselben Summe; und `flache_aufloesen` bekommt die
+Hülle: liegt der flache Tetraeder in einer Hüllfläche und tragen seine Innenseiten schon die
+vorgeschriebene Diagonale, fällt er weg, statt getauscht zu werden. Beides zusammen: 0 offene
+Innenseiten, `tet4` und `tet10`; jede Ergänzung allein lässt 4 bzw. 8 offen (gemessen
+25.09.2026). Am Doppelwürfel kippt der Diagonalfall 9 bzw. 8 Kanten je Körper, auch an den
+Außenflächen — dort war er bisher unbemerkt geblieben. Prüfungen `test_huelle_kippen` (2-2 und
+3 → 4 am Fächer, Rücknahmeprobe über `KIPP_DIAGONALE`), `test_flache_aufloesen_huelle`,
+`test_gemeinsame_flaeche_eigener_vernetzer` (Programmweg, `tet4` und `tet10`, Rücknahmeprobe).
+
+**Gekrümmte tet10 am Drehlager (dritter Auftrag, 24.09.2026).** Verlangt war das gekrümmte
+tet10-Netz des ganzen Drehlagers bei 18° und 36° — Seitenmitten auf der wahren Fläche,
+Jacobi-Prüfung, örtliche Anläufe — mit Elementen, Knoten, ungültigen tet10 vor den Anläufen,
+Rückfällen auf gerade Kanten (getrennt nach eigener und gemeinsamer Fläche), kleinster bezogener
+Jacobi-Determinante und Zeit. Der erste Lauf (alter Stand, 18°) ergab 687 807 Elemente mit
+**626 Rückfällen** (5 an gemeinsamen Flächen) und einer kleinsten bezogenen Determinante von
+**−11,4** — Werte, die keine Krümmung erklärt. Die Diagnose an V30 (227 Rückfälle, 594 gekrümmte
+Kanten) zeigte die Ursache: die gekrümmten Kanten waren **Sehnen über 36° bis 180°** auf Zylindern
+mit r = 10 mm. Das sind keine Mantelkanten, sondern Kanten der **ebenen Stirnflächen** kleiner
+Bohrungen — ein Dreiecksfächer aus Randkreispunkten, jede Kante mit beiden Enden auf dem Kreis.
+Die Zuordnung „Kante gehört zur Fläche F, wenn beide Endpunkte über ihre Hülldreiecke zu F
+gehören“ hielt sie für Mantelkanten und projizierte ihre Mitten radial auf den Zylinder; ein
+Durchmesser bekam seine Mitte auf den Rand. Feiner vernetzen konnte das nie heilen (die drei
+örtlichen Anläufe machten aus 899 ungültigen tet10 in V15 immer noch 144), und V30 bekam gar
+keinen Anlauf, weil daneben die Güte riss und die Grenze der Elementzahl den ganzen Körper nicht
+feiner ließ.
+
+Drei Änderungen (`mesher3d.py`): (1) **Die Zuordnung über die Hülldreiecke**
+(`randkanten_flaechen`): eine Kante gehört zu F, wenn sie Kante eines Hülldreiecks von F ist oder
+die andere Diagonale eines Hüllvierecks aus zwei F-Dreiecken (die Zerlegung darf ein Viereck anders
+teilen); alles andere ist eine Sehne durch das Innere und bleibt gerade. Arbeits- und Hauptprozess
+rechnen damit dieselbe Menge. (2) **Innere Punkte gegen umklappende tet10**
+(`_krumme_kappenpunkte`): was danach noch umklappt, ist flach gegen den Sehnenpfeil — am Zylinder
+in Hohlzylinder (r 50, 36°, h 35 mm) zwei Tetraeder mit Höhe 1,6 mm über einer Sehne mit Pfeil
+1,7 mm, zwei innere Ecken und eine Randsehne fast in einer Ebene. Ein Punkt im Schwerpunkt, von der
+gekrümmten Mitte weg nach innen geschoben und so weit, dass er in der **Umkugel** des Tetraeders
+bleibt (nur dann nimmt die Delaunay-Zerlegung es gewiss heraus — 12 mm tief lag er außerhalb der
+Kugel eines 1,6 mm flachen Tetraeders, und das blieb durch drei Durchgänge), löst es auf; er hält
+`KRUMM_KAPPEN_RANDABSTAND = 0,25` Sollgrößen Abstand zur Hülle (mit 0,4 wie die Kappen blieb am
+Deckelrand kein Punkt übrig) und ändert die **Randfläche nicht** — darum wirkt das auch an einer
+mit dem Nachbarn gemeinsamen Fläche, die kein Arbeitsprozess allein feiner machen darf, und die
+gemeinsamen Knoten bleiben. Ein zweiter Durchgang im Hauptprozess mit beidseitiger Verfeinerung
+ist damit nicht nötig. An eigenen Flächen kommen die Punkte erst nach den örtlichen Anläufen, weil
+das feinere Netz die Form besser hält (Buchse r 50/100, 36°, h 35: 2 566 tet10 mit kleinster
+bezogener Determinante 0,403 gegen 3 425 mit 0,028, wenn die Punkte zuerst kommen); an
+gemeinsamen sofort. Weil Glättung und MMG3D innere Ecken danach wieder an die Fläche rücken
+können, kommt am fertigen Netz noch das **Entzerren** (`krumme_entzerren`): jede innere Ecke
+eines Tetraeders, das als tet10 umklappen würde, wird vom Ort der gekrümmten Mitte weg
+verschoben, in Schritten von 1 bis 6 Sehnenpfeilen, bis das Element gültig ist und kein vorher
+gültiges Element am Punkt seinen Rauminhalt verliert; Hüllpunkte bleiben stehen. Auch das
+gehorcht der Reihenfolge: gemeinsame Flächen sofort, eigene erst nach den örtlichen Anläufen.
+(3) **Die Anlaufschleife**: die örtlichen Anläufe laufen auch, wenn daneben
+die Güte reißt; der beste Anlauf ist erst der ohne Lücke im Netzrand, dann der mit den wenigsten
+ungültigen tet10, dann der mit dem kleinsten Abstandsmaß; und der Rückfall im Hauptprozess läuft
+bis zum Stillstand, weil eine zurückgesetzte Mitte auch den Nachbarelementen gehört (ein tet10
+mit det J = −6,9e-7 blieb sonst im Modell). Das Protokoll nennt seither auch die kleinste
+bezogene Determinante **im fertigen Netz**. Nebenbei: die Seitenmittenknoten werden gesammelt
+angelegt (`_tet10_kanten_anlegen`) — je Knoten ein `np.vstack` an das ganze Knotenfeld war bei
+900 000 Kanten quadratisch.
+
+Prüfkörper `test_gemeinsame_gekruemmte_flaeche_ohne_rueckfall`: Zylinder r 50 in Hohlzylinder
+r 50/100, fest verbunden (gemeinsame Mantelfläche), 36°, h 35 mm, beide tet10 — **0 Rückfälle**,
+größter Weg einer Seitenmitte der Sehnenpfeil 1,704 mm, 2 innere Punkte im Zylinder; ohne die
+Punkte 2 Rückfälle an der gemeinsamen Fläche; mit der alten Zuordnung am Bolzen r 10 in Buchse
+r 30 wandern Sehnen der Stirnfläche auf den Mantel (größter Weg 1,91 mm gegen den Pfeil 1,022 mm)
+und 3 tet10 bleiben gerade. Die Hohlzylinder-Tabelle des zweiten Auftrags bleibt bei 0: h 35 / 20 /
+10 mm → 1 758 / 4 972 / 34 327 tet10, 0 Rückfälle, kleinste bezogene Determinante 0,162 / 0,065 /
+0,067, keine inneren Punkte nötig.
+
+Am Drehlager (nur vernetzt und gezählt, 3 Arbeitsprozesse, Kontaktfugen-Sperre für quadratische
+Elemente umgangen — siehe Befund unten; gemessen 24.09.2026):
+
+| | 18° | 36° |
+|---|---|---|
+| Elemente (tet10 + 64 Stäbe) | 670 185 | 496 617 |
+| Knoten / Unbekannte (3 je Knoten, hergeleitet) | 1 100 877 / 3 302 631 | 805 993 / 2 417 979 |
+| ungültige tet10 vor den örtlichen Anläufen (Körper) | 22 (3 Körper) | 160 (10 Körper) |
+| örtliche Anläufe | 4 | 22 |
+| Rückfälle auf gerade Kanten, eigene / gemeinsame Fläche | **0** / **0** | **17** / **0** |
+| kleinste bezogene Jacobi-Determinante, vor Rückfall / im fertigen Netz | 0,001 / 0,001 | −7,0 / 0,000 (positiv, unter 0,0005; V35) |
+| Lücken im Netzrand | 0 | 1 |
+| Zeit | 334 s | 588 s |
+
+Die sechs großen Platten (Elemente; ungültig je Anlauf; örtliche Anläufe; Rückfälle eigene /
+gemeinsame; kleinste bezogene Determinante im fertigen Netz):
+
+| Körper | 18° | 36° |
+|---|---|---|
+| V14 | 53 783; 0; 0; 0 / 0; 0,222 | 41 879; 5/4; 2; 0 / 0; 0,124 |
+| V36 | 38 872; 0; 0; 0 / 0; 0,342 | 94 428; 2/5/3/3/3; 3; 0 / 0; 0,017 |
+| V30 | 116 094; 0; 0; 0 / 0; 0,003 | 76 437; 6/2/5/5/3/2; 3; 2 / 0; 0,005 |
+| V34 | 52 133; 2; 1; 0 / 0; 0,001 | 10 972; 1/1/1/2/1; 0; 0 / 0; 0,007 |
+| V15 | 49 189; 1; 1; 0 / 0; 0,001 | 47 965; 30/7/8/12/3/3; 3; 3 / 0; 0,001 |
+| V31 | 78 536; 0; 0; 0 / 0; 0,003 | 46 286; 16/10/8/8/1/1; 3; 1 / 0; 0,001 |
+
+Zum Vergleich der Stand vor den drei Änderungen bei 18°: 687 807 Elemente, 1 126 316 Knoten,
+572 ungültig in 4 Körpern, 11 Anläufe, 626 Rückfälle (5 gemeinsam), −11,4, 498 s; bei 36°:
+491 511 Elemente, 588 ungültig in 9 Körpern, 279 Rückfälle (10 gemeinsam), −7,4, 290 s.
+Bei 18° ist damit die Abnahme erreicht; bei 36° bleiben 17 Rückfälle an eigenen Flächen
+(keine an gemeinsamen): 9 davon in fünf kleinen Körpern (V22, V28, V20, V25, V7), in denen der
+Arbeitsprozess **kein** ungültiges tet10 sah — der Hauptprozess prüft nach dem Zusammenlegen der
+Knoten auf gemeinsamen Flächen, und dort liegen die Ecken um Rundungsbeträge anders —, der Rest in
+V30, V15, V31 und V35 nach drei örtlichen Anläufen, inneren Punkten und Entzerren. Und eine
+Nebenwirkung der Reihung „erst ohne ungültige tet10“: für V36 wird bei 36° der feinste Anlauf
+gewählt, weil erst er ohne ungültiges Element ist — 94 428 statt 11 304 Elemente; das ganze Netz
+wächst so von 384 202 (Stand vor dem Entzerren, 19 Rückfälle) auf 496 617 Elemente. Ob ein
+gültiges gekrümmtes Netz acht mal so viele Elemente eines Körpers wert ist, ist eine Entscheidung
+für die Statik3D-Sitzung; die Stellschraube ist die Reihung in `koerper_vorbereiten`. Kleinste
+bezogene Determinanten um 0,001–0,003 bleiben in den Platten mit den kleinen Bohrungen: gültig, aber
+knapp — die Stelle für die adaptive Verfeinerung oder einen feineren Bogenwinkel an diesen Linien. **Befund für die Statik3D-Sitzung:** `fugen.QuadratischeSeiten`
+bricht die Vernetzung des Drehlagers mit tet10 ab (Kontaktbedingung Lagerbock-Grundplatte an
+3 065 quadratischen Elementen); für die Zählung wurde die Sperre umgangen, gerechnet wurde nichts.
 
 **Kappenpunkte halten Abstand (23.09.2026 abends).** An der Bohrung der Buchse r 50/100
 mit h = 20 mm behielten vier tet10 gerade Kanten, dazu stand eine Lücke von 0,0023 %
@@ -5110,6 +5612,27 @@ oben 12°: alle drei Kreise 30 Knoten; `test_bogenwinkel_je_koerper`). Zylinder 
 Grundkreis bei 18°, 10 bei 36°, 30 bei 12° (Test `test_bogenwinkel_je_koerper`).
 Nebenbei: 180/36 ist in Gleitkommazahlen 5,000000000000001; ohne Toleranz bekam der
 Halbkreis sechs statt fünf Abschnitte.
+
+**Die Bohrungsplatte (Nachtrag zum dritten Auftrag, 24.09.2026).** Die Statik3D-Sitzung maß
+an der Platte R 450 / t 35 mm mit Bohrung r 10 (24 Punkte) für h = 40 mm ohne „intelligent“
+FEHLER „Seiten im Inneren 30“ und für h = 50 / 60 mm mit „intelligent“ WARNUNG „Riss im Netz“
+mit 216 bzw. 440 Seiten. Drei Ursachen, drei Kuren: (1) `tetraedern_treu` wählte den besten
+Durchgang nach dem **Fehlbetrag** — an der Bohrungswand nehmen weggenommene Kappen den
+Rauminhalt ihrer Sehnenpfeile mit, und so gewann die vierte Runde mit 32 Dellen gegen die
+sechste ohne Delle; jetzt zählen erst die echten Dellen, dann der Fehlbetrag. Ein Fehlbetrag
+ohne Delle, den auch die Kappen nicht erklären, steht seither als eigene Warnung im Protokoll.
+(2) Die **Rissseiten** waren die vier Seiten von Tetraedern ohne Rauminhalt (54 · 4 = 216,
+110 · 4 = 440): vier Punkte in einer Ebene — zwei oben, zwei unten in der einlagigen Platte —,
+die Qhull als Tetraeder ausgibt und die nach der Glättung als flach herausflogen, ihre Seiten
+blieben als Hohlraum ohne Rauminhalt. `flache_aufloesen` teilt statt dessen die Pyramide
+der beiden Nachbarn über die **andere Diagonale** (2-2-Tausch) — kein Hohlraum, kein Riss
+(„kein Befund“ in allen drei „intelligent“-Zeilen). (3) Der **Kappenpunkt** hielt Abstand
+nach der Sollgröße am Ort (an der Bohrung 3 mm) und stand 1,4 mm neben der Bohrungswand; jetzt
+zählt die Größe der Kappe selbst (6 mm → 2,6 mm Abstand) — 16 statt 3 Kappen aufgelöst, 4
+statt 17 entfernt. Ergebnis (gemessen 24.09.2026, Abnahme der Statik3D-Sitzung vom
+23.09.): h 40 / 50 / 60 mm ohne „intelligent“ nur noch WARNUNG „Netzrand neben der Hülle“
+(die Diagonaltausche der entfernten Kappen an der gewölbten Wand, 153 / 128 / 153 Seiten,
+ohne Rauminhalt), mit „intelligent“ kein Befund.
 
 **Flache Tetraeder nach eigener Größe (Nachtrag B101, 24.09.2026).** Was nach der
 Glättung noch flach ist, fliegt heraus — bisher alles mit V ≤ FLACH·h³, h die Kantenlänge
@@ -5640,6 +6163,22 @@ vor der die Statik3D-Sitzung in ihrem Vertrag gewarnt hat. Der Quaderpfad verlan
 zusätzlich, dass **alle zwölf Kanten gerade** sind (`mesher._gerade_kanten`); krumme gehen
 an den Sweep, und das Protokoll sagt es.
 
+**Ein zweiter stiller Fehler desselben Pfads, quadratisch (25.09.2026).** Mit `ordnung = 2`
+bekommt der abgebildete Quader Hexaeder mit 20 Knoten; die Kantenmitten merkt sich der
+Vernetzer im gemeinsamen Zwischenspeicher unter dem Knotenpaar, damit der Nachbar an einer
+gemeinsamen Fläche dieselben trifft (wie beim `tet10`, Abschnitt oben). Der Aufruf reichte
+den Zwischenspeicher aber als `(cache or {})` weiter — ein noch **leerer** Zwischenspeicher,
+wie ihn `modell_vernetzen` anlegt, zählt in Python als falsch, und der erste Körper schrieb
+seine Kantenmitten in ein Wegwerf-Dict. Jede Kantenmitte der gemeinsamen Fläche gab es
+darum zweimal, die Körper hingen dort nur an den Ecken zusammen. Gemessen (Prüfmatrix,
+Kragarm 1,0 × 0,1 × 0,2 m aus zwei Körpern, 4 × 4 Felder je Fläche): 40 Orte mit zwei
+Knoten, σ_v an der Nachweisstelle **+610 N/mm²** neben der Balkenlösung; aus einem Körper
+oder mit geteilten Mitten +0,01 N/mm². Hülle, Randtreue und Formgüte meldeten nichts, nur
+die Zählung doppelter Knoten in der Abnahme. `test_sweep.test_quader_hex20_gemeinsame_flaeche`
+vernetzt zwei Einheitswürfel mit gemeinsamer Fläche über `modell_vernetzen` und verlangt
+0 doppelte Knoten und genau 65 Knoten auf der Fläche (25 Ecken, 40 Mitten); vor der
+Berichtigung waren es 40 Paare und 105 Knoten.
+
 **Woran die Erkennung sonst scheitert, sagt sie jetzt selbst** (`erkennen_warum_nicht`,
 eine Zeile je Körper im Protokoll): zu wenige Randflächen, keine zwei ebenen Kappen,
 Kappen ohne gemeinsamen Weg, „decken sich weder verschoben (x mm daneben) noch skaliert
@@ -5862,6 +6401,81 @@ hat nichts zu beanstanden. Darum ist der Schalter **aus** als Vorgabe: er kostet
 und senkt die kleinste Formgüte, und die Rechnung gewinnt an diesem Beispiel nichts. Wer
 den Übergang formgleich haben will — etwa weil eine Kontaktfuge genau dort liegt —,
 schaltet ihn ein (`test_pyramiden_als_uebergang`).
+
+**Betriebsart „sauber“ (dritter Auftrag, 24.09.2026).** Der Sweep ist kein Schalter mehr,
+sondern ein Feld mit drei Werten: `Netzeinstellungen.sweep = "aus" | "sauber" | "immer"`
+(`sweep.betriebsart`; `True`/`False` alter Dateien heißen „immer“/„aus“, ein unbekanntes Wort
+„immer“, die Vorgabe bleibt „aus“). In „sauber“ wird ein Körper **nur** als Hexaeder vernetzt,
+wenn jedes seiner hex8 und pent6 höchstens `TRAPEZ_GRENZE` Trapezfehler hat und an allen
+Integrationspunkten und Ecken eine positive Jacobi-Determinante (`sauber_pruefen`, vor dem
+Einbau am Lagenstapel); sonst wird er frei mit Tetraedern vernetzt, das Protokoll nennt den Grund
+(„nicht gesweept (Betriebsart „sauber“) – Trapezfehler 27,0° > 5,0° (Winkelfehler 57°)“), und
+der Übergang zu jedem gesweepten oder abgebildeten Nachbarn geht **immer über Pyramiden**
+(`netz.pyramiden` braucht es dafür nicht). Zerlegen an Fußabdrücken gibt es in „sauber“ nicht: die
+Blöcke wären gepflasterte Grundflächen, die die Probe nicht bestehen. Die Probe entscheidet schon
+die Verteilung (`sweep.sweepbar` mit `nur_pruefen`): nur ein sauber gesweepter Körper bleibt im
+Hauptprozess, ein abgelehnter geht als freier Körper in einen Arbeitsprozess — ohne diese
+Vorprüfung liefen die abgelehnten Körper nacheinander im Hauptprozess durch den freien Vernetzer,
+mit MMG3D über 14 Minuten für einen einzigen (gemessen 24.09.2026).
+
+**Die Grenze gemessen: Trapez gegen Parallelogramm.** `sweep.WINKELFEHLER_GRENZE` stand mit 15°
+ohne Messung. Gemessen am Kragarm wie V5 (`tests/messung_winkelfehler.py`, 1,0 × 0,1 × 0,2 m,
+Soll 355 N/mm² an der Nachweisstelle): das regelmäßige hex8-Netz erreicht 1 N/mm² schon mit
+8 × 2 × 4 Elementen (+0,77); dann dasselbe Netz mit Parallelogramm- und mit Trapezverzerrung im
+Zickzack über die Lagen — jedes Element bekommt den Eckwinkel 90° ± θ, das Trapez dazu je Spalte
+wechselnde Vorzeichen, sodass gegenüberliegende Kanten um 2 θ gegeneinander kippen. Fehler an der
+Nachweisstelle in N/mm² (Zuwachs gegen 0°):
+
+| θ | 2,5° | 5° | 7,5° | 10° | 15° | 20° | 30° |
+|---|---|---|---|---|---|---|---|
+| Parallelogramm, 8 × 2 × 4 | −0,06 | −0,10 | −0,13 | −0,14 | −0,10 | +0,01 | +0,37 |
+| Trapez, 8 × 2 × 4 | **−2,05** | −6,06 | −11,95 | −19,65 | −39,99 | −65,91 | −128,80 |
+| Parallelogramm, 16 × 4 × 8 | 0,00 | 0,00 | 0,00 | −0,01 | −0,01 | −0,01 | +0,01 |
+| Trapez, 16 × 4 × 8 | −0,48 | **−1,53** | −3,15 | −5,35 | −11,58 | −20,39 | −46,92 |
+
+Die **Parallelogrammverzerrung ist bis 30° unkritisch**, die **Trapezverzerrung kostet ab 2,5°
+mehr als 1 N/mm²** am groben Netz und ab 5° am feinen — der bekannte Trapezlock des hex8. Der
+Eckwinkelfehler unterscheidet die beiden nicht (beide θ). Darum zwei Konstanten:
+`WINKELFEHLER_GRENZE = 2,5°` (der größte Winkel, bei dem beide Verzerrungen unter 1 N/mm²
+bleiben — die Frage des Auftrags, wörtlich; die Netzabnahme liest sie weiter) und das Maß, das den
+hex8 wirklich trifft, `sweep.trapezfehler`: der Winkel zwischen **gegenüberliegenden** Kanten
+einer Viereckseite, 0 für Rechtecke und Parallelogramme, 2 θ für das Zickzack-Trapez, mit
+`TRAPEZ_GRENZE = 2 · WINKELFEHLER_GRENZE = 5°`. Die Betriebsart „sauber“ prüft den Trapezfehler.
+Empfehlung an die Netzabnahme: für die Warnung „verzerrte hex8“ ebenfalls `trapezfehler` gegen
+`TRAPEZ_GRENZE` lesen, sonst warnt sie vor Parallelogrammen, die nichts kosten.
+
+**Was der Übergang kostet.** Ein pyr5 ist für sich schwach (Element-Sitzung, 23.09.: der Kragarm
+als reines Pyramidennetz −193 / −93 / −34 N/mm²). Gemessen mit `tests/messung_uebergang_pyramiden.py`
+am zweiteiligen Kragarm, Fuge genau an der Nachweisstelle x = L/2: A der abgebildete hex8-Quader,
+B frei mit angehobener Deckelecke (weder abgebildet noch sweepbar), h = 25 mm, Fehler an der
+Nachweisstelle und ein Element daneben:
+
+| Netz | Elemente | Unbekannte | Fehler an der Fuge | ein Element in A / in B |
+|---|---|---|---|---|
+| hex8 durchgehend (V5) | 640 hex8 | 5 535 | +0,26 | +0,24 / +0,27 |
+| **Übergang** A hex8, B Tetraeder mit 32 Pyramiden | 640 hex8 + 32 pyr5 + 9 664 tet4 | 8 268 | **−25,9** | +2,0 / +12,4 |
+| Tetraeder durchgehend | 18 856 tet4 | 10 662 | −35,9 | −9,7 / +18,2 |
+
+Die Übergangslage kostet an der Fuge 26 N/mm² (7 %) — fast so viel wie das reine tet4-Netz, ein
+Element weiter im hex8-Teil noch 2. Wer den Übergang braucht, legt ihn nicht an die Nachweisstelle.
+Dabei fiel ein Fehler auf: an der Fuge zum **abgebildeten** Quader kamen alle 32 Pyramiden
+**umgestülpt** in den Löser (det J = −9,8e-7 an jedem Punkt), weil `solid_volume` den Betrag nimmt
+und den Umlaufsinn nie sah; seit dem 24.09.2026 richtet das Vorzeichen der Jacobi-Determinante
+das Grundviereck aus (`test_pyramiden_ausrichtung_am_abgebildeten_nachbarn`: 8 Pyramiden, alle
+det J > 0, Abnahme ohne Befund).
+
+**Am Drehlager in der Betriebsart „sauber“** (18°, 3 Arbeitsprozesse, nur vernetzt; gemessen
+24.09.2026): von 108 Körpern sind 68 sweepbar, und **keiner** besteht die Probe — Trapezfehler
+7,5° bis 72,2° (Median 26,4°), Eckwinkelfehler 5° bis 72° (Median 40°); die drei besten (V101,
+V70, V96) liegen mit 7,5° noch anderthalbmal über der Grenze. Der Grund ist der Sweep selbst:
+seine Grundfläche ist immer aus gepaarten Dreiecken gepflastert (`_grundnetz`), auch ein
+Rechteck — der Quader mit geteilter Deckelkante kommt so auf 30° Trapezfehler, ein 100 × 50 mm-Grund
+auf 5,9°, ein Zylinder mit gepflasterter Kreisscheibe auf 70°. Ergebnis: 584 614 tet4 auf
+141 466 Knoten (429 666 Unbekannte), 0 Hexaeder, 0 Pyramiden, 188 s; gegen das reine tet10-Netz bei
+18° (670 185 Elemente, 3 302 631 Unbekannte) und gegen das tet4-Netz mit `sweep = "aus"`
+(672 575 Elemente). Was die Betriebsart mit Hexaedern füllen würde, ist ein **abgebildetes
+Grundnetz für vierseitige Grundflächen** (Rechtecke, Ringsektoren mit feiner Winkelteilung) — das
+gehört zum Plan des hex8-Vernetzers für die dicken Platten, nicht in diesen Auftrag.
 
 **Am Drehlager** (Zählung der Löser-Sitzung mit `sweep.erkennen` und `netzfeld.bedeutung`,
 21.09.2026; 108 Körper, 1 375 Flächen, 2 807 Linien, 645 934 Volumenelemente):
@@ -7298,12 +7912,30 @@ Dreiecke seitlich), die der Sweep setzt:
 | pent15 | Bindung | direkt | nein | Bindung | direkt | Bindung | direkt | Bindung |
 | pyr5 | direkt | Bindung | linear | direkt | Bindung | direkt | Bindung | direkt |
 
-Die Vorgabe der Oberfläche, tet10 + VQ83, ist damit zulässig: tet10 neben dem hex8 über
-Pyramiden, neben dessen Keilen und Tetraedern mit Bindung. Geprüft wird die Tabelle
+Die Elementstufen der Oberfläche (25.09.2026) sind damit zulässig: Entwurf (tet4 neben
+hex8/pent6/pyr5 direkt) und Mittel/Fein (tet10 neben hex20/pent15 direkt oder mit
+Bindung); ein gesweeptes hex8 neben tet10 geht über Pyramiden, neben dessen Keilen und
+Tetraedern mit Bindung. Geprüft wird die Tabelle
 gegen die Rechnung (`tests/test_vertraeglich.py`): für 50 Typpaare mit gleich geformter
 Seite ist die Spur der Verschiebung von beiden Seiten gleich, genau wo die Tabelle
 „direkt“ oder „Bindung“ sagt, mit den Bindungen, die die Assemblierung wirklich setzt;
 ohne sie klafft sie bei „Bindung“. tetp neben tet4 rechnet, neben tet10 hält es an.
+
+**Elementstufe in der Oberfläche: was der Vernetzer daraus macht** (25.09.2026). Der
+Vernetzer hat **eine** Ordnung (`Netzeinstellungen.ordnung`) für frei vernetzte Körper
+(tet4/tet10), abgebildete Sechsflächner (hex8/hex20) und Flächen (shell3/4 bzw.
+shell6/8); der Sweep erzeugt immer hex8/pent6; tetp entstehen nur durch Umwandlung eines
+tet10-Netzes (`tetp.aus_tet10`). Die Haken der Maske *Elemente wählen* (am Vormittag des
+25.09.2026, nach dieser Tabelle ausgegraut) sind darum den Stufen gewichen
+(`statik3d.elementstufe`): **Entwurf** = `ordnung 1` (tet4, hex8 als VQ83, Schalen
+linear), **Mittel** = `ordnung 2` (tet10, hex20 als VQ203, Schalen quadratisch),
+**Fein** = Mittel mit halber Kantenlänge beim Vernetzen (`elementstufe.wirksam`); jede
+Stufe setzt den Sweep „sauber“. An einem Modell mit Kontaktbedingung, Kontaktpaar oder
+Flächenlager sind Mittel und Fein gesperrt (`elementstufe.quadratisch_gesperrt`, die
+eine Stelle), solange Kontakt nur die Eckknoten einer Seite nimmt
+(`fugen.QuadratischeSeiten`); das Modell wird mit Entwurf vernetzt, mit Zeile im
+Protokoll. Messwerte zu den Stufen: Benutzerhandbuch, „Elementstufe: Entwurf, Mittel,
+Fein“.
 
 Ein Volumenkörper, der so nie ein Netz bekommen kann, gilt auch nicht als
 **unvernetzt** (`Model.koerper_traegt`). Sonst forderte die

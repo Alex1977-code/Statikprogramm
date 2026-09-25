@@ -890,8 +890,14 @@ def test_probelauf_und_kennzahlen():
         return m
 
     m = aufbau()
+    # Verglichen wird mit der verschachtelten Iteration, in der jeder
+    # Fliessschritt den Kontakt auskonvergiert - daran misst sich "ein
+    # Kontaktschritt je Fliessschritt" - seit dem 24.09.2026 wieder die
+    # Vorgabe. Die gemeinsame Iteration (waehlbar) kuerzt selbst ab; dass sie
+    # trotzdem mit auskonvergiertem Kontakt endet, prueft
+    # tests/test_plastizitaet (T3).
     m.plastizitaet = pl.Plastizitaet(an=True, verfestigung=0.02, laststufen=2,
-                                     iterationen=40, toleranz=1e-4)
+                                     iterationen=40, toleranz=1e-4, kontakt="verschachtelt")
     voll = solver.solve_static(m)
 
     m2 = aufbau()
@@ -993,6 +999,97 @@ def test_probelauf_und_kennzahlen():
                voll.info["nnz_faktor"] == 0, voll.info.get("solver", "?"))
 
 
+def test_reibkraft_gleitender_knoten_ohne_reststeifigkeit():
+    """Zwei Kloetze (hex8) auf einer starren Platte in EINEM Kontaktpaar mit
+    mu 0,3, wie K4 der Pruefmatrix: A mit H_A = 0,5 mu N haftet, B mit
+    H_B = 1,5 mu N gleitet gegen Federn k auf seinem Deckel. Die Reibkraft an
+    B ist dann mu N, die Federn tragen H_B - mu N (15 mm Schlupf).
+
+    Bis zum 25.09.2026 trug die Reststeifigkeit der gleitenden Knoten (Phase
+    2: 1e-8 k_t, "vernachlaessigbar") bei 14,5 mm Schlupf 693 kN = 2,3 % von
+    mu N, die in keiner Kontaktkraft standen: die wahre Knotenkraft aus K u
+    wich von contact_forces ab, die Federkraft lag 3,5 % (tet4: 10 %) unter
+    H_B - mu N. Seither wirkt sie nur auf die Aenderung seit dem letzten
+    Zustand (contact.AUSGLEICH_RESTSTEIFIGKEIT), und K u = contact_forces.
+
+    Was bleibt, kommt von den **festgehaltenen Gleitrichtungen** (offen,
+    gemessen 25.09.2026 an diesem Modell, Lasten und Federn konsistent
+    verteilt, in y exakt symmetrisch): die Richtungen der Rand- und Eckknoten
+    von B liegen 20 bis 40 Grad neben der Bewegung (Eckknoten (-0,762,
+    +0,647)), die Querkraefte heben sich paarweise auf, aber die Reibkraft in
+    x ist nur 28 004 statt 30 000 kN (-6,7 %), und die Federn tragen 17 000
+    statt 15 000 kN. Darum prueft der Test die Reibkraft nur gegen die harte
+    obere Schranke mu N und gegen 0,9 mu N, nicht auf 1 %."""
+    from statik3d import assemble, contact as CT
+    mu, N = 0.3, 1.0e8
+    H_A, H_B, k = 0.5 * mu * N, 1.5 * mu * N, 1.0e9
+    # konsistente Knotenanteile einer gleichmaessigen Flaechenlast auf dem
+    # 2 x 2 Deckel (Ecke 1, Rand 2, Mitte 4 von 16) - so bleibt das Modell
+    # in y exakt symmetrisch
+    W = np.array([[1, 2, 1], [2, 4, 2], [1, 2, 1]], float) / 16.0
+
+    def modell():
+        m = Model()
+        m.add_material(Material("S"))
+        m.add_material(Material("Starr", E=210e12))
+        m.add_shell_prop(ShellProp("t", 0.05))
+        pl = mesher.grid_plate(m, "Starr", "t", 3.0, 2.0, 3, 2, origin=(-0.5, -0.5, 0))
+        for n in pl.ravel():
+            m.fix(int(n), "all")
+        platte = list(range(len(m.elements)))
+        bA = mesher.grid_box(m, "S", 1.0, 1.0, 0.25, 2, 2, 1, origin=(0.0, 0.0, 0.0))
+        bB = mesher.grid_box(m, "S", 1.0, 1.0, 0.25, 2, 2, 1, origin=(1.0, 0.0, 0.0))
+        unten_a = [int(n) for n in bA[:, :, 0].ravel()]
+        unten_b = [int(n) for n in bB[:, :, 0].ravel()]
+        oben_b = [int(n) for n in bB[:, :, -1].ravel()]
+        m.add_contact_pair("Fuge", unten_a + unten_b, platte, mu=mu)
+        for box, H in ((bA, H_A), (bB, H_B)):
+            for i in range(3):
+                for j in range(3):
+                    n = int(box[i, j, -1])
+                    m.load_node(n, Fz=-N * W[i, j], Fx=H * W[i, j])
+                    if H == H_B:
+                        m.fix(n, [0, 1], stiffness=[k * W[i, j]] * 2)
+        return m, unten_a, unten_b, oben_b
+
+    def messen(m, unten_b, oben_b, r):
+        K = assemble.stiffness(m, workers=1)
+        uf = np.asarray(r.u, float).reshape(-1)[:K.shape[0]]
+        fint = np.asarray(K @ uf).ravel()
+        wahr = np.array([fint[6 * n:6 * n + 3] for n in unten_b]).sum(axis=0)
+        cf = np.asarray(r.contact_forces, float)[unten_b, :3].sum(axis=0)
+        feder = float(np.asarray(r.reactions, float)[oben_b, 0].sum())
+        return wahr, cf, feder
+
+    m, unten_a, unten_b, oben_b = modell()
+    r = solver.solve_static(m)
+    wahr, cf, feder = messen(m, unten_b, oben_b, r)
+    st = {int(c["node"]): c["status"] for c in r.contact}
+    check("K4: B gleitet ganz, A nicht ganz (Phase 2 mit feiner Reststeifigkeit)",
+          float(all(st[n] == "Gleiten" for n in unten_b) and any(st[n] == "Haften" for n in unten_a)), 1.0, 0)
+    check("K4: Kontakt konvergiert", float(bool(r.info.get("contact_converged"))), 1.0, 0)
+    check("K4: K u = contact_forces an den Gleitknoten (x)", float(wahr[0]), float(cf[0]), 1e-4)
+    check("K4: K u = contact_forces an den Gleitknoten (y, Symmetrie: beide 0)",
+          float(abs(wahr[1] - cf[1]) + abs(cf[1]) <= 1e-6 * mu * N), 1.0, 0)
+    check("K4: Reibkraft an B hoechstens mu N", float(-cf[0] <= mu * N * (1 + 1e-6)), 1.0, 0)
+    check("K4: Reibkraft an B mindestens 0,9 mu N (offene Richtungsabweichung, gemessen 0,933)",
+          float(-cf[0] >= 0.9 * mu * N), 1.0, 0)
+    # 1e-5: der Ausgleich laesst den Rest der letzten Runde, k_res mal der
+    # letzten Aenderung der Tangentialverschiebung (gemessen 130 N = 3e-6 H_B)
+    check("K4: Gleichgewicht von B, H_B = Reibung + Feder", -float(cf[0]) - feder, H_B, 1e-5)
+    # Ruecknahmeprobe: ohne Ausgleich traegt die Reststeifigkeit Kraft, die
+    # in keiner Kontaktkraft steht
+    CT.AUSGLEICH_RESTSTEIFIGKEIT = False
+    try:
+        m0, _ua, ub0, ob0 = modell()
+        r0 = solver.solve_static(m0)
+        wahr0, cf0, _f0 = messen(m0, ub0, ob0, r0)
+    finally:
+        CT.AUSGLEICH_RESTSTEIFIGKEIT = True
+    check("K4 ohne Ausgleich: K u weicht von contact_forces um mehr als 1 % von mu N ab",
+          float(abs(wahr0[0] - cf0[0]) > 0.01 * mu * N), 1.0, 0)
+
+
 def main():
     print("=" * 96)
     print("STATIK3D - Verifikation Erweiterungen (Gelenke, Lasten, Kombinationen, Kontakt, Parallel)")
@@ -1004,6 +1101,7 @@ def main():
     test_unilateral_support()
     test_gap_element()
     test_surface_contact_friction()
+    test_reibkraft_gleitender_knoten_ohne_reststeifigkeit()
     test_parallel_assembly()
     test_stehender_pool()
     test_ketten_rechnen_dasselbe()
