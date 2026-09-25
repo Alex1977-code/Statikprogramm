@@ -9464,7 +9464,18 @@ class MainWindow(QtWidgets.QMainWindow):
         behaelt das bisher Erzeugte.
         """
         from .. import fugen
+        from ..sweep import betriebsart as sweep_betriebsart
         log = []
+        if sweep_betriebsart(self.model) == "immer":
+            # aeltere Sitzung mit eingeschaltetem Sweep (Option entfaellt,
+            # 25.09.2026). Seit das Feld ein Wort ist, waere getattr(...) auch
+            # fuer "aus" wahr; darum ueber betriebsart. "sauber" bleibt: es
+            # sweept nur Koerper, die die Probe bestehen, und setzt kuenftig die
+            # Stufe (25.09.2026)
+            self.model.netz.sweep = "aus"
+            log.append("Sechsflächner-Sweep ausgeschaltet: die Option gibt es nicht mehr, "
+                       "weil sie an Bohrungen und schrägen Kanten verzerrte Elemente erzeugt. "
+                       "Vernetzt wird mit Tetraedern.")
         n = 0
         prozesse = 1
         zeiten: dict = {}          # Sekunden je Phase, fuer die Schlusszeile
@@ -14330,7 +14341,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def maske_netzeinstellungen(self):
         from .. import netzdichte as nd
-        from ..sweep import betriebsart as sweep_betriebsart
         n = self.model.netz
         F = msk.Feld
 
@@ -14379,15 +14389,12 @@ class MainWindow(QtWidgets.QMainWindow):
                   # Eckknoten); alles andere geht an den freien Vernetzer (13.09.2026).
                   F("uebersteuern", "Teilung je Fläche aus der Netzdichte", "haken", bool(n.teilung_uebersteuern),
                     hinweis="aus: die eigene Teilung jeder Fläche (z. B. aus RFEM) bleibt"),
-                  F("sweep", "Sechsflächner sweepen (Hexaeder statt Tetraeder)", "haken",
-                    sweep_betriebsart(self.model) != "aus",       # Wort seit 25.09.2026
-                    hinweis="Körper, die Grundfläche mal Weg sind (Bolzen, Scheiben, Platten), werden "
-                            "in Lagen aus hex8 und pent6 vernetzt statt in Tetraeder - an der "
-                            "Kragplatte 97,6 % der Balkenlösung gegen 68,4 %, bei weniger als der "
-                            "halben Knotenzahl. Vorgabe aus: am Drehlager entstanden dabei 992 "
-                            "entartete Keile (Formgüte bis 0,025), und die Verformung lag um "
-                            "Faktor 4,5 daneben (21.09.2026). Die Abnahme meldet solche Netze vor "
-                            "dem Rechnen; wer einschaltet, sollte sie lesen."),
+                  # „Sechsflaechner sweepen“ ist seit 25.09.2026 keine Option mehr: am
+                  # Drehlager entstanden damit 926 hex8 mit fast entarteter Ecke und 242
+                  # flache Keile (Element-Sitzung, gemessen), LF1 konvergierte nicht mehr.
+                  # Der Anwender: „er war als option da und für mich als user nicht
+                  # erkennbar dass das ein problem ist“ - „keep it simple“. Hexaeder kommen
+                  # zurueck, wenn der Vernetzer sie nur dort setzt, wo sie sauber sind.
                   F("vernetzer", "Vernetzer (Volumen)", "wahl", vernetzer_text(n.vernetzer), vernetzer_liste,
                     hinweis="eigener Vernetzer, gmsh (GPL) oder Netgen (LGPL) - beide tetraedern dieselbe "
                             "Hülle, die Randknoten bleiben; keiner wird mit der exe ausgeliefert, "
@@ -14536,10 +14543,9 @@ class MainWindow(QtWidgets.QMainWindow):
                        form=self.NETZFORMEN.get(str(w.get("form", "")), n.form),
                        ordnung=self.NETZORDNUNG.get(str(w.get("ordnung", "")), n.ordnung),
                        abgebildet=bool(w.get("abgebildet", n.abgebildet)),
-                       # Haken an: das bisherige Wort bleiben ("sauber"), sonst "immer" (25.09.2026)
-                       sweep=((sweep_betriebsart(self.model) if sweep_betriebsart(self.model) != "aus"
-                               else "immer") if w.get("sweep", sweep_betriebsart(self.model) != "aus")
-                              else "aus"),
+                       # Kein Sweep-Haken mehr (ui/pS-2509); „sauber“ setzt kuenftig die
+                       # Stufe und bleibt stehen, alles andere wird „aus“ (25.09.2026)
+                       sweep="sauber" if sweep_betriebsart(self.model) == "sauber" else "aus",
                        teilung_uebersteuern=bool(w.get("uebersteuern", True)))
 
     def werkzeuge_dialog(self):

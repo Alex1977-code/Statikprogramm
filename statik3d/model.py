@@ -1789,10 +1789,16 @@ def sweep_aus_datei(wert) -> str:
     war fuer ihn nicht als Problem erkennbar (am Drehlager 926 verzerrte hex8
     und 242 flache Keile, LF1 nicht konvergiert); so hat es der Zweig
     ui/pS-2509 fuer den Haken bereits festgelegt. Ein unbekanntes Wort wird
-    ebenfalls "aus" (betriebsart laese es als "immer")."""
+    ebenfalls "aus" (betriebsart laese es als "immer").
+
+    Auch "immer" wird "aus" (Zusammenfuehren mit ui/pS-2509, 25.09.2026):
+    die Oberflaeche bietet keinen Sweep-Schalter mehr, und "immer" ist
+    genau der Sweep, der am Drehlager die verzerrten Elemente erzeugte.
+    "sauber" bleibt - es sweept nur Koerper, die die Probe bestehen, und
+    wird kuenftig von der Stufe gesetzt."""
     if isinstance(wert, str):
         w = wert.strip().lower()
-        return w if w in SWEEP_BETRIEBSARTEN else "aus"
+        return w if w in ("aus", "sauber") else "aus"
     return "aus"
 
 
@@ -1902,8 +1908,9 @@ class Netzeinstellungen:
     #: "immer" (dritte Lieferung der Vernetzer-Sitzung). Der Vernetzer liest
     #: es nur ueber sweep.betriebsart(model); "sauber" sweept einen Koerper
     #: nur, wenn jedes hex8/pent6 den Trapezfehler TRAPEZ_GRENZE einhaelt.
-    #: True/False aelterer Dateien werden beim Laden zu "aus"
-    #: (sweep_aus_datei): den Haken hat der Anwender nie bewusst gewollt.
+    #: True/False aelterer Dateien und "immer" werden beim Laden zu "aus"
+    #: (sweep_aus_datei): den Haken hat der Anwender nie bewusst gewollt,
+    #: und die Oberflaeche bietet keinen Sweep-Schalter mehr (ui/pS-2509).
     sweep: str = "aus"
     #: **Pyramiden** (pyr5) als Uebergang: wo ein frei vernetzter Koerper an
     #: die Vierecke eines gesweepten oder abgebildeten Nachbarn stoesst,
@@ -5818,7 +5825,10 @@ class Model:
         if "netz" in d:
             m.netz = _dc(Netzeinstellungen, d["netz"])
             # Das Feld ist seit 25.09.2026 ein Wort; eine aeltere Datei fuehrt
-            # True/False (sweep_aus_datei)
+            # True/False. „Sechsflaechner sweepen“ ist zugleich keine Option
+            # der Oberflaeche mehr (ui/pS-2509: verzerrte hex8 und flache Keile
+            # am Drehlager, LF1 nicht konvergiert): ein Haken und „immer“ laden
+            # als „aus“, „sauber“ bleibt (sweep_aus_datei)
             m.netz.sweep = sweep_aus_datei(getattr(m.netz, "sweep", "aus"))
         if "design" in d:
             m.design = _dc(DesignSettings, d["design"])
