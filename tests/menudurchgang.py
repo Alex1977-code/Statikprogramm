@@ -22,6 +22,9 @@ import json
 import os
 
 os.environ.setdefault("STATIK3D_KEIN_BROWSER", "1")     # kein Browser aus dem Durchgang
+# Rueckfrage vor Neu/Oeffnen/Beispiel/Beenden (24.09.2026): ohne Fenster verwerfen -
+# die modellersetzenden Befehle werden ohnehin uebersprungen
+os.environ.setdefault("STATIK3D_UNGESPEICHERT", "verwerfen")
 import sys
 import time
 import traceback
@@ -50,7 +53,11 @@ UEBERSPRINGEN = {
     "Nur aktiver Lastfall": "Rechnung mit Kontakt, 2 Mio. Elemente",
     "Eigenschwingungen": "Rechnung", "Knicken": "Rechnung", "Alle Stellungen": "Rechnung",
     "Vernetzen": "Vernetzung 4 min", "Flächen vernetzen": "Vernetzung", "Volumen vernetzen": "Vernetzung",
-    "Netz löschen": "zerstoert das Netz", "Alle Elemente löschen": "zerstoert das Netz",
+    "Netz löschen": "zerstoert das Netz",
+    # „Modell leeren…“ und „Alle Kontakte löschen…“ laufen mit (25.09.2026):
+    # ihre Rueckfrage ist ein QMessageBox, und QMessageBox.exec ist
+    # QDialog.exec, das oben auf 0 steht - sie wird verneint, am Drehlager
+    # auch im Zweig ohne Rueckgaengig (ueber 1 Mio. Elemente).
     "Kontaktfugen ausführen": "aendert das Netz",
     "Doppelte Knoten zusammenführen": "aendert das Modell (400 000 Knoten)",
     "Freie Bewegungen suchen": "Gleichungssystem 2 Mio. Elemente",
@@ -108,6 +115,7 @@ def main():
     w.selection = np.array([], dtype=int)
     w.path = MODELL
     w.refresh_all()
+    w._als_gespeichert()          # wie nach „Öffnen“: nichts ungespeichert
     w._refresh_title()
     w.zoom_alles()
     app.processEvents()

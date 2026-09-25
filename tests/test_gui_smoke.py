@@ -11,6 +11,12 @@ import os
 # nach jedem Lauf ein Browserfenster mit tests/_lastenheft_smoke.html, die der
 # Lauf gleich wieder geloescht hatte ("Zugriff auf die Datei nicht moeglich").
 os.environ.setdefault("STATIK3D_KEIN_BROWSER", "1")
+# Neu, Oeffnen, Beispiel und Beenden fragen seit dem 24.09.2026 nach
+# Ungespeichertem (Speichern/Verwerfen/Abbrechen). Dieser Lauf ruft sie weit
+# ueber hundertmal nach Aenderungen auf - der Testschalter antwortet
+# „verwerfen“, wie es vorher ohne Frage geschah (auch beim Aufruf als Skript,
+# ohne tests/__init__.py). Die Frage selbst prueft tests/test_ungespeichert.py.
+os.environ.setdefault("STATIK3D_UNGESPEICHERT", "verwerfen")
 import sys
 import time
 
@@ -162,7 +168,7 @@ def main():
     check("Fenster erzeugt", w.isVisible())
     # Netz aendern bei vorhandenen Ergebnissen fragt (Vernetzen / Abbrechen) -
     # im Durchlauf stimmt die Antwort zu; der eigene Abschnitt prueft die Frage
-    w._fragen_knoepfe = lambda titel, text, ja="Ja", nein="Abbrechen": True
+    w._fragen_knoepfe = lambda titel, text, ja="Ja", nein="Abbrechen", **_k: True
 
     for ex in ("frame", "truss", "plate", "solid", "hall", "gate", "contact", "friction"):
         t0 = time.time()
@@ -242,7 +248,7 @@ def main():
     mg_.load_node(1, Fz=-1000.0)
     w._solve_done("case", solver.solve_static(mg_)); app.processEvents()
     fragen_n = []
-    w._fragen_knoepfe = lambda titel, text, ja="Ja", nein="Abbrechen": (fragen_n.append((titel, ja, nein, text)), False)[1]
+    w._fragen_knoepfe = lambda titel, text, ja="Ja", nein="Abbrechen", **_k: (fragen_n.append((titel, ja, nein, text)), False)[1]
     n_el = len(mg_.elements)
     w.geometrie_vernetzen(); app.processEvents()
     check("Vernetzen mit Ergebnissen: Rückfrage „Netz ändern“, Knöpfe Vernetzen/Abbrechen, sie nennt die Löschung",
@@ -253,7 +259,7 @@ def main():
     check("Netz löschen fragt ebenso (Knopf „Netz löschen“) und lässt bei Abbrechen alles stehen",
           len(fragen_n) == 2 and fragen_n[1][1] == "Netz löschen" and w.analysis is not None
           and len(mg_.elements) == n_el, str(fragen_n[1:2])[:80])
-    w._fragen_knoepfe = lambda titel, text, ja="Ja", nein="Abbrechen": True
+    w._fragen_knoepfe = lambda titel, text, ja="Ja", nein="Abbrechen", **_k: True
     w.geometrie_vernetzen(); app.processEvents()
     check("Vernetzen bestätigt: die Ergebnisse sind verworfen (auch aus der Auswahl), das Netz neu",
           w.analysis is None and w.results is None and w.cb_result.count() == 0 and len(mg_.elements) > 0,
@@ -5334,7 +5340,7 @@ def main():
         gefragt_t = []
         alt_fk_t = w.__dict__.get("_fragen_knoepfe")
         alt_netz_t = w._vernetzen
-        w._fragen_knoepfe = lambda titel, text, ja="Ja", nein="Abbrechen": (
+        w._fragen_knoepfe = lambda titel, text, ja="Ja", nein="Abbrechen", **_k: (
             gefragt_t.append((titel, text)), False)[1]
         w._vernetzen = lambda f, k: (len(f), len(k)) and 0
         try:

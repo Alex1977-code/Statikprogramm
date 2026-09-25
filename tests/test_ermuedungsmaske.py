@@ -556,6 +556,10 @@ def _fenster(m):
                               tbl_fatl=QtWidgets.QTableWidget(0, 5), lbl_active=QtWidgets.QLabel(),
                               cb_g=QtWidgets.QCheckBox(), maskenrand=types.SimpleNamespace(maske=None))
     s._undo_knoepfe = lambda: None
+    # merken() vermerkt seit dem 24.09.2026 den Aenderungsstand (Stern im
+    # Titel, Rueckfrage vor Neu/Beenden) - die Attrappe hat keinen Titel
+    s._stand = 0
+    s._aenderung = lambda: None
     s._undo_init = lambda: G.MainWindow._undo_init(s)
     s.info = lambda t: None
     s._lastwahl_fuellen = lambda: None

@@ -82,12 +82,12 @@ Vierzehn Register nach Arbeitsschritt:
 
 | Register | Inhalt |
 |---|---|
-| **Datei** | Neu, Öffnen, Speichern, Projektangaben, Übernehmen aus fremden Formaten, Exportieren, Beispiele |
+| **Datei** | Neu, Öffnen, Speichern, Projektangaben, **Modell leeren (Eigenschaften behalten)…**, Übernehmen aus fremden Formaten, Exportieren, **Beispiel öffnen ▾** (die acht Beispiele in einem Knopf) |
 | **Start** | Auswahl, Modellprüfung, doppelte Knoten, freie Stabenden anschließen, Berechnen |
 | **Unterlagen** | **Dateien** (Datei hinzufügen: PDF, Bild, Word, Excel …; Unterlage öffnen; Entfernen), **Ansichten** (Ansicht aufnehmen, Skizze aus Ansicht), **Skizze** (Neue Skizze, Bearbeiten), **Bericht** (In den Bericht, Unterlagen zeigen) — seit 16.09.2026, siehe *Unterlagen* |
 | **Geometrie** | Knoten, Linien, **Ändern** (Verschieben, Kopieren, Drehen, Spiegeln der Auswahl), **Konstruktion** (Lot / Projektion), Auswahlart in der Ansicht, Koordinatensysteme, Arbeitsebene und Fang (auch „Lot“) |
 | **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, Stabzug, Stäbe für Nachweise, automatisch erkennen, Querschnitt zuweisen), **Flächen** (Schale, Fläche aus Linien, Rechteckplatte, vernetzen, verschneiden, Dicke zuweisen), **Volumen** (Volumen aus Flächen, Quader, vernetzen), **Gelenke** (Gelenk anlegen, Gelenke setzen, Tabelle), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
-| **Lager / Kontakt** | Knoten-, Linien-, Flächenlager, Nichtlinearität, Kontakt, Anschlüsse (anlegen, zeigen, löschen) |
+| **Lager / Kontakt** | Knoten-, Linien-, Flächenlager, Nichtlinearität, Kontakt (mit *Alle Kontakte löschen…*), Anschlüsse (anlegen, zeigen, löschen) |
 | **Lasten** | Lastfälle, Kombinationen, Lastfälle nach DIN 19704, Knoten-, Stab-, Flächen-, Temperaturlast, Zwangsverformung, Vorspannung, Eigengewicht, Generierer Wasserdruck und Wind |
 | **Netz** | Vernetzen (Flächen und Volumen), Netzeinstellungen (Netzdichte, Elementform, intelligente Anpassung), Netzqualität, **Netzknoten** (Schalter), Netz löschen, Kontaktfugen |
 | **Berechnung** | Berechnen (F5), einzelner Lastfall, Eigenschwingungen, Knicken, alle Stellungen, DIN 19704, Einstellungen, Bedienung im Browser |
@@ -101,8 +101,28 @@ Vierzehn Register nach Arbeitsschritt:
 Links über dem Ribbon die **Schnellzugriffsleiste** (Speichern, Rückgängig,
 Wiederholen, Berechnen) — dieselben Befehle, nur schneller erreichbar;
 „Alles deselektieren“ steht in der Glasleiste über der Ansicht. Rechts die
-**Befehlssuche**: Namen eintippen, Eingabetaste, der Befehl läuft und sein
-Register kommt nach vorn.
+**Befehlssuche**: Namen eintippen, darunter erscheint die Trefferliste mit
+dem Ort jedes Befehls („Spiel geben   (Lasten › Lasten)“). Gesucht wird
+am **Wortanfang** — „spiel“ findet „Spiel geben“, aber nicht die Gruppe
+„Beispiele“ — und nach gängigen anderen Wörtern: „Import“ findet
+*Übernehmen*, „Überlagerung“ die Kombinationen nach EN 1990 und DIN 19704,
+„Situation“ die Stellungen. Die **Eingabetaste führt nur aus, wenn genau ein
+Befehlsname passt**; sonst bleibt die Liste offen und man wählt den gemeinten
+(Pfeiltasten und Eingabe oder Klick). Befehle, die das Modell ersetzen oder
+etwas löschen — Neu, Öffnen, Übernehmen, die Beispiele, Modell leeren, alles
+mit „löschen“ im Namen, Beenden — **laufen nie aus der Suche**: sie holen nur
+ihr Register nach vorn, die Statuszeile sagt, wo der Knopf steht. Ausgenommen
+sind *Filter leeren*, *Sonden löschen* und *Messungen löschen*: sie leeren nur
+Ansicht oder Tabelle und laufen wie andere Befehle. Bis zum
+24.09.2026 führte die Eingabetaste den ersten Treffer irgendwo in Name, Gruppe
+oder Hinweis aus: „Spiel“ lud das Beispiel Rahmen und verwarf das offene
+Modell. Am 24.09.2026 gab es noch einen zweiten Weg: bei offener Liste führte
+die Eingabetaste einen Befehl mit genau einem Namenstreffer **zweimal** aus
+(ein Schalter wie *Kontakte zeigen* blieb dadurch aus, *Rückgängig* nahm zwei
+Schritte zurück), bei mehreren Treffern die erste Zeile. Seit dem 25.09.2026
+ist in der Liste keine Zeile vorgewählt; die Eingabetaste führt die mit den
+Pfeiltasten gewählte Zeile genau einmal aus, sonst gilt die Regel oben.
+Geprüft in `tests/test_ungespeichert.py`, dort auch mit echten Tastendrücken.
 
 Die Arbeitsfläche in drei Spalten:
 
@@ -195,6 +215,24 @@ Die Arbeitsfläche in drei Spalten:
   (Querschnitt mit seinen Kennwerten in cm und mm, Werkstoff, Dicke, Gelenk
   mit Wirkung je Freiheitsgrad, Lastfall, Kombination, Stellung,
   Situation, Berichtsbild, Kontaktbedingung …); Lager öffnen ihren Dialog.
+
+  **Ein Doppelklick auf einen Zweig** (die Art, etwa „Werkstoffe“ oder
+  „Stäbe mit Nachweis“) öffnet rechts die **Anlegemaske „Neu …“** — dieselbe
+  wie Rechtsklick → *Neu*, nicht modal. **Angelegt wird erst mit OK**,
+  *Abbrechen* legt nichts an. Das gilt für Querschnitte, Werkstoffe, Dicken,
+  Linien, Stäbe, Stäbe mit Nachweis, Flächen, Volumen, Gelenke, Knotenlager,
+  Kontaktbedingungen, Lastfälle, Kombinationen, Ermüdungslasten, Stellungen,
+  Situationen, Subsysteme, Schweißnähte, Bemaßungen und den Wasserdruck.
+  Zweige ohne Anlegemaske — darunter Knoten (dort legt *Neu* sofort einen
+  Knoten an), Linien- und Flächenlager (brauchen erst eine Auswahl), Bericht,
+  Anschlüsse und die Nachweisobjekte — klappen beim Doppelklick nur auf und
+  zu. Bis zum 24.09.2026 führte der Doppelklick einen Befehl aus: „Stäbe mit
+  Nachweis“ legte ohne Rückfrage Stäbe an (Rahmen: 0 → 3), „Bericht“ nahm die
+  Ansicht auf, andere Zweige öffneten modale Dialoge. Der Doppelklick auf
+  einen **Ergebniseintrag** zeigt das Ergebnis wie ein Klick und legt **kein
+  Berichtsbild** mehr an (seit 25.09.2026, Plan Paket 3: ein Doppelklick legt
+  nichts an); in den Bericht übernimmt *Bericht → Ansicht übernehmen*
+  (**Strg+B**) oder „+ Ansicht übernehmen“ im Modellbaum.
   Zweige mit sehr vielen Einträgen zeigen die ersten 20 000 und verweisen für
   den Rest auf die Tabelle unten, wo gefiltert werden kann.
   Die **Stellungen stehen nur hier**, mit „+ Stellung anlegen" am Ende des
@@ -1298,7 +1336,7 @@ Volumenkörper (Knoten ohne Drehfreiheitsgrad)“, bei einem Fachwerk-, Seil- od
 Scheibenmodell ohne Balken und Schalen „keine Verdrehungen: kein Knoten mit
 Drehsteifigkeit (Fachwerkstäbe, Seile, Scheiben und Volumenkörper haben keinen
 Drehfreiheitsgrad)“. Ein Klick meldet das in der Statuszeile und färbt nicht,
-ein Doppelklick übernimmt dann auch nichts in den Bericht. Geprüft in `tests/test_ergebnisbaum.py`, dort auch die
+ein Doppelklick färbt dann ebenfalls nicht. Geprüft in `tests/test_ergebnisbaum.py`, dort auch die
 Handrechnung am Kragarm: φ am Ende = F·L²/(2EI).
 
 Der Zweig **Schnittgrößen** führt N, Vy, Vz, Mt, My und Mz, jede mit ihren
@@ -1361,8 +1399,9 @@ Rahmen nach *Berechnen* alle 33 Lastpfeile weg). Der Schalter *Lasten*
 (Register *Ansicht*, Glasleiste) nimmt wie bisher alle Lasten aus dem Bild.
 
 **Ergebnisse in den Bericht übernehmen**: Ansicht einstellen, dann
-*Bericht → Ansicht übernehmen* (**Strg+B**), ein Doppelklick auf den
-Ergebniszweig oder „+ Ansicht übernehmen" im Modellbaum. Aufgenommen wird das
+*Bericht → Ansicht übernehmen* (**Strg+B**) oder „+ Ansicht übernehmen" im
+Modellbaum. Ein Doppelklick auf einen Ergebniseintrag nimmt seit dem
+25.09.2026 nichts mehr auf, er zeigt nur. Aufgenommen wird das
 Bild **und** die Einstellung, aus der es entstanden ist — welches Ergebnis,
 wonach eingefärbt, welcher Verlauf, welche Überhöhung. Ohne diese Angabe wäre
 eine Farbgrafik im Statikdokument nicht prüfbar.
@@ -2277,8 +2316,104 @@ Geprüft in `tests/test_transformieren.py` und der Oberflächenprüfung.
 **Strg+Z** nimmt die letzte Änderung zurück, **Strg+Y** stellt sie wieder her —
 für alles: Geometrie, Netz, Lager, Lasten, Linien. Gesichert wird jeweils das
 ganze Modell, darum bleibt auch eine Änderung umkehrbar, die viele Stellen auf
-einmal betrifft. Die letzten 50 Schritte werden vorgehalten; die Schnellzugriffs-
-leiste zeigt im Hinweistext, worum es beim nächsten Schritt geht.
+einmal betrifft. Die letzten 50 Schritte werden vorgehalten. Der Knopf
+**nennt, was er zurücknimmt**: der Hinweis beim Überfahren lautet etwa
+„Rückgängig: Kontakte gelöscht   (Strg+Z)“, ebenso die Statuszeile. Scheitert
+ein Befehl, nachdem er seinen Schritt schon vermerkt hatte (ein Löschen wird
+abgewiesen, der Wasserdruck abgebrochen), fällt der Schritt wieder weg, und
+der Knopf nennt wieder den vorigen — bis zum 24.09.2026 nannte er an 13 von 15
+solchen Stellen noch den verworfenen.
+
+### Nichts geht ungefragt verloren (seit 24.09.2026)
+
+**Stern im Fenstertitel.** Sobald das Modell vom gespeicherten Stand abweicht,
+steht hinter seinem Namen im Fenstertitel ein `*`. Nach *Speichern*, *Öffnen*,
+*Neu* und dem Laden eines Beispiels ist er weg; *Rückgängig* bis zum
+gespeicherten Stand nimmt ihn ebenfalls weg. Als Änderung zählt alles, was mit
+dem Modell gespeichert wird: jeder Befehl mit Rückgängig-Schritt, jede
+Eingabe in einer Tabellenzelle, die Projektangaben (auch aus dem
+Berichtsdialog), die Knöpfe des Registers Lager/Lasten (Eigengewicht,
+Temperaturlast, Linien- und Flächenlager, Kombinationen), Vernetzen, ein
+Import, Änderungen aus dem Browser — und **eine fertige Rechnung**: ihre
+Ergebnisse stehen erst nach dem Speichern in der Ergebnisdatei. Keine Änderung
+sind Anzeige, Auswahl, der gezeigte Lastfall und die Werteskala der Färbung.
+Was an keinem dieser Wege vorbeikommt, fängt ein Vergleich der Anzahlen aller
+Modellobjekte, der Lasten je Lastfall und der Knotenkoordinaten.
+
+**Rückfrage vor Neu, Öffnen, Beispiel, Übernehmen und Beenden.** Ist etwas
+ungespeichert, fragt das Programm, bevor es das Modell ersetzt — mit drei
+Knöpfen: **Speichern** (danach geht es weiter; bricht man den Dateidialog ab,
+bleibt alles, wie es war), **Verwerfen** (die Änderungen gehen verloren) und
+**Abbrechen** (nichts geschieht). Bei *Übernehmen* fragt es nur, wenn der Import
+das Modell ersetzt, nicht beim Anhängen. Bei *Öffnen* kommt die Frage vor dem
+Dateidialog. Ohne Änderungen wird nicht gefragt. **Während einer Rechnung
+unterbleiben Neu, Öffnen, Beispiel und ein ersetzendes Übernehmen immer**, auch
+wenn nichts ungespeichert ist: die Rechnung gehört zum offenen Modell. Die
+Statuszeile sagt „… erst nach der Rechnung“; wer nicht warten will, hält die
+Rechnung an (Esc). Bis zum 25.09.2026 galt die Sperre nur bei ungespeicherten
+Änderungen — ein Fehlgriff auf ein Beispiel verwarf dann eine laufende
+Rechnung ohne Frage, und ihr Ergebnis landete mit einer Fehlermeldung am neuen
+Modell. Ein Ergebnis, dessen Modell inzwischen ersetzt wurde, verwirft das
+Programm seitdem (Protokoll: „Ergebnis verworfen …“).
+
+**Speichern, wenn die Ergebnisdatei nicht geschrieben werden kann** (Platte
+voll, keine Rechte): Die Modelldatei ist gespeichert, die Ergebnisse gelten
+aber weiter als ungespeichert — der Stern bleibt, und wer in der Rückfrage
+vor Neu oder Beenden *Speichern* gewählt hat, sieht die Fehlermeldung, und das
+Programm hält an, statt ohne die Ergebnisse weiterzumachen. Bis zum
+25.09.2026 galt das als gespeichert.
+
+**Beenden während einer Rechnung** fragt „Rechnung abbrechen und beenden?“
+(*Abbrechen und beenden* / *Weiterrechnen*). Mit Ja hält die Rechnung beim
+nächsten Rechenschritt an (eine laufende Faktorisierung läuft zu Ende),
+fertige Lastfälle und Kombinationen bleiben erhalten, und erst dann schließt
+das Fenster — mit der Frage nach dem Speichern, sodass sich das Teilergebnis
+noch sichern lässt. Bis zum 24.09.2026 ging das Fenster mit laufendem
+Rechenfaden einfach zu.
+
+**Modell leeren (Eigenschaften behalten)…** (Register Datei, früher „Alle
+Elemente löschen“ im Register Netz, zwischen den Netzbefehlen) entfernt alles
+außer Werkstoffen, Querschnitten, Dicken und Projektangaben. Das Programm fragt
+vorher und **nennt mit Anzahl, was tatsächlich verschwindet**, etwa „Netz
+(221 Knoten, 240 Elemente), Knotenlager (43), Lastfälle mit ihren Lasten (3),
+Kombinationen (23), Stäbe mit Nachweis (3), Ermüdungslasten (1)“ — dazu
+Kontakte, Berichtsbilder, Stellungen, Unterlagen oder Layer, wenn es sie gibt;
+die Modelleinstellungen (Bemessung, Netzvorgaben, Einheiten, Plastizität,
+Berichtsrahmen) gehen auf die Vorgabe zurück. Sind die **Ergebnisse der
+letzten Rechnung nicht gespeichert**, sagt die Rückfrage, dass sie verloren
+gehen: Rückgängig holt das Modell zurück, die Ergebnisse nicht. Vorgabeknopf
+ist **Abbrechen** — die Eingabetaste leert nichts; ebenso bei *Alle Kontakte
+löschen…* und *Alle Lager löschen*. Bis zum 25.09.2026 nannte der Text nur
+Geometrie, Netz, Lager, Lastfälle, Lasten und Kombinationen, und die
+Eingabetaste leerte das Modell, auch ohne Rückgängig. Bis 1 000 000 Elemente lässt es sich mit Strg+Z
+zurücknehmen. Darüber sagt die Rückfrage ausdrücklich, dass es **nicht
+rückgängig** zu machen ist: die Sicherung wäre eine ganze Modellkopie — am
+Drehlager (2 064 422 Elemente) 1,38 GB und 11 s —, und wer ein Modell leert,
+will den Speicher meist gerade zurück. Die älteren Rückgängig-Schritte fallen
+dann ebenfalls weg, sie hielten dasselbe Modell fest.
+
+**Alle Kontakte löschen…** (Register Lager / Kontakt, früher „Kontakt
+löschen“) nennt vorher die Anzahl der einseitigen Lager, Spaltelemente und
+Kontaktpaare; die Kontaktbedingungen bleiben. **Alle Lager löschen** im
+Register Lager/Lasten fragt ebenso und lässt sich jetzt rückgängig machen,
+ebenso *Lasten des aktiven Lastfalls löschen*, *Lager entfernen*, das Ändern
+und Löschen von Kombinationen dort, *DIN 19704: Kombinationen* und *Freie
+Stabenden anschließen*; der Rückgängig-Knopf nennt jeweils den Schritt.
+
+**Projektangaben** (Projekt, Bauteil, Position, Bearbeiter) lassen sich bis
+100 000 Elemente rückgängig machen. Darüber gelten sie nur als ungespeichert
+(Stern), wie Eigengewicht und Temperaturlast: ein Rückgängig-Schritt kopiert
+das ganze Modell — am Drehlager rund 11 s je geändertem Textfeld —, und dort
+passen nur zwei Sicherungen in den Speicher; zwei geänderte Projektfelder
+hätten die echten Rückgängig-Schritte verdrängt (seit 25.09.2026).
+
+**Beispiele** stehen in einem Knopf *Beispiel öffnen ▾* statt in acht
+Knöpfen, von denen jeder das Modell ersetzte.
+
+Geprüft in `tests/test_ungespeichert.py` (mit dem echten Hauptfenster). Die
+übrigen Prüfungen mit Hauptfenster beantworten die Rückfrage über den
+Testschalter `STATIK3D_UNGESPEICHERT=verwerfen` (gesetzt in
+`tests/__init__.py`) ohne Fenster.
 
 ### Koordinatensysteme, Arbeitsebene, Fang
 
@@ -2589,7 +2724,7 @@ auf ein Update erscheint nur, wenn wirklich eines vorliegt.
 8. **Bericht**: Bericht → Bericht (HTML, im Browser druckbar/als PDF
    speichern; PDF direkt bei installiertem reportlab).
 
-Beispiele im Menü **Beispiele** zeigen jeden dieser Schritte fertig
+Beispiele unter **Datei → Beispiel öffnen ▾** zeigen jeden dieser Schritte fertig
 aufgebaut, u. a. der Hallenrahmen (Kombinationen, EC3, Ermüdung), die
 Stauwand (Stahlwasserbau, Schalen + Riegel, Wasserdruck) und zwei
 Kontaktbeispiele.
