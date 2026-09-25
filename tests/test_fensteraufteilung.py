@@ -381,8 +381,9 @@ def test_breite_maske_rollt():
     unten = knopf.mapTo(w, QtCore.QPoint(0, knopf.height())).y()
     check("Windmaske: der rechte Bereich bleibt bei etwa 460 px (vorher 1170 px), die Ansicht behält ihre Breite",
           rechts <= 480 and _ansicht(w)[0] >= b0 - 20, f"rechts {rechts}, Ansicht {b0} -> {_ansicht(w)[0]}")
-    check("… ihre breiten Zeilen rollen waagerecht", rolle.horizontalScrollBar().maximum() > 0,
-          f"Rollweg {rolle.horizontalScrollBar().maximum()} px")
+    hb = rolle.horizontalScrollBar()
+    check("… ihre breiten Zeilen rollen waagerecht (Rollbalken sichtbar)",
+          hb.maximum() > 0 and hb.isVisible(), f"Rollweg {hb.maximum()} px, Balken sichtbar {hb.isVisible()}")
     check("… „Übernehmen“ bleibt im Fenster sichtbar", unten <= w.height() and not knopf.visibleRegion().isEmpty(),
           f"Unterkante {unten} von {w.height()}")
     w.maskenrand.schliessen()

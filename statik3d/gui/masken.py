@@ -79,16 +79,14 @@ class Rollflaeche(QtWidgets.QScrollArea):
     ihres Inhalts - sie rollt nur, wenn der Platz wirklich fehlt - und
     verlangt als Mindesthoehe nur wenige Zeilen.
 
-    Waagerecht (25.09.2026, Paket 5): die Mindestbreite ist hoechstens
-    BREITE_HOECHSTENS; ein breiterer Inhalt rollt waagerecht. Vorher war sie
-    die des Inhalts, und die Windmaske zog den rechten Bereich auf 1170 px -
-    die Ansicht blieb bei 128 px (1600 x 980) bzw. 61 px (1536 x 864).
-    Mit STATIK3D_FENSTER=fest gilt der alte Stand (nie waagerecht rollen).
+    Waagerecht (25.09.2026, Paket 5): ein Inhalt, der breiter ist als der
+    rechte Bereich, rollt waagerecht. Bis dahin richtete sich die Breite des
+    rechten Bereichs nach der Wunschbreite der Maske - die Windmaske zog ihn
+    auf 1170 px, die Ansicht blieb bei 128 px (1600 x 980) bzw. 61 px
+    (1536 x 864). Seit der rechte Bereich seine 460 px behaelt
+    (gui/fenster.py), waere der Rest der Zeilen ohne Balken nicht zu
+    erreichen. Mit STATIK3D_FENSTER=fest gilt der alte Stand (nie waagerecht).
     """
-
-    #: Mindestbreite der Mitte hoechstens [px]; der rechte Bereich ist etwa
-    #: 460 px breit, abzueglich Rand der Maske und Rollbalken
-    BREITE_HOECHSTENS = 400
 
     #: Mindesthoehe der Mitte in Bildpunkten: etwa zwei Feldzeilen
     MINDESTHOEHE = 56
@@ -137,12 +135,8 @@ class Rollflaeche(QtWidgets.QScrollArea):
         if w is None:
             return super().minimumSizeHint()
         voll = max(0, w.sizeHint().height())
-        breite = w.minimumSizeHint().width() + self._balken()
-        if not _fenster_fest():
-            breite = min(breite, self.BREITE_HOECHSTENS)
-            if w.minimumSizeHint().width() + self._balken() > breite:
-                voll += self._balken()          # Platz fuer den waagerechten Balken
-        return QtCore.QSize(breite, voll if self.ganz_zeigen else min(self.MINDESTHOEHE, voll))
+        return QtCore.QSize(w.minimumSizeHint().width() + self._balken(),
+                            voll if self.ganz_zeigen else min(self.MINDESTHOEHE, voll))
 
     #: Tasten, mit denen eine QScrollArea rollt, ein Feld sie aber nicht braucht
     _ROLLTASTEN = (QtCore.Qt.Key_Up, QtCore.Qt.Key_Down,
