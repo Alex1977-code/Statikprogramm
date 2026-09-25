@@ -725,9 +725,16 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
                     teil[d] = max(fest)
             nx, ny, nz = teil
             ord_ = netz_ordnung(model, ordnung)
+            # Die Kantenmitten (Ordnung 2) liegen im Cache unter "kanten", damit
+            # der Nachbar an einer gemeinsamen Flaeche dieselben Knoten trifft.
+            # Bis zum 25.09.2026 stand hier ``(cache or {})`` - ein noch leerer
+            # Cache ist falsch-wertig, der erste Koerper schrieb in ein
+            # Wegwerf-Dict, und jede Kantenmitte der gemeinsamen Flaeche gab es
+            # zweimal (zwei Quader 4 x 4 x 4: 40 doppelte Knoten, Kragarm aus
+            # zwei Koerpern +610 N/mm2 neben der Balkenloesung; test_sweep).
+            kanten = cache.setdefault("kanten", {}) if cache is not None else None
             els = _hex_netz(model, order, max(1, nx), max(1, ny), max(1, nz), mat,
-                            koerper.name, ord_, (cache or {}).setdefault("kanten", {})
-                            if cache is not None else None, koerper=koerper, cache=cache)
+                            koerper.name, ord_, kanten, koerper=koerper, cache=cache)
             koerper.elemente = els
             koerper.kommentar = f"{len(els)} Hexaeder (abgebildet, {nx} x {ny} x {nz})"
             koerper.randtreue = 1.0

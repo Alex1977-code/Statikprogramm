@@ -401,6 +401,60 @@ def test_quader_randseiten_und_nachbar():
     check("das Netz ueberlebt Speichern und Laden", _typen(m2) == _typen(m))
 
 
+def test_quader_hex20_gemeinsame_flaeche():
+    """Zwei abgebildete Quader mit gemeinsamer Flaeche, quadratisch (hex20):
+    die Kantenmitten der gemeinsamen Flaeche gehoeren beiden Koerpern.
+
+    Bis zum 25.09.2026 legte jeder Koerper sie fuer sich an. mesher.mesh_koerper
+    reichte ``(cache or {}).setdefault("kanten", {})`` weiter, und ein noch
+    leerer Cache - so uebergibt ihn modell_vernetzen - ist falsch-wertig: der
+    erste Koerper schrieb seine Kantenmitten in ein Wegwerf-Dict, der zweite
+    fand sie nicht. Gemessen (Pruefmatrix 25.09.2026, Kragarm aus zwei Koerpern,
+    4 x 4 Felder): 40 Orte mit zwei Knoten, sigma_v +610 N/mm2 neben der
+    Balkenloesung; mit geteilten Mitten +0,01 N/mm2. Das Netz sah dabei von
+    aussen richtig aus, nur die Abnahme zaehlte doppelte Knoten.
+    """
+    m = Model()
+    m.netz.sweep = False
+    m.netz.ordnung = 2
+    m.add_material(Material.steel("S235"))
+    # zwei Einheitswuerfel uebereinander; die Flaeche z = 1 gehoert beiden
+    P = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+         (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1),
+         (0, 0, 2), (1, 0, 2), (1, 1, 2), (0, 1, 2)]
+    n = [m.add_node(*p) for p in P]
+    L = {}
+
+    def li(a, b):
+        key = (min(a, b), max(a, b))
+        if key not in L:
+            L[key] = f"L{len(L) + 1}"
+            m.add_line(L[key], [n[key[0]], n[key[1]]])
+        return L[key]
+
+    def fl(name, ecken):
+        m.add_flaeche(name, [li(ecken[i], ecken[(i + 1) % 4]) for i in range(4)],
+                      material="S235")
+        return name
+
+    for name, o in (("Boden", 0), ("Fuge", 4), ("Dach", 8)):
+        fl(name, [o, o + 1, o + 2, o + 3])
+    unten = [fl(f"MU{i}", [i, (i + 1) % 4, (i + 1) % 4 + 4, i + 4]) for i in range(4)]
+    oben = [fl(f"MO{i}", [i + 4, (i + 1) % 4 + 4, (i + 1) % 4 + 8, i + 8]) for i in range(4)]
+    m.add_koerper("Unten", ["Boden", "Fuge"] + unten, material="S235", teilung=[4, 4, 4])
+    m.add_koerper("Oben", ["Fuge", "Dach"] + oben, material="S235", teilung=[4, 4, 4])
+    log = []
+    mesher.modell_vernetzen(m, log=log, workers=1)
+    typen = {e.typ for e in m.elements}
+    check("beide Quader sind hex20", typen == {"hex20"}, str(sorted(typen)))
+    doppelt = _doppelte_knoten(m, list(range(m.nn)))
+    check("kein Ort mit zwei Knoten - die Kantenmitten der Fuge sind geteilt",
+          doppelt == 0, f"{doppelt} Paare")
+    auf = [i for i in range(m.nn) if abs(float(m.nodes[i][2]) - 1.0) < 1e-9]
+    check("Fuge: 25 Ecken und 40 Kantenmitten, jeder Knoten einmal",
+          len(auf) == 65, f"{len(auf)} Knoten auf z = 1")
+
+
 def _kreis(m, tag, cx, cy, z, r):
     """Ein Kreis aus zwei Halbboegen zwischen zwei Knoten - wie aus RFEM.
     Rueckgabe (Knoten p, Knoten q, Linie 1, Linie 2)."""
@@ -1522,7 +1576,8 @@ def test_vorgabe_aus():
 def main():
     for t in (test_vorgabe_aus, test_erkennung, test_netz_platte, test_quader_bleibt_abgebildet, test_nachbar_mit_tetraedern,
               test_nachbar_mit_verschiedener_teilung, test_lagen_bei_fliessen,
-              test_quader_randseiten_und_nachbar, test_zylinder_wird_gesweept,
+              test_quader_randseiten_und_nachbar, test_quader_hex20_gemeinsame_flaeche,
+              test_zylinder_wird_gesweept,
               test_platte_mit_nabe_zerlegt, test_abgesetzte_welle_zerlegt,
               test_pyramiden_als_uebergang, test_zerlegen_sagt_warum_nicht,
               test_keile_am_feinen_rand, test_verjuengter_zug, test_drehkoerper,
