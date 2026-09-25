@@ -35,17 +35,25 @@ res.info), gestoerte Pivots (res.info["loeser_nachweis"]), Fehler gegen die
 geschlossene Loesung (N/mm2 bzw. %; Spannung als geglaettete Knotenspannung
 res.solid_knoten, wie der Nachweis sie liest), Unbekannte, Zeit. Ergebnis:
 
-  gruen     konvergiert, jeder Fehler in seiner Grenze
-  gelb      konvergiert, ein Fehler groesser (Diskretisierung, z. B. tet4 zu steif)
-  rot       nicht konvergiert, Abbruch oder falsches Ergebnis (bei Faellen, die
-            jedes Element exakt darstellen kann, ist jede Ueberschreitung falsch)
+  gruen     konvergiert, jeder Fehler in seiner Grenze, Netz knotenkonform
+  gelb      konvergiert, ein Fehler groesser (Diskretisierung, z. B. tet4 zu
+            steif) - oder alle Fehler in der Grenze auf einem Netz, das nicht
+            knotenkonform ist ("Netzfehler"; nie gruen)
+  rot       nicht konvergiert, Abbruch, freie Bewegung (res.singular, ausser
+            "hebt ab" mit Kraft 0), gestoerte Pivots > 0 oder falsches Ergebnis
+            (bei exakten Faellen ist jede Ueberschreitung falsch)
   gesperrt  Kontakt an quadratischen Seiten (fugen.QuadratischeSeiten) - den
             tet10/hex20-Kontakt baut die Loeser-Sitzung
+
+Spannungen: jede Koerperzeile eines Knotens in res.solid_knoten einzeln, der
+groesste Fehler zaehlt (wie Results.solid_rand); in exakten Faellen dazu die
+Elementwerte res.solid_res.
 
 Aufruf:
     python -m tests.pruefmatrix                 # alles, Tabellen auf die Konsole
     python -m tests.pruefmatrix --json out.json # dazu die Rohwerte
     python -m tests.pruefmatrix --fall K1 P2    # nur diese Faelle
+    python -m tests.pruefmatrix --gegenprobe    # Kontrolllaeufe: ohne das Gepruefte / mit Kur
 """
 from __future__ import annotations
 
@@ -189,12 +197,26 @@ def vernetzen(m: Model, koerper, familie, h, ordnung, log):
     return typen
 
 
-def konformitaet(m: Model) -> dict:
+def konformitaet(m: Model, je_koerper: bool = False) -> dict:
     """Ist das Netz knotenkonform? Gezaehlt, **bevor** eine Fuge Knoten
     trennt: (a) Orte mit mehr als einem Knoten am Netz (z. B. Kantenmitten,
     die jeder Koerper selbst anlegt), (b) Elementseiten, die nur einem Element
     gehoeren und nicht auf der Aussenhuelle liegen - die Koerper der Matrix
-    fuellen zusammen einen Quader, dessen Huelle die Begrenzungsebenen sind."""
+    fuellen zusammen einen Quader, dessen Huelle die Begrenzungsebenen sind.
+
+    ``je_koerper``: jeder Koerper (Elementgruppe) fuer sich - fuer Modelle mit
+    Kontaktpaar, deren Koerper an der Fuge mit Absicht eigene, deckungsgleiche
+    Knoten haben; jeder Koerper ist dort ein Quader fuer sich."""
+    if je_koerper:
+        aus = {"doppelknoten": 0, "offene_innenseiten": 0}
+        for g in sorted({str(e.group) for e in m.elements}):
+            teil = Model("Teil")
+            teil.nodes = m.nodes
+            teil.elements = [e for e in m.elements if str(e.group) == g]
+            d = konformitaet(teil)
+            for k in aus:
+                aus[k] += d[k]
+        return aus
     from collections import Counter
     X = np.asarray(m.nodes, float)
     im = am_netz(m)
@@ -270,17 +292,54 @@ def quadratisch_machen(m: Model, mitte=None):
 # Auswertung
 # --------------------------------------------------------------------------
 def knotenspannung(res, knoten):
-    """Geglaettete Knotenspannung (Mittel der Zeilen dieses Knotens) - die
-    Tabelle, aus der der Nachweis (res.solid_rand) liest."""
+    """Geglaettete Knotenspannung aus res.solid_knoten, **je Koerperzeile**:
+    {Knoten: (k, 6)} mit einer Zeile je Koerper und Werkstoff, an dem der
+    Knoten haengt - die Tabelle, aus der der Nachweis (Results.solid_rand)
+    liest. Ausgewertet wird jede Zeile und der groesste Fehler genommen, wie
+    solid_rand die massgebende Zeile nimmt; das Mittel ueber die Zeilen
+    (Stand 0b17b12) konnte einen falschen Koerper hinter einem richtigen
+    verstecken."""
     sk = res.solid_knoten or {}
     kn = np.asarray(sk.get("knoten", []), np.int64)
-    S = np.asarray(sk.get("spannung", []), float)
+    S = np.asarray(sk.get("spannung", []), float).reshape(-1, 6)
     aus = {}
     for n in knoten:
         z = np.flatnonzero(kn == int(n))
         if len(z):
-            aus[int(n)] = S[z].mean(axis=0)
+            aus[int(n)] = S[z]
     return aus
+
+
+#: Gegenprobe (--gegenprobe): das Mittel der Zeilen statt jeder Zeile, wie im
+#: Stand 0b17b12
+ZEILEN_MITTELN = False
+
+
+def groesster_fehler(zeilen: dict, soll) -> float:
+    """Groesste Abweichung sigma_v - soll [N/mm2] ueber alle Knoten und alle
+    ihre Koerperzeilen, mit Vorzeichen. ``soll``: Zahl oder f(Knoten)."""
+    werte = []
+    for n, S in zeilen.items():
+        s = soll(n) if callable(soll) else soll
+        S = np.asarray(S, float).reshape(-1, 6)
+        if ZEILEN_MITTELN:
+            S = S.mean(axis=0, keepdims=True)
+        werte.extend((sv(r) - s) / MPA for r in S)
+    return max(werte, key=abs) if werte else np.nan
+
+
+def elementfehler(res, soll, elemente=None) -> float:
+    """Groesste Abweichung der Elementspannung (res.solid_res) von ``soll``
+    [N/mm2] ueber die Volumenelemente - fuer die homogenen Faelle, in denen
+    jedes Element den Zustand exakt darstellt. ``soll``: Zahl oder
+    f(Element); ``elemente``: nur diese (Vorgabe alle)."""
+    werte = []
+    for i, v in (res.solid_res or {}).items():
+        if elemente is not None and i not in elemente:
+            continue
+        s = soll(i) if callable(soll) else soll
+        werte.extend((sv(r) - s) / MPA for r in np.asarray(v, float).reshape(-1, 6))
+    return max(werte, key=abs) if werte else np.nan
 
 
 def sv(S):
@@ -307,6 +366,8 @@ class Fall:
     #: jedes Element stellt die Loesung exakt dar (homogener Zustand) - dann
     #: ist jede Ueberschreitung ein falsches Ergebnis (rot), nicht gelb
     exakt = False
+    #: warum jede Ueberschreitung falsch ist (Text fuer Befund und Tabelle)
+    exakt_grund = "homogener Zustand, jedes Element stellt ihn exakt dar"
     kontakt = False
     plastisch = False
     h = 0.5
@@ -354,10 +415,10 @@ class Kragarm(Fall):
         oben = [n for n in ecken if abs(X[n, 2] - kr.H) < 1e-9]
         P = kr.punkt()
         n = min(oben, key=lambda i: np.linalg.norm(X[i] - P))
-        S = knotenspannung(res, [n])[n]
         soll = kr.sigma * (kr.L - X[n, 0]) / (kr.L - kr.x_nw)
+        fehler = groesster_fehler(knotenspannung(res, [n]), soll)
         d = np.linalg.norm(X[n] - P)
-        return [metrik("σ_v", (sv(S) - soll) / MPA, 1.0, "N/mm²")], \
+        return [metrik("σ_v", fehler, 1.0, "N/mm²")], \
             f"Knoten {n} bei x = {X[n, 0]:.4f}, y = {X[n, 1]:.4f} m (Abstand {d * 1e3:.1f} mm)".replace(".", ",")
 
 
@@ -381,10 +442,7 @@ class LameZylinder(Fall):
         X = np.asarray(m.nodes, float)
         r = np.hypot(X[:, 0], X[:, 1])
         innen = [n for n in ecken_am_netz(m) if abs(r[n] - rz.a) < 1e-9]
-        S = knotenspannung(res, innen)
-        d_sv = max((sv(S[n]) - rz.sv_innen()) / MPA for n in S) if S else np.nan
-        d_sv_min = min((sv(S[n]) - rz.sv_innen()) / MPA for n in S) if S else np.nan
-        d = d_sv if abs(d_sv) >= abs(d_sv_min) else d_sv_min
+        d = groesster_fehler(knotenspannung(res, innen), rz.sv_innen())
         u = u3(res, m)
         ur = np.mean([(u[n, 0] * X[n, 0] + u[n, 1] * X[n, 1]) / r[n] for n in innen])
         du = (ur / rz.u_r(rz.a) - 1) * 100
@@ -464,11 +522,15 @@ class FugeDruck(Fall):
         lagern(m, lambda x: abs(x[0]) < tol, [0])
         lagern(m, lambda x: abs(x[1]) < tol, [1])
         oben = [n for n in np.flatnonzero(am_netz(m)) if abs(m.nodes[n, 2] - 2.0) < tol]
-        if federn:
-            k = federn / len(oben)
-            for n in oben:
-                m.fix(int(n), [0, 1, 2], stiffness=[k, k, k])
         seiten = pk.randseiten(m, lambda X: bool(np.all(np.abs(X[:, 2] - 2.0) < tol)))
+        if federn:
+            # nach Flaechenanteil verteilt (wie die Last): der Deckel bewegt
+            # sich gleichmaessig, die Wuerfel bleiben spannungsfrei. Bis
+            # 25.09.2026 gleich je Knoten - dann verzog sich der Deckel und
+            # der obere Wuerfel trug bis 102 N/mm² (gemessen, Element-Pruefung)
+            for n, w in flaechenanteile(m, seiten).items():
+                k = federn * w
+                m.fix(int(n), [0, 1, 2], stiffness=[k, k, k])
         pk.spannung_auf_seiten(m, seiten, lambda x: np.array([0.0, 0.0, -p]))
         return unten, oben
 
@@ -485,11 +547,12 @@ class FugeDruck(Fall):
         u = u3(res, m)
         uo = float(u[meta["oben"], 2].mean())
         du = (uo / self.u_soll(p) - 1) * 100
-        S = knotenspannung(res, ecken_am_netz(m))
-        dsv = max((abs(sv(s) - p) for s in S.values()), default=np.nan) / MPA
+        dsv = groesster_fehler(knotenspannung(res, ecken_am_netz(m)), abs(p))
         R = float(res.reactions[meta["unten"], 2].sum())
         dR = (R / p - 1) * 100
-        return [metrik("σ_v", dsv, 1.0, "N/mm²"), metrik("u_oben", du, 1.0, "%"),
+        return [metrik("σ_v", dsv, 1.0, "N/mm²"),
+                metrik("σ_v Element", elementfehler(res, abs(p)), 1.0, "N/mm²"),
+                metrik("u_oben", du, 1.0, "%"),
                 metrik("Auflager", dR, 1.0, "%")], f"{meta.get('spalt')} Spaltelemente"
 
 
@@ -508,8 +571,12 @@ class FugeZug(FugeDruck):
         F = self.p * 1.0
         R_f = float(res.reactions[meta["unten"], 2].sum())
         R_g = float(res.reactions[:, 2].sum())
+        # Last und Federn sitzen an denselben Deckelknoten: beide Wuerfel
+        # bleiben spannungsfrei - auch das ist ein homogener Zustand
         return [metrik("Fundament", R_f / F * 100, 1.0, "%"),
-                metrik("Federn", (-R_g / F - 1) * 100, 1.0, "%")], f"{meta.get('spalt')} Spaltelemente"
+                metrik("Federn", (-R_g / F - 1) * 100, 1.0, "%"),
+                metrik("σ_v Element", elementfehler(res, 0.0), 1.0, "N/mm²")], \
+            f"{meta.get('spalt')} Spaltelemente"
 
 
 # ---- Kontaktpaar mit Übermaß (strukturiert) ---------------------------------
@@ -540,6 +607,7 @@ def wuerfelpaar(typ, n, fy=None):
             if np.all(np.abs(X[kn, 2] - 1.0) < tol):
                 master.append(kn)
     slave = sorted({int(k) for i in oben_el for k in m.elements[i].nodes if abs(X[int(k), 2] - 1.0) < tol})
+    m._pm_netz = konformitaet(m, je_koerper=True)
     return m, slave, master
 
 
@@ -579,10 +647,10 @@ class UebermassFuge(Fall):
 
     def auswerten(self, m, res, meta):
         s = self.sigma_soll()
-        S = knotenspannung(res, ecken_am_netz(m))
-        dsv = max((abs(sv(x) - s) for x in S.values()), default=np.nan) / MPA
+        dsv = groesster_fehler(knotenspannung(res, ecken_am_netz(m)), s)
         R = float(res.reactions[meta["unten"], 2].sum())
-        return [metrik("σ_v", dsv, 1.0, "N/mm²"), metrik("Auflager", (R / s - 1) * 100, 1.0, "%")], \
+        return [metrik("σ_v", dsv, 1.0, "N/mm²"), metrik("σ_v Element", elementfehler(res, s), 1.0, "N/mm²"),
+                metrik("Auflager", (R / s - 1) * 100, 1.0, "%")], \
             f"{meta['n']}³ Zellen je Würfel"
 
 
@@ -622,9 +690,9 @@ class Druckwuerfel(Fall):
         u = u3(res, m)
         uo = float(u[meta["oben"], 2].mean())
         soll = -2.0 * sigma_eps_bilinear(p)
-        S = knotenspannung(res, ecken_am_netz(m))
-        dsv = max((abs(sv(s) - p) for s in S.values()), default=np.nan) / MPA
-        return [metrik("σ_v", dsv, 1.0, "N/mm²"), metrik("u_oben", (uo / soll - 1) * 100, 1.0, "%")], ""
+        dsv = groesster_fehler(knotenspannung(res, ecken_am_netz(m)), p)
+        return [metrik("σ_v", dsv, 1.0, "N/mm²"), metrik("σ_v Element", elementfehler(res, p), 1.0, "N/mm²"),
+                metrik("u_oben", (uo / soll - 1) * 100, 1.0, "%")], ""
 
 
 class HillRohr(Fall):
@@ -651,10 +719,7 @@ class HillRohr(Fall):
         X = np.asarray(m.nodes, float)
         r = np.hypot(X[:, 0], X[:, 1])
         aussen = [n for n in ecken_am_netz(m) if abs(r[n] - hl.b) < 1e-9]
-        S = knotenspannung(res, aussen)
-        s_soll = hl.punkt(c, hl.b)[0]
-        werte = [(sv(S[n]) - s_soll) / MPA for n in S]
-        d = max(werte, key=abs) if werte else np.nan
+        d = groesster_fehler(knotenspannung(res, aussen), hl.punkt(c, hl.b)[0])
         u = u3(res, m)
         ur = np.mean([(u[n, 0] * X[n, 0] + u[n, 1] * X[n, 1]) / r[n] for n in aussen])
         du = (ur / hl.u_r(c, hl.b) - 1) * 100
@@ -697,7 +762,322 @@ class UebermassPlastisch(UebermassFuge):
         return m, meta
 
 
+# ---- Kontaktpaare mit bekannter Lösung: Reibung, ungleiche Netze, Spalt ----
+MU = 0.3
+K_FEDER = 1e9                # N/m je Richtung, ueber die Deckelknoten verteilt; weich gegen
+#: den Reibweg (gemessen: bei 1e11 nahm die Feder 80 % und B haftete)
+
+
+def leeres_modell(fy=None):
+    m = Model("Pruefmatrix")
+    m.add_material(Material("S", E=E_ST, nu=NU_ST, rho=0.0, fy=fy))
+    return m
+
+
+def block(m, typ, p0, masse, h, gruppe):
+    """Quader p0 + [0, masse] als eigener Koerper mit eigenen Knoten
+    (strukturiert, pk.quader: Kuhn-Tetraeder oder Sechsflaechner), Zellweite
+    moeglichst h je Richtung. hex20 entsteht nach allen Bloecken ueber
+    quadratisch_machen. Rueckgabe: Zellen je Richtung."""
+    basis = "hex8" if typ == "hex20" else typ
+    n = [max(1, int(round(a / h))) for a in masse]
+    q, _ids = pk.quader(basis, *n, *masse)
+    neu = {i: m.add_node(*(q.nodes[i] + np.asarray(p0, float))) for i in range(q.nn)}
+    for e in q.elements:
+        m.add_element(e.typ, [neu[int(k)] for k in e.nodes], "S", group=gruppe)
+    return n
+
+
+def elemente_von(m, gruppe):
+    return [i for i, e in enumerate(m.elements) if str(e.group) == gruppe]
+
+
+def knoten_von(m, gruppe, bedingung=None):
+    X = np.asarray(m.nodes, float)
+    s = {int(k) for i in elemente_von(m, gruppe) for k in m.elements[i].nodes}
+    return sorted(k for k in s if bedingung is None or bedingung(X[k]))
+
+
+def facetten_von(m, gruppe, bedingung):
+    """Eckseiten der Elemente von ``gruppe``, deren Ecken alle ``bedingung``
+    erfuellen - die Master-Facetten des Kontaktpaars (wie in wuerfelpaar)."""
+    X = np.asarray(m.nodes, float)
+    aus = []
+    for i in elemente_von(m, gruppe):
+        e = m.elements[i]
+        for f in sl.FLAECHEN_ECKEN[e.typ]:
+            kn = [int(e.nodes[a]) for a in f]
+            if all(bedingung(X[k]) for k in kn):
+                aus.append(kn)
+    return aus
+
+
+def seiten_von(m, gruppe, bedingung):
+    """[(Element, Seitenknoten)] der Randseiten von ``gruppe`` fuer die Lasten."""
+    g = set(elemente_von(m, gruppe))
+    return [(i, kn) for i, kn in pk.randseiten(m, lambda P: all(bedingung(x) for x in P)) if i in g]
+
+
+def flaechenanteile(m, seiten):
+    """{Knoten: Anteil} der konsistenten Knotenkraefte einer Einheitsspannung,
+    Summe 1 - so verteilt, halten Federn eine gleichmaessige Spannung und
+    stoeren den homogenen Zustand nicht."""
+    anteile: dict = {}
+    for _i, kn in seiten:
+        fk = sl.flaechenlast_knoten(m.nodes[kn], 1.0, (0.0, 0.0, 1.0))
+        for a, n in enumerate(kn):
+            anteile[n] = anteile.get(n, 0.0) + float(fk[a][2])
+    A = sum(anteile.values())
+    return {n: w / A for n, w in anteile.items()}
+
+
+def federn(m, seiten, k, dofs):
+    """Federn der Gesamtsteifigkeit ``k`` je Richtung auf die Knoten der Seiten."""
+    anteile = flaechenanteile(m, seiten)
+    for n, w in anteile.items():
+        m.fix(int(n), list(dofs), stiffness=[k * w] * len(dofs))
+    return sorted(anteile)
+
+
+def kontaktpaar(m, oben, unten, z, h, **kw):
+    """Kontaktpaar: Knoten von ``oben`` auf der Ebene z gegen die Eckseiten
+    von ``unten`` dort (Master)."""
+    tol = 1e-9
+    slave = knoten_von(m, oben, lambda x: abs(x[2] - z) < tol)
+    master = facetten_von(m, unten, lambda x: abs(x[2] - z) < tol)
+    m.contact_pairs.append(ContactPair("Fuge", slave_nodes=slave, master_faces=master,
+                                       search_radius=0.5 * h, **kw))
+    return slave
+
+
+def phase2_runden(res) -> int:
+    """Kontaktschritte, die in Phase 2 der Reibung liefen (contact.py:
+    Reststeifigkeit gleitender Knoten 1e-8 k_t statt 1e-3 k_t), aus dem
+    Laufbuch res.info['laeufe'][..]['runden'] (erstes Feld: Phase)."""
+    return sum(1 for lauf in (res.info or {}).get("laeufe") or []
+               for r in lauf.get("runden") or [] if int(r[0]) == 2)
+
+
+def status_zaehlen(res, knoten):
+    k = set(int(n) for n in knoten)
+    aus: dict = {}
+    for c in res.contact or []:
+        if int(c.get("node", -1)) in k:
+            aus[c["status"]] = aus.get(c["status"], 0) + 1
+    return aus
+
+
+class ReibungHaftenGleiten(Fall):
+    kurz, rechenart = "K4", "Kontakt"
+    name = "Fuge mit Reibung μ 0,3: Klotz A haftet, Klotz B gleitet gegen Federn (ein Kontaktpaar)"
+    soll = ("Unterlage 2 × 1 × 1 m, unten eingespannt; darauf die Klötze A und B, je 1 × 1 × 0,25 m, "
+            "eigene Knoten, beide in **einem** Kontaktpaar, je p = 100 N/mm² Auflast (N = 100.000 kN). "
+            "A: Schub H_A = 0,5 μN = 15.000 kN, sonst nichts - Reibkraft = H_A, Fugenschlupf nur "
+            "elastisch (Penalty). B: Schub H_B = 1,5 μN = 45.000 kN, auf dem Deckel Federn k = "
+            "1.000 kN/mm in x und y - Reibkraft = μN = 30.000 kN, Federkraft = H_B − μN = 15.000 kN. "
+            "Weil A haftet und B gleitet, läuft die Reibung in Phase 2 (contact.py)")
+    grenze_text = ("Kräfte 1 %; Fugenschlupf von A 1 % seiner Deckelverschiebung; Phase 2 muss im "
+                   "Laufbuch (res.info['laeufe']) stehen, sonst rot")
+    exakt = True
+    exakt_grund = ("die Kräfte folgen aus Gleichgewicht und Reibgesetz, unabhängig vom Netz; "
+                   "Fehler sind keine Diskretisierung")
+    kontakt = True
+    h = 0.5
+    t = 0.25
+    p = 100e6
+    zwei = True
+
+    def bauen(self, familie, typ, ordnung, h, log):
+        m = leeres_modell()
+        tol = 1e-9
+        breite = 2.0 if self.zwei else 1.0
+        block(m, typ, (0, 0, 0), (breite, 1.0, 1.0), h, "U")
+        if self.zwei:
+            block(m, typ, (0, 0, 1.0), (1.0, 1.0, self.t), h, "A")
+        block(m, typ, (breite - 1.0, 0, 1.0), (1.0, 1.0, self.t), h, "B")
+        if typ == "hex20":
+            quadratisch_machen(m)
+        m._pm_netz = konformitaet(m, je_koerper=True)
+        for n in knoten_von(m, "U", lambda x: abs(x[2]) < tol):
+            m.fix(int(n), [0, 1, 2])
+        z1 = 1.0 + self.t
+        oben = {}
+        for g, faktor in (("A", 0.5), ("B", 1.5)):
+            if g == "A" and not self.zwei:
+                continue
+            seiten = seiten_von(m, g, lambda x: abs(x[2] - z1) < tol)
+            tau = faktor * MU * self.p
+            pk.spannung_auf_seiten(m, seiten, lambda x, tau=tau: np.array([tau, 0.0, -self.p]))
+            oben[g] = sorted({n for _i, kn in seiten for n in kn})
+        seiten_b = seiten_von(m, "B", lambda x: abs(x[2] - z1) < tol)
+        federn(m, seiten_b, K_FEDER, [0, 1])
+        slave = kontaktpaar(m, "B" if not self.zwei else "A", "U", 1.0, h, mu=MU)
+        if self.zwei:
+            slave_b = knoten_von(m, "B", lambda x: abs(x[2] - 1.0) < tol)
+            m.contact_pairs[0].slave_nodes = sorted(set(slave) | set(slave_b))
+            slave_a = slave
+        else:
+            slave_a, slave_b = [], slave
+        return m, {"oben": oben, "slave_a": slave_a, "slave_b": slave_b}
+
+    def auswerten(self, m, res, meta):
+        N = self.p * 1.0
+        cf = np.asarray(res.contact_forces, float)
+        R = np.asarray(res.reactions, float)
+        mets = []
+        teile = []
+        if self.zwei:
+            H_a = 0.5 * MU * N
+            mets.append(metrik("Reibung A", (-cf[meta["slave_a"], 0].sum() / H_a - 1) * 100, 1.0, "%"))
+            # Fugenschlupf: Slave-Knoten gegen den deckungsgleichen Knoten der Unterlage
+            X = np.asarray(m.nodes, float)
+            u = u3(res, m)
+            unter = {tuple(np.round(X[n], 9)): n for n in knoten_von(m, "U", lambda x: abs(x[2] - 1.0) < 1e-9)}
+            schlupf = max(abs(u[s, 0] - u[unter[tuple(np.round(X[s], 9))], 0])
+                          for s in meta["slave_a"] if tuple(np.round(X[s], 9)) in unter)
+            u_deckel = float(np.mean(u[meta["oben"]["A"], 0]))
+            mets.append(metrik("Schlupf A", schlupf / u_deckel * 100, 1.0, "%"))
+            teile.append("A: " + ", ".join(f"{v} {k}" for k, v in sorted(status_zaehlen(res, meta["slave_a"]).items())))
+        H_b, reib = 1.5 * MU * N, MU * N
+        mets.append(metrik("Reibung B", (-cf[meta["slave_b"], 0].sum() / reib - 1) * 100, 1.0, "%"))
+        # quer zur Last: das Modell ist in y symmetrisch, die Reibkraft hat
+        # dort die Resultierende null
+        mets.append(metrik("Reibung B quer", -cf[meta["slave_b"], 1].sum() / reib * 100, 1.0, "%"))
+        mets.append(metrik("Feder B", (-R[meta["oben"]["B"], 0].sum() / (H_b - reib) - 1) * 100, 1.0, "%"))
+        teile.append("B: " + ", ".join(f"{v} {k}" for k, v in sorted(status_zaehlen(res, meta["slave_b"]).items())))
+        teile.append(f"Phase-2-Schritte {phase2_runden(res)}")
+        return mets, "; ".join(teile)
+
+    def pruefen(self, m, res, meta):
+        if self.zwei and not phase2_runden(res):
+            return ["Phase 2 der Reibung nicht durchlaufen (kein Schritt mit Phase 2 in res.info['laeufe'])"]
+        return []
+
+
+class ReibungGanzGleiten(ReibungHaftenGleiten):
+    kurz = "K5"
+    name = "Fuge mit Reibung μ 0,3: ein Klotz gleitet ganz, der Rest geht in Federn"
+    soll = ("Unterlage 1 × 1 × 1 m, darauf nur Klotz B wie in K4 (p = 100 N/mm², H = 1,5 μN, Federn "
+            "k = 1.000 kN/mm): Reibkraft = μN = 30.000 kN, Federkraft = H − μN = 15.000 kN. Alle "
+            "Knoten der Gruppe gleiten; für eine ganz gleitende Gruppe nimmt contact.py die grobe "
+            "Reststeifigkeit 1e-3 k_t (_k_res), gleich ob Phase 1 oder 2")
+    grenze_text = "Kräfte 1 %"
+    zwei = False
+
+
+class UngleicheNetze(Fall):
+    kurz, rechenart = "K6", "Kontakt"
+    name = "Kontaktpaar mit ungleichen Netzen (oben 1,5-mal feiner als unten), Druck geht durch"
+    soll = ("zwei Würfel 1 m mit eigenen Knoten, unten Zellweite h, oben 2/3 h (Entwurf 2 × 2 × 2 "
+            "gegen 3 × 3 × 3), Kontaktpaar ohne Reibung, oben Slave; σ_zz = −p = −100 N/mm², "
+            "u_oben = −p L/E (L = 2 m), Auflager p A")
+    grenze_text = "1 N/mm² an jedem Knoten und Element, u 1 %, Auflager 1 %"
+    #: der Zustand ist homogen, beide Netze stellen ihn exakt dar; nur die
+    #: Kontaktformulierung (Knoten gegen Flaeche) muss ihn weitergeben
+    exakt = True
+    kontakt = True
+    h = 0.5
+    p = 100e6
+    fein_oben = 1.5
+
+    def bauen(self, familie, typ, ordnung, h, log):
+        m = leeres_modell()
+        tol = 1e-9
+        block(m, typ, (0, 0, 0), (1.0, 1.0, 1.0), h, "Unten")
+        block(m, typ, (0, 0, 1.0), (1.0, 1.0, 1.0), h / self.fein_oben, "Oben")
+        if typ == "hex20":
+            quadratisch_machen(m)
+        m._pm_netz = konformitaet(m, je_koerper=True)
+        unten = FugeDruck.lagerung(self, m, self.p)[0]
+        oben = [n for n in knoten_von(m, "Oben", lambda x: abs(x[2] - 2.0) < tol)]
+        kontaktpaar(m, "Oben", "Unten", 1.0, h, mu=0.0)
+        return m, {"unten": unten, "oben": oben}
+
+    def auswerten(self, m, res, meta):
+        p = self.p
+        u = u3(res, m)
+        uo = float(u[meta["oben"], 2].mean())
+        du = (uo / (-p * 2.0 / E_ST) - 1) * 100
+        dsv = groesster_fehler(knotenspannung(res, ecken_am_netz(m)), p)
+        R = float(res.reactions[meta["unten"], 2].sum())
+        return [metrik("σ_v", dsv, 1.0, "N/mm²"), metrik("σ_v Element", elementfehler(res, p), 1.0, "N/mm²"),
+                metrik("u_oben", du, 1.0, "%"), metrik("Auflager", (R / p - 1) * 100, 1.0, "%")], ""
+
+
+class Anfangsspalt(Fall):
+    kurz, rechenart = "K7", "Kontakt"
+    name = "Anfangsspalt g = 1 mm schließt sich unter Last (Kontaktpaar, oben Federn)"
+    soll = ("zwei Würfel 1 m, der obere 1 mm angehoben, auf dem Deckel Federn k = 10.000 kN/mm in z "
+            "(nach Flächenanteil verteilt), Last p A = 100.000 kN: F_c = (F − k g)/(1 + 2 k L/(E A)) "
+            "= 82.174 kN durch die Fuge, u_oben = g + 2 F_c L/(E A) = 1,7826 mm, σ = F_c/A in beiden "
+            "Würfeln. Zweiter Weg: derselbe Würfel anliegend mit ContactPair.spiel = g")
+    grenze_text = ("1 N/mm² an jedem Knoten und Element, u 1 %, Kräfte 1 %; beide Wege gleich auf "
+                   "0,01 %")
+    exakt = True
+    kontakt = True
+    h = 0.5
+    p = 100e6
+    g = 1e-3
+    k = 1e10
+
+    def f_c(self):
+        F, k, g = self.p * 1.0, self.k, self.g
+        return (F - k * g) / (1.0 + 2.0 * k * 1.0 / (E_ST * 1.0))
+
+    def u_soll(self):
+        return self.g + 2.0 * self.f_c() * 1.0 / (E_ST * 1.0)
+
+    def modell(self, typ, h, spiel_weg=False):
+        m = leeres_modell()
+        tol = 1e-9
+        dz = 0.0 if spiel_weg else self.g
+        block(m, typ, (0, 0, 0), (1.0, 1.0, 1.0), h, "Unten")
+        block(m, typ, (0, 0, 1.0 + dz), (1.0, 1.0, 1.0), h, "Oben")
+        if typ == "hex20":
+            quadratisch_machen(m)
+        m._pm_netz = konformitaet(m, je_koerper=True)
+        unten = lagern(m, lambda x: abs(x[2]) < tol, [2])
+        lagern(m, lambda x: abs(x[0]) < tol, [0])
+        lagern(m, lambda x: abs(x[1]) < tol, [1])
+        z1 = 2.0 + dz
+        seiten = seiten_von(m, "Oben", lambda x: abs(x[2] - z1) < tol)
+        oben = federn(m, seiten, self.k, [2])
+        pk.spannung_auf_seiten(m, seiten, lambda x: np.array([0.0, 0.0, -self.p]))
+        slave_z = 1.0 + dz
+        tol_ = 1e-9
+        slave = knoten_von(m, "Oben", lambda x: abs(x[2] - slave_z) < tol_)
+        master = facetten_von(m, "Unten", lambda x: abs(x[2] - 1.0) < tol_)
+        m.contact_pairs.append(ContactPair("Fuge", slave_nodes=slave, master_faces=master,
+                                           search_radius=0.5 * h, mu=0.0,
+                                           spiel=self.g if spiel_weg else 0.0))
+        return m, {"unten": unten, "oben": oben}
+
+    def bauen(self, familie, typ, ordnung, h, log):
+        m, meta = self.modell(typ, h)
+        meta.update(typ=typ, h=h)
+        return m, meta
+
+    def auswerten(self, m, res, meta):
+        fc = self.f_c()
+        u = u3(res, m)
+        uo = -float(u[meta["oben"], 2].mean())
+        R_u = float(res.reactions[meta["unten"], 2].sum())
+        R_f = float(res.reactions[meta["oben"], 2].sum())
+        m2, meta2 = self.modell(meta["typ"], meta["h"], spiel_weg=True)
+        r2 = solver.solve_static(m2, workers=1)
+        uo2 = -float(u3(r2, m2)[meta2["oben"], 2].mean())
+        return [metrik("σ_v", groesster_fehler(knotenspannung(res, ecken_am_netz(m)), fc), 1.0, "N/mm²"),
+                metrik("σ_v Element", elementfehler(res, fc), 1.0, "N/mm²"),
+                metrik("u_oben", (uo / self.u_soll() - 1) * 100, 1.0, "%"),
+                metrik("Fuge (Auflager)", (R_u / fc - 1) * 100, 1.0, "%"),
+                metrik("Federn", (R_f / (self.k * self.u_soll()) - 1) * 100, 1.0, "%"),
+                metrik("Weg Spiel", (uo2 / uo - 1) * 100, 0.01, "%")], \
+            f"u_oben {zahl(uo * 1e3, 4)} mm, über spiel {zahl(uo2 * 1e3, 4)} mm; Kontakt 2. Weg konv. " \
+            f"{(r2.info or {}).get('contact_converged')}"
+
+
 FAELLE = [Kragarm(), LameZylinder(), KragarmZweiKoerper(), FugeDruck(), FugeZug(), UebermassFuge(),
+          ReibungHaftenGleiten(), ReibungGanzGleiten(), UngleicheNetze(), Anfangsspalt(),
           Druckwuerfel(), HillRohr(), FugeDruckPlastisch(), UebermassPlastisch()]
 
 
@@ -747,7 +1127,15 @@ def zelle(fall, stufe, familie, typ, ordnung, faktor, h=None):
         z["plast"] = {k: pz.get(k) for k in ("iterationen", "laststufen", "fliessend", "eps_p_max", "verfahren")}
     nw = info.get("loeser_nachweis") or {}
     z["pivots"] = nw.get("gestoerte_pivots_summe")
-    z["singular"] = len(getattr(res, "singular", None) or [])
+    # res.singular: freie Bewegungen. "hebt ab" mit Kraft und Moment null ist
+    # keine: das Programm meldet damit einen Koerper, der nur durch Druck in
+    # der Fuge liegt (K4: die Kloetze auf der Unterlage) - es geht keine Last
+    # ins Nichts. Jeder andere Eintrag zaehlt.
+    sing = list(getattr(res, "singular", None) or [])
+    liegt = [x for x in sing if getattr(x, "art", "") == "hebt ab"
+             and float(getattr(x, "kraft", 1.0)) == 0.0 and float(getattr(x, "moment", 1.0)) == 0.0]
+    z["singular"] = len(sing) - len(liegt)
+    z["hebt_ab"] = [str(getattr(x, "text", x)) for x in liegt]
     try:
         mets, zus = fall.auswerten(m, res, meta)
     except Exception as ex:                      # noqa: BLE001
@@ -755,7 +1143,7 @@ def zelle(fall, stufe, familie, typ, ordnung, faktor, h=None):
         z["befund"] = f"Auswertung gescheitert: {type(ex).__name__}: {ex}"
         return z
     z["metriken"] = mets
-    z["zusatz"] = zus
+    z["zusatz"] = zus + (f"; res.singular: {len(liegt)} × „hebt ab“ mit Kraft 0" if liegt else "")
     raus = [x for x in mets if not (abs(x["wert"]) <= x["grenze"])]
     nicht_konv = []
     if fall.kontakt and z["kontakt_konv"] is not True:
@@ -767,13 +1155,28 @@ def zelle(fall, stufe, familie, typ, ordnung, faktor, h=None):
     nicht_konform = bool(netz.get("doppelknoten") or netz.get("offene_innenseiten"))
     konform_text = (f"Netz nicht knotenkonform: {netz.get('doppelknoten', 0)} Orte mit zwei Knoten, "
                     f"{netz.get('offene_innenseiten', 0)} offene Innenseiten") if nicht_konform else ""
-    if nicht_konv:
+    # Eine Singularitaet oder ein gestoerter Pivot heisst: das Gleichungssystem
+    # war nicht sauber loesbar - das Ergebnis zaehlt dann nicht, auch wenn die
+    # Zahlen passen
+    loeser = []
+    if z["singular"]:
+        loeser.append(f"{z['singular']} freie Bewegungen (res.singular)")
+    if z["pivots"]:
+        loeser.append(f"{ganz(z['pivots'])} gestörte Pivots")
+    pruef = getattr(fall, "pruefen", None)
+    zusatz_rot = pruef(m, res, meta) if pruef else []
+    if nicht_konv or loeser or zusatz_rot:
         z["ergebnis"] = "rot"
-        z["befund"] = "; ".join(nicht_konv + ([konform_text] if konform_text else []))
+        z["befund"] = "; ".join(nicht_konv + loeser + zusatz_rot + ([konform_text] if konform_text else [])
+                                + [f"{x['name']} {zahl(x['wert'])} {x['einheit']}" for x in raus])
+    elif not raus and nicht_konform:
+        # Nie gruen auf einem Netz, das nicht zusammenhaengt: der Wert kann
+        # zufaellig stimmen (die Messstelle liegt nicht am Riss)
+        z["ergebnis"] = "gelb"
+        z["besitzer"] = "Vernetzer"
+        z["befund"] = "Netzfehler: " + konform_text
     elif not raus:
         z["ergebnis"] = "grün"
-        if konform_text:
-            z["befund"] = "Hinweis: " + konform_text
     elif nicht_konform:
         z["ergebnis"] = "rot"
         z["besitzer"] = "Vernetzer"
@@ -781,7 +1184,7 @@ def zelle(fall, stufe, familie, typ, ordnung, faktor, h=None):
                                                          for x in raus))
     elif fall.exakt:
         z["ergebnis"] = "rot"
-        z["befund"] = ("falsches Ergebnis (homogener Zustand, jedes Element stellt ihn exakt dar): "
+        z["befund"] = (f"falsches Ergebnis ({fall.exakt_grund}): "
                        + ", ".join(f"{x['name']} {zahl(x['wert'])} {x['einheit']}" for x in raus))
     else:
         z["ergebnis"] = "gelb"
@@ -848,8 +1251,7 @@ def markdown(alle, faelle, laufzeit):
         out.append(f"### {f.kurz} {f.name}")
         out.append("")
         out.append(f"Soll: {f.soll}. Grenze: {f.grenze_text}."
-                   + (" Homogener Zustand: jedes Element stellt ihn exakt dar, jede Überschreitung ist rot."
-                      if f.exakt else ""))
+                   + (f" Exakt ({f.exakt_grund}): jede Überschreitung ist rot." if f.exakt else ""))
         out.append("")
         out.append("| Stufe | Element | h [m] | Ergebnis | Fehler | Kontakt konv. | Plast. konv. | "
                    "gest. Pivots | Unbekannte | Zeit [s] | Bemerkung |")
@@ -872,6 +1274,89 @@ def markdown(alle, faelle, laufzeit):
     return "\n".join(out)
 
 
+def _setze(alt: dict, obj, name, wert):
+    alt.setdefault((obj, name), getattr(obj, name))
+    setattr(obj, name, wert)
+
+
+def gegenproben():
+    """Kontrolllaeufe (--gegenprobe). Zwei Arten:
+
+    * **ohne das Gepruefte**: die Pruefung muss dann fehlschlagen (sonst
+      prueft sie nichts) - Phase 2 unterdrueckt, Spalt uebergangen, Mittel
+      statt jeder Koerperzeile, gleiche statt ungleicher Netze;
+    * **mit einer Kur als Monkeypatch**: belegt die Ursache einer roten Zelle.
+      Am Programmcode aendert das nichts; nach jedem Lauf ist alles wie vorher.
+    """
+    from statik3d import contact as ct
+    aus = []
+
+    def lauf(titel, fall, stufe, typ, ordnung, faktor, patch=None, erwartet=""):
+        global ZEILEN_MITTELN
+        alt: dict = {}
+        mitteln = ZEILEN_MITTELN
+        try:
+            if patch:
+                patch(alt)
+            z = zelle(fall, stufe, "hex" if typ.startswith("hex") else "tet", typ, ordnung, faktor)
+        finally:
+            for (obj, name), wert in alt.items():
+                setattr(obj, name, wert)
+            ZEILEN_MITTELN = mitteln
+        z["gegenprobe"] = titel
+        z["erwartet"] = erwartet
+        print(f"[{titel}] erwartet {erwartet}: " + zeile(z)
+              + (f"\n    Befund: {z['befund'][:240]}" if z.get("befund") else "")
+              + (f"\n    {z['zusatz'][:240]}" if z.get("zusatz") else ""), flush=True)
+        aus.append(z)
+        return z
+
+    def ohne_phase2(alt):
+        _setze(alt, ct.ContactSystem, "_full_slip_groups",
+               lambda self: {ct._group(c): True for c in self.cons if c.mu > 0 and c.ct is not None})
+
+    def kur_k4(alt):
+        _setze(alt, ct, "SLIP_STIFFNESS_FINE", 1e-12)
+        for n in ("GLEIT_ANTEIL", "GLEIT_ANTEIL_MIN", "GLEIT_ANTEIL_MAX"):
+            _setze(alt, ct, n, 1.0)
+
+    def nur_reststeifigkeit(alt):
+        _setze(alt, ct, "SLIP_STIFFNESS_FINE", 1e-12)
+
+    def kur_k5(alt):
+        _setze(alt, ct.ContactSystem, "_full_slip_groups", lambda self: {})
+        _setze(alt, ct, "SLIP_STIFFNESS_FINE", 1e-12)
+
+    def spalt_uebergehen(alt):
+        _setze(alt, ct, "AUFLIEGEND", 1.0)
+
+    def zeilen_mitteln(alt):
+        global ZEILEN_MITTELN
+        ZEILEN_MITTELN = True
+
+    gleiche = UngleicheNetze()
+    gleiche.fein_oben = 1.0
+    k4, k5, k7 = ReibungHaftenGleiten(), ReibungGanzGleiten(), Anfangsspalt()
+    for typ in ("tet4", "hex8"):
+        lauf("K4 ohne Phase 2", k4, "Entwurf", typ, 1, 1.0, ohne_phase2, "rot mit „Phase 2 nicht durchlaufen“")
+        lauf("K4 Kur: Reststeifigkeit 1e-12", k4, "Entwurf", typ, 1, 1.0, nur_reststeifigkeit, "Feder B besser")
+        lauf("K4 Kur: Reststeifigkeit 1e-12 und alle Verstöße zugleich", k4, "Entwurf", typ, 1, 1.0, kur_k4,
+             "grün")
+        lauf("K5 Kur: keine Gruppe ganz rutschend, Reststeifigkeit 1e-12", k5, "Entwurf", typ, 1, 1.0,
+             kur_k5, "grün")
+        lauf("K7 Spalt übergangen (contact.AUFLIEGEND = 1)", k7, "Entwurf", typ, 1, 1.0, spalt_uebergehen,
+             "rot")
+        lauf("K6 mit gleichen Netzen", gleiche, "Entwurf", typ, 1, 1.0, None, "grün")
+    for fall, stufe, typ, ordnung in ((KragarmZweiKoerper(), "Entwurf", "hex8", 1),
+                                      (KragarmZweiKoerper(), "Mittel", "tet10", 2),
+                                      (KragarmZweiKoerper(), "Mittel", "hex20", 2),
+                                      (FugeDruck(), "Entwurf", "tet4", 1),
+                                      (FugeDruck(), "Entwurf", "hex8", 1)):
+        lauf("Mittel der Körperzeilen (Stand 0b17b12)", fall, stufe, typ, ordnung, 1.0, zeilen_mitteln,
+             "σ_v kleiner oder gleich")
+    return aus
+
+
 def main(argv=None):
     import argparse
     ap = argparse.ArgumentParser()
@@ -879,7 +1364,16 @@ def main(argv=None):
     ap.add_argument("--json", default=None)
     ap.add_argument("--ohne-zusatz", action="store_true")
     ap.add_argument("--md", default=None)
+    ap.add_argument("--gegenprobe", action="store_true", help="nur die Kontrolllaeufe")
     a = ap.parse_args(argv)
+    if a.gegenprobe:
+        t0 = time.perf_counter()
+        aus = gegenproben()
+        print(f"Laufzeit {zahl((time.perf_counter() - t0) / 60, 1)} min", flush=True)
+        if a.json:
+            with open(a.json, "w", encoding="utf-8") as fh:
+                json.dump({"datum": DATUM, "gegenproben": aus}, fh, ensure_ascii=False, indent=1, default=str)
+        return aus
     faelle = [f for f in FAELLE if not a.fall or f.kurz in a.fall]
     print(f"Prüfmatrix {DATUM}: {len(faelle)} Fälle x 3 Stufen x 2 Familien, "
           f"MKL_NUM_THREADS={os.environ.get('MKL_NUM_THREADS')}", flush=True)
