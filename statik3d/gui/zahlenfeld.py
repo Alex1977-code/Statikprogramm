@@ -101,6 +101,25 @@ class Zahlenfeld(QtWidgets.QLineEdit):
         self.setzen(wert)
 
     # -- Werte -------------------------------------------------------------
+    @property
+    def lesung(self) -> "zl.Lesung":
+        """Die Lesung des aktuellen Texts. Sie wird in _pruefen (textChanged)
+        gebildet - schreibt das Programm aber bei blockierten Signalen
+        (blockSignals(True)), kommt textChanged nicht an, und das Feld las
+        weiter den alten Wert: die Parameterprofile der Querschnittsmaske
+        setzen ihre Vorgaben so und rechneten mit 0 mm (Oberflaechenpruefung
+        25.09.2026). Darum hier neu lesen, sobald der Text ein anderer ist."""
+        text = self.text()
+        if text != self._gelesen_text:
+            self._lesung = zl.lesen(text, self.ganz)
+            self._gelesen_text = text
+        return self._lesung
+
+    @lesung.setter
+    def lesung(self, wert) -> None:
+        self._lesung = wert
+        self._gelesen_text = self.text()
+
     def setzen(self, wert) -> None:
         """Wert zeigen: Zahlen formatiert, Text so, wie er ist, None leer."""
         if wert is None:

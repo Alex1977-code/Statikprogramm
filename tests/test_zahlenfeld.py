@@ -279,6 +279,38 @@ def test_programmwerte():
     d.deleteLater()
 
 
+def test_blockierte_signale():
+    """Schreibt das Programm bei blockierten Signalen (blockSignals(True)) in
+    ein Zahlenfeld, kam textChanged nicht an und das Feld las weiter den alten
+    Wert. Gemessen 25.09.2026 in der Oberflaechenpruefung: die Parameterprofile
+    der Querschnittsmaske setzen ihre Vorgaben so und rechneten mit 0 mm
+    („Parameterprofil mit Vorschau und Wpl“, „Doppel-T unsymmetrisch“)."""
+    _app()
+    from statik3d.gui import dialogs as dg
+    from statik3d.gui import zahlenfeld as zf
+    f = dg.NumEdit(0.0, 74)
+    f.blockSignals(True)
+    f.set(200.0)
+    f.blockSignals(False)
+    check("NumEdit.set bei blockierten Signalen: value() liest den neuen Wert",
+          f.value() == 200.0, f"{f.text()!r} -> {f.value()!r}")
+    g = zf.Zahlenfeld(None)
+    g.blockSignals(True)
+    g.setText("2.000.000")
+    g.blockSignals(False)
+    check("… auch eine ungültige Eingabe gilt sofort als ungültig", g.ungueltig(), g.text())
+    g.blockSignals(True)
+    g.setText("12,5")
+    g.blockSignals(False)
+    check("… und die nächste gültige wieder als 12,5", g.wert() == 12.5 and not g.ungueltig(), g.text())
+    from statik3d.gui import profilmaske as pm
+    mk = pm.QuerschnittMaske(None)
+    mk.cb_art.setCurrentText("T geschweißt")
+    check("Parameterprofil „T geschweißt“: Vorschau und Wpl aus den Vorgaben",
+          len(mk.bild_param.umrisse) == 1 and "Wpl" in mk.lbl_param.text(), mk.lbl_param.text()[:80])
+    mk.deleteLater()
+
+
 def test_tippen():
     """Zwischenstaende beim Tippen („-“, „2 0“, „1e“) sind neutral; rot wird
     es erst beim Verlassen oder Uebernehmen."""
@@ -1340,7 +1372,7 @@ def main():
     import faulthandler
     faulthandler.dump_traceback_later(900, exit=True)
     for t in (test_regel, test_eine_quelle, test_maske, test_geaenderte_felder, test_dialog,
-              test_programmwerte, test_tippen, test_tabellenzelle, test_register_einheiten,
+              test_programmwerte, test_blockierte_signale, test_tippen, test_tabellenzelle, test_register_einheiten,
               test_ergebnisse_behalten, test_nachbesserung, test_bemerkung_mit_vernetzen,
               test_verlassen_mit_tab, test_textfelder_zahlenregel, test_listen_anzahl,
               test_anzeige_nie_wissenschaftlich):
