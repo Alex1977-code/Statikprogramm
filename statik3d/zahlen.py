@@ -196,24 +196,99 @@ def feldwert(wert, vorgabe=None, ganz: bool = False):
 LISTENTRENNER = re.compile(r"[;\s]+|,(?![0-9])")
 
 
-def zahlenliste(text) -> list:
+def anzahl_text(anzahl) -> str:
+    """„3“ oder „1 oder 2“ fuer die Meldung einer Liste."""
+    if isinstance(anzahl, (tuple, list, set, frozenset)):
+        werte = sorted(int(a) for a in anzahl)
+        if len(werte) > 1:
+            return ", ".join(str(a) for a in werte[:-1]) + f" oder {werte[-1]}"
+        return str(werte[0])
+    return str(int(anzahl))
+
+
+def anzahl_pruefen(teile: list, anzahl, feld: str = "", text=None) -> list:
+    """Die Anzahl der Eintraege einer Liste pruefen (25.09.2026).
+
+    Bis dahin kuerzten die Listenfelder ueberzaehlige Eintraege still
+    („1, 0, 0, 5“ wurde die Achse 1, 0, 0) oder verwarfen die ganze Liste
+    (RBE3-Gewichte: still „alle gleich“). Eine leere Liste bleibt leer - die
+    Vorgabe setzt der Aufrufer. ``anzahl`` ist eine Zahl oder mehrere
+    erlaubte (Teilung „4“ oder „4, 5“); None prueft nichts."""
+    if anzahl is None or not teile:
+        return teile
+    erlaubt = ({int(a) for a in anzahl} if isinstance(anzahl, (tuple, list, set, frozenset))
+               else {int(anzahl)})
+    if len(teile) in erlaubt:
+        return teile
+    roh = str(text).strip() if text is not None else ""
+    werte = "Wert" if erlaubt == {1} else "Werte"
+    raise ValueError(f"{feld + ': ' if feld else ''}{anzahl_text(anzahl)} {werte} erwartet, "
+                     f"{len(teile)} gefunden" + (f" („{roh}“)" if roh else "") + ".")
+
+
+def listenteile(text, feld: str = "") -> list:
+    """Die Eintraege einer Zahlenliste als Text (25.09.2026).
+
+    * Steht ein „;“ im Text, trennt **nur** das Semikolon: Leerzeichen in
+      einem Eintrag sind dann Tausendertrennung („12,5; 1 000“ = 12,5 und
+      1 000).
+    * Sonst trennen Komma (ohne folgende Ziffer) und Leerzeichen. Dann ist
+      „1 000“ nicht eindeutig - eine Zahl oder zwei Eintraege? - und wird mit
+      Meldung abgewiesen, statt still „1“ und „0“ zu werden (bis 25.09.2026
+      wurde „12,5; 1 000“ als Versatz z = 1 mm gespeichert: das Leerzeichen
+      trennte, der dritte Eintrag fiel weg)."""
+    t = _normal(text)
+    if not t:
+        return []
+    if ";" in t:
+        return [x.strip() for x in t.split(";") if x.strip()]
+    stuecke = re.split(r"([;\s]+|,(?![0-9]))", t)
+    for i in range(0, len(stuecke) - 2, 2):
+        vorn, trenner, hinten = stuecke[i], stuecke[i + 1], stuecke[i + 2]
+        if not (vorn and hinten and trenner.isspace()):
+            continue
+        # „0 100“ schreibt niemand fuer hundert; „1 000“ oder „0,125 5“ schon
+        if re.fullmatch(r"[+-]?0\d*", vorn):
+            continue
+        zusammen = f"{vorn} {hinten}"
+        les = lesen(zusammen)
+        if les.status in (GUELTIG, FRAGE):
+            raise ValueError(
+                f"{feld + ': ' if feld else ''}„{zusammen}“ ist in einer Liste nicht eindeutig – "
+                f"eine Zahl ({zahl_text(les.wert)}) oder zwei Einträge? Einträge mit „;“ trennen "
+                f"(dann gilt das Leerzeichen als Tausendertrennung) oder ohne Leerzeichen schreiben.")
+    return [x.strip() for x in stuecke[::2] if x.strip()]
+
+
+def zahlenliste(text, anzahl=None, feld: str = "") -> list:
     """Mehrere Zahlen in einem Textfeld (Stab-Versatz y, z; Ersatzachse;
     Gewichte), jede nach :func:`feldwert` (25.09.2026).
 
-    In einer Liste trennen Leerzeichen die Eintraege - Tausender mit
-    Leerzeichen gibt es hier nicht. Ein mehrdeutiger oder ungueltiger Eintrag
-    wirft ValueError, statt still wegzufallen oder 1 zu werden."""
-    teile = [t.strip() for t in LISTENTRENNER.split(str(text or "").strip()) if t.strip()]
-    return [feldwert(t) for t in teile]
+    Getrennt wird nach :func:`listenteile`. Ein mehrdeutiger oder ungueltiger
+    Eintrag wirft ValueError, statt still wegzufallen oder 1 zu werden; mit
+    ``anzahl`` ebenso eine Liste mit zu vielen oder zu wenigen Eintraegen
+    (:func:`anzahl_pruefen`). ``feld`` steht vorn in der Meldung."""
+    werte = []
+    for t in listenteile(text, feld):
+        try:
+            werte.append(feldwert(t))
+        except ValueError as ex:
+            raise ValueError(f"{feld}: {ex}" if feld else str(ex)) from None
+    return anzahl_pruefen(werte, anzahl, feld, text)
 
 
-def zahl_text(x, tausender: bool = True, stellen: int = STELLEN) -> str:
+def zahl_text(x, tausender: bool = True, stellen: int = STELLEN, punkt: bool = False) -> str:
     """Eine Zahl zum Lesen: Dezimalkomma, nie wissenschaftlich, Tausender mit
     Leerzeichen (``tausender``), bis ``stellen`` gueltige Ziffern.
 
     2e6 -> „2 000 000“, 1234.5678 -> „1 234,5678“, 1e-5 -> „0,00001“,
     0.1 + 0.2 -> „0,3“. Ohne ``tausender`` fuer Felder, die ein fremder
-    Leser (Tabellenzelle, Formel) ohne Leerzeichen erwartet."""
+    Leser (Tabellenzelle, Formel) ohne Leerzeichen erwartet.
+
+    ``punkt``: Dezimalpunkt statt Komma - fuer Texte, die bis 25.09.2026 mit
+    einfachem :g geschrieben wurden und dort den Punkt zeigten (Modellbaum,
+    Ansicht, Meldungen); sie behalten ihr Trennzeichen, nur der Exponent
+    („2.5e+06 kg“) faellt weg."""
     try:
         x = float(x)
     except (TypeError, ValueError):
@@ -231,4 +306,4 @@ def zahl_text(x, tausender: bool = True, stellen: int = STELLEN) -> str:
     vorn, _, hinten = s.lstrip("-").partition(".")
     if tausender and len(vorn) > 3:
         vorn = f"{int(vorn):,}".replace(",", " ")
-    return vz + vorn + ("," + hinten if hinten else "")
+    return vz + vorn + (("." if punkt else ",") + hinten if hinten else "")

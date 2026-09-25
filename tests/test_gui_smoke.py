@@ -4350,12 +4350,15 @@ def main():
         kn_ = mk_s._felder["knoten"].text()
         mem_s = ms_.members[stabname_]
         sec_s = ms_.sections[ms_.elements[mem_s.elements[0]].sec]
+        from statik3d import zahlen as _zl_
         check("Stabmaske nennt Knoten (Anfang → Ende mit Koordinaten) und Länge",
               kn_.startswith("K") and "→" in kn_ and " m" in kn_ and " m (" in mk_s._felder["laenge"].text(),
               kn_[:80] + " | " + mk_s._felder["laenge"].text())
         check("… den Querschnitt mit Bezeichnung, Maßen in mm und Kennwerten in cm-Einheiten",
               qs_.startswith(sec_s.name) and "mm)" in qs_ and "A " in qs_ and "cm²" in qs_ and "I_y" in qs_ and "cm⁴" in qs_
-              and f"h {sec_s.h * 1e3:g}" in qs_, qs_[:120])
+              # Masse wie die Kennwerte daneben nach zahlen.zahl_text (25.09.2026:
+              # bis dahin :g, das grosse Werte mit Exponent schrieb)
+              and f"h {_zl_.zahl_text(sec_s.h * 1e3)}" in qs_, qs_[:120])
         check("… und den Werkstoff mit E und f_y",
               "E " in mk_s._felder["mat_info"].text() and "GPa" in mk_s._felder["mat_info"].text()
               and "f_y" in mk_s._felder["mat_info"].text(), mk_s._felder["mat_info"].text()[:80])

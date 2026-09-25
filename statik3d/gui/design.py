@@ -869,8 +869,8 @@ class Modellbaum(QtWidgets.QTreeWidget):
                          for name, x in model.materials.items()], "werkstoff",
                     "werkstoffe")
         dk = self._zweig(eig, "Dicken", len(model.shells), "dicken")
-        self._liste(dk, [(name, f"{getattr(x, 't', 0) * 1e3:g} mm", name,
-                          f"{name}: t = {getattr(x, 't', 0) * 1e3:g} mm")
+        self._liste(dk, [(name, f"{zl.zahl_text(getattr(x, 't', 0) * 1e3, punkt=True)} mm", name,
+                          f"{name}: t = {zl.zahl_text(getattr(x, 't', 0) * 1e3, punkt=True)} mm")
                          for name, x in model.shells.items()], "dicke", "dicken")
 
         # ---- Lager und Kopplungen ---------------------------------------
@@ -912,9 +912,9 @@ class Modellbaum(QtWidgets.QTreeWidget):
             if pm:
                 z = self._zweig(vb, "Punktmassen", len(pm), "kontakt")
                 self._liste(z, [(x.name or f"Punktmasse {i + 1}",
-                                 f"{x.masse:g} kg", str(i),
-                                 f"Knoten {x.node}: m = {x.masse:g} kg, "
-                                 f"J = {', '.join(f'{v:g}' for v in (x.traegheit or []))} kg m²")
+                                 f"{zl.zahl_text(x.masse, punkt=True)} kg", str(i),
+                                 f"Knoten {x.node}: m = {zl.zahl_text(x.masse, punkt=True)} kg, "
+                                 f"J = {', '.join(zl.zahl_text(v, punkt=True) for v in (x.traegheit or []))} kg m²")
                                 for i, x in enumerate(pm)], "punktmasse", "punktmassen")
             if dp:
                 z = self._zweig(vb, "Dämpfer", len(dp), "kontakt")
@@ -1054,8 +1054,8 @@ class Modellbaum(QtWidgets.QTreeWidget):
                     continue
                 if art == "eigengewicht":
                     g = lasten[0]
-                    zahl = (f"g = ({g[0]:g}, {g[1]:g}, {g[2]:g}) m/s²" if (g[0] or g[1])
-                            else f"g_z = {g[2]:g} m/s²")
+                    zahl = (f"g = ({zl.zahl_text(g[0], punkt=True)}, {zl.zahl_text(g[1], punkt=True)}, {zl.zahl_text(g[2], punkt=True)}) m/s²" if (g[0] or g[1])
+                            else f"g_z = {zl.zahl_text(g[2], punkt=True)} m/s²")
                 else:
                     zahl = len(lasten)
                 self._zweig(it, titel, zahl, "lastart", schluessel=f"{name}|{art}",

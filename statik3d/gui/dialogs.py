@@ -1478,7 +1478,7 @@ class JointDialog(QtWidgets.QDialog):
         z = ["Momenten-Rotations-Verhalten (EN 1993-1-8, Kap. 5 und 6.3)",
              "=" * 78,
              f"S_j,ini = {S}"
-             + (f", Rechenwert S_j = {g.S_j / 1e6:.1f} MNm/rad (eta = {g.eta:g})"
+             + (f", Rechenwert S_j = {g.S_j / 1e6:.1f} MNm/rad (eta = {zl.zahl_text(g.eta, punkt=True)})"
                 if math.isfinite(g.S_j) and g.S_j > 0 else ""),
              f"Klasse:  {g.beschreibung()}",
              f"M_j,Rd = {g.M_j_Rd / 1e3:.1f} kNm ({g.tragklasse or '-'})",
@@ -1546,7 +1546,7 @@ class BeulfeldDialog(QtWidgets.QDialog):
         form.addRow(self.lbl_l, self.ed_l)
         self.cb_qual = QtWidgets.QComboBox()
         for k, (q, text) in QUALITAET.items():
-            self.cb_qual.addItem(f"{text} (Q = {q:g})", k)
+            self.cb_qual.addItem(f"{text} (Q = {zl.zahl_text(q, punkt=True)})", k)
         if f:
             self.cb_qual.setCurrentIndex(max(0, self.cb_qual.findData(f.qualitaet)))
         else:

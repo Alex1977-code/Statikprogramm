@@ -17,6 +17,7 @@ import sys
 from PySide6 import QtCore, QtWidgets
 
 from .. import farm, parallel
+from .. import zahlen as zl
 from .worker import SolveWorker
 
 
@@ -110,7 +111,7 @@ class RechenhilfeFenster(QtWidgets.QWidget):
     def suchen(self, sekunden: float = 3.0):
         if self.worker is not None and self.worker.isRunning():
             return
-        self.melden(f"Suche Arbeitsplätze im Netz ({sekunden:g} s) …")
+        self.melden(f"Suche Arbeitsplätze im Netz ({zl.zahl_text(sekunden, punkt=True)} s) …")
         self.b_suchen.setEnabled(False)
         self.worker = SolveWorker(lambda progress: farm.server_suchen(sekunden, self.suchport))
         self.worker.finished_ok.connect(self._gefunden)

@@ -2131,9 +2131,27 @@ bzw. rot unter dem Bild, OK bleibt gesperrt.
 
 **Listenfelder** – Versatz y, z eines Stabs, Ersatzachse einer Feder,
 Gewichte eines starren Körpers, ψ0/ψ1/ψ2 eines Lastfalls – lesen jede Zahl
-nach derselben Regel, aber ohne Tausender: das Leerzeichen trennt dort die
-Einträge (Komma mit Leerzeichen oder Semikolon ebenso, „1,5, 2“ sind zwei
-Zahlen). „1.000“ wird abgewiesen, der Stab bleibt, wie er war.
+nach derselben Regel. Getrennt wird so:
+
+* **mit Semikolon**: steht ein „;“ im Feld, trennt nur das Semikolon, und
+  ein Leerzeichen in einem Eintrag ist Tausendertrennung – „12,5; 1 000“
+  ist 12,5 und 1 000;
+* **ohne Semikolon** trennen Leerzeichen und Komma mit Leerzeichen die
+  Einträge („1,5, 2“ und „1 0 0“ sind zwei bzw. drei Zahlen). „1 000“ ist
+  dann nicht eindeutig – eine Zahl oder zwei Einträge? – und wird mit
+  Meldung abgewiesen: mit „;“ trennen oder „1000“ schreiben;
+* ψ0/ψ1/ψ2 trennt der Schrägstrich („0,7/0,5/0,3“).
+
+Jedes dieser Felder hat eine **feste Anzahl**: Versatz zwei Werte (y, z),
+Ersatzachse drei, ψ drei, Gewichte eines je angeschlossenem Knoten. Zu
+viele oder zu wenige Einträge werden mit Meldung abgewiesen (Feld,
+erwartete und gefundene Anzahl, etwa „Ersatzachse x, y, z: 3 Werte
+erwartet, 4 gefunden“); ein leeres Feld gilt als Vorgabe (kein Versatz,
+Achse x, Gewichte alle gleich, ψ aus der Kategorie). Ebenso wird „1.000“
+abgewiesen. Das Objekt bleibt dann, wie es war, und es entsteht kein
+Rückgängig-Schritt. Bis 25.09.2026 wurden überzählige Einträge still
+weggelassen – „12,5; 1 000“ wurde Versatz z = 1 mm, Gewichte mit falscher
+Anzahl still „alle gleich“.
 
 **Ausnahmen**, die bewusst anders lesen:
 
@@ -2142,9 +2160,13 @@ Zahlen). „1.000“ wird abgewiesen, der Stab bleibt, wie er war.
 * der **Schwingbeiwert** der Ermüdungsmaske: „1.000“ ist dort 1 (ein
   Beiwert von tausend kommt nicht vor), die Lastspielzahl daneben weist
   „500.000“ dagegen ab;
-* **Nummernlisten** in den Masken (Knoten einer Linie oder eines Stabs,
-  Elemente, angeschlossene Knoten, Teilung) lesen nur ganze Nummern,
-  anderes fällt weg;
+* **Nummernlisten** in den Masken (Knoten einer Linie, Elemente eines
+  Stabs, angeschlossene Knoten) lesen nur ganze Nummern, anderes fällt
+  weg. Nummernlisten fester Länge – die zwei Knoten eines Stabelements,
+  die Knoten eines Elements in der Tabelle, die Teilung (eine Zahl für
+  alle Richtungen oder zwei bei einer Fläche, drei bei einem Volumen,
+  „4 × 4“ geht auch) – weisen seit 25.09.2026 einen Eintrag, der keine
+  ganze Zahl ist, und eine falsche Anzahl mit Meldung ab;
 * **Formeln** in Tabellenzellen („= 2*3,5“) und die **Filterzeile** der
   Tabellen („> 1000“, „2..5“) lesen Komma oder Punkt ohne Tausender;
 * **noch nicht umgestellt** sind die Drehfelder mit Pfeilen (z. B. Teilungen,
@@ -2190,7 +2212,18 @@ Feder 3 300 000 kN/m“ (bis 25.09.2026 „3.3e+06 kN/m“). Dasselbe gilt seit
 25.09.2026 für die übrigen Hinweise und Texte der Oberfläche: Lasttexte der
 Lastfallmaske (Komponenten durch Semikolon getrennt, „F = (0; 0; -10) kN“),
 Wirkung und Federn der Lager und Gelenke, Federn und Grenzschichten im
-Modellbaum, Querschnittswerte, Übermaß, freie Bewegungen.
+Modellbaum, Querschnittswerte, Übermaß, freie Bewegungen – und, nach einer
+Quelltextprüfung aller Anzeigetexte der Oberfläche, auch Punktmassen,
+Dicken und Eigengewicht im Modellbaum („2 500 000 kg“ statt „2.5e+06 kg“),
+die Lasttabelle (Abschnitte, Richtungen, Vorspannkraft, Übermaß), ψ in der
+Lastfalltabelle, β und Kipplänge in der Stabtabelle, Winkel der Stellungen,
+Suchweite der Kontakte, die Skala in der Kopfzeile sowie die Meldungen in
+Statusleiste und Protokoll. Diese Texte behalten ihr bisheriges
+Trennzeichen (dort, wo bisher ein Punkt stand, bleibt er), nur der
+Exponent fällt weg. Bewusst unverändert bleiben Texte, die wieder gelesen
+oder als Name benutzt werden: die Faktoren der Kombinationsformel, die
+Kerbfall-Wahl der Schwingungsmaske, der Name einer Dicke („t = 12 mm“)
+und eines Parameterprofils („R 200x100“) sowie die CSV-Ausgabe.
 Werte, die das Programm selbst in ein Feld schreibt (vorhandene Federn im
 Dialog Nichtlinearität, Normale und Ursprung der Schnittebene), sind nie
 mehrdeutig: 123,456 kN/m steht als „123,456“ da, OK bleibt frei.

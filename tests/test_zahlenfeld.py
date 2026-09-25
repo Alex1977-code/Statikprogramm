@@ -1130,6 +1130,122 @@ def test_textfelder_zahlenregel():
     w.error = alt_error
 
 
+def test_listen_anzahl():
+    """Listenfelder mit fester Anzahl (25.09.2026, letzte Runde der
+    Gegenpruefung): bis dahin kuerzten sie ueberzaehlige Eintraege still -
+    „12,5; 1 000“ wurde Versatz z = 1 mm, „1, 0, 0, 5“ eine Achse aus den
+    ersten drei, RBE3-Gewichte mit falscher Anzahl still „alle gleich“.
+    Jetzt: Meldung mit Feldname, erwarteter und gefundener Anzahl; das Objekt
+    bleibt, es entsteht kein leerer Rueckgaengig-Schritt. Leerzeichen als
+    Tausender innerhalb eines Eintrags nur, wenn „;“ trennt."""
+    from statik3d import zahlen as zl
+    w, app = _fenster()
+    fehler = []
+    alt_error = w.error
+    w.error = lambda text, *a, **k: (fehler.append(str(text)), w.info("FEHLER " + str(text)))
+
+    def meldung(fn, *a):
+        try:
+            fn(*a)
+        except (ValueError, TypeError) as ex:
+            return str(ex)
+        return ""
+
+    # die Regel ohne Oberflaeche
+    try:
+        gelesen = zl.zahlenliste("12,5; 1 000", 2, "Versatz")
+    except (ValueError, TypeError) as ex:
+        gelesen = repr(ex)
+    check("zahlenliste mit Anzahl: „12,5; 1 000“ = [12,5; 1000] („;“ trennt, Leerzeichen = Tausender)",
+          gelesen == [12.5, 1000.0], str(gelesen))
+    t = meldung(zl.zahlenliste, "12,5 1 000", 2, "Versatz")
+    check("… „12,5 1 000“ ohne „;“: Meldung nennt „1 000“ und „;“ (nicht still 3 Einträge)",
+          "1 000" in t and ";" in t, t)
+    t = meldung(zl.zahlenliste, "1, 0, 0, 5", 3, "Ersatzachse x, y, z")
+    check("… „1, 0, 0, 5“ für drei Werte: Meldung mit Feldname, 3 erwartet, 4 gefunden",
+          "Ersatzachse" in t and "3" in t and "4" in t, t)
+    t = meldung(zl.zahlenliste, "5", 2, "Versatz")
+    check("… zu wenige („5“ für y, z): Meldung", "2" in t and "1" in t, t)
+    try:
+        ok = zl.zahlenliste("1 0 0", 3) == [1.0, 0.0, 0.0] and zl.zahlenliste("", 3) == []
+    except (ValueError, TypeError):
+        ok = False
+    check("… „1 0 0“ = drei Werte, leer = [] (Vorgabe beim Aufrufer)", ok)
+
+    w.load_example("frame")
+    app.processEvents()
+    m = w.model
+    m.add_feder_prop("FT", [1e6] * 6, [1.0, 0.0, 0.0])
+    m.add_starrkoerper(0, [1, 2], "RBE3", [1.0, 2.0])
+    w.refresh_all()
+    app.processEvents()
+
+    def fall(titel, art, name, key, eingabe, lesen, soll):
+        fehler.clear()
+        mk = w._objektmaske(art, name) or w.maskenrand.maske
+        vorher, u0 = lesen(), _undo_n(w)
+        mk.setzen(key, eingabe)
+        mk.anwenden()
+        app.processEvents()
+        nachher, u1 = lesen(), _undo_n(w)
+        check(f"{titel} „{eingabe}“: abgewiesen, Meldung, Objekt und Rückgängig unverändert",
+              nachher == vorher and u1 == u0 and bool(fehler) and all(s in fehler[-1] for s in soll),
+              f"{vorher} -> {nachher} | undo {u0}->{u1} | {fehler[-1:]}")
+
+    def versatz():
+        return [list(x) for x in (m.elements[0].exzentrizitaet or [])]
+    fall("Stab-Versatz", "stabelement", "0", "ex_a", "12,5 1 000", versatz, ("1 000", ";"))
+    fall("Stab-Versatz", "stabelement", "0", "ex_a", "1; 2; 3", versatz, ("Versatz", "2", "3"))
+    fall("Stab-Versatz", "stabelement", "0", "ex_a", "5", versatz, ("Versatz", "2", "1"))
+    kn = ", ".join(str(n) for n in m.elements[0].nodes)
+    fall("Stab-Knoten", "stabelement", "0", "kn", kn + ", x", versatz, ("Knoten", "x"))
+    fehler.clear()
+    mk = w._objektmaske("stabelement", "0") or w.maskenrand.maske
+    mk.setzen("ex_a", "12,5; 1 000")
+    mk.anwenden()
+    app.processEvents()
+    ex = m.elements[0].exzentrizitaet or []
+    check("Stab-Versatz „12,5; 1 000“ = y 12,5 mm, z 1 000 mm (nicht still z = 1 mm)",
+          bool(ex) and abs(ex[0][1] - 0.0125) < 1e-12 and abs(ex[0][2] - 1.0) < 1e-12 and not fehler,
+          f"{ex} {fehler[-1:]}")
+
+    def achse():
+        return list(m.federn["FT"].achse)
+    fall("Feder Ersatzachse", "feder", "FT", "achse", "1, 0, 0, 5", achse, ("Ersatzachse", "3", "4"))
+    fall("Feder Ersatzachse", "feder", "FT", "achse", "1.000, 0, 0", achse, ("1.000",))
+
+    def gewichte():
+        return list(m.starrkoerper[-1].gewichte or [])
+    i_sk = str(len(m.starrkoerper) - 1)
+    fall("RBE3 Gewichte", "starrkoerper", i_sk, "gewichte", "1 000, 2", gewichte, ("1 000", ";"))
+    fall("RBE3 Gewichte", "starrkoerper", i_sk, "gewichte", "1; 2; 3", gewichte, ("Gewichte", "2", "3"))
+    fehler.clear()
+    mk = w._objektmaske("starrkoerper", i_sk) or w.maskenrand.maske
+    mk.setzen("gewichte", "1 000; 2")
+    mk.anwenden()
+    app.processEvents()
+    check("RBE3 Gewichte „1 000; 2“ = [1000, 2]", gewichte() == [1000.0, 2.0] and not fehler,
+          f"{gewichte()} {fehler[-1:]}")
+
+    lf = next(iter(m.load_cases))
+
+    def lastfall():
+        lc = m.load_cases[lf]
+        return (lc.psi, lc.category, lc.description)
+    fall("Lastfall ψ", "lastfall", lf, "psi", "0,7/0,5", lastfall, ("ψ", "3", "2"))
+    fall("Lastfall ψ", "lastfall", lf, "psi", "1.000/0,5/0,3", lastfall, ("1.000",))
+
+    t = meldung(lambda: w._zahlenliste("4, 4, 4", anzahl=(1, 2), feld="Teilung"))
+    check("Teilung einer Fläche „4, 4, 4“: Meldung (1 oder 2 Werte), nicht still gekürzt",
+          "Teilung" in t and "3" in t, t)
+    try:
+        ok = w._zahlenliste("4 × 5", anzahl=(1, 2)) == [4, 5] and w._zahlenliste("4", anzahl=(1, 2)) == [4]
+    except (ValueError, TypeError):
+        ok = False
+    check("… „4 × 5“ und „4“ gelesen", ok)
+    w.error = alt_error
+
+
 def test_anzeige_nie_wissenschaftlich():
     """Hinweise und Masken zeigen Zahlen ausgeschrieben (Anwender 12.09.2026:
     „2e+06“ ist unlesbar). Bis 25.09.2026 zeigte der Bettungshinweis
@@ -1160,12 +1276,51 @@ def test_anzeige_nie_wissenschaftlich():
     check("Lager-Wirkung mit Feder 3,3e9 N/m ohne e+", "Ausnahme" not in texte
           and not re.search(r"\de[+-]", texte), texte[:120])
 
-    # Quelltext: keine Formate mit wenigen geltenden Stellen oder Exponent in
-    # Texten der Oberflaeche (.3g schreibt 3300 als „3.3e+03“)
+    # Modellbaum (Gegenpruefung 25.09.2026: „2.5e+06 kg“ an einer Punktmasse)
+    from PySide6 import QtWidgets
+    w.model.add_punktmasse(0, 2.5e6, [4e6, 4e6, 1.2e7], name="Verschluss")
+    w.refresh_all()
+    app.processEvents()
+    baum, gefunden = [], False
+    for b in w.findChildren(QtWidgets.QTreeWidget):
+        it = QtWidgets.QTreeWidgetItemIterator(b)
+        while it.value():
+            x = it.value()
+            for c in range(x.columnCount()):
+                for t in (x.text(c), x.toolTip(c)):
+                    gefunden = gefunden or "2 500 000 kg" in t
+                    if re.search(r"\de[+-]\d", t):
+                        baum.append(t[:80])
+            it += 1
+    check("Modellbaum: Punktmasse „2 500 000 kg“, nirgends e+/e-", gefunden and not baum, str(baum[:3]))
+
+    # Quelltext: keine Formate mit Exponent oder ohne Stellen-Garantie in
+    # Texten der Oberflaeche - weder :.3g (3300 -> „3.3e+03“) noch einfaches
+    # :g (2 500 000 -> „2.5e+06“, seit 25.09.2026 mitgesucht) noch :e
     gui = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "statik3d", "gui")
-    muster = re.compile(r"\{[^{}]*:[+ ]?\.?\d*[eE]\}|\{[^{}]*:[+ ]?\.\d+[gG]\}")
-    # Rundung fuer ein Zahlenfeld (float(f"...")) und die CSV-Ausgabe
-    erlaubt = ('float(f"', ';".join(f"{v:.6e}"')
+    muster = re.compile(r"\{[^{}]*:[<>^=]?[+ -]?\d*(\.\d+)?[gGeE]\}|[\"']%[\d.]*[gGeE][\"']")
+    # Ausnahmen, je mit Grund - kein Anzeigetext, oder ein Text, der wieder
+    # gelesen oder als Schluessel benutzt wird:
+    erlaubt = (
+        # Rundung fuer ein Zahlenfeld: ein Wert, kein Text
+        'float(f"',
+        # CSV-Ausgabe der Ergebnisse (Datei fuer andere Programme)
+        ';".join(f"{v:.6e}"',
+        # Kombinationsformel im Textfeld der Maske - wird beim Übernehmen
+        # wieder als Formel gelesen (Faktoren wie 1.35)
+        'f"{k}: {v:g}" for k, v in (c.factors',
+        # Kerbfall-Wahl der Schwingungsmaske: der Wahltext wird mit der
+        # Liste verglichen und als Zahl wieder gelesen (zl.feldwert)
+        'f"{k:g}" for k in DETAIL_CATEGORIES', 'f"{sn.kerbfall:g}"',
+        # Name der Dicke („t = 12 mm“) ist ihr Schluessel im Modell; der
+        # Rückgängig-Text nennt denselben Namen
+        'ShellProp(f"t = {t*1000:g} mm"', 'self.merken(f"Dicke t = {t * 1000:g} mm")',
+        # Name eines Parameterprofils („R 200x100“) ist sein Schluessel
+        'masse = "x".join(f"{x:g}" for x in v)',
+        # Vorgabe der Farbskala; jede Skala setzt ihr Format selbst
+        # (spannungen.skalenformat, Klassen %.0f, Elementwerte %.2f)
+        '"label_font_size": 11, "fmt": "%.3g"',
+    )
     treffer = []
     for dat in sorted(os.listdir(gui)):
         if not dat.endswith(".py"):
@@ -1177,7 +1332,8 @@ def test_anzeige_nie_wissenschaftlich():
                 if any(x in zeile for x in erlaubt):
                     continue
                 treffer.append(f"{dat}:{nr}")
-    check("Oberfläche: keine :.3g/:.4g/:e-Formate in Anzeigetexten", not treffer, ", ".join(treffer[:12]))
+    check("Oberfläche: keine :g/:.3g/:e-Formate in Anzeigetexten (Ausnahmen begründet)",
+          not treffer, f"{len(treffer)}: " + ", ".join(treffer[:12]))
 
 
 def main():
@@ -1186,7 +1342,8 @@ def main():
     for t in (test_regel, test_eine_quelle, test_maske, test_geaenderte_felder, test_dialog,
               test_programmwerte, test_tippen, test_tabellenzelle, test_register_einheiten,
               test_ergebnisse_behalten, test_nachbesserung, test_bemerkung_mit_vernetzen,
-              test_verlassen_mit_tab, test_textfelder_zahlenregel, test_anzeige_nie_wissenschaftlich):
+              test_verlassen_mit_tab, test_textfelder_zahlenregel, test_listen_anzahl,
+              test_anzeige_nie_wissenschaftlich):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
