@@ -137,8 +137,99 @@ def test_ohne_koerper_und_ohne_kandidaten():
     check("ohne Staebe nichts zu tun", fugen.stabenden_koppeln(m2, [])["stabenden"] == 0)
 
 
+def _keilwuerfel():
+    """Einheitswuerfel aus 16 Keilen (pent6): 2 x 2 Quadrate je in zwei Dreiecke
+    geteilt, zwei Lagen in z - so, wie der Sweep Keile legt. Ein Zugstab endet
+    in der Deckelflaeche, einer im Innern (dieselben Punkte wie _modell)."""
+    from statik3d.model import Material, Model, Volumenkoerper
+    m = Model()
+    m.add_material(Material.steel("S235"))
+    m.add_section(Section("Rund", 1e-4, 1e-9, 1e-9, 1e-9))
+    idx = {}
+    for k in range(3):
+        for j in range(3):
+            for i in range(3):
+                idx[i, j, k] = m.add_node(0.5 * i, 0.5 * j, 0.5 * k)
+    elemente = []
+    for k in range(2):
+        for j in range(2):
+            for i in range(2):
+                a, b, c, d = (i, j), (i + 1, j), (i + 1, j + 1), (i, j + 1)
+                for tri in ((a, b, c), (a, c, d)):        # unten gegen den Uhrzeigersinn
+                    unten = [idx[p[0], p[1], k] for p in tri]
+                    oben = [idx[p[0], p[1], k + 1] for p in tri]
+                    elemente.append(m.add_element("pent6", unten + oben, "S235", group="V1"))
+    m.koerper["V1"] = Volumenkoerper("V1", material="S235", elemente=elemente)
+    fuss = m.add_node(0.41, 0.47, 1.0)
+    kopf = m.add_node(0.41, 0.47, 1.6)
+    innen = m.add_node(0.31, 0.29, 0.56)
+    oben2 = m.add_node(0.31, 0.29, 1.6)
+    e1 = m.add_element("truss", [fuss, kopf], "S235", "Rund", group="Zug")
+    e2 = m.add_element("truss", [innen, oben2], "S235", "Rund", group="Innen")
+    m.add_member("Zug", [e1])
+    m.add_member("Innen", [e2])
+    return m, idx, fuss, kopf, innen, oben2
+
+
+def test_stabende_im_keil():
+    """Stabenden in Keilen und Pyramiden (25.09.2026). Die Punktsuche kannte nur
+    Tetraeder und Hexaeder; ein Stabende in einem Keil blieb still frei. Am
+    Drehlager mit Sweep (Statik3D-Sitzung) waren das 6 Stabenden, 12
+    singulaere FHG und gestoerte Pivots in jeder Zerlegung."""
+    m, idx, fuss, kopf, innen, oben2 = _keilwuerfel()
+    log = []
+    b = fugen.stabenden_koppeln(m, log)
+    partner = {}
+    for k in m.kopplungen:
+        partner.setdefault(int(k.node_a), []).append(int(k.node_b))
+    check("Keile: beide Stabenden angeschlossen (Deckelflaeche und Innen)",
+          b["stabenden"] == 2 and set(partner) == {fuss, innen}, str(b.get("anschluesse")))
+    check("Keile: keine unbekannten Elementtypen gemeldet",
+          not b.get("unbekannte_elementtypen"), str(b.get("unbekannte_elementtypen")))
+    # Statik: der Zug geht durch die Keile ins Fundament
+    for (i, j, k), n in idx.items():
+        if k == 0:
+            m.fix(n, [0, 1, 2])
+    lc = m.add_load_case("LF1")
+    lc.gravity = [0, 0, 0]
+    lc.nodal_loads.append(NodalLoad(kopf, [0, 0, 50e3, 0, 0, 0]))
+    lc.nodal_loads.append(NodalLoad(oben2, [0, 0, 20e3, 0, 0, 0]))
+    r = solver.solve_static(m, case="LF1")
+    unten = [n for (i, j, k), n in idx.items() if k == 0]
+    R = float(r.reactions[unten, 2].sum())
+    check("Keile: das Fundament traegt die 70 kN der beiden Zugstaebe",
+          abs(R + 70e3) < 1e-3 * 70e3, f"{R:.1f} N")
+    # Ruecknahmeprobe: mit der alten Zerlegung (nur Tetraeder und Hexaeder)
+    alt = dict(fugen._TET_FORM)
+    fugen._TET_FORM.pop("pent6")
+    try:
+        m2, *_ = _keilwuerfel()
+        b2 = fugen.stabenden_koppeln(m2, [])
+    finally:
+        fugen._TET_FORM.clear()
+        fugen._TET_FORM.update(alt)
+    check("Ruecknahme: ohne Keil-Zerlegung bleiben beide Enden frei - jetzt aber laut gemeldet",
+          b2["stabenden"] == 0 and b2.get("unbekannte_elementtypen") == {"pent6": 16},
+          str(b2.get("unbekannte_elementtypen")))
+    # Pyramide: Grundflaeche z = 0, Spitze (0,5; 0,5; 1)
+    from statik3d.model import Material, Model, Volumenkoerper
+    p = Model()
+    p.add_material(Material.steel("S235"))
+    p.add_section(Section("Rund", 1e-4, 1e-9, 1e-9, 1e-9))
+    ecken = [p.add_node(*xyz) for xyz in ((0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0.5, 0.5, 1.0))]
+    ep = p.add_element("pyr5", ecken, "S235", group="P")
+    p.koerper["P"] = Volumenkoerper("P", material="S235", elemente=[ep])
+    s1 = p.add_node(0.55, 0.45, 0.3)
+    s2 = p.add_node(0.55, 0.45, 1.5)
+    p.add_member("S", [p.add_element("truss", [s1, s2], "S235", "Rund", group="S")])
+    bp = fugen.stabenden_koppeln(p, [])
+    check("Pyramide: das Stabende im Innern ist angeschlossen", bp["stabenden"] == 1,
+          str(bp.get("anschluesse")))
+
+
 def main():
-    for t in (test_anschluss, test_integrierte_last_und_lagerknoten, test_ohne_koerper_und_ohne_kandidaten):
+    for t in (test_anschluss, test_integrierte_last_und_lagerknoten, test_ohne_koerper_und_ohne_kandidaten,
+              test_stabende_im_keil):
         try:
             t()
         except Exception as ex:      # noqa: BLE001

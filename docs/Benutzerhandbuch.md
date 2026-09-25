@@ -3672,7 +3672,15 @@ RFEM. Das Protokoll nennt jeden Anschluss („2 Knoten an Volumen
 angeschlossen (Stabende) … Zug (K211) → V1"). Ein Stabende an keinem Volumen
 (Ankerstab im Fundament, Kragarm) bleibt frei; ein Knoten, der schon in einer
 Kopplung steht (Mitte einer starren Scheibe), wird nicht doppelt
-angeschlossen. Beim Öffnen einer älteren Datei mit Netz wird der Anschluss
+angeschlossen. **Seit dem 25.09.2026 auch in Keilen und Pyramiden:** Die Suche
+nach dem Element, in dem ein Knoten liegt, kannte bis dahin nur Tetraeder und
+Hexaeder. Ein Stabende in einem Keil (pent6/pent15, wie ihn der Sweep legt)
+oder einer Pyramide (pyr5) fand kein Element und blieb ohne Meldung frei — am
+Drehlager mit Sweep 6 Stabenden, 12 singuläre Freiheitsgrade und gestörte
+Pivots in jeder Zerlegung (von der Statik3D-Sitzung gemessen). Jetzt zerfallen
+Keile in drei und Pyramiden in zwei Tetraeder. Ein Volumentyp, den die Suche
+nicht kennt, steht im Protokoll („die Punktsuche kennt diese Volumentypen
+nicht …“), statt still übergangen zu werden. Beim Öffnen einer älteren Datei mit Netz wird der Anschluss
 nachgeholt (Protokoll unten). Die integrierten Linien stehen an der Fläche
 (Modelldatei); das Netz folgt ihnen noch nicht — für die starren Scheiben
 ist das ohne Folge, ihre Kopplung nimmt die Netzknoten innerhalb des
