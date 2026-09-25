@@ -7514,6 +7514,18 @@ Seite ist die Spur der Verschiebung von beiden Seiten gleich, genau wo die Tabel
 „direkt“ oder „Bindung“ sagt, mit den Bindungen, die die Assemblierung wirklich setzt;
 ohne sie klafft sie bei „Bindung“. tetp neben tet4 rechnet, neben tet10 hält es an.
 
+**Elementwahl in der Oberfläche: was der Vernetzer daraus macht** (25.09.2026). Die
+Maske *Elemente wählen* graut nach dieser Tabelle aus (`elementauswahl.zustand` liest
+`elemente.VERTRAEGLICH`; ein Test setzt einen Eintrag um und sieht den anderen Grund).
+Ausgegraut wird außerdem, was der Vernetzer nicht getrennt einstellen kann: er hat **eine**
+Ordnung (`Netzeinstellungen.ordnung`) für frei vernetzte Körper (tet4/tet10), abgebildete
+Sechsflächner (hex8/hex20) und Flächen (shell3/4 bzw. shell6/8); der Sweep erzeugt immer
+hex8/pent6; tetp entstehen nur durch Umwandlung eines tet10-Netzes (`tetp.aus_tet10`).
+Die Vorgabe tet10 + VQ83 bildet darum auf `ordnung = 2` ab, und abgebildete
+Sechsflächner werden dabei hex20 (VQ203) – verträglich („direkt“ bzw. „Bindung“ neben
+tet10 und pent15), aber nicht der hex8, den „VQ83“ nahelegt. Getrennt einstellbar wäre
+das nur im Vernetzer (eine eigene Ordnung für abgebildete Sechsflächner).
+
 Ein Volumenkörper, der so nie ein Netz bekommen kann, gilt auch nicht als
 **unvernetzt** (`Model.koerper_traegt`). Sonst forderte die
 Rechenbarkeitsprüfung vor jeder Rechnung ein Netz, das nicht entstehen kann.

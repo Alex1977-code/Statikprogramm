@@ -40,6 +40,8 @@ from . import masken as msk
 from . import zahlenfeld as zf
 from .. import zahlen as zl
 from .ermuedungsmaske import Ermuedungsmaske
+from . import elementmasken as elm
+from .. import elementauswahl as ea
 from . import tabellen as tab
 
 
@@ -347,6 +349,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.schwingung = None        # Schwingungsnachweis des Verschlusses
         self.messungen = []           # voruebergehende Messungen in der Ansicht
         self.sonden = []              # Wertmarken der Sonde (Knoten, Punkt)
+        self.elementtyp_faerben = False   # Faerbung nach Elementtyp gilt je Modell
         if not self.model.materials:
             self.model.add_material(Material.steel("S235"))
             self.model.add_material(Material.steel("S355"))
@@ -3932,6 +3935,15 @@ class MainWindow(QtWidgets.QMainWindow):
         g.klein("Netzeinstellungen…", self.maske_netzeinstellungen,
                 hinweis="Netzdichte (grob, mittel, fein, eigene Ziellänge), Elementform, intelligente "
                         "Anpassung an kleine Kanten, kleinste/größte Elementgröße, Höchstzahl je Objekt")
+        # Paket E (25.09.2026): Elemente anhaken, verwendete Elemente zeigen
+        g.klein("Elemente wählen…", self.maske_elementwahl,
+                hinweis="Die zu verwendenden Elemente anhaken (tet4/tet10, VQ83/VQ203, Pyramiden, "
+                        "Schalen) - Unverträgliches wird grau, der Grund steht am Zeiger; "
+                        f"Statik3D-Vorgabe {ea.VORGABE_TEXT}")
+        g.klein("Elementübersicht…", self.maske_elementuebersicht,
+                hinweis="Welche Elemente das Netz hat: Typ, Ansatz, Anzahl, Anteil je Körper; "
+                        "Klick zeigt nur diese Elemente, die Ansicht nach Elementtyp färben "
+                        "(mit Legende), Netz-Fingerabdruck für den Prüfer")
         g.klein("Adaptiv vernetzen…", self.geometrie_adaptiv_vernetzen,
                 hinweis="Vernetzen, den aktiven Lastfall rechnen, den Fehler je Element schätzen "
                         "(Spannungssprung), nur dort feiner und im Feld gröber - so viele Runden wie "
@@ -14425,6 +14437,17 @@ class MainWindow(QtWidgets.QMainWindow):
         maske.angewendet.connect(self._netzeinstellungen_setzen)
         return self.maske_erzeugen(maske)
 
+    def maske_elementwahl(self):
+        """Netz → Elemente wählen… (Paket E, gui/elementmasken.py)."""
+        return elm.maske_elementwahl(self)
+
+    def maske_elementuebersicht(self):
+        """Netz → Elementübersicht… (Paket E, gui/elementmasken.py)."""
+        return elm.maske_elementuebersicht(self)
+
+    #: Ansicht nach Elementtyp faerben (Elementuebersicht, 25.09.2026)
+    elementtyp_faerben = False
+
     def maske_netzguete(self):
         """Netzqualität: bewerten, einfärben, die schlechtesten finden.
 
@@ -14476,6 +14499,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.bottom_tabs.setCurrentIndex(0)
             if anzeigen:
                 self.netzguete_feld = {"werte": werte, "mass": mass}
+                self.elementtyp_faerben = False     # eine Faerbung zur Zeit (25.09.2026)
                 self.results = None
                 self.redraw()
             return werte, d
@@ -14788,6 +14812,12 @@ class MainWindow(QtWidgets.QMainWindow):
                       f"{len(m.load_cases)} Lastfälle, {len(m.members)} Stäbe")
             self._fortschritt_ende()
             QtWidgets.QApplication.restoreOverrideCursor()
+            if target is None:
+                # Elementwahl nach dem Import (Paket E, 25.09.2026): die
+                # Rueckfrage erst nach Balken und Sanduhr
+                zeile = elm.elementwahl_nach_import(self, m, path)
+                if zeile:
+                    self.log.appendPlainText(zeile)
         except Exception as ex:
             self._fortschritt_ende()               # kein Balken hinter der Meldung
             self.log.appendPlainText(traceback.format_exc())
@@ -18937,6 +18967,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.results = None
             text = r.summary()
         self.log.appendPlainText(text)
+        # welche Elemente gerechnet wurden (25.09.2026: „nach der Berechnung
+        # sehe ich das auch nirgendwo“)
+        self.log.appendPlainText(ea.protokollzeile(self.model))
         self.txt_summary.setPlainText(text)
         self._fill_result_selector()
         self._bewegungen_melden()
@@ -19807,6 +19840,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 guete_clim = [float(endlich.min()), float(max(endlich.max(), endlich.min() + 1e-12))]
             elif len(endlich):
                 guete_clim = [float(min(0.0, endlich.min())), 1.0]
+        # Faerbung nach Elementtyp (Elementuebersicht, 25.09.2026) - wie die
+        # Netzguete nur ohne gezeigtes Ergebnis
+        typfarbe = elm.faerbung_fuer_ansicht(self, m) if u is None and guete is None else None
         col = None
         if u is None and self.act_members.isChecked() and m.members:
             col = np.full(len(m.elements), np.nan)
@@ -19880,6 +19916,9 @@ class MainWindow(QtWidgets.QMainWindow):
                                       name=f"model_{nm}",
                                       **dict({"line_width": 4 if dick else 1},
                                              **vp.darstellung(modus, show_edges, True)))
+            elif typfarbe is not None:
+                elm.faerbung_zeichnen(self, netz, eidx, typfarbe, nm, 4 if dick else 1,
+                                      vp.darstellung(modus, show_edges, True))
             elif col is not None:
                 farbig = netz.copy()
                 farbig.cell_data["Stab"] = col[eidx]

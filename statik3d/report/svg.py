@@ -488,10 +488,12 @@ def figur_hinweis(model) -> str:
             f"({len(model.elements)} Elemente)")
 
 
-def _koerper_umrisse(model, proj, X, P, solids) -> str:
+def _koerper_umrisse(model, proj, X, P, solids, farben: dict = None) -> str:
     """Jeder Volumenkoerper als Umriss - die 2D-Huelle seiner Knoten in der
     Ansicht -, nach Tiefe sortiert (Maler-Algorithmus). Je Koerper hoechstens
-    20 000 Elemente abgetastet: fuer die Huelle reicht das."""
+    20 000 Elemente abgetastet: fuer die Huelle reicht das. ``farben``
+    {Koerpername: Farbe} faerbt die Umrisse einzeln (Bild nach Elementtyp,
+    25.09.2026); ohne sie alle in der Volumenfarbe."""
     import itertools
     from scipy.spatial import ConvexHull
     items = []
@@ -502,11 +504,11 @@ def _koerper_umrisse(model, proj, X, P, solids) -> str:
         for k in koerper:
             el = k.elemente
             schritt = max(1, len(el) // 20000)
-            gruppen.append(el[::schritt])
+            gruppen.append((k.name, el[::schritt]))
     elif solids:
         schritt = max(1, len(solids) // 100000)
-        gruppen.append(list(solids)[::schritt])
-    for el in gruppen:
+        gruppen.append(("", list(solids)[::schritt]))
+    for name, el in gruppen:
         try:
             ids = np.unique(np.fromiter(itertools.chain.from_iterable(
                 model.elements[i].nodes for i in el), int))
@@ -514,17 +516,18 @@ def _koerper_umrisse(model, proj, X, P, solids) -> str:
             continue
         if ids.size < 3:
             continue
-        items.append((float(proj.depth(X[ids].mean(axis=0))[0]), ids))
+        items.append((float(proj.depth(X[ids].mean(axis=0))[0]), ids, name))
     items.sort(key=lambda t: -t[0])
     out = [f'<g stroke="{COL_SOLID_STROKE}" stroke-width="0.8" stroke-linejoin="round" '
            f'fill="{COL_SOLID_FILL}" fill-opacity="0.85">']
-    for _, ids in items:
+    for _, ids, name in items:
         Q = P[ids]
         try:
             h = ConvexHull(Q)
         except Exception:      # noqa: BLE001 - entartet (alle Punkte auf einer Linie)
             continue
-        out.append(f'<polygon points="{_pts(Q[h.vertices])}"/>')
+        fill = f' fill="{farben[name]}"' if farben and name in farben else ""
+        out.append(f'<polygon points="{_pts(Q[h.vertices])}"{fill}/>')
     out.append("</g>")
     return "".join(out)
 
@@ -1211,5 +1214,96 @@ def draw_sn_curve(category: float, points=None, gamma_Mf: float = 1.0, width: in
                     (", Schub (m = 5)" if shear else ", m = 3 / 5"), 9, "end", "#666666"))
     if title:
         out.append(text(10, 15, title, 12, "start", COL_TEXT, "bold"))
+    out.append("</svg>")
+    return "".join(out)
+
+
+# ==========================================================================
+# Netz nach Elementtyp (Bericht „Netz und Elemente“, 25.09.2026)
+# ==========================================================================
+def aussenseiten(model, solids) -> list:
+    """Die Aussenseiten der Volumenelemente mit ihrem Element: [(i, Ecken)] -
+    jede Seite, die genau ein Element hat. Alle Volumentypen (auch pent6,
+    pyr5, hex20, pent15, tetp), anders als mesher.surface_facets, das nur
+    tet4/tet10/hex8 kennt; ohne das Element faerbt kein Bild nach Typ."""
+    from ..elements.solid import FLAECHEN_ECKEN
+    seiten: dict = {}
+    for i in solids:
+        e = model.elements[i]
+        typ = "tet4" if e.typ.startswith("tetp") else e.typ
+        for f in FLAECHEN_ECKEN.get(typ, ()):
+            kn = tuple(int(e.nodes[k]) for k in f)
+            key = tuple(sorted(set(kn)))
+            if len(key) < 3:
+                continue                      # zusammengefallene Seite (entartet)
+            seiten[key] = None if key in seiten else (int(i), kn)
+    return [v for v in seiten.values() if v is not None]
+
+
+def _legend_typen(x, y, eintraege) -> str:
+    """Legende der Elementtypen: je Zeile Farbfeld und Text."""
+    out = [text(x, y, "Elementtyp", 10, "start", COL_TEXT, "bold")]
+    for k, (col, lab) in enumerate(eintraege):
+        yy = y + 8 + k * 13
+        out.append(f'<rect x="{_n(x)}" y="{_n(yy)}" width="12" height="9" fill="{col}" '
+                   f'stroke="#555555" stroke-width="0.4"/>')
+        out.append(text(x + 16, yy + 8, lab, 9))
+    return "".join(out)
+
+
+def draw_elementtypen(model, projection="iso", width: int = 800, height: int = 520,
+                      title: str = "") -> str:
+    """Das Netz nach Elementtyp gefaerbt, mit Legende (Typ und Anzahl) - die
+    Farben der Ansicht (elementauswahl.FARBEN, auch in Graustufen
+    verschieden hell). Bei grossen Netzen (GROSS_AB) je Volumenkoerper der
+    Umriss in der Farbe seines haeufigsten Typs."""
+    from .. import elementauswahl as ea
+    from ..zahlen import zahl_text
+    proj = Projection(projection, width, height)
+    ml, mt, mr, mb = proj.margin
+    proj.margin = (ml, mt, max(mr, 175.0), mb)
+    W, H = proj.width, proj.height
+    out = [svg_open(W, H, title)]
+    if model.nn == 0 or not model.elements:
+        out.append(text(W / 2, H / 2, "kein Netz", 12, "middle", "#888888"))
+        out.append("</svg>")
+        return "".join(out)
+    X0 = np.asarray(model.nodes, dtype=float).reshape(-1, 3)
+    proj.fit(X0)
+    P = proj.project(X0)
+    beams, shells, solids = _element_groups(model)
+    gross = bool(solids) and ist_gross(model)
+    z = ea.zaehlung(model)
+    if gross:
+        farben = {}
+        for name, je in z["koerper"].items():
+            vol = {t: n for t, n in je.items() if t in EL.VOLUMEN_TYPEN}
+            if vol:
+                farben[name] = ea.farbe(max(vol, key=vol.get))
+        out.append(_koerper_umrisse(model, proj, X0, P, solids, farben))
+    else:
+        seiten = aussenseiten(model, solids)
+        out.append(_polygons(proj, X0, P, seiten, COL_SOLID_FILL, COL_SOLID_STROKE, 0.4, True,
+                             colours={i: ea.farbe(model.elements[i].typ) for i, _kn in seiten}))
+    schalen = []
+    for i in shells:
+        e = model.elements[i]
+        schalen.append((i, tuple(e.nodes[:4 if e.typ in ("shell4", "shell8") else 3])))
+    out.append(_polygons(proj, X0, P, schalen, COL_SHELL_FILL, COL_SHELL_STROKE, 0.5, True,
+                         colours={i: ea.farbe(model.elements[i].typ) for i, _kn in schalen}))
+    if beams:
+        out.append('<g stroke-linecap="round" fill="none">')
+        for i in beams:
+            a, b = model.elements[i].nodes[:2]
+            out.append(f'<line x1="{_n(P[a, 0])}" y1="{_n(P[a, 1])}" x2="{_n(P[b, 0])}" '
+                       f'y2="{_n(P[b, 1])}" stroke="{ea.farbe(model.elements[i].typ)}" '
+                       'stroke-width="2.2"/>')
+        out.append("</g>")
+    eintraege = [(ea.farbe(t), f"{ea.kurzname(t)} ({zahl_text(n)})") for t, n in z["typen"].items()]
+    out.append(_legend_typen(W - 165, 44, eintraege))
+    if title:
+        out.append(text(10, 16, title, 13, "start", COL_TEXT, "bold"))
+    out.append(text(W - 10, 16, proj.label, 10, "end", "#666666"))
+    out.append(proj.triad(30, H - 30, 22))
     out.append("</svg>")
     return "".join(out)
