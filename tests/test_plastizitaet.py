@@ -1631,8 +1631,12 @@ def test_gemeinsam_aendert_nichts_ohne_beides():
                 np.asarray(np.zeros((0, 3)) if cf is None else cf, float),
                 np.array(sorted((r.info.get("plastisch") or {}).items()), float).reshape(-1, 2))
 
-    # 6a961e5: (Zerlegungen, Rückführungen, max |u| in m, plastizitaet.konvergiert)
-    referenz = {"Kontakt ohne Plastizität: Block mit Reibung": (7, 0, 2.6374059202389813e-06, None),
+    # 6a961e5: (Zerlegungen, Rückführungen, max |u| in m, plastizitaet.konvergiert).
+    # Block mit Reibung: max |u| 2,6374059e-6 bis zum 25.09.2026; seit dem
+    # Ausgleich der Reststeifigkeit gleitender Knoten (contact.AUSGLEICH_
+    # RESTSTEIFIGKEIT, 16 Knoten gleiten) 2,6374050e-6 - die Feder 1e-8 k_t
+    # traegt am Ende keine Kraft mehr (3e-7 relativ, gemessen 25.09.2026)
+    referenz = {"Kontakt ohne Plastizität: Block mit Reibung": (7, 0, 2.6374050390356763e-06, None),
                 "Kontakt ohne Plastizität: Stempel auf Sockel": (5, 0, 0.0003803567719446193, None),
                 "Plastizität ohne Kontakt: Zugwürfel hex8": (3, 4, 0.010142857142857335, True),
                 "Plastizität ohne Kontakt: Kragträger tet4": (6, 8, 0.00967601273071502, True)}

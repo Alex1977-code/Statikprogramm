@@ -1173,6 +1173,7 @@ class ContactSystem:
             c.active = True if c.zug else c.g0 <= self.tol
             c.slip = False
             c.slip_dir = None
+            c.dt_last = None
             c.dir_updates = 0
             c.toggles = 0
             c.frozen = False
@@ -1209,7 +1210,12 @@ class ContactSystem:
                 "eingefroren": np.array([c.frozen for c in self.cons], bool),
                 "wechsel": np.array([c.toggles for c in self.cons], int),
                 "richtung": [None if c.slip_dir is None else np.array(c.slip_dir, float)
-                             for c in self.cons]}
+                             for c in self.cons],
+                # Tangentialverschiebung des Zustands (Ausgleich der
+                # Reststeifigkeit): gehoert zur Sicherung, sonst rechnet eine
+                # wiederholte Laststufe nicht bitgleich (25.09.2026)
+                "dt_last": [None if c.dt_last is None else np.array(c.dt_last, float)
+                            for c in self.cons]}
 
     def zustand_setzen(self, z) -> bool:
         """Eine Sicherung uebernehmen - der Startpunkt der Iteration statt der
@@ -1240,6 +1246,8 @@ class ContactSystem:
             c.Fn = float(z["Fn"][i])
             r = z["richtung"][i]
             c.slip_dir = None if r is None else np.array(r, float)
+            d = (z.get("dt_last") or [None] * len(self.cons))[i]
+            c.dt_last = None if d is None else np.array(d, float)
             c.dir_updates = 0
             # eingefrorene Bedingungen (oszillierten) bleiben eingefroren -
             # sonst wechseln sie gleich wieder und die Iteration beginnt von vorn
@@ -1270,6 +1278,7 @@ class ContactSystem:
                     if zuruecksetzen:
                         c.slip = False
                         c.slip_dir = None
+                        c.dt_last = None
                         c.dir_updates = 0
                         c.Ft = np.zeros(2)
         return n
