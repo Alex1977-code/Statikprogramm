@@ -6864,7 +6864,7 @@ def main():
         w._lagerdichte_geschoben(20); app.processEvents()
         n2_ = len(vp_.lager_punkte(m_, m_.surface_supports[0], m_.characteristic_size(), w.lagerdichte)[0])
         w.lagerdichte_zuruecksetzen()
-        check("Lagerdichte 2,0 verdichtet die Symbole (Schieber im Register Ansicht)",
+        check("Lagerdichte 2,0 verdichtet die Symbole (Schieber in der Maske „Darstellung“)",
               n2_ > 2 * n1_ and w.lagerdichte == 1.0 and w.sl_lagerdichte.value() == 10, str((n1_, n2_)))
         w.auswahlart_setzen("Lager")
         w._picked([0.0, 0.0, 0.0]); app.processEvents()

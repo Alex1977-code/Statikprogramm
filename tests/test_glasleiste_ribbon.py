@@ -20,8 +20,12 @@ Geprueft wird mit dem echten Hauptfenster (offscreen):
 * kein Ribbon-Register kuerzt eine Beschriftung bei 1366 und 1280 px Breite
   (1280 = 1920 px bei 150 % Skalierung, dazu ein eigener Prozess mit
   QT_SCALE_FACTOR=1.5) - gemessen mit QFontMetrics; jedes Register braucht
-  hoechstens 97 % der Breite (die Schrift unter Windows laeuft bis 2,8 %
+  hoechstens 97 % der Breite (die Schrift unter Windows laeuft bis 2,9 %
   breiter als die offscreen gemessene, siehe RESERVE);
+* die Registerzeile samt Kontextregister „Auswahl: 12 Knoten“ passt ohne
+  Rollpfeile; die Ergebnisauswahl der Glasleiste zeigt jeden Namen der
+  gerechneten Halle ganz; jeder Loeschbefehl hat einen Knopf dort, wohin die
+  Suche schickt (Nachbesserung nach der Gegenpruefung, 25.09.2026);
 * die Glasleiste liegt bei jeder Fensterbreite ganz in der Ansicht; was nicht
   passt, steht in der Ueberlaufliste „»“, keine Aktion geht verloren;
 * Aufbau der Glasleiste (Menueknoepfe Darstellung, Zeigen, Klick waehlt),
@@ -56,7 +60,10 @@ _FENSTER: dict = {}
 #: Anteil der Breite, den ein Register hoechstens brauchen darf. Die Breiten
 #: der Analyse (Desktop, DirectWrite) lagen 0,7 bis 2,8 % ueber den
 #: offscreen gemessenen (FreeType): Ansicht 3363/3341, Nachweise 2184/2138,
-#: Geometrie 1760/1748, Struktur 1646/1626, Lasten 1415/1376.
+#: Geometrie 1760/1748, Struktur 1646/1626, Lasten 1415/1376. Die
+#: Gegenpruefung (25.09.2026, Desktop bei 100 %) mass am neuen Stand bis
+#: 2,9 %: Nachweise 1275/1239, Geometrie 1245/1230 - die 3 % Reserve
+#: reichen knapp; bei 1280 px und 100 % bleiben dem Register 5 px Luft.
 RESERVE = 0.97
 #: Fenstergroessen der Abnahme: der kleine Bildschirm und 1920 px bei 150 %
 BREITEN = ((1366, 768), (1280, 720))
@@ -172,13 +179,14 @@ def _schrift_ok() -> bool:
 
 
 def test_ribbon_ohne_kuerzung():
-    from PySide6 import QtCore
+    from PySide6 import QtWidgets
     w, app = _fenster()
     if not check("Schrift wie auf dem Desktop (Segoe UI) - sonst misst die Prüfung Kästen",
                  _schrift_ok(), "QT_QPA_FONTDIR fehlt?"):
         return
-    # auch das Kontextregister „Auswahl“ (erscheint mit einer Auswahl)
-    w._set_selection([0, 1])
+    # auch das Kontextregister „Auswahl“ (erscheint mit einer Auswahl) - mit
+    # zweistelliger Zahl, „Auswahl: 12 Knoten“ ist der breitere Reiter
+    w._set_selection(list(range(12)))
     _ruhe()
     for breite, hoehe in BREITEN:
         w.resize(breite, hoehe)
@@ -190,10 +198,16 @@ def test_ribbon_ohne_kuerzung():
               not zu_breit and len(zeilen) >= 14, "; ".join(zu_breit)[:160])
         check(f"{breite} px: keine gekürzte Beschriftung (QFontMetrics) in {len(zeilen)} Registern",
               not gekuerzt, "; ".join(gekuerzt)[:160])
+        # Die Registerzeile: gekuerzt wird dort nie (ElideNone), sie laeuft
+        # ueber - dann erscheinen Rollpfeile und der letzte Reiter liegt
+        # dahinter. Bis 25.09.2026 stand hier „ElideNone or …“ und war damit
+        # immer wahr (Befund der Gegenpruefung).
         tb = w.ribbon.tabs.tabBar()
-        check(f"{breite} px: die Registernamen selbst werden nicht gekürzt",
-              tb.elideMode() == QtCore.Qt.ElideNone
-              or sum(tb.tabSizeHint(i).width() for i in range(tb.count())) <= tb.width())
+        summe = sum(tb.tabRect(i).width() for i in range(tb.count()))
+        pfeile = [k for k in tb.findChildren(QtWidgets.QToolButton) if k.isVisible()]
+        check(f"{breite} px: die Registerzeile samt „{w.ribbon._kontext_name}“ passt (keine Rollpfeile, "
+              f"{RESERVE:.0%})", summe <= RESERVE * tb.width() and not pfeile,
+              f"Reiter {summe} px, Zeile {tb.width()} px, {len(pfeile)} Pfeile")
         print("   " + ", ".join(f"{n} {h}" for n, h, _i, _g in zeilen))
     w._set_selection([])
     _ruhe()
@@ -604,6 +618,144 @@ def test_berechnen_weiss():
           m2.alpha() > 200 and m2.blue() > m2.red() + 60, f"RGB {m2.red()},{m2.green()},{m2.blue()}")
 
 
+# --------------------------------------------------------------------------
+# Nachbesserung nach der Gegenpruefung (25.09.2026)
+# --------------------------------------------------------------------------
+def _listenfeld(cb) -> int:
+    """Breite des Textfelds einer Aufklappliste - dort, wo der Stil den
+    gewaehlten Namen hinschreibt (ohne Pfeil und Rand)."""
+    from PySide6 import QtWidgets
+    opt = QtWidgets.QStyleOptionComboBox()
+    cb.initStyleOption(opt)
+    return cb.style().subControlRect(QtWidgets.QStyle.CC_ComboBox, opt,
+                                     QtWidgets.QStyle.SC_ComboBoxEditField, cb).width()
+
+
+def _abgeschnitten(cb) -> list:
+    """Die waehlbaren Eintraege, die im Textfeld nicht ganz Platz haben."""
+    from PySide6 import QtGui
+    fm = QtGui.QFontMetrics(cb.font())
+    feld = _listenfeld(cb)
+    return [cb.itemText(i) for i in range(cb.count())
+            if cb.itemData(i) is not None and fm.horizontalAdvance(cb.itemText(i)) > feld]
+
+
+def test_ergebnisliste_lesbar():
+    """Befund der Gegenpruefung: bei 1366 und 1536 px blieb die Liste nach dem
+    Weichen der Hauptknoepfe bei 120 px, 75 von 81 Namen der gerechneten Halle
+    waren abgeschnitten („Kombination GZ“), obwohl daneben Platz frei war."""
+    from statik3d import solver
+    w, app = _fenster()
+    gl = w.glasleiste
+    an = solver.solve_all(w.model, design=bool(w.model.members))
+    w._solve_done("all", an)
+    _ruhe()
+    cb = w.cb_lastwahl
+    n = sum(1 for i in range(cb.count()) if cb.itemData(i) is not None)
+    check("gerechnete Halle: die Ergebnisauswahl führt Lastfälle und Kombinationen",
+          n >= 40, f"{n} Einträge")
+    for breite, hoehe in ((1366, 768), (1536, 864), (1920, 1080)):
+        w.resize(breite, hoehe)
+        _ruhe()
+        weg = _abgeschnitten(cb)
+        g = gl.geometry()
+        check(f"{breite} px: kein Name der Ergebnisauswahl abgeschnitten",
+              not weg and g.right() < gl.parentWidget().width(),
+              f"Liste {cb.width()} px, Feld {_listenfeld(cb)} px, {len(weg)} von {n}: {weg[:2]}")
+    w.resize(1920, 1080)
+    _ruhe()
+
+
+def test_klickart_im_ueberlauf():
+    """Befund der Gegenpruefung: in „»“ stand „Klick wählt: Knoten“, auch wenn
+    eine andere Auswahlart galt - das Untermenue behielt seinen ersten Titel."""
+    w, app = _fenster()
+    gl = w.glasleiste
+    w.resize(1366, 768)
+    _ruhe()
+    w.auswahlart_setzen("Lager")
+    _ruhe()
+    menue = gl.menues["klickart"].menu()
+    check("„Klick wählt“: das Menü heißt wie der Knopf („Klick wählt: Lager“)",
+          menue.title() == "Klick wählt: Lager", menue.title())
+    # wo der Knopf in „»“ steht, ist der Untermenuetitel die Anzeige
+    gl.einpassen(300)
+    titel = [a.text() for a in gl.ueberlauf.menu().actions() if a.menu() is menue]
+    check("… und so steht es in der Überlaufliste „»“",
+          titel == ["Klick wählt: Lager"], str(titel))
+    w.auswahlart_setzen("Knoten")
+    _ruhe()
+    check("… nach dem Zurückstellen wieder „Klick wählt: Knoten“",
+          menue.title() == "Klick wählt: Knoten", menue.title())
+    gl.einpassen(gl.parentWidget().width() - 2 * gl.RAND)
+    w.resize(1920, 1080)
+    _ruhe()
+
+
+def _traegt(knopf, aktion) -> bool:
+    """Fuehrt dieser Knopf die Aktion - selbst oder in seinem Menue?"""
+    if knopf.defaultAction() is aktion:
+        return True
+    stapel = [knopf.menu()] if knopf.menu() is not None else []
+    while stapel:
+        m = stapel.pop()
+        for a in m.actions():
+            if a is aktion:
+                return True
+            if a.menu() is not None:
+                stapel.append(a.menu())
+    return False
+
+
+def test_loeschbefehle_haben_einen_knopf():
+    """Befund der Gegenpruefung: „Elemente löschen“ stand nur noch in der
+    Suche. Die Suche fuehrt Befehle mit Loeschwort aber nie aus, sondern nennt
+    den Knopf in Register › Gruppe - den es dann nicht gab."""
+    from PySide6 import QtWidgets
+    w, app = _fenster()
+    w._set_selection([0, 1])        # das Kontextregister „Auswahl“ ist dann da
+    _ruhe()
+    ohne = []
+    for b in w.ribbon.befehle:
+        if not b.nicht_aus_suche():
+            continue
+        reg = w.ribbon._register.get(b.register)
+        if reg is None and b.register == w.ribbon._kontext_name:
+            reg = w.ribbon._kontext
+        knoepfe = reg.findChildren(QtWidgets.QToolButton) if reg is not None else []
+        if not any(k.isVisibleTo(reg) and _traegt(k, b.aktion) for k in knoepfe):
+            ohne.append(f"{b.text} ({b.register} › {b.gruppe})")
+    check("jeder Befehl, den die Suche nicht ausführt, hat im genannten Register einen Knopf",
+          not ohne, "; ".join(ohne)[:160])
+    w._set_selection([])
+    _ruhe()
+    # die Zeile „Elemente löschen (Struktur › Eigenschaften)“ der Trefferliste
+    meldungen = []
+    w.ribbon.meldung.connect(meldungen.append)
+    for b in w.ribbon.befehle:
+        if b.text == "Elemente löschen":
+            w.ribbon._ausfuehren(b)
+    _ruhe()
+    w.ribbon.meldung.disconnect(meldungen.append)
+    reg = w.ribbon._register["Struktur"]
+    da = [k for k in reg.findChildren(QtWidgets.QToolButton)
+          if k.isVisibleTo(reg) and k.text() == "Elemente löschen"]
+    check("„Elemente löschen“ aus der Suche: Meldung nennt Struktur › Eigenschaften, dort steht der Knopf",
+          any("Struktur › Eigenschaften" in m for m in meldungen) and len(da) == 1,
+          f"{meldungen[-1:]} Knopf {len(da)}")
+
+
+def test_gelenkhinweise():
+    """Befund der Gegenpruefung: zwei Hinweise nannten „Gelenke setzen“ im
+    Register Struktur - den Knopf gibt es dort nicht mehr."""
+    import inspect
+    from statik3d.gui import design, main as hauptmodul
+    alt = "„Gelenke setzen“ im Register Struktur"
+    texte = inspect.getsource(hauptmodul) + inspect.getsource(design)
+    check("kein Hinweis schickt mehr zu „Gelenke setzen“ im Register Struktur",
+          alt not in texte and "Register Struktur → Gelenke setzen" not in texte)
+
+
 def test_handbuch():
     stamm = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     with open(os.path.join(stamm, "docs", "Benutzerhandbuch.md"), encoding="utf-8") as f:
@@ -616,6 +768,11 @@ def test_handbuch():
           "Neu | Ändern | Löschen | Tabelle" in t)
     check("Handbuch: eingeschaltete Schalter tragen einen Haken",
           "Eingeschaltete Schalter tragen einen Haken" in t and "ein weißes\nDreieck" in t)
+    check("Handbuch: Nachbesserung 25.09. (Liste wächst zurück, „Klick wählt: Lager“ in „»“, "
+          "Elemente löschen, Registerzeile)",
+          "bekommt die Ergebnisauswahl zurück" in t and "„Klick wählt: Lager“" in t
+          and "*Elemente\nlöschen* bleibt ein Knopf" in t and "**Die Registerzeile passt**" in t
+          and "braucht mehr als 1240 px" not in t)
 
 
 def main():
@@ -626,7 +783,8 @@ def main():
     for t in (test_ribbon_ohne_kuerzung, test_150_prozent, test_glasleiste_aufbau,
               test_glasleiste_passt, test_ribbon_ansicht, test_ribbon_nachweise,
               test_doppelte_knoepfe, test_kuerzel_bleiben, test_schalter_sichtbar,
-              test_berechnen_weiss, test_handbuch):
+              test_berechnen_weiss, test_klickart_im_ueberlauf, test_loeschbefehle_haben_einen_knopf,
+              test_gelenkhinweise, test_ergebnisliste_lesbar, test_handbuch):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

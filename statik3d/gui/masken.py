@@ -1141,8 +1141,9 @@ class Glasleiste(QtWidgets.QFrame):
 
         Stufen: erst weichen die Nebenknoepfe (Rang ab 10) in die
         Ueberlaufliste, der hoechste Rang zuerst; reicht das nicht, schrumpft
-        die Ergebnisauswahl bis LISTE_MIN, danach weichen die Hauptknoepfe.
-        Die Ergebnisauswahl, „»“ und „Alles deselektieren“ bleiben immer
+        die Ergebnisauswahl bis LISTE_MIN, danach weichen die Hauptknoepfe,
+        und der dabei frei gewordene Platz geht an die Ergebnisauswahl
+        zurueck. Die Ergebnisauswahl, „»“ und „Alles deselektieren“ bleiben immer
         stehen. Gerechnet wird nur, wenn sich Breite oder Inhalt geaendert
         haben - sonst stiesse jeder Aufruf ueber die Layoutanfrage den
         naechsten an."""
@@ -1181,6 +1182,15 @@ class Glasleiste(QtWidgets.QFrame):
             if self._wunschbreite() <= breite:
                 break
             weg(w)
+        # Was das Weichen der Hauptknoepfe frei macht, bekommt die Liste
+        # zurueck (25.09.2026): sonst blieb sie bei LISTE_MIN = 120 px, obwohl
+        # daneben Platz frei war - bei 1366 und 1536 px Fensterbreite waren
+        # 75 von 81 Namen der gerechneten Halle abgeschnitten („Kombination
+        # GZ“), und die Liste ist dort die einzige Anzeige des Ergebnisses.
+        for cb, b in self._listenbreite.items():
+            frei = breite - self._wunschbreite()
+            if frei > 0 and cb.minimumWidth() < b:
+                cb.setMinimumWidth(min(b, cb.minimumWidth() + frei))
         self._ueberlauf_fuellen(versteckt)
         self.resize(self.sizeHint())
         self._stand = (int(breite), tuple(w.sizeHint().width() for w in teile))

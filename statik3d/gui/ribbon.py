@@ -639,8 +639,12 @@ STIL = """
 QWidget#ribbon {{ background: {flaeche}; border-bottom: 1px solid {linie}; }}
 QTabWidget#ribbontabs::pane {{ border: 0; border-top: 1px solid {linie};
     background: {flaeche}; }}
+/* Reiter 9 px statt 14 px Innenabstand (25.09.2026): mit dem Kontextregister
+   „Auswahl: 12 Knoten“ brauchte die Registerzeile 1371 px - bei 1280 px
+   erschienen Rollpfeile, und gerade dieser Reiter lag dahinter. Mit 10 px
+   waeren es offscreen 1243 px, unter Windows bis 2,9 % mehr - zu knapp. */
 QTabWidget#ribbontabs > QTabBar::tab {{ background: transparent; border: 0;
-    padding: 6px 14px; margin: 0 1px; color: {matt}; font-weight: 600; }}
+    padding: 6px 9px; margin: 0 1px; color: {matt}; font-weight: 600; }}
 QTabWidget#ribbontabs > QTabBar::tab:selected {{ color: {akzent};
     border-bottom: 2px solid {akzent}; }}
 QTabWidget#ribbontabs > QTabBar::tab:hover {{ color: {text}; }}

@@ -3451,8 +3451,15 @@ class MainWindow(QtWidgets.QMainWindow):
         if knopf is None:
             return
         from . import symbole as sym
+        symbol = sym.symbol(self.AUSWAHLART_SYMBOL.get(self.auswahlart, "fang_knoten"))
         knopf.setText(f"Klick wählt: {self.auswahlart} ▾")
-        knopf.setIcon(sym.symbol(self.AUSWAHLART_SYMBOL.get(self.auswahlart, "fang_knoten")))
+        knopf.setIcon(symbol)
+        # Auch Titel und Symbol des Menues (25.09.2026): steht der Knopf in
+        # der Ueberlaufliste „»“, ist das Untermenue die einzige Anzeige der
+        # Auswahlart - es behielt bisher „Klick wählt: Knoten“.
+        if knopf.menu() is not None:
+            knopf.menu().setTitle(f"Klick wählt: {self.auswahlart}")
+            knopf.menu().setIcon(symbol)
 
     def maske_darstellung(self):
         """Rechte Maske „Darstellung“: Symbolgroesse der Lager und Lagerdichte.
@@ -3944,10 +3951,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Werkstoffe und ihre Kennwerte")
         g.klein("Schalendicken", lambda: self.tabelle_zeigen("Dicken"),
                 hinweis="Tabelle der Schalendicken - dort anlegen und ändern")
-        # wie „Knoten löschen“ im Kontextregister „Auswahl“ - dort, wo die
-        # Auswahl ist; hier nur noch fuer die Suche (25.09.2026)
-        g.nur_suche("Elemente löschen", self.delete_elements, symbol="loeschen",
-                    hinweis="Alle Elemente entfernen, deren Knoten sämtlich gewählt sind")
+        # Bleibt ein Knopf (Nachbesserung 25.09.2026): die Befehlssuche fuehrt
+        # Loeschbefehle nie aus, sondern nennt den Knopf in Register › Gruppe -
+        # nur in der Suche fuehrte „Elemente löschen“ darum ins Leere. Unter
+        # „Schalendicken“ macht er das Register 16 px breiter (1214 statt
+        # 1198 px offscreen gemessen), es passt weiter bei 1280 px.
+        g.klein("Elemente löschen", self.delete_elements,
+                hinweis="Alle Elemente entfernen, deren Knoten sämtlich gewählt sind")
 
         # -- Lager / Gelenke / Kontakt -----------------------------------
         r = rb.register("Lager / Kontakt")
@@ -5746,8 +5756,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 felder.append(F("elemente", "gesetzt an", "info",
                                 self._elemente_text(getattr(h, "elemente", []) or []) if h else "–"))
                 titel = f"Gelenk {name}"
+                # Weg nachgezogen 25.09.2026: der Knopf „Gelenke setzen…“ steht
+                # nicht mehr im Register Struktur (Paket 7)
                 hinweis = ("Je Freiheitsgrad: biegesteif, gelenkig oder Feder (Steifigkeit in kN/m bzw. "
-                           "kNm/rad). Gesetzt wird das Gelenk über „Gelenke setzen“ im Register Struktur.")
+                           "kNm/rad). Gesetzt wird das Gelenk an den gewählten Stäben über „Gelenke“ im "
+                           "Kontextregister „Auswahl“ (erscheint mit einer Auswahl) oder über die "
+                           "Befehlssuche „Gelenke setzen“.")
         elif art == "berichtseintrag":
             i = int(name)
             e = m.bericht[i]

@@ -86,7 +86,7 @@ Vierzehn Register nach Arbeitsschritt:
 | **Start** | Auswahl, Modellprüfung, doppelte Knoten, freie Stabenden anschließen, Berechnen |
 | **Unterlagen** | **Dateien** (Datei hinzufügen: PDF, Bild, Word, Excel …; Unterlage öffnen; Entfernen), **Ansichten** (Ansicht aufnehmen, Skizze aus Ansicht), **Skizze** (Neue Skizze, Bearbeiten), **Bericht** (In den Bericht, Unterlagen zeigen) — seit 16.09.2026, siehe *Unterlagen* |
 | **Geometrie** | **Knoten / Linien** (Knoten, Linie, Knoten löschen, Linie aus Knoten), **Ändern** (Verschieben, Kopieren, Drehen, Spiegeln der Auswahl), **Konstruktion** (Lot / Projektion, Spalt / Toleranz), Auswahlart in der Ansicht, Koordinatensysteme, Arbeitsebene, **Fang** (Hauptschalter F3 und *Fangarten ▾*, auch „Lot“) |
-| **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, Stabzug, *Nachweisstäbe ▾*: Stäbe für Nachweise, automatisch erkennen), **Flächen** (Schale, Fläche aus Linien, Rechteckplatte, verschneiden), **Volumen** (Volumen aus Flächen, Quader), **Gelenke** (Gelenk anlegen), Eigenschaften (Querschnitte, Werkstoffe, Dicken) |
+| **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, Stabzug, *Nachweisstäbe ▾*: Stäbe für Nachweise, automatisch erkennen), **Flächen** (Schale, Fläche aus Linien, Rechteckplatte, verschneiden), **Volumen** (Volumen aus Flächen, Quader), **Gelenke** (Gelenk anlegen), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
 | **Lager / Kontakt** | Knoten-, Linien-, Flächenlager, Nichtlinearität, Kontakt (mit *Alle Kontakte löschen…*), Anschlüsse (anlegen, zeigen, löschen) |
 | **Lasten** | Lastfälle, Kombinationen, Lastfälle nach DIN 19704, Knoten-, Stab-, Flächen-, Temperaturlast (groß), Zwangsverformung, Vorspannung, Übermaß, Spiel geben, Passung (klein), Eigengewicht, Generierer Wasserdruck und Wind |
 | **Netz** | Vernetzen (Flächen und Volumen), Netzeinstellungen (Netzdichte, Elementform, intelligente Anpassung), Netzqualität, **Netzknoten** (Schalter), Netz löschen, Kontaktfugen |
@@ -99,23 +99,32 @@ Vierzehn Register nach Arbeitsschritt:
 | **Extras** | Handbücher, Info, Update |
 
 **Jedes Register passt auf den Bildschirm** (seit 25.09.2026). Bis dahin
-brauchte *Ansicht* mit 40 Einzelknöpfen 3341 px, *Nachweise* 2184 px,
-*Geometrie*, *Struktur* und *Lasten* 1400 bis 1760 px — bei 1366 px
+brauchte *Ansicht* mit 40 Einzelknöpfen 3363 px, *Nachweise* 2184 px,
+*Geometrie*, *Struktur* und *Lasten* 1415 bis 1760 px — bei 1366 px
 Fensterbreite waren die Beschriftungen gekürzt („Na…C3“, „F…z“). Jetzt
 steht eine Schar gleichartiger Schalter in **einem Knopf mit Menü**
 (*Anzeigen ▾*, *Nummern ▾*, *Darstellung ▾*, *Fangarten ▾*), und je
 Nachweisobjekt gibt es einen großen Knopf mit dem Menü
 **Neu | Ändern | Löschen | Tabelle**. In der Befehlssuche heißen die Einträge
-weiter wie vorher („Beulfeld ändern…“, „Tabelle Beulfelder“). Kein Register
-braucht mehr als 1240 px; geprüft wird bei 1366 und 1280 px Breite (1920 px
-bei 150 % Skalierung) mit den Schriftmaßen, dass keine Beschriftung gekürzt
-ist (`tests/test_glasleiste_ribbon.py`). Aus dem Ribbon gefallen sind nur
+weiter wie vorher („Beulfeld ändern…“, „Tabelle Beulfelder“). Am breitesten
+ist *Nachweise* mit rund 1275 px bei 100 % Skalierung (Windows-Schrift) und
+1240 px bei 150 %; ein 1280 px breites Fenster hat also noch knapp Luft.
+Geprüft wird bei 1366 und 1280 px Breite (1920 px bei 150 % Skalierung) mit
+den Schriftmaßen, dass keine Beschriftung gekürzt ist
+(`tests/test_glasleiste_ribbon.py`). Aus dem Ribbon gefallen sind nur
 **Doppelungen** — die Befehlssuche findet und startet sie weiter: die Knöpfe
 „Tabelle …“ (die Tabellen haben unten ihre Reiter), *Flächen/Volumen
 vernetzen* (= *Netz → Vernetzen*) und *Querschnitt zuweisen…*, *Dicke
-zuweisen…*, *Gelenke setzen…*, *Elemente löschen* (sie stehen im
-Kontextregister „Auswahl“, das mit einer Auswahl erscheint). Alle Befehle und
-Tastenkürzel sind geblieben.
+zuweisen…*, *Gelenke setzen…* (sie stehen als *Zuweisen* und *Gelenke* im
+Kontextregister „Auswahl“, das mit einer Auswahl erscheint). *Elemente
+löschen* bleibt ein Knopf in *Struktur › Eigenschaften*: Befehle, die löschen,
+startet die Suche nie selbst, sie nennt den Knopf — und der muss dort stehen
+(Nachbesserung 25.09.2026). Alle Befehle und Tastenkürzel sind geblieben.
+
+**Die Registerzeile passt** auch mit dem Kontextregister „Auswahl: 12 Knoten“
+in ein 1280 px breites Fenster: die Reiter haben seit 25.09.2026 weniger
+Innenabstand (vorher brauchten alle Reiter zusammen 1371 px — bei 1280 px
+erschienen Rollpfeile, und gerade der Reiter „Auswahl“ lag dahinter).
 
 **Eingeschaltete Schalter tragen einen Haken.** Das Symbol eines
 eingeschalteten Schalters ist blau und trägt unten rechts eine blaue Plakette
@@ -1595,7 +1604,13 @@ Ergebnisauswahl, und was bei einer schmalen Ansicht nicht mehr passt, wandert
 in die **Überlaufliste „»“** vor *Alles deselektieren*: zuerst die Knöpfe der
 Sicht und die Intelligente Auswahl, dann wird die Ergebnisauswahl schmaler
 (bis 120 px), dann folgen Fang, *Klick wählt*, *Darstellung*, *Zeigen* und
-*Ergebnisse* — ein Menüknopf erscheint in der Liste als Untermenü. Die
+*Ergebnisse* — ein Menüknopf erscheint in der Liste als Untermenü. Den Platz,
+den die weichenden Knöpfe frei machen, bekommt die Ergebnisauswahl zurück, bis
+zu ihren vollen 190 px: bei 1366 und 1536 px Fensterbreite zeigt sie so jeden
+Namen der gerechneten Halle ganz („Kombination GZT12“ statt „Kombination GZ“,
+Nachbesserung 25.09.2026). Das Untermenü *Klick wählt* in „»“ nennt die
+geltende Auswahlart („Klick wählt: Lager“) — steht der Knopf dort, ist es die
+einzige Anzeige in der Leiste. Die
 Ergebnisauswahl, „»“ und *Alles deselektieren* bleiben immer stehen. Wird die
 Ansicht wieder breiter, kehren die Knöpfe zurück. Es sind dieselben Befehle
 wie im Ribbon, mit denselben Tastenkürzeln.
