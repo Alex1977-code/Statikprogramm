@@ -1295,11 +1295,13 @@ Hilfsfesselung (`StaticSystem.gerandet`),
     [ K   Cᵀ ] [ u ]   [ F   ]
     [ C   0  ] [ μ ] = [ −g0 ],
 
-und die Kontaktkraft ist der Multiplikator λ = −μ ≥ 0 (Druck). Die Zeilen
-sind mit der größten Hauptdiagonale von K skaliert, damit die Pivotwahl
-nicht an Einträgen von 1 neben 10¹¹ hängt und das relative Residuum der
-Löserprüfung auch ohne äußere Last einen Sinn hat (Presspassung: rechte
-Seite nur das Übermaß). Das Sattelpunktsystem lösen MUMPS (SYM = 2),
+und die Kontaktkraft ist der Multiplikator λ = −μ ≥ 0 (Druck). Jede Zeile
+ist mit der Diagonalsteifigkeit ihrer Knoten skaliert (dieselbe Größe, aus
+der k_n entstand; je Zeile, nicht die größte im Modell, damit starre Teile
+und Drehfreiheitsgrade der Stäbe die Zeile nicht verzerren), damit die
+Pivotwahl nicht an Einträgen von 1 neben 10¹¹ hängt und das relative
+Residuum der Löserprüfung auch ohne äußere Last einen Sinn hat
+(Presspassung: rechte Seite nur das Übermaß). Das Sattelpunktsystem lösen MUMPS (SYM = 2),
 PARDISO und SuperLU; CHOLMOD scheidet aus (positiv definit verlangt).
 Die Aktivmenge entscheidet am Vorzeichen: eine geschlossene Bedingung
 öffnet, sobald λ < −f_tol (f_tol = 10⁻⁶ der Bezugskraft ist die

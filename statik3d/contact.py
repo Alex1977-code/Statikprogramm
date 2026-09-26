@@ -1536,7 +1536,7 @@ class ContactSystem:
         sich ihre Zeile in ``zeile`` (-1 ohne), damit update(u, lam) den
         Multiplikator findet. Ohne exakte Bedingung ist C None."""
         Kc, Fc = self.matrices(ndof)
-        rows, cols, vals, b, zeilen = [], [], [], [], []
+        rows, cols, vals, b, zeilen, skala = [], [], [], [], [], []
         for i, c in enumerate(self.cons):
             if self._exakt(c):
                 c.zeile = len(zeilen)
@@ -1545,8 +1545,15 @@ class ContactSystem:
                 vals.append(c.cn)
                 b.append(-c.g0)
                 zeilen.append(i)
+                # Skalierung der Zeile (StaticSystem.solve): die
+                # Diagonalsteifigkeit der beteiligten Knoten, aus der k_n
+                # entstand - je Zeile, nicht die groesste im Modell, damit
+                # weiche und starre Teile (E 2e11 neben 2e14) und Dreh-
+                # freiheitsgrade der Staebe die Zeile nicht verzerren
+                skala.append(c.kn / PENALTY_FACTOR)
             else:
                 c.zeile = -1
+        self.c_skala = np.array(skala, float)
         if not zeilen:
             return Kc, Fc, None, None, []
         C = sparse.coo_matrix((np.concatenate(vals).astype(float),
@@ -1938,6 +1945,11 @@ class ContactSystem:
                     f = f - (c.Ft[0] * t1 + c.Ft[1] * t2)
             out.append({"kind": c.kind, "label": c.label, "node": int(c.node),
                         "master": c.master, "gap": float(c.g), "Fn": float(c.Fn),
+                        # Fn_roh: die Normalkraft ungekappt (Zug negativ) - an der
+                        # exakten Bedingung der Multiplikator; daran misst die
+                        # Abnahme, ob eine geschlossene Bedingung zieht
+                        "Fn_roh": float(getattr(c, "zug_roh", c.Fn)), "starr": bool(c.starr),
+                        "gehalten": bool(getattr(c, "gehalten", False)),
                         "Ft": float(np.linalg.norm(c.Ft)), "status": status,
                         "normal": c.normal.tolist(), "frozen": c.frozen,
                         "dof": int(c.dof), "limit": float(c.limit),

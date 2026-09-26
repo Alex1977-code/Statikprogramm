@@ -2090,7 +2090,7 @@ class StaticSystem:
     def solve(self, F: np.ndarray, K_extra: sparse.spmatrix = None,
               F_extra: np.ndarray = None, us: np.ndarray = None,
               signatur=None, C_extra: sparse.spmatrix = None,
-              b_extra: np.ndarray = None) -> np.ndarray:
+              b_extra: np.ndarray = None, c_skala=None) -> np.ndarray:
         """Loesen fuer Lastvektor F; optional zusaetzliche Steifigkeit (Kontakt)
         und vorgegebene Verschiebungen ``us`` des Lastfalls (Zwangsverformungen,
         wirksam nur an gesperrten FHG): K_ff u_f = F_f - K_fs u_s.
@@ -2100,7 +2100,9 @@ class StaticSystem:
         nur zusammen mit ``K_extra`` und ``signatur``. Die Kontaktkraefte
         lambda = -mu (Druck positiv, Kraft auf das Tragwerk C^T lambda)
         stehen danach in ``self.kontakt_multiplikatoren``, je Zeile von C;
-        ohne C ist das ein leeres Feld.
+        ohne C ist das ein leeres Feld. ``c_skala`` (je Zeile, Vorgabe die
+        groesste Hauptdiagonale von K fuer alle) skaliert die Zeilen auf
+        Steifigkeitsniveau.
 
         ``signatur`` kennzeichnet K_extra (ContactSystem.signatur): mit
         derselben Signatur wie beim vorigen Aufruf bleibt die Faktorisierung
@@ -2154,8 +2156,12 @@ class StaticSystem:
                     # Uebermass in Metern) waere ||b|| winzig und das relative
                     # Residuum der Loeserpruefung ohne Sinn - K3 hiess damit
                     # "numerisch singulaer" (26.09.2026). lambda = -s*mu.
-                    s = self._c_skala
-                    C_extra = C_extra.tocsr() * s
+                    if c_skala is not None and len(c_skala) == C_extra.shape[0]:
+                        s = np.asarray(c_skala, float)
+                        C_extra = sparse.diags(s) @ C_extra.tocsr()
+                    else:
+                        s = self._c_skala
+                        C_extra = C_extra.tocsr() * s
                     rand_rhs = s * np.asarray(b_extra, float) - C_extra[:, self.si] @ u[self.si]
                 if neu:
                     Ktff = Kt[self.fi][:, self.fi].tocsc()
@@ -5337,7 +5343,8 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         Kc, Fc, C, b, _z = cs.system_matrizen(model.ndof)
         if K_zusatz is not None:
             Kc = Kc + K_zusatz
-        u = system.solve(F, Kc, Fc, us=us, signatur=signatur(), C_extra=C, b_extra=b)
+        u = system.solve(F, Kc, Fc, us=us, signatur=signatur(), C_extra=C, b_extra=b,
+                         c_skala=getattr(cs, "c_skala", None))
         lam = system.kontakt_multiplikatoren
         # Vor _update_states (das setzt Zustaende um): passt der eingefrorene
         # Zustand zu dieser Last? Bis zum 22.09.2026 hiess der Lauf immer
@@ -5407,7 +5414,8 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     def loesen():
         # Loesung und die Multiplikatoren der exakten Bedingungen (lambda,
         # Druck positiv) - beide gehoeren zu diesem Schritt
-        u_ = system.solve(F, Kc, Fc, us=us, signatur=signatur(), C_extra=C, b_extra=b)
+        u_ = system.solve(F, Kc, Fc, us=us, signatur=signatur(), C_extra=C, b_extra=b,
+                          c_skala=getattr(cs, "c_skala", None))
         return u_, system.kontakt_multiplikatoren
 
     if not cs.cons:
