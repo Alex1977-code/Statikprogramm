@@ -1330,14 +1330,47 @@ Multiplikatoren gleich der Auflast auf 10⁻⁹, Presspassung K3 σ = 355 N/mm²
 auf 5·10⁻¹³ N/mm² in jedem Element, Prüfmatrix KP1 tet4 und KP2 (vorher rot)
 grün; K1, K2, K3, KP1, KP2 ohne festgehaltene Bedingung.
 
+**Haftfugen: die Schubbindung steht unabhängig vom Normalzustand
+(`Constraint.bindung`, 26.09.2026).** Eine Fuge, die in ihrer Ebene starr
+ist (RFEM: u_x, u_y starr, u_z Ausfall bei Zug — am Drehlager „Achse (Typ
+4)“, „Montageauge (Typ 4)“, „Lagerbock Auge 1/2“), gleitet nie; ihre
+Tangentialsteifigkeit k_t steht darum auch dort, wo die Normalbedingung
+offen ist. Bis zu diesem Datum schaltete die Bindung mit dem Normalzustand:
+öffnete ein Knoten, fiel mit ihm sein Schub weg, die Nachbarn übernahmen
+ihn, und der Knoten drückte sich wieder in die Fuge. Gemessen am Drehlager
+(LF1, Modell 25.09., exakte Normalbedingung, 16 Runden): ab Runde 8
+pendelten je Runde rund 500 Bedingungen auf und 500 zu, 1 924 Bedingungen
+wechselten mehrfach, 1 756 davon an haftenden Fugen; beim Öffnen trugen sie
+im Median 2,8 N Zug, ihre Bindung aber 54 N Schub (Verhältnis 19, 10-%- bis
+90-%-Quantil 5 bis 71). Mit stehender Bindung klangen die Wechsel ab:
+12 218, 4 266, 2 392, 1 564, 1 072, 556, 200, 87, 55, 33, 36, 35, 51, 12,
+13, 12 je Runde, 52 Bedingungen mit zwei Wechseln nach Runde 8, keine mit
+vier. Ein offener, gebundener Knoten trägt seinen Schub weiter (Ergebnisliste
+„gebunden“, Kraft in den Knotenkräften); ob das die Physik einer weit
+geöffneten Haftfuge trifft, ist eine Modellentscheidung — sie entspricht
+der Freigabe je Richtung, wie RFEM sie führt.
+
 Federn des Anwenders (`stiffness` > 0, elastische Bettung) bleiben Federn:
 dort ist die Feder die Physik, Durchdringung = F_n/k. Ebenso rechnet der
 Hilfsschritt `stabilise` (kein Halt im ersten Schritt) mit Federn an der
-jetzigen Lage. Gehaltene Bedingungen (`solver._freie_teile_halten`, ein Teil
-ohne geschlossene Bedingung) öffnen nicht unter Zug, solange das Teil sonst
-nichts trägt - `solver._halt_loesen` gibt sie frei, sobald es an mindestens
-drei anderen Bedingungen trägt; hängt es am Ende allein am Halt, heißt das
-„hebt ab“ (tests/test_kontakthalt).
+jetzigen Lage. Gehaltene Bedingungen (`solver._freie_teile_halten`, ein Teil,
+dessen geschlossene Bedingungen es nicht mehr halten) öffnen nicht unter Zug,
+solange das Teil sonst nichts trägt. Ob es getragen wird, entscheidet seit
+dem 26.09.2026 der **Rang** und nicht die Zahl: gehalten wird, bis die
+geschlossenen Bedingungen und Bindungen so viele Starrkörperbewegungen des
+Teils halten wie alle seine Bedingungen zusammen könnten (`_rang_zahl`,
+Singulärwerte der Zeilen auf den sechs Moden über `SCHUB_GRENZE`); fünf
+Bedingungen auf einer Linie halten die Kippung um die Linie nicht, und die
+alte Regel „drei sind zu“ hielt dann nichts, Stufe 2 dagegen die halbe Fuge
+samt der Reihe, die zog - der Block hing am Halt, hieß „hebt ab“, und die
+Hilfsfesselung übernahm die Last (Reaktionen 144 statt 90 kN). Freigegeben
+wird nach Zug geordnet, vom stärksten an, solange der Rang der übrigen
+bleibt (`_halt_loesen`), und in einer Runde mit Freigabe wird sonst nichts
+umgestellt: Freigabe und Öffnen im selben Schritt schossen über (kippender
+Block auf der Haftfuge, tests/test_kontakt_exakt: jetzt 3 Schritte, Summe
+der Multiplikatoren 90 kN auf 10⁻⁹). Hängt das Teil am Ende allein am Halt,
+heißt das „hebt ab“ (tests/test_kontakthalt) - bei 20 kN Schub am Deckel
+des Blocks zu Recht, seine Resultierende läge außerhalb der Fuge.
 
 Arten:
 

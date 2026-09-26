@@ -4819,9 +4819,25 @@ def _schub_traegt(model, knoten, bindend) -> float:
     ihrer Ebene nichts (der hochgezogene Block, tests/test_kontakthalt), eine
     Bohrung fasst den Stift dagegen rundum. Gerechnet wird darum, nicht
     geraten."""
+    zeilen = []
+    for c in bindend:
+        ct = np.asarray(c.ct, float).reshape(2, -1)
+        zeilen.append((c.dofs, ct[0]))
+        zeilen.append((c.dofs, ct[1]))
+    return _rang_auf_starrmoden(model, knoten, zeilen)
+
+
+def _rang_auf_starrmoden(model, knoten, zeilen) -> float:
+    """Wie fest die Zeilen ``(dofs, Koeffizienten)`` die sechs
+    Starrkoerperbewegungen der Knotenmenge halten: Verhaeltnis kleinster zu
+    groesstem Singulaerwert der Zeilen auf den Moden (Drehungen mit der
+    Ausdehnung des Teils skaliert). 0 heisst: eine Bewegung bleibt frei.
+    Kern von :func:`_schub_traegt`; seit dem 26.09.2026 auch fuer die Frage,
+    ob ein Teil ohne seine gehaltenen Bedingungen getragen wird
+    (:func:`_halt_loesen`) - dort mit Normal- und Bindungszeilen."""
     X = np.asarray(getattr(model, "nodes", ()), float)
     kn = np.array(sorted(int(n) for n in knoten if int(n) < len(X)), dtype=np.int64)
-    if len(kn) == 0 or not bindend:
+    if len(kn) == 0 or not zeilen:
         return 0.0
     o = X[kn].mean(axis=0)
     L = float(np.abs(X[kn] - o).max()) or 1.0
@@ -4835,20 +4851,68 @@ def _schub_traegt(model, knoten, bindend) -> float:
         P[:, 0:3, 3 + k] = np.cross(np.tile(e, (len(r), 1)), r) / L
         if NDOF > 3:
             P[:, 3 + k, 3 + k] = 1.0 / L
-    A = np.zeros((2 * len(bindend), 6))
-    for i, c in enumerate(bindend):
-        ct = np.asarray(c.ct, float).reshape(2, -1)
-        for j, dd in enumerate(np.asarray(c.dofs, dtype=np.int64)):
+    A = np.zeros((len(zeilen), 6))
+    for i, (dofs, koeff) in enumerate(zeilen):
+        koeff = np.asarray(koeff, float).ravel()
+        for j, dd in enumerate(np.asarray(dofs, dtype=np.int64)):
             z = idx.get(int(dd) // NDOF)
             if z is None:
                 continue
-            p = P[z, int(dd) % NDOF]
-            A[2 * i] += ct[0, j] * p
-            A[2 * i + 1] += ct[1, j] * p
+            A[i] += koeff[j] * P[z, int(dd) % NDOF]
     s = np.linalg.svd(A, compute_uv=False)
     s6 = np.zeros(6)
     s6[:len(s)] = s
     return float(s6.min() / s6.max()) if s6.max() > 0.0 else 0.0
+
+
+def _rang_zahl(model, knoten, zeilen) -> int:
+    """Wie viele der sechs Starrkoerperbewegungen die Zeilen halten: Zahl der
+    Singulaerwerte ueber ``SCHUB_GRENZE`` mal dem groessten (siehe
+    :func:`_rang_auf_starrmoden`). Eine ebene Fuge ohne Reibung haelt drei
+    (Abheben, zwei Kippungen), mit Bindung sechs."""
+    if not zeilen:
+        return 0
+    X = np.asarray(getattr(model, "nodes", ()), float)
+    kn = np.array(sorted(int(n) for n in knoten if int(n) < len(X)), dtype=np.int64)
+    if len(kn) == 0:
+        return 0
+    o = X[kn].mean(axis=0)
+    L = float(np.abs(X[kn] - o).max()) or 1.0
+    idx = {int(n): i for i, n in enumerate(kn)}
+    P = np.zeros((len(kn), NDOF, 6))
+    r = X[kn] - o
+    for k in range(3):
+        e = np.zeros(3)
+        e[k] = 1.0
+        P[:, k, k] = 1.0
+        P[:, 0:3, 3 + k] = np.cross(np.tile(e, (len(r), 1)), r) / L
+        if NDOF > 3:
+            P[:, 3 + k, 3 + k] = 1.0 / L
+    A = np.zeros((len(zeilen), 6))
+    for i, (dofs, koeff) in enumerate(zeilen):
+        koeff = np.asarray(koeff, float).ravel()
+        for j, dd in enumerate(np.asarray(dofs, dtype=np.int64)):
+            z = idx.get(int(dd) // NDOF)
+            if z is not None:
+                A[i] += koeff[j] * P[z, int(dd) % NDOF]
+    s = np.linalg.svd(A, compute_uv=False)
+    return int((s > SCHUB_GRENZE * s.max()).sum()) if s.size and s.max() > 0.0 else 0
+
+
+def _halterzeilen(cons, alle_zu: bool = False) -> list:
+    """Die Zeilen, mit denen die Bedingungen eines Teils seine
+    Starrkoerperbewegungen halten: Normalzeilen der geschlossenen (mit
+    ``alle_zu`` aller) und Tangentialzeilen der Bindungen - Haften, Schubhalt,
+    dauerhafte Bindung - sowie der geschlossenen Reibknoten."""
+    zeilen = []
+    for c in cons:
+        zu = c.active or alle_zu
+        if zu:
+            zeilen.append((c.dofs, c.cn))
+        if c.ct is not None and (c.bindung or c.schub_halt or (zu and (c.haften or c.mu > 0))):
+            zeilen.append((c.dofs, c.ct[0]))
+            zeilen.append((c.dofs, c.ct[1]))
+    return zeilen
 
 
 def _freie_teile_halten(model, cs, log: list = None, mindestens: int = HALT_MINDESTENS,
@@ -4891,10 +4955,24 @@ def _freie_teile_halten(model, cs, log: list = None, mindestens: int = HALT_MIND
     """
     gehalten, geschoben = [], []
     for name, _kn, cons in _teile_bedingungen(model, cs):
-        soll = min(int(mindestens), len(cons)) if stufe == 1 else (len(cons) + 1) // 2
         aktiv = [c for c in cons if c.active]
-        if len(aktiv) >= soll:
-            continue
+        if stufe == 1:
+            # Rang statt Zahl (26.09.2026): gehalten wird, bis die
+            # geschlossenen Bedingungen und Bindungen so viele
+            # Starrkoerperbewegungen halten wie alle Bedingungen des Teils
+            # zusammen koennten (eine ebene Fuge ohne Reibung: drei). Die
+            # Zahl allein truegt: fuenf Bedingungen auf einer Linie halten
+            # die Kippung um die Linie nicht (kippender Block auf der
+            # Haftfuge, tests/test_kontakt_exakt).
+            soll = min(int(mindestens), len(cons))
+            ziel = _rang_zahl(model, _kn, _halterzeilen(cons, alle_zu=True))
+            zeilen = _halterzeilen(cons)
+            if len(aktiv) >= soll and _rang_zahl(model, _kn, zeilen) >= ziel:
+                continue
+        else:
+            soll = (len(cons) + 1) // 2
+            if len(aktiv) >= soll:
+                continue
         bindend = [c for c in cons if c.ct is not None and (c.haften or float(c.mu) > 0.0)]
         if bindend and _schub_traegt(model, _kn, bindend) > SCHUB_GRENZE:
             # Der Halt eines Stiftes ist seine Schubbindung, nicht der Druck:
@@ -4911,7 +4989,18 @@ def _freie_teile_halten(model, cs, log: list = None, mindestens: int = HALT_MIND
                 geschoben.append((name, len(cons), len(bindend)))
             continue
         offen = sorted((c for c in cons if not c.active), key=lambda c: float(c.g))
-        nimm = offen[:soll - len(aktiv)]
+        if stufe == 1:
+            nimm = []
+            for c in offen:
+                if len(aktiv) + len(nimm) >= soll and _rang_zahl(model, _kn, zeilen) >= ziel:
+                    break
+                nimm.append(c)
+                zeilen.append((c.dofs, c.cn))
+                if c.ct is not None and (c.haften or float(c.mu) > 0.0):
+                    zeilen.append((c.dofs, c.ct[0]))
+                    zeilen.append((c.dofs, c.ct[1]))
+        else:
+            nimm = offen[:soll - len(aktiv)]
         for c in nimm:
             c.active = True
             c.gehalten = True
@@ -4936,42 +5025,76 @@ def _freie_teile_halten(model, cs, log: list = None, mindestens: int = HALT_MIND
     return bool(gehalten or geschoben)
 
 
-def _halt_loesen(model, cs, log: list = None) -> int:
+def _halt_loesen(model, cs, lam, log: list = None) -> int:
     """Gehaltene **exakte** Bedingungen (``gehalten``, starr) wieder freigeben,
-    sobald das Teil ohne sie getragen wird - mindestens ``HALT_MINDESTENS``
-    andere geschlossene Bedingungen hat (26.09.2026).
+    sobald das Teil ohne sie getragen wird (26.09.2026).
 
     Die exakte Bedingung oeffnet in ``_update_states`` nicht unter Zug, solange
     sie gehalten ist (sonst waere das Teil im naechsten Schritt wieder frei und
-    der Halt begaenne von vorn). Traegt das Teil inzwischen anderswo, werden
-    die gehaltenen unter Zug geoeffnet, die unter Druck zu gewoehnlichen
-    Bedingungen. Bleibt das Teil allein am Halt haengen, bleibt er - und
-    :func:`_gehaltene_unter_zug` sagt am Ende, dass es abhebt. Rueckgabe:
-    Zahl der geaenderten Bedingungen (dann ist die Runde ein Wechsel)."""
+    der Halt begaenne von vorn). Getragen heisst: die uebrigen geschlossenen
+    Normalbedingungen und die Bindungen (haften, Schubhalt) halten alle sechs
+    Starrkoerperbewegungen des Teils (:func:`_rang_auf_starrmoden` ueber
+    ``SCHUB_GRENZE``) - nicht bloss "drei andere sind zu": fuenf Bedingungen
+    auf einer Linie halten die Kippung um diese Linie nicht, und der Halt
+    pendelte dann mit dem kippenden Block (tests/test_kontakt_exakt,
+    Haftfuge). Dann werden die gehaltenen unter Zug (Multiplikator ``lam`` der
+    Zeile) geoeffnet, die unter Druck zu gewoehnlichen Bedingungen. Bleibt das
+    Teil allein am Halt haengen, bleibt er - und :func:`_gehaltene_unter_zug`
+    sagt am Ende, dass es abhebt.
+
+    Der Aufrufer loest **nur** diese Freigabe in der Runde und rechnet neu,
+    ehe er andere Bedingungen umstellt: Freigabe und Oeffnen im selben Schritt
+    schossen ueber (der Block verlor mit den gehaltenen auch die Reihe, die im
+    Endzustand traegt, und hing wieder am Halt). Rueckgabe: Zahl der
+    geaenderten Bedingungen."""
+    if not any(c.gehalten and c.active and c.starr for c in cs.cons):
+        return 0                                  # der Regelfall: nichts gehalten, keine Teilesuche
     n = 0
-    for name, _kn, cons in _teile_bedingungen(model, cs):
+    for name, kn, cons in _teile_bedingungen(model, cs):
         geh = [c for c in cons if c.active and c.gehalten and c.starr]
         if not geh:
             continue
-        andere = sum(1 for c in cons if c.active and not c.gehalten)
-        if andere < HALT_MINDESTENS:
-            continue
-        auf = 0
+
+        def multiplikator(c):
+            return float(lam[c.zeile]) if (lam is not None and 0 <= c.zeile < len(lam)) else 0.0
+
+        # Gehaltene unter Druck sind gewoehnliche Bedingungen geworden
         for c in geh:
+            if multiplikator(c) >= -cs.f_tol:
+                c.gehalten = False
+                n += 1
+        geh = [c for c in geh if c.gehalten]
+        if not geh:
+            continue
+        # Unter Zug: der Reihe nach vom staerksten Zug an freigeben, solange
+        # der Rang der uebrigen (geschlossene ohne Halt, verbleibender Halt,
+        # Bindungen) nicht sinkt - so faellt zuerst die Reihe, die zieht, und
+        # die Reihe, die im Endzustand traegt, bleibt (kippender Block)
+        rest = list(geh)
+        rang_mit = _rang_zahl(model, kn, _halterzeilen(cons))
+        auf = 0
+        for c in sorted(geh, key=multiplikator):
+            rest_ohne = [r for r in rest if r is not c]
+            bleibt = {id(r) for r in rest_ohne}
+            # Bedingungen sind Dataclasses mit Feldern aus numpy - Zugehoerigkeit
+            # ueber id(), nicht ueber ==
+            zeilen = _halterzeilen([x for x in cons if not (x.gehalten and x.active) or id(x) in bleibt])
+            if _rang_zahl(model, kn, zeilen) < rang_mit:
+                break
+            rest = rest_ohne
             c.gehalten = False
-            if float(getattr(c, "zug_roh", 0.0)) < -cs.f_tol:
-                c.active = False
-                c.slip = False
-                c.slip_dir = None
-                c.dt_last = None
-                c.yielding = False
-                c.Ft[:] = 0
-                c.Fn = 0.0
-                auf += 1
-        n += len(geh)
+            c.active = False
+            c.slip = False
+            c.slip_dir = None
+            c.dt_last = None
+            c.yielding = False
+            c.Ft[:] = 0
+            c.Fn = 0.0
+            auf += 1
+        n += auf
         if log is not None and auf:
-            log.append(f"Halt gelöst: {name} trägt an {andere} Bedingungen, "
-                       f"{auf} gehaltene unter Zug geöffnet")
+            log.append(f"Halt gelöst: {name} - {auf} von {len(geh)} gehaltenen unter Zug geöffnet, "
+                       f"Rang {rang_mit} bleibt; {len(rest)} bleiben gehalten")
     return n
 
 
@@ -5493,9 +5616,12 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                         ex = ex4
                 if not geloest:
                     raise _kontakt_abbruch(it, ex, cs, model, u, log=log) from None
-        changed = cs.update(u, lam)
-        if _halt_loesen(model, cs, log):
+        if _halt_loesen(model, cs, lam, log):
+            # Nur die Freigabe des Halts in dieser Runde; die Zustaende der
+            # uebrigen Bedingungen entscheidet die naechste Loesung
             changed = True
+        else:
+            changed = cs.update(u, lam)
         if cs.schub_halt_loesen():
             # Der Schubhalt hat den Schritt getragen; jetzt liegt das Teil
             # wieder an, und die gewoehnliche Haftbindung uebernimmt. Der

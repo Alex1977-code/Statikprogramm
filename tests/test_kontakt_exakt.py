@@ -193,9 +193,73 @@ def test_lager_und_spaltelement():
           f"{c2['status']}, g {float(c2['gap']):.3e} m")
 
 
+def test_haftfuge_bindung_bleibt():
+    """Haftfuge (in der Ebene starr, normal Ausfall bei Zug): die Schubbindung
+    steht auch dort, wo die Normalbedingung offen ist (Constraint.bindung,
+    26.09.2026). Am Drehlager pendelte die Aktivmenge sonst: an den
+    pendelnden Knoten trug die Bindung das 19-Fache der Normalkraft, und ihr
+    Schalten mit dem Normalzustand warf den Knoten in die Fuge zurueck."""
+    print("\n--- Haftfuge: die Schubbindung bleibt bei offener Normalbedingung ---")
+    # H = 5 kN am Deckel (z = 0,4 m): Moment 2 kNm, die Resultierende der 90 kN
+    # wandert von x = 0,15 auf 0,172 m - noch innerhalb der Fuge (0,2 m).
+    # Mit 20 kN laege sie bei 0,239 m: der Block kippt wirklich, "hebt ab"
+    # ist dann die richtige Antwort (so gemessen am 26.09.2026)
+    H = 5000.0
+    m = _block_auf_platte(kipp=1.5, mu=0.0)
+    cp = m.contact_pairs[0]
+    cp.haften = True
+    top = [int(l.node) for l in m.case().nodal_loads]
+    for n in top:
+        m.case().nodal_loads[[int(l.node) for l in m.case().nodal_loads].index(n)].F[0] += H / len(top)
+    res = solver.solve_static(m)
+    fuge = _fuge(res)
+    zu = [c for c in fuge if c["status"] != "offen"]
+    offen = [c for c in fuge if c["status"] == "offen"]
+    check("konvergiert, Fuge teils offen, nichts festgehalten",
+          res.info.get("contact_converged") and 3 <= len(offen) <= 20 and not any(c.get("frozen") for c in fuge),
+          f"{len(zu)} zu, {len(offen)} offen, {res.info.get('contact_iterations')} Schritte")
+    geb = [c for c in offen if c.get("gebunden")]
+    check("jede offene Bedingung ist gebunden und traegt Schub (Ft > 0)",
+          len(geb) == len(offen) and all(float(c["Ft"]) > 0.0 for c in geb),
+          f"{len(geb)} gebunden, Ft {min((float(c['Ft']) for c in geb), default=0):.1f}..{max((float(c['Ft']) for c in geb), default=0):.1f} N")
+    fn_min = min(float(c["Fn"]) for c in zu)
+    check("geschlossene: Fn >= 0 und Spalt null", fn_min >= 0.0 and max(abs(float(c["gap"])) for c in zu) < 1e-15,
+          f"min Fn {fn_min:.3f} N")
+    Fx = sum(float(c["F_vek"][0]) for c in fuge)
+    Fz = sum(float(c["F_vek"][2]) for c in fuge)
+    check("Gleichgewicht: Summe der Kontaktkraefte x = -H, z = +90 kN (1e-9)",
+          abs(Fx + H) < 1e-9 * H and abs(Fz - 90000.0) < 1e-9 * 90000.0, f"Fx {Fx:.6f} N, Fz {Fz:.6f} N")
+    Fx_offen = sum(float(c["F_vek"][0]) for c in geb)
+    check("davon tragen die offenen, gebundenen Knoten einen Teil des Schubs (|Fx| > 0)",
+          abs(Fx_offen) > 0.0, f"{Fx_offen:.3f} N von {-H:.0f} N")
+    R = res.reactions[:, :3].sum(axis=0)
+    check("Auflagerreaktionen der Platte: Rx = -H, Rz = +90 kN", abs(R[0] + H) < 1e-6 * H and abs(R[2] - 90000.0) < 1e-6 * 90000.0,
+          f"{R}")
+    # Ruecknahmeprobe: ohne Bindung traegt ein offener Knoten keinen Schub
+    m2 = _block_auf_platte(kipp=1.5, mu=0.0)
+    cp2 = m2.contact_pairs[0]
+    cp2.haften = True
+    for l in m2.case().nodal_loads:
+        l.F[0] += H / len(top)
+    alt = contact.ContactSystem._bedingung
+
+    def ohne_bindung(self, *a, **kw):
+        alt(self, *a, **kw)
+        self.cons[-1].bindung = False
+    contact.ContactSystem._bedingung = ohne_bindung
+    try:
+        res2 = solver.solve_static(m2)
+    finally:
+        contact.ContactSystem._bedingung = alt
+    offen2 = [c for c in _fuge(res2) if c["status"] == "offen"]
+    check("Ruecknahme: ohne Bindung traegt ein offener Knoten keinen Schub (Ft = 0, nicht gebunden)",
+          offen2 and all(float(c["Ft"]) == 0.0 and not c.get("gebunden") for c in offen2),
+          f"{len(offen2)} offen, {res2.info.get('contact_iterations')} Schritte, konvergiert {res2.info.get('contact_converged')}")
+
+
 def main() -> int:
     for t in (test_spalt_null_und_gleichgewicht, test_kippender_block, test_presspassung_exakt,
-              test_feder_bleibt_feder, test_lager_und_spaltelement):
+              test_feder_bleibt_feder, test_lager_und_spaltelement, test_haftfuge_bindung_bleibt):
         try:
             t()
         except Exception as ex:             # noqa: BLE001

@@ -156,6 +156,8 @@ class Constraint:
     dof: int = -1                  # Lager-FHG 0..5 bei kind 'dof'/'dof_rot'
     zug: bool = False              # Verbund: die Bedingung oeffnet nie (Zug wird uebertragen)
     haften: bool = False           # in der Fugenebene kein Gleiten
+    bindung: bool = False          # die Schubbindung (haften) steht auch bei offener
+                                   # Normalbedingung (26.09.2026, Drehlager-Zyklus)
     active: bool = False
     slip: bool = False
     slip_dir: Optional[np.ndarray] = None   # Gleitrichtung (2,) im Tangentialsystem
@@ -976,10 +978,16 @@ class ContactSystem:
             a_s = float((getattr(cp, "knotenflaechen", None) or {}).get(int(s), 0.0) or 0.0)
             limit = grenze * a_s
         normalen.append(n)
+        # Haften heisst: die Fuge gleitet nie - auch nicht dort, wo die
+        # Normalbedingung gerade offen steht. Schaltete die Schubbindung mit
+        # dem Normalzustand, pendelte die Aktivmenge am Drehlager (26.09.2026,
+        # gemessen: an den pendelnden Knoten trug die Bindung das 19-Fache der
+        # Normalkraft, 1 756 von 1 924 Pendlern an haftenden Fugen; mit
+        # stehender Bindung klangen die Wechsel von 500 je Runde auf 12 ab).
         self.cons.append(Constraint("surface", dofs, cn, ct, float(g0), kn,
                                     TANGENT_FACTOR * kn, mu, s, n, marke,
                                     master=(list(tri), list(wj)), limit=limit,
-                                    zug=bool(cp.zug), haften=haften,
+                                    zug=bool(cp.zug), haften=haften, bindung=haften,
                                     starr=self._starr(cp.stiffness)))
 
     def _rand_von(self, cp) -> set:
@@ -1574,7 +1582,7 @@ class ContactSystem:
         full_slip = self._full_slip_groups()
         for c in self.cons:
             if not c.active:
-                if not (c.schub_halt and c.ct is not None):
+                if not ((c.schub_halt or c.bindung) and c.ct is not None):
                     continue
                 # Schubhalt: der Stift steckt in der Bohrung und traegt dort
                 # Schub, auch wenn in diesem Schritt alle seine
@@ -1584,6 +1592,8 @@ class ContactSystem:
                 # Drehlager haelt der Schub aller Bedingungen die sechs
                 # Starrkoerperbewegungen mit 0,54 bis 0,71, drei Bedingungen
                 # dagegen mit 2e-18, also gar nicht (19.09.2026).
+                # Bindung (haften, 26.09.2026): derselbe Block, dauerhaft -
+                # die Haftfuge gleitet nie, gleich ob der Knoten anliegt.
                 kmat = c.kt * (np.outer(c.ct[0], c.ct[0]) + np.outer(c.ct[1], c.ct[1]))
                 r, cc = np.meshgrid(c.dofs, c.dofs, indexing="ij")
                 rows.append(r.ravel())
@@ -1855,7 +1865,11 @@ class ContactSystem:
                 # Tangentialverschiebung dieses Zustands, nur solange geglitten wird
                 c.dt_last = dt.copy() if c.slip else None
             elif not c.active:
-                c.Ft = np.zeros(2)
+                if c.bindung and c.ct is not None:
+                    # offen, aber gebunden: die Bindung traegt weiter Schub
+                    c.Ft = c.kt * np.array([c.ct[0] @ ue, c.ct[1] @ ue])
+                else:
+                    c.Ft = np.zeros(2)
             # Dieselbe Zaehlung wie `haftend` unten: jede Bedingung aendert
             # in der Schleife nur sich selbst, der Stand nach ihrem Durchgang
             # ist also der nach der Schleife
@@ -1943,7 +1957,12 @@ class ContactSystem:
                 if c.ct is not None:
                     t1, t2 = _axes_of(c)
                     f = f - (c.Ft[0] * t1 + c.Ft[1] * t2)
+            elif c.bindung and c.ct is not None and c.kind != "dof_rot":
+                # offen, aber gebunden: nur die Schubkraft der Bindung
+                t1, t2 = _axes_of(c)
+                f = -(c.Ft[0] * t1 + c.Ft[1] * t2)
             out.append({"kind": c.kind, "label": c.label, "node": int(c.node),
+                        "gebunden": bool(c.bindung and not c.active and c.ct is not None),
                         "master": c.master, "gap": float(c.g), "Fn": float(c.Fn),
                         # Fn_roh: die Normalkraft ungekappt (Zug negativ) - an der
                         # exakten Bedingung der Multiplikator; daran misst die
@@ -1960,9 +1979,9 @@ class ContactSystem:
         """Kontaktkraefte auf die Knoten (nn,3), global."""
         F = np.zeros((nn, 3))
         for c in self.cons:
-            if not c.active or c.kind == "dof_rot":
+            if c.kind == "dof_rot" or not (c.active or (c.bindung and c.ct is not None)):
                 continue
-            f = c.Fn * c.normal
+            f = c.Fn * c.normal                  # Fn ist 0, wenn offen (nur die Bindung traegt)
             if c.ct is not None:
                 t1, t2 = _axes_of(c)
                 f = f - (c.Ft[0] * t1 + c.Ft[1] * t2)

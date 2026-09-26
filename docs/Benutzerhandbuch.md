@@ -3400,6 +3400,12 @@ Federkraft aus einer winzigen Durchdringung mehr. Was Sie davon sehen:
   Steifigkeit), bleiben Federn - dort ist die Durchdringung Kraft/Steifigkeit.
 * Der Gleichungslöser rechnet dafür ein Sattelpunktsystem; MUMPS, PARDISO
   und SuperLU können das, CHOLMOD nicht (das Programm weicht dann aus).
+* **Haftfugen** (in der Ebene starr, normal Ausfall bei Zug — RFEM u_x/u_y
+  starr): die Schubbindung bleibt auch an Knoten stehen, deren Normal-
+  bedingung offen ist; sie gleiten nie. In der Kontakttabelle heißt so ein
+  Knoten „offen“ mit „gebunden“ und trägt eine Schubkraft. Vorher fiel mit
+  der Normalbedingung auch der Schub weg — am Drehlager pendelte die
+  Rechnung deswegen zwischen zwei Zuständen.
 
 Ein Teil, das in einem Schritt keine geschlossene Bedingung mehr hat, wird
 wie bisher an seinen nächsten Bedingungen gehalten; der Halt löst sich,

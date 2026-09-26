@@ -95,9 +95,13 @@ def test_teile_bedingungen():
     log = []
     ok = solver._freie_teile_halten(m, cs, log)
     zu = [c for c in cs.cons if c.active]
-    kleinste = sorted(cs.cons, key=lambda c: c.g)[:3]
-    check("Halt: drei Bedingungen mit dem kleinsten Spalt sind wieder zu, Protokollzeile",
-          ok and len(zu) == 3 and set(map(id, zu)) == set(map(id, kleinste)) and log and "gehalten" in log[0], str(log[:1])[:120])
+    # mindestens drei, und so viele mehr, bis die geschlossenen alle
+    # Starrkoerperbewegungen halten, die die Fuge halten kann (Rang statt
+    # Zahl, 26.09.2026): die drei naechsten koennen auf einer Linie liegen
+    kleinste = sorted(cs.cons, key=lambda c: c.g)[:len(zu)]
+    check("Halt: mindestens drei Bedingungen mit dem kleinsten Spalt sind wieder zu, Protokollzeile",
+          ok and 3 <= len(zu) <= 8 and set(map(id, zu)) == set(map(id, kleinste)) and log and "gehalten" in log[0],
+          f"{len(zu)} zu; " + str(log[:1])[:120])
     check("ist genug zu, wird nichts gehalten", not solver._freie_teile_halten(m, cs, []))
 
 
@@ -687,8 +691,8 @@ def test_halt_waehlt_den_schub():
     cs2 = _FalscheBedingungsliste(ohne)
     m2 = _modell_der_lage(lage_o)
     _mit_einem_teil("Blech", lambda: solver._freie_teile_halten(m2, cs2, log2))
-    check("ohne bindende Bedingungen bleibt es beim Normalhalt",
-          sum(1 for c in ohne if c.active) == solver.HALT_MINDESTENS
+    check("ohne bindende Bedingungen bleibt es beim Normalhalt (mindestens drei, bis der Rang steht)",
+          sum(1 for c in ohne if c.active) >= solver.HALT_MINDESTENS
           and not any(c.schub_halt for c in ohne),
           f"{sum(1 for c in ohne if c.active)} geschlossen")
 
