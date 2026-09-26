@@ -3382,6 +3382,31 @@ als **Drehfeder**. Eine Drehfeder wirkt nur, wenn der Knoten selbst gehalten ist
 
 ## 6 Kontakt
 
+**Geschlossene Fugen sind exakt geschlossen (seit 26.09.2026).** Eine
+Kontaktbedingung ohne eigene Federsteifigkeit erzwingt den Spalt null exakt;
+die Kontaktkraft ist ein eigener Wert der Rechnung (Multiplikator), keine
+Federkraft aus einer winzigen Durchdringung mehr. Was Sie davon sehen:
+
+* In der Kontakttabelle steht bei geschlossenen Bedingungen der Spalt 0
+  (vorher etwa ein Zehntausendstel der Verschiebung als Durchdringung).
+* Eine Bedingung öffnet, sobald ihre Kraft Zug anzeigt, und schließt,
+  sobald sie durchdringt - nichts wird mehr „als aktiv gehalten“, die
+  Protokollzeile „Zustand oszilliert, wird als aktiv gehalten“ gibt es nicht
+  mehr. Ein Ergebnis mit geschlossenen Bedingungen unter Zug kann so nicht
+  entstehen.
+* Bei einer Presspassung wird das Übermaß exakt geschlossen: die Pressung
+  ist σ = δ E/(2 L) auf Rechengenauigkeit (Prüfmatrix K3).
+* Federn, die Sie selbst eingeben (elastische Bettung, Kontaktpaar mit
+  Steifigkeit), bleiben Federn - dort ist die Durchdringung Kraft/Steifigkeit.
+* Der Gleichungslöser rechnet dafür ein Sattelpunktsystem; MUMPS, PARDISO
+  und SuperLU können das, CHOLMOD nicht (das Programm weicht dann aus).
+
+Ein Teil, das in einem Schritt keine geschlossene Bedingung mehr hat, wird
+wie bisher an seinen nächsten Bedingungen gehalten; der Halt löst sich,
+sobald das Teil an mindestens drei anderen Bedingungen trägt. Hängt es am
+Ende allein am Halt und zieht daran, bricht die Rechnung mit „hebt ab“ ab -
+siehe „Abbruch der Kontakt-Iteration“.
+
 > **Wann ein Kontaktergebnis nicht auskonvergiert ist (seit 22.09.2026).**
 > Bei Reibung prüft das Programm die Haft- und Gleitzustände nach jedem
 > Schritt nach. Wechseln sie immer weiter, bricht es die Nachprüfung nach 40

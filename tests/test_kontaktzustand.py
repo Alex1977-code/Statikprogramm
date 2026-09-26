@@ -371,9 +371,9 @@ def test_eingefroren_nur_wenn_der_zustand_passt():
               f"du {du:.1e}, d sigma_v {dsv / 1e6:.4f} N/mm2")
     # Ruecknahmeprobe: ohne die Pruefung bliebe H5 eingefroren - und falsch
     alt = ContactSystem.zustand_verstoesse
-    ContactSystem.zustand_verstoesse = lambda self, u: {"zug": 0, "zug_max": 0.0, "durchdringung": 0,
-                                                        "durchdringung_max": 0.0, "kegel": 0,
-                                                        "kegel_max": 0.0, "gegen": 0}
+    ContactSystem.zustand_verstoesse = lambda self, u, lam=None: {
+        "zug": 0, "zug_max": 0.0, "durchdringung": 0, "durchdringung_max": 0.0,
+        "kegel": 0, "kegel_max": 0.0, "gegen": 0}
     try:
         m2, _a, _b = _ermuedungsblock(faktoren)
         an2 = solver.solve_all(m2, combinations=False, envelopes=False, fatigue=True)

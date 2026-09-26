@@ -1280,17 +1280,62 @@ Skala 355 … 400.
 
 ## 4 Kontakt
 
-Kontakt wird mit dem Penalty-Verfahren und einer Aktivmengen-Iteration
-berechnet. Für jede Kontaktbedingung gilt der Spalt
+Kontakt wird mit einer Aktivmengen-Iteration berechnet. Für jede
+Kontaktbedingung gilt der Spalt
 
     g(u) = g0 + cᵀ u,
 
-c ist der Koeffizientenvektor der beteiligten Freiheitsgrade. Ist g < 0,
-werden die Steifigkeit k_n c cᵀ und die Last −k_n g0 c hinzugefügt; die
-Kontaktkraft ist F_n = −k_n g ≥ 0. Die Kontaktsteifigkeit wird automatisch
-als 10⁴-faches der Diagonalsteifigkeit der beteiligten Knoten gewählt
-(Durchdringung etwa 10⁻⁴ der freien Verschiebung) oder vom Anwender
-vorgegeben (elastische Bettung).
+c ist der Koeffizientenvektor der beteiligten Freiheitsgrade.
+
+**Exakte Normalbedingung (seit 26.09.2026, `contact.EXAKTE_NORMALBEDINGUNG`).**
+Eine geschlossene Bedingung ohne Feder des Anwenders erzwingt g = 0 **exakt**:
+ihre Zeile c steht als Lagrange-Rand im Gleichungssystem, wie die
+Hilfsfesselung (`StaticSystem.gerandet`),
+
+    [ K   Cᵀ ] [ u ]   [ F   ]
+    [ C   0  ] [ μ ] = [ −g0 ],
+
+und die Kontaktkraft ist der Multiplikator λ = −μ ≥ 0 (Druck). Die Zeilen
+sind mit der größten Hauptdiagonale von K skaliert, damit die Pivotwahl
+nicht an Einträgen von 1 neben 10¹¹ hängt und das relative Residuum der
+Löserprüfung auch ohne äußere Last einen Sinn hat (Presspassung: rechte
+Seite nur das Übermaß). Das Sattelpunktsystem lösen MUMPS (SYM = 2),
+PARDISO und SuperLU; CHOLMOD scheidet aus (positiv definit verlangt).
+Die Aktivmenge entscheidet am Vorzeichen: eine geschlossene Bedingung
+öffnet, sobald λ < −f_tol (f_tol = 10⁻⁶ der Bezugskraft ist die
+Genauigkeit des Gleichungslösers, keine physikalische Schwelle); eine
+offene schließt, sobald g < −tol. Nichts wird festgehalten. Das ist der
+primal-duale semiglatte Newton (Hintermüller/Ito/Kunisch 2002;
+Hüeber/Wohlmuth 2005) für den Normalkontakt; die Reibung bleibt darunter
+Penalty in den zwei Phasen.
+
+Warum nicht mehr die Feder: bis zum 25.09.2026 war jede Bedingung eine
+Feder k_n c cᵀ mit k_n = 10⁴-fache Diagonalsteifigkeit (10¹³ bis 10¹⁵ N/m
+am Drehlager), die Kraft F_n = −k_n g, und die Aktivmenge entschied am
+Vorzeichen von k_n g. 0,5 kN „Zug“ sind bei diesem k_n ein Spalt von 10⁻¹¹
+bis 10⁻¹³ m - Größenordnung dessen, was der direkte Löser an Vorwärtsfehler
+lässt (Hypothese, am Drehlager-Endzustand noch nicht nachgemessen; der
+Nachweis wäre ein Nachlösen mit anderem Löser und Nachiteration und der
+Vergleich der Vorzeichen). An Randknoten der Fuge pendelte die Bedingung
+jedenfalls, und nach acht Wechseln wurde sie aktiv festgehalten -
+mit dem Zug, den sie gerade trug. Am Drehlager-Endzustand vom 25.09.2026:
+980 festgehaltene von 13 536 aktiven, 809 davon unter Zug bis 1,6 kN (Median
+54 N). Eine Schwelle (1 N/mm² Pressung, Lauf 26.09.) ließ in jedem
+Kontaktblock 226 bis 436 davon stehen - sie kaschiert, sie heilt nicht.
+Gemessen mit der exakten Bedingung (tests/test_kontakt_exakt, 26.09.2026):
+Spalt geschlossener Bedingungen 0 (Feder: 1,4·10⁻¹⁰ m), Summe der
+Multiplikatoren gleich der Auflast auf 10⁻⁹, Presspassung K3 σ = 355 N/mm²
+auf 5·10⁻¹³ N/mm² in jedem Element, Prüfmatrix KP1 tet4 und KP2 (vorher rot)
+grün; K1, K2, K3, KP1, KP2 ohne festgehaltene Bedingung.
+
+Federn des Anwenders (`stiffness` > 0, elastische Bettung) bleiben Federn:
+dort ist die Feder die Physik, Durchdringung = F_n/k. Ebenso rechnet der
+Hilfsschritt `stabilise` (kein Halt im ersten Schritt) mit Federn an der
+jetzigen Lage. Gehaltene Bedingungen (`solver._freie_teile_halten`, ein Teil
+ohne geschlossene Bedingung) öffnen nicht unter Zug, solange das Teil sonst
+nichts trägt - `solver._halt_loesen` gibt sie frei, sobald es an mindestens
+drei anderen Bedingungen trägt; hängt es am Ende allein am Halt, heißt das
+„hebt ab“ (tests/test_kontakthalt).
 
 Arten:
 

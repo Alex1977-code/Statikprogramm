@@ -1635,9 +1635,13 @@ def test_gemeinsam_aendert_nichts_ohne_beides():
     # Block mit Reibung: max |u| 2,6374059e-6 bis zum 25.09.2026; seit dem
     # Ausgleich der Reststeifigkeit gleitender Knoten (contact.AUSGLEICH_
     # RESTSTEIFIGKEIT, 16 Knoten gleiten) 2,6374050e-6 - die Feder 1e-8 k_t
-    # traegt am Ende keine Kraft mehr (3e-7 relativ, gemessen 25.09.2026)
-    referenz = {"Kontakt ohne Plastizität: Block mit Reibung": (7, 0, 2.6374050390356763e-06, None),
-                "Kontakt ohne Plastizität: Stempel auf Sockel": (5, 0, 0.0003803567719446193, None),
+    # traegt am Ende keine Kraft mehr (3e-7 relativ, gemessen 25.09.2026).
+    # Seit der exakten Normalbedingung (contact.EXAKTE_NORMALBEDINGUNG,
+    # 26.09.2026) 2,6373307e-6 und Stempel 3,8035376e-4 statt 3,8035677e-4:
+    # die Durchdringung der Feder (Fn/k_n) faellt weg, das sind 2,8e-5 bzw.
+    # 7,9e-6 relativ - Zerlegungen und Rueckfuehrungen unveraendert.
+    referenz = {"Kontakt ohne Plastizität: Block mit Reibung": (7, 0, 2.637330735743709e-06, None),
+                "Kontakt ohne Plastizität: Stempel auf Sockel": (5, 0, 0.0003803537575356884, None),
                 "Plastizität ohne Kontakt: Zugwürfel hex8": (3, 4, 0.010142857142857335, True),
                 "Plastizität ohne Kontakt: Kragträger tet4": (6, 8, 0.00967601273071502, True)}
 
@@ -1958,14 +1962,27 @@ def test_uebermass_als_einzige_last():
           f"konvergiert {info.get('konvergiert')}, {info.get('fliessend')} fliessen, {info.get('iterationen')} Schritte")
     check("  und braucht dafuer nicht das ganze Budget (3 x 25)",
           0 < int(info.get("iterationen", 0)) < 30, f"{info.get('iterationen')} Schritte")
-    # Ruecknahmeprobe: mit dem Bezug 1 (wie bis 25.09.2026) bleibt es "nicht konvergiert"
+    # Ruecknahmeprobe: mit dem Bezug 1 (wie bis 25.09.2026) bleibt es "nicht
+    # konvergiert" - mit der Feder als Kontakt (Stand 25.09.): die Federkraefte
+    # aendern sich mit jeder Durchdringung um Bruchteile eines Newton, und das
+    # steht absolut gegen die Toleranz. Mit der exakten Normalbedingung
+    # (26.09.2026) faellt diese Stoerung weg: dann konvergiert es auch mit
+    # Bezug 1 N (die Aenderung ist wirklich unter 1e-3 N) - gemessen: 5 Schritte.
+    from statik3d import contact as _ct
+    alt_exakt = _ct.EXAKTE_NORMALBEDINGUNG
     pl.BEZUG_PLASTISCHE_LAST = False
     try:
         _m0, _r0, info0 = rechnen()
+        _ct.EXAKTE_NORMALBEDINGUNG = False
+        _m1, _r1, info1 = rechnen()
     finally:
         pl.BEZUG_PLASTISCHE_LAST = True
-    check("  Ruecknahmeprobe: mit Bezug 1 N nie konvergiert, obwohl das Ergebnis dasselbe ist",
-          info0.get("konvergiert") is False, f"konvergiert {info0.get('konvergiert')}, {info0.get('iterationen')} Schritte")
+        _ct.EXAKTE_NORMALBEDINGUNG = alt_exakt
+    check("  Ruecknahmeprobe: mit Bezug 1 N und Feder-Kontakt nie konvergiert, obwohl das Ergebnis dasselbe ist",
+          info1.get("konvergiert") is False, f"konvergiert {info1.get('konvergiert')}, {info1.get('iterationen')} Schritte")
+    check("  mit exakter Normalbedingung konvergiert es auch mit Bezug 1 N (keine Federstoerung mehr)",
+          info0.get("konvergiert") is True and int(info0.get("iterationen", 0)) < 30,
+          f"konvergiert {info0.get('konvergiert')}, {info0.get('iterationen')} Schritte")
 
 
 def main():

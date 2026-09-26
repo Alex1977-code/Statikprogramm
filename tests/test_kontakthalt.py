@@ -409,7 +409,7 @@ def test_deckel_merker_gilt_fuer_die_letzte_runde():
     cs.phase, cs.cycles, cs.settle, cs.log = 2, 0, 0, []
     cs.dF_slip, cs.f_ref = 0.0, 1.0
     folge = iter([True, False])
-    cs._update_states = lambda u: next(folge)
+    cs._update_states = lambda u, lam=None: next(folge)
     alt = _ct.MAX_CYCLES
     _ct.MAX_CYCLES = 1
     try:
@@ -451,12 +451,12 @@ def test_deckel_am_tatsaechlichen_austritt():
            ContactSystem.schub_halt_loesen)
     zaehler = {"deckel": 0}
 
-    def zustaende(self, u):
-        self._t_gewechselt = alt[1](self, u)
+    def zustaende(self, u, lam=None):
+        self._t_gewechselt = alt[1](self, u, lam)
         return self._t_gewechselt
 
-    def update(self, u):
-        weiter = alt[2](self, u)
+    def update(self, u, lam=None):
+        weiter = alt[2](self, u, lam)
         # In Phase 2 gibt update() mit Wechsel nur am Deckel False zurueck
         self._t_deckel = (not weiter and self.phase == 2
                           and bool(getattr(self, "_t_gewechselt", False)))
@@ -513,8 +513,8 @@ def test_ohne_merker_gilt_die_vorsichtige_probe():
 
     alt = (_ct.MAX_CYCLES, ContactSystem.update)
 
-    def update_ohne_merker(self, u):
-        weiter = alt[1](self, u)
+    def update_ohne_merker(self, u, lam=None):
+        weiter = alt[1](self, u, lam)
         self.__dict__.pop("am_deckel", None)
         return weiter
 

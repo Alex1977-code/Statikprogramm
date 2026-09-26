@@ -1961,15 +1961,18 @@ class StaticSystem:
         buch, self._nachweis_buch = getattr(self, "_nachweis_buch", None), None
         return None if buch is None else buch.als_dict(self.zeit_faktorisierung)
 
-    def gerandet(self, Kff):
-        """Kff mit dem Lagrange-Rand der Hilfsfesselung.
+    def gerandet(self, Kff, C=None):
+        """Kff mit dem Lagrange-Rand der Hilfsfesselung - und, mit ``C``, den
+        exakten Kontaktbedingungen (contact.ContactSystem.system_matrizen).
 
         Aus K wird
 
             [ K    V^T ]   [ u ]   [ F ]
             [ V     0  ] * [ l ] = [ 0 ]
 
-        Die Zusatzzeilen erzwingen ``V u = 0`` - der Starrkoerperanteil der
+        (mit Kontakt: der Rand ist [V; C], rechte Seite [0; b] mit C u = b,
+        die Multiplikatoren der C-Zeilen sind die negativen Kontaktkraefte;
+        siehe :meth:`solve`). Die Zusatzzeilen erzwingen ``V u = 0`` - der Starrkoerperanteil der
         freien Bewegungen ist damit exakt null statt nur klein. Die Haltekraft
         ist ``V^T l`` und verteilt sich damit ueber das Teil **wie die
         Bewegung selbst**; das ist die Traegheitsentlastung, und genau darum
@@ -1981,16 +1984,28 @@ class StaticSystem:
         Straffeder ``K + k*V^T V`` kostete deren Quadrat: am Drehlagermodell
         826 GB (siehe :func:`singular.stabilisieren`).
         """
-        if self._Vf is None or self._Vf.shape[0] == 0:
+        bloecke = [b for b in (self._Vf, C) if b is not None and b.shape[0] > 0]
+        if not bloecke:
             return Kff
-        m = self._Vf.shape[0]
-        return sparse.bmat([[Kff, self._Vf.T],
-                            [self._Vf, sparse.csr_matrix((m, m))]], format="csc")
+        B = bloecke[0] if len(bloecke) == 1 else sparse.vstack(bloecke, format="csr")
+        m = B.shape[0]
+        return sparse.bmat([[Kff, B.T],
+                            [B, sparse.csr_matrix((m, m))]], format="csc")
 
     @property
     def _rand(self) -> int:
         """Zahl der Randzeilen der Hilfsfesselung (0 = keine)."""
         return 0 if self._Vf is None else int(self._Vf.shape[0])
+
+    @property
+    def _c_skala(self) -> float:
+        """Skalierung der Kontakt-Bedingungszeilen: groesste Hauptdiagonale von K."""
+        s = getattr(self, "_c_skala_wert", None)
+        if s is None:
+            d = np.abs(np.asarray(self.K.diagonal()).ravel())
+            s = float(d.max()) if d.size and d.max() > 0 else 1.0
+            self._c_skala_wert = s
+        return s
 
     def freie_bewegungen(self, erzwingen: bool = False) -> list:
         """Bewegungen, die das Modell nicht haelt - gesucht, nicht gefesselt.
@@ -2074,10 +2089,18 @@ class StaticSystem:
 
     def solve(self, F: np.ndarray, K_extra: sparse.spmatrix = None,
               F_extra: np.ndarray = None, us: np.ndarray = None,
-              signatur=None) -> np.ndarray:
+              signatur=None, C_extra: sparse.spmatrix = None,
+              b_extra: np.ndarray = None) -> np.ndarray:
         """Loesen fuer Lastvektor F; optional zusaetzliche Steifigkeit (Kontakt)
         und vorgegebene Verschiebungen ``us`` des Lastfalls (Zwangsverformungen,
         wirksam nur an gesperrten FHG): K_ff u_f = F_f - K_fs u_s.
+
+        ``C_extra``/``b_extra`` (26.09.2026): exakte Kontaktbedingungen
+        C u = b als Lagrange-Rand hinter der Hilfsfesselung (:meth:`gerandet`),
+        nur zusammen mit ``K_extra`` und ``signatur``. Die Kontaktkraefte
+        lambda = -mu (Druck positiv, Kraft auf das Tragwerk C^T lambda)
+        stehen danach in ``self.kontakt_multiplikatoren``, je Zeile von C;
+        ohne C ist das ein leeres Feld.
 
         ``signatur`` kennzeichnet K_extra (ContactSystem.signatur): mit
         derselben Signatur wie beim vorigen Aufruf bleibt die Faktorisierung
@@ -2093,6 +2116,9 @@ class StaticSystem:
         if F_extra is not None:
             rhs = rhs + F_extra[self.fi]
         vorgabe = np.any(u[self.si])
+        self.kontakt_multiplikatoren = np.zeros(0)
+        if C_extra is not None and (K_extra is None or signatur is None):
+            raise ValueError("exakte Kontaktbedingungen brauchen K_extra und signatur")
         try:
             if K_extra is None:
                 if vorgabe:
@@ -2118,15 +2144,32 @@ class StaticSystem:
                 if vorgabe:
                     Ktfs = Kt[self.fi][:, self.si]
                     rhs = rhs - Ktfs @ u[self.si]
+                rand_rhs = None
+                if C_extra is not None:
+                    # C u = b auf den freien FHG: C_f u_f = b - C_s u_s. Die
+                    # Zeilen werden mit der groessten Hauptdiagonale von K
+                    # skaliert (Standard fuer Multiplikatorzeilen): Eintraege
+                    # von 1 neben 1e11 verderben die Pivotwahl, und ohne
+                    # aeussere Last (Presspassung K3: rechte Seite nur das
+                    # Uebermass in Metern) waere ||b|| winzig und das relative
+                    # Residuum der Loeserpruefung ohne Sinn - K3 hiess damit
+                    # "numerisch singulaer" (26.09.2026). lambda = -s*mu.
+                    s = self._c_skala
+                    C_extra = C_extra.tocsr() * s
+                    rand_rhs = s * np.asarray(b_extra, float) - C_extra[:, self.si] @ u[self.si]
                 if neu:
                     Ktff = Kt[self.fi][:, self.fi].tocsc()
                     self.kontakt_loeser_freigeben()
-                    ls = LinearSolver(self.gerandet(Ktff))
+                    ls = LinearSolver(self.gerandet(
+                        Ktff, None if C_extra is None else C_extra[:, self.fi]))
                     self._loeser_merken(ls)
                     self.faktorisierungen = getattr(self, "faktorisierungen", 0) + 1
                 self.backend = ls.backend
                 try:
-                    u[self.fi] = self._geloest(ls, rhs)
+                    u[self.fi] = self._geloest(ls, rhs, rand_rhs)
+                    if C_extra is not None:
+                        # Randloesung: erst die Hilfsfesselung, dann C; lambda = -s*mu
+                        self.kontakt_multiplikatoren = -s * self._randloesung[self._rand:]
                 finally:
                     if schluessel is None:
                         # ohne Signatur gilt die Faktorisierung nur fuer diesen
@@ -2142,12 +2185,14 @@ class StaticSystem:
             raise RuntimeError(singulaer_text(self.model, ex, self)) from None
         return u
 
-    def _geloest(self, ls: "LinearSolver", rhs: np.ndarray) -> np.ndarray:
+    def _geloest(self, ls: "LinearSolver", rhs: np.ndarray, rand_rhs=None) -> np.ndarray:
         """Loesen mit dem Lagrange-Rand: rechte Seite auffuellen, Rand abschneiden.
 
         Die Randzeilen fordern ``V u = 0``; ihre rechte Seite ist null. Die
         Multiplikatoren am Ende der Loesung sind die Haltekraefte und gehen
-        den Aufrufer nichts an.
+        den Aufrufer nichts an. ``rand_rhs`` sind die rechten Seiten weiterer
+        Randzeilen hinter V (exakte Kontaktbedingungen, C u = b); die ganze
+        Randloesung steht danach in ``self._randloesung`` (erst V, dann C).
 
         Hier zaehlt auch der Loeser-Nachweis des Lastfalls (_LoeserBuch): jede
         Loesung mit dem Loeser, der sie gerechnet hat.
@@ -2163,12 +2208,15 @@ class StaticSystem:
             genutzt[schluessel] = genutzt.get(schluessel, 0) + 1
         m = self._rand
         buch = getattr(self, "_nachweis_buch", None)
+        zusatz = np.zeros(m) if rand_rhs is None else np.concatenate([np.zeros(m), np.asarray(rand_rhs, float)])
+        self._randloesung = np.zeros(0)
         try:
-            if not m:
+            if not len(zusatz):
                 x = ls.solve(rhs)
             else:
-                x = ls.solve(np.concatenate([rhs, np.zeros(m)]))
-                x = np.asarray(x, float).ravel()[:len(rhs)]
+                x = np.asarray(ls.solve(np.concatenate([rhs, zusatz])), float).ravel()
+                self._randloesung = x[len(rhs):]
+                x = x[:len(rhs)]
         except BaseException:
             if buch is not None:
                 buch.gescheitert += 1
@@ -4863,7 +4911,7 @@ def _freie_teile_halten(model, cs, log: list = None, mindestens: int = HALT_MIND
             c.gehalten = True
             c.toggles += 1
             c.Fn = 0.0
-            if c.toggles > 8:
+            if c.toggles > 8 and not c.starr:      # die exakte Bedingung wird nie festgehalten
                 c.frozen = True
         if nimm:
             gehalten.append((name, len(cons), len(aktiv), len(nimm), max(float(c.g) for c in nimm)))
@@ -4880,6 +4928,45 @@ def _freie_teile_halten(model, cs, log: list = None, mindestens: int = HALT_MIND
                                    "gehalten" for n, z, a, h, g in gehalten[:8])
                        + (" …" if len(gehalten) > 8 else ""))
     return bool(gehalten or geschoben)
+
+
+def _halt_loesen(model, cs, log: list = None) -> int:
+    """Gehaltene **exakte** Bedingungen (``gehalten``, starr) wieder freigeben,
+    sobald das Teil ohne sie getragen wird - mindestens ``HALT_MINDESTENS``
+    andere geschlossene Bedingungen hat (26.09.2026).
+
+    Die exakte Bedingung oeffnet in ``_update_states`` nicht unter Zug, solange
+    sie gehalten ist (sonst waere das Teil im naechsten Schritt wieder frei und
+    der Halt begaenne von vorn). Traegt das Teil inzwischen anderswo, werden
+    die gehaltenen unter Zug geoeffnet, die unter Druck zu gewoehnlichen
+    Bedingungen. Bleibt das Teil allein am Halt haengen, bleibt er - und
+    :func:`_gehaltene_unter_zug` sagt am Ende, dass es abhebt. Rueckgabe:
+    Zahl der geaenderten Bedingungen (dann ist die Runde ein Wechsel)."""
+    n = 0
+    for name, _kn, cons in _teile_bedingungen(model, cs):
+        geh = [c for c in cons if c.active and c.gehalten and c.starr]
+        if not geh:
+            continue
+        andere = sum(1 for c in cons if c.active and not c.gehalten)
+        if andere < HALT_MINDESTENS:
+            continue
+        auf = 0
+        for c in geh:
+            c.gehalten = False
+            if float(getattr(c, "zug_roh", 0.0)) < -cs.f_tol:
+                c.active = False
+                c.slip = False
+                c.slip_dir = None
+                c.dt_last = None
+                c.yielding = False
+                c.Ft[:] = 0
+                c.Fn = 0.0
+                auf += 1
+        n += len(geh)
+        if log is not None and auf:
+            log.append(f"Halt gelöst: {name} trägt an {andere} Bedingungen, "
+                       f"{auf} gehaltene unter Zug geöffnet")
+    return n
 
 
 #: Ab welchem Anteil seiner eigenen Druckkraft ein Teil, das an gehaltenen
@@ -4916,7 +5003,11 @@ def _gehaltene_unter_zug(model, cs) -> list:
         geh = [c for c in cons if getattr(c, "gehalten", False) and c.active]
         if not geh:
             continue
-        zug = sum(max(0.0, float(c.kn) * float(c.g)) for c in geh)
+        # Feder: k_n*g der offen stehenden Feder; exakte Bedingung: g ist null,
+        # ihr Zug ist der negative Multiplikator (contact._normalkraft, in
+        # _update_states auf null gekappt - darum hier ueber `zug_roh`)
+        zug = sum(max(0.0, -float(getattr(c, "zug_roh", 0.0))) if c.starr
+                  else max(0.0, float(c.kn) * float(c.g)) for c in geh)
         # Was dasselbe Teil an Druck abtraegt (Fn ist die Normalkraft nach der
         # letzten Iteration, Druck positiv)
         druck = sum(max(0.0, float(getattr(c, "Fn", 0.0) or 0.0))
@@ -4943,7 +5034,23 @@ def _kontakt_abbruch(it: int, ex, cs, model, u, zug: list = None, log: list = No
             teile.append((name, idx, n, aktiv, fugen, U[idx].mean(axis=0),
                           float(np.linalg.norm(U[idx], axis=1).mean())))
         betraege = np.array([x[6] for x in teile], float)
+        # Zuerst das Gemessene: Teile, die an gehaltenen Punkten ziehen, heben
+        # wirklich ab (_gehaltene_unter_zug). Die Heuristik darunter (wenige
+        # geschlossene Bedingungen und Bewegung) kaeme bei einem einzelnen Teil
+        # immer zum Zug, weil es sich mit niemandem vergleichen kann - und
+        # nannte dann "verliert den Halt", wo der Zug schon gemessen ist
+        # (26.09.2026, tests/test_kontakthalt test_halt).
+        for name, kn, n_geh, kraft, cons in (zug or []):
+            idx = np.fromiter(kn, int, len(kn))
+            abgehoben.append({"name": name, "knoten": idx, "n": len(cons),
+                              "aktiv": sum(1 for c in cons if c.active),
+                              "fugen": sorted({(c.label or "").split(":")[0] for c in cons if c.label}),
+                              "u": U[idx].mean(axis=0), "betrag": float(np.linalg.norm(U[idx], axis=1).mean()),
+                              "mass": 0.0, "gehalten": int(n_geh), "zug": float(kraft)})
+        genannt = {a["name"] for a in abgehoben}
         for k, (name, idx, n, aktiv, fugen, mittel, betrag) in enumerate(teile):
+            if name in genannt:
+                continue
             # Ein Teil ist frei, wenn keine seiner Bedingungen mehr haelt - oder
             # wenn die Mehrheit offen ist und es sich um ein Vielfaches dessen
             # bewegt, was die uebrigen Teile tun (der Block, der auf drei
@@ -4958,17 +5065,6 @@ def _kontakt_abbruch(it: int, ex, cs, model, u, zug: list = None, log: list = No
             if los:
                 abgehoben.append({"name": name, "knoten": idx, "n": n, "aktiv": aktiv, "fugen": fugen,
                                   "u": mittel, "betrag": betrag, "mass": mass})
-        # Teile, die an gehaltenen Punkten ziehen: sie heben wirklich ab
-        genannt = {a["name"] for a in abgehoben}
-        for name, kn, n_geh, kraft, cons in (zug or []):
-            if name in genannt:
-                continue
-            idx = np.fromiter(kn, int, len(kn))
-            abgehoben.append({"name": name, "knoten": idx, "n": len(cons),
-                              "aktiv": sum(1 for c in cons if c.active),
-                              "fugen": sorted({(c.label or "").split(":")[0] for c in cons if c.label}),
-                              "u": U[idx].mean(axis=0), "betrag": float(np.linalg.norm(U[idx], axis=1).mean()),
-                              "mass": 0.0, "gehalten": int(n_geh), "zug": float(kraft)})
     except Exception:                 # noqa: BLE001 - die Diagnose darf den Abbruch nicht verschlucken
         abgehoben = []
     try:
@@ -5140,6 +5236,14 @@ def _kontaktsystem(system: StaticSystem, model: Model, uebermass, log: list):
     return cs
 
 
+def _kontaktlast(C, lam, ndof: int) -> np.ndarray:
+    """Kraefte der exakten Kontaktbedingungen auf das Tragwerk, C^T lambda -
+    fuer die Auflagerreaktionen: sie stehen weder in Kc u noch in Fc."""
+    if C is None or lam is None or not len(lam):
+        return np.zeros(ndof)
+    return np.asarray(C.T @ np.asarray(lam, float), float).ravel()
+
+
 def _kontaktlauf_angaben(cs, u, model: Model, grund: str) -> dict:
     """Was das Laufbuch ueber einen Kontaktlauf festhaelt (``cinfo['contact_lauf']``,
     in _kontakt_info_sammeln zum Eintrag gemacht): Grund des Endes, Zustand am
@@ -5230,10 +5334,11 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     f0 = getattr(system, "faktorisierungen", 0)
     eingefroren_verworfen = None     # Verstoesse, wenn der eingefrorene Zustand nicht passte
     if einfrieren is not None and cs.cons and cs.zustand_setzen(einfrieren):
-        Kc, Fc = cs.matrices(model.ndof)
+        Kc, Fc, C, b, _z = cs.system_matrizen(model.ndof)
         if K_zusatz is not None:
             Kc = Kc + K_zusatz
-        u = system.solve(F, Kc, Fc, us=us, signatur=signatur())
+        u = system.solve(F, Kc, Fc, us=us, signatur=signatur(), C_extra=C, b_extra=b)
+        lam = system.kontakt_multiplikatoren
         # Vor _update_states (das setzt Zustaende um): passt der eingefrorene
         # Zustand zu dieser Last? Bis zum 22.09.2026 hiess der Lauf immer
         # "konvergiert", auch wenn eine geschlossene Bedingung Zug trug (FE4).
@@ -5241,11 +5346,11 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         # gegen die nichtlineare Loesung), 1,1 H1 vier Knoten ueber dem
         # Reibkegel (7,0 %), 0,5 H1 Durchdringung und Gleiten gegen die
         # Richtung (18,8 %), -1,0 H1 Zug an sechs geschlossenen (70,0 %).
-        verst = cs.zustand_verstoesse(u)
+        verst = cs.zustand_verstoesse(u, lam)
         passt = not (verst["zug"] or verst["durchdringung"] or verst["kegel"] or verst["gegen"])
         if passt:
-            cs._update_states(u)             # nur zur Auswertung: g, Fn, Ft je Bedingung
-            R = system.reactions(u, F + Fc, Kc)
+            cs._update_states(u, lam)        # nur zur Auswertung: g, Fn, Ft je Bedingung
+            R = system.reactions(u, F + Fc + _kontaktlast(C, lam, model.ndof), Kc)
             Rsup = cs.support_reactions(model.nn)
             n6 = model.nn * NDOF
             Rk = R[:n6].reshape(-1, NDOF)
@@ -5290,13 +5395,20 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     deckel = False          # die Reibungsnachpruefung hat aufgegeben
     from .contact import MAX_CYCLES as _MAX_CYCLES
     it = 0
-    Kc = Fc = None
+    Kc = Fc = C = b = None
+    lam = np.zeros(0)
 
     def matrizen():
-        Kc_, Fc_ = cs.matrices(model.ndof)
+        Kc_, Fc_, C_, b_, _z = cs.system_matrizen(model.ndof)
         if K_zusatz is not None:
             Kc_ = (Kc_ + K_zusatz) if Kc_ is not None else K_zusatz
-        return Kc_, Fc_
+        return Kc_, Fc_, C_, b_
+
+    def loesen():
+        # Loesung und die Multiplikatoren der exakten Bedingungen (lambda,
+        # Druck positiv) - beide gehoeren zu diesem Schritt
+        u_ = system.solve(F, Kc, Fc, us=us, signatur=signatur(), C_extra=C, b_extra=b)
+        return u_, system.kontakt_multiplikatoren
 
     if not cs.cons:
         u = system.solve(F, K_extra=K_zusatz, us=us)
@@ -5310,11 +5422,11 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     u = None
     forced = False
     for it in range(1, max_iter + 1):
-        Kc, Fc = matrizen()
+        Kc, Fc, C, b = matrizen()
         u_vor = u                  # fuer die Protokollzeile: was bewegt die Runde?
         f_vor = getattr(system, "faktorisierungen", 0)
         try:
-            u = system.solve(F, Kc, Fc, us=us, signatur=signatur())
+            u, lam = loesen()
         except RuntimeError as ex:
             if it == 1 and warm and versuch < 3:
                 # Warmstart: eine im vorigen Lastfall offene Bedingung (Lager
@@ -5345,15 +5457,15 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 forced = True
                 log.append("Hilfsschritt: Bewegungsrichtung bestimmt, weil im ersten "
                            "Schritt keine Kontaktbedingung haelt")
-                Kc, Fc = matrizen()
+                Kc, Fc, C, b = matrizen()
                 try:
-                    u = system.solve(F, Kc, Fc, us=us, signatur=signatur())
+                    u, lam = loesen()
                 except RuntimeError as ex2:
                     raise _kontakt_abbruch(it, ex2, cs, model, u, log=log) from None
                 cs.select_by_direction(u)
-                Kc, Fc = matrizen()
+                Kc, Fc, C, b = matrizen()
                 try:
-                    u = system.solve(F, Kc, Fc, us=us, signatur=signatur())
+                    u, lam = loesen()
                 except RuntimeError as ex3:
                     raise _kontakt_abbruch(it, ex3, cs, model, u, log=log) from None
             else:
@@ -5364,16 +5476,18 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 for stufe in (1, 2):
                     if not _freie_teile_halten(model, cs, log, stufe=stufe):
                         continue
-                    Kc, Fc = matrizen()
+                    Kc, Fc, C, b = matrizen()
                     try:
-                        u = system.solve(F, Kc, Fc, us=us, signatur=signatur())
+                        u, lam = loesen()
                         geloest = True
                         break
                     except RuntimeError as ex4:
                         ex = ex4
                 if not geloest:
                     raise _kontakt_abbruch(it, ex, cs, model, u, log=log) from None
-        changed = cs.update(u)
+        changed = cs.update(u, lam)
+        if _halt_loesen(model, cs, log):
+            changed = True
         if cs.schub_halt_loesen():
             # Der Schubhalt hat den Schritt getragen; jetzt liegt das Teil
             # wieder an, und die gewoehnliche Haftbindung uebernimmt. Der
@@ -5495,7 +5609,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             if eingefroren_verworfen is not None:         # der Neustart kennt ihn nicht
                 cinfo2["contact_frozen_verworfen"] = eingefroren_verworfen
             return u2, R2, cons2, cf2, cinfo2
-    R = system.reactions(u, F + (Fc if Fc is not None else 0.0), Kc)
+    R = system.reactions(u, F + (Fc if Fc is not None else 0.0) + _kontaktlast(C, lam, model.ndof), Kc)
     # Einseitige Lager als Auflagerreaktionen ausweisen
     Rsup = cs.support_reactions(model.nn)
     n6 = model.nn * NDOF
@@ -6296,7 +6410,8 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
             for c in cs.cons:
                 c.active, c.slip, c.yielding, c.frozen = True, False, False, False
             kontakt_text = "alle Paare geschlossen und haftend (verklebt)"
-        Kc, _Fc = cs.matrices(model.ndof)
+        # als Federn: die Modalanalyse braucht eine Steifigkeit, keinen Rand
+        Kc, _Fc = cs.matrices(model.ndof, als_federn=True)
         n_kontakt = int(cs.n_active)
         if Kc is not None and getattr(Kc, "nnz", 0):
             K = (K + Kc).tocsr()

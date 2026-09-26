@@ -27,6 +27,20 @@ from .model import Model, NDOF, DOF_NAMES
 
 PENALTY_FACTOR = 1.0e4       # automatische Kontaktsteifigkeit = Faktor * Diagonalsteifigkeit
 TANGENT_FACTOR = 1.0         # k_t = TANGENT_FACTOR * k_n
+#: Exakte Normalbedingung (26.09.2026): eine Kontaktbedingung ohne Feder des
+#: Anwenders (k_n automatisch) erzwingt auf der Aktivmenge g = 0 exakt, mit
+#: dem Multiplikator lambda als Unbekannter (Sattelpunkt, solver.StaticSystem
+#: .solve mit C_extra) - der primal-duale semiglatte Newton. Die Aktivmenge
+#: entscheidet am Vorzeichen von lambda (aktiv oeffnet bei Zug) und des
+#: Spalts (inaktiv schliesst bei Durchdringung); nichts wird festgehalten.
+#: Vorher entschied -k_n*g mit k_n ~ 1e13..1e15 N/m: 0,5 kN Zug waren ein
+#: Spalt von 1e-11..1e-13 m, das Vorzeichen an Randknoten damit Rauschen des
+#: Gleichungsloesers, und die Bedingung pendelte, bis sie nach acht Wechseln
+#: aktiv festgehalten wurde - am Drehlager-Endzustand vom 25.09.2026 980
+#: festgehaltene von 13 536 aktiven, 809 davon unter Zug bis 1,6 kN. Der
+#: Schalter ist die Ruecknahmeprobe (tests/test_kontakt_exakt.py); Federn des
+#: Anwenders (stiffness > 0) bleiben Penalty, denn dort ist die Feder die Physik.
+EXAKTE_NORMALBEDINGUNG = True
 #: Anteil der Bezugskraft, ab dem ein Schubhalt am Ende als tragend gilt -
 #: dieselbe Schwelle wie fuer Zug an gehaltenen Punkten (solver.ZUG_ANTEIL).
 ZUG_ANTEIL = 0.05
@@ -157,6 +171,10 @@ class Constraint:
     schub_halt: bool = False       # von solver._freie_teile_halten tangential gehalten
                                    # (19.09.2026): die Schubbindung des Stiftes wirkt,
                                    # die Normalbedingung bleibt offen
+    starr: bool = False            # exakte Normalbedingung g = 0 mit Multiplikator (Fn = lambda)
+                                   # statt Feder k_n (EXAKTE_NORMALBEDINGUNG, 26.09.2026)
+    zeile: int = -1                # Zeile in C (system_matrizen), -1 ohne Zeile
+    zug_roh: float = 0.0           # Normalkraft ungekappt (Zug negativ), fuer solver._gehaltene_unter_zug
 
 
 def verteilungstext(werte, aufliegend: float = 0.0) -> str:
@@ -687,6 +705,11 @@ class ContactSystem:
         ref = d.max() if d.size and d.max() > 0 else (np.abs(self.diag).max() or 1.0)
         return PENALTY_FACTOR * ref
 
+    @staticmethod
+    def _starr(stiffness) -> bool:
+        """Exakte Normalbedingung statt Feder: nur ohne Feder des Anwenders."""
+        return bool(EXAKTE_NORMALBEDINGUNG) and not (stiffness and float(stiffness) > 0)
+
     def _build(self):
         m = self.model
         for cs in m.contact_supports:
@@ -709,7 +732,7 @@ class ContactSystem:
             self.cons.append(Constraint(
                 "support", dofs, n.copy(), np.vstack([t1, t2]) if cs.mu > 0 else None,
                 float(cs.gap), kn, TANGENT_FACTOR * kn, cs.mu, cs.node, n,
-                f"Einseitiges Lager Knoten {cs.node}"))
+                f"Einseitiges Lager Knoten {cs.node}", starr=self._starr(cs.stiffness)))
         for ge in m.gap_elements:
             if ge.direction is not None:
                 n = np.asarray(ge.direction, float)
@@ -734,7 +757,7 @@ class ContactSystem:
             self.cons.append(Constraint("gap", dofs, cn, ct, g0, kn, TANGENT_FACTOR * kn,
                                         ge.mu, ge.node_b, n,
                                         f"Spaltelement {ge.node_a}-{ge.node_b}",
-                                        master=([ge.node_a], [1.0])))
+                                        master=([ge.node_a], [1.0]), starr=self._starr(ge.stiffness)))
         # Die Namen aller Paare vorab: _fugen_uebermass nennt einen fremden
         # Eintrag nur dann "zu einer anderen Fuge gehoerig", wenn es diese
         # Fuge auch gibt.
@@ -857,7 +880,8 @@ class ContactSystem:
             label = f"{e.label} {DOF_NAMES[dof]} ({what})"
             self.cons.append(Constraint(
                 kind, np.array(dofs), cn, ct, float(e.slip), kn, TANGENT_FACTOR * kn,
-                mu, node, base * sgn, label, axes=axes, limit=float(e.limit), dof=dof))
+                mu, node, base * sgn, label, axes=axes, limit=float(e.limit), dof=dof,
+                starr=self._starr(e.stiffness)))
 
     def _fugen_uebermass(self, cp, normalen) -> float:
         """Wirksames Uebermass der Fuge [m] - bei einer Bohrung die Haelfte.
@@ -955,7 +979,8 @@ class ContactSystem:
         self.cons.append(Constraint("surface", dofs, cn, ct, float(g0), kn,
                                     TANGENT_FACTOR * kn, mu, s, n, marke,
                                     master=(list(tri), list(wj)), limit=limit,
-                                    zug=bool(cp.zug), haften=haften))
+                                    zug=bool(cp.zug), haften=haften,
+                                    starr=self._starr(cp.stiffness)))
 
     def _rand_von(self, cp) -> set:
         """Die Randknoten eines Kontaktpaars als Menge (einmal gebaut)."""
@@ -1283,8 +1308,20 @@ class ContactSystem:
                         c.Ft = np.zeros(2)
         return n
 
-    def zustand_verstoesse(self, u: np.ndarray) -> dict:
-        """Passt der gesetzte Zustand zur Loesung ``u``? Nur lesen, nichts setzen.
+    def _normalkraft(self, c: Constraint, g: float, lam) -> float:
+        """Normalkraft [N] einer aktiven Bedingung (Druck positiv): die
+        Grenzkraft beim Fliessen, der Multiplikator der exakten Bedingung
+        (``lam`` aus dem Sattelpunktsystem, Zeile ``c.zeile``), sonst die
+        Federkraft -k_n g."""
+        if c.yielding:
+            return float(c.limit)
+        if c.starr and lam is not None and c.zeile >= 0:
+            return float(lam[c.zeile])
+        return -c.kn * g
+
+    def zustand_verstoesse(self, u: np.ndarray, lam=None) -> dict:
+        """Passt der gesetzte Zustand zur Loesung ``u`` (Multiplikatoren
+        ``lam`` der exakten Bedingungen)? Nur lesen, nichts setzen.
 
         Ein eingefrorener Zustand (Ermuedungsreferenz, solve_with_contact mit
         ``einfrieren``) wird linear geloest, ohne Iteration. Bis zum 22.09.2026
@@ -1307,7 +1344,7 @@ class ContactSystem:
                     v["durchdringung"] += 1
                     v["durchdringung_max"] = max(v["durchdringung_max"], -g)
                 continue
-            Fn = c.limit if c.yielding else -c.kn * g
+            Fn = self._normalkraft(c, g, lam)
             if not (c.zug or c.yielding) and Fn < -self.f_tol:
                 v["zug"] += 1
                 v["zug_max"] = max(v["zug_max"], -Fn)
@@ -1484,8 +1521,47 @@ class ContactSystem:
         grenze = ZUG_ANTEIL * float(getattr(self, "f_ref", 1.0))
         return [(g, n, k) for g, (n, k) in sorted(je_gruppe.items()) if k > grenze]
 
-    def matrices(self, ndof: int):
-        """Kontaktsteifigkeit Kc (csr) und Kontaktlastvektor Fc."""
+    def _exakt(self, c: Constraint) -> bool:
+        """Traegt diese Bedingung in diesem Schritt eine Zeile in C (g = 0 exakt)?
+        Nur starre, aktive, nicht fliessende - und nicht im Hilfsschritt
+        (stabilise: dort sind alle Bedingungen reine Federn an ihrer Lage)."""
+        return bool(c.starr and c.active and not c.yielding
+                    and not (self.stabilising and getattr(c, "stabilised", False)))
+
+    def system_matrizen(self, ndof: int):
+        """Alles fuer einen Loesungsschritt: Kontaktsteifigkeit Kc, Kontaktlast
+        Fc und die exakten Normalbedingungen als Zeilenmatrix C (m, ndof) mit
+        rechter Seite b = -g0 (C u = b heisst g = g0 + c.u = 0). ``zeilen``
+        nennt je Zeile die Bedingung (Index in ``cons``); jede Bedingung merkt
+        sich ihre Zeile in ``zeile`` (-1 ohne), damit update(u, lam) den
+        Multiplikator findet. Ohne exakte Bedingung ist C None."""
+        Kc, Fc = self.matrices(ndof)
+        rows, cols, vals, b, zeilen = [], [], [], [], []
+        for i, c in enumerate(self.cons):
+            if self._exakt(c):
+                c.zeile = len(zeilen)
+                rows.append(np.full(len(c.dofs), c.zeile))
+                cols.append(c.dofs)
+                vals.append(c.cn)
+                b.append(-c.g0)
+                zeilen.append(i)
+            else:
+                c.zeile = -1
+        if not zeilen:
+            return Kc, Fc, None, None, []
+        C = sparse.coo_matrix((np.concatenate(vals).astype(float),
+                               (np.concatenate(rows), np.concatenate(cols))),
+                              shape=(len(zeilen), ndof)).tocsr()
+        return Kc, Fc, C, np.array(b, float), zeilen
+
+    def matrices(self, ndof: int, als_federn: bool = False):
+        """Kontaktsteifigkeit Kc (csr) und Kontaktlastvektor Fc.
+
+        Starre Bedingungen (exakte Normalbedingung) tragen hier keinen
+        Normalanteil - der steht als Zeile in C (system_matrizen); nur ihre
+        tangentialen Anteile (Haften, Gleiten) liegen in Kc. ``als_federn``
+        rechnet sie trotzdem als Federn k_n c c^T - fuer eine Steifigkeit ohne
+        Gleichungssystem mit Rand, etwa die Modalanalyse (verklebte Fugen)."""
         rows, cols, vals = [], [], []
         Fc = np.zeros(ndof)
         full_slip = self._full_slip_groups()
@@ -1512,6 +1588,9 @@ class ContactSystem:
                 # Grenzkraft erreicht: konstante Kraft, nur Reststeifigkeit (plastisch)
                 kmat = SLIP_STIFFNESS_FINE * c.kn * np.outer(c.cn, c.cn)
                 Fc[c.dofs] += c.limit * c.cn
+            elif self._exakt(c) and not als_federn:
+                # exakte Normalbedingung: Zeile in C, hier nichts in Normalrichtung
+                kmat = np.zeros((len(c.dofs), len(c.dofs)))
             else:
                 kmat = c.kn * np.outer(c.cn, c.cn)
                 if not (self.stabilising and getattr(c, "stabilised", False)):
@@ -1541,6 +1620,8 @@ class ContactSystem:
                         # und mit Ausgleich waere ihr Fixpunkt zu langsam.
                         Fc[c.dofs] += k_res * (c.dt_last[0] * c.ct[0] + c.dt_last[1] * c.ct[1])
                     kmat = kmat + k_res * (np.outer(c.ct[0], c.ct[0]) + np.outer(c.ct[1], c.ct[1]))
+            if not kmat.any():
+                continue                    # exakte Bedingung ohne Reibung: nur die Zeile in C
             rows.append(r.ravel())
             cols.append(cc.ravel())
             vals.append(kmat.ravel())
@@ -1575,9 +1656,10 @@ class ContactSystem:
         self.f_tol = 1e-6 * max(abs(f_ref), 1e-30)
         self.f_ref = max(abs(f_ref), 1e-30)
 
-    def update(self, u: np.ndarray) -> bool:
-        """Zustaende aus der Loesung u aktualisieren. Rueckgabe: True, solange weiter
-        iteriert werden muss.
+    def update(self, u: np.ndarray, lam=None) -> bool:
+        """Zustaende aus der Loesung u (und den Multiplikatoren lam der exakten
+        Bedingungen, system_matrizen) aktualisieren. Rueckgabe: True, solange
+        weiter iteriert werden muss.
 
         Phase 1 (grobe Reststeifigkeit): Aktivmenge, Haften/Gleiten und Gleitrichtungen
         wie ueblich (unterrelaxiert) bis nichts mehr wechselt.
@@ -1593,7 +1675,7 @@ class ContactSystem:
         spaetere Runde echt ohne Wechsel, meldete sie trotzdem den Deckel
         (gefunden von der Loesersitzung, 22.09.2026)."""
         self.am_deckel = False
-        changed = self._update_states(u)
+        changed = self._update_states(u, lam)
         if self.phase == 1:
             if changed:
                 return True
@@ -1622,7 +1704,7 @@ class ContactSystem:
             return False
         return True
 
-    def _update_states(self, u: np.ndarray) -> bool:
+    def _update_states(self, u: np.ndarray, lam=None) -> bool:
         changed = False
         verstoesse = []         # Phase 2: (Verhaeltnis, Bedingung, dt) je Verstoss
         guete = 0.0             # Summe der Kegelverstoesse haftender Knoten
@@ -1638,15 +1720,19 @@ class ContactSystem:
             g = c.g0 + c.cn @ ue
             c.g = g
             if c.active:
-                Fn = c.limit if c.yielding else -c.kn * g
+                Fn = self._normalkraft(c, g, lam)
                 if c.slip:
                     self.dF_slip = max(self.dF_slip, c.mu * abs(max(Fn, 0.0) - c.Fn))
-                new_active = Fn > -self.f_tol   # Druckkraft (bzw. winziger Zug) -> bleibt
+                # Druckkraft (bzw. Zug unter der Loesergenauigkeit f_tol) -> bleibt;
+                # an der exakten Bedingung ist Fn der Multiplikator, und ein
+                # Multiplikator unter -f_tol heisst: die Bedingung zieht - oeffnen
+                new_active = Fn > -self.f_tol
                 # Im Verbund bleibt die Bedingung auch unter Zug zu - und die
                 # Zugkraft gehoert ins Ergebnis, nicht auf null gekappt
                 c.Fn = Fn if c.zug else max(Fn, 0.0)
+                c.zug_roh = Fn                  # ungekappt, fuer solver._gehaltene_unter_zug
                 if c.limit > 0:
-                    if not c.yielding and new_active and -c.kn * g > c.limit:
+                    if not c.yielding and new_active and Fn > c.limit:
                         c.yielding = True       # Grenzkraft erreicht -> plastisch
                         c.g_yield = g
                         changed = True
@@ -1660,12 +1746,22 @@ class ContactSystem:
             else:
                 c.Fn = 0.0
                 new_active = g < -self.tol
-            if c.frozen or c.zug:
+            if c.zug or (c.frozen and not c.starr) or (c.gehalten and c.starr):
+                # Verbund oeffnet nie; eine festgehaltene Feder auch nicht; eine
+                # gehaltene exakte Bedingung (solver._freie_teile_halten) loest
+                # der Loeser, sobald das Teil anders getragen wird
+                # (solver._halt_loesen) - hier wuerde sie sonst unter Zug
+                # oeffnen, das Teil waere wieder frei, und der Halt begaenne
+                # von vorn
                 new_active = c.active
             if new_active != c.active:
                 war_aktiv = c.active
                 c.toggles += 1
-                if c.toggles > 8:
+                # Festgehalten wird nur eine Feder: die exakte Bedingung
+                # entscheidet am Multiplikator, nicht an k_n*g, und wird nicht
+                # festgehalten (EXAKTE_NORMALBEDINGUNG); die Wechsel zaehlen
+                # weiter fuers Laufbuch
+                if c.toggles > 8 and not c.starr:
                     c.frozen = True
                     new_active = True
                     self.log.append(f"{c.label}: Zustand oszilliert, wird als aktiv gehalten")
