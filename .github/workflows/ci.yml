@@ -1,0 +1,31 @@
+# Vertragspruefungen bei jedem Push und Pull Request (Schnittstellenvertrag
+# Statik3D <-> volumen3d, Abschnitt 9): Protokolle, Import-Regeln, Stubs,
+# Entry-Point-Registrierung und mypy --strict fuer das Vertragspaket.
+# Der Gesamtlauf der Rechensuiten laeuft weiter lokal (tests.run_all) - er
+# braucht Stunden und die Windows-Rechner; die exe baut windows-exe.yml.
+name: Vertrag
+
+on:
+  push:
+    branches: [main, "claude/**", "feature/**"]
+  pull_request:
+
+jobs:
+  vertrag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Abhaengigkeiten
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy scipy mypy
+          pip install ./packages/statik3d_contracts
+      - name: Typpruefung Vertragspaket (mypy --strict)
+        run: mypy --strict packages/statik3d_contracts/statik3d_contracts
+      - name: Vertragspruefungen
+        env:
+          PYTHONUTF8: "1"
+        run: python -m tests.contracts.test_vertrag

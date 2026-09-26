@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "statik3d-contracts"
+version = "2.0.0"
+description = "Schnittstellenvertrag Statik3D <-> Volumenmodul volumen3d: nur Typen, Protokolle und Stubs, keine Logik"
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.24"]
+
+# Die Stubs des Vertrags (Abschnitt 8) registrieren sich wie ein echter Loeser
+# (Abschnitt 7 und 7a), damit das Hauptprogramm die Entry-Point-Registrierung
+# ohne volumen3d pruefen kann. volumen3d traegt seine Loeser in seiner
+# eigenen pyproject.toml ein (fcm, hybrid).
+[project.entry-points."statik3d.solid_solvers"]
+stub = "statik3d_contracts.testing:StubSolidSolver"
+
+[project.entry-points."statik3d.assembly_solvers"]
+stub = "statik3d_contracts.testing:StubAssemblySolver"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["statik3d_contracts*"]
+
+[tool.setuptools.package-data]
+statik3d_contracts = ["py.typed"]
+
+[tool.mypy]
+strict = true
+python_version = "3.11"

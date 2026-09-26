@@ -11,3 +11,4 @@ statik3d/_build.py
 statik3d_selbsttest.txt
 statik3d_update.bat
 *.exe.new
+.claude/

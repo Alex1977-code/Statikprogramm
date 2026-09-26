@@ -1,4 +1,7 @@
 numpy>=1.24
+# Schnittstellenvertrag Statik3D <-> volumen3d (docs/Schnittstellenvertrag_Statik3D_FCM.md):
+# nur Typen, Protokolle und Stubs. Zum Entwickeln: pip install -e packages/statik3d_contracts
+./packages/statik3d_contracts
 scipy>=1.10
 PySide6>=6.5
 pyvista>=0.42

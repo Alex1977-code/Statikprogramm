@@ -90,7 +90,9 @@ nach `main` erfolgt **nur auf ausdrückliche Freigabe** und stößt
 | `statik3d/ec3/` | Nachweise nach EC3, Ermüdung |
 | `statik3d/importers/` | RFEM/RSTAB, IFC, SAF, DXF, HiCAD, Abaqus, Nastran |
 | `statik3d/gui/` | Qt-Oberfläche (`main.py`, `viewport.py`, `masken.py`, `symbole.py`) |
-| `docs/` | Benutzer-, Theorie-, Schnittstellen- und Farm-Handbuch, Bauanleitung MUMPS für Windows |
+| `docs/` | Benutzer-, Theorie-, Schnittstellen- und Farm-Handbuch, Bauanleitung MUMPS für Windows; `Schnittstellenvertrag_Statik3D_FCM.md` und `Vorgabe_Statik3D_Abschnitt_FCM-Volumenloeser.md` (Volumenmodul, verbindlich), `Volumenmodul.md` (Stand der Umstellung) |
+| `packages/statik3d_contracts/` | Schnittstellenvertrag zum Volumenmodul `volumen3d` als Code: nur Typen, Protokolle, Stubs (importiert nur Standardbibliothek und numpy; Änderungen nur per eigenem PR mit Versionserhöhung) |
+| `statik3d/diskretisierung.py`, `volumenloeser.py` | FE-Netz hinter `Discretization` (FE_MESH, mm); Volumenlöser über Entry Points `statik3d.solid_solvers` / `statik3d.assembly_solvers`, Versionsprüfung, Rückfall auf die Stubs |
 
 `docs/Theoriehandbuch.md` ist die Begründung des Verfahrens mit Messwerten,
 `docs/Benutzerhandbuch.md` beschreibt, was der Anwender sieht und tut. Beide
