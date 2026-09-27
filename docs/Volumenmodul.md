@@ -42,3 +42,35 @@ wachsender plastischer Dehnung, `on_step`).
   das Protokoll führen.
 - Referenzmodelle `tests/reference_models/` (Vertrag Abschnitt 8) als JSON/YAML mit
   Erwartungswerten – gemeinsam mit Session B.
+
+
+## Session B: Stand des Volumenmoduls `volumen3d` (Teilprojekt 1, 27.09.2026)
+
+Zweig `feature/volumen3d` (Worktree `Desktop/Statik3D/statik3d-volumen3d`, eigene venv mit
+numba und cupy für die späteren Stufen). Entwurf und Zerlegung: `docs/Volumenmodul_Entwurf.md`;
+Plan: `docs/superpowers/plans/2026-09-27-volumen3d-tp1-fcm-kern.md`; Theorie und Messwerte:
+`docs/Theoriehandbuch.md`, Kapitel 11. Regeln der Sitzung: `packages/volumen3d/CLAUDE.md`.
+
+| Teil | Ort | Stand |
+|---|---|---|
+| Paket nach Vertrag Abschnitt 1 | `packages/volumen3d/` (geometry, fcm, linalg, postprocess, api) | Entry Points `fcm` (echt) und `hybrid` (Platzhalter bis TP 7), `import-linter` (`.importlinter`) und `mypy --strict api.py` in der CI |
+| Geometriekern | `geometry/sdf.py`, `csg.py`, `polyeder.py`, `oberflaeche.py` | CSG aus `GeometrySource.params` (Quader, Zylinder, Kugel, Halbraum; Vereinigung, Differenz, Schnitt), konservative Abstände, lokale konvexe Stücke, Flächenquadratur auf der exakten Oberfläche |
+| FCM-Kern | `fcm/basis.py`, `gitter.py`, `quadratur.py`, `aggregation.py`, `elastizitaet.py`, `rand.py`, `problem.py` | Legendre-Basis p = 1…4, Wurzelgitter (Oktree-Ebene 0), ebenen-exakte Schnittzellen-Integration, Zellaggregation, Nitsche (voll / normal / schnitt), Lasten, Direktlöser (pypardiso, sonst SuperLU) |
+| Vertragsschicht | `api.py` | `FcmSolver.estimate/prepare/solve`, `FcmDiskretisierung` (summary, preview mit Zellklassen), Kopplungskontrolle je Schnittebene mit Multiplikatoren und Warnung > 5 %, Protokoll |
+| Prüfungen | `tests/volumen3d/` | Kernsuite `test_kern` (159 Prüfungen, in `run_all` und CI); Abnahmen `test_patch` (< 10⁻⁶: gemessen 10⁻¹²…10⁻⁸), `test_kragarm` (reine Biegung exakt, Stub gegen Timoshenko −0,9 % / +2,7 %), `test_lame` (p = 3: σ_r 0,31 %, σ_φ 0,12 %), `test_kirsch` (K_tg gegen Heywood/Pilkey, Schnittlagen) |
+
+**Bewusste Abweichungen von der Vorgabe (Messung, Begründung im Entwurf 3.5/3.6 und Theorie 11):**
+Punkttest der Schnittzellen nur als Rückfall (erster Ordnung, Patch-Test sonst unerreichbar);
+Zellaggregation schon in Stufe 1 und α nur für Zellen ohne Wurzel; an Schnittebenen
+Normalkomponente punktweise plus Resultierende in der Ebene statt aller drei Komponenten.
+
+**Vorschläge an den Vertrag** (`docs/vertrag-aenderungen/2026-09-27-lasten-und-schnittgroessen.md`):
+Lasten im `DetailModelSpec` (Minor 2.1.0) und Klarstellung der Seite der Schnittgrößen.
+
+**Änderungen außerhalb des Pakets:** `tests/contracts/test_vertrag.py` (Erwartung `fcm` vor
+`stub`), `tests/run_all.py`, `.github/workflows/ci.yml`, `requirements.txt`, `.importlinter`,
+`docs/Theoriehandbuch.md` Kapitel 11.
+
+**Nächste Schritte (Teilprojekt 2, Stufe 1b):** Oktree-Verfeinerung mit hängenden
+Freiheitsgraden (Zwangsmatrix wie bei der Aggregation), STL-Eingang (BVH, Windungszahl),
+Geometriekern vektorisieren (die Flächenquadratur dominiert die Aufbauzeit), dann Pull Request 1.

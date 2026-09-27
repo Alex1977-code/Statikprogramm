@@ -10245,3 +10245,144 @@ Nach M1 geht das nur mit einem gröberen gekrümmten Netz in den Nachweiskörper
 (Labor: Bogen 18° bei h = 0,5 × Bohrungsradius gemessen). Ob das Element es dann am
 Bauteil schafft, zeigen erst M2 und M3. Nachweisstellen auf Kontaktseiten
 bleiben ohne Kontakt über Punkte der Seite (B4) bei 15 bis 20 N/mm².
+
+
+## 11 Finite-Cell-Methode: Volumenmodul `volumen3d` (Teilprojekt 1, 27.09.2026)
+
+Das Volumenmodul rechnet Volumenbauteile ohne klassisches Vernetzen: Der Körper wird in ein
+achsparalleles Gitter würfelförmiger Zellen eingebettet, die Geometrie geht nur über eine
+vorzeichenbehaftete Abstandsfunktion (SDF) ein. Verbindlich sind
+`docs/Vorgabe_Statik3D_Abschnitt_FCM-Volumenloeser.md` und der Schnittstellenvertrag
+(`docs/Schnittstellenvertrag_Statik3D_FCM.md`, 2.0.0); die Umsetzungsentscheidungen stehen in
+`docs/Volumenmodul_Entwurf.md`. Dieses Kapitel hält die Formeln und die gemessenen Zahlen von
+Teilprojekt 1 fest (CPU-Referenz: assemblierte Steifigkeit, Direktlöser). Einheiten im Modul:
+mm, N, N/mm².
+
+### 11.1 Ansatz und Freiheitsgrade
+
+Je Zelle (Kante h) ein volles Tensorprodukt hierarchischer Ansätze aus integrierten
+Legendre-Polynomen, p = 1…4: `N1 = (1−ξ)/2`, `N2 = (1+ξ)/2`,
+`N_{j+1} = (P_j − P_{j−2}) / sqrt(2(2j−1))` für j = 2…p, sodass `∫ φ_i' φ_j' dξ = δ_ij`.
+Die (p+1)³ Moden hängen an Ecken (8), Kanten (12·(p−1)), Flächen (6·(p−1)²) und dem Zellinneren
+((p−1)³); Nachbarzellen teilen die Moden ihrer gemeinsamen Entität ohne Vorzeichenwechsel, weil
+alle Kanten und Flächen kanonisch in +Achsrichtung parametrisiert sind. Freiheitsgrade
+`3·Mode + Komponente`. Ein voller Quader mit n_x × n_y × n_z Zellen hat genau
+(n_x p+1)(n_y p+1)(n_z p+1) Moden (`tests/volumen3d/test_gitter.py`).
+
+### 11.2 Zellklassifikation
+
+Mit d dem Abstand der Zellmitte und r der halben Raumdiagonale gilt: d > r → OUTSIDE (keine
+Freiheitsgrade), d < −r → INSIDE (Gauß (p+1)³), sonst CUT. Das ist nur zulässig, weil die
+CSG-Kombinationen (Vereinigung = min, Schnitt = max, Differenz = max(d_a, −d_b)) den Abstand zur
+Gesamtoberfläche **nie überschätzen**: Jeder Punkt der Gesamtoberfläche liegt auf einer
+Grundform-Oberfläche, und der Weg dorthin kreuzt die Flächen, die in min/max den Ausschlag geben
+(Skizze in `geometry/csg.py`). Stichprobe: 300 Zufallspunkte je Zelle einer Kugel, keine
+INSIDE-Zelle mit Außenpunkt, keine OUTSIDE-Zelle mit Werkstoff.
+
+### 11.3 Integration geschnittener Zellen
+
+Die Vorgabe (Abschnitt 6) nennt rekursive Teilung mit Punkttest je Gauß-Punkt. Gemessen:
+Würfel 100³, schräg durch eine Ebene halbiert, h = 20, Tiefe 4, 6,5·10⁶ Punkte – Volumenfehler
+0,5 %. Der Punkttest ist erster Ordnung in der Blattkante; der Patch-Test der Vorgabe
+(< 10⁻⁶) ist damit unerreichbar. Umgesetzt sind darum **ebenen-exakte Blätter**: In einer
+geschnittenen Teilbox nennen die aktiven Grundformen (|d| ≤ r) ihre lokalen Ebenen – Halbraum
+und Quaderseiten exakt, Zylinder und Kugel als Tangentialebene –, der CSG-Baum prüft an den
+Gauß-Punkten, ob sich der Gesamtabstand als „Schnitt der positiven Formen minus Löcher“ (max)
+oder als Vereinigung (min) rekonstruieren lässt, und zerlegt die Teilbox in disjunkte konvexe
+Stücke (Box ∩ Halbräume, Löcher über S ∖ ∩h_j = ∪_j S ∩ ¬h_j ∩ h_1…h_{j−1}). Jedes Stück wird
+gegen seine Halbräume geclippt (Sutherland–Hodgman auf den Polyederflächen, Deckelpolygon aus
+den Schnittkanten), vom Schwerpunkt aus in Tetraeder zerlegt und mit der konischen Produktregel
+(Gauß–Jacobi in u und v, Gauß–Legendre in w, n = ⌈3p/2⌉ Punkte je Richtung, exakt bis
+Gesamtgrad 2n−1 ≥ 3p−1) integriert; achsparallele Stücke direkt mit Tensor-Gauß.
+
+| Prüfkörper (h = 10 bzw. 20, `test_quadratur`) | Volumenfehler |
+|---|---|
+| Würfel schräg halbiert, Tiefe 0/1/2 | 500000,000000 (exakt) |
+| Würfel mit zwei Ebenen und Kante, Tiefe 0 = Tiefe 3 | < 10⁻¹⁰, gegen Monte-Carlo 2,7·10⁻⁴ |
+| Quader mit Kanten und Ecken in den Zellen | 11424,000000 (exakt) |
+| Kugel R 43, Tiefe 0/1/2/3 | 1,4·10⁻² / 3,4·10⁻³ / 8,5·10⁻⁴ / 2,1·10⁻⁴ (Faktor 4: zweite Ordnung) |
+| Lochplatte 800×400×10, Loch 40, Tiefe 1/2 | 2,0·10⁻⁵ / 5,2·10⁻⁶ |
+| Platte 100×100×10, alle Zellen geschnitten | 64 Punkte je Zelle, exakt |
+
+Der fiktive Bereich kommt ohne negative Gewichte aus: ganze Teilbox mit Gewicht α, Stücke mit
+(1−α). Lässt sich die lokale Semantik nicht rekonstruieren, teilt die Rekursion zwei Stufen
+tiefer und fällt auf den Punkttest zurück (Zähler `blaetter_punkttest` im Protokoll; in allen
+Prüfkörpern 0).
+
+### 11.4 Kleine Schnittzellen: Zellaggregation statt α
+
+Patch-Test-Gitter (Quader durch zwei schräge Halbräume, 113 von 118 Zellen geschnitten): 10 Zellen
+mit Werkstoffanteil unter 10⁻⁴, drei mit 0. Der Fehler der FCM-Lösung skaliert mit α/Anteil:
+Spannung 1,4·10⁻² bei α = 10⁻⁸, 1,4·10⁻⁴ bei 10⁻¹⁰. Abhilfe nach Vorgabe 8.3 (Zellaggregation,
+Prinzip der aggregierten finiten Elemente, Badia/Verdugo/Martín 2018): Zellen mit Anteil unter
+0,25 bekommen eine wohlgestellte Wurzelzelle (Nachbar mit größtem Anteil, Fläche vor Kante vor
+Ecke, Ketten aufgelöst); Moden, die keine wohlgestellte Zelle trägt, werden an die Fortsetzung
+des Wurzelpolynoms gebunden: `M = V_c⁻¹ V_R` (Modalprojektion an Tensor-Chebyshev-Lobatto-Punkten,
+gleiche Zellgröße). Gelöst wird `CᵀKC`. Zwei weitere Befunde zwangen α aus dem Verfahren:
+gebundene Zellen dürfen keine α-Punkte tragen (α wirkt sonst auf die extrapolierten Wurzelmoden,
+die wie (2ξ)ᵖ wachsen: 2·10⁻⁵ statt 3·10⁻⁸), und in wohlgestellten Zellen tragen hohe Moden nur
+etwa Anteil^(2p+1) ihrer Energie im Werkstoff (0,28⁷ ≈ 10⁻⁴ bei p = 3), sodass α = 10⁻⁸ dort
+10⁻⁴ Fehler macht. Mit Aggregation erhält darum nur eine Zelle **ohne Wurzel** (isolierter
+Splitter) den Faktor α; alle anderen Schnittzellen werden ohne fiktives Gebiet integriert.
+
+| Patch-Test (lineares Feld über Nitsche auf dem ganzen Rand) | u relativ | σ innen | σ am Rand |
+|---|---|---|---|
+| p = 1 (681 FHG, 438 frei) | 5·10⁻¹⁵ | 8·10⁻¹³ | 2·10⁻¹² |
+| p = 2 (4023 FHG, 2469 frei) | 8·10⁻¹⁴ | 5·10⁻¹¹ | 1·10⁻¹⁰ |
+| p = 3 (12153 FHG, 7320 frei) | 5·10⁻¹² | 5·10⁻⁹ | 1·10⁻⁸ |
+| p = 2, Schnittanteil 10⁻⁶ (Vorgabe 13) | 9·10⁻¹⁴ | 4·10⁻¹¹ | 9·10⁻¹¹ |
+| p = 2, α = 10⁻¹⁰ bzw. β-Faktor 100 statt 10 | 7·10⁻¹⁴ / 3·10⁻¹³ | 3·10⁻¹¹ / 4·10⁻¹¹ | – |
+
+### 11.5 Verschiebungsränder: symmetrisches Nitsche
+
+Je Quadraturpunkt der Randfläche mit Verschiebungsinterpolation Nm (3×3m), Traktionsoperator
+`T = Nn D B` (3×3m; Nn bildet den Voigt-Spannungsvektor auf σ·n ab), Projektion P (Einheit oder
+n nᵀ) und Gewicht w:
+`K += w [ −Tᵀ P Nm − Nmᵀ P T + β Nmᵀ P Nm ]`, `f += w [ −Tᵀ P g + β Nmᵀ P g ]`,
+β = 10·E·p²/h. Das Verfahren ist konsistent (Patch-Test unabhängig von β, Tabelle oben); die
+Normalprojektion liefert Symmetrie- und Gleitränder (einachsiger Zug mit drei Symmetrieebenen:
+8·10⁻¹⁶). Flächenquadratur: Dreiecke der Grundformen an die Zellbox geclippt, lokale Stücke
+clippen das Polygon gegen fremde Halbräume, Gauß auf Fächerdreiecken (exakt bis Gesamtgrad
+2n−1 ≥ 3p, damit ∫(σ*n)·v exakt ist), Punkte auf die exakte Grundform projiziert, Gewichte mit
+dem Flächenfaktor dA_wahr/dA_Facette (Zylinder R/ρ·n_f·e_r, Kugel (R/ρ)²·n_f·e_r): Bohrungsmantel
+und Kugeloberfläche auf 10⁻⁸ bei Facette 0,5 h, Sechseck einer schrägen Schnittebene exakt.
+
+### 11.6 Kopplung an Stabquerschnitte
+
+Die ebene Querschnittskinematik eines Stabs enthält weder Querkontraktion noch
+Schubverwölbung. Mit allen drei Komponenten punktweise vorgegeben ist die Schnittebene seitlich
+gesperrt: am Stub-Kragarm des Vertrags (b 100, h 200, Segment x = 200…800) war das Moment um
+53 % zu hoch. An Schnittebenen gilt darum: Normalkomponente punktweise über Nitsche (trägt
+Biegung, Längskraft, Verwölbung), in der Ebene nur die drei Resultierenden – zwei Querkräfte
+und die Torsion – als Mittelwertzwänge `∫(u − g)·m_k dA = 0` mit drei Lagrange-Multiplikatoren
+je Ebene; λ·A ist die übertragene Zwangskraft (Kontrolle: 7512 N gegen 7625 N aus den
+Spannungen). Reine Biegung mit dem exakten 3D-Feld (`u_x = −Mxz/EI`, `u_y = νMyz/EI`,
+`u_z = M(x² + ν(z² − y²))/2EI`) bleibt exakt: Schnittmoment 5·10⁶ auf 10⁻⁶, Multiplikatoren 10⁻¹⁴.
+
+Grenze der Verschiebungskopplung: Für ein schubweiches Segment mit Euler-Bernoulli-Endwerten
+folgen andere Schnittgrößen als aus der Balkentheorie. Mit `M_y = −EI φ'`,
+`Q_z = κGA (w' − φ)`, `dM_y/dx = Q_z` und den Endwerten φ(x0), φ(x1), w(x0), w(x1) des Stubs
+liefert die Timoshenko-Rechnung (κ = 5/6, Φ = 12EI/(κGAl²) = 0,35 bei l = 3h) M = 2,77·10⁶ N·mm
+und Q = 7426 N; die FCM ergibt 2,75·10⁶ (−0,9 %) und 7625 N (+2,7 %), der schubstarre Stub
+2,00·10⁶ und 10000 N. Die Kopplungskontrolle im Ergebnis (`DetailResult.coupling_check`) weist
+solche Abweichungen aus und warnt ab 5 %. Empfehlung: Schnittebenen mindestens vier bis fünf
+Querschnittshöhen auseinander, sonst Kraftkopplung (Teilprojekt 5).
+
+### 11.7 Lamé-Zylinder und Kirsch-Platte
+
+Viertel eines dickwandigen Zylinders (r_i 50, r_a 100, Dicke 20, Innendruck 100 N/mm²), ebener
+Dehnungszustand über Normalen-Nitsche auf vier Symmetrieebenen, Druck über die Flächenquadratur
+der Bohrung; Referenz `σ_r = k(1 − r_a²/r²)`, `σ_φ = k(1 + r_a²/r²)`, k = p r_i²/(r_a² − r_i²),
+Gegenprobe Kesselformel `∫σ_φ dr = p r_i`. Auswertung auf einem Strahl bei 37° in halber Dicke
+(Zahlen aus `tests/volumen3d/test_lame.py`, Stand siehe dort):
+
+| p, h = 10 | σ_r (von p_i) | σ_φ | Freiheitsgrade (frei) |
+|---|---|---|---|
+| 2 | 1,41 % | 0,96 % | 10761 (4431) |
+| 3 | 0,31 % | 0,12 % | 33132 (13296) |
+
+Die Abnahme der Vorgabe (< 1 % bei moderatem Aufwand) erfüllt p = 3, der Standard des Vertrags.
+Die Kirsch-Platte (Viertel 400×200×10, Loch d 40, d/W 0,1, Zug 100 N/mm²; Referenz K_tg nach
+Heywood 3,032 und Pilkey 3,023, Howland 3,03) und die Schnittlagen-Robustheit (Wurzelgitter um
+0,2…0,8 Zellen verschoben) stehen in `tests/volumen3d/test_kirsch.py`; die gemessenen Werte
+werden dort und in `docs/Volumenmodul.md` nachgetragen.
