@@ -144,6 +144,23 @@ class Zellquadratur:
         if self.alpha > 0:
             teile.append((P, self.alpha * W, np.zeros(len(P), bool)))
 
+    def alpha_entfernen(self, zellen) -> None:
+        """Fuer die genannten Zellen (aggregierte, schlecht geschnittene) die alpha-Punkte
+        streichen und die Werkstoffstuecke von (1 - alpha) auf 1 heben.
+
+        Grund (Patch-Test 27.09.2026): die alpha-Steifigkeit einer gebundenen Zelle wirkt auf
+        die *Fortsetzung* des Wurzelpolynoms, und die waechst ausserhalb der Wurzelzelle wie
+        (2 xi)^p - der alpha-Fehler stieg damit von 3e-8 auf 2e-5 (p = 2) bzw. 1e-4 (p = 3).
+        Gebundene Moden brauchen keine Regularisierung; ihr Werkstoff wird exakt integriert.
+        """
+        for c in np.asarray(zellen, int):
+            P, W, I = self.zelle(int(c))
+            if I.all():
+                continue
+            skal = 1.0 / (1.0 - self.alpha) if self.alpha < 1.0 else 1.0
+            self._cache[int(c)] = (P[I], W[I] * skal, np.ones(int(I.sum()), bool))
+        self.statistik["zellen_ohne_alpha"] = int(len(zellen))
+
     # -- Kontrollgroessen ------------------------------------------------------------
     def volumen(self) -> float:
         """Integriertes Werkstoffvolumen (Punkte im Werkstoff; bei alpha > 0 mit Faktor 1-alpha)."""

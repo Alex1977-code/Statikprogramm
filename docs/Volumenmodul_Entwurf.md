@@ -145,6 +145,22 @@ eine Empfehlung ausspricht, wird ihr gefolgt, sofern nichts Gemessenes dagegen s
   Vorgabe zurück; die Zahl solcher Blätter steht im Protokoll.
 - Punkte und Gewichte der CUT-Zellen werden einmal berechnet und gehalten (für alle
   Lastfälle gleich); Basiswerte nicht (Speicher).
+- **Zellaggregation schon in TP 1** (Vorgabe 8.3, Gegenmaßnahme 1; Befund 27.09.: im
+  Patch-Test-Gitter haben 10 von 118 Zellen einen Werkstoffanteil unter 10⁻⁴, drei sogar 0;
+  der Fehler wuchs mit α/Anteil auf 1,4 % bei α = 10⁻⁸). Zellen mit Anteil unter der Schwelle
+  (Standard 0,25) bekommen eine wohlgestellte Wurzelzelle (Nachbar mit größtem Anteil, Fläche
+  vor Kante vor Ecke, Ketten aufgelöst); Moden, die keine wohlgestellte Zelle trägt, werden an
+  die Fortsetzung des Wurzelpolynoms gebunden (Modalprojektion, `M = V_c⁻¹ V_R`, lineare
+  Felder exakt). Zwangsmatrix C, gelöst wird CᵀKC. Prinzip der aggregierten finiten Elemente
+  (Badia, Verdugo, Martín 2018).
+- **α nur noch als Rückfall:** Gebundene Zellen dürfen keine α-Punkte tragen (α wirkt sonst auf
+  die extrapolierten Wurzelmoden, Fortsetzung wächst wie (2ξ)ᵖ: gemessen 2·10⁻⁵ statt 3·10⁻⁸),
+  und in wohlgestellten Zellen tragen hohe Moden nur ~Anteil^(2p+1) ihrer Energie im
+  Werkstoff (0,28⁷ ≈ 10⁻⁴ bei p = 3), sodass α = 10⁻⁸ dort 10⁻⁴ Fehler macht. Mit Aggregation
+  bekommen darum nur Zellen **ohne Wurzel** (isolierte Splitter) den Faktor α; alle anderen
+  Schnittzellen werden ohne fiktives Gebiet integriert. Ergebnis: Patch-Test 5·10⁻¹⁵ … 5·10⁻⁹
+  (p = 1…3) unabhängig von α und β. α bleibt Nutzerparameter (Vertrag `FcmSettings.alpha`) für
+  Aggregation aus und den Rückfall.
 - Qualitätsprüfung (Vorgabe 6) kommt mit TP 2; in TP 1 misst ein Test das integrierte
   Volumen von Kugel, schräg geschnittenem Würfel und Lochplatte gegen die Formel.
 
@@ -156,7 +172,25 @@ eine Empfehlung ausspricht, wird ihr gefolgt, sofern nichts Gemessenes dagegen s
   im Protokoll. Ein zellweises Eigenwertproblem für β kommt, wenn kleine Schnittanteile in
   TP 2 Stabilitätsprobleme zeigen (dann gemessen, nicht vorab).
 - Erwogen: Penalty (einfacher, aber β-abhängig und inkonsistent; nur als Rückfall vorgesehen),
-  Lagrange-Multiplikatoren (Sattelpunkt, passt nicht zu CG und Mehrgitter).
+  Lagrange-Multiplikatoren für den ganzen Rand (Sattelpunkt, passt nicht zu CG und Mehrgitter).
+- **Schnittebenen zum Stabwerk (Befund 27.09.):** Die ebene Querschnittskinematik eines Stabs
+  enthält keine Querkontraktion und keine Schubverwölbung. Mit allen drei Komponenten
+  punktweise vorgegeben ist die Schnittebene seitlich gesperrt: am Stub-Kragarm (Segment 3 h)
+  war das Moment um 45–53 % zu hoch. Darum gilt an Schnittebenen die Projektion `schnitt`:
+  Normalkomponente punktweise über Nitsche (trägt Biegung, Längskraft, Verwölbung), in der
+  Ebene nur die drei Resultierenden – zwei Translationen (Querkräfte) und die Drehung um die
+  Normale (Torsion) – als Mittelwertzwänge mit **drei Lagrange-Multiplikatoren je Ebene**
+  (Sattelpunkt mit nur 3 Zusatzunbekannten je Ebene, für den Direktlöser unkritisch; TP 3
+  eliminiert sie per Projektion). Die Multiplikatoren sind die übertragenen Traktionen
+  (λ·A = Querkraft) und dienen als Kontrolle. Reine Biegung (exaktes 3D-Feld) bleibt exakt
+  (10⁻⁶), Multiplikatoren 10⁻¹⁴.
+- **Grenze der Verschiebungskopplung:** Für ein schubweiches Segment mit vorgegebenen
+  Euler-Bernoulli-Endverdrehungen folgen andere Schnittgrößen als aus der Balkentheorie
+  (Φ = 12EI/(κGAl²), am Stub-Kragarm mit l = 3h: Φ = 0,35, Moment +37 %, Querkraft −24 %).
+  Die FCM trifft die unabhängige Timoshenko-Vorhersage auf −0,9 % (Moment) und +2,7 %
+  (Querkraft, κ = 5/6). Die Kopplungskontrolle im Ergebnis weist solche Abweichungen aus;
+  Empfehlung im Handbuch: Schnittebenen mindestens 4–5 Querschnittshöhen auseinander oder
+  schubweiches Globalmodell, sonst Kraftkopplung (TP 5).
 - Flächenlasten (Druck, Traktion) und Volumenlasten über Oberflächen- bzw. Volumenquadratur.
 - **Oberflächenquadratur:** jede CSG-Grundform liefert eine Tessellierung ihrer Oberfläche
   (Ebenen exakt als Polygone, Zylinder/Kugel parametrisch mit wählbarer Auflösung); Dreiecke
