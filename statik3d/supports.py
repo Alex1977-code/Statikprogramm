@@ -430,6 +430,39 @@ def lager_auf_netz(model: Model, log: list = None) -> dict:
 # --------------------------------------------------------------------------
 # Expansion
 # --------------------------------------------------------------------------
+#: Bettung [N/m^3] eines Flaechenlagers, ab der eine Feder **mit Ausfall** als
+#: starres Lager mit Ausfall gilt (Entscheidung des Anwenders 27.09.2026:
+#: "Flaechenlager starr mit Ausfall bei Zug ist ein starres Lager mit Ausfall
+#: bei Zug"). RFEM laesst "starr" nur ohne Nichtlinearitaet zu (inf); wer
+#: Ausfall bei Zug will, muss dort einen Federwert eintragen - am Drehlager
+#: 2,5e11 N/m^3 fuer das Lager "Starr". Echte Bettungen liegen Groessen-
+#: ordnungen darunter (Boden 1e7 bis 1e8, Elastomer 1e9 bis 1e10). Als Feder
+#: gerechnet lief das Lager im Feder-Pfad des Kontakts mit Festhalten (244
+#: festgehaltene Bedingungen, 26.09.2026); als starres Lager ist es eine
+#: exakte Bedingung (contact.EXAKTE_NORMALBEDINGUNG).
+#:
+#: **Noch abgeschaltet (inf), gemessen 27.09.2026:** mit starrem Lager wird
+#: die Reibung der Knagge (ux/uy starr bis mu*N) zur exakten Bedingung mit
+#: k_t = 1e4-facher Diagonalsteifigkeit, und die grobe Reststeifigkeit ihrer
+#: ganz gleitenden Gruppe (1e-3 k_t = das Zehnfache des Bauteils) trug am
+#: Klotz an der Knagge 21,5 von 100 kN Vertikallast, die in keiner
+#: Kontaktkraft standen (Pruefmatrix K5, offen). Mit der Bettung als Feder
+#: ist dieser Rest vernachlaessigbar. Die Regel wird eingeschaltet (1e11),
+#: sobald K5 geloest ist; tests/test_supports prueft den Mechanismus mit
+#: der Grenze 1e11.
+BETTUNG_STARR = float("inf")
+BETTUNG_STARR_VORGESEHEN = 1.0e11
+
+
+def bettung_als_starr(b: DofBehaviour) -> DofBehaviour:
+    """Feder mit Ausfall ab BETTUNG_STARR -> starr mit Ausfall (sonst unveraendert)."""
+    if b.typ == "spring" and b.failure and float(b.stiffness or 0.0) >= BETTUNG_STARR:
+        bs = DofBehaviour(**vars(b))
+        bs.typ, bs.stiffness = "rigid", 0.0
+        return bs
+    return b
+
+
 def _entry(node: int, dof: int, b: DofBehaviour, factor: float, label: str,
            source: str, value: float = 0.0) -> Optional[NodalDof]:
     if not b.acts:
@@ -477,6 +510,12 @@ def expand(model: Model, log: list = None) -> list[NodalDof]:
     from .fugen import quadratische_knoten, quadratische_seiten_sperren
     q = quadratische_knoten(model) if model.surface_supports else {}
     for ss in model.surface_supports:
+        for dof in range(NDOF):
+            b = ss.dof_behaviour(dof)
+            if bettung_als_starr(b) is not b and log is not None:
+                log.append(f"Flächenlager '{ss.name}': Bettung {b.stiffness:.3g} N/m³ mit Ausfall bei "
+                           f"{'Zug' if b.failure == 'zug' else 'Druck'} gilt als starres Lager mit Ausfall "
+                           f"(ab {BETTUNG_STARR:.0e} N/m³)")
         if getattr(ss, "lokal", False) and getattr(ss, "gruppen", None):
             if q:
                 quadratische_seiten_sperren(model, {int(n) for g in ss.gruppen for n in g[2]},
@@ -491,7 +530,8 @@ def expand(model: Model, log: list = None) -> list[NodalDof]:
             log.append(f"Flaechenlager '{ss.name}': keine Flaeche gefunden")
         for n, A in trib.items():
             for dof in range(NDOF):
-                e = _entry(n, dof, ss.dof_behaviour(dof), A, ss.name or "Flaechenlager", "surface")
+                e = _entry(n, dof, bettung_als_starr(ss.dof_behaviour(dof)), A,
+                           ss.name or "Flaechenlager", "surface")
                 if e is not None:
                     out.append(e)
     return _merge(out)
@@ -512,7 +552,7 @@ def _flaechenachsen(ss) -> list:
     normal_belegt: set = set()
     ebene_belegt: set = set()
     gruppen = [(int(g[0]), int(g[1]), list(g[2]), list(g[3])) for g in ss.gruppen]
-    b2 = ss.dof_behaviour(2)
+    b2 = bettung_als_starr(ss.dof_behaviour(2))
     for achse, vz, knoten, areas in gruppen:
         if not b2.acts:
             break

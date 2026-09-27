@@ -3409,9 +3409,17 @@ Federkraft aus einer winzigen Durchdringung mehr. Was Sie davon sehen:
 
 Ein Teil, das in einem Schritt keine geschlossene Bedingung mehr hat, wird
 wie bisher an seinen nächsten Bedingungen gehalten; der Halt löst sich,
-sobald das Teil an mindestens drei anderen Bedingungen trägt. Hängt es am
-Ende allein am Halt und zieht daran, bricht die Rechnung mit „hebt ab“ ab -
-siehe „Abbruch der Kontakt-Iteration“.
+sobald die übrigen geschlossenen Bedingungen, Bindungen und Lager des Teils
+alle seine Bewegungen halten. Hängt es am Ende allein am Halt und zieht
+daran, bricht die Rechnung mit „hebt ab“ ab - siehe „Abbruch der
+Kontakt-Iteration“.
+
+**Flächenlager mit Bettung und Ausfall bei Zug** (etwa das RFEM-Lager
+„Starr“ mit 2,5·10¹¹ N/m³) rechnen weiterhin als Feder - dort kann eine
+Bedingung noch „als aktiv gehalten“ werden (Protokoll). Die Regel, eine
+solche Bettung ab 10¹¹ N/m³ als starres Lager mit Ausfall zu behandeln, ist
+vorbereitet, aber abgeschaltet, bis die Reibung ganz gleitender Gruppen
+(Prüfmatrix K5) keine Kraft mehr in ihrer Reststeifigkeit trägt.
 
 > **Wann ein Kontaktergebnis nicht auskonvergiert ist (seit 22.09.2026).**
 > Bei Reibung prüft das Programm die Haft- und Gleitzustände nach jedem

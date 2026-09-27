@@ -2142,27 +2142,45 @@ class StaticSystem:
                 ls = getattr(self, "_kontakt_loeser", None)
                 neu = schluessel is None or ls is None \
                     or schluessel != getattr(self, "_kontakt_signatur", None)
-                Kt = (self.K + K_extra) if (neu or vorgabe) else None
-                if vorgabe:
-                    Ktfs = Kt[self.fi][:, self.si]
-                    rhs = rhs - Ktfs @ u[self.si]
                 rand_rhs = None
+                A_aug = None
                 if C_extra is not None:
                     # C u = b auf den freien FHG: C_f u_f = b - C_s u_s. Die
-                    # Zeilen werden mit der groessten Hauptdiagonale von K
+                    # Zeilen werden mit der Diagonalsteifigkeit ihrer Knoten
                     # skaliert (Standard fuer Multiplikatorzeilen): Eintraege
                     # von 1 neben 1e11 verderben die Pivotwahl, und ohne
                     # aeussere Last (Presspassung K3: rechte Seite nur das
                     # Uebermass in Metern) waere ||b|| winzig und das relative
                     # Residuum der Loeserpruefung ohne Sinn - K3 hiess damit
                     # "numerisch singulaer" (26.09.2026). lambda = -s*mu.
-                    if c_skala is not None and len(c_skala) == C_extra.shape[0]:
+                    C_roh = C_extra.tocsr()
+                    if c_skala is not None and len(c_skala) == C_roh.shape[0]:
                         s = np.asarray(c_skala, float)
-                        C_extra = sparse.diags(s) @ C_extra.tocsr()
+                        C_extra = sparse.diags(s) @ C_roh
                     else:
                         s = self._c_skala
-                        C_extra = C_extra.tocsr() * s
-                    rand_rhs = s * np.asarray(b_extra, float) - C_extra[:, self.si] @ u[self.si]
+                        C_extra = C_roh * s
+                    b_roh = np.asarray(b_extra, float)
+                    # Augmentierung (Golub/Greif, 27.09.2026): K + C^T S C im
+                    # Steifigkeitsblock und C^T S b auf der rechten Seite.
+                    # Dieselbe Loesung und derselbe Multiplikator (mit C u = b
+                    # hebt sich der Zusatz weg), aber der Block ist auch dann
+                    # regulaer, wenn erst die Bedingungen das Teil halten - eine
+                    # duenne Platte auf starren Lagern mit Ausfall ist ohne sie
+                    # frei in z, und PARDISO (LU, Typ 11) traf im Sattelpunkt-
+                    # system auf Nullpivots: bei einer Last endlich, bei der
+                    # naechsten inf ("Singulaeres System", tests/test_supports).
+                    A_aug = (C_extra.T @ C_roh).tocsr()
+                    rhs = rhs + np.asarray(C_extra.T @ b_roh).ravel()[self.fi]
+                    rand_rhs = s * b_roh - C_extra[:, self.si] @ u[self.si]
+                Kt = None
+                if neu or vorgabe:
+                    Kt = self.K + K_extra
+                    if A_aug is not None:
+                        Kt = Kt + A_aug
+                if vorgabe:
+                    Ktfs = Kt[self.fi][:, self.si]
+                    rhs = rhs - Ktfs @ u[self.si]
                 if neu:
                     Ktff = Kt[self.fi][:, self.fi].tocsc()
                     self.kontakt_loeser_freigeben()
@@ -4899,16 +4917,46 @@ def _rang_zahl(model, knoten, zeilen) -> int:
     return int((s > SCHUB_GRENZE * s.max()).sum()) if s.size and s.max() > 0.0 else 0
 
 
-def _halterzeilen(cons, alle_zu: bool = False) -> list:
+def _lagerzeilen(model, cs) -> dict:
+    """{Knoten: [FHG, ...]} der **linearen** Lager (fest oder Feder) aus
+    Knoten-, Linien- und Flaechenlagern - sie halten ein Teil ebenso wie
+    Kontaktbedingungen (Klotz K5: Federn am Deckel). Einmal je Kontaktsystem
+    bestimmt (das Modell aendert sich waehrend der Iteration nicht)."""
+    lager = getattr(cs, "_lagerzeilen", None)
+    if lager is None:
+        from . import supports as sup
+        lager = {}
+        try:
+            lin, _nl = sup.split(sup.expand(model))
+            for e in lin:
+                if e.typ == "rigid" or (e.typ == "spring" and float(e.stiffness or 0.0) > 0.0):
+                    lager.setdefault(int(e.node), set()).add(int(e.dof))
+        except Exception:                 # noqa: BLE001 - eine Diagnose darf nie sperren
+            lager = {}
+        cs._lagerzeilen = lager
+    return lager
+
+
+def _halterzeilen(cons, alle_zu: bool = False, ohne_gruppe: str = None,
+                  kn=None, lager: dict = None) -> list:
     """Die Zeilen, mit denen die Bedingungen eines Teils seine
     Starrkoerperbewegungen halten: Normalzeilen der geschlossenen (mit
     ``alle_zu`` aller) und Tangentialzeilen der Bindungen - Haften, Schubhalt,
-    dauerhafte Bindung - sowie der geschlossenen Reibknoten."""
+    dauerhafte Bindung - sowie der geschlossenen Reibknoten. ``ohne_gruppe``
+    laesst die Tangentialzeilen dieser Fuge weg (traegt das Teil auch ohne
+    ihre Reibung?). ``kn``/``lager``: die linearen Lager der Knoten des Teils
+    (:func:`_lagerzeilen`) zaehlen mit."""
     zeilen = []
+    if kn is not None and lager:
+        for n in kn:
+            for d in lager.get(int(n), ()):
+                zeilen.append((np.array([NDOF * int(n) + int(d)]), np.array([1.0])))
     for c in cons:
         zu = c.active or alle_zu
         if zu:
             zeilen.append((c.dofs, c.cn))
+        if ohne_gruppe is not None and (c.label or "").split(":")[0] == ohne_gruppe:
+            continue
         if c.ct is not None and (c.bindung or c.schub_halt or (zu and (c.haften or c.mu > 0))):
             zeilen.append((c.dofs, c.ct[0]))
             zeilen.append((c.dofs, c.ct[1]))
@@ -4965,8 +5013,9 @@ def _freie_teile_halten(model, cs, log: list = None, mindestens: int = HALT_MIND
             # die Kippung um die Linie nicht (kippender Block auf der
             # Haftfuge, tests/test_kontakt_exakt).
             soll = min(int(mindestens), len(cons))
-            ziel = _rang_zahl(model, _kn, _halterzeilen(cons, alle_zu=True))
-            zeilen = _halterzeilen(cons)
+            lager = _lagerzeilen(model, cs)
+            ziel = _rang_zahl(model, _kn, _halterzeilen(cons, alle_zu=True, kn=_kn, lager=lager))
+            zeilen = _halterzeilen(cons, kn=_kn, lager=lager)
             if len(aktiv) >= soll and _rang_zahl(model, _kn, zeilen) >= ziel:
                 continue
         else:
@@ -5054,6 +5103,12 @@ def _halt_loesen(model, cs, lam, log: list = None) -> int:
         geh = [c for c in cons if c.active and c.gehalten and c.starr]
         if not geh:
             continue
+        lager = _lagerzeilen(model, cs)
+        if _rang_zahl(model, kn, _halterzeilen([], kn=kn, lager=lager)) >= 6:
+            # Das Teil haelt sich selbst (feste Lager, z. B. die starre Platte
+            # unter dem Block): seine gehaltenen Bedingungen halten das
+            # **andere** Teil der Fuge - darueber entscheidet dessen Schleife
+            continue
 
         def multiplikator(c):
             return float(lam[c.zeile]) if (lam is not None and 0 <= c.zeile < len(lam)) else 0.0
@@ -5071,14 +5126,16 @@ def _halt_loesen(model, cs, lam, log: list = None) -> int:
         # Bindungen) nicht sinkt - so faellt zuerst die Reihe, die zieht, und
         # die Reihe, die im Endzustand traegt, bleibt (kippender Block)
         rest = list(geh)
-        rang_mit = _rang_zahl(model, kn, _halterzeilen(cons))
+        lager = _lagerzeilen(model, cs)
+        rang_mit = _rang_zahl(model, kn, _halterzeilen(cons, kn=kn, lager=lager))
         auf = 0
         for c in sorted(geh, key=multiplikator):
             rest_ohne = [r for r in rest if r is not c]
             bleibt = {id(r) for r in rest_ohne}
             # Bedingungen sind Dataclasses mit Feldern aus numpy - Zugehoerigkeit
             # ueber id(), nicht ueber ==
-            zeilen = _halterzeilen([x for x in cons if not (x.gehalten and x.active) or id(x) in bleibt])
+            zeilen = _halterzeilen([x for x in cons if not (x.gehalten and x.active) or id(x) in bleibt],
+                                   kn=kn, lager=lager)
             if _rang_zahl(model, kn, zeilen) < rang_mit:
                 break
             rest = rest_ohne

@@ -554,12 +554,75 @@ def test_einseitiges_lager_ohne_richtung():
           float(any("Nullvektor" in z for z in r1.info.get("contact_log", []))), 0.0, 0)
 
 
+def test_bettung_ab_1e11_gilt_als_starr():
+    """Flaechenlager mit Ausfall bei Zug: ab BETTUNG_STARR (1e11 N/m^3) ist es
+    ein starres Lager mit Ausfall (Anwender 27.09.2026; RFEM laesst 'starr'
+    nur ohne Nichtlinearitaet zu, das Drehlager traegt darum 2,5e11). Darunter
+    bleibt es eine Feder. Das starre Lager laeuft als exakte Bedingung: Spalt
+    null an den geschlossenen Knoten, kein Festhalten."""
+    def platte(c):
+        m = Model("Bettung Abheben")
+        m.add_material(Material.steel("S235"))
+        m.add_shell_prop(ShellProp("t", 0.02))
+        g = mesher.grid_plate(m, "S235", "t", 2.0, 2.0, 4, 4)
+        elems = list(range(len(m.elements)))
+        m.add_surface_support(elems, uz=dict(typ="spring", stiffness=c, failure="zug"))
+        m.fix(int(g[0, 0]), [0, 1])
+        m.fix(int(g[-1, 0]), [1])
+        # Flaechenlast nach unten, Zug an einer Ecke: unter starren Lagern
+        # hebt nur ab, was gezogen wird - und die Resultierende (30 kN bei
+        # x = y = 1,33 m) muss innerhalb der Fuge liegen. Mit Druck in der
+        # einen und Zug in der gegenueberliegenden Ecke laege sie bei 2,67 m
+        # ausserhalb: die Platte kippt, "hebt ab" waere die richtige Antwort
+        # (gemessen 27.09.2026). Unter reiner Drucklast an einem Knoten
+        # verformt sich die Platte auf starren Lagern gar nicht (25 zu).
+        for e in elems:
+            m.load_face(e, -10e3)                   # 4 m^2 -> 40 kN
+        m.load_node(int(g[0, 0]), Fz=+10e3)
+        return m
+    # Die Regel ist bis zur Loesung von K5 abgeschaltet (BETTUNG_STARR = inf);
+    # geprueft wird der Mechanismus mit der vorgesehenen Grenze 1e11
+    alt_grenze = supports.BETTUNG_STARR
+    supports.BETTUNG_STARR = supports.BETTUNG_STARR_VORGESEHEN
+    try:
+        _bettung_faelle(platte)
+    finally:
+        supports.BETTUNG_STARR = alt_grenze
+    m = platte(2.5e11)
+    uz = [e for e in supports.expand(m, []) if e.dof == 2]
+    check("abgeschaltet (Vorgabe): 2,5e11 bleibt eine Feder", 1.0 if all(e.typ == "spring" for e in uz) else 0.0, 1.0, 0)
+
+
+def _bettung_faelle(platte):
+    for c, erwartet in ((2.5e11, "rigid"), (1e9, "spring")):
+        m = platte(c)
+        log = []
+        uz = [e for e in supports.expand(m, log) if e.dof == 2]
+        check(f"Bettung {c:.1e}: FHG uz wird '{erwartet}'", 1.0 if all(e.typ == erwartet for e in uz) else 0.0, 1.0, 0)
+        check(f"Bettung {c:.1e}: Ausfall bei Zug bleibt", 1.0 if all(e.failure == "zug" for e in uz) else 0.0, 1.0, 0)
+        check(f"Bettung {c:.1e}: Protokollzeile {'steht' if erwartet == 'rigid' else 'fehlt'}",
+              1.0 if any("gilt als starres Lager" in z for z in log) == (erwartet == "rigid") else 0.0, 1.0, 0)
+        r = solver.solve_static(m)
+        zu = [x for x in r.contact if x["status"] != "offen"]
+        offen = [x for x in r.contact if x["status"] == "offen"]
+        check(f"Bettung {c:.1e}: konvergiert, Ecke hebt ab", 1.0 if (r.info.get("contact_converged") and offen and zu) else 0.0, 1.0, 0)
+        check(f"Bettung {c:.1e}: Gleichgewicht", r.reactions[:, 2].sum(), 30e3, 1e-3, "N")
+        g_max = max(abs(float(x["gap"])) for x in zu)
+        if erwartet == "rigid":
+            check("starr: Spalt geschlossener Knoten null (exakte Bedingung)", 1.0 if g_max < 1e-15 else 0.0, 1.0, 0)
+            check("starr: alle geschlossenen sind exakt (starr), keine festgehalten",
+                  1.0 if all(x.get("starr") for x in zu) and not any(x.get("frozen") for x in r.contact) else 0.0, 1.0, 0)
+        else:
+            check("Feder: Durchdringung = Fn/k messbar (max |g| > 1e-9 m)", 1.0 if g_max > 1e-9 else 0.0, 1.0, 0)
+
+
 def main():
     for t in (test_federlager_mit_schlupf, test_zug_und_druckausfall, test_grenzkraft,
               test_reibung_knotenlager, test_linienlager, test_flaechenlager,
               test_rotationslager_und_zusammenfassung, test_federgelenke,
               test_lager_folgen_dem_netz, test_flaechenlager_in_flaechenachsen,
-              test_lagersymbolik, test_einseitiges_lager_ohne_richtung):
+              test_lagersymbolik, test_einseitiges_lager_ohne_richtung,
+              test_bettung_ab_1e11_gilt_als_starr):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

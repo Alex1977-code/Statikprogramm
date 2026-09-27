@@ -1370,7 +1370,28 @@ umgestellt: Freigabe und Öffnen im selben Schritt schossen über (kippender
 Block auf der Haftfuge, tests/test_kontakt_exakt: jetzt 3 Schritte, Summe
 der Multiplikatoren 90 kN auf 10⁻⁹). Hängt das Teil am Ende allein am Halt,
 heißt das „hebt ab“ (tests/test_kontakthalt) - bei 20 kN Schub am Deckel
-des Blocks zu Recht, seine Resultierende läge außerhalb der Fuge.
+des Blocks zu Recht, seine Resultierende läge außerhalb der Fuge. Seit dem
+27.09.2026 zählen in der Rangprüfung auch die **linearen Lager** des Teils
+(feste und Federn aus Knoten-, Linien- und Flächenlagern, `_lagerzeilen`),
+und ein Teil, das sich selbst hält (die starre Platte unter dem Block),
+entscheidet nicht über den Halt des Nachbarteils.
+
+**Flächenlager „starr mit Ausfall“ (27.09.2026, noch abgeschaltet).** RFEM
+lässt „starr“ nur ohne Nichtlinearität zu; ein Lager mit Ausfall bei Zug
+trägt dort einen Federwert - am Drehlager 2,5·10¹¹ N/m³ für das Lager
+„Starr“. Nach Entscheidung des Anwenders gilt eine solche Bettung ab
+`supports.BETTUNG_STARR` als starres Lager mit Ausfall (exakte Bedingung).
+Die Regel ist gebaut (`supports.bettung_als_starr`, auch im RFEM-Import) und
+geprüft (tests/test_supports mit der vorgesehenen Grenze 10¹¹ N/m³), aber
+mit `BETTUNG_STARR = inf` abgeschaltet: mit starrer Knagge wird deren
+Reibung (u_x, u_y starr bis μ·N) zur exakten Bedingung mit k_t = 10⁴-facher
+Diagonalsteifigkeit, und die grobe Reststeifigkeit ihrer ganz gleitenden
+Gruppe (10⁻³ k_t, das Zehnfache des Bauteils) trug am Klotz an der Knagge
+21,5 von 100 kN Vertikallast, die in keiner Kontaktkraft standen - das
+offene K5. Mit der Bettung als Feder (k_t aus der Bettung) ist dieser Rest
+vernachlässigbar; darum bleibt es bis zur Lösung von K5 bei der Feder, und
+am Drehlager bei 244 bis 256 festgehaltenen Bettungsfedern (26.09.2026,
+Zug ≤ 0,35 kN).
 
 Arten:
 

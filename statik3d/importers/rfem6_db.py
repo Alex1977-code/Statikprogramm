@@ -1705,6 +1705,15 @@ def _surface_behaviour(impl: dict, nlmap: dict, label: str, log: list) -> dict:
         val = abs(float(impl.get(col) or 0.0))
         if val:
             out[2].limit = max(out[2].limit, val)
+    # RFEM laesst "starr" nur ohne Nichtlinearitaet zu; ein Lager mit Ausfall
+    # traegt darum einen Federwert (Drehlager "Starr": 2,5e11 N/m^3). Ab
+    # supports.BETTUNG_STARR gilt das als starres Lager mit Ausfall
+    # (Anwender 27.09.2026) - so steht es dann auch in der Maske.
+    from ..supports import BETTUNG_STARR, bettung_als_starr
+    if bettung_als_starr(out[2]) is not out[2]:
+        C.say(log, f"  {label}: Bettung {out[2].stiffness:.3g} N/m³ mit {out[2].failure} -> starr mit "
+                   f"Ausfall (ab {BETTUNG_STARR:.0e} N/m³)")
+        out[2] = bettung_als_starr(out[2])
     mu = max(abs(float(impl.get("negativeFrictionCoefficient") or 0.0)),
              abs(float(impl.get("positiveFrictionCoefficient") or 0.0)))
     if mu and code:

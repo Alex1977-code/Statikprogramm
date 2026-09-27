@@ -1653,7 +1653,21 @@ class ContactSystem:
     def _k_res(self, c: Constraint, full_slip: dict) -> float:
         """Reststeifigkeit eines gleitenden Knotens: grob in Phase 1 und fuer vollstaendig
         rutschende Gruppen (nur sie haelt das Bauteil), sonst in Phase 2 vernachlaessigbar
-        klein, damit die Reibkraft exakt mu*Fn betraegt."""
+        klein, damit die Reibkraft exakt mu*Fn betraegt.
+
+        Gemessen 27.09.2026: bezieht man den Rest auf die Bauteilsteifigkeit
+        statt auf k_t (bei starren Bedingungen 1e4-mal groesser), wird K4 hex8
+        gruen und K5 besser (Feder B -9 % statt -90 %), aber Phase 1 verliert
+        ihre Daempfung - der Block mit Reibung und die Warmstart-Fixtures
+        (test_kontaktzustand) laufen in den Deckel. Der grobe Rest bleibt darum;
+        was er an Kraft traegt, ist das offene K5 (ganz rutschende Gruppen).
+        Zwei Kuren am 27.09.2026 gemessen und zurueckgenommen: (a) feine Feder
+        fuer ganz rutschende Gruppen, die anderswo gehalten sind (Rang) - K5
+        hex8 gruen, aber Stempel und zwei Koerper mit mu 0,1 in der Plastizitaet
+        verschoben, ein Reibungslauf nicht mehr konvergiert; (b) Ausgleich auch
+        an der groben Feder - Fixpunkt zu langsam (K5 hex8 -79 % statt -86 %).
+        Der Klotz an der Knagge (tests/test_supports) zeigt den Rest: mit
+        starrer Knagge (k_t = 1e4-fache Diagonale) trug er 21,5 von 100 kN."""
         if self.phase == 2 and not full_slip.get(_group(c), False):
             return SLIP_STIFFNESS_FINE * c.kt
         return SLIP_STIFFNESS * c.kt
