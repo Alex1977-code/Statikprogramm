@@ -1,0 +1,332 @@
+# Volumenmodul `volumen3d`: Umsetzungsentwurf (Session B)
+
+Stand 27.09.2026, Zweig `feature/volumen3d` (Worktree `Desktop/Statik3D/statik3d-volumen3d`,
+abgezweigt von `main` 3267e10). Fachliche Grundlage und verbindlich:
+`Schnittstellenvertrag_Statik3D_FCM.md` (2.0.0) und
+`Vorgabe_Statik3D_Abschnitt_FCM-Volumenloeser.md`. Dieses Dokument legt fest, **wie** die
+Vorgabe umgesetzt wird: Zerlegung in Teilprojekte, Entscheidungen mit Begründung, das erste
+Teilprojekt im Einzelnen. Was die Vorgabe schon festlegt, wird hier nicht wiederholt.
+
+Die Entscheidungen in Abschnitt 3 sind Annahmen dieser Sitzung; der Anwender kann jede davon
+umstoßen. Sie sind so gewählt, dass eine Korrektur nur `packages/volumen3d` betrifft.
+
+---
+
+## 1. Rahmen
+
+**Rechner (gemessen 27.09.2026):** AMD Ryzen 9 5950X (16 Kerne), 128 GB RAM, NVIDIA GeForce
+RTX 3070 mit 8 GB (6,4 GB frei), Treiber 591.86, CUDA-Toolkit 12.4 mit `nvcc`. Die Vorgabe
+rechnet mit 16 GB (Abschnitt 9): das lokale Ziel sind darum ~5·10⁶ Freiheitsgrade auf der GPU;
+`estimate` weist den Bedarf vorher aus, größere Modelle laufen auf der CPU (128 GB).
+
+**Umgebung des Worktrees:** eigene `.venv` (Python 3.11.9) mit `requirements.txt` des
+Hauptprogramms plus `numba 0.67`, `cupy-cuda12x 14.2`, `mypy`. Baseline vor der ersten
+Änderung: `tests.contracts.test_vertrag` 43/43, `mypy --strict` für das Vertragspaket sauber,
+CuPy sieht die GPU (SGEMM 4000³ ×10 in 0,42 s).
+
+**Abhängigkeiten von `volumen3d`:** `numpy`, `scipy`, `numba`, `statik3d_contracts`; `cupy`
+optional (Extra `gpu`); `gmsh` optional für STEP (Teilprojekt 5). Kein `statik3d`-Import
+(Vertrag Abschnitt 1), keine Qt-Abhängigkeit.
+
+---
+
+## 2. Zerlegung in Teilprojekte
+
+Regeln des Anwenders (27.09.2026, Startauftrag): Umsetzung in der Reihenfolge von Vorgabe
+Abschnitt 12 (Ausbaustufen) bzw. 16.10 (Baugruppen), **Stufe 1 beginnend mit Geometriekern und
+Oktree**, geprüft an Patch-Test, Lochscheibe und Lamé-Zylinder; nach jeder abgeschlossenen
+Stufe ein Pull Request mit grüner CI, damit die Unterschiede klein bleiben und die Oberfläche
+früh gegen den echten Löser statt gegen den Stub prüfen kann. Die Stufen werden in Teilprojekte
+(TP) mit eigener Abnahme aus Vorgabe Abschnitt 13 bzw. 16.9 geschnitten; jedes TP bekommt einen
+eigenen Plan, und erst wenn seine Prüfungen grün sind, beginnt das nächste. Der Pull Request
+kommt je **Stufe**, also nach TP 2 (Stufe 1), TP 4 (Stufe 2 Kern), TP 5, TP 6, TP 7, TP 8.
+
+| TP | Stufe | Inhalt | Vorgabe | Abnahme |
+|---|---|---|---|---|
+| **1** | 1a | **FCM-Kern als CPU-Referenz:** Geometriekern mit CSG (analytische SDFs), Oktree-Datenstruktur (Morton-Codes) über einem Wurzelgitter würfelförmiger Zellen, in TP 1 noch ohne Verfeinerung; hierarchische Legendre-Basis p = 1…4, rekursive Schnittzellen-Quadratur, Nitsche für Verschiebungsränder, Flächen- und Volumenlasten, assemblierte Steifigkeit mit Direktlöser, Auswertung an der echten Oberfläche, Schnittgrößenkontrolle, Kopplung Stab → Volumen über den Provider, Paket nach Vertrag Abschnitt 1 mit Entry Points `fcm` (echt) und `hybrid` (ehrlicher Platzhalter bis TP 7) | 3–7, 8 (nur Direktlöser), 10 Stufe 1, 11.1 | Patch-Test < 10⁻⁶, Kragarm-Kopplung < 1 %, Lamé < 1 %, Kirsch < 2 %, Schnittlagen-Streuung < 1 % |
+| 2 | 1b | **Oktree-Verfeinerung und STL:** Verfeinerung an Schnittzellen, Nutzerbereichen und dünnen Wänden, 2:1-Balancierung, hängende Freiheitsgrade als Zwangsbedingungen, Volumenprüfung je Schnittzelle; STL-Eingang mit BVH und verallgemeinerter Windungszahl, Oberflächendreiecke für Randintegrale und Vorschau. Damit ist Stufe 1 vollständig → **Pull Request 1**. | 3, 4, 6 | Patch-Test mit hängenden Knoten < 10⁻⁶; Kirsch lokal verfeinert bei einem Bruchteil der Freiheitsgrade; kleine Schnittzellen 10⁻⁶ ohne Ausreißer; Lamé aus STL wie aus CSG; Innen/Außen an offenen Netzen |
+| 3 | 2a | **Matrixfreier Operator und PCG:** Summenfaktorisierung für INSIDE-Zellen, gespeicherte Quadratur für CUT-Zellen, Zwangsbedingungen im Operator, Jacobi-Vorkonditionierer; CPU mit numba, dann GPU mit CuPy-RawKernels | 8.1, 8.2, 9 | Operator gegen assemblierte Matrix < 10⁻¹², CPU gegen GPU < 10⁻⁶ relativ, Mehrfach-Lastfälle |
+| 4 | 2b | **Mehrgitter:** p-Mehrgitter auf feinster Ebene, darunter h-Mehrgitter über die Oktree-Ebenen, Chebyshev-Jacobi-Glätter, Grobgitter direkt; kleine Schnittzellen (Zellaggregation, alternativ Ghost Penalty); gemischte Genauigkeit → **Pull Request 2** | 8.3, 9 | Iterationszahl < 100 für 10⁻⁸ unabhängig von Größe und Schnittlage; 10⁶ Freiheitsgrade < 60 s |
+| 5 | 2c | **Effizienz und Nachweise:** Moment Fitting für elastische Schnittzellen, Spannungsrückgewinnung (SPR/L²), Hot-Spot entlang Nahtlinien, Konvergenzkurve, Protokoll; STEP über gmsh-Tessellierung. Schale → Volumen ist Sache des Providers (Hauptprogramm) und braucht hier nur die Prüfung. | 3, 6 (Stufe 2), 11 | Knotenblech-Referenzmodell, Vergleich mit Tet10-Referenz < 3 % |
+| 6 | 3 | Punktwolke und Voxel, Fehlerschätzer mit adaptiven hp-Zyklen, Kerbspannungskonzept, Stellungs-Batch | 3, 8.4, 11.2 | Konvergenzaussage nach 2–4 Zyklen; Kerbfall-Referenz |
+| 7 | 5 / 16.10 (1–3) | **Baugruppen:** Rotationsvernetzer Hex20/Hex27, J2-Plastizität mit Radial Return und konsistenter Tangente, Newton-Treiber, reibungsfreier Kontakt FE–FE (Augmented Lagrange), Lastpfad mit Checkpoints; `HybridAssemblySolver` wird echt | 16.2–16.6 | Lochscheibe elastoplastisch < 2 %, Hertz < 3 %, Bolzen im Spiel, quadratische Newton-Konvergenz |
+| 8 | 5 / 16.10 (4–9) | Plastizität in FCM-Körpern, Kontakt und Tie FE–FCM, Coulomb, Mortar, iterative Löser für Baugruppen, große Verformungen | 16 | Kontakt-Patch-Test, Hybrid-Gleichheitstest, Drehlager-Vergleich |
+
+Stufe 4 (zweiseitige Kopplung, Beulen) und Stufe 6 (Surrogate) folgen nach TP 8. Der Kern
+dieser Sitzung („matrixfreies GPU-Mehrgitter“) sind TP 1–4. TP 1 ist absichtlich die
+vollständige Rechenkette in langsamer, prüfbarer Form: jede spätere Stufe wird gegen sie
+gemessen (Operator gegen Matrix, GPU gegen CPU), nicht gegen Erwartungen. Der bestehende
+Kontakt- und Drehlagercode in `statik3d/` wird nicht geändert und dient nur als Vergleich.
+
+---
+
+## 3. Entscheidungen
+
+Jede Entscheidung nennt die erwogenen Alternativen. Die Vorgabe ist technologieneutral; wo sie
+eine Empfehlung ausspricht, wird ihr gefolgt, sofern nichts Gemessenes dagegen spricht.
+
+### 3.1 Sprache und Aufbau
+- Bezeichner, Kommentare, Docstrings im Paket auf Deutsch ohne Umlaute (CLAUDE.md). Englisch
+  bleiben nur die Namen, die der Vertrag vorgibt: Unterpakete `geometry/ fcm/ hex/ material/
+  contact/ nonlinear/ linalg/ postprocess/`, `api.py`, die Vertragstypen und die
+  Entry-Point-Namen `fcm` und `hybrid`.
+- `packages/volumen3d/` mit eigener `pyproject.toml` (setuptools, `requires-python >= 3.11`,
+  Version des Pakets unabhängig von der Vertragsversion), `py.typed`, `mypy --strict` für die
+  öffentliche Schicht (`api.py`, Datenklassen); Rechenkerne mit numba bleiben von mypy
+  ausgenommen, wo Typen der JIT im Weg stehen.
+- Einheiten im Paket durchgängig mm, N, N/mm² (Vertrag Abschnitt 2); die Umrechnung aus SI
+  ist Sache des Hauptprogramms an der Grenze.
+
+### 3.2 Rechen-Backends
+- **CPU:** numpy für Aufbau und Assemblierung, `numba.njit(parallel=True)` für Zellschleifen
+  (Operator, Glätter, Quadraturauswertung). **GPU:** CuPy, rechenintensive Kerne als
+  `cupy.RawKernel` (CUDA C in Python-Strings, JIT über NVRTC; `nvcc` ist nicht nötig).
+  Array-Code einmal schreiben, `xp = numpy | cupy` nach `FcmSettings.backend`.
+- Erwogen: `numba.cuda` (weniger reif für Shared-Memory-Kerne mit Summenfaktorisierung),
+  Taichi/Warp (weitere Laufzeit, keine Standardabhängigkeit im Programm), C++/CUDA über
+  pybind11 (Vorgabe nennt es als spätere Leistungsstufe; erst, wenn RawKernels gemessen zu
+  langsam sind).
+- Genauigkeit: TP 1–3 durchgängig FP64. Gemischte Genauigkeit (Operator und Glätter FP32,
+  äußeres CG FP64) kommt in TP 4 als Option mit der Abnahme „FP64-Referenz auf 10⁻⁶“.
+
+### 3.3 Ansatzfunktionen
+- Hierarchische Basis aus integrierten Legendre-Polynomen (Vorgabe Abschnitt 5), 1D:
+  `N1 = (1-ξ)/2`, `N2 = (1+ξ)/2`, `N_{j+1} = φ_j(ξ) = (P_j - P_{j-2}) / sqrt(2 (2j-1))` für
+  j = 2…p; 3D als volles Tensorprodukt, (p+1)³ Moden je Zelle, drei Verschiebungen je Mode
+  (Nummerierung `3·mode + Komponente`).
+- **Volles Tensorprodukt statt Trunk-Raum:** einfacher, und die Summenfaktorisierung (TP 3)
+  arbeitet auf der vollen Tensorstruktur; der Trunk-Raum spart bei p = 4 rund 30 % Moden und
+  kann später als Option kommen (Maske über die Moden, keine Strukturänderung).
+- Erwogen: Lagrange-Basis auf Gauß-Lobatto-Punkten (spektrale Elemente). Gleich gut für
+  Summenfaktorisierung, aber p-Mehrgitter und p-Adaptivität brauchen dann Interpolations-
+  matrizen statt einfachen Abschneidens; die Vorgabe empfiehlt die hierarchische Basis.
+- Moden werden nach Trägerentität sortiert: 8 Ecken, 12·(p−1) Kanten, 6·(p−1)² Flächen,
+  (p−1)³ Inneres. Da alle Zellen achsparallel sind und Kanten/Flächen kanonisch in
+  +Achsrichtung orientiert werden, entfallen Vorzeichenwechsel zwischen Nachbarzellen.
+- p ist in TP 1 modellweit einheitlich; die Datenstruktur führt p je Zelle (Vorgabe 4).
+
+### 3.4 Gitter
+- **Wurzelgitter aus würfelförmigen Zellen** der Kantenlänge `base_cell_size_mm` über dem
+  Hüllquader der Geometrie (n_x × n_y × n_z Wurzelzellen, Hüllquader um ein Zehntel Zelle
+  gepolstert, damit die Oberfläche nie genau auf Zellgrenzen liegt); unter jeder Wurzelzelle
+  ein linearer Oktree mit Morton-Codes. In TP 1 haben alle Blätter die Ebene 0.
+- Erwogen: ein einziger Oktree über einem Würfel um die Geometrie. Bei plattenförmigen
+  Bauteilen (Kirsch: 800 × 400 × 10 mm) verschwendet er Ebenen; das Wurzelgitter trifft die
+  Zellgröße direkt.
+- Zellklassifikation über die SDF: `|d(Mitte)| > halbe Raumdiagonale·(1+10⁻⁹)` entscheidet
+  INSIDE/OUTSIDE sicher, sonst CUT (konservativ; eine fälschlich als CUT geführte Zelle kostet
+  nur Quadraturpunkte, nie Genauigkeit).
+- Freiheitsgrade hängen an Entitäten (Ecke, Kante, Fläche, Zelle), identifiziert über
+  verdoppelte Ganzzahlkoordinaten im feinsten Gitter plus Ebene; diese Schlüssel überleben
+  die Verfeinerung in TP 2. Nur Entitäten von INSIDE- und CUT-Zellen tragen Freiheitsgrade.
+
+### 3.5 Integration
+- INSIDE: Gauß-Legendre (p+1)³. CUT: rekursive Oktant-Teilung der Zelle bis Tiefe k
+  (Vorgabe 3–5, Standard 4); Teilzellen werden nur weiter geteilt, wenn die SDF sie als
+  geschnitten ausweist; in jeder Blatt-Teilzelle Gauß (p+1)³, Gewicht `α·w` außerhalb
+  (α Standard 10⁻⁸). Punkte, Gewichte und Basiswerte der CUT-Zellen werden einmal berechnet und
+  gehalten (für alle Lastfälle gleich).
+- Qualitätsprüfung (Vorgabe 6) kommt mit TP 2; in TP 1 misst ein Test das integrierte
+  Volumen von Kugel und Zylinder gegen die Formel in Abhängigkeit von k.
+
+### 3.6 Randbedingungen und Lasten
+- Verschiebungsränder (Schnittebenen, Lager, Symmetrie) über **symmetrisches Nitsche** mit
+  Projektionsmatrix P (voll oder nur Normalenrichtung, damit Symmetrie und Gleitlager denselben
+  Code nutzen): Steifigkeit `- ∫ (σ(u)n)·Pv - ∫ (σ(v)n)·Pu + β ∫ Pu·Pv`, rechte Seite
+  entsprechend mit der Vorgabe g. β = C·E·p²/h je Zelle, C = 10 als Startwert; der Wert steht
+  im Protokoll. Ein zellweises Eigenwertproblem für β kommt, wenn kleine Schnittanteile in
+  TP 2 Stabilitätsprobleme zeigen (dann gemessen, nicht vorab).
+- Erwogen: Penalty (einfacher, aber β-abhängig und inkonsistent; nur als Rückfall vorgesehen),
+  Lagrange-Multiplikatoren (Sattelpunkt, passt nicht zu CG und Mehrgitter).
+- Flächenlasten (Druck, Traktion) und Volumenlasten über Oberflächen- bzw. Volumenquadratur.
+- **Oberflächenquadratur:** jede CSG-Grundform liefert eine Tessellierung ihrer Oberfläche
+  (Ebenen exakt als Polygone, Zylinder/Kugel parametrisch mit wählbarer Auflösung); Dreiecke
+  werden gegen die Zellbox geclippt, mit Gauß-Punkten für Grad 2p belegt, und jeder Punkt
+  bleibt nur, wenn er auf der Oberfläche der **Gesamtgeometrie** liegt (`|d| ≤ tol`), damit
+  Differenz und Schnitt stimmen (Bohrung nur innerhalb der Platte). Die Normale kommt exakt
+  aus dem SDF-Gradienten, nicht aus dem Dreieck; die Tessellierung trägt nur Fläche und Lage
+  (Fehler zweiter Ordnung in der Facettenweite, für Lamé mit 1 % Ziel: 360 Segmente ergeben
+  10⁻⁵).
+
+### 3.7 Geometrie (TP 1)
+- Nur CSG aus analytischen SDFs: Quader, Zylinder (endlich, beliebige Achse), Kugel,
+  Halbraum; Operationen Vereinigung (min), Differenz (max(a, −b)), Schnitt (max). Damit sind
+  alle Verifikationsmodelle der Vorgabe Abschnitt 13 beschreibbar. STL/STEP folgen in TP 5
+  hinter derselben Schnittstelle `GeometrieAbfrage` (`innen(P)`, `abstand(P)`,
+  `huellquader()`, `oberflaeche(box)`), alle Aufrufe vektorisiert über Punktlisten (n,3).
+- **Schema für `GeometrySource(type=CSG, params=...)`** (JSON-fähig, mm):
+  ```
+  params = {"csg": KNOTEN}
+  KNOTEN = {"typ": "quader",   "min": [x,y,z], "max": [x,y,z]}
+         | {"typ": "zylinder", "p0": [x,y,z], "p1": [x,y,z], "radius": r}
+         | {"typ": "kugel",    "mitte": [x,y,z], "radius": r}
+         | {"typ": "halbraum", "punkt": [x,y,z], "normale": [x,y,z]}   # Werkstoff gegen die Normale
+         | {"typ": "vereinigung" | "differenz" | "schnitt", "teile": [KNOTEN, ...]}
+  ```
+  Benannte Flächen (`"name": "bohrung"` an einer Grundform) bereiten `SurfaceSelector.named_surface`
+  (Vertrag 6a) vor.
+
+### 3.8 Löser (TP 1)
+- Assemblierte Steifigkeit als `scipy.sparse.csr`, Direktlöser `pypardiso` wenn vorhanden,
+  sonst `scipy.sparse.linalg.splu`; mehrere rechte Seiten in einem Lauf (Vertrag: `solve`
+  für alle Keys mit einer Diskretisierung). Das bleibt auch später der Referenz- und
+  Grobgitterlöser.
+
+### 3.9 Ergebnisse (TP 1)
+- Verschiebung und Spannung werden direkt aus der Lösung an beliebigen Punkten ausgewertet
+  (Zelle finden, lokale Koordinaten, Basis und Gradienten, σ = D B u); Auswertepunkte sind die
+  Ecken der Oberflächentriangulierung (Vorschau und `DetailResult.surface_points`). Bei p ≥ 3
+  reicht das für die Abnahmen; Rückgewinnung (SPR/L²) kommt in TP 6.
+- Schnittgrößenkontrolle: Integration von σ·n über die Schnittebenen-Quadratur, Vergleich mit
+  `GlobalFieldProvider.section_forces` → `DetailResult.coupling_check`.
+- Die Oberflächentriangulierung aus den Grundformen ist an CSG-Schnittkurven nicht wasserdicht;
+  für Vorschau und Punktauswertung reicht das, Marching Cubes auf der SDF (wasserdicht) kommt
+  in TP 5.
+
+### 3.10 Prüfungen und CI
+- Suiten unter `tests/volumen3d/` im Stil des Hauptprogramms (`check`, Aufruf
+  `python -m tests.volumen3d.test_...`), eine schnelle Sammelsuite `tests.volumen3d.test_kern`
+  wird in `tests/run_all.py` eingetragen; die teuren Konvergenz- und Leistungsläufe stehen in
+  eigenen Suiten mit Laufzeitangabe im Kopf und laufen vor jedem Merge.
+- `.github/workflows/ci.yml` bekommt einen Schritt „volumen3d (CPU)“: Paket installieren,
+  mypy für die öffentliche Schicht, Kernsuite. GPU-Prüfungen laufen nur lokal (kein GPU-Runner).
+- **Abhängigkeitsregeln per `import-linter`** (Regel des Anwenders, Vertrag Abschnitt 1):
+  `.importlinter` an der Repository-Wurzel mit den Verboten `volumen3d → statik3d`,
+  `statik3d_contracts → volumen3d | statik3d` und `statik3d → volumen3d` (das Hauptprogramm
+  kennt den Löser nur über Entry Points); `lint-imports` läuft in der CI und lokal vor jedem
+  Commit.
+- **Pull Request je abgeschlossener Stufe** mit grüner CI; kein Merge ohne die Abnahmen aus
+  Abschnitt 2, gemessen und mit Zahlen im PR-Text.
+- Referenzmodelle `tests/reference_models/` (Vertrag Abschnitt 8) legt Session B **nicht allein**
+  an; die Erwartungswerte der TP-1-Abnahmen werden in den Suiten mit Quelle dokumentiert und
+  später gemeinsam dorthin übernommen.
+
+### 3.11 Zielhardware
+- Lokal 8 GB GPU: `estimate` rechnet Speicher aus Freiheitsgraden, CUT-Quadratur und
+  Mehrgitter-Ebenen und meldet, ob das Modell auf die vorhandene GPU passt; sonst CPU-Rückfall
+  mit identischem Ergebnis (Vorgabe 9).
+
+---
+
+## 4. Teilprojekt 1 im Einzelnen
+
+### 4.1 Module
+
+```
+packages/volumen3d/
+├── CLAUDE.md                      Regeln der Sitzung (Anwender, 27.09.2026)
+├── pyproject.toml                 Entry Points: statik3d.solid_solvers → fcm = volumen3d.api:FcmSolver,
+│                                  statik3d.assembly_solvers → hybrid = volumen3d.api:HybridAssemblySolver
+└── volumen3d/
+    ├── __init__.py                Paketversion, CONTRACT_VERSION-Prüfung beim Import
+    ├── api.py                     FcmSolver (SolidDetailSolver), FcmDiskretisierung (Discretization),
+    │                              HybridAssemblySolver (bis TP 7 Platzhalter: capabilities leer,
+    │                              estimate nennt „nicht umgesetzt“, prepare wirft SolverError)
+    ├── geometry/
+    │   ├── sdf.py                 Grundformen (Quader, Zylinder, Kugel, Halbraum): abstand, gradient, huellquader
+    │   ├── csg.py                 CSG-Baum, Auswertung aus params, innen/abstand/oberflaeche
+    │   └── oberflaeche.py         Tessellierung der Grundformen, Clipping an Boxen, Flächenquadratur
+    ├── fcm/
+    │   ├── basis.py               1D integrierte Legendre, 3D-Tensorprodukt, Modenklassen, Gauß-Regeln
+    │   ├── gitter.py              Wurzelgitter + Oktree (Ebene 0 in TP 1), Klassifikation, Entitäten, Freiheitsgrade
+    │   ├── quadratur.py           INSIDE-Regel, rekursive CUT-Quadratur, Volumenkontrolle
+    │   ├── elastizitaet.py        D-Matrix, B-Matrizen, Zellsteifigkeit, Assemblierung (CPU-Referenz)
+    │   ├── rand.py                Dirichlet über Nitsche (mit Projektion), Traktion, Druck, Volumenlast
+    │   └── problem.py             FcmProblem: Geometrie + Gitter + Werkstoff + Ränder + Lasten → K, F → Loesung
+    ├── linalg/
+    │   └── direkt.py              pypardiso/splu mit Mehrfach-RHS
+    └── postprocess/
+        └── auswertung.py          Punktsuche, u/σ/von Mises an Punkten, Schnittgrößen
+```
+
+### 4.2 Datenfluss `FcmSolver`
+1. `estimate(spec)`: Hüllquader aus CSG → Wurzelgitter → Zellzahl, geschätzter Anteil
+   CUT-Zellen (Oberfläche/Volumen), Freiheitsgrade ≈ 3·(n_x·p+1)(n_y·p+1)(n_z·p+1), Speicher
+   für Matrix (Bandbreite) und CUT-Quadratur; Backend „cpu“ (TP 1 kennt kein anderes).
+2. `prepare(spec, material, progress)`: CSG bauen → Gitter klassifizieren → Freiheitsgrade
+   nummerieren → Quadratur der CUT-Zellen → Oberflächenquadratur der Schnittebenen (Nitsche)
+   und der Geometrieoberfläche → K assemblieren und faktorisieren → `FcmDiskretisierung`
+   (hält das Problem; `summary`: Zellen je Klasse, p, Freiheitsgrade, CUT-Quadraturpunkte,
+   Speicher; `preview_geometry`: Oberflächendreiecke und Zellboxen mit Klasse).
+3. `solve(disc, provider, keys, progress, cancel)`: je Key `provider.displacement_at` an den
+   Nitsche-Quadraturpunkten der Schnittebenen (NaN → `SolverError` mit Ortsangabe) → rechte
+   Seiten → ein Lösungslauf für alle Keys → je Key `DetailResult` (u, σ, von Mises an den
+   Oberflächenecken, `coupling_check` mit Schnittgrößenvergleich je Ebene, `protocol` mit allen
+   Einstellungen, β, α, k, Zellzahlen, Löser, Laufzeiten). `cancel()` wird zwischen den Stufen
+   geprüft und löst `SolverCancelled` aus.
+
+### 4.3 Fehlerbehandlung
+- `SolverError` bei: leerer Geometrie (keine INSIDE/CUT-Zelle), unbekanntem CSG-Typ, p außerhalb
+  1…4, `base_cell_size_mm ≤ 0`, Provider liefert NaN auf einer Schnittebene, singulärer Matrix
+  (Starrkörper ohne Verschiebungsrand: Meldung nennt die freie Bewegung, wie das Hauptprogramm
+  in Theoriehandbuch 7b).
+- Warnungen in `DetailResult.warnings`: Schnittebene näher als eine Querschnittshöhe an einer
+  Verfeinerungsstelle (Saint-Venant, Vorgabe 10), weniger als zwei Zellen über eine Wandstärke
+  (gemessen entlang der Zellachsen an CUT-Zellen), Schnittgrößenabweichung über 5 %.
+
+### 4.4 Prüfungen (Reihenfolge = Umsetzungsreihenfolge)
+| Nr. | Suite | Prüfung | Kriterium |
+|---|---|---|---|
+| T1 | `test_basis` | 1D: `∫φ'_i φ'_j = δ_ij`, Eckmoden bilden Partition der Eins, Ableitungen gegen zentrale Differenzen; 3D: Modenanzahl je Klasse, Gauß (p+1) integriert Grad 2p+1 exakt | 10⁻¹² |
+| T2 | `test_geometrie` | SDF-Werte und Gradienten der Grundformen, CSG-Kombinationen, Oberflächenquadratur summiert zur Mantelfläche | 10⁻¹⁰ (Ebenen), 10⁻⁵ (Zylinder 360 Segmente) |
+| T3 | `test_quadratur` | Volumen von Kugel und schräg geschnittenem Quader je Tiefe k; α-Anteil ausgewiesen | Fehler fällt mit k, k = 4 unter 10⁻⁴ |
+| T4 | `test_patch` | Quader, schräg durch zwei Halbräume geschnitten (viele CUT-Zellen), lineares Verschiebungsfeld über Nitsche auf dem ganzen Rand; p = 1…3 | u und σ < 10⁻⁶ relativ |
+| T5 | `test_kragarm` | Ausschnitt des Stub-Kragarms (Balkentheorie) zwischen zwei Schnittebenen, Verschiebungen aus `StubGlobalFieldProvider` über Nitsche; Schnittgrößen gegen `section_forces` | < 1 % |
+| T6 | `test_lame` | Viertel eines dickwandigen Zylinders unter Innendruck, Symmetrie über Nitsche-Normalprojektion, Druck über Oberflächenquadratur | σ_r, σ_φ < 1 % |
+| T7 | `test_kirsch` | Dünne Platte mit Loch, d/W = 0,1, Zug über Traktion; Vergleich mit Howland (K_tg = 3,03) | < 2 % |
+| T8 | `test_schnittlage` | Kirsch-Modell, Wurzelgitter um 0,1…0,9 Zellen verschoben | Streuung < 1 % |
+| T9 | `test_vertrag_fcm` | `FcmSolver` erfüllt `SolidDetailSolver`, Entry Point `fcm` registriert, `estimate/prepare/solve` mit Stub-Provider, Abbruch, Protokoll; `mypy --strict` für `api.py` | wie `test_vertrag` |
+
+T1–T3 sichern die Bausteine, T4 die gesamte Kette (B, D, α, Nitsche) mit exakter Lösung, T5–T8
+die Abnahmen der Vorgabe. Erwartungswerte werden mit Quelle und Formel in der Suite genannt
+(Lamé geschlossen, Howland/Heywood für Kirsch mit Angabe beider Formeln; zweite unabhängige
+Berechnung des Erwartungswerts im Test selbst, siehe Gedächtnisregel „Zahlen erst nach
+Gegenprobe“).
+
+### 4.5 Nicht-Ziele von TP 1
+Verfeinerung und hängende Knoten (TP 2), matrixfreier Operator und GPU (TP 3/4), STL/STEP
+(TP 5), Rückgewinnung, Hot-Spot und Adaptivität (TP 6), alles aus Vorgabe Abschnitt 16.
+
+---
+
+## 5. Änderungen außerhalb `packages/volumen3d`
+
+Der Vertrag beschränkt Session B auf `packages/volumen3d/`. Folgende Stellen außerhalb sind
+für TP 1 nötig; sie werden im Pull Request einzeln benannt:
+
+- `tests/contracts/test_vertrag.py`: die Prüfung „`volumenloeser()` liefert den Stub“ gilt nur
+  ohne echten Löser; mit installiertem `volumen3d` muss sie `fcm` erwarten. Änderung:
+  Erwartung aus den registrierten Entry Points ableiten (kein Eingriff ins Vertragspaket).
+- `tests/run_all.py`: Eintrag `tests.volumen3d.test_kern`.
+- `.github/workflows/ci.yml`: Schritt für `volumen3d` (CPU).
+- `requirements.txt`: `./packages/volumen3d` und `numba`; `cupy-cuda12x` nur als Kommentar
+  (GPU-Extra), damit die exe und Linux-Umgebungen ohne CUDA unverändert laufen.
+- `docs/Volumenmodul.md`: Abschnitt „Session B“ mit Stand; `docs/Theoriehandbuch.md`: neues
+  Kapitel „11 Finite-Cell-Methode“ mit Formeln und Messwerten der Abnahmen.
+- `.importlinter` (Wurzel) und der CI-Schritt `lint-imports` (Regel des Anwenders, siehe 3.10).
+- `docs/vertrag-aenderungen/`: Vorschläge für Vertragsänderungen (Regel des Anwenders, siehe
+  Abschnitt 6). Die Sitzung ändert den Vertrag nie selbst; der Anwender entscheidet und bringt
+  die Änderung als eigenen Pull Request auf `main`, beide Sitzungen holen sie per Rebase ab.
+  Der angekündigte Stand 2.0.1 lag am 27.09. noch nicht auf `main` (dort 2.0.0); gebaut wird
+  gegen 2.0.0, die Major-Nummer passt.
+
+Innerhalb des Pakets verankert `packages/volumen3d/CLAUDE.md` die Regeln des Anwenders (nur in
+diesem Paket arbeiten; Vertragspaket, Referenzmodelle und `statik3d/` nur lesen; Vertrag und
+Vorgabe verbindlich; Reihenfolge nach Abschnitt 12 bzw. 16.10; Einheiten N, mm, N/mm² an allen
+Schnittstellen; Vorschläge statt Vertragsänderungen; Pull Request je Stufe).
+
+Nicht angefasst: `packages/statik3d_contracts/`, `tests/reference_models/`, `statik3d/`.
+
+---
+
+## 6. Offene Fragen an den Anwender (mit gewählter Vorgabe)
+
+1. **Lasten im Detailmodell:** `DetailModelSpec` kennt keine Flächen- oder Volumenlasten
+   (Wasserdruck, Eigengewicht im Ausschnitt). TP 1 rechnet sie über die interne Schnittstelle;
+   für die Oberfläche bräuchte der Vertrag ein optionales Feld `loads` (Minor 2.1.0).
+   *Vorgehen:* Vorschlag in `docs/vertrag-aenderungen/2026-09-27-lasten-im-detailmodell.md`
+   mit TP 1; der Anwender entscheidet.
+2. **Trunk-Raum** statt vollem Tensorprodukt: erst nach Messung der Rechenzeit in TP 3.
+3. **GPU-Speicher 8 GB:** Zielgröße lokal 5·10⁶ Freiheitsgrade; für die 10⁷ der Vorgabe wäre
+   eine 16-GB-Karte nötig oder Out-of-Core (nicht geplant).
+4. **Speicherort der Referenzmodelle:** gemeinsam mit Session A festlegen, sobald TP 1 steht.
