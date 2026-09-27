@@ -14,7 +14,7 @@ from typing import Final
 
 #: Semantische Version des Vertrags (Abschnitt 9): Patch = Doku, Minor = neue
 #: optionale Felder/Methoden, Major = Umbenennen, Entfernen, geaenderte Bedeutung.
-CONTRACT_VERSION: Final = "2.0.0"
+CONTRACT_VERSION: Final = "2.0.1"
 
 
 def major(version: str) -> int:

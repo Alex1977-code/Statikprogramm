@@ -61,7 +61,7 @@ def test_importregeln():
                         and wurzel != "statik3d_contracts":
                     verstoesse.append(f"{name}: {m}")
     check("Vertragspaket importiert nur Standardbibliothek und numpy", not verstoesse, "; ".join(verstoesse))
-    check("Vertragsversion 2.0.0 (Abschnitt 9)", V.CONTRACT_VERSION == "2.0.0", V.CONTRACT_VERSION)
+    check("Vertragsversion 2.0.1 (Abschnitt 9)", V.CONTRACT_VERSION == "2.0.1", V.CONTRACT_VERSION)
     check("Versionspruefung: gleiche Major passt, andere nicht",
           V.vertragsversion_passt("2.3.1") and not V.vertragsversion_passt("1.1.0") and not V.vertragsversion_passt(""),
           "")
@@ -221,11 +221,17 @@ def test_registrierung():
     eps2 = VL.entry_points_der_gruppe(ENTRY_POINT_ASSEMBLY)
     check("Entry Point 'stub' der Gruppe statik3d.assembly_solvers registriert",
           eps2.get("stub") is T.StubAssemblySolver, str(list(eps2)))
-    l = VL.volumenloeser()
+    import warnings as _w
+    with _w.catch_warnings(record=True) as gefangen:
+        _w.simplefilter("always")
+        l = VL.volumenloeser()
     check("volumenloeser() liefert einen SolidDetailSolver (ohne echten Loeser den Stub)",
           isinstance(l, SolidDetailSolver) and l.name == "stub", getattr(l, "name", "?"))
-    check("uebersicht() nennt Name, Gruppe, Version, Zustand",
-          any(e["name"] == "stub" and e["zustand"] == "bereit" for e in VL.uebersicht()), str(VL.uebersicht()[:2]))
+    check("  und warnt dabei: der Stub greift nie still (Abschnitt 7, 2.0.1)",
+          any("STUB" in str(x.message) for x in gefangen), str([str(x.message)[:50] for x in gefangen]))
+    check("  ist_stub erkennt den Stub", VL.ist_stub(l) and VL.ist_stub({"stub": True}) and not VL.ist_stub({"solver": "fcm"}))
+    check("uebersicht() nennt Name, Gruppe, Version, Zustand - der Stub als STUB",
+          any(e["name"] == "stub" and e["zustand"].startswith("STUB") for e in VL.uebersicht()), str(VL.uebersicht()[:2]))
 
     class Fremd(T.StubSolidSolver):
         contract_version = "1.1.0"
@@ -241,6 +247,81 @@ def test_registrierung():
     except VL.Vertragsfehler:
         fehlt = True
     check("unbekannter Loesername -> Vertragsfehler mit Liste", fehlt)
+
+
+def test_stub_kennzeichnung_und_vorrang():
+    """Abschnitt 7 (2.0.1): jedes Stub-Ergebnis traegt die Kennzeichnung in
+    protocol und als erste Warnung; ein registrierter echter Loeser hat immer
+    Vorrang vor dem Stub, und dann warnt der Lader nicht."""
+    import warnings as _w
+    from statik3d import volumenloeser as VL
+    from statik3d_contracts import testing as T
+    from statik3d_contracts.detail import DetailModelSpec, FcmSettings, GeometrySource, GeometrySourceType
+    from statik3d_contracts.model import Material, ResultKey
+    from statik3d_contracts.coupling import CutPlane
+    from statik3d_contracts.solver import ENTRY_POINT_SOLID
+    spec = DetailModelSpec(id="D1", name="W", geometry=GeometrySource(GeometrySourceType.CSG), material_id="S355",
+                           cut_planes=(CutPlane(np.zeros(3), np.array([1.0, 0, 0])),), settings=FcmSettings(base_cell_size_mm=50.0))
+    s = T.StubSolidSolver()
+    disc = s.prepare(spec, Material("S355", "S355", 210_000.0, 0.3))
+    erg = s.solve(disc, T.StubGlobalFieldProvider(), [ResultKey("LF1")])[0]
+    check("DetailResult des Stubs: protocol['stub'] True und Kennzeichen",
+          erg.protocol.get("stub") is True and erg.protocol.get("kennzeichen") == T.STUB_KENNZEICHEN, str(erg.protocol)[:90])
+    check("  erste Warnung ist das Kennzeichen", erg.warnings and erg.warnings[0] == T.STUB_KENNZEICHEN, str(erg.warnings[:1]))
+    check("  ist_stub am Ergebnis", VL.ist_stub(erg))
+    # echter Loeser registriert: er gewinnt, keine Warnung
+
+    class Fcm(T.StubSolidSolver):
+        name = "fcm"
+    alt = VL.entry_points_der_gruppe
+    VL.entry_points_der_gruppe = lambda gruppe: {"stub": T.StubSolidSolver, "fcm": Fcm} if gruppe == ENTRY_POINT_SOLID else alt(gruppe)
+    try:
+        with _w.catch_warnings(record=True) as gefangen:
+            _w.simplefilter("always")
+            l = VL.volumenloeser()
+        check("mit registriertem 'fcm': der Lader waehlt ihn, nicht den Stub", l.name == "fcm", l.name)
+        check("  und warnt nicht", not any("STUB" in str(x.message) for x in gefangen))
+        check("  uebersicht: fcm bereit, stub als STUB",
+              {e["name"]: e["zustand"] for e in VL.uebersicht() if e["gruppe"] == ENTRY_POINT_SOLID} == {"fcm": "bereit", "stub": "STUB - keine echte Berechnung"},
+              str([(e["name"], e["zustand"]) for e in VL.uebersicht()]))
+    finally:
+        VL.entry_points_der_gruppe = alt
+
+
+def test_einheiten_rundreise():
+    """Abschnitt 2 (2.0.1): die Umrechnung SI <-> Vertragseinheiten liegt in
+    statik3d/vertragseinheiten.py, und Hin- und Rueckumrechnung heben sich auf."""
+    from statik3d import vertragseinheiten as E
+    from statik3d_contracts.units import LENGTH, FORCE, STRESS
+    rng = np.random.default_rng(7)
+    x = rng.uniform(-50.0, 50.0, size=(100_000, 3)) * np.array([1.0, 1e-3, 1e3])
+    paare = [("Laenge m<->mm", E.laenge_nach_vertrag, E.laenge_nach_si, 1000.0),
+             ("Kraft N<->N", E.kraft_nach_vertrag, E.kraft_nach_si, 1.0),
+             ("Moment Nm<->Nmm", E.moment_nach_vertrag, E.moment_nach_si, 1000.0),
+             ("Spannung Pa<->N/mm2", E.spannung_nach_vertrag, E.spannung_nach_si, 1e-6),
+             ("Dichte kg/m3<->kg/mm3", E.dichte_nach_vertrag, E.dichte_nach_si, 1e-9)]
+    for name, hin, zurueck, faktor in paare:
+        y = hin(x)
+        rel = float(np.max(np.abs(zurueck(y) - x) / np.maximum(np.abs(x), 1e-300)))
+        check(f"{name}: Rundreise auf 1e-15 (10^5 Werte)", rel <= 1e-15, f"{rel:.1e}")
+        check(f"{name}: Faktor {faktor:g}", np.allclose(y, x * faktor, rtol=1e-15, atol=0.0))
+    check("Vertragseinheiten mm / N / N/mm2", (LENGTH, FORCE, STRESS) == ("mm", "N", "N/mm2"))
+    check("1 m Kante -> 1000 mm im Discretization-Adapter (dieselbe Stelle)",
+          abs(float(E.laenge_nach_vertrag(1.0)) - 1000.0) < 1e-12)
+    # Umrechnung nirgends sonst: kein anderes Modul des Hauptprogramms multipliziert mit MM_JE_M
+    import ast, os
+    wurzel = os.path.dirname(os.path.abspath(E.__file__))
+    treffer = []
+    for name in sorted(os.listdir(wurzel)):
+        if name.endswith(".py") and name not in ("vertragseinheiten.py",):
+            with open(os.path.join(wurzel, name), encoding="utf-8") as f:
+                quelle = f.read()
+            if "vertragseinheiten" in quelle or "MM_JE_M" in quelle:
+                for kn in ast.walk(ast.parse(quelle)):
+                    if isinstance(kn, ast.ImportFrom) and kn.module and "vertragseinheiten" in kn.module:
+                        treffer.append(name)
+    check("nur diskretisierung.py (und kuenftig der Provider) importieren die Umrechnung",
+          set(treffer) <= {"diskretisierung.py", "globalfeld.py"}, str(treffer))
 
 
 def test_fe_netz_diskretisierung():
@@ -278,7 +359,8 @@ def test_fe_netz_diskretisierung():
 
 def main() -> int:
     for t in (test_importregeln, test_protokolle, test_stub_solid, test_stub_provider, test_stub_assembly,
-              test_registrierung, test_fe_netz_diskretisierung):
+              test_registrierung, test_stub_kennzeichnung_und_vorrang, test_einheiten_rundreise,
+              test_fe_netz_diskretisierung):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

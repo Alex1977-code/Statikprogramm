@@ -1,0 +1,24 @@
+[importlinter]
+root_packages =
+    statik3d
+    statik3d_contracts
+include_external_packages = True
+
+[importlinter:contract:vertrag-nur-stdlib-und-numpy]
+name = statik3d_contracts importiert nur Standardbibliothek und numpy
+type = forbidden
+source_modules =
+    statik3d_contracts
+forbidden_modules =
+    statik3d
+    volumen3d
+    scipy
+    PySide6
+
+[importlinter:contract:hauptprogramm-kennt-volumen3d-nicht]
+name = statik3d importiert volumen3d nie direkt (nur Entry Points, Vertrag Abschnitt 7)
+type = forbidden
+source_modules =
+    statik3d
+forbidden_modules =
+    volumen3d

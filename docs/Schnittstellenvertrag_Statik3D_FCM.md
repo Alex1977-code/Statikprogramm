@@ -2,19 +2,25 @@
 
 > **Verbindlich für beide Entwicklungsstränge.** Das Hauptprogramm (Statik3D) und das Volumenmodul (`volumen3d`, FCM und FE-Hexaeder, Kontakt, Plastizität) dürfen sich ausschließlich über die hier definierten Typen und Protokolle kennen. Änderungen an diesem Vertrag erfolgen nur per eigenem Pull Request mit Versionserhöhung (Abschnitt 9).
 
-**Vertragsversion:** 2.0.0 (Änderungen siehe Abschnitt 9)
+**Vertragsversion:** 2.0.1 (Änderungen siehe Abschnitt 9)
 **Sprache:** Python ≥ 3.11, Typisierung mit `dataclasses` und `typing.Protocol`, numerische Felder als `numpy.ndarray`.
 
 ---
 
 ## 1. Repository-Struktur (Monorepo auf GitHub)
 
+Stand 2.0.1 - so liegt es tatsächlich (das Hauptprogramm bleibt an der Wurzel):
+
 ```
-statik3d/                      # Repository-Wurzel
+Statikprogramm/                # Repository-Wurzel
+├── statik3d/                  # Hauptprogramm (UI, Globalmodell, Stab-/Schalen-/Volumenlöser, Kontakt)
+│   ├── diskretisierung.py     # FE-Netz hinter Discretization (kind = FE_MESH)
+│   ├── volumenloeser.py       # Lader der Volumenlöser über Entry Points (Abschnitt 7)
+│   └── vertragseinheiten.py   # die EINZIGE Stelle der Umrechnung SI ↔ Vertragseinheiten (Abschnitt 2)
 ├── packages/
 │   ├── statik3d_contracts/    # NUR dieser Vertrag als Code – keine Logik
 │   │   └── statik3d_contracts/
-│   │       ├── __init__.py
+│   │       ├── __init__.py    # CONTRACT_VERSION
 │   │       ├── units.py
 │   │       ├── model.py
 │   │       ├── discretization.py
@@ -22,35 +28,42 @@ statik3d/                      # Repository-Wurzel
 │   │       ├── detail.py
 │   │       ├── nonlinear.py   # ab 1.1: Mehrkörper, Kontakt, Plastizität
 │   │       ├── solver.py
-│   │       └── testing.py     # Stubs
-│   ├── statik3d/              # Hauptprogramm (UI, Globalmodell, Stab-/Schalenlöser)
-│   └── volumen3d/             # Volumenmodul (ohne UI-Abhängigkeit)
+│   │       └── testing.py     # Stubs (als Entry Point "stub" registriert, siehe Abschnitt 7)
+│   └── volumen3d/             # Volumenmodul (ohne UI-Abhängigkeit), Session B
+│       ├── CLAUDE.md          # Regeln der Sitzung, die dort arbeitet
 │       └── volumen3d/
 │           ├── api.py         # einzige öffentliche Einstiegspunkte (Entry Points)
 │           ├── geometry/      # Geometriekern, SDF, BVH, Punktwolken
 │           ├── fcm/           # Octree, Schnittzellen-Integration, FCM-Ansätze
 │           ├── hex/           # FE-Hexaeder für einfache Körper, strukturierter Rotationsvernetzer
 │           ├── material/      # linear elastisch, J2-Plastizität (Return Mapping)
-│           ├── contact/       # Kontaktsuche, Kontaktformulierungen, Tie
+│           ├── contact/       # Kontaktsuche, Kontaktformulierungen, Tie (siehe Arbeitsteilung)
 │           ├── nonlinear/     # Newton-Treiber, Schrittsteuerung, Checkpoints
 │           ├── linalg/        # Sparse-Direktlöser, PCG, Mehrgitter, GPU-Kernels
 │           └── postprocess/   # Spannungsrückgewinnung, Hot-Spot, Kontaktauswertung
 ├── tests/
-│   ├── contracts/             # Prüft, dass beide Seiten den Vertrag erfüllen
+│   ├── contracts/             # Prüft, dass beide Seiten den Vertrag erfüllen (auch Einheiten-Rundreise)
 │   └── reference_models/      # Gemeinsame Referenzmodelle (Abschnitt 8)
-└── .github/workflows/ci.yml   # Tests für alle drei Pakete bei jedem PR
+├── docs/
+│   ├── Schnittstellenvertrag_Statik3D_FCM.md      # dieser Vertrag
+│   ├── Vorgabe_Statik3D_Abschnitt_FCM-Volumenloeser.md
+│   ├── Volumenmodul.md        # Stand der Umstellung im Hauptprogramm
+│   └── vertrag-aenderungen/   # Vorschläge zur Vertragsänderung (Ablauf im README dort)
+├── .importlinter              # Abhängigkeitsregeln, in der CI geprüft
+└── .github/workflows/ci.yml   # Vertragsprüfungen, mypy --strict, lint-imports bei jedem Push und PR
 ```
 
-**Abhängigkeitsregeln (per CI geprüft, z. B. mit `import-linter`):**
+**Abhängigkeitsregeln (per CI mit `import-linter` geprüft, `.importlinter`):**
 - `statik3d_contracts` importiert nur Standardbibliothek und `numpy`.
 - `volumen3d` importiert `statik3d_contracts`, **niemals** `statik3d`.
-- `statik3d` importiert `statik3d_contracts` und `volumen3d` nur über die Registrierung in Abschnitt 7, nie interne Module von `volumen3d`.
+- `statik3d` importiert `statik3d_contracts`; `volumen3d` erreicht es nur über die Registrierung in Abschnitt 7, nie über interne Module von `volumen3d`.
 
 **Arbeitsteilung paralleler Sessions:**
-- Session A arbeitet ausschließlich in `packages/statik3d/`.
-- Session B arbeitet ausschließlich in `packages/volumen3d/`.
-- `packages/statik3d_contracts/` und `tests/reference_models/` werden von keiner Session eigenmächtig geändert.
-- Jede Session auf eigenem Branch (`feature/3d-solver`, `feature/volumen3d`), Zusammenführung per Pull Request mit grüner CI.
+- Session A (Hauptprogramm) arbeitet in `statik3d/`, `tests/` und `docs/` – nie in `packages/volumen3d/`.
+- Session B (Volumenmodul) arbeitet ausschließlich in `packages/volumen3d/` (Regeln in `packages/volumen3d/CLAUDE.md`).
+- `packages/statik3d_contracts/` und `tests/reference_models/` werden von keiner Session eigenmächtig geändert. Wer etwas Neues im Vertrag braucht, legt einen Vorschlag in `docs/vertrag-aenderungen/` ab; der Anwender entscheidet, die Änderung kommt als eigener Pull Request auf `main`, beide Sessions holen sie per Rebase ab.
+- Das Hauptprogramm hat einen eigenen Kontaktlöser (`statik3d/contact.py`, exakte Normalbedingung, Reibung, Plastizität). Session B baut **keinen zweiten Kontaktlöser daneben**, ohne dass das entschieden ist: entweder wandert der bestehende Kontaktcode später hinter das `AssemblySolver`-Protokoll, oder `volumen3d` löst ihn ab. Bis dahin darf Session B ihn lesen, nicht anfassen, und vergleicht am Ende von Stufe 5 dagegen.
+- Jede Session auf eigenem Branch, Zusammenführung per Pull Request mit grüner CI; Session B stufenweise, nach jeder abgeschlossenen Stufe ein PR, damit die UI früh gegen den echten Löser statt gegen den Stub geprüft wird.
 
 ---
 
@@ -71,6 +84,8 @@ statik3d/                      # Repository-Wurzel
 - **Spannungstensor in Voigt-Notation, Reihenfolge verbindlich:** `[σxx, σyy, σzz, τxy, τyz, τxz]`.
 - **Punktlisten:** `ndarray` der Form `(n, 3)`, `dtype=float64`.
 - **IDs:** nichtleere Strings, eindeutig je Typ, unveränderlich nach Anlage.
+
+**Innen und außen (2.0.1):** Statik3D rechnet intern in SI (m, N, Pa, kg/m³). Die Tabelle oben gilt für alles, was den Vertrag überschreitet. Die Umrechnung geschieht im Hauptprogramm an **genau einer Stelle**, `statik3d/vertragseinheiten.py`; sie benutzen die Implementierung des `GlobalFieldProvider` (Verschiebungen, Rotationen, Schnittgrößen) und der `Discretization`-Adapter (Geometrie). Nirgends sonst wird mit 1000 oder 10⁶ multipliziert. `tests/contracts/test_vertrag.py` enthält den Rundreisetest: Hin- und Rückumrechnung heben sich für Längen, Kräfte, Momente, Spannungen und Dichten auf (10⁵ Werte, relativ 10⁻¹⁵). `volumen3d` rechnet innen in Vertragseinheiten und rechnet nichts um.
 
 ```python
 # units.py
@@ -186,7 +201,7 @@ class GlobalFieldProvider(Protocol):
         ...
 ```
 
-**Zusage des Hauptprogramms:** `displacement_at` ist vektorisiert (keine Python-Schleife je Punkt) und für 10⁵ Punkte in unter 1 s aufrufbar.
+**Zusage des Hauptprogramms:** `displacement_at` ist vektorisiert (keine Python-Schleife je Punkt) und für 10⁵ Punkte in unter 1 s aufrufbar. Die Implementierung im Hauptprogramm ist – neben dem `Discretization`-Adapter – der einzige Ort, an dem SI-Größen des Globalmodells in Vertragseinheiten umgerechnet werden (über `statik3d/vertragseinheiten.py`, Abschnitt 2).
 
 ---
 
@@ -537,6 +552,11 @@ class SolidDetailSolver(Protocol):
 
 Das Hauptprogramm lädt Löser über `importlib.metadata.entry_points(group="statik3d.solid_solvers")`. Dadurch kennt `statik3d` keine internen Module von `volumen3d`.
 
+**Stub-Regeln (2.0.1):** Das Vertragspaket registriert seine Stubs selbst unter dem Namen `stub` (in beiden Gruppen), damit die Registrierung ohne `volumen3d` prüfbar ist. Für den Lader (`statik3d/volumenloeser.py`) gilt:
+- Ein echter Löser hat **immer Vorrang**: sobald `volumen3d` `fcm` bzw. `hybrid` registriert, wird ohne Namensangabe nie mehr der Stub gewählt.
+- Der Stub greift nur, wenn nichts anderes registriert ist (auch beim Rückfall ohne Paket-Metadaten), und dann **nie still**: der Lader warnt (`warnings.warn`, Protokoll), `uebersicht()` nennt den Zustand „STUB – keine echte Berechnung“.
+- Jedes Stub-Ergebnis trägt in `DetailResult.protocol` bzw. `AssemblyResult.protocol` die Einträge `"stub": True` und `"kennzeichen": "STUB - keine echte Berechnung"` und dieselbe Kennzeichnung als erste Warnung. Die Oberfläche zeigt sie unübersehbar an; ein Stub-Ergebnis darf in keinem Nachweis landen (`statik3d.volumenloeser.ist_stub`).
+
 ### 7a. Nichtlinearer Mehrkörperlöser (ab Version 1.1)
 
 Eigenes, zusätzliches Protokoll; `SolidDetailSolver` bleibt unverändert.
@@ -624,6 +644,7 @@ Jedes Referenzmodell enthält Eingabedaten, Erwartungswerte und Toleranzen als J
   4. Typprüfung mit `mypy --strict` für `statik3d_contracts`
 
 **Änderungsprotokoll:**
+- **2.0.1** – Patch (Doku): Abschnitt 1 an die tatsächliche Struktur angepasst (`statik3d/` an der Repository-Wurzel, `.importlinter`, `docs/vertrag-aenderungen/`, `packages/volumen3d/CLAUDE.md`, Arbeitsteilung samt Regel zum bestehenden Kontaktlöser); Abschnitt 2: SI intern, Umrechnung ausschließlich in `statik3d/vertragseinheiten.py` (GlobalFieldProvider und Discretization-Adapter) mit Rundreisetest; Abschnitt 7: Stub-Regeln (Vorrang echter Löser, sichtbare Kennzeichnung „STUB – keine echte Berechnung“, kein Nachweis aus Stub-Ergebnissen). Typen und Protokolle unverändert.
 - **2.0.0** – Paket `fcm_solid` in `volumen3d` umbenannt (enthält inzwischen FCM, FE-Hexaeder, Kontakt und Plastizität). Umbenennung vor der ersten Implementierung, daher ohne Migrationsaufwand.
 - **1.1.0** – Neu: `nonlinear.py` (Materialmodelle, Körper, Kontakt, Tie, Lastpfad, Mehrkörperergebnisse), Protokoll `AssemblySolver` mit Entry-Point-Gruppe `statik3d.assembly_solvers`, Stub `StubAssemblySolver`, neue Referenzmodelle. Keine Änderung bestehender Typen.
 - **1.0.0** – Erstfassung.

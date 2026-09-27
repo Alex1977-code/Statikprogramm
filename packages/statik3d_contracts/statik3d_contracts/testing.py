@@ -31,6 +31,12 @@ from .nonlinear import (AssemblyModelSpec, AssemblyResult, BodyResult, ContactRe
 from .solver import ProgressCallback, SolverCancelled, SolverError
 
 
+#: Kennzeichnung jedes Stub-Ergebnisses (Vertrag 2.0.1, Abschnitt 7): steht in
+#: protocol["kennzeichen"] und als erste Warnung - ein Stub-Ergebnis darf nie
+#: wie ein echtes aussehen und in keinem Nachweis landen.
+STUB_KENNZEICHEN = "STUB - keine echte Berechnung"
+
+
 def von_mises(stress: np.ndarray) -> np.ndarray:
     """Vergleichsspannung aus (n,6) Voigt [xx, yy, zz, xy, yz, xz]."""
     s = np.asarray(stress, float).reshape(-1, 6)
@@ -133,8 +139,9 @@ class StubSolidSolver:
                 displacement=np.asarray(u, float), stress=stress, von_mises=von_mises(stress),
                 convergence=[{"cycle": 0, "dofs": disc.dof_count(), "iterations": 1, "hotspot_max": 100.0}],
                 coupling_check={"force_deviation": 0.0, "moment_deviation": 0.0},
-                warnings=["Stub: konstante Spannung 100 N/mm2, keine Rechnung"],
+                warnings=[STUB_KENNZEICHEN, "Stub: konstante Spannung 100 N/mm2, keine Rechnung"],
                 protocol={"solver": self.name, "contract_version": self.contract_version,
+                          "stub": True, "kennzeichen": STUB_KENNZEICHEN,
                           "p": disc.p, "edge_mm": disc.kante_mm}))
             if progress is not None:
                 progress(f"Stub: {key.load_case_id}", (i + 1) / max(1, len(keys)))
@@ -298,10 +305,11 @@ class StubAssemblySolver:
             checkpoints=[f"{path.id}:{i}" for i in range(n_zust)] if path.save_checkpoints else [],
             max_plastic_strain=max_eps, max_contact_pressure=max_p,
             coupling_check={"force_deviation": 0.0},
-            warnings=["Stub: synthetischer Lastpfad, Hertz-Druck und Attrappen-Dehnung"],
+            warnings=[STUB_KENNZEICHEN, "Stub: synthetischer Lastpfad, Hertz-Druck und Attrappen-Dehnung"],
             protocol={"solver": self.name, "contract_version": self.contract_version,
+                      "stub": True, "kennzeichen": STUB_KENNZEICHEN,
                       "hertz": {"R_mm": self.R_MM, "F_je_laenge_N_mm": self.F_JE_LAENGE, "E": self.E, "nu": self.NU}})
 
 
-__all__ = ["von_mises", "wuerfel_oberflaeche", "StubDiscretization", "StubSolidSolver",
+__all__ = ["STUB_KENNZEICHEN", "von_mises", "wuerfel_oberflaeche", "StubDiscretization", "StubSolidSolver",
            "StubGlobalFieldProvider", "zylinder_oberflaeche", "hertz_zylinder_ebene", "StubAssemblySolver"]

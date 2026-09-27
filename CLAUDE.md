@@ -94,6 +94,22 @@ nach `main` erfolgt **nur auf ausdrückliche Freigabe** und stößt
 | `packages/statik3d_contracts/` | Schnittstellenvertrag zum Volumenmodul `volumen3d` als Code: nur Typen, Protokolle, Stubs (importiert nur Standardbibliothek und numpy; Änderungen nur per eigenem PR mit Versionserhöhung) |
 | `statik3d/diskretisierung.py`, `volumenloeser.py` | FE-Netz hinter `Discretization` (FE_MESH, mm); Volumenlöser über Entry Points `statik3d.solid_solvers` / `statik3d.assembly_solvers`, Versionsprüfung, Rückfall auf die Stubs |
 
+## Zwei Sitzungen, ein Vertrag
+
+Das Volumenmodul `packages/volumen3d/` baut eine zweite Sitzung (Session B, Regeln
+in `packages/volumen3d/CLAUDE.md`). Für diese Sitzung (Hauptprogramm) gilt
+spiegelbildlich: **nie in `packages/volumen3d/` arbeiten**;
+`packages/statik3d_contracts/` und `tests/reference_models/` nur lesen –
+Änderungen daran nur als Vorschlag in `docs/vertrag-aenderungen/` und nach
+Entscheidung des Anwenders als eigener Pull Request auf `main` (Vertragsversion
+erhöhen, Änderungsprotokoll, `tests/contracts`). Verbindlich sind
+`docs/Schnittstellenvertrag_Statik3D_FCM.md` und
+`docs/Vorgabe_Statik3D_Abschnitt_FCM-Volumenloeser.md`. Die Umrechnung SI ↔
+Vertragseinheiten liegt allein in `statik3d/vertragseinheiten.py`. `lint-imports`
+(`.importlinter`) prüft die Abhängigkeitsregeln. Der Stub des Vertragspakets ist
+nie eine Berechnung: der Lader warnt, Ergebnisse tragen „STUB – keine echte
+Berechnung“, kein Nachweis liest sie.
+
 `docs/Theoriehandbuch.md` ist die Begründung des Verfahrens mit Messwerten,
 `docs/Benutzerhandbuch.md` beschreibt, was der Anwender sieht und tut. Beide
 werden mit jeder Verhaltensänderung fortgeschrieben.

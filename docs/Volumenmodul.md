@@ -1,6 +1,6 @@
 # Volumenmodul `volumen3d`: Stand der Umstellung im Hauptprogramm
 
-Grundlage: `Schnittstellenvertrag_Statik3D_FCM.md` (Vertragsversion 2.0.0) und
+Grundlage: `Schnittstellenvertrag_Statik3D_FCM.md` (Vertragsversion 2.0.1) und
 `Vorgabe_Statik3D_Abschnitt_FCM-Volumenloeser.md` (beide in `docs/`, Stand 26.09.2026).
 Der Vertrag ist verbindlich für beide Entwicklungsstränge; Änderungen daran nur per eigenem
 Pull Request mit Versionserhöhung (Vertrag, Abschnitt 9).
@@ -19,18 +19,18 @@ Stubs des Vertrags (Abschnitt 8) in `statik3d_contracts/testing.py`: `StubSolidS
 Balkentheorie, vektorisiert), `StubAssemblySolver` (zwei Zylinder, Lastpfad mit Hertz-Druck und
 wachsender plastischer Dehnung, `on_step`).
 
-## Abweichungen vom Vertrag, bewusst
+## Seit Vertrag 2.0.1 (27.09.2026) im Vertrag selbst geregelt
 
-- **Repository-Aufbau (Abschnitt 1):** `statik3d/` bleibt vorerst an der Wurzel, nicht unter
-  `packages/statik3d/`; der Umzug würde Importe, Tests und den exe-Bau (`packaging/Statik3D.spec`)
-  auf einmal ändern. `packages/statik3d_contracts/` liegt wie vereinbart; `packages/volumen3d/`
-  legt Session B an.
-- **Einheiten:** Statik3D rechnet intern in SI (m, N, Pa); der Vertrag verlangt mm und N/mm².
-  Die Umrechnung liegt beim Hauptprogramm an der Grenze zum Volumenmodul
-  (`diskretisierung.MM`); die Kopplung (`GlobalFieldProvider`) muss sie ebenso leisten.
-- **Stub-Registrierung:** Der Vertrag sieht Entry Points nur in `volumen3d/pyproject.toml` vor.
-  Damit die Registrierung ohne `volumen3d` prüfbar ist, trägt das Vertragspaket seine Stubs
-  unter `stub` ein; `volumenloeser()` bevorzugt jeden anderen registrierten Löser.
+- **Repository-Aufbau (Abschnitt 1):** `statik3d/` liegt an der Wurzel, `packages/statik3d_contracts/`
+  und `packages/volumen3d/` darunter; `.importlinter` prüft die Abhängigkeitsregeln in der CI.
+- **Einheiten (Abschnitt 2):** SI intern, Umrechnung ausschließlich in
+  `statik3d/vertragseinheiten.py` (benutzt vom `Discretization`-Adapter und künftig vom
+  `GlobalFieldProvider`); Rundreisetest in `tests/contracts/test_vertrag.py`.
+- **Stub (Abschnitt 7):** echte Löser haben immer Vorrang; der Stub greift nur ohne andere
+  Registrierung und dann mit Warnung des Laders, Zustand „STUB – keine echte Berechnung“ in
+  `uebersicht()`, Kennzeichnung in `protocol["stub"]`/`["kennzeichen"]` und als erste Warnung;
+  `volumenloeser.ist_stub()` für Nachweise und Oberfläche.
+- **Vertragsänderungen:** Vorschläge in `docs/vertrag-aenderungen/`, eigener PR auf `main`.
 
 ## Offen (Abschnitt 10, Session A)
 

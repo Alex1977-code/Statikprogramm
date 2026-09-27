@@ -20,8 +20,8 @@ import numpy as np
 
 from statik3d_contracts.discretization import DiscretizationKind
 
-#: Meter -> Millimeter (Statik3D rechnet in SI, der Vertrag in mm)
-MM = 1000.0
+# Meter -> Millimeter: die einzige Umrechnungsstelle liegt in vertragseinheiten
+from .vertragseinheiten import MM_JE_M as MM
 
 #: Seiten der Volumenelemente ueber ihre Eckknoten (Indizes in element.nodes);
 #: quadratische Typen nutzen dieselben Ecken (die ersten Knoten)
