@@ -111,6 +111,114 @@ def _subtrahieren(stuecke: list[Halbraeume], ebenen: Halbraeume) -> list[Halbrae
     return aus
 
 
+def _pruefe_teile(teile: list[Halbraeume], proben: np.ndarray, d_probe: np.ndarray, r: float) -> bool:
+    """Stimmen die Teile an den Proben mit dem Vorzeichen des Formabstands ueberein? Proben auf
+    der Flaeche (|d| <= tol) entscheiden nicht."""
+    tol = 1e-9 * max(r, 1e-12)
+    drin = np.zeros(len(proben), bool)
+    for t in teile:
+        ok = np.ones(len(proben), bool)
+        for p, n in t:
+            ok &= (proben - p) @ n <= tol
+        drin |= ok
+    return bool(np.all((drin == (d_probe < 0)) | (np.abs(d_probe) <= tol)))
+
+
+def _form_teile(f, mitte, r: float, proben: np.ndarray | None = None, d_probe: np.ndarray | None = None) -> list[Halbraeume] | None:
+    """Der Werkstoff der Grundform f in der Kugel (mitte, r) als disjunkte konvexe Teile.
+    Grundformen sind lokal konvex (ein Teil: Schnitt ihrer lokalen Ebenen). Ein STL meldet seine
+    Lage: konvex ebenso; konkav (Bohrungswand, einspringende Kante) ist der Werkstoff die
+    Vereinigung der Halbraeume = Kugel minus Schnitt der gespiegelten Ebenen; gemischt
+    (Deckel trifft Bohrungswand) Schnitt der Schnitt-Typ-Ebenen ∩ Vereinigung der uebrigen.
+    Gemischte Teile werden an den Proben gegen das Vorzeichen des Formabstands geprueft;
+    scheitert das, zerlegt die binaere Raumteilung (wenige Ebenen), sonst None."""
+    if not hasattr(f, "lokale_lage"):
+        return [f.lokale_ebenen(mitte, r)]
+    ebenen, lage, schnitt = f.lokale_lage(mitte, r)
+    if lage == "konvex":
+        return [ebenen]
+    if lage == "konkav":
+        return _subtrahieren([[]], [(p, -n) for p, n in ebenen])
+    I = [e for e, s in zip(ebenen, schnitt) if s]
+    U = [(p, -n) for (p, n), s in zip(ebenen, schnitt) if not s]
+    teile = _schneiden(_subtrahieren([[]], U), I)
+    if proben is None or d_probe is None or _pruefe_teile(teile, proben, d_probe, r):
+        return teile
+    teile2 = _bsp_teile(f, mitte, r, ebenen, max_ebenen=6)
+    if teile2 is not None and (proben is None or _pruefe_teile(teile2, proben, d_probe, r)):
+        return teile2
+    return None
+
+
+def _schwerpunkt(flaechen: list[np.ndarray]) -> np.ndarray:
+    from .polyeder import tetraeder
+    T = tetraeder(flaechen)
+    v = np.abs(np.linalg.det(T[:, 1:] - T[:, :1])) / 6.0
+    return (T.mean(axis=1) * v[:, None]).sum(axis=0) / v.sum()
+
+
+def _bsp_teile(f, mitte, r: float, ebenen: Halbraeume, max_ebenen: int = 8, max_zellen: int = 64) -> list[Halbraeume] | None:
+    """Gemischte STL-Lage (Deckel trifft Bohrungswand, Sattel): binaere Raumteilung des Wuerfels
+    [mitte - r, mitte + r] an allen lokalen Ebenen. Innerhalb der Kugel liegt die Oberflaeche ganz
+    auf diesen Ebenen, also ist jede Zelle dort ganz Werkstoff oder ganz leer; Zeuge ist der
+    Schwerpunkt der Zelle im einbeschriebenen Wuerfel (sicher in der Kugel), sonst der
+    Zellschwerpunkt - liegt auch der ausserhalb der Kugel, None (Rueckfall: teilen, zuletzt
+    Punkttest). Viele Ebenen (grobe Blaetter an einer Bohrungskante) ebenfalls None: eine Stufe
+    tiefer beruehren weniger Facetten."""
+    from .polyeder import box_flaechen, clippen, volumen
+    if len(ebenen) > max_ebenen:
+        return None
+    mitte = np.asarray(mitte, float)
+    eps_v = 1e-12 * r ** 3
+    zellen: list[tuple[list[np.ndarray], Halbraeume]] = [(box_flaechen(mitte - r, mitte + r), [])]
+    for p, n in ebenen:
+        neu = []
+        for poly, hs in zellen:
+            vorn = clippen(poly, p, n)
+            hinten = clippen(poly, p, -n)
+            if volumen(vorn) > eps_v and volumen(hinten) > eps_v:
+                neu.append((vorn, hs + [(p, n)]))
+                neu.append((hinten, hs + [(p, -n)]))
+            else:
+                neu.append((poly, hs))
+        zellen = neu
+        if len(zellen) > max_zellen:
+            return None
+    a = r / np.sqrt(3.0)
+    klein = [(mitte - a, -np.eye(3)[d]) for d in range(3)] + [(mitte + a, np.eye(3)[d]) for d in range(3)]
+    teile: list[Halbraeume] = []
+    for poly, hs in zellen:
+        innen_poly = poly
+        for p, n in klein:
+            innen_poly = clippen(innen_poly, p, n)
+            if not innen_poly:
+                break
+        w = _schwerpunkt(innen_poly) if innen_poly and volumen(innen_poly) > eps_v else _schwerpunkt(poly)
+        if float(np.linalg.norm(w - mitte)) > r:
+            return None
+        if bool(f.innen(w[None])[0]):
+            teile.append(hs)
+    return teile
+
+
+def _mit_teilen_schneiden(stuecke: list[Halbraeume], teile: list[Halbraeume]) -> list[Halbraeume]:
+    """stuecke ∩ (∪ teile) fuer disjunkte Teile."""
+    aus: list[Halbraeume] = []
+    for t in teile:
+        aus += _schneiden(stuecke, t)
+    return aus
+
+
+def _teile_subtrahieren(stuecke: list[Halbraeume], teile: list[Halbraeume]) -> list[Halbraeume]:
+    """stuecke minus (∪ teile), nacheinander je Teil; ein leeres Teil ist die ganze Kugel (ein Loch,
+    das sie ausfuellt) und loescht alles."""
+    for t in teile:
+        if not t:
+            return []
+        stuecke = _subtrahieren(stuecke, t)
+    return stuecke
+
+
 class Csg:
     """Gesamtgeometrie: innen(P), abstand(P), gradient(P), huellquader(), dreiecke()."""
 
@@ -162,43 +270,51 @@ class Csg:
         aktiv = np.abs(d_m) <= r
         if not aktiv.any():
             return None
-        pos = [f for f, s in alle if s > 0]
-        neg = [f for f, s in alle if s < 0]
-        pos_akt = [f for (f, s), a in zip(alle, aktiv) if s > 0 and a]
-        neg_akt = [f for (f, s), a in zip(alle, aktiv) if s < 0 and a]
-        gekruemmt = any(f.gekruemmt for f in pos_akt + neg_akt)
-        dpos = np.stack([f.abstand(proben) for f in pos], axis=1) if pos else None
-        dneg = np.stack([-f.abstand(proben) for f in neg], axis=1) if neg else None
+        d_alle = [f.abstand(proben) for f, _ in alle]        # einmal je Form, auch fuer die Teilpruefung
+        pos = [(f, d) for (f, s), d in zip(alle, d_alle) if s > 0]
+        neg = [(f, d) for (f, s), d in zip(alle, d_alle) if s < 0]
+        pos_akt = [(f, d) for (f, s), a, d in zip(alle, aktiv, d_alle) if s > 0 and a]
+        neg_akt = [(f, d) for (f, s), a, d in zip(alle, aktiv, d_alle) if s < 0 and a]
+        gekruemmt = any(f.gekruemmt for f, _ in pos_akt + neg_akt)
+        dpos = np.stack([d for _, d in pos], axis=1) if pos else None
+        dneg = np.stack([-d for _, d in neg], axis=1) if neg else None
         rek = np.max(np.concatenate([d for d in (dpos, dneg) if d is not None], axis=1), axis=1)
         vz = np.array([s for _, s in alle])
         if np.all(np.abs(rek - d_ist) <= tol):
             # Waechter: eine ferne Form, die die ganze Kugel ausschliesst (positive weit aussen,
             # Loch weit innen), macht die Umgebung werkstofffrei - normalerweise schon vorher
             # als OUTSIDE erkannt, hier der Vollstaendigkeit halber
-            aktive = pos_akt + neg_akt
+            aktive = [f for f, _ in pos_akt + neg_akt]
             if np.any(~aktiv & (vz * d_m > r)):
                 return [], gekruemmt, aktive
             stuecke: list[Halbraeume] = [[]]
-            for f in pos_akt:
-                stuecke = _schneiden(stuecke, f.lokale_ebenen(mitte, r))
-            for f in neg_akt:
-                ebenen = f.lokale_ebenen(mitte, r)
-                if ebenen:
-                    stuecke = _subtrahieren(stuecke, ebenen)
+            for f, d in pos_akt:
+                teile = _form_teile(f, mitte, r, proben, d)
+                if teile is None:
+                    return None                   # STL-Lage nicht darstellbar: Rueckfall (teilen, zuletzt Punkttest)
+                stuecke = _mit_teilen_schneiden(stuecke, teile)
+            for f, d in neg_akt:
+                teile = _form_teile(f, mitte, r, proben, d)
+                if teile is None:
+                    return None
+                stuecke = _teile_subtrahieren(stuecke, teile)
             return stuecke, gekruemmt, aktive
         if dpos is not None and dneg is None and len(pos_akt) >= 1 and np.all(np.abs(dpos.min(axis=1) - d_ist) <= tol):
+            aktive = [f for f, _ in pos_akt]
             if np.any(~aktiv & (d_m < -r)):
-                return [[]], gekruemmt, pos_akt          # eine ferne Form fuellt die ganze Kugel
+                return [[]], gekruemmt, aktive          # eine ferne Form fuellt die ganze Kugel
             stuecke = []
-            bisher: list[Halbraeume] = []
-            for f in pos_akt:
-                ebenen = f.lokale_ebenen(mitte, r)
-                teil = _schneiden([[]], ebenen)
+            bisher: list[list[Halbraeume]] = []
+            for f, d in pos_akt:
+                teile = _form_teile(f, mitte, r, proben, d)
+                if teile is None:
+                    return None
+                teil = list(teile)
                 for g in bisher:
-                    teil = _subtrahieren(teil, g)
+                    teil = _teile_subtrahieren(teil, g)
                 stuecke += teil
-                bisher.append(ebenen)
-            return stuecke, gekruemmt, pos_akt
+                bisher.append(teile)
+            return stuecke, gekruemmt, aktive
         return None
 
     def dreiecke(self, facette_mm: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -237,9 +353,14 @@ def _knoten(d: dict) -> Knoten:
             return Kugel(d["mitte"], float(d["radius"]), name or "kugel")
         if typ == "halbraum":
             return Halbraum(d["punkt"], d["normale"], name or "halbraum")
+        if typ == "stl":
+            from .stl import Stl
+            if "dreiecke" in d:
+                return Stl.aus_dreiecken(np.asarray(d["dreiecke"], float), name or "stl")
+            return Stl.aus_datei(d["pfad"], name)
     except KeyError as ex:
         raise ValueError(f"CSG-Knoten {typ!r}: Angabe {ex} fehlt") from ex
-    raise ValueError(f"unbekannter CSG-Typ {typ!r}; bekannt: quader, zylinder, kugel, halbraum, "
+    raise ValueError(f"unbekannter CSG-Typ {typ!r}; bekannt: quader, zylinder, kugel, halbraum, stl, "
                      f"vereinigung, differenz, schnitt")
 
 

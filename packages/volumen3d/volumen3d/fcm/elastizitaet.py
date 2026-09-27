@@ -80,7 +80,7 @@ def zell_gradienten(gitter, quadratur, c: int) -> tuple[np.ndarray, np.ndarray]:
     P, W, _ = quadratur.zelle(c)
     xi = gitter.lokal(P, np.full(len(P), c))
     _, dN = basis_3d(gitter.p, xi)
-    return dN * (2.0 / gitter.h), W
+    return dN * (2.0 / float(gitter.h_zelle(c))), W
 
 
 def assemblieren(gitter, quadratur, E: float, nu: float, fortschritt=None, block_eintraege: int = 20_000_000) -> sp.csr_matrix:
@@ -97,7 +97,7 @@ def assemblieren(gitter, quadratur, E: float, nu: float, fortschritt=None, block
     je = (3 * m) ** 2
     je_block = max(1, block_eintraege // je)
     K: sp.csr_matrix | None = None
-    Ke_innen: np.ndarray | None = None          # alle INSIDE-Zellen sind bis auf die Lage gleich
+    Ke_innen: dict[int, np.ndarray] = {}        # INSIDE-Zellen einer Ebene sind bis auf die Lage gleich
     for start in range(0, nz, je_block):
         zellen = range(start, min(start + je_block, nz))
         zeilen = np.empty(len(zellen) * je, np.int32 if n < 2 ** 31 else np.int64)
@@ -105,10 +105,11 @@ def assemblieren(gitter, quadratur, E: float, nu: float, fortschritt=None, block
         werte = np.empty(len(zellen) * je)
         for k, c in enumerate(zellen):
             if gitter.klasse[c] == INSIDE:
-                if Ke_innen is None:
+                l = int(gitter.ebene[c])
+                if l not in Ke_innen:
                     G, W = zell_gradienten(gitter, quadratur, c)
-                    Ke_innen = zellsteifigkeit(G, W, E, nu)
-                Ke = Ke_innen
+                    Ke_innen[l] = zellsteifigkeit(G, W, E, nu)
+                Ke = Ke_innen[l]
             else:
                 G, W = zell_gradienten(gitter, quadratur, c)
                 Ke = zellsteifigkeit(G, W, E, nu)

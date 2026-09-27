@@ -10247,7 +10247,7 @@ Bauteil schafft, zeigen erst M2 und M3. Nachweisstellen auf Kontaktseiten
 bleiben ohne Kontakt über Punkte der Seite (B4) bei 15 bis 20 N/mm².
 
 
-## 11 Finite-Cell-Methode: Volumenmodul `volumen3d` (Teilprojekt 1, 27.09.2026)
+## 11 Finite-Cell-Methode: Volumenmodul `volumen3d` (Teilprojekte 1 und 2, 27.09.2026)
 
 Das Volumenmodul rechnet Volumenbauteile ohne klassisches Vernetzen: Der Körper wird in ein
 achsparalleles Gitter würfelförmiger Zellen eingebettet, die Geometrie geht nur über eine
@@ -10409,4 +10409,92 @@ prüffähigen Kerbwert nicht; die Vorgabe sieht dafür die Verfeinerung an Bohru
 (Abschnitt 4, Nutzervorgabe und Fehlerschätzer), die mit Teilprojekt 2 (Oktree, hängende
 Freiheitsgrade) kommt. Bis dahin gilt für Kerbwerte: mindestens vier Zellen je Radius und eine
 Konvergenzstudie je Lage; der Zähler `blaetter_unteraufgeloest` im Protokoll (Krümmungsradius
-kleiner als fünf Blattkanten) weist unteraufgelöste Stellen aus.
+kleiner als fünf Blattkanten) weist unteraufgelöste Stellen aus. Mit der lokalen Verfeinerung
+aus Teilprojekt 2 ist die Abnahme erfüllt (Abschnitt 11.8).
+
+### 11.8 Teilprojekt 2: Oktree, hängende Freiheitsgrade, STL
+
+**Oktree.** Das Wurzelgitter aus 11.1 bleibt; jede Wurzelzelle kann in Ebenen l = 1, 2, …
+geviertelt werden (Blattkante h/2^l). Verfeinerungsregeln (`Verfeinerung`): Schnittzellen bis
+Ebene `schnitt_ebenen`, Nutzerbereiche (Kugel um einen Punkt mit Zielkantenlänge, aus
+`RefinementRegion` des Vertrags), dünne Wände (Zellen mit Werkstoff, deren Nachbarn beidseits
+leer sind), Höchstebene. Nach jeder Regel wird auf 2:1 über alle 26 Nachbarrichtungen
+balanciert, damit an keiner Fläche, Kante oder Ecke mehr als eine Ebene springt. Die
+Modennummerierung bleibt entitätsbasiert; Ecken tragen ebenenfreie Schlüssel im feinsten
+verdoppelten Gitter, sodass eine Ecke, die grobe und feine Zelle teilen, dieselbe Nummer
+bekommt, während eine hängende Ecke (nur von feinen Zellen getragen) eine eigene erhält.
+Kugel r 43 in h 10: gleichmäßig 549 Blätter; `schnitt_ebenen=1` 172 + 2145 Blätter, keine
+Schnittzelle mehr auf Ebene 0, 0 Verstöße gegen 2:1; Bereich Radius 8 mit Ziel 2,6 mm → Ebene 2
+im Bereich, Übergangsring Ebene 1, 0 Verstöße.
+
+**Hängende Freiheitsgrade als Zwänge.** An einer hängenden Fläche (Kante, Ecke) sind die Moden
+der feinen Seite keine eigenen Unbekannten: ihre Spur muss der Spur des groben Polynoms gleichen.
+Der Zwangsauflöser (`fcm/zwaenge.py`) löst dazu je hängender Entität das kleine System
+V_F·M = N_C (Werte der feinen Basis an Chebyshev-Lobatto-Punkten gegen die grobe Basis) und
+schreibt jede gebundene Mode als Linearkombination der Moden der groben Zelle; Vorrang Fläche >
+Kante > Ecke > Aggregation, Ketten werden bis zu freien Moden aufgelöst (Kettenlänge im
+Protokoll), Selbstbezüge mit Koeffizient 1 sind Tautologien und fallen weg. Die
+Zellaggregation aus 11.4 läuft durch dieselbe Matrix; ihre Wurzeln liegen bevorzugt auf gleicher
+oder gröberer Ebene, weil eine feinere Wurzel an der aggregierten Zelle hängen und die Kette
+zirkulär werden kann (so gemessen: „Zwangszyklus an Mode 2368“, seither 0 Zyklen). Die
+Spurbindung reproduziert Polynome vom Grad p exakt (p = 1…3: 1,1e-16 … 4,4e-16), der Patch-Test
+auf lokal verfeinerten Gittern (eine Ebene an einer Ecke, dünne Wand, Schnittanteil 10⁻⁶) hält
+u und σ unter 10⁻⁶ – auch dort, wo hängende Kanten oder Ecken ohne hängende Fläche vorkommen
+(Vorrangregel geprüft).
+
+**Ränder auf Zellflächen.** Fällt eine Symmetrie- oder Schnittebene genau auf eine Zellfläche –
+in der verfeinerten Kirsch-Platte bei Versatz 0,4 liegen x = 0 und y = 0 auf Flächen der Ebenen
+1 und 2 –, wurden ihre Randpolygone beiden Nachbarzellen zugeschlagen: sym_x 2050 statt 1800 mm²,
+sym_y 4050 statt 3800 mm², und K_tg stieg auf 3,63 (statt 3,08), weil die Nitsche-Terme an x = 0
+doppelt und zusätzlich mit dem extrapolierten Polynom der leeren Nachbarzelle eingingen. Die
+gleichmäßigen Gitter waren nur zufällig verschont (Ursprung −1 oder −5 bei h 10). Regel seither:
+ein Polygon in einer Zellfläche gehört allein der Zelle auf der Werkstoffseite (Außennormale der
+Geometrie zeigt aus ihr heraus); Prüfung mit Würfelflächen auf Zellflächen der Ebenen 0, 1 und 2
+(600 mm² genau einmal, ohne die Regel 1200 mm²).
+
+**Kirsch-Platte mit Bereichsverfeinerung (Abnahme U3).** Bereich Radius r + 10 mm um die Lochachse
+mit Zielkante 2,5 mm (Ebene 2 = acht Blätter je Radius), sonst h = 10, p = 3, Versatz 0 / 0,4 /
+0,8: K_tg = 3,085 / 3,076 / 3,074, Streuung **0,34 %** (Vorgabe < 1 %), Mittel 3,078 = +1,7 % gegen
+3,028 (3D-Effekt +1 % enthalten); 199 095 freie Freiheitsgrade gegen 5 659 752 für ein
+gleichmäßiges Gitter h = 2,5 (3,5 %), Blätter {0: 2704, 1: 101, 2: 595}, 206 hängende Flächen,
+179 s für drei Lagen auf der durch die Hauptsitzung belegten Maschine. σ_xx/σ₀ über die Dicke am
+Lochrand (d = 0,1 mm): 2,95 am Rand bis 3,04 in der Mitte, symmetrisch.
+
+**STL-Eingang.** Vorzeichen des Abstands aus der verallgemeinerten Windungszahl (Jacobson u. a.
+2013, Raumwinkel nach Van Oosterom/Strackee): geschlossener Würfel innen 1, außen 0, auf einer
+Fläche ½, Kante ¼, Ecke ⅛; fehlt eine Facette (1/12 der Oberfläche), bleibt innen 11/12 und
+außen 1/12 – die Klassifikation hält, ein Strahltest durch die Lücke nicht. Die Facetten werden
+über gemeinsame Kanten einheitlich gewickelt (eine einzeln verkehrte Facette überdeckt mit ihrem
+eigenen Raumwinkel ±½ jede Windungszahl-Probe an ihr selbst und wäre so nicht zu finden), jede
+Zusammenhangskomponente über ihr Vorzeichenvolumen nach außen und Hohlraumschalen (ungerade
+Verschachtelungstiefe) nach innen gerichtet; Prüfung: Würfel mit einer verkehrten Facette,
+Hohlwürfel 30/10. Die größte Abweichung von w von 0/1 beidseits einer Stichprobe ist der
+`defekt` (Würfel mit Lücke 0,097; die Vertragsschicht lehnt > ¼ ab und warnt ab 10⁻³). Lokal ist ein STL eben; die Facetten, die die
+Umkugel einer Teilbox berühren, liefern die Ebenen, und ihre Ecken sagen, wie der Werkstoff
+daraus entsteht: liegen alle auf der Werkstoffseite aller Ebenen, ist er der Schnitt der
+Halbräume (konvex, wie bei den Grundformen); liegen alle auf der Leerseite, ist der Leerraum
+der Schnitt der gespiegelten Ebenen und der Werkstoff ihre Vereinigung (konkav: Bohrungswand,
+einspringende Kante – ohne diesen Fall fiel jede tessellierte Bohrungswand auf den Punkttest
+zurück: Viertelring h 10 mit 6573 Punkttest-Blättern und 10,5 Mio. Randpunkten durch die
+Vierteilung der Facetten); gemischt (Deckel trifft Bohrungswand) ist der Werkstoff der Schnitt
+der Halbräume vom Schnitt-Typ (alle Ecken auf ihrer Werkstoffseite) mit der Vereinigung der
+übrigen – an den Proben der Teilbox gegen das Vorzeichen des Abstands geprüft; scheitert das,
+zerlegt eine binäre Raumteilung an den lokalen Ebenen (höchstens sechs) den Würfel um die
+Teilbox in konvexe Zellen, deren Zeuge die Windungszahl klassifiziert, und erst danach kommt
+der Punkttest. Die Raumteilung allein war zu teuer (Viertelring: 29 895 Aufrufe, 1010 s, weil
+jedes Wandfacetten-Polygon mit r ≈ 10 mm beide Deckel berührt); mit der Schnitt/Vereinigungs-
+Regel baut derselbe Viertelring (h 10, p 3) in 43,7 s mit 368 050 Randpunkten, 245 Blättern
+und keinem Punkttest (belegte Maschine). Ergebnis: Würfel-STL 30³ gerade und um 30°/20° gedreht
+in h 10 Volumen 27 000 auf 10⁻¹⁰, L-Körper mit einspringender Kante 12 000 mm³ auf 10⁻¹⁰,
+jeweils ohne einen Punkttest. **Lamé aus dem tessellierten Viertelring** (Facette 1 mm, 1268
+Facetten, geschnitten mit vier Symmetrie-Halbräumen, h 10, p 3): σ_r 0,066 %, σ_φ 0,022 %,
+u_r 0,003 % gegen Lamé – genauer als die CSG-Rechnung (0,316 / 0,032 %), weil die Facetten
+exakte Ebenen des STL-Körpers sind (Sagitta 0,0025 mm), während die CSG-Zylinderfläche bei
+Tiefe 2 durch Tangentialebenen mit Fehler (2,5/50)² genähert wird; 1 188 116 Randpunkte (die
+Deckel- und Seitenfacetten des STL liegen doppelt zu den Halbraum-Polygonen, ungenutzt), 119 s
+mit Lösen auf der belegten Maschine. Kosten der Kernfunktionen: 1268 Facetten,
+10 000 Punkte, belegte Maschine – volle Suche 6,9 s, Windungszahl numpy 5,4 s; mit BVH (Median-
+Teilung, Boxabstand, numba) 0,001 s für die nächsten Punkte (identisch bis 3·10⁻¹⁴) und 0,011 s
+für die Windungszahl (numba, identisch bis 10⁻¹²). Ohne numba bleibt ein k-d-Baum-Index über
+Facettenschwerpunkte mit exakter Kugelschranke (Ergebnis gleich, nur 2,2-mal schneller als die
+volle Suche, weil die Schranke eine Schale der Dicke 2 R_max durchlässt).

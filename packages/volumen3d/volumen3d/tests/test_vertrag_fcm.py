@@ -114,11 +114,21 @@ def test_ablauf():
         check(f"ungueltige Einstellung ({text}) -> SolverError", f)
     from statik3d_contracts.detail import GeometrySource, GeometrySourceType
     try:
-        s.estimate(dataclasses.replace(spec, geometry=GeometrySource(GeometrySourceType.STL, path="x.stl")))
+        s.estimate(dataclasses.replace(spec, geometry=GeometrySource(GeometrySourceType.STL, path="gibt_es_nicht.stl")))
         f = False
     except SolverError as ex:
-        f = "Teilprojekt" in str(ex)
-    check("STL-Quelle in Teilprojekt 1 -> SolverError mit Verweis", f)
+        f = "Geometrie" in str(ex)
+    check("STL-Quelle ohne Datei -> SolverError (Geometrie)", f)
+    # echte STL-Datei (Wuerfel 100 mm) -> estimate rechnet damit
+    import os
+    import tempfile
+    from volumen3d.geometry.sdf import Quader
+    from volumen3d.geometry.stl import schreibe_stl
+    V, T = Quader([0, 0, 0], [100, 100, 100]).dreiecke(None, None, 1.0)
+    pfad = os.path.join(tempfile.mkdtemp(), "wuerfel.stl")
+    schreibe_stl(pfad, V[T])
+    e = s.estimate(dataclasses.replace(spec, geometry=GeometrySource(GeometrySourceType.STL, path=pfad), cut_planes=()))
+    check("STL-Quelle (Wuerfel-Datei): estimate liefert Zellen und Freiheitsgrade", e.get("cells", 0) > 0 and e.get("dofs", 0) > 0, str({k: e[k] for k in list(e)[:6]}))
 
 
 def test_gutachten_faelle():

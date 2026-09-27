@@ -97,7 +97,7 @@ def test_punktsuche():
     grenze = None
     for c in range(len(G.ijk)):
         I = G.ijk[c] + [1, 0, 0]
-        if I[0] < G.n[0] and G.alle_klassen[G.flach(I)] == OUTSIDE:
+        if I[0] < G.n[0] and G.alle_klassen[G.flach(I, 0)] == OUTSIDE:
             grenze = G.zellbox(c)[1] * [1, 0, 0] + (G.zellbox(c)[0] + 0.5 * G.h) * [0, 1, 1]
             break
     check("Punkt auf der Grenze aktive Zelle | OUTSIDE-Nachbar (+x) wird der aktiven Zelle zugeschlagen",

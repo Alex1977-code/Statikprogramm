@@ -25,7 +25,7 @@ from statik3d_contracts.nonlinear import AssemblyModelSpec, AssemblyResult, Load
 from statik3d_contracts.solver import ProgressCallback, SolverCancelled, SolverError
 
 from . import __version__
-from .fcm.gitter import Gitter
+from .fcm.gitter import Gitter, Verfeinerung
 from .fcm.problem import FcmProblem, Werkstoff
 from .geometry.csg import Csg, Operation, aus_params
 from .geometry.sdf import Halbraum
@@ -36,13 +36,24 @@ Fortschritt = Callable[[str, float], None]
 
 def _geometrie(spec: DetailModelSpec) -> tuple[Csg, list[str]]:
     """CSG des Details, geschnitten mit den Halbraeumen der Schnittebenen ('schnitt_i')."""
-    if spec.geometry.type != GeometrySourceType.CSG:
-        raise SolverError(f"Geometriequelle {spec.geometry.type.value!r} kommt mit Teilprojekt 2/5; "
-                          f"Teilprojekt 1 rechnet nur CSG")
+    if spec.geometry.type == GeometrySourceType.CSG:
+        params = spec.geometry.params
+    elif spec.geometry.type == GeometrySourceType.STL:
+        if not spec.geometry.path:
+            raise SolverError("GeometrySource STL braucht einen Pfad")
+        params = {"csg": {"typ": "stl", "pfad": spec.geometry.path, "name": spec.geometry.params.get("name", "stl")}}
+    else:
+        raise SolverError(f"Geometriequelle {spec.geometry.type.value!r} kommt mit Teilprojekt 5; "
+                          f"bis dahin CSG und STL")
     try:
-        basis = aus_params(spec.geometry.params)
-    except (ValueError, KeyError, TypeError) as ex:
-        raise SolverError(f"CSG-Geometrie: {ex}") from ex
+        basis = aus_params(params)
+    except (ValueError, KeyError, TypeError, OSError) as ex:
+        raise SolverError(f"Geometrie: {ex}") from ex
+    for f in basis.grundformen():
+        # Windungszahl-Defekt > 1/4: Innen/Aussen ist an der Stichprobe nicht mehr eindeutig
+        if getattr(f, "defekt", 0.0) > 0.25:
+            raise SolverError(f"STL {f.name!r}: Windungszahl weicht bis {f.defekt:.2f} von 0/1 ab - Huelle nicht geschlossen "
+                              f"oder uneinheitlich orientiert")
     namen = [f"schnitt_{i}" for i in range(len(spec.cut_planes))]
     if not spec.cut_planes:
         return basis, namen
@@ -52,6 +63,16 @@ def _geometrie(spec: DetailModelSpec) -> tuple[Csg, list[str]]:
         return Csg(Operation("schnitt", teile)), namen
     except ValueError as ex:
         raise SolverError(str(ex)) from ex
+
+
+def _verfeinerung(spec: DetailModelSpec) -> Verfeinerung:
+    """RefinementRegion des Vertrags -> Bereiche des Oktrees (p je Bereich kommt mit der p-Adaptivitaet)."""
+    bereiche = tuple((np.asarray(r.center, float).reshape(3), float(r.radius_mm), float(r.target_cell_size_mm))
+                     for r in spec.refinement)
+    for _, radius, ziel in bereiche:
+        if radius <= 0 or ziel <= 0:
+            raise SolverError("RefinementRegion: radius_mm und target_cell_size_mm muessen positiv sein")
+    return Verfeinerung(bereiche=bereiche)
 
 
 def _einstellungen_pruefen(s: FcmSettings) -> None:
@@ -100,9 +121,12 @@ class FcmDiskretisierung:
     def summary(self) -> dict[str, float | int | str]:
         g = self.problem.gitter
         ag = self.problem.aggregation
+        zw = self.problem.zwaenge.statistik
         return {"kind": self.kind.value, "subsystem": self.subsystem_id, "p": int(g.p or 0), "cell_size_mm": g.h,
                 "cells": int(len(g.ijk)), "inside_cells": int((g.klasse == 1).sum()), "cut_cells": int((g.klasse == 2).sum()),
-                "dofs": self.dof_count(), "dofs_free": int(ag.statistik["moden_frei"] * 3) if ag is not None else self.dof_count(),
+                "levels": ", ".join(f"{l}: {n}" for l, n in sorted(g.ebenen_verteilung().items())),
+                "max_level": int(g.max_ebene), "hanging_faces": int(zw["haengende_flaechen"]),
+                "dofs": self.dof_count(), "dofs_free": int(zw["moden_frei"] * 3),
                 "aggregated_cells": int(ag.statistik["zellen_schlecht"]) if ag is not None else 0,
                 "quadrature_points": int(self.problem.quadratur.anzahl_punkte()),
                 "surface_points": int(len(self.problem.oberflaeche.punkte)), "length_unit": "mm"}
@@ -128,13 +152,14 @@ class FcmSolver:
         _einstellungen_pruefen(s)
         g, _ = _geometrie(spec)
         try:
-            G = Gitter(g, float(s.base_cell_size_mm), 0.1)
+            G = Gitter(g, float(s.base_cell_size_mm), 0.1, _verfeinerung(spec))
         except ValueError as ex:
             raise SolverError(str(ex)) from ex
         G.moden_nummerieren(int(s.p))
         m = (int(s.p) + 1) ** 3
         nnz = len(G.ijk) * (3 * m) ** 2
         return {"dofs": int(G.n_dof), "cells": int(len(G.ijk)), "cut_cells": int((G.klasse == 2).sum()),
+                "levels": G.ebenen_verteilung(),
                 "memory_mb": round(nnz * 16 / 1e6 + G.n_dof * 8 * 40 / 1e6, 1), "backend": "cpu", "solver": self.name,
                 "note": "Direktloeser (Teilprojekt 1); Speicher der Faktorisierung kommt hinzu"}
 
@@ -151,7 +176,7 @@ class FcmSolver:
         try:
             pr = FcmProblem(g, h=float(s.base_cell_size_mm), p=int(s.p),
                             werkstoff=Werkstoff(float(material.E), float(material.nu), float(material.rho)),
-                            alpha=float(s.alpha))
+                            alpha=float(s.alpha), verfeinerung=_verfeinerung(spec))
             for n in namen:
                 pr.verschiebungsrand(n, n, projektion="schnitt")
         except ValueError as ex:
@@ -208,6 +233,14 @@ class FcmSolver:
                     s_e, u_e = np.zeros((0, 6)), np.zeros((0, 3))
                 ebenen = []
                 warn: list[str] = []
+                zr = float(pr.zwaenge.statistik.get("zyklen_rest_max", 0.0))
+                if zr > 1e-9:
+                    warn.append(f"Zwangszyklus mit Rest {zr:.2e}: {pr.zwaenge.statistik['zyklen_frei']} Moden an haengenden/"
+                                f"aggregierten Zellen frei gelassen; Stetigkeit dort nicht garantiert (Verfeinerung an der Stelle aendern)")
+                for f in pr.geometrie.grundformen():
+                    if getattr(f, "defekt", 0.0) > 1e-3:
+                        warn.append(f"STL {f.name!r}: Huelle hat kleine Luecken (Windungszahl-Defekt {f.defekt:.3f}); "
+                                    f"Innen/Aussen bleibt eindeutig, Flaechenlasten auf der Luecke fehlen")
                 for i, (n, cp) in enumerate(zip(disc.schnittnamen, disc.spec.cut_planes)):
                     fq = pr.raender[n].quadratur
                     F, M = aus.schnittgroessen(fq, cp.origin)

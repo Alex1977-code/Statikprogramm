@@ -52,13 +52,40 @@ def dreieck_an_box_clippen(V: np.ndarray, lo, hi) -> np.ndarray:
     """Dreieck (3,3) gegen die sechs Halbraeume der Box -> Polygon (k,3)."""
     poly = np.asarray(V, float).reshape(-1, 3)
     lo, hi = np.asarray(lo, float), np.asarray(hi, float)
+    # Toleranz statt 0: ein Polygon genau in einer Zellflaeche (Symmetrieebene auf Zellgrenze) liegt
+    # nach Rundung um ein ulp auf einer Seite und kaeme sonst in einer der beiden Zellen nicht an;
+    # _in_fremder_zellflaeche weist es dann der Werkstoffseite zu (Gutachten 27.09.2026)
+    tol = 1e-12 * float(np.max(hi - lo))
     for d in range(3):
         for punkt, n in ((lo, -np.eye(3)[d]), (hi, np.eye(3)[d])):
             if len(poly) < 3:
                 return np.zeros((0, 3))
-            poly, _ = polygon_clippen(poly, punkt, n, 0.0)
+            poly, _ = polygon_clippen(poly, punkt, n, tol)
     poly = polygon_bereinigen(poly, 1e-12 * float(np.max(hi - lo)))
     return poly if len(poly) >= 3 else np.zeros((0, 3))
+
+
+def _in_fremder_zellflaeche(geometrie, poly: np.ndarray, lo, hi) -> bool:
+    """Liegt das Polygon in einer Zellflaeche, gehoert es nur der Zelle auf der Werkstoffseite
+    (Aussennormale der Geometrie zeigt aus dieser Zelle heraus). Sonst zaehlten beide Nachbarn
+    es: Symmetrieebene x = 0 auf Zellflaechen der Ebenen 1 und 2 der verfeinerten Kirsch-Platte,
+    Versatz 0,4 -> sym_x 2050 statt 1800 mm2, K_t 3,63 statt 3,08 (27.09.2026)."""
+    s = poly.mean(axis=0)
+    eps = 1e-9 * float(np.max(hi - lo))
+    an_lo = np.abs(s - lo) <= eps
+    an_hi = np.abs(s - hi) <= eps
+    if not (an_lo.any() or an_hi.any()):
+        return False
+    n_p = polygon_normale(poly)
+    n = geometrie.gradient(s[None])[0]
+    for d in range(3):
+        if abs(n_p[d]) < 1.0 - 1e-9:
+            continue                                        # Polygon nicht in dieser Flaeche
+        if an_lo[d] and n[d] >= 0.0:
+            return True                                     # Werkstoff jenseits der lo-Flaeche
+        if an_hi[d] and n[d] <= 0.0:
+            return True
+    return False
 
 
 def polygon_normale(poly: np.ndarray) -> np.ndarray:
@@ -98,7 +125,16 @@ def _stuecke_des_polygons(geometrie, form, poly: np.ndarray, tiefe: int, stufe: 
     d = float(geometrie.abstand(c[None])[0])
     if d > r * (1 + 1e-9) or d < -r * (1 + 1e-9):
         return []                                 # ganz ausserhalb oder tief im Werkstoff
-    st = geometrie.lokale_stuecke(c, r, np.concatenate([poly, c[None]]))
+    # Proben: Ecken und Schwerpunkt auf der Flaeche, dazu Punkte knapp beidseits (delta = 1e-3 r, Ecken
+    # dafuer zum Schwerpunkt hin geschrumpft, damit alles in der Kugel bleibt). Nur die Proben abseits
+    # der Flaeche entscheiden bei gemischter STL-Lage, ob die Zerlegung stimmt (csg._pruefe_teile
+    # laesst |d| <= tol aus; Gutachten 27.09.2026: sonst zaehlte ein Steg auf einem Flansch doppelt).
+    n_eigen = form.gradient(c[None])[0]
+    delta = 1e-3 * r
+    geschrumpft = c + (1.0 - 2e-3) * (poly - c)
+    proben = np.concatenate([poly, c[None], c[None] + delta * n_eigen, c[None] - delta * n_eigen,
+                             geschrumpft + delta * n_eigen, geschrumpft - delta * n_eigen])
+    st = geometrie.lokale_stuecke(c, r, proben)
     # Vierteilung nur, wenn eine *fremde* gekruemmte Form die Kante des Stuecks als Sehne
     # naehert; die eigene Kruemmung erledigen Projektion und Flaechenfaktor exakt. Ist der
     # Kruemmungsradius der fremden Form kleiner als das Polygon, wird bis zur Hoechsttiefe geteilt.
@@ -120,7 +156,6 @@ def _stuecke_des_polygons(geometrie, form, poly: np.ndarray, tiefe: int, stufe: 
     # (bei ebenen Formen die Facettenebene selbst). Andere lokale Ebenen der Quellform - etwa
     # die Kappe eines Bohrzylinders - muessen schneiden, sonst liefern zwei Stuecke dasselbe
     # Polygon doppelt (Befund 27.09.: Bohrungsmantel +44 %).
-    n_eigen = form.gradient(c[None])[0]
     aus = []
     for halbraeume in st[0]:
         Q = poly
@@ -216,37 +251,33 @@ class Flaechenquadratur:
         for t in range(len(T)):
             Vt = V[T[t]]
             f = formen[quelle[t]]
-            i0 = np.maximum(np.floor((Vt.min(axis=0) - gitter.ursprung) / h - 1e-9).astype(int), 0)
-            i1 = np.minimum(np.floor((Vt.max(axis=0) - gitter.ursprung) / h + 1e-9).astype(int), gitter.n - 1)
-            for i in range(i0[0], i1[0] + 1):
-                for j in range(i0[1], i1[1] + 1):
-                    for k in range(i0[2], i1[2] + 1):
-                        c = gitter._aktiv_index[(i * gitter.n[1] + j) * gitter.n[2] + k]
-                        if c < 0:
-                            continue
-                        lo = gitter.ursprung + np.array([i, j, k]) * h
-                        poly = dreieck_an_box_clippen(Vt, lo, lo + h)
-                        if len(poly) < 3 or polygon_flaeche(poly) <= 1e-14 * h * h:
-                            continue
-                        for Q in _stuecke_des_polygons(geometrie, f, poly, tiefe, 0, statistik, tol):
-                            Qe = Q - f.abstand(Q)[:, None] * f.gradient(Q) if f.gekruemmt else Q   # Ecken auf die exakte Flaeche
-                            polygone.append(Qe)
-                            polygon_quelle.append(int(quelle[t]))
-                            B = np.array([[Q[0], Q[m], Q[m + 1]] for m in range(1, len(Q) - 1)])
-                            kreuz = np.cross(B[:, 1] - B[:, 0], B[:, 2] - B[:, 0])
-                            A = 0.5 * np.linalg.norm(kreuz, axis=1)
-                            P = (B[:, None, 0] + xi2[None, :, 0, None] * (B[:, None, 1] - B[:, None, 0])
-                                 + xi2[None, :, 1, None] * (B[:, None, 2] - B[:, None, 0])).reshape(-1, 3)
-                            W = (A[:, None] * w2[None, :] * 2.0).ravel()
-                            if f.gekruemmt:
-                                # Flaechenfaktor Bogen/Sehne am Sehnenpunkt, dann Punkt auf die exakte Grundform
-                                n_f = np.repeat(kreuz / np.maximum(2.0 * A, 1e-300)[:, None], len(xi2), axis=0)
-                                W = W * f.flaechenfaktor(P, n_f)
-                                P = P - f.abstand(P)[:, None] * f.gradient(P)
-                            P_l.append(P)
-                            W_l.append(W)
-                            C_l.append(np.full(len(P), c))
-                            Q_l.append(np.full(len(P), quelle[t]))
+            for c in gitter.blaetter_in_box(Vt.min(axis=0), Vt.max(axis=0)):
+                c = int(c)
+                lo, hi_c = gitter.zellbox(c)
+                poly = dreieck_an_box_clippen(Vt, lo, hi_c)
+                if len(poly) < 3 or polygon_flaeche(poly) <= 1e-14 * h * h:
+                    continue
+                if _in_fremder_zellflaeche(geometrie, poly, lo, hi_c):
+                    continue
+                for Q in _stuecke_des_polygons(geometrie, f, poly, tiefe, 0, statistik, tol):
+                    Qe = Q - f.abstand(Q)[:, None] * f.gradient(Q) if f.gekruemmt else Q   # Ecken auf die exakte Flaeche
+                    polygone.append(Qe)
+                    polygon_quelle.append(int(quelle[t]))
+                    B = np.array([[Q[0], Q[m], Q[m + 1]] for m in range(1, len(Q) - 1)])
+                    kreuz = np.cross(B[:, 1] - B[:, 0], B[:, 2] - B[:, 0])
+                    A = 0.5 * np.linalg.norm(kreuz, axis=1)
+                    P = (B[:, None, 0] + xi2[None, :, 0, None] * (B[:, None, 1] - B[:, None, 0])
+                         + xi2[None, :, 1, None] * (B[:, None, 2] - B[:, None, 0])).reshape(-1, 3)
+                    W = (A[:, None] * w2[None, :] * 2.0).ravel()
+                    if f.gekruemmt:
+                        # Flaechenfaktor Bogen/Sehne am Sehnenpunkt, dann Punkt auf die exakte Grundform
+                        n_f = np.repeat(kreuz / np.maximum(2.0 * A, 1e-300)[:, None], len(xi2), axis=0)
+                        W = W * f.flaechenfaktor(P, n_f)
+                        P = P - f.abstand(P)[:, None] * f.gradient(P)
+                    P_l.append(P)
+                    W_l.append(W)
+                    C_l.append(np.full(len(P), c))
+                    Q_l.append(np.full(len(P), quelle[t]))
         if not P_l:
             return cls.leer()
         P = np.concatenate(P_l)

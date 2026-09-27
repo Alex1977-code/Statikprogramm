@@ -20,8 +20,9 @@ from ..linalg.direkt import Direktloeser
 from . import rand
 from .aggregation import Zellaggregation
 from .elastizitaet import assemblieren
-from .gitter import CUT, Gitter
+from .gitter import CUT, Gitter, Verfeinerung
 from .quadratur import Zellquadratur
+from .zwaenge import Zwaenge
 
 
 @dataclass(frozen=True)
@@ -46,7 +47,8 @@ class Verschiebungsrand:
 class FcmProblem:
     def __init__(self, geometrie, h: float, p: int, werkstoff: Werkstoff, alpha: float = 1e-8, tiefe: int = 2,
                  polster: float = 0.1, beta_faktor: float = 10.0, facette_mm: float | None = None,
-                 ordnung_flaeche: int | None = None, aggregation: float | None = 0.25) -> None:
+                 ordnung_flaeche: int | None = None, aggregation: float | None = 0.25,
+                 verfeinerung: Verfeinerung | None = None) -> None:
         if not 1 <= p <= 4:
             raise ValueError("p muss zwischen 1 und 4 liegen")
         self.geometrie = geometrie
@@ -55,7 +57,8 @@ class FcmProblem:
         self.alpha = float(alpha)
         self.tiefe = int(tiefe)
         self.beta_faktor = float(beta_faktor)
-        self.gitter = Gitter(geometrie, h, polster)
+        self.verfeinerung = verfeinerung or Verfeinerung()
+        self.gitter = Gitter(geometrie, h, polster, self.verfeinerung)
         self.gitter.moden_nummerieren(self.p)
         self.quadratur = Zellquadratur(self.gitter, self.p, self.tiefe, self.alpha)
         # Zellaggregation (Vorgabe 8.3): Moden schlecht geschnittener Zellen an die Fortsetzung
@@ -70,6 +73,8 @@ class FcmProblem:
             ag = self.aggregation
             behalten = ag.schlecht & (ag.wurzel < 0)
             self.quadratur.alpha_entfernen(np.flatnonzero((self.gitter.klasse == CUT) & ~behalten))
+        # haengende Freiheitsgrade des Oktrees und Aggregation in einer Zwangsmatrix
+        self.zwaenge = Zwaenge(self.gitter, self.aggregation)
         # int (sigma n).v exakt fuer v vom Tensorgrad p (Gesamtgrad 3p auf der Flaeche): 2n-1 >= 3p
         self.ordnung_flaeche = ordnung_flaeche or int(np.ceil((3 * self.p + 1) / 2))
         self.facette_mm = facette_mm
@@ -129,18 +134,18 @@ class FcmProblem:
         for r in self.raender.values():
             art = "normal" if r.projektion == "schnitt" else r.projektion
             K = K + rand.nitsche_steifigkeit(self.gitter, r.quadratur, self.werkstoff.E, self.werkstoff.nu,
-                                             self.beta, art).tocsr()
+                                             self.beta_faktor, art).tocsr()
             if r.projektion == "schnitt":
                 r.zwang_start = sum(len(z) for z in zwaenge)
                 zwaenge.append(rand.mittelwert_zwaenge(self.gitter, r.quadratur, r.moden))
         self.K = K
         self._B = np.concatenate(zwaenge, axis=0) if zwaenge else None
         t1 = time.perf_counter()
-        C = self.aggregation.C if self.aggregation is not None else None
-        K_red = (C.T @ K @ C).tocsr() if C is not None else K
+        C = self.zwaenge.C
+        K_red = (C.T @ K @ C).tocsr()
         if self._B is not None:
             # Sattelpunkt [[K, B^T], [B, 0]]: Multiplikatoren = Resultierende der Mittelwertzwaenge
-            B_red = sp.csr_matrix(self._B @ C if C is not None else self._B)
+            B_red = sp.csr_matrix(self._B @ C)
             nz = B_red.shape[0]
             K_red = sp.bmat([[K_red, B_red.T], [B_red, sp.csr_matrix((nz, nz))]], format="csr")
         self._loeser = Direktloeser(K_red)
@@ -151,7 +156,8 @@ class FcmProblem:
             "p": self.p, "h_mm": self.gitter.h, "alpha": self.alpha, "tiefe": self.tiefe,
             "beta": self.beta, "beta_faktor": self.beta_faktor, "ordnung_flaeche": self.ordnung_flaeche,
             "zellen": int(len(self.gitter.ijk)), "cut": int((self.gitter.klasse == CUT).sum()),
-            "dofs": int(self.gitter.n_dof), "dofs_frei": int(self._loeser.n), "nnz": int(K.nnz),
+            "dofs": int(self.gitter.n_dof), "dofs_frei": int(3 * self.zwaenge.statistik["moden_frei"]), "nnz": int(K.nnz),
+            "ebenen": self.gitter.ebenen_verteilung(), "zwaenge": dict(self.zwaenge.statistik),
             "aggregation": dict(self.aggregation.statistik) if self.aggregation is not None else None,
             "quadraturpunkte": self.quadratur.anzahl_punkte(), "quadratur": dict(self.quadratur.statistik),
             "oberflaechenpunkte": int(len(self.oberflaeche.punkte)), "oberflaeche": dict(self.oberflaeche.statistik),
@@ -170,7 +176,7 @@ class FcmProblem:
             G = np.asarray(g(r.quadratur.punkte) if callable(g) else np.broadcast_to(np.asarray(g, float), (n_p, 3)), float)
             art = "normal" if r.projektion == "schnitt" else r.projektion
             f = f + rand.nitsche_rechte_seite(self.gitter, r.quadratur, self.werkstoff.E, self.werkstoff.nu,
-                                              self.beta, art, G)
+                                              self.beta_faktor, art, G)
             if r.projektion == "schnitt":
                 d[r.zwang_start:r.zwang_start + 3] = rand.mittelwert_vorgabe(r.quadratur, r.moden, G)
         return np.concatenate([f, d]) if len(d) else f
@@ -184,14 +190,14 @@ class FcmProblem:
         t0 = time.perf_counter()
         F = np.stack([self.rechte_seite(v) for v in liste], axis=1)
         n = self.gitter.n_dof
-        C = self.aggregation.C if self.aggregation is not None else None
-        F_red = np.asarray(C.T @ F[:n]) if C is not None else F[:n]
+        C = self.zwaenge.C
+        F_red = np.asarray(C.T @ F[:n])
         if self.n_zwaenge:
             F_red = np.concatenate([F_red, F[n:]], axis=0)
         X = self._loeser.loesen(F_red)
         m = X.shape[0] - self.n_zwaenge
         self.multiplikatoren = X[m:] if self.n_zwaenge else np.zeros((0, len(liste)))
-        U = np.asarray(C @ X[:m]) if C is not None else X[:m]
+        U = np.asarray(C @ X[:m])
         self.protokoll["t_loesen_s"] = round(time.perf_counter() - t0, 3)
         # Residuum: Direktloeser liefern bei singulaerer Matrix endliche Zahlen (Gutachten 27.09.:
         # freier Quader unter Traktion, max |u| 1e12 mm ohne Fehler); ein relatives Residuum

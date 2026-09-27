@@ -51,15 +51,21 @@ def _zellweise(gitter, fq):
     for k, c in enumerate(zellen):
         idx = reihenfolge[grenzen[k]:grenzen[k + 1]]
         N, dN = basis_3d(gitter.p, fq.xi[idx])
-        yield int(c), idx, N, dN * (2.0 / gitter.h)
+        yield int(c), idx, N, dN * (2.0 / float(gitter.h_zelle(int(c))))
 
 
-def nitsche_steifigkeit(gitter, fq, E: float, nu: float, beta: float, art: str) -> sp.coo_matrix:
+def beta_zelle(gitter, c: int, E: float, beta_faktor: float) -> float:
+    """Nitsche-Parameter je Zelle: C * E * p^2 / h_c (Vorgabe Abschnitt 7)."""
+    return float(beta_faktor) * float(E) * int(gitter.p) ** 2 / float(gitter.h_zelle(c))
+
+
+def nitsche_steifigkeit(gitter, fq, E: float, nu: float, beta_faktor: float, art: str) -> sp.coo_matrix:
     D = d_matrix(E, nu)
     m = anzahl_moden(gitter.p)
     n = gitter.n_dof
     Z, S, V = [], [], []
     for c, idx, N, G in _zellweise(gitter, fq):
+        beta = beta_zelle(gitter, c, E, beta_faktor)
         w = fq.gewichte[idx]
         T = np.einsum("qab,bc,qcd->qad", nn_matrizen(fq.normalen[idx]), D, b_matrizen(G))   # (q,3,3m)
         PN = np.einsum("qab,qbd->qad", projektionen(art, fq.normalen[idx]), n_matrizen(N))  # (q,3,3m)
@@ -76,12 +82,13 @@ def nitsche_steifigkeit(gitter, fq, E: float, nu: float, beta: float, art: str) 
     return sp.coo_matrix((np.concatenate(V), (np.concatenate(Z), np.concatenate(S))), shape=(n, n))
 
 
-def nitsche_rechte_seite(gitter, fq, E: float, nu: float, beta: float, art: str, g: np.ndarray) -> np.ndarray:
+def nitsche_rechte_seite(gitter, fq, E: float, nu: float, beta_faktor: float, art: str, g: np.ndarray) -> np.ndarray:
     """Vorgabe g (nq,3) an den Quadraturpunkten -> f (n_dof,)."""
     D = d_matrix(E, nu)
     g = np.asarray(g, float).reshape(-1, 3)
     f = np.zeros(gitter.n_dof)
     for c, idx, N, G in _zellweise(gitter, fq):
+        beta = beta_zelle(gitter, c, E, beta_faktor)
         w = fq.gewichte[idx]
         T = np.einsum("qab,bc,qcd->qad", nn_matrizen(fq.normalen[idx]), D, b_matrizen(G))
         Pg = np.einsum("qab,qb->qa", projektionen(art, fq.normalen[idx]), g[idx])               # (q,3)
@@ -151,5 +158,5 @@ def volumenlast(gitter, quadratur, b: np.ndarray) -> np.ndarray:
     return f
 
 
-__all__ = ["nn_matrizen", "projektionen", "nitsche_steifigkeit", "nitsche_rechte_seite", "flaechenlast", "volumenlast",
-           "starrkoerper_moden", "mittelwert_zwaenge", "mittelwert_vorgabe"]
+__all__ = ["nn_matrizen", "projektionen", "beta_zelle", "nitsche_steifigkeit", "nitsche_rechte_seite", "flaechenlast",
+           "volumenlast", "starrkoerper_moden", "mittelwert_zwaenge", "mittelwert_vorgabe"]

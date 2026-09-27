@@ -32,7 +32,7 @@ def kt_referenz():
     return heywood, pilkey
 
 
-def _platte(p, h, versatz=0.0, polster=0.1):
+def _platte(p, h, versatz=0.0, polster=0.1, verfeinerung=None):
     from volumen3d.fcm.problem import FcmProblem, Werkstoff
     from volumen3d.geometry.csg import aus_params
     g = aus_params({"csg": {"typ": "differenz", "teile": [
@@ -41,7 +41,7 @@ def _platte(p, h, versatz=0.0, polster=0.1):
             {"typ": "halbraum", "punkt": [0, 0, 0], "normale": [-1, 0, 0], "name": "sym_x"},
             {"typ": "halbraum", "punkt": [0, 0, 0], "normale": [0, -1, 0], "name": "sym_y"}]},
         {"typ": "zylinder", "p0": [0, 0, -1], "p1": [0, 0, T + 1], "radius": D / 2, "name": "loch"}]}})
-    pr = FcmProblem(g, h=h, p=p, werkstoff=Werkstoff(E, NU), polster=polster + versatz)
+    pr = FcmProblem(g, h=h, p=p, werkstoff=Werkstoff(E, NU), polster=polster + versatz, verfeinerung=verfeinerung)
     pr.verschiebungsrand("sym_x", "sym_x", projektion="normal")
     pr.verschiebungsrand("sym_y", "sym_y", projektion="normal")
     stirn = pr.oberflaeche.auswahl((pr.oberflaeche.name.astype(str) == "platte") & (np.abs(pr.oberflaeche.punkte[:, 0] - L / 2) < 1e-6))
@@ -100,5 +100,38 @@ def test_schnittlage():
           s_fein >= 0.0, f"{s_fein * 100:.2f} % (Ziel < 1 %)")
 
 
+def test_verfeinert():
+    """U3 (Teilprojekt 2): Loch lokal verfeinert (Bereich Radius r + h um die Lochachse, Zielgroesse h/4)
+    statt gleichmaessig h = r/4: Schnittlagen-Streuung < 1 % bei einem Bruchteil der Freiheitsgrade."""
+    from volumen3d.fcm.gitter import Gitter, Verfeinerung
+    from volumen3d.geometry.csg import aus_params
+    hw, pk = kt_referenz()
+    ref = 0.5 * (hw + pk)
+    v = Verfeinerung(bereiche=((np.array([0.0, 0.0, T / 2]), D / 2 + 10.0, 2.5),))
+    t = time.perf_counter()
+    werte, dofs = [], []
+    for lage in (0.0, 0.4, 0.8):
+        pr = _platte(3, 10.0, versatz=lage, verfeinerung=v)
+        werte.append(_kt(pr)[0])
+        dofs.append(pr.protokoll["dofs_frei"])
+        prot = pr.protokoll
+    streuung = (max(werte) - min(werte)) / np.mean(werte)
+    # Vergleich: gleichmaessig h = 2,5 haette so viele freie Moden (nur Gitter, keine Rechnung)
+    g = aus_params({"csg": {"typ": "differenz", "teile": [
+        {"typ": "schnitt", "teile": [
+            {"typ": "quader", "min": [-5, -5, 0], "max": [L / 2, W / 2, T], "name": "platte"},
+            {"typ": "halbraum", "punkt": [0, 0, 0], "normale": [-1, 0, 0], "name": "sym_x"},
+            {"typ": "halbraum", "punkt": [0, 0, 0], "normale": [0, -1, 0], "name": "sym_y"}]},
+        {"typ": "zylinder", "p0": [0, 0, -1], "p1": [0, 0, T + 1], "radius": D / 2, "name": "loch"}]}})
+    G = Gitter(g, h=2.5)
+    G.moden_nummerieren(3)
+    check("lokal verfeinert (Ebenen bis 2 am Loch), p=3, drei Lagen: Schnittlagen-Streuung < 1 %", streuung < 0.01,
+          " ".join(f"{w:.4f}" for w in werte) + f" -> {streuung * 100:.2f} % (Referenz {ref:.3f}); Ebenen {prot['ebenen']}, "
+          f"haengende Flaechen {prot['zwaenge']['haengende_flaechen']}, {time.perf_counter() - t:.0f} s")
+    check("dabei weniger als 40 % der Freiheitsgrade des gleichmaessigen Gitters h = 2,5",
+          max(dofs) < 0.4 * G.n_dof, f"{max(dofs)} frei gegen {G.n_dof} gleichmaessig")
+    check("K_tg in Plattenmitte innerhalb 2 % der Referenz (3D-Effekt +1 % enthalten)", abs(np.mean(werte) / ref - 1) < 0.02, f"{np.mean(werte):.4f} / {ref:.3f}")
+
+
 if __name__ == "__main__":
-    sys.exit(lauf([test_kirsch, test_schnittlage]))
+    sys.exit(lauf([test_kirsch, test_schnittlage, test_verfeinert]))

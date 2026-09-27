@@ -464,8 +464,19 @@ gleichmäßigen Gitters), Lamé aus STL wie aus CSG, Innen/Außen-Test an einem 
   beiden groben Nachbarn die gemeinsame Kante teilen). Danach die **Zellaggregation** nur noch für
   Moden, die noch frei sind: so bleibt die Stetigkeit über hängende Flächen auch bei schlecht
   geschnittenen feinen Zellen erhalten, und lineare Felder bleiben exakt (beide Vorschriften
-  reproduzieren sie). Ketten (Meister selbst gebunden) werden durch Einsetzen aufgelöst;
-  ein Zyklus ist ein Fehler.
+  reproduzieren sie). Ketten (Meister selbst gebunden) werden durch Einsetzen aufgelöst. Ein
+  Selbstbezug (der Mode taucht in seiner eigenen aufgelösten Vorschrift auf) ist mit
+  Koeffizient 1 und leerem Rest eine Tautologie – zwei Vorschriften mit derselben Spur – und
+  der Mode bleibt frei (`zyklen_frei`); mit Koeffizient c ≠ 1 wird nach dem Mode aufgelöst
+  (`zyklen_geloest`); Koeffizient 1 mit Rest ≠ 0 ist eine Bedingung an die Meistermoden, die
+  die Substitution nicht ausdrücken kann – der Mode bleibt frei, der größte Rest steht im
+  Protokoll (`zyklen_rest_max`), die Vertragsschicht warnt (Gutachten 27.09.). Die Wurzelwahl
+  der Aggregation (gleiche oder gröbere Ebene zuerst) hält Selbstbezüge aus den Abnahmen
+  heraus (Kirsch, Lamé, Kragarm: 0); im verfeinerten Patch-Test (`test_zwaenge`, dünne Wand
+  mit vielen aggregierten feinen Zellen) sind es 53 mit Rest bis 2,45 bei weiterhin u, σ <
+  10⁻⁶ – für lineare Felder sind die Bedingungen also erfüllt, für allgemeine Felder ist die
+  Stetigkeit an diesen Moden nicht bewiesen. **Offen (Teilprojekt 3):** die Konfiguration
+  verstehen und die Bedingung an die Meister ausdrücken.
 - Ergebnis wie bisher eine Zwangsmatrix C (n_dof × n_frei); Löser, Lasten und Auswertung bleiben
   unverändert.
 
@@ -478,24 +489,76 @@ gleichmäßigen Gitters), Lamé aus STL wie aus CSG, Innen/Außen-Test an einem 
   alle Dreiecke (numpy, n·m); für Netze über ~10⁴ Dreiecke kommt der schnelle Windungszahl-Baum
   (Barill u. a. 2018) mit Teilprojekt 5 – hier steht die Korrektheit vorn, die Kosten stehen im
   Protokoll.
-- **Lokal eben:** ein STL ist stückweise eben. Für eine Teilbox liefern die sie schneidenden
-  Dreiecke die lokalen Ebenen; unterscheiden sich deren Normalen um mehr als ein Grad, wird die
-  Teilbox geteilt (bis zur Höchsttiefe, danach Punkttest mit Windungszahl), sonst ist die
-  Integration wie bei Halbräumen exakt. `flaechenfaktor` = 1, `kruemmungsradius` = ∞,
-  `dreiecke()` = die Facetten selbst, Gradient = Normale des nächsten Dreiecks (Vorzeichen aus
-  der Windungszahl). Im CSG-Baum ist das STL eine Grundform (`{"typ": "stl", "pfad": …}`), also
-  auch schneidbar mit Halbräumen (Schnittebenen) und Löchern.
-- Innen/Außen-Prüfung: Würfel-STL mit einer fehlenden Facette (Lücke): Windungszahl klassifiziert
-  weiter richtig, ein Strahltest nicht.
+- **Lokal eben, drei Lagen:** ein STL ist stückweise eben. Für eine Teilbox liefern die
+  Facetten, die ihre Umkugel berühren, die lokalen Ebenen (koplanare zusammengefasst), und
+  `lokale_lage` sagt, wie der Werkstoff daraus entsteht: **konvex** (alle Ecken der
+  berührenden Facetten auf der Werkstoffseite aller Ebenen: Werkstoff = Schnitt der Halbräume,
+  wie bei den Grundformen), **konkav** (alle Ecken auf der Leerseite: Bohrungswand,
+  einspringende Kante – der Leerraum ist der Schnitt der gespiegelten Halbräume, der Werkstoff
+  ihre Vereinigung, in `csg._form_teile` als Kugel minus Leerraum mit `_subtrahieren`), oder
+  **gemischt** (Deckel trifft Bohrungswand, Sattel). Gemischt gilt je Ebene ihr Typ: vom
+  Schnitt-Typ, wenn alle Ecken der berührenden Facetten auf ihrer Werkstoffseite liegen, sonst
+  vom Vereinigungs-Typ; der Werkstoff ist der Schnitt der Schnitt-Typ-Halbräume mit der
+  Vereinigung der übrigen (`csg._form_teile`), geprüft an den Proben der Teilbox gegen das
+  Vorzeichen des Formabstands (`_pruefe_teile`). Scheitert die Prüfung, zerlegt `csg._bsp_teile`
+  den Würfel um die Teilbox per binärer Raumteilung an den lokalen Ebenen (höchstens sechs) in
+  konvexe Zellen, die ein Zeuge (Zellschwerpunkt im einbeschriebenen Würfel, per Windungszahl)
+  klassifiziert; erst danach gibt `lokale_stuecke` None zurück, die Teilbox wird weiter geteilt
+  und zuletzt per Punkttest integriert (Zähler `blaetter_punkttest`). Gemessen am Viertelring
+  (h 10, p 3, belegte Maschine): ohne konkave Lage 6573 Punkttest-Blätter, 10,5 Mio. Randpunkte,
+  509 s; mit konkaver Lage, gemischt per Raumteilung 1010 s (29 895 Aufrufe, weil jedes 20 mm
+  hohe Wandfacetten-Polygon beide Deckel berührt); mit der Schnitt/Vereinigungs-Regel 43,7 s,
+  368 050 Randpunkte, 245 Blätter, kein Punkttest.
+  `flaechenfaktor` = 1, `kruemmungsradius` = ∞, `dreiecke()` = die Facetten selbst, Gradient =
+  Richtung zum nächsten Punkt der Hülle, auf der Hülle die Facettennormale (Vorzeichen aus der
+  Windungszahl). Im CSG-Baum ist das STL eine Grundform (`{"typ": "stl", "pfad": …}` oder
+  `"dreiecke"` direkt), also auch schneidbar mit Halbräumen (Schnittebenen) und Löchern.
+- **Suchbaum:** nächste Punkte über eine BVH (`geometry/dreiecksbaum.py`: Median-Teilung der
+  Schwerpunkte, Boxabstand schneidet Teilbäume ab, numba-Kern mit Stapel je Punkt, seriell
+  unter 256 Punkten wegen 0,2 ms Threadstart); ohne numba ein k-d-Baum über Facettenschwerpunkte
+  mit exakter Kugelschranke (`stl._DreieckIndex`, Facetten mit R > 1 % der Diagonale für den
+  Index geviertelt). Beide liefern dieselben Punkte wie die volle Suche (Prüfung
+  `test_suchbaum`). Windungszahl als numba-Kern (Summationsreihenfolge einzig ein Unterschied,
+  < 10⁻¹¹), −0,0 → +0,0 im Zähler, damit Punkte genau in einer Facettenebene beidseits gleich
+  zählen. Der schnelle Windungszahl-Baum (Barill 2018) bleibt für Teilprojekt 5.
+- **Orientierung und Defekt:** eine einzeln verkehrt gewickelte Facette ist mit der Windungszahl
+  an ihrer eigenen Probe nicht zu erkennen (ihr eigener Raumwinkel ±½ überdeckt den Rest;
+  Gutachten 27.09.), dreht aber Innen/Außen in ihrer Umgebung um. Darum wickelt
+  `_konsistent_orientieren` die Facetten über gemeinsame Kanten einheitlich (Nachbarn
+  durchlaufen die Kante entgegengesetzt; Breitensuche je Zusammenhangskomponente, Kanten mit
+  mehr als zwei Facetten tragen nicht und werden gezählt), richtet jede Komponente über ihr
+  Vorzeichenvolumen nach außen und Komponenten ungerader Verschachtelungstiefe (Hohlräume) nach
+  innen; `umgedreht` zählt die gewendeten Facetten. Als Sicherung bleibt der |w|-Vergleich
+  beidseits einer Stichprobe (mit falsch orientierten Facetten ist w innen −1, das Vorzeichen
+  allein taugt nicht). `defekt` = größte Abweichung von w von 0/1 an dieser Stichprobe: 0 bei
+  geschlossener Hülle; bei einer Lücke von 1/12 der Oberfläche 0,097. Die Vertragsschicht lehnt
+  `defekt` > ¼ ab (Innen/Außen nicht mehr eindeutig) und warnt ab 10⁻³ (Flächenlasten auf der
+  Lücke fehlen). Prüfungen: Würfel mit einer verkehrten Facette (umgedreht 1, innen unter ihr
+  richtig), Hohlwürfel 30/10 (Hohlraumschale nach innen, Wand innen, Hohlraum außen, Defekt 0).
+- **Zweite Sicht (Gutachten 27.09.) eingearbeitet:** Randpolygone genau in einer Zellfläche
+  kamen nach Rundung um ein ulp in keiner Zelle an (`dreieck_an_box_clippen` clippt jetzt mit
+  Toleranz 10⁻¹²·h, die Werkstoffseite entscheidet); die Prüfung der gemischten STL-Zerlegung
+  war für Flächenpolygone leer (alle Proben auf der Fläche) – jetzt kommen Proben knapp
+  beidseits dazu; Selbstbezug mit Koeffizient 1 und Rest ≠ 0 bricht ab statt still eine
+  Bedingung zu streichen; abgeschnittene Werkstoffläufe zählen nicht als dünne Wand; ein Loch,
+  das die ganze Kugel füllt, löscht alle Stücke; `Dreiecksbaum` mit 0 Facetten. Nicht geändert:
+  koplanare antiparallele Facetten (innere Doppelfläche) werden zu einer Ebene mit der zuerst
+  gesehenen Normale zusammengefasst – im Volumenpfad fängt das die Probenprüfung, im
+  Flächenpfad der Zeugentest.
+- Innen/Außen-Prüfung: Würfel-STL mit einer fehlenden Facette (Lücke): Windungszahl innen 11/12,
+  außen 1/12 (Summe 1), klassifiziert weiter richtig; ein Strahltest durch die Lücke nicht.
 
 ### 4b.4 Geometriekern schneller
 
-Gemessen dominiert die Flächenquadratur den Aufbau (Profil: 99 von 106 s). Maßnahmen ohne
-Verhaltensänderung, jeweils gegen die Suiten geprüft: die acht Kinder einer Teilbox mit einem
-Aufruf klassifizieren; Abstände aller Grundformen für alle Proben einer Zelle in einem Aufruf
-(`lokale_stuecke` bekommt die vorab berechneten Werte); Modennummerierung über gepackte
-int64-Schlüssel und `np.unique`; Zellen-in-Box statt Dreieck×Wurzelzelle-Schleife. Ziel: Lamé
-h = 10, p = 3 Aufbau unter 20 s (bisher 50 s).
+Gemessen dominiert die Flächenquadratur den Aufbau (Profil: 99 von 106 s). Umgesetzt in
+Teilprojekt 2 (jeweils gegen die Suiten geprüft, Ergebnisse unverändert): Blätter-in-Box statt
+Dreieck×Wurzelzelle-Schleife (`gitter.blaetter_in_box`), Abstände je Grundform an den Proben
+einer Teilbox nur einmal (`lokale_stuecke`), STL-Kern mit BVH und numba-Windungszahl
+(Abschnitt 4b.3: Viertelring von 509 s auf 43,7 s). **Offen:** die acht Kinder einer Teilbox
+gemeinsam klassifizieren und die Modennummerierung über gepackte int64-Schlüssel. Stand
+27.09.2026 auf der durch die Hauptsitzung belegten Maschine (88 % Last): Lamé CSG h = 10, p = 3
+Aufbau 41,9 s (286 Zellen, 218 143 Randpunkte, 3516 Tangentialblätter); das Ziel „unter 20 s“
+ist unbelastet zu messen und bleibt für den nächsten Schritt notiert.
 
 ### 4b.5 Prüfungen
 

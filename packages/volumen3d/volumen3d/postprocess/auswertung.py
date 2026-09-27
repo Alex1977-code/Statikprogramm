@@ -54,14 +54,16 @@ class Auswertung:
     def spannung(self, P) -> np.ndarray:
         g, c, xi, Uc = self._lokal(P)
         _, dN = basis_3d(g.p, xi)
-        eps = np.einsum("nsd,nd->ns", b_matrizen(dN * (2.0 / g.h)), Uc)
+        skal = (2.0 / np.asarray(g.h_zelle(c), float))[:, None, None]
+        eps = np.einsum("nsd,nd->ns", b_matrizen(dN * skal), Uc)
         return eps @ self.D.T
 
     def spannung_und_verschiebung(self, P) -> tuple[np.ndarray, np.ndarray]:
         g, c, xi, Uc = self._lokal(P)
         N, dN = basis_3d(g.p, xi)
         u = np.einsum("ni,nia->na", N, Uc.reshape(len(N), -1, 3))
-        eps = np.einsum("nsd,nd->ns", b_matrizen(dN * (2.0 / g.h)), Uc)
+        skal = (2.0 / np.asarray(g.h_zelle(c), float))[:, None, None]
+        eps = np.einsum("nsd,nd->ns", b_matrizen(dN * skal), Uc)
         return eps @ self.D.T, u
 
     def schnittgroessen(self, fq, ursprung) -> tuple[np.ndarray, np.ndarray]:

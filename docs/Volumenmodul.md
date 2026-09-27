@@ -44,20 +44,21 @@ wachsender plastischer Dehnung, `on_step`).
   Erwartungswerten – gemeinsam mit Session B.
 
 
-## Session B: Stand des Volumenmoduls `volumen3d` (Teilprojekt 1, 27.09.2026)
+## Session B: Stand des Volumenmoduls `volumen3d` (Teilprojekte 1 und 2 = Stufe 1, 27.09.2026)
 
 Zweig `feature/volumen3d` (Worktree `Desktop/Statik3D/statik3d-volumen3d`, eigene venv mit
-numba und cupy für die späteren Stufen). Entwurf und Zerlegung: `packages/volumen3d/docs/Entwurf.md`;
-Plan: `packages/volumen3d/docs/plaene/2026-09-27-tp1-fcm-kern.md`; Theorie und Messwerte:
-`docs/Theoriehandbuch.md`, Kapitel 11. Regeln der Sitzung: `packages/volumen3d/CLAUDE.md`.
+numba und cupy für die späteren Stufen). Entwurf und Zerlegung: `packages/volumen3d/docs/Entwurf.md`
+(Abschnitt 4b: Teilprojekt 2); Pläne: `packages/volumen3d/docs/plaene/`; Theorie und Messwerte:
+`docs/Theoriehandbuch.md`, Kapitel 11 (11.8: Teilprojekt 2). Regeln der Sitzung:
+`packages/volumen3d/CLAUDE.md`.
 
 | Teil | Ort | Stand |
 |---|---|---|
 | Paket nach Vertrag Abschnitt 1 | `packages/volumen3d/` (geometry, fcm, linalg, postprocess, api) | Entry Points `fcm` (echt) und `hybrid` (Platzhalter bis TP 7), `import-linter` (`.importlinter`) und `mypy --strict api.py` in der CI |
-| Geometriekern | `geometry/sdf.py`, `csg.py`, `polyeder.py`, `oberflaeche.py` | CSG aus `GeometrySource.params` (Quader, Zylinder, Kugel, Halbraum; Vereinigung, Differenz, Schnitt), konservative Abstände, lokale konvexe Stücke, Flächenquadratur auf der exakten Oberfläche |
-| FCM-Kern | `fcm/basis.py`, `gitter.py`, `quadratur.py`, `aggregation.py`, `elastizitaet.py`, `rand.py`, `problem.py` | Legendre-Basis p = 1…4, Wurzelgitter (Oktree-Ebene 0), ebenen-exakte Schnittzellen-Integration, Zellaggregation, Nitsche (voll / normal / schnitt), Lasten, Direktlöser (pypardiso, sonst SuperLU) |
-| Vertragsschicht | `api.py` | `FcmSolver.estimate/prepare/solve`, `FcmDiskretisierung` (summary, preview mit Zellklassen), Kopplungskontrolle je Schnittebene mit Multiplikatoren und Warnung > 5 %, Protokoll |
-| Prüfungen | `packages/volumen3d/volumen3d/tests/` | Kernsuite `test_kern` (in `run_all` und CI); Abnahmen `test_patch` (< 10⁻⁶: gemessen 10⁻¹²…10⁻⁸), `test_kragarm` (reine Biegung exakt, Stub gegen Timoshenko −0,9 % / +2,7 %), `test_lame` (p = 3: σ_r 0,32 %, σ_φ 0,03 %), `test_kirsch` (K_tg +1,35 % gegen Howland; **Schnittlagen-Streuung 7,9 % – Abnahme < 1 % offen bis zur Verfeinerung an Bohrungen in TP 2**) |
+| Geometriekern | `geometry/sdf.py`, `csg.py`, `polyeder.py`, `oberflaeche.py`, `stl.py`, `dreiecksbaum.py` | CSG aus `GeometrySource.params` (Quader, Zylinder, Kugel, Halbraum, **STL**; Vereinigung, Differenz, Schnitt), konservative Abstände, lokale konvexe Stücke (STL: konvex / konkav / gemischt per binärer Raumteilung), Flächenquadratur auf der exakten Oberfläche; Randpolygone auf Zellflächen zählen genau einmal. STL: Windungszahl (robust gegen Lücken, `defekt` im Protokoll), BVH mit numba (ohne numba k-d-Baum-Index, gleiche Ergebnisse) |
+| FCM-Kern | `fcm/basis.py`, `gitter.py`, `zwaenge.py`, `quadratur.py`, `aggregation.py`, `elastizitaet.py`, `rand.py`, `problem.py` | Legendre-Basis p = 1…4, **Oktree** (Schnittzellen, `RefinementRegion`, dünne Wände, 2:1 über 26 Nachbarn), **hängende Freiheitsgrade** und Zellaggregation in einer Zwangsmatrix, ebenen-exakte Schnittzellen-Integration, Nitsche (voll / normal / schnitt) mit β je Zelle, Lasten, Direktlöser (pypardiso, sonst SuperLU) |
+| Vertragsschicht | `api.py` | `FcmSolver.estimate/prepare/solve`, `FcmDiskretisierung` (summary mit Ebenen, hängenden Flächen, freien Freiheitsgraden; preview mit Zellklassen), `GeometrySourceType.CSG` und `STL` (`path`), Kopplungskontrolle je Schnittebene mit Multiplikatoren und Warnung > 5 %, Protokoll |
+| Prüfungen | `packages/volumen3d/volumen3d/tests/` | Kernsuite `test_kern` (in `run_all` und CI, enthält Oktree, Zwänge, STL-Kurzfassung); Abnahmen `test_patch` (< 10⁻⁶ auch mit hängenden Freiheitsgraden), `test_zwaenge`, `test_oktree`, `test_kragarm` (reine Biegung exakt, Stub gegen Timoshenko −0,9 % / +2,7 %), `test_lame` (p = 3: σ_r 0,32 %, σ_φ 0,03 %), `test_kirsch` (K_tg +1,35 % gegen Howland; **mit Bereichsverfeinerung am Loch Schnittlagen-Streuung 0,34 % bei 3,5 % der Freiheitsgrade des gleichmäßigen Gitters – Abnahme erfüllt**), `test_stl` (Würfel-STL und L-Körper exakt; Lamé aus tesselliertem Ring mit Facette 1 mm: σ_r 0,066 %, σ_φ 0,022 %, genauer als CSG mit Tangentialebenen) |
 
 **Bewusste Abweichungen von der Vorgabe (Messung, Begründung im Entwurf 3.5/3.6 und Theorie 11):**
 Punkttest der Schnittzellen nur als Rückfall (erster Ordnung, Patch-Test sonst unerreichbar);
@@ -71,6 +72,8 @@ Lasten im `DetailModelSpec` (Minor 2.1.0) und Klarstellung der Seite der Schnitt
 `stub`), `tests/run_all.py`, `.github/workflows/ci.yml`, `requirements.txt`, `.importlinter`,
 `docs/Theoriehandbuch.md` Kapitel 11.
 
-**Nächste Schritte (Teilprojekt 2, Stufe 1b):** Oktree-Verfeinerung mit hängenden
-Freiheitsgraden (Zwangsmatrix wie bei der Aggregation), STL-Eingang (BVH, Windungszahl),
-Geometriekern vektorisieren (die Flächenquadratur dominiert die Aufbauzeit), dann Pull Request 1.
+**Nächste Schritte:** Pull Request 1 (Stufe 1 = Teilprojekte 1 und 2), danach Teilprojekt 3
+(matrixfreie Operatoren und p-Mehrgitter auf der CPU mit numba, dann GPU mit cupy) nach Entwurf
+Abschnitt 4. Offen aus Teilprojekt 2: der schnelle Windungszahl-Baum für STL-Netze über 10⁵
+Facetten (Teilprojekt 5) und die Aufbauzeit der Flächenquadratur bei STL-Geometrie (Zeugen je
+Polygonstück fragen Windungszahl und Abstand einzeln ab).
