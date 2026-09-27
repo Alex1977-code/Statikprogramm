@@ -95,9 +95,10 @@ deren Kräfte allein aus Gleichgewicht und Reibgesetz folgen (K4, K5). Dort ist 
   Richtig rechnen die Fugen mit passenden Netzen, die Presspassung und der **Anfangsspalt**
   (K7): u_oben 1,7826 mm und F_c 82.174 kN auf 0,00 %, über die Geometrie und über
   `ContactPair.spiel` gleich. Falsch rechnen:
-  * **Reibung, Bauteil gleitet gegen eine Feder** (K5): Die Feder bekommt nur 14 % (hex8) bzw.
-    9 % (tet4) ihrer Kraft. Den Rest trägt die Reststeifigkeit der gleitenden Knoten, und die
-    erscheint in keiner Kontaktkraft (Befund 4).
+  * **Reibung, Bauteil gleitet gegen eine Feder** (K5): Die Feder bekam nur 14 % (hex8) bzw.
+    9 % (tet4) ihrer Kraft. Den Rest trug die Reststeifigkeit der gleitenden Knoten, und die
+    erschien in keiner Kontaktkraft (Befund 4) — **behoben 27.09.2026**, hex8 grün (Feder
+    +0,21 %), tet4 +1,45 % aus den festgehaltenen Gleitrichtungen (wie K4).
   * **Reibung, ein Klotz haftet und einer gleitet** (K4): Phase 2 läuft, Haften ist exakt. Die
     Feder am gleitenden Klotz weicht −3,45 % (hex8) bzw. −10,16 % (tet4) ab, und die
     Reibkraft hat quer zur Last eine Komponente von 2,51 % bzw. 3,60 % von μN (Befund 5).
@@ -211,10 +212,18 @@ zurück, und `SLIP_STIFFNESS_FINE` steht auf 1e-12. Damit wird hex8 grün: Reibu
 Feder +0,21 %. tet4 ist dann Reibung −0,74 %, quer +0,83 %, Feder +1,47 %, also noch rot
 (Rest wie Befund 5). Die Ursache für die 86 bis 91 % ist damit belegt.
 
-**Besitzer: Löser** (`contact.py`, Löser-Sitzung). Für den Anwender heißt das: Ein Bauteil, das
+**Besitzer: Löser** (`contact.py`, Löser-Sitzung). Für den Anwender hieß das: Ein Bauteil, das
 auf einer Reibfuge rutscht und von etwas anderem gehalten wird (Feder, Anschlag, Schraube),
-bekommt in dieses Andere nur einen Bruchteil der Kraft. Das Ergebnis liegt auf der unsicheren
+bekam in dieses Andere nur einen Bruchteil der Kraft. Das Ergebnis lag auf der unsicheren
 Seite.
+
+**Behoben 27.09.2026.** Die feine Feder gilt jetzt auch für eine ganz gleitende Gruppe, sobald
+das Bauteil ohne ihre Schubzeilen noch vollen Rang hat (`solver._gruppen_frei`, Lager und andere
+Fugen zählen mit); nur ein Bauteil ohne solchen Halt behält die grobe Feder samt Warnung. Lauf
+vom 27.09.2026: hex8 Reibung −0,10 %, Feder +0,21 % (grün); tet4 Reibung −0,74 %, quer +0,83 %,
+Feder +1,45 % (rot, Rest wie Befund 5). Am Klotz an der starren Knagge (`tests/test_supports`)
+stieg die Knaggenkraft von 78,5 auf 100 kN, am Stempel mit gewölbter Unterseite
+(`tests/test_plastizitaet`) trug die grobe Feder 211 kN; Theoriehandbuch 4.
 
 ### Befund 5: Haften und Gleiten in einem Kontaktpaar: Reststeifigkeit und festgehaltene Gleitrichtung (K4 Entwurf, tet4 und hex8)
 
@@ -339,7 +348,7 @@ Drehlager-Kontrolllauf der Löser-Sitzung.
 | 1 hex20-Mitten an gemeinsamen Flächen nicht geteilt | L3 Mittel/Fein hex20 | Vernetzer (Fable) |
 | 2 freier Vernetzer: gemeinsame Fläche nicht konform, h wirkt nicht | K1, KP1, L3 tet4/tet10, K2 tet4 (gelb) | Vernetzer (Fable) |
 | 3 Plastizität meldet „nicht konvergiert“ bei Übermaß als einziger Last | KP2 Entwurf | Löser |
-| 4 ganz gleitende Gruppe: Reststeifigkeit 1e-3 k_t trägt statt der Feder | K5 Entwurf | Löser (`contact.py`) |
+| 4 ganz gleitende Gruppe: Reststeifigkeit 1e-3 k_t trägt statt der Feder | K5 Entwurf | Löser (`contact.py`) — **behoben 27.09.2026** (feine Feder, wenn das Bauteil anderswo gehalten ist; hex8 grün, tet4 +1,45 %) |
 | 5 Phase 2: Reststeifigkeit 1e-8 k_t proportional zum Gleitweg, Gleitrichtung festgehalten | K4 Entwurf | Löser (`contact.py`) |
 | 6 ungleiche Netze an der Fuge geben gleichmäßigen Druck nicht weiter | K6 Entwurf | Löser (`contact.py`) |
 | hex20 sperrt bei ν → 0,5 (gelb) | P2 Mittel/Fein hex20 | Element-Sitzung |
@@ -371,7 +380,7 @@ Je Fall und Stufe (Tetraeder · Sechsflächner):
 | K2 Fuge ohne Zug, Zug öffnet (zwei Würfel, oben in Federn) | Kontakt | tet4 gelb · hex8 grün | tet10 gesperrt · hex20 gesperrt | tet10 gesperrt · hex20 gesperrt |
 | K3 Presspassung, ebene Fuge (Kontaktpaar mit Übermaß) | Kontakt | tet4 grün · hex8 grün | tet10 gesperrt · hex20 gesperrt | tet10 gesperrt · hex20 gesperrt |
 | K4 Fuge mit Reibung μ 0,3: Klotz A haftet, Klotz B gleitet gegen Federn (ein Kontaktpaar) | Kontakt | tet4 **rot** · hex8 **rot** | tet10 gesperrt · hex20 gesperrt | tet10 gesperrt · hex20 gesperrt |
-| K5 Fuge mit Reibung μ 0,3: ein Klotz gleitet ganz, der Rest geht in Federn | Kontakt | tet4 **rot** · hex8 **rot** | tet10 gesperrt · hex20 gesperrt | tet10 gesperrt · hex20 gesperrt |
+| K5 Fuge mit Reibung μ 0,3: ein Klotz gleitet ganz, der Rest geht in Federn | Kontakt | tet4 **rot** · hex8 grün (seit 27.09.2026) | tet10 gesperrt · hex20 gesperrt | tet10 gesperrt · hex20 gesperrt |
 | K6 Kontaktpaar mit ungleichen Netzen (oben 1,5-mal feiner als unten), Druck geht durch | Kontakt | tet4 **rot** · hex8 **rot** | tet10 gesperrt · hex20 gesperrt | tet10 gesperrt · hex20 gesperrt |
 | K7 Anfangsspalt g = 1 mm schließt sich unter Last (Kontaktpaar, oben Federn) | Kontakt | tet4 grün · hex8 grün | tet10 gesperrt · hex20 gesperrt | tet10 gesperrt · hex20 gesperrt |
 | P1 Druckstab einachsig, bilinear verfestigend (fy 235, E_t/E 5 %) | Plastizität | tet4 grün · hex8 grün | tet10 grün · hex20 grün | tet10 grün · hex20 grün |
@@ -480,12 +489,12 @@ Soll: Unterlage 2 × 1 × 1 m, unten eingespannt; darauf die Klötze A und B, je
 
 ### K5 Fuge mit Reibung μ 0,3: ein Klotz gleitet ganz, der Rest geht in Federn
 
-Soll: Unterlage 1 × 1 × 1 m, darauf nur Klotz B wie in K4 (p = 100 N/mm², H = 1,5 μN, Federn k = 1.000 kN/mm): Reibkraft = μN = 30.000 kN, Federkraft = H − μN = 15.000 kN. Alle Knoten der Gruppe gleiten; für eine ganz gleitende Gruppe nimmt contact.py die grobe Reststeifigkeit 1e-3 k_t (_k_res), gleich ob Phase 1 oder 2. Grenze: Kräfte 1 %. Exakt (die Kräfte folgen aus Gleichgewicht und Reibgesetz, unabhängig vom Netz; Fehler sind keine Diskretisierung): jede Überschreitung ist rot.
+Soll: Unterlage 1 × 1 × 1 m, darauf nur Klotz B wie in K4 (p = 100 N/mm², H = 1,5 μN, Federn k = 1.000 kN/mm): Reibkraft = μN = 30.000 kN, Federkraft = H − μN = 15.000 kN. Alle Knoten der Gruppe gleiten; bis zum 27.09.2026 nahm contact.py für eine ganz gleitende Gruppe die grobe Reststeifigkeit 1e-3 k_t (_k_res), gleich ob Phase 1 oder 2 — sie trug 86 / 91 % der Federkraft (Lauf 3: Feder B −86,09 % hex8, −90,67 % tet4). Seit dem 27.09.2026 bekommt eine ganz gleitende Gruppe die feine Feder, sobald das Bauteil anderswo gehalten ist (hier: die Federn; Rang des Teils ohne die Schubzeilen der Gruppe vollständig). Grenze: Kräfte 1 %. Exakt (die Kräfte folgen aus Gleichgewicht und Reibgesetz, unabhängig vom Netz; Fehler sind keine Diskretisierung): jede Überschreitung ist rot. Zeilen: Lauf vom 27.09.2026 (`--fall K4 K5 --ohne-zusatz`), K4 dabei unverändert gegen Lauf 3.
 
 | Stufe | Element | h [m] | Ergebnis | Fehler | Kontakt konv. | Plast. konv. | gest. Pivots | Unbekannte | Zeit [s] | Bemerkung |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Entwurf | tet4 | 0,5000 | **rot** | Reibung B -0,61 %; Reibung B quer +0,76 %; Feder B -90,67 % | ja | – | 0 | 135 | 0,0 | falsches Ergebnis (die Kräfte folgen aus Gleichgewicht und Reibgesetz, unabhängig vom Netz; Fehler sind keine Diskretisierung): Feder B -90,67 %; B: 9 Gleiten; Phase-2-Schritte 0 |
-| Entwurf | hex8 | 0,5000 | **rot** | Reibung B -0,10 %; Reibung B quer +0,00 %; Feder B -86,09 % | ja | – | 0 | 135 | 0,0 | falsches Ergebnis (die Kräfte folgen aus Gleichgewicht und Reibgesetz, unabhängig vom Netz; Fehler sind keine Diskretisierung): Feder B -86,09 %; B: 9 Gleiten; Phase-2-Schritte 3 |
+| Entwurf | tet4 | 0,5000 | **rot** | Reibung B -0,74 %; Reibung B quer +0,83 %; Feder B +1,45 % | ja | – | 0 | 135 | 0,0 | falsches Ergebnis (die Kräfte folgen aus Gleichgewicht und Reibgesetz, unabhängig vom Netz; Fehler sind keine Diskretisierung): Feder B 1,45 %; B: 9 Gleiten; Phase-2-Schritte 4 |
+| Entwurf | hex8 | 0,5000 | grün | Reibung B -0,10 %; Reibung B quer -0,00 %; Feder B +0,21 % | ja | – | 0 | 135 | 0,0 | B: 9 Gleiten; Phase-2-Schritte 5 |
 | Mittel | tet10 | 0,5000 | gesperrt | – | – | – | – | 600 | 0,0 | fugen.QuadratischeSeiten: Kontaktpaar Fuge |
 | Mittel | hex20 | 0,5000 | gesperrt | – | – | – | – | 396 | 0,0 | fugen.QuadratischeSeiten: Kontaktpaar Fuge |
 | Fein | tet10 | 0,2500 | gesperrt | – | – | – | – | 2.916 | 0,1 | fugen.QuadratischeSeiten: Kontaktpaar Fuge |
@@ -611,10 +620,14 @@ Bleibt rot, gemessen, offen:
   μ N. Eine Nachführung in Phase 2 ist als Fixpunkt instabil (der Fehler verdoppelt sich je Runde bei
   weicher Querhaltung); sie braucht die konsistente Tangente μ F_n/|Δt| quer zur Gleitrichtung —
   ein eigener Schritt, gehört zum Löser (jetzt diese Sitzung).
-* **K5** ganz gleitende Gruppe: die grobe Reststeifigkeit hält den Klotz, Feder B −86 / −91 %; das
-  Programm warnt „Bauteil rutscht“. Ein Ausgleich mit grober Feder wäre als Fixpunkt zu langsam
-  (Faktor 0,999 je Runde); die Lösung ist, die feine Feder auch dort zu nehmen und ein Rutschen ohne
-  Halt an der wachsenden Verschiebung zu erkennen — Löser.
+* **K5** ganz gleitende Gruppe: **hex8 grün seit 27.09.2026** (Feder B +0,21 %). Die feine Feder
+  gilt jetzt auch für eine ganz gleitende Gruppe, wenn das Bauteil anderswo gehalten ist (Rang des
+  Teils ohne ihre Schubzeilen vollständig, `solver._gruppen_frei`); nur ein Bauteil ohne solchen Halt
+  behält die grobe Feder samt Warnung „Bauteil rutscht“. Ein Ausgleich mit grober Feder wäre als
+  Fixpunkt zu langsam gewesen (Faktor 0,999 je Runde, gemessen −79 % statt −86 %). tet4 bleibt rot
+  mit Feder B +1,45 % und Reibung quer +0,83 % — dasselbe Bild wie K4 tet4 (Feder +0,87 %, quer
+  −3,57 %), also die festgehaltenen Gleitrichtungen an Eck- und Randknoten, nicht mehr die
+  Reststeifigkeit.
 * **K6** Kontaktpaar mit ungleichen Netzen: hex8 +74 N/mm², tet4 −13,6 N/mm² neben dem homogenen
   Zustand. Der Knoten-gegen-Fläche-Kontakt verteilt die Slave-Knotenkräfte mit den Formfunktionen
   auf die Master-Knoten; für ungleiche Netze ist das nicht die konsistente Knotenlast eines

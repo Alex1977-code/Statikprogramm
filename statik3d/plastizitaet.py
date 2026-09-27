@@ -961,6 +961,11 @@ def _schlussabnahme(rest: float, toleranz: float) -> bool:
 #: 25.09.2026). Schalter fuer die Ruecknahmeprobe in den Tests.
 BEZUG_PLASTISCHE_LAST = True
 
+#: Hoechstens so viele Newton-Schritte vom Abschluss aus, wenn die
+#: Schlussabnahme verfehlt wird (_newton, 27.09.2026). 0 = wie bis dahin:
+#: pruefen und "nicht konvergiert" melden.
+ABSCHLUSS_NACHSCHRITTE = 5
+
 
 def _bezug(norm_F: float, F_p_neu: np.ndarray) -> float:
     """Bezugsgroesse der Aenderung ||F_p,neu - F_p||: die aeussere Last ||F||.
@@ -1182,6 +1187,41 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
         if kontakt is not None:
             F_p_ende, _z, _i = schritt(model, u, basis_anfang, einst, elemente, None)
             rest = float(np.linalg.norm(F_p_ende - F_p)) / _bezug(norm_F, F_p_ende)
+            # Nachiteration vom Abschluss aus (27.09.2026): der volle
+            # Kontaktlauf des Abschlusses kann u so verschieben, dass F_p nicht
+            # mehr passt. Bis dahin hiess das "nicht konvergiert", Schluss. Ein
+            # Newton, der die Abnahme verfehlt, versucht sie erst: je Runde ein
+            # Newton-Schritt mit der Tangente an der Abschlussloesung (Basis
+            # weiter der Anfang der letzten Stufe) und ein neuer Abschluss.
+            # Gemessen am Stempel mit ganz gleitender Fuge (feine Reststeifig-
+            # keit, K5): Rest 4,75e-3 nach dem ersten Abschluss bei Toleranz
+            # 1e-3 - die grobe Feder hatte den Stempel vorher mit 211 kN
+            # verborgener Kraft festgehalten.
+            nach = 0
+            while (nach < ABSCHLUSS_NACHSCHRITTE and info["konvergiert"]
+                   and not _schlussabnahme(rest, float(einst.toleranz))):
+                nach += 1
+                F_p_neu, zustand_neu, s_info = schritt(model, u, basis_anfang, einst, elemente, log,
+                                                       tangente=True)
+                info["iterationen"] += 1
+                info["verlauf"].append((stufen, -nach, rest, s_info["fliessend"]))
+                if progress is not None:
+                    progress(f"Plastizität: Abschluss verfehlt (Änderung {rest:.2e}), Nachschritt {nach}: "
+                             f"{s_info['fliessend']} Elemente fließen")
+                dK = s_info["dK"]
+                if dK.nnz == 0:
+                    u = _loesen(F + F_p_neu, None, "Newton", stufen, -nach)
+                else:
+                    u = _loesen(F + F_p_neu + dK @ u, dK, "Newton", stufen, -nach)
+                    info["faktorisierungen"] += 1
+                F_p, basis, _s = schritt(model, u, basis_anfang, einst, elemente, None)
+                u = _loesen(F + F_p, None, "Abschluss", None, None)
+                F_p_ende, _z, _i = schritt(model, u, basis_anfang, einst, elemente, None)
+                rest = float(np.linalg.norm(F_p_ende - F_p)) / _bezug(norm_F, F_p_ende)
+            if nach and log is not None:
+                log.append(f"Plastizität: Abschluss nach {nach} Nachschritt{'' if nach == 1 else 'en'} "
+                           f"{'bestanden' if _schlussabnahme(rest, float(einst.toleranz)) else 'weiter verfehlt'} "
+                           f"(Änderung {rest:.2e}, Toleranz {einst.toleranz:g})")
     if rest is not None:
         info["rest_abschluss"] = rest
         if info["konvergiert"] and not _schlussabnahme(rest, float(einst.toleranz)):

@@ -510,6 +510,269 @@ def _runde(cs, u):
     return changed, dict(zip(contact.RUNDEN_FELDER, cs.runden[-1]))
 
 
+def _abhebekante(n=8, kn=1.0e9):
+    """n reibungsfreie Bedingungen einer Abhebekante mit steigendem Verstoss
+    (Knoten i: (1+i) * 0,1 N): die geraden aktiv unter Zug, die ungeraden offen mit
+    Durchdringung - alle wollen wechseln. Rueckgabe (Stumpf, u)."""
+    from statik3d.contact import ContactSystem, Constraint
+    cons = []
+    u = np.zeros(3 * n)
+    for i in range(n):
+        c = Constraint(kind="surface", dofs=np.array([3 * i, 3 * i + 1, 3 * i + 2]),
+                       cn=np.array([0.0, 0.0, 1.0]), ct=None, g0=0.0, kn=kn, kt=kn, mu=0.0,
+                       node=i, normal=np.array([0.0, 0.0, 1.0]), label="Kante:%d" % i)
+        c.active, c.slip, c.Fn = (i % 2 == 0), False, 0.0
+        c.starr = True                  # exakte Bedingung: friert nie ein (wie am Drehlager)
+        cons.append(c)
+        # aktiv: g > 0 -> Fn = -kn g < 0 (Zug); offen: g < 0 (Durchdringung), als
+        # Kraft mit der oertlichen Steifigkeit kn / PENALTY_FACTOR - beide (1+i) * 0,1 N
+        u[3 * i + 2] = (1.0 + i) * (1.0e-10 if c.active else -1.0e-6)
+    cs = object.__new__(ContactSystem)
+    cs.cons, cs.phase, cs.log = cons, 1, []
+    cs.f_tol, cs.tol, cs.dF_slip = 0.01, 1e-12, 0.0
+    cs.f_ref = 1.0
+    cs.gleit_anteil, cs.gleit_guete = contact.GLEIT_ANTEIL, float("inf")
+    return cs, u
+
+
+def test_ausgleich_an_wieder_geschlossenen_knoten():
+    """Die grobe Reststeifigkeit der Phase 1 haelt einen gleitenden Knoten an
+    der Ausgangslage (kein Ausgleich, Daempfung). Ein Knoten, der in diesem
+    Lauf nach dem Abheben wieder geschlossen hat (wieder_zu), hat den Weg
+    seines Bauteils mitgemacht: fuer ihn ist die Ausgangslage kein Anker,
+    seine Feder bekommt den Ausgleich (dt_last) auch in Phase 1 - sonst zog
+    sie ihn mit dem Zehnfachen der Bauteilsteifigkeit mal diesem Weg zurueck
+    (Drehlager, Flaechenlager "Starr" als exakte Bedingung: 250 Bedingungen
+    der Abhebekante pendelten, 27.09.2026). Ohne anderen Halt (ganz gleitende
+    Gruppe, gruppe_frei) bleibt es beim Anker, auch fuer ihn."""
+    from statik3d.contact import ContactSystem, Constraint
+    kt = 1.0e9
+
+    def system(phase, wieder_zu, alle_gleiten=False, gruppe_frei=None):
+        cons = []
+        for i in range(2):
+            c = Constraint(kind="surface", dofs=np.array([3 * i, 3 * i + 1, 3 * i + 2]),
+                           cn=np.array([0.0, 0.0, 1.0]), ct=np.vstack([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+                           g0=0.0, kn=kt, kt=kt, mu=0.3, node=i, normal=np.array([0.0, 0.0, 1.0]),
+                           label="Fuge:%d" % i)
+            c.active, c.Fn = True, 1000.0
+            c.slip = (i == 0) or alle_gleiten
+            if c.slip:
+                c.slip_dir = np.array([1.0, 0.0])
+                c.dt_last = np.array([2.0e-6, 0.0])
+            cons.append(c)
+        cons[0].wieder_zu = wieder_zu
+        cs = object.__new__(ContactSystem)
+        cs.cons, cs.phase, cs.log, cs.stabilising = cons, phase, [], False
+        cs.gruppe_frei = gruppe_frei
+        return cs
+
+    def ausgleich(cs):
+        """Kraft des Ausgleichs am Knoten 0 in x (Kontaktlast ohne die
+        Reibkraft mu Fn), bezogen auf k_res * dt_last."""
+        _Kc, Fc = cs.matrices(6)
+        c = cs.cons[0]
+        k_res = cs._k_res(c, cs._full_slip_groups())
+        return (float(Fc[0]) + c.mu * c.Fn * c.slip_dir[0]) / (k_res * 2.0e-6)
+
+    check("Phase 1, nie abgehoben: grobe Feder ohne Ausgleich (Anker Ausgangslage)",
+          abs(ausgleich(system(1, False))) < 1e-6, f"{ausgleich(system(1, False)):.3e}")
+    check("Phase 1, wieder geschlossen: grobe Feder mit Ausgleich k_res * dt_last",
+          abs(ausgleich(system(1, True)) - 1.0) < 1e-6, f"{ausgleich(system(1, True)):.6f}")
+    check("Phase 2, feine Feder: Ausgleich wie bisher, ob wieder geschlossen oder nicht",
+          abs(ausgleich(system(2, False)) - 1.0) < 1e-6 and abs(ausgleich(system(2, True)) - 1.0) < 1e-6,
+          f"{ausgleich(system(2, False)):.6f} / {ausgleich(system(2, True)):.6f}")
+    check("ganz gleitende Gruppe ohne anderen Halt (gruppe_frei None): Anker bleibt, auch wieder geschlossen",
+          abs(ausgleich(system(1, True, alle_gleiten=True))) < 1e-6
+          and abs(ausgleich(system(1, True, alle_gleiten=True, gruppe_frei={"Fuge"}))) < 1e-6)
+    check("ganz gleitende Gruppe, anderswo gehalten (nicht in gruppe_frei): Ausgleich",
+          abs(ausgleich(system(1, True, alle_gleiten=True, gruppe_frei=set())) - 1.0) < 1e-6)
+
+    # Die Marke setzt das Schliessen in _update_states; die Sicherung traegt
+    # sie weiter (die gemeinsame Iteration setzt abgekuerzte Laeufe daraus
+    # fort - ohne die Marke waren gemeinsam und verschachtelt nicht bitgleich),
+    # initialize nimmt sie zurueck
+    cs, u = _abhebekante(n=2)
+    cs.cons[1].mu, cs.cons[1].ct = 0.3, np.vstack([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+    cs._update_states(u)
+    check("Schliessen setzt wieder_zu, Oeffnen nicht",
+          cs.cons[1].wieder_zu and not cs.cons[0].wieder_zu,
+          f"{[c.wieder_zu for c in cs.cons]}")
+    cs.cons[1].active = True
+    z = cs.zustand()
+    cs.cons[1].wieder_zu = False
+    cs.zustand_setzen(z)
+    check("die Sicherung traegt die Marke weiter", cs.cons[1].wieder_zu and not cs.cons[0].wieder_zu)
+    cs.tol = 1e-12
+    cs.initialize()
+    check("initialize nimmt die Marke zurueck", not any(c.wieder_zu for c in cs.cons))
+
+
+def test_residuum_beendet_das_troepfeln():
+    """Liegt die Summe aller Verstoesse einer Runde (Zug, Durchdringung,
+    Kegel, Gleiten gegen die Richtung - als Kraft) unter RESIDUUM_ANTEIL der
+    Kontaktkraft, steht der Zustand: nichts wird umgestellt, keine Richtung
+    nachgefuehrt, kein Wechsel gemeldet (27.09.2026). Am Drehlager hielten
+    sonst Wechsel von 1 bis 10 N bei Meganewton Kontaktkraft und
+    Richtungsnachfuehrungen die Phase 1 ueber 40 Runden offen."""
+    from statik3d.contact import ContactSystem, Constraint
+    kn = 1.0e9
+
+    def bed(i, active, uz, ux=0.0, slip=False, slip_dir=None, mu=0.3):
+        c = Constraint(kind="surface", dofs=np.array([3 * i, 3 * i + 1, 3 * i + 2]),
+                       cn=np.array([0.0, 0.0, 1.0]), ct=np.vstack([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+                       g0=0.0, kn=kn, kt=kn, mu=mu, node=i, normal=np.array([0.0, 0.0, 1.0]),
+                       label="Fuge:%d" % i)
+        c.active, c.slip, c.Fn = active, slip, 0.0
+        if slip_dir is not None:
+            c.slip_dir = np.array(slip_dir, float)
+        return c, (ux, uz)
+
+    def system(*extra):
+        # zehn Druckknoten: Fn = 1000 N -> Kontaktkraft 10 kN, Schranke 0,01 N
+        cons, u = [], []
+        for i in range(10):
+            c, du = bed(i, True, -1.0e-6)
+            cons.append(c)
+            u.append(du)
+        for c, du in extra:
+            cons.append(c)
+            u.append(du)
+        uu = np.zeros(3 * len(cons))
+        for i, (ux, uz) in enumerate(u):
+            uu[3 * i], uu[3 * i + 2] = ux, uz
+        cs = object.__new__(ContactSystem)
+        cs.cons, cs.phase, cs.log = cons, 1, []
+        cs.f_tol, cs.tol, cs.dF_slip = 1.0e-3, 1e-12, 0.0
+        cs.f_ref = 1.0e4
+        cs.gleit_anteil, cs.gleit_guete = contact.GLEIT_ANTEIL, float("inf")
+        return cs, uu
+
+    # Zug 0,004 N an einer geschlossenen, Durchdringung 0,004 N an einer offenen:
+    # Residuum 0,008 N < 0,01 N -> ruhe
+    cs, u = system(bed(10, True, +4.0e-12), bed(11, False, -4.0e-12))
+    changed, r = _runde(cs, u)
+    check("Residuum 0,008 N bei 10 kN Kontaktkraft: nichts umgestellt, kein Wechsel",
+          not changed and cs.cons[10].active and not cs.cons[11].active and r["ruhe"] == 1
+          and r["wechselwillig"] == 2 and abs(r["residuum"] - 8.0e-7) < 1e-12,
+          f"changed {changed}, ruhe {r['ruhe']}, willig {r['wechselwillig']}, Residuum {r['residuum']:.2e}")
+    check("und das Protokoll sagt es", any("unter der Lösergenauigkeit" in z for z in cs.log), str(cs.log[-1:]))
+    # Zug 0,02 N: Residuum 0,024 N > 0,01 N -> beide wechseln
+    cs, u = system(bed(10, True, +2.0e-11), bed(11, False, -4.0e-12))
+    changed, r = _runde(cs, u)
+    check("Residuum 0,024 N: Oeffnen und Schliessen wie gewohnt",
+          changed and not cs.cons[10].active and cs.cons[11].active and r["ruhe"] == 0,
+          f"changed {changed}, aktiv {[c.active for c in cs.cons[10:]]}")
+    # Kegel: haftender Knoten 0,004 N ueber mu Fn -> ruhe, bleibt haften; 0,05 N -> gleitet
+    cs, u = system(bed(10, True, -1.0e-6, ux=300.004e-9))
+    changed, r = _runde(cs, u)
+    check("Kegel 0,004 N ueber der Grenze: bleibt haften, kein Wechsel",
+          not changed and not cs.cons[10].slip and r["ruhe"] == 1, f"changed {changed}, slip {cs.cons[10].slip}")
+    cs, u = system(bed(10, True, -1.0e-6, ux=300.05e-9))
+    changed, r = _runde(cs, u)
+    check("Kegel 0,05 N ueber der Grenze: gleitet (Phase 1)",
+          changed and cs.cons[10].slip and r["gleiten_neu"] == 1, f"changed {changed}, slip {cs.cons[10].slip}")
+    # Gleiten gegen die Richtung: Reibkraft 0,006 N -> ruhe; 300 N -> wieder Haften
+    cs, u = system(bed(10, True, -2.0e-11, ux=-1.0e-9, slip=True, slip_dir=(1.0, 0.0)))
+    changed, r = _runde(cs, u)
+    check("gegen die Richtung mit mu Fn = 0,006 N: bleibt gleiten, kein Wechsel",
+          not changed and cs.cons[10].slip and r["ruhe"] == 1, f"changed {changed}, slip {cs.cons[10].slip}")
+    cs, u = system(bed(10, True, -1.0e-6, ux=-1.0e-9, slip=True, slip_dir=(1.0, 0.0)))
+    changed, r = _runde(cs, u)
+    check("gegen die Richtung mit mu Fn = 300 N: wieder Haften",
+          changed and not cs.cons[10].slip and r["haften_zurueck"] == 1, f"changed {changed}")
+    # Ohne Kontaktkraft gibt es kein Residuum: alles offen, einer will schliessen
+    cs, u = system(bed(10, False, -4.0e-12))
+    for c in cs.cons[:10]:
+        c.active = False
+    changed, r = _runde(cs, u)
+    check("ohne Kontaktkraft keine Ruhe: die Durchdringung schliesst",
+          changed and cs.cons[10].active and r["ruhe"] == 0, f"changed {changed}")
+
+
+def test_wechselanteil_bricht_den_zyklus():
+    """Oeffnen und Schliessen je Runde nur fuer den staerksten Anteil der
+    wechselwilligen Bedingungen, sobald das Verstossmass nicht mehr faellt
+    (contact.WECHSEL_ANTEIL_MIN, 27.09.2026). Am Drehlager mit dem Flaechenlager
+    "Starr" als exakter Bedingung wechselten 250 Bedingungen der Abhebekante
+    im Takt von zwei bis drei Runden (Zug 5 bis 50 N gegen Durchdringung
+    0,5 bis 1 nm): Nachbarn oeffneten und schlossen gleichzeitig und gaben
+    einander so jedes Mal den Anlass; Lauf 1 stand 30 Runden. Ohne die
+    Liniensuche stellt jede Runde alle Wechselwilligen um."""
+    zustand = lambda cs: [c.active for c in cs.cons]           # noqa: E731
+
+    # Erste Wuensche: der volle primal-duale Schritt, alle acht wechseln
+    cs, u = _abhebekante()
+    start = zustand(cs)
+    changed, r = _runde(cs, u)
+    check("erste Wuensche: alle wechseln (voller Schritt)",
+          changed and zustand(cs) == [not a for a in start] and r["wechselwillig"] == 8
+          and r["wechsel_a"] == 1.0 and r["oeffnen_frei"] == 4 and r["schliessen_frei"] == 4,
+          f"willig {r['wechselwillig']}, Anteil {r['wechsel_a']:g}, "
+          f"auf {r['oeffnen_frei']}, zu {r['schliessen_frei']}")
+    g1 = r["wechsel_guete"]
+    check("das Verstossmass ist Zug plus Durchdringung als Kraft, durch f_ref: 3,6 N / 1 N",
+          abs(g1 - 3.6) < 1e-9, f"{g1:.6f}")
+
+    # Der Zyklus: die Umgebung stellt alles zurueck, dieselbe Loesung wieder -
+    # das Mass faellt nicht, der Anteil halbiert sich, die Staerksten zuerst
+    for i, c in enumerate(cs.cons):
+        c.active = start[i]
+    changed, r = _runde(cs, u)
+    umgestellt = [i for i, c in enumerate(cs.cons) if c.active != start[i]]
+    check("Mass gleich: Anteil 0,5 - nur die vier staerksten (Knoten 4 bis 7) wechseln",
+          umgestellt == [4, 5, 6, 7] and r["wechsel_a"] == 0.5 and r["wechselwillig"] == 8,
+          f"umgestellt {umgestellt}, Anteil {r['wechsel_a']:g}")
+    for i, c in enumerate(cs.cons):
+        c.active = start[i]
+    changed, r = _runde(cs, u)
+    umgestellt = [i for i, c in enumerate(cs.cons) if c.active != start[i]]
+    check("wieder gleich: Anteil 0,25 - die zwei staerksten",
+          umgestellt == [6, 7] and r["wechsel_a"] == 0.25, f"umgestellt {umgestellt}, Anteil {r['wechsel_a']:g}")
+
+    # Faellt das Mass, waechst der Anteil wieder
+    for i, c in enumerate(cs.cons):
+        c.active = start[i]
+    changed, r = _runde(cs, 0.5 * u)
+    umgestellt = [i for i, c in enumerate(cs.cons) if c.active != start[i]]
+    check("Mass halbiert: Anteil 0,5 - vier wechseln",
+          umgestellt == [4, 5, 6, 7] and r["wechsel_a"] == 0.5 and abs(r["wechsel_guete"] - 1.8) < 1e-9,
+          f"umgestellt {umgestellt}, Anteil {r['wechsel_a']:g}, Mass {r['wechsel_guete']:.3f}")
+
+    # Immer weiter gleich: nie unter die Schranke, mindestens einer wechselt
+    for _ in range(12):
+        for i, c in enumerate(cs.cons):
+            c.active = start[i]
+        changed, r = _runde(cs, u)
+    umgestellt = [i for i, c in enumerate(cs.cons) if c.active != start[i]]
+    check("Schranke: Anteil nicht unter WECHSEL_ANTEIL_MIN, der staerkste wechselt immer",
+          umgestellt == [7] and abs(r["wechsel_a"] - contact.WECHSEL_ANTEIL_MIN) < 1e-15 and changed,
+          f"umgestellt {umgestellt}, Anteil {r['wechsel_a']:g}")
+
+    # Eine ruhige Runde (nichts will wechseln), danach neue Wuensche: voller Schritt
+    changed, r = _runde(cs, np.zeros_like(u))
+    check("ruhige Runde: keine Wuensche, kein Wechsel, Mass null",
+          not changed and r["wechselwillig"] == 0 and r["wechsel_guete"] == 0.0,
+          f"willig {r['wechselwillig']}, Mass {r['wechsel_guete']:g}")
+    for i, c in enumerate(cs.cons):
+        c.active = start[i]
+    changed, r = _runde(cs, u)
+    check("neue Wuensche nach einer ruhigen Runde: wieder alle (Anteil 1)",
+          zustand(cs) == [not a for a in start] and r["wechsel_a"] == 1.0,
+          f"Anteil {r['wechsel_a']:g}")
+
+    # Ausgeschlossen bleiben Verbund, festgehaltene Feder und gehaltene exakte Bedingung
+    cs, u = _abhebekante()
+    cs.cons[0].zug = True                    # aktiv unter Zug, Verbund
+    cs.cons[2].frozen, cs.cons[2].starr = True, False   # Feder unter Zug, festgehalten
+    cs.cons[4].gehalten = True               # gehaltene exakte Bedingung
+    changed, r = _runde(cs, u)
+    check("Verbund, festgehaltene Feder und gehaltene exakte Bedingung wechseln nicht "
+          "und zaehlen nicht als wechselwillig",
+          cs.cons[0].active and cs.cons[2].active and cs.cons[4].active and r["wechselwillig"] == 5,
+          f"aktiv {[c.active for c in cs.cons]}, willig {r['wechselwillig']}")
+
+
 def test_runden_zaehlen_die_wechselarten():
     """Je Runde ein Zahlentupel mit den Wechselarten (Buchfuehrung, 22.09.2026).
 
@@ -794,6 +1057,9 @@ def main():
               test_zustand_verstoesse_je_art,
               test_phase2_loest_mehrere_haftende_auf_einmal,
               test_gleitanteil_passt_sich_dem_guetemass_an,
+              test_wechselanteil_bricht_den_zyklus,
+              test_residuum_beendet_das_troepfeln,
+              test_ausgleich_an_wieder_geschlossenen_knoten,
               test_runden_zaehlen_die_wechselarten,
               test_endzustand_kennung_ist_prozessfest,
               test_start_angeboten_und_genutzt,

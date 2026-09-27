@@ -66,6 +66,44 @@ GLEIT_ANTEIL = 0.1
 GLEIT_ANTEIL_MIN = 0.02
 GLEIT_ANTEIL_MAX = 0.5
 GLEIT_WACHSTUM = 1.5
+#: Oeffnen und Schliessen je Runde (27.09.2026): von den Bedingungen, die
+#: wechseln wollen, wird der Anteil ``wechsel_anteil`` umgestellt, staerkster
+#: Verstoss zuerst; 1 heisst alle - der gewoehnliche primal-duale Schritt.
+#: Faellt das Verstossmass (Zug an aktiven plus Durchdringung an offenen
+#: Bedingungen, beides als Kraft, durch f_ref) nicht mehr um ein Zehntel je
+#: Runde, halbiert sich der Anteil, sonst verdoppelt er sich bis 1. Warum:
+#: am Drehlager mit dem Flaechenlager "Starr" als exakter Bedingung (3925
+#: Knoten) wechselten 250 Bedingungen der Abhebekante im Takt von zwei bis
+#: drei Runden - Zug 5 bis 50 N gegen Durchdringung 0,5 bis 1 nm -, weil
+#: Nachbarn gleichzeitig oeffneten und schlossen und einander so jedes Mal
+#: den Anlass gaben (der bekannte Zyklus des primal-dualen Verfahrens
+#: ausserhalb von M-Matrizen); die Zwischenzustaende, in denen nur einer
+#: wechselt, kamen nie vor. Lauf 1 stand 30 Runden bei Δu 1e-3; ohne die
+#: Regel (Bettung als Feder, 244 festgehalten) war er nach 18 fertig.
+WECHSEL_ANTEIL_MIN = 0.02
+WECHSEL_WACHSTUM = 2.0
+#: Residuum, ab dem der Kontaktzustand steht (27.09.2026): die Summe aller
+#: Verstoesse einer Runde als Kraft - Zug an geschlossenen, Durchdringung an
+#: offenen (mal oertliche Steifigkeit), Kegelueberschreitung haftender und
+#: die Reibkraft gleitender Knoten, die sich gegen ihre Richtung bewegen -
+#: liegt unter diesem Anteil der Kontaktkraft (Summe der Druckkraefte). Dann
+#: stellt die Runde nichts mehr um, auch keine Gleitrichtung, und meldet
+#: keinen Wechsel. Derselbe Anteil wie f_tol (1e-6 der groessten Knotenlast)
+#: fuer eine einzelne Bedingung, hier fuer die Summe. Warum: am Drehlager
+#: mit dem Flaechenlager "Starr" als exakter Bedingung troepfelte Phase 1
+#: nach der Abhebekante weiter - je Runde ein bis drei Oeffnen/Schliessen
+#: und ein bis fuenf Haft-Gleit-Wechsel mit Verstoessen von 1e-6 bis 1e-5 der
+#: Bezugskraft (1 bis 10 N bei Megnewton Kontaktkraft) und 9 bis 15
+#: Richtungsnachfuehrungen, jede Runde eine Faktorisierung von 25 s; Lauf 1
+#: stand nach 40 Runden noch in Phase 1 (Referenz mit Bettung als Feder:
+#: 21 Runden). Ein Wechsel unter der Loesergenauigkeit ist kein Zustand,
+#: sondern Rauschen.
+RESIDUUM_ANTEIL = 1.0e-6
+#: Schalter fuer die Ruecknahmeproben (27.09.2026): das Schliessen am
+#: Kraftmass (_durchdringungskraft > f_tol statt g < tol) und der Ausgleich
+#: der groben Reststeifigkeit fuer wieder geschlossene Knoten (wieder_zu).
+SCHLIESSEN_AM_KRAFTMASS = True
+AUSGLEICH_WIEDER_ZU = True
 #: Felder eines Eintrags in ``ContactSystem.runden`` - je Aufruf von
 #: ``_update_states`` (also je Kontaktschritt) ein Zahlentupel in dieser
 #: Reihenfolge. Gezaehlt werden **Ereignisse**, nicht Bedingungen: ein wieder
@@ -98,6 +136,11 @@ RUNDEN_FELDER = (
     "guete",                    # Summe der Kegelverstoesse haftender Knoten / f_ref
     "dF_slip",                  # groesste Aenderung von mu*Fn an gleitenden Knoten / f_ref
     "ganz_rutschend",           # Gruppen, deren aktive Reibknoten alle gleiten (nach der Runde)
+    "wechselwillig",            # Bedingungen, die oeffnen oder schliessen wollten
+    "wechsel_a",                # Anteil davon, der umgestellt wurde (Liniensuche, WECHSEL_ANTEIL_MIN)
+    "wechsel_guete",            # Verstossmass Zug + Durchdringung als Kraft / f_ref
+    "residuum",                 # Summe aller Verstoesse als Kraft / Kontaktkraft (RESIDUUM_ANTEIL)
+    "ruhe",                     # 1: Residuum unter RESIDUUM_ANTEIL - nichts umgestellt
 )
 #: Die Ereignisfelder (Stellen 1 bis 12 in RUNDEN_FELDER): eine Runde mit
 #: mindestens einem Ereignis ist genau eine, die ``changed`` meldet.
@@ -164,6 +207,9 @@ class Constraint:
     dir_updates: int = 0
     dt_last: Optional[np.ndarray] = None    # Tangentialverschiebung (2,) des letzten Zustands,
                                             # nur gleitend: Ausgleich der Reststeifigkeit (25.09.2026)
+    wieder_zu: bool = False        # in diesem Lauf geschlossen, nachdem sie offen war: die
+                                   # Ausgangslage ist fuer diesen Knoten kein Anker mehr
+                                   # (Ausgleich auch an der groben Feder, 27.09.2026)
     Fn: float = 0.0
     Ft: np.ndarray = field(default_factory=lambda: np.zeros(2))
     g: float = 0.0
@@ -682,6 +728,11 @@ class ContactSystem:
         #: (Liniensuche, siehe GLEIT_ANTEIL); Guetemass der vorigen Runde
         self.gleit_anteil = GLEIT_ANTEIL
         self.gleit_guete = float("inf")          # 1: Aktivmenge und Gleitrichtungen, 2: monotone Nachpruefung
+        #: Anteil der wechselwilligen Bedingungen, die je Runde oeffnen oder
+        #: schliessen (Liniensuche, siehe WECHSEL_ANTEIL_MIN); Verstossmass
+        #: der vorigen Runde
+        self.wechsel_anteil = 1.0
+        self.wechsel_guete = float("inf")
         self.stabilising = False   # Hilfsschritt ohne Spaltkraft (siehe stabilise)
         self.cycles = 0
         self.settle = 0
@@ -691,10 +742,19 @@ class ContactSystem:
         self.warm = False       # nach zustand_setzen: Phase 2 mit gesichertem Zustand
         self.dF_slip = 0.0      # groesste Aenderung von mu*Fn an gleitenden Knoten je Runde
         self.f_ref = 1.0
+        #: Ganz rutschende Reibgruppen, ohne deren Tangentialsteifigkeit eine
+        #: Starrkoerperbewegung ihres Teils frei waere (solver._gruppen_frei,
+        #: Rang, 27.09.2026). Nur sie behalten in Phase 2 die grobe
+        #: Reststeifigkeit; die anderen bekommen die feine mit Ausgleich, damit
+        #: die Feder am Ende keine Kraft traegt (K5). None: vom Loeser noch
+        #: nicht bestimmt - dann wie bis dahin (alle grob).
+        self.gruppe_frei = None
         self.diag = np.asarray(K.diagonal()).ravel()
         self.cons: list[Constraint] = []
         self.size = model.characteristic_size()
-        self.tol = 1e-12 * self.size          # Spalt-Toleranz (Aktivierung)
+        self.tol = 1e-12 * self.size          # Spalt-Toleranz: Beruehrung am Anfang (initialize),
+                                              # Entlastung beim Fliessen; das Schliessen entscheidet
+                                              # seit 27.09.2026 die Kraft (_durchdringungskraft, f_tol)
         self.f_tol = 1.0                      # Kraft-Toleranz (Freigabe), wird vom Loeser gesetzt
         self._build()
 
@@ -1202,11 +1262,16 @@ class ContactSystem:
         self.dF_slip = 0.0
         self.gleit_anteil = GLEIT_ANTEIL
         self.gleit_guete = float("inf")
+        self.wechsel_anteil = 1.0
+        self.wechsel_guete = float("inf")
+        self._ruhe_gemeldet = False
+        self.gruppe_frei = None
         for c in self.cons:
             c.active = True if c.zug else c.g0 <= self.tol
             c.slip = False
             c.slip_dir = None
             c.dt_last = None
+            c.wieder_zu = False
             c.dir_updates = 0
             c.toggles = 0
             c.frozen = False
@@ -1248,7 +1313,23 @@ class ContactSystem:
                 # Reststeifigkeit): gehoert zur Sicherung, sonst rechnet eine
                 # wiederholte Laststufe nicht bitgleich (25.09.2026)
                 "dt_last": [None if c.dt_last is None else np.array(c.dt_last, float)
-                            for c in self.cons]}
+                            for c in self.cons],
+                # wieder_zu gehoert zum Zustand wie dt_last: die gemeinsame
+                # Iteration von Fliessen und Kontakt setzt einen abgekuerzten
+                # Lauf aus der Sicherung fort, und ohne die Marke hing der
+                # wieder geschlossene Knoten dort wieder an der Ausgangslage -
+                # gemeinsam und verschachtelt waren nicht mehr bitgleich
+                # (gequetschter Block, max |Δu| 1,2e-9, 27.09.2026)
+                "wieder_zu": np.array([bool(getattr(c, "wieder_zu", False)) for c in self.cons], bool),
+                # ebenso die Liniensuche des Oeffnens und Schliessens: ein
+                # fortgesetzter Lauf soll dieselben Umstellungen treffen wie
+                # der ununterbrochene
+                "wechsel_anteil": float(getattr(self, "wechsel_anteil", 1.0)),
+                "wechsel_guete": float(getattr(self, "wechsel_guete", float("inf"))),
+                # ganz rutschende Gruppen ohne anderen Halt: Reststeifigkeit und
+                # Signatur haengen daran - ohne Sicherung faktorisierte der
+                # Warmstart neu (27.09.2026)
+                "gruppe_frei": None if getattr(self, "gruppe_frei", None) is None else sorted(self.gruppe_frei)}
 
     def zustand_setzen(self, z) -> bool:
         """Eine Sicherung uebernehmen - der Startpunkt der Iteration statt der
@@ -1281,16 +1362,22 @@ class ContactSystem:
             c.slip_dir = None if r is None else np.array(r, float)
             d = (z.get("dt_last") or [None] * len(self.cons))[i]
             c.dt_last = None if d is None else np.array(d, float)
+            c.wieder_zu = bool(z["wieder_zu"][i]) if "wieder_zu" in z else False
             c.dir_updates = 0
             # eingefrorene Bedingungen (oszillierten) bleiben eingefroren -
             # sonst wechseln sie gleich wieder und die Iteration beginnt von vorn
             c.toggles = int(z["wechsel"][i]) if "wechsel" in z else 0
             c.frozen = bool(z["eingefroren"][i]) if "eingefroren" in z else False
         self.phase = int(z.get("phase", 2) or 2)
+        gf = z.get("gruppe_frei")
+        self.gruppe_frei = None if gf is None else set(gf)
         self.warm = True
         self.cycles = 0
         self.settle = 0
         self.am_deckel = False
+        self.wechsel_anteil = float(z.get("wechsel_anteil", 1.0))
+        self.wechsel_guete = float(z.get("wechsel_guete", float("inf")))
+        self._ruhe_gemeldet = False
         self.runden = []
         return True
 
@@ -1316,6 +1403,26 @@ class ContactSystem:
                         c.Ft = np.zeros(2)
         return n
 
+    @staticmethod
+    def _durchdringungskraft(c: Constraint, g: float) -> float:
+        """Die Durchdringung einer offenen Bedingung als Kraft [N]: g mal der
+        oertlichen Steifigkeit - an der exakten Bedingung die Diagonale
+        (k_n / PENALTY_FACTOR), sonst die Feder. Eine offene Bedingung
+        schliesst, wenn diese Kraft ueber f_tol liegt - derselbe Massstab,
+        an dem eine geschlossene oeffnet (Zug ueber f_tol).
+
+        Bis zum 27.09.2026 schloss sie bei g < tol = 1e-12 mal Modellgroesse.
+        Das war am Drehlager (Diagonale 2e10 N/m, f_tol 1 N) rund zehnmal
+        schaerfer als das Oeffnen, und die Abhebekanten der Fugen Deckel und
+        Montageauge troepfelten: je Runde schloss ein Knoten auf 1e-11 m
+        Durchdringung (0,2 N), oeffnete in der naechsten mit 1 N Zug, und
+        Phase 2 zaehlte jede dieser Runden auf den Deckel von 40 - Lauf 1
+        stand nach 29 Runden Phase 1 noch 20 Runden in Phase 2 ohne Ende.
+        Zwei Massstaebe fuer dieselbe Bedingung sind keine Toleranz, sondern
+        ein Zyklus."""
+        k_ort = c.kn / PENALTY_FACTOR if c.starr else c.kn
+        return float(k_ort * -g)
+
     def _normalkraft(self, c: Constraint, g: float, lam) -> float:
         """Normalkraft [N] einer aktiven Bedingung (Druck positiv): die
         Grenzkraft beim Fliessen, der Multiplikator der exakten Bedingung
@@ -1338,7 +1445,8 @@ class ContactSystem:
         wurde. Gezaehlt wird mit denselben Grenzen wie in ``_update_states``:
         Zug ueber ``f_tol`` an einer geschlossenen Bedingung (nicht im Verbund,
         nicht fliessend; auch an einer wegen Oszillation festgehaltenen),
-        Durchdringung ueber ``tol`` an einer offenen, Haften ueber dem Reibkegel
+        Durchdringung als Kraft ueber ``f_tol`` an einer offenen
+        (_durchdringungskraft), Haften ueber dem Reibkegel
         (Faktor 1 + 1e-6) und Gleiten gegen die festgehaltene Gleitrichtung.
         Rueckgabe: Anzahl und groesster Wert je Art (Zug in N, Durchdringung in m,
         Kegel als Verhaeltnis |Ft|/(mu Fn))."""
@@ -1348,7 +1456,7 @@ class ContactSystem:
             ue = u[c.dofs]
             g = float(c.g0 + c.cn @ ue)
             if not c.active:
-                if g < -self.tol:
+                if (g < 0.0 and self._durchdringungskraft(c, g) > self.f_tol) if SCHLIESSEN_AM_KRAFTMASS                         else (g < -self.tol):
                     v["durchdringung"] += 1
                     v["durchdringung_max"] = max(v["durchdringung_max"], -g)
                 continue
@@ -1401,7 +1509,8 @@ class ContactSystem:
         h = np.array([bool(getattr(c, "schub_halt", False)) for c in self.cons], bool)
         return (self.phase, hash(a.tobytes()), hash(s.tobytes()), hash(y.tobytes()),
                 hash(h.tobytes()),
-                tuple(sorted(self._full_slip_groups().items())))
+                tuple(sorted(self._full_slip_groups().items())),
+                None if getattr(self, "gruppe_frei", None) is None else tuple(sorted(self.gruppe_frei)))
 
     def endzustand_kennung(self) -> str:
         """Kennung des Kontaktzustands, **prozessfest**: 16 Hexziffern aus
@@ -1623,18 +1732,34 @@ class ContactSystem:
                     k_res = self._k_res(c, full_slip)
                     f_t = fr * c.slip_dir
                     Fc[c.dofs] += -(f_t[0] * c.ct[0] + f_t[1] * c.ct[1])
+                    fein = k_res < SLIP_STIFFNESS * c.kt
                     if (AUSGLEICH_RESTSTEIFIGKEIT and c.dt_last is not None
-                            and k_res < SLIP_STIFFNESS * c.kt):
-                        # Ausgleich (nur bei der feinen Reststeifigkeit der Phase 2):
-                        # die Feder wirkt nur auf die Aenderung der Tangential-
-                        # verschiebung seit dem letzten Zustand, nicht auf sie
-                        # selbst. Sonst traegt sie am Ende Kraft, die in keiner
-                        # Kontaktkraft steht: Pruefmatrix K4 (hex8, 14,5 mm Schlupf)
-                        # 693 kN = 2,3 % von mu N (gemessen 25.09.2026 aus K u an
-                        # den Gleitknoten gegen contact_forces). Die grobe Feder der
-                        # Phase 1 und ganz gleitender Gruppen (K5) bleibt, wie sie
-                        # ist: sie haelt das Bauteil (Warnung "Bauteil rutscht"),
-                        # und mit Ausgleich waere ihr Fixpunkt zu langsam.
+                            and (fein or (AUSGLEICH_WIEDER_ZU and c.wieder_zu
+                                          and not self._ohne_halt(c, full_slip)))):
+                        # Ausgleich (feine Reststeifigkeit der Phase 2): die Feder
+                        # wirkt nur auf die Aenderung der Tangentialverschiebung
+                        # seit dem letzten Zustand, nicht auf sie selbst. Sonst
+                        # traegt sie am Ende Kraft, die in keiner Kontaktkraft
+                        # steht: Pruefmatrix K4 (hex8, 14,5 mm Schlupf) 693 kN =
+                        # 2,3 % von mu N (gemessen 25.09.2026 aus K u an den
+                        # Gleitknoten gegen contact_forces). Die grobe Feder der
+                        # Phase 1 und ganz gleitender Gruppen ohne anderen Halt
+                        # (K5, "Bauteil rutscht") bleibt ohne Ausgleich: sie haelt
+                        # das Bauteil an der Ausgangslage, und mit Ausgleich waere
+                        # ihr Fixpunkt zu langsam.
+                        # Ausnahme seit 27.09.2026: ein Knoten, der in diesem Lauf
+                        # nach dem Abheben wieder geschlossen hat (wieder_zu). Er
+                        # hat den Weg seines Bauteils mitgemacht; die Haftfeder
+                        # k_t (starr: 1e4-fache Diagonale) auf diesen Weg liess ihn
+                        # sofort gleiten (mu Fn = 0), und die grobe Reststeifigkeit
+                        # (das Zehnfache des Bauteils) zog ihn ohne Ausgleich mit
+                        # demselben Weg in die Ausgangslage - Hunderte kN aus einem
+                        # Knoten ohne Normalkraft. Am Drehlager mit dem Flaechen-
+                        # lager "Starr" als exakter Bedingung wechselten so 250
+                        # Bedingungen der Abhebekante im Takt von zwei bis drei
+                        # Runden (Zug 5 bis 50 N gegen Durchdringung 0,5 bis 1 nm),
+                        # Lauf 1 stand 40 Runden. Fuer ihn ist die Ausgangslage
+                        # kein Anker; Knoten, die nie abhoben, behalten ihn.
                         Fc[c.dofs] += k_res * (c.dt_last[0] * c.ct[0] + c.dt_last[1] * c.ct[1])
                     kmat = kmat + k_res * (np.outer(c.ct[0], c.ct[0]) + np.outer(c.ct[1], c.ct[1]))
             if not kmat.any():
@@ -1651,26 +1776,36 @@ class ContactSystem:
         return Kc, Fc
 
     def _k_res(self, c: Constraint, full_slip: dict) -> float:
-        """Reststeifigkeit eines gleitenden Knotens: grob in Phase 1 und fuer vollstaendig
-        rutschende Gruppen (nur sie haelt das Bauteil), sonst in Phase 2 vernachlaessigbar
-        klein, damit die Reibkraft exakt mu*Fn betraegt.
+        """Reststeifigkeit eines gleitenden Knotens: grob in Phase 1, in Phase 2
+        vernachlaessigbar klein, damit die Reibkraft exakt mu*Fn betraegt.
+        Grob bleibt sie in Phase 2 nur fuer eine ganz rutschende Gruppe, die
+        das Bauteil sonst nicht haelt (nicht in `gruppe_frei`, Rang des Teils
+        ohne ihre Schubzeilen unvollstaendig): dort ist die Lage unbestimmt,
+        die Feder haelt sie und das Protokoll warnt „Bauteil rutscht".
 
-        Gemessen 27.09.2026: bezieht man den Rest auf die Bauteilsteifigkeit
-        statt auf k_t (bei starren Bedingungen 1e4-mal groesser), wird K4 hex8
-        gruen und K5 besser (Feder B -9 % statt -90 %), aber Phase 1 verliert
-        ihre Daempfung - der Block mit Reibung und die Warmstart-Fixtures
-        (test_kontaktzustand) laufen in den Deckel. Der grobe Rest bleibt darum;
-        was er an Kraft traegt, ist das offene K5 (ganz rutschende Gruppen).
-        Zwei Kuren am 27.09.2026 gemessen und zurueckgenommen: (a) feine Feder
-        fuer ganz rutschende Gruppen, die anderswo gehalten sind (Rang) - K5
-        hex8 gruen, aber Stempel und zwei Koerper mit mu 0,1 in der Plastizitaet
-        verschoben, ein Reibungslauf nicht mehr konvergiert; (b) Ausgleich auch
-        an der groben Feder - Fixpunkt zu langsam (K5 hex8 -79 % statt -86 %).
-        Der Klotz an der Knagge (tests/test_supports) zeigt den Rest: mit
-        starrer Knagge (k_t = 1e4-fache Diagonale) trug er 21,5 von 100 kN."""
-        if self.phase == 2 and not full_slip.get(_group(c), False):
+        Gemessen 27.09.2026: die grobe Feder trug verborgene Kraft, sobald ein
+        Bauteil ganz gleitet, aber anderswo gehalten ist - am Klotz K5 der
+        Pruefmatrix 86 % der Federkraft, am Klotz an der starren Knagge
+        (tests/test_supports, k_t = 1e4-fache Diagonale) 21,5 von 100 kN, am
+        Stempel mit gewoelbter Unterseite 211 kN. Mit der feinen Feder fuer
+        gehaltene Gruppen: K5 hex8 gruen (Feder +0,21 %), Knagge R = (50, 0,
+        100) kN, Stempel 0,4075 mm statt 0,3831 mm. Verworfen: Rest auf die
+        Bauteilsteifigkeit statt k_t beziehen (Phase 1 verliert ihre Daempfung,
+        Block und Warmstart-Fixtures laufen in den Deckel) und Ausgleich an der
+        groben Feder (Fixpunkt zu langsam, K5 hex8 -79 % statt -86 %)."""
+        if self.phase == 2 and not self._ohne_halt(c, full_slip):
             return SLIP_STIFFNESS_FINE * c.kt
         return SLIP_STIFFNESS * c.kt
+
+    def _ohne_halt(self, c: Constraint, full_slip: dict) -> bool:
+        """Gehoert der Reibknoten zu einer ganz gleitenden Gruppe, deren Bauteil
+        sonst nichts haelt (solver._gruppen_frei; None: noch nicht bestimmt,
+        dann gilt jede ganz gleitende Gruppe als ungehalten)? Nur dort bleibt
+        die grobe Reststeifigkeit ohne Ausgleich: sie haelt das Bauteil."""
+        if not full_slip.get(_group(c), False):
+            return False
+        gf = getattr(self, "gruppe_frei", None)
+        return gf is None or _group(c) in gf
 
     def _full_slip_groups(self) -> dict:
         """Kontaktgruppe -> True, wenn alle aktiven Reibknoten gleiten (Bauteil rutscht;
@@ -1711,7 +1846,14 @@ class ContactSystem:
             if changed:
                 return True
             full = self._full_slip_groups()
-            if any(c.active and c.slip and not full.get(_group(c), False) for c in self.cons):
+            # In die Nachpruefung, sobald ein Knoten gleitet, dessen Gruppe nicht
+            # ganz rutscht - oder ganz rutscht, aber anderswo gehalten wird
+            # (gruppe_frei, 27.09.2026): sonst blieb der ganz rutschende Klotz
+            # K5 in Phase 1 an der groben Feder haengen
+            gf = getattr(self, "gruppe_frei", None)
+            if any(c.active and c.slip and (not full.get(_group(c), False)
+                                            or (gf is not None and _group(c) not in gf))
+                   for c in self.cons):
                 self.phase = 2
                 self.cycles = 0
                 return True
@@ -1746,6 +1888,77 @@ class ContactSystem:
         betroffen = set()       # id() der Bedingungen mit einem Ereignis
         zu_in_runde = set()     # id() der in dieser Runde geschlossenen
         n_haftend = 0
+        # Vorpass: wer will oeffnen oder schliessen, und wie stark (als Kraft)?
+        # Umgestellt wird davon der Anteil wechsel_anteil, staerkster Verstoss
+        # zuerst (Liniensuche wie beim Gleiten, siehe WECHSEL_ANTEIL_MIN):
+        # gleichzeitig oeffnende und schliessende Nachbarn liefen sonst am
+        # Drehlager im Kreis. Die Druckkraft einer offenen Bedingung, die
+        # schliessen will, ist Durchdringung mal oertliche Steifigkeit - an
+        # der exakten Bedingung die Diagonale (k_n / PENALTY_FACTOR), sonst
+        # die Feder.
+        wuensche: list = []
+        kontaktkraft = 0.0      # Summe der Druckkraefte (Bezug des Residuums)
+        kegel_summe = 0.0       # Kegelueberschreitung haftender Knoten [N]
+        gegen_summe = 0.0       # Reibkraft gleitender Knoten gegen ihre Richtung [N]
+        for c in self.cons:
+            ue = u[c.dofs]
+            g = c.g0 + c.cn @ ue
+            if c.active:
+                Fn = self._normalkraft(c, g, lam)
+                kontaktkraft += max(Fn, 0.0)
+                if c.ct is not None and c.mu > 0 and not c.haften:
+                    dt = np.array([c.ct[0] @ ue, c.ct[1] @ ue])
+                    limit = c.mu * max(Fn, 0.0)
+                    if not c.slip:
+                        ft = float(np.linalg.norm(c.kt * dt))
+                        if ft > limit * (1 + 1e-6):
+                            kegel_summe += ft - limit
+                    elif c.slip_dir is not None:
+                        nrm = float(np.linalg.norm(dt))
+                        if nrm > 0 and float(dt @ c.slip_dir) < 0:
+                            gegen_summe += limit
+            if c.zug or (c.frozen and not c.starr) or (c.gehalten and c.starr):
+                continue
+            if c.active:
+                if not Fn > -self.f_tol:
+                    wuensche.append((-Fn, c))
+            elif g < 0.0:
+                v = self._durchdringungskraft(c, g)
+                if (v > self.f_tol) if SCHLIESSEN_AM_KRAFTMASS else (g < -self.tol):
+                    wuensche.append((v, c))
+        f_ref = max(float(getattr(self, "f_ref", 1.0)), 1e-300)
+        wechsel_guete = sum(v for v, _c in wuensche) / f_ref
+        # Residuum: alle Verstoesse dieser Loesung als Kraft gegen die
+        # Kontaktkraft (RESIDUUM_ANTEIL). Darunter steht der Zustand: nichts
+        # wird umgestellt, keine Richtung nachgefuehrt, kein Wechsel gemeldet -
+        # die Loesung u ist die Loesung.
+        residuum = sum(v for v, _c in wuensche) + kegel_summe + gegen_summe
+        ruhe = kontaktkraft > 0.0 and residuum <= RESIDUUM_ANTEIL * kontaktkraft
+        self.residuum, self.kontaktkraft = float(residuum), float(kontaktkraft)
+        if ruhe and (wuensche or kegel_summe > 0.0 or gegen_summe > 0.0) \
+                and not getattr(self, "_ruhe_gemeldet", False):
+            self._ruhe_gemeldet = True
+            self.log.append(f"Kontakt: Verstöße unter der Lösergenauigkeit - Summe {residuum:.3g} N "
+                            f"bei {kontaktkraft / 1e3:.4g} kN Kontaktkraft, Anteil {RESIDUUM_ANTEIL:g}; "
+                            f"der Zustand steht ({len(wuensche)} Bedingungen wollten wechseln)")
+        n_wuensche = len(wuensche)
+        if ruhe:
+            wuensche = []
+        anteil = float(getattr(self, "wechsel_anteil", 1.0))
+        vorige = float(getattr(self, "wechsel_guete", float("inf")))
+        if wuensche:
+            if not np.isfinite(vorige) or vorige <= 0.0:
+                anteil = 1.0        # erste Wuensche (auch nach einer ruhigen Runde): voller Schritt
+            elif wechsel_guete < 0.9 * vorige:
+                anteil = min(1.0, anteil * WECHSEL_WACHSTUM)
+            else:
+                anteil = max(WECHSEL_ANTEIL_MIN, anteil / WECHSEL_WACHSTUM)
+        self.wechsel_anteil = anteil
+        self.wechsel_guete = wechsel_guete
+        if anteil < 1.0 and wuensche:
+            wuensche.sort(key=lambda e: -e[0])
+            wuensche = wuensche[:max(1, int(anteil * len(wuensche)))]
+        umstellen = {id(c) for _v, c in wuensche}
         for c in self.cons:
             ue = u[c.dofs]
             g = c.g0 + c.cn @ ue
@@ -1757,7 +1970,8 @@ class ContactSystem:
                 # Druckkraft (bzw. Zug unter der Loesergenauigkeit f_tol) -> bleibt;
                 # an der exakten Bedingung ist Fn der Multiplikator, und ein
                 # Multiplikator unter -f_tol heisst: die Bedingung zieht - oeffnen
-                new_active = Fn > -self.f_tol
+                # (wenn der Vorpass sie in dieser Runde umstellt)
+                new_active = id(c) not in umstellen
                 # Im Verbund bleibt die Bedingung auch unter Zug zu - und die
                 # Zugkraft gehoert ins Ergebnis, nicht auf null gekappt
                 c.Fn = Fn if c.zug else max(Fn, 0.0)
@@ -1776,15 +1990,13 @@ class ContactSystem:
                         betroffen.add(id(c))
             else:
                 c.Fn = 0.0
-                new_active = g < -self.tol
-            if c.zug or (c.frozen and not c.starr) or (c.gehalten and c.starr):
-                # Verbund oeffnet nie; eine festgehaltene Feder auch nicht; eine
-                # gehaltene exakte Bedingung (solver._freie_teile_halten) loest
-                # der Loeser, sobald das Teil anders getragen wird
-                # (solver._halt_loesen) - hier wuerde sie sonst unter Zug
-                # oeffnen, das Teil waere wieder frei, und der Halt begaenne
-                # von vorn
-                new_active = c.active
+                new_active = id(c) in umstellen
+            # Verbund oeffnet nie; eine festgehaltene Feder auch nicht; eine
+            # gehaltene exakte Bedingung (solver._freie_teile_halten) loest
+            # der Loeser, sobald das Teil anders getragen wird
+            # (solver._halt_loesen) - hier wuerde sie sonst unter Zug
+            # oeffnen, das Teil waere wieder frei, und der Halt begaenne
+            # von vorn: der Vorpass uebergeht sie
             if new_active != c.active:
                 war_aktiv = c.active
                 c.toggles += 1
@@ -1815,6 +2027,8 @@ class ContactSystem:
                     c.dt_last = None
                     c.yielding = False
                     c.Ft[:] = 0
+                else:
+                    c.wieder_zu = True
             if c.active and c.ct is not None and c.haften:
                 # Haften: die Fugenebene ist eine Feder, nie ein Gleiten
                 dt = np.array([c.ct[0] @ ue, c.ct[1] @ ue])
@@ -1827,7 +2041,9 @@ class ContactSystem:
                 if not c.slip:
                     c.Ft = Ft_el
                     guete += max(0.0, float(np.linalg.norm(Ft_el)) - limit)
-                    if np.linalg.norm(Ft_el) > limit * (1 + 1e-6) and limit >= 0:
+                    if ruhe:
+                        pass                    # Residuum unter der Loesergenauigkeit: Zustand steht
+                    elif np.linalg.norm(Ft_el) > limit * (1 + 1e-6) and limit >= 0:
                         if self.phase == 1:
                             c.slip = True
                             c.slip_dir = dt / nrm if nrm > 0 else np.array([1.0, 0.0])
@@ -1839,6 +2055,8 @@ class ContactSystem:
                         else:
                             ratio = np.linalg.norm(Ft_el) / limit if limit > 0 else np.inf
                             verstoesse.append((ratio, c, dt))
+                elif self.phase == 1 and ruhe:
+                    c.Ft = limit * c.slip_dir   # Zustand steht (Residuum), Richtung bleibt
                 elif self.phase == 1:
                     if nrm > 0 and (dt @ c.slip_dir) < 0:
                         # Bewegung entgegen Gleitrichtung -> wieder Haften
@@ -1904,7 +2122,7 @@ class ContactSystem:
             elif guete > self.gleit_guete:
                 self.gleit_anteil = max(GLEIT_ANTEIL_MIN, self.gleit_anteil / GLEIT_WACHSTUM)
         self.gleit_guete = guete
-        if verstoesse:
+        if verstoesse and not ruhe:
             haftend = sum(1 for k in self.cons
                           if k.active and k.ct is not None and k.mu > 0 and not k.slip)
             wieviele = max(1, int(self.gleit_anteil * haftend))
@@ -1922,11 +2140,12 @@ class ContactSystem:
         if runden is None:
             # Stuempfe aus object.__new__ (tests) kennen kein __init__
             runden = self.runden = []
-        f_ref = max(float(getattr(self, "f_ref", 1.0)), 1e-300)
         runden.append((int(self.phase),) + tuple(z[k] for k in RUNDEN_EREIGNISSE)
                       + (len(betroffen), len(verstoesse), n_haftend, float(self.gleit_anteil),
                          float(guete), float(self.dF_slip) / f_ref,
-                         sum(1 for v in self._full_slip_groups().values() if v)))
+                         sum(1 for v in self._full_slip_groups().values() if v),
+                         n_wuensche, float(anteil), float(wechsel_guete),
+                         float(residuum) / max(kontaktkraft, 1e-300), int(ruhe)))
         return changed
 
     # ---- Ergebnisse --------------------------------------------------------
@@ -1941,6 +2160,9 @@ class ContactSystem:
         for name, cs in groups.items():
             act = [c for c in cs if c.active]
             if act and all(c.slip for c in act):
+                gf = getattr(self, "gruppe_frei", None)
+                if gf is not None and name not in gf:
+                    continue            # anderswo gehalten: nichts laeuft weg
                 out.append(f"{name}: alle aktiven Kontaktknoten gleiten - Reibung reicht "
                            "nicht fuer das Gleichgewicht (Bauteil rutscht; nahe der "
                            "Reibkapazitaet mu*N urteilt das Verfahren konservativ)")
@@ -1983,6 +2205,9 @@ class ContactSystem:
                         # Abnahme, ob eine geschlossene Bedingung zieht
                         "Fn_roh": float(getattr(c, "zug_roh", c.Fn)), "starr": bool(c.starr),
                         "gehalten": bool(getattr(c, "gehalten", False)),
+                        # kn: die Abnahme rechnet die Durchdringung einer offenen
+                        # Bedingung damit in eine Kraft um (_durchdringungskraft)
+                        "kn": float(c.kn),
                         "Ft": float(np.linalg.norm(c.Ft)), "status": status,
                         "normal": c.normal.tolist(), "frozen": c.frozen,
                         "dof": int(c.dof), "limit": float(c.limit),

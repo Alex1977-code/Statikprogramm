@@ -1376,22 +1376,149 @@ des Blocks zu Recht, seine Resultierende läge außerhalb der Fuge. Seit dem
 und ein Teil, das sich selbst hält (die starre Platte unter dem Block),
 entscheidet nicht über den Halt des Nachbarteils.
 
-**Flächenlager „starr mit Ausfall“ (27.09.2026, noch abgeschaltet).** RFEM
-lässt „starr“ nur ohne Nichtlinearität zu; ein Lager mit Ausfall bei Zug
-trägt dort einen Federwert - am Drehlager 2,5·10¹¹ N/m³ für das Lager
-„Starr“. Nach Entscheidung des Anwenders gilt eine solche Bettung ab
-`supports.BETTUNG_STARR` als starres Lager mit Ausfall (exakte Bedingung).
-Die Regel ist gebaut (`supports.bettung_als_starr`, auch im RFEM-Import) und
-geprüft (tests/test_supports mit der vorgesehenen Grenze 10¹¹ N/m³), aber
-mit `BETTUNG_STARR = inf` abgeschaltet: mit starrer Knagge wird deren
-Reibung (u_x, u_y starr bis μ·N) zur exakten Bedingung mit k_t = 10⁴-facher
-Diagonalsteifigkeit, und die grobe Reststeifigkeit ihrer ganz gleitenden
-Gruppe (10⁻³ k_t, das Zehnfache des Bauteils) trug am Klotz an der Knagge
-21,5 von 100 kN Vertikallast, die in keiner Kontaktkraft standen - das
-offene K5. Mit der Bettung als Feder (k_t aus der Bettung) ist dieser Rest
-vernachlässigbar; darum bleibt es bis zur Lösung von K5 bei der Feder, und
-am Drehlager bei 244 bis 256 festgehaltenen Bettungsfedern (26.09.2026,
-Zug ≤ 0,35 kN).
+**Ganz gleitende Reibgruppen: die Reststeifigkeit trägt keine Kraft mehr
+(K5, 27.09.2026).** Bis dahin behielt eine Reibgruppe, deren aktive Knoten
+alle gleiten, auch in Phase 2 die grobe Reststeifigkeit 10⁻³ k_t - „sie hält
+das Bauteil“. Bei einer starren Bedingung ist k_t die 10⁴-fache
+Diagonalsteifigkeit, der „Rest“ also das Zehnfache des Bauteils, und er
+trug Kraft, die in keiner Kontaktkraft stand: am Klotz K5 der Prüfmatrix
+86 bis 90 % dessen, was die Federn des Klotzes tragen sollten; am Stempel
+mit gewölbter Unterseite (tests/test_plastizitaet) 211 kN - so viel wie die
+Reibkraft selbst - gemessen als Last + Kontaktkräfte + Reaktionen je Teil;
+am Klotz an der starren Knagge 21,5 von 100 kN Vertikallast. Jetzt
+entscheidet der Rang (`solver._gruppen_frei`): halten die übrigen
+Bedingungen, Bindungen und die linearen Lager des Teils (`_lagerzeilen`)
+alle Starrkörpermoden auch ohne die Tangentialsteifigkeit der Gruppe, so
+bekommt sie in Phase 2 die feine Reststeifigkeit mit Ausgleich, und die
+Iteration geht für sie in Phase 2 (`gruppe_frei` im Kontaktsystem,
+Signatur, Sicherung). Nur eine Gruppe, ohne die eine Bewegung frei bliebe,
+behält die grobe Feder samt Warnung „Bauteil rutscht“. Gemessen: K5 hex8
+Federkraft +0,21 % (vorher −86 %), tet4 +1,45 % (vorher −91 %); Stempel-Rest
+107 N statt 211 kN, seine Verschiebung 0,4075 statt 0,3804 mm (die alte
+Referenz war die federgehaltene); Knagge R = (50, 0, 100) kN. Drehlager LF1
+(vier ganz gleitende Lagergruppen „Starr u_x/u_y“): u 1,2980 mm, ε_p
+8,234 %, Bohrungen auf ±0,5 N/mm² wie zuvor, Schlussabnahme bestanden (Rest
+6·10⁻⁹), 62 min; nur am Montageauge V35 367 statt 380 N/mm² (25.09.: 368)
+und V115 231 statt 209 - dort trug die grobe Feder Kraft. Zwei Kuren
+vorher verworfen: die Reststeifigkeit auf die Bauteilsteifigkeit beziehen
+(Phase 1 verliert die Dämpfung, Block mit Reibung und Warmstart-Fixtures
+laufen in den Deckel) und der Ausgleich an der groben Feder (Fixpunkt zu
+langsam, K5 −79 %).
+
+Offen bleibt, was die grobe Feder verdeckt hatte: ein Körper, der ganz
+gleitet und in der Ebene nur über Reibung auf gewölbter Fläche gehalten ist,
+ist mechanisch indifferent. Am Stempel mit Fließen (zwei Körper, μ 0,1)
+erreicht der verschachtelte Newton die Schlussabnahme nicht (Rest 4,6·10⁻³
+bei Toleranz 10⁻³, auch nach fünf Nachschritten vom Abschluss aus,
+`plastizitaet.ABSCHLUSS_NACHSCHRITTE`), weil jeder volle Kontaktlauf die
+Reibung neu setzt (7 bis 11 Phase-2-Runden); die gemeinsame Iteration
+konvergiert dort (Rest 1,5·10⁻⁶). Das Programm meldet das jetzt ehrlich als
+„nicht konvergiert“ statt einer federgehaltenen Lösung.
+
+**Flächenlager „starr mit Ausfall“ (27.09.2026).** RFEM lässt „starr“ nur
+ohne Nichtlinearität zu; ein Lager mit Ausfall bei Zug trägt dort einen
+Federwert - am Drehlager 2,5·10¹¹ N/m³ für das Lager „Starr“. Nach
+Entscheidung des Anwenders gilt eine solche Bettung ab
+`supports.BETTUNG_STARR` = 10¹¹ N/m³ als starres Lager mit Ausfall (exakte
+Bedingung; `supports.bettung_als_starr`, auch im RFEM-Import, Protokollzeile).
+Echte Bettungen liegen Größenordnungen darunter (Boden 10⁷ bis 10⁸,
+Elastomer 10⁹ bis 10¹⁰). Belegt am Klotz an der Knagge (tests/test_supports):
+R = (50, 0, 100) kN - erst seit der Kur für K5 oben, vorher 78,5 kN.
+
+**Die Abhebekante des starren Flächenlagers pendelte (27.09.2026).** Mit der
+Regel stand Lauf 1 des Drehlagers 30 Runden bei Δu 10⁻³ (mit der Bettung als
+Feder war er nach 18 fertig; dort hielten 244 festgehaltene Federn still).
+Die Zyklus-Diagnose (Öffnen und Schließen je Bedingung mitgeschrieben,
+`scratchpad/drehlager_zyklus.py`): 250 Bedingungen wechselten ab Runde 8 im
+Takt von zwei bis drei Runden, 203 davon Knoten der Bettung „Starr“ (147
+mit μ 0,1), die übrigen Nachbarn in Deckel und Montageauge; Zug beim Öffnen
+5 bis 50 N, Durchdringung beim Schließen 0,5 bis 1 nm - beides nichts gegen
+die Lasten, aber jenseits von f_tol und tol, und die Aktivmenge fand nicht
+zur Ruhe. Zwei Kuren, nacheinander gemessen:
+
+1. *Liniensuche fürs Öffnen und Schließen* (`contact.WECHSEL_ANTEIL_MIN`):
+   wie beim Gleiten in Phase 2 stellt eine Runde nur den Anteil der
+   wechselwilligen Bedingungen um, stärkster Verstoß (Zug bzw.
+   Durchdringung mal örtliche Steifigkeit, als Kraft) zuerst; fällt das
+   Verstoßmaß nicht um ein Zehntel je Runde, halbiert sich der Anteil,
+   sonst verdoppelt er sich bis 1. Solange das Maß fällt, ist das der
+   gewöhnliche primal-duale Schritt (Prüfmatrix K1 bis KP2 unverändert,
+   Stumpftest in `test_kontaktzustand`). Am Drehlager **allein zu wenig**:
+   nach 40 Runden noch 226 Pendler, der Anteil pendelte mit dem Maß mit.
+2. *Die Ausgangslage ist kein Anker für einen Knoten, der abgehoben hat*
+   (`Constraint.wieder_zu`). Der Mechanismus stand im Quelltext: ein
+   Reibknoten, der nach dem Abheben wieder schließt, hat den Weg seines
+   Bauteils in der Fugenebene mitgemacht. Seine Haftfeder k_t (starr: die
+   10⁴-fache Diagonale) auf diesen Weg ließ ihn in derselben Runde gleiten
+   (μ F_n = 0), und die grobe Reststeifigkeit der Phase 1 (10⁻³ k_t, das
+   Zehnfache des Bauteils) zog ihn ohne Ausgleich mit demselben Weg in die
+   Ausgangslage - Hunderte kN aus einem Knoten ohne Normalkraft, die die
+   Nachbarn an der Abhebekante um eben jene 5 bis 50 N verschoben. Mit der
+   Bettung als Feder war k_t die 10⁴-fache Federsteifigkeit 2,5·10⁷ N/m,
+   nichts gegen das Bauteil - darum fiel es dort nicht auf. Seither bekommt
+   ein Knoten, der in diesem Lauf nach dem Abheben geschlossen hat, den
+   Ausgleich (`dt_last`) auch an der groben Feder; Knoten, die nie abhoben,
+   behalten den Anker (die Dämpfung der Phase 1), ebenso eine ganz gleitende
+   Gruppe ohne anderen Halt. Gemessen am Drehlager, Kur 2 allein (40 Runden
+   Diagnose): Pendler ab Runde 8 noch 58 statt 250, davon Bettung 9 statt 203,
+   keine Bedingung mit mehr als drei Wechseln (vorher 189 mit vier und mehr);
+   das Verstoßmaß fiel von Runde 8 bis 19 um vier Zehnerpotenzen auf 10⁻⁶
+   (Aktivmenge 12 630 statt 13 150). Was bleibt, ist ein Tröpfeln von ein
+   bis zwei Wechseln je Runde in den Fugen Deckel 1 und Montageauge auf dem
+   Niveau von f_tol (Maß 10⁻⁷ bis 10⁻⁶), getrieben von einzelnen
+   Haft-Gleit-Wechseln (gleitende Knoten 2367 bis 2372) - es hielt Phase 1
+   bis Runde 40 offen; im vollen Lauf endete Phase 1 nach 29 Runden, und
+   Phase 2 tröpfelte weiter (Runden 32 bis 50 je ein bis zwei Wechsel,
+   jede eine Faktorisierung, auf den Deckel von 40 zu). Verworfen: die
+   Landelage als fester Anker (`dt_ref`) - pfadabhängig, und der
+   Warmstart-Test brach; der Ausgleich für **alle** Knoten der Phase 1 - er
+   änderte die Gleitrichtungen des Blocks auf der Platte, LF2 verwarf den
+   Warmstart (14 statt 10 Schritte).
+3. *Ein Maßstab fürs Öffnen und Schließen* (`_durchdringungskraft`). Die
+   Folgen der letzten Pendler zeigten Schließungen bei „0,0000 µm“
+   Durchdringung: geschlossen wurde bei g < tol = 10⁻¹²·Modellgröße
+   (2·10⁻¹² m), geöffnet bei Zug über f_tol = 10⁻⁶·max|F| (1 N). Mit der
+   Diagonale 2·10¹⁰ N/m entsprach tol 0,04 N - das Schließen war 25-mal
+   schärfer als das Öffnen. Ein Knoten schloss auf 10⁻¹¹ m, zog in der
+   nächsten Runde mit 1 N, öffnete, und sein Nachbar schloss. Seither
+   schließt eine offene Bedingung, wenn ihre Durchdringung als Kraft
+   (Spalt mal Diagonale bzw. Feder) über f_tol liegt - derselbe Maßstab wie
+   beim Öffnen; `tol` bleibt für die Berührung am Anfang und die Entlastung
+   beim Fließen. Suiten und Prüfmatrix K1 bis KP2 unverändert. Am
+   Drehlager stand Lauf 1 trotzdem nach 40 Runden noch in Phase 1
+   (Aktivmenge 12 612 bis 12 619, Δu 10⁻⁵).
+4. *Der Zustand steht, wenn das Residuum unter der Lösergenauigkeit liegt*
+   (`RESIDUUM_ANTEIL` = 10⁻⁶). Die Diagnose mit den Ereignisfeldern der
+   Rundenablage (45 Runden) nannte das Tröpfeln: ab Runde 18 je Runde null
+   bis drei Öffnen/Schließen und null bis zwei Haft-Gleit-Wechsel mit
+   Verstößen von 10⁻⁶ bis 10⁻⁵ der Bezugskraft (1 bis 10 N), dazu 4 bis 15
+   Richtungsnachführungen gleitender Knoten (> 3°), und jeder dieser
+   Wechsel hielt Phase 1 offen (Runden 32 bis 45: nur noch „ri 8, 8, 8, 4,
+   6, 4“). Bis dahin endete eine Phase erst, wenn eine Runde **gar nichts**
+   umstellte. Jetzt summiert der Vorpass alle Verstöße der Lösung als
+   Kraft - Zug an geschlossenen, Durchdringung an offenen (mal örtliche
+   Steifigkeit), Kegelüberschreitung haftender Knoten und die Reibkraft
+   gleitender Knoten, die sich gegen ihre Richtung bewegen - und vergleicht
+   sie mit der Kontaktkraft (Summe der Druckkräfte). Liegt die Summe unter
+   10⁻⁶ davon, stellt die Runde nichts um, führt keine Richtung nach und
+   meldet keinen Wechsel: die Lösung u ist die Lösung, das Protokoll sagt
+   „Verstöße unter der Lösergenauigkeit - Summe … N bei … kN Kontaktkraft,
+   der Zustand steht“. Das ist derselbe relative Maßstab wie f_tol
+   (10⁻⁶ der größten Knotenlast) für eine einzelne Bedingung, angewandt auf
+   die Summe; ein Verstoß darüber wird weiter umgestellt. Stumpftest in
+   `test_kontaktzustand` (Zug 0,004 N und Durchdringung 0,004 N bei 10 kN
+   Kontaktkraft stehen, 0,024 N wechseln; Kegel 0,004 N bleibt haften,
+   0,05 N gleitet; ohne Kontaktkraft keine Ruhe). Suiten und Prüfmatrix
+   K1 bis KP2 unverändert. Eine Folge im Kleinen: gemeinsame und
+   verschachtelte Iteration von Fließen und Kontakt (5e.3) treffen sich am
+   gequetschten Block nicht mehr bitgleich, sondern auf 1,2·10⁻⁹ m bei
+   u_max 1,5·10⁻³ m - zwei Wege, die beide beim Residuum 10⁻⁶ enden, enden
+   bis auf diese Genauigkeit gleich (Bisektion: nur mit dem Residuum
+   ausgeschaltet wieder bitgleich; `tests/test_plastizitaet` prüft seither
+   auf 10⁻⁶ relativ). Der Block mit Reibung braucht 6 statt 7 Zerlegungen.
+
+Die Liniensuche bleibt als Sicherung im Programm: solange das Maß fällt,
+greift sie nicht. Voller Lauf mit allen vier Änderungen: siehe unten.
 
 Arten:
 
@@ -1429,10 +1556,13 @@ aufgebrachte Lasten geeignet. Die Iteration läuft in zwei Phasen:
    der Tangentialverschiebung seit dem letzten Zustand (`Constraint.dt_last`,
    Ausgleich im Kraftvektor): am Ende trägt sie nichts, K u und
    `contact_forces` stimmen überein (K4: 29 826 kN beide, Federkraft +1,2 %).
-   Die grobe Feder der Phase 1 und ganz gleitender Gruppen bleibt ohne
-   Ausgleich — sie hält das Bauteil, und ihr Fixpunkt wäre mit Ausgleich zu
-   langsam; dort steht weiter die Warnung „Bauteil rutscht“ (K5: die Feder
-   trägt 79 % dessen, was die Federn tragen sollten — offen). Ebenso offen:
+   Die grobe Feder der Phase 1 und einer ganz gleitenden Gruppe ohne anderen
+   Halt bleibt ohne Ausgleich — sie hält das Bauteil, und ihr Fixpunkt wäre
+   mit Ausgleich zu langsam; dort steht weiter die Warnung „Bauteil rutscht“
+   (anderswo gehaltene Gruppen: seit 27.09.2026 die feine Feder, K5 hex8
+   grün; Knoten, die nach dem Abheben wieder schließen: Ausgleich auch an
+   der groben Feder, siehe oben „Die Abhebekante des starren Flächenlagers
+   pendelte“). Offen:
    die festgehaltene Gleitrichtung lag an einem Eckknoten von K4 20° neben
    der Bewegung (2,5 % von μ N quer zur Last, 0,7 mm Seitenwanderung); eine
    Nachführung in Phase 2 ist als Fixpunkt instabil (weiche Querhaltung:

@@ -1387,16 +1387,34 @@ def test_gemeinsame_iteration_rechnet_dasselbe():
             check(f"{titel}: die gemeinsame Rechnung kürzt unterwegs ab", ab,
                   f"{len(ab)} abgekürzte von {len(arten_neu)} Läufen")
         za, zn = zustand_aus_info(r_alt.info), zustand_aus_info(r_neu.info)
-        check(f"{titel}: beide konvergiert", za == "konvergiert" and zn == "konvergiert",
-              f"verschachtelt: {za}; gemeinsam: {zn}")
-        sa, sn = _vergleichsspannungen(r_alt), _vergleichsspannungen(r_neu)
-        d = float(np.abs(sa - sn).max())
-        check(f"{titel}: σ_v je Element auf 1 N/mm² und 1 ‰ der größten gleich",
-              d <= 1e6 and d <= 1e-3 * float(sa.max()),
-              f"max |Δσ_v| {d / 1e6:.4f} N/mm² bei σ_v,max {float(sa.max()) / 1e6:.2f} N/mm²")
-        ua, un = np.asarray(r_alt.u, float)[:, :3], np.asarray(r_neu.u, float)[:, :3]
-        du = float(np.abs(ua - un).max()) / float(np.abs(ua).max())
-        check(f"{titel}: Verschiebungen auf 1e-4 der größten gleich", du <= 1e-4, f"{du:.2e}")
+        if titel.startswith("zwei"):
+            # Seit K5 (27.09.2026) haelt keine grobe Reststeifigkeit den ganz
+            # gleitenden Stempel mehr fest (sie trug 211 kN verborgene Kraft):
+            # in der Ebene ist er nur ueber die Reibung auf der gewoelbten
+            # Flaeche gehalten, also mechanisch indifferent. Der verschachtelte
+            # Newton erreicht die Schlussabnahme nicht (Rest 4,6e-3 bei 1e-3,
+            # auch nach den Nachschritten vom Abschluss), die gemeinsame
+            # Iteration mit drei Laststufen konvergiert (Rest 1,5e-6). Beide
+            # Wege enden in verschiedenen Reibzustaenden - gleich koennen sie
+            # nicht sein. Offen (Theoriehandbuch 4, K5); geprueft wird hier,
+            # dass das Programm es ehrlich meldet.
+            rest_alt = float((r_alt.info.get("plastizitaet") or {}).get("rest_abschluss") or 0.0)
+            tol = float(r_alt.model.plastizitaet.toleranz)
+            check(f"{titel}: gemeinsam konvergiert; verschachtelt meldet die verfehlte Abnahme "
+                  f"(indifferenter Stempel, offen seit K5)",
+                  zn == "konvergiert" and za.startswith("NICHT konvergiert") and rest_alt > tol,
+                  f"verschachtelt: {za} (Rest {rest_alt:.2e} > {tol:g}); gemeinsam: {zn}")
+        else:
+            check(f"{titel}: beide konvergiert", za == "konvergiert" and zn == "konvergiert",
+                  f"verschachtelt: {za}; gemeinsam: {zn}")
+            sa, sn = _vergleichsspannungen(r_alt), _vergleichsspannungen(r_neu)
+            d = float(np.abs(sa - sn).max())
+            check(f"{titel}: σ_v je Element auf 1 N/mm² und 1 ‰ der größten gleich",
+                  d <= 1e6 and d <= 1e-3 * float(sa.max()),
+                  f"max |Δσ_v| {d / 1e6:.4f} N/mm² bei σ_v,max {float(sa.max()) / 1e6:.2f} N/mm²")
+            ua, un = np.asarray(r_alt.u, float)[:, :3], np.asarray(r_neu.u, float)[:, :3]
+            du = float(np.abs(ua - un).max()) / float(np.abs(ua).max())
+            check(f"{titel}: Verschiebungen auf 1e-4 der größten gleich", du <= 1e-4, f"{du:.2e}")
         F = solver.case_loads(r_neu.model, {list(r_neu.model.load_cases)[0]: 1.0})[0]
         F3 = np.asarray(F, float)[:r_neu.model.nn * 6].reshape(-1, 6)[:, :3].sum(axis=0)
         Ra = np.asarray(r_alt.reactions, float)[:, :3].sum(axis=0)
@@ -1485,11 +1503,15 @@ def test_gemeinsame_iteration_kein_falsches_konvergiert():
     l2 = r2.info.get("laeufe") or []
     check("(b) Deckel 2: auch hier wird unterwegs abgekürzt",
           any(e.get("grund") == "abgekuerzt" for e in l2), f"{len(l2)} Läufe")
-    check("(b) Deckel 2: der Abschluss ist gedeckelt - „NICHT konvergiert“",
-          l2 and l2[-1]["grund"] == "deckel" and r2.info.get("contact_letzter_lauf_konvergiert") is False
+    # Welcher Lauf am Deckel endet, haengt am Reibungsweg (seit K5 der feinen
+    # Feder des ganz gleitenden Stempels: gedeckelt sind Laeufe unterwegs, der
+    # Abschluss selbst konvergiert); verlangt ist, dass ein gedeckelter Lauf
+    # den Lastfall "NICHT konvergiert" macht und im Laufbuch steht
+    check("(b) Deckel 2: ein Lauf am Deckel macht den Lastfall „NICHT konvergiert“",
+          l2 and any(e.get("grund") == "deckel" for e in l2)
           and r2.info.get("contact_converged") is False
           and zustand_aus_info(r2.info).startswith("NICHT konvergiert"),
-          f"letzter Lauf {l2[-1]['art'] if l2 else '-'} / {l2[-1]['grund'] if l2 else '-'}: "
+          f"Deckel-Läufe {sum(1 for e in l2 if e.get('grund') == 'deckel')} von {len(l2)}: "
           f"{zustand_aus_info(r2.info)}")
 
     tol = 1e-4
@@ -1640,8 +1662,21 @@ def test_gemeinsam_aendert_nichts_ohne_beides():
     # 26.09.2026) 2,6373307e-6 und Stempel 3,8035376e-4 statt 3,8035677e-4:
     # die Durchdringung der Feder (Fn/k_n) faellt weg, das sind 2,8e-5 bzw.
     # 7,9e-6 relativ - Zerlegungen und Rueckfuehrungen unveraendert.
-    referenz = {"Kontakt ohne Plastizität: Block mit Reibung": (7, 0, 2.637330735743709e-06, None),
-                "Kontakt ohne Plastizität: Stempel auf Sockel": (5, 0, 0.0003803537575356884, None),
+    # Stempel seit K5 (27.09.2026) 4,0753375e-4: seine Fuge gleitet ganz, und
+    # die grobe Reststeifigkeit hielt ihn mit 211 kN verborgener Kraft fest
+    # (Last + Kontaktkraefte + Reaktionen je Teil, so viel wie die Reibkraft);
+    # mit der feinen Feder und Ausgleich bleiben 107 N, der Stempel rutscht
+    # 7 % weiter - das ist die Coulomb-Loesung ohne Feder.
+    # 27.09.2026 (Abhebekante des starren Flaechenlagers, Theoriehandbuch 4):
+    # Block mit Reibung 6 statt 7 Zerlegungen - das Residuum beendet die
+    # Phase eine Runde frueher -, u_max 2,6400e-6 statt 2,6373e-6 m (+0,1 %,
+    # anderer Weg ueber Phase 1: Ausgleich fuer wieder geschlossene Knoten,
+    # Schliessen am Kraftmass); Stempel auf Sockel u_max 0,40711 statt
+    # 0,40753 mm (-0,1 %): der ganz gleitende Stempel ist in der Ebene
+    # indifferent, sein u_max haengt am Restverstoss, mit dem die Iteration
+    # endet. Bis dahin: "wie 6a961e5", vom 27.09. vormittags die K5-Kur.
+    referenz = {"Kontakt ohne Plastizität: Block mit Reibung": (6, 0, 2.64003962147164e-06, None),
+                "Kontakt ohne Plastizität: Stempel auf Sockel": (5, 0, 0.0004071098032618732, None),
                 "Plastizität ohne Kontakt: Zugwürfel hex8": (3, 4, 0.010142857142857335, True),
                 "Plastizität ohne Kontakt: Kragträger tet4": (6, 8, 0.00967601273071502, True)}
 
@@ -1801,19 +1836,34 @@ def test_gemeinsam_im_budget():
               and not any("nicht konvergiert" in z for z in log),
               f"{zustand_aus_info(rg.info)} / {zustand_aus_info(ra.info)}; {arten}")
 
-    m = _drehlagerartiges_modell()
+    # (c) seit K5 (27.09.2026) am Block mit Reibung statt am Stempel: der ganz
+    # gleitende Stempel erreicht die Abnahme nicht mehr (indifferent, siehe
+    # test_gemeinsam_...), am Block sind es 3 Newton-Schritte plus die
+    # Abnahme - vier Rueckfuehrungen, der letzte Lauf der Abschluss
+    m = _fliessendes_kontaktmodell()
     m.plastizitaet.laststufen = 1
     m.plastizitaet.iterationen = 9
     m.plastizitaet.kontakt = "gemeinsam"
     r = solver.solve_static(m)
     pz = r.info.get("plastizitaet") or {}
     laeufe = r.info.get("laeufe") or []
-    check("(c) die Abnahme nach dem 9. von 9 Schritten zählt nicht mit: „konvergiert“, "
-          "10 Rückführungen, der letzte Lauf der Abschluss",
-          zustand_aus_info(r.info) == "konvergiert" and pz.get("iterationen") == 10
-          and laeufe and laeufe[-1]["art"] == "Abschluss" and laeufe[-2].get("abgekuerzt"),
+    newton = sum(1 for k, it, *_ in (pz.get("verlauf") or []) if it > 0) if pz.get("verlauf") else None
+    check("(c) die Abnahme zählt nicht als Newton-Schritt: „konvergiert“, Rückführungen = Schritte + 1, "
+          "der letzte Lauf der Abschluss",
+          zustand_aus_info(r.info) == "konvergiert" and pz.get("iterationen") == 4
+          and laeufe and laeufe[-1]["art"] == "Abschluss",
           f"{zustand_aus_info(r.info)}, {pz.get('iterationen')} Rückführungen, "
           f"{[(e['art'], e['grund']) for e in laeufe[-2:]]}")
+    m2 = _drehlagerartiges_modell()
+    m2.plastizitaet.laststufen = 1
+    m2.plastizitaet.iterationen = 9
+    m2.plastizitaet.kontakt = "gemeinsam"
+    r2 = solver.solve_static(m2)
+    pz2 = r2.info.get("plastizitaet") or {}
+    check("(c) Stempel, eine Laststufe: die verfehlte Abnahme wird gemeldet (offen, indifferent)",
+          zustand_aus_info(r2.info).startswith("NICHT konvergiert")
+          and float(pz2.get("rest_abschluss") or 0.0) > float(m2.plastizitaet.toleranz),
+          f"{zustand_aus_info(r2.info)}, Rest {pz2.get('rest_abschluss')}")
 
 
 def test_gemeinsam_rueckfall_verschachtelt():
@@ -1843,12 +1893,24 @@ def test_gemeinsam_rueckfall_verschachtelt():
         check(f"{titel}: gemeinsam dasselbe Urteil wie verschachtelt",
               zustand_aus_info(rg.info) == zustand_aus_info(ra.info),
               f"gemeinsam: {zustand_aus_info(rg.info)}; verschachtelt: {zustand_aus_info(ra.info)}")
-        check(f"{titel}: … und bitgleiche Verschiebungen, Auflager- und Kontaktkräfte",
-              np.array_equal(np.asarray(rg.u, float), np.asarray(ra.u, float))
-              and np.array_equal(np.asarray(rg.reactions, float), np.asarray(ra.reactions, float))
-              and np.array_equal(np.asarray(rg.contact_forces, float),
-                                 np.asarray(ra.contact_forces, float)),
-              f"max |Δu| {float(np.abs(np.asarray(rg.u) - np.asarray(ra.u)).max()):.2e}")
+        # Bis zum 27.09.2026 bitgleich. Seit dem Residuum-Kriterium
+        # (contact.RESIDUUM_ANTEIL) endet eine Kontaktiteration, sobald die
+        # Summe der Verstoesse unter 1e-6 der Kontaktkraft liegt - zwei Wege
+        # zum selben Zustand enden darum bis auf diese Genauigkeit gleich,
+        # nicht mehr bitgleich (gequetschter Block: max |du| 1,2e-9 bei
+        # u_max 1,5e-3 m; mit RESIDUUM_ANTEIL = -1 wieder 0,0). Geprueft wird
+        # darum auf 1e-6 relativ, fuer u, Auflager- und Kontaktkraefte.
+        def gleich(x, y):
+            x, y = np.asarray(x, float), np.asarray(y, float)
+            bezug = float(np.nanmax(np.abs(x))) if x.size else 0.0
+            return x.shape == y.shape and (bezug == 0.0 or
+                                           float(np.nanmax(np.abs(x - y))) <= 1e-6 * bezug)
+        check(f"{titel}: … und dieselben Verschiebungen, Auflager- und Kontaktkräfte auf 1e-6 "
+              "(seit dem Residuum-Kriterium nicht mehr bitgleich)",
+              gleich(rg.u, ra.u) and gleich(rg.reactions, ra.reactions)
+              and gleich(rg.contact_forces, ra.contact_forces),
+              f"max |Δu| {float(np.abs(np.asarray(rg.u) - np.asarray(ra.u)).max()):.2e} "
+              f"bei u_max {float(np.abs(np.asarray(ra.u)).max()):.2e}")
         check(f"{titel}: der verworfene Versuch steht im Laufbuch und im Protokoll",
               verworfen and any("verschachtelt wiederholt" in z for z in log)
               and int(rg.info.get("contact_laeufe_verworfen", -1))

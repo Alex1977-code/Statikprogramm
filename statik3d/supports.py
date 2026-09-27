@@ -441,17 +441,15 @@ def lager_auf_netz(model: Model, log: list = None) -> dict:
 #: festgehaltene Bedingungen, 26.09.2026); als starres Lager ist es eine
 #: exakte Bedingung (contact.EXAKTE_NORMALBEDINGUNG).
 #:
-#: **Noch abgeschaltet (inf), gemessen 27.09.2026:** mit starrem Lager wird
-#: die Reibung der Knagge (ux/uy starr bis mu*N) zur exakten Bedingung mit
-#: k_t = 1e4-facher Diagonalsteifigkeit, und die grobe Reststeifigkeit ihrer
-#: ganz gleitenden Gruppe (1e-3 k_t = das Zehnfache des Bauteils) trug am
-#: Klotz an der Knagge 21,5 von 100 kN Vertikallast, die in keiner
-#: Kontaktkraft standen (Pruefmatrix K5, offen). Mit der Bettung als Feder
-#: ist dieser Rest vernachlaessigbar. Die Regel wird eingeschaltet (1e11),
-#: sobald K5 geloest ist; tests/test_supports prueft den Mechanismus mit
-#: der Grenze 1e11.
-BETTUNG_STARR = float("inf")
-BETTUNG_STARR_VORGESEHEN = 1.0e11
+#: Gemessen 27.09.2026 (Klotz an der Knagge, tests/test_supports): mit starrem
+#: Lager wird die Reibung der Knagge (ux/uy starr bis mu*N) zur exakten
+#: Bedingung mit k_t = 1e4-facher Diagonalsteifigkeit; die grobe Rest-
+#: steifigkeit ihrer ganz gleitenden Gruppe trug zunaechst 21,5 von 100 kN
+#: Vertikallast, die in keiner Kontaktkraft standen (K5). Seit der feinen
+#: Reststeifigkeit fuer anderswo gehaltene Gruppen (solver._gruppen_frei)
+#: stimmt es: R = (50, 0, 100) kN. Damit ist die Regel scharf.
+BETTUNG_STARR = 1.0e11
+BETTUNG_STARR_VORGESEHEN = BETTUNG_STARR
 
 
 def bettung_als_starr(b: DofBehaviour) -> DofBehaviour:

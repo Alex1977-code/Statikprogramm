@@ -3414,12 +3414,32 @@ alle seine Bewegungen halten. Hängt es am Ende allein am Halt und zieht
 daran, bricht die Rechnung mit „hebt ab“ ab - siehe „Abbruch der
 Kontakt-Iteration“.
 
-**Flächenlager mit Bettung und Ausfall bei Zug** (etwa das RFEM-Lager
-„Starr“ mit 2,5·10¹¹ N/m³) rechnen weiterhin als Feder - dort kann eine
-Bedingung noch „als aktiv gehalten“ werden (Protokoll). Die Regel, eine
-solche Bettung ab 10¹¹ N/m³ als starres Lager mit Ausfall zu behandeln, ist
-vorbereitet, aber abgeschaltet, bis die Reibung ganz gleitender Gruppen
-(Prüfmatrix K5) keine Kraft mehr in ihrer Reststeifigkeit trägt.
+**Flächenlager „starr mit Ausfall bei Zug“** (seit 27.09.2026): RFEM lässt
+„starr“ nur ohne Nichtlinearität zu, ein Lager mit Ausfall trägt dort einen
+Federwert - das RFEM-Lager „Starr“ des Drehlagers 2,5·10¹¹ N/m³. Eine
+Bettung ab 10¹¹ N/m³ mit Ausfall gilt in Statik3D als **starres Lager mit
+Ausfall** (exakte Bedingung, kein Festhalten mehr); das Protokoll nennt die
+Umdeutung beim Import und beim Rechnen. Echte Bettungen (Boden, Elastomer)
+liegen Größenordnungen darunter und bleiben Federn.
+
+**„Verstöße unter der Lösergenauigkeit - der Zustand steht“** (Protokoll,
+seit 27.09.2026): Die Kontaktiteration endet, sobald die Summe aller
+verbliebenen Verstöße (Zug an geschlossenen, Durchdringung an offenen
+Bedingungen, Reibkegel) als Kraft unter einem Millionstel der Kontaktkraft
+liegt - das ist die Genauigkeit des Gleichungslösers, keine Toleranz im
+Ergebnis. Vorher lief sie weiter, solange irgendeine Bedingung wechselte,
+am Drehlager 40 Runden lang mit Wechseln von 1 bis 10 N bei Meganewton
+Kontaktkraft (Theoriehandbuch 4). Die Zeile nennt Summe und Kontaktkraft.
+
+**Reibung, wenn ein Bauteil ganz gleitet** (seit 27.09.2026): gleiten alle
+Knoten einer Reibfuge, trägt die Fuge genau μ·N - die Reststeifigkeit, mit
+der das Programm den gleitenden Knoten führt, trägt keine Kraft mehr, sofern
+das Bauteil anderswo gehalten ist (Lager, andere Fugen, Bindungen). Vorher
+konnte sie erhebliche Kraft verbergen (am Stempel mit gewölbter Unterseite
+so viel wie die Reibkraft selbst). Ein Bauteil, das nur über Reibung auf
+gewölbter Fläche gehalten ist, hat keine eindeutige Lage; dort kann die
+Rechnung jetzt „nicht konvergiert“ melden, wo sie früher eine
+federgehaltene Lage ausgab - siehe Theoriehandbuch 4.
 
 > **Wann ein Kontaktergebnis nicht auskonvergiert ist (seit 22.09.2026).**
 > Bei Reibung prüft das Programm die Haft- und Gleitzustände nach jedem

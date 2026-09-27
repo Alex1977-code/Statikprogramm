@@ -4768,6 +4768,14 @@ def _teile_bedingungen(model, cs) -> list:
     from .diagnose import teiltragwerke
     if not cs.cons:
         return []
+    # Einmal je Kontaktsystem (27.09.2026): Teile und Zuordnung haengen nur am
+    # Modell, nicht am Zustand - die Aufrufer lesen `active` live. Gebraucht
+    # wird die Liste seit den Rangpruefungen (_halt_loesen, _gruppen_frei)
+    # in jeder Runde; am Drehlager kostete teiltragwerke ueber 655 000
+    # Elemente je Aufruf Minuten, und die Runde stand still.
+    cache = getattr(cs, "_teile_cache", None)
+    if cache is not None and cache[0] is model and cache[1] == len(cs.cons):
+        return cache[2]
     ne = len(model.elements)
     teile, belegt = [], set()
     for name, k in (getattr(model, "koerper", None) or {}).items():
@@ -4800,7 +4808,12 @@ def _teile_bedingungen(model, cs) -> list:
                     js.add(j)
         for j in js:
             cons_je[j].append(c)
-    return [(name, kn, cons) for (name, kn), cons in zip(teile, cons_je) if cons]
+    aus = [(name, kn, cons) for (name, kn), cons in zip(teile, cons_je) if cons]
+    try:
+        cs._teile_cache = (model, len(cs.cons), aus)
+    except Exception:                 # noqa: BLE001 - Stuempfe ohne __dict__
+        pass
+    return aus
 
 
 def _teile_mit_kontakt(model, cs) -> list:
@@ -4961,6 +4974,34 @@ def _halterzeilen(cons, alle_zu: bool = False, ohne_gruppe: str = None,
             zeilen.append((c.dofs, c.ct[0]))
             zeilen.append((c.dofs, c.ct[1]))
     return zeilen
+
+
+def _gruppen_frei(model, cs) -> set:
+    """Ganz rutschende Reibgruppen, ohne deren Tangentialsteifigkeit eine
+    Starrkoerperbewegung ihres Teils frei waere (27.09.2026). Nur sie
+    behalten in Phase 2 die grobe Reststeifigkeit (contact._k_res); alle
+    anderen bekommen die feine mit Ausgleich, damit die Feder am Ende keine
+    Kraft traegt, die in keiner Kontaktkraft steht (Pruefmatrix K5: die Feder
+    trug 86 bis 90 % dessen, was die Federn des Klotzes tragen sollten; Klotz
+    an der Knagge 21,5 von 100 kN). Gehalten heisst: Normalzeilen der
+    uebrigen Bedingungen, Bindungen und die linearen Lager des Teils
+    (_lagerzeilen) halten so viele Moden wie mit der Gruppe."""
+    voll = {g for g, v in cs._full_slip_groups().items() if v}
+    if not voll:
+        return set()
+    frei: set = set()
+    teile = _teile_bedingungen(model, cs)
+    lager = _lagerzeilen(model, cs)
+    for g in voll:
+        for _name, kn, cons in teile:
+            if not any((c.label or "").split(":")[0] == g for c in cons):
+                continue
+            mit = _rang_zahl(model, kn, _halterzeilen(cons, kn=kn, lager=lager))
+            ohne = _rang_zahl(model, kn, _halterzeilen(cons, ohne_gruppe=g, kn=kn, lager=lager))
+            if ohne < mit:
+                frei.add(g)
+                break
+    return frei
 
 
 def _freie_teile_halten(model, cs, log: list = None, mindestens: int = HALT_MINDESTENS,
@@ -5673,12 +5714,25 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                         ex = ex4
                 if not geloest:
                     raise _kontakt_abbruch(it, ex, cs, model, u, log=log) from None
+        # Ganz rutschende Gruppen, die anderswo gehalten sind (Rang): vor dem
+        # Update bestimmt, damit der Phasenwechsel den aktuellen Stand sieht,
+        # und danach fuer die Matrix des naechsten Schritts (27.09.2026)
+        frei_vorher = cs.gruppe_frei
+        cs.gruppe_frei = _gruppen_frei(model, cs)
         if _halt_loesen(model, cs, lam, log):
             # Nur die Freigabe des Halts in dieser Runde; die Zustaende der
             # uebrigen Bedingungen entscheidet die naechste Loesung
             changed = True
         else:
             changed = cs.update(u, lam)
+        frei_nachher = _gruppen_frei(model, cs)
+        voll = {g for g, v in cs._full_slip_groups().items() if v}
+        if frei_vorher is None:
+            if voll - frei_nachher:
+                changed = True      # erstmals: eine ganz rutschende Gruppe bekommt die feine Feder
+        elif frei_nachher != frei_vorher:
+            changed = True
+        cs.gruppe_frei = frei_nachher
         if cs.schub_halt_loesen():
             # Der Schubhalt hat den Schritt getragen; jetzt liegt das Teil
             # wieder an, und die gewoehnliche Haftbindung uebernimmt. Der

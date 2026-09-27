@@ -580,17 +580,17 @@ def test_bettung_ab_1e11_gilt_als_starr():
             m.load_face(e, -10e3)                   # 4 m^2 -> 40 kN
         m.load_node(int(g[0, 0]), Fz=+10e3)
         return m
-    # Die Regel ist bis zur Loesung von K5 abgeschaltet (BETTUNG_STARR = inf);
-    # geprueft wird der Mechanismus mit der vorgesehenen Grenze 1e11
+    check("Vorgabe: Grenze 1e11 N/m^3 (scharf seit 27.09.2026)", supports.BETTUNG_STARR, 1.0e11, 0)
+    _bettung_faelle(platte)
+    # Ruecknahmeprobe: mit Grenze inf bleibt 2,5e11 eine Feder
     alt_grenze = supports.BETTUNG_STARR
-    supports.BETTUNG_STARR = supports.BETTUNG_STARR_VORGESEHEN
+    supports.BETTUNG_STARR = float("inf")
     try:
-        _bettung_faelle(platte)
+        m = platte(2.5e11)
+        uz = [e for e in supports.expand(m, []) if e.dof == 2]
+        check("Ruecknahme (Grenze inf): 2,5e11 bleibt eine Feder", 1.0 if all(e.typ == "spring" for e in uz) else 0.0, 1.0, 0)
     finally:
         supports.BETTUNG_STARR = alt_grenze
-    m = platte(2.5e11)
-    uz = [e for e in supports.expand(m, []) if e.dof == 2]
-    check("abgeschaltet (Vorgabe): 2,5e11 bleibt eine Feder", 1.0 if all(e.typ == "spring" for e in uz) else 0.0, 1.0, 0)
 
 
 def _bettung_faelle(platte):
