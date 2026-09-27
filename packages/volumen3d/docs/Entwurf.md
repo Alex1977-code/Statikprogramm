@@ -65,6 +65,11 @@ Kontakt- und Drehlagercode in `statik3d/` wird nicht geändert und dient nur als
 Jede Entscheidung nennt die erwogenen Alternativen. Die Vorgabe ist technologieneutral; wo sie
 eine Empfehlung ausspricht, wird ihr gefolgt, sofern nichts Gemessenes dagegen spricht.
 
+Die drei Abweichungen von der Vorgabe – ebenen-exakte Integration statt Punkttest (3.5),
+Zellaggregation schon in Stufe 1 mit α nur für Zellen ohne Wurzel (3.5) und an Schnittebenen
+die Normalkomponente punktweise plus drei Mittelwertzwänge statt aller drei Komponenten (3.6) –
+hat der Anwender bei der Durchsicht von Pull Request 8 am 27.09.2026 bestätigt.
+
 ### 3.1 Sprache und Aufbau
 - Bezeichner, Kommentare, Docstrings im Paket auf Deutsch ohne Umlaute (CLAUDE.md). Englisch
   bleiben nur die Namen, die der Vertrag vorgibt: Unterpakete `geometry/ fcm/ hex/ material/
@@ -476,7 +481,8 @@ gleichmäßigen Gitters), Lamé aus STL wie aus CSG, Innen/Außen-Test an einem 
   mit vielen aggregierten feinen Zellen) sind es 53 mit Rest bis 2,45 bei weiterhin u, σ <
   10⁻⁶ – für lineare Felder sind die Bedingungen also erfüllt, für allgemeine Felder ist die
   Stetigkeit an diesen Moden nicht bewiesen. **Offen (Teilprojekt 3):** die Konfiguration
-  verstehen und die Bedingung an die Meister ausdrücken.
+  verstehen und die Bedingung an die Meister ausdrücken. Entscheidung des Anwenders vom
+  27.09.2026: Stufe 1 mit der Warnung zusammenführen, Klärung in Teilprojekt 3.
 - Ergebnis wie bisher eine Zwangsmatrix C (n_dof × n_frei); Löser, Lasten und Auswertung bleiben
   unverändert.
 

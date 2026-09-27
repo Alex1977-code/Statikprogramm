@@ -66,7 +66,10 @@ Zellaggregation schon in Stufe 1 und α nur für Zellen ohne Wurzel; an Schnitte
 Normalkomponente punktweise plus Resultierende in der Ebene statt aller drei Komponenten.
 
 **Vorschläge an den Vertrag** (`docs/vertrag-aenderungen/2026-09-27-lasten-und-schnittgroessen.md`):
-Lasten im `DetailModelSpec` (Minor 2.1.0) und Klarstellung der Seite der Schnittgrößen.
+Lasten im `DetailModelSpec` (Minor 2.1.0) und Klarstellung der Seite der Schnittgrößen. Vom
+Anwender am 27.09.2026 angenommen; die Umsetzung kommt als eigener Pull Request auf `main`
+(Vertragsversion 2.1.0, Änderungsprotokoll, `tests/contracts`), beide Sitzungen holen sie per
+Rebase ab.
 
 **Änderungen außerhalb des Pakets:** `tests/contracts/test_vertrag.py` (Erwartung `fcm` vor
 `stub`), `tests/run_all.py`, `.github/workflows/ci.yml`, `requirements.txt`, `.importlinter`,
