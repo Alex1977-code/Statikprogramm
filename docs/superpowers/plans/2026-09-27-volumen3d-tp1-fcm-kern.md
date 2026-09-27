@@ -17,6 +17,22 @@ symmetrisches Nitsche mit Projektion; assemblierte Steifigkeit, Direktlöser. En
 **Technik:** Python 3.11, numpy, scipy (`sparse`, `splu`), pypardiso wenn vorhanden,
 `statik3d_contracts` 2.0.x. Kein numba/cupy in TP 1 (kommt mit TP 3).
 
+> **Stand 27.09.2026 (Ausführung):** Aufgaben 1–14 umgesetzt und committet (Commit-Reihe bis
+> 91be88c auf `feature/volumen3d`), Kernsuite `tests.volumen3d.test_kern` 159/159, Abnahmen
+> Patch (10⁻¹²…10⁻⁸), Kragarm (reine Biegung exakt, Stub gegen Timoshenko −0,9 %/+2,7 %),
+> Lamé (p = 3: σ_r 0,31 %, σ_φ 0,03 %); Kirsch lief beim Schreiben. Aufgabe 15 (zweite Sicht)
+> angestoßen. **Abweichungen vom Plan, alle gemessen und im Entwurf 3.5/3.6 begründet:**
+> (a) Schnittzellen-Integration ebenen-exakt über lokale Ebenen, konvexe Stücke und Tetraeder
+> (`geometry/polyeder.py`) statt Punkttest – der Punkttest ist erster Ordnung (0,5 % Volumen
+> bei Tiefe 4) und macht den Patch-Test unmöglich; (b) Zellaggregation (`fcm/aggregation.py`)
+> schon in TP 1, α nur noch für Zellen ohne Wurzel – sonst Fehler α/Anteil (1,4 %);
+> (c) Kopplung an Schnittebenen als Projektion `schnitt` (Normalkomponente + drei
+> Mittelwertzwänge mit Lagrange-Multiplikatoren) statt voller Nitsche – volle Vorgabe der
+> Stabkinematik sperrt die Querkontraktion (+53 % Moment); (d) Flächenquadratur mit
+> Facette 0,5 h und exaktem Flächenfaktor Bogen/Sehne, Zellmatrizen über BLAS (Lamé h 10,
+> p 3: 897 s → 50 s). Offen vor Pull Request 1 (nach TP 2): Gesamtlauf `tests.run_all`,
+> Kirsch-Zahlen in Theoriehandbuch 11.7, Befunde der zweiten Sicht.
+
 **Konventionen:** Einheiten mm, N, N/mm². Voigt xx, yy, zz, xy, yz, xz mit technischen
 Gleitungen. Bezeichner deutsch ohne Umlaute; Kommentare sagen warum. Prüfsuiten im Stil des
 Hauptprogramms (`check`, Aufruf `python -m tests.volumen3d.test_<name>`). Python der

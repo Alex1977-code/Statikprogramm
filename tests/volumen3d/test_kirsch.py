@@ -40,8 +40,8 @@ def _platte(p, h, versatz=0.0, polster=0.1):
             {"typ": "quader", "min": [-5, -5, 0], "max": [L / 2, W / 2, T], "name": "platte"},
             {"typ": "halbraum", "punkt": [0, 0, 0], "normale": [-1, 0, 0], "name": "sym_x"},
             {"typ": "halbraum", "punkt": [0, 0, 0], "normale": [0, -1, 0], "name": "sym_y"}]},
-        {"typ": "zylinder", "p0": [0, 0, -1], "p1": [0, 0, T + 1], "radius": D / 2, "name": "loch"}]})
-    pr = FcmProblem(g, h=h, p=p, werkstoff=Werkstoff(E, NU), polster=polster + versatz, facette_mm=0.5)
+        {"typ": "zylinder", "p0": [0, 0, -1], "p1": [0, 0, T + 1], "radius": D / 2, "name": "loch"}]}})
+    pr = FcmProblem(g, h=h, p=p, werkstoff=Werkstoff(E, NU), polster=polster + versatz)
     pr.verschiebungsrand("sym_x", "sym_x", projektion="normal")
     pr.verschiebungsrand("sym_y", "sym_y", projektion="normal")
     stirn = pr.oberflaeche.auswahl((pr.oberflaeche.name.astype(str) == "platte") & (np.abs(pr.oberflaeche.punkte[:, 0] - L / 2) < 1e-6))
