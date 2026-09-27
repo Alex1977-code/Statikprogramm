@@ -86,6 +86,10 @@ class Quader:
 
     gekruemmt = False
 
+    def flaechenfaktor(self, Q, n_f) -> np.ndarray:
+        """dA_wahr / dA_facette an Facettenpunkten Q mit Facettennormalen n_f: eben, also 1."""
+        return np.ones(len(np.asarray(Q).reshape(-1, 3)))
+
     def lokale_ebenen(self, P, r: float) -> list[tuple[np.ndarray, np.ndarray]]:
         """Seitenebenen im Abstand <= r von P (Punkt, Normale nach aussen); exakt."""
         P = np.asarray(P, float).reshape(3)
@@ -156,6 +160,20 @@ class Zylinder:
 
     gekruemmt = True
 
+    def flaechenfaktor(self, Q, n_f) -> np.ndarray:
+        """dA_wahr / dA_facette fuer Mantelfacetten: radiale Projektion der Sehne (Radius rho)
+        auf den Mantel (Radius R) streckt um R/rho, die Neigung der Facette gegen die
+        Radialrichtung um n_f . e_r; Deckelfacetten (Normale laengs der Achse) bleiben 1.
+        Damit ist die Flaechenquadratur auf Zylindern bis auf die Regelordnung exakt, und die
+        Facettenweite darf grob (Zellgroesse) bleiben."""
+        a, Lz, t, rvec, rho, _ = self._lokal(Q)
+        n_f = np.asarray(n_f, float).reshape(-1, 3)
+        faktor = np.ones(len(rho))
+        mantel = (np.abs(n_f @ a) < 0.5) & (rho > 0)
+        er = rvec[mantel] / rho[mantel, None]
+        faktor[mantel] = (self.radius / rho[mantel]) * np.abs(np.einsum("ij,ij->i", n_f[mantel], er))
+        return faktor
+
     def lokale_ebenen(self, P, r: float) -> list[tuple[np.ndarray, np.ndarray]]:
         """Tangentialebene des Mantels (am radial projizierten Punkt) und Deckelebenen im
         Abstand <= r von P."""
@@ -222,6 +240,18 @@ class Kugel:
 
     gekruemmt = True
 
+    def flaechenfaktor(self, Q, n_f) -> np.ndarray:
+        """dA_wahr / dA_facette: radiale Projektion streckt in beiden Richtungen um R/rho,
+        Neigung der Facette um n_f . e_r."""
+        d = np.asarray(Q, float).reshape(-1, 3) - self.mitte
+        rho = np.linalg.norm(d, axis=1)
+        n_f = np.asarray(n_f, float).reshape(-1, 3)
+        faktor = np.ones(len(rho))
+        ok = rho > 0
+        er = d[ok] / rho[ok, None]
+        faktor[ok] = (self.radius / rho[ok]) ** 2 * np.abs(np.einsum("ij,ij->i", n_f[ok], er))
+        return faktor
+
     def lokale_ebenen(self, P, r: float) -> list[tuple[np.ndarray, np.ndarray]]:
         """Tangentialebene am radial projizierten Punkt, wenn die Kugelflaeche naeher als r ist."""
         d = np.asarray(P, float).reshape(3) - self.mitte
@@ -272,9 +302,21 @@ class Halbraum:
         return np.broadcast_to(self.normale, (len(np.asarray(P).reshape(-1, 3)), 3)).copy()
 
     def huellquader(self) -> tuple[np.ndarray, np.ndarray]:
-        return np.full(3, -np.inf), np.full(3, np.inf)
+        """Unendlich, ausser die Normale ist achsparallel: dann begrenzt die Ebene eine Seite
+        (Schnittebenen des Stabwerks liegen meist so, und das Wurzelgitter wird knapp)."""
+        lo, hi = np.full(3, -np.inf), np.full(3, np.inf)
+        d = int(np.argmax(np.abs(self.normale)))
+        if abs(abs(self.normale[d]) - 1.0) < 1e-12:
+            if self.normale[d] > 0:
+                hi[d] = self.punkt[d]
+            else:
+                lo[d] = self.punkt[d]
+        return lo, hi
 
     gekruemmt = False
+
+    def flaechenfaktor(self, Q, n_f) -> np.ndarray:
+        return np.ones(len(np.asarray(Q).reshape(-1, 3)))
 
     def lokale_ebenen(self, P, r: float) -> list[tuple[np.ndarray, np.ndarray]]:
         if abs(float(self.abstand(np.asarray(P, float).reshape(1, 3))[0])) > r:

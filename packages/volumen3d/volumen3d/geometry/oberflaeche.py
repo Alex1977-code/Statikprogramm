@@ -87,13 +87,22 @@ def _stuecke_des_polygons(geometrie, form, poly: np.ndarray, tiefe: int, stufe: 
     Gesamtgeometrie liegen. Jedes Stueck bestaetigt ein Zeugenpunkt (|d_gesamt| <= tol);
     Stuecke im Werkstoffinneren (innere Facetten, Ebenen durch das Innere) fallen so weg,
     bevor Punkte entstehen."""
-    c = poly.mean(axis=0)
-    r = float(np.linalg.norm(poly - c, axis=1).max())
+    c0 = poly.mean(axis=0)
+    # Bei gekruemmter Quelle liegt die Sehnenebene um die Sagitta der Facette unter der Flaeche;
+    # Bezugspunkt ist darum der auf die Quellflaeche projizierte Schwerpunkt (dort ist d = 0,
+    # wenn das Stueck zur Gesamtoberflaeche gehoert), der Radius um den Versatz vergroessert.
+    # Befund 27.09.: mit dem Sehnenschwerpunkt fielen kleine Teilpolygone (r < Sagitta) als
+    # "innen" weg - Kugeloberflaeche bei Tiefe 2 um 4e-4 zu klein.
+    c = _zeuge(form, poly)
+    r = float(np.linalg.norm(poly - c0, axis=1).max()) + float(np.linalg.norm(c - c0))
     d = float(geometrie.abstand(c[None])[0])
     if d > r * (1 + 1e-9) or d < -r * (1 + 1e-9):
         return []                                 # ganz ausserhalb oder tief im Werkstoff
     st = geometrie.lokale_stuecke(c, r, np.concatenate([poly, c[None]]))
-    if st is None or (st[1] and stufe < tiefe):
+    # Vierteilung nur, wenn eine *fremde* gekruemmte Form die Kante des Stuecks als Sehne
+    # naehert; die eigene Kruemmung erledigen Projektion und Flaechenfaktor exakt
+    fremd_gekruemmt = st is not None and any(f2.gekruemmt and f2 is not form for f2 in st[2])
+    if st is None or (fremd_gekruemmt and stufe < tiefe):
         if stufe < tiefe + 2:
             aus: list[np.ndarray] = []
             for i in range(1, len(poly) - 1):
@@ -105,13 +114,17 @@ def _stuecke_des_polygons(geometrie, form, poly: np.ndarray, tiefe: int, stufe: 
         statistik["rueckfall"] += 1
         return [poly]                             # Rueckfall: Punktfilter entscheidet
     n_poly = polygon_normale(poly)
-    eigene = form.lokale_ebenen(c, r)             # dieselben Ebenen, die lokale_stuecke fuer die Quelle nutzt
+    # Die eigene Flaeche ist die Tangentialebene der Quellform im projizierten Schwerpunkt c
+    # (bei ebenen Formen die Facettenebene selbst). Andere lokale Ebenen der Quellform - etwa
+    # die Kappe eines Bohrzylinders - muessen schneiden, sonst liefern zwei Stuecke dasselbe
+    # Polygon doppelt (Befund 27.09.: Bohrungsmantel +44 %).
+    n_eigen = form.gradient(c[None])[0]
     aus = []
     for halbraeume in st[0]:
         Q = poly
         for p, n in halbraeume:
-            if any(abs(float(n @ ne)) > 0.999 and abs(float((p - pe) @ n)) <= 1e-9 * r for pe, ne in eigene):
-                continue                          # eigene Flaeche (bei Kruemmung: Tangente an der Sehne) schneidet nicht
+            if abs(float(n @ n_eigen)) > 0.999 and abs(float((c - p) @ n)) <= 1e-9 * r:
+                continue                          # eigene Flaeche (Tangente in c) schneidet nicht
             if abs(float(n @ n_poly)) > 0.999:
                 # fremde parallele Ebene behaelt oder entfernt das ganze Polygon (z. B. Kappe eines Bohrzylinders)
                 if float((c - p) @ n) > 1e-9 * r:
@@ -177,12 +190,16 @@ class Flaechenquadratur:
                             continue
                         for Q in _stuecke_des_polygons(geometrie, f, poly, tiefe, 0, statistik, tol):
                             B = np.array([[Q[0], Q[m], Q[m + 1]] for m in range(1, len(Q) - 1)])
-                            A = 0.5 * np.linalg.norm(np.cross(B[:, 1] - B[:, 0], B[:, 2] - B[:, 0]), axis=1)
+                            kreuz = np.cross(B[:, 1] - B[:, 0], B[:, 2] - B[:, 0])
+                            A = 0.5 * np.linalg.norm(kreuz, axis=1)
                             P = (B[:, None, 0] + xi2[None, :, 0, None] * (B[:, None, 1] - B[:, None, 0])
                                  + xi2[None, :, 1, None] * (B[:, None, 2] - B[:, None, 0])).reshape(-1, 3)
                             W = (A[:, None] * w2[None, :] * 2.0).ravel()
                             if f.gekruemmt:
-                                P = P - f.abstand(P)[:, None] * f.gradient(P)      # auf die exakte Grundform
+                                # Flaechenfaktor Bogen/Sehne am Sehnenpunkt, dann Punkt auf die exakte Grundform
+                                n_f = np.repeat(kreuz / np.maximum(2.0 * A, 1e-300)[:, None], len(xi2), axis=0)
+                                W = W * f.flaechenfaktor(P, n_f)
+                                P = P - f.abstand(P)[:, None] * f.gradient(P)
                             P_l.append(P)
                             W_l.append(W)
                             C_l.append(np.full(len(P), c))
@@ -195,6 +212,7 @@ class Flaechenquadratur:
         Qi = np.concatenate(Q_l)
         ok = np.abs(geometrie.abstand(P)) <= tol
         statistik["verworfen"] = int((~ok).sum())
+        ok &= W > 0.0                                   # entartete Teildreiecke (Nullgewicht) weglassen
         P, W, C, Qi = P[ok], W[ok], C[ok], Qi[ok]
         N = geometrie.gradient(P)
         N /= np.linalg.norm(N, axis=1, keepdims=True)
@@ -204,7 +222,10 @@ class Flaechenquadratur:
 
     @classmethod
     def aus_geometrie(cls, geometrie, gitter, ordnung: int, facette_mm: float | None = None, tiefe: int = 2) -> "Flaechenquadratur":
-        V, T, Q = geometrie.dreiecke(facette_mm or 0.25 * gitter.h)
+        """Facettenweite Standard 0,5 h: Lage und Normale der Punkte sind exakt, die Gewichte
+        ueber den Flaechenfaktor der Grundform ebenfalls; nur die Clipping-Kanten an fremden
+        gekruemmten Formen sind Sehnen (Vierteilung bis ``tiefe``)."""
+        V, T, Q = geometrie.dreiecke(facette_mm or 0.5 * gitter.h)
         return cls.aus_dreiecken(geometrie, gitter, V, T, Q, ordnung, tiefe)
 
     @classmethod

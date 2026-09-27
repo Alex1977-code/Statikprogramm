@@ -225,11 +225,17 @@ def test_registrierung():
     with _w.catch_warnings(record=True) as gefangen:
         _w.simplefilter("always")
         l = VL.volumenloeser()
-    check("volumenloeser() liefert einen SolidDetailSolver (ohne echten Loeser den Stub)",
-          isinstance(l, SolidDetailSolver) and l.name == "stub", getattr(l, "name", "?"))
-    check("  und warnt dabei: der Stub greift nie still (Abschnitt 7, 2.0.1)",
-          any("STUB" in str(x.message) for x in gefangen), str([str(x.message)[:50] for x in gefangen]))
-    check("  ist_stub erkennt den Stub", VL.ist_stub(l) and VL.ist_stub({"stub": True}) and not VL.ist_stub({"solver": "fcm"}))
+    # mit installiertem volumen3d ist 'fcm' der erste echte Loeser; ohne ihn bleibt der Stub,
+    # und genau dann warnt der Lader (Abschnitt 7, 2.0.1)
+    echte = sorted(n for n, k in eps.items() if n != "stub" and not isinstance(k, Exception))
+    erwartet = echte[0] if echte else "stub"
+    check(f"volumenloeser() liefert einen SolidDetailSolver ({erwartet!r}: erster echter Loeser, sonst der Stub)",
+          isinstance(l, SolidDetailSolver) and l.name == erwartet, getattr(l, "name", "?"))
+    gewarnt = any("STUB" in str(x.message) for x in gefangen)
+    check("  Stub-Warnung genau dann, wenn der Stub gewaehlt wurde: der Stub greift nie still (Abschnitt 7, 2.0.1)",
+          gewarnt == (erwartet == "stub"), str([str(x.message)[:50] for x in gefangen]))
+    check("  ist_stub erkennt den Stub", VL.ist_stub(T.StubSolidSolver()) and VL.ist_stub({"stub": True})
+          and not VL.ist_stub({"solver": "fcm"}) and VL.ist_stub(l) == (erwartet == "stub"))
     check("uebersicht() nennt Name, Gruppe, Version, Zustand - der Stub als STUB",
           any(e["name"] == "stub" and e["zustand"].startswith("STUB") for e in VL.uebersicht()), str(VL.uebersicht()[:2]))
 

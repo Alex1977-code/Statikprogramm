@@ -7,11 +7,15 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 import scipy.sparse as sp
 
 from ..geometry.oberflaeche import Flaechenquadratur
+
+if TYPE_CHECKING:
+    from ..postprocess.auswertung import Auswertung
 from ..linalg.direkt import Direktloeser
 from . import rand
 from .aggregation import Zellaggregation
@@ -193,7 +197,7 @@ class FcmProblem:
                              "kein Verschiebungsrand?)")
         return U
 
-    def auswertung(self, U):
+    def auswertung(self, U: np.ndarray) -> "Auswertung":
         from ..postprocess.auswertung import Auswertung
         return Auswertung(self, U)
 

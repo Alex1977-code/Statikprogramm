@@ -62,13 +62,15 @@ def n_matrizen(N: np.ndarray) -> np.ndarray:
 def zellsteifigkeit(G: np.ndarray, w: np.ndarray, E: float, nu: float) -> np.ndarray:
     """K_e (3m,3m) aus globalen Gradienten G (nq,m,3) und Gewichten w (nq,)."""
     lam, mu = lame(E, nu)
-    m = G.shape[1]
-    M = np.einsum("qia,qjb->abij", G * w[:, None, None], G)          # (3,3,m,m)
-    spur = M[0, 0] + M[1, 1] + M[2, 2]
+    q, m, _ = G.shape
+    # Gradientenmomente als ein BLAS-Produkt: Spalte a*m + i von A ist dN_i/dx_a an allen Punkten
+    A = np.ascontiguousarray(G.transpose(0, 2, 1).reshape(q, 3 * m))
+    M = ((A * w[:, None]).T @ A).reshape(3, m, 3, m)                  # M[a,i,b,j] = sum w dN_i/dx_a dN_j/dx_b
+    spur = M[0, :, 0, :] + M[1, :, 1, :] + M[2, :, 2, :]
     K = np.empty((m, 3, m, 3))
     for a in range(3):
         for b in range(3):
-            K[:, a, :, b] = lam * M[a, b] + mu * M[b, a] + (mu * spur if a == b else 0.0)
+            K[:, a, :, b] = lam * M[a, :, b, :] + mu * M[b, :, a, :] + (mu * spur if a == b else 0.0)
     return K.reshape(3 * m, 3 * m)
 
 

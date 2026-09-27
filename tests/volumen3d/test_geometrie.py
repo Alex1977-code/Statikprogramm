@@ -101,7 +101,11 @@ def test_csg():
           u.abstand(np.array([[7.5, 0, 0.0]]))[0] < 0 and abs(u.abstand(np.array([[-10, 0, 0.0]]))[0]) < 1e-12)
     s = aus_params({"csg": {"typ": "schnitt", "teile": [{"typ": "quader", "min": [0, 0, 0], "max": [100, 100, 100]},
                                                           {"typ": "halbraum", "punkt": [50, 50, 50], "normale": [1, 0, 0]}]}})
-    check("Schnitt mit Halbraum: Huellquader bleibt der Quader, x=70 ist aussen", np.allclose(s.huellquader()[1], 100) and s.abstand(np.array([[70, 50, 50.0]]))[0] == 20)
+    check("Schnitt mit achsparallelem Halbraum: Huellquader wird bei x = 50 begrenzt, x=70 ist aussen",
+          np.allclose(s.huellquader()[1], [50, 100, 100]) and s.abstand(np.array([[70, 50, 50.0]]))[0] == 20, str(s.huellquader()))
+    s2 = aus_params({"csg": {"typ": "schnitt", "teile": [{"typ": "quader", "min": [0, 0, 0], "max": [100, 100, 100]},
+                                                           {"typ": "halbraum", "punkt": [50, 50, 50], "normale": [1, 1, 0]}]}})
+    check("schraeger Halbraum begrenzt den Huellquader nicht", np.allclose(s2.huellquader()[1], 100))
     # konservative Abstaende: |d_csg| <= wahrer Abstand (Stichprobe gegen feine Punktwolke der Oberflaeche)
     rng = np.random.default_rng(5)
     Pw = rng.uniform([-20, -20, -20], [420, 220, 30], (400, 3))
@@ -184,12 +188,16 @@ def test_oberflaechenquadratur():
         {"typ": "quader", "min": [0, 0, 0], "max": [200, 100, 10], "name": "platte"},
         {"typ": "zylinder", "p0": [100, 50, -1], "p1": [100, 50, 11], "radius": 20, "name": "bohrung"}]}})
     G = Gitter(g, h=10.0)
-    fq = Flaechenquadratur.aus_geometrie(g, G, ordnung=3, facette_mm=0.5)
+    fq = Flaechenquadratur.aus_geometrie(g, G, ordnung=3)          # Facette Standard 0,5 h = 5 mm
     A = {name: fq.gewichte[fq.name == name].sum() for name in ("platte", "bohrung")}
     soll_platte = 2 * (200 * 100 - np.pi * 400) + 2 * (200 * 10 + 100 * 10)
     # Lochrand auf der Deckflaeche als Sehnen der Tangentialebenen (Vierteilung bis Tiefe 2): zweite Ordnung
-    check("Plattenflaechen ohne Loch (2 Deck + 4 Stirn) auf 1e-4", abs(A["platte"] / soll_platte - 1) < 1e-4, f"{A['platte']:.3f} / {soll_platte:.3f}, {fq.statistik}")
-    check("Bohrungsmantel nur innerhalb der Platte (2 pi r t) auf 1e-4 (Facette 0,5 mm)", abs(A["bohrung"] / (2 * np.pi * 20 * 10) - 1) < 1e-4, f"{A['bohrung']:.4f} / {2 * np.pi * 200:.4f}")
+    check("Plattenflaechen ohne Loch (2 Deck + 4 Stirn) auf 3e-4 (Sehnen am Lochrand, Facette 5 mm)", abs(A["platte"] / soll_platte - 1) < 3e-4, f"{A['platte']:.3f} / {soll_platte:.3f}, {fq.statistik}, {len(fq.punkte)} Punkte")
+    check("Bohrungsmantel nur innerhalb der Platte (2 pi r t) auf 1e-7 dank Flaechenfaktor Bogen/Sehne (Facette 5 mm)", abs(A["bohrung"] / (2 * np.pi * 20 * 10) - 1) < 1e-7, f"{A['bohrung']:.8f} / {2 * np.pi * 200:.8f}")
+    kugel = aus_params({"csg": {"typ": "kugel", "mitte": [0, 0, 0], "radius": 30.0}})
+    fk = Flaechenquadratur.aus_geometrie(kugel, Gitter(kugel, h=10.0), ordnung=3)
+    # Restfehler ist die Quadraturordnung auf der Facette (Flaechenfaktor glatt, nicht polynomial): 9e-9 bei Facette 5 mm
+    check("Kugeloberflaeche 4 pi r^2 auf 1e-7 mit Facette 5 mm (Flaechenfaktor)", abs(fk.gewichte.sum() / (4 * np.pi * 900) - 1) < 1e-7, f"{fk.gewichte.sum():.6f} / {4 * np.pi * 900:.6f}, {len(fk.punkte)} Punkte")
     n = fq.normalen[fq.name == "bohrung"]
     P = fq.punkte[fq.name == "bohrung"]
     check("Normalen der Bohrung zeigen zur Achse, Punkte exakt auf r = 20",

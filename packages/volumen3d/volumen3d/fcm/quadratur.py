@@ -96,7 +96,7 @@ class Zellquadratur:
             return
         stuecke = geo.lokale_stuecke(m, r, P)
         if stuecke is not None:
-            ebenen, gekruemmt = stuecke
+            ebenen, gekruemmt = stuecke[0], stuecke[1]
             if gekruemmt and stufe < self.tiefe:
                 self._teilen(lo, s, stufe, teile)
                 return

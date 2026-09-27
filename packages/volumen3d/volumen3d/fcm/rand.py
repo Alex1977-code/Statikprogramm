@@ -63,8 +63,10 @@ def nitsche_steifigkeit(gitter, fq, E: float, nu: float, beta: float, art: str) 
         w = fq.gewichte[idx]
         T = np.einsum("qab,bc,qcd->qad", nn_matrizen(fq.normalen[idx]), D, b_matrizen(G))   # (q,3,3m)
         PN = np.einsum("qab,qbd->qad", projektionen(art, fq.normalen[idx]), n_matrizen(N))  # (q,3,3m)
-        TPN = np.einsum("q,qad,qae->de", w, T, PN)
-        Ke = -TPN - TPN.T + beta * np.einsum("q,qad,qae->de", w, PN, PN)
+        Tw = (T * w[:, None, None]).reshape(-1, T.shape[2])                                # BLAS statt einsum
+        PNf = PN.reshape(-1, PN.shape[2])
+        TPN = Tw.T @ PNf
+        Ke = -TPN - TPN.T + beta * ((PN * w[:, None, None]).reshape(-1, PN.shape[2]).T @ PNf)
         dof = gitter.zell_dofs(c)
         Z.append(np.repeat(dof, 3 * m))
         S.append(np.tile(dof, 3 * m))

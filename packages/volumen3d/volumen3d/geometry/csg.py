@@ -150,7 +150,7 @@ class Csg:
         ihren lokalen Ebenen (Tangentialebenen bei gekruemmten Formen): eine ferne Form
         schneidet die Kugel nicht, und wuerde sie die Kugel ganz ausschliessen, waere
         |d(mitte)| > r und die Teilbox schon vorher als innen/aussen erkannt.
-        Rueckgabe: (stuecke, gekruemmt).
+        Rueckgabe: (stuecke, gekruemmt, aktive Grundformen).
         """
         mitte = np.asarray(mitte, float).reshape(3)
         alle: list = []
@@ -175,8 +175,9 @@ class Csg:
             # Waechter: eine ferne Form, die die ganze Kugel ausschliesst (positive weit aussen,
             # Loch weit innen), macht die Umgebung werkstofffrei - normalerweise schon vorher
             # als OUTSIDE erkannt, hier der Vollstaendigkeit halber
+            aktive = pos_akt + neg_akt
             if np.any(~aktiv & (vz * d_m > r)):
-                return [], gekruemmt
+                return [], gekruemmt, aktive
             stuecke: list[Halbraeume] = [[]]
             for f in pos_akt:
                 stuecke = _schneiden(stuecke, f.lokale_ebenen(mitte, r))
@@ -184,10 +185,10 @@ class Csg:
                 ebenen = f.lokale_ebenen(mitte, r)
                 if ebenen:
                     stuecke = _subtrahieren(stuecke, ebenen)
-            return stuecke, gekruemmt
+            return stuecke, gekruemmt, aktive
         if dpos is not None and dneg is None and len(pos_akt) >= 1 and np.all(np.abs(dpos.min(axis=1) - d_ist) <= tol):
             if np.any(~aktiv & (d_m < -r)):
-                return [[]], gekruemmt                  # eine ferne Form fuellt die ganze Kugel
+                return [[]], gekruemmt, pos_akt          # eine ferne Form fuellt die ganze Kugel
             stuecke = []
             bisher: list[Halbraeume] = []
             for f in pos_akt:
@@ -197,15 +198,18 @@ class Csg:
                     teil = _subtrahieren(teil, g)
                 stuecke += teil
                 bisher.append(ebenen)
-            return stuecke, gekruemmt
+            return stuecke, gekruemmt, pos_akt
         return None
 
     def dreiecke(self, facette_mm: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Dreiecke aller Grundformen innerhalb des Huellquaders; quelle = Index in grundformen()."""
         Vs, Ts, Q = [], [], []
         n = 0
+        # Box fuer die Halbraum-Polygone minimal groesser als der Huellquader: liegt eine
+        # achsparallele Ebene genau auf der Huellquaderseite, faende der Kantenschnitt sonst nichts
+        rand = 1e-6 * float(np.max(self._hi - self._lo))
         for i, f in enumerate(self._formen):
-            V, T = f.dreiecke(self._lo, self._hi, facette_mm)
+            V, T = f.dreiecke(self._lo - rand, self._hi + rand, facette_mm)
             if len(T):
                 Vs.append(V)
                 Ts.append(T + n)
