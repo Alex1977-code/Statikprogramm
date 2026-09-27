@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 [importlinter]
 root_packages =
     statik3d
@@ -6,10 +7,38 @@ include_external_packages = True
 
 [importlinter:contract:vertrag-nur-stdlib-und-numpy]
 name = statik3d_contracts importiert nur Standardbibliothek und numpy
+=======
+; Abhaengigkeitsregeln des Schnittstellenvertrags (docs/Schnittstellenvertrag_Statik3D_FCM.md,
+; Abschnitt 1), geprueft mit import-linter (lint-imports) in der CI und lokal vor jedem Commit.
+; statik3d (Hauptprogramm) kennt volumen3d nur ueber Entry Points; es liegt nicht unter
+; packages/ und braucht Qt - darum wird es hier nicht als Wurzelpaket geladen, sondern
+; tests/contracts prueft seine Seite.
+
+[importlinter]
+root_packages =
+    volumen3d
+    statik3d_contracts
+include_external_packages = True
+
+[importlinter:contract:volumen3d-kennt-kein-statik3d]
+name = volumen3d importiert niemals statik3d oder Qt/VTK
+type = forbidden
+source_modules =
+    volumen3d
+forbidden_modules =
+    statik3d
+    PySide6
+    pyvista
+    vtk
+
+[importlinter:contract:vertrag-nur-numpy]
+name = statik3d_contracts importiert weder volumen3d noch statik3d noch scipy
+>>>>>>> 1792dbf (volumen3d: Paketgeruest, Entry Points fcm/hybrid, import-linter, Pruefhelfer)
 type = forbidden
 source_modules =
     statik3d_contracts
 forbidden_modules =
+<<<<<<< HEAD
     statik3d
     volumen3d
     scipy
@@ -22,3 +51,8 @@ source_modules =
     statik3d
 forbidden_modules =
     volumen3d
+=======
+    volumen3d
+    statik3d
+    scipy
+>>>>>>> 1792dbf (volumen3d: Paketgeruest, Entry Points fcm/hybrid, import-linter, Pruefhelfer)
