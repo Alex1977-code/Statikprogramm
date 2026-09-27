@@ -125,5 +125,92 @@ def test_csg():
     check("unendlicher Huellquader -> ValueError", fehler)
 
 
+def test_lokale_stuecke():
+    """Lokale Zerlegung: Platte mit Loch nahe der Bohrung und der Deckflaeche, ferne Form, Vereinigung."""
+    from volumen3d.geometry.csg import aus_params
+    g = aus_params({"csg": {"typ": "differenz", "teile": [
+        {"typ": "quader", "min": [0, 0, 0], "max": [400, 200, 10], "name": "platte"},
+        {"typ": "zylinder", "p0": [200, 100, -1], "p1": [200, 100, 11], "radius": 20, "name": "bohrung"}]}})
+    proben = np.random.default_rng(7).uniform(-1, 1, (27, 3))
+    # Deckflaeche und Bohrungswand aktiv (Kappe bei z = 11 ist 2 mm > r entfernt):
+    # Box ∩ {z <= 10} minus Loch -> ein Stueck mit zwei Halbraeumen
+    st = g.lokale_stuecke(np.array([221.0, 100, 9.0]), 1.5, np.array([221.0, 100, 9.0]) + 1.5 * proben)
+    check("Deckflaeche + Bohrung: ein Stueck, zwei Halbraeume, gekruemmt", st is not None and len(st[0]) == 1 and len(st[0][0]) == 2 and st[1], str(st))
+    # mit Kappe in Reichweite (z = 9,5, Kappe bei 11 genau 1,5 entfernt): Loch = Mantel ∩ Kappe -> zwei Stuecke
+    st = g.lokale_stuecke(np.array([221.0, 100, 9.5]), 1.5, np.array([221.0, 100, 9.5]) + 1.5 * proben)
+    check("Deckflaeche + Bohrung mit Kappe: zwei disjunkte Stuecke", st is not None and len(st[0]) == 2, str(st and len(st[0])))
+    # ferne Bohrung (1,85 mm > r) darf die Rekonstruktion nicht stoeren (Fehlerbild vom 27.09.)
+    st = g.lokale_stuecke(np.array([209.62, 119.62, 0.88]), 1.08, np.array([209.62, 119.62, 0.88]) + 1.08 * proben)
+    check("Bodenflaeche mit ferner Bohrung: ein Stueck mit nur der Bodenebene, eben", st is not None and len(st[0]) == 1 and len(st[0][0]) == 1 and not st[1], str(st))
+    # tief in der Bohrung: nur die Bohrung aktiv -> Komplement des Lochs = ein Stueck mit gekipptem Halbraum
+    st = g.lokale_stuecke(np.array([219.0, 100, 5]), 1.5, np.array([219.0, 100, 5]) + 1.5 * proben)
+    # Komplement der Tangentialebene (Punkt (220,100,5), Normale nach aussen aus dem Zylinder +x):
+    # behalte (x - p) . (-n) <= 0, also x >= 220 = Werkstoff ausserhalb des Lochs
+    check("nur Bohrungswand aktiv: ein Stueck (Komplement der Tangentialebene, Normale -x)", st is not None and len(st[0]) == 1 and len(st[0][0]) == 1
+          and np.allclose(st[0][0][0][0], [220, 100, 5]) and np.allclose(st[0][0][0][1], [-1, 0, 0]), str(st))
+    # ferne Form fuellt die Umgebung (Vereinigung, zweiter Quader tief innen): ganzer Werkstoff
+    u = aus_params({"csg": {"typ": "vereinigung", "teile": [{"typ": "quader", "min": [0, 0, 0], "max": [10, 10, 10]},
+                                                              {"typ": "quader", "min": [5, 5, 0], "max": [15, 15, 10]}]}})
+    st = u.lokale_stuecke(np.array([10.0, 10.0, 5.0]), 1.5, np.array([10.0, 10.0, 5.0]) + 1.5 * proben)
+    check("Vereinigung, zweiter Quader ueberdeckt die Umgebung: ein Stueck ohne Halbraeume (alles Werkstoff)", st is not None and st[0] == [[]], str(st))
+    # einspringende Ecke bei (10, 5): Werkstoff = {x <= 10} ∪ {y >= 5}, Box 3x3x3 minus 1,5x1,5x3 = 20,25
+    st = u.lokale_stuecke(np.array([10.0, 5.0, 5.0]), 1.5, np.array([10.0, 5.0, 5.0]) + 1.5 * proben)
+    check("Vereinigung an der einspringenden Ecke: zwei disjunkte Stuecke", st is not None and len(st[0]) == 2, str(st and len(st[0])))
+    from volumen3d.geometry.polyeder import box_flaechen, clippen, volumen
+    V = 0.0
+    for stueck in st[0]:
+        F = box_flaechen([8.5, 3.5, 3.5], [11.5, 6.5, 6.5])
+        for p, n in stueck:
+            F = clippen(F, p, n)
+            if not F:
+                break
+        V += volumen(F) if F else 0.0
+    check("Stuecke fuellen genau den Werkstoff der Box (27 - 6,75 = 20,25)", abs(V - 20.25) < 1e-12, f"{V:.6f}")
+
+
+def test_oberflaechenquadratur():
+    from volumen3d.fcm.gitter import Gitter
+    from volumen3d.geometry.csg import aus_params
+    from volumen3d.geometry.oberflaeche import Flaechenquadratur, dreieck_an_box_clippen, dreieck_gauss, polygon_flaeche
+    # Dreieck (-10,0),(30,0),(10,40) enthaelt das Quadrat [0,20]^2 ganz (Kanten x = -10 + y/2 und x = 30 - y/2 treffen bei y = 20 genau 0 und 20)
+    poly = dreieck_an_box_clippen(np.array([[-10, 0, 5], [30, 0, 5], [10, 40, 5.0]]), np.array([0, 0, 0.0]), np.array([20, 20, 10.0]))
+    check("Clipping: Dreieck ∩ Box = ganzes Quadrat, Flaeche 400", abs(polygon_flaeche(poly) - 400.0) < 1e-9 and len(poly) == 4, f"{polygon_flaeche(poly):.3f}, {len(poly)} Ecken")
+    poly2 = dreieck_an_box_clippen(np.array([[-10, -10, 5], [30, -10, 5], [-10, 30, 5.0]]), np.array([0, 0, 0.0]), np.array([20, 20, 10.0]))
+    check("Clipping: Dreieck x+y <= 20 ∩ Quadrat = Dreieck 200", abs(polygon_flaeche(poly2) - 200.0) < 1e-9, f"{polygon_flaeche(poly2):.3f}")
+    xi, w = dreieck_gauss(3)
+    check("Dreiecks-Gauss: Gewichte summieren zu 1/2, integriert x^2 y^2 exakt (2!2!/6! = 1/180)",
+          abs(w.sum() - 0.5) < 1e-14 and abs((w * xi[:, 0] ** 2 * xi[:, 1] ** 2).sum() - 1 / 180) < 1e-14)
+    g = aus_params({"csg": {"typ": "differenz", "teile": [
+        {"typ": "quader", "min": [0, 0, 0], "max": [200, 100, 10], "name": "platte"},
+        {"typ": "zylinder", "p0": [100, 50, -1], "p1": [100, 50, 11], "radius": 20, "name": "bohrung"}]}})
+    G = Gitter(g, h=10.0)
+    fq = Flaechenquadratur.aus_geometrie(g, G, ordnung=3, facette_mm=0.5)
+    A = {name: fq.gewichte[fq.name == name].sum() for name in ("platte", "bohrung")}
+    soll_platte = 2 * (200 * 100 - np.pi * 400) + 2 * (200 * 10 + 100 * 10)
+    # Lochrand auf der Deckflaeche als Sehnen der Tangentialebenen (Vierteilung bis Tiefe 2): zweite Ordnung
+    check("Plattenflaechen ohne Loch (2 Deck + 4 Stirn) auf 1e-4", abs(A["platte"] / soll_platte - 1) < 1e-4, f"{A['platte']:.3f} / {soll_platte:.3f}, {fq.statistik}")
+    check("Bohrungsmantel nur innerhalb der Platte (2 pi r t) auf 1e-4 (Facette 0,5 mm)", abs(A["bohrung"] / (2 * np.pi * 20 * 10) - 1) < 1e-4, f"{A['bohrung']:.4f} / {2 * np.pi * 200:.4f}")
+    n = fq.normalen[fq.name == "bohrung"]
+    P = fq.punkte[fq.name == "bohrung"]
+    check("Normalen der Bohrung zeigen zur Achse, Punkte exakt auf r = 20",
+          np.allclose(n[:, :2], -(P[:, :2] - [100, 50]) / 20, atol=1e-9) and np.allclose(n[:, 2], 0) and np.allclose(np.hypot(*(P[:, :2] - [100, 50]).T), 20.0))
+    check("jeder Punkt liegt in seiner Zelle", np.all(np.abs(fq.xi) <= 1 + 1e-9))
+    check("kein Rueckfall, kein Punkt vom Sicherheitsfilter verworfen", fq.statistik["rueckfall"] == 0 and fq.statistik["verworfen"] == 0, str(fq.statistik))
+    e = Flaechenquadratur.ebene(g, G, punkt=np.array([0.0, 0, 0]), normale=np.array([-1.0, 0, 0]), ordnung=3)
+    check("Ebenenauswahl x=0: Flaeche 100 x 10 exakt", abs(e.gewichte.sum() - 1000.0) < 1e-9, f"{e.gewichte.sum():.6f}")
+    # Ebene durch die Bohrung (y = 50): Deckflaeche der Platte minus Lochstrecke -> nichts, denn sie liegt im Inneren
+    check("Ebene im Werkstoffinneren liefert keine Punkte", len(Flaechenquadratur.ebene(g, G, np.array([0, 50.0, 0]), np.array([0, 1.0, 0]), 3).punkte) == 0)
+    # schraeg geschnittener Quader: Schnittflaeche = Sechseck 12990,38 exakt, Normale (1,1,1)/sqrt3
+    s = aus_params({"csg": {"typ": "schnitt", "teile": [{"typ": "quader", "min": [0, 0, 0], "max": [100, 100, 100], "name": "w"},
+                                                          {"typ": "halbraum", "punkt": [50, 50, 50], "normale": [1, 1, 1], "name": "s"}]}})
+    Gs = Gitter(s, h=20.0)
+    fs = Flaechenquadratur.aus_geometrie(s, Gs, ordnung=4)
+    As = fs.gewichte[fs.name == "s"].sum()
+    check("schraege Schnittflaeche: Sechseck exakt (< 1e-10)", abs(As / 12990.381056766578 - 1) < 1e-10, f"{As:.6f}")
+    # drei Seiten bei 0 verlieren je ein Dreieck 50x50/2 = 1250, drei Seiten bei 100 behalten je 1250: 3*8750 + 3*1250 = 30000
+    Aw = fs.gewichte[fs.name == "w"].sum()
+    check("Wuerfelseiten ohne den abgeschnittenen Teil: 30000 exakt (< 1e-10)", abs(Aw / 30000.0 - 1) < 1e-10, f"{Aw:.6f}, {fs.statistik}")
+
+
 if __name__ == "__main__":
-    sys.exit(lauf([test_grundformen, test_csg]))
+    sys.exit(lauf([test_grundformen, test_csg, test_lokale_stuecke, test_oberflaechenquadratur]))

@@ -84,6 +84,33 @@ def _grundformen(k, aus: list) -> None:
         aus.append(k)
 
 
+def _mit_vorzeichen(k, vorzeichen: int, aus: list) -> None:
+    """Alle Grundformen samt Vorzeichen (-1 unter einem subtrahierten Zweig, doppelt = +1)."""
+    if isinstance(k, Operation):
+        for i, t in enumerate(k.teile):
+            s = -vorzeichen if (k.op == "differenz" and i > 0) else vorzeichen
+            _mit_vorzeichen(t, s, aus)
+    else:
+        aus.append((k, vorzeichen))
+
+
+Halbraeume = list[tuple[np.ndarray, np.ndarray]]      # (Punkt, Normale): behalte (x-p).n <= 0
+
+
+def _schneiden(stuecke: list[Halbraeume], ebenen: Halbraeume) -> list[Halbraeume]:
+    return [s + ebenen for s in stuecke]
+
+
+def _subtrahieren(stuecke: list[Halbraeume], ebenen: Halbraeume) -> list[Halbraeume]:
+    """Stuecke minus (Schnitt der Halbraeume) als disjunkte konvexe Stuecke:
+    S \\ (h1 ∩ ... ∩ hm) = ∪_j  S ∩ ¬h_j ∩ h_1 ∩ ... ∩ h_{j-1}."""
+    aus: list[Halbraeume] = []
+    for s in stuecke:
+        for j, (p, n) in enumerate(ebenen):
+            aus.append(s + [(p, -n)] + ebenen[:j])
+    return aus
+
+
 class Csg:
     """Gesamtgeometrie: innen(P), abstand(P), gradient(P), huellquader(), dreiecke()."""
 
@@ -111,6 +138,67 @@ class Csg:
 
     def grundformen(self) -> list:
         return list(self._formen)
+
+    def lokale_stuecke(self, mitte, r: float, proben: np.ndarray):
+        """Lokale Beschreibung des Werkstoffs in der Kugel um ``mitte`` mit Radius r als
+        disjunkte konvexe Stuecke (Listen von Halbraeumen, Box implizit), oder None.
+
+        An den Probenpunkten wird ueber **alle** Grundformen geprueft, ob sich der
+        Gesamtabstand als max(positive d_i, -d_j der Loecher) ("Schnitt minus Loecher") oder
+        als min(positive d_i) (Vereinigung) rekonstruieren laesst; sonst None (Rueckfall
+        Punkttest). Die Stuecke bauen nur die **aktiven** Grundformen (|d(mitte)| <= r) aus
+        ihren lokalen Ebenen (Tangentialebenen bei gekruemmten Formen): eine ferne Form
+        schneidet die Kugel nicht, und wuerde sie die Kugel ganz ausschliessen, waere
+        |d(mitte)| > r und die Teilbox schon vorher als innen/aussen erkannt.
+        Rueckgabe: (stuecke, gekruemmt).
+        """
+        mitte = np.asarray(mitte, float).reshape(3)
+        alle: list = []
+        _mit_vorzeichen(self.wurzel, 1, alle)
+        proben = np.asarray(proben, float).reshape(-1, 3)
+        d_ist = self.abstand(proben)
+        tol = 1e-9 * max(r, 1e-12)
+        d_m = np.array([float(f.abstand(mitte[None])[0]) for f, _ in alle])
+        aktiv = np.abs(d_m) <= r
+        if not aktiv.any():
+            return None
+        pos = [f for f, s in alle if s > 0]
+        neg = [f for f, s in alle if s < 0]
+        pos_akt = [f for (f, s), a in zip(alle, aktiv) if s > 0 and a]
+        neg_akt = [f for (f, s), a in zip(alle, aktiv) if s < 0 and a]
+        gekruemmt = any(f.gekruemmt for f in pos_akt + neg_akt)
+        dpos = np.stack([f.abstand(proben) for f in pos], axis=1) if pos else None
+        dneg = np.stack([-f.abstand(proben) for f in neg], axis=1) if neg else None
+        rek = np.max(np.concatenate([d for d in (dpos, dneg) if d is not None], axis=1), axis=1)
+        vz = np.array([s for _, s in alle])
+        if np.all(np.abs(rek - d_ist) <= tol):
+            # Waechter: eine ferne Form, die die ganze Kugel ausschliesst (positive weit aussen,
+            # Loch weit innen), macht die Umgebung werkstofffrei - normalerweise schon vorher
+            # als OUTSIDE erkannt, hier der Vollstaendigkeit halber
+            if np.any(~aktiv & (vz * d_m > r)):
+                return [], gekruemmt
+            stuecke: list[Halbraeume] = [[]]
+            for f in pos_akt:
+                stuecke = _schneiden(stuecke, f.lokale_ebenen(mitte, r))
+            for f in neg_akt:
+                ebenen = f.lokale_ebenen(mitte, r)
+                if ebenen:
+                    stuecke = _subtrahieren(stuecke, ebenen)
+            return stuecke, gekruemmt
+        if dpos is not None and dneg is None and len(pos_akt) >= 1 and np.all(np.abs(dpos.min(axis=1) - d_ist) <= tol):
+            if np.any(~aktiv & (d_m < -r)):
+                return [[]], gekruemmt                  # eine ferne Form fuellt die ganze Kugel
+            stuecke = []
+            bisher: list[Halbraeume] = []
+            for f in pos_akt:
+                ebenen = f.lokale_ebenen(mitte, r)
+                teil = _schneiden([[]], ebenen)
+                for g in bisher:
+                    teil = _subtrahieren(teil, g)
+                stuecke += teil
+                bisher.append(ebenen)
+            return stuecke, gekruemmt
+        return None
 
     def dreiecke(self, facette_mm: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Dreiecke aller Grundformen innerhalb des Huellquaders; quelle = Index in grundformen()."""

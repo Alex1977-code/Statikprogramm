@@ -84,6 +84,22 @@ class Quader:
     def huellquader(self) -> tuple[np.ndarray, np.ndarray]:
         return self.lo.copy(), self.hi.copy()
 
+    gekruemmt = False
+
+    def lokale_ebenen(self, P, r: float) -> list[tuple[np.ndarray, np.ndarray]]:
+        """Seitenebenen im Abstand <= r von P (Punkt, Normale nach aussen); exakt."""
+        P = np.asarray(P, float).reshape(3)
+        aus = []
+        for d in range(3):
+            for grenze, vz in ((self.lo[d], -1.0), (self.hi[d], 1.0)):
+                if abs(P[d] - grenze) <= r:
+                    q = P.copy()
+                    q[d] = grenze
+                    n = np.zeros(3)
+                    n[d] = vz
+                    aus.append((q, n))
+        return aus
+
     def dreiecke(self, box_lo, box_hi, facette_mm: float) -> tuple[np.ndarray, np.ndarray]:
         lo, hi = self.lo, self.hi
         V = np.array([[lo[0], lo[1], lo[2]], [hi[0], lo[1], lo[2]], [hi[0], hi[1], lo[2]], [lo[0], hi[1], lo[2]],
@@ -138,6 +154,23 @@ class Zylinder:
         e = self.radius * np.sqrt(np.clip(1.0 - a ** 2, 0.0, 1.0))
         return np.minimum(self.p0, self.p1) - e, np.maximum(self.p0, self.p1) + e
 
+    gekruemmt = True
+
+    def lokale_ebenen(self, P, r: float) -> list[tuple[np.ndarray, np.ndarray]]:
+        """Tangentialebene des Mantels (am radial projizierten Punkt) und Deckelebenen im
+        Abstand <= r von P."""
+        a, Lz, t, rvec, rho, _ = self._lokal(np.asarray(P, float).reshape(1, 3))
+        t, rvec, rho = float(t[0]), rvec[0], float(rho[0])
+        aus = []
+        if abs(rho - self.radius) <= r:
+            er = rvec / rho if rho > 0 else _senkrechte(a)
+            aus.append((self.p0 + t * a + self.radius * er, er))
+        if abs(t) <= r:
+            aus.append((self.p0.copy(), -a))
+        if abs(t - Lz) <= r:
+            aus.append((self.p1.copy(), a.copy()))
+        return aus
+
     def dreiecke(self, box_lo, box_hi, facette_mm: float) -> tuple[np.ndarray, np.ndarray]:
         a, Lz = self._achse()
         u = _senkrechte(a)
@@ -187,6 +220,17 @@ class Kugel:
     def huellquader(self) -> tuple[np.ndarray, np.ndarray]:
         return self.mitte - self.radius, self.mitte + self.radius
 
+    gekruemmt = True
+
+    def lokale_ebenen(self, P, r: float) -> list[tuple[np.ndarray, np.ndarray]]:
+        """Tangentialebene am radial projizierten Punkt, wenn die Kugelflaeche naeher als r ist."""
+        d = np.asarray(P, float).reshape(3) - self.mitte
+        rho = float(np.linalg.norm(d))
+        if abs(rho - self.radius) > r:
+            return []
+        er = d / rho if rho > 0 else np.array([0.0, 0.0, 1.0])
+        return [(self.mitte + self.radius * er, er)]
+
     def dreiecke(self, box_lo, box_hi, facette_mm: float) -> tuple[np.ndarray, np.ndarray]:
         ns = max(8, int(np.ceil(2 * np.pi * self.radius / max(facette_mm, 1e-9))))
         nph = max(4, ns // 2)
@@ -229,6 +273,13 @@ class Halbraum:
 
     def huellquader(self) -> tuple[np.ndarray, np.ndarray]:
         return np.full(3, -np.inf), np.full(3, np.inf)
+
+    gekruemmt = False
+
+    def lokale_ebenen(self, P, r: float) -> list[tuple[np.ndarray, np.ndarray]]:
+        if abs(float(self.abstand(np.asarray(P, float).reshape(1, 3))[0])) > r:
+            return []
+        return [(self.punkt.copy(), self.normale.copy())]
 
     def dreiecke(self, box_lo, box_hi, facette_mm: float) -> tuple[np.ndarray, np.ndarray]:
         """Polygon Ebene ∩ Box aus den Schnittpunkten der zwoelf Boxkanten, nach Winkel

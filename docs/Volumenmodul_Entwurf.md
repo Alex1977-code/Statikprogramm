@@ -121,13 +121,32 @@ eine Empfehlung ausspricht, wird ihr gefolgt, sofern nichts Gemessenes dagegen s
   die Verfeinerung in TP 2. Nur Entitäten von INSIDE- und CUT-Zellen tragen Freiheitsgrade.
 
 ### 3.5 Integration
-- INSIDE: Gauß-Legendre (p+1)³. CUT: rekursive Oktant-Teilung der Zelle bis Tiefe k
-  (Vorgabe 3–5, Standard 4); Teilzellen werden nur weiter geteilt, wenn die SDF sie als
-  geschnitten ausweist; in jeder Blatt-Teilzelle Gauß (p+1)³, Gewicht `α·w` außerhalb
-  (α Standard 10⁻⁸). Punkte, Gewichte und Basiswerte der CUT-Zellen werden einmal berechnet und
-  gehalten (für alle Lastfälle gleich).
+- INSIDE: Gauß-Legendre (p+1)³. CUT: rekursive Oktant-Teilung der Zelle; Teilzellen, die
+  die SDF sicher als innen/außen ausweist, werden nicht weiter geteilt.
+- **Ebenen-exakte Blätter statt Punkttest** (Entscheidung 27.09. nach Messung: der reine
+  Punkttest der Vorgabe ist erster Ordnung – Würfel 100³, schräg durch eine Ebene halbiert,
+  h = 20, Tiefe 4, 6,5·10⁶ Punkte: Volumenfehler 0,5 %; damit ist der Patch-Test < 10⁻⁶ der
+  Vorgabe Abschnitt 13 unerreichbar). In einer geschnittenen Teilzelle nennen die aktiven
+  Grundformen (|d| ≤ halbe Raumdiagonale) ihre **lokalen Ebenen**: Halbraum und Quaderseiten
+  exakt, Zylinder und Kugel als Tangentialebene im Teilzellenmittelpunkt. Der CSG-Baum prüft
+  an den Gauß-Punkten der Teilzelle, ob sich der Gesamtabstand lokal als „Schnitt der
+  positiven Formen minus Löcher“ (max) oder als Vereinigung (min) rekonstruieren lässt, und
+  zerlegt die Teilzelle dann in **disjunkte konvexe Stücke** (Box ∩ Halbräume; Löcher über die
+  Standardzerlegung des Komplements). Jedes Stück wird gegen seine Halbräume geclippt
+  (Sutherland–Hodgman auf den Polyederflächen samt Deckelpolygon), vom Schwerpunkt aus in
+  Tetraeder zerlegt und mit der konischen Produktregel (Gauß–Jacobi, n = ⌈3p/2⌉ je Richtung,
+  exakt bis Gesamtgrad 2n−1 ≥ 3p−1) integriert – genau die Exaktheit, die der Patch-Test für
+  ∫∇v braucht. Ebene Geometrie ist damit auf jeder Tiefe exakt (keine Teilung nötig);
+  gekrümmte Flächen werden bis Tiefe k (Standard 2) geteilt, Fehler O(κ·Blattkante²) statt
+  O(Blattkante). Der **fiktive Bereich** kommt ohne negative Gewichte aus: die ganze Teilbox
+  mit Gauß (p+1)³ und Gewicht α, die Stücke mit Gewicht (1−α).
+- Lässt sich die lokale Semantik nicht rekonstruieren (verschachtelte Booleans, mehrere
+  gekrümmte Formen), teilt die Rekursion zwei Stufen tiefer und fällt auf den Punkttest der
+  Vorgabe zurück; die Zahl solcher Blätter steht im Protokoll.
+- Punkte und Gewichte der CUT-Zellen werden einmal berechnet und gehalten (für alle
+  Lastfälle gleich); Basiswerte nicht (Speicher).
 - Qualitätsprüfung (Vorgabe 6) kommt mit TP 2; in TP 1 misst ein Test das integrierte
-  Volumen von Kugel und Zylinder gegen die Formel in Abhängigkeit von k.
+  Volumen von Kugel, schräg geschnittenem Würfel und Lochplatte gegen die Formel.
 
 ### 3.6 Randbedingungen und Lasten
 - Verschiebungsränder (Schnittebenen, Lager, Symmetrie) über **symmetrisches Nitsche** mit
