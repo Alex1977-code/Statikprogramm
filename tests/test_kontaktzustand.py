@@ -150,6 +150,12 @@ def test_warmstart():
     kalt4 = solver.solve_cases(m, ["LF4"])["LF4"]
     reihe4 = solver.solve_cases(m, [lf1, "LF4"])
     warm4 = reihe4["LF4"]
+    # Ein fremder Zustand (anderer Lastfall) mit vielen Knoten gegen ihre
+    # Richtung wird weiter verworfen - sonst hinge das Ergebnis am Weg
+    # (27.09.2026: fortgesetzt statt kalt gab u_max 0,6 bis 4 % daneben bei
+    # gleichen Spannungen). Nur innerhalb desselben Lastfalls (Vorlauf,
+    # Fliessschritte) ist die Fortsetzung die Regel (solve_with_contact,
+    # ``fortsetzung``).
     check("umgekehrte Last: Warmstart verworfen, Neustart von der Geometrie",
           not warm4.info.get("contact_warm")
           and any("Warmstart verworfen" in str(z) for z in warm4.info.get("contact_log", [])),
@@ -916,7 +922,8 @@ def test_endzustand_kennung_ist_prozessfest():
 def test_start_angeboten_und_genutzt():
     """Woher der Warmstart eines Lastfalls kam - angeboten und genutzt
     getrennt (22.09.2026). Angeboten ist nicht genutzt: der Warmstart kann
-    verworfen werden (umgekehrte Last)."""
+    verworfen werden (umgekehrte Last, fremder Zustand); innerhalb desselben
+    Lastfalls ist seit 27.09.2026 die Fortsetzung die Regel."""
     m, lf1 = _modell()
     reihe = solver.solve_cases(m, [lf1, "LF2", "LF3"])
     i1, i2, i3 = reihe[lf1].info, reihe["LF2"].info, reihe["LF3"].info

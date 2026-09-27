@@ -903,9 +903,11 @@ def test_laufbuch_mit_fliessen():
     check("jeder spätere Lauf startet vom Zustand des Laufs davor",
           all(e["start_von_lauf"] == e["nr"] - 1 for e in laeufe[2:]),
           str([e["start_von_lauf"] for e in laeufe]))
-    check("der Vorlauf gibt seinen Zustand an keinen Lauf weiter",
-          laeufe[1]["start_von_lauf"] == laeufe[0]["start_von_lauf"]
-          and not any(e["start_von_lauf"] == 1 for e in laeufe),
+    # Bis 27.09.2026 gab der Vorlauf seinen Zustand an keinen Lauf weiter,
+    # der erste plastische Lauf startete kalt (am Drehlager 21 Runden noch
+    # einmal). Seither startet er vom Zustand des Vorlaufs (Lauf 1).
+    check("der Vorlauf gibt seinen Zustand an den ersten plastischen Lauf weiter",
+          laeufe[1]["start_von_lauf"] == 1 and laeufe[1]["warm"],
           str([e["start_von_lauf"] for e in laeufe]))
 
     # Gemeinsam: kein Vorlauf, die Arten schreibt der Newton selbst mit
@@ -948,11 +950,17 @@ def test_laufbuch_mit_fliessen():
     r4 = solver.solve_static(m4)
     l4 = laufbuch_pruefen(r4, "Anfangsdehnung gemeinsam", pruefe=check)
     a4 = [e["art"] for e in l4]
+    # Bitgleich bis 27.09.2026. Seit der erste plastische Lauf verschachtelt
+    # vom Zustand des Vorlaufs startet (gemeinsam hat keinen), gehen beide
+    # Wege verschieden durch die Kontaktiteration und enden am Residuum
+    # 1e-6 der Kontaktkraft - gleich auf 1e-5 der Verschiebung, nicht mehr
+    # bitgleich; dieselben Laeufe bleiben (Vorlauf abgezogen).
+    u3, u4 = np.asarray(r3.u, float), np.asarray(r4.u, float)
     check("Anfangsdehnung gemeinsam: ohne Vorlauf und ohne abgekürzte Läufe, "
-          "sonst dieselben Läufe und bitgleich",
+          "sonst dieselben Läufe, u auf 1e-5 gleich",
           a4 == a3[1:] and not any(e.get("abgekuerzt") for e in l4)
-          and np.array_equal(np.asarray(r4.u, float), np.asarray(r3.u, float)),
-          f"{a4[:3]} gegen {a3[:3]}")
+          and float(np.abs(u4 - u3).max()) <= 1e-5 * float(np.abs(u3).max()),
+          f"{a4} gegen {a3}; max |Δu| {float(np.abs(u4 - u3).max()):.2e} bei u_max {float(np.abs(u3).max()):.2e}")
 
     # Mit Deckel 1: gedeckelte Läufe stehen einzeln da
     m2 = _fliessendes_kontaktmodell()          # vor dem Deckel bauen: es rechnet selbst
@@ -1362,8 +1370,12 @@ def test_gemeinsame_iteration_spart_zerlegungen():
     Newton-Schritt den Kontakt auskonvergiert. Gezählt werden die Aufrufe
     von LinearSolver, nicht die Buchführung des Laufbuchs."""
     for titel, ((_r_alt, z_alt), (_r_neu, z_neu)) in _gemeinsam_gegen_verschachtelt().items():
-        check(f"{titel}: gemeinsam höchstens 70 % der Zerlegungen von verschachtelt",
-              z_neu <= 0.70 * z_alt, f"{z_neu} gegen {z_alt} ({z_neu / max(z_alt, 1) * 100:.0f} %)")
+        # Bis 27.09.2026 hoechstens 70 %: verschachtelt startete den ersten
+        # plastischen Lauf kalt. Seit er vom Zustand des Vorlaufs startet,
+        # braucht verschachtelt kaum mehr Zerlegungen als gemeinsam - Block
+        # mit Reibung 12 gegen 12, zwei Koerper 23 gegen 26 (gemessen).
+        check(f"{titel}: gemeinsam höchstens so viele Zerlegungen wie verschachtelt",
+              z_neu <= z_alt, f"{z_neu} gegen {z_alt} ({z_neu / max(z_alt, 1) * 100:.0f} %)")
 
 
 def test_gemeinsame_iteration_rechnet_dasselbe():
@@ -1388,22 +1400,22 @@ def test_gemeinsame_iteration_rechnet_dasselbe():
                   f"{len(ab)} abgekürzte von {len(arten_neu)} Läufen")
         za, zn = zustand_aus_info(r_alt.info), zustand_aus_info(r_neu.info)
         if titel.startswith("zwei"):
-            # Seit K5 (27.09.2026) haelt keine grobe Reststeifigkeit den ganz
-            # gleitenden Stempel mehr fest (sie trug 211 kN verborgene Kraft):
-            # in der Ebene ist er nur ueber die Reibung auf der gewoelbten
-            # Flaeche gehalten, also mechanisch indifferent. Der verschachtelte
-            # Newton erreicht die Schlussabnahme nicht (Rest 4,6e-3 bei 1e-3,
-            # auch nach den Nachschritten vom Abschluss), die gemeinsame
-            # Iteration mit drei Laststufen konvergiert (Rest 1,5e-6). Beide
-            # Wege enden in verschiedenen Reibzustaenden - gleich koennen sie
-            # nicht sein. Offen (Theoriehandbuch 4, K5); geprueft wird hier,
-            # dass das Programm es ehrlich meldet.
+            # Seit K5 (27.09.2026 vormittags) haelt keine grobe Reststeifigkeit
+            # den ganz gleitenden Stempel mehr fest; in der Ebene ist er nur
+            # ueber die Reibung auf der gewoelbten Flaeche gehalten, also
+            # mechanisch indifferent. Der verschachtelte Newton, der jeden
+            # Fliessschritt kalt begann, erreichte die Schlussabnahme nicht
+            # (Rest 4,6e-3 bei 1e-3). Seit der erste plastische Lauf vom
+            # Zustand des Vorlaufs startet (27.09.2026 abends), konvergiert
+            # auch er (Rest 1,27e-7); gemeinsam Rest 1,5e-6. Die Reibzustaende
+            # beider Wege sind am indifferenten Stempel verschieden - die
+            # Spannungen werden darum hier nicht verglichen.
             rest_alt = float((r_alt.info.get("plastizitaet") or {}).get("rest_abschluss") or 0.0)
             tol = float(r_alt.model.plastizitaet.toleranz)
-            check(f"{titel}: gemeinsam konvergiert; verschachtelt meldet die verfehlte Abnahme "
-                  f"(indifferenter Stempel, offen seit K5)",
-                  zn == "konvergiert" and za.startswith("NICHT konvergiert") and rest_alt > tol,
-                  f"verschachtelt: {za} (Rest {rest_alt:.2e} > {tol:g}); gemeinsam: {zn}")
+            check(f"{titel}: beide konvergieren, verschachtelt mit bestandener Abnahme "
+                  f"(indifferenter Stempel, seit dem Vorlauf-Warmstart)",
+                  zn == "konvergiert" and za == "konvergiert" and rest_alt <= tol,
+                  f"verschachtelt: {za} (Rest {rest_alt:.2e} <= {tol:g}); gemeinsam: {zn}")
         else:
             check(f"{titel}: beide konvergiert", za == "konvergiert" and zn == "konvergiert",
                   f"verschachtelt: {za}; gemeinsam: {zn}")
@@ -1860,9 +1872,12 @@ def test_gemeinsam_im_budget():
     m2.plastizitaet.kontakt = "gemeinsam"
     r2 = solver.solve_static(m2)
     pz2 = r2.info.get("plastizitaet") or {}
-    check("(c) Stempel, eine Laststufe: die verfehlte Abnahme wird gemeldet (offen, indifferent)",
-          zustand_aus_info(r2.info).startswith("NICHT konvergiert")
-          and float(pz2.get("rest_abschluss") or 0.0) > float(m2.plastizitaet.toleranz),
+    # Bis 27.09.2026 abends "NICHT konvergiert" (Rest 4,6e-3, indifferenter
+    # Stempel); seit der erste plastische Lauf vom Zustand des Vorlaufs
+    # startet: konvergiert, Rest 7,9e-8.
+    check("(c) Stempel, eine Laststufe: konvergiert mit bestandener Abnahme (seit dem Vorlauf-Warmstart)",
+          zustand_aus_info(r2.info) == "konvergiert"
+          and float(pz2.get("rest_abschluss") or 0.0) <= float(m2.plastizitaet.toleranz),
           f"{zustand_aus_info(r2.info)}, Rest {pz2.get('rest_abschluss')}")
 
 
@@ -1898,14 +1913,20 @@ def test_gemeinsam_rueckfall_verschachtelt():
         # Summe der Verstoesse unter 1e-6 der Kontaktkraft liegt - zwei Wege
         # zum selben Zustand enden darum bis auf diese Genauigkeit gleich,
         # nicht mehr bitgleich (gequetschter Block: max |du| 1,2e-9 bei
-        # u_max 1,5e-3 m; mit RESIDUUM_ANTEIL = -1 wieder 0,0). Geprueft wird
-        # darum auf 1e-6 relativ, fuer u, Auflager- und Kontaktkraefte.
+        # u_max 4,1e-2 m; mit RESIDUUM_ANTEIL = -1 wieder 0,0). Seit der
+        # erste plastische Lauf verschachtelt vom Zustand des Vorlaufs
+        # startet, liegen die Wege weiter auseinander (gemessen 27.09.2026):
+        # u 3,7e-7 bei 4,1e-2 m (9e-6), Auflagerkraefte 522 N bei 44 MN
+        # (1,2e-5), Kontaktkraefte 601 N bei 44 MN (1,4e-5) - Restkraefte von
+        # 1e-6 der Kontaktkraft, an einzelnen Knoten der weichen Reibhaltung
+        # des Blocks gesammelt. Geprueft wird darum auf 2e-5 relativ, fuer u,
+        # Auflager- und Kontaktkraefte.
         def gleich(x, y):
             x, y = np.asarray(x, float), np.asarray(y, float)
             bezug = float(np.nanmax(np.abs(x))) if x.size else 0.0
             return x.shape == y.shape and (bezug == 0.0 or
-                                           float(np.nanmax(np.abs(x - y))) <= 1e-6 * bezug)
-        check(f"{titel}: … und dieselben Verschiebungen, Auflager- und Kontaktkräfte auf 1e-6 "
+                                           float(np.nanmax(np.abs(x - y))) <= 2e-5 * bezug)
+        check(f"{titel}: … und dieselben Verschiebungen, Auflager- und Kontaktkräfte auf 2e-5 "
               "(seit dem Residuum-Kriterium nicht mehr bitgleich)",
               gleich(rg.u, ra.u) and gleich(rg.reactions, ra.reactions)
               and gleich(rg.contact_forces, ra.contact_forces),

@@ -353,9 +353,22 @@ def test_vorlauf_mit_deckel():
           str(r1.info.get("contact_vorlauf_nicht_konvergiert")))
     check("die klebende Kennzahl contact_converged meldet das",
           r1.info.get("contact_converged") is False, str(r1.info.get("contact_converged")))
+    # Bis 27.09.2026 bitgleich: der Vorlauf gab seinen Zustand nie weiter, die
+    # plastischen Laeufe begannen mit und ohne Deckel kalt. Seither startet
+    # der erste plastische Lauf vom Zustand eines **konvergierten** Vorlaufs
+    # (Warmstart als Regel); ein gedeckelter Vorlauf gibt nichts weiter, der
+    # Weg ist dann kalt wie bisher. Gemessen: mit dem Deckelzustand als Start
+    # (fremd, "wenige" zurueckgesetzt) max |du| 3,1e-9 m bei |u| 2,9e-6 m,
+    # ohne ihn (kalt) 7e-20 m - beide Wege treffen sich hier. Geprueft wird
+    # wie beim Warmstart (test_kontaktzustand): u auf 1e-3, sigma_v auf
+    # 1 N/mm2, denn ein anderer Reibweg darf sich in u zeigen.
     du = float(np.abs(r1.u - r.u).max())
-    check("das Ergebnis ist dasselbe wie ohne Deckel (max |du| = 0)", du == 0.0,
-          f"max |du| = {du:.3e} m bei max |u| = {float(np.abs(r.u).max()):.3e} m")
+    u_max = float(np.abs(r.u).max())
+    dsv = max(abs(pl.vergleichsspannung(np.asarray(r1.solid_res[i], float))
+                  - pl.vergleichsspannung(np.asarray(r.solid_res[i], float))) for i in r.solid_res)
+    check("das Ergebnis stimmt mit dem ohne Deckel ueberein (u auf 1e-3, sigma_v auf 1 N/mm2)",
+          du <= 1e-3 * u_max and dsv <= 1e6,
+          f"max |du| {du:.3e} m bei max |u| {u_max:.3e} m, max |d sigma_v| {dsv / 1e6:.4f} N/mm2")
     z = rl.zustand_aus_info(r1.info)
     check("darum zaehlt der Vorlauf nicht: konvergiert", z == "konvergiert", z)
 

@@ -136,6 +136,109 @@ def cpu_count() -> int:
     return os.cpu_count() or 1
 
 
+def speicher_frei() -> tuple:
+    """(freier physischer Speicher, freier Commit-Speicher) in Byte - beides
+    0, wenn das System keine Auskunft gibt. Der Commit-Speicher (RAM plus
+    Auslagerungsdatei) ist unter Windows die Grenze, an der Zuweisungen
+    scheitern, nicht der physische; PARDISO meldet dann -2."""
+    if platform.system() == "Windows":
+        import ctypes
+
+        class _Status(ctypes.Structure):
+            _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                        ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                        ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                        ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                        ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+        try:
+            st = _Status()
+            st.dwLength = ctypes.sizeof(st)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)):
+                return int(st.ullAvailPhys), int(st.ullAvailPageFile)
+        except Exception:               # noqa: BLE001 - ohne Auskunft bleibt es bei der Vorgabe
+            pass
+        return 0, 0
+    try:
+        werte = {}
+        with open("/proc/meminfo", encoding="ascii") as f:
+            for zeile in f:
+                k, _, rest = zeile.partition(":")
+                teile = rest.split()
+                if teile and teile[0].isdigit():
+                    werte[k.strip()] = int(teile[0]) * 1024
+        frei = int(werte.get("MemAvailable", 0))
+        if "CommitLimit" in werte and "Committed_AS" in werte:
+            commit = max(0, int(werte["CommitLimit"]) - int(werte["Committed_AS"]))
+        else:
+            commit = frei
+        return frei, commit
+    except (OSError, ValueError):
+        return 0, 0
+
+
+def speicher_eigen() -> int:
+    """Commit-Speicher (private Bytes) dieses Prozesses in Byte; 0 ohne Auskunft."""
+    if platform.system() == "Windows":
+        import ctypes
+
+        class _Zaehler(ctypes.Structure):
+            _fields_ = [("cb", ctypes.c_ulong), ("PageFaultCount", ctypes.c_ulong),
+                        ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
+                        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaNonPagedPoolUsage", ctypes.c_size_t), ("PagefileUsage", ctypes.c_size_t),
+                        ("PeakPagefileUsage", ctypes.c_size_t), ("PrivateUsage", ctypes.c_size_t)]
+        try:
+            z = _Zaehler()
+            z.cb = ctypes.sizeof(z)
+            k32, psapi = ctypes.windll.kernel32, ctypes.windll.psapi
+            # HANDLE ist 64 Bit: ohne restype kaeme das Pseudohandle -1 als
+            # 32-Bit-Wert an, und der Aufruf gaebe 0 zurueck (gemessen 27.09.2026)
+            k32.GetCurrentProcess.restype = ctypes.c_void_p
+            psapi.GetProcessMemoryInfo.argtypes = [ctypes.c_void_p, ctypes.POINTER(_Zaehler), ctypes.c_ulong]
+            psapi.GetProcessMemoryInfo.restype = ctypes.c_int
+            if psapi.GetProcessMemoryInfo(k32.GetCurrentProcess(), ctypes.byref(z), z.cb):
+                return int(z.PrivateUsage)
+        except Exception:               # noqa: BLE001
+            pass
+        return 0
+    try:
+        with open("/proc/self/status", encoding="ascii") as f:
+            for zeile in f:
+                if zeile.startswith("VmRSS:"):
+                    return int(zeile.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return 0
+
+
+#: Anteil des freien Commit-Speichers, den der Pool belegen darf; der Rest
+#: gehoert dem Hauptprozess (Matrix, Faktorisierung, Nachlauf).
+POOL_SPEICHER_ANTEIL = 0.5
+
+
+def arbeiter_nach_speicher(w: int, frei: int = None, eigen: int = None) -> int:
+    """Hoechstens so viele Arbeiter, wie in den halben freien Commit-Speicher
+    passen, wenn jeder so viel braucht wie der Hauptprozess jetzt - er haelt
+    das Modell, und genau das kopiert jeder Arbeiter beim Start.
+
+    Gemessen am Drehlager (655 000 tet4, 27.09.2026): je Arbeiter 1,4 GB
+    Arbeitssatz und 2,9 GB Commit, der Hauptprozess 24 GB Commit in der
+    Faktorisierung. Mit der Vorgabe cpu_count - 1 = 31 Arbeitern erschoepften
+    90 GB Pool plus Hauptprozess das Commit-Limit von 166 GB (128 GB RAM plus
+    38 GB Auslagerung): PARDISO -2 "kein Speicher", davor ein Absturz in der
+    Faktorisierung. Mit 12 Arbeitern blieben 69 GB Commit frei. Ein kleines
+    Modell (Hauptprozess 0,3 GB) bleibt bei der Vorgabe."""
+    if w <= 1:
+        return int(w)
+    frei = speicher_frei()[1] if frei is None else int(frei)
+    eigen = speicher_eigen() if eigen is None else int(eigen)
+    if frei <= 0 or eigen <= 0:
+        return int(w)
+    hoechstens = max(1, int(POOL_SPEICHER_ANTEIL * frei / eigen))
+    return min(int(w), hoechstens)
+
+
 def _context():
     if platform.system() == "Linux":
         return mp.get_context("fork")
@@ -255,6 +358,7 @@ class Arbeiter:
         self.vorher = None
         self.aufrufe = 0
         self.geteilt = None      # der Block, den ein verschachtelter Aufruf mitbenutzt
+        self.begrenzung = None   # (Vorgabe, wirksam), wenn der Speicher den Pool bemessen hat
 
     def __enter__(self):
         global _AKTIV
@@ -268,7 +372,17 @@ class Arbeiter:
         self.tiefe = 1
         n = len(getattr(self.model, "elements", []) or [])
         if self.w > 1 and n >= _settings.min_elements:
-            self._starten()
+            # Der Pool bemisst sich nach dem freien Speicher (arbeiter_nach_speicher)
+            vorgabe = self.w
+            self.w = arbeiter_nach_speicher(self.w)
+            self.begrenzung = (vorgabe, self.w)
+            if self.w < vorgabe:
+                frei, eigen = speicher_frei()[1], speicher_eigen()
+                _melden(f"[parallel] Pool: {self.w} statt {vorgabe} Arbeiter - freier Commit-Speicher "
+                        f"{frei / 2 ** 30:.1f} GB, je Arbeiter wie der Hauptprozess "
+                        f"{eigen / 2 ** 30:.2f} GB\n")
+            if self.w > 1:
+                self._starten()
         _AKTIV = self
         return self
 

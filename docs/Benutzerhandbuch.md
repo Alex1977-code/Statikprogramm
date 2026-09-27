@@ -5315,6 +5315,30 @@ davon nicht betroffen.
 
 ## 9 Berechnung und Parallelisierung
 
+**Arbeiterpool nach Speicher (seit 27.09.2026).** Die Elementschleifen
+laufen in einem Pool von Arbeitsprozessen, Vorgabe alle Kerne bis auf einen.
+Jeder Arbeiter hält eine Kopie des Modells; am Drehlager (655 000 Tetraeder)
+waren das 2,9 GB je Arbeiter, und 31 Arbeiter plus der Hauptprozess mit
+seiner Faktorisierung erschöpften den Speicher samt Auslagerungsdatei -
+der Gleichungslöser brach ab. Der Pool nimmt darum höchstens so viele
+Arbeiter, wie in die Hälfte des freien Speichers passen, wenn jeder so viel
+braucht wie der Hauptprozess beim Start; kleine Modelle bleiben bei der
+Vorgabe. Wird begrenzt, steht es in der Konsole: „[parallel] Pool: 12 statt
+31 Arbeiter - freier Commit-Speicher 126 GB, je Arbeiter wie der
+Hauptprozess 5 GB“. Wer weniger Arbeiter will, setzt sie in den
+Einstellungen; mehr als der Speicher trägt, gibt es nicht.
+
+**Kontakt und Fließen: Warmstart als Regel (seit 27.09.2026).** Innerhalb
+eines Lastfalls startet jeder Kontaktlauf eines Fließschritts vom Zustand
+des vorigen - auch der erste plastische Lauf vom elastischen Vorlauf. Gleiten
+Knoten gegen ihre festgehaltene Richtung, werden sie auf Haften
+zurückgesetzt und die Iteration läuft weiter („Warmstart: … auf Haften
+zurückgesetzt, Iteration fortgesetzt (Anlauf 1)“); von der Geometrie neu
+beginnt der Lauf nur, wenn das nicht konvergiert („Fortsetzung vom
+Warmstart nicht konvergiert - Neustart von der Geometrie“). Ein Warmstart
+aus einem **anderen** Lastfall wird wie bisher verworfen, wenn viele Knoten
+gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
+
 > **Zwei Läufe desselben Modells können sich unterscheiden — und das ist kein
 > Fehler (gemessen 22.09.2026).** Der Gleichungslöser summiert die
 > Faktorisierung auf mehrere Kerne auf. Wie die Arbeit dabei auf die Kerne

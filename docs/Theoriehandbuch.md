@@ -309,7 +309,19 @@ L+U bei 3,2 statt 4,9 Sekunden.
 Was in der Statuszeile steht, ist seit diesem Stand eindeutig getrennt: der
 **Prozesspool** („lokal, 31 von 32 Kernen“) gilt für Elementschleifen,
 Aufträge und die Vernetzung, der **Gleichungslöser** meldet sich mit Namen
-und Threadzahl gesondert. Vorher stand dort nur die Zahl des Prozesspools,
+und Threadzahl gesondert. **Der Pool bemisst sich seit dem 27.09.2026 nach
+dem freien Speicher** (`parallel.arbeiter_nach_speicher`): höchstens so
+viele Arbeiter, wie in den halben freien Commit-Speicher passen, wenn
+jeder so viel braucht wie der Hauptprozess beim Start des Pools - er hält
+das Modell, und genau das kopiert jeder Arbeiter. Gemessen am Drehlager
+(655 000 tet4): je Arbeiter 1,4 GB Arbeitssatz und 2,9 GB Commit, der
+Hauptprozess 24 GB Commit in der Faktorisierung; mit der Vorgabe 31
+Arbeiter erschöpften 90 GB Pool plus Hauptprozess das Commit-Limit von
+166 GB (128 GB RAM plus 38 GB Auslagerung) - PARDISO −2 „kein Speicher“,
+davor ein Absturz in der Faktorisierung. Mit 12 Arbeitern blieben 69 GB
+frei. Ein kleines Modell (Hauptprozess 0,3 GB) bleibt bei der Vorgabe; die
+Begrenzung steht als Hinweis „[parallel] Pool: 12 statt 31 Arbeiter …“ im
+Fehlerstrom (`tests/test_pool_speicher`). Vorher stand dort nur die Zahl des Prozesspools,
 und die las sich, als rechne auch der Löser so. Nach dem Lösen wird das Residuum
 |K u − F| / |F| geprüft; numerisch singuläre Systeme (fehlende Lagerung,
 freie Bauteile) werden als Fehler gemeldet statt unbemerkt falsche Ergebnisse
@@ -1405,15 +1417,48 @@ vorher verworfen: die Reststeifigkeit auf die Bauteilsteifigkeit beziehen
 laufen in den Deckel) und der Ausgleich an der groben Feder (Fixpunkt zu
 langsam, K5 −79 %).
 
-Offen bleibt, was die grobe Feder verdeckt hatte: ein Körper, der ganz
-gleitet und in der Ebene nur über Reibung auf gewölbter Fläche gehalten ist,
-ist mechanisch indifferent. Am Stempel mit Fließen (zwei Körper, μ 0,1)
-erreicht der verschachtelte Newton die Schlussabnahme nicht (Rest 4,6·10⁻³
-bei Toleranz 10⁻³, auch nach fünf Nachschritten vom Abschluss aus,
-`plastizitaet.ABSCHLUSS_NACHSCHRITTE`), weil jeder volle Kontaktlauf die
-Reibung neu setzt (7 bis 11 Phase-2-Runden); die gemeinsame Iteration
-konvergiert dort (Rest 1,5·10⁻⁶). Das Programm meldet das jetzt ehrlich als
-„nicht konvergiert“ statt einer federgehaltenen Lösung.
+Was die grobe Feder verdeckt hatte: ein Körper, der ganz gleitet und in der
+Ebene nur über Reibung auf gewölbter Fläche gehalten ist, ist mechanisch
+indifferent. Am Stempel mit Fließen (zwei Körper, μ 0,1) erreichte der
+verschachtelte Newton die Schlussabnahme zunächst nicht (Rest 4,6·10⁻³ bei
+Toleranz 10⁻³, auch nach fünf Nachschritten vom Abschluss aus,
+`plastizitaet.ABSCHLUSS_NACHSCHRITTE`), weil jeder Fließschritt den Kontakt
+kalt begann und jeder volle Kontaktlauf die Reibung neu setzte; die
+gemeinsame Iteration konvergierte (Rest 1,5·10⁻⁶). Seit der erste
+plastische Lauf vom Zustand des Vorlaufs startet (27.09.2026 abends, siehe
+„Warmstart als Regel“ unten) konvergiert auch der verschachtelte Weg: Rest
+1,27·10⁻⁷ am Stempel mit zwei Körpern, 7,9·10⁻⁸ am Stempel mit einer
+Laststufe. Die Reibzustände beider Wege bleiben am indifferenten Stempel
+verschieden.
+
+**Warmstart als Regel (27.09.2026).** Innerhalb eines Lastfalls startete
+jeder erste Kontaktlauf eines Fließschritts kalt, sobald „viele“ gleitende
+Knoten (mehr als ein Zehntel) sich gegen ihre festgehaltene Richtung
+bewegten - am Drehlager mit dem Flächenlager „Starr“ als exakter Bedingung
+(2 370 gleitende Knoten, deren Richtungen mit jeder Tangente wandern) je
+Newton-Schritt 30 bis 48 Runden zu 25 s statt 3 bis 18 warm; und der erste
+plastische Lauf begann immer kalt, weil der Zustand des elastischen
+Vorlaufs nie weitergegeben wurde (Referenz `k5_probe2`: Lauf 2 mit 21
+Runden noch einmal). Entscheidung des Anwenders: kalt nur, wenn unbedingt
+nötig. Seither gilt innerhalb desselben Lastfalls (`solve_with_contact`,
+`fortsetzung`: der Start ist der Zustand des Vorlaufs oder des vorigen
+Fließschritts): Knoten gegen ihre Richtung werden auf Haften
+zurückgesetzt und die Iteration wird vom Zustand aus fortgesetzt, bis zu
+drei Anläufe; kalt erst, wenn die Fortsetzung selbst nicht konvergiert. Ein
+Zustand vom Deckel (die Reibungsnachprüfung hat aufgegeben) zählt dabei als
+fremd, und ein gedeckelter Vorlauf gibt gar keinen Zustand weiter - sonst
+hinge das Ergebnis am Deckel (`tests/test_rechenliste`: mit Deckel im
+Vorlauf und ohne treffen sich die Wege auf 7·10⁻²⁰ m; mit dem Deckelzustand
+als Start lagen sie 3·10⁻⁹ m bei 3·10⁻⁶ m auseinander). Ein
+**fremder** Zustand - Warmstart aus einem anderen Lastfall, eingefrorener
+Zustand, der nicht passt - bleibt bei der alten Regel (wenige zurücksetzen,
+viele heißen Neustart): am Block mit Reibung endete die Fortsetzung aus
+einem fremden Zustand 0,6 bzw. 4 % (u_max) neben der kalten Lösung bei
+gleichen Spannungen (0,04 N/mm²) - für die Ermüdung, die Zustände
+vergleicht, wäre das ein Weg-Artefakt. Folgen in den Prüfungen: der Block
+mit Reibung braucht verschachtelt 12 statt 17 Zerlegungen (gemeinsam 12),
+zwei Körper 26 (gemeinsam 23); gemeinsam und verschachtelt treffen sich
+auf 10⁻⁵ statt 10⁻⁶.
 
 **Flächenlager „starr mit Ausfall“ (27.09.2026).** RFEM lässt „starr“ nur
 ohne Nichtlinearität zu; ein Lager mit Ausfall bei Zug trägt dort einen
@@ -2182,7 +2227,10 @@ in keiner Messung, weil die Messung ihn nicht durchläuft. Nach der Konvergenz
 prüft `warmstart_verstoesse`, ob gleitende Knoten sich gegen ihre
 festgehaltene Richtung bewegen: wenige werden auf Haften zurückgesetzt und
 die Iteration läuft weiter, viele verwerfen den Warmstart (Neustart von der
-Geometrie, Protokoll „Warmstart verworfen“). Gemessen am 12.09.2026: Block
+Geometrie, Protokoll „Warmstart verworfen“) - seit dem 27.09.2026 nur noch
+bei einem **fremden** Zustand (anderer Lastfall, eingefrorener Zustand);
+innerhalb desselben Lastfalls wird immer zurückgesetzt und fortgesetzt,
+siehe „Warmstart als Regel“ in Abschnitt 4. Gemessen am 12.09.2026: Block
 mit Reibung, Folgezustand 5 statt 21 Schritte, Wiederholung desselben
 Lastfalls 1 Schritt ohne Faktorisierung. Varianten, die nicht blieben:
 Warmstart in Phase 1 mit grober Reststeifigkeit (20 Schritte, kein Gewinn),

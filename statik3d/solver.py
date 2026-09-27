@@ -3659,7 +3659,10 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
                 # sollte.
                 start=None if (probelauf and start_ is None) else st,
                 einfrieren=einfrieren,
-                fenster=fenster, K_zusatz=K_zusatz, probelauf=probelauf, kurz=kurz)
+                fenster=fenster, K_zusatz=K_zusatz, probelauf=probelauf, kurz=kurz,
+                # start_ kommt aus demselben Lastfall (Vorlauf, Fliessschritt):
+                # dann ist der Zustand kein fremder, siehe fortsetzung unten
+                fortsetzung=start_ is not None)
             res.kontaktzustand = cinfo.pop("contact_state", None)
             res.info.update(_kontakt_info_sammeln(res, cinfo, lauf_art["art"], von_lauf))
             zustaende.append((len(res.info["laeufe"]), res.kontaktzustand))
@@ -3668,10 +3671,11 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         return u_, system.reactions(u_, Fg, K_zusatz), aktiv
 
     hilfs = False
-    # Gemeinsam gerechnet entfaellt der elastische Vorlauf: sein Zustand ging
-    # nie weiter (der erste plastische Lauf startet bei ``start``) und sein u
-    # wird ueberschrieben - er kostete nur Zerlegungen, am Block mit Reibung 7
-    # von 20 (23.09.2026). Was er nebenbei tat, das Erkennen freier
+    # Gemeinsam gerechnet entfaellt der elastische Vorlauf: sein u wird
+    # ueberschrieben, und bis zum 27.09.2026 ging auch sein Kontaktzustand
+    # nie weiter - er kostete nur Zerlegungen, am Block mit Reibung 7 von 20
+    # (23.09.2026); verschachtelt gibt er ihn seither an den ersten
+    # plastischen Lauf weiter (start_pl unten). Was er nebenbei tat, das Erkennen freier
     # Bewegungen samt Hilfsfesselung, geschieht dann um den ersten
     # plastischen Lauf (unten).
     gemeinsam = _gemeinsam(model, probelauf, einfrieren)
@@ -3729,10 +3733,18 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
         # klein - 199 statt 124 s gegen 633 s fuer den vollen Lauf: bei 645.934
         # Elementen ist das Aufstellen der Matrix der Brocken, nicht die Zahl
         # der Schritte.
+        # Verschachtelt startet der erste plastische Lauf vom Zustand des
+        # Vorlaufs (bis 27.09.2026 vom Start des Lastfalls, also kalt: am
+        # Drehlager 21 Runden noch einmal); gemeinsam gibt es keinen Vorlauf,
+        # dort bleibt es beim Start des Lastfalls.
+        zs = getattr(res, "kontaktzustand", None)
+        if isinstance(zs, dict) and not zs.get("konvergiert", True):
+            zs = None           # ein gedeckelter Vorlauf gibt keinen Zustand weiter: kalt wie bisher
+        start_pl = start if gemeinsam else (zs or start)
         try:
             try:
                 u, R, aktiv_eff, temp = _plastizitaet_rechnen(model, res, F, _rechnen, aktiv, temp,
-                                                              progress, start, gemeinsam)
+                                                              progress, start_pl, gemeinsam)
             except RuntimeError:
                 # Ohne Vorlauf scheitert an einer freien Bewegung erst der erste
                 # plastische Lauf - dann wie oben: festhalten und neu rechnen.
@@ -3746,7 +3758,7 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
                        "wird mit Hilfsfesselung gerechnet")
                 hilfs = True
                 u, R, aktiv_eff, temp = _plastizitaet_rechnen(model, res, F, _rechnen, aktiv, temp,
-                                                              progress, start, gemeinsam)
+                                                              progress, start_pl, gemeinsam)
         except RuntimeError as ex3:
             _teilergebnis_anhaengen(model, system, res, ex3, F, feq, q, temp, workers, aktiv,
                                     art=lauf_art["art"])
@@ -5491,6 +5503,20 @@ def _kontaktlauf_angaben(cs, u, model: Model, grund: str) -> dict:
             "endzustand_kennung": cs.endzustand_kennung(), "u_max": u_max}
 
 
+def _zustand_markiert(cs, konvergiert: bool) -> dict:
+    """Die Sicherung des Kontaktzustands mit der Marke, ob der Lauf konvergiert
+    (oder mit Absicht abgekuerzt) war. Ein Zustand vom Deckel (die Reibungs-
+    nachpruefung hat aufgegeben) gilt fuer den naechsten Lauf als fremd: dort
+    darf der Warmstart wie bisher verworfen werden, sonst hinge das Ergebnis
+    am Deckel (tests/test_rechenliste: mit MAX_CYCLES = 1 muss dasselbe u
+    herauskommen wie ohne Deckel; mit Fortsetzung wich es um 3e-9 m bei
+    3e-6 m ab, 27.09.2026)."""
+    z = cs.zustand()
+    if isinstance(z, dict):
+        z["konvergiert"] = bool(konvergiert)
+    return z
+
+
 def _neustart_vermerken(cinfo2: dict, runden_vorher: list) -> None:
     """Ein Neustart gehoert zu **demselben** Kontaktlauf: die Runden vor dem
     Neustart kommen vor die des Neustarts, damit je Schritt eine Runde im
@@ -5504,7 +5530,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                        max_iter: int = 120, progress=None, us: np.ndarray = None,
                        K_zusatz: sparse.spmatrix = None, uebermass: dict = None,
                        start=None, versuch: int = 0, einfrieren=None, fenster=None,
-                       probelauf: bool = False, kurz: int = None):
+                       probelauf: bool = False, kurz: int = None, fortsetzung: bool = False):
     """Kontakt-Iteration; ``K_zusatz`` (z. B. die abgezogene Steifigkeit
     ausgefallener Zugstaebe) kommt in jedem Schritt zur Kontaktsteifigkeit.
 
@@ -5615,6 +5641,10 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         eingefroren_verworfen = verst
         start = einfrieren
     warm = bool(start) and cs.zustand_setzen(start)
+    if fortsetzung and isinstance(start, dict) and not start.get("konvergiert", True):
+        # Der Start kommt aus demselben Lastfall, aber von einem Lauf, der am
+        # Deckel aufgab: fuer die Warmstartregel ein fremder Zustand
+        fortsetzung = False
     if warm and not kurz:
         # Ein abgekuerzter Lauf setzt immer den vorigen fort - die Zeile
         # stuende sonst je Newton-Schritt im Protokoll
@@ -5669,7 +5699,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 u2, R2, cons2, cf2, cinfo2 = solve_with_contact(
                     model, system, F, max_iter, progress, us, K_zusatz, uebermass,
                     start=None, versuch=versuch + 1, fenster=fenster,
-                    probelauf=probelauf, kurz=kurz)
+                    probelauf=probelauf, kurz=kurz, fortsetzung=fortsetzung)
                 cinfo2["contact_log"] = log + list(cinfo2.get("contact_log", []))
                 cinfo2["contact_warm"] = False
                 cinfo2["contact_factorisations"] = getattr(system, "faktorisierungen", 0) - f0
@@ -5827,15 +5857,33 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     elif warm and converged and u is not None:
         n_v = cs.warmstart_verstoesse(u)
         if n_v:
-            # Gleitende Knoten bewegen sich gegen ihre festgehaltene Richtung.
-            # Wenige: auf Haften zuruecksetzen und weiter (die Iteration findet
-            # die Richtung neu, die Matrix bleibt meist). Viele oder wiederholt:
-            # der Zustand passt nicht zu diesem Lastfall - von der Geometrie neu.
+            # Gleitende Knoten bewegen sich gegen ihre festgehaltene Richtung:
+            # auf Haften zuruecksetzen und vom Zustand aus weiter - die
+            # Iteration findet die Richtung neu, die Aktivmenge bleibt. Bis zum
+            # 27.09.2026 galt das nur fuer "wenige" (hoechstens ein Zehntel der
+            # Gleitenden, hoechstens zweimal); viele hiessen "Neustart von der
+            # Geometrie". Am Drehlager mit dem Flaechenlager "Starr" als
+            # exakter Bedingung (2 370 gleitende Knoten, deren Richtungen mit
+            # jeder Tangente wandern) kostete der kalte Start je Newton-
+            # Schritt 30 bis 48 Runden zu 25 s, der warme 3 bis 18.
+            # Entscheidung des Anwenders (27.09.2026): kalt nur, wenn
+            # unbedingt noetig. Innerhalb desselben Lastfalls (``fortsetzung``:
+            # der Start ist der Zustand des Vorlaufs oder des vorigen
+            # Fliessschritts) heisst das: zuruecksetzen und weiter, kalt erst,
+            # wenn die Fortsetzung selbst nicht konvergiert oder drei Anlaeufe
+            # nicht reichen. Ein **fremder** Zustand (Warmstart aus einem
+            # anderen Lastfall, eingefrorener Zustand, der nicht passt) bleibt
+            # bei der alten Regel: wenige Knoten zuruecksetzen, viele heissen
+            # Neustart - sonst haengt das Ergebnis eines Lastfalls am Weg,
+            # ueber den er gestartet wurde (Block mit Reibung, Zustaende H4/H5:
+            # u_max 0,6 bzw. 4 % neben der kalten Loesung bei gleichen
+            # Spannungen; die Ermuedung vergleicht Zustaende, nicht Wege).
             wenige = n_v <= max(2, cs.n_slip // 10) and versuch < 2
-            if wenige:
+            if (fortsetzung and versuch < 3) or wenige:
                 cs.warmstart_verstoesse(u, zuruecksetzen=True)
                 log.append(f"Warmstart: {n_v} gleitende Knoten bewegten sich gegen ihre "
-                           "Richtung - auf Haften zurueckgesetzt, Iteration fortgesetzt")
+                           f"Richtung - auf Haften zurueckgesetzt, Iteration fortgesetzt "
+                           f"(Anlauf {versuch + 1})")
                 neu_start = cs.zustand()
             else:
                 log.append(f"Warmstart verworfen: {n_v} gleitende Knoten bewegen sich gegen "
@@ -5845,7 +5893,20 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             u2, R2, cons2, cf2, cinfo2 = solve_with_contact(
                 model, system, F, max_iter, progress, us, K_zusatz, uebermass,
                 start=neu_start, versuch=versuch + 1, fenster=fenster,
-                probelauf=probelauf)
+                probelauf=probelauf, fortsetzung=fortsetzung)
+            if fortsetzung and neu_start is not None and not cinfo2.get("contact_converged"):
+                # Die Fortsetzung vom Zustand aus kam nicht zum Ende - jetzt
+                # ist der kalte Start unbedingt noetig
+                log_fort = list(cinfo2.get("contact_log", []))
+                log.append("Fortsetzung vom Warmstart nicht konvergiert - Neustart von der Geometrie")
+                it_fort = int(cinfo2.get("contact_iterations", 0))
+                u2, R2, cons2, cf2, cinfo2 = solve_with_contact(
+                    model, system, F, max_iter, progress, us, K_zusatz, uebermass,
+                    start=None, versuch=3, fenster=fenster, probelauf=probelauf,
+                    fortsetzung=fortsetzung)
+                cinfo2["contact_log"] = log_fort + list(cinfo2.get("contact_log", []))
+                cinfo2["contact_iterations"] = it_fort + int(cinfo2.get("contact_iterations", 0))
+                neu_start = None
             cinfo2["contact_log"] = log + list(cinfo2.get("contact_log", []))
             cinfo2["contact_warm"] = bool(neu_start) and cinfo2.get("contact_warm", False)
             cinfo2["contact_iterations"] = it + cinfo2.get("contact_iterations", 0)
@@ -5885,7 +5946,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         "contact_iterations": it, "contact_converged": converged, "contact_log": log,
         "contact_warm": warm,
         "contact_factorisations": getattr(system, "faktorisierungen", 0) - f0,
-        "contact_state": cs.zustand(),
+        "contact_state": _zustand_markiert(cs, converged or abgekuerzt),
         "contact_frozen_verworfen": eingefroren_verworfen,
         "contact_lauf": _kontaktlauf_angaben(cs, u, model, grund)}
 
