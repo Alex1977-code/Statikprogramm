@@ -1,7 +1,7 @@
 """Oeffentliche Einstiegspunkte des Volumenmoduls (Vertrag Abschnitt 7 und 7a).
 
 ``FcmSolver`` (Entry Point ``fcm``): Detailmodell aus CSG-Geometrie
-(``GeometrySource.params`` nach docs/Volumenmodul_Entwurf.md 3.7), Schnittebenen als
+(``GeometrySource.params`` nach packages/volumen3d/docs/Entwurf.md 3.7), Schnittebenen als
 Halbraeume (Werkstoff gegen die Normale, wie ``CutPlane.normal``), Verschiebungskopplung ueber
 den ``GlobalFieldProvider``: Normalkomponente punktweise ueber Nitsche, in der Ebene die drei
 Resultierenden als Mittelwertzwaenge (Entwurf 3.6, Projektion ``schnitt``). Ergebnis an der

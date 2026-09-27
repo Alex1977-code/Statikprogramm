@@ -239,8 +239,8 @@ eine Empfehlung ausspricht, wird ihr gefolgt, sofern nichts Gemessenes dagegen s
   in TP 5.
 
 ### 3.10 Prüfungen und CI
-- Suiten unter `tests/volumen3d/` im Stil des Hauptprogramms (`check`, Aufruf
-  `python -m tests.volumen3d.test_...`), eine schnelle Sammelsuite `tests.volumen3d.test_kern`
+- Suiten unter `packages/volumen3d/volumen3d/tests/` im Stil des Hauptprogramms (`check`, Aufruf
+  `python -m volumen3d.tests.test_...`), eine schnelle Sammelsuite `volumen3d.tests.test_kern`
   wird in `tests/run_all.py` eingetragen; die teuren Konvergenz- und Leistungsläufe stehen in
   eigenen Suiten mit Laufzeitangabe im Kopf und laufen vor jedem Merge.
 - `.github/workflows/ci.yml` bekommt einen Schritt „volumen3d (CPU)“: Paket installieren,
@@ -380,7 +380,7 @@ für TP 1 nötig; sie werden im Pull Request einzeln benannt:
 - `tests/contracts/test_vertrag.py`: die Prüfung „`volumenloeser()` liefert den Stub“ gilt nur
   ohne echten Löser; mit installiertem `volumen3d` muss sie `fcm` erwarten. Änderung:
   Erwartung aus den registrierten Entry Points ableiten (kein Eingriff ins Vertragspaket).
-- `tests/run_all.py`: Eintrag `tests.volumen3d.test_kern`.
+- `tests/run_all.py`: Eintrag `volumen3d.tests.test_kern`.
 - `.github/workflows/ci.yml`: Schritt für `volumen3d` (CPU).
 - `requirements.txt`: `./packages/volumen3d` und `numba`; `cupy-cuda12x` nur als Kommentar
   (GPU-Extra), damit die exe und Linux-Umgebungen ohne CUDA unverändert laufen.

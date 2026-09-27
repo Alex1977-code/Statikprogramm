@@ -7,7 +7,7 @@
     berechnet) - ebene Querschnitte ohne Schubverformung auf beiden Schnittebenen erzwingen
     eine kleinere Querkraft als die Balkentheorie meldet.
 
-Aufruf: python -m tests.volumen3d.test_kragarm   (~1 min)
+Aufruf: python -m volumen3d.tests.test_kragarm   (~1 min)
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 import numpy as np  # noqa: E402
 
-from tests.volumen3d._pruef import check, lauf  # noqa: E402
+from volumen3d.tests._pruef import check, lauf  # noqa: E402
 
 E, NU, L, B, H, F = 210000.0, 0.3, 1000.0, 100.0, 200.0, 10000.0
 I = B * H ** 3 / 12

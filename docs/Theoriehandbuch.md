@@ -10254,7 +10254,7 @@ achsparalleles Gitter würfelförmiger Zellen eingebettet, die Geometrie geht nu
 vorzeichenbehaftete Abstandsfunktion (SDF) ein. Verbindlich sind
 `docs/Vorgabe_Statik3D_Abschnitt_FCM-Volumenloeser.md` und der Schnittstellenvertrag
 (`docs/Schnittstellenvertrag_Statik3D_FCM.md`, 2.0.0); die Umsetzungsentscheidungen stehen in
-`docs/Volumenmodul_Entwurf.md`. Dieses Kapitel hält die Formeln und die gemessenen Zahlen von
+`packages/volumen3d/docs/Entwurf.md`. Dieses Kapitel hält die Formeln und die gemessenen Zahlen von
 Teilprojekt 1 fest (CPU-Referenz: assemblierte Steifigkeit, Direktlöser). Einheiten im Modul:
 mm, N, N/mm².
 
@@ -10267,7 +10267,7 @@ Die (p+1)³ Moden hängen an Ecken (8), Kanten (12·(p−1)), Flächen (6·(p−
 ((p−1)³); Nachbarzellen teilen die Moden ihrer gemeinsamen Entität ohne Vorzeichenwechsel, weil
 alle Kanten und Flächen kanonisch in +Achsrichtung parametrisiert sind. Freiheitsgrade
 `3·Mode + Komponente`. Ein voller Quader mit n_x × n_y × n_z Zellen hat genau
-(n_x p+1)(n_y p+1)(n_z p+1) Moden (`tests/volumen3d/test_gitter.py`).
+(n_x p+1)(n_y p+1)(n_z p+1) Moden (`packages/volumen3d/volumen3d/tests/test_gitter.py`).
 
 ### 11.2 Zellklassifikation
 
@@ -10374,7 +10374,7 @@ Viertel eines dickwandigen Zylinders (r_i 50, r_a 100, Dicke 20, Innendruck 100 
 Dehnungszustand über Normalen-Nitsche auf vier Symmetrieebenen, Druck über die Flächenquadratur
 der Bohrung; Referenz `σ_r = k(1 − r_a²/r²)`, `σ_φ = k(1 + r_a²/r²)`, k = p r_i²/(r_a² − r_i²),
 Gegenprobe Kesselformel `∫σ_φ dr = p r_i`. Auswertung auf einem Strahl bei 37° in halber Dicke
-(Zahlen aus `tests/volumen3d/test_lame.py`, Stand siehe dort):
+(Zahlen aus `packages/volumen3d/volumen3d/tests/test_lame.py`, Stand siehe dort):
 
 | p, h = 10 | Tiefe der Tangentialebenen | σ_r (von p_i) | σ_φ | Freiheitsgrade (frei) | Zeit |
 |---|---|---|---|---|---|

@@ -18,7 +18,7 @@ SUITES = ["tests.test_verification", "tests.test_elemente_volumen", "tests.test_
            "tests.test_vertraeglich", "tests.test_nachlauf_parallel", "tests.test_sweep_aus",
            "tests.test_elementuebersicht", "tests.test_elementstufe",
            "tests.contracts.test_vertrag", "tests.test_kontakt_exakt",
-           "tests.volumen3d.test_kern"]
+           "volumen3d.tests.test_kern"]
 
 
 def main(argv=None) -> int:

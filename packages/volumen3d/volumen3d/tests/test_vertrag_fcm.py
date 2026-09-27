@@ -1,7 +1,7 @@
 """T9: FcmSolver erfuellt den Vertrag (Abschnitt 7): Protokoll, Entry Point, Ablauf mit dem
 Stub-Provider, Kopplungskontrolle, Abbruch, Fehlerfaelle; HybridAssemblySolver als Platzhalter.
 
-Aufruf: python -m tests.volumen3d.test_vertrag_fcm
+Aufruf: python -m volumen3d.tests.test_vertrag_fcm
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 import numpy as np  # noqa: E402
 
-from tests.volumen3d._pruef import check, lauf  # noqa: E402
+from volumen3d.tests._pruef import check, lauf  # noqa: E402
 
 
 def _spec(p=2, h=50.0, x0=200.0, x1=800.0):
@@ -26,16 +26,21 @@ def _spec(p=2, h=50.0, x0=200.0, x1=800.0):
 
 
 def test_protokoll_und_registrierung():
-    from statik3d import volumenloeser as VL
-    from statik3d_contracts.solver import AssemblySolver, SolidDetailSolver
+    """Protokolle und Entry Points. Dass der Lader des Hauptprogramms 'fcm' vor dem Stub waehlt,
+    prueft tests/contracts/test_vertrag.py - volumen3d importiert statik3d nie (Vertrag Abschnitt 1)."""
+    from importlib import metadata
+    import statik3d_contracts as V
+    from statik3d_contracts.solver import ENTRY_POINT_ASSEMBLY, ENTRY_POINT_SOLID, AssemblySolver, SolidDetailSolver
     from volumen3d.api import FcmSolver, HybridAssemblySolver
     check("FcmSolver erfuellt SolidDetailSolver", isinstance(FcmSolver(), SolidDetailSolver))
     check("HybridAssemblySolver erfuellt AssemblySolver (Platzhalter, capabilities leer)",
           isinstance(HybridAssemblySolver(), AssemblySolver) and HybridAssemblySolver().capabilities == frozenset())
-    loeser = VL.volumenloeser()
-    check("Hauptprogramm waehlt 'fcm' vor dem Stub", loeser.name == "fcm", loeser.name)
-    bereit = {e["name"] for e in VL.uebersicht() if e["zustand"] == "bereit"}
-    check("uebersicht() meldet fcm und hybrid bereit", bereit >= {"fcm", "hybrid"}, str(sorted(bereit)))
+    check("Vertragsversion des Pakets passt zum installierten Vertrag (Major)",
+          V.vertragsversion_passt(FcmSolver.contract_version) and FcmSolver.contract_version == V.CONTRACT_VERSION, FcmSolver.contract_version)
+    geladen = {ep.name: ep.load() for ep in metadata.entry_points(group=ENTRY_POINT_SOLID)}
+    check("Entry Point 'fcm' laedt FcmSolver", geladen.get("fcm") is FcmSolver, str(sorted(geladen)))
+    geladen2 = {ep.name: ep.load() for ep in metadata.entry_points(group=ENTRY_POINT_ASSEMBLY)}
+    check("Entry Point 'hybrid' laedt HybridAssemblySolver", geladen2.get("hybrid") is HybridAssemblySolver, str(sorted(geladen2)))
 
 
 def test_ablauf():

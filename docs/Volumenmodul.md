@@ -47,8 +47,8 @@ wachsender plastischer Dehnung, `on_step`).
 ## Session B: Stand des Volumenmoduls `volumen3d` (Teilprojekt 1, 27.09.2026)
 
 Zweig `feature/volumen3d` (Worktree `Desktop/Statik3D/statik3d-volumen3d`, eigene venv mit
-numba und cupy für die späteren Stufen). Entwurf und Zerlegung: `docs/Volumenmodul_Entwurf.md`;
-Plan: `docs/superpowers/plans/2026-09-27-volumen3d-tp1-fcm-kern.md`; Theorie und Messwerte:
+numba und cupy für die späteren Stufen). Entwurf und Zerlegung: `packages/volumen3d/docs/Entwurf.md`;
+Plan: `packages/volumen3d/docs/plaene/2026-09-27-tp1-fcm-kern.md`; Theorie und Messwerte:
 `docs/Theoriehandbuch.md`, Kapitel 11. Regeln der Sitzung: `packages/volumen3d/CLAUDE.md`.
 
 | Teil | Ort | Stand |
@@ -57,7 +57,7 @@ Plan: `docs/superpowers/plans/2026-09-27-volumen3d-tp1-fcm-kern.md`; Theorie und
 | Geometriekern | `geometry/sdf.py`, `csg.py`, `polyeder.py`, `oberflaeche.py` | CSG aus `GeometrySource.params` (Quader, Zylinder, Kugel, Halbraum; Vereinigung, Differenz, Schnitt), konservative Abstände, lokale konvexe Stücke, Flächenquadratur auf der exakten Oberfläche |
 | FCM-Kern | `fcm/basis.py`, `gitter.py`, `quadratur.py`, `aggregation.py`, `elastizitaet.py`, `rand.py`, `problem.py` | Legendre-Basis p = 1…4, Wurzelgitter (Oktree-Ebene 0), ebenen-exakte Schnittzellen-Integration, Zellaggregation, Nitsche (voll / normal / schnitt), Lasten, Direktlöser (pypardiso, sonst SuperLU) |
 | Vertragsschicht | `api.py` | `FcmSolver.estimate/prepare/solve`, `FcmDiskretisierung` (summary, preview mit Zellklassen), Kopplungskontrolle je Schnittebene mit Multiplikatoren und Warnung > 5 %, Protokoll |
-| Prüfungen | `tests/volumen3d/` | Kernsuite `test_kern` (in `run_all` und CI); Abnahmen `test_patch` (< 10⁻⁶: gemessen 10⁻¹²…10⁻⁸), `test_kragarm` (reine Biegung exakt, Stub gegen Timoshenko −0,9 % / +2,7 %), `test_lame` (p = 3: σ_r 0,32 %, σ_φ 0,03 %), `test_kirsch` (K_tg +1,35 % gegen Howland; **Schnittlagen-Streuung 7,9 % – Abnahme < 1 % offen bis zur Verfeinerung an Bohrungen in TP 2**) |
+| Prüfungen | `packages/volumen3d/volumen3d/tests/` | Kernsuite `test_kern` (in `run_all` und CI); Abnahmen `test_patch` (< 10⁻⁶: gemessen 10⁻¹²…10⁻⁸), `test_kragarm` (reine Biegung exakt, Stub gegen Timoshenko −0,9 % / +2,7 %), `test_lame` (p = 3: σ_r 0,32 %, σ_φ 0,03 %), `test_kirsch` (K_tg +1,35 % gegen Howland; **Schnittlagen-Streuung 7,9 % – Abnahme < 1 % offen bis zur Verfeinerung an Bohrungen in TP 2**) |
 
 **Bewusste Abweichungen von der Vorgabe (Messung, Begründung im Entwurf 3.5/3.6 und Theorie 11):**
 Punkttest der Schnittzellen nur als Rückfall (erster Ordnung, Patch-Test sonst unerreichbar);

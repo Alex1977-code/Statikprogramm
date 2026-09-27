@@ -1,7 +1,7 @@
 """T1: Basisfunktionen. Orthonormalitaet der Ableitungen, Partition der Eins, Ableitungen
 gegen zentrale Differenzen, Modenklassen, Gauss-Genauigkeit.
 
-Aufruf: python -m tests.volumen3d.test_basis
+Aufruf: python -m volumen3d.tests.test_basis
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 import numpy as np  # noqa: E402
 
-from tests.volumen3d._pruef import check, lauf  # noqa: E402
+from volumen3d.tests._pruef import check, lauf  # noqa: E402
 
 
 def test_1d():

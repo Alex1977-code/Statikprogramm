@@ -4,7 +4,7 @@ die Flaechenquadratur der Bohrung. Referenz (Lame, unabhaengig vom Dehnungszusta
 sigma_r = k (1 - r_a^2/r^2), sigma_phi = k (1 + r_a^2/r^2), k = p r_i^2 / (r_a^2 - r_i^2).
 Gegenprobe: Kesselformel int sigma_phi dr = p r_i.
 
-Aufruf: python -m tests.volumen3d.test_lame   (~2 min)
+Aufruf: python -m volumen3d.tests.test_lame   (~2 min)
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 import numpy as np  # noqa: E402
 
-from tests.volumen3d._pruef import check, lauf  # noqa: E402
+from volumen3d.tests._pruef import check, lauf  # noqa: E402
 
 RI, RA, T, PI, E, NU = 50.0, 100.0, 20.0, 100.0, 210000.0, 0.3
 

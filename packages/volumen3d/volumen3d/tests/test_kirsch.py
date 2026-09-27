@@ -8,7 +8,7 @@ Pilkey   K_tn = 3 - 3,14 d/W + 3,667 (d/W)^2 - 1,527 (d/W)^3,  K_tg = 3,023
 (Howland 1930 tabelliert 3,03). 3D-Effekt bei t/d = 0,25 in Plattenmitte etwa +1 %
 (Folias/Wang), im Kriterium 2 % enthalten. Auswertung sigma_xx bei (0, d/2, t/2).
 
-Aufruf: python -m tests.volumen3d.test_kirsch   (~5 min)
+Aufruf: python -m volumen3d.tests.test_kirsch   (~5 min)
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 import numpy as np  # noqa: E402
 
-from tests.volumen3d._pruef import check, lauf  # noqa: E402
+from volumen3d.tests._pruef import check, lauf  # noqa: E402
 
 W, L, T, D, S0, E, NU = 400.0, 800.0, 10.0, 40.0, 100.0, 210000.0, 0.3
 

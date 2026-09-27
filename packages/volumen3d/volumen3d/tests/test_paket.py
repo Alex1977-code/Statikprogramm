@@ -1,6 +1,6 @@
 """Paketgeruest: Import, Vertragsversion, Entry Points fcm und hybrid, Importregeln.
 
-Aufruf: python -m tests.volumen3d.test_paket
+Aufruf: python -m volumen3d.tests.test_paket
 """
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from tests.volumen3d._pruef import check, lauf  # noqa: E402
+from volumen3d.tests._pruef import check, lauf  # noqa: E402
 
 
 def test_import():

@@ -16,7 +16,7 @@ __version__ = "0.1.0"
 
 #: Vertragsversion, gegen die dieses Paket gebaut ist; die Major-Nummer muss zum
 #: installierten Vertragspaket passen (Vertrag Abschnitt 9).
-CONTRACT_VERSION = "2.0.0"
+CONTRACT_VERSION = "2.0.1"
 
 if not _V.vertragsversion_passt(CONTRACT_VERSION):
     raise ImportError(f"volumen3d ist fuer Vertrag {CONTRACT_VERSION} gebaut, installiert ist "

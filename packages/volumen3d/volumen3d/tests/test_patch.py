@@ -3,7 +3,7 @@ lineares Verschiebungsfeld ueber Nitsche auf dem ganzen Rand; die Loesung muss d
 1e-6 treffen (Vorgabe Abschnitt 13: "exakt, Fehler < 1e-6"). Dazu die Konsistenz von Nitsche
 gegen beta und der Einfluss von alpha.
 
-Aufruf: python -m tests.volumen3d.test_patch
+Aufruf: python -m volumen3d.tests.test_patch
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 import numpy as np  # noqa: E402
 
-from tests.volumen3d._pruef import check, lauf  # noqa: E402
+from volumen3d.tests._pruef import check, lauf  # noqa: E402
 
 A = np.array([[1e-3, 2e-4, -3e-4], [4e-4, -5e-4, 6e-4], [-7e-4, 8e-4, 9e-4]])
 B0 = np.array([0.1, -0.2, 0.3])

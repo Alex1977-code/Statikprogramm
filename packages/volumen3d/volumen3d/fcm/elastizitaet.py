@@ -3,7 +3,7 @@
 Die Zellsteifigkeit entsteht aus Gradientenmomenten statt aus einer expliziten B-Matrix:
 M_ab = sum_q w_q dN/dx_a (x) dN/dx_b (m x m), und der Block (i,a),(j,b) von K_e ist
 lambda M_ab[i,j] + mu M_ba[i,j] + mu delta_ab sum_g M_gg[i,j]. Das ist dieselbe Matrix wie
-B^T D B (tests/volumen3d/test_elastizitaet.py prueft beide Wege gegeneinander), kommt aber
+B^T D B (packages/volumen3d/volumen3d/tests/test_elastizitaet.py prueft beide Wege gegeneinander), kommt aber
 ohne die (6 x 3m)-Matrizen je Quadraturpunkt aus - bei Schnittzellen mit tausenden Punkten
 entscheidet das ueber Speicher und Zeit.
 

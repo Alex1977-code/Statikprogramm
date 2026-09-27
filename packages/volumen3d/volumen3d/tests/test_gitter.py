@@ -1,7 +1,7 @@
 """T2c: Wurzelgitter - Klassifikation gegen feine Abtastung, Modenzahl gegen die
 geschlossene Formel, gemeinsame Moden von Nachbarn, Punktsuche.
 
-Aufruf: python -m tests.volumen3d.test_gitter
+Aufruf: python -m volumen3d.tests.test_gitter
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 import numpy as np  # noqa: E402
 
-from tests.volumen3d._pruef import check, lauf  # noqa: E402
+from volumen3d.tests._pruef import check, lauf  # noqa: E402
 
 
 def _kugel_gitter(h=10.0):

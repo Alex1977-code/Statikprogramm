@@ -50,7 +50,7 @@ bezieht. Der Stub (`StubGlobalFieldProvider.section_forces`) liefert unabhängig
 integriert die Traktion mit der Normalen aus dem Detail heraus, F = ∫ σ·n dA, also die Kraft,
 die der abgeschnittene Teil auf das Detail ausübt. Für die Ebene mit Normale −x haben beide
 das entgegengesetzte Vorzeichen; die Kopplungskontrolle meldet dann eine Abweichung von
-rund 200 %, obwohl beide Seiten stimmen (gemessen 27.09.2026, `tests/volumen3d/test_vertrag_fcm.py`).
+rund 200 %, obwohl beide Seiten stimmen (gemessen 27.09.2026, `packages/volumen3d/volumen3d/tests/test_vertrag_fcm.py`).
 
 **Vorschlag.** Klarstellung im Docstring von `SectionForces` und `GlobalFieldProvider.section_forces`:
 

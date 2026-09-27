@@ -1,9 +1,9 @@
 """Kernsuite des Volumenmoduls volumen3d fuer tests.run_all und die CI (nur CPU, unter 5 min):
 Paket, Basis, Geometrie, Gitter, Quadratur, Elastizitaet, Patch-Test, Vertragsschicht.
 Die Abnahmen mit laengerer Laufzeit (Kragarm, Lame, Kirsch) laufen als eigene Suiten
-(tests.volumen3d.test_kragarm, test_lame, test_kirsch) vor jedem Merge.
+(volumen3d.tests.test_kragarm, test_lame, test_kirsch) vor jedem Merge.
 
-Aufruf: python -m tests.volumen3d.test_kern
+Aufruf: python -m volumen3d.tests.test_kern
 """
 from __future__ import annotations
 
@@ -12,9 +12,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from tests.volumen3d import (test_basis, test_elastizitaet, test_geometrie, test_gitter, test_paket,  # noqa: E402
+from volumen3d.tests import (test_basis, test_elastizitaet, test_geometrie, test_gitter, test_paket,  # noqa: E402
                              test_patch, test_quadratur, test_vertrag_fcm)
-from tests.volumen3d._pruef import lauf  # noqa: E402
+from volumen3d.tests._pruef import lauf  # noqa: E402
 
 TESTS = [
     test_paket.test_import, test_paket.test_entry_points, test_paket.test_importregeln,

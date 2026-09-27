@@ -36,4 +36,4 @@ jobs:
       - name: Kernsuite volumen3d (CPU)
         env:
           PYTHONUTF8: "1"
-        run: python -m tests.volumen3d.test_kern
+        run: python -m volumen3d.tests.test_kern

@@ -1,7 +1,7 @@
 """T3: Schnittzellen-Integration. Polyeder-Bausteine, ebene Geometrie exakt auf jeder Tiefe,
 gekruemmte Geometrie zweiter Ordnung in der Blattkante, Lochplatte, alpha-Anteil.
 
-Aufruf: python -m tests.volumen3d.test_quadratur
+Aufruf: python -m volumen3d.tests.test_quadratur
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 import numpy as np  # noqa: E402
 
-from tests.volumen3d._pruef import check, lauf  # noqa: E402
+from volumen3d.tests._pruef import check, lauf  # noqa: E402
 
 
 def _quadratur(params, h, p, tiefe, alpha=0.0, polster=0.1, **kw):

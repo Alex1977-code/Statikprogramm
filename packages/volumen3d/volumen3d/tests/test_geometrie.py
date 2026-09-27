@@ -1,6 +1,6 @@
 """T2: Geometriekern - Grundformen, CSG, Oberflaechenquadratur.
 
-Aufruf: python -m tests.volumen3d.test_geometrie
+Aufruf: python -m volumen3d.tests.test_geometrie
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 import numpy as np  # noqa: E402
 
-from tests.volumen3d._pruef import check, lauf  # noqa: E402
+from volumen3d.tests._pruef import check, lauf  # noqa: E402
 
 
 def _num_grad(f, P, h=1e-6):
