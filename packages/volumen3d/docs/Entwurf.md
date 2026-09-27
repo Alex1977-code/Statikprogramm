@@ -413,3 +413,96 @@ Nicht angefasst: `packages/statik3d_contracts/`, `tests/reference_models/`, `sta
 3. **GPU-Speicher 8 GB:** Zielgröße lokal 5·10⁶ Freiheitsgrade; für die 10⁷ der Vorgabe wäre
    eine 16-GB-Karte nötig oder Out-of-Core (nicht geplant).
 4. **Speicherort der Referenzmodelle:** gemeinsam mit Session A festlegen, sobald TP 1 steht.
+
+
+---
+
+## 4b. Teilprojekt 2 im Einzelnen (Stufe 1b, begonnen 27.09.2026)
+
+Ziel: Stufe 1 der Vorgabe vollständig – Verfeinerung an Schnittzellen, Nutzerbereichen und
+dünnen Wänden mit hängenden Freiheitsgraden, STL-Eingang, Geometriekern schneller – und damit
+Pull Request 1. Die Abnahmen: Patch-Test mit hängenden Knoten < 10⁻⁶, Kirsch mit lokal
+verfeinertem Loch (Schnittlagen-Streuung < 1 % bei einem Bruchteil der Freiheitsgrade des
+gleichmäßigen Gitters), Lamé aus STL wie aus CSG, Innen/Außen-Test an einem Netz mit Lücke.
+
+### 4b.1 Oktree (`fcm/gitter.py`)
+
+- **Blätter statt Wurzelzellen:** jede aktive Zelle trägt `ebene` ℓ und `ijk` auf ihrer Ebene,
+  Kantenlänge h_ℓ = h/2^ℓ, Box aus `ursprung + ijk·h_ℓ`. Aufbau: Wurzelgitter klassifizieren →
+  Verfeinerungsregeln anwenden, bis keine Zelle mehr teilt → 2:1-Balancierung über alle 26
+  Nachbarn (Ecken eingeschlossen, damit jede hängende Entität genau eine Ebene gröber ist) →
+  OUTSIDE-Blätter verwerfen. Regeln (`Verfeinerung`): `schnitt_ebenen` (CUT-Zellen bis zu dieser
+  Ebene teilen), `bereiche` (`RefinementRegion` des Vertrags: Kugel um `center` mit
+  `target_cell_size_mm` → Ebene), `duenne_waende` (Werkstoffstrecke durch die Zellmitte längs
+  einer Achse kürzer als zwei Zellkanten → teilen; Vorgabe Abschnitt 4).
+- **Punktsuche vektorisiert:** je Ebene ein sortiertes Feld flacher Indizes; für Punkte werden die
+  Indizes aller Ebenen berechnet und von grob nach fein per `searchsorted` gesucht – der erste
+  Treffer ist das Blatt. Zellen-in-Box-Abfrage über die Blattlisten der Wurzelzellen (für die
+  Flächenquadratur).
+- **Entitätsschlüssel:** Ecken ebenenfrei über ihre Lage im feinsten verdoppelten Gitter (eine
+  Ecke einer feinen Zelle, die auf einer groben Ecke liegt, ist dieselbe Ecke); Kanten, Flächen
+  und Zellinneres mit Ebene (verschiedene Ebenen haben verschiedene Längen). Gleiche Ebene →
+  geteilte Nummern wie bisher, ohne Vorzeichenwechsel.
+- **Zellgrößen überall:** `zell_gradienten` (2/h_c), Nitsche-β (C·E·p²/h_c), INSIDE-Zellmatrix
+  je Ebene (K ∝ h, also einmal berechnen und mit 2^(−ℓ) skalieren), Werkstoffanteil (h_c³),
+  Aggregations-Nachbarn per Punktsuche statt Indexrechnung.
+
+### 4b.2 Hängende Freiheitsgrade und ein Zwangsauflöser (`fcm/zwaenge.py`)
+
+- Eine Entität einer feinen Zelle F ist **hängend**, wenn die Punktsuche knapp außerhalb (Fläche:
+  Mitte + ε·n; Kante: Mitte diagonal nach außen; Ecke: die acht Oktantrichtungen) eine gröbere
+  Zelle C findet. Dann gilt Stetigkeit: die Spur von F auf der Entität ist die Spur von C.
+- **Spur ganz auf einmal:** für eine hängende Fläche werden alle (p+1)² Moden von F, die auf ihr
+  nicht verschwinden (4 Ecken, 4 Kanten, Flächeninneres; nach der Basis sind das die Moden mit
+  Index 0 bzw. 1 in der Normalenrichtung), aus den Moden von C ausgedrückt:
+  `M = V_F⁻¹ · N_C(Punkte)` mit (p+1)² Tensor-Chebyshev-Lobatto-Punkten auf der Fläche, V_F die
+  2D-Modalvandermonde von F, N_C die Basis von C an denselben Punkten in C's Referenzkoordinaten
+  (der Spurraum ist beidseits der Tensorraum vom Grad p, die Abbildung exakt). Kanten ebenso
+  eindimensional (p+1 Punkte), Ecken als Auswertung der Basis von C am Punkt.
+- **Vorrang:** Flächen vor Kanten vor Ecken – ein Mode, den eine hängende Fläche schon bindet,
+  wird von einer Kante nicht noch einmal definiert (beide Definitionen stimmen überein, weil die
+  beiden groben Nachbarn die gemeinsame Kante teilen). Danach die **Zellaggregation** nur noch für
+  Moden, die noch frei sind: so bleibt die Stetigkeit über hängende Flächen auch bei schlecht
+  geschnittenen feinen Zellen erhalten, und lineare Felder bleiben exakt (beide Vorschriften
+  reproduzieren sie). Ketten (Meister selbst gebunden) werden durch Einsetzen aufgelöst;
+  ein Zyklus ist ein Fehler.
+- Ergebnis wie bisher eine Zwangsmatrix C (n_dof × n_frei); Löser, Lasten und Auswertung bleiben
+  unverändert.
+
+### 4b.3 STL-Eingang (`geometry/stl.py`)
+
+- Lesen von binärem und ASCII-STL (numpy), Dreiecke mit Flächennormalen, Hüllquader.
+- **Vorzeichen über die verallgemeinerte Windungszahl** (Jacobson u. a. 2013): w(P) = Σ Raumwinkel
+  der Dreiecke / 4π, innen für w > ½ – robust gegen kleine Lücken (Vorgabe Abschnitt 3).
+  Betrag als Abstand zum nächsten Dreieck (Punkt–Dreieck exakt). Beides zunächst blockweise über
+  alle Dreiecke (numpy, n·m); für Netze über ~10⁴ Dreiecke kommt der schnelle Windungszahl-Baum
+  (Barill u. a. 2018) mit Teilprojekt 5 – hier steht die Korrektheit vorn, die Kosten stehen im
+  Protokoll.
+- **Lokal eben:** ein STL ist stückweise eben. Für eine Teilbox liefern die sie schneidenden
+  Dreiecke die lokalen Ebenen; unterscheiden sich deren Normalen um mehr als ein Grad, wird die
+  Teilbox geteilt (bis zur Höchsttiefe, danach Punkttest mit Windungszahl), sonst ist die
+  Integration wie bei Halbräumen exakt. `flaechenfaktor` = 1, `kruemmungsradius` = ∞,
+  `dreiecke()` = die Facetten selbst, Gradient = Normale des nächsten Dreiecks (Vorzeichen aus
+  der Windungszahl). Im CSG-Baum ist das STL eine Grundform (`{"typ": "stl", "pfad": …}`), also
+  auch schneidbar mit Halbräumen (Schnittebenen) und Löchern.
+- Innen/Außen-Prüfung: Würfel-STL mit einer fehlenden Facette (Lücke): Windungszahl klassifiziert
+  weiter richtig, ein Strahltest nicht.
+
+### 4b.4 Geometriekern schneller
+
+Gemessen dominiert die Flächenquadratur den Aufbau (Profil: 99 von 106 s). Maßnahmen ohne
+Verhaltensänderung, jeweils gegen die Suiten geprüft: die acht Kinder einer Teilbox mit einem
+Aufruf klassifizieren; Abstände aller Grundformen für alle Proben einer Zelle in einem Aufruf
+(`lokale_stuecke` bekommt die vorab berechneten Werte); Modennummerierung über gepackte
+int64-Schlüssel und `np.unique`; Zellen-in-Box statt Dreieck×Wurzelzelle-Schleife. Ziel: Lamé
+h = 10, p = 3 Aufbau unter 20 s (bisher 50 s).
+
+### 4b.5 Prüfungen
+
+| Nr. | Suite | Prüfung | Kriterium |
+|---|---|---|---|
+| U1 | `test_oktree` | Verfeinerung an Schnittzellen/Bereich/dünner Wand, 2:1 über 26 Nachbarn, Punktsuche über Ebenen, Ecken ebenenfrei geteilt, Blätter in Box | Strukturaussagen exakt |
+| U2 | `test_zwaenge` | Spurabbildung reproduziert Polynome vom Grad p exakt; hängende Fläche/Kante/Ecke gefunden; Patch-Test auf verfeinertem Gitter (eine Ebene an einer Ecke, dünne Wand) | u, σ < 10⁻⁶ |
+| U3 | `test_kirsch` (erweitert) | Loch lokal verfeinert (Bereich r + h, Ebene +2): K_tg gegen Referenz, Schnittlagen-Streuung, Freiheitsgrade gegen gleichmäßiges h = r/4 | Streuung < 1 % bei < 40 % der Freiheitsgrade |
+| U4 | `test_stl` | Lesen, Windungszahl an Würfel mit Lücke, Abstand, lokale Ebenen; Lamé aus einem tessellierten Viertelzylinder (Facette 1 mm) gegen CSG | σ-Abweichung STL–CSG < 0,2 % |
+| U5 | Kernsuite, `lint-imports`, mypy, `tests.contracts`, `run_all` | wie TP 1 | grün |
