@@ -83,34 +83,47 @@ def zell_gradienten(gitter, quadratur, c: int) -> tuple[np.ndarray, np.ndarray]:
     return dN * (2.0 / gitter.h), W
 
 
-def assemblieren(gitter, quadratur, E: float, nu: float, fortschritt=None) -> sp.csr_matrix:
-    """Globale Steifigkeit (n_dof x n_dof) als CSR; doppelte Eintraege werden summiert."""
+def assemblieren(gitter, quadratur, E: float, nu: float, fortschritt=None, block_eintraege: int = 20_000_000) -> sp.csr_matrix:
+    """Globale Steifigkeit (n_dof x n_dof) als CSR; doppelte Eintraege werden summiert.
+
+    Blockweise: die COO-Tripel aller Zellen auf einmal brauchen 24 Byte je Eintrag - bei der
+    Kirsch-Platte mit h 5 (8300 Zellen, p 3) 7,3 GB, was auf der belegten Maschine mit einem
+    MemoryError endete (27.09.). Bloecke von etwa 20 Mio. Eintraegen (~0,5 GB) werden als CSR
+    aufsummiert.
+    """
     n = gitter.n_dof
     m = anzahl_moden(gitter.p)
     nz = len(gitter.ijk)
     je = (3 * m) ** 2
-    zeilen = np.empty(nz * je, np.int64)
-    spalten = np.empty(nz * je, np.int64)
-    werte = np.empty(nz * je)
+    je_block = max(1, block_eintraege // je)
+    K: sp.csr_matrix | None = None
     Ke_innen: np.ndarray | None = None          # alle INSIDE-Zellen sind bis auf die Lage gleich
-    for c in range(nz):
-        if gitter.klasse[c] == INSIDE:
-            if Ke_innen is None:
+    for start in range(0, nz, je_block):
+        zellen = range(start, min(start + je_block, nz))
+        zeilen = np.empty(len(zellen) * je, np.int32 if n < 2 ** 31 else np.int64)
+        spalten = np.empty_like(zeilen)
+        werte = np.empty(len(zellen) * je)
+        for k, c in enumerate(zellen):
+            if gitter.klasse[c] == INSIDE:
+                if Ke_innen is None:
+                    G, W = zell_gradienten(gitter, quadratur, c)
+                    Ke_innen = zellsteifigkeit(G, W, E, nu)
+                Ke = Ke_innen
+            else:
                 G, W = zell_gradienten(gitter, quadratur, c)
-                Ke_innen = zellsteifigkeit(G, W, E, nu)
-            Ke = Ke_innen
-        else:
-            G, W = zell_gradienten(gitter, quadratur, c)
-            Ke = zellsteifigkeit(G, W, E, nu)
-        dof = gitter.zell_dofs(c)
-        s = slice(c * je, (c + 1) * je)
-        zeilen[s] = np.repeat(dof, 3 * m)
-        spalten[s] = np.tile(dof, 3 * m)
-        werte[s] = Ke.ravel()
-        if fortschritt is not None and c % 200 == 0:
-            fortschritt("Steifigkeit assemblieren", c / nz)
-    K = sp.coo_matrix((werte, (zeilen, spalten)), shape=(n, n)).tocsr()
-    K.sum_duplicates()
+                Ke = zellsteifigkeit(G, W, E, nu)
+            dof = gitter.zell_dofs(c)
+            s = slice(k * je, (k + 1) * je)
+            zeilen[s] = np.repeat(dof, 3 * m)
+            spalten[s] = np.tile(dof, 3 * m)
+            werte[s] = Ke.ravel()
+            if fortschritt is not None and c % 200 == 0:
+                fortschritt("Steifigkeit assemblieren", c / nz)
+        K_block = sp.coo_matrix((werte, (zeilen, spalten)), shape=(n, n)).tocsr()
+        K_block.sum_duplicates()
+        K = K_block if K is None else K + K_block
+    if K is None:
+        K = sp.csr_matrix((n, n))
     return K
 
 
