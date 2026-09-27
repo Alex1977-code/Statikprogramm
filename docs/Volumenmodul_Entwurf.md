@@ -276,15 +276,18 @@ packages/volumen3d/
     │                              HybridAssemblySolver (bis TP 7 Platzhalter: capabilities leer,
     │                              estimate nennt „nicht umgesetzt“, prepare wirft SolverError)
     ├── geometry/
-    │   ├── sdf.py                 Grundformen (Quader, Zylinder, Kugel, Halbraum): abstand, gradient, huellquader
-    │   ├── csg.py                 CSG-Baum, Auswertung aus params, innen/abstand/oberflaeche
-    │   └── oberflaeche.py         Tessellierung der Grundformen, Clipping an Boxen, Flächenquadratur
+    │   ├── sdf.py                 Grundformen (Quader, Zylinder, Kugel, Halbraum): abstand, gradient, huellquader,
+    │   │                          lokale Ebenen, Flächenfaktor Bogen/Sehne, Tessellierung
+    │   ├── csg.py                 CSG-Baum, Auswertung aus params, innen/abstand/gradient, lokale konvexe Stücke
+    │   ├── polyeder.py            Box gegen Halbräume clippen, Tetraeder, konische Gauß-Jacobi-Regel
+    │   └── oberflaeche.py         Clipping an Zellboxen, Stücke der Gesamtoberfläche, Flächenquadratur
     ├── fcm/
     │   ├── basis.py               1D integrierte Legendre, 3D-Tensorprodukt, Modenklassen, Gauß-Regeln
     │   ├── gitter.py              Wurzelgitter + Oktree (Ebene 0 in TP 1), Klassifikation, Entitäten, Freiheitsgrade
-    │   ├── quadratur.py           INSIDE-Regel, rekursive CUT-Quadratur, Volumenkontrolle
-    │   ├── elastizitaet.py        D-Matrix, B-Matrizen, Zellsteifigkeit, Assemblierung (CPU-Referenz)
-    │   ├── rand.py                Dirichlet über Nitsche (mit Projektion), Traktion, Druck, Volumenlast
+    │   ├── quadratur.py           INSIDE-Regel, ebenen-exakte CUT-Quadratur, Punkttest als Rückfall, Volumenkontrolle
+    │   ├── aggregation.py         Zellaggregation kleiner Schnittzellen (Zwangsmatrix C)
+    │   ├── elastizitaet.py        D-Matrix, B-Matrizen, Zellsteifigkeit (BLAS), Assemblierung (CPU-Referenz)
+    │   ├── rand.py                Nitsche (voll / normal / schnitt), Mittelwertzwänge, Traktion, Druck, Volumenlast
     │   └── problem.py             FcmProblem: Geometrie + Gitter + Werkstoff + Ränder + Lasten → K, F → Loesung
     ├── linalg/
     │   └── direkt.py              pypardiso/splu mit Mehrfach-RHS
@@ -331,7 +334,23 @@ packages/volumen3d/
 | T9 | `test_vertrag_fcm` | `FcmSolver` erfüllt `SolidDetailSolver`, Entry Point `fcm` registriert, `estimate/prepare/solve` mit Stub-Provider, Abbruch, Protokoll; `mypy --strict` für `api.py` | wie `test_vertrag` |
 
 T1–T3 sichern die Bausteine, T4 die gesamte Kette (B, D, α, Nitsche) mit exakter Lösung, T5–T8
-die Abnahmen der Vorgabe. Erwartungswerte werden mit Quelle und Formel in der Suite genannt
+die Abnahmen der Vorgabe.
+
+**Gemessen am 27.09.2026** (Ryzen 9 5950X, pypardiso, parallel zu einem Drehlager-Lauf der
+Hauptsitzung; Einzelheiten in Theoriehandbuch Kapitel 11):
+
+| Nr. | Ergebnis |
+|---|---|
+| T1 | 21/21 (Orthonormalität 10⁻¹², Ableitungen 10⁻⁸) |
+| T2 | 45/45; Bohrungsmantel und Kugeloberfläche 10⁻⁸, Sechseck der Schnittebene und Würfelseiten < 10⁻¹⁰ |
+| T3 | 32/32; ebene Geometrie exakt auf jeder Tiefe, Kugel zweite Ordnung (1,4·10⁻² → 2,1·10⁻⁴ für Tiefe 0…3) |
+| T4 | 14/14; p = 1/2/3: u 5·10⁻¹⁵ / 8·10⁻¹⁴ / 5·10⁻¹², σ 8·10⁻¹³ / 5·10⁻¹¹ / 5·10⁻⁹; Schnittanteil 10⁻⁶: 4·10⁻¹¹; unabhängig von α und β |
+| T5 | 13/13; reine Biegung exakt (Moment 10⁻⁶, Multiplikatoren 10⁻¹⁴); Stub-Kragarm gegen Timoshenko −0,9 % (M) / +2,7 % (Q), gegen den schubstarren Stub +37 % / −24 % (Kinematik, nicht Rechnung) |
+| T6 | h = 10: p = 2 σ_r 1,41 % / σ_φ 0,95 % (36 s), p = 3 0,32 % / 0,03 % (50 s), p = 4 0,28 % / 0,09 % (149 s; Geometriegrenze der Tangentialebenen); Rotationssymmetrie bei 12° und 71° < 0,25 % |
+| T7 | p = 4, h = 10, 379 k FHG (195 k frei), 52 s: K_tg Mitte 3,069 gegen 3,028 (+1,35 %, davon etwa +1 % 3D-Effekt bei t/d = 0,25), Oberfläche 2,981 |
+| T9 | 25/25; `volumenloeser()` des Hauptprogramms wählt `fcm`, Vertragsprüfung 43/43 |
+
+T8 (Schnittlagen-Streuung) siehe `tests/volumen3d/test_kirsch.py` und Theoriehandbuch 11.7. Erwartungswerte werden mit Quelle und Formel in der Suite genannt
 (Lamé geschlossen, Howland/Heywood für Kirsch mit Angabe beider Formeln; zweite unabhängige
 Berechnung des Erwartungswerts im Test selbst, siehe Gedächtnisregel „Zahlen erst nach
 Gegenprobe“).
