@@ -62,11 +62,11 @@ def test_reine_biegung():
             lam = pr.multiplikatoren[:, 0]
             check("Multiplikatoren der Mittelwertzwaenge (Querkraft, Torsion) bei reiner Biegung 0",
                   np.abs(lam).max() < 1e-6 * M / H, str(lam))
-    P = np.array([[500, 20, 60.0], [450, -30, -80], [580, 45, 95]])
-    check("Feld exakt reproduziert (1e-6)", np.abs(aus.verschiebung(P) - u(P)).max() / np.abs(u(P)).max() < 1e-6)
-    s = aus.spannung(P)
-    check("sigma_xx = -M z / I, uebrige Komponenten 0 (1e-6)",
-          np.allclose(s[:, 0], -M * P[:, 2] / I, rtol=1e-6, atol=1e-6 * M * H / I) and np.abs(s[:, 1:]).max() < 1e-6 * M * H / I, str(s[0]))
+        P = np.array([[500, 20, 60.0], [450, -30, -80], [580, 45, 95]])
+        check(f"Feld exakt reproduziert ({projektion}, 1e-6)", np.abs(aus.verschiebung(P) - u(P)).max() / np.abs(u(P)).max() < 1e-6)
+        s = aus.spannung(P)
+        check(f"sigma_xx = -M z / I, uebrige Komponenten 0 ({projektion}, 1e-6)",
+              np.allclose(s[:, 0], -M * P[:, 2] / I, rtol=1e-6, atol=1e-6 * M * H / I) and np.abs(s[:, 1:]).max() < 1e-6 * M * H / I, str(s[0]))
 
 
 def test_stub_kragarm():

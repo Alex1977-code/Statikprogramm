@@ -116,6 +116,62 @@ def test_ablauf():
     check("STL-Quelle in Teilprojekt 1 -> SolverError mit Verweis", f)
 
 
+def test_gutachten_faelle():
+    """Befunde der zweiten Sicht vom 27.09.2026: schraege Schnittebene (Vorschau nur im Werkstoff,
+    kein nackter ValueError), Detail ohne Schnittebene, Nullwerte des Globalmodells."""
+    import numpy as np
+    from statik3d_contracts.coupling import CutPlane, SectionForces
+    from statik3d_contracts.detail import DetailModelSpec, FcmSettings, GeometrySource, GeometrySourceType
+    from statik3d_contracts.model import Material, ResultKey
+    from statik3d_contracts.solver import SolverError
+    from statik3d_contracts.testing import StubGlobalFieldProvider
+    from volumen3d.api import FcmSolver
+    s = FcmSolver()
+    mat = Material("S355", "S355", 210000.0, 0.3)
+    geo = GeometrySource(GeometrySourceType.CSG, params={"csg": {"typ": "quader", "min": [0, 0, 0], "max": [100, 100, 100], "name": "w"}})
+    # (1) schraege Schnittebene durch die Mitte
+    n = np.array([1.0, 1.0, 1.0]) / np.sqrt(3)
+    spec = DetailModelSpec("S", "schraeg", geo, "S355", (CutPlane(np.array([50.0, 50, 50]), n),), FcmSettings(base_cell_size_mm=25.0, p=1))
+    disc = s.prepare(spec, mat)
+    V, T = disc.oberflaeche()
+    d = disc.problem.geometrie.abstand(V)
+    check("schraege Schnittebene: alle Vorschau-Ecken liegen auf der Werkstoffoberflaeche (|d| < 1e-6 h)", len(V) > 0 and np.abs(d).max() < 1e-6 * 25.0, f"{len(V)} Ecken, max |d| {np.abs(d).max():.2e}")
+
+    class Starr(StubGlobalFieldProvider):
+        def displacement_at(self, P, key):
+            P = np.asarray(P, float)
+            return np.stack([0.001 * P[:, 0], np.zeros(len(P)), np.zeros(len(P))], axis=1), np.zeros((len(P), 3))
+
+        def section_forces(self, plane, key):
+            return SectionForces(np.zeros(3), np.zeros(3))
+    erg = s.solve(disc, Starr(1000.0, 100.0, 200.0, 210000.0, 10000.0), [ResultKey("LF1")])
+    check("schraege Schnittebene: solve liefert ein Ergebnis mit endlichen Spannungen (kein ValueError)",
+          len(erg) == 1 and np.all(np.isfinite(erg[0].stress)) and len(erg[0].surface_points) == len(V))
+    # (3) Nullwerte des Globalmodells: Kennzahlen bleiben beschraenkt (Bezug: groesste beteiligte Groesse)
+    cc = erg[0].coupling_check["planes"][0]
+    check("Nullwerte des Globalmodells: deviation_force und deviation_moment <= 1 (kein 2,5e3)",
+          0 <= cc["deviation_force"] <= 1.0 and 0 <= cc["deviation_moment"] <= 1.0 and "delta_force" in cc, f"{cc['deviation_force']:.3f}, {cc['deviation_moment']:.3f}")
+    # (2) Detail ohne Schnittebene
+    try:
+        s.prepare(DetailModelSpec("O", "ohne", geo, "S355", (), FcmSettings(base_cell_size_mm=50.0, p=1)), mat)
+        f = False
+    except SolverError as ex:
+        f = "Schnittebene" in str(ex)
+    check("Detail ohne Schnittebene -> SolverError (ungelagert)", f)
+    # (2b) ungelagertes Problem auf der internen Schnittstelle: Residuumspruefung greift
+    from volumen3d.fcm.problem import FcmProblem, Werkstoff
+    from volumen3d.geometry.csg import aus_params
+    pr = FcmProblem(aus_params(geo.params), h=50.0, p=1, werkstoff=Werkstoff(210000.0, 0.3))
+    stirn = pr.oberflaeche.auswahl(np.abs(pr.oberflaeche.punkte[:, 0] - 100.0) < 1e-9)
+    pr.traktion(None, np.array([100.0, 0, 0]), quadratur=stirn)
+    try:
+        pr.loesen({})
+        f = False
+    except ValueError as ex:
+        f = "Residuum" in str(ex) or "Starrkoerper" in str(ex)
+    check("ungelagerter Quader unter Traktion -> ValueError mit Residuum/Starrkoerper statt 1e12 mm", f)
+
+
 def test_hybrid_platzhalter():
     from statik3d_contracts.nonlinear import AssemblyModelSpec
     from statik3d_contracts.solver import SolverError
@@ -132,4 +188,4 @@ def test_hybrid_platzhalter():
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_protokoll_und_registrierung, test_ablauf, test_hybrid_platzhalter]))
+    sys.exit(lauf([test_protokoll_und_registrierung, test_ablauf, test_gutachten_faelle, test_hybrid_platzhalter]))

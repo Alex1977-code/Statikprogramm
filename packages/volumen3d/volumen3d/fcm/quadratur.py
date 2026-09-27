@@ -43,7 +43,8 @@ class Zellquadratur:
         self.ordnung_tet = ordnung_tet or max(2, int(np.ceil(1.5 * p)))
         self._X, self._W = gauss_3d(self.ordnung)
         self._cache: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
-        self.statistik = {"blaetter_eben": 0, "blaetter_tangential": 0, "blaetter_punkttest": 0, "stuecke": 0}
+        self.statistik = {"blaetter_eben": 0, "blaetter_tangential": 0, "blaetter_punkttest": 0, "stuecke": 0,
+                          "blaetter_unteraufgeloest": 0}
         self.punkttest_orte: list[tuple[np.ndarray, float]] = []     # Mitte und Radius der Rueckfall-Blaetter
 
     # -- je Zelle -------------------------------------------------------------------
@@ -92,22 +93,34 @@ class Zellquadratur:
                 teile.append((P, self.alpha * W, np.zeros(len(P), bool)))
             return
         if d < -r:                                           # sicher innen
-            teile.append((P, W, np.ones(len(P), bool)))
+            # in CUT-Zellen auch hier Werkstoff (1-alpha) plus fiktiv alpha, damit alle
+            # Werkstoffpunkte einheitlich skaliert sind (alpha_entfernen, werkstoffanteile)
+            teile.append((P, (1.0 - self.alpha) * W, np.ones(len(P), bool)))
+            if self.alpha > 0:
+                teile.append((P, self.alpha * W, np.zeros(len(P), bool)))
             return
         stuecke = geo.lokale_stuecke(m, r, P)
         if stuecke is not None:
             ebenen, gekruemmt = stuecke[0], stuecke[1]
-            if gekruemmt and stufe < self.tiefe:
+            # Kleiner Kruemmungsradius: der Tangentialfehler ist ~0,25 (Blattkante/R)^2, also 1 %
+            # erst ab R >= 5 Blattkanten (Gutachten 27.09.: Bohrung R 3 bei h 10 mit Tiefe 2 ->
+            # Lochvolumen -5,8 %). Dann bis zur Hoechsttiefe weiter teilen; was danach noch zu
+            # grob ist, wird gezaehlt (Protokoll) - die Abhilfe ist die Oktree-Verfeinerung (TP 2).
+            a = 2.0 * float(s[0])
+            zu_grob = any(f.kruemmungsradius < 5.0 * a for f in stuecke[2])
+            if (gekruemmt and stufe < self.tiefe) or (zu_grob and stufe < self.tiefe + self.tiefe_punkttest):
                 self._teilen(lo, s, stufe, teile)
                 return
             self._stuecke_integrieren(lo, hi, ebenen, P, W, teile)
             self.statistik["blaetter_tangential" if gekruemmt else "blaetter_eben"] += 1
+            if zu_grob:
+                self.statistik["blaetter_unteraufgeloest"] = self.statistik.get("blaetter_unteraufgeloest", 0) + 1
             return
         if stufe < self.tiefe + self.tiefe_punkttest:
             self._teilen(lo, s, stufe, teile)
             return
         innen = geo.innen(P)                                 # Rueckfall: Punkttest der Vorgabe
-        teile.append((P, np.where(innen, W, self.alpha * W), innen))
+        teile.append((P, np.where(innen, (1.0 - self.alpha) * W, self.alpha * W), innen))
         self.statistik["blaetter_punkttest"] += 1
         self.punkttest_orte.append((m.copy(), r))
 

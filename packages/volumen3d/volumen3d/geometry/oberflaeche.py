@@ -100,9 +100,11 @@ def _stuecke_des_polygons(geometrie, form, poly: np.ndarray, tiefe: int, stufe: 
         return []                                 # ganz ausserhalb oder tief im Werkstoff
     st = geometrie.lokale_stuecke(c, r, np.concatenate([poly, c[None]]))
     # Vierteilung nur, wenn eine *fremde* gekruemmte Form die Kante des Stuecks als Sehne
-    # naehert; die eigene Kruemmung erledigen Projektion und Flaechenfaktor exakt
+    # naehert; die eigene Kruemmung erledigen Projektion und Flaechenfaktor exakt. Ist der
+    # Kruemmungsradius der fremden Form kleiner als das Polygon, wird bis zur Hoechsttiefe geteilt.
     fremd_gekruemmt = st is not None and any(f2.gekruemmt and f2 is not form for f2 in st[2])
-    if st is None or (fremd_gekruemmt and stufe < tiefe):
+    zu_grob = st is not None and any(f2.gekruemmt and f2 is not form and f2.kruemmungsradius < 5.0 * r for f2 in st[2])
+    if st is None or (fremd_gekruemmt and stufe < tiefe) or (zu_grob and stufe < tiefe + 2):
         if stufe < tiefe + 2:
             aus: list[np.ndarray] = []
             for i in range(1, len(poly) - 1):
@@ -135,7 +137,14 @@ def _stuecke_des_polygons(geometrie, form, poly: np.ndarray, tiefe: int, stufe: 
             if len(Q) < 3:
                 break
         if len(Q) >= 3 and polygon_flaeche(Q) > 1e-14 * r * r:
-            if abs(float(geometrie.abstand(_zeuge(form, Q)[None])[0])) <= tol_flaeche:
+            z = _zeuge(form, Q)
+            # Zeuge: auf der Gesamtoberflaeche (|d| <= tol) UND ein Stueck nach aussen kein Werkstoff.
+            # Der zweite Teil faengt beruehrende Vereinigungen (gemeinsame Seite zweier Quader hat
+            # d = 0, ist aber innen; Gutachten 27.09.: Flaeche 30 000 statt 25 000 mm2).
+            n_z = geometrie.gradient(z[None])[0]
+            eps = max(1e-6 * r, 10.0 * tol_flaeche)
+            auf_flaeche = abs(float(geometrie.abstand(z[None])[0])) <= tol_flaeche
+            if auf_flaeche and not bool(geometrie.innen((z + eps * n_z)[None])[0]):
                 aus.append(Q)
             else:
                 statistik["innen_verworfen"] += 1
@@ -152,17 +161,46 @@ class Flaechenquadratur:
     quelle: np.ndarray      # (nq,) Index der Grundform
     name: np.ndarray        # (nq,) Name der Grundform
     statistik: dict = field(default_factory=dict)
+    polygone: list = field(default_factory=list)          # geclippte Oberflaechenstuecke (k,3), Ecken auf der exakten Flaeche
+    polygon_quelle: list = field(default_factory=list)    # Index der Grundform je Polygon
 
     def auswahl(self, maske) -> "Flaechenquadratur":
         maske = np.asarray(maske, bool)
         return Flaechenquadratur(self.punkte[maske], self.gewichte[maske], self.normalen[maske], self.zelle[maske],
-                                 self.xi[maske], self.quelle[maske], self.name[maske], dict(self.statistik))
+                                 self.xi[maske], self.quelle[maske], self.name[maske], dict(self.statistik),
+                                 self.polygone, self.polygon_quelle)
 
     @staticmethod
     def leer() -> "Flaechenquadratur":
         return Flaechenquadratur(np.zeros((0, 3)), np.zeros(0), np.zeros((0, 3)), np.zeros(0, int),
                                  np.zeros((0, 3)), np.zeros(0, int), np.zeros(0, object),
                                  {"rueckfall": 0, "verworfen": 0, "innen_verworfen": 0})
+
+    def dreiecke(self, geometrie) -> tuple[np.ndarray, np.ndarray]:
+        """Oberflaechentriangulierung aus den geclippten Polygonen: Ecken auf der exakten
+        Flaeche, Dreiecke nach aussen orientiert, Ecken zusammengefasst. Grundlage fuer
+        Vorschau und Auswertepunkte (Gutachten 27.09.: die rohe Tessellierung der Grundformen
+        reicht bei schraegen Schnittebenen in den Leerraum)."""
+        if not self.polygone:
+            return np.zeros((0, 3)), np.zeros((0, 3), int)
+        V_l, T_l, n = [], [], 0
+        for Q in self.polygone:
+            V_l.append(Q)
+            T_l.append(np.array([[n, n + i, n + i + 1] for i in range(1, len(Q) - 1)], int).reshape(-1, 3))
+            n += len(Q)
+        V = np.concatenate(V_l)
+        T = np.concatenate(T_l)
+        skala = max(float(np.abs(V).max()), 1.0)
+        _, idx, inv = np.unique(np.round(V / skala, 9), axis=0, return_index=True, return_inverse=True)
+        V = V[idx]
+        T = np.asarray(inv).reshape(-1)[T]
+        T = T[(T[:, 0] != T[:, 1]) & (T[:, 1] != T[:, 2]) & (T[:, 0] != T[:, 2])]
+        if len(T):
+            S = V[T].mean(axis=1)
+            nrm = np.cross(V[T[:, 1]] - V[T[:, 0]], V[T[:, 2]] - V[T[:, 0]])
+            umdrehen = np.einsum("ij,ij->i", nrm, geometrie.gradient(S)) < 0
+            T[umdrehen] = T[umdrehen][:, [0, 2, 1]]
+        return V, T
 
     @classmethod
     def aus_dreiecken(cls, geometrie, gitter, V, T, quelle, ordnung: int, tiefe: int = 2, formen=None) -> "Flaechenquadratur":
@@ -173,6 +211,8 @@ class Flaechenquadratur:
         h = gitter.h
         statistik = {"rueckfall": 0, "verworfen": 0, "innen_verworfen": 0}
         P_l, W_l, C_l, Q_l = [], [], [], []
+        polygone: list[np.ndarray] = []
+        polygon_quelle: list[int] = []
         for t in range(len(T)):
             Vt = V[T[t]]
             f = formen[quelle[t]]
@@ -189,6 +229,9 @@ class Flaechenquadratur:
                         if len(poly) < 3 or polygon_flaeche(poly) <= 1e-14 * h * h:
                             continue
                         for Q in _stuecke_des_polygons(geometrie, f, poly, tiefe, 0, statistik, tol):
+                            Qe = Q - f.abstand(Q)[:, None] * f.gradient(Q) if f.gekruemmt else Q   # Ecken auf die exakte Flaeche
+                            polygone.append(Qe)
+                            polygon_quelle.append(int(quelle[t]))
                             B = np.array([[Q[0], Q[m], Q[m + 1]] for m in range(1, len(Q) - 1)])
                             kreuz = np.cross(B[:, 1] - B[:, 0], B[:, 2] - B[:, 0])
                             A = 0.5 * np.linalg.norm(kreuz, axis=1)
@@ -218,7 +261,7 @@ class Flaechenquadratur:
         N /= np.linalg.norm(N, axis=1, keepdims=True)
         xi = np.clip(gitter.lokal(P, C), -1.0, 1.0)
         namen = np.array([formen[q].name for q in Qi], dtype=object)
-        return cls(P, W, N, C, xi, Qi, namen, statistik)
+        return cls(P, W, N, C, xi, Qi, namen, statistik, polygone, polygon_quelle)
 
     @classmethod
     def aus_geometrie(cls, geometrie, gitter, ordnung: int, facette_mm: float | None = None, tiefe: int = 2) -> "Flaechenquadratur":

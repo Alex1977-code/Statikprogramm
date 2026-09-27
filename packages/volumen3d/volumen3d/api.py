@@ -68,26 +68,14 @@ def _einstellungen_pruefen(s: FcmSettings) -> None:
 
 
 def _oberflaeche(problem: FcmProblem) -> tuple[np.ndarray, np.ndarray]:
-    """Dreiecke der Gesamtoberflaeche fuer Vorschau und Auswertepunkte: Tessellierung der
-    Grundformen, nur Dreiecke mit Schwerpunkt auf der Gesamtoberflaeche, nach aussen
-    orientiert. An CSG-Schnittkurven nicht wasserdicht (Entwurf 3.9; Marching Cubes in TP 5)."""
-    g = problem.geometrie
-    V, T, _ = g.dreiecke(0.25 * problem.gitter.h)
-    if len(T) == 0:
-        return np.zeros((0, 3)), np.zeros((0, 3), int)
-    S = V[T].mean(axis=1)
-    T = T[np.abs(g.abstand(S)) <= 0.02 * problem.gitter.h]
-    if len(T) == 0:
-        return np.zeros((0, 3)), np.zeros((0, 3), int)
-    S = V[T].mean(axis=1)
-    n = np.cross(V[T[:, 1]] - V[T[:, 0]], V[T[:, 2]] - V[T[:, 0]])
-    umdrehen = np.einsum("ij,ij->i", n, g.gradient(S)) < 0
-    T[umdrehen] = T[umdrehen][:, [0, 2, 1]]
-    benutzt = np.unique(T)
-    neu = np.full(len(V), -1)
-    neu[benutzt] = np.arange(len(benutzt))
-    ecken: np.ndarray = np.array(V[benutzt], dtype=float)
-    dreiecke: np.ndarray = np.array(neu[T], dtype=int)
+    """Dreiecke der Gesamtoberflaeche fuer Vorschau und Auswertepunkte aus den geclippten
+    Polygonen der Flaechenquadratur: Ecken auf der exakten Flaeche, nur Werkstoffoberflaeche,
+    nach aussen orientiert (an Zellgrenzen mit Naehten, an CSG-Schnittkurven nicht wasserdicht;
+    Marching Cubes in TP 5). Die rohe Tessellierung der Grundformen reichte bei schraegen
+    Schnittebenen in den Leerraum (Gutachten 27.09.)."""
+    V, T = problem.oberflaeche.dreiecke(problem.geometrie)
+    ecken: np.ndarray = np.array(V, dtype=float).reshape(-1, 3)
+    dreiecke: np.ndarray = np.array(T, dtype=int).reshape(-1, 3)
     return ecken, dreiecke
 
 
@@ -153,6 +141,10 @@ class FcmSolver:
     def prepare(self, spec: DetailModelSpec, material: Material, progress: ProgressCallback | None = None) -> FcmDiskretisierung:
         s = spec.settings
         _einstellungen_pruefen(s)
+        if not spec.cut_planes:
+            raise SolverError("Detailmodell ohne Schnittebene: kein Verschiebungsrand, das Detail waere "
+                              "ungelagert (Lagerungen und Lasten am Detail kommen mit Vertrag 2.1, "
+                              "siehe docs/vertrag-aenderungen)")
         melden: Fortschritt = progress or (lambda t, a: None)
         g, namen = _geometrie(spec)
         melden("Gitter, Quadratur und Oberflaeche", 0.05)
@@ -209,26 +201,39 @@ class FcmSolver:
             if abbruch():
                 raise SolverCancelled("abgebrochen bei der Auswertung")
             aus = pr.auswertung(U[:, k])
-            if len(Pe):
-                s_e, u_e = aus.spannung_und_verschiebung(Pe)
-            else:
-                s_e, u_e = np.zeros((0, 6)), np.zeros((0, 3))
-            ebenen = []
-            warn: list[str] = []
-            for i, (n, cp) in enumerate(zip(disc.schnittnamen, disc.spec.cut_planes)):
-                F, M = aus.schnittgroessen(pr.raender[n].quadratur, cp.origin)
-                sf = provider.section_forces(cp, key)
-                f_g = np.asarray(sf.force, float).reshape(3)
-                m_g = np.asarray(sf.moment, float).reshape(3)
-                dF = float(np.linalg.norm(F - f_g)) / max(float(np.linalg.norm(f_g)), 1e-12)
-                dM = float(np.linalg.norm(M - m_g)) / max(float(np.linalg.norm(m_g)), 1e-12)
-                # Konvention der FCM-Seite: F = int sigma.n dA mit n aus dem Detail heraus, also die Kraft,
-                # die der abgeschnittene Teil auf das Detail ausuebt (Vorschlag zur Klarstellung im Vertrag:
-                # docs/vertrag-aenderungen/2026-09-27-lasten-und-schnittgroessen.md)
-                ebenen.append({"plane": i, "force_fcm": F, "force_global": f_g, "moment_fcm": M, "moment_global": m_g,
-                               "deviation_force": dF, "deviation_moment": dM,
-                               "convention": "force_fcm = int sigma.n dA, n out of the detail",
-                               "multipliers": np.asarray(pr.multiplikatoren[3 * i:3 * i + 3, k], float)})
+            try:
+                if len(Pe):
+                    s_e, u_e = aus.spannung_und_verschiebung(Pe)
+                else:
+                    s_e, u_e = np.zeros((0, 6)), np.zeros((0, 3))
+                ebenen = []
+                warn: list[str] = []
+                for i, (n, cp) in enumerate(zip(disc.schnittnamen, disc.spec.cut_planes)):
+                    fq = pr.raender[n].quadratur
+                    F, M = aus.schnittgroessen(fq, cp.origin)
+                    sf = provider.section_forces(cp, key)
+                    f_g = np.asarray(sf.force, float).reshape(3)
+                    m_g = np.asarray(sf.moment, float).reshape(3)
+                    # Bezug fuer die relative Abweichung: groesste beteiligte Resultierende; Momente auch
+                    # gegen Kraft mal Flaechenmass, damit reine Biegung (Q = 0) oder reiner Zug (M = 0)
+                    # keine Scheinabweichung melden (Gutachten 27.09.: 2,5e3 bei Nullwerten)
+                    l_ref = float(np.sqrt(max(float(fq.gewichte.sum()), 1e-300)))
+                    ref_f = max(float(np.linalg.norm(f_g)), float(np.linalg.norm(F)))
+                    ref_m = max(float(np.linalg.norm(m_g)), float(np.linalg.norm(M)), ref_f * l_ref)
+                    dF = float(np.linalg.norm(F - f_g)) / ref_f if ref_f > 0 else 0.0
+                    dM = float(np.linalg.norm(M - m_g)) / ref_m if ref_m > 0 else 0.0
+                    # Konvention der FCM-Seite: F = int sigma.n dA mit n aus dem Detail heraus, also die
+                    # Kraft, die der abgeschnittene Teil auf das Detail ausuebt (Vorschlag zur Klarstellung:
+                    # docs/vertrag-aenderungen/2026-09-27-lasten-und-schnittgroessen.md)
+                    ebenen.append({"plane": i, "force_fcm": F, "force_global": f_g, "moment_fcm": M, "moment_global": m_g,
+                                   "delta_force": F - f_g, "delta_moment": M - m_g,
+                                   "deviation_force": dF, "deviation_moment": dM, "reference_force": ref_f, "reference_moment": ref_m,
+                                   "convention": "force_fcm = int sigma.n dA, n out of the detail",
+                                   "multipliers": np.asarray(pr.multiplikatoren[3 * i:3 * i + 3, k], float)})
+            except ValueError as ex:
+                raise SolverError(f"Auswertung fuer {key}: {ex}") from ex
+            for i, eb in enumerate(ebenen):
+                dF, dM = eb["deviation_force"], eb["deviation_moment"]
                 if dM > 0.05 or dF > 0.05:
                     warn.append(f"Schnittebene {i}: Abweichung der Schnittgroessen Kraft {dF * 100:.1f} %, Moment {dM * 100:.1f} % "
                                 f"> 5 % (Vorgabe 16.7: Schnittebenen weiter auseinander legen, schubweiches Globalmodell oder Kraftkopplung)")

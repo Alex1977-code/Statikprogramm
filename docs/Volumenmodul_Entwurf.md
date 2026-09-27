@@ -138,7 +138,9 @@ eine Empfehlung ausspricht, wird ihr gefolgt, sofern nichts Gemessenes dagegen s
   exakt bis Gesamtgrad 2n−1 ≥ 3p−1) integriert – genau die Exaktheit, die der Patch-Test für
   ∫∇v braucht. Ebene Geometrie ist damit auf jeder Tiefe exakt (keine Teilung nötig);
   gekrümmte Flächen werden bis Tiefe k (Standard 2) geteilt, Fehler O(κ·Blattkante²) statt
-  O(Blattkante). Der **fiktive Bereich** kommt ohne negative Gewichte aus: die ganze Teilbox
+  O(Blattkante). Gemessen am Lamé-Zylinder (h = 10, R = 50): Tiefe 2 begrenzt σ_r auf etwa
+  0,3 % unabhängig von p ≥ 3, Tiefe 3 bringt 0,09 % (p = 3) bei vierfacher Punktzahl – die
+  Oktree-Verfeinerung an gekrümmten Flächen (TP 2) ist der wirtschaftlichere Weg. Der **fiktive Bereich** kommt ohne negative Gewichte aus: die ganze Teilbox
   mit Gauß (p+1)³ und Gewicht α, die Stücke mit Gewicht (1−α).
 - Lässt sich die lokale Semantik nicht rekonstruieren (verschachtelte Booleans, mehrere
   gekrümmte Formen), teilt die Rekursion zwei Stufen tiefer und fällt auf den Punkttest der
@@ -350,7 +352,16 @@ Hauptsitzung; Einzelheiten in Theoriehandbuch Kapitel 11):
 | T7 | p = 4, h = 10, 379 k FHG (195 k frei), 52 s: K_tg Mitte 3,069 gegen 3,028 (+1,35 %, davon etwa +1 % 3D-Effekt bei t/d = 0,25), Oberfläche 2,981 |
 | T9 | 25/25; `volumenloeser()` des Hauptprogramms wählt `fcm`, Vertragsprüfung 43/43 |
 
-T8 (Schnittlagen-Streuung) siehe `tests/volumen3d/test_kirsch.py` und Theoriehandbuch 11.7. Erwartungswerte werden mit Quelle und Formel in der Suite genannt
+| T8 | **< 1 % nicht erfüllt** mit dem gleichmäßigen Gitter bei h = r/2: K_tg 3,01…3,26 über fünf Lagen (7,9 %); Ursache Auflösung des Lochs (|σ_r| am freien Rand bis 0,15 σ₀), nicht die Aggregation (Schwellenstudie 0,25/0,10/0,02: 7,7/5,6/18,5 %). Bei h = r/4 (p = 3): 1,42 %, etwa quadratische Konvergenz; die Suite prüft diese Konvergenz, die Abnahme < 1 % kommt mit der Verfeinerung an Bohrungen (TP 2) |
+
+Zweite Sicht (Gutachten 27.09., Subagent): elf Befunde, davon drei schwere (Vorschau-Dreiecke im
+Leerraum mit nacktem `ValueError` bei schrägen Schnittebenen, fehlende Singularitätsprüfung,
+Kopplungskennzahl bei Nullwerten des Globalmodells) und zwei mittlere (berührende Vereinigung
+zählt die innere Seite als Oberfläche, Krümmungsradius kleiner als das Blatt) – alle behoben und
+mit Prüfungen belegt (`test_vertrag_fcm.test_gutachten_faelle`, `test_geometrie`,
+`test_quadratur.test_kleine_radien`); dazu α-Gewichte vereinheitlicht, Gittertest am echten
+Grenzfall, INSIDE-Zellmatrix nur einmal berechnet. Offen (Leistung, TP 2/3): Geometriekern und
+Modennummerierung vektorisieren, Tetraederzahl je Stück senken. Erwartungswerte werden mit Quelle und Formel in der Suite genannt
 (Lamé geschlossen, Howland/Heywood für Kirsch mit Angabe beider Formeln; zweite unabhängige
 Berechnung des Erwartungswerts im Test selbst, siehe Gedächtnisregel „Zahlen erst nach
 Gegenprobe“).

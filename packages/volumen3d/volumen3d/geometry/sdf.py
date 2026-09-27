@@ -85,6 +85,7 @@ class Quader:
         return self.lo.copy(), self.hi.copy()
 
     gekruemmt = False
+    kruemmungsradius = np.inf
 
     def flaechenfaktor(self, Q, n_f) -> np.ndarray:
         """dA_wahr / dA_facette an Facettenpunkten Q mit Facettennormalen n_f: eben, also 1."""
@@ -159,6 +160,10 @@ class Zylinder:
         return np.minimum(self.p0, self.p1) - e, np.maximum(self.p0, self.p1) + e
 
     gekruemmt = True
+
+    @property
+    def kruemmungsradius(self) -> float:
+        return float(self.radius)
 
     def flaechenfaktor(self, Q, n_f) -> np.ndarray:
         """dA_wahr / dA_facette fuer Mantelfacetten: radiale Projektion der Sehne (Radius rho)
@@ -240,6 +245,10 @@ class Kugel:
 
     gekruemmt = True
 
+    @property
+    def kruemmungsradius(self) -> float:
+        return float(self.radius)
+
     def flaechenfaktor(self, Q, n_f) -> np.ndarray:
         """dA_wahr / dA_facette: radiale Projektion streckt in beiden Richtungen um R/rho,
         Neigung der Facette um n_f . e_r."""
@@ -314,6 +323,7 @@ class Halbraum:
         return lo, hi
 
     gekruemmt = False
+    kruemmungsradius = np.inf
 
     def flaechenfaktor(self, Q, n_f) -> np.ndarray:
         return np.ones(len(np.asarray(Q).reshape(-1, 3)))

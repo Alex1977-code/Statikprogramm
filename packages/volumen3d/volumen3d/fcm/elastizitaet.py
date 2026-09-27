@@ -16,6 +16,7 @@ import numpy as np
 import scipy.sparse as sp
 
 from .basis import anzahl_moden, basis_3d
+from .gitter import INSIDE
 
 
 def lame(E: float, nu: float) -> tuple[float, float]:
@@ -91,9 +92,16 @@ def assemblieren(gitter, quadratur, E: float, nu: float, fortschritt=None) -> sp
     zeilen = np.empty(nz * je, np.int64)
     spalten = np.empty(nz * je, np.int64)
     werte = np.empty(nz * je)
+    Ke_innen: np.ndarray | None = None          # alle INSIDE-Zellen sind bis auf die Lage gleich
     for c in range(nz):
-        G, W = zell_gradienten(gitter, quadratur, c)
-        Ke = zellsteifigkeit(G, W, E, nu)
+        if gitter.klasse[c] == INSIDE:
+            if Ke_innen is None:
+                G, W = zell_gradienten(gitter, quadratur, c)
+                Ke_innen = zellsteifigkeit(G, W, E, nu)
+            Ke = Ke_innen
+        else:
+            G, W = zell_gradienten(gitter, quadratur, c)
+            Ke = zellsteifigkeit(G, W, E, nu)
         dof = gitter.zell_dofs(c)
         s = slice(c * je, (c + 1) * je)
         zeilen[s] = np.repeat(dof, 3 * m)

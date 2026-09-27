@@ -10376,13 +10376,37 @@ der Bohrung; Referenz `σ_r = k(1 − r_a²/r²)`, `σ_φ = k(1 + r_a²/r²)`, k
 Gegenprobe Kesselformel `∫σ_φ dr = p r_i`. Auswertung auf einem Strahl bei 37° in halber Dicke
 (Zahlen aus `tests/volumen3d/test_lame.py`, Stand siehe dort):
 
-| p, h = 10 | σ_r (von p_i) | σ_φ | Freiheitsgrade (frei) |
-|---|---|---|---|
-| 2 | 1,41 % | 0,96 % | 10761 (4431) |
-| 3 | 0,31 % | 0,12 % | 33132 (13296) |
+| p, h = 10 | Tiefe der Tangentialebenen | σ_r (von p_i) | σ_φ | Freiheitsgrade (frei) | Zeit |
+|---|---|---|---|---|---|
+| 2 | 2 | 1,41 % | 0,95 % | 8961 (4431) | 36 s |
+| 3 | 2 | 0,32 % | 0,03 % | 27768 (13296) | 50 s |
+| 4 | 2 | 0,28 % | 0,09 % | 62991 (29643) | 149 s |
+| 3 | 3 | 0,087 % | 0,06 % | 27768 (13296) | 256 s |
+| 4 | 3 | 0,071 % | 0,07 % | 62991 (29643) | 636 s |
 
 Die Abnahme der Vorgabe (< 1 % bei moderatem Aufwand) erfüllt p = 3, der Standard des Vertrags.
-Die Kirsch-Platte (Viertel 400×200×10, Loch d 40, d/W 0,1, Zug 100 N/mm²; Referenz K_tg nach
-Heywood 3,032 und Pilkey 3,023, Howland 3,03) und die Schnittlagen-Robustheit (Wurzelgitter um
-0,2…0,8 Zellen verschoben) stehen in `tests/volumen3d/test_kirsch.py`; die gemessenen Werte
-werden dort und in `docs/Volumenmodul.md` nachgetragen.
+Von p = 3 auf p = 4 verbessert sich bei Tiefe 2 nichts mehr: Die Tangentialebenen der
+Schnittzellen nähern die Zylinderflächen mit einem Fehler ~(Blattkante/R)² = (2,5/50)², und erst
+Tiefe 3 senkt σ_r um den Faktor 3,6 (zweite Ordnung). Für hohe p braucht die gekrümmte Geometrie
+also feinere Blätter oder – wirtschaftlicher – die Oktree-Verfeinerung an der Oberfläche
+(Teilprojekt 2); der Standard bleibt Tiefe 2.
+**Kirsch-Platte** (Viertel 400×200×10, Loch d 40, d/W 0,1, Zug 100 N/mm²; Referenz K_tg nach
+Heywood 3,032 und Pilkey 3,023, Howland 3,03; 3D-Effekt in Plattenmitte bei t/d = 0,25 etwa
++1 %): p = 4, h = 10 (zwei Zellen je Lochradius), 378 675 Freiheitsgrade (194 895 frei),
+52 s: K_tg in Plattenmitte 3,069 (+1,35 % gegen 3,028), an der Oberfläche 2,981.
+
+**Schnittlagen-Robustheit (Vorgabe 13: Streuung < 1 %):** dasselbe Modell mit dem Wurzelgitter um
+0 / 0,2 / 0,4 / 0,6 / 0,8 Zellen verschoben ergibt K_tg = 3,069 / 3,012 / 3,262 / 3,200 / 3,142,
+Streuung **7,9 %** – die Abnahme ist mit dem gleichmäßigen Gitter bei h = r/2 **nicht erfüllt**.
+Ursache ist nicht die Zellaggregation (p = 3: Schwelle 0,25 → 7,7 %, 0,10 → 5,6 %, 0,02 → 18,5 %
+mit einem Ausreißer 3,75), sondern die Auflösung des Lochs: am freien Lochrand bleibt |σ_r| bis
+0,15·σ₀ stehen (müsste 0 sein), und je nach Lage der Schnittzelle stammt der Randwert aus einem
+eigenen schwach gestützten Polynom oder aus der Fortsetzung der Wurzelzelle. Mit h = 5 (vier
+Zellen je Radius, p = 3, drei Lagen 0 / 0,4 / 0,8) sinkt die Streuung auf **1,42 %**
+(K_tg 3,098 / 3,111 / 3,142) und |σ_r|/σ₀ am Rand auf 0,02…0,05 – etwa quadratisch mit der
+Zellgröße; unter 1 % braucht es acht Zellen je Radius. Zwei Zellen je Radius reichen für einen
+prüffähigen Kerbwert nicht; die Vorgabe sieht dafür die Verfeinerung an Bohrungen vor
+(Abschnitt 4, Nutzervorgabe und Fehlerschätzer), die mit Teilprojekt 2 (Oktree, hängende
+Freiheitsgrade) kommt. Bis dahin gilt für Kerbwerte: mindestens vier Zellen je Radius und eine
+Konvergenzstudie je Lage; der Zähler `blaetter_unteraufgeloest` im Protokoll (Krümmungsradius
+kleiner als fünf Blattkanten) weist unteraufgelöste Stellen aus.

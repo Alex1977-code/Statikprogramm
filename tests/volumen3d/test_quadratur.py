@@ -97,8 +97,9 @@ def test_kugel_zweite_ordnung():
         punkte.append(Q.anzahl_punkte())
     # Tangentialebene: Fehler ~ 0,25 (Blattkante/R)^2, gemessen 27.09.2026 (h = 10, R = 43):
     # k=0 1,4e-2, k=1 3,4e-3, k=2 8,5e-4, k=3 2,1e-4 - Faktor 4 je Stufe
-    check("Kugel: Fehler faellt je Stufe mindestens um den Faktor 3,5 (zweite Ordnung in der Blattkante)",
-          all(fehler[i] / fehler[i + 1] > 3.5 for i in range(3)),
+    # Tiefe 0 wird bei R 43 < 5 h automatisch auf Tiefe 1 gehoben (Regel kleine Radien), daher k=0 = k=1
+    check("Kugel: Fehler faellt je Stufe (ab Tiefe 1) mindestens um den Faktor 3,5 (zweite Ordnung in der Blattkante)",
+          all(fehler[i] / fehler[i + 1] > 3.5 for i in range(1, 3)) and abs(fehler[0] / fehler[1] - 1) < 1e-9,
           " ".join(f"k={k}: {f:.1e} ({n} Pkt, {z:.2f} s)" for k, f, n, z in zip((0, 1, 2, 3), fehler, punkte, zeiten)))
     check("Kugel, Tiefe 2 (Standard): Volumenfehler < 1e-3", fehler[2] < 1e-3, f"{fehler[2]:.1e}")
     check("Kugel, Tiefe 3: Volumenfehler < 3e-4", fehler[3] < 3e-4, f"{fehler[3]:.1e}")
@@ -140,6 +141,26 @@ def test_lochplatte():
           f"{Qp.anzahl_punkte()} Punkte, {len(Qp.gitter.ijk)} Zellen, V {Qp.volumen():.6f}")
 
 
+def test_kleine_radien():
+    """Gutachten 27.09.: Kruemmungsradius kleiner als das Blatt (Schraubenbohrung R 3 bei h 10) - die
+    Tangentialebene ersetzte einen ganzen Bogen (Lochvolumen -5,8 %, freie Kugel R 3 +16 %)."""
+    # Nachteilung bis zur Hoechsttiefe (2 + 2 = 4, Blattkante 0,625 mm): Tangentialfehler
+    # 0,25 (0,625/3)^2 = 1,1 %; danach zaehlt das Protokoll die unteraufgeloesten Blaetter
+    soll = 4 / 3 * np.pi * 27.0
+    Q = _quadratur({"csg": {"typ": "kugel", "mitte": [0, 0, 0], "radius": 3.0}}, 10.0, 2, 2)
+    check("freie Kugel R 3 in h = 10: Volumen auf 2 % (vorher +16 %), unteraufgeloeste Blaetter gezaehlt",
+          abs(Q.volumen() / soll - 1) < 0.02 and Q.statistik["blaetter_unteraufgeloest"] > 0, f"{Q.volumen():.3f} / {soll:.3f}, {Q.statistik}")
+    platte = {"csg": {"typ": "differenz", "teile": [{"typ": "quader", "min": [0, 0, 0], "max": [100, 100, 10]},
+                                                    {"typ": "zylinder", "p0": [50, 50, -1], "p1": [50, 50, 11], "radius": 3.0}]}}
+    Q = _quadratur(platte, 10.0, 2, 2)
+    check("Platte mit Bohrung R 3 in h = 10: Lochvolumen auf 2 % (vorher -5,8 %)",
+          abs((1e5 - Q.volumen()) / (np.pi * 90.0) - 1) < 0.02, f"Loch {1e5 - Q.volumen():.2f} / {np.pi * 90.0:.2f}, {Q.statistik}")
+    Q8 = _quadratur({"csg": {"typ": "differenz", "teile": [{"typ": "quader", "min": [0, 0, 0], "max": [100, 100, 10]},
+                                                             {"typ": "zylinder", "p0": [50, 50, -1], "p1": [50, 50, 11], "radius": 8.0}]}}, 10.0, 2, 2)
+    check("Bohrung R 8 in h = 10: Lochvolumen auf 0,5 % (vorher -0,7 %)",
+          abs((1e5 - Q8.volumen()) / (np.pi * 640.0) - 1) < 0.005, f"Loch {1e5 - Q8.volumen():.2f} / {np.pi * 640.0:.2f}, {Q8.statistik}")
+
+
 def test_inside_zelle():
     from volumen3d.fcm.gitter import INSIDE, Gitter
     from volumen3d.fcm.quadratur import Zellquadratur
@@ -156,4 +177,4 @@ def test_inside_zelle():
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_polyeder, test_ebene_geometrie_exakt, test_kugel_zweite_ordnung, test_lochplatte, test_inside_zelle]))
+    sys.exit(lauf([test_polyeder, test_ebene_geometrie_exakt, test_kugel_zweite_ordnung, test_lochplatte, test_kleine_radien, test_inside_zelle]))

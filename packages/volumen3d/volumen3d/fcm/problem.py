@@ -144,6 +144,7 @@ class FcmProblem:
             nz = B_red.shape[0]
             K_red = sp.bmat([[K_red, B_red.T], [B_red, sp.csr_matrix((nz, nz))]], format="csr")
         self._loeser = Direktloeser(K_red)
+        self._K_red = K_red
         self.n_zwaenge = 0 if self._B is None else int(self._B.shape[0])
         t2 = time.perf_counter()
         self.protokoll.update({
@@ -192,9 +193,18 @@ class FcmProblem:
         self.multiplikatoren = X[m:] if self.n_zwaenge else np.zeros((0, len(liste)))
         U = np.asarray(C @ X[:m]) if C is not None else X[:m]
         self.protokoll["t_loesen_s"] = round(time.perf_counter() - t0, 3)
-        if not np.all(np.isfinite(U)):
-            raise ValueError("Gleichungssystem singulaer oder unbestimmt (freie Starrkoerperbewegung? "
-                             "kein Verschiebungsrand?)")
+        # Residuum: Direktloeser liefern bei singulaerer Matrix endliche Zahlen (Gutachten 27.09.:
+        # freier Quader unter Traktion, max |u| 1e12 mm ohne Fehler); ein relatives Residuum
+        # ueber 1e-6 heisst: nicht zuverlaessig geloest, in der Regel freie Starrkoerperbewegung.
+        R = self._K_red @ X - F_red
+        norm_f = np.linalg.norm(F_red, axis=0)
+        norm_r = np.linalg.norm(R, axis=0)
+        residuum = np.where(norm_f > 0, norm_r / np.maximum(norm_f, 1e-300), norm_r)
+        self.protokoll["residuum"] = float(residuum.max()) if len(residuum) else 0.0
+        if not np.all(np.isfinite(U)) or self.protokoll["residuum"] > 1e-6:
+            raise ValueError(f"Gleichungssystem nicht zuverlaessig geloest (relatives Residuum "
+                             f"{self.protokoll['residuum']:.1e}): freie Starrkoerperbewegung, fehlender "
+                             f"Verschiebungsrand oder singulaere Matrix")
         return U
 
     def auswertung(self, U: np.ndarray) -> "Auswertung":

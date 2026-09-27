@@ -208,6 +208,12 @@ def test_oberflaechenquadratur():
     check("Ebenenauswahl x=0: Flaeche 100 x 10 exakt", abs(e.gewichte.sum() - 1000.0) < 1e-9, f"{e.gewichte.sum():.6f}")
     # Ebene durch die Bohrung (y = 50): Deckflaeche der Platte minus Lochstrecke -> nichts, denn sie liegt im Inneren
     check("Ebene im Werkstoffinneren liefert keine Punkte", len(Flaechenquadratur.ebene(g, G, np.array([0, 50.0, 0]), np.array([0, 1.0, 0]), 3).punkte) == 0)
+    # beruehrende Vereinigung: die gemeinsame Seite ist keine Oberflaeche (Gutachten 27.09.: 30 000 statt 25 000)
+    u2 = aus_params({"csg": {"typ": "vereinigung", "teile": [{"typ": "quader", "min": [0, 0, 0], "max": [50, 50, 50], "name": "a"},
+                                                               {"typ": "quader", "min": [50, 0, 0], "max": [100, 50, 50], "name": "b"}]}})
+    fu = Flaechenquadratur.aus_geometrie(u2, Gitter(u2, h=10.0), ordnung=3)
+    check("beruehrende Vereinigung zweier Quader: Oberflaeche 25 000 mm2, innere Seite x = 50 ohne Punkte",
+          abs(fu.gewichte.sum() - 25000.0) < 1e-6 and not np.any(np.abs(fu.punkte[:, 0] - 50.0) < 1e-9), f"{fu.gewichte.sum():.3f}, {fu.statistik}")
     # schraeg geschnittener Quader: Schnittflaeche = Sechseck 12990,38 exakt, Normale (1,1,1)/sqrt3
     s = aus_params({"csg": {"typ": "schnitt", "teile": [{"typ": "quader", "min": [0, 0, 0], "max": [100, 100, 100], "name": "w"},
                                                           {"typ": "halbraum", "punkt": [50, 50, 50], "normale": [1, 1, 1], "name": "s"}]}})

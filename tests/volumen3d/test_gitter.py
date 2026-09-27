@@ -91,9 +91,17 @@ def test_punktsuche():
     check("lokale Koordinaten in [-1,1]", np.all(np.abs(xi) <= 1 + 1e-12))
     lo, hi = G.zellbox(c[:2])
     check("Rueckabbildung", np.allclose(lo + 0.5 * (xi + 1) * (hi - lo), P[:2]))
-    # Punkt genau auf einer Zellgrenze zwischen einer OUTSIDE- und einer CUT-Zelle
-    grenze = G.ursprung + np.array([1, 4, 4]) * G.h          # x-Grenze zwischen Zelle 0 und 1 in der Mitte
-    check("Punkt auf Zellgrenze wird der aktiven Nachbarzelle zugeschlagen", G.zelle_finden(grenze[None])[0] >= 0)
+    # Punkt genau auf einer Zellgrenze zwischen einer aktiven Zelle und ihrem OUTSIDE-Nachbarn in +x:
+    # floor ohne Epsilon traefe die OUTSIDE-Zelle, der Epsilon-Rueckfall muss die aktive finden
+    from volumen3d.fcm.gitter import OUTSIDE
+    grenze = None
+    for c in range(len(G.ijk)):
+        I = G.ijk[c] + [1, 0, 0]
+        if I[0] < G.n[0] and G.alle_klassen[G.flach(I)] == OUTSIDE:
+            grenze = G.zellbox(c)[1] * [1, 0, 0] + (G.zellbox(c)[0] + 0.5 * G.h) * [0, 1, 1]
+            break
+    check("Punkt auf der Grenze aktive Zelle | OUTSIDE-Nachbar (+x) wird der aktiven Zelle zugeschlagen",
+          grenze is not None and G.zelle_finden(grenze[None])[0] == c, f"{grenze} -> Zelle {G.zelle_finden(grenze[None])[0] if grenze is not None else None}, erwartet {c}")
     check("zell_dofs: 3 (p+1)^3 Eintraege, Reihenfolge 3*mode + Komponente",
           (G.moden_nummerieren(2) is not None) and list(G.zell_dofs(0)[:6]) == [3 * G.zell_moden[0, 0] + k for k in range(3)] + [3 * G.zell_moden[0, 1] + k for k in range(3)])
 
