@@ -10938,7 +10938,10 @@ Chebyshev-Grad 3 auf [λ_max/8, λ_max] 81 / 125 / 112 / 129 / 59 Iterationen. A
 Standard ist seither Grad 5 auf [λ_max/16, λ_max]; damit: 51 / 82 / 72 / 86 / 49 Iterationen, alle
 unter dem Richtwert 100 der Vorgabe, GPU-PCG 7,7 bis 16,9 s gegen 9 bis 30 s für das Lösen des
 Direktlösers nach seiner Faktorisierung, K_t jeweils identisch; bei h 20 p 3 19 bis 37 Iterationen.
-Offen bleibt das Einrichten auf der CPU (Zelldaten, Glätterblöcke, Grobgitter: bei h 20 p 3 rund 11 s
-gegen 5 s Assemblierung plus Faktorisierung des Direktlösers), darum bleibt der Direktlöser vorerst
-Standard der Vertragsschicht; der Mehrgitterweg lohnt sich, sobald ein Detail mehrere Lastfälle hat
-oder das Modell für den Direktlöser zu groß wird.
+Offen bleibt das Einrichten auf der CPU. Nach der Entdopplung (Matrix aus den Zelldaten, feine
+Matrix und Diagonale wiederverwendet), einem Tensorprodukt der Basis per Broadcasting und einem
+parallelen Blockauszug kostet das Mehrgitter-Einrichten bei Kirsch h 10 p 3 rund 13 s. Im selben
+Prozess gemessen (Aufbau + Lösen, Maschine belegt): Versatz 0 Direktlöser 25,5 s gegen Mehrgitter
+auf der GPU 42,1 s (51 Iterationen), Versatz 0,6 53,7 s gegen 57,6 s (86 Iterationen). Das Lösen ist
+auf der GPU schneller (8,8 gegen 10,0 s und 21,6 gegen 28,1 s), der Gesamtweg noch nicht; darum
+bleibt der Direktlöser Standard der Vertragsschicht, bis das Einrichten auf die GPU wandert.

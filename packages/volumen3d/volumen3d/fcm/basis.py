@@ -61,15 +61,28 @@ def modenklassen(p: int) -> dict[str, np.ndarray]:
 def basis_3d(p: int, xi: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """N (n,m) und dN/dxi (n,m,3) an Referenzpunkten xi (n,3) in [-1,1]^3, m = (p+1)^3."""
     xi = np.asarray(xi, float).reshape(-1, 3)
+    n = len(xi)
     Na, da = legendre_1d(p, xi[:, 0])
     Nb, db = legendre_1d(p, xi[:, 1])
     Nc, dc = legendre_1d(p, xi[:, 2])
-    abc = _indizes(p)
-    A, B, C = abc[:, 0], abc[:, 1], abc[:, 2]
-    N = Na[:, A] * Nb[:, B] * Nc[:, C]
-    dN = np.stack([da[:, A] * Nb[:, B] * Nc[:, C],
-                   Na[:, A] * db[:, B] * Nc[:, C],
-                   Na[:, A] * Nb[:, B] * dc[:, C]], axis=2)
+    # Tensorprodukt per Broadcasting in der Reihenfolge von _indizes (a langsam, c schnell) statt
+    # neun indizierter Kopien (n, m): Schnittzellen-Zellmatrizen Kirsch h 20 p 3 3,5 s -> siehe
+    # Theorie 11.10 (28.09.2026); gleiche Produkte, Unterschied nur in der Rundungsreihenfolge
+    if p <= 1:                                        # bei p = 1 sind die Kopien billiger (0,54 gegen 1,21 ms)
+        abc = _indizes(p)
+        A, B, C = abc[:, 0], abc[:, 1], abc[:, 2]
+        return (Na[:, A] * Nb[:, B] * Nc[:, C],
+                np.stack([da[:, A] * Nb[:, B] * Nc[:, C], Na[:, A] * db[:, B] * Nc[:, C], Na[:, A] * Nb[:, B] * dc[:, C]], axis=2))
+    a = Na[:, :, None, None]
+    b = Nb[:, None, :, None]
+    c = Nc[:, None, None, :]
+    bc = b * c
+    m = (p + 1) ** 3                                  # explizit: reshape(0, -1) scheitert bei Zellen ohne Punkte
+    N = (a * bc).reshape(n, m)
+    dN = np.empty((n, m, 3))
+    dN[:, :, 0] = (da[:, :, None, None] * bc).reshape(n, m)
+    dN[:, :, 1] = ((a * c) * db[:, None, :, None]).reshape(n, m)
+    dN[:, :, 2] = ((a * b) * dc[:, None, None, :]).reshape(n, m)
     return N, dN
 
 

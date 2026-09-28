@@ -51,12 +51,13 @@ def _kron3(M: sp.spmatrix) -> sp.csr_matrix:
 
 
 if _NUMBA:
-    @numba.njit(cache=True)
+    @numba.njit(parallel=True, cache=True)
     def _teilmatrizen_nb(indptr, indices, data, S, s):          # pragma: no cover - numba
-        """A[S_k, S_k] fuer k Bloecke gleicher Groesse s (S (k, s) sortiert) aus CSR."""
+        """A[S_k, S_k] fuer k Bloecke gleicher Groesse s (S (k, s) sortiert) aus CSR, parallel ueber
+        die Bloecke (jeder Block schreibt nur in seinen eigenen Speicher)."""
         k = S.shape[0]
         B = np.zeros((k, s, s))
-        for b in range(k):
+        for b in numba.prange(k):
             for a in range(s):
                 zeile = S[b, a]
                 for idx in range(indptr[zeile], indptr[zeile + 1]):
@@ -129,9 +130,12 @@ if _NUMBA:
         return aus, ok
 
 
-def _teilmatrizen(A: sp.csr_matrix, S: np.ndarray) -> np.ndarray:
+def _teilmatrizen(A: sp.csr_matrix, S: np.ndarray, indizes: tuple | None = None) -> np.ndarray:
+    """``indizes``: (indptr, indices) schon als int64 - einmal umgewandelt statt je Blockgruppe
+    (Kirsch h 10 p 3: 57 Gruppen, 3,0 s nur fuer astype, 28.09.2026)."""
     if _NUMBA:
-        return _teilmatrizen_nb(A.indptr.astype(np.int64), A.indices.astype(np.int64), A.data, S.astype(np.int64), S.shape[1])
+        ip, ix = indizes if indizes is not None else (A.indptr.astype(np.int64), A.indices.astype(np.int64))
+        return _teilmatrizen_nb(ip, ix, A.data, S.astype(np.int64), S.shape[1])
     return np.stack([A[s_][:, s_].toarray() for s_ in S])
 
 
@@ -177,9 +181,10 @@ class ZellSchwarz:
             S = np.unique(Cz.indices[a:b])
             gruppen.setdefault(len(S), []).append(S)
         self.gruppen: list[tuple[np.ndarray, np.ndarray]] = []
+        indizes = (A.indptr.astype(np.int64), A.indices.astype(np.int64))
         for s, liste in sorted(gruppen.items()):
             I = np.ascontiguousarray(np.array(liste, dtype=np.int64))
-            B = _teilmatrizen(A, I)
+            B = _teilmatrizen(A, I, indizes)
             self.gruppen.append((I, _inv_stapel(B)))
         self.n = int(C.shape[1])
         self.speicher_mb = round(sum(Bi.nbytes for _, Bi in self.gruppen) / 1e6, 1)

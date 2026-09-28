@@ -744,6 +744,18 @@ Plan: `docs/plaene/2026-09-28-tp4-mehrgitter.md`. Messlatte aus Teilprojekt 3: J
   Integration der Zellsteifigkeiten), die feinste Ebene übernimmt C^T(K + K_rand)C und die
   Jacobi-Diagonale des Problems, die Diagonale nutzt BLAS statt eines Dreifach-einsum. Kirsch h 20
   p 3: Einrichten rund 11 s gegen 5 s für Assemblierung plus Faktorisierung des Direktlösers.
-- **Offen vor Pull Request 2:** Einrichten weiter senken (Basisauswertung der Zelldaten gebündelt,
-  Blöcke aus den Zellmatrizen direkt auf der GPU), dann `backend='gpu'`/`'auto'` in der
-  Vertragsschicht freischalten.
+- **Weiter gesenkt (28.09.2026 nachmittags):** Tensorprodukt der Basis per Broadcasting (p 3:
+  5,1 → 3,6 ms je 2000 Punkte, p 4: 13,8 → 7,3 ms; trifft beide Löser), Indexfelder der Matrix
+  einmal statt je Blockgruppe nach int64, Blockauszug parallel. Einrichten des Mehrgitters bei
+  Kirsch h 10 p 3: 13 s (vorher 24–48 s).
+- **Gesamtweg im selben Prozess (Kirsch h 10 p 3, Maschine durch die Hauptsitzung belegt):**
+
+| Versatz | frei | Direktlöser Aufbau + Lösen | Mehrgitter GPU Aufbau + Lösen | Iterationen |
+|---|---|---|---|---|
+| 0,0 | 130 611 | 15,5 + 10,0 = 25,5 s | 33,4 + 8,8 = 42,1 s | 51 |
+| 0,6 | 187 239 | 25,6 + 28,1 = 53,7 s | 36,0 + 21,6 = 57,6 s | 86 |
+
+  Das Lösen ist auf der GPU schneller, der Gesamtweg noch nicht: der Abstand ist das Einrichten
+  des Mehrgitters (Ebenen, Glätterblöcke, λ_max). Die Vertragsschicht bleibt beim Direktlöser.
+- **Offen vor Pull Request 2:** Einrichten des Mehrgitters auf die GPU (Blöcke aus den Zell-
+  matrizen dort bilden und invertieren), danach `backend='gpu'`/`'auto'` in der Vertragsschicht.
