@@ -2,7 +2,7 @@
 
 > **Verbindlich für beide Entwicklungsstränge.** Das Hauptprogramm (Statik3D) und das Volumenmodul (`volumen3d`, FCM und FE-Hexaeder, Kontakt, Plastizität) dürfen sich ausschließlich über die hier definierten Typen und Protokolle kennen. Änderungen an diesem Vertrag erfolgen nur per eigenem Pull Request mit Versionserhöhung (Abschnitt 9).
 
-**Vertragsversion:** 2.0.1 (Änderungen siehe Abschnitt 9)
+**Vertragsversion:** 2.1.0 (Änderungen siehe Abschnitt 9)
 **Sprache:** Python ≥ 3.11, Typisierung mit `dataclasses` und `typing.Protocol`, numerische Felder als `numpy.ndarray`.
 
 ---
@@ -176,7 +176,14 @@ class CutPlane:
 
 @dataclass(frozen=True)
 class SectionForces:
-    """Resultierende am Schnitt, bezogen auf CutPlane.origin, globale Achsen."""
+    """Resultierende am Schnitt, bezogen auf CutPlane.origin, globale Achsen.
+
+    Seite (2.1.0): Kraft und Moment, die der abgeschnittene Teil des
+    Globalmodells auf das Detail ausübt - die Traktion σ·n über den Schnitt
+    integriert, n = CutPlane.normal (aus dem Detail heraus). Für einen Stab
+    mit lokaler x-Achse in Richtung n sind das die Schnittgrößen der
+    Stabkonvention, gegen n das Negative davon.
+    """
     force: np.ndarray     # (3,) N
     moment: np.ndarray    # (3,) N·mm
 
@@ -197,9 +204,13 @@ class GlobalFieldProvider(Protocol):
         ...
 
     def section_forces(self, plane: CutPlane, key: ResultKey) -> SectionForces:
-        """Schnittgrößen des Globalmodells am Schnitt, für die Plausibilitätskontrolle."""
+        """Schnittgrößen des Globalmodells am Schnitt, für die
+        Plausibilitätskontrolle: die Wirkung des abgeschnittenen Restes auf
+        das Detail, Vorzeichen nach plane.normal (siehe SectionForces)."""
         ...
 ```
+
+**Seite der Schnittgrößen (2.1.0):** `SectionForces` ist die Wirkung des abgeschnittenen Restes auf das Detail, F = ∫ σ·n dA mit n = `CutPlane.normal` aus dem Detail heraus. Ein Detail mit zwei Schnittebenen an einem Stab längs x bekommt an der Ebene mit Normale +x die Schnittgrößen der Stabkonvention und an der Ebene mit Normale −x deren Negatives; der spätere Provider des Hauptprogramms setzt das Vorzeichen aus der Lage der Ebene zum Stab. Bis 2.0.1 lieferte der Stub beides mit demselben Vorzeichen, und die Kopplungskontrolle des Volumenmoduls meldete an der Ebene mit Normale −x rund 200 % Abweichung, obwohl beide Seiten stimmten (gemessen 27.09.2026).
 
 **Zusage des Hauptprogramms:** `displacement_at` ist vektorisiert (keine Python-Schleife je Punkt) und für 10⁵ Punkte in unter 1 s aufrufbar. Die Implementierung im Hauptprogramm ist – neben dem `Discretization`-Adapter – der einzige Ort, an dem SI-Größen des Globalmodells in Vertragseinheiten umgerechnet werden (über `statik3d/vertragseinheiten.py`, Abschnitt 2).
 
@@ -262,6 +273,8 @@ class DetailModelSpec:
     settings: FcmSettings
     refinement: tuple[RefinementRegion, ...] = ()
     weld_lines: tuple[WeldLine, ...] = ()
+    loads: tuple[SurfaceLoad, ...] = ()     # 2.1.0: Druck, Traktion oder Resultierende je Fläche (nonlinear.py)
+    body_load: np.ndarray | None = None     # 2.1.0: (3,) N/mm³, z. B. Eigengewicht ρ·g
 
 @dataclass
 class HotSpotResult:
@@ -285,6 +298,8 @@ class DetailResult:
     warnings: list[str] = field(default_factory=list)
     protocol: dict = field(default_factory=dict)           # alle Einstellungen, für Prüffähigkeit
 ```
+
+**Lasten im Detailmodell (2.1.0):** Ein Detail kann Lasten tragen, die das Globalmodell nicht liefert - Wasserdruck auf die Detailoberfläche, Eigengewicht des Ausschnitts, Kontaktdruck einer Auflagerplatte. `loads` ist ein Tupel `SurfaceLoad` aus `nonlinear.py` (Abschnitt 6a): `pressure` in N/mm² positiv drückt auf die Fläche (t = −p·n), `traction` (3,) N/mm² global, `resultant` (Kraft N, Moment N·mm) über die Fläche verteilt; die Fläche wählt `SurfaceSelector` mit `body_id` = Detail-ID und `named_surface` = Name der CSG-Grundform (auch `box` oder `cylinder`). `SurfaceLoad.load_case_id` ordnet die Last dem `ResultKey.load_case_id` zu; Lasten ohne passenden Key werden für diesen Key nicht angesetzt. `body_load` ist eine Volumenlast (3,) in N/mm³. Beide Felder sind optional mit leerem Standard; der Stub trägt sie im Protokoll (`loads`, `body_load`) und warnt, dass er sie nicht ansetzt. Im Hauptprogramm gehört dazu die Maske „Lasten am Detail“ im Knoten „Detailmodelle (Volumen)“.
 
 ---
 
@@ -644,6 +659,7 @@ Jedes Referenzmodell enthält Eingabedaten, Erwartungswerte und Toleranzen als J
   4. Typprüfung mit `mypy --strict` für `statik3d_contracts`
 
 **Änderungsprotokoll:**
+- **2.1.0** – Minor (Vorschlag `docs/vertrag-aenderungen/2026-09-27-lasten-und-schnittgroessen.md`, vom Anwender am 28.09.2026 angenommen): `DetailModelSpec` bekommt die optionalen Felder `loads` (Tupel `SurfaceLoad` aus `nonlinear.py`: Druck, Traktion oder Resultierende je benannter Fläche, N, mm, N/mm², `body_id` = Detail-ID) und `body_load` ((3,) N/mm³); Abschnitt 5 stellt klar, auf welche Seite sich `SectionForces` bezieht (Wirkung des abgeschnittenen Restes auf das Detail, n = `CutPlane.normal` aus dem Detail heraus), und der Stub-Provider setzt das Vorzeichen aus der Normalen (bisher unabhängig von ihr: 200 % Abweichung an der Ebene mit Normale −x). Stub trägt die neuen Felder im Protokoll und warnt, dass er sie nicht ansetzt. Bestehende Typen und Bedeutungen unverändert.
 - **2.0.1** – Patch (Doku): Abschnitt 1 an die tatsächliche Struktur angepasst (`statik3d/` an der Repository-Wurzel, `.importlinter`, `docs/vertrag-aenderungen/`, `packages/volumen3d/CLAUDE.md`, Arbeitsteilung samt Regel zum bestehenden Kontaktlöser); Abschnitt 2: SI intern, Umrechnung ausschließlich in `statik3d/vertragseinheiten.py` (GlobalFieldProvider und Discretization-Adapter) mit Rundreisetest; Abschnitt 7: Stub-Regeln (Vorrang echter Löser, sichtbare Kennzeichnung „STUB – keine echte Berechnung“, kein Nachweis aus Stub-Ergebnissen). Typen und Protokolle unverändert.
 - **2.0.0** – Paket `fcm_solid` in `volumen3d` umbenannt (enthält inzwischen FCM, FE-Hexaeder, Kontakt und Plastizität). Umbenennung vor der ersten Implementierung, daher ohne Migrationsaufwand.
 - **1.1.0** – Neu: `nonlinear.py` (Materialmodelle, Körper, Kontakt, Tie, Lastpfad, Mehrkörperergebnisse), Protokoll `AssemblySolver` mit Entry-Point-Gruppe `statik3d.assembly_solvers`, Stub `StubAssemblySolver`, neue Referenzmodelle. Keine Änderung bestehender Typen.

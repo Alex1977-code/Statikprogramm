@@ -1,6 +1,6 @@
 # Volumenmodul `volumen3d`: Stand der Umstellung im Hauptprogramm
 
-Grundlage: `Schnittstellenvertrag_Statik3D_FCM.md` (Vertragsversion 2.0.1) und
+Grundlage: `Schnittstellenvertrag_Statik3D_FCM.md` (Vertragsversion 2.1.0) und
 `Vorgabe_Statik3D_Abschnitt_FCM-Volumenloeser.md` (beide in `docs/`, Stand 26.09.2026).
 Der Vertrag ist verbindlich für beide Entwicklungsstränge; Änderungen daran nur per eigenem
 Pull Request mit Versionserhöhung (Vertrag, Abschnitt 9).

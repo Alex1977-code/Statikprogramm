@@ -22,7 +22,14 @@ class CutPlane:
 
 @dataclass(frozen=True)
 class SectionForces:
-    """Resultierende am Schnitt, bezogen auf CutPlane.origin, globale Achsen."""
+    """Resultierende am Schnitt, bezogen auf CutPlane.origin, globale Achsen.
+
+    Seite (2.1.0): Kraft und Moment, die der abgeschnittene Teil des
+    Globalmodells auf das Detail ausuebt - die Traktion sigma . n ueber den
+    Schnitt integriert, n = ``CutPlane.normal`` (aus dem Detail heraus). Fuer
+    einen Stab mit lokaler x-Achse in Richtung n sind das die Schnittgroessen
+    der Stabkonvention, gegen n das Negative davon.
+    """
     force: np.ndarray     # (3,) N
     moment: np.ndarray    # (3,) N*mm
 
@@ -44,7 +51,9 @@ class GlobalFieldProvider(Protocol):
         ...
 
     def section_forces(self, plane: CutPlane, key: ResultKey) -> SectionForces:
-        """Schnittgroessen des Globalmodells am Schnitt, fuer die Plausibilitaetskontrolle."""
+        """Schnittgroessen des Globalmodells am Schnitt, fuer die
+        Plausibilitaetskontrolle: die Wirkung des abgeschnittenen Restes auf
+        das Detail, Vorzeichen nach ``plane.normal`` (siehe SectionForces)."""
         ...
 
 

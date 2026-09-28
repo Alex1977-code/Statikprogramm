@@ -61,7 +61,7 @@ def test_importregeln():
                         and wurzel != "statik3d_contracts":
                     verstoesse.append(f"{name}: {m}")
     check("Vertragspaket importiert nur Standardbibliothek und numpy", not verstoesse, "; ".join(verstoesse))
-    check("Vertragsversion 2.0.1 (Abschnitt 9)", V.CONTRACT_VERSION == "2.0.1", V.CONTRACT_VERSION)
+    check("Vertragsversion 2.1.0 (Abschnitt 9)", V.CONTRACT_VERSION == "2.1.0", V.CONTRACT_VERSION)
     check("Versionspruefung: gleiche Major passt, andere nicht",
           V.vertragsversion_passt("2.3.1") and not V.vertragsversion_passt("1.1.0") and not V.vertragsversion_passt(""),
           "")
@@ -160,6 +160,45 @@ def test_stub_provider():
     sf = p.section_forces(CutPlane(np.array([L / 2, 0, 0]), np.array([1.0, 0, 0])), ResultKey("LF1"))
     check("Schnittgroessen bei L/2: Querkraft F, Moment F L/2",
           abs(sf.force[2] + F) < 1e-9 and abs(sf.moment[1] - F * L / 2) < 1e-9, f"{sf.force} {sf.moment}")
+    # 2.1.0: die Wirkung des abgeschnittenen Restes auf das Detail - an der
+    # Ebene mit Normale -x das Negative der Stabkonvention (bis 2.0.1 dasselbe
+    # Vorzeichen: 200 % Abweichung in der Kopplungskontrolle, 27.09.2026)
+    sg = p.section_forces(CutPlane(np.array([L / 2, 0, 0]), np.array([-1.0, 0, 0])), ResultKey("LF1"))
+    check("Normale -x: Kraft und Moment mit umgekehrtem Vorzeichen (Seite der Schnittgroessen, 2.1.0)",
+          abs(sg.force[2] - F) < 1e-9 and abs(sg.moment[1] + F * L / 2) < 1e-9
+          and np.allclose(sg.force, -sf.force) and np.allclose(sg.moment, -sf.moment), f"{sg.force} {sg.moment}")
+
+
+def test_lasten_am_detail():
+    """Abschnitt 6 (2.1.0): Lasten im Detailmodell - optionale Felder mit leerem
+    Standard, SurfaceLoad aus nonlinear.py; der Stub traegt sie im Protokoll
+    und sagt, dass er sie nicht ansetzt (nie still)."""
+    from statik3d_contracts.detail import DetailModelSpec, FcmSettings, GeometrySource, GeometrySourceType
+    from statik3d_contracts.nonlinear import SurfaceLoad, SurfaceSelector
+    from statik3d_contracts.model import Material, ResultKey
+    from statik3d_contracts.coupling import CutPlane
+    from statik3d_contracts import testing as T
+    ohne = DetailModelSpec(id="D1", name="W", geometry=GeometrySource(GeometrySourceType.CSG), material_id="S355",
+                           cut_planes=(CutPlane(np.zeros(3), np.array([1.0, 0, 0])),), settings=FcmSettings(base_cell_size_mm=50.0))
+    check("ohne Angabe: loads leer, body_load None (abwaertskompatibel)", ohne.loads == () and ohne.body_load is None)
+    druck = SurfaceLoad("wasser", SurfaceSelector("D1", named_surface="mantel"), "LF1", pressure=0.5)
+    zug = SurfaceLoad("zug", SurfaceSelector("D1", named_surface="deckel"), "LF1", traction=np.array([0.0, 0.0, 12.0]))
+    mit = DetailModelSpec(id="D1", name="W", geometry=GeometrySource(GeometrySourceType.CSG), material_id="S355",
+                          cut_planes=(CutPlane(np.zeros(3), np.array([1.0, 0, 0])),), settings=FcmSettings(base_cell_size_mm=50.0),
+                          loads=(druck, zug), body_load=np.array([0.0, 0.0, -7.85e-5]))
+    check("zwei Flaechenlasten (Druck 0,5 N/mm2, Traktion) und Eigengewicht 7,85e-5 N/mm3 am Detail",
+          len(mit.loads) == 2 and mit.loads[0].pressure == 0.5 and mit.loads[0].surface.body_id == "D1"
+          and abs(mit.body_load[2] + 7.85e-5) < 1e-20)
+    s = T.StubSolidSolver()
+    disc = s.prepare(mit, Material("S355", "S355", 210_000.0, 0.3))
+    erg = s.solve(disc, T.StubGlobalFieldProvider(), [ResultKey("LF1")])[0]
+    check("Stub: Protokoll nennt 2 Lasten und die Volumenlast",
+          erg.protocol.get("loads") == 2 and erg.protocol.get("body_load") is True, str(erg.protocol)[-60:])
+    check("  und warnt, dass er sie nicht ansetzt - hinter dem Kennzeichen",
+          erg.warnings[0] == T.STUB_KENNZEICHEN and any("nicht angesetzt" in w for w in erg.warnings), str(erg.warnings))
+    erg0 = s.solve(s.prepare(ohne, Material("S355", "S355", 210_000.0, 0.3)), T.StubGlobalFieldProvider(), [ResultKey("LF1")])[0]
+    check("  ohne Lasten keine solche Warnung, loads 0", erg0.protocol.get("loads") == 0
+          and not any("nicht angesetzt" in w for w in erg0.warnings))
 
 
 def test_stub_assembly():
@@ -364,7 +403,8 @@ def test_fe_netz_diskretisierung():
 
 
 def main() -> int:
-    for t in (test_importregeln, test_protokolle, test_stub_solid, test_stub_provider, test_stub_assembly,
+    for t in (test_importregeln, test_protokolle, test_stub_solid, test_stub_provider, test_lasten_am_detail,
+              test_stub_assembly,
               test_registrierung, test_stub_kennzeichnung_und_vorrang, test_einheiten_rundreise,
               test_fe_netz_diskretisierung):
         print(f"\n--- {t.__name__} ---")
