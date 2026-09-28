@@ -257,7 +257,8 @@ class Constraint:
     zug_roh: float = 0.0           # Normalkraft ungekappt (Zug negativ), fuer solver._gehaltene_unter_zug
     lam_t: np.ndarray = field(default_factory=lambda: np.zeros(2))  # Tangentialmultiplikator (2,) N
                                    # in der Ft-Konvention (primal-dual, 28.09.2026)
-    zeile_t: int = -1              # erste der zwei Haftzeilen in C (system_matrizen), -1 ohne
+    zeile_t: int = -1              # erste Haftzeile in C (system_matrizen), -1 ohne
+    zeilen_t: tuple = (-1, -1)     # je Tangentialrichtung die Haftzeile in C, -1 ohne (leere Zeile)
     k_quer: float = 0.0            # Quertangente in Kc beim Gleiten (primal-dual); 0: keine
     quer_dir: Optional[np.ndarray] = None   # Gleitrichtung, mit der k_quer aufgestellt ist
     richtung_start: Optional[np.ndarray] = None   # Gleitrichtung beim Warmstart (zustand_setzen)
@@ -798,6 +799,8 @@ class ContactSystem:
                                               # seit 27.09.2026 die Kraft (_durchdringungskraft, f_tol)
         self.f_tol = 1.0                      # Kraft-Toleranz (Freigabe), wird vom Loeser gesetzt
         self._build()
+        # Tangentialzeilen auf gesperrten FHG nullen (Reibung primal-dual, _primal_dual)
+        self._feste_tangenten_nullen()
 
     # ---- Aufbau ----------------------------------------------------------
     def _auto_k(self, nodes) -> float:
@@ -1413,6 +1416,7 @@ class ContactSystem:
             c.wieder_zu = False
             c.lam_t = np.zeros(2)
             c.zeile_t = -1
+            c.zeilen_t = (-1, -1)
             c.k_quer = 0.0
             c.quer_dir = None
             c.richtung_start = None
@@ -1521,6 +1525,7 @@ class ContactSystem:
             qd = (z.get("quer_dir") or [None] * len(self.cons))[i]
             c.quer_dir = None if qd is None else np.array(qd, float)
             c.zeile_t = -1
+            c.zeilen_t = (-1, -1)
             # Womit der Warmstart begann: die Umkehr eines Knotens gegen diesen
             # Stand heisst, der Zustand war fremd (warmstart_verstoesse)
             c.richtung_start = None if c.slip_dir is None else np.array(c.slip_dir, float)
@@ -1895,14 +1900,38 @@ class ContactSystem:
             # dieses Halts. Am abhebenden Block wechselten die zwei noch
             # gedrueckten Knoten sonst 85 Runden zwischen Haften und Gleiten.
             return False
+        # mindestens eine belegte Tangentialzeile. Ein Lagerknoten mit Reibung
+        # in nur einer Richtung hat eine leere zweite Zeile, und eine Zeile ganz
+        # auf gesperrten Freiheitsgraden ist beim Aufbau genullt worden
+        # (_feste_tangenten_nullen). Bis 28.09.2026 abends fiel ein solcher
+        # Knoten ganz aus der primal-dualen Reibung - am Drehlager 26 Knoten
+        # des Flaechenlagers "Starr uz", die in Phase 2 gegen ihre Richtung
+        # glitten, ohne dass die alte Logik das abbaute: das Residuum stand bei
+        # 2,2e-4 der Kontaktkraft (rund 20 kN Reibkraft in falscher Richtung),
+        # und der Lauf hiess trotzdem "konvergiert".
+        return bool(np.any(np.abs(c.ct) > 1e-12))
+
+    @staticmethod
+    def _belegte_tangenten(c: Constraint) -> list:
+        """Die Tangentialrichtungen (0, 1) mit Eintraegen - nur sie bekommen eine
+        Haftzeile; eine leere Zeile machte das Sattelpunktsystem singulaer."""
+        return [k for k in (0, 1) if bool(np.any(np.abs(c.ct[k]) > 1e-12))]
+
+    def _feste_tangenten_nullen(self):
+        """Tangentialzeilen, die ganz auf gesperrten Freiheitsgraden liegen, auf
+        null setzen: in diese Richtung kann nichts gleiten (ein lineares Lager
+        haelt sie), und eine solche Zeile waere als Haftzeile leer. Einmal nach
+        dem Aufbau; die Freiheitsgrade selbst traegt ohnehin das Lager."""
         fest = self._fest_maske()
-        for k in (0, 1):
-            traeger = np.abs(c.ct[k]) > 1e-12
-            if not traeger.any():
-                return False                   # Haftzeile ohne Eintrag: leer
-            if fest is not None and bool(np.all(fest[c.dofs[traeger]])):
-                return False
-        return True
+        if fest is None:
+            return
+        for c in self.cons:
+            if c.ct is None:
+                continue
+            for k in (0, 1):
+                traeger = np.abs(c.ct[k]) > 1e-12
+                if traeger.any() and bool(np.all(fest[c.dofs[traeger]])):
+                    c.ct[k] = 0.0
 
     def _pd_vorbereiten(self):
         """Einmal je Runde: die Fugen, in denen der Loeser Punkte haelt
@@ -1911,10 +1940,25 @@ class ContactSystem:
                          if c.gehalten or getattr(c, "schub_halt", False)}
 
     def _fest_maske(self):
-        """Gesperrte Freiheitsgrade des Modells (assemble.constrained_dofs),
-        einmal bestimmt; None, wenn das System sie nicht kennt (Stuempfe)."""
+        """Gesperrte Freiheitsgrade des Modells - die linear starren Lager -,
+        einmal bestimmt; None, wenn das Modell sie nicht nennt (Stuempfe).
+        Nicht ueber assemble.constrained_dofs: das baut zur Pruefung der
+        Kontakt-FHG selbst ein Kontaktsystem, und dieses fragte wieder nach
+        der Maske - am 28.09.2026 abends eine Rekursion bis zum Abbruch, 280
+        Aufbauten je Rechnung, test_fugen 53 statt rund 5 Minuten."""
         if hasattr(self, "_fest"):
             return self._fest
+        try:
+            from . import supports as sup
+            fest = np.zeros(int(self.model.ndof), bool)
+            lin, _nl = sup.split(sup.expand(self.model))
+            for e_ in lin:
+                if e_.typ == "rigid":
+                    fest[e_.index] = True
+            self._fest = fest
+        except Exception:                      # noqa: BLE001 - Stumpf ohne Modell
+            self._fest = None
+        return self._fest
         try:
             from . import assemble as asm
             self._fest, _v = asm.constrained_dofs(self.model, self.K)
@@ -1970,8 +2014,9 @@ class ContactSystem:
         ohne Zeile in diesem Schritt die Haftfeder k_t d_t; beim Gleiten die
         angesetzte Reibkraft mu lam_n w/|w| des Zustands."""
         if not c.slip:
-            if lam is not None and c.zeile_t >= 0 and len(lam) > c.zeile_t + 1:
-                return -np.array([lam[c.zeile_t], lam[c.zeile_t + 1]], float)
+            zt = getattr(c, "zeilen_t", (-1, -1))
+            if lam is not None and c.zeile_t >= 0 and max(zt) < len(lam):
+                return -np.array([lam[z] if z >= 0 else 0.0 for z in zt], float)
             return np.asarray(c.kt * dt, float)
         return np.asarray(getattr(c, "lam_t", np.zeros(2)), float)
 
@@ -2014,15 +2059,19 @@ class ContactSystem:
         for i, c in enumerate(self.cons):
             if self._haftzeile(c):
                 c.zeile_t = len(zeilen)
-                for k in (0, 1):
-                    rows.append(np.full(len(c.dofs), c.zeile_t + k))
+                zt = [-1, -1]
+                for k in self._belegte_tangenten(c):
+                    zt[k] = len(zeilen)
+                    rows.append(np.full(len(c.dofs), len(zeilen)))
                     cols.append(c.dofs)
                     vals.append(c.ct[k])
                     b.append(0.0)
                     zeilen.append(i)
                     skala.append(self._c_pd(c))
+                c.zeilen_t = tuple(zt)
             else:
                 c.zeile_t = -1
+                c.zeilen_t = (-1, -1)
         self.c_skala = np.array(skala, float)
         self.D_kopplung = None
         if not zeilen:

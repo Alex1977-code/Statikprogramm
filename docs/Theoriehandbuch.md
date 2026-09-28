@@ -1508,6 +1508,20 @@ in Phase 2 wie der Normalkontakt aus Multiplikatoren bestimmt
   Das System wird damit unsymmetrisch; mit dem Gleichungslöser ama (LDL^T)
   entfällt die Spalte, und die Reibkraft läuft wie vorher eine Runde nach -
   dasselbe Ergebnis (8,3·10⁻⁶ gegen PARDISO).
+* Lagerknoten mit Reibung in nur einer Richtung haben eine leere zweite
+  Tangentialzeile; sie bekommen nur die belegte Haftzeile (eine leere machte
+  das Sattelpunktsystem singulär). Zeilen, die ganz auf gesperrten
+  Freiheitsgraden liegen, werden beim Aufbau genullt. Bis zum 28.09.2026
+  abends fielen solche Knoten ganz aus der primal-dualen Reibung und
+  rechneten mit der alten Logik, die in Phase 2 ein Gleiten gegen die
+  Richtung stehen lässt: am Drehlager 26 Knoten des Flächenlagers
+  „Starr uz (Ausfall bei Zug)“ (Diagnose mit Zerlegung des Residuums je
+  Fuge und Art). Das Residuum blieb bei 2,2·10⁻⁴ der Kontaktkraft stehen,
+  rund 20 kN Reibkraft zeigten in die falsche Richtung, der Lauf hieß
+  trotzdem „konvergiert“, und erst die Warmstart-Prüfung am Laufende setzte
+  sie zurück - die Schlussrunden, die am Drehlager Zeit kosteten
+  (`tests/test_kontakt_exakt`, Reibung in einer Richtung, mit
+  Rücknahmeprobe).
 * Ausgenommen sind Fugen, in denen der Löser Punkte hält (gehalten,
   Schubhalt): ihr Reibzustand ist ein Artefakt des Halts. Ein ganz abhebender
   Block pendelte sonst 85 Runden zwischen Haften und Gleiten statt „hebt ab“

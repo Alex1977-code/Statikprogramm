@@ -418,11 +418,76 @@ def test_mortar_ungleiche_netze():
           f"{sv:.2f} N/mm2")
 
 
+def test_reibung_in_einer_richtung():
+    """Lagerknoten mit Reibung in nur einer Richtung (ux mit mu_ref uz, uy
+    linear gehalten): die Bedingung hat eine leere zweite Tangentialzeile.
+    Bis 28.09.2026 abends fiel ein solcher Knoten ganz aus der Reibung
+    primal-dual und rechnete mit der alten Logik, die in Phase 2 ein Gleiten
+    gegen die Richtung stehen laesst - am Drehlager 26 Knoten des
+    Flaechenlagers, Residuum 2,2e-4 der Kontaktkraft, trotzdem
+    "konvergiert". Jetzt rechnet er primal-dual mit einer Haftzeile."""
+    print("\n--- Reibung in einer Richtung: primal-dual mit einer Haftzeile ---")
+    from statik3d.model import Model, Material
+    from statik3d import mesher
+
+    def rechne(H_anteil, mu=0.3, N=90e3, y_reibung=False):
+        m = Model("eine Richtung")
+        m.add_material(Material.steel("S235"))
+        b = mesher.grid_box(m, "S235", 1.0, 1.0, 0.5, 2, 2, 1)
+        unten = [int(x) for x in b[:, :, 0].ravel()]
+        oben = [int(x) for x in b[:, :, -1].ravel()]
+        for n in unten:
+            if y_reibung:
+                # Reibung auch in y erklaert, y aber linear gehalten: die
+                # y-Zeile liegt ganz auf einem gesperrten FHG und wird genullt
+                m.support(n, [2], uz=dict(failure="zug"), ux=dict(mu=mu, mu_ref=2),
+                          uy=dict(mu=mu, mu_ref=2))
+            else:
+                m.support(n, [2], uz=dict(failure="zug"), ux=dict(mu=mu, mu_ref=2))
+            m.fix(n, [1])
+        for n in oben:
+            m.load_node(n, Fz=-N / len(oben), Fx=H_anteil * mu * N / len(oben))
+        pd = {}
+        alt = contact.ContactSystem.results
+
+        def gemerkt(self):
+            reib = [c for c in self.cons if c.active and c.ct is not None and c.mu > 0]
+            pd["anteil"] = (sum(1 for c in reib if self._primal_dual(c)), len(reib))
+            pd["leer"] = sum(1 for c in reib if len(self._belegte_tangenten(c)) == 1)
+            return alt(self)
+        contact.ContactSystem.results = gemerkt
+        try:
+            res = solver.solve_static(m)
+        finally:
+            contact.ContactSystem.results = alt
+        Fx = float(res.reactions[unten, 0].sum())
+        return res, Fx, pd, mu * N
+    res, Fx, pd, muN = rechne(0.5)
+    # haftend erreicht die Iteration Phase 2 nicht (nichts gleitet) - dort
+    # rechnet ohnehin nichts primal-dual; geprueft wird das Gleichgewicht
+    check("haftend (H = 0,5 mu N): Reaktion in x = -H, jede Reibbedingung mit einer belegten Zeile",
+          res.info.get("contact_converged") and abs(Fx + 0.5 * muN) < 1e-6 * muN
+          and pd["leer"] == pd["anteil"][1] > 0,
+          f"Fx {Fx / 1e3:.3f} kN, eine Zeile {pd['leer']} von {pd['anteil'][1]}")
+    res, Fx, pd, muN = rechne(1.5)
+    Ft = sum(float(c["Ft"]) for c in res.contact)
+    check("gleitend (H = 1,5 mu N): Reibkraft mu N, alle Reibknoten primal-dual (vorher keiner)",
+          res.info.get("contact_converged") and abs(Ft - muN) < 1e-6 * muN
+          and pd["anteil"][0] == pd["anteil"][1] > 0,
+          f"Ft {Ft / 1e3:.3f} kN (mu N {muN / 1e3:.1f}), primal-dual {pd['anteil']}")
+    res, Fx, pd, muN = rechne(1.5, y_reibung=True)
+    Ft = sum(float(c["Ft"]) for c in res.contact)
+    check("Reibung auch in y, y linear gehalten: y-Zeile genullt, gleitend mu N, alle primal-dual",
+          res.info.get("contact_converged") and abs(Ft - muN) < 1e-6 * muN
+          and pd["anteil"][0] == pd["anteil"][1] > 0 and pd["leer"] == pd["anteil"][1],
+          f"Ft {Ft / 1e3:.3f} kN, primal-dual {pd['anteil']}, eine Zeile {pd['leer']}")
+
+
 def main() -> int:
     for t in (test_spalt_null_und_gleichgewicht, test_kippender_block, test_presspassung_exakt,
               test_feder_bleibt_feder, test_lager_und_spaltelement, test_haftfuge_bindung_bleibt,
               test_reibung_primal_dual, test_reibung_mit_symmetrischem_loeser,
-              test_mortar_ungleiche_netze):
+              test_mortar_ungleiche_netze, test_reibung_in_einer_richtung):
         try:
             t()
         except Exception as ex:             # noqa: BLE001

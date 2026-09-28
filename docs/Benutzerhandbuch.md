@@ -3506,8 +3506,11 @@ sind es jetzt (Prüfmatrix K4), und ein ganz gleitendes Bauteil wandert nicht
 mehr seitlich weg. Im Protokoll kann stehen „Kontakt: Gleitrichtungen nach
 60 Runden nicht eingespielt (… in der letzten Runde) - abgebrochen“; das
 zählt wie der Deckel der Nachprüfung, das Ergebnis heißt „nicht
-auskonvergiert“. Bettungen und Kontaktfedern mit eigener Steifigkeit rechnen
-die Reibung wie bisher. Ist unter *Berechnung → Einstellungen* der
+auskonvergiert“. Das gilt auch für Lagerknoten mit Reibung in nur einer
+Richtung (seit dem 28.09.2026 abends; vorher konnte dort die Reibkraft am
+Ende gegen die Bewegung zeigen, ohne dass die Rechnung es meldete).
+Bettungen und Kontaktfedern mit eigener Steifigkeit rechnen die Reibung wie
+bisher. Ist unter *Berechnung → Einstellungen* der
 Gleichungslöser „ama“ gewählt, rechnet die Reibung mit etwas mehr Runden,
 das Ergebnis ist dasselbe.
 
