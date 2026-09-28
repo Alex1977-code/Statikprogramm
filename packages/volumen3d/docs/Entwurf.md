@@ -155,7 +155,7 @@ hat der Anwender bei der Durchsicht von Pull Request 8 am 27.09.2026 bestätigt.
 - **Zellaggregation schon in TP 1** (Vorgabe 8.3, Gegenmaßnahme 1; Befund 27.09.: im
   Patch-Test-Gitter haben 10 von 118 Zellen einen Werkstoffanteil unter 10⁻⁴, drei sogar 0;
   der Fehler wuchs mit α/Anteil auf 1,4 % bei α = 10⁻⁸). Zellen mit Anteil unter der Schwelle
-  (Standard 0,25) bekommen eine wohlgestellte Wurzelzelle (Nachbar mit größtem Anteil, Fläche
+  (Standard 0,4, bis 28.09.2026 abends 0,25; Messung in 4d.4) bekommen eine wohlgestellte Wurzelzelle (Nachbar mit größtem Anteil, Fläche
   vor Kante vor Ecke, Ketten aufgelöst); Moden, die keine wohlgestellte Zelle trägt, werden an
   die Fortsetzung des Wurzelpolynoms gebunden (Modalprojektion, `M = V_c⁻¹ V_R`, lineare
   Felder exakt). Zwangsmatrix C, gelöst wird CᵀKC. Prinzip der aggregierten finiten Elemente
@@ -746,6 +746,15 @@ Plan: `docs/plaene/2026-09-28-tp4-mehrgitter.md`. Messlatte aus Teilprojekt 3: J
 - **Automatische Wahl:** Schlussmessung (freie Maschine, Commit d669b9f, 23 Fälle Block und Kirsch)
   bestätigt die Schwelle 200 000 Freiheitsgrade (Theorie 11.10); Kirsch jetzt 23–43 Iterationen
   (Ausreißer h 8, Versatz 0,3: 114).
+- **Zweite Sicht (Gutachten 28.09.2026 abends):** Toleranz des Mehrgitters 10⁻¹² (gemessen: Verschiebungen
+  bei 10⁻¹⁰ bis 1,1·10⁻⁷ daneben, bei 10⁻¹² bis 1,5·10⁻⁹); Nullraum auch mit Schnittebenen (Sattelpunkt
+  filtert gesperrte Bewegungen, Bestätigung A q ≈ 0 und B q ≈ 0), 16 statt 6 Proben; GPU-Probe mit
+  RawModule, Rückfall auf direkt bei jedem GPU-Fehler in `prepare` und `solve`, Aufräumen vorher;
+  NaN-Abbruch in PCG und Blockinversion; Meldung „Last nicht im Gleichgewicht“; `"auto"` nur p = 3;
+  Speicherschätzung nach p. Tests: `test_nullkandidaten_mehrdimensional`, `test_p1_und_gleichgewicht`,
+  `test_pcg_nan`, Rückfall und Verschiebungen in `test_loeserwahl`.
+- **Aggregationsschwelle 0,4 statt 0,25:** Kirsch h 8, Versatz 0,3 von 109 auf 40 Iterationen (Kondition
+  559 → 42), h 10 fünf Lagen 22–31 statt 22–36, K_tg gleich (Theorie 11.10, Plan TP 4 Aufgabe 3).
 - Fünf Schnittlagen Kirsch h 10 p 3 verfeinert (128 724 bis 199 095 freie Koordinaten), GPU FP64:
   81 / 125 / 112 / 129 / 59 Iterationen, GPU-PCG 8,6 bis 21 s, K_t identisch mit dem Direktlöser;
   Direktlöser (Lösen nach der Faktorisierung) 7 bis 25 s. Einrichten auf der CPU: Zelldaten 17–24 s,

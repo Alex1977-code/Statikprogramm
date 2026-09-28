@@ -207,15 +207,36 @@ def _gpu_speicher_mb(n_zellen: int, n_cut: int, p: int, n_frei: int) -> float:
     Formel (Bloecke 1,2 m3, ohne Auszug und Arbeitsfelder) lag bis 50 % darunter; mit ihr lief die Karte bei
     Kirsch h 8 ueber. Ohne freie Koordinaten (estimate vor dem Aufbau) gilt n_frei = n_dof als obere Schranke."""
     m3 = 3 * (p + 1) ** 3
-    grob = (p ** 3 / (p + 1) ** 3) ** 2 if p > 1 else 0.0
     k_cut = 8.0 * n_cut * m3 ** 2
-    glaetter = 8.0 * n_zellen * (1.1 * m3) ** 2 * (1.0 + grob)
-    matrix = 12.0 * 360.0 * n_frei * 1.16
+    # Glaetterbloecke auf den Ebenen p, p-1, ..., 2 (die Ebene 1 wird direkt geloest)
+    glaetter = sum(8.0 * n_zellen * (1.1 * 3 * (q + 1) ** 3) ** 2 for q in range(2, p + 1))
+    # Eintraege je Zeile der reduzierten Matrix: p 3 gemessen (310 bis 352 an acht Faellen, angesetzt 360);
+    # p 1, 2, 4 aus der Kopplung im gleichmaessigen Gitter (81, 192, 648; Gutachten 28.09.2026), ungemessen
+    je_zeile = {1: 81.0, 2: 192.0, 3: 360.0, 4: 648.0}.get(p, 648.0 * ((p + 1) / 5.0) ** 3)
+    matrix = 12.0 * je_zeile * n_frei * 1.16
     return (k_cut + glaetter + matrix) / 1e6 + 700.0
 
 
 # Reserve auf die Schaetzung gegen den freien GPU-Speicher (andere Anwendungen, Fragmentierung)
 _GPU_RESERVE = 1.2
+
+# Polynomgrade, fuer die 'auto' das Mehrgitter waehlen darf: nur gemessene. Bei p 1 gibt es nur eine Ebene,
+# das "Mehrgitter" waere die volle Zerlegung plus PCG und damit strikt langsamer als direkt; p 2 und p 4 sind
+# fuer Schwelle und Speicher nicht gemessen (Gutachten 28.09.2026)
+_AUTO_GRADE = (3,)
+
+
+def _gpu_aufraeumen(pr: FcmProblem) -> None:
+    """Felder eines gescheiterten GPU-Versuchs freigeben, bevor der Direktloeser faktorisiert."""
+    import gc
+    for name in ("_zelldaten", "_operator", "_mehrgitter", "_gpu"):
+        setattr(pr, name, None)
+    gc.collect()
+    try:
+        import cupy  # type: ignore[import-untyped, import-not-found, unused-ignore]  # CI ohne cupy
+        cupy.get_default_memory_pool().free_all_blocks()
+    except Exception:                                          # pragma: no cover - ohne cupy
+        pass
 
 
 def _loeserwahl(backend: str, n_zellen: int, n_cut: int, p: int, n_dof: int,
@@ -235,9 +256,10 @@ def _loeserwahl(backend: str, n_zellen: int, n_cut: int, p: int, n_dof: int,
             return "direkt", "cpu", "GPU-Speicher zu klein", [f"backend 'gpu': geschaetzt {bedarf:.0f} MB GPU-Speicher, frei "
                                                               f"{frei:.0f} MB - Rueckfall auf den Direktloeser der CPU"]
         return "mehrgitter", "gpu", f"backend 'gpu', {bedarf:.0f} von {frei:.0f} MB", []
-    if frei > 0 and n_dof >= _AUTO_MIN_DOFS and _GPU_RESERVE * bedarf <= frei:
+    if frei > 0 and p in _AUTO_GRADE and n_dof >= _AUTO_MIN_DOFS and _GPU_RESERVE * bedarf <= frei:
         return "mehrgitter", "gpu", f"auto: {n_dof} Freiheitsgrade >= {_AUTO_MIN_DOFS}, GPU {bedarf:.0f} von {frei:.0f} MB", []
     grund = ("keine GPU" if frei <= 0 else
+             f"p {p}: Umschaltschwelle nur fuer p {', '.join(str(q) for q in _AUTO_GRADE)} gemessen" if p not in _AUTO_GRADE else
              f"{n_dof} Freiheitsgrade < {_AUTO_MIN_DOFS}" if n_dof < _AUTO_MIN_DOFS else
              f"GPU-Speicher: geschaetzt {bedarf:.0f} MB, frei {frei:.0f} MB")
     return "direkt", "cpu", f"auto: {grund}", []
@@ -359,20 +381,33 @@ class FcmSolver:
                                                        int(pr.zwaenge.C.shape[1]))
         pr.loeser, pr.backend = loeser, geraet
         # Vertragstoleranz gilt fuer das relative Residuum; fuer Verschiebungen auf 1e-6 gegen den
-        # Direktloeser (Vorgabe 9) braucht das Mehrgitter 1e-10 (Kragarm p 3: bei 1e-10 1e-8, test_mehrgitter)
-        pr.toleranz = min(float(s.tolerance), 1e-10)
+        # Direktloeser (Vorgabe 9) rechnet das Mehrgitter bis 1e-12. Gemessen nach der Aggregationskorrektur
+        # (Kragarm-Ausschnitt h 25/16 ueber diese Schicht, Block h 25/20, 28.09.2026): bei 1e-10 weichen die
+        # Verschiebungen um 1,3e-10 bis 1,1e-7 ab, bei 1e-12 um 1,4e-12 bis 1,5e-9, das Loesen dauert 15 bis
+        # 25 % laenger. Vorher (Wurzeln bis 38 Halbweiten) lagen sie bei 1e-10 bis 4,3e-6 daneben; der
+        # Kommentar hier behauptete 1e-8 (Gutachten 28.09.2026). 1e-12 haelt den Abstand zur Vorgabe >= 600.
+        pr.toleranz = min(float(s.tolerance), 1e-12)
         melden("Steifigkeit assemblieren", 0.3)
+        gpu_fehler = ""
         try:
             pr.aufbauen(lambda t, a: melden(t, 0.3 + 0.6 * a))
-        except MemoryError as ex:                               # auch cupy OutOfMemoryError
+        except Exception as ex:                                 # Speicher, NVRTC, cuBLAS, Treiber, Bloecke
             if geraet != "gpu":
+                if isinstance(ex, ValueError):
+                    raise SolverError(str(ex)) from ex
                 raise
-            warnungen.append(f"GPU-Speicher reichte nicht ({ex}); Rueckfall auf den Direktloeser der CPU")
-            loeser, geraet, grund = "direkt", "cpu", grund + " -> Rueckfall CPU (Speicher)"
+            gpu_fehler = f"{type(ex).__name__}: {ex}"
+        if gpu_fehler:
+            # ausserhalb des except-Blocks: der Traceback hielt sonst die Felder des gescheiterten Versuchs
+            # (Ebenenmatrizen, Grobgitterzerlegung, GPU-Bloecke) waehrend der Faktorisierung fest
+            _gpu_aufraeumen(pr)
+            warnungen.append(f"GPU-Mehrgitter fehlgeschlagen ({gpu_fehler}); Rueckfall auf den Direktloeser der CPU")
+            loeser, geraet, grund = "direkt", "cpu", grund + " -> Rueckfall CPU"
             pr.loeser, pr.backend = loeser, geraet
-            pr.aufbauen(lambda t, a: melden(t, 0.3 + 0.6 * a))
-        except ValueError as ex:
-            raise SolverError(str(ex)) from ex
+            try:
+                pr.aufbauen(lambda t, a: melden(t, 0.3 + 0.6 * a))
+            except ValueError as ex:
+                raise SolverError(str(ex)) from ex
         melden("Diskretisierung bereit", 1.0)
         disc = FcmDiskretisierung(spec, pr, namen, lasten, lasten_protokoll)
         disc.loeserwahl = {"loeser": pr.protokoll.get("loeser", loeser), "geraet": geraet, "begruendung": grund,
@@ -408,10 +443,28 @@ class FcmSolver:
             raise SolverCancelled("abgebrochen vor dem Loesen")
         # Flaechenlasten nur fuer Keys mit passender Lastfall-ID (Vertrag 2.1.0)
         zusatz = [disc.lasten.get(key.load_case_id) for key in keys]
+        gpu_fehler = ""
         try:
             U = pr.loesen(vorgaben, zusatzlasten=zusatz)
-        except ValueError as ex:
-            raise SolverError(str(ex)) from ex
+        except Exception as ex:
+            if isinstance(ex, ValueError) and (pr.backend != "gpu" or str(ex).startswith("Last nicht im Gleichgewicht")):
+                raise SolverError(str(ex)) from ex
+            if pr.backend != "gpu":
+                raise
+            gpu_fehler = f"{type(ex).__name__}: {ex}"
+        if gpu_fehler:
+            # GPU-Fehler im PCG (Speicher, Treiber, NaN, Stagnation): direkt neu aufbauen und loesen
+            _gpu_aufraeumen(pr)
+            pr.loeser, pr.backend = "direkt", "cpu"
+            disc.loeserwahl.setdefault("warnungen", []).append(
+                f"GPU-Mehrgitter beim Loesen fehlgeschlagen ({gpu_fehler}); Rueckfall auf den Direktloeser der CPU")
+            disc.loeserwahl.update({"loeser": "direkt", "geraet": "cpu",
+                                    "begruendung": str(disc.loeserwahl.get("begruendung", "")) + " -> Rueckfall CPU beim Loesen"})
+            try:
+                pr.aufbauen()
+                U = pr.loesen(vorgaben, zusatzlasten=zusatz)
+            except ValueError as ex:
+                raise SolverError(str(ex)) from ex
         melden("Gleichungssystem geloest", 0.7)
         V, T = disc.oberflaeche()
         # Auswertepunkte minimal in den Werkstoff ruecken, damit die Punktsuche eine aktive Zelle findet

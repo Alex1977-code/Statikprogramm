@@ -56,13 +56,30 @@ void einsammeln(const double* __restrict__ puffer, const long long* __restrict__
 """
 
 
+_PROBE: bool | None = None
+
+
 def verfuegbar() -> bool:
+    """GPU nutzbar: Geraet da und eine Kleinrechnung samt RawModule-Kompilat laeuft. Nur die Geraetezahl
+    reichte nicht - ohne NVRTC (gepackte exe) brach jedes grosse Modell unter 'auto' mit CompileException ab,
+    statt auf die CPU zurueckzufallen (Gutachten 28.09.2026). Das Ergebnis wird je Prozess gemerkt."""
+    global _PROBE
+    if _PROBE is not None:
+        return _PROBE
     if not _CUPY:
+        _PROBE = False
         return False
     try:
-        return int(cupy.cuda.runtime.getDeviceCount()) > 0
-    except Exception:                                          # pragma: no cover - Treiberfehler
-        return False
+        if int(cupy.cuda.runtime.getDeviceCount()) <= 0:
+            _PROBE = False
+            return False
+        a = cupy.arange(4, dtype=cupy.float64)
+        kern = cupy.RawModule(code='extern "C" __global__ void probe(double* a) { a[threadIdx.x] *= 2.0; }').get_function("probe")
+        kern((1,), (4,), (a,))
+        _PROBE = abs(float((a * 1.0).sum()) - 12.0) < 1e-12
+    except Exception:                                          # pragma: no cover - Treiber-, NVRTC-, cuBLAS-Fehler
+        _PROBE = False
+    return _PROBE
 
 
 class OperatorGpu:

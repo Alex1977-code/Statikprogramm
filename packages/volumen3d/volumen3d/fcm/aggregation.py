@@ -61,7 +61,7 @@ def _chebyshev_lobatto_3d(p: int) -> np.ndarray:
 
 
 class Zellaggregation:
-    def __init__(self, gitter, quadratur, schwelle: float = 0.25) -> None:
+    def __init__(self, gitter, quadratur, schwelle: float = 0.4) -> None:
         self.gitter = gitter
         self.schwelle = float(schwelle)
         self.anteil = werkstoffanteile(gitter, quadratur)

@@ -153,6 +153,108 @@ def test_nullkandidaten():
           f"groesster Singulaerwert {fest_max:.1e} (Schwelle 0,1)")
 
 
+def test_nullkandidaten_mehrdimensional():
+    """Mehrere freie Bewegungen und Mittelwertzwaenge (Gutachten 28.09.2026).
+
+    k = 6 getrennte freie Laplace-Ketten (je 3000 Unbekannte, Nullraum: je eine Konstante) - so viele
+    Nullvektoren wie ein ganz ungelagerter Koerper. Die Singulaerwerte der Nullvektoren sind die einer
+    k x m-Gaussmatrix; mit den frueheren m = 6 Proben lag der kleinste fuer k = 6 mit rund 20 %
+    Wahrscheinlichkeit unter der Schwelle 0,1. Erwartet mit _NULL_PROBEN: in allen zehn Zufallsstaenden
+    genau sechs Kandidaten, die den Nullraum aufspannen (Hauptwinkel-Cosinus > 1 - 1e-8). Zum Vergleich wird
+    gezaehlt, wie oft sechs Proben einen Nullvektor verloren haetten.
+    Sattelpunkt: zwei freie Ketten, eine Mittelwertzeile sperrt die Konstante der ersten; der Loeser des
+    Sattelpunkts filtert sie heraus, uebrig bleibt genau die Konstante der zweiten Kette."""
+    import scipy.sparse as sp
+    import scipy.sparse.linalg as spla
+    from volumen3d.fcm.mehrgitter import _NULL_PROBEN, grob_nullkandidaten
+
+    def kette(n):
+        haupt = np.full(n, 2.0); haupt[[0, -1]] = 1.0
+        return sp.diags([-np.ones(n - 1), haupt, -np.ones(n - 1)], [-1, 0, 1])
+
+    k, n = 6, 3000
+    A = sp.block_diag([kette(n)] * k, format="csc")
+    N = np.zeros((k * n, k))
+    for i in range(k):
+        N[i * n:(i + 1) * n, i] = 1.0 / np.sqrt(n)
+    delta = 1e-10 * float(A.diagonal().max())
+    lu = spla.splu((A + delta * sp.eye(k * n, format="csc")).tocsc())
+    ok, verloren_6, cos_min = True, 0, 1.0
+    for seed in range(10):
+        rng = np.random.default_rng(seed)
+        for m, zaehlen in ((_NULL_PROBEN, False), (6, True)):
+            K, _ = grob_nullkandidaten(lambda R: lu.solve(A @ R), rng.standard_normal((k * n, m)))
+            if zaehlen:
+                verloren_6 += int(K.shape[1] < k)
+                continue
+            if K.shape[1] != k:
+                ok = False
+                continue
+            c = float(np.linalg.svd(N.T @ K, compute_uv=False).min())
+            cos_min = min(cos_min, c)
+            ok &= c > 1 - 1e-8
+    check(f"sechs freie Bewegungen mit {_NULL_PROBEN} Proben in allen zehn Staenden erkannt (mit 6 Proben in {verloren_6} von 10 "
+          f"Staenden ein Nullvektor verloren)", ok, f"kleinster Hauptwinkel-Cosinus {cos_min:.10f}")
+    # Sattelpunkt mit Mittelwertzwang auf der ersten Kette
+    n2 = 2000
+    A2 = sp.block_diag([kette(n2), kette(n2)], format="csr")
+    B = np.zeros((1, 2 * n2)); B[0, :n2] = 1.0 / n2
+    d2 = 1e-10 * float(A2.diagonal().max())
+    S = sp.bmat([[A2 + d2 * sp.eye(2 * n2), sp.csr_matrix(B).T], [sp.csr_matrix(B), None]], format="csc")
+    lu2 = spla.splu(S)
+    K2, s2 = grob_nullkandidaten(lambda R: lu2.solve(np.concatenate([A2 @ R, B @ R], axis=0))[:2 * n2],
+                                 np.random.default_rng(3).standard_normal((2 * n2, _NULL_PROBEN)))
+    e2 = np.zeros(2 * n2); e2[n2:] = 1.0 / np.sqrt(n2)
+    c2 = abs(float(e2 @ K2[:, 0])) if K2.shape[1] == 1 else 0.0
+    check("Sattelpunkt: die von B gesperrte Bewegung faellt heraus, die freie bleibt (genau ein Kandidat)",
+          K2.shape[1] == 1 and c2 > 1 - 1e-8, f"{K2.shape[1]} Kandidat(en), Cosinus {c2:.10f}, Singulaerwerte {np.round(s2[:3], 4).tolist()}")
+
+
+def test_p1_und_gleichgewicht():
+    """p = 1 (nur eine Ebene, das Grobgitter ist der ganze Operator) und eine Last in Richtung der freien
+    Bewegung (Gutachten 28.09.2026). Erwartet: bei p = 1 ist der V-Zyklus die Grobgitterloesung selbst, bis auf
+    die Verschiebung delta die exakte Inverse; der PCG konvergiert in hoechstens fuenf Iterationen (gemessen 4)
+    und trifft den Direktloeser auf 1e-8; eine z-Last auf die Kirsch-Scheibe (u_z frei) wird sofort als
+    Last nicht im Gleichgewicht gemeldet, statt 1000 Iterationen bis 'nicht konvergiert' zu laufen."""
+    from volumen3d.fcm.mehrgitter import PMehrgitter
+    from volumen3d.linalg.pcg import pcg
+    from volumen3d.tests.test_operator import _kirsch
+    from volumen3d.tests.test_kirsch import L
+    pr = _kirsch(p=1)
+    pr.aufbauen()
+    n = pr.gitter.n_dof
+    C = pr.zwaenge.C
+    mg = PMehrgitter(pr)
+    b = np.asarray(C.T @ pr.rechte_seite({})[:n]).ravel()
+    erg = pcg(lambda x: mg.ebenen[0].A(x), b, mg.anwenden, tol=1e-12, max_iter=50)
+    U = np.asarray(C @ erg.x).ravel()
+    U_ref = pr.loesen({})[:, 0]
+    # Spannungen statt Verschiebungen: u_z ist frei, der Direktloeser liefert dafuer einen beliebigen Anteil,
+    # das Mehrgitter projiziert ihn heraus
+    rng = np.random.default_rng(6)
+    P = rng.uniform([0, 0, 0], [400, 200, 10], (4000, 3))
+    P = P[pr.geometrie.abstand(P) < -0.5][:300]
+    s_mg, s_ref = pr.auswertung(U).spannung(P), pr.auswertung(U_ref).spannung(P)
+    f = np.abs(s_mg - s_ref).max() / np.abs(s_ref).max()
+    check("p = 1: eine Ebene, PCG in <= 5 Iterationen, Spannungen wie direkt (< 1e-8)",
+          len(mg.ebenen) == 1 and erg.konvergiert and erg.iterationen <= 5 and f < 1e-8,
+          f"Ebenen {len(mg.ebenen)}, Iterationen {erg.iterationen}, Abweichung {f:.1e}, Nullraum {mg.statistik['nullraum_dim']}")
+    pr2 = _kirsch(p=2, verfeinert=True)
+    stirn = pr2.oberflaeche.auswahl((pr2.oberflaeche.name.astype(str) == "platte") & (np.abs(pr2.oberflaeche.punkte[:, 0] - L / 2) < 1e-6))
+    pr2.traktion(None, np.array([0.0, 0.0, 1.0]), quadratur=stirn)
+    pr2.loeser = "mehrgitter"
+    pr2.aufbauen()
+    t = time.perf_counter()
+    try:
+        pr2.loesen({})
+        meldung = ""
+    except ValueError as ex:
+        meldung = str(ex)
+    dt = time.perf_counter() - t
+    check("z-Last bei freier z-Bewegung: sofort 'Last nicht im Gleichgewicht' statt Stagnation",
+          meldung.startswith("Last nicht im Gleichgewicht") and dt < 30.0, f"{meldung!r}, {dt:.1f} s")
+
+
 def test_symmetrie():
     """Der V-Zyklus als CG-Vorkonditionierer muss symmetrisch und positiv definit sein (Gutachten 28.09.2026:
     bisher nur ueber die Iterationszahlen belegt)."""
@@ -278,4 +380,4 @@ def test_kern():
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_ebenen, test_nullkandidaten, test_nullraum, test_symmetrie, test_problem_mehrgitter, test_pcg_mehrgitter]))
+    sys.exit(lauf([test_ebenen, test_nullkandidaten, test_nullkandidaten_mehrdimensional, test_p1_und_gleichgewicht, test_nullraum, test_symmetrie, test_problem_mehrgitter, test_pcg_mehrgitter]))

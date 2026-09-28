@@ -332,6 +332,7 @@ def test_loeserwahl():
     e_c, e_g = erg["cpu"][2], erg["gpu"][2]
     gpu_da = api._gpu_frei_mb() > 0
     f_s = np.abs(e_g.stress - e_c.stress).max() / np.abs(e_c.stress).max()
+    f_u = np.abs(e_g.displacement - e_c.displacement).max() / np.abs(e_c.displacement).max()
     m_c = np.concatenate([pl["multipliers"] for pl in e_c.coupling_check["planes"]])
     m_g = np.concatenate([pl["multipliers"] for pl in e_g.coupling_check["planes"]])
     f_m = np.abs(m_g - m_c).max() / max(np.abs(m_c).max(), 1.0)
@@ -340,12 +341,63 @@ def test_loeserwahl():
         ok_g = wahl_g["geraet"] == "gpu" and "mehrgitter" in erg["gpu"][1].summary()["solver_path"]
     else:
         ok_g = wahl_g["geraet"] == "cpu" and any("Rueckfall" in w for w in e_g.warnings)
-    check(f"backend 'gpu' ({'GPU vorhanden' if gpu_da else 'ohne GPU: Rueckfall'}): Spannungen (< 1e-6) und Multiplikatoren (< 1e-6) "
-          f"wie 'cpu'; 'auto' waehlt beim kleinen Modell direkt; estimate nennt den Weg ({erg['auto'][0]['solver_path']}, "
+    # Verschiebungen mit: Vorgabe 9 verlangt 1e-6 gegen den Direktloeser, und mit der frueheren Toleranz
+    # 1e-10 lagen sie in den Mehrgitter-Tests bis 4,3e-6 daneben (Gutachten 28.09.2026)
+    check(f"backend 'gpu' ({'GPU vorhanden' if gpu_da else 'ohne GPU: Rueckfall'}): Verschiebungen, Spannungen und Multiplikatoren "
+          f"(< 1e-6) wie 'cpu'; 'auto' waehlt beim kleinen Modell direkt; estimate nennt den Weg ({erg['auto'][0]['solver_path']}, "
           f"{erg['auto'][0]['choice']})",
-          ok_g and f_s < 1e-6 and f_m < 1e-6 and erg["auto"][2].protocol["solver_choice"]["loeser"] in ("pardiso", "superlu")
+          ok_g and f_u < 1e-6 and f_s < 1e-6 and f_m < 1e-6 and erg["auto"][2].protocol["solver_choice"]["loeser"] in ("pardiso", "superlu")
           and erg["auto"][0]["solver_path"] == "direkt",
-          f"Spannungen {f_s:.1e}, Multiplikatoren {f_m:.1e}, Wahl gpu {wahl_g}")
+          f"Verschiebungen {f_u:.1e}, Spannungen {f_s:.1e}, Multiplikatoren {f_m:.1e}, Wahl gpu {wahl_g}")
+    # 'auto' nur fuer gemessene Grade; Speicherschaetzung waechst mit p
+    alt = api._gpu_frei_mb
+    try:
+        api._gpu_frei_mb = lambda: 1e9
+        wahl_p = {p: api._loeserwahl("auto", 2000, 1500, p, api._AUTO_MIN_DOFS + 1)[0] for p in (1, 2, 3, 4)}
+    finally:
+        api._gpu_frei_mb = alt
+    bedarf = [api._gpu_speicher_mb(2000, 1500, p, 300_000) for p in (1, 2, 3, 4)]
+    check("'auto': Mehrgitter nur bei p 3 (gemessen), sonst direkt; Speicherschaetzung waechst mit p",
+          wahl_p == {1: "direkt", 2: "direkt", 3: "mehrgitter", 4: "direkt"} and all(a < b for a, b in zip(bedarf, bedarf[1:])),
+          f"{wahl_p}, Schaetzung {[round(b) for b in bedarf]} MB")
+    # Rueckfall beim Aufbau: jeder Fehler des GPU-Wegs (hier erzwungen) fuehrt auf den Direktloeser
+    from volumen3d.fcm import mehrgitter as mg_modul
+    alt_wahl, alt_init = api._loeserwahl, mg_modul.PMehrgitter.__init__
+
+    def kaputt(self, *a, **k):
+        raise RuntimeError("Probe: GPU-Kompilat fehlt")
+
+    try:
+        api._loeserwahl = lambda *a, **k: ("mehrgitter", "gpu", "Probe", [])
+        mg_modul.PMehrgitter.__init__ = kaputt
+        disc_r = s.prepare(spec, mat, progress=lambda t, a: None)
+    finally:
+        api._loeserwahl, mg_modul.PMehrgitter.__init__ = alt_wahl, alt_init
+    e_r = s.solve(disc_r, prov, [ResultKey("LF1")], progress=lambda t, a: None)[0]
+    f_r = np.abs(e_r.stress - e_c.stress).max() / np.abs(e_c.stress).max()
+    check("GPU-Fehler beim Aufbau: Rueckfall auf den Direktloeser mit Warnung, Ergebnis wie 'cpu'",
+          disc_r.loeserwahl["geraet"] == "cpu" and disc_r.problem._zelldaten is None and f_r < 1e-12
+          and any("Rueckfall" in w for w in e_r.warnings), f"{disc_r.loeserwahl}, Abweichung {f_r:.1e}")
+    # Rueckfall beim Loesen: der GPU-Weg scheitert im PCG, solve baut direkt neu auf
+    disc_l = s.prepare(spec, mat, progress=lambda t, a: None)
+    pr_l = disc_l.problem
+    pr_l.backend = "gpu"
+    loesen_alt = type(pr_l).loesen
+
+    def loesen_probe(self, *a, **k):
+        if self.backend == "gpu":
+            raise RuntimeError("Probe: CUDA-Fehler im PCG")
+        return loesen_alt(self, *a, **k)
+
+    try:
+        type(pr_l).loesen = loesen_probe
+        e_l = s.solve(disc_l, prov, [ResultKey("LF1")], progress=lambda t, a: None)[0]
+    finally:
+        type(pr_l).loesen = loesen_alt
+    f_l = np.abs(e_l.stress - e_c.stress).max() / np.abs(e_c.stress).max()
+    check("GPU-Fehler beim Loesen: Rueckfall auf den Direktloeser mit Warnung, Ergebnis wie 'cpu'",
+          pr_l.backend == "cpu" and f_l < 1e-12 and any("beim Loesen" in w for w in e_l.warnings),
+          f"Abweichung {f_l:.1e}, Warnungen {e_l.warnings}")
 
 
 def test_hybrid_platzhalter():

@@ -241,8 +241,9 @@ def test_problem_gpu():
 
 def test_gpu_speicher():
     """Die Speicherschaetzung der Vertragsschicht deckt die gemessene Spitze beim Einrichten und liegt hoechstens
-    30 % darueber; nach dem Einrichten gibt der Pool die Zwischenbloecke zurueck (was bleibt, ist Fragmentierung
-    teilbelegter Speicherstuecke: gemessen 212 MB bei 1385 MB Spitze, ohne Freigabe 806 MB) - Schranke 1/4 der Spitze.
+    30 % darueber; nach dem Einrichten hat das Mehrgitter alles Freigebbare zurueckgegeben: ein weiteres
+    free_all_blocks() gibt nichts mehr frei (was bleibt, ist Fragmentierung teilbelegter Speicherstuecke, gemessen
+    212 bis 343 MB bei 1,3 bis 1,4 GB Spitze; ohne Freigabe hielt der Pool 806 MB).
 
     Befund 28.09.2026: die alte Schaetzung lag bis 50 % unter der Spitze (Kirsch h 8: 4,7 gegen 7,3 GB), weil
     die ganze Groessengruppe auf einmal invertiert wurde und Auszug und Arbeitsfelder fehlten; mehrere Details
@@ -271,9 +272,12 @@ def test_gpu_speicher():
         mg = PMehrgitter(pr, geraet="gpu")
         spitze = (mg.statistik["gpu_spitze_mb"] * 1e6 - vorher) / 1e6
         rest = (pool.total_bytes() - pool.used_bytes()) / 1e6
+        pool.free_all_blocks()
+        rest_danach = (pool.total_bytes() - pool.used_bytes()) / 1e6
         check(f"Kirsch h {h} Versatz {vers}: Schaetzung {schaetzung:.0f} MB >= Spitze {spitze:.0f} MB und <= 1,3 x Spitze; "
-              f"danach Zwischenbloecke unter 1/4 der Spitze", spitze <= schaetzung <= 1.3 * spitze and rest < 0.25 * spitze,
-              f"Verhaeltnis {schaetzung / spitze:.2f}, belegt {mg.statistik['gpu_belegt_mb']:.0f} MB, zwischengespeichert {rest:.1f} MB")
+              f"danach nichts mehr freizugeben", spitze <= schaetzung <= 1.3 * spitze and rest - rest_danach < 1.0,
+              f"Verhaeltnis {schaetzung / spitze:.2f}, belegt {mg.statistik['gpu_belegt_mb']:.0f} MB, zwischengespeichert {rest:.1f} MB, "
+              f"nach weiterer Freigabe {rest_danach:.1f} MB")
         del mg, pr
         pool.free_all_blocks()
 

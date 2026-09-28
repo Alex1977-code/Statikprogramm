@@ -10589,7 +10589,7 @@ Patch-Test-Gitter (Quader durch zwei schräge Halbräume, 113 von 118 Zellen ges
 mit Werkstoffanteil unter 10⁻⁴, drei mit 0. Der Fehler der FCM-Lösung skaliert mit α/Anteil:
 Spannung 1,4·10⁻² bei α = 10⁻⁸, 1,4·10⁻⁴ bei 10⁻¹⁰. Abhilfe nach Vorgabe 8.3 (Zellaggregation,
 Prinzip der aggregierten finiten Elemente, Badia/Verdugo/Martín 2018): Zellen mit Anteil unter
-0,25 bekommen eine wohlgestellte Wurzelzelle (Nachbar mit größtem Anteil, Fläche vor Kante vor
+der Schwelle (bis 28.09.2026 abends 0,25, seither 0,4, siehe 11.10) bekommen eine wohlgestellte Wurzelzelle (Nachbar mit größtem Anteil, Fläche vor Kante vor
 Ecke, Ketten aufgelöst); Moden, die keine wohlgestellte Zelle trägt, werden an die Fortsetzung
 des Wurzelpolynoms gebunden: `M = V_c⁻¹ V_R` (Modalprojektion an Tensor-Chebyshev-Lobatto-Punkten,
 gleiche Zellgröße). Gelöst wird `CᵀKC`. Zwei weitere Befunde zwangen α aus dem Verfahren:
@@ -10947,7 +10947,8 @@ Residuum zurückwirkte; weder eine schärfere λ_max-Schätzung (60 Potenzschrit
 darum am Grobgitter per zweifacher inverser Iteration aus sechs Zufallsproben bestimmt, auf die
 feinste Ebene injiziert, dort am Operator bestätigt (‖A n‖ < 10⁻⁶ des Bezugs; ein nur fast
 singulärer echter Modus darf nicht wegfallen) und vor und nach dem V-Zyklus symmetrisch
-herausprojiziert (z = Π M Π r). Damit: 81 Iterationen, reproduzierbar, das Residuum fällt
+herausprojiziert (z = Π M Π r). Damit: 81 Iterationen, in der Iterationszahl reproduzierbar (die GPU
+summiert Blockbeiträge mit atomaren Additionen, die Zahlen selbst sind nicht bitgleich), das Residuum fällt
 gleichmäßig. Entschieden wird über die Singulärwerte des Probenblocks nach den zwei Schritten: ein
 Nullvektor n bleibt dabei unverändert stehen (R₂ ≈ n nᵀX, Singulärwert ≈ √χ²₆, unter 0,1 mit
 Wahrscheinlichkeit 2·10⁻⁸), jeder andere Modus schrumpft um (δ/λ)². Gemessen am Kirsch-Modell p 3,
@@ -11034,6 +11035,50 @@ Freiheitsgrade bei p 3); darüber rechnet `"auto"` wieder direkt.
 `"gpu"` erzwingt das Mehrgitter und fällt ohne GPU oder bei zu wenig Speicher mit Warnung auf den
 Direktlöser zurück (Vorgabe 9), `"cpu"` rechnet immer direkt; das Mehrgitter auf der CPU ist in allen
 Messungen langsamer als der Direktlöser und wird nicht gewählt. Die Vertragstoleranz (relatives
-Residuum) wird für das Mehrgitter auf 10⁻¹⁰ geschärft, damit die Verschiebungen den Direktlöser auf
-10⁻⁶ treffen (Vorgabe 9); die Spannungen stimmen in allen 23 Fällen auf die angegebenen Stellen überein.
-Protokoll und `summary()` nennen den gewählten Weg und die Begründung.
+Residuum) wird für das Mehrgitter auf 10⁻¹² geschärft, damit die Verschiebungen den Direktlöser auf
+10⁻⁶ treffen (Vorgabe 9): gemessen am Kragarm-Ausschnitt über die Vertragsschicht (h 25 und 16) und am
+eingespannten Block (h 25 und 20) weichen sie bei 10⁻¹⁰ um 1,3·10⁻¹⁰ bis 1,1·10⁻⁷ ab, bei 10⁻¹² um
+1,4·10⁻¹² bis 1,5·10⁻⁹, das Lösen dauert 15 bis 25 % länger. Vor der Aggregationskorrektur lagen sie bei
+10⁻¹⁰ bis 4,3·10⁻⁶ daneben. Die Spannungen stimmen in allen 23 Fällen der Tabelle auf die angegebenen
+Stellen überein. Protokoll und `summary()` nennen den gewählten Weg und die Begründung.
+
+**Zweite Sicht über Teilprojekt 3 und 4 (28.09.2026 abends).** Ein unabhängiges Gutachten fand keinen
+falsch gebauten Kern, aber Lücken, die seither geschlossen sind. Die Nullraumerkennung war mit
+Schnittebenen abgeschaltet, im Vertragsweg also nie aktiv; ein zweiter, von keiner Ebene berührter
+Körper wäre ohne Projektion und ohne Warnung geblieben. Sie läuft jetzt immer: der Sattelpunktlöser
+des Grobgitters trifft eine von den Mittelwertzwängen gesperrte Bewegung exakt und filtert sie so
+heraus, bestätigt werden nur Vektoren mit A q ≈ 0 und B q ≈ 0 (dann vertauschen die Projektionen des
+CG und des V-Zyklus). Sechs Zufallsproben reichten für mehrere freie Bewegungen nicht: die
+Singulärwerte der Nullvektoren sind die einer k × m-Gaußmatrix, und bei sechs freien Bewegungen ging
+mit sechs Proben in drei von zehn Zufallsständen einer verloren; mit sechzehn Proben in keinem.
+Fehler der GPU außer Speichermangel (fehlendes NVRTC in der gepackten exe, cuBLAS, Treiber) führten
+zum Abbruch statt zum Rückfall. Die GPU gilt jetzt erst als verfügbar, wenn eine Kleinrechnung samt
+RawModule-Kompilat läuft, und jeder Fehler des GPU-Wegs beim Aufbau oder Lösen fällt mit Warnung auf
+den Direktlöser zurück; die Felder des gescheiterten Versuchs werden vorher freigegeben, der Pool auch
+nach einem Fehler. NaN aus einem singulären Block wurde weder bei der Inversion noch im CG erkannt
+(Vergleiche mit NaN sind falsch; der CG wäre 1000 V-Zyklen gelaufen); beides bricht jetzt sofort mit
+Meldung ab. Eine Last mit Anteil in Richtung einer freien Bewegung wird vor dem CG gemeldet („Last
+nicht im Gleichgewicht“). `"auto"` wählt das Mehrgitter nur bei p = 3, dem gemessenen Grad: bei p = 1
+gibt es nur eine Ebene, und p = 2 und 4 sind weder für die Schwelle noch für den Speicher gemessen; die
+Speicherschätzung setzt die Einträge je Zeile nach p an und zählt alle Glätterebenen.
+
+**Aggregationsschwelle 0,4 (28.09.2026 abends).** Der Ausreißer Kirsch h 8, Versatz 0,3 mit 109 bis 114
+Iterationen ließ sich an den Ritz-Werten des vorkonditionierten Operators festmachen: rund acht
+Eigenwerte zwischen 0,002 und 0,016, alle anderen über 0,03 (Kondition 559). Ihre Eigenvektoren
+sitzen auf rund 400 freien Moden am belasteten Plattenende, in Zellen mit Werkstoffanteil 0,26, also
+knapp über der Schwelle 0,25 und damit wohlgestellt; ihre hohen Moden tragen aber nur etwa
+Anteil^(2p+1) ihrer Energie im Werkstoff und teilen sich die Nachbarschaft mit leeren Zellen. Mit der
+Schwelle 0,4 (Plan TP 4, Aufgabe 3) werden solche Zellen aggregiert:
+
+| Kirsch p 3 | Schwelle 0,25 | Schwelle 0,4 |
+|---|---|---|
+| h 8, Versatz 0,3: Iterationen / Kondition / Lösen | 109 / 559 / 15,7 s | 40 / 42 / 5,7 s |
+| h 8, Versatz 0,3: K_tg | 3,0735 | 3,0744 |
+| h 10, Versatz 0 / 0,2 / 0,4 / 0,6 / 0,8: Iterationen | 22 / 27 / 36 / 25 / 24 | 22 / 22 / 31 / 22 / 24 |
+| h 10: K_tg (Referenz 3,028) | 3,0849 / 3,0837 / 3,0760 / 3,0740 / 3,0744 | 3,0798 / 3,0837 / 3,0760 / 3,0744 / 3,0744 |
+
+Die Genauigkeit bleibt (K_tg gleich oder bis 0,17 % näher an der Referenz), die Patch-Tests bleiben
+unter 10⁻⁶; die freien Koordinaten nehmen ab (h 10, Versatz 0,2: 122 430 statt 184 809). Die Forderung
+des Plans, dass die Iterationen über fünf Schnittlagen um höchstens 20 % streuen, erfüllt auch 0,4 nicht
+ganz (31 gegen im Mittel 24, +28 %); vorher waren es +34 %.
+

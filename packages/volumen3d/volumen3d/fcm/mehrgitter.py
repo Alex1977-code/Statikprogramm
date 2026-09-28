@@ -235,6 +235,10 @@ class ZellSchwarz:
                     kern((((b - a) * s + 255) // 256,), (256,), (indptr, indices, A_gpu.data, I[a:b], np.int32(b - a), np.int32(s), B))
                     Xa = cupy.linalg.inv(B)
                     del B
+                    # cupy wirft bei singulaeren Bloecken nicht, sondern liefert inf/NaN (errstate 'ignore'); ohne
+                    # Pruefung lief der PCG dann 1000 V-Zyklen und meldete 'Residuum nan' (Gutachten 28.09.2026)
+                    if not bool(cupy.isfinite(Xa).all()):
+                        raise ValueError(f"Schwarz-Glaetter (GPU): Zellbloecke der Groesse {s} nicht invertierbar")
                     X[a:b] = Xa
                     X[a:b] += Xa.transpose(0, 2, 1)
                     X[a:b] *= 0.5
@@ -273,8 +277,10 @@ def _csr_auf_gpu(A: sp.csr_matrix):
 # Groesse der Teilstapel beim Auszug und der Inversion der Glaetterbloecke auf der GPU
 _TEILSTAPEL_BYTES = 256e6
 
-# Schwelle fuer den Singulaerwert eines Nullvektors nach zwei Schritten inverser Iteration (siehe unten)
+# Schwelle fuer den Singulaerwert eines Nullvektors nach zwei Schritten inverser Iteration und Zahl der
+# Zufallsproben (siehe grob_nullkandidaten)
 _NULL_SCHWELLE = 0.1
+_NULL_PROBEN = 16
 
 
 def grob_nullkandidaten(loesen, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -282,10 +288,15 @@ def grob_nullkandidaten(loesen, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     Zerlegung, loesen(R) = (A1 + delta I)^-1 A1 R, auf Zufallsproben X mit Eintraegen ~ N(0, 1).
 
     X - loesen(X) = delta (A1 + delta I)^-1 X: ein Nullvektor n bleibt mit Faktor 1 stehen, ein Modus mit
-    Eigenwert lambda schrumpft um delta / (lambda + delta) je Schritt. Nach zwei Schritten ist R2 ~ n (n^T X),
-    der Singulaerwert eines Nullvektors ~ sqrt(chi^2_6) (unter 0,1 mit Wahrscheinlichkeit ~ 2e-8), alle
-    anderen um (delta/lambda)^2 gedaempft. Gemessen Kirsch p 3, h 10 bis 14, Versatz 0 und 0,6: Nullvektor
-    2,4 bis 3,8, zweitgroesster Wert 5e-6 bis 4e-4 (28.09.2026).
+    Eigenwert lambda schrumpft um delta / (lambda + delta) je Schritt. Nach zwei Schritten ist R2 ~ N (N^T X),
+    die Singulaerwerte der k Nullvektoren sind die der Gaussmatrix N^T X (k x m Proben), alle anderen Moden
+    um (delta/lambda)^2 gedaempft. Mit m = 16 Proben liegt der kleinste dieser Singulaerwerte fuer k <= 6
+    (ganz ungelagerter Koerper) im Mittel bei sqrt(16) - sqrt(k) >= 1,5, weit ueber der Schwelle 0,1; mit
+    den frueheren 6 Proben war er fuer k = 6 mit rund 20 % Wahrscheinlichkeit darunter (Edelman,
+    Gutachten 28.09.2026). Gemessen Kirsch p 3, h 10 bis 14, Versatz 0 und 0,6 (k = 1): Nullvektor 2,4 bis
+    3,8, zweitgroesster Wert 5e-6 bis 4e-4 (28.09.2026). Mit Mittelwertzwaengen loest ``loesen`` den
+    Sattelpunkt; ein Nullvektor, den die Zwaenge sperren (B n != 0), faellt dabei heraus (die Loesung trifft
+    ihn exakt), nur freie Bewegungen im Kern von B bleiben stehen.
 
     Die fruehere Schwelle auf das Residuum einer einzelnen Probe (> 1e-3) hing am Zufall und an der Groesse:
     der Nullanteil eines Zufallsvektors ist |n^T x| / ||x|| ~ 1 / sqrt(N1); bei Kirsch h 12 und h 14 lag er bei
@@ -347,6 +358,23 @@ class PMehrgitter:
     def __init__(self, problem, glaetter_grad: int = 5, alpha: float = 16.0, potenz_schritte: int = 15,
                  glaetter: str = "schwarz", lambda_sicherheit: float = 1.1, grob_verschiebung: float = 1e-10,
                  geraet: str = "cpu") -> None:
+        try:
+            self._einrichten(problem, glaetter_grad, alpha, potenz_schritte, glaetter, lambda_sicherheit,
+                             grob_verschiebung, geraet)
+        finally:
+            if geraet == "gpu":
+                # zwischengespeicherte Bloecke freigeben - hier sind die lokalen Felder des Einrichtens schon
+                # aufgeloest, und auch nach einem Fehler (Speichermangel) bleibt der Pool nicht gefuellt;
+                # sonst sammelten sich mehrere Details eines Prozesses im Pool, bis die Karte auslagerte
+                # (Messreihe 28.09.2026: 1,5 statt 0,13 s je Iteration)
+                import cupy
+                cupy.get_default_memory_pool().free_all_blocks()
+        if geraet == "gpu":
+            import cupy
+            self.statistik["gpu_belegt_mb"] = round(cupy.get_default_memory_pool().used_bytes() / 1e6, 1)
+
+    def _einrichten(self, problem, glaetter_grad: int, alpha: float, potenz_schritte: int, glaetter: str,
+                    lambda_sicherheit: float, grob_verschiebung: float, geraet: str) -> None:
         t0 = time.perf_counter()
         zeiten: dict[str, float] = {}
         pr = problem
@@ -461,7 +489,7 @@ class PMehrgitter:
         # A1s Y = A1 X den Nullraumanteil nicht zurueck; zwei Schritte inverser Iteration trennen ihn ab.
         # grob_residuum (Probe einer Spalte) bleibt nur als Kennzahl im Protokoll, entscheidet nichts mehr.
         N1 = A1.shape[0]
-        X = np.random.default_rng(1).standard_normal((N1, 6))
+        X = np.random.default_rng(1).standard_normal((N1, _NULL_PROBEN))
 
         def grob_loesen(R):
             rhs = A1 @ R
@@ -470,7 +498,10 @@ class PMehrgitter:
             return grob.direkt.loesen(rhs)[:N1]
 
         self.grob_residuum = float(np.linalg.norm(X[:, 0] - grob_loesen(X[:, :1])[:, 0]) / np.linalg.norm(X[:, 0]))
-        kandidaten = grob_nullkandidaten(grob_loesen, X)[0] if not self.n_zwaenge else np.zeros((N1, 0))
+        # auch mit Schnittebenen: der Vertragsweg hat immer welche, und ein Koerper, den keine Ebene
+        # beruehrt (zweites Blech, STL mit zwei Schalen), bliebe sonst ohne Projektion und ohne Warnung
+        # (Gutachten 28.09.2026); der Sattelpunkt filtert die von B gesperrten Bewegungen
+        kandidaten = grob_nullkandidaten(grob_loesen, X)[0]
         zeiten["grobgitter"] = time.perf_counter() - t
         # Nullraum auf die feinste Ebene injizieren und dort am Operator bestaetigen. Ohne ihn blaehte der
         # Vorkonditionierer den Nullraumanteil auf (r_0/delta), der ueber Rundung ins Residuum
@@ -488,6 +519,11 @@ class PMehrgitter:
             x_ref = np.random.default_rng(2).standard_normal(fein.n_frei)
             bezug = np.linalg.norm(fein.A_matrix @ x_ref) / np.linalg.norm(x_ref)
             echt = [j for j in range(Q.shape[1]) if np.linalg.norm(fein.A_matrix @ Q[:, j]) < 1e-6 * bezug]
+            if fein.B is not None and echt:
+                # frei nur im Kern der Mittelwertzwaenge: dann vertauschen die Projektionen des CG (auf den
+                # Kern von B) und des V-Zyklus (weg vom Nullraum)
+                b_norm = float(np.linalg.norm(fein.B))
+                echt = [j for j in echt if np.linalg.norm(fein.B @ Q[:, j]) < 1e-8 * b_norm]
             if echt:
                 self._nullraum_cpu = np.ascontiguousarray(Q[:, echt])
                 self.nullraum = self.xp.asarray(self._nullraum_cpu)
@@ -535,13 +571,8 @@ class PMehrgitter:
                           "zeiten_s": {k: round(v, 2) for k, v in zeiten.items()},
                           "t_einrichten_s": round(time.perf_counter() - t0, 3)}
         if geraet == "gpu":
-            # Spitze = was der Pool waehrend des Einrichtens gleichzeitig hielt (er gibt nichts von selbst
-            # zurueck); danach die zwischengespeicherten Bloecke freigeben, sonst sammeln sich mehrere
-            # Details eines Prozesses im Pool, bis die Karte auslagert (Messreihe 28.09.2026)
-            pool = self.xp.get_default_memory_pool()
-            self.statistik["gpu_spitze_mb"] = round(pool.total_bytes() / 1e6, 1)
-            pool.free_all_blocks()
-            self.statistik["gpu_belegt_mb"] = round(pool.used_bytes() / 1e6, 1)
+            # Spitze = was der Pool waehrend des Einrichtens gleichzeitig hielt (er gibt nichts von selbst zurueck)
+            self.statistik["gpu_spitze_mb"] = round(self.xp.get_default_memory_pool().total_bytes() / 1e6, 1)
 
     # -- Glaetter ------------------------------------------------------------------------
     def _chebyshev(self, eb: Ebene, b: np.ndarray, x: np.ndarray) -> np.ndarray:

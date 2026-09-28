@@ -47,7 +47,9 @@ class Zwaenge:
         if aggregation is not None:
             for mode, eintraege in aggregation.roh_zwaenge(dict(self.roh)).items():
                 self.roh[mode] = eintraege
-            self.statistik["moden_aggregiert"] = len(self.roh) - self.statistik["moden_haengend"]
+            n_null = int(aggregation.statistik.get("moden_null", 0))
+            self.statistik["moden_aggregiert"] = len(self.roh) - self.statistik["moden_haengend"] - n_null
+            self.statistik["moden_null"] = n_null
         self._ketten_aufloesen()
         self.C = self._matrix()
 

@@ -48,9 +48,14 @@ class Verschiebungsrand:
 class FcmProblem:
     def __init__(self, geometrie, h: float, p: int, werkstoff: Werkstoff, alpha: float = 1e-8, tiefe: int = 2,
                  polster: float = 0.1, beta_faktor: float = 10.0, facette_mm: float | None = None,
-                 ordnung_flaeche: int | None = None, aggregation: float | None = 0.25,
+                 ordnung_flaeche: int | None = None, aggregation: float | None = 0.4,
                  verfeinerung: Verfeinerung | None = None, loeser: str = "direkt", toleranz: float = 1e-8,
                  backend: str = "cpu") -> None:
+        # aggregation: Werkstoffanteil, unter dem eine Schnittzelle an eine Wurzel gebunden wird. 0,4 statt
+        # 0,25 (Plan TP 4, Aufgabe 3, gemessen 28.09.2026): Zellen knapp ueber 0,25 galten als wohlgestellt,
+        # ihre hohen Moden tragen aber kaum Werkstoff; Kirsch h 8 p 3 Versatz 0,3: 109 statt 40 Iterationen
+        # (Kondition des vorkonditionierten Operators 559 statt 42), K_t gleich auf 0,03 %; h 10 fuenf Lagen
+        # 22 bis 31 statt 22 bis 36 Iterationen, K_t gleich oder bis 0,17 % naeher an der Referenz
         if backend not in ("cpu", "gpu"):
             raise ValueError(f"backend {backend!r}: 'cpu' oder 'gpu'")
         self.backend = backend
@@ -160,6 +165,9 @@ class FcmProblem:
             self._zelldaten = Zelldaten(self.gitter, self.quadratur, self.werkstoff.E, self.werkstoff.nu)
             K = self._zelldaten.matrix()
         else:
+            # Felder eines frueheren iterativen Aufbaus freigeben (Rueckfall nach GPU-Fehler: Zellmatrizen
+            # und GPU-Bloecke blieben sonst waehrend der Faktorisierung belegt, Gutachten 28.09.2026)
+            self._zelldaten = self._operator = self._mehrgitter = self._gpu = None
             K = assemblieren(self.gitter, self.quadratur, self.werkstoff.E, self.werkstoff.nu, fortschritt)
         n = self.gitter.n_dof
         K_rand: sp.csr_matrix = sp.csr_matrix((n, n))              # Nitsche-Anteil getrennt: der matrixfreie
@@ -294,6 +302,15 @@ class FcmProblem:
                 grenze = 1000 if self._mehrgitter is not None else 200_000
                 b_k = F_red[:, k]
                 d_k = F[n:, k] if self.n_zwaenge else None
+                N0 = getattr(self._mehrgitter, "_nullraum_cpu", None)
+                if N0 is not None:
+                    # mit freier Bewegung loest der projizierte CG nur, wenn die Last im Gleichgewicht ist
+                    # (N^T b = 0; N liegt im Kern von B, also N^T (b - A x_p) = N^T b); sonst liefe er bis
+                    # zur Grenze und meldete nur 'nicht konvergiert' (Gutachten 28.09.2026)
+                    anteil = float(np.linalg.norm(N0.T @ b_k)) / max(float(np.linalg.norm(b_k)), 1e-300)
+                    if anteil > 1e-8:
+                        raise ValueError(f"Last nicht im Gleichgewicht: Anteil {anteil:.1e} der rechten Seite wirkt in Richtung "
+                                         f"einer freien Starrkoerperbewegung ({N0.shape[1]} ohne Lagerung)")
                 if self._gpu is not None:
                     b_k = cupy.asarray(b_k)
                     d_k = cupy.asarray(d_k) if d_k is not None else None

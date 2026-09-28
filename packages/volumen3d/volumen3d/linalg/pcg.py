@@ -113,6 +113,8 @@ def pcg(A: Callable[[np.ndarray], np.ndarray], b: np.ndarray, M_inv: np.ndarray 
     z = proj(vork(r))
     p = z.copy()
     rz = float(r @ z)
+    if not np.isfinite(rz):
+        raise ValueError("PCG: Vorkonditionierer liefert nicht endliche Werte (NaN/inf)")
     energie = 0.0
     energie_rel = np.inf
     res_rel = 1.0
@@ -128,7 +130,11 @@ def pcg(A: Callable[[np.ndarray], np.ndarray], b: np.ndarray, M_inv: np.ndarray 
             break
         q = proj(A(p))
         pq = float(p @ q)
-        if pq <= 0.0:
+        if not pq > 0.0:
+            # 'not >' statt '<=': mit NaN waere der Vergleich falsch, und der CG liefe bis max_iter
+            # (Gutachten 28.09.2026: singulaerer GPU-Block -> 1000 V-Zyklen, dann 'Residuum nan')
+            if not np.isfinite(pq):
+                raise ValueError("PCG: nicht endliche Werte (NaN/inf) in Operator oder Vorkonditionierer")
             raise ValueError(f"PCG: p^T A p = {pq:.3e} <= 0 - Operator nicht positiv definit (freie Starrkoerperbewegung?)")
         alpha = rz / pq
         x += alpha * p
@@ -144,6 +150,8 @@ def pcg(A: Callable[[np.ndarray], np.ndarray], b: np.ndarray, M_inv: np.ndarray 
             break
         z = proj(vork(r))
         rz_neu = float(r @ z)
+        if not np.isfinite(rz_neu):
+            raise ValueError("PCG: Vorkonditionierer liefert nicht endliche Werte (NaN/inf)")
         beta = rz_neu / rz
         rz = rz_neu
         p = z + beta * p

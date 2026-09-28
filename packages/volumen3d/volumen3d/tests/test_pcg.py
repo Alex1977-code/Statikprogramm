@@ -126,5 +126,25 @@ def _lame_mit_druck(pr):
     return pr
 
 
+def test_pcg_nan():
+    """Ein Vorkonditionierer mit NaN bricht sofort mit Meldung ab, statt bis max_iter zu laufen (Vergleiche mit
+    NaN sind falsch; Gutachten 28.09.2026: singulaerer GPU-Block -> 1000 V-Zyklen, dann 'Residuum nan')."""
+    from volumen3d.linalg.pcg import pcg
+    A = np.diag(np.arange(1.0, 11.0))
+    aufrufe = [0]
+
+    def vork(r):
+        aufrufe[0] += 1
+        return np.full_like(r, np.nan) if aufrufe[0] > 2 else r.copy()
+
+    try:
+        pcg(lambda x: A @ x, np.ones(10), vork, tol=1e-12, max_iter=500)
+        meldung = ""
+    except ValueError as ex:
+        meldung = str(ex)
+    check("NaN im Vorkonditionierer: ValueError nach wenigen Schritten", "NaN" in meldung and aufrufe[0] <= 4,
+          f"{meldung!r} nach {aufrufe[0]} Anwendungen")
+
+
 if __name__ == "__main__":
-    sys.exit(lauf([test_pcg, test_problem_pcg]))
+    sys.exit(lauf([test_pcg, test_problem_pcg, test_pcg_nan]))
