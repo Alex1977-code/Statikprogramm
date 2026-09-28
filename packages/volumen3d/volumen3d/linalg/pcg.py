@@ -76,7 +76,14 @@ def pcg(A: Callable[[np.ndarray], np.ndarray], b: np.ndarray, M_inv: np.ndarray 
     b = xp.asarray(b, dtype=float).ravel()
     n = int(b.shape[0])
     max_iter = max_iter or max(2000, int(20 * np.sqrt(n)))
-    m_inv = xp.ones(n) if M_inv is None else xp.asarray(M_inv, dtype=float)
+    # Vorkonditionierer: Diagonale (Jacobi) oder Funktion r -> z (V-Zyklus des Mehrgitters)
+    if callable(M_inv):
+        vork = M_inv
+    else:
+        m_inv = xp.ones(n) if M_inv is None else xp.asarray(M_inv, dtype=float)
+
+        def vork(r):
+            return m_inv * r
     if B is not None and len(B):
         B = xp.asarray(B, dtype=float).reshape(-1, n)
         d = xp.zeros(B.shape[0]) if d is None else xp.asarray(d, dtype=float).ravel()
@@ -98,7 +105,7 @@ def pcg(A: Callable[[np.ndarray], np.ndarray], b: np.ndarray, M_inv: np.ndarray 
     if norm_b == 0.0:
         lam = G_inv @ (B @ (b - A(x_p))) if B is not None else xp.zeros(0)
         return PcgErgebnis(x_p, 0, 0.0, 0.0, True, lam)
-    z = proj(m_inv * r)
+    z = proj(vork(r))
     p = z.copy()
     rz = float(r @ z)
     energie = 0.0
@@ -123,7 +130,7 @@ def pcg(A: Callable[[np.ndarray], np.ndarray], b: np.ndarray, M_inv: np.ndarray 
         if res_rel <= tol and energie_rel <= tol:
             konvergiert = True
             break
-        z = proj(m_inv * r)
+        z = proj(vork(r))
         rz_neu = float(r @ z)
         beta = rz_neu / rz
         rz = rz_neu

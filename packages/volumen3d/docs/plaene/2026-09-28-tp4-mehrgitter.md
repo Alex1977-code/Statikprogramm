@@ -42,6 +42,15 @@ freien feinen Moden; P̃ ist die Injektion zwischen den freien Koordinaten.
   – Iterationen und Zeit je Fall im Protokoll, Ziel < 100 (Vorgabe 8.3), Vergleich mit Jacobi in
   der Theorie; p = 4 (Kirsch h 10) und Schnittlagen 0 / 0,4 / 0,8 als Robustheitsprobe.
 
+### Stand 28.09.2026 mittags
+Aufgaben 1 und 2 umgesetzt: Schachtelung exakt (0 … 3·10⁻¹⁶), V-Zyklus mit Chebyshev um einen
+Glätter, Grobgitter p = 1 mit Sattelpunkt für die Mittelwertzwänge. Befund: Jacobi-Glätter
+reicht nicht (637 bis über 2000 Iterationen, Cluster auf Moden von Schnittzellen mit Anteil ≈ 0
+am Nitsche-Rand, λ ≈ 10⁻⁵); mit Zellblock-Schwarz 26 bis 53 Iterationen in allen fünf Fällen
+(Entwurf 4d.2, Theorie 11.10). `FcmProblem(loeser="mehrgitter")` steht. Offen aus Aufgabe 2:
+Einrichtzeit und Speicher der Blöcke (Kirsch h 20 p 3: 32 s), Blöcke aus Nachbar-Zellmatrizen,
+nur Schnittzellen blocken; Aufgabe 3 damit teilweise vorweggenommen.
+
 ### Aufgabe 3: Kleine Schnittzellen und Kondition
 - Messen, welche Moden nach dem V-Zyklus die Konvergenz bremsen (Ritz-Werte aus dem CG):
   Aggregation deckt Anteile < 0,25 ab; bleibt die Iterationszahl schnittlagenabhängig, Schwelle

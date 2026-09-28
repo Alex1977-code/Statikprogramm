@@ -87,5 +87,8 @@ der Vertragsschicht. GPU-Kerne mit CuPy sind da (3,1 ms je Anwendung bei 229 608
 Freiheitsgraden gegen 18,8 ms CPU). Vertrag 2.1.0 (Merge bdac39d, 28.09.) ist angeschlossen:
 `DetailModelSpec.loads` je Lastfall-ID (Druck, Traktion, Resultierende über benannte Fläche, Box
 oder Zylinder) und `body_load`, mit Protokoll je Last (Fläche, Schwerpunkt, Kraft, Moment).
-Pull Request 2 kommt nach Teilprojekt 4 (Stufe 2). Offen aus Teilprojekt 2: der schnelle Windungszahl-Baum für STL-Netze
+Teilprojekt 4 (p-Mehrgitter, `fcm/mehrgitter.py`, 28.09.) senkt die Iterationszahlen mit
+Zellblock-Schwarz-Glätter auf 26 bis 53 in allen Abnahmefällen (Jacobi: 2 580 bis über 40 000),
+`FcmProblem(loeser="mehrgitter")`; offen dort Einrichtzeit der Blöcke und GPU. Pull Request 2
+kommt nach Abschluss von Teilprojekt 4 (Stufe 2). Offen aus Teilprojekt 2: der schnelle Windungszahl-Baum für STL-Netze
 über 10⁵ Facetten (Teilprojekt 5) und die Vierteilung der Randpolygone an gekrümmten Formen.

@@ -34,25 +34,34 @@ class Zelldaten:
 
     def __init__(self, gitter, quadratur, E: float, nu: float) -> None:
         g = gitter
-        self.gitter = gitter
         p = int(g.p)
-        self.m = anzahl_moden(p)
-        nz = len(g.ijk)
-        self.dofs = np.ascontiguousarray((3 * g.zell_moden[:, :, None] + np.arange(3)).reshape(nz, 3 * self.m), dtype=np.int32)
+        m = anzahl_moden(p)
         # Referenz-Zellmatrix fuer eine Zelle der Kantenlaenge h (Ebene 0): Tensor-Gauss (p+1)^3 ist
         # fuer Polynome vom Grad 2p exakt, also identisch mit der Quadratur der INSIDE-Zellen
         xi, w = gauss_3d(p + 1)
         _, dN = basis_3d(p, xi)
         h0 = float(g.h)
-        self.K_ref = zellsteifigkeit(dN * (2.0 / h0), w * (0.5 * h0) ** 3, E, nu)
-        self.innen = np.flatnonzero(g.klasse == INSIDE).astype(np.int64)
-        self.skala_innen = np.ascontiguousarray(0.5 ** g.ebene[self.innen].astype(float))      # h_l/h_0
-        self.cut = np.flatnonzero(g.klasse == CUT).astype(np.int64)
-        n3 = 3 * self.m
-        self.K_cut = np.empty((len(self.cut), n3, n3))
-        for i, c in enumerate(self.cut):
+        K_ref = zellsteifigkeit(dN * (2.0 / h0), w * (0.5 * h0) ** 3, E, nu)
+        innen = np.flatnonzero(g.klasse == INSIDE).astype(np.int64)
+        cut = np.flatnonzero(g.klasse == CUT).astype(np.int64)
+        n3 = 3 * m
+        K_cut = np.empty((len(cut), n3, n3))
+        for i, c in enumerate(cut):
             G, W = zell_gradienten(g, quadratur, int(c))
-            self.K_cut[i] = zellsteifigkeit(G, W, E, nu)
+            K_cut[i] = zellsteifigkeit(G, W, E, nu)
+        self._einrichten(g, m, K_ref, innen, cut, K_cut)
+
+    def _einrichten(self, g, m: int, K_ref: np.ndarray, innen: np.ndarray, cut: np.ndarray, K_cut: np.ndarray) -> None:
+        self.gitter = g
+        self.m = m
+        nz = len(g.ijk)
+        n3 = 3 * m
+        self.dofs = np.ascontiguousarray((3 * g.zell_moden[:, :, None] + np.arange(3)).reshape(nz, n3), dtype=np.int32)
+        self.K_ref = np.ascontiguousarray(K_ref)
+        self.innen = innen
+        self.skala_innen = np.ascontiguousarray(0.5 ** g.ebene[innen].astype(float))            # h_l/h_0
+        self.cut = cut
+        self.K_cut = np.ascontiguousarray(K_cut)
         # Inzidenz Freiheitsgrad -> (Zelle, lokal), CSR ueber alle Zellen (auch OUTSIDE gibt es nicht)
         flach = self.dofs.ravel()
         reihen = np.argsort(flach, kind="stable")
@@ -62,6 +71,17 @@ class Zelldaten:
         self.statistik = {"zellen_innen": int(len(self.innen)), "zellen_cut": int(len(self.cut)),
                           "speicher_zellmatrizen_mb": round(self.K_cut.nbytes / 1e6, 1),
                           "speicher_inzidenz_mb": round((self.inz_zelle.nbytes + self.inz_lokal.nbytes + self.inz_zeiger.nbytes) / 1e6, 1)}
+
+    @classmethod
+    def teilraum(cls, fein: "Zelldaten", gitter_grob, sub: np.ndarray) -> "Zelldaten":
+        """Zelldaten eines groeberen Polynomgrads aus den feinen: die Zellmatrizen sind Teilbloecke
+        (hierarchische Basis: der Raum vom Grad p-1 sind die Moden mit Indizes <= p-1), keine neue
+        Integration. ``sub``: feiner lokaler Modenindex je grobem lokalen Mode."""
+        sub3 = (3 * np.asarray(sub, int)[:, None] + np.arange(3)).ravel()
+        z = cls.__new__(cls)
+        z._einrichten(gitter_grob, len(sub), fein.K_ref[np.ix_(sub3, sub3)], fein.innen, fein.cut,
+                      fein.K_cut[:, sub3][:, :, sub3] if len(fein.cut) else np.empty((0, len(sub3), len(sub3))))
+        return z
 
     def matrix(self) -> sp.csr_matrix:
         """Assemblierte Matrix aus denselben Zellmatrizen (Pruefung gegen elastizitaet.assemblieren)."""

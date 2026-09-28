@@ -661,3 +661,52 @@ die assemblierte Matrix aus Teilprojekt 1.
 | V5 | `test_vertrag_fcm` | `solve` mit PCG gleich Direktlöser am Vertragsbeispiel | 10⁻⁶ relativ |
 | V6 | `test_operator_gpu` (lokal) | GPU gegen CPU, Operator und Lösung | 10⁻¹² / 10⁻⁸ |
 | V7 | Kernsuite, `lint-imports`, mypy, `tests.contracts`, `run_all` | wie bisher | grün |
+
+## 4d. Teilprojekt 4 im Einzelnen (Stufe 2b, begonnen 28.09.2026)
+
+Plan: `docs/plaene/2026-09-28-tp4-mehrgitter.md`. Messlatte aus Teilprojekt 3: Jacobi-PCG mit
+5 045 (Patch h 20 p 2), 20 373 (Lamé h 20 p 3), 4 420 (Kirsch h 20 p 2 verfeinert) und über
+40 000 Iterationen (Kirsch h 20 p 3 verfeinert).
+
+### 4d.1 p-Ebenen ohne neue Integration (`fcm/mehrgitter.py`)
+- Die hierarchische Basis ist geschachtelt: der Raum vom Grad p−1 sind die Moden mit 1D-Indizes
+  ≤ p−1. Der Übergang zwischen den Graden ist eine **Injektion** (Auswahl von Moden), der
+  Galerkin-Grobgitteroperator der **Teilblock der Zellmatrizen** (`Zelldaten.teilraum`), und die
+  Zwänge sind geschachtelt (ein Meister vom Grad d trägt nur zu Sklaven vom Grad ≤ d bei, weil
+  Spur und Fortsetzung eines Polynoms vom Grad d den Grad d behalten). Darum sind die freien
+  groben Moden eine Teilmenge der freien feinen Moden, P̃ ist die Injektion zwischen den freien
+  Koordinaten, und A_grob = P̃ᵀ A_fein P̃ gilt exakt – gemessen 0 bis 3·10⁻¹⁶ auf Patch mit
+  dünner Wand, Kragarmsegment, Lamé und Kirsch verfeinert (`test_mehrgitter.test_ebenen`).
+- Je Ebene: Gitterkopie mit eigener Nummerierung (`moden_nummerieren(p_k)` auf einem flachen
+  Duplikat), `Zwaenge` mit derselben Aggregation, Nitsche-Matrix P₃ᵀ K_rand P₃, Operator,
+  Jacobi-Diagonale. Grobgitter p = 1 mit dem Direktlöser; die Mittelwertzwänge der Schnittebenen
+  (B x = 0 des projizierten CG) werden auf jede Ebene injiziert und am Grobgitter als Sattelpunkt
+  gelöst – ohne sie ist A dort singulär (Starrkörper in der Ebene), und der Direktlöser lieferte
+  Zahlen um 10¹² (Kragarmsegment: 2000 Iterationen ohne Konvergenz).
+
+### 4d.2 Glätter: Zellblock-Schwarz statt Jacobi
+- Mit Chebyshev-Jacobi (Grad 3, α = 8) brauchte der V-Zyklus im PCG noch 637 bis über 2000
+  Iterationen. Die Diagnose am Patch h 20 p 2 (Spektrum von M⁻¹A explizit): 210 von 2469
+  Eigenwerten unter 0,01, die kleinsten (10⁻⁵) getragen von Moden, die nur zu Schnittzellen mit
+  Werkstoffanteil ≈ 0 gehören und auf dem Nitsche-Rand liegen. Solche lokalen Cluster erreicht
+  weder ein Punkt-Glätter (α müsste 10⁵ sein) noch das Grobgitter p = 1 (nur Eckmoden); α = 30
+  oder Grad 6 änderten daran nichts (min 1,9·10⁻⁵ bzw. 2,4·10⁻⁵).
+- Darum der **additive Schwarz-Glätter über Zellblöcke** (Vorgabe 8.3, Gegenmaßnahme 2): je
+  Zelle wird der Block A[S,S] der freien Koordinaten, die die Zelle berührt, exakt gelöst
+  (Inverse aus der nur hierfür assemblierten Matrix je Ebene), die Überlappung regelt die
+  Chebyshev-Beschleunigung um den Glätter (λ_max von M_AS·A per Potenzmethode). Ergebnis
+  (28.09.2026, PCG bis 10⁻¹⁰, Spannungen wie Direktlöser auf 10⁻⁹…10⁻¹⁰):
+
+| Fall | Jacobi | V-Zyklus Jacobi | V-Zyklus Schwarz | Zeit Schwarz |
+|---|---|---|---|---|
+| Patch h 20 p 2 (2469 frei) | 5 045 | 1 327 | **29** | 2,0 s (+0,4 s Einrichten) |
+| Kragarmsegment p 3 h 50 (schnitt, 3549 frei) | 2 580 | > 2000 | **53** | 10 s |
+| Lamé h 20 p 3 (2316 frei) | 20 373 | > 2000 | **26** | 0,8 s (+0,8 s) |
+| Kirsch h 20 p 2 verfeinert (11 013 frei) | 4 420 | 637 | **38** | 1,7 s (+3,7 s) |
+| Kirsch h 20 p 3 verfeinert (35 000 frei) | > 40 000 | > 2000 | **43** | 9,2 s (+32 s) |
+
+  Der Richtwert der Vorgabe (unter 100 Iterationen) ist erfüllt. Offen: das Einrichten der
+  Blöcke (Assemblierung je Ebene, Inversen) skaliert mit Σ|S|² – Kirsch h 20 p 3 braucht 32 s
+  und Speicher für die Inversen; die Blöcke aus den Zellmatrizen der Nachbarn statt aus der
+  assemblierten Matrix zu bauen und nur Schnittzellen zu blocken (INSIDE-Zellen mit Jacobi) sind
+  die nächsten Messungen, dann die GPU (Blöcke als gestapelte Matrizen, batched matvec).

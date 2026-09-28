@@ -10845,3 +10845,42 @@ Schwerpunkt auf 10⁻⁹), Eigengewicht. Gegen die Schnittkräfte der Kopplungsk
 Gleichgewicht nur auf 5 %, weil ∫σ·n dA den Strafanteil des Nitsche-Randes nicht enthält
 (Abschnitt 11.6); eine Box zur Flächenauswahl ist dünn zu halten, da sie Quadraturpunkte wählt
 (0,1 mm Dicke griff 34 mm² der Seitenflächen mit, 0,001 mm nichts).
+
+### 11.10 Teilprojekt 4: p-Mehrgitter mit Zellblock-Glätter
+
+**Schachtelung statt Interpolation.** Die hierarchische Basis (11.1) enthält den Raum vom Grad
+p−1 als die Moden mit 1D-Indizes ≤ p−1. Der Übergang zwischen den Polynomgraden ist darum eine
+Injektion (Auswahl von Moden), der Galerkin-Grobgitteroperator der Teilblock der Zellmatrizen aus
+11.9 (keine neue Integration), und die Zwänge aus 11.8 sind geschachtelt: die Spur eines
+Polynoms vom Grad d auf einer hängenden Fläche und seine Fortsetzung in eine aggregierte Zelle
+haben wieder Grad d, ein Meister vom Grad d bindet also nur Sklaven vom Grad ≤ d. Deshalb sind
+die freien groben Moden eine Teilmenge der freien feinen, P̃ ist die Injektion zwischen den
+freien Koordinaten und A_grob = P̃ᵀ A_fein P̃ gilt exakt; gemessen 0 bis 3·10⁻¹⁶ (Patch mit dünner
+Wand, Kragarmsegment, Lamé, Kirsch verfeinert). Das Grobgitter p = 1 (Eckmoden) löst der
+Direktlöser; die Mittelwertzwänge der Schnittebenen werden auf jede Ebene injiziert und dort als
+Sattelpunkt mitgeführt, sonst ist A am Grobgitter singulär (Starrkörper in der Ebene) und der
+Direktlöser liefert Zahlen um 10¹².
+
+**Warum Jacobi als Glätter nicht reicht.** Mit Chebyshev-Jacobi (Grad 3, Spektrum
+[λ_max/8, λ_max]) reduziert ein V-Zyklus das Residuum zwar um den Faktor 0,03 bis 0,08, der PCG
+brauchte aber 637 (Kirsch h 20 p 2) bis über 2000 Iterationen. Das explizite Spektrum von M⁻¹A am
+Patch h 20 p 2 (2469 freie Koordinaten) zeigt 210 Eigenwerte unter 0,01, die kleinsten bei 10⁻⁵;
+ihre Eigenvektoren sitzen auf Moden, die nur zu Schnittzellen mit Werkstoffanteil ≈ 0 gehören und
+auf dem Nitsche-Rand liegen (die Zellen selbst sind wohlgestellt, der Anteil nahe der geteilten
+Fläche ist es nicht). Solche lokalen Cluster erreicht kein Punkt-Glätter (α = 30 oder Grad 6:
+min 1,9·10⁻⁵ bzw. 2,4·10⁻⁵) und kein Grobgitter aus Eckmoden.
+
+**Zellblock-Schwarz.** Die Vorgabe 8.3 nennt als zweite Gegenmaßnahme den additiven Schwarz-
+Glätter mit Patches um schwach gestützte Freiheitsgrade. Hier wird je Zelle der Block A[S,S] der
+freien Koordinaten, die die Zelle berührt, exakt invertiert (aus der nur hierfür assemblierten
+Matrix je Ebene); die Überlappung regelt keine Dämpfung, sondern die Chebyshev-Beschleunigung um
+den Glätter mit λ_max von M_AS·A aus der Potenzmethode. Damit fallen die lokalen Cluster aus dem
+Spektrum, und der PCG braucht (28.09.2026, bis 10⁻¹⁰, Spannungen wie der Direktlöser auf
+10⁻⁹…10⁻¹⁰): Patch h 20 p 2 **29** Iterationen (Jacobi 5 045), Kragarmsegment p 3 mit
+Schnittebenen **53** (2 580), Lamé h 20 p 3 **26** (20 373), Kirsch h 20 p 2 verfeinert **38**
+(4 420), Kirsch h 20 p 3 verfeinert **43** (über 40 000). Der Richtwert der Vorgabe (unter 100)
+ist erfüllt, und die Iterationszahl hängt kaum von p und Verfeinerung ab. Der Preis liegt im
+Einrichten der Blöcke (Kirsch h 20 p 3: 32 s, Speicher Σ|S|²); Blöcke aus den Zellmatrizen der
+Nachbarn statt aus der assemblierten Matrix und nur für Schnittzellen sind die nächsten
+Messungen, danach die GPU mit gestapelten Blöcken. `FcmProblem(loeser="mehrgitter")` ist
+geprüft (Kragarmsegment: 53 Iterationen, Multiplikatoren wie der Sattelpunkt).

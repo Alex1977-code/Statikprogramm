@@ -52,8 +52,9 @@ class FcmProblem:
                  verfeinerung: Verfeinerung | None = None, loeser: str = "direkt", toleranz: float = 1e-8) -> None:
         if not 1 <= p <= 4:
             raise ValueError("p muss zwischen 1 und 4 liegen")
-        if loeser not in ("direkt", "pcg"):
-            raise ValueError(f"loeser {loeser!r}: 'direkt' (assemblierte Matrix, pardiso/SuperLU) oder 'pcg' (matrixfrei, Jacobi)")
+        if loeser not in ("direkt", "pcg", "mehrgitter"):
+            raise ValueError(f"loeser {loeser!r}: 'direkt' (assemblierte Matrix, pardiso/SuperLU), 'pcg' (matrixfrei, Jacobi) "
+                             f"oder 'mehrgitter' (matrixfrei, p-Mehrgitter mit Zellblock-Glaetter)")
         self.loeser = loeser
         self.toleranz = float(toleranz)
         self.geometrie = geometrie
@@ -164,8 +165,8 @@ class FcmProblem:
         self.n_zwaenge = 0 if self._B is None else int(self._B.shape[0])
         t1 = time.perf_counter()
         C = self.zwaenge.C
-        if self.loeser == "pcg":
-            # matrixfrei (Teilprojekt 3): Zellmatrizen statt Faktorisierung; K bleibt fuer die
+        if self.loeser in ("pcg", "mehrgitter"):
+            # matrixfrei (Teilprojekt 3/4): Zellmatrizen statt Faktorisierung; K bleibt fuer die
             # Residuumsprobe und die Auswertung des Vergleichs erhalten
             from .operator import Operator, Zelldaten
             from ..linalg.pcg import jacobi_diagonale
@@ -174,7 +175,13 @@ class FcmProblem:
             self._diagonale = jacobi_diagonale(self._zelldaten, C, K_rand)
             self._K_red = (C.T @ K @ C).tocsr()
             self._loeser = None
-            name_loeser = "pcg-jacobi" + ("" if self._operator.numba else " (numpy)")
+            self._mehrgitter = None
+            if self.loeser == "mehrgitter":
+                from .mehrgitter import PMehrgitter
+                self._mehrgitter = PMehrgitter(self)
+                name_loeser = "pcg-mehrgitter"
+            else:
+                name_loeser = "pcg-jacobi" + ("" if self._operator.numba else " (numpy)")
         else:
             K_red = (C.T @ K @ C).tocsr()
             if self._B is not None:
@@ -198,8 +205,10 @@ class FcmProblem:
             "oberflaechenpunkte": int(len(self.oberflaeche.punkte)), "oberflaeche": dict(self.oberflaeche.statistik),
             "loeser": name_loeser,
             "t_assemblierung_s": round(t1 - t0, 3), "t_faktorisierung_s": round(t2 - t1, 3)})
-        if self.loeser == "pcg":
+        if self.loeser in ("pcg", "mehrgitter"):
             self.protokoll["operator"] = dict(self._zelldaten.statistik)
+        if self.loeser == "mehrgitter":
+            self.protokoll["mehrgitter"] = dict(self._mehrgitter.statistik)
 
     def rechte_seite(self, vorgaben: dict, zusatz: np.ndarray | None = None) -> np.ndarray:
         """vorgaben: Randname -> g(P) -> (n,3) oder Feld (n,3) oder Konstante; Lasten kommen immer dazu,
@@ -237,14 +246,15 @@ class FcmProblem:
         n = self.gitter.n_dof
         C = self.zwaenge.C
         F_red = np.asarray(C.T @ F[:n])
-        if self.loeser == "pcg":
+        if self.loeser in ("pcg", "mehrgitter"):
             from ..linalg.pcg import pcg
             B = np.asarray(self._B @ C) if self.n_zwaenge else None
             X = np.empty((C.shape[1], len(liste)))
             lam = np.empty((self.n_zwaenge, len(liste)))
             iterationen, residuen = [], []
+            vork = self._mehrgitter.anwenden if self._mehrgitter is not None else 1.0 / self._diagonale
             for k in range(len(liste)):
-                erg = pcg(self._operator.frei_anwenden, F_red[:, k], 1.0 / self._diagonale, tol=self.toleranz,
+                erg = pcg(self._operator.frei_anwenden, F_red[:, k], vork, tol=self.toleranz,
                           B=B, d=F[n:, k] if self.n_zwaenge else None)
                 if not erg.konvergiert:
                     raise ValueError(f"PCG nicht konvergiert: Residuum {erg.residuum_rel:.1e} nach {erg.iterationen} Iterationen")

@@ -223,6 +223,8 @@ class Zwaenge:
         C = sp.coo_matrix((np.concatenate(V), (np.concatenate(Z), np.concatenate(S))), shape=(3 * n_moden, 3 * n_frei)).tocsr()
         self.statistik["moden_frei"] = n_frei
         self.statistik["moden_gebunden"] = int(gebunden.sum())
+        self.moden_frei = fi                          # Modennummer je freier Spalte (p-Mehrgitter: Injektion)
+        self.spalte_von_mode = neu_nr                 # freie Spalte je Mode (nur fuer freie Moden gueltig)
         return C
 
 
