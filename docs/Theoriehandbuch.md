@@ -1521,7 +1521,11 @@ in Phase 2 wie der Normalkontakt aus Multiplikatoren bestimmt
   trotzdem „konvergiert“, und erst die Warmstart-Prüfung am Laufende setzte
   sie zurück - die Schlussrunden, die am Drehlager Zeit kosteten
   (`tests/test_kontakt_exakt`, Reibung in einer Richtung, mit
-  Rücknahmeprobe).
+  Rücknahmeprobe). Drehlager danach (Lauf `einzeilig_18a770d`, zwei
+  Auswerter): 53,6 min statt 77,0, alle 18 Kontaktläufe konvergiert, keine
+  Warmstart-Korrektur mehr, Runden je Lauf 37 / 8 / 6 / 3 / 9 … statt
+  53 / 51 / 6 / 3 / 30 …, Residuum am Ende 0; ε_p 8,291 %, u_max 1,1507 mm,
+  Bohrungen innerhalb 3 N/mm² des Laufs davor.
 * Ausgenommen sind Fugen, in denen der Löser Punkte hält (gehalten,
   Schubhalt): ihr Reibzustand ist ein Artefakt des Halts. Ein ganz abhebender
   Block pendelte sonst 85 Runden zwischen Haften und Gleiten statt „hebt ab“
