@@ -180,30 +180,30 @@ class FcmProblem:
             # matrixfrei (Teilprojekt 3/4): Zellmatrizen statt Faktorisierung; die reduzierte Matrix
             # bleibt fuer die Residuumsprobe und die Glaetterbloecke des Mehrgitters erhalten
             from .operator import Operator
-            from ..linalg.pcg import jacobi_diagonale
             self._operator = Operator(self._zelldaten, C=C, K_rand=K_rand)
-            self._diagonale = jacobi_diagonale(self._zelldaten, C, K_rand)
             self._K_red = (C.T @ K @ C).tocsr()
+            # Jacobi-Diagonale = Diagonale der reduzierten Matrix (gleich jacobi_diagonale, ohne Zellschleife)
+            self._diagonale = np.asarray(self._K_red.diagonal(), float)
             self._loeser = None
             self._mehrgitter = None
             self._gpu = None
+            if self.backend == "gpu":
+                from .operator_gpu import verfuegbar
+                if not verfuegbar():
+                    raise ValueError("backend 'gpu': keine GPU/CuPy verfuegbar")
             if self.loeser == "mehrgitter":
                 from .mehrgitter import PMehrgitter
-                self._mehrgitter = PMehrgitter(self)
+                # auf der GPU wird das Mehrgitter dort eingerichtet (Bloecke, lambda_max, Operatoren)
+                self._mehrgitter = PMehrgitter(self, geraet=self.backend)
                 name_loeser = "pcg-mehrgitter"
             else:
                 name_loeser = "pcg-jacobi" + ("" if self._operator.numba else " (numpy)")
             if self.backend == "gpu":
-                # Operator und V-Zyklus auf der GPU (Theorie 11.10); Einrichten bleibt auf der CPU
-                from .operator_gpu import OperatorGpu, verfuegbar
-                if not verfuegbar():
-                    raise ValueError("backend 'gpu': keine GPU/CuPy verfuegbar")
-                op_gpu = OperatorGpu(self._zelldaten, C=C, K_rand=K_rand)
-                mg_gpu = None
                 if self._mehrgitter is not None:
-                    from .mehrgitter_gpu import PMehrgitterGpu
-                    mg_gpu = PMehrgitterGpu(self._mehrgitter)
-                self._gpu = (op_gpu, mg_gpu)
+                    self._gpu = (self._mehrgitter.operator_gpu, self._mehrgitter)
+                else:
+                    from .operator_gpu import OperatorGpu
+                    self._gpu = (OperatorGpu(self._zelldaten, C=C, K_rand=K_rand), None)
                 name_loeser += " (gpu)"
         else:
             K_red = (C.T @ K @ C).tocsr()

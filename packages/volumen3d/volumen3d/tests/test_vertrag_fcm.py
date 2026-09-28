@@ -105,7 +105,7 @@ def test_ablauf():
     check("Provider liefert NaN -> SolverError mit Hinweis und Ort", f)
     from statik3d_contracts.detail import FcmSettings
     for schlecht, text in ((FcmSettings(base_cell_size_mm=50.0, p=7), "p"), (FcmSettings(base_cell_size_mm=-1.0), "base_cell_size"),
-                           (FcmSettings(base_cell_size_mm=50.0, backend="gpu"), "backend"), (FcmSettings(base_cell_size_mm=50.0, coupling="forces"), "coupling")):
+                           (FcmSettings(base_cell_size_mm=50.0, backend="tpu"), "backend"), (FcmSettings(base_cell_size_mm=50.0, coupling="forces"), "coupling")):
         try:
             s.estimate(dataclasses.replace(spec, settings=schlecht))
             f = False
@@ -292,6 +292,62 @@ def test_zylinderauswahl():
           f"Zylinder {p_zyl['area_mm2']:.3f}, benannt {p_name['area_mm2']:.3f}, soll {A_soll:.3f} mm2")
 
 
+def test_loeserwahl():
+    """backend 'auto' waehlt den im Gesamtweg schnelleren Weg (Theorie 11.10): Mehrgitter auf der GPU ab
+    _AUTO_MIN_DOFS Freiheitsgraden bei genug GPU-Speicher, sonst direkt; 'gpu' faellt ohne GPU oder bei zu
+    wenig Speicher auf die CPU zurueck (Vorgabe 9), 'cpu' ist immer direkt."""
+    import dataclasses
+    from statik3d_contracts.model import Material, ResultKey
+    from statik3d_contracts.testing import StubGlobalFieldProvider
+    from volumen3d import api
+    alt = api._gpu_frei_mb
+    try:
+        api._gpu_frei_mb = lambda: 8000.0
+        n_gross = api._AUTO_MIN_DOFS + 1
+        faelle = [("cpu", 10 ** 6, "direkt"), ("auto", 50_000, "direkt"), ("auto", n_gross, "mehrgitter"), ("gpu", 50_000, "mehrgitter")]
+        ok = all(api._loeserwahl(b, 2000, 1500, 3, n)[0] == erw for b, n, erw in faelle)
+        api._gpu_frei_mb = lambda: 0.0
+        l0, g0, _, w0 = api._loeserwahl("gpu", 2000, 1500, 3, n_gross)
+        la, _, grund_a, _ = api._loeserwahl("auto", 2000, 1500, 3, n_gross)
+        api._gpu_frei_mb = lambda: 100.0                    # zu wenig Speicher fuer 2000 Zellen p 3
+        l1, _, _, w1 = api._loeserwahl("gpu", 2000, 1500, 3, n_gross)
+        check("Loeserwahl: cpu direkt, auto klein direkt, auto gross GPU-Mehrgitter, gpu GPU-Mehrgitter; ohne GPU bzw. mit "
+              "zu wenig Speicher Rueckfall auf direkt mit Warnung",
+              ok and l0 == "direkt" and g0 == "cpu" and w0 and la == "direkt" and "keine GPU" in grund_a and l1 == "direkt" and w1,
+              f"{w0} / {grund_a} / {w1}")
+    finally:
+        api._gpu_frei_mb = alt
+    # durchgehend: backend 'gpu' gegen 'cpu' am Kragarm-Ausschnitt (klein - 'auto' waehlt direkt)
+    s = api.FcmSolver()
+    mat = Material("S355", "S355", 210000.0, 0.3, 7.85e-9)
+    prov = StubGlobalFieldProvider(1000.0, 100.0, 200.0, 210000.0, 10000.0)
+    spec = _spec(p=2, h=50.0)
+    erg = {}
+    for b in ("cpu", "gpu", "auto"):
+        sp_b = dataclasses.replace(spec, settings=dataclasses.replace(spec.settings, backend=b))
+        est = s.estimate(sp_b)
+        disc = s.prepare(sp_b, mat, progress=lambda t, a: None)
+        e = s.solve(disc, prov, [ResultKey("LF1")], progress=lambda t, a: None)[0]
+        erg[b] = (est, disc, e)
+    e_c, e_g = erg["cpu"][2], erg["gpu"][2]
+    gpu_da = api._gpu_frei_mb() > 0
+    f_s = np.abs(e_g.stress - e_c.stress).max() / np.abs(e_c.stress).max()
+    m_c = np.concatenate([pl["multipliers"] for pl in e_c.coupling_check["planes"]])
+    m_g = np.concatenate([pl["multipliers"] for pl in e_g.coupling_check["planes"]])
+    f_m = np.abs(m_g - m_c).max() / max(np.abs(m_c).max(), 1.0)
+    wahl_g = e_g.protocol["solver_choice"]
+    if gpu_da:
+        ok_g = wahl_g["geraet"] == "gpu" and "mehrgitter" in erg["gpu"][1].summary()["solver_path"]
+    else:
+        ok_g = wahl_g["geraet"] == "cpu" and any("Rueckfall" in w for w in e_g.warnings)
+    check(f"backend 'gpu' ({'GPU vorhanden' if gpu_da else 'ohne GPU: Rueckfall'}): Spannungen (< 1e-6) und Multiplikatoren (< 1e-6) "
+          f"wie 'cpu'; 'auto' waehlt beim kleinen Modell direkt; estimate nennt den Weg ({erg['auto'][0]['solver_path']}, "
+          f"{erg['auto'][0]['choice']})",
+          ok_g and f_s < 1e-6 and f_m < 1e-6 and erg["auto"][2].protocol["solver_choice"]["loeser"] in ("pardiso", "superlu")
+          and erg["auto"][0]["solver_path"] == "direkt",
+          f"Spannungen {f_s:.1e}, Multiplikatoren {f_m:.1e}, Wahl gpu {wahl_g}")
+
+
 def test_hybrid_platzhalter():
     from statik3d_contracts.nonlinear import AssemblyModelSpec
     from statik3d_contracts.solver import SolverError
@@ -308,4 +364,4 @@ def test_hybrid_platzhalter():
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_protokoll_und_registrierung, test_ablauf, test_gutachten_faelle, test_hybrid_platzhalter, test_lasten, test_zylinderauswahl]))
+    sys.exit(lauf([test_protokoll_und_registrierung, test_ablauf, test_gutachten_faelle, test_hybrid_platzhalter, test_lasten, test_zylinderauswahl, test_loeserwahl]))

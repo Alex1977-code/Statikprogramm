@@ -91,7 +91,10 @@ Teilprojekt 4 (p-Mehrgitter, `fcm/mehrgitter.py`, 28.09.) senkt die Iterationsza
 Zellblock-Schwarz-Glätter auf 26 bis 53 in allen Abnahmefällen (Jacobi: 2 580 bis über 40 000),
 `FcmProblem(loeser="mehrgitter")`; mit `backend="gpu"` läuft der V-Zyklus auf der Grafikkarte
 (Kirsch h 10 p 3: 8,6 bis 21 s gegen 7 bis 25 s Lösen des Direktlösers), freie Starrkörper-
-bewegungen werden erkannt und herausprojiziert. Offen vor Pull Request 2 (Stufe 2): Iterationen bei
-feinen Gittern (h 10: bis 129) und das Einrichten auf der CPU (50 bis 70 s); bis dahin bleibt der
-Direktlöser der Standard der Vertragsschicht. Offen aus Teilprojekt 2: der schnelle Windungszahl-Baum für STL-Netze
+bewegungen werden erkannt und herausprojiziert. Seit dem 28.09.2026 abends wählt die Vertragsschicht mit
+`FcmSettings.backend = "auto"` (Standard) den schnelleren Weg: das Mehrgitter auf der GPU ab 200 000
+Freiheitsgraden bei genug GPU-Speicher, sonst den Direktlöser; `"gpu"` erzwingt das Mehrgitter (Rückfall
+ohne GPU mit Warnung), `"cpu"` den Direktlöser. Gemessen (Kirsch h 10 p 3, Gesamtweg): 32,9 gegen 34,4 s
+und 35,3 gegen 57,4 s; darunter bleibt der Direktlöser schneller. `summary()` und Protokoll nennen den Weg
+(`solver_path`, `backend`, `solver_choice`); für das Hauptprogramm ändert sich an der Schnittstelle nichts. Offen aus Teilprojekt 2: der schnelle Windungszahl-Baum für STL-Netze
 über 10⁵ Facetten (Teilprojekt 5) und die Vierteilung der Randpolygone an gekrümmten Formen.

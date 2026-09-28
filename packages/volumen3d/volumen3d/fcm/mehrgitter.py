@@ -26,7 +26,6 @@ import numpy as np
 import scipy.sparse as sp
 
 from ..linalg.direkt import Direktloeser
-from ..linalg.pcg import jacobi_diagonale
 from .basis import modenklassen
 from .operator import Operator, Zelldaten
 
@@ -153,6 +152,44 @@ def _inv_stapel(B: np.ndarray) -> np.ndarray:
     return 0.5 * (X + np.swapaxes(X, 1, 2))
 
 
+_AUSZUG_QUELLE = r"""
+extern "C" __global__
+void teilmatrizen(const long long* __restrict__ indptr, const int* __restrict__ indices,
+                  const double* __restrict__ data, const long long* __restrict__ S,
+                  const int k, const int s, double* __restrict__ B)
+{
+    const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= (long long)k * s) return;
+    const long long b = t / s;
+    const int a = (int)(t % s);
+    const long long* Sb = S + b * s;
+    const long long zeile = Sb[a];
+    double* Bb = B + b * (long long)s * s + (long long)a * s;
+    for (long long idx = indptr[zeile]; idx < indptr[zeile + 1]; ++idx) {
+        const long long col = indices[idx];
+        int lo = 0, hi = s;
+        while (lo < hi) { const int mid = (lo + hi) >> 1; if (Sb[mid] < col) lo = mid + 1; else hi = mid; }
+        if (lo < s && Sb[lo] == col) Bb[lo] = data[idx];
+    }
+}
+"""
+
+
+def _zell_bloecke(C: sp.csr_matrix, dofs: np.ndarray) -> dict[int, list[np.ndarray]]:
+    """Je Zelle die beruehrten freien Koordinaten (Spalten der Zeilen von C zu den Zellfreiheits-
+    graden), nach Blockgroesse gruppiert."""
+    Cz = C.tocsr()[dofs.ravel()]
+    n3 = dofs.shape[1]
+    gruppen: dict[int, list[np.ndarray]] = {}
+    for c in range(dofs.shape[0]):
+        a, b = Cz.indptr[c * n3], Cz.indptr[(c + 1) * n3]
+        if a == b:
+            continue
+        S = np.unique(Cz.indices[a:b])
+        gruppen.setdefault(len(S), []).append(S)
+    return gruppen
+
+
 class ZellSchwarz:
     """Additiver Schwarz-Glaetter ueber Zellbloecke (Vorgabe 8.3, Gegenmassnahme 2).
 
@@ -161,35 +198,55 @@ class ZellSchwarz:
     Glaetter noch das Grobgitter p = 1 (nur Eckmoden) erreichen sie (Patch h 20 p 2: 210 von 2469
     Eigenwerten des V-Zyklus-vorkonditionierten Operators unter 0,01, 1327 CG-Iterationen). Je
     Zelle wird der Block A[S,S] der freien Koordinaten, die die Zelle beruehrt, exakt geloest.
-    Bloecke gleicher Groesse liegen gestapelt (Einrichten: numba-Auszug aus der CSR-Matrix und
-    eine gestapelte Inversion je Groesse; Anwenden: einsum + bincount statt Schleife ueber Zellen -
-    Kirsch h 20 p 3: Einrichten 49 s -> siehe Theorie 11.10, Anwenden 19 -> 13 ms)."""
+    Bloecke gleicher Groesse liegen gestapelt. ``geraet='cpu'``: numba-Auszug aus der CSR-Matrix,
+    eigene Cholesky-Inversion, Anwenden mit einsum + bincount. ``geraet='gpu'``: Auszug per
+    RawKernel, gestapelte Inversion mit cuBLAS, Bloecke bleiben auf der GPU (Theorie 11.10)."""
 
-    def __init__(self, ebene: "Ebene", A: sp.csr_matrix) -> None:
-        z = ebene.zelldaten
-        C = ebene.C.tocsr()
+    def __init__(self, C: sp.csr_matrix, dofs: np.ndarray, A: sp.csr_matrix, geraet: str = "cpu",
+                 A_gpu=None) -> None:
         A = A.tocsr()
         A.sort_indices()
-        gruppen: dict[int, list[np.ndarray]] = {}
-        # beruehrte freie Koordinaten je Zelle: Spalten der Zeilen von C zu den Zellfreiheitsgraden
-        Cz = C[z.dofs.ravel()]
-        n3 = z.dofs.shape[1]
-        for c in range(len(z.gitter.ijk)):
-            a, b = Cz.indptr[c * n3], Cz.indptr[(c + 1) * n3]
-            if a == b:
-                continue
-            S = np.unique(Cz.indices[a:b])
-            gruppen.setdefault(len(S), []).append(S)
-        self.gruppen: list[tuple[np.ndarray, np.ndarray]] = []
-        indizes = (A.indptr.astype(np.int64), A.indices.astype(np.int64))
-        for s, liste in sorted(gruppen.items()):
-            I = np.ascontiguousarray(np.array(liste, dtype=np.int64))
-            B = _teilmatrizen(A, I, indizes)
-            self.gruppen.append((I, _inv_stapel(B)))
+        gruppen = _zell_bloecke(C, dofs)
         self.n = int(C.shape[1])
-        self.speicher_mb = round(sum(Bi.nbytes for _, Bi in self.gruppen) / 1e6, 1)
+        self.geraet = geraet
+        self.gruppen: list = []
+        if geraet == "gpu":
+            import cupy
+            if A_gpu is None:
+                A_gpu = _csr_auf_gpu(A)
+            indptr = A_gpu.indptr.astype(cupy.int64)
+            indices = A_gpu.indices
+            if indices.dtype != cupy.int32:
+                indices = indices.astype(cupy.int32)
+            kern = cupy.RawModule(code=_AUSZUG_QUELLE).get_function("teilmatrizen")
+            for s, liste in sorted(gruppen.items()):
+                I = cupy.asarray(np.array(liste, dtype=np.int64))
+                k = int(I.shape[0])
+                B = cupy.zeros((k, s, s), dtype=cupy.float64)
+                n_thr = k * s
+                kern(((n_thr + 255) // 256,), (256,), (indptr, indices, A_gpu.data, I, np.int32(k), np.int32(s), B))
+                X = cupy.linalg.inv(B)
+                del B
+                X = 0.5 * (X + X.transpose(0, 2, 1))
+                self.gruppen.append((I, I.ravel(), X))
+            self.speicher_mb = round(sum(int(X.nbytes) for _, _, X in self.gruppen) / 1e6, 1)
+        else:
+            indizes = (A.indptr.astype(np.int64), A.indices.astype(np.int64))
+            for s, liste in sorted(gruppen.items()):
+                I = np.ascontiguousarray(np.array(liste, dtype=np.int64))
+                B = _teilmatrizen(A, I, indizes)
+                self.gruppen.append((I, _inv_stapel(B)))
+            self.speicher_mb = round(sum(Bi.nbytes for _, Bi in self.gruppen) / 1e6, 1)
 
-    def anwenden(self, r: np.ndarray) -> np.ndarray:
+    def anwenden(self, r):
+        if self.geraet == "gpu":
+            import cupy
+            import cupyx
+            z = cupy.zeros(self.n, dtype=cupy.float64)
+            for I, I_flach, X in self.gruppen:
+                beitrag = cupy.matmul(X, r[I][:, :, None])[:, :, 0]
+                cupyx.scatter_add(z, I_flach, beitrag.ravel())
+            return z
         z = np.zeros(self.n)
         for I, Binv in self.gruppen:
             beitrag = np.einsum("kab,kb->ka", Binv, r[I])
@@ -197,42 +254,52 @@ class ZellSchwarz:
         return z
 
 
-class Ebene:
-    """Eine p-Ebene: Gitter (bzw. Kopie mit eigener Nummerierung), Zwangsmatrix, Zelldaten,
-    Operator, Jacobi-Diagonale."""
+def _csr_auf_gpu(A: sp.csr_matrix):
+    import cupyx.scipy.sparse as cusp
+    return cusp.csr_matrix(A.tocsr())
 
-    def __init__(self, p: int, gitter, C: sp.csr_matrix, moden_frei: np.ndarray, zelldaten: Zelldaten,
-                 K_rand: sp.spmatrix | None, diag: np.ndarray | None = None) -> None:
+
+class Ebene:
+    """Eine p-Ebene: Gitter (bzw. Kopie mit eigener Nummerierung), Zwangsmatrix C, assemblierte freie
+    Matrix A = C^T (K + K_rand) C, Diagonale, Injektion P zur feineren Ebene, Freiheitsgradtabelle
+    der Zellen (fuer die Glaetterbloecke) und der Operator: auf der feinsten Ebene matrixfrei, auf den
+    groben Ebenen das Produkt mit A (die groben Matrizen sind Teilmatrizen der feinen, s. PMehrgitter)."""
+
+    def __init__(self, p: int, gitter, C: sp.csr_matrix, moden_frei: np.ndarray, A: sp.csr_matrix,
+                 operator=None) -> None:
         self.p = p
         self.gitter = gitter
         self.C = C.tocsr()
         self.moden_frei = np.asarray(moden_frei, int)            # Modennummer je freier Koordinate
-        self.zelldaten = zelldaten
-        self.K_rand = K_rand
-        self.operator = Operator(zelldaten, C=self.C, K_rand=K_rand)
+        self.A_matrix = A.tocsr()
         self.n_frei = int(self.C.shape[1])
-        self.diag = diag if diag is not None else jacobi_diagonale(zelldaten, self.C, K_rand)
+        self.diag = np.asarray(self.A_matrix.diagonal(), float)
+        n3 = 3 * int(gitter.zell_moden.shape[1])
+        self.dofs = np.ascontiguousarray((3 * gitter.zell_moden[:, :, None] + np.arange(3)).reshape(-1, n3), dtype=np.int64)
+        self.operator = operator                                  # matrixfrei (feinste Ebene) oder None
         self.lambda_max = 0.0
         self.P: sp.csr_matrix | None = None            # Injektion freie Koordinaten dieser Ebene -> feinere Ebene
         self.B: np.ndarray | None = None               # Mittelwertzwaenge auf dieser Ebene
         self.direkt: Direktloeser | None = None
         self.vork = None
         self.schwarz: ZellSchwarz | None = None
+        self.A_geraet = None                                      # Operator auf dem Rechengeraet
+        self.P_geraet = None
+        self.PT_geraet = None
 
-    def A(self, x: np.ndarray) -> np.ndarray:
-        return self.operator.frei_anwenden(x)
-
-    def matrix(self) -> sp.csr_matrix:
-        """Assemblierte freie Matrix C^T (K + K_rand) C (fuer Glaetterbloecke und Grobgitter)."""
-        K = self.zelldaten.matrix()
-        if self.K_rand is not None:
-            K = K + self.K_rand
-        return (self.C.T @ K @ self.C).tocsr()
+    def A(self, x):
+        if self.A_geraet is not None:
+            return self.A_geraet(x)
+        if self.operator is not None:
+            return self.operator.frei_anwenden(x)
+        return self.A_matrix @ x
 
 
 class PMehrgitter:
     """V-Zyklus ueber die Polynomgrade p, p-1, ..., 1; ``anwenden(r)`` ist die Vorkonditionierung.
     Glaetter: 'schwarz' (Zellbloecke, Standard) oder 'jacobi', jeweils mit Chebyshev-Beschleunigung.
+    ``geraet='gpu'``: Glaetterbloecke, Operatoren, lambda_max und V-Zyklus auf der GPU (``anwenden``
+    nimmt und liefert cupy-Felder); nur das Grobgitter p = 1 bleibt auf der CPU.
 
     Standard Grad 5 auf [lambda_max/16, lambda_max]: am schwierigsten Fall (Kirsch h 10 p 3, Versatz
     0,6, GPU) gemessen Grad 3/alpha 8: 129 Iterationen 14,6 s, Grad 5/alpha 8: 92 / 16,7 s, Grad
@@ -240,7 +307,8 @@ class PMehrgitter:
     die Iterationszahl schon; Grad 5/alpha 16 haelt die Vorgabe (unter 100) ohne Zeitverlust."""
 
     def __init__(self, problem, glaetter_grad: int = 5, alpha: float = 16.0, potenz_schritte: int = 15,
-                 glaetter: str = "schwarz", lambda_sicherheit: float = 1.1, grob_verschiebung: float = 1e-10) -> None:
+                 glaetter: str = "schwarz", lambda_sicherheit: float = 1.1, grob_verschiebung: float = 1e-10,
+                 geraet: str = "cpu") -> None:
         t0 = time.perf_counter()
         zeiten: dict[str, float] = {}
         pr = problem
@@ -250,17 +318,32 @@ class PMehrgitter:
         p = int(g.p)
         self.glaetter_grad = int(glaetter_grad)
         self.alpha = float(alpha)
+        self.geraet = geraet
+        if geraet == "gpu":
+            import cupy
+            self.xp = cupy
+        else:
+            self.xp = np
         zd_fein = getattr(pr, "_zelldaten", None) or Zelldaten(g, pr.quadratur, pr.werkstoff.E, pr.werkstoff.nu)
-        # feinste Ebene mit den Zwaengen des Problems selbst: dieselben freien Koordinaten wie pr.loesen
-        self.ebenen: list[Ebene] = [Ebene(p, g, pr.zwaenge.C, pr.zwaenge.moden_frei, zd_fein, pr.K_rand,
-                                          getattr(pr, "_diagonale", None))]
+        # feinste Ebene mit den Zwaengen und der reduzierten Matrix des Problems (dieselben freien
+        # Koordinaten wie pr.loesen); beim Direktloeser mit Schnittebenen ist _K_red der Sattelpunkt
+        C0 = pr.zwaenge.C
+        A0 = getattr(pr, "_K_red", None)
+        if A0 is None or A0.shape[0] != C0.shape[1]:
+            K = zd_fein.matrix()
+            if pr.K_rand is not None:
+                K = K + pr.K_rand
+            A0 = (C0.T @ K @ C0).tocsr()
+        op_fein = Operator(zd_fein, C=C0, K_rand=pr.K_rand)
+        self.ebenen: list[Ebene] = [Ebene(p, g, C0, pr.zwaenge.moden_frei, A0, operator=op_fein)]
+        self.zelldaten_fein = zd_fein
+        self.K_rand = pr.K_rand
         fein = self.ebenen[0]
         t = time.perf_counter()
         for pk in range(p - 1, 0, -1):
             g_k = copy.copy(g)
             g_k.moden_nummerieren(pk)                      # weist neue Felder zu, das Original bleibt
             sub = _teilraum_indizes(fein.p, pk)
-            zd_k = Zelldaten.teilraum(fein.zelldaten, g_k, sub)
             # Injektion der Moden: je Zelle grober lokaler Mode j <-> feiner lokaler Mode sub[j]
             paare = np.unique(np.stack([fein.gitter.zell_moden[:, sub].ravel(), g_k.zell_moden.ravel()], axis=1), axis=0)
             grob_von_fein = np.full(fein.gitter.n_moden, -1, int)
@@ -271,9 +354,8 @@ class PMehrgitter:
             maske = grob_von_fein[fein.moden_frei] >= 0
             spalten_f = np.flatnonzero(maske)
             moden_frei_k = grob_von_fein[fein.moden_frei[spalten_f]]
-            zeilen = (3 * spalten_f[:, None] + np.arange(3)).ravel()
-            spalten = np.arange(3 * len(spalten_f))
-            P_frei = sp.csr_matrix((np.ones(len(zeilen)), (zeilen, spalten)), shape=(fein.n_frei, 3 * len(spalten_f)))
+            auswahl = (3 * spalten_f[:, None] + np.arange(3)).ravel()        # feine freie Koordinaten
+            P_frei = sp.csr_matrix((np.ones(len(auswahl)), (auswahl, np.arange(len(auswahl)))), shape=(fein.n_frei, len(auswahl)))
             CP = (fein.C @ P_frei).tocsr()
             # Schachtelung pruefen: Zeilen von C_fein P~ ausserhalb des groben Raums muessen verschwinden
             ausserhalb = np.ones(fein.gitter.n_moden, bool)
@@ -284,8 +366,11 @@ class PMehrgitter:
                                  f"Eintrag {float(np.abs(rest.data).max()):.2e} auf Moden ausserhalb des groben Raums")
             C_k = (P3.T @ CP).tocsr()
             C_k.eliminate_zeros()
-            K_rand_k = (P3.T @ fein.K_rand @ P3).tocsr() if fein.K_rand is not None and fein.K_rand.nnz else None
-            eb = Ebene(pk, g_k, C_k, moden_frei_k, zd_k, K_rand_k)
+            # Galerkin exakt, weil geschachtelt: A_grob = P~^T A_fein P~, und P~ waehlt nur Koordinaten aus -
+            # die grobe Matrix ist eine Teilmatrix der feinen (keine neue Assemblierung, test_mehrgitter
+            # vergleicht mit C_k^T K_k C_k aus den Teilbloecken der Zellmatrizen)
+            A_k = fein.A_matrix[auswahl][:, auswahl].tocsr()
+            eb = Ebene(pk, g_k, C_k, moden_frei_k, A_k)
             eb.P = P_frei
             self.ebenen.append(eb)
             fein = eb
@@ -298,10 +383,29 @@ class PMehrgitter:
             if B is not None and eb.P is not None:
                 B = np.asarray(B @ eb.P)
             eb.B = B
-        # Grobgitter p = 1 direkt, mit den Mittelwertzwaengen als Sattelpunkt
+        # Rechengeraet: Operatoren und Injektionen
+        t = time.perf_counter()
+        if geraet == "gpu":
+            import cupyx.scipy.sparse as cusp
+            from .operator_gpu import OperatorGpu
+            op_gpu = OperatorGpu(zd_fein, C=C0, K_rand=pr.K_rand)
+            self.ebenen[0].A_geraet = op_gpu.frei_anwenden
+            self.operator_gpu = op_gpu
+            for eb in self.ebenen[1:]:
+                if eb is not self.ebenen[-1]:
+                    A_g = cusp.csr_matrix(eb.A_matrix)
+                    eb.A_geraet = (lambda x, M=A_g: M @ x)
+                eb.P_geraet = cusp.csr_matrix(eb.P)
+                eb.PT_geraet = cusp.csr_matrix(eb.P.T.tocsr())
+        else:
+            for eb in self.ebenen[1:]:
+                eb.P_geraet = eb.P
+                eb.PT_geraet = eb.P.T.tocsr()
+        zeiten["geraet"] = time.perf_counter() - t
+        # Grobgitter p = 1 direkt (CPU), mit den Mittelwertzwaengen als Sattelpunkt
         t = time.perf_counter()
         grob = self.ebenen[-1]
-        A1 = grob.matrix()
+        A1 = grob.A_matrix
         # Kleine Verschiebung delta = 1e-10 max diag: ein singulaeres Grobgitter (Kirsch-Modell: u_z frei,
         # keine Schnittebene) faktorisierte Pardiso mit still gestoerten Pivots, die Korrektur bekam
         # Nullraumanteile der Groesse 1/Pivot, und der PCG stagnierte je nach Schnittlage (Versatz 0,2:
@@ -330,14 +434,14 @@ class PMehrgitter:
         R1 = X - grob_loesen(X)
         self.grob_residuum = float(np.linalg.norm(R1[:, 0]) / np.linalg.norm(X[:, 0]))
         R2 = R1 - grob_loesen(R1)
-        A1 = A1s
         zeiten["grobgitter"] = time.perf_counter() - t
         # Nullraum auf die feinste Ebene injizieren und dort am Operator bestaetigen. Ohne ihn blaehte der
         # Vorkonditionierer den Nullraumanteil auf (r_0/delta), der ueber Rundung ins Residuum
         # zurueckwirkte: Kirsch h 10 p 3 (u_z frei) erreichte 1e-8 und sprang wieder auf 1e-6, 147 bis 243
         # Iterationen je nach Einstellung und Summationsreihenfolge (28.09.2026). Nur bestaetigte echte
         # Nullvektoren werden herausprojiziert - ein fast singulaerer, aber echter Modus darf nicht fehlen.
-        self.nullraum: np.ndarray | None = None
+        self.nullraum = None
+        self._nullraum_cpu: np.ndarray | None = None
         if not self.n_zwaenge and self.grob_residuum > 1e-3:
             U_s, s_w, _ = np.linalg.svd(R2, full_matrices=False)
             kandidaten = U_s[:, s_w > 1e-2 * s_w.max()] if s_w.max() > 1e-3 else U_s[:, :0]
@@ -347,42 +451,39 @@ class PMehrgitter:
             if kandidaten.shape[1]:
                 Q, _ = np.linalg.qr(kandidaten)
                 x_ref = np.random.default_rng(2).standard_normal(fein.n_frei)
-                bezug = np.linalg.norm(fein.A(x_ref)) / np.linalg.norm(x_ref)
-                echt = [j for j in range(Q.shape[1]) if np.linalg.norm(fein.A(Q[:, j])) < 1e-6 * bezug]
+                bezug = np.linalg.norm(fein.A_matrix @ x_ref) / np.linalg.norm(x_ref)
+                echt = [j for j in range(Q.shape[1]) if np.linalg.norm(fein.A_matrix @ Q[:, j]) < 1e-6 * bezug]
                 if echt:
-                    self.nullraum = Q[:, echt]
-        # Glaetter je Ebene: Schwarz-Zellbloecke aus der (nur hierfuer) assemblierten Matrix, sonst Jacobi
+                    self._nullraum_cpu = np.ascontiguousarray(Q[:, echt])
+                    self.nullraum = self.xp.asarray(self._nullraum_cpu)
+        # Glaetter je Ebene: Schwarz-Zellbloecke aus der assemblierten Matrix der Ebene, sonst Jacobi
         t = time.perf_counter()
         self.glaetter = glaetter
         speicher = 0.0
-        for k, eb in enumerate(self.ebenen[:-1]):
+        for eb in self.ebenen[:-1]:
             if glaetter == "schwarz":
-                # feinste Ebene: die reduzierte Matrix des Problems ist schon da (C^T (K + K_rand) C); beim
-                # Direktloeser mit Schnittebenen ist sie der Sattelpunkt (andere Groesse) und wird neu gebildet
-                A_eb = getattr(pr, "_K_red", None) if k == 0 else None
-                if A_eb is None or A_eb.shape[0] != eb.n_frei:
-                    A_eb = eb.matrix()
-                eb.schwarz = ZellSchwarz(eb, A_eb)
+                eb.schwarz = ZellSchwarz(eb.C, eb.dofs, eb.A_matrix, geraet=geraet)
                 speicher += eb.schwarz.speicher_mb
                 eb.vork = eb.schwarz.anwenden
             else:
-                eb.vork = lambda r, d=eb.diag: r / d
+                d = self.xp.asarray(eb.diag)
+                eb.vork = (lambda r, d=d: r / d)
         zeiten["glaetter"] = time.perf_counter() - t
         # lambda_max von M^-1 A je Ebene (Potenzmethode), 10 % Sicherheit
         t = time.perf_counter()
         rng = np.random.default_rng(0)
         for eb in self.ebenen[:-1]:
-            v = rng.standard_normal(eb.n_frei)
-            v /= np.linalg.norm(v)
+            v = self.xp.asarray(rng.standard_normal(eb.n_frei))
+            v /= float(self.xp.linalg.norm(v))
             lam = 0.0
             for _ in range(potenz_schritte):
                 w = eb.vork(eb.A(v))
-                lam = float(np.linalg.norm(w))
+                lam = float(self.xp.linalg.norm(w))
                 v = w / lam
             eb.lambda_max = float(lambda_sicherheit) * lam
         zeiten["lambda_max"] = time.perf_counter() - t
         warnungen = []
-        k_null = 0 if self.nullraum is None else int(self.nullraum.shape[1])
+        k_null = 0 if self._nullraum_cpu is None else int(self._nullraum_cpu.shape[1])
         if k_null:
             warnungen.append(f"Operator singulaer: {k_null} freie Starrkoerperbewegung(en) ohne Lagerung (am feinen Operator "
                              f"bestaetigt); der Vorkonditionierer projiziert sie heraus, die Verschiebungen sind nur bis auf "
@@ -392,9 +493,9 @@ class PMehrgitter:
                              f"nicht bestaetigt; Verschiebung {self.grob_delta:.1e}")
         self.statistik = {"ebenen": [int(e.p) for e in self.ebenen], "frei_je_ebene": [int(e.n_frei) for e in self.ebenen],
                           "lambda_max": [round(e.lambda_max, 4) for e in self.ebenen[:-1]], "glaetter": glaetter,
-                          "glaetter_grad": self.glaetter_grad, "alpha": self.alpha, "grobgitter": grob.direkt.name,
-                          "grobgitter_nnz": int(A1.nnz), "grobgitter_probe": self.grob_residuum, "grobgitter_delta": self.grob_delta,
-                          "nullraum_dim": k_null,
+                          "glaetter_grad": self.glaetter_grad, "alpha": self.alpha, "geraet": geraet,
+                          "grobgitter": grob.direkt.name, "grobgitter_nnz": int(A1s.nnz), "grobgitter_probe": self.grob_residuum,
+                          "grobgitter_delta": self.grob_delta, "nullraum_dim": k_null,
                           "speicher_glaetter_mb": round(speicher, 1), "warnungen": warnungen,
                           "zeiten_s": {k: round(v, 2) for k, v in zeiten.items()},
                           "t_einrichten_s": round(time.perf_counter() - t0, 3)}
@@ -408,7 +509,7 @@ class PMehrgitter:
         c = 0.5 * (lmax - lmin)
         r = b - eb.A(x)
         alpha = 0.0
-        p = np.zeros_like(x)
+        p = self.xp.zeros_like(x)
         for i in range(self.glaetter_grad):
             z = eb.vork(r)
             if i == 0:
@@ -424,22 +525,25 @@ class PMehrgitter:
         return x
 
     # -- Zyklus --------------------------------------------------------------------------
-    def _zyklus(self, k: int, b: np.ndarray) -> np.ndarray:
+    def _zyklus(self, k: int, b):
         eb = self.ebenen[k]
         if eb.direkt is not None:
+            # Grobgitter auf der CPU (klein); auf der GPU eine Uebertragung hin und zurueck
+            b_cpu = b.get() if self.geraet == "gpu" else b
             if self.n_zwaenge:
-                return eb.direkt.loesen(np.concatenate([b, np.zeros(self.n_zwaenge)]))[:len(b)]
-            return eb.direkt.loesen(b)
-        x = self._chebyshev(eb, b, np.zeros_like(b))
+                y = eb.direkt.loesen(np.concatenate([b_cpu, np.zeros(self.n_zwaenge)]))[:len(b_cpu)]
+            else:
+                y = eb.direkt.loesen(b_cpu)
+            return self.xp.asarray(y)
+        x = self._chebyshev(eb, b, self.xp.zeros_like(b))
         r = b - eb.A(x)
         grob = self.ebenen[k + 1]
-        rc = grob.P.T @ r
-        xc = self._zyklus(k + 1, rc)
-        x = x + grob.P @ xc
+        xc = self._zyklus(k + 1, grob.PT_geraet @ r)
+        x = x + grob.P_geraet @ xc
         return self._chebyshev(eb, b, x)
 
-    def anwenden(self, r: np.ndarray) -> np.ndarray:
-        r = np.asarray(r, float)
+    def anwenden(self, r):
+        r = self.xp.asarray(r, dtype=float)
         N = self.nullraum
         if N is None:
             return self._zyklus(0, r)

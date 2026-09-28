@@ -10945,3 +10945,36 @@ Prozess gemessen (Aufbau + Lösen, Maschine belegt): Versatz 0 Direktlöser 25,5
 auf der GPU 42,1 s (51 Iterationen), Versatz 0,6 53,7 s gegen 57,6 s (86 Iterationen). Das Lösen ist
 auf der GPU schneller (8,8 gegen 10,0 s und 21,6 gegen 28,1 s), der Gesamtweg noch nicht; darum
 bleibt der Direktlöser Standard der Vertragsschicht, bis das Einrichten auf die GPU wandert.
+
+**Einrichten auf der GPU und automatische Wahl (28.09.2026).** Weil die Zwänge geschachtelt sind und
+P̃ nur Koordinaten auswählt, ist die grobe Matrix eine Teilmatrix der feinen: A_grob = A_fein[S, S]
+mit S den ausgewählten Koordinaten (gegen C_kᵀ K_k C_k aus den Teilblöcken der Zellmatrizen auf
+10⁻¹² geprüft). Die groben Ebenen werden darum nicht mehr assembliert, und die Jacobi-Diagonale ist
+die Diagonale dieser Matrizen. Mit `geraet="gpu"` werden die Glätterblöcke per RawKernel aus der
+feinen Matrix auf der GPU ausgezogen, mit cuBLAS gestapelt invertiert und bleiben dort; λ_max, die
+groben Operatoren (cuSPARSE) und der V-Zyklus laufen ebenfalls auf der GPU, nur das Grobgitter p = 1
+auf der CPU. Das auf der GPU eingerichtete Mehrgitter stimmt mit dem CPU-Mehrgitter auf 2·10⁻¹⁰
+überein. Das Einrichten kostet bei Kirsch h 10 p 3 nun 4 s statt 13 s. Gesamtweg (Aufbau + Lösen)
+im selben Prozess, Maschine belegt:
+
+| Kirsch p 3 | frei | Direktlöser | Mehrgitter GPU | Mehrgitter CPU |
+|---|---|---|---|---|
+| h 20, Versatz 0 | 33 060 | 6,4 s | 13,9 s | – |
+| h 20, Versatz 0,6 | 26 400 | 9,6 s | 10,8 s | – |
+| h 14, Versatz 0 | 69 879 | 11,3 s | 23,7 s | – |
+| h 14, Versatz 0,6 | 92 280 | 18,2 s | 31,0 s | – |
+| h 10, Versatz 0 | 130 611 | 34,4 s | **32,9 s** | 110,2 s |
+| h 10, Versatz 0,6 | 187 239 | 57,4 s | **35,3 s** | 244,2 s |
+
+Der Direktlöser wächst mit der Modellgröße überlinear (Auffüllung der Faktorisierung), das
+Mehrgitter annähernd linear; der Schnittpunkt liegt knapp über 100 000 freien Koordinaten. Die
+Vertragsschicht wählt deshalb mit `FcmSettings.backend = "auto"` (Standard des Vertrags) das
+Mehrgitter auf der GPU ab 200 000 Freiheitsgraden, wenn eine GPU mit genug Speicher da ist
+(Schätzung aus Zellmatrizen, Glätterblöcken und Blockauszug, an Kirsch h 10 p 3 mit 2,3 GB gegen
+gemessene 2,4 GB geeicht, mit Faktor 1,3 gegen den freien Speicher), sonst den Direktlöser.
+`"gpu"` erzwingt das Mehrgitter und fällt ohne GPU oder bei zu wenig Speicher mit Warnung auf den
+Direktlöser zurück (Vorgabe 9), `"cpu"` rechnet immer direkt; das Mehrgitter auf der CPU ist in allen
+Messungen langsamer als der Direktlöser und wird nicht gewählt. Die Vertragstoleranz (relatives
+Residuum) wird für das Mehrgitter auf 10⁻¹⁰ geschärft, damit die Verschiebungen den Direktlöser auf
+10⁻⁶ treffen (Vorgabe 9); am Vertragsbeispiel mit `"gpu"` weichen die Spannungen um 1·10⁻⁸ ab.
+Protokoll und `summary()` nennen den gewählten Weg und die Begründung.

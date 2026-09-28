@@ -757,5 +757,10 @@ Plan: `docs/plaene/2026-09-28-tp4-mehrgitter.md`. Messlatte aus Teilprojekt 3: J
 
   Das Lösen ist auf der GPU schneller, der Gesamtweg noch nicht: der Abstand ist das Einrichten
   des Mehrgitters (Ebenen, Glätterblöcke, λ_max). Die Vertragsschicht bleibt beim Direktlöser.
-- **Offen vor Pull Request 2:** Einrichten des Mehrgitters auf die GPU (Blöcke aus den Zell-
-  matrizen dort bilden und invertieren), danach `backend='gpu'`/`'auto'` in der Vertragsschicht.
+- **Einrichten auf der GPU und automatische Wahl (28.09.2026 abends):** grobe Matrizen als
+  Teilmatrizen der feinen (Galerkin exakt, keine Assemblierung), Diagonale aus den Matrizen,
+  Glätterblöcke per RawKernel auf der GPU ausgezogen und mit cuBLAS invertiert, λ_max und grobe
+  Operatoren auf der GPU. Gesamtweg Kirsch h 10 p 3: GPU-Mehrgitter 32,9 / 35,3 s gegen Direktlöser
+  34,4 / 57,4 s; bei h 14 und h 20 ist der Direktlöser schneller (Tabelle in Theorie 11.10).
+  Vertragsschicht: `backend='auto'` wählt ab 200 000 Freiheitsgraden das GPU-Mehrgitter (bei genug
+  Speicher), sonst direkt; `'gpu'` erzwingt es mit Rückfall, `'cpu'` rechnet direkt.

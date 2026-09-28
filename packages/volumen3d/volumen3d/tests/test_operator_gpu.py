@@ -183,6 +183,36 @@ def test_mehrgitter_gpu():
         cupy.get_default_memory_pool().free_all_blocks()
 
 
+def test_mehrgitter_auf_gpu_eingerichtet():
+    """PMehrgitter(geraet='gpu'): Glaetterbloecke per RawKernel ausgezogen und mit cuBLAS invertiert,
+    lambda_max und Zyklus auf der GPU - gleich dem CPU-Mehrgitter (V-Zyklus < 1e-8, lambda_max < 1e-6)."""
+    from volumen3d.fcm.operator_gpu import verfuegbar
+    if not verfuegbar():
+        check("GPU/CuPy nicht verfuegbar - Einrichten auf der GPU uebersprungen", True)
+        return
+    import cupy
+    from volumen3d.fcm.mehrgitter import PMehrgitter
+    from volumen3d.tests.test_operator import _kirsch
+    pr = _kirsch(p=3, h=20.0, verfeinert=True)
+    pr.loeser = "pcg"
+    pr.aufbauen()
+    t = time.perf_counter()
+    mg_c = PMehrgitter(pr)
+    t_c = time.perf_counter() - t
+    t = time.perf_counter()
+    mg_g = PMehrgitter(pr, geraet="gpu")
+    cupy.cuda.Stream.null.synchronize()
+    t_g = time.perf_counter() - t
+    r = np.random.default_rng(6).standard_normal(mg_c.ebenen[0].n_frei)
+    z_c = mg_c.anwenden(r)
+    z_g = cupy.asnumpy(mg_g.anwenden(cupy.asarray(r)))
+    f = np.abs(z_g - z_c).max() / np.abs(z_c).max()
+    f_l = max(abs(a - b) / a for a, b in zip(mg_c.statistik["lambda_max"], mg_g.statistik["lambda_max"]))
+    check(f"Kirsch h 20 p 3: Mehrgitter auf der GPU eingerichtet = CPU (V-Zyklus < 1e-8, lambda_max < 1e-6); Einrichten "
+          f"CPU {t_c:.1f} s {mg_c.statistik['zeiten_s']} gegen GPU {t_g:.1f} s {mg_g.statistik['zeiten_s']}",
+          f < 1e-8 and f_l < 1e-6, f"V-Zyklus {f:.1e}, lambda_max {f_l:.1e}")
+
+
 def test_problem_gpu():
     """FcmProblem(loeser='mehrgitter', backend='gpu') am Kragarmsegment mit Schnittebenen: Verschiebungen und
     Multiplikatoren wie der Direktloeser (projizierter CG auf der GPU mit B als cupy-Feld)."""
@@ -210,4 +240,4 @@ def test_problem_gpu():
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_operator_gpu, test_pcg_gpu, test_gross_gpu, test_mehrgitter_gpu, test_problem_gpu]))
+    sys.exit(lauf([test_operator_gpu, test_pcg_gpu, test_gross_gpu, test_mehrgitter_gpu, test_mehrgitter_auf_gpu_eingerichtet, test_problem_gpu]))

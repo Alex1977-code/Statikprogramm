@@ -50,6 +50,26 @@ def test_ebenen():
                 a_g = grob.A(x)
                 a_f = grob.P.T @ fein.A(grob.P @ x)
                 fehler = max(fehler, float(np.abs(a_g - a_f).max() / max(np.abs(a_f).max(), 1e-300)))
+        # grobe Matrizen (Teilmatrizen der feinen) gegen C_k^T (K_k + K_rand,k) C_k aus den Teilbloecken der
+        # Zellmatrizen - unabhaengige Pruefung der Galerkin-Eigenschaft
+        import scipy.sparse as sp
+        from volumen3d.fcm.mehrgitter import _teilraum_indizes
+        from volumen3d.fcm.operator import Zelldaten
+        zd_f = mg.zelldaten_fein
+        K_rand_f = pr.K_rand
+        f_g = 0.0
+        for k in range(1, len(mg.ebenen)):
+            fe, eb = mg.ebenen[k - 1], mg.ebenen[k]
+            sub = _teilraum_indizes(fe.p, eb.p)
+            paare = np.unique(np.stack([fe.gitter.zell_moden[:, sub].ravel(), eb.gitter.zell_moden.ravel()], axis=1), axis=0)
+            P3 = sp.kron(sp.csr_matrix((np.ones(len(paare)), (paare[:, 0], paare[:, 1])), shape=(fe.gitter.n_moden, eb.gitter.n_moden)),
+                         sp.eye(3), format="csr")
+            zd_k = Zelldaten.teilraum(zd_f, eb.gitter, sub)
+            K_rand_k = (P3.T @ K_rand_f @ P3).tocsr()
+            A_ind = (eb.C.T @ (zd_k.matrix() + K_rand_k) @ eb.C).tocsr()
+            D = (A_ind - eb.A_matrix).tocsr()
+            f_g = max(f_g, (float(np.abs(D.data).max()) if D.nnz else 0.0) / float(np.abs(A_ind.data).max()))
+            zd_f, K_rand_f = zd_k, K_rand_k
         # abgeleitete grobe Zwaenge gegen unabhaengig gebaute (Spurbindung und Aggregation auf dem groben Gitter)
         f_c = 0.0
         gleich_frei = True
@@ -67,9 +87,10 @@ def test_ebenen():
                 D = (eb.C[:, sp3] - zw.C).tocsr()
                 f_c = max(f_c, float(np.abs(D.data).max()) if D.nnz else 0.0)
         check(f"{name}: Ebenen {mg.statistik['ebenen']} mit {mg.statistik['frei_je_ebene']} freien Koordinaten; Injektion, "
-              f"A_grob = P~^T A_fein P~ (< 1e-12), abgeleitete grobe Zwaenge = unabhaengig gebaute (< 1e-10); "
-              f"lambda_max {mg.statistik['lambda_max']}, {t_mg:.1f} s {mg.statistik['zeiten_s']}",
-              ok_inj and fehler < 1e-12 and gleich_frei and f_c < 1e-10, f"A {fehler:.1e}, C {f_c:.1e}, freie Moden gleich {gleich_frei}")
+              f"A_grob = P~^T A_fein P~ (< 1e-12), Teilmatrix = C^T K C aus Teilbloecken (< 1e-12), abgeleitete grobe Zwaenge "
+              f"= unabhaengig gebaute (< 1e-10); lambda_max {mg.statistik['lambda_max']}, {t_mg:.1f} s {mg.statistik['zeiten_s']}",
+              ok_inj and fehler < 1e-12 and f_g < 1e-12 and gleich_frei and f_c < 1e-10,
+              f"A {fehler:.1e}, Galerkin {f_g:.1e}, C {f_c:.1e}, freie Moden gleich {gleich_frei}")
 
 
 def test_nullraum():
@@ -206,13 +227,15 @@ def test_kern():
     op = Operator(z, C=C, K_rand=pr.K_rand)
     mg = PMehrgitter(pr)
     x = np.random.default_rng(1).standard_normal(mg.ebenen[1].n_frei)
-    fehler = np.abs(mg.ebenen[1].A(x) - mg.ebenen[1].P.T @ mg.ebenen[0].A(mg.ebenen[1].P @ x)).max()
+    a_g = mg.ebenen[1].A(x)                                   # Teilmatrix der assemblierten Matrix
+    a_f = mg.ebenen[1].P.T @ mg.ebenen[0].A(mg.ebenen[1].P @ x)  # feiner Operator matrixfrei
+    fehler = np.abs(a_g - a_f).max() / np.abs(a_f).max()      # relativ (Eintraege ~1e6)
     b = np.asarray(C.T @ pr.rechte_seite({})[:n]).ravel()
     erg = pcg(op.frei_anwenden, b, mg.anwenden, tol=1e-10, max_iter=500)
     U_ref = pr.loesen({})[:, 0]
     U = np.asarray(C @ erg.x).ravel()
     check(f"Kernsuite: p-Ebenen geschachtelt (< 1e-12) und PCG mit V-Zyklus in {erg.iterationen} Iterationen (< 100), Loesung wie Direktloeser",
-          fehler / max(np.abs(x).max(), 1) < 1e-12 and erg.konvergiert and erg.iterationen < 100 and np.abs(U - U_ref).max() / np.abs(U_ref).max() < 1e-6,
+          fehler < 1e-12 and erg.konvergiert and erg.iterationen < 100 and np.abs(U - U_ref).max() / np.abs(U_ref).max() < 1e-6,
           f"Schachtelung {fehler:.1e}, Iterationen {erg.iterationen}")
 
 

@@ -164,12 +164,69 @@ def _einstellungen_pruefen(s: FcmSettings) -> None:
         raise SolverError("base_cell_size_mm muss positiv sein")
     if not 1 <= int(s.p) <= 4:
         raise SolverError(f"p = {s.p}: Teilprojekt 1 unterstuetzt p = 1 ... 4")
-    if s.backend not in ("auto", "cpu"):
-        raise SolverError(f"backend {s.backend!r}: GPU kommt mit Teilprojekt 3, hier 'auto' oder 'cpu'")
+    if s.backend not in ("auto", "cpu", "gpu"):
+        raise SolverError(f"backend {s.backend!r}: 'auto', 'cpu' oder 'gpu'")
     if s.coupling != "displacement":
         raise SolverError(f"coupling {s.coupling!r}: Kraftkopplung kommt mit Teilprojekt 5")
     if not 0.0 <= float(s.alpha) < 1.0:
         raise SolverError("alpha muss in [0, 1) liegen")
+
+
+# Ab dieser Zahl von Freiheitsgraden ist das p-Mehrgitter auf der GPU im Gesamtweg (Aufbau + Loesen)
+# schneller als der Direktloeser. Gemessen am Kirsch-Modell p 3 (28.09.2026, RTX 3070, Maschine belegt),
+# Gesamtweg direkt / GPU-Mehrgitter: h 20 (26 400-33 060 frei) 6,4 / 13,9 s und 9,6 / 10,8 s; h 14
+# (69 879-92 280 frei) 11,3 / 23,7 s und 18,2 / 31,0 s; h 10 (130 611 frei, 229 608 Freiheitsgrade)
+# 34,4 / 32,9 s, (187 239 frei) 57,4 / 35,3 s. Die Schwelle trennt diese Faelle richtig.
+_AUTO_MIN_DOFS = 200_000
+
+
+def _gpu_frei_mb() -> float:
+    """Freier GPU-Speicher in MB, 0 ohne nutzbare GPU."""
+    try:
+        from .fcm.operator_gpu import verfuegbar
+        if not verfuegbar():
+            return 0.0
+        import cupy  # type: ignore[import-untyped, import-not-found, unused-ignore]  # CI ohne cupy
+        frei, _ = cupy.cuda.Device().mem_info
+        return float(frei) / 1e6 + float(cupy.get_default_memory_pool().free_bytes()) / 1e6
+    except Exception:                                          # pragma: no cover - Treiber-/Importfehler
+        return 0.0
+
+
+def _gpu_speicher_mb(n_zellen: int, n_cut: int, p: int, n_dof: int) -> float:
+    """Geschaetzter GPU-Speicher des Mehrgitters: Zellmatrizen der Schnittzellen, Glaetterbloecke der
+    Ebenen p und p-1 (Blockgroesse im Mittel 1,2 x 3 (p+1)^3), reduzierte Matrix fuer den Blockauszug.
+    Geeicht an Kirsch h 10 p 3 (2366 Zellen, 2159 geschnitten): geschaetzt 2,3 GB, gemessen 2,4 GB."""
+    m3 = 3 * (p + 1) ** 3
+    grob = (p ** 3 / (p + 1) ** 3) ** 2 if p > 1 else 0.0
+    k_cut = 8.0 * n_cut * m3 ** 2
+    schwarz = 8.0 * n_zellen * (1.2 * m3) ** 2 * (1.0 + grob)
+    k_red = 12.0 * n_dof * m3 * 0.75
+    return (k_cut + schwarz + k_red) / 1e6
+
+
+def _loeserwahl(backend: str, n_zellen: int, n_cut: int, p: int, n_dof: int) -> tuple[str, str, str, list[str]]:
+    """(loeser, geraet, Begruendung, Warnungen). 'cpu': Direktloeser. 'gpu': Mehrgitter auf der GPU,
+    Rueckfall auf den Direktloeser ohne GPU oder bei zu wenig Speicher (Vorgabe 9). 'auto': der im
+    Gesamtweg schnellere Weg - Mehrgitter auf der GPU ab _AUTO_MIN_DOFS Freiheitsgraden, sonst direkt."""
+    if backend == "cpu":
+        return "direkt", "cpu", "backend 'cpu'", []
+    frei = _gpu_frei_mb()
+    bedarf = _gpu_speicher_mb(n_zellen, n_cut, p, n_dof)
+    if backend == "gpu":
+        if frei <= 0:
+            return "direkt", "cpu", "keine GPU", ["backend 'gpu': keine nutzbare GPU gefunden - Rueckfall auf den Direktloeser "
+                                                  "der CPU (gleiche Ergebnisse, Vorgabe 9)"]
+        if 1.3 * bedarf > frei:
+            return "direkt", "cpu", "GPU-Speicher zu klein", [f"backend 'gpu': geschaetzt {bedarf:.0f} MB GPU-Speicher, frei "
+                                                              f"{frei:.0f} MB - Rueckfall auf den Direktloeser der CPU"]
+        return "mehrgitter", "gpu", f"backend 'gpu', {bedarf:.0f} von {frei:.0f} MB", []
+    if frei > 0 and n_dof >= _AUTO_MIN_DOFS and 1.3 * bedarf <= frei:
+        return "mehrgitter", "gpu", f"auto: {n_dof} Freiheitsgrade >= {_AUTO_MIN_DOFS}, GPU {bedarf:.0f} von {frei:.0f} MB", []
+    grund = ("keine GPU" if frei <= 0 else
+             f"{n_dof} Freiheitsgrade < {_AUTO_MIN_DOFS}" if n_dof < _AUTO_MIN_DOFS else
+             f"GPU-Speicher: geschaetzt {bedarf:.0f} MB, frei {frei:.0f} MB")
+    return "direkt", "cpu", f"auto: {grund}", []
 
 
 def _oberflaeche(problem: FcmProblem) -> tuple[np.ndarray, np.ndarray]:
@@ -196,6 +253,7 @@ class FcmDiskretisierung:
         self.schnittnamen = schnittnamen
         self.lasten = lasten or {}                      # Lastfall-ID -> rechte Seite der Flaechenlasten (2.1.0)
         self.lasten_protokoll = lasten_protokoll or []
+        self.loeserwahl: dict[str, Any] = {}
         self._oberflaeche: tuple[np.ndarray, np.ndarray] | None = None
 
     def dof_count(self) -> int:
@@ -216,7 +274,9 @@ class FcmDiskretisierung:
                 "dofs": self.dof_count(), "dofs_free": int(zw["moden_frei"] * 3),
                 "aggregated_cells": int(ag.statistik["zellen_schlecht"]) if ag is not None else 0,
                 "quadrature_points": int(self.problem.quadratur.anzahl_punkte()),
-                "surface_points": int(len(self.problem.oberflaeche.punkte)), "length_unit": "mm"}
+                "surface_points": int(len(self.problem.oberflaeche.punkte)), "length_unit": "mm",
+                "solver_path": str(self.loeserwahl.get("loeser", self.problem.loeser)),
+                "backend": str(self.loeserwahl.get("geraet", self.problem.backend))}
 
     def oberflaeche(self) -> tuple[np.ndarray, np.ndarray]:
         if self._oberflaeche is None:
@@ -245,10 +305,15 @@ class FcmSolver:
         G.moden_nummerieren(int(s.p))
         m = (int(s.p) + 1) ** 3
         nnz = len(G.ijk) * (3 * m) ** 2
-        return {"dofs": int(G.n_dof), "cells": int(len(G.ijk)), "cut_cells": int((G.klasse == 2).sum()),
+        n_cut = int((G.klasse == 2).sum())
+        loeser, geraet, grund, warn = _loeserwahl(s.backend, len(G.ijk), n_cut, int(s.p), int(G.n_dof))
+        return {"dofs": int(G.n_dof), "cells": int(len(G.ijk)), "cut_cells": n_cut,
                 "levels": G.ebenen_verteilung(),
-                "memory_mb": round(nnz * 16 / 1e6 + G.n_dof * 8 * 40 / 1e6, 1), "backend": "cpu", "solver": self.name,
-                "note": "Direktloeser (Teilprojekt 1); Speicher der Faktorisierung kommt hinzu"}
+                "memory_mb": round(nnz * 16 / 1e6 + G.n_dof * 8 * 40 / 1e6, 1), "backend": geraet, "solver": self.name,
+                "solver_path": "pcg-mehrgitter (gpu)" if loeser == "mehrgitter" else "direkt",
+                "gpu_memory_mb": round(_gpu_speicher_mb(len(G.ijk), n_cut, int(s.p), int(G.n_dof)), 1),
+                "choice": grund, "warnings": warn,
+                "note": "Speicher der Faktorisierung kommt beim Direktloeser hinzu"}
 
     def prepare(self, spec: DetailModelSpec, material: Material, progress: ProgressCallback | None = None) -> FcmDiskretisierung:
         s = spec.settings
@@ -273,10 +338,31 @@ class FcmSolver:
             lasten, lasten_protokoll = _lasten_vorbereiten(spec, pr)
         except ValueError as ex:
             raise SolverError(str(ex)) from ex
+        # Loeserwahl: der im Gesamtweg schnellere Weg (Theorie 11.10) - Mehrgitter auf der GPU fuer grosse
+        # Modelle, sonst der Direktloeser; 'cpu'/'gpu' erzwingen, 'gpu' faellt ohne GPU auf die CPU zurueck
+        n_cut = int((pr.gitter.klasse == 2).sum())
+        loeser, geraet, grund, warnungen = _loeserwahl(s.backend, len(pr.gitter.ijk), n_cut, int(pr.p), int(pr.gitter.n_dof))
+        pr.loeser, pr.backend = loeser, geraet
+        # Vertragstoleranz gilt fuer das relative Residuum; fuer Verschiebungen auf 1e-6 gegen den
+        # Direktloeser (Vorgabe 9) braucht das Mehrgitter 1e-10 (Kragarm p 3: bei 1e-10 1e-8, test_mehrgitter)
+        pr.toleranz = min(float(s.tolerance), 1e-10)
         melden("Steifigkeit assemblieren", 0.3)
-        pr.aufbauen(lambda t, a: melden(t, 0.3 + 0.6 * a))
+        try:
+            pr.aufbauen(lambda t, a: melden(t, 0.3 + 0.6 * a))
+        except MemoryError as ex:                               # auch cupy OutOfMemoryError
+            if geraet != "gpu":
+                raise
+            warnungen.append(f"GPU-Speicher reichte nicht ({ex}); Rueckfall auf den Direktloeser der CPU")
+            loeser, geraet, grund = "direkt", "cpu", grund + " -> Rueckfall CPU (Speicher)"
+            pr.loeser, pr.backend = loeser, geraet
+            pr.aufbauen(lambda t, a: melden(t, 0.3 + 0.6 * a))
+        except ValueError as ex:
+            raise SolverError(str(ex)) from ex
         melden("Diskretisierung bereit", 1.0)
-        return FcmDiskretisierung(spec, pr, namen, lasten, lasten_protokoll)
+        disc = FcmDiskretisierung(spec, pr, namen, lasten, lasten_protokoll)
+        disc.loeserwahl = {"loeser": pr.protokoll.get("loeser", loeser), "geraet": geraet, "begruendung": grund,
+                           "warnungen": list(warnungen)}
+        return disc
 
     def solve(self, disc: FcmDiskretisierung, provider: GlobalFieldProvider, keys: list[ResultKey],
               progress: ProgressCallback | None = None, cancel: Callable[[], bool] | None = None) -> list[DetailResult]:
@@ -326,7 +412,10 @@ class FcmSolver:
                 else:
                     s_e, u_e = np.zeros((0, 6)), np.zeros((0, 3))
                 ebenen = []
-                warn: list[str] = []
+                warn: list[str] = list(disc.loeserwahl.get("warnungen", []))
+                mg = getattr(pr, "_mehrgitter", None)
+                if pr.loeser == "mehrgitter" and mg is not None:
+                    warn += [str(w) for w in mg.statistik.get("warnungen", [])]
                 for f in pr.geometrie.grundformen():
                     if getattr(f, "defekt", 0.0) > 1e-3:
                         warn.append(f"STL {f.name!r}: Huelle hat kleine Luecken (Windungszahl-Defekt {f.defekt:.3f}); "
@@ -365,6 +454,7 @@ class FcmSolver:
                               "key": str(key), "coupling": "displacement (normal pointwise + in-plane resultants)",
                               "geometry": spec_kurz(disc.spec), "t_solve_s": round(time.perf_counter() - t0, 3),
                               "loads": [dict(l) for l in disc.lasten_protokoll if l["load_case_id"] == key.load_case_id],
+                              "solver_choice": dict(disc.loeserwahl),
                               "body_load": None if disc.spec.body_load is None else np.asarray(disc.spec.body_load, float).reshape(3)})
             ergebnisse.append(DetailResult(detail_id=disc.subsystem_id, key=key, surface_points=V, surface_triangles=T,
                                            displacement=u_e, stress=s_e, von_mises=von_mises(s_e) if len(s_e) else np.zeros(0),

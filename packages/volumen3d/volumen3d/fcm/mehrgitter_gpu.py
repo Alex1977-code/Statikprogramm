@@ -29,10 +29,15 @@ except ImportError:                                            # pragma: no cove
 
 
 class _EbeneGpu:
-    def __init__(self, eb, fp32: bool) -> None:
+    def __init__(self, eb, fp32: bool, zd_fein=None, K_rand=None) -> None:
         self.p = eb.p
         self.n_frei = eb.n_frei
-        self.op = OperatorGpu(eb.zelldaten, C=eb.C, K_rand=eb.K_rand)
+        if eb.operator is not None:                          # feinste Ebene: matrixfrei
+            op = OperatorGpu(zd_fein, C=eb.C, K_rand=K_rand)
+            self._A = op.frei_anwenden
+        else:                                                 # grobe Ebenen: assemblierte Teilmatrix
+            A_g = cusp.csr_matrix(eb.A_matrix)
+            self._A = lambda x, M=A_g: M @ x
         self.lambda_max = float(eb.lambda_max)
         dtyp = cupy.float32 if fp32 else cupy.float64
         self.fp32 = fp32
@@ -43,7 +48,7 @@ class _EbeneGpu:
         self.diag = cupy.asarray(eb.diag)
 
     def A(self, x):
-        return self.op.frei_anwenden(x)
+        return self._A(x)
 
     def vork(self, r):
         if not self.gruppen:
@@ -70,12 +75,12 @@ class PMehrgitterGpu:
         self.glaetter_grad = mg.glaetter_grad
         self.alpha = mg.alpha
         self.n_zwaenge = mg.n_zwaenge
-        self.ebenen = [_EbeneGpu(eb, fp32) for eb in mg.ebenen[:-1]]
+        self.ebenen = [_EbeneGpu(eb, fp32, mg.zelldaten_fein, mg.K_rand) for eb in mg.ebenen[:-1]]
         self.grob = mg.ebenen[-1]                           # Direktloeser auf der CPU
         # Injektionen Ebene k+1 -> Ebene k (einschliesslich der zum Grobgitter), einmal hochgeladen
         self.injektion = [(cusp.csr_matrix(mg.ebenen[k + 1].P), cusp.csr_matrix(mg.ebenen[k + 1].P.T.tocsr()))
                           for k in range(len(mg.ebenen) - 1)]
-        self.nullraum = cupy.asarray(mg.nullraum) if mg.nullraum is not None else None
+        self.nullraum = cupy.asarray(mg._nullraum_cpu) if mg._nullraum_cpu is not None else None
         self.fp32 = fp32
         cupy.cuda.Stream.null.synchronize()
         frei, gesamt = cupy.cuda.Device().mem_info
