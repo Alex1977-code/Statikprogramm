@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "volumen3d"
+version = "0.1.0"
+description = "Volumenmodul von Statik3D: Finite-Cell-Methode, FE-Hexaeder, Kontakt, Plastizitaet"
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.24", "scipy>=1.10", "statik3d-contracts>=2.0,<3"]
+
+[project.optional-dependencies]
+gpu = ["cupy-cuda12x>=13"]
+schnell = ["numba>=0.59", "pypardiso>=0.4"]
+
+# Registrierung nach Vertrag Abschnitt 7 und 7a. 'hybrid' ist bis Teilprojekt 7 ein
+# ehrlicher Platzhalter (capabilities leer, prepare wirft SolverError).
+[project.entry-points."statik3d.solid_solvers"]
+fcm = "volumen3d.api:FcmSolver"
+
+[project.entry-points."statik3d.assembly_solvers"]
+hybrid = "volumen3d.api:HybridAssemblySolver"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["volumen3d*"]
+
+[tool.setuptools.package-data]
+volumen3d = ["py.typed"]
+
+[tool.mypy]
+python_version = "3.11"

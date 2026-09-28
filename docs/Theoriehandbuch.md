@@ -10444,3 +10444,256 @@ Nach M1 geht das nur mit einem gröberen gekrümmten Netz in den Nachweiskörper
 (Labor: Bogen 18° bei h = 0,5 × Bohrungsradius gemessen). Ob das Element es dann am
 Bauteil schafft, zeigen erst M2 und M3. Nachweisstellen auf Kontaktseiten
 bleiben ohne Kontakt über Punkte der Seite (B4) bei 15 bis 20 N/mm².
+
+
+## 11 Finite-Cell-Methode: Volumenmodul `volumen3d` (Teilprojekte 1 und 2, 27.09.2026)
+
+Das Volumenmodul rechnet Volumenbauteile ohne klassisches Vernetzen: Der Körper wird in ein
+achsparalleles Gitter würfelförmiger Zellen eingebettet, die Geometrie geht nur über eine
+vorzeichenbehaftete Abstandsfunktion (SDF) ein. Verbindlich sind
+`docs/Vorgabe_Statik3D_Abschnitt_FCM-Volumenloeser.md` und der Schnittstellenvertrag
+(`docs/Schnittstellenvertrag_Statik3D_FCM.md`, 2.0.0); die Umsetzungsentscheidungen stehen in
+`packages/volumen3d/docs/Entwurf.md`. Dieses Kapitel hält die Formeln und die gemessenen Zahlen von
+Teilprojekt 1 fest (CPU-Referenz: assemblierte Steifigkeit, Direktlöser). Einheiten im Modul:
+mm, N, N/mm².
+
+### 11.1 Ansatz und Freiheitsgrade
+
+Je Zelle (Kante h) ein volles Tensorprodukt hierarchischer Ansätze aus integrierten
+Legendre-Polynomen, p = 1…4: `N1 = (1−ξ)/2`, `N2 = (1+ξ)/2`,
+`N_{j+1} = (P_j − P_{j−2}) / sqrt(2(2j−1))` für j = 2…p, sodass `∫ φ_i' φ_j' dξ = δ_ij`.
+Die (p+1)³ Moden hängen an Ecken (8), Kanten (12·(p−1)), Flächen (6·(p−1)²) und dem Zellinneren
+((p−1)³); Nachbarzellen teilen die Moden ihrer gemeinsamen Entität ohne Vorzeichenwechsel, weil
+alle Kanten und Flächen kanonisch in +Achsrichtung parametrisiert sind. Freiheitsgrade
+`3·Mode + Komponente`. Ein voller Quader mit n_x × n_y × n_z Zellen hat genau
+(n_x p+1)(n_y p+1)(n_z p+1) Moden (`packages/volumen3d/volumen3d/tests/test_gitter.py`).
+
+### 11.2 Zellklassifikation
+
+Mit d dem Abstand der Zellmitte und r der halben Raumdiagonale gilt: d > r → OUTSIDE (keine
+Freiheitsgrade), d < −r → INSIDE (Gauß (p+1)³), sonst CUT. Das ist nur zulässig, weil die
+CSG-Kombinationen (Vereinigung = min, Schnitt = max, Differenz = max(d_a, −d_b)) den Abstand zur
+Gesamtoberfläche **nie überschätzen**: Jeder Punkt der Gesamtoberfläche liegt auf einer
+Grundform-Oberfläche, und der Weg dorthin kreuzt die Flächen, die in min/max den Ausschlag geben
+(Skizze in `geometry/csg.py`). Stichprobe: 300 Zufallspunkte je Zelle einer Kugel, keine
+INSIDE-Zelle mit Außenpunkt, keine OUTSIDE-Zelle mit Werkstoff.
+
+### 11.3 Integration geschnittener Zellen
+
+Die Vorgabe (Abschnitt 6) nennt rekursive Teilung mit Punkttest je Gauß-Punkt. Gemessen:
+Würfel 100³, schräg durch eine Ebene halbiert, h = 20, Tiefe 4, 6,5·10⁶ Punkte – Volumenfehler
+0,5 %. Der Punkttest ist erster Ordnung in der Blattkante; der Patch-Test der Vorgabe
+(< 10⁻⁶) ist damit unerreichbar. Umgesetzt sind darum **ebenen-exakte Blätter**: In einer
+geschnittenen Teilbox nennen die aktiven Grundformen (|d| ≤ r) ihre lokalen Ebenen – Halbraum
+und Quaderseiten exakt, Zylinder und Kugel als Tangentialebene –, der CSG-Baum prüft an den
+Gauß-Punkten, ob sich der Gesamtabstand als „Schnitt der positiven Formen minus Löcher“ (max)
+oder als Vereinigung (min) rekonstruieren lässt, und zerlegt die Teilbox in disjunkte konvexe
+Stücke (Box ∩ Halbräume, Löcher über S ∖ ∩h_j = ∪_j S ∩ ¬h_j ∩ h_1…h_{j−1}). Jedes Stück wird
+gegen seine Halbräume geclippt (Sutherland–Hodgman auf den Polyederflächen, Deckelpolygon aus
+den Schnittkanten), vom Schwerpunkt aus in Tetraeder zerlegt und mit der konischen Produktregel
+(Gauß–Jacobi in u und v, Gauß–Legendre in w, n = ⌈3p/2⌉ Punkte je Richtung, exakt bis
+Gesamtgrad 2n−1 ≥ 3p−1) integriert; achsparallele Stücke direkt mit Tensor-Gauß.
+
+| Prüfkörper (h = 10 bzw. 20, `test_quadratur`) | Volumenfehler |
+|---|---|
+| Würfel schräg halbiert, Tiefe 0/1/2 | 500000,000000 (exakt) |
+| Würfel mit zwei Ebenen und Kante, Tiefe 0 = Tiefe 3 | < 10⁻¹⁰, gegen Monte-Carlo 2,7·10⁻⁴ |
+| Quader mit Kanten und Ecken in den Zellen | 11424,000000 (exakt) |
+| Kugel R 43, Tiefe 0/1/2/3 | 1,4·10⁻² / 3,4·10⁻³ / 8,5·10⁻⁴ / 2,1·10⁻⁴ (Faktor 4: zweite Ordnung) |
+| Lochplatte 800×400×10, Loch 40, Tiefe 1/2 | 2,0·10⁻⁵ / 5,2·10⁻⁶ |
+| Platte 100×100×10, alle Zellen geschnitten | 64 Punkte je Zelle, exakt |
+
+Der fiktive Bereich kommt ohne negative Gewichte aus: ganze Teilbox mit Gewicht α, Stücke mit
+(1−α). Lässt sich die lokale Semantik nicht rekonstruieren, teilt die Rekursion zwei Stufen
+tiefer und fällt auf den Punkttest zurück (Zähler `blaetter_punkttest` im Protokoll; in allen
+Prüfkörpern 0).
+
+### 11.4 Kleine Schnittzellen: Zellaggregation statt α
+
+Patch-Test-Gitter (Quader durch zwei schräge Halbräume, 113 von 118 Zellen geschnitten): 10 Zellen
+mit Werkstoffanteil unter 10⁻⁴, drei mit 0. Der Fehler der FCM-Lösung skaliert mit α/Anteil:
+Spannung 1,4·10⁻² bei α = 10⁻⁸, 1,4·10⁻⁴ bei 10⁻¹⁰. Abhilfe nach Vorgabe 8.3 (Zellaggregation,
+Prinzip der aggregierten finiten Elemente, Badia/Verdugo/Martín 2018): Zellen mit Anteil unter
+0,25 bekommen eine wohlgestellte Wurzelzelle (Nachbar mit größtem Anteil, Fläche vor Kante vor
+Ecke, Ketten aufgelöst); Moden, die keine wohlgestellte Zelle trägt, werden an die Fortsetzung
+des Wurzelpolynoms gebunden: `M = V_c⁻¹ V_R` (Modalprojektion an Tensor-Chebyshev-Lobatto-Punkten,
+gleiche Zellgröße). Gelöst wird `CᵀKC`. Zwei weitere Befunde zwangen α aus dem Verfahren:
+gebundene Zellen dürfen keine α-Punkte tragen (α wirkt sonst auf die extrapolierten Wurzelmoden,
+die wie (2ξ)ᵖ wachsen: 2·10⁻⁵ statt 3·10⁻⁸), und in wohlgestellten Zellen tragen hohe Moden nur
+etwa Anteil^(2p+1) ihrer Energie im Werkstoff (0,28⁷ ≈ 10⁻⁴ bei p = 3), sodass α = 10⁻⁸ dort
+10⁻⁴ Fehler macht. Mit Aggregation erhält darum nur eine Zelle **ohne Wurzel** (isolierter
+Splitter) den Faktor α; alle anderen Schnittzellen werden ohne fiktives Gebiet integriert.
+
+| Patch-Test (lineares Feld über Nitsche auf dem ganzen Rand) | u relativ | σ innen | σ am Rand |
+|---|---|---|---|
+| p = 1 (681 FHG, 438 frei) | 5·10⁻¹⁵ | 8·10⁻¹³ | 2·10⁻¹² |
+| p = 2 (4023 FHG, 2469 frei) | 8·10⁻¹⁴ | 5·10⁻¹¹ | 1·10⁻¹⁰ |
+| p = 3 (12153 FHG, 7320 frei) | 5·10⁻¹² | 5·10⁻⁹ | 1·10⁻⁸ |
+| p = 2, Schnittanteil 10⁻⁶ (Vorgabe 13) | 9·10⁻¹⁴ | 4·10⁻¹¹ | 9·10⁻¹¹ |
+| p = 2, α = 10⁻¹⁰ bzw. β-Faktor 100 statt 10 | 7·10⁻¹⁴ / 3·10⁻¹³ | 3·10⁻¹¹ / 4·10⁻¹¹ | – |
+
+### 11.5 Verschiebungsränder: symmetrisches Nitsche
+
+Je Quadraturpunkt der Randfläche mit Verschiebungsinterpolation Nm (3×3m), Traktionsoperator
+`T = Nn D B` (3×3m; Nn bildet den Voigt-Spannungsvektor auf σ·n ab), Projektion P (Einheit oder
+n nᵀ) und Gewicht w:
+`K += w [ −Tᵀ P Nm − Nmᵀ P T + β Nmᵀ P Nm ]`, `f += w [ −Tᵀ P g + β Nmᵀ P g ]`,
+β = 10·E·p²/h. Das Verfahren ist konsistent (Patch-Test unabhängig von β, Tabelle oben); die
+Normalprojektion liefert Symmetrie- und Gleitränder (einachsiger Zug mit drei Symmetrieebenen:
+8·10⁻¹⁶). Flächenquadratur: Dreiecke der Grundformen an die Zellbox geclippt, lokale Stücke
+clippen das Polygon gegen fremde Halbräume, Gauß auf Fächerdreiecken (exakt bis Gesamtgrad
+2n−1 ≥ 3p, damit ∫(σ*n)·v exakt ist), Punkte auf die exakte Grundform projiziert, Gewichte mit
+dem Flächenfaktor dA_wahr/dA_Facette (Zylinder R/ρ·n_f·e_r, Kugel (R/ρ)²·n_f·e_r): Bohrungsmantel
+und Kugeloberfläche auf 10⁻⁸ bei Facette 0,5 h, Sechseck einer schrägen Schnittebene exakt.
+
+### 11.6 Kopplung an Stabquerschnitte
+
+Die ebene Querschnittskinematik eines Stabs enthält weder Querkontraktion noch
+Schubverwölbung. Mit allen drei Komponenten punktweise vorgegeben ist die Schnittebene seitlich
+gesperrt: am Stub-Kragarm des Vertrags (b 100, h 200, Segment x = 200…800) war das Moment um
+53 % zu hoch. An Schnittebenen gilt darum: Normalkomponente punktweise über Nitsche (trägt
+Biegung, Längskraft, Verwölbung), in der Ebene nur die drei Resultierenden – zwei Querkräfte
+und die Torsion – als Mittelwertzwänge `∫(u − g)·m_k dA = 0` mit drei Lagrange-Multiplikatoren
+je Ebene; λ·A ist die übertragene Zwangskraft (Kontrolle: 7512 N gegen 7625 N aus den
+Spannungen). Reine Biegung mit dem exakten 3D-Feld (`u_x = −Mxz/EI`, `u_y = νMyz/EI`,
+`u_z = M(x² + ν(z² − y²))/2EI`) bleibt exakt: Schnittmoment 5·10⁶ auf 10⁻⁶, Multiplikatoren 10⁻¹⁴.
+
+Grenze der Verschiebungskopplung: Für ein schubweiches Segment mit Euler-Bernoulli-Endwerten
+folgen andere Schnittgrößen als aus der Balkentheorie. Mit `M_y = −EI φ'`,
+`Q_z = κGA (w' − φ)`, `dM_y/dx = Q_z` und den Endwerten φ(x0), φ(x1), w(x0), w(x1) des Stubs
+liefert die Timoshenko-Rechnung (κ = 5/6, Φ = 12EI/(κGAl²) = 0,35 bei l = 3h) M = 2,77·10⁶ N·mm
+und Q = 7426 N; die FCM ergibt 2,75·10⁶ (−0,9 %) und 7625 N (+2,7 %), der schubstarre Stub
+2,00·10⁶ und 10000 N. Die Kopplungskontrolle im Ergebnis (`DetailResult.coupling_check`) weist
+solche Abweichungen aus und warnt ab 5 %. Empfehlung: Schnittebenen mindestens vier bis fünf
+Querschnittshöhen auseinander, sonst Kraftkopplung (Teilprojekt 5).
+
+### 11.7 Lamé-Zylinder und Kirsch-Platte
+
+Viertel eines dickwandigen Zylinders (r_i 50, r_a 100, Dicke 20, Innendruck 100 N/mm²), ebener
+Dehnungszustand über Normalen-Nitsche auf vier Symmetrieebenen, Druck über die Flächenquadratur
+der Bohrung; Referenz `σ_r = k(1 − r_a²/r²)`, `σ_φ = k(1 + r_a²/r²)`, k = p r_i²/(r_a² − r_i²),
+Gegenprobe Kesselformel `∫σ_φ dr = p r_i`. Auswertung auf einem Strahl bei 37° in halber Dicke
+(Zahlen aus `packages/volumen3d/volumen3d/tests/test_lame.py`, Stand siehe dort):
+
+| p, h = 10 | Tiefe der Tangentialebenen | σ_r (von p_i) | σ_φ | Freiheitsgrade (frei) | Zeit |
+|---|---|---|---|---|---|
+| 2 | 2 | 1,41 % | 0,95 % | 8961 (4431) | 36 s |
+| 3 | 2 | 0,32 % | 0,03 % | 27768 (13296) | 50 s |
+| 4 | 2 | 0,28 % | 0,09 % | 62991 (29643) | 149 s |
+| 3 | 3 | 0,087 % | 0,06 % | 27768 (13296) | 256 s |
+| 4 | 3 | 0,071 % | 0,07 % | 62991 (29643) | 636 s |
+
+Die Abnahme der Vorgabe (< 1 % bei moderatem Aufwand) erfüllt p = 3, der Standard des Vertrags.
+Von p = 3 auf p = 4 verbessert sich bei Tiefe 2 nichts mehr: Die Tangentialebenen der
+Schnittzellen nähern die Zylinderflächen mit einem Fehler ~(Blattkante/R)² = (2,5/50)², und erst
+Tiefe 3 senkt σ_r um den Faktor 3,6 (zweite Ordnung). Für hohe p braucht die gekrümmte Geometrie
+also feinere Blätter oder – wirtschaftlicher – die Oktree-Verfeinerung an der Oberfläche
+(Teilprojekt 2); der Standard bleibt Tiefe 2.
+**Kirsch-Platte** (Viertel 400×200×10, Loch d 40, d/W 0,1, Zug 100 N/mm²; Referenz K_tg nach
+Heywood 3,032 und Pilkey 3,023, Howland 3,03; 3D-Effekt in Plattenmitte bei t/d = 0,25 etwa
++1 %): p = 4, h = 10 (zwei Zellen je Lochradius), 378 675 Freiheitsgrade (194 895 frei),
+52 s: K_tg in Plattenmitte 3,069 (+1,35 % gegen 3,028), an der Oberfläche 2,981.
+
+**Schnittlagen-Robustheit (Vorgabe 13: Streuung < 1 %):** dasselbe Modell mit dem Wurzelgitter um
+0 / 0,2 / 0,4 / 0,6 / 0,8 Zellen verschoben ergibt K_tg = 3,069 / 3,012 / 3,262 / 3,200 / 3,142,
+Streuung **7,9 %** – die Abnahme ist mit dem gleichmäßigen Gitter bei h = r/2 **nicht erfüllt**.
+Ursache ist nicht die Zellaggregation (p = 3: Schwelle 0,25 → 7,7 %, 0,10 → 5,6 %, 0,02 → 18,5 %
+mit einem Ausreißer 3,75), sondern die Auflösung des Lochs: am freien Lochrand bleibt |σ_r| bis
+0,15·σ₀ stehen (müsste 0 sein), und je nach Lage der Schnittzelle stammt der Randwert aus einem
+eigenen schwach gestützten Polynom oder aus der Fortsetzung der Wurzelzelle. Mit h = 5 (vier
+Zellen je Radius, p = 3, drei Lagen 0 / 0,4 / 0,8) sinkt die Streuung auf **1,42 %**
+(K_tg 3,098 / 3,111 / 3,142) und |σ_r|/σ₀ am Rand auf 0,02…0,05 – etwa quadratisch mit der
+Zellgröße; unter 1 % braucht es acht Zellen je Radius. Zwei Zellen je Radius reichen für einen
+prüffähigen Kerbwert nicht; die Vorgabe sieht dafür die Verfeinerung an Bohrungen vor
+(Abschnitt 4, Nutzervorgabe und Fehlerschätzer), die mit Teilprojekt 2 (Oktree, hängende
+Freiheitsgrade) kommt. Bis dahin gilt für Kerbwerte: mindestens vier Zellen je Radius und eine
+Konvergenzstudie je Lage; der Zähler `blaetter_unteraufgeloest` im Protokoll (Krümmungsradius
+kleiner als fünf Blattkanten) weist unteraufgelöste Stellen aus. Mit der lokalen Verfeinerung
+aus Teilprojekt 2 ist die Abnahme erfüllt (Abschnitt 11.8).
+
+### 11.8 Teilprojekt 2: Oktree, hängende Freiheitsgrade, STL
+
+**Oktree.** Das Wurzelgitter aus 11.1 bleibt; jede Wurzelzelle kann in Ebenen l = 1, 2, …
+geviertelt werden (Blattkante h/2^l). Verfeinerungsregeln (`Verfeinerung`): Schnittzellen bis
+Ebene `schnitt_ebenen`, Nutzerbereiche (Kugel um einen Punkt mit Zielkantenlänge, aus
+`RefinementRegion` des Vertrags), dünne Wände (Zellen mit Werkstoff, deren Nachbarn beidseits
+leer sind), Höchstebene. Nach jeder Regel wird auf 2:1 über alle 26 Nachbarrichtungen
+balanciert, damit an keiner Fläche, Kante oder Ecke mehr als eine Ebene springt. Die
+Modennummerierung bleibt entitätsbasiert; Ecken tragen ebenenfreie Schlüssel im feinsten
+verdoppelten Gitter, sodass eine Ecke, die grobe und feine Zelle teilen, dieselbe Nummer
+bekommt, während eine hängende Ecke (nur von feinen Zellen getragen) eine eigene erhält.
+Kugel r 43 in h 10: gleichmäßig 549 Blätter; `schnitt_ebenen=1` 172 + 2145 Blätter, keine
+Schnittzelle mehr auf Ebene 0, 0 Verstöße gegen 2:1; Bereich Radius 8 mit Ziel 2,6 mm → Ebene 2
+im Bereich, Übergangsring Ebene 1, 0 Verstöße.
+
+**Hängende Freiheitsgrade als Zwänge.** An einer hängenden Fläche (Kante, Ecke) sind die Moden
+der feinen Seite keine eigenen Unbekannten: ihre Spur muss der Spur des groben Polynoms gleichen.
+Der Zwangsauflöser (`fcm/zwaenge.py`) löst dazu je hängender Entität das kleine System
+V_F·M = N_C (Werte der feinen Basis an Chebyshev-Lobatto-Punkten gegen die grobe Basis) und
+schreibt jede gebundene Mode als Linearkombination der Moden der groben Zelle; Vorrang Fläche >
+Kante > Ecke > Aggregation, Ketten werden bis zu freien Moden aufgelöst (Kettenlänge im
+Protokoll), Selbstbezüge mit Koeffizient 1 sind Tautologien und fallen weg. Die
+Zellaggregation aus 11.4 läuft durch dieselbe Matrix; ihre Wurzeln liegen bevorzugt auf gleicher
+oder gröberer Ebene, weil eine feinere Wurzel an der aggregierten Zelle hängen und die Kette
+zirkulär werden kann (so gemessen: „Zwangszyklus an Mode 2368“, seither 0 Zyklen). Die
+Spurbindung reproduziert Polynome vom Grad p exakt (p = 1…3: 1,1e-16 … 4,4e-16), der Patch-Test
+auf lokal verfeinerten Gittern (eine Ebene an einer Ecke, dünne Wand, Schnittanteil 10⁻⁶) hält
+u und σ unter 10⁻⁶ – auch dort, wo hängende Kanten oder Ecken ohne hängende Fläche vorkommen
+(Vorrangregel geprüft).
+
+**Ränder auf Zellflächen.** Fällt eine Symmetrie- oder Schnittebene genau auf eine Zellfläche –
+in der verfeinerten Kirsch-Platte bei Versatz 0,4 liegen x = 0 und y = 0 auf Flächen der Ebenen
+1 und 2 –, wurden ihre Randpolygone beiden Nachbarzellen zugeschlagen: sym_x 2050 statt 1800 mm²,
+sym_y 4050 statt 3800 mm², und K_tg stieg auf 3,63 (statt 3,08), weil die Nitsche-Terme an x = 0
+doppelt und zusätzlich mit dem extrapolierten Polynom der leeren Nachbarzelle eingingen. Die
+gleichmäßigen Gitter waren nur zufällig verschont (Ursprung −1 oder −5 bei h 10). Regel seither:
+ein Polygon in einer Zellfläche gehört allein der Zelle auf der Werkstoffseite (Außennormale der
+Geometrie zeigt aus ihr heraus); Prüfung mit Würfelflächen auf Zellflächen der Ebenen 0, 1 und 2
+(600 mm² genau einmal, ohne die Regel 1200 mm²).
+
+**Kirsch-Platte mit Bereichsverfeinerung (Abnahme U3).** Bereich Radius r + 10 mm um die Lochachse
+mit Zielkante 2,5 mm (Ebene 2 = acht Blätter je Radius), sonst h = 10, p = 3, Versatz 0 / 0,4 /
+0,8: K_tg = 3,085 / 3,076 / 3,074, Streuung **0,34 %** (Vorgabe < 1 %), Mittel 3,078 = +1,7 % gegen
+3,028 (3D-Effekt +1 % enthalten); 199 095 freie Freiheitsgrade gegen 5 659 752 für ein
+gleichmäßiges Gitter h = 2,5 (3,5 %), Blätter {0: 2704, 1: 101, 2: 595}, 206 hängende Flächen,
+179 s für drei Lagen auf der durch die Hauptsitzung belegten Maschine. σ_xx/σ₀ über die Dicke am
+Lochrand (d = 0,1 mm): 2,95 am Rand bis 3,04 in der Mitte, symmetrisch.
+
+**STL-Eingang.** Vorzeichen des Abstands aus der verallgemeinerten Windungszahl (Jacobson u. a.
+2013, Raumwinkel nach Van Oosterom/Strackee): geschlossener Würfel innen 1, außen 0, auf einer
+Fläche ½, Kante ¼, Ecke ⅛; fehlt eine Facette (1/12 der Oberfläche), bleibt innen 11/12 und
+außen 1/12 – die Klassifikation hält, ein Strahltest durch die Lücke nicht. Die Facetten werden
+über gemeinsame Kanten einheitlich gewickelt (eine einzeln verkehrte Facette überdeckt mit ihrem
+eigenen Raumwinkel ±½ jede Windungszahl-Probe an ihr selbst und wäre so nicht zu finden), jede
+Zusammenhangskomponente über ihr Vorzeichenvolumen nach außen und Hohlraumschalen (ungerade
+Verschachtelungstiefe) nach innen gerichtet; Prüfung: Würfel mit einer verkehrten Facette,
+Hohlwürfel 30/10. Die größte Abweichung von w von 0/1 beidseits einer Stichprobe ist der
+`defekt` (Würfel mit Lücke 0,097; die Vertragsschicht lehnt > ¼ ab und warnt ab 10⁻³). Lokal ist ein STL eben; die Facetten, die die
+Umkugel einer Teilbox berühren, liefern die Ebenen, und ihre Ecken sagen, wie der Werkstoff
+daraus entsteht: liegen alle auf der Werkstoffseite aller Ebenen, ist er der Schnitt der
+Halbräume (konvex, wie bei den Grundformen); liegen alle auf der Leerseite, ist der Leerraum
+der Schnitt der gespiegelten Ebenen und der Werkstoff ihre Vereinigung (konkav: Bohrungswand,
+einspringende Kante – ohne diesen Fall fiel jede tessellierte Bohrungswand auf den Punkttest
+zurück: Viertelring h 10 mit 6573 Punkttest-Blättern und 10,5 Mio. Randpunkten durch die
+Vierteilung der Facetten); gemischt (Deckel trifft Bohrungswand) ist der Werkstoff der Schnitt
+der Halbräume vom Schnitt-Typ (alle Ecken auf ihrer Werkstoffseite) mit der Vereinigung der
+übrigen – an den Proben der Teilbox gegen das Vorzeichen des Abstands geprüft; scheitert das,
+zerlegt eine binäre Raumteilung an den lokalen Ebenen (höchstens sechs) den Würfel um die
+Teilbox in konvexe Zellen, deren Zeuge die Windungszahl klassifiziert, und erst danach kommt
+der Punkttest. Die Raumteilung allein war zu teuer (Viertelring: 29 895 Aufrufe, 1010 s, weil
+jedes Wandfacetten-Polygon mit r ≈ 10 mm beide Deckel berührt); mit der Schnitt/Vereinigungs-
+Regel baut derselbe Viertelring (h 10, p 3) in 43,7 s mit 368 050 Randpunkten, 245 Blättern
+und keinem Punkttest (belegte Maschine). Ergebnis: Würfel-STL 30³ gerade und um 30°/20° gedreht
+in h 10 Volumen 27 000 auf 10⁻¹⁰, L-Körper mit einspringender Kante 12 000 mm³ auf 10⁻¹⁰,
+jeweils ohne einen Punkttest. **Lamé aus dem tessellierten Viertelring** (Facette 1 mm, 1268
+Facetten, geschnitten mit vier Symmetrie-Halbräumen, h 10, p 3): σ_r 0,066 %, σ_φ 0,022 %,
+u_r 0,003 % gegen Lamé – genauer als die CSG-Rechnung (0,316 / 0,032 %), weil die Facetten
+exakte Ebenen des STL-Körpers sind (Sagitta 0,0025 mm), während die CSG-Zylinderfläche bei
+Tiefe 2 durch Tangentialebenen mit Fehler (2,5/50)² genähert wird; 1 188 116 Randpunkte (die
+Deckel- und Seitenfacetten des STL liegen doppelt zu den Halbraum-Polygonen, ungenutzt), 119 s
+mit Lösen auf der belegten Maschine. Kosten der Kernfunktionen: 1268 Facetten,
+10 000 Punkte, belegte Maschine – volle Suche 6,9 s, Windungszahl numpy 5,4 s; mit BVH (Median-
+Teilung, Boxabstand, numba) 0,001 s für die nächsten Punkte (identisch bis 3·10⁻¹⁴) und 0,011 s
+für die Windungszahl (numba, identisch bis 10⁻¹²). Ohne numba bleibt ein k-d-Baum-Index über
+Facettenschwerpunkte mit exakter Kugelschranke (Ergebnis gleich, nur 2,2-mal schneller als die
+volle Suche, weil die Schranke eine Schale der Dicke 2 R_max durchlässt).

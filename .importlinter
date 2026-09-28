@@ -2,6 +2,7 @@
 root_packages =
     statik3d
     statik3d_contracts
+    volumen3d
 include_external_packages = True
 
 [importlinter:contract:vertrag-nur-stdlib-und-numpy]
@@ -22,3 +23,14 @@ source_modules =
     statik3d
 forbidden_modules =
     volumen3d
+
+[importlinter:contract:volumen3d-kennt-kein-statik3d]
+name = volumen3d importiert niemals statik3d oder Qt/VTK (Vertrag Abschnitt 1)
+type = forbidden
+source_modules =
+    volumen3d
+forbidden_modules =
+    statik3d
+    PySide6
+    pyvista
+    vtk
