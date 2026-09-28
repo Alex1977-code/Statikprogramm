@@ -201,11 +201,14 @@ class FcmProblem:
         if self.loeser == "pcg":
             self.protokoll["operator"] = dict(self._zelldaten.statistik)
 
-    def rechte_seite(self, vorgaben: dict) -> np.ndarray:
-        """vorgaben: Randname -> g(P) -> (n,3) oder Feld (n,3) oder Konstante; Lasten kommen immer dazu."""
+    def rechte_seite(self, vorgaben: dict, zusatz: np.ndarray | None = None) -> np.ndarray:
+        """vorgaben: Randname -> g(P) -> (n,3) oder Feld (n,3) oder Konstante; Lasten kommen immer dazu,
+        ``zusatz`` (n_dof,) nur fuer diese rechte Seite (Lasten je Lastfall, Vertrag 2.1.0)."""
         f = np.zeros(self.gitter.n_dof)
         for last in self.lasten:
             f = f + last
+        if zusatz is not None:
+            f = f + np.asarray(zusatz, float).ravel()
         d = np.zeros(getattr(self, "n_zwaenge", 0))
         for name, r in self.raender.items():
             g = vorgaben.get(name, 0.0)
@@ -218,14 +221,19 @@ class FcmProblem:
                 d[r.zwang_start:r.zwang_start + 3] = rand.mittelwert_vorgabe(r.quadratur, r.moden, G)
         return np.concatenate([f, d]) if len(d) else f
 
-    def loesen(self, vorgaben_je_key) -> np.ndarray:
-        """Ein dict (ein Key) oder eine Liste von dicts -> U (n_dof, n_keys). Die Multiplikatoren
-        der Schnittebenen (Resultierende in der Ebene) stehen danach in ``self.multiplikatoren``."""
+    def loesen(self, vorgaben_je_key, zusatzlasten=None) -> np.ndarray:
+        """Ein dict (ein Key) oder eine Liste von dicts -> U (n_dof, n_keys). ``zusatzlasten``: je Key
+        ein Lastvektor (n_dof,) oder None (Flaechenlasten je Lastfall, Vertrag 2.1.0). Die
+        Multiplikatoren der Schnittebenen (Resultierende in der Ebene) stehen danach in
+        ``self.multiplikatoren``."""
         if self.K is None:
             self.aufbauen()
         liste = vorgaben_je_key if isinstance(vorgaben_je_key, list) else [vorgaben_je_key]
+        zusatz = list(zusatzlasten) if zusatzlasten is not None else [None] * len(liste)
+        if len(zusatz) != len(liste):
+            raise ValueError("zusatzlasten: je Key ein Eintrag (oder None)")
         t0 = time.perf_counter()
-        F = np.stack([self.rechte_seite(v) for v in liste], axis=1)
+        F = np.stack([self.rechte_seite(v, z) for v, z in zip(liste, zusatz)], axis=1)
         n = self.gitter.n_dof
         C = self.zwaenge.C
         F_red = np.asarray(C.T @ F[:n])

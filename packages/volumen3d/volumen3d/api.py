@@ -21,15 +21,94 @@ from statik3d_contracts.coupling import GlobalFieldProvider
 from statik3d_contracts.detail import DetailModelSpec, DetailResult, FcmSettings, GeometrySourceType
 from statik3d_contracts.discretization import DiscretizationKind
 from statik3d_contracts.model import Material, ResultKey
-from statik3d_contracts.nonlinear import AssemblyModelSpec, AssemblyResult, LoadPath, StepResult
+from statik3d_contracts.nonlinear import AssemblyModelSpec, AssemblyResult, LoadPath, StepResult, SurfaceLoad, SurfaceSelector
 from statik3d_contracts.solver import ProgressCallback, SolverCancelled, SolverError
 
 from . import __version__
+from .fcm import rand
 from .fcm.gitter import Gitter, Verfeinerung
 from .fcm.problem import FcmProblem, Werkstoff
 from .geometry.csg import Csg, Operation, aus_params
+from .geometry.oberflaeche import Flaechenquadratur
 from .geometry.sdf import Halbraum
 from .postprocess.auswertung import von_mises
+
+
+def _flaeche_waehlen(pr: FcmProblem, sel: SurfaceSelector, detail_id: str, last_id: str) -> Flaechenquadratur:
+    """Oberflaechenpunkte nach SurfaceSelector (Vertrag 6a/2.1.0): benannte Grundform, Box oder Zylinder
+    (Achspunkt, Achsrichtung, Radius; Toleranz 2 % des Radius, mindestens 0,01 mm)."""
+    if sel.body_id != detail_id:
+        raise SolverError(f"Last {last_id!r}: body_id {sel.body_id!r} ist nicht das Detail {detail_id!r}")
+    fq = pr.oberflaeche
+    P = fq.punkte
+    if sel.named_surface is not None:
+        maske = fq.name.astype(str) == sel.named_surface
+        if not maske.any():
+            namen = sorted(set(fq.name.astype(str).tolist()))
+            raise SolverError(f"Last {last_id!r}: keine Flaeche {sel.named_surface!r}; vorhanden: {namen}")
+    elif sel.box is not None:
+        lo, hi = (np.asarray(sel.box[0], float).reshape(3), np.asarray(sel.box[1], float).reshape(3))
+        eps = 1e-9 * float(np.max(hi - lo)) if np.any(hi > lo) else 0.0
+        maske = np.all((P >= lo - eps) & (P <= hi + eps), axis=1)
+        if not maske.any():
+            raise SolverError(f"Last {last_id!r}: die Box {lo.tolist()} .. {hi.tolist()} enthaelt keinen Oberflaechenpunkt")
+    elif sel.cylinder is not None:
+        a0 = np.asarray(sel.cylinder[0], float).reshape(3)
+        a = np.asarray(sel.cylinder[1], float).reshape(3)
+        a = a / np.linalg.norm(a)
+        r = float(sel.cylinder[2])
+        rel = P - a0
+        rho = np.linalg.norm(rel - (rel @ a)[:, None] * a, axis=1)
+        maske = np.abs(rho - r) <= max(0.02 * r, 0.01)
+        if not maske.any():
+            raise SolverError(f"Last {last_id!r}: kein Oberflaechenpunkt auf dem Zylinder mit Radius {r} (Toleranz 2 %)")
+    else:
+        raise SolverError(f"Last {last_id!r}: SurfaceSelector ohne named_surface, box oder cylinder")
+    return fq.auswahl(maske)
+
+
+def _traktionsfeld(last: SurfaceLoad, fq: Flaechenquadratur) -> np.ndarray:
+    """Traktion (nq,3) an den Quadraturpunkten: Druck (t = -p n), globale Traktion und Resultierende.
+    Resultierende (Vertrag 2.1.0): Kraft als konstante Traktion F/A, Moment als linear verteilte
+    Traktion omega x (P - c) mit omega = (tr J I - J)^-1 M, J = int r r^T dA um den Schwerpunkt c -
+    so ist int (P - c) x t dA = M und int t dA = F, jedes Teilfeld ohne Nebenwirkung."""
+    n = len(fq.punkte)
+    T = np.zeros((n, 3))
+    if last.pressure is not None:
+        T -= float(last.pressure) * fq.normalen
+    if last.traction is not None:
+        T += np.broadcast_to(np.asarray(last.traction, float).reshape(3), (n, 3))
+    if last.resultant is not None:
+        F = np.asarray(last.resultant[0], float).reshape(3)
+        M = np.asarray(last.resultant[1], float).reshape(3)
+        w = fq.gewichte
+        A = float(w.sum())
+        c = (w[:, None] * fq.punkte).sum(axis=0) / A
+        r = fq.punkte - c
+        J = np.einsum("q,qi,qj->ij", w, r, r)
+        T += F / A
+        if np.any(M != 0.0):
+            omega = np.linalg.solve(np.trace(J) * np.eye(3) - J, M)
+            T += np.cross(omega, r)
+    return T
+
+
+def _lasten_vorbereiten(spec: DetailModelSpec, pr: FcmProblem) -> tuple[dict[str, np.ndarray], list[dict[str, Any]]]:
+    """Rechte Seiten der Flaechenlasten je Lastfall-ID und ihr Protokoll (Flaeche, Resultierende)."""
+    vektoren: dict[str, np.ndarray] = {}
+    protokoll: list[dict[str, Any]] = []
+    for last in spec.loads:
+        fq = _flaeche_waehlen(pr, last.surface, spec.id, last.id)
+        T = _traktionsfeld(last, fq)
+        f = rand.flaechenlast(pr.gitter, fq, T)
+        vektoren[last.load_case_id] = vektoren.get(last.load_case_id, 0.0) + f
+        w = fq.gewichte
+        F = (w[:, None] * T).sum(axis=0)
+        c = (w[:, None] * fq.punkte).sum(axis=0) / float(w.sum())
+        M = (w[:, None] * np.cross(fq.punkte - c, T)).sum(axis=0)
+        protokoll.append({"id": last.id, "load_case_id": last.load_case_id, "points": int(len(fq.punkte)),
+                          "area_mm2": float(w.sum()), "centroid": c, "force_N": F, "moment_about_centroid_Nmm": M})
+    return vektoren, protokoll
 
 Fortschritt = Callable[[str, float], None]
 
@@ -104,11 +183,14 @@ class FcmDiskretisierung:
     """Erfuellt ``Discretization`` (Vertrag Abschnitt 4) und haelt das aufgebaute Problem."""
     kind: DiscretizationKind = DiscretizationKind.FCM_OCTREE
 
-    def __init__(self, spec: DetailModelSpec, problem: FcmProblem, schnittnamen: list[str]) -> None:
+    def __init__(self, spec: DetailModelSpec, problem: FcmProblem, schnittnamen: list[str],
+                 lasten: dict[str, np.ndarray] | None = None, lasten_protokoll: list[dict[str, Any]] | None = None) -> None:
         self.subsystem_id = spec.id
         self.spec = spec
         self.problem = problem
         self.schnittnamen = schnittnamen
+        self.lasten = lasten or {}                      # Lastfall-ID -> rechte Seite der Flaechenlasten (2.1.0)
+        self.lasten_protokoll = lasten_protokoll or []
         self._oberflaeche: tuple[np.ndarray, np.ndarray] | None = None
 
     def dof_count(self) -> int:
@@ -168,8 +250,7 @@ class FcmSolver:
         _einstellungen_pruefen(s)
         if not spec.cut_planes:
             raise SolverError("Detailmodell ohne Schnittebene: kein Verschiebungsrand, das Detail waere "
-                              "ungelagert (Lagerungen und Lasten am Detail kommen mit Vertrag 2.1, "
-                              "siehe docs/vertrag-aenderungen)")
+                              "ungelagert (Vertrag 2.1.0 kennt Lasten am Detail, aber keine Lagerungen)")
         melden: Fortschritt = progress or (lambda t, a: None)
         g, namen = _geometrie(spec)
         melden("Gitter, Quadratur und Oberflaeche", 0.05)
@@ -179,12 +260,18 @@ class FcmSolver:
                             alpha=float(s.alpha), verfeinerung=_verfeinerung(spec))
             for n in namen:
                 pr.verschiebungsrand(n, n, projektion="schnitt")
+            # Lasten am Detail (Vertrag 2.1.0): Volumenlast fuer alle Keys, Flaechenlasten je Lastfall-ID
+            if spec.body_load is not None:
+                b = np.asarray(spec.body_load, float).reshape(3)
+                if np.any(b != 0.0):
+                    pr.volumenlast(b)
+            lasten, lasten_protokoll = _lasten_vorbereiten(spec, pr)
         except ValueError as ex:
             raise SolverError(str(ex)) from ex
         melden("Steifigkeit assemblieren", 0.3)
         pr.aufbauen(lambda t, a: melden(t, 0.3 + 0.6 * a))
         melden("Diskretisierung bereit", 1.0)
-        return FcmDiskretisierung(spec, pr, namen)
+        return FcmDiskretisierung(spec, pr, namen, lasten, lasten_protokoll)
 
     def solve(self, disc: FcmDiskretisierung, provider: GlobalFieldProvider, keys: list[ResultKey],
               progress: ProgressCallback | None = None, cancel: Callable[[], bool] | None = None) -> list[DetailResult]:
@@ -213,8 +300,10 @@ class FcmSolver:
             melden(f"Randverschiebungen {key.load_case_id}", 0.2 * (k + 1) / max(len(keys), 1))
         if abbruch():
             raise SolverCancelled("abgebrochen vor dem Loesen")
+        # Flaechenlasten nur fuer Keys mit passender Lastfall-ID (Vertrag 2.1.0)
+        zusatz = [disc.lasten.get(key.load_case_id) for key in keys]
         try:
-            U = pr.loesen(vorgaben)
+            U = pr.loesen(vorgaben, zusatzlasten=zusatz)
         except ValueError as ex:
             raise SolverError(str(ex)) from ex
         melden("Gleichungssystem geloest", 0.7)
@@ -269,7 +358,9 @@ class FcmSolver:
             protokoll: dict[str, Any] = dict(pr.protokoll)
             protokoll.update({"solver": self.name, "contract_version": self.contract_version, "volumen3d": __version__,
                               "key": str(key), "coupling": "displacement (normal pointwise + in-plane resultants)",
-                              "geometry": spec_kurz(disc.spec), "t_solve_s": round(time.perf_counter() - t0, 3)})
+                              "geometry": spec_kurz(disc.spec), "t_solve_s": round(time.perf_counter() - t0, 3),
+                              "loads": [dict(l) for l in disc.lasten_protokoll if l["load_case_id"] == key.load_case_id],
+                              "body_load": None if disc.spec.body_load is None else np.asarray(disc.spec.body_load, float).reshape(3)})
             ergebnisse.append(DetailResult(detail_id=disc.subsystem_id, key=key, surface_points=V, surface_triangles=T,
                                            displacement=u_e, stress=s_e, von_mises=von_mises(s_e) if len(s_e) else np.zeros(0),
                                            coupling_check={"planes": ebenen}, warnings=warn, protocol=protokoll,

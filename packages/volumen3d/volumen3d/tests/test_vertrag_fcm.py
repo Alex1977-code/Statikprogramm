@@ -187,6 +187,81 @@ def test_gutachten_faelle():
     check("ungelagerter Quader unter Traktion -> ValueError mit Residuum/Starrkoerper statt 1e12 mm", f)
 
 
+def test_lasten():
+    """Vertrag 2.1.0: Flaechenlasten je Lastfall-ID (Druck per Box, Resultierende mit Moment auf der
+    benannten Flaeche), Volumenlast; Gleichgewicht: Summe der Schnittkraft-Aenderungen an beiden
+    Schnittebenen = minus Lastresultierende (F_fcm = Wirkung des Restes auf das Detail)."""
+    import dataclasses
+    from statik3d_contracts.model import Material, ResultKey
+    from statik3d_contracts.nonlinear import SurfaceLoad, SurfaceSelector
+    from statik3d_contracts.solver import SolverError
+    from statik3d_contracts.testing import StubGlobalFieldProvider
+    from volumen3d.api import FcmSolver
+    s = FcmSolver()
+    mat = Material("S355", "S355", 210000.0, 0.3, 7.85e-9)
+    prov = StubGlobalFieldProvider(1000.0, 100.0, 200.0, 210000.0, 10000.0)
+    spec0 = _spec(p=2, h=50.0, x0=200.0, x1=800.0)
+    # Druck 0,5 N/mm2 auf die Oberseite z = 100 (Box), nur LF1; Resultierende (Kraft + Moment) auf der ganzen
+    # benannten Flaeche 'balken', nur LF3
+    # Box duenn halten: sie waehlt Quadraturpunkte, und eine Box von 0,1 mm Dicke griffe Punkte der
+    # Seitenflaechen dicht an der Kante mit (gemessen 60 034 statt 60 000 mm2)
+    druck = SurfaceLoad("wasser", SurfaceSelector("D1", box=(np.array([0.0, -60.0, 99.999]), np.array([1000.0, 60.0, 100.001]))), "LF1", pressure=0.5)
+    F_res, M_res = np.array([0.0, 2000.0, -3000.0]), np.array([1.0e5, 0.0, 2.0e5])
+    res = SurfaceLoad("res", SurfaceSelector("D1", named_surface="balken"), "LF3", resultant=(F_res, M_res))
+    spec = dataclasses.replace(spec0, loads=(druck, res))
+    disc = s.prepare(spec, mat, progress=lambda t, a: None)
+    keys = [ResultKey("LF1"), ResultKey("LF2"), ResultKey("LF3")]
+    erg = s.solve(disc, prov, keys, progress=lambda t, a: None)
+
+    def summe(e):
+        F = sum(np.asarray(pl["force_fcm"], float) for pl in e.coupling_check["planes"])
+        M = sum(np.asarray(pl["moment_fcm"], float) + np.cross(np.asarray(cp.origin, float), np.asarray(pl["force_fcm"], float))
+                for pl, cp in zip(e.coupling_check["planes"], spec.cut_planes))
+        return F, M                                   # Moment um den Ursprung
+
+    F1, M1 = summe(erg[0])
+    F2, M2 = summe(erg[1])
+    F3, M3 = summe(erg[2])
+    A_top = 600.0 * 100.0
+    F_druck = np.array([0.0, 0.0, -0.5 * A_top])       # Druck auf z = 100 wirkt in -z
+    p1 = erg[0].protocol["loads"]
+    check("LF1: Druck per Box auf der Oberseite 60 000 mm2 (< 1e-6), Protokoll nennt Flaeche und Resultierende",
+          len(p1) == 1 and abs(p1[0]["area_mm2"] - A_top) < 1e-6 * A_top and np.linalg.norm(p1[0]["force_N"] - F_druck) < 1e-6 * np.linalg.norm(F_druck),
+          str(p1)[:200])
+    # Die Schnittkraefte der Kopplungskontrolle sind int sigma.n dA; der Strafanteil des Nitsche-Randes
+    # fehlt darin (Theorie 11.6), gemessen 5 % bei h 50 p 2. Die Lastaufbringung selbst ist ueber die
+    # exakten Resultierenden im Protokoll geprueft; hier zaehlt die Zuordnung je Lastfall-ID.
+    check("LF1 gegen LF2 (ohne Last): Summe der Schnittkraft-Aenderungen = -Lastresultierende (< 10 %, Nitsche-Strafanteil)",
+          np.linalg.norm((F1 - F2) + F_druck) < 0.10 * np.linalg.norm(F_druck), f"{F1 - F2} gegen {-F_druck}")
+    p3 = erg[2].protocol["loads"]
+    c3 = np.asarray(p3[0]["centroid"], float)
+    check("LF3: Resultierende trifft F und M um den Schwerpunkt (Verteilung konstant + linear)",
+          np.allclose(p3[0]["force_N"], F_res, rtol=1e-9, atol=1e-6) and np.allclose(p3[0]["moment_about_centroid_Nmm"], M_res, rtol=1e-9, atol=1e-3),
+          f"{p3[0]['force_N']} / {p3[0]['moment_about_centroid_Nmm']}")
+    M_last = M_res + np.cross(c3, F_res)
+    check("LF3 gegen LF2: Kraft- und Momentenaenderung an den Schnittebenen = -Resultierende um den Ursprung (< 15 %, Nitsche-Strafanteil)",
+          np.linalg.norm((F3 - F2) + F_res) < 0.15 * np.linalg.norm(F_res) and np.linalg.norm((M3 - M2) + M_last) < 0.15 * np.linalg.norm(M_last),
+          f"dF {F3 - F2} gegen {-F_res}; dM {M3 - M2} gegen {-M_last}")
+    check("LF2 ohne passende Lastfall-ID: keine Last im Protokoll", erg[1].protocol["loads"] == [])
+    # Volumenlast (Eigengewicht) fuer alle Keys: Vergleich zweier Diskretisierungen
+    b = np.array([0.0, 0.0, -7.85e-9 * 9810.0])
+    disc_b = s.prepare(dataclasses.replace(spec0, body_load=b), mat, progress=lambda t, a: None)
+    e_b = s.solve(disc_b, prov, [ResultKey("LF2")], progress=lambda t, a: None)[0]
+    Fb, _ = summe(e_b)
+    V = 600.0 * 100.0 * 200.0
+    check("Volumenlast: Summe der Schnittkraft-Aenderungen = -b V (< 10 %, Nitsche-Strafanteil)", np.linalg.norm((Fb - F2) + b * V) < 0.10 * np.linalg.norm(b * V),
+          f"{Fb - F2} gegen {-b * V}")
+    # Fehlerfaelle
+    for last, text in ((SurfaceLoad("x", SurfaceSelector("D1", named_surface="gibt_es_nicht"), "LF1", pressure=1.0), "Flaeche"),
+                       (SurfaceLoad("y", SurfaceSelector("D9", named_surface="balken"), "LF1", pressure=1.0), "body_id")):
+        try:
+            s.prepare(dataclasses.replace(spec0, loads=(last,)), mat, progress=lambda t, a: None)
+            ok = False
+        except SolverError as ex:
+            ok = text in str(ex)
+        check(f"Last mit unbekannter {text} -> SolverError", ok)
+
+
 def test_hybrid_platzhalter():
     from statik3d_contracts.nonlinear import AssemblyModelSpec
     from statik3d_contracts.solver import SolverError
@@ -203,4 +278,4 @@ def test_hybrid_platzhalter():
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_protokoll_und_registrierung, test_ablauf, test_gutachten_faelle, test_hybrid_platzhalter]))
+    sys.exit(lauf([test_protokoll_und_registrierung, test_ablauf, test_gutachten_faelle, test_hybrid_platzhalter, test_lasten]))

@@ -10829,3 +10829,19 @@ CPU identisch (5·10⁻¹²), braucht bei 2 316 freien Freiheitsgraden aber 6,8 
 Iteration mehrere Kernstarts und dünnbesetzte Produkte mit festen Startkosten anfallen – die
 GPU lohnt sich ab Modellen mit einigen 10⁵ Freiheitsgraden, und erst mit dem Mehrgitter aus
 Teilprojekt 4 sinkt die Iterationszahl so weit, dass die Startkosten nicht mehr zählen.
+
+**Lasten am Detail (Vertrag 2.1.0, 28.09.2026).** `DetailModelSpec.loads` sind Flächenlasten
+je Lastfall-ID: die Fläche wählt ein `SurfaceSelector` (benannte CSG-Grundform, Box oder
+Zylinder mit 2 % Radiustoleranz) unter den Quadraturpunkten der Oberfläche, die Traktion ist
+Druck (t = −p·n), globale Traktion oder eine Resultierende. Die Resultierende wird verteilt als
+konstante Traktion F/A für die Kraft und als lineares Feld ω × (P − c) für das Moment mit
+ω = (tr J·I − J)⁻¹·M und J = ∫(P − c)(P − c)ᵀ dA um den Flächenschwerpunkt c; so gilt
+∫ t dA = F und ∫ (P − c) × t dA = M, und keiner der beiden Anteile erzeugt die jeweils andere
+Größe. Eine Last wirkt nur auf Ergebnisschlüssel mit derselben `load_case_id`; `body_load` (N/mm³)
+wirkt auf alle. Das Protokoll nennt je Last Fläche, Schwerpunkt, Kraft und Moment aus der
+Quadratur. Prüfung am Kragarmsegment: Druck über eine Box auf der Oberseite (60 000 mm² auf
+10⁻⁶, Resultierende exakt), Resultierende mit Moment auf der benannten Fläche (F und M um den
+Schwerpunkt auf 10⁻⁹), Eigengewicht. Gegen die Schnittkräfte der Kopplungskontrolle stimmt das
+Gleichgewicht nur auf 5 %, weil ∫σ·n dA den Strafanteil des Nitsche-Randes nicht enthält
+(Abschnitt 11.6); eine Box zur Flächenauswahl ist dünn zu halten, da sie Quadraturpunkte wählt
+(0,1 mm Dicke griff 34 mm² der Seitenflächen mit, 0,001 mm nichts).

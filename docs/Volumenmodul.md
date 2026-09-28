@@ -83,6 +83,9 @@ Moden), Aufbauzeit halbiert (Lamé CSG 21,4 s, STL 18,0 s), matrixfreier Operato
 PCG mit Jacobi und projizierten Mittelwertzwängen (`linalg/pcg.py`, `FcmProblem(loeser="pcg")`).
 Befund: Kondition der Jacobi-vorkonditionierten Matrix 10⁶ bis 5·10⁷, 5 000 bis 20 000
 Iterationen – die Messlatte für das Mehrgitter (Teilprojekt 4); der Direktlöser bleibt Standard
-der Vertragsschicht. Offen in Teilprojekt 3: GPU-Kerne mit CuPy. Pull Request 2 kommt nach
-Teilprojekt 4 (Stufe 2). Offen aus Teilprojekt 2: der schnelle Windungszahl-Baum für STL-Netze
+der Vertragsschicht. GPU-Kerne mit CuPy sind da (3,1 ms je Anwendung bei 229 608
+Freiheitsgraden gegen 18,8 ms CPU). Vertrag 2.1.0 (Merge bdac39d, 28.09.) ist angeschlossen:
+`DetailModelSpec.loads` je Lastfall-ID (Druck, Traktion, Resultierende über benannte Fläche, Box
+oder Zylinder) und `body_load`, mit Protokoll je Last (Fläche, Schwerpunkt, Kraft, Moment).
+Pull Request 2 kommt nach Teilprojekt 4 (Stufe 2). Offen aus Teilprojekt 2: der schnelle Windungszahl-Baum für STL-Netze
 über 10⁵ Facetten (Teilprojekt 5) und die Vierteilung der Randpolygone an gekrümmten Formen.

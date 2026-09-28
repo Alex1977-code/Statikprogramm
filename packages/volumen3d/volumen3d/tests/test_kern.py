@@ -27,7 +27,7 @@ TESTS = [
     test_elastizitaet.test_zellsteifigkeit, test_elastizitaet.test_starrkoerper,
     test_patch.test_patch, test_patch.test_kleine_schnittzellen, test_patch.test_normalprojektion,
     test_vertrag_fcm.test_protokoll_und_registrierung, test_vertrag_fcm.test_ablauf, test_vertrag_fcm.test_gutachten_faelle,
-    test_vertrag_fcm.test_hybrid_platzhalter,
+    test_vertrag_fcm.test_hybrid_platzhalter, test_vertrag_fcm.test_lasten,
 ]
 
 if __name__ == "__main__":
