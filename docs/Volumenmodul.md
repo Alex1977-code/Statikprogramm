@@ -75,8 +75,14 @@ Rebase ab.
 `stub`), `tests/run_all.py`, `.github/workflows/ci.yml`, `requirements.txt`, `.importlinter`,
 `docs/Theoriehandbuch.md` Kapitel 11.
 
-**Nächste Schritte:** Pull Request 1 (Stufe 1 = Teilprojekte 1 und 2), danach Teilprojekt 3
-(matrixfreie Operatoren und p-Mehrgitter auf der CPU mit numba, dann GPU mit cupy) nach Entwurf
-Abschnitt 4. Offen aus Teilprojekt 2: der schnelle Windungszahl-Baum für STL-Netze über 10⁵
-Facetten (Teilprojekt 5) und die Aufbauzeit der Flächenquadratur bei STL-Geometrie (Zeugen je
-Polygonstück fragen Windungszahl und Abstand einzeln ab).
+**Stand Teilprojekt 3 (28.09.2026, auf `feature/volumen3d`, noch kein Pull Request):**
+Pull Request 8 (Stufe 1) ist am 28.09. nach `main` gegangen (Merge c54af91). Seither: Zwangszyklen
+strukturell beseitigt (Wurzeln der Aggregation nie feiner, gröbste Zelle als Eigentümer geteilter
+Moden), Aufbauzeit halbiert (Lamé CSG 21,4 s, STL 18,0 s), matrixfreier Operator mit numba
+(`fcm/operator.py`, = Matrix auf 10⁻¹⁵, 18,7 ms je Anwendung bei 229 608 Freiheitsgraden) und
+PCG mit Jacobi und projizierten Mittelwertzwängen (`linalg/pcg.py`, `FcmProblem(loeser="pcg")`).
+Befund: Kondition der Jacobi-vorkonditionierten Matrix 10⁶ bis 5·10⁷, 5 000 bis 20 000
+Iterationen – die Messlatte für das Mehrgitter (Teilprojekt 4); der Direktlöser bleibt Standard
+der Vertragsschicht. Offen in Teilprojekt 3: GPU-Kerne mit CuPy. Pull Request 2 kommt nach
+Teilprojekt 4 (Stufe 2). Offen aus Teilprojekt 2: der schnelle Windungszahl-Baum für STL-Netze
+über 10⁵ Facetten (Teilprojekt 5) und die Vierteilung der Randpolygone an gekrümmten Formen.

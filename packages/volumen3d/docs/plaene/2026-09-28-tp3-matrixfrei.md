@@ -37,7 +37,11 @@ Direktlöser auf 10⁻⁸ (relatives Residuum), Kirsch p 3 und Lamé p 3 unverä
   Zeit je Anwendung im Protokoll (`t_operator_s`), Ziel Kirsch h 10 p 3 (199 095 freie
   Freiheitsgrade) < 0,2 s auf der CPU.
 
-### Aufgabe 3: Summenfaktorisierung für INSIDE-Zellen
+### Aufgabe 3: Summenfaktorisierung für INSIDE-Zellen — zurückgestellt (Messung 28.09.2026)
+Gemessen an Kirsch h 10 p 3 verfeinert: 207 INSIDE- gegen 2159 CUT-Zellen, 18,7 ms je
+Anwendung bei 229 608 Freiheitsgraden (Ziel < 200 ms). Die INSIDE-Zellen tragen unter 10 % der
+Zellen; eine Summenfaktorisierung nur für sie spart nichts Messbares. Sie kommt mit der GPU-Stufe
+wieder auf den Tisch, wenn INSIDE-Zellen bei feinen Gittern überwiegen (h ≪ Bauteilmaß).
 - Tensorstruktur der Basis: u_e (p+1)³×3 → Gradienten über drei 1D-Matrizen (Werte/Ableitungen an
   den Gauß-Punkten), Spannung punktweise (λ, μ), Rückweg transponiert: O(p⁴) statt O(p⁶); als
   numba-Kern mit festen Feldern je Zelle.

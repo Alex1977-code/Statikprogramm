@@ -10777,3 +10777,42 @@ Teilung, Boxabstand, numba) 0,001 s für die nächsten Punkte (identisch bis 3·
 für die Windungszahl (numba, identisch bis 10⁻¹²). Ohne numba bleibt ein k-d-Baum-Index über
 Facettenschwerpunkte mit exakter Kugelschranke (Ergebnis gleich, nur 2,2-mal schneller als die
 volle Suche, weil die Schranke eine Schale der Dicke 2 R_max durchlässt).
+
+### 11.9 Teilprojekt 3: matrixfreier Operator und vorkonditioniertes CG
+
+**Operator ohne globale Matrix.** Das Produkt v = K·u wird zellweise gebildet (Vorgabe 8.1).
+INSIDE-Zellen einer Ebene sind bis auf den Maßstab gleich: K ∝ h, also K_e = h_l/h₀·K_ref mit
+einer Referenz-Zellmatrix je p und Werkstoff (Tensor-Gauß (p+1)³ ist für Polynome vom Grad 2p
+exakt und stimmt darum mit der Quadratur der INSIDE-Zellen überein). CUT-Zellen behalten ihre
+Zellmatrix aus der Schnittzellen-Quadratur (Vorgabe 8.1 „optional“; Kirsch h 10 p 3 verfeinert:
+2159 Schnittzellen, 637 MB). Eingesammelt wird nicht per Atomics oder Graphfärbung, sondern per
+Gather: der Zellkern schreibt sein Ergebnis in einen Puffer (Zellen × 3m), eine vorab gebaute
+Inzidenz Freiheitsgrad → (Zelle, lokaler Index) summiert je Freiheitsgrad parallel – kein
+Wettlauf, auf CPU und GPU gleich. Zwänge (hängende Freiheitsgrade, Aggregation) bleiben die
+Zwangsmatrix C, die Nitsche-Ränder die dünnbesetzte Matrix K_rand: A = Cᵀ(K + K_rand)C.
+Gemessen (28.09.2026): Operator = assemblierte Matrix auf 10⁻¹⁵ (Kirsch verfeinert, Lamé, Patch
+mit dünner Wand); Kirsch h 10 p 3 verfeinert mit 229 608 Freiheitsgraden 18,7 ms je Anwendung
+(numba, Ziel < 200 ms), Zelldaten in 10,7 s. Die Summenfaktorisierung für INSIDE-Zellen ist
+zurückgestellt: sie stellen dort unter 10 % der Zellen.
+
+**PCG.** Vorkonditioniertes CG in FP64 mit relativer Residuumsschranke und Energienorm der
+letzten Korrektur (für x₀ = 0 ist ‖x_k‖²_A = Σ α_j r_jᵀz_j, die Energienorm läuft ohne weitere
+Operatoranwendung mit); Jacobi mit der exakten Diagonale von A aus den Zellmatrizen
+(C_eᵀK_eC_e je Zelle). Die drei Mittelwertzwänge je Schnittebene (Projektion `schnitt`, bisher
+Sattelpunkt) laufen als projizierter CG: x = x_p + z mit x_p = Bᵀ(BBᵀ)⁻¹d und z im Kern von B,
+Operator und Vorkonditionierer mit P = I − Bᵀ(BBᵀ)⁻¹B projiziert; die Multiplikatoren folgen aus
+λ = (BBᵀ)⁻¹B(b − Ax) und stimmen mit denen des Sattelpunkts überein (Kragarmsegment: 548
+Iterationen, Verschiebungen auf 2·10⁻⁷).
+
+**Kondition – die Messlatte für das Mehrgitter.** Die Jacobi-vorkonditionierte Matrix
+D^−½AD^−½ hat Kondition 1,45·10⁶ (Patch h 20 p 2, 2469 freie Freiheitsgrade) und 5,0·10⁷ (Lamé
+h 20 p 3, 2316); A selbst 1,9·10⁷ bzw. 3,8·10⁹, die Diagonale spannt 3,7·10² bzw. 3,3·10⁴
+(Nitsche-Strafterm β = 10·E·p²/h auf den Randmoden). PCG braucht bis 10⁻¹⁰ 5 045 bzw. 20 373
+Iterationen (Kirsch h 20 p 2 verfeinert 4 420) und trifft die direkte Lösung in den Spannungen
+auf 2·10⁻⁶, 2·10⁻⁹ und 3·10⁻⁹; in den Verschiebungen weichen Kirsch-Lösungen um einen freien
+Starrkörperanteil ab (u_z ist dort nicht gehalten, beide Löser wählen ihn verschieden – ein
+Hinweis für die Vertragsschicht, nicht für den Löser). Die kleinsten Eigenvektoren verteilen
+sich über wenige Moden schwach gestützter Schnittzellen und Moden hoher Ordnung; genau das ist
+das Ziel von p-Mehrgitter und Chebyshev-Jacobi-Glätter in Teilprojekt 4 (Vorgabe 8.3, Richtwert
+unter 100 Iterationen). Bis dahin bleibt der Direktlöser der Standard; `FcmProblem(loeser="pcg")`
+ist geprüft und liefert Protokoll mit Iterationen und Residuum.

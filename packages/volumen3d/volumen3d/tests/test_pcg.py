@@ -87,6 +87,37 @@ def test_pcg():
     _vergleich("Kirsch h 20 p 2 verfeinert (haengende Freiheitsgrade, Traktion)", _kirsch(verfeinert=True), {})
 
 
+def test_problem_pcg():
+    """FcmProblem(loeser='pcg') rechnet denselben Lastfall wie der Direktloeser (Protokoll mit Iterationen)."""
+    from volumen3d.fcm.problem import FcmProblem, Werkstoff
+    from volumen3d.tests.test_kragarm import _segment
+    from volumen3d.tests.test_lame import E, NU, _geometrie
+
+    def u_lin(P):
+        P = np.asarray(P, float).reshape(-1, 3)
+        return np.stack([1e-3 * P[:, 0], -0.3e-3 * P[:, 1], -0.3e-3 * P[:, 2]], axis=1)
+
+    ergebnisse = []
+    for loeser in ("direkt", "pcg"):
+        pr = _lame_mit_druck(FcmProblem(_geometrie(), h=25.0, p=2, werkstoff=Werkstoff(E, NU), loeser=loeser, toleranz=1e-10))
+        U = pr.loesen({})[:, 0]
+        P = np.array([[60.0, 30.0, 10.0], [80.0, 20.0, 5.0], [55.0, 55.0, 15.0]])
+        ergebnisse.append((pr, pr.auswertung(U).spannung(P)))
+    (pr_d, s_d), (pr_p, s_p) = ergebnisse
+    check(f"FcmProblem loeser='pcg' (Lame h 25 p 2): Spannungen wie 'direkt' auf 1e-6; Protokoll {pr_p.protokoll['loeser']}, "
+          f"Iterationen {pr_p.protokoll['iterationen']}, Residuum {pr_p.protokoll['residuum']:.1e}, Operator {pr_p.protokoll['operator']}",
+          np.abs(s_p - s_d).max() / np.abs(s_d).max() < 1e-6 and pr_p.protokoll["residuum"] < 1e-8 and pr_p.protokoll["iterationen"][0] > 0,
+          f"{np.abs(s_p - s_d).max() / np.abs(s_d).max():.1e}")
+    pr = _segment(400.0, 600.0, 2, 50.0)
+    pr_p = _segment(400.0, 600.0, 2, 50.0)
+    pr_p.loeser, pr_p.toleranz = "pcg", 1e-10
+    U_d = pr.loesen({"links": u_lin, "rechts": u_lin})[:, 0]
+    U_p = pr_p.loesen({"links": u_lin, "rechts": u_lin})[:, 0]
+    check("FcmProblem loeser='pcg' mit Schnittebenen ('schnitt'): Verschiebungen und Multiplikatoren wie 'direkt'",
+          np.abs(U_p - U_d).max() / np.abs(U_d).max() < 1e-6 and np.allclose(pr_p.multiplikatoren, pr.multiplikatoren, atol=1e-6),
+          f"{np.abs(U_p - U_d).max() / np.abs(U_d).max():.1e}, Iterationen {pr_p.protokoll['iterationen']}")
+
+
 def _lame_mit_druck(pr):
     from volumen3d.tests.test_lame import PI
     for n in ("sym_x", "sym_y", "sym_z0", "sym_z1"):
@@ -96,4 +127,4 @@ def _lame_mit_druck(pr):
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_pcg]))
+    sys.exit(lauf([test_pcg, test_problem_pcg]))

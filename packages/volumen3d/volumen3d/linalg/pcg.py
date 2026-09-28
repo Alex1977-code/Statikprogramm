@@ -58,33 +58,45 @@ def jacobi_diagonale(zelldaten, C: sp.spmatrix, K_rand: sp.spmatrix | None = Non
     return diag
 
 
+def _modul(a):
+    """numpy oder cupy, je nach Feldtyp (derselbe CG-Code fuer CPU und GPU, Vorgabe 9)."""
+    try:
+        import cupy
+        if isinstance(a, cupy.ndarray):
+            return cupy
+    except ImportError:
+        pass
+    return np
+
+
 def pcg(A: Callable[[np.ndarray], np.ndarray], b: np.ndarray, M_inv: np.ndarray | None = None,
         tol: float = 1e-8, max_iter: int | None = None, B: np.ndarray | None = None, d: np.ndarray | None = None,
         fortschritt: Callable[[int, float], None] | None = None) -> PcgErgebnis:
-    b = np.asarray(b, float).ravel()
-    n = len(b)
+    xp = _modul(b)
+    b = xp.asarray(b, dtype=float).ravel()
+    n = int(b.shape[0])
     max_iter = max_iter or max(2000, int(20 * np.sqrt(n)))
-    m_inv = np.ones(n) if M_inv is None else np.asarray(M_inv, float)
+    m_inv = xp.ones(n) if M_inv is None else xp.asarray(M_inv, dtype=float)
     if B is not None and len(B):
-        B = np.asarray(B, float).reshape(-1, n)
-        d = np.zeros(B.shape[0]) if d is None else np.asarray(d, float).ravel()
+        B = xp.asarray(B, dtype=float).reshape(-1, n)
+        d = xp.zeros(B.shape[0]) if d is None else xp.asarray(d, dtype=float).ravel()
         G = B @ B.T
-        G_inv = np.linalg.inv(G)
+        G_inv = xp.linalg.inv(G)
         x_p = B.T @ (G_inv @ d)
 
-        def proj(v: np.ndarray) -> np.ndarray:
+        def proj(v):
             return v - B.T @ (G_inv @ (B @ v))
     else:
         B = None
-        x_p = np.zeros(n)
+        x_p = xp.zeros(n)
 
-        def proj(v: np.ndarray) -> np.ndarray:
+        def proj(v):
             return v
     r = proj(b - A(x_p)) if B is not None else b.copy()
-    norm_b = float(np.linalg.norm(r))
-    x = np.zeros(n)
+    norm_b = float(xp.sqrt(r @ r))
+    x = xp.zeros(n)
     if norm_b == 0.0:
-        lam = G_inv @ (B @ (b - A(x_p))) if B is not None else np.zeros(0)
+        lam = G_inv @ (B @ (b - A(x_p))) if B is not None else xp.zeros(0)
         return PcgErgebnis(x_p, 0, 0.0, 0.0, True, lam)
     z = proj(m_inv * r)
     p = z.copy()
@@ -105,7 +117,7 @@ def pcg(A: Callable[[np.ndarray], np.ndarray], b: np.ndarray, M_inv: np.ndarray 
         d_e = alpha * rz                                   # Abnahme des Energiefehlers = Energie der Korrektur
         energie += d_e
         energie_rel = float(np.sqrt(max(d_e, 0.0) / energie)) if energie > 0 else 0.0
-        res_rel = float(np.linalg.norm(r) / norm_b)
+        res_rel = float(xp.sqrt(r @ r)) / norm_b
         if fortschritt is not None:
             fortschritt(k, res_rel)
         if res_rel <= tol and energie_rel <= tol:
@@ -117,7 +129,7 @@ def pcg(A: Callable[[np.ndarray], np.ndarray], b: np.ndarray, M_inv: np.ndarray 
         rz = rz_neu
         p = z + beta * p
     x_ges = x_p + x
-    lam = G_inv @ (B @ (b - A(x_ges))) if B is not None else np.zeros(0)
+    lam = G_inv @ (B @ (b - A(x_ges))) if B is not None else xp.zeros(0)
     return PcgErgebnis(x_ges, k, res_rel, energie_rel, konvergiert, lam)
 
 

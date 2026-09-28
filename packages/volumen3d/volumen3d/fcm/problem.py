@@ -49,9 +49,13 @@ class FcmProblem:
     def __init__(self, geometrie, h: float, p: int, werkstoff: Werkstoff, alpha: float = 1e-8, tiefe: int = 2,
                  polster: float = 0.1, beta_faktor: float = 10.0, facette_mm: float | None = None,
                  ordnung_flaeche: int | None = None, aggregation: float | None = 0.25,
-                 verfeinerung: Verfeinerung | None = None) -> None:
+                 verfeinerung: Verfeinerung | None = None, loeser: str = "direkt", toleranz: float = 1e-8) -> None:
         if not 1 <= p <= 4:
             raise ValueError("p muss zwischen 1 und 4 liegen")
+        if loeser not in ("direkt", "pcg"):
+            raise ValueError(f"loeser {loeser!r}: 'direkt' (assemblierte Matrix, pardiso/SuperLU) oder 'pcg' (matrixfrei, Jacobi)")
+        self.loeser = loeser
+        self.toleranz = float(toleranz)
         self.geometrie = geometrie
         self.p = int(p)
         self.werkstoff = werkstoff
@@ -157,17 +161,30 @@ class FcmProblem:
         self.K = K
         self.K_rand = K_rand
         self._B = np.concatenate(zwaenge, axis=0) if zwaenge else None
+        self.n_zwaenge = 0 if self._B is None else int(self._B.shape[0])
         t1 = time.perf_counter()
         C = self.zwaenge.C
-        K_red = (C.T @ K @ C).tocsr()
-        if self._B is not None:
-            # Sattelpunkt [[K, B^T], [B, 0]]: Multiplikatoren = Resultierende der Mittelwertzwaenge
-            B_red = sp.csr_matrix(self._B @ C)
-            nz = B_red.shape[0]
-            K_red = sp.bmat([[K_red, B_red.T], [B_red, sp.csr_matrix((nz, nz))]], format="csr")
-        self._loeser = Direktloeser(K_red)
-        self._K_red = K_red
-        self.n_zwaenge = 0 if self._B is None else int(self._B.shape[0])
+        if self.loeser == "pcg":
+            # matrixfrei (Teilprojekt 3): Zellmatrizen statt Faktorisierung; K bleibt fuer die
+            # Residuumsprobe und die Auswertung des Vergleichs erhalten
+            from .operator import Operator, Zelldaten
+            from ..linalg.pcg import jacobi_diagonale
+            self._zelldaten = Zelldaten(self.gitter, self.quadratur, self.werkstoff.E, self.werkstoff.nu)
+            self._operator = Operator(self._zelldaten, C=C, K_rand=K_rand)
+            self._diagonale = jacobi_diagonale(self._zelldaten, C, K_rand)
+            self._K_red = (C.T @ K @ C).tocsr()
+            self._loeser = None
+            name_loeser = "pcg-jacobi" + ("" if self._operator.numba else " (numpy)")
+        else:
+            K_red = (C.T @ K @ C).tocsr()
+            if self._B is not None:
+                # Sattelpunkt [[K, B^T], [B, 0]]: Multiplikatoren = Resultierende der Mittelwertzwaenge
+                B_red = sp.csr_matrix(self._B @ C)
+                nz = B_red.shape[0]
+                K_red = sp.bmat([[K_red, B_red.T], [B_red, sp.csr_matrix((nz, nz))]], format="csr")
+            self._loeser = Direktloeser(K_red)
+            self._K_red = K_red
+            name_loeser = self._loeser.name
         t2 = time.perf_counter()
         self.protokoll.update({
             "p": self.p, "h_mm": self.gitter.h, "alpha": self.alpha, "tiefe": self.tiefe,
@@ -179,8 +196,10 @@ class FcmProblem:
             "aggregation": dict(self.aggregation.statistik) if self.aggregation is not None else None,
             "quadraturpunkte": self.quadratur.anzahl_punkte(), "quadratur": dict(self.quadratur.statistik),
             "oberflaechenpunkte": int(len(self.oberflaeche.punkte)), "oberflaeche": dict(self.oberflaeche.statistik),
-            "loeser": self._loeser.name,
+            "loeser": name_loeser,
             "t_assemblierung_s": round(t1 - t0, 3), "t_faktorisierung_s": round(t2 - t1, 3)})
+        if self.loeser == "pcg":
+            self.protokoll["operator"] = dict(self._zelldaten.statistik)
 
     def rechte_seite(self, vorgaben: dict) -> np.ndarray:
         """vorgaben: Randname -> g(P) -> (n,3) oder Feld (n,3) oder Konstante; Lasten kommen immer dazu."""
@@ -210,17 +229,41 @@ class FcmProblem:
         n = self.gitter.n_dof
         C = self.zwaenge.C
         F_red = np.asarray(C.T @ F[:n])
-        if self.n_zwaenge:
-            F_red = np.concatenate([F_red, F[n:]], axis=0)
-        X = self._loeser.loesen(F_red)
-        m = X.shape[0] - self.n_zwaenge
-        self.multiplikatoren = X[m:] if self.n_zwaenge else np.zeros((0, len(liste)))
-        U = np.asarray(C @ X[:m])
+        if self.loeser == "pcg":
+            from ..linalg.pcg import pcg
+            B = np.asarray(self._B @ C) if self.n_zwaenge else None
+            X = np.empty((C.shape[1], len(liste)))
+            lam = np.empty((self.n_zwaenge, len(liste)))
+            iterationen, residuen = [], []
+            for k in range(len(liste)):
+                erg = pcg(self._operator.frei_anwenden, F_red[:, k], 1.0 / self._diagonale, tol=self.toleranz,
+                          B=B, d=F[n:, k] if self.n_zwaenge else None)
+                if not erg.konvergiert:
+                    raise ValueError(f"PCG nicht konvergiert: Residuum {erg.residuum_rel:.1e} nach {erg.iterationen} Iterationen")
+                X[:, k] = erg.x
+                lam[:, k] = erg.multiplikatoren
+                iterationen.append(erg.iterationen)
+                residuen.append(erg.residuum_rel)
+            self.multiplikatoren = lam
+            self.protokoll["iterationen"] = iterationen
+            self.protokoll["residuum_rel"] = max(residuen) if residuen else 0.0
+            U = np.asarray(C @ X)
+            # Residuum des reduzierten Systems ohne Multiplikatoranteil (Projektion haelt B x = d)
+            R = self._K_red @ X - F_red
+            if self.n_zwaenge:
+                R = R + B.T @ lam
+        else:
+            if self.n_zwaenge:
+                F_red = np.concatenate([F_red, F[n:]], axis=0)
+            X = self._loeser.loesen(F_red)
+            m = X.shape[0] - self.n_zwaenge
+            self.multiplikatoren = X[m:] if self.n_zwaenge else np.zeros((0, len(liste)))
+            U = np.asarray(C @ X[:m])
+            R = self._K_red @ X - F_red
         self.protokoll["t_loesen_s"] = round(time.perf_counter() - t0, 3)
         # Residuum: Direktloeser liefern bei singulaerer Matrix endliche Zahlen (Gutachten 27.09.:
         # freier Quader unter Traktion, max |u| 1e12 mm ohne Fehler); ein relatives Residuum
         # ueber 1e-6 heisst: nicht zuverlaessig geloest, in der Regel freie Starrkoerperbewegung.
-        R = self._K_red @ X - F_red
         norm_f = np.linalg.norm(F_red, axis=0)
         norm_r = np.linalg.norm(R, axis=0)
         residuum = np.where(norm_f > 0, norm_r / np.maximum(norm_f, 1e-300), norm_r)
