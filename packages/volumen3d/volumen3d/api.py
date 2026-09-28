@@ -172,11 +172,14 @@ def _einstellungen_pruefen(s: FcmSettings) -> None:
         raise SolverError("alpha muss in [0, 1) liegen")
 
 
-# Ab dieser Zahl von Freiheitsgraden ist das p-Mehrgitter auf der GPU im Gesamtweg (Aufbau + Loesen)
-# schneller als der Direktloeser. Gemessen am Kirsch-Modell p 3 (28.09.2026, RTX 3070, Maschine belegt),
-# Gesamtweg direkt / GPU-Mehrgitter: h 20 (26 400-33 060 frei) 6,4 / 13,9 s und 9,6 / 10,8 s; h 14
-# (69 879-92 280 frei) 11,3 / 23,7 s und 18,2 / 31,0 s; h 10 (130 611 frei, 229 608 Freiheitsgrade)
-# 34,4 / 32,9 s, (187 239 frei) 57,4 / 35,3 s. Die Schwelle trennt diese Faelle richtig.
+# Ab dieser Zahl von Freiheitsgraden waehlt 'auto' das p-Mehrgitter auf der GPU. Gemessen im Gesamtweg
+# (Aufbau + Loesen) auf freier Maschine (RTX 3070, 28.09.2026, Commit 9cbdcf1), direkt / GPU-Mehrgitter:
+# kompakter Block mit Bohrung 65 000 FHG 14,5 / 18,3 s, 116 000 FHG 20,7 / 22,5 und 22,2 / 19,9 s,
+# 186 000 FHG 39,2 / 31,9 s, 281 000 FHG 58,0 / 42,6 s, 340 000 FHG 61,2 / 51,3 s; duenne Kirsch-Scheibe
+# (fuer den Direktloeser guenstig) bis 174 000 FHG direkt 1,5 bis 2,7 s schneller, 230 000 bis 500 000 FHG
+# je nach Schnittlage 4 s schneller bis 4 s langsamer. Unter der Schwelle ist das Mehrgitter hoechstens
+# beim Block knapp darunter schneller (186 000 FHG), darueber gewinnt es beim Block deutlich und liegt bei
+# der Scheibe gleichauf. Nach oben begrenzt der GPU-Speicher (8 GB: etwa 500 000 FHG bei p 3).
 _AUTO_MIN_DOFS = 200_000
 
 
@@ -193,35 +196,46 @@ def _gpu_frei_mb() -> float:
         return 0.0
 
 
-def _gpu_speicher_mb(n_zellen: int, n_cut: int, p: int, n_dof: int) -> float:
-    """Geschaetzter GPU-Speicher des Mehrgitters: Zellmatrizen der Schnittzellen, Glaetterbloecke der
-    Ebenen p und p-1 (Blockgroesse im Mittel 1,2 x 3 (p+1)^3), reduzierte Matrix fuer den Blockauszug.
-    Geeicht an Kirsch h 10 p 3 (2366 Zellen, 2159 geschnitten): geschaetzt 2,3 GB, gemessen 2,4 GB."""
+def _gpu_speicher_mb(n_zellen: int, n_cut: int, p: int, n_frei: int) -> float:
+    """Geschaetzte Spitze des GPU-Speichers beim Einrichten des Mehrgitters (MB).
+
+    Posten: Zellmatrizen der Schnittzellen (8 n_cut m3^2, m3 = 3 (p+1)^3), Glaetterbloecke der Ebenen p und
+    p-1 (Blockgroesse im Mittel 1,1 m3), die feine Matrix waehrend des Blockauszugs und die grobe Matrix
+    (12 Byte je Eintrag, 360 Eintraege je freier Koordinate, grob 16 % davon), Teilstapel und Arbeitsfelder
+    der Inversion 700 MB. Geeicht an acht Faellen (Kirsch h 14 bis 8, Block h 20 bis 14, 28.09.2026): die
+    Schaetzung liegt 2 bis 10 % ueber der gemessenen Spitze des Speicherpools (1,4 bis 5,3 GB). Die alte
+    Formel (Bloecke 1,2 m3, ohne Auszug und Arbeitsfelder) lag bis 50 % darunter; mit ihr lief die Karte bei
+    Kirsch h 8 ueber. Ohne freie Koordinaten (estimate vor dem Aufbau) gilt n_frei = n_dof als obere Schranke."""
     m3 = 3 * (p + 1) ** 3
     grob = (p ** 3 / (p + 1) ** 3) ** 2 if p > 1 else 0.0
     k_cut = 8.0 * n_cut * m3 ** 2
-    schwarz = 8.0 * n_zellen * (1.2 * m3) ** 2 * (1.0 + grob)
-    k_red = 12.0 * n_dof * m3 * 0.75
-    return (k_cut + schwarz + k_red) / 1e6
+    glaetter = 8.0 * n_zellen * (1.1 * m3) ** 2 * (1.0 + grob)
+    matrix = 12.0 * 360.0 * n_frei * 1.16
+    return (k_cut + glaetter + matrix) / 1e6 + 700.0
 
 
-def _loeserwahl(backend: str, n_zellen: int, n_cut: int, p: int, n_dof: int) -> tuple[str, str, str, list[str]]:
+# Reserve auf die Schaetzung gegen den freien GPU-Speicher (andere Anwendungen, Fragmentierung)
+_GPU_RESERVE = 1.2
+
+
+def _loeserwahl(backend: str, n_zellen: int, n_cut: int, p: int, n_dof: int,
+                n_frei: int | None = None) -> tuple[str, str, str, list[str]]:
     """(loeser, geraet, Begruendung, Warnungen). 'cpu': Direktloeser. 'gpu': Mehrgitter auf der GPU,
     Rueckfall auf den Direktloeser ohne GPU oder bei zu wenig Speicher (Vorgabe 9). 'auto': der im
     Gesamtweg schnellere Weg - Mehrgitter auf der GPU ab _AUTO_MIN_DOFS Freiheitsgraden, sonst direkt."""
     if backend == "cpu":
         return "direkt", "cpu", "backend 'cpu'", []
     frei = _gpu_frei_mb()
-    bedarf = _gpu_speicher_mb(n_zellen, n_cut, p, n_dof)
+    bedarf = _gpu_speicher_mb(n_zellen, n_cut, p, n_dof if n_frei is None else n_frei)
     if backend == "gpu":
         if frei <= 0:
             return "direkt", "cpu", "keine GPU", ["backend 'gpu': keine nutzbare GPU gefunden - Rueckfall auf den Direktloeser "
                                                   "der CPU (gleiche Ergebnisse, Vorgabe 9)"]
-        if 1.3 * bedarf > frei:
+        if _GPU_RESERVE * bedarf > frei:
             return "direkt", "cpu", "GPU-Speicher zu klein", [f"backend 'gpu': geschaetzt {bedarf:.0f} MB GPU-Speicher, frei "
                                                               f"{frei:.0f} MB - Rueckfall auf den Direktloeser der CPU"]
         return "mehrgitter", "gpu", f"backend 'gpu', {bedarf:.0f} von {frei:.0f} MB", []
-    if frei > 0 and n_dof >= _AUTO_MIN_DOFS and 1.3 * bedarf <= frei:
+    if frei > 0 and n_dof >= _AUTO_MIN_DOFS and _GPU_RESERVE * bedarf <= frei:
         return "mehrgitter", "gpu", f"auto: {n_dof} Freiheitsgrade >= {_AUTO_MIN_DOFS}, GPU {bedarf:.0f} von {frei:.0f} MB", []
     grund = ("keine GPU" if frei <= 0 else
              f"{n_dof} Freiheitsgrade < {_AUTO_MIN_DOFS}" if n_dof < _AUTO_MIN_DOFS else
@@ -341,7 +355,8 @@ class FcmSolver:
         # Loeserwahl: der im Gesamtweg schnellere Weg (Theorie 11.10) - Mehrgitter auf der GPU fuer grosse
         # Modelle, sonst der Direktloeser; 'cpu'/'gpu' erzwingen, 'gpu' faellt ohne GPU auf die CPU zurueck
         n_cut = int((pr.gitter.klasse == 2).sum())
-        loeser, geraet, grund, warnungen = _loeserwahl(s.backend, len(pr.gitter.ijk), n_cut, int(pr.p), int(pr.gitter.n_dof))
+        loeser, geraet, grund, warnungen = _loeserwahl(s.backend, len(pr.gitter.ijk), n_cut, int(pr.p), int(pr.gitter.n_dof),
+                                                       int(pr.zwaenge.C.shape[1]))
         pr.loeser, pr.backend = loeser, geraet
         # Vertragstoleranz gilt fuer das relative Residuum; fuer Verschiebungen auf 1e-6 gegen den
         # Direktloeser (Vorgabe 9) braucht das Mehrgitter 1e-10 (Kragarm p 3: bei 1e-10 1e-8, test_mehrgitter)

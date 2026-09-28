@@ -239,5 +239,44 @@ def test_problem_gpu():
           fu < 1e-6 and fl < 1e-6, f"U {fu:.1e}, lambda {fl:.1e}")
 
 
+def test_gpu_speicher():
+    """Die Speicherschaetzung der Vertragsschicht deckt die gemessene Spitze beim Einrichten und liegt hoechstens
+    30 % darueber; nach dem Einrichten gibt der Pool die Zwischenbloecke zurueck (was bleibt, ist Fragmentierung
+    teilbelegter Speicherstuecke: gemessen 212 MB bei 1385 MB Spitze, ohne Freigabe 806 MB) - Schranke 1/4 der Spitze.
+
+    Befund 28.09.2026: die alte Schaetzung lag bis 50 % unter der Spitze (Kirsch h 8: 4,7 gegen 7,3 GB), weil
+    die ganze Groessengruppe auf einmal invertiert wurde und Auszug und Arbeitsfelder fehlten; mehrere Details
+    in einem Prozess sammelten sich im Pool, bis die 8-GB-Karte auslagerte (1,5 s statt 0,13 s je Iteration).
+    Die Spitze ist pool.total_bytes() nach dem Einrichten in einem frischen Pool (er gibt nichts von selbst
+    zurueck), unabhaengig von der Statistik des Mehrgitters gelesen."""
+    from volumen3d.fcm.operator_gpu import verfuegbar
+    if not verfuegbar():
+        check("GPU/CuPy nicht verfuegbar - GPU-Pruefungen uebersprungen", True)
+        return
+    import cupy
+    from volumen3d.api import _gpu_speicher_mb
+    from volumen3d.fcm.gitter import Verfeinerung
+    from volumen3d.fcm.mehrgitter import PMehrgitter
+    from volumen3d.tests.test_kirsch import D, T, _platte
+    pool = cupy.get_default_memory_pool()
+    for h, vers in ((14.0, 0.0), (12.0, 0.6)):
+        v = Verfeinerung(bereiche=((np.array([0.0, 0.0, T / 2]), D / 2 + 10.0, h / 4),))
+        pr = _platte(3, h, versatz=vers, verfeinerung=v)
+        pr.loeser = "pcg"
+        pr.aufbauen()
+        g = pr.gitter
+        schaetzung = _gpu_speicher_mb(len(g.ijk), int((g.klasse == 2).sum()), 3, int(pr.zwaenge.C.shape[1]))
+        pool.free_all_blocks()
+        vorher = pool.total_bytes()
+        mg = PMehrgitter(pr, geraet="gpu")
+        spitze = (mg.statistik["gpu_spitze_mb"] * 1e6 - vorher) / 1e6
+        rest = (pool.total_bytes() - pool.used_bytes()) / 1e6
+        check(f"Kirsch h {h} Versatz {vers}: Schaetzung {schaetzung:.0f} MB >= Spitze {spitze:.0f} MB und <= 1,3 x Spitze; "
+              f"danach Zwischenbloecke unter 1/4 der Spitze", spitze <= schaetzung <= 1.3 * spitze and rest < 0.25 * spitze,
+              f"Verhaeltnis {schaetzung / spitze:.2f}, belegt {mg.statistik['gpu_belegt_mb']:.0f} MB, zwischengespeichert {rest:.1f} MB")
+        del mg, pr
+        pool.free_all_blocks()
+
+
 if __name__ == "__main__":
-    sys.exit(lauf([test_operator_gpu, test_pcg_gpu, test_gross_gpu, test_mehrgitter_gpu, test_mehrgitter_auf_gpu_eingerichtet, test_problem_gpu]))
+    sys.exit(lauf([test_operator_gpu, test_pcg_gpu, test_gross_gpu, test_mehrgitter_gpu, test_mehrgitter_auf_gpu_eingerichtet, test_problem_gpu, test_gpu_speicher]))

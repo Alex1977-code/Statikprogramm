@@ -222,12 +222,23 @@ class ZellSchwarz:
             for s, liste in sorted(gruppen.items()):
                 I = cupy.asarray(np.array(liste, dtype=np.int64))
                 k = int(I.shape[0])
-                B = cupy.zeros((k, s, s), dtype=cupy.float64)
-                n_thr = k * s
-                kern(((n_thr + 255) // 256,), (256,), (indptr, indices, A_gpu.data, I, np.int32(k), np.int32(s), B))
-                X = cupy.linalg.inv(B)
-                del B
-                X = 0.5 * (X + X.transpose(0, 2, 1))
+                X = cupy.empty((k, s, s), dtype=cupy.float64)
+                # Teilstapel von hoechstens _TEILSTAPEL_BYTES: die gestapelte Inversion legt Kopien und
+                # Arbeitsfelder an, die Symmetrisierung zwei weitere Felder - ueber ganze Groessengruppen
+                # hielt der Speicherpool danach das Doppelte der Bloecke (Kirsch h 9 p 3: 5,9 GB, davon
+                # 2,9 GB belegt), und bei h 8 lief die 8-GB-Karte ueber (Auslagern, 1,5 s statt 0,13 s je
+                # Iteration, 28.09.2026)
+                schritt = max(1, int(_TEILSTAPEL_BYTES // (8 * s * s)))
+                for a in range(0, k, schritt):
+                    b = min(k, a + schritt)
+                    B = cupy.zeros((b - a, s, s), dtype=cupy.float64)
+                    kern((((b - a) * s + 255) // 256,), (256,), (indptr, indices, A_gpu.data, I[a:b], np.int32(b - a), np.int32(s), B))
+                    Xa = cupy.linalg.inv(B)
+                    del B
+                    X[a:b] = Xa
+                    X[a:b] += Xa.transpose(0, 2, 1)
+                    X[a:b] *= 0.5
+                    del Xa
                 self.gruppen.append((I, I.ravel(), X))
             self.speicher_mb = round(sum(int(X.nbytes) for _, _, X in self.gruppen) / 1e6, 1)
         else:
@@ -258,6 +269,9 @@ def _csr_auf_gpu(A: sp.csr_matrix):
     import cupyx.scipy.sparse as cusp
     return cusp.csr_matrix(A.tocsr())
 
+
+# Groesse der Teilstapel beim Auszug und der Inversion der Glaetterbloecke auf der GPU
+_TEILSTAPEL_BYTES = 256e6
 
 # Schwelle fuer den Singulaerwert eines Nullvektors nach zwei Schritten inverser Iteration (siehe unten)
 _NULL_SCHWELLE = 0.1
@@ -520,6 +534,14 @@ class PMehrgitter:
                           "speicher_glaetter_mb": round(speicher, 1), "warnungen": warnungen,
                           "zeiten_s": {k: round(v, 2) for k, v in zeiten.items()},
                           "t_einrichten_s": round(time.perf_counter() - t0, 3)}
+        if geraet == "gpu":
+            # Spitze = was der Pool waehrend des Einrichtens gleichzeitig hielt (er gibt nichts von selbst
+            # zurueck); danach die zwischengespeicherten Bloecke freigeben, sonst sammeln sich mehrere
+            # Details eines Prozesses im Pool, bis die Karte auslagert (Messreihe 28.09.2026)
+            pool = self.xp.get_default_memory_pool()
+            self.statistik["gpu_spitze_mb"] = round(pool.total_bytes() / 1e6, 1)
+            pool.free_all_blocks()
+            self.statistik["gpu_belegt_mb"] = round(pool.used_bytes() / 1e6, 1)
 
     # -- Glaetter ------------------------------------------------------------------------
     def _chebyshev(self, eb: Ebene, b: np.ndarray, x: np.ndarray) -> np.ndarray:
