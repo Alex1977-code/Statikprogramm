@@ -259,6 +259,30 @@ def _csr_auf_gpu(A: sp.csr_matrix):
     return cusp.csr_matrix(A.tocsr())
 
 
+# Schwelle fuer den Singulaerwert eines Nullvektors nach zwei Schritten inverser Iteration (siehe unten)
+_NULL_SCHWELLE = 0.1
+
+
+def grob_nullkandidaten(loesen, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Kandidaten fuer den Nullraum des Grobgitters: zwei Schritte inverser Iteration mit der verschobenen
+    Zerlegung, loesen(R) = (A1 + delta I)^-1 A1 R, auf Zufallsproben X mit Eintraegen ~ N(0, 1).
+
+    X - loesen(X) = delta (A1 + delta I)^-1 X: ein Nullvektor n bleibt mit Faktor 1 stehen, ein Modus mit
+    Eigenwert lambda schrumpft um delta / (lambda + delta) je Schritt. Nach zwei Schritten ist R2 ~ n (n^T X),
+    der Singulaerwert eines Nullvektors ~ sqrt(chi^2_6) (unter 0,1 mit Wahrscheinlichkeit ~ 2e-8), alle
+    anderen um (delta/lambda)^2 gedaempft. Gemessen Kirsch p 3, h 10 bis 14, Versatz 0 und 0,6: Nullvektor
+    2,4 bis 3,8, zweitgroesster Wert 5e-6 bis 4e-4 (28.09.2026).
+
+    Die fruehere Schwelle auf das Residuum einer einzelnen Probe (> 1e-3) hing am Zufall und an der Groesse:
+    der Nullanteil eines Zufallsvektors ist |n^T x| / ||x|| ~ 1 / sqrt(N1); bei Kirsch h 12 und h 14 lag er bei
+    9,8e-4 und 8,5e-4, der Nullraum blieb unerkannt, und der PCG divergierte nach 1,6e-8 wieder (Abbruch mit
+    p^T A p < 0 bzw. 113 statt 51 Iterationen). Rueckgabe: Kandidaten (orthonormale Spalten), Singulaerwerte."""
+    R1 = X - loesen(X)
+    R2 = R1 - loesen(R1)
+    U_s, s_w, _ = np.linalg.svd(R2, full_matrices=False)
+    return U_s[:, s_w > _NULL_SCHWELLE], s_w
+
+
 class Ebene:
     """Eine p-Ebene: Gitter (bzw. Kopie mit eigener Nummerierung), Zwangsmatrix C, assemblierte freie
     Matrix A = C^T (K + K_rand) C, Diagonale, Injektion P zur feineren Ebene, Freiheitsgradtabelle
@@ -419,9 +443,9 @@ class PMehrgitter:
             B1 = sp.csr_matrix(grob.B)
             A1s = sp.bmat([[A1s, B1.T], [B1, sp.csr_matrix((self.n_zwaenge, self.n_zwaenge))]], format="csr")
         grob.direkt = Direktloeser(A1s)
-        # Singularitaet erkennen: fuer Zufallsproben X liefert die Loesung von A1s Y = A1 X den
-        # Nullraumanteil nicht zurueck (A1 X_0 = 0); X - Y ist ein Schritt inverser Iteration auf den
-        # Nullraum, ein zweiter Schritt drueckt die uebrigen Moden auf (delta/lambda)^2.
+        # Singularitaet erkennen (grob_nullkandidaten): fuer Zufallsproben X liefert die Loesung von
+        # A1s Y = A1 X den Nullraumanteil nicht zurueck; zwei Schritte inverser Iteration trennen ihn ab.
+        # grob_residuum (Probe einer Spalte) bleibt nur als Kennzahl im Protokoll, entscheidet nichts mehr.
         N1 = A1.shape[0]
         X = np.random.default_rng(1).standard_normal((N1, 6))
 
@@ -431,9 +455,8 @@ class PMehrgitter:
                 rhs = np.concatenate([rhs, grob.B @ R], axis=0)
             return grob.direkt.loesen(rhs)[:N1]
 
-        R1 = X - grob_loesen(X)
-        self.grob_residuum = float(np.linalg.norm(R1[:, 0]) / np.linalg.norm(X[:, 0]))
-        R2 = R1 - grob_loesen(R1)
+        self.grob_residuum = float(np.linalg.norm(X[:, 0] - grob_loesen(X[:, :1])[:, 0]) / np.linalg.norm(X[:, 0]))
+        kandidaten = grob_nullkandidaten(grob_loesen, X)[0] if not self.n_zwaenge else np.zeros((N1, 0))
         zeiten["grobgitter"] = time.perf_counter() - t
         # Nullraum auf die feinste Ebene injizieren und dort am Operator bestaetigen. Ohne ihn blaehte der
         # Vorkonditionierer den Nullraumanteil auf (r_0/delta), der ueber Rundung ins Residuum
@@ -442,20 +465,18 @@ class PMehrgitter:
         # Nullvektoren werden herausprojiziert - ein fast singulaerer, aber echter Modus darf nicht fehlen.
         self.nullraum = None
         self._nullraum_cpu: np.ndarray | None = None
-        if not self.n_zwaenge and self.grob_residuum > 1e-3:
-            U_s, s_w, _ = np.linalg.svd(R2, full_matrices=False)
-            kandidaten = U_s[:, s_w > 1e-2 * s_w.max()] if s_w.max() > 1e-3 else U_s[:, :0]
+        n_kandidaten = int(kandidaten.shape[1])
+        if n_kandidaten:
             for eb in reversed(self.ebenen[1:]):
                 kandidaten = eb.P @ kandidaten
             fein = self.ebenen[0]
-            if kandidaten.shape[1]:
-                Q, _ = np.linalg.qr(kandidaten)
-                x_ref = np.random.default_rng(2).standard_normal(fein.n_frei)
-                bezug = np.linalg.norm(fein.A_matrix @ x_ref) / np.linalg.norm(x_ref)
-                echt = [j for j in range(Q.shape[1]) if np.linalg.norm(fein.A_matrix @ Q[:, j]) < 1e-6 * bezug]
-                if echt:
-                    self._nullraum_cpu = np.ascontiguousarray(Q[:, echt])
-                    self.nullraum = self.xp.asarray(self._nullraum_cpu)
+            Q, _ = np.linalg.qr(kandidaten)
+            x_ref = np.random.default_rng(2).standard_normal(fein.n_frei)
+            bezug = np.linalg.norm(fein.A_matrix @ x_ref) / np.linalg.norm(x_ref)
+            echt = [j for j in range(Q.shape[1]) if np.linalg.norm(fein.A_matrix @ Q[:, j]) < 1e-6 * bezug]
+            if echt:
+                self._nullraum_cpu = np.ascontiguousarray(Q[:, echt])
+                self.nullraum = self.xp.asarray(self._nullraum_cpu)
         # Glaetter je Ebene: Schwarz-Zellbloecke aus der assemblierten Matrix der Ebene, sonst Jacobi
         t = time.perf_counter()
         self.glaetter = glaetter
@@ -488,9 +509,9 @@ class PMehrgitter:
             warnungen.append(f"Operator singulaer: {k_null} freie Starrkoerperbewegung(en) ohne Lagerung (am feinen Operator "
                              f"bestaetigt); der Vorkonditionierer projiziert sie heraus, die Verschiebungen sind nur bis auf "
                              f"diese Bewegung bestimmt, die Spannungen nicht betroffen")
-        elif self.grob_residuum > 1e-3:
-            warnungen.append(f"Grobgitter nahezu singulaer (Probe weicht um {self.grob_residuum:.1e} ab), am feinen Operator "
-                             f"nicht bestaetigt; Verschiebung {self.grob_delta:.1e}")
+        elif n_kandidaten:
+            warnungen.append(f"Grobgitter nahezu singulaer ({n_kandidaten} Kandidat(en) fuer freie Bewegungen), am feinen "
+                             f"Operator nicht bestaetigt; Verschiebung {self.grob_delta:.1e}")
         self.statistik = {"ebenen": [int(e.p) for e in self.ebenen], "frei_je_ebene": [int(e.n_frei) for e in self.ebenen],
                           "lambda_max": [round(e.lambda_max, 4) for e in self.ebenen[:-1]], "glaetter": glaetter,
                           "glaetter_grad": self.glaetter_grad, "alpha": self.alpha, "geraet": geraet,
@@ -553,4 +574,4 @@ class PMehrgitter:
         return z - N @ (N.T @ z)
 
 
-__all__ = ["PMehrgitter", "Ebene", "ZellSchwarz"]
+__all__ = ["PMehrgitter", "Ebene", "ZellSchwarz", "grob_nullkandidaten"]

@@ -17,6 +17,20 @@ bei verschiedener Zellgroesse ist die Fortsetzung weiterhin ein Polynom vom Grad
 Moden bleiben frei. Lineare Felder werden von der Fortsetzung exakt reproduziert, darum bleibt
 der Patch-Test exakt; die Konditionszahl wird von der Schnittlage unabhaengig.
 
+Zellen ohne wohlgestellten Nachbarn erben die Wurzel eines Nachbarn (Ketten). Dabei gilt die
+naechstgelegene Wurzel, und die Ketten wachsen schichtweise (jede Runde nur aus den Wurzeln der
+Vorrunde). Frueher gewann die Wurzel mit dem groessten Anteil, und innerhalb einer Runde reichte eine
+eben vergebene Wurzel gleich weiter: an der Kirsch-Scheibe (10 mm dick, Schichten ohne wohlgestellte
+Zelle) wanderte die Wurzel so bis 38 Halbweiten weit, das Wurzelpolynom wurde ueber elf Zellen
+fortgesetzt, und C bekam Koeffizienten bis 3,5e9 (h 8, Versatz 0,6; 28.09.2026) - die reduzierte
+Matrix hatte Diagonalwerte bis 2,5e21 gegen einen Median von 1,4e5. Die weitesten Faelle waren leere
+Zellen im Loch, 19 mm vom naechsten Werkstoff: die Abstandsfunktion der Mengenoperation ist dort nur
+eine untere Schranke (0,6 mm), die Klassifikation nennt sie darum geschnitten. Leere Zellen, die keine
+Zelle mit Werkstoff beruehren, bekommen deshalb keine Wurzel; ihre Moden beeinflussen keinen
+Werkstoffpunkt und werden null gesetzt. Leere Zellen am Werkstoff brauchen dagegen eine Wurzel: ihre
+Moden sind Meister haengender Moden von Werkstoffzellen und bekaemen frei nur deren Steifigkeit
+(Patch-Test duenne Waende p 3: Randspannung 2,8e-6 statt 5,8e-8).
+
 Die Rohzwaenge (Mode -> Wurzelmoden mit Koeffizienten) verarbeitet fcm/zwaenge.py zusammen
 mit den haengenden Freiheitsgraden zur Zwangsmatrix.
 """
@@ -53,15 +67,29 @@ class Zellaggregation:
         self.anteil = werkstoffanteile(gitter, quadratur)
         self.wurzel = np.full(len(gitter.ijk), -1, int)             # -1: wohlgestellt oder ohne Wurzel
         self.schlecht = self.anteil < self.schwelle
+        self.leer = self.schlecht & (self.anteil <= 0.0)             # geschnitten klassifiziert, aber ohne Werkstoff
+        self.werkstofffern = self._werkstofffern()                    # leer und ohne Beruehrung mit Werkstoff
         self.zu_teilen: tuple = ()
         self._wurzeln_zuordnen()
         self.statistik = {"schwelle": self.schwelle, "zellen_schlecht": int(self.schlecht.sum()),
-                          "zellen_ohne_wurzel": int((self.schlecht & (self.wurzel < 0)).sum()),
+                          "zellen_leer": int(self.leer.sum()), "zellen_werkstofffern": int(self.werkstofffern.sum()),
+                          "zellen_ohne_wurzel": int((self.schlecht & ~self.werkstofffern & (self.wurzel < 0)).sum()),
                           "zellen_zu_teilen": len(self.zu_teilen),
-                          "moden_gebunden": 0, "anteil_min": float(self.anteil.min()),
+                          "moden_gebunden": 0, "moden_null": 0, "wurzelabstand_max": 0.0, "anteil_min": float(self.anteil.min()),
                           "anteil_min_wohl": float(self.anteil[~self.schlecht].min()) if (~self.schlecht).any() else 0.0}
 
     # -- Zellen ------------------------------------------------------------------------
+    def _werkstofffern(self) -> np.ndarray:
+        """Leere Zellen, die keine Zelle mit Werkstoff beruehren (Flaeche, Kante oder Ecke, auch
+        feinere Blaetter an ihrem Rand)."""
+        g = self.gitter
+        fern = np.zeros(len(g.ijk), bool)
+        for c in np.flatnonzero(self.leer):
+            lo, hi = g.zellbox(c)
+            eps = 1e-6 * float(g.h_zelle(c))
+            fern[c] = not bool(np.any(self.anteil[g.blaetter_in_box(lo - eps, hi + eps)] > 0.0))
+        return fern
+
     def _nachbar(self, c: int, d) -> int:
         """Blatt hinter der Flaeche/Kante/Ecke in Richtung d (per Punktsuche, ebenenunabhaengig)."""
         lo, hi = self.gitter.zellbox(c)
@@ -79,7 +107,7 @@ class Zellaggregation:
         nur feinere wohlgestellte Nachbarn haben, landen in ``zu_teilen``; FcmProblem teilt sie
         und baut das Gitter neu, dann liegen ihre Kinder auf der Ebene der Nachbarn."""
         g = self.gitter
-        offen = list(np.flatnonzero(self.schlecht))
+        offen = list(np.flatnonzero(self.schlecht & ~self.werkstofffern))
         rest = []
         nur_feiner: set[int] = set()
         for c in offen:
@@ -103,21 +131,25 @@ class Zellaggregation:
                 if feiner_gesehen:
                     nur_feiner.add(int(c))
         while rest:
+            # schichtweise: Kandidaten nur aus den Wurzeln der Vorrunde, die naechste gewinnt (kleinste
+            # Fortsetzungskoeffizienten ~ Abstand^p), bei Gleichstand der groessere Anteil
+            vorher = self.wurzel.copy()
             neu = []
-            fortschritt = False
+            vergeben = {}
             for c in rest:
-                kandidaten = []
+                kandidaten = set()
                 for d in _NACHBARN:
                     n = self._nachbar(c, d)
-                    if n >= 0 and n != c and self.wurzel[n] >= 0 and g.ebene[self.wurzel[n]] <= g.ebene[c]:
-                        kandidaten.append(self.wurzel[n])
+                    if n >= 0 and n != c and vorher[n] >= 0 and g.ebene[vorher[n]] <= g.ebene[c]:
+                        kandidaten.add(int(vorher[n]))
                 if kandidaten:
-                    self.wurzel[c] = max(kandidaten, key=lambda r: self.anteil[r])
-                    fortschritt = True
+                    vergeben[c] = min(kandidaten, key=lambda r: (self._abstand_zu(c, r), -self.anteil[r]))
                 else:
                     neu.append(c)
+            for c, r in vergeben.items():
+                self.wurzel[c] = r
             rest = neu
-            if not fortschritt:
+            if not vergeben:
                 break                                                 # isolierte Zellen ohne Werkstoffnachbar
         # ohne Wurzel, aber mit feineren wohlgestellten Nachbarn: teilen statt aggregieren
         self.zu_teilen = tuple((int(g.ebene[c]), int(g.ijk[c, 0]), int(g.ijk[c, 1]), int(g.ijk[c, 2]))
@@ -135,25 +167,58 @@ class Zellaggregation:
         Vr, _ = basis_3d(g.p, g.lokal(X, np.full(len(X), r)))
         return np.linalg.solve(Vc, Vr)
 
-    def roh_zwaenge(self, bereits: set | None = None) -> dict[int, list[tuple[int, float]]]:
-        """Mode -> [(Wurzelmode, Koeffizient)] fuer schlecht gestellte Moden, die nicht schon
-        (durch haengende Entitaeten) gebunden sind."""
-        bereits = bereits or set()
+    def _abstand_zu(self, c: int, r: int) -> float:
+        """Abstand der Mitten von Zelle c und Wurzel r in Halbweiten der Wurzel (Maximumnorm): 2 fuer den
+        Flaechennachbarn gleicher Groesse; bestimmt die Groesse der Fortsetzungskoeffizienten (~ Abstand^p)."""
+        g = self.gitter
+        lo_c, hi_c = g.zellbox(c)
+        lo_r, hi_r = g.zellbox(int(r))
+        return float((np.abs(0.5 * (lo_c + hi_c) - 0.5 * (lo_r + hi_r)) / (0.5 * (hi_r - lo_r))).max())
+
+    def _abstand(self, c: int) -> float:
+        return self._abstand_zu(c, int(self.wurzel[c]))
+
+    def roh_zwaenge(self, haengend: dict[int, list[tuple[int, float]]] | None = None) -> dict[int, list[tuple[int, float]]]:
+        """Mode -> [(Wurzelmode, Koeffizient)] fuer schlecht gestellte Moden, die nicht schon durch
+        haengende Entitaeten gebunden sind (haengend: deren Rohzwaenge); Mode -> [] (null) fuer Moden,
+        die keinen Werkstoffpunkt beeinflussen."""
+        haengend = haengend or {}
         g = self.gitter
         wohl_mode = np.zeros(g.n_moden, bool)
         for c in np.flatnonzero(~self.schlecht):
             wohl_mode[g.zell_moden[c]] = True
+        # relevant: von einer Zelle mit Werkstoff getragen oder (transitiv) Meister eines relevanten
+        # haengenden Modes - nur solche Moden beeinflussen die Loesung an Werkstoffpunkten
+        relevant = np.zeros(g.n_moden, bool)
+        for c in np.flatnonzero(self.anteil > 0.0):
+            relevant[g.zell_moden[c]] = True
+        geaendert = True
+        while geaendert:
+            geaendert = False
+            for mode, eintraege in haengend.items():
+                if relevant[mode]:
+                    for mm, _ in eintraege:
+                        if not relevant[mm]:
+                            relevant[mm] = True
+                            geaendert = True
         eigentuemer = np.full(g.n_moden, -1, int)
         # Eigentuemer eines geteilten Modes ist die groebste schlechte Zelle: ein Eckmode, den eine
         # grobe und eine feine schlechte Zelle teilen, wuerde sonst ueber die Wurzel der feinen Zelle
         # gebunden, deren Moden (haengende Ecken) wiederum an der groben Zelle haengen - Zwangszyklus
         # (test_zwaenge, duenne Wand, 27.09.2026: Mode 582 -> 6605 -> 582). Mit dem groebsten Eigentuemer
-        # laufen alle Zwangsketten monoton zu groeberen Ebenen.
-        reihenfolge = sorted(np.flatnonzero(self.schlecht & (self.wurzel >= 0)),
-                             key=lambda c: (int(g.ebene[c]), -self.anteil[self.wurzel[c]]))
+        # laufen alle Zwangsketten monoton zu groeberen Ebenen. Auf gleicher Ebene gewinnt die naechste
+        # Wurzel (kleinste Fortsetzungskoeffizienten), dann die mit dem groessten Anteil.
+        mit_wurzel = np.flatnonzero(self.schlecht & (self.wurzel >= 0))
+        abstand = {int(c): self._abstand(int(c)) for c in mit_wurzel}
+        self.statistik["wurzelabstand_max"] = round(max(abstand.values(), default=0.0), 3)
+        reihenfolge = sorted(mit_wurzel, key=lambda c: (int(g.ebene[c]), abstand[int(c)], -self.anteil[self.wurzel[c]]))
         for c in reihenfolge:
             for i in g.zell_moden[c]:
-                if not wohl_mode[i] and eigentuemer[i] < 0 and int(i) not in bereits:
+                # alle Moden einer Zelle mit Wurzel werden gebunden, auch nicht relevante: eine leere Zelle
+                # kann einen Werkstoffsplitter unterhalb der Quadraturaufloesung beruehren, und dort
+                # ausgewertete Randspannungen verfehlten sonst das lineare Feld (Patch-Test duenne Waende
+                # p 3: 2,8e-6 statt < 1e-6)
+                if not wohl_mode[i] and eigentuemer[i] < 0 and int(i) not in haengend:
                     eigentuemer[i] = c
         roh: dict[int, list[tuple[int, float]]] = {}
         for c in reihenfolge:
@@ -166,7 +231,14 @@ class Zellaggregation:
                 koeff = M[i_loc]
                 nz = np.flatnonzero(np.abs(koeff) > 1e-14)
                 roh[int(g.zell_moden[c, i_loc])] = [(int(wurzel_moden[j]), float(koeff[j])) for j in nz]
-        self.statistik["moden_gebunden"] = len(roh)
+        # null: freie Moden ohne Einfluss auf Werkstoffpunkte (nur werkstoffferne Zellen tragen sie)
+        n_null = 0
+        for i in np.flatnonzero(~relevant & ~wohl_mode):
+            if int(i) not in haengend and int(i) not in roh:
+                roh[int(i)] = []
+                n_null += 1
+        self.statistik["moden_gebunden"] = len(roh) - n_null
+        self.statistik["moden_null"] = n_null
         return roh
 
 

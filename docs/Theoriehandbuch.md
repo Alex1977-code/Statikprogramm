@@ -10721,6 +10721,28 @@ auf lokal verfeinerten Gittern (eine Ebene an einer Ecke, dünne Wand, Schnittan
 u und σ unter 10⁻⁶ – auch dort, wo hängende Kanten oder Ecken ohne hängende Fläche vorkommen
 (Vorrangregel geprüft).
 
+**Nahe Wurzeln und leere Zellen (28.09.2026).** Die Koeffizienten der Fortsetzung wachsen mit dem
+Abstand zur Wurzel etwa wie Abstandᵖ. Beim Mehrgitter fiel auf, dass die reduzierte Matrix der
+Kirsch-Scheibe Diagonalwerte bis 2,5·10²¹ hatte, bei einem Median von 1,4·10⁵; die Zellmatrizen
+selbst reichten nur bis 2,5·10⁶, der Nitsche-Anteil bis 2,8·10⁷. Die Ursache lag in C: Koeffizienten
+bis 3,5·10⁹ (h 8, Versatz 0,6), in allen Kirsch-Größen zwischen 5·10⁵ und 1,4·10⁸. Zellen ohne
+wohlgestellten Nachbarn erbten die Wurzel eines Nachbarn, und zwar die mit dem größten Anteil, auch
+wenn sie in derselben Runde gerade erst weitergereicht worden war. Dazu kamen leere Zellen im Loch
+nahe der Symmetrieecke, 19 mm vom nächsten Werkstoff: die Abstandsfunktion der Mengenoperation ist
+dort nur eine untere Schranke (0,6 mm), und die Klassifikation nannte sie geschnitten. Über sie lief
+die Kette bis 38 Halbweiten weit, das Wurzelpolynom wurde über elf Zellen fortgesetzt. Regeln
+seither: Ketten wachsen schichtweise aus den Wurzeln der Vorrunde, und die nächstgelegene Wurzel
+gewinnt; leere Zellen, die keine Zelle mit Werkstoff berühren, bekommen keine Wurzel, und ihre Moden
+werden null gesetzt, soweit sie keinen Werkstoffpunkt beeinflussen (von keiner Werkstoffzelle
+getragen und kein Meister eines solchen hängenden Modes). Leere Zellen am Werkstoff bleiben in den
+Ketten: ihre Moden sind Meister hängender Moden von Werkstoffzellen, und ohne Wurzel bekamen sie nur
+deren Steifigkeit (Patch-Test dünne Wand p 3: Randspannung 2,8·10⁻⁶ statt 5,8·10⁻⁸). Gemessen an
+sechs Kirsch-Größen von h 20 bis h 8: Wurzelabstand höchstens 4 Halbweiten, |C| höchstens 3,4·10⁴;
+die Patch-Tests bleiben unter 10⁻⁶. Die Exaktheit linearer Felder auf der Kirsch-Geometrie selbst
+war schon vorher nicht gegeben (σ-Fehler 10⁻³ bis 2,5·10⁻² nahe dem Loch, nach der Änderung 10⁻³
+bis 6,6·10⁻³): Volumen- und Randquadratur nähern die gekrümmte Lochfläche verschieden an. Das ist
+ein eigener, offener Punkt.
+
 **Ränder auf Zellflächen.** Fällt eine Symmetrie- oder Schnittebene genau auf eine Zellfläche –
 in der verfeinerten Kirsch-Platte bei Versatz 0,4 liegen x = 0 und y = 0 auf Flächen der Ebenen
 1 und 2 –, wurden ihre Randpolygone beiden Nachbarzellen zugeschlagen: sym_x 2050 statt 1800 mm²,
@@ -10926,7 +10948,17 @@ darum am Grobgitter per zweifacher inverser Iteration aus sechs Zufallsproben be
 feinste Ebene injiziert, dort am Operator bestätigt (‖A n‖ < 10⁻⁶ des Bezugs; ein nur fast
 singulärer echter Modus darf nicht wegfallen) und vor und nach dem V-Zyklus symmetrisch
 herausprojiziert (z = Π M Π r). Damit: 81 Iterationen, reproduzierbar, das Residuum fällt
-gleichmäßig. Gelagerte Modelle (Patch, Kragarm mit Schnittebenen – über die Vertragsschicht immer
+gleichmäßig. Entschieden wird über die Singulärwerte des Probenblocks nach den zwei Schritten: ein
+Nullvektor n bleibt dabei unverändert stehen (R₂ ≈ n nᵀX, Singulärwert ≈ √χ²₆, unter 0,1 mit
+Wahrscheinlichkeit 2·10⁻⁸), jeder andere Modus schrumpft um (δ/λ)². Gemessen am Kirsch-Modell p 3,
+h 10 bis 14: Nullvektor 2,4 bis 3,8, zweitgrößter Wert 5·10⁻⁶ bis 4·10⁻⁴; die Schwelle liegt bei
+0,1. Die erste Fassung entschied über das Residuum einer einzelnen Probe (> 10⁻³). Das ist der
+Nullanteil eines Zufallsvektors, |nᵀx|/‖x‖ ≈ 1/√N₁, und fällt mit der Größe des Grobgitters: bei
+h 12 und h 14 (Versatz 0) lag er bei 9,8·10⁻⁴ und 8,5·10⁻⁴, der Nullraum blieb unerkannt, das
+Residuum fiel bis 1,6·10⁻⁸ und wuchs danach exponentiell, bis der CG mit pᵀAp < 0 abbrach (h 12)
+bzw. erst nach 113 Iterationen zufällig konvergierte (h 14). Eine Prüfung an einer Laplace-Kette
+mit 20 000 Unbekannten, deren erste Probe senkrecht zum Nullraum liegt, hält das fest; die gelagerte
+Kette (kleinster Eigenwert 6·10⁻⁹, also fast singulär) bleibt mit 3·10⁻³ klar unter der Schwelle. Gelagerte Modelle (Patch, Kragarm mit Schnittebenen – über die Vertragsschicht immer
 der Fall) haben keinen Nullraum; das Protokoll meldet die Bewegung mit Warnung. Zeiten Kirsch h 10
 p 3 bei belasteter Maschine: GPU-PCG 9 bis 11 s gegen 37 s Direktlöser; das Einrichten auf der CPU
 (Zelldaten, Blöcke, Grobgitter) kostet 30 bis 35 s und wird von allen Lastfällen eines Details

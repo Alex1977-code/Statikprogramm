@@ -115,6 +115,44 @@ def test_nullraum():
         check(f"{name}: Nullraum erkannt und bestaetigt wie erwartet", ok, text)
 
 
+def test_nullkandidaten():
+    """Die Nullraumerkennung haengt nicht an einer einzelnen Probe und nicht an der Groesse des Grobgitters.
+
+    Synthetisch: A = Laplace-Kette mit freien Enden (Nullraum: Konstante), N = 20 000, verschobene Zerlegung wie
+    im Mehrgitter (delta = 1e-10 max diag). Die erste Probe liegt senkrecht zur Konstanten - das Residuum dieser
+    Probe ist dann Rundung, die fruehere Schwelle (> 1e-3) sah keinen Nullraum (Kirsch h 12: 9,8e-4, PCG
+    divergierte). Erwartet: genau ein Kandidat, parallel zur Konstanten (|cos| > 1 - 1e-8); gelagerte Kette
+    (erstes Ende fest) ohne Kandidaten, fuer zehn Zufallsstaende."""
+    import scipy.sparse as sp
+    import scipy.sparse.linalg as spla
+    from volumen3d.fcm.mehrgitter import grob_nullkandidaten
+    N = 20_000
+    haupt = np.full(N, 2.0); haupt[[0, -1]] = 1.0
+    A_frei = sp.diags([-np.ones(N - 1), haupt, -np.ones(N - 1)], [-1, 0, 1], format="csc")
+    A_fest = A_frei.copy().tolil(); A_fest[0, 0] = 2.0; A_fest = A_fest.tocsc()
+    eins = np.ones(N) / np.sqrt(N)
+    ok_frei, ok_fest, texte, fest_max = True, True, [], 0.0
+    for seed in range(10):
+        rng = np.random.default_rng(seed)
+        for A, frei in ((A_frei, True), (A_fest, False)):
+            delta = 1e-10 * float(A.diagonal().max())
+            lu = spla.splu((A + delta * sp.eye(N, format="csc")).tocsc())
+            X = rng.standard_normal((N, 6))
+            X[:, 0] -= eins * (eins @ X[:, 0])                 # erste Probe ohne Nullanteil
+            alt_probe = np.linalg.norm(X[:, 0] - lu.solve(A @ X[:, 0])) / np.linalg.norm(X[:, 0])
+            K, s_w = grob_nullkandidaten(lambda R: lu.solve(A @ R), X)
+            if frei:
+                cos = abs(float(eins @ K[:, 0])) if K.shape[1] == 1 else 0.0
+                ok_frei &= K.shape[1] == 1 and cos > 1 - 1e-8 and alt_probe < 1e-3
+                texte.append(f"frei: {K.shape[1]} Kand., cos {cos:.10f}, alte Probe {alt_probe:.1e}")
+            else:
+                ok_fest &= K.shape[1] == 0
+                fest_max = max(fest_max, float(s_w.max()))
+    check("Nullraum der freien Kette erkannt, obwohl die erste Probe ihn nicht enthaelt (alte Schwelle versagt)", ok_frei, texte[0])
+    check("gelagerte Kette: kein Nullraumkandidat (zehn Zufallsstaende)", ok_fest,
+          f"groesster Singulaerwert {fest_max:.1e} (Schwelle 0,1)")
+
+
 def test_symmetrie():
     """Der V-Zyklus als CG-Vorkonditionierer muss symmetrisch und positiv definit sein (Gutachten 28.09.2026:
     bisher nur ueber die Iterationszahlen belegt)."""
@@ -240,4 +278,4 @@ def test_kern():
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_ebenen, test_nullraum, test_symmetrie, test_problem_mehrgitter, test_pcg_mehrgitter]))
+    sys.exit(lauf([test_ebenen, test_nullkandidaten, test_nullraum, test_symmetrie, test_problem_mehrgitter, test_pcg_mehrgitter]))

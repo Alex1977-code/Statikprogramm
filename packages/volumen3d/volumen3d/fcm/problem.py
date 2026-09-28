@@ -92,8 +92,10 @@ class FcmProblem:
             # in wohlgestellten Zellen tragen hohe Moden nur ~Anteil^(2p+1) ihrer Energie im
             # Werkstoff (0,28^7 = 1e-4 bei p = 3), sodass alpha = 1e-8 dort 1e-4 Fehler macht
             # (Patch-Test 27.09.2026). Ohne alpha ist die Rechnung fuer lineare Felder exakt.
+            # Werkstoffferne leere Zellen brauchen alpha nicht: ihre Moden sind null gesetzt oder von
+            # Werkstoffzellen getragen (Zellaggregation.roh_zwaenge).
             ag = self.aggregation
-            behalten = ag.schlecht & (ag.wurzel < 0)
+            behalten = ag.schlecht & (ag.wurzel < 0) & ~ag.werkstofffern
             self.quadratur.alpha_entfernen(np.flatnonzero((self.gitter.klasse == CUT) & ~behalten))
         # haengende Freiheitsgrade des Oktrees und Aggregation in einer Zwangsmatrix
         self.zwaenge = Zwaenge(self.gitter, self.aggregation)

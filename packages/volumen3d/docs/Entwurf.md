@@ -488,6 +488,10 @@ gleichmäßigen Gitters), Lamé aus STL wie aus CSG, Innen/Außen-Test an einem 
   Patch-Konfigurationen 0 Zyklen bei Kettenlänge 2, u und σ unverändert < 10⁻⁶; die Teilung
   war in keinem Fall nötig (die Wurzeln der Nachbarn reichten), ihr Mechanismus ist in
   `test_oktree` (`Verfeinerung.zellen`) geprüft.
+- **Nahe Wurzeln (28.09.2026):** Ketten wachsen schichtweise, die nächste Wurzel gewinnt; leere
+  Zellen ohne Berührung mit Werkstoff bekommen keine Wurzel, ihre Moden ohne Einfluss auf
+  Werkstoffpunkte werden null gesetzt. Vorher |C| bis 3,5·10⁹ (Kirsch h 8, Wurzel 38 Halbweiten
+  entfernt), jetzt höchstens 3,4·10⁴ bei Abstand ≤ 4 (`test_zwaenge.test_leere_zellen`).
 - Ergebnis wie bisher eine Zwangsmatrix C (n_dof × n_frei); Löser, Lasten und Auswertung bleiben
   unverändert.
 
@@ -732,7 +736,10 @@ Plan: `docs/plaene/2026-09-28-tp4-mehrgitter.md`. Messlatte aus Teilprojekt 3: J
 - Nullraum freier Starrkörperbewegungen: am Grobgitter erkannt, am feinen Operator bestätigt,
   symmetrisch herausprojiziert; Kirsch h 10 p 3 von 147–243 schwankenden auf 81 reproduzierbare
   Iterationen. Über die Vertragsschicht (Schnittebenen mit Mittelwertzwängen) tritt der Fall nicht
-  auf; das Protokoll warnt, wenn doch.
+  auf; das Protokoll warnt, wenn doch. Erkannt wird über die Singulärwerte nach zwei Schritten
+  inverser Iteration (`grob_nullkandidaten`, Schwelle 0,1), nicht mehr über das Residuum einer
+  Probe: das fiel mit der Grobgittergröße unter 10⁻³ (Kirsch h 12: 9,8·10⁻⁴), der Nullraum blieb
+  unerkannt und der PCG divergierte nach 1,6·10⁻⁸.
 - Fünf Schnittlagen Kirsch h 10 p 3 verfeinert (128 724 bis 199 095 freie Koordinaten), GPU FP64:
   81 / 125 / 112 / 129 / 59 Iterationen, GPU-PCG 8,6 bis 21 s, K_t identisch mit dem Direktlöser;
   Direktlöser (Lösen nach der Faktorisierung) 7 bis 25 s. Einrichten auf der CPU: Zelldaten 17–24 s,
