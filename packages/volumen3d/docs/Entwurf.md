@@ -725,3 +725,23 @@ Plan: `docs/plaene/2026-09-28-tp4-mehrgitter.md`. Messlatte aus Teilprojekt 3: J
   Zylinderauswahl, Volumenlast an mehreren Keys; cupy-Singularität von BBᵀ, exakte Konvergenz im
   CG, leere Inzidenzsegmente abgefangen. Volumenlast je Lastfall und Kombinationsfaktoren als
   Vertragsvorschlag `docs/vertrag-aenderungen/2026-09-28-volumenlast-je-lastfall.md`.
+
+### 4d.4 GPU und singuläre Modelle (28.09.2026)
+- `fcm/mehrgitter_gpu.py`: `PMehrgitterGpu(mg)` spiegelt das CPU-Mehrgitter; Glätter in FP64
+  (FP32 divergierte bei h 10: Blockkonditionen bis 10⁸). GPU-Zyklus = CPU auf 1,4·10⁻⁹.
+- Nullraum freier Starrkörperbewegungen: am Grobgitter erkannt, am feinen Operator bestätigt,
+  symmetrisch herausprojiziert; Kirsch h 10 p 3 von 147–243 schwankenden auf 81 reproduzierbare
+  Iterationen. Über die Vertragsschicht (Schnittebenen mit Mittelwertzwängen) tritt der Fall nicht
+  auf; das Protokoll warnt, wenn doch.
+- Fünf Schnittlagen Kirsch h 10 p 3 verfeinert (128 724 bis 199 095 freie Koordinaten), GPU FP64:
+  81 / 125 / 112 / 129 / 59 Iterationen, GPU-PCG 8,6 bis 21 s, K_t identisch mit dem Direktlöser;
+  Direktlöser (Lösen nach der Faktorisierung) 7 bis 25 s. Einrichten auf der CPU: Zelldaten 17–24 s,
+  Mehrgitter 33–48 s (davon Glätterblöcke 19–26 s). **Stand:** bei h 20 liegt die Iterationszahl
+  unter 60 und innerhalb ±20 % über die Lagen, bei h 10 noch nicht (bis 129, ±40 %); und das
+  Einrichten kostet mehr als die Faktorisierung des Direktlösers. `FcmProblem(loeser="mehrgitter",
+  backend="gpu")` ist gebaut und geprüft; die Vertragsschicht bleibt beim Direktlöser.
+- **Offen vor Pull Request 2:** (a) Iterationen bei feinen Gittern senken – Glättergrad, α, Blöcke
+  mit Nachbarschaft zweiter Ordnung oder h-Ebenen unter p = 1 (Vorgabe 8.3: geometrisches
+  h-Mehrgitter über die Oktree-Ebenen); (b) Einrichten beschleunigen (Blöcke aus den Zellmatrizen
+  direkt auf der GPU statt über die assemblierte Matrix, Zelldaten vektorisiert); (c) danach
+  `backend='gpu'` und `'auto'` in der Vertragsschicht freischalten.

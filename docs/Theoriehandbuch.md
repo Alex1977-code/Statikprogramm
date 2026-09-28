@@ -10908,3 +10908,32 @@ Mehrgitter ist für die Grafikkarte gebaut (Vorgabe 9, 448 GB/s auf der RTX 3070
 `FcmProblem(loeser="mehrgitter")` ist geprüft: Kragarmsegment p 3 mit Zug und mit reiner
 Verdrehung ohne Last, je 54 Iterationen, Verschiebungen und Multiplikatoren wie der Sattelpunkt
 auf 10⁻⁶.
+
+**V-Zyklus auf der GPU und singuläre Modelle (28.09.2026).** Das eingerichtete CPU-Mehrgitter
+wird auf die Grafikkarte gespiegelt: Operator je Ebene als CuPy-Kern (11.9), Schwarz-Blöcke je
+Größe gestapelt (gebündelte Matrixprodukte, Scatter-Add), Injektionen als cupyx-CSR, Chebyshev in
+cupy; das Grobgitter p = 1 bleibt auf der CPU (eine Übertragung hin und zurück je Zyklus). Der
+GPU-Zyklus stimmt in FP64 mit der CPU auf 1,4·10⁻⁹ überein (Summationsreihenfolge). Blöcke in FP32
+(Vorgabe 9 erlaubt es für Glätter) divergieren bei h 10: die Blockinversen haben Konditionen bis
+10⁸, und die Rundung auf 6·10⁻⁸ macht ihre kleinsten Eigenwerte negativ – der Glätter bleibt FP64.
+Beim Kirsch-Modell h 10 p 3 (130 611 freie Koordinaten) sprang das Residuum nach 10⁻⁸ wieder auf
+10⁻⁶, und die Iterationszahl schwankte zwischen 147 und 243 je nach Einstellung und Summations-
+reihenfolge. Ursache ist die freie z-Verschiebung dieses Modells (nur Normalen-Nitsche auf den
+Symmetrieebenen): der Vorkonditionierer blähte den Nullraumanteil auf, der über Rundung ins
+Residuum zurückwirkte; weder eine schärfere λ_max-Schätzung (60 Potenzschritte: 151, Sicherheit
+1,5: 243) noch eine andere Grobgitterverschiebung (10⁻¹³: 159, 10⁻⁷: 174) halfen. Der Nullraum wird
+darum am Grobgitter per zweifacher inverser Iteration aus sechs Zufallsproben bestimmt, auf die
+feinste Ebene injiziert, dort am Operator bestätigt (‖A n‖ < 10⁻⁶ des Bezugs; ein nur fast
+singulärer echter Modus darf nicht wegfallen) und vor und nach dem V-Zyklus symmetrisch
+herausprojiziert (z = Π M Π r). Damit: 81 Iterationen, reproduzierbar, das Residuum fällt
+gleichmäßig. Gelagerte Modelle (Patch, Kragarm mit Schnittebenen – über die Vertragsschicht immer
+der Fall) haben keinen Nullraum; das Protokoll meldet die Bewegung mit Warnung. Zeiten Kirsch h 10
+p 3 bei belasteter Maschine: GPU-PCG 9 bis 11 s gegen 37 s Direktlöser; das Einrichten auf der CPU
+(Zelldaten, Blöcke, Grobgitter) kostet 30 bis 35 s und wird von allen Lastfällen eines Details
+geteilt. Kirsch h 20 p 3 (33 060 frei): GPU 3,8 s gegen CPU-Mehrgitter 12,1 s und Direktlöser 6,0 s.
+Über fünf Schnittlagen bei h 10 (128 724 bis 199 095 freie Koordinaten) braucht der GPU-PCG 81 / 125
+/ 112 / 129 / 59 Iterationen und 8,6 bis 21 s, bei identischem K_t; das Lösen des Direktlösers nach
+der Faktorisierung dauert 7 bis 25 s. Die Iterationszahl ist damit bei h 10 weder unter 100 noch
+lageunabhängig (bei h 20: 39 bis 58), und das Einrichten auf der CPU (50 bis 70 s) übersteigt die
+Faktorisierung. Bis das behoben ist (Glätter, h-Ebenen unter p = 1 nach Vorgabe 8.3, Einrichten auf
+der GPU), bleibt der Direktlöser der Standard der Vertragsschicht.

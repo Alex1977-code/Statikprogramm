@@ -89,6 +89,9 @@ Freiheitsgraden gegen 18,8 ms CPU). Vertrag 2.1.0 (Merge bdac39d, 28.09.) ist an
 oder Zylinder) und `body_load`, mit Protokoll je Last (Fläche, Schwerpunkt, Kraft, Moment).
 Teilprojekt 4 (p-Mehrgitter, `fcm/mehrgitter.py`, 28.09.) senkt die Iterationszahlen mit
 Zellblock-Schwarz-Glätter auf 26 bis 53 in allen Abnahmefällen (Jacobi: 2 580 bis über 40 000),
-`FcmProblem(loeser="mehrgitter")`; offen dort Einrichtzeit der Blöcke und GPU. Pull Request 2
-kommt nach Abschluss von Teilprojekt 4 (Stufe 2). Offen aus Teilprojekt 2: der schnelle Windungszahl-Baum für STL-Netze
+`FcmProblem(loeser="mehrgitter")`; mit `backend="gpu"` läuft der V-Zyklus auf der Grafikkarte
+(Kirsch h 10 p 3: 8,6 bis 21 s gegen 7 bis 25 s Lösen des Direktlösers), freie Starrkörper-
+bewegungen werden erkannt und herausprojiziert. Offen vor Pull Request 2 (Stufe 2): Iterationen bei
+feinen Gittern (h 10: bis 129) und das Einrichten auf der CPU (50 bis 70 s); bis dahin bleibt der
+Direktlöser der Standard der Vertragsschicht. Offen aus Teilprojekt 2: der schnelle Windungszahl-Baum für STL-Netze
 über 10⁵ Facetten (Teilprojekt 5) und die Vierteilung der Randpolygone an gekrümmten Formen.

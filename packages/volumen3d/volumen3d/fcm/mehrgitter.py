@@ -230,7 +230,7 @@ class PMehrgitter:
     Glaetter: 'schwarz' (Zellbloecke, Standard) oder 'jacobi', jeweils mit Chebyshev-Beschleunigung."""
 
     def __init__(self, problem, glaetter_grad: int = 3, alpha: float = 8.0, potenz_schritte: int = 15,
-                 glaetter: str = "schwarz") -> None:
+                 glaetter: str = "schwarz", lambda_sicherheit: float = 1.1, grob_verschiebung: float = 1e-10) -> None:
         t0 = time.perf_counter()
         zeiten: dict[str, float] = {}
         pr = problem
@@ -297,23 +297,49 @@ class PMehrgitter:
         # 500 Iterationen ohne Konvergenz, 28.09.2026). Mit delta bleibt der Nullraumanteil r_0/delta,
         # und r_0 ist fuer konsistente Systeme Rundung; fuer die uebrigen Moden (lambda >> delta) aendert
         # sich die Korrektur nicht messbar.
-        self.grob_delta = 1e-10 * float(np.abs(A1.diagonal()).max())
+        self.grob_delta = float(grob_verschiebung) * float(np.abs(A1.diagonal()).max())
         A1s = (A1 + self.grob_delta * sp.eye(A1.shape[0], format="csr")).tocsr()
         self.n_zwaenge = 0 if grob.B is None else int(grob.B.shape[0])
         if self.n_zwaenge:
             B1 = sp.csr_matrix(grob.B)
             A1s = sp.bmat([[A1s, B1.T], [B1, sp.csr_matrix((self.n_zwaenge, self.n_zwaenge))]], format="csr")
         grob.direkt = Direktloeser(A1s)
-        # Singularitaet erkennen: fuer eine Zufallsprobe x liefert die Loesung von A1s y = A1 x den
-        # Nullraumanteil von x nicht zurueck (A1 x_0 = 0), also ist |y - x| / |x| dann gross
-        x_probe = np.random.default_rng(1).standard_normal(A1.shape[0])
-        rhs = A1 @ x_probe
-        if self.n_zwaenge:
-            rhs = np.concatenate([rhs, grob.B @ x_probe])
-        y = grob.direkt.loesen(rhs)[:A1.shape[0]]
-        self.grob_residuum = float(np.linalg.norm(y - x_probe) / np.linalg.norm(x_probe))
+        # Singularitaet erkennen: fuer Zufallsproben X liefert die Loesung von A1s Y = A1 X den
+        # Nullraumanteil nicht zurueck (A1 X_0 = 0); X - Y ist ein Schritt inverser Iteration auf den
+        # Nullraum, ein zweiter Schritt drueckt die uebrigen Moden auf (delta/lambda)^2.
+        N1 = A1.shape[0]
+        X = np.random.default_rng(1).standard_normal((N1, 6))
+
+        def grob_loesen(R):
+            rhs = A1 @ R
+            if self.n_zwaenge:
+                rhs = np.concatenate([rhs, grob.B @ R], axis=0)
+            return grob.direkt.loesen(rhs)[:N1]
+
+        R1 = X - grob_loesen(X)
+        self.grob_residuum = float(np.linalg.norm(R1[:, 0]) / np.linalg.norm(X[:, 0]))
+        R2 = R1 - grob_loesen(R1)
         A1 = A1s
         zeiten["grobgitter"] = time.perf_counter() - t
+        # Nullraum auf die feinste Ebene injizieren und dort am Operator bestaetigen. Ohne ihn blaehte der
+        # Vorkonditionierer den Nullraumanteil auf (r_0/delta), der ueber Rundung ins Residuum
+        # zurueckwirkte: Kirsch h 10 p 3 (u_z frei) erreichte 1e-8 und sprang wieder auf 1e-6, 147 bis 243
+        # Iterationen je nach Einstellung und Summationsreihenfolge (28.09.2026). Nur bestaetigte echte
+        # Nullvektoren werden herausprojiziert - ein fast singulaerer, aber echter Modus darf nicht fehlen.
+        self.nullraum: np.ndarray | None = None
+        if not self.n_zwaenge and self.grob_residuum > 1e-3:
+            U_s, s_w, _ = np.linalg.svd(R2, full_matrices=False)
+            kandidaten = U_s[:, s_w > 1e-2 * s_w.max()] if s_w.max() > 1e-3 else U_s[:, :0]
+            for eb in reversed(self.ebenen[1:]):
+                kandidaten = eb.P @ kandidaten
+            fein = self.ebenen[0]
+            if kandidaten.shape[1]:
+                Q, _ = np.linalg.qr(kandidaten)
+                x_ref = np.random.default_rng(2).standard_normal(fein.n_frei)
+                bezug = np.linalg.norm(fein.A(x_ref)) / np.linalg.norm(x_ref)
+                echt = [j for j in range(Q.shape[1]) if np.linalg.norm(fein.A(Q[:, j])) < 1e-6 * bezug]
+                if echt:
+                    self.nullraum = Q[:, echt]
         # Glaetter je Ebene: Schwarz-Zellbloecke aus der (nur hierfuer) assemblierten Matrix, sonst Jacobi
         t = time.perf_counter()
         self.glaetter = glaetter
@@ -337,17 +363,22 @@ class PMehrgitter:
                 w = eb.vork(eb.A(v))
                 lam = float(np.linalg.norm(w))
                 v = w / lam
-            eb.lambda_max = 1.1 * lam
+            eb.lambda_max = float(lambda_sicherheit) * lam
         zeiten["lambda_max"] = time.perf_counter() - t
         warnungen = []
-        if self.grob_residuum > 1e-3:
-            warnungen.append(f"Grobgitter singulaer oder nahezu singulaer (Probe weicht um {self.grob_residuum:.1e} ab): "
-                             f"freie Starrkoerperbewegung ohne Schnittebene? Das Mehrgitter rechnet mit Verschiebung "
-                             f"{self.grob_delta:.1e} weiter, die Loesung ist nur bis auf diese Bewegung bestimmt")
+        k_null = 0 if self.nullraum is None else int(self.nullraum.shape[1])
+        if k_null:
+            warnungen.append(f"Operator singulaer: {k_null} freie Starrkoerperbewegung(en) ohne Lagerung (am feinen Operator "
+                             f"bestaetigt); der Vorkonditionierer projiziert sie heraus, die Verschiebungen sind nur bis auf "
+                             f"diese Bewegung bestimmt, die Spannungen nicht betroffen")
+        elif self.grob_residuum > 1e-3:
+            warnungen.append(f"Grobgitter nahezu singulaer (Probe weicht um {self.grob_residuum:.1e} ab), am feinen Operator "
+                             f"nicht bestaetigt; Verschiebung {self.grob_delta:.1e}")
         self.statistik = {"ebenen": [int(e.p) for e in self.ebenen], "frei_je_ebene": [int(e.n_frei) for e in self.ebenen],
                           "lambda_max": [round(e.lambda_max, 4) for e in self.ebenen[:-1]], "glaetter": glaetter,
                           "glaetter_grad": self.glaetter_grad, "alpha": self.alpha, "grobgitter": grob.direkt.name,
                           "grobgitter_nnz": int(A1.nnz), "grobgitter_probe": self.grob_residuum, "grobgitter_delta": self.grob_delta,
+                          "nullraum_dim": k_null,
                           "speicher_glaetter_mb": round(speicher, 1), "warnungen": warnungen,
                           "zeiten_s": {k: round(v, 2) for k, v in zeiten.items()},
                           "t_einrichten_s": round(time.perf_counter() - t0, 3)}
@@ -392,7 +423,14 @@ class PMehrgitter:
         return self._chebyshev(eb, b, x)
 
     def anwenden(self, r: np.ndarray) -> np.ndarray:
-        return self._zyklus(0, np.asarray(r, float))
+        r = np.asarray(r, float)
+        N = self.nullraum
+        if N is None:
+            return self._zyklus(0, r)
+        # symmetrisch projiziert: z = Pi M Pi r mit Pi = I - N N^T (N orthonormal)
+        r = r - N @ (N.T @ r)
+        z = self._zyklus(0, r)
+        return z - N @ (N.T @ z)
 
 
 __all__ = ["PMehrgitter", "Ebene", "ZellSchwarz"]

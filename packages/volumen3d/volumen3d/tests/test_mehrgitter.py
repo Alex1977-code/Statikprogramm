@@ -72,6 +72,28 @@ def test_ebenen():
               ok_inj and fehler < 1e-12 and gleich_frei and f_c < 1e-10, f"A {fehler:.1e}, C {f_c:.1e}, freie Moden gleich {gleich_frei}")
 
 
+def test_nullraum():
+    """Freie Starrkoerperbewegung (Kirsch: nur Normalen-Nitsche auf sym_x, sym_y -> u_z frei) wird am
+    Grobgitter erkannt, am feinen Operator bestaetigt und herausprojiziert; gelagerte Modelle haben keinen
+    Nullraum. Ohne Projektion sprang das Residuum bei h 10 von 1e-8 zurueck auf 1e-6 (147 bis 243 Iterationen)."""
+    from volumen3d.fcm.mehrgitter import PMehrgitter
+    for name, bau, erwartet in ((_faelle()[3][0], _faelle()[3][1], 1), (_faelle()[0][0], _faelle()[0][1], 0), (_faelle()[1][0], _faelle()[1][1], 0)):
+        pr = bau()
+        pr.aufbauen()
+        mg = PMehrgitter(pr)
+        k = mg.statistik["nullraum_dim"]
+        ok = k == erwartet
+        text = f"Nullraum {k} (erwartet {erwartet}), Warnungen {mg.statistik['warnungen']}"
+        if erwartet and mg.nullraum is not None:
+            # der Nullvektor ist die starre z-Verschiebung: nur u_z-Anteile, alle gleich (freie Koordinaten der Ecken)
+            n = pr.zwaenge.C @ mg.nullraum[:, 0]
+            u = n.reshape(-1, 3)
+            anteil_z = np.linalg.norm(u[:, 2]) / np.linalg.norm(u)
+            ok &= anteil_z > 0.999
+            text += f", z-Anteil des Nullvektors {anteil_z:.4f}"
+        check(f"{name}: Nullraum erkannt und bestaetigt wie erwartet", ok, text)
+
+
 def test_symmetrie():
     """Der V-Zyklus als CG-Vorkonditionierer muss symmetrisch und positiv definit sein (Gutachten 28.09.2026:
     bisher nur ueber die Iterationszahlen belegt)."""
@@ -194,4 +216,4 @@ def test_kern():
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_ebenen, test_symmetrie, test_problem_mehrgitter, test_pcg_mehrgitter]))
+    sys.exit(lauf([test_ebenen, test_nullraum, test_symmetrie, test_problem_mehrgitter, test_pcg_mehrgitter]))

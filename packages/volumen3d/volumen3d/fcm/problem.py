@@ -49,7 +49,11 @@ class FcmProblem:
     def __init__(self, geometrie, h: float, p: int, werkstoff: Werkstoff, alpha: float = 1e-8, tiefe: int = 2,
                  polster: float = 0.1, beta_faktor: float = 10.0, facette_mm: float | None = None,
                  ordnung_flaeche: int | None = None, aggregation: float | None = 0.25,
-                 verfeinerung: Verfeinerung | None = None, loeser: str = "direkt", toleranz: float = 1e-8) -> None:
+                 verfeinerung: Verfeinerung | None = None, loeser: str = "direkt", toleranz: float = 1e-8,
+                 backend: str = "cpu") -> None:
+        if backend not in ("cpu", "gpu"):
+            raise ValueError(f"backend {backend!r}: 'cpu' oder 'gpu'")
+        self.backend = backend
         if not 1 <= p <= 4:
             raise ValueError("p muss zwischen 1 und 4 liegen")
         if loeser not in ("direkt", "pcg", "mehrgitter"):
@@ -180,6 +184,19 @@ class FcmProblem:
                 from .mehrgitter import PMehrgitter
                 self._mehrgitter = PMehrgitter(self)
                 name_loeser = "pcg-mehrgitter"
+            self._gpu = None
+            if self.backend == "gpu":
+                # Operator und V-Zyklus auf der GPU (Theorie 11.10); Einrichten bleibt auf der CPU
+                from .operator_gpu import OperatorGpu, verfuegbar
+                if not verfuegbar():
+                    raise ValueError("backend 'gpu': keine GPU/CuPy verfuegbar")
+                op_gpu = OperatorGpu(self._zelldaten, C=C, K_rand=K_rand)
+                mg_gpu = None
+                if self._mehrgitter is not None:
+                    from .mehrgitter_gpu import PMehrgitterGpu
+                    mg_gpu = PMehrgitterGpu(self._mehrgitter)
+                self._gpu = (op_gpu, mg_gpu)
+                name_loeser += " (gpu)"
             else:
                 name_loeser = "pcg-jacobi" + ("" if self._operator.numba else " (numpy)")
         else:
@@ -253,16 +270,30 @@ class FcmProblem:
             lam = np.empty((self.n_zwaenge, len(liste)))
             iterationen, residuen = [], []
             vork = self._mehrgitter.anwenden if self._mehrgitter is not None else 1.0 / self._diagonale
+            A_frei = self._operator.frei_anwenden
+            nach_cpu = np.asarray
+            B_x = B
+            if self._gpu is not None:
+                import cupy
+                op_gpu, mg_gpu = self._gpu
+                A_frei = op_gpu.frei_anwenden
+                vork = mg_gpu.anwenden if mg_gpu is not None else cupy.asarray(1.0 / self._diagonale)
+                nach_cpu = cupy.asnumpy
+                B_x = cupy.asarray(B) if B is not None else None
             for k in range(len(liste)):
                 # Jacobi allein braucht Tausende Iterationen (Kondition 1e6 bis 5e7, Theorie 11.9), das
                 # Mehrgitter unter 100 (11.10); die Grenze soll Stagnation melden, nicht Jacobi abschneiden
                 grenze = 1000 if self._mehrgitter is not None else 200_000
-                erg = pcg(self._operator.frei_anwenden, F_red[:, k], vork, tol=self.toleranz, max_iter=grenze,
-                          B=B, d=F[n:, k] if self.n_zwaenge else None)
+                b_k = F_red[:, k]
+                d_k = F[n:, k] if self.n_zwaenge else None
+                if self._gpu is not None:
+                    b_k = cupy.asarray(b_k)
+                    d_k = cupy.asarray(d_k) if d_k is not None else None
+                erg = pcg(A_frei, b_k, vork, tol=self.toleranz, max_iter=grenze, B=B_x, d=d_k)
                 if not erg.konvergiert:
                     raise ValueError(f"PCG nicht konvergiert: Residuum {erg.residuum_rel:.1e} nach {erg.iterationen} Iterationen")
-                X[:, k] = erg.x
-                lam[:, k] = erg.multiplikatoren
+                X[:, k] = nach_cpu(erg.x)
+                lam[:, k] = nach_cpu(erg.multiplikatoren)
                 iterationen.append(erg.iterationen)
                 residuen.append(erg.residuum_rel)
             self.multiplikatoren = lam
