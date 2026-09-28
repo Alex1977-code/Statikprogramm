@@ -91,14 +91,13 @@ Teilprojekt 4 (p-Mehrgitter, `fcm/mehrgitter.py`, 28.09.) senkt die Iterationsza
 Zellblock-Schwarz-Glätter auf 26 bis 53 in allen Abnahmefällen (Jacobi: 2 580 bis über 40 000),
 `FcmProblem(loeser="mehrgitter")`; mit `backend="gpu"` läuft der V-Zyklus auf der Grafikkarte
 (Kirsch h 10 p 3: 8,6 bis 21 s gegen 7 bis 25 s Lösen des Direktlösers), freie Starrkörper-
-bewegungen werden erkannt und herausprojiziert. Seit dem 28.09.2026 abends wählt die Vertragsschicht mit
-`FcmSettings.backend = "auto"` (Standard) den schnelleren Weg: das Mehrgitter auf der GPU ab 200 000
-Freiheitsgraden bei genug GPU-Speicher, sonst den Direktlöser; `"gpu"` erzwingt das Mehrgitter (Rückfall
-ohne GPU mit Warnung), `"cpu"` den Direktlöser. Die Schwelle ist auf freier Maschine an 23 Fällen
-gemessen (kompakter Block und dünne Kirsch-Scheibe, Theorie 11.10): beim Block ist das Mehrgitter ab
-186 000 Freiheitsgraden schneller (281 000: 41,7 gegen 57,5 s), bei der Scheibe liegen beide ab 230 000
-gleichauf. Vorher behoben: Nullraumerkennung größenunabhängig, Aggregationswurzeln höchstens zwei Zellen
-entfernt (Koeffizienten der Zwangsmatrix bis 3,4·10⁴ statt 3,5·10⁹), GPU-Speicher in Teilstapeln und
-richtig geschätzt. `summary()` und Protokoll nennen den Weg
+bewegungen werden erkannt und herausprojiziert. `FcmSettings.backend = "auto"` (Standard) wählt den im
+Gesamtweg schnelleren Weg; auf der gemessenen Karte (RTX 3070, 8 GB) ist das bis zur Speichergrenze des
+Mehrgitters der Direktlöser: in der Schlussmessung vom 29.09.2026 (23 Fälle, kompakter Block und dünne
+Kirsch-Scheibe, 65 000 bis 497 000 Freiheitsgrade) war er in 20 Fällen schneller (Theorie 11.10). `"gpu"`
+erzwingt das Mehrgitter auf der Grafikkarte, mit Rückfall auf den Direktlöser bei fehlender GPU, zu wenig
+Speicher oder jedem GPU-Fehler; `"cpu"` rechnet direkt. Vorher behoben: Nullraumerkennung größenunabhängig
+und auch mit Schnittebenen, Aggregationswurzeln höchstens zwei Zellen entfernt und Aggregationsschwelle
+0,4, GPU-Speicher in Teilstapeln und richtig geschätzt. `summary()` und Protokoll nennen den Weg
 (`solver_path`, `backend`, `solver_choice`); für das Hauptprogramm ändert sich an der Schnittstelle nichts. Offen aus Teilprojekt 2: der schnelle Windungszahl-Baum für STL-Netze
 über 10⁵ Facetten (Teilprojekt 5) und die Vierteilung der Randpolygone an gekrümmten Formen.

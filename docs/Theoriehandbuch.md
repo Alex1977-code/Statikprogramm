@@ -11026,12 +11026,11 @@ der Scheibe erst ab 230 000 Freiheitsgraden 1,6- bis 2,8-mal (bis 174 000 etwa g
 Abstand im Gesamtweg macht das Einrichten des iterativen Wegs (Zellmatrizen, Matrix, Blöcke), das 2 bis
 12 s länger dauert als Assemblieren und Faktorisieren beim Direktlöser. Beim Block wächst der Vorsprung des
 Mehrgitters mit der Größe (281 000 Freiheitsgrade: 16 s), bei der Scheibe liegen beide ab 230 000
-gleichauf. Ein Ausreißer ist Kirsch h 8, Versatz 0,3 mit 114 Iterationen (offen). Die Vertragsschicht
-wählt mit `FcmSettings.backend = "auto"` (Standard des Vertrags) das Mehrgitter auf der GPU ab 200 000
-Freiheitsgraden, wenn eine GPU mit genug Speicher da ist, sonst den Direktlöser. Über alle 23 Fälle
-verschenkt diese Schwelle zusammen 19 s gegen die jeweils bessere Wahl; 250 000 wären 18 s, 150 000
-22 s, 300 000 33 s. Nach oben begrenzt der Speicher der Karte das Mehrgitter (8 GB: etwa 500 000
-Freiheitsgrade bei p 3); darüber rechnet `"auto"` wieder direkt.
+gleichauf. Ein Ausreißer ist Kirsch h 8, Versatz 0,3 mit 114 Iterationen (unten behoben). Auf diesem
+Stand wählte die Vertragsschicht mit `FcmSettings.backend = "auto"` das Mehrgitter auf der GPU ab 200 000
+Freiheitsgraden; über alle 23 Fälle verschenkte diese Schwelle 19 s gegen die jeweils bessere Wahl. Die
+Schlussmessung nach den Korrekturen unten hat die Wahl umgedreht. Nach oben begrenzt der Speicher der Karte
+das Mehrgitter (8 GB: etwa 500 000 Freiheitsgrade bei p 3).
 `"gpu"` erzwingt das Mehrgitter und fällt ohne GPU oder bei zu wenig Speicher mit Warnung auf den
 Direktlöser zurück (Vorgabe 9), `"cpu"` rechnet immer direkt; das Mehrgitter auf der CPU ist in allen
 Messungen langsamer als der Direktlöser und wird nicht gewählt. Die Vertragstoleranz (relatives
@@ -11081,4 +11080,31 @@ Die Genauigkeit bleibt (K_tg gleich oder bis 0,17 % näher an der Referenz), die
 unter 10⁻⁶; die freien Koordinaten nehmen ab (h 10, Versatz 0,2: 122 430 statt 184 809). Die Forderung
 des Plans, dass die Iterationen über fünf Schnittlagen um höchstens 20 % streuen, erfüllt auch 0,4 nicht
 ganz (31 gegen im Mittel 24, +28 %); vorher waren es +34 %.
+
+**Schlussmessung auf dem endgültigen Stand (Commit c4694d6, 29.09.2026).** Mit der Schwelle 0,4 und der
+Toleranz 10⁻¹² dieselben 23 Fälle, freie Maschine, je Fall ein Prozess:
+
+| Modell | Freiheitsgrade | Direktlöser | Mehrgitter GPU | Iterationen |
+|---|---|---|---|---|
+| Block h 25, Versatz 0 / 0,3 | 65 040 / 65 616 | 14,5 / 15,2 s | 17,8 / 17,6 s | 45 / 28 |
+| Block h 20 | 116 187 / 115 728 | 20,6 / 22,3 s | 23,0 / 22,8 s | 32 / 28 |
+| Block h 16 | 185 856 / 232 296 | 38,8 / 38,5 s | **33,4** / 40,2 s | 27 / 33 |
+| Block h 14 | 281 292 / 340 476 | 49,4 / 61,0 s | **44,4** / 61,8 s | 33 / 32 |
+| Kirsch h 14, Versatz 0 / 0,3 / 0,6 | 81 183 – 135 327 | 7,4 / 8,1 / 8,3 s | 11,8 / 11,4 / 12,1 s | 33 / 29 / 32 |
+| Kirsch h 12 | 165 501 – 173 862 | 10,4 / 11,0 / 11,3 s | 15,9 / 16,2 / 13,4 s | 31 / 33 / 28 |
+| Kirsch h 10 | 229 608 – 330 705 | 15,6 / 18,9 / 17,4 s | 17,7 / 19,5 / 23,1 s | 29 / 38 / 30 |
+| Kirsch h 9 | 283 896 – 390 018 | 19,4 / 24,3 / 20,8 s | 21,8 / **23,4** / 23,9 s | 31 / 41 / 35 |
+| Kirsch h 8 | 360 204 – 497 244 | 26,0 / 32,2 / 27,6 s | 27,5 / 33,4 / 31,7 s | 43 / 55 / 29 |
+
+Die Schwelle 0,4 nimmt vor allem dem Direktlöser Arbeit ab: sie senkt die Zahl der freien Koordinaten
+(Kirsch h 10, Versatz 0,6: 125 562 statt 187 239, Direktlöser 17,4 statt 20,8 s), während der Aufbau des
+iterativen Wegs an den Zellen hängt. Der Direktlöser ist jetzt in 20 von 23 Fällen schneller, meist um 1
+bis 6 s; das Mehrgitter gewinnt nur beim Block mit 186 000 und 281 000 Freiheitsgraden (je etwa 5 s) und
+einmal bei der Scheibe (0,9 s). Zusammen braucht der Direktlöser 519 s, das Mehrgitter 564 s, die jeweils
+bessere Wahl 508 s; die Schwelle 200 000 verschenkt 28,6 s, 400 000 16,6 s, „immer direkt“ 11,3 s (aus
+dem Protokoll per Skript nachgerechnet). `"auto"` wählt darum den Direktlöser; `"gpu"` erzwingt das
+Mehrgitter weiterhin, und der Mechanismus der Schwelle bleibt abgeschaltet stehen (`_AUTO_MEHRGITTER`).
+Lohnen wird sich die GPU auf dieser Karte erst mit einem schnelleren Aufbau des iterativen Wegs: er
+dauert 2 bis 20 s länger als Assemblieren und Faktorisieren; das Lösen selbst ist auf der GPU beim Block
+ab 186 000 Freiheitsgraden 3- bis 6-mal schneller, darunter 0,5- bis 2,6-mal.
 

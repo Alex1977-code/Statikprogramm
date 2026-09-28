@@ -755,6 +755,10 @@ Plan: `docs/plaene/2026-09-28-tp4-mehrgitter.md`. Messlatte aus Teilprojekt 3: J
   `test_pcg_nan`, Rückfall und Verschiebungen in `test_loeserwahl`.
 - **Aggregationsschwelle 0,4 statt 0,25:** Kirsch h 8, Versatz 0,3 von 109 auf 40 Iterationen (Kondition
   559 → 42), h 10 fünf Lagen 22–31 statt 22–36, K_tg gleich (Theorie 11.10, Plan TP 4 Aufgabe 3).
+- **Schlussmessung auf dem endgültigen Stand (c4694d6):** mit Schwelle 0,4 und Toleranz 10⁻¹² ist der
+  Direktlöser in 20 von 23 Fällen schneller (Summe 519 gegen 564 s); `"auto"` wählt darum den Direktlöser,
+  `"gpu"` erzwingt das Mehrgitter, der Schwellenmechanismus ist abgeschaltet (`_AUTO_MEHRGITTER`). Nächster
+  Hebel: Aufbau des iterativen Wegs (2–20 s länger als Assemblieren und Faktorisieren).
 - Fünf Schnittlagen Kirsch h 10 p 3 verfeinert (128 724 bis 199 095 freie Koordinaten), GPU FP64:
   81 / 125 / 112 / 129 / 59 Iterationen, GPU-PCG 8,6 bis 21 s, K_t identisch mit dem Direktlöser;
   Direktlöser (Lösen nach der Faktorisierung) 7 bis 25 s. Einrichten auf der CPU: Zelldaten 17–24 s,

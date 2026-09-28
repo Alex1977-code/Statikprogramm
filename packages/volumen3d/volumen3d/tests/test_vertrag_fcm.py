@@ -293,7 +293,8 @@ def test_zylinderauswahl():
 
 
 def test_loeserwahl():
-    """backend 'auto' waehlt den im Gesamtweg schnelleren Weg (Theorie 11.10): Mehrgitter auf der GPU ab
+    """backend 'auto' waehlt den im Gesamtweg schnelleren Weg (Theorie 11.10): derzeit immer den Direktloeser
+    (Schlussmessung: in 20 von 23 Faellen schneller); eingeschaltet (_AUTO_MEHRGITTER) Mehrgitter auf der GPU ab
     _AUTO_MIN_DOFS Freiheitsgraden bei genug GPU-Speicher, sonst direkt; 'gpu' faellt ohne GPU oder bei zu
     wenig Speicher auf die CPU zurueck (Vorgabe 9), 'cpu' ist immer direkt."""
     import dataclasses
@@ -301,9 +302,13 @@ def test_loeserwahl():
     from statik3d_contracts.testing import StubGlobalFieldProvider
     from volumen3d import api
     alt = api._gpu_frei_mb
+    alt_auto = api._AUTO_MEHRGITTER
     try:
         api._gpu_frei_mb = lambda: 8000.0
         n_gross = api._AUTO_MIN_DOFS + 1
+        api._AUTO_MEHRGITTER = False
+        standard = api._loeserwahl("auto", 2000, 1500, 3, n_gross)
+        api._AUTO_MEHRGITTER = True
         faelle = [("cpu", 10 ** 6, "direkt"), ("auto", 50_000, "direkt"), ("auto", n_gross, "mehrgitter"), ("gpu", 50_000, "mehrgitter")]
         ok = all(api._loeserwahl(b, 2000, 1500, 3, n)[0] == erw for b, n, erw in faelle)
         api._gpu_frei_mb = lambda: 0.0
@@ -317,6 +322,9 @@ def test_loeserwahl():
               f"{w0} / {grund_a} / {w1}")
     finally:
         api._gpu_frei_mb = alt
+        api._AUTO_MEHRGITTER = alt_auto
+    check("Standard: 'auto' waehlt auch bei grossen Modellen und freier GPU den Direktloeser (Schlussmessung 11.10)",
+          standard[0] == "direkt" and standard[1] == "cpu" and "Direktloeser" in standard[2], str(standard))
     # durchgehend: backend 'gpu' gegen 'cpu' am Kragarm-Ausschnitt (klein - 'auto' waehlt direkt)
     s = api.FcmSolver()
     mat = Material("S355", "S355", 210000.0, 0.3, 7.85e-9)
@@ -353,11 +361,13 @@ def test_loeserwahl():
     alt = api._gpu_frei_mb
     try:
         api._gpu_frei_mb = lambda: 1e9
+        api._AUTO_MEHRGITTER = True
         wahl_p = {p: api._loeserwahl("auto", 2000, 1500, p, api._AUTO_MIN_DOFS + 1)[0] for p in (1, 2, 3, 4)}
     finally:
         api._gpu_frei_mb = alt
+        api._AUTO_MEHRGITTER = alt_auto
     bedarf = [api._gpu_speicher_mb(2000, 1500, p, 300_000) for p in (1, 2, 3, 4)]
-    check("'auto': Mehrgitter nur bei p 3 (gemessen), sonst direkt; Speicherschaetzung waechst mit p",
+    check("'auto' (eingeschaltet): Mehrgitter nur bei p 3 (gemessen), sonst direkt; Speicherschaetzung waechst mit p",
           wahl_p == {1: "direkt", 2: "direkt", 3: "mehrgitter", 4: "direkt"} and all(a < b for a, b in zip(bedarf, bedarf[1:])),
           f"{wahl_p}, Schaetzung {[round(b) for b in bedarf]} MB")
     # Rueckfall beim Aufbau: jeder Fehler des GPU-Wegs (hier erzwungen) fuehrt auf den Direktloeser

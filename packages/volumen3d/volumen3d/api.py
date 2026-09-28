@@ -172,14 +172,17 @@ def _einstellungen_pruefen(s: FcmSettings) -> None:
         raise SolverError("alpha muss in [0, 1) liegen")
 
 
-# Ab dieser Zahl von Freiheitsgraden waehlt 'auto' das p-Mehrgitter auf der GPU. Gemessen im Gesamtweg
-# (Aufbau + Loesen), freie Maschine, RTX 3070, je Fall ein Prozess (28.09.2026, Commit d669b9f), direkt /
-# GPU-Mehrgitter: kompakter Block mit Bohrung 65 000 FHG 16,6 / 19,0 s, 116 000 FHG 20,6 / 22,7 und
-# 22,4 / 21,1 s, 186 000 FHG 39,0 / 33,7 s, 281 000 FHG 57,5 / 41,7 s, 340 000 FHG 61,1 / 52,5 s; duenne
-# Kirsch-Scheibe (fuer den Direktloeser guenstig) bis 174 000 FHG direkt 1,2 bis 3,6 s schneller, von 230 000
-# bis 500 000 FHG je nach Schnittlage 4,7 s schneller bis 7,7 s langsamer (Mittel gleichauf). Ueber alle
-# 23 Faelle verschenkt die Schwelle 200 000 zusammen 19 s gegen die jeweils bessere Wahl, 250 000 18 s,
-# 150 000 22 s, 300 000 33 s. Nach oben begrenzt der GPU-Speicher (8 GB: etwa 500 000 FHG bei p 3).
+# 'auto' waehlt den im Gesamtweg (Aufbau + Loesen) schnelleren Weg; auf der gemessenen Karte (RTX 3070, 8 GB)
+# ist das bis zur Speichergrenze des Mehrgitters (etwa 500 000 FHG bei p 3) der Direktloeser. Schlussmessung
+# auf freier Maschine, je Fall ein Prozess, Commit c4694d6 (Aggregationsschwelle 0,4, Toleranz 1e-12), 23 Faelle
+# kompakter Block mit Bohrung und duenne Kirsch-Scheibe von 65 000 bis 497 000 FHG: der Direktloeser ist in 20
+# Faellen schneller (meist 1 bis 6 s), das GPU-Mehrgitter nur beim Block mit 186 000 und 281 000 FHG (je etwa
+# 5 s) und einmal bei der Scheibe (0,9 s). Summe direkt 519 s, Mehrgitter 564 s, jeweils bessere Wahl 508 s;
+# eine Schwelle 200 000 verschenkt 28,6 s, 400 000 16,6 s, immer direkt 11,3 s. Vor der Schwelle 0,4 lag das
+# Mehrgitter ab 200 000 FHG vorn (Commit d669b9f); die Aggregation nimmt vor allem dem Direktloeser Arbeit ab
+# (weniger freie Koordinaten), der Aufbau des iterativen Wegs haengt an den Zellen. Der Mechanismus bleibt
+# fuer eine schnellere Einrichtung stehen und ist mit _AUTO_MEHRGITTER abgeschaltet; 'gpu' erzwingt das Mehrgitter.
+_AUTO_MEHRGITTER = False
 _AUTO_MIN_DOFS = 200_000
 
 
@@ -243,7 +246,8 @@ def _loeserwahl(backend: str, n_zellen: int, n_cut: int, p: int, n_dof: int,
                 n_frei: int | None = None) -> tuple[str, str, str, list[str]]:
     """(loeser, geraet, Begruendung, Warnungen). 'cpu': Direktloeser. 'gpu': Mehrgitter auf der GPU,
     Rueckfall auf den Direktloeser ohne GPU oder bei zu wenig Speicher (Vorgabe 9). 'auto': der im
-    Gesamtweg schnellere Weg - Mehrgitter auf der GPU ab _AUTO_MIN_DOFS Freiheitsgraden, sonst direkt."""
+    Gesamtweg schnellere Weg - derzeit immer der Direktloeser (_AUTO_MEHRGITTER, Messung oben); eingeschaltet
+    Mehrgitter auf der GPU ab _AUTO_MIN_DOFS Freiheitsgraden bei p in _AUTO_GRADE und genug Speicher."""
     if backend == "cpu":
         return "direkt", "cpu", "backend 'cpu'", []
     frei = _gpu_frei_mb()
@@ -256,6 +260,9 @@ def _loeserwahl(backend: str, n_zellen: int, n_cut: int, p: int, n_dof: int,
             return "direkt", "cpu", "GPU-Speicher zu klein", [f"backend 'gpu': geschaetzt {bedarf:.0f} MB GPU-Speicher, frei "
                                                               f"{frei:.0f} MB - Rueckfall auf den Direktloeser der CPU"]
         return "mehrgitter", "gpu", f"backend 'gpu', {bedarf:.0f} von {frei:.0f} MB", []
+    if not _AUTO_MEHRGITTER:
+        return "direkt", "cpu", ("auto: Direktloeser - im Gesamtweg bis zur Speichergrenze der GPU meist schneller als "
+                                 "das GPU-Mehrgitter (Theorie 11.10); backend 'gpu' erzwingt das Mehrgitter"), []
     if frei > 0 and p in _AUTO_GRADE and n_dof >= _AUTO_MIN_DOFS and _GPU_RESERVE * bedarf <= frei:
         return "mehrgitter", "gpu", f"auto: {n_dof} Freiheitsgrade >= {_AUTO_MIN_DOFS}, GPU {bedarf:.0f} von {frei:.0f} MB", []
     grund = ("keine GPU" if frei <= 0 else
