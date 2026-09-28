@@ -5333,9 +5333,13 @@ eines Lastfalls startet jeder Kontaktlauf eines Fließschritts vom Zustand
 des vorigen - auch der erste plastische Lauf vom elastischen Vorlauf. Gleiten
 Knoten gegen ihre festgehaltene Richtung, werden sie auf Haften
 zurückgesetzt und die Iteration läuft weiter („Warmstart: … auf Haften
-zurückgesetzt, Iteration fortgesetzt (Anlauf 1)“); von der Geometrie neu
-beginnt der Lauf nur, wenn das nicht konvergiert („Fortsetzung vom
-Warmstart nicht konvergiert - Neustart von der Geometrie“). Ein Warmstart
+zurückgesetzt, Iteration fortgesetzt (Anlauf 1, Maß 2740 kN)“ - das Maß ist
+die Reibkraft dieser Knoten); von der Geometrie neu beginnt der Lauf nur,
+wenn das nicht konvergiert („Fortsetzung vom Warmstart nicht konvergiert -
+Neustart von der Geometrie“) oder nichts mehr bringt: fällt das Maß nicht
+unter das des vorigen Anlaufs, war die Fortsetzung ein Kreis („Warmstart
+verworfen: … Maß 2583 kN nicht unter 2578 kN des vorigen Anlaufs - Neustart
+von der Geometrie“); höchstens acht Anläufe. Ein Warmstart
 aus einem **anderen** Lastfall wird wie bisher verworfen, wenn viele Knoten
 gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
 

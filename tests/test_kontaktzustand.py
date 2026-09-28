@@ -696,6 +696,86 @@ def test_residuum_beendet_das_troepfeln():
           changed and cs.cons[10].active and r["ruhe"] == 0, f"changed {changed}")
 
 
+def test_gegenrichtung_traegt_ihre_reibkraft_als_mass():
+    """warmstart_verstoesse zaehlt gleitende Knoten gegen ihre Richtung und
+    legt seit 28.09.2026 deren Reibkraft mu Fn als Mass ab
+    (warmstart_gegen_kraft): der Loeser setzt nur zurueck, wenn die Summe
+    ueber RESIDUUM_ANTEIL der Kontaktkraft liegt. Am Drehlager stammten die
+    Richtungen von Bettungsknoten ohne Normalkraft aus Rauschen - drei
+    Fortsetzungen und ein Neustart fuer nichts (Lauf `starr_warm`)."""
+    from statik3d.contact import ContactSystem, Constraint
+    cons, u = [], np.zeros(9)
+    for i, (Fn, ux) in enumerate(((1000.0, -1.0e-6), (0.0, -1.0e-9), (500.0, +1.0e-6))):
+        c = Constraint(kind="surface", dofs=np.array([3 * i, 3 * i + 1, 3 * i + 2]),
+                       cn=np.array([0.0, 0.0, 1.0]), ct=np.vstack([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+                       g0=0.0, kn=1e9, kt=1e9, mu=0.3, node=i, normal=np.array([0.0, 0.0, 1.0]),
+                       label="Fuge:%d" % i)
+        c.active, c.slip, c.Fn = True, True, Fn
+        c.slip_dir = np.array([1.0, 0.0])
+        cons.append(c)
+        u[3 * i] = ux                       # 0 und 1 bewegen sich gegen die Richtung, 2 mit ihr
+    # ein haftender Knoten dazu: sonst gilt die Gruppe als ganz gleitend, und
+    # dort zaehlt kein Knoten (indifferente Bewegung)
+    h = Constraint(kind="surface", dofs=np.array([9, 10, 11]), cn=np.array([0.0, 0.0, 1.0]),
+                   ct=np.vstack([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]), g0=0.0, kn=1e9, kt=1e9, mu=0.3,
+                   node=3, normal=np.array([0.0, 0.0, 1.0]), label="Fuge:3")
+    h.active, h.slip, h.Fn = True, False, 1000.0
+    cons.append(h)
+    u = np.concatenate([u, np.zeros(3)])
+    cs = object.__new__(ContactSystem)
+    cs.cons = cons
+    n = cs.warmstart_verstoesse(u)
+    check("zwei Knoten gegen ihre Richtung, Mass = Summe ihrer Reibkraft 0,3 * (1000 + 0) N",
+          n == 2 and abs(cs.warmstart_gegen_kraft - 300.0) < 1e-9,
+          f"n {n}, Kraft {cs.warmstart_gegen_kraft:.3f} N")
+    cons[0].Fn = 0.0
+    n = cs.warmstart_verstoesse(u)
+    check("ohne Normalkraft ist das Mass null - Richtungen aus Rauschen zaehlen nicht",
+          n == 2 and cs.warmstart_gegen_kraft == 0.0, f"n {n}, Kraft {cs.warmstart_gegen_kraft}")
+    n = cs.warmstart_verstoesse(u, zuruecksetzen=True)
+    check("zuruecksetzen wie bisher: beide haften wieder, der dritte gleitet weiter",
+          not cons[0].slip and not cons[1].slip and cons[2].slip)
+    # ganz gleitende Gruppe: dasselbe Mass, keine Sonderregel - ob die
+    # Fortsetzung etwas bringt, entscheidet der Loeser am Vergleich des
+    # Masses mit dem vorigen Anlauf (test_plastizitaet, gequetschter Block)
+    for c in cons:
+        c.slip, c.slip_dir, c.Fn = True, np.array([1.0, 0.0]), 1000.0
+    n = cs.warmstart_verstoesse(u)
+    check("ganz gleitende Gruppe: zwei Knoten gegen die Richtung, Mass 0,3 * 2000 N",
+          n == 2 and abs(cs.warmstart_gegen_kraft - 600.0) < 1e-9,
+          f"n {n}, Kraft {cs.warmstart_gegen_kraft}")
+
+
+def test_wiederschliessen_gleitet_sofort_in_phase_2():
+    """Ein Knoten, der in dieser Runde wieder schliesst, gleitet sofort - auch
+    in Phase 2 (28.09.2026). Seine Haftfeder k_t liegt auf dem absoluten Weg,
+    den er offen mit dem Bauteil zurueckgelegt hat: ein Scheinverstoss. Bis
+    dahin ging er in die Liniensuche der Kegelverstoesse (Anteil 0,02 bis 0,5
+    je Runde) und brauchte bis zu 40 Runden; am Drehlager (Nachtlauf, Lauf 7)
+    fuellten 36 bis 55 solcher Knoten je Runde den Deckel. Zehn haftende
+    Knoten ueber dem Kegel gehen weiter anteilig (einer je Runde)."""
+    from statik3d.contact import Constraint
+    cs, u = _haftende_ueber_kegel(n=10)                 # Phase 2, Anteil 0,1
+    u = np.concatenate([u, np.zeros(6)])
+    for k in (10, 11):
+        c = Constraint(kind="surface", dofs=np.array([3 * k, 3 * k + 1, 3 * k + 2]),
+                       cn=np.array([0.0, 0.0, 1.0]), ct=np.vstack([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+                       g0=0.0, kn=1.0e9, kt=1.0e9, mu=0.3, node=k,
+                       normal=np.array([0.0, 0.0, 1.0]), label="Fuge:%d" % k)
+        c.active, c.slip, c.Fn = False, False, 0.0        # offen, schliesst in dieser Runde
+        cs.cons.append(c)
+        u[3 * k + 2] = -1.0e-6                            # Durchdringung 1000 N > f_tol
+        u[3 * k] = 4.0e-7                                 # Weg in der Ebene: k_t dt = 400 N > mu Fn = 0
+    changed, r = _runde(cs, u)
+    check("beide wieder geschlossenen Knoten gleiten in derselben Runde (Phase 2)",
+          cs.cons[10].active and cs.cons[10].slip and cs.cons[11].active and cs.cons[11].slip
+          and r["gleiten_nach_schliessen"] == 2,
+          f"slip {cs.cons[10].slip}, {cs.cons[11].slip}; nach Schliessen {r['gleiten_nach_schliessen']}")
+    check("die zehn haftenden gehen weiter anteilig: einer neu gleitend, neun haften",
+          r["gleiten_neu"] == 1 and sum(1 for c in cs.cons[:10] if c.slip) == 1,
+          f"neu {r['gleiten_neu']}, gleitend {sum(1 for c in cs.cons[:10] if c.slip)}")
+
+
 def test_wechselanteil_bricht_den_zyklus():
     """Oeffnen und Schliessen je Runde nur fuer den staerksten Anteil der
     wechselwilligen Bedingungen, sobald das Verstossmass nicht mehr faellt
@@ -1065,6 +1145,8 @@ def main():
               test_phase2_loest_mehrere_haftende_auf_einmal,
               test_gleitanteil_passt_sich_dem_guetemass_an,
               test_wechselanteil_bricht_den_zyklus,
+              test_gegenrichtung_traegt_ihre_reibkraft_als_mass,
+              test_wiederschliessen_gleitet_sofort_in_phase_2,
               test_residuum_beendet_das_troepfeln,
               test_ausgleich_an_wieder_geschlossenen_knoten,
               test_runden_zaehlen_die_wechselarten,

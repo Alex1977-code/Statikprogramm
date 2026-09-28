@@ -1388,6 +1388,20 @@ class ContactSystem:
         Phase 2 nicht). Mit ``zuruecksetzen`` werden sie auf Haften gesetzt;
         die Iteration findet ihre Richtung dann neu."""
         n = 0
+        # Die Reibkraft mu Fn der Knoten gegen ihre Richtung, als Mass fuer den
+        # Loeser (28.09.2026): unter RESIDUUM_ANTEIL der Kontaktkraft ist das
+        # Rauschen, kein Grund zum Zuruecksetzen oder Neustart. Am Drehlager
+        # (Lauf `starr_warm`) fand die Pruefung nach jeder Fortsetzung wieder
+        # Knoten - Bettungsknoten mit verschwindender Normalkraft, deren
+        # Richtung aus Rauschen stammt - und nach drei Anlaeufen hiess es
+        # Neustart: 10 + 8 + 5 + 2 + 35 Runden statt 10.
+        # Der Loeser vergleicht das Mass mit dem des vorigen Anlaufs: faellt
+        # es nicht, ist die Fortsetzung ein Zyklus (gequetschter Block:
+        # 3,84 - 2,58 - 2,58 - 3,83 - 2,58 MN, siebenmal dieselben drei Knoten
+        # am Rand zwischen Ausbreiten und Querlast, deren Richtung als
+        # Fixpunkt kippt) und nur der kalte Start mit der unterrelaxierten
+        # Richtungsnachfuehrung der Phase 1 loest ihn.
+        self.warmstart_gegen_kraft = 0.0
         for c in self.cons:
             if c.active and c.slip and c.ct is not None and c.slip_dir is not None:
                 ue = u[c.dofs]
@@ -1395,6 +1409,7 @@ class ContactSystem:
                 nrm = float(np.linalg.norm(dt))
                 if nrm > 0 and float(dt @ c.slip_dir) < -1e-9 * nrm:
                     n += 1
+                    self.warmstart_gegen_kraft += c.mu * max(float(c.Fn), 0.0)
                     if zuruecksetzen:
                         c.slip = False
                         c.slip_dir = None
@@ -2044,7 +2059,15 @@ class ContactSystem:
                     if ruhe:
                         pass                    # Residuum unter der Loesergenauigkeit: Zustand steht
                     elif np.linalg.norm(Ft_el) > limit * (1 + 1e-6) and limit >= 0:
-                        if self.phase == 1:
+                        # Ein in dieser Runde wieder geschlossener Knoten gleitet
+                        # sofort, auch in Phase 2 (28.09.2026): seine Haftfeder
+                        # k_t liegt auf dem absoluten Weg, den er offen mit dem
+                        # Bauteil zurueckgelegt hat - ein Scheinverstoss, kein
+                        # Kegelverstoss eines haftenden Nachbarn. Ueber die
+                        # Liniensuche (Anteil 0,02 bis 0,5 je Runde) brauchte er
+                        # bis zu 40 Runden; am Drehlager fuellten solche Knoten
+                        # den Deckel (Lauf 7: 36 bis 55 je Runde).
+                        if self.phase == 1 or id(c) in zu_in_runde:
                             c.slip = True
                             c.slip_dir = dt / nrm if nrm > 0 else np.array([1.0, 0.0])
                             c.dir_updates = 0

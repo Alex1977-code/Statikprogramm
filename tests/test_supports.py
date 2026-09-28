@@ -616,8 +616,45 @@ def _bettung_faelle(platte):
             check("Feder: Durchdringung = Fn/k messbar (max |g| > 1e-9 m)", 1.0 if g_max > 1e-9 else 0.0, 1.0, 0)
 
 
+def test_halt_status_steht_ab_phase_2():
+    """Ob eine ganz gleitende Reibgruppe anderswo gehalten ist (solver.
+    _gruppen_frei, Rang), wird nur in Phase 1 bestimmt; ab Phase 2 steht es
+    fest wie die Gleitrichtungen (28.09.2026). Am Drehlager (Nachtlauf, Lauf 7)
+    wechselten die vier Lagergruppen nach drei ruhigen Runden ihren Status,
+    ihre Reststeifigkeit sprang um 1e5, und 277 Bedingungen rissen um. Am
+    Klotz an der starren Knagge (ganz gleitende Gruppe, vom Boden gehalten):
+    kein Aufruf in Phase 2, sobald der Status steht - und dasselbe Ergebnis."""
+    aufrufe = []
+    alt = solver._gruppen_frei
+
+    def gezaehlt(model, cs):
+        aufrufe.append((int(cs.phase), cs.gruppe_frei is None))
+        return alt(model, cs)
+
+    m, kk, ss = _klotz_mit_knagge()
+    ss.lokal = True
+    supports.lager_auf_netz(m)
+    oben = [int(i) for i in np.flatnonzero(np.abs(m.nodes[:, 2] - 1.0) < 1e-9)]
+    for n in oben:
+        m.load_node(n, Fx=-50e3 / len(oben), Fz=-100e3 / len(oben))
+    solver._gruppen_frei = gezaehlt
+    try:
+        r = solver.solve_static(m)
+    finally:
+        solver._gruppen_frei = alt
+    # Der eine Aufruf nach dem Umschalten gehoert zur Uebergangsrunde (der
+    # Status wird mit dem Stand beim Uebergang festgelegt); danach keiner mehr
+    in_phase_2 = sum(1 for (ph, _l), (ph_v, _lv) in zip(aufrufe[1:], aufrufe[:-1]) if ph == 2 and ph_v == 2)
+    check("Halt-Status: Aufrufe in Phase 1 (mindestens einer)",
+          1.0 if sum(1 for ph, _l in aufrufe if ph == 1) >= 1 else 0.0, 1.0, 0, str(aufrufe[:6]))
+    check("Halt-Status: nach der Uebergangsrunde kein Aufruf in Phase 2 mehr", in_phase_2, 0, 0,
+          f"{len(aufrufe)} Aufrufe: {aufrufe[:8]}")
+    check("Knagge dabei unveraendert: Rx = 50 kN", r.reactions[:, 0].sum(), 50e3, 1e-3, "N")
+    check("Bettung dabei unveraendert: Rz = 100 kN", r.reactions[:, 2].sum(), 100e3, 1e-3, "N")
+
+
 def main():
-    for t in (test_federlager_mit_schlupf, test_zug_und_druckausfall, test_grenzkraft,
+    for t in (test_halt_status_steht_ab_phase_2, test_federlager_mit_schlupf, test_zug_und_druckausfall, test_grenzkraft,
               test_reibung_knotenlager, test_linienlager, test_flaechenlager,
               test_rotationslager_und_zusammenfassung, test_federgelenke,
               test_lager_folgen_dem_netz, test_flaechenlager_in_flaechenachsen,

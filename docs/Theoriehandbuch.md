@@ -1443,9 +1443,28 @@ Runden noch einmal). Entscheidung des Anwenders: kalt nur, wenn unbedingt
 nötig. Seither gilt innerhalb desselben Lastfalls (`solve_with_contact`,
 `fortsetzung`: der Start ist der Zustand des Vorlaufs oder des vorigen
 Fließschritts): Knoten gegen ihre Richtung werden auf Haften
-zurückgesetzt und die Iteration wird vom Zustand aus fortgesetzt, bis zu
-drei Anläufe; kalt erst, wenn die Fortsetzung selbst nicht konvergiert. Ein
-Zustand vom Deckel (die Reibungsnachprüfung hat aufgegeben) zählt dabei als
+zurückgesetzt und die Iteration wird vom Zustand aus fortgesetzt; kalt erst,
+wenn die Fortsetzung selbst nicht konvergiert oder nichts mehr bringt. Ob
+sie etwas bringt, sagt das Kraftmaß der Prüfung (unten) im Vergleich zum
+vorigen Anlauf: fällt es nicht, ist die Fortsetzung ein Zyklus, und der Lauf
+startet kalt („Warmstart verworfen: … Maß 2583 kN nicht unter 2578 kN des
+vorigen Anlaufs - Neustart von der Geometrie“). Eine feste Zahl taugt dafür
+nicht (gemessen 28.09.2026): drei Anläufe erzwangen am Drehlager
+(`starr_warm2`) nach 10, 8, 4 und 2 Runden - fallend, mit fallendem Maß - den
+kalten Start mit 35 Runden; acht blinde Anläufe am gequetschten Block
+(`tests/test_plastizitaet`, 4 Laststufen) waren ab dem zweiten ein Zyklus
+(3,84 - 2,58 - 2,58 - 3,83 - 2,58 MN, siebenmal dieselben drei Knoten am
+Rand zwischen Ausbreiten und Querlast, deren Richtung als Fixpunkt kippt)
+und brachten gemeinsam und verschachtelt 2,6 mm bei 42,7 mm auseinander.
+`FORTSETZUNGEN_MAX` = 8 bleibt als Schutz vor Endlosrekursion bei
+kriechendem Maß. Die
+Prüfung selbst trägt seit dem 28.09. ein Kraftmaß: liegt die Reibkraft μ F_n
+der Knoten gegen ihre Richtung zusammen unter 10⁻⁶ der Kontaktkraft
+(`RESIDUUM_ANTEIL`), sind das Richtungen aus Rauschen - Bettungsknoten ohne
+Normalkraft -, und der Zustand steht. Ohne das Maß fand der Lauf
+`starr_warm` am Drehlager nach jeder Fortsetzung wieder solche Knoten und
+startete nach drei Anläufen doch kalt: 10 + 8 + 5 + 2 + 35 Runden statt 10.
+Ein Zustand vom Deckel (die Reibungsnachprüfung hat aufgegeben) zählt dabei als
 fremd, und ein gedeckelter Vorlauf gibt gar keinen Zustand weiter - sonst
 hinge das Ergebnis am Deckel (`tests/test_rechenliste`: mit Deckel im
 Vorlauf und ohne treffen sich die Wege auf 7·10⁻²⁰ m; mit dem Deckelzustand
@@ -1459,6 +1478,32 @@ vergleicht, wäre das ein Weg-Artefakt. Folgen in den Prüfungen: der Block
 mit Reibung braucht verschachtelt 12 statt 17 Zerlegungen (gemeinsam 12),
 zwei Körper 26 (gemeinsam 23); gemeinsam und verschachtelt treffen sich
 auf 10⁻⁵ statt 10⁻⁶.
+
+**Offen: die Querlage eines gleitenden Bauteils (K4, gemessen
+28.09.2026).** Am gequetschten Block (`tests/test_plastizitaet`, 4
+Laststufen, acht von neun Knoten gleiten) enden verschachtelt und gemeinsam
+seit dem Fortschrittskriterium in Spiegelbildern: u_y des Blocks +0,94 bzw.
+−0,71 mm bei symmetrischer Last, die Normalkräfte gespiegelt (1 438 217 ↔
+1 438 132 N an den Eckknoten), u_max auf sieben Stellen gleich (42,64054
+mm), der größte Unterschied 1,65 mm quer. Mit festgehaltenen Gleitrichtungen
+in Phase 2 ist die Lage quer zur Gleitrichtung unbestimmt - welcher Ast
+getroffen wird, entscheidet der Weg; dass sich beide Wege bis zum 27.09. auf
+10⁻⁷ trafen, lag an derselben Folge kalter Starts, nicht am Verfahren.
+Verworfen am selben Tag: die konsistente Quertangente μ F_n/|d_t| auf die
+Querrichtung in K_c (Ableitung von −μ F_n d_t/|d_t|, als Feder auf die
+Änderung seit dem letzten Zustand) mit je Runde nachgeführter Richtung -
+Newton statt Fixpunkt. Am Block, sobald alle neun Knoten glitten, kippten
+die Richtungen jede Runde (9 von 9, Residuum 30 % der Kontaktkraft, die
+Normalkräfte liefen je Runde um 1,2 % nach), u_max 0,64 statt 0,043 m,
+1 072 statt 263 Zerlegungen: ein Knoten, der seine Bewegung umkehrt,
+müsste haften - der Übergang Gleiten → Haften ist in Phase 2 ausgeschaltet
+-, und die Kopplung μ d ∂F_n/∂u fehlt in der symmetrischen Matrix. Der Weg
+ist der semiglatte Newton für die Reibung (Haften, Gleiten und Richtung in
+einem Schritt; Prüfmatrix K4, K5 tet4). Bis dahin prüft
+`test_gemeinsam_rueckfall_verschachtelt` am Block, was vom Weg unabhängig
+ist - u_max, die Auflagersummen, die Menge der Kontaktkräfte auf 2·10⁻⁵ -
+und die Querdrift unter 2 mm; die übrigen Fälle weiter auf 2·10⁻⁵ in jeder
+Zahl.
 
 **Flächenlager „starr mit Ausfall“ (27.09.2026).** RFEM lässt „starr“ nur
 ohne Nichtlinearität zu; ein Lager mit Ausfall bei Zug trägt dort einen
@@ -1563,7 +1608,37 @@ zur Ruhe. Zwei Kuren, nacheinander gemessen:
    auf 10⁻⁶ relativ). Der Block mit Reibung braucht 6 statt 7 Zerlegungen.
 
 Die Liniensuche bleibt als Sicherung im Programm: solange das Maß fällt,
-greift sie nicht. Voller Lauf mit allen vier Änderungen: siehe unten.
+greift sie nicht.
+
+**Voller Lauf mit allen vier Änderungen (Nachtlauf `starr_nacht`, 27./28.09.,
+Stand 695843d, 12 Arbeiter):** 9,4 h, Plastizität konvergiert mit ε_p
+8,29 % (Referenz 8,23 %), Bohrungen V15/V34/V16/V29 359/359/356/354 N/mm²
+(25.09.: 364/366/356/355), V35 366 (368), V115 209 (193); u_max 1,150 mm
+statt 1,298 mm - die Differenz ist die Nachgiebigkeit der Bettung
+2,5·10¹¹ N/m³, die als starres Lager entfällt (rund 2,5 kN je Knoten bei
+2,5·10⁷ N/m). Aber: 9 von 18 Kontaktläufen brachen ab (Läufe 7 bis 10, 16
+bis 18 am Deckel, 14 und 15 bei 120 Schritten), 1 187 Zerlegungen, alle
+Läufe nach dem Vorlauf kalt (Neustart, alte Warmstartregel). Die
+Rundenablage nannte zwei Mechanismen, beide am 28.09. behoben:
+
+5. *Der Halt-Status ganz gleitender Gruppen steht ab Phase 2 fest.* In
+   Lauf 7 wechselten nach drei ruhigen Runden die vier Lagergruppen ihren
+   Status („ganz rutschend“ 4 → 0): eine einzige Öffnung änderte den Rang,
+   die Reststeifigkeit der Gruppen sprang um 10⁵, und die nächste Lösung
+   riss 277 Bedingungen um (haftende Knoten 58 → 370, 349 Kegelverstöße,
+   Gütemaß 2·10⁴) - der Deckel. Seither bestimmt `solver._gruppen_frei` den
+   Status nur in Phase 1 und in der Übergangsrunde; ab Phase 2 steht er wie
+   die Gleitrichtungen (`tests/test_supports`, Klotz an der Knagge: nach
+   der Übergangsrunde kein Aufruf mehr, Rx 50 kN, Rz 100 kN unverändert).
+6. *Wiederschließen gleitet sofort, auch in Phase 2.* Ein Knoten, der in
+   derselben Runde wieder schließt, trägt die Haftfeder k_t auf dem
+   absoluten Weg, den er offen mit dem Bauteil zurückgelegt hat - ein
+   Scheinverstoß, der in Phase 2 in die Liniensuche der Kegelverstöße ging
+   (Anteil 0,02 bis 0,5 je Runde): in Lauf 7 je Runde 36 bis 55 solcher
+   Knoten („Gleiten nach Wiederschließen“), die den Deckel füllten. Seither
+   gleitet er in derselben Runde, wie in Phase 1 (`test_kontaktzustand`:
+   zwei wieder geschlossene gleiten sofort, zehn haftende Verstöße weiter
+   anteilig). Suiten und Prüfmatrix K4/K5/K7/KP1/KP2 unverändert.
 
 Arten:
 
