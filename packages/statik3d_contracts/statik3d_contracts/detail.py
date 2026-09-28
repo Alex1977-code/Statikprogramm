@@ -74,7 +74,9 @@ class DetailModelSpec:
     # ``surface.body_id`` ist die Detail-ID, ``named_surface`` der Name der
     # CSG-Grundform (auch box oder cylinder). ``load_case_id`` ordnet die Last
     # dem ``ResultKey.load_case_id`` zu; ohne passenden Key wird sie fuer diesen
-    # Key nicht angesetzt.
+    # Key nicht angesetzt. Eine Resultierende verteilt der Loeser: konstante
+    # Traktion fuer die Kraft, linear verteilte fuer das Moment, bezogen auf
+    # den Flaechenschwerpunkt.
     loads: tuple[SurfaceLoad, ...] = ()
     body_load: np.ndarray | None = None     # (3,) N/mm3, z. B. Eigengewicht rho*g
 
