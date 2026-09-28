@@ -1576,6 +1576,19 @@ hex8 grün (σ_v 0,00 N/mm²). Knoten, deren Einflussbereich nicht ganz auf der
 Gegenfläche liegt (Rand der Überdeckung), behalten die Projektion; Paare mit
 quadratischen Elementen (Kontakt dort gesperrt) ebenso. Folge im Test: der
 Stempel auf Sockel (4 × 4 gegen 6 × 6) u_max +0,33 %.
+Am Drehlager (Lauf `mortar_81e7b64`, 28.09.2026, zwei Auswerter): 803
+Slave-Knoten in sechs Fugen bekommen Mortar-Gewichte, die übrigen gepaarten
+behalten die Projektion. Die Überdeckung Σ_i M_ji / D_j ist dort
+zweigeteilt - je Fuge liegt sie entweder auf 10⁻⁶ bei 1 (Median meist um
+10⁻¹³) oder mehr als 1 % daneben, dazwischen fast nichts -, also entscheidet
+nicht die Toleranz, sondern ob der Einflussbereich eines Knotens ganz auf der
+Gegenfläche liegt. Offen: Knoten mit teilweiser Überdeckung auf den
+überdeckten Teil zu beschränken (w = M_ji / Σ_i M_ji) - erst mit einem
+Prüffall mit Rand der Überdeckung. Ergebnis gegen den Stand ohne Mortar:
+alle Kontaktläufe konvergiert, ε_p 8,291 %, u_max 1,1504 statt 1,1496 mm,
+Bohrungen innerhalb 1,5 N/mm² außer dem Montageauge V35 379,8 statt 373,6
+und V115 210,7 statt 215,2 N/mm² - dort liegen die meisten Mortar-Knoten.
+Aufbau der Gewichte für alle zwölf Paare rund 26 s.
 
 **Flächenlager „starr mit Ausfall“ (27.09.2026).** RFEM lässt „starr“ nur
 ohne Nichtlinearität zu; ein Lager mit Ausfall bei Zug trägt dort einen
