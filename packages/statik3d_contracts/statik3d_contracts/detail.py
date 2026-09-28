@@ -3,12 +3,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from .coupling import CutPlane
 from .model import ResultKey
+
+if TYPE_CHECKING:                      # nonlinear.py importiert detail.py - kein Kreis zur Laufzeit
+    from .nonlinear import SurfaceLoad
 
 
 class GeometrySourceType(str, Enum):
@@ -64,6 +67,18 @@ class DetailModelSpec:
     settings: FcmSettings
     refinement: tuple[RefinementRegion, ...] = ()
     weld_lines: tuple[WeldLine, ...] = ()
+    # Lasten am Detail (2.1.0), die das Globalmodell nicht liefert - Wasserdruck,
+    # Kontaktdruck einer Auflagerplatte, Eigengewicht. ``SurfaceLoad`` aus
+    # nonlinear.py: Druck (N/mm2, positiv drueckt auf die Flaeche, t = -p n),
+    # Traktion (3,) N/mm2 global oder Resultierende (Kraft N, Moment N*mm);
+    # ``surface.body_id`` ist die Detail-ID, ``named_surface`` der Name der
+    # CSG-Grundform (auch box oder cylinder). ``load_case_id`` ordnet die Last
+    # dem ``ResultKey.load_case_id`` zu; ohne passenden Key wird sie fuer diesen
+    # Key nicht angesetzt. Eine Resultierende verteilt der Loeser: konstante
+    # Traktion fuer die Kraft, linear verteilte fuer das Moment, bezogen auf
+    # den Flaechenschwerpunkt.
+    loads: tuple[SurfaceLoad, ...] = ()
+    body_load: np.ndarray | None = None     # (3,) N/mm3, z. B. Eigengewicht rho*g
 
 
 @dataclass

@@ -2,7 +2,7 @@
 
 Nur dieser Vertrag als Code: Typen (``dataclasses``), Protokolle
 (``typing.Protocol``) und Stubs - keine Logik. Verbindlich ist
-``docs/Schnittstellenvertrag_Statik3D_FCM.md`` (Vertragsversion 2.0.0);
+``docs/Schnittstellenvertrag_Statik3D_FCM.md`` (Vertragsversion 2.1.0);
 Aenderungen nur per eigenem Pull Request mit Versionserhoehung (Abschnitt 9).
 
 Abhaengigkeitsregel (Abschnitt 1): dieses Paket importiert nur die
@@ -14,7 +14,7 @@ from typing import Final
 
 #: Semantische Version des Vertrags (Abschnitt 9): Patch = Doku, Minor = neue
 #: optionale Felder/Methoden, Major = Umbenennen, Entfernen, geaenderte Bedeutung.
-CONTRACT_VERSION: Final = "2.0.1"
+CONTRACT_VERSION: Final = "2.1.0"
 
 
 def major(version: str) -> int:

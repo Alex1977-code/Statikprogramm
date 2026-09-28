@@ -72,6 +72,8 @@ class StubDiscretization:
     kante_mm: float
     p: int
     kind: DiscretizationKind = DiscretizationKind.FCM_OCTREE
+    lasten: int = 0                 # Lasten am Detail aus der Spec (2.1.0) - der Stub setzt sie nicht an
+    volumenlast: bool = False
 
     def dof_count(self) -> int:
         # acht Zellen, hierarchischer Ansatz Grad p, drei Verschiebungen je Funktion
@@ -119,7 +121,9 @@ class StubSolidSolver:
             raise SolverError("base_cell_size_mm muss positiv sein")
         if progress is not None:
             progress("Stub: Wuerfel angelegt", 1.0)
-        return StubDiscretization(subsystem_id=spec.id, kante_mm=self.KANTE_MM, p=int(spec.settings.p))
+        return StubDiscretization(subsystem_id=spec.id, kante_mm=self.KANTE_MM, p=int(spec.settings.p),
+                                  lasten=len(getattr(spec, "loads", ()) or ()),
+                                  volumenlast=getattr(spec, "body_load", None) is not None)
 
     def solve(self, disc: Any, provider: GlobalFieldProvider, keys: list[ResultKey],
               progress: ProgressCallback | None = None,
@@ -134,15 +138,24 @@ class StubSolidSolver:
             u, _rot = provider.displacement_at(P, key)
             u = np.where(np.isfinite(u), u, 0.0)
             stress = np.tile(self.SPANNUNG, (len(P), 1))
+            lasten = int(getattr(disc, "lasten", 0) or 0)
+            volumenlast = bool(getattr(disc, "volumenlast", False))
+            warnungen = [STUB_KENNZEICHEN, "Stub: konstante Spannung 100 N/mm2, keine Rechnung"]
+            if lasten or volumenlast:
+                # Die Felder der Spec (2.1.0) kommen im Protokoll an, angesetzt
+                # werden sie nicht - und das steht dabei, nie still
+                warnungen.append(f"Stub: {lasten} Lasten am Detail"
+                                 f"{' und die Volumenlast' if volumenlast else ''} nicht angesetzt")
             aus.append(DetailResult(
                 detail_id=str(disc.subsystem_id), key=key, surface_points=P, surface_triangles=T,
                 displacement=np.asarray(u, float), stress=stress, von_mises=von_mises(stress),
                 convergence=[{"cycle": 0, "dofs": disc.dof_count(), "iterations": 1, "hotspot_max": 100.0}],
                 coupling_check={"force_deviation": 0.0, "moment_deviation": 0.0},
-                warnings=[STUB_KENNZEICHEN, "Stub: konstante Spannung 100 N/mm2, keine Rechnung"],
+                warnings=warnungen,
                 protocol={"solver": self.name, "contract_version": self.contract_version,
                           "stub": True, "kennzeichen": STUB_KENNZEICHEN,
-                          "p": disc.p, "edge_mm": disc.kante_mm}))
+                          "p": disc.p, "edge_mm": disc.kante_mm,
+                          "loads": lasten, "body_load": volumenlast}))
             if progress is not None:
                 progress(f"Stub: {key.load_case_id}", (i + 1) / max(1, len(keys)))
         return aus
@@ -185,9 +198,15 @@ class StubGlobalFieldProvider:
 
     def section_forces(self, plane: CutPlane, key: ResultKey) -> SectionForces:
         x = float(np.asarray(plane.origin, float)[0])
-        # Schnittgroessen am Schnitt x: Querkraft F, Moment F (L - x) um y
-        return SectionForces(force=np.array([0.0, 0.0, -self.F]),
-                             moment=np.array([0.0, self.F * (self.L - x), 0.0]))
+        # Schnittgroessen am Schnitt x in der Stabkonvention (Kraft auf die
+        # +x-Seite): Querkraft F, Moment F (L - x) um y. Seite (2.1.0): die
+        # Wirkung des abgeschnittenen Restes auf das Detail - fuer die Normale
+        # in +x die Stabkonvention, fuer die Normale in -x das Negative. Bis
+        # 2.0.1 kam beides mit demselben Vorzeichen; an der Ebene mit Normale
+        # -x meldete die Kopplungskontrolle 200 % (gemessen 27.09.2026).
+        vorzeichen = 1.0 if float(np.asarray(plane.normal, float)[0]) >= 0.0 else -1.0
+        return SectionForces(force=vorzeichen * np.array([0.0, 0.0, -self.F]),
+                             moment=vorzeichen * np.array([0.0, self.F * (self.L - x), 0.0]))
 
 
 # ---------------------------------------------------------------------------
