@@ -10816,3 +10816,16 @@ sich über wenige Moden schwach gestützter Schnittzellen und Moden hoher Ordnun
 das Ziel von p-Mehrgitter und Chebyshev-Jacobi-Glätter in Teilprojekt 4 (Vorgabe 8.3, Richtwert
 unter 100 Iterationen). Bis dahin bleibt der Direktlöser der Standard; `FcmProblem(loeser="pcg")`
 ist geprüft und liefert Protokoll mit Iterationen und Residuum.
+
+**GPU.** Dieselben Zelldaten laufen als CuPy-RawKernel: ein Block je Zelle lädt u_e in den
+gemeinsamen Speicher, jeder Thread bildet eine Zeile von K_e·u_e und liest K_e dabei spaltenweise
+(K_e ist symmetrisch, so sind die Zugriffe der Threads zusammenhängend); das Einsammeln je
+Freiheitsgrad ist der zweite Kern; C und K_rand liegen als cupyx-CSR, der CG-Code ist für numpy
+und cupy derselbe. Gemessen auf der RTX 3070 in FP64 (28.09.2026): GPU-Operator = Matrix auf
+10⁻¹⁵; Kirsch h 10 p 3 verfeinert (229 608 Freiheitsgrade) 3,1 ms je Anwendung gegen 18,8 ms auf
+der CPU bei 652 MB GPU-Speicher; kleine Modelle (6 069 Freiheitsgrade) 0,05 gegen 0,17 ms, ganz
+kleine (14 961, viele Schnittzellen) 0,63 gegen 0,22 ms. Die PCG-Lösung auf der GPU ist mit der
+CPU identisch (5·10⁻¹²), braucht bei 2 316 freien Freiheitsgraden aber 6,8 s gegen 0,1 s, weil je
+Iteration mehrere Kernstarts und dünnbesetzte Produkte mit festen Startkosten anfallen – die
+GPU lohnt sich ab Modellen mit einigen 10⁵ Freiheitsgraden, und erst mit dem Mehrgitter aus
+Teilprojekt 4 sinkt die Iterationszahl so weit, dass die Startkosten nicht mehr zählen.

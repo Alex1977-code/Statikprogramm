@@ -640,9 +640,15 @@ die assemblierte Matrix aus Teilprojekt 1.
   gleiche Zahlen). GPU: `cupy.RawKernel` je Zelle, C und K_rand als `cupyx.scipy.sparse`, PCG mit
   `xp = cupy`; nur lokal prüfbar, CI überspringt. Genauigkeit durchgängig FP64 (gemischt erst in
   Teilprojekt 4 mit der Abnahme „FP64-Referenz auf 10⁻⁶“).
-- Vertragsschicht: `backend='cpu'` nimmt den matrixfreien Weg, sobald die Zellmatrizen ins
-  Budget passen; der Direktlöser bleibt als Referenz erreichbar. `estimate` nennt beide
-  Speicherbedarfe.
+- Vertragsschicht: der Direktlöser bleibt Standard, bis das Mehrgitter (Teilprojekt 4) die
+  Iterationszahlen senkt; `FcmProblem(loeser="pcg")` ist geprüft (Protokoll mit Iterationen,
+  Residuum, Operator-Speicher). `backend='gpu'` wird in der Vertragsschicht mit Teilprojekt 4
+  freigeschaltet, wenn PCG plus Mehrgitter auf der GPU den Direktlöser schlägt.
+- **Gemessen (28.09.2026, RTX 3070, FP64):** GPU-Operator = Matrix auf 10⁻¹⁵; Kirsch h 10 p 3
+  verfeinert (229 608 Freiheitsgrade) 3,1 ms je Anwendung gegen 18,8 ms CPU (652 MB GPU-Speicher);
+  kleine Modelle 0,05–0,63 ms gegen 0,17–0,22 ms; PCG auf der GPU identisch zur CPU (5·10⁻¹²), bei
+  2 316 freien Freiheitsgraden 6,8 s gegen 0,1 s – die Startkosten je Iteration zählen, solange
+  Jacobi Tausende Iterationen braucht.
 
 ### 4c.4 Prüfungen
 

@@ -71,6 +71,13 @@ wieder auf den Tisch, wenn INSIDE-Zellen bei feinen Gittern überwiegen (h ≪ B
 - Prüfung: `test_vertrag_fcm` und Kernsuite grün, `FcmSolver.solve` liefert mit PCG dieselben
   Spannungen wie mit dem Direktlöser (10⁻⁶ relativ) am Vertragsbeispiel.
 
+### Stand 28.09.2026 abends
+Aufgaben 1, 2, 4, 5 und 6 umgesetzt (Commits be1bf48, 71ebc09 und Folgecommit): Operator = Matrix
+auf 10⁻¹⁵, PCG gegen Direktlöser grün (Iterationen 548 … 20 373, Kondition 10⁶ … 5·10⁷),
+`FcmProblem(loeser="pcg")`, GPU-Operator 3,1 ms gegen 18,8 ms CPU bei 229 608 FHG. Aufgabe 3
+zurückgestellt (siehe oben), Aufgabe 7 (Theorie 11.9, Entwurf 4c, Volumenmodul.md) geschrieben;
+zweite Sicht und Pull Request folgen mit Teilprojekt 4 (Stufe 2).
+
 ### Aufgabe 6: GPU mit CuPy (`fcm/operator_gpu.py`, `linalg/pcg.py` mit `xp`)
 - Zellkerne als `cupy.RawKernel` (dichte Zellmatrix je Zelle, ein Block je Zelle, Puffer +
   Gather), C und K_rand als `cupyx.scipy.sparse`; PCG mit `xp = cupy`. Nur lokal prüfbar
