@@ -52,7 +52,7 @@ def jacobi_diagonale(zelldaten, C: sp.spmatrix, K_rand: sp.spmatrix | None = Non
             continue
         spalten = np.unique(Ce.indices)
         Cs = Ce[:, spalten].toarray()
-        diag[spalten] += s * np.einsum("aj,ab,bj->j", Cs, Ke, Cs)
+        diag[spalten] += s * (Cs * (Ke @ Cs)).sum(axis=0)          # BLAS statt Dreifach-einsum (2,3 s -> Bruchteil)
     if K_rand is not None and K_rand.nnz:
         diag += np.asarray((C.T @ K_rand @ C).diagonal()).ravel()
     return diag

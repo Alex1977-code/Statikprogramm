@@ -197,7 +197,7 @@ class Ebene:
     Operator, Jacobi-Diagonale."""
 
     def __init__(self, p: int, gitter, C: sp.csr_matrix, moden_frei: np.ndarray, zelldaten: Zelldaten,
-                 K_rand: sp.spmatrix | None) -> None:
+                 K_rand: sp.spmatrix | None, diag: np.ndarray | None = None) -> None:
         self.p = p
         self.gitter = gitter
         self.C = C.tocsr()
@@ -206,7 +206,7 @@ class Ebene:
         self.K_rand = K_rand
         self.operator = Operator(zelldaten, C=self.C, K_rand=K_rand)
         self.n_frei = int(self.C.shape[1])
-        self.diag = jacobi_diagonale(zelldaten, self.C, K_rand)
+        self.diag = diag if diag is not None else jacobi_diagonale(zelldaten, self.C, K_rand)
         self.lambda_max = 0.0
         self.P: sp.csr_matrix | None = None            # Injektion freie Koordinaten dieser Ebene -> feinere Ebene
         self.B: np.ndarray | None = None               # Mittelwertzwaenge auf dieser Ebene
@@ -227,9 +227,14 @@ class Ebene:
 
 class PMehrgitter:
     """V-Zyklus ueber die Polynomgrade p, p-1, ..., 1; ``anwenden(r)`` ist die Vorkonditionierung.
-    Glaetter: 'schwarz' (Zellbloecke, Standard) oder 'jacobi', jeweils mit Chebyshev-Beschleunigung."""
+    Glaetter: 'schwarz' (Zellbloecke, Standard) oder 'jacobi', jeweils mit Chebyshev-Beschleunigung.
 
-    def __init__(self, problem, glaetter_grad: int = 3, alpha: float = 8.0, potenz_schritte: int = 15,
+    Standard Grad 5 auf [lambda_max/16, lambda_max]: am schwierigsten Fall (Kirsch h 10 p 3, Versatz
+    0,6, GPU) gemessen Grad 3/alpha 8: 129 Iterationen 14,6 s, Grad 5/alpha 8: 92 / 16,7 s, Grad
+    5/alpha 16: 86 / 15,0 s, Grad 8/alpha 30: 58 / 16,4 s (28.09.2026). Die Zeit haengt kaum am Grad,
+    die Iterationszahl schon; Grad 5/alpha 16 haelt die Vorgabe (unter 100) ohne Zeitverlust."""
+
+    def __init__(self, problem, glaetter_grad: int = 5, alpha: float = 16.0, potenz_schritte: int = 15,
                  glaetter: str = "schwarz", lambda_sicherheit: float = 1.1, grob_verschiebung: float = 1e-10) -> None:
         t0 = time.perf_counter()
         zeiten: dict[str, float] = {}
@@ -242,7 +247,8 @@ class PMehrgitter:
         self.alpha = float(alpha)
         zd_fein = getattr(pr, "_zelldaten", None) or Zelldaten(g, pr.quadratur, pr.werkstoff.E, pr.werkstoff.nu)
         # feinste Ebene mit den Zwaengen des Problems selbst: dieselben freien Koordinaten wie pr.loesen
-        self.ebenen: list[Ebene] = [Ebene(p, g, pr.zwaenge.C, pr.zwaenge.moden_frei, zd_fein, pr.K_rand)]
+        self.ebenen: list[Ebene] = [Ebene(p, g, pr.zwaenge.C, pr.zwaenge.moden_frei, zd_fein, pr.K_rand,
+                                          getattr(pr, "_diagonale", None))]
         fein = self.ebenen[0]
         t = time.perf_counter()
         for pk in range(p - 1, 0, -1):
@@ -344,9 +350,14 @@ class PMehrgitter:
         t = time.perf_counter()
         self.glaetter = glaetter
         speicher = 0.0
-        for eb in self.ebenen[:-1]:
+        for k, eb in enumerate(self.ebenen[:-1]):
             if glaetter == "schwarz":
-                eb.schwarz = ZellSchwarz(eb, eb.matrix())
+                # feinste Ebene: die reduzierte Matrix des Problems ist schon da (C^T (K + K_rand) C); beim
+                # Direktloeser mit Schnittebenen ist sie der Sattelpunkt (andere Groesse) und wird neu gebildet
+                A_eb = getattr(pr, "_K_red", None) if k == 0 else None
+                if A_eb is None or A_eb.shape[0] != eb.n_frei:
+                    A_eb = eb.matrix()
+                eb.schwarz = ZellSchwarz(eb, A_eb)
                 speicher += eb.schwarz.speicher_mb
                 eb.vork = eb.schwarz.anwenden
             else:

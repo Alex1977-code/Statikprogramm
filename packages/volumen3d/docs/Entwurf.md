@@ -736,12 +736,14 @@ Plan: `docs/plaene/2026-09-28-tp4-mehrgitter.md`. Messlatte aus Teilprojekt 3: J
 - Fünf Schnittlagen Kirsch h 10 p 3 verfeinert (128 724 bis 199 095 freie Koordinaten), GPU FP64:
   81 / 125 / 112 / 129 / 59 Iterationen, GPU-PCG 8,6 bis 21 s, K_t identisch mit dem Direktlöser;
   Direktlöser (Lösen nach der Faktorisierung) 7 bis 25 s. Einrichten auf der CPU: Zelldaten 17–24 s,
-  Mehrgitter 33–48 s (davon Glätterblöcke 19–26 s). **Stand:** bei h 20 liegt die Iterationszahl
-  unter 60 und innerhalb ±20 % über die Lagen, bei h 10 noch nicht (bis 129, ±40 %); und das
-  Einrichten kostet mehr als die Faktorisierung des Direktlösers. `FcmProblem(loeser="mehrgitter",
-  backend="gpu")` ist gebaut und geprüft; die Vertragsschicht bleibt beim Direktlöser.
-- **Offen vor Pull Request 2:** (a) Iterationen bei feinen Gittern senken – Glättergrad, α, Blöcke
-  mit Nachbarschaft zweiter Ordnung oder h-Ebenen unter p = 1 (Vorgabe 8.3: geometrisches
-  h-Mehrgitter über die Oktree-Ebenen); (b) Einrichten beschleunigen (Blöcke aus den Zellmatrizen
-  direkt auf der GPU statt über die assemblierte Matrix, Zelldaten vektorisiert); (c) danach
-  `backend='gpu'` und `'auto'` in der Vertragsschicht freischalten.
+  Mehrgitter 33–48 s (davon Glätterblöcke 19–26 s).
+- **Glätter Grad 5, α 16 (Messreihe am schwierigsten Fall, Theorie 11.10):** fünf Lagen h 10 jetzt
+  51 / 82 / 72 / 86 / 49 Iterationen (unter 100), GPU-PCG 7,7–16,9 s gegen 9–30 s Lösen des
+  Direktlösers; h 20 p 3: 19–37 Iterationen.
+- **Einrichten entdoppelt:** im iterativen Weg entsteht die Matrix aus den Zelldaten (keine zweite
+  Integration der Zellsteifigkeiten), die feinste Ebene übernimmt C^T(K + K_rand)C und die
+  Jacobi-Diagonale des Problems, die Diagonale nutzt BLAS statt eines Dreifach-einsum. Kirsch h 20
+  p 3: Einrichten rund 11 s gegen 5 s für Assemblierung plus Faktorisierung des Direktlösers.
+- **Offen vor Pull Request 2:** Einrichten weiter senken (Basisauswertung der Zelldaten gebündelt,
+  Blöcke aus den Zellmatrizen direkt auf der GPU), dann `backend='gpu'`/`'auto'` in der
+  Vertragsschicht freischalten.

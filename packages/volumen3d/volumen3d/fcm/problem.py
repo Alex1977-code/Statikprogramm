@@ -151,7 +151,14 @@ class FcmProblem:
     # -- Aufbau und Loesung -----------------------------------------------------------
     def aufbauen(self, fortschritt=None) -> None:
         t0 = time.perf_counter()
-        K = assemblieren(self.gitter, self.quadratur, self.werkstoff.E, self.werkstoff.nu, fortschritt)
+        if self.loeser in ("pcg", "mehrgitter"):
+            # Zellmatrizen einmal: die assemblierte Matrix entsteht aus denselben Zelldaten (gleich auf
+            # 1e-16, test_operator), statt die Zellsteifigkeiten ein zweites Mal zu integrieren
+            from .operator import Zelldaten
+            self._zelldaten = Zelldaten(self.gitter, self.quadratur, self.werkstoff.E, self.werkstoff.nu)
+            K = self._zelldaten.matrix()
+        else:
+            K = assemblieren(self.gitter, self.quadratur, self.werkstoff.E, self.werkstoff.nu, fortschritt)
         n = self.gitter.n_dof
         K_rand: sp.csr_matrix = sp.csr_matrix((n, n))              # Nitsche-Anteil getrennt: der matrixfreie
         zwaenge = []                                                # Operator (TP 3) addiert ihn zur Zellsumme
@@ -170,21 +177,22 @@ class FcmProblem:
         t1 = time.perf_counter()
         C = self.zwaenge.C
         if self.loeser in ("pcg", "mehrgitter"):
-            # matrixfrei (Teilprojekt 3/4): Zellmatrizen statt Faktorisierung; K bleibt fuer die
-            # Residuumsprobe und die Auswertung des Vergleichs erhalten
-            from .operator import Operator, Zelldaten
+            # matrixfrei (Teilprojekt 3/4): Zellmatrizen statt Faktorisierung; die reduzierte Matrix
+            # bleibt fuer die Residuumsprobe und die Glaetterbloecke des Mehrgitters erhalten
+            from .operator import Operator
             from ..linalg.pcg import jacobi_diagonale
-            self._zelldaten = Zelldaten(self.gitter, self.quadratur, self.werkstoff.E, self.werkstoff.nu)
             self._operator = Operator(self._zelldaten, C=C, K_rand=K_rand)
             self._diagonale = jacobi_diagonale(self._zelldaten, C, K_rand)
             self._K_red = (C.T @ K @ C).tocsr()
             self._loeser = None
             self._mehrgitter = None
+            self._gpu = None
             if self.loeser == "mehrgitter":
                 from .mehrgitter import PMehrgitter
                 self._mehrgitter = PMehrgitter(self)
                 name_loeser = "pcg-mehrgitter"
-            self._gpu = None
+            else:
+                name_loeser = "pcg-jacobi" + ("" if self._operator.numba else " (numpy)")
             if self.backend == "gpu":
                 # Operator und V-Zyklus auf der GPU (Theorie 11.10); Einrichten bleibt auf der CPU
                 from .operator_gpu import OperatorGpu, verfuegbar
@@ -197,8 +205,6 @@ class FcmProblem:
                     mg_gpu = PMehrgitterGpu(self._mehrgitter)
                 self._gpu = (op_gpu, mg_gpu)
                 name_loeser += " (gpu)"
-            else:
-                name_loeser = "pcg-jacobi" + ("" if self._operator.numba else " (numpy)")
         else:
             K_red = (C.T @ K @ C).tocsr()
             if self._B is not None:

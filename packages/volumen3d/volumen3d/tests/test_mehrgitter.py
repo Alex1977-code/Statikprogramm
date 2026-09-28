@@ -134,7 +134,8 @@ def test_problem_mehrgitter():
         ergebnisse = {}
         for loeser in ("direkt", "pcg", "mehrgitter"):
             pr = _segment(400.0, 600.0, 3, 50.0)
-            pr.loeser, pr.toleranz = loeser, 1e-10
+            # Mehrgitter bis 1e-12 (Vorgabe 9: 1e-6 gegen die Referenz; mit 1e-10 gemessen 4,3e-6 bei Grad 5), Jacobi 1e-10
+            pr.loeser, pr.toleranz = loeser, (1e-12 if loeser == "mehrgitter" else 1e-10)
             t = time.perf_counter()
             U = pr.loesen(vorg)[:, 0]
             ergebnisse[loeser] = (U, pr.multiplikatoren[:, 0].copy(), pr.protokoll.get("iterationen"), time.perf_counter() - t, pr.protokoll["residuum"])

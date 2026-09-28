@@ -10931,9 +10931,14 @@ der Fall) haben keinen Nullraum; das Protokoll meldet die Bewegung mit Warnung. 
 p 3 bei belasteter Maschine: GPU-PCG 9 bis 11 s gegen 37 s Direktlöser; das Einrichten auf der CPU
 (Zelldaten, Blöcke, Grobgitter) kostet 30 bis 35 s und wird von allen Lastfällen eines Details
 geteilt. Kirsch h 20 p 3 (33 060 frei): GPU 3,8 s gegen CPU-Mehrgitter 12,1 s und Direktlöser 6,0 s.
-Über fünf Schnittlagen bei h 10 (128 724 bis 199 095 freie Koordinaten) braucht der GPU-PCG 81 / 125
-/ 112 / 129 / 59 Iterationen und 8,6 bis 21 s, bei identischem K_t; das Lösen des Direktlösers nach
-der Faktorisierung dauert 7 bis 25 s. Die Iterationszahl ist damit bei h 10 weder unter 100 noch
-lageunabhängig (bei h 20: 39 bis 58), und das Einrichten auf der CPU (50 bis 70 s) übersteigt die
-Faktorisierung. Bis das behoben ist (Glätter, h-Ebenen unter p = 1 nach Vorgabe 8.3, Einrichten auf
-der GPU), bleibt der Direktlöser der Standard der Vertragsschicht.
+Über fünf Schnittlagen bei h 10 (128 724 bis 199 095 freie Koordinaten) brauchte der GPU-PCG mit
+Chebyshev-Grad 3 auf [λ_max/8, λ_max] 81 / 125 / 112 / 129 / 59 Iterationen. Am schwierigsten Fall
+(Versatz 0,6) gemessen: Grad 3/α 8 129 Iterationen in 14,6 s, Grad 5/α 8 92 in 16,7 s, Grad 5/α 16
+86 in 15,0 s, Grad 8/α 30 58 in 16,4 s – die Zeit hängt kaum am Grad, die Iterationszahl schon.
+Standard ist seither Grad 5 auf [λ_max/16, λ_max]; damit: 51 / 82 / 72 / 86 / 49 Iterationen, alle
+unter dem Richtwert 100 der Vorgabe, GPU-PCG 7,7 bis 16,9 s gegen 9 bis 30 s für das Lösen des
+Direktlösers nach seiner Faktorisierung, K_t jeweils identisch; bei h 20 p 3 19 bis 37 Iterationen.
+Offen bleibt das Einrichten auf der CPU (Zelldaten, Glätterblöcke, Grobgitter: bei h 20 p 3 rund 11 s
+gegen 5 s Assemblierung plus Faktorisierung des Direktlösers), darum bleibt der Direktlöser vorerst
+Standard der Vertragsschicht; der Mehrgitterweg lohnt sich, sobald ein Detail mehrere Lastfälle hat
+oder das Modell für den Direktlöser zu groß wird.
