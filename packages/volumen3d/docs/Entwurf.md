@@ -624,9 +624,16 @@ die assemblierte Matrix aus Teilprojekt 1.
 - FP64, relative Residuumsschranke `FcmSettings.tolerance` (10⁻⁸), zusätzlich Energienorm
   (Vorgabe 8.2), Abbruch über `ProgressCallback`. Jacobi mit der exakten Diagonale von A aus
   den Zellmatrizen (C_eᵀ K_e C_e je Zelle). Mehrere Lastfälle nacheinander; Block-CG später.
-- Erwartung: mit Jacobi allein Hunderte bis Tausende Iterationen. Das ist der gemessene
-  Ausgangspunkt für das Mehrgitter in Teilprojekt 4, kein Mangel dieser Stufe; Iterationszahlen
-  stehen im Protokoll und in der Theorie.
+- **Gemessen (28.09.2026):** die Jacobi-vorkonditionierte Matrix D^-½ A D^-½ hat Kondition
+  1,45·10⁶ (Patch h 20 p 2, 2469 freie Freiheitsgrade) und 5,0·10⁷ (Lamé h 20 p 3, 2316), A
+  selbst 1,9·10⁷ bzw. 3,8·10⁹; die Diagonale spannt 3,7·10² bzw. 3,3·10⁴ (Nitsche-Strafterm
+  β = 10·E·p²/h auf den Randmoden). PCG braucht 5 045 bzw. 20 373 Iterationen bis 10⁻¹⁰ und
+  trifft die direkte Lösung dann auf 7·10⁻⁶ bzw. 2·10⁻⁷; das Kragarmsegment mit projiziertem CG
+  548 Iterationen. Das ist der Ausgangspunkt für das Mehrgitter in Teilprojekt 4, kein Mangel
+  dieser Stufe: die kleinsten Eigenvektoren verteilen sich über wenige Moden schwach gestützter
+  Schnittzellen und Moden hoher Ordnung, genau das Ziel von p-Mehrgitter und Glätter (Vorgabe
+  8.3, Richtwert unter 100 Iterationen). Bis dahin bleibt der Direktlöser der Standard der
+  Vertragsschicht; der matrixfreie PCG ist als Löser wählbar und geprüft.
 
 ### 4c.3 Backends
 - CPU: `numba.njit(parallel=True)` für die Zellkerne, numpy-Rückfall ohne numba (langsamer,
