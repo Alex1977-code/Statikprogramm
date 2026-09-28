@@ -388,11 +388,11 @@ class FcmSolver:
                                                        int(pr.zwaenge.C.shape[1]))
         pr.loeser, pr.backend = loeser, geraet
         # Vertragstoleranz gilt fuer das relative Residuum; fuer Verschiebungen auf 1e-6 gegen den
-        # Direktloeser (Vorgabe 9) rechnet das Mehrgitter bis 1e-12. Gemessen nach der Aggregationskorrektur
-        # (Kragarm-Ausschnitt h 25/16 ueber diese Schicht, Block h 25/20, 28.09.2026): bei 1e-10 weichen die
-        # Verschiebungen um 1,3e-10 bis 1,1e-7 ab, bei 1e-12 um 1,4e-12 bis 1,5e-9, das Loesen dauert 15 bis
-        # 25 % laenger. Vorher (Wurzeln bis 38 Halbweiten) lagen sie bei 1e-10 bis 4,3e-6 daneben; der
-        # Kommentar hier behauptete 1e-8 (Gutachten 28.09.2026). 1e-12 haelt den Abstand zur Vorgabe >= 600.
+        # Direktloeser (Vorgabe 9) rechnet das Mehrgitter bis 1e-12. Gemessen auf dem Stand mit
+        # Aggregationsschwelle 0,4 (Kragarm-Ausschnitt h 25/16 ueber diese Schicht, Block h 25/20, 29.09.2026):
+        # bei 1e-10 weichen die Verschiebungen um 1,5e-10 bis 1,7e-8 ab, bei 1e-12 um 7,6e-13 bis 9,7e-11, das
+        # Loesen dauert 19 bis 29 % laenger. Vor der Aggregationskorrektur lagen sie bei 1e-10 bis 4,3e-6
+        # daneben; der Kommentar hier behauptete 1e-8 (Gutachten 28.09.2026).
         pr.toleranz = min(float(s.tolerance), 1e-12)
         melden("Steifigkeit assemblieren", 0.3)
         gpu_fehler = ""

@@ -746,8 +746,8 @@ Plan: `docs/plaene/2026-09-28-tp4-mehrgitter.md`. Messlatte aus Teilprojekt 3: J
 - **Automatische Wahl:** Schlussmessung (freie Maschine, Commit d669b9f, 23 Fälle Block und Kirsch)
   bestätigt die Schwelle 200 000 Freiheitsgrade (Theorie 11.10); Kirsch jetzt 23–43 Iterationen
   (Ausreißer h 8, Versatz 0,3: 114).
-- **Zweite Sicht (Gutachten 28.09.2026 abends):** Toleranz des Mehrgitters 10⁻¹² (gemessen: Verschiebungen
-  bei 10⁻¹⁰ bis 1,1·10⁻⁷ daneben, bei 10⁻¹² bis 1,5·10⁻⁹); Nullraum auch mit Schnittebenen (Sattelpunkt
+- **Zweite Sicht (Gutachten 28.09.2026 abends):** Toleranz des Mehrgitters 10⁻¹² (gemessen mit Schwelle 0,4:
+  Verschiebungen bei 10⁻¹⁰ bis 1,7·10⁻⁸ daneben, bei 10⁻¹² bis 9,7·10⁻¹¹); Nullraum auch mit Schnittebenen (Sattelpunkt
   filtert gesperrte Bewegungen, Bestätigung A q ≈ 0 und B q ≈ 0), 16 statt 6 Proben; GPU-Probe mit
   RawModule, Rückfall auf direkt bei jedem GPU-Fehler in `prepare` und `solve`, Aufräumen vorher;
   NaN-Abbruch in PCG und Blockinversion; Meldung „Last nicht im Gleichgewicht“; `"auto"` nur p = 3;

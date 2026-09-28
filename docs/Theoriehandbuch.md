@@ -11035,10 +11035,10 @@ das Mehrgitter (8 GB: etwa 500 000 Freiheitsgrade bei p 3).
 Direktlöser zurück (Vorgabe 9), `"cpu"` rechnet immer direkt; das Mehrgitter auf der CPU ist in allen
 Messungen langsamer als der Direktlöser und wird nicht gewählt. Die Vertragstoleranz (relatives
 Residuum) wird für das Mehrgitter auf 10⁻¹² geschärft, damit die Verschiebungen den Direktlöser auf
-10⁻⁶ treffen (Vorgabe 9): gemessen am Kragarm-Ausschnitt über die Vertragsschicht (h 25 und 16) und am
-eingespannten Block (h 25 und 20) weichen sie bei 10⁻¹⁰ um 1,3·10⁻¹⁰ bis 1,1·10⁻⁷ ab, bei 10⁻¹² um
-1,4·10⁻¹² bis 1,5·10⁻⁹, das Lösen dauert 15 bis 25 % länger. Vor der Aggregationskorrektur lagen sie bei
-10⁻¹⁰ bis 4,3·10⁻⁶ daneben. Die Spannungen stimmen in allen 23 Fällen der Tabelle auf die angegebenen
+10⁻⁶ treffen (Vorgabe 9): gemessen auf dem endgültigen Stand (Aggregationsschwelle 0,4) am Kragarm-
+Ausschnitt über die Vertragsschicht (h 25 und 16) und am eingespannten Block (h 25 und 20) weichen sie bei
+10⁻¹⁰ um 1,5·10⁻¹⁰ bis 1,7·10⁻⁸ ab, bei 10⁻¹² um 7,6·10⁻¹³ bis 9,7·10⁻¹¹, das Lösen dauert 19 bis 29 %
+länger. Vor der Aggregationskorrektur lagen sie bei 10⁻¹⁰ bis 4,3·10⁻⁶ daneben. Die Spannungen stimmen in allen 23 Fällen der Tabelle auf die angegebenen
 Stellen überein. Protokoll und `summary()` nennen den gewählten Weg und die Begründung.
 
 **Zweite Sicht über Teilprojekt 3 und 4 (28.09.2026 abends).** Ein unabhängiges Gutachten fand keinen
@@ -11067,7 +11067,8 @@ Eigenwerte zwischen 0,002 und 0,016, alle anderen über 0,03 (Kondition 559). Ih
 sitzen auf rund 400 freien Moden am belasteten Plattenende, in Zellen mit Werkstoffanteil 0,26, also
 knapp über der Schwelle 0,25 und damit wohlgestellt; ihre hohen Moden tragen aber nur etwa
 Anteil^(2p+1) ihrer Energie im Werkstoff und teilen sich die Nachbarschaft mit leeren Zellen. Mit der
-Schwelle 0,4 (Plan TP 4, Aufgabe 3) werden solche Zellen aggregiert:
+Schwelle 0,4 (Plan TP 4, Aufgabe 3) werden solche Zellen aggregiert (GPU-Mehrgitter, CG bis zum relativen
+Residuum 10⁻¹⁰):
 
 | Kirsch p 3 | Schwelle 0,25 | Schwelle 0,4 |
 |---|---|---|
