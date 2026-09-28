@@ -143,15 +143,19 @@ class FcmProblem:
     def aufbauen(self, fortschritt=None) -> None:
         t0 = time.perf_counter()
         K = assemblieren(self.gitter, self.quadratur, self.werkstoff.E, self.werkstoff.nu, fortschritt)
-        zwaenge = []
+        n = self.gitter.n_dof
+        K_rand: sp.csr_matrix = sp.csr_matrix((n, n))              # Nitsche-Anteil getrennt: der matrixfreie
+        zwaenge = []                                                # Operator (TP 3) addiert ihn zur Zellsumme
         for r in self.raender.values():
             art = "normal" if r.projektion == "schnitt" else r.projektion
-            K = K + rand.nitsche_steifigkeit(self.gitter, r.quadratur, self.werkstoff.E, self.werkstoff.nu,
-                                             self.beta_faktor, art).tocsr()
+            K_rand = K_rand + rand.nitsche_steifigkeit(self.gitter, r.quadratur, self.werkstoff.E, self.werkstoff.nu,
+                                                       self.beta_faktor, art).tocsr()
             if r.projektion == "schnitt":
                 r.zwang_start = sum(len(z) for z in zwaenge)
                 zwaenge.append(rand.mittelwert_zwaenge(self.gitter, r.quadratur, r.moden))
+        K = (K + K_rand).tocsr()
         self.K = K
+        self.K_rand = K_rand
         self._B = np.concatenate(zwaenge, axis=0) if zwaenge else None
         t1 = time.perf_counter()
         C = self.zwaenge.C

@@ -74,18 +74,21 @@ class Zellquadratur:
     def _box(self, lo, s):
         return lo + s * (self._X + 1.0), self._W * float(np.prod(s))
 
-    def _teilen(self, lo, s, stufe, teile) -> None:
-        for dx in (0, 1):
-            for dy in (0, 1):
-                for dz in (0, 1):
-                    l2 = lo + s * np.array([dx, dy, dz])
-                    self._teilbox(l2, l2 + s, stufe + 1, teile)
+    _KINDER = np.array([(dx, dy, dz) for dx in (0, 1) for dy in (0, 1) for dz in (0, 1)], float)
 
-    def _teilbox(self, lo, hi, stufe, teile) -> None:
+    def _teilen(self, lo, s, stufe, teile) -> None:
+        # die acht Kinder in einem Abstandsaufruf klassifizieren (Aufgabe 5 des Plans TP 2)
+        los = lo + s * self._KINDER
+        d8 = self.gitter.geometrie.abstand(los + 0.5 * s)
+        for l2, d in zip(los, d8):
+            self._teilbox(l2, l2 + s, stufe + 1, teile, float(d))
+
+    def _teilbox(self, lo, hi, stufe, teile, d: float | None = None) -> None:
         s = 0.5 * (hi - lo)
         m = lo + s
         geo = self.gitter.geometrie
-        d = float(geo.abstand(m[None])[0])
+        if d is None:
+            d = float(geo.abstand(m[None])[0])
         r = np.sqrt(3.0) * float(s[0]) * (1 + 1e-9)
         P, W = self._box(lo, s)
         if d > r:                                            # sicher ausserhalb: nur alpha

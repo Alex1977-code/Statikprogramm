@@ -33,14 +33,18 @@ class Operation:
 Knoten = Grundform | Operation
 
 
-def _abstand(k, P: np.ndarray) -> np.ndarray:
+def _abstand(k, P: np.ndarray, vorab: dict | None = None) -> np.ndarray:
+    """Gesamtabstand des Teilbaums k; ``vorab`` liefert schon berechnete Abstaende je Grundform
+    (Schluessel id(form)), damit lokale_stuecke jede Form nur einmal auswertet."""
     if isinstance(k, Operation):
-        d = np.stack([_abstand(t, P) for t in k.teile], axis=1)
+        d = np.stack([_abstand(t, P, vorab) for t in k.teile], axis=1)
         if k.op == "vereinigung":
             return d.min(axis=1)
         if k.op == "schnitt":
             return d.max(axis=1)
         return np.maximum(d[:, 0], -d[:, 1:].min(axis=1))
+    if vorab is not None:
+        return vorab[id(k)]
     return k.abstand(P)
 
 
@@ -264,13 +268,18 @@ class Csg:
         alle: list = []
         _mit_vorzeichen(self.wurzel, 1, alle)
         proben = np.asarray(proben, float).reshape(-1, 3)
-        d_ist = self.abstand(proben)
         tol = 1e-9 * max(r, 1e-12)
-        d_m = np.array([float(f.abstand(mitte[None])[0]) for f, _ in alle])
+        # ein Aufruf je Grundform fuer Mitte und Proben zusammen; der Gesamtabstand an den Proben
+        # folgt aus denselben Werten ueber den Baum (Profil Lame CSG 27.09.: 320 000 kleine
+        # abstand-Aufrufe, 15 s von 50 s Aufbau)
+        punkte = np.concatenate([mitte[None], proben])
+        d_formen = [f.abstand(punkte) for f, _ in alle]
+        d_m = np.array([float(d[0]) for d in d_formen])
+        d_alle = [d[1:] for d in d_formen]                   # einmal je Form, auch fuer die Teilpruefung
+        d_ist = _abstand(self.wurzel, proben, {id(f): d for (f, _), d in zip(alle, d_alle)})
         aktiv = np.abs(d_m) <= r
         if not aktiv.any():
             return None
-        d_alle = [f.abstand(proben) for f, _ in alle]        # einmal je Form, auch fuer die Teilpruefung
         pos = [(f, d) for (f, s), d in zip(alle, d_alle) if s > 0]
         neg = [(f, d) for (f, s), d in zip(alle, d_alle) if s < 0]
         pos_akt = [(f, d) for (f, s), a, d in zip(alle, aktiv, d_alle) if s > 0 and a]

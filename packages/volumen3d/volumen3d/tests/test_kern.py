@@ -13,7 +13,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from volumen3d.tests import (test_basis, test_elastizitaet, test_geometrie, test_gitter, test_oktree, test_paket,  # noqa: E402
-                             test_patch, test_quadratur, test_stl, test_vertrag_fcm, test_zwaenge)
+                             test_operator, test_patch, test_quadratur, test_stl, test_vertrag_fcm, test_zwaenge)
 from volumen3d.tests._pruef import lauf  # noqa: E402
 
 TESTS = [
@@ -22,7 +22,7 @@ TESTS = [
     test_geometrie.test_grundformen, test_geometrie.test_csg, test_geometrie.test_lokale_stuecke, test_geometrie.test_oberflaechenquadratur,
     test_gitter.test_klassifikation, test_gitter.test_moden_vollgitter, test_gitter.test_punktsuche,
     test_oktree.test_schnittzellen, test_oktree.test_bereich_und_duenn, test_oktree.test_punktsuche_und_box, test_oktree.test_moden_ueber_ebenen, test_oktree.test_rand_auf_zellflaechen,
-    test_zwaenge.test_zaehlung_und_spur, test_stl.test_kern_stl,
+    test_zwaenge.test_zaehlung_und_spur, test_stl.test_kern_stl, test_operator.test_kern,
     test_quadratur.test_polyeder, test_quadratur.test_ebene_geometrie_exakt, test_quadratur.test_kleine_radien, test_quadratur.test_inside_zelle,
     test_elastizitaet.test_zellsteifigkeit, test_elastizitaet.test_starrkoerper,
     test_patch.test_patch, test_patch.test_kleine_schnittzellen, test_patch.test_normalprojektion,

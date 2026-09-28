@@ -565,11 +565,22 @@ Gemessen dominiert die Flächenquadratur den Aufbau (Profil: 99 von 106 s). Umge
 Teilprojekt 2 (jeweils gegen die Suiten geprüft, Ergebnisse unverändert): Blätter-in-Box statt
 Dreieck×Wurzelzelle-Schleife (`gitter.blaetter_in_box`), Abstände je Grundform an den Proben
 einer Teilbox nur einmal (`lokale_stuecke`), STL-Kern mit BVH und numba-Windungszahl
-(Abschnitt 4b.3: Viertelring von 509 s auf 43,7 s). **Offen:** die acht Kinder einer Teilbox
-gemeinsam klassifizieren und die Modennummerierung über gepackte int64-Schlüssel. Stand
-27.09.2026 auf der durch die Hauptsitzung belegten Maschine (88 % Last): Lamé CSG h = 10, p = 3
-Aufbau 41,9 s (286 Zellen, 218 143 Randpunkte, 3516 Tangentialblätter); das Ziel „unter 20 s“
-ist unbelastet zu messen und bleibt für den nächsten Schritt notiert.
+(Abschnitt 4b.3: Viertelring von 509 s auf 43,7 s). Zweite Runde am 28.09.2026 nach dem
+Profil des CSG-Lamé-Aufbaus (50,6 s unter Profiler und Last; 320 000 kleine `abstand`-Aufrufe
+mit 15 s, 96 640 einzelne `np.cross` mit 4,3 s, vier Zeugenaufrufe je Polygonstück): in
+`lokale_stuecke` ein Abstandsaufruf je Grundform für Mitte und Proben zusammen und der
+Gesamtabstand aus denselben Werten über den Baum (`_abstand` mit `vorab`); die Zeugen aller
+Stücke eines Polygons in einem Aufruf je Funktion; die acht Kinder einer Teilbox in einem
+Abstandsaufruf; Zylinderachse und Radialrichtung einmal je Form statt je Abfrage; Flächenvektor
+eines Polygons mit einem `np.cross` statt einem je Fächerdreieck; `_box_abstand` ohne
+`linalg.norm`. Ergebnisse unverändert (104 Prüfungen von Geometrie, Quadratur, Patch-Test und
+STL identisch grün). Gemessen ohne Profiler bei 42 % Grundlast der Maschine: Lamé CSG h = 10,
+p = 3 Aufbau **21,4 s** (vorher 41,9 s), Lamé STL 18,0 s (vorher 43,7 s). Der Rest liegt in
+der Vierteilung der Randpolygone an fremden gekrümmten Formen (35 033 Polygonaufrufe aus 2757
+Facetten); sie nur für die Teilstücke zu wiederholen, die die gekrümmte Form wirklich berühren,
+wäre der nächste Schritt, ändert aber die Punktmenge und gehört zu einer Messung mit den
+Abnahmen. Die Modennummerierung über gepackte Schlüssel ist gestrichen: sie taucht im Profil
+nicht auf.
 
 ### 4b.5 Prüfungen
 
@@ -580,3 +591,60 @@ ist unbelastet zu messen und bleibt für den nächsten Schritt notiert.
 | U3 | `test_kirsch` (erweitert) | Loch lokal verfeinert (Bereich r + h, Ebene +2): K_tg gegen Referenz, Schnittlagen-Streuung, Freiheitsgrade gegen gleichmäßiges h = r/4 | Streuung < 1 % bei < 40 % der Freiheitsgrade |
 | U4 | `test_stl` | Lesen, Windungszahl an Würfel mit Lücke, Abstand, lokale Ebenen; Lamé aus einem tessellierten Viertelzylinder (Facette 1 mm) gegen CSG | σ-Abweichung STL–CSG < 0,2 % |
 | U5 | Kernsuite, `lint-imports`, mypy, `tests.contracts`, `run_all` | wie TP 1 | grün |
+
+## 4c. Teilprojekt 3 im Einzelnen (Stufe 2a, begonnen 28.09.2026)
+
+Plan: `docs/plaene/2026-09-28-tp3-matrixfrei.md`. Ziel ist v = K·u ohne globale Matrix mit
+vorkonditioniertem CG, zuerst auf der CPU (numba), dann als CuPy-Kern; gemessen wird alles gegen
+die assemblierte Matrix aus Teilprojekt 1.
+
+### 4c.1 Zelldaten und Operator (`fcm/operator.py`)
+- **Structure of Arrays:** INSIDE-Zellen je Ebene mit Freiheitsgradtabelle (nz, 3m) und einer
+  Referenz-Zellmatrix K_ref je p und Werkstoff (K ∝ h, also K_e = h_l/h₀ · K_ref); CUT-Zellen mit
+  gespeicherter Zellmatrix (Vorgabe 8.1 „optional, konfigurierbar“). Die Alternative, je
+  Schnittzelle den Quadratursatz zu behalten und K_e u je Anwendung neu zu integrieren, kostet
+  bei Tiefe 2 Hunderte Punkte je Zelle und ist erst nötig, wenn die Matrizen nicht ins Budget
+  passen (Kirsch h 10 p 3: 1722 Schnittzellen × 295 KB = 0,5 GB; p 4: 1,9 GB) – die Wahl fällt
+  nach der Speicherabschätzung.
+- **Einsammeln ohne Wettlauf:** Vorgabe 8.1 nennt Atomics oder Graphfärbung. Hier stattdessen
+  Gather: der Zellkern schreibt sein Ergebnis in einen Puffer (nz, 3m), und eine vorab gebaute
+  Inzidenz „Freiheitsgrad → (Zelle, lokaler Index)“ (CSR) summiert je Freiheitsgrad parallel.
+  Keine Atomics, keine Färbung, auf CPU und GPU gleich; der Puffer ist klein (Kirsch h 10 p 3:
+  0,4 Mio. Zahlen).
+- **Zwänge und Ränder:** hängende Freiheitsgrade und Aggregation bleiben die Zwangsmatrix C aus
+  `Zwaenge`; der freie Operator ist A = Cᵀ (K + K_rand) C mit der dünnbesetzten Nitsche-Matrix
+  K_rand (Randanteil, klein). Die drei Mittelwertzwänge je Schnittebene (Projektion `schnitt`)
+  werden nicht mehr als Sattelpunkt geführt, sondern per projiziertem CG (Nebenbedingung B x = b
+  mit 3 Zeilen je Ebene, P = I − Bᵀ(BBᵀ)⁻¹B); A bleibt symmetrisch positiv definit.
+- **Summenfaktorisierung** für INSIDE-Zellen (O(p⁴) statt O(p⁶)) kommt als eigene Aufgabe gegen
+  die dichte Zellmatrix gemessen; bei p ≤ 4 sind beide Wege nahe beieinander, entschieden wird
+  nach Messung.
+
+### 4c.2 PCG (`linalg/pcg.py`)
+- FP64, relative Residuumsschranke `FcmSettings.tolerance` (10⁻⁸), zusätzlich Energienorm
+  (Vorgabe 8.2), Abbruch über `ProgressCallback`. Jacobi mit der exakten Diagonale von A aus
+  den Zellmatrizen (C_eᵀ K_e C_e je Zelle). Mehrere Lastfälle nacheinander; Block-CG später.
+- Erwartung: mit Jacobi allein Hunderte bis Tausende Iterationen. Das ist der gemessene
+  Ausgangspunkt für das Mehrgitter in Teilprojekt 4, kein Mangel dieser Stufe; Iterationszahlen
+  stehen im Protokoll und in der Theorie.
+
+### 4c.3 Backends
+- CPU: `numba.njit(parallel=True)` für die Zellkerne, numpy-Rückfall ohne numba (langsamer,
+  gleiche Zahlen). GPU: `cupy.RawKernel` je Zelle, C und K_rand als `cupyx.scipy.sparse`, PCG mit
+  `xp = cupy`; nur lokal prüfbar, CI überspringt. Genauigkeit durchgängig FP64 (gemischt erst in
+  Teilprojekt 4 mit der Abnahme „FP64-Referenz auf 10⁻⁶“).
+- Vertragsschicht: `backend='cpu'` nimmt den matrixfreien Weg, sobald die Zellmatrizen ins
+  Budget passen; der Direktlöser bleibt als Referenz erreichbar. `estimate` nennt beide
+  Speicherbedarfe.
+
+### 4c.4 Prüfungen
+
+| Nr. | Suite | Prüfung | Kriterium |
+|---|---|---|---|
+| V1 | `test_operator` | Inzidenz und Freiheitsgradtabelle wie `zell_dofs`; Zellmatrizen über die Inzidenz summiert = assemblierte Matrix | < 10⁻¹² relativ |
+| V2 | `test_operator` | A x gegen (Cᵀ K C) x auf Kirsch verfeinert, Lamé, Patch dünne Wand, 20 Zufallsvektoren | < 10⁻¹² relativ |
+| V3 | `test_operator` | Summenfaktorisierung = dichte Zellmatrix; Zeitvergleich p 2…4 | < 10⁻¹³; Messung |
+| V4 | `test_pcg` | PCG gegen Direktlöser (Patch, Kragarm mit `schnitt`, Lamé, Kirsch) | 10⁻⁸ relativ; Iterationen protokolliert |
+| V5 | `test_vertrag_fcm` | `solve` mit PCG gleich Direktlöser am Vertragsbeispiel | 10⁻⁶ relativ |
+| V6 | `test_operator_gpu` (lokal) | GPU gegen CPU, Operator und Lösung | 10⁻¹² / 10⁻⁸ |
+| V7 | Kernsuite, `lint-imports`, mypy, `tests.contracts`, `run_all` | wie bisher | grün |

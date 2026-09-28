@@ -88,16 +88,23 @@ def _in_fremder_zellflaeche(geometrie, poly: np.ndarray, lo, hi) -> bool:
     return False
 
 
+def _polygon_flaechenvektor(poly: np.ndarray) -> np.ndarray:
+    """Summe der Kreuzprodukte des Faechers um poly[0], ein Aufruf statt einem je Dreieck
+    (Profil Lame CSG 28.09.2026: 96 640 kleine cross-Aufrufe, 4,3 s von 31 s Aufbau)."""
+    if len(poly) < 3:
+        return np.zeros(3)
+    return np.cross(poly[1:-1] - poly[0], poly[2:] - poly[0]).sum(axis=0)
+
+
 def polygon_normale(poly: np.ndarray) -> np.ndarray:
-    n = np.zeros(3)
-    for i in range(1, len(poly) - 1):
-        n += np.cross(poly[i] - poly[0], poly[i + 1] - poly[0])
-    l = np.linalg.norm(n)
+    n = _polygon_flaechenvektor(poly)
+    l = float(np.sqrt(n @ n))
     return n / l if l > 0 else n
 
 
 def polygon_flaeche(poly: np.ndarray) -> float:
-    return 0.5 * float(np.linalg.norm(sum(np.cross(poly[i] - poly[0], poly[i + 1] - poly[0]) for i in range(1, len(poly) - 1))))
+    n = _polygon_flaechenvektor(poly)
+    return 0.5 * float(np.sqrt(n @ n))
 
 
 def _zeuge(form, Q: np.ndarray) -> np.ndarray:
@@ -156,7 +163,7 @@ def _stuecke_des_polygons(geometrie, form, poly: np.ndarray, tiefe: int, stufe: 
     # (bei ebenen Formen die Facettenebene selbst). Andere lokale Ebenen der Quellform - etwa
     # die Kappe eines Bohrzylinders - muessen schneiden, sonst liefern zwei Stuecke dasselbe
     # Polygon doppelt (Befund 27.09.: Bohrungsmantel +44 %).
-    aus = []
+    kandidaten = []
     for halbraeume in st[0]:
         Q = poly
         for p, n in halbraeume:
@@ -172,18 +179,23 @@ def _stuecke_des_polygons(geometrie, form, poly: np.ndarray, tiefe: int, stufe: 
             if len(Q) < 3:
                 break
         if len(Q) >= 3 and polygon_flaeche(Q) > 1e-14 * r * r:
-            z = _zeuge(form, Q)
-            # Zeuge: auf der Gesamtoberflaeche (|d| <= tol) UND ein Stueck nach aussen kein Werkstoff.
-            # Der zweite Teil faengt beruehrende Vereinigungen (gemeinsame Seite zweier Quader hat
-            # d = 0, ist aber innen; Gutachten 27.09.: Flaeche 30 000 statt 25 000 mm2).
-            n_z = geometrie.gradient(z[None])[0]
-            eps = max(1e-6 * r, 10.0 * tol_flaeche)
-            auf_flaeche = abs(float(geometrie.abstand(z[None])[0])) <= tol_flaeche
-            if auf_flaeche and not bool(geometrie.innen((z + eps * n_z)[None])[0]):
-                aus.append(Q)
-            else:
-                statistik["innen_verworfen"] += 1
-    return aus
+            kandidaten.append(Q)
+    if not kandidaten:
+        return []
+    # Zeugen aller Stuecke gemeinsam auswerten (ein Aufruf je Funktion statt vier je Stueck):
+    # auf der Gesamtoberflaeche (|d| <= tol) UND ein Stueck nach aussen kein Werkstoff. Der zweite
+    # Teil faengt beruehrende Vereinigungen (gemeinsame Seite zweier Quader hat d = 0, ist aber
+    # innen; Gutachten 27.09.: Flaeche 30 000 statt 25 000 mm2).
+    Z = np.array([Q.mean(axis=0) for Q in kandidaten])
+    if form.gekruemmt:
+        Z = Z - form.abstand(Z)[:, None] * form.gradient(Z)
+    n_z = geometrie.gradient(Z)
+    eps = max(1e-6 * r, 10.0 * tol_flaeche)
+    auf_flaeche = np.abs(geometrie.abstand(Z)) <= tol_flaeche
+    aussen_frei = ~geometrie.innen(Z + eps * n_z)
+    ok = auf_flaeche & aussen_frei
+    statistik["innen_verworfen"] += int((~ok).sum())
+    return [Q for Q, o in zip(kandidaten, ok) if o]
 
 
 @dataclass
