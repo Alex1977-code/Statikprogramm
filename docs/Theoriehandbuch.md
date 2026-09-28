@@ -1549,6 +1549,34 @@ Block auf der Platte mit Kippen lief mit ihr um das 230-Fache davon). Der
 Gleichungslöser ama scheitert am Sattelpunkt des Stempels auf Sockel schon in
 der ersten Kontaktrunde - vorbestehend, auch am Stand ec3b464.
 
+**Mortar-Gewichte bei ungleichen Netzen (28.09.2026, Prüfmatrix K6,
+`contact.MORTAR`, `statik3d/mortar.py`).** Die Kopplung Knoten gegen Fläche
+projiziert jeden Slave-Knoten auf ein Dreieck der Master-Fläche (Vierecke
+dafür geteilt) und verteilt seine Kraft mit den Dreiecksgewichten. Bei
+ungleichen Netzen kommt ein gleichmäßiger Druck so nicht gleichmäßig an:
+im Fall K6 (zwei Würfel, oben 3 × 3, unten 2 × 2 geteilt, p = 100 N/mm²)
+bekamen die unteren Knoten 846 und 661 statt 625 cm² Einflussfläche an den
+Ecken und 2255 statt 2500 in der Mitte, unsymmetrisch längs der
+Dreiecksdiagonalen; σ_v lag 74,16 N/mm² (hex8) bzw. 13,56 N/mm² (tet4)
+daneben. Jetzt kommen die Master-Gewichte eines Slave-Knotens j aus dem
+Integral w_ji = ∫Φ_j N_i^m dA / ∫N_j dA über die Slave-Oberfläche, Φ_j die
+dualen Formfunktionen der Slave-Facetten (∫_e Φ_j N_k = δ_jk ∫_e N_j je
+Facette, Wohlmuth 2000), N_i^m die Formfunktionen der Master-Facetten -
+Vierecke bilinear, nicht geteilt. Integriert wird über die Schnittpolygone
+von Slave- und projizierter Master-Facette (Sutherland-Hodgman, je
+Teildreieck 7 Punkte, Grad 5). Die Bedingung bleibt eine Zeile je
+Slave-Knoten mit derselben Normalen und demselben Anfangsspalt wie bisher;
+nur wer die Kraft auf der Master-Seite trägt, ändert sich. Für einen
+gleichmäßigen Druck p trägt der Slave-Knoten p ∫N_j, und am Master-Knoten
+kommt Σ_j p ∫N_j w_ji = p ∫N_i^m an, genau seine Einflussfläche (gemessen:
+625 / 1250 / 2500 cm² auf 2,5·10⁻¹⁶ m²). Bei deckungsgleichen Netzen ist
+w_ji = δ_ji (gemessen auf 3,9·10⁻¹⁵): Knoten auf Knoten wie bisher, die
+Prüfmatrix K1–K5, K7, KP1, KP2 bleibt unverändert grün. K6 ist mit tet4 und
+hex8 grün (σ_v 0,00 N/mm²). Knoten, deren Einflussbereich nicht ganz auf der
+Gegenfläche liegt (Rand der Überdeckung), behalten die Projektion; Paare mit
+quadratischen Elementen (Kontakt dort gesperrt) ebenso. Folge im Test: der
+Stempel auf Sockel (4 × 4 gegen 6 × 6) u_max +0,33 %.
+
 **Flächenlager „starr mit Ausfall“ (27.09.2026).** RFEM lässt „starr“ nur
 ohne Nichtlinearität zu; ein Lager mit Ausfall bei Zug trägt dort einen
 Federwert - am Drehlager 2,5·10¹¹ N/m³ für das Lager „Starr“. Nach

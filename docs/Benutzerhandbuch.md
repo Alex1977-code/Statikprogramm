@@ -3511,6 +3511,15 @@ die Reibung wie bisher. Ist unter *Berechnung → Einstellungen* der
 Gleichungslöser „ama“ gewählt, rechnet die Reibung mit etwas mehr Runden,
 das Ergebnis ist dasselbe.
 
+**Ungleiche Netze an der Fuge (seit 28.09.2026).** Liegen an einer Fuge
+Netze verschiedener Feinheit aufeinander, gibt die Fuge einen gleichmäßigen
+Druck jetzt auch gleichmäßig weiter: das Programm verteilt die Kraft eines
+Knotens nach den überdeckten Flächen (Mortar-Verfahren) statt nach dem Punkt,
+auf den er fällt. Vorher lag die Spannung im Prüffall bis 74 N/mm² daneben.
+Im Protokoll steht dann „Kontaktpaar '…': 250 Slave-Knoten mit
+Mortar-Gewichten (ungleiche Netze)“; Knoten am Rand der Überdeckung rechnen
+wie bisher. Bei gleichen Netzen ändert sich nichts.
+
 **Plastizität: eine Laststufe wird halbiert (seit 28.09.2026).** Wächst die
 Änderung der plastischen Kräfte in einer Laststufe zweimal hintereinander,
 oder endet dort ein Kontaktlauf nicht konvergiert, rechnet das Programm die

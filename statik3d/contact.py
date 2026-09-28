@@ -65,6 +65,15 @@ AUSGLEICH_RESTSTEIFIGKEIT = True
 #: ein umkehrender Knoten kreiste zwischen Zuruecksetzen und Wiedergleiten.
 #: Schalter fuer die Ruecknahmeprobe.
 REIBUNG_PRIMAL_DUAL = True
+#: Mortar-Gewichte fuer Kontaktpaare zwischen Volumenkoerpern (28.09.2026,
+#: statik3d/mortar.py): die Master-Gewichte eines Slave-Knotens kommen aus dem
+#: Integral seiner dualen Formfunktion gegen die Master-Formfunktionen, nicht
+#: aus der Projektion eines Punktes auf ein Dreieck. Bei ungleichen Netzen kam
+#: ein gleichmaessiger Druck sonst ungleichmaessig an (Pruefmatrix K6: sigma_v
+#: +74 N/mm2 mit hex8, -13,6 mit tet4 bei p = 100 N/mm2); bei deckungsgleichen
+#: Netzen sind die Gewichte die alten (Knoten auf Knoten). Schalter fuer die
+#: Ruecknahmeprobe.
+MORTAR = True
 QUER_TOL = 1.0e-4             # Richtungsaenderung [rad], ab der die Reibkraft (Fc) nachgefuehrt wird
 #: Ab dieser Drehung gegen die Richtung, mit der die Quertangente in Kc
 #: steht, wird die Tangente neu gesetzt (neue Matrix). Eine schiefe Tangente
@@ -1082,6 +1091,101 @@ class ContactSystem:
                                     zug=bool(cp.zug), haften=haften, bindung=haften,
                                     starr=self._starr(cp.stiffness)))
 
+    def _knoten_elemente(self) -> dict:
+        """Knoten -> Volumenelemente, einmal je Kontaktsystem gebaut."""
+        ke = getattr(self, "_ke_cache", None)
+        if ke is None:
+            from .assemble import SOLID_TYPES
+            ke = {}
+            for ei, e in enumerate(self.model.elements):
+                if e.typ in SOLID_TYPES:
+                    for n in e.nodes:
+                        ke.setdefault(int(n), []).append(ei)
+            self._ke_cache = ke
+        return ke
+
+    def _slave_facetten(self, cp):
+        """Randflaechen der Slave-Koerper, deren Ecken alle Slave-Knoten sind -
+        die Traeger der Slave-Formfunktionen fuer die Mortar-Gewichte. None,
+        wenn ein beteiligter Koerper nicht linear ist (tet4, hex8, pent6,
+        pyr5): Kontakt an quadratischen Elementen ist gesperrt, und ihre
+        Seitenmitten kennt mortar.py nicht."""
+        from .assemble import SOLID_FACES
+        S = {int(x) for x in cp.slave_nodes}
+        ke = self._knoten_elemente()
+        kand = set()
+        for s in S:
+            kand.update(ke.get(s, ()))
+        zaehl, form, innen = {}, {}, {}
+        for ei in kand:
+            e = self.model.elements[ei]
+            if e.typ not in ("tet4", "hex8", "pent6", "pyr5"):
+                return None
+            cen = self.model.nodes[e.nodes].mean(axis=0)
+            for f in SOLID_FACES[e.typ]:
+                nodes = tuple(int(e.nodes[i]) for i in f)
+                key = tuple(sorted(nodes))
+                zaehl[key] = zaehl.get(key, 0) + 1
+                form[key] = nodes
+                innen[key] = cen
+        rand = [k for k, z in zaehl.items() if z == 1 and all(n in S for n in k)]
+        self._slave_innen = {k: innen[k] for k in rand}
+        return [form[k] for k in rand]
+
+    def _mortar_einsetzen(self, cp, erste: int, facets: list, radius: float):
+        """Die Knoten-gegen-Flaeche-Gewichte der Bedingungen dieses Paars (ab
+        ``erste``) durch duale Mortar-Gewichte ersetzen (MORTAR, mortar.py).
+        Normale, Anfangsspalt und Zustand bleiben; nur wer die Kraft auf der
+        Master-Seite traegt, aendert sich. Knoten, deren Einflussbereich nicht
+        ganz auf der Gegenflaeche liegt (Rand der Ueberdeckung), behalten die
+        Projektion - dort gibt es kein Integral ueber die ganze Einflussflaeche."""
+        from . import mortar as mo
+        if any(len(f) not in (3, 4) for f in facets):
+            return
+        sf = self._slave_facetten(cp)
+        if not sf:
+            return
+        gew = mo.gewichte(self.model.nodes, sf, facets, radius,
+                          slave_innen=getattr(self, "_slave_innen", None),
+                          master_innen=_solid_outward(self.model, cp))
+        geaendert = rand = 0
+        for c in self.cons[erste:]:
+            if c.kind != "surface":
+                continue
+            s = int(c.node)
+            eintrag = gew.get(s)
+            if eintrag is None or eintrag[0] <= 0:
+                continue
+            D, Mj = eintrag
+            w = {int(i): v / D for i, v in Mj.items() if abs(v) > 1e-14 * D}
+            if not w or abs(sum(w.values()) - 1.0) > 1e-6:
+                rand += 1
+                continue
+            groesste = max(w, key=lambda i: abs(w[i]))
+            if abs(w[groesste] - 1.0) <= 1e-9 and all(abs(v) <= 1e-9 for i, v in w.items() if i != groesste):
+                w = {groesste: 1.0}
+            tri = list(w)
+            wj = [w[i] for i in tri]
+            alt_m = c.master
+            if (alt_m and len(alt_m[0]) == len(tri) and set(map(int, alt_m[0])) == set(tri)
+                    and np.allclose([dict(zip(map(int, alt_m[0]), alt_m[1]))[i] for i in tri], wj,
+                                    rtol=0.0, atol=1e-9)):
+                continue                             # dieselben Gewichte (deckungsgleich)
+            n = np.asarray(c.cn[:3], float)
+            c.dofs = np.array(_trans_dofs(s) + sum((_trans_dofs(t) for t in tri), []))
+            c.cn = np.concatenate([n] + [-wi * n for wi in wj])
+            if c.ct is not None:
+                t1, t2 = np.asarray(c.ct[0][:3], float), np.asarray(c.ct[1][:3], float)
+                c.ct = np.vstack([np.concatenate([t1] + [-wi * t1 for wi in wj]),
+                                  np.concatenate([t2] + [-wi * t2 for wi in wj])])
+            c.master = (tri, wj)
+            geaendert += 1
+        if geaendert:
+            self.log.append(f"Kontaktpaar '{cp.name}': {geaendert} Slave-Knoten mit Mortar-Gewichten "
+                            f"(ungleiche Netze)"
+                            + (f", {rand} am Rand der Überdeckung wie bisher Knoten gegen Fläche"
+                               if rand else ""))
+
     def _rand_von(self, cp) -> set:
         """Die Randknoten eines Kontaktpaars als Menge (einmal gebaut)."""
         cache = getattr(self, "_rand_cache", None)
@@ -1251,6 +1355,8 @@ class ContactSystem:
             self._bedingung(cp, s, list(tri), list(wj), n, d, normalen,
                             f"{cp.name}: Knoten {s} -> Facette {tri}", band)
             n_paired += 1
+        if MORTAR:
+            self._mortar_einsetzen(cp, erste, facets, radius)
         # Das Uebermass erst jetzt: welche Form die Fuge hat, sagen die
         # Facetten, die wirklich gepaart wurden - nicht alle Aussenflaechen des
         # Masters. Ein Hexaeder hat sechs davon, und alle sechs zusammen saehen

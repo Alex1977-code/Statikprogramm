@@ -364,10 +364,65 @@ def test_reibung_mit_symmetrischem_loeser():
           f"nur_symmetrisch {gesehen.get('nur_sym')}, Spalte {gesehen.get('D')}, du {du:.1e}")
 
 
+def test_mortar_ungleiche_netze():
+    """Mortar-Gewichte (contact.MORTAR, statik3d/mortar.py, 28.09.2026): bei
+    deckungsgleichen Netzen Knoten auf Knoten (Gewicht 1), bei ungleichen
+    kommt ein gleichmaessiger Druck gleichmaessig an. Pruefmatrix K6 (oben
+    3 x 3, unten 2 x 2, p = 100 N/mm2): vorher sigma_v +74,16 N/mm2 mit hex8,
+    -13,56 mit tet4, an den unteren Knoten 846 / 661 statt 625 cm2."""
+    print("\n--- Mortar: ungleiche Netze geben den Druck weiter ---")
+    from statik3d import mortar as mo
+    from tests import pruefmatrix as pm
+
+    def gitter(n, z, versatz=0):
+        xs = np.linspace(0, 1, n + 1)
+        K = [[xs[i], xs[j], z] for j in range(n + 1) for i in range(n + 1)]
+        F = [(versatz + j * (n + 1) + i, versatz + j * (n + 1) + i + 1,
+              versatz + (j + 1) * (n + 1) + i + 1, versatz + (j + 1) * (n + 1) + i)
+             for j in range(n) for i in range(n)]
+        return np.array(K, float), F
+    Ks, Fs = gitter(3, 1.0)
+    Km, Fm = gitter(3, 1.0, versatz=len(Ks))
+    w = mo.gewichte(np.vstack([Ks, Km]), Fs, Fm, 0.1)
+    fehl = max(abs(v - (D if i == j + len(Ks) else 0.0)) / D for j, (D, Mj) in w.items() for i, v in Mj.items())
+    check("deckungsgleiche Netze: Gewicht 1 auf dem gegenueberliegenden Knoten (auf 1e-12)",
+          fehl < 1e-12, f"{fehl:.1e}")
+    Km, Fm = gitter(2, 1.0, versatz=len(Ks))
+    w = mo.gewichte(np.vstack([Ks, Km]), Fs, Fm, 0.1)
+    last = {}
+    for j, (D, Mj) in w.items():
+        for i, v in Mj.items():
+            last[i] = last.get(i, 0.0) + v
+    soll = {0: 0.0625, 1: 0.125, 2: 0.0625, 3: 0.125, 4: 0.25, 5: 0.125, 6: 0.0625, 7: 0.125, 8: 0.0625}
+    abw = max(abs(last[i + len(Ks)] - a) for i, a in soll.items())
+    check("3 x 3 gegen 2 x 2: an den Master-Knoten genau ihre Einflussflaechen (625 / 1250 / 2500 cm2)",
+          abw < 1e-12, f"max Abweichung {abw:.1e} m2")
+    fall = pm.UngleicheNetze()
+    for typ in ("hex8", "tet4"):
+        m, meta = fall.bauen("hex" if typ == "hex8" else "tet", typ, 1, 0.5, [])
+        res = solver.solve_static(m, workers=1)
+        met = fall.auswerten(m, res, meta)[0]
+        sv = max(abs(float(x["wert"])) for x in met if "σ_v" in x["name"])
+        check(f"K6 {typ}: sigma_v auf 1 N/mm2 homogen (vorher +74,16 hex8 / -13,56 tet4)",
+              res.info.get("contact_converged") and sv < 1.0, f"max |d sigma_v| {sv:.4f} N/mm2")
+    alt = contact.MORTAR
+    contact.MORTAR = False
+    try:
+        m, meta = fall.bauen("hex", "hex8", 1, 0.5, [])
+        res = solver.solve_static(m, workers=1)
+        met = fall.auswerten(m, res, meta)[0]
+        sv = max(abs(float(x["wert"])) for x in met if "σ_v" in x["name"])
+    finally:
+        contact.MORTAR = alt
+    check("Ruecknahme (Knoten gegen Flaeche): K6 hex8 wieder weit daneben (> 10 N/mm2)", sv > 10.0,
+          f"{sv:.2f} N/mm2")
+
+
 def main() -> int:
     for t in (test_spalt_null_und_gleichgewicht, test_kippender_block, test_presspassung_exakt,
               test_feder_bleibt_feder, test_lager_und_spaltelement, test_haftfuge_bindung_bleibt,
-              test_reibung_primal_dual, test_reibung_mit_symmetrischem_loeser):
+              test_reibung_primal_dual, test_reibung_mit_symmetrischem_loeser,
+              test_mortar_ungleiche_netze):
         try:
             t()
         except Exception as ex:             # noqa: BLE001

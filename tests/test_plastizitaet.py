@@ -1704,8 +1704,12 @@ def test_gemeinsam_aendert_nichts_ohne_beides():
     # test_reibung_primal_dual). Die Zerlegungen: Haftzeilen und Quer-
     # tangenten aendern die Matrix, wenn Knoten zwischen Haften und Gleiten
     # wechseln.
+    # Ebenfalls 28.09.2026 (Mortar-Gewichte, contact.MORTAR): der Stempel (4 x 4)
+    # steht auf einem Sockel mit 6 x 6 - ungleiche Netze -, u_max 0,39381 statt
+    # 0,39253 mm (+0,33 %); der Block mit Reibung hat deckungsgleiche Netze
+    # und bleibt, wie er war.
     referenz = {"Kontakt ohne Plastizität: Block mit Reibung": (15, 0, 2.6415669504283543e-06, None),
-                "Kontakt ohne Plastizität: Stempel auf Sockel": (8, 0, 0.00039253163289777303, None),
+                "Kontakt ohne Plastizität: Stempel auf Sockel": (8, 0, 0.00039380952002928657, None),
                 "Plastizität ohne Kontakt: Zugwürfel hex8": (3, 4, 0.010142857142857335, True),
                 "Plastizität ohne Kontakt: Kragträger tet4": (6, 8, 0.00967601273071502, True)}
 

@@ -105,8 +105,9 @@ deren Kräfte allein aus Gleichgewicht und Reibgesetz folgen (K4, K5). Dort ist 
     Reibkraft hatte quer zur Last eine Komponente von 2,51 % bzw. 3,60 % von μN (Befund 5) —
     **behoben 28.09.2026** (Reibung primal-dual, Theoriehandbuch 4): tet4 und hex8 grün,
     Feder ±0,00 %, quer +0,18 % bzw. −0,00 %.
-  * **Ungleiche Netze an der Fuge** (K6): Bei einem homogenen Druck von 100 N/mm² weicht σ_v mit
-    hex8 um +74,16 N/mm² ab, mit tet4 um −13,56 N/mm² (Befund 6).
+  * **Ungleiche Netze an der Fuge** (K6): Bei einem homogenen Druck von 100 N/mm² wich σ_v mit
+    hex8 um +74,16 N/mm² ab, mit tet4 um −13,56 N/mm² (Befund 6) — **behoben 28.09.2026**
+    (duale Mortar-Gewichte, Theoriehandbuch 4): tet4 und hex8 grün, σ_v 0,00 N/mm².
   * Mit tet4 aus dem freien Vernetzer sind K1 und KP1 rot und K2 gelb, weil das Netz an der
     gemeinsamen Fläche nicht konform ist (Befund 2).
 
@@ -282,6 +283,12 @@ eines Slave-Knotens nur auf drei der vier Ecken. Das ist nicht gemessen.
 
 **Besitzer: Löser** (`contact.py`, Löser-Sitzung). Am Drehlager sind die Netze an den
 Kontaktflächen ungleich.
+
+**Behoben 28.09.2026.** Gemessen bestätigt: die unteren Knoten bekamen 846 / 661 statt 625 cm²
+an den Ecken und 2255 statt 2500 in der Mitte - die Kraft eines Slave-Knotens ging über die
+Dreiecksgewichte der geteilten Vierecke. Mit dualen Mortar-Gewichten (`statik3d/mortar.py`)
+genau 625 / 1250 / 2500 cm², K6 tet4 und hex8 grün; Rücknahmeprobe in
+`tests/test_kontakt_exakt` (ohne Mortar wieder +74,16 N/mm²).
 
 ## Gelbe Zellen: was bekannt ist und was auffällt
 
