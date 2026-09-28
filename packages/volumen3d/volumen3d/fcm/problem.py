@@ -5,6 +5,7 @@ um. Alle Groessen in mm, N, N/mm2.
 """
 from __future__ import annotations
 
+import dataclasses
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -58,12 +59,24 @@ class FcmProblem:
         self.tiefe = int(tiefe)
         self.beta_faktor = float(beta_faktor)
         self.verfeinerung = verfeinerung or Verfeinerung()
-        self.gitter = Gitter(geometrie, h, polster, self.verfeinerung)
-        self.gitter.moden_nummerieren(self.p)
-        self.quadratur = Zellquadratur(self.gitter, self.p, self.tiefe, self.alpha)
-        # Zellaggregation (Vorgabe 8.3): Moden schlecht geschnittener Zellen an die Fortsetzung
-        # des Nachbarpolynoms binden; None/0 = aus (nur zum Messen des alpha-Effekts)
-        self.aggregation = Zellaggregation(self.gitter, self.quadratur, aggregation) if aggregation else None
+        # Gitter, Quadratur, Aggregation - und noch einmal, wenn die Aggregation Zellen teilen
+        # muss (schlecht geschnitten, alle wohlgestellten Nachbarn feiner: eine feinere Wurzel
+        # ergaebe Zwangszyklen, Entwurf 4b.2). Die Kinder liegen dann auf der Ebene der Nachbarn.
+        zwang: tuple = tuple(self.verfeinerung.zellen)
+        self.wurzel_teilungen = 0
+        for runde in range(4):
+            v = dataclasses.replace(self.verfeinerung, zellen=zwang) if zwang else self.verfeinerung
+            self.gitter = Gitter(geometrie, h, polster, v)
+            self.gitter.moden_nummerieren(self.p)
+            self.quadratur = Zellquadratur(self.gitter, self.p, self.tiefe, self.alpha)
+            # Zellaggregation (Vorgabe 8.3): Moden schlecht geschnittener Zellen an die Fortsetzung
+            # des Nachbarpolynoms binden; None/0 = aus (nur zum Messen des alpha-Effekts)
+            self.aggregation = Zellaggregation(self.gitter, self.quadratur, aggregation) if aggregation else None
+            if self.aggregation is None or not self.aggregation.zu_teilen or runde == 3:
+                break
+            zwang = zwang + tuple(self.aggregation.zu_teilen)
+            self.wurzel_teilungen += len(self.aggregation.zu_teilen)
+        self.verfeinerung = v
         if self.aggregation is not None:
             # Mit Aggregation braucht alpha nur noch, was keine Wurzel hat (isolierte Splitter):
             # gebundene Zellen wuerden alpha auf die extrapolierten Wurzelmoden wirken lassen, und
@@ -157,7 +170,8 @@ class FcmProblem:
             "beta": self.beta, "beta_faktor": self.beta_faktor, "ordnung_flaeche": self.ordnung_flaeche,
             "zellen": int(len(self.gitter.ijk)), "cut": int((self.gitter.klasse == CUT).sum()),
             "dofs": int(self.gitter.n_dof), "dofs_frei": int(3 * self.zwaenge.statistik["moden_frei"]), "nnz": int(K.nnz),
-            "ebenen": self.gitter.ebenen_verteilung(), "zwaenge": dict(self.zwaenge.statistik),
+            "ebenen": self.gitter.ebenen_verteilung(), "wurzel_teilungen": int(self.wurzel_teilungen),
+            "zwaenge": dict(self.zwaenge.statistik),
             "aggregation": dict(self.aggregation.statistik) if self.aggregation is not None else None,
             "quadraturpunkte": self.quadratur.anzahl_punkte(), "quadratur": dict(self.quadratur.statistik),
             "oberflaechenpunkte": int(len(self.oberflaeche.punkte)), "oberflaeche": dict(self.oberflaeche.statistik),

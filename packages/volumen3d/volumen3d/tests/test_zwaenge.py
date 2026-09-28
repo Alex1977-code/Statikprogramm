@@ -89,13 +89,23 @@ def test_patch_verfeinert():
             U = pr.loesen({"alles": u_exakt})[:, 0]
             eu, es, eo = _fehler(pr, U)
             zw = pr.protokoll["zwaenge"]
-            check(f"{name}, p={p}: u, sigma < 1e-6 mit haengenden Freiheitsgraden", eu < 1e-6 and es < 1e-6 and eo < 1e-6,
+            check(f"{name}, p={p}: u, sigma < 1e-6 mit haengenden Freiheitsgraden, keine Zwangszyklen",
+                  eu < 1e-6 and es < 1e-6 and eo < 1e-6 and zw["zyklen_frei"] == 0,
                   f"u {eu:.1e}, sigma {es:.1e}, Rand {eo:.1e}; Ebenen {pr.protokoll['ebenen']}, haengend F/K/E "
                   f"{zw['haengende_flaechen']}/{zw['haengende_kanten']}/{zw['haengende_ecken']}, Moden haengend {zw['moden_haengend']}, "
-                  f"aggregiert {zw['moden_aggregiert']}, frei {zw['moden_frei']} von {pr.gitter.n_moden}, Ketten {zw['kettenlaenge']}, {time.perf_counter() - t:.1f} s")
+                  f"aggregiert {zw['moden_aggregiert']}, frei {zw['moden_frei']} von {pr.gitter.n_moden}, Ketten {zw['kettenlaenge']}, "
+                  f"Wurzelteilungen {pr.wurzel_teilungen}, {time.perf_counter() - t:.1f} s")
             if p == 2 and name.startswith("Schnittzellen +"):
                 check("  dabei kommen haengende Kanten oder Ecken ohne Flaeche vor (Vorrangregel geprueft)",
                       zw["haengende_kanten"] + zw["haengende_ecken"] > 0, str(zw))
+                # 27.09.2026: hier hatten 21 schlechte Zellen eine feinere Wurzel und geteilte Eckmoden wurden ueber
+                # die Wurzel der feinen Zelle gebunden -> 53 Selbstbezuege. Jetzt: keine Wurzel feiner als ihre Zelle
+                # (Zellen ohne solche Wurzel wuerden geteilt), Eigentuemer geteilter Moden ist die groebste Zelle.
+                ag = pr.aggregation
+                s = np.flatnonzero(ag.schlecht & (ag.wurzel >= 0))
+                check("  keine Wurzel feiner als ihre Zelle, keine Zelle ohne Wurzel oder zu teilen",
+                      (pr.gitter.ebene[ag.wurzel[s]] <= pr.gitter.ebene[s]).all() and ag.statistik["zellen_zu_teilen"] == 0
+                      and ag.statistik["zellen_ohne_wurzel"] == 0, f"Wurzelteilungen {pr.wurzel_teilungen}, {ag.statistik}")
     # kleine Schnittzellen bleiben mit Verfeinerung exakt (Aggregation nach den haengenden Zwaengen)
     extra = ({"typ": "halbraum", "punkt": [80.0 + 2e-5, 0, 0], "normale": [1, 0, 0], "name": "s3"},)
     pr = _problem(2, Verfeinerung(schnitt_ebenen=1), extra=extra)

@@ -10707,10 +10707,15 @@ Der Zwangsauflöser (`fcm/zwaenge.py`) löst dazu je hängender Entität das kle
 V_F·M = N_C (Werte der feinen Basis an Chebyshev-Lobatto-Punkten gegen die grobe Basis) und
 schreibt jede gebundene Mode als Linearkombination der Moden der groben Zelle; Vorrang Fläche >
 Kante > Ecke > Aggregation, Ketten werden bis zu freien Moden aufgelöst (Kettenlänge im
-Protokoll), Selbstbezüge mit Koeffizient 1 sind Tautologien und fallen weg. Die
-Zellaggregation aus 11.4 läuft durch dieselbe Matrix; ihre Wurzeln liegen bevorzugt auf gleicher
-oder gröberer Ebene, weil eine feinere Wurzel an der aggregierten Zelle hängen und die Kette
-zirkulär werden kann (so gemessen: „Zwangszyklus an Mode 2368“, seither 0 Zyklen). Die
+Protokoll). Die Zellaggregation aus 11.4 läuft durch dieselbe Matrix. Ihre Wurzeln sind nie
+feiner als die aggregierte Zelle, und ein Mode, den mehrere schlechte Zellen teilen, gehört der
+gröbsten von ihnen: sonst hängen die Moden der feineren Wurzel ihrerseits an der groben Zelle,
+und die Kette wird zirkulär (im verfeinerten Patch-Test mit dünner Wand 53 Selbstbezüge mit
+Koeffizient 1 und Rest bis 2,45, gemessen 27.09.2026). Mit beiden Regeln laufen alle Ketten
+monoton zu gröberen Ebenen und können nicht zurückkehren; ein Selbstbezug ist seither ein
+Fehler mit Ausnahme, und in allen Abnahmen sind es 0 bei Kettenlänge 2. Findet eine schlechte
+Zelle keine Wurzel gleicher oder gröberer Ebene, obwohl feinere wohlgestellte Nachbarn da sind,
+wird sie geteilt und das Gitter neu gebaut (`wurzel_teilungen` im Protokoll; bisher nie nötig). Die
 Spurbindung reproduziert Polynome vom Grad p exakt (p = 1…3: 1,1e-16 … 4,4e-16), der Patch-Test
 auf lokal verfeinerten Gittern (eine Ebene an einer Ecke, dünne Wand, Schnittanteil 10⁻⁶) hält
 u und σ unter 10⁻⁶ – auch dort, wo hängende Kanten oder Ecken ohne hängende Fläche vorkommen

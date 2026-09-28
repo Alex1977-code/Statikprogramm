@@ -53,9 +53,11 @@ class Zellaggregation:
         self.anteil = werkstoffanteile(gitter, quadratur)
         self.wurzel = np.full(len(gitter.ijk), -1, int)             # -1: wohlgestellt oder ohne Wurzel
         self.schlecht = self.anteil < self.schwelle
+        self.zu_teilen: tuple = ()
         self._wurzeln_zuordnen()
         self.statistik = {"schwelle": self.schwelle, "zellen_schlecht": int(self.schlecht.sum()),
                           "zellen_ohne_wurzel": int((self.schlecht & (self.wurzel < 0)).sum()),
+                          "zellen_zu_teilen": len(self.zu_teilen),
                           "moden_gebunden": 0, "anteil_min": float(self.anteil.min()),
                           "anteil_min_wohl": float(self.anteil[~self.schlecht].min()) if (~self.schlecht).any() else 0.0}
 
@@ -69,25 +71,37 @@ class Zellaggregation:
         return int(self.gitter.zelle_finden(P[None])[0])
 
     def _wurzeln_zuordnen(self) -> None:
+        """Wurzel je schlecht geschnittener Zelle: der wohlgestellte Nachbar auf gleicher oder
+        groeberer Ebene mit der kleinsten Nachbarstufe und dem groessten Werkstoffanteil, sonst
+        die Wurzel eines Nachbarn (ebenfalls nicht feiner). Nie eine feinere Zelle: die hinge
+        mit ihren Moden an der aggregierten Zelle, und die Zwangsketten wuerden zirkulaer
+        (test_zwaenge, duenne Wand: 53 Selbstbezuege mit Rest bis 2,45, 27.09.2026). Zellen, die
+        nur feinere wohlgestellte Nachbarn haben, landen in ``zu_teilen``; FcmProblem teilt sie
+        und baut das Gitter neu, dann liegen ihre Kinder auf der Ebene der Nachbarn."""
+        g = self.gitter
         offen = list(np.flatnonzero(self.schlecht))
         rest = []
+        nur_feiner: set[int] = set()
         for c in offen:
-            beste, best_schluessel = -1, (99, 99, 0.0)
+            beste, best_schluessel = -1, (99, 0.0)
+            feiner_gesehen = False
             for d in _NACHBARN:
                 n = self._nachbar(c, d)
                 if n < 0 or n == c or self.schlecht[n]:
                     continue
+                if g.ebene[n] > g.ebene[c]:
+                    feiner_gesehen = True
+                    continue
                 stufe = abs(d[0]) + abs(d[1]) + abs(d[2])
-                # Wurzeln auf gleicher oder groeberer Ebene zuerst: eine feinere Wurzel koennte an der
-                # aggregierten Zelle haengen, und die Zwangsketten wuerden zirkulaer (fcm/zwaenge.py)
-                feiner = 1 if self.gitter.ebene[n] > self.gitter.ebene[c] else 0
-                schluessel = (feiner, stufe, -self.anteil[n])
+                schluessel = (stufe, -self.anteil[n])
                 if schluessel < best_schluessel:
                     beste, best_schluessel = n, schluessel
             if beste >= 0:
                 self.wurzel[c] = beste
             else:
                 rest.append(c)
+                if feiner_gesehen:
+                    nur_feiner.add(int(c))
         while rest:
             neu = []
             fortschritt = False
@@ -95,7 +109,7 @@ class Zellaggregation:
                 kandidaten = []
                 for d in _NACHBARN:
                     n = self._nachbar(c, d)
-                    if n >= 0 and n != c and self.wurzel[n] >= 0:
+                    if n >= 0 and n != c and self.wurzel[n] >= 0 and g.ebene[self.wurzel[n]] <= g.ebene[c]:
                         kandidaten.append(self.wurzel[n])
                 if kandidaten:
                     self.wurzel[c] = max(kandidaten, key=lambda r: self.anteil[r])
@@ -105,6 +119,9 @@ class Zellaggregation:
             rest = neu
             if not fortschritt:
                 break                                                 # isolierte Zellen ohne Werkstoffnachbar
+        # ohne Wurzel, aber mit feineren wohlgestellten Nachbarn: teilen statt aggregieren
+        self.zu_teilen = tuple((int(g.ebene[c]), int(g.ijk[c, 0]), int(g.ijk[c, 1]), int(g.ijk[c, 2]))
+                               for c in rest if c in nur_feiner and g.ebene[c] < 8)
 
     # -- Moden --------------------------------------------------------------------------
     def _fortsetzung(self, c: int, r: int) -> np.ndarray:
@@ -127,7 +144,13 @@ class Zellaggregation:
         for c in np.flatnonzero(~self.schlecht):
             wohl_mode[g.zell_moden[c]] = True
         eigentuemer = np.full(g.n_moden, -1, int)
-        reihenfolge = sorted(np.flatnonzero(self.schlecht & (self.wurzel >= 0)), key=lambda c: -self.anteil[self.wurzel[c]])
+        # Eigentuemer eines geteilten Modes ist die groebste schlechte Zelle: ein Eckmode, den eine
+        # grobe und eine feine schlechte Zelle teilen, wuerde sonst ueber die Wurzel der feinen Zelle
+        # gebunden, deren Moden (haengende Ecken) wiederum an der groben Zelle haengen - Zwangszyklus
+        # (test_zwaenge, duenne Wand, 27.09.2026: Mode 582 -> 6605 -> 582). Mit dem groebsten Eigentuemer
+        # laufen alle Zwangsketten monoton zu groeberen Ebenen.
+        reihenfolge = sorted(np.flatnonzero(self.schlecht & (self.wurzel >= 0)),
+                             key=lambda c: (int(g.ebene[c]), -self.anteil[self.wurzel[c]]))
         for c in reihenfolge:
             for i in g.zell_moden[c]:
                 if not wohl_mode[i] and eigentuemer[i] < 0 and int(i) not in bereits:

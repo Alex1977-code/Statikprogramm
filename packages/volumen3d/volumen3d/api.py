@@ -233,10 +233,6 @@ class FcmSolver:
                     s_e, u_e = np.zeros((0, 6)), np.zeros((0, 3))
                 ebenen = []
                 warn: list[str] = []
-                zr = float(pr.zwaenge.statistik.get("zyklen_rest_max", 0.0))
-                if zr > 1e-9:
-                    warn.append(f"Zwangszyklus mit Rest {zr:.2e}: {pr.zwaenge.statistik['zyklen_frei']} Moden an haengenden/"
-                                f"aggregierten Zellen frei gelassen; Stetigkeit dort nicht garantiert (Verfeinerung an der Stelle aendern)")
                 for f in pr.geometrie.grundformen():
                     if getattr(f, "defekt", 0.0) > 1e-3:
                         warn.append(f"STL {f.name!r}: Huelle hat kleine Luecken (Windungszahl-Defekt {f.defekt:.3f}); "

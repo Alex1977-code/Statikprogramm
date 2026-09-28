@@ -469,20 +469,25 @@ gleichmäßigen Gitters), Lamé aus STL wie aus CSG, Innen/Außen-Test an einem 
   beiden groben Nachbarn die gemeinsame Kante teilen). Danach die **Zellaggregation** nur noch für
   Moden, die noch frei sind: so bleibt die Stetigkeit über hängende Flächen auch bei schlecht
   geschnittenen feinen Zellen erhalten, und lineare Felder bleiben exakt (beide Vorschriften
-  reproduzieren sie). Ketten (Meister selbst gebunden) werden durch Einsetzen aufgelöst. Ein
-  Selbstbezug (der Mode taucht in seiner eigenen aufgelösten Vorschrift auf) ist mit
-  Koeffizient 1 und leerem Rest eine Tautologie – zwei Vorschriften mit derselben Spur – und
-  der Mode bleibt frei (`zyklen_frei`); mit Koeffizient c ≠ 1 wird nach dem Mode aufgelöst
-  (`zyklen_geloest`); Koeffizient 1 mit Rest ≠ 0 ist eine Bedingung an die Meistermoden, die
-  die Substitution nicht ausdrücken kann – der Mode bleibt frei, der größte Rest steht im
-  Protokoll (`zyklen_rest_max`), die Vertragsschicht warnt (Gutachten 27.09.). Die Wurzelwahl
-  der Aggregation (gleiche oder gröbere Ebene zuerst) hält Selbstbezüge aus den Abnahmen
-  heraus (Kirsch, Lamé, Kragarm: 0); im verfeinerten Patch-Test (`test_zwaenge`, dünne Wand
-  mit vielen aggregierten feinen Zellen) sind es 53 mit Rest bis 2,45 bei weiterhin u, σ <
-  10⁻⁶ – für lineare Felder sind die Bedingungen also erfüllt, für allgemeine Felder ist die
-  Stetigkeit an diesen Moden nicht bewiesen. **Offen (Teilprojekt 3):** die Konfiguration
-  verstehen und die Bedingung an die Meister ausdrücken. Entscheidung des Anwenders vom
-  27.09.2026: Stufe 1 mit der Warnung zusammenführen, Klärung in Teilprojekt 3.
+  reproduzieren sie). Ketten (Meister selbst gebunden) werden durch Einsetzen aufgelöst.
+- **Selbstbezüge gibt es nicht mehr (28.09.2026).** Im verfeinerten Patch-Test (`test_zwaenge`,
+  dünne Wand) traten 53 Selbstbezüge mit Koeffizient 1 und Rest bis 2,45 auf; die Diagnose
+  zeigte zwei Ursachen. Erstens bekamen 21 schlecht geschnittene grobe Zellen eine *feinere*
+  Wurzel, weil alle wohlgestellten Nachbarn feiner waren; deren Moden hingen ihrerseits an der
+  groben Zelle. Zweitens wurde ein Eckmode, den eine grobe und eine feine schlechte Zelle
+  teilen, über die Wurzel der feinen Zelle gebunden, deren hängende Ecken wiederum an der groben
+  Zelle hingen (Mode 582 → 6605 → 582). Regeln seither: eine Wurzel ist nie feiner als ihre
+  Zelle (auch im zweiten Durchgang über die Wurzeln der Nachbarn nicht); der Eigentümer eines
+  geteilten Modes ist die gröbste schlechte Zelle; findet eine Zelle so keine Wurzel, obwohl sie
+  feinere wohlgestellte Nachbarn hat, meldet sie `zu_teilen`, `FcmProblem` teilt sie
+  (`Verfeinerung.zellen`) und baut Gitter, Quadratur und Aggregation neu (bis zu vier Runden,
+  Protokoll `wurzel_teilungen`). Damit laufen alle Zwangsketten monoton zu gröberen Ebenen –
+  hängende Moden zeigen auf gröbere Zellen, aggregierte auf Wurzeln gleicher oder gröberer
+  Ebene, Wurzelmoden sind nie aggregiert – und können nicht zurückkehren; ein Selbstbezug ist
+  darum ein Fehler, den `Zwaenge` mit Ausnahme meldet. Gemessen: in allen drei verfeinerten
+  Patch-Konfigurationen 0 Zyklen bei Kettenlänge 2, u und σ unverändert < 10⁻⁶; die Teilung
+  war in keinem Fall nötig (die Wurzeln der Nachbarn reichten), ihr Mechanismus ist in
+  `test_oktree` (`Verfeinerung.zellen`) geprüft.
 - Ergebnis wie bisher eine Zwangsmatrix C (n_dof × n_frei); Löser, Lasten und Auswertung bleiben
   unverändert.
 
