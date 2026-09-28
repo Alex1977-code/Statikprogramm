@@ -1961,7 +1961,7 @@ class StaticSystem:
         buch, self._nachweis_buch = getattr(self, "_nachweis_buch", None), None
         return None if buch is None else buch.als_dict(self.zeit_faktorisierung)
 
-    def gerandet(self, Kff, C=None):
+    def gerandet(self, Kff, C=None, D=None):
         """Kff mit dem Lagrange-Rand der Hilfsfesselung - und, mit ``C``, den
         exakten Kontaktbedingungen (contact.ContactSystem.system_matrizen).
 
@@ -1989,7 +1989,17 @@ class StaticSystem:
             return Kff
         B = bloecke[0] if len(bloecke) == 1 else sparse.vstack(bloecke, format="csr")
         m = B.shape[0]
-        return sparse.bmat([[Kff, B.T],
+        oben = B.T
+        if D is not None and D.shape[1] > 0 and D.nnz:
+            # Kopplung der Reibkraft an den Multiplikator (contact.D_kopplung,
+            # 28.09.2026): die Spalte -mu q lam_n steht neben C^T - das
+            # System ist damit unsymmetrisch (pypardiso Typ 11 ohnehin, MUMPS
+            # waehlt sym=0 an ist_symmetrisch)
+            rand = self._rand
+            Dfull = D if rand == 0 else sparse.hstack(
+                [sparse.csr_matrix((D.shape[0], rand)), D], format="csr")
+            oben = (oben + Dfull).tocsr()
+        return sparse.bmat([[Kff, oben],
                             [B, sparse.csr_matrix((m, m))]], format="csc")
 
     @property
@@ -2090,7 +2100,8 @@ class StaticSystem:
     def solve(self, F: np.ndarray, K_extra: sparse.spmatrix = None,
               F_extra: np.ndarray = None, us: np.ndarray = None,
               signatur=None, C_extra: sparse.spmatrix = None,
-              b_extra: np.ndarray = None, c_skala=None) -> np.ndarray:
+              b_extra: np.ndarray = None, c_skala=None,
+              D_extra: sparse.spmatrix = None) -> np.ndarray:
         """Loesen fuer Lastvektor F; optional zusaetzliche Steifigkeit (Kontakt)
         und vorgegebene Verschiebungen ``us`` des Lastfalls (Zwangsverformungen,
         wirksam nur an gesperrten FHG): K_ff u_f = F_f - K_fs u_s.
@@ -2161,6 +2172,11 @@ class StaticSystem:
                         s = self._c_skala
                         C_extra = C_roh * s
                     b_roh = np.asarray(b_extra, float)
+                    D_f = None
+                    if D_extra is not None and D_extra.nnz:
+                        # Kraft D lambda = D (-s mu) auf das Tragwerk: nach links
+                        # als Spalte D s am Multiplikator (siehe gerandet)
+                        D_f = (D_extra.tocsr()[self.fi] @ sparse.diags(s)).tocsr()
                     # Augmentierung (Golub/Greif, 27.09.2026): K + C^T S C im
                     # Steifigkeitsblock und C^T S b auf der rechten Seite.
                     # Dieselbe Loesung und derselbe Multiplikator (mit C u = b
@@ -2185,7 +2201,8 @@ class StaticSystem:
                     Ktff = Kt[self.fi][:, self.fi].tocsc()
                     self.kontakt_loeser_freigeben()
                     ls = LinearSolver(self.gerandet(
-                        Ktff, None if C_extra is None else C_extra[:, self.fi]))
+                        Ktff, None if C_extra is None else C_extra[:, self.fi],
+                        None if C_extra is None else D_f))
                     self._loeser_merken(ls)
                     self.faktorisierungen = getattr(self, "faktorisierungen", 0) + 1
                 self.backend = ls.backend
@@ -3425,7 +3442,20 @@ class _KontaktImNewton:
         if s is not None:
             s["voll"] = s["voll"] or bool(voll)
             s["abgekuerzt"] = s["abgekuerzt"] or halter["abgekuerzt"]
+            if nach == vor + 1 and not halter["abgekuerzt"] and not laeufe[-1].get("konvergiert", True):
+                # ein voller Kontaktlauf der Stufe endete am Deckel (28.09.2026)
+                s["deckel"] = True
         return u_
+
+    def deckel_in_stufe(self) -> bool:
+        """Endete in dieser Stufe ein voller Kontaktlauf am Deckel, nachdem
+        abgekuerzt worden war? Dann wird sie verschachtelt wiederholt: vom
+        abgekuerzten Zustand aus lief die Reibung am gequetschten Block (vier
+        Laststufen, Reibung primal-dual) in einen Richtungszyklus - Residuum
+        2,6 % der Kontaktkraft, acht Knoten wechselten jede Runde die
+        Richtung, bis zur Grenze der Richtungsrunden; verschachtelt nicht."""
+        s = self._stufe
+        return bool(s and s.get("deckel") and s["abgekuerzt"])
 
     def stufe_beginnt(self):
         self._stufen += 1
@@ -3441,6 +3471,9 @@ class _KontaktImNewton:
 
     def naechster(self, aenderungen) -> str:
         s, d = self._stufe, list(aenderungen)
+        if self.deckel_in_stufe():
+            s["grund"] = "endete ein voller Kontaktlauf am Deckel"
+            return "zurueck"
         s["grund"] = None
         if s["bezug"] is None and s["voll"]:
             # Die Abnahme - die erste volle Loesung der Stufe nach
@@ -3471,6 +3504,33 @@ class _KontaktImNewton:
             s["gefallen"] = True
         s["kurz"] += 1
         return "kurz"
+
+    def merken(self):
+        """Marke fuer einen Ruecksprung an den Anfang einer Laststufe
+        (plastizitaet.HALBIEREN_MAX): Kontaktzustand vor dem Startwert und die
+        Zahl der Laeufe bis dahin."""
+        return {"start": self.halter["start"], "lauf": len(self.res.info.get("laeufe") or [])}
+
+    def deckel_seit(self, marke) -> bool:
+        """Endete seit der Marke ein voller (nicht abgekuerzter, nicht
+        verworfener) Kontaktlauf am Deckel? Dann rechnet der Newton der
+        Plastizitaet auf einer unzuverlaessigen Loesung weiter - die Stufe wird
+        halbiert (plastizitaet.HALBIEREN_MAX)."""
+        laeufe = self.res.info.get("laeufe") or []
+        return any(not e.get("konvergiert", True) and not e.get("abgekuerzt") and not e.get("verworfen")
+                   for e in laeufe[marke["lauf"]:])
+
+    def zurueck_an(self, marke) -> int:
+        """Den Kontaktzustand der Marke wieder einsetzen; die Laeufe seit ihr
+        sind verworfen (im Laufbuch markiert). Rueckgabe: ihre Zahl."""
+        self.halter["start"] = marke["start"]
+        laeufe = self.res.info.get("laeufe") or []
+        verworfen = laeufe[marke["lauf"]:]
+        for e in verworfen:
+            e["verworfen"] = True
+        _laufbuch_zaehlen(self.res)
+        self._stufe = None
+        return len(verworfen)
 
     def zurueck(self):
         s = self._stufe
@@ -5475,12 +5535,17 @@ def _kontaktsystem(system: StaticSystem, model: Model, uebermass, log: list):
     return cs
 
 
-def _kontaktlast(C, lam, ndof: int) -> np.ndarray:
+def _kontaktlast(C, lam, ndof: int, D=None) -> np.ndarray:
     """Kraefte der exakten Kontaktbedingungen auf das Tragwerk, C^T lambda -
-    fuer die Auflagerreaktionen: sie stehen weder in Kc u noch in Fc."""
+    fuer die Auflagerreaktionen: sie stehen weder in Kc u noch in Fc. Dazu
+    die implizit gekoppelte Reibkraft D lambda (contact.D_kopplung)."""
     if C is None or lam is None or not len(lam):
         return np.zeros(ndof)
-    return np.asarray(C.T @ np.asarray(lam, float), float).ravel()
+    lam = np.asarray(lam, float)
+    f = np.asarray(C.T @ lam, float).ravel()
+    if D is not None and D.shape[1] == len(lam):
+        f = f + np.asarray(D @ lam, float).ravel()
+    return f
 
 
 def _kontaktlauf_angaben(cs, u, model: Model, grund: str) -> dict:
@@ -5578,6 +5643,12 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         max_iter = int(kurz)
     log: list[str] = []
     cs = _kontaktsystem(system, model, uebermass, log)
+    # Die Kopplungsspalte der Reibung (contact._gekoppelt) macht das System
+    # unsymmetrisch; ama (LDL^T) verlangt Symmetrie
+    try:
+        cs.nur_symmetrisch = str(getattr(parallel.settings(), "solver_backend", "") or "").strip() == "ama"
+    except Exception:                          # noqa: BLE001 - ohne Einstellungen: PARDISO/SuperLU
+        cs.nur_symmetrisch = False
     cs.set_force_scale(float(np.abs(F).max()) if F.size else 1.0)
     cs.initialize()
     # ContactSystem.signatur() kennt nur den Kontakt. Mit einem K_zusatz, das
@@ -5599,7 +5670,8 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         if K_zusatz is not None:
             Kc = Kc + K_zusatz
         u = system.solve(F, Kc, Fc, us=us, signatur=signatur(), C_extra=C, b_extra=b,
-                         c_skala=getattr(cs, "c_skala", None))
+                         c_skala=getattr(cs, "c_skala", None),
+                         D_extra=getattr(cs, "D_kopplung", None))
         lam = system.kontakt_multiplikatoren
         # Vor _update_states (das setzt Zustaende um): passt der eingefrorene
         # Zustand zu dieser Last? Bis zum 22.09.2026 hiess der Lauf immer
@@ -5612,7 +5684,8 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         passt = not (verst["zug"] or verst["durchdringung"] or verst["kegel"] or verst["gegen"])
         if passt:
             cs._update_states(u, lam)        # nur zur Auswertung: g, Fn, Ft je Bedingung
-            R = system.reactions(u, F + Fc + _kontaktlast(C, lam, model.ndof), Kc)
+            R = system.reactions(u, F + Fc + _kontaktlast(C, lam, model.ndof,
+                                                          getattr(cs, "D_kopplung", None)), Kc)
             Rsup = cs.support_reactions(model.nn)
             n6 = model.nn * NDOF
             Rk = R[:n6].reshape(-1, NDOF)
@@ -5674,7 +5747,8 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
         # Loesung und die Multiplikatoren der exakten Bedingungen (lambda,
         # Druck positiv) - beide gehoeren zu diesem Schritt
         u_ = system.solve(F, Kc, Fc, us=us, signatur=signatur(), C_extra=C, b_extra=b,
-                          c_skala=getattr(cs, "c_skala", None))
+                          c_skala=getattr(cs, "c_skala", None),
+                          D_extra=getattr(cs, "D_kopplung", None))
         return u_, system.kontakt_multiplikatoren
 
     if not cs.cons:
@@ -5871,10 +5945,10 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
     # Abgekuerzt: an der Schrittgrenze ohne Deckel beendet - mit Absicht
     abgekuerzt = bool(kurz) and not converged and not deckel and not probelauf
     if kurz and warm and converged and u is not None:
-        if cs.warmstart_verstoesse(u, zuruecksetzen=True):
+        if cs.warmstart_verstoesse(u, zuruecksetzen=True, fremd=not fortsetzung):
             converged, abgekuerzt = False, True
     elif warm and converged and u is not None:
-        n_v = cs.warmstart_verstoesse(u)
+        n_v = cs.warmstart_verstoesse(u, fremd=not fortsetzung)
         from .contact import RESIDUUM_ANTEIL as _RES
         kraft_gegen = float(getattr(cs, "warmstart_gegen_kraft", 0.0))
         kontaktkraft = float(getattr(cs, "kontaktkraft", 0.0))
@@ -5928,7 +6002,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             fortschritt = kraft_gegen < gegen_vorher
             fortsetzbar = fortsetzung and fortschritt
             if (fortsetzbar and versuch < FORTSETZUNGEN_MAX) or wenige:
-                cs.warmstart_verstoesse(u, zuruecksetzen=True)
+                cs.warmstart_verstoesse(u, zuruecksetzen=True, fremd=not fortsetzung)
                 log.append(f"Warmstart: {n_v} gleitende Knoten bewegten sich gegen ihre "
                            f"Richtung - auf Haften zurueckgesetzt, Iteration fortgesetzt "
                            f"(Anlauf {versuch + 1}, Maß {kraft_gegen / 1e3:.4g} kN)")
@@ -5973,7 +6047,8 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             if eingefroren_verworfen is not None:         # der Neustart kennt ihn nicht
                 cinfo2["contact_frozen_verworfen"] = eingefroren_verworfen
             return u2, R2, cons2, cf2, cinfo2
-    R = system.reactions(u, F + (Fc if Fc is not None else 0.0) + _kontaktlast(C, lam, model.ndof), Kc)
+    R = system.reactions(u, F + (Fc if Fc is not None else 0.0)
+                         + _kontaktlast(C, lam, model.ndof, getattr(cs, "D_kopplung", None)), Kc)
     # Einseitige Lager als Auflagerreaktionen ausweisen
     Rsup = cs.support_reactions(model.nn)
     n6 = model.nn * NDOF

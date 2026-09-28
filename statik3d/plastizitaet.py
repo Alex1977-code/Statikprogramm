@@ -965,6 +965,18 @@ BEZUG_PLASTISCHE_LAST = True
 #: Schlussabnahme verfehlt wird (_newton, 27.09.2026). 0 = wie bis dahin:
 #: pruefen und "nicht konvergiert" melden.
 ABSCHLUSS_NACHSCHRITTE = 5
+#: Laeuft der Newton einer Laststufe weg - die Aenderung waechst zweimal
+#: hintereinander, nachdem sie einmal gefallen war -, wird die Stufe vom
+#: Startwert an in zwei halben Stufen wiederholt, hoechstens so oft je
+#: urspruenglicher Stufe (28.09.2026). Gemessen am gequetschten Block mit
+#: Reibung primal-dual: mit 1 und 8 Laststufen konvergiert, mit 4 lief Stufe 3
+#: weg (Aenderung 1,6 - 1,8 - 4,4 - 7,2 - ... - 26, nach 40 Schritten "nicht
+#: konvergiert") - ob eine Rechnung konvergierte, hing an der Teilung der
+#: Last. Mit dem Halbieren (2 Stufen: dreimal, 4 Stufen: zweimal) geben 1, 2, 4
+#: und 8 Laststufen denselben Zustand: u_max 42,667 mm, eps_p 12,99 %.
+#: Dasselbe Kriterium beendet schon die abgekuerzte Iteration
+#: (solver._KontaktImNewton.naechster).
+HALBIEREN_MAX = 4
 
 
 def _bezug(norm_F: float, F_p_neu: np.ndarray) -> float:
@@ -988,7 +1000,7 @@ def _bezug(norm_F: float, F_p_neu: np.ndarray) -> float:
 
 def _stufe_gemeinsam(model, F, k: int, stufen: int, u, basis: "Zustand", F_p, einst: "Plastizitaet",
                      elemente: list, norm_F: float, info: dict, log, progress, _loesen,
-                     kontakt):
+                     kontakt, faktor: float = None, letzte: bool = None):
     """Eine Laststufe des Newton mit abgekuerztem Kontakt - die gemeinsame
     Iteration von Fliessen und Kontakt (siehe :func:`_newton`). ``u`` ist der
     Startwert der Stufe, mit voll auskonvergiertem Kontakt geloest.
@@ -1009,7 +1021,10 @@ def _stufe_gemeinsam(model, F, k: int, stufen: int, u, basis: "Zustand", F_p, ei
     entscheidet der Loeser (``kontakt.naechster``), nicht diese Schleife."""
     n_max = int(max(1, einst.iterationen))
     tol = float(einst.toleranz)
-    F_k = (k / stufen) * F
+    # Lastfaktor und "letzte Stufe" kommen seit dem Halbieren (HALBIEREN_MAX)
+    # vom Aufrufer; ohne Angabe wie bisher k/stufen
+    F_k = ((k / stufen) if faktor is None else float(faktor)) * F
+    letzte = (k == stufen) if letzte is None else bool(letzte)
     F_p_stufe, zustand_stufe = F_p, basis
     abschluss = None            # (F_p, Zustand), mit denen der Abschluss gerechnet ist
     je_schritt: list = []       # die Aenderungen dieser Stufe, fuer kontakt.naechster
@@ -1025,6 +1040,10 @@ def _stufe_gemeinsam(model, F, k: int, stufen: int, u, basis: "Zustand", F_p, ei
             progress(f"Plastizität: Laststufe {k}/{stufen}, Newton-Schritt {it}: "
                      f"{s_info['fliessend']} Elemente fließen, Änderung {diff:.2e}")
         if diff <= tol and not kontakt.abgekuerzt():
+            if getattr(kontakt, "deckel_in_stufe", lambda: False)():
+                # ein voller Kontaktlauf dieser Stufe endete am Deckel: nicht
+                # abnehmen, verschachtelt wiederholen (solver._KontaktImNewton)
+                return None
             if abschluss is not None:
                 # Schlussabnahme bestanden: F_p und Zustand sind die, mit denen
                 # der Abschluss gerechnet ist - wie verschachtelt
@@ -1037,7 +1056,7 @@ def _stufe_gemeinsam(model, F, k: int, stufen: int, u, basis: "Zustand", F_p, ei
             # Unter der Toleranz, aber die Loesung dazu war abgekuerzt: ein
             # Schritt mit vollem Kontakt nimmt sie ab, ausserhalb des Budgets
             grenze += 1
-            if k == stufen:
+            if letzte:
                 u = _loesen(F + F_p_neu, None, "Abschluss", None, None, True)
                 abschluss = (F_p_neu, zustand_neu)
                 continue
@@ -1124,9 +1143,22 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
     diff = 0.0
     basis_anfang = basis
     rest = None                 # gemeinsam: der Abschluss hat die letzte Stufe schon abgenommen
-    for k in range(1, stufen + 1):
-        F_k = (k / stufen) * F
+    # Lastfaktoren der Stufen mit ihrer Halbierungstiefe; eine weglaufende
+    # Stufe wird vom Startwert an in zwei halben wiederholt (HALBIEREN_MAX)
+    faktoren = [(k_ / stufen, 0) for k_ in range(1, stufen + 1)]
+    info["halbiert"] = 0
+    lam_alt = 0.0
+    k = 0
+    while k < len(faktoren):
+        lam_k, tiefe = faktoren[k]
+        k += 1
+        letzte = k == len(faktoren)
+        F_k = lam_k * F
         basis_anfang = basis
+        # Was ein Ruecksprung an den Stufenanfang braucht: Loesung, Zustand,
+        # F_p und - mit Kontakt - der Kontaktzustand vor dem Startwert
+        vorher = (u, basis, F_p)
+        marke = kontakt.merken() if kontakt is not None and hasattr(kontakt, "merken") else None
         # Startwert der Laststufe: elastische Loesung mit dem bisherigen F_p -
         # ein Rueckwaertseinsetzen auf der schon vorhandenen Faktorisierung
         u = _loesen(F_k + F_p, None, "Laststufe", k, 0)
@@ -1136,7 +1168,8 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
             u_start = u
             kontakt.stufe_beginnt()
             vorab = _stufe_gemeinsam(model, F, k, stufen, u, basis, F_p, einst, elemente,
-                                     norm_F, info, log, progress, _loesen, kontakt)
+                                     norm_F, info, log, progress, _loesen, kontakt,
+                                     faktor=lam_k, letzte=letzte)
             if vorab is None:
                 # Verschachtelt wiederholen, vom Startwert der Stufe: der
                 # Loeser setzt den Kontaktzustand auf den nach dem Startwert
@@ -1153,7 +1186,12 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
                                f"Newton-Schritten nicht konvergiert (Änderung {diff:.2e} > "
                                f"{einst.toleranz:g})")
             basis, F_p = zustand_stufe, F_p_stufe
+            lam_alt = lam_k
             continue
+        je_schritt: list = []
+        gefallen = False
+        weglauf = False
+        erreicht = False
         for it in range(1, int(max(1, einst.iterationen)) + 1):
             F_p_neu, zustand_neu, s_info = schritt(model, u, basis, einst, elemente, log,
                                                    tangente=True)
@@ -1162,9 +1200,26 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
             info["iterationen"] += 1
             info["verlauf"].append((k, it, diff, s_info["fliessend"]))
             if progress is not None:
-                progress(f"Plastizität: Laststufe {k}/{stufen}, Newton-Schritt {it}: "
+                progress(f"Plastizität: Laststufe {k}/{len(faktoren)}, Newton-Schritt {it}: "
                          f"{s_info['fliessend']} Elemente fließen, Änderung {diff:.2e}")
             if diff <= float(einst.toleranz):
+                erreicht = True
+                break
+            je_schritt.append(diff)
+            if len(je_schritt) >= 2 and je_schritt[-1] < je_schritt[-2]:
+                gefallen = True
+            if (gefallen and len(je_schritt) >= 3 and tiefe < HALBIEREN_MAX
+                    and je_schritt[-1] > je_schritt[-2] > je_schritt[-3]):
+                weglauf = True
+                break
+            if (tiefe < HALBIEREN_MAX and marke is not None
+                    and getattr(kontakt, "deckel_seit", lambda _m: False)(marke)):
+                # Ein Kontaktlauf dieser Stufe endete am Deckel: auf dieser Loesung
+                # weiterzurechnen hiesse raten - halbieren wie beim Weglaufen. Am
+                # gequetschten Block (4 Stufen) standen so 650 von 752 Zerlegungen
+                # in verworfenen Versuchen, je Lauf 69 bis zur Grenze der
+                # Richtungsrunden (28.09.2026)
+                weglauf = True
                 break
             dK = s_info["dK"]
             if dK.nnz == 0:
@@ -1174,12 +1229,33 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
             else:
                 u = _loesen(F_k + F_p_neu + dK @ u, dK, "Newton", k, it)
                 info["faktorisierungen"] += 1
-        else:
+        if weglauf:
+            # Zurueck an den Stufenanfang, die Stufe in zwei halben wiederholen
+            u, basis, F_p = vorher
+            mitte = 0.5 * (lam_alt + lam_k)
+            faktoren[k - 1] = (lam_k, tiefe + 1)
+            faktoren.insert(k - 1, (mitte, tiefe + 1))
+            k -= 1
+            info["halbiert"] += 1
+            verworfen = kontakt.zurueck_an(marke) if marke is not None else None
+            if log is not None:
+                if len(je_schritt) >= 3 and je_schritt[-1] > je_schritt[-2] > je_schritt[-3]:
+                    warum = (f"läuft weg (Änderung {je_schritt[-3]:.2e} - {je_schritt[-2]:.2e} - "
+                             f"{je_schritt[-1]:.2e})")
+                else:
+                    warum = "- ein Kontaktlauf endete nicht konvergiert"
+                log.append(f"Plastizität: Laststufe bis {lam_k * 100:.4g} % der Last {warum}; "
+                           f"sie wird vom Startwert an in zwei halben Stufen wiederholt"
+                           + ("" if verworfen is None else f" ({verworfen} Kontaktläufe verworfen)"))
+            continue
+        if not erreicht:
             info["konvergiert"] = False
             if log is not None:
                 log.append(f"Plastizität: Laststufe {k} nach {einst.iterationen} Newton-Schritten "
                            f"nicht konvergiert (Änderung {diff:.2e} > {einst.toleranz:g})")
         basis, F_p = zustand_stufe, F_p_stufe
+        lam_alt = lam_k
+    stufen_gerechnet = len(faktoren)
     if rest is None:
         # Die letzte Loesung gehoert zum letzten Zustand: im Gleichgewicht ist
         # K u = F + F_p, also genau diese elastische Loesung
@@ -1204,15 +1280,15 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
                 F_p_neu, zustand_neu, s_info = schritt(model, u, basis_anfang, einst, elemente, log,
                                                        tangente=True)
                 info["iterationen"] += 1
-                info["verlauf"].append((stufen, -nach, rest, s_info["fliessend"]))
+                info["verlauf"].append((stufen_gerechnet, -nach, rest, s_info["fliessend"]))
                 if progress is not None:
                     progress(f"Plastizität: Abschluss verfehlt (Änderung {rest:.2e}), Nachschritt {nach}: "
                              f"{s_info['fliessend']} Elemente fließen")
                 dK = s_info["dK"]
                 if dK.nnz == 0:
-                    u = _loesen(F + F_p_neu, None, "Newton", stufen, -nach)
+                    u = _loesen(F + F_p_neu, None, "Newton", stufen_gerechnet, -nach)
                 else:
-                    u = _loesen(F + F_p_neu + dK @ u, dK, "Newton", stufen, -nach)
+                    u = _loesen(F + F_p_neu + dK @ u, dK, "Newton", stufen_gerechnet, -nach)
                     info["faktorisierungen"] += 1
                 F_p, basis, _s = schritt(model, u, basis_anfang, einst, elemente, None)
                 u = _loesen(F + F_p, None, "Abschluss", None, None)
@@ -1234,8 +1310,9 @@ def _newton(model, F, loesen, loesen_tangente, einst: Plastizitaet, elemente: li
     if log is not None:
         log.append(f"Plastizität: {info['fliessend']} Elemente fließen, ε_p,eq max "
                    f"{info['eps_p_max'] * 100:.3f} %, {info['iterationen']} Newton-Schritte in "
-                   f"{stufen} Laststufen ({info['faktorisierungen']} Faktorisierungen, "
-                   f"konsistente Tangente)"
+                   f"{stufen_gerechnet} Laststufen"
+                   + (f" ({info['halbiert']}-mal halbiert)" if info.get("halbiert") else "")
+                   + f" ({info['faktorisierungen']} Faktorisierungen, konsistente Tangente)"
                    + ("" if info["konvergiert"] else " - nicht konvergiert"))
     return u, basis, F_p, info
 

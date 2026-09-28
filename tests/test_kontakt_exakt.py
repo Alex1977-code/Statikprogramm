@@ -124,7 +124,18 @@ def test_kippender_block():
     g_f = max(-float(c["gap"]) for c in zu_f)
     check("Ruecknahme (Feder): geschlossene Knoten durchdringen die Platte (max -g > 1e-13 m)",
           res_f.info.get("contact_converged") and g_f > 1e-13, f"max Durchdringung {g_f:.2e} m")
-    du = float(np.abs(res.u[:, :3] - res_f.u[:, :3]).max()) / float(np.abs(res.u[:, :3]).max())
+    # Seit der Reibung primal-dual (28.09.2026) rechnet der exakte Weg auch
+    # die Reibung anders als der Feder-Weg (Haftzeilen, Richtung aus der
+    # Versuchskraft): fuer den Vergleich der **Normalbedingung** laeuft der
+    # exakte Weg hier noch einmal mit der Reibung der Feder (gemessen: mit
+    # beiden Neuerungen 9,2e-3 auseinander, davon 9,1e-3 die Reibung)
+    alt_pd = contact.REIBUNG_PRIMAL_DUAL
+    contact.REIBUNG_PRIMAL_DUAL = False
+    try:
+        res_e = solver.solve_static(_block_auf_platte(kipp=1.5))
+    finally:
+        contact.REIBUNG_PRIMAL_DUAL = alt_pd
+    du = float(np.abs(res_e.u[:, :3] - res_f.u[:, :3]).max()) / float(np.abs(res_e.u[:, :3]).max())
     check("beide Wege liefern dieselbe Verformung bis auf die Federdurchdringung (< 1e-3)", du < 1e-3, f"{du:.1e}")
 
 
@@ -257,9 +268,106 @@ def test_haftfuge_bindung_bleibt():
           f"{len(offen2)} offen, {res2.info.get('contact_iterations')} Schritte, konvergiert {res2.info.get('contact_converged')}")
 
 
+def _coulomb(m):
+    """Rechnen und am Endzustand das Reibgesetz pruefen: je gleitendem Knoten
+    der Winkel zwischen Reibkraft (Ft-Konvention, parallel zum Weg) und
+    Tangentialweg d_t = C_t u, je haftendem |Ft| / (mu Fn)."""
+    import math
+    letzte = {}
+    alt = contact.ContactSystem.results
+
+    def gemerkt(self):
+        letzte["cs"] = self
+        return alt(self)
+    contact.ContactSystem.results = gemerkt
+    try:
+        res = solver.solve_static(m)
+    finally:
+        contact.ContactSystem.results = alt
+    u = np.asarray(res.u, float).ravel()
+    winkel, kegel = [], []
+    for c in letzte["cs"].cons:
+        if not (c.active and c.ct is not None and c.mu > 0 and not c.haften):
+            continue
+        dt = np.array([c.ct[0] @ u[c.dofs], c.ct[1] @ u[c.dofs]])
+        if c.slip and np.linalg.norm(dt) > 0 and np.linalg.norm(c.Ft) > 0:
+            cw = float(dt @ c.Ft) / (np.linalg.norm(dt) * np.linalg.norm(c.Ft))
+            winkel.append(math.degrees(math.acos(max(-1.0, min(1.0, cw)))))
+        elif not c.slip:
+            kegel.append(float(np.linalg.norm(c.Ft)) / max(c.mu * max(c.Fn, 0.0), 1e-300))
+    return res, (max(winkel) if winkel else 0.0), (max(kegel) if kegel else 0.0), len(winkel)
+
+
+def test_reibung_primal_dual():
+    """Reibung primal-dual (contact.REIBUNG_PRIMAL_DUAL, 28.09.2026): am
+    Endzustand liegt die Reibkraft jedes gleitenden Knotens parallel zu seinem
+    Weg, und kein haftender liegt ausserhalb des Kegels. Mit festgehaltenen
+    Gleitrichtungen (bis dahin) stand sie am Stempel auf gewoelbter Unterseite
+    bis 180 Grad gegen den Weg (Median 47), am Block mit Reibung bis 52 Grad."""
+    print("\n--- Reibung primal-dual: Coulomb am Endzustand ---")
+    from statik3d.examples_lib import block_friction_example
+    from tests.test_plastizitaet import _drehlagerartiges_modell
+
+    def stempel():
+        m = _drehlagerartiges_modell()
+        m.plastizitaet.an = False
+        return m
+    for name, bau in (("Stempel auf Sockel", stempel), ("Block mit Reibung", block_friction_example)):
+        res, w, k, n = _coulomb(bau())
+        check(f"{name}: Reibkraft parallel zum Gleitweg (max Winkel < 1 Grad), Haften im Kegel",
+              res.info.get("contact_converged") and n > 0 and w < 1.0 and k <= 1.0 + 1e-6,
+              f"{n} gleitend, max {w:.2f} Grad, haftend |Ft|/muFn max {k:.4f}")
+    alt = contact.REIBUNG_PRIMAL_DUAL
+    contact.REIBUNG_PRIMAL_DUAL = False
+    try:
+        _res, w, _k, n = _coulomb(stempel())
+    finally:
+        contact.REIBUNG_PRIMAL_DUAL = alt
+    check("Ruecknahme (festgehaltene Richtungen): am Stempel Reibkraft bis weit gegen den Weg (> 10 Grad)",
+          w > 10.0, f"{n} gleitend, max {w:.1f} Grad")
+
+
+def test_reibung_mit_symmetrischem_loeser():
+    """Die Kopplungsspalte der Reibung (contact._gekoppelt) macht das System
+    unsymmetrisch; mit dem Gleichungsloeser ama (LDL^T, nur symmetrisch)
+    rechnet der Kontakt ohne sie - Ergebnis wie mit PARDISO (gemessen
+    28.09.2026: 8,3e-6 relativ, 30 statt 29 Runden)."""
+    print("\n--- Reibung mit ama: ohne Kopplungsspalte, dasselbe Ergebnis ---")
+    from statik3d import parallel
+    from statik3d.examples_lib import block_friction_example
+    try:
+        import ama  # noqa: F401
+    except ImportError:
+        print("     uebersprungen (ama nicht installiert)")
+        return
+    ref = solver.solve_static(block_friction_example())
+    st = parallel.settings()
+    alt = st.solver_backend
+    st.solver_backend = "ama"
+    gesehen = {}
+    alt_sm = contact.ContactSystem.system_matrizen
+
+    def sm(self, ndof):
+        erg = alt_sm(self, ndof)
+        gesehen["nur_sym"] = bool(getattr(self, "nur_symmetrisch", False))
+        gesehen["D"] = gesehen.get("D", False) or getattr(self, "D_kopplung", None) is not None
+        return erg
+    contact.ContactSystem.system_matrizen = sm
+    try:
+        res = solver.solve_static(block_friction_example())
+    finally:
+        st.solver_backend = alt
+        contact.ContactSystem.system_matrizen = alt_sm
+    du = float(np.abs(np.asarray(res.u) - np.asarray(ref.u)).max()) / float(np.abs(np.asarray(ref.u)).max())
+    check("ama: nur_symmetrisch gesetzt, keine Kopplungsspalte, konvergiert, u wie PARDISO auf 1e-4",
+          gesehen.get("nur_sym") and not gesehen.get("D") and res.info.get("contact_converged") and du < 1e-4,
+          f"nur_symmetrisch {gesehen.get('nur_sym')}, Spalte {gesehen.get('D')}, du {du:.1e}")
+
+
 def main() -> int:
     for t in (test_spalt_null_und_gleichgewicht, test_kippender_block, test_presspassung_exakt,
-              test_feder_bleibt_feder, test_lager_und_spaltelement, test_haftfuge_bindung_bleibt):
+              test_feder_bleibt_feder, test_lager_und_spaltelement, test_haftfuge_bindung_bleibt,
+              test_reibung_primal_dual, test_reibung_mit_symmetrischem_loeser):
         try:
             t()
         except Exception as ex:             # noqa: BLE001
