@@ -89,6 +89,11 @@ def pcg(A: Callable[[np.ndarray], np.ndarray], b: np.ndarray, M_inv: np.ndarray 
         d = xp.zeros(B.shape[0]) if d is None else xp.asarray(d, dtype=float).ravel()
         G = B @ B.T
         G_inv = xp.linalg.inv(G)
+        # cupy wirft bei (fast) singulaerem B B^T nicht, sondern liefert NaN (Gutachten 28.09.2026):
+        # abhaengige Zwangszeilen hier melden statt still NaN zu rechnen
+        probe = G_inv @ G
+        if not bool(xp.all(xp.isfinite(G_inv))) or float(xp.abs(probe - xp.eye(G.shape[0])).max()) > 1e-8:
+            raise ValueError("PCG: Zwangszeilen B abhaengig (B B^T singulaer) - Schnittebenen pruefen")
         x_p = B.T @ (G_inv @ d)
 
         def proj(v):
@@ -114,6 +119,13 @@ def pcg(A: Callable[[np.ndarray], np.ndarray], b: np.ndarray, M_inv: np.ndarray 
     konvergiert = False
     k = 0
     for k in range(1, max_iter + 1):
+        if float(xp.sqrt(r @ r)) == 0.0:
+            # exakt geloest (exakter Vorkonditionierer): das Energiekriterium verlangte sonst einen
+            # weiteren Schritt mit p = 0 und meldete faelschlich 'nicht positiv definit'
+            konvergiert = True
+            res_rel = 0.0
+            k -= 1
+            break
         q = proj(A(p))
         pq = float(p @ q)
         if pq <= 0.0:

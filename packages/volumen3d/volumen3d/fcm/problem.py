@@ -254,7 +254,10 @@ class FcmProblem:
             iterationen, residuen = [], []
             vork = self._mehrgitter.anwenden if self._mehrgitter is not None else 1.0 / self._diagonale
             for k in range(len(liste)):
-                erg = pcg(self._operator.frei_anwenden, F_red[:, k], vork, tol=self.toleranz,
+                # Jacobi allein braucht Tausende Iterationen (Kondition 1e6 bis 5e7, Theorie 11.9), das
+                # Mehrgitter unter 100 (11.10); die Grenze soll Stagnation melden, nicht Jacobi abschneiden
+                grenze = 1000 if self._mehrgitter is not None else 200_000
+                erg = pcg(self._operator.frei_anwenden, F_red[:, k], vork, tol=self.toleranz, max_iter=grenze,
                           B=B, d=F[n:, k] if self.n_zwaenge else None)
                 if not erg.konvergiert:
                     raise ValueError(f"PCG nicht konvergiert: Residuum {erg.residuum_rel:.1e} nach {erg.iterationen} Iterationen")
@@ -266,10 +269,13 @@ class FcmProblem:
             self.protokoll["iterationen"] = iterationen
             self.protokoll["residuum_rel"] = max(residuen) if residuen else 0.0
             U = np.asarray(C @ X)
-            # Residuum des reduzierten Systems ohne Multiplikatoranteil (Projektion haelt B x = d)
+            # Residuum des vollen Sattelpunktsystems [K x + B^T lam - f; B x - d] wie beim Direktloeser;
+            # ohne die Vorgabe d hiesse eine reine Querverschiebung (f = 0) ein absolutes Residuum in N
+            # (Gutachten 28.09.2026: Torsion am Kragarmsegment -> ValueError trotz konvergiertem PCG)
             R = self._K_red @ X - F_red
             if self.n_zwaenge:
-                R = R + B.T @ lam
+                R = np.concatenate([R + B.T @ lam, B @ X - F[n:]], axis=0)
+                F_red = np.concatenate([F_red, F[n:]], axis=0)
         else:
             if self.n_zwaenge:
                 F_red = np.concatenate([F_red, F[n:]], axis=0)
@@ -282,7 +288,14 @@ class FcmProblem:
         # Residuum: Direktloeser liefern bei singulaerer Matrix endliche Zahlen (Gutachten 27.09.:
         # freier Quader unter Traktion, max |u| 1e12 mm ohne Fehler); ein relatives Residuum
         # ueber 1e-6 heisst: nicht zuverlaessig geloest, in der Regel freie Starrkoerperbewegung.
+        # Bezug: rechte Seite samt Vorgabe d. Beim iterativen Loeser zusaetzlich die innere Kraft K x
+        # (= R + F): eine Vorgabe allein (f = 0, d != 0) hat sonst keinen passenden Massstab, und die
+        # Singularitaet meldet dort der CG selbst (p^T A p <= 0, keine Konvergenz). Beim Direktloeser
+        # bleibt der Bezug die rechte Seite, sonst verdeckte ein Starrkoerperanteil (x ~ 1e12) das
+        # Residuum (Gutachten 27.09.2026).
         norm_f = np.linalg.norm(F_red, axis=0)
+        if self.loeser in ("pcg", "mehrgitter"):
+            norm_f = np.maximum(norm_f, np.linalg.norm(R + F_red, axis=0))
         norm_r = np.linalg.norm(R, axis=0)
         residuum = np.where(norm_f > 0, norm_r / np.maximum(norm_f, 1e-300), norm_r)
         self.protokoll["residuum"] = float(residuum.max()) if len(residuum) else 0.0

@@ -31,7 +31,9 @@ def _faelle():
 
 
 def test_ebenen():
+    import copy
     from volumen3d.fcm.mehrgitter import PMehrgitter
+    from volumen3d.fcm.zwaenge import Zwaenge
     rng = np.random.default_rng(3)
     for name, bau, _ in _faelle()[:4]:
         pr = bau()
@@ -48,9 +50,81 @@ def test_ebenen():
                 a_g = grob.A(x)
                 a_f = grob.P.T @ fein.A(grob.P @ x)
                 fehler = max(fehler, float(np.abs(a_g - a_f).max() / max(np.abs(a_f).max(), 1e-300)))
+        # abgeleitete grobe Zwaenge gegen unabhaengig gebaute (Spurbindung und Aggregation auf dem groben Gitter)
+        f_c = 0.0
+        gleich_frei = True
+        for eb in mg.ebenen[1:]:
+            ag_k = None
+            if pr.aggregation is not None:
+                ag_k = copy.copy(pr.aggregation)
+                ag_k.gitter = eb.gitter
+                ag_k.statistik = dict(pr.aggregation.statistik)
+            zw = Zwaenge(eb.gitter, ag_k)
+            gleich_frei &= bool(np.array_equal(np.sort(eb.moden_frei), zw.moden_frei))
+            if gleich_frei:
+                ordnung = np.argsort(eb.moden_frei)
+                sp3 = (3 * ordnung[:, None] + np.arange(3)).ravel()
+                D = (eb.C[:, sp3] - zw.C).tocsr()
+                f_c = max(f_c, float(np.abs(D.data).max()) if D.nnz else 0.0)
         check(f"{name}: Ebenen {mg.statistik['ebenen']} mit {mg.statistik['frei_je_ebene']} freien Koordinaten; Injektion, "
-              f"A_grob = P~^T A_fein P~ (< 1e-12: Zwaenge geschachtelt); lambda_max {mg.statistik['lambda_max']}, {t_mg:.1f} s",
-              ok_inj and fehler < 1e-12, f"max {fehler:.1e}")
+              f"A_grob = P~^T A_fein P~ (< 1e-12), abgeleitete grobe Zwaenge = unabhaengig gebaute (< 1e-10); "
+              f"lambda_max {mg.statistik['lambda_max']}, {t_mg:.1f} s {mg.statistik['zeiten_s']}",
+              ok_inj and fehler < 1e-12 and gleich_frei and f_c < 1e-10, f"A {fehler:.1e}, C {f_c:.1e}, freie Moden gleich {gleich_frei}")
+
+
+def test_symmetrie():
+    """Der V-Zyklus als CG-Vorkonditionierer muss symmetrisch und positiv definit sein (Gutachten 28.09.2026:
+    bisher nur ueber die Iterationszahlen belegt)."""
+    from volumen3d.fcm.mehrgitter import PMehrgitter
+    rng = np.random.default_rng(8)
+    for name, bau, _ in (_faelle()[0], _faelle()[2]):
+        pr = bau()
+        pr.aufbauen()
+        mg = PMehrgitter(pr)
+        n = mg.ebenen[0].n_frei
+        asym, rq = 0.0, np.inf
+        for _ in range(5):
+            x, y = rng.standard_normal(n), rng.standard_normal(n)
+            Mx, My = mg.anwenden(x), mg.anwenden(y)
+            asym = max(asym, abs(float(y @ Mx - x @ My)) / abs(float(y @ Mx)))
+            rq = min(rq, float(x @ Mx) / float(x @ x))
+        # Bezug der Schranke: die Grobgitterloesung (LU mit Pivotisierung) ist nur bis auf Kondition x
+        # Rundung symmetrisch; die Blockinversen werden symmetrisiert (vorher 1,2e-9 bzw. 5,1e-9)
+        check(f"{name}: V-Zyklus symmetrisch (|y^T M x - x^T M y| / |y^T M x| < 1e-8) und positiv (x^T M x > 0)",
+              asym < 1e-8 and rq > 0, f"Asymmetrie {asym:.1e}, kleinster Rayleigh-Quotient {rq:.2e}")
+
+
+def test_problem_mehrgitter():
+    """FcmProblem(loeser='mehrgitter') am Kragarmsegment: Verschiebungen und Multiplikatoren wie der
+    Sattelpunkt des Direktloesers - auch fuer eine reine Verdrehung ohne Last (f = 0, nur d, Gutachten
+    28.09.2026: Residuumsprobe meldete dort faelschlich einen Fehler)."""
+    from volumen3d.tests.test_kragarm import _segment
+
+    def u_lin(P):
+        P = np.asarray(P, float).reshape(-1, 3)
+        return np.stack([1e-3 * P[:, 0], -0.3e-3 * P[:, 1], -0.3e-3 * P[:, 2]], axis=1)
+
+    def u_dreh(P):                                           # Verdrehung um die Stabachse x um 1e-3 rad
+        P = np.asarray(P, float).reshape(-1, 3)
+        return np.stack([np.zeros(len(P)), -1e-3 * P[:, 2], 1e-3 * P[:, 1]], axis=1)
+
+    for name, vorg in (("Zug/Querkontraktion", {"links": u_lin, "rechts": u_lin}), ("reine Verdrehung rechts, links fest", {"links": 0.0, "rechts": u_dreh})):
+        ergebnisse = {}
+        for loeser in ("direkt", "pcg", "mehrgitter"):
+            pr = _segment(400.0, 600.0, 3, 50.0)
+            pr.loeser, pr.toleranz = loeser, 1e-10
+            t = time.perf_counter()
+            U = pr.loesen(vorg)[:, 0]
+            ergebnisse[loeser] = (U, pr.multiplikatoren[:, 0].copy(), pr.protokoll.get("iterationen"), time.perf_counter() - t, pr.protokoll["residuum"])
+        U_d, lam_d = ergebnisse["direkt"][:2]
+        for loeser in ("pcg", "mehrgitter"):
+            U, lam, it, t, res = ergebnisse[loeser]
+            fu = np.abs(U - U_d).max() / np.abs(U_d).max()
+            fl = np.abs(lam - lam_d).max() / max(np.abs(lam_d).max(), 1.0)
+            # Jacobi-PCG: Kondition ~1e7, bei tol 1e-10 gemessen 1,5e-5 in u (28.09.2026) - Referenzloeser ohne Mehrgitter
+            grenze = 1e-6 if loeser == "mehrgitter" else 1e-4
+            check(f"Kragarmsegment p 3, {name}, loeser={loeser}: Verschiebungen und Multiplikatoren wie direkt (< {grenze:g}); "
+                  f"{it} Iterationen, Residuumsprobe {res:.1e}, {t:.1f} s", fu < grenze and fl < grenze, f"U {fu:.1e}, lambda {fl:.1e}")
 
 
 def test_pcg_mehrgitter():
@@ -120,4 +194,4 @@ def test_kern():
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_ebenen, test_pcg_mehrgitter]))
+    sys.exit(lauf([test_ebenen, test_symmetrie, test_problem_mehrgitter, test_pcg_mehrgitter]))

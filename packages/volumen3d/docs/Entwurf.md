@@ -705,8 +705,23 @@ Plan: `docs/plaene/2026-09-28-tp4-mehrgitter.md`. Messlatte aus Teilprojekt 3: J
 | Kirsch h 20 p 2 verfeinert (11 013 frei) | 4 420 | 637 | **38** | 1,7 s (+3,7 s) |
 | Kirsch h 20 p 3 verfeinert (35 000 frei) | > 40 000 | > 2000 | **43** | 9,2 s (+32 s) |
 
-  Der Richtwert der Vorgabe (unter 100 Iterationen) ist erfüllt. Offen: das Einrichten der
-  Blöcke (Assemblierung je Ebene, Inversen) skaliert mit Σ|S|² – Kirsch h 20 p 3 braucht 32 s
-  und Speicher für die Inversen; die Blöcke aus den Zellmatrizen der Nachbarn statt aus der
-  assemblierten Matrix zu bauen und nur Schnittzellen zu blocken (INSIDE-Zellen mit Jacobi) sind
-  die nächsten Messungen, dann die GPU (Blöcke als gestapelte Matrizen, batched matvec).
+  Der Richtwert der Vorgabe (unter 100 Iterationen) ist erfüllt.
+
+### 4d.3 Nach dem Gutachten (28.09.2026)
+- **Einrichten:** Blöcke per numba aus der CSR-Matrix gezogen, nach Größe gestapelt, mit einer
+  eigenen Cholesky-Inversion invertiert (LAPACK aus 32 numba-Threads überschrieb Speicher);
+  Anwenden gebündelt (einsum + bincount). Grobe Zwänge aus den feinen abgeleitet. Kirsch h 20 p 3
+  verfeinert: Einrichten 4,9 bis 12,8 s (vorher 24 bis 60 s); h 10 p 3 vorher 147 s.
+- **Grobgitter:** Verschiebung δ = 10⁻¹⁰·max diag gegen singuläre Grobgitter (freie Starrkörper-
+  bewegung ohne Schnittebene) und Probe mit Warnung; ohne sie stagnierte der PCG bei einer von
+  fünf Schnittlagen.
+- **Schnittlagen:** 43 / 53 / 58 / 47 / 39 Iterationen über fünf Lagen (Kirsch h 20 p 3).
+- **Zeit:** auf der CPU bleibt der Direktlöser schneller (30 000 freie Koordinaten: 1–2 s gegen
+  10–25 s), weil die 150–325 MB Blockinversen je V-Zyklus zwölfmal gelesen werden. Nächster
+  Schritt ist die GPU (Aufgabe 5) mit Blöcken in FP32.
+- **Befunde des Gutachtens:** Zylinderauswahl mit radialer Normale (vorher 345,6 statt 314,2 mm²),
+  Residuumsprobe des iterativen Zweigs mit der Vorgabe d (reine Verdrehung meldete falsch),
+  Prüfungen für Symmetrie, `loeser="mehrgitter"` samt Multiplikatoren, Verdrehung ohne Last,
+  Zylinderauswahl, Volumenlast an mehreren Keys; cupy-Singularität von BBᵀ, exakte Konvergenz im
+  CG, leere Inzidenzsegmente abgefangen. Volumenlast je Lastfall und Kombinationsfaktoren als
+  Vertragsvorschlag `docs/vertrag-aenderungen/2026-09-28-volumenlast-je-lastfall.md`.

@@ -246,11 +246,17 @@ def test_lasten():
     # Volumenlast (Eigengewicht) fuer alle Keys: Vergleich zweier Diskretisierungen
     b = np.array([0.0, 0.0, -7.85e-9 * 9810.0])
     disc_b = s.prepare(dataclasses.replace(spec0, body_load=b), mat, progress=lambda t, a: None)
-    e_b = s.solve(disc_b, prov, [ResultKey("LF2")], progress=lambda t, a: None)[0]
+    e_bs = s.solve(disc_b, prov, [ResultKey("LF2"), ResultKey("LF1", stellung_id="S2")], progress=lambda t, a: None)
+    e_b = e_bs[0]
     Fb, _ = summe(e_b)
+    Fb2, _ = summe(e_bs[1])
     V = 600.0 * 100.0 * 200.0
     check("Volumenlast: Summe der Schnittkraft-Aenderungen = -b V (< 10 %, Nitsche-Strafanteil)", np.linalg.norm((Fb - F2) + b * V) < 0.10 * np.linalg.norm(b * V),
           f"{Fb - F2} gegen {-b * V}")
+    # body_load wirkt nach Vertrag 2.1.0 auf alle Keys (Gutachten 28.09.2026: bisher nur an einem Key geprueft);
+    # der Stub liefert fuer beide Keys dieselben Randverschiebungen, also auch dieselben Schnittkraefte
+    check("Volumenlast wirkt auf jeden Key (zweiter Key mit anderer Stellung: gleiche Schnittkraefte, Protokoll traegt body_load)",
+          np.allclose(Fb2, Fb, rtol=1e-9, atol=1e-9) and all(e.protocol["body_load"] is not None for e in e_bs), f"{Fb2} / {Fb}")
     # Fehlerfaelle
     for last, text in ((SurfaceLoad("x", SurfaceSelector("D1", named_surface="gibt_es_nicht"), "LF1", pressure=1.0), "Flaeche"),
                        (SurfaceLoad("y", SurfaceSelector("D9", named_surface="balken"), "LF1", pressure=1.0), "body_id")):
@@ -260,6 +266,30 @@ def test_lasten():
         except SolverError as ex:
             ok = text in str(ex)
         check(f"Last mit unbekannter {text} -> SolverError", ok)
+
+
+def test_zylinderauswahl():
+    """SurfaceSelector.cylinder waehlt nur die Bohrungswand (Gutachten 28.09.2026: ohne Normalenpruefung
+    kamen Punkte der ebenen Seiten im 2-%-Ring mit, Kirsch: 345,6 statt 314,2 mm2)."""
+    import dataclasses
+    from statik3d_contracts.detail import GeometrySource, GeometrySourceType
+    from statik3d_contracts.model import Material
+    from statik3d_contracts.nonlinear import SurfaceLoad, SurfaceSelector
+    from volumen3d.api import FcmSolver
+    geo = GeometrySource(GeometrySourceType.CSG, params={"csg": {"typ": "differenz", "teile": [
+        {"typ": "quader", "min": [195, -50, -100], "max": [805, 50, 100], "name": "balken"},
+        {"typ": "zylinder", "p0": [500, -60, 0], "p1": [500, 60, 0], "radius": 20.0, "name": "bohrung"}]}})
+    spec = dataclasses.replace(_spec(p=2, h=50.0), geometry=geo)
+    A_soll = 2 * np.pi * 20.0 * 100.0                      # Mantel der Bohrung durch die Dicke 100
+    lasten = (SurfaceLoad("zyl", SurfaceSelector("D1", cylinder=(np.array([500.0, 0, 0]), np.array([0.0, 1, 0]), 20.0)), "LF1",
+                          traction=np.array([0.0, 0.0, 1.0])),
+              SurfaceLoad("name", SurfaceSelector("D1", named_surface="bohrung"), "LF2", traction=np.array([0.0, 0.0, 1.0])))
+    disc = FcmSolver().prepare(dataclasses.replace(spec, loads=lasten), Material("S355", "S355", 210000.0, 0.3), progress=lambda t, a: None)
+    p_zyl, p_name = disc.lasten_protokoll
+    check("Zylinderauswahl: nur die Bohrungswand (Flaeche 2 pi r t auf 1e-4), gleich der benannten Flaeche 'bohrung'",
+          abs(p_zyl["area_mm2"] / A_soll - 1) < 1e-4 and abs(p_zyl["area_mm2"] - p_name["area_mm2"]) < 1e-6 * A_soll
+          and abs(p_zyl["force_N"][2] / A_soll - 1) < 1e-4,
+          f"Zylinder {p_zyl['area_mm2']:.3f}, benannt {p_name['area_mm2']:.3f}, soll {A_soll:.3f} mm2")
 
 
 def test_hybrid_platzhalter():
@@ -278,4 +308,4 @@ def test_hybrid_platzhalter():
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_protokoll_und_registrierung, test_ablauf, test_gutachten_faelle, test_hybrid_platzhalter, test_lasten]))
+    sys.exit(lauf([test_protokoll_und_registrierung, test_ablauf, test_gutachten_faelle, test_hybrid_platzhalter, test_lasten, test_zylinderauswahl]))

@@ -10879,8 +10879,32 @@ Spektrum, und der PCG braucht (28.09.2026, bis 10⁻¹⁰, Spannungen wie der Di
 10⁻⁹…10⁻¹⁰): Patch h 20 p 2 **29** Iterationen (Jacobi 5 045), Kragarmsegment p 3 mit
 Schnittebenen **53** (2 580), Lamé h 20 p 3 **26** (20 373), Kirsch h 20 p 2 verfeinert **38**
 (4 420), Kirsch h 20 p 3 verfeinert **43** (über 40 000). Der Richtwert der Vorgabe (unter 100)
-ist erfüllt, und die Iterationszahl hängt kaum von p und Verfeinerung ab. Der Preis liegt im
-Einrichten der Blöcke (Kirsch h 20 p 3: 32 s, Speicher Σ|S|²); Blöcke aus den Zellmatrizen der
-Nachbarn statt aus der assemblierten Matrix und nur für Schnittzellen sind die nächsten
-Messungen, danach die GPU mit gestapelten Blöcken. `FcmProblem(loeser="mehrgitter")` ist
-geprüft (Kragarmsegment: 53 Iterationen, Multiplikatoren wie der Sattelpunkt).
+ist erfüllt, und die Iterationszahl hängt kaum von p und Verfeinerung ab.
+
+**Einrichten, Grobgitter und Robustheit (28.09.2026, nach Gutachten).** Das Profil der ersten
+Fassung am Kirsch-Modell h 10 p 3 (130 611 freie Koordinaten) zeigte 90 von 147 s Einrichtzeit in
+4 732 einzelnen LAPACK-Inversionen der Zellblöcke. Eine parallele Inversion über numba mit
+LAPACK-Aufrufen aus 32 Threads überschrieb Speicher (OpenBLAS ist für so viele gleichzeitige
+Aufrufer nicht gebaut); die Blöcke werden darum mit einer eigenen Cholesky-Inversion in numba
+invertiert (A = LLᵀ, A⁻¹ = L⁻ᵀL⁻¹, exakt symmetrisch): 2 000 Blöcke der Größe 192 in 0,55 s statt
+42 s, Abweichung 3·10⁻¹⁵. Die groben Zwänge werden nicht mehr je Ebene neu gebaut, sondern aus den
+feinen abgeleitet (C_grob = P₃ᵀ C_fein P̃, Schachtelung beim Aufbau geprüft, gegen unabhängig
+gebaute Zwänge auf 10⁻¹³ gleich). Bei Schnittlage 0,2 stagnierte die erste Fassung (500
+Iterationen ohne Konvergenz): das Kirsch-Modell hat eine freie z-Verschiebung, das Grobgitter
+p = 1 ist singulär, und Pardiso störte die Pivots still, sodass die Grobkorrektur Nullraumanteile
+der Größe 1/Pivot bekam. Seither wird das Grobgitter um δ = 10⁻¹⁰·max diag verschoben (der
+Nullraumanteil bleibt r₀/δ, r₀ ist für konsistente Systeme Rundung) und eine Zufallsprobe meldet
+die Singularität im Protokoll. Fünf Schnittlagen (Kirsch h 20 p 3 verfeinert, 26 400 bis 33 060
+freie Koordinaten): 43 / 53 / 58 / 47 / 39 Iterationen, Einrichten 4,9 bis 12,8 s, K_t identisch
+mit dem Direktlöser. Der V-Zyklus ist symmetrisch auf 2·10⁻⁹ (Grenze der LU-Lösung am
+Grobgitter) und positiv (kleinster Rayleigh-Quotient 7·10⁻⁵).
+
+**CPU gegen Direktlöser.** Bei 30 000 freien Koordinaten löst der Direktlöser in 1 bis 2 s, der
+PCG mit V-Zyklus braucht 10 bis 25 s. Der Grund ist die Speicherbandbreite: die Blockinversen
+belegen 150 bis 325 MB und werden je V-Zyklus zwölfmal gelesen (je drei Chebyshev-Schritte vor und
+nach der Grobkorrektur auf zwei Ebenen). Auf der CPU bleibt der Direktlöser darum Standard; das
+Mehrgitter ist für die Grafikkarte gebaut (Vorgabe 9, 448 GB/s auf der RTX 3070 gegen rund
+20 GB/s), und die Blöcke dürfen dort in FP32 liegen (gemischte Genauigkeit im Glätter, Vorgabe 9).
+`FcmProblem(loeser="mehrgitter")` ist geprüft: Kragarmsegment p 3 mit Zug und mit reiner
+Verdrehung ohne Last, je 54 Iterationen, Verschiebungen und Multiplikatoren wie der Sattelpunkt
+auf 10⁻⁶.

@@ -68,6 +68,9 @@ class Zelldaten:
         self.inz_zelle = np.ascontiguousarray((reihen // n3).astype(np.int64))
         self.inz_lokal = np.ascontiguousarray((reihen % n3).astype(np.int64))
         self.inz_zeiger = np.searchsorted(flach[reihen], np.arange(g.n_dof + 1)).astype(np.int64)
+        if np.any(np.diff(self.inz_zeiger) == 0):
+            # np.add.reduceat im numpy-Rueckfall liefert fuer leere Segmente still den naechsten Wert
+            raise ValueError("Zelldaten: Freiheitsgrad ohne Zelle (Modennummerierung luekenhaft)")
         self.statistik = {"zellen_innen": int(len(self.innen)), "zellen_cut": int(len(self.cut)),
                           "speicher_zellmatrizen_mb": round(self.K_cut.nbytes / 1e6, 1),
                           "speicher_inzidenz_mb": round((self.inz_zelle.nbytes + self.inz_lokal.nbytes + self.inz_zeiger.nbytes) / 1e6, 1)}

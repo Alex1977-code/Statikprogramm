@@ -58,10 +58,15 @@ def _flaeche_waehlen(pr: FcmProblem, sel: SurfaceSelector, detail_id: str, last_
         a = a / np.linalg.norm(a)
         r = float(sel.cylinder[2])
         rel = P - a0
-        rho = np.linalg.norm(rel - (rel @ a)[:, None] * a, axis=1)
-        maske = np.abs(rho - r) <= max(0.02 * r, 0.01)
+        radial = rel - (rel @ a)[:, None] * a
+        rho = np.linalg.norm(radial, axis=1)
+        e_r = radial / np.maximum(rho, 1e-300)[:, None]
+        # zusaetzlich radiale Normale verlangen: sonst kommen Punkte ebener Flaechen im 2-%-Ring um die
+        # Bohrung mit (Gutachten 28.09.2026: Kirsch h 20, Bohrung R 20: 345,6 statt 314,2 mm2, davon
+        # 24,7 mm2 Plattenseiten und 6,8 mm2 Symmetrieebenen)
+        maske = (np.abs(rho - r) <= max(0.02 * r, 0.01)) & (np.abs(np.einsum("ij,ij->i", fq.normalen, e_r)) >= 0.9)
         if not maske.any():
-            raise SolverError(f"Last {last_id!r}: kein Oberflaechenpunkt auf dem Zylinder mit Radius {r} (Toleranz 2 %)")
+            raise SolverError(f"Last {last_id!r}: kein Oberflaechenpunkt auf dem Zylinder mit Radius {r} (Toleranz 2 %, radiale Normale)")
     else:
         raise SolverError(f"Last {last_id!r}: SurfaceSelector ohne named_surface, box oder cylinder")
     return fq.auswahl(maske)
