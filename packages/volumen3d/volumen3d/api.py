@@ -173,13 +173,13 @@ def _einstellungen_pruefen(s: FcmSettings) -> None:
 
 
 # Ab dieser Zahl von Freiheitsgraden waehlt 'auto' das p-Mehrgitter auf der GPU. Gemessen im Gesamtweg
-# (Aufbau + Loesen) auf freier Maschine (RTX 3070, 28.09.2026, Commit 9cbdcf1), direkt / GPU-Mehrgitter:
-# kompakter Block mit Bohrung 65 000 FHG 14,5 / 18,3 s, 116 000 FHG 20,7 / 22,5 und 22,2 / 19,9 s,
-# 186 000 FHG 39,2 / 31,9 s, 281 000 FHG 58,0 / 42,6 s, 340 000 FHG 61,2 / 51,3 s; duenne Kirsch-Scheibe
-# (fuer den Direktloeser guenstig) bis 174 000 FHG direkt 1,5 bis 2,7 s schneller, 230 000 bis 500 000 FHG
-# je nach Schnittlage 4 s schneller bis 4 s langsamer. Unter der Schwelle ist das Mehrgitter hoechstens
-# beim Block knapp darunter schneller (186 000 FHG), darueber gewinnt es beim Block deutlich und liegt bei
-# der Scheibe gleichauf. Nach oben begrenzt der GPU-Speicher (8 GB: etwa 500 000 FHG bei p 3).
+# (Aufbau + Loesen), freie Maschine, RTX 3070, je Fall ein Prozess (28.09.2026, Commit d669b9f), direkt /
+# GPU-Mehrgitter: kompakter Block mit Bohrung 65 000 FHG 16,6 / 19,0 s, 116 000 FHG 20,6 / 22,7 und
+# 22,4 / 21,1 s, 186 000 FHG 39,0 / 33,7 s, 281 000 FHG 57,5 / 41,7 s, 340 000 FHG 61,1 / 52,5 s; duenne
+# Kirsch-Scheibe (fuer den Direktloeser guenstig) bis 174 000 FHG direkt 1,2 bis 3,6 s schneller, von 230 000
+# bis 500 000 FHG je nach Schnittlage 4,7 s schneller bis 7,7 s langsamer (Mittel gleichauf). Ueber alle
+# 23 Faelle verschenkt die Schwelle 200 000 zusammen 19 s gegen die jeweils bessere Wahl, 250 000 18 s,
+# 150 000 22 s, 300 000 33 s. Nach oben begrenzt der GPU-Speicher (8 GB: etwa 500 000 FHG bei p 3).
 _AUTO_MIN_DOFS = 200_000
 
 

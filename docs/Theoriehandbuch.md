@@ -10986,27 +10986,54 @@ die Diagonale dieser Matrizen. Mit `geraet="gpu"` werden die Glätterblöcke per
 feinen Matrix auf der GPU ausgezogen, mit cuBLAS gestapelt invertiert und bleiben dort; λ_max, die
 groben Operatoren (cuSPARSE) und der V-Zyklus laufen ebenfalls auf der GPU, nur das Grobgitter p = 1
 auf der CPU. Das auf der GPU eingerichtete Mehrgitter stimmt mit dem CPU-Mehrgitter auf 2·10⁻¹⁰
-überein. Das Einrichten kostet bei Kirsch h 10 p 3 nun 4 s statt 13 s. Gesamtweg (Aufbau + Lösen)
-im selben Prozess, Maschine belegt:
+überein. Das Einrichten kostet bei Kirsch h 10 p 3 nun 4 s statt 13 s.
 
-| Kirsch p 3 | frei | Direktlöser | Mehrgitter GPU | Mehrgitter CPU |
+Beim Messen der Umschaltschwelle kamen drei Fehler zutage, die vorher behoben werden mussten: die
+Nullraumerkennung hing an der Modellgröße (oben), die Aggregation setzte Wurzeln bis 38 Halbweiten
+entfernt fort (11.4) und verdarb damit die Kondition, und der GPU-Speicher lief über. Nach den beiden
+ersten Korrekturen braucht das Mehrgitter bei der Kirsch-Scheibe 23 bis 43 Iterationen statt 51 bis
+125, auch der Direktlöser wurde schneller (h 10, Versatz 0,6: 20,8 statt 37,2 s). Zum Speicher: die
+Glätterblöcke wurden je Größengruppe auf einmal ausgezogen und invertiert, die Arbeitskopien der
+gestapelten Inversion und die Symmetrisierung ließen den Speicherpool auf das Doppelte der Blöcke
+wachsen (Kirsch h 9: 5,9 GB gehalten, 2,9 GB belegt), und mehrere Modelle in einem Prozess sammelten
+sich im Pool, bis die 8-GB-Karte auslagerte (1,5 statt 0,13 s je Iteration). Seither laufen Auszug
+und Inversion in Teilstapeln von höchstens 256 MB, und der Pool wird nach dem Einrichten freigegeben;
+Spitze und Belegung stehen in der Statistik. Die Schätzung der Vertragsschicht lag bis 50 % unter der
+Spitze und zählt jetzt die Zellmatrizen der Schnittzellen, die Glätterblöcke (mittlere Blockgröße
+1,1·3(p+1)³), die feine Matrix während des Auszugs samt grober Matrix (360 Einträge je freier
+Koordinate) und 700 MB Arbeitsfelder; an acht Fällen von 1,4 bis 5,3 GB liegt sie 2 bis 10 % über
+der gemessenen Spitze, gewählt wird mit 20 % Reserve gegen den freien Speicher.
+
+Gesamtweg (Aufbau + Lösen) auf freier Maschine, je Fall ein eigener Prozess (Commit d669b9f); die
+Scheibe ist nur ein bis zwei Zellen dick und damit für den Direktlöser günstig, der Block mit Bohrung
+(200 mm Würfel, r 40) ist ein kompakter Körper:
+
+| Modell | Freiheitsgrade | Direktlöser | Mehrgitter GPU | Iterationen |
 |---|---|---|---|---|
-| h 20, Versatz 0 | 33 060 | 6,4 s | 13,9 s | – |
-| h 20, Versatz 0,6 | 26 400 | 9,6 s | 10,8 s | – |
-| h 14, Versatz 0 | 69 879 | 11,3 s | 23,7 s | – |
-| h 14, Versatz 0,6 | 92 280 | 18,2 s | 31,0 s | – |
-| h 10, Versatz 0 | 130 611 | 34,4 s | **32,9 s** | 110,2 s |
-| h 10, Versatz 0,6 | 187 239 | 57,4 s | **35,3 s** | 244,2 s |
+| Block h 25, Versatz 0 / 0,3 | 65 040 / 65 616 | 16,6 / 15,4 s | 19,0 / 16,9 s | 50 / 26 |
+| Block h 20 | 116 187 / 115 728 | 20,6 / 22,4 s | 22,7 / **21,1** s | 26 / 22 |
+| Block h 16 | 185 856 / 232 296 | 39,0 / 39,7 s | **33,7** / **39,2** s | 22 / 27 |
+| Block h 14 | 281 292 / 340 476 | 57,5 / 61,1 s | **41,7** / **52,5** s | 22 / 26 |
+| Kirsch h 14, Versatz 0 / 0,3 / 0,6 | 81 183 – 135 327 | 7,7 / 8,3 / 9,7 s | 9,6 / 10,7 / 12,4 s | 23 / 24 / 31 |
+| Kirsch h 12 | 165 501 – 173 862 | 10,5 / 11,3 / 13,1 s | 13,6 / 14,9 / 14,3 s | 24 / 23 / 29 |
+| Kirsch h 10 | 229 608 – 330 705 | 15,6 / 19,3 / 20,8 s | 17,9 / **18,4** / 21,4 s | 23 / 29 / 26 |
+| Kirsch h 9 | 283 896 – 390 018 | 20,0 / 25,9 / 25,4 s | 22,2 / **25,2** / **25,2** s | 24 / 43 / 31 |
+| Kirsch h 8 | 360 204 – 497 244 | 30,8 / 34,6 / 33,5 s | **26,1** / 42,3 / **33,3** s | 35 / 114 / 26 |
 
-Der Direktlöser wächst mit der Modellgröße überlinear (Auffüllung der Faktorisierung), das
-Mehrgitter annähernd linear; der Schnittpunkt liegt knapp über 100 000 freien Koordinaten. Die
-Vertragsschicht wählt deshalb mit `FcmSettings.backend = "auto"` (Standard des Vertrags) das
-Mehrgitter auf der GPU ab 200 000 Freiheitsgraden, wenn eine GPU mit genug Speicher da ist
-(Schätzung aus Zellmatrizen, Glätterblöcken und Blockauszug, an Kirsch h 10 p 3 mit 2,3 GB gegen
-gemessene 2,4 GB geeicht, mit Faktor 1,3 gegen den freien Speicher), sonst den Direktlöser.
+Das Lösen selbst ist auf der GPU beim Block ab 116 000 Freiheitsgraden 1,9- bis 9,4-mal schneller, bei
+der Scheibe erst ab 230 000 Freiheitsgraden 1,6- bis 2,8-mal (bis 174 000 etwa gleich schnell); den
+Abstand im Gesamtweg macht das Einrichten des iterativen Wegs (Zellmatrizen, Matrix, Blöcke), das 2 bis
+12 s länger dauert als Assemblieren und Faktorisieren beim Direktlöser. Beim Block wächst der Vorsprung des
+Mehrgitters mit der Größe (281 000 Freiheitsgrade: 16 s), bei der Scheibe liegen beide ab 230 000
+gleichauf. Ein Ausreißer ist Kirsch h 8, Versatz 0,3 mit 114 Iterationen (offen). Die Vertragsschicht
+wählt mit `FcmSettings.backend = "auto"` (Standard des Vertrags) das Mehrgitter auf der GPU ab 200 000
+Freiheitsgraden, wenn eine GPU mit genug Speicher da ist, sonst den Direktlöser. Über alle 23 Fälle
+verschenkt diese Schwelle zusammen 19 s gegen die jeweils bessere Wahl; 250 000 wären 18 s, 150 000
+22 s, 300 000 33 s. Nach oben begrenzt der Speicher der Karte das Mehrgitter (8 GB: etwa 500 000
+Freiheitsgrade bei p 3); darüber rechnet `"auto"` wieder direkt.
 `"gpu"` erzwingt das Mehrgitter und fällt ohne GPU oder bei zu wenig Speicher mit Warnung auf den
 Direktlöser zurück (Vorgabe 9), `"cpu"` rechnet immer direkt; das Mehrgitter auf der CPU ist in allen
 Messungen langsamer als der Direktlöser und wird nicht gewählt. Die Vertragstoleranz (relatives
 Residuum) wird für das Mehrgitter auf 10⁻¹⁰ geschärft, damit die Verschiebungen den Direktlöser auf
-10⁻⁶ treffen (Vorgabe 9); am Vertragsbeispiel mit `"gpu"` weichen die Spannungen um 1·10⁻⁸ ab.
+10⁻⁶ treffen (Vorgabe 9); die Spannungen stimmen in allen 23 Fällen auf die angegebenen Stellen überein.
 Protokoll und `summary()` nennen den gewählten Weg und die Begründung.

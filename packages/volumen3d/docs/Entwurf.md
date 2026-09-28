@@ -740,6 +740,12 @@ Plan: `docs/plaene/2026-09-28-tp4-mehrgitter.md`. Messlatte aus Teilprojekt 3: J
   inverser Iteration (`grob_nullkandidaten`, Schwelle 0,1), nicht mehr über das Residuum einer
   Probe: das fiel mit der Grobgittergröße unter 10⁻³ (Kirsch h 12: 9,8·10⁻⁴), der Nullraum blieb
   unerkannt und der PCG divergierte nach 1,6·10⁻⁸.
+- **GPU-Speicher (28.09.2026):** Auszug und Inversion der Glätterblöcke in Teilstapeln ≤ 256 MB, Pool
+  nach dem Einrichten frei, Statistik `gpu_spitze_mb`/`gpu_belegt_mb`; Schätzung der Vertragsschicht
+  neu geeicht (2–10 % über der Spitze, vorher bis 50 % darunter), Reserve 1,2.
+- **Automatische Wahl:** Schlussmessung (freie Maschine, Commit d669b9f, 23 Fälle Block und Kirsch)
+  bestätigt die Schwelle 200 000 Freiheitsgrade (Theorie 11.10); Kirsch jetzt 23–43 Iterationen
+  (Ausreißer h 8, Versatz 0,3: 114).
 - Fünf Schnittlagen Kirsch h 10 p 3 verfeinert (128 724 bis 199 095 freie Koordinaten), GPU FP64:
   81 / 125 / 112 / 129 / 59 Iterationen, GPU-PCG 8,6 bis 21 s, K_t identisch mit dem Direktlöser;
   Direktlöser (Lösen nach der Faktorisierung) 7 bis 25 s. Einrichten auf der CPU: Zelldaten 17–24 s,

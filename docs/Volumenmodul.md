@@ -94,7 +94,11 @@ Zellblock-Schwarz-Glätter auf 26 bis 53 in allen Abnahmefällen (Jacobi: 2 580 
 bewegungen werden erkannt und herausprojiziert. Seit dem 28.09.2026 abends wählt die Vertragsschicht mit
 `FcmSettings.backend = "auto"` (Standard) den schnelleren Weg: das Mehrgitter auf der GPU ab 200 000
 Freiheitsgraden bei genug GPU-Speicher, sonst den Direktlöser; `"gpu"` erzwingt das Mehrgitter (Rückfall
-ohne GPU mit Warnung), `"cpu"` den Direktlöser. Gemessen (Kirsch h 10 p 3, Gesamtweg): 32,9 gegen 34,4 s
-und 35,3 gegen 57,4 s; darunter bleibt der Direktlöser schneller. `summary()` und Protokoll nennen den Weg
+ohne GPU mit Warnung), `"cpu"` den Direktlöser. Die Schwelle ist auf freier Maschine an 23 Fällen
+gemessen (kompakter Block und dünne Kirsch-Scheibe, Theorie 11.10): beim Block ist das Mehrgitter ab
+186 000 Freiheitsgraden schneller (281 000: 41,7 gegen 57,5 s), bei der Scheibe liegen beide ab 230 000
+gleichauf. Vorher behoben: Nullraumerkennung größenunabhängig, Aggregationswurzeln höchstens zwei Zellen
+entfernt (Koeffizienten der Zwangsmatrix bis 3,4·10⁴ statt 3,5·10⁹), GPU-Speicher in Teilstapeln und
+richtig geschätzt. `summary()` und Protokoll nennen den Weg
 (`solver_path`, `backend`, `solver_choice`); für das Hauptprogramm ändert sich an der Schnittstelle nichts. Offen aus Teilprojekt 2: der schnelle Windungszahl-Baum für STL-Netze
 über 10⁵ Facetten (Teilprojekt 5) und die Vierteilung der Randpolygone an gekrümmten Formen.
