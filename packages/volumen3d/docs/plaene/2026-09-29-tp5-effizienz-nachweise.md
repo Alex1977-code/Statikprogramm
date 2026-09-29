@@ -155,22 +155,25 @@ beiden Wegen 40 bis 60 % der Gesamtzeit; sie zu senken hilft beiden Wegen gleich
 
 ## Modell je Schritt
 
-| Schritt | Modell | Warum |
-|---|---|---|
-| A1 Aufbau vermessen | Sonnet 5 | klar umrissene Messaufgabe |
-| A2 Aufbau beschleunigen | Opus 5.5 | Umbau in bekanntem Code mit vielen Prüfungen |
-| A3 GPU-Speicher für 10⁶ FHG | Fable 5.1 | numerisch heikel (FP32, Glätter), Entwurf und Umsetzung |
-| A4 h-Mehrgitter (nur wenn nötig) | Fable 5.1 | hängende Knoten im Mehrgitter, höchstes Risiko |
-| A5 Streuung über Schnittlagen | Opus 5.5 | Ritz-Analyse und Glätterabstimmung |
-| A6 Leistungsabnahme, Löserwahl | Sonnet 5 | Messreihe nach festem Schema |
-| B1 Moment Fitting | Fable 5.1 | Stabilität der Gewichte, Konsistenz Volumen/Rand |
-| B2 Spannungsrückgewinnung | Opus 5.5 | bekanntes Verfahren, sorgfältige Umsetzung |
-| B3 Hot-Spot IIW Typ a | Opus 5.5 | Geometrie der Referenzpunkte, Normbezug |
-| B4 Konvergenzkurve, Protokoll | Sonnet 5 | überschaubar, baut auf B2/B3 |
-| B5 STEP über gmsh | Sonnet 5 | Anbindung einer Bibliothek |
-| B6 Windungszahl-Baum | Opus 5.5 | Algorithmus mit Genauigkeitsnachweis |
-| B7 Schale → Volumen (Prüfung) | Sonnet 5 | Test über bestehende Schnittstelle |
-| C1 Knotenblech-Abnahme | Opus 5.5 | Modellbau und Nachweis gegen Referenz |
-| C2 Zweite Sicht | Fable 5.1 | unabhängig von der Umsetzung, tiefste Prüfung |
-| C3 Handbücher | Sonnet 5 | Texte aus vorhandenen Messwerten |
-| C4 Gesamtlauf, Pull Request | Sonnet 5 | Routine mit Prüfliste |
+Der Anwender stellt Modell und Denkstufe vor jedem Schritt von Hand ein; der Stand wird nach jedem Schritt
+nachgetragen.
+
+| Schritt | Modell | Denkstufe | Warum | Stand |
+|---|---|---|---|---|
+| A1 Aufbau vermessen | Sonnet 5 | mittel | klar umrissene Messaufgabe | erledigt (5381f71) |
+| A2 Aufbau beschleunigen | Opus 5.5 | hoch | Umbau in bekanntem Code mit vielen Prüfungen | Code in d0e6c37, Nachmessung läuft |
+| A3 GPU-Speicher für 10⁶ FHG | Fable 5.1 | sehr hoch | numerisch heikel (FP32, Glätter), Entwurf und Umsetzung | offen |
+| A4 h-Mehrgitter (nur wenn nötig) | Fable 5.1 | sehr hoch | hängende Knoten im Mehrgitter, höchstes Risiko | offen, Entscheidung nach A3 |
+| A5 Streuung über Schnittlagen | Opus 5.5 | hoch | Ritz-Analyse und Glätterabstimmung | offen |
+| A6 Leistungsabnahme, Löserwahl | Sonnet 5 | mittel | Messreihe nach festem Schema | offen |
+| B1 Moment Fitting | Fable 5.1 | sehr hoch | Stabilität der Gewichte, Konsistenz Volumen/Rand | offen |
+| B2 Spannungsrückgewinnung | Opus 5.5 | hoch | bekanntes Verfahren, sorgfältige Umsetzung | offen |
+| B3 Hot-Spot IIW Typ a | Opus 5.5 | hoch | Geometrie der Referenzpunkte, Normbezug | offen |
+| B4 Konvergenzkurve, Protokoll | Sonnet 5 | mittel | überschaubar, baut auf B2/B3 | offen |
+| B5 STEP über gmsh | Sonnet 5 | mittel | Anbindung einer Bibliothek | offen |
+| B6 Windungszahl-Baum | Opus 5.5 | hoch | Algorithmus mit Genauigkeitsnachweis | offen |
+| B7 Schale → Volumen (Prüfung) | Sonnet 5 | mittel | Test über bestehende Schnittstelle | offen |
+| C1 Knotenblech-Abnahme | Opus 5.5 | hoch | Modellbau und Nachweis gegen Referenz | offen |
+| C2 Zweite Sicht | Fable 5.1 | hoch | unabhängig von der Umsetzung, tiefste Prüfung | offen |
+| C3 Handbücher | Sonnet 5 | niedrig | Texte aus vorhandenen Messwerten | offen |
+| C4 Gesamtlauf, Pull Request | Sonnet 5 | mittel | Routine mit Prüfliste | offen |
