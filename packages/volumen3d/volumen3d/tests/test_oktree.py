@@ -66,6 +66,13 @@ def test_bereich_und_duenn():
           Gd.max_ebene == 2 and (Gd.ebene >= 1).all(), str(Gd.ebenen_verteilung()))
     Gu = Gitter(platte, h=10.0)
     check("ohne Regel bleibt die Platte auf Ebene 0", (Gu.ebene == 0).all())
+    # erzwungene Teilung einzelner Blaetter (Aggregation fordert sie fuer Zellen mit nur feineren Nachbarn)
+    ziel = [(0, int(Gu.ijk[c, 0]), int(Gu.ijk[c, 1]), int(Gu.ijk[c, 2])) for c in (0, 5)]
+    Gz = Gitter(platte, h=10.0, polster=0.1, verfeinerung=Verfeinerung(zellen=tuple(ziel)))
+    kinder = [c for c in range(len(Gz.ijk)) if Gz.ebene[c] == 1 and (0, int(Gz.ijk[c, 0]) // 2, int(Gz.ijk[c, 1]) // 2, int(Gz.ijk[c, 2]) // 2) in ziel]
+    check("Verfeinerung.zellen: genau die zwei genannten Blaetter geteilt (Kinder auf Ebene 1, 2:1 balanciert)",
+          len(kinder) == len([c for c in range(len(Gz.ijk)) if Gz.ebene[c] == 1]) and 8 <= len(kinder) <= 16 and _balance_pruefen(Gz)[0],
+          f"{Gz.ebenen_verteilung()}, Verstoesse {_balance_pruefen(Gz)[1]}")
 
 
 def test_punktsuche_und_box():

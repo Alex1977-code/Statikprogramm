@@ -10589,7 +10589,7 @@ Patch-Test-Gitter (Quader durch zwei schräge Halbräume, 113 von 118 Zellen ges
 mit Werkstoffanteil unter 10⁻⁴, drei mit 0. Der Fehler der FCM-Lösung skaliert mit α/Anteil:
 Spannung 1,4·10⁻² bei α = 10⁻⁸, 1,4·10⁻⁴ bei 10⁻¹⁰. Abhilfe nach Vorgabe 8.3 (Zellaggregation,
 Prinzip der aggregierten finiten Elemente, Badia/Verdugo/Martín 2018): Zellen mit Anteil unter
-0,25 bekommen eine wohlgestellte Wurzelzelle (Nachbar mit größtem Anteil, Fläche vor Kante vor
+der Schwelle (bis 28.09.2026 abends 0,25, seither 0,4, siehe 11.10) bekommen eine wohlgestellte Wurzelzelle (Nachbar mit größtem Anteil, Fläche vor Kante vor
 Ecke, Ketten aufgelöst); Moden, die keine wohlgestellte Zelle trägt, werden an die Fortsetzung
 des Wurzelpolynoms gebunden: `M = V_c⁻¹ V_R` (Modalprojektion an Tensor-Chebyshev-Lobatto-Punkten,
 gleiche Zellgröße). Gelöst wird `CᵀKC`. Zwei weitere Befunde zwangen α aus dem Verfahren:
@@ -10707,14 +10707,41 @@ Der Zwangsauflöser (`fcm/zwaenge.py`) löst dazu je hängender Entität das kle
 V_F·M = N_C (Werte der feinen Basis an Chebyshev-Lobatto-Punkten gegen die grobe Basis) und
 schreibt jede gebundene Mode als Linearkombination der Moden der groben Zelle; Vorrang Fläche >
 Kante > Ecke > Aggregation, Ketten werden bis zu freien Moden aufgelöst (Kettenlänge im
-Protokoll), Selbstbezüge mit Koeffizient 1 sind Tautologien und fallen weg. Die
-Zellaggregation aus 11.4 läuft durch dieselbe Matrix; ihre Wurzeln liegen bevorzugt auf gleicher
-oder gröberer Ebene, weil eine feinere Wurzel an der aggregierten Zelle hängen und die Kette
-zirkulär werden kann (so gemessen: „Zwangszyklus an Mode 2368“, seither 0 Zyklen). Die
+Protokoll). Die Zellaggregation aus 11.4 läuft durch dieselbe Matrix. Ihre Wurzeln sind nie
+feiner als die aggregierte Zelle, und ein Mode, den mehrere schlechte Zellen teilen, gehört der
+gröbsten von ihnen: sonst hängen die Moden der feineren Wurzel ihrerseits an der groben Zelle,
+und die Kette wird zirkulär (im verfeinerten Patch-Test mit dünner Wand 53 Selbstbezüge mit
+Koeffizient 1 und Rest bis 2,45, gemessen 27.09.2026). Mit beiden Regeln laufen alle Ketten
+monoton zu gröberen Ebenen und können nicht zurückkehren; ein Selbstbezug ist seither ein
+Fehler mit Ausnahme, und in allen Abnahmen sind es 0 bei Kettenlänge 2. Findet eine schlechte
+Zelle keine Wurzel gleicher oder gröberer Ebene, obwohl feinere wohlgestellte Nachbarn da sind,
+wird sie geteilt und das Gitter neu gebaut (`wurzel_teilungen` im Protokoll; bisher nie nötig). Die
 Spurbindung reproduziert Polynome vom Grad p exakt (p = 1…3: 1,1e-16 … 4,4e-16), der Patch-Test
 auf lokal verfeinerten Gittern (eine Ebene an einer Ecke, dünne Wand, Schnittanteil 10⁻⁶) hält
 u und σ unter 10⁻⁶ – auch dort, wo hängende Kanten oder Ecken ohne hängende Fläche vorkommen
 (Vorrangregel geprüft).
+
+**Nahe Wurzeln und leere Zellen (28.09.2026).** Die Koeffizienten der Fortsetzung wachsen mit dem
+Abstand zur Wurzel etwa wie Abstandᵖ. Beim Mehrgitter fiel auf, dass die reduzierte Matrix der
+Kirsch-Scheibe Diagonalwerte bis 2,5·10²¹ hatte, bei einem Median von 1,4·10⁵; die Zellmatrizen
+selbst reichten nur bis 2,5·10⁶, der Nitsche-Anteil bis 2,8·10⁷. Die Ursache lag in C: Koeffizienten
+bis 3,5·10⁹ (h 8, Versatz 0,6), in allen Kirsch-Größen zwischen 5·10⁵ und 1,4·10⁸. Zellen ohne
+wohlgestellten Nachbarn erbten die Wurzel eines Nachbarn, und zwar die mit dem größten Anteil, auch
+wenn sie in derselben Runde gerade erst weitergereicht worden war. Dazu kamen leere Zellen im Loch
+nahe der Symmetrieecke, 19 mm vom nächsten Werkstoff: die Abstandsfunktion der Mengenoperation ist
+dort nur eine untere Schranke (0,6 mm), und die Klassifikation nannte sie geschnitten. Über sie lief
+die Kette bis 38 Halbweiten weit, das Wurzelpolynom wurde über elf Zellen fortgesetzt. Regeln
+seither: Ketten wachsen schichtweise aus den Wurzeln der Vorrunde, und die nächstgelegene Wurzel
+gewinnt; leere Zellen, die keine Zelle mit Werkstoff berühren, bekommen keine Wurzel, und ihre Moden
+werden null gesetzt, soweit sie keinen Werkstoffpunkt beeinflussen (von keiner Werkstoffzelle
+getragen und kein Meister eines solchen hängenden Modes). Leere Zellen am Werkstoff bleiben in den
+Ketten: ihre Moden sind Meister hängender Moden von Werkstoffzellen, und ohne Wurzel bekamen sie nur
+deren Steifigkeit (Patch-Test dünne Wand p 3: Randspannung 2,8·10⁻⁶ statt 5,8·10⁻⁸). Gemessen an
+sechs Kirsch-Größen von h 20 bis h 8: Wurzelabstand höchstens 4 Halbweiten, |C| höchstens 3,4·10⁴;
+die Patch-Tests bleiben unter 10⁻⁶. Die Exaktheit linearer Felder auf der Kirsch-Geometrie selbst
+war schon vorher nicht gegeben (σ-Fehler 10⁻³ bis 2,5·10⁻² nahe dem Loch, nach der Änderung 10⁻³
+bis 6,6·10⁻³): Volumen- und Randquadratur nähern die gekrümmte Lochfläche verschieden an. Das ist
+ein eigener, offener Punkt.
 
 **Ränder auf Zellflächen.** Fällt eine Symmetrie- oder Schnittebene genau auf eine Zellfläche –
 in der verfeinerten Kirsch-Platte bei Versatz 0,4 liegen x = 0 und y = 0 auf Flächen der Ebenen
@@ -10772,3 +10799,313 @@ Teilung, Boxabstand, numba) 0,001 s für die nächsten Punkte (identisch bis 3·
 für die Windungszahl (numba, identisch bis 10⁻¹²). Ohne numba bleibt ein k-d-Baum-Index über
 Facettenschwerpunkte mit exakter Kugelschranke (Ergebnis gleich, nur 2,2-mal schneller als die
 volle Suche, weil die Schranke eine Schale der Dicke 2 R_max durchlässt).
+
+### 11.9 Teilprojekt 3: matrixfreier Operator und vorkonditioniertes CG
+
+**Operator ohne globale Matrix.** Das Produkt v = K·u wird zellweise gebildet (Vorgabe 8.1).
+INSIDE-Zellen einer Ebene sind bis auf den Maßstab gleich: K ∝ h, also K_e = h_l/h₀·K_ref mit
+einer Referenz-Zellmatrix je p und Werkstoff (Tensor-Gauß (p+1)³ ist für Polynome vom Grad 2p
+exakt und stimmt darum mit der Quadratur der INSIDE-Zellen überein). CUT-Zellen behalten ihre
+Zellmatrix aus der Schnittzellen-Quadratur (Vorgabe 8.1 „optional“; Kirsch h 10 p 3 verfeinert:
+2159 Schnittzellen, 637 MB). Eingesammelt wird nicht per Atomics oder Graphfärbung, sondern per
+Gather: der Zellkern schreibt sein Ergebnis in einen Puffer (Zellen × 3m), eine vorab gebaute
+Inzidenz Freiheitsgrad → (Zelle, lokaler Index) summiert je Freiheitsgrad parallel – kein
+Wettlauf, auf CPU und GPU gleich. Zwänge (hängende Freiheitsgrade, Aggregation) bleiben die
+Zwangsmatrix C, die Nitsche-Ränder die dünnbesetzte Matrix K_rand: A = Cᵀ(K + K_rand)C.
+Gemessen (28.09.2026): Operator = assemblierte Matrix auf 10⁻¹⁵ (Kirsch verfeinert, Lamé, Patch
+mit dünner Wand); Kirsch h 10 p 3 verfeinert mit 229 608 Freiheitsgraden 18,7 ms je Anwendung
+(numba, Ziel < 200 ms), Zelldaten in 10,7 s. Die Summenfaktorisierung für INSIDE-Zellen ist
+zurückgestellt: sie stellen dort unter 10 % der Zellen.
+
+**PCG.** Vorkonditioniertes CG in FP64 mit relativer Residuumsschranke und Energienorm der
+letzten Korrektur (für x₀ = 0 ist ‖x_k‖²_A = Σ α_j r_jᵀz_j, die Energienorm läuft ohne weitere
+Operatoranwendung mit); Jacobi mit der exakten Diagonale von A aus den Zellmatrizen
+(C_eᵀK_eC_e je Zelle). Die drei Mittelwertzwänge je Schnittebene (Projektion `schnitt`, bisher
+Sattelpunkt) laufen als projizierter CG: x = x_p + z mit x_p = Bᵀ(BBᵀ)⁻¹d und z im Kern von B,
+Operator und Vorkonditionierer mit P = I − Bᵀ(BBᵀ)⁻¹B projiziert; die Multiplikatoren folgen aus
+λ = (BBᵀ)⁻¹B(b − Ax) und stimmen mit denen des Sattelpunkts überein (Kragarmsegment: 548
+Iterationen, Verschiebungen auf 2·10⁻⁷).
+
+**Kondition – die Messlatte für das Mehrgitter.** Die Jacobi-vorkonditionierte Matrix
+D^−½AD^−½ hat Kondition 1,45·10⁶ (Patch h 20 p 2, 2469 freie Freiheitsgrade) und 5,0·10⁷ (Lamé
+h 20 p 3, 2316); A selbst 1,9·10⁷ bzw. 3,8·10⁹, die Diagonale spannt 3,7·10² bzw. 3,3·10⁴
+(Nitsche-Strafterm β = 10·E·p²/h auf den Randmoden). PCG braucht bis 10⁻¹⁰ 5 045 bzw. 20 373
+Iterationen (Kirsch h 20 p 2 verfeinert 4 420) und trifft die direkte Lösung in den Spannungen
+auf 2·10⁻⁶, 2·10⁻⁹ und 3·10⁻⁹; in den Verschiebungen weichen Kirsch-Lösungen um einen freien
+Starrkörperanteil ab (u_z ist dort nicht gehalten, beide Löser wählen ihn verschieden – ein
+Hinweis für die Vertragsschicht, nicht für den Löser). Die kleinsten Eigenvektoren verteilen
+sich über wenige Moden schwach gestützter Schnittzellen und Moden hoher Ordnung; genau das ist
+das Ziel von p-Mehrgitter und Chebyshev-Jacobi-Glätter in Teilprojekt 4 (Vorgabe 8.3, Richtwert
+unter 100 Iterationen). Bis dahin bleibt der Direktlöser der Standard; `FcmProblem(loeser="pcg")`
+ist geprüft und liefert Protokoll mit Iterationen und Residuum.
+
+**GPU.** Dieselben Zelldaten laufen als CuPy-RawKernel: ein Block je Zelle lädt u_e in den
+gemeinsamen Speicher, jeder Thread bildet eine Zeile von K_e·u_e und liest K_e dabei spaltenweise
+(K_e ist symmetrisch, so sind die Zugriffe der Threads zusammenhängend); das Einsammeln je
+Freiheitsgrad ist der zweite Kern; C und K_rand liegen als cupyx-CSR, der CG-Code ist für numpy
+und cupy derselbe. Gemessen auf der RTX 3070 in FP64 (28.09.2026): GPU-Operator = Matrix auf
+10⁻¹⁵; Kirsch h 10 p 3 verfeinert (229 608 Freiheitsgrade) 3,1 ms je Anwendung gegen 18,8 ms auf
+der CPU bei 652 MB GPU-Speicher; kleine Modelle (6 069 Freiheitsgrade) 0,05 gegen 0,17 ms, ganz
+kleine (14 961, viele Schnittzellen) 0,63 gegen 0,22 ms. Die PCG-Lösung auf der GPU ist mit der
+CPU identisch (5·10⁻¹²), braucht bei 2 316 freien Freiheitsgraden aber 6,8 s gegen 0,1 s, weil je
+Iteration mehrere Kernstarts und dünnbesetzte Produkte mit festen Startkosten anfallen – die
+GPU lohnt sich ab Modellen mit einigen 10⁵ Freiheitsgraden, und erst mit dem Mehrgitter aus
+Teilprojekt 4 sinkt die Iterationszahl so weit, dass die Startkosten nicht mehr zählen.
+
+**Lasten am Detail (Vertrag 2.1.0, 28.09.2026).** `DetailModelSpec.loads` sind Flächenlasten
+je Lastfall-ID: die Fläche wählt ein `SurfaceSelector` (benannte CSG-Grundform, Box oder
+Zylinder mit 2 % Radiustoleranz) unter den Quadraturpunkten der Oberfläche, die Traktion ist
+Druck (t = −p·n), globale Traktion oder eine Resultierende. Die Resultierende wird verteilt als
+konstante Traktion F/A für die Kraft und als lineares Feld ω × (P − c) für das Moment mit
+ω = (tr J·I − J)⁻¹·M und J = ∫(P − c)(P − c)ᵀ dA um den Flächenschwerpunkt c; so gilt
+∫ t dA = F und ∫ (P − c) × t dA = M, und keiner der beiden Anteile erzeugt die jeweils andere
+Größe. Eine Last wirkt nur auf Ergebnisschlüssel mit derselben `load_case_id`; `body_load` (N/mm³)
+wirkt auf alle. Das Protokoll nennt je Last Fläche, Schwerpunkt, Kraft und Moment aus der
+Quadratur. Prüfung am Kragarmsegment: Druck über eine Box auf der Oberseite (60 000 mm² auf
+10⁻⁶, Resultierende exakt), Resultierende mit Moment auf der benannten Fläche (F und M um den
+Schwerpunkt auf 10⁻⁹), Eigengewicht. Gegen die Schnittkräfte der Kopplungskontrolle stimmt das
+Gleichgewicht nur auf 5 %, weil ∫σ·n dA den Strafanteil des Nitsche-Randes nicht enthält
+(Abschnitt 11.6); eine Box zur Flächenauswahl ist dünn zu halten, da sie Quadraturpunkte wählt
+(0,1 mm Dicke griff 34 mm² der Seitenflächen mit, 0,001 mm nichts).
+
+### 11.10 Teilprojekt 4: p-Mehrgitter mit Zellblock-Glätter
+
+**Schachtelung statt Interpolation.** Die hierarchische Basis (11.1) enthält den Raum vom Grad
+p−1 als die Moden mit 1D-Indizes ≤ p−1. Der Übergang zwischen den Polynomgraden ist darum eine
+Injektion (Auswahl von Moden), der Galerkin-Grobgitteroperator der Teilblock der Zellmatrizen aus
+11.9 (keine neue Integration), und die Zwänge aus 11.8 sind geschachtelt: die Spur eines
+Polynoms vom Grad d auf einer hängenden Fläche und seine Fortsetzung in eine aggregierte Zelle
+haben wieder Grad d, ein Meister vom Grad d bindet also nur Sklaven vom Grad ≤ d. Deshalb sind
+die freien groben Moden eine Teilmenge der freien feinen, P̃ ist die Injektion zwischen den
+freien Koordinaten und A_grob = P̃ᵀ A_fein P̃ gilt exakt; gemessen 0 bis 3·10⁻¹⁶ (Patch mit dünner
+Wand, Kragarmsegment, Lamé, Kirsch verfeinert). Das Grobgitter p = 1 (Eckmoden) löst der
+Direktlöser; die Mittelwertzwänge der Schnittebenen werden auf jede Ebene injiziert und dort als
+Sattelpunkt mitgeführt, sonst ist A am Grobgitter singulär (Starrkörper in der Ebene) und der
+Direktlöser liefert Zahlen um 10¹².
+
+**Warum Jacobi als Glätter nicht reicht.** Mit Chebyshev-Jacobi (Grad 3, Spektrum
+[λ_max/8, λ_max]) reduziert ein V-Zyklus das Residuum zwar um den Faktor 0,03 bis 0,08, der PCG
+brauchte aber 637 (Kirsch h 20 p 2) bis über 2000 Iterationen. Das explizite Spektrum von M⁻¹A am
+Patch h 20 p 2 (2469 freie Koordinaten) zeigt 210 Eigenwerte unter 0,01, die kleinsten bei 10⁻⁵;
+ihre Eigenvektoren sitzen auf Moden, die nur zu Schnittzellen mit Werkstoffanteil ≈ 0 gehören und
+auf dem Nitsche-Rand liegen (die Zellen selbst sind wohlgestellt, der Anteil nahe der geteilten
+Fläche ist es nicht). Solche lokalen Cluster erreicht kein Punkt-Glätter (α = 30 oder Grad 6:
+min 1,9·10⁻⁵ bzw. 2,4·10⁻⁵) und kein Grobgitter aus Eckmoden.
+
+**Zellblock-Schwarz.** Die Vorgabe 8.3 nennt als zweite Gegenmaßnahme den additiven Schwarz-
+Glätter mit Patches um schwach gestützte Freiheitsgrade. Hier wird je Zelle der Block A[S,S] der
+freien Koordinaten, die die Zelle berührt, exakt invertiert (aus der nur hierfür assemblierten
+Matrix je Ebene); die Überlappung regelt keine Dämpfung, sondern die Chebyshev-Beschleunigung um
+den Glätter mit λ_max von M_AS·A aus der Potenzmethode. Damit fallen die lokalen Cluster aus dem
+Spektrum, und der PCG braucht (28.09.2026, bis 10⁻¹⁰, Spannungen wie der Direktlöser auf
+10⁻⁹…10⁻¹⁰): Patch h 20 p 2 **29** Iterationen (Jacobi 5 045), Kragarmsegment p 3 mit
+Schnittebenen **53** (2 580), Lamé h 20 p 3 **26** (20 373), Kirsch h 20 p 2 verfeinert **38**
+(4 420), Kirsch h 20 p 3 verfeinert **43** (über 40 000). Der Richtwert der Vorgabe (unter 100)
+ist erfüllt, und die Iterationszahl hängt kaum von p und Verfeinerung ab.
+
+**Einrichten, Grobgitter und Robustheit (28.09.2026, nach Gutachten).** Das Profil der ersten
+Fassung am Kirsch-Modell h 10 p 3 (130 611 freie Koordinaten) zeigte 90 von 147 s Einrichtzeit in
+4 732 einzelnen LAPACK-Inversionen der Zellblöcke. Eine parallele Inversion über numba mit
+LAPACK-Aufrufen aus 32 Threads überschrieb Speicher (OpenBLAS ist für so viele gleichzeitige
+Aufrufer nicht gebaut); die Blöcke werden darum mit einer eigenen Cholesky-Inversion in numba
+invertiert (A = LLᵀ, A⁻¹ = L⁻ᵀL⁻¹, exakt symmetrisch): 2 000 Blöcke der Größe 192 in 0,55 s statt
+42 s, Abweichung 3·10⁻¹⁵. Die groben Zwänge werden nicht mehr je Ebene neu gebaut, sondern aus den
+feinen abgeleitet (C_grob = P₃ᵀ C_fein P̃, Schachtelung beim Aufbau geprüft, gegen unabhängig
+gebaute Zwänge auf 10⁻¹³ gleich). Bei Schnittlage 0,2 stagnierte die erste Fassung (500
+Iterationen ohne Konvergenz): das Kirsch-Modell hat eine freie z-Verschiebung, das Grobgitter
+p = 1 ist singulär, und Pardiso störte die Pivots still, sodass die Grobkorrektur Nullraumanteile
+der Größe 1/Pivot bekam. Seither wird das Grobgitter um δ = 10⁻¹⁰·max diag verschoben (der
+Nullraumanteil bleibt r₀/δ, r₀ ist für konsistente Systeme Rundung) und eine Zufallsprobe meldet
+die Singularität im Protokoll. Fünf Schnittlagen (Kirsch h 20 p 3 verfeinert, 26 400 bis 33 060
+freie Koordinaten): 43 / 53 / 58 / 47 / 39 Iterationen, Einrichten 4,9 bis 12,8 s, K_t identisch
+mit dem Direktlöser. Der V-Zyklus ist symmetrisch auf 2·10⁻⁹ (Grenze der LU-Lösung am
+Grobgitter) und positiv (kleinster Rayleigh-Quotient 7·10⁻⁵).
+
+**CPU gegen Direktlöser.** Bei 30 000 freien Koordinaten löst der Direktlöser in 1 bis 2 s, der
+PCG mit V-Zyklus braucht 10 bis 25 s. Der Grund ist die Speicherbandbreite: die Blockinversen
+belegen 150 bis 325 MB und werden je V-Zyklus zwölfmal gelesen (je drei Chebyshev-Schritte vor und
+nach der Grobkorrektur auf zwei Ebenen). Auf der CPU bleibt der Direktlöser darum Standard; das
+Mehrgitter ist für die Grafikkarte gebaut (Vorgabe 9, 448 GB/s auf der RTX 3070 gegen rund
+20 GB/s), und die Blöcke dürfen dort in FP32 liegen (gemischte Genauigkeit im Glätter, Vorgabe 9).
+`FcmProblem(loeser="mehrgitter")` ist geprüft: Kragarmsegment p 3 mit Zug und mit reiner
+Verdrehung ohne Last, je 54 Iterationen, Verschiebungen und Multiplikatoren wie der Sattelpunkt
+auf 10⁻⁶.
+
+**V-Zyklus auf der GPU und singuläre Modelle (28.09.2026).** Das eingerichtete CPU-Mehrgitter
+wird auf die Grafikkarte gespiegelt: Operator je Ebene als CuPy-Kern (11.9), Schwarz-Blöcke je
+Größe gestapelt (gebündelte Matrixprodukte, Scatter-Add), Injektionen als cupyx-CSR, Chebyshev in
+cupy; das Grobgitter p = 1 bleibt auf der CPU (eine Übertragung hin und zurück je Zyklus). Der
+GPU-Zyklus stimmt in FP64 mit der CPU auf 1,4·10⁻⁹ überein (Summationsreihenfolge). Blöcke in FP32
+(Vorgabe 9 erlaubt es für Glätter) divergieren bei h 10: die Blockinversen haben Konditionen bis
+10⁸, und die Rundung auf 6·10⁻⁸ macht ihre kleinsten Eigenwerte negativ – der Glätter bleibt FP64.
+Beim Kirsch-Modell h 10 p 3 (130 611 freie Koordinaten) sprang das Residuum nach 10⁻⁸ wieder auf
+10⁻⁶, und die Iterationszahl schwankte zwischen 147 und 243 je nach Einstellung und Summations-
+reihenfolge. Ursache ist die freie z-Verschiebung dieses Modells (nur Normalen-Nitsche auf den
+Symmetrieebenen): der Vorkonditionierer blähte den Nullraumanteil auf, der über Rundung ins
+Residuum zurückwirkte; weder eine schärfere λ_max-Schätzung (60 Potenzschritte: 151, Sicherheit
+1,5: 243) noch eine andere Grobgitterverschiebung (10⁻¹³: 159, 10⁻⁷: 174) halfen. Der Nullraum wird
+darum am Grobgitter per zweifacher inverser Iteration aus sechs Zufallsproben bestimmt, auf die
+feinste Ebene injiziert, dort am Operator bestätigt (‖A n‖ < 10⁻⁶ des Bezugs; ein nur fast
+singulärer echter Modus darf nicht wegfallen) und vor und nach dem V-Zyklus symmetrisch
+herausprojiziert (z = Π M Π r). Damit: 81 Iterationen, in der Iterationszahl reproduzierbar (die GPU
+summiert Blockbeiträge mit atomaren Additionen, die Zahlen selbst sind nicht bitgleich), das Residuum fällt
+gleichmäßig. Entschieden wird über die Singulärwerte des Probenblocks nach den zwei Schritten: ein
+Nullvektor n bleibt dabei unverändert stehen (R₂ ≈ n nᵀX, Singulärwert ≈ √χ²₆, unter 0,1 mit
+Wahrscheinlichkeit 2·10⁻⁸), jeder andere Modus schrumpft um (δ/λ)². Gemessen am Kirsch-Modell p 3,
+h 10 bis 14: Nullvektor 2,4 bis 3,8, zweitgrößter Wert 5·10⁻⁶ bis 4·10⁻⁴; die Schwelle liegt bei
+0,1. Die erste Fassung entschied über das Residuum einer einzelnen Probe (> 10⁻³). Das ist der
+Nullanteil eines Zufallsvektors, |nᵀx|/‖x‖ ≈ 1/√N₁, und fällt mit der Größe des Grobgitters: bei
+h 12 und h 14 (Versatz 0) lag er bei 9,8·10⁻⁴ und 8,5·10⁻⁴, der Nullraum blieb unerkannt, das
+Residuum fiel bis 1,6·10⁻⁸ und wuchs danach exponentiell, bis der CG mit pᵀAp < 0 abbrach (h 12)
+bzw. erst nach 113 Iterationen zufällig konvergierte (h 14). Eine Prüfung an einer Laplace-Kette
+mit 20 000 Unbekannten, deren erste Probe senkrecht zum Nullraum liegt, hält das fest; die gelagerte
+Kette (kleinster Eigenwert 6·10⁻⁹, also fast singulär) bleibt mit 3·10⁻³ klar unter der Schwelle. Gelagerte Modelle (Patch, Kragarm mit Schnittebenen – über die Vertragsschicht immer
+der Fall) haben keinen Nullraum; das Protokoll meldet die Bewegung mit Warnung. Zeiten Kirsch h 10
+p 3 bei belasteter Maschine: GPU-PCG 9 bis 11 s gegen 37 s Direktlöser; das Einrichten auf der CPU
+(Zelldaten, Blöcke, Grobgitter) kostet 30 bis 35 s und wird von allen Lastfällen eines Details
+geteilt. Kirsch h 20 p 3 (33 060 frei): GPU 3,8 s gegen CPU-Mehrgitter 12,1 s und Direktlöser 6,0 s.
+Über fünf Schnittlagen bei h 10 (128 724 bis 199 095 freie Koordinaten) brauchte der GPU-PCG mit
+Chebyshev-Grad 3 auf [λ_max/8, λ_max] 81 / 125 / 112 / 129 / 59 Iterationen. Am schwierigsten Fall
+(Versatz 0,6) gemessen: Grad 3/α 8 129 Iterationen in 14,6 s, Grad 5/α 8 92 in 16,7 s, Grad 5/α 16
+86 in 15,0 s, Grad 8/α 30 58 in 16,4 s – die Zeit hängt kaum am Grad, die Iterationszahl schon.
+Standard ist seither Grad 5 auf [λ_max/16, λ_max]; damit: 51 / 82 / 72 / 86 / 49 Iterationen, alle
+unter dem Richtwert 100 der Vorgabe, GPU-PCG 7,7 bis 16,9 s gegen 9 bis 30 s für das Lösen des
+Direktlösers nach seiner Faktorisierung, K_t jeweils identisch; bei h 20 p 3 19 bis 37 Iterationen.
+Offen bleibt das Einrichten auf der CPU. Nach der Entdopplung (Matrix aus den Zelldaten, feine
+Matrix und Diagonale wiederverwendet), einem Tensorprodukt der Basis per Broadcasting und einem
+parallelen Blockauszug kostet das Mehrgitter-Einrichten bei Kirsch h 10 p 3 rund 13 s. Im selben
+Prozess gemessen (Aufbau + Lösen, Maschine belegt): Versatz 0 Direktlöser 25,5 s gegen Mehrgitter
+auf der GPU 42,1 s (51 Iterationen), Versatz 0,6 53,7 s gegen 57,6 s (86 Iterationen). Das Lösen ist
+auf der GPU schneller (8,8 gegen 10,0 s und 21,6 gegen 28,1 s), der Gesamtweg noch nicht; darum
+bleibt der Direktlöser Standard der Vertragsschicht, bis das Einrichten auf die GPU wandert.
+
+**Einrichten auf der GPU und automatische Wahl (28.09.2026).** Weil die Zwänge geschachtelt sind und
+P̃ nur Koordinaten auswählt, ist die grobe Matrix eine Teilmatrix der feinen: A_grob = A_fein[S, S]
+mit S den ausgewählten Koordinaten (gegen C_kᵀ K_k C_k aus den Teilblöcken der Zellmatrizen auf
+10⁻¹² geprüft). Die groben Ebenen werden darum nicht mehr assembliert, und die Jacobi-Diagonale ist
+die Diagonale dieser Matrizen. Mit `geraet="gpu"` werden die Glätterblöcke per RawKernel aus der
+feinen Matrix auf der GPU ausgezogen, mit cuBLAS gestapelt invertiert und bleiben dort; λ_max, die
+groben Operatoren (cuSPARSE) und der V-Zyklus laufen ebenfalls auf der GPU, nur das Grobgitter p = 1
+auf der CPU. Das auf der GPU eingerichtete Mehrgitter stimmt mit dem CPU-Mehrgitter auf 2·10⁻¹⁰
+überein. Das Einrichten kostet bei Kirsch h 10 p 3 nun 4 s statt 13 s.
+
+Beim Messen der Umschaltschwelle kamen drei Fehler zutage, die vorher behoben werden mussten: die
+Nullraumerkennung hing an der Modellgröße (oben), die Aggregation setzte Wurzeln bis 38 Halbweiten
+entfernt fort (11.4) und verdarb damit die Kondition, und der GPU-Speicher lief über. Nach den beiden
+ersten Korrekturen braucht das Mehrgitter bei der Kirsch-Scheibe 23 bis 43 Iterationen statt 51 bis
+125, auch der Direktlöser wurde schneller (h 10, Versatz 0,6: 20,8 statt 37,2 s). Zum Speicher: die
+Glätterblöcke wurden je Größengruppe auf einmal ausgezogen und invertiert, die Arbeitskopien der
+gestapelten Inversion und die Symmetrisierung ließen den Speicherpool auf das Doppelte der Blöcke
+wachsen (Kirsch h 9: 5,9 GB gehalten, 2,9 GB belegt), und mehrere Modelle in einem Prozess sammelten
+sich im Pool, bis die 8-GB-Karte auslagerte (1,5 statt 0,13 s je Iteration). Seither laufen Auszug
+und Inversion in Teilstapeln von höchstens 256 MB, und der Pool wird nach dem Einrichten freigegeben;
+Spitze und Belegung stehen in der Statistik. Die Schätzung der Vertragsschicht lag bis 50 % unter der
+Spitze und zählt jetzt die Zellmatrizen der Schnittzellen, die Glätterblöcke (mittlere Blockgröße
+1,1·3(p+1)³), die feine Matrix während des Auszugs samt grober Matrix (360 Einträge je freier
+Koordinate) und 700 MB Arbeitsfelder; an acht Fällen von 1,4 bis 5,3 GB liegt sie 2 bis 10 % über
+der gemessenen Spitze, gewählt wird mit 20 % Reserve gegen den freien Speicher.
+
+Gesamtweg (Aufbau + Lösen) auf freier Maschine, je Fall ein eigener Prozess (Commit d669b9f); die
+Scheibe ist nur ein bis zwei Zellen dick und damit für den Direktlöser günstig, der Block mit Bohrung
+(200 mm Würfel, r 40) ist ein kompakter Körper:
+
+| Modell | Freiheitsgrade | Direktlöser | Mehrgitter GPU | Iterationen |
+|---|---|---|---|---|
+| Block h 25, Versatz 0 / 0,3 | 65 040 / 65 616 | 16,6 / 15,4 s | 19,0 / 16,9 s | 50 / 26 |
+| Block h 20 | 116 187 / 115 728 | 20,6 / 22,4 s | 22,7 / **21,1** s | 26 / 22 |
+| Block h 16 | 185 856 / 232 296 | 39,0 / 39,7 s | **33,7** / **39,2** s | 22 / 27 |
+| Block h 14 | 281 292 / 340 476 | 57,5 / 61,1 s | **41,7** / **52,5** s | 22 / 26 |
+| Kirsch h 14, Versatz 0 / 0,3 / 0,6 | 81 183 – 135 327 | 7,7 / 8,3 / 9,7 s | 9,6 / 10,7 / 12,4 s | 23 / 24 / 31 |
+| Kirsch h 12 | 165 501 – 173 862 | 10,5 / 11,3 / 13,1 s | 13,6 / 14,9 / 14,3 s | 24 / 23 / 29 |
+| Kirsch h 10 | 229 608 – 330 705 | 15,6 / 19,3 / 20,8 s | 17,9 / **18,4** / 21,4 s | 23 / 29 / 26 |
+| Kirsch h 9 | 283 896 – 390 018 | 20,0 / 25,9 / 25,4 s | 22,2 / **25,2** / **25,2** s | 24 / 43 / 31 |
+| Kirsch h 8 | 360 204 – 497 244 | 30,8 / 34,6 / 33,5 s | **26,1** / 42,3 / **33,3** s | 35 / 114 / 26 |
+
+Das Lösen selbst ist auf der GPU beim Block ab 116 000 Freiheitsgraden 1,9- bis 9,4-mal schneller, bei
+der Scheibe erst ab 230 000 Freiheitsgraden 1,6- bis 2,8-mal (bis 174 000 etwa gleich schnell); den
+Abstand im Gesamtweg macht das Einrichten des iterativen Wegs (Zellmatrizen, Matrix, Blöcke), das 2 bis
+12 s länger dauert als Assemblieren und Faktorisieren beim Direktlöser. Beim Block wächst der Vorsprung des
+Mehrgitters mit der Größe (281 000 Freiheitsgrade: 16 s), bei der Scheibe liegen beide ab 230 000
+gleichauf. Ein Ausreißer ist Kirsch h 8, Versatz 0,3 mit 114 Iterationen (unten behoben). Auf diesem
+Stand wählte die Vertragsschicht mit `FcmSettings.backend = "auto"` das Mehrgitter auf der GPU ab 200 000
+Freiheitsgraden; über alle 23 Fälle verschenkte diese Schwelle 19 s gegen die jeweils bessere Wahl. Die
+Schlussmessung nach den Korrekturen unten hat die Wahl umgedreht. Nach oben begrenzt der Speicher der Karte
+das Mehrgitter (8 GB: etwa 500 000 Freiheitsgrade bei p 3).
+`"gpu"` erzwingt das Mehrgitter und fällt ohne GPU oder bei zu wenig Speicher mit Warnung auf den
+Direktlöser zurück (Vorgabe 9), `"cpu"` rechnet immer direkt; das Mehrgitter auf der CPU ist in allen
+Messungen langsamer als der Direktlöser und wird nicht gewählt. Die Vertragstoleranz (relatives
+Residuum) wird für das Mehrgitter auf 10⁻¹² geschärft, damit die Verschiebungen den Direktlöser auf
+10⁻⁶ treffen (Vorgabe 9): gemessen auf dem endgültigen Stand (Aggregationsschwelle 0,4) am Kragarm-
+Ausschnitt über die Vertragsschicht (h 25 und 16) und am eingespannten Block (h 25 und 20) weichen sie bei
+10⁻¹⁰ um 1,5·10⁻¹⁰ bis 1,7·10⁻⁸ ab, bei 10⁻¹² um 7,6·10⁻¹³ bis 9,7·10⁻¹¹, das Lösen dauert 19 bis 29 %
+länger. Vor der Aggregationskorrektur lagen sie bei 10⁻¹⁰ bis 4,3·10⁻⁶ daneben. Die Spannungen stimmen in allen 23 Fällen der Tabelle auf die angegebenen
+Stellen überein. Protokoll und `summary()` nennen den gewählten Weg und die Begründung.
+
+**Zweite Sicht über Teilprojekt 3 und 4 (28.09.2026 abends).** Ein unabhängiges Gutachten fand keinen
+falsch gebauten Kern, aber Lücken, die seither geschlossen sind. Die Nullraumerkennung war mit
+Schnittebenen abgeschaltet, im Vertragsweg also nie aktiv; ein zweiter, von keiner Ebene berührter
+Körper wäre ohne Projektion und ohne Warnung geblieben. Sie läuft jetzt immer: der Sattelpunktlöser
+des Grobgitters trifft eine von den Mittelwertzwängen gesperrte Bewegung exakt und filtert sie so
+heraus, bestätigt werden nur Vektoren mit A q ≈ 0 und B q ≈ 0 (dann vertauschen die Projektionen des
+CG und des V-Zyklus). Sechs Zufallsproben reichten für mehrere freie Bewegungen nicht: die
+Singulärwerte der Nullvektoren sind die einer k × m-Gaußmatrix, und bei sechs freien Bewegungen ging
+mit sechs Proben in drei von zehn Zufallsständen einer verloren; mit sechzehn Proben in keinem.
+Fehler der GPU außer Speichermangel (fehlendes NVRTC in der gepackten exe, cuBLAS, Treiber) führten
+zum Abbruch statt zum Rückfall. Die GPU gilt jetzt erst als verfügbar, wenn eine Kleinrechnung samt
+RawModule-Kompilat läuft, und jeder Fehler des GPU-Wegs beim Aufbau oder Lösen fällt mit Warnung auf
+den Direktlöser zurück; die Felder des gescheiterten Versuchs werden vorher freigegeben, der Pool auch
+nach einem Fehler. NaN aus einem singulären Block wurde weder bei der Inversion noch im CG erkannt
+(Vergleiche mit NaN sind falsch; der CG wäre 1000 V-Zyklen gelaufen); beides bricht jetzt sofort mit
+Meldung ab. Eine Last mit Anteil in Richtung einer freien Bewegung wird vor dem CG gemeldet („Last
+nicht im Gleichgewicht“). `"auto"` wählt das Mehrgitter nur bei p = 3, dem gemessenen Grad: bei p = 1
+gibt es nur eine Ebene, und p = 2 und 4 sind weder für die Schwelle noch für den Speicher gemessen; die
+Speicherschätzung setzt die Einträge je Zeile nach p an und zählt alle Glätterebenen.
+
+**Aggregationsschwelle 0,4 (28.09.2026 abends).** Der Ausreißer Kirsch h 8, Versatz 0,3 mit 109 bis 114
+Iterationen ließ sich an den Ritz-Werten des vorkonditionierten Operators festmachen: rund acht
+Eigenwerte zwischen 0,002 und 0,016, alle anderen über 0,03 (Kondition 559). Ihre Eigenvektoren
+sitzen auf rund 400 freien Moden am belasteten Plattenende, in Zellen mit Werkstoffanteil 0,26, also
+knapp über der Schwelle 0,25 und damit wohlgestellt; ihre hohen Moden tragen aber nur etwa
+Anteil^(2p+1) ihrer Energie im Werkstoff und teilen sich die Nachbarschaft mit leeren Zellen. Mit der
+Schwelle 0,4 (Plan TP 4, Aufgabe 3) werden solche Zellen aggregiert (GPU-Mehrgitter, CG bis zum relativen
+Residuum 10⁻¹⁰):
+
+| Kirsch p 3 | Schwelle 0,25 | Schwelle 0,4 |
+|---|---|---|
+| h 8, Versatz 0,3: Iterationen / Kondition / Lösen | 109 / 559 / 15,7 s | 40 / 42 / 5,7 s |
+| h 8, Versatz 0,3: K_tg | 3,0735 | 3,0744 |
+| h 10, Versatz 0 / 0,2 / 0,4 / 0,6 / 0,8: Iterationen | 22 / 27 / 36 / 25 / 24 | 22 / 22 / 31 / 22 / 24 |
+| h 10: K_tg (Referenz 3,028) | 3,0849 / 3,0837 / 3,0760 / 3,0740 / 3,0744 | 3,0798 / 3,0837 / 3,0760 / 3,0744 / 3,0744 |
+
+Die Genauigkeit bleibt (K_tg gleich oder bis 0,17 % näher an der Referenz), die Patch-Tests bleiben
+unter 10⁻⁶; die freien Koordinaten nehmen ab (h 10, Versatz 0,2: 122 430 statt 184 809). Die Forderung
+des Plans, dass die Iterationen über fünf Schnittlagen um höchstens 20 % streuen, erfüllt auch 0,4 nicht
+ganz (31 gegen im Mittel 24, +28 %); vorher waren es +34 %.
+
+**Schlussmessung auf dem endgültigen Stand (Commit c4694d6, 29.09.2026).** Mit der Schwelle 0,4 und der
+Toleranz 10⁻¹² dieselben 23 Fälle, freie Maschine, je Fall ein Prozess:
+
+| Modell | Freiheitsgrade | Direktlöser | Mehrgitter GPU | Iterationen |
+|---|---|---|---|---|
+| Block h 25, Versatz 0 / 0,3 | 65 040 / 65 616 | 14,5 / 15,2 s | 17,8 / 17,6 s | 45 / 28 |
+| Block h 20 | 116 187 / 115 728 | 20,6 / 22,3 s | 23,0 / 22,8 s | 32 / 28 |
+| Block h 16 | 185 856 / 232 296 | 38,8 / 38,5 s | **33,4** / 40,2 s | 27 / 33 |
+| Block h 14 | 281 292 / 340 476 | 49,4 / 61,0 s | **44,4** / 61,8 s | 33 / 32 |
+| Kirsch h 14, Versatz 0 / 0,3 / 0,6 | 81 183 – 135 327 | 7,4 / 8,1 / 8,3 s | 11,8 / 11,4 / 12,1 s | 33 / 29 / 32 |
+| Kirsch h 12 | 165 501 – 173 862 | 10,4 / 11,0 / 11,3 s | 15,9 / 16,2 / 13,4 s | 31 / 33 / 28 |
+| Kirsch h 10 | 229 608 – 330 705 | 15,6 / 18,9 / 17,4 s | 17,7 / 19,5 / 23,1 s | 29 / 38 / 30 |
+| Kirsch h 9 | 283 896 – 390 018 | 19,4 / 24,3 / 20,8 s | 21,8 / **23,4** / 23,9 s | 31 / 41 / 35 |
+| Kirsch h 8 | 360 204 – 497 244 | 26,0 / 32,2 / 27,6 s | 27,5 / 33,4 / 31,7 s | 43 / 55 / 29 |
+
+Die Schwelle 0,4 nimmt vor allem dem Direktlöser Arbeit ab: sie senkt die Zahl der freien Koordinaten
+(Kirsch h 10, Versatz 0,6: 125 562 statt 187 239, Direktlöser 17,4 statt 20,8 s), während der Aufbau des
+iterativen Wegs an den Zellen hängt. Der Direktlöser ist jetzt in 20 von 23 Fällen schneller, meist um 1
+bis 6 s; das Mehrgitter gewinnt nur beim Block mit 186 000 und 281 000 Freiheitsgraden (je etwa 5 s) und
+einmal bei der Scheibe (0,9 s). Zusammen braucht der Direktlöser 519 s, das Mehrgitter 564 s, die jeweils
+bessere Wahl 508 s; die Schwelle 200 000 verschenkt 28,6 s, 400 000 16,6 s, „immer direkt“ 11,3 s (aus
+dem Protokoll per Skript nachgerechnet). `"auto"` wählt darum den Direktlöser; `"gpu"` erzwingt das
+Mehrgitter weiterhin, und der Mechanismus der Schwelle bleibt abgeschaltet stehen (`_AUTO_MEHRGITTER`).
+Lohnen wird sich die GPU auf dieser Karte erst mit einem schnelleren Aufbau des iterativen Wegs: er
+dauert 2 bis 20 s länger als Assemblieren und Faktorisieren; das Lösen selbst ist auf der GPU beim Block
+ab 186 000 Freiheitsgraden 3- bis 6-mal schneller, darunter 0,5- bis 2,6-mal.
+

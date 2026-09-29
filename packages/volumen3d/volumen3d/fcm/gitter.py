@@ -40,11 +40,15 @@ class Verfeinerung:
         Achse kuerzer als zwei Zellkanten ist (bis max_ebene).
     max_ebene: Obergrenze der Ebenen; Standard ist die groesste aus den Regeln folgende Ebene,
         mindestens schnitt_ebenen, bei duenne_waende mindestens 2; nie ueber 8.
+    zellen: erzwungene Teilungen einzelner Blaetter als (ebene, i, j, k) - die Zellaggregation
+        fordert sie fuer schlecht geschnittene Zellen, deren wohlgestellte Nachbarn alle feiner
+        sind (eine feinere Wurzel hinge an der Zelle selbst: Zwangszyklus, Entwurf 4b.2).
     """
     schnitt_ebenen: int = 0
     bereiche: tuple = ()
     duenne_waende: bool = False
     max_ebene: int | None = None
+    zellen: tuple = ()
 
     def ebenen_grenze(self, h: float) -> int:
         l = int(self.schnitt_ebenen)
@@ -54,6 +58,8 @@ class Verfeinerung:
             l = max(l, 2)
         if self.max_ebene is not None:
             l = max(int(self.max_ebene), 0)
+        for z in self.zellen:
+            l = max(l, int(z[0]) + 1)
         return min(l, 8)
 
 
@@ -132,6 +138,12 @@ class Gitter:
             kandidaten = np.flatnonzero((klasse == CUT) & (ebene < self.max_ebene) & ~teilen)
             for c in kandidaten:
                 if self._duenn(lo[c], hl[c]):
+                    teilen[c] = True
+        if v.zellen:
+            # erzwungene Teilungen: genau die genannten Blaetter (Kinder haben eine andere Ebene)
+            schluessel = {(int(z[0]), int(z[1]), int(z[2]), int(z[3])) for z in v.zellen}
+            for c in np.flatnonzero(~teilen):
+                if (int(ebene[c]), int(ijk[c, 0]), int(ijk[c, 1]), int(ijk[c, 2])) in schluessel:
                     teilen[c] = True
         teilen &= ebene < self.max_ebene
         return teilen

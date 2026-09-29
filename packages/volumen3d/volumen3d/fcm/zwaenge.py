@@ -45,9 +45,11 @@ class Zwaenge:
                           "moden_haengend": 0, "moden_aggregiert": 0, "kettenlaenge": 0, "zyklen_frei": 0}
         self._haengende()
         if aggregation is not None:
-            for mode, eintraege in aggregation.roh_zwaenge(set(self.roh)).items():
+            for mode, eintraege in aggregation.roh_zwaenge(dict(self.roh)).items():
                 self.roh[mode] = eintraege
-            self.statistik["moden_aggregiert"] = len(self.roh) - self.statistik["moden_haengend"]
+            n_null = int(aggregation.statistik.get("moden_null", 0))
+            self.statistik["moden_aggregiert"] = len(self.roh) - self.statistik["moden_haengend"] - n_null
+            self.statistik["moden_null"] = n_null
         self._ketten_aufloesen()
         self.C = self._matrix()
 
@@ -185,21 +187,16 @@ class Zwaenge:
                     else:
                         neu[mm] = neu.get(mm, 0.0) + k
                 if mode in neu:
+                    # Selbstbezug. Er entstand nur, wenn eine aggregierte Zelle eine feinere Wurzel
+                    # hatte, deren Moden an ihr hingen (test_zwaenge, duenne Wand: 53 Faelle mit
+                    # Koeffizient 1 und Rest bis 2,45). Seit die Aggregation keine feineren Wurzeln
+                    # mehr waehlt und solche Zellen geteilt werden (aggregation.zu_teilen), sinken
+                    # Zwangsketten monoton in der Ebene und koennen nicht zurueckkehren; ein
+                    # Selbstbezug ist darum ein Fehler und kein Sonderfall.
                     c = neu.pop(mode)
-                    if abs(1.0 - c) < 1e-9:
-                        # u = u + rest: mit rest = 0 eine Tautologie (zwei Vorschriften mit derselben
-                        # Spur), der Mode bleibt frei. Mit rest != 0 ist es eine Bedingung an die
-                        # Meistermoden, die diese Substitution nicht ausdruecken kann; der Mode bleibt
-                        # ebenfalls frei, der groesste Rest steht im Protokoll (zyklen_rest_max), die
-                        # Vertragsschicht warnt. Gutachten 27.09.2026; im verfeinerten Patch-Test
-                        # (test_zwaenge) kommt Rest 0,5 vor, u und sigma bleiben dort < 1e-6.
-                        rest = max((abs(k) for k in neu.values()), default=0.0)
-                        self.statistik["zyklen_rest_max"] = max(self.statistik.get("zyklen_rest_max", 0.0), rest)
-                        del self.roh[mode]
-                        self.statistik["zyklen_frei"] += 1
-                        continue
-                    neu = {mm: k / (1.0 - c) for mm, k in neu.items()}
-                    self.statistik["zyklen_geloest"] = self.statistik.get("zyklen_geloest", 0) + 1
+                    rest = max((abs(k) for k in neu.values()), default=0.0)
+                    raise ValueError(f"Zwangszyklus an Mode {mode} (Koeffizient {c:.6g}, Rest {rest:.2e}) - "
+                                     f"Wurzelwahl der Aggregation pruefen")
                 self.roh[mode] = [(mm, k) for mm, k in neu.items() if abs(k) > 1e-14]
             self.statistik["kettenlaenge"] = runde + 1
             if not offen:
@@ -228,6 +225,8 @@ class Zwaenge:
         C = sp.coo_matrix((np.concatenate(V), (np.concatenate(Z), np.concatenate(S))), shape=(3 * n_moden, 3 * n_frei)).tocsr()
         self.statistik["moden_frei"] = n_frei
         self.statistik["moden_gebunden"] = int(gebunden.sum())
+        self.moden_frei = fi                          # Modennummer je freier Spalte (p-Mehrgitter: Injektion)
+        self.spalte_von_mode = neu_nr                 # freie Spalte je Mode (nur fuer freie Moden gueltig)
         return C
 
 
