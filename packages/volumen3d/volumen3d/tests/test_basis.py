@@ -58,6 +58,10 @@ def test_3d():
     ecken = np.array([[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)], float)
     Ne, _ = basis_3d(p, ecken)
     check("Eckmode 0 ist 1 an (-1,-1,-1), sonst 0", Ne[0, 0] == 1.0 and np.allclose(Ne[1:, 0], 0.0))
+    # Zelle ohne Quadraturpunkte (28.09.2026: reshape(0, -1) scheiterte im Broadcast-Tensorprodukt)
+    leer = [basis_3d(p, np.zeros((0, 3))) for p in (1, 2, 3, 4)]
+    check("leere Punktmenge: N (0, m), dN (0, m, 3) fuer p = 1..4",
+          all(N0.shape == (0, (p + 1) ** 3) and d0.shape == (0, (p + 1) ** 3, 3) for p, (N0, d0) in zip((1, 2, 3, 4), leer)))
 
 
 def test_gauss():

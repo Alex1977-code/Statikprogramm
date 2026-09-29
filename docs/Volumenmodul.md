@@ -75,8 +75,29 @@ Rebase ab.
 `stub`), `tests/run_all.py`, `.github/workflows/ci.yml`, `requirements.txt`, `.importlinter`,
 `docs/Theoriehandbuch.md` Kapitel 11.
 
-**Nächste Schritte:** Pull Request 1 (Stufe 1 = Teilprojekte 1 und 2), danach Teilprojekt 3
-(matrixfreie Operatoren und p-Mehrgitter auf der CPU mit numba, dann GPU mit cupy) nach Entwurf
-Abschnitt 4. Offen aus Teilprojekt 2: der schnelle Windungszahl-Baum für STL-Netze über 10⁵
-Facetten (Teilprojekt 5) und die Aufbauzeit der Flächenquadratur bei STL-Geometrie (Zeugen je
-Polygonstück fragen Windungszahl und Abstand einzeln ab).
+**Stand Teilprojekt 3 (28.09.2026, auf `feature/volumen3d`, noch kein Pull Request):**
+Pull Request 8 (Stufe 1) ist am 28.09. nach `main` gegangen (Merge c54af91). Seither: Zwangszyklen
+strukturell beseitigt (Wurzeln der Aggregation nie feiner, gröbste Zelle als Eigentümer geteilter
+Moden), Aufbauzeit halbiert (Lamé CSG 21,4 s, STL 18,0 s), matrixfreier Operator mit numba
+(`fcm/operator.py`, = Matrix auf 10⁻¹⁵, 18,7 ms je Anwendung bei 229 608 Freiheitsgraden) und
+PCG mit Jacobi und projizierten Mittelwertzwängen (`linalg/pcg.py`, `FcmProblem(loeser="pcg")`).
+Befund: Kondition der Jacobi-vorkonditionierten Matrix 10⁶ bis 5·10⁷, 5 000 bis 20 000
+Iterationen – die Messlatte für das Mehrgitter (Teilprojekt 4); der Direktlöser bleibt Standard
+der Vertragsschicht. GPU-Kerne mit CuPy sind da (3,1 ms je Anwendung bei 229 608
+Freiheitsgraden gegen 18,8 ms CPU). Vertrag 2.1.0 (Merge bdac39d, 28.09.) ist angeschlossen:
+`DetailModelSpec.loads` je Lastfall-ID (Druck, Traktion, Resultierende über benannte Fläche, Box
+oder Zylinder) und `body_load`, mit Protokoll je Last (Fläche, Schwerpunkt, Kraft, Moment).
+Teilprojekt 4 (p-Mehrgitter, `fcm/mehrgitter.py`, 28.09.) senkt die Iterationszahlen mit
+Zellblock-Schwarz-Glätter auf 26 bis 53 in allen Abnahmefällen (Jacobi: 2 580 bis über 40 000),
+`FcmProblem(loeser="mehrgitter")`; mit `backend="gpu"` läuft der V-Zyklus auf der Grafikkarte
+(Kirsch h 10 p 3: 8,6 bis 21 s gegen 7 bis 25 s Lösen des Direktlösers), freie Starrkörper-
+bewegungen werden erkannt und herausprojiziert. `FcmSettings.backend = "auto"` (Standard) wählt den im
+Gesamtweg schnelleren Weg; auf der gemessenen Karte (RTX 3070, 8 GB) ist das bis zur Speichergrenze des
+Mehrgitters der Direktlöser: in der Schlussmessung vom 29.09.2026 (23 Fälle, kompakter Block und dünne
+Kirsch-Scheibe, 65 000 bis 497 000 Freiheitsgrade) war er in 20 Fällen schneller (Theorie 11.10). `"gpu"`
+erzwingt das Mehrgitter auf der Grafikkarte, mit Rückfall auf den Direktlöser bei fehlender GPU, zu wenig
+Speicher oder jedem GPU-Fehler; `"cpu"` rechnet direkt. Vorher behoben: Nullraumerkennung größenunabhängig
+und auch mit Schnittebenen, Aggregationswurzeln höchstens zwei Zellen entfernt und Aggregationsschwelle
+0,4, GPU-Speicher in Teilstapeln und richtig geschätzt. `summary()` und Protokoll nennen den Weg
+(`solver_path`, `backend`, `solver_choice`); für das Hauptprogramm ändert sich an der Schnittstelle nichts. Offen aus Teilprojekt 2: der schnelle Windungszahl-Baum für STL-Netze
+über 10⁵ Facetten (Teilprojekt 5) und die Vierteilung der Randpolygone an gekrümmten Formen.

@@ -33,7 +33,8 @@ def _senkrechte(a: np.ndarray) -> np.ndarray:
 
 def _box_abstand(q: np.ndarray) -> np.ndarray:
     """Abstandsformel achsparalleler Boxen in beliebiger Dimension, q = |x| - e."""
-    aussen = np.linalg.norm(np.maximum(q, 0.0), axis=1)
+    qp = np.maximum(q, 0.0)
+    aussen = np.sqrt(np.einsum("ij,ij->i", qp, qp))      # statt linalg.norm: 3x schneller auf kleinen Feldern
     innen = np.minimum(q.max(axis=1), 0.0)
     return aussen + innen
 
@@ -127,19 +128,24 @@ class Zylinder:
         object.__setattr__(self, "p1", np.asarray(self.p1, float).reshape(3))
         if self.radius <= 0 or np.allclose(self.p0, self.p1):
             raise ValueError(f"Zylinder {self.name!r}: Radius > 0 und p0 != p1 noetig")
+        a = self.p1 - self.p0
+        Lz = float(np.sqrt(a @ a))
+        object.__setattr__(self, "_a", a / Lz)               # Achse einmal, nicht je Abfrage
+        object.__setattr__(self, "_Lz", Lz)
+        object.__setattr__(self, "_u", _senkrechte(a / Lz))  # Radialrichtung auf der Achse
 
     def _achse(self):
-        a = self.p1 - self.p0
-        Lz = float(np.linalg.norm(a))
-        return a / Lz, Lz
+        return self._a, self._Lz
 
     def _lokal(self, P):
-        a, Lz = self._achse()
+        a, Lz = self._a, self._Lz
         rel = np.asarray(P, float).reshape(-1, 3) - self.p0
         t = rel @ a
         rvec = rel - t[:, None] * a
-        r = np.linalg.norm(rvec, axis=1)
-        q = np.stack([r - self.radius, np.abs(t - 0.5 * Lz) - 0.5 * Lz], axis=1)
+        r = np.sqrt(np.einsum("ij,ij->i", rvec, rvec))
+        q = np.empty((len(t), 2))
+        q[:, 0] = r - self.radius
+        q[:, 1] = np.abs(t - 0.5 * Lz) - 0.5 * Lz
         return a, Lz, t, rvec, r, q
 
     def abstand(self, P) -> np.ndarray:
@@ -151,7 +157,8 @@ class Zylinder:
         er = np.zeros_like(rvec)
         ok = r > 0
         er[ok] = rvec[ok] / r[ok, None]
-        er[~ok] = _senkrechte(a)                      # auf der Achse: Radialrichtung beliebig
+        if not ok.all():
+            er[~ok] = self._u                         # auf der Achse: Radialrichtung beliebig
         return g2[:, :1] * er + g2[:, 1:] * a
 
     def huellquader(self) -> tuple[np.ndarray, np.ndarray]:
@@ -186,7 +193,7 @@ class Zylinder:
         t, rvec, rho = float(t[0]), rvec[0], float(rho[0])
         aus = []
         if abs(rho - self.radius) <= r:
-            er = rvec / rho if rho > 0 else _senkrechte(a)
+            er = rvec / rho if rho > 0 else self._u
             aus.append((self.p0 + t * a + self.radius * er, er))
         if abs(t) <= r:
             aus.append((self.p0.copy(), -a))
