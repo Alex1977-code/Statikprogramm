@@ -19,13 +19,13 @@ Schlussmessung in 20 von 23 Fällen schneller war (Theorie 11.10). Der Aufbau de
 20 %). Der Vertrag enthält `WeldLine`, `HotSpotResult` und `DetailResult.convergence` schon; die gemeinsamen
 Referenzmodelle aus Vertrag Abschnitt 8 (`tests/reference_models/`) fehlen im Repository.
 
-## Entscheidungen des Anwenders vor dem Start
+## Entscheidungen des Anwenders (29.09.2026)
 
-| Nr. | Frage | Vorschlag |
+| Nr. | Frage | Entscheidung |
 |---|---|---|
-| E1 | Reihenfolge: zuerst der Rest aus Stufe 2 (Phase A), dann Teilprojekt 5 (Phase B)? | ja, weil A2 und A3 bestimmen, ob sich die GPU überhaupt lohnt |
-| E2 | Referenzwerte für das Knotenblech (Hot-Spot, Vorgabe 13: Tet10 in RFEM oder Ansys) | vom Anwender aus RFEM oder Ansys; ersatzweise Tet10 des Hauptprogramms, dann im Protokoll so benannt |
-| E3 | Ablage der Referenzmodelle in `tests/reference_models/` (für Session B nur lesbar) | Vorschlag in `docs/vertrag-aenderungen/`, eigener Pull Request der Hauptsitzung |
+| E1 | Reihenfolge: zuerst der Rest aus Stufe 2 (Phase A), dann Teilprojekt 5 (Phase B)? | ja |
+| E2 | Referenzwerte für das Knotenblech (Hot-Spot, Vorgabe 13: Tet10 in RFEM oder Ansys) | **Hauptprogramm**: Tet10-Rechnung von `statik3d/` als Referenz, im Protokoll so benannt |
+| E3 | Ablage der Referenzmodelle in `tests/reference_models/` (für Session B nur lesbar) | ja: Vorschlag in `docs/vertrag-aenderungen/`, eigener Pull Request der Hauptsitzung |
 | E4 | gmsh als optionale Abhängigkeit für STEP (`pip install gmsh`, Extra `step`) | ja, nur optional; ohne gmsh klare Fehlermeldung |
 
 ## Phase A – Rest aus Stufe 2 (Leistung, Vorgabe 8.3, 9, 13)
@@ -37,12 +37,36 @@ Referenzmodelle aus Vertrag Abschnitt 8 (`tests/reference_models/`) fehlen im Re
 - Ergebnis: Tabelle je Posten im Plan und in Theorie 11.10, daraus die Ziele für A2.
 - Prüfung: beide Skripte stimmen auf 10 % überein; Summe der Posten = gemessener Aufbau auf 5 %.
 
+**Ergebnis A1 (29.09.2026, Commit cbe0e09, freie Maschine, je Lauf ein Prozess).** Zwei Skripte – eines liest
+die im Code eingebauten Zeitwerte, eines hängt Zeitmesser mit GPU-Synchronisation von außen um die Funktionen –
+stimmen in allen acht Läufen auf 10 % überein; die Posten erklären den Aufbau bis auf 3 %. Sekunden:
+
+| Posten | Kirsch h 10 V 0,3 | Kirsch h 8 V 0,3 | Block h 16 V 0 | Block h 14 V 0,3 |
+|---|---|---|---|---|
+| Freiheitsgrade (frei) | 229 830 (181 797) | 472 611 (286 584) | 185 856 (171 720) | 340 476 (265 284) |
+| Konstruktor, beide Wege | 10,7 | 23,1 | 11,1 | 17,0 |
+| davon Randquadratur / Werkstoffanteile / Wurzelwahl / hängende Zwänge | 3,9 / 1,6 / 1,1 / 3,2 | 5,3 / 2,6 / 5,3 / 6,1 | 6,7 / 3,6 / 0,3 / 0,0 | 8,8 / 4,9 / 1,4 / 0,0 |
+| direkt: Assemblieren / CᵀKC / Faktorisieren + Lösen | 10,1 / 1,8 / 6,3 | 17,0 / 2,6 / 9,1 | 24,8 / 1,5 / 10,0 | 34,1 / 2,3 / 21,2 |
+| Mehrgitter: Zelldaten + Matrix / CᵀKC / Einrichten / PCG | 9,6 / 1,7 / 3,0 / 3,1 | 15,7 / 2,6 / 4,4 / 7,8 | 24,6 / 1,4 / 3,5 / 1,6 | 33,5 / 2,4 / 20,8 / 4,0 |
+| davon Glätterblöcke (Auszug, Inversion) | 1,4 | 2,1 | 2,3 | 19,0 |
+| Gesamt direkt / Mehrgitter | 28,9 / 30,1 | 50,8 / 53,6 | 48,2 / 43,0 | 74,0 / 78,1 |
+
+Befunde: (1) Zellintegration plus Matrix kostet auf dem iterativen Weg nicht mehr als das Assemblieren – die im
+Plan vermutete doppelte Arbeit gibt es nicht. (2) Beim Block h 14 kostet ein einzelner Glätterblock der Größe
+2 463 in der gestapelten Inversion von CuPy 8,6 s, Blöcke um 1 200 bis 1 350 je 1 bis 1,5 s; so große Blöcke
+entstehen, wo eine Zelle über die Aggregation an mehrere Wurzeln gebunden ist (Schwelle 0,4). (3) Grobgitter
+(0,3 s) und Nullraumprobe (unter 0,1 s) sind vernachlässigbar. (4) Konstruktor und Zellintegration tragen auf
+beiden Wegen 40 bis 60 % der Gesamtzeit; sie zu senken hilft beiden Wegen gleich (Zellintegration auch über B1).
+
 ### A2: Aufbau beschleunigen
-- Die teuersten Posten aus A1 angehen (Kandidaten: doppelte Arbeit zwischen Zelldaten und Matrix, CᵀKC in
-  scipy, Blockauszug, Grobgitterzerlegung, Nullraumprobe).
-- Ziel: Aufbau des iterativen Wegs höchstens 1 s länger als Assemblieren und Faktorisieren bei
-  300 000 Freiheitsgraden.
-- Prüfung: bestehende Suiten (Operator = Matrix auf 10⁻¹², Mehrgitter, GPU), Gesamtweg an vier Fällen.
+- Nach A1: (a) große Glätterblöcke nicht in der gestapelten Inversion, sondern einzeln per Cholesky (oder auf der
+  CPU) invertieren; (b) die reduzierte feine Matrix auf dem iterativen Weg direkt aus den Zelldaten bauen statt
+  K zu assemblieren und CᵀKC zu bilden, wenn das messbar spart (heute 3,5 bis 6,8 s); (c) im Konstruktor die
+  Wurzelwahl (bis 5,3 s) und die hängenden Zwänge (bis 6,1 s) beschleunigen – das hilft beiden Wegen.
+- Ziel: Einrichten des Mehrgitters an allen vier Fällen höchstens 4,5 s, Mehrgitter-Gesamtweg am Block h 14
+  schneller als direkt; Konstruktor spürbar kürzer.
+- Prüfung: bestehende Suiten (Operator = Matrix auf 10⁻¹², Mehrgitter, GPU, Zwänge, Patch), Gesamtweg an den
+  vier A1-Fällen mit beiden Skripten.
 
 ### A3: GPU-Speicher für 10⁶ Freiheitsgrade
 - Posten heute: Zellmatrizen der Schnittzellen (295 KB je Zelle bei p 3), Glätterblöcke (etwa 0,35 MB je
