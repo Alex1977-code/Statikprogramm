@@ -70,8 +70,23 @@ Starten: `python run_gui.py` (Desktop), `python run_web.py` (Handy/Browser).
 
 ## Zweig und Bau
 
-Entwickelt wird auf `claude/statikprogramm-analog-ansys-bzfhij`. Ein Merge
-nach `main` erfolgt **nur auf ausdrückliche Freigabe** und stößt
+`claude/statikprogramm-analog-ansys-bzfhij` ist der **Sammelzweig**, nicht der
+Arbeitsplatz: mehrere Sitzungen speisen ihn über Themenzweige und Pull
+Requests. Darum, jedes Mal:
+
+1. **erst holen** — `git fetch origin && git log --oneline HEAD..origin/claude/statikprogramm-analog-ansys-bzfhij`;
+   steht dort etwas, hereinholen, **bevor** gearbeitet wird;
+2. dann ein Themenzweig je Sache von der aktuellen Spitze aus;
+3. Pull Request auf den Sammelzweig.
+
+Wer das überspringt, merkt es erst beim Push, und dann ist die Arbeit schon
+getan: am 29.09.2026 hatten zwei Sitzungen denselben Befund unabhängig gebaut
+(`ResultCombination` als Umhüllende), und die schwächere Fassung musste wieder
+heraus. Wer welchen Bereich in der Hand hat, steht in `docs/Mitarbeit.md`,
+Abschnitt 5a; ein Befund in einem fremden Bereich wird **gemessen und als
+Übergabe in `docs/` gelegt**, nicht selbst gebaut.
+
+Ein Merge nach `main` erfolgt **nur auf ausdrückliche Freigabe** und stößt
 `.github/workflows/windows-exe.yml` an: der baut `Statik3D.exe`, führt sie mit
 `--selbsttest` aus und veröffentlicht das Release `latest` neu.
 

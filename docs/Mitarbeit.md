@@ -151,6 +151,48 @@ Faustregel: **Ein Pull Request fasst ein Thema an.** Zwei Leute an derselben
 Datei gleichzeitig geht gut, solange es verschiedene Funktionen sind; zwei
 Leute an `model.py` sollten kurz miteinander reden.
 
+## 5a Wer hat gerade was in der Hand
+
+Die Tabelle in 5 sagt, wie der Code geschnitten ist. Diese hier sagt, **wer
+gerade daran arbeitet** — sie wird fortgeschrieben, wenn sich das ändert.
+
+| Bereich | Sitzung | Stand 29.09.2026 |
+|---|---|---|
+| `packages/volumen3d/` | Volumenmodul (Session B) | eigene Regeln in `packages/volumen3d/CLAUDE.md`; alle anderen lesen dort nur |
+| `statik3d/mesher.py`, `mesher3d.py`, `netzfeld.py`, `sweep.py`, `netzfehler.py`, `adaptiv.py`, `netzdichte.py` | Vernetzersitzung | laufende Arbeit; Befunde dorthin als Übergabe in `docs/`, nicht selbst anfassen |
+| `statik3d/contact.py`, Gleichungslöser | Kontakt-/Lösersitzung | siehe `docs/uebergabe-statik3d-kontaktschritte-2026-09-20.md` |
+| `statik3d/importers/`, `sections`, `ec3/`, `report/`, `gui/`, `diagnose.py` | Hauptprogramm | |
+| `statik3d/model.py` | **alle — hier abstimmen** | jede Änderung am Datenmodell trifft alle vier |
+
+Wer einen Befund in einem fremden Bereich findet, **misst ihn und legt ihn als
+Übergabe in `docs/`** (`docs/uebergabe-<thema>-<datum>.md`, Muster: die beiden
+vorhandenen) — mit Zahlen, damit die andere Sitzung nicht nachmessen muss. Er
+baut ihn nicht selbst. Das kostet einmal eine Datei und spart das, was am
+29.09.2026 passiert ist: zwei Sitzungen haben denselben Befund unabhängig
+gebaut (RFEMs `ResultCombination` als Umhüllende), und die schwächere Fassung
+musste wieder heraus.
+
+## 5b Damit sich zwei Sitzungen nicht behindern
+
+Der Zweig `claude/statikprogramm-analog-ansys-bzfhij` ist der **Sammelzweig**,
+nicht der Arbeitsplatz. Die Regel aus Abschnitt 3 gilt darum auch zwischen den
+Sitzungen, und sie ist der ganze Schutz:
+
+1. **Vor dem Anfangen holen**: `git fetch origin && git log --oneline HEAD..origin/<sammelzweig>`.
+   Steht dort etwas, erst hereinholen. Wer das überspringt, merkt es erst beim
+   Push — dann ist die Arbeit schon getan.
+2. **Ein Themenzweig je Sache**: `git switch -c thema/kurzer-name`, von der
+   aktuellen Spitze des Sammelzweigs aus.
+3. **Pull Request auf den Sammelzweig**, nicht direkt darauf pushen. Der Titel
+   nennt das Thema; der Text nennt die Messwerte.
+4. Auf `main` geht es nur auf ausdrückliche Freigabe des Anwenders — jeder Push
+   dorthin baut eine neue `Statik3D.exe` und veröffentlicht sie als `latest`
+   (Abschnitt 3).
+
+Ein Pull Request ist dabei mehr als Form: er zeigt beiden Sitzungen vor dem
+Zusammenführen, welche Dateien angefasst wurden. Genau das hätte den
+Doppelbau vom 29.09. verhindert.
+
 ## 6 Umgebung einrichten
 
 ```bash
