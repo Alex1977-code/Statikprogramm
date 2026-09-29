@@ -68,6 +68,22 @@ beiden Wegen 40 bis 60 % der Gesamtzeit; sie zu senken hilft beiden Wegen gleich
 - Prüfung: bestehende Suiten (Operator = Matrix auf 10⁻¹², Mehrgitter, GPU, Zwänge, Patch), Gesamtweg an den
   vier A1-Fällen mit beiden Skripten.
 
+**Ergebnis A2 (29.09.2026, Commit d0e6c37, freie Maschine, je Lauf ein Prozess, beide Messskripte auf 10 % gleich).**
+Sekunden, vorher (cbe0e09) → nachher:
+
+| Posten | Kirsch h 10 V 0,3 | Kirsch h 8 V 0,3 | Block h 16 V 0 | Block h 14 V 0,3 |
+|---|---|---|---|---|
+| Konstruktor | 10,7 → 6,5 | 23,1 → 11,8 | 11,1 → 9,9 | 17,0 → 14,1 |
+| Mehrgitter einrichten | 3,0 → 2,5 | 4,4 → 3,9 | 3,5 → 2,0 | 20,8 → 3,8 |
+| Gesamt direkt | 28,9 → 24,7 | 50,8 → 42,5 | 48,2 → 47,4 | 74,0 → 74,7 |
+| Gesamt Mehrgitter GPU | 30,1 → 24,6 | 53,6 → 44,1 | 43,0 → 41,6 | 78,1 → 58,1 |
+
+Die Ziele sind erreicht: das Einrichten des Mehrgitters bleibt in allen vier Fällen unter 4,5 s, am Block h 14 ist
+das Mehrgitter jetzt 16,6 s schneller als der Direktlöser, und der Konstruktor ist bei den verfeinerten Gittern
+um 40 bis 50 % kürzer. Zwangsmatrix und Wurzeln sind an fünf Modellen bitgleich mit dem alten Stand. Nicht
+umgesetzt ist Teil (b), die reduzierte Matrix direkt aus den Zelldaten (heute 3,2 bis 6,7 s für Matrix und CᵀKC):
+A3 ändert den Umgang mit der feinen Matrix ohnehin, der Punkt wandert dorthin.
+
 ### A3: GPU-Speicher für 10⁶ Freiheitsgrade
 - Posten heute: Zellmatrizen der Schnittzellen (295 KB je Zelle bei p 3), Glätterblöcke (etwa 0,35 MB je
   Zelle), feine Matrix während des Auszugs. Optionen messen: Schwarz-Blöcke nur für Schnittzellen und
@@ -161,8 +177,8 @@ nachgetragen.
 | Schritt | Modell | Denkstufe | Warum | Stand |
 |---|---|---|---|---|
 | A1 Aufbau vermessen | Sonnet 5 | mittel | klar umrissene Messaufgabe | erledigt (5381f71) |
-| A2 Aufbau beschleunigen | Opus 5.5 | hoch | Umbau in bekanntem Code mit vielen Prüfungen | Code in d0e6c37, Nachmessung läuft |
-| A3 GPU-Speicher für 10⁶ FHG | Fable 5.1 | sehr hoch | numerisch heikel (FP32, Glätter), Entwurf und Umsetzung | offen |
+| A2 Aufbau beschleunigen | Opus 5.5 | hoch | Umbau in bekanntem Code mit vielen Prüfungen | erledigt (d0e6c37), Teil (b) nach A3 |
+| A3 GPU-Speicher für 10⁶ FHG | Fable 5.1 | sehr hoch | numerisch heikel (FP32, Glätter), Entwurf und Umsetzung | läuft |
 | A4 h-Mehrgitter (nur wenn nötig) | Fable 5.1 | sehr hoch | hängende Knoten im Mehrgitter, höchstes Risiko | offen, Entscheidung nach A3 |
 | A5 Streuung über Schnittlagen | Opus 5.5 | hoch | Ritz-Analyse und Glätterabstimmung | offen |
 | A6 Leistungsabnahme, Löserwahl | Sonnet 5 | mittel | Messreihe nach festem Schema | offen |
