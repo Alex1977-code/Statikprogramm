@@ -2459,6 +2459,24 @@ def randkantenlaenge(P: np.ndarray, T: np.ndarray) -> np.ndarray:
     von 20 mm sind die Randdreiecke klein, auf einer 900-mm-Platte gross. Das
     Innere muss dieser Feinheit folgen, sonst stehen grobe Innenpunkte neben
     feinen Randpunkten - und dazwischen entstehen Splitter.
+
+    **Das Mittel, nicht das Minimum** - und das ist nachgemessen, nicht
+    geraten. An einer 20-mm-Bohrung in einer 900-mm-Platte (h = 50 mm) gehen
+    an 40 der 1191 Huellpunkte feine Bohrungskanten und grobe Feldkanten
+    zusammen; das groesste Verhaeltnis Mittel zu Minimum ist dort 5,1
+    (15,9 gegen 3,1 mm). Beide Felder einmal durchgerechnet:
+
+        Groessenfeld   Tetraeder   Guete min   unter 0,3   davon an der Bohrung
+        Mittel             7 328      0,1017         105                    44
+        Minimum           12 414      0,1018         211                   114
+
+    Das Minimum macht das Netz also um zwei Drittel groesser, ohne den
+    schlechtesten Tetraeder zu bessern (0,1017 gegen 0,1018), und verdoppelt
+    die Zahl der schlechten: es verlangt am Uebergangspunkt die Bohrungssehne
+    (3 mm), obwohl der Punkt schon auf dem groben Feld sitzt - und genau dieser
+    Uebergang erzeugt die Splitter, die er verhindern soll. Nach oben ist das
+    Feld ohnehin gedeckelt (``min(h, kante + WACHSTUM * d)``), es kann also
+    nicht groeber werden als die Zielkantenlaenge.
     """
     summe = np.zeros(len(P))
     zahl = np.zeros(len(P))
