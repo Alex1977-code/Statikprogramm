@@ -282,5 +282,29 @@ def test_gpu_speicher():
         pool.free_all_blocks()
 
 
+def test_schwarz_grosse_bloecke_gpu():
+    """Auf der GPU werden Bloecke ueber _EINZELN_AB einzeln invertiert (cuSOLVER) statt gestapelt: Blockinversen
+    exakt wie numpy (< 1e-10) und das Einrichten mit einem Block der Groesse 2000 unter 1,5 s (gestapelt gemessen
+    etwa 5 s fuer s 2000, 8,6 s fuer s 2463; A1, Plan TP 5)."""
+    from volumen3d.fcm.operator_gpu import verfuegbar
+    if not verfuegbar():
+        check("GPU/CuPy nicht verfuegbar - GPU-Pruefungen uebersprungen", True)
+        return
+    import cupy
+    from volumen3d.fcm.mehrgitter import _EINZELN_AB, ZellSchwarz
+    from volumen3d.tests.test_mehrgitter import _schwarz_probe
+    C, dofs, A, r, z_ref = _schwarz_probe()
+    ZellSchwarz(C[6:, 2000:], dofs[1:] - 6, A[2000:, 2000:], geraet="gpu")    # Kompilate und cuSOLVER warm
+    cupy.cuda.Device().synchronize()
+    t = time.perf_counter()
+    sw = ZellSchwarz(C, dofs, A, geraet="gpu")
+    cupy.cuda.Device().synchronize()
+    dt = time.perf_counter() - t
+    z = cupy.asnumpy(sw.anwenden(cupy.asarray(r)))
+    f = float(np.abs(z - z_ref).max() / np.abs(z_ref).max())
+    check(f"Schwarz GPU mit einem Block der Groesse 2000 (> {_EINZELN_AB}): Blockinversen exakt (< 1e-10), Einrichten < 1,5 s",
+          f < 1e-10 and dt < 1.5, f"Abweichung {f:.1e}, Einrichten {dt:.2f} s")
+
+
 if __name__ == "__main__":
-    sys.exit(lauf([test_operator_gpu, test_pcg_gpu, test_gross_gpu, test_mehrgitter_gpu, test_mehrgitter_auf_gpu_eingerichtet, test_problem_gpu, test_gpu_speicher]))
+    sys.exit(lauf([test_operator_gpu, test_pcg_gpu, test_gross_gpu, test_mehrgitter_gpu, test_mehrgitter_auf_gpu_eingerichtet, test_problem_gpu, test_gpu_speicher, test_schwarz_grosse_bloecke_gpu]))

@@ -255,6 +255,49 @@ def test_p1_und_gleichgewicht():
           meldung.startswith("Last nicht im Gleichgewicht") and dt < 30.0, f"{meldung!r}, {dt:.1f} s")
 
 
+def _schwarz_probe():
+    """Kuenstlicher Fall mit einem grossen Block (Zelle 0 beruehrt 2000 freie Koordinaten) und 50 kleinen
+    (je 6, Einheitszeilen): C, Zellfreiheitsgrade, SPD-Matrix A und die unabhaengige Referenz
+    z = sum_i R_i^T A[S_i, S_i]^-1 R_i r mit numpy."""
+    import scipy.sparse as sp
+    rng = np.random.default_rng(11)
+    gross, n_klein, n3 = 2000, 50, 6
+    n = gross + n_klein * n3
+    zeilen, spalten = [], []
+    for r in range(n3):
+        c = np.arange(r, gross, n3)
+        zeilen += [r] * len(c)
+        spalten += list(c)
+    zeilen += list(range(n3, n3 + n_klein * n3))
+    spalten += list(range(gross, n))
+    C = sp.csr_matrix((np.ones(len(zeilen)), (zeilen, spalten)), shape=(n3 + n_klein * n3, n))
+    dofs = np.arange(n3 + n_klein * n3).reshape(-1, n3)
+    M = rng.standard_normal((n, n)) / np.sqrt(n)
+    A_dicht = M @ M.T + np.eye(n)
+    A = sp.csr_matrix(A_dicht)
+    r = rng.standard_normal(n)
+    z_ref = np.zeros(n)
+    for c in range(dofs.shape[0]):
+        S = np.unique(C[dofs[c]].indices)
+        z_ref[S] += np.linalg.solve(A_dicht[np.ix_(S, S)], r[S])
+    return C, dofs, A, r, z_ref
+
+
+def test_schwarz_grosse_bloecke():
+    """Glaetterbloecke ueber _EINZELN_AB werden einzeln (LAPACK im Hauptfaden) invertiert; der Glaetter wendet
+    genau die Blockinversen an (gegen numpy, < 1e-10). Anlass: Block h 14 p 3 mit einem Block der Groesse 2463,
+    in der gestapelten Inversion 8,6 s (A1, Plan TP 5)."""
+    from volumen3d.fcm.mehrgitter import _EINZELN_AB, ZellSchwarz
+    C, dofs, A, r, z_ref = _schwarz_probe()
+    t = time.perf_counter()
+    sw = ZellSchwarz(C, dofs, A, geraet="cpu")
+    dt = time.perf_counter() - t
+    f = float(np.abs(sw.anwenden(r) - z_ref).max() / np.abs(z_ref).max())
+    groessen = sorted(int(I.shape[1]) for I, _ in sw.gruppen)
+    check(f"Schwarz CPU mit einem Block der Groesse 2000 (> {_EINZELN_AB}) und 50 kleinen: Blockinversen exakt (< 1e-10)",
+          f < 1e-10 and groessen == [6, 2000], f"Abweichung {f:.1e}, Gruppen {groessen}, Einrichten {dt:.2f} s")
+
+
 def test_symmetrie():
     """Der V-Zyklus als CG-Vorkonditionierer muss symmetrisch und positiv definit sein (Gutachten 28.09.2026:
     bisher nur ueber die Iterationszahlen belegt)."""
@@ -380,4 +423,4 @@ def test_kern():
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_ebenen, test_nullkandidaten, test_nullkandidaten_mehrdimensional, test_p1_und_gleichgewicht, test_nullraum, test_symmetrie, test_problem_mehrgitter, test_pcg_mehrgitter]))
+    sys.exit(lauf([test_ebenen, test_nullkandidaten, test_nullkandidaten_mehrdimensional, test_p1_und_gleichgewicht, test_nullraum, test_schwarz_grosse_bloecke, test_symmetrie, test_problem_mehrgitter, test_pcg_mehrgitter]))

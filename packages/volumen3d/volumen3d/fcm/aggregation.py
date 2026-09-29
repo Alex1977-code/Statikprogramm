@@ -41,8 +41,10 @@ import numpy as np
 from .basis import basis_3d
 from .gitter import CUT
 
+_NACHBARN_TAB: dict = {}                                            # wird unten aus _NACHBARN gefuellt
 _NACHBARN = sorted(((dx, dy, dz) for dx in (-1, 0, 1) for dy in (-1, 0, 1) for dz in (-1, 0, 1) if (dx, dy, dz) != (0, 0, 0)),
                    key=lambda v: (abs(v[0]) + abs(v[1]) + abs(v[2])))     # Flaechen-, dann Kanten-, dann Eckennachbarn
+_NACHBARN_TAB.update({d: i for i, d in enumerate(_NACHBARN)})
 
 
 def werkstoffanteile(gitter, quadratur) -> np.ndarray:
@@ -70,6 +72,7 @@ class Zellaggregation:
         self.leer = self.schlecht & (self.anteil <= 0.0)             # geschnitten klassifiziert, aber ohne Werkstoff
         self.werkstofffern = self._werkstofffern()                    # leer und ohne Beruehrung mit Werkstoff
         self.zu_teilen: tuple = ()
+        self._nachbar_tab: dict[int, np.ndarray] = {}
         self._wurzeln_zuordnen()
         self.statistik = {"schwelle": self.schwelle, "zellen_schlecht": int(self.schlecht.sum()),
                           "zellen_leer": int(self.leer.sum()), "zellen_werkstofffern": int(self.werkstofffern.sum()),
@@ -90,8 +93,28 @@ class Zellaggregation:
             fern[c] = not bool(np.any(self.anteil[g.blaetter_in_box(lo - eps, hi + eps)] > 0.0))
         return fern
 
+    def _nachbarn_vorberechnen(self, zellen: np.ndarray) -> None:
+        """Blaetter hinter allen 26 Flaechen, Kanten und Ecken der Zellen in einem Aufruf von zelle_finden.
+        Einzeln waren es 50 492 Aufrufe mit je einem Punkt, 6,4 s von 23 s Konstruktor bei Kirsch h 8 p 3 (Profil
+        29.09.2026, A2 Plan TP 5); die Suche ist punktweise, die Nachbarn sind dieselben."""
+        zellen = np.asarray(zellen, int)
+        if len(zellen) == 0:
+            return
+        g = self.gitter
+        lo, hi = g.zellbox(zellen)
+        m = 0.5 * (lo + hi)
+        hl = np.asarray(g.h_zelle(zellen), float).reshape(-1, 1, 1)
+        D = np.asarray(_NACHBARN, float)                               # (26, 3)
+        P = m[:, None, :] + (0.5 * hl + 1e-4 * hl) * D[None, :, :]
+        n = g.zelle_finden(P.reshape(-1, 3)).reshape(len(zellen), len(_NACHBARN))
+        for c, zeile in zip(zellen, n):
+            self._nachbar_tab[int(c)] = zeile
+
     def _nachbar(self, c: int, d) -> int:
         """Blatt hinter der Flaeche/Kante/Ecke in Richtung d (per Punktsuche, ebenenunabhaengig)."""
+        zeile = self._nachbar_tab.get(int(c))
+        if zeile is not None:
+            return int(zeile[_NACHBARN_TAB[tuple(d)]])
         lo, hi = self.gitter.zellbox(c)
         m = 0.5 * (lo + hi)
         hl = float(self.gitter.h_zelle(c))
@@ -108,6 +131,7 @@ class Zellaggregation:
         und baut das Gitter neu, dann liegen ihre Kinder auf der Ebene der Nachbarn."""
         g = self.gitter
         offen = list(np.flatnonzero(self.schlecht & ~self.werkstofffern))
+        self._nachbarn_vorberechnen(np.asarray(offen, int))
         rest = []
         nur_feiner: set[int] = set()
         for c in offen:

@@ -148,5 +148,45 @@ def test_leere_zellen():
           f"{len(null_moden)} Moden null, groesster Werkstoffanteil ihrer Zellen {float(anteil_max[null_moden].max()):.1e}")
 
 
+def test_gebuendelte_nachbarsuche():
+    """Die Nachbarn der Aggregation und die Probepunkte der haengenden Entitaeten werden in einem Aufruf von
+    zelle_finden gesucht (vorher 81 380 Einzelaufrufe, 12 s von 23 s Konstruktor bei Kirsch h 8 p 3; A2 Plan
+    TP 5). Die Suche ist punktweise: die gebuendelten Ergebnisse muessen den Einzelabfragen gleichen. Geprueft an
+    der verfeinerten Kirsch-Scheibe (h 20, Versatz 0,6: schlechte Zellen und haengende Flaechen, Kanten, Ecken)."""
+    from volumen3d.fcm.aggregation import _NACHBARN
+    from volumen3d.fcm.gitter import Verfeinerung
+    from volumen3d.tests.test_kirsch import D, T, _platte
+    v = Verfeinerung(bereiche=((np.array([0.0, 0.0, T / 2]), D / 2 + 10.0, 5.0),))
+    pr = _platte(3, 20.0, versatz=0.6, verfeinerung=v)
+    g, ag, zw = pr.gitter, pr.aggregation, pr.zwaenge
+    # Aggregation: Tabelle gegen Einzelsuche
+    abw_n, n_n = 0, 0
+    for c, zeile in list(ag._nachbar_tab.items()):
+        lo, hi = g.zellbox(c)
+        m = 0.5 * (lo + hi)
+        hl = float(g.h_zelle(c))
+        for i, d in enumerate(_NACHBARN):
+            P = m + (0.5 * hl + 1e-4 * hl) * np.asarray(d, float)
+            abw_n += int(g.zelle_finden(P[None])[0] != zeile[i])
+            n_n += 1
+    # Zwaenge: gebuendelte Probepunkte gegen Einzelsuche (jede fuenfte feine Zelle)
+    fein = np.flatnonzero(g.ebene > 0)[::5]
+    nb = zw._probepunkte(fein)
+    lo, hi = g.zellbox(fein)
+    m = 0.5 * (lo + hi)
+    hl = np.asarray(g.h_zelle(fein), float)
+    eps = zw.eps * hl
+    abw_p, n_p = 0, 0
+    for iF in range(len(fein)):
+        for k, (d, s) in enumerate([(d, s) for d in range(3) for s in (-1, 1)]):
+            P = m[iF].copy()
+            P[d] += s * (0.5 * hl[iF] + eps[iF])
+            abw_p += int(g.zelle_finden(P[None])[0] != nb[iF, k])
+            n_p += 1
+    check("gebuendelte Nachbarsuche = Einzelabfragen (Aggregation alle 26 Richtungen, haengende Flaechen)",
+          n_n > 1000 and n_p > 100 and abw_n == 0 and abw_p == 0,
+          f"Aggregation {n_n} Abfragen, {abw_n} verschieden; Flaechenproben {n_p}, {abw_p} verschieden")
+
+
 if __name__ == "__main__":
-    sys.exit(lauf([test_zaehlung_und_spur, test_leere_zellen, test_patch_verfeinert]))
+    sys.exit(lauf([test_zaehlung_und_spur, test_leere_zellen, test_gebuendelte_nachbarsuche, test_patch_verfeinert]))

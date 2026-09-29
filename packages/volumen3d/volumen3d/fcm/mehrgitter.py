@@ -233,7 +233,10 @@ class ZellSchwarz:
                     b = min(k, a + schritt)
                     B = cupy.zeros((b - a, s, s), dtype=cupy.float64)
                     kern((((b - a) * s + 255) // 256,), (256,), (indptr, indices, A_gpu.data, I[a:b], np.int32(b - a), np.int32(s), B))
-                    Xa = cupy.linalg.inv(B)
+                    if s > _EINZELN_AB:
+                        Xa = cupy.stack([cupy.linalg.inv(B[i]) for i in range(b - a)])
+                    else:
+                        Xa = cupy.linalg.inv(B)
                     del B
                     # cupy wirft bei singulaeren Bloecken nicht, sondern liefert inf/NaN (errstate 'ignore'); ohne
                     # Pruefung lief der PCG dann 1000 V-Zyklen und meldete 'Residuum nan' (Gutachten 28.09.2026)
@@ -250,7 +253,14 @@ class ZellSchwarz:
             for s, liste in sorted(gruppen.items()):
                 I = np.ascontiguousarray(np.array(liste, dtype=np.int64))
                 B = _teilmatrizen(A, I, indizes)
-                self.gruppen.append((I, _inv_stapel(B)))
+                if s > _EINZELN_AB:
+                    # LAPACK aus dem Hauptfaden (mehrfaedig je Block); aus numba-Faeden zerstoerte es Speicher
+                    X = np.linalg.inv(B)
+                    if not np.all(np.isfinite(X)):
+                        raise ValueError(f"Schwarz-Glaetter: Zellbloecke der Groesse {s} nicht invertierbar")
+                    self.gruppen.append((I, 0.5 * (X + np.swapaxes(X, 1, 2))))
+                else:
+                    self.gruppen.append((I, _inv_stapel(B)))
             self.speicher_mb = round(sum(Bi.nbytes for _, Bi in self.gruppen) / 1e6, 1)
 
     def anwenden(self, r):
@@ -276,6 +286,14 @@ def _csr_auf_gpu(A: sp.csr_matrix):
 
 # Groesse der Teilstapel beim Auszug und der Inversion der Glaetterbloecke auf der GPU
 _TEILSTAPEL_BYTES = 256e6
+
+# Ab dieser Blockgroesse wird einzeln invertiert statt gestapelt. Die gestapelte Inversion (cuBLAS
+# getrfBatched) ist fuer viele kleine Bloecke gebaut und waechst fuer grosse wie s^4 und schlechter:
+# gemessen (RTX 3070, 29.09.2026) s 256, 20 Bloecke: gestapelt 0,014 s, einzeln 0,026 s; s 400, 4 Bloecke:
+# 0,043 gegen 0,016 s; s 1350: 1,47 gegen 0,038 s; s 2463: 8,57 gegen 0,17 s. Am Block h 14 p 3 (Schwelle
+# 0,4) kostete so ein einzelner Block 8,6 s von 19 s Glaetter-Einrichtung (A1, Plan TP 5). Auf der CPU gilt
+# dasselbe fuer die numba-Cholesky je Block (ein Faden je Block): grosse Bloecke gehen an LAPACK im Hauptfaden.
+_EINZELN_AB = 320
 
 # Schwelle fuer den Singulaerwert eines Nullvektors nach zwei Schritten inverser Iteration und Zahl der
 # Zufallsproben (siehe grob_nullkandidaten)
