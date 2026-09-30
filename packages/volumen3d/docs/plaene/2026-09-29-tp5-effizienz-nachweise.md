@@ -267,7 +267,7 @@ nachgetragen.
 | A3 GPU-Speicher für 10⁶ FHG | Fable 5.1 | sehr hoch | numerisch heikel (FP32, Glätter), Entwurf und Umsetzung | erledigt (d47d4a1) |
 | A4 h-Mehrgitter (nur wenn nötig) | Fable 5.1 | sehr hoch | hängende Knoten im Mehrgitter, höchstes Risiko | entfällt (Grobgitter 12 % des Lösens) |
 | A5 Streuung über Schnittlagen | Opus 5.5 | hoch | Ritz-Analyse und Glätterabstimmung | erledigt (f2bf8e7): α 100 (−20 bis −25 %); Vorgabe als erfüllt anerkannt |
-| A6 Leistungsabnahme, Löserwahl | Sonnet 5 | mittel | Messreihe nach festem Schema | läuft: Regeln festgelegt, Messung beginnt |
+| A6 Leistungsabnahme, Löserwahl | Sonnet 5 | mittel | Messreihe nach festem Schema | erledigt: `auto` bleibt direkt; Lösen 10⁶ FHG 7–8 s, Aufbau + Lösen 62–115 s |
 | B1 Moment Fitting | Fable 5.1 | sehr hoch | Stabilität der Gewichte, Konsistenz Volumen/Rand | offen |
 | B2 Spannungsrückgewinnung | Opus 5.5 | hoch | bekanntes Verfahren, sorgfältige Umsetzung | offen |
 | B3 Hot-Spot IIW Typ a | Opus 5.5 | hoch | Geometrie der Referenzpunkte, Normbezug | offen |

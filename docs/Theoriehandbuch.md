@@ -11216,3 +11216,97 @@ Loch und die dünne Scheibe mit zwei halb gefüllten Zellschichten über die Dic
 selbst gesetzte Ziel ±20 % (Plan TP 4) ist damit nicht erreicht; die Vorgabe verlangt eine stabile
 Iterationszahl unter 100 bei 10⁻⁸, die mit höchstens 39 Iterationen bei 10⁻¹² eingehalten ist.
 
+**Löserwahl und Leistungsabnahme (Plan TP 5, A6, 30.09.2026).** Die Schlussmessung vom 29.09. ist mit dem Stand
+nach A2, A3 und A5 (Commit a0a5c74) wiederholt worden, dazu p 2 und p 4 und die Modelle um eine Million
+Freiheitsgrade. Die Regeln standen vor der ersten Messung im Plan (Commit a0a5c74). Freie Maschine, je Fall ein
+Prozess, Toleranz 10⁻¹²; „Gesamt“ ist wie am 29.09. Aufbau plus Lösen ohne den Konstruktor des Problems, der
+getrennt genannt wird. Beim Direktlöser enthält das Lösen die Faktorisierung, denn PARDISO faktorisiert erst beim
+ersten Lösen. Die Kontrollspannung σ_x am Lochrand bzw. an der Bohrung stimmt zwischen beiden Wegen in allen 23
+Fällen auf die ausgegebenen vier Nachkommastellen überein (die im Plan genannte Schwelle 10⁻⁹ ließ sich mit dieser
+Ausgabe nicht prüfen; die Genauigkeit des Mehrgitters bis 10⁻¹² ist in A3 und A5 gesondert belegt). Zwei unabhängige Skripte (eines mit den eingebauten Zeitwerten des Protokolls, eines mit
+Zeitmessern von außen um die Funktionen des Aufbaus, an sechs Fällen) weichen im Aufbau um höchstens 6 % und im
+Lösen um höchstens 8 % voneinander ab.
+
+*Serie S, 23 Fälle bei p 3 (65 000 bis 497 000 Freiheitsgrade, Zeit in s je Lage im Mittel):*
+
+| Modell | Lagen | Freiheitsgrade | Gesamt direkt (Mittel) | Gesamt Mehrgitter (Mittel) | Verhältnis je Lage | Iterationen |
+|---|---|---|---|---|---|---|
+| Block h 25 | 2 | 65.040 bis 65.616 | 15,0 s | 16,9 s | 1,05 bis 1,20 | 21 bis 32 |
+| Block h 20 | 2 | 115.728 bis 116.187 | 21,6 s | 20,7 s | 0,91 bis 1,01 | 21 bis 24 |
+| Block h 16 | 2 | 185.856 bis 232.296 | 41,1 s | 33,3 s | 0,75 bis 0,88 | 20 bis 25 |
+| Block h 14 | 2 | 281.292 bis 340.476 | 55,4 s | 42,5 s | 0,73 bis 0,81 | 24 bis 25 |
+| Kirsch h 14 | 3 | 81.183 bis 135.327 | 7,9 s | 10,0 s | 1,21 bis 1,28 | 23 bis 25 |
+| Kirsch h 12 | 3 | 165.501 bis 173.862 | 10,8 s | 13,2 s | 1,17 bis 1,28 | 21 bis 25 |
+| Kirsch h 10 | 3 | 229.608 bis 330.705 | 17,4 s | 18,7 s | 0,97 bis 1,21 | 22 bis 28 |
+| Kirsch h 9 | 3 | 283.896 bis 390.018 | 21,2 s | 22,6 s | 0,96 bis 1,16 | 23 bis 32 |
+| Kirsch h 8 | 3 | 360.204 bis 497.244 | 28,3 s | 29,4 s | 1,01 bis 1,09 | 23 bis 44 |
+
+Das GPU-Mehrgitter ist im Gesamtweg in 7 von 23 Fällen schneller; die Summe beträgt 523 s für den Direktlöser
+und 509 s für das Mehrgitter. Der Unterschied liegt an der Bauteilform: am kompakten Block (Summe der acht Fälle
+266 s gegen 227 s, Verhältnis 0,85) liegt das Mehrgitter ab 185 000 Freiheitsgraden bei 0,73 bis 0,88, an der
+dünnen Kirsch-Scheibe (Summe 257 s gegen 282 s, Verhältnis 1,10) ist es nur in 2 von 15 Fällen schneller (0,96 und
+0,97). Die vorher festgelegte Regel (kleinste Zahl aller Freiheitsgrade N₀, ab der das Mehrgitter in jedem Fall
+höchstens das 1,05-fache des Direktlösers braucht und in der Summe mindestens 10 % schneller ist) findet kein N₀:
+der größte Fall der Serie (Kirsch h 8, Versatz 0,6, 497 244 Freiheitsgrade) liegt bei 1,09. **`auto` bleibt beim
+Direktlöser**, `_AUTO_MEHRGITTER` bleibt ausgeschaltet, und damit entfällt die Erweiterung der Polynomgrade.
+
+*Serie G, p 2 und p 4:*
+
+| Modell | p | Freiheitsgrade | Gesamt direkt | Gesamt Mehrgitter | Verhältnis | Iterationen |
+|---|---|---|---|---|---|---|
+| Block h 16 (Versatz 0,3) | 2 | 71.568 | 5,1 s | 5,9 s | 1,16 | 24 |
+| Block h 16 (Versatz 0,3) | 4 | 539.778 | 159,1 s | 128,3 s | 0,81 | 44 |
+| Block h 20 (Versatz 0) | 2 | 36.096 | 3,0 s | 4,0 s | 1,35 | 23 |
+| Block h 20 (Versatz 0) | 4 | 268.818 | 77,9 s | 77,1 s | 0,99 | 41 |
+| Kirsch h 9 (Versatz 0,3) | 2 | 94.695 | 4,0 s | 5,3 s | 1,33 | 29 |
+| Kirsch h 9 (Versatz 0,3) | 4 | 672.045 | 106,9 s | 97,2 s | 0,91 | 57 |
+| Kirsch h 12 (Versatz 0,3) | 2 | 55.938 | 2,1 s | 3,5 s | 1,66 | 21 |
+| Kirsch h 12 (Versatz 0,3) | 4 | 394.620 | 46,1 s | 55,2 s | 1,20 | 41 |
+
+Bei p 2 ist das Mehrgitter in allen vier Fällen langsamer (1,16 bis 1,66), bei p 4 in drei von vier schneller (0,81
+bis 0,99) und beim Kirsch h 12 langsamer (1,20). Die Zahl der Iterationen steigt mit p (p 2: 21 bis 29, p 3: 20 bis
+44, p 4: 41 bis 57). Für die Löserwahl folgt daraus nichts, weil `auto` ohnehin beim Direktlöser bleibt.
+
+*Serie M, eine Million Freiheitsgrade bei p 3:*
+
+| Modell | Weg | Konstruktor | Aufbau | Lösen | Aufbau + Lösen | Iterationen |
+|---|---|---|---|---|---|---|
+| Block h 9 (967.992 FHG) | direkt | 33,4 s | 107,2 s | 173,0 s | 280,2 s | – |
+| Block h 9 (967.992 FHG) | mehrgitter-gpu | 33,7 s | 107,8 s | 7,1 s | 115,0 s | 22 |
+| Kirsch h 5,5 (1.002.528 FHG) | direkt | 21,0 s | 49,2 s | 34,2 s | 83,4 s | – |
+| Kirsch h 5,5 (1.002.528 FHG) | mehrgitter-gpu | 21,7 s | 53,6 s | 8,3 s | 62,0 s | 27 |
+
+Hier liegt das Mehrgitter in beiden Familien vorn: am Block 115 statt 280 s (0,41; der Direktlöser braucht dazu
+46 GB Hauptspeicher, am 30.09. in A3 gemessen, und das Lösen allein 173 s), an der Kirsch-Scheibe 62 statt 83 s (0,74). Zwischen 497 000
+(letzter Fall der Serie S) und 968 000 Freiheitsgraden fehlt die Messung; ein N₀ zwischen beiden Grenzen ist mit
+diesen Zahlen nicht festzulegen. Das ist ein Befund nach der Messung und nicht Teil der vorher festgelegten Regel.
+
+*Verlustrechnung (Zeitmesser von außen, Zeiten ohne Konstruktor in s):*
+
+| Fall | Direktlöser | davon Aufbau der Zellmatrizen und Assemblierung | davon Faktorisierung + Substitution | Mehrgitter | davon Zelldaten | davon Zelldaten.matrix, Einrichten, PCG |
+|---|---|---|---|---|---|---|
+| Block h 14, Versatz 0,3 (340 476 FHG) | 59,2 | 34,4 | 19,8 + 1,4 | 45,0 | 30,0 | 3,4 + 4,7 + 2,9 |
+| Kirsch h 10, Versatz 0,3 (229 830 FHG) | 18,6 | 9,7 | 5,3 + 0,9 | 17,9 | 7,3 | 2,0 + 3,4 + 2,1 (+ 0,4) |
+
+Die Zellmatrizen sind auf beiden Wegen der größte Posten und von ähnlicher Größe (am Block 34,4 gegen 30,0 s, an der
+Scheibe 9,7 gegen 7,3 s). Das Mehrgitter spart die Faktorisierung und die Substitution (am Block 21,2 s, an der
+Scheibe 6,1 s) und braucht dafür die Matrix aus den Zelldaten, das Einrichten und den PCG (11,0 s am Block, 7,5 s
+plus 0,4 s Rest an der Scheibe). Am Block bleibt es damit 10 s unter dem Direktlöser, mit den Zellmatrizen
+zusammen 14,2 s; an der Scheibe fällt der Gewinn aus der Faktorisierung weg (6,1 gegen 7,9 s), und nur die
+billigeren Zellmatrizen (2,4 s) lassen einen Vorsprung von 0,8 s stehen. Gemessen ist der Unterschied der
+Faktorisierung: am Block 19,8 s bei 265 284 freien Koordinaten, an der Scheibe 5,3 s bei 181 797, und bei 10⁶
+Freiheitsgraden 173 s gegen 34 s für das Lösen des Direktlösers; darum die Trennung nach Bauteilform. Die Summen
+des Zeitbaums stimmen mit dem ersten Skript auf 5 % überein (59,2 und 45,0 gegen 61,2 und 44,7 s; 18,6 und
+17,9 gegen 19,4 und 18,8 s).
+
+**Leistungskriterium (Vorgabe 13: eine Million Freiheitsgrade, Lösung unter 60 s).** In der Lesart (a), das Lösen
+allein, ist es erfüllt: 7,1 s am Block (22 Iterationen) und 8,3 s an der Scheibe (27 Iterationen). In der Lesart (b),
+Aufbau plus Lösen, ist es nicht erfüllt: 115,0 s am Block und 62,0 s an der Scheibe; mit dem Konstruktor 148,6 und
+83,6 s. Die Lesart (b) zählt das Einrichten einmal je Bauteil, jeder weitere Lastfall kostet nur das Lösen. Der
+Zeitbaum zeigt, wo die Zeit steht: am Block 78,4 s in `Zelldaten` (Zellsteifigkeiten der Schnittzellen, 68 % der
+115 s; der Aufbau insgesamt liegt auf beiden Wegen bei 107,2 und 107,8 s), 10,2 s in der Matrix aus den Zelldaten, 8,8 s im Einrichten des Mehrgitters, 6,3 s
+im PCG; im Konstruktor 19,8 s im Problem selbst (nicht weiter aufgeschlüsselt), 11,4 s in der Aggregation und
+2,6 s in den Zwängen. An der Scheibe 25,5 s in `Zelldaten` (41 % der 62 s), 9,3 s Matrix, 9,8 s Einrichten, 7,8 s PCG.
+Eine Verkürzung von (b) unter 60 s setzt bei den Zellsteifigkeiten an, nicht beim Löser; sie hängt vom
+Momentenfitting (TP 5, B1) ab, das die Integration der Schnittzellen ersetzt, und wird danach neu gemessen.
+

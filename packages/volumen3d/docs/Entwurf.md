@@ -777,6 +777,12 @@ Plan: `docs/plaene/2026-09-28-tp4-mehrgitter.md`. Messlatte aus Teilprojekt 3: J
   Iterationen im Mittel 33,0 → 24,8 (h 10) und 39,6 → 30,6 (h 8), Lösen 15,0 → 11,7 s und 26,6 → 21,2 s in
   Summe, Spannungen gleich. Die relative Streuung bleibt (−25 bis +29 %): langsame Moden am Oktree-Übergang
   am Loch und in den halb gefüllten Zellschichten der dünnen Scheibe, nicht an der Aggregationsschwelle.
+- **A6, Löserwahl und Leistungsabnahme (30.09.2026, Theorie 11.10):** 23 Fälle p 3, dazu p 2, p 4 und 10⁶
+  Freiheitsgrade, zwei Skripte. `auto` bleibt beim Direktlöser (kein N₀ nach der vorher festgelegten Regel): das
+  Mehrgitter gewinnt am kompakten Block (0,73 bis 0,88 ab 185 000 FHG, spart die Faktorisierung), verliert an der
+  dünnen Scheibe (Summe 1,10). Bei 10⁶ FHG vorn (Block 115 statt 280 s, Kirsch 62 statt 83 s). Kriterium 10⁶ FHG
+  unter 60 s: Lösen allein 7,1 und 8,3 s erfüllt; Aufbau plus Lösen 115 und 62 s nicht – 68 % am Block sind die
+  Zellsteifigkeiten der Schnittzellen (`Zelldaten`, 78 s), löserunabhängig.
 - Fünf Schnittlagen Kirsch h 10 p 3 verfeinert (128 724 bis 199 095 freie Koordinaten), GPU FP64:
   81 / 125 / 112 / 129 / 59 Iterationen, GPU-PCG 8,6 bis 21 s, K_t identisch mit dem Direktlöser;
   Direktlöser (Lösen nach der Faktorisierung) 7 bis 25 s. Einrichten auf der CPU: Zelldaten 17–24 s,

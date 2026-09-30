@@ -172,16 +172,19 @@ def _einstellungen_pruefen(s: FcmSettings) -> None:
         raise SolverError("alpha muss in [0, 1) liegen")
 
 
-# 'auto' waehlt den im Gesamtweg (Aufbau + Loesen) schnelleren Weg; auf der gemessenen Karte (RTX 3070, 8 GB)
-# ist das bis zur Speichergrenze des Mehrgitters (etwa 500 000 FHG bei p 3) der Direktloeser. Schlussmessung
-# auf freier Maschine, je Fall ein Prozess, Commit c4694d6 (Aggregationsschwelle 0,4, Toleranz 1e-12), 23 Faelle
-# kompakter Block mit Bohrung und duenne Kirsch-Scheibe von 65 000 bis 497 000 FHG: der Direktloeser ist in 20
-# Faellen schneller (meist 1 bis 6 s), das GPU-Mehrgitter nur beim Block mit 186 000 und 281 000 FHG (je etwa
-# 5 s) und einmal bei der Scheibe (0,9 s). Summe direkt 519 s, Mehrgitter 564 s, jeweils bessere Wahl 508 s;
-# eine Schwelle 200 000 verschenkt 28,6 s, 400 000 16,6 s, immer direkt 11,3 s. Vor der Schwelle 0,4 lag das
-# Mehrgitter ab 200 000 FHG vorn (Commit d669b9f); die Aggregation nimmt vor allem dem Direktloeser Arbeit ab
-# (weniger freie Koordinaten), der Aufbau des iterativen Wegs haengt an den Zellen. Der Mechanismus bleibt
-# fuer eine schnellere Einrichtung stehen und ist mit _AUTO_MEHRGITTER abgeschaltet; 'gpu' erzwingt das Mehrgitter.
+# 'auto' waehlt den im Gesamtweg (Aufbau + Loesen) schnelleren Weg. Messung A6 (30.09.2026, Plan TP 5), Commit
+# a0a5c74, freie Maschine, je Fall ein Prozess, zwei Skripte mit gleichen Zeiten (Aufbau bis 6 %, Loesen bis 8 %),
+# p 3, 23 Faelle von 65 000 bis 497 000 FHG: das GPU-Mehrgitter ist in 7 Faellen schneller, Summe direkt 523 s,
+# Mehrgitter 509 s - aber beim kompakten Block (Summe der acht Faelle 0,85, ab 185 000 FHG 0,73 bis 0,88) und nicht
+# bei der duennen Kirsch-Scheibe (Summe 1,10, nur 2 von 15 Faellen schneller). Die vorher festgelegte Regel (N0, ab
+# dem das Mehrgitter in jedem Fall hoechstens das 1,05-fache braucht und in der Summe 10 % schneller ist) findet
+# kein N0, der groesste Fall liegt bei 1,09: 'auto' bleibt beim Direktloeser. Bei 10^6 FHG ist das Mehrgitter in
+# beiden Familien vorn (Block 115 statt 280 s bei 46 GB Hauptspeicher des Direktloesers nach A3, Kirsch 62 statt
+# 83 s); zwischen 497 000 und 968 000 fehlt die Messung. Es spart die Faktorisierung samt Substitution (Block h 14
+# 21,2 s, Kirsch h 10 6,1 s) und braucht dafuer Zelldaten.matrix, Einrichten und PCG (11,0 bzw. 7,9 s); die
+# Zellmatrizen sind auf beiden Wegen der groesste Posten und aehnlich gross. p 2: Mehrgitter immer langsamer (1,16
+# bis 1,66), p 4: in 3 von 4 Faellen schneller (0,81 bis 0,99).
+# Der Mechanismus bleibt stehen und ist mit _AUTO_MEHRGITTER abgeschaltet; 'gpu' erzwingt das Mehrgitter.
 _AUTO_MEHRGITTER = False
 _AUTO_MIN_DOFS = 200_000
 
