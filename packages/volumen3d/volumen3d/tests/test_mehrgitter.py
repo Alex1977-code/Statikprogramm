@@ -298,6 +298,35 @@ def test_schwarz_grosse_bloecke():
           f < 1e-10 and groessen == [6, 2000], f"Abweichung {f:.1e}, Gruppen {groessen}, Einrichten {dt:.2f} s")
 
 
+def test_chebyshev_fenster():
+    """Chebyshev-Fenster des Glaetters [lambda_max/100, lambda_max] statt [lambda_max/16, lambda_max] (Plan TP 5, A5):
+    lambda_max von M^-1 A sitzt im Uebergangsguertel des Oktrees und wandert mit der Schnittlage, das schmale
+    Fenster liess darunter je nach Lage Moden liegen. Kirsch h 20 p 3 verfeinert, Versatz 0,4 (zwei halb
+    gefuellte Zellschichten ueber die Dicke), CPU: der Standard braucht hoechstens 85 % der Iterationen von
+    alpha 16, die Spannungen stimmen ueberein (< 1e-6). Auf der GPU gemessen (h 10 und h 8, je fuenf Lagen):
+    24,8 statt 33,0 und 30,6 statt 39,6 Iterationen im Mittel."""
+    from volumen3d.fcm.gitter import Verfeinerung
+    from volumen3d.fcm.mehrgitter import PMehrgitter
+    from volumen3d.linalg.pcg import pcg
+    from volumen3d.tests.test_kirsch import D, T, _platte
+    h = 20.0
+    pr = _platte(3, h, versatz=0.4, verfeinerung=Verfeinerung(bereiche=((np.array([0.0, 0.0, T / 2]), D / 2 + 10.0, h / 4),)))
+    pr.loeser = "pcg"
+    pr.aufbauen()
+    n = pr.gitter.n_dof
+    C = pr.zwaenge.C
+    b = np.asarray(C.T @ pr.rechte_seite({})[:n]).ravel()
+    P = np.concatenate([pr.quadratur.zelle(c)[0][pr.quadratur.zelle(c)[2]][:3] for c in range(0, len(pr.gitter.ijk), max(1, len(pr.gitter.ijk) // 100))])
+    erg = {}
+    for name, mg in (("alpha 16", PMehrgitter(pr, alpha=16.0)), ("Standard", PMehrgitter(pr))):
+        e = pcg(pr._operator.frei_anwenden, b, mg.anwenden, tol=1e-10, max_iter=500)
+        erg[name] = (e.iterationen, e.konvergiert, pr.auswertung(np.asarray(C @ e.x).ravel()).spannung(P), mg.alpha)
+    (i16, k16, s16, _), (i_s, k_s, s_s, a_s) = erg["alpha 16"], erg["Standard"]
+    f = float(np.abs(s_s - s16).max() / np.abs(s16).max())
+    check(f"Kirsch h 20 p 3 Versatz 0,4: Standardfenster (alpha {a_s:g}) {i_s} Iterationen <= 85 % von alpha 16 ({i16}), "
+          f"Spannungen gleich (< 1e-6)", k16 and k_s and a_s == 100.0 and i_s <= 0.85 * i16 and f < 1e-6, f"Spannungen {f:.1e}")
+
+
 def test_symmetrie():
     """Der V-Zyklus als CG-Vorkonditionierer muss symmetrisch und positiv definit sein (Gutachten 28.09.2026:
     bisher nur ueber die Iterationszahlen belegt)."""
@@ -423,4 +452,4 @@ def test_kern():
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_ebenen, test_nullkandidaten, test_nullkandidaten_mehrdimensional, test_p1_und_gleichgewicht, test_nullraum, test_schwarz_grosse_bloecke, test_symmetrie, test_problem_mehrgitter, test_pcg_mehrgitter]))
+    sys.exit(lauf([test_ebenen, test_nullkandidaten, test_nullkandidaten_mehrdimensional, test_p1_und_gleichgewicht, test_nullraum, test_schwarz_grosse_bloecke, test_chebyshev_fenster, test_symmetrie, test_problem_mehrgitter, test_pcg_mehrgitter]))

@@ -121,6 +121,31 @@ Freiheitsgraden 1,0 bis 1,2 s von 9 bis 11 s (12 %) und beim Einrichten 1 bis 5 
   Optionen: gewichteter Schwarz-Glätter, Ghost Penalty als Alternative zur Aggregation (Vorgabe 8.3).
 - Prüfung: fünf Lagen h 10 und h 8 innerhalb ±20 %, K_tg unverändert auf 0,2 %.
 
+**Vorgehen, vor der Messung festgelegt (30.09.2026):** Gemessen werden die fünf Lagen (Versatz 0; 0,2;
+0,4; 0,6; 0,8) bei h 10 und h 8, je Fall ein Prozess aus einem festen Arbeitsbaum, mit zwei unabhängigen
+Skripten: einem eigenen CG (Abbruch wie `linalg/pcg.py`, dazu Ritzwerte und die Lage des Ritzvektors zum
+kleinsten Ritzwert, als Energieanteile je Zelle nach Werkstoffanteil) und dem Produktweg
+`FcmProblem.loesen` als Gegenprobe. Die Iterationszahlen beider Skripte müssen übereinstimmen, sonst gilt
+die Messung nicht. Verglichen werden der bisherige Glätter und der gewichtete additive Schwarz-Glätter
+W M⁻¹ W mit W = diag(1/√Vielfachheit) (Schalter `glaetter_gewicht`, Vorgabe aus). Der gewichtete Glätter
+wird zur Vorgabe, wenn er bei h 10 und h 8 jeweils alle fünf Lagen in ±20 % um den Mittelwert bringt oder
+die größte Abweichung mindestens halbiert, keine Lage um mehr als zwei Iterationen verschlechtert, K_t auf
+0,2 % gleich lässt und die Lösezeit um höchstens 5 % erhöht. Trifft das nicht zu, entscheidet die Lage des
+langsamen Ritzvektors über die nächste Maßnahme: sitzt seine Energie in Zellen knapp über der
+Aggregationsschwelle, ist das ein Fall für die Stabilisierung (Ghost Penalty oder Aggregation), verteilt
+sie sich über das Gebiet, ist es eine Frage des Glätters.
+
+**Ergebnis A5 (30.09.2026, Messcommit b0a08a8, beide Skripte mit gleichen Iterationszahlen in allen 20
+Fällen):** Der gewichtete Schwarz-Glätter fällt nach der Regel durch (h 10, Versatz 0: 29 → 230 Iterationen,
+λ_max der feinsten Ebene 33 → 394). Die langsamen Moden sitzen an den langsamsten Lagen nicht an der
+Aggregationsschwelle, sondern im Oktree-Übergang am Loch (volle Zellen) und in den halb gefüllten
+Zellschichten der dünnen Scheibe; es ist also eine Frage des Glätters. Ein breiteres Chebyshev-Fenster
+[λ_max/100, λ_max] senkt Iterationen und Lösezeit an allen Lagen um 20 bis 25 % bei gleichen Spannungen und
+ist Standard geworden. Die relative Streuung bleibt aber bei −25 bis +29 %, weil das Fenster alle Lagen im
+selben Verhältnis verkürzt. Das Ziel ±20 % ist nicht erreicht; ob es gilt oder durch „stabil unter 100
+Iterationen“ der Vorgabe ersetzt wird, entscheidet der Anwender (Alternative: Glätterblöcke über die Dicke
+bzw. um Knoten, ein eigener größerer Schritt).
+
 ### A6: Leistungsabnahme und Löserwahl neu messen
 - 10⁶ Freiheitsgrade unter 60 s (Vorgabe 13) am Block; Schlussmessung der 23 Fälle wiederholen, dazu
   p 2 und p 4. `_AUTO_MEHRGITTER` nur einschalten und die Schwelle nur setzen, wenn die Messung es trägt.
@@ -196,9 +221,9 @@ nachgetragen.
 |---|---|---|---|---|
 | A1 Aufbau vermessen | Sonnet 5 | mittel | klar umrissene Messaufgabe | erledigt (5381f71) |
 | A2 Aufbau beschleunigen | Opus 5.5 | hoch | Umbau in bekanntem Code mit vielen Prüfungen | erledigt (d0e6c37), Teil (b) nach A3 |
-| A3 GPU-Speicher für 10⁶ FHG | Fable 5.1 | sehr hoch | numerisch heikel (FP32, Glätter), Entwurf und Umsetzung | erledigt |
+| A3 GPU-Speicher für 10⁶ FHG | Fable 5.1 | sehr hoch | numerisch heikel (FP32, Glätter), Entwurf und Umsetzung | erledigt (d47d4a1) |
 | A4 h-Mehrgitter (nur wenn nötig) | Fable 5.1 | sehr hoch | hängende Knoten im Mehrgitter, höchstes Risiko | entfällt (Grobgitter 12 % des Lösens) |
-| A5 Streuung über Schnittlagen | Opus 5.5 | hoch | Ritz-Analyse und Glätterabstimmung | offen |
+| A5 Streuung über Schnittlagen | Opus 5.5 | hoch | Ritz-Analyse und Glätterabstimmung | Fenster α 100 umgesetzt (−20 bis −25 %); ±20 % nicht erreicht, Entscheidung offen |
 | A6 Leistungsabnahme, Löserwahl | Sonnet 5 | mittel | Messreihe nach festem Schema | offen |
 | B1 Moment Fitting | Fable 5.1 | sehr hoch | Stabilität der Gewichte, Konsistenz Volumen/Rand | offen |
 | B2 Spannungsrückgewinnung | Opus 5.5 | hoch | bekanntes Verfahren, sorgfältige Umsetzung | offen |

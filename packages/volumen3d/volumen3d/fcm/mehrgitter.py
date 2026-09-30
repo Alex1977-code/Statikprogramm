@@ -365,12 +365,18 @@ class PMehrgitter:
     ``geraet='gpu'``: Glaetterbloecke, Operatoren, lambda_max und V-Zyklus auf der GPU (``anwenden``
     nimmt und liefert cupy-Felder); nur das Grobgitter p = 1 bleibt auf der CPU.
 
-    Standard Grad 5 auf [lambda_max/16, lambda_max]: am schwierigsten Fall (Kirsch h 10 p 3, Versatz
-    0,6, GPU) gemessen Grad 3/alpha 8: 129 Iterationen 14,6 s, Grad 5/alpha 8: 92 / 16,7 s, Grad
-    5/alpha 16: 86 / 15,0 s, Grad 8/alpha 30: 58 / 16,4 s (28.09.2026). Die Zeit haengt kaum am Grad,
-    die Iterationszahl schon; Grad 5/alpha 16 haelt die Vorgabe (unter 100) ohne Zeitverlust."""
+    Standard Grad 5 auf [lambda_max/100, lambda_max]. lambda_max von M^-1 A (33 bis 65) sitzt an drei
+    untersuchten Lagen im Uebergangsguertel des Oktrees (Ebene 1, volle Zellen) und wandert mit der
+    Schnittlage; mit alpha 16
+    glaettete Chebyshev nur oberhalb von 2 bis 4, darunter blieb alles dem Grobgitter p = 1. Mit alpha 100
+    verdoppelt sich der kleinste Ritzwert des vorkonditionierten Operators an allen zehn Lagen (h 10:
+    0,061-0,100 auf 0,116-0,188). Kirsch p 3, je fuenf Schnittlagen, GPU, tol 1e-12 (30.09.2026, A5): h 10
+    24,8 statt 33,0 Iterationen im Mittel, Loesen ueber FcmProblem.loesen 11,7 statt 15,0 s in Summe; h 8
+    30,6 statt 39,6, 21,2 statt 26,6 s; Spannungen gleich. alpha 60/100/200 an vier Lagen: 2,42/2,29/2,21 s (h 10, Versatz
+    0,4) - das Fenster saettigt; Grad 6 bringt weniger Iterationen, aber keine Zeit (28.09. bei der
+    alten Blockablage war Grad 8/alpha 30 noch langsamer als Grad 5/alpha 16)."""
 
-    def __init__(self, problem, glaetter_grad: int = 5, alpha: float = 16.0, potenz_schritte: int = 15,
+    def __init__(self, problem, glaetter_grad: int = 5, alpha: float = 100.0, potenz_schritte: int = 15,
                  glaetter: str = "schwarz", lambda_sicherheit: float = 1.1, grob_verschiebung: float = 1e-10,
                  geraet: str = "cpu") -> None:
         try:

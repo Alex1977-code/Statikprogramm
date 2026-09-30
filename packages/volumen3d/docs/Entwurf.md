@@ -771,6 +771,12 @@ Plan: `docs/plaene/2026-09-28-tp4-mehrgitter.md`. Messlatte aus Teilprojekt 3: J
   4 425 MB Höchststand, 29 Iterationen, wie direkt auf 2,8·10⁻¹⁴; Kirsch h 5,5 4 822 MB, 36 Iterationen,
   Spannungen wie direkt auf 1,6·10⁻¹² (vorher 10,8 bzw. 12,2 GB geschätzt). Schätzung der Vertragsschicht neu
   geeicht (3–26 % über dem Höchststand). A4 (h-Mehrgitter) entfällt: Grobgitter 12 % des Lösens.
+- **A5, Streuung über die Schnittlagen (30.09.2026, Theorie 11.10):** Kirsch p 3, je fünf Lagen h 10 und h 8,
+  zwei Skripte mit gleichen Iterationszahlen. Gewichteter Schwarz-Glätter W M⁻¹ W verworfen (h 10 Versatz 0:
+  29 → 230 Iterationen, λ_max 33 → 394). Chebyshev-Fenster [λ_max/100, λ_max] statt [λ_max/16, λ_max]:
+  Iterationen im Mittel 33,0 → 24,8 (h 10) und 39,6 → 30,6 (h 8), Lösen 15,0 → 11,7 s und 26,6 → 21,2 s in
+  Summe, Spannungen gleich. Die relative Streuung bleibt (−25 bis +29 %): langsame Moden am Oktree-Übergang
+  am Loch und in den halb gefüllten Zellschichten der dünnen Scheibe, nicht an der Aggregationsschwelle.
 - Fünf Schnittlagen Kirsch h 10 p 3 verfeinert (128 724 bis 199 095 freie Koordinaten), GPU FP64:
   81 / 125 / 112 / 129 / 59 Iterationen, GPU-PCG 8,6 bis 21 s, K_t identisch mit dem Direktlöser;
   Direktlöser (Lösen nach der Faktorisierung) 7 bis 25 s. Einrichten auf der CPU: Zelldaten 17–24 s,

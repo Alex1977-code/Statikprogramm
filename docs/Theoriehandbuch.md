@@ -10968,7 +10968,7 @@ geteilt. Kirsch h 20 p 3 (33 060 frei): GPU 3,8 s gegen CPU-Mehrgitter 12,1 s un
 Chebyshev-Grad 3 auf [λ_max/8, λ_max] 81 / 125 / 112 / 129 / 59 Iterationen. Am schwierigsten Fall
 (Versatz 0,6) gemessen: Grad 3/α 8 129 Iterationen in 14,6 s, Grad 5/α 8 92 in 16,7 s, Grad 5/α 16
 86 in 15,0 s, Grad 8/α 30 58 in 16,4 s – die Zeit hängt kaum am Grad, die Iterationszahl schon.
-Standard ist seither Grad 5 auf [λ_max/16, λ_max]; damit: 51 / 82 / 72 / 86 / 49 Iterationen, alle
+Standard war danach Grad 5 auf [λ_max/16, λ_max] (seit 30.09.2026 [λ_max/100, λ_max], siehe unten); damit: 51 / 82 / 72 / 86 / 49 Iterationen, alle
 unter dem Richtwert 100 der Vorgabe, GPU-PCG 7,7 bis 16,9 s gegen 9 bis 30 s für das Lösen des
 Direktlösers nach seiner Faktorisierung, K_t jeweils identisch; bei h 20 p 3 19 bis 37 Iterationen.
 Offen bleibt das Einrichten auf der CPU. Nach der Entdopplung (Matrix aus den Zelldaten, feine
@@ -11168,4 +11168,51 @@ bis 1 000 000 Freiheitsgraden 3 bis 26 % über dem Höchststand im knappen Betri
 Gegenprobe: der Höchststand der Karte (alle Prozesse) lag in einem Lauf 683 MB über dem Pool, in den
 Wiederholungen 50 bis 80 MB – der Unterschied kam von anderen Programmen auf der Karte, deren Belegung
 zwischen 1,15 und 1,42 GB schwankte.
+
+**Streuung über die Schnittlagen und Chebyshev-Fenster (Plan TP 5, A5, 30.09.2026).** Gemessen an der
+Kirsch-Scheibe p 3 (verfeinert) mit fünf Schnittlagen (Versatz 0 bis 0,8) bei h 10 und h 8, GPU, Abbruch
+bei 10⁻¹² in Residuum und Energie, je Fall ein Prozess aus einem festen Arbeitsbaum; zwei unabhängige
+Skripte (eigener CG mit Ritzwerten, Produktweg `FcmProblem.loesen`) liefern dieselben Iterationszahlen.
+Mit dem bisherigen Fenster [λ_max/16, λ_max] brauchte der CG bei h 10 29 / 31 / 43 / 30 / 32 Iterationen
+(Mittel 33,0, Versatz 0,4 bei +30 %) und bei h 8 43 / 41 / 34 / 29 / 51 (Mittel 39,6, −27 % bis +29 %).
+Die langsamste Mode (Ritzvektor zum kleinsten Ritzwert, als Energieanteile je Zelle) sitzt je nach Lage an
+verschiedenen Stellen: sieben Mal im verfeinerten Bereich am Loch (Ebenen 1 und 2, meist volle Zellen), drei
+Mal in teilgefüllten Zellen der groben Scheibe (Werkstoffanteil 0,5 bis 0,7) nahe dem belasteten Rand, bei
+h 10, Versatz 0,4 mit einem über die Dicke schwingenden u_z (je Zellschicht ein Polynom höheren Grades in z,
+das p = 1 nicht darstellt). Nur an den zwei Lagen mit Versatz 0 liegt sie überwiegend in Zellen an oder unter der
+Aggregationsschwelle (Werkstoffanteil 0,4 an der Oberseite im verfeinerten Bereich); das sind nicht die
+langsamen Lagen (29 und 43 Iterationen). An den beiden langsamsten (h 10 Versatz 0,4, h 8 Versatz 0,8)
+sitzt sie in halb bzw. voll gefüllten Zellen – eine andere Stabilisierung (Ghost Penalty statt Aggregation)
+träfe sie nicht. λ_max von M⁻¹A (33 bis 65) sitzt an den drei daraufhin
+untersuchten Lagen im Übergangsgürtel des Oktrees am Loch (Ebene 1, volle Zellen) und wandert mit der
+Schnittlage.
+
+Zuerst gemessen wurde ein gewichteter additiver Schwarz-Glätter, W (Σ R_kᵀ A_k⁻¹ R_k) W mit W = diag(1/√m)
+und m der Zahl der Blöcke je Koordinate. Er ist verworfen: bei h 10, Versatz 0 stiegen die Iterationen von
+29 auf 230, weil λ_max auf der feinsten Ebene von 33 auf 394 sprang (auf der Ebene darunter sank es wie
+erwartet von 36 auf 5,9). Wo der große Eigenwert entsteht, ist nicht weiter untersucht; nach der vor der
+Messung festgelegten Regel (keine Lage um mehr als zwei Iterationen schlechter) ist die Variante verworfen.
+
+Wirksam ist dagegen ein breiteres Chebyshev-Fenster. Bei α 16 glättet Chebyshev nur oberhalb von λ_max/16,
+also 2 bis 4; darunter bleibt alles dem Grobgitter. An vier Lagen gemessen (Lösezeit bei h 10, Versatz 0,4):
+α 16 3,09 s, α 30 2,75 s, α 60 2,42 s, α 100 2,29 s, α 200 2,21 s – das Fenster sättigt ab etwa 100; Grad 6
+statt 5 spart Iterationen, aber keine Zeit (am 28.09. bei der alten Blockablage war Grad 8/α 30 noch
+langsamer als Grad 5/α 16). Standard ist seither Grad 5 auf [λ_max/100, λ_max]:
+
+| Kirsch p 3 | Iterationen α 16 | Iterationen α 100 | Lösen α 16 | Lösen α 100 |
+|---|---|---|---|---|
+| h 10, fünf Lagen | 29 / 31 / 43 / 30 / 32 (Mittel 33,0) | 22 / 23 / 32 / 23 / 24 (24,8) | 15,0 s | 11,7 s |
+| h 8, fünf Lagen | 43 / 41 / 34 / 29 / 51 (39,6) | 34 / 31 / 26 / 23 / 39 (30,6) | 26,6 s | 21,2 s |
+
+(Lösezeiten über `FcmProblem.loesen` in Summe über die fünf Lagen; der reine CG des ersten Skripts 12,8 → 9,6
+und 23,7 → 18,1 s. Das Einrichten, 15 bis 27 s je Lage, hängt nicht am Fenster.)
+
+Der kleinste Ritzwert des vorkonditionierten Operators verdoppelt sich an allen zehn Lagen (h 10: 0,061
+bis 0,100 auf 0,116 bis 0,188), die Spannungen am Lochrand sind auf sechs Stellen gleich, K_t streut über
+die Lagen um 0,3 % (Vorgabe: Ergebnisstreuung unter 1 %). Die relative Streuung der Iterationen bleibt
+dagegen: h 10 −11 % bis +29 %, h 8 −25 % bis +27 %. Das breitere Fenster verkürzt alle Lagen etwa im selben
+Verhältnis; die Ursachen sind die beiden Stellen, an denen die langsamen Moden sitzen (Oktree-Übergang am
+Loch und die dünne Scheibe mit zwei halb gefüllten Zellschichten über die Dicke), nicht die Aggregation. Das
+selbst gesetzte Ziel ±20 % (Plan TP 4) ist damit nicht erreicht; die Vorgabe verlangt eine stabile
+Iterationszahl unter 100 bei 10⁻⁸, die mit höchstens 39 Iterationen bei 10⁻¹² eingehalten ist.
 
