@@ -247,6 +247,30 @@ Wurzelwahl der Aggregation hing an der Rundung des Werkstoffanteils (Test in tes
 - Superconvergent Patch Recovery oder L²-Projektion der Spannungen, ausgewertet an den Oberflächenpunkten.
 - Prüfung: Patch-Test exakt; Kirsch und Lamé an der Oberfläche näher an der Referenz als der Rohwert.
 
+**Vorgehen und Regeln, vor der Messung festgelegt (30.09.2026):**
+
+*Verfahren.* Globale L²-Projektion der sechs Spannungskomponenten auf den stetigen skalaren Ansatzraum vom Grad p
+derselben Zellen, mit derselben skalaren Zwangsmatrix wie die Verschiebungen (hängende Moden und Aggregation;
+C ist komponentenweise gleich, die skalare Fassung ist C[0::3, 0::3]): M X = B mit M = Cᵀ(Σ ∫ Nᵀ N dΩ)C über die
+Zellquadratur (Werkstoff- und α-Punkte, wie die Steifigkeit) und B = Cᵀ Σ ∫ Nᵀ σ_h dΩ. M wird einmal je Problem
+faktorisiert (Direktlöser), jeder Lastfall kostet nur rechte Seiten. SPR wird nicht gebaut: Patches um Knoten
+vertragen sich schlecht mit Schnittzellen, hängenden Moden und Aggregation; die L²-Projektion erbt alle drei.
+Neues Modul `postprocess/rueckgewinnung.py`, `Auswertung.spannung(P, geglaettet=...)`.
+
+*Messung (FcmProblem-Ebene, Direktlöser, Auswertepunkte auf der echten Oberfläche wie im Vertragsweg: die Punkte
+der Flächenquadratur, 1e-7·h nach innen gerückt).* (1) Patch p 2 und p 3: Spannungen gegen die exakten. (2) Lamé
+p 2 und p 3, h 20 und h 10: σ_r, σ_φ, σ_z gegen Lamé an allen Oberflächenpunkten, größter und mittlerer Fehler
+bezogen auf p_i. (3) Kirsch p 3 verfeinert, h 20 mit Versatz 0 und 0,4: K_t am Lochrand, Streuung über die beiden
+Lagen, und das Randresiduum |σ·n| auf den freien Flächen (Loch, freie Längsseite, Ober- und Unterseite) bezogen auf
+S₀ – die Rückgewinnung soll die Randbedingung nicht verschlechtern. (4) Kragarmsegment p 3 reine Biegung: σ_x an
+der Oberfläche gegen Balkentheorie. Dazu Zeit für Aufbau und Faktorisierung von M und je Lastfall.
+
+*Regel.* Die Rückgewinnung wird der Vorgabewert für die Oberflächenspannungen des Vertragswegs (`DetailResult.stress`),
+wenn (a) die Patch-Tests unter 10⁻⁶ bleiben, (b) an allen vier Lamé-Fällen der größte Oberflächenfehler kleiner
+ist als roh, (c) K_t an beiden Kirsch-Lagen sich um höchstens 0,5 % vom Rohwert unterscheidet und das mittlere
+Randresiduum nicht größer ist als roh, (d) die reine Biegung auf 10⁻⁶ exakt bleibt. Sonst bleibt der Rohwert
+Vorgabe und die Rückgewinnung ein Schalter; das Protokoll nennt in jedem Fall, welche Spannung ausgegeben wird.
+
 ### B3: Hot-Spot nach IIW Typ a (Vorgabe 11.2)
 - Referenzpunkte im Abstand 0,4·t und 1,0·t vom Nahtübergang, senkrecht zur Naht auf der Blechoberfläche,
   lineare Extrapolation, maßgebende Komponente senkrecht zur Naht; Richtung aus Oberflächennormale und
@@ -307,7 +331,7 @@ nachgetragen.
 | A5 Streuung über Schnittlagen | Opus 5.5 | hoch | Ritz-Analyse und Glätterabstimmung | erledigt (f2bf8e7): α 100 (−20 bis −25 %); Vorgabe als erfüllt anerkannt |
 | A6 Leistungsabnahme, Löserwahl | Sonnet 5 | mittel | Messreihe nach festem Schema | erledigt: `auto` bleibt direkt; Lösen 10⁶ FHG 7–8 s, Aufbau + Lösen 62–115 s |
 | B1 Moment Fitting | Fable 5.1 | sehr hoch | Stabilität der Gewichte, Konsistenz Volumen/Rand | Vorgabe an (Anwender); schwere Suiten und Zeiten auf freier Maschine ausstehend |
-| B2 Spannungsrückgewinnung | Opus 5.5 | hoch | bekanntes Verfahren, sorgfältige Umsetzung | offen |
+| B2 Spannungsrückgewinnung | Opus 5.5 | hoch | bekanntes Verfahren, sorgfältige Umsetzung | läuft: Verfahren und Regel festgelegt |
 | B3 Hot-Spot IIW Typ a | Opus 5.5 | hoch | Geometrie der Referenzpunkte, Normbezug | offen |
 | B4 Konvergenzkurve, Protokoll | Sonnet 5 | mittel | überschaubar, baut auf B2/B3 | offen |
 | B5 STEP über gmsh | Sonnet 5 | mittel | Anbindung einer Bibliothek | offen |
