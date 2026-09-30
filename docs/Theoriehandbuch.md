@@ -1623,6 +1623,28 @@ spiegelsymmetrisch auf 2,8·10⁻¹⁶; mit der Projektion (Rücknahmeprobe) wei
 spiegelbildliche Eckknoten um 10,3 % voneinander ab (8 972 gegen 4 128 kN).
 Prüfmatrix K1–K7, KP1, KP2 und der Stempel der Plastizität (als kleinerer
 Slave ganz überdeckt) bleiben unverändert.
+
+Am Drehlager (Lauf `mortar_rand_cca9e85`, 30.09.2026, PARDISO, auf dem
+Netz des Laufs `einzeilig_18a770d`, zwei Auswerter) bekommen jetzt 7 504
+Slave-Knoten in sieben Fugen Mortar-Gewichte statt 803, davon 6 701 am Rand
+der Überdeckung: die Fugen dort sind schmale Streifen und Ringe mit vielen
+Rändern (Lagerbock-Grundplatte 1 255 Randkanten auf 4 249 Master-Facetten,
+Deckel 1 3 422 auf 8 378), und jede teilweise überdeckte Facette liegt
+innerhalb einer halben Facettengröße neben einer Randkante des Masters –
+kein Kandidat fällt durch einen Filter. Der Aufbau der Gewichte für alle
+zwölf Paare dauert 23,9 s. Ergebnis gegen den Lauf `einzeilig_18a770d`
+(gleiches Netz): alle 18 Kontaktläufe konvergiert, 137 Runden und 119
+Faktorisierungen statt 130 und 105, ε_p 8,291 %, u_max 1,1502 statt
+1,1507 mm, größter Knotenunterschied 0,015 mm; Kontaktzustand wie dort
+(kein festgehaltener Knoten, keiner unter Zug, drei offene mit einer
+Durchdringung unter einem Nanometer bei beiden). Bohrungskörper V15, V16,
+V29, V34, V113, V114 auf 0,13 % gleich; das Montageauge V35 380,4 statt
+373,3 N/mm² und V115 206,2 statt 212,4 N/mm² – in derselben Richtung wie
+schon der erste Mortar-Stand (379,8 / 210,7), dort liegen 974 und 228
+Randknoten. Ein Sollwert ist an diesen Stellen nicht bekannt; die
+Erwartung vor dem Lauf, die Werte rückten näher an den Stand ohne Mortar,
+hat sich nicht bestätigt. Was für die Mortar-Werte spricht, ist der
+Prüffall: die Projektion verteilt die Kraft an einem Rand um 10 % schief.
 Am Drehlager (Lauf `mortar_81e7b64`, 28.09.2026, zwei Auswerter): 803
 Slave-Knoten in sechs Fugen bekommen Mortar-Gewichte, die übrigen gepaarten
 behalten die Projektion. Die Überdeckung Σ_i M_ji / D_j ist dort

@@ -1169,8 +1169,6 @@ class ContactSystem:
             if not w or abs(sum(w.values()) - 1.0) > 1e-6:
                 unvollstaendig += 1              # Sicherheitsnetz, sollte nicht vorkommen
                 continue
-            if eintrag.rand:
-                rand += 1
             groesste = max(w, key=lambda i: abs(w[i]))
             if abs(w[groesste] - 1.0) <= 1e-9 and all(abs(v) <= 1e-9 for i, v in w.items() if i != groesste):
                 w = {groesste: 1.0}
@@ -1181,6 +1179,11 @@ class ContactSystem:
                     and np.allclose([dict(zip(map(int, alt_m[0]), alt_m[1]))[i] for i in tri], wj,
                                     rtol=0.0, atol=1e-9)):
                 continue                             # dieselben Gewichte (deckungsgleich)
+            # erst hier zaehlen: ein Randknoten deckungsgleicher Netze behaelt
+            # delta - am Drehlager standen sonst 1058 "davon am Rand" bei 932
+            # geaenderten (Lauf mortar_rand_cca9e85, 30.09.2026)
+            if eintrag.rand:
+                rand += 1
             n = np.asarray(c.cn[:3], float)
             c.dofs = np.array(_trans_dofs(s) + sum((_trans_dofs(t) for t in tri), []))
             c.cn = np.concatenate([n] + [-wi * n for wi in wj])

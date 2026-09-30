@@ -520,6 +520,30 @@ def test_mortar_am_rand_der_ueberdeckung():
         contact.MORTAR = alt
     check("Ruecknahme (Knoten gegen Flaeche): unsymmetrisch um mehr als 1 % (gemessen 10,3 %)",
           asym2 > 1e-2, f"{asym2:.3f}")
+    # Zaehlung im Protokoll: "davon N am Rand" zaehlt nur Knoten, deren Gewichte
+    # sich geaendert haben. Am Drehlager (Lauf mortar_rand_cca9e85, 30.09.2026)
+    # stand "932 Slave-Knoten mit Mortar-Gewichten, davon 1058 am Rand": Rand-
+    # knoten deckungsgleicher Netze behalten delta und zaehlten trotzdem mit.
+    # Hier: Master aus zwei Koerpern derselben Gruppe - links feiner (Gewichte
+    # aendern sich), rechts deckungsgleich und kuerzer als der Slave (die
+    # Knoten auf seiner Kante sind Randknoten mit unveraenderten Gewichten).
+    m = pm.leeres_modell()
+    tol = 1e-9
+    pm.block(m, "hex8", (0, 0, 0), (0.4, 1.2, 1.0), 0.2, "Unten")
+    pm.block(m, "hex8", (0.4, 0, 0), (0.4, 1.2, 1.0), 0.4, "Unten")
+    pm.block(m, "hex8", (0, 0, 1.0), (1.2, 1.2, 1.0), 0.4, "Oben")
+    pm.lagern(m, lambda x: abs(x[2]) < tol, [2])
+    pm.lagern(m, lambda x: abs(x[0]) < tol, [0])
+    pm.lagern(m, lambda x: abs(x[1]) < tol, [1])
+    seiten = pk.randseiten(m, lambda X: bool(np.all(np.abs(X[:, 2] - 2.0) < tol)))
+    pk.spannung_auf_seiten(m, seiten, lambda x: np.array([0.0, 0.0, -100e6]))
+    pm.kontaktpaar(m, "Oben", "Unten", 1.0, 0.4, mu=0.0)
+    res = solver.solve_static(m, workers=1)
+    zeile = next((z for z in (res.info.get("contact_log") or []) if "Mortar" in z), "")
+    check("gemischter Master: 8 Knoten ueber dem feineren Teil aendern die Gewichte, die 4 Randknoten auf der "
+          "Kante des deckungsgleichen Teils behalten delta und zaehlen nicht als 'davon am Rand'",
+          res.info.get("contact_converged") and "8 Slave-Knoten mit Mortar-Gewichten" in zeile
+          and "am Rand" not in zeile, zeile[:140] or "keine Mortar-Zeile")
 
 
 def test_reibung_in_einer_richtung():
