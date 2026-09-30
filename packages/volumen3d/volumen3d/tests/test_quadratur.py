@@ -227,6 +227,17 @@ def test_momentfitting():
     _, n1, lam1, _ = ergebnisse["q p"]
     check(f"q = p dagegen: indefinite Zellmatrizen (kleinster relativer Eigenwert {lam1:.1e} < -1e-5), bei q = 2p {lam2:.1e} >= -1e-12",
           lam1 < -1e-5 and lam2 >= -1e-12)
+    # Vorgabe (Anwender 30.09.2026): ohne Angabe fittet die Zellquadratur mit q = 2p; FcmProblem reicht das durch
+    from volumen3d.fcm.problem import FcmProblem, Werkstoff
+    Q_std = Zellquadratur(G, p=p)
+    n_std = sum(len(Q_std.zelle(int(c))[1]) for c in cut)
+    pr = FcmProblem(_geometrie(), h=20.0, p=p, werkstoff=Werkstoff(E, NU))
+    pr_aus = FcmProblem(_geometrie(), h=20.0, p=p, werkstoff=Werkstoff(E, NU), momentfitting=False)
+    check(f"Vorgabe: Zellquadratur und FcmProblem fitten ohne Angabe mit q = 2p ({n_std} Punkte wie gefittet), "
+          f"momentfitting=False schaltet zurueck",
+          Q_std.momentfitting and Q_std.fit_grad == 2 * p and n_std == n2 and pr.quadratur.momentfitting
+          and not pr_aus.quadratur.momentfitting and pr.quadratur.anzahl_punkte() < pr_aus.quadratur.anzahl_punkte(),
+          f"Punkte FcmProblem {pr.quadratur.anzahl_punkte()} gegen {pr_aus.quadratur.anzahl_punkte()} ohne Fitting")
 
 
 def test_inside_zelle():

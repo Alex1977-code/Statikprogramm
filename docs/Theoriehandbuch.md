@@ -11367,8 +11367,10 @@ und 3,10770), die Lamé-Fehler sind unverändert (p 3: σ_r 1,187 %, σ_φ 0,412
 Schnittzelle auf 2·10⁻¹³ überein, das Werkstoffvolumen auf 10⁻¹⁵; kein Rückfall, kein NNLS. Das Ziel des Plans,
 mindestens fünfmal weniger Punkte, ist an allen gekrümmten Geometrien weit übertroffen (17- bis 34-fach) und an den
 eben geschnittenen Patch-Zellen verfehlt (2,6- und 4,2-fach); dort war die Referenz schon vergleichsweise billig.
-Ob das Fitting Vorgabe wird, entscheidet der Anwender (Plan TP 5); gemessen ist, dass es die Ergebnisse nicht
-ändert und nie mehr Punkte erzeugt als die Referenz.
+Nach der vorher festgelegten Regel wäre die Referenz Standard geblieben; der Anwender hat das Fitting am
+30.09.2026 zur Vorgabe gemacht (`MOMENTFITTING_STANDARD = True`), weil es die Ergebnisse nicht ändert und nie mehr
+Punkte erzeugt als die Referenz. `momentfitting=False` schaltet zurück; plastische Körper brauchen nach Vertrag 6a
+die Unterteilung (im Modul gibt es noch keine Plastizität).
 
 **Befund am Rande: die Wurzelwahl der Aggregation hing an der Rundung.** Vor der Kur unterschieden sich die
 Lösungen mit und ohne Fitting am Lamé-Zylinder um 4·10⁻³ in den Randspannungen, obwohl alle Zellmatrizen auf

@@ -789,7 +789,8 @@ Plan: `docs/plaene/2026-09-28-tp4-mehrgitter.md`. Messlatte aus Teilprojekt 3: J
   −29 des mittleren) sind dann unschädlich; q < 2p liefert indefinite Matrizen (−3,3·10⁻³) und Fehler bis 10⁻³. Punkte je
   Schnittzelle: Lamé 22- bis 34-fach, Kirsch 17- bis 19-fach, ebener Patch 2,6- bis 4,2-fach weniger, achsparallel unverändert
   (Fitting nur, wo es Punkte spart). Nebenbefund behoben: Wurzelwahl der Aggregation hing an 3·10⁻¹⁵ im Anteil (jetzt auf
-  neun Stellen gerundet, Gleichstand nach fester Nachbarreihenfolge). Vorgabe an/aus: Entscheidung des Anwenders.
+  neun Stellen gerundet, Gleichstand nach fester Nachbarreihenfolge). Vorgabe seit 30.09.2026 an (Anwender),
+  `momentfitting=False` schaltet zurück (plastische Körper, Vertrag 6a).
 - Fünf Schnittlagen Kirsch h 10 p 3 verfeinert (128 724 bis 199 095 freie Koordinaten), GPU FP64:
   81 / 125 / 112 / 129 / 59 Iterationen, GPU-PCG 8,6 bis 21 s, K_t identisch mit dem Direktlöser;
   Direktlöser (Lösen nach der Faktorisierung) 7 bis 25 s. Einrichten auf der CPU: Zelldaten 17–24 s,

@@ -33,8 +33,11 @@ from .basis import gauss_3d
 from .gitter import INSIDE
 from .momentfitting import fit_grad_standard, gefittete_regel
 
-# Vorgabe fuer neue Zellquadraturen; nach der Messung gesetzt (Plan TP 5, B1; Theorie 11.11)
-MOMENTFITTING_STANDARD = False
+# Vorgabe fuer neue Zellquadraturen (Anwender 30.09.2026, Plan TP 5 B1, Theorie 11.11): mit q = 2p sind die
+# Zellmatrizen dieselben wie mit der rekursiven Integration (2e-13 an jeder Schnittzelle), bei 17- bis 34-mal
+# weniger Punkten an gekruemmten Raendern (Lame h 20 p 3: 10 541 -> 306 je Schnittzelle). False schaltet zurueck -
+# plastische Koerper brauchen nach Vertrag 6a die Unterteilung (im Paket noch keine Plastizitaet).
+MOMENTFITTING_STANDARD = True
 
 
 class Zellquadratur:

@@ -241,6 +241,8 @@ der Regel bleibt die Referenz Standard (`MOMENTFITTING_STANDARD = False`), der A
 Vorgabe. Zeiten der Zellmatrizen an Kirsch h 10 und Block h 14 folgen auf freier Maschine. Nebenbefund behoben:
 Wurzelwahl der Aggregation hing an der Rundung des Werkstoffanteils (Test in test_zwaenge).
 
+**Entscheidung B1 (Anwender, 30.09.2026):** „fitting einschalten“ – `MOMENTFITTING_STANDARD = True`.
+
 ### B2: Spannungsrückgewinnung (Vorgabe 11.1)
 - Superconvergent Patch Recovery oder L²-Projektion der Spannungen, ausgewertet an den Oberflächenpunkten.
 - Prüfung: Patch-Test exakt; Kirsch und Lamé an der Oberfläche näher an der Referenz als der Rohwert.
@@ -304,7 +306,7 @@ nachgetragen.
 | A4 h-Mehrgitter (nur wenn nötig) | Fable 5.1 | sehr hoch | hängende Knoten im Mehrgitter, höchstes Risiko | entfällt (Grobgitter 12 % des Lösens) |
 | A5 Streuung über Schnittlagen | Opus 5.5 | hoch | Ritz-Analyse und Glätterabstimmung | erledigt (f2bf8e7): α 100 (−20 bis −25 %); Vorgabe als erfüllt anerkannt |
 | A6 Leistungsabnahme, Löserwahl | Sonnet 5 | mittel | Messreihe nach festem Schema | erledigt: `auto` bleibt direkt; Lösen 10⁶ FHG 7–8 s, Aufbau + Lösen 62–115 s |
-| B1 Moment Fitting | Fable 5.1 | sehr hoch | Stabilität der Gewichte, Konsistenz Volumen/Rand | gebaut und gemessen; Vorgabe an/aus: Entscheidung offen; Zeiten auf freier Maschine ausstehend |
+| B1 Moment Fitting | Fable 5.1 | sehr hoch | Stabilität der Gewichte, Konsistenz Volumen/Rand | Vorgabe an (Anwender); schwere Suiten und Zeiten auf freier Maschine ausstehend |
 | B2 Spannungsrückgewinnung | Opus 5.5 | hoch | bekanntes Verfahren, sorgfältige Umsetzung | offen |
 | B3 Hot-Spot IIW Typ a | Opus 5.5 | hoch | Geometrie der Referenzpunkte, Normbezug | offen |
 | B4 Konvergenzkurve, Protokoll | Sonnet 5 | mittel | überschaubar, baut auf B2/B3 | offen |
