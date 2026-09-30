@@ -146,10 +146,53 @@ selben Verhältnis verkürzt. Das Ziel ±20 % ist nicht erreicht; ob es gilt ode
 Iterationen“ der Vorgabe ersetzt wird, entscheidet der Anwender (Alternative: Glätterblöcke über die Dicke
 bzw. um Knoten, ein eigener größerer Schritt).
 
+**Entscheidung A5 (Anwender, 30.09.2026):** Die Vorgabe (stabile Iterationszahl unter 100) gilt als erfüllt, das
+selbst gesetzte Ziel ±20 % entfällt. Glätterblöcke über die Dicke werden nicht gebaut; die Streuung wird am
+echten Knotenblech (C1) noch einmal angesehen.
+
 ### A6: Leistungsabnahme und Löserwahl neu messen
 - 10⁶ Freiheitsgrade unter 60 s (Vorgabe 13) am Block; Schlussmessung der 23 Fälle wiederholen, dazu
   p 2 und p 4. `_AUTO_MEHRGITTER` nur einschalten und die Schwelle nur setzen, wenn die Messung es trägt.
 - Prüfung: Tabelle in Theorie 11.10, Verlustrechnung per Skript aus dem Protokoll.
+
+**Vorgehen und Regeln, vor der Messung festgelegt (30.09.2026):**
+
+*Messstand.* Fester Arbeitsbaum (`git worktree`) auf dem Commit dieses Planabschnitts, Etikett mit Commit; je
+Fall ein Prozess, nacheinander, Prozessliste vorher leer, Hauptsitzung vorher benachrichtigt. „Gesamt“ heißt
+wie am 29.09. Aufbau plus Lösen ohne den Konstruktor des Problems; der Konstruktor wird getrennt ausgewiesen.
+
+*Serien.* (S) Die 23 Fälle der Schlussmessung vom 29.09. (Block h 25/20/16/14 mit Versatz 0 und 0,3; Kirsch
+h 14/12/10/9/8 mit Versatz 0/0,3/0,6), p 3, Direktlöser und GPU-Mehrgitter, Toleranz 1e-12. (G) Grade: p 2
+und p 4 an vier Fällen (Kirsch h 12 und h 9 mit Versatz 0,3, Block h 20 mit Versatz 0 und h 16 mit Versatz
+0,3), beide Wege. (M) Eine Million Freiheitsgrade: Block h 9 (967 992 Freiheitsgrade, p 3), beide Wege, dazu
+Kirsch h 5,5 (1 002 528 Freiheitsgrade), ebenfalls beide Wege (am 30.09. lag der Direktlöser dort bei 27 GB und
+36 s; ob das im Gesamtweg unter dem Mehrgitter liegt, zeigt die Serie).
+
+*Zwei Skripte.* Skript 1 (`a1_skript1`): Gesamtzeiten mit `perf_counter` und den eingebauten Zeitwerten des
+Protokolls. Skript 2 (`a1_skript2`): Zeitmesser von außen um die Funktionen des Aufbaus, ohne eingebaute
+Zeitwerte zu lesen, Zeitbaum; läuft an sechs Fällen (Kirsch h 10 Versatz 0,3 und Block h 14 Versatz 0,3 je beide
+Wege, Block h 9 nur Mehrgitter, Kirsch h 5,5 nur Mehrgitter). Weichen beide in Aufbau oder Lösen um mehr als
+10 % ab, gilt der Fall nicht und wird wiederholt. Verschiebungs- und Spannungswerte beider Wege müssen je Fall
+auf 1e-9 übereinstimmen (Kontrollwert σ_x).
+
+*Regel R1 (Löserwahl `auto`).* Das Mehrgitter wird für `auto` eingeschaltet, wenn es in Serie S (Gesamtzeit)
+oberhalb einer Schwelle N0 im Mittel mindestens 10 % schneller ist als der Direktlöser und in keinem Fall
+langsamer als das 1,05-fache. N0 ist die kleinste Zahl aller Freiheitsgrade eines Falls (die Größe, nach der
+`auto` wählt), für die das für alle größeren Fälle der Serie gilt. Gibt es kein N0 unterhalb des größten Falls
+der Serie, bleibt `auto` beim Direktlöser. Der Hauptspeicher des Direktlösers (am Block h 9 46 GB) geht als
+Zahl in den Bericht ein, entscheidet aber nicht, weil er von der Rechnerausstattung abhängt.
+
+*Regel R2 (Grade).* `_AUTO_GRADE` wird nur dann um p 2 oder p 4 erweitert, wenn R1 einschaltet und Serie G für
+dieses p dieselbe Bedingung an allen vier Fällen erfüllt.
+
+*Regel R3 (Leistungskriterium Vorgabe 13: 10⁶ Freiheitsgrade, Lösung unter 60 s).* Zwei Lesarten, beide
+berichtet: (a) das Lösen allein, (b) der Gesamtweg Aufbau plus Lösen. Die Lesart (b) zählt das Einrichten
+einmal je Bauteil; jeder weitere Lastfall kostet nur das Lösen. Erfüllt ist das Kriterium, wenn (a) unter
+60 s liegt und (b) angegeben ist; liegt (b) darüber, geht die Zahl mit der Verlustrechnung an den Anwender.
+
+*Verlustrechnung.* Per Skript aus Protokoll (Skript 1) und Zeitbaum (Skript 2): Zeit je Posten (Gitter,
+Quadratur, Zelldaten, Nitsche, Einrichten des Mehrgitters mit Blöcken, Lösen) und Anteil an der Gesamtzeit für
+Mehrgitter gegen Direktlöser; der Abstand beider Wege wird den Posten zugeordnet.
 
 ## Phase B – Teilprojekt 5 (Vorgabe 3, 6 Stufe 2, 11)
 
@@ -223,8 +266,8 @@ nachgetragen.
 | A2 Aufbau beschleunigen | Opus 5.5 | hoch | Umbau in bekanntem Code mit vielen Prüfungen | erledigt (d0e6c37), Teil (b) nach A3 |
 | A3 GPU-Speicher für 10⁶ FHG | Fable 5.1 | sehr hoch | numerisch heikel (FP32, Glätter), Entwurf und Umsetzung | erledigt (d47d4a1) |
 | A4 h-Mehrgitter (nur wenn nötig) | Fable 5.1 | sehr hoch | hängende Knoten im Mehrgitter, höchstes Risiko | entfällt (Grobgitter 12 % des Lösens) |
-| A5 Streuung über Schnittlagen | Opus 5.5 | hoch | Ritz-Analyse und Glätterabstimmung | Fenster α 100 umgesetzt (−20 bis −25 %); ±20 % nicht erreicht, Entscheidung offen |
-| A6 Leistungsabnahme, Löserwahl | Sonnet 5 | mittel | Messreihe nach festem Schema | offen |
+| A5 Streuung über Schnittlagen | Opus 5.5 | hoch | Ritz-Analyse und Glätterabstimmung | erledigt (f2bf8e7): α 100 (−20 bis −25 %); Vorgabe als erfüllt anerkannt |
+| A6 Leistungsabnahme, Löserwahl | Sonnet 5 | mittel | Messreihe nach festem Schema | läuft: Regeln festgelegt, Messung beginnt |
 | B1 Moment Fitting | Fable 5.1 | sehr hoch | Stabilität der Gewichte, Konsistenz Volumen/Rand | offen |
 | B2 Spannungsrückgewinnung | Opus 5.5 | hoch | bekanntes Verfahren, sorgfältige Umsetzung | offen |
 | B3 Hot-Spot IIW Typ a | Opus 5.5 | hoch | Geometrie der Referenzpunkte, Normbezug | offen |
