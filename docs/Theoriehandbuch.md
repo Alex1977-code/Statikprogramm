@@ -11511,6 +11511,9 @@ Fernfeld und Konvergenz halten die vorher festgelegte Regel (1 % und 3 %, gemess
 Querblech die Strukturspannung nur erhöhen kann; die über die Dicke linearisierte Strukturspannung im Übergangsschnitt
 (93 bis 97 N/mm²) zeigt aber, dass die Oberseite dort örtlich entlastet wird – das einseitige Querblech hebt die
 Schwerachse, die Zugkraft greift darunter an und biegt die Oberseite zurück. σ_hs ≈ σ_n ist damit plausibel, aber
-nicht gegen eine unabhängige Referenz belegt; offen und Entscheidung des Anwenders (Plan TP 5).
+nicht gegen eine unabhängige Referenz belegt. Auf Entscheidung des Anwenders (30.09.2026) gilt seither die Spanne
+0,95 bis 1,5·σ_n mit dieser Begründung, und den Absolutwert prüft die Abnahme C1 gegen die Tet10-Referenz des
+Hauptprogramms. Die Prüfung rechnet h 10 (rund 70 s); die Konvergenz h 10 → h 5 (1,8 Mio. Freiheitsgrade, 25 Minuten)
+läuft nur auf Verlangen (`VOLUMEN3D_LANG=1`).
 
 

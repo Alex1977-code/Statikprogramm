@@ -803,7 +803,7 @@ Plan: `docs/plaene/2026-09-28-tp4-mehrgitter.md`. Messlatte aus Teilprojekt 3: J
   (Kreis um den Übergang, zwei Oberflächenäste), Warnung statt Wert bei Mehrdeutigkeit; `DetailResult.hot_spots` und
   Protokoll `hot_spot`. Dazu verschachtelte CSG-Bäume ebenen-exakt (`Csg._baum_stuecke`, Flächenpolygone an allen
   Ebenen geteilt): T-Stoß mit Kehlnähten ohne Punkttest, Volumen und Flächen exakt. T-Stoß unter Zug: σ_hs 0,99–1,02 σ_n,
-  Spanne σ_n ≤ σ_hs verfehlt (h 10: 98,75) – Entscheidung offen.
+  Spanne σ_n ≤ σ_hs verfehlt (h 10: 98,75); auf Entscheidung des Anwenders 0,95…1,5 σ_n, Absolutwert in C1 gegen Tet10.
 - Fünf Schnittlagen Kirsch h 10 p 3 verfeinert (128 724 bis 199 095 freie Koordinaten), GPU FP64:
   81 / 125 / 112 / 129 / 59 Iterationen, GPU-PCG 8,6 bis 21 s, K_t identisch mit dem Direktlöser;
   Direktlöser (Lösen nach der Faktorisierung) 7 bis 25 s. Einrichten auf der CPU: Zelldaten 17–24 s,

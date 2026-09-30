@@ -313,6 +313,10 @@ Beleg des Absolutwerts fehlt. Entscheidung des Anwenders offen. Befund während 
 fielen auf den Punkttest zurück (siehe Theorie 11.13). Die Prüfung (3) mit h 5 dauert 25 Minuten und muss vor dem Merge
 kleiner werden.
 
+**Entscheidung B3 (Anwender, 30.09.2026):** Empfehlung angenommen – Spanne 0,95 bis 1,5·σ_n mit der Begründung aus der
+Linearisierung, Absolutwert in C1 gegen die Tet10-Referenz des Hauptprogramms. Die Prüfung rechnet h 10; die Konvergenz
+h 10 → h 5 läuft nur mit `VOLUMEN3D_LANG=1`.
+
 ### B4: Konvergenzkurve und Protokoll (Vorgabe 11.3)
 - `DetailResult.convergence` je Zyklus (Hot-Spot und Maximalspannung über Freiheitsgrade), Zyklen aus
   `FcmSettings.adaptive_cycles` als p-Erhöhung und h-Halbierung in Nahtnähe (ohne Fehlerschätzer, der kommt
@@ -367,7 +371,7 @@ nachgetragen.
 | A6 Leistungsabnahme, Löserwahl | Sonnet 5 | mittel | Messreihe nach festem Schema | erledigt: `auto` bleibt direkt; Lösen 10⁶ FHG 7–8 s, Aufbau + Lösen 62–115 s |
 | B1 Moment Fitting | Fable 5.1 | sehr hoch | Stabilität der Gewichte, Konsistenz Volumen/Rand | erledigt: Vorgabe an; schwere Suiten grün, Zeiten in Theorie 11.11 |
 | B2 Spannungsrückgewinnung | Opus 5.5 | hoch | bekanntes Verfahren, sorgfältige Umsetzung | erledigt: L²-Projektion ist Ausgabe; Kosten in Theorie 11.12 |
-| B3 Hot-Spot IIW Typ a | Opus 5.5 | hoch | Geometrie der Referenzpunkte, Normbezug | gebaut (Zweig feature/volumen3d-b3); Spanne in Prüfung 3 verfehlt, Entscheidung offen |
+| B3 Hot-Spot IIW Typ a | Opus 5.5 | hoch | Geometrie der Referenzpunkte, Normbezug | erledigt: Spanne korrigiert (Anwender), Absolutwert in C1 gegen Tet10 |
 | B4 Konvergenzkurve, Protokoll | Sonnet 5 | mittel | überschaubar, baut auf B2/B3 | offen |
 | B5 STEP über gmsh | Sonnet 5 | mittel | Anbindung einer Bibliothek | offen |
 | B6 Windungszahl-Baum | Opus 5.5 | hoch | Algorithmus mit Genauigkeitsnachweis | offen |

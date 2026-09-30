@@ -149,41 +149,51 @@ def _linearisiert(aus, x, y=25.0, n=24):
     return s_m + s_b
 
 
-def test_zug_handrechnung():
-    """T-Stoss mit nicht tragenden Kehlnaehten unter Zug, Handrechnung sigma_n = F/(b t) = 100 N/mm2. Geprueft (Regel
-    vorher im Plan): fern der Naht (x 180, Ober- und Unterseite) sigma_xx = sigma_n auf 1 %; sigma_hs an allen Punkten
-    beider Nahtuebergaenge zwischen sigma_n und 1,5 sigma_n; sigma_hs zwischen h 10 und h 5 um weniger als 3 % anders.
-    Zum Vergleich ohne Kriterium: die ueber die Dicke linearisierte Strukturspannung im Uebergangsschnitt."""
+def _zug_werte(h):
     from volumen3d.postprocess.hotspot import nahtgeometrie, strukturspannungen
-    werte = {}
-    for h in (10.0, 5.0):
-        t = time.perf_counter()
-        pr = _zug(h)
-        U = pr.loesen({})[:, 0]
-        aus = pr.auswertung(U)
-        fern = aus.spannung(np.array([[180.0, 25.0, -1e-6], [180.0, 25.0, -T_BLECH + 1e-6]]), geglaettet=True)[:, 0]
-        hs = {}
-        for name, x in (("rechts", X_RECHTS), ("links", X_LINKS)):
-            erg = strukturspannungen(nahtgeometrie(pr.geometrie, nahtlinie(x), T_BLECH),
-                                     lambda P: aus.spannung(P, geglaettet=True), 1e-7 * pr.gitter.h)
-            hs[name] = np.array([v for _, v, _, _ in erg])
-        werte[h] = (fern, hs, _linearisiert(aus, X_RECHTS), pr.gitter.n_dof, time.perf_counter() - t)
-    f10, hs10, lin10, n10, t10 = werte[10.0]
-    f5, hs5, lin5, n5, t5 = werte[5.0]
-    alle5 = np.concatenate([hs5["rechts"], hs5["links"]])
-    alle10 = np.concatenate([hs10["rechts"], hs10["links"]])
-    check("Fern der Naht (x 180) sigma_xx = sigma_n auf 1 % an Ober- und Unterseite, h 10 und h 5",
-          np.abs(f10 / 100.0 - 1).max() < 0.01 and np.abs(f5 / 100.0 - 1).max() < 0.01, f"h 10 {f10}, h 5 {f5}")
-    check(f"sigma_hs an allen {len(alle5)} Nahtpunkten zwischen sigma_n und 1,5 sigma_n (h 10 und h 5)",
-          len(alle5) == 2 * len(Y_NAHT) and len(alle10) == len(alle5) and alle5.min() >= 100.0 and alle5.max() <= 150.0
-          and alle10.min() >= 100.0 and alle10.max() <= 150.0,
-          f"h 10: {alle10.min():.2f} bis {alle10.max():.2f}, h 5: {alle5.min():.2f} bis {alle5.max():.2f} N/mm2")
-    d = float(np.abs(alle5 / alle10 - 1).max())
-    check("sigma_hs zwischen h 10 und h 5 um weniger als 3 % anders", d < 0.03,
-          f"groesste Aenderung {d * 100:.2f} %; Mittel rechts {hs10['rechts'].mean():.2f} -> {hs5['rechts'].mean():.2f}, links "
-          f"{hs10['links'].mean():.2f} -> {hs5['links'].mean():.2f}; linearisiert im Schnitt x 113 (y 25): {lin10:.2f} -> {lin5:.2f}; "
-          f"{n10} / {n5} FHG, {t10:.0f} / {t5:.0f} s")
+    t = time.perf_counter()
+    pr = _zug(h)
+    U = pr.loesen({})[:, 0]
+    aus = pr.auswertung(U)
+    fern = aus.spannung(np.array([[180.0, 25.0, -1e-6], [180.0, 25.0, -T_BLECH + 1e-6]]), geglaettet=True)[:, 0]
+    hs = {}
+    for name, x in (("rechts", X_RECHTS), ("links", X_LINKS)):
+        erg = strukturspannungen(nahtgeometrie(pr.geometrie, nahtlinie(x), T_BLECH),
+                                 lambda P: aus.spannung(P, geglaettet=True), 1e-7 * pr.gitter.h)
+        hs[name] = np.array([v for _, v, _, _ in erg])
+    return fern, hs, _linearisiert(aus, X_RECHTS), pr.gitter.n_dof, time.perf_counter() - t
+
+
+def test_zug_handrechnung():
+    """T-Stoss mit nicht tragenden Kehlnaehten unter Zug, Handrechnung sigma_n = F/(b t) = 100 N/mm2, h 10 (~70 s).
+    Fern der Naht (x 180, Ober- und Unterseite) sigma_xx = sigma_n auf 1 %; sigma_hs an allen 18 Punkten zwischen
+    0,95 sigma_n und 1,5 sigma_n. Die urspruengliche Untergrenze sigma_n (Annahme: das Querblech erhoeht die
+    Strukturspannung nur) hielt nicht - gemessen 98,75 bis 101,92 N/mm2; die ueber die Dicke linearisierte
+    Strukturspannung im Uebergangsschnitt (93 bis 97 N/mm2) zeigt die oertliche Entlastung der Oberseite durch das
+    einseitige Querblech. Grenze 0,95 auf Entscheidung des Anwenders (30.09.2026); den Absolutwert prueft C1 gegen die
+    Tet10-Referenz des Hauptprogramms. Die Konvergenz h 10 -> h 5 steht in test_zug_konvergenz (lang)."""
+    fern, hs, lin, n, dt = _zug_werte(10.0)
+    alle = np.concatenate([hs["rechts"], hs["links"]])
+    check("Fern der Naht (x 180) sigma_xx = sigma_n auf 1 % an Ober- und Unterseite (h 10)", np.abs(fern / 100.0 - 1).max() < 0.01, str(fern))
+    check(f"sigma_hs an allen {len(alle)} Nahtpunkten zwischen 0,95 sigma_n und 1,5 sigma_n (h 10)",
+          len(alle) == 2 * len(Y_NAHT) and alle.min() >= 95.0 and alle.max() <= 150.0,
+          f"{alle.min():.2f} bis {alle.max():.2f} N/mm2, Mittel rechts {hs['rechts'].mean():.2f}, links {hs['links'].mean():.2f}; "
+          f"linearisiert im Schnitt x 113 (y 25) {lin:.2f}; {n} FHG, {dt:.0f} s")
+
+
+def test_zug_konvergenz():
+    """Lang (~25 min, 1,8 Mio. FHG bei h 5): sigma_hs zwischen h 10 und h 5 um weniger als 3 % anders (gemessen
+    30.09.2026: 1,33 %). Laeuft nur mit VOLUMEN3D_LANG=1."""
+    if os.environ.get("VOLUMEN3D_LANG") != "1":
+        check("Konvergenz h 10 -> h 5 uebersprungen (VOLUMEN3D_LANG=1 setzen; gemessen 1,33 %)", True)
+        return
+    _, hs10, _, _, _ = _zug_werte(10.0)
+    _, hs5, _, _, _ = _zug_werte(5.0)
+    a10 = np.concatenate([hs10["rechts"], hs10["links"]])
+    a5 = np.concatenate([hs5["rechts"], hs5["links"]])
+    d = float(np.abs(a5 / a10 - 1).max())
+    check("sigma_hs zwischen h 10 und h 5 um weniger als 3 % anders", d < 0.03, f"groesste Aenderung {d * 100:.2f} %")
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_geometrie_und_lineares_feld, test_uneindeutig, test_exaktes_feld, test_zug_handrechnung]))
+    sys.exit(lauf([test_geometrie_und_lineares_feld, test_uneindeutig, test_exaktes_feld, test_zug_handrechnung, test_zug_konvergenz]))

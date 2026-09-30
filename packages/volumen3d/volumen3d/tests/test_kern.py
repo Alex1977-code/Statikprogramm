@@ -12,7 +12,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from volumen3d.tests import (test_basis, test_elastizitaet, test_geometrie, test_gitter, test_oktree, test_paket,  # noqa: E402
+from volumen3d.tests import (test_basis, test_elastizitaet, test_geometrie, test_gitter, test_hotspot, test_oktree, test_paket,  # noqa: E402
                              test_mehrgitter, test_operator, test_patch, test_quadratur, test_rueckgewinnung, test_stl, test_vertrag_fcm,
                              test_zwaenge)
 from volumen3d.tests._pruef import lauf  # noqa: E402
@@ -27,6 +27,8 @@ TESTS = [
     test_quadratur.test_polyeder, test_quadratur.test_ebene_geometrie_exakt, test_quadratur.test_kleine_radien, test_quadratur.test_inside_zelle,
     test_quadratur.test_momentfitting, test_zwaenge.test_wurzelwahl_rundungsfest,
     test_rueckgewinnung.test_patch_exakt, test_rueckgewinnung.test_reine_biegung, test_rueckgewinnung.test_mehrere_lastfaelle,
+    test_quadratur.test_verschachtelter_baum, test_hotspot.test_geometrie_und_lineares_feld, test_hotspot.test_uneindeutig,
+    test_hotspot.test_exaktes_feld,
     test_elastizitaet.test_zellsteifigkeit, test_elastizitaet.test_starrkoerper,
     test_patch.test_patch, test_patch.test_kleine_schnittzellen, test_patch.test_normalprojektion,
     test_vertrag_fcm.test_protokoll_und_registrierung, test_vertrag_fcm.test_ablauf, test_vertrag_fcm.test_gutachten_faelle,
