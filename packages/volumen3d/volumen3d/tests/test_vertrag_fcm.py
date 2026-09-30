@@ -71,6 +71,13 @@ def test_ablauf():
     erg = s.solve(disc, prov, keys, progress=lambda t, a: None)
     n = len(erg[0].surface_points)
     check("je Key ein DetailResult mit Formen (n,3),(m,3),(n,3),(n,6),(n,)", len(erg) == 2 and erg[0].displacement.shape == (n, 3) and erg[0].stress.shape == (n, 6) and erg[0].von_mises.shape == (n,))
+    # Oberflaechenspannungen aus der L2-Projektion (Plan TP 5 B2): dieselben Werte wie Auswertung.spannung_geglaettet
+    # an den Oberflaechenpunkten, das Protokoll nennt die Ausgabe
+    from volumen3d.postprocess.auswertung import von_mises as vm
+    sr = erg[0].protocol.get("stress_recovery", {})
+    check("DetailResult.stress ist die geglaettete Spannung (L2-Projektion), Protokoll stress_recovery nennt sie, von Mises dazu passend",
+          str(sr.get("ausgabe", "")).startswith("geglaettet") and sr.get("verfahren") == "L2-Projektion"
+          and np.allclose(erg[0].von_mises, vm(erg[0].stress)), str(sr))
     cc = erg[0].coupling_check
     check("coupling_check je Schnittebene mit force/moment fcm und global, deviation, multipliers",
           len(cc["planes"]) == 2 and all(k in cc["planes"][0] for k in ("force_fcm", "force_global", "moment_fcm", "moment_global", "deviation_force", "deviation_moment", "multipliers")), str(cc)[:160])

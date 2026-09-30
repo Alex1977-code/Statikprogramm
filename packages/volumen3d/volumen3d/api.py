@@ -188,6 +188,12 @@ def _einstellungen_pruefen(s: FcmSettings) -> None:
 _AUTO_MEHRGITTER = False
 _AUTO_MIN_DOFS = 200_000
 
+# Oberflaechenspannungen des Vertragswegs aus der L2-Projektion (Vorgabe 11.1, Plan TP 5 B2, Theorie 11.12): nach
+# der vorher festgelegten Regel gemessen - Patch und reine Biegung exakt, an vier Lame-Faellen der groesste
+# Oberflaechenfehler kleiner als roh (p 2 h 20: 15 statt 57 %, p 3 h 10: 2,23 statt 2,29 %), K_t der Kirsch-Scheibe
+# hoechstens 0,41 % verschoben, Randresiduum |sigma.n| auf freien Flaechen im Mittel 17 bis 20 % kleiner.
+_SPANNUNG_GEGLAETTET = True
+
 
 def _gpu_frei_mb() -> float:
     """Freier GPU-Speicher in MB, 0 ohne nutzbare GPU."""
@@ -497,6 +503,8 @@ class FcmSolver:
             try:
                 if len(Pe):
                     s_e, u_e = aus.spannung_und_verschiebung(Pe)
+                    if _SPANNUNG_GEGLAETTET:
+                        s_e = aus.spannung_geglaettet(Pe)
                 else:
                     s_e, u_e = np.zeros((0, 6)), np.zeros((0, 3))
                 ebenen = []
@@ -537,12 +545,15 @@ class FcmSolver:
                 if dM > 0.05 or dF > 0.05:
                     warn.append(f"Schnittebene {i}: Abweichung der Schnittgroessen Kraft {dF * 100:.1f} %, Moment {dM * 100:.1f} % "
                                 f"> 5 % (Vorgabe 16.7: Schnittebenen weiter auseinander legen, schubweiches Globalmodell oder Kraftkopplung)")
+            rg = getattr(pr, "_rueckgewinnung", None)
             protokoll: dict[str, Any] = dict(pr.protokoll)
             protokoll.update({"solver": self.name, "contract_version": self.contract_version, "volumen3d": __version__,
                               "key": str(key), "coupling": "displacement (normal pointwise + in-plane resultants)",
                               "geometry": spec_kurz(disc.spec), "t_solve_s": round(time.perf_counter() - t0, 3),
                               "loads": [dict(l) for l in disc.lasten_protokoll if l["load_case_id"] == key.load_case_id],
                               "solver_choice": dict(disc.loeserwahl),
+                              "stress_recovery": (dict(rg.statistik, ausgabe="geglaettet (L2-Projektion)")
+                                                  if _SPANNUNG_GEGLAETTET and rg is not None else {"ausgabe": "roh (sigma = D B u)"}),
                               "body_load": None if disc.spec.body_load is None else np.asarray(disc.spec.body_load, float).reshape(3)})
             ergebnisse.append(DetailResult(detail_id=disc.subsystem_id, key=key, surface_points=V, surface_triangles=T,
                                            displacement=u_e, stress=s_e, von_mises=von_mises(s_e) if len(s_e) else np.zeros(0),

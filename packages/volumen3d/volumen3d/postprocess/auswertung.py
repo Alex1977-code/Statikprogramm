@@ -1,8 +1,8 @@
 """Auswertung der Loesung an Punkten (Entwurf 3.9): Verschiebung, Spannung (Voigt),
 Vergleichsspannung, Schnittgroessen ueber eine Flaechenquadratur.
 
-Spannungen werden direkt aus der Loesung ausgewertet (sigma = D B u); Rueckgewinnung
-(SPR/L2) kommt mit Teilprojekt 5.
+Spannungen roh aus der Loesung (sigma = D B u) oder geglaettet durch die globale L2-Projektion
+(postprocess/rueckgewinnung.py, Vorgabe 11.1): ``spannung(P, geglaettet=True)``.
 """
 from __future__ import annotations
 
@@ -51,12 +51,23 @@ class Auswertung:
         N, _ = basis_3d(g.p, xi)
         return np.einsum("ni,nia->na", N, Uc.reshape(len(N), -1, 3))
 
-    def spannung(self, P) -> np.ndarray:
+    def spannung(self, P, geglaettet: bool = False) -> np.ndarray:
+        if geglaettet:
+            return self.spannung_geglaettet(P)
         g, c, xi, Uc = self._lokal(P)
         _, dN = basis_3d(g.p, xi)
         skal = (2.0 / np.asarray(g.h_zelle(c), float))[:, None, None]
         eps = np.einsum("nsd,nd->ns", b_matrizen(dN * skal), Uc)
         return eps @ self.D.T
+
+    def spannung_geglaettet(self, P) -> np.ndarray:
+        """Spannungen (n,6) der L2-Projektion; die Koeffizienten werden je Auswertung einmal berechnet."""
+        from .rueckgewinnung import rueckgewinnung
+        r = rueckgewinnung(self.problem)
+        if getattr(self, "_knoten", None) is None:
+            self._knoten = r.knoten(self.U)
+        P = np.asarray(P, float).reshape(-1, 3)
+        return r.spannung(P, self._knoten, self._zellen(P))
 
     def spannung_und_verschiebung(self, P) -> tuple[np.ndarray, np.ndarray]:
         g, c, xi, Uc = self._lokal(P)

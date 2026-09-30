@@ -271,6 +271,11 @@ ist als roh, (c) K_t an beiden Kirsch-Lagen sich um höchstens 0,5 % vom Rohwert
 Randresiduum nicht größer ist als roh, (d) die reine Biegung auf 10⁻⁶ exakt bleibt. Sonst bleibt der Rohwert
 Vorgabe und die Rückgewinnung ein Schalter; das Protokoll nennt in jedem Fall, welche Spannung ausgegeben wird.
 
+**Ergebnis B2 (30.09.2026, Theorie 11.12):** alle vier Punkte erfüllt – Patch und reine Biegung exakt, Lamé an allen
+vier Fällen besser als roh (größter Fehler 15,2 statt 56,6 %, 5,24 statt 5,27 %, 5,36 statt 5,51 %, 2,23 statt 2,29 %),
+K_t um 0,41 und 0,22 % verschoben, Randresiduum im Mittel 17 bis 20 % kleiner. Die L²-Projektion ist Ausgabe des
+Vertragswegs. Kosten an großen Modellen folgen auf freier Maschine.
+
 ### B3: Hot-Spot nach IIW Typ a (Vorgabe 11.2)
 - Referenzpunkte im Abstand 0,4·t und 1,0·t vom Nahtübergang, senkrecht zur Naht auf der Blechoberfläche,
   lineare Extrapolation, maßgebende Komponente senkrecht zur Naht; Richtung aus Oberflächennormale und
@@ -331,7 +336,7 @@ nachgetragen.
 | A5 Streuung über Schnittlagen | Opus 5.5 | hoch | Ritz-Analyse und Glätterabstimmung | erledigt (f2bf8e7): α 100 (−20 bis −25 %); Vorgabe als erfüllt anerkannt |
 | A6 Leistungsabnahme, Löserwahl | Sonnet 5 | mittel | Messreihe nach festem Schema | erledigt: `auto` bleibt direkt; Lösen 10⁶ FHG 7–8 s, Aufbau + Lösen 62–115 s |
 | B1 Moment Fitting | Fable 5.1 | sehr hoch | Stabilität der Gewichte, Konsistenz Volumen/Rand | Vorgabe an (Anwender); schwere Suiten und Zeiten auf freier Maschine ausstehend |
-| B2 Spannungsrückgewinnung | Opus 5.5 | hoch | bekanntes Verfahren, sorgfältige Umsetzung | läuft: Verfahren und Regel festgelegt |
+| B2 Spannungsrückgewinnung | Opus 5.5 | hoch | bekanntes Verfahren, sorgfältige Umsetzung | erledigt: L²-Projektion ist Ausgabe; Kosten großer Modelle ausstehend |
 | B3 Hot-Spot IIW Typ a | Opus 5.5 | hoch | Geometrie der Referenzpunkte, Normbezug | offen |
 | B4 Konvergenzkurve, Protokoll | Sonnet 5 | mittel | überschaubar, baut auf B2/B3 | offen |
 | B5 STEP über gmsh | Sonnet 5 | mittel | Anbindung einer Bibliothek | offen |

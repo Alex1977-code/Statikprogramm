@@ -11384,3 +11384,56 @@ ist mit beiden Quadraturen gleich weit von exakt entfernt (Spannungen innen 9,3�
 bis 0,19) – erwartet, weil die Momente aus derselben Integration stammen; die Ursache liegt in der
 Verträglichkeit von Volumen- und Randquadratur an gekrümmten Flächen (offen, siehe 11.8, Aggregationsketten).
 
+### 11.12 Teilprojekt 5: Spannungsrückgewinnung durch L²-Projektion (30.09.2026)
+
+**Warum.** Die Rohspannung σ_h = D B u ist in jeder Zelle ein Polynom und springt an den Zellgrenzen. An der
+Oberfläche, wo die Nachweise ansetzen, ist sie am unsichersten: dort liegen die Schnittzellen, oft mit wenig
+Werkstoff, und die aggregierten Zellen, deren Verschiebungen die Fortsetzung des Wurzelpolynoms sind. Am
+Lamé-Zylinder h 20 p 2 lag der größte Fehler der Rohspannung an den Oberflächenpunkten bei 57 % des Innendrucks,
+im Mittel bei 3,7 %. Die Vorgabe (Abschnitt 11.1) verlangt eine Glättung über Superconvergent Patch Recovery oder
+L²-Projektion und die Auswertung an der echten Oberfläche.
+
+**Verfahren** (`postprocess/rueckgewinnung.py`). Jede der sechs Spannungskomponenten wird auf den stetigen skalaren
+Ansatzraum vom Grad p derselben Zellen projiziert: M X = B mit M = Cᵀ(Σ ∫ Nᵀ N dΩ)C und B = Cᵀ Σ ∫ Nᵀ σ_h dΩ. C ist
+die skalare Fassung der Zwangsmatrix; die Zwänge der Verschiebungen (hängende Moden des Oktrees und Aggregation)
+sind für alle drei Komponenten gleich, darum genügt jede dritte Zeile und Spalte. Integriert wird mit der
+Zellquadratur der Steifigkeit, Werkstoff- und α-Punkte, sodass das Werkstoffgebiet M genauso bestimmt wie die
+Steifigkeit: gebundene Moden schlecht geschnittener Zellen hängen an ihrer Wurzel, isolierte Splitter behalten α.
+M wird einmal je Problem aufgebaut und faktorisiert, jeder Lastfall kostet nur rechte Seiten; mehrere Lastfälle
+laufen in einem Aufruf. Konstante Spannungen gehören zum Ansatzraum und werden exakt wiedergegeben. SPR ist nicht
+gebaut: Patches um Knoten vertragen sich schlecht mit Schnittzellen, hängenden Moden und Aggregation, die
+L²-Projektion erbt alle drei ohne Sonderfälle. Die Massenmatrix hat am Patch-Modell die Kondition 2,2·10⁸
+(Schnittzellen, hierarchische Basis); zwei Lastfälle in einem Aufruf und einzeln unterscheiden sich darum um
+10⁻⁹ bis 3·10⁻⁸ (verschiedene Summationsreihenfolge der rechten Seiten), das ist Kondition mal
+Maschinengenauigkeit und für Spannungen belanglos.
+
+**Messung** (Direktlöser, Auswertepunkte sind die Punkte der Flächenquadratur, 1e-7·h nach innen gerückt, wie im
+Vertragsweg; die Regel stand vorher im Plan):
+
+| Fall | Oberflächenpunkte | Rohwert | geglättet |
+|---|---|---|---|
+| Patch p 2 / p 3, Fehler gegen σ exakt | 6 720 / 10 500 | 2,0·10⁻¹⁰ / 6,3·10⁻⁸ | 8,5·10⁻¹¹ / 2,1·10⁻⁸ |
+| Reine Biegung p 3, Fehler gegen −M z / I | 7 800 | 8,3·10⁻¹¹ | 8,7·10⁻¹¹ |
+| Lamé p 2 h 20, größter / mittlerer Fehler (bezogen auf p_i) | 49 604 | 56,6 % / 3,66 % | 15,2 % / 2,93 % |
+| Lamé p 3 h 20 | 77 469 | 5,27 % / 0,62 % | 5,24 % / 0,54 % |
+| Lamé p 2 h 10 | 139 640 | 5,51 % / 0,81 % | 5,36 % / 0,79 % |
+| Lamé p 3 h 10 | 218 143 | 2,29 % / 0,22 % | 2,23 % / 0,21 % |
+| Kirsch p 3 h 20, Versatz 0: K_t / mittleres Randresiduum | 45 850 | 3,1567 / 1,87·10⁻³ | 3,1437 / 1,55·10⁻³ |
+| Kirsch p 3 h 20, Versatz 0,4 | 39 525 | 3,1077 / 1,49·10⁻³ | 3,1009 / 1,20·10⁻³ |
+
+Das Randresiduum ist |σ·n| auf den freien Flächen (Loch, Ober- und Unterseite, freie Längsseite), bezogen auf die
+Nennspannung S₀; die geglättete Spannung verletzt die Randbedingung im Mittel um 17 bis 20 % weniger, das größte
+Residuum sinkt von 2,8 auf 1,9 % bzw. von 4,2 auf 2,6 %. K_t verschiebt sich um 0,41 bzw. 0,22 %, beide Male zur
+Tabellenreferenz 3,028 hin. Der große Gewinn liegt beim groben Lamé-Fall mit p 2; bei p 3 und h 10 ist die
+Rohspannung schon gut, und die Glättung bessert nur wenig (2,29 auf 2,23 %). Im größten Fehler wird kein gemessener
+Fall schlechter, auf einzelnen Flächen schon: an der unbelasteten Außenfläche des Lamé-Zylinders steigt er bei p 2 h 20
+von 2,1 auf 3,8 % und bei p 2 h 10 von 0,50 auf 0,52 %, auf der Symmetriefläche y = 0 bei p 3 h 10 von 0,54 auf 0,56 %.
+
+Nach der Regel ist die L²-Projektion seither die Ausgabe des Vertragswegs: `DetailResult.stress` und
+`von_mises` sind geglättet, das Protokoll nennt es unter `stress_recovery` mit den Zeiten; `_SPANNUNG_GEGLAETTET`
+in `api.py` schaltet zurück. `Auswertung.spannung(P, geglaettet=True)` gibt die geglätteten Werte an beliebigen
+Punkten, die Rohwerte bleiben die Vorgabe dieser Funktion (Kopplungskontrolle, Schnittgrößen und alle bisherigen
+Abnahmen rechnen weiter mit ihnen). Kosten an den gemessenen Modellen bis 72 000 Freiheitsgrade: Aufbau von M
+0,02 bis 0,23 s, rechte Seiten 0,03 bis 0,6 s je Aufruf; an den großen Modellen wird auf freier Maschine
+nachgemessen.
+

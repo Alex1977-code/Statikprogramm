@@ -791,6 +791,11 @@ Plan: `docs/plaene/2026-09-28-tp4-mehrgitter.md`. Messlatte aus Teilprojekt 3: J
   (Fitting nur, wo es Punkte spart). Nebenbefund behoben: Wurzelwahl der Aggregation hing an 3·10⁻¹⁵ im Anteil (jetzt auf
   neun Stellen gerundet, Gleichstand nach fester Nachbarreihenfolge). Vorgabe seit 30.09.2026 an (Anwender),
   `momentfitting=False` schaltet zurück (plastische Körper, Vertrag 6a).
+- **B2, Spannungsrückgewinnung (30.09.2026, Theorie 11.12):** globale L²-Projektion der sechs Komponenten auf den
+  stetigen Raum vom Grad p mit der skalaren Zwangsmatrix (C[0::3, 0::3]), Massenmatrix einmal je Problem faktorisiert
+  (`postprocess/rueckgewinnung.py`). Patch und reine Biegung exakt; Lamé an allen Oberflächenpunkten besser als roh
+  (p 2 h 20: 15 statt 57 %, p 3 h 10: 2,23 statt 2,29 %); Kirsch K_t um 0,2 bis 0,4 % verschoben, Randresiduum 17–20 %
+  kleiner. Nach der Regel Ausgabe des Vertragswegs (`DetailResult.stress`, Protokoll `stress_recovery`).
 - Fünf Schnittlagen Kirsch h 10 p 3 verfeinert (128 724 bis 199 095 freie Koordinaten), GPU FP64:
   81 / 125 / 112 / 129 / 59 Iterationen, GPU-PCG 8,6 bis 21 s, K_t identisch mit dem Direktlöser;
   Direktlöser (Lösen nach der Faktorisierung) 7 bis 25 s. Einrichten auf der CPU: Zelldaten 17–24 s,
