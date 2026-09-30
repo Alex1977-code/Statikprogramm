@@ -283,6 +283,28 @@ Vertragswegs. Kosten an großen Modellen folgen auf freier Maschine.
 - Prüfung: lineares Spannungsfeld wird exakt extrapoliert; Blech mit Kehlnaht unter Zug gegen die
   Handrechnung. Ist die Seite geometrisch nicht eindeutig, Vertragsvorschlag für eine Richtungsangabe.
 
+**Vorgehen und Regeln, vor der Messung festgelegt (30.09.2026):**
+
+*Verfahren* (`postprocess/hotspot.py`). Je Punkt der Nahtpolylinie: Tangente aus den Nachbarpunkten; in der Ebene
+senkrecht dazu ein Kreis vom Radius 0,05·t um den Nahtübergang, auf dem die Vorzeichenwechsel des Geometrieabstands
+die beiden Oberflächenäste liefern (Blech und Nahtoberfläche; andere Anzahl → Warnung, kein Wert). Blechseite ist
+der Ast, unter dem die Werkstofftiefe längs der Innennormalen bei 0,7·t vom Übergang gleich der Blechdicke t ist
+(auf 20 %), während sie es beim anderen Ast nicht ist; sonst Warnung „Blechseite nicht eindeutig“, kein Wert, und
+für diesen Fall ein Vertragsvorschlag für eine Richtungsangabe. Referenzpunkte bei 0,4·t und 1,0·t längs des
+Blechastes, auf die Oberfläche projiziert; maßgebend ist σ_⊥ = d·σ·d mit d der Richtung auf dem Blech senkrecht zur
+Naht, aus der Spannung, die der Vertragsweg ausgibt (geglättet nach B2); σ_hs = 5/3·σ(0,4t) − 2/3·σ(1,0t) (die
+Beiwerte 1,67 und 0,67 der IIW sind diese Brüche gerundet). `method = "effective_notch"` wird mit Warnung
+übergangen (Kerbspannung ist nicht Teil von B3).
+
+*Prüfungen.* (1) Synthetisches lineares Spannungsfeld auf einem T-Stoß (Grundblech t 10, Querblech, beidseitige
+Kehlnähte): σ_hs gleich σ_⊥ am Übergang auf 10⁻¹², Blechseite an allen Punkten beider Nahtübergänge richtig.
+(2) Finite Zellen mit exakt darstellbarem quadratischem Verschiebungsfeld (σ_xx linear in x, konstante
+Volumenkraft, Dirichlet überall), p 3: σ_hs gleich σ_⊥ am Übergang auf 10⁻⁶, roh und geglättet. (3) T-Stoß unter
+Zug σ_n = 100 N/mm² (nicht tragende Nähte): Handrechnung σ_n = F/(b·t); geprüft wird, dass die Oberflächenspannung
+fern der Naht σ_n auf 1 % trifft, σ_hs zwischen σ_n und 1,5·σ_n liegt und sich zwischen h und h/2 um weniger als
+3 % ändert; zum Vergleich (ohne Kriterium) die über die Dicke linearisierte Strukturspannung im Nahtübergangsschnitt.
+(4) Vertragsweg: `DetailResult.hot_spots` je Nahtpunkt gefüllt, Protokoll nennt Verfahren und Spannungsart.
+
 ### B4: Konvergenzkurve und Protokoll (Vorgabe 11.3)
 - `DetailResult.convergence` je Zyklus (Hot-Spot und Maximalspannung über Freiheitsgrade), Zyklen aus
   `FcmSettings.adaptive_cycles` als p-Erhöhung und h-Halbierung in Nahtnähe (ohne Fehlerschätzer, der kommt
@@ -337,7 +359,7 @@ nachgetragen.
 | A6 Leistungsabnahme, Löserwahl | Sonnet 5 | mittel | Messreihe nach festem Schema | erledigt: `auto` bleibt direkt; Lösen 10⁶ FHG 7–8 s, Aufbau + Lösen 62–115 s |
 | B1 Moment Fitting | Fable 5.1 | sehr hoch | Stabilität der Gewichte, Konsistenz Volumen/Rand | Vorgabe an (Anwender); schwere Suiten und Zeiten auf freier Maschine ausstehend |
 | B2 Spannungsrückgewinnung | Opus 5.5 | hoch | bekanntes Verfahren, sorgfältige Umsetzung | erledigt: L²-Projektion ist Ausgabe; Kosten großer Modelle ausstehend |
-| B3 Hot-Spot IIW Typ a | Opus 5.5 | hoch | Geometrie der Referenzpunkte, Normbezug | offen |
+| B3 Hot-Spot IIW Typ a | Opus 5.5 | hoch | Geometrie der Referenzpunkte, Normbezug | läuft: Verfahren und Regeln festgelegt |
 | B4 Konvergenzkurve, Protokoll | Sonnet 5 | mittel | überschaubar, baut auf B2/B3 | offen |
 | B5 STEP über gmsh | Sonnet 5 | mittel | Anbindung einer Bibliothek | offen |
 | B6 Windungszahl-Baum | Opus 5.5 | hoch | Algorithmus mit Genauigkeitsnachweis | offen |
