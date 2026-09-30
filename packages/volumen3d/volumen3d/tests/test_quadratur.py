@@ -161,6 +161,74 @@ def test_kleine_radien():
           abs((1e5 - Q8.volumen()) / (np.pi * 640.0) - 1) < 0.005, f"Loch {1e5 - Q8.volumen():.2f} / {np.pi * 640.0:.2f}, {Q8.statistik}")
 
 
+def test_momentfitting():
+    """Moment Fitting (Vorgabe 6 Stufe 2, Plan TP 5 B1): (1) an einer halb gefuellten Zelle trifft die gefittete Regel
+    (Tensor-Gauss (q+1)^3) alle Tensor-Momente bis Grad q exakt - Gegenprobe mit Monomen, unabhaengig von der
+    Legendre-Basis des Fits; (2) mit q = 2p sind alle Integranden der Zellsteifigkeit exakt: am Lame-Zylinder h 20 p 2
+    stimmt jede Schnittzellmatrix mit der Referenzquadratur auf 1e-11 ueberein, das Werkstoffvolumen auf 1e-12, kein
+    Rueckfall, und die Punkte je Schnittzelle sinken mindestens um den Faktor 10 (gemessen 30.09.2026: 2517 -> 112);
+    (3) mit q = p ist das nicht so: gemessen indefinite Zellmatrizen (kleinster relativer Eigenwert -1,9e-3) - darum
+    ist 2p die Vorgabe (fit_grad_standard)."""
+    from volumen3d.fcm.basis import gauss_3d
+    from volumen3d.fcm.elastizitaet import zell_gradienten, zellsteifigkeit
+    from volumen3d.fcm.gitter import CUT, Gitter
+    from volumen3d.fcm.momentfitting import fit_grad_standard, gefittete_regel
+    from volumen3d.fcm.quadratur import Zellquadratur
+    from volumen3d.tests.test_lame import E, NU, _geometrie
+    # (1) Werkstoff = Teilbox [0, 1.3] x [0, 2] x [0, 2] der Zelle [0, 2]^3, Referenz Tensor-Gauss 8^3 darauf
+    q = 6
+    X, W = gauss_3d(8)
+    lo, hi, b_hi = np.zeros(3), np.full(3, 2.0), np.array([1.3, 2.0, 2.0])
+    s = 0.5 * (b_hi - lo)
+    P_ref, W_ref = lo + s * (X + 1.0), W * float(np.prod(s))
+    erg = gefittete_regel(lo, hi, P_ref, W_ref, q, 3)
+    f_max = 0.0
+    for a in range(q + 1):
+        for b in range(0, q + 1, 3):
+            for c in range(0, q + 1, 2):
+                exakt = (b_hi[0] ** (a + 1) / (a + 1)) * (2.0 ** (b + 1) / (b + 1)) * (2.0 ** (c + 1) / (c + 1))
+                ist = float(np.sum(erg.gewichte * erg.punkte[:, 0] ** a * erg.punkte[:, 1] ** b * erg.punkte[:, 2] ** c))
+                f_max = max(f_max, abs(ist - exakt) / exakt)
+    check(f"Halb gefuellte Zelle, q {q}: {len(erg.gewichte)} Punkte treffen alle Monome x^a y^b z^c bis Grad {q} (< 1e-12), "
+          f"Volumen {erg.gewichte.sum():.6f} = 5,2", erg.art == "fit" and f_max < 1e-12 and abs(erg.gewichte.sum() - 5.2) < 1e-12,
+          f"groesste Abweichung {f_max:.1e}, kleinstes Gewicht {erg.min_gewicht:.2f} des mittleren, negative Masse {erg.neg_anteil:.3f}")
+    # (2) und (3) am Lame-Zylinder
+    p = 2
+    G = Gitter(_geometrie(), h=20.0, polster=0.1)
+    G.moden_nummerieren(p)
+    ref = Zellquadratur(G, p=p, momentfitting=False)
+    cut = np.flatnonzero(G.klasse == CUT)
+    t = time.perf_counter()
+    fit = Zellquadratur(G, p=p, momentfitting=True)
+    for c in cut:
+        fit.zelle(int(c))
+    t_fit = time.perf_counter() - t
+    ergebnisse = {}
+    for name, Q in (("Referenz", ref), ("q 2p", fit), ("q p", Zellquadratur(G, p=p, momentfitting=True, fit_grad=p))):
+        K, n, lam = {}, 0, 0.0
+        for c in cut:
+            Gr, W = zell_gradienten(G, Q, int(c))
+            n += len(W)
+            if len(W):
+                K[int(c)] = zellsteifigkeit(Gr, W, E, NU)
+                ev = np.linalg.eigvalsh(K[int(c)])
+                lam = min(lam, float(ev[0] / ev[-1]))
+        ergebnisse[name] = (K, n, lam, Q.volumen())
+    K0, n0, _, v0 = ergebnisse["Referenz"]
+    K2, n2, lam2, v2 = ergebnisse["q 2p"]
+    dK = max(float(np.abs(K2[c] - K0[c]).max() / np.abs(K0[c]).max()) for c in K0)
+    st = fit.statistik
+    check(f"Lame h 20 p {p}, q {fit.fit_grad} = 2p (fit_grad_standard {fit_grad_standard(p)}): {len(cut)} Schnittzellen, Zellmatrizen wie Referenz "
+          f"(< 1e-11), Volumen gleich (< 1e-12), kein Rueckfall, Punkte {n0} -> {n2} (Faktor >= 10)",
+          fit.fit_grad == 2 * p == fit_grad_standard(p) and dK < 1e-11 and abs(v2 - v0) / v0 < 1e-12 and st["fit_rueckfall"] == 0
+          and st["fit_nnls"] == 0 and n0 >= 10 * n2,
+          f"groesste Abweichung {dK:.1e}, Volumen {abs(v2 - v0) / v0:.1e}, Statistik {st['fit_zellen']} gefittet, kleinstes Gewicht "
+          f"{st['fit_min_gewicht']:.1f}, Einrichten {t_fit:.2f} s")
+    _, n1, lam1, _ = ergebnisse["q p"]
+    check(f"q = p dagegen: indefinite Zellmatrizen (kleinster relativer Eigenwert {lam1:.1e} < -1e-5), bei q = 2p {lam2:.1e} >= -1e-12",
+          lam1 < -1e-5 and lam2 >= -1e-12)
+
+
 def test_inside_zelle():
     from volumen3d.fcm.gitter import INSIDE, Gitter
     from volumen3d.fcm.quadratur import Zellquadratur
@@ -177,4 +245,4 @@ def test_inside_zelle():
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_polyeder, test_ebene_geometrie_exakt, test_kugel_zweite_ordnung, test_lochplatte, test_kleine_radien, test_inside_zelle]))
+    sys.exit(lauf([test_polyeder, test_ebene_geometrie_exakt, test_kugel_zweite_ordnung, test_lochplatte, test_kleine_radien, test_inside_zelle, test_momentfitting]))

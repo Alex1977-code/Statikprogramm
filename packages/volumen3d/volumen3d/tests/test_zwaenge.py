@@ -148,6 +148,36 @@ def test_leere_zellen():
           f"{len(null_moden)} Moden null, groesster Werkstoffanteil ihrer Zellen {float(anteil_max[null_moden].max()):.1e}")
 
 
+def test_wurzelwahl_rundungsfest():
+    """Die Wurzel einer schlecht geschnittenen Zelle darf nicht an der Rundung des Werkstoffanteils haengen (Befund
+    30.09.2026, Plan TP 5 B1): zwei volle Nachbarn unterschieden sich je nach Quadratur (Referenz gegen Moment
+    Fitting) um 3e-15 im Anteil, der Zufallssieger aenderte die Zwangsmatrix und die Randspannungen am Lame-Zylinder
+    um 4e-3. Hier: dieselbe Quadratur mit Gewichten mal (1 + 3e-15) muss dieselben Wurzeln liefern."""
+    from volumen3d.fcm.aggregation import Zellaggregation
+    from volumen3d.fcm.gitter import Gitter
+    from volumen3d.fcm.quadratur import Zellquadratur
+    from volumen3d.tests.test_lame import _geometrie
+
+    class Gestoert:
+        def __init__(self, q, faktor):
+            self.q, self.alpha, self.faktor = q, q.alpha, faktor
+
+        def zelle(self, c):
+            P, W, I = self.q.zelle(c)
+            return P, W * self.faktor, I
+
+    G = Gitter(_geometrie(), h=20.0, polster=0.1)
+    G.moden_nummerieren(3)
+    Q = Zellquadratur(G, p=3, momentfitting=False)
+    a = Zellaggregation(G, Q, 0.4)
+    verschieden = 0
+    for faktor in (1.0 + 3e-15, 1.0 - 3e-15, 1.0 + 7e-15):
+        b = Zellaggregation(G, Gestoert(Q, faktor), 0.4)
+        verschieden += int(not np.array_equal(a.wurzel, b.wurzel))
+    check(f"Lame h 20 p 3: {int(a.schlecht.sum())} schlecht geschnittene Zellen, Wurzeln bei Gewichten mal (1 +- 3e-15, 7e-15) unveraendert",
+          verschieden == 0 and a.schlecht.sum() > 0, f"{verschieden} von 3 Stoerungen aenderten Wurzeln")
+
+
 def test_gebuendelte_nachbarsuche():
     """Die Nachbarn der Aggregation und die Probepunkte der haengenden Entitaeten werden in einem Aufruf von
     zelle_finden gesucht (vorher 81 380 Einzelaufrufe, 12 s von 23 s Konstruktor bei Kirsch h 8 p 3; A2 Plan
@@ -189,4 +219,4 @@ def test_gebuendelte_nachbarsuche():
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_zaehlung_und_spur, test_leere_zellen, test_gebuendelte_nachbarsuche, test_patch_verfeinert]))
+    sys.exit(lauf([test_zaehlung_und_spur, test_leere_zellen, test_gebuendelte_nachbarsuche, test_wurzelwahl_rundungsfest, test_patch_verfeinert]))

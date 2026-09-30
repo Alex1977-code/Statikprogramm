@@ -50,7 +50,7 @@ class FcmProblem:
                  polster: float = 0.1, beta_faktor: float = 10.0, facette_mm: float | None = None,
                  ordnung_flaeche: int | None = None, aggregation: float | None = 0.4,
                  verfeinerung: Verfeinerung | None = None, loeser: str = "direkt", toleranz: float = 1e-8,
-                 backend: str = "cpu") -> None:
+                 backend: str = "cpu", momentfitting: bool | None = None, fit_grad: int | None = None) -> None:
         # aggregation: Werkstoffanteil, unter dem eine Schnittzelle an eine Wurzel gebunden wird. 0,4 statt
         # 0,25 (Plan TP 4, Aufgabe 3, gemessen 28.09.2026): Zellen knapp ueber 0,25 galten als wohlgestellt,
         # ihre hohen Moden tragen aber kaum Werkstoff; Kirsch h 8 p 3 Versatz 0,3: 109 statt 40 Iterationen
@@ -71,6 +71,8 @@ class FcmProblem:
         self.werkstoff = werkstoff
         self.alpha = float(alpha)
         self.tiefe = int(tiefe)
+        self.momentfitting = momentfitting                  # None: Vorgabe der Zellquadratur (Plan TP 5, B1)
+        self.fit_grad = fit_grad
         self.beta_faktor = float(beta_faktor)
         self.verfeinerung = verfeinerung or Verfeinerung()
         # Gitter, Quadratur, Aggregation - und noch einmal, wenn die Aggregation Zellen teilen
@@ -82,7 +84,8 @@ class FcmProblem:
             v = dataclasses.replace(self.verfeinerung, zellen=zwang) if zwang else self.verfeinerung
             self.gitter = Gitter(geometrie, h, polster, v)
             self.gitter.moden_nummerieren(self.p)
-            self.quadratur = Zellquadratur(self.gitter, self.p, self.tiefe, self.alpha)
+            self.quadratur = Zellquadratur(self.gitter, self.p, self.tiefe, self.alpha, momentfitting=momentfitting,
+                                           fit_grad=fit_grad)
             # Zellaggregation (Vorgabe 8.3): Moden schlecht geschnittener Zellen an die Fortsetzung
             # des Nachbarpolynoms binden; None/0 = aus (nur zum Messen des alpha-Effekts)
             self.aggregation = Zellaggregation(self.gitter, self.quadratur, aggregation) if aggregation else None

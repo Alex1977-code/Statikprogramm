@@ -783,6 +783,13 @@ Plan: `docs/plaene/2026-09-28-tp4-mehrgitter.md`. Messlatte aus Teilprojekt 3: J
   dünnen Scheibe (Summe 1,10). Bei 10⁶ FHG vorn (Block 115 statt 280 s, Kirsch 62 statt 83 s). Kriterium 10⁶ FHG
   unter 60 s: Lösen allein 7,1 und 8,3 s erfüllt; Aufbau plus Lösen 115 und 62 s nicht – 68 % am Block sind die
   Zellsteifigkeiten der Schnittzellen (`Zelldaten`, 78 s), löserunabhängig.
+- **B1, Moment Fitting (30.09.2026, Theorie 11.11):** `fcm/momentfitting.py`, Schalter `Zellquadratur(momentfitting,
+  fit_grad)`. Gefittete Regel auf Tensor-Gauß (q+1)³ je Schnittzelle, Gewichte per Kronecker-Lösung aus den Momenten der
+  Referenzintegration; q = 2p macht die Zellmatrizen bis auf Rundung gleich (gemessen 2·10⁻¹³), negative Gewichte (bis
+  −29 des mittleren) sind dann unschädlich; q < 2p liefert indefinite Matrizen (−3,3·10⁻³) und Fehler bis 10⁻³. Punkte je
+  Schnittzelle: Lamé 22- bis 34-fach, Kirsch 17- bis 19-fach, ebener Patch 2,6- bis 4,2-fach weniger, achsparallel unverändert
+  (Fitting nur, wo es Punkte spart). Nebenbefund behoben: Wurzelwahl der Aggregation hing an 3·10⁻¹⁵ im Anteil (jetzt auf
+  neun Stellen gerundet, Gleichstand nach fester Nachbarreihenfolge). Vorgabe an/aus: Entscheidung des Anwenders.
 - Fünf Schnittlagen Kirsch h 10 p 3 verfeinert (128 724 bis 199 095 freie Koordinaten), GPU FP64:
   81 / 125 / 112 / 129 / 59 Iterationen, GPU-PCG 8,6 bis 21 s, K_t identisch mit dem Direktlöser;
   Direktlöser (Lösen nach der Faktorisierung) 7 bis 25 s. Einrichten auf der CPU: Zelldaten 17–24 s,

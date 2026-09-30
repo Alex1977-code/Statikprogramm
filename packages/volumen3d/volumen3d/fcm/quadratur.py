@@ -14,6 +14,13 @@ alpha, die Werkstoffstuecke mit Gewicht (1 - alpha). Kann die Geometrie die loka
 nicht rekonstruieren, teilt die Rekursion ``tiefe_punkttest`` Stufen tiefer und faellt auf
 den Punkttest der Vorgabe zurueck (Gewicht alpha ausserhalb); ``statistik`` zaehlt das.
 
+Moment Fitting (Vorgabe 6 Stufe 2, fcm/momentfitting.py): mit ``momentfitting`` dient die rekursive
+Integration einer Schnittzelle nur noch als Referenz fuer die Momente der Werkstoffdomaene; gehalten wird
+die gefittete Regel auf den Tensor-Gauss-Punkten (q+1)^3 der Zelle (``innen`` heisst dann: traegt
+Werkstoffgewicht, der Punkt selbst kann ausserhalb liegen) plus ein Satz alpha-Punkte (p+1)^3 fuer die
+ganze Zelle - derselbe Wert wie die alpha-Punkte aller Blaetter, da beide Regeln bis Grad 2p+1 exakt sind.
+Plastische Koerper brauchen nach Vertrag 6a die Unterteilung: der Schalter bleibt.
+
 Punkte und Gewichte je Zelle werden einmal berechnet und gehalten (fuer alle Lastfaelle
 gleich); Basiswerte nicht (Speicher).
 """
@@ -24,11 +31,16 @@ import numpy as np
 from ..geometry.polyeder import box_flaechen, clippen, polyeder_quadratur
 from .basis import gauss_3d
 from .gitter import INSIDE
+from .momentfitting import fit_grad_standard, gefittete_regel
+
+# Vorgabe fuer neue Zellquadraturen; nach der Messung gesetzt (Plan TP 5, B1; Theorie 11.11)
+MOMENTFITTING_STANDARD = False
 
 
 class Zellquadratur:
     def __init__(self, gitter, p: int, tiefe: int = 2, alpha: float = 1e-8, ordnung: int | None = None,
-                 tiefe_punkttest: int = 2, ordnung_tet: int | None = None) -> None:
+                 tiefe_punkttest: int = 2, ordnung_tet: int | None = None, momentfitting: bool | None = None,
+                 fit_grad: int | None = None) -> None:
         if tiefe < 0 or tiefe_punkttest < 0:
             raise ValueError("tiefe und tiefe_punkttest muessen >= 0 sein")
         if not 0.0 <= alpha < 1.0:
@@ -46,6 +58,12 @@ class Zellquadratur:
         self.statistik = {"blaetter_eben": 0, "blaetter_tangential": 0, "blaetter_punkttest": 0, "stuecke": 0,
                           "blaetter_unteraufgeloest": 0}
         self.punkttest_orte: list[tuple[np.ndarray, float]] = []     # Mitte und Radius der Rueckfall-Blaetter
+        self.momentfitting = MOMENTFITTING_STANDARD if momentfitting is None else bool(momentfitting)
+        self.fit_grad = int(fit_grad) if fit_grad is not None else fit_grad_standard(p)
+        if self.momentfitting:
+            self.statistik.update({"fit_grad": self.fit_grad, "fit_zellen": 0, "fit_nnls": 0, "fit_rueckfall": 0,
+                                   "fit_min_gewicht": 1.0, "fit_neg_anteil_max": 0.0,
+                                   "punkte_referenz": 0, "punkte_gefittet": 0})
 
     # -- je Zelle -------------------------------------------------------------------
     def zelle(self, c: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -68,7 +86,38 @@ class Zellquadratur:
             else:
                 aus = (np.concatenate([t[0] for t in teile]), np.concatenate([t[1] for t in teile]),
                        np.concatenate([t[2] for t in teile]))
+                if self.momentfitting and aus[2].any():
+                    aus = self._fitten(lo, hi, aus)
         self._cache[c] = aus
+        return aus
+
+    def _fitten(self, lo, hi, referenz):
+        """Werkstoffteil der Referenzregel durch die gefittete Regel ersetzen, alpha-Teil durch einen Satz."""
+        P, W, I = referenz
+        st = self.statistik
+        st["punkte_referenz"] += int(len(P))
+        # nur wo es Punkte spart: achsparallel geschnittene Zellen haben schon (p+1)^3 Punkte (Kragarmsegment 64
+        # gegen 343 + 64 gefittet), die Regel ist so oder so exakt
+        if len(P) <= (self.fit_grad + 1) ** 3 + (self.ordnung ** 3 if self.alpha > 0 else 0):
+            st["fit_unnoetig"] = st.get("fit_unnoetig", 0) + 1
+            st["punkte_gefittet"] += int(len(P))
+            return referenz
+        erg = gefittete_regel(lo, hi, P[I], W[I], self.fit_grad, self.p)
+        st["fit_min_gewicht"] = min(st["fit_min_gewicht"], erg.min_gewicht)
+        st["fit_neg_anteil_max"] = max(st["fit_neg_anteil_max"], erg.neg_anteil)
+        if erg.art == "rueckfall":
+            st["fit_rueckfall"] += 1
+            st["punkte_gefittet"] += int(len(P))
+            return referenz
+        st["fit_nnls" if erg.art == "nnls" else "fit_zellen"] += 1
+        if self.alpha > 0:
+            s = 0.5 * (np.asarray(hi, float) - np.asarray(lo, float))
+            Pa, Wa = self._box(np.asarray(lo, float), s)
+            aus = (np.concatenate([erg.punkte, Pa]), np.concatenate([erg.gewichte, self.alpha * Wa]),
+                   np.concatenate([np.ones(len(erg.punkte), bool), np.zeros(len(Pa), bool)]))
+        else:
+            aus = (erg.punkte, erg.gewichte, np.ones(len(erg.punkte), bool))
+        st["punkte_gefittet"] += int(len(aus[0]))
         return aus
 
     def _box(self, lo, s):

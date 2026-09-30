@@ -67,6 +67,10 @@ class Zellaggregation:
         self.gitter = gitter
         self.schwelle = float(schwelle)
         self.anteil = werkstoffanteile(gitter, quadratur)
+        # Rangfolge der Wurzeln nur nach dem gerundeten Anteil: zwei volle Nachbarn unterschieden sich um 3e-15 je
+        # nach Quadratur (Referenz gegen Moment Fitting, Lame h 20 p 3), der Zufallssieger aenderte C und die
+        # Spannungen am Rand um 4e-3 (30.09.2026). Gleichstand entscheidet die feste Nachbarreihenfolge.
+        self._rang = np.round(self.anteil, 9)
         self.wurzel = np.full(len(gitter.ijk), -1, int)             # -1: wohlgestellt oder ohne Wurzel
         self.schlecht = self.anteil < self.schwelle
         self.leer = self.schlecht & (self.anteil <= 0.0)             # geschnitten klassifiziert, aber ohne Werkstoff
@@ -145,7 +149,7 @@ class Zellaggregation:
                     feiner_gesehen = True
                     continue
                 stufe = abs(d[0]) + abs(d[1]) + abs(d[2])
-                schluessel = (stufe, -self.anteil[n])
+                schluessel = (stufe, -self._rang[n])
                 if schluessel < best_schluessel:
                     beste, best_schluessel = n, schluessel
             if beste >= 0:
@@ -167,7 +171,7 @@ class Zellaggregation:
                     if n >= 0 and n != c and vorher[n] >= 0 and g.ebene[vorher[n]] <= g.ebene[c]:
                         kandidaten.add(int(vorher[n]))
                 if kandidaten:
-                    vergeben[c] = min(kandidaten, key=lambda r: (self._abstand_zu(c, r), -self.anteil[r]))
+                    vergeben[c] = min(kandidaten, key=lambda r: (self._abstand_zu(c, r), -self._rang[r], r))
                 else:
                     neu.append(c)
             for c, r in vergeben.items():
@@ -235,7 +239,7 @@ class Zellaggregation:
         mit_wurzel = np.flatnonzero(self.schlecht & (self.wurzel >= 0))
         abstand = {int(c): self._abstand(int(c)) for c in mit_wurzel}
         self.statistik["wurzelabstand_max"] = round(max(abstand.values(), default=0.0), 3)
-        reihenfolge = sorted(mit_wurzel, key=lambda c: (int(g.ebene[c]), abstand[int(c)], -self.anteil[self.wurzel[c]]))
+        reihenfolge = sorted(mit_wurzel, key=lambda c: (int(g.ebene[c]), abstand[int(c)], -self._rang[self.wurzel[c]]))
         for c in reihenfolge:
             for i in g.zell_moden[c]:
                 # alle Moden einer Zelle mit Wurzel werden gebunden, auch nicht relevante: eine leere Zelle

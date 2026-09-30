@@ -11310,3 +11310,75 @@ im PCG; im Konstruktor 19,8 s im Problem selbst (nicht weiter aufgeschlüsselt),
 Eine Verkürzung von (b) unter 60 s setzt bei den Zellsteifigkeiten an, nicht beim Löser; sie hängt vom
 Momentenfitting (TP 5, B1) ab, das die Integration der Schnittzellen ersetzt, und wird danach neu gemessen.
 
+### 11.11 Teilprojekt 5: Moment Fitting für Schnittzellen (30.09.2026)
+
+**Warum.** Die ebenen-exakte Integration aus 11.3 teilt eine gekrümmt geschnittene Zelle bis Tiefe 2 in
+Blätter und zerlegt jedes geschnittene Blatt in Tetraeder mit einer konischen Produktregel. Das ist genau,
+aber teuer: am Lamé-Zylinder h 20 p 3 liegen 10 541 Punkte in einer Schnittzelle, an der Kirsch-Scheibe h 20
+776 bis 1 471 im Mittel über alle Schnittzellen (die gekrümmt geschnittenen am Loch tragen bis zu 12 000). Die
+Zellsteifigkeiten der Schnittzellen waren in der Messung A6 mit 78 s der größte Posten des Modells mit einer
+Million Freiheitsgraden (68 % von Aufbau und Lösen). Die Vorgabe (Abschnitt 6, Stufe 2) nennt dafür Moment
+Fitting: je Schnittzelle ein kleiner Satz fester Punkte mit angepassten Gewichten, der die Momente der
+Werkstoffdomäne exakt integriert.
+
+**Verfahren** (`fcm/momentfitting.py`, Schalter `Zellquadratur(momentfitting=..., fit_grad=q)`). Die bisherige
+Integration liefert je Schnittzelle die Referenzpunkte und damit die Momente μ_abc = Σ W_k N_a N_b N_c der
+Werkstoffdomäne in der Tensor-Legendre-Basis vom Grad q je Richtung (die 1D-Basis aus 11.1; sie spannt dieselben
+Polynome auf wie die Monome, ist auf [−1, 1] aber gut konditioniert). Die gefittete Regel liegt auf den
+Tensor-Gauß-Punkten (q+1)³ der ganzen Zelle, ihre Gewichte w lösen Σ_i w_i N_a(x_i) N_b(y_i) N_c(z_i) = μ_abc.
+Weil Punkte und Basis Tensorprodukte sind, ist die Momentenmatrix ein Kronecker-Produkt A₁ ⊗ A₁ ⊗ A₁ mit der
+eindimensionalen Matrix A₁[i,a] = N_a(x_i) an den q+1 Gauß-Punkten; die Lösung sind drei eindimensionale
+Kontraktionen mit A₁⁻ᵀ statt einer (q+1)³-dimensionalen Gleichung, und sie ist gut konditioniert. Der fiktive
+α-Anteil bleibt ein Satz Tensor-Gauß-Punkte (p+1)³ mit Gewicht α über die ganze Zelle; das ist derselbe Wert wie
+die α-Punkte aller Blätter, da beide Regeln bis Grad 2p+1 exakt sind. Gefittet wird nur, wo es Punkte spart:
+achsparallel geschnittene Zellen (Kragarmsegment) haben schon (p+1)³ Punkte und behalten sie.
+
+**Warum q = 2p.** Die Integranden der Zellsteifigkeit sind Produkte zweier Ableitungen von Basisfunktionen, in
+jeder Richtung vom Grad höchstens 2p. Mit q = 2p liegen sie im Raum, den die gefittete Regel exakt integriert –
+exakt im Sinne der Referenz: die Regel reproduziert für jedes f aus diesem Raum den Wert Σ W_k f(P_k) der
+Referenzregel, auch dort, wo die Referenz selbst (Tetraeder bis Gesamtgrad 3p−1) nicht exakt ist. Die Zellmatrix
+ist damit bis auf Rundung dieselbe, unabhängig davon, wie die Gewichte aussehen. Und die sehen wild aus: an einer
+zu 65 % gefüllten, eben geschnittenen Zelle ist das kleinste Gewicht −0,16 des mittleren, an Schnittzellen der
+Lamé- und Kirsch-Geometrie −17 bis −29, die negative Gewichtsmasse erreicht 87 % der positiven. Für q < 2p ist
+die Exaktheit nicht gegeben, und die negativen Gewichte schlagen durch: mit q = p sind Zellmatrizen indefinit
+(kleinster relativer Eigenwert −1,9·10⁻³ am Lamé-Zylinder, −3,3·10⁻³ an der Kirsch-Scheibe), der Lamé-Fehler in
+σ_r steigt von 3,32 auf 5,96 % (p 2), und die vorgesehene Reparatur – NNLS auf (q+2)³ Punkten, sonst Rückfall auf
+die Referenz – greift so oft (Kirsch h 20: 17 bis 22 von 27 gefitteten Zellen), dass kaum Punkte gespart werden
+(Faktor 1,3 bis 1,8). Mit q = p+1 und p+2 bleiben Abweichungen von 10⁻⁴ bis 10⁻³ in den Spannungen und
+Eigenwerte bis −1,3·10⁻⁴. Darum ist 2p die Vorgabe (`fit_grad_standard`), und die NNLS-Stufe bleibt nur für
+kleinere q im Code.
+
+**Messung** (h 20, freie Wahl q ∈ {p, …, 2p}, Direktlöser, je Fall Referenz gegen gefittet; „σ gegen Referenz“
+ist die größte Abweichung der Spannungen an 1 500 Werkstoffpunkten bzw. an den Randpunkten, bezogen auf die
+größte Spannung; Zeiten der Zellmatrizen aller Schnittzellen bei belegter Maschine, nur als Anhalt):
+
+| Fall | Schnittzellen | Punkte je Schnittzelle: Referenz → q = 2p | Faktor | σ gegen Referenz innen / Rand | Zellmatrizen |
+|---|---|---|---|---|---|
+| Patch p 2 (schräge Ebenen) | 113 | 240 → 94 | 2,6 | 1,6·10⁻¹¹ / 5,7·10⁻¹¹ | 0,27 → 0,37 s |
+| Patch p 3 | 113 | 1 097 → 260 | 4,2 | 8,0·10⁻¹⁰ / 5,9·10⁻⁹ | 2,0 → 0,26 s |
+| Lamé p 2 | 56 | 2 517 → 112 | 22,6 | 6,2·10⁻¹⁴ / 2,0·10⁻¹³ | 0,23 → 0,04 s |
+| Lamé p 3 | 56 | 10 541 → 306 | 34,4 | 1,3·10⁻¹² / 7,5·10⁻¹² | 2,14 → 0,13 s |
+| Kirsch p 3 verfeinert, Versatz 0 | 382 | 1 471 → 79 | 18,6 | 7,1·10⁻¹³ / 1,3·10⁻¹⁰ | 2,24 → 0,76 s |
+| Kirsch p 3 verfeinert, Versatz 0,4 | 720 | 776 → 46 | 16,7 | 2,2·10⁻¹² / 1,0·10⁻¹¹ | 2,66 → 0,79 s |
+| Kragarmsegment p 3 (achsparallel) | 75 | 64 → 64 | 1,0 | 4,3·10⁻¹² / 3,5·10⁻¹¹ | 0,18 → 0,17 s |
+
+Patch-Tests bleiben unter 10⁻⁸ (p 3) bzw. 10⁻¹⁰ (p 2), K_t der Kirsch-Scheibe ist auf fünf Stellen gleich (3,15666
+und 3,10770), die Lamé-Fehler sind unverändert (p 3: σ_r 1,187 %, σ_φ 0,412 %). Die Zellmatrizen stimmen an jeder
+Schnittzelle auf 2·10⁻¹³ überein, das Werkstoffvolumen auf 10⁻¹⁵; kein Rückfall, kein NNLS. Das Ziel des Plans,
+mindestens fünfmal weniger Punkte, ist an allen gekrümmten Geometrien weit übertroffen (17- bis 34-fach) und an den
+eben geschnittenen Patch-Zellen verfehlt (2,6- und 4,2-fach); dort war die Referenz schon vergleichsweise billig.
+Ob das Fitting Vorgabe wird, entscheidet der Anwender (Plan TP 5); gemessen ist, dass es die Ergebnisse nicht
+ändert und nie mehr Punkte erzeugt als die Referenz.
+
+**Befund am Rande: die Wurzelwahl der Aggregation hing an der Rundung.** Vor der Kur unterschieden sich die
+Lösungen mit und ohne Fitting am Lamé-Zylinder um 4·10⁻³ in den Randspannungen, obwohl alle Zellmatrizen auf
+10⁻¹³ gleich waren. Ursache: die Wurzel einer schlecht geschnittenen Zelle ist der wohlgestellte Nachbar mit dem
+größten Werkstoffanteil, und zwei volle Nachbarn unterschieden sich je nach Quadratur um 3·10⁻¹⁵ im Anteil – der
+Sieger war Zufall der Rundung, mit ihm die Zwangsmatrix. Seither entscheidet der auf neun Stellen gerundete
+Anteil, bei Gleichstand die feste Nachbarreihenfolge (Flächen-, dann Kanten-, dann Eckennachbarn); Gewichte mal
+(1 ± 3·10⁻¹⁵) lassen die Wurzeln unverändert (test_zwaenge), und beide Quadraturen liefern jetzt auf 10⁻¹²
+dieselben Spannungen. Ebenfalls gemessen und unverändert: das lineare Feld auf der gekrümmten Kirsch-Geometrie
+ist mit beiden Quadraturen gleich weit von exakt entfernt (Spannungen innen 9,3·10⁻³, an einzelnen Randpunkten
+bis 0,19) – erwartet, weil die Momente aus derselben Integration stammen; die Ursache liegt in der
+Verträglichkeit von Volumen- und Randquadratur an gekrümmten Flächen (offen, siehe 11.8, Aggregationsketten).
+
