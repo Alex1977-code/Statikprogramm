@@ -236,6 +236,17 @@ class Zellaggregation:
         # (test_zwaenge, duenne Wand, 27.09.2026: Mode 582 -> 6605 -> 582). Mit dem groebsten Eigentuemer
         # laufen alle Zwangsketten monoton zu groeberen Ebenen. Auf gleicher Ebene gewinnt die naechste
         # Wurzel (kleinste Fortsetzungskoeffizienten), dann die mit dem groessten Anteil.
+        #
+        # Die groebste schlechte Zelle zaehlt auch ohne Wurzel (sie behaelt alpha, FcmProblem): Ihre Moden sind frei und
+        # duerfen nicht ueber eine feinere Zelle an deren Wurzel haengen. Sonst band Z54 (Ebene 1) die Ecke, die sie mit der
+        # unverwurzelten Z11 (Ebene 0, Anteil 0,18) teilt, an die Wurzel Z66, waehrend ein haengender Mode der Nachbarzelle
+        # Z50 an Z11 haengt und die Wurzel denselben Mode enthaelt: 803 -> 192 -> 803, Zwangszyklus mit Koeffizient 1 und Rest
+        # 2,45 (T-Stoss mit zwei lokalen Halbierungen an den Kehlnaehten, Plan TP 5 B4, 30.09.2026). Ohne die Sperre lief die
+        # Kette nicht monoton zu groeberen Ebenen.
+        ebene_frei = np.full(g.n_moden, 1 << 30, int)
+        for c in np.flatnonzero(self.schlecht & (self.wurzel < 0) & ~self.werkstofffern):
+            mo = g.zell_moden[c]
+            ebene_frei[mo] = np.minimum(ebene_frei[mo], int(g.ebene[c]))
         mit_wurzel = np.flatnonzero(self.schlecht & (self.wurzel >= 0))
         abstand = {int(c): self._abstand(int(c)) for c in mit_wurzel}
         self.statistik["wurzelabstand_max"] = round(max(abstand.values(), default=0.0), 3)
@@ -246,7 +257,7 @@ class Zellaggregation:
                 # kann einen Werkstoffsplitter unterhalb der Quadraturaufloesung beruehren, und dort
                 # ausgewertete Randspannungen verfehlten sonst das lineare Feld (Patch-Test duenne Waende
                 # p 3: 2,8e-6 statt < 1e-6)
-                if not wohl_mode[i] and eigentuemer[i] < 0 and int(i) not in haengend:
+                if not wohl_mode[i] and eigentuemer[i] < 0 and int(i) not in haengend and ebene_frei[i] >= g.ebene[c]:
                     eigentuemer[i] = c
         roh: dict[int, list[tuple[int, float]]] = {}
         for c in reihenfolge:

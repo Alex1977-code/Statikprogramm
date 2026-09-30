@@ -11516,4 +11516,98 @@ nicht gegen eine unabhängige Referenz belegt. Auf Entscheidung des Anwenders (3
 Hauptprogramms. Die Prüfung rechnet h 10 (rund 70 s); die Konvergenz h 10 → h 5 (1,8 Mio. Freiheitsgrade, 25 Minuten)
 läuft nur auf Verlangen (`VOLUMEN3D_LANG=1`).
 
+### 11.14 Teilprojekt 5: adaptive Zyklen und Konvergenzkurve (30.09.2026)
+
+**Was der Vertrag verlangt.** `FcmSettings.adaptive_cycles` wählt die Zahl der Zyklen, `DetailResult.convergence` trägt je
+Zyklus Freiheitsgrade, Hot-Spot und weitere Größen, und das Protokoll soll „alle Einstellungen“ nennen, damit der Nachweis
+prüffähig ist (Vorgabe 8.4 und 11.3). Die Kurve über die Freiheitsgrade ist Pflichtbestandteil jedes Detailnachweises.
+
+**Zyklen** (`FcmSolver.solve`, ohne Fehlerschätzer – der kommt mit TP 6). Zyklus 0 ist die Rechnung der Einstellungen. Jeder
+weitere Zyklus ändert genau eine Sache, damit der Schritt an der Kurve ablesbar bleibt. Ungerade Zyklen halbieren lokal die
+Zellgröße: um Punkte der Nahtlinien im Abstand höchstens t (Kugeln vom Radius 2·t) wird die Zielzellgröße gegenüber dem
+Vorzyklus halbiert. Gerade Zyklen erhöhen p um eins, bis p = 4; danach wird stattdessen verfeinert. Ohne Naht gibt es
+keine Stelle für die lokale Verfeinerung: dann nur p + 1, und bei p = 4 endet die Folge mit einer Warnung. Jeder Zyklus ist
+eine vollständige Diskretisierung (neues Gitter, eigene Zwangsmatrix, eigene Löserwahl), das Ergebnis des Vertragswegs ist der
+letzte Zyklus; die früheren bleiben als Einträge der Kurve. Mehr als vier Zyklen lehnt der Vertragsweg ab (Vorgabe: 2 bis 4).
+Ein Abbruch zwischen den Zyklen meldet `SolverCancelled`; der Fortschritt teilt jeden Zyklus in Vorbereitung (40 %) und Lösen.
+
+**Kurve.** Je Zyklus ein Eintrag: `cycle`, `step` (Start, h-Halbierung Naht, p-Erhöhung), `dofs`, `p`, `cells`, `cut_cells`,
+`h_min_mm`, `hotspot_max`, `hotspot_mean`, `stress_max` (größte Von-Mises-Spannung an den Oberflächenpunkten; an scharfen
+Kerben wächst sie mit der Verfeinerung und ist darum kein Konvergenzkriterium), `solver_path`, `iterations`, `t_s` und
+`hotspot_change` (relative Änderung gegenüber dem Vorzyklus).
+
+**Konvergenzaussage** (`postprocess/konvergenz.py`, `protocol["convergence_statement"]`). Aus `hotspot_max` der Zyklen, ohne
+Raten: bei weniger als drei Werten „zu wenige Zyklen“; sonst mit Δ_k = σ_k − σ_{k−1}: „monoton konvergent“, wenn alle Δ_k dasselbe
+Vorzeichen haben und |Δ_{k+1}| < |Δ_k|. Dann gilt die Aitken-Extrapolation σ_∞ = σ_n + Δ_n·r/(1 − r) mit r = Δ_n/Δ_{n−1}, die für
+eine geometrische Folge den Grenzwert exakt trifft (Prüfung: 100 + 10·0,5ᵏ und 100 − 10·0,6ᵏ ergeben 100 auf 10⁻¹²), und die
+Restabweichung |σ_n − σ_∞|/σ_∞ sagt, wie weit der letzte Zyklus noch entfernt ist. Eine schwingende oder wachsende Folge
+bekommt keinen Grenzwert; das Ergebnis trägt eine Warnung, und die Werte stehen im Protokoll. Dass ein Hot-Spot von unten
+gegen den Grenzwert läuft, ist normal (T-Stoß h 10 → h 5: 100,43 → 100,93 N/mm²); das „fällt“ der ursprünglichen Planzeile
+war als „konvergiert monoton“ gemeint.
+
+**Protokoll der Einstellungen** (`protocol["settings"]`, je Zyklus): p, Zellgröße, Verfeinerungsbereiche mit Mitte, Radius
+und Zielgröße, α, Toleranz des Vertrags und die verwendete (das Mehrgitter rechnet bis 10⁻¹²), Kopplungsart, Zyklenzahl und
+Schritt, angeforderter und benutzter Rechenweg mit Löserweg, Moment Fitting und sein Grad, Art der ausgegebenen Spannung
+(geglättet oder roh), Aggregationsschwelle, Nähte mit Kennung, Punktzahl, Blechdicke und Verfahren, Vertrags- und Paketversion.
+Dazu trägt das Protokoll `cycles`, `convergence_statement`, `hot_spot` (11.13) und `stress_recovery` (11.12).
+
+**Prüfungen** (`tests/test_adaptiv.py`, die schnellen in der Kernsuite). (1) Die Aussage als reine Funktion gegen geschlossene
+Formen (geometrisch von oben und unten, schwingend, wachsend, zwei Werte, fehlender Wert, konstant). (2) Kragarm-Ausschnitt ohne Naht
+mit zwei Zyklen: p 2 → 3 → 4 mit 6 237 → 19 200 → 43 407 Freiheitsgraden, alle Felder der Kurve und des Protokolls, der letzte Zyklus
+stimmt mit der Rechnung mit p 4 ohne Zyklen auf 4,5·10⁻⁹ überein, der Fortschritt steigt monoton bis 1. (3) Grenzen: Zyklenzahl
+außerhalb 0 bis 4 wird abgelehnt, p 4 ohne Naht endet mit Warnung, der Abbruch greift zwischen den Zyklen. (4) T-Stoß unter Zug
+über den Vertragsweg (nur mit `VOLUMEN3D_LANG=1`, 27 s auf vier Kernen): Schritte, Freiheitsgrade und Kopplungskontrolle
+(Kraft 1,38 %) stimmen, alle Hot-Spot-Werte liegen zwischen 0,5 und 1,5·σ_n, die Aussage stimmt mit der nachgerechneten Monotonie überein.
+
+**Die Konvergenzforderung des Plans ist nicht erfüllt.** Vorab festgelegt war: am T-Stoß (Basiszellgröße 20, p 2, drei Zyklen)
+konvergiert `hotspot_max` monoton, die letzte Änderung liegt unter 3 %. Gemessen:
+
+| Start | Zyklen (Freiheitsgrade, `hotspot_max` in N/mm²) | Aussage |
+|---|---|---|
+| h 20, p 2, drei Zyklen | Start 2 079: 81,1 → h/2 6 240: 119,0 → p 3 18 639: 134,2 → h/2 80 388: 91,0 | nicht monoton |
+| h 20, p 2, vier Zyklen | dazu p 4 182 493: 121,5 | nicht monoton |
+| h 10, p 2, zwei Zyklen | Start 10 725: 119,8 → h/2 29 514: 127,6 → p 3 92 208: 110,1 | nicht monoton |
+| h 10, p 3, ein Zyklus | Start 32 718: 138,3 → h/2 92 208: 110,1 | zwei Werte |
+
+Die Werte sind längs der Naht glatt (am letzten Zyklus 120,2 bis 121,5 an der rechten, 116,2 bis 117,4 an der linken Naht), es ist
+also kein Punktrauschen. Zwei Wege zur selben Diskretisierung (Start h 10 mit p 2 und Zyklen, Start h 10 mit p 3 und einem
+Zyklus: lokale Zellgröße 5, p 3, 92 208 Freiheitsgrade) liefern denselben Wert 110,073. Die Schwankung von ±15 % zwischen
+ähnlich feinen Gittern (91, 110 und 122 bei 5 mm lokal und p 3, p 3, p 4) kommt von der Lage der Referenzpunkte: Sie liegen bei
+0,4 t = 4 mm und 1,0 t = 10 mm vom Nahtübergang, also bei Zellen von 5 bis 20 mm in der ersten Zellschicht an der
+Kerbe, und die Spannung dort hängt an der singulären Stelle. Eine monotone Kurve braucht lokal Zellen von etwa 2 mm
+(0,4 t reicht dann über zwei Zellen), und das sind bei zwei Nähten mehr als eine Million Freiheitsgrade; das ist auf der belegten
+Maschine nicht gerechnet. Die Zykluslogik selbst (Wechsel h/p) ist damit nicht als Ursache belegt und nicht als unschuldig; sie wechselt
+Schritte, deren Wirkung sich überlagert. **Empfehlung (Entscheidung des Anwenders):** den Fahrplan auf „h zuerst“ umstellen, lokale Zellgröße
+bis t/4 an den Nähten (Referenzpunkt 0,4 t mindestens 1,6 Zellen vom Übergang), dann p + 1, und die Konvergenz am echten Knotenblech der Abnahme
+C1 messen; die Aussage sagt bis dahin ehrlich „nicht monoton“ und der Nachweis trägt die Warnung.
+
+Dazu zwei Beobachtungen zur geglätteten Spannung. Die größte Von-Mises-Spannung an den Oberflächenpunkten wächst roh mit der
+Verfeinerung (123,5 → 133,5 → 131,8 → 170,9 → 202,9 N/mm² über fünf Zyklen, die singuläre Kerbe), die geglättete bleibt bei 123 bis 134:
+die L²-Projektion kappt die Spitze. Das ist für den Hot-Spot gewollt, für eine Kerbspannung (Vorgabe 11.2) nicht; dafür gibt es
+die Rohspannung (`Auswertung.spannung`). Und: rohe und geglättete Hot-Spots unterscheiden sich im letzten Zyklus um 10 % (121,5 gegen
+110,5 bei p 4), ein weiteres Zeichen, dass die Referenzpunkte noch in der Zone der Kerbstörung liegen.
+
+**Befund in B4: Zwangszyklus bei lokaler Verfeinerung an Nähten.** Schon der erste h-Schritt (Ziel 10 an den Nähten, Basis 20, p 2
+und p 3) brach den Konstruktor mit „Zwangszyklus an Mode … (Koeffizient 1, Rest 2,45)“. Ursache: eine grobe, schlecht geschnittene Zelle
+ohne Wurzel (Ebene 0, Anteil 0,18; sie behält α) teilt eine Ecke mit feineren, an eine Wurzel gebundenen Zellen. Die feinere Zelle
+band die gemeinsame Ecke an ihre Wurzel, während ein hängender Mode ihrer Nachbarzelle an der groben Zelle hängt und die Wurzel denselben
+Mode enthält: 803 → 192 → 803, und mit Rest ungleich null ist das keine Tautologie, sondern ein widersprüchlicher Zwang. Die Regel
+„Eigentümer eines geteilten Modes ist die gröbste schlechte Zelle“ lief nur über Zellen mit Wurzel. Seither zählt auch die unverwurzelte
+schlechte Zelle (ohne die werkstoffferne); ist sie gröber als die Zelle, die den Mode binden würde, bleibt der Mode frei. Am T-Stoß mit
+zwei lokalen Halbierungen (829 Zellen) sind das 12 Moden. `test_zwaenge.test_unverwurzelte_grobe_zelle` schlägt ohne die Änderung fehl.
+Die Änderung liegt in `Zellaggregation.roh_zwaenge` und trifft nur Konstellationen, die vorher entweder einen Zyklus oder eine
+Bindung über die feinere Zelle hatten; alle leichten Suiten sind unverändert grün. An den 23 Modellen der schweren Suiten (Kirsch h 20, 14 und 10
+mit fünf Lagen, Lamé p 2 und 3, Kragarm, Block h 25, 20, 14, Patch, Operator-Kirsch) sperrt die Änderung nur an einem Modell Moden, Kirsch h 20
+mit Versatz 0,6 (zwei Moden); dort sind K_t (3,12035926) und 802 Spannungen bitgleich mit und ohne Änderung. Die schweren Suiten rechnen
+damit dieselben Zahlen und wurden nicht wiederholt.
+
+**Offener Punkt: Konsistenzfehler am T-Stoß mit lokaler Verfeinerung.** Ein Feld im Ansatzraum wird am T-Stoß nicht auf Rundungsniveau
+reproduziert, wie es die Patch-Tests (10⁻¹⁰ bis 10⁻¹³, auch mit Verfeinerung) zeigen: das quadratische Feld u = (c x²/2, 0, 0) mit
+konstanter Volumenkraft ergibt an 1 500 Werkstoffpunkten σ_xx-Fehler von 3,3·10⁻⁶ (p 2, Ziel 5), 9,5·10⁻⁶ (p 2, Ziel 10) und 2,6·10⁻⁵
+(p 3, Ziel 10); ein lineares Feld 5,6·10⁻⁷ (p 2) und 6,6·10⁻⁵ (p 3). Es ist keine Rundung (Residuum des Gleichungssystems 4·10⁻¹⁶,
+ein Nachiterationsschritt ändert nichts) und sitzt nicht an den freigelassenen Moden (dort höchstens 3,7·10⁻⁷), sondern breit in den feinen
+Zellen um die Naht, auch in vollen Zellen. Teilursachen sind belegt: die Tetraederregel der Schnittzellen (Grad 3p − 1; mit Ordnung 8 sinkt der
+p-2-Fehler auf 3,7·10⁻⁷) und α (p 3: 1,1·10⁻⁵ bei 10⁻⁸, 1,2·10⁻⁶ bei 10⁻¹²); ein Rest ist ungeklärt. Gegen den Diskretisierungsfehler der
+Strukturspannung (1 %) ist das klein, gegen das Patch-Niveau nicht; die Prüfung nimmt die gemessene Schranke 10⁻⁴.
+
 

@@ -356,6 +356,14 @@ Aussage, letzte Änderung unter 3 %, Kopplungskontrolle Kraft unter 5 %; das „
 dieser T-Stoß, das Knotenblech selbst kommt in C1. (3) Fehlerfälle: `adaptive_cycles` außerhalb 0 bis 4 →
 `SolverError`; Abbruch zwischen den Zyklen meldet `SolverCancelled`.
 
+**Ergebnis B4 (30.09.2026, Theorie 11.14):** Zyklen, Kurve, Protokoll der Einstellungen und Konvergenzaussage gebaut und geprüft
+(Kernsuite 268/268, `test_adaptiv` 9/9), Fortschritt und Abbruch zwischen den Zyklen, Grenzen der Zyklenzahl. **Die Konvergenzforderung ist nicht
+erfüllt:** am T-Stoß 81,1 → 119,0 → 134,2 → 91,0 N/mm² (nicht monoton), mit vier Zyklen und mit feinerem Start ebenso; die Referenzpunkte
+bei 0,4 t liegen bei Zellen von 5 bis 20 mm in der ersten Zellschicht an der Kerbe. Empfehlung „h zuerst bis t/4, dann p + 1“ mit Messung am
+Knotenblech in C1; Entscheidung beim Anwender. Befund während B4 behoben: Zwangszyklus in der Aggregation (unverwurzelte grobe schlechte Zelle
+mit feineren verwurzelten Nachbarn); an den 23 Modellen der schweren Suiten sperrt sie höchstens zwei Moden, dort bitgleich. Offen: Konsistenzfehler 10⁻⁶ bis 10⁻⁴ am T-Stoß mit lokaler
+Verfeinerung (Ursache teilweise geklärt).
+
 ### B5: STEP über gmsh-Tessellierung (Vorgabe 3)
 - Optionales Extra `step` mit gmsh; `GeometrySourceType.STEP` → Tessellierung → bestehender STL-Weg;
   ohne gmsh `SolverError` mit Hinweis. Die neue optionale Abhängigkeit im Pull Request benennen.
@@ -405,7 +413,7 @@ nachgetragen.
 | B1 Moment Fitting | Fable 5.1 | sehr hoch | Stabilität der Gewichte, Konsistenz Volumen/Rand | erledigt: Vorgabe an; schwere Suiten grün, Zeiten in Theorie 11.11 |
 | B2 Spannungsrückgewinnung | Opus 5.5 | hoch | bekanntes Verfahren, sorgfältige Umsetzung | erledigt: L²-Projektion ist Ausgabe; Kosten in Theorie 11.12 |
 | B3 Hot-Spot IIW Typ a | Opus 5.5 | hoch | Geometrie der Referenzpunkte, Normbezug | erledigt: Spanne korrigiert (Anwender), Absolutwert in C1 gegen Tet10 |
-| B4 Konvergenzkurve, Protokoll | Sonnet 5 | mittel | überschaubar, baut auf B2/B3 | läuft: Verfahren und Regeln festgelegt |
+| B4 Konvergenzkurve, Protokoll | Sonnet 5 | mittel | überschaubar, baut auf B2/B3 | gebaut; Konvergenzforderung nicht erfüllt, Entscheidung offen |
 | B5 STEP über gmsh | Sonnet 5 | mittel | Anbindung einer Bibliothek | offen |
 | B6 Windungszahl-Baum | Opus 5.5 | hoch | Algorithmus mit Genauigkeitsnachweis | offen |
 | B7 Schale → Volumen (Prüfung) | Sonnet 5 | mittel | Test über bestehende Schnittstelle | offen |

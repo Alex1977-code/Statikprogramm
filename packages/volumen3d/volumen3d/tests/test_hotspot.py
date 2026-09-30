@@ -21,10 +21,11 @@ X_RECHTS, X_LINKS = 105.0 + SCHENKEL, 95.0 - SCHENKEL
 Y_NAHT = np.arange(5.0, 46.0, 5.0)
 
 
-def t_stoss():
+def t_stoss(x_lo=0.0, x_hi=200.0):
+    """T-Stoss; x_lo/x_hi sind die Enden des Grundblechs (der Vertragsweg braucht Polster hinter den Schnittebenen)."""
     from volumen3d.geometry.csg import aus_params
     return aus_params({"csg": {"typ": "vereinigung", "teile": [
-        {"typ": "quader", "min": [0, 0, -T_BLECH], "max": [200, 50, 0], "name": "grundblech"},
+        {"typ": "quader", "min": [x_lo, 0, -T_BLECH], "max": [x_hi, 50, 0], "name": "grundblech"},
         {"typ": "quader", "min": [95, 0, 0], "max": [105, 50, 60], "name": "querblech"},
         {"typ": "schnitt", "teile": [
             {"typ": "quader", "min": [105, 0, 0], "max": [X_RECHTS, 50, SCHENKEL], "name": "naht_rechts"},

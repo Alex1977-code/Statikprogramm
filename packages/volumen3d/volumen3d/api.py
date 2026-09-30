@@ -12,13 +12,15 @@ ohne Faehigkeiten.
 """
 from __future__ import annotations
 
+import dataclasses
 import time
 from typing import Any, Callable
 
 import numpy as np
 from statik3d_contracts import CONTRACT_VERSION
 from statik3d_contracts.coupling import GlobalFieldProvider
-from statik3d_contracts.detail import DetailModelSpec, DetailResult, FcmSettings, GeometrySourceType, HotSpotResult
+from statik3d_contracts.detail import (DetailModelSpec, DetailResult, FcmSettings, GeometrySourceType, HotSpotResult,
+                                       RefinementRegion)
 from statik3d_contracts.discretization import DiscretizationKind
 from statik3d_contracts.model import Material, ResultKey
 from statik3d_contracts.nonlinear import AssemblyModelSpec, AssemblyResult, LoadPath, StepResult, SurfaceLoad, SurfaceSelector
@@ -33,6 +35,7 @@ from .geometry.oberflaeche import Flaechenquadratur
 from .geometry.sdf import Halbraum
 from .postprocess.auswertung import von_mises
 from .postprocess.hotspot import Nahtpunkt, nahtgeometrie, strukturspannungen
+from .postprocess.konvergenz import konvergenzaussage
 
 
 def _flaeche_waehlen(pr: FcmProblem, sel: SurfaceSelector, detail_id: str, last_id: str) -> Flaechenquadratur:
@@ -160,6 +163,9 @@ def _verfeinerung(spec: DetailModelSpec) -> Verfeinerung:
     return Verfeinerung(bereiche=bereiche)
 
 
+_MAX_ZYKLEN = 4
+
+
 def _einstellungen_pruefen(s: FcmSettings) -> None:
     if not s.base_cell_size_mm > 0:
         raise SolverError("base_cell_size_mm muss positiv sein")
@@ -171,6 +177,8 @@ def _einstellungen_pruefen(s: FcmSettings) -> None:
         raise SolverError(f"coupling {s.coupling!r}: Kraftkopplung kommt mit Teilprojekt 5")
     if not 0.0 <= float(s.alpha) < 1.0:
         raise SolverError("alpha muss in [0, 1) liegen")
+    if not 0 <= int(s.adaptive_cycles) <= _MAX_ZYKLEN:
+        raise SolverError(f"adaptive_cycles = {s.adaptive_cycles}: 0 bis {_MAX_ZYKLEN} (Vorgabe 8.4: 2 bis 4 adaptive Zyklen)")
 
 
 # 'auto' waehlt den im Gesamtweg (Aufbau + Loesen) schnelleren Weg. Messung A6 (30.09.2026, Plan TP 5), Commit
@@ -317,6 +325,12 @@ class FcmDiskretisierung:
         self.lasten = lasten or {}                      # Lastfall-ID -> rechte Seite der Flaechenlasten (2.1.0)
         self.lasten_protokoll = lasten_protokoll or []
         self.loeserwahl: dict[str, Any] = {}
+        # adaptive Zyklen (Plan TP 5 B4): Werkstoff und Ausgangsspezifikation, aus denen die naechsten Zyklen entstehen,
+        # Schritt dieses Zyklus und die lokale Zielzellgroesse an den Naehten (None: noch nicht verfeinert)
+        self.material: Material | None = None
+        self.spec0: DetailModelSpec = spec
+        self.schritt = "Start"
+        self.ziel_naht: float | None = None
         self._oberflaeche: tuple[np.ndarray, np.ndarray] | None = None
         self._naehte: list[tuple[Any, list[Nahtpunkt]]] | None = None
         self.naht_warnungen: list[str] = []
@@ -461,16 +475,89 @@ class FcmSolver:
                 raise SolverError(str(ex)) from ex
         melden("Diskretisierung bereit", 1.0)
         disc = FcmDiskretisierung(spec, pr, namen, lasten, lasten_protokoll)
+        disc.material = material
         disc.loeserwahl = {"loeser": pr.protokoll.get("loeser", loeser), "geraet": geraet, "begruendung": grund,
                            "warnungen": list(warnungen)}
         return disc
 
     def solve(self, disc: FcmDiskretisierung, provider: GlobalFieldProvider, keys: list[ResultKey],
               progress: ProgressCallback | None = None, cancel: Callable[[], bool] | None = None) -> list[DetailResult]:
+        """Loest alle Keys; mit ``adaptive_cycles`` > 0 folgen Zyklen mit lokaler h-Halbierung an den Naehten und p + 1 (Plan
+        TP 5 B4, ohne Fehlerschaetzer - der kommt mit TP 6). Ergebnis ist der letzte Zyklus, ``convergence`` traegt alle."""
         melden: Fortschritt = progress or (lambda t, a: None)
         abbruch = cancel or (lambda: False)
         if not isinstance(disc, FcmDiskretisierung):
             raise SolverError("solve braucht die Diskretisierung aus FcmSolver.prepare")
+        n_zyklen = int(disc.spec0.settings.adaptive_cycles)
+        if n_zyklen == 0:
+            return self._zyklus(disc, provider, keys, melden, abbruch)
+
+        def im_zyklus(z: int, von: float = 0.0, bis: float = 1.0) -> Fortschritt:
+            """Fortschritt des Zyklus z auf das Intervall [z + von, z + bis] von n_zyklen + 1 abgebildet (Vorbereitung und
+            Loesen eines Zyklus melden je 0 bis 1 und bekommen je einen Teil, sonst sprang der Balken zurueck)."""
+            return lambda text, a: melden(f"Zyklus {z}: {text}", (z + von + (bis - von) * min(max(a, 0.0), 1.0)) / (n_zyklen + 1))
+        t_z = time.perf_counter()
+        ergebnisse = self._zyklus(disc, provider, keys, im_zyklus(0), abbruch)
+        kurven: list[list[dict[str, Any]]] = [[] for _ in keys]
+        for k, e in enumerate(ergebnisse):
+            kurven[k].append({**e.convergence[0], "t_s": round(time.perf_counter() - t_z, 3)})
+        d = disc
+        hinweise: list[str] = []
+        for z in range(1, n_zyklen + 1):
+            if abbruch():
+                raise SolverCancelled(f"abgebrochen vor Zyklus {z}")
+            t_z = time.perf_counter()
+            nxt = self._naechster_zyklus(d, z, im_zyklus(z, 0.0, 0.4))
+            if nxt is None:
+                hinweise.append(f"adaptive Zyklen nach {z - 1} beendet: p = {_P_MAX} erreicht und keine Naht fuer die lokale "
+                                f"h-Verfeinerung")
+                break
+            d = nxt
+            ergebnisse = self._zyklus(d, provider, keys, im_zyklus(z, 0.4, 1.0), abbruch)
+            for k, e in enumerate(ergebnisse):
+                kurven[k].append({**e.convergence[0], "cycle": z, "t_s": round(time.perf_counter() - t_z, 3)})
+        for k, e in enumerate(ergebnisse):
+            kurve = kurven[k]
+            for a, b in zip(kurve[:-1], kurve[1:]):
+                ha, hb = a.get("hotspot_max"), b.get("hotspot_max")
+                b["hotspot_change"] = (hb - ha) / abs(ha) if ha not in (None, 0.0) and hb is not None else None
+            aussage = konvergenzaussage([c.get("hotspot_max") for c in kurve])
+            e.convergence = kurve
+            e.protocol["cycles"] = len(kurve) - 1
+            e.protocol["convergence_statement"] = aussage
+            e.warnings.extend(hinweise)
+            if aussage["art"] == "nicht_monoton":
+                e.warnings.append("Konvergenz der Strukturspannung: " + aussage["text"])
+        melden("Zyklen abgeschlossen", 1.0)
+        return ergebnisse
+
+    def _naechster_zyklus(self, disc: FcmDiskretisierung, z: int, melden: Fortschritt) -> FcmDiskretisierung | None:
+        """Diskretisierung des Zyklus z aus der des Zyklus z - 1: ungerade z lokale h-Halbierung an den Naehten, gerade z
+        p + 1 (bei p = 4 h-Halbierung); ohne Naht nur p + 1, bei p = 4 None (Ende der Folge)."""
+        s0 = disc.spec0
+        if disc.material is None:
+            raise SolverError("adaptive Zyklen brauchen die Diskretisierung aus FcmSolver.prepare")
+        p = int(disc.spec.settings.p)
+        punkte = [wl for wl in s0.weld_lines if len(np.asarray(wl.points).reshape(-1, 3)) > 0]
+        h_schritt = bool(punkte) and (z % 2 == 1 or p >= _P_MAX)
+        if not h_schritt and p >= _P_MAX:
+            return None
+        ziel = disc.ziel_naht
+        spec = disc.spec
+        if h_schritt:
+            ziel = 0.5 * (float(s0.settings.base_cell_size_mm) if disc.ziel_naht is None else disc.ziel_naht)
+            spec = dataclasses.replace(s0, settings=disc.spec.settings, refinement=tuple(s0.refinement) + _nahtregionen(punkte, ziel))
+        else:
+            spec = dataclasses.replace(disc.spec, settings=dataclasses.replace(disc.spec.settings, p=p + 1))
+        neu = self.prepare(spec, disc.material, melden)
+        neu.spec0 = s0
+        neu.ziel_naht = ziel
+        neu.schritt = "h-Halbierung Naht" if h_schritt else "p-Erhoehung"
+        return neu
+
+    def _zyklus(self, disc: FcmDiskretisierung, provider: GlobalFieldProvider, keys: list[ResultKey],
+                melden: Fortschritt, abbruch: Callable[[], bool]) -> list[DetailResult]:
+        """Ein Zyklus: rechte Seiten, Loesen, Auswertung fuer alle Keys (bisheriger Rumpf von ``solve``)."""
         pr = disc.problem
         t0 = time.perf_counter()
         vorgaben: list[dict[str, np.ndarray]] = []
@@ -601,6 +688,7 @@ class FcmSolver:
                                                         "Naht, sigma_hs = 5/3 sigma(0,4t) - 2/3 sigma(1,0t), Komponente senkrecht zur Naht",
                                            "spannung": "geglaettet (L2-Projektion)" if _SPANNUNG_GEGLAETTET else "roh",
                                            "naehte": naht_protokoll},
+                              "settings": _einstellungen_protokoll(disc, rg is not None),
                               "stress_recovery": (dict(rg.statistik, ausgabe="geglaettet (L2-Projektion)")
                                                   if _SPANNUNG_GEGLAETTET and rg is not None else {"ausgabe": "roh (sigma = D B u)"}),
                               "body_load": None if disc.spec.body_load is None else np.asarray(disc.spec.body_load, float).reshape(3)})
@@ -608,10 +696,61 @@ class FcmSolver:
                                            displacement=u_e, stress=s_e, von_mises=von_mises(s_e) if len(s_e) else np.zeros(0),
                                            hot_spots=hot,
                                            coupling_check={"planes": ebenen}, warnings=warn, protocol=protokoll,
-                                           convergence=[{"cycle": 0, "dofs": int(pr.gitter.n_dof), "p": pr.p, "cells": int(len(pr.gitter.ijk)),
-                                                         "hotspot_max": max((h.stress for h in hot), default=None)}]))
+                                           convergence=[{"cycle": 0, "step": disc.schritt, "dofs": int(pr.gitter.n_dof), "p": pr.p,
+                                                         "cells": int(len(pr.gitter.ijk)), "cut_cells": int((pr.gitter.klasse == 2).sum()),
+                                                         "h_min_mm": float(pr.gitter.h / 2.0 ** int(pr.gitter.ebene.max())),
+                                                         "hotspot_max": max((h.stress for h in hot), default=None),
+                                                         "hotspot_mean": float(np.mean([h.stress for h in hot])) if hot else None,
+                                                         "stress_max": float(von_mises(s_e).max()) if len(s_e) else None,
+                                                         "solver_path": str(disc.loeserwahl.get("loeser", pr.loeser)),
+                                                         "iterations": _iterationen(pr, k)}]))
             melden(f"Ergebnis {key.load_case_id}", 0.7 + 0.3 * (k + 1) / max(len(keys), 1))
         return ergebnisse
+
+
+_P_MAX = 4
+
+
+def _nahtregionen(wls: list[Any], ziel_mm: float) -> tuple[RefinementRegion, ...]:
+    """Kugeln vom Radius 2 t um Punkte der Nahtlinien (Abstand hoechstens t) mit der Zielzellgroesse ``ziel_mm``."""
+    regionen: list[RefinementRegion] = []
+    for wl in wls:
+        P = np.asarray(wl.points, float).reshape(-1, 3)
+        t = float(wl.plate_thickness_mm)
+        wahl = [0]
+        for i in range(1, len(P)):
+            if float(np.linalg.norm(P[i] - P[wahl[-1]])) >= t:
+                wahl.append(i)
+        if wahl[-1] != len(P) - 1:
+            wahl.append(len(P) - 1)
+        regionen += [RefinementRegion(center=P[i].copy(), radius_mm=2.0 * t, target_cell_size_mm=ziel_mm) for i in wahl]
+    return tuple(regionen)
+
+
+def _iterationen(pr: FcmProblem, k: int) -> int | None:
+    it = pr.protokoll.get("iterationen")
+    if isinstance(it, (list, tuple)) and len(it) > k:
+        return int(it[k])
+    return None
+
+
+def _einstellungen_protokoll(disc: FcmDiskretisierung, rueckgewinnung: bool) -> dict[str, Any]:
+    """Alle Einstellungen des Zyklus, damit Nachweise pruefbar sind (Vorgabe 11.3): Vertragseinstellungen, Verfeinerung,
+    verwendeter Rechenweg und Ausgabeart der Spannungen, Naehte, Versionen."""
+    spec, s, pr = disc.spec, disc.spec.settings, disc.problem
+    return {"p": int(s.p), "base_cell_size_mm": float(s.base_cell_size_mm),
+            "refinement": [{"center": np.asarray(r.center, float).tolist(), "radius_mm": float(r.radius_mm),
+                            "target_cell_size_mm": float(r.target_cell_size_mm)} for r in spec.refinement],
+            "alpha": float(s.alpha), "tolerance": float(s.tolerance), "tolerance_used": float(pr.toleranz),
+            "coupling": str(s.coupling), "adaptive_cycles": int(disc.spec0.settings.adaptive_cycles), "cycle_step": disc.schritt,
+            "backend_requested": str(s.backend), "backend_used": str(disc.loeserwahl.get("geraet", pr.backend)),
+            "solver_path": str(disc.loeserwahl.get("loeser", pr.loeser)),
+            "moment_fitting": bool(pr.quadratur.momentfitting), "fit_grad": int(pr.quadratur.fit_grad) if pr.quadratur.momentfitting else None,
+            "stress_output": "geglaettet (L2-Projektion)" if _SPANNUNG_GEGLAETTET and rueckgewinnung else "roh (sigma = D B u)",
+            "aggregation_threshold": None if pr.aggregation is None else float(pr.aggregation.schwelle),
+            "weld_lines": [{"id": wl.id, "points": int(len(np.asarray(wl.points).reshape(-1, 3))),
+                            "plate_thickness_mm": float(wl.plate_thickness_mm), "method": wl.method} for wl in spec.weld_lines],
+            "contract_version": CONTRACT_VERSION, "volumen3d": __version__}
 
 
 def spec_kurz(spec: DetailModelSpec) -> dict[str, Any]:

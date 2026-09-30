@@ -44,6 +44,7 @@ class Zwaenge:
         self.statistik = {"haengende_flaechen": 0, "haengende_kanten": 0, "haengende_ecken": 0,
                           "moden_haengend": 0, "moden_aggregiert": 0, "kettenlaenge": 0, "zyklen_frei": 0}
         self._haengende()
+        self._haengend_moden = frozenset(self.roh)           # vor der Aggregation gebundene Moden (haengende Entitaeten)
         if aggregation is not None:
             for mode, eintraege in aggregation.roh_zwaenge(dict(self.roh)).items():
                 self.roh[mode] = eintraege
