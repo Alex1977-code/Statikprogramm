@@ -60,6 +60,11 @@ class Auswertung:
         eps = np.einsum("nsd,nd->ns", b_matrizen(dN * skal), Uc)
         return eps @ self.D.T
 
+    def knoten_setzen(self, X: np.ndarray) -> None:
+        """Koeffizienten der L2-Projektion (n_moden, 6, 1) von aussen, wenn sie fuer mehrere Lastfaelle zugleich
+        berechnet wurden (die Zellschleife der rechten Seiten kostet fast gleich viel fuer eine wie fuer viele Spalten)."""
+        self._knoten = X
+
     def spannung_geglaettet(self, P) -> np.ndarray:
         """Spannungen (n,6) der L2-Projektion; die Koeffizienten werden je Auswertung einmal berechnet."""
         from .rueckgewinnung import rueckgewinnung

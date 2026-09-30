@@ -417,6 +417,37 @@ def test_loeserwahl():
           f"Abweichung {f_l:.1e}, Warnungen {e_l.warnings}")
 
 
+def test_hotspot_vertragsweg():
+    """WeldLine -> DetailResult.hot_spots (Plan TP 5 B3): eine Naht auf der Laengskante y 50, z 100 des Balkens mit
+    Blechdicke 100 (Seitenflaeche: Werkstofftiefe 100 = t, Oberseite 200) liefert je Punkt ein HotSpotResult mit der
+    Position des Punkts und endlicher Spannung; das Protokoll nennt Verfahren und Spannungsart, convergence
+    hotspot_max; eine Naht mit method 'effective_notch' wird mit Warnung uebergangen, ein Punkt mitten in der Flaeche
+    bleibt ohne Wert (Warnung)."""
+    import dataclasses
+    from statik3d_contracts.detail import WeldLine
+    from statik3d_contracts.model import Material, ResultKey
+    from statik3d_contracts.testing import StubGlobalFieldProvider
+    from volumen3d.api import FcmSolver
+    xs = np.linspace(400.0, 600.0, 5)
+    kante = np.stack([xs, np.full(5, 50.0), np.full(5, 100.0)], axis=1)
+    mitte = np.array([[500.0, 50.0, 0.0], [520.0, 50.0, 0.0]])
+    spec = dataclasses.replace(_spec(), weld_lines=(WeldLine("N1", kante, 100.0), WeldLine("N2", kante, 100.0, method="effective_notch"),
+                                                   WeldLine("N3", mitte, 100.0)))
+    s = FcmSolver()
+    disc = s.prepare(spec, Material("S355", "S355", 210000.0, 0.3, fy=355.0))
+    erg = s.solve(disc, StubGlobalFieldProvider(1000.0, 100.0, 200.0, 210000.0, 10000.0), [ResultKey("LF1")])[0]
+    n1 = [h for h in erg.hot_spots if h.weld_line_id == "N1"]
+    hp = erg.protocol.get("hot_spot", {})
+    check("Naht N1: 5 HotSpotResult mit Position je Punkt und endlicher Spannung, Protokoll hot_spot mit Verfahren und Spannungsart, "
+          "convergence hotspot_max",
+          len(n1) == 5 and all(np.allclose(h.position, k) for h, k in zip(n1, kante)) and all(np.isfinite(h.stress) for h in n1)
+          and "IIW" in hp.get("verfahren", "") and hp.get("naehte", {}).get("N1", {}).get("ohne_wert") == 0
+          and erg.convergence[0].get("hotspot_max") == max(h.stress for h in n1), str(hp.get("naehte", {}).get("N1")))
+    check("effective_notch uebergangen (Warnung), N3 in der Flaeche ohne Wert (Warnung 'ohne Knick'), keine Ergebnisse dafuer",
+          not any(h.weld_line_id in ("N2", "N3") for h in erg.hot_spots) and any("effective_notch" in w for w in erg.warnings)
+          and any("N3" in w and "ohne Knick" in w for w in erg.warnings), str([w for w in erg.warnings if "Naht" in w]))
+
+
 def test_hybrid_platzhalter():
     from statik3d_contracts.nonlinear import AssemblyModelSpec
     from statik3d_contracts.solver import SolverError
@@ -433,4 +464,4 @@ def test_hybrid_platzhalter():
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_protokoll_und_registrierung, test_ablauf, test_gutachten_faelle, test_hybrid_platzhalter, test_lasten, test_zylinderauswahl, test_loeserwahl]))
+    sys.exit(lauf([test_protokoll_und_registrierung, test_ablauf, test_gutachten_faelle, test_hybrid_platzhalter, test_lasten, test_zylinderauswahl, test_loeserwahl, test_hotspot_vertragsweg]))

@@ -240,6 +240,35 @@ def test_momentfitting():
           f"Punkte FcmProblem {pr.quadratur.anzahl_punkte()} gegen {pr_aus.quadratur.anzahl_punkte()} ohne Fitting")
 
 
+def test_verschachtelter_baum():
+    """Verschachtelte CSG-Baeume (Plan TP 5 B3): ein T-Stoss als Vereinigung aus Grundblech, Querblech und zwei
+    Kehlnaehten, jede Naht ein Schnitt aus Quader und 45-Grad-Halbraum. Vorher passte das auf keins der beiden flachen
+    Muster, jedes Blatt fiel auf den Punkttest erster Ordnung (h 20: 18 401 Blaetter, Volumen +0,13 %, 2,6 Mio.
+    Oberflaechenpunkte, 61 s). Jetzt ueber den Baum: kein Punkttest-Blatt, Volumen exakt (133 200 mm3 = 200*50*10 +
+    10*50*60 + 2*50*8*8/2, < 1e-12), jede Flaeche exakt (< 1e-11) auf drei Gittern."""
+    from volumen3d.fcm.gitter import Gitter
+    from volumen3d.fcm.quadratur import Zellquadratur
+    from volumen3d.geometry.oberflaeche import Flaechenquadratur
+    from volumen3d.tests.test_hotspot import t_stoss
+    geo = t_stoss()
+    v_soll = 200 * 50 * 10 + 10 * 50 * 60 + 2 * 50 * 8 * 8 / 2
+    a_soll = {"grundblech": 2 * 200 * 50 - 26 * 50 + 2 * 200 * 10 + 2 * 50 * 10, "querblech": 10 * 50 + 2 * 10 * 60 + 2 * 52 * 50,
+              "naht_links": 2 * 32.0, "naht_rechts": 2 * 32.0, "nahtflaeche_links": 8 * np.sqrt(2) * 50, "nahtflaeche_rechts": 8 * np.sqrt(2) * 50}
+    for h in (20.0, 10.0, 7.0):
+        t = time.perf_counter()
+        G = Gitter(geo, h=h, polster=0.1)
+        G.moden_nummerieren(3)
+        Q = Zellquadratur(G, p=3, alpha=0.0)
+        v = Q.volumen()
+        o = Flaechenquadratur.aus_geometrie(geo, G, 5)
+        nm = o.name.astype(str)
+        fa = max(abs(float(o.gewichte[nm == n].sum()) - a) / a for n, a in a_soll.items())
+        check(f"T-Stoss h {h:g}: kein Punkttest-Blatt, Volumen exakt (< 1e-12), alle sechs Flaechen exakt (< 1e-11), kein Flaechenrueckfall",
+              Q.statistik["blaetter_punkttest"] == 0 and abs(v - v_soll) / v_soll < 1e-12 and fa < 1e-11 and o.statistik["rueckfall"] == 0,
+              f"Volumen {v:.6f}, Flaechen {fa:.1e}, {Q.statistik['blaetter_eben']} ebene Blaetter, {len(o.punkte)} Oberflaechenpunkte, "
+              f"{time.perf_counter() - t:.1f} s")
+
+
 def test_inside_zelle():
     from volumen3d.fcm.gitter import INSIDE, Gitter
     from volumen3d.fcm.quadratur import Zellquadratur
@@ -256,4 +285,4 @@ def test_inside_zelle():
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_polyeder, test_ebene_geometrie_exakt, test_kugel_zweite_ordnung, test_lochplatte, test_kleine_radien, test_inside_zelle, test_momentfitting]))
+    sys.exit(lauf([test_polyeder, test_ebene_geometrie_exakt, test_kugel_zweite_ordnung, test_lochplatte, test_kleine_radien, test_inside_zelle, test_momentfitting, test_verschachtelter_baum]))

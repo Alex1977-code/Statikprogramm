@@ -159,6 +159,9 @@ def _stuecke_des_polygons(geometrie, form, poly: np.ndarray, tiefe: int, stufe: 
         statistik["rueckfall"] += 1
         return [poly]                             # Rueckfall: Punktfilter entscheidet
     n_poly = polygon_normale(poly)
+    if getattr(st[0], "baum", False):
+        kandidaten = _zerlegt_an_allen_ebenen(poly, st[0], n_poly, n_eigen, c, r)
+        return _zeugen_pruefen(geometrie, form, kandidaten, r, tol_flaeche, statistik)
     # Die eigene Flaeche ist die Tangentialebene der Quellform im projizierten Schwerpunkt c
     # (bei ebenen Formen die Facettenebene selbst). Andere lokale Ebenen der Quellform - etwa
     # die Kappe eines Bohrzylinders - muessen schneiden, sonst liefern zwei Stuecke dasselbe
@@ -180,6 +183,36 @@ def _stuecke_des_polygons(geometrie, form, poly: np.ndarray, tiefe: int, stufe: 
                 break
         if len(Q) >= 3 and polygon_flaeche(Q) > 1e-14 * r * r:
             kandidaten.append(Q)
+    return _zeugen_pruefen(geometrie, form, kandidaten, r, tol_flaeche, statistik)
+
+
+def _zerlegt_an_allen_ebenen(poly, stuecke, n_poly, n_eigen, c, r) -> list[np.ndarray]:
+    """Baumweg: das Polygon an allen Ebenen aller Stuecke teilen (ausser der eigenen und parallelen), jede Teilflaeche
+    einmal. Eine Vereinigung liefert disjunkte Stuecke, aber das Stueck der Quellform kennt die Ebenen der anderen
+    Formen nicht: am T-Stoss blieb die Grundblech-Oberseite einer Zelle ungeteilt und fiel mit ihrem Schwerpunkt unter
+    der Naht ganz weg (8 000 statt 8 700 mm2), und Stuecke verschiedener Formen deckten dieselbe Stirnflaeche doppelt
+    (Plan TP 5 B3, 30.09.2026). Nach der Teilung ist jede Teilflaeche bezueglich aller Ebenen einheitlich, der
+    Zeugenpunkt entscheidet fuer die ganze Flaeche."""
+    ebenen: list[tuple[np.ndarray, np.ndarray]] = []
+    for halbraeume in stuecke:
+        for p, n in halbraeume:
+            if abs(float(n @ n_poly)) > 0.999 or (abs(float(n @ n_eigen)) > 0.999 and abs(float((c - p) @ n)) <= 1e-9 * r):
+                continue
+            if not any(abs(float(n @ n2)) > 1 - 1e-12 and abs(float((p - p2) @ n2)) <= 1e-9 * r for p2, n2 in ebenen):
+                ebenen.append((p, n))
+    teile = [poly]
+    for p, n in ebenen:
+        neu = []
+        for Q in teile:
+            for m in (n, -n):
+                R, _ = polygon_clippen(Q, p, m, 1e-12 * r)
+                if len(R) >= 3 and polygon_flaeche(R) > 1e-14 * r * r:
+                    neu.append(R)
+        teile = neu
+    return teile
+
+
+def _zeugen_pruefen(geometrie, form, kandidaten, r, tol_flaeche, statistik) -> list[np.ndarray]:
     if not kandidaten:
         return []
     # Zeugen aller Stuecke gemeinsam auswerten (ein Aufruf je Funktion statt vier je Stueck):

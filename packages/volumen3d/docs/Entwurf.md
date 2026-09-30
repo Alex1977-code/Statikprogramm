@@ -796,6 +796,14 @@ Plan: `docs/plaene/2026-09-28-tp4-mehrgitter.md`. Messlatte aus Teilprojekt 3: J
   (`postprocess/rueckgewinnung.py`). Patch und reine Biegung exakt; Lamé an allen Oberflächenpunkten besser als roh
   (p 2 h 20: 15 statt 57 %, p 3 h 10: 2,23 statt 2,29 %); Kirsch K_t um 0,2 bis 0,4 % verschoben, Randresiduum 17–20 %
   kleiner. Nach der Regel Ausgabe des Vertragswegs (`DetailResult.stress`, Protokoll `stress_recovery`).
+- **B1/B2 auf freier Maschine (30.09.2026):** Fitting senkt die Quadraturpunkte um 92–96 %, den Gesamtweg um 11–27 %
+  (Block h 9: 149 → 109 s mit Mehrgitter); Aufbau plus Lösen bei 10⁶ FHG 41 s (Lesart b der Vorgabe 13 erfüllt).
+  Rückgewinnung bei 10⁶ FHG: 5 s Aufbau, 13 s rechte Seiten (für alle Keys zusammen), 2 s Auswertung.
+- **B3, Hot-Spot IIW Typ a (30.09.2026, Theorie 11.13):** `postprocess/hotspot.py`, Blechseite aus der Werkstofftiefe
+  (Kreis um den Übergang, zwei Oberflächenäste), Warnung statt Wert bei Mehrdeutigkeit; `DetailResult.hot_spots` und
+  Protokoll `hot_spot`. Dazu verschachtelte CSG-Bäume ebenen-exakt (`Csg._baum_stuecke`, Flächenpolygone an allen
+  Ebenen geteilt): T-Stoß mit Kehlnähten ohne Punkttest, Volumen und Flächen exakt. T-Stoß unter Zug: σ_hs 0,99–1,02 σ_n,
+  Spanne σ_n ≤ σ_hs verfehlt (h 10: 98,75) – Entscheidung offen.
 - Fünf Schnittlagen Kirsch h 10 p 3 verfeinert (128 724 bis 199 095 freie Koordinaten), GPU FP64:
   81 / 125 / 112 / 129 / 59 Iterationen, GPU-PCG 8,6 bis 21 s, K_t identisch mit dem Direktlöser;
   Direktlöser (Lösen nach der Faktorisierung) 7 bis 25 s. Einrichten auf der CPU: Zelldaten 17–24 s,

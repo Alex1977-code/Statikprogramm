@@ -305,6 +305,14 @@ fern der Naht σ_n auf 1 % trifft, σ_hs zwischen σ_n und 1,5·σ_n liegt und s
 3 % ändert; zum Vergleich (ohne Kriterium) die über die Dicke linearisierte Strukturspannung im Nahtübergangsschnitt.
 (4) Vertragsweg: `DetailResult.hot_spots` je Nahtpunkt gefüllt, Protokoll nennt Verfahren und Spannungsart.
 
+**Ergebnis B3 (30.09.2026, Theorie 11.13, Zweig feature/volumen3d-b3):** (1), (2) und (4) erfüllt (synthetisch 2·10⁻¹⁶,
+exaktes Feld 1,6·10⁻⁷, Vertragsweg mit Warnungen). (3): Fernfeld 0,05 %, Konvergenz h 10 → h 5 1,3 % erfüllt; die Spanne
+σ_n ≤ σ_hs ≤ 1,5·σ_n verfehlt (h 10: 98,75 bis 101,92 N/mm²). Die Linearisierung über die Dicke (93–97 N/mm²) zeigt eine
+örtliche Entlastung der Oberseite durch das einseitige Querblech; die Annahme der Regel war falsch, ein unabhängiger
+Beleg des Absolutwerts fehlt. Entscheidung des Anwenders offen. Befund während B3 behoben: verschachtelte CSG-Bäume
+fielen auf den Punkttest zurück (siehe Theorie 11.13). Die Prüfung (3) mit h 5 dauert 25 Minuten und muss vor dem Merge
+kleiner werden.
+
 ### B4: Konvergenzkurve und Protokoll (Vorgabe 11.3)
 - `DetailResult.convergence` je Zyklus (Hot-Spot und Maximalspannung über Freiheitsgrade), Zyklen aus
   `FcmSettings.adaptive_cycles` als p-Erhöhung und h-Halbierung in Nahtnähe (ohne Fehlerschätzer, der kommt
@@ -357,9 +365,9 @@ nachgetragen.
 | A4 h-Mehrgitter (nur wenn nötig) | Fable 5.1 | sehr hoch | hängende Knoten im Mehrgitter, höchstes Risiko | entfällt (Grobgitter 12 % des Lösens) |
 | A5 Streuung über Schnittlagen | Opus 5.5 | hoch | Ritz-Analyse und Glätterabstimmung | erledigt (f2bf8e7): α 100 (−20 bis −25 %); Vorgabe als erfüllt anerkannt |
 | A6 Leistungsabnahme, Löserwahl | Sonnet 5 | mittel | Messreihe nach festem Schema | erledigt: `auto` bleibt direkt; Lösen 10⁶ FHG 7–8 s, Aufbau + Lösen 62–115 s |
-| B1 Moment Fitting | Fable 5.1 | sehr hoch | Stabilität der Gewichte, Konsistenz Volumen/Rand | Vorgabe an (Anwender); schwere Suiten und Zeiten auf freier Maschine ausstehend |
-| B2 Spannungsrückgewinnung | Opus 5.5 | hoch | bekanntes Verfahren, sorgfältige Umsetzung | erledigt: L²-Projektion ist Ausgabe; Kosten großer Modelle ausstehend |
-| B3 Hot-Spot IIW Typ a | Opus 5.5 | hoch | Geometrie der Referenzpunkte, Normbezug | läuft: Verfahren und Regeln festgelegt |
+| B1 Moment Fitting | Fable 5.1 | sehr hoch | Stabilität der Gewichte, Konsistenz Volumen/Rand | erledigt: Vorgabe an; schwere Suiten grün, Zeiten in Theorie 11.11 |
+| B2 Spannungsrückgewinnung | Opus 5.5 | hoch | bekanntes Verfahren, sorgfältige Umsetzung | erledigt: L²-Projektion ist Ausgabe; Kosten in Theorie 11.12 |
+| B3 Hot-Spot IIW Typ a | Opus 5.5 | hoch | Geometrie der Referenzpunkte, Normbezug | gebaut (Zweig feature/volumen3d-b3); Spanne in Prüfung 3 verfehlt, Entscheidung offen |
 | B4 Konvergenzkurve, Protokoll | Sonnet 5 | mittel | überschaubar, baut auf B2/B3 | offen |
 | B5 STEP über gmsh | Sonnet 5 | mittel | Anbindung einer Bibliothek | offen |
 | B6 Windungszahl-Baum | Opus 5.5 | hoch | Algorithmus mit Genauigkeitsnachweis | offen |

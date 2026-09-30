@@ -18,7 +18,7 @@ from typing import Any, Callable
 import numpy as np
 from statik3d_contracts import CONTRACT_VERSION
 from statik3d_contracts.coupling import GlobalFieldProvider
-from statik3d_contracts.detail import DetailModelSpec, DetailResult, FcmSettings, GeometrySourceType
+from statik3d_contracts.detail import DetailModelSpec, DetailResult, FcmSettings, GeometrySourceType, HotSpotResult
 from statik3d_contracts.discretization import DiscretizationKind
 from statik3d_contracts.model import Material, ResultKey
 from statik3d_contracts.nonlinear import AssemblyModelSpec, AssemblyResult, LoadPath, StepResult, SurfaceLoad, SurfaceSelector
@@ -32,6 +32,7 @@ from .geometry.csg import Csg, Operation, aus_params
 from .geometry.oberflaeche import Flaechenquadratur
 from .geometry.sdf import Halbraum
 from .postprocess.auswertung import von_mises
+from .postprocess.hotspot import Nahtpunkt, nahtgeometrie, strukturspannungen
 
 
 def _flaeche_waehlen(pr: FcmProblem, sel: SurfaceSelector, detail_id: str, last_id: str) -> Flaechenquadratur:
@@ -317,6 +318,30 @@ class FcmDiskretisierung:
         self.lasten_protokoll = lasten_protokoll or []
         self.loeserwahl: dict[str, Any] = {}
         self._oberflaeche: tuple[np.ndarray, np.ndarray] | None = None
+        self._naehte: list[tuple[Any, list[Nahtpunkt]]] | None = None
+        self.naht_warnungen: list[str] = []
+
+    def naehte(self) -> list[tuple[Any, list[Nahtpunkt]]]:
+        """Nahtgeometrie je WeldLine mit method 'hot_spot', einmal je Diskretisierung (haengt nur an der Geometrie).
+        Punkte ohne eindeutige Blechseite bleiben ohne Wert, ihre Gruende stehen in ``naht_warnungen``."""
+        if self._naehte is None:
+            self._naehte = []
+            for wl in self.spec.weld_lines:
+                if wl.method != "hot_spot":
+                    self.naht_warnungen.append(f"Naht {wl.id!r}: Verfahren {wl.method!r} ist nicht umgesetzt (nur 'hot_spot', "
+                                               f"IIW Typ a) - uebergangen")
+                    continue
+                try:
+                    q = nahtgeometrie(self.problem.geometrie, np.asarray(wl.points, float), float(wl.plate_thickness_mm))
+                except ValueError as ex:
+                    self.naht_warnungen.append(f"Naht {wl.id!r}: {ex}")
+                    continue
+                schlecht = [(i, x.warnung) for i, x in enumerate(q) if not x.ok]
+                if schlecht:
+                    self.naht_warnungen.append(f"Naht {wl.id!r}: {len(schlecht)} von {len(q)} Punkten ohne Strukturspannung, "
+                                               f"z. B. Punkt {schlecht[0][0]}: {schlecht[0][1]}")
+                self._naehte.append((wl, q))
+        return self._naehte
 
     def dof_count(self) -> int:
         return int(self.problem.gitter.n_dof)
@@ -496,10 +521,18 @@ class FcmSolver:
         # Auswertepunkte minimal in den Werkstoff ruecken, damit die Punktsuche eine aktive Zelle findet
         Pe = V - 1e-7 * pr.gitter.h * pr.geometrie.gradient(V) if len(V) else V
         ergebnisse: list[DetailResult] = []
+        # Rueckgewinnung fuer alle Keys in einem Aufruf: die rechten Seiten kosten je Aufruf eine Zellschleife (Block h 9,
+        # 10^6 FHG: 12 s), die weiteren Spalten fast nichts (Messung B2/B3, 30.09.2026)
+        X_alle = None
+        if _SPANNUNG_GEGLAETTET and len(Pe):
+            from .postprocess.rueckgewinnung import rueckgewinnung
+            X_alle = rueckgewinnung(pr).knoten(U)
         for k, key in enumerate(keys):
             if abbruch():
                 raise SolverCancelled("abgebrochen bei der Auswertung")
             aus = pr.auswertung(U[:, k])
+            if X_alle is not None:
+                aus.knoten_setzen(X_alle[:, :, k:k + 1])
             try:
                 if len(Pe):
                     s_e, u_e = aus.spannung_und_verschiebung(Pe)
@@ -509,6 +542,18 @@ class FcmSolver:
                     s_e, u_e = np.zeros((0, 6)), np.zeros((0, 3))
                 ebenen = []
                 warn: list[str] = list(disc.loeserwahl.get("warnungen", []))
+                # Strukturspannung am Nahtuebergang (IIW Typ a, Vorgabe 11.2) aus derselben Spannung wie stress
+                hot: list[HotSpotResult] = []
+                naht_protokoll: dict[str, Any] = {}
+                spannung_fn = aus.spannung_geglaettet if _SPANNUNG_GEGLAETTET else aus.spannung
+                for wl, q in disc.naehte():
+                    erg_n = strukturspannungen(q, spannung_fn, 1e-7 * pr.gitter.h)
+                    hot += [HotSpotResult(weld_line_id=wl.id, position=np.asarray(np_.position, float).copy(), stress=hs,
+                                          method="hot_spot IIW Typ a (0,4 t / 1,0 t, linear)") for np_, hs, _, _ in erg_n]
+                    naht_protokoll[wl.id] = {"punkte": len(q), "ohne_wert": len(q) - len(erg_n), "blechdicke_mm": float(wl.plate_thickness_mm),
+                                             "sigma_hs_max": max((hs for _, hs, _, _ in erg_n), default=None),
+                                             "sigma_04t": [s04 for _, _, s04, _ in erg_n], "sigma_10t": [s10 for _, _, _, s10 in erg_n]}
+                warn += disc.naht_warnungen
                 mg = getattr(pr, "_mehrgitter", None)
                 if pr.loeser == "mehrgitter" and mg is not None:
                     warn += [str(w) for w in mg.statistik.get("warnungen", [])]
@@ -552,13 +597,19 @@ class FcmSolver:
                               "geometry": spec_kurz(disc.spec), "t_solve_s": round(time.perf_counter() - t0, 3),
                               "loads": [dict(l) for l in disc.lasten_protokoll if l["load_case_id"] == key.load_case_id],
                               "solver_choice": dict(disc.loeserwahl),
+                              "hot_spot": {"verfahren": "IIW Typ a: Referenzpunkte 0,4 t und 1,0 t auf der Blechoberflaeche senkrecht zur "
+                                                        "Naht, sigma_hs = 5/3 sigma(0,4t) - 2/3 sigma(1,0t), Komponente senkrecht zur Naht",
+                                           "spannung": "geglaettet (L2-Projektion)" if _SPANNUNG_GEGLAETTET else "roh",
+                                           "naehte": naht_protokoll},
                               "stress_recovery": (dict(rg.statistik, ausgabe="geglaettet (L2-Projektion)")
                                                   if _SPANNUNG_GEGLAETTET and rg is not None else {"ausgabe": "roh (sigma = D B u)"}),
                               "body_load": None if disc.spec.body_load is None else np.asarray(disc.spec.body_load, float).reshape(3)})
             ergebnisse.append(DetailResult(detail_id=disc.subsystem_id, key=key, surface_points=V, surface_triangles=T,
                                            displacement=u_e, stress=s_e, von_mises=von_mises(s_e) if len(s_e) else np.zeros(0),
+                                           hot_spots=hot,
                                            coupling_check={"planes": ebenen}, warnings=warn, protocol=protokoll,
-                                           convergence=[{"cycle": 0, "dofs": int(pr.gitter.n_dof), "p": pr.p, "cells": int(len(pr.gitter.ijk))}]))
+                                           convergence=[{"cycle": 0, "dofs": int(pr.gitter.n_dof), "p": pr.p, "cells": int(len(pr.gitter.ijk)),
+                                                         "hotspot_max": max((h.stress for h in hot), default=None)}]))
             melden(f"Ergebnis {key.load_case_id}", 0.7 + 0.3 * (k + 1) / max(len(keys), 1))
         return ergebnisse
 

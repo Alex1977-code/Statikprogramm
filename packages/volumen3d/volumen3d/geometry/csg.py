@@ -101,6 +101,13 @@ def _mit_vorzeichen(k, vorzeichen: int, aus: list) -> None:
 Halbraeume = list[tuple[np.ndarray, np.ndarray]]      # (Punkt, Normale): behalte (x-p).n <= 0
 
 
+class BaumStuecke(list):
+    """Stueckliste aus dem Baumweg (Csg._baum_stuecke). Die Stuecke einer Vereinigung sind disjunkt, aber ein
+    Flaechenpolygon auf einer Form wird von den Stuecken der anderen Formen nicht geteilt - die Flaechenquadratur
+    zerlegt es darum an allen beteiligten Ebenen (geometry/oberflaeche.py)."""
+    baum = True
+
+
 def _schneiden(stuecke: list[Halbraeume], ebenen: Halbraeume) -> list[Halbraeume]:
     return [s + ebenen for s in stuecke]
 
@@ -258,7 +265,8 @@ class Csg:
         An den Probenpunkten wird ueber **alle** Grundformen geprueft, ob sich der
         Gesamtabstand als max(positive d_i, -d_j der Loecher) ("Schnitt minus Loecher") oder
         als min(positive d_i) (Vereinigung) rekonstruieren laesst; sonst None (Rueckfall
-        Punkttest). Die Stuecke bauen nur die **aktiven** Grundformen (|d(mitte)| <= r) aus
+        Punkttest - oder, wenn keins der beiden Muster passt, ueber den Baum selbst, siehe
+        _baum_stuecke). Die Stuecke bauen nur die **aktiven** Grundformen (|d(mitte)| <= r) aus
         ihren lokalen Ebenen (Tangentialebenen bei gekruemmten Formen): eine ferne Form
         schneidet die Kugel nicht, und wuerde sie die Kugel ganz ausschliessen, waere
         |d(mitte)| > r und die Teilbox schon vorher als innen/aussen erkannt.
@@ -324,7 +332,65 @@ class Csg:
                 stuecke += teil
                 bisher.append(teile)
             return stuecke, gekruemmt, aktive
-        return None
+        return self._baum_stuecke(mitte, r, proben, alle, d_m, d_alle, aktiv, d_ist, tol)
+
+    def _baum_stuecke(self, mitte, r, proben, alle, d_m, d_alle, aktiv, d_ist, tol):
+        """Stuecke ueber den CSG-Baum selbst, fuer verschachtelte Baeume, die keins der beiden flachen Muster
+        erfuellen - etwa eine Vereinigung, deren Teile Schnitte sind (Kehlnaht = Quader ∩ Halbraum am T-Stoss;
+        vorher fiel dort jedes Blatt auf den Punkttest erster Ordnung: 18 401 Blaetter, Volumen +0,13 %, Plan
+        TP 5 B3, 30.09.2026). Je Knoten: Schnitt schneidet die Stuecke der Kinder, Vereinigung haengt jedes Kind
+        ohne die vorigen an (disjunkt), Differenz zieht ab; eine inaktive Form (|d(mitte)| > r) ist die ganze
+        Kugel oder leer. Ohne gekruemmte aktive Form sind die Stuecke exakt und werden an den Proben gegen das
+        Vorzeichen des Gesamtabstands geprueft (Punkte naeher als tol an der Flaeche ausgenommen); scheitert
+        das, None (Rueckfall wie bisher)."""
+        info = {id(f): (float(dm), d, bool(a)) for (f, _), dm, d, a in zip(alle, d_m, d_alle, aktiv)}
+        aktive: list = []
+
+        def teile(k):
+            if isinstance(k, Operation):
+                kinder = [teile(t) for t in k.teile]
+                if any(c is None for c in kinder):
+                    return None
+                if k.op == "schnitt":
+                    acc: list[Halbraeume] = [[]]
+                    for c in kinder:
+                        acc = _mit_teilen_schneiden(acc, c)
+                    return acc
+                if k.op == "vereinigung":
+                    acc, bisher = [], []
+                    for c in kinder:
+                        t = list(c)
+                        for g in bisher:
+                            t = _teile_subtrahieren(t, g)
+                        acc += t
+                        bisher.append(c)
+                    return acc
+                acc = list(kinder[0])                       # differenz
+                for c in kinder[1:]:
+                    acc = _teile_subtrahieren(acc, c)
+                return acc
+            dm, d, a = info[id(k)]
+            if not a:
+                return [[]] if dm < 0 else []
+            if not any(k is f for f in aktive):             # Identitaet: Grundformen tragen Arrays, == waere elementweise
+                aktive.append(k)
+            return _form_teile(k, mitte, r, proben, d)
+
+        stuecke = teile(self.wurzel)
+        if stuecke is None:
+            return None
+        gekruemmt = any(f.gekruemmt for f in aktive)
+        if not gekruemmt and len(proben):
+            drin = np.zeros(len(proben), int)
+            for st in stuecke:
+                m = np.ones(len(proben), bool)
+                for p0, n0 in st:
+                    m &= (proben - p0) @ n0 <= tol
+                drin += m
+            klar = np.abs(d_ist) > tol
+            if np.any(drin[klar] != (d_ist[klar] < 0).astype(int)):
+                return None
+        return BaumStuecke(stuecke), gekruemmt, aktive
 
     def dreiecke(self, facette_mm: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Dreiecke aller Grundformen innerhalb des Huellquaders; quelle = Index in grundformen()."""

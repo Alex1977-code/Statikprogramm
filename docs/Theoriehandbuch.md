@@ -11372,6 +11372,24 @@ Nach der vorher festgelegten Regel wäre die Referenz Standard geblieben; der An
 Punkte erzeugt als die Referenz. `momentfitting=False` schaltet zurück; plastische Körper brauchen nach Vertrag 6a
 die Unterteilung (im Modul gibt es noch keine Plastizität).
 
+**Zeiten auf freier Maschine (30.09.2026, Commit efc9686, je Fall ein Prozess).** Referenzquadratur gegen Fitting an
+den Modellen der Messung A6, p 3; „gesamt“ ist hier Konstruktor plus Aufbau plus Lösen:
+
+| Modell | Freiheitsgrade | Quadraturpunkte | Konstruktor | Aufbau direkt / Mehrgitter | Gesamt direkt / Mehrgitter |
+|---|---|---|---|---|---|
+| Kirsch h 10, Versatz 0,3 | 229 830 | 2 126 504 → 169 545 | 6,7 → 9,4 s | 12,5 → 6,4 / 17,1 → 10,2 s | 25,7 → 22,1 / 26,1 → 22,7 s |
+| Kirsch h 8, Versatz 0,3 | 472 611 | 3 187 976 → 266 066 | 11,9 → 16,2 s | 21,1 → 12,0 / 26,1 → 16,8 s | 43,8 → 39,0 / 44,6 → 39,5 s |
+| Block h 14, Versatz 0,3 | 340 476 | 9 485 160 → 327 150 | 14,7 → 27,8 s | 37,9 → 9,4 / 41,9 → 13,3 s | 74,9 → 59,8 / 59,7 → 44,1 s |
+| Block h 9 | 967 992 | 24 551 712 → 972 601 | 33,7 → 67,4 s | 107,0 → 32,9 / 108,3 → 34,3 s | 323,4 → 277,2 / 148,7 → 108,9 s |
+
+Die Spannungen sind in allen acht Paaren auf die ausgegebenen vier Stellen gleich. Die Quadraturpunkte sinken um 92
+bis 96 %, der Aufbau wird 1,8- bis 4-mal schneller; ein Teil der Ersparnis wandert in den
+Konstruktor, der die Referenzintegration weiter braucht und daraus die Momente bildet (Block h 9: 34 → 67 s). Im
+Gesamtweg bleiben 11 bis 27 % Gewinn. Für das Leistungskriterium der Vorgabe 13 (Messung A6, Lesart b: Aufbau plus
+Lösen bei 10⁶ Freiheitsgraden) heißt das am Block 34,3 + 6,9 = 41,2 s statt 115 s – die Lesart b ist mit dem
+Fitting erfüllt, mit dem Konstruktor sind es 109 s. Der nächste Hebel ist der Konstruktor selbst (Momente ohne den
+Umweg über alle Referenzpunkte).
+
 **Befund am Rande: die Wurzelwahl der Aggregation hing an der Rundung.** Vor der Kur unterschieden sich die
 Lösungen mit und ohne Fitting am Lamé-Zylinder um 4·10⁻³ in den Randspannungen, obwohl alle Zellmatrizen auf
 10⁻¹³ gleich waren. Ursache: die Wurzel einer schlecht geschnittenen Zelle ist der wohlgestellte Nachbar mit dem
@@ -11434,6 +11452,65 @@ Nach der Regel ist die L²-Projektion seither die Ausgabe des Vertragswegs: `Det
 in `api.py` schaltet zurück. `Auswertung.spannung(P, geglaettet=True)` gibt die geglätteten Werte an beliebigen
 Punkten, die Rohwerte bleiben die Vorgabe dieser Funktion (Kopplungskontrolle, Schnittgrößen und alle bisherigen
 Abnahmen rechnen weiter mit ihnen). Kosten an den gemessenen Modellen bis 72 000 Freiheitsgrade: Aufbau von M
-0,02 bis 0,23 s, rechte Seiten 0,03 bis 0,6 s je Aufruf; an den großen Modellen wird auf freier Maschine
-nachgemessen.
+0,02 bis 0,23 s, rechte Seiten 0,03 bis 0,6 s je Aufruf. Auf freier Maschine mit Fitting (Commit efc9686):
+
+| Modell | freie skalare Moden | Aufbau von M | rechte Seiten | Auswertung an der Oberfläche |
+|---|---|---|---|---|
+| Kirsch h 10, Versatz 0,3 | 60 653 | 0,95 s | 1,68 s | 0,63 s (154 975 Punkte) |
+| Kirsch h 8, Versatz 0,3 | 95 528 | 1,57 s | 2,84 s | 0,76 s (223 725 Punkte) |
+| Block h 14, Versatz 0,3 | 88 428 | 1,29 s | 3,29 s | 0,90 s (277 275 Punkte) |
+| Block h 9 (10⁶ FHG) | 269 232 | 4,89 s | 12,95 s | 1,96 s (640 850 Punkte) |
+
+Ohne Fitting kosten die rechten Seiten 17 bis 204 s, weil sie über alle Referenzpunkte laufen. Die rechten Seiten
+sind eine Zellschleife, deren Kosten kaum von der Zahl der Lastfälle abhängen; der Vertragsweg berechnet sie darum
+seit B3 für alle Keys in einem Aufruf statt je Key.
+
+### 11.13 Teilprojekt 5: Strukturspannung am Nahtübergang nach IIW Typ a (30.09.2026)
+
+**Verfahren** (`postprocess/hotspot.py`, Vorgabe 11.2). Je Punkt der Nahtpolylinie (`WeldLine.points`, Nahtübergang)
+liegen die Referenzpunkte bei 0,4·t und 1,0·t auf der Blechoberfläche, senkrecht zur Naht; maßgebend ist
+σ_⊥ = d·σ·d mit d der Richtung auf dem Blech von der Naht weg, und σ_hs = 5/3·σ(0,4t) − 2/3·σ(1,0t) (die Beiwerte 1,67
+und 0,67 der IIW sind diese Brüche gerundet). Die Spannung ist dieselbe wie in `DetailResult.stress` (geglättet,
+11.12). Der Vertrag liefert nur die Polylinie und die Blechdicke; auf welcher Seite des Übergangs das Blech liegt,
+bestimmt die Geometrie: in der Ebene senkrecht zur Naht schneidet ein Kreis vom Radius 0,05·t um den Übergang die
+Oberfläche in zwei Ästen (Blech und Nahtoberfläche). Unter dem Blechast ist der Werkstoff längs der Innennormalen so
+tief wie das Blech dick (auf 20 %), unter der Nahtoberfläche tiefer – am T-Stoß mit Kehlnaht 45° und Schenkel 8
+sind es (0,7·t/√2 + t)·√2 = 21,1 mm, gemessen auf 4·10⁻¹⁴ mm. Passt kein oder beide Äste, oder sind die Äste
+gegenläufig (ebene Fläche, kein Knick), gibt es für diesen Punkt keinen Wert, sondern eine Warnung; geraten wird
+nicht. `method = "effective_notch"` wird mit Warnung übergangen. Der Vertragsweg füllt `DetailResult.hot_spots` je
+gültigem Nahtpunkt, das Protokoll nennt unter `hot_spot` Verfahren, Spannungsart und je Naht die Werte bei 0,4·t und
+1,0·t, `convergence` trägt `hotspot_max`.
+
+**Verschachtelte CSG-Bäume (Befund in B3).** Ein T-Stoß mit Kehlnähten ist eine Vereinigung, deren Teile Schnitte
+sind (Naht = Quader ∩ Halbraum). Die ebenen-exakte Zerlegung (11.3) kannte nur „Schnitt aller Formen minus
+Löcher“ und „Vereinigung aller Formen“; hier fiel jedes Blatt auf den Punkttest erster Ordnung (h 20: 18 401
+Blätter, Volumen +0,13 %, 2,6 Mio. Oberflächenpunkte, 61 s Konstruktor), und das exakt darstellbare Feld wich um
+3,7 % ab. Seither bildet `Csg._baum_stuecke` die lokalen Stücke über den Baum selbst: Schnitt schneidet die Stücke
+der Kinder, Vereinigung hängt jedes Kind ohne die vorigen an, Differenz zieht ab; ohne gekrümmte aktive Form werden
+die Stücke an den Proben gegen das Vorzeichen des Abstands geprüft (sonst Rückfall wie bisher). Die Flächenquadratur
+teilt ein Polygon auf diesem Weg an allen beteiligten Ebenen, bevor die Zeugenpunkte entscheiden – sonst fiel eine
+Grundblech-Oberseite, deren Schwerpunkt unter der Naht lag, ganz weg, und Stirnflächen wurden doppelt gezählt. Am
+T-Stoß auf drei Gittern: kein Punkttest-Blatt, Volumen exakt (133 200 mm³), alle sechs Flächen auf 3·10⁻¹², Konstruktor
+1,3 statt 61 s bei h 20. Die flachen Muster bleiben unverändert; alle übrigen Suiten sind grün geblieben.
+
+**Prüfungen.** (1) Synthetisches Feld linear in x auf dem T-Stoß: Blechseite an allen 18 Punkten richtig,
+Referenzpunkte auf 3·10⁻¹⁶ mm, σ_hs = σ_xx am Übergang auf 2·10⁻¹⁶. (2) Finite Zellen mit exakt darstellbarem
+Feld (u = (c x²/2, 0, 0), konstante Volumenkraft, Dirichlet überall, p 3): σ_hs trifft σ_xx am Übergang auf 1,6·10⁻⁷
+roh und 6,2·10⁻⁸ geglättet. (3) T-Stoß unter Zug σ_n = 100 N/mm² (Grundblech t 10, einseitiges Querblech 10 mm,
+beidseitige Kehlnähte, nicht tragend, Symmetrie x = 0 und y = 0):
+
+| | h 10 (316 827 FHG) | h 5 (1 832 523 FHG) |
+|---|---|---|
+| σ_xx fern der Naht (x 180), Ober-/Unterseite | 100,01 / 100,05 | 100,01 / 100,05 |
+| σ_hs an 18 Nahtpunkten | 98,75 bis 101,92 | 100,04 bis 101,97 |
+| Mittel rechts / links | 100,43 / 99,65 | 100,93 / 100,77 |
+| über die Dicke linearisiert, Schnitt x 113 (Oberseite) | 93,42 | 96,58 |
+
+Fernfeld und Konvergenz halten die vorher festgelegte Regel (1 % und 3 %, gemessen 0,05 % und 1,3 %). Die Spanne
+σ_n ≤ σ_hs ≤ 1,5·σ_n hält nicht: bei h 10 liegt der kleinste Wert 1,25 % unter σ_n. Die Annahme dahinter war, dass das
+Querblech die Strukturspannung nur erhöhen kann; die über die Dicke linearisierte Strukturspannung im Übergangsschnitt
+(93 bis 97 N/mm²) zeigt aber, dass die Oberseite dort örtlich entlastet wird – das einseitige Querblech hebt die
+Schwerachse, die Zugkraft greift darunter an und biegt die Oberseite zurück. σ_hs ≈ σ_n ist damit plausibel, aber
+nicht gegen eine unabhängige Referenz belegt; offen und Entscheidung des Anwenders (Plan TP 5).
+
 
