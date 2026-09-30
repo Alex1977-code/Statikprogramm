@@ -205,6 +205,33 @@ Mehrgitter gegen Direktlöser; der Abstand beider Wege wird den Posten zugeordne
 - Ziel: Quadraturpunkte mindestens um den Faktor 5 weniger bei gleicher Genauigkeit.
 - Prüfung: Patch-Tests < 10⁻⁶, Lamé und Kirsch auf 0,1 % wie vorher, Punktzahl und Aufbauzeit im Protokoll.
 
+**Vorgehen und Regeln, vor der Messung festgelegt (30.09.2026):**
+
+*Verfahren.* Neues Modul `fcm/momentfitting.py`; `Zellquadratur(momentfitting=..., fit_grad=q)`. Je Schnittzelle
+liefert die bisherige ebenen-exakte Integration die Referenzpunkte; daraus die Momente der Werkstoffdomäne in der
+Tensor-Legendre-Basis vom Grad q je Richtung (die 1D-Basis aus `fcm/basis.py`, sie spannt dieselben Polynome auf wie
+die Monome). Die gefittete Regel liegt auf den Tensor-Gauß-Punkten (q+1)³ der Zelle; ihre Gewichte lösen das
+Momentensystem exakt, und weil Punkte und Basis Tensorprodukte sind, zerfällt es in drei eindimensionale Lösungen
+(Kronecker-Struktur, gut konditioniert). Die fiktiven α-Punkte bleiben wie bisher (Tensor-Gauß (p+1)³ mit α).
+Wählt man q = 2p, sind alle Integranden der Zellsteifigkeit (Grad ≤ 2p je Richtung) mit der Regel exakt
+integriert, die Zellmatrix ist bis auf Rundung die der Referenz, und negative Gewichte können ihr nichts anhaben;
+für q < 2p ist das nicht gesichert. Negative Gewichte: bei q ≥ 2p werden sie hingenommen; sonst gilt eine Zelle als
+schlecht gefittet, wenn die negative Gewichtsmasse 1 % der positiven übersteigt – dann NNLS auf den Gauß-Punkten
+(q+2)³, und bleibt ein Residuum über 10⁻¹⁰ (relativ), fällt die Zelle auf die Referenzquadratur zurück. Die Statistik
+zählt gefittet / NNLS / Rückfall, das kleinste Gewicht, die negative Gewichtsmasse und die Punkte je Schnittzelle
+vorher und nachher. Der Schalter bleibt, weil plastische Körper nach Vertrag 6a die Unterteilung brauchen.
+
+*Messung.* q ∈ {p, p+1, p+2, 2p} an Patch (p 2 und 3), Lamé (p 2 und 3), Kirsch h 20 p 3 verfeinert (Versatz 0 und
+0,4), Kragarmsegment; Größen: Abweichung der Spannungen gegen die Referenzquadratur, K_t, Punkte je Schnittzelle,
+kleinster Eigenwert der Zellmatrizen, später (freie Maschine) die Zeit für Zelldaten und Assemblierung an Kirsch h 10
+und Block h 14. Dazu das lineare Feld auf der gekrümmten Kirsch-Geometrie vorher und nachher; Erwartung: unverändert,
+weil die Momente aus derselben Integration stammen wie bisher (dann steht das so im Handbuch).
+
+*Regel.* Vorgabe wird das kleinste q, bei dem die Patch-Tests unter 10⁻⁶ bleiben, Lamé- und Kirsch-Spannungen um
+höchstens 0,1 % von der Referenzquadratur abweichen und alle Zellmatrizen positiv semidefinit bleiben (kleinster
+Eigenwert ≥ −10⁻¹⁰ des größten). Die Punktzahl je Schnittzelle muss dabei mindestens um den Faktor 5 sinken; sonst
+bleibt die Referenzquadratur Standard und das Fitting ein Schalter.
+
 ### B2: Spannungsrückgewinnung (Vorgabe 11.1)
 - Superconvergent Patch Recovery oder L²-Projektion der Spannungen, ausgewertet an den Oberflächenpunkten.
 - Prüfung: Patch-Test exakt; Kirsch und Lamé an der Oberfläche näher an der Referenz als der Rohwert.
@@ -268,7 +295,7 @@ nachgetragen.
 | A4 h-Mehrgitter (nur wenn nötig) | Fable 5.1 | sehr hoch | hängende Knoten im Mehrgitter, höchstes Risiko | entfällt (Grobgitter 12 % des Lösens) |
 | A5 Streuung über Schnittlagen | Opus 5.5 | hoch | Ritz-Analyse und Glätterabstimmung | erledigt (f2bf8e7): α 100 (−20 bis −25 %); Vorgabe als erfüllt anerkannt |
 | A6 Leistungsabnahme, Löserwahl | Sonnet 5 | mittel | Messreihe nach festem Schema | erledigt: `auto` bleibt direkt; Lösen 10⁶ FHG 7–8 s, Aufbau + Lösen 62–115 s |
-| B1 Moment Fitting | Fable 5.1 | sehr hoch | Stabilität der Gewichte, Konsistenz Volumen/Rand | offen |
+| B1 Moment Fitting | Fable 5.1 | sehr hoch | Stabilität der Gewichte, Konsistenz Volumen/Rand | läuft: Verfahren und Regel festgelegt |
 | B2 Spannungsrückgewinnung | Opus 5.5 | hoch | bekanntes Verfahren, sorgfältige Umsetzung | offen |
 | B3 Hot-Spot IIW Typ a | Opus 5.5 | hoch | Geometrie der Referenzpunkte, Normbezug | offen |
 | B4 Konvergenzkurve, Protokoll | Sonnet 5 | mittel | überschaubar, baut auf B2/B3 | offen |
