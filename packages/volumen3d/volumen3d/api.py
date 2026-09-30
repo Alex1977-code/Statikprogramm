@@ -200,24 +200,34 @@ def _gpu_frei_mb() -> float:
 
 
 def _gpu_speicher_mb(n_zellen: int, n_cut: int, p: int, n_frei: int) -> float:
-    """Geschaetzte Spitze des GPU-Speichers beim Einrichten des Mehrgitters (MB).
+    """Geschaetzter Hoechststand des GPU-Speichers beim Einrichten des Mehrgitters (MB), wenn der Speicher
+    knapp ist (der Glaetteraufbau gibt den Pool dann nach jeder Groessengruppe frei).
 
-    Posten: Zellmatrizen der Schnittzellen (8 n_cut m3^2, m3 = 3 (p+1)^3), Glaetterbloecke der Ebenen p und
-    p-1 (Blockgroesse im Mittel 1,1 m3), die feine Matrix waehrend des Blockauszugs und die grobe Matrix
-    (12 Byte je Eintrag, 360 Eintraege je freier Koordinate, grob 16 % davon), Teilstapel und Arbeitsfelder
-    der Inversion 700 MB. Geeicht an acht Faellen (Kirsch h 14 bis 8, Block h 20 bis 14, 28.09.2026): die
-    Schaetzung liegt 2 bis 10 % ueber der gemessenen Spitze des Speicherpools (1,4 bis 5,3 GB). Die alte
-    Formel (Bloecke 1,2 m3, ohne Auszug und Arbeitsfelder) lag bis 50 % darunter; mit ihr lief die Karte bei
-    Kirsch h 8 ueber. Ohne freie Koordinaten (estimate vor dem Aufbau) gilt n_frei = n_dof als obere Schranke."""
+    Posten: Zellmatrizen der Schnittzellen und Glaetterbloecke der Ebenen p bis 2, beide symmetrisch gepackt
+    (8 Byte mal s (s + 1) / 2; Glaetterbloecke im Mittel 1,08 mal so gross wie die Zelle, gemessen 1,01 bis
+    1,07), die Matrizen der Ebenen p-1 bis 2 (die feine Matrix geht nicht auf die GPU), Indexfelder und Puffer
+    (24 Byte je Blockzeile), Vektoren, und 900 MB fuer Teilstapel und Arbeitsfelder der Inversion (gemessen
+    640 bis 860 MB). Geeicht an neun Faellen p 3 (Kirsch h 14 bis 8, Block h 20 bis 14, 65 000 bis 500 000
+    Freiheitsgrade, 29.09.2026): die Schaetzung liegt 3 bis 26 % ueber dem gemessenen Hoechststand (1,0 bis
+    2,8 GB; Pool und Karte auf 60 MB gleich). Vor dem Packen und mit der feinen Matrix auf der GPU waren es
+    1,4 bis 5,3 GB. p 2 und p 4 sind nicht gemessen. Ohne freie Koordinaten (estimate vor dem Aufbau) gilt
+    n_frei = n_dof als obere Schranke."""
+    def gepackt(s: float) -> float:
+        return 8.0 * s * (s + 1.0) / 2.0
+
     m3 = 3 * (p + 1) ** 3
-    k_cut = 8.0 * n_cut * m3 ** 2
+    k_cut = n_cut * gepackt(m3)
     # Glaetterbloecke auf den Ebenen p, p-1, ..., 2 (die Ebene 1 wird direkt geloest)
-    glaetter = sum(8.0 * n_zellen * (1.1 * 3 * (q + 1) ** 3) ** 2 for q in range(2, p + 1))
-    # Eintraege je Zeile der reduzierten Matrix: p 3 gemessen (310 bis 352 an acht Faellen, angesetzt 360);
-    # p 1, 2, 4 aus der Kopplung im gleichmaessigen Gitter (81, 192, 648; Gutachten 28.09.2026), ungemessen
-    je_zeile = {1: 81.0, 2: 192.0, 3: 360.0, 4: 648.0}.get(p, 648.0 * ((p + 1) / 5.0) ** 3)
-    matrix = 12.0 * je_zeile * n_frei * 1.16
-    return (k_cut + glaetter + matrix) / 1e6 + 700.0
+    stufen = [3 * (q + 1) ** 3 for q in range(2, p + 1)]
+    glaetter = n_zellen * sum(gepackt(1.08 * sq) for sq in stufen)
+    # Eintraege je Zeile: p 3 gemessen (310 bis 352 an acht Faellen, angesetzt 360); p 1, 2, 4 aus der Kopplung
+    # im gleichmaessigen Gitter (81, 192, 648; Gutachten 28.09.2026). Die Ebene q hat rund (q/p)^3 der freien
+    # Koordinaten; gemessen p 3 -> 2: 48 bis 54 Eintraege je feiner freier Koordinate, angesetzt 57
+    je_zeile = {1: 81.0, 2: 192.0, 3: 360.0, 4: 648.0}
+    matrizen = sum(12.0 * je_zeile.get(q, 648.0 * ((q + 1) / 5.0) ** 3) * n_frei * (q / p) ** 3 for q in range(2, p))
+    index = 24.0 * n_zellen * (m3 + 1.08 * sum(stufen))
+    vektoren = 100.0 * n_frei
+    return (k_cut + glaetter + matrizen + index + vektoren) / 1e6 + 900.0
 
 
 # Reserve auf die Schaetzung gegen den freien GPU-Speicher (andere Anwendungen, Fragmentierung)

@@ -98,6 +98,9 @@ Kirsch-Scheibe, 65 000 bis 497 000 Freiheitsgrade) war er in 20 Fällen schnelle
 erzwingt das Mehrgitter auf der Grafikkarte, mit Rückfall auf den Direktlöser bei fehlender GPU, zu wenig
 Speicher oder jedem GPU-Fehler; `"cpu"` rechnet direkt. Vorher behoben: Nullraumerkennung größenunabhängig
 und auch mit Schnittebenen, Aggregationswurzeln höchstens zwei Zellen entfernt und Aggregationsschwelle
-0,4, GPU-Speicher in Teilstapeln und richtig geschätzt. `summary()` und Protokoll nennen den Weg
+0,4, GPU-Speicher in Teilstapeln und richtig geschätzt. Seit dem 30.09.2026 (Plan Teilprojekt 5, A3) liegen Zellmatrizen und
+Glätterblöcke symmetrisch gepackt auf der Grafikkarte, und die feine Matrix bleibt auf der CPU: Modelle mit
+einer Million Freiheitsgraden rechnen mit 4,4 bis 4,8 GB auf der 8-GB-Karte (vorher 10,8 bis 12,2 GB
+geschätzt), in 29 bis 36 Iterationen und mit denselben Ergebnissen wie der Direktlöser. `summary()` und Protokoll nennen den Weg
 (`solver_path`, `backend`, `solver_choice`); für das Hauptprogramm ändert sich an der Schnittstelle nichts. Offen aus Teilprojekt 2: der schnelle Windungszahl-Baum für STL-Netze
 über 10⁵ Facetten (Teilprojekt 5) und die Vierteilung der Randpolygone an gekrümmten Formen.

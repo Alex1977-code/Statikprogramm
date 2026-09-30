@@ -240,46 +240,62 @@ def test_problem_gpu():
 
 
 def test_gpu_speicher():
-    """Die Speicherschaetzung der Vertragsschicht deckt die gemessene Spitze beim Einrichten und liegt hoechstens
-    30 % darueber; nach dem Einrichten hat das Mehrgitter alles Freigebbare zurueckgegeben: ein weiteres
-    free_all_blocks() gibt nichts mehr frei (was bleibt, ist Fragmentierung teilbelegter Speicherstuecke, gemessen
-    212 bis 343 MB bei 1,3 bis 1,4 GB Spitze; ohne Freigabe hielt der Pool 806 MB).
+    """Die Speicherschaetzung der Vertragsschicht deckt den gemessenen Hoechststand beim Einrichten und liegt
+    hoechstens 30 % darueber. Gemessen wird im knappen Betrieb (Freigabe des Pools nach jeder Groessengruppe
+    erzwungen), fuer den die Schaetzung gilt; der Hoechststand des Pools wird gegen die Karte selbst geprueft
+    (freier Speicher, alle 10 ms abgetastet, Abweichung unter 150 MB).
 
-    Befund 28.09.2026: die alte Schaetzung lag bis 50 % unter der Spitze (Kirsch h 8: 4,7 gegen 7,3 GB), weil
-    die ganze Groessengruppe auf einmal invertiert wurde und Auszug und Arbeitsfelder fehlten; mehrere Details
-    in einem Prozess sammelten sich im Pool, bis die 8-GB-Karte auslagerte (1,5 s statt 0,13 s je Iteration).
-    Die Spitze ist pool.total_bytes() nach dem Einrichten in einem frischen Pool (er gibt nichts von selbst
-    zurueck), unabhaengig von der Statistik des Mehrgitters gelesen."""
+    Befunde: 28.09.2026 lag die alte Schaetzung bis 50 % unter der Spitze (Kirsch h 8: 4,7 gegen 7,3 GB), mehrere
+    Details in einem Prozess sammelten sich im Pool, bis die 8-GB-Karte auslagerte. 29.09.2026 (A3, Plan TP 5):
+    Zellmatrizen und Blockinversen symmetrisch gepackt, feine Matrix nicht mehr auf der GPU - Kirsch h 12 V 0,6
+    1549 statt 2172 MB Hoechststand, belegt 690 statt 1251 MB; die Schranke 'belegt' unten haelt das fest."""
     from volumen3d.fcm.operator_gpu import verfuegbar
     if not verfuegbar():
         check("GPU/CuPy nicht verfuegbar - GPU-Pruefungen uebersprungen", True)
         return
+    import threading
     import cupy
     from volumen3d.api import _gpu_speicher_mb
+    from volumen3d.fcm import mehrgitter as mg_modul
     from volumen3d.fcm.gitter import Verfeinerung
-    from volumen3d.fcm.mehrgitter import PMehrgitter
     from volumen3d.tests.test_kirsch import D, T, _platte
     pool = cupy.get_default_memory_pool()
-    for h, vers in ((14.0, 0.0), (12.0, 0.6)):
-        v = Verfeinerung(bereiche=((np.array([0.0, 0.0, T / 2]), D / 2 + 10.0, h / 4),))
-        pr = _platte(3, h, versatz=vers, verfeinerung=v)
-        pr.loeser = "pcg"
-        pr.aufbauen()
-        g = pr.gitter
-        schaetzung = _gpu_speicher_mb(len(g.ijk), int((g.klasse == 2).sum()), 3, int(pr.zwaenge.C.shape[1]))
-        pool.free_all_blocks()
-        vorher = pool.total_bytes()
-        mg = PMehrgitter(pr, geraet="gpu")
-        spitze = (mg.statistik["gpu_spitze_mb"] * 1e6 - vorher) / 1e6
-        rest = (pool.total_bytes() - pool.used_bytes()) / 1e6
-        pool.free_all_blocks()
-        rest_danach = (pool.total_bytes() - pool.used_bytes()) / 1e6
-        check(f"Kirsch h {h} Versatz {vers}: Schaetzung {schaetzung:.0f} MB >= Spitze {spitze:.0f} MB und <= 1,3 x Spitze; "
-              f"danach nichts mehr freizugeben", spitze <= schaetzung <= 1.3 * spitze and rest - rest_danach < 1.0,
-              f"Verhaeltnis {schaetzung / spitze:.2f}, belegt {mg.statistik['gpu_belegt_mb']:.0f} MB, zwischengespeichert {rest:.1f} MB, "
-              f"nach weiterer Freigabe {rest_danach:.1f} MB")
-        del mg, pr
-        pool.free_all_blocks()
+    reserve_alt = mg_modul._FREI_RESERVE_BYTES
+    try:
+        mg_modul._FREI_RESERVE_BYTES = 1e15
+        for h, vers, belegt_max in ((14.0, 0.0, 400.0), (12.0, 0.6, 800.0)):
+            v = Verfeinerung(bereiche=((np.array([0.0, 0.0, T / 2]), D / 2 + 10.0, h / 4),))
+            pr = _platte(3, h, versatz=vers, verfeinerung=v)
+            pr.loeser = "pcg"
+            pr.aufbauen()
+            g = pr.gitter
+            schaetzung = _gpu_speicher_mb(len(g.ijk), int((g.klasse == 2).sum()), 3, int(pr.zwaenge.C.shape[1]))
+            pool.free_all_blocks()
+            vorher = pool.total_bytes()
+            frei0 = cupy.cuda.runtime.memGetInfo()[0]
+            kleinstes, laeuft = [frei0], [True]
+
+            def abtasten():
+                while laeuft[0]:
+                    kleinstes[0] = min(kleinstes[0], cupy.cuda.runtime.memGetInfo()[0])
+                    time.sleep(0.01)
+
+            faden = threading.Thread(target=abtasten, daemon=True)
+            faden.start()
+            mg = mg_modul.PMehrgitter(pr, geraet="gpu")
+            laeuft[0] = False
+            faden.join()
+            spitze = (mg.statistik["gpu_spitze_mb"] * 1e6 - vorher) / 1e6
+            karte = (frei0 - kleinstes[0]) / 1e6
+            belegt = mg.statistik["gpu_belegt_mb"] - vorher / 1e6
+            check(f"Kirsch h {h} Versatz {vers}: Schaetzung {schaetzung:.0f} MB >= Hoechststand {spitze:.0f} MB und <= 1,3 x; "
+                  f"Pool und Karte gleich (< 150 MB); belegt {belegt:.0f} MB < {belegt_max:.0f} MB",
+                  max(spitze, karte) <= schaetzung <= 1.3 * spitze and abs(karte - spitze) < 150.0 and belegt < belegt_max,
+                  f"Verhaeltnis {schaetzung / spitze:.2f}, Karte {karte:.0f} MB")
+            del mg, pr
+            pool.free_all_blocks()
+    finally:
+        mg_modul._FREI_RESERVE_BYTES = reserve_alt
 
 
 def test_schwarz_grosse_bloecke_gpu():
@@ -306,5 +322,108 @@ def test_schwarz_grosse_bloecke_gpu():
           f < 1e-10 and dt < 1.5, f"Abweichung {f:.1e}, Einrichten {dt:.2f} s")
 
 
+def test_gepackte_bloecke():
+    """Gepackte symmetrische Bloecke (fcm/bloecke_gpu.py) gegen eine unabhaengige numpy-Rechnung
+    z[I_k] += skala_k X_k v[I_k] mit vollen Matrizen. Der Fall deckt ab: Groessen 1, 81, 192 und 211, drei
+    Bloecke ueber 256 Zeilen (in Auftraege zerlegt: 700, 257 und 1030), zwanzig Bloecke, die sich eine Matrix mit
+    verschiedener Skala teilen (wie die INSIDE-Zellen des Operators), und Ziele ohne Block. Erwartet: Abweichung
+    < 1e-13, zwei Anwendungen bitgleich (Einsammeln in fester Reihenfolge), Matrixspeicher s (s + 1) / 2 je Block."""
+    from volumen3d.fcm.operator_gpu import verfuegbar
+    if not verfuegbar():
+        check("GPU/CuPy nicht verfuegbar - GPU-Pruefungen uebersprungen", True)
+        return
+    import cupy
+    from volumen3d.fcm.bloecke_gpu import GepackteBloecke, dreieck, gepackte_laenge
+    rng = np.random.default_rng(21)
+    n = 9000
+    groessen = np.array([1] * 3 + [81] * 40 + [192] * 30 + [211] * 10 + [700, 257, 1030] + [192] * 20)
+    n_eigen = len(groessen) - 20
+    index, voll, gepackt, start_x, pos = [], [], [], [], 0
+    for k, sk in enumerate(groessen):
+        index.append(np.sort(rng.choice(n - 50, int(sk), replace=False)))          # die letzten 50 Ziele bleiben leer
+        if k < n_eigen:
+            M = rng.standard_normal((sk, sk))
+            Xk = M + M.T
+            il, jl = dreieck(int(sk))
+            gepackt.append(Xk[il, jl])
+            start_x.append(pos)
+            pos += len(il)
+        else:                                                                       # geteilte Matrix: die des ersten 192er-Blocks
+            Xk = voll[43]
+            start_x.append(start_x[43])
+        voll.append(Xk)
+    skala = np.concatenate([np.ones(n_eigen), 0.5 ** rng.integers(0, 4, 20)])
+    X = cupy.asarray(np.concatenate(gepackt))
+    gb = GepackteBloecke(n, groessen, np.concatenate(index), X, np.array(start_x), skala)
+    v = rng.standard_normal(n)
+    z_ref = np.zeros(n)
+    for k in range(len(groessen)):
+        z_ref[index[k]] += skala[k] * (voll[k] @ v[index[k]])
+    vg = cupy.asarray(v)
+    z1 = gb.anwenden(vg)
+    z2 = gb.anwenden(vg)
+    f = float(np.abs(cupy.asnumpy(z1) - z_ref).max() / np.abs(z_ref).max())
+    n_auftraege = sum(a for _, a, _ in gb.auftraege)
+    erwartet_auftraege = len(groessen) - 3 + 3 + 2 + 5                              # 700 -> 3, 257 -> 2, 1030 -> 5
+    speicher = int(gepackte_laenge(groessen[:n_eigen]).sum()) * 8
+    check("gepackte Bloecke = volle Rechnung mit numpy (< 1e-13), bitgleich wiederholbar, grosse Bloecke in Auftraegen",
+          f < 1e-13 and bool((z1 == z2).all()) and n_auftraege == erwartet_auftraege and int(X.nbytes) == speicher
+          and float(cupy.abs(z1[n - 50:]).max()) == 0.0,
+          f"Abweichung {f:.1e}, {n_auftraege} Auftraege fuer {len(groessen)} Bloecke, Matrixspeicher {X.nbytes / 1e6:.1f} MB "
+          f"(voll waeren {sum(int(g) ** 2 for g in groessen[:n_eigen]) * 8 / 1e6:.1f} MB)")
+
+
+def test_million_gpu():
+    """Eine Million Freiheitsgrade auf der 8-GB-Karte (Plan TP 5, A3; Vorgabe 13 Performance): Kirsch-Scheibe h 5,5
+    p 3 verfeinert (1 002 528 Freiheitsgrade, 10 962 Zellen, 9 600 geschnitten) mit dem GPU-Mehrgitter im knappen
+    Speicherbetrieb. Erwartet: Hoechststand des Pools unter 5,5 GB und unter der Schaetzung der Vertragsschicht
+    (diese hoechstens 30 % darueber), Iterationen unter 100, und die Spannung sigma_x am Lochrand wie am 30.09.2026
+    gegen den Direktloeser bestaetigt (Mehrgitter 307,5662 N/mm2, Abweichung zum Direktloeser 1,6e-12; die
+    Verschiebungen unterscheiden sich um die freie z-Bewegung, die der Direktloeser beliebig festlegt). Vor dem
+    Packen der Zellmatrizen und Blockinversen haette dieses Modell 12,2 GB gebraucht. Laeuft nur, wenn die Karte
+    mindestens 6,5 GB frei hat; braucht rund 16 GB Hauptspeicher und 90 s."""
+    from volumen3d.fcm.operator_gpu import verfuegbar
+    if not verfuegbar():
+        check("GPU/CuPy nicht verfuegbar - GPU-Pruefungen uebersprungen", True)
+        return
+    import cupy
+    frei = cupy.cuda.runtime.memGetInfo()[0] / 1e6
+    if frei < 6500:
+        check(f"GPU hat nur {frei:.0f} MB frei - Millionenmodell uebersprungen", True)
+        return
+    from volumen3d.api import _gpu_speicher_mb
+    from volumen3d.fcm import mehrgitter as mg_modul
+    from volumen3d.fcm.gitter import Verfeinerung
+    from volumen3d.tests.test_kirsch import D, S0, T, _platte
+    pool = cupy.get_default_memory_pool()
+    reserve_alt = mg_modul._FREI_RESERVE_BYTES
+    try:
+        mg_modul._FREI_RESERVE_BYTES = 1e15
+        t0 = time.perf_counter()
+        h = 5.5
+        v = Verfeinerung(bereiche=((np.array([0.0, 0.0, T / 2]), D / 2 + 10.0, h / 4),))
+        pr = _platte(3, h, versatz=0.0, verfeinerung=v)
+        pr.loeser, pr.backend, pr.toleranz = "mehrgitter", "gpu", 1e-12
+        g = pr.gitter
+        schaetzung = _gpu_speicher_mb(len(g.ijk), int((g.klasse == 2).sum()), 3, int(pr.zwaenge.C.shape[1]))
+        pool.free_all_blocks()
+        vorher = pool.total_bytes() / 1e6
+        pr.aufbauen()
+        st = pr._mehrgitter.statistik
+        spitze = st["gpu_spitze_mb"] - vorher
+        U = pr.loesen({})[:, 0]
+        it = pr.protokoll["iterationen"][0]
+        sx = float(pr.auswertung(U).spannung(np.array([[0.0, D / 2 + 1e-6, T / 2]]))[0, 0])
+        f = abs(sx - 307.5662) / 307.5662
+        check(f"Kirsch h 5,5 p 3 ({g.n_dof} Freiheitsgrade): Hoechststand {spitze:.0f} MB < 5500 und <= Schaetzung {schaetzung:.0f} MB <= 1,3 x; "
+              f"{it} Iterationen < 100; sigma_x {sx:.4f} wie gegen den Direktloeser bestaetigt (< 5e-7)",
+              g.n_dof == 1_002_528 and spitze < 5500 and spitze <= schaetzung <= 1.3 * spitze and it < 100 and f < 5e-7,
+              f"belegt {st['gpu_belegt_mb'] - vorher:.0f} MB, Abweichung sigma_x {f:.1e}, {time.perf_counter() - t0:.0f} s")
+        del pr, U
+        pool.free_all_blocks()
+    finally:
+        mg_modul._FREI_RESERVE_BYTES = reserve_alt
+
+
 if __name__ == "__main__":
-    sys.exit(lauf([test_operator_gpu, test_pcg_gpu, test_gross_gpu, test_mehrgitter_gpu, test_mehrgitter_auf_gpu_eingerichtet, test_problem_gpu, test_gpu_speicher, test_schwarz_grosse_bloecke_gpu]))
+    sys.exit(lauf([test_gepackte_bloecke, test_operator_gpu, test_pcg_gpu, test_gross_gpu, test_mehrgitter_gpu, test_mehrgitter_auf_gpu_eingerichtet, test_problem_gpu, test_gpu_speicher, test_schwarz_grosse_bloecke_gpu, test_million_gpu]))

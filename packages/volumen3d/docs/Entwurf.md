@@ -759,6 +759,18 @@ Plan: `docs/plaene/2026-09-28-tp4-mehrgitter.md`. Messlatte aus Teilprojekt 3: J
   Direktlöser in 20 von 23 Fällen schneller (Summe 519 gegen 564 s); `"auto"` wählt darum den Direktlöser,
   `"gpu"` erzwingt das Mehrgitter, der Schwellenmechanismus ist abgeschaltet (`_AUTO_MEHRGITTER`). Nächster
   Hebel: Aufbau des iterativen Wegs (2–20 s länger als Assemblieren und Faktorisieren).
+- **Plan TP 5, A1/A2 (29.09.2026):** Aufbau vermessen (zwei Skripte, 10 % gleich): kein Doppelaufwand
+  zwischen Zelldaten und Assemblieren; große Glätterblöcke (> 320) einzeln invertiert (Block der Größe 2463:
+  8,6 → 0,17 s), Nachbarsuche der Aggregation und Probepunkte der hängenden Zwänge in einem Aufruf
+  (Konstruktor Kirsch h 8: 23 → 12 s). Mehrgitter einrichten überall < 4,5 s, Block h 14 Gesamtweg 58 gegen
+  75 s direkt.
+- **Plan TP 5, A3 (30.09.2026):** `fcm/bloecke_gpu.py` – symmetrisch gepackte Blöcke mit zweiteiligem Kern
+  (Faden je Zeile für die untere, Warp je Spalte für die gespiegelte Hälfte), Aufträge zu 256 Zeilen,
+  Einsammeln über die Inzidenz (bitgleich wiederholbar); Operator und Schwarz-Glätter nutzen ihn.
+  Blockauszug auf der CPU, Pool-Freigabe je Größengruppe bei < 2 GB frei. 10⁶ Freiheitsgrade: Block h 9
+  4 425 MB Höchststand, 29 Iterationen, wie direkt auf 2,8·10⁻¹⁴; Kirsch h 5,5 4 822 MB, 36 Iterationen,
+  Spannungen wie direkt auf 1,6·10⁻¹² (vorher 10,8 bzw. 12,2 GB geschätzt). Schätzung der Vertragsschicht neu
+  geeicht (3–26 % über dem Höchststand). A4 (h-Mehrgitter) entfällt: Grobgitter 12 % des Lösens.
 - Fünf Schnittlagen Kirsch h 10 p 3 verfeinert (128 724 bis 199 095 freie Koordinaten), GPU FP64:
   81 / 125 / 112 / 129 / 59 Iterationen, GPU-PCG 8,6 bis 21 s, K_t identisch mit dem Direktlöser;
   Direktlöser (Lösen nach der Faktorisierung) 7 bis 25 s. Einrichten auf der CPU: Zelldaten 17–24 s,

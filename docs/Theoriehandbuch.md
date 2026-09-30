@@ -11109,3 +11109,63 @@ Lohnen wird sich die GPU auf dieser Karte erst mit einem schnelleren Aufbau des 
 dauert 2 bis 20 s länger als Assemblieren und Faktorisieren; das Lösen selbst ist auf der GPU beim Block
 ab 186 000 Freiheitsgraden 3- bis 6-mal schneller, darunter 0,5- bis 2,6-mal.
 
+**Aufbau vermessen und beschleunigt (Plan TP 5, A1 und A2, 29.09.2026).** Zwei unabhängige Messskripte – eines
+liest die im Code eingebauten Zeitwerte, eines hängt Zeitmesser mit GPU-Synchronisation von außen um die
+Funktionen – stimmen in acht Läufen auf 10 % überein. Ergebnis: Zellintegration und Matrix kosten auf dem
+iterativen Weg nicht mehr als das Assemblieren (die vermutete doppelte Arbeit gibt es nicht); der Nachteil des
+Mehrgitters kam aus zwei anderen Quellen. Erstens kostete beim Block h 14 ein einzelner Glätterblock der Größe
+2 463 in der gestapelten Inversion von CuPy 8,6 s (cuBLAS getrfBatched ist für viele kleine Blöcke gebaut und
+wächst für große schlechter als s⁴: s 256, 20 Blöcke gestapelt 0,014 s, einzeln 0,026 s; s 400 0,043 gegen
+0,016 s; s 2 463 8,57 gegen 0,17 s); Blöcke über 320 werden seither einzeln invertiert, auf der CPU mit LAPACK
+im Hauptfaden statt in der numba-Cholesky. Zweitens suchten die Aggregation ihre 26 Nachbarn und der
+Zwangsauflöser seine 98 Probepunkte je feiner Zelle einzeln (81 380 Aufrufe der Punktsuche, 12 s von 23 s
+Konstruktor bei Kirsch h 8); beide werden jetzt in einem Aufruf gesucht, Zwangsmatrix und Wurzeln sind an fünf
+Modellen bitgleich. Danach: Einrichten des Mehrgitters in allen vier Fällen unter 4,5 s (Block h 14: 20,8 →
+3,8 s), Konstruktor bei den verfeinerten Gittern 40 bis 50 % kürzer (Kirsch h 8: 23,1 → 11,8 s), Gesamtweg am
+Block h 14 Mehrgitter 58,1 s gegen direkt 74,7 s.
+
+**Eine Million Freiheitsgrade auf der 8-GB-Karte (Plan TP 5, A3, 30.09.2026).** Nach alter Bauart hätten die
+Modelle um 10⁶ Freiheitsgrade 10,8 bis 12,2 GB GPU-Speicher gebraucht: Zellmatrizen der Schnittzellen
+(295 KB je Zelle bei p 3), Glätterblöcke (rund 350 KB je Zelle für die Ebenen 3 und 2) und die feine Matrix
+für den Blockauszug (3,4 bis 4,2 GB). Drei Maßnahmen, alle in FP64 und ohne Änderung der Rechnung (FP32 im
+Glätter divergierte schon einmal, siehe oben): (1) Zellmatrizen und Blockinversen liegen symmetrisch gepackt
+auf der GPU, nur das untere Dreieck, spaltenweise – die Hälfte. Ein Faden je Zeile, der das Dreieck über die
+Symmetrie ergänzt, liest die gespiegelte Hälfte längs seiner eigenen Spalte, und 32 Fäden eines Warps greifen
+dann auf 32 verschiedene Speicherzeilen zu: 4 000 Blöcke der Größe 192 brauchten 8,7 ms statt 3,1 ms. Der Kern
+rechnet darum in zwei Teilen: die untere Hälfte mit einem Faden je Zeile (für festes b lesen die Fäden a ≥ b
+aufeinanderfolgende Adressen der Spalte b), die gespiegelte Hälfte mit einem Warp je Spalte als Skalarprodukt
+längs der Spalte mit Summe über den Warp; damit 3,3 ms bei halbem Speicher, der Operator bei 229 608
+Freiheitsgraden 1,9 statt 3,1 ms je Anwendung. Große Blöcke werden in Aufträge von höchstens 256 Zeilen
+zerlegt; eingesammelt wird über die Inzidenz in fester Reihenfolge, die Anwendung ist damit bitgleich
+wiederholbar (das Aufaddieren mit atomaren Additionen war es nicht). Derselbe Kern dient Operator und Glätter
+(`fcm/bloecke_gpu.py`). (2) Der Blockauszug läuft auf der CPU in Teilstapeln, die feine Matrix geht nicht mehr
+auf die GPU; das kostet am Block h 14 0,64 statt 0,48 s. (3) Der Speicherpool wird nach jeder Größengruppe
+des Glätters freigegeben, sobald die Karte weniger als 2 GB frei hat – unter Windows meldet sie keinen Mangel,
+sondern lagert aus (1,5 statt 0,13 s je Iteration); die Freigabe kostet bei 33 Gruppen rund 1 s und senkt den
+Höchststand um 200 bis 750 MB (Block h 14: 2 295 → 2 094 MB, Kirsch h 8: 3 311 → 2 689 MB, bei 10⁶: 5 158 →
+4 425 und 5 574 → 4 822 MB). Gemessen (freie Maschine, je Fall ein Prozess; Höchststand des Pools, die
+Karte selbst liegt 50 bis 80 MB darüber, alle 10 ms abgetastet):
+
+| Kirsch p 3 | Freiheitsgrade | Höchststand vorher | Höchststand jetzt (knapp) | belegt vorher → jetzt |
+|---|---|---|---|---|
+| h 14, Versatz 0 | 81 183 | 1 340 MB | 967 MB | 581 → 328 MB |
+| h 12, Versatz 0,6 | 172 128 | 2 172 MB | 1 549 MB | 1 251 → 690 MB |
+| h 8, Versatz 0,3 | 472 611 | 5 189 MB | 2 689 MB | 3 503 → 1 924 MB |
+| h 5,5, Versatz 0 | 1 002 528 | – (12,2 GB geschätzt) | 4 822 MB | 4 066 MB |
+| Block h 9, Versatz 0 | 967 992 | – (10,8 GB geschätzt) | 4 425 MB | 3 673 MB |
+
+Bei den beiden Modellen um 10⁶ Freiheitsgrade braucht das Mehrgitter 29 (Block) und 36 (Kirsch) Iterationen
+und löst in 9,0 bzw. 11,1 s; der Direktlöser braucht am Block 46 GB Hauptspeicher und 169 s (Kirsch, dünn:
+27 GB, 36 s). Die Ergebnisse stimmen überein: am Block Verschiebungen an 3 000 Punkten auf 2,8·10⁻¹⁴,
+Spannungen auf 5,8·10⁻¹³; an der Kirsch-Scheibe Spannungen auf 1,6·10⁻¹², die Verschiebungen unterscheiden
+sich um die freie z-Bewegung, die das Mehrgitter herausprojiziert und der Direktlöser beliebig festlegt.
+Ist der Speicher nicht knapp, hält der Pool die Zwischenstücke fest, und der Höchststand liegt höher (Block
+5 158 MB, Kirsch 5 574 MB) – unschädlich, weil dann Platz ist. Anteile am Lösen bei 10⁶: gepackte Blöcke
+(Operator und Glätter) 69 %, Grobgitter p = 1 auf der CPU 12 % – das Grobgitter ist kein Engpass, ein
+h-Mehrgitter darunter (Plan A4) entfällt. Die Schätzung der Vertragsschicht ist neu geeicht (gepackte
+Posten, Matrizen der Ebenen p−1 bis 2, Indexfelder, 900 MB Arbeitsfelder) und liegt an elf Fällen von 81 000
+bis 1 000 000 Freiheitsgraden 3 bis 26 % über dem Höchststand im knappen Betrieb (10⁶: 7 bis 8 %).
+Gegenprobe: der Höchststand der Karte (alle Prozesse) lag in einem Lauf 683 MB über dem Pool, in den
+Wiederholungen 50 bis 80 MB – der Unterschied kam von anderen Programmen auf der Karte, deren Belegung
+zwischen 1,15 und 1,42 GB schwankte.
+

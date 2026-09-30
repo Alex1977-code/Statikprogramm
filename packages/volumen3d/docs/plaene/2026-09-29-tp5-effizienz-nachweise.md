@@ -93,6 +93,24 @@ A3 ändert den Umgang mit der feinen Matrix ohnehin, der Punkt wandert dorthin.
 - Ziel: 10⁶ Freiheitsgrade p 3 mit Spitze unter 7 GB, Iterationen unter 100, Ergebnis wie CPU auf 10⁻⁶.
 - Prüfung: `test_gpu_speicher` um den neuen Fall erweitert, Schätzformel neu geeicht.
 
+**Ergebnis A3 (30.09.2026).** Symmetrisch gepackte Blöcke mit zweiteiligem Kern (`fcm/bloecke_gpu.py`, halber
+Speicher in FP64, gleich schnell wie vorher, bitgleich wiederholbar), Blockauszug auf der CPU, Pool-Freigabe je
+Größengruppe bei knapper Karte; Schätzung neu geeicht. Höchststand des Pools im knappen Betrieb (Karte 50 bis 80 MB
+darüber), Iterationen und Vergleich mit dem Direktlöser:
+
+| Modell | Freiheitsgrade | Höchststand | belegt | Schätzung | Iterationen | Lösen GPU | gegen direkt |
+|---|---|---|---|---|---|---|---|
+| Block h 9, V 0 | 967 992 | 4 425 MB | 3 673 MB | 4 719 MB | 29 | 9,0 s | u 2,8·10⁻¹⁴, σ 5,8·10⁻¹³ (direkt 46 GB, 169 s) |
+| Kirsch h 5,5, V 0 | 1 002 528 | 4 822 MB | 4 066 MB | 5 227 MB | 36 | 11,1 s | σ 1,6·10⁻¹² (u: freie z-Bewegung; direkt 27 GB, 36 s) |
+
+Ziele erreicht: unter 7 GB, unter 100 Iterationen, Ergebnis wie CPU. FP32 war nicht nötig. Teil (b) aus A2
+(reduzierte Matrix direkt aus den Zelldaten) bleibt zurückgestellt: Nutzen 2 bis 3 s, kein Speichergewinn.
+Test `test_million_gpu` (Kirsch h 5,5, 90 s, nur bei ≥ 6,5 GB freier Karte).
+
+**Entscheidung A4:** entfällt. Das Grobgitter p = 1 (Pardiso auf der CPU) kostet beim Lösen mit 10⁶
+Freiheitsgraden 1,0 bis 1,2 s von 9 bis 11 s (12 %) und beim Einrichten 1 bis 5 s; die gepackten Blöcke
+(Operator und Glätter) tragen 69 %. Ein h-Mehrgitter unter p = 1 brächte hier nichts.
+
 ### A4: h-Mehrgitter unter p = 1 (nur wenn nötig)
 - Entscheidungspunkt nach A3: ist das Grobgitter p = 1 (Pardiso) bei 10⁶ Freiheitsgraden der Engpass in
   Zeit oder Speicher? Nur dann h-Ebenen über den Oktree mit hängenden Knoten (Vorgabe 8.3 „p/h“).
@@ -178,8 +196,8 @@ nachgetragen.
 |---|---|---|---|---|
 | A1 Aufbau vermessen | Sonnet 5 | mittel | klar umrissene Messaufgabe | erledigt (5381f71) |
 | A2 Aufbau beschleunigen | Opus 5.5 | hoch | Umbau in bekanntem Code mit vielen Prüfungen | erledigt (d0e6c37), Teil (b) nach A3 |
-| A3 GPU-Speicher für 10⁶ FHG | Fable 5.1 | sehr hoch | numerisch heikel (FP32, Glätter), Entwurf und Umsetzung | läuft |
-| A4 h-Mehrgitter (nur wenn nötig) | Fable 5.1 | sehr hoch | hängende Knoten im Mehrgitter, höchstes Risiko | offen, Entscheidung nach A3 |
+| A3 GPU-Speicher für 10⁶ FHG | Fable 5.1 | sehr hoch | numerisch heikel (FP32, Glätter), Entwurf und Umsetzung | erledigt |
+| A4 h-Mehrgitter (nur wenn nötig) | Fable 5.1 | sehr hoch | hängende Knoten im Mehrgitter, höchstes Risiko | entfällt (Grobgitter 12 % des Lösens) |
 | A5 Streuung über Schnittlagen | Opus 5.5 | hoch | Ritz-Analyse und Glätterabstimmung | offen |
 | A6 Leistungsabnahme, Löserwahl | Sonnet 5 | mittel | Messreihe nach festem Schema | offen |
 | B1 Moment Fitting | Fable 5.1 | sehr hoch | Stabilität der Gewichte, Konsistenz Volumen/Rand | offen |
