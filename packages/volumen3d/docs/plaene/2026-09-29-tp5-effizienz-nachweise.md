@@ -323,6 +323,39 @@ h 10 → h 5 läuft nur mit `VOLUMEN3D_LANG=1`.
   in TP 6); Protokoll aller Einstellungen (p, Verfeinerung, α, Toleranz, Kopplungsart, Löserweg).
 - Prüfung: Kurve fällt monoton gegen den Grenzwert am Knotenblech-Vorversuch; Protokoll vollständig.
 
+**Vorgehen und Regeln, vor der Messung festgelegt (30.09.2026):**
+
+*Zyklen.* `adaptive_cycles = N` (0 bis 4, Vorgabe 8.4 nennt 2 bis 4): Zyklus 0 ist die Rechnung der Einstellungen, jeder
+weitere ändert genau eine Sache, damit der Schritt an der Kurve ablesbar bleibt. Ungerade Zyklen: lokale
+h-Halbierung – um Punkte der Nahtlinien im Abstand höchstens t (Kugeln vom Radius 2·t) wird die Zielzellgröße gegenüber
+dem Vorzyklus halbiert. Gerade Zyklen: p + 1 bis p = 4, danach h-Halbierung. Ohne Naht (keine Stelle für die lokale
+Verfeinerung) nur p + 1; ist p = 4 erreicht, endet die Folge mit Warnung. Das Ergebnis des Vertragswegs ist der letzte
+Zyklus. Fehlerschätzer und Auswahl der Zellen bleiben TP 6.
+
+*Kurve.* Je Zyklus ein Eintrag in `DetailResult.convergence`: `cycle`, `step` (Start, h-Halbierung Naht,
+p-Erhöhung), `dofs`, `p`, `cells`, `cut_cells`, `h_min_mm`, `hotspot_max`, `hotspot_mean`, `stress_max` (größte
+Von-Mises-Spannung an den Oberflächenpunkten – an scharfen Kerben nicht konvergent, deshalb kein Kriterium),
+`solver_path`, `iterations`, `t_s`, `hotspot_change` (relativ zum Vorzyklus). Die Kurve über Freiheitsgrade ist Pflicht
+jedes Detailnachweises (Vorgabe 11.3).
+
+*Konvergenzaussage* (`protocol["convergence_statement"]`, aus `hotspot_max`; kein Raten): bei weniger als drei Werten
+„zu wenige Zyklen“; sonst mit Δ_k = σ_k − σ_{k−1}: „monoton konvergent“, wenn alle Δ_k dasselbe Vorzeichen haben und
+|Δ_{k+1}| < |Δ_k| – dann der Grenzwert nach Aitken σ_∞ = σ_n + Δ_n·r/(1 − r) mit r = Δ_n/Δ_{n−1} und die Restabweichung
+|σ_n − σ_∞|/σ_∞; andernfalls „nicht monoton, keine Konvergenzaussage“ mit den Werten. Das „fällt“ der Planzeile
+lese ich als „konvergiert monoton“: der Hot-Spot an einem Blech mit Naht kann von unten wie von oben gegen den Grenzwert
+laufen (T-Stoß: h 10 → h 5 von 100,43 auf 100,93 N/mm²).
+
+*Protokoll.* `protocol["settings"]` enthält: p, Zellgröße, Verfeinerungsbereiche, α, Toleranz des Vertrags und die
+verwendete, Kopplungsart, angeforderter und benutzter Rechenweg mit Löserweg, Moment Fitting (Grad), Spannungsart,
+Aggregationsschwelle, Zyklenzahl, Nähte (Kennung, Punkte, Blechdicke, Verfahren), Vertrags- und Paketversion.
+
+*Prüfungen.* (1) Kernsuite, Kragarm-Ausschnitt ohne Naht mit `adaptive_cycles = 2`: drei Einträge, p 2 → 3 → 4, Freiheitsgrade
+wachsend, Protokoll vollständig. (2) T-Stoß unter Zug (Geber mit gleichmäßigem Zug, Schnittebenen an den Enden),
+Basiszellgröße 20, p 2, drei Zyklen (h-Halbierung, p + 1, h-Halbierung): `hotspot_max` monoton konvergent im Sinn der
+Aussage, letzte Änderung unter 3 %, Kopplungskontrolle Kraft unter 5 %; das „Knotenblech-Vorversuch“ der Planzeile ist
+dieser T-Stoß, das Knotenblech selbst kommt in C1. (3) Fehlerfälle: `adaptive_cycles` außerhalb 0 bis 4 →
+`SolverError`; Abbruch zwischen den Zyklen meldet `SolverCancelled`.
+
 ### B5: STEP über gmsh-Tessellierung (Vorgabe 3)
 - Optionales Extra `step` mit gmsh; `GeometrySourceType.STEP` → Tessellierung → bestehender STL-Weg;
   ohne gmsh `SolverError` mit Hinweis. Die neue optionale Abhängigkeit im Pull Request benennen.
@@ -372,7 +405,7 @@ nachgetragen.
 | B1 Moment Fitting | Fable 5.1 | sehr hoch | Stabilität der Gewichte, Konsistenz Volumen/Rand | erledigt: Vorgabe an; schwere Suiten grün, Zeiten in Theorie 11.11 |
 | B2 Spannungsrückgewinnung | Opus 5.5 | hoch | bekanntes Verfahren, sorgfältige Umsetzung | erledigt: L²-Projektion ist Ausgabe; Kosten in Theorie 11.12 |
 | B3 Hot-Spot IIW Typ a | Opus 5.5 | hoch | Geometrie der Referenzpunkte, Normbezug | erledigt: Spanne korrigiert (Anwender), Absolutwert in C1 gegen Tet10 |
-| B4 Konvergenzkurve, Protokoll | Sonnet 5 | mittel | überschaubar, baut auf B2/B3 | offen |
+| B4 Konvergenzkurve, Protokoll | Sonnet 5 | mittel | überschaubar, baut auf B2/B3 | läuft: Verfahren und Regeln festgelegt |
 | B5 STEP über gmsh | Sonnet 5 | mittel | Anbindung einer Bibliothek | offen |
 | B6 Windungszahl-Baum | Opus 5.5 | hoch | Algorithmus mit Genauigkeitsnachweis | offen |
 | B7 Schale → Volumen (Prüfung) | Sonnet 5 | mittel | Test über bestehende Schnittstelle | offen |
