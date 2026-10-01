@@ -481,7 +481,7 @@ Verwölbung.
 **Ergebnis B7 (01.10.2026, Theorie 11.17):** Schranke (1) hält mit zwei bis zehn Größenordnungen Abstand: Schnittgrößenabweichung Kraft/Moment höchstens 6,7·10⁻⁴ / 2,3·10⁻⁴ (geneigt 30°, p 2) bzw.
 2,4·10⁻⁸ / 6,0·10⁻⁸ (p 3), achsparallel 2,1·10⁻¹² / 2,7·10⁻¹², keine Kopplungswarnung. Schranke (2) hält: σ_x′ gegen die Schalenverteilung ≤ 3,5·10⁻³ (10°, p 2), ≤ 5,3·10⁻⁷ (30°, p 3),
 übrige Komponenten ≤ 1,3·10⁻³. Schranke (3) (Gleichgewicht 10⁻⁶, vorab geraten) hält achsparallel (1,9·10⁻¹¹) und bei p 3 (≤ 2,2·10⁻⁷), **nicht für p 2 am schrägen Schnitt (4,2·10⁻³)**: dort gilt die
-Vorgabeschranke 1 %, Gleichgewichtsrest und Spannungsfehler verschwinden bei p 3 gemeinsam; Entscheidung beim Anwender (Empfehlung: Vorgabeschranke 1 % für p 2 am schrägen Schnitt, das Band 10⁻⁵ gilt bei p 3).
+Vorgabeschranke 1 %, Gleichgewichtsrest und Spannungsfehler verschwinden bei p 3 gemeinsam; Anwender 01.10.2026: Empfehlung angenommen (Vorgabeschranke 1 % für p 2 am schrägen Schnitt, Band 10⁻⁵ bei p 3).
 **Befundregel angewendet:** (a) Kopplungskontrolle: reine Biegung meldete 100 % Kraftabweichung → gemeinsames Lastmaß für Kraft und Moment (`api._kopplungsabweichung`, Test); (b) Fehler aus B6 gefunden und
 behoben: Hüllenfacetten hinter einer Schnittebene blieben als Oberfläche stehen (6 030 Punkte hinter der Ebene an der Kugelhülle; Test `test_flaeche_hinter_schnittebene`). Offen (nicht Teil von B7):
 Konsistenzfehler des p-2-Ansatzes am schrägen Schnitt (Spannung 2,2·10⁻⁴ bis 3,5·10⁻³, Verschiebung 10⁻⁶; ohne Einfluss: α, Fitting, Flächenordnung, Tiefe; Einfluss: Aggregationsschwelle).
@@ -492,6 +492,44 @@ Konsistenzfehler des p-2-Ansatzes am schrägen Schnitt (Spannung 2,2·10⁻⁴ b
 - Modell aus CSG (Blech, Kehlnaht, Anschluss), Lasten über Schnittebene, Hot-Spot entlang der Naht,
   Konvergenzkurve. Referenzwerte nach E2, Ablage nach E3.
 - Prüfung: Hot-Spot-Spannung gegen Tet10-Referenz < 3 % (Vorgabe 13).
+
+**Modell und Regeln C1, vor der Messung festgelegt (01.10.2026).** Längssteife (Knotenblech) auf einem Zugblech, der klassische
+IIW-Fall „nicht tragende Längsrippe“ mit Hot-Spot Typ a am Stirnnaht-Übergang. Alle Maße in mm, Werkstoff E 210 000, ν 0,3:
+
+| Teil | Abmessung |
+|---|---|
+| Grundblech | x −5…205 (Schnittebenen x 0 und 200), y 0…80, z −10…0 (t = 10) |
+| Knotenblech | x 70…130, y 36…44 (t_a = 8), z 0…40 |
+| Kehlnaht rundum, Schenkel 6 (45°) | Pyramidenstumpf: Quader [64,136]×[30,50]×[0,6] ∩ {x + z ≤ 136} ∩ {−x + z ≤ −64} ∩ {y + z ≤ 50} ∩ {−y + z ≤ −30}; Ecken damit auf Gehrung |
+| Nahtübergänge | Stirnnähte x = 136 und x = 64 (y 30…50), Längsnähte y = 30 und y = 50 (x 64…136), alle auf z = 0 |
+| Nahtlinien (`WeldLine`) | „stirn_rechts“: (136, y, 0), „stirn_links“: (64, y, 0), y = 32, 34, …, 48; Blechdicke 10 |
+| Last | Zug σ_n = 100 N/mm² (F = 80 kN auf 80 × 10) über die Schnittebenen: Geber u = (εx, −νε(y − 40), −νε(z + 5)), ε = σ_n/E, Schnittkraft ±80 kN |
+
+Referenzpunkte nach IIW Typ a bei 0,4 t = 4 und 1,0 t = 10 mm vom Übergang auf der Blechoberseite senkrecht zur Naht, also (140, y, 0) und (146, y, 0) für
+die rechte, (60, y, 0) und (54, y, 0) für die linke Stirnnaht; σ_hs = 5/3 σ_xx(0,4 t) − 2/3 σ_xx(1,0 t). Erwartung aus der Literatur (Niemi/Fricke, Längsrippe):
+σ_hs/σ_n zwischen 1,2 und 1,6 – nur Plausibilität, keine Schranke.
+
+*FCM-Seite* (`tests/test_knotenblech.py`, Vertragsweg): CSG wie oben, Basiszellgröße 10 (= t), p 2, `adaptive_cycles` 4 nach dem Fahrplan aus B4
+(h 5, h 2,5 = t/4, p 3, p 4); je Zyklus σ_hs,max, σ_hs(y = 40), Freiheitsgrade, Zeit, Kopplungskontrolle; Konvergenzaussage. Zusätzlich derselbe Körper als
+STEP-Hülle (B6) im letzten Zellstand als zweite Diskretisierung derselben Seite.
+
+*Referenz* (Hauptprogramm nach E2, Tet10 von `statik3d/`): dasselbe Volumen, Netz mit Kantenlänge 1 mm (t/10) in 12 mm Umkreis der Nahtübergänge, 2,5 mm im
+Blech, 5 mm fern; Randbedingungen wie der Vertragsweg: u_x = εx auf den Stirnflächen x 0 und x 200, Querbewegung frei bis auf die Starrkörperlagerung;
+Auswertung σ_xx an den Blechoberflächenpunkten (140, y, 0), (146, y, 0), (60, y, 0), (54, y, 0) für y = 32…48 (Rohwerte liefern, nicht nur σ_hs), dazu die
+Schnittkraft bei x 200, Knoten- und Elementzahl. Das Netz liefert Session B als Angebot aus gmsh (Tet10, `.inp`), die Hauptsitzung darf ihr eigenes nehmen.
+Ablage nach E3 (`tests/reference_models/knotenblech_kehlnaht/`: Eingabe als JSON, Erwartungswerte, Toleranz) durch die Hauptsitzung; der Vorschlag mit der
+vollständigen JSON liegt in `docs/vertrag-aenderungen/2026-10-01-referenzmodell-knotenblech.md`.
+
+*Schranken.* (1) Abnahme: σ_hs(y = 40) des letzten Zyklus gegen die Tet10-Referenz unter 3 % (Vorgabe 13), an beiden Stirnnähten. (2) Symmetrie: rechte
+und linke Stirnnaht im selben Zyklus auf 1 % gleich (Modell ist in x spiegelsymmetrisch). (3) Konvergenz: letzte Änderung der Kurve unter 3 % (Vorgabe 13,
+Konvergenzkurve). (4) Kopplungskontrolle Kraft unter 5 %, keine Integrationswarnung. (5) Fern der Naht (x 180, Ober- und Unterseite) σ_xx = σ_n ± 1 %.
+(6) Zwei unabhängige Auswertungen: σ_hs aus dem Hot-Spot-Modul (`DetailResult.hot_spots`) und aus einer eigenen Extrapolation der Oberflächenspannung
+`DetailResult.stress` an den Referenzpunkten (Interpolation über die nächsten Oberflächenpunkte), Übereinstimmung auf 1 %; auf der Referenzseite dieselbe
+Extrapolation aus den gelieferten Rohwerten.
+
+*Befundregel.* Verfehlt (1) bei erfüllter (2)–(6), wird zuerst die Referenz mit halbiertem Netz an den Übergängen wiederholt (Netzkonvergenz der Referenz),
+dann erst das Verfahren hinterfragt; Entscheidung beim Anwender. Solange die Referenz der Hauptsitzung fehlt, gilt ein eigener Tet10-Lauf des Hauptprogramms aus einem
+festen Arbeitsbaum von `main` (nur lesend, über den Abaqus-Import des gmsh-Netzes) als **vorläufig** und wird im Protokoll so benannt.
 
 ### C2: Zweite Sicht über Phase A und B
 - Unabhängiges Gutachten, nur lesend, anderes Modell als die Umsetzung; Befunde am Quelltext prüfen, dann
@@ -523,8 +561,8 @@ nachgetragen.
 | B4 Konvergenzkurve, Protokoll | Sonnet 5 | mittel | überschaubar, baut auf B2/B3 | gebaut; Fahrplan h zuerst bis t/4 umgesetzt (Anwender), T-Stoß p 2–4 bei 2,5 mm: 111,0 → 107,4 → 107,9; Messung am Knotenblech in C1 |
 | B5 STEP über gmsh | Sonnet 5 | mittel | Anbindung einer Bibliothek | gebaut; Planprüfung K_t am gekrümmten Körper nicht erfüllt (STL-Weg zu langsam), Entscheidung offen |
 | B6 Windungszahl-Baum + Hüllenintegration | Fable 5.1 | sehr hoch | Divergenzsatz über Dreiecke, Barill-Baum, Genauigkeitsnachweis | erledigt: (1)–(3) halten, Block N 120 388 → 26,8 s, K_t 0,12 %; Baum mit β 4 statt 2 (Anwender 01.10.: angenommen) |
-| B7 Schale → Volumen (Prüfung) | Sonnet 5.5 | mittel | Test über bestehende Schnittstelle | erledigt: Schnittgrößen < 7·10⁻⁴ (p 2), 6·10⁻⁸ (p 3); Kopplungskontrolle und Hüllenfacetten-Fehler behoben; Gleichgewichtsschranke p 2 geneigt beim Anwender |
-| C1 Knotenblech-Abnahme | Opus 5.5 | hoch | Modellbau und Nachweis gegen Referenz | offen |
+| B7 Schale → Volumen (Prüfung) | Sonnet 5.5 | mittel | Test über bestehende Schnittstelle | erledigt: Schnittgrößen < 7·10⁻⁴ (p 2), 6·10⁻⁸ (p 3); Kopplungskontrolle und Hüllenfacetten-Fehler behoben; Schranke p 2 geneigt 1 % (Anwender) |
+| C1 Knotenblech-Abnahme | Fable 5.1 | sehr hoch | Modellbau und Nachweis gegen Referenz | läuft: Modell und Regeln festgelegt |
 | C2 Zweite Sicht | Fable 5.1 | hoch | unabhängig von der Umsetzung, tiefste Prüfung | offen |
 | C3 Handbücher | Sonnet 5 | niedrig | Texte aus vorhandenen Messwerten | offen |
 | C4 Gesamtlauf, Pull Request | Sonnet 5 | mittel | Routine mit Prüfliste | offen |
