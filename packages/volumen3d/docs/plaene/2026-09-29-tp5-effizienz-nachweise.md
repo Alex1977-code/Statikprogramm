@@ -364,6 +364,14 @@ Knotenblech in C1; Entscheidung beim Anwender. Befund während B4 behoben: Zwang
 mit feineren verwurzelten Nachbarn); an den 23 Modellen der schweren Suiten sperrt sie höchstens zwei Moden, dort bitgleich. Offen: Konsistenzfehler 10⁻⁶ bis 10⁻⁴ am T-Stoß mit lokaler
 Verfeinerung (Ursache teilweise geklärt).
 
+**Entscheidung B4 (Anwender, 01.10.2026):** „zuerst lokal h bis t/4, dann p + 1, Messung am Knotenblech in C1“ – die
+Empfehlung ist angenommen. **Neuer Fahrplan** (ersetzt den abwechselnden): Jeder Zyklus ändert genau eine Sache, aber zuerst nur h:
+die Zielzellgröße an der Naht i ist im Zyklus k gleich max(h₀/2ᵏ, tᵢ/4) mit h₀ der Basiszellgröße und tᵢ der Blechdicke der Naht
+(Referenzpunkt 0,4·t liegt dann mindestens 1,6 Zellen vom Übergang); gehalbiert wird, solange es eine Naht gibt, deren Zielgröße
+noch über tᵢ/4 liegt. Danach folgt p + 1 bis p = 4, danach endet die Folge mit Warnung. Ohne Naht nur p + 1. Das Maximum von
+vier Zyklen bleibt. Geprüft wird der Fahrplan als reine Funktion (Schritte, Zielgrößen, Ende) und der Vertragsweg an einem Modell, dessen
+Basiszellgröße schon bei t/2 liegt; die Konvergenz selbst misst C1 am Knotenblech.
+
 ### B5: STEP über gmsh-Tessellierung (Vorgabe 3)
 - Optionales Extra `step` mit gmsh; `GeometrySourceType.STEP` → Tessellierung → bestehender STL-Weg;
   ohne gmsh `SolverError` mit Hinweis. Die neue optionale Abhängigkeit im Pull Request benennen.
