@@ -910,34 +910,34 @@ class Modellbaum(QtWidgets.QTreeWidget):
                              hinweis="Punktmassen, Dämpfer, Federn, starre Körper "
                                      "(RBE2/RBE3) und Grenzschichten ohne Dicke")
             if pm:
-                z = self._zweig(vb, "Punktmassen", len(pm), "kontakt")
+                z = self._zweig(vb, "Punktmassen", len(pm), "punktmassen")
                 self._liste(z, [(x.name or f"Punktmasse {i + 1}",
                                  f"{zl.zahl_text(x.masse, punkt=True)} kg", str(i),
                                  f"Knoten {x.node}: m = {zl.zahl_text(x.masse, punkt=True)} kg, "
                                  f"J = {', '.join(zl.zahl_text(v, punkt=True) for v in (x.traegheit or []))} kg m²")
                                 for i, x in enumerate(pm)], "punktmasse", "punktmassen")
             if dp:
-                z = self._zweig(vb, "Dämpfer", len(dp), "kontakt")
+                z = self._zweig(vb, "Dämpfer", len(dp), "daempfer")
                 self._liste(z, [(x.name or f"Dämpfer {i + 1}",
                                  f"K{x.node_a}" + (f"–K{x.node_b}" if int(x.node_b) >= 0 else ""),
                                  str(i),
                                  f"c = {', '.join(zl.zahl_text(v) for v in (x.c or []))}")
                                 for i, x in enumerate(dp)], "daempfer", "daempfer")
             if fed:
-                z = self._zweig(vb, "Federn", len(fed), "kontakt")
+                z = self._zweig(vb, "Federn", len(fed), "federn")
                 # Federn in N/m sind gross: ausgeschrieben statt „1e+08“ (25.09.2026)
                 self._liste(z, [(name, "; ".join(zl.zahl_text(v) for v in (x.k or [])[:3]), name,
                                  f"{name}: k = {'; '.join(zl.zahl_text(v) for v in (x.k or []))}")
                                 for name, x in fed.items()], "feder", "federn")
             if sk:
-                z = self._zweig(vb, "Starre Körper", len(sk), "kontakt")
+                z = self._zweig(vb, "Starre Körper", len(sk), "starrkoerper")
                 self._liste(z, [(x.name or f"Starrkörper {i + 1}",
                                  f"{x.art}, {len(x.slaves)} Kn", str(i),
                                  f"{x.art}: Master K{x.master}, "
                                  f"{len(x.slaves)} angeschlossene Knoten")
                                 for i, x in enumerate(sk)], "starrkoerper", "starrkoerper")
             if gs:
-                z = self._zweig(vb, "Grenzschichten", len(gs), "kontakt")
+                z = self._zweig(vb, "Grenzschichten", len(gs), "grenzschichten")
                 self._liste(z, [(name, f"kn = {zl.zahl_text(x.kn)}", name,
                                  f"{name}: kn = {zl.zahl_text(x.kn)} N/m je m², kt = {zl.zahl_text(x.kt)}")
                                 for name, x in gs.items()], "grenzschicht", "grenzschichten")

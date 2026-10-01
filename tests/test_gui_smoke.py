@@ -7061,8 +7061,10 @@ def main():
               w.ribbon._kontext is not None and w.ribbon.tabs.currentWidget() is w.ribbon._kontext
               and getattr(w, "cb_assign_shell", None) is not None)
         w.zuweisen_zeigen("gelenke"); app.processEvents()
-        check("„Gelenke setzen…“ mit Auswahl zeigt die Maske Lager/Lasten",
-              w.eingaben_dock.windowTitle() == "Lager/Lasten", w.eingaben_dock.windowTitle())
+        # Paket F (01.10.2026): bis dahin zeigte das die Maske Lager/Lasten, in der
+        # es kein Gelenkfeld gibt - jetzt die Gelenkmaske (Anlegen, wenn es keins gibt)
+        check("„Gelenke setzen…“ mit Auswahl zeigt die Gelenkmaske",
+              "Gelenk" in w.eingaben_dock.windowTitle(), w.eingaben_dock.windowTitle())
         # B8: Auswahl in der Ansicht markiert die Modelltabellen
         check("Auswahl in der Ansicht markiert die Zeilen der Knotentabelle",
               sorted(int(x) for x in w.tbl_knoten.gewaehlte_schluessel()) == [0, 1],
