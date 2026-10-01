@@ -14,6 +14,135 @@ from .. import elemente as EL
 VTK_LINE, VTK_TRI, VTK_QUAD, VTK_TETRA, VTK_HEX, VTK_TET10 = 3, 5, 9, 10, 12, 24
 
 
+def farbskala_waagerecht(skala: dict, zweite: bool = False) -> dict:
+    """Lage der Farbskala in der Kompaktstufe des Fensters (Paket 5, 25.09.2026).
+
+    In einer kleinen Ansicht (unter etwa 700 x 400 px) nimmt eine senkrechte
+    Skala am rechten Rand ein Zehntel der Breite und liegt unter dem Wuerfel;
+    waagerecht unten steht sie ueber die halbe Breite. Nur die Lage aendert
+    sich - Titel, Format und Schrift (der Inhalt) bleiben, wie sie sind.
+    ``zweite``: die Skala des Schnittgroessenverlaufs steht ueber der ersten.
+    """
+    s = dict(skala)
+    s.update(vertical=False, position_x=0.30, position_y=0.13 if zweite else 0.02,
+             width=0.45, height=0.08)
+    return s
+
+
+#: Abstand der waagerechten Farbskala ueber den Kennwerten [px]
+SKALA_UEBER_KENNWERTEN = 8
+
+
+def kennwerte_rahmen(renderer, text) -> tuple | None:
+    """Rechteck eines Textdarstellers in Bildpunkten der Ansicht:
+    (x0, x1, y0, y1), y von unten. vtkTextActor.GetBoundingBox liefert es
+    bezogen auf die Lage des Textes (VTK 9.7: 0..377 x 0..12 fuer eine Zeile
+    bei (12, 10)) - die Lage kommt hier dazu."""
+    bb = [0.0, 0.0, 0.0, 0.0]
+    text.GetBoundingBox(renderer, bb)
+    if not bb[3] > bb[2]:
+        return None
+    px, py = (float(v) for v in text.GetPosition()[:2])
+    if bb[2] < py - 0.5:
+        bb = [bb[0] + px, bb[1] + px, bb[2] + py, bb[3] + py]
+    return tuple(float(v) for v in bb)
+
+
+def farbskalen_heben(renderer, kennwerte: str = "kennwerte") -> float:
+    """Waagerechte Farbskalen ueber die Kennwerte unten links heben (25.09.2026).
+
+    Gegenpruefung Paket 5: die waagerechte Skala der Kompaktstufe stand bei
+    672 x 627 px auf y 15-57 px, die Kennwertzeile auf y 13-22 px - „73.52
+    Knoten 14 [mm]“ war auf dem Farbbalken nicht zu lesen. Wie viele Zeilen
+    die Kennwerte haben, steht erst fest, wenn sie gezeichnet sind (nach der
+    Skala); darum wird vor jedem Bild nachgesehen und die Skalen werden so
+    weit nach oben geschoben, dass sie ueber dem Text stehen. Nur nach oben:
+    beim naechsten Aufbau kommen sie ohnehin mit ihrer Grundlage wieder.
+    Rueckgabe: Verschiebung in Anteilen der Ansichtshoehe (0 = nichts getan).
+    """
+    try:
+        breite, hoehe = renderer.GetSize()
+    except Exception:                       # noqa: BLE001
+        return 0.0
+    if hoehe <= 0 or breite <= 0:
+        return 0.0
+    try:
+        text = renderer.actors.get(kennwerte)
+    except Exception:                       # noqa: BLE001
+        text = None
+    if text is None or not text.GetVisibility() or not text.IsA("vtkTextActor"):
+        return 0.0
+    oben = None
+    try:
+        rahmen = kennwerte_rahmen(renderer, text)
+        if rahmen is not None:
+            oben = rahmen[3]
+    except Exception:                       # noqa: BLE001
+        oben = None
+    if oben is None:
+        # ohne Textmass: Zeilen mal Schriftgroesse mal 1,2 ueber der Lage
+        try:
+            zeilen = str(text.GetInput() or "").count("\n") + 1
+            groesse = float(text.GetTextProperty().GetFontSize())
+            oben = float(text.GetPosition()[1]) + zeilen * groesse * 1.2
+        except Exception:                   # noqa: BLE001
+            return 0.0
+    ziel = (oben + SKALA_UEBER_KENNWERTEN) / float(hoehe)
+    balken = []
+    props = renderer.GetViewProps()
+    props.InitTraversal()
+    for _ in range(props.GetNumberOfItems()):
+        p = props.GetNextProp()
+        if (p is not None and p.IsA("vtkScalarBarActor") and p.GetVisibility()
+                and p.GetOrientation() == 0):
+            balken.append(p)
+    if not balken:
+        return 0.0
+    unten = min(float(b.GetPositionCoordinate().GetValue()[1]) for b in balken)
+    schub = ziel - unten
+    if schub <= 1e-4:
+        return 0.0
+    for b in balken:
+        x, y = b.GetPositionCoordinate().GetValue()[:2]
+        b.SetPosition(x, y + schub)
+    return schub
+
+
+def farbskalen_heben_einrichten(plotter, an) -> bool:
+    """``farbskalen_heben`` vor jedem Bild aufrufen, solange ``an()`` wahr ist
+    (Kompaktstufe des Fensters). Einmal je Renderer; Rueckgabe: eingerichtet."""
+    ren = getattr(plotter, "renderer", None)
+    if ren is None:
+        return False
+    if farbskalen_heben_aktiv(ren):
+        return True
+    import weakref
+    ref = weakref.ref(ren)
+
+    def vor_bild(_obj, _ereignis):
+        r = ref()
+        try:
+            if r is not None and an():
+                farbskalen_heben(r)
+        except Exception:                   # noqa: BLE001 - das Bild darf nie scheitern
+            pass
+    ren.AddObserver("StartEvent", vor_bild)
+    _SKALA_HEBEN[id(ren)] = ref
+    return True
+
+
+def farbskalen_heben_aktiv(renderer) -> bool:
+    """Haengt farbskalen_heben an diesem Renderer? (Ueber id und schwachen
+    Verweis: eine id allein kehrt nach dem Schliessen eines Plotters bei
+    einem neuen wieder.)"""
+    ref = _SKALA_HEBEN.get(id(renderer))
+    return ref is not None and ref() is renderer
+
+
+#: id(Renderer) -> schwacher Verweis, fuer Renderer mit farbskalen_heben
+_SKALA_HEBEN: dict = {}
+
+
 def kanten_vor_flaechen() -> bool:
     """Linien gewinnen gegen die Flaeche, auf der sie liegen.
 

@@ -57,6 +57,8 @@ from .tabellen import Spalte
 from .. import ks
 from . import viewport as vp
 from . import design as dsg
+from . import fenster as fen
+from .fenster import starten as fenster_starten
 from . import layer as lyr
 from . import skizze as skg
 from .. import skizze as sk
@@ -287,6 +289,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.progress_bar.setVisible(False)
         self.progress_bar.setFixedWidth(180)
         self.statusBar().addPermanentWidget(self.progress_bar)
+        # Fensteraufteilung: Kopfzeile, Docks, Ansicht → Fenster, Kompaktstufe
+        # (Paket 5, 25.09.2026; STATIK3D_FENSTER=fest haelt den alten Stand)
+        self.anordnung = fen.Fensteranordnung(self)
         self.refresh_all()
         self._als_gespeichert()          # das leere Startmodell ist nichts Ungespeichertes
 
@@ -335,8 +340,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self.cb_ks.setCurrentText(self.ks_aktiv)
             self.cb_ks.blockSignals(False)
         m = self.model
-        self.lbl_netz.setText(f"Netz: {m.nn} Knoten · {len(m.elements)} Elemente"
-                              if m.nn else "Netz: leer")
+        # Der Modellumfang steht nur noch hier, nicht mehr in der Kopfzeile
+        # (Paket 5, 25.09.2026) - mit den Stellungen, die dort mitstanden
+        n_st = len(getattr(m, "stellungen", None) or [])
+        self.lbl_netz.setText((f"Netz: {m.nn} Knoten · {len(m.elements)} Elemente"
+                               if m.nn else "Netz: leer")
+                              + (f" · {n_st} Stellung{'en' if n_st != 1 else ''}" if n_st else ""))
         if self.analysis is not None:
             n = len(self.analysis.cases) + len(self.analysis.combinations)
             self.lbl_solver.setText(f"Solver: {n} Ergebnisse")
@@ -4439,6 +4448,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabs.addTab(self._scroll(self._tab_design()), "Nachweise")
         self.tabs.addTab(self._scroll(self._tab_solve()), "Berechnung")
         self.tabs.addTab(self._scroll(self._tab_results()), "Ergebnisse")
+        # 470 px bis 24.09.2026; ohne STATIK3D_FENSTER=fest setzt
+        # fenster.Fensteranordnung sie auf 400 px (rechts etwa 460 px)
         self.tabs.setMinimumWidth(470)
         # Die Registerleiste entfaellt: sichtbar ist immer genau eine Maske,
         # gewaehlt ueber den Befehl im Ribbon. Der Docktitel nennt sie.
@@ -4575,6 +4586,12 @@ class MainWindow(QtWidgets.QMainWindow):
         rolle = getattr(maske, "rolle", None)
         unten = getattr(self, "unten_dock", None)
         if rolle is None or unten is None or not unten.isVisible() or rolle.widget() is None:
+            return
+        if self.corner(QtCore.Qt.BottomRightCorner) == QtCore.Qt.RightDockWidgetArea:
+            # Der rechte Bereich reicht ueber die volle Hoehe (Paket 5,
+            # 25.09.2026): ein kleinerer unterer Bereich gibt ihm nichts, und
+            # die volle Mitte liess das Fenster wachsen (Lager 1 bei 1920 x 1080
+            # maximiert: 1218 px)
             return
         fehlt = rolle.widget().sizeHint().height() - rolle.viewport().height()
         frei = unten.height() - max(unten.minimumHeight(), unten.minimumSizeHint().height())
@@ -10006,10 +10023,10 @@ class MainWindow(QtWidgets.QMainWindow):
         norm = m.meta.get("Norm")
         if norm:
             teile.insert(1, norm)
-        stellungen = self._stellungen_obj()
-        modell = f"{m.nn} Knoten · {len(m.elements)} Elemente"
-        if stellungen:
-            modell += f" · {len(stellungen)} Stellungen"
+        # Der Modellumfang (Knoten, Elemente, Stellungen) steht seit 25.09.2026
+        # nur noch in der Statusleiste (_refresh_status): die Kopfzeile traegt
+        # jetzt Schnellzugriff und Suche
+        modell = ""
         if self.analysis is not None:
             info = getattr(self.analysis, "info", {}) or {}
             t = info.get("time") or info.get("dauer")
@@ -17056,9 +17073,19 @@ class MainWindow(QtWidgets.QMainWindow):
     def tabelle_zeigen(self, name: str) -> bool:
         """Eine Tabelle im unteren Bereich nach vorn holen (die Gruppe folgt)."""
         if self.tab_unten.zeigen(name):
-            self.unten_dock.show()
+            self._unten_zeigen()
             return True
         return False
+
+    def _unten_zeigen(self):
+        """Den unteren Bereich zeigen - in der Kompaktstufe auch aufklappen
+        (Paket 5, Gegenpruefung 25.09.2026: sonst blieb die Tabelle hinter
+        der Registerzeile, und der Befehl wirkte tot)."""
+        anordnung = getattr(self, "anordnung", None)
+        if anordnung is not None:
+            anordnung.unten_zeigen()
+        else:
+            self.unten_dock.show()
 
     # ---- Auswahl / Randbedingungen -----------------------------------
     def _sel_val(self, i):
@@ -18649,7 +18676,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log.appendPlainText(tb)
         self.log.appendPlainText("FEHLER: " + str(msg))
         try:
-            self.tab_unten.setCurrentWidget(self.log)
+            # Die Gruppenleiste unten (design.py) kennt kein setCurrentWidget:
+            # der Aufruf scheiterte still, das Protokoll kam nie nach vorn
+            # (Gegenpruefung Paket 5, 25.09.2026). In der Kompaktstufe muss
+            # der Bereich ausserdem aufklappen.
+            self.tabelle_zeigen("Protokoll")
         except Exception:                  # noqa: BLE001 - Anzeige darf nie sperren
             pass
         self.statusBar().showMessage(f"Berechnung gescheitert: {str(msg).splitlines()[0]}"
@@ -19764,6 +19795,9 @@ class MainWindow(QtWidgets.QMainWindow):
         die Skala wird dann kuerzer, statt unter seine Knopfzeile zu laufen.
         """
         skala = dict(self.FARBSKALA_VERLAUF if verlauf else self.FARBSKALA)
+        if getattr(self, "_farbskala_waagerecht", False):
+            # Kompaktstufe des Fensters (gui/fenster.py, 25.09.2026)
+            return vp.farbskala_waagerecht(skala, zweite=verlauf)
         try:
             hoch = float(self.plotter.render_window.GetSize()[1])
         except Exception:                   # noqa: BLE001
@@ -22247,6 +22281,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self._beenden_nach_rechnung = False
             event.ignore()
             return
+        # Groesse und Aufteilung fuer den naechsten Start (Paket 5, 25.09.2026)
+        anordnung = getattr(self, "anordnung", None)
+        if anordnung is not None:
+            anordnung.speichern()
         self.stop_web_server()
         super().closeEvent(event)
 
@@ -22626,7 +22664,8 @@ def main(app=None, splash=None):
         win.setWindowIcon(app.windowIcon())
     except Exception:                       # noqa: BLE001
         pass
-    win.show()
+    # maximiert bzw. wie zuletzt gespeichert (Paket 5, 25.09.2026)
+    fenster_starten(win)
     if splash is not None:
         try:
             splash.fertig(win)

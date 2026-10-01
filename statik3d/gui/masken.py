@@ -63,6 +63,13 @@ class Feld:
     leer: bool = False
 
 
+def _fenster_fest() -> bool:
+    """STATIK3D_FENSTER=fest: Fensteraufteilung wie bis 24.09.2026 (Pruefungen,
+    Bildvergleich bilder.py) - siehe gui/fenster.py."""
+    from .fenster import fest
+    return fest()
+
+
 class Rollflaeche(QtWidgets.QScrollArea):
     """Die rollbare Mitte einer Maske (24.09.2026).
 
@@ -70,8 +77,15 @@ class Rollflaeche(QtWidgets.QScrollArea):
     Wunschgroesse; eine Maske mit 15 Feldern rollte dann schon in einem
     leeren, hohen rechten Bereich. Diese hier wuenscht sich die volle Hoehe
     ihres Inhalts - sie rollt nur, wenn der Platz wirklich fehlt - und
-    verlangt als Mindesthoehe nur wenige Zeilen. Die Mindestbreite bleibt die
-    des Inhalts (plus Rollbalken): waagerecht wird nie gerollt, so wie vorher.
+    verlangt als Mindesthoehe nur wenige Zeilen.
+
+    Waagerecht (25.09.2026, Paket 5): ein Inhalt, der breiter ist als der
+    rechte Bereich, rollt waagerecht. Bis dahin richtete sich die Breite des
+    rechten Bereichs nach der Wunschbreite der Maske - die Windmaske zog ihn
+    auf 1170 px, die Ansicht blieb bei 128 px (1600 x 980) bzw. 61 px
+    (1536 x 864). Seit der rechte Bereich seine 460 px behaelt
+    (gui/fenster.py), waere der Rest der Zeilen ohne Balken nicht zu
+    erreichen. Mit STATIK3D_FENSTER=fest gilt der alte Stand (nie waagerecht).
     """
 
     #: Mindesthoehe der Mitte in Bildpunkten: etwa zwei Feldzeilen
@@ -82,7 +96,8 @@ class Rollflaeche(QtWidgets.QScrollArea):
         self.setObjectName("maskenrolle")
         self.setWidgetResizable(True)
         self.setFrameShape(QtWidgets.QFrame.NoFrame)
-        self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff if _fenster_fest()
+                                          else QtCore.Qt.ScrollBarAsNeeded)
         # Die Flaeche selbst nimmt keinen Fokus: Tab geht von Feld zu Feld
         self.setFocusPolicy(QtCore.Qt.NoFocus)
         self.viewport().setAutoFillBackground(False)
@@ -1041,6 +1056,9 @@ class Ansichtswuerfel(QtWidgets.QWidget):
     ZEILE = 20            # Hoehe der Richtungszeile
     ZIEHEN = 4            # ab so vielen Bildpunkten Bewegung gilt ein Klick als Ziehen
 
+    #: Kantenlaenge in der Kompaktstufe (Paket 5, 25.09.2026)
+    WUERFEL_KOMPAKT = 60
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedSize(self.WUERFEL + 74, self.WUERFEL + self.ZEILE + 6)
@@ -1053,6 +1071,13 @@ class Ansichtswuerfel(QtWidgets.QWidget):
         self._zuletzt = None
         self._gezogen = False
         self.kamera = None               # -> 3x3 Drehmatrix Welt -> Bild oder None
+
+    def kante_setzen(self, kante: int) -> None:
+        """Kantenlaenge des Wuerfelfeldes (Kompaktstufe: kleiner). Die
+        Richtungszeile behaelt ihre Hoehe, sie wird nur schmaler."""
+        self.WUERFEL = int(kante)
+        self.setFixedSize(self.WUERFEL + 74, self.WUERFEL + self.ZEILE + 6)
+        self.update()
 
     # -- Geometrie -------------------------------------------------------
     def _matrix(self):
@@ -1255,7 +1280,15 @@ class Ansichtsrand(QtCore.QObject):
         self.ansicht = ansicht
         self.leiste = leiste
         self.wuerfel = wuerfel
+        self.kompakt = False
         ansicht.installEventFilter(self)
+        self.platzieren()
+
+    def kompakt_setzen(self, an: bool) -> None:
+        """Kompaktstufe des Fensters (Paket 5, 25.09.2026): der Wuerfel wird
+        kleiner, damit er in einer kleinen Ansicht nicht ein Viertel verdeckt."""
+        self.kompakt = bool(an)
+        self.wuerfel.kante_setzen(Ansichtswuerfel.WUERFEL_KOMPAKT if an else Ansichtswuerfel.WUERFEL)
         self.platzieren()
 
     def platzieren(self):

@@ -271,6 +271,20 @@ class Register(QtWidgets.QWidget):
         return g
 
 
+class _KlickDraussen(QtCore.QObject):
+    """Ereignisfilter an der Anwendung, nur solange ein Register vorlaeufig
+    offen ist (Ribbon._klick_draussen, 25.09.2026)."""
+
+    def __init__(self, ribbon):
+        super().__init__(ribbon)
+        self.ribbon = ribbon
+
+    def eventFilter(self, obj, ev):
+        if ev.type() == QtCore.QEvent.MouseButtonPress:
+            self.ribbon._druck_irgendwo(obj, ev)
+        return False
+
+
 class Ribbon(QtWidgets.QWidget):
     """Die Befehlsleiste mit Schnellzugriff, Registern und Befehlssuche."""
 
@@ -310,6 +324,7 @@ class Ribbon(QtWidgets.QWidget):
         self.suche.returnPressed.connect(self._suche_ausfuehren)
         kopf.addWidget(self.suche)
         aussen.addLayout(kopf)
+        self._aussen, self._kopfreihe = aussen, kopf
 
         self.tabs = QtWidgets.QTabWidget(self)
         self.tabs.setObjectName("ribbontabs")
@@ -317,6 +332,144 @@ class Ribbon(QtWidgets.QWidget):
         self.tabs.setUsesScrollButtons(True)
         aussen.addWidget(self.tabs)
         self._suche_einrichten()
+        self._einklappen_einrichten()
+
+    def kopf_abgeben(self):
+        """Schnellzugriff und Suche aus der eigenen Zeile herausgeben (25.09.2026).
+
+        Das Programmfenster stellt beide in die dunkle Kopfzeile: die eigene
+        Zeile ueber den Registern kostete 31 px Hoehe, in denen links vier
+        Symbole und rechts ein Suchfeld standen. Es bleiben dieselben Objekte
+        (ribbon.schnellzugriff, ribbon.suche) - Kuerzel, Suche und Pruefungen
+        finden sie weiter. Rueckgabe: (Schnellzugriff, Suche)."""
+        reihe = getattr(self, "_kopfreihe", None)
+        if reihe is not None:
+            for w in (self.schnellzugriff, self.suche):
+                reihe.removeWidget(w)
+            self._aussen.removeItem(reihe)
+            reihe.deleteLater()
+            self._kopfreihe = None
+        return self.schnellzugriff, self.suche
+
+    # -- Einklappen (25.09.2026) -------------------------------------------
+    # Das eingeklappte Ribbon zeigt nur die Registerzeile: 99 px mehr fuer
+    # die Ansicht. Wie in Office: Doppelklick auf einen Reiter oder Strg+F1
+    # schaltet um; ein einfacher Klick auf einen Reiter klappt das Register
+    # nur vorlaeufig auf, bis ein Befehl daraus gelaufen ist.
+    #: ausgeloest, wenn das Ribbon ein- oder ausgeklappt wird (bleibend)
+    eingeklappt_geaendert = QtCore.Signal(bool)
+
+    def _einklappen_einrichten(self):
+        self._eingeklappt = False
+        self._vorlaeufig = False
+        # Der Stapel der Register ist ein Kind des QTabWidget ohne eigenen
+        # Zugriff - ausgeblendet bleibt nur die Reiterzeile
+        self._stapel = self.tabs.findChild(QtWidgets.QStackedWidget)
+        self._doppel = False
+        self._klick_draussen_an = False
+        self.tabs.tabBarDoubleClicked.connect(self._reiter_doppelt)
+        self.tabs.tabBarClicked.connect(self._reiter_geklickt)
+
+    def _reiter_doppelt(self, _i: int) -> None:
+        """Doppelklick auf einen Reiter schaltet das Einklappen um.
+
+        QTabBar sendet nach tabBarDoubleClicked selbst noch einmal
+        tabBarClicked (Gegenpruefung 25.09.2026, echter Doppelklick): der
+        oeffnete das eben eingeklappte Register gleich wieder vorlaeufig, und
+        sichtbar aenderte sich nichts. Dieser eine Klick zaehlt nicht."""
+        self._doppel = True
+        QtCore.QTimer.singleShot(0, self._doppel_vergessen)
+        self.einklappen(not self._eingeklappt)
+
+    def _doppel_vergessen(self) -> None:
+        self._doppel = False
+
+    def eingeklappt(self) -> bool:
+        """Bleibend eingeklappt (ein vorlaeufig offenes Register zaehlt nicht)."""
+        return self._eingeklappt
+
+    def einklappen(self, an: bool = True) -> None:
+        """Das Ribbon bleibend ein- (an) oder ausklappen."""
+        an = bool(an)
+        self._vorlaeufig = False
+        geaendert = an != self._eingeklappt
+        self._eingeklappt = an
+        self._stapel_zeigen(not an)
+        if geaendert:
+            self.eingeklappt_geaendert.emit(an)
+
+    def _stapel_zeigen(self, sichtbar: bool) -> None:
+        # Ein Klick neben das vorlaeufig offene Register schliesst es wie in
+        # Office (Gegenpruefung 25.09.2026: es blieb nach einem Klick in die
+        # Ansicht offen und nahm ihr 99 px); gehorcht wird nur solange
+        self._klick_draussen(self._eingeklappt and sichtbar)
+        if self._stapel is None:
+            return
+        self._stapel.setVisible(sichtbar)
+        if sichtbar:
+            self.tabs.setMaximumHeight(16777215)
+        else:
+            # QTabWidget rechnet seine Wunschhoehe mit dem verborgenen Stapel
+            self.tabs.setMaximumHeight(self.tabs.tabBar().sizeHint().height())
+        self.updateGeometry()
+
+    def _klick_draussen(self, an: bool) -> None:
+        app = QtWidgets.QApplication.instance()
+        if app is None or bool(an) == self._klick_draussen_an:
+            return
+        self._klick_draussen_an = bool(an)
+        if getattr(self, "_draussen_filter", None) is None:
+            self._draussen_filter = _KlickDraussen(self)
+        if an:
+            app.installEventFilter(self._draussen_filter)
+        else:
+            app.removeEventFilter(self._draussen_filter)
+
+    def _druck_irgendwo(self, obj, ev) -> None:
+        """Ein Mausdruck irgendwo im Programm, waehrend das Register vorlaeufig
+        offen ist: liegt er neben dem Ribbon, klappt es zu.
+
+        Menues und Listen, die aus dem Ribbon aufgehen, sind eigene Fenster:
+        waehrend eines solchen Aufklappers zaehlt nichts. Ob der Druck neben
+        dem Ribbon lag, sagt die Lage, nicht das Empfaengerobjekt (ein nicht
+        angenommener Druck wandert zu den Eltern weiter, auch aus dem Ribbon
+        heraus)."""
+        if not isinstance(obj, QtWidgets.QWidget):
+            return
+        try:
+            punkt = ev.globalPosition().toPoint()
+        except AttributeError:
+            return
+        if (QtWidgets.QApplication.activePopupWidget() is None and obj.window() is self.window()
+                and not self.rect().contains(self.mapFromGlobal(punkt))):
+            self._vorlaeufig = False
+            self._stapel_zeigen(False)
+
+    def _reiter_geklickt(self, _i: int) -> None:
+        """Eingeklappt: ein Klick auf einen Reiter zeigt das Register, bis ein
+        Befehl daraus laeuft (oder ein zweiter Klick es wieder schliesst)."""
+        if self._doppel:
+            # der Klick, den QTabBar nach einem Doppelklick selbst sendet
+            self._doppel = False
+            return
+        if not self._eingeklappt:
+            return
+        if self._vorlaeufig and _i == self.tabs.currentIndex():
+            self._vorlaeufig = False
+            self._stapel_zeigen(False)
+            return
+        self._vorlaeufig = True
+        self._stapel_zeigen(True)
+
+    def vorlaeufig_offen(self) -> bool:
+        return self._eingeklappt and self._vorlaeufig
+
+    def _nach_befehl(self) -> None:
+        """Ein Befehl ist gelaufen: ein vorlaeufig aufgeklapptes Register klappt
+        wieder zu."""
+        if self._eingeklappt and self._vorlaeufig:
+            self._vorlaeufig = False
+            self._stapel_zeigen(False)
 
     # -- Aufbau ----------------------------------------------------------
     def register(self, name: str) -> Register:
@@ -390,6 +543,8 @@ class Ribbon(QtWidgets.QWidget):
 
     def merken(self, b: Befehl):
         self.befehle.append(b)
+        # ein vorlaeufig aufgeklapptes Register klappt nach dem Befehl zu
+        b.aktion.triggered.connect(lambda *_a: self._nach_befehl())
 
     def vorsicht(self, *aktionen: QtGui.QAction):
         """Diese Befehle ersetzen oder leeren das Modell: die Suche fuehrt sie
