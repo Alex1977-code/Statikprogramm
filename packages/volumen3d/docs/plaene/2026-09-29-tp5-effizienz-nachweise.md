@@ -442,7 +442,7 @@ wird Vorgabe ab 20 000 Facetten, wenn (4) hält; sonst bleiben beide Schalter mi
 (2) STL-Suite grün mit unveränderten Werten; Lamé aus STL 44 s statt 78 s, die Suite 48 s statt rund 3 min. (3) Block mit Bohrung N 120 bei h 25: Konstruktor 26,8 s (p 3; vorher 388 s),
 alle 573 Schnittzellen Hüllenzellen ohne Punkttest, Volumen = Tessellierung auf 2,2·10⁻¹⁶; durch den Vertragsweg gegen CSG K_t 0,12 % (p 2) und 0,25 % (p 3).
 (4) N 240, 107 636 Dreiecke, 100 000 Punkte: Innen/Außen-Entscheidung bei jedem β für alle Punkte gleich, Geschwindigkeit 28- bis 73-mal; die Schranke |Δw| < 10⁻³
-hält mit dem im Plan genannten β 2 **nicht** (9,9·10⁻³), erst mit β 4 (2,6·10⁻⁴, 28-mal schneller) – Vorgabe darum β 4, zur Bestätigung durch den Anwender.
+hält mit dem im Plan genannten β 2 **nicht** (9,9·10⁻³), erst mit β 4 (2,6·10⁻⁴, 28-mal schneller) – Vorgabe darum β 4 (Anwender 01.10.2026: Empfehlung angenommen).
 (5) Kernsuite 298/298, alle 21 Paketsuiten grün (darunter Lamé 7/7, Kirsch 8/8, Kragarm 15/15, Mehrgitter 26/26), mypy, lint-imports grün. Teil 3 nicht gebaut: die Zellen an den Schnittebenen des Blocks
 treffen nur ebene Facetten, die Zeit steckt in der Oberflächenquadratur der Facetten (17 von 27 s), nicht in Ebenenzellen. Beide Schalter sind Vorgabe
 (`HUELLEN_EXAKT_STANDARD`, `WINDUNG_BAUM_AB = 20 000`).
@@ -451,6 +451,32 @@ treffen nur ebene Facetten, die Zeit steckt in der Oberflächenquadratur der Fac
 - Kopplung an ein Schalen-Globalmodell ist Sache des Providers im Hauptprogramm; hier nur ein Test mit einem
   Schalen-Provider-Stub über die Vertragsschicht.
 - Prüfung: Schnittgrößenkontrolle < 1 % (Vorgabe 13, Kopplung).
+
+**Vorgehen und Regeln B7, vor der Messung festgelegt (01.10.2026).** Der Provider ist ein Stub der Suite (`tests/test_schale.py`), kein Teil des
+Pakets: ein Plattenstreifen (Dicke t = 10 mm, Breite b = 100 mm, Länge 200 mm zwischen den Schnittebenen) als Schalenmodell in lokalen Achsen
+(x′ Länge, y′ Breite, z′ Normale, Mittelfläche z′ = 0), Reissner-Mindlin-Kinematik: `displacement_at` liefert Mittelflächenverschiebung u₀(x′, y′) plus
+Rotation θ(x′, y′) mal Normalenabstand, also die lineare Verteilung über die Dicke (Vertrag Abschnitt 5, Vorgabe 10 Stufe 1); `section_forces` kommt
+aus den Schalenresultierenden je Breite (n_x, m_x), über die Schnittbreite integriert, mit der Seitenkonvention des Vertrags (Kraft des abgeschnittenen
+Teils auf das Detail, n aus dem Detail heraus). Zustand: Membrandehnung ε₀ und Krümmung κ in x′ bei freien Längsrändern (n_y = m_y = 0, also
+Querkontraktion ε_y = −ν ε₀ und antiklastische Krümmung κ_y = −ν κ): u₀ = (ε₀ x′, −ν ε₀ y′, w) mit w = −κ (x′² − ν y′²)/2, θ = (ν κ y′, κ x′, 0);
+Schalenresultierende n_x = E t ε₀, m_x = E t³ κ/12 je Breite, Spannung σ_x′ = E (ε₀ + κ z′). Die Dickendehnung der Schalentheorie fehlt dem Provider
+bewusst (nur ein Starrkörperanteil der Querrichtung, keine Spannung): der Vertragsweg legt nur die Normalkomponente punktweise und die Mittelwerte der
+Tangentialkomponenten fest.
+
+*Fälle.* (A) Streifen achsparallel (CSG, Schnittebenen x 0 und 200); (B) derselbe Streifen um 30° um die y-Achse geneigt (STL-Hülle, schräge
+Schnittebenen; prüft B6 und die schräge Kopplung zusammen). Je drei Lastfälle: Membran (σ_m = 100 N/mm², κ = 0), Biegung (Randspannung σ_b = 150 N/mm²,
+ε₀ = 0) und beides. Zellgröße 25 mm, p = 2.
+
+*Schranken.* (1) Schnittgrößenkontrolle des Vertragswegs (`coupling_check`) für Kraft und Moment je Ebene, Fall und Lastfall unter 1 % (Vorgabe 13,
+Kopplung Stab → Volumen, hier für die Schale) und keine Kopplungswarnung; (2) σ_x′ (in lokalen Schalenachsen) an allen Oberflächenpunkten gleich
+σ_m + σ_b z′/(t/2) auf 1 % des Größtwerts, alle anderen lokalen Komponenten unter 1 % des Größtwerts (die Felder liegen im Ansatzraum, erwartet sind
+Rundung bis Konsistenzfehler der Schnittzellen; die Schranke ist die der Vorgabe, die gemessenen Werte werden berichtet); (3) die Resultierenden beider
+Ebenen sind im Gleichgewicht (Σ Kraft und Σ Moment um den Streifenmittelpunkt unter 1e-6 des Bezugs).
+
+*Befundregel.* Meldet die Kontrolle bei verschwindender Referenz (reine Biegung: Kraft 0, reine Membran: Moment um die Mittelfläche 0) eine Scheinabweichung,
+ist das ein Fehler der Kontrolle, nicht des Verfahrens: er wird mit einem fehlschlagenden Test behoben und im Ergebnis genannt. Nicht Teil von B7: die
+Kopplung an ein echtes Schalenmodell des Hauptprogramms (Provider dort), Querkraft mit Schubverformung (Timoshenko-Anteil im Kragarmtest erklärt) und
+Verwölbung.
 
 ## Phase C – Abnahme und Abschluss
 
@@ -488,8 +514,8 @@ nachgetragen.
 | B3 Hot-Spot IIW Typ a | Opus 5.5 | hoch | Geometrie der Referenzpunkte, Normbezug | erledigt: Spanne korrigiert (Anwender), Absolutwert in C1 gegen Tet10 |
 | B4 Konvergenzkurve, Protokoll | Sonnet 5 | mittel | überschaubar, baut auf B2/B3 | gebaut; Fahrplan h zuerst bis t/4 umgesetzt (Anwender), T-Stoß p 2–4 bei 2,5 mm: 111,0 → 107,4 → 107,9; Messung am Knotenblech in C1 |
 | B5 STEP über gmsh | Sonnet 5 | mittel | Anbindung einer Bibliothek | gebaut; Planprüfung K_t am gekrümmten Körper nicht erfüllt (STL-Weg zu langsam), Entscheidung offen |
-| B6 Windungszahl-Baum + Hüllenintegration | Fable 5.1 | sehr hoch | Divergenzsatz über Dreiecke, Barill-Baum, Genauigkeitsnachweis | erledigt: (1)–(3) halten, Block N 120 388 → 26,8 s, K_t 0,12 %; Baum mit β 4 statt 2 (Entscheidung Anwender) |
-| B7 Schale → Volumen (Prüfung) | Sonnet 5 | mittel | Test über bestehende Schnittstelle | offen |
+| B6 Windungszahl-Baum + Hüllenintegration | Fable 5.1 | sehr hoch | Divergenzsatz über Dreiecke, Barill-Baum, Genauigkeitsnachweis | erledigt: (1)–(3) halten, Block N 120 388 → 26,8 s, K_t 0,12 %; Baum mit β 4 statt 2 (Anwender 01.10.: angenommen) |
+| B7 Schale → Volumen (Prüfung) | Sonnet 5.5 | mittel | Test über bestehende Schnittstelle | läuft: Verfahren und Regeln festgelegt |
 | C1 Knotenblech-Abnahme | Opus 5.5 | hoch | Modellbau und Nachweis gegen Referenz | offen |
 | C2 Zweite Sicht | Fable 5.1 | hoch | unabhängig von der Umsetzung, tiefste Prüfung | offen |
 | C3 Handbücher | Sonnet 5 | niedrig | Texte aus vorhandenen Messwerten | offen |
