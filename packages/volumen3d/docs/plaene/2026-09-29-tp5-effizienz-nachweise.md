@@ -545,6 +545,28 @@ Hot-Spots bei t/4 und p 4; Hebel t/8 oder Hot-Spot-Variante mit größerem Kerba
 - Unabhängiges Gutachten, nur lesend, anderes Modell als die Umsetzung; Befunde am Quelltext prüfen, dann
   beheben und mit Tests absichern.
 
+**Vorgehen und Regeln C2, vor dem Gutachten festgelegt (02.10.2026).** Umfang: alles, was Teilprojekt 5 in `packages/volumen3d/volumen3d/`
+geändert hat (`git diff 7a6c922..e64a52d`, 34 Dateien, +4 439 Zeilen). Drei Gutachter als eigenständige Unteragenten ohne Kenntnis des
+Sitzungsverlaufs, jeder ein anderes Modell als die Umsetzung seines Teils:
+
+| Gruppe | Inhalt (umgesetzt von) | Gutachter |
+|---|---|---|
+| G1 | A3 gepackte GPU-Blöcke, B1 Moment Fitting, B6 Hüllenintegration und Windungsbaum, C1 Kuren im Geometriekern (Fable 5.1) | Opus 5.5 |
+| G2 | A2/A5 Mehrgitter und Glätter, B2 L²-Projektion, B3 Hot-Spot und verschachtelte CSG-Bäume (Opus 5.5) | Fable 5.1 |
+| G3 | A6 Löserwahl, B4 adaptive Zyklen und Konvergenzaussage, B5 STEP, B7 Kopplungskontrolle (Sonnet 5.5) | Opus 5.5 |
+
+Die Gutachter lesen nur; kleine Nachrechnungen (ein Prozess, unter einer Minute, ohne GPU) sind erlaubt, Suiten und Dateiänderungen nicht. Gesucht
+sind vor allem stille Fehler (falsches Ergebnis ohne Meldung), Abhängigkeit von Rundung, Gitterphase oder Reihenfolge, Verstöße gegen den
+Vertrag und Tests, die nicht fehlschlagen können oder deren Schranken geraten sind. Jeder Befund nennt Datei und Zeile, ein konkretes Szenario
+(Eingabe → falsches Ergebnis), Schwere (hoch/mittel/niedrig) und ob er gelesen oder nachgerechnet ist. Bekannte offene Punkte sind den Gutachtern
+genannt und zählen nicht als Befund.
+
+*Prüfung der Befunde und Ausgang.* Jeden Befund prüfe ich am Quelltext mit einem Skript oder Test, der ihn nachstellt. Bestätigte Befunde der
+Schwere hoch und mittel werden behoben, jeweils mit einem Test, der ohne die Kur fehlschlägt, und einem Absatz im Handbuch; bestätigte niedrige
+werden behoben, wenn die Kur klein ist, sonst aufgelistet. Nicht bestätigte werden mit Begründung zurückgewiesen. C2 ist fertig, wenn alle
+bestätigten hohen und mittleren Befunde behoben sind, Kernsuite und alle betroffenen Suiten grün laufen und die Liste mit Entscheidung je Befund im
+Plan und in Theorie 11.19 steht. Was beim Beheben neu auffällt, kommt auf die Liste und wird nicht in C2 nachgezogen, außer es ist ein Fehler der Kur.
+
 ### C3: Handbücher
 - Theoriehandbuch (neue Abschnitte nach 11.10), Entwurf Abschnitt 4e, `docs/Volumenmodul.md`.
 
@@ -573,6 +595,6 @@ nachgetragen.
 | B6 Windungszahl-Baum + Hüllenintegration | Fable 5.1 | sehr hoch | Divergenzsatz über Dreiecke, Barill-Baum, Genauigkeitsnachweis | erledigt: (1)–(3) halten, Block N 120 388 → 26,8 s, K_t 0,12 %; Baum mit β 4 statt 2 (Anwender 01.10.: angenommen) |
 | B7 Schale → Volumen (Prüfung) | Sonnet 5.5 | mittel | Test über bestehende Schnittstelle | erledigt: Schnittgrößen < 7·10⁻⁴ (p 2), 6·10⁻⁸ (p 3); Kopplungskontrolle und Hüllenfacetten-Fehler behoben; Schranke p 2 geneigt 1 % (Anwender) |
 | C1 Knotenblech-Abnahme | Fable 5.1 | sehr hoch | Modellbau und Nachweis gegen Referenz | erledigt: +0,34 % / −2,93 % gegen Tet10-Referenz PR 13 (Schranke 3 %); Symmetrie 3,1 % (Gitterphase) und 0,5-mm-Referenzlauf beim Anwender |
-| C2 Zweite Sicht | Fable 5.1 | hoch | unabhängig von der Umsetzung, tiefste Prüfung | offen |
+| C2 Zweite Sicht | Opus 5.5 (Prüfung und Kuren), Gutachter je Gruppe ein anderes Modell | hoch | unabhängig von der Umsetzung, tiefste Prüfung | läuft: Regeln festgelegt, drei Gutachten |
 | C3 Handbücher | Sonnet 5 | niedrig | Texte aus vorhandenen Messwerten | offen |
 | C4 Gesamtlauf, Pull Request | Sonnet 5 | mittel | Routine mit Prüfliste | offen |
