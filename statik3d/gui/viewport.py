@@ -29,6 +29,47 @@ def farbskala_waagerecht(skala: dict, zweite: bool = False) -> dict:
     return s
 
 
+#: Zeichen, die die Schrift der Ansicht (Latin-1) nicht hat - fuer Texte, deren
+#: Einrueckung bleiben muss (Kopfzeile), ohne die Umformungen von bildtext
+_BILDZEICHEN = (("→", "->"), ("„", '"'), ("“", '"'), ("”", '"'), ("▾", ""), ("−", "-"), ("…", ".."))
+
+
+def bildzeichen(text: str) -> str:
+    """Nur die Zeichen ersetzen, die im Bild verloren gingen (02.10.2026: in der
+    Kopfzeile stand „(Ergebnisse  Lasten im Ergebnisbild)“ - der Pfeil fehlte)."""
+    s = str(text or "")
+    for alt, neu in _BILDZEICHEN:
+        s = s.replace(alt, neu)
+    return s.encode("latin-1", "replace").decode("latin-1")
+
+
+def kopfzeile_ausweichen(text, wuerfel, abstand: float = 6.0):
+    """Neue Unterkante (y von unten) fuer eine Kopfzeile, die in den
+    Ansichtswuerfel laeuft - None, wenn sie frei steht. ``text`` und ``wuerfel``
+    sind (x0, x1, y0, y1) in Bildpunkten der Ansicht, y von unten. Bei 150 %
+    reichten die langen Zeilen in einer schmalen Ansicht unter den Wuerfel
+    (Sichtpruefung 02.10.2026); dann steht die Kopfzeile darunter."""
+    if text is None or wuerfel is None:
+        return None
+    tx0, tx1, ty0, ty1 = (float(v) for v in text)
+    wx0, wx1, wy0, wy1 = (float(v) for v in wuerfel)
+    if tx1 <= wx0 or tx0 >= wx1 or ty1 <= wy0 or ty0 >= wy1:
+        return None
+    return wy0 - float(abstand) - (ty1 - ty0)
+
+
+def kopfzeile_y(hoch: int, glas_hoehe: int, zeilen: int, schrift: int, massstab: float = 1.0) -> int:
+    """Unterkante der Kopfzeile in Bildpunkten der Ansicht (VTK zaehlt von unten):
+    unter der Glasleiste, ``zeilen`` Zeilen hoch. ``hoch`` kommt von VTK in
+    Geraetepixeln, die Glasleiste aus Qt in Punkten - beides muss in derselben
+    Einheit stehen. Bis zum 02.10.2026 fehlte der Massstab: bei 150 % lag die
+    erste Zeile unter der Glasleiste."""
+    f = max(1.0, float(massstab or 1.0))
+    rand = (int(glas_hoehe) + 16) * f
+    zh = schrift * 2 * 1.25 * f
+    return int(max(hoch - rand - zh * int(zeilen), 6))
+
+
 #: Abstand der waagerechten Farbskala ueber den Kennwerten [px]
 SKALA_UEBER_KENNWERTEN = 8
 

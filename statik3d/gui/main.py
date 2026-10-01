@@ -21361,13 +21361,22 @@ class MainWindow(QtWidgets.QMainWindow):
             # Fenster reicht die Leiste bis in die linke Ecke. VTK zaehlt die
             # Bildzeilen von unten.
             hoch = self.plotter.render_window.GetSize()[1]
-            rand = (self.glasleiste.height() + 16) if getattr(self, "glasleiste", None) \
-                else 46
-            zh = int(self.SCHRIFT_KOPF * 2 * 1.25)
-            y = hoch - rand - zh * len(zeilen)
-            self.plotter.add_text("\n".join(zeilen), position=(12, max(y, 6)),
+            glas = self.glasleiste.height() if getattr(self, "glasleiste", None) else 30
+            y = vp.kopfzeile_y(hoch, glas, len(zeilen), self.SCHRIFT_KOPF, self._pixelmass())
+            self.plotter.add_text("\n".join(vp.bildzeichen(z) for z in zeilen), position=(12, y),
                                   font_size=self.SCHRIFT_KOPF, font="courier",
                                   color="#203040", name="kopfzeile")
+            akt = self.plotter.renderer.actors.get("kopfzeile")
+            wue = getattr(self, "ansichtswuerfel", None)
+            if akt is not None and wue is not None and wue.isVisible():
+                ia = self.plotter.interactor
+                s = self._pixelmass()
+                lo = ia.mapFromGlobal(wue.mapToGlobal(QtCore.QPoint(0, 0)))
+                wr = (lo.x() * s, (lo.x() + wue.width()) * s,
+                      hoch - (lo.y() + wue.height()) * s, hoch - lo.y() * s)
+                neu = vp.kopfzeile_ausweichen(vp.kennwerte_rahmen(self.plotter.renderer, akt), wr, 6 * s)
+                if neu is not None:
+                    akt.SetPosition(12, max(neu, 6))
         except Exception as ex:             # noqa: BLE001
             self.log.appendPlainText(f"Kopfzeile: {ex}")
         return zeilen

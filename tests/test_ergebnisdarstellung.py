@@ -552,6 +552,30 @@ def test_nach_f5_ribbon_ergebnisse():
     check("nach der Rechnung steht das Ribbon auf „Ergebnisse“", t == "Ergebnisse", t)
 
 
+def test_bild_bei_150_prozent():
+    """Sichtpruefung 02.10.2026 bei 150 %: die Kopfzeile lag unter der Glasleiste,
+    der Titel der waagerechten Farbskala auf ihren Zahlen, und der Pfeil in
+    „Lasten ausgeblendet (Ergebnisse → …)“ fehlte im Bild."""
+    from statik3d.gui import viewport as vp
+    from statik3d.gui.main import MainWindow as MW
+    glas, n = 44, 4
+    for f in (1.0, 1.5, 2.0):
+        hoch = int(800 * f)
+        y = vp.kopfzeile_y(hoch, glas, n, MW.SCHRIFT_KOPF, f)
+        oben = y + MW.SCHRIFT_KOPF * 2 * 1.25 * f * n
+        check(f"Kopfzeile bei {f:.0%}: ganz unter der Glasleiste (Gerätepixel)",
+              oben <= hoch - glas * f + 1e-6, f"oben {oben:.0f}, Glasleiste ab {hoch - glas * f:.0f}")
+    # Kopfzeile (x0, x1, y0, y1) und Wuerfel in Geraetepixeln, y von unten
+    neu = vp.kopfzeile_ausweichen((12, 790, 960, 1040), (600, 720, 900, 1020), 9)
+    check("Kopfzeile, die in den Würfel läuft, rückt darunter",
+          neu is not None and abs(neu - (900 - 9 - 80)) < 1e-9, str(neu))
+    check("… eine, die frei steht, bleibt", vp.kopfzeile_ausweichen((12, 500, 960, 1040), (600, 720, 900, 1020))
+          is None)
+    t = vp.bildzeichen("  Lasten ausgeblendet (Ergebnisse → Lasten im Ergebnisbild)")
+    check("Kopfzeile: nur Zeichen, die die Schrift im Bild hat, Einrückung bleibt",
+          t.startswith("  Lasten") and "->" in t and t.encode("latin-1") is not None and "?" not in t, t)
+
+
 def test_lasten_im_ergebnisbild_unter_zeigen():
     """Plan Paket 6: „Lasten im Ergebnisbild“ als Schalter unter „Zeigen ▾“ der
     Glasleiste, Vorgabe aus - dieselbe Aktion wie im Register Ergebnisse."""
@@ -994,6 +1018,7 @@ def main():
               test_knoten_und_auswahl_an_der_verformten_lage, test_legende_folgt_den_einheiten,
               test_ueberhoehung, test_ergebnissteuerung_oben_rechts, test_nach_f5_ribbon_ergebnisse,
               test_f5_laesst_geaenderte_maske_stehen, test_lasten_im_ergebnisbild_unter_zeigen,
+              test_bild_bei_150_prozent,
               test_zeichenwege_an_der_bildlage, test_umriss_marke_verlauf_sichtbar,
               test_bildtext_kopfzeile, test_werteskala_in_fester_einheit,
               test_ueberhoehungsfeld_nachbesserung, test_tabfolge_steuerung_register,
