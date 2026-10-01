@@ -8,9 +8,13 @@ Uebergang auf der Blechoberflaeche, senkrecht zur Naht, lineare Extrapolation au
 mit sigma = d . S . d, d der Richtung auf dem Blech senkrecht zur Naht. Die Geometrie liefert der Vertrag nur als
 Polylinie und Blechdicke; auf welcher Seite des Uebergangs das Blech liegt, wird aus der Geometrie bestimmt: in der
 Ebene senkrecht zur Naht schneidet ein kleiner Kreis um den Uebergang die Oberflaeche in zwei Aesten (Blech und
-Nahtoberflaeche). Unter dem Blechast ist der Werkstoff so tief wie das Blech dick ist, unter der Nahtoberflaeche
-tiefer (Naht plus Blech, am T-Stoss mit Kehlnaht rund 2 t). Ist das nicht eindeutig, gibt es keinen Wert, sondern
-eine Warnung - geraten wird nicht.
+Nahtoberflaeche). Der Blechast ist der, dessen Oberflaeche von 0,05 t bis 1,0 t eben bleibt (Normalen innerhalb 10 Grad,
+Punkte auf der Ebene) und unter dem der Werkstoff t tief ist (auf 20 %); die Nahtoberflaeche knickt innerhalb 1,0 t ab
+(Ende der Kehlnahtflaeche, Ende der Ueberhoehung). Bis 02.10.2026 entschied allein die Tiefe 0,7 t laengs beider Aeste: bei
+Kehlnaehten mit Schenkel unter 0,495 t lag dieser Punkt schon auf dem Anschlussblech, bei flachen Ueberhoehungen unter der
+Ueberhoehung, und beide Aeste passten (kein Wert, Gutachten C2, G2-1). Ist kein Ast ueber 1,0 t eben (Blechende, Nachbarnaht,
+starke Kruemmung), gaebe es keine Blechoberflaeche fuer die Referenzpunkte - vorher wurden sie still auf die Stirnflaeche gezogen
+(G2-2). Ist es nicht eindeutig, gibt es keinen Wert, sondern eine Warnung - geraten wird nicht.
 """
 from __future__ import annotations
 
@@ -21,6 +25,9 @@ import numpy as np
 _KREIS_RADIUS = 0.05          # in Blechdicken; klein gegen 0,4 t, gross gegen die Rundung der Abstandsfunktion
 _KREIS_PROBEN = 720
 _TIEFE_BEI = 0.7              # in Blechdicken: Mitte zwischen den Referenzpunkten
+_EBEN_PROBEN = (0.05, 0.2, 0.4, 0.7, 1.0)   # in Blechdicken: Proben laengs des Asts fuer die Ebenheit
+_EBEN_COS = float(np.cos(np.deg2rad(10.0)))  # Normalen innerhalb 10 Grad (Rohr: Radius ueber 5,7 t)
+_EBEN_ABSTAND = 0.02          # in Blechdicken: Abstand der Proben von der Ebene am Uebergang
 _TIEFE_TOLERANZ = 0.2         # Werkstofftiefe = t auf 20 %
 _TIEFE_MAX = 3.0
 BEIWERTE = (5.0 / 3.0, -2.0 / 3.0)
@@ -39,14 +46,24 @@ class Nahtpunkt:
     warnung: str = ""
 
 
-def _tangenten(P: np.ndarray) -> np.ndarray:
-    T = np.empty_like(P)
-    if len(P) == 1:
-        raise ValueError("Nahtpolylinie braucht mindestens zwei Punkte (Tangente)")
-    T[1:-1] = P[2:] - P[:-2]
-    T[0] = P[1] - P[0]
-    T[-1] = P[-1] - P[-2]
-    return T / np.linalg.norm(T, axis=1)[:, None]
+def _tangenten(P: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """(Punkte, Tangenten). Weniger als zwei Punkte: ValueError (eine leere Linie gab vorher einen IndexError, der den ganzen Vertragsweg
+    abbrach, Gutachten C2, G2-3). Eine geschlossene Linie (letzter Punkt = erster) wird zyklisch behandelt: der doppelte Endpunkt
+    entfaellt, und die Tangente am Stoss ist die mittlere der beiden Nachbarn statt zweier einseitiger (G2-4)."""
+    P = np.asarray(P, float).reshape(-1, 3)
+    if len(P) < 2:
+        raise ValueError(f"Nahtpolylinie braucht mindestens zwei Punkte (Tangente), hat {len(P)}")
+    groesse = max(float(np.ptp(P, axis=0).max()), 1e-300)
+    geschlossen = len(P) >= 4 and float(np.linalg.norm(P[0] - P[-1])) <= 1e-9 * groesse
+    if geschlossen:
+        P = P[:-1]
+        T = np.roll(P, -1, axis=0) - np.roll(P, 1, axis=0)
+    else:
+        T = np.empty_like(P)
+        T[1:-1] = P[2:] - P[:-2]
+        T[0] = P[1] - P[0]
+        T[-1] = P[-1] - P[-2]
+    return P, T / np.linalg.norm(T, axis=1)[:, None]
 
 
 def _projizieren(geo, X: np.ndarray, schritte: int = 6) -> np.ndarray:
@@ -84,8 +101,7 @@ def _tiefe(geo, Q: np.ndarray, n: np.ndarray, t: float) -> float:
 
 def nahtgeometrie(geo, punkte: np.ndarray, t: float) -> list[Nahtpunkt]:
     """Blechseite, Richtung und Referenzpunkte je Punkt der Nahtpolylinie (Einheiten wie die Geometrie, mm)."""
-    P = np.asarray(punkte, float).reshape(-1, 3)
-    T = _tangenten(P)
+    P, T = _tangenten(np.asarray(punkte, float).reshape(-1, 3))
     rho = _KREIS_RADIUS * t
     th = np.linspace(0.0, 2.0 * np.pi, _KREIS_PROBEN, endpoint=False)
     aus = []
@@ -117,14 +133,27 @@ def nahtgeometrie(geo, punkte: np.ndarray, t: float) -> list[Nahtpunkt]:
         if float(aeste[0] @ aeste[1]) < -0.999:
             aus.append(Nahtpunkt(p0, False, warnung="Oberflaeche ohne Knick (Aeste gegenlaeufig): der Punkt liegt nicht auf einem Nahtuebergang"))
             continue
-        tiefen = []
+        tiefen, eben = [], []
+        tau = np.array(_EBEN_PROBEN) * t
         for u in aeste:
+            X0 = p0[None, :] + tau[:, None] * u[None, :]
+            R = _projizieren(geo, X0)
+            N = _normale(geo, R)
+            eben.append(bool(np.all(N @ N[0] >= _EBEN_COS) and np.all(np.abs((R - R[0]) @ N[0]) <= _EBEN_ABSTAND * t)
+                             and np.all(np.linalg.norm(R - X0, axis=1) <= _EBEN_ABSTAND * t + 1e-9 * t)))
             Q = _projizieren(geo, p0 + _TIEFE_BEI * t * u)[0]
             tiefen.append(_tiefe(geo, Q, _normale(geo, Q)[0], t))
-        passt = [abs(d - t) <= _TIEFE_TOLERANZ * t for d in tiefen]
+        passt = [e and abs(d - t) <= _TIEFE_TOLERANZ * t for e, d in zip(eben, tiefen)]
         if sum(passt) != 1:
-            aus.append(Nahtpunkt(p0, False, tiefen=tuple(tiefen),
-                                 warnung=f"Blechseite nicht eindeutig (Werkstofftiefe {tiefen[0]:.2f} und {tiefen[1]:.2f} mm, Blechdicke {t:g} mm)"))
+            tief_t = [abs(d - t) <= _TIEFE_TOLERANZ * t for d in tiefen]
+            if sum(passt) == 0 and (not any(eben) or any(tt and not e for tt, e in zip(tief_t, eben))):
+                grund = (f"weniger als 1,0 t ebene Blechoberflaeche senkrecht zur Naht (Blechende, Nachbarnaht oder starke Kruemmung); "
+                         f"die Referenzpunkte 0,4 t und 1,0 t fehlen")
+            elif sum(passt) == 0:
+                grund = f"Werkstofftiefe unter dem ebenen Ast passt nicht zur Blechdicke (Tiefen {tiefen[0]:.2f} und {tiefen[1]:.2f} mm, Blechdicke {t:g} mm)"
+            else:
+                grund = f"Blechseite nicht eindeutig (beide Aeste eben, Werkstofftiefe {tiefen[0]:.2f} und {tiefen[1]:.2f} mm, Blechdicke {t:g} mm)"
+            aus.append(Nahtpunkt(p0, False, tiefen=tuple(tiefen), warnung=grund))
             continue
         u = aeste[int(np.argmax(passt))]
         R = _projizieren(geo, p0[None, :] + np.array(ABSTAENDE)[:, None] * t * u[None, :])
@@ -152,7 +181,22 @@ def strukturspannungen(nahtpunkte: list[Nahtpunkt], spannung, einruecken: float)
         return []
     R = np.concatenate([q.referenz - einruecken * q.normalen for q in gut])
     D = np.concatenate([q.richtung for q in gut])
-    sig = normalspannung(spannung(R), D).reshape(len(gut), 2)
+    try:
+        sig = normalspannung(spannung(R), D).reshape(len(gut), 2)
+    except ValueError:
+        # ein Referenzpunkt ausserhalb der aktiven Zellen (Punktsuche wirft) verwarf vorher das ganze Ergebnis des Lastfalls samt
+        # Oberflaechenspannungen (Gutachten C2, G2-7); jetzt Punkt fuer Punkt, die betroffenen bleiben mit Warnung ohne Wert
+        zeilen, behalten = [], []
+        for i, q in enumerate(gut):
+            try:
+                zeilen.append(normalspannung(spannung(R[2 * i:2 * i + 2]), D[2 * i:2 * i + 2]))
+                behalten.append(q)
+            except ValueError as ex:
+                q.ok = False
+                q.warnung = f"Referenzpunkt ausserhalb der Zellen ({ex})"
+        if not behalten:
+            return []
+        gut, sig = behalten, np.array(zeilen).reshape(len(behalten), 2)
     hs = sig @ np.array(BEIWERTE)
     return [(q, float(h), float(s[0]), float(s[1])) for q, h, s in zip(gut, hs, sig)]
 

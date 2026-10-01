@@ -292,6 +292,12 @@ def test_windungsbaum():
     innen_gross = s_gross.innen(P)
     s_klein = Stl.aus_dreiecken(_kugelschale(50.0, 40, 41, mitte=(10.0, -20.0, 30.0)))
     s_klein.innen(P[:10])
+    # Befund G1-6 (Gutachten C2): dieselbe Kugel um 1e6 mm verschoben - die Momente in absoluten Koordinaten loeschten sich aus (|dw| 3,5e-3)
+    versatz = np.array([1e6, -1e6, 1e6])
+    Dv = D + versatz
+    wv_ex = windungszahl(P[:4000] + versatz, Dv)
+    wv_b = Windungsbaum(Dreiecksbaum(Dv)).windungszahl(P[:4000] + versatz)
+    check(f"Versatz 1e6 mm: |dw| {np.abs(wv_b - wv_ex).max():.1e} (< 1e-3, vorher 3,5e-3)", np.abs(wv_b - wv_ex).max() < 1e-3)
     check(f"Stl.innen: Baum ab {WINDUNG_BAUM_AB} Facetten gebaut (25 088: ja, 3 200: nein), Entscheidung wie exakt",
           s_gross._windung is not None and s_klein._windung is None and bool((innen_gross == (w_ex > 0.5)).all()))
 
@@ -330,7 +336,87 @@ def test_flaeche_hinter_schnittebene():
           f"Punkte hinter der Ebene {dahinter} (0)", abs(ist / soll - 1) < 1e-9 and dahinter == 0, f"{fq.statistik}")
 
 
-TESTS = [test_stammfunktionen, test_polyeder_momente, test_baum_und_zellquadratur, test_windungsbaum, test_flaeche_hinter_schnittebene]
+def test_offene_huelle():
+    """Befund G1-2 (Gutachten C2, 02.10.2026): der Divergenzsatz gilt nur fuer geschlossene Huellen; eine Huelle mit Luecke (Defekt bis 0,25
+    wird mit Warnung angenommen) gab still falsche Zellvolumina - Wuerfel 30^3 ohne eine Facette 13 859 statt 27 000 mm3 (24 Zellen als
+    'leer'), bei einer Luecke von 2 mm2 in 2 700 Facetten 26 958 (Defekt 3e-4, keine Warnung). Jetzt zaehlt Stl die offenen Kanten, und
+    offene Huellen gehen den alten Weg (Zerlegung an lokalen Ebenen); dazu prueft jede Huellenzelle 0 <= V <= V_Zelle. Pruefung: Zellquadratur
+    mit Huellenintegration gleich der ohne (alter Weg) bei beiden Luecken, keine Huellenzelle, geschlossene Huelle unveraendert exakt."""
+    from volumen3d.fcm.gitter import Gitter
+    from volumen3d.fcm.quadratur import Zellquadratur
+    from volumen3d.geometry.csg import aus_params
+    D = _wuerfel([1.0, 1.0, 1.0], [31.0, 31.0, 31.0])
+    # feine Wuerfelhuelle: jede Seite als 15 x 15 Quadrate zu je zwei Dreiecken (2 700 Facetten, Kante 2 mm)
+    def seite(o, u, v):
+        o, u, v = (np.asarray(x, float) for x in (o, u, v))
+        T = []
+        for i in range(15):
+            for j in range(15):
+                a0 = o + i * u + j * v
+                T += [[a0, a0 + u, a0 + u + v], [a0, a0 + u + v, a0 + v]]
+        return T
+    e = 2.0
+    D_fein = np.array(seite([1, 1, 1], [0, e, 0], [e, 0, 0]) + seite([1, 1, 31], [e, 0, 0], [0, e, 0]) + seite([1, 1, 1], [e, 0, 0], [0, 0, e])
+                      + seite([1, 31, 1], [0, 0, e], [e, 0, 0]) + seite([1, 1, 1], [0, 0, e], [0, e, 0]) + seite([31, 1, 1], [0, e, 0], [0, 0, e]))
+    zeilen, ok = [], True
+    for name, DD, offen_soll in (("geschlossen", D, 0), ("ohne Facette 6 (x-Seite)", np.delete(D, 6, axis=0), 3),
+                                 (f"fein ({len(D_fein)}) ohne eine auf x = 31", np.delete(D_fein, 2300, axis=0), 3)):
+        g = aus_params({"csg": {"typ": "stl", "dreiecke": DD.tolist(), "name": "w"}})
+        G = Gitter(g, h=10.0)
+        Q = Zellquadratur(G, p=2, alpha=0.0)
+        Q_alt = Zellquadratur(G, p=2, alpha=0.0, huellen_exakt=False)
+        v, v_alt = Q.volumen(), Q_alt.volumen()
+        form = g.grundformen()[0]
+        hz = Q.statistik.get("huellenzellen", 0)
+        if offen_soll == 0:
+            ok &= abs(v / 27000.0 - 1) < 1e-10 and hz > 0 and form.offene_kanten == 0
+        else:
+            ok &= abs(v - v_alt) <= 1e-9 * 27000.0 and hz == 0 and form.offene_kanten == offen_soll
+        zeilen.append(f"{name}: V {v:.3f} / alt {v_alt:.3f}, Huellenzellen {hz}, offene Kanten {form.offene_kanten}, Defekt {form.defekt:.1e}")
+    # Befund G1-5: mit fit_grad < 2p (oder momentfitting aus) fittete die Huellenzelle mit zu kleinem Grad; jetzt immer q >= 2p
+    g = aus_params({"csg": {"typ": "stl", "dreiecke": D.tolist(), "name": "w"}})
+    Gq = Gitter(g, h=10.0)
+    Qk = Zellquadratur(Gq, p=2, alpha=0.0, fit_grad=2, momentfitting=False)
+    vk = Qk.volumen()
+    ok &= Qk.statistik.get("huellen_grad") == 4 and abs(vk / 27000.0 - 1) < 1e-10
+    zeilen.append(f"fit_grad 2, momentfitting aus: Huellengrad {Qk.statistik.get('huellen_grad')}, V {vk:.3f}")
+    check("offene Huellen gehen den alten Weg (Volumen wie ohne Huellenintegration, keine Huellenzelle, 3 offene Kanten); geschlossene exakt", ok,
+          "; ".join(zeilen))
+
+
+def test_huelle_in_abgezogenem_teilbaum():
+    """Befund G1-4 (Gutachten C2, 02.10.2026): steckt die Huelle in einem abgezogenen Teilbaum, der selbst eine Operation ist, ueberging
+    Csg._stuecke_ohne diesen Teilbaum ganz; Facettenpolygone der Huelle, die gar nicht Rand des Lochs sind, blieben als Oberflaeche im
+    Werkstoff stehen (Volumen war richtig). Faelle mit H als STL-Wuerfel und dieselben mit H als Quader (Gegenprobe):
+    (1) A = [0,40]^3 − (H ∩ {x <= 20}), H = [10,30]^3: 9 600 + Hohlraum [10,20] x [10,30]^2 mit 2 (10*20)*2 + 2 (20*20) = 1 600 -> 11 200;
+    (2) A − (B − H), B = [10,30]^3 (Quader), H = [5,20]^3: Hohlraum B − H hat dieselbe Oberflaeche wie B (drei Quadrate 10 x 10 von B fallen weg,
+    drei von H kommen hinzu) -> 9 600 + 2 400 = 12 000."""
+    from volumen3d.fcm.gitter import Gitter
+    from volumen3d.geometry.csg import aus_params
+    from volumen3d.geometry.oberflaeche import Flaechenquadratur
+    A = {"typ": "quader", "min": [0, 0, 0], "max": [40, 40, 40], "name": "A"}
+    def huelle(lo, hi, stl):
+        if stl:
+            return {"typ": "stl", "dreiecke": _wuerfel(lo, hi).tolist(), "name": "H"}
+        return {"typ": "quader", "min": list(lo), "max": list(hi), "name": "H"}
+    zeilen, ok = [], True
+    for stl in (True, False):
+        f1 = {"typ": "differenz", "teile": [A, {"typ": "schnitt", "teile": [huelle([10, 10, 10], [30, 30, 30], stl),
+                                                                          {"typ": "halbraum", "punkt": [20, 0, 0], "normale": [1, 0, 0], "name": "E"}]}]}
+        f2 = {"typ": "differenz", "teile": [A, {"typ": "differenz", "teile": [{"typ": "quader", "min": [10, 10, 10], "max": [30, 30, 30], "name": "B"},
+                                                                            huelle([5, 5, 5], [20, 20, 20], stl)]}]}
+        for name, par, soll in (("1", f1, 11200.0), ("2", f2, 12000.0)):
+            g = aus_params({"csg": par})
+            for h in (10.0, 7.0):
+                o = Flaechenquadratur.aus_geometrie(g, Gitter(g, h=h), 3)
+                a = float(o.gewichte.sum())
+                ok &= abs(a / soll - 1) < 1e-9
+                zeilen.append(f"{name} {'STL' if stl else 'Quader'} h {h:g}: {a:.3f}")
+    check("Huelle in abgezogenem Operations-Teilbaum: Oberflaeche exakt (1e-9), keine Scheinflaechen im Werkstoff; Gegenprobe mit Quader", ok, "; ".join(zeilen))
+
+
+TESTS = [test_stammfunktionen, test_polyeder_momente, test_baum_und_zellquadratur, test_windungsbaum, test_flaeche_hinter_schnittebene, test_offene_huelle,
+         test_huelle_in_abgezogenem_teilbaum]
 
 if __name__ == "__main__":
     sys.exit(lauf(TESTS))

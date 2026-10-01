@@ -303,8 +303,9 @@ def test_chebyshev_fenster():
     lambda_max von M^-1 A sitzt im Uebergangsguertel des Oktrees und wandert mit der Schnittlage, das schmale
     Fenster liess darunter je nach Lage Moden liegen. Kirsch h 20 p 3 verfeinert, Versatz 0,4 (zwei halb
     gefuellte Zellschichten ueber die Dicke), CPU: der Standard braucht hoechstens 85 % der Iterationen von
-    alpha 16, die Spannungen stimmen ueberein (< 1e-6). Auf der GPU gemessen (h 10 und h 8, je fuenf Lagen):
-    24,8 statt 33,0 und 30,6 statt 39,6 Iterationen im Mittel."""
+    alpha 16, die Spannungen stimmen ueberein (< 1e-6). Gemessen in genau dieser Pruefung (02.10.2026, Gutachten C2,
+    G2-8): 19 gegen 26 Iterationen (73 %), Spannungen 7,4e-9. Auf der GPU gemessen (h 10 und h 8, je fuenf Lagen):
+    24,8 statt 33,0 und 30,6 statt 39,6 Iterationen im Mittel (75 und 77 %)."""
     from volumen3d.fcm.gitter import Verfeinerung
     from volumen3d.fcm.mehrgitter import PMehrgitter
     from volumen3d.linalg.pcg import pcg
@@ -325,6 +326,47 @@ def test_chebyshev_fenster():
     f = float(np.abs(s_s - s16).max() / np.abs(s16).max())
     check(f"Kirsch h 20 p 3 Versatz 0,4: Standardfenster (alpha {a_s:g}) {i_s} Iterationen <= 85 % von alpha 16 ({i16}), "
           f"Spannungen gleich (< 1e-6)", k16 and k_s and a_s == 100.0 and i_s <= 0.85 * i16 and f < 1e-6, f"Spannungen {f:.1e}")
+
+
+def test_grosse_bloecke_spd():
+    """Befund G2-10 (Gutachten C2, 02.10.2026): Bloecke ueber 320 Koordinaten wurden mit LU (np.linalg.inv, cupy.linalg.inv) invertiert;
+    ein nicht positiv definiter Block fiel nicht auf (die numba-Cholesky der kleinen Bloecke prueft die Pivots), der V-Zyklus waere
+    indefinit geworden. Jetzt Cholesky auch fuer grosse Bloecke: ein Block 400 x 400 mit einem negativen Eigenwert -> ValueError, ein SPD-Block
+    gibt die Inverse auf 1e-12."""
+    import scipy.sparse as sp
+    from volumen3d.fcm.mehrgitter import ZellSchwarz
+    n = 400
+    rng = np.random.default_rng(3)
+    Qm, _ = np.linalg.qr(rng.standard_normal((n, n)))
+    ew = np.linspace(1.0, 10.0, n)
+    A_spd = Qm @ np.diag(ew) @ Qm.T
+    ew_ind = ew.copy()
+    ew_ind[7] = -0.5
+    A_ind = Qm @ np.diag(ew_ind) @ Qm.T
+    C = sp.identity(n, format="csr")
+    dofs = np.arange(n).reshape(1, n)                          # eine Zelle, deren Zeilen von C alle n Koordinaten beruehren: ein Block n x n
+    zeilen = []
+    geraete = ["cpu"]
+    try:
+        import cupy  # noqa: F401
+        geraete.append("gpu")
+    except ImportError:
+        pass
+    ok = True
+    for geraet in geraete:
+        try:
+            ZellSchwarz(C, dofs, sp.csr_matrix(A_ind), geraet=geraet)
+            meldung = ""
+        except ValueError as ex:
+            meldung = str(ex)
+        z = ZellSchwarz(C, dofs, sp.csr_matrix(A_spd), geraet=geraet)
+        r = rng.standard_normal(n)
+        x = z.anwenden(r if geraet == "cpu" else __import__("cupy").asarray(r))
+        x = np.asarray(x.get() if hasattr(x, "get") else x)
+        f = float(np.abs(A_spd @ x - r).max())
+        ok &= "positiv definit" in meldung and f < 1e-10
+        zeilen.append(f"{geraet}: indefinit -> '{meldung[:50]}', SPD Residuum {f:.1e}")
+    check("grosse Glaetterbloecke: indefiniter Block -> ValueError 'nicht positiv definit', SPD-Block exakt invertiert (CPU und GPU)", ok, "; ".join(zeilen))
 
 
 def test_symmetrie():
@@ -452,4 +494,4 @@ def test_kern():
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_ebenen, test_nullkandidaten, test_nullkandidaten_mehrdimensional, test_p1_und_gleichgewicht, test_nullraum, test_schwarz_grosse_bloecke, test_chebyshev_fenster, test_symmetrie, test_problem_mehrgitter, test_pcg_mehrgitter]))
+    sys.exit(lauf([test_ebenen, test_nullkandidaten, test_nullkandidaten_mehrdimensional, test_p1_und_gleichgewicht, test_nullraum, test_schwarz_grosse_bloecke, test_grosse_bloecke_spd, test_chebyshev_fenster, test_symmetrie, test_problem_mehrgitter, test_pcg_mehrgitter]))

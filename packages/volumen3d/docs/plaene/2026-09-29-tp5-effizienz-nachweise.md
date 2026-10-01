@@ -567,6 +567,28 @@ werden behoben, wenn die Kur klein ist, sonst aufgelistet. Nicht bestätigte wer
 bestätigten hohen und mittleren Befunde behoben sind, Kernsuite und alle betroffenen Suiten grün laufen und die Liste mit Entscheidung je Befund im
 Plan und in Theorie 11.19 steht. Was beim Beheben neu auffällt, kommt auf die Liste und wird nicht in C2 nachgezogen, außer es ist ein Fehler der Kur.
 
+**Ergebnis C2 (02.10.2026, Theorie 11.19).** 25 Befunde, davon einer doppelt (G3-1 = G1-3, G3-5 = G2-6); alle am Quelltext bestätigt, jede Kur mit einem Test, der
+ohne sie fehlschlägt.
+
+| ID | Schwere | Befund | Entscheidung |
+|---|---|---|---|
+| G3-1 / G1-3 | hoch | STEP mit durchdringenden Körpern rechnete still „A minus B“ (805 400 statt 1 288 000 mm³); überlappende STL-Schalen doppelt | behoben: STEP vereinigen (`fuse`), STL Kantenkreuzung → Fehler, Tiefenproben innen |
+| G1-1 | hoch | deckungsgleiche Flächen auf dem flachen Weg doppelt/teilweise doppelt, reihenfolge- und gitterabhängig; Scheindeckel über bündiger Tasche | behoben: Gegen-Ebene → Teilen + Zeuge; Zeuge verlangt Werkstoff innen |
+| G1-2 | hoch | offene Hülle im Divergenzweg still falsch (13 859 statt 27 000 mm³) | behoben: offene Kanten → alter Weg, Volumenwächter je Zelle |
+| G2-1 | hoch | Blechseite „nicht eindeutig“ bei Kehlnaht-Schenkel < 0,495 t und Stumpfnähten → kein Hot-Spot | behoben: Blechast eben über 1,0 t + Tiefe t |
+| G1-4 | mittel | Hülle in abgezogenem Operations-Teilbaum → Scheinflächen im Werkstoff | behoben |
+| G2-2 | mittel | Referenzpunkt hinter Blechkante still auf Stirnfläche (+70 %) | behoben mit G2-1 (Warnung, kein Wert) |
+| G3-2 | mittel | Konvergenzaussage „Änderung 0“ vor Monotonie; wirkungslose h-Zyklen | behoben: `ohne_aenderung`, h-Schritt ohne Wirkung übersprungen |
+| G3-3 | mittel | Kopplungskontrolle verschleierte Momentfehler an dünnen Blechen (40 % Moment → 4,7 %) | behoben: Abweichung als Spannung (36 %) |
+| G3-4 | mittel | zwei Prüfungen in `test_adaptiv` ohne Aussage | behoben |
+| G3-5 / G2-6 | mittel | `hotspot_max` vorzeichenbehaftet | behoben: betragsgrößter Wert mit Vorzeichen |
+| G1-5, G1-6, G2-3, G2-4, G2-5, G2-7, G2-8, G2-9, G2-10, G3-6, G3-8, G3-9 | niedrig | siehe Theorie 11.19 | behoben |
+| G3-7 | niedrig | Zyklen: Fehler verwirft fertige, Speicher der Vorzyklen, Nahtdicke spät, kein Abbruch in `prepare` | behoben bis auf Abbruch in `prepare` (aufgelistet) |
+
+Aufgelistet, nicht in C2: Abbruch in `prepare`, `summary()` nach Zyklen (Vertragsklarstellung), Vereinigung mit mehreren Kindern derselben Hülle, `t_s` von Zyklus 0,
+Torsion in der Kopplungskontrolle über das polare Moment. Sichtbare Folge für den Anwender: das Knotenblech meldet jetzt „Moment 7,9 % > 5 %“ an den Schnittebenen
+(Endeinspannung gegen das exzentrische Blech, die der Zug-Geber nicht kennt) – richtig, der Vergleich gegen Tet10 bleibt unberührt.
+
 ### C3: Handbücher
 - Theoriehandbuch (neue Abschnitte nach 11.10), Entwurf Abschnitt 4e, `docs/Volumenmodul.md`.
 
@@ -595,6 +617,6 @@ nachgetragen.
 | B6 Windungszahl-Baum + Hüllenintegration | Fable 5.1 | sehr hoch | Divergenzsatz über Dreiecke, Barill-Baum, Genauigkeitsnachweis | erledigt: (1)–(3) halten, Block N 120 388 → 26,8 s, K_t 0,12 %; Baum mit β 4 statt 2 (Anwender 01.10.: angenommen) |
 | B7 Schale → Volumen (Prüfung) | Sonnet 5.5 | mittel | Test über bestehende Schnittstelle | erledigt: Schnittgrößen < 7·10⁻⁴ (p 2), 6·10⁻⁸ (p 3); Kopplungskontrolle und Hüllenfacetten-Fehler behoben; Schranke p 2 geneigt 1 % (Anwender) |
 | C1 Knotenblech-Abnahme | Fable 5.1 | sehr hoch | Modellbau und Nachweis gegen Referenz | erledigt: +0,34 % / −2,93 % gegen Tet10-Referenz PR 13 (Schranke 3 %); Symmetrie 3,1 % (Gitterphase) und 0,5-mm-Referenzlauf beim Anwender |
-| C2 Zweite Sicht | Opus 5.5 (Prüfung und Kuren), Gutachter je Gruppe ein anderes Modell | hoch | unabhängig von der Umsetzung, tiefste Prüfung | läuft: Regeln festgelegt, drei Gutachten |
+| C2 Zweite Sicht | Opus 5.5 (Prüfung und Kuren), Gutachter je Gruppe ein anderes Modell | hoch | unabhängig von der Umsetzung, tiefste Prüfung | erledigt: 24 Befunde bestätigt, 4 hohe und 6 mittlere behoben, 12 niedrige behoben, 1 teilweise; Liste in Theorie 11.19 |
 | C3 Handbücher | Sonnet 5 | niedrig | Texte aus vorhandenen Messwerten | offen |
 | C4 Gesamtlauf, Pull Request | Sonnet 5 | mittel | Routine mit Prüfliste | offen |

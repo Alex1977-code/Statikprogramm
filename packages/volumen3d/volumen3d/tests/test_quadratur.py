@@ -302,6 +302,51 @@ def test_innere_trennflaeche():
               f"{o.statistik}, {len(o.punkte)} Punkte")
 
 
+def test_deckungsgleiche_flaechen():
+    """Befund G1-1 (Gutachten C2, 02.10.2026): die C1-Kur fuer deckungsgleiche Flaechen (zwei Formen stehen auf derselben Ebene) half nur
+    im Baumweg; auf dem flachen Vereinigungsweg (Quader + Quader) zaehlte der Boden doppelt oder teilweise doppelt, abhaengig von der
+    Reihenfolge der Formen und der Gitterphase (Boden 1 756 bis 1 880 statt 1 600 mm2), und eine wieder aufgefuellte Tasche behielt einen
+    Scheindeckel. Geschlossene Formen der Oberflaeche, je zwei Reihenfolgen und drei Zellgroessen:
+    (a) A = [0,40]^2 x [0,10] ∪ B = [12,28]^2 x [0,20]: 1 600 + 1 344 + 1 600 + 640 + 256 = 5 440;
+    (b) Knotenblech [70,130] x [36,44] x [0,40] ∪ Nahtquader [64,136] x [30,50] x [0,6]: 1 440 + 1 104 + 960 + 4 624 + 480 = 8 608;
+    (c) (C − B) ∪ A mit C = [0,40]^2 x [0,10], Tasche B = [10,30]^2 x [5,11], Fuellung A = [10,20] x [10,30] x [5,10]: 5 100, davon auf z = 10 1 400."""
+    from volumen3d.fcm.gitter import Gitter
+    from volumen3d.geometry.csg import aus_params
+    from volumen3d.geometry.oberflaeche import Flaechenquadratur
+    def q(lo, hi, name):
+        return {"typ": "quader", "min": lo, "max": hi, "name": name}
+    faelle = [
+        ("a", [q([0, 0, 0], [40, 40, 10], "A"), q([12, 12, 0], [28, 28, 20], "B")], "vereinigung", 5440.0, None),
+        ("b", [q([70, 36, 0], [130, 44, 40], "K"), q([64, 30, 0], [136, 50, 6], "N")], "vereinigung", 8608.0, None),
+    ]
+    zeilen, ok = [], True
+    for name, teile, op, soll, _ in faelle:
+        for reihe in (teile, teile[::-1]):
+            g = aus_params({"csg": {"typ": op, "teile": reihe}})
+            for h in (10.0, 7.0, 4.3):
+                o = Flaechenquadratur.aus_geometrie(g, Gitter(g, h=h), 3)
+                a = float(o.gewichte.sum())
+                ok &= abs(a / soll - 1) < 1e-9
+                zeilen.append(f"{name} {[t['name'] for t in reihe]} h {h:g}: {a:.3f}")
+    tasche = {"typ": "vereinigung", "teile": [{"typ": "differenz", "teile": [q([0, 0, 0], [40, 40, 10], "C"), q([10, 10, 5], [30, 30, 11], "B")]},
+                                               q([10, 10, 5], [20, 30, 10], "A")]}
+    # (d) dieselbe Tasche buendig (Deckel der Tasche B deckungsgleich mit dem von C, Fall des Gutachtens): C = [0,40]^2 x [0,10],
+    # B = [10,20]^2 x [5,10], A = [10,15] x [10,20] x [5,10] -> 4 950, davon auf z = 10 1 550 (vorher Scheindeckel 1 600)
+    buendig = {"typ": "vereinigung", "teile": [{"typ": "differenz", "teile": [q([0, 0, 0], [40, 40, 10], "C"), q([10, 10, 5], [20, 20, 10], "B")]},
+                                                q([10, 10, 5], [15, 20, 10], "A")]}
+    for name, g_par, soll, soll_oben in (("c", tasche, 5100.0, 1400.0), ("c", {"typ": "vereinigung", "teile": tasche["teile"][::-1]}, 5100.0, 1400.0),
+                                         ("d", buendig, 4950.0, 1550.0), ("d", {"typ": "vereinigung", "teile": buendig["teile"][::-1]}, 4950.0, 1550.0)):
+        g = aus_params({"csg": g_par})
+        for h in (10.0, 7.0, 4.3):
+            o = Flaechenquadratur.aus_geometrie(g, Gitter(g, h=h), 3)
+            a = float(o.gewichte.sum())
+            oben = float(o.gewichte[(np.abs(o.punkte[:, 2] - 10.0) < 1e-9) & (o.normalen[:, 2] > 0.999)].sum())
+            ok &= abs(a / soll - 1) < 1e-9 and abs(oben / soll_oben - 1) < 1e-9
+            zeilen.append(f"{name} h {h:g}: {a:.3f} (z 10: {oben:.3f})")
+    check("deckungsgleiche Flaechen auf dem flachen Weg: Oberflaechen exakt (1e-9), unabhaengig von Reihenfolge und Zellgroesse; aufgefuellte Tasche ohne Scheindeckel",
+          ok, "; ".join(zeilen))
+
+
 def test_inside_zelle():
     from volumen3d.fcm.gitter import INSIDE, Gitter
     from volumen3d.fcm.quadratur import Zellquadratur
@@ -318,4 +363,4 @@ def test_inside_zelle():
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_innere_trennflaeche, test_polyeder, test_ebene_geometrie_exakt, test_kugel_zweite_ordnung, test_lochplatte, test_kleine_radien, test_inside_zelle, test_momentfitting, test_verschachtelter_baum]))
+    sys.exit(lauf([test_innere_trennflaeche, test_deckungsgleiche_flaechen, test_polyeder, test_ebene_geometrie_exakt, test_kugel_zweite_ordnung, test_lochplatte, test_kleine_radien, test_inside_zelle, test_momentfitting, test_verschachtelter_baum]))

@@ -267,9 +267,14 @@ def test_gebuendelte_nachbarsuche():
             P[d] += s * (0.5 * hl[iF] + eps[iF])
             abw_p += int(g.zelle_finden(P[None])[0] != nb[iF, k])
             n_p += 1
-    check("gebuendelte Nachbarsuche = Einzelabfragen (Aggregation alle 26 Richtungen, haengende Flaechen)",
-          n_n > 1000 and n_p > 100 and abw_n == 0 and abw_p == 0,
-          f"Aggregation {n_n} Abfragen, {abw_n} verschieden; Flaechenproben {n_p}, {abw_p} verschieden")
+    # alle 98 Proben (auch Kanten und Ecken) einzeln gegen die gebuendelte Suche (Gutachten C2, G2-8: vorher nur die 6 Flaechenproben);
+    # die Reihenfolge, in der _haengende sie liest, sichert der verfeinerte Patch-Test (test_patch_verfeinert)
+    PP = zw._probepunkte(fein, punkte_zurueck=True)
+    abw_alle = sum(int(g.zelle_finden(PP[iF, k][None])[0] != nb[iF, k]) for iF in range(0, len(fein), 3) for k in range(PP.shape[1]))
+    n_alle = len(range(0, len(fein), 3)) * PP.shape[1]
+    check("gebuendelte Nachbarsuche = Einzelabfragen (Aggregation alle 26 Richtungen, haengende Flaechen, alle 98 Proben je feiner Zelle)",
+          n_n > 1000 and n_p > 100 and abw_n == 0 and abw_p == 0 and PP.shape[1] == 98 and abw_alle == 0,
+          f"Aggregation {n_n} Abfragen, {abw_n} verschieden; Flaechenproben {n_p}, {abw_p} verschieden; alle Proben {n_alle}, {abw_alle} verschieden")
 
 
 if __name__ == "__main__":

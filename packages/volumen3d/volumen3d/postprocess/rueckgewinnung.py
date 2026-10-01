@@ -107,6 +107,10 @@ class L2Rueckgewinnung:
         g = self.gitter
         P = np.asarray(P, float).reshape(-1, 3)
         c = g.zelle_finden(P) if zellen is None else np.asarray(zellen)
+        if np.any(c < 0):
+            # zelle_finden liefert -1 ausserhalb; zell_moden[-1] haette still die letzte Zelle genommen (Gutachten C2, G2-9)
+            i = int(np.flatnonzero(c < 0)[0])
+            raise ValueError(f"{int((c < 0).sum())} Punkte ausserhalb aller aktiven Zellen, z. B. {P[i]}")
         s = np.empty((len(P), 6, X.shape[2]))
         for a in range(0, len(P), _PUNKTE_JE_BLOCK):
             b = min(len(P), a + _PUNKTE_JE_BLOCK)

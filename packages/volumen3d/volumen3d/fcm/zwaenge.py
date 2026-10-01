@@ -92,7 +92,7 @@ class Zwaenge:
             return -1
         return int(n[np.argmin(self.gitter.ebene[n])])
 
-    def _probepunkte(self, fein: np.ndarray) -> np.ndarray:
+    def _probepunkte(self, fein: np.ndarray, punkte_zurueck: bool = False) -> np.ndarray:
         """Alle Probepunkte der haengenden Entitaeten je feiner Zelle (6 Flaechen, 12 Kanten x 3 Quadranten,
         8 Ecken x 7 Oktanten = 98) in der Reihenfolge, in der _haengende sie abfragt, und ihre Blaetter in einem
         Aufruf. Einzeln waren es 30 836 Aufrufe von zelle_finden mit je einem bis sieben Punkten, 6,5 s von 23 s
@@ -126,6 +126,8 @@ class Zwaenge:
                             continue                           # das ist F selbst
                         punkte.append(v + eps[:, None] * np.array([ox, oy, oz], float))
         P = np.stack(punkte, axis=1)                           # (n_fein, 98, 3)
+        if punkte_zurueck:                                     # fuer die Pruefung der gebuendelten Suche gegen Einzelabfragen
+            return P
         return g.zelle_finden(P.reshape(-1, 3)).reshape(len(fein), P.shape[1])
 
     def _haengende(self) -> None:

@@ -67,9 +67,13 @@ class Windungsbaum:
         kreuz = np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0])
         an = 0.5 * kreuz                                       # a_t n_t (Flaeche mal Einheitsnormale)
         a = np.linalg.norm(an, axis=1)
-        c = T.mean(axis=1)
+        c_abs = T.mean(axis=1)
         # exakte zweite Momente des Dreiecks um seinen Schwerpunkt: (a/12) sum_v (v - c)(v - c)^T
-        dv = T - c[:, None, :]
+        dv = T - c_abs[:, None, :]
+        # Schwerpunkte relativ zur Mitte des Huellquaders: in absoluten Koordinaten loeschten sich in A2 - A1 p~ ... die grossen Terme aus
+        # (Versatz 1e6 mm: |dw| 3,5e-3 statt 1,8e-4, Gutachten C2, G1-6); die Zentralmomente M1, M2 haengen vom Bezug nicht ab
+        s0 = 0.5 * (baum.lo[0] + baum.hi[0])
+        c = c_abs - s0
         S = (a / 12.0)[:, None, None] * np.einsum("tvj,tvk->tjk", dv, dv)
         # Praefixsummen der Groessen, aus denen die Knotenmomente um beliebiges p~ folgen:
         #   N = sum a n;  A1[ij] = sum a n_i c_j;  A2[ijk] = sum n_i (a c_j c_k + S_jk);  sum a;  sum a c
@@ -85,15 +89,15 @@ class Windungsbaum:
         N = summe[:, 4:7]
         A1k = summe[:, 7:16].reshape(n_knoten, 3, 3)
         A2k = summe[:, 16:43].reshape(n_knoten, 3, 3, 3)
-        mitte_box = 0.5 * (baum.lo + baum.hi)
+        mitte_box = 0.5 * (baum.lo + baum.hi) - s0
         pt = np.where((a_k > 0)[:, None], ac_k / np.where(a_k > 0, a_k, 1.0)[:, None], mitte_box)
         # Umkugel um p~ ueber die acht Boxecken (obere Schranke der wahren Umkugel, ohne Durchlauf der Ecken)
-        ecken = np.stack([baum.hi[:, d] if (i >> d) & 1 else baum.lo[:, d] for i in range(8) for d in range(3)], axis=1).reshape(n_knoten, 8, 3)
+        ecken = np.stack([baum.hi[:, d] if (i >> d) & 1 else baum.lo[:, d] for i in range(8) for d in range(3)], axis=1).reshape(n_knoten, 8, 3) - s0
         rad = np.linalg.norm(ecken - pt[:, None, :], axis=2).max(axis=1)
         M1 = A1k - N[:, :, None] * pt[:, None, :]
         M2 = (A2k - A1k[:, :, :, None] * pt[:, None, None, :] - A1k[:, :, None, :] * pt[:, None, :, None]
               + N[:, :, None, None] * pt[:, None, :, None] * pt[:, None, None, :])
-        self.pt = np.ascontiguousarray(pt)
+        self.pt = np.ascontiguousarray(pt + s0)
         self.rad = np.ascontiguousarray(rad)
         self.N = np.ascontiguousarray(N)
         self.M1 = np.ascontiguousarray(M1)

@@ -177,7 +177,13 @@ def _stuecke_des_polygons(geometrie, form, poly: np.ndarray, tiefe: int, stufe: 
         # orientierte Huelle), der Zeugentest entfaellt - er kostete je Polygon eine Windungszahl ueber alle Facetten
         # (Block mit Bohrung N 60: 62 000 Aufrufe, 13 von 23 s der Flaechenquadratur, Plan TP 5 B6)
         return [poly] if polygon_flaeche(poly) > 1e-14 * r * r else []
-    if getattr(st[0], "baum", False):
+    # Eine Ebene durch das Polygon mit entgegengesetzter Normale gehoert zum Komplement einer deckungsgleichen Flaeche (Vereinigung zweier
+    # Formen auf derselben Ebene: Stueck "B ohne A" = B ∩ {z < 0} am gemeinsamen Boden z = 0). Die Regel fuer parallele Ebenen unten behielt
+    # solche Stuecke und lieferte den Fussabdruck doppelt oder - mit dem Abgleich nach Rang am Zeugen eines nur teilweise ueberdeckten
+    # Polygons - teilweise doppelt, abhaengig von Reihenfolge und Gitterphase (Quader auf Quader: Boden 1 756 bis 1 880 statt 1 600 mm2,
+    # Gutachten C2, G1-1). Dann wie im Baumweg: an allen Ebenen teilen, jede Teilflaeche ist einheitlich, Zeuge und Abgleich entscheiden.
+    koplanar = any(float(n @ n_eigen) < -0.999 and abs(float((c - p) @ n)) <= 1e-9 * r for halbraeume in st[0] for p, n in halbraeume)
+    if getattr(st[0], "baum", False) or koplanar:
         kandidaten = _zerlegt_an_allen_ebenen(poly, st[0], n_poly, n_eigen, c, r)
         return _zeugen_pruefen(geometrie, form, kandidaten, r, tol_flaeche, statistik, st[2])
     # Die eigene Flaeche ist die Tangentialebene der Quellform im projizierten Schwerpunkt c
@@ -244,7 +250,10 @@ def _zeugen_pruefen(geometrie, form, kandidaten, r, tol_flaeche, statistik, akti
     eps = max(1e-6 * r, 10.0 * tol_flaeche)
     auf_flaeche = np.abs(geometrie.abstand(Z)) <= tol_flaeche
     aussen_frei = ~geometrie.innen(Z + eps * n_z)
-    ok = auf_flaeche & aussen_frei
+    # und ein Stueck nach innen Werkstoff: auf einer deckungsgleichen Lochflaeche (Tasche buendig mit der Oberseite) ist der CSG-Abstand
+    # max(d_C, -d_B) null und aussen frei, der Deckel ueber der Tasche blieb als Scheinflaeche stehen (Gutachten C2, G1-1: 1 600 statt 1 550 mm2)
+    innen_voll = geometrie.innen(Z - eps * n_z)
+    ok = auf_flaeche & aussen_frei & innen_voll
     statistik["innen_verworfen"] += int((~ok).sum())
     # Deckungsgleiche Flaechen zweier Formen auf derselben Seite (Knotenblech und Nahtstumpf stehen beide auf z = 0, Plan TP 5 C1:
     # Boden des Knotenblechs 480 mm2 doppelt): nur eine Form behaelt das Stueck - eine analytische vor einer Huelle (benannte

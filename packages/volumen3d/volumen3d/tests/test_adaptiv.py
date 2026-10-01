@@ -34,12 +34,18 @@ def test_konvergenzaussage():
           and abs(a["restabweichung"] - abs(geo[-1] - 100) / 100) < 1e-12, f"{a['text']} | {b['text']}")
     schwingt = konvergenzaussage([100.0, 103.0, 101.0, 102.0])
     waechst = konvergenzaussage([100.0, 101.0, 103.0, 107.0])
+    # Befund G3-2 (Gutachten C2, 02.10.2026): die letzte Aenderung null galt vor der Monotoniepruefung als Konvergenz - auch nach einem
+    # Ueberschwinger [100, 120, 90, 90] und bei einer konstanten Folge, die nur zeigt, dass sich nichts geaendert hat (wirkungslose Zyklen)
+    nach_schwung = konvergenzaussage([100.0, 120.0, 90.0, 90.0])
+    konstant = konvergenzaussage([100.0, 100.0, 100.0])
+    ruhig = konvergenzaussage([100.0, 110.0, 112.0, 112.0])
     check("Schwingende und wachsende Folge: nicht monoton, kein Grenzwert; zwei Werte zu wenig; fehlender Wert kein Hot-Spot; "
-          "konstante Folge Grenzwert = Wert",
+          "Null nach Ueberschwinger nicht monoton; konstante Folge 'ohne Aenderung' ohne Grenzwert; Null nach monotoner Annaeherung konvergent",
           schwingt["art"] == waechst["art"] == "nicht_monoton" and schwingt["grenzwert"] is None and waechst["grenzwert"] is None
           and konvergenzaussage([1.0, 2.0])["art"] == "zu_wenige_zyklen" and konvergenzaussage([1.0, None, 2.0])["art"] == "kein_hotspot"
-          and konvergenzaussage([100.0, 100.0, 100.0])["art"] == "monoton_konvergent"
-          and konvergenzaussage([100.0, 100.0, 100.0])["grenzwert"] == 100.0, schwingt["text"])
+          and nach_schwung["art"] == "nicht_monoton" and konstant["art"] == "ohne_aenderung" and konstant["grenzwert"] is None
+          and ruhig["art"] == "monoton_konvergent" and ruhig["grenzwert"] == 112.0,
+          f"{schwingt['text']} | {nach_schwung['text']} | {konstant['text']} | {ruhig['text']}")
 
 
 def _spec(p, h, zyklen):
@@ -79,10 +85,15 @@ def test_zyklen_ohne_naht():
           and all(a <= b + 1e-12 for a, b in zip(meld[:-1], meld[1:])),
           f"fehlt {set(EINSTELLUNGEN) - set(st)}")
     einzeln = s.solve(s.prepare(_spec(4, 50.0, 0), mat), prov, [ResultKey("LF1")])[0]
-    check("Letzter Zyklus = Rechnung mit p 4 ohne Zyklen (Spannungen auf 1e-12, gleiche Oberflaeche), ohne Zyklen ein Eintrag",
-          erg[0].stress.shape == einzeln.stress.shape and np.allclose(erg[0].stress, einzeln.stress, rtol=1e-9, atol=1e-9 * np.abs(einzeln.stress).max())
-          and len(einzeln.convergence) == 1 and einzeln.protocol["cycles"] == 0 if "cycles" in einzeln.protocol else len(einzeln.convergence) == 1,
-          f"{np.abs(erg[0].stress - einzeln.stress).max():.1e}")
+    # Befund G3-4 (Gutachten C2, 02.10.2026): der Ausdruck stand als "A and ... and D if 'cycles' in protocol else E" und pruefte ohne
+    # Zyklen nur E - der Spannungsvergleich lief nie; jetzt ausdruecklich, und ohne Zyklen stehen cycles 0 und die Aussage im Protokoll
+    gleich_form = erg[0].stress.shape == einzeln.stress.shape
+    d_s = float(np.abs(erg[0].stress - einzeln.stress).max()) if gleich_form else float("inf")
+    # gemessen (02.10.2026): 9,2e-11 bis 3,7e-10 des Groesstwerts 12,3 N/mm2 (PARDISO parallel, Toleranz 1e-12); Schranke 1e-8
+    check("Letzter Zyklus = Rechnung mit p 4 ohne Zyklen (Spannungen auf 1e-8 des Groesstwerts, gleiche Oberflaeche), ohne Zyklen ein Eintrag, "
+          "cycles 0 und Konvergenzaussage im Protokoll",
+          gleich_form and d_s <= 1e-8 * float(np.abs(einzeln.stress).max()) and len(einzeln.convergence) == 1
+          and einzeln.protocol.get("cycles") == 0 and "convergence_statement" in einzeln.protocol, f"{d_s:.1e}")
 
 
 def test_fahrplan():
@@ -149,6 +160,41 @@ def test_zyklen_mit_naht():
           f"dofs {[c['dofs'] for c in k]}, {len(reg)} Bereiche, {time.perf_counter() - t:.1f} s")
 
 
+def test_massgebender_hotspot():
+    """Befund G3-5/G2-6 (Gutachten C2, 02.10.2026): hotspot_max war das vorzeichenbehaftete Maximum - unter Druck (alle sigma_hs < 0) der
+    betragskleinste, also unmassgebende Punkt, auf den sich Kurve und Konvergenzaussage bezogen. Jetzt der betragsgroesste Wert mit Vorzeichen."""
+    from volumen3d.api import _massgebend
+    check("massgebender Hot-Spot: Druck -120 statt -3, gemischt -150 vor +100, Zug 130, leer None",
+          _massgebend([-3.0, -120.0, -50.0]) == -120.0 and _massgebend([100.0, -150.0]) == -150.0 and _massgebend([10.0, 130.0]) == 130.0
+          and _massgebend([]) is None)
+
+
+def test_zyklen_ohne_wirkung():
+    """Befund G3-2 (Gutachten C2): hat der Anwender die Naht schon selbst auf t/4 verfeinert, aenderten die h-Schritte das Netz nicht; zwei
+    wirkungslose Zyklen wurden gerechnet und die Aussage hiess 'monoton konvergent, letzte Aenderung null'. Jetzt wird ein h-Schritt ohne
+    Wirkung uebersprungen (der Fahrplan geht weiter) und im Protokoll genannt. Kragarm h 100 p 1, Naht t 100 mit eigenem Bereich Radius 400
+    auf 25, zwei Zyklen: beide sind p-Erhoehungen (p 1, 2, 3), Freiheitsgrade wachsen, Warnung nennt die uebersprungenen h-Schritte."""
+    import dataclasses
+    from statik3d_contracts.detail import RefinementRegion, WeldLine
+    from statik3d_contracts.model import Material, ResultKey
+    from statik3d_contracts.testing import StubGlobalFieldProvider
+    from volumen3d.api import FcmSolver
+    xs = np.linspace(400.0, 600.0, 5)
+    s0 = _spec(1, 100.0, 2)
+    spec = dataclasses.replace(s0, weld_lines=(WeldLine("N1", np.stack([xs, np.full(5, 50.0), np.full(5, 100.0)], axis=1), 100.0),),
+                               refinement=(RefinementRegion(center=np.array([500.0, 50.0, 100.0]), radius_mm=400.0, target_cell_size_mm=25.0),))
+    s = FcmSolver()
+    t = time.perf_counter()
+    erg = s.solve(s.prepare(spec, Material("S355", "S355", 210000.0, 0.3, fy=355.0)),
+                  StubGlobalFieldProvider(1000.0, 100.0, 200.0, 210000.0, 10000.0), [ResultKey("LF1")])[0]
+    k = erg.convergence
+    hinweis = [w for w in erg.warnings if "ohne Wirkung" in w]
+    check("eigene Verfeinerung auf t/4: h-Schritte ohne Wirkung uebersprungen, Zyklen p 1 -> 2 -> 3 mit wachsenden Freiheitsgraden, Hinweis im Ergebnis",
+          [c["step"] for c in k] == ["Start", "p-Erhoehung", "p-Erhoehung"] and [c["p"] for c in k] == [1, 2, 3]
+          and k[0]["dofs"] < k[1]["dofs"] < k[2]["dofs"] and len(hinweis) >= 1,
+          f"Schritte {[c['step'] for c in k]}, dofs {[c['dofs'] for c in k]}, {hinweis}, {time.perf_counter() - t:.1f} s")
+
+
 def test_zyklen_grenzen():
     """adaptive_cycles ausserhalb 0 bis 4 -> SolverError; bei p 4 ohne Naht endet die Folge sofort mit Warnung (ein Eintrag);
     Abbruch zwischen den Zyklen -> SolverCancelled."""
@@ -169,17 +215,48 @@ def test_zyklen_grenzen():
     erg = s.solve(s.prepare(_spec(4, 100.0, 1), mat), prov, [ResultKey("LF1")])[0]
     check("p 4 ohne Naht, adaptive_cycles 1: Folge endet sofort, ein Eintrag, Warnung nennt den Grund",
           len(erg.convergence) == 1 and any("p = 4 erreicht" in w for w in erg.warnings), str([w for w in erg.warnings if "Zyklen" in w]))
-    zaehler = {"n": 0}
+    # Abbruch genau zwischen Zyklus 0 und 1 (Befund G3-4: der Zaehler loeste vorher erst innerhalb von Zyklus 1 aus, die Abfrage zwischen
+    # den Zyklen war ungeprueft): nach dem ersten Zyklus wird der Abbruch wahr, die Meldung muss den naechsten Zyklus nennen
+    zustand = {"fertig": False}
+    zyklus_orig = s._zyklus
 
-    def abbruch():
-        zaehler["n"] += 1
-        return zaehler["n"] > 4
+    def zyklus_mit_marke(*a, **kw):
+        erg_z = zyklus_orig(*a, **kw)
+        zustand["fertig"] = True
+        return erg_z
+    s._zyklus = zyklus_mit_marke
     try:
-        s.solve(s.prepare(_spec(2, 100.0, 2), mat), prov, [ResultKey("LF1")], cancel=abbruch)
-        ok = False
-    except SolverCancelled:
-        ok = True
-    check("Abbruch waehrend der Zyklen -> SolverCancelled", ok)
+        s.solve(s.prepare(_spec(2, 100.0, 2), mat), prov, [ResultKey("LF1")], cancel=lambda: zustand["fertig"])
+        meldung = ""
+    except SolverCancelled as ex:
+        meldung = str(ex)
+    finally:
+        s._zyklus = zyklus_orig
+    check("Abbruch zwischen den Zyklen -> SolverCancelled 'vor Zyklus 1'", "vor Zyklus 1" in meldung, meldung)
+    # Befund G3-7: Blechdicke 0 fiel erst im ersten Zyklus auf (Meldung zu RefinementRegion); ein Fehler im spaeteren Zyklus verwarf alles
+    import dataclasses
+    from statik3d_contracts.detail import WeldLine
+    try:
+        s.prepare(dataclasses.replace(_spec(2, 100.0, 1), weld_lines=(WeldLine("N0", np.array([[400.0, 50, 100], [600.0, 50, 100]]), 0.0),)), mat)
+        dicke = ""
+    except SolverError as ex:
+        dicke = str(ex)
+    zyklen_orig = s._zyklus
+    aufrufe = {"n": 0}
+
+    def zyklus_scheitert_spaet(*a, **kw):
+        aufrufe["n"] += 1
+        if aufrufe["n"] == 2:
+            raise SolverError("Probe: Zyklus 1 scheitert")
+        return zyklen_orig(*a, **kw)
+    s._zyklus = zyklus_scheitert_spaet
+    try:
+        erg2 = s.solve(s.prepare(_spec(2, 100.0, 2), mat), prov, [ResultKey("LF1")])[0]
+    finally:
+        s._zyklus = zyklen_orig
+    check("Blechdicke 0 -> SolverError in prepare mit 'Blechdicke'; scheitert Zyklus 1, gilt Zyklus 0 mit Warnung (ein Eintrag)",
+          "Blechdicke" in dicke and len(erg2.convergence) == 1 and any("Zyklus 1 gescheitert" in w for w in erg2.warnings),
+          f"{dicke[:60]} | {[w for w in erg2.warnings if 'gescheitert' in w]}")
 
 
 class ZugGeber:
@@ -262,4 +339,5 @@ def test_zyklen_t_stoss():
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_konvergenzaussage, test_fahrplan, test_zyklen_ohne_naht, test_zyklen_mit_naht, test_zyklen_grenzen, test_zyklen_t_stoss]))
+    sys.exit(lauf([test_konvergenzaussage, test_fahrplan, test_zyklen_ohne_naht, test_zyklen_mit_naht, test_zyklen_grenzen, test_massgebender_hotspot,
+                   test_zyklen_ohne_wirkung, test_zyklen_t_stoss]))

@@ -183,29 +183,62 @@ def test_schale_geneigt_p3():
               max(schl[k] for k in ("kraft", "moment", "sigma", "rest", "gleichgewicht")) < 1e-5 and schl["warn"] == 0, f"{dauer:.0f} s")
 
 
+class _Schnitt:
+    """Schnittflaeche als Flaechenquadratur-Ersatz: Rechteck b x t in der Ebene x = 0 (Normale +x), Mitte im Ursprung, Gauss 4 x 4
+    (exakt fuer die Traegheiten wie die Polygonquadratur des Vertragswegs)."""
+
+    def __init__(self, b, t):
+        xg, wg = np.polynomial.legendre.leggauss(4)
+        Y, Z = np.meshgrid(0.5 * b * xg, 0.5 * t * xg, indexing="ij")
+        WY, WZ = np.meshgrid(0.5 * b * wg, 0.5 * t * wg, indexing="ij")
+        self.punkte = np.stack([np.zeros(Y.size), Y.ravel(), Z.ravel()], axis=1)
+        self.gewichte = (WY * WZ).ravel()
+        self.normalen = np.tile([1.0, 0.0, 0.0], (Y.size, 1))
+        # Randpunkte wie bei der echten Ebenenquadratur: die aeussersten Quadraturpunkte (hier dazu die Ecken, damit die Randspannung exakt ist)
+        ecken = np.array([[0, -b / 2, -t / 2], [0, b / 2, -t / 2], [0, b / 2, t / 2], [0, -b / 2, t / 2]], float)
+        self.punkte = np.concatenate([self.punkte, ecken])
+        self.gewichte = np.concatenate([self.gewichte, np.zeros(4)])
+        self.normalen = np.tile([1.0, 0.0, 0.0], (len(self.punkte), 1))
+
+
 def test_kopplungsabweichung():
-    """Die Kontrollgroesse als reine Funktion (api._kopplungsabweichung): Bezuege und Grenzfaelle, Erwartungswerte von Hand
-    (Flaeche 10 000 mm2 -> l = 100 mm)."""
-    from volumen3d.api import _kopplungsabweichung as k
+    """Die Kontrollgroesse als reine Funktion (api._kopplungsabweichung) an einem Rechteckschnitt b x t; Erwartungswerte von Hand.
+    Befund G3-3 (Gutachten C2, 02.10.2026): mit dem Hebel sqrt(A) verschleierte das gemeinsame Lastmass Momentfehler an duennen Blechen
+    (Plattenstreifen b 100, t 10, Membran 100 und Biegung 150 N/mm2: nur 40 % des Moments -> 4,7 %, keine Warnung). Jetzt werden die
+    Abweichungen als Spannungen bewertet: Kraft |dN|/A + |dQ|/A, Moment max |sigma_b(dM)| + tau_T(dM_t), bezogen auf die groessere der beiden
+    Referenzspannungen |N|/A + |Q|/A + max |sigma_b(M)| + tau_T(M_t)."""
+    from volumen3d.api import _kopplungsabweichung as k, _schnittkennwerte
     z = np.zeros(3)
-    # reine Biegung: Kraft im Globalmodell 0, Rundungsrest 1e-9 N im Detail, Moment 2,5e5 N mm stimmt: kein Scheinwert
-    dF, dM, rf, rm = k(np.array([1e-9, 0, 0]), np.array([0, 2.5e5, 0]), z, np.array([0, 2.5e5, 0]), 1e4)
-    check("reine Biegung (Kraft 0 gegen 1e-9 N): Kraftabweichung 1e-9 / 2500 = 4e-13 (Bezug M/l), Moment 0; vorher 1,0",
-          abs(dF - 1e-9 / 2500.0) < 1e-20 and dM == 0.0 and abs(rf - 2500.0) < 1e-9 and abs(rm - 2.5e5) < 1e-6, f"{dF:.2e}, {dM:.2e}, {rf}, {rm}")
-    # reiner Zug (Moment 0 beidseits): Bezug der Kraft die Kraft selbst, Wert wie bisher
-    dF, dM, rf, rm = k(np.array([1e5 * 1.001, 0, 0]), z, np.array([1e5, 0, 0]), z, 1e4)
-    check("reiner Zug, Kraft 0,1 % zu gross: Kraftabweichung 1e-3 / 1,001 (Bezug die groessere Kraft), Moment 0 (Bezug F l)",
-          abs(dF - 100.0 / 100100.0) < 1e-12 and dM == 0.0 and abs(rf - 100100.0) < 1e-9, f"{dF:.6e}, {dM:.1e}, {rf}")
-    # Kraft und Moment verschieden gross: das groessere Lastmass gilt fuer beide
-    dF, dM, rf, rm = k(np.array([0, 0, 900.0]), np.array([0, 4e5, 0]), np.array([0, 0, 1000.0]), np.array([0, 4e5, 0]), 1e4)
-    check("Querkraft 900 gegen 1000 N bei Moment 4e5 N mm (Lastmass max(4e5, 1000 * 100) = 4e5): Kraftabweichung 100 / 4000 = 2,5 %",
-          abs(dF - 100.0 / 4000.0) < 1e-12 and dM == 0.0 and abs(rm - 4e5) < 1e-6, f"{dF:.4e}")
-    # Nullwerte auf beiden Seiten: 0, keine Division
-    dF, dM, rf, rm = k(z, z, z, z, 1e4)
-    check("Nullwerte beidseits: 0 und 0 (Bezuege 0)", dF == 0.0 and dM == 0.0 and rf == 0.0 and rm == 0.0)
-    # eigene Werte, Globalmodell null: gemeldete Kraft allein ist 100 % (keine Verschleierung)
-    dF, dM, rf, rm = k(np.array([500.0, 0, 0]), z, z, z, 1e4)
-    check("Detail meldet 500 N, Globalmodell 0, keine Momente: Kraftabweichung 1,0 (echte Abweichung bleibt sichtbar)", abs(dF - 1.0) < 1e-12 and dM == 0.0, f"{dF}")
+    ex = np.array([1.0, 0.0, 0.0])
+    st = _schnittkennwerte(_Schnitt(100.0, 10.0), np.zeros(3), ex)
+    A, W = 1000.0, 100.0 * 10.0 ** 2 / 6.0                              # W um die schwache Achse (Moment um y, Biegung ueber die Dicke)
+    F_m = np.array([100.0 * A, 0, 0])                                   # Membran 100 N/mm2
+    M_b = np.array([0, 150.0 * W, 0])                                   # Randspannung 150 N/mm2
+    dF, dM, sref = k(F_m, 0.4 * M_b, F_m, M_b, st)
+    check("Streifen b 100 t 10, Membran 100 + Biegung 150, Detail mit 40 % des Moments: Momentabweichung 0,6*150/250 = 36 % (vorher 4,7 %), Kraft 0",
+          abs(dM - 0.36) < 1e-3 and dF < 1e-12 and abs(sref - 250.0) < 0.5, f"dM {dM:.4f}, dF {dF:.1e}, Bezug {sref:.2f} N/mm2")
+    st30 = _schnittkennwerte(_Schnitt(300.0, 10.0), np.zeros(3), ex)
+    dF, dM, sref = k(np.array([100.0 * 3000.0, 0, 0]), z, np.array([100.0 * 3000.0, 0, 0]), np.array([0, 150.0 * 300 * 100 / 6.0, 0]), st30)
+    check("b/t 30, Moment fehlt ganz: 150/250 = 60 % (vorher 4,6 %)", abs(dM - 0.6) < 1e-3, f"{dM:.4f}")
+    # reine Biegung mit Rundungsrest in der Kraft: keine Scheinabweichung
+    dF, dM, sref = k(np.array([1e-9, 0, 0]), M_b, z, M_b, st)
+    check("reine Biegung, Kraftrest 1e-9 N: Kraftabweichung 1e-9/A/150 = 6,7e-15, Moment 0 (Rundung)", dF < 1e-13 and dM < 1e-15, f"{dF:.1e}, {dM:.1e}")
+    # reiner Zug 0,1 % zu gross: Bezug die groessere Membranspannung
+    dF, dM, sref = k(1.001 * F_m, z, F_m, z, st)
+    check("reiner Zug 0,1 % zu gross: 0,1/100,1 = 1,0e-3, Moment 0 (Rundung)", abs(dF - 0.1 / 100.1) < 1e-9 and dM < 1e-15, f"{dF:.6e}, {dM:.1e}")
+    # Kraft, die das Globalmodell nicht kennt, neben einem Moment: bleibt sichtbar (vorher 3,75 % bei 150 N gegen 4e5 N mm, A 1e4)
+    dF, dM, sref = k(np.array([0, 0, 150.0]), np.array([0, 4e5, 0]), z, np.array([0, 4e5, 0]), _schnittkennwerte(_Schnitt(100.0, 100.0), np.zeros(3), ex))
+    check("Querkraft 150 N, die das Globalmodell nicht kennt, neben Moment 4e5 N mm (Schnitt 100 x 100): 0,015/(0,015+2,4) = 0,62 %",
+          abs(dF - 0.015 / (0.015 + 2.4)) < 1e-6, f"{dF:.5f}")
+    dF, dM, sref = k(z, z, z, z, st)
+    check("Nullwerte beidseits: 0 und 0", dF == 0.0 and dM == 0.0 and sref == 0.0)
+    dF, dM, sref = k(np.array([500.0, 0, 0]), z, z, z, st)
+    check("Detail meldet 500 N, Globalmodell 0, keine Momente: Kraftabweichung 1,0", abs(dF - 1.0) < 1e-12 and dM < 1e-15, f"{dF}, {dM:.1e}")
+    # Moment um einen Punkt neben dem Schwerpunkt: die Kennwerte beziehen auf den Schwerpunkt (Versatz traegt F x e)
+    st_v = _schnittkennwerte(_Schnitt(100.0, 10.0), np.array([0.0, 0.0, -5.0]), ex)
+    dF, dM, sref = k(F_m, np.cross(np.array([0.0, 0.0, 5.0]), F_m), F_m, np.cross(np.array([0.0, 0.0, 5.0]), F_m), st_v)
+    check("reiner Zug, Moment um einen Punkt 5 mm unter dem Schwerpunkt (F x e): auf den Schwerpunkt umgerechnet keine Biegung, Bezug 100",
+          dM < 1e-15 and abs(sref - 100.0) < 1e-9, f"{sref:.3f}, {dM:.1e}")
 
 
 TESTS = [test_kopplungsabweichung, test_schale_achsparallel, test_schale_geneigt, test_schale_geneigt_p3]

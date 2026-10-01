@@ -37,6 +37,44 @@ def test_patch_exakt():
               f"Abweichung {f:.1e}, {time.perf_counter() - t:.2f} s, {pr._rueckgewinnung.statistik}")
 
 
+def test_haengende_moden():
+    """Pruefluecke G2-5 (Gutachten C2, 02.10.2026): die L2-Projektion erbt haengende Moden und Aggregation ueber die skalare Zwangsmatrix
+    C[0::3, 0::3]; geprueft waren nur Faelle ohne Verfeinerung. Patch-Gebiet (Quader mit zwei schraegen Schnitten), lokale Verfeinerung zwei
+    Ebenen um einen Punkt der Schnittebene, p 2, Aggregation 0,25: das lineare Feld muss an allen Oberflaechenpunkten und in den feinen Zellen
+    exakt sein (Gutachter gemessen 2,3e-10 / 2,1e-11; Schranke 1e-8 wie der Patch-Test). Dazu G2-9: Punkte ausserhalb -> ValueError."""
+    from volumen3d.fcm.gitter import Verfeinerung
+    from volumen3d.fcm.problem import FcmProblem, Werkstoff
+    from volumen3d.geometry.csg import aus_params
+    from volumen3d.postprocess.rueckgewinnung import rueckgewinnung
+    from volumen3d.tests import test_patch as T
+    g = aus_params({"csg": {"typ": "schnitt", "teile": [
+        {"typ": "quader", "min": [0, 0, 0], "max": [100, 100, 100], "name": "quader"},
+        {"typ": "halbraum", "punkt": [60, 50, 50], "normale": [1, 2, 3], "name": "s1"},
+        {"typ": "halbraum", "punkt": [30, 40, 70], "normale": [-2, 1, 1.5], "name": "s2"}]}})
+    v = Verfeinerung(bereiche=((np.array([55.0, 45.0, 40.0]), 22.0, 5.0),))
+    pr = FcmProblem(g, h=20.0, p=2, werkstoff=Werkstoff(T.E, T.NU), alpha=1e-8, beta_faktor=10.0, aggregation=0.25, verfeinerung=v)
+    pr.verschiebungsrand("alles", None, projektion="voll")
+    U = pr.loesen({"alles": T.u_exakt})[:, 0]
+    o = pr.oberflaeche
+    aus = pr.auswertung(U)
+    s_ex = T.sigma_exakt()
+    f_o = float(np.abs(aus.spannung(o.punkte - 1e-7 * pr.gitter.h * o.normalen, geglaettet=True) - s_ex).max() / np.abs(s_ex).max())
+    rng = np.random.default_rng(1)
+    Q = rng.uniform(0, 100, (20000, 3))
+    Q = Q[(pr.geometrie.abstand(Q) < -0.5) & (np.linalg.norm(Q - [55, 45, 40], axis=1) < 22)][:1500]
+    f_i = float(np.abs(aus.spannung(Q, geglaettet=True) - s_ex).max() / np.abs(s_ex).max())
+    zs = pr.zwaenge.statistik
+    try:
+        r = rueckgewinnung(pr)
+        r.spannung(np.array([[500.0, 500.0, 500.0]]), r.knoten(U[:, None]))
+        aussen = ""
+    except ValueError as ex:
+        aussen = str(ex)
+    check(f"haengende Moden {zs['moden_haengend']}, aggregiert {zs['moden_aggregiert']}: geglaettet an der Oberflaeche {f_o:.1e}, in den feinen Zellen "
+          f"{f_i:.1e} (< 1e-8); Punkt ausserhalb -> ValueError",
+          zs["moden_haengend"] > 0 and zs["moden_aggregiert"] > 0 and f_o < 1e-8 and f_i < 1e-8 and "ausserhalb" in aussen, aussen[:60])
+
+
 def test_lame_besser_als_roh():
     """Lame-Zylinder h 20 p 2 (Innendruck, ebene Dehnung): sigma_r, sigma_phi, sigma_z gegen Lame an allen
     Oberflaechenpunkten; die Projektion senkt den groessten Fehler deutlich (gemessen 30.09.2026: roh 56,6 %,
@@ -108,4 +146,4 @@ def test_mehrere_lastfaelle():
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_patch_exakt, test_lame_besser_als_roh, test_reine_biegung, test_mehrere_lastfaelle]))
+    sys.exit(lauf([test_patch_exakt, test_haengende_moden, test_lame_besser_als_roh, test_reine_biegung, test_mehrere_lastfaelle]))

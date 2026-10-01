@@ -31,10 +31,25 @@ def konvergenzaussage(werte: list[float | None]) -> dict[str, Any]:
     if len(f) < 3:
         aus.update(art="zu_wenige_zyklen", text=f"{len(f)} Zyklen: zu wenige fuer eine Konvergenzaussage (mindestens 3)")
         return aus
-    bezug = max(abs(w) for w in f)
-    if abs(d[-1]) <= _NULL * bezug:
-        aus.update(art="monoton_konvergent", grenzwert=f[-1], restabweichung=0.0,
-                   text=f"letzte Aenderung null (< {_NULL:g} des Betrags): Grenzwert {f[-1]:.6g} N/mm2")
+    bezug = max(max(abs(w) for w in f), 1e-300)
+    null = [abs(x) <= _NULL * bezug for x in d]
+    if all(null):
+        # nichts hat sich geaendert - das belegt keine Konvergenz, sondern meist wirkungslose Zyklen (Netz unveraendert); vorher hiess
+        # es 'monoton konvergent' (Gutachten C2, G3-2)
+        aus.update(art="ohne_aenderung", text=f"der Wert hat sich in keinem Zyklus geaendert ({f[-1]:.6g} N/mm2): keine Konvergenzaussage "
+                                               f"(Zyklen ohne Wirkung auf das Netz?)")
+        return aus
+    if null[-1]:
+        # letzte Aenderung null: nur dann ein Grenzwert, wenn die Aenderungen davor monoton abnehmen (vorher galt jede Null als
+        # Konvergenz, auch nach einem Ueberschwinger wie 100, 120, 90, 90 - Gutachten C2, G3-2)
+        vorher = [x for x, n in zip(d, null) if not n]
+        if len(vorher) == len([x for x in d[:-1]]) and ((all(x > 0 for x in vorher) or all(x < 0 for x in vorher))
+                                                        and all(abs(b) < abs(a) for a, b in zip(vorher[:-1], vorher[1:]))):
+            aus.update(art="monoton_konvergent", grenzwert=f[-1], restabweichung=0.0,
+                       text=f"monoton angenaehert, letzte Aenderung null (< {_NULL:g} des Betrags): Grenzwert {f[-1]:.6g} N/mm2")
+            return aus
+        aus.update(art="nicht_monoton",
+                   text="nicht monoton (Aenderungen " + ", ".join(f"{x:+.4g}" for x in d) + " N/mm2): keine Konvergenzaussage")
         return aus
     gleiches_vorzeichen = all(x > 0 for x in d) or all(x < 0 for x in d)
     abnehmend = all(abs(b) < abs(a) for a, b in zip(d[:-1], d[1:]))

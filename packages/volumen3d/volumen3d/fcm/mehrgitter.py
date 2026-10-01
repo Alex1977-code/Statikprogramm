@@ -152,6 +152,15 @@ def _inv_stapel(B: np.ndarray) -> np.ndarray:
     return 0.5 * (X + np.swapaxes(X, 1, 2))
 
 
+def _inv_spd_gpu(B):                                         # pragma: no cover - GPU
+    """Inverse eines symmetrisch positiv definiten Blocks auf der GPU ueber Cholesky; nicht positiv definit -> NaN (cuSOLVER wirft unter
+    errstate 'ignore' nicht), die Pruefung auf endliche Werte danach meldet es."""
+    import cupy
+    L = cupy.linalg.cholesky(B)
+    Li = cupy.linalg.inv(L)
+    return Li.T @ Li
+
+
 def _zell_bloecke(C: sp.csr_matrix, dofs: np.ndarray) -> dict[int, list[np.ndarray]]:
     """Je Zelle die beruehrten freien Koordinaten (Spalten der Zeilen von C zu den Zellfreiheits-
     graden), nach Blockgroesse gruppiert."""
@@ -214,14 +223,16 @@ class ZellSchwarz:
                     b = min(k, a + schritt)
                     B = cupy.asarray(_teilmatrizen(A, I[a:b], indizes))
                     if s > _EINZELN_AB:
-                        Xa = cupy.stack([cupy.linalg.inv(B[i]) for i in range(b - a)])
+                        # Cholesky statt LU: ein nicht positiv definiter Block liefert NaN und faellt unten auf; LU haette ihn still
+                        # invertiert und den V-Zyklus indefinit gemacht (Gutachten C2, G2-10)
+                        Xa = cupy.stack([_inv_spd_gpu(B[i]) for i in range(b - a)])
                     else:
                         Xa = cupy.linalg.inv(B)
                     del B
                     # cupy wirft bei singulaeren Bloecken nicht, sondern liefert inf/NaN (errstate 'ignore'); ohne
                     # Pruefung lief der PCG dann 1000 V-Zyklen und meldete 'Residuum nan' (Gutachten 28.09.2026)
                     if not bool(cupy.isfinite(Xa).all()):
-                        raise ValueError(f"Schwarz-Glaetter (GPU): Zellbloecke der Groesse {s} nicht invertierbar")
+                        raise ValueError(f"Schwarz-Glaetter (GPU): Zellbloecke der Groesse {s} nicht invertierbar oder nicht positiv definit")
                     # symmetrisiert und gepackt in einem Schritt: unteres Dreieck von (X + X^T) / 2
                     P = Xa[:, il, jl]
                     P += Xa[:, jl, il]
@@ -248,8 +259,14 @@ class ZellSchwarz:
                 I = np.ascontiguousarray(np.array(liste, dtype=np.int64))
                 B = _teilmatrizen(A, I, indizes)
                 if s > _EINZELN_AB:
-                    # LAPACK aus dem Hauptfaden (mehrfaedig je Block); aus numba-Faeden zerstoerte es Speicher
-                    X = np.linalg.inv(B)
+                    # LAPACK aus dem Hauptfaden (mehrfaedig je Block); aus numba-Faeden zerstoerte es Speicher. Cholesky statt LU wie
+                    # bei den kleinen Bloecken: ein nicht positiv definiter Block faellt auf (Gutachten C2, G2-10)
+                    try:
+                        L = np.linalg.cholesky(B)
+                    except np.linalg.LinAlgError as ex:
+                        raise ValueError(f"Schwarz-Glaetter: Zellbloecke der Groesse {s} nicht positiv definit ({ex})") from ex
+                    Li = np.linalg.inv(L)
+                    X = np.swapaxes(Li, 1, 2) @ Li
                     if not np.all(np.isfinite(X)):
                         raise ValueError(f"Schwarz-Glaetter: Zellbloecke der Groesse {s} nicht invertierbar")
                     self.gruppen.append((I, 0.5 * (X + np.swapaxes(X, 1, 2))))

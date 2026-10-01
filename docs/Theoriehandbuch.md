@@ -11517,6 +11517,10 @@ nicht gegen eine unabhängige Referenz belegt. Auf Entscheidung des Anwenders (3
 Hauptprogramms. Die Prüfung rechnet h 10 (rund 70 s); die Konvergenz h 10 → h 5 (1,8 Mio. Freiheitsgrade, 25 Minuten)
 läuft nur auf Verlangen (`VOLUMEN3D_LANG=1`).
 
+**Nachtrag (C2, 02.10.2026): Anwendbarkeit.** Die Blechseite wird nicht mehr allein an der Werkstofftiefe erkannt, sondern daran, dass die Oberfläche längs des Asts
+von 0,05 t bis 1,0 t eben bleibt und darunter t Werkstoff liegt; vorher blieben Kehlnähte mit Schenkel unter 0,495 t und Stumpfnähte ohne Wert, und ein Blechende
+vor 1,0 t gab still +70 %. Gültig für ebene Bleche und Rohre mit Radius über 5,7 t (11.19, G2-1/G2-2).
+
 ### 11.14 Teilprojekt 5: adaptive Zyklen und Konvergenzkurve (30.09.2026)
 
 **Was der Vertrag verlangt.** `FcmSettings.adaptive_cycles` wählt die Zahl der Zyklen, `DetailResult.convergence` trägt je
@@ -11526,7 +11530,8 @@ prüffähig ist (Vorgabe 8.4 und 11.3). Die Kurve über die Freiheitsgrade ist P
 **Zyklen** (`FcmSolver.solve`, ohne Fehlerschätzer – der kommt mit TP 6). Zyklus 0 ist die Rechnung der Einstellungen. Jeder
 weitere Zyklus ändert genau eine Sache, damit der Schritt an der Kurve ablesbar bleibt. Ungerade Zyklen halbieren lokal die
 Zellgröße: um Punkte der Nahtlinien im Abstand höchstens t (Kugeln vom Radius 2·t) wird die Zielzellgröße gegenüber dem
-Vorzyklus halbiert. Gerade Zyklen erhöhen p um eins, bis p = 4; danach wird stattdessen verfeinert. Ohne Naht gibt es
+Vorzyklus halbiert. Gerade Zyklen erhöhen p um eins, bis p = 4; danach wird stattdessen verfeinert (Fahrplan bis 01.10.2026; seither gilt „zuerst
+lokal h bis t/4, dann p + 1“, siehe unten, und ein h-Schritt ohne Wirkung auf das Netz wird übersprungen, 11.19). Ohne Naht gibt es
 keine Stelle für die lokale Verfeinerung: dann nur p + 1, und bei p = 4 endet die Folge mit einer Warnung. Jeder Zyklus ist
 eine vollständige Diskretisierung (neues Gitter, eigene Zwangsmatrix, eigene Löserwahl), das Ergebnis des Vertragswegs ist der
 letzte Zyklus; die früheren bleiben als Einträge der Kurve. Mehr als vier Zyklen lehnt der Vertragsweg ab (Vorgabe: 2 bis 4).
@@ -11823,6 +11828,14 @@ achsparallel mit 10⁻⁹ (gemessen 1,9·10⁻¹¹) und bei p 3 mit 10⁻⁵ (ge
 **Prüfungen** (`tests/test_schale.py` in der Kernsuite: Kontrollgröße als reine Funktion, achsparallel, geneigt p 2 mit Punkten zwischen den Ebenen, geneigt p 3; `tests/test_huelle.py`:
 Hüllenfläche hinter der Schnittebene).
 
+**Nachtrag (C2, 02.10.2026): Kopplungskontrolle als Spannung.** Das gemeinsame Lastmaß mit dem Hebel √A (Befund 1 oben) verschleierte Momentfehler an dünnen
+Blechen: am Plattenstreifen b 100, t 10 mit Membran 100 und Biegung 150 N/mm² ist F·√A das Zwölffache des Moments, ein Detail mit nur 40 % des Moments meldete
+4,7 % statt einer Warnung (Gutachten C2, G3-3). Jetzt werden die Abweichungen als Spannungen bewertet (`api._schnittkennwerte`, `_kopplungsabweichung`):
+Querschnittswerte der Schnittquadratur (Fläche, Schwerpunkt, Trägheiten), Moment auf den Schwerpunkt umgerechnet, Kraftanteil (|ΔN| + |ΔQ|)/A, Momentanteil die
+größte Randspannung aus ΔM (Biegung, dazu Torsion über das polare Moment), beides bezogen auf die größere der Referenzspannungen von Detail und Globalmodell.
+Am Streifen meldet derselbe Fall jetzt 36 %, ein ganz fehlendes Moment bei b/t = 30 60 %; reine Biegung, reiner Zug und Nullwerte bleiben ohne Scheinabweichung.
+Die Messwerte dieses Abschnitts ändern sich dadurch: geneigt p 2 Kraft 3,7·10⁻⁵, Moment 4,8·10⁻⁵; Kragarm-Stub 24,6 % (vorher 10 bis 60 % erwartet, erfüllt).
+
 ### 11.18 Teilprojekt 5: Abnahme am Knotenblech mit Kehlnaht (01.10.2026)
 
 **Modell** (Plan TP 5 C1, vor der Messung festgelegt; `tests/test_knotenblech.py`, `MODELL`). Längssteife auf einem Zugblech, der IIW-Fall „nicht tragende
@@ -11896,3 +11909,80 @@ von 3,2·10⁻¹² auf 2·10⁻¹⁶ – dort waren 27 Punkte doppelt.
 **Prüfungen** (`tests/test_knotenblech.py`: Kernteil h 10 in der Kernsuite – Volumen, Kopplung, Membrananteil, 18 Hot-Spots im Band 1,0 bis 2,0 σ_n;
 Konvergenz mit vier Zyklen und Abnahme gegen `REFERENZ` nur mit `VOLUMEN3D_LANG=1`, 436 s und 59 GB; `REFERENZ` nennt die Quelle Pull Request 13 der Hauptsitzung;
 die Symmetrie rechts/links wird als Information gemeldet, bis der Anwender über die Planschranke entschieden hat).
+
+**Nachtrag (C2, 02.10.2026).** Mit der Kopplungskontrolle als Spannung (Nachtrag zu 11.17) meldet das Knotenblech jetzt an beiden Schnittebenen „Moment 7,9 % > 5 %“:
+die ebenen Schnittebenen halten das Blech gegen die Verdrehung, die das exzentrische Knotenblech erzeugt, und im Detail entsteht dort ein Biegemoment von 1,2·10⁴ N·mm
+(Randspannung ±8,8 N/mm²), das der Zug-Geber (reiner Zug) nicht kennt. Die Warnung ist richtig – das Globalmodell bildet die Exzentrizität nicht ab –, und
+die Tet10-Referenz hat dieselben Randbedingungen; der Vergleich FCM gegen Tet10 bleibt davon unberührt. Die Kraftabweichung liegt bei 2,2 % (h 10).
+
+### 11.19 Teilprojekt 5: zweite Sicht über Phase A und B (02.10.2026)
+
+**Vorgehen** (Plan TP 5 C2, Regeln vor dem Gutachten festgelegt). Alles, was Teilprojekt 5 im Paket geändert hat (34 Dateien, +4 439 Zeilen), haben drei
+Gutachter ohne Kenntnis des Sitzungsverlaufs gelesen, jeder ein anderes Modell als die Umsetzung seines Teils: G1 (Opus 5.5) die von Fable 5.1 gebauten
+Teile (GPU-Blöcke, Moment Fitting, Hüllenintegration, Windungsbaum, Kuren aus C1), G2 (Fable 5.1) die von Opus 5.5 gebauten (Mehrgitter, L²-Projektion,
+Hot-Spot, verschachtelte CSG-Bäume), G3 (Opus 5.5) die von Sonnet 5.5 gebauten (Löserwahl, adaptive Zyklen, STEP, Kopplungskontrolle). Jeder Befund
+wurde mit einem Skript oder Test nachgestellt; jede Kur hat einen Test, der ohne sie fehlschlägt. Von 25 Befunden (24 verschiedene) waren alle bestätigt;
+behoben sind alle hohen und mittleren und die niedrigen mit kleiner Kur.
+
+**Hohe Befunde.**
+
+*Sich durchdringende Körper (G3-1, auch G1-3).* Eine STEP-Datei mit zwei sich durchdringenden Körpern lief still durch und rechnete „A minus B“: die Hülle
+hatte doppelte Wände, und die Verschachtelungstiefe jeder Schale wurde an einer einzigen Facette bestimmt – die lag bei B zufällig in A, also wurde B zum
+Hohlraum gewendet (Volumen 805 400 statt 1 288 000 mm³, in jeder Reihenfolge; am Quader mit Stutzen σ 306 statt 100 N/mm², nur eine Kopplungswarnung). Kur:
+mehrere Körper einer STEP-Datei werden vor dem Tessellieren vereinigt (OpenCASCADE `fuse`; Protokoll `vereinigt`); für STL prüft `_durchdringung`, ob eine Kante
+einer Schale eine Facette einer anderen kreuzt (echter Vorzeichenwechsel des Ebenenabstands, Schnittpunkt in der Facette, bestätigt durch Punkte knapp im
+Inneren der eigenen Schale, die im Inneren der fremden liegen), und meldet dann einen Fehler; die Tiefe wird an bis zu acht Facetten knapp innerhalb der
+eigenen Schale bestimmt (auf einer berührenden fremden Fläche ist die Windungszahl je nach Facette 0, ½ oder 1). Berührende Schalen (gemeinsame Fläche,
+Teilfläche, Kante) und echte Hohlräume bleiben gültig. Kosten: Hohlkugel aus 2 × 25 088 Facetten 1,9 s beim Laden.
+
+*Deckungsgleiche Flächen auf dem flachen Weg (G1-1).* Die C1-Kur (11.18) half nur im Baumweg. Bei einer Vereinigung zweier Formen auf derselben Ebene liefert
+das Stück „B ohne A“ = B ∩ {z < 0} eine Ebene durch das Polygon mit entgegengesetzter Normale; die Regel für parallele Ebenen behielt es, der Fußabdruck kam
+doppelt oder – mit dem Abgleich nach Rang am Zeugen eines nur teilweise überdeckten Polygons – teilweise doppelt, abhängig von Reihenfolge und Gitterphase:
+Quader auf Quader 5 306 bis 5 552 statt 5 440 mm², Knotenblech auf Nahtquader 8 571 bis 8 861 statt 8 608. Kur: ein Polygon mit einer solchen Gegen-Ebene geht wie
+im Baumweg den Weg „an allen Ebenen teilen, Zeuge, Abgleich“. Dazu verlangt der Zeuge jetzt auch Werkstoff knapp innerhalb: über einer bündigen Tasche (Lochfläche
+deckungsgleich mit der Oberseite) ist der CSG-Abstand max(d_C, −d_B) null und außen frei, der Deckel blieb als Scheinfläche stehen (1 600 statt 1 550 mm²).
+Alle Fälle sind jetzt exakt (10⁻⁹), in beiden Reihenfolgen und bei drei Zellgrößen.
+
+*Offene Hüllen im Divergenzweg (G1-2).* Der Divergenzsatz (11.16) gilt nur für geschlossene Hüllen; eine Lücke verfälscht die ganze x-Säule hinter ihr (Würfel
+30³ ohne eine Facette auf einer x-Seite: 13 859 statt 27 000 mm³, 24 Zellen „leer“; eine fehlende Facette auf einer y- oder z-Seite wirkt nicht, weil n_x = 0).
+Kur: `Stl.offene_kanten` zählt die Kanten mit nur einer Facette; offene Hüllen gehen den alten Weg (Zerlegung an lokalen Ebenen, Fehler örtlich an der Lücke:
+27 981 mm³ wie vor B6), dazu prüft jede Hüllenzelle 0 ≤ V ≤ V_Zelle und fällt sonst zurück. Die Warnung nennt die offenen Kanten und den Weg.
+
+*Blechseite am Nahtübergang (G2-1).* Die Blechseite wurde allein an der Werkstofftiefe 0,7 t längs beider Äste erkannt. Bei Kehlnähten mit Schenkel unter
+0,495 t liegt dieser Punkt schon auf dem Anschlussblech (Tiefe = dessen Dicke), bei flachen Überhöhungen von Stumpfnähten unter der Überhöhung (t + Höhe):
+beide Äste passten, kein Wert (T-Stoß t 10 mit Schenkel 4, 3, 2 und alle geprüften Stumpfnähte). Kur: der Blechast ist der, dessen Oberfläche von 0,05 t bis
+1,0 t eben bleibt (Normalen innerhalb 10°, Punkte auf der Ebene, Projektion verschiebt nicht) und unter dem der Werkstoff t tief ist; die Nahtoberfläche knickt
+innerhalb 1,0 t ab. Mit derselben Prüfung fällt G2-2 weg: endete das Blech vor 1,0 t, wurde der Referenzpunkt still auf die Stirnfläche gezogen (σ_hs +70 %);
+jetzt kein Wert mit der Warnung „weniger als 1,0 t ebene Blechoberfläche“. Grenze: an Rohren muss der Radius über 5,7 t liegen (10° über 1,0 t).
+
+**Mittlere Befunde.** *Hülle in einem abgezogenen Teilbaum (G1-4):* `_stuecke_ohne` übersprang ein Loch, das selbst eine Operation ist und die Hülle enthält;
+Facetten außerhalb des Lochrands blieben als Fläche im Werkstoff (A − (H ∩ {x ≤ 20}) 11 634 statt 11 200 mm²). Jetzt Schnitt mit den Randstücken des Teilbaums.
+*Konvergenzaussage (G3-2):* eine letzte Änderung null galt vor der Monotonieprüfung als Konvergenz ([100, 120, 90, 90] „konvergent“), und hatte der Anwender die
+Naht selbst schon auf t/4 verfeinert, rechneten die h-Zyklen dasselbe Netz zweimal und meldeten „konvergent, letzte Änderung null“. Jetzt: eine Folge ohne
+Änderung heißt `ohne_aenderung` (mit Warnung, ohne Grenzwert), eine Null nach monotoner Annäherung bleibt konvergent, und ein h-Schritt ohne Wirkung wird
+übersprungen und im Ergebnis genannt. *Kopplungskontrolle (G3-3):* siehe den Nachtrag zu 11.17. *Prüfungen ohne Aussage (G3-4):* der Vergleich „letzter Zyklus
+= Rechnung mit p 4“ stand als `A and … if 'cycles' in protocol else E` und prüfte nur E, der Abbruch zwischen den Zyklen war nicht geprüft; beides ist jetzt
+ausdrücklich, und ohne Zyklen stehen `cycles` 0 und die Konvergenzaussage im Protokoll. *Maßgebender Hot-Spot (G3-5/G2-6):* `hotspot_max` und `sigma_hs_max`
+sind jetzt der betragsgrößte Wert mit Vorzeichen (vorher unter Druck der betragskleinste).
+
+**Niedrige Befunde, behoben.** Die Hüllenzelle fittet mit q = max(fit_grad, 2p), unabhängig vom Schalter (G1-5); der Windungsbaum bildet seine Momente relativ zur
+Mitte des Hüllquaders (Versatz 10⁶ mm: |Δw| 1,5·10⁻⁴ statt 3,5·10⁻³, G1-6); leere Nahtpolylinie gibt einen Fehler statt eines IndexError aus dem ganzen Lauf (G2-3);
+geschlossene Polylinien werden zyklisch behandelt (G2-4); die L²-Projektion mit hängenden Moden und Aggregation ist geprüft (2 501 hängende, 1 018 aggregierte
+Moden: 2,5·10⁻¹⁰ an der Oberfläche, 2,3·10⁻¹¹ in den feinen Zellen, G2-5); ein Referenzpunkt außerhalb der Zellen kostet nur seinen Nahtpunkt (G2-7); die
+gebündelte Nachbarsuche ist an allen 98 Proben je feiner Zelle gegen Einzelabfragen geprüft (G2-8); `L2Rueckgewinnung.spannung` wirft für Punkte außerhalb statt
+still die letzte Zelle zu nehmen (G2-9); Glätterblöcke über 320 Koordinaten werden über Cholesky invertiert, ein nicht positiv definiter fällt auf (G2-10); der
+STEP-Cache hängt am Inhalt (Hash), eigene Netzoptionen gelten auch bei laufendem gmsh und werden danach zurückgestellt, eine Sperre verhindert zwei
+Tessellierungen zugleich (G3-6); Blechdicke ≤ 0 wird in `prepare` abgewiesen, ein Fehler in einem späteren Zyklus liefert den letzten fertigen mit Warnung, die
+Faktorisierung des Vorzyklus wird vor dem nächsten Aufbau freigegeben (G3-7); `estimate` sagt, dass seine Größen für Zyklus 0 gelten, und der Begründungstext
+der Löserwahl folgt der Messung aus A6 (G3-8); Docstrings und 11.14 beschreiben den geltenden Fahrplan (G3-9).
+
+**Aufgelistet, nicht behoben.** Abbruch während `prepare` eines Zyklus (der Vertrag gibt `prepare` keinen Abbruch; Aufbau bis Minuten); `summary()` beschreibt
+nach `solve` weiter Zyklus 0 (Klarstellung „mit derselben Diskretisierung“ im Vertrag nötig); eine Vereinigung mit mehreren Kindern, die dieselbe Hülle
+enthalten (nur programmatisch erreichbar); `t_s` von Zyklus 0 enthält die Vorbereitung nicht, die späteren schon; die Torsion geht in die Kopplungskontrolle
+über das polare Moment ein, an dünnen Querschnitten eine Unterschätzung.
+
+**Prüfungen.** Neue und geänderte Tests: `test_step.test_mehrere_koerper`, `test_step.test_cache_und_gmsh_zustand`, `test_stl.test_durchdringende_schalen`,
+`test_quadratur.test_deckungsgleiche_flaechen`, `test_huelle.test_offene_huelle`, `test_huelle.test_huelle_in_abgezogenem_teilbaum`, `test_huelle.test_windungsbaum`
+(Versatz), `test_hotspot.test_anwendbarkeit`, `test_hotspot.test_polylinien`, `test_adaptiv.test_konvergenzaussage`, `test_adaptiv.test_zyklen_ohne_wirkung`,
+`test_adaptiv.test_massgebender_hotspot`, `test_adaptiv.test_zyklen_ohne_naht`, `test_adaptiv.test_zyklen_grenzen`, `test_schale.test_kopplungsabweichung`,
+`test_rueckgewinnung.test_haengende_moden`, `test_zwaenge.test_gebuendelte_nachbarsuche`, `test_mehrgitter.test_grosse_bloecke_spd`.

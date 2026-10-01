@@ -10,14 +10,17 @@ Die Geometrie bleibt damit eine Innen/Aussen-Funktion; Krümmung steckt nur in d
   mit den Ecken auf der Flaeche (einbeschriebenes Polygon), der Volumenfehler einer Bohrung ist (2 pi / N)^2 / 6 ihres Volumens
   (gemessen am Block 200^3 mit Bohrung r 40: N 60 +0,019 %, 120 +0,0047 %, 240 +0,0012 % des Gesamtvolumens), die Dreieckszahl
   waechst mit N (8 000, 28 000, 108 000).
-* Mehrere Koerper in einer Datei werden zu einer Huelle zusammengefasst; sich durchdringende Koerper sind nicht zulaessig.
+* Mehrere Koerper in einer Datei werden vor dem Tessellieren vereinigt (OpenCASCADE fuse): sich durchdringende Koerper gaben vorher
+  doppelte Waende, und der STL-Weg rechnete still 'A minus B' (Gutachten C2, G3-1: Volumen 805 400 statt 1 288 000 mm3).
 * gmsh ist optional (Extra ``step``, GPL): ohne gmsh gibt es einen klaren Fehler, kein stiller Ersatz. Die Bibliothek wird
   nicht unterbrechbar initialisiert (Arbeitsfaeden) und ein bereits laufendes gmsh des Aufrufers bleibt unberuehrt: eigenes
   Modell, Optionen und aktuelles Modell werden zurueckgesetzt.
 """
 from __future__ import annotations
 
+import hashlib
 import os
+import threading
 from typing import Any
 
 import numpy as np
@@ -26,7 +29,12 @@ KRUEMMUNG_STANDARD = 120
 _CACHE: dict[tuple, tuple[np.ndarray, dict[str, Any]]] = {}
 _CACHE_MAX = 4
 _OPTIONEN_ZAHL = ("General.Terminal", "Mesh.MeshSizeMax", "Mesh.MeshSizeMin", "Mesh.MeshSizeFromCurvature",
-                  "Mesh.MeshSizeExtendFromBoundary", "Mesh.MeshSizeFromPoints", "Mesh.MeshSizeFromParametricPoints")
+                  "Mesh.MeshSizeExtendFromBoundary", "Mesh.MeshSizeFromPoints", "Mesh.MeshSizeFromParametricPoints",
+                  "Mesh.MeshSizeFactor", "Mesh.ElementOrder", "Mesh.RecombineAll", "Mesh.SubdivisionAlgorithm")
+# eigene Netzoptionen, auch wenn gmsh beim Aufrufer schon laeuft: sonst galten dessen Einstellungen (MeshSizeFactor 4 gab 1 884 statt
+# 27 788 Dreiecke, ElementOrder 2 'keine Dreiecke'), und das Protokoll nannte die eigenen (Gutachten C2, G3-6)
+_NETZ_VORGABEN = {"Mesh.MeshSizeFactor": 1.0, "Mesh.ElementOrder": 1.0, "Mesh.RecombineAll": 0.0, "Mesh.SubdivisionAlgorithm": 0.0}
+_SPERRE = threading.Lock()                                    # gmsh ist je Prozess ein Zustand: nie zwei Tessellierungen zugleich
 _OPTIONEN_TEXT = ("Geometry.OCCTargetUnit",)
 HINWEIS_GMSH = ("STEP braucht gmsh (optionales Extra 'step'): pip install \"gmsh>=4.11\" (GPL-Lizenz); "
                 "bis dahin CSG, STL oder ein tessellierter Export der Datei")
@@ -46,7 +54,11 @@ def tesselliere(pfad: str, groesse_mm: float, kruemmung: int = KRUEMMUNG_STANDAR
         raise ValueError(f"STEP-Datei {pfad!r} nicht gefunden")
     if not groesse_mm > 0 or int(kruemmung) < 8:
         raise ValueError("STEP-Tessellierung: Facettengroesse muss positiv und die Zahl der Dreiecke je Vollkreis mindestens 8 sein")
-    schluessel = (os.path.abspath(pfad), os.path.getmtime(pfad), os.path.getsize(pfad), float(groesse_mm), int(kruemmung))
+    # Inhaltshash statt Pfad, Zeit und Groesse: eine gleich grosse Datei mit erhaltener Zeit (Kopie, Entpacken) lieferte sonst die alte
+    # Tessellierung (Gutachten C2, G3-6)
+    with open(pfad, "rb") as f:
+        inhalt = hashlib.sha256(f.read()).hexdigest()
+    schluessel = (inhalt, float(groesse_mm), int(kruemmung))
     if schluessel in _CACHE:
         D, info = _CACHE[schluessel]
         return D.copy(), dict(info)
@@ -54,7 +66,8 @@ def tesselliere(pfad: str, groesse_mm: float, kruemmung: int = KRUEMMUNG_STANDAR
         import gmsh
     except ImportError as ex:
         raise ValueError(HINWEIS_GMSH) from ex
-    D, info = _mit_gmsh(gmsh, pfad, float(groesse_mm), int(kruemmung))
+    with _SPERRE:
+        D, info = _mit_gmsh(gmsh, pfad, float(groesse_mm), int(kruemmung))
     if len(_CACHE) >= _CACHE_MAX:
         _CACHE.pop(next(iter(_CACHE)))
     _CACHE[schluessel] = (D, info)
@@ -93,10 +106,22 @@ def _mit_gmsh(gmsh: Any, pfad: str, groesse_mm: float, kruemmung: int) -> tuple[
         if not koerper:
             raise ValueError(f"STEP-Datei {pfad!r} enthaelt keinen Volumenkoerper ({len(flaechen)} Flaechen): "
                              f"die Huelle muss ein geschlossener Koerper sein")
+        n_koerper = len(koerper)
+        if n_koerper > 1:
+            # vereinigen, bevor tesselliert wird: Durchdringungen und gemeinsame Flaechen verschwinden, die Huelle ist der Rand der Vereinigung
+            try:
+                gmsh.model.occ.fuse([koerper[0]], list(koerper[1:]))
+                gmsh.model.occ.synchronize()
+            except Exception as ex:                         # noqa: BLE001
+                raise ValueError(f"STEP-Datei {pfad!r}: {n_koerper} Koerper liessen sich nicht vereinigen: {ex}") from ex
+            koerper = gmsh.model.getEntities(3)
+            flaechen = gmsh.model.getEntities(2)
         gmsh.option.setNumber("Mesh.MeshSizeMax", float(groesse_mm))
         gmsh.option.setNumber("Mesh.MeshSizeMin", 0.0)
         gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", float(kruemmung))
         gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
+        for n, w in _NETZ_VORGABEN.items():
+            gmsh.option.setNumber(n, w)
         try:
             gmsh.model.mesh.generate(2)
         except Exception as ex:                             # noqa: BLE001
@@ -116,7 +141,8 @@ def _mit_gmsh(gmsh: Any, pfad: str, groesse_mm: float, kruemmung: int) -> tuple[
             raise ValueError(f"STEP-Datei {pfad!r}: die Tessellierung lieferte keine Dreiecke")
         D = np.concatenate(teile)
         lo, hi = D.reshape(-1, 3).min(axis=0), D.reshape(-1, 3).max(axis=0)
-        info = {"quelle": os.path.basename(pfad), "dreiecke": int(len(D)), "koerper": int(len(koerper)), "flaechen": int(len(flaechen)),
+        info = {"quelle": os.path.basename(pfad), "dreiecke": int(len(D)), "koerper": int(n_koerper), "vereinigt": n_koerper > 1,
+                "koerper_nach_vereinigung": int(len(koerper)), "flaechen": int(len(flaechen)),
                 "facettengroesse_mm": float(groesse_mm), "dreiecke_je_vollkreis": int(kruemmung), "einheit": "mm (umgerechnet von der Dateieinheit)",
                 "gmsh": str(getattr(gmsh, "__version__", "?")), "huellquader_min": lo.tolist(), "huellquader_max": hi.tolist()}
         return D, info

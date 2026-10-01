@@ -304,8 +304,9 @@ def _loeserwahl(backend: str, n_zellen: int, n_cut: int, p: int, n_dof: int,
                                                               f"{frei:.0f} MB - Rueckfall auf den Direktloeser der CPU"]
         return "mehrgitter", "gpu", f"backend 'gpu', {bedarf:.0f} von {frei:.0f} MB", []
     if not _AUTO_MEHRGITTER:
-        return "direkt", "cpu", ("auto: Direktloeser - im Gesamtweg bis zur Speichergrenze der GPU meist schneller als "
-                                 "das GPU-Mehrgitter (Theorie 11.10); backend 'gpu' erzwingt das Mehrgitter"), []
+        return "direkt", "cpu", ("auto: Direktloeser - in der Schlussmessung (23 Faelle bis 500 000 Freiheitsgrade) meist schneller als das "
+                                 "GPU-Mehrgitter; bei 10^6 Freiheitsgraden ist das Mehrgitter vorn (Theorie 11.10, Plan TP 5 A6); backend 'gpu' "
+                                 "erzwingt es"), []
     if frei > 0 and p in _AUTO_GRADE and n_dof >= _AUTO_MIN_DOFS and _GPU_RESERVE * bedarf <= frei:
         return "mehrgitter", "gpu", f"auto: {n_dof} Freiheitsgrade >= {_AUTO_MIN_DOFS}, GPU {bedarf:.0f} von {frei:.0f} MB", []
     grund = ("keine GPU" if frei <= 0 else
@@ -346,6 +347,7 @@ class FcmDiskretisierung:
         self.spec0: DetailModelSpec = spec
         self.schritt = "Start"
         self.k_h = 0                                      # Zahl der lokalen Halbierungen an den Naehten bisher
+        self.uebersprungen: list[str] = []                # h-Schritte ohne Wirkung vor diesem Zyklus (Gutachten C2, G3-2)
         self._oberflaeche: tuple[np.ndarray, np.ndarray] | None = None
         self._naehte: list[tuple[Any, list[Nahtpunkt]]] | None = None
         self.naht_warnungen: list[str] = []
@@ -429,7 +431,9 @@ class FcmSolver:
                 "solver_path": "pcg-mehrgitter (gpu)" if loeser == "mehrgitter" else "direkt",
                 "gpu_memory_mb": round(_gpu_speicher_mb(len(G.ijk), n_cut, int(s.p), int(G.n_dof)), 1),
                 "choice": grund, "warnings": warn,
-                "note": "Speicher der Faktorisierung kommt beim Direktloeser hinzu"}
+                "note": "Speicher der Faktorisierung kommt beim Direktloeser hinzu"
+                        + (f"; Groessen fuer Zyklus 0 - mit adaptive_cycles {int(s.adaptive_cycles)} wachsen Freiheitsgrade und Speicher je "
+                           f"Zyklus (lokale h-Halbierung an den Naehten, p + 1 bis 4), am T-Stoss etwa auf das 80-Fache" if int(s.adaptive_cycles) > 0 else "")}
 
     def prepare(self, spec: DetailModelSpec, material: Material, progress: ProgressCallback | None = None) -> FcmDiskretisierung:
         s = spec.settings
@@ -437,6 +441,10 @@ class FcmSolver:
         if not spec.cut_planes:
             raise SolverError("Detailmodell ohne Schnittebene: kein Verschiebungsrand, das Detail waere "
                               "ungelagert (Vertrag 2.1.0 kennt Lasten am Detail, aber keine Lagerungen)")
+        for wl in spec.weld_lines:
+            # sofort pruefen, nicht erst beim Verfeinerungsbereich des ersten Zyklus (Meldung zu RefinementRegion, Gutachten C2, G3-7)
+            if not (np.isfinite(float(wl.plate_thickness_mm)) and float(wl.plate_thickness_mm) > 0.0):
+                raise SolverError(f"Naht {wl.id!r}: Blechdicke {wl.plate_thickness_mm} mm - muss positiv sein")
         melden: Fortschritt = progress or (lambda t, a: None)
         g, namen = _geometrie(spec)
         melden("Gitter, Quadratur und Oberflaeche", 0.05)
@@ -505,7 +513,12 @@ class FcmSolver:
             raise SolverError("solve braucht die Diskretisierung aus FcmSolver.prepare")
         n_zyklen = int(disc.spec0.settings.adaptive_cycles)
         if n_zyklen == 0:
-            return self._zyklus(disc, provider, keys, melden, abbruch)
+            ergebnisse = self._zyklus(disc, provider, keys, melden, abbruch)
+            for e in ergebnisse:
+                # dieselben Protokollschluessel wie mit Zyklen (Gutachten C2, G3-9): eine Rechnung ist eine Folge der Laenge 1
+                e.protocol["cycles"] = 0
+                e.protocol["convergence_statement"] = konvergenzaussage([c.get("hotspot_max") for c in e.convergence])
+            return ergebnisse
 
         def im_zyklus(z: int, von: float = 0.0, bis: float = 1.0) -> Fortschritt:
             """Fortschritt des Zyklus z auf das Intervall [z + von, z + bis] von n_zyklen + 1 abgebildet (Vorbereitung und
@@ -522,13 +535,29 @@ class FcmSolver:
             if abbruch():
                 raise SolverCancelled(f"abgebrochen vor Zyklus {z}")
             t_z = time.perf_counter()
-            nxt = self._naechster_zyklus(d, im_zyklus(z, 0.0, 0.4))
-            if nxt is None:
-                hinweise.append(f"adaptive Zyklen nach {z - 1} beendet: lokale Zellgroesse an den Naehten bei t/4 (oder keine Naht) "
-                                f"und p = {_P_MAX} erreicht")
+            if d is not disc:
+                # die Faktorisierung des Vorzyklus wird nicht mehr gebraucht (seine Ergebnisse stehen fest): vor dem Aufbau des naechsten
+                # freigeben, sonst lebten drei Diskretisierungen samt Faktorisierung zugleich (Gutachten C2, G3-7); die des Zyklus 0 gehoert
+                # dem Aufrufer und bleibt
+                _loeser_freigeben(d)
+            try:
+                nxt = self._naechster_zyklus(d, im_zyklus(z, 0.0, 0.4))
+                if nxt is None:
+                    hinweise.append(f"adaptive Zyklen nach {z - 1} beendet: lokale Zellgroesse an den Naehten bei t/4 (oder keine Naht) "
+                                    f"und p = {_P_MAX} erreicht")
+                    break
+                neue = self._zyklus(nxt, provider, keys, im_zyklus(z, 0.4, 1.0), abbruch)
+            except SolverCancelled:
+                raise
+            except SolverError as ex:
+                # ein Fehler im spaeteren Zyklus verwarf vorher auch alle fertigen (G3-7); jetzt gilt der letzte fertige Zyklus mit Warnung
+                hinweise.append(f"Zyklus {z} gescheitert ({ex}) - Ergebnis aus Zyklus {z - 1}")
                 break
             d = nxt
-            ergebnisse = self._zyklus(d, provider, keys, im_zyklus(z, 0.4, 1.0), abbruch)
+            for schritt_ohne in getattr(nxt, "uebersprungen", []):
+                hinweise.append(f"Zyklus {z}: {schritt_ohne} ohne Wirkung auf das Netz (an den Naehten ist es schon so fein, etwa durch "
+                                f"eigene Verfeinerungsbereiche) - uebersprungen, der Fahrplan ging weiter")
+            ergebnisse = neue
             for k, e in enumerate(ergebnisse):
                 kurven[k].append({**e.convergence[0], "cycle": z, "t_s": round(time.perf_counter() - t_z, 3)})
         for k, e in enumerate(ergebnisse):
@@ -541,7 +570,7 @@ class FcmSolver:
             e.protocol["cycles"] = len(kurve) - 1
             e.protocol["convergence_statement"] = aussage
             e.warnings.extend(hinweise)
-            if aussage["art"] == "nicht_monoton":
+            if aussage["art"] in ("nicht_monoton", "ohne_aenderung"):
                 e.warnings.append("Konvergenz der Strukturspannung: " + aussage["text"])
         melden("Zyklen abgeschlossen", 1.0)
         return ergebnisse
@@ -555,20 +584,29 @@ class FcmSolver:
         p = int(disc.spec.settings.p)
         naehte = [wl for wl in s0.weld_lines if len(np.asarray(wl.points).reshape(-1, 3)) > 0]
         basis = float(s0.settings.base_cell_size_mm)
-        schritt = _fahrplan(p, disc.k_h, basis, [float(wl.plate_thickness_mm) for wl in naehte])
-        if schritt is None:
-            return None
         k_h = disc.k_h
-        if schritt == "h":
-            k_h += 1
-            spec = dataclasses.replace(s0, settings=disc.spec.settings,
-                                       refinement=tuple(s0.refinement) + _nahtregionen(naehte, k_h, basis))
-        else:
-            spec = dataclasses.replace(disc.spec, settings=dataclasses.replace(disc.spec.settings, p=p + 1))
-        neu = self.prepare(spec, disc.material, melden)
+        uebersprungen: list[str] = []
+        while True:
+            schritt = _fahrplan(p, k_h, basis, [float(wl.plate_thickness_mm) for wl in naehte])
+            if schritt is None:
+                return None
+            if schritt == "h":
+                k_h += 1
+                spec = dataclasses.replace(s0, settings=disc.spec.settings,
+                                           refinement=tuple(s0.refinement) + _nahtregionen(naehte, k_h, basis))
+            else:
+                spec = dataclasses.replace(disc.spec, settings=dataclasses.replace(disc.spec.settings, p=p + 1))
+            neu = self.prepare(spec, disc.material, melden)
+            # eine h-Halbierung, die das Netz nicht aendert (eigene Verfeinerung schon feiner), waere ein Zyklus ohne Wirkung - er brachte
+            # die Aussage 'letzte Aenderung null, konvergent' (Gutachten C2, G3-2); uebergehen und den Fahrplan weiterschalten
+            if schritt == "h" and len(neu.problem.gitter.ijk) == len(disc.problem.gitter.ijk) and neu.problem.gitter.n_dof == disc.problem.gitter.n_dof:
+                uebersprungen.append(f"h-Halbierung auf {_nahtziel(basis, k_h, min(float(wl.plate_thickness_mm) for wl in naehte)):g} mm")
+                continue
+            break
         neu.spec0 = s0
         neu.k_h = k_h
         neu.schritt = "h-Halbierung Naht" if schritt == "h" else "p-Erhoehung"
+        neu.uebersprungen = uebersprungen
         return neu
 
     def _zyklus(self, disc: FcmDiskretisierung, provider: GlobalFieldProvider, keys: list[ResultKey],
@@ -650,11 +688,14 @@ class FcmSolver:
                 naht_protokoll: dict[str, Any] = {}
                 spannung_fn = aus.spannung_geglaettet if _SPANNUNG_GEGLAETTET else aus.spannung
                 for wl, q in disc.naehte():
+                    vorher = sum(1 for x in q if x.ok)
                     erg_n = strukturspannungen(q, spannung_fn, 1e-7 * pr.gitter.h)
+                    if len(erg_n) < vorher:
+                        warn.append(f"Naht {wl.id!r}: {vorher - len(erg_n)} Punkte ohne Strukturspannung, Referenzpunkt ausserhalb der Zellen")
                     hot += [HotSpotResult(weld_line_id=wl.id, position=np.asarray(np_.position, float).copy(), stress=hs,
                                           method="hot_spot IIW Typ a (0,4 t / 1,0 t, linear)") for np_, hs, _, _ in erg_n]
                     naht_protokoll[wl.id] = {"punkte": len(q), "ohne_wert": len(q) - len(erg_n), "blechdicke_mm": float(wl.plate_thickness_mm),
-                                             "sigma_hs_max": max((hs for _, hs, _, _ in erg_n), default=None),
+                                             "sigma_hs_max": _massgebend([hs for _, hs, _, _ in erg_n]),
                                              "sigma_04t": [s04 for _, _, s04, _ in erg_n], "sigma_10t": [s10 for _, _, _, s10 in erg_n]}
                 warn += disc.naht_warnungen
                 w_int = _integrationswarnung(pr.quadratur.statistik, pr.oberflaeche.statistik)
@@ -665,8 +706,12 @@ class FcmSolver:
                     warn += [str(w) for w in mg.statistik.get("warnungen", [])]
                 for f in pr.geometrie.grundformen():
                     if getattr(f, "defekt", 0.0) > 1e-3:
-                        warn.append(f"STL {f.name!r}: Huelle hat kleine Luecken (Windungszahl-Defekt {f.defekt:.3f}); "
-                                    f"Innen/Aussen bleibt eindeutig, Flaechenlasten auf der Luecke fehlen")
+                        warn.append(f"STL {f.name!r}: Huelle hat kleine Luecken (Windungszahl-Defekt {f.defekt:.3f}, "
+                                    f"{getattr(f, 'offene_kanten', 0)} offene Kanten); Innen/Aussen bleibt eindeutig, die Zellen werden ohne "
+                                    f"Huellenintegration (Zerlegung an lokalen Ebenen) integriert, Flaechenlasten auf der Luecke fehlen")
+                    elif getattr(f, "offene_kanten", 0) > 0:
+                        warn.append(f"STL {f.name!r}: Huelle nicht geschlossen ({f.offene_kanten} offene Kanten, Windungszahl-Defekt "
+                                    f"{getattr(f, 'defekt', 0.0):.1e}); die Zellen werden ohne Huellenintegration integriert")
                 for i, (n, cp) in enumerate(zip(disc.schnittnamen, disc.spec.cut_planes)):
                     fq = pr.raender[n].quadratur
                     F, M = aus.schnittgroessen(fq, cp.origin)
@@ -676,13 +721,17 @@ class FcmSolver:
                     # Bezug fuer die relative Abweichung: groesste beteiligte Resultierende; Momente auch
                     # gegen Kraft mal Flaechenmass, damit reine Biegung (Q = 0) oder reiner Zug (M = 0)
                     # keine Scheinabweichung melden (Gutachten 27.09.: 2,5e3 bei Nullwerten)
-                    dF, dM, ref_f, ref_m = _kopplungsabweichung(F, M, f_g, m_g, float(fq.gewichte.sum()))
+                    kennwerte = _schnittkennwerte(fq, cp.origin, cp.normal)
+                    dF, dM, ref_s = _kopplungsabweichung(F, M, f_g, m_g, kennwerte)
+                    ref_f = ref_s * kennwerte["A"]
+                    ref_m = ref_s * (float(np.linalg.eigvalsh(kennwerte["I"]).min()) / max(kennwerte["r_max"], 1e-300))
                     # Konvention der FCM-Seite: F = int sigma.n dA mit n aus dem Detail heraus, also die
                     # Kraft, die der abgeschnittene Teil auf das Detail ausuebt (Vorschlag zur Klarstellung:
                     # docs/vertrag-aenderungen/2026-09-27-lasten-und-schnittgroessen.md)
                     ebenen.append({"plane": i, "force_fcm": F, "force_global": f_g, "moment_fcm": M, "moment_global": m_g,
                                    "delta_force": F - f_g, "delta_moment": M - m_g,
                                    "deviation_force": dF, "deviation_moment": dM, "reference_force": ref_f, "reference_moment": ref_m,
+                                   "reference_stress": ref_s, "deviation_measure": "stress: (|dN|+|dQ|)/A and max edge stress of dM, / reference stress",
                                    "convention": "force_fcm = int sigma.n dA, n out of the detail",
                                    "multipliers": np.asarray(pr.multiplikatoren[3 * i:3 * i + 3, k], float)})
             except ValueError as ex:
@@ -715,7 +764,7 @@ class FcmSolver:
                                            convergence=[{"cycle": 0, "step": disc.schritt, "dofs": int(pr.gitter.n_dof), "p": pr.p,
                                                          "cells": int(len(pr.gitter.ijk)), "cut_cells": int((pr.gitter.klasse == 2).sum()),
                                                          "h_min_mm": float(pr.gitter.h / 2.0 ** int(pr.gitter.ebene.max())),
-                                                         "hotspot_max": max((h.stress for h in hot), default=None),
+                                                         "hotspot_max": _massgebend([h.stress for h in hot]),
                                                          "hotspot_mean": float(np.mean([h.stress for h in hot])) if hot else None,
                                                          "stress_max": float(von_mises(s_e).max()) if len(s_e) else None,
                                                          "solver_path": str(disc.loeserwahl.get("loeser", pr.loeser)),
@@ -725,6 +774,22 @@ class FcmSolver:
 
 
 _P_MAX = 4
+
+
+def _loeser_freigeben(disc: FcmDiskretisierung) -> None:
+    """Faktorisierung und Mehrgitter einer Diskretisierung freigeben; ein spaeteres Loesen baut sie neu auf (K None -> aufbauen)."""
+    pr = disc.problem
+    for name in ("_loeser", "_mehrgitter", "_gpu", "_operator", "K"):
+        if hasattr(pr, name):
+            setattr(pr, name, None)
+
+
+def _massgebend(werte: list[float]) -> float | None:
+    """Betragsgroesster Wert mit Vorzeichen: der massgebende Hot-Spot fuer Kurve und Konvergenzaussage (``hotspot_max``,
+    ``sigma_hs_max``). Vorher das vorzeichenbehaftete Maximum - unter Druck der betragskleinste Punkt (Gutachten C2, G3-5)."""
+    if not werte:
+        return None
+    return float(max(werte, key=abs))
 
 
 def _nahtziel(basis_mm: float, k_h: int, dicke_mm: float) -> float:
@@ -742,7 +807,9 @@ def _fahrplan(p: int, k_h: int, basis_mm: float, dicken: list[float]) -> str | N
 
 
 def _nahtregionen(wls: list[Any], k_h: int, basis_mm: float) -> tuple[RefinementRegion, ...]:
-    """Kugeln vom Radius 2 t um Punkte der Nahtlinien (Abstand hoechstens t) mit der Zielzellgroesse ``_nahtziel``."""
+    """Kugeln vom Radius 2 t um Punkte der Nahtlinien mit der Zielzellgroesse ``_nahtziel``: Mittelpunkte sind Polylinienpunkte im Abstand
+    von mindestens t (und der letzte Punkt); bei Punktabstaenden ueber 2 t entstehen Luecken zwischen den Kugeln - es wird nicht
+    interpoliert, die Hot-Spots werden ohnehin nur an den Polylinienpunkten ausgewertet (Gutachten C2, G3-9)."""
     regionen: list[RefinementRegion] = []
     for wl in wls:
         P = np.asarray(wl.points, float).reshape(-1, 3)
@@ -758,22 +825,64 @@ def _nahtregionen(wls: list[Any], k_h: int, basis_mm: float) -> tuple[Refinement
     return tuple(regionen)
 
 
-def _kopplungsabweichung(F: np.ndarray, M: np.ndarray, f_g: np.ndarray, m_g: np.ndarray, flaeche_mm2: float) -> tuple[float, float, float, float]:
-    """Relative Abweichung der Schnittgroessen (Kraft, Moment) gegen das Globalmodell und die beiden Bezuege.
+def _schnittkennwerte(fq: Any, ursprung: np.ndarray, normale: np.ndarray) -> dict[str, Any]:
+    """Querschnittswerte einer Schnittflaeche fuer die Kopplungskontrolle: Flaeche A, Schwerpunkt c, Achsen e1, e2 in der Ebene,
+    Traegheiten I11, I22, I12 um den Schwerpunkt (Quadratur), Randabstaende aus den Quadraturpunkten (die aeussersten liegen
+    wenige Hundertstel Millimeter vor dem Rand; die Polygone der Ebenenquadratur reichen ueber den Werkstoff hinaus und taugen
+    dafuer nicht - am Knotenblech 45 statt 5 mm), polares Moment und groesster Randabstand fuer die Torsion."""
+    n = np.asarray(normale, float).reshape(3)
+    n = n / np.linalg.norm(n)
+    e1 = np.cross(n, [1.0, 0.0, 0.0] if abs(n[0]) < 0.9 else [0.0, 1.0, 0.0])
+    e1 /= np.linalg.norm(e1)
+    e2 = np.cross(n, e1)
+    P = np.asarray(fq.punkte, float).reshape(-1, 3)
+    w = np.asarray(fq.gewichte, float).ravel()
+    A = float(w.sum())
+    c = (w[:, None] * P).sum(axis=0) / A if A > 0 else np.asarray(ursprung, float).reshape(3)
+    r1, r2 = (P - c) @ e1, (P - c) @ e2
+    I11, I22, I12 = float(w @ (r1 * r1)), float(w @ (r2 * r2)), float(w @ (r1 * r2))
+    rand = np.stack([r1, r2], axis=1)
+    return {"A": A, "c": c, "o": np.asarray(ursprung, float).reshape(3), "n": n, "e1": e1, "e2": e2, "I": np.array([[I11, I12], [I12, I22]]),
+            "rand": rand, "Ip": I11 + I22, "r_max": float(np.linalg.norm(rand, axis=1).max()) if len(rand) else 0.0}
 
-    Kraft und Moment haben ein gemeinsames Lastmass: das groesste beteiligte Moment oder die groesste beteiligte Kraft mal der
-    Laenge l = sqrt(Schnittflaeche). Bezug des Moments ref_m = max(|M|, |m_g|, f0 l), Bezug der Kraft ref_f = ref_m / l = max(f0, m0 / l)
-    mit f0 = max(|F|, |f_g|), m0 = max(|M|, |m_g|). Ohne den Momentenanteil im Kraftbezug meldete reine Biegung (Kraft 0 im
-    Globalmodell, Rundungsrest im Detail) 100 % Kraftabweichung (Schalen-Stub, Plan TP 5 B7: 1,0 bei reiner Biegung); mit ihm
-    wird ein Kraftrest gegen die Kraft gemessen, die dasselbe Moment am Hebel l aufbraechte. Nullwerte beider Seiten: 0."""
-    l_ref = float(np.sqrt(max(float(flaeche_mm2), 1e-300)))
-    f0 = max(float(np.linalg.norm(f_g)), float(np.linalg.norm(F)))
-    m0 = max(float(np.linalg.norm(m_g)), float(np.linalg.norm(M)))
-    ref_m = max(m0, f0 * l_ref)
-    ref_f = ref_m / l_ref
-    dF = float(np.linalg.norm(np.asarray(F, float) - np.asarray(f_g, float))) / ref_f if ref_f > 0 else 0.0
-    dM = float(np.linalg.norm(np.asarray(M, float) - np.asarray(m_g, float))) / ref_m if ref_m > 0 else 0.0
-    return dF, dM, ref_f, ref_m
+
+def _schnittspannungen(F: np.ndarray, M: np.ndarray, k: dict[str, Any]) -> tuple[float, float]:
+    """(Kraftanteil, Momentanteil) als Spannungen: |N|/A + |Q|/A und groesste Randspannung aus Biegung plus Torsion (tau = T r_max / I_p,
+    fuer duenne Querschnitte eine Unterschaetzung - nur Massstab). Das Moment wird vom Bezugspunkt der Schnittebene auf den Schwerpunkt
+    umgerechnet (M_c = M - (c - o) x F)."""
+    if k["A"] <= 0.0:
+        return 0.0, 0.0
+    F = np.asarray(F, float).reshape(3)
+    Mc = np.asarray(M, float).reshape(3) - np.cross(k["c"] - k["o"], F)
+    N = float(F @ k["n"])
+    Q = F - N * k["n"]
+    s_kraft = (abs(N) + float(np.linalg.norm(Q))) / k["A"]
+    Mt = float(Mc @ k["n"])
+    M1, M2 = float(Mc @ k["e1"]), float(Mc @ k["e2"])
+    # sigma(r) = b1 r1 + b2 r2 mit int sigma r2 = M1, -int sigma r1 = M2 (r x sigma n, e1 x n = -e2): [[I11, I12], [I12, I22]] b = [-M2, M1]
+    try:
+        b = np.linalg.solve(k["I"], np.array([-M2, M1]))
+    except np.linalg.LinAlgError:
+        b = np.linalg.lstsq(k["I"], np.array([-M2, M1]), rcond=None)[0]
+    s_biegung = float(np.abs(k["rand"] @ b).max()) if len(k["rand"]) else 0.0
+    s_torsion = abs(Mt) * k["r_max"] / k["Ip"] if k["Ip"] > 0 else 0.0
+    return s_kraft, s_biegung + s_torsion
+
+
+def _kopplungsabweichung(F: np.ndarray, M: np.ndarray, f_g: np.ndarray, m_g: np.ndarray, kennwerte: dict[str, Any]) -> tuple[float, float, float]:
+    """Relative Abweichung der Schnittgroessen (Kraft, Moment) gegen das Globalmodell, als Spannungen bewertet, und die Bezugsspannung.
+
+    Kraftabweichung (|dN| + |dQ|)/A, Momentabweichung groesste Randspannung aus dM (Biegung mit den Traegheiten der Schnittflaeche plus
+    Torsion), beide bezogen auf die groessere der Referenzspannungen von Detail und Globalmodell (Summe aus Kraft- und Momentanteil).
+    Vorher (B7) ein gemeinsames Lastmass mit dem Hebel sqrt(A): an duennen Blechen ist das zwolfmal das Biegemoment, ein Detail mit nur
+    40 % des Moments meldete 4,7 % statt einer Warnung (Gutachten C2, G3-3). Nullwerte beidseits: 0."""
+    s_f, s_m = _schnittspannungen(F, M, kennwerte)
+    g_f, g_m = _schnittspannungen(f_g, m_g, kennwerte)
+    d_f, d_m = _schnittspannungen(np.asarray(F, float) - np.asarray(f_g, float), np.asarray(M, float) - np.asarray(m_g, float), kennwerte)
+    bezug = max(s_f + s_m, g_f + g_m)
+    if bezug <= 0.0:
+        return 0.0, 0.0, 0.0
+    return d_f / bezug, d_m / bezug, bezug
 
 
 def _integrationswarnung(quad: dict[str, Any], flaeche: dict[str, Any]) -> str | None:

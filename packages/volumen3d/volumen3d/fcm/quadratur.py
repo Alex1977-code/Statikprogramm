@@ -117,7 +117,10 @@ class Zellquadratur:
         if erg is None:
             return None
         huelle, vz = erg
-        q = self.fit_grad
+        # Grad der Momente: mindestens 2p, sonst sind die Zellmatrizen nicht exakt (q = p gab indefinite Matrizen, test_momentfitting);
+        # die Huellenzelle hat keine Punktquadratur als Rueckfall, darum gilt das unabhaengig vom Schalter momentfitting (Gutachten C2, G1-5)
+        q = max(self.fit_grad, 2 * self.p)
+        self.statistik["huellen_grad"] = q
         # alle Dreiecke der Saeule x >= x_lo in der y-z-Scheibe der Zelle: die Formel summiert ueber den ganzen Rand der Huelle,
         # Teile rechts der Zelle tragen den vollen x-Integralwert (geometry/huelle.py); eine Kugelabfrage faende sie nicht
         D = huelle.dreiecke_ecken[huelle.in_box(np.array([lo[0], lo[1], lo[2]]), np.array([np.inf, hi[1], hi[2]]))]
@@ -131,9 +134,14 @@ class Zellquadratur:
             Nc, _ = legendre_1d(q, X[:, 2])
             mu = np.einsum("p,pa,pb,pc->abc", W * float(np.prod(s)), Na, Nb, Nc, optimize=True) - mu
         st = self.statistik
-        st["huellenzellen"] += 1
         volumen = float(mu[0:2, 0:2, 0:2].sum())                   # Konstante = (N_0 + N_1)^3
-        if volumen <= 1e-12 * float(np.prod(hi - lo)):
+        v_zelle = float(np.prod(hi - lo))
+        if not -1e-9 * v_zelle <= volumen <= v_zelle * (1 + 1e-9):
+            # unmoegliches Werkstoffvolumen: die Huelle ist hier nicht sauber geschlossen oder durchdringt sich - alter Weg (G1-2)
+            st["huellenzellen_rueckfall"] = st.get("huellenzellen_rueckfall", 0) + 1
+            return None
+        st["huellenzellen"] += 1
+        if volumen <= 1e-12 * v_zelle:
             st["huellenzellen_leer"] += 1
             if self.alpha > 0:
                 Pa, Wa = self._box(lo, s)

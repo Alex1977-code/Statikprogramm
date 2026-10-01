@@ -344,7 +344,8 @@ class Csg:
         """Stuecke fuer ein Polygon auf einer Facette der Huelle: die Huelle selbst gilt als voll (das Polygon liegt auf ihr),
         die anderen Formen entscheiden ueber den Baum, welcher Teil des Polygons wirklich Rand des Werkstoffs ist - im Schnitt
         bleibt, was in den anderen Formen liegt; in einer Vereinigung faellt weg, was andere Glieder ueberdecken; als Loch
-        (subtrahiert) bleibt, wo der erste Operand Werkstoff hat. Ohne andere aktive Form ist das Stueck die ganze Kugel."""
+        (subtrahiert) bleibt, wo der erste Operand Werkstoff hat und der Teilbaum des Lochs Rand liefert. Inaktive Formen zaehlen
+        als voll oder leer nach dem Vorzeichen ihres Abstands; ohne andere Form ist das Stueck die ganze Kugel."""
         proben = np.asarray(proben, float).reshape(-1, 3)
         andere = [(f, s) for f, s in alle if f is not huelle]
         if not andere:
@@ -388,7 +389,12 @@ class Csg:
                 acc = list(kinder[0][0])                        # differenz: erster Operand minus die Loecher
                 for i, (c, h) in enumerate(kinder[1:], start=1):
                     if h:
-                        continue                                # das Loch, auf dessen Wand das Polygon liegt, nimmt nichts weg
+                        # das Loch, auf dessen Wand das Polygon liegt: Rand ist nur, was im ersten Operanden UND auf dem Rand des Lochs
+                        # liegt - fuer ein Loch, das selbst eine Operation ist, also nur der Teil, den dessen Teilbaum als Rand liefert.
+                        # Vorher wurde es uebersprungen, und Facetten der Huelle ausserhalb des Lochrands blieben als Flaeche im Werkstoff
+                        # stehen (A − (H ∩ {x <= 20}): 11 634 statt 11 200 mm2, Gutachten C2, G1-4)
+                        acc = _mit_teilen_schneiden(acc, c)
+                        continue
                     acc = _teile_subtrahieren(acc, c)
                 return acc, bool(mit)
             if k is huelle:
@@ -487,6 +493,10 @@ class Csg:
         if len(aktiv) != 1 or not hasattr(aktiv[0], "dreiecke_ecken"):
             return None
         h = aktiv[0]
+        if getattr(h, "offene_kanten", 0) > 0:
+            # Divergenzsatz nur fuer geschlossene Huellen: eine Luecke verfaelscht die ganze x-Saeule hinter ihr (Wuerfel ohne eine
+            # Facette auf einer x-Seite 13 859 statt 27 000 mm3, Gutachten C2, G1-2); offene Huellen gehen den alten Weg
+            return None
         # Werte: 0 leer, 1 voll, 2 Huelle, 3 Komplement der Huelle
         NICHT = {0: 1, 1: 0, 2: 3, 3: 2}
 

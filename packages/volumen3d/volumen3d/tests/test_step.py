@@ -254,6 +254,90 @@ def test_block_mit_bohrung_gegen_csg():
           and dauer["step"] < 40.0, f"{vol['step']:.3f} gegen {v_soll:.3f}")
 
 
+def _boxen_step(pfad, boxen):
+    import gmsh
+    gmsh.initialize([], readConfigFiles=False)
+    try:
+        gmsh.option.setNumber("General.Terminal", 0)
+        gmsh.model.add("boxen")
+        for b in boxen:
+            gmsh.model.occ.addBox(*b)
+        gmsh.model.occ.synchronize()
+        gmsh.write(pfad)
+    finally:
+        gmsh.finalize()
+
+
+def test_mehrere_koerper():
+    """Befund G3-1 (Gutachten C2, 02.10.2026): eine STEP-Datei mit zwei sich durchdringenden Koerpern lief ohne Meldung durch und rechnete
+    'A minus B' - die Huelle hatte doppelte Waende, B galt als Hohlraum (Verschachtelung an einer Facette in A bestimmt), Volumen 805 400 statt
+    1 288 000 mm3. Mehrere Koerper werden jetzt vor dem Tessellieren vereinigt (OpenCASCADE fuse). Pruefung: A = [0,100]^3, B = [60,160] x
+    [10,90] x [20,80] in beiden Reihenfolgen -> Volumen der Tessellierung (Divergenzsatz, unabhaengig von Stl) = Vereinigung 1 288 000 auf 1e-9,
+    Punkte nur in B und in A ∩ B innen; beruehrende Koerper (gemeinsame Flaeche x = 100) -> 2 000 000."""
+    if not _gmsh_da():
+        check("mehrere Koerper uebersprungen: gmsh nicht installiert", True)
+        return
+    from volumen3d.geometry.step import tesselliere
+    from volumen3d.geometry.stl import Stl
+    soll = 1e6 + 100 * 80 * 60 - 40 * 80 * 60
+    proben = np.array([[20.0, 50, 50], [80.0, 50, 50], [140.0, 50, 50], [140.0, 5, 50]])
+    with tempfile.TemporaryDirectory() as tmp:
+        erg = []
+        for name, boxen in (("A_B", [(0, 0, 0, 100, 100, 100), (60, 10, 20, 100, 80, 60)]), ("B_A", [(60, 10, 20, 100, 80, 60), (0, 0, 0, 100, 100, 100)])):
+            pfad = os.path.join(tmp, name + ".step")
+            _boxen_step(pfad, boxen)
+            D, info = tesselliere(pfad, 50.0, 60)
+            s = Stl.aus_dreiecken(D, name)
+            erg.append((_volumen(D), s.innen(proben).tolist(), info))
+        pfad = os.path.join(tmp, "beruehrend.step")
+        _boxen_step(pfad, [(0, 0, 0, 100, 100, 100), (100, 0, 0, 100, 100, 100)])
+        Db, info_b = tesselliere(pfad, 50.0, 60)
+    check(f"zwei sich durchdringende Koerper: Volumen {erg[0][0]:.1f} / {erg[1][0]:.1f} = Vereinigung {soll:.0f} (1e-9), nur-B und A∩B innen, aussen aussen",
+          all(abs(v / soll - 1) < 1e-9 and inn == [True, True, True, False] for v, inn, _ in erg), f"{[(round(v, 1), inn) for v, inn, _ in erg]}")
+    check(f"beruehrende Koerper: Volumen {_volumen(Db):.1f} = 2 000 000 (1e-9); Protokoll nennt zwei Koerper und die Vereinigung",
+          abs(_volumen(Db) / 2e6 - 1) < 1e-9 and info_b["koerper"] == 2 and erg[0][2].get("vereinigt") is True, str(info_b))
+
+
+def test_cache_und_gmsh_zustand():
+    """Befund G3-6 (Gutachten C2, 02.10.2026): (a) der Cache-Schluessel war Pfad, Aenderungszeit und Groesse - eine gleich grosse Datei mit
+    zurueckgesetzter Zeit (Kopie mit Zeitstempeln) lieferte die alte Tessellierung; (b) lief gmsh beim Aufrufer schon, galten dessen
+    Optionen (MeshSizeFactor 4: 1 884 statt 27 788 Dreiecke, ElementOrder 2: 'keine Dreiecke'), das Protokoll nannte die eigenen.
+    Jetzt Inhaltshash und eigene Netzoptionen auch bei laufendem gmsh (danach zurueckgesetzt)."""
+    if not _gmsh_da():
+        check("Cache und gmsh-Zustand uebersprungen: gmsh nicht installiert", True)
+        return
+    import gmsh
+    from volumen3d.geometry import step as S
+    with tempfile.TemporaryDirectory() as tmp:
+        pfad = os.path.join(tmp, "q.step")
+        quader_step(pfad)
+        S._CACHE.clear()
+        D0, _ = S.tesselliere(pfad, 25.0, 60)
+        st = os.stat(pfad)
+        roh = open(pfad, "rb").read()
+        assert b"MILLI" in roh
+        with open(pfad, "wb") as f:
+            f.write(roh.replace(b"MILLI", b"CENTI"))           # gleiche Laenge, Einheit cm: zehnfache Ausdehnung
+        os.utime(pfad, ns=(st.st_atime_ns, st.st_mtime_ns))
+        D1, _ = S.tesselliere(pfad, 25.0, 60)
+        ausdehnung = (float(np.ptp(D0[:, :, 0])), float(np.ptp(D1[:, :, 0])))
+        with open(pfad, "wb") as f:
+            f.write(roh)
+        S._CACHE.clear()
+        gmsh.initialize([], readConfigFiles=False)
+        try:
+            gmsh.option.setNumber("General.Terminal", 0)
+            gmsh.option.setNumber("Mesh.MeshSizeFactor", 4.0)
+            gmsh.option.setNumber("Mesh.ElementOrder", 2)
+            D2, _ = S.tesselliere(pfad, 25.0, 60)
+            danach = (gmsh.option.getNumber("Mesh.MeshSizeFactor"), gmsh.option.getNumber("Mesh.ElementOrder"))
+        finally:
+            gmsh.finalize()
+    check(f"gleich grosse Datei mit zurueckgesetzter Zeit (Einheit MILLI -> CENTI): neue Tessellierung (Ausdehnung x {ausdehnung[0]:g} -> {ausdehnung[1]:g}); "
+          f"laufendes gmsh mit MeshSizeFactor 4 und ElementOrder 2: gleiche Dreiecke wie frei ({len(D2)} = {len(D0)}), Optionen danach zurueck {danach}",
+          abs(ausdehnung[1] / ausdehnung[0] - 10.0) < 1e-9 and len(D2) == len(D0) and danach == (4.0, 2.0))
+
+
 def test_integrationswarnung():
     """Die Warnung der Integrationsordnung: stille Zaehler -> keine Meldung, Blaetter im Punkttest oder Flaechenstuecke im Rueckfall -> Meldung mit
     beiden Zahlen und dem Hinweis auf STL/STEP (reine Funktion, Plan TP 5 B5)."""
@@ -324,4 +408,4 @@ def test_fehler():
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_tessellierung, test_vertragsweg_gegen_csg, test_block_mit_bohrung_gegen_csg, test_integrationswarnung, test_fehler]))
+    sys.exit(lauf([test_tessellierung, test_vertragsweg_gegen_csg, test_block_mit_bohrung_gegen_csg, test_mehrere_koerper, test_cache_und_gmsh_zustand, test_integrationswarnung, test_fehler]))

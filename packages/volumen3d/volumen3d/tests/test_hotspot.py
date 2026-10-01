@@ -85,6 +85,106 @@ def test_uneindeutig():
           and all("Oberflaechenaeste" in q.warnung for q in innen), f"{flach[0].warnung} / {innen[0].warnung}")
 
 
+def _t_stoss_schenkel(s, x_hi=200.0):
+    """T-Stoss wie t_stoss, aber mit Kehlnahtschenkel s und Grundblechende x_hi."""
+    from volumen3d.geometry.csg import aus_params
+    xr, xl = 105.0 + s, 95.0 - s
+    return aus_params({"csg": {"typ": "vereinigung", "teile": [
+        {"typ": "quader", "min": [0, 0, -T_BLECH], "max": [x_hi, 50, 0], "name": "grundblech"},
+        {"typ": "quader", "min": [95, 0, 0], "max": [105, 50, 60], "name": "querblech"},
+        {"typ": "schnitt", "teile": [{"typ": "quader", "min": [105, 0, 0], "max": [xr, 50, s], "name": "naht_rechts"},
+                                     {"typ": "halbraum", "punkt": [xr, 0, 0], "normale": [1, 0, 1], "name": "nf_r"}]},
+        {"typ": "schnitt", "teile": [{"typ": "quader", "min": [xl, 0, 0], "max": [95, 50, s], "name": "naht_links"},
+                                     {"typ": "halbraum", "punkt": [xl, 0, 0], "normale": [-1, 0, 1], "name": "nf_l"}]}]}}), xr, xl
+
+
+def _stumpfnaht(hoehe, breite_fuss, breite_kopf):
+    """Blech t 10 (x 0..200) mit Nahtueberhoehung als Trapez auf der Oberseite um x = 100 (Fuss breite_fuss, Kopf breite_kopf, Hoehe hoehe)."""
+    from volumen3d.geometry.csg import aus_params
+    a, b = 100.0 - 0.5 * breite_fuss, 100.0 + 0.5 * breite_fuss
+    dx = 0.5 * (breite_fuss - breite_kopf)
+    return aus_params({"csg": {"typ": "vereinigung", "teile": [
+        {"typ": "quader", "min": [0, 0, -T_BLECH], "max": [200, 50, 0], "name": "blech"},
+        {"typ": "schnitt", "teile": [{"typ": "quader", "min": [a, 0, 0], "max": [b, 50, hoehe], "name": "ueberhoehung"},
+                                     {"typ": "halbraum", "punkt": [a, 0, 0], "normale": [-hoehe, 0, dx], "name": "flanke_l"},
+                                     {"typ": "halbraum", "punkt": [b, 0, 0], "normale": [hoehe, 0, dx], "name": "flanke_r"}]}]}}), a, b
+
+
+def test_anwendbarkeit():
+    """Befunde G2-1 und G2-2 (Gutachten C2, 02.10.2026). (1) Die Blechseite wurde an der Werkstofftiefe 0,7 t laengs beider Aeste erkannt;
+    bei Kehlnaehten mit Schenkel unter 0,495 t liegt dieser Punkt hinter dem Ende der Nahtflaeche auf dem Anschlussblech (Tiefe = dessen Dicke),
+    bei Stumpfnaehten unter einer flachen Ueberhoehung (Tiefe t + Hoehe) - beide Aeste 'passten', kein Wert. Jetzt ist der Blechast der, dessen
+    Oberflaeche von 0,05 t bis 1,0 t eben bleibt (Normalen innerhalb 10 Grad, Punkte auf der Ebene) und unter dem der Werkstoff t tief ist.
+    (2) Endete das Blech vor 1,0 t, wurde der Referenzpunkt still auf die Stirnflaeche gezogen (sigma_hs +70 %); jetzt kein Wert mit Warnung.
+    Pruefung im linearen Feld sigma_xx = 50 + 0,8 x (sigma_hs = sigma_xx am Uebergang, Richtung weg von der Naht)."""
+    from volumen3d.postprocess.hotspot import nahtgeometrie, strukturspannungen
+
+    def sigma(P):
+        P = np.asarray(P, float).reshape(-1, 3)
+        S = np.zeros((len(P), 6))
+        S[:, 0] = 50.0 + 0.8 * P[:, 0]
+        return S
+
+    def pruefe(geo, x, vz):
+        q = nahtgeometrie(geo, nahtlinie(x), T_BLECH)
+        erg = strukturspannungen(q, sigma, 0.0)
+        gut = len(erg) == len(Y_NAHT) and all(np.allclose(p.richtung, [vz, 0, 0], atol=1e-9) for p in q)
+        f = max((abs(h - (50.0 + 0.8 * x)) / (50.0 + 0.8 * x) for _, h, _, _ in erg), default=1.0)
+        return gut and f < 1e-12, f"{len(erg)}/{len(Y_NAHT)} Werte, Fehler {f:.1e}, {q[0].warnung}"
+    zeilen, ok = [], True
+    for s_n in (8.0, 5.0, 4.0, 3.0, 2.0):
+        geo, xr, xl = _t_stoss_schenkel(s_n)
+        for x, vz in ((xr, 1.0), (xl, -1.0)):
+            g, z = pruefe(geo, x, vz)
+            ok &= g
+            zeilen.append(f"Kehlnaht s {s_n:g} x {x:g}: {z}")
+    for hoehe, fuss, kopf in ((2.0, 16.0, 8.0), (1.0, 16.0, 12.0), (2.0, 20.0, 10.0)):
+        geo, a, b = _stumpfnaht(hoehe, fuss, kopf)
+        for x, vz in ((b, 1.0), (a, -1.0)):
+            g, z = pruefe(geo, x, vz)
+            ok &= g
+            zeilen.append(f"Stumpfnaht h {hoehe:g} x {x:g}: {z}")
+    check("Blechseite eindeutig bei Kehlnaehten mit Schenkel 2 bis 8 (t 10) und Stumpfnaehten mit Ueberhoehung 1 bis 2 mm: alle Punkte mit Wert, "
+          "Richtung weg von der Naht, sigma_hs = sigma_xx am Uebergang (< 1e-12)", ok, "; ".join(zeilen))
+    # Blech endet 8 mm (0,8 t) hinter dem rechten Uebergang: rechts kein Wert mit Warnung, links unveraendert
+    geo, xr, xl = _t_stoss_schenkel(8.0, x_hi=105.0 + 8.0 + 8.0)
+    qr = nahtgeometrie(geo, nahtlinie(xr), T_BLECH)
+    gl, zl = pruefe(geo, xl, -1.0)
+    check("Blechende 0,8 t hinter dem Uebergang: rechts kein Wert, Warnung nennt 1,0 t; links weiter alle Werte richtig",
+          not any(q.ok for q in qr) and all("1,0 t" in q.warnung for q in qr) and gl, f"{qr[0].warnung} / links {zl}")
+
+
+def test_polylinien():
+    """Befunde G2-3, G2-4, G2-7 (Gutachten C2, 02.10.2026): leere Polylinie -> ValueError (vorher IndexError aus solve); geschlossene Linie
+    -> der doppelte Endpunkt entfaellt, Tangente am Stoss ist die mittlere (vorher zwei Hot-Spots an derselben Stelle mit verschiedenen
+    Richtungen); ein Referenzpunkt ausserhalb der Zellen kostet nur diesen Punkt (vorher das ganze Ergebnis)."""
+    from volumen3d.postprocess.hotspot import _tangenten, nahtgeometrie, strukturspannungen
+    try:
+        _tangenten(np.zeros((0, 3)))
+        leer = ""
+    except ValueError as ex:
+        leer = str(ex)
+    Q = np.array([[0.0, 0, 0], [10, 0, 0], [10, 10, 0], [0, 10, 0], [0.0, 0, 0]])
+    P, T = _tangenten(Q)
+    ecke = np.array([1.0, -1.0, 0]) / np.sqrt(2.0)
+    geo = t_stoss()
+    q = nahtgeometrie(geo, nahtlinie(X_RECHTS), T_BLECH)
+
+    def spannung(R):
+        R = np.asarray(R, float).reshape(-1, 3)
+        if np.any(R[:, 1] > 42.0):
+            raise ValueError("Punkt ausserhalb aller aktiven Zellen")
+        S = np.zeros((len(R), 6))
+        S[:, 0] = 100.0
+        return S
+    erg = strukturspannungen(q, spannung, 0.0)
+    check("leere Polylinie -> ValueError; geschlossenes Quadrat -> 4 Punkte, Tangente am Stoss (1,-1,0)/sqrt2; Referenzpunkt ausserhalb kostet nur "
+          "seine Punkte (y 45: 1 von 9 ohne Wert, Warnung am Punkt)",
+          "mindestens zwei" in leer and len(P) == 4 and np.allclose(T[0], -ecke) | np.allclose(T[0], ecke) and len(erg) == 8
+          and sum(1 for x in q if not x.ok) == 1 and "ausserhalb" in [x for x in q if not x.ok][0].warnung,
+          f"{leer[:40]}; {len(P)} Punkte, T0 {np.round(T[0], 3)}; {len(erg)} Werte")
+
+
 def _problem(h, p=3, verfeinern=True):
     from volumen3d.fcm.gitter import Verfeinerung
     from volumen3d.fcm.problem import FcmProblem, Werkstoff
@@ -197,4 +297,4 @@ def test_zug_konvergenz():
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_geometrie_und_lineares_feld, test_uneindeutig, test_exaktes_feld, test_zug_handrechnung, test_zug_konvergenz]))
+    sys.exit(lauf([test_geometrie_und_lineares_feld, test_uneindeutig, test_anwendbarkeit, test_polylinien, test_exaktes_feld, test_zug_handrechnung, test_zug_konvergenz]))

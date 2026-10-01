@@ -833,6 +833,10 @@ Plan: `docs/plaene/2026-09-28-tp4-mehrgitter.md`. Messlatte aus Teilprojekt 3: J
   gmsh-Netz 1 mm, 1,09 Mio. FHG, main 7da3571; Session B hatte den Lauf vorab identisch): rechts +0,34 %, links −2,93 % – Abnahme hält,
   links knapp; die Differenz rechts/links (3,1 %) ist Gitterphase am Übergang (Planschranke 1 % verfehlt, Hebel t/8 beim Anwender). Befunde behoben: Probenprüfung der
   Baumzerlegung an inneren Trennflächen, deckungsgleiche Flächen zweier Formen doppelt.
+- **C2, zweite Sicht (02.10.2026, Theorie 11.19):** drei Gutachter (je ein anderes Modell als die Umsetzung), 24 verschiedene Befunde, alle bestätigt;
+  behoben: durchdringende Körper (STEP vereinigen, STL Fehler), deckungsgleiche Flächen auf dem flachen Weg und Scheindeckel, offene Hüllen im Divergenzweg,
+  Blechseite am Nahtübergang (eben über 1,0 t + Tiefe), Hülle in abgezogenem Teilbaum, Konvergenzaussage und wirkungslose Zyklen, Kopplungskontrolle als
+  Spannung, zwei Prüfungen ohne Aussage, maßgebender Hot-Spot mit Vorzeichen, dazu zwölf niedrige. Aufgelistet: Abbruch in `prepare`, `summary()` nach Zyklen.
 - Fünf Schnittlagen Kirsch h 10 p 3 verfeinert (128 724 bis 199 095 freie Koordinaten), GPU FP64:
   81 / 125 / 112 / 129 / 59 Iterationen, GPU-PCG 8,6 bis 21 s, K_t identisch mit dem Direktlöser;
   Direktlöser (Lösen nach der Faktorisierung) 7 bis 25 s. Einrichten auf der CPU: Zelldaten 17–24 s,
