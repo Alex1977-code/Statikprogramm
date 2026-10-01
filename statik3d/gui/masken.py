@@ -816,10 +816,11 @@ class Maskenrand(QtCore.QObject):
             # wurden auseinandergezogen. Fehlt Platz, rollt ihre Mitte -
             # das Fenster waechst nicht mehr.
             dehnung = int(getattr(maske, "dehnung", 0) or 0)
+            platz = self._anfang()
             if dehnung:
-                self.ziel.insertWidget(0, maske, dehnung)
+                self.ziel.insertWidget(platz, maske, dehnung)
             else:
-                self.ziel.insertWidget(0, maske, 0, QtCore.Qt.AlignTop)
+                self.ziel.insertWidget(platz, maske, 0, QtCore.Qt.AlignTop)
             maske.show()
             # Die Tab-Folge erst hier noch einmal setzen: allein (ohne
             # Fenster) ist die Kette ein Ring, und Qt haelt „Übernehmen“ nach
@@ -853,6 +854,19 @@ class Maskenrand(QtCore.QObject):
             except (RuntimeError, AttributeError):
                 pass
             m.deleteLater()
+
+    def _anfang(self) -> int:
+        """Die Stelle im Ziel, an die eine Maske kommt: hinter die Widgets,
+        die oben stehen bleiben (Eigenschaft ``bleibt_oben``, etwa die
+        Ergebnissteuerung - Entscheidung 8 des Anwenders, 25.09.2026:
+        rechts dann Steuerung und darunter eine Maske)."""
+        n = 0
+        while n < self.ziel.count():
+            w = self.ziel.itemAt(n).widget()
+            if w is None or not w.property("bleibt_oben"):
+                break
+            n += 1
+        return n
 
     def _vergessen(self):
         self.maske = None

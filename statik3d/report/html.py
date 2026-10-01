@@ -594,7 +594,12 @@ class Report:
         if e.verlauf and e.verlauf != "kein Verlauf":
             zeilen.append(["Schnittgrößenverlauf", e.verlauf])
         if e.ueberhoehung:
-            zeilen.append(["Überhöhung", f"{e.ueberhoehung:g}"])
+            # der Faktor der Zeichnung, nie wissenschaftlich („1480.1“ statt
+            # „1.4801e+03“ bei steifen Bauteilen; 25.09.2026), mit seinen
+            # geltenden Ziffern (0.034 bleibt 0.034, 30 wird nicht „30.0“)
+            from ..zahlen import zahl_text
+            zeilen.append(["Überhöhung",
+                           f"x{zahl_text(float(e.ueberhoehung), tausender=False, punkt=True)}"])
         b.append(("kv", zeilen, ""))
         if e.bild:
             b.append(self._bild(e.bild, e.beschriftung or e.bezug(), W))
