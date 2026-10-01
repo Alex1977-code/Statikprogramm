@@ -156,17 +156,33 @@ def _gekuerzt(wurzel) -> list:
 
 
 def _register_messen(w, app) -> list:
-    """(Name, Wunschbreite, verfuegbare Breite, gekuerzte Texte) je Register."""
+    """(Name, Wunschbreite, verfuegbare Breite, gekuerzte Texte) je Register.
+
+    Gemessen wird das **aufgeklappte** Register - so, wie man es nach einem
+    Klick auf den Reiter sieht. Seit Paket 5 ist das Ribbon in der
+    Kompaktstufe (Fenster unter 900 px hoch, also bei 1366 x 768 und
+    1280 x 720 immer) eingeklappt; gemessen wurde dann ein verborgener Stapel
+    mit veralteten Breiten (Zusammenfuehrung 02.10.2026)."""
     from PySide6 import QtWidgets
     zeilen = []
-    tabs = w.ribbon.tabs
+    rb = w.ribbon
+    war_zu = rb.eingeklappt()
+    if war_zu:
+        rb.einklappen(False)
+        _ruhe()
+    tabs = rb.tabs
     vorher = tabs.currentIndex()
     for i in range(tabs.count()):
         tabs.setCurrentIndex(i)
         _ruhe()
         reg = tabs.widget(i)
+        if not reg.isVisible():
+            zeilen.append((tabs.tabText(i), 10 ** 6, 1, ["Register beim Messen nicht sichtbar"]))
+            continue
         zeilen.append((tabs.tabText(i), reg.sizeHint().width(), reg.width(), _gekuerzt(reg)))
     tabs.setCurrentIndex(vorher)
+    if war_zu:
+        rb.einklappen(True)
     _ruhe()
     return zeilen
 

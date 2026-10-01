@@ -552,6 +552,16 @@ def test_nach_f5_ribbon_ergebnisse():
     check("nach der Rechnung steht das Ribbon auf „Ergebnisse“", t == "Ergebnisse", t)
 
 
+def test_lasten_im_ergebnisbild_unter_zeigen():
+    """Plan Paket 6: „Lasten im Ergebnisbild“ als Schalter unter „Zeigen ▾“ der
+    Glasleiste, Vorgabe aus - dieselbe Aktion wie im Register Ergebnisse."""
+    w, app = _fenster()
+    a = (getattr(w.glasleiste, "eintraege", None) or {}).get("lasten_ergebnis")
+    check("„Zeigen ▾“ führt „Lasten im Ergebnisbild“ (dieselbe Aktion wie im Ribbon)",
+          a is not None and a is w.act_lasten_ergebnis, str(sorted(getattr(w.glasleiste, "eintraege", {}))))
+    check("… Vorgabe aus", a is not None and not a.isChecked())
+
+
 def test_f5_laesst_geaenderte_maske_stehen():
     """Plan 4b (Fortschreibung 01.10.2026): eine offene Maske mit Aenderungen
     bleibt nach F5 stehen; ohne Aenderung kommt rechts die Ergebnismaske."""
@@ -983,7 +993,7 @@ def main():
               test_max_min_marken, test_werte_am_verlauf, test_verlauf_am_unverformten_stab,
               test_knoten_und_auswahl_an_der_verformten_lage, test_legende_folgt_den_einheiten,
               test_ueberhoehung, test_ergebnissteuerung_oben_rechts, test_nach_f5_ribbon_ergebnisse,
-              test_f5_laesst_geaenderte_maske_stehen,
+              test_f5_laesst_geaenderte_maske_stehen, test_lasten_im_ergebnisbild_unter_zeigen,
               test_zeichenwege_an_der_bildlage, test_umriss_marke_verlauf_sichtbar,
               test_bildtext_kopfzeile, test_werteskala_in_fester_einheit,
               test_ueberhoehungsfeld_nachbesserung, test_tabfolge_steuerung_register,

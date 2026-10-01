@@ -3420,9 +3420,13 @@ class MainWindow(QtWidgets.QMainWindow):
             "Zeigen ▾", [("knoten", self.act_knoten, "knoten"), ("linien", self.act_linien, "linien"),
                          ("staebe", self.act_staebe, "staebe"), ("flaechen", self.act_flaechen, "flaechen"),
                          ("volumen", self.act_volumen, "volumen"), ("lager", self.act_lager, "lager"),
-                         ("netz", self.act_edges, "netz"), ("lasten", self.act_loads, "lasten")],
+                         ("netz", self.act_edges, "netz"), ("lasten", self.act_loads, "lasten"),
+                         # Plan Paket 6: die Lasten im Bild einer Kombination oder
+                         # Umhuellenden als Schalter hier, Vorgabe aus (02.10.2026);
+                         # dieselbe Aktion wie im Register Ergebnisse
+                         ("lasten_ergebnis", self.act_lasten_ergebnis, "lasten")],
             "zeigen", "Was die Ansicht zeigt: Knoten, Linien, Stäbe, Flächen, Volumen, Lager, "
-                      "FE-Netz (F9), Lasten", symbol="ansicht", weicht=2)
+                      "FE-Netz (F9), Lasten, Lasten im Ergebnisbild", symbol="ansicht", weicht=2)
         leiste.trenner()
         # Sicht: nur die Selektion, Auswahl weg, zurueck, alles, Verborgenes
         # als Geist im Hintergrund - Nebenknoepfe, sie weichen zuerst
