@@ -1604,7 +1604,8 @@ Im Bild einer Kombination oder Umhüllenden stehen seit 24.09.2026 **keine
 Lasten**: vorher standen dort die Lasten des aktiven Lastfalls, als gehörten
 sie dazu. Die Kopfzeile sagt es in einer eigenen Zeile: „Lasten ausgeblendet
 (Ergebnisse → Lasten im Ergebnisbild)“. Wer sie sehen will, schaltet
-*Ergebnisse → Lasten im Ergebnisbild* ein; die Kopfzeile nennt dann den
+*Ergebnisse → Lasten im Ergebnisbild* ein (derselbe Schalter steht in der
+Glasleiste unter *Zeigen ▾*); die Kopfzeile nennt dann den
 Lastfall („Lasten LF1 [kN/m]“). Ausgenommen ist eine **Umhüllende aus genau
 einem Lastfall**, etwa „Umhüllende CASES“ eines Modells mit nur LF1: sie ist
 dieser Lastfall und zeigt seine Lasten (bis zur Nachbesserung waren am
@@ -1620,7 +1621,11 @@ Objekt anklickt oder einen Befehl wählt: rechts steht dann die Steuerung und
 darunter die Maske des Objekts. Ohne Ergebnis (neues Modell, nach *Rückgängig*)
 ist er weg. Nach dem Rechnen (F5) steht das Ribbon auf dem Register
 **Ergebnisse**; bei 1366 × 768 und 1280 × 720 wird das Fenster dabei nicht
-höher (die Steuerung hat darum nur drei Zeilen, etwa 96 px).
+höher (die Steuerung hat darum nur drei Zeilen, etwa 96 px). Rechts erscheint
+die Maske *Ergebnisse* — außer eine offene Maske hat noch nicht übernommene
+Änderungen: die **bleibt stehen** (seit 02.10.2026), das Protokoll sagt es, und
+die Ergebnisse stehen im Register *Ergebnisse* und im Modellbaum. Bis dahin
+ersetzte die Rechnung sie ohne Rückfrage, und die Eingabe war weg.
 
 Die Auswahllisten *Ergebnis* und *Färbung* sind schmal (etwa 18 Zeichen) und
 bestimmen die Breite des rechten Bereichs nicht: eine lange Kombination wie
@@ -2403,7 +2408,10 @@ Druckpunkt ist die erste Ecke, der Loslasspunkt die zweite; dazwischen zeigt
 ein durchscheinendes Rechteck, was das Fenster fassen wird. Ein kurzer Klick
 ins Leere zieht **kein** Fenster mehr auf, sondern hebt die Auswahl auf
 (16.09.2026: „kurz = alles deselektieren, lang = Selektionsfenster“); bis dahin
-setzte er die erste Ecke, und der nächste Klick die zweite.
+setzte er die erste Ecke, und der nächste Klick die zweite. Das gilt auch, wenn
+der **Rasterfang** dabei einen Rasterpunkt fängt, solange keine Maske einen
+Punkt erwartet (seit 02.10.2026; vorher blieb die Auswahl dann stehen, und die
+Statuszeile meldete nur „Gefangen: raster“).
 
 | aufgezogen | Rechteck | gewählt wird |
 |---|---|---|
