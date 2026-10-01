@@ -392,6 +392,52 @@ Die neue optionale Abhängigkeit (gmsh ≥ 4.11, GPL, Extra `step`) steht im Pul
 - Prüfung: dieselbe Innen/Außen-Entscheidung wie exakt an 10⁵ Zufallspunkten, mindestens zehnmal schneller
   bei 10⁶ Facetten.
 
+**Entscheidung B5 (Anwender, 01.10.2026):** Empfehlung angenommen – die Integration tessellierter Hüllen läuft über die
+Dreiecke selbst, zusammen mit B6 als ein Schritt (Fable 5.1, sehr hoch). Die Aussage der Konvergenzkurve über die p-Phase
+(Vorschlag aus B4) ist damit nicht entschieden und bleibt offen.
+
+**Vorgehen und Regeln B6, vor der Messung festgelegt (01.10.2026):**
+
+*Teil 1, exakte Integration tessellierter Hüllen (`geometry/huelle.py`).* Für eine Zelle B = [lo, hi] (achsparallel) und eine
+geschlossene, nach außen orientierte Hülle Ω gilt mit G = (∫_{x_lo}^{x} g χ_B dx', 0, 0) für polynomiales g
+
+    ∫_{Ω∩B} g dV = Σ_Dreiecke ∫_T G_x n_x dA,
+
+weil G_x in x stetig ist und die Sprünge von G über die Ebenen y = const, z = const keinen Fluss haben (Normale senkrecht zu G).
+Je Dreieck genügen also das Clippen an den y- und z-Scheiben der Zelle und das Teilen bei x_lo und x_hi (Teile mit x < x_lo
+tragen null, mit x > x_hi den vollen x-Integralwert) – alles exakte Polygonoperationen, keine Zerlegung an lokalen Ebenen, kein
+Punkttest. Die Momente der Tensor-Legendre-Basis vom Grad q = 2p folgen so in geschlossener Form (Stammfunktionen der
+hierarchischen 1D-Basis über die Legendre-Rekursion), und das Moment Fitting aus B1 liefert daraus die Zellregel. Gilt für
+Zellen, in denen genau eine aktive Grundform eine Hülle (STL oder STEP) ist und die übrigen Formen die Zelle ganz enthalten
+oder ganz ausschließen (eine kleine Boolesche Auswertung des CSG-Baums über {leer, voll, Form, Komplement}); ist das Ergebnis
+das Komplement der Hülle (Hülle als Loch), sind die Momente Box minus Hülle. Zellen, in denen die Hülle eine andere aktive
+Form trifft (Schnittebenen, Symmetrieebenen), behalten vorerst den bisherigen Weg; wie viel Zeit sie kosten, wird gemessen
+(Teil 3 entscheidet). Flächenquadratur: ein Polygon auf einer Hüllenfacette wird nur noch von den **anderen** Formen geclippt,
+die eigenen lokalen Ebenen der Hülle entfallen (`lokale_stuecke(..., ohne=form)`).
+
+*Teil 2, schneller Windungszahl-Baum (`geometry/windung.py`).* Nach Barill, Dickson, Schmidt, Levin, Jacobson 2018 („Fast Winding
+Numbers for Soups and Clouds“): je Knoten der vorhandenen BVH (`geometry/dreiecksbaum.py`) der flächengewichtete Normalenvektor, der
+flächengewichtete Schwerpunkt und die Momente zweiter Ordnung; ein Knoten, dessen Abstand zum Punkt mehr als β = 2 seiner
+Umkugel beträgt, wird durch die Taylor-Näherung zweiter Ordnung ersetzt, sonst abgestiegen, Blätter exakt (Van Oosterom und
+Strackee). Nur wenn die Hülle mehr als 20 000 Facetten hat (darunter ist die exakte Summe mit numba schnell genug) und nur für die
+Innen/Außen-Entscheidung des Abstands; die Facettenprüfung der Hülle (Defekt) rechnet weiter exakt.
+
+*Teil 3 (nur wenn Teil 1 die Zellen an Schnittebenen nicht abdeckt und sie die Zeit bestimmen).* Ebenenbereiche innerhalb der Hülle
+über den Divergenzsatz eine Dimension tiefer: die Schnittsegmente Dreieck ∩ Ebene bilden geschlossene Schleifen, die 2D-Scheibenformel
+gibt die Flächenmomente des Ebenenpolygons innerhalb der Hülle, Randkanten liefern 1D-Intervalle über Segment-Dreieck-Schnitte.
+
+*Prüfungen.* (1) Polyeder mit geschlossener Form als Hülle (Würfel, gedrehter Würfel, L-Prisma, Hülle gleich Zellbox): Volumen und
+alle Tensor-Momente bis Grad 6 gegen die exakte Integration (Zerlegung in Tetraeder) auf 10⁻¹²; Stammfunktionen der 1D-Basis gegen
+Gauß-Integration auf 10⁻¹⁴. (2) Bestehende STL-Suite (Lamé aus STL, Würfel, L-Körper) unverändert grün, Lamé aus STL schneller.
+(3) Block mit Bohrung als STEP (N 120, 27 788 Dreiecke) durch `FcmProblem`: Konstruktor unter 30 s bei h 25 (CSG 4,6 s), keine
+Punkttest-Blätter in Zellen, die nur die Hülle schneidet, Werkstoffvolumen gleich dem Volumen der Tessellierung auf 10⁻¹⁰; durch
+den Vertragsweg gegen CSG: K_t auf 0,5 % (die offene Planprüfung aus B5). (4) Windungszahl: an 10⁵ Zufallspunkten um die
+Tessellierung mit 107 636 Dreiecken (N 240) dieselbe Innen/Außen-Entscheidung wie exakt für alle Punkte, |Δw| < 10⁻³, mindestens
+zehnmal schneller als die exakte numba-Summe. (5) Alle Suiten grün, mypy, lint-imports.
+
+*Regel.* Die Hüllenintegration ersetzt für Hüllenformen die Zerlegung an lokalen Ebenen, wenn (1) bis (3) halten; der Windungszahl-Baum
+wird Vorgabe ab 20 000 Facetten, wenn (4) hält; sonst bleiben beide Schalter mit Vorgabe aus.
+
 ### B7: Schale → Volumen (nur Prüfung)
 - Kopplung an ein Schalen-Globalmodell ist Sache des Providers im Hauptprogramm; hier nur ein Test mit einem
   Schalen-Provider-Stub über die Vertragsschicht.
@@ -433,7 +479,7 @@ nachgetragen.
 | B3 Hot-Spot IIW Typ a | Opus 5.5 | hoch | Geometrie der Referenzpunkte, Normbezug | erledigt: Spanne korrigiert (Anwender), Absolutwert in C1 gegen Tet10 |
 | B4 Konvergenzkurve, Protokoll | Sonnet 5 | mittel | überschaubar, baut auf B2/B3 | gebaut; Fahrplan h zuerst bis t/4 umgesetzt (Anwender), T-Stoß p 2–4 bei 2,5 mm: 111,0 → 107,4 → 107,9; Messung am Knotenblech in C1 |
 | B5 STEP über gmsh | Sonnet 5 | mittel | Anbindung einer Bibliothek | gebaut; Planprüfung K_t am gekrümmten Körper nicht erfüllt (STL-Weg zu langsam), Entscheidung offen |
-| B6 Windungszahl-Baum | Opus 5.5 | hoch | Algorithmus mit Genauigkeitsnachweis | offen |
+| B6 Windungszahl-Baum + Hüllenintegration | Fable 5.1 | sehr hoch | Divergenzsatz über Dreiecke, Barill-Baum, Genauigkeitsnachweis | läuft: Verfahren und Regeln festgelegt |
 | B7 Schale → Volumen (Prüfung) | Sonnet 5 | mittel | Test über bestehende Schnittstelle | offen |
 | C1 Knotenblech-Abnahme | Opus 5.5 | hoch | Modellbau und Nachweis gegen Referenz | offen |
 | C2 Zweite Sicht | Fable 5.1 | hoch | unabhängig von der Umsetzung, tiefste Prüfung | offen |
