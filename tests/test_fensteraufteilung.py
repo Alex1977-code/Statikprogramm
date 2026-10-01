@@ -33,10 +33,10 @@ bleiben bei 1916 x 1076 hoechstens 1137 x 610 px = 34 %. 45 % der Flaeche
 verlangen bei 1137 px Breite 0,45 * 1916 * 1076 / 1137 = 816 px Hoehe; da
 sind 610 + 6 (Trennlinie) + 269 = 885 px, unten blieben also rund 63 px -
 weniger als eine Tabellenzeile (berichtigt 25.09.2026, vorher stand hier
-„rund 110 px“). Das Planmass steht darum als OFFEN in der Ausgabe, bis der
-Anwender entscheidet; geprueft wird bis dahin das Zielbild aus Kap. 2
-(mindestens 50 % der Breite und 45 % der Hoehe) und mindestens 30 % der
-Flaeche auf allen Bildschirmen.
+„rund 110 px“). Entscheidung E1 des Anwenders (01.10.2026, Fortschreibung
+des Plans): Abnahme ist das Zielbild aus Kap. 2 - mindestens 50 % der Breite
+und 45 % der Hoehe -, dazu mindestens 30 % der Flaeche auf allen
+Bildschirmen; der Flaechenanteil bei 1920 x 1080 wird nur berichtet.
 
 Aufruf:  python -m tests.test_fensteraufteilung
 """
@@ -707,10 +707,10 @@ def test_abnahme_bildschirme():
         check(f"{text}: startet maximiert, nicht höher als der Bildschirm",
               st["maximiert"] and fh <= sh and st["rahmen_h"] <= sh + 2, detail)
         if (sb, sh) == (1920, 1080):
-            # Planmass 4a sichtbar fuehren (Gegenpruefung 25.09.2026), bis der
-            # Anwender entscheidet - nicht still durch das Ersatzmass ersetzen
-            offen(f"{text}: Planmaß 4a „Ansicht ≥ 45 % der Fensterfläche“", anteil >= 0.45, detail)
-            check(f"{text}: Ersatzmaß bis zur Entscheidung - Ansicht ≥ 50 % der Breite und ≥ 45 % der Höhe "
+            # Entscheidung E1 (01.10.2026): das Zielbild aus Kap. 2 ist die
+            # Abnahme; der Flaechenanteil (34 %) steht nur im Bericht
+            print(f"     Flächenanteil der Ansicht (nur berichtet, E1): {detail}", flush=True)
+            check(f"{text}: Abnahme nach E1 - Ansicht ≥ 50 % der Breite und ≥ 45 % der Höhe "
                   "(Zielbild Kap. 2)", ab >= 0.5 * fb and ah >= 0.45 * fh, detail)
         check(f"{text}: Ansicht ≥ 30 % der Fensterfläche", anteil >= 0.30, detail)
         maengel = []
