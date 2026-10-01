@@ -85,6 +85,70 @@ def test_zyklen_ohne_naht():
           f"{np.abs(erg[0].stress - einzeln.stress).max():.1e}")
 
 
+def test_fahrplan():
+    """Fahrplan 'zuerst lokal h bis t/4, dann p + 1' (Anwender 01.10.2026) als reine Funktion; Erwartung aus der Formel
+    Zielgroesse_i(k) = max(h0 / 2^k, t_i / 4) im Test selbst gerechnet: h wird gehalbiert, solange eine Naht noch ueber t_i/4
+    liegt, danach p + 1 bis p = 4, danach Ende; ohne Naht nur p."""
+    from volumen3d.api import _fahrplan, _nahtregionen, _nahtziel
+    from statik3d_contracts.detail import WeldLine
+
+    def folge(p, basis, dicken, n=6):
+        k, aus = 0, []
+        for _ in range(n):
+            st = _fahrplan(p, k, basis, dicken)
+            aus.append(st)
+            if st is None:
+                break
+            if st == "h":
+                k += 1
+            else:
+                p += 1
+        return aus
+    soll = {
+        (2, 20.0, (10.0,)): ["h", "h", "h", "p", "p", None],         # 20 -> 10 -> 5 -> 2,5 (= t/4), dann p 3, p 4
+        (2, 10.0, (10.0,)): ["h", "h", "p", "p", None],              # 10 -> 5 -> 2,5
+        (2, 2.5, (10.0,)): ["p", "p", None],                         # schon bei t/4: nur p
+        (3, 5.0, (10.0, 20.0)): ["h", "p", None],                    # t 10: 5 -> 2,5; t 20 haelt bei 5 (= t/4)
+        (2, 20.0, ()): ["p", "p", None],                             # ohne Naht nur p
+        (4, 20.0, (10.0,)): ["h", "h", "h", None],                   # p 4 schon da: nur h bis t/4, dann Ende
+    }
+    ok = all(folge(p, b, list(d)) == e for (p, b, d), e in soll.items())
+    check(f"Fahrplan: {len(soll)} Faelle (Basis 20/10/2,5, eine und zwei Naehte, ohne Naht, p 4) wie nach der Formel", ok,
+          str({k: folge(k[0], k[1], list(k[2])) for k in soll}))
+    wl = [WeldLine("A", np.zeros((3, 3)) + np.arange(3)[:, None] * 12.0, 10.0), WeldLine("B", np.ones((2, 3)) * 5.0, 20.0)]
+    ziele = {k: sorted({round(r.target_cell_size_mm, 6) for r in _nahtregionen(wl, k, 20.0)}) for k in range(5)}
+    erwartet = {k: sorted({round(_nahtziel(20.0, k, t), 6) for t in (10.0, 20.0)}) for k in range(5)}
+    kugeln = _nahtregionen(wl, 1, 20.0)
+    check("Nahtregionen: Zielgroesse je Naht max(h0/2^k, t/4) (k 0 bis 4), Radius 2 t, Punkte im Abstand hoechstens t",
+          ziele == erwartet and ziele[3] == [2.5, 5.0] and ziele[4] == [2.5, 5.0]
+          and {round(r.radius_mm, 6) for r in kugeln} == {20.0, 40.0} and len(kugeln) == 3 + 2, f"{ziele}, {len(kugeln)} Kugeln")
+
+
+def test_zyklen_mit_naht():
+    """Kragarm-Ausschnitt mit Naht auf der Laengskante (y 50, z 100, Blechdicke 100, t/4 = 25) ueber den Vertragsweg, Basis 50,
+    p 2, zwei Zyklen: erst lokale Halbierung auf 25 (Ziel t/4 erreicht), dann p 3. Die Verfeinerungsbereiche stehen mit
+    Mitte, Radius 2 t und Zielgroesse im Protokoll, die Kurve traegt die Schritte."""
+    import dataclasses
+    from statik3d_contracts.detail import WeldLine
+    from statik3d_contracts.model import Material, ResultKey
+    from statik3d_contracts.testing import StubGlobalFieldProvider
+    from volumen3d.api import FcmSolver
+    xs = np.linspace(400.0, 600.0, 5)
+    spec = dataclasses.replace(_spec(2, 50.0, 2), weld_lines=(WeldLine("N1", np.stack([xs, np.full(5, 50.0), np.full(5, 100.0)], axis=1), 100.0),))
+    s = FcmSolver()
+    t = time.perf_counter()
+    erg = s.solve(s.prepare(spec, Material("S355", "S355", 210000.0, 0.3, fy=355.0)),
+                  StubGlobalFieldProvider(1000.0, 100.0, 200.0, 210000.0, 10000.0), [ResultKey("LF1")])[0]
+    k = erg.convergence
+    reg = erg.protocol["settings"]["refinement"]
+    check("Kragarm mit Naht, 2 Zyklen: Schritte Start / h-Halbierung Naht / p-Erhoehung, p 2 2 3, Freiheitsgrade wachsend, "
+          "Bereiche im Protokoll mit Zielgroesse t/4 = 25 und Radius 2 t = 200",
+          [c["step"] for c in k] == ["Start", "h-Halbierung Naht", "p-Erhoehung"] and [c["p"] for c in k] == [2, 2, 3]
+          and k[0]["dofs"] < k[1]["dofs"] < k[2]["dofs"] and len(reg) >= 1 and all(abs(r["target_cell_size_mm"] - 25.0) < 1e-12
+          and abs(r["radius_mm"] - 200.0) < 1e-12 for r in reg) and all(c["hotspot_max"] is not None for c in k),
+          f"dofs {[c['dofs'] for c in k]}, {len(reg)} Bereiche, {time.perf_counter() - t:.1f} s")
+
+
 def test_zyklen_grenzen():
     """adaptive_cycles ausserhalb 0 bis 4 -> SolverError; bei p 4 ohne Naht endet die Folge sofort mit Warnung (ein Eintrag);
     Abbruch zwischen den Zyklen -> SolverCancelled."""
@@ -161,15 +225,12 @@ def t_stoss_spec(h, p, zyklen):
 
 
 def test_zyklen_t_stoss():
-    """T-Stoss unter Zug sigma_n = 100 N/mm2 ueber den Vertragsweg (Zug-Geber, Schnittebenen an den Enden), Basiszellgroesse
-    20, p 2, drei Zyklen: lokale h-Halbierung (10), p 3, lokale h-Halbierung (5) - 26 s auf 4 Kernen. Geprueft wird, was belegt ist:
-    Schritte und Freiheitsgrade, Kopplungskontrolle Kraft unter 5 %, alle Hot-Spot-Werte im plausiblen Bereich
-    (0,5 bis 1,5 sigma_n, gemessen 81 bis 134), die Konvergenzaussage stimmt mit der unabhaengig nachgerechneten Monotonie der
-    Kurve ueberein, und eine nicht monotone Kurve traegt die Warnung. NICHT erfuellt ist die vor der Messung festgelegte
-    Planforderung 'monoton konvergent, letzte Aenderung unter 3 %': gemessen 81,1 - 119,0 - 134,2 - 91,0 N/mm2 (nicht
-    monoton); auch vier Zyklen (p 4: 121,5) und feinere Starts (h 10: 119,8 - 127,6 - 110,1) laufen nicht monoton. Die
-    Referenzpunkte bei 0,4 t = 4 mm liegen bei Zellen von 5 bis 20 mm in der ersten Zellschicht an der singulaeren Kerbe
-    (Theorie 11.14). Laeuft nur mit VOLUMEN3D_LANG=1."""
+    """T-Stoss unter Zug sigma_n = 100 N/mm2 ueber den Vertragsweg (Zug-Geber, Schnittebenen an den Enden), Basiszellgroesse 10
+    (= t), p 2, zwei Zyklen nach dem Fahrplan 'h zuerst bis t/4' (10 -> 5 -> 2,5). Geprueft wird, was belegt ist: Schritte und
+    Freiheitsgrade, Kopplungskontrolle Kraft unter 5 %, Hot-Spot-Werte im plausiblen Bereich (0,5 bis 1,5 sigma_n), die
+    Konvergenzaussage stimmt mit der nachgerechneten Monotonie ueberein, eine nicht monotone Kurve traegt die Warnung.
+    Die Konvergenz selbst misst die Abnahme C1 am Knotenblech. Mit dem abwechselnden Fahrplan (h, p, h) war die Kurve nicht
+    monoton (81,1 - 119,0 - 134,2 - 91,0 N/mm2; Theorie 11.14). Laeuft nur mit VOLUMEN3D_LANG=1 (Minuten)."""
     if os.environ.get("VOLUMEN3D_LANG") != "1":
         check("T-Stoss-Zyklen uebersprungen (VOLUMEN3D_LANG=1 setzen)", True)
         return
@@ -177,7 +238,7 @@ def test_zyklen_t_stoss():
     from volumen3d.api import FcmSolver
     s = FcmSolver()
     t = time.perf_counter()
-    disc = s.prepare(t_stoss_spec(20.0, 2, 3), Material("S355", "S355", 210000.0, 0.3, fy=355.0))
+    disc = s.prepare(t_stoss_spec(10.0, 2, 2), Material("S355", "S355", 210000.0, 0.3, fy=355.0))
     erg = s.solve(disc, ZugGeber(), [ResultKey("LF1")])[0]
     k = erg.convergence
     hs = [c["hotspot_max"] for c in k]
@@ -186,12 +247,13 @@ def test_zyklen_t_stoss():
     dt = time.perf_counter() - t
     d = np.diff(hs)
     monoton = bool((np.all(d > 0) or np.all(d < 0)) and np.all(np.abs(d[1:]) < np.abs(d[:-1])))
-    print("Kurve:", [(c["step"], c["p"], c["dofs"], round(c["hotspot_max"], 3), round(c["hotspot_mean"], 3), c["t_s"]) for c in k])
+    print("Kurve:", [(c["step"], c["p"], c["dofs"], c["h_min_mm"], round(c["hotspot_max"], 3), round(c["hotspot_mean"], 3), c["t_s"]) for c in k])
     print("Aussage:", aussage["text"])
-    print(f"Planforderung monoton konvergent, letzte Aenderung < 3 %: {'erfuellt' if monoton and abs(k[-1]['hotspot_change']) < 0.03 else 'NICHT erfuellt'}")
-    check("T-Stoss, 3 Zyklen: Schritte h-Halbierung/p-Erhoehung/h-Halbierung, Freiheitsgrade wachsend, Kopplungskontrolle Kraft < 5 %",
-          [c["step"] for c in k] == ["Start", "h-Halbierung Naht", "p-Erhoehung", "h-Halbierung Naht"] and all(a["dofs"] < b["dofs"] for a, b in zip(k[:-1], k[1:]))
-          and dF < 0.05, f"dofs {[c['dofs'] for c in k]}, Abweichung Kraft {dF * 100:.2f} %, {dt:.0f} s")
+    check("T-Stoss, 2 Zyklen: Schritte Start/h-Halbierung/h-Halbierung, kleinste Zelle 10 -> 5 -> 2,5 mm, Freiheitsgrade wachsend, "
+          "Kopplungskontrolle Kraft < 5 %",
+          [c["step"] for c in k] == ["Start", "h-Halbierung Naht", "h-Halbierung Naht"] and [c["h_min_mm"] for c in k] == [10.0, 5.0, 2.5]
+          and all(a["dofs"] < b["dofs"] for a, b in zip(k[:-1], k[1:])) and dF < 0.05,
+          f"dofs {[c['dofs'] for c in k]}, Abweichung Kraft {dF * 100:.2f} %, {dt:.0f} s")
     check("Hot-Spot-Werte aller Zyklen im plausiblen Bereich 0,5 bis 1,5 sigma_n; Konvergenzaussage stimmt mit der nachgerechneten Monotonie "
           "ueberein; nicht monotone Kurve traegt die Warnung",
           all(50.0 <= v <= 150.0 for v in hs) and (aussage["art"] == "monoton_konvergent") == monoton
@@ -200,4 +262,4 @@ def test_zyklen_t_stoss():
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_konvergenzaussage, test_zyklen_ohne_naht, test_zyklen_grenzen, test_zyklen_t_stoss]))
+    sys.exit(lauf([test_konvergenzaussage, test_fahrplan, test_zyklen_ohne_naht, test_zyklen_mit_naht, test_zyklen_grenzen, test_zyklen_t_stoss]))

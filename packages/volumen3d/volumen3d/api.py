@@ -130,13 +130,26 @@ def _geometrie(spec: DetailModelSpec) -> tuple[Csg, list[str]]:
         if not spec.geometry.path:
             raise SolverError("GeometrySource STL braucht einen Pfad")
         params = {"csg": {"typ": "stl", "pfad": spec.geometry.path, "name": spec.geometry.params.get("name", "stl")}}
+    elif spec.geometry.type == GeometrySourceType.STEP:
+        # STEP ueber gmsh-Tessellierung und den STL-Weg (Plan TP 5 B5, Theorie 11.15); Angaben in params: tessellation_mm
+        # (groesste Facette, Vorgabe: Basiszellgroesse), elements_per_circle (Dreiecke je Vollkreis, Vorgabe 120), name
+        if not spec.geometry.path:
+            raise SolverError("GeometrySource STEP braucht einen Pfad")
+        from .geometry.step import KRUEMMUNG_STANDARD, tesselliere
+        prm = spec.geometry.params
+        try:
+            D, step_info = tesselliere(spec.geometry.path, float(prm.get("tessellation_mm", spec.settings.base_cell_size_mm)),
+                                       int(prm.get("elements_per_circle", KRUEMMUNG_STANDARD)))
+        except ValueError as ex:
+            raise SolverError(str(ex)) from ex
+        params = {"csg": {"typ": "stl", "dreiecke": D, "name": prm.get("name", "step")}}
     else:
-        raise SolverError(f"Geometriequelle {spec.geometry.type.value!r} kommt mit Teilprojekt 5; "
-                          f"bis dahin CSG und STL")
+        raise SolverError(f"Geometriequelle {spec.geometry.type.value!r} ist nicht umgesetzt (CSG, STL und STEP gibt es)")
     try:
         basis = aus_params(params)
     except (ValueError, KeyError, TypeError, OSError) as ex:
         raise SolverError(f"Geometrie: {ex}") from ex
+    basis.tessellierung = step_info if spec.geometry.type == GeometrySourceType.STEP else None
     for f in basis.grundformen():
         # Windungszahl-Defekt > 1/4: Innen/Aussen ist an der Stichprobe nicht mehr eindeutig
         if getattr(f, "defekt", 0.0) > 0.25:
@@ -148,9 +161,11 @@ def _geometrie(spec: DetailModelSpec) -> tuple[Csg, list[str]]:
     teile = (basis.wurzel,) + tuple(Halbraum(np.asarray(cp.origin, float), np.asarray(cp.normal, float), n)
                                     for cp, n in zip(spec.cut_planes, namen))
     try:
-        return Csg(Operation("schnitt", teile)), namen
+        geschnitten = Csg(Operation("schnitt", teile))
     except ValueError as ex:
         raise SolverError(str(ex)) from ex
+    geschnitten.tessellierung = basis.tessellierung
+    return geschnitten, namen
 
 
 def _verfeinerung(spec: DetailModelSpec) -> Verfeinerung:
@@ -330,7 +345,7 @@ class FcmDiskretisierung:
         self.material: Material | None = None
         self.spec0: DetailModelSpec = spec
         self.schritt = "Start"
-        self.ziel_naht: float | None = None
+        self.k_h = 0                                      # Zahl der lokalen Halbierungen an den Naehten bisher
         self._oberflaeche: tuple[np.ndarray, np.ndarray] | None = None
         self._naehte: list[tuple[Any, list[Nahtpunkt]]] | None = None
         self.naht_warnungen: list[str] = []
@@ -507,10 +522,10 @@ class FcmSolver:
             if abbruch():
                 raise SolverCancelled(f"abgebrochen vor Zyklus {z}")
             t_z = time.perf_counter()
-            nxt = self._naechster_zyklus(d, z, im_zyklus(z, 0.0, 0.4))
+            nxt = self._naechster_zyklus(d, im_zyklus(z, 0.0, 0.4))
             if nxt is None:
-                hinweise.append(f"adaptive Zyklen nach {z - 1} beendet: p = {_P_MAX} erreicht und keine Naht fuer die lokale "
-                                f"h-Verfeinerung")
+                hinweise.append(f"adaptive Zyklen nach {z - 1} beendet: lokale Zellgroesse an den Naehten bei t/4 (oder keine Naht) "
+                                f"und p = {_P_MAX} erreicht")
                 break
             d = nxt
             ergebnisse = self._zyklus(d, provider, keys, im_zyklus(z, 0.4, 1.0), abbruch)
@@ -531,28 +546,29 @@ class FcmSolver:
         melden("Zyklen abgeschlossen", 1.0)
         return ergebnisse
 
-    def _naechster_zyklus(self, disc: FcmDiskretisierung, z: int, melden: Fortschritt) -> FcmDiskretisierung | None:
-        """Diskretisierung des Zyklus z aus der des Zyklus z - 1: ungerade z lokale h-Halbierung an den Naehten, gerade z
-        p + 1 (bei p = 4 h-Halbierung); ohne Naht nur p + 1, bei p = 4 None (Ende der Folge)."""
+    def _naechster_zyklus(self, disc: FcmDiskretisierung, melden: Fortschritt) -> FcmDiskretisierung | None:
+        """Diskretisierung des naechsten Zyklus nach ``_fahrplan``: zuerst lokale h-Halbierung an den Naehten bis t/4, dann
+        p + 1 bis p = 4, danach None (Ende der Folge)."""
         s0 = disc.spec0
         if disc.material is None:
             raise SolverError("adaptive Zyklen brauchen die Diskretisierung aus FcmSolver.prepare")
         p = int(disc.spec.settings.p)
-        punkte = [wl for wl in s0.weld_lines if len(np.asarray(wl.points).reshape(-1, 3)) > 0]
-        h_schritt = bool(punkte) and (z % 2 == 1 or p >= _P_MAX)
-        if not h_schritt and p >= _P_MAX:
+        naehte = [wl for wl in s0.weld_lines if len(np.asarray(wl.points).reshape(-1, 3)) > 0]
+        basis = float(s0.settings.base_cell_size_mm)
+        schritt = _fahrplan(p, disc.k_h, basis, [float(wl.plate_thickness_mm) for wl in naehte])
+        if schritt is None:
             return None
-        ziel = disc.ziel_naht
-        spec = disc.spec
-        if h_schritt:
-            ziel = 0.5 * (float(s0.settings.base_cell_size_mm) if disc.ziel_naht is None else disc.ziel_naht)
-            spec = dataclasses.replace(s0, settings=disc.spec.settings, refinement=tuple(s0.refinement) + _nahtregionen(punkte, ziel))
+        k_h = disc.k_h
+        if schritt == "h":
+            k_h += 1
+            spec = dataclasses.replace(s0, settings=disc.spec.settings,
+                                       refinement=tuple(s0.refinement) + _nahtregionen(naehte, k_h, basis))
         else:
             spec = dataclasses.replace(disc.spec, settings=dataclasses.replace(disc.spec.settings, p=p + 1))
         neu = self.prepare(spec, disc.material, melden)
         neu.spec0 = s0
-        neu.ziel_naht = ziel
-        neu.schritt = "h-Halbierung Naht" if h_schritt else "p-Erhoehung"
+        neu.k_h = k_h
+        neu.schritt = "h-Halbierung Naht" if schritt == "h" else "p-Erhoehung"
         return neu
 
     def _zyklus(self, disc: FcmDiskretisierung, provider: GlobalFieldProvider, keys: list[ResultKey],
@@ -641,6 +657,9 @@ class FcmSolver:
                                              "sigma_hs_max": max((hs for _, hs, _, _ in erg_n), default=None),
                                              "sigma_04t": [s04 for _, _, s04, _ in erg_n], "sigma_10t": [s10 for _, _, _, s10 in erg_n]}
                 warn += disc.naht_warnungen
+                w_int = _integrationswarnung(pr.quadratur.statistik, pr.oberflaeche.statistik)
+                if w_int:
+                    warn.append(w_int)
                 mg = getattr(pr, "_mehrgitter", None)
                 if pr.loeser == "mehrgitter" and mg is not None:
                     warn += [str(w) for w in mg.statistik.get("warnungen", [])]
@@ -681,7 +700,8 @@ class FcmSolver:
             protokoll: dict[str, Any] = dict(pr.protokoll)
             protokoll.update({"solver": self.name, "contract_version": self.contract_version, "volumen3d": __version__,
                               "key": str(key), "coupling": "displacement (normal pointwise + in-plane resultants)",
-                              "geometry": spec_kurz(disc.spec), "t_solve_s": round(time.perf_counter() - t0, 3),
+                              "geometry": spec_kurz(disc.spec), "step_tessellation": getattr(pr.geometrie, "tessellierung", None),
+                              "t_solve_s": round(time.perf_counter() - t0, 3),
                               "loads": [dict(l) for l in disc.lasten_protokoll if l["load_case_id"] == key.load_case_id],
                               "solver_choice": dict(disc.loeserwahl),
                               "hot_spot": {"verfahren": "IIW Typ a: Referenzpunkte 0,4 t und 1,0 t auf der Blechoberflaeche senkrecht zur "
@@ -711,20 +731,48 @@ class FcmSolver:
 _P_MAX = 4
 
 
-def _nahtregionen(wls: list[Any], ziel_mm: float) -> tuple[RefinementRegion, ...]:
-    """Kugeln vom Radius 2 t um Punkte der Nahtlinien (Abstand hoechstens t) mit der Zielzellgroesse ``ziel_mm``."""
+def _nahtziel(basis_mm: float, k_h: int, dicke_mm: float) -> float:
+    """Zielzellgroesse an einer Naht nach k_h lokalen Halbierungen: h0 / 2^k, nie unter t/4 (Plan TP 5 B4, 01.10.2026)."""
+    return max(basis_mm / 2.0 ** k_h, 0.25 * dicke_mm)
+
+
+def _fahrplan(p: int, k_h: int, basis_mm: float, dicken: list[float]) -> str | None:
+    """Naechster Schritt der adaptiven Zyklen: 'h' (lokale Halbierung an den Naehten), solange eine Naht noch eine Zielgroesse
+    ueber t/4 hat (der Referenzpunkt 0,4 t liegt dann mindestens 1,6 Zellen vom Uebergang; Entscheidung des Anwenders
+    01.10.2026), danach 'p' (p + 1) bis p = 4, danach None. Ohne Naht nur 'p'."""
+    if any(basis_mm / 2.0 ** k_h > 0.25 * t * (1.0 + 1e-9) for t in dicken):
+        return "h"
+    return "p" if p < _P_MAX else None
+
+
+def _nahtregionen(wls: list[Any], k_h: int, basis_mm: float) -> tuple[RefinementRegion, ...]:
+    """Kugeln vom Radius 2 t um Punkte der Nahtlinien (Abstand hoechstens t) mit der Zielzellgroesse ``_nahtziel``."""
     regionen: list[RefinementRegion] = []
     for wl in wls:
         P = np.asarray(wl.points, float).reshape(-1, 3)
         t = float(wl.plate_thickness_mm)
+        ziel = _nahtziel(basis_mm, k_h, t)
         wahl = [0]
         for i in range(1, len(P)):
             if float(np.linalg.norm(P[i] - P[wahl[-1]])) >= t:
                 wahl.append(i)
         if wahl[-1] != len(P) - 1:
             wahl.append(len(P) - 1)
-        regionen += [RefinementRegion(center=P[i].copy(), radius_mm=2.0 * t, target_cell_size_mm=ziel_mm) for i in wahl]
+        regionen += [RefinementRegion(center=P[i].copy(), radius_mm=2.0 * t, target_cell_size_mm=ziel) for i in wahl]
     return tuple(regionen)
+
+
+def _integrationswarnung(quad: dict[str, Any], flaeche: dict[str, Any]) -> str | None:
+    """Warnung, wenn die Geometrie nur in erster Ordnung integriert wurde: Blaetter der Volumenintegration im Punkttest oder
+    Flaechenstuecke im Rueckfall. Typisch fuer STL- und STEP-Huellen mit unregelmaessig tesselliertem gekruemmtem Rand (die
+    lokale Lage ist dort 'gemischt', die Zerlegung an wenigen Ebenen scheitert; Theorie 11.15)."""
+    n_pt = int(quad.get("blaetter_punkttest", 0))
+    n_rf = int(flaeche.get("rueckfall", 0))
+    if n_pt == 0 and n_rf == 0:
+        return None
+    return (f"Geometrie: {n_pt} Blaetter der Volumenintegration im Punkttest (erste Ordnung, Volumenfehler bis 0,5 %) und {n_rf} "
+            f"Flaechenstuecke im Rueckfall - typisch fuer STL- und STEP-Huellen mit unregelmaessig tesselliertem gekruemmtem Rand; "
+            f"feinere Zellen, gleichmaessigere Tessellierung oder CSG verbessern das")
 
 
 def _iterationen(pr: FcmProblem, k: int) -> int | None:

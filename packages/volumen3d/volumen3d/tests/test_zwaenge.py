@@ -199,7 +199,7 @@ def test_unverwurzelte_grobe_zelle():
     from volumen3d.tests import test_hotspot as H
     from statik3d_contracts.detail import WeldLine
     wls = [WeldLine("NR", H.nahtlinie(H.X_RECHTS), H.T_BLECH), WeldLine("NL", H.nahtlinie(H.X_LINKS), H.T_BLECH)]
-    ber = tuple((np.asarray(r.center, float), float(r.radius_mm), float(r.target_cell_size_mm)) for r in _nahtregionen(wls, 5.0))
+    ber = tuple((np.asarray(r.center, float), float(r.radius_mm), float(r.target_cell_size_mm)) for r in _nahtregionen(wls, 2, 20.0))
     pr = FcmProblem(H.t_stoss(), h=20.0, p=2, werkstoff=Werkstoff(H.E, H.NU), verfeinerung=Verfeinerung(bereiche=ber))
     g, ag = pr.gitter, pr.aggregation
     frei_unverwurzelt = np.flatnonzero(ag.schlecht & (ag.wurzel < 0) & ~ag.werkstofffern)

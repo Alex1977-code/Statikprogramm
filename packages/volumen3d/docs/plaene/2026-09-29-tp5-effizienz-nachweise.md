@@ -372,10 +372,20 @@ noch über tᵢ/4 liegt. Danach folgt p + 1 bis p = 4, danach endet die Folge mi
 vier Zyklen bleibt. Geprüft wird der Fahrplan als reine Funktion (Schritte, Zielgrößen, Ende) und der Vertragsweg an einem Modell, dessen
 Basiszellgröße schon bei t/2 liegt; die Konvergenz selbst misst C1 am Knotenblech.
 
+**Ergebnis B4 mit dem neuen Fahrplan (01.10.2026, Theorie 11.14):** Zyklen h(5) h(2,5) p3 p4 am T-Stoß: 119,8 – 127,6 – 111,0 – 107,4 – 107,9 N/mm², letzte Änderung 0,45 %; die
+Aussage bleibt wegen der groben Anfangsschritte „nicht monoton“ (Vorschlag: Aussage über die p-Phase bei fester Zellgröße, Entscheidung beim Anwender).
+
 ### B5: STEP über gmsh-Tessellierung (Vorgabe 3)
 - Optionales Extra `step` mit gmsh; `GeometrySourceType.STEP` → Tessellierung → bestehender STL-Weg;
   ohne gmsh `SolverError` mit Hinweis. Die neue optionale Abhängigkeit im Pull Request benennen.
 - Prüfung: Würfel mit Bohrung als STEP gegen CSG (Volumen, K_t); Test überspringt ohne gmsh.
+
+**Vorgehen und Ergebnis B5 (01.10.2026, Theorie 11.15):** `geometry/step.py`, Extra `step`; Prüfungen: Tessellierung des Blocks mit Bohrung gegen die Formel
+(N 60 +0,019 %, N 120 +0,0047 %, wasserdicht, Orientierung, Einheit), STEP-Quader durch den Vertragsweg gleich CSG (Volumen exakt, σ 1,3·10⁻¹⁰), Fehlerfälle,
+Integrationswarnung; ohne gmsh übersprungen. **Die Planprüfung „Würfel mit Bohrung als STEP gegen CSG (Volumen, K_t)“ ist nicht erfüllt:** gekrümmte, unstrukturiert
+tessellierte STEP-Flächen laufen im STL-Weg in Minuten bis Stunden (N 16: 206 s gegen 4,6 s CSG bei feineren Zellen) und in erster Ordnung, weil die lokale Lage der gmsh-Netze „gemischt“ ist.
+Das Volumen der Tessellierung selbst stimmt; K_t steht aus. Vorschlag: Integration über die Dreiecke (Divergenzsatz), zusammen mit B6; Entscheidung beim Anwender.
+Die neue optionale Abhängigkeit (gmsh ≥ 4.11, GPL, Extra `step`) steht im Pull Request einzeln.
 
 ### B6: Schneller Windungszahl-Baum (Rest aus TP 2)
 - Näherung nach Barill u. a. 2018 (Dipole je BVH-Knoten) für STL-Netze über 10⁵ Facetten.
@@ -421,8 +431,8 @@ nachgetragen.
 | B1 Moment Fitting | Fable 5.1 | sehr hoch | Stabilität der Gewichte, Konsistenz Volumen/Rand | erledigt: Vorgabe an; schwere Suiten grün, Zeiten in Theorie 11.11 |
 | B2 Spannungsrückgewinnung | Opus 5.5 | hoch | bekanntes Verfahren, sorgfältige Umsetzung | erledigt: L²-Projektion ist Ausgabe; Kosten in Theorie 11.12 |
 | B3 Hot-Spot IIW Typ a | Opus 5.5 | hoch | Geometrie der Referenzpunkte, Normbezug | erledigt: Spanne korrigiert (Anwender), Absolutwert in C1 gegen Tet10 |
-| B4 Konvergenzkurve, Protokoll | Sonnet 5 | mittel | überschaubar, baut auf B2/B3 | gebaut; Konvergenzforderung nicht erfüllt, Entscheidung offen |
-| B5 STEP über gmsh | Sonnet 5 | mittel | Anbindung einer Bibliothek | offen |
+| B4 Konvergenzkurve, Protokoll | Sonnet 5 | mittel | überschaubar, baut auf B2/B3 | gebaut; Fahrplan h zuerst bis t/4 umgesetzt (Anwender), T-Stoß p 2–4 bei 2,5 mm: 111,0 → 107,4 → 107,9; Messung am Knotenblech in C1 |
+| B5 STEP über gmsh | Sonnet 5 | mittel | Anbindung einer Bibliothek | gebaut; Planprüfung K_t am gekrümmten Körper nicht erfüllt (STL-Weg zu langsam), Entscheidung offen |
 | B6 Windungszahl-Baum | Opus 5.5 | hoch | Algorithmus mit Genauigkeitsnachweis | offen |
 | B7 Schale → Volumen (Prüfung) | Sonnet 5 | mittel | Test über bestehende Schnittstelle | offen |
 | C1 Knotenblech-Abnahme | Opus 5.5 | hoch | Modellbau und Nachweis gegen Referenz | offen |

@@ -242,6 +242,8 @@ class Csg:
         self._lo, self._hi = lo, hi
         self._formen: list = []
         _grundformen(wurzel, self._formen)
+        # Angaben zur Herkunft der Huelle fuers Protokoll (STEP: Tessellierung, siehe geometry/step.py), sonst None
+        self.tessellierung: dict | None = None
 
     def abstand(self, P) -> np.ndarray:
         return _abstand(self.wurzel, np.asarray(P, float).reshape(-1, 3))

@@ -811,6 +811,12 @@ Plan: `docs/plaene/2026-09-28-tp4-mehrgitter.md`. Messlatte aus Teilprojekt 3: J
   nicht monoton, Referenzpunkte in der ersten Zellschicht an der Kerbe); Empfehlung „h zuerst bis t/4“ liegt beim Anwender.
   Befund behoben: Zwangszyklus in `Zellaggregation.roh_zwaenge`, wenn eine unverwurzelte grobe schlechte Zelle Ecken mit feineren
   verwurzelten teilt. Offen: Konsistenzfehler 1e-6…1e-4 am T-Stoß mit lokaler Verfeinerung.
+  Fahrplan seit 01.10.2026 (Anwender): zuerst lokal h bis t/4, dann p + 1 (`_fahrplan`); T-Stoß: 119,8–127,6–111,0 (2,5 mm) → p 3 107,4 → p 4 107,9 N/mm²,
+  letzte Änderung 0,45 %, Aussage wegen der groben Anfangsschritte „nicht monoton“ (Vorschlag: Aussage über die p-Phase).
+- **B5, STEP über gmsh (01.10.2026, Theorie 11.15):** `geometry/step.py`, Extra `step` (gmsh optional, GPL), `GeometrySource.params`
+  `tessellation_mm`/`elements_per_circle`, Einheit nach mm, Protokoll `step_tessellation`; Tessellierung gegen die Formel (Bohrung N 120 +0,0047 %), STEP-Quader
+  durch den Vertragsweg gleich CSG. Befund: gekrümmte unstrukturierte Tessellierungen sind im STL-Weg langsam (N 16 Block mit Bohrung 206 s, CSG-Block 4,6 s) und nur erster
+  Ordnung; Warnung `_integrationswarnung`, Abhilfe (Integration über die Dreiecke) beim Anwender.
 - Fünf Schnittlagen Kirsch h 10 p 3 verfeinert (128 724 bis 199 095 freie Koordinaten), GPU FP64:
   81 / 125 / 112 / 129 / 59 Iterationen, GPU-PCG 8,6 bis 21 s, K_t identisch mit dem Direktlöser;
   Direktlöser (Lösen nach der Faktorisierung) 7 bis 25 s. Einrichten auf der CPU: Zelldaten 17–24 s,

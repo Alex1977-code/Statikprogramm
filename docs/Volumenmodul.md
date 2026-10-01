@@ -110,6 +110,6 @@ verschachtelten Bäumen (Kehlnähte als Schnitt aus Quader und Halbraum) werden 
 `FcmSettings.adaptive_cycles` (0 bis 4) mehrere Zyklen (lokale h-Halbierung an den Nähten und p + 1, ohne Fehlerschätzer) und liefert die
 Konvergenzkurve in `DetailResult.convergence`, alle Einstellungen im Protokoll (`settings`) und eine Konvergenzaussage
 (`convergence_statement`); am T-Stoß sind die Hot-Spot-Werte über die Zyklen noch nicht monoton (Theorie 11.14), die Aussage sagt das und
-der Nachweis trägt eine Warnung. `summary()` und Protokoll nennen den Weg
+der Nachweis trägt eine Warnung. Seit B5 liest `GeometrySourceType.STEP` Dateien über gmsh (optionales Extra `step`, GPL; ohne gmsh `SolverError` mit Hinweis): Tessellierung, Einheit nach mm, dann der STL-Weg. Ebene Körper laufen exakt und schnell; bei gekrümmten Flächen ist der STL-Weg langsam und nur erster Ordnung (Warnung im Ergebnis, Theorie 11.15) – für gekrümmte CAD-Teile bis auf Weiteres CSG verwenden. `summary()` und Protokoll nennen den Weg
 (`solver_path`, `backend`, `solver_choice`); für das Hauptprogramm ändert sich an der Schnittstelle nichts. Offen aus Teilprojekt 2: der schnelle Windungszahl-Baum für STL-Netze
 über 10⁵ Facetten (Teilprojekt 5) und die Vierteilung der Randpolygone an gekrümmten Formen.

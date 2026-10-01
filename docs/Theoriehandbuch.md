@@ -11610,4 +11610,70 @@ Zellen um die Naht, auch in vollen Zellen. Teilursachen sind belegt: die Tetraed
 p-2-Fehler auf 3,7·10⁻⁷) und α (p 3: 1,1·10⁻⁵ bei 10⁻⁸, 1,2·10⁻⁶ bei 10⁻¹²); ein Rest ist ungeklärt. Gegen den Diskretisierungsfehler der
 Strukturspannung (1 %) ist das klein, gegen das Patch-Niveau nicht; die Prüfung nimmt die gemessene Schranke 10⁻⁴.
 
+**Neuer Fahrplan seit 01.10.2026 (Entscheidung des Anwenders: zuerst lokal h bis t/4, dann p + 1).** Die Zielzellgröße an der Naht i ist
+nach k Halbierungen max(h₀/2ᵏ, tᵢ/4); gehalbiert wird, solange eine Naht darüber liegt (`_fahrplan` in `api.py`, als reine Funktion gegen die Formel
+geprüft: sechs Fälle mit Basis 20, 10 und 2,5, einer und zwei Nähten, ohne Naht, p 4), danach p + 1 bis p = 4, dann Ende mit Warnung. Am T-Stoß
+(Basis 10 = t, p 2, vier Zyklen, freie Maschine) ergibt das:
 
+| Zyklus | Schritt | p | Freiheitsgrade | kleinste Zelle | `hotspot_max` | `hotspot_mean` | Zeit |
+|---|---|---|---|---|---|---|---|
+| 0 | Start | 2 | 10 725 | 10 mm | 119,80 | 116,58 | 1 s |
+| 1 | h-Halbierung Naht | 2 | 29 514 | 5 mm | 127,58 | 122,29 | 5 s |
+| 2 | h-Halbierung Naht | 2 | 120 699 | 2,5 mm (= t/4) | 110,99 | 108,96 | 19 s |
+| 3 | p-Erhöhung | 3 | 387 672 | 2,5 mm | 107,45 | 106,62 | 96 s |
+| 4 | p-Erhöhung | 4 | 895 569 | 2,5 mm | 107,93 | 107,51 | 370 s |
+
+Längs der Naht ist der letzte Zyklus glatt (106,9 bis 107,9 N/mm² an beiden Nähten). Die Änderungen sind +7,78, −16,59, −3,54 und +0,49 N/mm²: Mit der
+Zellgröße t/4 ist die Zahl stabil, die p-Phase ändert sie um −3,2 % und dann um +0,45 %, der Hot-Spot liegt bei etwa 107,9 N/mm² (±0,5 %). Die Aussage
+bleibt „nicht monoton“, weil die frühen, noch groben Halbierungen überschwingen (119,8 → 127,6 → 111,0); die vor der Messung festgelegte Forderung
+„monoton konvergent, letzte Änderung unter 3 %“ ist damit in der zweiten Hälfte erfüllt (0,45 %) und in der ersten nicht. **Vorschlag, nicht
+umgesetzt:** die Aussage nur über die p-Phase bei fester feinster Zellgröße zu bilden (ab dem ersten Zyklus mit h_min = t/4) und dort eine kleine letzte Änderung
+(unter 1 %) statt strenger Monotonie zu verlangen – sie wäre hier erfüllt (110,99 → 107,45 → 107,93). Meine frühere Schätzung „über eine Million Freiheitsgrade“ für
+Zellen von 2 mm war zu pessimistisch: bei p 2 sind es 120 699, erst p 4 erreicht 895 569 (370 s, 17 GB Hauptspeicher). Die größte geglättete Von-Mises-Spannung wächst
+auch geglättet mit der Verfeinerung (132,7 → 158,2 → 172,6 → 189,2 N/mm² von Zyklus 1 bis 4): die Kerbe ist singulär. Die Messung am Knotenblech bleibt C1.
+
+
+
+### 11.15 Teilprojekt 5: STEP-Eingang über gmsh-Tessellierung (01.10.2026)
+
+**Verfahren** (`geometry/step.py`, Vorgabe 3). `GeometrySourceType.STEP` liest die Datei mit gmsh (OpenCASCADE), tesselliert die Oberfläche zu Dreiecken
+und gibt sie als Hülle an den bestehenden STL-Weg (Windungszahl für innen und außen, Orientierung, Abstand, Facettenprüfung): die Geometrie bleibt eine
+Innen/Außen-Funktion, die Krümmung steckt nur in der Tessellierung. Angaben in `GeometrySource.params`: `tessellation_mm` (größte Facette, Vorgabe die
+Basiszellgröße) und `elements_per_circle` (Dreiecke je Vollkreis, Vorgabe 120), `name`. Die Einheit rechnet gmsh beim Lesen von der in der Datei
+deklarierten nach mm um (`Geometry.OCCTargetUnit = MM`; geprüft mit einer Datei, deren Kopf auf Meter umdeklariert ist: die Ausdehnung wird tausendfach).
+Mehrere Körper werden zu einer Hülle zusammengefasst, sich durchdringende sind nicht zulässig. gmsh ist **optional** (Extra `step` in
+`packages/volumen3d/pyproject.toml`, `pip install "gmsh>=4.11"`, GPL-Lizenz, nicht gebündelt); ohne gmsh gibt es `SolverError` mit dem Installationshinweis. Die
+Bibliothek wird nicht unterbrechbar und ohne Konfigurationsdateien initialisiert (Arbeitsfäden), ein schon laufendes gmsh des Aufrufers bleibt unberührt
+(eigenes Modell, Optionen und aktuelles Modell werden zurückgesetzt). Fehlerfälle mit klarer Meldung: Datei fehlt, kein Pfad, keine STEP-Datei, nur eine
+Fläche statt eines Körpers, zu grobe Tessellierung. Die Tessellierung steht im Protokoll (`step_tessellation`: Quelle, Dreiecke, Körper, Flächen, Facettengröße,
+Dreiecke je Vollkreis, gmsh-Version, Hüllquader); Ergebnisse einer Datei werden zwischengespeichert, damit `estimate` und `prepare` einmal tessellieren.
+
+**Genauigkeit der Tessellierung** (Block 210 × 200 × 200 mm mit Bohrung r 40, Facette 25 mm): Die Ecken liegen auf der Fläche (einbeschriebenes Polygon), der
+Volumenfehler der Bohrung ist (2π/N)²/6 ihres Volumens:
+
+| Dreiecke je Vollkreis N | Dreiecke | Volumen gegen die geschlossene Form | Grenze (2π/N)²/6 des Bohrungsvolumens |
+|---|---|---|---|
+| 60 | 7 810 | +0,0188 % | +0,0248 % |
+| 120 | 27 788 | +0,0047 % | +0,0062 % |
+| 240 | 107 636 | +0,0012 % | – |
+
+Die Hülle ist wasserdicht (jede Kante gehört zu genau zwei Dreiecken), die Dreiecke der Stirnfläche zeigen nach außen, der Hüllquader stimmt auf 10⁻⁹ mm.
+Durch den ganzen Vertragsweg stimmt ein STEP-Quader mit der CSG-Fassung überein: Volumen gleich, σ_xx an allen Oberflächenpunkten 100 N/mm² auf 1,3·10⁻¹⁰, Verschiebung
+gegen das Zugfeld 1,3·10⁻⁸, Kopplungskontrolle 7·10⁻¹⁵ (ebene Flächen sind im STL-Weg exakt).
+
+**Befund: gekrümmte STEP-Flächen sind im STL-Weg langsam und nur in erster Ordnung.** Ein Block mit Bohrung als STEP durch den Konstruktor des Problems
+(Gitter, Quadratur, Aggregation, Zwänge, Oberflächenquadratur): N 16 mit 1 004 Dreiecken bei Zellen von 50 mm 206 s (CSG-Block bei Zellen von 25 mm: 4,6 s, Messung A6);
+N 32 bei Zellen von 100 mm und ein Vollzylinder (konvex) mit N 48 bei 50 mm waren nach 580 s nicht fertig, der Vollzylinder mit N 24 bei 100 mm nach 70 s auch nicht. Beim
+N-16-Lauf stecken 198 der 206 s in der Flächenquadratur der Polygonstücke, davon 174 s in `_bsp_teile`. Ursache: gmsh
+tesselliert gekrümmte Flächen unstrukturiert, die Knoten liegen verstreut auf der Fläche, und ein solches Dreiecksnetz hat Kanten mit wechselndem Knickvorzeichen, also
+kein konvexes oder konkaves Ebenenarrangement. Am Vollzylinder meldet `lokale_lage` bei Kugeln mit Radius 5 mm in 163 von 200 Fällen „konvex“, bei 15 mm in 128 von 200 Fällen
+„gemischt“ und bei 43 mm in allen 200 (im Mittel 154 Ebenen je Kugel). Die Zerlegung an höchstens sechs Ebenen scheitert, die Flächenstücke werden rekursiv geviertelt, und
+am Ende steht der Punkttest erster Ordnung. Das bestehende STL-Netz des Lamé-Tests (regelmäßig, Sehnen 1 mm) rechnet dagegen in 78 s. **Folgen:** Der Vertragsweg
+meldet eine Warnung, wenn Blätter im Punkttest oder Flächenstücke im Rückfall stehen (`_integrationswarnung`, geprüft als reine Funktion; sie schweigt bei
+ebenen Flächen), und die Prüfung läuft am ebenen STEP-Quader und an der Tessellierung des Blocks mit Bohrung, nicht am gekrümmten Körper. Ein Block mit Bohrung gegen CSG
+(K_t) steht damit nicht im Test; das ist offen. **Abhilfe (Entscheidung des Anwenders):** eine Integration über die Dreiecke selbst (Divergenzsatz für das Volumen, Vorgabe 6
+„oberflächenbasierte Integration“, Fläche je Dreieck exakt) statt der Zerlegung an lokalen Ebenen – ein eigener Schritt, naheliegend zusammen mit dem schnellen Windungszahl-Baum (B6).
+Bis dahin gilt für gekrümmte CAD-Teile: CSG verwenden oder die Tessellierung strukturiert vorgeben.
+
+**Prüfungen** (`tests/test_step.py`, in der Kernsuite, ohne gmsh übersprungen außer den Fehlerfällen und der Warnung, die ohne gmsh simuliert laufen): Tessellierung (Volumen
+gegen die Formel, wasserdicht, Orientierung, Hüllquader, Einheit), Vertragsweg STEP-Quader gegen CSG, Integrationswarnung, Fehlerfälle.
