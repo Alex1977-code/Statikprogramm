@@ -452,14 +452,22 @@ class Csg:
             return None
         gekruemmt = any(f.gekruemmt for f in aktive)
         if not gekruemmt and len(proben):
+            # Abdeckung mit abgeschlossenen Stuecken (eine Probe auf der Trennflaeche zweier Stuecke liegt in beiden), Disjunktheit
+            # nur mit offenen: vorher zaehlte "drin == 1" eine Probe auf einer inneren Trennflaeche doppelt und verwarf die richtige
+            # Zerlegung (Knotenblech im Nahtstumpf, Plan TP 5 C1: 1 534 Flaechenstuecke im Rueckfall, Oberflaeche +481 mm2)
             drin = np.zeros(len(proben), int)
+            offen = np.zeros(len(proben), int)
             for st in stuecke:
                 m = np.ones(len(proben), bool)
+                mo = np.ones(len(proben), bool)
                 for p0, n0 in st:
-                    m &= (proben - p0) @ n0 <= tol
+                    s_ = (proben - p0) @ n0
+                    m &= s_ <= tol
+                    mo &= s_ < -tol
                 drin += m
+                offen += mo
             klar = np.abs(d_ist) > tol
-            if np.any(drin[klar] != (d_ist[klar] < 0).astype(int)):
+            if np.any((drin[klar] > 0) != (d_ist[klar] < 0)) or np.any(offen > 1):
                 return None
         return BaumStuecke(stuecke), gekruemmt, aktive
 

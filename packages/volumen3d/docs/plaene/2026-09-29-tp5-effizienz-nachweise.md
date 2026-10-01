@@ -531,6 +531,16 @@ Extrapolation aus den gelieferten Rohwerten.
 dann erst das Verfahren hinterfragt; Entscheidung beim Anwender. Solange die Referenz der Hauptsitzung fehlt, gilt ein eigener Tet10-Lauf des Hauptprogramms aus einem
 festen Arbeitsbaum von `main` (nur lesend, über den Abaqus-Import des gmsh-Netzes) als **vorläufig** und wird im Protokoll so benannt.
 
+**Ergebnis C1 (01.10.2026, Theorie 11.18):** (1) **hält** gegen die Tet10-Referenz der Hauptsitzung (Pull Request 13 auf main; gmsh-Netz 1 mm, 1,09 Mio. FHG, main 7da3571, zwei geeichte Auswertungen; Session B hatte denselben Lauf vorab mit identischem Ergebnis):
+σ_hs(y = 40) FCM 143,23 / 138,94 gegen Tet10 142,74 / 143,14 N/mm², also +0,34 % rechts und −2,93 % links; rechts alle neun Punkte auf 0,4 %. Die Referenz selbst wanderte von
+2,5 auf 1 mm um 3,6 % (Richardson-Grenzwert ≈ 141,7), und die Kantenlänge am Übergang ist im Median 1,33 mm statt der geforderten 1 mm (Befund der Hauptsitzung); der 0,5-mm-Lauf
+(6,45 Mio. FHG, Netz liegt bereit, ~100 GB direkt) liegt beim Anwender. (2) **verfehlt**: rechts/links 3,1 % (Gitterphase: linker Übergang auf einer Zellgrenze, rechter 0,5 mm davor) – das ist die Schnittlagen-Streuung des
+Hot-Spots bei t/4 und p 4; Hebel t/8 oder Hot-Spot-Variante mit größerem Kerbabstand, Entscheidung beim Anwender. (3) hält: letzte Änderung 0,44 %; Aussage „nicht monoton“
+(B4-Frage offen). (4) hält: Kraft 2,25 %, keine Integrationswarnung – nach zwei Kuren am Geometriekern (Probenprüfung an inneren Trennflächen, deckungsgleiche Flächen).
+(5) **umgedeutet**: fern der Naht biegt das exzentrische Knotenblech das Blech (111,1 oben, 94,9 unten, Tet10 ebenso); die Regel gilt für den Membrananteil (0,7 %).
+(6) **verfehlt in der geplanten Form** (Interpolation der Oberflächenpunkte: 3,3 % / 9 %); die unabhängige zweite Auswertung ist die Tet10-Referenz. Kurve: 181,1 → 175,4 →
+157,1 → 142,6 → 143,2 bei 14 295 → 36 009 → 150 411 → 477 702 → 1 096 107 FHG, 329 s und 59 GB im letzten Zyklus.
+
 ### C2: Zweite Sicht über Phase A und B
 - Unabhängiges Gutachten, nur lesend, anderes Modell als die Umsetzung; Befunde am Quelltext prüfen, dann
   beheben und mit Tests absichern.
@@ -562,7 +572,7 @@ nachgetragen.
 | B5 STEP über gmsh | Sonnet 5 | mittel | Anbindung einer Bibliothek | gebaut; Planprüfung K_t am gekrümmten Körper nicht erfüllt (STL-Weg zu langsam), Entscheidung offen |
 | B6 Windungszahl-Baum + Hüllenintegration | Fable 5.1 | sehr hoch | Divergenzsatz über Dreiecke, Barill-Baum, Genauigkeitsnachweis | erledigt: (1)–(3) halten, Block N 120 388 → 26,8 s, K_t 0,12 %; Baum mit β 4 statt 2 (Anwender 01.10.: angenommen) |
 | B7 Schale → Volumen (Prüfung) | Sonnet 5.5 | mittel | Test über bestehende Schnittstelle | erledigt: Schnittgrößen < 7·10⁻⁴ (p 2), 6·10⁻⁸ (p 3); Kopplungskontrolle und Hüllenfacetten-Fehler behoben; Schranke p 2 geneigt 1 % (Anwender) |
-| C1 Knotenblech-Abnahme | Fable 5.1 | sehr hoch | Modellbau und Nachweis gegen Referenz | läuft: Modell und Regeln festgelegt |
+| C1 Knotenblech-Abnahme | Fable 5.1 | sehr hoch | Modellbau und Nachweis gegen Referenz | erledigt: +0,34 % / −2,93 % gegen Tet10-Referenz PR 13 (Schranke 3 %); Symmetrie 3,1 % (Gitterphase) und 0,5-mm-Referenzlauf beim Anwender |
 | C2 Zweite Sicht | Fable 5.1 | hoch | unabhängig von der Umsetzung, tiefste Prüfung | offen |
 | C3 Handbücher | Sonnet 5 | niedrig | Texte aus vorhandenen Messwerten | offen |
 | C4 Gesamtlauf, Pull Request | Sonnet 5 | mittel | Routine mit Prüfliste | offen |

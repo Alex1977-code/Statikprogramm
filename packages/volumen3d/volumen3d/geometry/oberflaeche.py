@@ -179,7 +179,7 @@ def _stuecke_des_polygons(geometrie, form, poly: np.ndarray, tiefe: int, stufe: 
         return [poly] if polygon_flaeche(poly) > 1e-14 * r * r else []
     if getattr(st[0], "baum", False):
         kandidaten = _zerlegt_an_allen_ebenen(poly, st[0], n_poly, n_eigen, c, r)
-        return _zeugen_pruefen(geometrie, form, kandidaten, r, tol_flaeche, statistik)
+        return _zeugen_pruefen(geometrie, form, kandidaten, r, tol_flaeche, statistik, st[2])
     # Die eigene Flaeche ist die Tangentialebene der Quellform im projizierten Schwerpunkt c
     # (bei ebenen Formen die Facettenebene selbst). Andere lokale Ebenen der Quellform - etwa
     # die Kappe eines Bohrzylinders - muessen schneiden, sonst liefern zwei Stuecke dasselbe
@@ -201,7 +201,7 @@ def _stuecke_des_polygons(geometrie, form, poly: np.ndarray, tiefe: int, stufe: 
                 break
         if len(Q) >= 3 and polygon_flaeche(Q) > 1e-14 * r * r:
             kandidaten.append(Q)
-    return _zeugen_pruefen(geometrie, form, kandidaten, r, tol_flaeche, statistik)
+    return _zeugen_pruefen(geometrie, form, kandidaten, r, tol_flaeche, statistik, st[2])
 
 
 def _zerlegt_an_allen_ebenen(poly, stuecke, n_poly, n_eigen, c, r) -> list[np.ndarray]:
@@ -230,7 +230,7 @@ def _zerlegt_an_allen_ebenen(poly, stuecke, n_poly, n_eigen, c, r) -> list[np.nd
     return teile
 
 
-def _zeugen_pruefen(geometrie, form, kandidaten, r, tol_flaeche, statistik) -> list[np.ndarray]:
+def _zeugen_pruefen(geometrie, form, kandidaten, r, tol_flaeche, statistik, aktive=()) -> list[np.ndarray]:
     if not kandidaten:
         return []
     # Zeugen aller Stuecke gemeinsam auswerten (ein Aufruf je Funktion statt vier je Stueck):
@@ -246,6 +246,27 @@ def _zeugen_pruefen(geometrie, form, kandidaten, r, tol_flaeche, statistik) -> l
     aussen_frei = ~geometrie.innen(Z + eps * n_z)
     ok = auf_flaeche & aussen_frei
     statistik["innen_verworfen"] += int((~ok).sum())
+    # Deckungsgleiche Flaechen zweier Formen auf derselben Seite (Knotenblech und Nahtstumpf stehen beide auf z = 0, Plan TP 5 C1:
+    # Boden des Knotenblechs 480 mm2 doppelt): nur eine Form behaelt das Stueck - eine analytische vor einer Huelle (benannte
+    # Symmetrie-Halbraeume um ein STL tragen Lager und Lasten, Lame aus STL), sonst die mit dem kleineren Rang; geprueft wird am
+    # Zeugen gegen die anderen aktiven Formen (Abstand null, gleiche Aussennormale). Beruehrende Vereinigungen mit
+    # entgegengesetzten Normalen faengt schon aussen_frei.
+    if ok.any() and len(aktive) > 1:
+        rang = {id(f): (1 if hasattr(f, "dreiecke_ecken") else 0, i) for i, f in enumerate(geometrie.grundformen())}
+        eigener = rang.get(id(form), (0, 0))
+        idx = np.flatnonzero(ok)
+        for g in aktive:
+            if g is form or rang.get(id(g), (0, 0)) >= eigener:
+                continue
+            dg = np.abs(g.abstand(Z[idx])) <= tol_flaeche
+            if dg.any():
+                ng = g.gradient(Z[idx[dg]])
+                gleich = np.einsum("ij,ij->i", ng, n_z[idx[dg]]) > 0.999
+                ok[idx[dg][gleich]] = False
+                statistik["doppelt_verworfen"] = statistik.get("doppelt_verworfen", 0) + int(gleich.sum())
+            idx = np.flatnonzero(ok)
+            if not len(idx):
+                break
     return [Q for Q, o in zip(kandidaten, ok) if o]
 
 

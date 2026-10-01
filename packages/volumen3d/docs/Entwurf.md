@@ -828,6 +828,11 @@ Plan: `docs/plaene/2026-09-28-tp4-mehrgitter.md`. Messlatte aus Teilprojekt 3: J
   achsparallel und 10°/30° geneigt (STL-Hülle, schräge Ebenen): Schnittgrößenabweichung ≤ 7·10⁻⁴ (p 2), ≤ 6·10⁻⁸ (p 3), Vorgabe 1 %. Befunde: Kopplungskontrolle meldete bei reiner Biegung
   100 % Kraftabweichung (Kraftbezug ohne Momentenanteil; jetzt gemeinsames Lastmaß `_kopplungsabweichung`); Hüllenfacetten hinter einer Schnittebene blieben als Oberfläche stehen (Fehler aus B6,
   behoben, `Csg._stuecke_ohne`); offen: Konsistenzfehler p 2 am schrägen Schnitt 10⁻⁴ bis 3,5·10⁻³ in der Spannung (hängt an der Aggregationsschwelle).
+- **C1, Abnahme am Knotenblech mit Kehlnaht (01.10.2026, Theorie 11.18):** Längsrippe auf Zugblech (CSG, Nahtstumpf als Prismatoid), vier Zyklen h 5, h 2,5, p 3, p 4
+  (1,10 Mio. FHG, 329 s, 59 GB): σ_hs 181 → 175 → 157 → 142,6 → 143,2 N/mm², letzte Änderung 0,44 %. Gegen die Tet10-Referenz der Hauptsitzung (PR 13 auf main,
+  gmsh-Netz 1 mm, 1,09 Mio. FHG, main 7da3571; Session B hatte den Lauf vorab identisch): rechts +0,34 %, links −2,93 % – Abnahme hält,
+  links knapp; die Differenz rechts/links (3,1 %) ist Gitterphase am Übergang (Planschranke 1 % verfehlt, Hebel t/8 beim Anwender). Befunde behoben: Probenprüfung der
+  Baumzerlegung an inneren Trennflächen, deckungsgleiche Flächen zweier Formen doppelt.
 - Fünf Schnittlagen Kirsch h 10 p 3 verfeinert (128 724 bis 199 095 freie Koordinaten), GPU FP64:
   81 / 125 / 112 / 129 / 59 Iterationen, GPU-PCG 8,6 bis 21 s, K_t identisch mit dem Direktlöser;
   Direktlöser (Lösen nach der Faktorisierung) 7 bis 25 s. Einrichten auf der CPU: Zelldaten 17–24 s,

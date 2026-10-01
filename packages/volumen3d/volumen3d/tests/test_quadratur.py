@@ -269,6 +269,39 @@ def test_verschachtelter_baum():
               f"{time.perf_counter() - t:.1f} s")
 
 
+def test_innere_trennflaeche():
+    """Befund aus C1 (Plan TP 5, 01.10.2026): Knotenblech (Quader) in einem Nahtstumpf (Quader ∩ vier 45-Grad-Halbraeume), vereinigt.
+    Die Seitenflaechen des Knotenblechs laufen unterhalb der Nahtoberflaeche durch das Innere des Stumpfs; die Probenpruefung in
+    Csg._baum_stuecke zaehlte Proben genau auf dieser inneren Trennflaeche in zwei abgeschlossenen Stuecken (Knotenblech und
+    Stumpf minus Knotenblech) doppelt und verwarf die Zerlegung: 1 534 Flaechenstuecke im Rueckfall, Oberflaeche 8 382,7 statt
+    7 901,6 mm2 (die Deckflaeche des Stumpfs im Inneren blieb stehen), Integrationswarnung. Geschlossene Form: Boden 72*20,
+    Mantel des Prismatoids 2*(72+60)/2*6*sqrt2 + 2*(20+8)/2*6*sqrt2, Knotenblech ueber z 6: 2*60*34 + 2*8*34 + 60*8;
+    Volumen ueber die Prismatoidformel h/6 (A1 + 4 Am + A2) = 5 616 plus 60*8*34."""
+    from volumen3d.fcm.gitter import Gitter
+    from volumen3d.fcm.quadratur import Zellquadratur
+    from volumen3d.geometry.csg import aus_params
+    from volumen3d.geometry.oberflaeche import Flaechenquadratur
+    geo = aus_params({"csg": {"typ": "vereinigung", "teile": [
+        {"typ": "quader", "min": [70, 36, 0], "max": [130, 44, 40], "name": "knotenblech"},
+        {"typ": "schnitt", "teile": [{"typ": "quader", "min": [64, 30, 0], "max": [136, 50, 6], "name": "naht"},
+                                     {"typ": "halbraum", "punkt": [136, 0, 0], "normale": [1, 0, 1], "name": "f0"},
+                                     {"typ": "halbraum", "punkt": [64, 0, 0], "normale": [-1, 0, 1], "name": "f1"},
+                                     {"typ": "halbraum", "punkt": [0, 50, 0], "normale": [0, 1, 1], "name": "f2"},
+                                     {"typ": "halbraum", "punkt": [0, 30, 0], "normale": [0, -1, 1], "name": "f3"}]}]}})
+    s2 = np.sqrt(2.0)
+    a_soll = 72 * 20 + (72 + 60) * 6 * s2 + (20 + 8) * 6 * s2 + 2 * 60 * 34 + 2 * 8 * 34 + 60 * 8
+    v_soll = 6 / 6 * (72 * 20 + 4 * 66 * 14 + 60 * 8) + 60 * 8 * 34
+    for h in (10.0, 5.0):
+        G = Gitter(geo, h=h)
+        Q = Zellquadratur(G, p=2, alpha=0.0)
+        v = Q.volumen()
+        o = Flaechenquadratur.aus_geometrie(geo, G, 3)
+        a = float(o.gewichte.sum())
+        check(f"Knotenblech im Nahtstumpf h {h:g}: Oberflaeche {a:.3f} = {a_soll:.3f} (< 1e-9), kein Flaechenrueckfall, Volumen {v:.3f} = {v_soll:.0f} (< 1e-12), kein Punkttest",
+              abs(a / a_soll - 1) < 1e-9 and o.statistik["rueckfall"] == 0 and abs(v / v_soll - 1) < 1e-12 and Q.statistik["blaetter_punkttest"] == 0,
+              f"{o.statistik}, {len(o.punkte)} Punkte")
+
+
 def test_inside_zelle():
     from volumen3d.fcm.gitter import INSIDE, Gitter
     from volumen3d.fcm.quadratur import Zellquadratur
@@ -285,4 +318,4 @@ def test_inside_zelle():
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_polyeder, test_ebene_geometrie_exakt, test_kugel_zweite_ordnung, test_lochplatte, test_kleine_radien, test_inside_zelle, test_momentfitting, test_verschachtelter_baum]))
+    sys.exit(lauf([test_innere_trennflaeche, test_polyeder, test_ebene_geometrie_exakt, test_kugel_zweite_ordnung, test_lochplatte, test_kleine_radien, test_inside_zelle, test_momentfitting, test_verschachtelter_baum]))

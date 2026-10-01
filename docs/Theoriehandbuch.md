@@ -11822,3 +11822,77 @@ achsparallel mit 10⁻⁹ (gemessen 1,9·10⁻¹¹) und bei p 3 mit 10⁻⁵ (ge
 
 **Prüfungen** (`tests/test_schale.py` in der Kernsuite: Kontrollgröße als reine Funktion, achsparallel, geneigt p 2 mit Punkten zwischen den Ebenen, geneigt p 3; `tests/test_huelle.py`:
 Hüllenfläche hinter der Schnittebene).
+
+### 11.18 Teilprojekt 5: Abnahme am Knotenblech mit Kehlnaht (01.10.2026)
+
+**Modell** (Plan TP 5 C1, vor der Messung festgelegt; `tests/test_knotenblech.py`, `MODELL`). Längssteife auf einem Zugblech, der IIW-Fall „nicht tragende
+Längsrippe“ mit Hot-Spot Typ a am Stirnnaht-Übergang: Grundblech 200 × 80 × 10 zwischen den Schnittebenen x 0 und 200 (CSG mit Polster bis −5 und 205),
+Knotenblech 60 × 8 × 40 bei x 70…130, Kehlnaht rundum mit Schenkel 6 als Pyramidenstumpf (Quader [64,136]×[30,50]×[0,6] ∩ vier 45°-Halbräume, Ecken auf
+Gehrung); Zug σ_n = 100 N/mm² über die Schnittebenen (Geber u = (εx, −νε(y − 40), −νε(z + 5)), Schnittkraft 80 kN); Nahtlinien „stirn_rechts“ (136, y, 0) und
+„stirn_links“ (64, y, 0), y = 32…48, Referenzpunkte 0,4 t und 1,0 t auf der Blechoberseite. Volumen 181 936 mm³ (Prismatoid des Stumpfs 5 616 = h/6 (A₁ + 4A_m + A₂);
+die Pyramidenstumpf-Formel gilt nicht, weil Grund- und Deckfläche nicht ähnlich sind – der erste Entwurf des Tests hatte sie, die Zellquadratur hatte recht).
+Das Modell ist in x spiegelsymmetrisch zu x = 100.
+
+**Referenz** (E2: Tet10 des Hauptprogramms; E3: Ablage durch die Hauptsitzung als Pull Request 13 auf `main`, `tests/reference_models/knotenblech_kehlnaht/`,
+Vorschlag `docs/vertrag-aenderungen/2026-10-01-referenzmodell-knotenblech.md`). Session B hatte vorab denselben Lauf des Hauptprogramms aus einem festen Arbeitsbaum
+von `main` (7da3571, nur lesend) gerechnet; die Hauptsitzung bestätigte die Werte auf die Stelle genau, mit zwei an der exakten Lösung geeichten Auswertungen
+(2,6·10⁻⁹ N/mm², höchstens 0,86 % auseinander; Primärwert das Elementfeld am Punkt). Netz und Lauf: gmsh-Netz
+(OpenCASCADE-Körper identisch mit der CSG ohne Polster, 1 mm Tet10 in 12 mm Umkreis der Nahtübergänge, 2,5 mm im Blech, 5 mm fern; 247 636 Elemente,
+363 048 Knoten, 1,09 Mio. Freiheitsgrade) über den Abaqus-Import, u_x = εx auf beiden Stirnflächen, Starrkörper statisch bestimmt, σ_xx am Punkt als Mittel
+der Elementfelder (`tests.pruefkoerper.punktspannung`), Lösen 294 s. **Einschränkung der Hauptsitzung:** die gemessene Kantenlänge am Übergang liegt im Median bei 1,33 mm
+(90 % unter 1,75, Maximum 2,2 mm) – das gmsh-Größenfeld ist ein Ziel, keine Garantie; die Anforderung t/10 hält dieses Netz nicht. Netzkonvergenz der Referenz: mit 2,5 mm am Übergang σ_hs(y = 40) 148,0 / 149,1, mit 1 mm
+142,74 / 143,14 N/mm² (rechts / links) – 3,6 % Änderung; bei Fehlerordnung h² läge der Grenzwert bei etwa 141,7 (Richardson), also rund 0,7 % unter dem 1-mm-Wert.
+Die Referenz ist in sich symmetrisch (0,28 %). Der 0,5-mm-Lauf (1 554 780 Tet10, 2 149 968 Knoten, 6,45 Mio. Freiheitsgrade, Netz liegt bereit) braucht mit dem
+Direktlöser rund 100 GB und liegt beim Anwender (iterativer Löser oder Pause der anderen Sitzung).
+
+**FCM** (Vertragsweg, Basiszellgröße 10 = t, p 2, `adaptive_cycles` 4 nach dem Fahrplan aus B4):
+
+| Zyklus | Schritt | p | Freiheitsgrade | kleinste Zelle | σ_hs,max | Zeit |
+|---|---|---|---|---|---|---|
+| 0 | Start | 2 | 14 295 | 10 | 181,06 | 1 s |
+| 1 | h-Halbierung Naht | 2 | 36 009 | 5 | 175,42 | 6 s |
+| 2 | h-Halbierung Naht | 2 | 150 411 | 2,5 | 157,14 | 21 s |
+| 3 | p-Erhöhung | 3 | 477 702 | 2,5 | 142,60 | 75 s |
+| 4 | p-Erhöhung | 4 | 1 096 107 | 2,5 | 143,23 | 329 s (59 GB) |
+
+Letzte Änderung +0,44 % (Schranke 3 %), Konvergenzaussage „nicht monoton“ (−5,6, −18,3, −14,5, +0,6 N/mm²; die Frage aus B4, ob die Aussage nur die p-Phase
+betrachten soll, ist offen). Kopplungskontrolle Kraft 2,25 % (Schnittkraft 81 844,7 N; Tet10 81 845,2 N), keine Integrationswarnung. Fern der Naht (x 180)
+oben 111,1 und unten 94,9 N/mm², Tet10 111,1 / 95,0: das exzentrische Knotenblech biegt das Blech, und die ebenen Schnittebenen halten die Enden gegen
+Verdrehung – darum gilt die Planregel „σ_xx = σ_n ± 1 %“ hier für den Membrananteil (Mittel beider Seiten 103,1 gegen Schnittkraft/(b t) 102,4, 0,7 %), nicht für
+jede Seite.
+
+**Abnahme (Vorgabe 13, Schranke 3 %) gegen die Referenz**, letzter Zyklus, σ_hs in N/mm²:
+
+| y | 32 | 34 | 36 | 38 | 40 | 42 | 44 | 46 | 48 |
+|---|---|---|---|---|---|---|---|---|---|
+| FCM rechts | 130,63 | 136,76 | 140,54 | 142,58 | 143,23 | 142,58 | 140,54 | 136,76 | 130,63 |
+| Tet10 rechts | 130,14 | 136,46 | 140,33 | 142,43 | 142,74 | 142,55 | 140,15 | 136,67 | 130,42 |
+| FCM links | 126,94 | 132,71 | 136,33 | 138,31 | 138,94 | 138,31 | 136,34 | 132,71 | 126,94 |
+| Tet10 links | 130,48 | 136,56 | 140,63 | 142,78 | 143,14 | 142,16 | 140,46 | 137,01 | 130,33 |
+
+Rechts stimmen FCM und Tet10 an allen neun Punkten auf 0,4 % überein (y = 40: +0,34 %), links liegt die FCM um 2,7 bis 3,0 % darunter (y = 40: −2,93 %).
+**Die Abnahme hält an beiden Stirnnähten, links knapp.** Die Differenz zwischen rechts und links (3,1 %) ist kein Modellfehler – Geometrie, Last und die Tet10-Lösung
+sind symmetrisch –, sondern die Gitterphase: das Gitter beginnt bei lo − 0,1 h = −1, der linke Übergang x 64 liegt bei Zellen von 2,5 mm genau auf einer Zellgrenze,
+der rechte x 136 0,5 mm vor einer. Der Referenzpunkt 0,4 t = 4 mm liegt damit höchstens zwei Zellen vor der Spannungssingularität am Übergang, und dort entscheidet
+die Lage der Zellgrenzen über Prozente. Die Planschranke „rechts und links auf 1 % gleich“ hält nicht; sie misst dasselbe wie die Schnittlagen-Robustheit der
+Vorgabe 13 (Streuung unter 1 %), die für den Hot-Spot bei t/4 und p 4 also nicht erreicht ist. Hebel (nicht Teil von C1, Entscheidung beim Anwender): Nahtziel t/8
+statt t/4 (ein h-Zyklus mehr; Freiheitsgrade und Speicher steigen deutlich – bei p 4 wären es über 2 Mio.) oder ein Hot-Spot-Verfahren mit größerem Abstand zur Kerbe
+(IIW Typ a grob: 0,5 t / 1,5 t).
+
+**Zwei unabhängige Auswertungen.** Die Planregel (6) sah eine zweite Auswertung aus den Oberflächenpunkten des Ergebnisses vor (lineare Interpolation der
+Eckwerte an die Referenzpunkte): sie wich rechts 3,3 % und links 9 % vom Hot-Spot-Modul ab – zwischen Eckpunkten 2,5 mm auseinander im steilen Gradienten
+4 mm vor dem Übergang ist lineare Interpolation untauglich, und die Oberflächenpunkte sind nicht der Weg zum Hot-Spot. Die rohe Spannung σ = D B u (ohne
+L²-Projektion) an den Referenzpunkten weicht bei h 10 um 7,8 % vom geglätteten Wert ab (Information im Kerntest). Die unabhängige zweite Auswertung ist die Tet10-Referenz
+(anderes Programm, anderes Netz, eigene Extrapolation aus Rohwerten), gegen die auf beiden Seiten verglichen wird.
+
+**Befunde aus dem Modellbau, behoben (mit Test, `test_quadratur.test_innere_trennflaeche`):** (1) Die Probenprüfung der Baumzerlegung (`Csg._baum_stuecke`) zählte
+Proben genau auf einer inneren Trennfläche zweier abgeschlossener Stücke (Knotenblech-Seitenfläche im Inneren des Nahtstumpfs) doppelt und verwarf die richtige
+Zerlegung: 1 534 Flächenstücke im Rückfall, Integrationswarnung, Oberfläche 8 382,7 statt 7 901,6 mm². Jetzt prüft die Abdeckung mit abgeschlossenen und die Disjunktheit
+mit offenen Stücken. (2) Deckungsgleiche Flächen zweier Formen auf derselben Seite (Knotenblech und Nahtstumpf stehen beide auf z = 0) zählten doppelt (480 mm²);
+jetzt behält eine Form das Stück – eine analytische vor einer Hülle (die benannten Symmetrie-Halbräume um das Lamé-STL tragen Lager und Lasten; mit dem reinen Rang
+verlor „sym_x“ seine Punkte), sonst die mit dem kleineren Rang (`_zeugen_pruefen`, Statistik `doppelt_verworfen`). Am T-Stoß (11.13) verbesserte das die Flächenexaktheit
+von 3,2·10⁻¹² auf 2·10⁻¹⁶ – dort waren 27 Punkte doppelt.
+
+**Prüfungen** (`tests/test_knotenblech.py`: Kernteil h 10 in der Kernsuite – Volumen, Kopplung, Membrananteil, 18 Hot-Spots im Band 1,0 bis 2,0 σ_n;
+Konvergenz mit vier Zyklen und Abnahme gegen `REFERENZ` nur mit `VOLUMEN3D_LANG=1`, 436 s und 59 GB; `REFERENZ` nennt die Quelle Pull Request 13 der Hauptsitzung;
+die Symmetrie rechts/links wird als Information gemeldet, bis der Anwender über die Planschranke entschieden hat).
