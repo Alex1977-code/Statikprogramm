@@ -601,6 +601,14 @@ LANGE_MASKEN = [
     ("Neuer Querschnitt", "_baum_neu", ("querschnitte",)),
     ("Ermüdungslasten", "maske_ermuedungslasten", ()),
     ("Netzeinstellungen", "maske_netzeinstellungen", ()),
+    # Zusammenfuehrung der Pakete 5, 6b und 7 (02.10.2026): was seit 562dc3a
+    # nach main kam und rechts breiter ist, und der Zustand nach F5 - dann
+    # steht die Ergebnissteuerung oben rechts ueber jeder Maske (Paket 6b)
+    ("Elementübersicht", "maske_elementuebersicht", ()),
+    ("Register Berechnung", "maske_zeigen", ("Berechnung",)),
+    ("Nach F5: Ergebnisse", "nach_f5:maske_zeigen", ("Ergebnisse",)),
+    ("Nach F5: Wind unter der Ergebnissteuerung", "nach_f5:maske_wind", ()),
+    ("Nach F5: Netzeinstellungen unter der Ergebnissteuerung", "nach_f5:maske_netzeinstellungen", ()),
 ]
 
 
@@ -628,14 +636,28 @@ def _kind_messen():
     erg = {"schirm": [scr.width(), scr.height()], "start": mass(), "masken": []}
     w.load_example("frame")
     _ruhe(6)
+    gerechnet = False
     for text, meth, args in LANGE_MASKEN:
         try:
+            if meth.startswith("nach_f5:"):
+                if not gerechnet:
+                    from statik3d import solver
+                    an = solver.solve_all(w.model, design=bool(w.model.members))
+                    w._solve_done("all", an)
+                    _ruhe(6)
+                    gerechnet = True
+                meth = meth.split(":", 1)[1]
             getattr(w, meth)(*args)
         except Exception as ex:        # noqa: BLE001
             erg["masken"].append({"text": text, "fehler": str(ex)[:80]})
             continue
         _ruhe(6)
         mk = w.maskenrand.maske if w.maskenrand.offen() else None
+        if mk is None and meth == "maske_zeigen":
+            # ein Register rechts (Berechnung, Ergebnisse) hat keinen Hauptknopf
+            # unten - es zaehlt, dass es rechts steht und nichts waechst
+            erg["masken"].append(dict(mass(), text=text, knopf=w.eingaben_dock.windowTitle() == args[0]))
+            continue
         if mk is None:
             erg["masken"].append({"text": text, "fehler": "keine Maske"})
             continue
