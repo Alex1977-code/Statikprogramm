@@ -552,6 +552,34 @@ def test_nach_f5_ribbon_ergebnisse():
     check("nach der Rechnung steht das Ribbon auf „Ergebnisse“", t == "Ergebnisse", t)
 
 
+def test_f5_laesst_geaenderte_maske_stehen():
+    """Plan 4b (Fortschreibung 01.10.2026): eine offene Maske mit Aenderungen
+    bleibt nach F5 stehen; ohne Aenderung kommt rechts die Ergebnismaske."""
+    from statik3d.gui import zahlenfeld as zf
+    w, app = _fenster()
+    w.load_example("hall"); app.processEvents()
+    an = solver.solve_all(w.model, design=bool(w.model.members))
+    w._objektmaske("knoten", "1"); app.processEvents()
+    mk = w.maskenrand.maske
+    feld = next((n for n, f in mk._felder.items() if isinstance(f, zf.Zahlenfeld)), None)
+    if not check("Knotenmaske mit einem Zahlenfeld offen", mk is not None and feld is not None, str(feld)):
+        return
+    mk.setzen(feld, 123.456); app.processEvents()
+    check("die Maske meldet die Änderung", bool(mk.geaenderte_felder()), str(mk.geaenderte_felder()))
+    n_log = len(w.log.toPlainText().splitlines())
+    w._solve_done("all", an); app.processEvents()
+    neu = w.log.toPlainText().splitlines()[n_log:]
+    check("nach F5 bleibt die geänderte Maske stehen (bisher ersetzt, die Eingabe war weg)",
+          w.maskenrand.offen() and w.maskenrand.maske is mk and feld in mk.geaenderte_felder(),
+          f"offen {w.maskenrand.offen()}, Dock {w.eingaben_dock.windowTitle()}")
+    check("… und das Protokoll sagt es", any("bleibt" in z and "Änderungen" in z for z in neu), str(neu[-3:]))
+    w.maskenrand.schliessen(); app.processEvents()
+    w._objektmaske("knoten", "1"); app.processEvents()
+    w._solve_done("all", an); app.processEvents()
+    check("ohne Änderung zeigt F5 rechts die Ergebnismaske", w.eingaben_dock.windowTitle() == "Ergebnisse",
+          w.eingaben_dock.windowTitle())
+
+
 # --------------------------------------------------------------------------
 # Nachbesserung nach der Gegenpruefung (25.09.2026)
 # --------------------------------------------------------------------------
@@ -955,6 +983,7 @@ def main():
               test_max_min_marken, test_werte_am_verlauf, test_verlauf_am_unverformten_stab,
               test_knoten_und_auswahl_an_der_verformten_lage, test_legende_folgt_den_einheiten,
               test_ueberhoehung, test_ergebnissteuerung_oben_rechts, test_nach_f5_ribbon_ergebnisse,
+              test_f5_laesst_geaenderte_maske_stehen,
               test_zeichenwege_an_der_bildlage, test_umriss_marke_verlauf_sichtbar,
               test_bildtext_kopfzeile, test_werteskala_in_fester_einheit,
               test_ueberhoehungsfeld_nachbesserung, test_tabfolge_steuerung_register,

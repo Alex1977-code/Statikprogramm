@@ -19018,7 +19018,7 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception:              # noqa: BLE001 - Anzeige darf nie sperren
                 pass
         try:
-            self.maske_zeigen("Ergebnisse")
+            self._ergebnismaske_nach_rechnung()
         except Exception:                  # noqa: BLE001
             pass
         teil = getattr(getattr(w, "ausnahme", None), "teilergebnis", None)
@@ -19441,6 +19441,21 @@ class MainWindow(QtWidgets.QMainWindow):
                                  + "\nEs wird trotzdem gerechnet - mit Hilfsfesselung.")
         return True
 
+    def _ergebnismaske_nach_rechnung(self) -> bool:
+        """Rechts nach einer Rechnung die Ergebnismaske - ausser eine offene
+        Maske hat noch nicht uebernommene Aenderungen: die bleibt stehen
+        (Plan 4b, Fortschreibung 01.10.2026). Bis dahin ersetzte F5 sie ohne
+        Rueckfrage, und die Eingabe war weg. Die Ergebnissteuerung oben rechts
+        bleibt auch ueber der stehenden Maske sichtbar."""
+        rand = getattr(self, "maskenrand", None)
+        mk = rand.maske if rand is not None and rand.offen() else None
+        if mk is not None and _maskenaenderung(mk):
+            self.info(f"Die Maske „{getattr(mk, 'titel', '')}“ hat nicht übernommene Änderungen und bleibt "
+                      "offen - die Ergebnisse stehen im Register Ergebnisse und im Modellbaum")
+            return False
+        self.maske_zeigen("Ergebnisse")
+        return True
+
     def _solve_done(self, kind, r, stand=None):
         # der Modellstand dieser Rechnung: Koordinaten und je Element Typ und
         # Knoten - legt man danach Knoten oder Staebe an, loescht oder
@@ -19480,7 +19495,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.txt_summary.setPlainText(text)
         self._fill_result_selector()
         self._bewegungen_melden()
-        self.maske_zeigen("Ergebnisse")
+        self._ergebnismaske_nach_rechnung()
         # Nach der Rechnung steht das Ribbon auf „Ergebnisse“ (Plan 4b,
         # 25.09.2026): dort liegen die Befehle, die man jetzt braucht. Unten
         # springt nur bei einem nicht erfuellten Nachweis etwas nach vorn
