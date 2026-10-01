@@ -1,7 +1,7 @@
 """U4: STL-Eingang - Lesen/Schreiben, Windungszahl (auch mit Luecke), Abstand, lokale Ebenen,
 exaktes Volumen eines Wuerfel-STL, Lame aus einem tessellierten Viertelzylinder gegen CSG.
 
-Aufruf: python -m volumen3d.tests.test_stl   (~3 min)
+Aufruf: python -m volumen3d.tests.test_stl   (~1 min; vor der Huellenintegration B6 ~3 min)
 """
 from __future__ import annotations
 
@@ -110,7 +110,15 @@ def test_volumen_und_quadratur():
     Q = Zellquadratur(G, p=2, alpha=0.0)
     check("Wuerfel-STL 30^3 im Gitter h 10 (Kanten und Ecken in Zellen): Volumen exakt (< 1e-10)", abs(Q.volumen() / 27000.0 - 1) < 1e-10,
           f"{Q.volumen():.6f}, {Q.statistik}")
-    check("dabei nur ebene Blaetter, kein Punkttest", Q.statistik["blaetter_punkttest"] == 0 and Q.statistik["blaetter_eben"] > 0)
+    # Seit B6 (Plan TP 5) integriert die Zellquadratur Huellen ueber den Divergenzsatz je Zelle: keine Blaetter mehr, jede
+    # Schnittzelle ist eine Huellenzelle; der alte Weg (huellen_exakt=False) muss weiter nur ebene Blaetter brauchen
+    n_cut = int((G.klasse == 2).sum())
+    Q_alt = Zellquadratur(G, p=2, alpha=0.0, huellen_exakt=False)
+    v_alt = Q_alt.volumen()                                   # zuerst rechnen: die Statistik fuellt sich je Zelle
+    check("dabei kein Punkttest: neu alle Schnittzellen als Huellenzellen ohne Blaetter, alter Weg nur ebene Blaetter",
+          Q.statistik["blaetter_punkttest"] == 0 and Q.statistik["huellenzellen"] == n_cut and Q.statistik["blaetter_eben"] == 0
+          and Q_alt.statistik["blaetter_punkttest"] == 0 and Q_alt.statistik["blaetter_eben"] > 0
+          and abs(v_alt / 27000.0 - 1) < 1e-10, f"neu {Q.statistik}, alt {Q_alt.statistik}")
     # schraeg: gedrehter Wuerfel (Rotation um z um 30 Grad und um x um 20 Grad)
     rz = np.deg2rad(30.0)
     rx = np.deg2rad(20.0)

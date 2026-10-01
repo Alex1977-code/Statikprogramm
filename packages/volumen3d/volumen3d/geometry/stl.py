@@ -380,6 +380,13 @@ class _DreieckIndex:
             d_aus[s:s + block], q_aus[s:s + block], t_aus[s:s + block] = d0, q0, self.eltern[t0]
         return d_aus, q_aus, t_aus
 
+    def in_box(self, lo: np.ndarray, hi: np.ndarray) -> np.ndarray:
+        """Facetten, deren Huellbox die Box [lo, hi] beruehrt (ohne Baum: alle pruefen)."""
+        lo = np.asarray(lo, float).reshape(3)
+        hi = np.asarray(hi, float).reshape(3)
+        mn, mx = self.D.min(axis=1), self.D.max(axis=1)
+        return np.flatnonzero(np.all((mx >= lo) & (mn <= hi), axis=1))
+
     def beruehrende(self, P: np.ndarray, r: float) -> np.ndarray:
         """Indizes der Facetten mit Abstand <= r (1 + 1e-9) zum Punkt P, aufsteigend."""
         P = np.asarray(P, float).reshape(3)
@@ -405,6 +412,7 @@ class Stl:
     umgedreht: int = 0                  # beim Laden gewendete Facetten (verkehrte Wicklung, Hohlraeume)
     nicht_mannigfaltig: int = 0         # Kanten mit mehr als zwei Facetten (innere Doppelflaechen)
     _index: Any = field(default=None, repr=False, compare=False)
+    _windung: Any = field(default=None, repr=False, compare=False)     # Windungsbaum (windung.py), erst beim ersten innen()
     gekruemmt = False
     kruemmungsradius = np.inf
 
@@ -457,6 +465,15 @@ class Stl:
         return windungszahl(P, self.dreiecke_ecken)
 
     def innen(self, P) -> np.ndarray:
+        """Innen/Aussen-Entscheidung; ab WINDUNG_BAUM_AB Facetten ueber den Windungszahl-Baum (Barill 2018, windung.py:
+        Block mit Bohrung N 240 28-mal schneller, gleiche Entscheidung an 100 000 Punkten), sonst exakt."""
+        P = np.ascontiguousarray(np.asarray(P, float).reshape(-1, 3))
+        if self._windung is None and _NUMBA and hasattr(self._index, "links"):
+            from .windung import WINDUNG_BAUM_AB, Windungsbaum        # hier, nicht oben: windung braucht den numba-Kern von stl
+            if len(self.dreiecke_ecken) >= WINDUNG_BAUM_AB:
+                object.__setattr__(self, "_windung", Windungsbaum(self._index))
+        if self._windung is not None:
+            return self._windung.innen(P)
         return self.windungszahl(P) > 0.5
 
     def naechste_punkte(self, P) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -493,6 +510,10 @@ class Stl:
 
     def _beruehrende(self, P, r: float) -> np.ndarray:
         return self._index.beruehrende(P, r)
+
+    def in_box(self, lo, hi) -> np.ndarray:
+        """Facetten, deren Huellbox die Box [lo, hi] beruehrt (Saeule einer Zelle, geometry/huelle.py)."""
+        return self._index.in_box(lo, hi)
 
     def _ebenen(self, idx: np.ndarray) -> list[tuple[np.ndarray, np.ndarray]]:
         """Ebenen der Facetten idx, koplanare zusammengefasst."""

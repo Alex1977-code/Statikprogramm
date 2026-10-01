@@ -90,10 +90,15 @@ def _in_fremder_zellflaeche(geometrie, poly: np.ndarray, lo, hi) -> bool:
 
 def _polygon_flaechenvektor(poly: np.ndarray) -> np.ndarray:
     """Summe der Kreuzprodukte des Faechers um poly[0], ein Aufruf statt einem je Dreieck
-    (Profil Lame CSG 28.09.2026: 96 640 kleine cross-Aufrufe, 4,3 s von 31 s Aufbau)."""
+    (Profil Lame CSG 28.09.2026: 96 640 kleine cross-Aufrufe, 4,3 s von 31 s Aufbau); die drei Komponenten als Skalarprodukte
+    statt np.cross, das an winzigen Feldern vor allem Achsen sortiert (18,9 gegen 8,9 us je Polygon; Block mit Bohrung N 120:
+    173 395 Aufrufe, 01.10.2026)."""
     if len(poly) < 3:
         return np.zeros(3)
-    return np.cross(poly[1:-1] - poly[0], poly[2:] - poly[0]).sum(axis=0)
+    P = poly - poly[0]
+    a, b = P[1:-1], P[2:]
+    return np.array([float(a[:, 1] @ b[:, 2] - a[:, 2] @ b[:, 1]), float(a[:, 2] @ b[:, 0] - a[:, 0] @ b[:, 2]),
+                     float(a[:, 0] @ b[:, 1] - a[:, 1] @ b[:, 0])])
 
 
 def polygon_normale(poly: np.ndarray) -> np.ndarray:
@@ -127,21 +132,27 @@ def _stuecke_des_polygons(geometrie, form, poly: np.ndarray, tiefe: int, stufe: 
     # wenn das Stueck zur Gesamtoberflaeche gehoert), der Radius um den Versatz vergroessert.
     # Befund 27.09.: mit dem Sehnenschwerpunkt fielen kleine Teilpolygone (r < Sagitta) als
     # "innen" weg - Kugeloberflaeche bei Tiefe 2 um 4e-4 zu klein.
-    c = _zeuge(form, poly)
+    huelle = hasattr(form, "dreiecke_ecken")
+    c = c0 if huelle else _zeuge(form, poly)
     r = float(np.linalg.norm(poly - c0, axis=1).max()) + float(np.linalg.norm(c - c0))
-    d = float(geometrie.abstand(c[None])[0])
-    if d > r * (1 + 1e-9) or d < -r * (1 + 1e-9):
-        return []                                 # ganz ausserhalb oder tief im Werkstoff
+    if not huelle:
+        # Huellenfacetten liegen auf der Oberflaeche ihrer Form (d = 0); der Gesamtabstand hier kostete je Polygon eine
+        # Windungszahl ueber alle Facetten (Block mit Bohrung N 120: 35 000 Aufrufe, 47 s; Plan TP 5 B6)
+        d = float(geometrie.abstand(c[None])[0])
+        if d > r * (1 + 1e-9) or d < -r * (1 + 1e-9):
+            return []                             # ganz ausserhalb oder tief im Werkstoff
     # Proben: Ecken und Schwerpunkt auf der Flaeche, dazu Punkte knapp beidseits (delta = 1e-3 r, Ecken
     # dafuer zum Schwerpunkt hin geschrumpft, damit alles in der Kugel bleibt). Nur die Proben abseits
     # der Flaeche entscheiden bei gemischter STL-Lage, ob die Zerlegung stimmt (csg._pruefe_teile
     # laesst |d| <= tol aus; Gutachten 27.09.2026: sonst zaehlte ein Steg auf einem Flansch doppelt).
-    n_eigen = form.gradient(c[None])[0]
+    n_eigen = polygon_normale(poly) if huelle else form.gradient(c[None])[0]   # Facettenwicklung ist nach aussen orientiert
     delta = 1e-3 * r
     geschrumpft = c + (1.0 - 2e-3) * (poly - c)
     proben = np.concatenate([poly, c[None], c[None] + delta * n_eigen, c[None] - delta * n_eigen,
                              geschrumpft + delta * n_eigen, geschrumpft - delta * n_eigen])
-    st = geometrie.lokale_stuecke(c, r, proben)
+    # Polygon auf einer Huellenfacette: nur die anderen Formen clippen (Plan TP 5 B6; vorher fiel jede gemischte Lage auf die
+    # Vierteilung und den Punktfilter zurueck)
+    st = geometrie.lokale_stuecke(c, r, proben, ohne=form if hasattr(form, "dreiecke_ecken") else None)
     # Vierteilung nur, wenn eine *fremde* gekruemmte Form die Kante des Stuecks als Sehne
     # naehert; die eigene Kruemmung erledigen Projektion und Flaechenfaktor exakt. Ist der
     # Kruemmungsradius der fremden Form kleiner als das Polygon, wird bis zur Hoechsttiefe geteilt.
@@ -159,6 +170,11 @@ def _stuecke_des_polygons(geometrie, form, poly: np.ndarray, tiefe: int, stufe: 
         statistik["rueckfall"] += 1
         return [poly]                             # Rueckfall: Punktfilter entscheidet
     n_poly = polygon_normale(poly)
+    if hasattr(form, "dreiecke_ecken") and not st[2]:
+        # Facettenpolygon einer Huelle ohne andere aktive Form: es ist Rand des Werkstoffs (geschlossene, nach aussen
+        # orientierte Huelle), der Zeugentest entfaellt - er kostete je Polygon eine Windungszahl ueber alle Facetten
+        # (Block mit Bohrung N 60: 62 000 Aufrufe, 13 von 23 s der Flaechenquadratur, Plan TP 5 B6)
+        return [poly] if polygon_flaeche(poly) > 1e-14 * r * r else []
     if getattr(st[0], "baum", False):
         kandidaten = _zerlegt_an_allen_ebenen(poly, st[0], n_poly, n_eigen, c, r)
         return _zeugen_pruefen(geometrie, form, kandidaten, r, tol_flaeche, statistik)
@@ -290,9 +306,15 @@ class Flaechenquadratur:
         xi2, w2 = dreieck_gauss(ordnung)
         h = gitter.h
         statistik = {"rueckfall": 0, "verworfen": 0, "innen_verworfen": 0}
-        P_l, W_l, C_l, Q_l = [], [], [], []
+        P_l, W_l, C_l, Q_l, N_l = [], [], [], [], []
         polygone: list[np.ndarray] = []
         polygon_quelle: list[int] = []
+        # Punkte auf Huellenfacetten: Abstand null und Normale = Facettennormale (Vorzeichen der Form im Baum: ein Loch zeigt
+        # nach innen) - statt Windungszahlen fuer alle Punkte (Block mit Bohrung N 120: 1 039 150 Punkte, 59 s)
+        from .csg import _mit_vorzeichen
+        vz: list = []
+        _mit_vorzeichen(geometrie.wurzel, 1, vz) if hasattr(geometrie, "wurzel") else None
+        vorzeichen = {id(f): sg for f, sg in vz}
         for t in range(len(T)):
             Vt = V[T[t]]
             f = formen[quelle[t]]
@@ -323,17 +345,27 @@ class Flaechenquadratur:
                     W_l.append(W)
                     C_l.append(np.full(len(P), c))
                     Q_l.append(np.full(len(P), quelle[t]))
+                    if hasattr(f, "dreiecke_ecken"):
+                        n_q = polygon_normale(Q) * float(vorzeichen.get(id(f), 1))
+                        N_l.append(np.broadcast_to(n_q, (len(P), 3)).copy())
+                    else:
+                        N_l.append(np.full((len(P), 3), np.nan))
         if not P_l:
             return cls.leer()
         P = np.concatenate(P_l)
         W = np.concatenate(W_l)
         C = np.concatenate(C_l)
         Qi = np.concatenate(Q_l)
-        ok = np.abs(geometrie.abstand(P)) <= tol
+        N = np.concatenate(N_l)
+        bekannt = np.isfinite(N[:, 0])
+        ok = np.ones(len(P), bool)
+        if not bekannt.all():
+            ok[~bekannt] = np.abs(geometrie.abstand(P[~bekannt])) <= tol
         statistik["verworfen"] = int((~ok).sum())
         ok &= W > 0.0                                   # entartete Teildreiecke (Nullgewicht) weglassen
-        P, W, C, Qi = P[ok], W[ok], C[ok], Qi[ok]
-        N = geometrie.gradient(P)
+        P, W, C, Qi, N, bekannt = P[ok], W[ok], C[ok], Qi[ok], N[ok], bekannt[ok]
+        if not bekannt.all():
+            N[~bekannt] = geometrie.gradient(P[~bekannt])
         N /= np.linalg.norm(N, axis=1, keepdims=True)
         xi = np.clip(gitter.lokal(P, C), -1.0, 1.0)
         namen = np.array([formen[q].name for q in Qi], dtype=object)

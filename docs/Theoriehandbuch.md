@@ -11677,3 +11677,89 @@ Bis dahin gilt für gekrümmte CAD-Teile: CSG verwenden oder die Tessellierung s
 
 **Prüfungen** (`tests/test_step.py`, in der Kernsuite, ohne gmsh übersprungen außer den Fehlerfällen und der Warnung, die ohne gmsh simuliert laufen): Tessellierung (Volumen
 gegen die Formel, wasserdicht, Orientierung, Hüllquader, Einheit), Vertragsweg STEP-Quader gegen CSG, Integrationswarnung, Fehlerfälle.
+
+### 11.16 Teilprojekt 5: exakte Integration tessellierter Hüllen und schneller Windungszahl-Baum (01.10.2026)
+
+**Ausgangslage.** Nach 11.15 war der STL-Weg an gekrümmten, unstrukturiert tessellierten Hüllen langsam und nur erster Ordnung, weil die Zerlegung an
+lokalen Ebenen bei gemischter Lage scheitert und am Ende der Punkttest steht. Der Anwender nahm die Empfehlung an: die Integration läuft über die Dreiecke
+selbst, zusammen mit dem aus Teilprojekt 2 offenen Windungszahl-Baum (Plan TP 5 B6).
+
+**Teil 1: Hüllenintegration über den Divergenzsatz** (`geometry/huelle.py`). Für eine achsparallele Zelle B = [lo, hi] und eine geschlossene, nach außen
+orientierte Hülle Ω gilt mit G = (G_x, 0, 0), G_x(x, y, z) = ∫_{x_lo}^{x} g χ_B dx′ für polynomiales g
+
+    ∫_{Ω∩B} g dV = Σ_Dreiecke T ∫_T G_x n_x dA,
+
+denn div G = g χ_B, G_x ist in x stetig, und die Sprünge von G über die Ebenen y = const und z = const haben keinen Fluss (Normale senkrecht zu G); der Gaußsche
+Satz über Ω braucht darum nur den Rand von Ω, nicht den Werkstoffteil der Zellflächen. Je Dreieck genügen das Clippen an den y- und z-Scheiben der Zelle und das
+Teilen bei x_lo und x_hi: Teile mit x < x_lo tragen null, Teile mit x > x_hi den vollen, in x konstanten Wert ∫_{x_lo}^{x_hi} g dx′ – darum braucht die Zelle **alle**
+Dreiecke der Säule x ≥ x_lo in ihrer y-z-Scheibe (`Dreiecksbaum.in_box` mit +∞), nicht nur die berührenden. Alles sind exakte Polygonoperationen ohne Zerlegung an
+lokalen Ebenen und ohne Punkttest. Die Momente der Tensor-Legendre-Basis vom Grad q = 2p (Moment Fitting, 11.11) folgen in geschlossener Form: mit den Stammfunktionen
+S_a(ξ) = ∫_{−1}^{ξ} N_a der hierarchischen 1D-Basis (S_0 = ξ/2 − ξ²/4 + 3/4, S_1 = ξ/2 + ξ²/4 + 1/4, S_j = (∫P_j − ∫P_{j−2})/√(2(2j−1)) über ∫_{−1}^{ξ} P_k = (P_{k+1} − P_{k−1})/(2k+1))
+ist der Integrand auf einem ebenen Polygonstück ein Polynom vom Gesamtgrad 3q + 1 (laufende Stücke) bzw. 2q (volle Stücke, S_a konstant), den die kollabierte
+Gauß-Jacobi-Regel der Fächerdreiecke exakt integriert; für die vollen Stücke ist die Punktsumme nur zweidimensional (das sparte am Block mit Bohrung N 120 16 von 22 s
+der Hüllenmomente: 106 384 volle gegen 41 574 laufende Fächerdreiecke in 573 Zellen). Eine Zelle geht diesen Weg, wenn in ihrer Umkugel genau **eine** aktive
+Grundform eine Hülle ist und der CSG-Baum über den vier Werten {leer, voll, Hülle, Komplement} (Schnitt = und, Vereinigung = oder, Differenz = und nicht; `Csg.huellenzelle`)
+Hülle oder Komplement ergibt; beim Komplement (Hülle als Loch) sind die Momente Tensor-Gauß der Box minus Hülle. Zellen, in denen die Hülle eine andere aktive Form
+trifft (Schnittebenen, Symmetrieebenen), behalten den bisherigen Weg. Flächenquadratur: ein Polygon auf einer Hüllenfacette wird nur von den **anderen** Formen geclippt
+(`Csg.lokale_stuecke(..., ohne=form)`); ohne andere aktive Form ist es ohne Zeugentest Rand des Werkstoffs, die Normale ist die Facettennormale (mit dem Vorzeichen der Form im
+Baum), der Abstandsfilter entfällt für Hüllenpunkte – das waren je Polygon bzw. je Punkt Windungszahlen über alle Facetten (Block mit Bohrung N 120: 35 000 Aufrufe
+mit 47 s und 1 039 150 Punkte mit 59 s vor dem Umbau).
+
+**Genauigkeit** (`tests/test_huelle.py`, Prüfung (1) des Plans, Schranke 10⁻¹²): Stammfunktionen bis Grad 10 an 17 Stellen gegen Gauß 3,3·10⁻¹⁶; achsparalleler
+Würfel in sechs Lagen zur Zelle (Hülle gleich Zellbox, Zelle ganz innen, Ecke in der Zelle, Hülle ganz in der Zelle, Berührung bei x_hi von außen, Hüllenfläche auf einer
+Zellfläche) alle Momente bis Grad 6 gegen Tensor-Gauß ≤ 2,2·10⁻¹⁶ des Zellvolumens; gedrehter Würfel in vier Lagen gegen Clippen und Tetraeder-Zerlegung ≤ 1,4·10⁻¹⁵;
+gedrehtes L-Prisma (einspringende Kante) gegen die Summe der Teilquader ≤ 2,6·10⁻¹⁷; Quaderzelle 1:2:3 6,5·10⁻¹⁶; eine nach innen gewickelte Hülle liefert das negative
+Volumen (kein Betrag). Im CSG-Baum: Block minus Loch, Loch im Schnitt, Hülle über einer Platte in der Vereinigung, Loch in einem Block 80³ (Lochzellen Hüllenzellen, ebene
+Blätter wie ohne Loch), Hülle ∩ Halbraum (Hüllenzellen und ebene Blätter nebeneinander) – alle Volumen exakt. Die STL-Suite rechnet unverändert (Würfel, gedrehter Würfel,
+L-Körper exakt, Lamé aus STL mit σ_r 0,070 % und σ_φ 0,024 % gegen Lamé), nur sind Schnittzellen einer reinen Hülle jetzt Hüllenzellen ohne Blätter; Lamé aus
+STL (Viertelring, Sehnen 1 mm, p 3) braucht 44 s statt 78 s, die ganze STL-Suite 48 s statt rund 3 min.
+
+**Zeiten** (Block 210 × 200 × 200 mm mit Bohrung r 40 als STEP, Konstruktor von `FcmProblem` mit Gitter, Quadratur, Aggregation, Zwängen und Oberflächenquadratur, 01.10.2026):
+
+| Fall | vor B6 | nach B6 |
+|---|---|---|
+| N 16 (1 004 Dreiecke), Zellen 50 mm, p 2 | 206 s | 11,9 s |
+| N 60 (7 810 Dreiecke), Zellen 25 mm, p 2 | 56,6 s (Netz regelmäßiger als bei N 16) | 16,8 s |
+| N 120 (27 788 Dreiecke), Zellen 25 mm, p 3 | 388 s | 26,8 s (Planmarke 30 s; CSG-Block 4,6 s in A6) |
+
+Beim N-120-Lauf sind alle 573 Schnittzellen Hüllenzellen (9 leer), kein Blatt im Punkttest, kein Flächenstück im Rückfall, das Werkstoffvolumen gleich dem Volumen der
+Tessellierung auf 2,2·10⁻¹⁶. Im Profil (35,2 s unter cProfile) entfallen 24,5 s auf die Oberflächenquadratur der 27 788 Facetten (1 039 150 Punkte, 173 395 Polygonstücke, davon
+8,9 s in `np.cross` an winzigen Feldern – seither als drei Skalarprodukte, 18,9 → 8,9 µs je Polygon) und 10,1 s auf die Hüllenzellen. **Durch den Vertragsweg** (Schnittebenen
+x 0 und 200, Zug σ_n = 100 N/mm², h 25) gegen CSG mit dem exakten Zylinder – die in 11.15 offene Prüfung: K_t = max σ_xx am Bohrungsrand / σ_n bei p 2 2,7158 (STEP) gegen 2,7190
+(CSG), 0,12 %; bei p 3 2,7503 gegen 2,7573, 0,25 % (Schranke 0,5 %); `prepare` 20 s gegen 7 s (p 2) bzw. 27 s gegen 13 s (p 3); 351 Hüllenzellen, kein Punkttest-Blatt. Die
+Zellen an den Schnittebenen treffen dort nur ebene Facetten (Stirnflächen x = −5 und 205), die der alte Weg mit ebenen Blättern exakt integriert; Teil 3 des Plans
+(Ebenenbereiche innerhalb der Hülle über den Divergenzsatz eine Dimension tiefer) ist darum nicht gebaut – er wird nötig, wenn eine Schnitt- oder Symmetrieebene durch den
+gekrümmten Teil einer Hülle läuft; dort gilt weiter der Punkttest mit der Warnung aus 11.15.
+
+**Teil 2: schneller Windungszahl-Baum** (`geometry/windung.py`, nach Barill, Dickson, Schmidt, Levin, Jacobson, „Fast Winding Numbers for Soups and Clouds“, ACM TOG 37(4), 2018).
+Die Windungszahl w(q) = ∫_S f·n dA mit dem Dipolkern f(p) = (p − q)/(4π|p − q|³) wird je Knoten der vorhandenen BVH (`dreiecksbaum.py`) um den flächengewichteten Schwerpunkt p̃
+bis zur zweiten Ordnung entwickelt; der Knoten braucht nur seine Momente N = Σ a_t n_t, M1[ij] = Σ n_ti ∫_T (p − p̃)_j dA und M2[ijk] = Σ n_ti ∫_T (p − p̃)_j (p − p̃)_k dA, die
+hier **exakt über die Dreiecke** gebildet werden (∫_T (p − c) dA = 0, ∫_T (p − c)(p − c)ᵀ dA = (a/12) Σ_v (v − c)(v − c)ᵀ; Barill nehmen den Schwerpunkt als Punktmasse) und aus
+Präfixsummen über die Dreiecke in Baumordnung ohne Rekursion folgen. Ein Knoten gilt als fern, wenn |p̃ − q| > β mal seiner Umkugel um p̃ (obere Schranke über die acht
+Boxecken), sonst steigt die Suche ab; Blätter rechnen exakt (Van Oosterom und Strackee). Eingesetzt wird der Baum nur für die Innen/Außen-Entscheidung (`Stl.innen`, also
+Abstand und Gradient) ab 20 000 Facetten; `Stl.windungszahl` und die Facettenprüfung beim Laden rechnen weiter exakt. Ohne numba gibt es keine BVH und keinen Baum.
+
+**Messung** (Prüfung (4) des Plans: Tessellierung N 240 mit 107 636 Dreiecken, 100 000 Zufallspunkte, 60 % im Hüllquader mit 10 % Rand, 40 % bis 0,5 mm beidseits der Facetten;
+BVH 0,63 s, Momente 0,13 s, exakte numba-Summe 11,1 s):
+
+| β | |Δw| max | 99,9-%-Quantil | Zeit | gegen exakt | innen/außen gleich |
+|---|---|---|---|---|---|
+| 2 (Plan, nach Barill) | 9,9·10⁻³ | 8,0·10⁻³ | 0,150 s | 73-mal schneller | 100 000 / 100 000 |
+| 2,5 | 2,9·10⁻³ | 2,0·10⁻³ | 0,223 s | 50-mal | 100 000 / 100 000 |
+| 3 | 1,2·10⁻³ | 8,5·10⁻⁴ | 0,286 s | 39-mal | 100 000 / 100 000 |
+| **4 (Vorgabe)** | 2,6·10⁻⁴ | 2,1·10⁻⁴ | 0,397 s | 28-mal | 100 000 / 100 000 |
+
+Die Innen/Außen-Entscheidung stimmte bei jedem β an allen Punkten, die vorab gesetzte Schranke |Δw| < 10⁻³ hält erst mit β 4 – darum ist β 4 Vorgabe (`BETA_STANDARD`), nicht
+das im Plan genannte β 2; die Geschwindigkeitsforderung (zehnmal) hält auch dort. Dass die Ordnungen stimmen, zeigt der Fehler mit abgeschnittener Reihe (20 000 Punkte, β 4):
+nur Dipol 9,8·10⁻³, bis erste Ordnung 8,3·10⁻³, bis zweite Ordnung 2,5·10⁻⁴ (im Mittel 1,9·10⁻³ → 8,1·10⁻⁴ → 3,3·10⁻⁵; die erste Ordnung ist für ebene Flecken um den
+flächengewichteten Schwerpunkt null). Mit β = ∞ liefert der Baum die exakte Summe auf 10⁻¹² (Blattrechnung und Durchlauf). In der Suite (`test_huelle.test_windungsbaum`,
+Kugelschale r 50 mit 25 088 Facetten, 20 000 Punkte): gleiche Entscheidung, |Δw| max 1,5·10⁻⁴, 22-mal schneller. Am Block mit Bohrung N 120 bringt der Baum nur noch 1,5 s
+(28,3 → 26,8 s), weil Teil 1 die meisten Windungszahl-Aufrufe schon beseitigt hat; er trägt bei feineren Netzen und überall dort, wo Zellen Hülle und andere Formen zugleich sehen.
+
+**Regel (Plan B6) und Stand.** Die Hüllenintegration ersetzt für Hüllenformen die Zerlegung an lokalen Ebenen (`HUELLEN_EXAKT_STANDARD = True`, Schalter `huellen_exakt`
+der Zellquadratur; Prüfungen (1) bis (3) halten), der Windungszahl-Baum ist Vorgabe ab 20 000 Facetten (Prüfung (4) hält mit β 4). Für gekrümmte CAD-Teile gilt die Empfehlung
+„CSG verwenden“ aus 11.15 nicht mehr, solange keine Schnitt- oder Symmetrieebene den gekrümmten Teil der Hülle kreuzt; Volumen und Zellregeln sind für die Tessellierung
+exakt, die Krümmung steckt nur in ihr (Bohrung N 120: Volumenfehler +0,0047 %, 11.15).
+
+**Prüfungen** (`tests/test_huelle.py` in der Kernsuite: Stammfunktionen, Polyeder-Momente, CSG-Baum und Zellquadratur, Windungsbaum; `tests/test_stl.py` mit der
+Unterscheidung Hüllenzellen/alter Weg; `tests/test_step.py`: Block mit Bohrung durch den Vertragsweg gegen CSG mit `VOLUMEN3D_LANG=1`).

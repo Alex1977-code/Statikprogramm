@@ -12,8 +12,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from volumen3d.tests import (test_adaptiv, test_basis, test_elastizitaet, test_geometrie, test_gitter, test_hotspot, test_oktree,  # noqa: E402
-                             test_paket, test_step,
+from volumen3d.tests import (test_adaptiv, test_basis, test_elastizitaet, test_geometrie, test_gitter, test_hotspot, test_huelle,  # noqa: E402
+                             test_oktree, test_paket, test_step,
                              test_mehrgitter, test_operator, test_patch, test_quadratur, test_rueckgewinnung, test_stl, test_vertrag_fcm,
                              test_zwaenge)
 from volumen3d.tests._pruef import lauf  # noqa: E402
@@ -32,7 +32,9 @@ TESTS = [
     test_hotspot.test_exaktes_feld,
     test_adaptiv.test_konvergenzaussage, test_adaptiv.test_fahrplan, test_adaptiv.test_zyklen_ohne_naht,
     test_adaptiv.test_zyklen_mit_naht, test_adaptiv.test_zyklen_grenzen,
-    test_step.test_tessellierung, test_step.test_vertragsweg_gegen_csg, test_step.test_integrationswarnung, test_step.test_fehler,
+    test_step.test_tessellierung, test_step.test_vertragsweg_gegen_csg, test_step.test_block_mit_bohrung_gegen_csg, test_step.test_integrationswarnung,
+    test_step.test_fehler,
+    test_huelle.test_stammfunktionen, test_huelle.test_polyeder_momente, test_huelle.test_baum_und_zellquadratur, test_huelle.test_windungsbaum,
     test_elastizitaet.test_zellsteifigkeit, test_elastizitaet.test_starrkoerper,
     test_patch.test_patch, test_patch.test_kleine_schnittzellen, test_patch.test_normalprojektion,
     test_vertrag_fcm.test_protokoll_und_registrierung, test_vertrag_fcm.test_ablauf, test_vertrag_fcm.test_gutachten_faelle,

@@ -31,7 +31,11 @@ import numpy as np
 from ..geometry.polyeder import box_flaechen, clippen, polyeder_quadratur
 from .basis import gauss_3d
 from .gitter import INSIDE
-from .momentfitting import fit_grad_standard, gefittete_regel
+from .momentfitting import fit_grad_standard, gefittete_regel, gewichte_kronecker
+
+# Tessellierte Huellen (STL, STEP) ueber den Divergenzsatz integrieren statt ueber die Zerlegung an lokalen Ebenen (Plan TP 5
+# B6, geometry/huelle.py, Theorie 11.16); False schaltet auf den alten Weg zurueck
+HUELLEN_EXAKT_STANDARD = True
 
 # Vorgabe fuer neue Zellquadraturen (Anwender 30.09.2026, Plan TP 5 B1, Theorie 11.11): mit q = 2p sind die
 # Zellmatrizen dieselben wie mit der rekursiven Integration (2e-13 an jeder Schnittzelle), bei 17- bis 34-mal
@@ -43,7 +47,7 @@ MOMENTFITTING_STANDARD = True
 class Zellquadratur:
     def __init__(self, gitter, p: int, tiefe: int = 2, alpha: float = 1e-8, ordnung: int | None = None,
                  tiefe_punkttest: int = 2, ordnung_tet: int | None = None, momentfitting: bool | None = None,
-                 fit_grad: int | None = None) -> None:
+                 fit_grad: int | None = None, huellen_exakt: bool | None = None) -> None:
         if tiefe < 0 or tiefe_punkttest < 0:
             raise ValueError("tiefe und tiefe_punkttest muessen >= 0 sein")
         if not 0.0 <= alpha < 1.0:
@@ -63,6 +67,10 @@ class Zellquadratur:
         self.punkttest_orte: list[tuple[np.ndarray, float]] = []     # Mitte und Radius der Rueckfall-Blaetter
         self.momentfitting = MOMENTFITTING_STANDARD if momentfitting is None else bool(momentfitting)
         self.fit_grad = int(fit_grad) if fit_grad is not None else fit_grad_standard(p)
+        self.huellen_exakt = HUELLEN_EXAKT_STANDARD if huellen_exakt is None else bool(huellen_exakt)
+        self._hat_huelle = any(hasattr(f, "dreiecke_ecken") for f in gitter.geometrie.grundformen()) if hasattr(gitter.geometrie, "grundformen") else False
+        if self.huellen_exakt and self._hat_huelle:
+            self.statistik.update({"huellenzellen": 0, "huellenzellen_leer": 0})
         if self.momentfitting:
             self.statistik.update({"fit_grad": self.fit_grad, "fit_zellen": 0, "fit_nnls": 0, "fit_rueckfall": 0,
                                    "fit_min_gewicht": 1.0, "fit_neg_anteil_max": 0.0,
@@ -80,6 +88,8 @@ class Zellquadratur:
             P = lo + s * (self._X + 1.0)
             W = self._W * float(np.prod(s))
             aus = (P, W, np.ones(len(P), bool))
+        elif self.huellen_exakt and self._hat_huelle and (h := self._huellenzelle(lo, hi)) is not None:
+            aus = h
         else:
             teile: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
             self._teilbox(lo, hi, 0, teile)
@@ -93,6 +103,50 @@ class Zellquadratur:
                     aus = self._fitten(lo, hi, aus)
         self._cache[c] = aus
         return aus
+
+    def _huellenzelle(self, lo, hi):
+        """Zelle, deren Werkstoff genau eine tessellierte Huelle (oder ihr Komplement) ist: Momente ueber den Divergenzsatz,
+        Regel ueber das Moment Fitting (q = fit_grad), alpha-Punkte als ein Satz; None, wenn die Zelle nicht so einfach ist."""
+        from ..geometry.huelle import huellenmomente
+        lo = np.asarray(lo, float)
+        hi = np.asarray(hi, float)
+        s = 0.5 * (hi - lo)
+        m = lo + s
+        r = np.sqrt(3.0) * float(s[0]) * (1 + 1e-9)
+        erg = self.gitter.geometrie.huellenzelle(m, r)
+        if erg is None:
+            return None
+        huelle, vz = erg
+        q = self.fit_grad
+        # alle Dreiecke der Saeule x >= x_lo in der y-z-Scheibe der Zelle: die Formel summiert ueber den ganzen Rand der Huelle,
+        # Teile rechts der Zelle tragen den vollen x-Integralwert (geometry/huelle.py); eine Kugelabfrage faende sie nicht
+        D = huelle.dreiecke_ecken[huelle.in_box(np.array([lo[0], lo[1], lo[2]]), np.array([np.inf, hi[1], hi[2]]))]
+        mu = huellenmomente(D, lo, hi, q)
+        if vz < 0:
+            # Werkstoff = Zelle minus Huelle: Momente der ganzen Zelle (Tensor-Gauss, exakt) minus die der Huelle
+            from .basis import legendre_1d
+            X, W = gauss_3d(q + 1)
+            Na, _ = legendre_1d(q, X[:, 0])
+            Nb, _ = legendre_1d(q, X[:, 1])
+            Nc, _ = legendre_1d(q, X[:, 2])
+            mu = np.einsum("p,pa,pb,pc->abc", W * float(np.prod(s)), Na, Nb, Nc, optimize=True) - mu
+        st = self.statistik
+        st["huellenzellen"] += 1
+        volumen = float(mu[0:2, 0:2, 0:2].sum())                   # Konstante = (N_0 + N_1)^3
+        if volumen <= 1e-12 * float(np.prod(hi - lo)):
+            st["huellenzellen_leer"] += 1
+            if self.alpha > 0:
+                Pa, Wa = self._box(lo, s)
+                return Pa, self.alpha * Wa, np.zeros(len(Pa), bool)
+            return np.zeros((0, 3)), np.zeros(0), np.zeros(0, bool)
+        X, _ = gauss_3d(q + 1)
+        w = (1.0 - self.alpha) * gewichte_kronecker(mu, q)
+        P = lo + s * (X + 1.0)
+        if self.alpha > 0:
+            Pa, Wa = self._box(lo, s)
+            return (np.concatenate([P, Pa]), np.concatenate([w, self.alpha * Wa]),
+                    np.concatenate([np.ones(len(P), bool), np.zeros(len(Pa), bool)]))
+        return P, w, np.ones(len(P), bool)
 
     def _fitten(self, lo, hi, referenz):
         """Werkstoffteil der Referenzregel durch die gefittete Regel ersetzen, alpha-Teil durch einen Satz."""

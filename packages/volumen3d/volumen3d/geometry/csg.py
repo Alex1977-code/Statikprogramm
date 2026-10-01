@@ -260,7 +260,7 @@ class Csg:
     def grundformen(self) -> list:
         return list(self._formen)
 
-    def lokale_stuecke(self, mitte, r: float, proben: np.ndarray):
+    def lokale_stuecke(self, mitte, r: float, proben: np.ndarray, ohne=None):
         """Lokale Beschreibung des Werkstoffs in der Kugel um ``mitte`` mit Radius r als
         disjunkte konvexe Stuecke (Listen von Halbraeumen, Box implizit), oder None.
 
@@ -277,6 +277,10 @@ class Csg:
         mitte = np.asarray(mitte, float).reshape(3)
         alle: list = []
         _mit_vorzeichen(self.wurzel, 1, alle)
+        if ohne is not None and hasattr(ohne, "dreiecke_ecken"):
+            # Flaechenpolygon auf einer Facette dieser Huelle: die Huelle selbst clippt es nicht (es liegt auf ihr), nur die
+            # anderen Formen - ihre eigenen lokalen Ebenen (bei gemischter Lage unloesbar: Theorie 11.15) entfallen (Plan TP 5 B6)
+            return self._stuecke_ohne(ohne, mitte, r, proben, alle)
         proben = np.asarray(proben, float).reshape(-1, 3)
         tol = 1e-9 * max(r, 1e-12)
         # ein Aufruf je Grundform fuer Mitte und Proben zusammen; der Gesamtabstand an den Proben
@@ -336,6 +340,71 @@ class Csg:
             return stuecke, gekruemmt, aktive
         return self._baum_stuecke(mitte, r, proben, alle, d_m, d_alle, aktiv, d_ist, tol)
 
+    def _stuecke_ohne(self, huelle, mitte, r, proben, alle):
+        """Stuecke fuer ein Polygon auf einer Facette der Huelle: die Huelle selbst gilt als voll (das Polygon liegt auf ihr),
+        die anderen Formen entscheiden ueber den Baum, welcher Teil des Polygons wirklich Rand des Werkstoffs ist - im Schnitt
+        bleibt, was in den anderen Formen liegt; in einer Vereinigung faellt weg, was andere Glieder ueberdecken; als Loch
+        (subtrahiert) bleibt, wo der erste Operand Werkstoff hat. Ohne andere aktive Form ist das Stueck die ganze Kugel."""
+        proben = np.asarray(proben, float).reshape(-1, 3)
+        andere = [(f, s) for f, s in alle if f is not huelle]
+        if not andere:
+            return [[]], False, []
+        punkte = np.concatenate([mitte[None], proben])
+        d_formen = {id(f): f.abstand(punkte) for f, _ in andere}
+        d_m = np.array([float(d_formen[id(f)][0]) for f, _ in andere])
+        aktiv = np.abs(d_m) <= r
+        if not aktiv.any():
+            return [[]], False, []
+        info = {id(f): (float(dm), d_formen[id(f)][1:], bool(a)) for (f, _), dm, a in zip(andere, d_m, aktiv)}
+        aktive: list = []
+
+        def teile(k):
+            """(Stuecke, enthaelt die Huelle); None, wenn eine Form nicht darstellbar ist."""
+            if isinstance(k, Operation):
+                kinder = [teile(t) for t in k.teile]
+                if any(c is None for c in kinder):
+                    return None
+                mit = [i for i, (_, h) in enumerate(kinder) if h]
+                if k.op == "schnitt":
+                    acc: list[Halbraeume] = [[]]
+                    for c, _ in kinder:
+                        acc = _mit_teilen_schneiden(acc, c)
+                    return acc, bool(mit)
+                if k.op == "vereinigung":
+                    if mit:
+                        acc = list(kinder[mit[0]][0])
+                        for i, (c, _) in enumerate(kinder):
+                            if i != mit[0]:
+                                acc = _teile_subtrahieren(acc, c)
+                        return acc, True
+                    acc, bisher = [], []
+                    for c, _ in kinder:
+                        t = list(c)
+                        for g in bisher:
+                            t = _teile_subtrahieren(t, g)
+                        acc += t
+                        bisher.append(c)
+                    return acc, False
+                acc = list(kinder[0][0])                        # differenz: erster Operand minus die Loecher
+                for i, (c, h) in enumerate(kinder[1:], start=1):
+                    if h:
+                        continue                                # das Loch, auf dessen Wand das Polygon liegt, nimmt nichts weg
+                    acc = _teile_subtrahieren(acc, c)
+                return acc, bool(mit)
+            if k is huelle:
+                return [[]], True
+            dm, d, a = info[id(k)]
+            if not a:
+                return ([[]] if dm < 0 else []), False
+            if not any(k is f for f in aktive):
+                aktive.append(k)
+            t = _form_teile(k, mitte, r, proben, d)
+            return (None if t is None else (t, False))
+        erg = teile(self.wurzel)
+        if erg is None:
+            return None
+        return BaumStuecke(erg[0]), any(f.gekruemmt for f in aktive), aktive
+
     def _baum_stuecke(self, mitte, r, proben, alle, d_m, d_alle, aktiv, d_ist, tol):
         """Stuecke ueber den CSG-Baum selbst, fuer verschachtelte Baeume, die keins der beiden flachen Muster
         erfuellen - etwa eine Vereinigung, deren Teile Schnitte sind (Kehlnaht = Quader ∩ Halbraum am T-Stoss;
@@ -393,6 +462,70 @@ class Csg:
             if np.any(drin[klar] != (d_ist[klar] < 0).astype(int)):
                 return None
         return BaumStuecke(stuecke), gekruemmt, aktive
+
+    def huellenzelle(self, mitte, r: float):
+        """Ist der Werkstoff in der Kugel (mitte, r) genau eine tessellierte Huelle (oder ihr Komplement)?
+
+        Liefert (huelle, vorzeichen) mit +1 (Werkstoff = Huelle ∩ Kugel) oder -1 (Werkstoff = Kugel minus Huelle), sonst None.
+        Alle anderen Grundformen muessen die Kugel ganz enthalten oder ganz ausschliessen (|d(mitte)| > r); der Baum wird dann
+        ueber den vier Werten leer, voll, Huelle, Komplement ausgewertet (Schnitt = und, Vereinigung = oder, Differenz = und nicht).
+        Grundlage der exakten Integration tessellierter Huellen (geometry/huelle.py, Plan TP 5 B6)."""
+        mitte = np.asarray(mitte, float).reshape(3)
+        huellen = [f for f in self._formen if hasattr(f, "dreiecke_ecken")]
+        if not huellen:
+            return None
+        d = {id(f): float(f.abstand(mitte[None])[0]) for f in self._formen}
+        aktiv = [f for f in self._formen if abs(d[id(f)]) <= r]
+        if len(aktiv) != 1 or not hasattr(aktiv[0], "dreiecke_ecken"):
+            return None
+        h = aktiv[0]
+        # Werte: 0 leer, 1 voll, 2 Huelle, 3 Komplement der Huelle
+        NICHT = {0: 1, 1: 0, 2: 3, 3: 2}
+
+        def und(a, b):
+            if a == 0 or b == 0:
+                return 0
+            if a == 1:
+                return b
+            if b == 1:
+                return a
+            return a if a == b else 0                           # Huelle ∩ Komplement = leer
+
+        def oder(a, b):
+            if a == 1 or b == 1:
+                return 1
+            if a == 0:
+                return b
+            if b == 0:
+                return a
+            return a if a == b else 1                           # Huelle ∪ Komplement = voll
+
+        def wert(k):
+            if isinstance(k, Operation):
+                w = [wert(t) for t in k.teile]
+                if k.op == "schnitt":
+                    acc = 1
+                    for x in w:
+                        acc = und(acc, x)
+                    return acc
+                if k.op == "vereinigung":
+                    acc = 0
+                    for x in w:
+                        acc = oder(acc, x)
+                    return acc
+                acc = w[0]
+                for x in w[1:]:
+                    acc = und(acc, NICHT[x])
+                return acc
+            if k is h:
+                return 2
+            return 1 if d[id(k)] < 0.0 else 0
+        v = wert(self.wurzel)
+        if v == 2:
+            return h, 1
+        if v == 3:
+            return h, -1
+        return None
 
     def dreiecke(self, facette_mm: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Dreiecke aller Grundformen innerhalb des Huellquaders; quelle = Index in grundformen()."""

@@ -1,10 +1,10 @@
 """STEP-Eingang ueber gmsh-Tessellierung (Vorgabe 3, Plan TP 5 B5, Theorie 11.15).
 
-Aufruf: python -m volumen3d.tests.test_step   (~20 s; die gmsh-Pruefungen werden ohne gmsh uebersprungen)
-Modelle: (1) Block 210 x 200 x 200 mm (x -5 bis 205) mit Bohrung r 40 laengs z durch (100, 100) fuer die Tessellierung; (2) Quader
-210 x 100 x 100 mm fuer den Vertragsweg gegen CSG (ebene Flaechen: der STL-Weg ist dort exakt und schnell). Die STEP-Dateien
-entstehen im Test mit gmsh (OpenCASCADE) selbst. Gekruemmte STEP-Flaechen durch den ganzen Vertragsweg sind nicht im Test:
-die lokale Lage unregelmaessig tessellierter Netze ist 'gemischt', der Konstruktor braucht Minuten bis Stunden (Theorie 11.15).
+Aufruf: python -m volumen3d.tests.test_step   (~20 s; die gmsh-Pruefungen werden ohne gmsh uebersprungen; der Block mit Bohrung
+durch den Vertragsweg nur mit VOLUMEN3D_LANG=1, ~40 s)
+Modelle: (1) Block 210 x 200 x 200 mm (x -5 bis 205) mit Bohrung r 40 laengs z durch (100, 100) fuer die Tessellierung und - seit der
+Huellenintegration ueber den Divergenzsatz (Plan TP 5 B6, Theorie 11.16) - fuer den Vertragsweg gegen CSG (K_t); (2) Quader
+210 x 100 x 100 mm fuer den Vertragsweg gegen CSG mit ebenen Flaechen. Die STEP-Dateien entstehen im Test mit gmsh (OpenCASCADE) selbst.
 """
 from __future__ import annotations
 
@@ -184,6 +184,76 @@ def test_vertragsweg_gegen_csg():
           and not any("Punkttest" in w for w in e_step.warnings), str(info))
 
 
+class _ZugGeberBlock(ZugGeber):
+    """Zug sigma_n = 100 N/mm2 am Block 200 x 200 (Querschnitt an den Schnittebenen x 0 und 200, Querdehnung um (100, 100))."""
+
+    def __init__(self):
+        super().__init__(sigma=100.0, flaeche=200.0 * 200.0)
+
+    def displacement_at(self, points, key):
+        P = np.asarray(points, float).reshape(-1, 3)
+        e = self.s / self.E
+        u = np.column_stack([e * P[:, 0], -self.nu * e * (P[:, 1] - 100.0), -self.nu * e * (P[:, 2] - 100.0)])
+        return u, np.zeros_like(u)
+
+
+def _spec_block(art, pfad, h=25.0, p=2):
+    from statik3d_contracts.coupling import CutPlane
+    from statik3d_contracts.detail import DetailModelSpec, FcmSettings, GeometrySource, GeometrySourceType
+    if art == "step":
+        geo = GeometrySource(GeometrySourceType.STEP, path=pfad, params={"tessellation_mm": 25.0, "elements_per_circle": 120})
+    else:
+        geo = GeometrySource(GeometrySourceType.CSG, params={"csg": {"typ": "differenz", "teile": [
+            {"typ": "quader", "min": [-5, 0, 0], "max": [205, 200, 200], "name": "block"},
+            {"typ": "zylinder", "p0": [100, 100, -1], "p1": [100, 100, 201], "radius": R, "name": "bohrung"}]}})
+    return DetailModelSpec(id="B", name="Block", geometry=geo, material_id="S355",
+                           cut_planes=(CutPlane(np.array([0.0, 100.0, 100.0]), np.array([-1.0, 0, 0])),
+                                       CutPlane(np.array([200.0, 100.0, 100.0]), np.array([1.0, 0, 0]))),
+                           settings=FcmSettings(base_cell_size_mm=h, p=p))
+
+
+def test_block_mit_bohrung_gegen_csg():
+    """Die offene Planpruefung aus B5 (Plan TP 5, Pruefung (3) zu B6): der Block mit Bohrung unter Zug durch den Vertragsweg, einmal als
+    STEP (N 120, 27 788 Dreiecke), einmal als CSG mit dem exakten Zylinder, gleiche Einstellungen (h 25, p 2). Gemessen am 01.10.2026:
+    K_t = max sigma_xx am Bohrungsrand / sigma_n 2,7158 (STEP) gegen 2,7190 (CSG), 0,12 % (p 3: 2,7503 gegen 2,7573, 0,25 %); Schranke
+    0,5 %. Dazu: kein Punkttest-Blatt im STEP-Lauf (vor B6 Minuten bis Stunden mit gemischter Lage), Werkstoffvolumen gleich dem
+    Volumen der Tessellierung zwischen den Schnittebenen (7 395 035,38 - 2 * 5 * 200 * 200) auf 1e-10, prepare unter 40 s.
+    Laeuft nur mit VOLUMEN3D_LANG=1 (~40 s)."""
+    if os.environ.get("VOLUMEN3D_LANG") != "1":
+        check("Block mit Bohrung STEP gegen CSG uebersprungen (VOLUMEN3D_LANG=1 setzen; gemessen K_t 0,12 % bei p 2, 0,25 % bei p 3)", True)
+        return
+    if not _gmsh_da():
+        check("Block mit Bohrung STEP gegen CSG uebersprungen: gmsh nicht installiert (pip install \"gmsh>=4.11\")", True)
+        return
+    from statik3d_contracts.model import Material, ResultKey
+    from volumen3d.api import FcmSolver
+    s = FcmSolver()
+    mat = Material("S355", "S355", 210000.0, 0.3, fy=355.0)
+    kt, vol, st, dauer = {}, {}, {}, {}
+    with tempfile.TemporaryDirectory() as tmp:
+        pfad = os.path.join(tmp, "block.step")
+        block_step(pfad)
+        v_tess = _volumen(__import__("volumen3d.geometry.step", fromlist=["tesselliere"]).tesselliere(pfad, 25.0, 120)[0])
+        for art in ("csg", "step"):
+            t = time.perf_counter()
+            disc = s.prepare(_spec_block(art, pfad), mat)
+            dauer[art] = time.perf_counter() - t
+            e = s.solve(disc, _ZugGeberBlock(), [ResultKey("LF1")])[0]
+            P = e.surface_points
+            am_rand = np.hypot(P[:, 0] - 100.0, P[:, 1] - 100.0) < R + 0.5
+            kt[art] = float(e.stress[am_rand, 0].max()) / 100.0
+            vol[art] = float(disc.problem.quadratur.volumen())
+            st[art] = dict(disc.problem.quadratur.statistik)
+    dk = abs(kt["step"] / kt["csg"] - 1)
+    v_soll = v_tess - 2 * 5.0 * L_Y * L_Z
+    check(f"Block mit Bohrung (h 25, p 2): K_t STEP {kt['step']:.4f} gegen CSG {kt['csg']:.4f}, Abweichung {dk * 100:.2f} % (< 0,5 %)",
+          dk < 5e-3, f"prepare {dauer['csg']:.0f} s CSG, {dauer['step']:.0f} s STEP")
+    check(f"STEP-Lauf: kein Punkttest-Blatt, {st['step'].get('huellenzellen')} Huellenzellen, Volumen = Tessellierung zwischen den Schnittebenen "
+          f"(relativ {abs(vol['step'] / v_soll - 1):.1e} < 1e-10), prepare {dauer['step']:.0f} s (< 40 s)",
+          st["step"]["blaetter_punkttest"] == 0 and st["step"].get("huellenzellen", 0) > 0 and abs(vol["step"] / v_soll - 1) < 1e-10
+          and dauer["step"] < 40.0, f"{vol['step']:.3f} gegen {v_soll:.3f}")
+
+
 def test_integrationswarnung():
     """Die Warnung der Integrationsordnung: stille Zaehler -> keine Meldung, Blaetter im Punkttest oder Flaechenstuecke im Rueckfall -> Meldung mit
     beiden Zahlen und dem Hinweis auf STL/STEP (reine Funktion, Plan TP 5 B5)."""
@@ -254,4 +324,4 @@ def test_fehler():
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_tessellierung, test_vertragsweg_gegen_csg, test_integrationswarnung, test_fehler]))
+    sys.exit(lauf([test_tessellierung, test_vertragsweg_gegen_csg, test_block_mit_bohrung_gegen_csg, test_integrationswarnung, test_fehler]))

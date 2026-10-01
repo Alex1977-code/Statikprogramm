@@ -438,6 +438,15 @@ zehnmal schneller als die exakte numba-Summe. (5) Alle Suiten grün, mypy, lint-
 *Regel.* Die Hüllenintegration ersetzt für Hüllenformen die Zerlegung an lokalen Ebenen, wenn (1) bis (3) halten; der Windungszahl-Baum
 wird Vorgabe ab 20 000 Facetten, wenn (4) hält; sonst bleiben beide Schalter mit Vorgabe aus.
 
+**Ergebnis B6 (01.10.2026, Theorie 11.16):** (1) hält auf 10⁻¹⁵ (Stammfunktionen 3,3·10⁻¹⁶; Würfel, gedrehter Würfel, L-Prisma, Hülle gleich Zellbox ≤ 1,4·10⁻¹⁵).
+(2) STL-Suite grün mit unveränderten Werten; Lamé aus STL 44 s statt 78 s, die Suite 48 s statt rund 3 min. (3) Block mit Bohrung N 120 bei h 25: Konstruktor 26,8 s (p 3; vorher 388 s),
+alle 573 Schnittzellen Hüllenzellen ohne Punkttest, Volumen = Tessellierung auf 2,2·10⁻¹⁶; durch den Vertragsweg gegen CSG K_t 0,12 % (p 2) und 0,25 % (p 3).
+(4) N 240, 107 636 Dreiecke, 100 000 Punkte: Innen/Außen-Entscheidung bei jedem β für alle Punkte gleich, Geschwindigkeit 28- bis 73-mal; die Schranke |Δw| < 10⁻³
+hält mit dem im Plan genannten β 2 **nicht** (9,9·10⁻³), erst mit β 4 (2,6·10⁻⁴, 28-mal schneller) – Vorgabe darum β 4, zur Bestätigung durch den Anwender.
+(5) Kernsuite 298/298, alle 21 Paketsuiten grün (darunter Lamé 7/7, Kirsch 8/8, Kragarm 15/15, Mehrgitter 26/26), mypy, lint-imports grün. Teil 3 nicht gebaut: die Zellen an den Schnittebenen des Blocks
+treffen nur ebene Facetten, die Zeit steckt in der Oberflächenquadratur der Facetten (17 von 27 s), nicht in Ebenenzellen. Beide Schalter sind Vorgabe
+(`HUELLEN_EXAKT_STANDARD`, `WINDUNG_BAUM_AB = 20 000`).
+
 ### B7: Schale → Volumen (nur Prüfung)
 - Kopplung an ein Schalen-Globalmodell ist Sache des Providers im Hauptprogramm; hier nur ein Test mit einem
   Schalen-Provider-Stub über die Vertragsschicht.
@@ -479,7 +488,7 @@ nachgetragen.
 | B3 Hot-Spot IIW Typ a | Opus 5.5 | hoch | Geometrie der Referenzpunkte, Normbezug | erledigt: Spanne korrigiert (Anwender), Absolutwert in C1 gegen Tet10 |
 | B4 Konvergenzkurve, Protokoll | Sonnet 5 | mittel | überschaubar, baut auf B2/B3 | gebaut; Fahrplan h zuerst bis t/4 umgesetzt (Anwender), T-Stoß p 2–4 bei 2,5 mm: 111,0 → 107,4 → 107,9; Messung am Knotenblech in C1 |
 | B5 STEP über gmsh | Sonnet 5 | mittel | Anbindung einer Bibliothek | gebaut; Planprüfung K_t am gekrümmten Körper nicht erfüllt (STL-Weg zu langsam), Entscheidung offen |
-| B6 Windungszahl-Baum + Hüllenintegration | Fable 5.1 | sehr hoch | Divergenzsatz über Dreiecke, Barill-Baum, Genauigkeitsnachweis | läuft: Verfahren und Regeln festgelegt |
+| B6 Windungszahl-Baum + Hüllenintegration | Fable 5.1 | sehr hoch | Divergenzsatz über Dreiecke, Barill-Baum, Genauigkeitsnachweis | erledigt: (1)–(3) halten, Block N 120 388 → 26,8 s, K_t 0,12 %; Baum mit β 4 statt 2 (Entscheidung Anwender) |
 | B7 Schale → Volumen (Prüfung) | Sonnet 5 | mittel | Test über bestehende Schnittstelle | offen |
 | C1 Knotenblech-Abnahme | Opus 5.5 | hoch | Modellbau und Nachweis gegen Referenz | offen |
 | C2 Zweite Sicht | Fable 5.1 | hoch | unabhängig von der Umsetzung, tiefste Prüfung | offen |

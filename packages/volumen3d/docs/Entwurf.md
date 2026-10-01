@@ -817,6 +817,13 @@ Plan: `docs/plaene/2026-09-28-tp4-mehrgitter.md`. Messlatte aus Teilprojekt 3: J
   `tessellation_mm`/`elements_per_circle`, Einheit nach mm, Protokoll `step_tessellation`; Tessellierung gegen die Formel (Bohrung N 120 +0,0047 %), STEP-Quader
   durch den Vertragsweg gleich CSG. Befund: gekrümmte unstrukturierte Tessellierungen sind im STL-Weg langsam (N 16 Block mit Bohrung 206 s, CSG-Block 4,6 s) und nur erster
   Ordnung; Warnung `_integrationswarnung`, Abhilfe (Integration über die Dreiecke) beim Anwender.
+- **B6, Hüllenintegration und Windungszahl-Baum (01.10.2026, Theorie 11.16):** `geometry/huelle.py` integriert tessellierte Hüllen je Zelle exakt über den
+  Divergenzsatz (Momente der Tensor-Legendre-Basis in geschlossener Form, keine lokalen Ebenen, kein Punkttest; `Csg.huellenzelle` wertet den Baum über
+  {leer, voll, Hülle, Komplement} aus, Flächenpolygone auf Facetten clippen nur die anderen Formen). Block mit Bohrung N 120 h 25 p 3: Konstruktor 388 → 26,8 s,
+  Volumen = Tessellierung auf 2e-16, kein Punkttest; durch den Vertragsweg K_t gegen CSG 0,12 % (p 2) und 0,25 % (p 3) – die offene Prüfung aus B5.
+  `geometry/windung.py`: Barill-Baum mit exakten Dreiecksmomenten bis zweiter Ordnung auf der BVH, Vorgabe ab 20 000 Facetten für `Stl.innen`; N 240 (107 636
+  Dreiecke), 100 000 Punkte: gleiche Entscheidung, |Δw| 2,6e-4, 28-mal schneller mit β 4 (β 2 aus dem Plan: 9,9e-3, Schranke 1e-3 verfehlt). Teil 3
+  (Ebenen durch den gekrümmten Teil einer Hülle) nicht gebaut, weil die Zellen an den Schnittebenen nur ebene Facetten treffen.
 - Fünf Schnittlagen Kirsch h 10 p 3 verfeinert (128 724 bis 199 095 freie Koordinaten), GPU FP64:
   81 / 125 / 112 / 129 / 59 Iterationen, GPU-PCG 8,6 bis 21 s, K_t identisch mit dem Direktlöser;
   Direktlöser (Lösen nach der Faktorisierung) 7 bis 25 s. Einrichten auf der CPU: Zelldaten 17–24 s,
