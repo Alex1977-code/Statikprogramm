@@ -2743,8 +2743,13 @@ class MainWindow(QtWidgets.QMainWindow):
             # Flaeche, Volumen oder Linie - und die Auswahlart folgt ihm.
             if self._objekt_unter_zeiger_waehlen():
                 return
-        if p is None:
-            # Klick ins Leere: alles abwaehlen
+        if p is None or (i < 0 and fangart == "raster" and not maske_will_punkt):
+            # Klick ins Leere: alles abwaehlen. Ein gefangener Rasterpunkt
+            # zaehlt dazu, solange keine Maske einen Punkt erwartet (02.10.2026):
+            # der Rasterfang ist von Anfang an an, und fast jeder Klick ins
+            # Leere traf einen Rasterpunkt - die Auswahl blieb stehen, die
+            # Statuszeile sagte nur „Gefangen: raster“. Aufgefallen beim
+            # Zusammenfuehren der Pakete 5, 6b und 7 (andere Bildgeometrie)
             return self._klick_ins_leere()
         if i < 0:
             # Kantenmitte oder Rasterpunkt: erst wenn eine Maske einen Punkt

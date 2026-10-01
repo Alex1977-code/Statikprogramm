@@ -3899,6 +3899,16 @@ def main():
         check("kurzer Klick ins Leere hebt die Auswahl auf und beginnt kein Fenster (16.09.2026)",
               w._fenster_ecke is None and len(w.selection) == 0,
               f"Fenster {w._fenster_ecke}, Auswahl {w.selection}")
+        # Gezielt auf einen Rasterpunkt (Rasterfang an, keine Maske erwartet
+        # einen Punkt): auch das ist ein Klick ins Leere (02.10.2026). Bis dahin
+        # hing die Pruefung oben davon ab, ob ihr Klick zufaellig einen
+        # Rasterpunkt traf - dann blieb die Auswahl stehen.
+        xr_, yr_ = px(np.array([-0.5, -0.5, 0.0]))
+        w.selection = np.array([k0], int)
+        klick_bei(xr_, yr_)
+        check("Klick auf einen Rasterpunkt ohne Maske, die einen Punkt erwartet, hebt die Auswahl auf",
+              "raster" in w.fang_arten and w._fenster_ecke is None and len(w.selection) == 0,
+              f"Fang {w.fang_arten}, Auswahl {w.selection}")
         qt_ = lambda x, y: QtCore.QPoint(int(round(x / s_)), int(round(h_qt - 1 - y / s_)))
         w._fenster_beginnen(qt_(xa, ya))
         w._fenster_abschliessen(qt_(xb, yb))
