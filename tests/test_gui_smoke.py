@@ -3061,11 +3061,14 @@ def main():
               and "Abmessungen" in w.lbl_modellangaben.text(),
               f"{w.eingaben_dock.windowTitle()} {angaben.get('Knoten')}")
         from statik3d.gui import symbole as symq
-        check("Auswahlart als Knöpfe in der Glasleiste, auch „Netz“",
-              all(f"auswahl_{a}" in w.glasleiste.knoepfe for a in w.AUSWAHLARTEN)
+        # seit 25.09.2026 (Paket 7) die Eintraege des Menueknopfs „Klick wählt ▾“
+        klick_ = w.glasleiste.menues["klickart"].menu().actions()
+        check("Auswahlart in der Glasleiste (Menü „Klick wählt“), auch „Netz“",
+              all(w.glasleiste.eintraege.get(f"auswahl_{a}") is w.act_auswahlart[a]
+                  and w.act_auswahlart[a] in klick_ for a in w.AUSWAHLARTEN)
               and set(w.act_auswahlart) == set(w.AUSWAHLARTEN)
               and "Netz" in w.AUSWAHLARTEN and symq.hat_zeichnung("fang_netz"),
-              str([k for k in w.glasleiste.knoepfe if k.startswith("auswahl_")]))
+              str([k for k in w.glasleiste.eintraege if k.startswith("auswahl_")]))
         w.auswahlart_setzen("Netz")
         check("Auswahlart Netz schaltet den Knopf, die anderen aus",
               w.auswahlart == "Netz" and w.act_auswahlart["Netz"].isChecked()
@@ -5498,11 +5501,17 @@ def main():
 
         # Glasleiste: Symbole mit Text beim Ueberfahren, mittig, ohne "Alles holen"
         kn = w.glasleiste.knoepfe
-        check("Glasleiste: Darstellung, Sichtbarkeit, Sicht, Fang und Auswahlart als Knöpfe",
-              all(k in kn for k in ("Voll", "Drahtmodell", "knoten", "staebe", "flaechen",
-                                    "volumen", "netz", "auswahl_weg", "nur_auswahl", "ausblenden",
-                                    "zurueck", "alles", "fang", "auswahl_Knoten",
-                                    "auswahl_Volumen", "auswahl_Netz")), str(sorted(kn)))
+        # Seit 25.09.2026 (Paket 7): Darstellung, Sichtbarkeit und Auswahlart
+        # als Eintraege der Menueknoepfe, Sicht/Fang/Deselektieren als Knoepfe
+        ein_ = w.glasleiste.eintraege
+        men_ = {k: b.menu().actions() for k, b in w.glasleiste.menues.items()}
+        check("Glasleiste: Darstellung, Sichtbarkeit, Auswahlart als Menüs, Sicht und Fang als Knöpfe",
+              all(k in kn for k in ("auswahl_weg", "nur_auswahl", "ausblenden", "zurueck", "alles", "fang"))
+              and all(k in ein_ for k in ("Voll", "Drahtmodell", "knoten", "staebe", "flaechen",
+                                          "volumen", "netz", "auswahl_Knoten", "auswahl_Volumen",
+                                          "auswahl_Netz"))
+              and ein_["Voll"] in men_["darstellung"] and ein_["knoten"] in men_["zeigen"]
+              and ein_["auswahl_Netz"] in men_["klickart"], str(sorted(kn)) + str(sorted(ein_)))
         check("„Alles deselektieren“ steht in der Glasleiste und nicht mehr im Schnellzugriff",
               kn["auswahl_weg"].defaultAction() is w.act_auswahl_weg
               and w.act_auswahl_weg.text() == "Alles deselektieren"
@@ -5513,13 +5522,14 @@ def main():
                   and b.toolButtonStyle() == QtCore.Qt.ToolButtonIconOnly
                   for b in kn.values()),
               str([k for k, b in kn.items() if b.icon().isNull() or not b.toolTip()]))
-        # Lager ein- und ausblendbar, in der Leiste zwischen Volumen und Netz (12.09.2026)
-        reihe = list(kn)
-        check("Glasleiste: Schalter „Lager“ zwischen Volumen und FE-Netz, Aktion des Ribbons",
-              "lager" in kn and reihe.index("lager") == reihe.index("volumen") + 1
-              and reihe.index("netz") == reihe.index("lager") + 1
-              and kn["lager"].defaultAction() is w.act_lager and w.act_lager.isChecked(),
-              str(reihe))
+        # Lager ein- und ausblendbar, in der Leiste zwischen Volumen und Netz
+        # (12.09.2026) - seit 25.09.2026 im Menü „Zeigen ▾“
+        reihe = men_["zeigen"]
+        check("Glasleiste: Schalter „Lager“ zwischen Volumen und FE-Netz (Menü „Zeigen“), Aktion des Ribbons",
+              w.act_lager in reihe and reihe.index(w.act_lager) == reihe.index(w.act_volumen) + 1
+              and reihe.index(w.act_edges) == reihe.index(w.act_lager) + 1
+              and ein_["lager"] is w.act_lager and w.act_lager.isChecked(),
+              str([a.text() for a in reihe]))
         if not w.model.supports:
             w.model.support(0, [0, 1, 2], name="Probe")
         w.act_lager.setChecked(False); w.redraw()
@@ -6872,8 +6882,9 @@ def main():
         m_.add_line_support([0, 1, 2, 3], uz=dict(typ="rigid"))
         m_.add_surface_support([e1_, e2_], uz=dict(typ="spring", stiffness=5e7, failure="zug"))
         w.refresh_all(); app.processEvents()
-        check("Auswahlart „Lager“ in der Glasleiste mit Symbol",
-              "Lager" in w.AUSWAHLARTEN and "auswahl_Lager" in w.glasleiste.knoepfe
+        check("Auswahlart „Lager“ in der Glasleiste (Menü „Klick wählt“) mit Symbol",
+              "Lager" in w.AUSWAHLARTEN and w.glasleiste.eintraege.get("auswahl_Lager") is w.act_auswahlart["Lager"]
+              and w.act_auswahlart["Lager"] in w.glasleiste.menues["klickart"].menu().actions()
               and not w.act_auswahlart["Lager"].icon().isNull())
         sym_ = [vp_.lager_symbol(s) for s in m_.supports]
         check("Lagersymbole: Einspannung Würfel, Gelenk Pyramide mit Kugel, Rolle mit Gleitebene in x, "
@@ -6890,7 +6901,7 @@ def main():
         w._lagerdichte_geschoben(20); app.processEvents()
         n2_ = len(vp_.lager_punkte(m_, m_.surface_supports[0], m_.characteristic_size(), w.lagerdichte)[0])
         w.lagerdichte_zuruecksetzen()
-        check("Lagerdichte 2,0 verdichtet die Symbole (Schieber im Register Ansicht)",
+        check("Lagerdichte 2,0 verdichtet die Symbole (Schieber in der Maske „Darstellung“)",
               n2_ > 2 * n1_ and w.lagerdichte == 1.0 and w.sl_lagerdichte.value() == 10, str((n1_, n2_)))
         w.auswahlart_setzen("Lager")
         w._picked([0.0, 0.0, 0.0]); app.processEvents()
@@ -7688,8 +7699,14 @@ def main():
         p_dicht = _lagerpunkte()
         check("Schieber „Dichte“ zeichnet sofort neu: mehr Symbole im Bild",
               w.lagerdichte == 3.0 and p_dicht > 2 * p_duenn > 0, f"{p_duenn} -> {p_dicht} Punkte")
-        check("Schieber „Lager“ (Größe) steht daneben",
-              w.sl_lager.isVisibleTo(w) or w.sl_lager.parent() is not None)
+        # seit 25.09.2026 (Paket 7) stehen beide Schieber in der Maske „Darstellung“
+        mk_d = w.maske_darstellung(); app.processEvents()
+        sl_d = [s_ for s_ in mk_d.findChildren(QtWidgets.QSlider)]
+        check("Schieber „Lagergröße“ steht daneben (Maske „Darstellung“)",
+              w.sl_lager.parent() is not None and len(sl_d) == 2
+              and sl_d[0].value() == w.sl_lager.value() and sl_d[1].value() == w.sl_lagerdichte.value(),
+              str([s_.value() for s_ in sl_d]))
+        w.maskenrand.schliessen(); app.processEvents()
         w.lagerdichte_zuruecksetzen()
         app.processEvents()
         check("Lagerdichte zurücksetzen: 1,0 und Schieber auf 10",

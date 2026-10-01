@@ -983,9 +983,12 @@ class Modellbaum(QtWidgets.QTreeWidget):
 
         # Der Zweig steht immer (16.09.2026, „im Modellbaum muessen auch Gelenke
         # sein"): ohne Gelenke bietet er das Anlegen an, wie die Kontakte.
+        # Weg nachgezogen 25.09.2026: „Gelenke setzen…“ hat im Register
+        # Struktur keinen Knopf mehr (Paket 7)
         gk = self._zweig(wurzel, "Gelenke", len(model.hinges), "gelenke",
                          hinweis="Stabendgelenke: je Freiheitsgrad biegesteif, gelenkig oder Feder; "
-                                 "gesetzt an Stabelementen (Register Struktur → Gelenke setzen).")
+                                 "gesetzt an Stabelementen (Kontextregister „Auswahl“ → Gelenke, "
+                                 "oder Befehlssuche „Gelenke setzen“).")
         self._liste(gk, [(name, ", ".join(["ux", "uy", "uz", "φx", "φy", "φz"][d % 6]
                                           for d in h.released()) or "starr",
                           name, f"{name}: freigegeben {h.released()}")

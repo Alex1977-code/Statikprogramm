@@ -89,18 +89,53 @@ Vierzehn Register nach Arbeitsschritt:
 | **Datei** | Neu, Öffnen, Speichern, Projektangaben, **Modell leeren (Eigenschaften behalten)…**, Übernehmen aus fremden Formaten, Exportieren, **Beispiel öffnen ▾** (die acht Beispiele in einem Knopf) |
 | **Start** | Auswahl, Modellprüfung, doppelte Knoten, freie Stabenden anschließen, Berechnen |
 | **Unterlagen** | **Dateien** (Datei hinzufügen: PDF, Bild, Word, Excel …; Unterlage öffnen; Entfernen), **Ansichten** (Ansicht aufnehmen, Skizze aus Ansicht), **Skizze** (Neue Skizze, Bearbeiten), **Bericht** (In den Bericht, Unterlagen zeigen) — seit 16.09.2026, siehe *Unterlagen* |
-| **Geometrie** | Knoten, Linien, **Ändern** (Verschieben, Kopieren, Drehen, Spiegeln der Auswahl), **Konstruktion** (Lot / Projektion), Auswahlart in der Ansicht, Koordinatensysteme, Arbeitsebene und Fang (auch „Lot“) |
-| **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, Stabzug, Stäbe für Nachweise, automatisch erkennen, Querschnitt zuweisen), **Flächen** (Schale, Fläche aus Linien, Rechteckplatte, vernetzen, verschneiden, Dicke zuweisen), **Volumen** (Volumen aus Flächen, Quader, vernetzen), **Gelenke** (Gelenk anlegen, Gelenke setzen, Tabelle), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
+| **Geometrie** | **Knoten / Linien** (Knoten, Linie, Knoten löschen, Linie aus Knoten), **Ändern** (Verschieben, Kopieren, Drehen, Spiegeln der Auswahl), **Konstruktion** (Lot / Projektion, Spalt / Toleranz), Auswahlart in der Ansicht, Koordinatensysteme, Arbeitsebene, **Fang** (Hauptschalter F3 und *Fangarten ▾*, auch „Lot“) |
+| **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, Stabzug, *Nachweisstäbe ▾*: Stäbe für Nachweise, automatisch erkennen), **Flächen** (Schale, Fläche aus Linien, Rechteckplatte, verschneiden), **Volumen** (Volumen aus Flächen, Quader), **Gelenke** (Gelenk anlegen), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
 | **Lager / Kontakt** | Knoten-, Linien-, Flächenlager, Nichtlinearität, Kontakt (mit *Alle Kontakte löschen…*), Anschlüsse (anlegen, zeigen, löschen) |
-| **Lasten** | Lastfälle, Kombinationen, Lastfälle nach DIN 19704, Knoten-, Stab-, Flächen-, Temperaturlast, Zwangsverformung, Vorspannung, Eigengewicht, Generierer Wasserdruck und Wind |
+| **Lasten** | Lastfälle, Kombinationen, Lastfälle nach DIN 19704, Knoten-, Stab-, Flächen-, Temperaturlast (groß), Zwangsverformung, Vorspannung, Übermaß, Spiel geben, Passung (klein), Eigengewicht, Generierer Wasserdruck und Wind |
 | **Netz** | Vernetzen (Flächen und Volumen), Netzeinstellungen (**Elemente Entwurf / Mittel / Fein**, Netzdichte, Elementform, intelligente Anpassung), **Elementübersicht**, Netzqualität, **Netzknoten** (Schalter), Netz löschen, Kontaktfugen |
 | **Berechnung** | Berechnen (F5), einzelner Lastfall, Eigenschwingungen, Knicken, alle Stellungen, DIN 19704, Einstellungen, Bedienung im Browser |
-| **Nachweise** | EC3, Ermüdung, Verformung (GZG), Beulen (EC3-1-5/-1-6), Lasteinleitung, Konfiguration |
-| **Ergebnisse** | Ergebniswahl und die Tabellen |
+| **Nachweise** | EC3, Ermüdung, Schweißnähte, Kerbfälle, Konfiguration, Knicklängen, Schwingung; je Nachweisobjekt ein Knopf mit Menü **Neu \| Ändern \| Löschen \| Tabelle**: *Verformung ▾* (GZG), *Beulfeld ▾*, *Volumenbereich ▾*, *Lasteinleitung ▾* |
+| **Ergebnisse** | Ergebniswahl, Werte im Bild, Werteskala, Tabelle ausgeben (die Tabellen selbst: Reiter unten oder Befehlssuche) |
 | **Bericht** | Statischer Bericht, Ansicht übernehmen, **Lastenheft** (anzusetzende Einwirkungen nach DIN 19704/ZTV-ING mit Hintergrund, Ansatz und Skizzen) |
-| **Ansicht** | Blickrichtungen, Darstellungsart (Voll, Transparent, Hidden-Line, Drahtmodell), FE-Netz, Knoten, Nummern, Lasten, Stäbe farbig, Lagergröße und Lagerdichte, Einheiten |
+| **Ansicht** | Isometrisch, *Richtung ▾* (XY, XZ, YZ, Rückseite), Zoom alles; *Darstellung ▾* (Voll, Transparent, Hidden-Line, Drahtmodell, **Symbolgrößen…** = Maske „Darstellung“ mit Lagergröße und Lagerdichte); *Anzeigen ▾* (FE-Netz, Knoten, Linien, Stäbe, Flächen, Volumen, Lager, Lasten, Lastwerte, Stäbe farbig …); *Nummern ▾*; *Sicht ▾* und Schnittebene; Layer; Einheiten |
 | **Messen** | Abstand, Winkel, Koordinaten, Fläche eines Polygons, Länge/Fläche der Auswahl; Bemaßung (Linearmaß, Maßkette, Höhenkote, Winkelmaß, Radius) mit Einstellungen |
 | **Extras** | Handbücher, Info, Update |
+
+**Jedes Register passt auf den Bildschirm** (seit 25.09.2026). Bis dahin
+brauchte *Ansicht* mit 40 Einzelknöpfen 3363 px, *Nachweise* 2184 px,
+*Geometrie*, *Struktur* und *Lasten* 1415 bis 1760 px — bei 1366 px
+Fensterbreite waren die Beschriftungen gekürzt („Na…C3“, „F…z“). Jetzt
+steht eine Schar gleichartiger Schalter in **einem Knopf mit Menü**
+(*Anzeigen ▾*, *Nummern ▾*, *Darstellung ▾*, *Fangarten ▾*), und je
+Nachweisobjekt gibt es einen großen Knopf mit dem Menü
+**Neu | Ändern | Löschen | Tabelle**. In der Befehlssuche heißen die Einträge
+weiter wie vorher („Beulfeld ändern…“, „Tabelle Beulfelder“). Am breitesten
+ist *Nachweise* mit rund 1275 px bei 100 % Skalierung (Windows-Schrift) und
+1240 px bei 150 %; ein 1280 px breites Fenster hat also noch knapp Luft.
+Geprüft wird bei 1366 und 1280 px Breite (1920 px bei 150 % Skalierung) mit
+den Schriftmaßen, dass keine Beschriftung gekürzt ist
+(`tests/test_glasleiste_ribbon.py`). Aus dem Ribbon gefallen sind nur
+**Doppelungen** — die Befehlssuche findet und startet sie weiter: die Knöpfe
+„Tabelle …“ (die Tabellen haben unten ihre Reiter), *Flächen/Volumen
+vernetzen* (= *Netz → Vernetzen*) und *Querschnitt zuweisen…*, *Dicke
+zuweisen…*, *Gelenke setzen…* (sie stehen als *Zuweisen* und *Gelenke* im
+Kontextregister „Auswahl“, das mit einer Auswahl erscheint). *Elemente
+löschen* bleibt ein Knopf in *Struktur › Eigenschaften*: Befehle, die löschen,
+startet die Suche nie selbst, sie nennt den Knopf — und der muss dort stehen
+(Nachbesserung 25.09.2026). Alle Befehle und Tastenkürzel sind geblieben.
+
+**Die Registerzeile passt** auch mit dem Kontextregister „Auswahl: 12 Knoten“
+in ein 1280 px breites Fenster: die Reiter haben seit 25.09.2026 weniger
+Innenabstand (vorher brauchten alle Reiter zusammen 1371 px — bei 1280 px
+erschienen Rollpfeile, und gerade der Reiter „Auswahl“ lag dahinter).
+
+**Eingeschaltete Schalter tragen einen Haken.** Das Symbol eines
+eingeschalteten Schalters ist blau und trägt unten rechts eine blaue Plakette
+mit weißem Haken — im Ribbon, in der Glasleiste und in den Menüs. Bis zum
+25.09.2026 wurde es weiß, auf dem hellblauen Grund des eingeschalteten
+Knopfs also unsichtbar. Der blaue Knopf **Berechnen** trägt ein weißes
+Dreieck (vorher blau auf Blau); im Schnellzugriff bleibt es blau.
 
 Links in der Kopfzeile die **Schnellzugriffsleiste** (Speichern, Rückgängig,
 Wiederholen, Berechnen) — dieselben Befehle, nur schneller erreichbar;
@@ -1686,8 +1721,9 @@ Kapitel lässt sich in der Berichtsmaske abwählen.
 
 ### Darstellung in der Ansicht
 
-Vier Darstellungsarten, im Register *Ansicht* nebeneinander und auf
-**Strg+1 … Strg+4**, dazu im Rechtsklickmenü der Ansicht:
+Vier Darstellungsarten, im Register *Ansicht* im Menü *Darstellung ▾*, in
+der Glasleiste ebenso, auf **Strg+1 … Strg+4** und im Rechtsklickmenü der
+Ansicht:
 
 | Art | Taste | Bild |
 |---|---|---|
@@ -1786,8 +1822,8 @@ Transparentmodus sehe ich keine Spannungen“). Geprüft in
 
 #### Nummern: je Objektart ein Schalter
 
-Im Register *Ansicht* steht die Gruppe **Nummern** — ein Schalter je Objektart,
-jeder für sich:
+Im Register *Ansicht* steht der Menüknopf **Nummern ▾** — ein Schalter je
+Objektart, jeder für sich:
 
 | Schalter | zeigt | Farbe |
 |---|---|---|
@@ -1818,18 +1854,37 @@ dann aus, und die Statuszeile sagt, wie viele es wären. Erst ausblenden, dann
 bleiben die Nummern des Restes lesbar.
 
 **Die Glasleiste** liegt mittig oben über der Ansicht, durchscheinend, und
-trägt als Symbole die Griffe, die man beim Modellieren dauernd braucht — der
-Klartext erscheint beim Überfahren mit der Maus. Von links nach rechts:
+trägt die Griffe, die man beim Modellieren dauernd braucht — der Klartext
+erscheint beim Überfahren mit der Maus. Von links nach rechts:
 
 | Gruppe | Knöpfe |
 |---|---|
 | ganz links | **Ergebnisauswahl** — Lastfälle, Kombinationen, Umhüllende, Eigenformen: was die Ansicht zeigt; gleich dahinter **Ergebnisse zeigen / ausblenden** (Schalter, seit 24.09.2026) |
-| Darstellung | Voll, Transparent, Hidden-Line, Drahtmodell |
-| Sichtbarkeit | Knoten (der Konstruktion; Netzknoten: *Netz → Netzknoten*), Linien, Stäbe, Flächen, Volumen, **Lager**, FE-Netz, Lasten — jedes einzeln schaltbar |
-| Sicht | Selektion anzeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen, **Verborgenes im Hintergrund** (Schalter), **Intelligente Auswahl** (Schalter) |
-| Fang | Fang ein/aus (die Fangarten einzeln: Ribbon *Geometrie → Arbeitsebene*) |
-| Auswahlart | was ein Klick trifft, als Knöpfe: Knoten, Linie, Stab, Fläche, Volumen, **Netz** (einzelne Elemente), **Lager** (Knoten-, Linien- und Flächenlager), **Last** — genau einer ist gedrückt |
-| ganz rechts | **Alles deselektieren** (✕, auch Esc) — der Griff, der jede Auswahl beendet |
+| Darstellung ▾ | Menü: Voll, Transparent, Hidden-Line, Drahtmodell (Strg+1 … 4); das Symbol zeigt die gewählte Art |
+| Zeigen ▾ | Menü: Knoten (der Konstruktion; Netzknoten: *Netz → Netzknoten*), Linien, Stäbe, Flächen, Volumen, **Lager**, FE-Netz (F9), Lasten — jedes einzeln schaltbar |
+| Sicht | Selektion anzeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen, **Verborgenes im Hintergrund** (Schalter) |
+| Klick wählt: Knoten ▾ | Menü der Auswahlart — was ein Klick trifft: Knoten, Linie, Stab, Fläche, Volumen, **Netz** (einzelne Elemente), **Lager** (Knoten-, Linien- und Flächenlager), **Last**; genau eine ist an, die Beschriftung nennt sie |
+| Auswahl, Fang | **Intelligente Auswahl** (Schalter), Fang ein/aus (F3; die Fangarten: Ribbon *Geometrie → Fang → Fangarten ▾*) |
+| ganz rechts | Überlaufliste **»** (nur bei Bedarf) und **Alles deselektieren** (✕, auch Esc) — der Griff, der jede Auswahl beendet |
+
+**Nie breiter als die Ansicht** (seit 25.09.2026). Bis dahin trug die Leiste
+27 Einzelknöpfe und war 1133 px breit — bei 1002 px Ansicht (1920 × 1080) und
+448 px (1366 × 768) lagen *Alles deselektieren* und die Auswahlart „Lager“
+außerhalb des Bildes. Jetzt hat sie höchstens 12 Knöpfe neben der
+Ergebnisauswahl, und was bei einer schmalen Ansicht nicht mehr passt, wandert
+in die **Überlaufliste „»“** vor *Alles deselektieren*: zuerst die Knöpfe der
+Sicht und die Intelligente Auswahl, dann wird die Ergebnisauswahl schmaler
+(bis 120 px), dann folgen Fang, *Klick wählt*, *Darstellung*, *Zeigen* und
+*Ergebnisse* — ein Menüknopf erscheint in der Liste als Untermenü. Den Platz,
+den die weichenden Knöpfe frei machen, bekommt die Ergebnisauswahl zurück, bis
+zu ihren vollen 190 px: bei 1366 und 1536 px Fensterbreite zeigt sie so jeden
+Namen der gerechneten Halle ganz („Kombination GZT12“ statt „Kombination GZ“,
+Nachbesserung 25.09.2026). Das Untermenü *Klick wählt* in „»“ nennt die
+geltende Auswahlart („Klick wählt: Lager“) — steht der Knopf dort, ist es die
+einzige Anzeige in der Leiste. Die
+Ergebnisauswahl, „»“ und *Alles deselektieren* bleiben immer stehen. Wird die
+Ansicht wieder breiter, kehren die Knöpfe zurück. Es sind dieselben Befehle
+wie im Ribbon, mit denselben Tastenkürzeln.
 
 **Ergebnisauswahl in der Leiste.** Ganz links steht eine Aufklappliste mit
 allem, was die Ansicht zeigen kann, unter fetten Überschriften, die sich
@@ -1896,8 +1951,8 @@ dessen Schalter in der Glasleiste aus ist — mit ausgeschalteten Stäben
 wählt weder ein Klick noch ein Fenster einen Stab, mit ausgeschalteten
 Knoten keinen Knoten; die Statusleiste sagt dann, warum nichts geschieht.
 Lager an ausgeblendeten Knoten und Lasten an ausgeblendeten Teilen sind
-ebenso wenig zu treffen; mit ausgeschaltetem Schalter **Lager** (Glasleiste,
-zwischen Volumen und FE-Netz; Ribbon *Ansicht → Anzeigen*) verschwinden alle
+ebenso wenig zu treffen; mit ausgeschaltetem Schalter **Lager** (Glasleiste
+*Zeigen ▾*, zwischen Volumen und FE-Netz; Ribbon *Ansicht → Anzeigen ▾*) verschwinden alle
 Knoten-, Linien- und Flächenlager aus dem Bild und sind nicht wählbar — am
 Drehlager mit 50 Lagerflächen verdecken die Symbole sonst das Bauteil.
 
@@ -1910,7 +1965,7 @@ massiver Körper ist massiv gefüllt; am Drehlagermodell berühren allein in V31
 30 499 der 35 686 Tetraeder die Oberfläche gar nicht.
 
 Wer nachsehen will, schneidet auf: Schalter **Schnittebene** (*Ansicht →
-Sicht*), daneben die Achse (x, y, z) und ein Schieber für die Lage im
+Sicht*, neben *Sicht ▾*), daneben die Achse (x, y, z) und ein Schieber für die Lage im
 Bauteil; **Andere Seite** lässt die andere Hälfte stehen. Im Schnitt stehen
 die Tetraeder des Inneren, und Füllung, Netzdichte und Elementform sind mit
 einem Blick zu prüfen. Ausgeschaltet steht das Bauteil wieder ganz da.
@@ -1931,7 +1986,7 @@ Volumen an jeder Stelle ansehen, etwa der Spannungsverlauf durch die Wand
 einer Bohrung. Geprüft in `tests/test_gui_smoke.py` (Abschnitt Schnittebene:
 schräge Ebene durch die Mitte, aus der Ansicht, Werkzeug im Bild).
 
-Es sind dieselben Befehle wie im Ribbon (*Ansicht → Anzeigen* und *Sicht*, der Fang unter *Geometrie → Arbeitsebene*),
+Es sind dieselben Befehle wie im Ribbon (*Ansicht → Anzeigen ▾* und *Sicht ▾*, der Fang unter *Geometrie → Fang*),
 nur näher an der Maus. „Alles ins Bild" steht im Ribbon unter *Blickrichtung*
 und als **iso** unter dem Ansichtswürfel.
 
@@ -2097,7 +2152,7 @@ die Lagerart: dunkelblau fest (Einspannung), grün gelenkig (alle
 Verschiebungen gehalten), orange gleitend (eine Verschiebung frei), violett
 Feder, grau nur Verdrehungen gehalten. Ein Lager mit Ausfall, Schlupf,
 Reibung oder Grenzkraft trägt zusätzlich eine **rote Kugel** am Knoten. Der
-Schalter **Lagerbeschriftung** (Ribbon *Ansicht → Anzeigen*, neben *Lager*)
+Schalter **Lagerbeschriftung** (Ribbon *Ansicht → Anzeigen ▾*, unter *Lager*)
 schreibt an jedes Knotenlager, was es hält: „fest", „gelenkig" oder die
 gehaltenen Freiheitsgrade („uyz", „rxyz"), Federn mit „k", nichtlinear mit
 „*". Geprüft in `tests/test_supports.py` (`test_lagersymbolik`).
@@ -2112,10 +2167,15 @@ der Fläche. Eine senkrechte Lagerfläche (Knagge) sperrt damit waagerecht; das
 Protokoll des Imports nennt je Lager die Zahl der senkrechten Flächen. Ein aus RFEM übernommenes Lager kennt seine Linien bzw. Flächen
 der Geometrie; die Symbole belegen darum die ganze Fläche, auch wenn noch
 kein Netz vorliegt. Wie dicht die Symbole stehen, sagt die **Lagerdichte**:
-Schieber „Dichte" im Register *Ansicht → Symbole* (1,0 = alle 5 % der
-Modellgröße ein Symbol; die Ansicht folgt dem Schieber sofort), Rechtsklick
-in die Ansicht → „Lagerdichte…" oder auf ein Linien-/Flächenlager. Die
-**Größe** stellt der Schieber „Lager" daneben für alle zusammen ein; **ein
+Schieber „Lagerdichte" in der rechten **Maske „Darstellung“** (*Ansicht →
+Darstellung ▾ → Symbolgrößen…*; 1,0 = alle 5 % der Modellgröße ein Symbol;
+die Ansicht folgt dem Schieber sofort, *Zurücksetzen* stellt 1,0 ein),
+Rechtsklick in die Ansicht → „Lagerdichte…" oder auf ein Linien-/Flächenlager.
+Die **Größe** stellt der Schieber „Lagergröße" darüber für alle zusammen ein.
+Bis zum 25.09.2026 standen beide Schieber im Register *Ansicht → Symbole*;
+dort nahmen sie mit 666 px den Platz, der den übrigen Knöpfen des Registers
+fehlte. Die Befehle *Lagergröße zurücksetzen* und *Lagerdichte zurücksetzen*
+findet die Befehlssuche weiter. **Ein
 Rechtsklick auf ein Lagersymbol** öffnet dessen eigenes Menü mit „Größe
 dieses Lagers…", „Größe aller Lager…", „Lager bearbeiten…" (die Maske
 rechts) und „Lager löschen". Die eingestellte Größe wird mitgespeichert.
@@ -2296,8 +2356,9 @@ Ein Klick trifft, was gezeichnet ist: Stäbe auch auf ihrem Körper, Flächen
 auch auf einem Zylindermantel, Volumen auf ihrer Oberfläche (Zellenpicker
 der Grafik, in Millisekunden). Erst wenn dort nichts liegt, sucht das
 Programm geometrisch in der Nähe des Klicks. Was ein Klick trifft, sagt die
-**Auswahlart** — die Knöpfe in der Glasleiste oder das Feld im Register
-*Start*; der Modellbaum stellt sie beim Anklicken eines Zweigs passend um.
+**Auswahlart** — *Klick wählt: … ▾* in der Glasleiste oder das Feld unter
+*Geometrie → Auswahl in der Ansicht*; der Modellbaum stellt sie beim
+Anklicken eines Zweigs passend um.
 Mit der Auswahlart **Netz** trifft ein Klick ein einzelnes Element des
 FE-Netzes (Stab-, Flächen- oder Volumenelement); die gewählten Elemente
 leuchten in der Ansicht. Steht die Auswahlart auf **Knoten** und liegt unter
@@ -2432,7 +2493,7 @@ Zwangsverformungen die Verschiebung. Die **Einheiten** der gezeichneten
 Lastarten stehen oben links in eckigen Klammern unter dem Lastfall, etwa
 „[kN, kN/m, kN/m²]“ - in den Einheiten aus *Ansicht → Einheiten*
 (Vorgabe kN, kNm, kN/m, kN/m², K und mm). Der Schalter
-*Ansicht → Anzeigen → Lastwerte* blendet die Zahlen aus; die Textgröße
+*Ansicht → Anzeigen ▾ → Lastwerte* blendet die Zahlen aus; die Textgröße
 folgt den Bemaßungseinstellungen. Bei sehr vielen gleichartigen Lasten
 werden höchstens 60 je Lastart beschriftet.
 
@@ -2878,9 +2939,10 @@ Im Register **Geometrie** stehen zwei Gruppen für die Eingabehilfen - der Fang 
   **Stab** (der Fußpunkt auf der Stabachse), **Fläche** (der Punkt auf der
   Fläche oder Schale unter dem Zeiger, auch auf einem Zylindermantel),
   **Volumen** (der Punkt auf der Oberfläche eines Körpers), zuletzt der
-  **Rasterpunkt**. Jede Art ist einzeln schaltbar — im Ribbon, in der
-  Glasleiste oder mit Umschalt+F1 … F8 (Lot: Umschalt+F8); der Hauptschalter
-  (F3) nimmt alles zurück. Die Statusleiste zeigt den Zustand.
+  **Rasterpunkt**. Jede Art ist einzeln schaltbar — im Ribbon unter
+  *Geometrie → Fang → Fangarten ▾* oder mit Umschalt+F1 … F8 (Lot:
+  Umschalt+F8); der Hauptschalter (F3, auch in der Glasleiste) nimmt alles
+  zurück. Die Statusleiste zeigt den Zustand.
 
 ### Lot und Projektion
 
@@ -2953,7 +3015,7 @@ Ansicht dreht. Drei Wege, ihn zu benutzen:
   — und **iso** für die isometrische Ansicht mit allem im Bild. Die Rückseite
   ist damit ein Klick und nicht eine halbe Umdrehung.
 
-Im Ribbon *Ansicht → Blickrichtung* stehen dieselben Richtungen, dazu
+Im Ribbon *Ansicht → Blickrichtung → Richtung ▾* stehen dieselben Richtungen, dazu
 „Rückseite (180°)", das die laufende Ansicht am Blickpunkt umkehrt, und
 „Zoom alles".
 
