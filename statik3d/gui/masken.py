@@ -959,6 +959,20 @@ def stil() -> str:
 # ==========================================================================
 # Glasleiste und Ansichtswuerfel ueber der Ansicht
 # ==========================================================================
+def _listen_bedarf(cb) -> int:
+    """Breite einer Aufklappliste, in der ihr laengster waehlbarer Eintrag ganz
+    zu lesen ist: Text plus der Rand, den der Stil um das Textfeld legt."""
+    opt = QtWidgets.QStyleOptionComboBox()
+    cb.initStyleOption(opt)
+    feld = cb.style().subControlRect(QtWidgets.QStyle.CC_ComboBox, opt,
+                                     QtWidgets.QStyle.SC_ComboBoxEditField, cb).width()
+    rand = max(0, cb.width() - feld)
+    fm = QtGui.QFontMetrics(cb.font())
+    laengste = max((fm.horizontalAdvance(cb.itemText(i)) for i in range(cb.count())
+                    if cb.itemData(i) is not None), default=0)
+    return int(laengste + rand + 2)
+
+
 class Glasleiste(QtWidgets.QFrame):
     """Schmale, durchscheinende Leiste **mittig oben** ueber der Ansicht.
 
@@ -1206,7 +1220,14 @@ class Glasleiste(QtWidgets.QFrame):
         for cb, b in self._listenbreite.items():
             ueber = self._wunschbreite() - breite
             if ueber > 0:
-                cb.setMinimumWidth(max(self.LISTE_MIN, cb.minimumWidth() - ueber))
+                # nicht unter den laengsten Namen (02.10.2026): mit der
+                # Aufteilung aus Paket 5 ist die Ansicht bei 1366 px schmaler;
+                # die Liste schrumpfte auf 122 px und schnitt 75 von 81 Namen
+                # der gerechneten Halle ab („Kombination GZ“) - sie ist dort
+                # die einzige Anzeige des Ergebnisses. Lieber weicht ein
+                # Hauptknopf in „»“.
+                grenze = min(b, max(self.LISTE_MIN, _listen_bedarf(cb)))
+                cb.setMinimumWidth(max(grenze, cb.minimumWidth() - ueber))
         for w in haupt:
             if self._wunschbreite() <= breite:
                 break

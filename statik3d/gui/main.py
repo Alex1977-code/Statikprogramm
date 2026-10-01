@@ -4552,7 +4552,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.act_layer_neu = g.klein("Layer aus Auswahl", self.layer_aus_auswahl, zeichen="+",
                                      hinweis="Die Auswahl in der Ansicht als neuen Layer anlegen")
         self._layer_combo_fuellen()
-        g = r.gruppe("Einheiten")
+        # Eine Gruppe „Fenster“ mit „Einheiten“ und „Fenster ▾“ (fenster.py):
+        # als eigene Gruppe brauchte „Fenster ▾“ Rahmen und Trennlinie, und
+        # das Register Ansicht kam auf 1251 px - bei 1280 px Fensterbreite sind
+        # 1241 px erlaubt (Zusammenfuehrung der Pakete 5 und 7, 02.10.2026)
+        g = r.gruppe("Fenster")
+        self._gruppe_fenster = g
         self.act_einheiten = g.gross("Einheiten", "㎪", self.maske_einheiten,
                                      hinweis="Einheiten und Nachkommastellen für Ansicht und "
                                              "Tabellen (Kraft, Länge, Verformung, Spannung)")

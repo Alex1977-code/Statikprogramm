@@ -320,7 +320,7 @@ class Fensteranordnung(QtCore.QObject):
     # -- Menue Ansicht → Fenster --------------------------------------------
     def _menue_bauen(self):
         w, rb = self.w, self.w.ribbon
-        g = rb.register("Ansicht").gruppe("Fenster")
+        g = getattr(w, "_gruppe_fenster", None) or rb.register("Ansicht").gruppe("Fenster")
         akt = g.menue("Fenster ▾", [
             ("Modellbaum zeigen", lambda: self._zone_geschaltet("baum"),
              "Den Modellbaum links ein- oder ausblenden"),
