@@ -353,8 +353,8 @@ class Csg:
         d_formen = {id(f): f.abstand(punkte) for f, _ in andere}
         d_m = np.array([float(d_formen[id(f)][0]) for f, _ in andere])
         aktiv = np.abs(d_m) <= r
-        if not aktiv.any():
-            return [[]], False, []
+        # auch ohne aktive andere Form entscheidet der Baum: eine Schnittebene, die das Polygon ganz ueberholt hat (Abstand der Mitte > r
+        # auf der Aussenseite), nimmt es weg (Befund aus B7, 01.10.2026; ein frueher Rueckgabewert "alles" liess Facetten hinter der Ebene stehen)
         info = {id(f): (float(dm), d_formen[id(f)][1:], bool(a)) for (f, _), dm, a in zip(andere, d_m, aktiv)}
         aktive: list = []
 

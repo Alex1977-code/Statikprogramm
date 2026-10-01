@@ -170,6 +170,8 @@ def _stuecke_des_polygons(geometrie, form, poly: np.ndarray, tiefe: int, stufe: 
         statistik["rueckfall"] += 1
         return [poly]                             # Rueckfall: Punktfilter entscheidet
     n_poly = polygon_normale(poly)
+    if not st[0]:
+        return []                                 # kein Werkstoff in der Kugel (etwa hinter einer Schnittebene): kein Rand
     if hasattr(form, "dreiecke_ecken") and not st[2]:
         # Facettenpolygon einer Huelle ohne andere aktive Form: es ist Rand des Werkstoffs (geschlossene, nach aussen
         # orientierte Huelle), der Zeugentest entfaellt - er kostete je Polygon eine Windungszahl ueber alle Facetten

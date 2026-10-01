@@ -10640,7 +10640,8 @@ liefert die Timoshenko-Rechnung (κ = 5/6, Φ = 12EI/(κGAl²) = 0,35 bei l = 3h
 und Q = 7426 N; die FCM ergibt 2,75·10⁶ (−0,9 %) und 7625 N (+2,7 %), der schubstarre Stub
 2,00·10⁶ und 10000 N. Die Kopplungskontrolle im Ergebnis (`DetailResult.coupling_check`) weist
 solche Abweichungen aus und warnt ab 5 %. Empfehlung: Schnittebenen mindestens vier bis fünf
-Querschnittshöhen auseinander, sonst Kraftkopplung (Teilprojekt 5).
+Querschnittshöhen auseinander, sonst Kraftkopplung (Teilprojekt 5). Kraft und Moment haben seit B7 ein gemeinsames
+Lastmaß als Bezug (11.17, Befund 1): max(Moment, Kraft mal √Schnittfläche).
 
 ### 11.7 Lamé-Zylinder und Kirsch-Platte
 
@@ -11761,5 +11762,63 @@ der Zellquadratur; Prüfungen (1) bis (3) halten), der Windungszahl-Baum ist Vor
 „CSG verwenden“ aus 11.15 nicht mehr, solange keine Schnitt- oder Symmetrieebene den gekrümmten Teil der Hülle kreuzt; Volumen und Zellregeln sind für die Tessellierung
 exakt, die Krümmung steckt nur in ihr (Bohrung N 120: Volumenfehler +0,0047 %, 11.15).
 
+**Nachtrag (B7, 01.10.2026): Fehler im Flächenweg der Hüllen, behoben.** Mit dem Entfernen des Gesamtabstandsfilters für Hüllenfacetten blieben Facettenpolygone in Zellen stehen, in
+denen eine Schnittebene für das Polygon inaktiv war, aber dahinter lag (Ausgabepunkte und Flächenlasten außerhalb des Details; das Volumen war nicht betroffen). Siehe 11.17,
+Befund 2; die Zeiten und Genauigkeiten dieses Abschnitts bleiben gültig (die Flächenquadratur des Blocks N 120 hat keine Facetten hinter den Schnittebenen im Gitter).
+
 **Prüfungen** (`tests/test_huelle.py` in der Kernsuite: Stammfunktionen, Polyeder-Momente, CSG-Baum und Zellquadratur, Windungsbaum; `tests/test_stl.py` mit der
 Unterscheidung Hüllenzellen/alter Weg; `tests/test_step.py`: Block mit Bohrung durch den Vertragsweg gegen CSG mit `VOLUMEN3D_LANG=1`).
+
+### 11.17 Teilprojekt 5: Schale → Volumen über die Vertragsschicht (01.10.2026)
+
+**Prüfaufbau** (`tests/test_schale.py`, Plan TP 5 B7; die Kopplung an ein echtes Schalenmodell ist Sache des Providers im Hauptprogramm). Der Provider ist
+ein Stub der Suite: ein Plattenstreifen (t = 10 mm, b = 100 mm, 200 mm zwischen den Schnittebenen) als Schalenmodell mit Reissner-Mindlin-Kinematik. `displacement_at`
+liefert die Mittelflächenverschiebung u₀ plus Rotation θ mal Normalenabstand z′ (lineare Verteilung über die Dicke, u = u₀ + θ × z′e_z), `section_forces` die
+Schalenresultierenden je Breite (n_x = E t ε₀, m_x = E t³ κ/12) über die Schnittbreite integriert, mit der Seitenkonvention des Vertrags. Zustand: Membrandehnung ε₀ und
+Krümmung κ bei freien Längsrändern (n_y = m_y = 0): u₀ = (ε₀x′, −νε₀y′, w) mit w = −κ(x′² − νy′²)/2, θ = (νκy′, κx′, 0). Das ist die exakte 3D-Lösung des freien Streifens
+bis auf die Dickendehnung (u_z′ ∋ −νκz′²/2 und −νε₀z′), die die Schalentheorie nicht kennt; der Vertragsweg legt an den Schnittebenen nur die Normalkomponente
+punktweise und die Mittelwerte der Tangentialkomponenten fest (11.6), die fehlende Dickendehnung verschiebt darum den Streifen nur starr (Mittelwert νκt²/24 = 5·10⁻⁴ mm).
+Fälle: (A) achsparallel (CSG-Quader, Schnittebenen x 0 und 200), (B) um 10° und 30° um die y-Achse geneigt (STL-Hülle, schräge Schnittebenen, prüft B6 und die schräge
+Kopplung zugleich); je Fall Membran (σ_m = 100 N/mm²), Biegung (Randspannung 150 N/mm²) und beides; Zellen 25 mm.
+
+**Messwerte** (h 25; Kraft und Moment sind die Abweichungen der Kopplungskontrolle gegen den Provider, σ die größte Abweichung von σ_x′ = E(ε₀ + κz′) in lokalen
+Schalenachsen an allen Oberflächenpunkten bezogen auf den Größtwert, Gleichgewicht der Resultierenden beider Ebenen um die Streifenmitte):
+
+| Fall | Kraft | Moment | σ_x′ | übrige Komponenten | Gleichgewicht |
+|---|---|---|---|---|---|
+| A, p 2, drei Lastfälle | ≤ 2,1·10⁻¹² | ≤ 2,7·10⁻¹² | ≤ 5,0·10⁻⁷ | ≤ 6,4·10⁻¹² | ≤ 1,9·10⁻¹¹ |
+| B 30°, p 2 | ≤ 6,7·10⁻⁴ | ≤ 2,3·10⁻⁴ | ≤ 2,2·10⁻⁴ | ≤ 8,2·10⁻⁵ | ≤ 4,2·10⁻³ |
+| B 10°, p 2 | ≤ 7,7·10⁻⁵ | ≤ 3,5·10⁻⁵ | ≤ 3,5·10⁻³ | ≤ 1,3·10⁻³ | ≤ 4,6·10⁻⁴ |
+| B 30°, p 3 | ≤ 2,4·10⁻⁸ | ≤ 6,0·10⁻⁸ | ≤ 5,3·10⁻⁷ | ≤ 1,4·10⁻⁷ | ≤ 2,2·10⁻⁷ |
+| B 10°, p 3 | ≤ 2,4·10⁻⁸ | ≤ 1,8·10⁻⁸ | ≤ 2,5·10⁻⁶ | ≤ 1,0·10⁻⁶ | ≤ 1,2·10⁻⁷ |
+
+Die Vorgabe (Schnittgrößenabweichung unter 1 %) ist in allen Fällen mit mindestens zwei Größenordnungen Abstand erfüllt, ohne Kopplungswarnung. Die Verschiebung der Lösung
+stimmt mit der exakten 3D-Lösung nach Abzug des Starrkörperanteils auf 2,5·10⁻⁸ (A und p 3) bzw. 9,9·10⁻⁷ (10°, p 2) des Größtwerts überein; die größeren Spannungsabweichungen bei p 2 am
+schrägen Schnitt sind also Konsistenzfehler der Schnittzellen, die in der Spannung (Gradient) stärker auftreten.
+
+**Befund 1: die Kopplungskontrolle meldete bei reiner Biegung 100 % Kraftabweichung.** Der Kraftbezug war die größere der beteiligten Kräfte; bei reiner Biegung ist die Kraft im
+Globalmodell null und im Detail nur ein Rest (2·10⁻⁸ N achsparallel, 0,01 und 5,3 N an den beiden Ebenen des geneigten Streifens, Moment 2,5·10⁵ N·mm), also |F|/|F| = 1,0 und eine Warnung „> 5 %“. Das Moment hatte seit dem Gutachten vom 27.09. einen Bezug mit Kraft mal Länge. Jetzt
+haben beide ein gemeinsames Lastmaß (`api._kopplungsabweichung`): ref_m = max(|M|, |m_g|, f₀·l), ref_f = ref_m/l mit l = √Schnittfläche, f₀ die größte beteiligte Kraft; ein Kraftrest wird
+also gegen die Kraft gemessen, die dasselbe Moment am Hebel l aufbrächte. Folge: bei momentbestimmten Zuständen wird eine Querkraftabweichung gegen das größere Lastmaß M/l bezogen,
+die Warnschwelle 5 % liegt entsprechend später (z. B. Querkraft 900 gegen 1000 N bei 4·10⁵ N·mm: 2,5 % statt 10 %); eine Kraft, die das Globalmodell nicht kennt, bleibt als Abweichung 1,0
+sichtbar (geprüft als reine Funktion).
+
+**Befund 2: Hüllenfacetten hinter einer Schnittebene blieben als Oberfläche stehen (Fehler aus B6, behoben).** Für Facettenpolygone einer Hülle hatte B6 den Gesamtabstandsfilter
+entfernt (11.16); `Csg._stuecke_ohne` gab bei „keine andere Form aktiv“ die ganze Kugel zurück, auch wenn die Mitte hinter einer inaktiven Schnittebene lag. Facetten kleiner als der
+Abstand zur Ebene (bei Tessellierungen fast alle) galten so als Rand des Werkstoffs: an der Kugelhülle mit Halbraum 6 030 Oberflächenpunkte hinter der Ebene und 30 324,6 statt
+28 513,3 mm²; am geneigten Streifen lagen Ausgabepunkte außerhalb des Details, deren Spannung extrapoliert war (in zwei Läufen dort der größte gemessene Fehler: 2,8·10⁻⁴ bei h 25 und 1,6·10⁻³ bei h 12,5, nach der Korrektur 2,2·10⁻⁴ und 2,4·10⁻⁴).
+Der Baum entscheidet jetzt auch ohne aktive Form (inaktive Formen zählen als voll oder leer nach dem Vorzeichen des Abstands), und ein Polygon ohne Werkstoff in der Kugel entfällt.
+Das Volumen war nicht betroffen (Zellklassifikation), wohl aber Ausgabepunkte und Flächenlasten auf Hüllenflächen hinter Schnittebenen. Prüfung: Kugelhülle ∩ Halbraum, Oberfläche
+gegen die unabhängige Summe aus geclippten Facetten und konvexer Kappe auf 3·10⁻¹⁵, keine Punkte hinter der Ebene (`test_huelle.test_flaeche_hinter_schnittebene`).
+
+**Befund 3 (offen): Konsistenzfehler des p-2-Ansatzes am schrägen Schnitt.** Das Feld liegt im Ansatzraum (quadratisch), p 2 reproduziert es am geneigten Streifen aber nur auf
+10⁻⁴ bis 3,5·10⁻³ in der Spannung, p 3 auf 10⁻⁶, der achsparallele Fall auf 10⁻⁷. Ohne Einfluss sind α (10⁻⁸ gegen 10⁻¹²), Moment Fitting (an/aus), die Flächenquadraturordnung (Vorgabe, 6, 10) und die
+Teilungstiefe (2, 3); deutlichen Einfluss hat die Aggregationsschwelle (Spannung bei 10°: Schwelle 0,4 → 3,5·10⁻³, 0,2 → 1,7·10⁻², ohne Aggregation 1,3·10⁻¹). Die Hüllenintegration (B6) verbessert den Fall
+(30°: 1,2·10⁻³ → 2,2·10⁻⁴). Das passt zum schon bekannten offenen Konsistenzfehler 10⁻⁶ bis 10⁻⁴ am T-Stoß (Theorie 11.14); die Ursache ist nicht geklärt und kein Teil von B7. Der Fehler
+liegt deutlich unter der Vorgabeschranke; Gleichgewichtsrest und Schnittgrößenabweichung treten mit ihm auf und verschwinden bei p 3 gemeinsam mit ihm (am geneigten Streifen p 2 bleibt ein Kraftrest von 5,3 N bei 7 906 N Lastmaß).
+
+**Schranken.** Die im Plan vorab gesetzte Schranke 10⁻⁶ für das Gleichgewicht der Resultierenden war geraten und wird für p 2 am schrägen Schnitt nicht gehalten (4,2·10⁻³); sie gilt
+achsparallel mit 10⁻⁹ (gemessen 1,9·10⁻¹¹) und bei p 3 mit 10⁻⁵ (gemessen ≤ 2,5·10⁻⁶); für p 2 geneigt gilt die Vorgabeschranke 1 % (Entscheidung beim Anwender).
+
+**Prüfungen** (`tests/test_schale.py` in der Kernsuite: Kontrollgröße als reine Funktion, achsparallel, geneigt p 2 mit Punkten zwischen den Ebenen, geneigt p 3; `tests/test_huelle.py`:
+Hüllenfläche hinter der Schnittebene).

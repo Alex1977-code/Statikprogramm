@@ -824,6 +824,10 @@ Plan: `docs/plaene/2026-09-28-tp4-mehrgitter.md`. Messlatte aus Teilprojekt 3: J
   `geometry/windung.py`: Barill-Baum mit exakten Dreiecksmomenten bis zweiter Ordnung auf der BVH, Vorgabe ab 20 000 Facetten für `Stl.innen`; N 240 (107 636
   Dreiecke), 100 000 Punkte: gleiche Entscheidung, |Δw| 2,6e-4, 28-mal schneller mit β 4 (β 2 aus dem Plan: 9,9e-3, Schranke 1e-3 verfehlt). Teil 3
   (Ebenen durch den gekrümmten Teil einer Hülle) nicht gebaut, weil die Zellen an den Schnittebenen nur ebene Facetten treffen.
+- **B7, Schale → Volumen (01.10.2026, Theorie 11.17):** Prüfung mit einem Schalen-Provider-Stub (Reissner-Mindlin, lineare Verteilung über die Dicke) am Plattenstreifen,
+  achsparallel und 10°/30° geneigt (STL-Hülle, schräge Ebenen): Schnittgrößenabweichung ≤ 7·10⁻⁴ (p 2), ≤ 6·10⁻⁸ (p 3), Vorgabe 1 %. Befunde: Kopplungskontrolle meldete bei reiner Biegung
+  100 % Kraftabweichung (Kraftbezug ohne Momentenanteil; jetzt gemeinsames Lastmaß `_kopplungsabweichung`); Hüllenfacetten hinter einer Schnittebene blieben als Oberfläche stehen (Fehler aus B6,
+  behoben, `Csg._stuecke_ohne`); offen: Konsistenzfehler p 2 am schrägen Schnitt 10⁻⁴ bis 3,5·10⁻³ in der Spannung (hängt an der Aggregationsschwelle).
 - Fünf Schnittlagen Kirsch h 10 p 3 verfeinert (128 724 bis 199 095 freie Koordinaten), GPU FP64:
   81 / 125 / 112 / 129 / 59 Iterationen, GPU-PCG 8,6 bis 21 s, K_t identisch mit dem Direktlöser;
   Direktlöser (Lösen nach der Faktorisierung) 7 bis 25 s. Einrichten auf der CPU: Zelldaten 17–24 s,

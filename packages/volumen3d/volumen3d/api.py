@@ -676,11 +676,7 @@ class FcmSolver:
                     # Bezug fuer die relative Abweichung: groesste beteiligte Resultierende; Momente auch
                     # gegen Kraft mal Flaechenmass, damit reine Biegung (Q = 0) oder reiner Zug (M = 0)
                     # keine Scheinabweichung melden (Gutachten 27.09.: 2,5e3 bei Nullwerten)
-                    l_ref = float(np.sqrt(max(float(fq.gewichte.sum()), 1e-300)))
-                    ref_f = max(float(np.linalg.norm(f_g)), float(np.linalg.norm(F)))
-                    ref_m = max(float(np.linalg.norm(m_g)), float(np.linalg.norm(M)), ref_f * l_ref)
-                    dF = float(np.linalg.norm(F - f_g)) / ref_f if ref_f > 0 else 0.0
-                    dM = float(np.linalg.norm(M - m_g)) / ref_m if ref_m > 0 else 0.0
+                    dF, dM, ref_f, ref_m = _kopplungsabweichung(F, M, f_g, m_g, float(fq.gewichte.sum()))
                     # Konvention der FCM-Seite: F = int sigma.n dA mit n aus dem Detail heraus, also die
                     # Kraft, die der abgeschnittene Teil auf das Detail ausuebt (Vorschlag zur Klarstellung:
                     # docs/vertrag-aenderungen/2026-09-27-lasten-und-schnittgroessen.md)
@@ -760,6 +756,24 @@ def _nahtregionen(wls: list[Any], k_h: int, basis_mm: float) -> tuple[Refinement
             wahl.append(len(P) - 1)
         regionen += [RefinementRegion(center=P[i].copy(), radius_mm=2.0 * t, target_cell_size_mm=ziel) for i in wahl]
     return tuple(regionen)
+
+
+def _kopplungsabweichung(F: np.ndarray, M: np.ndarray, f_g: np.ndarray, m_g: np.ndarray, flaeche_mm2: float) -> tuple[float, float, float, float]:
+    """Relative Abweichung der Schnittgroessen (Kraft, Moment) gegen das Globalmodell und die beiden Bezuege.
+
+    Kraft und Moment haben ein gemeinsames Lastmass: das groesste beteiligte Moment oder die groesste beteiligte Kraft mal der
+    Laenge l = sqrt(Schnittflaeche). Bezug des Moments ref_m = max(|M|, |m_g|, f0 l), Bezug der Kraft ref_f = ref_m / l = max(f0, m0 / l)
+    mit f0 = max(|F|, |f_g|), m0 = max(|M|, |m_g|). Ohne den Momentenanteil im Kraftbezug meldete reine Biegung (Kraft 0 im
+    Globalmodell, Rundungsrest im Detail) 100 % Kraftabweichung (Schalen-Stub, Plan TP 5 B7: 1,0 bei reiner Biegung); mit ihm
+    wird ein Kraftrest gegen die Kraft gemessen, die dasselbe Moment am Hebel l aufbraechte. Nullwerte beider Seiten: 0."""
+    l_ref = float(np.sqrt(max(float(flaeche_mm2), 1e-300)))
+    f0 = max(float(np.linalg.norm(f_g)), float(np.linalg.norm(F)))
+    m0 = max(float(np.linalg.norm(m_g)), float(np.linalg.norm(M)))
+    ref_m = max(m0, f0 * l_ref)
+    ref_f = ref_m / l_ref
+    dF = float(np.linalg.norm(np.asarray(F, float) - np.asarray(f_g, float))) / ref_f if ref_f > 0 else 0.0
+    dM = float(np.linalg.norm(np.asarray(M, float) - np.asarray(m_g, float))) / ref_m if ref_m > 0 else 0.0
+    return dF, dM, ref_f, ref_m
 
 
 def _integrationswarnung(quad: dict[str, Any], flaeche: dict[str, Any]) -> str | None:

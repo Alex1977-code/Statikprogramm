@@ -296,7 +296,41 @@ def test_windungsbaum():
           s_gross._windung is not None and s_klein._windung is None and bool((innen_gross == (w_ex > 0.5)).all()))
 
 
-TESTS = [test_stammfunktionen, test_polyeder_momente, test_baum_und_zellquadratur, test_windungsbaum]
+def test_flaeche_hinter_schnittebene():
+    """Befund aus B7 (Plan TP 5, 01.10.2026): Facetten einer Huelle, die kleiner sind als der Abstand zu einer Schnittebene, lagen
+    in Zellen, in denen die Ebene fuer das Facettenpolygon nicht aktiv war - die Zerlegung ``ohne=form`` hielt sie fuer ganz
+    innen und behielt sie, obwohl sie hinter der Ebene liegen (Oberflaechenpunkte und Flaechenlasten ausserhalb des Details;
+    vorher fing das der Gesamtabstand ab, den B6 fuer Huellenfacetten entfernt hatte). Tessellierte Kugel r 50 (3 200 Facetten, mittlere
+    Kante 8 mm) um den Ursprung, Halbraum x <= 20: Oberflaeche = Summe der an der Ebene geclippten Facetten + Kappenflaeche (konvexe
+    Huelle der Schnittpunkte, unabhaengig davon mit scipy), keine Punkte mit x > 20."""
+    from scipy.spatial import ConvexHull
+    from volumen3d.fcm.gitter import Gitter
+    from volumen3d.geometry.csg import aus_params
+    from volumen3d.geometry.oberflaeche import Flaechenquadratur, polygon_flaeche
+    from volumen3d.geometry.polyeder import polygon_clippen
+    D = _kugelschale(50.0, 40, 41)
+    x_e = 20.0
+    ex = np.array([1.0, 0.0, 0.0])
+    # unabhaengige Referenz: Facetten an x = x_e geclippt (Werkstoffseite x <= x_e) und die Kappe als konvexe Huelle der Schnittpunkte
+    flaeche, punkte = 0.0, []
+    for t in D:
+        Q, _ = polygon_clippen(t, np.array([x_e, 0.0, 0.0]), ex, 1e-12)               # Normale zeigt auf die entfernte Seite
+        if len(Q) >= 3:
+            flaeche += polygon_flaeche(Q)
+            punkte += [q[1:] for q in Q if abs(q[0] - x_e) < 1e-9]
+    kappe = ConvexHull(np.array(punkte)).volume                  # 2D-Huelle: "volume" ist die Flaeche
+    soll = flaeche + kappe
+    g = aus_params({"csg": {"typ": "schnitt", "teile": [{"typ": "stl", "dreiecke": D.tolist(), "name": "kugel"},
+                                                         {"typ": "halbraum", "punkt": [x_e, 0.0, 0.0], "normale": [1.0, 0.0, 0.0], "name": "ebene"}]}})
+    G = Gitter(g, h=10.0)
+    fq = Flaechenquadratur.aus_geometrie(g, G, ordnung=3)
+    ist = float(fq.gewichte.sum())
+    dahinter = int((fq.punkte[:, 0] > x_e + 1e-6).sum())
+    check(f"Kugel-Huelle mit Halbraum x <= 20: Oberflaeche {ist:.4f} gegen unabhaengig {soll:.4f} (relativ {abs(ist / soll - 1):.1e} < 1e-9), "
+          f"Punkte hinter der Ebene {dahinter} (0)", abs(ist / soll - 1) < 1e-9 and dahinter == 0, f"{fq.statistik}")
+
+
+TESTS = [test_stammfunktionen, test_polyeder_momente, test_baum_und_zellquadratur, test_windungsbaum, test_flaeche_hinter_schnittebene]
 
 if __name__ == "__main__":
     sys.exit(lauf(TESTS))

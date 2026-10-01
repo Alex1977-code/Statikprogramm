@@ -478,6 +478,14 @@ ist das ein Fehler der Kontrolle, nicht des Verfahrens: er wird mit einem fehlsc
 Kopplung an ein echtes Schalenmodell des Hauptprogramms (Provider dort), Querkraft mit Schubverformung (Timoshenko-Anteil im Kragarmtest erklärt) und
 Verwölbung.
 
+**Ergebnis B7 (01.10.2026, Theorie 11.17):** Schranke (1) hält mit zwei bis zehn Größenordnungen Abstand: Schnittgrößenabweichung Kraft/Moment höchstens 6,7·10⁻⁴ / 2,3·10⁻⁴ (geneigt 30°, p 2) bzw.
+2,4·10⁻⁸ / 6,0·10⁻⁸ (p 3), achsparallel 2,1·10⁻¹² / 2,7·10⁻¹², keine Kopplungswarnung. Schranke (2) hält: σ_x′ gegen die Schalenverteilung ≤ 3,5·10⁻³ (10°, p 2), ≤ 5,3·10⁻⁷ (30°, p 3),
+übrige Komponenten ≤ 1,3·10⁻³. Schranke (3) (Gleichgewicht 10⁻⁶, vorab geraten) hält achsparallel (1,9·10⁻¹¹) und bei p 3 (≤ 2,2·10⁻⁷), **nicht für p 2 am schrägen Schnitt (4,2·10⁻³)**: dort gilt die
+Vorgabeschranke 1 %, Gleichgewichtsrest und Spannungsfehler verschwinden bei p 3 gemeinsam; Entscheidung beim Anwender (Empfehlung: Vorgabeschranke 1 % für p 2 am schrägen Schnitt, das Band 10⁻⁵ gilt bei p 3).
+**Befundregel angewendet:** (a) Kopplungskontrolle: reine Biegung meldete 100 % Kraftabweichung → gemeinsames Lastmaß für Kraft und Moment (`api._kopplungsabweichung`, Test); (b) Fehler aus B6 gefunden und
+behoben: Hüllenfacetten hinter einer Schnittebene blieben als Oberfläche stehen (6 030 Punkte hinter der Ebene an der Kugelhülle; Test `test_flaeche_hinter_schnittebene`). Offen (nicht Teil von B7):
+Konsistenzfehler des p-2-Ansatzes am schrägen Schnitt (Spannung 2,2·10⁻⁴ bis 3,5·10⁻³, Verschiebung 10⁻⁶; ohne Einfluss: α, Fitting, Flächenordnung, Tiefe; Einfluss: Aggregationsschwelle).
+
 ## Phase C – Abnahme und Abschluss
 
 ### C1: Knotenblech mit Kehlnaht (Abnahme TP 5)
@@ -515,7 +523,7 @@ nachgetragen.
 | B4 Konvergenzkurve, Protokoll | Sonnet 5 | mittel | überschaubar, baut auf B2/B3 | gebaut; Fahrplan h zuerst bis t/4 umgesetzt (Anwender), T-Stoß p 2–4 bei 2,5 mm: 111,0 → 107,4 → 107,9; Messung am Knotenblech in C1 |
 | B5 STEP über gmsh | Sonnet 5 | mittel | Anbindung einer Bibliothek | gebaut; Planprüfung K_t am gekrümmten Körper nicht erfüllt (STL-Weg zu langsam), Entscheidung offen |
 | B6 Windungszahl-Baum + Hüllenintegration | Fable 5.1 | sehr hoch | Divergenzsatz über Dreiecke, Barill-Baum, Genauigkeitsnachweis | erledigt: (1)–(3) halten, Block N 120 388 → 26,8 s, K_t 0,12 %; Baum mit β 4 statt 2 (Anwender 01.10.: angenommen) |
-| B7 Schale → Volumen (Prüfung) | Sonnet 5.5 | mittel | Test über bestehende Schnittstelle | läuft: Verfahren und Regeln festgelegt |
+| B7 Schale → Volumen (Prüfung) | Sonnet 5.5 | mittel | Test über bestehende Schnittstelle | erledigt: Schnittgrößen < 7·10⁻⁴ (p 2), 6·10⁻⁸ (p 3); Kopplungskontrolle und Hüllenfacetten-Fehler behoben; Gleichgewichtsschranke p 2 geneigt beim Anwender |
 | C1 Knotenblech-Abnahme | Opus 5.5 | hoch | Modellbau und Nachweis gegen Referenz | offen |
 | C2 Zweite Sicht | Fable 5.1 | hoch | unabhängig von der Umsetzung, tiefste Prüfung | offen |
 | C3 Handbücher | Sonnet 5 | niedrig | Texte aus vorhandenen Messwerten | offen |
