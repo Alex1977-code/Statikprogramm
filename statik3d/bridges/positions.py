@@ -7,7 +7,8 @@ Eigengewicht wirkt unter einem anderen Winkel, der Antrieb hält ein anderes
 Moment. Deshalb wird jede **Stellung** als eigener Rechenlauf geführt und am
 Ende die Umhüllende über alle Stellungen gebildet.
 
-    Stellung        Name, Winkel, welche Lager greifen, welche Lastfälle gelten,
+    Stellung        Name, Winkel, welche Lager greifen, welche Lastfälle sie
+                    rechnet (nur zugewiesene, ohne Zuordnung keine),
                     Drehachse und Drehwinkel für die bewegten Bauteile
     Stellungsreihe  alle Stellungen eines Bauwerks, gerechnet und ausgewertet
     Umhüllende      größte Ausnutzung, Schnittgröße und Auflagerkraft über alle
@@ -15,9 +16,10 @@ Ende die Umhüllende über alle Stellungen gebildet.
 
     from statik3d.bridges.positions import Stellung, Stellungsreihe
     reihe = Stellungsreihe(modell)
-    reihe.add(Stellung("S1", 0.0,   "geschlossen", lager_aktiv=["Endauflager"]))
-    reihe.add(Stellung("S3", 32.0,  "im Öffnen"))
-    reihe.add(Stellung("S5", 82.0,  "offen", lager_aktiv=["Ruhelager"]))
+    lf = list(modell.load_cases)
+    reihe.add(Stellung("S1", 0.0,   "geschlossen", lager_aktiv=["Endauflager"], faelle=lf))
+    reihe.add(Stellung("S3", 32.0,  "im Öffnen", faelle=lf))
+    reihe.add(Stellung("S5", 82.0,  "offen", lager_aktiv=["Ruhelager"], faelle=lf))
     erg = reihe.rechnen()
     print(erg.bericht())
 """
@@ -66,7 +68,11 @@ class Stellung:
                   alle Lager greifen. Lager ohne Namen bleiben immer aktiv.
     lager_aus:    Namen der Lager, die in dieser Stellung ausdrücklich nicht
                   greifen (wirkt zusätzlich zu lager_aktiv).
-    faelle:       Lastfälle, die in dieser Stellung gelten. Leer = alle.
+    faelle:       Lastfälle, die in dieser Stellung gelten - nur sie rechnet die
+                  Stellungsreihe. Leer = keine (seit 02.10.2026, Zusage an den
+                  Anwender: „nur das gerechnet wird was auch zugewiesen wurde“;
+                  bis dahin hiess leer „alle“, aeltere Dateien bekommen darum
+                  beim Laden alle, Model.from_dict).
     kombinationen: Kombinationen, die in dieser Stellung gelten. Leer = alle,
                   die nur aus den geltenden Lastfällen bestehen.
     dreh_achse / dreh_punkt / dreh_winkel:
@@ -267,6 +273,10 @@ class Stellung:
 
     def _faelle(self, m: Model, log: list = None):
         if not self.faelle:
+            # Leer heisst seit dem 02.10.2026 „keine“: die Stellungsreihe rechnet
+            # eine solche Stellung gar nicht erst (Stellungsreihe.rechnen). Das
+            # Modell selbst - Lage, Lager, Gelenke, etwa fuer die Vorschau oder
+            # eine Situation - behaelt dann seine Lastfaelle unveraendert.
             return
         behalten = set(self.faelle)
         unbekannt = sorted(behalten - set(m.load_cases))
@@ -445,19 +455,26 @@ class Stellungsreihe:
         self.stellungen: list[Stellung] = []
         self.ergebnisse: list[StellungsErgebnis] = []
         self.log: list[str] = []
+        #: nach rechnen(): Stellungen ohne zugewiesene Lastfaelle (nicht gerechnet)
+        #: und Lastfaelle, die keiner Stellung zugewiesen sind
+        self.ohne_lastfaelle: list[str] = []
+        self.lastfaelle_ohne_stellung: list[str] = []
 
     def add(self, stellung: Stellung) -> Stellung:
         self.stellungen.append(stellung)
         return stellung
 
     def aus_winkeln(self, winkel, achse=(0, 1, 0), punkt=(0, 0, 0),
-                    gruppen=None, praefix: str = "S") -> list:
-        """Stellungsreihe aus einer Winkelliste erzeugen (gleiche Drehachse)."""
+                    gruppen=None, praefix: str = "S", faelle=None) -> list:
+        """Stellungsreihe aus einer Winkelliste erzeugen (gleiche Drehachse).
+        ``faelle``: die Lastfaelle jeder Stellung - ohne sie rechnet die Reihe
+        die Stellungen nicht (Stellung.faelle)."""
         out = []
         for i, w in enumerate(winkel, 1):
             out.append(self.add(Stellung(
                 f"{praefix}{i}", float(w),
                 "geschlossen" if abs(w) < 1e-9 else f"gedreht um {w:g}°",
+                faelle=list(faelle or []),
                 dreh_achse=achse, dreh_punkt=punkt, dreh_winkel=float(w),
                 dreh_gruppen=list(gruppen or []))))
         return out
@@ -469,10 +486,17 @@ class Stellungsreihe:
         from .. import solver
         self.ergebnisse = []
         self.log = []
+        self.ohne_lastfaelle = []
         for i, st in enumerate(self.stellungen, 1):
             if progress:
                 progress(f"Stellung {i}/{len(self.stellungen)}: {st.beschriftung()}")
             self.log.append(f"Stellung {st.beschriftung()}")
+            if not st.faelle:
+                # Nur Zugewiesenes wird gerechnet (02.10.2026) - bis dahin
+                # rechnete eine Stellung ohne Zuordnung alle Lastfaelle
+                self.log.append(f"  {st.name}: keine Lastfälle zugewiesen - nicht gerechnet")
+                self.ohne_lastfaelle.append(st.name)
+                continue
             e = StellungsErgebnis(stellung=st)
             try:
                 m = st.modell(self.basis, self.log)
@@ -516,6 +540,13 @@ class Stellungsreihe:
                 e.fehler = f"{type(ex).__name__}: {ex}" if str(ex).strip() else type(ex).__name__
                 self.log.append(f"  {st.name}: FEHLER {e.fehler}")
             self.ergebnisse.append(e)
+        # Was keiner Stellung zugewiesen ist, wird nicht gerechnet - vermerkt
+        # (Zusage an den Anwender, 24.09.2026)
+        zugewiesen = {f for s in self.stellungen for f in (s.faelle or [])}
+        self.lastfaelle_ohne_stellung = [n for n in self.basis.load_cases if n not in zugewiesen]
+        if self.lastfaelle_ohne_stellung:
+            self.log.append("Lastfälle in keiner Stellung (nicht gerechnet): "
+                            + ", ".join(self.lastfaelle_ohne_stellung))
         return Umhuellende(self)
 
     # -- Zugriff ---------------------------------------------------------

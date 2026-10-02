@@ -62,7 +62,10 @@ def dof_index(key) -> int:
         raise KeyError(f"Freiheitsgrad {key} liegt nicht zwischen 0 und 5")
     return i
 NDOF = 6
-FORMAT_VERSION = 7
+#: Fassung der Modelldatei. 8 seit 02.10.2026: Stellung.faelle leer heisst
+#: „keine Lastfaelle“ statt „alle“ - beim Laden einer aelteren Datei bekommt
+#: eine leere Zuordnung alle Lastfaelle (Entscheidung E6 des Anwenders).
+FORMAT_VERSION = 8
 
 # Einwirkungskategorien (DIN EN 1990/NA Tabelle A.1.1) -> (psi0, psi1, psi2)
 ACTION_CATEGORIES = {
@@ -3226,6 +3229,8 @@ class Model:
         #: Unterlagen: Dateien, uebernommene Ansichten und Skizzen zum Modell
         self.unterlagen: dict[str, Unterlage] = {}
         self.stellungen: list = []
+        #: Hinweise aus dem Laden einer Datei (Model.from_dict), nicht gespeichert
+        self._ladehinweise: list = []
         # Lastgenerierer (wasserdruck.Wasserdruck, wind.Wind), nach Name
         self.wasserdruecke: dict = {}
         self.winde: dict = {}
@@ -5918,6 +5923,20 @@ class Model:
                 s.verschiebung = tuple(getattr(s, "verschiebung", None) or (0.0, 0.0, 0.0))
                 if s.antrieb is not None:
                     s.antrieb = (int(s.antrieb[0]), tuple(s.antrieb[1]))
+            # E6 (01.10.2026): bis Fassung 7 hiess eine leere Zuordnung „alle
+            # Lastfaelle“ - so bleiben die Ergebnisse aelterer Dateien gleich,
+            # und die Zuordnung steht sichtbar in der Stellung
+            try:
+                fassung = int(d.get("format") or 0)
+            except (TypeError, ValueError):
+                fassung = 0
+            if fassung < 8 and m.load_cases:
+                for s in m.stellungen:
+                    if not s.faelle:
+                        s.faelle = list(m.load_cases)
+                        m._ladehinweise.append(
+                            f"Stellung {s.name}: ohne zugewiesene Lastfälle gespeichert (das hieß bis "
+                            f"Fassung 7 „alle“) - jetzt alle {len(s.faelle)} Lastfälle zugewiesen")
         # Die aus Objektlasten verteilten Elementlasten stehen absichtlich
         # nicht in der Datei (``LoadCase.to_dict`` schreibt nur ``eigene``),
         # damit sie nach dem Laden nicht doppelt liegen. Erzeugt hat sie bis

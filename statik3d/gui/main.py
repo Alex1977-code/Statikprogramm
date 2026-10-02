@@ -5888,6 +5888,10 @@ class MainWindow(QtWidgets.QMainWindow):
                             for i, x in enumerate(self._lagerliste_von(lart))]
 
                 felder = [F("name", "Bezeichnung", "text", name, breite=150),
+                          F("faelle", "Lastfälle dieser Stellung", "mehrfach", liste("faelle"),
+                            list(m.load_cases),
+                            hinweis="Nur angehakte Lastfälle rechnet „Alle Stellungen“; ohne Haken "
+                                    "rechnet die Stellung nichts, und das Protokoll sagt es"),
                           F("klick", "Klick in der Ansicht schaltet Stab, Fläche oder Volumen aus / ein",
                             "haken", True,
                             hinweis="Solange der Haken steht, gehen Klicks in der Ansicht an diese "
@@ -6330,7 +6334,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _stellung_aus_maske(self, w: dict, alt):
         """Eine Stellung aus den Feldern der Maske - alles, was die Maske nicht
-        kennt (Lastfälle, Antrieb, Winkelbeschriftung), bleibt vom Original."""
+        kennt (Antrieb, Winkelbeschriftung), bleibt vom Original; die Lastfaelle
+        nur, wenn die Maske kein Feld dafuer hat."""
         from ..bridges.positions import Stellung
         import dataclasses
         m = self.model
@@ -6357,6 +6362,8 @@ class MainWindow(QtWidgets.QMainWindow):
                       linienlager_aus=self._namensliste(w.get("linienlager_aus")),
                       flaechenlager_aus=self._namensliste(w.get("flaechenlager_aus")))
         felder["winkel"] = felder["dreh_winkel"]
+        if "faelle" in w:
+            felder["faelle"] = [f for f in self._namensliste(w.get("faelle")) if f in m.load_cases]
         vorlage = alt if alt is not None else None
         if vorlage is not None:
             return dataclasses.replace(vorlage, **felder)
@@ -12362,7 +12369,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for s in self._stellungen_obj():
             e = erg.get(s.name)
             rows.append([s.name, zl.zahl_text(s.winkel, tausender=False, punkt=True), ", ".join(s.lager_aus) or "–",
-                         ", ".join(s.faelle) or "alle",
+                         ", ".join(s.faelle) or "keine",
                          # ohne gefuehrten Nachweis ist eta = 0 keine Zahl
                          "–" if e is None or e.fehler
                          or (e.warnungen and not e.nachgewiesen) else f"{e.eta:.3f}",
@@ -12455,7 +12462,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # wenn jede Stellung am FEHLER gescheitert war: „2 Stellungen
         # gerechnet: eta = 0.000“ bei 0 Ergebnissen (Befund B064).
         n_ok, n_fehler = len(umh.ergebnisse), len(umh.fehlerhaft)
-        if not n_ok:
+        if not n_ok and not n_fehler and reihe.ohne_lastfaelle:
+            self.error("Keine Stellung gerechnet – keiner ist ein Lastfall zugewiesen (Stellungsmaske: "
+                       "„Lastfälle dieser Stellung“ anhaken)")
+        elif not n_ok:
             self.error(f"Keine Stellung gerechnet – {n_fehler} von {len(liste)} mit FEHLER "
                        "(siehe Protokoll)")
         elif n_fehler:
@@ -22709,6 +22719,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.results = None
             self.selection = np.array([], dtype=int)
             self.path = p
+            # was das Laden umgestellt hat (Stellungen ohne Lastfaelle in
+            # aelteren Dateien, E6) - in das Protokoll
+            for z in getattr(self.model, "_ladehinweise", None) or []:
+                self.log.appendPlainText("Hinweis: " + z)
             self.refresh_all()
             self._refresh_title()
             self.zoom_alles()

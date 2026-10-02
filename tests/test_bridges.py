@@ -118,9 +118,10 @@ def test_stellungen():
 def test_reihe():
     m, n = _klappe()
     r = Stellungsreihe(m, "Klappbruecke Hafenkanal")
-    r.add(Stellung("S1", 0.0, "geschlossen"))
+    # seit 02.10.2026 rechnet eine Stellung nur ihre zugewiesenen Lastfaelle
+    r.add(Stellung("S1", 0.0, "geschlossen", faelle=["LF1"]))
     for w in (20.0, 45.0, 70.0, 82.0):
-        r.add(Stellung(f"S{int(w)}", w, f"geöffnet {w:g}°", lager_aus=["Endauflager"],
+        r.add(Stellung(f"S{int(w)}", w, f"geöffnet {w:g}°", lager_aus=["Endauflager"], faelle=["LF1"],
                        dreh_achse=(0, 1, 0), dreh_punkt=(0, 0, 0), dreh_winkel=-w,
                        dreh_gruppen=["klappe"]))
     check("fuenf Stellungen", len(r) == 5, str(len(r)))
@@ -166,7 +167,7 @@ def test_reihe():
 
     # fehlerhafte Stellung wird gemeldet, nicht verschwiegen
     r2 = Stellungsreihe(m)
-    r2.add(Stellung("X", 0.0, lager_aus=["Drehlager", "Endauflager"]))
+    r2.add(Stellung("X", 0.0, lager_aus=["Drehlager", "Endauflager"], faelle=["LF1"]))
     u2 = r2.rechnen()
     check("Stellung ohne Lager wird als Fehler ausgewiesen",
           len(u2.fehlerhaft) == 1, str(len(u2.fehlerhaft)))
@@ -211,7 +212,7 @@ def test_meldung_nach_allen_stellungen():
         G.MainWindow.refresh_stellungen(s)
         return (texte(s.lbl_umh.setText) or [""])[-1]
 
-    ohne_lager = dict(lager_aus=["Drehlager", "Endauflager"])
+    ohne_lager = dict(lager_aus=["Drehlager", "Endauflager"], faelle=["LF1"])
     s = rechne([Stellung("X", 0.0, **ohne_lager), Stellung("Y", 10.0, **ohne_lager)])
     u = s.umhuellende
     alle = texte(s.info) + texte(s.error)
@@ -235,7 +236,7 @@ def test_meldung_nach_allen_stellungen():
     check("… und das Etikett im Register: kein „η = 0,000“, sondern „nicht bestimmt“",
           "η = 0" not in lbl and "nicht bestimmt" in lbl and "2 mit FEHLER" in lbl, lbl)
 
-    s = rechne([Stellung("S1", 0.0, "geschlossen"), Stellung("X", 0.0, **ohne_lager)])
+    s = rechne([Stellung("S1", 0.0, "geschlossen", faelle=["LF1"]), Stellung("X", 0.0, **ohne_lager)])
     u = s.umhuellende
     letzte = (texte(s.info) or [""])[-1]
     check("eine von zwei rechenbar: „1 von 2 Stellungen gerechnet (1 mit FEHLER)“",
@@ -245,7 +246,7 @@ def test_meldung_nach_allen_stellungen():
     check("… das Etikett nennt dann das η der gerechneten Stellung",
           f"η = {u.eta:.3f}".replace(".", ",") in lbl and "nicht bestimmt" not in lbl, lbl)
 
-    s = rechne([Stellung("S1", 0.0, "geschlossen")])
+    s = rechne([Stellung("S1", 0.0, "geschlossen", faelle=["LF1"])])
     letzte = (texte(s.info) or [""])[-1]
     check("Gegenprobe, alle gerechnet: die Zeile wie bisher",
           letzte.startswith("1 Stellungen gerechnet: eta = ") and not texte(s.error), letzte)
@@ -265,8 +266,8 @@ def test_eta_ohne_nachweis():
         if ohne_staebe:
             mm.members.clear()
         r = Stellungsreihe(mm, "Klappe")
-        r.add(Stellung("S1", 0.0, "geschlossen"))
-        r.add(Stellung("S2", 30.0, "offen", lager_aus=["Endauflager"]))
+        r.add(Stellung("S1", 0.0, "geschlossen", faelle=["LF1"]))
+        r.add(Stellung("S2", 30.0, "offen", lager_aus=["Endauflager"], faelle=["LF1"]))
         u = r.rechnen(kombinationen=True, nachweise=nachweise)
         kurz = u.kurztext()
         check(f"{titel}: eta nicht bestimmt, kein 'eta = 0.000'",
@@ -281,7 +282,7 @@ def test_eta_ohne_nachweis():
               "Umhüllende: eta nicht bestimmt" in b and "0.000" not in "".join(zeilen), str(zeilen))
     # Gegenprobe: mit Stab und Nachweis bleibt eta bestimmt
     r = Stellungsreihe(m, "Klappe")
-    r.add(Stellung("S1", 0.0, "geschlossen"))
+    r.add(Stellung("S1", 0.0, "geschlossen", faelle=["LF1"]))
     u = r.rechnen(kombinationen=True, nachweise=True)
     check("mit Stabnachweis: eta bestimmt und ok",
           u.eta_bestimmt and u.eta > 0 and u.kurztext().startswith("eta = ")
@@ -367,7 +368,7 @@ def test_reihe_ohne_verlangten_nachweis():
     def reihe_aus(m):
         r = Stellungsreihe(m, m.name)
         for name, w in (("geschlossen", 0.0), ("Zwischen", 40.0), ("offen", 82.0)):
-            r.add(Stellung(name, w, f"{w:g} Grad"))
+            r.add(Stellung(name, w, f"{w:g} Grad", faelle=list(m.load_cases)))
         return r
 
     def ohne_nachweis(vorsatz, u):
@@ -543,8 +544,53 @@ def test_stellung_ermuedungslasten_im_protokoll():
           and m.fatigue_loads["V"].folge == ["LF1", "Verkehr"])
 
 
+def test_nur_zugewiesene_lastfaelle():
+    """Plan-Schritt 7S (Zusage an den Anwender vom 24.09.2026: „nur das gerechnet
+    wird was auch zugewiesen wurde, einen vermerkt lastfall nicht verwendet“):
+    eine Stellung rechnet nur die Lastfaelle, die ihr zugewiesen sind; ohne
+    Zuordnung rechnet sie nichts, und Lastfaelle in keiner Stellung stehen im
+    Protokoll. Bis zum 02.10.2026 hiess eine leere Zuordnung „alle“. Entscheidung
+    E6 (01.10.2026): aeltere Dateien (Fassung unter 8) bekommen beim Laden fuer
+    eine leere Zuordnung alle Lastfaelle - ihre Ergebnisse bleiben gleich."""
+    from dataclasses import asdict
+    m, n = _klappe()
+    g = next(iter(m.load_cases))
+    m.add_load_case("Wind", "W", activate=False)
+    m.load_node(n[2], Fz=-10e3, case="Wind")
+    r = Stellungsreihe(m, "Klappe")
+    r.add(Stellung("S0", 0.0, "ohne Zuordnung"))
+    r.add(Stellung("S1", 0.0, "nur Eigengewicht", faelle=[g]))
+    u = r.rechnen()
+    gerechnet = [e.stellung.name for e in u.ergebnisse]
+    check("Stellung ohne zugewiesene Lastfälle wird nicht gerechnet (bisher: alle)",
+          gerechnet == ["S1"] and not u.fehlerhaft, str((gerechnet, [e.stellung.name for e in u.fehlerhaft])))
+    check("… das Protokoll sagt es",
+          any("S0" in z and "keine Lastfälle zugewiesen" in z for z in r.log), str(r.log[:4]))
+    e = r.ergebnis("S1")
+    check("die Stellung rechnet nur ihren Lastfall", set(e.modell.load_cases) == {g},
+          str(sorted(e.modell.load_cases)))
+    check("ein Lastfall in keiner Stellung wird vermerkt",
+          any("in keiner Stellung" in z and "Wind" in z for z in r.log), str(r.log[-2:]))
+    # E6: Dateien vor Fassung 8 - leer hiess damals „alle“
+    d = m.to_dict()
+    d["stellungen"] = [asdict(Stellung("S0", 0.0, "alt"))]
+    d["format"] = 7
+    m7 = Model.from_dict(d)
+    check("Datei vor Fassung 8: eine leere Zuordnung wird „alle Lastfälle“ (E6)",
+          m7.stellungen[0].faelle == list(m.load_cases), str(m7.stellungen[0].faelle))
+    check("… und das Laden sagt es", any("S0" in z for z in getattr(m7, "_ladehinweise", [])),
+          str(getattr(m7, "_ladehinweise", None)))
+    d["format"] = 8
+    m8 = Model.from_dict(d)
+    check("Datei ab Fassung 8: eine leere Zuordnung bleibt leer", m8.stellungen[0].faelle == [],
+          str(m8.stellungen[0].faelle))
+    check("gespeichert wird Fassung 8 oder neuer", int(m.to_dict().get("format", 0)) >= 8,
+          str(m.to_dict().get("format")))
+
+
 def main():
     for t in (test_drehung, test_stellungen, test_reihe, test_reihe_ohne_verlangten_nachweis,
+              test_nur_zugewiesene_lastfaelle,
               test_meldung_nach_allen_stellungen, test_eta_ohne_nachweis,
               test_ermuedung_in_stellung, test_din19704, test_ztv_ing,
               test_stellung_ermuedungslasten_im_protokoll):

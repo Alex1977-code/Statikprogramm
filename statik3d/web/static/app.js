@@ -1204,7 +1204,7 @@ function stellungForm(st) {
     <div class="grid2">${inp('name', 'Name', s.name || '', 'required')}${num('winkel', 'Stellungswinkel [°]', s.winkel ?? 0)}</div>
     ${inp('beschreibung', 'Beschreibung', s.beschreibung || '')}
     <div class="grid2">${inp('lager_aus', 'Lager aus (Namen, Komma)', (s.lager_aus || []).join(', '))}${inp('lager_aktiv', 'nur diese Lager aktiv', (s.lager_aktiv || []).join(', '))}</div>
-    ${inp('faelle', 'Lastfälle dieser Stellung (Komma, leer = alle)', (s.faelle || []).join(', '))}
+    ${inp('faelle', 'Lastfälle dieser Stellung (Komma; nur diese werden gerechnet, leer = keine)', (s.faelle || []).join(', '))}
     <details${st && s.dreh_winkel ? ' open' : ''}><summary>Bewegtes Bauteil drehen</summary><div class="body">
       <div class="grid2">${num('dreh_winkel', 'Drehwinkel [°]', s.dreh_winkel ?? 0)}${inp('gruppen', 'Gruppen / Stäbe (Komma)', (s.gruppen || []).join(', '))}</div>
       <div class="grid3">${num('achse_x', 'Achse x', achse[0])}${num('achse_y', 'Achse y', achse[1])}${num('achse_z', 'Achse z', achse[2])}</div>
@@ -1243,7 +1243,7 @@ function renderBruecke() {
       <div class="muted">${esc(gew.beschreibung || 'ohne Beschreibung')}</div>
       <div class="kv"><b>Lager aus</b><span>${esc((gew.lager_aus || []).join(', ') || '–')}</span>
         <b>nur aktiv</b><span>${esc((gew.lager_aktiv || []).join(', ') || 'alle')}</span>
-        <b>Lastfälle</b><span>${esc((gew.faelle || []).join(', ') || 'alle')}</span>
+        <b>Lastfälle</b><span>${esc((gew.faelle || []).join(', ') || 'keine')}</span>
         <b>Drehung</b><span>${gew.dreh_winkel ? `${fmt(gew.dreh_winkel, 1)}° · ${esc((gew.gruppen || []).join(', ') || 'ganzes Modell')}` : 'keine'}</span>
         <b>Antrieb</b><span>${gew.antrieb ? 'Moment angesetzt' : '–'}</span></div>
       ${e ? (e.fehler ? `<div class="msg err">${esc(e.fehler)}</div>` : stellungMeldung(e))
@@ -1275,7 +1275,7 @@ function renderBruecke() {
     html += `<details open><summary>Stellungen <span class="n">${liste.length}</span></summary><div class="body">
       ${table(['Stellung', 'Winkel', 'Lager aus', 'Lastfälle', 'η', 'u max [mm]', ''],
         liste.map(x => [x.name, fmt(x.winkel, 1) + '°', (x.lager_aus || []).join(', ') || '–',
-          (x.faelle || []).join(', ') || 'alle',
+          (x.faelle || []).join(', ') || 'keine',
           x.ergebnis && !x.ergebnis.fehler ? x.ergebnis.eta : '',
           x.ergebnis && !x.ergebnis.fehler ? fmt(x.ergebnis.u_max * 1e3, 3) : (x.ergebnis && x.ergebnis.fehler ? 'Fehler' : '–'),
           `<button class="btn small danger" data-action="op" data-payload='${JSON.stringify({op: 'remove_stellung', name: x.name})}' data-confirm="Stellung ${x.name} entfernen?">✕</button>`]),

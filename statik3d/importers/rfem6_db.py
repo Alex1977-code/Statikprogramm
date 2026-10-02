@@ -1529,6 +1529,11 @@ def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,
             if sit:
                 lc.situation = sit
                 mit_mod[sit] = mit_mod.get(sit, 0) + 1
+                # die Stellung der Strukturmodifikation rechnet genau diese
+                # Lastfaelle (Stellung.faelle, nur Zugewiesenes - 02.10.2026)
+                st = m.stellung(sit)
+                if st is not None and nm not in st.faelle:
+                    st.faelle.append(nm)
             else:
                 ohne_mod += 1
         n += 1

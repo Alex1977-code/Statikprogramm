@@ -3158,6 +3158,12 @@ an), nicht mehr als getippte Namen.
 Kombinationen zu; nicht mehr genannte fallen in die Grundstellung zurück.
 Was in der Stellung nicht wirkt (Stäbe, Flächen, Volumen, Gelenke, Lager),
 steht in der Stellung selbst — die Maske der Situation zeigt es nur an.
+Die Situation bestimmt, in welcher Stellung ein Lastfall bei **Berechnen**
+rechnet. **▶ Alle Stellungen rechnen** (Register ⟳ Stellungen) liest
+dagegen die eigene Liste jeder Stellung, „Lastfälle dieser Stellung“ in
+ihrer Maske, und rechnet nur, was dort angehakt ist (siehe *Stellungen
+anlegen*). Eine Situation trägt ihre Lastfälle nicht in diese Liste ein; der
+RFEM-Import füllt beides aus den Strukturmodifikationen.
 Nennt eine Situation als Stellung „Grundstellung“ und heißt keine Stellung so
 (dann bietet die Maske den Namen nicht an; er kommt aus einer Modelldatei,
 beim Anhängen oder über die Web-API herein), ist sie unbewegt mit allen
@@ -3179,7 +3185,9 @@ der Quelldatei ist ein Ausfallszenario: sie schaltet genannte Stäbe und Lager
 ab, und die Lastfälle, die darauf verweisen, rechnen mit diesem verkleinerten
 System. Der Import legt daraus eine Stellung und eine Situation an und trägt
 sie bei den betroffenen Lastfällen ein; die Kombinationen folgen ihren
-Lastfällen. Am geprüften Drehlagermodell heißt sie „Ankerausfall" und betrifft
+Lastfällen. Seit dem 02.10.2026 stehen dieselben Lastfälle auch in der Liste
+„Lastfälle dieser Stellung“, so dass **▶ Alle Stellungen rechnen** in dieser
+Stellung genau sie rechnet. Am geprüften Drehlagermodell heißt sie „Ankerausfall" und betrifft
 **128 der 422 Lastfälle** — ohne sie rechneten diese 128 Fälle mit einem Anker
 und einem Lager, die ausgefallen sein sollen. Mischt eine Kombination aus
 RFEM Lastfälle aus zwei Situationen, sind das zwei Tragwerke — in RFEM eine
@@ -4576,9 +4584,10 @@ den Namen fasst das Löschen nicht an, so die **Lastfallliste einer Stellung**:
 stand dort „LF1, LF2“, bleibt LF2 nach dem Löschen stehen, die Modellprüfung
 meldet nichts, und erst die Rechnung der Stellungen lässt diese Stellung ohne
 Ergebnis („Stellung 'S1': Lastfall 'LF2' gibt es im Modell nicht“, gemessen
-24.09.2026). Dann den Lastfall in der Stellung herausnehmen. Eine Stellung mit
-eigener Lastfallliste nennt im Protokoll jede Ermüdungslast, die dabei
-entfällt; einen Verlauf kürzt sie nicht, er entfällt dort ganz, sobald ein
+24.09.2026). Dann die Maske der Stellung öffnen und **Übernehmen**: Unter
+„Lastfälle dieser Stellung“ stehen nur die vorhandenen Lastfälle, und der
+gelöschte fällt aus der Liste. Eine Stellung nennt im Protokoll jede
+Ermüdungslast, die mit ihrer Lastfallliste entfällt; einen Verlauf kürzt sie nicht, er entfällt dort ganz, sobald ein
 Glied fehlt (siehe *Stellungen anlegen*).
 
 **Grundlast.** Ein Lastfall mit dem Haken „Grundlast“ (Maske Lastfall) wirkt
@@ -7660,9 +7669,10 @@ Stellung für welchen Nachweis maßgebend ist**.
 from statik3d.bridges import Stellung, Stellungsreihe
 
 reihe = Stellungsreihe(modell, "Klappbrücke Hafenkanal")
-reihe.add(Stellung("S1", 0.0, "geschlossen"))
+alle = list(modell.load_cases)               # gerechnet wird nur Zugewiesenes
+reihe.add(Stellung("S1", 0.0, "geschlossen", faelle=alle))
 for w in (20, 45, 70, 82):
-    reihe.add(Stellung(f"S{w}", w, f"geöffnet {w}°",
+    reihe.add(Stellung(f"S{w}", w, f"geöffnet {w}°", faelle=alle,
                        lager_aus=["Endauflager"],          # Riegel gezogen
                        dreh_achse=(0, 1, 0), dreh_punkt=(0, 0, 0),
                        dreh_winkel=-w, dreh_gruppen=["klappe"],
@@ -7677,7 +7687,8 @@ Je Stellung lässt sich einstellen:
 |---|---|
 | `lager_aktiv` / `lager_aus` | welche benannten Lager in dieser Stellung greifen |
 | `dreh_achse`, `dreh_punkt`, `dreh_winkel`, `dreh_gruppen` | die bewegten Bauteile werden gedreht; das Eigengewicht wirkt dadurch anders |
-| `faelle`, `kombinationen` | welche Lastfälle in dieser Stellung überhaupt gelten |
+| `faelle` | welche Lastfälle diese Stellung rechnet — nur diese; ohne Zuordnung rechnet sie nichts |
+| `kombinationen` | welche Kombinationen in dieser Stellung gelten |
 | `antrieb` | Antriebsmoment als Knotenlast in einem eigenen Lastfall |
 
 Die Umhüllende nennt die größte Ausnutzung, die größte Verformung und die
@@ -7685,6 +7696,25 @@ größte Auflagerkraft je Knoten — **jeweils mit der Stellung, in der sie
 auftritt**. `umh.kurve()` liefert `(Winkel, η, u_max)` für die Kurve über den
 Stellungswinkel. Eine Stellung ohne ausreichende Lagerung wird als Fehler
 ausgewiesen, nicht stillschweigend übergangen.
+
+**Nur Zugewiesenes wird gerechnet.** Eine Stellung rechnet genau die
+Lastfälle, die ihr zugewiesen sind: in der Stellungsmaske unter „Lastfälle
+dieser Stellung“ zum Anhaken, in Python mit `faelle`, im RFEM-Import aus den
+Lastfällen ihrer Strukturmodifikation. Eine Stellung ohne Zuordnung rechnet
+nichts; das Protokoll nennt sie („S0: keine Lastfälle zugewiesen - nicht
+gerechnet“), und die Tabelle zeigt unter Lastfälle „keine“. Ein Lastfall,
+der in keiner Stellung steht, wird vermerkt („Lastfälle in keiner Stellung
+(nicht gerechnet): Wind“). Ist keiner Stellung etwas zugewiesen, meldet
+**▶ Alle Stellungen rechnen** „Keine Stellung gerechnet – keiner ist ein
+Lastfall zugewiesen“. Bis zum 02.10.2026 hieß eine leere Zuordnung „alle
+Lastfälle“: Jede Stellung rechnete alles, auch Lastfälle, die zu ihr nicht
+gehörten, und in der Desktop-Oberfläche ließ sich die Zuordnung nicht
+einstellen. Modelle, die vorher gespeichert sind (Dateifassung unter 8),
+bekommen beim Laden für jede leere Zuordnung einmalig die Liste aller
+Lastfälle; ihre Ergebnisse bleiben dadurch gleich, und das Protokoll sagt es
+je Stellung („Hinweis: Stellung S1: ohne zugewiesene Lastfälle gespeichert
+…“). Geprüft in `tests/test_bridges.py` (`test_nur_zugewiesene_lastfaelle`)
+und `tests/test_stellungen_zuweisung.py`.
 
 **Lastfälle einer Stellung.** Mit `faelle` fallen die übrigen Lastfälle aus
 dem Stellungsmodell heraus, auch aus den Kombinationen. Eine gewöhnliche
@@ -7700,7 +7730,8 @@ mit EK1 = 1,35·LF1 oder 1,35·LF1 + 1,5·LF2 in der Stellung mit
 wich der Nachweis auf die Lastfälle aus, und es kam η = 0,1702 statt 0,3702
 heraus. Stand daneben die gewöhnliche Kombination K1 = LF1 + LF2, lief er
 allein gegen K1, mit η = 0,2553. Jetzt liefert die Stellung in beiden Fällen
-0,3702 wie die Stellung ohne `faelle`.
+0,3702 wie damals die Stellung ohne `faelle`, die bis zum 02.10.2026 alle
+Lastfälle rechnete.
 
 Das Antriebsmoment (`antrieb`) kommt mit dem Faktor 1,0 in jede Kombination
 und in jede Alternative, die einen positiven Faktor hat. Bis zum 23.09.2026
@@ -7864,8 +7895,10 @@ ausgefallenen Lagern, geltenden Lastfällen, η und größter Verformung.
 Ausgangsstellung, Verschiebung, Verdrehung, deaktivierte Stäbe, Flächen,
 Volumen, Gelenke und Lager — siehe „Stellungen: Lage und Wirkung des
 Systems“ in Kapitel 2); „Entfernen" arbeitet auf der gewählten Zeile.
-Lastfälle je Stellung und Antriebsmoment kommen aus der Python-Schnittstelle
-(`Stellung(faelle=…, antrieb=…)`). **▶ Alle Stellungen rechnen** rechnet jede Stellung einzeln
+Die Lastfälle je Stellung werden in derselben Maske unter „Lastfälle dieser
+Stellung“ angehakt; gerechnet wird nur, was dort angehakt ist (siehe
+*Stellungen anlegen*). Das Antriebsmoment kommt aus der Python-Schnittstelle
+(`Stellung(antrieb=…)`). **▶ Alle Stellungen rechnen** rechnet jede Stellung einzeln
 und schreibt die Umhüllende darunter; der Filmstreifen unter der 3D-Ansicht
 zeigt danach je Karte das η, die maßgebende mit ★. Die Schlusszeile zählt,
 was gerechnet ist: „1 von 2 Stellungen gerechnet (1 mit FEHLER, siehe
