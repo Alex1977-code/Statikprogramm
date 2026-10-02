@@ -90,6 +90,33 @@ def test_maske_weist_lastfaelle_zu():
     st = w.model.stellung("S1")
     check("„Übernehmen“ schreibt die angehakten Lastfälle in die Stellung", st is not None and st.faelle == [g],
           str(st and st.faelle))
+    w._objektmaske("stellung", "S1"); app.processEvents()
+    mk = w.maskenrand.maske
+    knopf = mk.zusatzknoepfe.get("Alle Lastfälle anhaken")
+    check("Knopf „Alle Lastfälle anhaken“ in der Stellungsmaske", knopf is not None,
+          str(list(mk.zusatzknoepfe)))
+    if knopf is not None:
+        knopf.click(); app.processEvents()
+        mk.anwenden(); app.processEvents()
+        st = w.model.stellung("S1")
+        check("… hakt alle an, „Übernehmen“ schreibt sie", st.faelle == list(w.model.load_cases),
+              str(st.faelle))
+
+
+def test_umbenennen_fuehrt_stellung_mit():
+    """Gegenpruefung 02.10.2026: Umbenennen eines Lastfalls in seiner Maske
+    liess den alten Namen in der Stellung stehen, die dann scheiterte."""
+    w, app = _fenster()
+    m, g = _modell(w)
+    m.stellung("S1").faelle = [g, "Wind"]
+    w.refresh_all(); app.processEvents()
+    w._objektmaske("lastfall", "Wind"); app.processEvents()
+    mk = w.maskenrand.maske
+    mk.setzen("name", "Sturm")
+    mk.anwenden(); app.processEvents()
+    st = w.model.stellung("S1")
+    check("Lastfall in seiner Maske umbenannt: die Stellung führt den neuen Namen",
+          "Sturm" in w.model.load_cases and st.faelle == [g, "Sturm"], str(st.faelle))
 
 
 def test_alle_stellungen_ohne_zuordnung():
@@ -135,8 +162,8 @@ def test_alte_datei_bekommt_alle_lastfaelle():
 def main():
     import faulthandler
     faulthandler.dump_traceback_later(600, exit=True)
-    for t in (test_maske_weist_lastfaelle_zu, test_alle_stellungen_ohne_zuordnung,
-              test_alte_datei_bekommt_alle_lastfaelle):
+    for t in (test_maske_weist_lastfaelle_zu, test_umbenennen_fuehrt_stellung_mit,
+              test_alle_stellungen_ohne_zuordnung, test_alte_datei_bekommt_alle_lastfaelle):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

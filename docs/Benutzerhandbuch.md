@@ -4579,15 +4579,15 @@ einmal „… von … Einträgen gelöscht“), die Zeile dazu nur im Protokoll
 nahm der Knopf nur die Faktoren mit: am Zugstab-Volumen mit einer oder-EK über
 LF1, LF2, LF3 standen nach dem Löschen von LF2 die Alternativen und die
 Ermüdungslasten weiter auf LF2, die Modellprüfung meldete FEHLER, und die
-Rechnung brach mit „Lastfall 'LF2' existiert nicht“ ab. Andere Verweise auf
-den Namen fasst das Löschen nicht an, so die **Lastfallliste einer Stellung**:
-stand dort „LF1, LF2“, bleibt LF2 nach dem Löschen stehen, die Modellprüfung
-meldet nichts, und erst die Rechnung der Stellungen lässt diese Stellung ohne
-Ergebnis („Stellung 'S1': Lastfall 'LF2' gibt es im Modell nicht“, gemessen
-24.09.2026). Dann die Maske der Stellung öffnen und **Übernehmen**: Unter
-„Lastfälle dieser Stellung“ stehen nur die vorhandenen Lastfälle, und der
-gelöschte fällt aus der Liste. Eine Stellung nennt im Protokoll jede
-Ermüdungslast, die mit ihrer Lastfallliste entfällt; einen Verlauf kürzt sie nicht, er entfällt dort ganz, sobald ein
+Rechnung brach mit „Lastfall 'LF2' existiert nicht“ ab. Seit dem 02.10.2026
+fällt der Name auch aus der **Lastfallliste einer Stellung**, und das Protokoll
+sagt es („Stellung 'S1': Lastfall 'LF2' aus ihrer Lastfallliste genommen“,
+mit dem Zusatz „ihr ist kein Lastfall mehr zugewiesen“, wenn nichts bleibt).
+Ebenso folgt die Liste dem Umbenennen eines Lastfalls. Bis dahin blieb LF2
+dort stehen, die Modellprüfung meldete nichts, und erst die Rechnung der
+Stellungen ließ die Stellung ohne Ergebnis („Stellung 'S1': Lastfall 'LF2'
+gibt es im Modell nicht“, gemessen 24.09.2026). Eine Stellung nennt im
+Protokoll jede Ermüdungslast, die mit ihrer Lastfallliste entfällt; einen Verlauf kürzt sie nicht, er entfällt dort ganz, sobald ein
 Glied fehlt (siehe *Stellungen anlegen*).
 
 **Grundlast.** Ein Lastfall mit dem Haken „Grundlast“ (Maske Lastfall) wirkt
@@ -7699,7 +7699,8 @@ ausgewiesen, nicht stillschweigend übergangen.
 
 **Nur Zugewiesenes wird gerechnet.** Eine Stellung rechnet genau die
 Lastfälle, die ihr zugewiesen sind: in der Stellungsmaske unter „Lastfälle
-dieser Stellung“ zum Anhaken, in Python mit `faelle`, im RFEM-Import aus den
+dieser Stellung“ zum Anhaken (der Knopf „Alle Lastfälle anhaken“ setzt jeden
+Haken), in Python mit `faelle`, im RFEM-Import aus den
 Lastfällen ihrer Strukturmodifikation. Eine Stellung ohne Zuordnung rechnet
 nichts; das Protokoll nennt sie („S0: keine Lastfälle zugewiesen - nicht
 gerechnet“), und die Tabelle zeigt unter Lastfälle „keine“. Ein Lastfall,
@@ -7902,7 +7903,10 @@ Stellung“ angehakt; gerechnet wird nur, was dort angehakt ist (siehe
 und schreibt die Umhüllende darunter; der Filmstreifen unter der 3D-Ansicht
 zeigt danach je Karte das η, die maßgebende mit ★. Die Schlusszeile zählt,
 was gerechnet ist: „1 von 2 Stellungen gerechnet (1 mit FEHLER, siehe
-Protokoll): eta = …“, wenn eine scheitert; scheitern alle, meldet die
+Protokoll): eta = …“, wenn eine scheitert, und „1 von 2 Stellungen gerechnet
+(1 ohne Lastfälle, siehe Protokoll): eta = …“, wenn einer keine Lastfälle
+zugewiesen sind; die Zeile unter dem Knopf und der Bericht („Nicht
+gerechnet“) nennen beides ebenso. Scheitern alle, meldet die
 Oberfläche „Keine Stellung gerechnet – 2 von 2 mit FEHLER“, und η gilt als
 nicht bestimmt: Die Zeile unter dem Knopf lautet dann „Umhüllende über alle
 Stellungen: η nicht bestimmt – keine Stellung gerechnet (2 mit FEHLER, siehe

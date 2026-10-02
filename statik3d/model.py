@@ -3275,12 +3275,14 @@ class Model:
         (bridges.positions) laesst solche Lasten ebenso entfallen. Ein
         Verlauf, dem kein Glied bleibt, entfaellt auch.
 
-        Andere Verweise auf den Namen bleiben stehen, etwa die Lastfallliste
-        einer Stellung (bridges.positions.Stellung.faelle): gemessen
-        24.09.2026 mit faelle ['LF1', 'LF2'] nach remove_load_case('LF2')
-        Rueckgabe [], faelle unveraendert, check() ohne FEHLER oder WARNUNG, und
-        Stellungsreihe.rechnen laesst die Stellung mit "Lastfall 'LF2' gibt
-        es im Modell nicht" ohne Ergebnis.
+        Aus der Lastfallliste einer Stellung (bridges.positions.Stellung.faelle)
+        faellt der Name seit dem 02.10.2026 ebenfalls heraus. Bis dahin blieb
+        er stehen: gemessen 24.09.2026 mit faelle ['LF1', 'LF2'] nach
+        remove_load_case('LF2') Rueckgabe [], faelle unveraendert, check() ohne
+        FEHLER oder WARNUNG, und Stellungsreihe.rechnen liess die Stellung mit
+        "Lastfall 'LF2' gibt es im Modell nicht" ohne Ergebnis. Seit E6 traegt
+        jede Stellung einer aelteren Datei die volle Liste; jede waere so
+        gescheitert.
 
         Bis zum 23.09.2026 gingen nur die Faktoren mit (Befund B105): die
         Alternativen einer oder-EK und die Ermuedungslasten zeigten danach
@@ -3322,6 +3324,11 @@ class Model:
                     welcher = "oberer" if fl.case_max == name else "unterer"
                     aus.append(f"Ermüdungslast '{fl.name}' entfällt: ihr {welcher} Zustand "
                                f"war Lastfall '{name}'")
+        for s in getattr(self, "stellungen", None) or []:
+            if name in (getattr(s, "faelle", None) or []):
+                s.faelle = [f for f in s.faelle if f != name]
+                aus.append(f"Stellung '{s.name}': Lastfall '{name}' aus ihrer Lastfallliste genommen"
+                           + ("" if s.faelle else " - ihr ist kein Lastfall mehr zugewiesen"))
         if self.active_case == name:
             self.active_case = next(iter(self.load_cases), "")
         if not self.load_cases:

@@ -118,6 +118,12 @@ class Stellung:
         t = f"{self.name} ({self.winkel:g}°)"
         return t + (f" - {self.beschreibung}" if self.beschreibung else "")
 
+    def lastfall_umbenennen(self, alt: str, neu: str) -> None:
+        """Die Lastfallliste folgt dem Umbenennen eines Lastfalls. Seit dem
+        02.10.2026 rechnet eine Stellung nur ihre Liste; ein alter Name darin
+        liess sie mit „Lastfall … gibt es im Modell nicht“ scheitern."""
+        self.faelle = [neu if f == alt else f for f in self.faelle]
+
     # -- Modell fuer diese Stellung -------------------------------------
     def modell(self, basis: Model, log: list = None) -> Model:
         """Das Modell dieser Stellung: verschobene und gedrehte Geometrie,
@@ -569,6 +575,18 @@ class Umhuellende:
         self.fehlerhaft = [e for e in reihe.ergebnisse if e.fehler]
 
     @property
+    def ohne_lastfaelle(self) -> list:
+        """Stellungen ohne zugewiesene Lastfaelle - nicht gerechnet (seit
+        02.10.2026; als Eigenschaft, damit aeltere Ablagen sie nicht brauchen)."""
+        return list(getattr(self.reihe, "ohne_lastfaelle", None) or [])
+
+    def nicht_gerechnet_text(self) -> str:
+        """„ (1 mit FEHLER, 2 ohne Lastfälle, siehe Protokoll)“ - oder leer."""
+        teile = ([f"{len(self.fehlerhaft)} mit FEHLER"] if self.fehlerhaft else []) \
+            + ([f"{len(self.ohne_lastfaelle)} ohne Lastfälle"] if self.ohne_lastfaelle else [])
+        return f" ({', '.join(teile)}, siehe Protokoll)" if teile else ""
+
+    @property
     def eta(self) -> float:
         return max((e.eta for e in self.ergebnisse), default=0.0)
 
@@ -627,8 +645,7 @@ class Umhuellende:
         dem Warnhinweis - oder, wenn nichts gerechnet oder nachgewiesen
         wurde, genau das."""
         if not self.ergebnisse:
-            return ("eta nicht bestimmt – keine Stellung gerechnet"
-                    + (f" ({len(self.fehlerhaft)} mit FEHLER, siehe Protokoll)" if self.fehlerhaft else ""))
+            return "eta nicht bestimmt – keine Stellung gerechnet" + self.nicht_gerechnet_text()
         if not self.eta_bestimmt:
             return "eta nicht bestimmt – kein Stabnachweis geführt" + self.warnhinweis()
         return (f"eta = {self.eta:.3f}"
@@ -679,7 +696,7 @@ class Umhuellende:
         z.append("-" * 78)
         if not self.ergebnisse:
             z.append("Umhüllende: eta nicht bestimmt – keine Stellung gerechnet"
-                     + (" (siehe „Nicht gerechnet“)" if self.fehlerhaft else ""))
+                     + (" (siehe „Nicht gerechnet“)" if self.fehlerhaft or self.ohne_lastfaelle else ""))
         elif not self.eta_bestimmt:
             z.append("Umhüllende: eta nicht bestimmt – in keiner Stellung wurde ein "
                      "Stabnachweis geführt"
@@ -710,9 +727,16 @@ class Umhuellende:
                 z += [f"    WARNUNG: {x}" for x in w[:5]]
                 if len(w) > 5:
                     z.append(f"    … und {len(w) - 5} weitere (siehe Protokoll)")
-        if self.fehlerhaft:
+        if self.fehlerhaft or self.ohne_lastfaelle:
             z.append("")
             z.append("Nicht gerechnet:")
             for e in self.fehlerhaft:
                 z.append(f"  {e.stellung.beschriftung()}: {e.fehler[:60]}")
+            for name in self.ohne_lastfaelle:
+                z.append(f"  {name}: keine Lastfälle zugewiesen")
+        rest = list(getattr(self.reihe, "lastfaelle_ohne_stellung", None) or [])
+        if rest:
+            z.append("")
+            z.append("Lastfälle in keiner Stellung (nicht gerechnet): " + ", ".join(rest[:20])
+                     + (f" … und {len(rest) - 20} weitere" if len(rest) > 20 else ""))
         return "\n".join(z)

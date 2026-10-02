@@ -246,6 +246,26 @@ def test_meldung_nach_allen_stellungen():
     check("… das Etikett nennt dann das η der gerechneten Stellung",
           f"η = {u.eta:.3f}".replace(".", ",") in lbl and "nicht bestimmt" not in lbl, lbl)
 
+    # Plan 7S (02.10.2026): eine Stellung ohne zugewiesene Lastfaelle rechnet
+    # nichts und zaehlt nicht mit - die Gegenpruefung fand „2 Stellungen
+    # gerechnet“ bei einer gerechneten
+    s = rechne([Stellung("S1", 0.0, "geschlossen", faelle=["LF1"]), Stellung("S0", 0.0, "ohne Lastfälle")])
+    u = s.umhuellende
+    letzte = (texte(s.info) or [""])[-1]
+    check("eine von zwei mit Lastfällen: „1 von 2 Stellungen gerechnet (1 ohne Lastfälle, …)“",
+          len(u.ergebnisse) == 1
+          and "1 von 2 Stellungen gerechnet (1 ohne Lastfälle, siehe Protokoll): eta = " in letzte, letzte)
+    lbl = etikett(s)
+    check("… das Etikett im Register sagt es auch", "1 ohne Lastfälle" in lbl and "η = " in lbl, lbl)
+    check("… und der Bericht nennt sie unter „Nicht gerechnet“",
+          "Nicht gerechnet:" in u.bericht() and "S0: keine Lastfälle zugewiesen" in u.bericht(),
+          u.bericht().splitlines()[-3:])
+    s = rechne([Stellung("S0", 0.0, "ohne Lastfälle"), Stellung("X", 0.0, **ohne_lager)])
+    alle = texte(s.error)
+    check("keine gerechnet, eine mit FEHLER, eine ohne Lastfälle: beide genannt",
+          any("Keine Stellung gerechnet – 1 von 2 mit FEHLER, 1 ohne Lastfälle" in t for t in alle),
+          str(alle[-1:]))
+
     s = rechne([Stellung("S1", 0.0, "geschlossen", faelle=["LF1"])])
     letzte = (texte(s.info) or [""])[-1]
     check("Gegenprobe, alle gerechnet: die Zeile wie bisher",
@@ -586,6 +606,35 @@ def test_nur_zugewiesene_lastfaelle():
           str(m8.stellungen[0].faelle))
     check("gespeichert wird Fassung 8 oder neuer", int(m.to_dict().get("format", 0)) >= 8,
           str(m.to_dict().get("format")))
+    # Der Weg „Importieren“ (importers.import_file) sagt dasselbe wie das
+    # Oeffnen (Gegenpruefung 02.10.2026: dort fehlte der Hinweis)
+    import json
+    import os
+    import tempfile
+    from statik3d import importers
+    d["format"] = 7
+    pfad = os.path.join(tempfile.mkdtemp(prefix="statik3d_7s_"), "alt.json")
+    with open(pfad, "w", encoding="utf-8") as f:
+        json.dump(d, f)
+    log = []
+    mi = importers.import_file(pfad, log=log)
+    check("Importieren einer älteren Datei: alle Lastfälle und der Hinweis im Protokoll",
+          mi.stellungen[0].faelle == list(m.load_cases)
+          and any(str(z).startswith("Hinweis: Stellung S0") for z in log), str(log[:3]))
+    # Umbenennen und Loeschen fuehren die Liste mit (Gegenpruefung 02.10.2026:
+    # nach E6 traegt jede Stellung einer aelteren Datei alle Namen, und ein
+    # alter Name liess sie mit „gibt es im Modell nicht“ scheitern)
+    st = Stellung("S2", 0.0, "beide", faelle=[g, "Wind"])
+    st.lastfall_umbenennen("Wind", "Sturm")
+    check("Stellung.lastfall_umbenennen führt die Liste mit", st.faelle == [g, "Sturm"], str(st.faelle))
+    m.stellungen = [Stellung("S2", 0.0, "beide", faelle=[g, "Wind"]),
+                    Stellung("S3", 0.0, "nur Wind", faelle=["Wind"])]
+    mit = m.remove_load_case("Wind")
+    check("Löschen eines Lastfalls nimmt ihn aus den Stellungen",
+          m.stellungen[0].faelle == [g] and m.stellungen[1].faelle == [],
+          str([s.faelle for s in m.stellungen]))
+    check("… und sagt es, auch wenn einer Stellung nichts bleibt",
+          any("S3" in z and "kein Lastfall mehr zugewiesen" in z for z in mit), str(mit))
 
 
 def main():

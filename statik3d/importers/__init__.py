@@ -289,6 +289,10 @@ def import_file(path: str, model: Model = None, log: list = None, **options) -> 
         _melde(fortschritt, 1.0, "Modell gelesen")
         if fresh:
             model = loaded
+            # was das Laden umgestellt hat (E6: Stellungen ohne Lastfaelle in
+            # aelteren Dateien bekommen alle) - ins Protokoll wie beim Oeffnen
+            for z in getattr(loaded, "_ladehinweise", None) or []:
+                C.say(log, "Hinweis: " + z)
         else:
             C.say(log, f"JSON-Modell '{loaded.name}' angehaengt")
             model = _append_model(model, loaded, tol, log)

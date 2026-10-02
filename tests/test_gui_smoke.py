@@ -592,7 +592,8 @@ def main():
         from statik3d.gui import design as dsg
         w.load_example("gate")
         w.model.meta["Bauteil"] = "Klappbruecke"
-        w._stellungen_obj()[:] = [Stellung(name=f"S{i}", winkel=float(a), beschreibung=t)
+        w._stellungen_obj()[:] = [Stellung(name=f"S{i}", winkel=float(a), beschreibung=t,
+                                           faelle=list(w.model.load_cases))
                         for i, (a, t) in enumerate(((0, "geschlossen"), (32, "Zwischen"),
                                                     (82, "offen")), 1)]
         w.refresh_all()
