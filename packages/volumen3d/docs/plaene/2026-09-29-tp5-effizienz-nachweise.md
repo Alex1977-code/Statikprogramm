@@ -625,8 +625,11 @@ Rebase auf main). O2: Referenzlauf mit 0,5 mm, Direktlöser, Maschine exklusiv. 
 Monotonie wird zusätzlich genannt.
 
 *Messregeln O3, vor der Messung festgelegt (02.10.2026).* Modell und Last wie C1 (`tests/test_knotenblech.py`), Basiszellgröße 10 (= t), Fahrplan wie dort
-(h 5, h 2,5, p 3, p 4), Vertragsweg. Die Gitterlage wird verschoben, indem das ganze Modell (Geometrie, Schnittebenen, Nahtlinien) um δ in x verschoben wird:
-δ = 0, 0,625, 1,25, 1,875 mm (ein Viertel der feinsten Zelle 2,5 mm je Schritt, zusammen eine Periode der feinsten Zellen). Das Gitter beginnt bei
+(h 5, h 2,5, p 3, p 4), Vertragsweg. Die Gitterlage wird verschoben, indem die beiden Schnittebenen um δ in x verschoben werden (Naht, Blech und Last bleiben; das Blech behält sein Polster
+von 5 mm hinter der rechten Ebene): δ = 0, 0,625, 1,25, 1,875 mm (ein Viertel der feinsten Zelle 2,5 mm je Schritt, zusammen eine Periode der feinsten Zellen).
+Das Gitter beginnt an der Hülle der beschnittenen Geometrie und wandert deshalb mit den Ebenen; ein Verschieben des ganzen Modells ändert die Lage zur Naht nicht
+(gemessen im Schnelllauf: identische Werte bei δ = 0 und 0,625). Die Ebenen liegen 64 mm von den Nähten entfernt, die Verschiebung um 1,9 mm ändert die
+Physik nicht (Abklingen der Störung der Einspannung in der Größenordnung e^(−2π·6)). Das Gitter beginnt bei
 lo − 0,1 h; die Lage des Übergangs zur Zellgrenze φ = ((x_Naht − Ursprung) mod h_fein)/h_fein wird je Lauf mitgeschrieben. Je Verschiebung ein Lauf bis p 4;
 aus den Zyklen werden die Hot-Spots des Zyklus mit p 3 und des Zyklus mit p 4 festgehalten (ein Mitschnitt von `FcmSolver._zyklus`, ohne Änderung am Paket).
 Größen je Lauf, Zyklus und Naht: σ_hs bei y = 40 und Mittel über y 32…48 für (a) die Referenzpunkte 0,4 t / 1,0 t (Vorgabe des Pakets, σ_hs = 5/3 σ₀,₄ − 2/3 σ₁,₀)
