@@ -259,6 +259,31 @@ Die Arbeitsfläche in drei Spalten:
   | **Ergebnisse** | Umhüllende, Kombinationen, Lastfälle, Nachweise, Eigenformen, Knickfiguren |
   | **Bericht** | die aus der Ansicht übernommenen Ergebnisbilder |
 
+  **Der Baum bleibt, wie Sie ihn gelassen haben** (seit 02.10.2026). Bis dahin
+  klappten nach fast jeder Änderung – „Übernehmen“ in einer Maske,
+  Rückgängig, Aktualisieren – Stäbe, Lager, Lastfälle, Ergebnisse und andere
+  Zweige wieder zu, der Baum sprang nach oben, und der gewählte Eintrag war
+  nicht mehr gewählt. Jetzt merkt sich der Baum, ob ein Zweig offen ist, an
+  seiner Art und seinem Platz im Baum und nicht mehr am angezeigten Text. Offene
+  Zweige bleiben offen, der gewählte Eintrag (auch mehrere) bleibt gewählt,
+  ohne dass sich seine Maske neu öffnet, und die Zeile, die oben im Baum
+  stand, steht weiter oben, auch wenn darüber eine Zeile dazukommt. Ein
+  anderes Modell erbt davon nichts: nach *Datei → Neu*, *Öffnen*, einem
+  Beispiel und einem Import, der nicht an das Modell anhängt, beginnt der
+  Baum im Grundzustand. Darin sind nur die Wurzel, *Lager* und *Stellungen*
+  aufgeklappt, alles andere ist zu, und der Baum steht ganz oben. Bis zum
+  02.10.2026 galt der Zustand eines Zweigs gleichen Namens aus dem vorigen
+  Modell weiter, und *Lager* war nie offen, obwohl es so gedacht war.
+
+  **Schrift und Farbe im Baum** (seit 02.10.2026). Grau steht, was leer ist
+  (Zähler 0); was gefüllt ist, steht in der gewöhnlichen Schriftfarbe. Fett stehen
+  nur Gruppen, also Zweige, die andere Zweige zusammenfassen: der Modellname,
+  *Eigenschaften*, *Lager*, *Verbindungen*, *Kontaktbedingungen*,
+  *Einwirkungen* und *Ergebnisse*. Bis zum 02.10.2026 waren manche gefüllten
+  Zweige fett oder blau und andere nicht, ohne dass eine Regel dahinterstand.
+  Die Warnfarbe steht nur noch bei Warnungen, blau nur noch bei den
+  Zeilen „+ … anlegen“.
+
   **Ein Klick wählt aus** — links im Baum, gleichzeitig in der Ansicht: der
   Zweig „Knoten“ wählt **alle** Knoten, der Eintrag „K3“ nur diesen; ebenso
   bei Linien, Stäben, Flächen und Volumen. Die Auswahlart springt mit um.
@@ -838,7 +863,13 @@ das Gewählte ist orange hervorgehoben.
 Fläche und Volumenkörper sind **Geometrie** — sie tragen erst dann Elemente,
 wenn sie **vernetzt** werden (*Vernetzen* in derselben Gruppe, oder das
 Häkchen „gleich vernetzen" in der Maske). Im Modellbaum trägt ein noch nicht
-vernetztes Objekt ein ○.
+vernetztes Objekt ein ○. Ist das Vernetzen eines Volumens gescheitert oder
+abgebrochen, oder der freie Vernetzer abgeschaltet, steht vor seinem Namen ein
+⚠ in der Warnfarbe, und der Hinweis am Eintrag nennt den Grund (so, wie ihn der
+Vernetzer vermerkt hat); der Zweig *Volumen* trägt dieselbe Warnfarbe, damit man
+es auch zugeklappt sieht. Ein Hilfskörper ohne Rauminhalt (in RFEM ein
+Null-Volumen) steht grau und ohne Warnzeichen: er bekommt nie ein Netz und
+fehlt nicht. Bis zum 02.10.2026 trugen alle drei Fälle nur das ○.
 
 | Form | Netz |
 |---|---|

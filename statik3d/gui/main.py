@@ -10316,6 +10316,14 @@ class MainWindow(QtWidgets.QMainWindow):
             zustand, art = "bereit", "matt"
         self.kopf.setzen(" · ".join(teile), modell, zustand, art)
 
+    def _baum_neu_beginnen(self):
+        """Das Modell ist ein anderes (Neu, Öffnen, Beispiel, Import): der
+        Modellbaum beginnt im Grundzustand und erbt weder Aufklappzustand noch
+        gewählten Eintrag noch Rollposition. Rückgängig, Übernehmen und
+        Aktualisieren behalten sie."""
+        if hasattr(self, "baum"):
+            self.baum.zustand_vergessen()
+
     def _refresh_baum(self):
         self._werteskala_anzeigen()
         if hasattr(self, "baum"):
@@ -15489,6 +15497,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.results = None
             self.selection = np.array([], dtype=int)
             self._dateifortschritt(0.98, "Ansicht und Modellbaum aufbauen")
+            if target is None:
+                self._baum_neu_beginnen()
             self.refresh_all()
             self.zoom_alles()
             # Das uebernommene Modell steht in keiner Statik3D-Datei - ein
@@ -22699,6 +22709,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._objektauswahl_leeren()
         self.path = None
         self.netzguete_feld = None
+        self._baum_neu_beginnen()
         self.refresh_all()
         self._als_gespeichert()
         self._refresh_title()
@@ -22765,6 +22776,7 @@ class MainWindow(QtWidgets.QMainWindow):
             # aelteren Dateien, E6) - in das Protokoll
             for z in getattr(self.model, "_ladehinweise", None) or []:
                 self.log.appendPlainText("Hinweis: " + z)
+            self._baum_neu_beginnen()
             self.refresh_all()
             self._refresh_title()
             self.zoom_alles()
@@ -23006,6 +23018,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.results = None
             self.selection = np.array([], dtype=int)
             self.path = None
+            self._baum_neu_beginnen()
             self.refresh_all()
             self.plotter.view_isometric()
             self.zoom_alles()
