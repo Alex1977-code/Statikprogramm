@@ -222,9 +222,15 @@ def festschrift_stil(px=11) -> str:
     return f'font-family: "{festschrift_familie()}";{gross}'
 
 
-#: Anfang einer Meldungszeile: FEHLER oder WARNUNG als erstes Wort, auch eingerueckt
-#: (Importhinweise stehen als „  WARNUNG:   ...“); „FEHLERFREI“ zaehlt nicht
-_MELDUNG = re.compile(r"\s*(FEHLER|WARNUNG)\b")
+#: Anfang einer Meldungszeile: FEHLER, WARNUNG oder ABBRUCH als erstes Wort, auch
+#: eingerueckt (Importhinweise stehen als „  WARNUNG:   ...“, die Zusammenfassung
+#: als „ABBRUCH                 : ...“); „FEHLERFREI“ zaehlt nicht
+_MELDUNG = re.compile(r"\s*(FEHLER|WARNUNG|ABBRUCH)\b")
+
+#: dasselbe nach einem Namen als erstem Wort („  S1: WARNUNG ...“ aus der
+#: Stellungsreihe, bridges/positions.py): das erste Wort endet mit „:“. Was
+#: danach mitten im Satz steht („... - WARNUNG: ...“), zaehlt nicht.
+_MELDUNG_MIT_NAME = re.compile(r"\s*\S+:\s+(FEHLER|WARNUNG)\b")
 
 
 def protokollzeile_art(text: str):
@@ -234,14 +240,17 @@ def protokollzeile_art(text: str):
     Die Regel ist klein und steht im Handbuch: ein **Abschnitt** beginnt mit
     ``--- `` am Zeilenanfang („--- Beispiel 'hall' (Datum) ---“,
     „--- Freie Bewegungen ---“, „--- Berechnung gestartet ---“); eine **Meldung**
-    hat FEHLER oder WARNUNG als erstes Wort der Zeile. Folgezeilen einer
-    mehrzeiligen Meldung sind eigene Zeilen und bleiben, wie sie sind."""
+    hat FEHLER, WARNUNG oder ABBRUCH als erstes Wort der Zeile (ABBRUCH zaehlt
+    wie FEHLER) oder FEHLER/WARNUNG als zweites Wort nach einem ersten Wort, das
+    mit „:“ endet („  S1: WARNUNG ...“). Das Stichwort mitten im Satz faerbt
+    nichts. Folgezeilen einer mehrzeiligen Meldung sind eigene Zeilen und
+    bleiben, wie sie sind."""
     if text.startswith("--- "):
         return "abschnitt"
-    m = _MELDUNG.match(text)
+    m = _MELDUNG.match(text) or _MELDUNG_MIT_NAME.match(text)
     if m is None:
         return None
-    return "fehler" if m.group(1) == "FEHLER" else "warnung"
+    return "warnung" if m.group(1) == "WARNUNG" else "fehler"
 
 
 class ProtokollFaerber(QtGui.QSyntaxHighlighter):
@@ -271,7 +280,11 @@ class ProtokollFaerber(QtGui.QSyntaxHighlighter):
     def highlightBlock(self, text):          # noqa: N802 - Qt-Schreibweise
         fmt = self._formate.get(protokollzeile_art(text))
         if fmt is not None:
-            self.setFormat(0, len(text), fmt)
+            # Qt zaehlt in UTF-16-Einheiten, Python in Codepunkten: ein Zeichen
+            # ausserhalb der Grundebene (Emoji im Pfad) hat dort zwei - mit
+            # len(text) bliebe das Zeilenende ungefaerbt. Die Blocklaenge
+            # (ohne den Absatzumbruch) ist Qts eigene Zahl.
+            self.setFormat(0, max(0, self.currentBlock().length() - 1), fmt)
 
 
 class Marke(QtWidgets.QLabel):

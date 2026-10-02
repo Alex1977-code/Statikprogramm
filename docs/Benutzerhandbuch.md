@@ -2528,8 +2528,11 @@ für Zeile. Jetzt zeigt das Protokoll drei Auszeichnungen, und der Text bleibt
 dabei, wie er war.
 
 **FEHLER rot, WARNUNG orange.** Eine Zeile, deren erstes Wort **FEHLER** ist,
-steht ganz in Rot (`#c62828`, wie die Fehlerfarbe der Oberfläche), eine Zeile,
-deren erstes Wort **WARNUNG** ist, ganz in einem dunklen Orange (`#b35a00`).
+steht ganz in Rot (`#c62828`, wie die Fehlerfarbe der Oberfläche), ebenso eine
+Zeile, deren erstes Wort **ABBRUCH** ist („ABBRUCH: Berechnung abgebrochen …“,
+auch die Zeile „ABBRUCH                 : …“ der Zusammenfassung); eine Zeile,
+deren erstes Wort **WARNUNG** ist, steht ganz in einem dunklen Orange
+(`#b35a00`).
 Dieses Orange ist bewusst dunkler als die Warnfarbe von Modellbaum und
 Filmstreifen (`#b7791f`): als 11 Pixel kleine Schrift auf Weiß erreichte jene
 nur einen Kontrast von 3,6 zu 1, die Web-Richtlinien (WCAG, Stufe AA) verlangen
@@ -2537,9 +2540,14 @@ für kleinen Text 4,5 zu 1. Gerechnet über die relative Leuchtdichte hat das
 Rot 5,6 zu 1 und das dunkle Orange 4,8 zu 1; die Prüfung steht in
 `tests/test_protokoll_lesbar.py`. Das erste Wort entscheidet, auch wenn die Zeile eingerückt
 ist, wie bei den Importhinweisen („  WARNUNG:   Stabtyp Zugstab: …“), und auch
-ohne Doppelpunkt („FEHLER Versatz Anfang y, z [mm]: …“). Ein FEHLER oder eine
-WARNUNG mitten im Satz färbt nichts, und „FEHLERFREI“ oder „WARNUNGEN“ sind
-keine Meldungen. Besteht eine Meldung aus mehreren Zeilen, gilt die Farbe nur
+ohne Doppelpunkt („FEHLER Versatz Anfang y, z [mm]: …“). Auch hinter einem
+Namen darf das Stichwort stehen: endet das erste Wort der Zeile mit einem
+Doppelpunkt und folgt darauf FEHLER oder WARNUNG, färbt die Zeile ebenso, wie
+bei der Stellungsreihe („  S1: WARNUNG …“, „  S1: FEHLER …“). Ein FEHLER oder
+eine WARNUNG mitten im Satz färbt nichts („Situation S1: … - WARNUNG: die
+Stellung … gibt es nicht“ bleibt schwarz), ebenso ein Name aus mehreren
+Wörtern vor dem Doppelpunkt, und „FEHLERFREI“ oder „WARNUNGEN“ sind keine
+Meldungen. Besteht eine Meldung aus mehreren Zeilen, gilt die Farbe nur
 für die Zeile, die mit dem Stichwort beginnt; die Folgezeilen bleiben
 schwarz. Die rote, fette Sammelzeile der Nachweise („Nachweise: 1 NICHT
 erfüllt (…)“) behält ihr eigenes Rot.
@@ -2571,14 +2579,12 @@ Sans Mono, Liberation Mono, Menlo, Courier New; gibt es keine davon, nimmt es
 die Festbreitenschrift des Systems. Auf einem Windows-Rechner mit Consolas
 ist das Consolas.
 
-Dasselbe galt für vier weitere Stellen, die bis zum 02.10.2026 eine
+Dasselbe galt für drei weitere Stellen, die bis zum 02.10.2026 eine
 Festbreitenschrift nur dem Namen nach hatten: den Befund unter *Anschlüsse
-zeigen*, den Update-Befund (rechte Maustaste am Knopf „Update suchen“), den
-Anschlussdialog und die Profilwerte im Querschnittsdialog. Die ersten drei
-verlangten „Courier New“ mit `setFont`, und das Stilblatt des Fensters setzte
-die Schrift dennoch auf Segoe UI zurück (gemessen); der Querschnittsdialog
-stand wie das Protokoll auf „monospace“, also Tahoma. Alle vier nehmen jetzt
-dieselbe Festbreitenschrift, in der Größe des Fensters.
+zeigen*, den Update-Befund (rechte Maustaste am Knopf „Update suchen“) und den
+Anschlussdialog. Sie verlangten „Courier New“ mit `setFont`, und das Stilblatt
+des Fensters setzte die Schrift dennoch auf Segoe UI zurück (gemessen). Alle
+drei nehmen jetzt dieselbe Festbreitenschrift, in der Größe des Fensters.
 
 ### Auswahl per Klick
 

@@ -19,8 +19,9 @@ Abschnitte fett, eine echte Festbreitenschrift.
 
 Aufruf:  python -m tests.test_protokoll_lesbar
          python -m tests.test_protokoll_lesbar --nur-schrift   (ohne Hauptfenster,
-         zum Lauf auf dem Desktop mit QT_QPA_PLATFORM=windows: dann gibt es
-         Schriften, offscreen gibt es keine)
+         mit QT_QPA_PLATFORM=windows: dann gibt es Schriften, offscreen gibt es
+         keine; der normale Lauf startet das unter Windows selbst als
+         Unterprozess und uebernimmt die Pruefungen)
 """
 import os
 import sys
@@ -122,9 +123,20 @@ def test_zeilenarten_im_fenster():
     t, fm = schreibe("WARNUNG: FEHLER: 2 Teiltragwerke ohne Lager")
     check("WARNUNG vor FEHLER: gilt das erste Wort (Warnfarbe)",
           fm == [(0, len(t), warn, False)], str(fm))
+    t, fm = schreibe("  S1: FEHLER RuntimeError: Probe")
+    check("Stichwort nach „Name:“ als erstem Wort: FEHLER rot",
+          fm == [(0, len(t), rot, False)], str(fm))
+    t, fm = schreibe("  S1: WARNUNG Kombination K9 ohne Ergebnis")
+    check("Stichwort nach „Name:“ als erstem Wort: WARNUNG in der Warnfarbe",
+          fm == [(0, len(t), warn, False)], str(fm))
+    t, fm = schreibe("ABBRUCH: Berechnung abgebrochen")
+    check("ABBRUCH als erstes Wort zählt wie FEHLER (rot)", fm == [(0, len(t), rot, False)], str(fm))
 
     # was nur so aussieht, bleibt unberuehrt
-    for text in ("Abnahme: FEHLER mitten im Satz",
+    for text in ("Die Abnahme meldet FEHLER mitten im Satz",
+                 "Situation S1: Stellung S9 - WARNUNG: gibt es nicht",
+                 "Klappe offen: WARNUNG Name aus zwei Wörtern (Regel: erstes Wort)",
+                 "Hinweis ABBRUCH ohne Doppelpunkt davor und nicht als erstes Wort",
                  "FEHLERFREI: nichts zu melden",
                  "WARNUNGEN: 3",
                  "Fehler: klein geschrieben",
@@ -297,17 +309,32 @@ def _farbton(farbe):
     return colorsys.rgb_to_hsv(r, g, b)[0] * 360.0
 
 
-def _felder_der_modalen_maske(app, aufruf):
+def _felder_der_modalen_maske(app, aufruf, versuche=100, zaehler=None):
     """Ruft *aufruf* (enthaelt ein ``exec()``); der Zeitgeber merkt sich, sobald
     die Maske steht, Stilzeile und Schrift ihrer Textfelder und schliesst sie.
-    Zurueck: [(Titel, Stilzeile, Familie, fest?), ...]."""
+    Steht nach *versuche* Versuchen (alle 50 ms) keine Maske da, gibt er auf und
+    schliesst eine sichtbare Maske, damit ``exec()`` nicht ewig haengt; kehrt
+    *aufruf* ohne Maske zurueck, plant er nichts mehr ein. *zaehler* bekommt je
+    leerem Versuch einen Eintrag. Zurueck: [(Titel, Stilzeile, Familie, fest?), ...]."""
     from PySide6 import QtCore, QtGui, QtWidgets
     gefunden = []
+    fertig = [False]
+    leer = [0]
 
     def zu():
+        if fertig[0]:
+            return
         d = QtWidgets.QApplication.activeModalWidget()
         if d is None:
-            QtCore.QTimer.singleShot(50, zu)
+            leer[0] += 1
+            if zaehler is not None:
+                zaehler.append(leer[0])
+            if leer[0] < versuche:
+                QtCore.QTimer.singleShot(50, zu)
+            else:
+                for x in QtWidgets.QApplication.topLevelWidgets():
+                    if isinstance(x, QtWidgets.QDialog) and x.isVisible():
+                        x.reject()
             return
         for t in d.findChildren(QtWidgets.QPlainTextEdit):
             t.ensurePolished()
@@ -315,8 +342,61 @@ def _felder_der_modalen_maske(app, aufruf):
             gefunden.append((d.windowTitle(), t.styleSheet().strip(), i.family(), i.fixedPitch()))
         d.reject()
     QtCore.QTimer.singleShot(0, zu)
-    aufruf()
+    try:
+        aufruf()
+    finally:
+        fertig[0] = True
     return gefunden
+
+
+def test_zeitgeber_der_modalen_maske_gibt_auf():
+    """Der Zeitgeber des Helfers plant sich nicht endlos neu ein."""
+    from PySide6 import QtCore
+    app = _app()
+
+    def warten(ms):
+        schleife = QtCore.QEventLoop()
+        QtCore.QTimer.singleShot(ms, schleife.quit)
+        schleife.exec()
+    zaehler = []
+    got = _felder_der_modalen_maske(app, lambda: warten(500), versuche=3, zaehler=zaehler)
+    check("ohne Maske: der Zeitgeber gibt nach 3 Versuchen auf (0,5 s hätten 10 gegeben)",
+          got == [] and len(zaehler) == 3, str(zaehler))
+    z2 = []
+    _felder_der_modalen_maske(app, lambda: None, versuche=3, zaehler=z2)
+    warten(300)
+    check("Aufruf ohne Maske kehrt zurück: der Zeitgeber plant nichts mehr ein", z2 == [], str(z2))
+
+
+def test_echte_schrift_im_unterprozess():
+    """Die Wirkung der Schrift zeigt nur eine Plattform mit Schriften. Unter Windows
+    startet der normale Lauf darum einen Unterprozess mit QT_QPA_PLATFORM=windows
+    und --nur-schrift (baut Widgets, zeigt kein Fenster) und uebernimmt dessen
+    Pruefungen; sonst wird mit Hinweis uebersprungen."""
+    import json
+    import subprocess
+    if sys.platform != "win32":
+        print("      (nicht Windows: Unterprozess mit QT_QPA_PLATFORM=windows übersprungen)")
+        return
+    env = dict(os.environ)
+    env["QT_QPA_PLATFORM"] = "windows"
+    env["PYTHONUTF8"] = "1"
+    wurzel = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    r = subprocess.run([sys.executable, "-m", "tests.test_protokoll_lesbar", "--nur-schrift"],
+                       cwd=wurzel, env=env, capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", timeout=300)
+    marke = "ERGEBNISSE_JSON "
+    zeilen = [z for z in r.stdout.splitlines() if z.startswith(marke)]
+    if not zeilen:
+        check("Unterprozess (windows, --nur-schrift) liefert Ergebnisse", False,
+              (r.stderr or r.stdout)[-300:].replace("\n", " | "))
+        return
+    erg = json.loads(zeilen[-1][len(marke):])
+    check("Unterprozess (windows, --nur-schrift): mindestens 20 Prüfungen übernommen",
+          len(erg) >= 20, str(len(erg)))
+    for name, ok in erg:
+        check(f"[windows] {name}", ok)
+    check("Unterprozess (windows, --nur-schrift) endete mit 0", r.returncode == 0, str(r.returncode))
 
 
 def _fest_pruefen(name, stil, familie, fest, soll):
@@ -418,6 +498,107 @@ def _echte_schrift_dialoge():
                   i.family(), i.fixedPitch(), soll)
 
 
+def test_meldungen_der_echten_erzeuger():
+    """Meldungen, die das Programm wirklich schreibt und die das Stichwort nicht
+    als erstes Wort tragen: die Stellungsreihe (bridges/positions.py: „  S1:
+    WARNUNG ...“, „  S1: FEHLER ...“) und der ABBRUCH (main.py, solver.py).
+    Die Zeilen der Stellungsreihe baut ihr eigener Code - hier mit einer kleinen
+    echten Rechnung; die Quelle der Warnung und der Fehler ist ersetzt."""
+    from unittest import mock
+    from statik3d.bridges import positions as P
+    from statik3d.bridges.positions import Stellung, Stellungsreihe
+    from statik3d.model import Material, Section
+    w, app = _fenster()
+    rot, warn = _farben()
+    w.new_model()
+    m = w.model
+    m.add_material(Material.steel("S355"))
+    m.add_section(Section.from_profile("HEB 300"))
+    n = [m.add_node(4.0 * i, 0.0, 0.0) for i in range(3)]
+    for i in range(2):
+        m.add_element("beam", [n[i], n[i + 1]], "S355", "HEB 300")
+    m.support(n[0], "all", name="Einspannung")
+    g = next(iter(m.load_cases))
+    m.load_node(n[-1], Fz=-5e3, case=g)
+
+    def reihe_rechnen():
+        reihe = Stellungsreihe(m, "Probe")
+        reihe.add(Stellung("S1", 0.0, "geschlossen", faelle=[g]))
+        reihe.rechnen(kombinationen=False, nachweise=False)
+        w.log.clear()
+        for z in reihe.log:                  # wie MainWindow.stellungen_rechnen
+            w.info(z)
+        return {t: f for t, f in _zeilen(w)}
+
+    with mock.patch.object(P.StellungsErgebnis, "warnungen",
+                           property(lambda self: ["Kombination K9 ohne Ergebnis"])):
+        zeilen = reihe_rechnen()
+    wz = [t for t in zeilen if t.startswith("  S1: WARNUNG")]
+    check("Stellungsreihe: „  S1: WARNUNG …“ steht in der Warnfarbe, ganze Zeile",
+          len(wz) == 1 and zeilen[wz[0]] == [(0, len(wz[0]), warn, False)], str(zeilen))
+    uz = [t for t in zeilen if t.startswith("  S1: u_max")]
+    check("Stellungsreihe: „  S1: u_max = …“ bleibt ohne Format",
+          len(uz) == 1 and zeilen[uz[0]] == [], str(uz))
+    kz = [t for t in zeilen if t.startswith("Stellung S1")]
+    check("Stellungsreihe: Kopfzeile „Stellung S1 (0°) - geschlossen“ bleibt ohne Format",
+          len(kz) == 1 and zeilen[kz[0]] == [], str(kz))
+
+    with mock.patch("statik3d.solver.solve_all",
+                    side_effect=RuntimeError("Faktorisierung gescheitert")):
+        zeilen = reihe_rechnen()
+    fz = [t for t in zeilen if t.startswith("  S1: FEHLER")]
+    check("Stellungsreihe: „  S1: FEHLER …“ steht rot, ganze Zeile",
+          len(fz) == 1 and zeilen[fz[0]] == [(0, len(fz[0]), rot, False)], str(zeilen))
+
+    # ABBRUCH: die Zeilen aus main.py (_abbruch_teil_zeigen, Kontaktabbruch) und
+    # solver.py (Zusammenfassung); eine Folgezeile bleibt, wie sie ist
+    w.log.clear()
+    w.log.appendPlainText(
+        "ABBRUCH: gezeigt wird die Verformung der letzten Kontakt-Iteration (1) als Ergebnis "
+        "„LF1 - Abbruch (Iteration 1)“ - kein Gleichgewicht, keine Auflagerkräfte.")
+    w.log.appendPlainText(
+        "ABBRUCH: Berechnung abgebrochen (nach 7 s) - 1 Lastfälle bleiben erhalten, 2 Kombinationen offen.\n"
+        "    Die gerechneten Ergebnisse stehen in der Auswahl und im Modellbaum wie sonst.\n"
+        "    Ein neuer Lauf rechnet alles noch einmal.")
+    w.log.appendPlainText("ABBRUCH                 : Kontakt-Iteration 2: Gleichungssystem singulär")
+    z = _zeilen(w)
+    check("ABBRUCH (Kontaktabbruch) als erstes Wort: ganze Zeile rot",
+          z[0][1] == [(0, len(z[0][0]), rot, False)], str(z[0]))
+    check("ABBRUCH (Sammellauf) als erstes Wort: rot, die eingerückten Folgezeilen nicht",
+          z[1][1] == [(0, len(z[1][0]), rot, False)] and z[2][1] == [] and z[3][1] == [], str(z[1:4]))
+    check("ABBRUCH der Zusammenfassung („ABBRUCH      : …“): rot",
+          z[4][1] == [(0, len(z[4][0]), rot, False)], str(z[4]))
+
+    # was bewusst ungefaerbt bleibt: das Stichwort mitten im Satz (main.py, Situation)
+    w.log.clear()
+    w.log.appendPlainText("Situation S1: Stellung S9 + 2 Lastfälle - WARNUNG: die Stellung „S9“ gibt es nicht; "
+                          "die Modellprüfung meldet es")
+    w.log.appendPlainText("Abgebrochen wegen ABBRUCH mitten im Satz")
+    z = _zeilen(w)
+    check("Stichwort mitten im Satz („… - WARNUNG: …“): ohne Format",
+          z[0][1] == [] and z[1][1] == [], str(z))
+
+
+def test_zeilenende_bei_zeichen_ausserhalb_der_grundebene():
+    """Qt zaehlt in UTF-16-Einheiten, Python in Codepunkten: eine Zeile mit einem
+    Emoji im Pfad muss bis zum Ende gefaerbt sein."""
+    w, app = _fenster()
+    rot, warn = _farben()
+    w.log.clear()
+    smiley = "\U0001F600"
+    zeilen = (f"--- Modell geöffnet: x{smiley}.s3d ---",
+              f"FEHLER: Datei x{smiley}.s3d nicht lesbar",
+              f"WARNUNG: {smiley}{smiley} im Namen",
+              f"  S1: WARNUNG {smiley}")
+    for text in zeilen:
+        w.log.appendPlainText(text)
+    soll = [(None, True), (rot, False), (warn, False), (warn, False)]
+    for (text, fm), (farbe, fett), z in zip(_zeilen(w), soll, zeilen):
+        n16 = len(z.encode("utf-16-le")) // 2
+        check(f"UTF-16-Länge: „{z[:24]}…“ ganze Zeile ({n16} Einheiten, {len(z)} Zeichen)",
+              n16 > len(z) and text == z and fm == [(0, n16, farbe, fett)], str(fm))
+
+
 def test_waehle_festschrift():
     """Die Wahl der Schrift als reine Logik - ohne Schriftdatenbank pruefbar."""
     from statik3d.gui import design as dsg
@@ -492,11 +673,15 @@ def main():
     nur_schrift = "--nur-schrift" in sys.argv
     tests = ((test_waehle_festschrift, _echte_schrift, _echte_schrift_dialoge,
               test_kontrast_nur_rechnung) if nur_schrift else
-             (test_zeilenarten_im_fenster, test_aufrufe_des_programms,
+             (test_zeilenarten_im_fenster, test_meldungen_der_echten_erzeuger,
+              test_zeilenende_bei_zeichen_ausserhalb_der_grundebene,
+              test_aufrufe_des_programms,
               test_text_bleibt_wie_geschrieben, test_leistung_je_zeile,
               test_kontrast_der_protokollfarben,
               test_waehle_festschrift, test_schrift_im_fenster,
-              test_weitere_stellen_mit_festschrift))
+              test_zeitgeber_der_modalen_maske_gibt_auf,
+              test_weitere_stellen_mit_festschrift,
+              test_echte_schrift_im_unterprozess))
     for t in tests:
         print(f"\n--- {t.__name__} ---")
         try:
@@ -506,6 +691,9 @@ def main():
             traceback.print_exc()
             RESULTS.append((t.__name__ + f" (Ausnahme: {ex})", False))
     n_ok = sum(1 for _, ok in RESULTS if ok)
+    if nur_schrift:                    # fuer den Lauf als Unterprozess (test_echte_schrift_im_unterprozess)
+        import json
+        print("ERGEBNISSE_JSON " + json.dumps(RESULTS, ensure_ascii=True))
     print(f"\n{'=' * 60}\nErgebnis: {n_ok}/{len(RESULTS)} Pruefungen bestanden")
     sys.stdout.flush()
     return 0 if n_ok == len(RESULTS) else 1
