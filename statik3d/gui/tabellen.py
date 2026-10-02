@@ -343,15 +343,31 @@ class Spalte:
 #: Zellfarben einer Eingabetabelle (02.10.2026, Teilpaket 10a): wo man tippen
 #: darf, steht reines Weiss, wo nicht, ein helles Grau. Vorher waren beide durch
 #: die Zebrastreifen der Zeilen gemischt und die Bearbeitbarkeit nicht zu sehen.
-ZELLE_EDIT = "#ffffff"
-ZELLE_FEST = "#eceff2"
+#: Die Farben stehen mit den uebrigen der Oberflaeche in design.FARBEN.
+ZELLE_EDIT = dsg.FARBEN["zelle_edit"]
+ZELLE_FEST = dsg.FARBEN["zelle_fest"]
 
 
 #: Klartext der Schluessel, die Tabellen heute noch zeigten (02.10.2026,
 #: Teilpaket 10a). Gespeichert und gerechnet wird weiter mit dem Schluessel.
-#: Elementarten aus dem Elementverzeichnis, ohne die Klammer mit den
+#: Elementarten aus dem Elementverzeichnis, ohne die Klammer **am Ende** mit den
 #: Verfahrensangaben: „Balken 3D (12 FHG, Timoshenko-Schub …)“ wird „Balken 3D“.
-ELEMENTART_TEXT = {t: a.name.split(" (")[0] for t, a in _EL.ELEMENTE.items()}
+def _elementart_texte() -> dict:
+    """Kurzer Klartext je Elementart - und jeder Klartext nur einmal.
+
+    Eine Klammer mitten im Namen bleibt stehen: „Keil (Prisma), linear“ und
+    „Keil (Prisma), quadratisch“ duerfen nicht beide „Keil“ heissen (erste
+    Fassung vom 02.10.2026 schnitt am ersten „ (“ ab). Faellt trotzdem ein
+    Kurzname auf zwei Arten, etwa bei einer neuen Elementart, steht fuer beide
+    der volle Name aus dem Verzeichnis."""
+    kurz = {t: re.sub(r"\s*\([^)]*\)$", "", a.name) for t, a in _EL.ELEMENTE.items()}
+    haeufigkeit: dict = {}
+    for k in kurz.values():
+        haeufigkeit[k] = haeufigkeit.get(k, 0) + 1
+    return {t: (k if haeufigkeit[k] == 1 else _EL.ELEMENTE[t].name) for t, k in kurz.items()}
+
+
+ELEMENTART_TEXT = _elementart_texte()
 LINIENART_TEXT = {"polyline": "Polylinie", "arc": "Bogen", "circle": "Kreis",
                   "ellipse": "Ellipse", "spline": "Spline", "parabola": "Parabel"}
 QUERSCHNITTSART_TEXT = {"I": "I-Profil", "I2": "Doppel-T unsymmetrisch", "U": "U-Profil",
@@ -423,10 +439,19 @@ class TabellenModell(QtCore.QAbstractTableModel):
             return " / ".join(festkomma(x * f, nk) for x in paar)
         return wert
 
+    def _export_wert(self, k: int, w):
+        """Ein Wert fuer Zwischenablage, CSV und Excel: in der Anzeigeeinheit, eine
+        nicht endliche Zahl (nan, inf) als **leeres Feld**. Die Anzeige zeigt dafuer
+        „–“; im Export stoert ein Text in einer Zahlenspalte (Excel liest sie dann
+        nicht mehr als Zahlen), und ``nan`` als Zahl in einer xlsx-Zelle ist ungueltig."""
+        x = self.angezeigt(k, w) if k < len(self.spalten) else w
+        if isinstance(x, float) and not math.isfinite(x):
+            return ""
+        return x
+
     def zeilen_angezeigt(self, zeilen: list) -> list:
         """Zeilen in Anzeigeeinheiten - fuer Zwischenablage, CSV und Excel."""
-        return [[self.angezeigt(k, w) if k < len(self.spalten) else w
-                 for k, w in enumerate(z)] for z in zeilen]
+        return [[self._export_wert(k, w) for k, w in enumerate(z)] for z in zeilen]
 
     def einheiten_aktualisieren(self):
         """Nach geaenderten Einheiten Kopf und Zellen neu zeichnen."""

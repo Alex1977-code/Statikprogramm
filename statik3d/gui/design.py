@@ -35,6 +35,9 @@ FARBEN = {
     "schlecht": "#c62828",
     "warn": "#b7791f",
     "ansicht": "#e9edf1",
+    # Eingabetabellen (Teilpaket 10a): editierbare Zelle weiss, feste grau
+    "zelle_edit": "#ffffff",
+    "zelle_fest": "#eceff2",
 }
 
 #: Stilblatt fuer das ganze Fenster

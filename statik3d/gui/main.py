@@ -11136,11 +11136,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 teile = [f"{self.LASTRICHTUNG[k]} = {tab.festkomma(v / 1e3, 3)}"
                          for k, v in enumerate(l.F) if v]
                 zeilen.append([i, lcname, "Knotenlast", f"K{l.node}",
-                               ", ".join(teile) or "0",
+                               "; ".join(teile) or "0",
                                "global", ""])
                 i += 1
             for l in lc.eigene("beam_loads"):
-                q = ", ".join(tab.festkomma(v / 1e3, 3) for v in l.q)
+                q = "; ".join(tab.festkomma(v / 1e3, 3) for v in l.q)
                 abschnitt = (f"von {zl.zahl_text(l.a, tausender=False)} m" + (f" bis {zl.zahl_text(l.b, tausender=False)} m" if l.b is not None else "")
                              if getattr(l, "teilweise", False) else "")
                 zeilen.append([i, lcname, "Streckenlast", f"E{l.elem}",
@@ -11172,7 +11172,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         wert = "linear " + " → ".join(f"{zl.zahl_text(float(x[3]) / 1e3, stellen=3)}" for x in P) + " kN/m²"
                     else:
                         wert = f"p = {tab.festkomma(l.p / 1e3, 4)} kN/m²"
-                    richtung = ("(" + ", ".join(zl.zahl_text(x, tausender=False) for x in l.richtung) + ")"
+                    richtung = ("(" + "; ".join(zl.zahl_text(x, tausender=False) for x in l.richtung) + ")"
                                 if l.richtung else "senkrecht")
                     if l.projiziert:
                         richtung += " projiziert"
@@ -11182,10 +11182,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 i += 1
             for l in lc.linienlasten:
                 ziel = ("Stab " if l.art == "stab" else "Linie ") + str(l.ziel)
-                q = ", ".join(tab.festkomma(v / 1e3, 3) for v in l.q)
+                q = "; ".join(tab.festkomma(v / 1e3, 3) for v in l.q)
                 wert = f"q = ({q}) kN/m"
                 if l.q2 is not None and list(l.q2) != list(l.q):
-                    wert += " → (" + ", ".join(tab.festkomma(v / 1e3, 3) for v in l.q2) + ")"
+                    wert += " → (" + "; ".join(tab.festkomma(v / 1e3, 3) for v in l.q2) + ")"
                 abschnitt = ""
                 if l.von or l.bis is not None:
                     abschnitt = f"von {zl.zahl_text(l.von, tausender=False)} m" + (f" bis {zl.zahl_text(l.bis, tausender=False)} m" if l.bis is not None
@@ -11204,7 +11204,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                f"F_v = {zl.zahl_text(l.kraft / 1e3, tausender=False)} kN",
                                "Stabachse" if l.art == "stab" else
                                ("längste Abmessung" if l.achse is None else
-                                "(" + ", ".join(zl.zahl_text(x, tausender=False) for x in l.achse) + ")"),
+                                "(" + "; ".join(zl.zahl_text(x, tausender=False) for x in l.achse) + ")"),
                                l.kommentar or ""])
                 i += 1
             for l in getattr(lc, "uebermasse", None) or []:
@@ -11224,6 +11224,12 @@ class MainWindow(QtWidgets.QMainWindow):
         Klick finge den Doppelklick ab, der die Maske des Lastfalls oeffnet:
         sein zweiter Klick landete dann in der Lasttabelle. Ohne Rueckfrage,
         und das Modell bleibt unveraendert (kein Rueckgaengig-Schritt)."""
+        if getattr(self, "_auswahl_sammeln", False):
+            # Mehrfachauswahl in der Tabelle: _tabelle_mehrfach schickt je Zeile
+            # ein Signal (am Drehlager bis 422); die Lasttabelle bei jeder
+            # neu zu fuellen waere Verschwendung, und welcher Lastfall gemeint
+            # sein soll, sagt eine Auswahl aus mehreren nicht. Es bleibt, wie es ist.
+            return
         name = str(wert)
         cb = getattr(self, "cb_lastfilter", None)
         if cb is None or name not in self.model.load_cases:
@@ -20028,9 +20034,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self._fill(self.tbl_contact, [])
             self._fill(self.tbl_kontaktpaare, [])
             # Der Hinweis gehoert nur zu Modellen mit Kontakt: ohne Kontakt gibt
-            # es nichts, was man waehlen koennte (02.10.2026, Teilpaket 10a)
-            hat_kontakt = bool(self.model.has_contact
-                               or getattr(self.model, "kontaktbedingungen", None))
+            # es nichts, was man waehlen koennte (02.10.2026, Teilpaket 10a).
+            # Nur has_contact: eine Kontaktbedingung, die nicht ausgefuehrt oder
+            # abgeschaltet ist, erzeugt keine Kontaktergebnisse - der Hinweis
+            # fuehrte dort ins Leere.
+            hat_kontakt = bool(self.model.has_contact)
             for tb in (self.tbl_contact, self.tbl_kontaktpaare):
                 tb.hinweis_setzen("Kontaktkräfte gibt es zu Lastfall oder Kombination - "
                                   "Ergebnis wählen" if hat_kontakt else "")

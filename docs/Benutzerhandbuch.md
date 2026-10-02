@@ -2420,13 +2420,19 @@ nie ein „-0,0“ für Rundungsschrott und nie eine Zahl mit Exponenten: „1e-
 steht in der CSV-Datei als „0,00001“. Ein Wert wie -0,006 mit zwei Stellen
 bleibt „-0,01“, denn er ist nicht null. Eine Zahl, die keine ist
 (etwa die mittlere Pressung einer Kontaktfläche ohne wirksame Fläche), steht
-als „–“ da und nicht als „nan“.
+in der Tabelle als „–“ da und nicht als „nan“. Kopieren, CSV und Excel lassen
+das Feld dafür leer: ein „–“ machte aus einer Zahlenspalte in Excel eine
+Textspalte, und „nan“ als Zahl in einer xlsx-Zelle ist keine gültige Datei
+(bis zum 02.10.2026 stand es so darin).
 
 **Zahlen in Tabellen mit Komma.** Die Lasttabelle schrieb ihre Größen bis zum
 02.10.2026 mit Dezimalpunkt („q = (0.000, 0.000, -12.500) kN/m“, „von 1.5 m“,
 „F_v = 150 kN“ mit Punkt bei Dezimalstellen) und das „min / max“ der
-Auflagerkräfte ebenso. Beides steht jetzt mit Komma („q = (0,000, 0,000,
--12,500) kN/m“). Die 3D-Ansicht und die Beschriftungen im Bild behalten den
+Auflagerkräfte ebenso. Beides steht jetzt mit Komma („q = (0,000; 0,000;
+-12,500) kN/m“). Weil das Komma nun das Dezimalzeichen ist, trennt die
+Lasttabelle die Teile eines Vektors mit Semikolon („Fy = 2,000; Fz = -5,000“,
+„Richtung (0,707; 0; -0,707)“) und nicht mehr mit Komma. Die 3D-Ansicht und die
+Beschriftungen im Bild behalten den
 Punkt, so wie bisher; die Regel „Tabellen Komma, Ansicht Punkt“ gilt weiter.
 In keiner Tabelle steht ein Ergebniswert wissenschaftlich („2,39e+03“).
 
@@ -2439,7 +2445,10 @@ statt „polyline“, „arc“, „circle“, bei den Querschnitten „I-Profil
 „CHS“, „rect“, „circle“, in der Kontakt-Tabelle der Ergebnisse „Einseitiges
 Lager“, „Spaltelement“, „Kontaktfläche“ und „Lagerbedingung“ statt „support“,
 „gap“, „surface“, „dof“ und in der Lasttabelle das Bezugssystem „lokal“ statt
-„local“. Im Filter schreibt man, was dasteht („Balken“, nicht „beam“); die
+„local“. Jede Elementart hat ihren eigenen Klartext; „Keil (Prisma), linear“
+und „Keil (Prisma), quadratisch“ stehen getrennt, und eine neue Elementart mit
+gleichem Kurznamen erscheint mit ihrem vollen Namen aus dem Elementverzeichnis.
+Im Filter schreibt man, was dasteht („Balken“, nicht „beam“); die
 Spalte sortiert nach dem Klartext, und Kopieren, CSV und Excel geben ihn aus.
 Gespeichert und gerechnet wird weiter mit dem Schlüssel, eine ältere Datei
 lädt also unverändert. Noch als Schlüssel stehen die Einwirkungskategorie der
@@ -2450,8 +2459,11 @@ sie bekommen ihre Fachbegriffe mit dem Paket „Fachbegriffe statt Schlüssel“
 „Kontakt“ und „Kontaktpaare“ sagten bei einer Umhüllenden bisher immer
 „Kontaktkräfte gibt es zu Lastfall oder Kombination – Ergebnis wählen“, auch
 in einem Modell ganz ohne Kontakt, in dem es nichts zu wählen gibt. Jetzt steht
-der Satz nur noch, wenn das Modell Kontakt hat (einseitige Lager, Spaltelemente,
-Kontaktpaare, Kontaktbedingungen oder Lager mit Ausfall, Schlupf oder Reibung).
+der Satz nur noch, wenn das Modell Kontakt hat, also einseitige Lager,
+Spaltelemente, Kontaktpaare oder Lager mit Ausfall, Schlupf oder Reibung. Eine
+Kontaktbedingung zählt erst, wenn ihre Trennung im Netz ausgeführt ist und aus
+ihr Kontaktpaare geworden sind; eine noch nicht ausgeführte oder abgeschaltete
+erzeugt keine Kontaktergebnisse, und der Hinweis führte dort ins Leere.
 Zugleich verschwindet er, sobald ein Lastfall oder eine Kombination gezeigt
 wird: bisher blieb er in einer leeren Kontakt-Tabelle stehen, obwohl das
 Ergebnis schon gewählt war.
@@ -2464,7 +2476,10 @@ bleibt unverändert (kein Rückgängig-Schritt). Das Register „Lasten“ wird 
 nicht nach vorn geholt: ein Wechsel schon beim ersten Klick finge den
 Doppelklick ab, der die Maske des Lastfalls öffnet, denn sein zweiter Klick
 träfe dann die Lasttabelle. Zurück zu allen Lasten kommt man mit „(alle)“ in
-der Auswahl über der Lasttabelle.
+der Auswahl über der Lasttabelle. Markiert man mehrere Lastfälle auf einmal
+(Umschalt oder Strg), ändert sich an der Lasttabelle nichts: welcher von
+mehreren gemeint wäre, sagt die Auswahl nicht, und das Programm füllt die
+Tabelle nicht für jede markierte Zeile neu (am Drehlager bis zu 422 Mal).
 
 **Weiße und graue Zellen.** In den Eingabetabellen (Tabellen mit mindestens
 einer editierbaren Spalte: Werkstoffe, Querschnitte, Dicken, Knoten, Linien,
@@ -2479,7 +2494,7 @@ behalten die Auswahlfarbe.
 
 **Eingabetabellen sind editierbar.** In Werkstoffe, Querschnitte, Dicken,
 Knoten, Elementen, Lagern und Lastfällen sind die **weißen** Zellen zum
-Hineinschreiben da, die grauen nicht (siehe „Tabelleninhalte“ weiter unten):
+Hineinschreiben da, die grauen nicht (siehe den Abschnitt „Tabelleninhalte“ weiter oben):
 Zelle anklicken, Wert tippen,
 Eingabetaste. Gerechnet werden darf dabei — `= 210/1,05` ergibt 200. Erlaubt
 sind die vier Grundrechenarten, Klammern, Potenz und `pi`; mehr nicht, damit

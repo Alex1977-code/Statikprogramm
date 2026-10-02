@@ -11,8 +11,14 @@ Tabelleninhalte im unteren Bereich (Teilpaket 10a der Oberflaechenplanung,
 * die Art steht im Klartext („Balken 3D“ statt „beam“), gesucht, sortiert und
   exportiert wird, was dasteht;
 * der Kontakt-Hinweis erscheint nur bei Modellen mit Kontakt;
-* ein Klick auf einen Lastfall stellt die Lasttabelle auf seine Lasten;
-* editierbare Zellen weiss, die uebrigen grau (nur Eingabetabellen).
+* ein Klick auf einen Lastfall stellt die Lasttabelle auf seine Lasten - ohne
+  Rueckfrage (jede Rueckfrage wird gezaehlt), der Doppelklick oeffnet weiter die
+  Maske, eine Mehrfachauswahl fuellt die Lasttabelle nicht je Zeile neu, und eine
+  Zelle nach dem Umsortieren schreibt ins richtige Objekt;
+* Vektoren in der Lasttabelle mit Semikolon getrennt (das Komma ist Dezimalzeichen);
+* nicht endliche Zahlen: Anzeige „–“, Export leeres Feld;
+* editierbare Zellen weiss, die uebrigen grau (nur Eingabetabellen), die Farben
+  stehen in design.FARBEN.
 
 Aufruf:  python -m tests.test_tabelleninhalte
 """
@@ -57,6 +63,59 @@ def _fenster():
                                      w.log.appendPlainText("FEHLER: " + str(msg)))
     _FENSTER.update(w=w, app=app)
     return w, app
+
+
+class _Rueckfragen:
+    """Zaehlt jede Rueckfrage und jedes Meldungsfenster, statt es zu zeigen - ein
+    echtes Fenster liesse die Pruefung haengen. ``n`` nennt, was aufgerufen wurde.
+
+    Erfasst: die Fragefunktionen des Hauptfensters (_fragen_knoepfe,
+    _bestaetigen, warnung, error), die statischen QMessageBox-Fenster und
+    QDialog.exec (die modalen Dialoge der Masken)."""
+
+    def __init__(self, w):
+        self.w = w
+        self.n = []
+        self._alt = []
+
+    def _zaehler(self, name, antwort):
+        def f(*a, **k):
+            self.n.append(name)
+            return antwort
+        return f
+
+    def __enter__(self):
+        from PySide6 import QtWidgets
+        for name, antwort in (("_fragen_knoepfe", True), ("_bestaetigen", True),
+                              ("warnung", None), ("error", None)):
+            self._alt.append((self.w, name, self.w.__dict__.get(name, None)))
+            setattr(self.w, name, self._zaehler(name, antwort))
+        for name in ("question", "warning", "information", "critical"):
+            try:
+                alt = QtWidgets.QMessageBox.__dict__.get(name)
+                setattr(QtWidgets.QMessageBox, name,
+                        staticmethod(self._zaehler("QMessageBox." + name, QtWidgets.QMessageBox.Yes)))
+                self._alt.append((QtWidgets.QMessageBox, name, alt))
+            except Exception:       # noqa: BLE001 - dann zaehlt nur, was sich zaehlen laesst
+                pass
+        try:
+            alt = QtWidgets.QDialog.__dict__.get("exec")
+            setattr(QtWidgets.QDialog, "exec", self._zaehler("QDialog.exec", 0))
+            self._alt.append((QtWidgets.QDialog, "exec", alt))
+        except Exception:           # noqa: BLE001
+            pass
+        return self
+
+    def __exit__(self, *exc):
+        for ziel, name, alt in reversed(self._alt):
+            if alt is None:
+                try:
+                    delattr(ziel, name)
+                except (AttributeError, TypeError):
+                    pass
+            else:
+                setattr(ziel, name, alt)
+        return False
 
 
 def _modell(kontakt=False):
@@ -154,7 +213,48 @@ def test_tabelle_pur():
     folge = [t.filter.data(t.filter.index(r, 3), DR) for r in range(t.filter.rowCount())]
     check("… sortiert wird nach dem Klartext", folge == sorted(folge, key=str.lower), str(folge))
 
+    # Elementarten: jeder Klartext nur einmal
+    from statik3d import elemente as EL
+    texte = tab.ELEMENTART_TEXT
+    check("Elementarten: zu jeder Art ein Klartext", set(texte) == set(EL.ELEMENTE),
+          str(sorted(set(EL.ELEMENTE) ^ set(texte))))
+    doppelt = sorted(v for v in set(texte.values()) if list(texte.values()).count(v) > 1)
+    check("… alle Klartexte paarweise verschieden (pent6 und pent15 nicht beide „Keil“)",
+          not doppelt and texte["pent6"] != texte["pent15"],
+          f"{texte['pent6']!r} / {texte['pent15']!r} doppelt: {doppelt}")
+    check("… Keil linear und quadratisch behalten das Wort „Keil“ und ihre Ordnung",
+          texte["pent6"] == "Keil (Prisma), linear" and texte["pent15"] == "Keil (Prisma), quadratisch",
+          f"{texte['pent6']!r} / {texte['pent15']!r}")
+    check("… die Klammer am Ende mit den Verfahrensangaben entfaellt",
+          texte["beam"] == "Balken 3D" and texte["shell4"] == "Schale, Viereck"
+          and texte["tet10"] == "Tetraeder, quadratisch" and "(" not in texte["hex20"],
+          f"{texte['beam']!r} {texte['shell4']!r} {texte['hex20']!r}")
+
+    # nicht endliche Zahlen: Anzeige „–“, Export leer (und eine gueltige xlsx)
+    nan, inf = float("nan"), float("inf")
+    z = Datentabelle([Spalte("Nr", "", "ganz"), Spalte("p", "N/mm²", "zahl", 3)], "Pressung")
+    z.setzen([[1, nan], [2, inf], [3, 1.5]])
+    mz = z.modell
+    check("nan und inf: die Tabelle zeigt „–“",
+          [mz.data(mz.index(r, 1), DR) for r in range(3)] == ["–", "–", "1,500"],
+          str([mz.data(mz.index(r, 1), DR) for r in range(3)]))
+    check("… Kopieren und CSV lassen das Feld leer (kein „nan“, kein „–“)",
+          z.text().splitlines()[1:] == ["1;", "2;", "3;1,5"], str(z.text().splitlines()[1:]))
+    import zipfile
+    with tempfile.TemporaryDirectory() as d_:
+        pfad = z.export_xlsx(os.path.join(d_, "p.xlsx"))
+        with zipfile.ZipFile(pfad) as zf:
+            blatt = zf.read("xl/worksheets/sheet1.xml").decode("utf-8")
+    check("… in der xlsx steht keine ungueltige Zahl („nan“, „inf“), nur die 1,5",
+          "nan" not in blatt and "inf" not in blatt and "<v>1.5</v>" in blatt,
+          blatt[-200:])
+
     # Farben: nur Eingabetabellen
+    from statik3d.gui import design as dsg
+    check("Die Zellfarben stehen bei den Farben der Oberflaeche (design.FARBEN)",
+          tab.ZELLE_EDIT == dsg.FARBEN["zelle_edit"] == "#ffffff"
+          and tab.ZELLE_FEST == dsg.FARBEN["zelle_fest"] != "#ffffff",
+          f"{tab.ZELLE_EDIT} / {tab.ZELLE_FEST}")
     e = Datentabelle([Spalte("Name"), Spalte("E", "GPa", "zahl", 1, True)], "Eingabe")
     e.setzen([["S355", 210.0]])
     farbe = lambda tab_, k: tab_.modell.data(tab_.modell.index(0, k), BG)
@@ -254,8 +354,10 @@ def test_fenster_reihenfolge_und_lasten():
     check("… keine „-0,000“ / „-0.000“ (auf null gerundet, ohne Vorzeichen)",
           not any(re.search(r"-0[,.]0+(?!\d)", t) for t in texte),
           str([t for t in texte if re.search(r"-0[,.]0", t)][:3]))
-    check("… die Streckenlast -0,4 N/m steht als „q = (0,000, 0,000, 0,000) kN/m“",
-          any(t == "q = (0,000, 0,000, 0,000) kN/m" for t in grosse), str(grosse))
+    check("… die Streckenlast -0,4 N/m steht als „q = (0,000; 0,000; 0,000) kN/m“",
+          any(t == "q = (0,000; 0,000; 0,000) kN/m" for t in grosse), str(grosse))
+    check("… zwei Komponenten einer Knotenlast mit Semikolon: „Fy = 0,000; Fz = 0,000“",
+          any(t == "Fy = 0,000; Fz = 0,000" for t in grosse), str(grosse))
     check("… Eigengewicht mit Komma: „-9,81 m/s²“", any(t == "-9,81 m/s²" for t in grosse), str(grosse))
     check("… das Bezugssystem steht auf Deutsch: „global“",
           any(str(z[5]) == "global" for z in w.tbl_last.modell.zeilen))
@@ -311,16 +413,24 @@ def test_klick_auf_lastfall():
     n_alle = len(w.tbl_last.modell.zeilen)
     register = w.tab_unten.currentIndex()
     vorher = len(getattr(w, "_undo", []))
-    # Klick auf die Zeile „Adler“
-    w.tbl_lastfall.zeile_gewaehlt.emit("Adler"); app.processEvents()
+    # Klick auf die Zeile „Adler“ - mit Zaehler fuer jede Rueckfrage
+    with _Rueckfragen(w) as rf:
+        rf.w._fragen_knoepfe("Probe", "Der Zaehler muss das hier bemerken")
+        bemerkt = list(rf.n)
+        rf.n.clear()
+        w.tbl_lastfall.zeile_gewaehlt.emit("Adler"); app.processEvents()
+        fragen = list(rf.n)
+    check("Der Zaehler fuer Rueckfragen funktioniert (er bemerkt einen Aufruf von _fragen_knoepfe)",
+          bemerkt == ["_fragen_knoepfe"], str(bemerkt))
     lastfaelle = {str(z[1]) for z in w.tbl_last.modell.zeilen}
     check("Klick auf „Adler“: die Lasttabelle zeigt nur dessen Lasten",
           lastfaelle == {"Adler"} and w.cb_lastfilter.currentText() == "Adler",
           f"{lastfaelle} / {w.cb_lastfilter.currentText()}")
     check("… ohne das Register zu wechseln (der Doppelklick auf den Lastfall bleibt moeglich)",
           w.tab_unten.currentIndex() == register)
-    check("… ohne Rueckfrage und ohne Aenderung des Modells (kein Rueckgaengig-Schritt)",
-          len(getattr(w, "_undo", [])) == vorher and not w.fehler_liste, str(w.fehler_liste[:1]))
+    check("… ohne Rueckfrage, ohne Meldungsfenster und ohne Aenderung des Modells (kein Rueckgaengig-Schritt)",
+          not fragen and len(getattr(w, "_undo", [])) == vorher and not w.fehler_liste,
+          f"Fragen: {fragen}, Fehler: {w.fehler_liste[:1]}")
     w.tbl_lastfall.zeile_gewaehlt.emit("Zebra"); app.processEvents()
     zeb = {str(z[1]) for z in w.tbl_last.modell.zeilen}
     check("Klick auf „Zebra“: dessen Lasten (Eigengewicht, Streckenlast, Knotenlast)",
@@ -346,9 +456,127 @@ def test_klick_auf_lastfall():
           and not w.fehler_liste)
 
 
-def _umhuellende(w, app, kontakt):
+def test_lasttabelle_vektoren():
+    """Vektoren in der Lasttabelle: Semikolon als Trenner, weil das Komma jetzt
+    das Dezimalzeichen ist."""
+    from statik3d.model import Geometrielast, Linienlast, Vorspannung
+    w, app = _fenster()
+    w._modell_setzen(_modell()); app.processEvents()
+    lc = w.model.load_cases["Mitte"]
+    lc.geometrielasten.append(Geometrielast(ziel="F1", art="flaeche", p=1000.0,
+                                            richtung=[0.707, 0.0, -0.707]))
+    lc.linienlasten.append(Linienlast(ziel="S1", art="stab", q=[0.0, 0.0, -12500.0],
+                                      q2=[0.0, 0.0, -5000.0], system="local", von=0.5, bis=2.0))
+    lc.vorspannungen.append(Vorspannung(ziel="K1", art="koerper", kraft=150e3, achse=[1.0, 0.0, 0.0]))
+    w.cb_lastfilter.setCurrentText("(alle)")
+    w._lasten_fuellen()
+    zeilen = w.tbl_last.modell.zeilen
+    zelle = lambda art, k: next((str(z[k]) for z in zeilen if z[2] == art), None)
+    check("Flaechenlast mit Richtung: „(0,707; 0; -0,707)“", zelle("Flächenlast", 5) == "(0,707; 0; -0,707)"
+          or any(str(z[5]) == "(0,707; 0; -0,707)" for z in zeilen),
+          str([z[5] for z in zeilen]))
+    check("Linienlast: „q = (0,000; 0,000; -12,500) kN/m → (0,000; 0,000; -5,000)“",
+          zelle("Linienlast", 4) == "q = (0,000; 0,000; -12,500) kN/m → (0,000; 0,000; -5,000)",
+          str(zelle("Linienlast", 4)))
+    check("… im Bezugssystem „lokal“, Abschnitt „von 0,5 m bis 2 m“",
+          zelle("Linienlast", 5) == "lokal" and zelle("Linienlast", 6) == "von 0,5 m bis 2 m",
+          f"{zelle('Linienlast', 5)!r} / {zelle('Linienlast', 6)!r}")
+    check("Vorspannung des Koerpers mit Achse: „(1; 0; 0)“", zelle("Vorspannung", 5) == "(1; 0; 0)",
+          str(zelle("Vorspannung", 5)))
+    texte = [str(z[k]) for z in zeilen for k in (4, 5)]
+    check("In keiner Groesse oder Richtung trennt „, “ noch die Teile eines Vektors",
+          not any(re.search(r"\d, ", t) for t in texte),
+          str([t for t in texte if re.search(r"\d, ", t)][:3]))
+
+
+def test_lastfalltabelle_bedienung():
+    """Doppelklick, Mehrfachauswahl und Zelleingabe nach dem Umsortieren."""
+    from PySide6 import QtCore, QtTest
+    w, app = _fenster()
+    w._modell_setzen(_modell()); app.processEvents()
+    w.tabelle_zeigen("Lastfälle"); app.processEvents()
+    tb = w.tbl_lastfall
+    register = w.tab_unten.currentIndex()
+    w.cb_lastfilter.setCurrentText("(alle)"); app.processEvents()
+
+    # Doppelklick auf „Zebra“ (Zeile 1): die Maske des Lastfalls wird weiter geoeffnet
+    aufrufe = []
+    w.lastfall_bearbeiten = lambda name: aufrufe.append(str(name))
+    sichtbar = tb.view.isVisible()
+    with _Rueckfragen(w) as rf:
+        if sichtbar:
+            ziel = tb.view.visualRect(tb.filter.index(1, 0)).center()
+            # wie ein Anwender: Druck und Loslassen, dann der zweite Druck als
+            # Doppelklick (mouseDClick allein schickt kein „clicked“ voraus, und
+            # die Ansicht meldet doubleClicked nur nach dem Druck auf dieselbe Zeile)
+            QtTest.QTest.mouseClick(tb.view.viewport(), QtCore.Qt.LeftButton,
+                                    QtCore.Qt.NoModifier, ziel)
+            QtTest.QTest.mouseDClick(tb.view.viewport(), QtCore.Qt.LeftButton,
+                                     QtCore.Qt.NoModifier, ziel)
+        else:
+            tb.view.setCurrentIndex(tb.filter.index(1, 0))
+            tb.view.doubleClicked.emit(tb.filter.index(1, 0))
+        app.processEvents()
+        fragen = list(rf.n)
+    del w.lastfall_bearbeiten
+    check("Doppelklick auf „Zebra“ ruft die Maske des Lastfalls auf",
+          aufrufe == ["Zebra"], f"{aufrufe} ({'echter Mausklick' if sichtbar else 'Signal doubleClicked'})")
+    check("… der erste Klick hat das Register nicht gewechselt, der zweite traf dieselbe Tabelle",
+          w.tab_unten.currentIndex() == register and w.tab_unten.currentWidget() is not None,
+          f"Register {register} -> {w.tab_unten.currentIndex()}")
+    check("… und der Klick hat dabei die Lasttabelle auf „Zebra“ gestellt, ohne Rueckfrage",
+          w.cb_lastfilter.currentText() == "Zebra" and not fragen, f"{w.cb_lastfilter.currentText()} {fragen}")
+
+    # Mehrfachauswahl: hoechstens einmal fuellen
+    w.cb_lastfilter.setCurrentText("(alle)"); app.processEvents()
+    zaehler = []
+    original = w._lasten_fuellen
+    w._lasten_fuellen = lambda *a, **k: (zaehler.append(1), original(*a, **k))[1]
+    try:
+        tb.zeilen_gewaehlt.emit(["LF1", "Zebra", "Adler", "Mitte"]); app.processEvents()
+        n_multi = len(zaehler)
+        zaehler.clear()
+        tb.zeile_gewaehlt.emit("Adler"); app.processEvents()
+        n_einzel = len(zaehler)
+    finally:
+        del w._lasten_fuellen
+    check("Mehrfachauswahl von vier Lastfaellen: die Lasttabelle wird hoechstens einmal gefuellt",
+          n_multi <= 1, f"{n_multi} Mal (statt 4)")
+    check("… ein Einzelklick fuellt sie genau einmal (der Zaehler zaehlt)", n_einzel == 1, str(n_einzel))
+    w.cb_lastfilter.setCurrentText("(alle)"); app.processEvents()
+    tb.zeilen_gewaehlt.emit(["Zebra", "Mitte"]); app.processEvents()
+    check("… eine Mehrfachauswahl laesst die Auswahl der Lasttabelle, wie sie war",
+          w.cb_lastfilter.currentText() == "(alle)", w.cb_lastfilter.currentText())
+
+    # Zelleingabe nach dem Umsortieren schreibt ins richtige Objekt
+    m = w.model
+    vorher = {n: m.load_cases[n].description for n in m.load_cases}
+    tb.view.sortByColumn(0, QtCore.Qt.AscendingOrder); app.processEvents()
+    namen = [str(tb.filter.data(tb.filter.index(r, 0), QtCore.Qt.UserRole))
+             for r in range(tb.filter.rowCount())]
+    r_mitte = namen.index("Mitte")
+    ok = tb.filter.setData(tb.filter.index(r_mitte, 3), "Windlast neu", QtCore.Qt.EditRole)
+    check("Sortiert (Adler, LF1, Mitte, Zebra): die Beschreibung der Zeile „Mitte“ landet bei „Mitte“",
+          ok and m.load_cases["Mitte"].description == "Windlast neu"
+          and all(m.load_cases[n].description == vorher[n] for n in ("Zebra", "Adler", "LF1")),
+          f"{namen}: " + str({n: m.load_cases[n].description for n in m.load_cases}))
+    tb.view.sortByColumn(-1, QtCore.Qt.AscendingOrder); app.processEvents()
+    namen = [str(tb.filter.data(tb.filter.index(r, 0), QtCore.Qt.UserRole))
+             for r in range(tb.filter.rowCount())]
+    r_adler = namen.index("Adler")
+    ok = tb.filter.setData(tb.filter.index(r_adler, 1), 5, QtCore.Qt.EditRole)
+    check("Zurueck in Modellreihenfolge: die Nummer der Zeile „Adler“ landet bei „Adler“",
+          ok and namen == list(m.load_cases) and m.load_cases["Adler"].nummer == 5
+          and all(m.load_cases[n].nummer != 5 for n in ("Zebra", "Mitte", "LF1")),
+          f"{namen}: " + str({n: m.load_cases[n].nummer for n in m.load_cases}))
+
+
+def _umhuellende(w, app, kontakt, bedingung=False):
     from statik3d import solver
-    w._modell_setzen(_modell(kontakt)); app.processEvents()
+    m = _modell(kontakt)
+    if bedingung:
+        m.add_kontaktbedingung("Fuge")        # nicht ausgefuehrt: erzeugt keinen Kontakt
+    w._modell_setzen(m); app.processEvents()
     an = solver.solve_all(w.model, design=False)
     w._solve_done("all", an); app.processEvents()
     return an
@@ -364,6 +592,13 @@ def test_kontakt_hinweis():
           "Kontaktkräfte" not in z1 and "Kontaktkräfte" not in z2, f"{z1!r} / {z2!r}")
     check("… die Tabellen sind leer und sagen nur die Zeilenzahl",
           z1 == "0 Zeilen" and z2 == "0 Zeilen", f"{z1!r} / {z2!r}")
+    _umhuellende(w, app, kontakt=False, bedingung=True)
+    z1, z2 = w.tbl_contact.lbl_zeilen.text(), w.tbl_kontaktpaare.lbl_zeilen.text()
+    check("Vorbedingung: das Modell hat eine Kontaktbedingung, aber keinen Kontakt",
+          len(w.model.kontaktbedingungen) == 1 and not w.model.has_contact
+          and not w.model.kontaktbedingungen["Fuge"].ausgefuehrt)
+    check("Modell nur mit einer nicht ausgeführten Kontaktbedingung: kein Hinweis (sie führt ins Leere)",
+          "Kontaktkräfte" not in z1 and "Kontaktkräfte" not in z2, f"{z1!r} / {z2!r}")
     _umhuellende(w, app, kontakt=True)
     z1, z2 = w.tbl_contact.lbl_zeilen.text(), w.tbl_kontaktpaare.lbl_zeilen.text()
     check("Modell mit Kontakt: der Hinweis steht, wie bisher",
@@ -403,7 +638,8 @@ def main():
     print("STATIK3D - Tabelleninhalte (Teilpaket 10a)")
     print("=" * 96)
     for t in (test_festkomma, test_tabelle_pur, test_fenster_reihenfolge_und_lasten,
-              test_art_im_klartext, test_klick_auf_lastfall, test_kontakt_hinweis):
+              test_lasttabelle_vektoren, test_art_im_klartext, test_klick_auf_lastfall,
+              test_lastfalltabelle_bedienung, test_kontakt_hinweis):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
