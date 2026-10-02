@@ -647,6 +647,14 @@ Messung: Verschiebungen in y und z, Netzfeinheit über t/4 hinaus rechnen.
 *Betrieb.* Je Lauf rund 440 s und bis 59 GB (Direktlöser, p 4); die Läufe nacheinander, vorher die Prozessliste prüfen und die Hauptsitzung benachrichtigen
 (etwa 30 Minuten, 59 GB von 128 GB, 104 GB frei).
 
+**Ergebnis O3 (02.10.2026, Theorie 11.20).** Vier Läufe (Schnittebenen um 0, 0,625, 1,25, 1,875 mm verschoben, je bis p 4, 1,09 bis 1,10 Mio. Freiheitsgrade, 230 bis 240 s im letzten Zyklus,
+bis 59 GB). Gegenprobe (Paket gegen unabhängig gelesenes σ_xx) 1,3·10⁻¹⁴; δ = 0 reproduziert C1 bis auf die letzte Stelle. Die erste Fassung der Messregel (das ganze Modell verschieben)
+war falsch, weil das Gitter an der Hülle der beschnittenen Geometrie beginnt und mitwandert; berichtigt vor der Messreihe.
+**S(a) bei p 4 = 5,73 %** (138,94 … 147,17 N/mm²; p 3: 4,21 %) – Regel (3) greift. S(c) bei p 4 = 3,27 % (p 3: 4,66 %): die Regel „S(c) ≤ 1 %“ ist nicht erfüllt, sieben von acht Proben liegen aber auf 0,52 %
+(138,41 … 139,13), die achte (linke Naht genau auf einer Zellgrenze, φ = 0,00) 3 % tiefer – in (a) ebenfalls das Minimum. Gegen Tet10: sieben von acht Proben innerhalb 3 % (−2,93 … +1,95 %), eine bei +3,10 %:
+die Abnahme C1 hält nicht bei jeder Gitterlage. Die Streuung kommt allein von σ(0,4 t) (3,6 %, σ(1,0 t) 0,4 %), verstärkt durch den Beiwert 5/3; p-Erhöhung mindert sie nicht (p 3: 4,2 %).
+Größe t/8: Noch nicht bekannt: der Aufbau des Gitters für das Nahtziel 1,25 mm (nur Gitter und Modennummerierung, ohne Lösen) war nach über zehn Minuten Rechenzeit nicht fertig, während die Gitter für 2,5 mm in 0,1 s stehen (5 146 Zellen, 150 411 / 477 702 / 1 096 107 Freiheitsgrade bei p 2 / 3 / 4, die Werte der Läufe aus C1 bis auf die Stelle).. Entscheidung des Anwenders offen (siehe O3).
+
 *O4 – Konvergenzaussage.* Der Vorschlag aus B4 war, die Aussage nur über die p-Phase zu treffen. Die Messungen zeigen, dass auch die p-Phase nicht monoton
 ist (Knotenblech 157,1 → 142,6 → 143,2; T-Stoß 111,0 → 107,4 → 107,9): die Aitken-Aussage bliebe „nicht monoton“. Zu entscheiden ist das Kriterium:
 (a) wie bisher nur bei monotoner Folge eine Aussage, (b) Aussage über die letzte relative Änderung mit der Schranke der Vorgabe (unter 3 % gilt als
@@ -718,7 +726,7 @@ nachgetragen.
 | C2 Zweite Sicht | Opus 5.5 (Prüfung und Kuren), Gutachter je Gruppe ein anderes Modell | hoch | unabhängig von der Umsetzung, tiefste Prüfung | erledigt: 24 Befunde bestätigt, 4 hohe und 6 mittlere behoben, 12 niedrige behoben, 1 teilweise; Liste in Theorie 11.19 |
 | O1 Referenz Knotenblech nach main | Sonnet 5.5 | niedrig | Test auf `erwartung_tet10.json` umstellen | erledigt: PR 13 auf main (f56281a), main in den Zweig gemergt (c37cd91), Test liest die Datei |
 | O2 Tet10-Referenz 0,5 mm | Sonnet 5.5 (Hauptsitzung) | mittel | Lauf und Auswertung nach festem Schema | angenommen: rechnen, Direktlöser, Maschine exklusiv (Hauptsitzung legt den Zeitpunkt fest) |
-| O3 Hot-Spot-Streuung mit der Gitterlage | Sonnet 5.5 (Messung), Opus 5.5 (Umsetzung) | mittel / hoch | erst messen, dann t/8 oder 0,5 t / 1,5 t | Empfehlung angenommen; Messregeln festgelegt, Messung läuft (4 Verschiebungen, p 3 und p 4, a und c) |
+| O3 Hot-Spot-Streuung mit der Gitterlage | Sonnet 5.5 (Messung), Opus 5.5 (Umsetzung) | mittel / hoch | erst messen, dann t/8 oder 0,5 t / 1,5 t | Messung erledigt: S(a) 5,73 %, S(c) 3,27 % bei p 4; Entscheidung offen: t/8, 0,5 t / 1,5 t, Streuband oder Schranke anheben |
 | O4 Konvergenzaussage | Sonnet 5.5 | mittel | Kriterium in `konvergenz.py`, Tests, Handbuch | angenommen: letzte Änderung unter 3 %, Monotonie zusätzlich genannt; Umsetzung offen |
 | C3 Handbücher | Sonnet 5.5 | mittel | Texte aus vorhandenen Messwerten, viele Zahlen | offen; nach O1 bis O4 |
 | C4 Gesamtlauf, Pull Request | Sonnet 5.5 | mittel | Routine mit Prüfliste | offen; Merge nur auf Freigabe |

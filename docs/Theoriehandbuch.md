@@ -12111,3 +12111,55 @@ enthalten (nur programmatisch erreichbar); `t_s` von Zyklus 0 enthält die Vorbe
 (Versatz), `test_hotspot.test_anwendbarkeit`, `test_hotspot.test_polylinien`, `test_adaptiv.test_konvergenzaussage`, `test_adaptiv.test_zyklen_ohne_wirkung`,
 `test_adaptiv.test_massgebender_hotspot`, `test_adaptiv.test_zyklen_ohne_naht`, `test_adaptiv.test_zyklen_grenzen`, `test_schale.test_kopplungsabweichung`,
 `test_rueckgewinnung.test_haengende_moden`, `test_zwaenge.test_gebuendelte_nachbarsuche`, `test_mehrgitter.test_grosse_bloecke_spd`.
+
+### 11.20 Teilprojekt 5: Streuung des Hot-Spots mit der Gitterlage (O3, 02.10.2026)
+
+**Frage.** Am Knotenblech (11.18) unterschieden sich die spiegelgleichen Stirnnähte im letzten Zyklus um 3,1 %, die vorab gesetzte Schranke war 1 %. Ist das ein
+Ausreißer der einen Gitterlage, oder streut der Hot-Spot bei Nahtziel t/4 mit der Lage des Gitters zur Naht so stark? Die Regeln (Verschiebungen, Größen, Auswertung)
+sind im Plan TP 5 (O3) vor der Messung festgelegt.
+
+**Verfahren.** Das Gitter beginnt an der Hülle der beschnittenen Geometrie und wandert deshalb mit den Schnittebenen; ein Verschieben des ganzen Modells ändert die
+Lage zur Naht nicht (im Schnelllauf identische Werte – die erste Fassung der Messregel war darin falsch und ist berichtigt). Verschoben werden darum nur die beiden
+Schnittebenen um δ = 0, 0,625, 1,25 und 1,875 mm (ein Viertel der feinsten Zelle 2,5 mm je Schritt); Naht, Blech und Last bleiben. Jeder Lauf ist der Fahrplan aus B4
+(h 5, h 2,5, p 3, p 4) über den Vertragsweg; die Hot-Spots jedes Zyklus werden mitgeschnitten. Aus derselben Lösung werden die Referenzpunkte (a) 0,4 t / 1,0 t
+(Vorgabe 11.2, σ_hs = 5/3 σ₀,₄ − 2/3 σ₁,₀) und (c) 0,5 t / 1,5 t (IIW für grobe Netze, σ_hs = 1,5 σ₀,₅ − 0,5 σ₁,₅) ausgewertet. Gegenprobe: σ_xx an den Referenzpunkten
+unabhängig aus der geglätteten Spannung gelesen, größte Abweichung zu den Werten des Hot-Spot-Moduls über alle Zyklen, Nähte und Punkte 1,3·10⁻¹⁴. Der Lauf mit δ = 0
+reproduziert den Lauf aus C1 bis auf die letzte Stelle (143,229 / 138,943 bei 1 096 107 Freiheitsgraden).
+
+**Messwerte** (letzter Zyklus, p 4, N/mm²; φ ist die Lage der Naht zur nächsten Zellgrenze der feinsten Zellen in Bruchteilen der Zelle, Gitterursprung 2,5 mm):
+
+| Verschiebung δ der Ebenen | 0 | 0,625 | 1,25 | 1,875 |
+|---|---|---|---|---|
+| Lage der Naht zur Zellgrenze φ (rechts / links) | 0,80 / 0,00 | 0,55 / 0,75 | 0,30 / 0,50 | 0,05 / 0,25 |
+| Freiheitsgrade im letzten Zyklus | 1 096 107 | 1 091 244 | 1 088 472 | 1 092 108 |
+| σ_hs(y 40), (a), rechts | 143,23 | 143,66 | 147,17 | 143,43 |
+| σ_hs(y 40), (a), links | 138,94 | 145,93 | 143,12 | 143,02 |
+| σ_hs(y 40), (c), rechts | 138,42 | 138,41 | 139,00 | 138,94 |
+| σ_hs(y 40), (c), links | 134,60 | 139,13 | 138,53 | 138,83 |
+| gegen Tet10 (PR 13), (a), rechts / links | +0,34 % / −2,93 % | +0,65 % / +1,95 % | +3,10 % / −0,01 % | +0,48 % / −0,08 % |
+
+**Streuung S = (max − min)/Mittel über die acht Proben** (4 Verschiebungen × 2 Nähte) von σ_hs(y 40):
+
+| | (a) 0,4 t / 1,0 t | (c) 0,5 t / 1,5 t |
+|---|---|---|
+| p 3 | 4,21 % (137,57 … 143,53) | 4,66 % (133,69 … 140,14) |
+| p 4 | **5,73 %** (138,94 … 147,17) | **3,27 %** (134,60 … 139,13) |
+| p 4, ohne die Probe φ = 0,00 | 2,9 % (143,02 … 147,17) | 0,52 % (138,41 … 139,13) |
+| p 4, Mittel über y 32 … 48 statt y 40 | 5,66 % | 3,22 % |
+
+**Auswertung nach den Regeln des Plans.** Regel (3) greift: S(a) bei p 4 ist mit 5,7 % größer als 3 %, die Schranke 1 % wie auch die der Vorgabe (3 %) gelten also nicht;
+die Variante (c) erfüllt „S(c) bei p 4 ≤ 1 %“ nicht (3,3 %), obwohl sieben der acht Proben auf 0,5 % beieinander liegen – die achte, die linke Naht mit der Naht genau auf einer
+Zellgrenze (φ = 0,00), liegt 3 % darunter, in (a) ebenfalls (138,94 gegen 143,0 bis 147,2). Gegen Tet10 liegen sieben der acht Proben innerhalb 3 % (−2,93 % bis +1,95 %), die
+Probe rechts bei δ = 1,25 mit +3,10 % knapp außerhalb: **die Abnahme C1 hält also nicht bei jeder Gitterlage**; mit dem Lauf δ = 0 (−2,93 %) bestand sie nur knapp.
+
+**Herkunft der Streuung.** Sie kommt allein vom Referenzpunkt 0,4 t, der 1,6 Zellen von der Spannungssingularität am Nahtübergang liegt: σ(0,4 t) streut bei p 4 um 3,6 %
+(132,4 … 137,3 N/mm²), σ(1,0 t) – genau vier Zellen vom Übergang – um 0,40 % (122,5 … 123,0). Im Hot-Spot (a) wirkt der Beiwert 5/3: 8,2 N/mm² Streuung aus σ(0,4 t) gegen 0,3 aus
+σ(1,0 t). In (c) liegt der erste Punkt bei 2,0 Zellen, σ(0,5 t) streut bei p 4 um 2,3 % (129,0 … 132,1), der Beiwert ist 1,5. Die Abhängigkeit ist nicht glatt: die Probe mit φ = 0,00 (Naht genau auf der
+Zellgrenze) liegt in (a) um 3 % unter der mit φ = 0,05 (andere Naht des spiegelsymmetrischen Modells), die Proben bei φ = 0,25 bis 0,30 liegen 1,5 bis 2,5 % darüber. Mit p 3 nach p 4 nimmt die Streuung nicht ab (4,2 → 5,7 %), p-Verfeinerung hilft also nicht,
+es ist eine Frage der Zellgröße am Übergang.
+
+**Größe von t/8.** Noch nicht bekannt: der Aufbau des Gitters für das Nahtziel 1,25 mm (nur Gitter und Modennummerierung, ohne Lösen) war nach über zehn Minuten Rechenzeit nicht fertig, während die Gitter für 2,5 mm in 0,1 s stehen (5 146 Zellen, 150 411 / 477 702 / 1 096 107 Freiheitsgrade bei p 2 / 3 / 4, die Werte der Läufe aus C1 bis auf die Stelle).
+
+**Offen (Entscheidung des Anwenders, Plan O3).** (a) Die Schranke 3 % ist nicht belegt (5,7 %). (b) Nahtziel t/8: Größe siehe oben, die Wirkung auf die Streuung ist nicht gemessen. (c) 0,5 t / 1,5 t
+ändert die Vorgabe 11.2 (0,4 t / 1,0 t), liegt im Wert 3,7 % unter (a) und hat in der PR-13-Referenz keine Vergleichspunkte (Tet10 an 0,5 t und 1,5 t müsste die Hauptsitzung
+liefern, am besten zusammen mit dem 0,5-mm-Lauf, O2). Weitere Möglichkeit: die Streuung als Band berichten (Mittel und Spanne über Verschiebungen der Gitterlage) statt einer Schranke.
