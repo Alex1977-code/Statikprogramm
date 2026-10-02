@@ -124,7 +124,18 @@ def test_kippender_block():
     g_f = max(-float(c["gap"]) for c in zu_f)
     check("Ruecknahme (Feder): geschlossene Knoten durchdringen die Platte (max -g > 1e-13 m)",
           res_f.info.get("contact_converged") and g_f > 1e-13, f"max Durchdringung {g_f:.2e} m")
-    du = float(np.abs(res.u[:, :3] - res_f.u[:, :3]).max()) / float(np.abs(res.u[:, :3]).max())
+    # Seit der Reibung primal-dual (28.09.2026) rechnet der exakte Weg auch
+    # die Reibung anders als der Feder-Weg (Haftzeilen, Richtung aus der
+    # Versuchskraft): fuer den Vergleich der **Normalbedingung** laeuft der
+    # exakte Weg hier noch einmal mit der Reibung der Feder (gemessen: mit
+    # beiden Neuerungen 9,2e-3 auseinander, davon 9,1e-3 die Reibung)
+    alt_pd = contact.REIBUNG_PRIMAL_DUAL
+    contact.REIBUNG_PRIMAL_DUAL = False
+    try:
+        res_e = solver.solve_static(_block_auf_platte(kipp=1.5))
+    finally:
+        contact.REIBUNG_PRIMAL_DUAL = alt_pd
+    du = float(np.abs(res_e.u[:, :3] - res_f.u[:, :3]).max()) / float(np.abs(res_e.u[:, :3]).max())
     check("beide Wege liefern dieselbe Verformung bis auf die Federdurchdringung (< 1e-3)", du < 1e-3, f"{du:.1e}")
 
 
@@ -257,9 +268,226 @@ def test_haftfuge_bindung_bleibt():
           f"{len(offen2)} offen, {res2.info.get('contact_iterations')} Schritte, konvergiert {res2.info.get('contact_converged')}")
 
 
+def _coulomb(m):
+    """Rechnen und am Endzustand das Reibgesetz pruefen: je gleitendem Knoten
+    der Winkel zwischen Reibkraft (Ft-Konvention, parallel zum Weg) und
+    Tangentialweg d_t = C_t u, je haftendem |Ft| / (mu Fn)."""
+    import math
+    letzte = {}
+    alt = contact.ContactSystem.results
+
+    def gemerkt(self):
+        letzte["cs"] = self
+        return alt(self)
+    contact.ContactSystem.results = gemerkt
+    try:
+        res = solver.solve_static(m)
+    finally:
+        contact.ContactSystem.results = alt
+    u = np.asarray(res.u, float).ravel()
+    winkel, kegel = [], []
+    for c in letzte["cs"].cons:
+        if not (c.active and c.ct is not None and c.mu > 0 and not c.haften):
+            continue
+        dt = np.array([c.ct[0] @ u[c.dofs], c.ct[1] @ u[c.dofs]])
+        if c.slip and np.linalg.norm(dt) > 0 and np.linalg.norm(c.Ft) > 0:
+            cw = float(dt @ c.Ft) / (np.linalg.norm(dt) * np.linalg.norm(c.Ft))
+            winkel.append(math.degrees(math.acos(max(-1.0, min(1.0, cw)))))
+        elif not c.slip:
+            kegel.append(float(np.linalg.norm(c.Ft)) / max(c.mu * max(c.Fn, 0.0), 1e-300))
+    return res, (max(winkel) if winkel else 0.0), (max(kegel) if kegel else 0.0), len(winkel)
+
+
+def test_reibung_primal_dual():
+    """Reibung primal-dual (contact.REIBUNG_PRIMAL_DUAL, 28.09.2026): am
+    Endzustand liegt die Reibkraft jedes gleitenden Knotens parallel zu seinem
+    Weg, und kein haftender liegt ausserhalb des Kegels. Mit festgehaltenen
+    Gleitrichtungen (bis dahin) stand sie am Stempel auf gewoelbter Unterseite
+    bis 180 Grad gegen den Weg (Median 47), am Block mit Reibung bis 52 Grad."""
+    print("\n--- Reibung primal-dual: Coulomb am Endzustand ---")
+    from statik3d.examples_lib import block_friction_example
+    from tests.test_plastizitaet import _drehlagerartiges_modell
+
+    def stempel():
+        m = _drehlagerartiges_modell()
+        m.plastizitaet.an = False
+        return m
+    for name, bau in (("Stempel auf Sockel", stempel), ("Block mit Reibung", block_friction_example)):
+        res, w, k, n = _coulomb(bau())
+        check(f"{name}: Reibkraft parallel zum Gleitweg (max Winkel < 1 Grad), Haften im Kegel",
+              res.info.get("contact_converged") and n > 0 and w < 1.0 and k <= 1.0 + 1e-6,
+              f"{n} gleitend, max {w:.2f} Grad, haftend |Ft|/muFn max {k:.4f}")
+    alt = contact.REIBUNG_PRIMAL_DUAL
+    contact.REIBUNG_PRIMAL_DUAL = False
+    try:
+        _res, w, _k, n = _coulomb(stempel())
+    finally:
+        contact.REIBUNG_PRIMAL_DUAL = alt
+    check("Ruecknahme (festgehaltene Richtungen): am Stempel Reibkraft bis weit gegen den Weg (> 10 Grad)",
+          w > 10.0, f"{n} gleitend, max {w:.1f} Grad")
+
+
+def test_reibung_mit_symmetrischem_loeser():
+    """Die Kopplungsspalte der Reibung (contact._gekoppelt) macht das System
+    unsymmetrisch; mit dem Gleichungsloeser ama (LDL^T, nur symmetrisch)
+    rechnet der Kontakt ohne sie - Ergebnis wie mit PARDISO (gemessen
+    28.09.2026: 8,3e-6 relativ, 30 statt 29 Runden)."""
+    print("\n--- Reibung mit ama: ohne Kopplungsspalte, dasselbe Ergebnis ---")
+    from statik3d import parallel
+    from statik3d.examples_lib import block_friction_example
+    try:
+        import ama  # noqa: F401
+    except ImportError:
+        print("     uebersprungen (ama nicht installiert)")
+        return
+    ref = solver.solve_static(block_friction_example())
+    st = parallel.settings()
+    alt = st.solver_backend
+    st.solver_backend = "ama"
+    gesehen = {}
+    alt_sm = contact.ContactSystem.system_matrizen
+
+    def sm(self, ndof):
+        erg = alt_sm(self, ndof)
+        gesehen["nur_sym"] = bool(getattr(self, "nur_symmetrisch", False))
+        gesehen["D"] = gesehen.get("D", False) or getattr(self, "D_kopplung", None) is not None
+        return erg
+    contact.ContactSystem.system_matrizen = sm
+    try:
+        res = solver.solve_static(block_friction_example())
+    finally:
+        st.solver_backend = alt
+        contact.ContactSystem.system_matrizen = alt_sm
+    du = float(np.abs(np.asarray(res.u) - np.asarray(ref.u)).max()) / float(np.abs(np.asarray(ref.u)).max())
+    check("ama: nur_symmetrisch gesetzt, keine Kopplungsspalte, konvergiert, u wie PARDISO auf 1e-4",
+          gesehen.get("nur_sym") and not gesehen.get("D") and res.info.get("contact_converged") and du < 1e-4,
+          f"nur_symmetrisch {gesehen.get('nur_sym')}, Spalte {gesehen.get('D')}, du {du:.1e}")
+
+
+def test_mortar_ungleiche_netze():
+    """Mortar-Gewichte (contact.MORTAR, statik3d/mortar.py, 28.09.2026): bei
+    deckungsgleichen Netzen Knoten auf Knoten (Gewicht 1), bei ungleichen
+    kommt ein gleichmaessiger Druck gleichmaessig an. Pruefmatrix K6 (oben
+    3 x 3, unten 2 x 2, p = 100 N/mm2): vorher sigma_v +74,16 N/mm2 mit hex8,
+    -13,56 mit tet4, an den unteren Knoten 846 / 661 statt 625 cm2."""
+    print("\n--- Mortar: ungleiche Netze geben den Druck weiter ---")
+    from statik3d import mortar as mo
+    from tests import pruefmatrix as pm
+
+    def gitter(n, z, versatz=0):
+        xs = np.linspace(0, 1, n + 1)
+        K = [[xs[i], xs[j], z] for j in range(n + 1) for i in range(n + 1)]
+        F = [(versatz + j * (n + 1) + i, versatz + j * (n + 1) + i + 1,
+              versatz + (j + 1) * (n + 1) + i + 1, versatz + (j + 1) * (n + 1) + i)
+             for j in range(n) for i in range(n)]
+        return np.array(K, float), F
+    Ks, Fs = gitter(3, 1.0)
+    Km, Fm = gitter(3, 1.0, versatz=len(Ks))
+    w = mo.gewichte(np.vstack([Ks, Km]), Fs, Fm, 0.1)
+    fehl = max(abs(v - (D if i == j + len(Ks) else 0.0)) / D for j, (D, Mj) in w.items() for i, v in Mj.items())
+    check("deckungsgleiche Netze: Gewicht 1 auf dem gegenueberliegenden Knoten (auf 1e-12)",
+          fehl < 1e-12, f"{fehl:.1e}")
+    Km, Fm = gitter(2, 1.0, versatz=len(Ks))
+    w = mo.gewichte(np.vstack([Ks, Km]), Fs, Fm, 0.1)
+    last = {}
+    for j, (D, Mj) in w.items():
+        for i, v in Mj.items():
+            last[i] = last.get(i, 0.0) + v
+    soll = {0: 0.0625, 1: 0.125, 2: 0.0625, 3: 0.125, 4: 0.25, 5: 0.125, 6: 0.0625, 7: 0.125, 8: 0.0625}
+    abw = max(abs(last[i + len(Ks)] - a) for i, a in soll.items())
+    check("3 x 3 gegen 2 x 2: an den Master-Knoten genau ihre Einflussflaechen (625 / 1250 / 2500 cm2)",
+          abw < 1e-12, f"max Abweichung {abw:.1e} m2")
+    fall = pm.UngleicheNetze()
+    for typ in ("hex8", "tet4"):
+        m, meta = fall.bauen("hex" if typ == "hex8" else "tet", typ, 1, 0.5, [])
+        res = solver.solve_static(m, workers=1)
+        met = fall.auswerten(m, res, meta)[0]
+        sv = max(abs(float(x["wert"])) for x in met if "σ_v" in x["name"])
+        check(f"K6 {typ}: sigma_v auf 1 N/mm2 homogen (vorher +74,16 hex8 / -13,56 tet4)",
+              res.info.get("contact_converged") and sv < 1.0, f"max |d sigma_v| {sv:.4f} N/mm2")
+    alt = contact.MORTAR
+    contact.MORTAR = False
+    try:
+        m, meta = fall.bauen("hex", "hex8", 1, 0.5, [])
+        res = solver.solve_static(m, workers=1)
+        met = fall.auswerten(m, res, meta)[0]
+        sv = max(abs(float(x["wert"])) for x in met if "σ_v" in x["name"])
+    finally:
+        contact.MORTAR = alt
+    check("Ruecknahme (Knoten gegen Flaeche): K6 hex8 wieder weit daneben (> 10 N/mm2)", sv > 10.0,
+          f"{sv:.2f} N/mm2")
+
+
+def test_reibung_in_einer_richtung():
+    """Lagerknoten mit Reibung in nur einer Richtung (ux mit mu_ref uz, uy
+    linear gehalten): die Bedingung hat eine leere zweite Tangentialzeile.
+    Bis 28.09.2026 abends fiel ein solcher Knoten ganz aus der Reibung
+    primal-dual und rechnete mit der alten Logik, die in Phase 2 ein Gleiten
+    gegen die Richtung stehen laesst - am Drehlager 26 Knoten des
+    Flaechenlagers, Residuum 2,2e-4 der Kontaktkraft, trotzdem
+    "konvergiert". Jetzt rechnet er primal-dual mit einer Haftzeile."""
+    print("\n--- Reibung in einer Richtung: primal-dual mit einer Haftzeile ---")
+    from statik3d.model import Model, Material
+    from statik3d import mesher
+
+    def rechne(H_anteil, mu=0.3, N=90e3, y_reibung=False):
+        m = Model("eine Richtung")
+        m.add_material(Material.steel("S235"))
+        b = mesher.grid_box(m, "S235", 1.0, 1.0, 0.5, 2, 2, 1)
+        unten = [int(x) for x in b[:, :, 0].ravel()]
+        oben = [int(x) for x in b[:, :, -1].ravel()]
+        for n in unten:
+            if y_reibung:
+                # Reibung auch in y erklaert, y aber linear gehalten: die
+                # y-Zeile liegt ganz auf einem gesperrten FHG und wird genullt
+                m.support(n, [2], uz=dict(failure="zug"), ux=dict(mu=mu, mu_ref=2),
+                          uy=dict(mu=mu, mu_ref=2))
+            else:
+                m.support(n, [2], uz=dict(failure="zug"), ux=dict(mu=mu, mu_ref=2))
+            m.fix(n, [1])
+        for n in oben:
+            m.load_node(n, Fz=-N / len(oben), Fx=H_anteil * mu * N / len(oben))
+        pd = {}
+        alt = contact.ContactSystem.results
+
+        def gemerkt(self):
+            reib = [c for c in self.cons if c.active and c.ct is not None and c.mu > 0]
+            pd["anteil"] = (sum(1 for c in reib if self._primal_dual(c)), len(reib))
+            pd["leer"] = sum(1 for c in reib if len(self._belegte_tangenten(c)) == 1)
+            return alt(self)
+        contact.ContactSystem.results = gemerkt
+        try:
+            res = solver.solve_static(m)
+        finally:
+            contact.ContactSystem.results = alt
+        Fx = float(res.reactions[unten, 0].sum())
+        return res, Fx, pd, mu * N
+    res, Fx, pd, muN = rechne(0.5)
+    # haftend erreicht die Iteration Phase 2 nicht (nichts gleitet) - dort
+    # rechnet ohnehin nichts primal-dual; geprueft wird das Gleichgewicht
+    check("haftend (H = 0,5 mu N): Reaktion in x = -H, jede Reibbedingung mit einer belegten Zeile",
+          res.info.get("contact_converged") and abs(Fx + 0.5 * muN) < 1e-6 * muN
+          and pd["leer"] == pd["anteil"][1] > 0,
+          f"Fx {Fx / 1e3:.3f} kN, eine Zeile {pd['leer']} von {pd['anteil'][1]}")
+    res, Fx, pd, muN = rechne(1.5)
+    Ft = sum(float(c["Ft"]) for c in res.contact)
+    check("gleitend (H = 1,5 mu N): Reibkraft mu N, alle Reibknoten primal-dual (vorher keiner)",
+          res.info.get("contact_converged") and abs(Ft - muN) < 1e-6 * muN
+          and pd["anteil"][0] == pd["anteil"][1] > 0,
+          f"Ft {Ft / 1e3:.3f} kN (mu N {muN / 1e3:.1f}), primal-dual {pd['anteil']}")
+    res, Fx, pd, muN = rechne(1.5, y_reibung=True)
+    Ft = sum(float(c["Ft"]) for c in res.contact)
+    check("Reibung auch in y, y linear gehalten: y-Zeile genullt, gleitend mu N, alle primal-dual",
+          res.info.get("contact_converged") and abs(Ft - muN) < 1e-6 * muN
+          and pd["anteil"][0] == pd["anteil"][1] > 0 and pd["leer"] == pd["anteil"][1],
+          f"Ft {Ft / 1e3:.3f} kN, primal-dual {pd['anteil']}, eine Zeile {pd['leer']}")
+
+
 def main() -> int:
     for t in (test_spalt_null_und_gleichgewicht, test_kippender_block, test_presspassung_exakt,
-              test_feder_bleibt_feder, test_lager_und_spaltelement, test_haftfuge_bindung_bleibt):
+              test_feder_bleibt_feder, test_lager_und_spaltelement, test_haftfuge_bindung_bleibt,
+              test_reibung_primal_dual, test_reibung_mit_symmetrischem_loeser,
+              test_mortar_ungleiche_netze, test_reibung_in_einer_richtung):
         try:
             t()
         except Exception as ex:             # noqa: BLE001

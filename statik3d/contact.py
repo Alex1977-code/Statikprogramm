@@ -50,6 +50,38 @@ SLIP_STIFFNESS_FINE = 1.0e-8  # Phase 2: haftende Nachbarn halten das Bauteil, F
 #: Kraftanteil aus der Tangentialverschiebung des letzten Zustands wird im
 #: Kraftvektor ausgeglichen (25.09.2026). Schalter fuer die Ruecknahmeprobe.
 AUSGLEICH_RESTSTEIFIGKEIT = True
+#: Reibung primal-dual (28.09.2026, Bauplan REIBUNG-PRIMAL-DUAL): an starren
+#: Normalbedingungen wird der Reibzustand in Phase 2 wie der Normalkontakt
+#: aus Multiplikatoren bestimmt. Haften heisst zwei exakte Zeilen c_t u = 0
+#: im Sattelpunkt (Multiplikator lam_t = Reaktion), Gleiten die Reibkraft
+#: mu lam_n w/|w| mit der Versuchskraft w = lam_t + c d_t (c = k_n /
+#: PENALTY_FACTOR, die Diagonalsteifigkeit) und in Kc die konsistente
+#: Tangente c mu lam_n / |w| <= c quer zur Richtung; die Richtung wird jede
+#: Runde aus w gebildet (Newton, kein Fixpunkt), und ein Knoten, dessen
+#: Versuchskraft in den Kegel faellt, haftet wieder (Umkehr). Warum: mit
+#: festgehaltener Richtung und Haftfeder auf dem Gesamtweg war die Lage quer
+#: zur Gleitrichtung unbestimmt (gequetschter Block: Spiegelbilder +0,94 /
+#: -0,71 mm), die Pruefmatrix K4 rot (quer -3,57 % tet4, -2,49 % hex8), und
+#: ein umkehrender Knoten kreiste zwischen Zuruecksetzen und Wiedergleiten.
+#: Schalter fuer die Ruecknahmeprobe.
+REIBUNG_PRIMAL_DUAL = True
+#: Mortar-Gewichte fuer Kontaktpaare zwischen Volumenkoerpern (28.09.2026,
+#: statik3d/mortar.py): die Master-Gewichte eines Slave-Knotens kommen aus dem
+#: Integral seiner dualen Formfunktion gegen die Master-Formfunktionen, nicht
+#: aus der Projektion eines Punktes auf ein Dreieck. Bei ungleichen Netzen kam
+#: ein gleichmaessiger Druck sonst ungleichmaessig an (Pruefmatrix K6: sigma_v
+#: +74 N/mm2 mit hex8, -13,6 mit tet4 bei p = 100 N/mm2); bei deckungsgleichen
+#: Netzen sind die Gewichte die alten (Knoten auf Knoten). Schalter fuer die
+#: Ruecknahmeprobe.
+MORTAR = True
+QUER_TOL = 1.0e-4             # Richtungsaenderung [rad], ab der die Reibkraft (Fc) nachgefuehrt wird
+#: Ab dieser Drehung gegen die Richtung, mit der die Quertangente in Kc
+#: steht, wird die Tangente neu gesetzt (neue Matrix). Eine schiefe Tangente
+#: aendert die Loesung nicht (Feder auf die Aenderung seit dem letzten
+#: Zustand, null im Fixpunkt), nur den Weg dorthin - und jede neue Tangente
+#: kostet eine Faktorisierung (Drehlager 4,23 s).
+QUER_MATRIX_TOL = 1.0e-2
+QUER_RUNDEN_MAX = 60          # Phase 2: hoechstens so viele Runden nur fuer Richtungen (Schutz)
 SETTLE_ROUNDS = 8             # Phase 2: Nachlaufen der Normalkraefte in der Reibkraft mu*Fn
 MAX_CYCLES = 40               # Phase 2: hoechstens so viele Zustandswechsel-Runden
 #: Phase 2: so viel von den haftenden Knoten geht je Runde ins Gleiten,
@@ -223,6 +255,14 @@ class Constraint:
                                    # statt Feder k_n (EXAKTE_NORMALBEDINGUNG, 26.09.2026)
     zeile: int = -1                # Zeile in C (system_matrizen), -1 ohne Zeile
     zug_roh: float = 0.0           # Normalkraft ungekappt (Zug negativ), fuer solver._gehaltene_unter_zug
+    lam_t: np.ndarray = field(default_factory=lambda: np.zeros(2))  # Tangentialmultiplikator (2,) N
+                                   # in der Ft-Konvention (primal-dual, 28.09.2026)
+    zeile_t: int = -1              # erste Haftzeile in C (system_matrizen), -1 ohne
+    zeilen_t: tuple = (-1, -1)     # je Tangentialrichtung die Haftzeile in C, -1 ohne (leere Zeile)
+    k_quer: float = 0.0            # Quertangente in Kc beim Gleiten (primal-dual); 0: keine
+    quer_dir: Optional[np.ndarray] = None   # Gleitrichtung, mit der k_quer aufgestellt ist
+    richtung_start: Optional[np.ndarray] = None   # Gleitrichtung beim Warmstart (zustand_setzen)
+    war_gleitend_start: bool = False        # glitt der Knoten im uebernommenen Zustand?
 
 
 def verteilungstext(werte, aufliegend: float = 0.0) -> str:
@@ -736,6 +776,8 @@ class ContactSystem:
         self.stabilising = False   # Hilfsschritt ohne Spaltkraft (siehe stabilise)
         self.cycles = 0
         self.settle = 0
+        self.richtung_neu = 0   # in dieser Runde nachgefuehrte Gleitrichtungen (Phase 2)
+        self.richtung_runden = 0
         self.am_deckel = False  # hat der letzte update()-Aufruf am Deckel aufgegeben?
         #: je Runde ein Zahlentupel nach RUNDEN_FELDER (Buchfuehrung, siehe dort)
         self.runden: list = []
@@ -757,6 +799,8 @@ class ContactSystem:
                                               # seit 27.09.2026 die Kraft (_durchdringungskraft, f_tol)
         self.f_tol = 1.0                      # Kraft-Toleranz (Freigabe), wird vom Loeser gesetzt
         self._build()
+        # Tangentialzeilen auf gesperrten FHG nullen (Reibung primal-dual, _primal_dual)
+        self._feste_tangenten_nullen()
 
     # ---- Aufbau ----------------------------------------------------------
     def _auto_k(self, nodes) -> float:
@@ -1050,6 +1094,101 @@ class ContactSystem:
                                     zug=bool(cp.zug), haften=haften, bindung=haften,
                                     starr=self._starr(cp.stiffness)))
 
+    def _knoten_elemente(self) -> dict:
+        """Knoten -> Volumenelemente, einmal je Kontaktsystem gebaut."""
+        ke = getattr(self, "_ke_cache", None)
+        if ke is None:
+            from .assemble import SOLID_TYPES
+            ke = {}
+            for ei, e in enumerate(self.model.elements):
+                if e.typ in SOLID_TYPES:
+                    for n in e.nodes:
+                        ke.setdefault(int(n), []).append(ei)
+            self._ke_cache = ke
+        return ke
+
+    def _slave_facetten(self, cp):
+        """Randflaechen der Slave-Koerper, deren Ecken alle Slave-Knoten sind -
+        die Traeger der Slave-Formfunktionen fuer die Mortar-Gewichte. None,
+        wenn ein beteiligter Koerper nicht linear ist (tet4, hex8, pent6,
+        pyr5): Kontakt an quadratischen Elementen ist gesperrt, und ihre
+        Seitenmitten kennt mortar.py nicht."""
+        from .assemble import SOLID_FACES
+        S = {int(x) for x in cp.slave_nodes}
+        ke = self._knoten_elemente()
+        kand = set()
+        for s in S:
+            kand.update(ke.get(s, ()))
+        zaehl, form, innen = {}, {}, {}
+        for ei in kand:
+            e = self.model.elements[ei]
+            if e.typ not in ("tet4", "hex8", "pent6", "pyr5"):
+                return None
+            cen = self.model.nodes[e.nodes].mean(axis=0)
+            for f in SOLID_FACES[e.typ]:
+                nodes = tuple(int(e.nodes[i]) for i in f)
+                key = tuple(sorted(nodes))
+                zaehl[key] = zaehl.get(key, 0) + 1
+                form[key] = nodes
+                innen[key] = cen
+        rand = [k for k, z in zaehl.items() if z == 1 and all(n in S for n in k)]
+        self._slave_innen = {k: innen[k] for k in rand}
+        return [form[k] for k in rand]
+
+    def _mortar_einsetzen(self, cp, erste: int, facets: list, radius: float):
+        """Die Knoten-gegen-Flaeche-Gewichte der Bedingungen dieses Paars (ab
+        ``erste``) durch duale Mortar-Gewichte ersetzen (MORTAR, mortar.py).
+        Normale, Anfangsspalt und Zustand bleiben; nur wer die Kraft auf der
+        Master-Seite traegt, aendert sich. Knoten, deren Einflussbereich nicht
+        ganz auf der Gegenflaeche liegt (Rand der Ueberdeckung), behalten die
+        Projektion - dort gibt es kein Integral ueber die ganze Einflussflaeche."""
+        from . import mortar as mo
+        if any(len(f) not in (3, 4) for f in facets):
+            return
+        sf = self._slave_facetten(cp)
+        if not sf:
+            return
+        gew = mo.gewichte(self.model.nodes, sf, facets, radius,
+                          slave_innen=getattr(self, "_slave_innen", None),
+                          master_innen=_solid_outward(self.model, cp))
+        geaendert = rand = 0
+        for c in self.cons[erste:]:
+            if c.kind != "surface":
+                continue
+            s = int(c.node)
+            eintrag = gew.get(s)
+            if eintrag is None or eintrag[0] <= 0:
+                continue
+            D, Mj = eintrag
+            w = {int(i): v / D for i, v in Mj.items() if abs(v) > 1e-14 * D}
+            if not w or abs(sum(w.values()) - 1.0) > 1e-6:
+                rand += 1
+                continue
+            groesste = max(w, key=lambda i: abs(w[i]))
+            if abs(w[groesste] - 1.0) <= 1e-9 and all(abs(v) <= 1e-9 for i, v in w.items() if i != groesste):
+                w = {groesste: 1.0}
+            tri = list(w)
+            wj = [w[i] for i in tri]
+            alt_m = c.master
+            if (alt_m and len(alt_m[0]) == len(tri) and set(map(int, alt_m[0])) == set(tri)
+                    and np.allclose([dict(zip(map(int, alt_m[0]), alt_m[1]))[i] for i in tri], wj,
+                                    rtol=0.0, atol=1e-9)):
+                continue                             # dieselben Gewichte (deckungsgleich)
+            n = np.asarray(c.cn[:3], float)
+            c.dofs = np.array(_trans_dofs(s) + sum((_trans_dofs(t) for t in tri), []))
+            c.cn = np.concatenate([n] + [-wi * n for wi in wj])
+            if c.ct is not None:
+                t1, t2 = np.asarray(c.ct[0][:3], float), np.asarray(c.ct[1][:3], float)
+                c.ct = np.vstack([np.concatenate([t1] + [-wi * t1 for wi in wj]),
+                                  np.concatenate([t2] + [-wi * t2 for wi in wj])])
+            c.master = (tri, wj)
+            geaendert += 1
+        if geaendert:
+            self.log.append(f"Kontaktpaar '{cp.name}': {geaendert} Slave-Knoten mit Mortar-Gewichten "
+                            f"(ungleiche Netze)"
+                            + (f", {rand} am Rand der Überdeckung wie bisher Knoten gegen Fläche"
+                               if rand else ""))
+
     def _rand_von(self, cp) -> set:
         """Die Randknoten eines Kontaktpaars als Menge (einmal gebaut)."""
         cache = getattr(self, "_rand_cache", None)
@@ -1219,6 +1358,8 @@ class ContactSystem:
             self._bedingung(cp, s, list(tri), list(wj), n, d, normalen,
                             f"{cp.name}: Knoten {s} -> Facette {tri}", band)
             n_paired += 1
+        if MORTAR:
+            self._mortar_einsetzen(cp, erste, facets, radius)
         # Das Uebermass erst jetzt: welche Form die Fuge hat, sagen die
         # Facetten, die wirklich gepaart wurden - nicht alle Aussenflaechen des
         # Masters. Ein Hexaeder hat sechs davon, und alle sechs zusammen saehen
@@ -1254,6 +1395,7 @@ class ContactSystem:
         """
         self.phase = 1
         self.cycles = 0
+        self.richtung_runden = 0
         self.settle = 0
         self.am_deckel = False
         self.runden = []
@@ -1272,6 +1414,13 @@ class ContactSystem:
             c.slip_dir = None
             c.dt_last = None
             c.wieder_zu = False
+            c.lam_t = np.zeros(2)
+            c.zeile_t = -1
+            c.zeilen_t = (-1, -1)
+            c.k_quer = 0.0
+            c.quer_dir = None
+            c.richtung_start = None
+            c.war_gleitend_start = False
             c.dir_updates = 0
             c.toggles = 0
             c.frozen = False
@@ -1324,6 +1473,12 @@ class ContactSystem:
                 # ebenso die Liniensuche des Oeffnens und Schliessens: ein
                 # fortgesetzter Lauf soll dieselben Umstellungen treffen wie
                 # der ununterbrochene
+                # Tangentialmultiplikator (primal-dual): das Gedaechtnis der
+                # Reibkraft, ohne ihn rechnet die Fortsetzung anders
+                "lam_t": [np.array(getattr(c, "lam_t", np.zeros(2)), float) for c in self.cons],
+                "k_quer": np.array([float(getattr(c, "k_quer", 0.0)) for c in self.cons], float),
+                "quer_dir": [None if getattr(c, "quer_dir", None) is None else np.array(c.quer_dir, float)
+                             for c in self.cons],
                 "wechsel_anteil": float(getattr(self, "wechsel_anteil", 1.0)),
                 "wechsel_guete": float(getattr(self, "wechsel_guete", float("inf"))),
                 # ganz rutschende Gruppen ohne anderen Halt: Reststeifigkeit und
@@ -1363,6 +1518,18 @@ class ContactSystem:
             d = (z.get("dt_last") or [None] * len(self.cons))[i]
             c.dt_last = None if d is None else np.array(d, float)
             c.wieder_zu = bool(z["wieder_zu"][i]) if "wieder_zu" in z else False
+            lt = (z.get("lam_t") or [None] * len(self.cons))[i]
+            c.lam_t = np.zeros(2) if lt is None else np.array(lt, float)
+            kq = z.get("k_quer")
+            c.k_quer = float(kq[i]) if kq is not None and len(kq) == len(self.cons) else 0.0
+            qd = (z.get("quer_dir") or [None] * len(self.cons))[i]
+            c.quer_dir = None if qd is None else np.array(qd, float)
+            c.zeile_t = -1
+            c.zeilen_t = (-1, -1)
+            # Womit der Warmstart begann: die Umkehr eines Knotens gegen diesen
+            # Stand heisst, der Zustand war fremd (warmstart_verstoesse)
+            c.richtung_start = None if c.slip_dir is None else np.array(c.slip_dir, float)
+            c.war_gleitend_start = bool(c.slip)
             c.dir_updates = 0
             # eingefrorene Bedingungen (oszillierten) bleiben eingefroren -
             # sonst wechseln sie gleich wieder und die Iteration beginnt von vorn
@@ -1373,6 +1540,7 @@ class ContactSystem:
         self.gruppe_frei = None if gf is None else set(gf)
         self.warm = True
         self.cycles = 0
+        self.richtung_runden = 0
         self.settle = 0
         self.am_deckel = False
         self.wechsel_anteil = float(z.get("wechsel_anteil", 1.0))
@@ -1381,12 +1549,15 @@ class ContactSystem:
         self.runden = []
         return True
 
-    def warmstart_verstoesse(self, u: np.ndarray, zuruecksetzen: bool = False) -> int:
-        """Gleitende Knoten, die sich gegen ihre festgehaltene Gleitrichtung
-        bewegen - der Warmstart hat dann einen anderen Lastfall vor sich als
-        der Zustand annahm (Phase 1 setzt solche Knoten zurueck auf Haften,
-        Phase 2 nicht). Mit ``zuruecksetzen`` werden sie auf Haften gesetzt;
-        die Iteration findet ihre Richtung dann neu."""
+    def warmstart_verstoesse(self, u: np.ndarray, zuruecksetzen: bool = False,
+                             fremd: bool = True) -> int:
+        """Knoten, deren Reibzustand nicht zu dieser Loesung passt: an der
+        Feder gleitende Knoten, die sich gegen ihre festgehaltene Richtung
+        bewegen; primal-dual (nur bei ``fremd``, Warmstart aus einem anderen
+        Lastfall) Knoten, die sich gegen ihren uebernommenen Stand gedreht
+        haben oder vom Gleiten ins Haften fielen. Mit ``zuruecksetzen`` werden
+        sie auf Haften gesetzt; die Iteration findet ihre Richtung dann neu."""
+        self._pd_vorbereiten()
         n = 0
         # Die Reibkraft mu Fn der Knoten gegen ihre Richtung, als Mass fuer den
         # Loeser (28.09.2026): unter RESIDUUM_ANTEIL der Kontaktkraft ist das
@@ -1403,19 +1574,40 @@ class ContactSystem:
         # Richtungsnachfuehrung der Phase 1 loest ihn.
         self.warmstart_gegen_kraft = 0.0
         for c in self.cons:
-            if c.active and c.slip and c.ct is not None and c.slip_dir is not None:
+            if not (c.active and c.ct is not None):
+                continue
+            gegen = False
+            if self._primal_dual(c):
+                # Primal-dual ist der konvergierte Zustand in sich stimmig (die
+                # Richtung kommt aus der Versuchskraft, Umkehr heisst Haften).
+                # Innerhalb desselben Lastfalls gibt es darum nichts zu
+                # korrigieren. Ein **fremder** Zustand verraet sich daran, dass
+                # sich Knoten gegen ihren uebernommenen Stand gedreht haben
+                # oder vom Gleiten ins Haften fielen - dann gilt die alte
+                # Regel: viele heissen Neustart von der Geometrie, sonst hinge
+                # das Ergebnis am Weg (umgekehrte Last, tests/test_kontaktzustand).
+                if fremd:
+                    if c.slip:
+                        gegen = (c.slip_dir is not None and c.richtung_start is not None
+                                 and float(c.slip_dir @ c.richtung_start) < 0.0)
+                    else:
+                        gegen = bool(c.war_gleitend_start)
+            elif c.slip and c.slip_dir is not None:
                 ue = u[c.dofs]
                 dt = np.array([c.ct[0] @ ue, c.ct[1] @ ue])
                 nrm = float(np.linalg.norm(dt))
-                if nrm > 0 and float(dt @ c.slip_dir) < -1e-9 * nrm:
-                    n += 1
-                    self.warmstart_gegen_kraft += c.mu * max(float(c.Fn), 0.0)
-                    if zuruecksetzen:
-                        c.slip = False
-                        c.slip_dir = None
-                        c.dt_last = None
-                        c.dir_updates = 0
-                        c.Ft = np.zeros(2)
+                gegen = nrm > 0 and float(dt @ c.slip_dir) < -1e-9 * nrm
+            if gegen:
+                n += 1
+                self.warmstart_gegen_kraft += c.mu * max(float(c.Fn), 0.0)
+                if zuruecksetzen:
+                    c.slip = False
+                    c.slip_dir = None
+                    c.dt_last = None
+                    c.lam_t = np.zeros(2)
+                    c.k_quer, c.quer_dir = 0.0, None
+                    c.dir_updates = 0
+                    c.Ft = np.zeros(2)
         return n
 
     @staticmethod
@@ -1465,6 +1657,7 @@ class ContactSystem:
         (Faktor 1 + 1e-6) und Gleiten gegen die festgehaltene Gleitrichtung.
         Rueckgabe: Anzahl und groesster Wert je Art (Zug in N, Durchdringung in m,
         Kegel als Verhaeltnis |Ft|/(mu Fn))."""
+        self._pd_vorbereiten()
         v = {"zug": 0, "zug_max": 0.0, "durchdringung": 0, "durchdringung_max": 0.0,
              "kegel": 0, "kegel_max": 0.0, "gegen": 0}
         for c in self.cons:
@@ -1482,12 +1675,25 @@ class ContactSystem:
             if c.ct is None or c.haften or c.mu <= 0:
                 continue
             dt = np.array([c.ct[0] @ ue, c.ct[1] @ ue])
+            limit = c.mu * max(Fn, 0.0)
+            if self._primal_dual(c):
+                # Versuchskraft gegen den Kegel, wie in _update_states
+                w = self._lam_t(c, lam, dt) + self._c_pd(c) * dt
+                nw = float(np.linalg.norm(w))
+                if c.slip:
+                    if limit > 0 and (nw < limit * (1 - 1e-6) or (
+                            nw > 0 and c.slip_dir is not None
+                            and float(np.linalg.norm(c.slip_dir - w / nw)) > 1e-3)):
+                        v["gegen"] += 1
+                elif nw > limit * (1 + 1e-6) and nw > self.f_tol:
+                    v["kegel"] += 1
+                    v["kegel_max"] = max(v["kegel_max"], nw / limit if limit > 0 else np.inf)
+                continue
             if c.slip:
                 nrm = float(np.linalg.norm(dt))
                 if c.slip_dir is not None and nrm > 0 and float(dt @ c.slip_dir) < -1e-9 * nrm:
                     v["gegen"] += 1
                 continue
-            limit = c.mu * max(Fn, 0.0)
             ft = float(np.linalg.norm(c.kt * dt))
             if ft > limit * (1 + 1e-6) and ft > self.f_tol:
                 v["kegel"] += 1
@@ -1525,7 +1731,14 @@ class ContactSystem:
         return (self.phase, hash(a.tobytes()), hash(s.tobytes()), hash(y.tobytes()),
                 hash(h.tobytes()),
                 tuple(sorted(self._full_slip_groups().items())),
-                None if getattr(self, "gruppe_frei", None) is None else tuple(sorted(self.gruppe_frei)))
+                None if getattr(self, "gruppe_frei", None) is None else tuple(sorted(self.gruppe_frei)),
+                # Quertangenten (primal-dual) stehen in Kc: ihr Inhalt, nicht ein
+                # Zaehler - ein uebernommener Zustand mit denselben Tangenten
+                # loest mit der Faktorisierung des vorigen Lastfalls
+                hash(np.array([float(getattr(c, "k_quer", 0.0)) for c in self.cons], float).tobytes()),
+                hash(np.array([(-2.0, -2.0) if getattr(c, "quer_dir", None) is None
+                               else (float(c.quer_dir[0]), float(c.quer_dir[1]))
+                               for c in self.cons], float).tobytes()))
 
     def endzustand_kennung(self) -> str:
         """Kennung des Kontaktzustands, **prozessfest**: 16 Hexziffern aus
@@ -1660,6 +1873,153 @@ class ContactSystem:
         return bool(c.starr and c.active and not c.yielding
                     and not (self.stabilising and getattr(c, "stabilised", False)))
 
+    def _primal_dual(self, c: Constraint) -> bool:
+        """Wird der Reibzustand dieses Knotens in diesem Schritt primal-dual
+        bestimmt (REIBUNG_PRIMAL_DUAL)? Aktive Reibknoten (mu > 0, keine
+        Haftfuge) in Phase 2 - an exakten Normalbedingungen wie an Federn
+        (dort ist lam_n die Federkraft); nicht im Hilfsschritt, und nicht,
+        wenn eine Haftzeile ganz auf gesperrten Freiheitsgraden laege
+        (Symmetrielager: die Zeile waere leer, das System singulaer)."""
+        if not REIBUNG_PRIMAL_DUAL or getattr(self, "phase", 1) != 2:
+            return False
+        if not (c.ct is not None and c.mu > 0 and not c.haften and self._exakt(c)):
+            # nur an der exakten Normalbedingung (starr, lam_n Multiplikator):
+            # an der Feder des Anwenders lief der Block auf der Platte mit
+            # Kippen 1,5 davon (u 230-fach, nicht konvergiert; 28.09.2026)
+            return False
+        if c.gehalten or c.frozen or getattr(c, "schub_halt", False):
+            # Hilfen des Loesers (solver._freie_teile_halten, Einfrieren), keine
+            # Reibfuge: ein ganz abhebender Block hing sonst mit seinen vier
+            # gehaltenen Punkten in der Reibungslogik, pendelte 40 Runden
+            # (Oeffnen/Schliessen an Reibstellen) und endete am Deckel mit
+            # u 2,6 m statt mit der Meldung "hebt ab" (test_solver_ext)
+            return False
+        if _group(c) in getattr(self, "_pd_ohne", ()):
+            # ... und ebenso die uebrigen Knoten derselben Fuge: haelt der Loeser
+            # das Teil an Hilfspunkten fest, ist sein Reibzustand ein Artefakt
+            # dieses Halts. Am abhebenden Block wechselten die zwei noch
+            # gedrueckten Knoten sonst 85 Runden zwischen Haften und Gleiten.
+            return False
+        # mindestens eine belegte Tangentialzeile. Ein Lagerknoten mit Reibung
+        # in nur einer Richtung hat eine leere zweite Zeile, und eine Zeile ganz
+        # auf gesperrten Freiheitsgraden ist beim Aufbau genullt worden
+        # (_feste_tangenten_nullen). Bis 28.09.2026 abends fiel ein solcher
+        # Knoten ganz aus der primal-dualen Reibung - am Drehlager 26 Knoten
+        # des Flaechenlagers "Starr uz", die in Phase 2 gegen ihre Richtung
+        # glitten, ohne dass die alte Logik das abbaute: das Residuum stand bei
+        # 2,2e-4 der Kontaktkraft (rund 20 kN Reibkraft in falscher Richtung),
+        # und der Lauf hiess trotzdem "konvergiert".
+        return bool(np.any(np.abs(c.ct) > 1e-12))
+
+    @staticmethod
+    def _belegte_tangenten(c: Constraint) -> list:
+        """Die Tangentialrichtungen (0, 1) mit Eintraegen - nur sie bekommen eine
+        Haftzeile; eine leere Zeile machte das Sattelpunktsystem singulaer."""
+        return [k for k in (0, 1) if bool(np.any(np.abs(c.ct[k]) > 1e-12))]
+
+    def _feste_tangenten_nullen(self):
+        """Tangentialzeilen, die ganz auf gesperrten Freiheitsgraden liegen, auf
+        null setzen: in diese Richtung kann nichts gleiten (ein lineares Lager
+        haelt sie), und eine solche Zeile waere als Haftzeile leer. Einmal nach
+        dem Aufbau; die Freiheitsgrade selbst traegt ohnehin das Lager."""
+        fest = self._fest_maske()
+        if fest is None:
+            return
+        for c in self.cons:
+            if c.ct is None:
+                continue
+            for k in (0, 1):
+                traeger = np.abs(c.ct[k]) > 1e-12
+                if traeger.any() and bool(np.all(fest[c.dofs[traeger]])):
+                    c.ct[k] = 0.0
+
+    def _pd_vorbereiten(self):
+        """Einmal je Runde: die Fugen, in denen der Loeser Punkte haelt
+        (gehalten, Schubhalt) - dort keine Reibung primal-dual (_primal_dual)."""
+        self._pd_ohne = {_group(c) for c in self.cons
+                         if c.gehalten or getattr(c, "schub_halt", False)}
+
+    def _fest_maske(self):
+        """Gesperrte Freiheitsgrade des Modells - die linear starren Lager -,
+        einmal bestimmt; None, wenn das Modell sie nicht nennt (Stuempfe).
+        Nicht ueber assemble.constrained_dofs: das baut zur Pruefung der
+        Kontakt-FHG selbst ein Kontaktsystem, und dieses fragte wieder nach
+        der Maske - am 28.09.2026 abends eine Rekursion bis zum Abbruch, 280
+        Aufbauten je Rechnung, test_fugen 53 statt rund 5 Minuten."""
+        if hasattr(self, "_fest"):
+            return self._fest
+        try:
+            from . import supports as sup
+            fest = np.zeros(int(self.model.ndof), bool)
+            lin, _nl = sup.split(sup.expand(self.model))
+            for e_ in lin:
+                if e_.typ == "rigid":
+                    fest[e_.index] = True
+            self._fest = fest
+        except Exception:                      # noqa: BLE001 - Stumpf ohne Modell
+            self._fest = None
+        return self._fest
+        try:
+            from . import assemble as asm
+            self._fest, _v = asm.constrained_dofs(self.model, self.K)
+            self._fest = np.asarray(self._fest, bool)
+        except Exception:                      # noqa: BLE001 - Stumpf ohne Modell
+            self._fest = None
+        return self._fest
+
+    def _haftzeile(self, c: Constraint) -> bool:
+        """Traegt der Knoten in diesem Schritt zwei Haftzeilen c_t u = 0 in C?"""
+        return self._primal_dual(c) and not c.slip
+
+    def _gekoppelt(self, c: Constraint) -> bool:
+        """Steht die Reibkraft dieses gleitenden Knotens implizit im Sattelpunkt
+        (Spalte -mu q lam_n am Multiplikator seiner Normalzeile, D_kopplung)?
+        Primal-dual gleitend mit gesetzter Tangentenrichtung q (quer_dir).
+        Warum (28.09.2026): mit der Reibkraft mu lam_n^alt w/|w| aus der
+        vorigen Runde blieb der gequetschte Block im Fliessschritt bei 3 %
+        Residuum stehen (70 Runden, auch unterrelaxiert) - die Reibung ist
+        dort die Einspannung, jede Richtungsaenderung verschiebt die
+        Normalkraefte, und die kamen erst eine Runde spaeter an.
+
+        Mit der Spalte ist das System unsymmetrisch. Verlangt der eingestellte
+        Gleichungsloeser Symmetrie (ama, LDL^T), setzt der Loeser
+        ``nur_symmetrisch``: dann steht die Reibkraft wie vorher mit der
+        Normalkraft der vorigen Runde im Lastvektor - dasselbe Ergebnis, mehr
+        Runden (Block mit Reibung, LF3 nach LF2: 22 Runden und 6 Zerlegungen
+        statt 6 und 0; gequetschter Block 42,130 und 42,580 mm mit und ohne,
+        gemessen 28.09.2026)."""
+        return (self._primal_dual(c) and c.slip and c.quer_dir is not None
+                and not getattr(self, "nur_symmetrisch", False))
+
+    def _c_pd(self, c: Constraint) -> float:
+        """Die Konstante c der Versuchskraft w = lam_t + c d_t: die
+        Diagonalsteifigkeit der Knoten (dieselbe Skala wie die automatische
+        Kontaktsteifigkeit k_n / PENALTY_FACTOR und die Zeilenskalierung der
+        Normalbedingung) - nicht die Feder des Anwenders: an einer weichen
+        Bettung waere w sonst von der Reibkraft allein bestimmt, und weder
+        Umkehr noch Richtung kaemen je an."""
+        if c.starr:
+            return float(c.kn / PENALTY_FACTOR)
+        diag = getattr(self, "diag", None)
+        if diag is not None and len(c.dofs):
+            ref = float(np.max(np.abs(diag[c.dofs])))
+            if ref > 0:
+                return ref
+        return float(c.kn / PENALTY_FACTOR)
+
+    def _lam_t(self, c: Constraint, lam, dt: np.ndarray) -> np.ndarray:
+        """Tangentialmultiplikator des Knotens in diesem Schritt, in der
+        Ft-Konvention (parallel zu d_t beim Haften): aus den Haftzeilen (die
+        Randloesung gibt die Kraft auf das Tragwerk, Ft ist ihr Negatives),
+        ohne Zeile in diesem Schritt die Haftfeder k_t d_t; beim Gleiten die
+        angesetzte Reibkraft mu lam_n w/|w| des Zustands."""
+        if not c.slip:
+            zt = getattr(c, "zeilen_t", (-1, -1))
+            if lam is not None and c.zeile_t >= 0 and max(zt) < len(lam):
+                return -np.array([lam[z] if z >= 0 else 0.0 for z in zt], float)
+            return np.asarray(c.kt * dt, float)
+        return np.asarray(getattr(c, "lam_t", np.zeros(2)), float)
+
     def system_matrizen(self, ndof: int):
         """Alles fuer einen Loesungsschritt: Kontaktsteifigkeit Kc, Kontaktlast
         Fc und die exakten Normalbedingungen als Zeilenmatrix C (m, ndof) mit
@@ -1667,8 +2027,10 @@ class ContactSystem:
         nennt je Zeile die Bedingung (Index in ``cons``); jede Bedingung merkt
         sich ihre Zeile in ``zeile`` (-1 ohne), damit update(u, lam) den
         Multiplikator findet. Ohne exakte Bedingung ist C None."""
+        self._pd_vorbereiten()
         Kc, Fc = self.matrices(ndof)
         rows, cols, vals, b, zeilen, skala = [], [], [], [], [], []
+        d_rows, d_cols, d_vals = [], [], []
         for i, c in enumerate(self.cons):
             if self._exakt(c):
                 c.zeile = len(zeilen)
@@ -1677,6 +2039,13 @@ class ContactSystem:
                 vals.append(c.cn)
                 b.append(-c.g0)
                 zeilen.append(i)
+                if self._gekoppelt(c):
+                    # Reibkraft -mu lam_n q auf das Tragwerk, q die Tangentenrichtung:
+                    # als Spalte am Multiplikator (StaticSystem.solve, D_extra)
+                    q = c.quer_dir
+                    d_rows.append(c.dofs)
+                    d_cols.append(np.full(len(c.dofs), c.zeile))
+                    d_vals.append(-c.mu * (q[0] * c.ct[0] + q[1] * c.ct[1]))
                 # Skalierung der Zeile (StaticSystem.solve): die
                 # Diagonalsteifigkeit der beteiligten Knoten, aus der k_n
                 # entstand - je Zeile, nicht die groesste im Modell, damit
@@ -1685,12 +2054,36 @@ class ContactSystem:
                 skala.append(c.kn / PENALTY_FACTOR)
             else:
                 c.zeile = -1
+        # Haftzeilen der Reibung primal-dual: zwei Zeilen c_t1 u = 0, c_t2 u = 0
+        # je haftendem Knoten, hinter den Normalzeilen, skaliert mit c
+        for i, c in enumerate(self.cons):
+            if self._haftzeile(c):
+                c.zeile_t = len(zeilen)
+                zt = [-1, -1]
+                for k in self._belegte_tangenten(c):
+                    zt[k] = len(zeilen)
+                    rows.append(np.full(len(c.dofs), len(zeilen)))
+                    cols.append(c.dofs)
+                    vals.append(c.ct[k])
+                    b.append(0.0)
+                    zeilen.append(i)
+                    skala.append(self._c_pd(c))
+                c.zeilen_t = tuple(zt)
+            else:
+                c.zeile_t = -1
+                c.zeilen_t = (-1, -1)
         self.c_skala = np.array(skala, float)
+        self.D_kopplung = None
         if not zeilen:
             return Kc, Fc, None, None, []
         C = sparse.coo_matrix((np.concatenate(vals).astype(float),
                                (np.concatenate(rows), np.concatenate(cols))),
                               shape=(len(zeilen), ndof)).tocsr()
+        if d_rows:
+            self.D_kopplung = sparse.coo_matrix(
+                (np.concatenate(d_vals).astype(float),
+                 (np.concatenate(d_rows), np.concatenate(d_cols))),
+                shape=(ndof, len(zeilen))).tocsr()
         return Kc, Fc, C, np.array(b, float), zeilen
 
     def matrices(self, ndof: int, als_federn: bool = False):
@@ -1738,14 +2131,22 @@ class ContactSystem:
                     Fc[c.dofs] += -c.kn * c.g0 * c.cn
             if c.ct is not None and (c.mu > 0 or c.haften):
                 if not c.slip:
-                    kmat = kmat + c.kt * (np.outer(c.ct[0], c.ct[0]) + np.outer(c.ct[1], c.ct[1]))
+                    if not (self._haftzeile(c) and not als_federn):
+                        kmat = kmat + c.kt * (np.outer(c.ct[0], c.ct[0]) + np.outer(c.ct[1], c.ct[1]))
+                    # sonst Haften exakt: zwei Zeilen in C (system_matrizen), keine Feder
                 else:
                     # Gleiten: konstante Reibkraft mu*Fn entgegen der Gleitrichtung
                     # + Reststeifigkeit (haelt das System regulaer); in Phase 2 so klein,
                     # dass ihr Kraftanteil vernachlaessigbar ist
                     fr = c.mu * max(c.Fn, 0.0)
                     k_res = self._k_res(c, full_slip)
-                    f_t = fr * c.slip_dir
+                    if not als_federn and self._gekoppelt(c):
+                        # die Reibkraft steht implizit im Sattelpunkt (D_kopplung,
+                        # Richtung quer_dir); hier nur der Rest auf die Richtung
+                        # dieser Runde, mit der Normalkraft der vorigen
+                        f_t = fr * (c.slip_dir - c.quer_dir)
+                    else:
+                        f_t = fr * c.slip_dir
                     Fc[c.dofs] += -(f_t[0] * c.ct[0] + f_t[1] * c.ct[1])
                     fein = k_res < SLIP_STIFFNESS * c.kt
                     if (AUSGLEICH_RESTSTEIFIGKEIT and c.dt_last is not None
@@ -1777,6 +2178,18 @@ class ContactSystem:
                         # kein Anker; Knoten, die nie abhoben, behalten ihn.
                         Fc[c.dofs] += k_res * (c.dt_last[0] * c.ct[0] + c.dt_last[1] * c.ct[1])
                     kmat = kmat + k_res * (np.outer(c.ct[0], c.ct[0]) + np.outer(c.ct[1], c.ct[1]))
+                    if (not als_federn and c.k_quer > 0.0 and c.quer_dir is not None
+                            and self._primal_dual(c)):
+                        # Konsistente Tangente der Reibkraft mu lam_n w/|w| nach
+                        # d_t, quer zur Richtung: c mu lam_n/|w| (I - w w^T),
+                        # hoechstens c. Als Feder auf die Aenderung seit dem
+                        # letzten Zustand (Ausgleich); mit der nachgefuehrten
+                        # Richtung ist q . dt_last null.
+                        q = np.array([-c.quer_dir[1], c.quer_dir[0]])
+                        tq = q[0] * c.ct[0] + q[1] * c.ct[1]
+                        kmat = kmat + c.k_quer * np.outer(tq, tq)
+                        if c.dt_last is not None:
+                            Fc[c.dofs] += c.k_quer * float(q @ c.dt_last) * tq
             if not kmat.any():
                 continue                    # exakte Bedingung ohne Reibung: nur die Zeile in C
             rows.append(r.ravel())
@@ -1871,6 +2284,7 @@ class ContactSystem:
                    for c in self.cons):
                 self.phase = 2
                 self.cycles = 0
+                self.richtung_runden = 0
                 return True
             return False
         if not changed:
@@ -1879,6 +2293,24 @@ class ContactSystem:
             if self.dF_slip > 1e-4 * self.f_ref and self.settle < SETTLE_ROUNDS:
                 self.settle += 1
                 return True
+            if getattr(self, "richtung_neu", 0):
+                # Gleitrichtungen nachgefuehrt (primal-dual): noch eine Runde
+                # mit der neuen Tangente - kein Zustandswechsel, zaehlt nicht
+                # auf den Deckel. Spielen sie sich in QUER_RUNDEN_MAX Runden
+                # nicht ein, ist der Zustand nicht konsistent: Abbruch wie am
+                # Deckel. Verworfen (28.09.2026): schon nach acht Runden ohne
+                # Fortschritt abbrechen - das schnitt langsam konvergierende
+                # Nachfuehrungen ab (gequetschter Block: sieben Halbierungen,
+                # u_max 42,72 statt 42,67 mm, mit einer Laststufe "nicht
+                # konvergiert").
+                if getattr(self, "richtung_runden", 0) < QUER_RUNDEN_MAX:
+                    self.richtung_runden += 1
+                    return True
+                self.log.append("Kontakt: Gleitrichtungen nach "
+                                f"{QUER_RUNDEN_MAX} Runden nicht eingespielt "
+                                f"({self.richtung_neu} in der letzten Runde) - abgebrochen")
+                self.am_deckel = True
+                return False
             return False
         self.cycles += 1
         if self.cycles >= MAX_CYCLES:
@@ -1924,7 +2356,21 @@ class ContactSystem:
                 if c.ct is not None and c.mu > 0 and not c.haften:
                     dt = np.array([c.ct[0] @ ue, c.ct[1] @ ue])
                     limit = c.mu * max(Fn, 0.0)
-                    if not c.slip:
+                    if self._primal_dual(c):
+                        # Versuchskraft w = lam_t + c d_t gegen den Kegel
+                        w = self._lam_t(c, lam, dt) + self._c_pd(c) * dt
+                        nw = float(np.linalg.norm(w))
+                        if not c.slip and nw > limit * (1 + 1e-6):
+                            kegel_summe += nw - limit
+                        elif c.slip and nw < limit * (1 - 1e-6):
+                            gegen_summe += limit - nw
+                        elif c.slip and nw > 0 and c.slip_dir is not None:
+                            # die angesetzte Reibkraft mu lam_n slip_dir gegen die
+                            # konsistente mu lam_n w/|w|: ohne diesen Anteil hiess
+                            # eine schiefe Richtung "ruhe" und blieb stehen (K4
+                            # hex8: vier Richtungen 11 Grad schief, quer -9,9 %)
+                            gegen_summe += limit * float(np.linalg.norm(c.slip_dir - w / nw))
+                    elif not c.slip:
                         ft = float(np.linalg.norm(c.kt * dt))
                         if ft > limit * (1 + 1e-6):
                             kegel_summe += ft - limit
@@ -1974,6 +2420,7 @@ class ContactSystem:
             wuensche.sort(key=lambda e: -e[0])
             wuensche = wuensche[:max(1, int(anteil * len(wuensche)))]
         umstellen = {id(c) for _v, c in wuensche}
+        self.richtung_neu = 0
         for c in self.cons:
             ue = u[c.dofs]
             g = c.g0 + c.cn @ ue
@@ -2053,7 +2500,95 @@ class ContactSystem:
                 Ft_el = c.kt * dt
                 limit = c.mu * max(c.Fn, 0.0)
                 nrm = np.linalg.norm(dt)
-                if not c.slip:
+                pd = self._primal_dual(c)
+                if pd and not c.slip:
+                    # Haften primal-dual: lam_t ist die Reaktion der Haftzeilen
+                    # (ohne Zeile in diesem Schritt die Haftfeder); gleiten,
+                    # sobald die Versuchskraft w = lam_t + c d_t den Kegel
+                    # verlaesst - ueber die Liniensuche wie bisher, sofort
+                    # fuer einen in dieser Runde geschlossenen Knoten
+                    c.lam_t = self._lam_t(c, lam, dt)
+                    cq = self._c_pd(c)
+                    w = c.lam_t + cq * dt
+                    nw = float(np.linalg.norm(w))
+                    c.Ft = c.lam_t.copy()
+                    guete += max(0.0, nw - limit)
+                    if ruhe:
+                        pass
+                    elif nw > limit * (1 + 1e-6) and limit >= 0:
+                        if id(c) in zu_in_runde:
+                            c.slip = True
+                            c.slip_dir = w / nw if nw > 0 else np.array([1.0, 0.0])
+                            c.dir_updates = 0
+                            c.quer_dir = c.slip_dir.copy()
+                            c.k_quer = cq * limit / nw if nw > 0 else 0.0
+                            c.lam_t = limit * c.slip_dir
+                            c.Ft = c.lam_t.copy()
+                            changed = True
+                            z[_gleitart(limit, True)] += 1
+                            betroffen.add(id(c))
+                        else:
+                            ratio = nw / limit if limit > 0 else np.inf
+                            verstoesse.append((ratio, c, w))
+                elif pd:
+                    # Gleiten primal-dual: Versuchskraft aus der angesetzten
+                    # Reibkraft und dem Weg; faellt sie in den Kegel, kehrt der
+                    # Knoten um und haftet wieder (die Haftzeilen halten ihn an
+                    # der Ausgangslage); sonst Richtung und Tangente aus w
+                    cq = self._c_pd(c)
+                    w = c.lam_t + cq * dt
+                    nw = float(np.linalg.norm(w))
+                    if ruhe:
+                        c.Ft = limit * c.slip_dir       # Zustand steht (Residuum)
+                    elif limit > 0 and nw < limit * (1 - 1e-6):
+                        # Die Versuchskraft liegt im Kegel: der Knoten haftet. Verworfen
+                        # (28.09.2026): auch haften lassen, wer sich gegen seine
+                        # Gleitrichtung bewegt - das fuehrte am gequetschten Block auf
+                        # einen anderen Ast, dessen Ergebnis an der Teilung der Last hing
+                        # (u_max 42,13 / 42,24 / 42,58 / 42,67 mm fuer 1 / 2 / 4 / 8
+                        # Laststufen); ohne die Regel 42,667 mm fuer alle, mit dem
+                        # Halbieren weglaufender Laststufen (plastizitaet.HALBIEREN_MAX).
+                        c.slip = False
+                        c.slip_dir = None
+                        c.quer_dir, c.k_quer = None, 0.0
+                        c.lam_t = w.copy()
+                        c.Ft = c.lam_t.copy()
+                        changed = True
+                        z["haften_zurueck"] += 1
+                        betroffen.add(id(c))
+                    else:
+                        # Richtung aus der Versuchskraft (Fixpunkt) mit der Tangente
+                        # c mu lam_n/|w| in Kc. Verworfen (28.09.2026): der kondensierte
+                        # Newton-Schritt (Querkomponente der alten Reibkraft um
+                        # mu lam_n/(|w| - mu lam_n) ueber w hinaus gedreht, Tangente
+                        # c mu lam_n/(|w| - mu lam_n)): LF2 warm in 5 statt 19 Runden,
+                        # aber am Kegelrand ungueltig - gequetschter Block u 0,98 m,
+                        # Wiederholung desselben Lastfalls 37 statt 1 Runde; mit
+                        # gedeckelter Verstaerkung (4) LF1 54 bis 68 statt 30 Runden
+                        # und der Block weiter bei 1,6 m. Der Fixpunkt konvergiert
+                        # linear (Block mit Reibung: rund 20 Richtungsrunden je
+                        # Lastfall, ohne Faktorisierung), K4/K5 gruen.
+                        nd = w / nw if nw > 0 else (c.slip_dir if c.slip_dir is not None
+                                                    else np.array([1.0, 0.0]))
+                        k_neu = cq * limit / nw if nw > 0 else 0.0
+                        if c.slip_dir is None or float(np.linalg.norm(nd - c.slip_dir)) > QUER_TOL:
+                            c.slip_dir = np.asarray(nd, float)
+                            # Eine Reibkraft unter der Loesergenauigkeit (f_tol) hat
+                            # keine Richtung, die zaehlt: am ganz abhebenden Block
+                            # drehten Knoten ohne Normalkraft ihre Richtung jede Runde
+                            # bis zur Grenze von QUER_RUNDEN_MAX, statt dass die
+                            # Meldung "hebt ab" kam (test_solver_ext, 28.09.2026)
+                            if limit > self.f_tol:
+                                self.richtung_neu = getattr(self, "richtung_neu", 0) + 1
+                                z["richtung"] += 1
+                        if (c.quer_dir is None or (c.k_quer <= 0.0) != (k_neu <= 0.0)
+                                or float(np.linalg.norm(c.slip_dir - c.quer_dir)) > QUER_MATRIX_TOL
+                                or (c.k_quer > 0.0 and abs(k_neu - c.k_quer) > 0.5 * c.k_quer)):
+                            c.quer_dir = c.slip_dir.copy()
+                            c.k_quer = k_neu
+                        c.lam_t = limit * c.slip_dir
+                        c.Ft = c.lam_t.copy()
+                elif not c.slip:
                     c.Ft = Ft_el
                     guete += max(0.0, float(np.linalg.norm(Ft_el)) - limit)
                     if ruhe:
@@ -2151,11 +2686,17 @@ class ContactSystem:
             wieviele = max(1, int(self.gleit_anteil * haftend))
             verstoesse.sort(key=lambda e: -e[0])
             for _ratio, c, dt in verstoesse[:wieviele]:
+                # dt: der Weg - primal-dual die Versuchskraft w (dieselbe Richtung)
                 nrm = np.linalg.norm(dt)
                 c.slip = True
                 c.slip_dir = dt / nrm if nrm > 0 else np.array([1.0, 0.0])
                 c.dir_updates = 0
                 c.Ft = c.mu * c.Fn * c.slip_dir
+                if self._primal_dual(c):
+                    limit = c.mu * max(c.Fn, 0.0)
+                    c.quer_dir = c.slip_dir.copy()
+                    c.k_quer = self._c_pd(c) * limit / nrm if nrm > 0 else 0.0
+                    c.lam_t = limit * c.slip_dir
                 changed = True
                 z[_gleitart(c.mu * max(c.Fn, 0.0), id(c) in zu_in_runde)] += 1
                 betroffen.add(id(c))
@@ -2175,6 +2716,7 @@ class ContactSystem:
     def warnings(self) -> list[str]:
         """Hinweise: vollstaendig gleitende Kontaktpaare (Gleichgewicht nur durch
         Reststeifigkeit) und eingefrorene Bedingungen."""
+        self._pd_vorbereiten()
         out = []
         groups: dict[str, list[Constraint]] = {}
         for c in self.cons:

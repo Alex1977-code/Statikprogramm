@@ -156,13 +156,20 @@ def test_warmstart():
     # gleichen Spannungen). Nur innerhalb desselben Lastfalls (Vorlauf,
     # Fliessschritte) ist die Fortsetzung die Regel (solve_with_contact,
     # ``fortsetzung``).
-    check("umgekehrte Last: Warmstart verworfen, Neustart von der Geometrie",
-          not warm4.info.get("contact_warm")
-          and any("Warmstart verworfen" in str(z) for z in warm4.info.get("contact_log", [])),
+    # Seit der Reibung primal-dual (28.09.2026) sind es hier zwei Knoten, die
+    # sich gegen ihren uebernommenen Stand drehen - "wenige": sie werden
+    # zurueckgesetzt und die Iteration laeuft weiter, statt kalt neu zu
+    # beginnen. Das Ergebnis ist das kalte (gemessen: u 1,3e-5 relativ,
+    # Auflagersummen gleich); die Pruefung darunter misst es auf 1e-4.
+    check("umgekehrte Last: der fremde Zustand wird verworfen oder an den Knoten gegen ihre "
+          "Richtung zurueckgesetzt (steht im Protokoll)",
+          any("Warmstart verworfen" in str(z) or "zurueckgesetzt" in str(z)
+              for z in warm4.info.get("contact_log", [])),
           str([z for z in warm4.info.get("contact_log", []) if "Warmstart" in str(z)])[:120])
-    check("umgekehrte Last: dieselben Auflagerkraefte wie kalt",
+    check("umgekehrte Last: dieselben Auflagerkraefte wie kalt, u auf 1e-4",
           np.allclose(warm4.reactions.sum(axis=0), kalt4.reactions.sum(axis=0), rtol=1e-9, atol=1e-6)
-          and float(np.abs(warm4.u - kalt4.u).max()) < 1e-3 * float(np.abs(kalt4.u).max()))
+          and float(np.abs(warm4.u - kalt4.u).max()) < 1e-4 * float(np.abs(kalt4.u).max()),
+          f"u {float(np.abs(warm4.u - kalt4.u).max()) / float(np.abs(kalt4.u).max()):.1e}")
     # Kombination direkt mit Kontakt: Warmstart aus dem System
     m.add_combination("K", {lf1: 1.0, "LF2": 0.0}, typ="ULS")
     systeme = {}
@@ -1025,9 +1032,10 @@ def test_start_angeboten_und_genutzt():
     for nl in m.load_cases[lf1].nodal_loads:
         m.load_node(nl.node, Fx=-nl.F[0], Fy=nl.F[1], Fz=nl.F[2])
     i4 = solver.solve_cases(m, [lf1, "LF4"])["LF4"].info
-    check("umgekehrte Last: angeboten von LF1, aber nicht genutzt (verworfen, Neustart)",
-          i4.get("start_angeboten_von") == f"Lastfall {lf1}" and i4.get("start_genutzt") is False
-          and i4["laeufe"][0]["neustart"] and not i4["laeufe"][0]["warm"],
+    # verworfen (Neustart, nicht genutzt) oder zurueckgesetzt (genutzt, mit
+    # Neustart der Iteration) - seit der Reibung primal-dual das zweite
+    check("umgekehrte Last: angeboten von LF1, nicht unbesehen genutzt (verworfen oder zurueckgesetzt)",
+          i4.get("start_angeboten_von") == f"Lastfall {lf1}" and i4["laeufe"][0]["neustart"],
           f"{i4.get('start_angeboten_von')} / {i4.get('start_genutzt')} / "
           f"Neustart {i4['laeufe'][0]['neustart']}")
     # Kombination: vom Zustand, den das System vom letzten Lastfall haelt

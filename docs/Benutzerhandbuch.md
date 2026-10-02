@@ -3494,6 +3494,47 @@ federgehaltene Lage ausgab - siehe Theoriehandbuch 4.
   Marker im Viewport). Hebt ein Bauteil vollständig ab oder rutscht es ohne
   Halt, wird das als Fehler gemeldet – dann Lagerung oder Lasten prüfen.
 
+**Reibung folgt dem Reibgesetz (seit 28.09.2026).** In Fugen mit exakt
+geschlossener Normalbedingung (die Vorgabe, ohne eigene Feder) bestimmt das
+Programm Haften und Gleiten wie das Öffnen und Schließen: ein haftender
+Knoten ist in der Fugenebene exakt festgehalten, ein gleitender trägt μ·N
+genau in Richtung seines Gleitwegs, und diese Richtung wird in jeder Runde
+nachgeführt. Vorher blieb sie ab der Nachprüfung fest und konnte weit neben
+dem Weg liegen - am Stempel auf gewölbter Unterseite bis zur Gegenrichtung.
+Was man davon sieht: Querkräfte, die bei symmetrischer Last null sein müssen,
+sind es jetzt (Prüfmatrix K4), und ein ganz gleitendes Bauteil wandert nicht
+mehr seitlich weg. Im Protokoll kann stehen „Kontakt: Gleitrichtungen nach
+60 Runden nicht eingespielt (… in der letzten Runde) - abgebrochen“; das
+zählt wie der Deckel der Nachprüfung, das Ergebnis heißt „nicht
+auskonvergiert“. Das gilt auch für Lagerknoten mit Reibung in nur einer
+Richtung (seit dem 28.09.2026 abends; vorher konnte dort die Reibkraft am
+Ende gegen die Bewegung zeigen, ohne dass die Rechnung es meldete).
+Bettungen und Kontaktfedern mit eigener Steifigkeit rechnen die Reibung wie
+bisher. Ist unter *Berechnung → Einstellungen* der
+Gleichungslöser „ama“ gewählt, rechnet die Reibung mit etwas mehr Runden,
+das Ergebnis ist dasselbe.
+
+**Ungleiche Netze an der Fuge (seit 28.09.2026).** Liegen an einer Fuge
+Netze verschiedener Feinheit aufeinander, gibt die Fuge einen gleichmäßigen
+Druck jetzt auch gleichmäßig weiter: das Programm verteilt die Kraft eines
+Knotens nach den überdeckten Flächen (Mortar-Verfahren) statt nach dem Punkt,
+auf den er fällt. Vorher lag die Spannung im Prüffall bis 74 N/mm² daneben.
+Im Protokoll steht dann „Kontaktpaar '…': 250 Slave-Knoten mit
+Mortar-Gewichten (ungleiche Netze)“; Knoten am Rand der Überdeckung rechnen
+wie bisher. Bei gleichen Netzen ändert sich nichts.
+
+**Plastizität: eine Laststufe wird halbiert (seit 28.09.2026).** Wächst die
+Änderung der plastischen Kräfte in einer Laststufe zweimal hintereinander,
+oder endet dort ein Kontaktlauf nicht konvergiert, rechnet das Programm die
+Stufe vom Anfang an in zwei halben Stufen neu. Im Protokoll steht dann
+„Plastizität: Laststufe bis 75 % der Last läuft weg (Änderung … - … - …);
+sie wird vom Startwert an in zwei halben Stufen wiederholt (6 Kontaktläufe
+verworfen)“ und in der Schlusszeile „… in 6 Laststufen (2-mal halbiert)“.
+Das geschieht höchstens viermal je eingestellter Laststufe. Wozu: ob eine
+Rechnung konvergierte, hing vorher daran, wie die Last geteilt war - der
+gequetschte Block im Test lief mit vier Laststufen weg, mit einer und mit
+acht nicht; jetzt gibt er mit 1, 2, 4 und 8 Stufen dasselbe Ergebnis.
+
 #### Einseitiges Lager ohne Richtung (22.09.2026)
 
 Ein einseitiges Lager, dessen Stützrichtung der Nullvektor (0 0 0) ist, kann

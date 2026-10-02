@@ -1478,32 +1478,135 @@ vergleicht, wäre das ein Weg-Artefakt. Folgen in den Prüfungen: der Block
 mit Reibung braucht verschachtelt 12 statt 17 Zerlegungen (gemeinsam 12),
 zwei Körper 26 (gemeinsam 23); gemeinsam und verschachtelt treffen sich
 auf 10⁻⁵ statt 10⁻⁶.
+Seit der Reibung primal-dual (28.09.2026, unten) ist ein konvergierter
+Zustand in sich stimmig - die Richtung kommt aus der Versuchskraft, wer
+umkehrt, haftet -, und innerhalb desselben Lastfalls gibt es an diesen
+Knoten nichts mehr zu prüfen. Einen **fremden** Zustand verraten Knoten, die
+sich gegen ihre übernommene Richtung gedreht haben oder vom Gleiten ins
+Haften fielen; für sie gilt die alte Regel. Am Block mit Reibung sind das
+bei umgekehrter Last zwei Knoten - „wenige“, sie werden zurückgesetzt statt
+kalt neu zu rechnen, und das Ergebnis trifft die kalte Lösung auf 1,3·10⁻⁵.
 
-**Offen: die Querlage eines gleitenden Bauteils (K4, gemessen
-28.09.2026).** Am gequetschten Block (`tests/test_plastizitaet`, 4
-Laststufen, acht von neun Knoten gleiten) enden verschachtelt und gemeinsam
-seit dem Fortschrittskriterium in Spiegelbildern: u_y des Blocks +0,94 bzw.
-−0,71 mm bei symmetrischer Last, die Normalkräfte gespiegelt (1 438 217 ↔
-1 438 132 N an den Eckknoten), u_max auf sieben Stellen gleich (42,64054
-mm), der größte Unterschied 1,65 mm quer. Mit festgehaltenen Gleitrichtungen
-in Phase 2 ist die Lage quer zur Gleitrichtung unbestimmt - welcher Ast
-getroffen wird, entscheidet der Weg; dass sich beide Wege bis zum 27.09. auf
-10⁻⁷ trafen, lag an derselben Folge kalter Starts, nicht am Verfahren.
-Verworfen am selben Tag: die konsistente Quertangente μ F_n/|d_t| auf die
-Querrichtung in K_c (Ableitung von −μ F_n d_t/|d_t|, als Feder auf die
-Änderung seit dem letzten Zustand) mit je Runde nachgeführter Richtung -
-Newton statt Fixpunkt. Am Block, sobald alle neun Knoten glitten, kippten
-die Richtungen jede Runde (9 von 9, Residuum 30 % der Kontaktkraft, die
-Normalkräfte liefen je Runde um 1,2 % nach), u_max 0,64 statt 0,043 m,
-1 072 statt 263 Zerlegungen: ein Knoten, der seine Bewegung umkehrt,
-müsste haften - der Übergang Gleiten → Haften ist in Phase 2 ausgeschaltet
--, und die Kopplung μ d ∂F_n/∂u fehlt in der symmetrischen Matrix. Der Weg
-ist der semiglatte Newton für die Reibung (Haften, Gleiten und Richtung in
-einem Schritt; Prüfmatrix K4, K5 tet4). Bis dahin prüft
-`test_gemeinsam_rueckfall_verschachtelt` am Block, was vom Weg unabhängig
-ist - u_max, die Auflagersummen, die Menge der Kontaktkräfte auf 2·10⁻⁵ -
-und die Querdrift unter 2 mm; die übrigen Fälle weiter auf 2·10⁻⁵ in jeder
-Zahl.
+**Reibung primal-dual (28.09.2026, Prüfmatrix K4 und K5).** An exakten
+Normalbedingungen (Abschnitt „Exakte Normalbedingung“) wird der Reibzustand
+in Phase 2 wie der Normalkontakt aus Multiplikatoren bestimmt
+(`contact.REIBUNG_PRIMAL_DUAL`, nach Hüeber, Stadler und Wohlmuth):
+
+* **Versuchskraft** je Knoten w = λ_t + c·d_t mit dem Tangential­multiplikator
+  λ_t, dem Weg d_t = C_t·u in der Fugenebene und c = k_n / PENALTY_FACTOR,
+  der Diagonalsteifigkeit der Knoten.
+* **Haften** (|w| ≤ μ·λ_n): zwei exakte Zeilen c_t·u = 0 im Sattelpunkt, λ_t
+  ist ihre Reaktion; keine Haftfeder mehr.
+* **Gleiten** (|w| > μ·λ_n): Reibkraft μ·λ_n·w/|w|, in K_c die konsistente
+  Tangente c·μ·λ_n/|w| quer zur Richtung (Ableitung der Projektion nach d_t),
+  als Feder auf die Änderung seit dem letzten Zustand. Die Richtung folgt je
+  Runde der Versuchskraft; solche Richtungsrunden zählen nicht auf den Deckel
+  der Zustandswechsel (Grenze 60 Runden). Die Reibkraft steht dazu als Spalte
+  −μ·q am Multiplikator der Normalzeile im Gleichungssystem (q die Richtung
+  der Tangente): so kommt eine geänderte Normalkraft in derselben Runde an
+  (Block mit Reibung, LF3 nach LF2: 6 Runden ohne Zerlegung statt 22 mit 6).
+  Das System wird damit unsymmetrisch; mit dem Gleichungslöser ama (LDL^T)
+  entfällt die Spalte, und die Reibkraft läuft wie vorher eine Runde nach -
+  dasselbe Ergebnis (8,3·10⁻⁶ gegen PARDISO).
+* Lagerknoten mit Reibung in nur einer Richtung haben eine leere zweite
+  Tangentialzeile; sie bekommen nur die belegte Haftzeile (eine leere machte
+  das Sattelpunktsystem singulär). Zeilen, die ganz auf gesperrten
+  Freiheitsgraden liegen, werden beim Aufbau genullt. Bis zum 28.09.2026
+  abends fielen solche Knoten ganz aus der primal-dualen Reibung und
+  rechneten mit der alten Logik, die in Phase 2 ein Gleiten gegen die
+  Richtung stehen lässt: am Drehlager 26 Knoten des Flächenlagers
+  „Starr uz (Ausfall bei Zug)“ (Diagnose mit Zerlegung des Residuums je
+  Fuge und Art). Das Residuum blieb bei 2,2·10⁻⁴ der Kontaktkraft stehen,
+  rund 20 kN Reibkraft zeigten in die falsche Richtung, der Lauf hieß
+  trotzdem „konvergiert“, und erst die Warmstart-Prüfung am Laufende setzte
+  sie zurück - die Schlussrunden, die am Drehlager Zeit kosteten
+  (`tests/test_kontakt_exakt`, Reibung in einer Richtung, mit
+  Rücknahmeprobe). Drehlager danach (Lauf `einzeilig_18a770d`, zwei
+  Auswerter): 53,6 min statt 77,0, alle 18 Kontaktläufe konvergiert, keine
+  Warmstart-Korrektur mehr, Runden je Lauf 37 / 8 / 6 / 3 / 9 … statt
+  53 / 51 / 6 / 3 / 30 …, Residuum am Ende 0; ε_p 8,291 %, u_max 1,1507 mm,
+  Bohrungen innerhalb 3 N/mm² des Laufs davor.
+* Ausgenommen sind Fugen, in denen der Löser Punkte hält (gehalten,
+  Schubhalt): ihr Reibzustand ist ein Artefakt des Halts. Ein ganz abhebender
+  Block pendelte sonst 85 Runden zwischen Haften und Gleiten statt „hebt ab“
+  zu melden. Ebenso zählt die Drehung einer Reibkraft unter f_tol nicht als
+  Richtungsrunde.
+
+Gemessen am Endzustand (`tests/test_kontakt_exakt`, Coulomb-Prüfung): die
+Reibkraft liegt an jedem gleitenden Knoten parallel zu seinem Weg - höchstens
+0,07° am Block mit Reibung, 0,00° am Stempel auf gewölbter Unterseite. Mit den
+bis dahin in Phase 2 festgehaltenen Richtungen stand sie am Block bis 52°
+daneben (Median 9°), am Stempel bis 180° (Median 47°). Folgen: Prüfmatrix K4
+tet4 und hex8 grün (vorher quer −3,57 bzw. −2,49 % von μN, Feder +0,87 bzw.
++1,16 %), K5 tet4 grün (vorher Feder +1,45 %); Stempel auf Sockel u_max
+0,39253 statt 0,40711 mm (−3,6 %), Block mit Reibung +0,06 %. Der gequetschte
+Block (`tests/test_plastizitaet`, 60 MN über der Quetschlast von 37,6 MN)
+gibt mit 1, 2, 4 und 8 Laststufen denselben Zustand, u_max 42,667 mm und
+ε_p 12,99 %, symmetrisch (mittleres u_y des Deckels unter 10⁻⁷ m); mit den
+festgehaltenen Richtungen hing er an der Teilung (42,25 / 42,34 / 42,66 mm)
+und endete verschachtelt und gemeinsam in Spiegelbildern (u_y +0,94 bzw.
+−0,71 mm). Dazu gehört das Halbieren weglaufender Laststufen (Abschnitt 5e).
+
+Verworfen, jeweils gemessen am 28.09.2026: (1) die Quertangente ohne Rückkehr
+ins Haften - die Richtungen kippten jede Runde, u_max 0,64 statt 0,043 m;
+(2) ein kondensierter Newton-Schritt für die Richtung (Drehung über w hinaus
+um μλ_n/(|w| − μλ_n)) - am Kegelrand ungültig, u_max 0,98 m, auch gedeckelt
+nicht besser; (3) Unterrelaxation der Richtung (0,5 und 0,3) - der Zyklus
+blieb; (4) „wer sich gegen seine Gleitrichtung bewegt, haftet“ - konvergiert,
+aber auf einem anderen Ast, abhängig von der Teilung der Last (42,13 / 42,24
+/ 42,58 / 42,67 mm für 1 / 2 / 4 / 8 Stufen); (5) Richtungen festhalten, wenn
+das Residuum nicht mehr fällt, oder den Lauf dann abbrechen - beides nicht
+nötig bzw. schädlich (Abbruch nach acht Runden schnitt langsam konvergierende
+Nachführungen ab: sieben Halbierungen, 42,72 mm, mit einer Stufe „nicht
+konvergiert“).
+
+**Offen:** Bettungen und Federn des Anwenders (keine exakte Normalbedingung)
+rechnen die Reibung weiter mit Haftfeder und festgehaltener Richtung in
+Phase 2 - dort war die Versuchskraft ohne Multiplikator nicht tragfähig (der
+Block auf der Platte mit Kippen lief mit ihr um das 230-Fache davon). Der
+Gleichungslöser ama scheitert am Sattelpunkt des Stempels auf Sockel schon in
+der ersten Kontaktrunde - vorbestehend, auch am Stand ec3b464.
+
+**Mortar-Gewichte bei ungleichen Netzen (28.09.2026, Prüfmatrix K6,
+`contact.MORTAR`, `statik3d/mortar.py`).** Die Kopplung Knoten gegen Fläche
+projiziert jeden Slave-Knoten auf ein Dreieck der Master-Fläche (Vierecke
+dafür geteilt) und verteilt seine Kraft mit den Dreiecksgewichten. Bei
+ungleichen Netzen kommt ein gleichmäßiger Druck so nicht gleichmäßig an:
+im Fall K6 (zwei Würfel, oben 3 × 3, unten 2 × 2 geteilt, p = 100 N/mm²)
+bekamen die unteren Knoten 846 und 661 statt 625 cm² Einflussfläche an den
+Ecken und 2255 statt 2500 in der Mitte, unsymmetrisch längs der
+Dreiecksdiagonalen; σ_v lag 74,16 N/mm² (hex8) bzw. 13,56 N/mm² (tet4)
+daneben. Jetzt kommen die Master-Gewichte eines Slave-Knotens j aus dem
+Integral w_ji = ∫Φ_j N_i^m dA / ∫N_j dA über die Slave-Oberfläche, Φ_j die
+dualen Formfunktionen der Slave-Facetten (∫_e Φ_j N_k = δ_jk ∫_e N_j je
+Facette, Wohlmuth 2000), N_i^m die Formfunktionen der Master-Facetten -
+Vierecke bilinear, nicht geteilt. Integriert wird über die Schnittpolygone
+von Slave- und projizierter Master-Facette (Sutherland-Hodgman, je
+Teildreieck 7 Punkte, Grad 5). Die Bedingung bleibt eine Zeile je
+Slave-Knoten mit derselben Normalen und demselben Anfangsspalt wie bisher;
+nur wer die Kraft auf der Master-Seite trägt, ändert sich. Für einen
+gleichmäßigen Druck p trägt der Slave-Knoten p ∫N_j, und am Master-Knoten
+kommt Σ_j p ∫N_j w_ji = p ∫N_i^m an, genau seine Einflussfläche (gemessen:
+625 / 1250 / 2500 cm² auf 2,5·10⁻¹⁶ m²). Bei deckungsgleichen Netzen ist
+w_ji = δ_ji (gemessen auf 3,9·10⁻¹⁵): Knoten auf Knoten wie bisher, die
+Prüfmatrix K1–K5, K7, KP1, KP2 bleibt unverändert grün. K6 ist mit tet4 und
+hex8 grün (σ_v 0,00 N/mm²). Knoten, deren Einflussbereich nicht ganz auf der
+Gegenfläche liegt (Rand der Überdeckung), behalten die Projektion; Paare mit
+quadratischen Elementen (Kontakt dort gesperrt) ebenso. Folge im Test: der
+Stempel auf Sockel (4 × 4 gegen 6 × 6) u_max +0,33 %.
+Am Drehlager (Lauf `mortar_81e7b64`, 28.09.2026, zwei Auswerter): 803
+Slave-Knoten in sechs Fugen bekommen Mortar-Gewichte, die übrigen gepaarten
+behalten die Projektion. Die Überdeckung Σ_i M_ji / D_j ist dort
+zweigeteilt - je Fuge liegt sie entweder auf 10⁻⁶ bei 1 (Median meist um
+10⁻¹³) oder mehr als 1 % daneben, dazwischen fast nichts -, also entscheidet
+nicht die Toleranz, sondern ob der Einflussbereich eines Knotens ganz auf der
+Gegenfläche liegt. Offen: Knoten mit teilweiser Überdeckung auf den
+überdeckten Teil zu beschränken (w = M_ji / Σ_i M_ji) - erst mit einem
+Prüffall mit Rand der Überdeckung. Ergebnis gegen den Stand ohne Mortar:
+alle Kontaktläufe konvergiert, ε_p 8,291 %, u_max 1,1504 statt 1,1496 mm,
+Bohrungen innerhalb 1,5 N/mm² außer dem Montageauge V35 379,8 statt 373,6
+und V115 210,7 statt 215,2 N/mm² - dort liegen die meisten Mortar-Knoten.
+Aufbau der Gewichte für alle zwölf Paare rund 26 s.
 
 **Flächenlager „starr mit Ausfall“ (27.09.2026).** RFEM lässt „starr“ nur
 ohne Nichtlinearität zu; ein Lager mit Ausfall bei Zug trägt dort einen
@@ -4897,6 +5000,24 @@ Anfangsdehnungsschritt eine volle Kontakt-Iteration. Entschieden wird das mit
 dem Umbau der verschachtelten Iteration Plastizität × Kontakt, nicht hier.
 Nachweis `tests/test_plastizitaet.py::test_rohr_ideal_plastisch_nach_hill` und
 `::test_anfangsdehnung_trifft_den_newton`.
+
+**Laststufe halbieren (28.09.2026, `plastizitaet.HALBIEREN_MAX`).** Läuft
+der Newton einer Laststufe weg - die Änderung wächst zweimal hintereinander,
+nachdem sie einmal gefallen war - oder endet einer ihrer Kontaktläufe nicht
+konvergiert, wird die Stufe vom Startwert an in zwei halben wiederholt
+(Lösung, Fließzustand und Kontaktzustand vom Stufenanfang; die Läufe des
+verworfenen Versuchs stehen im Laufbuch als verworfen), höchstens viermal je
+ursprünglicher Stufe. Am gequetschten Block mit Reibung primal-dual lief mit
+vier Laststufen Stufe 3 weg (Änderung 1,6 - 1,8 - 4,4 - 7,2 ... 26, nach 40
+Schritten „nicht konvergiert“), mit einer und mit acht nicht - ob eine
+Rechnung konvergierte, hing an der Teilung der Last. Mit dem Halbieren (vier
+Stufen: zweimal) geben 1, 2, 4 und 8 Laststufen denselben Zustand (u_max
+42,667 mm, ε_p 12,99 %) mit 263 Zerlegungen, davon 161 in verworfenen
+Versuchen; ohne das sofortige Halbieren nach einem gescheiterten Kontaktlauf
+waren es 752, davon 650 verworfen (jeder solche Lauf 69 Runden bis zur Grenze
+der Richtungsrunden). In der gemeinsamen Iteration (5e.3) wird eine Stufe,
+in der nach abgekürzten Läufen ein voller Kontaktlauf am Deckel endet,
+verschachtelt wiederholt.
 
 ### 5e.3 Fließen und Kontakt gemeinsam iteriert (23./24.09.2026)
 

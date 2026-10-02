@@ -98,12 +98,16 @@ deren Kräfte allein aus Gleichgewicht und Reibgesetz folgen (K4, K5). Dort ist 
   * **Reibung, Bauteil gleitet gegen eine Feder** (K5): Die Feder bekam nur 14 % (hex8) bzw.
     9 % (tet4) ihrer Kraft. Den Rest trug die Reststeifigkeit der gleitenden Knoten, und die
     erschien in keiner Kontaktkraft (Befund 4) — **behoben 27.09.2026**, hex8 grün (Feder
-    +0,21 %), tet4 +1,45 % aus den festgehaltenen Gleitrichtungen (wie K4).
+    +0,21 %); tet4 seit der Reibung primal-dual (28.09.2026) ebenfalls grün (Feder +0,00 %,
+    quer +0,30 %).
   * **Reibung, ein Klotz haftet und einer gleitet** (K4): Phase 2 läuft, Haften ist exakt. Die
-    Feder am gleitenden Klotz weicht −3,45 % (hex8) bzw. −10,16 % (tet4) ab, und die
-    Reibkraft hat quer zur Last eine Komponente von 2,51 % bzw. 3,60 % von μN (Befund 5).
-  * **Ungleiche Netze an der Fuge** (K6): Bei einem homogenen Druck von 100 N/mm² weicht σ_v mit
-    hex8 um +74,16 N/mm² ab, mit tet4 um −13,56 N/mm² (Befund 6).
+    Feder am gleitenden Klotz wich −3,45 % (hex8) bzw. −10,16 % (tet4) ab, und die
+    Reibkraft hatte quer zur Last eine Komponente von 2,51 % bzw. 3,60 % von μN (Befund 5) —
+    **behoben 28.09.2026** (Reibung primal-dual, Theoriehandbuch 4): tet4 und hex8 grün,
+    Feder ±0,00 %, quer +0,18 % bzw. −0,00 %.
+  * **Ungleiche Netze an der Fuge** (K6): Bei einem homogenen Druck von 100 N/mm² wich σ_v mit
+    hex8 um +74,16 N/mm² ab, mit tet4 um −13,56 N/mm² (Befund 6) — **behoben 28.09.2026**
+    (duale Mortar-Gewichte, Theoriehandbuch 4): tet4 und hex8 grün, σ_v 0,00 N/mm².
   * Mit tet4 aus dem freien Vernetzer sind K1 und KP1 rot und K2 gelb, weil das Netz an der
     gemeinsamen Fläche nicht konform ist (Befund 2).
 
@@ -280,6 +284,12 @@ eines Slave-Knotens nur auf drei der vier Ecken. Das ist nicht gemessen.
 **Besitzer: Löser** (`contact.py`, Löser-Sitzung). Am Drehlager sind die Netze an den
 Kontaktflächen ungleich.
 
+**Behoben 28.09.2026.** Gemessen bestätigt: die unteren Knoten bekamen 846 / 661 statt 625 cm²
+an den Ecken und 2255 statt 2500 in der Mitte - die Kraft eines Slave-Knotens ging über die
+Dreiecksgewichte der geteilten Vierecke. Mit dualen Mortar-Gewichten (`statik3d/mortar.py`)
+genau 625 / 1250 / 2500 cm², K6 tet4 und hex8 grün; Rücknahmeprobe in
+`tests/test_kontakt_exakt` (ohne Mortar wieder +74,16 N/mm²).
+
 ## Gelbe Zellen: was bekannt ist und was auffällt
 
 * **L3 hex8, zwei Körper: +12,33 N/mm² in der Körperzeile, im Mittel +0,83.** Das Netz ist
@@ -349,7 +359,7 @@ Drehlager-Kontrolllauf der Löser-Sitzung.
 | 2 freier Vernetzer: gemeinsame Fläche nicht konform, h wirkt nicht | K1, KP1, L3 tet4/tet10, K2 tet4 (gelb) | Vernetzer (Fable) |
 | 3 Plastizität meldet „nicht konvergiert“ bei Übermaß als einziger Last | KP2 Entwurf | Löser |
 | 4 ganz gleitende Gruppe: Reststeifigkeit 1e-3 k_t trägt statt der Feder | K5 Entwurf | Löser (`contact.py`) — **behoben 27.09.2026** (feine Feder, wenn das Bauteil anderswo gehalten ist; hex8 grün, tet4 +1,45 %) |
-| 5 Phase 2: Reststeifigkeit 1e-8 k_t proportional zum Gleitweg, Gleitrichtung festgehalten | K4 Entwurf | Löser (`contact.py`) |
+| 5 Phase 2: Reststeifigkeit 1e-8 k_t proportional zum Gleitweg, Gleitrichtung festgehalten | K4 Entwurf | Löser (`contact.py`) — **behoben 28.09.2026** (Reibung primal-dual: Haften als exakte Zeilen, Richtung aus der Versuchskraft; K4 und K5 tet4/hex8 grün) |
 | 6 ungleiche Netze an der Fuge geben gleichmäßigen Druck nicht weiter | K6 Entwurf | Löser (`contact.py`) |
 | hex20 sperrt bei ν → 0,5 (gelb) | P2 Mittel/Fein hex20 | Element-Sitzung |
 | tet4 plastisch auf der weichen Seite (gelb) | P2 tet4 | Element-Sitzung |

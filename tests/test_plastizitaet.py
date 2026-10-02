@@ -1695,8 +1695,21 @@ def test_gemeinsam_aendert_nichts_ohne_beides():
     # 0,40753 mm (-0,1 %): der ganz gleitende Stempel ist in der Ebene
     # indifferent, sein u_max haengt am Restverstoss, mit dem die Iteration
     # endet. Bis dahin: "wie 6a961e5", vom 27.09. vormittags die K5-Kur.
-    referenz = {"Kontakt ohne Plastizität: Block mit Reibung": (6, 0, 2.64003962147164e-06, None),
-                "Kontakt ohne Plastizität: Stempel auf Sockel": (5, 0, 0.0004071098032618732, None),
+    # 28.09.2026 (Reibung primal-dual, contact.REIBUNG_PRIMAL_DUAL): Block mit
+    # Reibung 15 statt 6 Zerlegungen, u_max +0,06 %; Stempel 8 statt 5,
+    # u_max 0,39253 statt 0,40711 mm (-3,6 %). Beides sind jetzt Coulomb-
+    # Loesungen: die Reibkraft liegt an jedem gleitenden Knoten parallel zum
+    # Weg (max 0,07 Grad); vorher stand sie am Stempel bis 180 Grad gegen den
+    # Weg (Median 47), am Block bis 52 Grad (test_kontakt_exakt,
+    # test_reibung_primal_dual). Die Zerlegungen: Haftzeilen und Quer-
+    # tangenten aendern die Matrix, wenn Knoten zwischen Haften und Gleiten
+    # wechseln.
+    # Ebenfalls 28.09.2026 (Mortar-Gewichte, contact.MORTAR): der Stempel (4 x 4)
+    # steht auf einem Sockel mit 6 x 6 - ungleiche Netze -, u_max 0,39381 statt
+    # 0,39253 mm (+0,33 %); der Block mit Reibung hat deckungsgleiche Netze
+    # und bleibt, wie er war.
+    referenz = {"Kontakt ohne Plastizität: Block mit Reibung": (15, 0, 2.6415669504283543e-06, None),
+                "Kontakt ohne Plastizität: Stempel auf Sockel": (8, 0, 0.00039380952002928657, None),
                 "Plastizität ohne Kontakt: Zugwürfel hex8": (3, 4, 0.010142857142857335, True),
                 "Plastizität ohne Kontakt: Kragträger tet4": (6, 8, 0.00967601273071502, True)}
 
@@ -1870,7 +1883,7 @@ def test_gemeinsam_im_budget():
     newton = sum(1 for k, it, *_ in (pz.get("verlauf") or []) if it > 0) if pz.get("verlauf") else None
     check("(c) die Abnahme zählt nicht als Newton-Schritt: „konvergiert“, Rückführungen = Schritte + 1, "
           "der letzte Lauf der Abschluss",
-          zustand_aus_info(r.info) == "konvergiert" and pz.get("iterationen") == 4
+          zustand_aus_info(r.info) == "konvergiert" and pz.get("iterationen") == 5
           and laeufe and laeufe[-1]["art"] == "Abschluss",
           f"{zustand_aus_info(r.info)}, {pz.get('iterationen')} Rückführungen, "
           f"{[(e['art'], e['grund']) for e in laeufe[-2:]]}")
@@ -1929,52 +1942,49 @@ def test_gemeinsam_rueckfall_verschachtelt():
         # 1e-6 der Kontaktkraft, an einzelnen Knoten der weichen Reibhaltung
         # des Blocks gesammelt. Geprueft wird darum auf 2e-5 relativ, fuer u,
         # Auflager- und Kontaktkraefte.
-        def gleich(x, y):
+        # Seit der Reibung primal-dual (28.09.2026): u und Auflagerkraefte
+        # weiter auf 2e-5; einzelne Kontaktkraefte auf 1e-4 - das Residuum
+        # (1e-6 der Summe der Kontaktkraefte) verteilt sich auf die Knoten,
+        # gegen die groesste einzelne Kontaktkraft gemessen: (a) 3,8e-5,
+        # (c) 3,6e-5, (b) 7,0e-6.
+        def gleich(x, y, tol=2e-5):
             x, y = np.asarray(x, float), np.asarray(y, float)
             bezug = float(np.nanmax(np.abs(x))) if x.size else 0.0
             return x.shape == y.shape and (bezug == 0.0 or
-                                           float(np.nanmax(np.abs(x - y))) <= 2e-5 * bezug)
+                                           float(np.nanmax(np.abs(x - y))) <= tol * bezug)
         du_max = float(np.abs(np.asarray(rg.u, float) - np.asarray(ra.u, float)).max())
         u_max = float(np.abs(np.asarray(ra.u, float)).max())
-        if not titel.startswith("(b)"):
-            check(f"{titel}: … und dieselben Verschiebungen, Auflager- und Kontaktkräfte auf 2e-5 "
-                  "(seit dem Residuum-Kriterium nicht mehr bitgleich)",
-                  gleich(rg.u, ra.u) and gleich(rg.reactions, ra.reactions)
-                  and gleich(rg.contact_forces, ra.contact_forces),
-                  f"max |Δu| {du_max:.2e} bei u_max {u_max:.2e}")
+        check(f"{titel}: … und dieselben Verschiebungen und Auflagerkräfte auf 2e-5, "
+              "Kontaktkräfte auf 1e-4 (seit dem Residuum-Kriterium nicht mehr bitgleich)",
+              gleich(rg.u, ra.u) and gleich(rg.reactions, ra.reactions)
+              and gleich(rg.contact_forces, ra.contact_forces, 1e-4),
+              f"max |Δu| {du_max:.2e} bei u_max {u_max:.2e}")
+        if titel.startswith("(b)"):
+            # Bis zur Reibung primal-dual endeten die beiden Wege hier in
+            # Spiegelbildern (u_y des Blocks +0,94 / -0,71 mm bei
+            # symmetrischer Last): mit festgehaltenen Gleitrichtungen war die
+            # Querlage unbestimmt. Jetzt ist der Block symmetrisch.
+            X = np.asarray(bau().nodes, float)
+            for name_, r_ in (("verschachtelt", ra), ("gemeinsam", rg)):
+                uy = np.asarray(r_.u, float).reshape(-1, 6)[:, 1]
+                oben = [i for i in range(len(X)) if abs(X[i, 2] - 0.4) < 1e-9]
+                check(f"{titel}: {name_} symmetrisch (mittleres u_y des Deckels unter 1e-6 m)",
+                      abs(float(np.mean(uy[oben]))) < 1e-6, f"{float(np.mean(uy[oben])):.2e} m")
+        # Seit der Reibung primal-dual laeuft der abgekuerzte Newton an (a) und
+        # (c) nicht mehr weg: gemeinsam konvergiert ohne Rueckfall (28 statt
+        # 52 bzw. 41 Zerlegungen). Geprueft wird dann, dass nichts verworfen
+        # ist und nichts im Protokoll steht; den Rueckfall selbst uebt (b).
+        if verworfen or titel.startswith("(b)"):
+            check(f"{titel}: der verworfene Versuch steht im Laufbuch und im Protokoll",
+                  verworfen and any("verschachtelt wiederholt" in z for z in log)
+                  and int(rg.info.get("contact_laeufe_verworfen", -1))
+                  == len(verworfen) - len(abgekuerzt),
+                  f"{len(verworfen)} verworfen, davon {len(abgekuerzt)} abgekürzt")
         else:
-            # (b) seit dem Fortschrittskriterium der Warmstart-Fortsetzung
-            # (28.09.2026): die beiden Wege enden in Spiegelbildern - u_y des
-            # Blocks +0,94 bzw. -0,71 mm bei symmetrischer Last, die
-            # Normalkraefte gespiegelt (1 438 217 <-> 1 438 132 N), u_max auf
-            # sieben Stellen gleich (4,264054e-2 m), max |du| 1,65e-3 quer.
-            # Mit festgehaltenen Gleitrichtungen in Phase 2 ist die Lage quer
-            # zur Gleitrichtung unbestimmt (offen: K4, Theoriehandbuch 4);
-            # dass sich die Wege bis dahin auf 1e-7 trafen, lag an derselben
-            # Folge kalter Starts. Geprueft wird darum, was vom Weg unabhaengig
-            # ist, und die Drift bleibt unter 2 mm.
-            def summe(x):
-                arr = np.asarray(x, float)
-                return arr.reshape(arr.shape[0], -1).sum(axis=0)
-
-            def mengen(x):
-                arr = np.asarray(x, float)
-                arr = arr.reshape(arr.shape[0], -1)
-                return np.sort(np.linalg.norm(arr, axis=1))
-            check(f"{titel}: dasselbe u_max, dieselben Auflagersummen und dieselbe Menge der "
-                  "Kontaktkräfte auf 2e-5 - die Querlage des Blocks ist unbestimmt (K4 offen), "
-                  "Drift unter 2 mm",
-                  gleich([u_max], [float(np.abs(np.asarray(rg.u, float)).max())])
-                  and gleich(summe(ra.reactions), summe(rg.reactions))
-                  and gleich(mengen(ra.contact_forces), mengen(rg.contact_forces))
-                  and du_max <= 2e-3,
-                  f"max |Δu| {du_max:.2e} bei u_max {u_max:.2e}; Auflagersummen "
-                  f"{np.round(summe(ra.reactions)[:3] / 1e3, 1)} / {np.round(summe(rg.reactions)[:3] / 1e3, 1)} kN")
-        check(f"{titel}: der verworfene Versuch steht im Laufbuch und im Protokoll",
-              verworfen and any("verschachtelt wiederholt" in z for z in log)
-              and int(rg.info.get("contact_laeufe_verworfen", -1))
-              == len(verworfen) - len(abgekuerzt),
-              f"{len(verworfen)} verworfen, davon {len(abgekuerzt)} abgekürzt")
+            check(f"{titel}: gemeinsam ohne Rückfall - nichts verworfen, keine Zeile im Protokoll",
+                  not any("verschachtelt wiederholt" in z for z in log)
+                  and int(rg.info.get("contact_laeufe_verworfen", 0)) == 0,
+                  f"{zg} gegen {za} Zerlegungen")
         mehr = sum(int(e["faktorisierungen"] or 0) for e in verworfen)
         check(f"{titel}: der Rückfall kostet höchstens die Zerlegungen der verworfenen Läufe mehr",
               zg <= za + mehr, f"{zg} gegen {za} Zerlegungen, verworfen {mehr}")
@@ -2041,8 +2051,10 @@ def test_hilfsfesselung_ohne_vorlauf():
           str([z for z in mg if "Hilfsfesselung" in z][:1]) + f" {arten[:2]}")
     ua, ug = np.asarray(ra.u, float)[:, :3], np.asarray(rg.u, float)[:, :3]
     du = float(np.abs(ua - ug).max()) / float(np.abs(ua).max())
-    check("… „konvergiert“, Verschiebungen wie verschachtelt auf 1e-6",
-          zustand_aus_info(rg.info) == "konvergiert" and du <= 1e-6, f"{zustand_aus_info(rg.info)}, {du:.1e}")
+    # 1e-6 bis 28.09.2026; seit der Reibung primal-dual 1,4e-5 - dieselbe
+    # Genauigkeit wie zwischen den Wegen sonst (test_gemeinsam_rueckfall_...)
+    check("… „konvergiert“, Verschiebungen wie verschachtelt auf 2e-5",
+          zustand_aus_info(rg.info) == "konvergiert" and du <= 2e-5, f"{zustand_aus_info(rg.info)}, {du:.1e}")
 
 
 def test_uebermass_als_einzige_last():
@@ -2106,6 +2118,65 @@ def test_uebermass_als_einzige_last():
           f"konvergiert {info0.get('konvergiert')}, {info0.get('iterationen')} Schritte")
 
 
+def test_laststufe_halbieren():
+    """Laeuft der Newton einer Laststufe weg (die Aenderung waechst zweimal
+    hintereinander, nachdem sie gefallen war), wird die Stufe vom Startwert an
+    in zwei halben wiederholt (plastizitaet.HALBIEREN_MAX, 28.09.2026). Am
+    gequetschten Block mit vier Laststufen lief Stufe 3 sonst weg (1,6 - 1,8 -
+    4,4 - 7,2 ... 26, "nicht konvergiert"), mit einer und mit acht Laststufen
+    nicht - das Urteil hing an der Teilung der Last."""
+    from statik3d.gui.rechenliste import zustand_aus_info
+    m = _gequetschter_block()
+    m.plastizitaet.laststufen = 4
+    r = solver.solve_static(m)
+    pz = r.info.get("plastizitaet") or {}
+    log = pz.get("log") or []
+    check("4 Laststufen: konvergiert, halbiert, das Protokoll sagt es",
+          zustand_aus_info(r.info) == "konvergiert" and int(pz.get("halbiert") or 0) >= 1
+          and any("in zwei halben Stufen wiederholt" in z for z in log),
+          f"{zustand_aus_info(r.info)}, halbiert {pz.get('halbiert')}")
+    alt = pl.HALBIEREN_MAX
+    pl.HALBIEREN_MAX = 0
+    try:
+        m0 = _gequetschter_block()
+        m0.plastizitaet.laststufen = 4
+        r0 = solver.solve_static(m0)
+    finally:
+        pl.HALBIEREN_MAX = alt
+    check("Ruecknahme (nie halbieren): „nicht konvergiert“",
+          zustand_aus_info(r0.info) != "konvergiert", zustand_aus_info(r0.info))
+
+
+def test_reibung_und_fliessen_wegunabhaengig():
+    """Reibung primal-dual und Halbieren zusammen (28.09.2026): der
+    gequetschte Block gibt mit 1 und 4 Laststufen denselben Zustand - gemessen
+    u_max 42,667 mm, eps_p 12,99 % fuer 1, 2, 4 und 8 Stufen -, symmetrisch
+    (mittleres u_y des Deckels unter 1e-6 m). Bis dahin hing er an der
+    Teilung: 42,25 / 42,34 / 42,66 mm (festgehaltene Richtungen, mit Quer-
+    drift bis 0,9 mm), mit der verworfenen Umkehr-Regel 42,13 / 42,24 / 42,58 /
+    42,67 mm."""
+    from statik3d.gui.rechenliste import zustand_aus_info
+    erg = {}
+    for stufen in (1, 4):
+        m = _gequetschter_block()
+        m.plastizitaet.laststufen = stufen
+        r = solver.solve_static(m)
+        X = np.asarray(m.nodes, float)
+        oben = [i for i in range(len(X)) if abs(X[i, 2] - 0.4) < 1e-9]
+        u = np.asarray(r.u, float).reshape(-1, 6)
+        erg[stufen] = (zustand_aus_info(r.info), float(np.abs(u[:, :3]).max()),
+                       float((r.info.get("plastizitaet") or {}).get("eps_p_max") or 0.0),
+                       float(np.mean(u[oben, 1])))
+    (z1, u1, e1, y1), (z4, u4, e4, y4) = erg[1], erg[4]
+    check("1 und 4 Laststufen: beide konvergiert, u_max 42,667 mm auf 0,01 mm, gleich auf 1e-4",
+          z1 == z4 == "konvergiert" and abs(u1 - 0.042667) < 1e-5 and abs(u4 - u1) <= 1e-4 * u1,
+          f"{z1} / {z4}, u_max {u1 * 1e3:.4f} / {u4 * 1e3:.4f} mm")
+    check("… dieselbe plastische Vergleichsdehnung auf 1e-3 (12,99 %)",
+          abs(e4 - e1) <= 1e-3 * e1 and abs(e1 - 0.1299) < 5e-4, f"{e1 * 100:.3f} / {e4 * 100:.3f} %")
+    check("… symmetrisch: mittleres u_y des Deckels unter 1e-6 m",
+          abs(y1) < 1e-6 and abs(y4) < 1e-6, f"{y1:.1e} / {y4:.1e} m")
+
+
 def main():
     for t in (test_rueckfuehrung, test_tangente_ist_die_ableitung_der_rueckfuehrung,
               test_blockweise_wie_die_schleife,
@@ -2133,7 +2204,8 @@ def main():
               test_gemeinsam_rueckfall_verschachtelt,
               test_hilfsfesselung_ohne_vorlauf,
               test_vorgabe_verschachtelt_und_unbekannter_wert,
-              test_uebermass_als_einzige_last):
+              test_uebermass_als_einzige_last, test_laststufe_halbieren,
+              test_reibung_und_fliessen_wegunabhaengig):
         try:
             t()
         except Exception as ex:      # noqa: BLE001
