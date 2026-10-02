@@ -59,6 +59,8 @@ from . import viewport as vp
 from . import design as dsg
 from . import fenster as fen
 from .fenster import starten as fenster_starten
+from . import sprache
+from .sprache import kuerzel_text
 from . import layer as lyr
 from . import skizze as skg
 from .. import skizze as sk
@@ -15800,7 +15802,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for a, liste, wort, leer in ((self.act_undo, u, "Rückgängig", "Nichts rückgängig zu machen"),
                                      (self.act_redo, r, "Wiederholen", "Nichts zu wiederholen")):
             text = f"{wort}: {liste[-1][0]}" if liste else leer
-            kuerzel = a.shortcut().toString().replace("Ctrl", "Strg")
+            kuerzel = kuerzel_text(a.shortcut())
             a.setToolTip(text + (f"   ({kuerzel})" if kuerzel and liste else ""))
             a.setStatusTip(text)
 
@@ -23577,6 +23579,10 @@ def main(app=None, splash=None):
     """
     app = app or QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
     app.setStyle("Fusion")
+    # Qts eigene Texte (Standardknoepfe, Textfeld-Menue, Kuerzel) auf Deutsch -
+    # vor dem Fenster, damit schon der Aufbau die deutschen Texte sieht
+    # (statik3d.gui.sprache, 02.10.2026)
+    qt_sprache = sprache.uebersetzer_laden(app)
     try:
         from . import symbole as sym
         app.setWindowIcon(sym.programmsymbol())
@@ -23588,6 +23594,10 @@ def main(app=None, splash=None):
         except Exception:                   # noqa: BLE001
             pass
     win = MainWindow()
+    if qt_sprache.meldung:
+        # fehlt die Datei, laeuft das Programm weiter - ein Hinweis im
+        # Protokoll (und in der Mitschrift), kein Fenster
+        win.log.appendPlainText("Hinweis: " + qt_sprache.meldung)
     try:
         win.setWindowIcon(app.windowIcon())
     except Exception:                       # noqa: BLE001

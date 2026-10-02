@@ -38,6 +38,8 @@ import os
 
 from PySide6 import QtCore, QtWidgets
 
+from .sprache import kuerzel_text
+
 #: Kennung des gespeicherten Formats; eine andere Kennung wird verworfen
 FASSUNG = 1
 #: Sollmasse (Antwort 9 des Anwenders, 24.09.2026)
@@ -345,7 +347,7 @@ class Fensteranordnung(QtCore.QObject):
             self.act_zone[name].setChecked(True)
             dock.visibilityChanged.connect(lambda _v, n=name: self._zone_nachziehen(n))
         rb.kuerzel_setzen(self.act_ribbon, "Ctrl+F1")
-        self.act_ribbon.setToolTip(self.act_ribbon.toolTip() + "   (Ctrl+F1)")
+        self.act_ribbon.setToolTip(self.act_ribbon.toolTip() + f"   ({kuerzel_text('Ctrl+F1')})")
         rb.eingeklappt_geaendert.connect(self._ribbon_nachziehen)
 
     def _docks(self) -> dict:

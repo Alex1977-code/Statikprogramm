@@ -19,6 +19,7 @@ from PySide6 import QtCore, QtWidgets
 from .. import farm, parallel
 from .. import zahlen as zl
 from .worker import SolveWorker
+from . import sprache
 
 
 class RechenhilfeFenster(QtWidgets.QWidget):
@@ -245,6 +246,7 @@ def main(argv=None) -> int:
     a, _rest = ap.parse_known_args(argv if argv is not None else sys.argv[1:])
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
     app.setStyle("Fusion")
+    sprache.uebersetzer_laden(app)      # Qt-Texte auf Deutsch (02.10.2026)
     try:
         from . import symbole as sym
         app.setWindowIcon(sym.programmsymbol())

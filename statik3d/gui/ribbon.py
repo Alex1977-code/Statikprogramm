@@ -39,6 +39,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import design as dsg
 from . import symbole as sym
+from .sprache import kuerzel_text
 
 
 #: Suchwoerter, die ein Befehl nicht im Namen traegt, mit denen man ihn aber
@@ -175,7 +176,9 @@ class Gruppe(QtWidgets.QWidget):
         if kuerzel:
             self._ribbon.kuerzel_setzen(a, kuerzel)
         h = hinweis or text
-        a.setToolTip(f"{h}" + (f"   ({kuerzel})" if kuerzel else ""))
+        # Der Hinweis nennt das Kuerzel deutsch („Strg+Z“); der Schluessel
+        # der Tastenfolge (kuerzel_setzen) bleibt „Ctrl+Z“ (02.10.2026)
+        a.setToolTip(f"{h}" + (f"   ({kuerzel_text(kuerzel)})" if kuerzel else ""))
         self._ribbon.merken(Befehl(self._register, self._name, text, a, hinweis))
         return a
 
