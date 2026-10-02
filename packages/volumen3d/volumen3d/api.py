@@ -570,7 +570,7 @@ class FcmSolver:
             e.protocol["cycles"] = len(kurve) - 1
             e.protocol["convergence_statement"] = aussage
             e.warnings.extend(hinweise)
-            if aussage["art"] in ("nicht_monoton", "ohne_aenderung"):
+            if aussage["art"] in ("nicht_konvergiert", "ohne_aenderung"):
                 e.warnings.append("Konvergenz der Strukturspannung: " + aussage["text"])
         melden("Zyklen abgeschlossen", 1.0)
         return ergebnisse

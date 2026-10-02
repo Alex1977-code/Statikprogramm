@@ -11663,7 +11663,8 @@ Ein Abbruch zwischen den Zyklen meldet `SolverCancelled`; der Fortschritt teilt 
 Kerben wächst sie mit der Verfeinerung und ist darum kein Konvergenzkriterium), `solver_path`, `iterations`, `t_s` und
 `hotspot_change` (relative Änderung gegenüber dem Vorzyklus).
 
-**Konvergenzaussage** (`postprocess/konvergenz.py`, `protocol["convergence_statement"]`). Aus `hotspot_max` der Zyklen, ohne
+**Konvergenzaussage** (`postprocess/konvergenz.py`, `protocol["convergence_statement"]`; Kriterium seit 02.10.2026 siehe das Nachtrag unten – die folgende Beschreibung ist die Fassung
+von B4). Aus `hotspot_max` der Zyklen, ohne
 Raten: bei weniger als drei Werten „zu wenige Zyklen“; sonst mit Δ_k = σ_k − σ_{k−1}: „monoton konvergent“, wenn alle Δ_k dasselbe
 Vorzeichen haben und |Δ_{k+1}| < |Δ_k|. Dann gilt die Aitken-Extrapolation σ_∞ = σ_n + Δ_n·r/(1 − r) mit r = Δ_n/Δ_{n−1}, die für
 eine geometrische Folge den Grenzwert exakt trifft (Prüfung: 100 + 10·0,5ᵏ und 100 − 10·0,6ᵏ ergeben 100 auf 10⁻¹²), und die
@@ -11759,7 +11760,17 @@ umgesetzt:** die Aussage nur über die p-Phase bei fester feinster Zellgröße z
 Zellen von 2 mm war zu pessimistisch: bei p 2 sind es 120 699, erst p 4 erreicht 895 569 (370 s, 17 GB Hauptspeicher). Die größte geglättete Von-Mises-Spannung wächst
 auch geglättet mit der Verfeinerung (132,7 → 158,2 → 172,6 → 189,2 N/mm² von Zyklus 1 bis 4): die Kerbe ist singulär. Die Messung am Knotenblech bleibt C1.
 
-
+**Nachtrag (O4, 02.10.2026): Kriterium der Konvergenzaussage.** Entscheidung des Anwenders: die Aussage bewertet die **letzte relative Änderung** r = |σ_n − σ_(n−1)|/|σ_(n−1)|
+(wie `hotspot_change`) gegen die Schranke der Vorgabe 13, **3 %** (`KONVERGENZ_SCHRANKE`): `konvergiert` bei r < 3 %, sonst `nicht_konvergiert`; `kein_hotspot`, `zu_wenige_zyklen` und `ohne_aenderung`
+bleiben. Die **Monotonie** (alle Änderungen mit demselben Vorzeichen, betragsmäßig abnehmend) wird zusätzlich genannt (`monoton`), ist aber keine Bedingung; nur bei monotoner Folge gibt es den
+Aitken-Grenzwert mit der Restabweichung (wie oben). Der Text nennt immer beides – „letzte relative Änderung 0,44 % < 3 %: konvergiert; Folge nicht monoton (Änderungen −5,64, −18,28, −14,54,
++0,63 N/mm²)“. Die Warnung im Ergebnis gilt `nicht_konvergiert` und `ohne_aenderung`; eine konvergierte, nicht monotone Folge trägt nur den Hinweis im Text. Warum: die Folgen der frühen h-Schritte
+schwingen immer (Knotenblech 181,1 → 175,4 → 157,1 → 142,6 → 143,2, T-Stoß 119,8 → 127,6 → 111,0 → 107,4 → 107,9); „nicht monoton, keine Aussage“ sagte dem Anwender nicht, was er wissen muss, obwohl der
+letzte Schritt unter 0,5 % lag. Mit dem neuen Kriterium: Knotenblech r 0,44 % und T-Stoß (p-Phase) r 0,47 % konvergiert, beide nicht monoton; das T-Stoß-Ergebnis mit zwei Zyklen
+(119,8 → 127,6 → 111,0, r 13 %) nicht konvergiert (Warnung). **Bekannte Schwäche:** eine Folge mit großem Überschwinger vor einer kleinen letzten Änderung gilt als konvergiert ([100, 120, 90, 90]:
+r = 0, konvergiert, nicht monoton) – die Änderungen und die Monotonie stehen deshalb daneben im Text, und die Kurve selbst (`convergence`) liegt dem Nachweis bei. Geprüft in
+`test_adaptiv.test_konvergenzaussage` (Erwartungswerte von Hand: 110/105/102,5/101,25 r 1,22 %, [100, 103, 101, 102] r 0,99 %, [100, 101, 103, 107] r 3,88 %, die gemessenen Folgen) und in
+`test_zyklen_t_stoss`.
 
 ### 11.15 Teilprojekt 5: STEP-Eingang über gmsh-Tessellierung (01.10.2026)
 
@@ -12040,6 +12051,9 @@ die ebenen Schnittebenen halten das Blech gegen die Verdrehung, die das exzentri
 (Randspannung ±8,8 N/mm²), das der Zug-Geber (reiner Zug) nicht kennt. Die Warnung ist richtig – das Globalmodell bildet die Exzentrizität nicht ab –, und
 die Tet10-Referenz hat dieselben Randbedingungen; der Vergleich FCM gegen Tet10 bleibt davon unberührt. Die Kraftabweichung liegt bei 2,2 % (h 10).
 
+**Nachtrag (O4, 02.10.2026).** Die Konvergenzaussage des Knotenblechs lautet jetzt „letzte relative Änderung 0,44 % < 3 %: konvergiert; Folge nicht monoton (Änderungen −5,64, −18,28, −14,54, +0,63 N/mm²)“
+(Kriterium siehe 11.14). Die Streuung der Abnahme mit der Gitterlage steht in 11.20.
+
 ### 11.19 Teilprojekt 5: zweite Sicht über Phase A und B (02.10.2026)
 
 **Vorgehen** (Plan TP 5 C2, Regeln vor dem Gutachten festgelegt). Alles, was Teilprojekt 5 im Paket geändert hat (34 Dateien, +4 439 Zeilen), haben drei
@@ -12157,6 +12171,10 @@ Probe rechts bei δ = 1,25 mit +3,10 % knapp außerhalb: **die Abnahme C1 hält 
 σ(1,0 t). In (c) liegt der erste Punkt bei 2,0 Zellen, σ(0,5 t) streut bei p 4 um 2,3 % (129,0 … 132,1), der Beiwert ist 1,5. Die Abhängigkeit ist nicht glatt: die Probe mit φ = 0,00 (Naht genau auf der
 Zellgrenze) liegt in (a) um 3 % unter der mit φ = 0,05 (andere Naht des spiegelsymmetrischen Modells), die Proben bei φ = 0,25 bis 0,30 liegen 1,5 bis 2,5 % darüber. Mit p 3 nach p 4 nimmt die Streuung nicht ab (4,2 → 5,7 %), p-Verfeinerung hilft also nicht,
 es ist eine Frage der Zellgröße am Übergang.
+
+**Berichtsform (O3, Entscheidung des Anwenders 02.10.2026).** Bis das Nahtziel t/8 gemessen ist, wird die Streuung als Band berichtet: σ_hs(y 40) bei Nahtziel t/4 und p 4 im Mittel 143,6 N/mm²
+mit der Spanne 138,9 bis 147,2 N/mm² über die Gitterlage (S = 5,7 %), gegen die Tet10-Referenz je Lage −2,93 % bis +3,10 %. Eine Rechnung liefert einen Wert aus diesem Band; die Abnahme „unter 3 %“
+gilt für die Lagen 0, 0,625 und 1,875 mm der Schnittebenen, bei 1,25 mm liegt die rechte Naht mit +3,10 % knapp außerhalb.
 
 **Größe von t/8.** Noch nicht bekannt: der Aufbau des Gitters für das Nahtziel 1,25 mm (nur Gitter und Modennummerierung, ohne Lösen) war nach über zehn Minuten Rechenzeit nicht fertig, während die Gitter für 2,5 mm in 0,1 s stehen (5 146 Zellen, 150 411 / 477 702 / 1 096 107 Freiheitsgrade bei p 2 / 3 / 4, die Werte der Läufe aus C1 bis auf die Stelle).
 

@@ -255,7 +255,8 @@ def test_knotenblech_konvergenz():
     dF = max(eb["deviation_force"] for eb in erg.coupling_check["planes"])
     check(f"vier Zyklen: Schritte {[c['step'] for c in k]}, kleinste Zelle {[c['h_min_mm'] for c in k]}, p {[c['p'] for c in k]}, "
           f"letzte Aenderung {letzte * 100:.2f} % (< 3 %), Kopplung Kraft {dF * 100:.2f} % (< 5 %)",
-          len(k) == 5 and letzte < 0.03 and dF < 0.05, f"{kurve}, {dt:.0f} s")
+          len(k) == 5 and letzte < 0.03 and dF < 0.05 and erg.protocol["convergence_statement"]["art"] == "konvergiert"
+          and not erg.protocol["convergence_statement"]["monoton"], f"{kurve}, {dt:.0f} s")
     # Symmetrie: gemessen 3,09 % im letzten Zyklus (143,2 gegen 138,9; Gitterphase: der linke Uebergang liegt auf einer Zellgrenze, der rechte
     # 0,5 mm davor) - die Planschranke 1 % haelt nicht; das ist die Schnittlagen-Streuung des Hot-Spots bei t/4 und p 4 und liegt als Entscheidung
     # beim Anwender (Hebel t/8). Bis dahin Information, keine Schranke - eine nachtraeglich auf den Messwert gelegte Schranke pruefte nichts.
@@ -269,6 +270,9 @@ def test_knotenblech_konvergenz():
     d_alle = max(float(np.abs(r / np.array(ref["sigma_hs_rechts"]) - 1).max()), float(np.abs(l / np.array(ref["sigma_hs_links"]) - 1).max()))
     # Die Abnahme haengt von der Gitterlage ab (Theorie 11.20, O3): bei dieser Lage (Schnittebenen bei 0 und 200) hielt sie mit -2,93 % knapp, bei anderen
     # Lagen bis +3,10 %. Die Schranke 3 % ist die der Vorgabe; welche Streuung zulaessig ist, entscheidet der Anwender (Plan O3).
+    # Streuband ueber die Gitterlage (Theorie 11.20, O3): bei Nahtziel t/4 und p 4 im Mittel 143,6 N/mm2, Spanne 138,9 bis 147,2 (5,7 %); je Lage -2,93 % bis +3,10 % gegen Tet10
+    check(f"Streuband (Information, Theorie 11.20): dieser Lauf y 40 rechts {r[4]:.2f}, links {l[4]:.2f} liegt im Band 138,9 bis 147,2 N/mm2 der vier Gitterlagen",
+          138.9 <= min(r[4], l[4]) and max(r[4], l[4]) <= 147.2)
     check(f"Abnahme (Vorgabe 13): sigma_hs(y 40) gegen Tet10-Referenz [{ref['quelle']}]: "
           f"rechts {(r[4] / ref['sigma_hs_rechts_y40'] - 1) * 100:+.2f} %, links {(l[4] / ref['sigma_hs_links_y40'] - 1) * 100:+.2f} % (|.| < 3 %); "
           f"alle 18 Punkte {d_alle * 100:.2f} %", d_ref < 0.03, f"Referenz rechts {ref['sigma_hs_rechts_y40']}, links {ref['sigma_hs_links_y40']}; {ref['status'][:80]}")

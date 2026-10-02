@@ -743,7 +743,7 @@ nachgetragen.
 | O1 Referenz Knotenblech nach main | Sonnet 5.5 | niedrig | Test auf `erwartung_tet10.json` umstellen | erledigt: PR 13 auf main (f56281a), main in den Zweig gemergt (c37cd91), Test liest die Datei |
 | O2 Tet10-Referenz 0,5 mm | Sonnet 5.5 (Hauptsitzung) | mittel | Lauf und Auswertung nach festem Schema | angenommen: rechnen, Direktlöser, Maschine exklusiv (Hauptsitzung legt den Zeitpunkt fest) |
 | O3 Hot-Spot-Streuung mit der Gitterlage | Sonnet 5.5 (Messung), Opus 5.5 (Umsetzung) | mittel / hoch | erst messen, dann t/8 oder 0,5 t / 1,5 t | Messung erledigt (S(a) 5,73 %, S(c) 3,27 % bei p 4); angenommen: Streuband berichten (Theorie 11.20); t/8 und 0,5 t / 1,5 t gemessen, wenn die Maschine frei ist |
-| O4 Konvergenzaussage | Sonnet 5.5 | mittel | Kriterium in `konvergenz.py`, Tests, Handbuch | angenommen; Regeln festgelegt, Umsetzung läuft |
+| O4 Konvergenzaussage | Sonnet 5.5 | mittel | Kriterium in `konvergenz.py`, Tests, Handbuch | erledigt: letzte Änderung < 3 % konvergiert, Monotonie zusätzlich (Knotenblech 0,44 %, T-Stoß 0,47 %) |
 | C3 Handbücher | Sonnet 5.5 | mittel | Texte aus vorhandenen Messwerten, viele Zahlen | offen; nach O1 bis O4 |
 | C4 Gesamtlauf, Pull Request | Sonnet 5.5 | mittel | Routine mit Prüfliste | offen; Merge nur auf Freigabe |
 | O5 Konsistenzfehler der Schnittzellen | Fable 5.1 | sehr hoch | Ursachensuche in Aggregation und Quadratur | Entscheidung offen: wann (Empfehlung: vor TP 6, nach PR 3) |

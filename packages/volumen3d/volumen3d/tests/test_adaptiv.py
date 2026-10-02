@@ -22,30 +22,45 @@ EINTRAG = ("cycle", "step", "dofs", "p", "cells", "cut_cells", "h_min_mm", "hots
 
 
 def test_konvergenzaussage():
-    """Die Aussage ist eine reine Funktion der Folge. Erwartungswerte aus der geschlossenen Form: eine geometrische Folge
-    sigma_k = s + c q^k hat den Aitken-Grenzwert s exakt (hier s 100, c 10, q 0,5 bzw. -0,4 von unten)."""
-    from volumen3d.postprocess.konvergenz import konvergenzaussage
-    geo = [100 + 10 * 0.5 ** k for k in range(4)]
+    """Die Aussage ist eine reine Funktion der Folge (Entscheidung O4, 02.10.2026): konvergiert, wenn die letzte relative Aenderung
+    r = |s_n - s_(n-1)| / |s_(n-1)| unter 3 % liegt (Vorgabe 13), sonst nicht konvergiert; die Monotonie (alle Aenderungen mit gleichem Vorzeichen
+    und betragsmaessig abnehmend) wird zusaetzlich genannt, und nur bei monotoner Folge gibt es den Aitken-Grenzwert. Erwartungswerte von Hand
+    aus den Folgen: geometrische Folge s + c q^k hat den Aitken-Grenzwert s exakt (s 100, c 10, q 0,5 von oben:
+    110, 105, 102,5, 101,25 mit r = 1,25/102,5 = 1,22 %; q 0,6 von unten: 90, 94, 96,4, 97,84 mit r = 1,44/96,4 = 1,49 %); [100, 103, 101, 102]: r = 1/101 = 0,99 %;
+    [100, 101, 103, 107]: r = 4/103 = 3,88 %; [100, 120, 90, 90]: r = 0; die gemessenen Folgen des Knotenblechs (11.18) und des T-Stosses (11.14)."""
+    from volumen3d.postprocess.konvergenz import KONVERGENZ_SCHRANKE, konvergenzaussage
+    geo = [100 + 10 * 0.5 ** k for k in range(4)]                  # 110, 105, 102,5, 101,25
     a = konvergenzaussage(geo)
-    unten = [100 - 10 * 0.6 ** k for k in range(4)]
+    unten = [100 - 10 * 0.6 ** k for k in range(4)]                # 90, 94, 96,4, 97,84
     b = konvergenzaussage(unten)
-    check("Geometrische Folge von oben und von unten: monoton konvergent, Aitken-Grenzwert 100 auf 1e-12",
-          a["art"] == b["art"] == "monoton_konvergent" and abs(a["grenzwert"] - 100) < 1e-12 and abs(b["grenzwert"] - 100) < 1e-12
-          and abs(a["restabweichung"] - abs(geo[-1] - 100) / 100) < 1e-12, f"{a['text']} | {b['text']}")
+    r_a, r_b = abs(geo[-1] - geo[-2]) / abs(geo[-2]), abs(unten[-1] - unten[-2]) / abs(unten[-2])
+    check("Schranke 3 %; geometrische Folge von oben (r 1,2 %) und von unten (r 1,5 %): konvergiert, monoton, Aitken-Grenzwert 100 auf 1e-12, "
+          "letzte Aenderung wie von Hand",
+          KONVERGENZ_SCHRANKE == 0.03 and a["art"] == b["art"] == "konvergiert" and a["monoton"] and b["monoton"]
+          and abs(a["grenzwert"] - 100) < 1e-12 and abs(b["grenzwert"] - 100) < 1e-12 and abs(a["restabweichung"] - abs(geo[-1] - 100) / 100) < 1e-12
+          and abs(a["letzte_aenderung"] - r_a) < 1e-15 and abs(b["letzte_aenderung"] - r_b) < 1e-15, f"{a['text']} | {b['text']}")
     schwingt = konvergenzaussage([100.0, 103.0, 101.0, 102.0])
     waechst = konvergenzaussage([100.0, 101.0, 103.0, 107.0])
-    # Befund G3-2 (Gutachten C2, 02.10.2026): die letzte Aenderung null galt vor der Monotoniepruefung als Konvergenz - auch nach einem
-    # Ueberschwinger [100, 120, 90, 90] und bei einer konstanten Folge, die nur zeigt, dass sich nichts geaendert hat (wirkungslose Zyklen)
     nach_schwung = konvergenzaussage([100.0, 120.0, 90.0, 90.0])
     konstant = konvergenzaussage([100.0, 100.0, 100.0])
-    ruhig = konvergenzaussage([100.0, 110.0, 112.0, 112.0])
-    check("Schwingende und wachsende Folge: nicht monoton, kein Grenzwert; zwei Werte zu wenig; fehlender Wert kein Hot-Spot; "
-          "Null nach Ueberschwinger nicht monoton; konstante Folge 'ohne Aenderung' ohne Grenzwert; Null nach monotoner Annaeherung konvergent",
-          schwingt["art"] == waechst["art"] == "nicht_monoton" and schwingt["grenzwert"] is None and waechst["grenzwert"] is None
-          and konvergenzaussage([1.0, 2.0])["art"] == "zu_wenige_zyklen" and konvergenzaussage([1.0, None, 2.0])["art"] == "kein_hotspot"
-          and nach_schwung["art"] == "nicht_monoton" and konstant["art"] == "ohne_aenderung" and konstant["grenzwert"] is None
-          and ruhig["art"] == "monoton_konvergent" and ruhig["grenzwert"] == 112.0,
-          f"{schwingt['text']} | {nach_schwung['text']} | {konstant['text']} | {ruhig['text']}")
+    check("[100, 103, 101, 102]: r 0,99 % konvergiert, nicht monoton, kein Grenzwert; [100, 101, 103, 107]: r 3,88 % nicht konvergiert; "
+          "[100, 120, 90, 90]: r 0 konvergiert, nicht monoton (Text nennt es); konstante Folge ohne Aenderung",
+          schwingt["art"] == "konvergiert" and not schwingt["monoton"] and schwingt["grenzwert"] is None and abs(schwingt["letzte_aenderung"] - 1 / 101) < 1e-15
+          and waechst["art"] == "nicht_konvergiert" and abs(waechst["letzte_aenderung"] - 4 / 103) < 1e-15 and waechst["grenzwert"] is None
+          and nach_schwung["art"] == "konvergiert" and not nach_schwung["monoton"] and nach_schwung["letzte_aenderung"] == 0.0
+          and "nicht monoton" in nach_schwung["text"] and konstant["art"] == "ohne_aenderung" and konstant["grenzwert"] is None,
+          f"{schwingt['text']} | {waechst['text']} | {nach_schwung['text']} | {konstant['text']}")
+    check("zwei Werte zu wenig, fehlender Wert kein Hot-Spot, Null nach monotoner Annaeherung [100, 110, 112, 112]: konvergiert, monoton, Grenzwert 112",
+          konvergenzaussage([1.0, 2.0])["art"] == "zu_wenige_zyklen" and konvergenzaussage([1.0, None, 2.0])["art"] == "kein_hotspot"
+          and konvergenzaussage([100.0, 110.0, 112.0, 112.0])["art"] == "konvergiert" and konvergenzaussage([100.0, 110.0, 112.0, 112.0])["monoton"]
+          and konvergenzaussage([100.0, 110.0, 112.0, 112.0])["grenzwert"] == 112.0)
+    kb = konvergenzaussage([181.06, 175.42, 157.14, 142.60, 143.23])       # Knotenblech C1, vier Zyklen
+    ts = konvergenzaussage([119.8, 127.6, 111.0, 107.4, 107.9])            # T-Stoss p-Phase (11.14)
+    check(f"gemessene Folgen: Knotenblech r {kb['letzte_aenderung'] * 100:.2f} % und T-Stoss r {ts['letzte_aenderung'] * 100:.2f} % konvergiert, beide nicht monoton "
+          f"(vorher 'nicht monoton, keine Aussage'); Druck: [-100, -110, -112, -112.5] konvergiert, Betrag zaehlt",
+          kb["art"] == ts["art"] == "konvergiert" and not kb["monoton"] and not ts["monoton"] and abs(kb["letzte_aenderung"] - 0.63 / 142.60) < 1e-9
+          and abs(ts["letzte_aenderung"] - 0.5 / 107.4) < 1e-9 and konvergenzaussage([-100.0, -110.0, -112.0, -112.5])["art"] == "konvergiert",
+          f"{kb['text']}")
 
 
 def _spec(p, h, zyklen):
@@ -331,10 +346,12 @@ def test_zyklen_t_stoss():
           [c["step"] for c in k] == ["Start", "h-Halbierung Naht", "h-Halbierung Naht"] and [c["h_min_mm"] for c in k] == [10.0, 5.0, 2.5]
           and all(a["dofs"] < b["dofs"] for a, b in zip(k[:-1], k[1:])) and dF < 0.05,
           f"dofs {[c['dofs'] for c in k]}, Abweichung Kraft {dF * 100:.2f} %, {dt:.0f} s")
-    check("Hot-Spot-Werte aller Zyklen im plausiblen Bereich 0,5 bis 1,5 sigma_n; Konvergenzaussage stimmt mit der nachgerechneten Monotonie "
-          "ueberein; nicht monotone Kurve traegt die Warnung",
-          all(50.0 <= v <= 150.0 for v in hs) and (aussage["art"] == "monoton_konvergent") == monoton
-          and (monoton or any("Konvergenz der Strukturspannung" in w for w in erg.warnings)),
+    letzte = abs(hs[-1] - hs[-2]) / abs(hs[-2])
+    check("Hot-Spot-Werte aller Zyklen im plausiblen Bereich 0,5 bis 1,5 sigma_n; Konvergenzaussage stimmt mit der nachgerechneten letzten Aenderung "
+          "(unter 3 %) und Monotonie ueberein; nicht konvergierte Kurve traegt die Warnung",
+          all(50.0 <= v <= 150.0 for v in hs) and (aussage["art"] == "konvergiert") == (letzte < 0.03) and aussage["monoton"] == monoton
+          and abs(aussage["letzte_aenderung"] - letzte) < 1e-12
+          and (aussage["art"] == "konvergiert" or any("Konvergenz der Strukturspannung" in w for w in erg.warnings)),
           f"Werte {[round(v, 2) for v in hs]}; {aussage['text']}")
 
 

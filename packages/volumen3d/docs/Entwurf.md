@@ -837,6 +837,8 @@ Plan: `docs/plaene/2026-09-28-tp4-mehrgitter.md`. Messlatte aus Teilprojekt 3: J
   behoben: durchdringende Körper (STEP vereinigen, STL Fehler), deckungsgleiche Flächen auf dem flachen Weg und Scheindeckel, offene Hüllen im Divergenzweg,
   Blechseite am Nahtübergang (eben über 1,0 t + Tiefe), Hülle in abgezogenem Teilbaum, Konvergenzaussage und wirkungslose Zyklen, Kopplungskontrolle als
   Spannung, zwei Prüfungen ohne Aussage, maßgebender Hot-Spot mit Vorzeichen, dazu zwölf niedrige. Aufgelistet: Abbruch in `prepare`, `summary()` nach Zyklen.
+- **O3/O4 (02.10.2026, Theorie 11.20, 11.14):** Hot-Spot-Streuung mit der Gitterlage am Knotenblech gemessen (vier Lagen, p 3 und p 4): S 5,7 % bei (a) 0,4 t / 1,0 t, 3,3 % bei (c) 0,5 t / 1,5 t, allein
+  von σ(0,4 t); berichtet als Band (Mittel 143,6, Spanne 138,9 bis 147,2 N/mm²). Konvergenzaussage: letzte relative Änderung unter 3 % = konvergiert, Monotonie und Aitken-Grenzwert zusätzlich.
 - Fünf Schnittlagen Kirsch h 10 p 3 verfeinert (128 724 bis 199 095 freie Koordinaten), GPU FP64:
   81 / 125 / 112 / 129 / 59 Iterationen, GPU-PCG 8,6 bis 21 s, K_t identisch mit dem Direktlöser;
   Direktlöser (Lösen nach der Faktorisierung) 7 bis 25 s. Einrichten auf der CPU: Zelldaten 17–24 s,
