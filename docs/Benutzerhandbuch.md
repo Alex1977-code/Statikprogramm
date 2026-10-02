@@ -267,22 +267,48 @@ Die Arbeitsfläche in drei Spalten:
   seiner Art und seinem Platz im Baum und nicht mehr am angezeigten Text. Offene
   Zweige bleiben offen, der gewählte Eintrag (auch mehrere) bleibt gewählt,
   ohne dass sich seine Maske neu öffnet, und die Zeile, die oben im Baum
-  stand, steht weiter oben, auch wenn darüber eine Zeile dazukommt. Ein
-  anderes Modell erbt davon nichts: nach *Datei → Neu*, *Öffnen*, einem
-  Beispiel und einem Import, der nicht an das Modell anhängt, beginnt der
-  Baum im Grundzustand. Darin sind nur die Wurzel, *Lager* und *Stellungen*
-  aufgeklappt, alles andere ist zu, und der Baum steht ganz oben. Bis zum
-  02.10.2026 galt der Zustand eines Zweigs gleichen Namens aus dem vorigen
-  Modell weiter, und *Lager* war nie offen, obwohl es so gedacht war.
+  stand, steht weiter oben, auch wenn darüber eine Zeile dazukommt. Wer mehr
+  als 200 Einträge gewählt hat (etwa alle Knoten mit Strg+A), behält nach dem
+  Aktualisieren nur den aktuellen Eintrag als gewählt.
 
-  **Schrift und Farbe im Baum** (seit 02.10.2026). Grau steht, was leer ist
-  (Zähler 0); was gefüllt ist, steht in der gewöhnlichen Schriftfarbe. Fett stehen
-  nur Gruppen, also Zweige, die andere Zweige zusammenfassen: der Modellname,
-  *Eigenschaften*, *Lager*, *Verbindungen*, *Kontaktbedingungen*,
+  Zwei Ausnahmen betreffen die Auswahl, nicht das Aufklappen. Erstens
+  **nummerierte Einträge**: Knoten, Stabelemente, Knoten-, Linien- und
+  Flächenlager, Punktmassen, Dämpfer, starre Körper und Berichtsbilder heißen im
+  Baum nach ihrer laufenden Nummer. Löscht man einen von ihnen, rücken die
+  Nummern dahinter auf, und dieselbe Nummer meint ein anderes Objekt. Hat sich
+  die Zahl der Einträge einer solchen Liste geändert, bleibt darum nichts darin
+  gewählt, statt still das nachgerückte Objekt zu markieren (ein zweites Entf
+  löschte sonst das falsche). Einträge mit Namen, etwa Lastfälle, Kombinationen
+  und Stellungen, bleiben gewählt, auch wenn ein anderer gelöscht wird.
+  Zweitens **Rückgängig und Wiederholen**: Die Ansicht leert dabei ihre
+  Auswahl, und der Baum zieht mit, damit Entf im Baum nicht auf Objekte wirkt,
+  die in der Ansicht nicht gewählt sind. Aufklappzustand und Rolle bleiben
+  auch dort.
+
+  Ein anderes Modell erbt von alledem nichts: nach *Datei → Neu*, *Öffnen*,
+  einem Beispiel, einem Import, der nicht an das Modell anhängt, und einem
+  Modell, das der Browser (Handy) an die Stelle des geöffneten setzt, beginnt
+  der Baum im Grundzustand. Darin sind nur die Wurzel, *Lager* und
+  *Stellungen* aufgeklappt, alles andere ist zu, nichts ist gewählt, und der
+  Baum steht ganz oben. Bis zum 02.10.2026 galt der Zustand eines Zweigs
+  gleichen Namens aus dem vorigen Modell weiter, und *Lager* war nie offen,
+  obwohl es so gedacht war.
+
+  **Schrift und Farbe im Baum** (seit 02.10.2026). Grau steht ein Zweig nur,
+  wenn er **samt allem darunter** leer ist: Zähler 0 und kein Unterzweig mit
+  Inhalt. „Volumen 0“ über „Volumenelementen 960“ (Elemente, die ohne Körper
+  angelegt wurden, wie beim Beispiel Quader, bei Platte, Stauwand und Block mit
+  Reibung) steht darum in der gewöhnlichen Schriftfarbe, ebenso „Flächen 0“ über
+  den Flächenelementen und „Stäbe 0“ über Stäben mit Nachweis oder
+  Schweißnähten. Was gefüllt ist, steht in der gewöhnlichen Schriftfarbe. Fett
+  stehen nur Gruppen, also Zweige, die andere Zweige zusammenfassen: der
+  Modellname, *Eigenschaften*, *Lager*, *Verbindungen*, *Kontaktbedingungen*,
   *Einwirkungen* und *Ergebnisse*. Bis zum 02.10.2026 waren manche gefüllten
-  Zweige fett oder blau und andere nicht, ohne dass eine Regel dahinterstand.
-  Die Warnfarbe steht nur noch bei Warnungen, blau nur noch bei den
-  Zeilen „+ … anlegen“.
+  Zweige fett oder blau und andere nicht, ohne dass eine Regel dahinterstand,
+  und jeder Zweig mit Zähler 0 stand grau, auch über gefüllten Unterzweigen.
+  Die Warnfarbe steht nur noch bei Warnungen. Blau stehen die Zeilen
+  „+ … anlegen“, und die Flächenkontakte behalten die Farbe ihrer Wirkung (zum
+  Beispiel starr grau, nur Druck rot, Zug und Druck blau, wie in der Ansicht).
 
   **Ein Klick wählt aus** — links im Baum, gleichzeitig in der Ansicht: der
   Zweig „Knoten“ wählt **alle** Knoten, der Eintrag „K3“ nur diesen; ebenso
@@ -869,7 +895,10 @@ abgebrochen, oder der freie Vernetzer abgeschaltet, steht vor seinem Namen ein
 Vernetzer vermerkt hat); der Zweig *Volumen* trägt dieselbe Warnfarbe, damit man
 es auch zugeklappt sieht. Ein Hilfskörper ohne Rauminhalt (in RFEM ein
 Null-Volumen) steht grau und ohne Warnzeichen: er bekommt nie ein Netz und
-fehlt nicht. Bis zum 02.10.2026 trugen alle drei Fälle nur das ○.
+fehlt nicht. Grau wird er aber erst, wenn der Vernetzer ihn als solchen erkannt
+hat, also beim Vernetzen den Grund „kein Volumen“ vermerkt hat; vorher trägt
+er wie jedes noch nicht vernetzte Volumen das ○. Bis zum 02.10.2026 trugen alle
+drei Fälle nur das ○.
 
 | Form | Netz |
 |---|---|

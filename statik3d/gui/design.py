@@ -521,6 +521,9 @@ class Modellbaum(QtWidgets.QTreeWidget):
         self._zweige: list = []
         #: Das Modell ist ein anderes: der naechste Aufbau beginnt im Grundzustand
         self._vergessen = False
+        #: Rueckgaengig/Wiederholen: der naechste Aufbau behaelt Aufklappzustand
+        #: und Rolle, aber nicht die Auswahl (die Ansicht leert ihre auch)
+        self._auswahl_verwerfen = False
 
     #: Grundzustand eines Modells: nur diese Zweige sind aufgeklappt (Pfade).
     #: Die Wurzel, damit man den Baum sieht; „Lager“ und „Stellungen“ waren im
@@ -535,6 +538,13 @@ class Modellbaum(QtWidgets.QTreeWidget):
     #: So viele gewaehlte Eintraege merkt der Baum ueber einen Neuaufbau; wer
     #: mehr gewaehlt hat (Strg+A in der Knotenliste), behaelt nur den aktuellen
     AUSWAHL_MAX = 200
+    #: Arten, deren Schluessel die laufende Nummer ist: nach dem Loeschen ruecken
+    #: die Nummern auf, und dieselbe Nummer meint ein anderes Objekt. Hat sich die
+    #: Zahl der Eintraege der Liste geaendert, wird ihre Auswahl nicht
+    #: wiederhergestellt (ein zweites Entf loeschte sonst die falschen).
+    NUMMERIERT = frozenset({"knoten", "stabelement", "lager_einzeln", "linienlager_einzeln",
+                            "flaechenlager_einzeln", "punktmasse", "daempfer", "starrkoerper",
+                            "berichtseintrag"})
 
     @staticmethod
     def _schluessel(item) -> tuple[str, str]:
@@ -747,28 +757,37 @@ class Modellbaum(QtWidgets.QTreeWidget):
         return tuple(teile)
 
     def _ort(self, item) -> tuple:
-        """(Pfad des Elternteils, Art und Kennung, Stelle unter dem Elternteil):
-        wiederzufinden, ohne die Kinder durchzugehen (die Stelle wird zuerst
-        geprueft)."""
+        """(Pfad des Elternteils, Art und Kennung, Stelle unter dem Elternteil,
+        Zaehler des Elternteils): wiederzufinden, ohne die Kinder durchzugehen
+        (die Stelle wird zuerst geprueft). Der Zaehler (Spalte 1 des Zweigs, die
+        Zahl der Objekte, nicht der Zeilen) zeigt bei nummerierten Arten, ob
+        sich die Liste geaendert hat."""
         eltern = item.parent()
         if eltern is None:
-            return (), self._element(item), 0
-        return self.pfad_von(eltern), self._element(item), eltern.indexOfChild(item)
+            return (), self._element(item), 0, ""
+        return (self.pfad_von(eltern), self._element(item), eltern.indexOfChild(item),
+                eltern.text(1))
 
-    def _auffinden(self, ort: tuple, verzeichnis: dict, naechster: bool = False):
+    def _auffinden(self, ort: tuple, verzeichnis: dict, naechster: bool = False,
+                   pruefen: bool = True):
         """Den Eintrag zu einem Ort im neuen Baum, sonst ``None``.
 
         Zweige stehen im Verzeichnis. Ein Eintrag in einer Liste wird zuerst an
         seiner alten Stelle gesucht, dann in deren Umgebung; nur in kurzen
         Listen geht die Suche ueber alle (am Drehlager hat „Knoten“ 20 000
         Eintraege). ``naechster``: ist er weg, der Eintrag an seiner Stelle.
+        ``pruefen``: bei nummerierten Arten (:attr:`NUMMERIERT`) nichts finden,
+        wenn sich der Zaehler der Liste geaendert hat; fuer die Rollposition
+        gilt das nicht, sie braucht nur die Stelle.
         """
-        eltern_pfad, element, nr = ort
+        eltern_pfad, element, nr, zaehler = ort
         zweig = verzeichnis.get(eltern_pfad + (element,))
         if zweig is not None:
             return zweig
         eltern = verzeichnis.get(eltern_pfad)
         if eltern is None:
+            return None
+        if pruefen and element[0] in self.NUMMERIERT and eltern.text(1) != zaehler:
             return None
         n = eltern.childCount()
         if 0 <= nr < n and self._element(eltern.child(nr)) == element:
@@ -788,6 +807,13 @@ class Modellbaum(QtWidgets.QTreeWidget):
         Eintrag und Rollposition des vorigen Modells gelten nicht mehr."""
         self._offen.clear()
         self._vergessen = True
+
+    def auswahl_vergessen(self) -> None:
+        """Rueckgaengig und Wiederholen: der naechste Aufbau behaelt
+        Aufklappzustand und Rolle, aber nicht die Auswahl. Die Ansicht leert
+        ihre Auswahl dabei (``_objektauswahl_leeren``); der Baum darf nicht
+        auf Objekten markiert bleiben, die dort nicht mehr gewaehlt sind."""
+        self._auswahl_verwerfen = True
 
     def _ansicht_merken(self):
         """Vor dem Neuaufbau: Aufklappzustand, Auswahl und Rollposition.
@@ -815,6 +841,9 @@ class Modellbaum(QtWidgets.QTreeWidget):
                 oben = self.itemAt(2, 2)
                 if oben is not None:
                     anker = self._ort(oben)
+            if self._auswahl_verwerfen:
+                self._auswahl_verwerfen = False
+                gewaehlt, aktuell = [], None
             return {"auswahl": [self._ort(i) for i in gewaehlt],
                     "aktuell": self._ort(aktuell) if aktuell is not None else None,
                     "anker": anker}
@@ -856,7 +885,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
             self.blockSignals(gesperrt)
         self._gemeldet = False
         if ansicht["anker"] is not None:
-            ziel = self._auffinden(ansicht["anker"], verzeichnis, naechster=True)
+            ziel = self._auffinden(ansicht["anker"], verzeichnis, naechster=True, pruefen=False)
             if ziel is not None:
                 self.scrollToItem(ziel, QtWidgets.QAbstractItemView.PositionAtTop)
 
@@ -889,6 +918,18 @@ class Modellbaum(QtWidgets.QTreeWidget):
         it.setForeground(1, QtGui.QColor(FARBEN["matt"]))
         if farbe is None and schluessel is None and str(zahl) == "0":
             farbe = FARBEN["matt"]
+            it.setData(0, QtCore.Qt.UserRole + 3, True)         # nur wegen Zaehler 0 grau
+        elif not blatt and schluessel is None and str(zahl).isdigit() and int(zahl) > 0:
+            # Ein Unterzweig mit Inhalt: „Volumen 0“ steht ueber „Volumenelemente
+            # 960“ (Elemente ohne Koerper), „Staebe 0“ ueber den Schweissnaehten.
+            # Grau heisst leer samt allem darunter - die Zweige darueber, die nur
+            # wegen ihres eigenen Zaehlers grau gesetzt wurden, werden normal.
+            p = eltern
+            while isinstance(p, QtWidgets.QTreeWidgetItem):
+                if p.data(0, QtCore.Qt.UserRole + 3):
+                    p.setData(0, QtCore.Qt.UserRole + 3, None)
+                    p.setData(0, QtCore.Qt.ForegroundRole, None)
+                p = p.parent()
         if farbe:
             it.setForeground(0, QtGui.QColor(farbe))
         if hinweis:

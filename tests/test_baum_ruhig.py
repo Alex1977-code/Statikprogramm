@@ -524,7 +524,114 @@ def test_volumen_ohne_netz():
 
 
 # ---------------------------------------------------------------------------
-# 6. Das Hauptfenster
+# 5. Nachbesserung 02.10.2026 (Gegenpruefung): grau nur, wenn alles darunter leer ist
+# ---------------------------------------------------------------------------
+def _unterzweig_gefuellt(baum, i) -> bool:
+    for k in range(i.childCount()):
+        c = i.child(k)
+        if c.text(0).startswith("+") or baum._ist_eintrag(c):
+            continue
+        if c.text(1).isdigit() and int(c.text(1)) > 0:
+            return True
+    return False
+
+
+def test_grau_nur_wenn_der_zweig_leer_ist():
+    """„Volumen 0“ über „Volumenelemente 960“ (Beispiel Quader, Platte, Block
+    mit Reibung, Stauwand: Elemente ohne Körper) stand grau - grau heißt leer."""
+    from statik3d.examples_lib import build_example
+    from statik3d.gui import design as dsg
+    b, app = _baum(900)
+    gefunden = []
+    for name in ("solid", "plate", "friction", "gate"):
+        m = build_example(name)
+        b.fuellen(m)
+        app.processEvents()
+        for i in _alle(b):
+            if not i.childCount() or i.text(1) != "0" or b._ist_eintrag(i):
+                continue
+            gefuellt = _unterzweig_gefuellt(b, i)
+            if gefuellt:
+                gefunden.append(f"{name}: {i.text(0)}")
+            ist_grau = _farbe(i) == dsg.FARBEN["matt"]
+            check(f"{name}: „{i.text(0)} 0“ steht " + ("normal, ein Unterzweig hat Inhalt" if gefuellt
+                                                       else "grau, alles darunter ist leer"),
+                  ist_grau == (not gefuellt), f"Farbe {_farbe(i)}")
+    check("Vorbereitung: es gab Zweige mit Zähler 0 über gefülltem Unterzweig",
+          any("Volumen" in g for g in gefunden) and any("Flächen" in g for g in gefunden),
+          str(gefunden))
+    # ganz leer bleibt grau
+    from statik3d.model import Model
+    b.fuellen(Model())
+    app.processEvents()
+    vol = _finden(b, "Volumen", "geokoerper")
+    check("ohne Körper und ohne Volumenelemente steht „Volumen“ grau", _farbe(vol) == dsg.FARBEN["matt"],
+          str(_farbe(vol)))
+    b.close()
+
+
+# ---------------------------------------------------------------------------
+# 6. Auswahl nach dem Löschen nummerierter Einträge
+# ---------------------------------------------------------------------------
+def test_auswahl_nach_loeschen_nummerierter_eintraege():
+    """Knoten, Lager, Stabelemente … tragen ihre laufende Nummer als Schlüssel;
+    nach dem Löschen rücken die Nummern auf. Die Auswahl darf dann nicht still
+    auf das nachgerückte Objekt fallen (ein zweites Entf löschte die falschen)."""
+    from PySide6 import QtCore
+    m = _reiches_modell()
+    b, app = _baum(500)
+    b.fuellen(m, STELLUNGEN, ERGEBNISSE)
+    for name in ("Lager", "Knotenlager"):
+        _finden(b, name).setExpanded(True)
+    kl = _finden(b, "Knotenlager")
+    n0 = len(m.supports)
+    check("Vorbereitung: mindestens sechs Knotenlager", n0 >= 6, str(n0))
+    b.clearSelection()
+    for k in range(kl.childCount()):
+        if _element(kl.child(k))[1] in ("1", "2", "3"):          # „Lager 2 bis 4“
+            kl.child(k).setSelected(True)
+    b.setCurrentItem(kl.child(2), 0, QtCore.QItemSelectionModel.NoUpdate)
+    check("Vorbereitung: drei Lager gewählt", len(b.selectedItems()) == 3, str(len(b.selectedItems())))
+    b.fuellen(m, STELLUNGEN, ERGEBNISSE)
+    check("unverändert neu aufgebaut: dieselben drei Lager bleiben gewählt",
+          sorted(_element(i)[1] for i in b.selectedItems()) == ["1", "2", "3"])
+    del m.supports[1:4]                                      # gelöscht, die Nummern rücken auf
+    b.fuellen(m, STELLUNGEN, ERGEBNISSE)
+    app.processEvents()
+    gew = [_element(i) for i in b.selectedItems()]
+    cur = b.currentItem()
+    check("Lager 2 bis 4 gelöscht: nichts Nachgerücktes ist gewählt", not gew, str(gew))
+    check("… und der aktuelle Eintrag ist kein nachgerücktes Lager",
+          cur is None or _element(cur)[0] != "lager_einzeln", str(_element(cur) if cur is not None else None))
+    # Knoten in einer gedeckelten Liste: die Zahl der Zeilen bleibt gleich, die Zahl der Knoten nicht
+    from statik3d.gui import design as dsg
+    from statik3d.model import Model
+    m2 = Model()
+    m2.name = "Gross"
+    m2.nodes = np.random.rand(dsg.BAUM_MAX + 300, 3)
+    b.fuellen(m2)
+    _finden(b, "Knoten", "knoten").setExpanded(True)
+    b.eintrag_waehlen("knoten", "5")
+    m2.nodes = np.delete(m2.nodes, 1, axis=0)
+    b.fuellen(m2)
+    check("Knoten gelöscht (Liste auf 20 000 Zeilen gedeckelt): K5 wird nicht still neu gewählt",
+          not b.selectedItems(), str([_element(i) for i in b.selectedItems()]))
+    # nicht nummerierte Arten behalten ihre Auswahl auch nach dem Löschen eines anderen
+    b.fuellen(m, STELLUNGEN, ERGEBNISSE)
+    namen = list(m.load_cases)
+    for name in ("Einwirkungen", "Lastfälle"):
+        _finden(b, name).setExpanded(True)
+    b.eintrag_waehlen("lastfall", namen[0])
+    del m.load_cases[namen[-1]]
+    b.fuellen(m, STELLUNGEN, ERGEBNISSE)
+    check("ein Lastfall (Schlüssel = Name) bleibt gewählt, wenn ein anderer gelöscht wird",
+          [_element(i) for i in b.selectedItems()] == [("lastfall", namen[0])],
+          str([_element(i) for i in b.selectedItems()]))
+    b.close()
+
+
+# ---------------------------------------------------------------------------
+# 7. Das Hauptfenster
 # ---------------------------------------------------------------------------
 def _fenster():
     if "w" in _FENSTER:
@@ -636,10 +743,21 @@ def test_fenster_uebernehmen_und_rueckgaengig():
     check("Rückgängig: Aufklappzustand bleibt", not falsch and "Extra" not in w.model.load_cases,
           ", ".join(falsch[:8]))
     jetzt = b.itemAt(4, 4)
-    check("Rückgängig: derselbe Eintrag steht oben, derselbe Lastfall ist gewählt",
-          jetzt is not None and _kennung(jetzt) == oben and b.currentItem() is not None
-          and _element(b.currentItem()) == ("lastfall", lf),
+    check("Rückgängig: derselbe Eintrag steht oben (die Rolle bleibt)",
+          jetzt is not None and _kennung(jetzt) == oben,
           f"{oben[-1] if oben else None} -> {_kennung(jetzt)[-1] if jetzt is not None else None}")
+    check("Rückgängig: die Auswahl des Baums ist verworfen (die Ansicht leert ihre auch)",
+          not b.selectedItems() and b.currentItem() is None and len(w.selection) == 0,
+          str([_element(i) for i in b.selectedItems()]))
+    # Wiederholen ebenso
+    vorher, oben, lf = _zustand_setzen(w, app)
+    check("Wiederholen, Vorbereitung: ein Lastfall ist gewählt", len(b.selectedItems()) == 1)
+    w.redo()
+    app.processEvents()
+    nachher = _zweige(b)
+    falsch = sorted({k[-1][1] for k in vorher if nachher.get(k) != vorher[k]})
+    check("Wiederholen: Aufklappzustand bleibt, die Auswahl ist verworfen",
+          not falsch and not b.selectedItems(), ", ".join(falsch[:8]))
 
 
 def _grundzustand(w):
@@ -684,14 +802,51 @@ def test_fenster_neues_modell_erbt_nichts():
               f"gewählt {len(b.selectedItems())}, Rolle {b.verticalScrollBar().value()}")
 
 
+def test_fenster_web_ersetzt_das_modell():
+    """Die Web-Befehle (Neu, Beispiel, Modell ersetzen, Import) tauschen das
+    Modell des Fensters über State.bound aus; ``_web_poll`` ruft nur
+    refresh_all. Ohne Server nachgestellt: ein Stellvertreter für den Stand
+    und ein neues Modellobjekt."""
+    from types import SimpleNamespace
+    from statik3d.examples_lib import build_example
+    w, app = _fenster()
+    b = w.baum
+    w.load_example("hall")
+    app.processEvents()
+    vorher, oben, lf = _zustand_setzen(w, app)
+    w.web_state = SimpleNamespace(version=1)
+    w.web_version = 0
+    try:
+        w.model.meta["Bemerkung"] = "im Browser geändert"   # dasselbe Modell, nur geändert
+        w._web_poll()
+        app.processEvents()
+        nachher = _zweige(b)
+        falsch = sorted({k[-1][1] for k in vorher if nachher.get(k) != vorher[k]})
+        check("Web: dasselbe Modell geändert → Aufklappzustand und Auswahl bleiben",
+              not falsch and b.currentItem() is not None, ", ".join(falsch[:8]))
+        w.model = build_example("frame")              # wie replace_model / Beispiel / Neu im Browser
+        w.web_state.version = 2
+        w._web_poll()
+        app.processEvents()
+        offen, erwartet = _grundzustand(w)
+        erwartet = [e for e in erwartet if e in [i.text(0) for i in _alle(b)]]
+        check("Web: anderes Modell → Grundzustand, nichts gewählt, Rolle oben",
+              offen == erwartet and not b.selectedItems() and b.verticalScrollBar().value() == 0,
+              f"offen {offen}, gewählt {len(b.selectedItems())}")
+    finally:
+        w.web_state = None
+
+
 def main():
     tests = [test_jeder_zweig_behaelt_seinen_zustand, test_drei_doppelte_namen,
              test_gleicher_text_an_zwei_stellen, test_wurzel_traegt_den_modellnamen_nicht_als_schluessel,
              test_pfade_sind_eindeutig, test_grundzustand_im_baum, test_rollposition_folgt_dem_eintrag,
              test_gewaehlter_eintrag_bleibt, test_kosten_haengen_nicht_an_der_listenlaenge,
-             test_schriftregel, test_volumen_ohne_netz,
+             test_schriftregel, test_volumen_ohne_netz, test_grau_nur_wenn_der_zweig_leer_ist,
+             test_auswahl_nach_loeschen_nummerierter_eintraege,
              test_fenster_refresh_all_haelt_den_zustand, test_fenster_uebernehmen_und_rueckgaengig,
-             test_fenster_neues_modell_erbt_nichts]
+             test_fenster_neues_modell_erbt_nichts,
+             test_fenster_web_ersetzt_das_modell]
     for t in tests:
         print(f"\n--- {t.__name__} ---")
         try:

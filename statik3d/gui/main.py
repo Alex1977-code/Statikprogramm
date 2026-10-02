@@ -10329,6 +10329,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if hasattr(self, "baum"):
             self.baum.fuellen(self.model, self._stellungen_liste(),
                               self._ergebnisliste())
+            # welches Modell der Baum zeigt (fuer den Web-Server, :meth:`_web_poll`);
+            # schwach, damit ein ersetztes Modell nicht bis hierher im Speicher bleibt
+            import weakref
+            self._baum_modell = weakref.ref(self.model)
         if hasattr(self, "lbl_modellangaben"):
             self.lbl_modellangaben.setText(self._modellangaben_text())
 
@@ -15728,6 +15732,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.schwingung = None
         self.selection = np.array([], dtype=int)
         self._objektauswahl_leeren()
+        # die Ansicht hat ihre Auswahl geleert: der Baum behaelt Aufklappzustand
+        # und Rolle, aber keine Markierung - sonst wirkt Entf dort auf Objekte,
+        # die in der Ansicht nicht gewaehlt sind
+        if hasattr(self, "baum"):
+            self.baum.auswahl_vergessen()
         self._undo_knoepfe()
         self.refresh_all()
 
@@ -23107,6 +23116,12 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self.web_version = st.version
         self._aenderung()              # geaendert im Browser, gespeichert ist es damit nicht
+        # Die Web-Befehle (Neu, Beispiel, Modell ersetzen, Import) tauschen das
+        # Modell ueber State.bound aus: ein anderes Objekt heisst anderes Modell,
+        # der Baum beginnt dann im Grundzustand
+        zeigt = getattr(self, "_baum_modell", None)
+        if zeigt is not None and zeigt() is not self.model:
+            self._baum_neu_beginnen()
         try:
             self.selection = self.selection[self.selection < self.model.nn]
             self.refresh_all()
