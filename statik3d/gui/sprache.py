@@ -20,12 +20,13 @@ nicht benutzt. Der Hinweis am Knopf soll in jedem Fall dasselbe sagen wie das
 Handbuch.
 
 Wo die Dateien liegen: PySide6 bringt sie im Paket mit
-(``PySide6/translations``); QLibraryInfo nennt den Ordner. In der exe sammelt
+(``PySide6/translations``, in den Linux-Raedern ``PySide6/Qt/translations``);
+QLibraryInfo nennt den Ordner. In der exe sammelt
 PyInstaller ``qt_de.qm`` und ``qtbase_de.qm`` ueber seinen Qt-Hook mit ein
 (gemessen an build/Statik3D/Analysis-00.toc: ``PySide6\\translations\\...``),
-sie liegen zur Laufzeit unter ``sys._MEIPASS/PySide6/translations``. Gesucht
-wird darum in dieser Reihenfolge: QLibraryInfo, der Ordner des PySide6-Pakets,
-``_MEIPASS``.
+sie liegen zur Laufzeit unter ``sys._MEIPASS/PySide6/translations`` (unter
+Linux ``.../PySide6/Qt/translations``). Gesucht wird darum in dieser
+Reihenfolge: QLibraryInfo, der Ordner des PySide6-Pakets, ``_MEIPASS``.
 """
 from __future__ import annotations
 
@@ -73,12 +74,16 @@ def suchorte() -> list:
         pass
     try:
         import PySide6
-        dazu(os.path.join(os.path.dirname(PySide6.__file__), "translations"))
+        paket = os.path.dirname(PySide6.__file__)
+        dazu(os.path.join(paket, "translations"))
+        # die Linux-Raeder von PySide6 legen Qt unter PySide6/Qt ab
+        dazu(os.path.join(paket, "Qt", "translations"))
     except Exception:                       # noqa: BLE001
         pass
     meipass = getattr(sys, "_MEIPASS", None)      # nur in der exe (PyInstaller)
     if meipass:
         dazu(os.path.join(meipass, "PySide6", "translations"))
+        dazu(os.path.join(meipass, "PySide6", "Qt", "translations"))     # Linux
         dazu(os.path.join(meipass, "translations"))
     return orte
 

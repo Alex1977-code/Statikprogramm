@@ -7784,18 +7784,24 @@ Strg+A an das Feld (Text markieren), nicht an das Modell.
 Programm keine Übersetzung für die Texte, die Qt selbst beschriftet: die
 Knöpfe „OK“, „Cancel“, „Yes“ und „No“ in Rückfragen, das Rechtsklickmenü der
 Textfelder („Undo“, „Cut“, „Copy“, „Paste“, „Select All“) und die
-Farbauswahl erschienen englisch, und in den Hinweisen der Knöpfe stand
-„Ctrl+Z“ oder „Shift+F1“. Seit dem 02.10.2026 lädt das Programm beim Start die
+Farbauswahl erschienen englisch, und in den Hinweisen mancher Knöpfe stand
+das Kürzel englisch, etwa „Ctrl+N“ am Knopf *Neu* und „Shift+F1“ am Fang auf
+Knoten (die Hinweise von *Rückgängig* und *Wiederholen* nannten schon vorher
+„Strg+Z“ und „Strg+Y“). Seit dem 02.10.2026 lädt das Programm beim Start die
 deutschen Texte von Qt (die Datei `qtbase_de.qm` liegt in der exe): Rückfragen
 bieten „Ja“, „Nein“, „Abbrechen“, „Speichern“ und „Verwerfen“ an, das Menü der
 Textfelder heißt „Rückgängig“, „Ausschneiden“, „Kopieren“, „Einfügen“ und
-„Alles auswählen“, und die Farbauswahl ist deutsch beschriftet. Die Hinweise
-an den Knöpfen nennen die Kürzel mit den Namen der Tasten auf der deutschen
+„Alles auswählen“, und die Farbauswahl ist deutsch beschriftet. Damit ändert
+sich eine Taste: In einer Rückfrage mit „Ja“ und „Nein“ bestätigt jetzt die
+Taste J (bis zum 02.10.2026 die Taste Y, nach dem englischen „Yes“); die Taste N
+bleibt N. Die Hinweise an
+den Knöpfen nennen die Kürzel mit den Namen der Tasten auf der deutschen
 Tastatur, also Strg, Umschalt, Entf, Pos1, Ende, Bild auf und Bild ab; das gilt
 unabhängig von der Übersetzung. Fehlt die Übersetzungsdatei, etwa bei einer
 beschädigten Installation, startet das Programm trotzdem: es schreibt dann
 eine Zeile „Hinweis: Qt-Übersetzung qtbase_de.qm nicht gefunden …“ ins
-Protokoll, und die Texte von Qt bleiben englisch. Die Tastenfolgen selbst
+Protokoll (die Rechenhilfe in ihr eigenes Protokollfeld), und die Texte von
+Qt bleiben englisch. Die Tastenfolgen selbst
 ändern sich dadurch nicht, Strg+Z bleibt Strg+Z; wo ein Kürzel bisher in einem
 Hinweis mit „Ctrl“ geschrieben stand, steht jetzt „Strg“.
 

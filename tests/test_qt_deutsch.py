@@ -68,6 +68,17 @@ def _uebersetzer_entfernen(app):
         t.setParent(None)
 
 
+def _fenster_merken(app) -> list:
+    """Die jetzigen Hauptebenen-Fenster - als Liste von Objekten, nicht von
+    id(): topLevelWidgets() liefert fuer C++-eigene Fenster Huellen, die gleich
+    wieder freigegeben werden, und ein neues Fenster kann deren id erben."""
+    return list(app.topLevelWidgets())
+
+
+def _neue_fenster(app, alt, klasse) -> list:
+    return [w for w in app.topLevelWidgets() if isinstance(w, klasse) and not any(w is x for x in alt)]
+
+
 def _anzahl_uebersetzer(app) -> int:
     from PySide6 import QtCore
     return len(app.findChildren(QtCore.QTranslator))
@@ -212,6 +223,8 @@ def test_suchorte_und_exe():
     check("Suchorte: erst QLibraryInfo, dann der PySide6-Ordner",
           orte[0] == qt and pak in orte and (qt == pak or orte.index(pak) >= 1), str(orte))
     check("… keine Doppelten", len(orte) == len(set(orte)), str(orte))
+    linux = os.path.normcase(os.path.normpath(os.path.join(os.path.dirname(PySide6.__file__), "Qt", "translations")))
+    check("Suchorte: für Linux auch PySide6/Qt/translations (pip-Paket)", linux in orte, str(orte))
 
     exe = tempfile.mkdtemp(prefix="statik3d_meipass_")
     ziel = os.path.join(exe, "PySide6", "translations")
@@ -228,6 +241,8 @@ def test_suchorte_und_exe():
         orte2 = [os.path.normcase(os.path.normpath(o)) for o in sprache.suchorte()]
         check("mit sys._MEIPASS: PySide6/translations der exe steht in den Suchorten",
               os.path.normcase(os.path.normpath(ziel)) in orte2, str(orte2))
+        ziel_linux = os.path.normcase(os.path.normpath(os.path.join(exe, "PySide6", "Qt", "translations")))
+        check("… und für Linux PySide6/Qt/translations der exe", ziel_linux in orte2, str(orte2))
         erg = sprache.uebersetzer_laden(app, orte=[ziel])
         check("aus dem Ordner der exe geladen", erg.geladen == ("qtbase",) and _abbrechen() == "Abbrechen",
               f"{erg.geladen} {_abbrechen()}")
@@ -247,6 +262,7 @@ def test_programmstart_laedt_uebersetzer():
     check("vor dem Start: englisch", _abbrechen() == "Cancel", _abbrechen())
     app.exec = lambda *a, **k: 0          # die Schleife selbst gehoert nicht zur Pruefung
     code = "kein SystemExit"
+    vorher0 = _fenster_merken(app)
     try:
         gm.main(app=app)
     except SystemExit as ex:
@@ -254,13 +270,19 @@ def test_programmstart_laedt_uebersetzer():
     check("main() lief bis zum Ende der Ereignisschleife", code == 0, str(code))
     check("nach dem Start: „Abbrechen“ und deutsche Standardknöpfe",
           _abbrechen() == "Abbrechen" and "&Ja" in _knopftexte(), f"{_abbrechen()!r} {_knopftexte()}")
+    # das Fenster, das main() mit geladenem Uebersetzer gebaut hat: Hinweise
+    # deutsch, Tastenfolgen weiter „Ctrl+…“ und wirksam
+    fenster0 = _neue_fenster(app, vorher0, gm.MainWindow)
+    check("main() hat genau ein Hauptfenster gebaut", len(fenster0) == 1, str(len(fenster0)))
+    if fenster0:
+        _hinweise_und_kuerzel(fenster0[0], app, "mit Übersetzer, Fenster aus main()", True)
     for w in app.topLevelWidgets():
         if w.isVisible():
             w.hide()
     # fehlt die Datei: der Start laeuft trotzdem, im Protokoll steht eine Zeile
     from statik3d.gui import sprache
     _uebersetzer_entfernen(app)
-    vorher = {id(w) for w in app.topLevelWidgets()}
+    vorher = _fenster_merken(app)
     leer = tempfile.mkdtemp(prefix="statik3d_keinqm_")
     echt = sprache.suchorte
     sprache.suchorte = lambda: [leer]
@@ -271,7 +293,7 @@ def test_programmstart_laedt_uebersetzer():
         code = ex.code
     finally:
         sprache.suchorte = echt
-    neu = [w for w in app.topLevelWidgets() if id(w) not in vorher and isinstance(w, gm.MainWindow)]
+    neu = _neue_fenster(app, vorher, gm.MainWindow)
     protokoll = neu[0].log.toPlainText() if neu else ""
     check("ohne Übersetzungsdatei startet das Programm trotzdem (Code 0), Qt bleibt englisch",
           code == 0 and bool(neu) and _abbrechen() == "Cancel", f"{code} {len(neu)} {_abbrechen()}")
@@ -281,66 +303,164 @@ def test_programmstart_laedt_uebersetzer():
         if w.isVisible():
             w.hide()
     # die Rechenhilfe (eigener Start, eigene Anwendung) laedt ihn ebenso
-    _uebersetzer_entfernen(app)
-    os.environ["STATIK3D_KEIN_EXEC"] = "1"
-    try:
-        from statik3d.gui import rechenhilfe
-        rechenhilfe.main(["--rechenhilfe"])
-    finally:
-        del os.environ["STATIK3D_KEIN_EXEC"]
-    check("Rechenhilfe: Qt-Texte deutsch", _abbrechen() == "Abbrechen", _abbrechen())
+    from statik3d.gui import rechenhilfe
+
+    def rechenhilfe_starten(orte=None):
+        _uebersetzer_entfernen(app)
+        echt = sprache.suchorte
+        if orte is not None:
+            sprache.suchorte = lambda: orte
+        # main() haelt sein Fenster nur in einer lokalen Variablen (es laeuft
+        # sonst in app.exec()); ohne Ereignisschleife waere es nach der
+        # Rueckkehr weg - darum merkt sich die Pruefung die Fenster
+        gemerkt = []
+        Echt = rechenhilfe.RechenhilfeFenster
+
+        class Merker(Echt):
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k)
+                gemerkt.append(self)
+        rechenhilfe.RechenhilfeFenster = Merker
+        os.environ["STATIK3D_KEIN_EXEC"] = "1"
+        try:
+            rechenhilfe.main(["--rechenhilfe"])
+        finally:
+            del os.environ["STATIK3D_KEIN_EXEC"]
+            sprache.suchorte = echt
+            rechenhilfe.RechenhilfeFenster = Echt
+        text = gemerkt[0].protokoll.toPlainText() if gemerkt else ""
+        for w in gemerkt:
+            w.hide()
+        return len(gemerkt), text
+    n, text = rechenhilfe_starten()
+    check("Rechenhilfe: Qt-Texte deutsch, im Protokollfeld kein Hinweis",
+          n == 1 and _abbrechen() == "Abbrechen" and "Hinweis" not in text, f"{n} {_abbrechen()!r} {text!r}")
+    n, text = rechenhilfe_starten([leer])
+    check("Rechenhilfe ohne Übersetzungsdatei (leerer Suchort): läuft, Qt englisch",
+          n == 1 and _abbrechen() == "Cancel", f"{n} {_abbrechen()!r}")
+    check("… ihr Protokollfeld nennt den Grund („Hinweis: Qt-Übersetzung qtbase_de.qm nicht gefunden …“)",
+          "Hinweis: Qt-Übersetzung qtbase_de.qm nicht gefunden" in text, text)
     for w in app.topLevelWidgets():
         w.hide()
     _uebersetzer_entfernen(app)
 
 
-def test_hinweise_ohne_ctrl():
-    """Die Hinweise aller Befehle zeigen Strg/Umschalt, die Kuerzel selbst bleiben."""
-    from PySide6 import QtGui
-    w, app = _fenster()
+def _hinweise_und_kuerzel(w, app, kopf, uebersetzt):
+    """Die Hinweise am Fenster ``w`` zeigen Strg/Umschalt, die Tastenfolgen
+    bleiben „Ctrl+…“ und loesen weiter aus. ``uebersetzt``: ob der Qt-Uebersetzer
+    beim Bau des Fensters schon geladen war."""
+    from PySide6 import QtCore, QtGui, QtTest
+    Qt = QtCore.Qt
+    p = f"[{kopf}] "
     rb = w.ribbon
     befehle = list(rb.befehle)
     mit_ctrl = [(b.text, b.aktion.toolTip()) for b in befehle if re.search(r"Ctrl|Shift\+", b.aktion.toolTip())]
-    check(f"Ribbon: in keinem der {len(befehle)} Befehlshinweise steht „Ctrl“ oder „Shift+“",
+    check(p + f"Ribbon: in keinem der {len(befehle)} Befehlshinweise steht „Ctrl“ oder „Shift+“",
           not mit_ctrl, str(mit_ctrl[:3]))
     alle = [a for a in w.findChildren(QtGui.QAction)]
     mit_ctrl = [(a.text(), a.toolTip()) for a in alle if re.search(r"Ctrl|Shift\+", a.toolTip())]
-    check(f"alle {len(alle)} Aktionen des Fensters: kein „Ctrl“ im Hinweis", not mit_ctrl, str(mit_ctrl[:3]))
+    check(p + f"alle {len(alle)} Aktionen des Fensters: kein „Ctrl“ im Hinweis", not mit_ctrl, str(mit_ctrl[:3]))
     mit_strg = [b for b in befehle if "Strg+" in b.aktion.toolTip()]
-    check("… dafür steht „Strg+“ in vielen Hinweisen (Neu, Öffnen, Speichern, Darstellungen …)",
+    check(p + "… dafür steht „Strg+“ in vielen Hinweisen (Neu, Öffnen, Speichern, Darstellungen …)",
           len(mit_strg) >= 10, str(len(mit_strg)))
 
     def tip(name):
         b = next((b for b in befehle if b.text == name), None)
         return b.aktion.toolTip() if b is not None else None
     t = tip("Neu")
-    check("Neu: Hinweis nennt „(Strg+N)“", t is not None and t.endswith("(Strg+N)"), repr(t))
+    check(p + "Neu: Hinweis nennt „(Strg+N)“", t is not None and t.endswith("(Strg+N)"), repr(t))
     umsch = [b for b in befehle if "Umschalt+F1" in b.aktion.toolTip()]
-    check("Fang auf Knoten: „Umschalt+F1“ im Hinweis", len(umsch) >= 1, str([b.aktion.toolTip() for b in umsch]))
+    check(p + "Fang auf Knoten: „Umschalt+F1“ im Hinweis", len(umsch) >= 1, str([b.aktion.toolTip() for b in umsch]))
     kopie = [b for b in befehle if "Strg+Umschalt+C" in b.aktion.toolTip()]
-    check("Tabelle kopieren: „Strg+Umschalt+C“ im Hinweis", len(kopie) >= 1)
+    check(p + "Tabelle kopieren: „Strg+Umschalt+C“ im Hinweis", len(kopie) >= 1)
     t = w.anordnung.act_ribbon.toolTip()
-    check("Ribbon einklappen: „Strg+F1“, einmal und ohne „Ctrl“", t.count("Strg+F1") == 1 and "Ctrl" not in t, repr(t))
+    check(p + "Ribbon einklappen: „Strg+F1“, einmal und ohne „Ctrl“", t.count("Strg+F1") == 1 and "Ctrl" not in t, repr(t))
 
     # die Tastenfolgen selbst bleiben (Schluessel „Ctrl+…“)
     seq = lambda a: a.shortcut().toString(QtGui.QKeySequence.PortableText)
     soll = {"Neu": "Ctrl+N", "Öffnen": "Ctrl+O", "Speichern": "Ctrl+S"}
     ist = {n: next((seq(b.aktion) for b in befehle if b.text == n), None) for n in soll}
-    check("Kürzel unverändert: Strg+N, Strg+O, Strg+S bleiben „Ctrl+…“", ist == soll, str(ist))
-    check("Strg+F1 gehört weiter dem Schalter „Ribbon einklappen“",
+    check(p + "Kürzel unverändert: Strg+N, Strg+O, Strg+S bleiben „Ctrl+…“", ist == soll, str(ist))
+    check(p + "Strg+F1 gehört weiter dem Schalter „Ribbon einklappen“",
           w.anordnung.act_ribbon.shortcut() == QtGui.QKeySequence("Ctrl+F1"), seq(w.anordnung.act_ribbon))
-    check("Strg+Z, Strg+Y unverändert",
+    check(p + "Strg+Z, Strg+Y unverändert",
           seq(w.act_undo) == "Ctrl+Z" and seq(w.act_redo) == "Ctrl+Y", f"{seq(w.act_undo)} {seq(w.act_redo)}")
+    # Taste und Umschalter, nicht der Text: so sieht Qt die Tastenfolge
+    kombi = lambda mod, taste: QtGui.QKeySequence(QtCore.QKeyCombination(mod, taste))
+    erwartet = {"Neu": kombi(Qt.ControlModifier, Qt.Key_N), "Öffnen": kombi(Qt.ControlModifier, Qt.Key_O),
+                "Speichern": kombi(Qt.ControlModifier, Qt.Key_S)}
+    ist = {n: next((b.aktion.shortcut() for b in befehle if b.text == n), None) for n in erwartet}
+    check(p + "Strg+N/O/S sind Strg-Taste plus Buchstabe (QKeyCombination), unabhängig vom Text",
+          ist == erwartet, str({n: v.toString() if v else v for n, v in ist.items()}))
+    nativ = w.act_undo.shortcut().toString(QtGui.QKeySequence.NativeText)
+    check(p + "Anzeigetext der Aktion (NativeText): " + ("„Strg+Z“" if uebersetzt else "„Ctrl+Z“ ohne Übersetzer"),
+          nativ == ("Strg+Z" if uebersetzt else "Ctrl+Z"), nativ)
 
     # Rueckgaengig/Wiederholen schreiben ihren Hinweis nach jedem Schritt neu
     w.load_example("frame"); app.processEvents()
     w._meta_setzen("projekt", "Probe"); app.processEvents()
     t = w.act_undo.toolTip()
-    check("Rückgängig nach einem Schritt: „Rückgängig: … (Strg+Z)“",
+    check(p + "Rückgängig nach einem Schritt: „Rückgängig: … (Strg+Z)“",
           t.startswith("Rückgängig: ") and t.endswith("(Strg+Z)") and "Ctrl" not in t, repr(t))
     w.undo(); app.processEvents()
     t = w.act_redo.toolTip()
-    check("Wiederholen nach Rückgängig: „(Strg+Y)“", t.endswith("(Strg+Y)") and "Ctrl" not in t, repr(t))
+    check(p + "Wiederholen nach Rückgängig: „(Strg+Y)“", t.endswith("(Strg+Y)") and "Ctrl" not in t, repr(t))
+
+    # und sie loesen wirklich aus: echter Tastendruck ins Fenster
+    # (Strg+A wählt alle Knoten, Strg+F1 klappt das Ribbon ein)
+    # zwei sichtbare Hauptfenster tragen dasselbe Kuerzel: Qt meldet „Ambiguous
+    # shortcut overload“ und loest nichts aus - darum die anderen verstecken
+    for x in app.topLevelWidgets():
+        if x is not w and isinstance(x, type(w)) and x.isVisible():
+            x.hide()
+    w.show(); w.activateWindow(); app.processEvents()
+    w.load_example("frame"); app.processEvents()
+    vor = len(w.selection)
+    QtTest.QTest.keyClick(w, Qt.Key_A, Qt.ControlModifier); app.processEvents()
+    check(p + "Strg+A löst aus: wählt alle Knoten",
+          vor == 0 and len(w.selection) == len(w.model.nodes) > 0, f"{vor} -> {len(w.selection)} von {len(w.model.nodes)}")
+    a = w.anordnung.act_ribbon
+    vorher = a.isChecked()
+    QtTest.QTest.keyClick(w, Qt.Key_F1, Qt.ControlModifier); app.processEvents()
+    zwischen = a.isChecked()
+    QtTest.QTest.keyClick(w, Qt.Key_F1, Qt.ControlModifier); app.processEvents()
+    check(p + "Strg+F1 löst aus: schaltet „Ribbon einklappen“ um und wieder zurück",
+          zwischen != vorher and a.isChecked() == vorher, f"{vorher} -> {zwischen} -> {a.isChecked()}")
+
+
+def test_hinweise_ohne_ctrl():
+    """Die Hinweise aller Befehle zeigen Strg/Umschalt, die Kuerzel selbst
+    bleiben - an einem Fenster, das ohne Uebersetzer gebaut wurde."""
+    w, app = _fenster()
+    _hinweise_und_kuerzel(w, app, "ohne Übersetzer", False)
+
+
+def test_rueckfrage_tasten():
+    """Mit dem Uebersetzer bestaetigt in „Ja/Nein“ die Taste J (vorher Y), N bleibt N."""
+    from PySide6 import QtCore, QtTest, QtWidgets
+    from statik3d.gui import sprache
+    app = _app()
+    _uebersetzer_entfernen(app)
+
+    def druck(taste):
+        S = QtWidgets.QMessageBox
+        mb = S(S.Question, "t", "x", S.Yes | S.No)
+        erg = []
+        mb.buttonClicked.connect(lambda b: erg.append(b.text().replace("&", "")))
+        mb.show(); app.processEvents()
+        QtTest.QTest.keyClick(mb, taste)
+        QtTest.QTest.qWait(400)          # animateClick wartet 100 ms
+        mb.close()
+        return erg
+    Key = QtCore.Qt
+    vorher = (druck(Key.Key_Y), druck(Key.Key_J), druck(Key.Key_N))
+    check("ohne Übersetzer: Y bestätigt „Yes“, J tut nichts, N wählt „No“",
+          vorher == (["Yes"], [], ["No"]), str(vorher))
+    sprache.uebersetzer_laden(app)
+    nachher = (druck(Key.Key_Y), druck(Key.Key_J), druck(Key.Key_N))
+    check("mit Übersetzer: J bestätigt „Ja“, Y tut nichts, N wählt „Nein“",
+          nachher == ([], ["Ja"], ["Nein"]), str(nachher))
+    _uebersetzer_entfernen(app)
 
 
 def test_handbuch():
@@ -351,14 +471,18 @@ def test_handbuch():
     check("Handbuch: Qt-Texte auf Deutsch (Standardknöpfe, Kontextmenü der Textfelder, Strg statt Ctrl)",
           i >= 0 and "Bis zum 02.10.2026" in absatz and "Abbrechen" in absatz and "Ctrl" in absatz
           and "Umschalt" in absatz and "qtbase_de.qm" in absatz and "Protokoll" in absatz, "")
+    check("Handbuch: das Beispiel ist „Ctrl+N“ am Knopf Neu (Rückgängig sagte schon vorher Strg+Z)",
+          "„Ctrl+N“ am Knopf *Neu*" in absatz and "schon vorher" in absatz and "„Ctrl+Z“" not in absatz, "")
+    check("Handbuch: in Rückfragen bestätigt jetzt die Taste J (vorher Y), N bleibt N",
+          "Taste J" in absatz and "Taste Y" in absatz and "Taste N" in absatz, "")
 
 
 def main():
     import faulthandler
     faulthandler.dump_traceback_later(600, exit=True)
-    for t in (test_kuerzeltext_tabelle, test_uebersetzer_laden, test_fehlende_datei_still_mit_meldung,
-              test_suchorte_und_exe, test_hinweise_ohne_ctrl, test_programmstart_laedt_uebersetzer,
-              test_handbuch):
+    for t in (test_kuerzeltext_tabelle, test_uebersetzer_laden, test_rueckfrage_tasten,
+              test_fehlende_datei_still_mit_meldung, test_suchorte_und_exe, test_hinweise_ohne_ctrl,
+              test_programmstart_laedt_uebersetzer, test_handbuch):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
