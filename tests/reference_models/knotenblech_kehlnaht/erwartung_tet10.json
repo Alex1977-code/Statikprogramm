@@ -1,0 +1,494 @@
+{
+ "modell": "knotenblech_kehlnaht",
+ "beschreibung": "Tet10-Referenz des Hauptprogramms statik3d (Entscheidung E2 des Anwenders, 29.09.2026)",
+ "programmstand": {
+  "commit": "7da3571a300fde8c4bf00d604bdd06710c4c2ed9",
+  "zweig": "main"
+ },
+ "netz": {
+  "quelle": "knotenblech_tet10_1mm.inp",
+  "sha256": "4d547fffc50d03d47a1b15dd2b1e0a46154e7a4b0d8a2840ccd6d760559271de",
+  "erzeuger": "gmsh (Session B), C3D10",
+  "elemente_tet10": 247636,
+  "knoten": 363048,
+  "kantenlaenge_uebergang_mm": {
+   "median_mm": 1.325,
+   "p90_mm": 1.754,
+   "max_mm": 2.195
+  },
+  "hinweis": "nur die C3D10-Elemente der Datei; die CPS6-Stirnflaechen sind weggelassen",
+  "anforderung_kante_uebergang_mm": 1.0,
+  "anforderung_erfuellt": false,
+  "hinweis_kante": "Groessenfeld des Erzeugers 1 mm in 12 mm Umkreis der Nahtuebergaenge; gemessen an allen Kanten der Tetraeder mit einer Ecke hoechstens 1,5 mm vom Uebergang (x 64 bzw. 136, y 30..50, z 0) ist der Median 1,325 mm - die Anforderung t/10 haelt dieses Netz nicht"
+ },
+ "werkstoff": {
+  "E_N_mm2": 210000.0,
+  "nu": 0.3
+ },
+ "randbedingungen": {
+  "ux_x0_mm": 0.0,
+  "ux_x200_mm": 0.095238095,
+  "quer": "frei",
+  "starrkoerper": {
+   "uy_uz_0_bei_mm": [
+    0.0,
+    40.625,
+    -4.987011
+   ],
+   "uz_0_bei_mm": [
+    0.0,
+    80.0,
+    -5.0
+   ]
+  }
+ },
+ "reaktion_x_an_x200_N": 81845.234,
+ "auswertung": {
+  "primaer": "sigma_xx = Spannungsfeld des Tet10-Elements am Punkt (interpoliert, Rohwert), gemittelt ueber die Elemente, die den Punkt enthalten",
+  "zum_vergleich": "sigma_xx_knoten = geglaettete Eckspannung des Loesers (res.solid_knoten), linear im Oberflaechendreieck interpoliert",
+  "einheit": "N/mm2"
+ },
+ "punkte": [
+  {
+   "seite": "rechts",
+   "lage": "0.4t",
+   "x_mm": 140.0,
+   "y_mm": 32.0,
+   "z_mm": 0.0,
+   "sigma_xx": 125.612,
+   "sigma_xx_knoten": 126.2807
+  },
+  {
+   "seite": "rechts",
+   "lage": "1.0t",
+   "x_mm": 146.0,
+   "y_mm": 32.0,
+   "z_mm": 0.0,
+   "sigma_xx": 118.8234,
+   "sigma_xx_knoten": 118.8156
+  },
+  {
+   "seite": "rechts",
+   "lage": "0.4t",
+   "x_mm": 140.0,
+   "y_mm": 34.0,
+   "z_mm": 0.0,
+   "sigma_xx": 130.058,
+   "sigma_xx_knoten": 130.673
+  },
+  {
+   "seite": "rechts",
+   "lage": "1.0t",
+   "x_mm": 146.0,
+   "y_mm": 34.0,
+   "z_mm": 0.0,
+   "sigma_xx": 120.4505,
+   "sigma_xx_knoten": 120.4648
+  },
+  {
+   "seite": "rechts",
+   "lage": "0.4t",
+   "x_mm": 140.0,
+   "y_mm": 36.0,
+   "z_mm": 0.0,
+   "sigma_xx": 132.8725,
+   "sigma_xx_knoten": 133.277
+  },
+  {
+   "seite": "rechts",
+   "lage": "1.0t",
+   "x_mm": 146.0,
+   "y_mm": 36.0,
+   "z_mm": 0.0,
+   "sigma_xx": 121.687,
+   "sigma_xx_knoten": 121.6935
+  },
+  {
+   "seite": "rechts",
+   "lage": "0.4t",
+   "x_mm": 140.0,
+   "y_mm": 38.0,
+   "z_mm": 0.0,
+   "sigma_xx": 134.4477,
+   "sigma_xx_knoten": 134.8729
+  },
+  {
+   "seite": "rechts",
+   "lage": "1.0t",
+   "x_mm": 146.0,
+   "y_mm": 38.0,
+   "z_mm": 0.0,
+   "sigma_xx": 122.4762,
+   "sigma_xx_knoten": 122.475
+  },
+  {
+   "seite": "rechts",
+   "lage": "0.4t",
+   "x_mm": 140.0,
+   "y_mm": 40.0,
+   "z_mm": 0.0,
+   "sigma_xx": 134.7431,
+   "sigma_xx_knoten": 135.0905
+  },
+  {
+   "seite": "rechts",
+   "lage": "1.0t",
+   "x_mm": 146.0,
+   "y_mm": 40.0,
+   "z_mm": 0.0,
+   "sigma_xx": 122.7455,
+   "sigma_xx_knoten": 122.7481
+  },
+  {
+   "seite": "rechts",
+   "lage": "0.4t",
+   "x_mm": 140.0,
+   "y_mm": 42.0,
+   "z_mm": 0.0,
+   "sigma_xx": 134.5203,
+   "sigma_xx_knoten": 134.6343
+  },
+  {
+   "seite": "rechts",
+   "lage": "1.0t",
+   "x_mm": 146.0,
+   "y_mm": 42.0,
+   "z_mm": 0.0,
+   "sigma_xx": 122.4713,
+   "sigma_xx_knoten": 122.4794
+  },
+  {
+   "seite": "rechts",
+   "lage": "0.4t",
+   "x_mm": 140.0,
+   "y_mm": 44.0,
+   "z_mm": 0.0,
+   "sigma_xx": 132.7699,
+   "sigma_xx_knoten": 133.2547
+  },
+  {
+   "seite": "rechts",
+   "lage": "1.0t",
+   "x_mm": 146.0,
+   "y_mm": 44.0,
+   "z_mm": 0.0,
+   "sigma_xx": 121.7032,
+   "sigma_xx_knoten": 121.7061
+  },
+  {
+   "seite": "rechts",
+   "lage": "0.4t",
+   "x_mm": 140.0,
+   "y_mm": 46.0,
+   "z_mm": 0.0,
+   "sigma_xx": 130.1892,
+   "sigma_xx_knoten": 130.5477
+  },
+  {
+   "seite": "rechts",
+   "lage": "1.0t",
+   "x_mm": 146.0,
+   "y_mm": 46.0,
+   "z_mm": 0.0,
+   "sigma_xx": 120.4683,
+   "sigma_xx_knoten": 120.4671
+  },
+  {
+   "seite": "rechts",
+   "lage": "0.4t",
+   "x_mm": 140.0,
+   "y_mm": 48.0,
+   "z_mm": 0.0,
+   "sigma_xx": 125.78,
+   "sigma_xx_knoten": 126.1036
+  },
+  {
+   "seite": "rechts",
+   "lage": "1.0t",
+   "x_mm": 146.0,
+   "y_mm": 48.0,
+   "z_mm": 0.0,
+   "sigma_xx": 118.8241,
+   "sigma_xx_knoten": 118.8247
+  },
+  {
+   "seite": "links",
+   "lage": "0.4t",
+   "x_mm": 60.0,
+   "y_mm": 32.0,
+   "z_mm": 0.0,
+   "sigma_xx": 125.8234,
+   "sigma_xx_knoten": 125.9261
+  },
+  {
+   "seite": "links",
+   "lage": "1.0t",
+   "x_mm": 54.0,
+   "y_mm": 32.0,
+   "z_mm": 0.0,
+   "sigma_xx": 118.8452,
+   "sigma_xx_knoten": 118.8238
+  },
+  {
+   "seite": "links",
+   "lage": "0.4t",
+   "x_mm": 60.0,
+   "y_mm": 34.0,
+   "z_mm": 0.0,
+   "sigma_xx": 130.1132,
+   "sigma_xx_knoten": 130.2519
+  },
+  {
+   "seite": "links",
+   "lage": "1.0t",
+   "x_mm": 54.0,
+   "y_mm": 34.0,
+   "z_mm": 0.0,
+   "sigma_xx": 120.4446,
+   "sigma_xx_knoten": 120.4697
+  },
+  {
+   "seite": "links",
+   "lage": "0.4t",
+   "x_mm": 60.0,
+   "y_mm": 36.0,
+   "z_mm": 0.0,
+   "sigma_xx": 133.0593,
+   "sigma_xx_knoten": 133.1577
+  },
+  {
+   "seite": "links",
+   "lage": "1.0t",
+   "x_mm": 54.0,
+   "y_mm": 36.0,
+   "z_mm": 0.0,
+   "sigma_xx": 121.7066,
+   "sigma_xx_knoten": 121.712
+  },
+  {
+   "seite": "links",
+   "lage": "0.4t",
+   "x_mm": 60.0,
+   "y_mm": 38.0,
+   "z_mm": 0.0,
+   "sigma_xx": 134.6524,
+   "sigma_xx_knoten": 134.7896
+  },
+  {
+   "seite": "links",
+   "lage": "1.0t",
+   "x_mm": 54.0,
+   "y_mm": 38.0,
+   "z_mm": 0.0,
+   "sigma_xx": 122.4612,
+   "sigma_xx_knoten": 122.4778
+  },
+  {
+   "seite": "links",
+   "lage": "0.4t",
+   "x_mm": 60.0,
+   "y_mm": 40.0,
+   "z_mm": 0.0,
+   "sigma_xx": 134.9682,
+   "sigma_xx_knoten": 135.1182
+  },
+  {
+   "seite": "links",
+   "lage": "1.0t",
+   "x_mm": 54.0,
+   "y_mm": 40.0,
+   "z_mm": 0.0,
+   "sigma_xx": 122.7092,
+   "sigma_xx_knoten": 122.7177
+  },
+  {
+   "seite": "links",
+   "lage": "0.4t",
+   "x_mm": 60.0,
+   "y_mm": 42.0,
+   "z_mm": 0.0,
+   "sigma_xx": 134.2838,
+   "sigma_xx_knoten": 134.6736
+  },
+  {
+   "seite": "links",
+   "lage": "1.0t",
+   "x_mm": 54.0,
+   "y_mm": 42.0,
+   "z_mm": 0.0,
+   "sigma_xx": 122.4706,
+   "sigma_xx_knoten": 122.4734
+  },
+  {
+   "seite": "links",
+   "lage": "0.4t",
+   "x_mm": 60.0,
+   "y_mm": 44.0,
+   "z_mm": 0.0,
+   "sigma_xx": 132.9524,
+   "sigma_xx_knoten": 133.3117
+  },
+  {
+   "seite": "links",
+   "lage": "1.0t",
+   "x_mm": 54.0,
+   "y_mm": 44.0,
+   "z_mm": 0.0,
+   "sigma_xx": 121.687,
+   "sigma_xx_knoten": 121.7208
+  },
+  {
+   "seite": "links",
+   "lage": "0.4t",
+   "x_mm": 60.0,
+   "y_mm": 46.0,
+   "z_mm": 0.0,
+   "sigma_xx": 130.3926,
+   "sigma_xx_knoten": 130.6036
+  },
+  {
+   "seite": "links",
+   "lage": "1.0t",
+   "x_mm": 54.0,
+   "y_mm": 46.0,
+   "z_mm": 0.0,
+   "sigma_xx": 120.4664,
+   "sigma_xx_knoten": 120.4655
+  },
+  {
+   "seite": "links",
+   "lage": "0.4t",
+   "x_mm": 60.0,
+   "y_mm": 48.0,
+   "z_mm": 0.0,
+   "sigma_xx": 125.7319,
+   "sigma_xx_knoten": 126.2254
+  },
+  {
+   "seite": "links",
+   "lage": "1.0t",
+   "x_mm": 54.0,
+   "y_mm": 48.0,
+   "z_mm": 0.0,
+   "sigma_xx": 118.8354,
+   "sigma_xx_knoten": 118.8202
+  }
+ ],
+ "hot_spot": [
+  {
+   "seite": "rechts",
+   "y_mm": 32.0,
+   "sigma_hs": 130.1378,
+   "sigma_hs_knoten": 131.2573
+  },
+  {
+   "seite": "rechts",
+   "y_mm": 34.0,
+   "sigma_hs": 136.463,
+   "sigma_hs_knoten": 137.4785
+  },
+  {
+   "seite": "rechts",
+   "y_mm": 36.0,
+   "sigma_hs": 140.3295,
+   "sigma_hs_knoten": 140.9993
+  },
+  {
+   "seite": "rechts",
+   "y_mm": 38.0,
+   "sigma_hs": 142.4288,
+   "sigma_hs_knoten": 143.1382
+  },
+  {
+   "seite": "rechts",
+   "y_mm": 40.0,
+   "sigma_hs": 142.7415,
+   "sigma_hs_knoten": 143.3188
+  },
+  {
+   "seite": "rechts",
+   "y_mm": 42.0,
+   "sigma_hs": 142.553,
+   "sigma_hs_knoten": 142.7376
+  },
+  {
+   "seite": "rechts",
+   "y_mm": 44.0,
+   "sigma_hs": 140.1477,
+   "sigma_hs_knoten": 140.9537
+  },
+  {
+   "seite": "rechts",
+   "y_mm": 46.0,
+   "sigma_hs": 136.6699,
+   "sigma_hs_knoten": 137.2681
+  },
+  {
+   "seite": "rechts",
+   "y_mm": 48.0,
+   "sigma_hs": 130.4172,
+   "sigma_hs_knoten": 130.9561
+  },
+  {
+   "seite": "links",
+   "y_mm": 32.0,
+   "sigma_hs": 130.4756,
+   "sigma_hs_knoten": 130.661
+  },
+  {
+   "seite": "links",
+   "y_mm": 34.0,
+   "sigma_hs": 136.5589,
+   "sigma_hs_knoten": 136.7734
+  },
+  {
+   "seite": "links",
+   "y_mm": 36.0,
+   "sigma_hs": 140.6279,
+   "sigma_hs_knoten": 140.7881
+  },
+  {
+   "seite": "links",
+   "y_mm": 38.0,
+   "sigma_hs": 142.7798,
+   "sigma_hs_knoten": 142.9974
+  },
+  {
+   "seite": "links",
+   "y_mm": 40.0,
+   "sigma_hs": 143.1409,
+   "sigma_hs_knoten": 143.3852
+  },
+  {
+   "seite": "links",
+   "y_mm": 42.0,
+   "sigma_hs": 142.1593,
+   "sigma_hs_knoten": 142.8071
+  },
+  {
+   "seite": "links",
+   "y_mm": 44.0,
+   "sigma_hs": 140.4626,
+   "sigma_hs_knoten": 141.0391
+  },
+  {
+   "seite": "links",
+   "y_mm": 46.0,
+   "sigma_hs": 137.0101,
+   "sigma_hs_knoten": 137.3623
+  },
+  {
+   "seite": "links",
+   "y_mm": 48.0,
+   "sigma_hs": 130.3296,
+   "sigma_hs_knoten": 131.1622
+  }
+ ],
+ "pruefung": {
+  "eichung_max_abweichung_N_mm2": 2.575063717813464e-09,
+  "primaer_gegen_knoten_hs_max": 0.008603,
+  "symmetrie_rechts_links_max": 0.002799,
+  "symmetrie_y40_max": 0.004335
+ },
+ "status": "verbindlich fuer das 1-mm-Netz; Netzkonvergenz (0,5-mm-Netz, 6,45 Mio. FHG) offen - wenn gerechnet, ersetzt sie diese Werte"
+}
