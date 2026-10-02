@@ -12031,6 +12031,10 @@ von 3,2·10⁻¹² auf 2·10⁻¹⁶ – dort waren 27 Punkte doppelt.
 Konvergenz mit vier Zyklen und Abnahme gegen `REFERENZ` nur mit `VOLUMEN3D_LANG=1`, 436 s und 59 GB; `REFERENZ` nennt die Quelle Pull Request 13 der Hauptsitzung;
 die Symmetrie rechts/links wird als Information gemeldet, bis der Anwender über die Planschranke entschieden hat).
 
+**Nachtrag (O1, 02.10.2026).** Pull Request 13 der Hauptsitzung (Referenzmodell, Merge-Commit f56281a) ist auf main; `test_knotenblech` liest die Referenz seither aus
+`tests/reference_models/knotenblech_kehlnaht/erwartung_tet10.json` (Hilfsfunktion `lade_referenz`) statt aus eingetragenen Zahlen – dieselben Werte (142,74 / 143,14 N/mm²). Ersetzt der
+0,5-mm-Lauf der Hauptsitzung die Datei, folgt der Test ohne Änderung; die Abnahme hängt von der Gitterlage ab (11.20).
+
 **Nachtrag (C2, 02.10.2026).** Mit der Kopplungskontrolle als Spannung (Nachtrag zu 11.17) meldet das Knotenblech jetzt an beiden Schnittebenen „Moment 7,9 % > 5 %“:
 die ebenen Schnittebenen halten das Blech gegen die Verdrehung, die das exzentrische Knotenblech erzeugt, und im Detail entsteht dort ein Biegemoment von 1,2·10⁴ N·mm
 (Randspannung ±8,8 N/mm²), das der Zug-Geber (reiner Zug) nicht kennt. Die Warnung ist richtig – das Globalmodell bildet die Exzentrizität nicht ab –, und

@@ -3,14 +3,16 @@
 Modell (Plan C1, 01.10.2026): Grundblech t 10 (x -5..205, y 0..80, z -10..0), Knotenblech 60 x 8 x 40 (x 70..130, y 36..44, z 0..40),
 Kehlnaht rundum mit Schenkel 6 als Pyramidenstumpf (Ecken auf Gehrung), Zug sigma_n = 100 N/mm2 ueber die Schnittebenen x 0 und 200.
 Hot-Spot IIW Typ a an den Stirnnaht-Uebergaengen x 136 und x 64 (Referenzpunkte 0,4 t und 1,0 t auf der Blechoberseite).
-Die Referenz ist die Tet10-Rechnung des Hauptprogramms (Entscheidung E2, Pull Request 13 auf main); ihre Werte stehen in REFERENZ.
+Die Referenz ist die Tet10-Rechnung des Hauptprogramms (Entscheidung E2, Pull Request 13 auf main); ihre Werte liest `lade_referenz()` aus der Datei.
 
 Aufruf: python -m volumen3d.tests.test_knotenblech   (Kernteil h 10 p 2 ~1 min; Konvergenz mit vier Zyklen und Abnahme mit VOLUMEN3D_LANG=1)
 """
 from __future__ import annotations
 
 import dataclasses
+import json
 import os
+import pathlib
 import sys
 import time
 
@@ -30,15 +32,27 @@ Y_MITTE, Z_MITTE = 0.5 * B_BLECH, -0.5 * T
 
 # Referenz des Hauptprogramms (Tet10, Entscheidung E2; Plan C1): sigma_hs an der Stirnnaht bei y = 40 in N/mm2, None solange sie fehlt.
 # Vorlaeufige Werte (eigener Lauf des Hauptprogramms aus einem festen Arbeitsbaum) tragen den Vermerk "vorlaeufig".
-# Referenz der Hauptsitzung (E2/E3, 01.10.2026, Pull Request 13 auf main: tests/reference_models/knotenblech_kehlnaht/erwartung_tet10.json): statik3d Tet10
-# (main 7da3571) auf dem gmsh-Netz 1 mm (247 636 Tet10, 363 048 Knoten, 1,09 Mio. FHG, PARDISO), zwei an der exakten Loesung geeichte Auswertungen
-# (2,6e-9 N/mm2), Primaerwert Elementfeld am Punkt; Reaktion 81 845,23 N (FCM 81 844,7 N). Einschraenkung: Kantenlaenge am Uebergang im Median 1,33 mm
-# (Maximum 2,2), also nicht t/10; mit 2,5 mm am Uebergang (eigener Vorlauf von Session B) 148,04 / 149,10 - die Referenz wandert zwischen den Netzen um
-# 3,6 %, der 0,5-mm-Lauf (6,45 Mio. FHG) liegt beim Anwender. Die vorlaeufigen Werte von Session B (eigener Lauf desselben Programms) waren identisch.
-REFERENZ: dict = {"quelle": "Hauptsitzung PR 13: statik3d Tet10 main 7da3571, gmsh-Netz 1 mm (Kante am Uebergang median 1,33 mm)",
-                  "sigma_hs_rechts_y40": 142.74, "sigma_hs_links_y40": 143.14,
-                  "sigma_hs_rechts": [130.14, 136.46, 140.33, 142.43, 142.74, 142.55, 140.15, 136.67, 130.42],
-                  "sigma_hs_links": [130.48, 136.56, 140.63, 142.78, 143.14, 142.16, 140.46, 137.01, 130.33], "vorlaeufig": False}
+# Referenz der Hauptsitzung (E2/E3, Pull Request 13, seit 02.10.2026 auf main): tests/reference_models/knotenblech_kehlnaht/erwartung_tet10.json, gerechnet mit
+# statik3d Tet10 (main 7da3571) auf dem gmsh-Netz 1 mm (247 636 Tet10, 363 048 Knoten, 1,09 Mio. FHG, PARDISO), zwei an der exakten Loesung geeichte Auswertungen
+# (2,6e-9 N/mm2), Primaerwert das Elementfeld am Punkt. Einschraenkung der Hauptsitzung: Kantenlaenge am Uebergang im Median 1,33 mm (Maximum 2,2), also nicht t/10;
+# das 0,5-mm-Netz (6,45 Mio. FHG) rechnet die Hauptsitzung am Abend des 02.10.2026 und ersetzt die Werte dann in der Datei - dieser Test liest sie von dort.
+REFERENZ_DATEI = pathlib.Path(__file__).resolve().parents[4] / "tests" / "reference_models" / "knotenblech_kehlnaht" / "erwartung_tet10.json"
+
+
+def lade_referenz() -> dict | None:
+    """sigma_hs je Naht (Liste ueber y 32..48) und die Quelle aus der Referenzdatei der Hauptsitzung; None, wenn die Datei fehlt (Paket ohne Repository)."""
+    if not REFERENZ_DATEI.is_file():
+        return None
+    d = json.loads(REFERENZ_DATEI.read_text(encoding="utf-8"))
+    je_seite: dict[str, list[float]] = {"rechts": [], "links": []}
+    for q in sorted(d["hot_spot"], key=lambda q: q["y_mm"]):
+        je_seite[q["seite"]].append(float(q["sigma_hs"]))
+    n = d["netz"]
+    return {"quelle": f"{REFERENZ_DATEI.name} (Hauptsitzung, {d['programmstand']['zweig']} {d['programmstand']['commit'][:7]}, Netz {n['quelle']}, Kante am Uebergang "
+                      f"median {n['kantenlaenge_uebergang_mm']['median_mm']} mm)",
+            "sigma_hs_rechts": je_seite["rechts"], "sigma_hs_links": je_seite["links"],
+            "sigma_hs_rechts_y40": je_seite["rechts"][4], "sigma_hs_links_y40": je_seite["links"][4], "status": d["status"]}
+
 
 MODELL = {
     "name": "Knotenblech mit Kehlnaht (Laengsrippe, IIW Typ a)",
@@ -186,6 +200,11 @@ def test_knotenblech_h10():
     # dieses Tests, 01.10.2026: die Zellquadratur hatte recht). Im Knotenblech liegen 60*8*6 = 2 880 des Stumpfs.
     a1, am, a2 = (X_TOE_R - X_TOE_L) * (Y_B - Y_A + 2 * S_NAHT), (X_B - X_A + S_NAHT) * (Y_B - Y_A + S_NAHT), (X_B - X_A) * (Y_B - Y_A)
     v_soll = L * B_BLECH * T + (X_B - X_A) * (Y_B - Y_A) * H_KB + S_NAHT / 6.0 * (a1 + 4 * am + a2) - (X_B - X_A) * (Y_B - Y_A) * S_NAHT
+    ref = lade_referenz()
+    check("Referenzdatei der Hauptsitzung lesbar: je Naht 9 Punkte, sigma_hs bei y 40 zwischen 130 und 150 N/mm2 (Tet10 1 mm: 142,74 / 143,14)",
+          ref is None or (len(ref["sigma_hs_rechts"]) == 9 and len(ref["sigma_hs_links"]) == 9
+                          and 130.0 < ref["sigma_hs_rechts_y40"] < 150.0 and 130.0 < ref["sigma_hs_links_y40"] < 150.0),
+          "Datei fehlt (Paket ohne Repository)" if ref is None else f"rechts {ref['sigma_hs_rechts_y40']:.4f}, links {ref['sigma_hs_links_y40']:.4f}")
     check(f"Volumen der CSG gleich der geschlossenen Form ({v:.3f} gegen {v_soll:.3f}, relativ {abs(v / v_soll - 1):.1e} < 1e-9)", abs(v / v_soll - 1) < 1e-9)
     dF = max(eb["deviation_force"] for eb in erg.coupling_check["planes"])
     fern = _fern(erg)
@@ -218,7 +237,7 @@ def test_knotenblech_h10():
 
 def test_knotenblech_konvergenz():
     """Vier Zyklen nach dem Fahrplan (h 5, h 2,5, p 3, p 4) ueber den Vertragsweg; Kurve, letzte Aenderung < 3 %, Symmetrie, eigene Extrapolation,
-    Abnahme gegen die Tet10-Referenz < 3 % (sobald REFERENZ gefuellt ist). Laeuft nur mit VOLUMEN3D_LANG=1 (Minuten, Speicher > 10 GB)."""
+    Abnahme gegen die Tet10-Referenz < 3 % (Referenzdatei der Hauptsitzung). Laeuft nur mit VOLUMEN3D_LANG=1 (Minuten, Speicher > 10 GB)."""
     if os.environ.get("VOLUMEN3D_LANG") != "1":
         check("Knotenblech-Konvergenz uebersprungen (VOLUMEN3D_LANG=1 setzen)", True)
         return
@@ -242,14 +261,17 @@ def test_knotenblech_konvergenz():
     # beim Anwender (Hebel t/8). Bis dahin Information, keine Schranke - eine nachtraeglich auf den Messwert gelegte Schranke pruefte nichts.
     check(f"Symmetrie rechts/links {sym * 100:.2f} % (Information: Planschranke 1 % verfehlt, Entscheidung beim Anwender); Interpolation der "
           f"Oberflaechenpunkte gegen Modul {d_eig * 100:.1f} % (Information); sigma_hs(y 40) rechts {r[4]:.3f}, links {l[4]:.3f} N/mm2", True)
-    if REFERENZ["sigma_hs_rechts_y40"] is None:
-        check("Abnahme gegen Tet10 offen: Referenz des Hauptprogramms liegt noch nicht vor (REFERENZ leer)", True, f"FCM y 40: {r[4]:.3f} N/mm2")
+    ref = lade_referenz()
+    if ref is None:
+        check("Abnahme gegen Tet10 uebersprungen: Referenzdatei tests/reference_models/knotenblech_kehlnaht/erwartung_tet10.json fehlt", True, f"FCM y 40: {r[4]:.3f} N/mm2")
         return
-    d_ref = max(abs(r[4] / REFERENZ["sigma_hs_rechts_y40"] - 1), abs(l[4] / REFERENZ["sigma_hs_links_y40"] - 1))
-    d_alle = max(float(np.abs(r / np.array(REFERENZ["sigma_hs_rechts"]) - 1).max()), float(np.abs(l / np.array(REFERENZ["sigma_hs_links"]) - 1).max()))
-    check(f"Abnahme (Vorgabe 13): sigma_hs(y 40) gegen Tet10-Referenz [{REFERENZ['quelle']}{', vorlaeufig' if REFERENZ['vorlaeufig'] else ''}]: "
-          f"rechts {(r[4] / REFERENZ['sigma_hs_rechts_y40'] - 1) * 100:+.2f} %, links {(l[4] / REFERENZ['sigma_hs_links_y40'] - 1) * 100:+.2f} % (|.| < 3 %); "
-          f"alle 18 Punkte {d_alle * 100:.2f} %", d_ref < 0.03, f"Referenz rechts {REFERENZ['sigma_hs_rechts_y40']}, links {REFERENZ['sigma_hs_links_y40']}")
+    d_ref = max(abs(r[4] / ref["sigma_hs_rechts_y40"] - 1), abs(l[4] / ref["sigma_hs_links_y40"] - 1))
+    d_alle = max(float(np.abs(r / np.array(ref["sigma_hs_rechts"]) - 1).max()), float(np.abs(l / np.array(ref["sigma_hs_links"]) - 1).max()))
+    # Die Abnahme haengt von der Gitterlage ab (Theorie 11.20, O3): bei dieser Lage (Schnittebenen bei 0 und 200) hielt sie mit -2,93 % knapp, bei anderen
+    # Lagen bis +3,10 %. Die Schranke 3 % ist die der Vorgabe; welche Streuung zulaessig ist, entscheidet der Anwender (Plan O3).
+    check(f"Abnahme (Vorgabe 13): sigma_hs(y 40) gegen Tet10-Referenz [{ref['quelle']}]: "
+          f"rechts {(r[4] / ref['sigma_hs_rechts_y40'] - 1) * 100:+.2f} %, links {(l[4] / ref['sigma_hs_links_y40'] - 1) * 100:+.2f} % (|.| < 3 %); "
+          f"alle 18 Punkte {d_alle * 100:.2f} %", d_ref < 0.03, f"Referenz rechts {ref['sigma_hs_rechts_y40']}, links {ref['sigma_hs_links_y40']}; {ref['status'][:80]}")
 
 
 TESTS = [test_knotenblech_h10, test_knotenblech_konvergenz]
