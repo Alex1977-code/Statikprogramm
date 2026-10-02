@@ -733,6 +733,21 @@ Balancierungsdurchläufe (sonst bliebe ein solcher Fehler unbemerkt; mit der Kor
 erfüllt, kein Blatt über der Obergrenze, bei zwei Ebenen dieselben 5 146 Blätter); danach laufen Kernsuite und die schweren Suiten, weil sie alle auf dem Gitteraufbau stehen. Empfehlung: vor Pull Request 3
 beheben. Sonnet 5.5, mittel.
 
+*Entscheidung O15 (Anwender 02.10.2026):* Empfehlung angenommen, den Gitterfehler vor Pull Request 3 beheben.
+
+*Regeln O15, vor der Umsetzung festgelegt (02.10.2026).* (1) Korrektur in `Gitter._aufbauen`: die Balancierung teilt die von `_indizieren` sortierten Felder `self.ebene`, `self.ijk`,
+`self.klasse`, für die die Maske aus `_unbalanciert` gilt. (2) Obergrenze für die Balancierungsdurchläufe: höchstens `2·max_ebene + 2`, danach `RuntimeError`. Begründung: ein Durchlauf löst alle
+Verstöße; ein neuer Verstoß entsteht nur an einem Nachbarn, der dem geteilten Blatt um zwei Ebenen nachhinkt, und die Kette läuft eine Ebene tiefer, also höchstens `max_ebene` Durchläufe. Gemessen mit
+der Korrektur: 1 Durchlauf bei zwei Ebenen, 2 bei drei. (3) Test `test_oktree.test_verfeinerung_drei_ebenen` (Kugel Radius 43, h 10, Bereich Radius 8 mit Ziel 1,3 mm, drei Ebenen; zum Vergleich Ziel
+2,6 mm): der Aufbau endet, kein Blatt liegt über `max_ebene`, 2:1 über 26 Nachbarn und Überdeckung ohne Lücke und Überlappung gelten – **unabhängig vom Gitter geprüft** über eine Abbildung der feinsten Teilzellen
+auf ihr Blatt, nicht über `Gitter.zelle_finden`; dazu schlägt die Obergrenze an, wenn `_unbalanciert` nie aufhört. Der Test muss mit der alten Reihenfolge (mit der Obergrenze) fehlschlagen. Alter Stand am Fall
+Ziel 1,3 mm (gemessen): Blätter der Ebenen 4 und 5 bei `max_ebene` 3, keine Konvergenz nach 40 Durchläufen. (4) Wirkung auf bestehende Ergebnisse: für **jedes** Gitter, das die Kernsuite und die schweren
+Suiten bauen, wird die Blattmenge (`ebene`, `ijk`, sortiert) nach der Korrektur mit der des alten Verfahrens (mit Durchlaufgrenze 60) verglichen; Gleichheit heißt, dass sich keine Zahl dieser Suiten
+ändern kann, Unterschiede werden mit Suite und Fall aufgelistet und die betroffenen Suiten mit den Ergebnissen vor der Korrektur verglichen. (5) Zahlen von t/8 mit dem Code des Repositorys wiederholen:
+31 531 Blätter, 841 032 / 2 747 052 / 6 398 538 Freiheitsgrade bei p 2 / 3 / 4, Aufbau unter 5 s. (6) Danach Kernsuite, `test_oktree`, `test_gitter`, `test_zwaenge`, `test_patch`, `test_stl`, `test_step`,
+`test_huelle`, `test_schale`, `test_rueckgewinnung`, `test_mehrgitter`, `test_operator_gpu`, `test_lame`, `test_kragarm`, `test_kirsch`, `test_knotenblech` (lang), `test_adaptiv` (lang), mypy, lint-imports; Handbuch:
+Theorie 11.8 (Nachtrag), 11.20, Entwurf 4b.1 und 4e.8, `Volumenmodul.md`.
+
 ## Modell je Schritt
 
 Der Anwender stellt Modell und Denkstufe vor jedem Schritt von Hand ein; der Stand wird nach jedem Schritt
