@@ -17941,9 +17941,7 @@ class MainWindow(QtWidgets.QMainWindow):
         lay = QtWidgets.QVBoxLayout(dlg)
         t = QtWidgets.QPlainTextEdit(text)
         t.setReadOnly(True)
-        f = t.font()
-        f.setFamily("Courier New")
-        t.setFont(f)
+        t.setStyleSheet(dsg.festschrift_stil(None))   # setFont ginge im Stilblatt unter
         t.setMinimumSize(820, 520)
         lay.addWidget(t)
         bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Close)
@@ -23347,9 +23345,7 @@ class MainWindow(QtWidgets.QMainWindow):
         lay = QtWidgets.QVBoxLayout(box)
         txt = QtWidgets.QPlainTextEdit()
         txt.setReadOnly(True)
-        f = txt.font()
-        f.setFamily("Courier New")
-        txt.setFont(f)
+        txt.setStyleSheet(dsg.festschrift_stil(None))   # setFont ginge im Stilblatt unter
         txt.setPlainText("Befund wird erstellt …")
         txt.setMinimumSize(720, 380)
         lay.addWidget(txt)

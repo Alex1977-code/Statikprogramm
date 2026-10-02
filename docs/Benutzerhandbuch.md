@@ -2528,10 +2528,14 @@ für Zeile. Jetzt zeigt das Protokoll drei Auszeichnungen, und der Text bleibt
 dabei, wie er war.
 
 **FEHLER rot, WARNUNG orange.** Eine Zeile, deren erstes Wort **FEHLER** ist,
-steht ganz in Rot, eine Zeile, deren erstes Wort **WARNUNG** ist, ganz in
-Orange. Es sind die Fehler- und die Warnfarbe der Oberfläche, die auch der
-Modellbaum und der Filmstreifen der Stellungen benutzen (Rot `#c62828`,
-Orange `#b7791f`). Das erste Wort entscheidet, auch wenn die Zeile eingerückt
+steht ganz in Rot (`#c62828`, wie die Fehlerfarbe der Oberfläche), eine Zeile,
+deren erstes Wort **WARNUNG** ist, ganz in einem dunklen Orange (`#b35a00`).
+Dieses Orange ist bewusst dunkler als die Warnfarbe von Modellbaum und
+Filmstreifen (`#b7791f`): als 11 Pixel kleine Schrift auf Weiß erreichte jene
+nur einen Kontrast von 3,6 zu 1, die Web-Richtlinien (WCAG, Stufe AA) verlangen
+für kleinen Text 4,5 zu 1. Gerechnet über die relative Leuchtdichte hat das
+Rot 5,6 zu 1 und das dunkle Orange 4,8 zu 1; die Prüfung steht in
+`tests/test_protokoll_lesbar.py`. Das erste Wort entscheidet, auch wenn die Zeile eingerückt
 ist, wie bei den Importhinweisen („  WARNUNG:   Stabtyp Zugstab: …“), und auch
 ohne Doppelpunkt („FEHLER Versatz Anfang y, z [mm]: …“). Ein FEHLER oder eine
 WARNUNG mitten im Satz färbt nichts, und „FEHLERFREI“ oder „WARNUNGEN“ sind
@@ -2566,6 +2570,15 @@ wirklich festbreite Schrift aus dieser Reihe: Consolas, Cascadia Mono, DejaVu
 Sans Mono, Liberation Mono, Menlo, Courier New; gibt es keine davon, nimmt es
 die Festbreitenschrift des Systems. Auf einem Windows-Rechner mit Consolas
 ist das Consolas.
+
+Dasselbe galt für vier weitere Stellen, die bis zum 02.10.2026 eine
+Festbreitenschrift nur dem Namen nach hatten: den Befund unter *Anschlüsse
+zeigen*, den Update-Befund (rechte Maustaste am Knopf „Update suchen“), den
+Anschlussdialog und die Profilwerte im Querschnittsdialog. Die ersten drei
+verlangten „Courier New“ mit `setFont`, und das Stilblatt des Fensters setzte
+die Schrift dennoch auf Segoe UI zurück (gemessen); der Querschnittsdialog
+stand wie das Protokoll auf „monospace“, also Tahoma. Alle vier nehmen jetzt
+dieselbe Festbreitenschrift, in der Größe des Fensters.
 
 ### Auswahl per Klick
 

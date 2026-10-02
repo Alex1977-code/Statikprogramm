@@ -11,7 +11,7 @@ from ..model import (Model, Material, Section, LoadCase, Combination, Member,
 from .. import profiles
 from ..ec3.fatigue import DETAIL_CATEGORIES, DETAIL_EXAMPLES
 from .. import elemente as EL
-from .design import namen as _namen
+from .design import namen as _namen, festschrift_stil as _festschrift_stil
 from . import zahlenfeld as zf
 from .. import zahlen as zl
 
@@ -143,7 +143,7 @@ class SectionDialog(QtWidgets.QDialog):
         self.profile = QtWidgets.QComboBox()
         self.profile.currentTextChanged.connect(self._show_props)
         self.props = QtWidgets.QLabel("")
-        self.props.setStyleSheet("font-family: monospace")
+        self.props.setStyleSheet(_festschrift_stil(None))
         f.addRow("Land / Norm", self.country)
         f.addRow("Reihe", self.family)
         f.addRow("Profil", self.profile)
@@ -1429,9 +1429,9 @@ class JointDialog(QtWidgets.QDialog):
         self.txt = QtWidgets.QPlainTextEdit()
         self.txt.setReadOnly(True)
         self.txt.setMinimumSize(720, 380)
-        f = self.txt.font()
-        f.setFamily("Courier New")
-        self.txt.setFont(f)
+        # Festbreitenschrift ueber die Stilzeile: setFont ginge im Stilblatt
+        # des Fensters unter (Segoe UI), 02.10.2026
+        self.txt.setStyleSheet(_festschrift_stil(None))
         lay.addWidget(self.txt)
 
         self.cb_fest = QtWidgets.QCheckBox(

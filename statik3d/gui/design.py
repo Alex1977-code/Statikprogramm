@@ -36,6 +36,10 @@ FARBEN = {
     "gut": "#2e8b3a",
     "schlecht": "#c62828",
     "warn": "#b7791f",
+    # Warnfarbe fuer Text (Protokoll, 11 px): dunkler als "warn" - Kontrast auf
+    # Weiss 4,8 zu 1 statt 3,6, WCAG AA verlangt 4,5 fuer kleine Schrift.
+    # "warn" bleibt fuer Modellbaum und Filmstreifen (Teilpaket 9a)
+    "warn_text": "#b35a00",
     "ansicht": "#e9edf1",
     # Eingabetabellen (Teilpaket 10a): editierbare Zelle weiss, feste grau
     "zelle_edit": "#ffffff",
@@ -208,11 +212,14 @@ def festschrift_familie() -> str:
     return name
 
 
-def festschrift_stil(px: int = 11) -> str:
+def festschrift_stil(px=11) -> str:
     """Stilzeile fuer ein Textfeld in der Festbreitenschrift. Die Schrift gehoert
     in die Stilzeile des Feldes, nicht in setFont: das Stilblatt des Fensters
-    (STIL, Segoe UI fuer jedes QWidget) hebt ein gesetztes Schriftbild wieder auf."""
-    return f'font-family: "{festschrift_familie()}"; font-size: {px}px;'
+    (STIL, Segoe UI fuer jedes QWidget) hebt ein gesetztes Schriftbild wieder auf
+    (Dialoge mit setFamily("Courier New") standen so in Segoe UI, gemessen
+    02.10.2026). ``px=None`` laesst die Groesse des Fensters stehen."""
+    gross = f" font-size: {px}px;" if px else ""
+    return f'font-family: "{festschrift_familie()}";{gross}'
 
 
 #: Anfang einer Meldungszeile: FEHLER oder WARNUNG als erstes Wort, auch eingerueckt
@@ -240,6 +247,10 @@ def protokollzeile_art(text: str):
 class ProtokollFaerber(QtGui.QSyntaxHighlighter):
     """Faerbt und fettet Zeilen des Protokolls, ohne den Text anzufassen.
 
+    Rot ist FARBEN["schlecht"], Orange FARBEN["warn_text"] (nicht "warn": das ist
+    fuer Flaechen und grosse Zeichen und liegt als 11-px-Text mit 3,6 zu 1 unter
+    der Grenze 4,5 der WCAG).
+
     Ein Syntaxfaerber legt seine Formate ueber das Layout des Blocks; der Text
     des Dokuments und das Zeichenformat der Zeile bleiben unberuehrt -
     ``toPlainText()`` liefert genau das Geschriebene, und die rote Sammelzeile
@@ -252,7 +263,7 @@ class ProtokollFaerber(QtGui.QSyntaxHighlighter):
         fehler = QtGui.QTextCharFormat()
         fehler.setForeground(QtGui.QColor(FARBEN["schlecht"]))
         warnung = QtGui.QTextCharFormat()
-        warnung.setForeground(QtGui.QColor(FARBEN["warn"]))
+        warnung.setForeground(QtGui.QColor(FARBEN["warn_text"]))
         abschnitt = QtGui.QTextCharFormat()
         abschnitt.setFontWeight(QtGui.QFont.Bold)
         self._formate = {"fehler": fehler, "warnung": warnung, "abschnitt": abschnitt}

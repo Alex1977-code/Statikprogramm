@@ -6,11 +6,16 @@ Abschnitte fett, eine echte Festbreitenschrift.
   des Protokolls (toPlainText) bleibt Zeichen fuer Zeichen derselbe, denn sehr
   viele Pruefungen lesen ihn so.
 * FEHLER-Zeile: ganze Zeile in der Fehlerfarbe der Oberflaeche
-  (design.FARBEN["schlecht"]); WARNUNG-Zeile in der Warnfarbe
-  (FARBEN["warn"]); Abschnittskopf („--- Titel ---“): fett.
+  (design.FARBEN["schlecht"]); WARNUNG-Zeile in der Textfarbe der Warnung
+  (FARBEN["warn_text"], dunkler als FARBEN["warn"]: 11-px-Text braucht nach
+  WCAG 4,5 zu 1 auf Weiss, geprueft in test_kontrast_der_protokollfarben);
+  Abschnittskopf („--- Titel ---“): fett.
 * Schrift: unter Windows ist „monospace“ kein Schriftname - die Vorgabe wurde
   zu Tahoma, einer Proportionalschrift (gemessen 02.10.2026). Jetzt waehlt
-  design.festschrift_familie die erste wirklich festbreite Schrift.
+  design.festschrift_familie die erste wirklich festbreite Schrift. Dasselbe
+  gilt fuer die Dialoge, die „Courier New“ per setFont verlangten (das Stilblatt
+  des Fensters hob es auf): Anschluesse, Update-Befund, Anschlussdialog,
+  Querschnittsdialog.
 
 Aufruf:  python -m tests.test_protokoll_lesbar
          python -m tests.test_protokoll_lesbar --nur-schrift   (ohne Hauptfenster,
@@ -84,7 +89,7 @@ def _letzte(w, n=1):
 def _farben():
     from PySide6 import QtGui
     from statik3d.gui.design import FARBEN
-    return (QtGui.QColor(FARBEN["schlecht"]).name(), QtGui.QColor(FARBEN["warn"]).name())
+    return (QtGui.QColor(FARBEN["schlecht"]).name(), QtGui.QColor(FARBEN["warn_text"]).name())
 
 
 def test_zeilenarten_im_fenster():
@@ -231,6 +236,188 @@ def test_leistung_je_zeile():
           mit <= 3 * ohne + 0.5, f"mit {mit:.3f} s, ohne {ohne:.3f} s")
 
 
+def _leuchtdichte(farbe):
+    """Relative Leuchtdichte nach WCAG 2.x (sRGB) einer Farbe „#rrggbb“."""
+    r, g, b = (int(farbe[i:i + 2], 16) / 255.0 for i in (1, 3, 5))
+
+    def lin(c):
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+    return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+
+
+def _kontrast(vorder, grund):
+    """Kontrastverhaeltnis nach WCAG 2.x: (hell + 0,05) / (dunkel + 0,05)."""
+    a, b = _leuchtdichte(vorder), _leuchtdichte(grund)
+    return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+
+
+def test_kontrast_nur_rechnung():
+    """11-px-Text braucht nach WCAG AA mindestens 4,5 zu 1 auf dem Grund des
+    Protokolls (design.FARBEN["flaeche"]). Die Warnfarbe des Modellbaums
+    (FARBEN["warn"], 3,6 zu 1) reicht dafuer nicht und bleibt fuer Flaechen
+    und grosse Zeichen, wie sie ist."""
+    from statik3d.gui import design as dsg
+    F = dsg.FARBEN
+    grund = F["flaeche"]
+    k_fehler = _kontrast(F["schlecht"], grund)
+    check("Fehlerfarbe auf dem Protokollgrund: Kontrast mindestens 4,5 zu 1",
+          k_fehler >= 4.5, f"{F['schlecht']} auf {grund}: {k_fehler:.2f}")
+    check("Warnfarbe für Text (warn_text) gibt es und erreicht 4,5 zu 1",
+          "warn_text" in F and _kontrast(F.get("warn_text", "#ffffff"), grund) >= 4.5,
+          f"{F.get('warn_text')}: {_kontrast(F.get('warn_text', '#ffffff'), grund):.2f}")
+    check("Warnfarbe für Text ist ein Orange (Farbton 20 bis 40 Grad), kein Braun-Schwarz",
+          "warn_text" in F and 20 <= _farbton(F["warn_text"]) <= 40,
+          f"{_farbton(F.get('warn_text', '#000000')):.0f} Grad")
+    check("FARBEN[\"warn\"] für Modellbaum und Filmstreifen ist unverändert (#b7791f)",
+          F["warn"] == "#b7791f", F["warn"])
+    check("das Protokoll nimmt warn_text, nicht warn (und unterscheidet es von Rot)",
+          F.get("warn_text") not in (None, F["warn"], F["schlecht"]), str(F.get("warn_text")))
+    # die Rechnung selbst an einem bekannten Wert: Schwarz auf Weiss ist 21 zu 1
+    check("Kontrastrechnung: Schwarz auf Weiss ist 21 zu 1",
+          abs(_kontrast("#000000", "#ffffff") - 21.0) < 1e-6, f"{_kontrast('#000000', '#ffffff'):.4f}")
+
+
+def test_kontrast_der_protokollfarben():
+    """Wie test_kontrast_nur_rechnung, dazu die Zeile im Fenster."""
+    from statik3d.gui import design as dsg
+    test_kontrast_nur_rechnung()
+    w, app = _fenster()
+    rot, warn = _farben()
+    w.log.clear()
+    w.log.appendPlainText("WARNUNG: Kontrastprobe")
+    z = _letzte(w)
+    check("WARNUNG-Zeile im Fenster hat die Textfarbe der Warnung mit Kontrast >= 4,5",
+          z[1] and z[1][0][2] == warn and _kontrast(z[1][0][2], dsg.FARBEN["flaeche"]) >= 4.5,
+          f"{z[1]}")
+
+
+def _farbton(farbe):
+    import colorsys
+    r, g, b = (int(farbe[i:i + 2], 16) / 255.0 for i in (1, 3, 5))
+    return colorsys.rgb_to_hsv(r, g, b)[0] * 360.0
+
+
+def _felder_der_modalen_maske(app, aufruf):
+    """Ruft *aufruf* (enthaelt ein ``exec()``); der Zeitgeber merkt sich, sobald
+    die Maske steht, Stilzeile und Schrift ihrer Textfelder und schliesst sie.
+    Zurueck: [(Titel, Stilzeile, Familie, fest?), ...]."""
+    from PySide6 import QtCore, QtGui, QtWidgets
+    gefunden = []
+
+    def zu():
+        d = QtWidgets.QApplication.activeModalWidget()
+        if d is None:
+            QtCore.QTimer.singleShot(50, zu)
+            return
+        for t in d.findChildren(QtWidgets.QPlainTextEdit):
+            t.ensurePolished()
+            i = QtGui.QFontInfo(t.font())
+            gefunden.append((d.windowTitle(), t.styleSheet().strip(), i.family(), i.fixedPitch()))
+        d.reject()
+    QtCore.QTimer.singleShot(0, zu)
+    aufruf()
+    return gefunden
+
+
+def _fest_pruefen(name, stil, familie, fest, soll):
+    """Die Stilzeile ist die des Helfers; mit Schriftdatenbank (Desktop) meldet
+    QFontInfo am Widget eine feste Schrift in der gewaehlten Familie."""
+    from statik3d.gui import design as dsg
+    check(f"{name}: Stilzeile aus dem gemeinsamen Helfer", stil == soll.strip(), stil)
+    check(f"{name}: kein „monospace“, solange es eine echte Festbreitenschrift gibt",
+          "monospace" not in stil or not dsg._schriften_vorhanden(), stil)
+    if dsg._schriften_vorhanden():
+        check(f"{name}: QFontInfo meldet eine feste Schrift", fest and familie.lower() ==
+              dsg.festschrift_familie().lower(), f"{familie}, fest={fest}")
+
+
+def test_weitere_stellen_mit_festschrift():
+    """Die vier weiteren Stellen, die „Courier New“ per setFont oder „monospace“
+    verlangten: Anschlüsse (show_joints), Update-Befund (update_report),
+    Anschlussdialog (JointDialog.txt) und die Profilwerte im Querschnittsdialog
+    (SectionDialog.props). Unter dem Stilblatt des Fensters hob dieses das
+    gesetzte Schriftbild auf (gemessen: Segoe UI statt Courier New)."""
+    from PySide6 import QtWidgets
+    from statik3d.gui import design as dsg
+    from statik3d.gui.dialogs import JointDialog, SectionDialog
+    from statik3d.joints.templates import TYPES
+    from statik3d.model import Material, Section
+    w, app = _fenster()
+    soll = dsg.festschrift_stil(None)
+    check("festschrift_stil(None) setzt nur die Familie, keine Größe",
+          soll.startswith('font-family: "') and "font-size" not in soll and soll.endswith(";"), soll)
+
+    w.new_model()
+    m = w.model
+    m.add_material(Material.steel("S355"))
+    m.add_section(Section.from_profile("IPE 400"))
+    n = [m.add_node(6.0 * i, 0.0, 0.0) for i in range(2)]
+    e = m.add_element("beam", [n[0], n[1]], "S355", "IPE 400")
+    m.add_joint("A1", next(iter(TYPES)), e, 1)
+    w.analysis = None
+
+    # Anschluesse: die Maske zeigt den Befund im Klartext
+    got = _felder_der_modalen_maske(app, w.show_joints)
+    check("Anschlüsse: die Maske hat ein Textfeld", len(got) == 1, str(got))
+    if got:
+        _fest_pruefen("Anschlüsse (main.py show_joints)", got[0][1], got[0][2], got[0][3], soll)
+
+    # Update-Befund: der Befund kommt aus einem Arbeiter - hier ausgeschaltet
+    w._run_update_worker = lambda *a, **k: None
+    got = _felder_der_modalen_maske(app, w.update_report)
+    check("Update-Befund: die Maske hat ein Textfeld", len(got) == 1, str(got))
+    if got:
+        _fest_pruefen("Update-Befund (main.py update_report)", got[0][1], got[0][2], got[0][3], soll)
+
+    # Anschlussdialog und Querschnittsdialog: ohne exec, nur gebaut
+    d = JointDialog(w, m, e, 1, {"N": -100e3, "Vz": 90e3, "My": 180e3})
+    d.txt.ensurePolished()
+    from PySide6 import QtGui
+    i = QtGui.QFontInfo(d.txt.font())
+    _fest_pruefen("Anschlussdialog (dialogs.py JointDialog.txt)", d.txt.styleSheet().strip(),
+                  i.family(), i.fixedPitch(), soll)
+    d.close()
+    s = SectionDialog(w)
+    s.props.ensurePolished()
+    i = QtGui.QFontInfo(s.props.font())
+    _fest_pruefen("Querschnittsdialog (dialogs.py SectionDialog.props)", s.props.styleSheet().strip(),
+                  i.family(), i.fixedPitch(), soll)
+    s.close()
+
+
+def _echte_schrift_dialoge():
+    """Ohne Hauptfenster (Lauf mit QT_QPA_PLATFORM=windows --nur-schrift): die
+    beiden Dialoge aus dialogs.py unter dem Stilblatt des Fensters; mit Schriften
+    meldet QFontInfo dort die feste Schrift."""
+    from PySide6 import QtGui, QtWidgets
+    from statik3d.gui import design as dsg
+    from statik3d.gui.dialogs import JointDialog, SectionDialog
+    from statik3d.joints.templates import TYPES
+    from statik3d.model import Material, Model, Section
+    _app()
+    if not dsg._schriften_vorhanden():
+        print("      (keine Schriftdatenbank - offscreen -, Dialoge nicht pruefbar)")
+        return
+    eltern = QtWidgets.QMainWindow()
+    eltern.setStyleSheet(dsg.stil())
+    soll = dsg.festschrift_stil(None)
+    m = Model("Probe")
+    m.add_material(Material.steel("S355"))
+    m.add_section(Section.from_profile("IPE 400"))
+    n = [m.add_node(6.0 * i, 0.0, 0.0) for i in range(2)]
+    e = m.add_element("beam", [n[0], n[1]], "S355", "IPE 400")
+    d = JointDialog(eltern, m, e, 1, {"N": -100e3, "Vz": 90e3, "My": 180e3})
+    d.txt.ensurePolished()
+    i = QtGui.QFontInfo(d.txt.font())
+    _fest_pruefen("Anschlussdialog ohne Hauptfenster", d.txt.styleSheet().strip(),
+                  i.family(), i.fixedPitch(), soll)
+    s = SectionDialog(eltern)
+    s.props.ensurePolished()
+    i = QtGui.QFontInfo(s.props.font())
+    _fest_pruefen("Querschnittsdialog ohne Hauptfenster", s.props.styleSheet().strip(),
+                  i.family(), i.fixedPitch(), soll)
+
+
 def test_waehle_festschrift():
     """Die Wahl der Schrift als reine Logik - ohne Schriftdatenbank pruefbar."""
     from statik3d.gui import design as dsg
@@ -303,10 +490,13 @@ def main():
     import faulthandler
     faulthandler.dump_traceback_later(600, exit=True)
     nur_schrift = "--nur-schrift" in sys.argv
-    tests = ((test_waehle_festschrift, _echte_schrift) if nur_schrift else
+    tests = ((test_waehle_festschrift, _echte_schrift, _echte_schrift_dialoge,
+              test_kontrast_nur_rechnung) if nur_schrift else
              (test_zeilenarten_im_fenster, test_aufrufe_des_programms,
               test_text_bleibt_wie_geschrieben, test_leistung_je_zeile,
-              test_waehle_festschrift, test_schrift_im_fenster))
+              test_kontrast_der_protokollfarben,
+              test_waehle_festschrift, test_schrift_im_fenster,
+              test_weitere_stellen_mit_festschrift))
     for t in tests:
         print(f"\n--- {t.__name__} ---")
         try:
