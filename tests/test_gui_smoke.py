@@ -1649,9 +1649,12 @@ def main():
               and mb.supports[0].name == "Fußpunkt links")
         check("Symbolgröße in der Tabelle editierbar",
               w._lager_aendern(0, 6, 2.5) and mb.supports[0].groesse == 2.5)
-        # Die Tabelle ist nach der ersten Spalte sortiert - Zeile 0 ist der
-        # Lastfall mit dem ersten Namen, nicht der zuerst angelegte
+        # Die Tabelle steht seit dem 02.10.2026 (Teilpaket 10a) in der Reihenfolge
+        # des Modells (bis dahin nach der ersten Spalte sortiert) - Zeile 0 ist
+        # der zuerst angelegte Lastfall
         lf0 = str(w.tbl_lastfall.modell.zeilen[0][0])
+        check("Lastfalltabelle steht in der Reihenfolge des Modells",
+              lf0 == next(iter(mb.load_cases)), lf0)
         check("Lastfallnummer in der Tabelle editierbar",
               w._lastfall_aendern(0, 1, 7) and mb.load_cases[lf0].nummer == 7,
               f"{lf0}: {mb.load_cases[lf0].nummer}")

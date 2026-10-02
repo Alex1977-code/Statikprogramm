@@ -10577,7 +10577,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.tbl_sec = tab.Datentabelle([
             Spalte("Name", hinweis="Bezeichnung des Querschnitts"),
-            Spalte("Typ", hinweis="I, RHS, CHS, rect, circle, free"),
+            Spalte("Typ", hinweis="Art des Querschnitts: I-Profil, Rechteckhohlprofil (RHS), "
+                                  "Rohr (CHS), Rechteck, Kreis, frei …",
+                   klartext=tab.QUERSCHNITTSART_TEXT),
             Spalte("A", "cm²", "zahl", 2, True, hinweis="Querschnittsfläche"),
             Spalte("Iy", "cm⁴", "zahl", 1, True, hinweis="Trägheitsmoment um die starke Achse"),
             Spalte("Iz", "cm⁴", "zahl", 1, True, hinweis="Trägheitsmoment um die schwache Achse"),
@@ -10632,7 +10634,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # ---- Linien -------------------------------------------------------
         self.tbl_linie = tab.Datentabelle([
-            Spalte("Linie"), Spalte("Art"), Spalte("Knoten", "", "ganz"),
+            Spalte("Linie"), Spalte("Art", klartext=tab.LINIENART_TEXT),
+            Spalte("Knoten", "", "ganz"),
             Spalte("Länge", "m", "zahl", 3),
             Spalte("Folge", "", "text", 3, True, hinweis="Knotennummern in Reihenfolge - direkt bearbeitbar"),
             Spalte("Bemerkung", "", "text", 3, True)],
@@ -10650,7 +10653,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # ---- Elemente -----------------------------------------------------
         self.tbl_elem = tab.Datentabelle([
-            Spalte("Element", "", "ganz"), Spalte("Art"),
+            Spalte("Element", "", "ganz"), Spalte("Art", klartext=tab.ELEMENTART_TEXT),
             Spalte("Knoten", "", "text", 3, True, hinweis="Knotennummern des Elements - direkt bearbeitbar"),
             Spalte("Werkstoff", "", "wahl", 3, True, werte_fn=lambda _z: _namen(self.model.materials)),
             Spalte("Querschnitt / Dicke", "", "wahl", 3, True,
@@ -10706,8 +10709,11 @@ class MainWindow(QtWidgets.QMainWindow):
             Spalte("Ausschlussgruppe"),
             Spalte("Situation", hinweis="Stellung und wirksame Elemente, in denen der Lastfall gilt"),
             Spalte("Theorie", hinweis="I, II oder III. Ordnung; leer = wie Einstellung")],
-            "Lastfälle", self)
+            "Lastfälle", self, modellreihenfolge=True)
         self.tbl_lastfall.modell.aendern = self._lastfall_aendern
+        # Ein Klick auf einen Lastfall stellt das Register „Lasten“ auf seine
+        # Lasten (ohne das Register zu wechseln, siehe _tabelle_lastfall)
+        self.tbl_lastfall.zeile_gewaehlt.connect(self._tabelle_lastfall)
         self.tbl_lastfall.view.doubleClicked.connect(
             lambda _i: self.lastfall_bearbeiten(str(self._tabellenschluessel(self.tbl_lastfall))))
         bf1 = QtWidgets.QPushButton("Lastfall hinzufügen…")
@@ -10893,7 +10899,7 @@ class MainWindow(QtWidgets.QMainWindow):
             Spalte("Kombination"), Spalte("Typ"), Spalte("Formel"),
             Spalte("Beschreibung"), Spalte("Situation"),
             Spalte("Theorie", hinweis="I, II oder III. Ordnung; leer = wie Einstellung")],
-            "Kombinationen", self)
+            "Kombinationen", self, modellreihenfolge=True)
         self.tbl_kombi.view.doubleClicked.connect(
             lambda _i: self.kombination_bearbeiten(str(self._tabellenschluessel(self.tbl_kombi))))
         bc1 = QtWidgets.QPushButton("Kombination hinzufügen…")
@@ -11093,7 +11099,7 @@ class MainWindow(QtWidgets.QMainWindow):
                      x.describe(), x.art_der_trennung(m), x.standard or "benutzerdefiniert",
                      ", ".join(x.koerpernamen or []) or "–",
                      ", ".join(getattr(x, "gegenkoerper", None) or []) or "alle anderen",
-                     zl.zahl_text(x.suchweite * 1e3, tausender=False, punkt=True) if getattr(x, "suchweite", 0.0) else "automatisch"]
+                     zl.zahl_text(x.suchweite * 1e3, tausender=False) if getattr(x, "suchweite", 0.0) else "automatisch"]
                     for name, x in (getattr(m, "kontaktbedingungen", {}) or {}).items()])
 
     #: Richtungsnamen der Knotenlast
@@ -11103,7 +11109,9 @@ class MainWindow(QtWidgets.QMainWindow):
         """Die Lasten aller (oder eines) Lastfaelle in die Tabelle schreiben."""
         m = self.model
         cb = self.cb_lastfilter
-        namen = ["(alle)"] + _namen(m.load_cases)
+        # In der Reihenfolge des Modells wie die Tabelle der Lastfaelle, nicht
+        # natuerlich nach Name sortiert (Teilpaket 10a, 02.10.2026)
+        namen = ["(alle)"] + list(m.load_cases)
         if [cb.itemText(i) for i in range(cb.count())] != namen:
             cur = cb.currentText()
             cb.blockSignals(True)
@@ -11119,51 +11127,52 @@ class MainWindow(QtWidgets.QMainWindow):
                 continue
             if any(lc.gravity):
                 zeilen.append([i, lcname, "Eigengewicht", "ganzes Modell",
-                               f"{float(lc.gravity[2]):.2f} m/s²", "global Z", ""])
+                               f"{tab.festkomma(lc.gravity[2], 2)} m/s²", "global Z", ""])
                 i += 1
             # Aus Objektlasten abgeleitete Elementlasten (_geo) stehen nicht
             # in der Tabelle: bei einem Volumenmodell waeren es Hunderttausende,
             # und sie entstehen beim Verteilen neu. Die Objektlast steht dafuer.
             for l in lc.eigene("nodal_loads"):
-                teile = [f"{self.LASTRICHTUNG[k]} = {v / 1e3:.3f}"
+                teile = [f"{self.LASTRICHTUNG[k]} = {tab.festkomma(v / 1e3, 3)}"
                          for k, v in enumerate(l.F) if v]
                 zeilen.append([i, lcname, "Knotenlast", f"K{l.node}",
                                ", ".join(teile) or "0",
                                "global", ""])
                 i += 1
             for l in lc.eigene("beam_loads"):
-                q = ", ".join(f"{v / 1e3:.3f}" for v in l.q)
-                abschnitt = (f"von {zl.zahl_text(l.a, tausender=False, punkt=True)} m" + (f" bis {zl.zahl_text(l.b, tausender=False, punkt=True)} m" if l.b is not None else "")
+                q = ", ".join(tab.festkomma(v / 1e3, 3) for v in l.q)
+                abschnitt = (f"von {zl.zahl_text(l.a, tausender=False)} m" + (f" bis {zl.zahl_text(l.b, tausender=False)} m" if l.b is not None else "")
                              if getattr(l, "teilweise", False) else "")
                 zeilen.append([i, lcname, "Streckenlast", f"E{l.elem}",
-                               f"q = ({q}) kN/m", l.system,
+                               f"q = ({q}) kN/m",
+                               tab.LASTSYSTEM_TEXT.get(l.system, l.system),
                                " ".join(x for x in ("veränderlich" if l.q2 is not None else "",
                                                     abschnitt) if x)])
                 i += 1
             for l in lc.eigene("face_loads"):
                 zeilen.append([i, lcname, "Flächenlast", f"E{l.elem}",
-                               f"p = {l.p / 1e3:.4f} kN/m²",
+                               f"p = {tab.festkomma(l.p / 1e3, 4)} kN/m²",
                                "Richtungsvektor" if l.direction else "lokal z", ""])
                 i += 1
             for l in lc.eigene("temp_loads"):
                 zeilen.append([i, lcname, "Temperatur", f"E{l.elem}",
-                               f"ΔT = {l.dT:.2f} K",
-                               f"ΔT_z = {l.dT_z:.2f} K" if l.dT_z else "gleichmäßig",
+                               f"ΔT = {tab.festkomma(l.dT, 2)} K",
+                               f"ΔT_z = {tab.festkomma(l.dT_z, 2)} K" if l.dT_z else "gleichmäßig",
                                ""])
                 i += 1
             for l in lc.geometrielasten:
                 ziel = ("Fläche " if l.art == "flaeche" else "Volumen ") + str(l.ziel)
                 if getattr(l, "lastart", "druck") == "temperatur":
-                    zeilen.append([i, lcname, "Temperatur", ziel, f"ΔT = {l.dT:.2f} K",
-                                   f"ΔT_z = {l.dT_z:.2f} K" if l.dT_z else "gleichmäßig",
+                    zeilen.append([i, lcname, "Temperatur", ziel, f"ΔT = {tab.festkomma(l.dT, 2)} K",
+                                   f"ΔT_z = {tab.festkomma(l.dT_z, 2)} K" if l.dT_z else "gleichmäßig",
                                    l.kommentar or "noch nicht vernetzt"])
                 else:
                     if l.verlauf:
                         P = l.verlauf.get("punkte") or []
                         wert = "linear " + " → ".join(f"{zl.zahl_text(float(x[3]) / 1e3, stellen=3)}" for x in P) + " kN/m²"
                     else:
-                        wert = f"p = {l.p / 1e3:.4f} kN/m²"
-                    richtung = ("(" + ", ".join(zl.zahl_text(x, tausender=False, punkt=True) for x in l.richtung) + ")"
+                        wert = f"p = {tab.festkomma(l.p / 1e3, 4)} kN/m²"
+                    richtung = ("(" + ", ".join(zl.zahl_text(x, tausender=False) for x in l.richtung) + ")"
                                 if l.richtung else "senkrecht")
                     if l.projiziert:
                         richtung += " projiziert"
@@ -11173,15 +11182,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 i += 1
             for l in lc.linienlasten:
                 ziel = ("Stab " if l.art == "stab" else "Linie ") + str(l.ziel)
-                q = ", ".join(f"{v / 1e3:.3f}" for v in l.q)
+                q = ", ".join(tab.festkomma(v / 1e3, 3) for v in l.q)
                 wert = f"q = ({q}) kN/m"
                 if l.q2 is not None and list(l.q2) != list(l.q):
-                    wert += " → (" + ", ".join(f"{v / 1e3:.3f}" for v in l.q2) + ")"
+                    wert += " → (" + ", ".join(tab.festkomma(v / 1e3, 3) for v in l.q2) + ")"
                 abschnitt = ""
                 if l.von or l.bis is not None:
-                    abschnitt = f"von {zl.zahl_text(l.von, tausender=False, punkt=True)} m" + (f" bis {zl.zahl_text(l.bis, tausender=False, punkt=True)} m" if l.bis is not None
+                    abschnitt = f"von {zl.zahl_text(l.von, tausender=False)} m" + (f" bis {zl.zahl_text(l.bis, tausender=False)} m" if l.bis is not None
                                                       else " bis Ende")
-                zeilen.append([i, lcname, "Linienlast", ziel, wert, l.system,
+                zeilen.append([i, lcname, "Linienlast", ziel, wert,
+                               tab.LASTSYSTEM_TEXT.get(l.system, l.system),
                                " ".join(x for x in (abschnitt, l.kommentar or "") if x)])
                 i += 1
             for l in lc.zwangsverformungen:
@@ -11191,19 +11201,45 @@ class MainWindow(QtWidgets.QMainWindow):
             for l in getattr(lc, "vorspannungen", None) or []:
                 zeilen.append([i, lcname, "Vorspannung",
                                ("Stab " if l.art == "stab" else "Volumen ") + str(l.ziel),
-                               f"F_v = {zl.zahl_text(l.kraft / 1e3, tausender=False, punkt=True)} kN",
+                               f"F_v = {zl.zahl_text(l.kraft / 1e3, tausender=False)} kN",
                                "Stabachse" if l.art == "stab" else
                                ("längste Abmessung" if l.achse is None else
-                                "(" + ", ".join(zl.zahl_text(x, tausender=False, punkt=True) for x in l.achse) + ")"),
+                                "(" + ", ".join(zl.zahl_text(x, tausender=False) for x in l.achse) + ")"),
                                l.kommentar or ""])
                 i += 1
             for l in getattr(lc, "uebermasse", None) or []:
                 zeilen.append([i, lcname, "Übermaß", f"Fuge {l.ziel}",
-                               f"Ü = {zl.zahl_text(l.ueberdeckung * 1e6, tausender=False, punkt=True)} µm",
+                               f"Ü = {zl.zahl_text(l.ueberdeckung * 1e6, tausender=False)} µm",
                                "Gesamtüberdeckung",
                                " ".join(x for x in (l.passmass or "", l.kommentar or "") if x)])
                 i += 1
         self._fill(self.tbl_last, zeilen)
+
+    def _tabelle_lastfall(self, wert):
+        """Zeile der Lastfalltabelle angeklickt: die Lasttabelle zeigt nur noch
+        die Lasten dieses Lastfalls (Teilpaket 10a, 02.10.2026).
+
+        Gestellt wird die Auswahl „Lastfall“ im Register „Lasten“; das Register
+        selbst bleibt, wo der Anwender es hat. Ein Wechsel schon beim ersten
+        Klick finge den Doppelklick ab, der die Maske des Lastfalls oeffnet:
+        sein zweiter Klick landete dann in der Lasttabelle. Ohne Rueckfrage,
+        und das Modell bleibt unveraendert (kein Rueckgaengig-Schritt)."""
+        name = str(wert)
+        cb = getattr(self, "cb_lastfilter", None)
+        if cb is None or name not in self.model.load_cases:
+            return
+        if cb.findText(name) < 0 or cb.currentText() == name:
+            return
+        cb.blockSignals(True)
+        cb.setCurrentText(name)
+        cb.blockSignals(False)
+        self._lasten_fuellen()
+        try:
+            self.statusBar().showMessage(
+                f"Register „Lasten“ zeigt jetzt die Lasten von {name} "
+                f"({self.tbl_last.zeilenzahl()} Lasten)", 6000)
+        except RuntimeError:
+            pass
 
     def _lastzeiger(self, nr: int):
         """(Lastfall, Listenname, Index) zu einer Zeilennummer der Lasttabelle."""
@@ -11831,7 +11867,8 @@ class MainWindow(QtWidgets.QMainWindow):
         tabs.addTab(self.tbl_fat, "Ermüdung")
 
         self.tbl_contact = tab.Datentabelle([
-            Spalte("Knoten", "", "ganz"), Spalte("Art"), Spalte("Status"),
+            Spalte("Knoten", "", "ganz"),
+            Spalte("Art", klartext=tab.KONTAKTART_TEXT), Spalte("Status"),
             Spalte("Fn", kN, "zahl", 2), Spalte("Ft", kN, "zahl", 2),
             Spalte("Spalt", "mm", "zahl", 3), Spalte("Paar")],
             "Kontakt", self, mit_kennwerten=True)
@@ -19976,6 +20013,10 @@ class MainWindow(QtWidgets.QMainWindow):
                  k["Fn_max"] / 1e3] for k in spn.kontaktkraefte(self.model, r)])
             self._fill(self.tbl_env, [])
             self.tbl_beam.hinweis_setzen("")
+            # Zu einem Lastfall oder einer Kombination gibt es Kontaktkraefte:
+            # ein Hinweis aus der Umhuellenden von vorhin gilt nicht mehr
+            for tb in (self.tbl_contact, self.tbl_kontaktpaare):
+                tb.hinweis_setzen("")
             self.tbl_env.hinweis_setzen("Extremwerte gibt es zur Umhüllenden - Ergebnis „Umhüllende“ wählen")
             self._ergebnistabelle_nachziehen(self.tbl_env, self.tbl_beam)
         elif hasattr(r, "extreme_table"):
@@ -19986,8 +20027,13 @@ class MainWindow(QtWidgets.QMainWindow):
             # Umhuellenden - die Tabellen bleiben leer statt veraltet
             self._fill(self.tbl_contact, [])
             self._fill(self.tbl_kontaktpaare, [])
+            # Der Hinweis gehoert nur zu Modellen mit Kontakt: ohne Kontakt gibt
+            # es nichts, was man waehlen koennte (02.10.2026, Teilpaket 10a)
+            hat_kontakt = bool(self.model.has_contact
+                               or getattr(self.model, "kontaktbedingungen", None))
             for tb in (self.tbl_contact, self.tbl_kontaktpaare):
-                tb.hinweis_setzen("Kontaktkräfte gibt es zu Lastfall oder Kombination - Ergebnis wählen")
+                tb.hinweis_setzen("Kontaktkräfte gibt es zu Lastfall oder Kombination - "
+                                  "Ergebnis wählen" if hat_kontakt else "")
             # Stabkraefte je Element gibt es nur zu Lastfall oder Kombination;
             # die Umhuellende traegt ihre Extremwerte im Register Umhuellende
             self.tbl_beam.hinweis_setzen("die Umhüllende zeigt ihre Extremwerte im Register "
@@ -19997,7 +20043,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._ergebnistabelle_nachziehen(self.tbl_beam, self.tbl_env)
             react = []
             for s in sorted({s.node for s in self.model.supports}):
-                react.append([s] + [f"{r.r_min[s, i]/1e3:.2f} / {r.r_max[s, i]/1e3:.2f}" for i in range(6)])
+                react.append([s] + [f"{tab.festkomma(r.r_min[s, i] / 1e3, 2)} / "
+                                    f"{tab.festkomma(r.r_max[s, i] / 1e3, 2)}" for i in range(6)])
             self._fill(self.tbl_react, react)
         # Zusaetze im Modellbaum (Verformungen, Schnittgroessen) zum gezeigten
         # Ergebnis - sie blieben beim alten stehen (Befund 24.09.2026). Aendern

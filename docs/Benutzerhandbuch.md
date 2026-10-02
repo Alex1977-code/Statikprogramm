@@ -2394,9 +2394,93 @@ Zahlen (nicht als Text) — in Excel lässt sich damit sofort weiterrechnen.
 Element beziehungsweise den Knoten in der 3D-Ansicht; umgekehrt markiert eine
 Auswahl in der Ansicht die zugehörigen Zeilen und rollt die erste ins Bild.
 
+#### Tabelleninhalte: Reihenfolge, Zahlen, Klartext, Farben (seit 02.10.2026)
+
+**Lastfälle und Kombinationen stehen in der Reihenfolge des Modells.** Bis zum
+02.10.2026 waren alle Tabellen nach der ersten Spalte geordnet, bei den
+Lastfällen und Kombinationen also nach dem Namen. Wer „GZT1“ bis „GZT40“ in
+einer anderen Reihenfolge angelegt hatte, fand die Kombination dort, wo ihr
+Name hinfiel, und nicht dort, wo er sie angelegt hatte. Jetzt steht in den
+Tabellen „Lastfälle“ und „Kombinationen“ der zuerst angelegte Eintrag oben und
+ein neuer unten. Ein Klick auf eine Spaltenüberschrift sortiert wie gewohnt;
+der dritte Klick auf dieselbe Überschrift hebt die Sortierung auf und bringt
+die Reihenfolge des Modells zurück. Die Auswahl „Lastfall“ über der Lasttabelle
+nennt die Lastfälle in derselben Reihenfolge (bis zum 02.10.2026 stand sie
+natürlich nach Name sortiert). Die Lasten, der Bericht und die Unterlagen
+trugen ihre laufende Nummer in der ersten Spalte und standen deshalb schon vorher
+in der Reihenfolge des Modells; alle anderen Tabellen bleiben nach der ersten
+Spalte geordnet, natürlich sortiert (L2 vor L10).
+
+**Kein „-0,00“.** Ein Wert, der auf die angezeigten Nachkommastellen zu null
+rundet, steht ohne Vorzeichen da: „0,00“ statt „-0,00“. Das gilt für jede
+Zahlenzelle, für die Max-/Min-Zeile, für die „min / max“-Paare der Auflager
+bei einer Umhüllenden und für die Größen in der Lasttabelle. Kopieren, CSV und
+Excel geben weiter mehr Stellen aus, als die Anzeige zeigt („-0,0004“), aber
+nie ein „-0,0“ für Rundungsschrott und nie eine Zahl mit Exponenten: „1e-05“
+steht in der CSV-Datei als „0,00001“. Ein Wert wie -0,006 mit zwei Stellen
+bleibt „-0,01“, denn er ist nicht null. Eine Zahl, die keine ist
+(etwa die mittlere Pressung einer Kontaktfläche ohne wirksame Fläche), steht
+als „–“ da und nicht als „nan“.
+
+**Zahlen in Tabellen mit Komma.** Die Lasttabelle schrieb ihre Größen bis zum
+02.10.2026 mit Dezimalpunkt („q = (0.000, 0.000, -12.500) kN/m“, „von 1.5 m“,
+„F_v = 150 kN“ mit Punkt bei Dezimalstellen) und das „min / max“ der
+Auflagerkräfte ebenso. Beides steht jetzt mit Komma („q = (0,000, 0,000,
+-12,500) kN/m“). Die 3D-Ansicht und die Beschriftungen im Bild behalten den
+Punkt, so wie bisher; die Regel „Tabellen Komma, Ansicht Punkt“ gilt weiter.
+In keiner Tabelle steht ein Ergebniswert wissenschaftlich („2,39e+03“).
+
+**Die Art steht im Klartext.** Wo eine Tabelle bisher den Schlüssel aus dem
+Modell zeigte, steht jetzt das Wort: in der Tabelle der Stäbe die Elementart
+(„Balken 3D“ statt „beam“, „Schale, Viereck“ statt „shell4“, „Tetraeder,
+quadratisch“ statt „tet10“), bei den Linien „Polylinie“, „Bogen“, „Kreis“ …
+statt „polyline“, „arc“, „circle“, bei den Querschnitten „I-Profil“,
+„Rechteckhohlprofil (RHS)“, „Rohr (CHS)“, „Rechteck“, „Kreis“ statt „I“, „RHS“,
+„CHS“, „rect“, „circle“, in der Kontakt-Tabelle der Ergebnisse „Einseitiges
+Lager“, „Spaltelement“, „Kontaktfläche“ und „Lagerbedingung“ statt „support“,
+„gap“, „surface“, „dof“ und in der Lasttabelle das Bezugssystem „lokal“ statt
+„local“. Im Filter schreibt man, was dasteht („Balken“, nicht „beam“); die
+Spalte sortiert nach dem Klartext, und Kopieren, CSV und Excel geben ihn aus.
+Gespeichert und gerechnet wird weiter mit dem Schlüssel, eine ältere Datei
+lädt also unverändert. Noch als Schlüssel stehen die Einwirkungskategorie der
+Lastfälle („G“, „Q_A“, „W“) und der Typ der Kombinationen („ULS“, „SLS_CH“);
+sie bekommen ihre Fachbegriffe mit dem Paket „Fachbegriffe statt Schlüssel“.
+
+**Der Kontakt-Hinweis erscheint nur bei Modellen mit Kontakt.** Die Tabellen
+„Kontakt“ und „Kontaktpaare“ sagten bei einer Umhüllenden bisher immer
+„Kontaktkräfte gibt es zu Lastfall oder Kombination – Ergebnis wählen“, auch
+in einem Modell ganz ohne Kontakt, in dem es nichts zu wählen gibt. Jetzt steht
+der Satz nur noch, wenn das Modell Kontakt hat (einseitige Lager, Spaltelemente,
+Kontaktpaare, Kontaktbedingungen oder Lager mit Ausfall, Schlupf oder Reibung).
+Zugleich verschwindet er, sobald ein Lastfall oder eine Kombination gezeigt
+wird: bisher blieb er in einer leeren Kontakt-Tabelle stehen, obwohl das
+Ergebnis schon gewählt war.
+
+**Ein Klick auf einen Lastfall zeigt seine Lasten.** Wer in der Tabelle
+„Lastfälle“ eine Zeile anklickt, stellt damit die Auswahl „Lastfall“ im
+Register „Lasten“ auf diesen Lastfall; die Lasttabelle zeigt dann nur dessen
+Lasten, und die Statuszeile sagt es. Es gibt keine Rückfrage, und das Modell
+bleibt unverändert (kein Rückgängig-Schritt). Das Register „Lasten“ wird dabei
+nicht nach vorn geholt: ein Wechsel schon beim ersten Klick finge den
+Doppelklick ab, der die Maske des Lastfalls öffnet, denn sein zweiter Klick
+träfe dann die Lasttabelle. Zurück zu allen Lasten kommt man mit „(alle)“ in
+der Auswahl über der Lasttabelle.
+
+**Weiße und graue Zellen.** In den Eingabetabellen (Tabellen mit mindestens
+einer editierbaren Spalte: Werkstoffe, Querschnitte, Dicken, Knoten, Linien,
+Stäbe, Lager, Lastfälle, Flächen, Volumenkörper, Schweißnähte, Bericht,
+Unterlagen) sind die editierbaren Zellen reinweiß und alle übrigen hellgrau.
+Bis zum 02.10.2026 lagen über beiden die Zebrastreifen der Zeilen, so dass man
+der Zelle nicht ansah, ob sie sich bearbeiten lässt; die Zebrastreifen
+entfallen in diesen Tabellen. Reine Ergebnistabellen (Stabkräfte, Auflagerkräfte,
+Nachweise …) haben keine editierbare Spalte und behalten die Zebrastreifen; die
+Ampelfarben der Nachweise bleiben, wie sie sind, und die markierten Zeilen
+behalten die Auswahlfarbe.
+
 **Eingabetabellen sind editierbar.** In Werkstoffe, Querschnitte, Dicken,
-Knoten, Elementen, Lagern und Lastfällen sind die hellen Spalten zum
-Hineinschreiben da: Zelle anklicken, Wert tippen,
+Knoten, Elementen, Lagern und Lastfällen sind die **weißen** Zellen zum
+Hineinschreiben da, die grauen nicht (siehe „Tabelleninhalte“ weiter unten):
+Zelle anklicken, Wert tippen,
 Eingabetaste. Gerechnet werden darf dabei — `= 210/1,05` ergibt 200. Erlaubt
 sind die vier Grundrechenarten, Klammern, Potenz und `pi`; mehr nicht, damit
 aus einer Tabellenzelle kein Programm wird. Ein unmöglicher Wert (E ≤ 0,

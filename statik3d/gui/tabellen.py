@@ -41,6 +41,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import design as dsg
 from .. import zahlen as zl
+from .. import elemente as _EL
 
 
 # --------------------------------------------------------------------------
@@ -108,6 +109,26 @@ def ampelstufe(wert) -> str:
     if z > AMPEL_GRENZE_GELB:
         return "gelb"
     return ""
+
+
+def festkomma(x, nk: int) -> str:
+    """Zahl als Tabellentext: *nk* Nachkommastellen, Dezimalkomma, nie ein
+    Vorzeichen vor einer Null.
+
+    Anlass (02.10.2026, Teilpaket 10a): ``f"{-0.0004:.2f}"`` schreibt „-0.00“ -
+    der Wert ist auf null gerundet und hat dann kein Vorzeichen mehr. Gezeigt
+    wird er als „0,00“. Was keine endliche Zahl ist (leere Kontaktflaeche:
+    p = Fn / 0), steht als „–“ da und nicht als „nan“."""
+    try:
+        x = float(x)
+    except (TypeError, ValueError):
+        return str(x)
+    if not math.isfinite(x):
+        return "–"
+    s = f"{x:.{max(0, int(nk))}f}"
+    if s.startswith("-") and not s.strip("-0.,"):
+        s = s[1:]
+    return s.replace(".", ",")
 
 
 def passt(wert, ausdruck: str) -> bool:
@@ -184,14 +205,22 @@ def formel(text: str) -> float:
         raise ValueError(f"Formel nicht lesbar: {ex}")
 
 
+def _csv_zahl(x: float) -> str:
+    """Eine Gleitkommazahl fuer CSV: Dezimalkomma, nie wissenschaftlich
+    („1e-05“ wird „0,00001“, 02.10.2026, Teilpaket 10a)."""
+    s = str(x)
+    if "e" in s or "E" in s:
+        s = np.format_float_positional(x, trim="-")
+    return s.replace(".", ",")
+
+
 def als_csv(kopf: list, zeilen: list, trenner: str = ";") -> str:
     """Tabelle als CSV-Text (deutsches Dezimalkomma, Semikolon als Trenner)."""
     puffer = io.StringIO()
     schreiber = csv.writer(puffer, delimiter=trenner, lineterminator="\n")
     schreiber.writerow(kopf)
     for z in zeilen:
-        schreiber.writerow([str(x).replace(".", ",")
-                            if isinstance(x, float) else x for x in z])
+        schreiber.writerow([_csv_zahl(x) if isinstance(x, float) else x for x in z])
     return puffer.getvalue()
 
 
@@ -287,6 +316,17 @@ class Spalte:
     werte_fn: object = None
     #: Ampel in Nachweistabellen (Ausnutzung, D, Status): siehe ampelstufe
     ampel: bool = False
+    #: Schluessel -> Klartext einer Textspalte („beam“ -> „Balken 3D“). Die
+    #: Zeilen behalten den Schluessel (Wahllisten und Rueckrufe lesen ihn);
+    #: gezeigt, sortiert, gefiltert und exportiert wird der Klartext
+    #: (02.10.2026, Teilpaket 10a). Was nicht im Verzeichnis steht, bleibt wie es ist.
+    klartext: dict = None
+
+    def text_von(self, wert):
+        """Der Klartext zu *wert* - oder *wert* selbst."""
+        if self.klartext:
+            return self.klartext.get(str(wert), wert)
+        return wert
 
     def wahlwerte(self, zeile=None) -> list:
         if self.werte_fn is not None:
@@ -298,6 +338,33 @@ class Spalte:
 
     def kopf(self) -> str:
         return f"{self.name} [{self.einheit}]" if self.einheit else self.name
+
+
+#: Zellfarben einer Eingabetabelle (02.10.2026, Teilpaket 10a): wo man tippen
+#: darf, steht reines Weiss, wo nicht, ein helles Grau. Vorher waren beide durch
+#: die Zebrastreifen der Zeilen gemischt und die Bearbeitbarkeit nicht zu sehen.
+ZELLE_EDIT = "#ffffff"
+ZELLE_FEST = "#eceff2"
+
+
+#: Klartext der Schluessel, die Tabellen heute noch zeigten (02.10.2026,
+#: Teilpaket 10a). Gespeichert und gerechnet wird weiter mit dem Schluessel.
+#: Elementarten aus dem Elementverzeichnis, ohne die Klammer mit den
+#: Verfahrensangaben: „Balken 3D (12 FHG, Timoshenko-Schub …)“ wird „Balken 3D“.
+ELEMENTART_TEXT = {t: a.name.split(" (")[0] for t, a in _EL.ELEMENTE.items()}
+LINIENART_TEXT = {"polyline": "Polylinie", "arc": "Bogen", "circle": "Kreis",
+                  "ellipse": "Ellipse", "spline": "Spline", "parabola": "Parabel"}
+QUERSCHNITTSART_TEXT = {"I": "I-Profil", "I2": "Doppel-T unsymmetrisch", "U": "U-Profil",
+                        "T": "T-Profil", "L": "Winkel", "Z": "Z-Profil", "Hut": "Hutprofil",
+                        "Kreuz": "Kreuzprofil", "RHS": "Rechteckhohlprofil (RHS)",
+                        "CHS": "Rohr (CHS)", "rect": "Rechteck", "circle": "Kreis",
+                        "poly": "Polygon", "composite": "zusammengesetzt", "free": "frei"}
+#: Art einer Kontaktbedingung im Ergebnis (contact.Constraint.kind)
+KONTAKTART_TEXT = {"support": "Einseitiges Lager", "gap": "Spaltelement",
+                   "surface": "Kontaktfläche", "dof": "Lagerbedingung (Verschiebung)",
+                   "dof_rot": "Lagerbedingung (Drehung)"}
+#: Bezugssystem einer Stab- oder Linienlast
+LASTSYSTEM_TEXT = {"global": "global", "local": "lokal"}
 
 
 class TabellenModell(QtCore.QAbstractTableModel):
@@ -319,6 +386,12 @@ class TabellenModell(QtCore.QAbstractTableModel):
         #: gefiltert, bearbeitet und exportiert wird in den eingestellten
         #: Einheiten mit deren Nachkommastellen.
         self.einheiten_quelle = None
+        #: Zellen nach Bearbeitbarkeit einfaerben (nur Eingabetabellen, siehe
+        #: Datentabelle: gesetzt, wenn mindestens eine Spalte editierbar ist)
+        self.zellfarben = False
+        #: Zeilen in der Reihenfolge, in der sie gesetzt wurden - damit die
+        #: Modellreihenfolge nach einer Spaltensortierung wiederkommt
+        self._ur = None
 
     # -- Einheiten -------------------------------------------------------
     def anzeige(self, k: int) -> tuple:
@@ -339,15 +412,15 @@ class TabellenModell(QtCore.QAbstractTableModel):
         """Zahlenwert der Spalte *k* in der Anzeigeeinheit (Text bleibt Text;
         ein „min / max“-Paar wird als Paar umgerechnet)."""
         if self.spalten[k].art != "zahl":
-            return wert
+            return self.spalten[k].text_von(wert)
         if isinstance(wert, (int, float)) and not isinstance(wert, bool):
             f, _e, nk = self.anzeige(k)
-            return round(float(wert) * f, int(nk) + 6)
+            # + 0.0: aus „-0.0“ wird „0.0“ (auch ein auf null gerundeter Wert)
+            return round(float(wert) * f, int(nk) + 6) + 0.0
         paar = _paar(wert)
         if paar is not None:
             f, _e, nk = self.anzeige(k)
-            if f != 1.0:
-                return " / ".join(f"{x * f:.{nk}f}" for x in paar)
+            return " / ".join(festkomma(x * f, nk) for x in paar)
         return wert
 
     def zeilen_angezeigt(self, zeilen: list) -> list:
@@ -393,13 +466,16 @@ class TabellenModell(QtCore.QAbstractTableModel):
                     # auf sechs Stellen - F2 und Enter machten aus 1234,5678 m
                     # still 1234,57 m (gui_analyse/unten/editrolle2.py)
                     return zl.zahl_text(float(wert) * f, tausender=False)
-                return f"{float(wert) * f:.{nk}f}".replace(".", ",")
+                return festkomma(float(wert) * f, nk)
             if sp.art == "zahl" and rolle == QtCore.Qt.DisplayRole and _paar(wert) is not None:
+                # auch ohne Umrechnung neu geschrieben: der Rechenteil liefert
+                # „-0.00 / 1.23“ mit Punkt (Auflager der Umhuellenden)
                 f, _e, nk = self.anzeige(k)
-                if f != 1.0:
-                    return " / ".join(f"{x * f:.{nk}f}".replace(".", ",") for x in _paar(wert))
+                return " / ".join(festkomma(x * f, nk) for x in _paar(wert))
             if rolle == QtCore.Qt.EditRole:
                 return str(wert)
+            if sp.klartext:
+                return str(sp.text_von(wert))
             if sp.art == "ganz" and isinstance(wert, (int, float)):
                 return str(int(wert))
             return str(wert)
@@ -407,6 +483,10 @@ class TabellenModell(QtCore.QAbstractTableModel):
             # Nur die Anzeige: Zwischenablage, CSV und Excel lesen die Zeilen
             # und bleiben ohne Farbe (24.09.2026)
             if not self.spalten[k].ampel:
+                if rolle == QtCore.Qt.BackgroundRole and self.zellfarben:
+                    # Eingabetabelle: weiss = hier darf man tippen, grau = nicht
+                    return QtGui.QBrush(QtGui.QColor(
+                        ZELLE_EDIT if self.spalten[k].editierbar else ZELLE_FEST))
                 return None
             stufe = ampelstufe(wert)
             if stufe == "rot":
@@ -426,7 +506,7 @@ class TabellenModell(QtCore.QAbstractTableModel):
             if self.spalten[k].art in ("zahl", "ganz"):
                 z = _zahl(wert)
                 return wert if z is None else self.angezeigt(k, z)
-            return wert
+            return self.spalten[k].text_von(wert)
         return None
 
     def flags(self, index):
@@ -489,6 +569,7 @@ class TabellenModell(QtCore.QAbstractTableModel):
     def setzen(self, zeilen: list):
         self.beginResetModel()
         self.zeilen = [list(z) for z in zeilen]
+        self._ur = list(self.zeilen)
         self._index = None
         self._sortieren()
         self.endResetModel()
@@ -504,7 +585,15 @@ class TabellenModell(QtCore.QAbstractTableModel):
         self.sortierung = (int(spalte), richtung)
         folge = self._sortfolge()
         if folge is None:
-            return
+            # Spalte -1 („nicht sortiert“): die Reihenfolge wiederherstellen,
+            # in der die Zeilen gesetzt wurden - die Modellreihenfolge
+            ur = self._ur
+            if int(spalte) >= 0 or ur is None or len(ur) != len(self.zeilen):
+                return
+            pos = {id(z): i for i, z in enumerate(self.zeilen)}
+            if len(pos) != len(ur) or any(id(z) not in pos for z in ur):
+                return
+            folge = [pos[id(z)] for z in ur]
         self.layoutAboutToBeChanged.emit()
         alt = self.persistentIndexList()
         self.zeilen = [self.zeilen[i] for i in folge]
@@ -532,9 +621,16 @@ class TabellenModell(QtCore.QAbstractTableModel):
         # Zeit und ein Drittel mehr Speicher (Gegenpruefung 25.09.2026).
         g_zahl, g_text = (1, 0) if absteigend else (0, 1)
 
+        # Klartext-Spalte: nach dem gezeigten Wort sortieren. Ohne Klartext kostet
+        # das je Zeile nur die Abfrage einer lokalen Variablen (bei 2 Mio.
+        # Zeilen zaehlt jeder Aufruf).
+        klar = self.spalten[k].klartext
+
         def schluessel(r):
             z = zeilen[r]
             wert = z[k] if k < len(z) else ""
+            if klar:
+                wert = klar.get(str(wert), wert)
             zahl = _zahl(wert)
             if zahl is not None:
                 return (g_zahl, zahl, [])
@@ -682,10 +778,13 @@ class Datentabelle(QtWidgets.QWidget):
     SPALTE_MAX = 360
 
     def __init__(self, spalten: list, titel: str = "", parent=None,
-                 mit_kennwerten: bool = False):
+                 mit_kennwerten: bool = False, modellreihenfolge: bool = False):
         super().__init__(parent)
         self.titel = titel
         self.modell = TabellenModell(spalten, [], self)
+        # Eingabetabelle (mindestens eine editierbare Spalte): Zellen weiss
+        # oder grau statt Zebrastreifen
+        self.modell.zellfarben = any(sp.editierbar for sp in spalten)
         self.modell.meldung.connect(self._meldung)
         #: die zuletzt gezeigte Meldung einer abgewiesenen Eingabe
         self.letzte_meldung = ""
@@ -748,8 +847,21 @@ class Datentabelle(QtWidgets.QWidget):
         self.view.setSortingEnabled(True)
         # setSortingEnabled setzt den Pfeil auf Spalte 0 *absteigend* - die
         # Tabelle stuende sonst von Anfang an verkehrt herum.
-        self.view.sortByColumn(0, QtCore.Qt.AscendingOrder)
-        self.view.setAlternatingRowColors(True)
+        if modellreihenfolge:
+            # Lastfaelle und Kombinationen stehen in der Reihenfolge des
+            # Modells (der Anwender legt sie so an und liest sie so), nicht
+            # nach Name: bei „GZT1 … GZT40“ stand sonst jede Kombination dort,
+            # wo ihr Name hinfaellt. Ein Klick auf den Spaltenkopf sortiert
+            # wie gewohnt, der dritte Klick bringt die Modellreihenfolge zurueck.
+            self.view.sortByColumn(-1, QtCore.Qt.AscendingOrder)
+            kopf_ = self.view.horizontalHeader()
+            if hasattr(kopf_, "setSortIndicatorClearable"):      # Qt 6.1 und neuer
+                kopf_.setSortIndicatorClearable(True)
+        else:
+            self.view.sortByColumn(0, QtCore.Qt.AscendingOrder)
+        self.modellreihenfolge = bool(modellreihenfolge)
+        # Zebrastreifen nur, wo die Zellen nicht nach Bearbeitbarkeit gefaerbt sind
+        self.view.setAlternatingRowColors(not self.modell.zellfarben)
         self.view.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         # Umschalt markiert einen Bereich, Strg nimmt einzelne Zeilen dazu
         self.view.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
