@@ -2519,6 +2519,54 @@ letzte bleibt immer. Wer A, Iy, Iz, It oder Wpl,y von Hand ändert, löst den
 Querschnitt von der Profildatenbank; sein Typ wird `free`, die Nachweise
 laufen dann elastisch.
 
+#### Protokoll lesbar: Farben, Abschnitte, Schrift (seit 02.10.2026)
+
+Bis zum 02.10.2026 stand das Protokoll in einer einzigen Farbe und einer
+Schrift, die gar keine Festbreitenschrift war. Eine FEHLER-Zeile sah aus wie
+jede andere, und wer in einem langen Lauf nach der Meldung suchte, las Zeile
+für Zeile. Jetzt zeigt das Protokoll drei Auszeichnungen, und der Text bleibt
+dabei, wie er war.
+
+**FEHLER rot, WARNUNG orange.** Eine Zeile, deren erstes Wort **FEHLER** ist,
+steht ganz in Rot, eine Zeile, deren erstes Wort **WARNUNG** ist, ganz in
+Orange. Es sind die Fehler- und die Warnfarbe der Oberfläche, die auch der
+Modellbaum und der Filmstreifen der Stellungen benutzen (Rot `#c62828`,
+Orange `#b7791f`). Das erste Wort entscheidet, auch wenn die Zeile eingerückt
+ist, wie bei den Importhinweisen („  WARNUNG:   Stabtyp Zugstab: …“), und auch
+ohne Doppelpunkt („FEHLER Versatz Anfang y, z [mm]: …“). Ein FEHLER oder eine
+WARNUNG mitten im Satz färbt nichts, und „FEHLERFREI“ oder „WARNUNGEN“ sind
+keine Meldungen. Besteht eine Meldung aus mehreren Zeilen, gilt die Farbe nur
+für die Zeile, die mit dem Stichwort beginnt; die Folgezeilen bleiben
+schwarz. Die rote, fette Sammelzeile der Nachweise („Nachweise: 1 NICHT
+erfüllt (…)“) behält ihr eigenes Rot.
+
+**Abschnitte fett.** Ein Abschnitt beginnt im Protokoll mit drei Strichen und
+einem Leerzeichen am Zeilenanfang; diese Kopfzeile steht fett. Das sind
+„--- Beispiel 'hall'  (02.10.2026 08:39) ---“ und „--- Neues Modell … ---“
+beim Wechsel des Modells, „--- Modellprüfung ---“, „--- Freie Bewegungen ---“,
+„--- Berechnung gestartet ---“, „--- Abnahme des Netzes: … ---“ und
+„--- Objekte ohne Netz ---“. Die Regel ist bewusst klein: andere Zeilen, die
+wie Überschriften wirken („Umhuellende ULS: 42 Ergebnisse“), bleiben normal,
+und eingerückte oder mitten in der Zeile stehende Striche zählen nicht.
+
+**Der Text ändert sich nicht.** Die Farben sind nur Anzeige. Markierter Text,
+die Datei aus *Extras → Protokoll speichern…* und die Mitschrift unter
+`%LOCALAPPDATA%\Statik3D\Protokolle` enthalten dieselben Zeilen wie vorher,
+ohne zusätzliche Zeichen. Auch bei einem langen Lauf bleibt das Protokoll
+flott: das Färben kostet je angehängter Zeile wenige Mikrosekunden (gemessen
+mit 25.000 Zeilen: 1,7 statt 1,45 Sekunden insgesamt).
+
+**Festbreitenschrift.** Das Protokoll, der Regelwerk-Text unter „DIN 19704 /
+ZTV-ING“, die Zusammenfassung unter „BERECHNEN“ und der Ergebnistext in der
+Maske Ergebnisse standen bis zum 02.10.2026 auf „monospace“. Unter Windows ist
+das kein Schriftname; Qt nahm stattdessen Tahoma (gemessen), eine
+Proportionalschrift, in der Spalten wie „max. Verschiebung       : 16.894 mm“
+nicht untereinander standen. Jetzt wählt das Programm beim Start die erste
+wirklich festbreite Schrift aus dieser Reihe: Consolas, Cascadia Mono, DejaVu
+Sans Mono, Liberation Mono, Menlo, Courier New; gibt es keine davon, nimmt es
+die Festbreitenschrift des Systems. Auf einem Windows-Rechner mit Consolas
+ist das Consolas.
+
 ### Auswahl per Klick
 
 Ein Klick trifft, was gezeichnet ist: Stäbe auch auf ihrem Körper, Flächen

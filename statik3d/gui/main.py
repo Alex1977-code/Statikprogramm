@@ -104,6 +104,9 @@ class Protokollfeld(QtWidgets.QPlainTextEdit):
     def __init__(self, *a, **kw):
         super().__init__(*a, **kw)
         self.mitschrift = None
+        # FEHLER rot, WARNUNG orange, Abschnitte („--- Titel ---“) fett - als
+        # Faerber am Dokument, damit der Text unveraendert bleibt (02.10.2026)
+        self.faerber = dsg.ProtokollFaerber(self.document())
 
     def zeile_anhaengen(self, text, fmt=None) -> None:
         """Eine Zeile ans Ende, mit eigenem Cursor und eigenem Zeichenformat.
@@ -12056,7 +12059,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tab_unten = tabs
         self.log = Protokollfeld()
         self.log.setReadOnly(True)
-        self.log.setStyleSheet("font-family: monospace; font-size: 11px;")
+        self.log.setStyleSheet(dsg.festschrift_stil())
         # Ein langer Lauf schreibt zehntausende Zeilen. Ohne Grenze waechst das
         # Textdokument unbegrenzt, und sein Layout liegt in Qt6Gui - genau der
         # Bibliothek, in der der Absturz vom 07.09. lag. 20.000 Zeilen reichen
@@ -12432,7 +12435,7 @@ class MainWindow(QtWidgets.QMainWindow):
         gl.addWidget(b)
         self.txt_regelwerk = QtWidgets.QPlainTextEdit()
         self.txt_regelwerk.setReadOnly(True)
-        self.txt_regelwerk.setStyleSheet("font-family: monospace; font-size: 11px;")
+        self.txt_regelwerk.setStyleSheet(dsg.festschrift_stil())
         self.txt_regelwerk.setMinimumHeight(160)
         self.txt_regelwerk.setPlainText(
             "Die Beiwerte sind Voreinstellungen und gegen die geltende Fassung der "
@@ -13023,7 +13026,7 @@ class MainWindow(QtWidgets.QMainWindow):
         lay.addWidget(self.btn_solve)
         self.txt_summary = QtWidgets.QPlainTextEdit()
         self.txt_summary.setReadOnly(True)
-        self.txt_summary.setStyleSheet("font-family: monospace; font-size: 11px;")
+        self.txt_summary.setStyleSheet(dsg.festschrift_stil())
         lay.addWidget(self.txt_summary, 1)
         return w
 
@@ -13082,7 +13085,7 @@ class MainWindow(QtWidgets.QMainWindow):
         lay.addWidget(self.cb_undeformed)
         self.txt_res = QtWidgets.QPlainTextEdit()
         self.txt_res.setReadOnly(True)
-        self.txt_res.setStyleSheet("font-family: monospace; font-size: 11px;")
+        self.txt_res.setStyleSheet(dsg.festschrift_stil())
         lay.addWidget(self.txt_res, 1)
         b1 = QtWidgets.QPushButton("CSV…"); b1.clicked.connect(self.export_csv)
         b2 = QtWidgets.QPushButton("VTK…"); b2.clicked.connect(self.export_vtk)

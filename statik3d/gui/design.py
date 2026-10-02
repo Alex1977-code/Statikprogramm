@@ -13,6 +13,8 @@ die Eingaben rechts - und unten Protokoll und Tabellen.
 """
 from __future__ import annotations
 
+import re
+
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 from .. import elemente as EL
@@ -148,6 +150,117 @@ QToolTip {{ background: {kopf}; color: #fff; border: 0; padding: 5px 7px; }}
 
 def stil() -> str:
     return STIL.format(**FARBEN)
+
+
+# ---- Protokoll: Festbreitenschrift und Faerbung (Teilpaket 9a, 02.10.2026) -------
+
+#: Festbreitenschriften in der Reihenfolge der Vorliebe: Consolas (auf jedem
+#: Windows seit Vista), Cascadia Mono (Windows 11), dann die ueblichen unter
+#: Linux und macOS, zuletzt Courier New
+FESTSCHRIFTEN = ("Consolas", "Cascadia Mono", "DejaVu Sans Mono", "Liberation Mono",
+                 "Menlo", "Courier New")
+
+#: die gewaehlte Familie, einmal je Programmlauf (die Schriftdatenbank aendert
+#: sich nicht); None, solange es noch keine Anwendung gibt
+_FAMILIE = None
+
+
+def _schriften_vorhanden() -> list:
+    """Die Namen der installierten Schriften. Ohne Anwendung (Qt verlangt eine
+    fuer die Schriftdatenbank) und offscreen unter Windows, wo es gar keine
+    Schriften gibt, ist die Liste leer."""
+    if QtGui.QGuiApplication.instance() is None:
+        return []
+    return list(QtGui.QFontDatabase.families())
+
+
+def waehle_festschrift(vorhanden, ist_fest, vorrang=FESTSCHRIFTEN):
+    """Die erste Schrift aus *vorrang*, die installiert **und** wirklich
+    festbreit ist - sonst None. Reine Wahl ohne Qt: *vorhanden* sind die Namen
+    der installierten Schriften, *ist_fest* fragt eine Familie, ob sie fest ist.
+    Der Name kommt so zurueck, wie ihn die Schriftdatenbank schreibt."""
+    echt = {n.lower(): n for n in vorhanden}
+    for name in vorrang:
+        gefunden = echt.get(name.lower())
+        if gefunden is not None and ist_fest(gefunden):
+            return gefunden
+    return None
+
+
+def festschrift_familie() -> str:
+    """Die Familie fuer Protokoll und Textfelder mit Spalten.
+
+    „monospace“ ist unter Windows kein Schriftname: die Stilzeile
+    ``font-family: monospace`` wurde dort zu Tahoma, einer Proportionalschrift
+    (gemessen 02.10.2026) - Spalten im Protokoll standen schief. Darum die
+    erste wirklich festbreite Schrift aus FESTSCHRIFTEN, sonst die
+    Festbreitenschrift des Systems, sonst bleibt es bei „monospace“."""
+    global _FAMILIE
+    if _FAMILIE is not None:
+        return _FAMILIE
+    if QtGui.QGuiApplication.instance() is None:
+        return "monospace"
+    name = waehle_festschrift(_schriften_vorhanden(), QtGui.QFontDatabase.isFixedPitch)
+    if name is None:
+        name = (QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont).family()
+                or "monospace")
+    _FAMILIE = name
+    return name
+
+
+def festschrift_stil(px: int = 11) -> str:
+    """Stilzeile fuer ein Textfeld in der Festbreitenschrift. Die Schrift gehoert
+    in die Stilzeile des Feldes, nicht in setFont: das Stilblatt des Fensters
+    (STIL, Segoe UI fuer jedes QWidget) hebt ein gesetztes Schriftbild wieder auf."""
+    return f'font-family: "{festschrift_familie()}"; font-size: {px}px;'
+
+
+#: Anfang einer Meldungszeile: FEHLER oder WARNUNG als erstes Wort, auch eingerueckt
+#: (Importhinweise stehen als „  WARNUNG:   ...“); „FEHLERFREI“ zaehlt nicht
+_MELDUNG = re.compile(r"\s*(FEHLER|WARNUNG)\b")
+
+
+def protokollzeile_art(text: str):
+    """Wie das Protokoll die Zeile zeigt: ``"fehler"`` (rot), ``"warnung"``
+    (orange), ``"abschnitt"`` (fett) oder None (unveraendert).
+
+    Die Regel ist klein und steht im Handbuch: ein **Abschnitt** beginnt mit
+    ``--- `` am Zeilenanfang („--- Beispiel 'hall' (Datum) ---“,
+    „--- Freie Bewegungen ---“, „--- Berechnung gestartet ---“); eine **Meldung**
+    hat FEHLER oder WARNUNG als erstes Wort der Zeile. Folgezeilen einer
+    mehrzeiligen Meldung sind eigene Zeilen und bleiben, wie sie sind."""
+    if text.startswith("--- "):
+        return "abschnitt"
+    m = _MELDUNG.match(text)
+    if m is None:
+        return None
+    return "fehler" if m.group(1) == "FEHLER" else "warnung"
+
+
+class ProtokollFaerber(QtGui.QSyntaxHighlighter):
+    """Faerbt und fettet Zeilen des Protokolls, ohne den Text anzufassen.
+
+    Ein Syntaxfaerber legt seine Formate ueber das Layout des Blocks; der Text
+    des Dokuments und das Zeichenformat der Zeile bleiben unberuehrt -
+    ``toPlainText()`` liefert genau das Geschriebene, und die rote Sammelzeile
+    der Nachweise (eigenes Zeichenformat) behaelt es. Gearbeitet wird je Block,
+    ohne Zustand von Zeile zu Zeile: eine neue Zeile kostet eine Regelpruefung,
+    nicht einen Lauf ueber das Dokument."""
+
+    def __init__(self, dokument):
+        super().__init__(dokument)
+        fehler = QtGui.QTextCharFormat()
+        fehler.setForeground(QtGui.QColor(FARBEN["schlecht"]))
+        warnung = QtGui.QTextCharFormat()
+        warnung.setForeground(QtGui.QColor(FARBEN["warn"]))
+        abschnitt = QtGui.QTextCharFormat()
+        abschnitt.setFontWeight(QtGui.QFont.Bold)
+        self._formate = {"fehler": fehler, "warnung": warnung, "abschnitt": abschnitt}
+
+    def highlightBlock(self, text):          # noqa: N802 - Qt-Schreibweise
+        fmt = self._formate.get(protokollzeile_art(text))
+        if fmt is not None:
+            self.setFormat(0, len(text), fmt)
 
 
 class Marke(QtWidgets.QLabel):
