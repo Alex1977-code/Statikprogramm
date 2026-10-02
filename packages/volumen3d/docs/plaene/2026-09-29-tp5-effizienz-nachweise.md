@@ -596,6 +596,77 @@ Torsion in der Kopplungskontrolle über das polare Moment. Sichtbare Folge für 
 - `run_all`, alle Paketsuiten, GPU-Suite lokal, mypy, lint-imports, CI grün; Pull Request mit den
   Änderungen außerhalb des Pakets einzeln benannt. Gemergt wird nur nach Freigabe.
 
+## Offene Entscheidungen nach C2 (02.10.2026)
+
+Die Punkte sind nach dem Zeitpunkt geordnet, zu dem sie entschieden sein sollten: O1 bis O4 vor C3 und C4 (sie ändern Tests, Code oder
+Handbuchtext des Pull Requests 3), O5 bis O14 können danach kommen. Je Punkt: was zu entscheiden ist, die Möglichkeiten, die Empfehlung und das
+Modell für die Arbeit, die aus der Entscheidung folgt.
+
+*O1 – Referenz Knotenblech nach main (Pull Request 13 der Hauptsitzung).* Zu entscheiden ist die Freigabe des Merge von `tests/reference_models/
+knotenblech_kehlnaht/` (JSON, STEP, `erwartung_tet10.json`) nach main. Danach holt Session B main per Rebase ab, und `test_knotenblech` liest die
+Erwartungswerte aus der Datei statt aus den eingetragenen Zahlen (heute dieselben Werte, 142,74 / 143,14 N/mm²). Empfehlung: freigeben, weil die Werte
+von zwei Seiten unabhängig bestätigt sind. Folgearbeit Sonnet 5.5, niedrig.
+
+*O2 – Tet10-Referenz mit 0,5 mm am Übergang.* Die Referenz wanderte zwischen 2,5 und 1 mm um 3,6 %, und das 1-mm-Netz hält am Übergang nur 1,33 mm im
+Median; die linke Stirnnaht liegt mit −2,93 % knapp unter der Schranke 3 %. Zu entscheiden ist, ob der Lauf mit dem bereitliegenden 0,5-mm-Netz
+(1,55 Mio. Tet10, 6,45 Mio. Freiheitsgrade) gerechnet wird, und wie: mit dem Direktlöser (rund 100 GB, Maschine exklusiv, etwa nachts) oder mit dem
+iterativen Löser der Hauptsitzung. Rechnen würde die Hauptsitzung (Entscheidung E2). Empfehlung: ja, mit dem Direktlöser bei freier Maschine, weil erst
+dann feststeht, ob die Abnahme links wirklich hält. Hauptsitzung Sonnet 5.5, mittel; die Auswertung in Session B Sonnet 5.5, niedrig.
+
+*O3 – Streuung des Hot-Spots mit der Gitterlage.* Am Knotenblech unterscheiden sich die spiegelgleichen Stirnnähte im letzten Zyklus um 3,1 %; die
+Planschranke 1 % ist verfehlt. Zu entscheiden ist zwischen (a) der Schranke der Vorgabe (3 %) als Abnahmewert, (b) einem feineren Nahtziel t/8 (ein
+h-Zyklus mehr; der letzte Zyklus hat heute bei p 4 1,1 Mio. Freiheitsgrade und braucht 59 GB, mit t/8 mehr – wie viel, ist nicht gemessen), und
+(c) einer Hot-Spot-Variante mit größerem
+Abstand zur Kerbe (IIW für grobe Netze: Referenzpunkte 0,5 t und 1,5 t). Empfehlung: zuerst messen – die Gitterlage in drei Schritten verschieben, p 3 und
+p 4, je Stirnnaht – und dann zwischen (a), (b) und (c) wählen. Messung Sonnet 5.5, mittel; Umsetzung von (b) oder (c) Opus 5.5, hoch.
+
+*O4 – Konvergenzaussage.* Der Vorschlag aus B4 war, die Aussage nur über die p-Phase zu treffen. Die Messungen zeigen, dass auch die p-Phase nicht monoton
+ist (Knotenblech 157,1 → 142,6 → 143,2; T-Stoß 111,0 → 107,4 → 107,9): die Aitken-Aussage bliebe „nicht monoton“. Zu entscheiden ist das Kriterium:
+(a) wie bisher nur bei monotoner Folge eine Aussage, (b) Aussage über die letzte relative Änderung mit der Schranke der Vorgabe (unter 3 % gilt als
+konvergiert, die Monotonie wird zusätzlich genannt), (c) nur p-Phase mit (b). Empfehlung: (b) – es ist das Kriterium, das C1 schon verwendet, und es sagt
+dem Anwender, was er wissen muss. Folgearbeit Sonnet 5.5, mittel.
+
+*O5 – Konsistenzfehler der Schnittzellen.* Offen sind 10⁻⁶ bis 10⁻⁴ am T-Stoß mit lokaler Verfeinerung und 2·10⁻⁴ bis 3,5·10⁻³ in der Spannung bei p 2 am
+schrägen Schnitt (abhängig von der Aggregationsschwelle, nicht von α, Moment Fitting, Flächenordnung oder Tiefe). Beides liegt unter den Schranken der
+Vorgabe. Zu entscheiden ist, ob die Ursache jetzt oder vor Teilprojekt 6 (Fehlerschätzer, der davon gestört würde) gesucht wird. Empfehlung: vor Teilprojekt 6,
+nicht vor Pull Request 3. Fable 5.1, sehr hoch.
+
+*O6 – Ebenen durch den gekrümmten Teil einer Hülle (B6 Teil 3).* Läuft eine Schnitt- oder Symmetrieebene durch eine gekrümmte STL- oder STEP-Fläche,
+gilt dort der Punkttest erster Ordnung mit Warnung. Zu entscheiden ist, ob der Divergenzweg eine Dimension tiefer gebaut wird. Empfehlung: bauen, sobald ein
+Anwendungsfall mit gekrümmtem CAD-Teil und Schnittebene ansteht. Fable 5.1, sehr hoch.
+
+*O7 – Vertragsvorschlag 2.2.0 (Volumenlast je Lastfall, liegt seit 28.09.2026).* Heute wirkt `body_load` auf jeden Lastfall; ein Lastfall ohne Eigengewicht
+(etwa Wind) bekommt im Detail eine Last, die das Globalmodell nicht trägt, und Kombinationen bekommen keine Faktoren. Der Vorschlag: `body_loads` je Lastfall
+und Faktoren für Kombinationen (oder das Hauptprogramm löst Kombinationen selbst auf). Zu entscheiden ist Annahme, Annahme nur von Punkt 1 (Kombinationen löst
+das Hauptprogramm auf) oder Ablehnung; bei Annahme setzt die Hauptsitzung ihn als eigenen Pull Request um, Session B schließt ihn an. Empfehlung: Punkt 1
+annehmen, Kombinationen im Hauptprogramm auflösen. Hauptsitzung Sonnet 5.5, mittel; Anschluss in Session B Sonnet 5.5, mittel.
+
+*O8 – Abbruch während `prepare` eines Zyklus.* Der Vertrag gibt `prepare` keinen Abbruch; ein Abbruch wird erst nach dem Aufbau des nächsten Zyklus bemerkt
+(am T-Stoß Minuten). Zu entscheiden ist ein Vertragsvorschlag (Minor, optionaler Parameter `cancel` in `prepare`) oder das Hinnehmen. Empfehlung: zusammen mit
+O9 als ein Vorschlag. Sonnet 5.5, mittel.
+
+*O9 – `summary()` nach Zyklen.* Nach `solve` mit Zyklen beschreibt `disc.summary()` weiter Zyklus 0; der Vertrag (Abschnitt 7) sagt „mit derselben
+Diskretisierung“. Zu entscheiden ist, ob der Vertrag klarstellt, dass `summary()` die übergebene Diskretisierung beschreibt und die Zyklen nur in
+`convergence` und im Protokoll stehen (Patch), oder ob `solve` die Diskretisierung des letzten Zyklus zurückgibt (Minor). Empfehlung: Klarstellung (Patch).
+Sonnet 5.5, niedrig.
+
+*O10 – Torsion in der Kopplungskontrolle.* Die Torsion geht über das polare Moment ein und wird an dünnen Rechteckquerschnitten um etwa den Faktor b/(2t)
+unterschätzt (Streifen b/t = 10: fünffach, b/t = 30: fünfzehnfach).
+Zu entscheiden ist, ob ein Torsionswiderstand aus der Schnittfläche gebaut wird (dünnwandige Näherung oder Spannungsfunktion) oder die Unterschätzung als
+Grenze der Kontrollgröße dokumentiert bleibt. Empfehlung: dokumentiert lassen, bis ein Detail mit Torsion ansteht. Opus 5.5, hoch.
+
+*O11 – Zeiten je Zyklus.* `t_s` von Zyklus 0 enthält die Vorbereitung nicht, die der späteren Zyklen schon. Zu entscheiden ist die Festlegung. Empfehlung:
+je Zyklus Vorbereitung und Lösen getrennt ausweisen. Sonnet 5.5, niedrig.
+
+*O12 – Vereinigung mit mehreren Kindern derselben Hülle.* Nur programmatisch erreichbar (`aus_params` erzeugt je Knoten ein eigenes Objekt). Keine
+Entscheidung nötig; Empfehlung: mit klarem Fehler abweisen. Sonnet 5.5, niedrig.
+
+*O13 – Einrichtzeit der großen Glätterblöcke auf der GPU nach der Cholesky-Umstellung (C2, G2-10).* Richtig geprüft, Zeit nicht gemessen. Keine
+Entscheidung, nur eine Messung (Kirsch h 8 und Block h 14 gegen die Werte aus A3). Sonnet 5.5, mittel.
+
+*O14 – Nächster Leistungshebel am STEP-Weg.* Die Oberflächenquadratur der Hüllenfacetten trägt 17 von 27 s am Block mit Bohrung N 120. Zu entscheiden ist,
+ob sie jetzt beschleunigt wird (Schleifen über 173 000 Polygone in numba). Empfehlung: nach Pull Request 3. Opus 5.5, hoch.
+
 ## Modell je Schritt
 
 Der Anwender stellt Modell und Denkstufe vor jedem Schritt von Hand ein; der Stand wird nach jedem Schritt
@@ -613,10 +684,24 @@ nachgetragen.
 | B2 Spannungsrückgewinnung | Opus 5.5 | hoch | bekanntes Verfahren, sorgfältige Umsetzung | erledigt: L²-Projektion ist Ausgabe; Kosten in Theorie 11.12 |
 | B3 Hot-Spot IIW Typ a | Opus 5.5 | hoch | Geometrie der Referenzpunkte, Normbezug | erledigt: Spanne korrigiert (Anwender), Absolutwert in C1 gegen Tet10 |
 | B4 Konvergenzkurve, Protokoll | Sonnet 5 | mittel | überschaubar, baut auf B2/B3 | gebaut; Fahrplan h zuerst bis t/4 umgesetzt (Anwender), T-Stoß p 2–4 bei 2,5 mm: 111,0 → 107,4 → 107,9; Messung am Knotenblech in C1 |
-| B5 STEP über gmsh | Sonnet 5 | mittel | Anbindung einer Bibliothek | gebaut; Planprüfung K_t am gekrümmten Körper nicht erfüllt (STL-Weg zu langsam), Entscheidung offen |
+| B5 STEP über gmsh | Sonnet 5 | mittel | Anbindung einer Bibliothek | erledigt; die offene Planprüfung K_t am gekrümmten Körper hat B6 erfüllt (0,12 %) |
 | B6 Windungszahl-Baum + Hüllenintegration | Fable 5.1 | sehr hoch | Divergenzsatz über Dreiecke, Barill-Baum, Genauigkeitsnachweis | erledigt: (1)–(3) halten, Block N 120 388 → 26,8 s, K_t 0,12 %; Baum mit β 4 statt 2 (Anwender 01.10.: angenommen) |
 | B7 Schale → Volumen (Prüfung) | Sonnet 5.5 | mittel | Test über bestehende Schnittstelle | erledigt: Schnittgrößen < 7·10⁻⁴ (p 2), 6·10⁻⁸ (p 3); Kopplungskontrolle und Hüllenfacetten-Fehler behoben; Schranke p 2 geneigt 1 % (Anwender) |
 | C1 Knotenblech-Abnahme | Fable 5.1 | sehr hoch | Modellbau und Nachweis gegen Referenz | erledigt: +0,34 % / −2,93 % gegen Tet10-Referenz PR 13 (Schranke 3 %); Symmetrie 3,1 % (Gitterphase) und 0,5-mm-Referenzlauf beim Anwender |
 | C2 Zweite Sicht | Opus 5.5 (Prüfung und Kuren), Gutachter je Gruppe ein anderes Modell | hoch | unabhängig von der Umsetzung, tiefste Prüfung | erledigt: 24 Befunde bestätigt, 4 hohe und 6 mittlere behoben, 12 niedrige behoben, 1 teilweise; Liste in Theorie 11.19 |
-| C3 Handbücher | Sonnet 5 | niedrig | Texte aus vorhandenen Messwerten | offen |
-| C4 Gesamtlauf, Pull Request | Sonnet 5 | mittel | Routine mit Prüfliste | offen |
+| O1 Referenz Knotenblech nach main | Sonnet 5.5 | niedrig | Test auf `erwartung_tet10.json` umstellen | Entscheidung offen: Freigabe Merge PR 13 (Empfehlung: ja) |
+| O2 Tet10-Referenz 0,5 mm | Sonnet 5.5 (Hauptsitzung) | mittel | Lauf und Auswertung nach festem Schema | Entscheidung offen: rechnen ja/nein, Direktlöser exklusiv oder iterativ (Empfehlung: ja, Direktlöser nachts) |
+| O3 Hot-Spot-Streuung mit der Gitterlage | Sonnet 5.5 (Messung), Opus 5.5 (Umsetzung) | mittel / hoch | erst messen, dann t/8 oder 0,5 t / 1,5 t | Entscheidung offen: Schranke 3 %, t/8 oder größerer Kerbabstand (Empfehlung: erst messen) |
+| O4 Konvergenzaussage | Sonnet 5.5 | mittel | Kriterium in `konvergenz.py`, Tests, Handbuch | Entscheidung offen: nur monoton / letzte Änderung unter 3 % / nur p-Phase (Empfehlung: letzte Änderung) |
+| C3 Handbücher | Sonnet 5.5 | mittel | Texte aus vorhandenen Messwerten, viele Zahlen | offen; nach O1 bis O4 |
+| C4 Gesamtlauf, Pull Request | Sonnet 5.5 | mittel | Routine mit Prüfliste | offen; Merge nur auf Freigabe |
+| O5 Konsistenzfehler der Schnittzellen | Fable 5.1 | sehr hoch | Ursachensuche in Aggregation und Quadratur | Entscheidung offen: wann (Empfehlung: vor TP 6, nach PR 3) |
+| O6 Ebenen durch gekrümmte Hülle (B6 Teil 3) | Fable 5.1 | sehr hoch | Divergenzweg eine Dimension tiefer | Entscheidung offen: bauen oder Warnung lassen (Empfehlung: bei Bedarf) |
+| O7 Vertragsvorschlag 2.2.0 Volumenlast je Lastfall | Sonnet 5.5 | mittel | Anschluss in `api.py` nach dem Vertrags-PR | Entscheidung offen: ganz, nur Punkt 1 oder ablehnen (Empfehlung: Punkt 1, Kombinationen im Hauptprogramm) |
+| O8 Abbruch in `prepare` | Sonnet 5.5 | mittel | Vertragsvorschlag schreiben | Entscheidung offen: Vorschlag (Minor) oder hinnehmen (Empfehlung: Vorschlag mit O9) |
+| O9 `summary()` nach Zyklen | Sonnet 5.5 | niedrig | Klarstellung im Vertrag | Entscheidung offen: Klarstellung (Patch) oder letzte Diskretisierung zurückgeben (Minor) |
+| O10 Torsion in der Kopplungskontrolle | Opus 5.5 | hoch | Torsionswiderstand aus der Schnittfläche | Entscheidung offen: bauen oder dokumentiert lassen (Empfehlung: dokumentiert lassen) |
+| O11 Zeiten je Zyklus | Sonnet 5.5 | niedrig | Protokollfelder | Entscheidung offen: Festlegung (Empfehlung: Vorbereitung und Lösen getrennt) |
+| O12 mehrere Kinder derselben Hülle | Sonnet 5.5 | niedrig | Prüfung in `Csg` | keine Entscheidung nötig; Empfehlung: mit Fehler abweisen |
+| O13 GPU-Einrichtzeit nach Cholesky | Sonnet 5.5 | mittel | Messreihe gegen A3 | keine Entscheidung, nur Messung |
+| O14 Oberflächenquadratur der Hüllenfacetten | Opus 5.5 | hoch | numba-Schleifen, Leistung | Entscheidung offen: jetzt oder nach PR 3 (Empfehlung: nach PR 3) |
