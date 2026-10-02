@@ -10642,16 +10642,19 @@ Bauteil schafft, zeigen erst M2 und M3. Nachweisstellen auf Kontaktseiten
 bleiben ohne Kontakt über Punkte der Seite (B4) bei 15 bis 20 N/mm².
 
 
-## 11 Finite-Cell-Methode: Volumenmodul `volumen3d` (Teilprojekte 1 und 2, 27.09.2026)
+## 11 Finite-Cell-Methode: Volumenmodul `volumen3d` (Teilprojekte 1 bis 5, 27.09. bis 02.10.2026)
 
 Das Volumenmodul rechnet Volumenbauteile ohne klassisches Vernetzen: Der Körper wird in ein
 achsparalleles Gitter würfelförmiger Zellen eingebettet, die Geometrie geht nur über eine
 vorzeichenbehaftete Abstandsfunktion (SDF) ein. Verbindlich sind
 `docs/Vorgabe_Statik3D_Abschnitt_FCM-Volumenloeser.md` und der Schnittstellenvertrag
-(`docs/Schnittstellenvertrag_Statik3D_FCM.md`, 2.0.0); die Umsetzungsentscheidungen stehen in
-`packages/volumen3d/docs/Entwurf.md`. Dieses Kapitel hält die Formeln und die gemessenen Zahlen von
-Teilprojekt 1 fest (CPU-Referenz: assemblierte Steifigkeit, Direktlöser). Einheiten im Modul:
-mm, N, N/mm².
+(`docs/Schnittstellenvertrag_Statik3D_FCM.md`, seit 28.09.2026 Version 2.1.0); die Umsetzungsentscheidungen stehen in
+`packages/volumen3d/docs/Entwurf.md`. Dieses Kapitel hält die Formeln und die gemessenen Zahlen
+fest, geordnet nach den Teilprojekten: 11.1 bis 11.7 Teilprojekt 1 (CPU-Referenz: assemblierte Steifigkeit, Direktlöser), 11.8 Teilprojekt 2
+(Oktree, hängende Freiheitsgrade, STL), 11.9 Teilprojekt 3 (matrixfreier Operator, PCG), 11.10 Teilprojekt 4 (p-Mehrgitter, mit den Leistungsarbeiten A1 bis A6 des Plans TP 5) und 11.11 bis 11.20
+Teilprojekt 5 (Moment Fitting, Spannungsrückgewinnung, Hot-Spot, adaptive Zyklen, STEP, Hüllenintegration, Schale, Knotenblech, zweite Sicht,
+Streuung mit der Gitterlage). Beobachtungen und Entscheidungen, die später dazukamen, stehen als „Nachtrag“ im Abschnitt, auf den sie sich
+beziehen (oder in 11.19 und 11.20); ein früherer Absatz kann dadurch überholt sein. Einheiten im Modul: mm, N, N/mm².
 
 ### 11.1 Ansatz und Freiheitsgrade
 
@@ -11663,13 +11666,14 @@ Ein Abbruch zwischen den Zyklen meldet `SolverCancelled`; der Fortschritt teilt 
 Kerben wächst sie mit der Verfeinerung und ist darum kein Konvergenzkriterium), `solver_path`, `iterations`, `t_s` und
 `hotspot_change` (relative Änderung gegenüber dem Vorzyklus).
 
-**Konvergenzaussage** (`postprocess/konvergenz.py`, `protocol["convergence_statement"]`; Kriterium seit 02.10.2026 siehe das Nachtrag unten – die folgende Beschreibung ist die Fassung
-von B4). Aus `hotspot_max` der Zyklen, ohne
-Raten: bei weniger als drei Werten „zu wenige Zyklen“; sonst mit Δ_k = σ_k − σ_{k−1}: „monoton konvergent“, wenn alle Δ_k dasselbe
-Vorzeichen haben und |Δ_{k+1}| < |Δ_k|. Dann gilt die Aitken-Extrapolation σ_∞ = σ_n + Δ_n·r/(1 − r) mit r = Δ_n/Δ_{n−1}, die für
+**Konvergenzaussage** (`postprocess/konvergenz.py`, `protocol["convergence_statement"]`; Kriterium seit O4, 02.10.2026, begründet im Nachtrag unten). Aus `hotspot_max` der
+Zyklen, ohne Raten: bei weniger als drei Werten „zu wenige Zyklen“; sonst bewertet die Aussage die **letzte relative Änderung** r = |σ_n − σ_(n−1)|/|σ_(n−1)| gegen die
+Schranke 3 % (die Zahl der Vorgabe 13 für den Hot-Spot gegen Tet10, für die Konvergenz übernommen (O4); die Vorgabe verlangt für die Konvergenz nur die Kurve, 11.3) – „konvergiert“ bei r < 3 %, sonst „nicht konvergiert“ (dazu `kein_hotspot` und `ohne_aenderung`). Die Monotonie (mit Δ_k = σ_k − σ_{k−1} alle Δ_k
+mit demselben Vorzeichen und |Δ_{k+1}| < |Δ_k|) wird zusätzlich genannt, ist aber keine Bedingung. Nur bei einer monotonen Folge gilt die Aitken-Extrapolation
+σ_∞ = σ_n + Δ_n·q/(1 − q) mit q = Δ_n/Δ_{n−1}, die für
 eine geometrische Folge den Grenzwert exakt trifft (Prüfung: 100 + 10·0,5ᵏ und 100 − 10·0,6ᵏ ergeben 100 auf 10⁻¹²), und die
 Restabweichung |σ_n − σ_∞|/σ_∞ sagt, wie weit der letzte Zyklus noch entfernt ist. Eine schwingende oder wachsende Folge
-bekommt keinen Grenzwert; das Ergebnis trägt eine Warnung, und die Werte stehen im Protokoll. Dass ein Hot-Spot von unten
+bekommt keinen Grenzwert; die Änderungen und die Monotonie stehen im Text, `nicht_konvergiert` und `ohne_aenderung` tragen eine Warnung, und die Werte stehen im Protokoll. Dass ein Hot-Spot von unten
 gegen den Grenzwert läuft, ist normal (T-Stoß h 10 → h 5: 100,43 → 100,93 N/mm²); das „fällt“ der ursprünglichen Planzeile
 war als „konvergiert monoton“ gemeint.
 
@@ -11680,14 +11684,16 @@ Schritt, angeforderter und benutzter Rechenweg mit Löserweg, Moment Fitting und
 Dazu trägt das Protokoll `cycles`, `convergence_statement`, `hot_spot` (11.13) und `stress_recovery` (11.12).
 
 **Prüfungen** (`tests/test_adaptiv.py`, die schnellen in der Kernsuite). (1) Die Aussage als reine Funktion gegen geschlossene
-Formen (geometrisch von oben und unten, schwingend, wachsend, zwei Werte, fehlender Wert, konstant). (2) Kragarm-Ausschnitt ohne Naht
+Formen (geometrisch von oben und unten, schwingend, wachsend, zwei Werte, fehlender Wert, konstant, Null nach monotoner Annäherung) und gegen die gemessenen Folgen von
+Knotenblech und T-Stoß (Nachtrag O4). (2) Kragarm-Ausschnitt ohne Naht
 mit zwei Zyklen: p 2 → 3 → 4 mit 6 237 → 19 200 → 43 407 Freiheitsgraden, alle Felder der Kurve und des Protokolls, der letzte Zyklus
 stimmt mit der Rechnung mit p 4 ohne Zyklen auf 4,5·10⁻⁹ überein, der Fortschritt steigt monoton bis 1. (3) Grenzen: Zyklenzahl
 außerhalb 0 bis 4 wird abgelehnt, p 4 ohne Naht endet mit Warnung, der Abbruch greift zwischen den Zyklen. (4) T-Stoß unter Zug
 über den Vertragsweg (nur mit `VOLUMEN3D_LANG=1`, 27 s auf vier Kernen): Schritte, Freiheitsgrade und Kopplungskontrolle
-(Kraft 1,38 %) stimmen, alle Hot-Spot-Werte liegen zwischen 0,5 und 1,5·σ_n, die Aussage stimmt mit der nachgerechneten Monotonie überein.
+(Kraft 1,32 % seit C2, bei B4 1,38 %) stimmen, alle Hot-Spot-Werte liegen zwischen 0,5 und 1,5·σ_n, die Aussage stimmt mit der nachgerechneten letzten Änderung (13 %: nicht konvergiert) und der
+Monotonie überein, und die nicht konvergierte Kurve trägt die Warnung.
 
-**Die Konvergenzforderung des Plans ist nicht erfüllt.** Vorab festgelegt war: am T-Stoß (Basiszellgröße 20, p 2, drei Zyklen)
+**Messung in B4: die Konvergenzforderung des Plans war nicht erfüllt** (die Folgen daraus stehen unten: Fahrplan seit 01.10.2026, Kriterium seit O4). Vorab festgelegt war: am T-Stoß (Basiszellgröße 20, p 2, drei Zyklen)
 konvergiert `hotspot_max` monoton, die letzte Änderung liegt unter 3 %. Gemessen:
 
 | Start | Zyklen (Freiheitsgrade, `hotspot_max` in N/mm²) | Aussage |
@@ -11705,9 +11711,9 @@ Zyklus: lokale Zellgröße 5, p 3, 92 208 Freiheitsgrade) liefern denselben Wert
 Kerbe, und die Spannung dort hängt an der singulären Stelle. Eine monotone Kurve braucht lokal Zellen von etwa 2 mm
 (0,4 t reicht dann über zwei Zellen), und das sind bei zwei Nähten mehr als eine Million Freiheitsgrade; das ist auf der belegten
 Maschine nicht gerechnet. Die Zykluslogik selbst (Wechsel h/p) ist damit nicht als Ursache belegt und nicht als unschuldig; sie wechselt
-Schritte, deren Wirkung sich überlagert. **Empfehlung (Entscheidung des Anwenders):** den Fahrplan auf „h zuerst“ umstellen, lokale Zellgröße
-bis t/4 an den Nähten (Referenzpunkt 0,4 t mindestens 1,6 Zellen vom Übergang), dann p + 1, und die Konvergenz am echten Knotenblech der Abnahme
-C1 messen; die Aussage sagt bis dahin ehrlich „nicht monoton“ und der Nachweis trägt die Warnung.
+Schritte, deren Wirkung sich überlagert. **Folge (Anwender, 01.10.2026):** der Fahrplan wurde auf „h zuerst“ umgestellt, lokale Zellgröße
+bis t/4 an den Nähten (Referenzpunkt 0,4 t mindestens 1,6 Zellen vom Übergang), dann p + 1; die Konvergenz am echten Knotenblech der Abnahme
+C1 wurde danach gemessen (11.18), und das Kriterium der Aussage änderte sich mit O4 (oben und Nachtrag).
 
 Dazu zwei Beobachtungen zur geglätteten Spannung. Die größte Von-Mises-Spannung an den Oberflächenpunkten wächst roh mit der
 Verfeinerung (123,5 → 133,5 → 131,8 → 170,9 → 202,9 N/mm² über fünf Zyklen, die singuläre Kerbe), die geglättete bleibt bei 123 bis 134:
@@ -11753,21 +11759,21 @@ geprüft: sechs Fälle mit Basis 20, 10 und 2,5, einer und zwei Nähten, ohne Na
 
 Längs der Naht ist der letzte Zyklus glatt (106,9 bis 107,9 N/mm² an beiden Nähten). Die Änderungen sind +7,78, −16,59, −3,54 und +0,49 N/mm²: Mit der
 Zellgröße t/4 ist die Zahl stabil, die p-Phase ändert sie um −3,2 % und dann um +0,45 %, der Hot-Spot liegt bei etwa 107,9 N/mm² (±0,5 %). Die Aussage
-bleibt „nicht monoton“, weil die frühen, noch groben Halbierungen überschwingen (119,8 → 127,6 → 111,0); die vor der Messung festgelegte Forderung
-„monoton konvergent, letzte Änderung unter 3 %“ ist damit in der zweiten Hälfte erfüllt (0,45 %) und in der ersten nicht. **Vorschlag, nicht
-umgesetzt:** die Aussage nur über die p-Phase bei fester feinster Zellgröße zu bilden (ab dem ersten Zyklus mit h_min = t/4) und dort eine kleine letzte Änderung
-(unter 1 %) statt strenger Monotonie zu verlangen – sie wäre hier erfüllt (110,99 → 107,45 → 107,93). Meine frühere Schätzung „über eine Million Freiheitsgrade“ für
+lautete in B4 „nicht monoton“ (seit O4: „konvergiert, Folge nicht monoton“), weil die frühen, noch groben Halbierungen überschwingen (119,8 → 127,6 → 111,0); die vor der Messung festgelegte Forderung
+„monoton konvergent, letzte Änderung unter 3 %“ ist damit in der zweiten Hälfte erfüllt (0,45 %) und in der ersten nicht. **Vorschlag aus B4, durch O4 ersetzt (Nachtrag):** die Aussage nur über die p-Phase bei fester feinster Zellgröße zu bilden (ab dem ersten Zyklus mit h_min = t/4) und dort eine kleine letzte Änderung
+(unter 1 %) statt strenger Monotonie zu verlangen – sie wäre hier erfüllt (110,99 → 107,45 → 107,93). Die frühere Schätzung „über eine Million Freiheitsgrade“ für
 Zellen von 2 mm war zu pessimistisch: bei p 2 sind es 120 699, erst p 4 erreicht 895 569 (370 s, 17 GB Hauptspeicher). Die größte geglättete Von-Mises-Spannung wächst
 auch geglättet mit der Verfeinerung (132,7 → 158,2 → 172,6 → 189,2 N/mm² von Zyklus 1 bis 4): die Kerbe ist singulär. Die Messung am Knotenblech bleibt C1.
 
 **Nachtrag (O4, 02.10.2026): Kriterium der Konvergenzaussage.** Entscheidung des Anwenders: die Aussage bewertet die **letzte relative Änderung** r = |σ_n − σ_(n−1)|/|σ_(n−1)|
-(wie `hotspot_change`) gegen die Schranke der Vorgabe 13, **3 %** (`KONVERGENZ_SCHRANKE`): `konvergiert` bei r < 3 %, sonst `nicht_konvergiert`; `kein_hotspot`, `zu_wenige_zyklen` und `ohne_aenderung`
+(wie `hotspot_change`) gegen die Schranke **3 %** (`KONVERGENZ_SCHRANKE`; die Zahl der Vorgabe 13 für den Hot-Spot gegen Tet10, für die Konvergenz übernommen (O4); die Vorgabe verlangt für die Konvergenz nur die Kurve, 11.3): `konvergiert` bei r < 3 %, sonst `nicht_konvergiert`; `kein_hotspot`, `zu_wenige_zyklen` und `ohne_aenderung`
 bleiben. Die **Monotonie** (alle Änderungen mit demselben Vorzeichen, betragsmäßig abnehmend) wird zusätzlich genannt (`monoton`), ist aber keine Bedingung; nur bei monotoner Folge gibt es den
-Aitken-Grenzwert mit der Restabweichung (wie oben). Der Text nennt immer beides – „letzte relative Änderung 0,44 % < 3 %: konvergiert; Folge nicht monoton (Änderungen −5,64, −18,28, −14,54,
+Aitken-Grenzwert mit der Restabweichung (wie oben). Der Text nennt immer beides – „letzte relative Änderung 0,44 % < 3 %: konvergiert; Folge nicht monoton (Änderungen −5,64, −18,28, −14,53,
 +0,63 N/mm²)“. Die Warnung im Ergebnis gilt `nicht_konvergiert` und `ohne_aenderung`; eine konvergierte, nicht monotone Folge trägt nur den Hinweis im Text. Warum: die Folgen der frühen h-Schritte
 schwingen immer (Knotenblech 181,1 → 175,4 → 157,1 → 142,6 → 143,2, T-Stoß 119,8 → 127,6 → 111,0 → 107,4 → 107,9); „nicht monoton, keine Aussage“ sagte dem Anwender nicht, was er wissen muss, obwohl der
-letzte Schritt unter 0,5 % lag. Mit dem neuen Kriterium: Knotenblech r 0,44 % und T-Stoß (p-Phase) r 0,47 % konvergiert, beide nicht monoton; das T-Stoß-Ergebnis mit zwei Zyklen
-(119,8 → 127,6 → 111,0, r 13 %) nicht konvergiert (Warnung). **Bekannte Schwäche:** eine Folge mit großem Überschwinger vor einer kleinen letzten Änderung gilt als konvergiert ([100, 120, 90, 90]:
+letzte Schritt unter 0,5 % lag. Mit dem neuen Kriterium: Knotenblech r 0,44 % und T-Stoß (p-Phase) r 0,45 % konvergiert, beide nicht monoton; das T-Stoß-Ergebnis mit zwei Zyklen
+(119,8 → 127,6 → 111,0, r 13 %) nicht konvergiert (Warnung). (Die erste Fassung dieses Nachtrags und der Planregeln nannte für den T-Stoß 0,47 %: gerechnet aus den auf eine
+Stelle gerundeten Werten 107,4 und 107,9; mit den gemessenen 107,446 und 107,932 N/mm² sind es 0,45 %. Berichtigt bei C3; der Test rechnet jetzt mit den ungerundeten Werten.) **Bekannte Schwäche:** eine Folge mit großem Überschwinger vor einer kleinen letzten Änderung gilt als konvergiert ([100, 120, 90, 90]:
 r = 0, konvergiert, nicht monoton) – die Änderungen und die Monotonie stehen deshalb daneben im Text, und die Kurve selbst (`convergence`) liegt dem Nachweis bei. Geprüft in
 `test_adaptiv.test_konvergenzaussage` (Erwartungswerte von Hand: 110/105/102,5/101,25 r 1,22 %, [100, 103, 101, 102] r 0,99 %, [100, 101, 103, 107] r 3,88 %, die gemessenen Folgen) und in
 `test_zyklen_t_stoss`.
@@ -11779,7 +11785,7 @@ und gibt sie als Hülle an den bestehenden STL-Weg (Windungszahl für innen und 
 Innen/Außen-Funktion, die Krümmung steckt nur in der Tessellierung. Angaben in `GeometrySource.params`: `tessellation_mm` (größte Facette, Vorgabe die
 Basiszellgröße) und `elements_per_circle` (Dreiecke je Vollkreis, Vorgabe 120), `name`. Die Einheit rechnet gmsh beim Lesen von der in der Datei
 deklarierten nach mm um (`Geometry.OCCTargetUnit = MM`; geprüft mit einer Datei, deren Kopf auf Meter umdeklariert ist: die Ausdehnung wird tausendfach).
-Mehrere Körper werden zu einer Hülle zusammengefasst, sich durchdringende sind nicht zulässig. gmsh ist **optional** (Extra `step` in
+Mehrere Körper werden zu einer Hülle zusammengefasst, sich durchdringende sind nicht zulässig (Stand B5; seit C2 werden STEP-Körper vereinigt und durchdringende STL-Schalen mit einem Fehler abgewiesen, 11.19). gmsh ist **optional** (Extra `step` in
 `packages/volumen3d/pyproject.toml`, `pip install "gmsh>=4.11"`, GPL-Lizenz, nicht gebündelt); ohne gmsh gibt es `SolverError` mit dem Installationshinweis. Die
 Bibliothek wird nicht unterbrechbar und ohne Konfigurationsdateien initialisiert (Arbeitsfäden), ein schon laufendes gmsh des Aufrufers bleibt unberührt
 (eigenes Modell, Optionen und aktuelles Modell werden zurückgesetzt). Fehlerfälle mit klarer Meldung: Datei fehlt, kein Pfad, keine STEP-Datei, nur eine
@@ -11809,9 +11815,10 @@ kein konvexes oder konkaves Ebenenarrangement. Am Vollzylinder meldet `lokale_la
 am Ende steht der Punkttest erster Ordnung. Das bestehende STL-Netz des Lamé-Tests (regelmäßig, Sehnen 1 mm) rechnet dagegen in 78 s. **Folgen:** Der Vertragsweg
 meldet eine Warnung, wenn Blätter im Punkttest oder Flächenstücke im Rückfall stehen (`_integrationswarnung`, geprüft als reine Funktion; sie schweigt bei
 ebenen Flächen), und die Prüfung läuft am ebenen STEP-Quader und an der Tessellierung des Blocks mit Bohrung, nicht am gekrümmten Körper. Ein Block mit Bohrung gegen CSG
-(K_t) steht damit nicht im Test; das ist offen. **Abhilfe (Entscheidung des Anwenders):** eine Integration über die Dreiecke selbst (Divergenzsatz für das Volumen, Vorgabe 6
+(K_t) steht damit in B5 nicht im Test; B6 hat das nachgeholt (11.16: 0,12 % bei p 2). **Abhilfe (Entscheidung des Anwenders), in B6 umgesetzt:** eine Integration über die Dreiecke selbst (Divergenzsatz für das Volumen, Vorgabe 6
 „oberflächenbasierte Integration“, Fläche je Dreieck exakt) statt der Zerlegung an lokalen Ebenen – ein eigener Schritt, naheliegend zusammen mit dem schnellen Windungszahl-Baum (B6).
-Bis dahin gilt für gekrümmte CAD-Teile: CSG verwenden oder die Tessellierung strukturiert vorgeben.
+Das galt bis B6; seither (11.16) behalten nur Zellen, in denen die Hülle auf eine andere aktive Form trifft (Schnitt- oder Symmetrieebene; bei ebenen Facetten exakt), und die Zellen offener Hüllen (11.19) den bisherigen Weg;
+der Punkttest bleibt dort, wo eine Ebene durch den gekrümmten Teil der Hülle läuft.
 
 **Prüfungen** (`tests/test_step.py`, in der Kernsuite, ohne gmsh übersprungen außer den Fehlerfällen und der Warnung, die ohne gmsh simuliert laufen): Tessellierung (Volumen
 gegen die Formel, wasserdicht, Orientierung, Hüllquader, Einheit), Vertragsweg STEP-Quader gegen CSG, Integrationswarnung, Fehlerfälle.
@@ -11935,7 +11942,7 @@ schrägen Schnitt sind also Konsistenzfehler der Schnittzellen, die in der Spann
 
 **Befund 1: die Kopplungskontrolle meldete bei reiner Biegung 100 % Kraftabweichung.** Der Kraftbezug war die größere der beteiligten Kräfte; bei reiner Biegung ist die Kraft im
 Globalmodell null und im Detail nur ein Rest (2·10⁻⁸ N achsparallel, 0,01 und 5,3 N an den beiden Ebenen des geneigten Streifens, Moment 2,5·10⁵ N·mm), also |F|/|F| = 1,0 und eine Warnung „> 5 %“. Das Moment hatte seit dem Gutachten vom 27.09. einen Bezug mit Kraft mal Länge. Jetzt
-haben beide ein gemeinsames Lastmaß (`api._kopplungsabweichung`): ref_m = max(|M|, |m_g|, f₀·l), ref_f = ref_m/l mit l = √Schnittfläche, f₀ die größte beteiligte Kraft; ein Kraftrest wird
+haben beide ein gemeinsames Lastmaß (`api._kopplungsabweichung`; Stand B7, seit C2 werden die Abweichungen als Spannungen bewertet, Nachtrag unten): ref_m = max(|M|, |m_g|, f₀·l), ref_f = ref_m/l mit l = √Schnittfläche, f₀ die größte beteiligte Kraft; ein Kraftrest wird
 also gegen die Kraft gemessen, die dasselbe Moment am Hebel l aufbrächte. Folge: bei momentbestimmten Zuständen wird eine Querkraftabweichung gegen das größere Lastmaß M/l bezogen,
 die Warnschwelle 5 % liegt entsprechend später (z. B. Querkraft 900 gegen 1000 N bei 4·10⁵ N·mm: 2,5 % statt 10 %); eine Kraft, die das Globalmodell nicht kennt, bleibt als Abweichung 1,0
 sichtbar (geprüft als reine Funktion).
@@ -11949,13 +11956,13 @@ Das Volumen war nicht betroffen (Zellklassifikation), wohl aber Ausgabepunkte un
 gegen die unabhängige Summe aus geclippten Facetten und konvexer Kappe auf 3·10⁻¹⁵, keine Punkte hinter der Ebene (`test_huelle.test_flaeche_hinter_schnittebene`).
 
 **Befund 3 (offen): Konsistenzfehler des p-2-Ansatzes am schrägen Schnitt.** Das Feld liegt im Ansatzraum (quadratisch), p 2 reproduziert es am geneigten Streifen aber nur auf
-10⁻⁴ bis 3,5·10⁻³ in der Spannung, p 3 auf 10⁻⁶, der achsparallele Fall auf 10⁻⁷. Ohne Einfluss sind α (10⁻⁸ gegen 10⁻¹²), Moment Fitting (an/aus), die Flächenquadraturordnung (Vorgabe, 6, 10) und die
+2·10⁻⁴ bis 3,5·10⁻³ in der Spannung, p 3 auf 10⁻⁶, der achsparallele Fall auf 10⁻⁷. Ohne Einfluss sind α (10⁻⁸ gegen 10⁻¹²), Moment Fitting (an/aus), die Flächenquadraturordnung (Vorgabe, 6, 10) und die
 Teilungstiefe (2, 3); deutlichen Einfluss hat die Aggregationsschwelle (Spannung bei 10°: Schwelle 0,4 → 3,5·10⁻³, 0,2 → 1,7·10⁻², ohne Aggregation 1,3·10⁻¹). Die Hüllenintegration (B6) verbessert den Fall
 (30°: 1,2·10⁻³ → 2,2·10⁻⁴). Das passt zum schon bekannten offenen Konsistenzfehler 10⁻⁶ bis 10⁻⁴ am T-Stoß (Theorie 11.14); die Ursache ist nicht geklärt und kein Teil von B7. Der Fehler
 liegt deutlich unter der Vorgabeschranke; Gleichgewichtsrest und Schnittgrößenabweichung treten mit ihm auf und verschwinden bei p 3 gemeinsam mit ihm (am geneigten Streifen p 2 bleibt ein Kraftrest von 5,3 N bei 7 906 N Lastmaß).
 
 **Schranken.** Die im Plan vorab gesetzte Schranke 10⁻⁶ für das Gleichgewicht der Resultierenden war geraten und wird für p 2 am schrägen Schnitt nicht gehalten (4,2·10⁻³); sie gilt
-achsparallel mit 10⁻⁹ (gemessen 1,9·10⁻¹¹) und bei p 3 mit 10⁻⁵ (gemessen ≤ 2,5·10⁻⁶); für p 2 geneigt gilt die Vorgabeschranke 1 % (Entscheidung beim Anwender).
+achsparallel mit 10⁻⁹ (gemessen 1,9·10⁻¹¹) und bei p 3 mit 10⁻⁵ (gemessen ≤ 2,5·10⁻⁶); für p 2 geneigt gilt die Vorgabeschranke 1 % (vom Anwender am 01.10.2026 angenommen).
 
 **Prüfungen** (`tests/test_schale.py` in der Kernsuite: Kontrollgröße als reine Funktion, achsparallel, geneigt p 2 mit Punkten zwischen den Ebenen, geneigt p 3; `tests/test_huelle.py`:
 Hüllenfläche hinter der Schnittebene).
@@ -11987,8 +11994,11 @@ von `main` (7da3571, nur lesend) gerechnet; die Hauptsitzung bestätigte die Wer
 der Elementfelder (`tests.pruefkoerper.punktspannung`), Lösen 294 s. **Einschränkung der Hauptsitzung:** die gemessene Kantenlänge am Übergang liegt im Median bei 1,33 mm
 (90 % unter 1,75, Maximum 2,2 mm) – das gmsh-Größenfeld ist ein Ziel, keine Garantie; die Anforderung t/10 hält dieses Netz nicht. Netzkonvergenz der Referenz: mit 2,5 mm am Übergang σ_hs(y = 40) 148,0 / 149,1, mit 1 mm
 142,74 / 143,14 N/mm² (rechts / links) – 3,6 % Änderung; bei Fehlerordnung h² läge der Grenzwert bei etwa 141,7 (Richardson), also rund 0,7 % unter dem 1-mm-Wert.
-Die Referenz ist in sich symmetrisch (0,28 %). Der 0,5-mm-Lauf (1 554 780 Tet10, 2 149 968 Knoten, 6,45 Mio. Freiheitsgrade, Netz liegt bereit) braucht mit dem
-Direktlöser rund 100 GB und liegt beim Anwender (iterativer Löser oder Pause der anderen Sitzung).
+Die Referenz ist in sich symmetrisch (0,28 %). Der 0,5-mm-Lauf (1 554 780 Tet10, 2 149 968 Knoten, 6,45 Mio. Freiheitsgrade) passt nicht in den Speicher: die Hauptsitzung maß am 1-mm-Netz (1 087 659 Gleichungen)
+33,6 GB für das Aufstellen und 30,6 GB für die PARDISO-Zerlegung (`lauf_05mm/ABNAHME-05MM.md`, `lauf_05mm/bedarf_1mm/bedarf.json`). Der Anwender hat deshalb entschieden, nur am Übergang auf 0,5 mm zu verfeinern (O2); Session B lieferte
+dafür am 02.10.2026 ein lokal verfeinertes Netz (445 946 Knoten, 305 689 Tet10, 1,34 Mio. Freiheitsgrade; Feldwert 0,5 mm in vier Zonen um die beiden Nahtübergänge, tatsächliche
+Kantenlänge am Übergang im Median 0,66 mm gegen 1,23 mm im 1-mm-Netz, gemessen an den Kanten mit Mitte höchstens 1 mm von der Übergangslinie – die Hauptsitzung nennt für das 1-mm-Netz 1,33 mm nach einer anderen Vorschrift, siehe oben;
+`REFERENZ-KNOTENBLECH-2026-10-01/LIEFERUNG-LOKAL05.md`). Der Lauf der Hauptsitzung steht aus.
 
 **FCM** (Vertragsweg, Basiszellgröße 10 = t, p 2, `adaptive_cycles` 4 nach dem Fahrplan aus B4):
 
@@ -12000,8 +12010,7 @@ Direktlöser rund 100 GB und liegt beim Anwender (iterativer Löser oder Pause d
 | 3 | p-Erhöhung | 3 | 477 702 | 2,5 | 142,60 | 75 s |
 | 4 | p-Erhöhung | 4 | 1 096 107 | 2,5 | 143,23 | 329 s (59 GB) |
 
-Letzte Änderung +0,44 % (Schranke 3 %), Konvergenzaussage „nicht monoton“ (−5,6, −18,3, −14,5, +0,6 N/mm²; die Frage aus B4, ob die Aussage nur die p-Phase
-betrachten soll, ist offen). Kopplungskontrolle Kraft 2,25 % (Schnittkraft 81 844,7 N; Tet10 81 845,2 N), keine Integrationswarnung. Fern der Naht (x 180)
+Letzte Änderung +0,44 % (Schranke 3 %), Konvergenzaussage „konvergiert, Folge nicht monoton“ (−5,6, −18,3, −14,5, +0,6 N/mm²; Kriterium seit O4, 11.14). Kopplungskontrolle Kraft 2,25 % (Schnittkraft 81 844,7 N; Tet10 81 845,2 N), keine Integrationswarnung. Fern der Naht (x 180)
 oben 111,1 und unten 94,9 N/mm², Tet10 111,1 / 95,0: das exzentrische Knotenblech biegt das Blech, und die ebenen Schnittebenen halten die Enden gegen
 Verdrehung – darum gilt die Planregel „σ_xx = σ_n ± 1 %“ hier für den Membrananteil (Mittel beider Seiten 103,1 gegen Schnittkraft/(b t) 102,4, 0,7 %), nicht für
 jede Seite.
@@ -12020,7 +12029,7 @@ Rechts stimmen FCM und Tet10 an allen neun Punkten auf 0,4 % überein (y = 40: +
 sind symmetrisch –, sondern die Gitterphase: das Gitter beginnt bei lo − 0,1 h = −1, der linke Übergang x 64 liegt bei Zellen von 2,5 mm genau auf einer Zellgrenze,
 der rechte x 136 0,5 mm vor einer. Der Referenzpunkt 0,4 t = 4 mm liegt damit höchstens zwei Zellen vor der Spannungssingularität am Übergang, und dort entscheidet
 die Lage der Zellgrenzen über Prozente. Die Planschranke „rechts und links auf 1 % gleich“ hält nicht; sie misst dasselbe wie die Schnittlagen-Robustheit der
-Vorgabe 13 (Streuung unter 1 %), die für den Hot-Spot bei t/4 und p 4 also nicht erreicht ist. Hebel (nicht Teil von C1, Entscheidung beim Anwender): Nahtziel t/8
+Vorgabe 13 (Streuung unter 1 %), die für den Hot-Spot bei t/4 und p 4 also nicht erreicht ist. Hebel (nicht Teil von C1; Messung und Entscheidung O3 in 11.20): Nahtziel t/8
 statt t/4 (ein h-Zyklus mehr; Freiheitsgrade und Speicher steigen deutlich – bei p 4 wären es über 2 Mio.) oder ein Hot-Spot-Verfahren mit größerem Abstand zur Kerbe
 (IIW Typ a grob: 0,5 t / 1,5 t).
 
@@ -12039,8 +12048,9 @@ verlor „sym_x“ seine Punkte), sonst die mit dem kleineren Rang (`_zeugen_pru
 von 3,2·10⁻¹² auf 2·10⁻¹⁶ – dort waren 27 Punkte doppelt.
 
 **Prüfungen** (`tests/test_knotenblech.py`: Kernteil h 10 in der Kernsuite – Volumen, Kopplung, Membrananteil, 18 Hot-Spots im Band 1,0 bis 2,0 σ_n;
-Konvergenz mit vier Zyklen und Abnahme gegen `REFERENZ` nur mit `VOLUMEN3D_LANG=1`, 436 s und 59 GB; `REFERENZ` nennt die Quelle Pull Request 13 der Hauptsitzung;
-die Symmetrie rechts/links wird als Information gemeldet, bis der Anwender über die Planschranke entschieden hat).
+Konvergenz mit vier Zyklen und Abnahme gegen die Referenzdatei der Hauptsitzung (Pull Request 13) nur mit `VOLUMEN3D_LANG=1`, 436 s und 59 GB bei der ersten Messung, 572 s
+am 02.10.2026; die Aussage „konvergiert“ gehört zur Prüfung, die Symmetrie rechts/links wird als Information gemeldet (die Planschranke 1 % gilt nicht, entschieden mit O3), und der Lauf muss im
+gemessenen Streuband der Gitterlage (11.20) liegen – eine Regressionsprüfung, keine Abnahmeschranke).
 
 **Nachtrag (O1, 02.10.2026).** Pull Request 13 der Hauptsitzung (Referenzmodell, Merge-Commit f56281a) ist auf main; `test_knotenblech` liest die Referenz seither aus
 `tests/reference_models/knotenblech_kehlnaht/erwartung_tet10.json` (Hilfsfunktion `lade_referenz`) statt aus eingetragenen Zahlen – dieselben Werte (142,74 / 143,14 N/mm²). Ersetzt der
@@ -12051,7 +12061,7 @@ die ebenen Schnittebenen halten das Blech gegen die Verdrehung, die das exzentri
 (Randspannung ±8,8 N/mm²), das der Zug-Geber (reiner Zug) nicht kennt. Die Warnung ist richtig – das Globalmodell bildet die Exzentrizität nicht ab –, und
 die Tet10-Referenz hat dieselben Randbedingungen; der Vergleich FCM gegen Tet10 bleibt davon unberührt. Die Kraftabweichung liegt bei 2,2 % (h 10).
 
-**Nachtrag (O4, 02.10.2026).** Die Konvergenzaussage des Knotenblechs lautet jetzt „letzte relative Änderung 0,44 % < 3 %: konvergiert; Folge nicht monoton (Änderungen −5,64, −18,28, −14,54, +0,63 N/mm²)“
+**Nachtrag (O4, 02.10.2026).** Die Konvergenzaussage des Knotenblechs lautet jetzt „letzte relative Änderung 0,44 % < 3 %: konvergiert; Folge nicht monoton (Änderungen −5,64, −18,28, −14,53, +0,63 N/mm²)“
 (Kriterium siehe 11.14). Die Streuung der Abnahme mit der Gitterlage steht in 11.20.
 
 ### 11.19 Teilprojekt 5: zweite Sicht über Phase A und B (02.10.2026)
@@ -12060,7 +12070,7 @@ die Tet10-Referenz hat dieselben Randbedingungen; der Vergleich FCM gegen Tet10 
 Gutachter ohne Kenntnis des Sitzungsverlaufs gelesen, jeder ein anderes Modell als die Umsetzung seines Teils: G1 (Opus 5.5) die von Fable 5.1 gebauten
 Teile (GPU-Blöcke, Moment Fitting, Hüllenintegration, Windungsbaum, Kuren aus C1), G2 (Fable 5.1) die von Opus 5.5 gebauten (Mehrgitter, L²-Projektion,
 Hot-Spot, verschachtelte CSG-Bäume), G3 (Opus 5.5) die von Sonnet 5.5 gebauten (Löserwahl, adaptive Zyklen, STEP, Kopplungskontrolle). Jeder Befund
-wurde mit einem Skript oder Test nachgestellt; jede Kur hat einen Test, der ohne sie fehlschlägt. Von 25 Befunden (24 verschiedene) waren alle bestätigt;
+wurde mit einem Skript oder Test nachgestellt; jede Kur hat einen Test, der ohne sie fehlschlägt. Von 25 Befunden (23 verschiedene: G3-1 = G1-3 und G3-5 = G2-6 sind doppelt) waren alle bestätigt;
 behoben sind alle hohen und mittleren und die niedrigen mit kleiner Kur.
 
 **Hohe Befunde.**
@@ -12176,8 +12186,8 @@ es ist eine Frage der Zellgröße am Übergang.
 mit der Spanne 138,9 bis 147,2 N/mm² über die Gitterlage (S = 5,7 %), gegen die Tet10-Referenz je Lage −2,93 % bis +3,10 %. Eine Rechnung liefert einen Wert aus diesem Band; die Abnahme „unter 3 %“
 gilt für die Lagen 0, 0,625 und 1,875 mm der Schnittebenen, bei 1,25 mm liegt die rechte Naht mit +3,10 % knapp außerhalb.
 
-**Größe von t/8.** Noch nicht bekannt: der Aufbau des Gitters für das Nahtziel 1,25 mm (nur Gitter und Modennummerierung, ohne Lösen) war nach über zehn Minuten Rechenzeit nicht fertig, während die Gitter für 2,5 mm in 0,1 s stehen (5 146 Zellen, 150 411 / 477 702 / 1 096 107 Freiheitsgrade bei p 2 / 3 / 4, die Werte der Läufe aus C1 bis auf die Stelle).
+**Größe von t/8.** Der Aufbau des Gitters für das Nahtziel 1,25 mm endete nicht (zwei Versuche, der erste nach 30 Minuten durch die Zeitgrenze des Werkzeugs beendet, der zweite von mir abgebrochen), während die Gitter für 2,5 mm in 0,1 s stehen. Die Ursache ist ein Fehler im Gitteraufbau, kein Rechenaufwand (Plan O15): `Gitter._aufbauen` (seit Teilprojekt 2) wendet in der 2:1-Balancierung die Maske aus `_unbalanciert` – sie gilt für die von `_indizieren` sortierten Felder `self.ebene`, `self.ijk`, `self.klasse` – auf die unsortierten lokalen Felder an und teilt damit andere Zellen als gemeint. Bei zwei Ebenen unter der Basiszelle (Nahtziel 2,5 mm) bleibt das ohne Folge: mit der im Scratchpad korrigierten Reihenfolge (das Repository ist unverändert) entstehen dieselben 5 146 Blätter und dieselben 150 411 / 477 702 / 1 096 107 Freiheitsgrade bei p 2 / 3 / 4 wie in den Läufen aus C1. Bei drei Ebenen (1,25 mm) entstehen Blätter der Ebene 4 über der Obergrenze 3, und die Balancierung teilt in jedem Durchlauf weitere (219 Zellen je Durchlauf, 38 Durchläufe in 13 s gemessen, die Zahl der Blätter wächst weiter) – sie endet nicht. Mit der korrigierten Reihenfolge steht das Gitter in 1,0 s: 31 531 Blätter (Ebenen 0 bis 3: 208 / 622 / 1 721 / 28 980), 2:1 nach zwei Durchläufen erfüllt, kein Blatt über der Obergrenze, **841 032 / 2 747 052 / 6 398 538 Freiheitsgrade bei p 2 / 3 / 4**. Die Zählung ist an den bekannten Werten für 2,5 mm geeicht (exakt gleich). Nahtziel t/8 ist damit bei p 4 mit 6,4 Mio. Freiheitsgraden auf dieser Maschine nicht zu rechnen (zum Vergleich: 1,10 Mio. Freiheitsgrade brauchten 59 GB beim Direktlöser und 4,4 bis 4,8 GB auf der Grafikkarte beim Mehrgitter); bei p 3 sind es 2,7 Mio., bei p 2 0,84 Mio. Freiheitsgrade, aber p 2 ist nicht der Abnahmezustand.
 
-**Offen (Entscheidung des Anwenders, Plan O3).** (a) Die Schranke 3 % ist nicht belegt (5,7 %). (b) Nahtziel t/8: Größe siehe oben, die Wirkung auf die Streuung ist nicht gemessen. (c) 0,5 t / 1,5 t
-ändert die Vorgabe 11.2 (0,4 t / 1,0 t), liegt im Wert 3,7 % unter (a) und hat in der PR-13-Referenz keine Vergleichspunkte (Tet10 an 0,5 t und 1,5 t müsste die Hauptsitzung
-liefern, am besten zusammen mit dem 0,5-mm-Lauf, O2). Weitere Möglichkeit: die Streuung als Band berichten (Mittel und Spanne über Verschiebungen der Gitterlage) statt einer Schranke.
+**Entschieden und offen (O3).** Entschieden am 02.10.2026: die Streuung wird als Band berichtet (oben); die Schranke 3 % ist nicht belegt (5,7 %) und wird nicht behauptet. Offen und zu messen,
+sobald die Maschine frei ist: (b) Nahtziel t/8 und seine Wirkung auf die Streuung (Größe siehe oben: bei p 4 auf dieser Maschine nicht rechenbar, der Gitterfehler steht in Plan O15); (c) 0,5 t / 1,5 t, das die Vorgabe 11.2 (0,4 t / 1,0 t) ändert, im Wert 3,7 % unter (a) liegt und
+in der PR-13-Referenz keine Vergleichspunkte hat (Tet10 an 0,5 t und 1,5 t müsste die Hauptsitzung liefern, am besten zusammen mit dem Lauf am lokal verfeinerten Netz, O2).

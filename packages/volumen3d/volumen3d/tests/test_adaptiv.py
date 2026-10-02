@@ -23,7 +23,7 @@ EINTRAG = ("cycle", "step", "dofs", "p", "cells", "cut_cells", "h_min_mm", "hots
 
 def test_konvergenzaussage():
     """Die Aussage ist eine reine Funktion der Folge (Entscheidung O4, 02.10.2026): konvergiert, wenn die letzte relative Aenderung
-    r = |s_n - s_(n-1)| / |s_(n-1)| unter 3 % liegt (Vorgabe 13), sonst nicht konvergiert; die Monotonie (alle Aenderungen mit gleichem Vorzeichen
+    r = |s_n - s_(n-1)| / |s_(n-1)| unter 3 % liegt (Entscheidung O4), sonst nicht konvergiert; die Monotonie (alle Aenderungen mit gleichem Vorzeichen
     und betragsmaessig abnehmend) wird zusaetzlich genannt, und nur bei monotoner Folge gibt es den Aitken-Grenzwert. Erwartungswerte von Hand
     aus den Folgen: geometrische Folge s + c q^k hat den Aitken-Grenzwert s exakt (s 100, c 10, q 0,5 von oben:
     110, 105, 102,5, 101,25 mit r = 1,25/102,5 = 1,22 %; q 0,6 von unten: 90, 94, 96,4, 97,84 mit r = 1,44/96,4 = 1,49 %); [100, 103, 101, 102]: r = 1/101 = 0,99 %;
@@ -54,12 +54,15 @@ def test_konvergenzaussage():
           konvergenzaussage([1.0, 2.0])["art"] == "zu_wenige_zyklen" and konvergenzaussage([1.0, None, 2.0])["art"] == "kein_hotspot"
           and konvergenzaussage([100.0, 110.0, 112.0, 112.0])["art"] == "konvergiert" and konvergenzaussage([100.0, 110.0, 112.0, 112.0])["monoton"]
           and konvergenzaussage([100.0, 110.0, 112.0, 112.0])["grenzwert"] == 112.0)
-    kb = konvergenzaussage([181.06, 175.42, 157.14, 142.60, 143.23])       # Knotenblech C1, vier Zyklen
-    ts = konvergenzaussage([119.8, 127.6, 111.0, 107.4, 107.9])            # T-Stoss p-Phase (11.14)
+    # Messwerte mit allen gemessenen Stellen (Knotenblech: test_knotenblech LANG 02.10.2026; T-Stoss: Kurve h 10 p 2 vier Zyklen, 01.10.2026) -
+    # mit auf eine Stelle gerundeten Werten kamen 0,47 % statt 0,45 % heraus
+    kb = konvergenzaussage([181.06, 175.419, 157.135, 142.601, 143.229])    # Knotenblech C1, vier Zyklen
+    ts = konvergenzaussage([119.799, 127.577, 110.988, 107.446, 107.932])   # T-Stoss p-Phase (11.14)
     check(f"gemessene Folgen: Knotenblech r {kb['letzte_aenderung'] * 100:.2f} % und T-Stoss r {ts['letzte_aenderung'] * 100:.2f} % konvergiert, beide nicht monoton "
           f"(vorher 'nicht monoton, keine Aussage'); Druck: [-100, -110, -112, -112.5] konvergiert, Betrag zaehlt",
-          kb["art"] == ts["art"] == "konvergiert" and not kb["monoton"] and not ts["monoton"] and abs(kb["letzte_aenderung"] - 0.63 / 142.60) < 1e-9
-          and abs(ts["letzte_aenderung"] - 0.5 / 107.4) < 1e-9 and konvergenzaussage([-100.0, -110.0, -112.0, -112.5])["art"] == "konvergiert",
+          kb["art"] == ts["art"] == "konvergiert" and not kb["monoton"] and not ts["monoton"] and abs(kb["letzte_aenderung"] - 0.628 / 142.601) < 1e-12
+          and abs(ts["letzte_aenderung"] - 0.486 / 107.446) < 1e-12 and round(kb["letzte_aenderung"] * 100, 2) == 0.44
+          and round(ts["letzte_aenderung"] * 100, 2) == 0.45 and konvergenzaussage([-100.0, -110.0, -112.0, -112.5])["art"] == "konvergiert",
           f"{kb['text']}")
 
 

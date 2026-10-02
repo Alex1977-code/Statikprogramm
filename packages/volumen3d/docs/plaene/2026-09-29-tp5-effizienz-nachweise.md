@@ -567,7 +567,7 @@ werden behoben, wenn die Kur klein ist, sonst aufgelistet. Nicht bestätigte wer
 bestätigten hohen und mittleren Befunde behoben sind, Kernsuite und alle betroffenen Suiten grün laufen und die Liste mit Entscheidung je Befund im
 Plan und in Theorie 11.19 steht. Was beim Beheben neu auffällt, kommt auf die Liste und wird nicht in C2 nachgezogen, außer es ist ein Fehler der Kur.
 
-**Ergebnis C2 (02.10.2026, Theorie 11.19).** 25 Befunde, davon einer doppelt (G3-1 = G1-3, G3-5 = G2-6); alle am Quelltext bestätigt, jede Kur mit einem Test, der
+**Ergebnis C2 (02.10.2026, Theorie 11.19).** 25 Befunde, davon zwei doppelt (G3-1 = G1-3, G3-5 = G2-6), also 23 verschiedene; alle am Quelltext bestätigt, jede Kur mit einem Test, der
 ohne sie fehlschlägt.
 
 | ID | Schwere | Befund | Entscheidung |
@@ -624,6 +624,11 @@ p 4, je Stirnnaht – und dann zwischen (a), (b) und (c) wählen. Messung Sonnet
 Rebase auf main). O2: Referenzlauf mit 0,5 mm, Direktlöser, Maschine exklusiv. O3: erst messen (unten). O4: Kriterium „letzte relative Änderung unter 3 %“, die
 Monotonie wird zusätzlich genannt.
 
+*Entscheidung O2, geändert (02.10.2026, Quelle `lauf_05mm/ABNAHME-05MM.md` der Hauptsitzung):* Das 0,5-mm-Netz (6,45 Mio. Freiheitsgrade) passt nicht in den Speicher: die Hauptsitzung maß am 1-mm-Netz
+(1 087 659 Gleichungen) 33,6 GB für das Aufstellen und 30,6 GB für die PARDISO-Zerlegung. Der Anwender entschied darauf, nur am Übergang auf 0,5 mm zu verfeinern; Session B lieferte
+`knotenblech_tet10_lokal05.inp` (445 946 Knoten, 305 689 Tet10, 1,34 Mio. Freiheitsgrade, Kantenlänge am Übergang im Median 0,66 mm gegen 1,23 mm im 1-mm-Netz, gemessen als Kanten mit Mitte höchstens 1 mm
+von der Übergangslinie; die Hauptsitzung nennt 1,33 mm für das 1-mm-Netz nach einer anderen Vorschrift). Die Hauptsitzung rechnet am Abend des 02.10.2026 allein auf der Maschine.
+
 *Messregeln O3, vor der Messung festgelegt (02.10.2026).* Modell und Last wie C1 (`tests/test_knotenblech.py`), Basiszellgröße 10 (= t), Fahrplan wie dort
 (h 5, h 2,5, p 3, p 4), Vertragsweg. Die Gitterlage wird verschoben, indem die beiden Schnittebenen um δ in x verschoben werden (Naht, Blech und Last bleiben; das Blech behält sein Polster
 von 5 mm hinter der rechten Ebene): δ = 0, 0,625, 1,25, 1,875 mm (ein Viertel der feinsten Zelle 2,5 mm je Schritt, zusammen eine Periode der feinsten Zellen).
@@ -653,27 +658,27 @@ war falsch, weil das Gitter an der Hülle der beschnittenen Geometrie beginnt un
 **S(a) bei p 4 = 5,73 %** (138,94 … 147,17 N/mm²; p 3: 4,21 %) – Regel (3) greift. S(c) bei p 4 = 3,27 % (p 3: 4,66 %): die Regel „S(c) ≤ 1 %“ ist nicht erfüllt, sieben von acht Proben liegen aber auf 0,52 %
 (138,41 … 139,13), die achte (linke Naht genau auf einer Zellgrenze, φ = 0,00) 3 % tiefer – in (a) ebenfalls das Minimum. Gegen Tet10: sieben von acht Proben innerhalb 3 % (−2,93 … +1,95 %), eine bei +3,10 %:
 die Abnahme C1 hält nicht bei jeder Gitterlage. Die Streuung kommt allein von σ(0,4 t) (3,6 %, σ(1,0 t) 0,4 %), verstärkt durch den Beiwert 5/3; p-Erhöhung mindert sie nicht (p 3: 4,2 %).
-Größe t/8: Noch nicht bekannt: der Aufbau des Gitters für das Nahtziel 1,25 mm (nur Gitter und Modennummerierung, ohne Lösen) war nach über zehn Minuten Rechenzeit nicht fertig, während die Gitter für 2,5 mm in 0,1 s stehen (5 146 Zellen, 150 411 / 477 702 / 1 096 107 Freiheitsgrade bei p 2 / 3 / 4, die Werte der Läufe aus C1 bis auf die Stelle).. Entscheidung des Anwenders offen (siehe O3).
+Größe t/8: der Gitteraufbau für 1,25 mm endete wegen eines Fehlers in der 2:1-Balancierung nicht (O15); mit korrigierter Reihenfolge 841 032 / 2 747 052 / 6 398 538 Freiheitsgrade bei p 2 / 3 / 4 – bei p 4 nicht rechenbar (Theorie 11.20).
 
-*Entscheidung O3 (Anwender 02.10.2026):* Empfehlung angenommen. Bis Nahtziel t/8 gemessen ist (Gitteraufbau dauert über zehn Minuten, Ursache offen), wird die Streuung
+*Entscheidung O3 (Anwender 02.10.2026):* Empfehlung angenommen. Bis Nahtziel t/8 gemessen ist (Gitteraufbau für 1,25 mm endete nicht: Gitterfehler O15; Größe von t/8 bei p 4: 6,4 Mio. Freiheitsgrade), wird die Streuung
 als Band berichtet und die Abnahme gegen Tet10 mit ihr genannt: σ_hs(y 40) bei t/4 und p 4 im Mittel 143,6 N/mm² mit der Spanne 138,9 bis 147,2 N/mm² über die Gitterlage
-(5,7 %), je Lage gegen Tet10 −2,93 % bis +3,10 %. Das Band steht in Theorie 11.20, `docs/Volumenmodul.md` und im Abnahmetest (Information, keine Schranke). Das Messen von t/8
+(5,7 %), je Lage gegen Tet10 −2,93 % bis +3,10 %. Das Band steht in Theorie 11.20, `docs/Volumenmodul.md` und im Abnahmetest (Regressionsprüfung: der Lauf liegt im Band; keine Abnahmeschranke). Das Messen von t/8
 und die Frage 0,5 t / 1,5 t bleiben offen und werden gezogen, wenn die Maschine nach dem Abendlauf der Hauptsitzung frei ist.
 
 *Regeln O4, vor der Umsetzung festgelegt (02.10.2026).* Kriterium der Konvergenzaussage (`postprocess/konvergenz.py`): die letzte relative Änderung r = |σ_n − σ_(n−1)| / |σ_(n−1)|
-(wie `hotspot_change` der Kurve) gegen die Schranke 3 % (Vorgabe 13, Konvergenzkurve). Art: `konvergiert` bei r < 3 %, `nicht_konvergiert` sonst; unverändert bleiben `kein_hotspot`
+(wie `hotspot_change` der Kurve) gegen die Schranke 3 % (die Zahl der Vorgabe 13 für den Hot-Spot gegen Tet10, für die Konvergenz übernommen (O4); die Vorgabe verlangt für die Konvergenz nur die Kurve, 11.3). Art: `konvergiert` bei r < 3 %, `nicht_konvergiert` sonst; unverändert bleiben `kein_hotspot`
 (ein Zyklus ohne Wert), `zu_wenige_zyklen` (unter drei Werte) und `ohne_aenderung` (kein Zyklus hat etwas geändert). Zusätzlich genannt, nicht als Bedingung: `monoton` (alle Änderungen
 mit demselben Vorzeichen und im Betrag abnehmend), `letzte_aenderung`, `schranke`, und – nur bei monotoner Folge – der Grenzwert nach Aitken mit der Restabweichung. Der Text nennt
 immer beides, die letzte Änderung und die Monotonie, mit den Änderungen der Folge. Warnung im Ergebnis bei `nicht_konvergiert` und `ohne_aenderung`; bei `konvergiert` ohne Monotonie nur der
 Hinweis im Text (frühe h-Schritte schwingen, 11.14). Erwartungswerte der Tests von Hand aus den Folgen: geometrische Folgen 110/105/102,5/101,25 (r 1,2 %, monoton, Grenzwert 100),
 [100, 103, 101, 102] (r 0,99 %, nicht monoton), [100, 101, 103, 107] (r 3,88 %: nicht konvergiert), [100, 120, 90, 90] (r 0: konvergiert, nicht monoton – die Null-Aussage aus C2 G3-2 bleibt
 mit dem Vermerk „nicht monoton“), [100, 100, 100] (ohne Änderung), und die gemessenen Folgen Knotenblech [181,06; 175,42; 157,14; 142,60; 143,23] (r 0,44 %, nicht monoton) und
-T-Stoß p-Phase [119,8; 127,6; 111,0; 107,4; 107,9] (r 0,47 %, nicht monoton). Bekannte Schwäche des Kriteriums, im Text genannt: eine Folge mit großem Überschwinger vor einer kleinen letzten
+T-Stoß p-Phase [119,8; 127,6; 111,0; 107,4; 107,9] (r 0,47 % aus den gerundeten Werten; mit den gemessenen 107,446 → 107,932 sind es 0,45 %, berichtigt bei C3; nicht monoton). Bekannte Schwäche des Kriteriums, im Text genannt: eine Folge mit großem Überschwinger vor einer kleinen letzten
 Änderung gilt als konvergiert; die Monotonie und die Änderungen stehen daneben.
 
 *O4 – Konvergenzaussage.* Der Vorschlag aus B4 war, die Aussage nur über die p-Phase zu treffen. Die Messungen zeigen, dass auch die p-Phase nicht monoton
 ist (Knotenblech 157,1 → 142,6 → 143,2; T-Stoß 111,0 → 107,4 → 107,9): die Aitken-Aussage bliebe „nicht monoton“. Zu entscheiden ist das Kriterium:
-(a) wie bisher nur bei monotoner Folge eine Aussage, (b) Aussage über die letzte relative Änderung mit der Schranke der Vorgabe (unter 3 % gilt als
+(a) wie bisher nur bei monotoner Folge eine Aussage, (b) Aussage über die letzte relative Änderung mit der Schranke 3 % (unter 3 % gilt als
 konvergiert, die Monotonie wird zusätzlich genannt), (c) nur p-Phase mit (b). Empfehlung: (b) – es ist das Kriterium, das C1 schon verwendet, und es sagt
 dem Anwender, was er wissen muss. Folgearbeit Sonnet 5.5, mittel.
 
@@ -718,6 +723,16 @@ Entscheidung, nur eine Messung (Kirsch h 8 und Block h 14 gegen die Werte aus A3
 *O14 – Nächster Leistungshebel am STEP-Weg.* Die Oberflächenquadratur der Hüllenfacetten trägt 17 von 27 s am Block mit Bohrung N 120. Zu entscheiden ist,
 ob sie jetzt beschleunigt wird (Schleifen über 173 000 Polygone in numba). Empfehlung: nach Pull Request 3. Opus 5.5, hoch.
 
+*O15 – Reihenfolgefehler in der 2:1-Balancierung des Gitters (beim Messen von Nahtziel t/8 gefunden, C3, 02.10.2026).* `Gitter._aufbauen` (seit Teilprojekt 2, Commit e919811) wendet die Maske aus
+`_unbalanciert` – sie gilt für die von `_indizieren` sortierten Felder `self.ebene`, `self.ijk`, `self.klasse` – auf die unsortierten lokalen Felder an und teilt damit andere Zellen als gemeint. Bei zwei Ebenen
+unter der Basiszelle (Nahtziel 2,5 mm) bleibt das ohne Folge: mit der im Scratchpad korrigierten Reihenfolge dieselben 5 146 Blätter und 150 411 / 477 702 / 1 096 107 Freiheitsgrade (alle bisherigen Messungen
+des Teilprojekts 5 stehen auf diesem Fall). Bei drei Ebenen (Nahtziel 1,25 mm) entstehen Blätter der Ebene 4 über der Obergrenze 3, die Balancierung teilt in jedem Durchlauf weitere (219 Zellen je Durchlauf,
+38 Durchläufe in 13 s gemessen) und endet nicht; mit der Korrektur steht das Gitter in 1,0 s (31 531 Blätter, zwei Durchläufe, 841 032 / 2 747 052 / 6 398 538 Freiheitsgrade bei p 2 / 3 / 4). Wer heute
+eine Verfeinerung über drei Ebenen anfordert, wartet also ohne Ende. Zu entscheiden ist, wann das behoben wird. Die Korrektur ist eine Zeile (die sortierten Felder an `_teilen` geben) mit einer Obergrenze für die
+Balancierungsdurchläufe (sonst bliebe ein solcher Fehler unbemerkt; mit der Korrektur genügen höchstens zwei Durchläufe bei drei Ebenen) und einem Test (Verfeinerung über drei Ebenen: der Aufbau endet, 2:1
+erfüllt, kein Blatt über der Obergrenze, bei zwei Ebenen dieselben 5 146 Blätter); danach laufen Kernsuite und die schweren Suiten, weil sie alle auf dem Gitteraufbau stehen. Empfehlung: vor Pull Request 3
+beheben. Sonnet 5.5, mittel.
+
 ## Modell je Schritt
 
 Der Anwender stellt Modell und Denkstufe vor jedem Schritt von Hand ein; der Stand wird nach jedem Schritt
@@ -739,12 +754,12 @@ nachgetragen.
 | B6 Windungszahl-Baum + Hüllenintegration | Fable 5.1 | sehr hoch | Divergenzsatz über Dreiecke, Barill-Baum, Genauigkeitsnachweis | erledigt: (1)–(3) halten, Block N 120 388 → 26,8 s, K_t 0,12 %; Baum mit β 4 statt 2 (Anwender 01.10.: angenommen) |
 | B7 Schale → Volumen (Prüfung) | Sonnet 5.5 | mittel | Test über bestehende Schnittstelle | erledigt: Schnittgrößen < 7·10⁻⁴ (p 2), 6·10⁻⁸ (p 3); Kopplungskontrolle und Hüllenfacetten-Fehler behoben; Schranke p 2 geneigt 1 % (Anwender) |
 | C1 Knotenblech-Abnahme | Fable 5.1 | sehr hoch | Modellbau und Nachweis gegen Referenz | erledigt: +0,34 % / −2,93 % gegen Tet10-Referenz PR 13 (Schranke 3 %); Symmetrie 3,1 % (Gitterphase) und 0,5-mm-Referenzlauf beim Anwender |
-| C2 Zweite Sicht | Opus 5.5 (Prüfung und Kuren), Gutachter je Gruppe ein anderes Modell | hoch | unabhängig von der Umsetzung, tiefste Prüfung | erledigt: 24 Befunde bestätigt, 4 hohe und 6 mittlere behoben, 12 niedrige behoben, 1 teilweise; Liste in Theorie 11.19 |
+| C2 Zweite Sicht | Opus 5.5 (Prüfung und Kuren), Gutachter je Gruppe ein anderes Modell | hoch | unabhängig von der Umsetzung, tiefste Prüfung | erledigt: 23 verschiedene Befunde bestätigt, 4 hohe und 6 mittlere behoben, 12 niedrige behoben, 1 teilweise; Liste in Theorie 11.19 |
 | O1 Referenz Knotenblech nach main | Sonnet 5.5 | niedrig | Test auf `erwartung_tet10.json` umstellen | erledigt: PR 13 auf main (f56281a), main in den Zweig gemergt (c37cd91), Test liest die Datei |
-| O2 Tet10-Referenz 0,5 mm | Sonnet 5.5 (Hauptsitzung) | mittel | Lauf und Auswertung nach festem Schema | angenommen: rechnen, Direktlöser, Maschine exklusiv (Hauptsitzung legt den Zeitpunkt fest) |
-| O3 Hot-Spot-Streuung mit der Gitterlage | Sonnet 5.5 (Messung), Opus 5.5 (Umsetzung) | mittel / hoch | erst messen, dann t/8 oder 0,5 t / 1,5 t | Messung erledigt (S(a) 5,73 %, S(c) 3,27 % bei p 4); angenommen: Streuband berichten (Theorie 11.20); t/8 und 0,5 t / 1,5 t gemessen, wenn die Maschine frei ist |
-| O4 Konvergenzaussage | Sonnet 5.5 | mittel | Kriterium in `konvergenz.py`, Tests, Handbuch | erledigt: letzte Änderung < 3 % konvergiert, Monotonie zusätzlich (Knotenblech 0,44 %, T-Stoß 0,47 %) |
-| C3 Handbücher | Sonnet 5.5 | mittel | Texte aus vorhandenen Messwerten, viele Zahlen | offen; nach O1 bis O4 |
+| O2 Tet10-Referenz 0,5 mm | Sonnet 5.5 (Hauptsitzung) | mittel | Lauf und Auswertung nach festem Schema | geändert (02.10.): das volle Netz passt nicht in den Speicher, die Hauptsitzung rechnet am lokal verfeinerten Netz `lokal05` (1,34 Mio. Freiheitsgrade) am Abend des 02.10. |
+| O3 Hot-Spot-Streuung mit der Gitterlage | Sonnet 5.5 (Messung), Opus 5.5 (Umsetzung) | mittel / hoch | erst messen, dann t/8 oder 0,5 t / 1,5 t | Messung erledigt (S(a) 5,73 %, S(c) 3,27 % bei p 4); angenommen: Streuband berichten (Theorie 11.20); Größe von t/8 gemessen (p 4: 6,4 Mio. Freiheitsgrade, nicht rechenbar; die Bauzeit war der Gitterfehler O15), 0,5 t / 1,5 t gemessen, wenn die Maschine frei ist |
+| O4 Konvergenzaussage | Sonnet 5.5 | mittel | Kriterium in `konvergenz.py`, Tests, Handbuch | erledigt: letzte Änderung < 3 % konvergiert, Monotonie zusätzlich (Knotenblech 0,44 %, T-Stoß 0,45 %) |
+| C3 Handbücher | Sonnet 5.5 | mittel | Texte aus vorhandenen Messwerten, viele Zahlen | erledigt: Theorie 11 konsolidiert, Entwurf 4e neu, `Volumenmodul.md` nach Stufen; unabhängiger Prüfer (Opus) gegen die Quellen, 16 Befunde bearbeitet; Berichtigungen 0,47 → 0,45 %, 24 → 23 Befunde in C2; Nebenbefund O15 (Gitter) |
 | C4 Gesamtlauf, Pull Request | Sonnet 5.5 | mittel | Routine mit Prüfliste | offen; Merge nur auf Freigabe |
 | O5 Konsistenzfehler der Schnittzellen | Fable 5.1 | sehr hoch | Ursachensuche in Aggregation und Quadratur | Entscheidung offen: wann (Empfehlung: vor TP 6, nach PR 3) |
 | O6 Ebenen durch gekrümmte Hülle (B6 Teil 3) | Fable 5.1 | sehr hoch | Divergenzweg eine Dimension tiefer | Entscheidung offen: bauen oder Warnung lassen (Empfehlung: bei Bedarf) |
@@ -756,3 +771,4 @@ nachgetragen.
 | O12 mehrere Kinder derselben Hülle | Sonnet 5.5 | niedrig | Prüfung in `Csg` | keine Entscheidung nötig; Empfehlung: mit Fehler abweisen |
 | O13 GPU-Einrichtzeit nach Cholesky | Sonnet 5.5 | mittel | Messreihe gegen A3 | keine Entscheidung, nur Messung |
 | O14 Oberflächenquadratur der Hüllenfacetten | Opus 5.5 | hoch | numba-Schleifen, Leistung | Entscheidung offen: jetzt oder nach PR 3 (Empfehlung: nach PR 3) |
+| O15 Reihenfolgefehler der 2:1-Balancierung (Gitter) | Sonnet 5.5 | mittel | Einzeiler mit Obergrenze, Test und Wiederholung der Suiten | Entscheidung offen: jetzt oder nach PR 3 (Empfehlung: vor PR 3) |

@@ -4,7 +4,7 @@ Kriterium: die letzte relative Aenderung
 
     r = |sigma_n - sigma_(n-1)| / |sigma_(n-1)|        (wie ``hotspot_change`` der Kurve)
 
-liegt unter der Schranke der Vorgabe 13 (``KONVERGENZ_SCHRANKE`` = 3 %): ``konvergiert``, sonst ``nicht_konvergiert``. Die Monotonie
+liegt unter der Schranke ``KONVERGENZ_SCHRANKE`` = 3 % (die Zahl der Vorgabe 13 fuer den Hot-Spot gegen Tet10, fuer die Konvergenz uebernommen, O4): ``konvergiert``, sonst ``nicht_konvergiert``. Die Monotonie
 wird zusaetzlich genannt, ist aber keine Bedingung: alle Aenderungen Delta_k = sigma_k - sigma_(k-1) mit demselben Vorzeichen und im Betrag
 abnehmend. Nur bei einer monotonen Folge gibt es den Grenzwert nach Aitken
 
@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import Any
 
-KONVERGENZ_SCHRANKE = 0.03          # Vorgabe 13 (Konvergenzkurve): letzte Aenderung unter 3 %
+KONVERGENZ_SCHRANKE = 0.03          # 3 %: Zahl der Vorgabe 13 (Hot-Spot gegen Tet10), fuer die letzte Aenderung uebernommen (O4)
 _NULL = 1e-12
 
 
