@@ -7699,8 +7699,8 @@ ausgewiesen, nicht stillschweigend übergangen.
 
 **Nur Zugewiesenes wird gerechnet.** Eine Stellung rechnet genau die
 Lastfälle, die ihr zugewiesen sind: in der Stellungsmaske unter „Lastfälle
-dieser Stellung“ zum Anhaken (der Knopf „Alle Lastfälle anhaken“ setzt jeden
-Haken), in Python mit `faelle`, im RFEM-Import aus den
+dieser Stellung“ zum Anhaken (der Haken „Alle Lastfälle anhaken“ darunter setzt
+oder löscht jeden Haken der Liste), in Python mit `faelle`, im RFEM-Import aus den
 Lastfällen ihrer Strukturmodifikation. Eine Stellung ohne Zuordnung rechnet
 nichts; das Protokoll nennt sie („S0: keine Lastfälle zugewiesen - nicht
 gerechnet“), und die Tabelle zeigt unter Lastfälle „keine“. Ein Lastfall,

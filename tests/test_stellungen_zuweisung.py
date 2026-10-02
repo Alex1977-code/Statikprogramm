@@ -92,15 +92,28 @@ def test_maske_weist_lastfaelle_zu():
           str(st and st.faelle))
     w._objektmaske("stellung", "S1"); app.processEvents()
     mk = w.maskenrand.maske
-    knopf = mk.zusatzknoepfe.get("Alle Lastfälle anhaken")
-    check("Knopf „Alle Lastfälle anhaken“ in der Stellungsmaske", knopf is not None,
-          str(list(mk.zusatzknoepfe)))
-    if knopf is not None:
-        knopf.click(); app.processEvents()
+    cb = mk._felder.get("faelle_alle")
+    lw = mk._felder.get("faelle")
+    check("Haken „Alle Lastfälle anhaken“ unter der Liste, nicht gesetzt bei einem von zwei",
+          cb is not None and not cb.isChecked(), str(list(mk._felder)))
+    if cb is not None:
+        cb.setChecked(True); app.processEvents()
         mk.anwenden(); app.processEvents()
         st = w.model.stellung("S1")
         check("… hakt alle an, „Übernehmen“ schreibt sie", st.faelle == list(w.model.load_cases),
               str(st.faelle))
+        w._objektmaske("stellung", "S1"); app.processEvents()
+        mk = w.maskenrand.maske
+        cb, lw = mk._felder.get("faelle_alle"), mk._felder.get("faelle")
+        check("… beim nächsten Öffnen steht er, weil alle zugewiesen sind", cb.isChecked())
+        lw.item(0).setCheckState(QtCore.Qt.Unchecked); app.processEvents()
+        check("… er folgt der Liste: einen Haken entfernt, steht er nicht mehr", not cb.isChecked())
+        lw.item(0).setCheckState(QtCore.Qt.Checked); app.processEvents()
+        check("… alle von Hand angehakt, steht er wieder", cb.isChecked())
+        cb.setChecked(False); app.processEvents()
+        check("… ihn entfernen löscht jeden Haken der Liste",
+              all(lw.item(i).checkState() == QtCore.Qt.Unchecked for i in range(lw.count())))
+        mk.abbrechen(); app.processEvents()
 
 
 def test_umbenennen_fuehrt_stellung_mit():

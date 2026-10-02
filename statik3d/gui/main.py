@@ -5893,6 +5893,10 @@ class MainWindow(QtWidgets.QMainWindow):
                             list(m.load_cases),
                             hinweis="Nur angehakte Lastfälle rechnet „Alle Stellungen“; ohne Haken "
                                     "rechnet die Stellung nichts, und das Protokoll sagt es"),
+                          F("faelle_alle", "Alle Lastfälle anhaken", "haken",
+                            bool(st is not None and m.load_cases
+                                 and set(m.load_cases) <= set(st.faelle or [])),
+                            hinweis="Setzt oder löscht jeden Haken der Liste darüber"),
                           F("klick", "Klick in der Ansicht schaltet Stab, Fläche oder Volumen aus / ein",
                             "haken", True,
                             hinweis="Solange der Haken steht, gehen Klicks in der Ansicht an diese "
@@ -5932,8 +5936,7 @@ class MainWindow(QtWidgets.QMainWindow):
                            "deaktivieren“.")
                 zusatz = [("Auswahl deaktivieren", lambda: self._stellung_auswahl(halter.get("m"), name, True)),
                           ("Auswahl aktivieren", lambda: self._stellung_auswahl(halter.get("m"), name, False)),
-                          ("Alle aktivieren", lambda: self._stellung_alle_aktiv(halter.get("m"), name)),
-                          ("Alle Lastfälle anhaken", lambda: self._stellung_alle_lastfaelle(halter.get("m")))]
+                          ("Alle aktivieren", lambda: self._stellung_alle_aktiv(halter.get("m"), name))]
         elif art in ("lager", "linienlager", "flaechenlager"):
             liste = self._lagerliste_von(art)
             titel_art = {"lager": "Knotenlager", "linienlager": "Linienlager", "flaechenlager": "Flächenlager"}[art]
@@ -5991,6 +5994,7 @@ class MainWindow(QtWidgets.QMainWindow):
             maske.geschlossen.connect(lambda: self._situation_vorschau(None))
             maske.abgebrochen.connect(lambda: self._situation_vorschau(None))
             self._stellung_klickmodus(maske, name)
+            self._stellung_alle_lastfaelle(maske)
         zweigart = self.baum.ELTERNART.get(art, art)
         if not eintrag:
             maske.angewendet.connect(lambda _w, z=zweigart: self._baum_neu(z))
@@ -6443,13 +6447,31 @@ class MainWindow(QtWidgets.QMainWindow):
             modus(bool(haken.isChecked()))
 
     def _stellung_alle_lastfaelle(self, maske):
-        """„Alle Lastfälle anhaken“ in der Stellungsmaske - am Drehlager sonst
-        422 einzelne Haken. Direkt an der Liste, nicht ueber einen Namenstext."""
-        lw = (getattr(maske, "_felder", None) or {}).get("faelle") if maske is not None else None
-        if lw is None:
+        """Der Haken „Alle Lastfälle anhaken“ unter der Lastfallliste der
+        Stellungsmaske - am Drehlager sonst 422 einzelne Haken. Er setzt oder
+        loescht jeden Haken der Liste, direkt an der Liste und nicht ueber einen
+        Namenstext, und folgt ihr, wenn von Hand alle angehakt werden. Ein Haken
+        statt eines vierten Zusatzknopfs: mit vier Knoepfen wurden bei 1920 und
+        1366 alle Beschriftungen im Fuss abgeschnitten (Sichtpruefung 02.10.2026)."""
+        felder = getattr(maske, "_felder", None) or {}
+        lw, cb = felder.get("faelle"), felder.get("faelle_alle")
+        if lw is None or cb is None:
             return
-        for i in range(lw.count()):
-            lw.item(i).setCheckState(QtCore.Qt.Checked)
+
+        def alle(an):
+            for i in range(lw.count()):
+                lw.item(i).setCheckState(QtCore.Qt.Checked if an else QtCore.Qt.Unchecked)
+
+        def folgen(_it=None):
+            voll = lw.count() > 0 and all(lw.item(i).checkState() == QtCore.Qt.Checked
+                                          for i in range(lw.count()))
+            if cb.isChecked() != voll:
+                cb.blockSignals(True)
+                cb.setChecked(voll)
+                cb.blockSignals(False)
+
+        cb.toggled.connect(alle)
+        lw.itemChanged.connect(folgen)
 
     def _stellung_alle_aktiv(self, maske, name: str):
         if maske is None:

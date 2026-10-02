@@ -3316,18 +3316,19 @@ def main():
         app.processEvents()
         mk = w.maskenrand.maske
         # Seit Plan 7S (02.10.2026) gehoeren die Lastfaelle der Stellung in
-        # ihre Maske („Lastfälle dieser Stellung“, „Alle Lastfälle anhaken“):
+        # ihre Maske („Lastfälle dieser Stellung“, darunter der Haken „Alle
+        # Lastfälle anhaken“ - kein vierter Zusatzknopf, sonst schneidet der
+        # Fuss alle Beschriftungen ab):
         # die Stellung rechnet nur sie. Bis dahin verlangte diese Pruefung
         # ausdruecklich, dass das Feld fehlt.
         check("Neu: Stellung-Maske rechts: Bezeichnung, Lastfälle, Ausgangsstellung, Verschiebung, "
               "Verdrehung, deaktivierte Stäbe/Flächen/Volumen/Gelenke/Lager - mehr nicht",
               isinstance(mk, msk_.Maske) and mk.titel.startswith("Neu: Stellung")
-              and {"name", "faelle", "basis", "dx", "dy", "dz", "winkel", "ax", "ay", "az", "px", "py", "pz",
-                   "staebe_aus", "flaechen_aus", "koerper_aus", "gelenke_aus", "lager_aus",
+              and {"name", "faelle", "faelle_alle", "basis", "dx", "dy", "dz", "winkel", "ax", "ay", "az",
+                   "px", "py", "pz", "staebe_aus", "flaechen_aus", "koerper_aus", "gelenke_aus", "lager_aus",
                    "linienlager_aus", "flaechenlager_aus"} <= set(mk.werte())
               and "beschreibung" not in mk.werte()
-              and set(mk.zusatzknoepfe) == {"Auswahl deaktivieren", "Auswahl aktivieren", "Alle aktivieren",
-                                            "Alle Lastfälle anhaken"},
+              and set(mk.zusatzknoepfe) == {"Auswahl deaktivieren", "Auswahl aktivieren", "Alle aktivieren"},
               str(sorted(mk.werte())))
         w.clear_selection()
         w.sel_staebe = [stab]
