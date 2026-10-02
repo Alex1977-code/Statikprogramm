@@ -15550,13 +15550,22 @@ class MainWindow(QtWidgets.QMainWindow):
             if d.members.isChecked() and not m.members:
                 self._dateifortschritt(0.96, "Stäbe erkennen")
                 m.auto_members()
-            self.analysis = None
-            self.results = None
-            self.selection = np.array([], dtype=int)
+            if target is None:
+                # Ein anderes Modell: aufgeraeumt wie nach Neu - und ohne den
+                # Pfad der zuvor geoeffneten Datei. Bis zum 02.10.2026 blieb er
+                # stehen: der Titel nannte die alte Datei, und Strg+S schrieb
+                # das importierte Modell ohne Rueckfrage darueber.
+                self._neues_modell_zuruecksetzen()
+            else:
+                self.analysis = None
+                self.results = None
+                self.selection = np.array([], dtype=int)
             self._dateifortschritt(0.98, "Ansicht und Modellbaum aufbauen")
             if target is None:
                 self._baum_neu_beginnen()
             self.refresh_all()
+            if target is None:
+                self._neues_modell_abschliessen()
             self.zoom_alles()
             # Das uebernommene Modell steht in keiner Statik3D-Datei - ein
             # neuer Import (RFEM-Datei am Drehlager: Minuten) waere der Preis
@@ -22790,11 +22799,15 @@ class MainWindow(QtWidgets.QMainWindow):
         stehen (gemessen: Maske „Knotenlager“ des vorigen Modells nach dem
         Beispiel noch offen). Die Umhuellende und die Stellungsreihe des
         vorigen Modells blieben auch nach Neu: die Zeile unter den Stellungen
-        nannte dessen η weiter."""
+        nannte dessen η weiter. Auch die Sicht „von vorher“ einer Stellungsmaske
+        mit Vorschau (``_situation_sicht_alt``) gehoert dem vorigen Modell: das
+        Schliessen der Maske schriebe sie sonst nach dem Tausch zurueck in
+        ``versteckt`` - das Beispiel bekaeme die Ausblendung des alten Modells."""
         self.analysis = None
         self.results = None
         self.umhuellende = None
         self.stellungsreihe = None
+        self._situation_sicht_alt = None
         self.selection = np.array([], dtype=int)
         self._objektauswahl_leeren()
         self.path = None
@@ -22859,9 +22872,8 @@ class MainWindow(QtWidgets.QMainWindow):
             finally:
                 self._fortschritt_ende()
             self.__init_defaults()
-            self.analysis = None
-            self.results = None
-            self.selection = np.array([], dtype=int)
+            # derselbe saubere Stand wie nach Neu (02.10.2026), dann der Pfad
+            self._neues_modell_zuruecksetzen()
             self.path = p
             # was das Laden umgestellt hat (Stellungen ohne Lastfaelle in
             # aelteren Dateien, E6) - in das Protokoll
@@ -22869,7 +22881,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.log.appendPlainText("Hinweis: " + z)
             self._baum_neu_beginnen()
             self.refresh_all()
-            self._refresh_title()
+            # Titel und Maske rechts, vor dem Zoom und vor den Ergebnissen: die
+            # Ergebnisdatei darunter stellt rechts ihre eigene Maske hin
+            self._neues_modell_abschliessen()
             self.zoom_alles()
         except Exception as ex:
             self.error(str(ex))

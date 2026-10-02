@@ -107,13 +107,14 @@ def _kern(r, kante=8):
     return QtCore.QRect(c.x() - kante // 2, c.y() - kante // 2, kante, kante)
 
 
-def _pfeile_gemessen(felder, mindestens=6):
-    """Je Feld und Pfeilbereich die dunklen Punkte in der Mitte; (ok, Berichtszeile)."""
+def _pfeile_gemessen(felder, mindestens=6, grenze=170):
+    """Je Feld und Pfeilbereich die dunklen Punkte in der Mitte; (ok, Berichtszeile).
+    ``grenze`` 205 zaehlt auch den grauen Pfeil eines gesperrten Feldes."""
     ok, teile = True, []
     for f in felder:
         bild = f.grab().toImage()
         for name, r in _pfeilbereiche(f):
-            n = _dunkle_punkte(bild, _kern(r))
+            n = _dunkle_punkte(bild, _kern(r), grenze)
             teile.append(f"{type(f).__name__}.{name}={n}")
             ok = ok and n >= mindestens
     return ok, " ".join(teile)
@@ -154,6 +155,8 @@ def test_pfeile_sichtbar():
     # das schmale Feld der Ribbonzeile (21 px hoch): die Pfeile muessen auch dort passen
     rz = QtWidgets.QDoubleSpinBox()
     rz.setProperty("ribbonzeile", True)
+    for f in (sp, ds, rz):
+        f.setValue(5)          # mittendrin: am Minimum (Vorgabe 0) ist der untere Pfeil grau
     rc = QtWidgets.QComboBox()
     rc.setProperty("ribbonzeile", True)
     rc.addItems(["a"])
@@ -161,12 +164,128 @@ def test_pfeile_sichtbar():
     for f in felder:
         f.setFixedWidth(120)
         lay.addWidget(f)
+    # so hoch wie die kleinen Knoepfe der Ribbonspalte (Stilregel ribbonzeile,
+    # 25.09.2026: 21 px statt 29 px des allgemeinen Feldes)
+    rz.setFixedHeight(21)
+    rc.setFixedHeight(21)
     halter.resize(760, 60)
     halter.show()
     app.processEvents()
+    check("Ribbonfelder sind 21 px hoch", rz.height() == 21 and rc.height() == 21,
+          f"{rz.height()} und {rc.height()}")
     ok, bericht = _pfeile_gemessen(felder)
     check("Aufklappliste und Drehfeld zeichnen ihre Pfeile (dunkle Punkte im Pfeilbereich)", ok, bericht)
     halter.close()
+
+
+def _bereich(feld, name):
+    return dict(_pfeilbereiche(feld))[name]
+
+
+def _zaehle(feld, name, grenze):
+    """Punkte im Kern des Pfeilbereichs ``name``, dunkler als ``grenze``."""
+    return _dunkle_punkte(feld.grab().toImage(), _kern(_bereich(feld, name)), grenze)
+
+
+def test_pfeile_gesperrt_und_am_anschlag():
+    """Ein gesperrtes Feld und ein Drehfeld am Anschlag zeigen den Pfeil grau
+    (#a9b6c2, Helligkeit 181), nicht dunkel (#66717c, 113): dunkle Punkte unter
+    170 gibt es dann keine, graue unter 205 aber noch."""
+    from PySide6 import QtWidgets
+    from statik3d.gui import design as dsg, masken as msk, ribbon as rib, tabellen as tab
+    app = _app()
+    halter = QtWidgets.QWidget()
+    halter.setStyleSheet(dsg.stil() + rib.stil() + msk.stil() + tab.stil())
+    lay = QtWidgets.QHBoxLayout(halter)
+    cb = QtWidgets.QComboBox()
+    cb.addItems(["abc"])
+    sp, ds = QtWidgets.QSpinBox(), QtWidgets.QDoubleSpinBox()
+    sp.setRange(0, 10)
+    sp.setValue(5)
+    for f in (cb, sp, ds):
+        f.setFixedWidth(120)
+        lay.addWidget(f)
+    halter.resize(420, 60)
+    halter.show()
+    app.processEvents()
+
+    def lage(f, name):
+        return (_zaehle(f, name, 170), _zaehle(f, name, 205))
+
+    dunkel, hell = lage(cb, "Pfeil")
+    check("Aufklappliste freigegeben: dunkler Pfeil", dunkel >= 6, f"{dunkel} dunkel, {hell} ab 205")
+    cb.setEnabled(False)
+    app.processEvents()
+    dunkel, hell = lage(cb, "Pfeil")
+    check("Aufklappliste gesperrt: grauer Pfeil, kein dunkler", dunkel == 0 and hell >= 6,
+          f"{dunkel} dunkel, {hell} unter 205")
+    for f in (sp, ds):
+        f.setEnabled(False)
+    app.processEvents()
+    ok = all(lage(f, n)[0] == 0 and lage(f, n)[1] >= 6 for f in (sp, ds) for n in ("auf", "ab"))
+    check("Drehfeld gesperrt: beide Pfeile grau", ok,
+          str([lage(f, n) for f in (sp, ds) for n in ("auf", "ab")]))
+    sp.setEnabled(True)
+    sp.setValue(0)
+    app.processEvents()
+    auf, ab = lage(sp, "auf"), lage(sp, "ab")
+    check("Drehfeld am Minimum: oben dunkel, unten grau", auf[0] >= 6 and ab[0] == 0 and ab[1] >= 6,
+          f"auf {auf}, ab {ab}")
+    sp.setValue(10)
+    app.processEvents()
+    auf, ab = lage(sp, "auf"), lage(sp, "ab")
+    check("Drehfeld am Maximum: oben grau, unten dunkel", ab[0] >= 6 and auf[0] == 0 and auf[1] >= 6,
+          f"auf {auf}, ab {ab}")
+    halter.close()
+
+
+def _knopf_gemalt(feld, aktiv, gedrueckt=False):
+    """Das Drehfeld mit dem Stil gemalt, als faehre die Maus ueber ``aktiv``
+    (Aufwaertsknopf oder Abwaertsknopf); ``gedrueckt``: die Taste ist unten."""
+    from PySide6 import QtGui, QtWidgets
+    S = QtWidgets.QStyle
+    opt = QtWidgets.QStyleOptionSpinBox()
+    feld.initStyleOption(opt)
+    opt.activeSubControls = aktiv
+    if aktiv != S.SC_None:
+        opt.state |= S.State_MouseOver
+    if gedrueckt:
+        opt.state |= S.State_Sunken
+    bild = QtGui.QImage(feld.size(), QtGui.QImage.Format_ARGB32_Premultiplied)
+    bild.fill(QtGui.QColor("white"))
+    p = QtGui.QPainter(bild)
+    feld.style().drawComplexControl(S.CC_SpinBox, opt, p, feld)
+    p.end()
+    return bild
+
+
+def test_drehfeldknoepfe_melden_zurueck():
+    """Die Knoepfe des Drehfelds tragen keinen Rahmen mehr (sonst zeichnet Qt
+    Trennlinien); ihre Rueckmeldung beim Ueberfahren und Druecken kommt darum
+    aus dem Stilblatt: eine andere Flaeche als im Ruhezustand."""
+    from PySide6 import QtGui, QtWidgets
+    from statik3d.gui import design as dsg
+    S = QtWidgets.QStyle
+    app = _app()
+    sp = QtWidgets.QDoubleSpinBox()
+    sp.setStyleSheet(dsg.stil())
+    sp.setRange(0, 100)
+    sp.setValue(50)
+    sp.setFixedWidth(120)
+    sp.show()
+    app.processEvents()
+    for knopf, sc in (("auf", S.SC_SpinBoxUp), ("ab", S.SC_SpinBoxDown)):
+        r = _bereich(sp, knopf)
+        # ein Punkt im Knopf neben dem Pfeil, nicht in der Rundung der Ecke
+        x, y = r.left() + 2, r.center().y()
+        ruhe = QtGui.QColor(_knopf_gemalt(sp, S.SC_None).pixel(x, y)).name()
+        ueber = QtGui.QColor(_knopf_gemalt(sp, sc).pixel(x, y)).name()
+        druck = QtGui.QColor(_knopf_gemalt(sp, sc, True).pixel(x, y)).name()
+        check(f"Knopf {knopf}: beim Überfahren eine andere Fläche als in Ruhe", ueber != ruhe,
+              f"Ruhe {ruhe}, Überfahren {ueber}")
+        check(f"Knopf {knopf}: beim Drücken eine dritte Fläche", druck not in (ruhe, ueber),
+              f"Ruhe {ruhe}, Überfahren {ueber}, Drücken {druck}")
+    sp.close()
 
 
 def test_pfeile_im_hauptfenster():
@@ -177,16 +296,26 @@ def test_pfeile_im_hauptfenster():
     w.load_example("frame")
     w._objektmaske("stabelement", "0")            # Aufklapplisten der Maske rechts sichtbar
     app.processEvents()
+    # das echte Drehfeld der Arbeitsebene (sp_raster) liegt in einem Register
+    # des Ribbons: Register durchgehen, bis es sichtbar ist
+    for i in range(w.ribbon.tabs.count()):
+        w.ribbon.zeigen(w.ribbon.tabs.tabText(i))
+        app.processEvents()
+        if w.sp_raster.isVisible():
+            break
+    check("das Drehfeld der Arbeitsebene (sp_raster) ist sichtbar", w.sp_raster.isVisible(),
+          w.ribbon.tabs.tabText(w.ribbon.tabs.currentIndex()))
     felder = [f for f in w.findChildren(QtWidgets.QAbstractSpinBox) + w.findChildren(QtWidgets.QComboBox)
               if f.isVisible() and f.width() > 40 and f.height() > 14
               and f.parentWidget() is not None and f.parentWidget().objectName() != "qt_scrollarea_viewport"
               and f.objectName() not in ("qt_spinbox_lineedit",)]
     glas = [f for f in felder if f.objectName() == "glasliste"]
+    check("… und gemessen wird auch sp_raster", w.sp_raster in felder)
     check("das Hauptfenster hat sichtbare Aufklapplisten und Drehfelder", len(felder) >= 3, str(len(felder)))
     check("… darunter die Liste der Glasleiste", len(glas) >= 1, str(len(glas)))
     schlecht = []
     for f in felder:
-        ok, bericht = _pfeile_gemessen([f], mindestens=4)
+        ok, bericht = _pfeile_gemessen([f], mindestens=4, grenze=205)    # dunkel oder grau (Anschlag, gesperrt)
         if not ok:
             schlecht.append(f"{type(f).__name__}#{f.objectName()}: {bericht}")
     check("jedes davon zeigt seinen Pfeil", not schlecht, "; ".join(schlecht[:4]))
@@ -258,10 +387,26 @@ def _stoerstand(w, app):
     w.sel_linien[:] = ["L1"]
     w.sel_staebe[:] = ["1"]
     w.selection = np.array([0, 1])
-    w.leuchtet = [0]
     w.netzguete_feld = {"werte": [1.0], "mass": "formguete"}
-    w._objektmaske("lager", "0")               # Maske rechts offen
+    # etwas ausgeblendet, dann eine Stellungsmaske mit Vorschau: ihr Schliessen
+    # stellt die Sicht „von vorher“ wieder her (_situation_vorschau(None))
+    w.versteckt["elemente"] = {0}
+    w._objektmaske("stellung", "S1")           # Maske rechts offen, mit Vorschau
     app.processEvents()
+    w.leuchtet = [0]                           # nach der Maske: die Vorschau setzt es selbst
+
+
+def _stoerstand_da(w):
+    """(ok, Text): ist der Stoerstand wirklich da - sonst prueft ein Vergleich
+    danach nichts."""
+    z = _zustand(w)
+    ok = bool(z["Maske rechts offen"] and z["Umhüllende vorhanden"] and z["Stellungsreihe vorhanden"]
+              and z["Auswahl Linien"] and z["Auswahl Stäbe"] and z["leuchtende Elemente"]
+              and z["Rückgängig-Stapel"] >= 1 and z["Netzgüte-Färbung"] is not None
+              and z["Auswahl Knoten"] and z["Sicht-Rest"] == {0}
+              and z["Docktitel"] != "Eingaben" and z["Text Umhüllende"] != "noch nicht gerechnet")
+    return ok, str({k: z[k] for k in ("Maske rechts offen", "Docktitel", "Sicht-Rest", "Rückgängig-Stapel",
+                                      "Auswahl Linien", "Auswahl Stäbe", "leuchtende Elemente")})
 
 
 def _zustand(w):
@@ -276,6 +421,8 @@ def _zustand(w):
         "Text Umhüllende": w.lbl_umh.text(),
         "Rückgängig-Stapel": len(w._undo), "Analyse": w.analysis, "Ergebnis": w.results,
         "Pfad": w.path, "ungespeichert": w.ungespeichert(),
+        "ausgeblendete Elemente": sorted(w.versteckt["elemente"]),
+        "Sicht-Rest": getattr(w, "_situation_sicht_alt", None),
     }
 
 
@@ -284,20 +431,22 @@ def test_beispiel_raeumt_auf_wie_neu():
     from statik3d import update as upd
     w, app = _fenster()
     _stoerstand(w, app)
-    vorher = _zustand(w)
-    check("Vorbedingung: der Störstand ist da (Maske offen, Umhüllende, Auswahl, Stapel)",
-          vorher["Maske rechts offen"] and vorher["Umhüllende vorhanden"] and vorher["Auswahl Linien"]
-          and vorher["Rückgängig-Stapel"] >= 1 and vorher["Netzgüte-Färbung"] is not None,
-          str({k: vorher[k] for k in ("Maske rechts offen", "Rückgängig-Stapel", "Auswahl Linien")}))
+    ok, text = _stoerstand_da(w)
+    check("Vorbedingung vor Neu: der Störstand ist da (Maske, Umhüllende, Auswahl, Stapel, Sicht)", ok, text)
     w.new_model()
     app.processEvents()
     neu = _zustand(w)
     _stoerstand(w, app)
+    ok, text = _stoerstand_da(w)
+    check("Vorbedingung vor Beispiel: der Störstand ist da", ok, text)
     w.load_example("frame")
     app.processEvents()
     bsp = _zustand(w)
     for k in neu:
         check(f"nach Beispiel wie nach Neu: {k}", bsp[k] == neu[k], f"Beispiel {bsp[k]!r}  Neu {neu[k]!r}"[:150])
+    check("im Beispiel ist nichts ausgeblendet (die Sicht des vorigen Modells kam nicht zurück)",
+          not bsp["ausgeblendete Elemente"] and bsp["Sicht-Rest"] is None,
+          f"{bsp['ausgeblendete Elemente']} / {bsp['Sicht-Rest']}")
     check("Neu selbst ist sauber (keine Umhüllende, keine Maske, keine Auswahl)",
           not neu["Umhüllende vorhanden"] and not neu["Stellungsreihe vorhanden"]
           and not neu["Maske rechts offen"] and not neu["Auswahl Linien"] and neu["Netzgüte-Färbung"] is None
@@ -310,6 +459,86 @@ def test_beispiel_raeumt_auf_wie_neu():
           w.windowTitle() == f"{w.model.name} – Statik3D {ver}" and w.model.name != "Neues Modell", w.windowTitle())
     check("nach Beispiel: das Beispielmodell ist da", len(w.model.elements) > 0 and w.model.nn > 0,
           f"{w.model.nn} Knoten, {len(w.model.elements)} Elemente")
+
+
+def _gleich_wie_neu(name, neu, danach, ausser=()):
+    for k in neu:
+        if k in ausser:
+            continue
+        check(f"{name}: {k} wie nach Neu", danach[k] == neu[k], f"{danach[k]!r}  Neu {neu[k]!r}"[:150])
+
+
+def test_oeffnen_raeumt_auf_wie_neu():
+    """Das Oeffnen einer Datei (modell_laden) raeumt wie Neu auf - bis
+    02.10.2026 liess es Maske, Umhuellende, Auswahl und Netzguete stehen."""
+    w, app = _fenster()
+    w.load_example("frame")
+    datei = os.path.join(tempfile.mkdtemp(prefix="statik3d_klein_oeffnen_"), "rahmen.json")
+    w.model.save(datei)
+    w.new_model()
+    neu = _zustand(w)
+    _stoerstand(w, app)
+    ok, text = _stoerstand_da(w)
+    check("Vorbedingung vor Öffnen: der Störstand ist da", ok, text)
+    check("Datei geladen", w.modell_laden(datei, fragen=False) is True)
+    app.processEvents()
+    geoeffnet = _zustand(w)
+    _gleich_wie_neu("nach Öffnen", neu, geoeffnet, ausser=("Pfad",))
+    check("nach Öffnen: der Pfad ist die Datei, nichts ist ungespeichert",
+          w.path == datei and geoeffnet["ungespeichert"] == "", f"{w.path} / {geoeffnet['ungespeichert']!r}")
+    check("nach Öffnen: Fenstertitel nennt die Datei, ohne Stern", w.windowTitle().startswith("rahmen.json – "),
+          w.windowTitle())
+
+
+def test_import_ohne_anhaengen():
+    """Import ohne Anhaengen: aufgeraeumt wie Neu, und der Pfad der zuvor
+    geoeffneten Datei ist weg - sonst schriebe Strg+S das importierte Modell
+    ungefragt ueber diese Datei (bis 02.10.2026)."""
+    from PySide6 import QtWidgets
+    from statik3d.gui import dialogs as dg
+    from tests.test_rfem6 import make_rf6
+    w, app = _fenster()
+    tmp = tempfile.mkdtemp(prefix="statik3d_klein_import_")
+    w.load_example("frame")
+    alt = os.path.join(tmp, "alt.json")
+    w.model.save(alt)
+    with open(alt, "rb") as f:
+        alt_inhalt = f.read()
+    w.new_model()
+    neu = _zustand(w)
+    f_rf6 = make_rf6(os.path.join(tmp, "b.rf6"), nodes=[(0, 0, 0), (2, 0, 0)], lines=[[1, 2]],
+                     members=[(1, None, None)],
+                     supports=[("Fest", (float("inf"),) * 6, (0,) * 6, None, [1])])
+    _stoerstand(w, app)
+    w.path = alt                               # zuvor geoeffnet: alt.json
+    w._refresh_title()
+    ok, text = _stoerstand_da(w)
+    check("Vorbedingung vor Import: der Störstand ist da, Pfad = alt.json", ok and w.path == alt, text)
+    alt_fk, alt_open, alt_exec = w._fragen_knoepfe, QtWidgets.QFileDialog.getOpenFileName, dg.ImportDialog.exec
+    alt_save = QtWidgets.QFileDialog.getSaveFileName
+    w._fragen_knoepfe = lambda *a, **k: False
+    QtWidgets.QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: (f_rf6, ""))
+    dg.ImportDialog.exec = lambda self: 1
+    try:
+        w.import_file()
+        app.processEvents()
+        importiert = _zustand(w)
+        _gleich_wie_neu("nach Import", neu, importiert, ausser=("ungespeichert", "Rückgängig-Stapel", "Text Umhüllende"))
+        check("nach Import: der Pfad ist weg (Strg+S fragt nach dem Dateinamen)", w.path is None, str(w.path))
+        check("nach Import: der Titel nennt nicht mehr alt.json", "alt.json" not in w.windowTitle(), w.windowTitle())
+        check("nach Import: das Modell gilt als ungespeichert", bool(importiert["ungespeichert"]),
+              repr(importiert["ungespeichert"]))
+        gefragt = []
+        QtWidgets.QFileDialog.getSaveFileName = staticmethod(lambda *a, **k: (gefragt.append(a), ("", ""))[1])
+        w.save_model()
+        check("Strg+S nach dem Import fragt nach dem Dateinamen", len(gefragt) == 1, str(len(gefragt)))
+        with open(alt, "rb") as f:
+            check("alt.json ist unverändert", f.read() == alt_inhalt)
+    finally:
+        w._fragen_knoepfe = alt_fk
+        QtWidgets.QFileDialog.getOpenFileName = alt_open
+        QtWidgets.QFileDialog.getSaveFileName = alt_save
+        dg.ImportDialog.exec = alt_exec
 
 
 # --------------------------------------------------------------------------
@@ -395,22 +624,25 @@ def test_handbuch():
     hb = " ".join(_text("docs/Benutzerhandbuch.md").split())
     for name, satz in (("Pfeile", "**Aufklapplisten und Drehfelder** zeigen rechts ihren Pfeil"),
                        ("Titel", "„Hallenrahmen – Statik3D 2.1.0“"),
-                       ("Beispiel", "**Ein Beispiel räumt auf wie *Neu***"),
+                       ("Beispiel, Öffnen, Import", "ebenso das *Öffnen* einer Datei und der *Import* ohne Anhängen"),
+                       ("graue Pfeile", "zeigen den Pfeil grau"),
                        ("Hinweise", "Der **Hinweis** zu einem Feld erscheint")):
         check(f"Handbuch beschreibt: {name}", satz in hb)
     for name, satz in (("Kopfzeile", "Bis zum 02.10.2026 hieß die Kopfzeile"),
-                       ("Pfeile", "Bis zum 02.10.2026 fehlte er"),
+                       ("Pfeile", "Bis zum 02.10.2026 fehlte der Pfeil"),
                        ("Hinweise", "Bis zum 02.10.2026 stand er nur an der Beschriftung"),
-                       ("Beispiel", "Bis zum 02.10.2026 räumte nur *Neu* so auf")):
+                       ("Beispiel", "Bis zum 02.10.2026 räumte nur *Neu* so auf"),
+                       ("Import", "Bis zum 02.10.2026 blieb der Pfad stehen")):
         check(f"Handbuch nennt den Stand vorher: {name}", satz in hb)
 
 
 def main():
     import faulthandler
     faulthandler.dump_traceback_later(900, exit=True)
-    for t in (test_pfeile_im_stilblatt, test_pfeile_sichtbar, test_pfeile_im_hauptfenster, test_titel,
-              test_beispiel_raeumt_auf_wie_neu, test_hinweise_am_feld, test_hinweise_in_echten_masken,
-              test_handbuch):
+    for t in (test_pfeile_im_stilblatt, test_pfeile_sichtbar, test_pfeile_gesperrt_und_am_anschlag,
+              test_drehfeldknoepfe_melden_zurueck, test_pfeile_im_hauptfenster, test_titel,
+              test_beispiel_raeumt_auf_wie_neu, test_oeffnen_raeumt_auf_wie_neu, test_import_ohne_anhaengen,
+              test_hinweise_am_feld, test_hinweise_in_echten_masken, test_handbuch):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

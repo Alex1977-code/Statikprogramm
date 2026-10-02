@@ -45,6 +45,9 @@ FARBEN = {
     # Eingabetabellen (Teilpaket 10a): editierbare Zelle weiss, feste grau
     "zelle_edit": "#ffffff",
     "zelle_fest": "#eceff2",
+    # Pfeile gesperrter Felder und Drehfelder am Anschlag (Teilpaket 11f); dieselbe
+    # Farbe wie die Schrift gesperrter Knoepfe (QPushButton:disabled)
+    "gesperrt": "#a9b6c2",
 }
 
 #: Stilblatt fuer das ganze Fenster
@@ -159,14 +162,17 @@ QToolTip {{ background: {kopf}; color: #fff; border: 0; padding: 5px 7px; }}
 #: wird er wie statik3d/web/static ueber den Ort dieser Datei.
 BILDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bilder")
 
-#: die Pfeilbilder: Dateiname je Richtung
-PFEILE = {"ab": "pfeil_ab.png", "auf": "pfeil_auf.png"}
+#: die Pfeilbilder: Name -> (Dateiname, Pfeil nach unten?, Farbe aus FARBEN). Die
+#: grauen gehoeren zu gesperrten Feldern und zu einem Drehfeld am Anschlag.
+PFEILE = {"ab": ("pfeil_ab.png", True, "matt"), "auf": ("pfeil_auf.png", False, "matt"),
+          "ab_grau": ("pfeil_ab_grau.png", True, "gesperrt"),
+          "auf_grau": ("pfeil_auf_grau.png", False, "gesperrt")}
 
 #: Kantenlaenge des Pfeilbilds in logischen Bildpunkten
 PFEIL_KANTE = 10
 
 
-def pfeil_bild(runter: bool, faktor: int = 1) -> QtGui.QImage:
+def pfeil_bild(runter: bool, faktor: int = 1, farbe: str = "matt") -> QtGui.QImage:
     """Das Bild eines Pfeils (Winkel, wie Windows sie an Auswahlfeldern zeichnet).
 
     Unter einem Stilblatt zeichnet Qt an Aufklappliste und Drehfeld **keinen**
@@ -175,14 +181,14 @@ def pfeil_bild(runter: bool, faktor: int = 1) -> QtGui.QImage:
     Pfeilbereich). Ein Dreieck aus Rahmenstrichen (``border-top: 5px solid``)
     ging nicht: Qt zeichnet daraus Balken, keine Spitze. Darum Bilder.
     ``faktor`` 2 ist die Fassung fuer hohe Bildschirmdichte (Name mit ``@2x``,
-    die Qt dort selbst waehlt). Neu schreiben:
+    die Qt dort selbst waehlt), ``farbe`` ein Schluessel aus FARBEN. Neu schreiben:
     ``python -c "from statik3d.gui import design; design.pfeilbilder_schreiben()"``"""
     s = PFEIL_KANTE * faktor
     bild = QtGui.QImage(s, s, QtGui.QImage.Format_ARGB32_Premultiplied)
     bild.fill(0)
     p = QtGui.QPainter(bild)
     p.setRenderHint(QtGui.QPainter.Antialiasing)
-    stift = QtGui.QPen(QtGui.QColor(FARBEN["matt"]), 1.8 * faktor)
+    stift = QtGui.QPen(QtGui.QColor(FARBEN[farbe]), 1.8 * faktor)
     stift.setCapStyle(QtCore.Qt.RoundCap)
     stift.setJoinStyle(QtCore.Qt.RoundJoin)
     p.setPen(stift)
@@ -195,17 +201,17 @@ def pfeil_bild(runter: bool, faktor: int = 1) -> QtGui.QImage:
 
 
 def pfeilbilder_schreiben(ordner: str = None) -> list:
-    """Die Pfeilbilder (je Richtung einfach und ``@2x``) in den Ordner schreiben;
+    """Die Pfeilbilder (je Pfeil einfach und ``@2x``) in den Ordner schreiben;
     ohne Angabe nach :data:`BILDER`. Gibt die Dateinamen zurueck. Braucht eine
     Qt-Anwendung (QGuiApplication) nicht - QImage und QPainter genuegen."""
     ordner = ordner or BILDER
     os.makedirs(ordner, exist_ok=True)
     namen = []
-    for richtung, datei in PFEILE.items():
+    for datei, runter, farbe in PFEILE.values():
         stamm, endung = os.path.splitext(datei)
         for faktor, zusatz in ((1, ""), (2, "@2x")):
             name = stamm + zusatz + endung
-            pfeil_bild(richtung == "ab", faktor).save(os.path.join(ordner, name))
+            pfeil_bild(runter, faktor, farbe).save(os.path.join(ordner, name))
             namen.append(name)
     return namen
 
@@ -220,21 +226,41 @@ def _pfeilregeln() -> str:
     (gemessen: 25 dunkle Punkte am Rand des Pfeilbereichs). Der Pfad hat
     Schraegstriche und steht in Anfuehrungszeichen - der Ordner der exe
     liegt unter dem Benutzernamen, und der darf ein Leerzeichen haben."""
-    pfade = {k: os.path.join(BILDER, d).replace("\\", "/") for k, d in PFEILE.items()}
+    k = PFEIL_KANTE
+    pfade = {k: os.path.join(BILDER, v[0]).replace("\\", "/") for k, v in PFEILE.items()}
     if not all(os.path.isfile(p) for p in pfade.values()):
         return ""
-    k = PFEIL_KANTE
+    # Der Knopf ohne Rahmen hat keine Rueckmeldung mehr, die Qt selbst zeichnet:
+    # beim Ueberfahren die helle Akzentflaeche, beim Druecken die dunklere der
+    # Knoepfe (QPushButton:pressed). Die Rundung folgt der des Feldes (8 px
+    # abzueglich 1 px Rand), sonst ragte die Flaeche ueber die Ecke.
+    # ":off" ist der Zustand eines Drehfelds am Anschlag (Qt-Dokumentation).
     return (
         'QComboBox::down-arrow {{ image: url("{ab}"); width: {k}px; height: {k}px; }}\n'
+        'QComboBox::down-arrow:disabled {{ image: url("{ab_grau}"); }}\n'
         'QSpinBox::up-button, QDoubleSpinBox::up-button {{ subcontrol-origin: border;\n'
-        '    subcontrol-position: top right; width: 18px; border: 0; }}\n'
+        '    subcontrol-position: top right; width: 18px; border: 0;\n'
+        '    border-top-right-radius: 7px; }}\n'
         'QSpinBox::down-button, QDoubleSpinBox::down-button {{ subcontrol-origin: border;\n'
-        '    subcontrol-position: bottom right; width: 18px; border: 0; }}\n'
+        '    subcontrol-position: bottom right; width: 18px; border: 0;\n'
+        '    border-bottom-right-radius: 7px; }}\n'
+        'QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,\n'
+        'QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {{\n'
+        '    background: {akzent_hell}; }}\n'
+        'QSpinBox::up-button:pressed, QDoubleSpinBox::up-button:pressed,\n'
+        'QSpinBox::down-button:pressed, QDoubleSpinBox::down-button:pressed {{\n'
+        '    background: {gedrueckt}; }}\n'
         'QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{ image: url("{auf}");\n'
         '    width: {k}px; height: {k}px; }}\n'
+        'QSpinBox::up-arrow:disabled, QSpinBox::up-arrow:off,\n'
+        'QDoubleSpinBox::up-arrow:disabled, QDoubleSpinBox::up-arrow:off {{\n'
+        '    image: url("{auf_grau}"); }}\n'
         'QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{ image: url("{ab}");\n'
-        '    width: {k}px; height: {k}px; }}'
-    ).format(ab=pfade["ab"], auf=pfade["auf"], k=k)
+        '    width: {k}px; height: {k}px; }}\n'
+        'QSpinBox::down-arrow:disabled, QSpinBox::down-arrow:off,\n'
+        'QDoubleSpinBox::down-arrow:disabled, QDoubleSpinBox::down-arrow:off {{\n'
+        '    image: url("{ab_grau}"); }}'
+    ).format(k=k, akzent_hell=FARBEN["akzent_hell"], gedrueckt="#dce9f8", **pfade)
 
 
 def stil() -> str:

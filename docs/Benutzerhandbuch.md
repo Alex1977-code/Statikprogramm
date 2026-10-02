@@ -91,8 +91,11 @@ Programm und hängte einen Zusatz an („Statik3D 2.1.0 - Hallenrahmen - FEM mit
 Lastfällen, Kontakt und EC3-Nachweisen“).
 
 **Aufklapplisten und Drehfelder** zeigen rechts ihren Pfeil: die Aufklappliste
-einen nach unten, das Drehfeld einen nach oben und einen nach unten. Bis zum
-02.10.2026 fehlte er, weil das Stilblatt des Programms Qt den eigenen Pfeil
+einen nach unten, das Drehfeld einen nach oben und einen nach unten. Ein
+gesperrtes Feld und ein Drehfeld am Anschlag (der untere Pfeil am kleinsten, der
+obere am größten Wert) zeigen den Pfeil grau. Die Knöpfe des Drehfelds färben
+sich beim Überfahren hellblau und beim Drücken dunkler. Bis zum 02.10.2026
+fehlte der Pfeil, weil das Stilblatt des Programms Qt den eigenen Pfeil
 abnimmt. Die Pfeile sind kleine Bilddateien im Ordner `statik3d/gui/bilder`; er
 steht im Rezept der Programmdatei (`packaging/Statik3D.spec`) und in
 `pyproject.toml`. `tests/test_kleinigkeiten.py` prüft an einem gezeichneten
@@ -3178,17 +3181,23 @@ hätten die echten Rückgängig-Schritte verdrängt (seit 25.09.2026).
 **Beispiele** stehen in einem Knopf *Beispiel öffnen ▾* statt in acht
 Knöpfen, von denen jeder das Modell ersetzte.
 
-**Ein Beispiel räumt auf wie *Neu*** (seit 02.10.2026). Beide vergessen, was dem
-vorigen Modell gehörte: die Auswahl von Knoten, Linien, Stäben und Elementen,
-die leuchtenden Elemente, die Netzgüte-Färbung, die Umhüllende und die
-Stellungsreihe, die Ergebnisse und den Rückgängig-Stapel; die Maske rechts
+**Ein Beispiel räumt auf wie *Neu*** (seit 02.10.2026), ebenso das *Öffnen*
+einer Datei und der *Import* ohne Anhängen. Alle vergessen, was dem vorigen
+Modell gehörte: die Auswahl von Knoten, Linien, Stäben und Elementen, die
+leuchtenden Elemente, die Netzgüte-Färbung, die Umhüllende und die
+Stellungsreihe, die Ergebnisse, den Rückgängig-Stapel und die Ausblendung, die
+eine offene Stellungsmaske als Vorschau gesetzt hatte; die Maske rechts
 schließt, der Fenstertitel nennt das neue Modell. Bis zum 02.10.2026 räumte nur
-*Neu* so auf: Nach einem Beispiel blieben die Auswahl von Linien und Stäben,
-die leuchtenden Elemente, die Netzgüte-Färbung und die Maske rechts mit den
-Feldern des vorigen Modells stehen, und die Umhüllende der Stellungen samt der Zeile darunter („η =
-…“ des vorigen Modells) blieb sogar nach *Neu* stehen. Das *Öffnen* einer
-Datei räumt noch nicht in diesem Umfang auf: Es leert die Auswahl der Knoten und
-den Rückgängig-Stapel, lässt die offene Maske rechts aber stehen.
+*Neu* so auf: Nach einem Beispiel, nach dem Öffnen und nach dem Import blieben
+die Auswahl von Linien und Stäben, die leuchtenden Elemente, die
+Netzgüte-Färbung und die Maske rechts mit den Feldern des vorigen Modells
+stehen, und die Umhüllende der Stellungen samt der Zeile darunter („η = …“ des
+vorigen Modells) blieb sogar nach *Neu* stehen. Nach einem Import ohne
+Anhängen ist der Pfad der zuvor geöffneten Datei weg: Der Titel nennt den Namen
+des Modells, und Strg+S fragt nach dem Dateinamen. Bis zum 02.10.2026 blieb der
+Pfad stehen, der Titel nannte die alte Datei, und Strg+S überschrieb sie ohne
+Rückfrage mit dem importierten Modell. Beim Import mit *Anhängen* bleiben Modell
+und Pfad, wie sie waren.
 
 Geprüft in `tests/test_ungespeichert.py` (mit dem echten Hauptfenster). Die
 übrigen Prüfungen mit Hauptfenster beantworten die Rückfrage über den
