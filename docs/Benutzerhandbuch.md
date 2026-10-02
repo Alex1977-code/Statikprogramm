@@ -7830,9 +7830,36 @@ Tastatur (Strg, Umschalt) und sein Ort im Ribbon. Ein Filterfeld darüber
 blendet Zeilen aus, es sucht in allen drei Spalten. Die Liste wird bei jedem
 Öffnen aus den Befehlen des Ribbons erzeugt und nicht von Hand gepflegt: ein
 neues Kürzel steht beim nächsten Öffnen darin, und ein Kürzel, das nicht gilt,
-steht nicht darin. Das Fenster ist nicht modal, das Programm bleibt
-bedienbar. Jede Tastenfolge kommt genau einmal vor; geprüft in
-`tests/test_ribbon_ordnung.py`.
+steht nicht darin. Die Befehlssuche hat keinen Knopf im Ribbon; ihr Ort heißt
+darum „Kopfzeile oben rechts“, in der Liste wie in der Trefferliste der
+Befehlssuche. Das Fenster ist nicht modal, das Programm bleibt bedienbar. Jede
+Tastenfolge kommt genau einmal vor.
+
+Die Kürzel gelten im Programmfenster **und in seinen nicht modalen Fenstern**
+(zum Beispiel der Liste selbst und dem Skizzenfenster); unter einem modalen
+Dialog, einer Rückfrage oder einer Dateiauswahl, ruhen sie. Im Fenster der Liste
+schließt Esc die Liste, und Strg+F setzt den Cursor in ihr Filterfeld. Bis zum
+03.10.2026 wirkten beide Tasten dort im Hauptfenster: Esc hob die Auswahl auf
+oder brach einen laufenden Vorgang ab, Strg+F sprang in die Befehlssuche des
+Hauptfensters, weil die Kürzel des Ribbons für das ganze Programm gelten und das
+Fenster der Liste sie nicht abfing.
+
+**Weitere Tasten.** Hinter den Befehlen steht ein Abschnitt „Weitere Tasten“ mit
+den Tasten, die kein Befehl des Ribbons trägt, sondern ein Fenster selbst
+abfängt. Im Modellbaum (der Fokus steht im Baum) löschen Entf und Rücktaste den
+gewählten Eintrag, bei mehreren gewählten derselben Art alle; die Eingabetaste
+öffnet die Maske des gewählten Eintrags, wie ein Doppelklick; Pos1 und Ende
+springen zum ersten und zum letzten Eintrag. In der rechten Maske löst die
+Eingabetaste den Hauptknopf aus, von jedem Feld aus; in einer Tabelle oder Liste
+der Maske blättert sie nur. Im Programmfenster bricht Esc einen laufenden
+Vorgang mit Abbrechen-Knopf ab (Vernetzen, Berechnung, Nachweise, Wind,
+Wasserdruck) oder ein aufgezogenes Auswahlfenster; steht das Klickfeld einer
+Maske scharf, beendet Esc zuerst das Klicken, und läuft nichts, wirkt Esc wie
+„Alles deselektieren“. Im Skizzenfenster löschen Entf und Rücktaste das
+gewählte Element. Diese Zeilen entstehen nicht aus den Befehlen, sondern stehen
+in `statik3d/gui/kuerzelliste.py`; `tests/test_ribbon_ordnung.py` drückt die
+Tasten wirklich und prüft, dass sie tun, was dort steht, ebenso, dass Esc und
+Strg+F im Fenster der Liste ihr gehören.
 
 Ansicht: Strg+1 voll, Strg+2 transparent, Strg+3 Hidden-Line,
 Strg+4 Drahtmodell, F9 FE-Netz ein/aus.
@@ -7860,7 +7887,8 @@ gehört genau einem Befehl: Das Register „Auswahl“ zeigt „Alles deselektie
 noch einmal, das Kürzel Esc trägt aber nur der Befehl im Register „Start“ -
 zwei Befehle mit demselben Kürzel blockierten sich in Qt gegenseitig, und Esc
 tat nichts, solange das Register „Auswahl“ vorn lag. Kürzel wirken nur,
-wenn das Programmfenster aktiv ist. Steht der Cursor in einem Textfeld, geht
+wenn das Programmfenster oder eines seiner nicht modalen Fenster aktiv ist.
+Steht der Cursor in einem Textfeld, geht
 Strg+A an das Feld (Text markieren), nicht an das Modell.
 
 **Qt-Texte auf Deutsch (seit 02.10.2026).** Bis zum 02.10.2026 lud das

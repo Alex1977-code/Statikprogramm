@@ -4651,7 +4651,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # trägt das Kürzel, steht in der Liste und läuft aus der Suche.
         g.nur_suche("Befehlssuche", self.ribbon.suche_fokussieren, "Ctrl+F",
                     "Den Cursor in die Befehlssuche oben rechts setzen - dort Namen eintippen, "
-                    "die Trefferliste zeigt den Ort jedes Befehls")
+                    "die Trefferliste zeigt den Ort jedes Befehls", ort="Kopfzeile oben rechts")
         g = r.gruppe("Programm")
         g.gross("Info", "ⓘ", self.about,
                 hinweis="Fassung, Build und Gültigkeitsbereich")

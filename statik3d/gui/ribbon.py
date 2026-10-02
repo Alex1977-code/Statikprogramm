@@ -87,6 +87,13 @@ class Befehl:
     hinweis: str = ""
     #: ersetzt oder leert das Modell (Ribbon.vorsicht) - nie direkt aus der Suche
     vorsicht: bool = False
+    #: Ort, wenn der Befehl nicht in einem Register steht (die Befehlssuche
+    #: oben rechts, 03.10.2026); leer = „Register › Gruppe“
+    ort: str = ""
+
+    def ort_text(self) -> str:
+        """Wo der Befehl zu finden ist - fuer die Trefferliste und die Kuerzelliste."""
+        return self.ort or f"{self.register} › {self.gruppe}"
 
     def suchtext(self) -> str:
         return f"{self.text} {self.register} {self.gruppe} {self.hinweis}".lower()
@@ -172,7 +179,7 @@ class Gruppe(QtWidgets.QWidget):
         self.spalte: QtWidgets.QVBoxLayout | None = None
 
     # -- Knoepfe ---------------------------------------------------------
-    def _aktion(self, text: str, fn, kuerzel: str, hinweis: str) -> QtGui.QAction:
+    def _aktion(self, text: str, fn, kuerzel: str, hinweis: str, ort: str = "") -> QtGui.QAction:
         a = QtGui.QAction(text, self)
         if fn is not None:
             a.triggered.connect(lambda _=False, f=fn: f())
@@ -182,7 +189,7 @@ class Gruppe(QtWidgets.QWidget):
         # Der Hinweis nennt das Kuerzel deutsch („Strg+Z“); der Schluessel
         # der Tastenfolge (kuerzel_setzen) bleibt „Ctrl+Z“ (02.10.2026)
         a.setToolTip(f"{h}" + (f"   ({kuerzel_text(kuerzel)})" if kuerzel else ""))
-        self._ribbon.merken(Befehl(self._register, self._name, text, a, hinweis))
+        self._ribbon.merken(Befehl(self._register, self._name, text, a, hinweis, ort=ort))
         return a
 
     def gross(self, text: str, zeichen: str = "", fn=None, kuerzel: str = "",
@@ -307,14 +314,16 @@ class Gruppe(QtWidgets.QWidget):
         return a
 
     def nur_suche(self, text: str, fn=None, kuerzel: str = "", hinweis: str = "",
-                  symbol: str = "") -> QtGui.QAction:
+                  symbol: str = "", ort: str = "") -> QtGui.QAction:
         """Ein Befehl ohne Knopf: die Befehlssuche findet ihn weiter.
 
         Fuer Doppelungen, die aus dem Ribbon fallen (25.09.2026): „Tabelle …“
         (die Tabelle hat unten ihren Reiter), „Flächen/Volumen vernetzen“
         (= Netz → Vernetzen), „Querschnitt/Dicke zuweisen…“ und „Gelenke
-        setzen…“ (= Kontextregister „Auswahl“)."""
-        a = self._aktion(text, fn, kuerzel, hinweis)
+        setzen…“ (= Kontextregister „Auswahl“). ``ort`` nennt, wo es den Befehl
+        statt eines Knopfs gibt („Kopfzeile oben rechts“ fuer die Befehlssuche);
+        die Suche holt dann kein Register nach vorn."""
+        a = self._aktion(text, fn, kuerzel, hinweis, ort)
         a.setIcon(sym.fuer_befehl(text, "", symbol))
         return a
 
@@ -743,7 +752,7 @@ class Ribbon(QtWidgets.QWidget):
     def anzeige(b: Befehl) -> str:
         """Die Zeile eines Befehls in der Trefferliste - mit Ort, denn manche
         Namen gibt es mehrfach („Einstellungen“)."""
-        return f"{b.text}   ({b.register} › {b.gruppe})"
+        return f"{b.text}   ({b.ort_text()})"
 
     def namenstreffer(self, text: str) -> list:
         """Befehle, in deren Namen (oder Synonymen) jedes Suchwort am
@@ -812,7 +821,8 @@ class Ribbon(QtWidgets.QWidget):
 
     def _ausfuehren(self, b: Befehl):
         self._vervollstaendigung.popup().hide()
-        self.zeigen(b.register)
+        if not b.ort:
+            self.zeigen(b.register)
         self.suche.clear()
         self._anzeige = {}
         if b.nicht_aus_suche():

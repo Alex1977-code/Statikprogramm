@@ -55,6 +55,11 @@ def check(name, ok, detail=""):
 
 def _fenster():
     if "w" in _FENSTER:
+        # nach einem Listen- oder Skizzenfenster ist das Hauptfenster nicht mehr aktiv; Kürzel und
+        # Tastendrücke wirken nur im aktiven Fenster (ohne Aktivierung legte die Eingabetaste in
+        # einer Maske zweimal an: Zeilenschluss des Felds und Hauptknopf)
+        _FENSTER["w"].activateWindow()
+        _FENSTER["app"].processEvents()
         return _FENSTER["w"], _FENSTER["app"]
     from PySide6 import QtWidgets
     from statik3d.gui.main import MainWindow
@@ -255,7 +260,8 @@ def test_kuerzelliste():
     if dlg is None:
         return
     tbl = dlg.tabelle
-    zeilen = [[tbl.item(r, c).text() for c in range(tbl.columnCount())] for r in range(tbl.rowCount())]
+    # die Zeilen der Befehle; dahinter steht der Abschnitt „Weitere Tasten“
+    zeilen = [[tbl.item(r, c).text() for c in range(tbl.columnCount())] for r in range(dlg.n_befehle)]
     kopf = [tbl.horizontalHeaderItem(c).text() for c in range(tbl.columnCount())]
     check("Spalten: Befehl, Kürzel, Ort", kopf == ["Befehl", "Kürzel", "Ort"], str(kopf))
     # unabhaengig gezaehlt: jede Aktion des Fensters, die ein Kuerzel traegt
@@ -344,12 +350,218 @@ def test_befehle_vollstaendig():
           {"Kombinationen automatisch…", "DIN 19704: Kombinationen"} <= texte, str(sorted(texte)[:4]))
 
 
+def _liste_oeffnen(w, app):
+    """Extras → Tastenkürzel auslösen, das Listenfenster zurückgeben (aktiv)."""
+    w.ribbon.zeigen("Extras")
+    _befehle(w, "Tastenkürzel")[0].aktion.trigger()
+    app.processEvents()
+    dlg = w._kuerzelliste
+    dlg.activateWindow()
+    app.processEvents()
+    return dlg
+
+
+def _vorgang_vorspiegeln(w, an: bool):
+    """Einen Vorgang mit Balken und Abbrechen-Knopf vorspiegeln (Esc im
+    Programmfenster bricht ihn ab, ``_esc_abbrechen``) oder wegnehmen."""
+    if an:
+        w._abbruch = False
+        w._abbrechen_knopf("Probe")
+        w.progress_bar.setVisible(True)
+    else:
+        w.btn_abbrechen.setVisible(False)
+        w.progress_bar.setVisible(False)
+        w._abbruch = False
+
+
+def test_listenfenster_nimmt_esc_und_strg_f():
+    """Die Ribbon-Kürzel sind Anwendungskürzel: im nicht modalen Listenfenster
+    wirkte Esc im Hauptfenster (Auswahl aufheben, Vorgang abbrechen) statt das
+    Fenster zu schließen, und Strg+F sprang in die Befehlssuche des
+    Hauptfensters statt ins eigene Filterfeld (Gegenprüfung 03.10.2026)."""
+    import numpy as np
+    from PySide6 import QtCore, QtTest
+    w, app = _fenster()
+    w.load_example("frame")
+    app.processEvents()
+    for ziel_name in ("tabelle", "filter"):
+        dlg = _liste_oeffnen(w, app)
+        check(f"Vorbereitung ({ziel_name}): das Listenfenster ist das aktive Fenster", dlg.isActiveWindow())
+        ziel = getattr(dlg, ziel_name)
+        ziel.setFocus()
+        w.selection = np.arange(3)
+        _vorgang_vorspiegeln(w, True)
+        QtTest.QTest.keyClick(ziel, QtCore.Qt.Key_Escape)
+        app.processEvents()
+        check(f"Esc im Listenfenster (Fokus: {ziel_name}) schließt es", not dlg.isVisible())
+        check("… die Auswahl im Modell bleibt und der laufende Vorgang wird nicht abgebrochen",
+              len(w.selection) == 3 and w._abbruch is False,
+              f"Auswahl {len(w.selection)}, Abbruch {w._abbruch}")
+        _vorgang_vorspiegeln(w, False)
+    dlg = _liste_oeffnen(w, app)
+    for ziel_name in ("tabelle", "filter"):
+        ziel = getattr(dlg, ziel_name)
+        dlg.filter.setText("Abc")
+        ziel.setFocus()
+        w.ribbon.suche.clearFocus()
+        app.processEvents()
+        QtTest.QTest.keyClick(ziel, QtCore.Qt.Key_F, QtCore.Qt.ControlModifier)
+        app.processEvents()
+        check(f"Strg+F im Listenfenster (Fokus: {ziel_name}) setzt den Cursor ins eigene Filterfeld",
+              dlg.filter.hasFocus() and not w.ribbon.suche.hasFocus(),
+              f"Filter {dlg.filter.hasFocus()}, Befehlssuche {w.ribbon.suche.hasFocus()}")
+        check("… und markiert, was schon darin steht", dlg.filter.selectedText() == "Abc",
+              repr(dlg.filter.selectedText()))
+    dlg.close()
+    # das Hauptfenster behält seine Kürzel: Esc bricht dort den Vorgang ab, Strg+F springt in die Suche
+    w.activateWindow()
+    app.processEvents()
+    w.selection = np.arange(3)
+    _vorgang_vorspiegeln(w, True)
+    w.plotter.interactor.setFocus()
+    app.processEvents()
+    QtTest.QTest.keyClick(w, QtCore.Qt.Key_Escape)
+    app.processEvents()
+    check("Hauptfenster unverändert: Esc bricht den laufenden Vorgang ab, die Auswahl bleibt",
+          w._abbruch is True and len(w.selection) == 3, f"Abbruch {w._abbruch}, Auswahl {len(w.selection)}")
+    _vorgang_vorspiegeln(w, False)
+    QtTest.QTest.keyClick(w, QtCore.Qt.Key_F, QtCore.Qt.ControlModifier)
+    app.processEvents()
+    check("Hauptfenster unverändert: Strg+F setzt den Cursor in die Befehlssuche", w.ribbon.suche.hasFocus())
+    w.selection = np.arange(0)
+
+
+#: Tasten ohne Befehl im Ribbon (Abschnitt „Weitere Tasten“ der Liste)
+WEITERE = {
+    ("Eintrag löschen", "Entf, Rücktaste", "Modellbaum"),
+    ("Eintrag bearbeiten", "Eingabetaste", "Modellbaum"),
+    ("Erster / letzter Eintrag", "Pos1, Ende", "Modellbaum"),
+    ("Maske übernehmen", "Eingabetaste", "Maske rechts"),
+    ("Laufenden Vorgang abbrechen", "Esc", "Programmfenster"),
+    ("Gewähltes Element löschen", "Entf, Rücktaste", "Skizzenfenster"),
+}
+
+
+def test_weitere_tasten_in_der_liste():
+    w, app = _fenster()
+    dlg = _liste_oeffnen(w, app)
+    tbl = dlg.tabelle
+    zeilen = [[tbl.item(r, c).text() for c in range(tbl.columnCount())] for r in range(tbl.rowCount())]
+    kopf = [i for i, z in enumerate(zeilen) if z[0].startswith("Weitere Tasten")]
+    check("Die Liste hat einen Abschnitt „Weitere Tasten“ hinter den Befehlen",
+          len(kopf) == 1 and kopf[0] == dlg.n_befehle, f"Trennzeile {kopf}, Befehle {dlg.n_befehle}")
+    if len(kopf) != 1:
+        dlg.close()
+        return
+    weitere = {tuple(z) for z in zeilen[kopf[0] + 1:]}
+    check("… mit allen Tasten ohne Befehl: Modellbaum, Maske, Esc, Skizzenfenster (Esc nur als Abbruch)",
+          weitere == WEITERE, str(sorted(weitere ^ WEITERE))[:200])
+    check("… die Trennzeile steht über alle drei Spalten", tbl.columnSpan(kopf[0], 0) == 3)
+    text = dlg.hinweis.text()
+    check("Der Hinweis im Fenster nennt, wo die Kürzel gelten: Programmfenster und seine nicht modalen "
+          "Fenster, nicht unter modalen Dialogen",
+          "nicht modalen" in text and "modale" in text and "Dialog" in text, text[:120])
+    tip = tbl.item(kopf[0], 0).toolTip()
+    check("… die Trennzeile sagt dasselbe von ihren Tasten (Hinweis an der Zeile)",
+          "Programmfenster" in tip and "nicht modalen" in tip and "modalen Dialog" in tip, tip[:100])
+    dlg.close()
+
+
+def test_weitere_tasten_wirken():
+    """Was der Abschnitt „Weitere Tasten“ verspricht, tut die Taste wirklich
+    (echte Tastendrücke im aktiven Fenster)."""
+    from PySide6 import QtCore, QtTest, QtWidgets
+    w, app = _fenster()
+    K = QtCore.Qt
+    w.load_example("frame")
+    app.processEvents()
+    # Modellbaum: Pos1 / Ende, Eingabetaste
+    b = w.baum
+    b.setFocus()
+    alle = b._alle_eintraege()
+    QtTest.QTest.keyClick(b, K.Key_Home)
+    ersten = b.currentItem() is alle[0]
+    QtTest.QTest.keyClick(b, K.Key_End)
+    check("Modellbaum: Pos1 geht zum ersten, Ende zum letzten Eintrag",
+          ersten and b.currentItem() is alle[-1] and len(alle) > 2, str(len(alle)))
+    ziel = next(i for i in alle if b._schluessel(i)[0])
+    b.setCurrentItem(ziel)
+    gesehen = []
+    b.bearbeiten.connect(lambda art, name: gesehen.append((art, name)))
+    # der Befehl öffnet für Knoten einen modalen Dialog: der bliebe in der Prüfung stehen
+    exec_alt = QtWidgets.QDialog.exec
+    QtWidgets.QDialog.exec = lambda self, *a, **k: 0
+    try:
+        QtTest.QTest.keyClick(b, K.Key_Return)
+    finally:
+        QtWidgets.QDialog.exec = exec_alt
+    check("Modellbaum: die Eingabetaste bearbeitet den gewählten Eintrag",
+          gesehen == [b._schluessel(ziel)], str(gesehen))
+    # Maske: Eingabetaste übernimmt (Esc gehört dem Programmfenster, siehe die Prüfung oben)
+    w.maske_knoten()
+    app.processEvents()
+    mk = w.maskenrand.maske
+    felder = list(mk._felder.values())
+    for f in felder:
+        f.setText("7")
+    n0 = w.model.nn
+    felder[-1].setFocus()
+    QtTest.QTest.keyClick(felder[-1], K.Key_Return)
+    app.processEvents()
+    check("Maske: die Eingabetaste übernimmt (Knoten angelegt)", w.model.nn == n0 + 1, f"{n0} -> {w.model.nn}")
+    # Skizzenfenster: Entf löscht das gewählte Element
+    f = w.unterlage_skizze_neu()
+    app.processEvents()
+    f.activateWindow()
+    f.element_anfuegen({"art": "linie", "p1": [0, 0], "p2": [10, 0]})
+    f.blatt.hervor = 0
+    QtTest.QTest.keyClick(f.blatt, K.Key_Delete)
+    check("Skizzenfenster: Entf löscht das gewählte Element", len(f.skizze["elemente"]) == 0,
+          str(len(f.skizze["elemente"])))
+    f.close()
+
+
+def test_ort_der_befehlssuche():
+    """Die Befehlssuche steht nicht im Register Extras, sondern oben rechts."""
+    w, app = _fenster()
+    b = _befehle(w, "Befehlssuche")[0]
+    check("Ort der Befehlssuche in der Trefferliste: „Kopfzeile oben rechts“",
+          w.ribbon.anzeige(b) == "Befehlssuche   (Kopfzeile oben rechts)", w.ribbon.anzeige(b))
+    dlg = _liste_oeffnen(w, app)
+    tbl = dlg.tabelle
+    je = {tbl.item(r, 1).text(): tbl.item(r, 2).text() for r in range(dlg.n_befehle)}
+    check("… und in der Kürzelliste", je.get("Strg+F") == "Kopfzeile oben rechts", str(je.get("Strg+F")))
+    dlg.close()
+    w.activateWindow()
+    app.processEvents()
+    w.ribbon.suche.clear()
+    w.ribbon.zeigen("Berechnung")
+    w.ribbon._anzeige = {w.ribbon.anzeige(b): b}
+    w.ribbon._ausfuehren(b)
+    app.processEvents()
+    check("… die Suche führt den Befehl aus (Cursor in der Suche), ohne das Register Extras nach vorn zu holen",
+          w.ribbon.suche.hasFocus()
+          and w.ribbon.tabs.tabText(w.ribbon.tabs.currentIndex()) == "Berechnung",
+          w.ribbon.tabs.tabText(w.ribbon.tabs.currentIndex()))
+
+
+def test_lastenheft_nennt_den_neuen_ort():
+    from statik3d.model import Model
+    from statik3d.bridges import lastenheft as lh
+    absatz = " ".join(b[1] for b in lh.Lastenheft(Model()).kapitel_kombinationen() if b[0] == "p")
+    check("Lastenheft: „Kombinationen nach DIN 19704 bilden“ steht in Lasten › Kombinationen",
+          "Lasten › Kombinationen" in absatz and "DIN 19704“" in absatz, absatz[-90:])
+
+
 def main():
     import faulthandler
     faulthandler.dump_traceback_later(600, exit=True)
     for t in (test_registerfolge, test_gruppe_kombinationen, test_gruppe_fugen_passungen,
               test_f1_handbuch, test_strg_f_befehlssuche, test_kuerzelliste,
-              test_kuerzel_ohne_doppelte, test_befehle_vollstaendig):
+              test_kuerzel_ohne_doppelte, test_befehle_vollstaendig,
+              test_listenfenster_nimmt_esc_und_strg_f, test_weitere_tasten_in_der_liste,
+              test_weitere_tasten_wirken, test_ort_der_befehlssuche,
+              test_lastenheft_nennt_den_neuen_ort):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
