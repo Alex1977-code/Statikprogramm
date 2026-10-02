@@ -3,7 +3,8 @@ Ribbon: die Befehlsleiste des Programmfensters.
 
 Ein Ribbon ist eine Registerleiste, in der die Befehle nach Arbeitsschritt
 geordnet stehen - Datei, Start, Geometrie, Struktur, Lager, Lasten, Netz,
-Berechnung, Nachweise, Ergebnisse, Bericht, Ansicht, Extras. Jedes Register
+Berechnung, Ergebnisse, Nachweise, Bericht, Ansicht, Extras (seit 02.10.2026
+vor den Nachweisen: nach dem Rechnen kommt das Ergebnis). Jedes Register
 enthaelt **Gruppen**, jede Gruppe grosse Knoepfe fuer die Hauptbefehle und
 kleine fuer die Nebenbefehle.
 
@@ -17,7 +18,7 @@ machen:
   Berechnen, Auswahl aufheben) - dieselben Aktionsobjekte, nicht neue Befehle,
 * die **Tastenkuerzel** - sie haengen am Fenster und gelten darum in jedem
   Register; jede Tastenfolge gehoert genau einem Befehl (:meth:`Ribbon.kuerzel_setzen`),
-* die **Befehlssuche** rechts im Ribbon.
+* die **Befehlssuche** rechts im Ribbon (Strg+F setzt den Cursor hinein).
 
 Aufbau::
 
@@ -53,6 +54,8 @@ SYNONYME = {
     "Stellung anlegen…": "Stellung Situation Verschlussstellung",
     "Alle Stellungen": "Stellung Situation Verschlussstellung",
     "Modell leeren (Eigenschaften behalten)…": "Alle Elemente löschen",
+    "Befehlssuche": "Befehl Befehle suchen Suche",
+    "Tastenkürzel": "Kürzel Tastatur Tasten Shortcut",
 }
 #: Loeschende Befehle erkennt die Suche am Namen - sie laufen nie direkt aus ihr
 LOESCHWOERTER = re.compile(r"lösch|leeren|verwerf|entfern")
@@ -207,15 +210,23 @@ class Gruppe(QtWidgets.QWidget):
         return a
 
     def klein(self, text: str, fn=None, kuerzel: str = "", hinweis: str = "",
-              zeichen: str = "", symbol: str = "") -> QtGui.QAction:
-        """Nebenbefehl: Symbol neben der Beschriftung, bis zu drei uebereinander."""
+              zeichen: str = "", symbol: str = "", anzeige: str = "") -> QtGui.QAction:
+        """Nebenbefehl: Symbol neben der Beschriftung, bis zu drei uebereinander.
+
+        ``text`` ist der Name des Befehls fuer Suche und Trefferliste,
+        ``anzeige`` (wenn gesetzt) die kuerzere Beschriftung auf dem Knopf -
+        in einer Gruppe, deren Titel schon sagt, worum es geht („Kombinationen“:
+        „EN 1990…“ statt „Kombinationen automatisch…“; 02.10.2026)."""
         a = self._aktion(text, fn, kuerzel, hinweis)
         a.setIcon(sym.fuer_befehl(text, zeichen, symbol))
+        if anzeige:
+            a.setText(anzeige)
+            a.setIconText(anzeige)
         b = QtWidgets.QToolButton(self)
         b.setDefaultAction(a)
         b.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
         b.setIconSize(QtCore.QSize(SYMBOL_KLEIN, SYMBOL_KLEIN))
-        b.setText(text)
+        b.setText(anzeige or text)
         b.setObjectName("ribbonklein")
         b.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
         b.setFixedHeight((INHALT_HOEHE - 4) // 3)
@@ -630,6 +641,26 @@ class Ribbon(QtWidgets.QWidget):
         a.setShortcutContext(QtCore.Qt.ApplicationShortcut)
         self.window().addAction(a)
         return True
+
+    def kuerzel_liste(self) -> list:
+        """Die Befehle, die ein Tastenkuerzel tragen, in der Reihenfolge der
+        Register (02.10.2026) - die Liste unter Extras → Tastenkuerzel.
+
+        Sie entsteht aus den Befehlen, nicht aus einem Text von Hand: ein
+        neues Kuerzel steht beim naechsten Oeffnen der Liste darin. Ein Befehl
+        ohne Kuerzel fehlt - auch die zweite Schaltflaeche „Alles
+        deselektieren“ im Kontextregister, der :meth:`kuerzel_setzen` die
+        Tastenfolge verweigert hat (jede Tastenfolge gehoert genau einem Befehl)."""
+        reihe = {self.tabs.tabText(i): i for i in range(self.tabs.count())}
+        tragen = [b for b in self.befehle if not b.aktion.shortcut().isEmpty()]
+        # stabil: innerhalb eines Registers bleibt die Reihenfolge des Aufbaus
+        return sorted(tragen, key=lambda b: reihe.get(b.register, len(reihe)))
+
+    def suche_fokussieren(self) -> None:
+        """Strg+F: den Cursor in die Befehlssuche setzen. Was schon darin
+        steht, ist markiert - der naechste Buchstabe ersetzt es."""
+        self.suche.setFocus(QtCore.Qt.ShortcutFocusReason)
+        self.suche.selectAll()
 
     def merken(self, b: Befehl):
         self.befehle.append(b)

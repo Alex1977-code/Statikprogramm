@@ -5204,7 +5204,11 @@ def main():
               cp_p is not None and abs(cp_p.spiel - 5e-5) < 1e-12
               and abs(cp_p.grenzpressung - 300e6) < 1 and len(cp_p.rand_knoten) >= 4,
               str((getattr(cp_p, "spiel", None), getattr(cp_p, "grenzpressung", None))))
-        check("Ribbon: der Befehl „Passung“ steht neben „Übermaß“", any(a.text() == "Passung" for a in w.findChildren(QtGui.QAction)))
+        # seit 02.10.2026 in einer Gruppe: Lager / Kontakt › Fugen / Passungen (Paket 12a)
+        check("Ribbon: der Befehl „Passung“ steht neben „Übermaß“ in Lager / Kontakt › Fugen / Passungen",
+              any(a.text() == "Passung" for a in w.findChildren(QtGui.QAction))
+              and {(b.register, b.gruppe) for b in w.ribbon.befehle if b.text in ("Passung", "Übermaß")}
+              == {("Lager / Kontakt", "Fugen / Passungen")})
         # ---- Reibbeiwert für viele Fugen und die drei Passungsarten (17.09.2026) ----
         from statik3d import passungen as pss_
         kb_p = w.model.kontaktbedingungen["Fuge P"]
@@ -5300,8 +5304,10 @@ def main():
               f"r {z_.get('radius')}, {len(m_.koerper['V1'].elemente)} Elemente")
         check("das Protokoll nennt Trennung und Spiel",
               "von den Nachbarn getrennt" in w.log.toPlainText() and "Spiel 0.100 mm am Durchmesser" in w.log.toPlainText())
-        check("Ribbon: der Befehl „Spiel geben“ steht neben „Passung“",
-              any(a.text() == "Spiel geben" for a in w.findChildren(QtGui.QAction)))
+        check("Ribbon: der Befehl „Spiel geben“ steht neben „Passung“ (Lager / Kontakt › Fugen / Passungen)",
+              any(a.text() == "Spiel geben" for a in w.findChildren(QtGui.QAction))
+              and {(b.register, b.gruppe) for b in w.ribbon.befehle if b.text in ("Passung", "Spiel geben")}
+              == {("Lager / Kontakt", "Fugen / Passungen")})
         w.maskenrand.schliessen()
     except Exception as ex:      # noqa: BLE001
         import traceback
@@ -5401,8 +5407,11 @@ def main():
         check("kein Kegel: alle Bohrungskreise gleich, in beiden Blechen", len(radien_b) == 1, str(len(radien_b)))
         check("das Protokoll nennt die Volumen, die neu zu vernetzen sind",
               "Noch zu vernetzen" in w.log.toPlainText() and "Blech1" in w.log.toPlainText())
-        check("Ribbon: der Befehl „Spalt / Toleranz“ steht in der Geometrie",
-              any(a.text() == "Spalt / Toleranz" for a in w.findChildren(QtGui.QAction)))
+        # bis 02.10.2026 stand er im Register Geometrie (Paket 12a)
+        check("Ribbon: der Befehl „Spalt / Toleranz“ steht in Lager / Kontakt › Fugen / Passungen",
+              any(a.text() == "Spalt / Toleranz" for a in w.findChildren(QtGui.QAction))
+              and {(b.register, b.gruppe) for b in w.ribbon.befehle if b.text == "Spalt / Toleranz"}
+              == {("Lager / Kontakt", "Fugen / Passungen")})
         # Vernetzen fragt nur, wenn wirklich etwas ein Netz hat: am frisch
         # eingelesenen Modell ist nichts vernetzt, die Randflächen der Volumen
         # bekommen nie ein eigenes Netz und zählten fälschlich als „hat Netz“

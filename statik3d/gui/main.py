@@ -3875,11 +3875,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Von den gewählten Knoten das Lot fällen: auf die Arbeitsebene, die Ebene einer Fläche, "
                 "den nächsten Punkt einer Fläche oder Linie - als neuer Knoten (mit Lotlinie) oder "
                 "die Knoten dorthin verschieben (projizieren)")
-        g.gross("Spalt / Toleranz", "◎", self.maske_spalt, "",
-                "Welle und Bohrung auf ein Spiel bringen: das Programm misst das Nullmaß beider, "
-                "und der Spalt lässt sich am Zylinder abziehen, an der Bohrung zugeben oder auf "
-                "beide verteilen. Die Bohrung wird über ihre ganze Länge angepasst, in jedem "
-                "Bauteil, durch das sie geht - sonst bliebe ein Kegel stehen")
         g = r.gruppe("Auswahl in der Ansicht")
         # Seit 25.09.2026 (Paket 7) in der Spalte der kleinen Knoepfe, die
         # Auswahlfelder so hoch wie diese: „Geometrie“ brauchte 1748 px und
@@ -4023,9 +4018,6 @@ class MainWindow(QtWidgets.QMainWindow):
         g = r.gruppe("Kontakt")
         g.gross("Kontakt", "⇹", lambda: self.maske_zeigen("Kontakt"),
                 hinweis="Einseitiges Lager, Spaltelement, Kontaktpaar")
-        g.klein("Kontaktbedingung…", lambda: self._baum_neu("kontaktbedingungen"),
-                hinweis="Kontakt zwischen zwei Körpern: Kontaktflächen, Standardkontakt (Verbund, "
-                        "ohne Trennung, reibungsfrei, reibungsbehaftet, rau), Reibung, Suchradius")
         g.klein("Alle Kontakte löschen…", self.clear_contact,
                 hinweis="Alle einseitigen Lager, Spaltelemente und Kontaktpaare entfernen (mit Rückfrage; "
                         "die Kontaktbedingungen bleiben)")
@@ -4034,6 +4026,34 @@ class MainWindow(QtWidgets.QMainWindow):
             "Jede Kontaktbedingung in eigener Farbe über die Geometrie legen, mit einem "
             "Schild an der Fuge: Name und Wirkung (Zug, Schub, Reibung). So ist zu sehen, "
             "wo welcher Kontakt wie wirkt")
+        # Alles, was die Fuge zwischen zwei Körpern beschreibt, an einer Stelle
+        # (02.10.2026, Paket 12a). Bis dahin standen Übermaß, Spiel geben und
+        # Passung im Register Lasten, Spalt / Toleranz in der Geometrie und
+        # „Kontaktfugen ausführen“ im Register Netz.
+        g = r.gruppe("Fugen / Passungen")
+        g.gross("Spalt / Toleranz", "◎", self.maske_spalt, "",
+                "Welle und Bohrung auf ein Spiel bringen: das Programm misst das Nullmaß beider, "
+                "und der Spalt lässt sich am Zylinder abziehen, an der Bohrung zugeben oder auf "
+                "beide verteilen. Die Bohrung wird über ihre ganze Länge angepasst, in jedem "
+                "Bauteil, durch das sie geht - sonst bliebe ein Kegel stehen")
+        g.klein("Kontaktbedingung…", lambda: self._baum_neu("kontaktbedingungen"),
+                hinweis="Kontakt zwischen zwei Körpern: Kontaktflächen, Standardkontakt (Verbund, "
+                        "ohne Trennung, reibungsfrei, reibungsbehaftet, rau), Reibung, Suchradius")
+        g.klein("Kontaktfugen ausführen", self.kontaktfugen_ausfuehren,
+                hinweis="Die Netze an den Kontaktbedingungen trennen")
+        g.klein("Passung", self.maske_passung,
+                hinweis="Spiel, Lochleibungsgrenze und Randabminderung für alle Kontaktfugen der "
+                        "gewählten Volumen auf einmal (Passstifte, Bolzen): Einstellungen, die "
+                        "RFEM nicht kennt und die hier nach dem Import gesetzt werden", symbol="lasten")
+        g.klein("Übermaß", self.maske_uebermass,
+                hinweis="Presspassung als Last: Übermaß einer Kontaktfuge (Passstift, "
+                        "Unterlegblech). Daraus entstehen Pressspannung und - über den "
+                        "Reibbeiwert der Fuge - Schubtragfähigkeit", symbol="lasten")
+        g.klein("Spiel geben", self.maske_spiel,
+                hinweis="Gewählte zylindrische Volumen (Passstifte, Bolzen) geometrisch um das "
+                        "Durchmesserspiel verkleinern oder gewählte ebene Flächen um einen Spalt nach "
+                        "innen versetzen - erst von den Nachbarn getrennt, dann neu vernetzt: das Spiel "
+                        "steht im Modell, ohne Sonderbedingung an der Fuge", symbol="lasten")
         g = r.gruppe("Anschlüsse")
         g.gross("Anschluss", "⊞", self.add_joint,
                 hinweis="Kopfplatte, Laschenstoß oder Diagonalanschluss am gewählten "
@@ -4051,14 +4071,25 @@ class MainWindow(QtWidgets.QMainWindow):
         g = r.gruppe("Lastfälle")
         g.gross("Lastfälle", "≔", lambda: self.maske_zeigen("Lastfälle"),
                 hinweis="Lastfälle anlegen und verwalten")
-        g.klein("Kombinationen automatisch…", self.auto_combinations,
-                hinweis="Kombinationen nach EN 1990 (6.10 oder 6.10a/b) aus den Lastfällen bilden - GZT, GZG, außergewöhnlich")
         g.klein("Lastfälle nach DIN 19704…", self.maske_din19704_lastfaelle,
                 hinweis="Stahlwasserbau: die üblichen Lastfälle (Eigengewicht, Wasserdruck, Wind, "
                         "Temperatur, Eis, Betriebslast, Antrieb …) mit Einwirkungsart und Nummer anlegen")
         g.klein("Ermüdungslasten…", self.maske_ermuedungslasten,
                 hinweis="Lastkollektiv für den Ermüdungsnachweis (Palmgren-Miner): je Zeile zwei "
                         "Zustände oder ein Verlauf mit Lastspielzahl - rechts als Maske")
+        # Beide Wege zur Kombination in einer Gruppe (02.10.2026, Paket 12a):
+        # „Kombinationen automatisch…“ stand bis dahin bei den Lastfällen, „DIN 19704:
+        # Kombinationen“ im Register Berechnung bei den Stellungen
+        # Auf den Knöpfen steht kurz „EN 1990…“ und „DIN 19704“ (der Gruppentitel sagt
+        # „Kombinationen“); mit den vollen Namen wuchs das Register Lasten auf 1293 px und
+        # passte bei 1280 px nicht mehr. Die Befehlssuche kennt weiter die vollen Namen.
+        g = r.gruppe("Kombinationen")
+        g.klein("Kombinationen automatisch…", self.auto_combinations,
+                hinweis="Kombinationen nach EN 1990 (6.10 oder 6.10a/b) aus den Lastfällen bilden - GZT, GZG, außergewöhnlich",
+                anzeige="EN 1990…")
+        g.klein("DIN 19704: Kombinationen", self.din19704_bilden,
+                hinweis="Lastkombinationen nach DIN 19704 aus den Lastfallklassen bilden",
+                anzeige="DIN 19704")
         g = r.gruppe("Lasten")
         g.gross("Knotenlast", "", self.maske_knotenlast, "",
                 "Knoten wählen, Kräfte und Momente eintragen", symbol="knotenlast")
@@ -4072,8 +4103,10 @@ class MainWindow(QtWidgets.QMainWindow):
         g.gross("Temperatur", "", self.maske_temperaturlast, "",
                 "Temperaturänderung auf gewählte Stäbe, Flächen oder Volumen",
                 symbol="temperatur")
-        # Die selteneren Lasten in zwei Spalten kleiner Knoepfe (25.09.2026,
-        # Paket 7): neun grosse Knoepfe brauchten 750 px, das Register 1376 px
+        # Die selteneren Lasten in einer Spalte kleiner Knoepfe (25.09.2026,
+        # Paket 7): neun grosse Knoepfe brauchten 750 px, das Register 1376 px.
+        # Uebermaß, Spiel geben und Passung stehen seit 02.10.2026 unter
+        # Lager / Kontakt › Fugen / Passungen.
         g.klein("Zwangsverformung", self.maske_zwangsverformung,
                 hinweis="Vorgegebene Verschiebung oder Verdrehung an gewählten gelagerten "
                         "Knoten (Setzung)", symbol="zwang")
@@ -4081,19 +4114,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Vorspannkraft in gewählten Stäben (Zugstange, Seil, Anker) oder Volumen "
                         "(Schraube) - als Anfangsdehnung: das Bauteil trägt F_v als Zug und klemmt "
                         "die Umgebung", symbol="lasten")
-        g.klein("Übermaß", self.maske_uebermass,
-                hinweis="Presspassung als Last: Übermaß einer Kontaktfuge (Passstift, "
-                        "Unterlegblech). Daraus entstehen Pressspannung und - über den "
-                        "Reibbeiwert der Fuge - Schubtragfähigkeit", symbol="lasten")
-        g.klein("Spiel geben", self.maske_spiel,
-                hinweis="Gewählte zylindrische Volumen (Passstifte, Bolzen) geometrisch um das "
-                        "Durchmesserspiel verkleinern oder gewählte ebene Flächen um einen Spalt nach "
-                        "innen versetzen - erst von den Nachbarn getrennt, dann neu vernetzt: das Spiel "
-                        "steht im Modell, ohne Sonderbedingung an der Fuge", symbol="lasten")
-        g.klein("Passung", self.maske_passung,
-                hinweis="Spiel, Lochleibungsgrenze und Randabminderung für alle Kontaktfugen der "
-                        "gewählten Volumen auf einmal (Passstifte, Bolzen): Einstellungen, die "
-                        "RFEM nicht kennt und die hier nach dem Import gesetzt werden", symbol="lasten")
         g = r.gruppe("Generierer")
         g.gross("Wasserdruck", "", lambda: self.maske_wasserdruck(), "",
                 "Wasserdruck auf einen Verschluss je Situation: Ober- und Unterwasser, "
@@ -4145,9 +4165,6 @@ class MainWindow(QtWidgets.QMainWindow):
                                          "Ansicht sind die Knoten der Konstruktion", symbol="knoten")
         g.klein("Netz löschen", self.netz_loeschen_geometrie, symbol="netz_loeschen",
                 hinweis="Das Netz der Flächen und Volumen entfernen - die Geometrie bleibt")
-        g = r.gruppe("Weiteres")
-        g.klein("Kontaktfugen ausführen", self.kontaktfugen_ausfuehren,
-                hinweis="Die Netze an den Kontaktbedingungen trennen")
 
         # -- Berechnung --------------------------------------------------
         r = rb.register("Berechnung")
@@ -4165,13 +4182,88 @@ class MainWindow(QtWidgets.QMainWindow):
         g.klein("Stellung anlegen…", self.neue_stellung,
                 hinweis="Rechts die Maske: Bezeichnung, Ausgangsstellung, Verschiebung, Verdrehung, "
                         "deaktivierte Stäbe, Flächen, Volumen, Gelenke und Lager")
-        g.klein("DIN 19704: Kombinationen", self.din19704_bilden,
-                hinweis="Lastkombinationen nach DIN 19704 aus den Lastfallklassen bilden")
         g = r.gruppe("Einstellungen")
         g.gross("Einstellungen", "⚙", lambda: self.maske_zeigen("Berechnung"),
                 hinweis="Analyseart, Prozesse, Rechnerfarm")
         g.klein("Bedienung im Browser…", self.start_web_server,
                 hinweis="Web-Server starten - das Modell im Browser oder auf dem Handy bedienen")
+
+        # -- Ergebnisse --------------------------------------------------
+        # Vor den Nachweisen (02.10.2026, Paket 12a): nach dem Rechnen kommt das
+        # Ergebnis, danach der Nachweis. Die Reihenfolge der Register ist die
+        # Reihenfolge ihres Aufbaus hier.
+        r = rb.register("Ergebnisse")
+        g = r.gruppe("Auswahl")
+        g.gross("Ergebnisse", "∿", lambda: self.maske_zeigen("Ergebnisse"),
+                hinweis="Ergebnis, Färbung, Verlauf und Überhöhung wählen")
+        # die Glasleiste zieht mit: ausgeblendet steht sie auf dem aktiven
+        # Lastfall, dessen Lasten das Bild dann zeigt (24.09.2026)
+        self.act_ergebnisse = g.schalter(
+            "Ergebnisse zeigen", lambda _z: (self.redraw(), self._lastwahl_nachziehen()), True,
+            "Ergebnisse zeigen / ausblenden – die Ergebnisdarstellung aus dem Bild "
+            "nehmen: Färbung, verformtes System, "
+            "Werte, Kontaktmarken, Skala und Kopfzeile. Das Modell bleibt sichtbar, die "
+            "Ergebnisse bleiben gerechnet - der Schalter holt sie zurück")
+        self.act_kennwerte = g.schalter(
+            "Kennwerte im Bild", lambda _z: self.redraw(), True,
+            "Größte Ausnutzung, kleinste und größte Verformung und "
+            "Schnittgrößen als Text in der Ansicht – sie kommen so auch in "
+            "den Bericht")
+        # Vorgabe aus (24.09.2026): im Bild einer Kombination oder
+        # Umhuellenden standen die Lasten des aktiven Lastfalls, als
+        # gehoerten sie dazu. Ein Lastfall zeigt seine Lasten weiter.
+        self.act_lasten_ergebnis = g.schalter(
+            "Lasten im Ergebnisbild", lambda _z: self.redraw(), False,
+            "Bei einer Kombination oder Umhüllenden die Lasten des aktiven Lastfalls "
+            "ins Ergebnisbild – oben links steht, welcher Lastfall es ist. Das "
+            "Ergebnis eines Lastfalls zeigt immer seine eigenen Lasten (Schalter "
+            "„Lasten“ im Register Ansicht)", symbol="lasten")
+        g = r.gruppe("Tabellen", sichtbar=False)
+        # Die Tabellen haben unten ihre Reiter: im Ribbon waren das sechs
+        # Doppelungen - die Suche findet sie weiter (25.09.2026, Paket 7)
+        for name in ("Stabkräfte", "Auflagerkräfte", "Umhüllende",
+                     "Nachweise EC3", "Ermüdung", "Kontakt"):
+            g.nur_suche(f"Tabelle {name}", lambda n=name: self.tabelle_zeigen(n), symbol="tabelle",
+                        hinweis=f"Tabelle {name} unten zeigen")
+        g = r.gruppe("Werte im Bild")
+        self.act_werte_staebe = g.schalter(
+            "Werte Stäbe", lambda _z: self.redraw(), False,
+            "Zahlenwerte an den Stäben: die gewählte Schnittgröße an den Nachweisstellen "
+            "(Filter in der Maske Ergebnisse), ohne Verlauf der Färbungswert", symbol="staebe")
+        self.act_werte_flaechen = g.schalter(
+            "Werte Flächen", lambda _z: self.redraw(), False,
+            "Zahlenwerte an den Flächenelementen: der Färbungswert je Element", symbol="flaechen")
+        self.act_werte_volumen = g.schalter(
+            "Werte Volumen", lambda _z: self.redraw(), False,
+            "Je Volumenkörper der betragsgrößte Färbungswert an seinem Ort", symbol="volumen")
+        self.act_sonde = g.schalter(
+            "Sonde", self._sonde_umschalten, False,
+            "Klick auf das Modell setzt eine Marke mit dem Wert an dieser Stelle "
+            "(Färbungswert am nächsten Knoten); beliebig viele, „Sonden löschen“ räumt auf")
+        g.klein("Sonden löschen", self.sonden_loeschen,
+                hinweis="Alle Sonden aus der Ansicht nehmen")
+        self.act_kontaktmarken = g.schalter(
+            "Kontaktmarken", lambda _z: self.redraw(), False,
+            "Kugeln an den Kontaktknoten nach Zustand: grün haftet, orange gleitet, grau offen, "
+            "blau Kontakt ohne Reibung. Bis 12.09.2026 immer im Bild - am Drehlager 21 586 "
+            "Kugeln über jedem Ergebnis; jetzt nur mit diesem Schalter oder als Färbung "
+            "„Kontakt Zustand“")
+        g = r.gruppe("Werteskala")
+        self.act_werteskala = g.gross(
+            "Werteskala", "▤", lambda: self.maske_zeigen("Ergebnisse"),
+            hinweis="Grenzen der Farbskala (Maske Ergebnisse): automatisch, fest oder "
+                    "Grenzwert wie 355 für S355 - darüber magenta, der Größtwert an der Skala; "
+                    "wahlweise nur die Überschreitungen färben")
+        g = r.gruppe("Tabelle ausgeben")
+        g.gross("Excel", "▦", lambda: self.tabelle_ausgeben("xlsx"),
+                hinweis="Die Tabelle, die unten vorn liegt, als xlsx speichern "
+                        "(nur die gefilterten Zeilen)")
+        g.klein("CSV…", lambda: self.tabelle_ausgeben("csv"),
+                hinweis="Als CSV speichern (Semikolon, deutsches Dezimalkomma)")
+        g.klein("In die Zwischenablage", lambda: self.tabelle_ausgeben("clip"),
+                "Ctrl+Shift+C", "Die sichtbaren Zeilen kopieren")
+        g.klein("Filter leeren", self.tabelle_filter_leeren,
+                hinweis="Alle Kopfzeilenfilter der vorderen Tabelle löschen")
 
         # -- Nachweise ---------------------------------------------------
         r = rb.register("Nachweise")
@@ -4266,79 +4358,6 @@ class MainWindow(QtWidgets.QMainWindow):
              "Die in der Tabelle gewählte Lasteinleitung entfernen"),
             ("Tabelle Lasteinleitung", lambda: self.tabelle_zeigen("Lasteinleitung"), "Tabelle",
              "Die Nachweise der Lasteinleitung unten in der Tabelle")])
-
-        r = rb.register("Ergebnisse")
-        g = r.gruppe("Auswahl")
-        g.gross("Ergebnisse", "∿", lambda: self.maske_zeigen("Ergebnisse"),
-                hinweis="Ergebnis, Färbung, Verlauf und Überhöhung wählen")
-        # die Glasleiste zieht mit: ausgeblendet steht sie auf dem aktiven
-        # Lastfall, dessen Lasten das Bild dann zeigt (24.09.2026)
-        self.act_ergebnisse = g.schalter(
-            "Ergebnisse zeigen", lambda _z: (self.redraw(), self._lastwahl_nachziehen()), True,
-            "Ergebnisse zeigen / ausblenden – die Ergebnisdarstellung aus dem Bild "
-            "nehmen: Färbung, verformtes System, "
-            "Werte, Kontaktmarken, Skala und Kopfzeile. Das Modell bleibt sichtbar, die "
-            "Ergebnisse bleiben gerechnet - der Schalter holt sie zurück")
-        self.act_kennwerte = g.schalter(
-            "Kennwerte im Bild", lambda _z: self.redraw(), True,
-            "Größte Ausnutzung, kleinste und größte Verformung und "
-            "Schnittgrößen als Text in der Ansicht – sie kommen so auch in "
-            "den Bericht")
-        # Vorgabe aus (24.09.2026): im Bild einer Kombination oder
-        # Umhuellenden standen die Lasten des aktiven Lastfalls, als
-        # gehoerten sie dazu. Ein Lastfall zeigt seine Lasten weiter.
-        self.act_lasten_ergebnis = g.schalter(
-            "Lasten im Ergebnisbild", lambda _z: self.redraw(), False,
-            "Bei einer Kombination oder Umhüllenden die Lasten des aktiven Lastfalls "
-            "ins Ergebnisbild – oben links steht, welcher Lastfall es ist. Das "
-            "Ergebnis eines Lastfalls zeigt immer seine eigenen Lasten (Schalter "
-            "„Lasten“ im Register Ansicht)", symbol="lasten")
-        g = r.gruppe("Tabellen", sichtbar=False)
-        # Die Tabellen haben unten ihre Reiter: im Ribbon waren das sechs
-        # Doppelungen - die Suche findet sie weiter (25.09.2026, Paket 7)
-        for name in ("Stabkräfte", "Auflagerkräfte", "Umhüllende",
-                     "Nachweise EC3", "Ermüdung", "Kontakt"):
-            g.nur_suche(f"Tabelle {name}", lambda n=name: self.tabelle_zeigen(n), symbol="tabelle",
-                        hinweis=f"Tabelle {name} unten zeigen")
-        g = r.gruppe("Werte im Bild")
-        self.act_werte_staebe = g.schalter(
-            "Werte Stäbe", lambda _z: self.redraw(), False,
-            "Zahlenwerte an den Stäben: die gewählte Schnittgröße an den Nachweisstellen "
-            "(Filter in der Maske Ergebnisse), ohne Verlauf der Färbungswert", symbol="staebe")
-        self.act_werte_flaechen = g.schalter(
-            "Werte Flächen", lambda _z: self.redraw(), False,
-            "Zahlenwerte an den Flächenelementen: der Färbungswert je Element", symbol="flaechen")
-        self.act_werte_volumen = g.schalter(
-            "Werte Volumen", lambda _z: self.redraw(), False,
-            "Je Volumenkörper der betragsgrößte Färbungswert an seinem Ort", symbol="volumen")
-        self.act_sonde = g.schalter(
-            "Sonde", self._sonde_umschalten, False,
-            "Klick auf das Modell setzt eine Marke mit dem Wert an dieser Stelle "
-            "(Färbungswert am nächsten Knoten); beliebig viele, „Sonden löschen“ räumt auf")
-        g.klein("Sonden löschen", self.sonden_loeschen,
-                hinweis="Alle Sonden aus der Ansicht nehmen")
-        self.act_kontaktmarken = g.schalter(
-            "Kontaktmarken", lambda _z: self.redraw(), False,
-            "Kugeln an den Kontaktknoten nach Zustand: grün haftet, orange gleitet, grau offen, "
-            "blau Kontakt ohne Reibung. Bis 12.09.2026 immer im Bild - am Drehlager 21 586 "
-            "Kugeln über jedem Ergebnis; jetzt nur mit diesem Schalter oder als Färbung "
-            "„Kontakt Zustand“")
-        g = r.gruppe("Werteskala")
-        self.act_werteskala = g.gross(
-            "Werteskala", "▤", lambda: self.maske_zeigen("Ergebnisse"),
-            hinweis="Grenzen der Farbskala (Maske Ergebnisse): automatisch, fest oder "
-                    "Grenzwert wie 355 für S355 - darüber magenta, der Größtwert an der Skala; "
-                    "wahlweise nur die Überschreitungen färben")
-        g = r.gruppe("Tabelle ausgeben")
-        g.gross("Excel", "▦", lambda: self.tabelle_ausgeben("xlsx"),
-                hinweis="Die Tabelle, die unten vorn liegt, als xlsx speichern "
-                        "(nur die gefilterten Zeilen)")
-        g.klein("CSV…", lambda: self.tabelle_ausgeben("csv"),
-                hinweis="Als CSV speichern (Semikolon, deutsches Dezimalkomma)")
-        g.klein("In die Zwischenablage", lambda: self.tabelle_ausgeben("clip"),
-                "Ctrl+Shift+C", "Die sichtbaren Zeilen kopieren")
-        g.klein("Filter leeren", self.tabelle_filter_leeren,
-                hinweis="Alle Kopfzeilenfilter der vorderen Tabelle löschen")
 
         # -- Bericht -----------------------------------------------------
         r = rb.register("Bericht")
@@ -4615,14 +4634,24 @@ class MainWindow(QtWidgets.QMainWindow):
 
         r = rb.register("Extras")
         g = r.gruppe("Handbücher")
-        g.gross("Handbuch", "❓", lambda: self.open_doc("Benutzerhandbuch.md"),
-                hinweis="Das Benutzerhandbuch öffnen")
+        # F1 wie in jedem Programm (02.10.2026, Paket 12a)
+        g.gross("Handbuch", "❓", lambda: self.open_doc("Benutzerhandbuch.md"), "F1",
+                "Das Benutzerhandbuch öffnen")
         g.klein("Theoriehandbuch", lambda: self.open_doc("Theoriehandbuch.md"),
                 hinweis="Mechanik, Elemente und Nachweise - die Theorie hinter dem Programm")
         g.klein("Schnittstellen", lambda: self.open_doc("Schnittstellen.md"),
                 hinweis="Die Import- und Exportformate im Einzelnen")
         g.klein("Rechnerfarm", lambda: self.open_doc("Rechnerfarm.md"),
                 hinweis="Verteiltes Rechnen auf mehreren Rechnern einrichten")
+        g = r.gruppe("Tastatur")
+        g.gross("Tastenkürzel", "", self.kuerzel_zeigen, symbol="tabelle",
+                hinweis="Die Liste aller Tastenkürzel: Befehl, Kürzel und Ort im Ribbon - "
+                        "aus den Befehlen erzeugt, nicht von Hand gepflegt")
+        # kein Knopf: die Befehlssuche selbst ist das Feld oben rechts. Der Befehl
+        # trägt das Kürzel, steht in der Liste und läuft aus der Suche.
+        g.nur_suche("Befehlssuche", self.ribbon.suche_fokussieren, "Ctrl+F",
+                    "Den Cursor in die Befehlssuche oben rechts setzen - dort Namen eintippen, "
+                    "die Trefferliste zeigt den Ort jedes Befehls")
         g = r.gruppe("Programm")
         g.gross("Info", "ⓘ", self.about,
                 hinweis="Fassung, Build und Gültigkeitsbereich")
@@ -23142,6 +23171,22 @@ class MainWindow(QtWidgets.QMainWindow):
             self._browser(QtCore.QUrl.fromLocalFile(p))
         else:
             self.error(f"Dokument nicht gefunden: {p}")
+
+    def kuerzel_zeigen(self):
+        """Extras -> Tastenkuerzel: die Liste aller Kuerzel in einem nicht
+        modalen Fenster. Sie entsteht bei jedem Oeffnen neu aus den Befehlen
+        des Ribbons (``Ribbon.kuerzel_liste``) - ein altes Fenster wird
+        ersetzt, damit nichts Veraltetes stehen bleibt."""
+        from .kuerzelliste import Kuerzelliste
+        alt = getattr(self, "_kuerzelliste", None)
+        if alt is not None:
+            alt.close()
+            alt.deleteLater()
+        f = Kuerzelliste(self, self.ribbon.kuerzel_liste())
+        self._kuerzelliste = f
+        f.show()
+        f.raise_()
+        return f
 
     # ---- Web-Server (Browser / Handy) ---------------------------------
     def start_web_server(self):

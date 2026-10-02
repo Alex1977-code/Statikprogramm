@@ -103,25 +103,42 @@ Feld, dass im Pfeilbereich wirklich etwas steht.
 
 Darunter das **Ribbon** — die Befehlsleiste. Jeder Befehl steht dort genau
 einmal; es gibt keine Menüleiste und keine zweite Werkzeugleiste daneben.
-Vierzehn Register nach Arbeitsschritt:
+Fünfzehn Register nach Arbeitsschritt:
 
 | Register | Inhalt |
 |---|---|
 | **Datei** | Neu, Öffnen, Speichern, Projektangaben, **Modell leeren (Eigenschaften behalten)…**, Übernehmen aus fremden Formaten, Exportieren, **Beispiel öffnen ▾** (die acht Beispiele in einem Knopf) |
 | **Start** | Auswahl, Modellprüfung, doppelte Knoten, freie Stabenden anschließen, Berechnen |
 | **Unterlagen** | **Dateien** (Datei hinzufügen: PDF, Bild, Word, Excel …; Unterlage öffnen; Entfernen), **Ansichten** (Ansicht aufnehmen, Skizze aus Ansicht), **Skizze** (Neue Skizze, Bearbeiten), **Bericht** (In den Bericht, Unterlagen zeigen) — seit 16.09.2026, siehe *Unterlagen* |
-| **Geometrie** | **Knoten / Linien** (Knoten, Linie, Knoten löschen, Linie aus Knoten), **Ändern** (Verschieben, Kopieren, Drehen, Spiegeln der Auswahl), **Konstruktion** (Lot / Projektion, Spalt / Toleranz), Auswahlart in der Ansicht, Koordinatensysteme, Arbeitsebene, **Fang** (Hauptschalter F3 und *Fangarten ▾*, auch „Lot“) |
+| **Geometrie** | **Knoten / Linien** (Knoten, Linie, Knoten löschen, Linie aus Knoten), **Ändern** (Verschieben, Kopieren, Drehen, Spiegeln der Auswahl), **Konstruktion** (Lot / Projektion), Auswahlart in der Ansicht, Koordinatensysteme, Arbeitsebene, **Fang** (Hauptschalter F3 und *Fangarten ▾*, auch „Lot“) |
 | **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, Stabzug, *Nachweisstäbe ▾*: Stäbe für Nachweise, automatisch erkennen), **Flächen** (Schale, Fläche aus Linien, Rechteckplatte, verschneiden), **Volumen** (Volumen aus Flächen, Quader), **Gelenke** (Gelenk anlegen), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
-| **Lager / Kontakt** | Knoten-, Linien-, Flächenlager, Nichtlinearität, Kontakt (mit *Alle Kontakte löschen…*), Anschlüsse (anlegen, zeigen, löschen) |
-| **Lasten** | Lastfälle, Kombinationen, Lastfälle nach DIN 19704, Knoten-, Stab-, Flächen-, Temperaturlast (groß), Zwangsverformung, Vorspannung, Übermaß, Spiel geben, Passung (klein), Eigengewicht, Generierer Wasserdruck und Wind |
-| **Netz** | Vernetzen (Flächen und Volumen), Netzeinstellungen (**Elemente Entwurf / Mittel / Fein**, Netzdichte, Elementform, intelligente Anpassung), **Elementübersicht**, Netzqualität, **Netzknoten** (Schalter), Netz löschen, Kontaktfugen |
-| **Berechnung** | Berechnen (F5), einzelner Lastfall, Eigenschwingungen, Knicken, alle Stellungen, DIN 19704, Einstellungen, Bedienung im Browser |
-| **Nachweise** | EC3, Ermüdung, Schweißnähte, Kerbfälle, Konfiguration, Knicklängen, Schwingung; je Nachweisobjekt ein Knopf mit Menü **Neu \| Ändern \| Löschen \| Tabelle**: *Verformung ▾* (GZG), *Beulfeld ▾*, *Volumenbereich ▾*, *Lasteinleitung ▾* |
+| **Lager / Kontakt** | Knoten-, Linien-, Flächenlager, Nichtlinearität, **Kontakt** (mit *Alle Kontakte löschen…*), **Fugen / Passungen** (Spalt / Toleranz, Kontaktbedingung, Kontaktfugen ausführen, Passung, Übermaß, Spiel geben), Anschlüsse (anlegen, zeigen, löschen) |
+| **Lasten** | **Lastfälle** (Lastfälle, Lastfälle nach DIN 19704, Ermüdungslasten), **Kombinationen** (*EN 1990…* und *DIN 19704* nebeneinander), Knoten-, Stab-, Flächen-, Temperaturlast (groß), Zwangsverformung, Vorspannung (klein), Eigengewicht, Generierer Wasserdruck und Wind |
+| **Netz** | Vernetzen (Flächen und Volumen), Netzeinstellungen (**Elemente Entwurf / Mittel / Fein**, Netzdichte, Elementform, intelligente Anpassung), **Elementübersicht**, Netzqualität, **Netzknoten** (Schalter), Netz löschen |
+| **Berechnung** | Berechnen (F5), einzelner Lastfall, Eigenschwingungen, Knicken, alle Stellungen, Stellung anlegen, Einstellungen, Bedienung im Browser |
 | **Ergebnisse** | Ergebniswahl, Werte im Bild, Werteskala, Tabelle ausgeben (die Tabellen selbst: Reiter unten oder Befehlssuche) |
+| **Nachweise** | EC3, Ermüdung, Schweißnähte, Kerbfälle, Konfiguration, Knicklängen, Schwingung; je Nachweisobjekt ein Knopf mit Menü **Neu \| Ändern \| Löschen \| Tabelle**: *Verformung ▾* (GZG), *Beulfeld ▾*, *Volumenbereich ▾*, *Lasteinleitung ▾* |
 | **Bericht** | Statischer Bericht, Ansicht übernehmen, **Lastenheft** (anzusetzende Einwirkungen nach DIN 19704/ZTV-ING mit Hintergrund, Ansatz und Skizzen) |
 | **Ansicht** | Isometrisch, *Richtung ▾* (XY, XZ, YZ, Rückseite), Zoom alles; *Darstellung ▾* (Voll, Transparent, Hidden-Line, Drahtmodell, **Symbolgrößen…** = Maske „Darstellung“ mit Lagergröße und Lagerdichte); *Anzeigen ▾* (FE-Netz, Knoten, Linien, Stäbe, Flächen, Volumen, Lager, Lasten, Lastwerte, Stäbe farbig …); *Nummern ▾*; *Sicht ▾* und Schnittebene; Layer; Einheiten |
 | **Messen** | Abstand, Winkel, Koordinaten, Fläche eines Polygons, Länge/Fläche der Auswahl; Bemaßung (Linearmaß, Maßkette, Höhenkote, Winkelmaß, Radius) mit Einstellungen |
-| **Extras** | Handbücher, Info, Update |
+| **Extras** | Handbücher (F1), **Tastenkürzel** (die Liste aller Kürzel), Info, Update |
+
+**Reihenfolge der Register und zusammengerückte Gruppen** (seit 02.10.2026).
+Nach dem Rechnen kommt das Ergebnis, danach der Nachweis: *Ergebnisse* steht
+darum vor *Nachweise* (bis zum 02.10.2026 war es umgekehrt). Die beiden Wege,
+Kombinationen zu bilden, stehen in der Gruppe *Lasten → Kombinationen*
+nebeneinander: *EN 1990…* (früher „Kombinationen automatisch…“ bei den
+Lastfällen) und *DIN 19704* (früher „DIN 19704: Kombinationen“ im Register
+*Berechnung* bei den Stellungen). Auf den Knöpfen steht die Kurzform, weil das
+Register *Lasten* mit den vollen Namen 1293 px gebraucht hätte und bei 1280 px
+Fensterbreite nicht mehr gepasst hätte; die Befehlssuche kennt weiter die
+vollen Namen, und der Hinweis am Knopf sagt, was er tut. Alles, was die Fuge
+zwischen zwei Körpern betrifft, steht in der Gruppe *Lager / Kontakt → Fugen /
+Passungen*: Spalt / Toleranz, Kontaktbedingung…, Kontaktfugen ausführen,
+Passung, Übermaß und Spiel geben. Bis zum 02.10.2026 standen Übermaß, Spiel
+geben und Passung im Register *Lasten*, Spalt / Toleranz in der *Geometrie* und
+Kontaktfugen ausführen im Register *Netz*. Kein Befehl hat sich geändert, nur
+sein Ort. Geprüft in `tests/test_ribbon_ordnung.py`.
 
 **Jedes Register passt auf den Bildschirm** (seit 25.09.2026). Bis dahin
 brauchte *Ansicht* mit 40 Einzelknöpfen 3363 px, *Nachweise* 2184 px,
@@ -161,8 +178,9 @@ Dreieck (vorher blau auf Blau); im Schnellzugriff bleibt es blau.
 Links in der Kopfzeile die **Schnellzugriffsleiste** (Speichern, Rückgängig,
 Wiederholen, Berechnen) — dieselben Befehle, nur schneller erreichbar;
 „Alles deselektieren“ steht in der Glasleiste über der Ansicht. Rechts die
-**Befehlssuche**: Namen eintippen, darunter erscheint die Trefferliste mit
-dem Ort jedes Befehls („Spiel geben   (Lasten › Lasten)“). Gesucht wird
+**Befehlssuche** (Strg+F setzt den Cursor hinein): Namen eintippen, darunter
+erscheint die Trefferliste mit dem Ort jedes Befehls („Spiel geben   (Lager /
+Kontakt › Fugen / Passungen)“). Gesucht wird
 am **Wortanfang** — „spiel“ findet „Spiel geben“, aber nicht die Gruppe
 „Beispiele“ — und nach gängigen anderen Wörtern: „Import“ findet
 *Übernehmen*, „Überlagerung“ die Kombinationen nach EN 1990 und DIN 19704,
@@ -517,7 +535,8 @@ zusammenpassen, hält sie ein Spaltelement je Knotenpaar oder ein Kontaktpaar
 über die Fläche. Die Fuge trägt dann Druck und geht unter Zug auf.
 
 Wer nur einzelne Körper neu vernetzt oder ein Modell von Hand aufgebaut hat,
-findet den Befehl auch einzeln: **Netz → Kontaktfugen ausführen**. Die
+findet den Befehl auch einzeln: **Lager / Kontakt → Kontaktfugen ausführen**
+(bis zum 02.10.2026 im Register *Netz*). Die
 Spalte „Trennung ausgeführt" sagt, ob und wie es geschehen ist
 („ja (68 Spaltelemente)", „ja (Kontaktpaar)"); steht dort „nein", rechnet das
 Modell an dieser Stelle durchverbunden — also **zu steif** —, und das Protokoll
@@ -549,7 +568,8 @@ Weg, die Geometrie bleibt), dieses eine wirkliche Lücke im Netz.
 
 #### Spalt / Toleranz: Welle und Bohrung auf ein Spiel bringen
 
-*Geometrie → Spalt / Toleranz* (17.09.2026, „der innere Zylinder sollte als
+*Lager / Kontakt → Spalt / Toleranz* (bis zum 02.10.2026 im Register
+*Geometrie*; 17.09.2026, „der innere Zylinder sollte als
 solcher erkannt werden und der gewünschte Spalt ausgehend vom Nullmaß
 eingestellt werden können, gleiches gilt für das Auge/die Bohrung“). Die
 Maske nennt oben den gewählten **Zylinder** und darunter das **Nullmaß**, das
@@ -3620,7 +3640,7 @@ Last heraus (bei Objektlasten samt ihren Elementlasten).
 
 ### Übermaß: die Presspassung als Last
 
-*Register Lasten → „Übermaß"*
+*Register Lager / Kontakt → Fugen / Passungen → „Übermaß"* (bis zum 02.10.2026 im Register Lasten)
 
 Ein Passstift hält sein Bauteil nicht, weil er im Loch steckt, sondern weil
 er zu dick dafür ist. Genau das trägt man hier ein: **Fläche in der Ansicht
@@ -7798,6 +7818,22 @@ Strg+N neu, Strg+O öffnen, Strg+S speichern, Strg+I importieren,
 Strg+R Bericht, F5 berechnen, Strg+Z rückgängig, Strg+Y wiederholen,
 Strg+Umschalt+C vordere Tabelle kopieren.
 
+Hilfe und Suche (seit 02.10.2026): F1 öffnet das Benutzerhandbuch, Strg+F
+setzt den Cursor in die Befehlssuche oben rechts - was schon darin steht, ist
+markiert und wird vom nächsten Buchstaben ersetzt. Strg+F1 klappt das Ribbon
+ein. Bis zum 02.10.2026 trugen weder F1 noch Strg+F einen Befehl; die
+Befehlssuche erreichte man nur mit der Maus.
+
+**Liste der Tastenkürzel.** *Extras → Tastenkürzel* öffnet ein Fenster mit allen
+Kürzeln: der Befehl, sein Kürzel mit den Namen der Tasten auf der deutschen
+Tastatur (Strg, Umschalt) und sein Ort im Ribbon. Ein Filterfeld darüber
+blendet Zeilen aus, es sucht in allen drei Spalten. Die Liste wird bei jedem
+Öffnen aus den Befehlen des Ribbons erzeugt und nicht von Hand gepflegt: ein
+neues Kürzel steht beim nächsten Öffnen darin, und ein Kürzel, das nicht gilt,
+steht nicht darin. Das Fenster ist nicht modal, das Programm bleibt
+bedienbar. Jede Tastenfolge kommt genau einmal vor; geprüft in
+`tests/test_ribbon_ordnung.py`.
+
 Ansicht: Strg+1 voll, Strg+2 transparent, Strg+3 Hidden-Line,
 Strg+4 Drahtmodell, F9 FE-Netz ein/aus.
 Maus im Bild: Rad zoomt zum Zeiger, linke Taste wählt, gedrückte mittlere
@@ -8135,7 +8171,8 @@ Namen, die Einwirkungsart, die Beschreibung der Einwirkung und eine
 fortlaufende Lastfallnummer ab der eingetragenen ersten Nummer; das
 Eigengewicht trägt g. Die Lasten selbst kommen danach aus den Masken und
 Generierern (Wasserdruck, Wind) in diese Lastfälle; „Kombinationen nach
-DIN 19704 bilden" kombiniert sie je Lastfallklasse.
+DIN 19704 bilden" (Register *Lasten → Kombinationen → DIN 19704*, bis zum 02.10.2026
+im Register *Berechnung*) kombiniert sie je Lastfallklasse.
 
 **Lastenheft** (Register *Bericht*) schreibt ein eigenes Dokument (HTML,
 mit Strg+P als PDF; auch Markdown), das **alle anzusetzenden Einwirkungen

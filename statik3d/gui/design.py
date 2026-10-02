@@ -1575,7 +1575,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                                      ("\nWird beim Vernetzen getrennt (Netz → Vernetzen)."
                                       if x.wartet_auf_netz(model) else
                                       "\n⚠ Trennung nicht ausgeführt – das Modell rechnet hier "
-                                      "durchverbunden, also zu steif. Netz → „Kontaktfugen ausführen“.")),
+                                      "durchverbunden, also zu steif. Lager / Kontakt → „Kontaktfugen ausführen“.")),
                                   wirkungsfarbe(x))
                                  for name, x in flaechenkontakte.items()],
                             "kontaktbedingung", "kontaktbedingungen")
