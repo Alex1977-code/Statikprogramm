@@ -655,6 +655,22 @@ war falsch, weil das Gitter an der Hülle der beschnittenen Geometrie beginnt un
 die Abnahme C1 hält nicht bei jeder Gitterlage. Die Streuung kommt allein von σ(0,4 t) (3,6 %, σ(1,0 t) 0,4 %), verstärkt durch den Beiwert 5/3; p-Erhöhung mindert sie nicht (p 3: 4,2 %).
 Größe t/8: Noch nicht bekannt: der Aufbau des Gitters für das Nahtziel 1,25 mm (nur Gitter und Modennummerierung, ohne Lösen) war nach über zehn Minuten Rechenzeit nicht fertig, während die Gitter für 2,5 mm in 0,1 s stehen (5 146 Zellen, 150 411 / 477 702 / 1 096 107 Freiheitsgrade bei p 2 / 3 / 4, die Werte der Läufe aus C1 bis auf die Stelle).. Entscheidung des Anwenders offen (siehe O3).
 
+*Entscheidung O3 (Anwender 02.10.2026):* Empfehlung angenommen. Bis Nahtziel t/8 gemessen ist (Gitteraufbau dauert über zehn Minuten, Ursache offen), wird die Streuung
+als Band berichtet und die Abnahme gegen Tet10 mit ihr genannt: σ_hs(y 40) bei t/4 und p 4 im Mittel 143,6 N/mm² mit der Spanne 138,9 bis 147,2 N/mm² über die Gitterlage
+(5,7 %), je Lage gegen Tet10 −2,93 % bis +3,10 %. Das Band steht in Theorie 11.20, `docs/Volumenmodul.md` und im Abnahmetest (Information, keine Schranke). Das Messen von t/8
+und die Frage 0,5 t / 1,5 t bleiben offen und werden gezogen, wenn die Maschine nach dem Abendlauf der Hauptsitzung frei ist.
+
+*Regeln O4, vor der Umsetzung festgelegt (02.10.2026).* Kriterium der Konvergenzaussage (`postprocess/konvergenz.py`): die letzte relative Änderung r = |σ_n − σ_(n−1)| / |σ_(n−1)|
+(wie `hotspot_change` der Kurve) gegen die Schranke 3 % (Vorgabe 13, Konvergenzkurve). Art: `konvergiert` bei r < 3 %, `nicht_konvergiert` sonst; unverändert bleiben `kein_hotspot`
+(ein Zyklus ohne Wert), `zu_wenige_zyklen` (unter drei Werte) und `ohne_aenderung` (kein Zyklus hat etwas geändert). Zusätzlich genannt, nicht als Bedingung: `monoton` (alle Änderungen
+mit demselben Vorzeichen und im Betrag abnehmend), `letzte_aenderung`, `schranke`, und – nur bei monotoner Folge – der Grenzwert nach Aitken mit der Restabweichung. Der Text nennt
+immer beides, die letzte Änderung und die Monotonie, mit den Änderungen der Folge. Warnung im Ergebnis bei `nicht_konvergiert` und `ohne_aenderung`; bei `konvergiert` ohne Monotonie nur der
+Hinweis im Text (frühe h-Schritte schwingen, 11.14). Erwartungswerte der Tests von Hand aus den Folgen: geometrische Folgen 110/105/102,5/101,25 (r 1,2 %, monoton, Grenzwert 100),
+[100, 103, 101, 102] (r 0,99 %, nicht monoton), [100, 101, 103, 107] (r 3,88 %: nicht konvergiert), [100, 120, 90, 90] (r 0: konvergiert, nicht monoton – die Null-Aussage aus C2 G3-2 bleibt
+mit dem Vermerk „nicht monoton“), [100, 100, 100] (ohne Änderung), und die gemessenen Folgen Knotenblech [181,06; 175,42; 157,14; 142,60; 143,23] (r 0,44 %, nicht monoton) und
+T-Stoß p-Phase [119,8; 127,6; 111,0; 107,4; 107,9] (r 0,47 %, nicht monoton). Bekannte Schwäche des Kriteriums, im Text genannt: eine Folge mit großem Überschwinger vor einer kleinen letzten
+Änderung gilt als konvergiert; die Monotonie und die Änderungen stehen daneben.
+
 *O4 – Konvergenzaussage.* Der Vorschlag aus B4 war, die Aussage nur über die p-Phase zu treffen. Die Messungen zeigen, dass auch die p-Phase nicht monoton
 ist (Knotenblech 157,1 → 142,6 → 143,2; T-Stoß 111,0 → 107,4 → 107,9): die Aitken-Aussage bliebe „nicht monoton“. Zu entscheiden ist das Kriterium:
 (a) wie bisher nur bei monotoner Folge eine Aussage, (b) Aussage über die letzte relative Änderung mit der Schranke der Vorgabe (unter 3 % gilt als
@@ -726,8 +742,8 @@ nachgetragen.
 | C2 Zweite Sicht | Opus 5.5 (Prüfung und Kuren), Gutachter je Gruppe ein anderes Modell | hoch | unabhängig von der Umsetzung, tiefste Prüfung | erledigt: 24 Befunde bestätigt, 4 hohe und 6 mittlere behoben, 12 niedrige behoben, 1 teilweise; Liste in Theorie 11.19 |
 | O1 Referenz Knotenblech nach main | Sonnet 5.5 | niedrig | Test auf `erwartung_tet10.json` umstellen | erledigt: PR 13 auf main (f56281a), main in den Zweig gemergt (c37cd91), Test liest die Datei |
 | O2 Tet10-Referenz 0,5 mm | Sonnet 5.5 (Hauptsitzung) | mittel | Lauf und Auswertung nach festem Schema | angenommen: rechnen, Direktlöser, Maschine exklusiv (Hauptsitzung legt den Zeitpunkt fest) |
-| O3 Hot-Spot-Streuung mit der Gitterlage | Sonnet 5.5 (Messung), Opus 5.5 (Umsetzung) | mittel / hoch | erst messen, dann t/8 oder 0,5 t / 1,5 t | Messung erledigt: S(a) 5,73 %, S(c) 3,27 % bei p 4; Entscheidung offen: t/8, 0,5 t / 1,5 t, Streuband oder Schranke anheben |
-| O4 Konvergenzaussage | Sonnet 5.5 | mittel | Kriterium in `konvergenz.py`, Tests, Handbuch | angenommen: letzte Änderung unter 3 %, Monotonie zusätzlich genannt; Umsetzung offen |
+| O3 Hot-Spot-Streuung mit der Gitterlage | Sonnet 5.5 (Messung), Opus 5.5 (Umsetzung) | mittel / hoch | erst messen, dann t/8 oder 0,5 t / 1,5 t | Messung erledigt (S(a) 5,73 %, S(c) 3,27 % bei p 4); angenommen: Streuband berichten (Theorie 11.20); t/8 und 0,5 t / 1,5 t gemessen, wenn die Maschine frei ist |
+| O4 Konvergenzaussage | Sonnet 5.5 | mittel | Kriterium in `konvergenz.py`, Tests, Handbuch | angenommen; Regeln festgelegt, Umsetzung läuft |
 | C3 Handbücher | Sonnet 5.5 | mittel | Texte aus vorhandenen Messwerten, viele Zahlen | offen; nach O1 bis O4 |
 | C4 Gesamtlauf, Pull Request | Sonnet 5.5 | mittel | Routine mit Prüfliste | offen; Merge nur auf Freigabe |
 | O5 Konsistenzfehler der Schnittzellen | Fable 5.1 | sehr hoch | Ursachensuche in Aggregation und Quadratur | Entscheidung offen: wann (Empfehlung: vor TP 6, nach PR 3) |
