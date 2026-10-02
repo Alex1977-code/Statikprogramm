@@ -10302,10 +10302,10 @@ class MainWindow(QtWidgets.QMainWindow):
             ver = __version__
         m = self.model
         bauteil = m.meta.get("Bauteil") or m.name or "Neues Modell"
-        teile = [bauteil, f"Statik3D {ver}"]
+        # „Bauteil – Statik3D 2.1.0“ (bis 02.10.2026 mit Mittelpunkt: „Bauteil ·
+        # Statik3D 2.1.0“); eine Norm gehoert zum Bauteil: „Bauteil · Norm – Statik3D …“
         norm = m.meta.get("Norm")
-        if norm:
-            teile.insert(1, norm)
+        modellteil = f"{bauteil} · {norm}" if norm else bauteil
         # Der Modellumfang (Knoten, Elemente, Stellungen) steht seit 25.09.2026
         # nur noch in der Statusleiste (_refresh_status): die Kopfzeile traegt
         # jetzt Schnellzugriff und Suche
@@ -10319,7 +10319,7 @@ class MainWindow(QtWidgets.QMainWindow):
             zustand, art = "Ergebnis vorhanden", "gut"
         else:
             zustand, art = "bereit", "matt"
-        self.kopf.setzen(" · ".join(teile), modell, zustand, art)
+        self.kopf.setzen(f"{modellteil} – Statik3D {ver}", modell, zustand, art)
 
     def _baum_neu_beginnen(self):
         """Das Modell ist ein anderes (Neu, Öffnen, Beispiel, Import): der
@@ -12494,6 +12494,11 @@ class MainWindow(QtWidgets.QMainWindow):
         elif self._stellungen_obj():
             self.lbl_umh.setText(f"{len(self._stellungen_obj())} Stellungen angelegt – "
                                  "noch nicht gerechnet")
+        else:
+            # kein Ergebnis, keine Stellung (Neu, Beispiel, Stellungen geloescht):
+            # der Text vom Bau der Maske - bis 02.10.2026 blieb hier die Zeile
+            # des vorigen Modells stehen
+            self.lbl_umh.setText("noch nicht gerechnet")
 
     def _stellung_zeile(self):
         z = self.tbl_stellung.currentRow()
@@ -22770,18 +22775,37 @@ class MainWindow(QtWidgets.QMainWindow):
         self.model = Model("Neues Modell")
         self._stufe_vorgabe()
         self.__init_defaults()
+        self._neues_modell_zuruecksetzen()
+        self._baum_neu_beginnen()
+        self.refresh_all()
+        self._als_gespeichert()
+        self._neues_modell_abschliessen()
+
+    def _neues_modell_zuruecksetzen(self):
+        """Alles, was dem **vorigen** Modell gehoerte, vergessen - Neu und
+        Beispiel rufen es nach dem Tausch von ``self.model``, vor refresh_all.
+
+        Bis zum 02.10.2026 raeumte nur Neu auf; ein Beispiel liess Auswahl,
+        leuchtende Elemente, Netzguete-Faerbung und die offene Maske rechts
+        stehen (gemessen: Maske „Knotenlager“ des vorigen Modells nach dem
+        Beispiel noch offen). Die Umhuellende und die Stellungsreihe des
+        vorigen Modells blieben auch nach Neu: die Zeile unter den Stellungen
+        nannte dessen η weiter."""
         self.analysis = None
         self.results = None
+        self.umhuellende = None
+        self.stellungsreihe = None
         self.selection = np.array([], dtype=int)
         self._objektauswahl_leeren()
         self.path = None
         self.netzguete_feld = None
-        self._baum_neu_beginnen()
-        self.refresh_all()
-        self._als_gespeichert()
+
+    def _neues_modell_abschliessen(self):
+        """Der Rest nach refresh_all und _als_gespeichert: der Fenstertitel nennt
+        das neue Modell (er wird sonst nur neu gesetzt, wenn der Stern kommt
+        oder geht), die Maske rechts ist zu, rechts steht nichts - die
+        Projektangaben holt man sich ueber den obersten Punkt des Modellbaums."""
         self._refresh_title()
-        # Ein neues Modell: keine Maske mehr, rechts nichts - die Projektangaben
-        # holt man sich ueber den obersten Punkt des Modellbaums
         if getattr(self, "maskenrand", None) is not None:
             self.maskenrand.schliessen()
         self.rechts_leeren()
@@ -23081,16 +23105,17 @@ class MainWindow(QtWidgets.QMainWindow):
             self._protokoll_neu(f"Beispiel '{which}'")
             self.model = build_example(which)
             self.__init_defaults()
-            self.analysis = None
-            self.results = None
-            self.selection = np.array([], dtype=int)
-            self.path = None
+            # derselbe saubere Stand wie nach Neu (02.10.2026), dazu das Beispiel
+            self._neues_modell_zuruecksetzen()
             self._baum_neu_beginnen()
             self.refresh_all()
-            self.plotter.view_isometric()
-            self.zoom_alles()
             # ein unveraendertes Beispiel laesst sich jederzeit neu laden
             self._als_gespeichert()
+            self._neues_modell_abschliessen()
+            # zuletzt: die Ansicht passt sich der Flaeche an, die nach dem
+            # Schliessen der Maske rechts frei ist
+            self.plotter.view_isometric()
+            self.zoom_alles()
             self.info(f"Beispiel '{which}' geladen - jetzt BERECHNEN (F5)")
         except Exception as ex:
             self.log.appendPlainText(traceback.format_exc())
@@ -23250,7 +23275,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ---- Fensterrahmen: Version und Modell -----------------------------
     def _refresh_title(self):
-        """Fenstertitel: Programm, Fassung und geöffnetes Modell."""
+        """Fenstertitel: „Modell – Statik3D 2.1.0“, ungespeichert „Modell* – …“.
+
+        Bis zum 02.10.2026 stand das Programm vorn und ein Zusatz hinten
+        („Statik3D 2.1.0 - Modell - FEM mit Lastfällen, Kontakt und
+        EC3-Nachweisen“, mit Bindestrichen). Jetzt der Name zuerst, wie die
+        Kopfzeile ihn zeigt und wie Windows Dokumente benennt; der Zusatz
+        entfällt (Plan Oberfläche, Teilpaket 11f)."""
         from .. import update as upd
         try:
             ver = upd.version_label()
@@ -23261,8 +23292,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Stern: etwas ist ungespeichert (_titel_nachziehen, 24.09.2026)
         self._titel_stern = bool(self.ungespeichert()) if getattr(self, "model", None) else False
         stern = "*" if self._titel_stern else ""
-        self.setWindowTitle(f"Statik3D {ver}" + (f" - {name}{stern}" if name else stern)
-                            + " - FEM mit Lastfällen, Kontakt und EC3-Nachweisen")
+        self.setWindowTitle(f"{name}{stern} – Statik3D {ver}" if name else f"Statik3D {ver}{stern}")
 
     def _refresh_version_label(self):
         from .. import update as upd

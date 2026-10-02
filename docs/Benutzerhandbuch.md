@@ -80,6 +80,24 @@ Stellungen) steht nur noch in der Statusleiste unten; bis zum 24.09.2026
 stand er als zweite Marke oben, und Schnellzugriff und Suche hatten eine
 eigene Zeile über den Registern.
 
+Der Text in der Mitte der Kopfzeile und der **Fenstertitel** nennen das Modell
+zuerst und das Programm danach: „Hallenrahmen – Statik3D 2.1.0“, mit einem
+Halbgeviertstrich. Trägt das Modell eine Norm, steht sie hinter dem Bauteil
+(„Hallenrahmen · EN 1993-1-1 – Statik3D 2.1.0“). Ist etwas ungespeichert, steht
+im Fenstertitel ein Stern hinter dem Namen („Hallenrahmen* – Statik3D 2.1.0“);
+eine geöffnete Datei erscheint mit ihrem Dateinamen. Bis zum 02.10.2026 hieß die
+Kopfzeile „Hallenrahmen · Statik3D 2.1.0“, und der Fenstertitel begann mit dem
+Programm und hängte einen Zusatz an („Statik3D 2.1.0 - Hallenrahmen - FEM mit
+Lastfällen, Kontakt und EC3-Nachweisen“).
+
+**Aufklapplisten und Drehfelder** zeigen rechts ihren Pfeil: die Aufklappliste
+einen nach unten, das Drehfeld einen nach oben und einen nach unten. Bis zum
+02.10.2026 fehlte er, weil das Stilblatt des Programms Qt den eigenen Pfeil
+abnimmt. Die Pfeile sind kleine Bilddateien im Ordner `statik3d/gui/bilder`; er
+steht im Rezept der Programmdatei (`packaging/Statik3D.spec`) und in
+`pyproject.toml`. `tests/test_kleinigkeiten.py` prüft an einem gezeichneten
+Feld, dass im Pfeilbereich wirklich etwas steht.
+
 Darunter das **Ribbon** — die Befehlsleiste. Jeder Befehl steht dort genau
 einmal; es gibt keine Menüleiste und keine zweite Werkzeugleiste daneben.
 Vierzehn Register nach Arbeitsschritt:
@@ -2878,6 +2896,14 @@ Programmfenster keine Maske: Ist ein Feld gerade orange (die Maus füllt es),
 beendet das erste Esc nur diese Auswahl per Maus; jedes weitere Esc hebt wie
 überall die Auswahl in der Ansicht auf („Alles deselektieren“).
 
+Der **Hinweis** zu einem Feld erscheint, wenn man mit der Maus auf dem Feld
+verweilt, nicht nur auf seiner Beschriftung; bei einem Haken steht er am Haken
+selbst. Bis zum 02.10.2026 stand er nur an der Beschriftung, und ein Haken
+hatte gar keinen. Was ein Feld selbst meldet, geht vor: Ein Zahlenfeld mit
+ungültiger Eingabe zeigt seine Fehlermeldung und danach, sobald die Zahl
+stimmt, wieder den Hinweis; ein Listenfeld nennt die Anzahl und alle Einträge,
+der Hinweis steht darin mit an erster Stelle.
+
 ### Zahlen eingeben (seit 24.09.2026)
 
 Die Zahlenfelder der Masken rechts (auch der Sammelmaske für mehrere
@@ -3151,6 +3177,18 @@ hätten die echten Rückgängig-Schritte verdrängt (seit 25.09.2026).
 
 **Beispiele** stehen in einem Knopf *Beispiel öffnen ▾* statt in acht
 Knöpfen, von denen jeder das Modell ersetzte.
+
+**Ein Beispiel räumt auf wie *Neu*** (seit 02.10.2026). Beide vergessen, was dem
+vorigen Modell gehörte: die Auswahl von Knoten, Linien, Stäben und Elementen,
+die leuchtenden Elemente, die Netzgüte-Färbung, die Umhüllende und die
+Stellungsreihe, die Ergebnisse und den Rückgängig-Stapel; die Maske rechts
+schließt, der Fenstertitel nennt das neue Modell. Bis zum 02.10.2026 räumte nur
+*Neu* so auf: Nach einem Beispiel blieben die Auswahl von Linien und Stäben,
+die leuchtenden Elemente, die Netzgüte-Färbung und die Maske rechts mit den
+Feldern des vorigen Modells stehen, und die Umhüllende der Stellungen samt der Zeile darunter („η =
+…“ des vorigen Modells) blieb sogar nach *Neu* stehen. Das *Öffnen* einer
+Datei räumt noch nicht in diesem Umfang auf: Es leert die Auswahl der Knoten und
+den Rückgängig-Stapel, lässt die offene Maske rechts aber stehen.
 
 Geprüft in `tests/test_ungespeichert.py` (mit dem echten Hauptfenster). Die
 übrigen Prüfungen mit Hauptfenster beantworten die Rückfrage über den

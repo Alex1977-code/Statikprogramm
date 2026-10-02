@@ -249,6 +249,9 @@ class Maske(QtWidgets.QFrame):
         self._listen: dict[str, tuple] = {}
         #: Zahlenfelder, die leer bleiben duerfen (Feld.leer, 25.09.2026)
         self._leer_erlaubt = {f.name for f in felder if getattr(f, "leer", False)}
+        #: Felder mit Hinweis: Name -> Hinweis (Feld.hinweis); er steht an der
+        #: Beschriftung und seit 02.10.2026 auch am Feld selbst
+        self._hinweise = {f.name: f.hinweis for f in felder if f.hinweis}
 
         # Gemeinsamer Rahmen (24.09.2026, Paket 1 des Oberflaechenplans):
         # fester Kopf (Titel, Hinweiszeile), rollbare Mitte (die Felder),
@@ -309,6 +312,13 @@ class Maske(QtWidgets.QFrame):
         for i, f in enumerate(felder):
             w = self._bauen(f)
             self._felder[f.name] = w
+            # Der Hinweis auch am Feld und am Haken (02.10.2026): bis dahin stand
+            # er nur an der Beschriftung, und ein Haken hat keine. Was ein Feld
+            # selbst setzt, bleibt: Listenfeld und Mehrfachwahl bringen ihren
+            # Hinweis mit (Anzahl und Eintraege). Das Zahlenfeld legt ihn nur
+            # ab - seine Fehlermeldung geht vor und weicht ihm danach wieder.
+            if f.hinweis and (isinstance(w, zf.Zahlenfeld) or not w.toolTip()):
+                w.setToolTip(f.hinweis)
             w.setProperty("feldname", f.name)
             w.installEventFilter(self)
             if f.art == "haken":

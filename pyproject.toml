@@ -28,3 +28,4 @@ include = ["statik3d*"]
 
 [tool.setuptools.package-data]
 "statik3d.web" = ["static/*"]
+"statik3d.gui" = ["bilder/*"]

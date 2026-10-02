@@ -13,6 +13,7 @@ die Eingaben rechts - und unten Protokoll und Tabellen.
 """
 from __future__ import annotations
 
+import os
 import re
 
 import numpy as np
@@ -124,6 +125,7 @@ QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QPlainTextEdit, QTextEdit {{
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {{
     border-color: {akzent}; }}
 QComboBox::drop-down {{ border: 0; width: 18px; }}
+{pfeile}
 QCheckBox, QRadioButton {{ spacing: 6px; }}
 
 QTableWidget, QTreeWidget, QListWidget {{ background: {flaeche};
@@ -152,8 +154,93 @@ QToolTip {{ background: {kopf}; color: #fff; border: 0; padding: 5px 7px; }}
 """
 
 
+#: Ordner der Pfeilbilder (Teilpaket 11f). Er gehoert in die exe: Statik3D.spec
+#: sammelt statik3d/gui/bilder ein, pyproject.toml nimmt ihn ins Paket. Gefunden
+#: wird er wie statik3d/web/static ueber den Ort dieser Datei.
+BILDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bilder")
+
+#: die Pfeilbilder: Dateiname je Richtung
+PFEILE = {"ab": "pfeil_ab.png", "auf": "pfeil_auf.png"}
+
+#: Kantenlaenge des Pfeilbilds in logischen Bildpunkten
+PFEIL_KANTE = 10
+
+
+def pfeil_bild(runter: bool, faktor: int = 1) -> QtGui.QImage:
+    """Das Bild eines Pfeils (Winkel, wie Windows sie an Auswahlfeldern zeichnet).
+
+    Unter einem Stilblatt zeichnet Qt an Aufklappliste und Drehfeld **keinen**
+    Pfeil mehr, sobald ``drop-down`` bzw. ``up-button`` einen eigenen Rahmen
+    bekommen (gemessen 02.10.2026: ohne die Bilder 0 dunkle Punkte im
+    Pfeilbereich). Ein Dreieck aus Rahmenstrichen (``border-top: 5px solid``)
+    ging nicht: Qt zeichnet daraus Balken, keine Spitze. Darum Bilder.
+    ``faktor`` 2 ist die Fassung fuer hohe Bildschirmdichte (Name mit ``@2x``,
+    die Qt dort selbst waehlt). Neu schreiben:
+    ``python -c "from statik3d.gui import design; design.pfeilbilder_schreiben()"``"""
+    s = PFEIL_KANTE * faktor
+    bild = QtGui.QImage(s, s, QtGui.QImage.Format_ARGB32_Premultiplied)
+    bild.fill(0)
+    p = QtGui.QPainter(bild)
+    p.setRenderHint(QtGui.QPainter.Antialiasing)
+    stift = QtGui.QPen(QtGui.QColor(FARBEN["matt"]), 1.8 * faktor)
+    stift.setCapStyle(QtCore.Qt.RoundCap)
+    stift.setJoinStyle(QtCore.Qt.RoundJoin)
+    p.setPen(stift)
+    # 10 x 10: Spitze in der Mitte, Schenkel 3 Bildpunkte hoch, 6,8 breit
+    oben, unten = (0.36 * s, 0.66 * s) if runter else (0.66 * s, 0.36 * s)
+    p.drawPolyline([QtCore.QPointF(0.16 * s, oben), QtCore.QPointF(0.5 * s, unten),
+                    QtCore.QPointF(0.84 * s, oben)])
+    p.end()
+    return bild
+
+
+def pfeilbilder_schreiben(ordner: str = None) -> list:
+    """Die Pfeilbilder (je Richtung einfach und ``@2x``) in den Ordner schreiben;
+    ohne Angabe nach :data:`BILDER`. Gibt die Dateinamen zurueck. Braucht eine
+    Qt-Anwendung (QGuiApplication) nicht - QImage und QPainter genuegen."""
+    ordner = ordner or BILDER
+    os.makedirs(ordner, exist_ok=True)
+    namen = []
+    for richtung, datei in PFEILE.items():
+        stamm, endung = os.path.splitext(datei)
+        for faktor, zusatz in ((1, ""), (2, "@2x")):
+            name = stamm + zusatz + endung
+            pfeil_bild(richtung == "ab", faktor).save(os.path.join(ordner, name))
+            namen.append(name)
+    return namen
+
+
+def _pfeilregeln() -> str:
+    """Stilregeln fuer die Pfeile von Aufklappliste und Drehfeld - leer, wenn die
+    Bilder fehlen (Qt meldete sonst bei jedem Feld eine Warnung, und die Felder
+    sind dann so unschoen wie bisher, aber nicht kaputt).
+
+    Die Pfeile stehen auf der Flaeche der Knoepfe ohne eigenen Rahmen: ein
+    Drehfeld zeichnete sonst die Trennlinien der Windows-Knoepfe mit
+    (gemessen: 25 dunkle Punkte am Rand des Pfeilbereichs). Der Pfad hat
+    Schraegstriche und steht in Anfuehrungszeichen - der Ordner der exe
+    liegt unter dem Benutzernamen, und der darf ein Leerzeichen haben."""
+    pfade = {k: os.path.join(BILDER, d).replace("\\", "/") for k, d in PFEILE.items()}
+    if not all(os.path.isfile(p) for p in pfade.values()):
+        return ""
+    k = PFEIL_KANTE
+    return (
+        'QComboBox::down-arrow {{ image: url("{ab}"); width: {k}px; height: {k}px; }}\n'
+        'QSpinBox::up-button, QDoubleSpinBox::up-button {{ subcontrol-origin: border;\n'
+        '    subcontrol-position: top right; width: 18px; border: 0; }}\n'
+        'QSpinBox::down-button, QDoubleSpinBox::down-button {{ subcontrol-origin: border;\n'
+        '    subcontrol-position: bottom right; width: 18px; border: 0; }}\n'
+        'QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{ image: url("{auf}");\n'
+        '    width: {k}px; height: {k}px; }}\n'
+        'QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{ image: url("{ab}");\n'
+        '    width: {k}px; height: {k}px; }}'
+    ).format(ab=pfade["ab"], auf=pfade["auf"], k=k)
+
+
 def stil() -> str:
-    return STIL.format(**FARBEN)
+    # Die Pfeilregeln kommen fertig gesetzt als Wert in die Vorlage; ihre
+    # Klammern liest format() dort nicht noch einmal
+    return STIL.format(pfeile=_pfeilregeln(), **FARBEN)
 
 
 # ---- Protokoll: Festbreitenschrift und Faerbung (Teilpaket 9a, 02.10.2026) -------
