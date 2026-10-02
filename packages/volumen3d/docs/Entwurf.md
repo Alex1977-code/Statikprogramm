@@ -440,6 +440,8 @@ gleichmäßigen Gitters), Lamé aus STL wie aus CSG, Innen/Außen-Test an einem 
   Ebene teilen), `bereiche` (`RefinementRegion` des Vertrags: Kugel um `center` mit
   `target_cell_size_mm` → Ebene), `duenne_waende` (Werkstoffstrecke durch die Zellmitte längs
   einer Achse kürzer als zwei Zellkanten → teilen; Vorgabe Abschnitt 4).
+- **Balancierung (O15, 02.10.2026):** geteilt werden die von `_indizieren` sortierten Felder (die Maske aus `_unbalanciert` gilt für sie), höchstens `2·max_ebene + 2` Durchläufe, sonst `RuntimeError`;
+  vorher teilte die Balancierung bei drei Ebenen ohne Ende (Theorie 11.8, Nachtrag).
 - **Punktsuche vektorisiert:** je Ebene ein sortiertes Feld flacher Indizes; für Punkte werden die
   Indizes aller Ebenen berechnet und von grob nach fein per `searchsorted` gesucht – der erste
   Treffer ist das Blatt. Zellen-in-Box-Abfrage über die Blattlisten der Wurzelzellen (für die
@@ -895,18 +897,20 @@ dieser Abschnitt hält die Entscheidungen und ihre Folgen fest. Die Einträge st
   von σ(0,4 t); berichtet als Band (Mittel 143,6, Spanne 138,9 bis 147,2 N/mm²). Konvergenzaussage: letzte relative Änderung unter 3 % = konvergiert, Monotonie und Aitken-Grenzwert zusätzlich.
 - **O4, Berichtigung (C3, 02.10.2026):** die Planregeln nannten für die letzte Änderung der T-Stoß-p-Phase 0,47 %, gerechnet aus den gerundeten Werten 107,4 und 107,9; die gemessenen
   Werte 107,446 und 107,932 ergeben 0,45 %. Handbuch, Plan und Test sind berichtigt.
+- **O15 (02.10.2026, Commit 250e607):** Reihenfolgefehler der 2:1-Balancierung des Gitters behoben (`Gitter._aufbauen` teilte unsortierte statt der sortierten Felder; ab drei Ebenen Kaskade, t/8 am Knotenblech), mit
+  Durchlaufgrenze und Test `test_oktree.test_verfeinerung_drei_ebenen`. 393 Gitter aus 26 Suiten verglichen (alte und neue Reihenfolge, Blattmengen aus `ebene` und `ijk` exakt): 391 gleich, 0 verschieden, 2 Kaskade im alten Verfahren – das ist der absichtlich gebaute Dreiebenenfall des neuen Tests (2 100 Blätter in 519 / 155 / 306 / 1 120), gebaut in `test_oktree` und `test_kern`: kein bestehendes Gitter und damit kein bestehendes Ergebnis ändert sich. t/8 (Nahtziel 1,25 mm): 31 531 Blätter, 0,9 s,
+  841 032 / 2 747 052 / 6 398 538 Freiheitsgrade bei p 2 / 3 / 4, bei p 4 nicht rechenbar.
 
 ### 4e.7 Prüfungen
-Stand 02.10.2026 (nach O4): Kernsuite `volumen3d.tests.test_kern` 342 Prüfungen, Vertragsschicht `test_vertrag_fcm` 51, Knotenblech mit `VOLUMEN3D_LANG=1` 9 (Konvergenz „konvergiert“ mit letzter
+Stand 02.10.2026 (nach O15): Kernsuite `volumen3d.tests.test_kern` 347 Prüfungen (342 vor O15, fünf neue), Vertragsschicht `test_vertrag_fcm` 51, Knotenblech mit `VOLUMEN3D_LANG=1` 9 (Konvergenz „konvergiert“ mit letzter
 Änderung 0,44 %, Streuband: der Lauf liegt im gemessenen Band 138,9 bis 147,2 N/mm² (Regressionsprüfung, keine Abnahmeschranke), Abnahme gegen Tet10 rechts +0,34 %, links −2,93 %), `mypy --strict` für `api.py` und `postprocess/konvergenz.py` sauber, `lint-imports` 3 Regeln gehalten. Mit C2 (0ee938c) liefen alle
 25 Suiten und die GPU-Suite (14 Prüfungen) grün. Prüfungen, die in Teilprojekt 5 entstanden (Auswahl): `test_quadratur` (Moment Fitting, innere Trennfläche, deckungsgleiche Flächen), `test_rueckgewinnung`,
 `test_hotspot`, `test_adaptiv` (Zyklen, Konvergenzaussage, maßgebender Hot-Spot), `test_step`, `test_huelle` (Hüllenintegration, Windungsbaum), `test_stl` (durchdringende Schalen), `test_schale`,
-`test_knotenblech` sowie `test_mehrgitter.test_grosse_bloecke_spd`, `test_mehrgitter.test_chebyshev_fenster`, `test_operator_gpu.test_gepackte_bloecke`, `test_operator_gpu.test_million_gpu`,
+`test_knotenblech`, `test_oktree.test_verfeinerung_drei_ebenen` sowie `test_mehrgitter.test_grosse_bloecke_spd`, `test_mehrgitter.test_chebyshev_fenster`, `test_operator_gpu.test_gepackte_bloecke`, `test_operator_gpu.test_million_gpu`,
 `test_zwaenge.test_wurzelwahl_rundungsfest`, `test_zwaenge.test_unverwurzelte_grobe_zelle` und `test_zwaenge.test_gebuendelte_nachbarsuche`. Schwere Abnahmen vor jedem Merge: `test_kragarm`, `test_lame`, `test_kirsch`, `test_mehrgitter`, `test_operator_gpu`.
 
 ### 4e.8 Offen
 Entscheidungen und Empfehlungen stehen im Plan, Abschnitt „Offene Entscheidungen nach C2“: O3 Messung von Nahtziel t/8 und 0,5 t / 1,5 t (Größe von t/8 gemessen: 6,4 Mio. Freiheitsgrade bei p 4, nicht rechenbar, Theorie 11.20); O5 Konsistenzfehler der Schnittzellen (10⁻⁶ bis 10⁻⁴ am T-Stoß, 2·10⁻⁴ bis 3,5·10⁻³ in der Spannung bei p 2 am schrägen Schnitt; Empfehlung: vor Teilprojekt 6); O6 Ebenen durch den gekrümmten Teil einer
 Hülle; O7 Vertragsvorschlag 2.2.0 (Volumenlast je Lastfall); O8 Abbruch während `prepare`; O9 `summary()` nach Zyklen; O10 Torsion in der Kopplungskontrolle; O11 Zeiten je Zyklus; O12 mehrere Kinder derselben Hülle;
-O13 Einrichtzeit der Glätterblöcke auf der GPU nach der Cholesky-Umstellung; O14 Oberflächenquadratur der Hüllenfacetten (17 von 27 s am Block mit Bohrung N 120); O15 Reihenfolgefehler in der 2:1-Balancierung des Gitters (`Gitter._aufbauen`: bei drei Verfeinerungsebenen
-endet der Aufbau nicht; bei zwei Ebenen, allen bisherigen Messungen, ohne Folge; Empfehlung: vor Pull Request 3 beheben). Aus Teilprojekt 2 offen: die Vierteilung der
+O13 Einrichtzeit der Glätterblöcke auf der GPU nach der Cholesky-Umstellung; O14 Oberflächenquadratur der Hüllenfacetten (17 von 27 s am Block mit Bohrung N 120); O15 (Reihenfolgefehler der 2:1-Balancierung) ist behoben, 4e.6. Aus Teilprojekt 2 offen: die Vierteilung der
 Randpolygone an gekrümmten Formen.
