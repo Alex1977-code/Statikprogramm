@@ -2493,8 +2493,9 @@ Ampelfarben der Nachweise bleiben, wie sie sind. Eine markierte Zeile zeigt in
 jeder Zelle die Auswahlfarbe, auch in einer grauen, weißen oder gelben, mit und
 ohne Fokus in der Tabelle. In der ersten Fassung vom 02.10.2026 überdeckte die
 Zellfarbe die Auswahl am Windows-Desktop: die markierte Zeile sah aus wie die
-anderen. Seither bekommt eine markierte Zelle keine Zellfarbe mehr unter die
-Auswahlfarbe, und der Stil zeichnet sie wie vor den Zellfarben.
+anderen; der Windows-11-Stil legte die Auswahl nur als Hauch und schmalen Strich
+am Zellrand darüber. Seither bekommt eine markierte Zelle statt ihrer Zellfarbe
+ausdrücklich die Auswahlfarbe (ohne Fokus die inaktive) und die Auswahlschrift.
 
 **Eingabetabellen sind editierbar.** In Werkstoffe, Querschnitte, Dicken,
 Knoten, Elementen, Lagern und Lastfällen sind die **weißen** Zellen zum
