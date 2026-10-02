@@ -620,6 +620,30 @@ h-Zyklus mehr; der letzte Zyklus hat heute bei p 4 1,1 Mio. Freiheitsgrade und b
 Abstand zur Kerbe (IIW für grobe Netze: Referenzpunkte 0,5 t und 1,5 t). Empfehlung: zuerst messen – die Gitterlage in drei Schritten verschieben, p 3 und
 p 4, je Stirnnaht – und dann zwischen (a), (b) und (c) wählen. Messung Sonnet 5.5, mittel; Umsetzung von (b) oder (c) Opus 5.5, hoch.
 
+*Entscheidung O1 bis O4 (Anwender 02.10.2026):* Empfehlungen angenommen. O1: Merge von Pull Request 13 freigegeben (die Umstellung des Tests folgt nach dem
+Rebase auf main). O2: Referenzlauf mit 0,5 mm, Direktlöser, Maschine exklusiv. O3: erst messen (unten). O4: Kriterium „letzte relative Änderung unter 3 %“, die
+Monotonie wird zusätzlich genannt.
+
+*Messregeln O3, vor der Messung festgelegt (02.10.2026).* Modell und Last wie C1 (`tests/test_knotenblech.py`), Basiszellgröße 10 (= t), Fahrplan wie dort
+(h 5, h 2,5, p 3, p 4), Vertragsweg. Die Gitterlage wird verschoben, indem das ganze Modell (Geometrie, Schnittebenen, Nahtlinien) um δ in x verschoben wird:
+δ = 0, 0,625, 1,25, 1,875 mm (ein Viertel der feinsten Zelle 2,5 mm je Schritt, zusammen eine Periode der feinsten Zellen). Das Gitter beginnt bei
+lo − 0,1 h; die Lage des Übergangs zur Zellgrenze φ = ((x_Naht − Ursprung) mod h_fein)/h_fein wird je Lauf mitgeschrieben. Je Verschiebung ein Lauf bis p 4;
+aus den Zyklen werden die Hot-Spots des Zyklus mit p 3 und des Zyklus mit p 4 festgehalten (ein Mitschnitt von `FcmSolver._zyklus`, ohne Änderung am Paket).
+Größen je Lauf, Zyklus und Naht: σ_hs bei y = 40 und Mittel über y 32…48 für (a) die Referenzpunkte 0,4 t / 1,0 t (Vorgabe des Pakets, σ_hs = 5/3 σ₀,₄ − 2/3 σ₁,₀)
+und (c) 0,5 t / 1,5 t (IIW für grobe Netze, σ_hs = 1,5 σ₀,₅ − 0,5 σ₁,₅); beide aus derselben Lösung (die Konstanten der Hot-Spot-Geometrie werden im Mitschnitt für den
+zweiten Aufruf umgestellt). Gegenprobe: σ_xx an den Referenzpunkten (140, 40, 0) und (146, 40, 0) usw. unabhängig aus `Auswertung.spannung_geglaettet` gelesen
+und mit den Protokollwerten des Hot-Spot-Moduls verglichen (Übereinstimmung auf 1e-6 relativ, sonst werden die Zahlen nicht berichtet). Streuung
+S = (max − min)/Mittelwert über alle acht Proben (4 Verschiebungen × 2 Nähte) von σ_hs(y 40), getrennt nach p, nach (a)/(c).
+
+*Auswertung (Regeln).* (1) S(a) bei p 4 ≤ 1 %: die Planschranke gilt, die 3,1 % waren ein Ausreißer der einen Lage – keine Maßnahme. (2) 1 % < S(a) ≤ 3 %:
+Empfehlung (a): Schranke der Vorgabe 3 %, die Abnahme gegen Tet10 wird mit dem gemessenen Streuband berichtet. (3) S(a) > 3 %: Maßnahme nötig; (c) gilt als
+wirksam, wenn S(c) bei p 4 ≤ 1 % bleibt (dann Entscheidung über (c) mit Vergleich gegen die Tet10-Referenz an 0,5 t und 1,5 t, die die Hauptsitzung liefern müsste
+– PR 13 hat nur 0,4 t und 1,0 t); sonst (b) t/8, dessen Größe vorab mit `estimate` (Freiheitsgrade, ohne Lösen) für p 3 und p 4 berichtet wird. Nicht im Plan der
+Messung: Verschiebungen in y und z, Netzfeinheit über t/4 hinaus rechnen.
+
+*Betrieb.* Je Lauf rund 440 s und bis 59 GB (Direktlöser, p 4); die Läufe nacheinander, vorher die Prozessliste prüfen und die Hauptsitzung benachrichtigen
+(etwa 30 Minuten, 59 GB von 128 GB, 104 GB frei).
+
 *O4 – Konvergenzaussage.* Der Vorschlag aus B4 war, die Aussage nur über die p-Phase zu treffen. Die Messungen zeigen, dass auch die p-Phase nicht monoton
 ist (Knotenblech 157,1 → 142,6 → 143,2; T-Stoß 111,0 → 107,4 → 107,9): die Aitken-Aussage bliebe „nicht monoton“. Zu entscheiden ist das Kriterium:
 (a) wie bisher nur bei monotoner Folge eine Aussage, (b) Aussage über die letzte relative Änderung mit der Schranke der Vorgabe (unter 3 % gilt als
@@ -689,10 +713,10 @@ nachgetragen.
 | B7 Schale → Volumen (Prüfung) | Sonnet 5.5 | mittel | Test über bestehende Schnittstelle | erledigt: Schnittgrößen < 7·10⁻⁴ (p 2), 6·10⁻⁸ (p 3); Kopplungskontrolle und Hüllenfacetten-Fehler behoben; Schranke p 2 geneigt 1 % (Anwender) |
 | C1 Knotenblech-Abnahme | Fable 5.1 | sehr hoch | Modellbau und Nachweis gegen Referenz | erledigt: +0,34 % / −2,93 % gegen Tet10-Referenz PR 13 (Schranke 3 %); Symmetrie 3,1 % (Gitterphase) und 0,5-mm-Referenzlauf beim Anwender |
 | C2 Zweite Sicht | Opus 5.5 (Prüfung und Kuren), Gutachter je Gruppe ein anderes Modell | hoch | unabhängig von der Umsetzung, tiefste Prüfung | erledigt: 24 Befunde bestätigt, 4 hohe und 6 mittlere behoben, 12 niedrige behoben, 1 teilweise; Liste in Theorie 11.19 |
-| O1 Referenz Knotenblech nach main | Sonnet 5.5 | niedrig | Test auf `erwartung_tet10.json` umstellen | Entscheidung offen: Freigabe Merge PR 13 (Empfehlung: ja) |
-| O2 Tet10-Referenz 0,5 mm | Sonnet 5.5 (Hauptsitzung) | mittel | Lauf und Auswertung nach festem Schema | Entscheidung offen: rechnen ja/nein, Direktlöser exklusiv oder iterativ (Empfehlung: ja, Direktlöser nachts) |
-| O3 Hot-Spot-Streuung mit der Gitterlage | Sonnet 5.5 (Messung), Opus 5.5 (Umsetzung) | mittel / hoch | erst messen, dann t/8 oder 0,5 t / 1,5 t | Entscheidung offen: Schranke 3 %, t/8 oder größerer Kerbabstand (Empfehlung: erst messen) |
-| O4 Konvergenzaussage | Sonnet 5.5 | mittel | Kriterium in `konvergenz.py`, Tests, Handbuch | Entscheidung offen: nur monoton / letzte Änderung unter 3 % / nur p-Phase (Empfehlung: letzte Änderung) |
+| O1 Referenz Knotenblech nach main | Sonnet 5.5 | niedrig | Test auf `erwartung_tet10.json` umstellen | freigegeben (Anwender 02.10.); Umstellung nach dem Merge und Rebase |
+| O2 Tet10-Referenz 0,5 mm | Sonnet 5.5 (Hauptsitzung) | mittel | Lauf und Auswertung nach festem Schema | angenommen: rechnen, Direktlöser, Maschine exklusiv (Hauptsitzung legt den Zeitpunkt fest) |
+| O3 Hot-Spot-Streuung mit der Gitterlage | Sonnet 5.5 (Messung), Opus 5.5 (Umsetzung) | mittel / hoch | erst messen, dann t/8 oder 0,5 t / 1,5 t | Empfehlung angenommen; Messregeln festgelegt, Messung läuft (4 Verschiebungen, p 3 und p 4, a und c) |
+| O4 Konvergenzaussage | Sonnet 5.5 | mittel | Kriterium in `konvergenz.py`, Tests, Handbuch | angenommen: letzte Änderung unter 3 %, Monotonie zusätzlich genannt; Umsetzung offen |
 | C3 Handbücher | Sonnet 5.5 | mittel | Texte aus vorhandenen Messwerten, viele Zahlen | offen; nach O1 bis O4 |
 | C4 Gesamtlauf, Pull Request | Sonnet 5.5 | mittel | Routine mit Prüfliste | offen; Merge nur auf Freigabe |
 | O5 Konsistenzfehler der Schnittzellen | Fable 5.1 | sehr hoch | Ursachensuche in Aggregation und Quadratur | Entscheidung offen: wann (Empfehlung: vor TP 6, nach PR 3) |
