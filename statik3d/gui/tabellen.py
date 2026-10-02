@@ -691,6 +691,20 @@ class WahlDelegate(QtWidgets.QStyledItemDelegate):
         super().__init__(tabelle.view)
         self.tabelle = tabelle
 
+    def initStyleOption(self, option, index):
+        """Eine markierte Zelle bekommt keine Zellfarbe unter die Auswahlfarbe.
+
+        Die Zellfarben der Eingabetabellen (weiss, grau) und das Gelb der Ampel
+        kommen als BackgroundRole aus dem Modell und landen als
+        ``option.backgroundBrush`` in der Stiloption. Der Windows-Stil zeichnet
+        die Auswahl dann nicht darueber: am Desktop sah die markierte Zeile aus
+        wie die anderen, mit und ohne Fokus (Sichtpruefung 02.10.2026). Ohne
+        Brush zeichnet der Stil wie vor den Zellfarben - die Auswahlfarbe der
+        Palette, ohne Fokus die der inaktiven Gruppe."""
+        super().initStyleOption(option, index)
+        if option.state & QtWidgets.QStyle.StateFlag.State_Selected:
+            option.backgroundBrush = QtGui.QBrush()
+
     def _spalte(self, index):
         q = self.tabelle.filter.mapToSource(index)
         sp = self.tabelle.modell.spalten[q.column()]

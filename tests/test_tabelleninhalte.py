@@ -318,6 +318,96 @@ def _lasttexte(w):
     return [str(x) for z in w.tbl_last.modell.zeilen for x in z]
 
 
+def test_auswahlfarbe():
+    """Eine markierte Zeile zeigt die Auswahlfarbe - unabhaengig von der Zellfarbe.
+
+    Gegenpruefung des Anwenders am Desktop (02.10.2026): in Tabellen mit
+    weissen und grauen Zellen sah die markierte Zeile aus wie die anderen, mit
+    und ohne Fokus. Die Zellfarbe aus dem Modell (BackgroundRole) landet als
+    backgroundBrush in der Stiloption, und der Windows-Stil legt die Auswahl
+    nicht darueber. Darum leert der Delegat die Brush einer markierten Zelle.
+
+    Zwei Wege: (1) die Stiloption selbst - sie zeigt die Ursache in jedem Stil;
+    (2) das gezeichnete Bild je verfuegbarem Qt-Stil, mit und ohne Fokus. Der
+    Offscreen-Lauf zeichnet die Auswahl auch mit der Brush (gemessen: alle vier
+    Stile), das Bild allein faengt den Fehler dort also nicht - die Option schon."""
+    from PySide6 import QtCore, QtGui, QtWidgets
+    from statik3d.gui import tabellen as tab
+    from statik3d.gui.tabellen import Datentabelle, Spalte
+    app = _app()
+    t = Datentabelle([Spalte("Name"), Spalte("E", "GPa", "zahl", 1, True),
+                      Spalte("Ausnutzung", "", "zahl", 3, ampel=True)], "Farbe")
+    t.setzen([[f"S{i}", 210.0 + i, 0.95 if i == 3 else 0.5] for i in range(6)])
+    t.resize(520, 260)
+    t.show()
+    t.activateWindow()
+    app.processEvents()
+    v = t.view
+    delegat = v.itemDelegate()
+
+    def option(zeile, k, gewaehlt):
+        opt = QtWidgets.QStyleOptionViewItem()
+        if gewaehlt:
+            opt.state |= QtWidgets.QStyle.StateFlag.State_Selected
+        delegat.initStyleOption(opt, t.filter.index(zeile, k))
+        return opt
+
+    fest, edit, gelb = option(0, 0, False), option(0, 1, False), option(3, 2, False)
+    check("Option ohne Auswahl: graue Zelle grau, editierbare weiss, Ampel gelb bleibt",
+          fest.backgroundBrush.color().name() == tab.ZELLE_FEST
+          and edit.backgroundBrush.color().name() == tab.ZELLE_EDIT
+          and gelb.backgroundBrush.color().name() == tab.AMPEL_GELB,
+          f"{fest.backgroundBrush.color().name()} {edit.backgroundBrush.color().name()} "
+          f"{gelb.backgroundBrush.color().name()}")
+    zustand = {}
+    for name, zeile, k in (("grau", 0, 0), ("weiss", 0, 1), ("gelb", 3, 2)):
+        opt = option(zeile, k, True)          # die Option muss leben, solange man ihre Brush liest
+        zustand[name] = opt.backgroundBrush.style()
+    check("Option MIT Auswahl: keine Zellfarbe unter der Auswahlfarbe (grau, weiss, gelb)",
+          all(s == QtCore.Qt.BrushStyle.NoBrush for s in zustand.values()),
+          str({n: str(s) for n, s in zustand.items()}))
+
+    def abstand(a: QtGui.QColor, b: str) -> int:
+        c = QtGui.QColor(b)
+        return abs(a.red() - c.red()) + abs(a.green() - c.green()) + abs(a.blue() - c.blue())
+
+    stile = []                                       # die Stilobjekte muessen leben
+    for stil in QtWidgets.QStyleFactory.keys():
+        s = QtWidgets.QStyleFactory.create(stil)
+        if s is None:
+            continue
+        stile.append(s)
+        t.setStyle(s)
+        v.setStyle(s)
+        v.viewport().setStyle(s)
+        v.clearSelection()
+        v.selectRow(2)
+        for fokus in (True, False):
+            if fokus:
+                v.setFocus()
+            else:
+                t.felder[0].setFocus()
+            app.processEvents()
+            bild = v.viewport().grab().toImage()
+
+            def punkt(zeile, k):
+                # linke obere Ecke der Zelle: dort steht kein Text (Zahlen rechts
+                # bündig, Text beginnt erst nach dem Zellrand)
+                r = v.visualRect(t.filter.index(zeile, k))
+                return bild.pixelColor(r.left() + 3, r.top() + 3)
+            p_fest, p_edit = punkt(2, 0), punkt(2, 1)
+            ruhig_fest, ruhig_edit = punkt(0, 0), punkt(0, 1)
+            check(f"{stil}, {'mit' if fokus else 'ohne'} Fokus: markierte graue und weisse Zelle "
+                  f"zeigen die Auswahlfarbe",
+                  abstand(p_fest, tab.ZELLE_FEST) > 60 and abstand(p_fest, tab.ZELLE_EDIT) > 60
+                  and abstand(p_edit, tab.ZELLE_FEST) > 60 and abstand(p_edit, tab.ZELLE_EDIT) > 60
+                  and abs(abstand(p_fest, p_edit.name())) <= 24
+                  and ruhig_fest.name() == tab.ZELLE_FEST and ruhig_edit.name() == tab.ZELLE_EDIT,
+                  f"markiert grau {p_fest.name()}, weiss {p_edit.name()}; "
+                  f"nicht markiert {ruhig_fest.name()} / {ruhig_edit.name()}")
+    t.close()
+
+
 def test_fenster_reihenfolge_und_lasten():
     from PySide6 import QtCore
     w, app = _fenster()
@@ -637,7 +727,7 @@ def main():
     print("=" * 96)
     print("STATIK3D - Tabelleninhalte (Teilpaket 10a)")
     print("=" * 96)
-    for t in (test_festkomma, test_tabelle_pur, test_fenster_reihenfolge_und_lasten,
+    for t in (test_festkomma, test_tabelle_pur, test_auswahlfarbe, test_fenster_reihenfolge_und_lasten,
               test_lasttabelle_vektoren, test_art_im_klartext, test_klick_auf_lastfall,
               test_lastfalltabelle_bedienung, test_kontakt_hinweis):
         print(f"\n--- {t.__name__} ---")

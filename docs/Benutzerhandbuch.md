@@ -2489,8 +2489,12 @@ Bis zum 02.10.2026 lagen über beiden die Zebrastreifen der Zeilen, so dass man
 der Zelle nicht ansah, ob sie sich bearbeiten lässt; die Zebrastreifen
 entfallen in diesen Tabellen. Reine Ergebnistabellen (Stabkräfte, Auflagerkräfte,
 Nachweise …) haben keine editierbare Spalte und behalten die Zebrastreifen; die
-Ampelfarben der Nachweise bleiben, wie sie sind, und die markierten Zeilen
-behalten die Auswahlfarbe.
+Ampelfarben der Nachweise bleiben, wie sie sind. Eine markierte Zeile zeigt in
+jeder Zelle die Auswahlfarbe, auch in einer grauen, weißen oder gelben, mit und
+ohne Fokus in der Tabelle. In der ersten Fassung vom 02.10.2026 überdeckte die
+Zellfarbe die Auswahl am Windows-Desktop: die markierte Zeile sah aus wie die
+anderen. Seither bekommt eine markierte Zelle keine Zellfarbe mehr unter die
+Auswahlfarbe, und der Stil zeichnet sie wie vor den Zellfarben.
 
 **Eingabetabellen sind editierbar.** In Werkstoffe, Querschnitte, Dicken,
 Knoten, Elementen, Lagern und Lastfällen sind die **weißen** Zellen zum
