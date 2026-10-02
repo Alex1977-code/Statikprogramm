@@ -132,7 +132,7 @@ Entscheidung beim Anwender, Plan O7) sowie zwei noch nicht geschriebene Vorschl�
   Der Provider selbst ist Sache des Hauptprogramms.
 - **Abnahme am Knotenblech mit Kehlnaht (C1, Theorie 11.18):** hält gegen die Tet10-Referenz des Hauptprogramms (Pull Request 13 auf `main`; rechts +0,3 %, links −2,9 %, Schranke 3 %);
   Paket in `Desktop/Statik3D/REFERENZ-KNOTENBLECH-2026-10-01/`. Für den 0,5-mm-Lauf der Hauptsitzung liegt dort ein lokal verfeinertes Netz (`knotenblech_tet10_lokal05.inp`, 445 946 Knoten,
-  1,34 Mio. Freiheitsgrade); der Lauf steht aus (Plan O2).
+  1,34 Mio. Freiheitsgrade); der Lauf der Hauptsitzung (02.10.2026, 19:12) belegt die Netzkonvergenz der Referenz (σ_hs gegen 1 mm höchstens 0,31 %), und FCM liegt gegen diese Referenz über vier Gitterlagen bei −2,95 % bis +2,96 % (Schranke 3 %, Theorie 11.20).
 - **Zweite Sicht (C2, Theorie 11.19):** 23 verschiedene Befunde bestätigt, die wesentlichen behoben. Für das Hauptprogramm sichtbar: STEP-Dateien mit mehreren Körpern werden vereinigt (durchdringende
   STL-Schalen geben einen Fehler); die Kopplungskontrolle bewertet Abweichungen als Spannungen (`reference_stress`, `deviation_measure` im `coupling_check`; Momentfehler an dünnen Blechen
   werden jetzt gemeldet, das Knotenblech meldet „Moment 7,9 % > 5 %“ – richtig, das Globalmodell bildet die Exzentrizität nicht ab); `hotspot_max` ist der betragsgrößte Wert mit Vorzeichen;
@@ -149,8 +149,7 @@ Entscheidung beim Anwender, Plan O7) sowie zwei noch nicht geschriebene Vorschl�
 
 ### Offen (Session B)
 
-Entscheidungen und Empfehlungen stehen im Plan, Abschnitt „Offene Entscheidungen nach C2“, und in Entwurf 4e.8: die Messung von Nahtziel t/8 (Größe gemessen: 6,4 Mio. Freiheitsgrade bei p 4, nicht rechenbar) und 0,5 t / 1,5 t (O3), der Lauf der Hauptsitzung am
-lokal verfeinerten Netz (O2), der Konsistenzfehler des p-2-Ansatzes am schrägen Schnitt (2·10⁻⁴ bis 3,5·10⁻³ in der Spannung) und am T-Stoß mit lokaler Verfeinerung (O5), Ebenen durch gekrümmte
+Entscheidungen und Empfehlungen stehen im Plan, Abschnitt „Offene Entscheidungen nach C2“, und in Entwurf 4e.8: die Messung von Nahtziel t/8 (Größe gemessen: 6,4 Mio. Freiheitsgrade bei p 4, nicht rechenbar) und 0,5 t / 1,5 t (O3), der Konsistenzfehler des p-2-Ansatzes am schrägen Schnitt (2·10⁻⁴ bis 3,5·10⁻³ in der Spannung) und am T-Stoß mit lokaler Verfeinerung (O5), Ebenen durch gekrümmte
 Hüllen (O6), der Vertragsvorschlag 2.2.0 (O7), Abbruch in `prepare` und `summary()` nach Zyklen (O8, O9), Torsion in der Kopplungskontrolle (O10), Zeiten je Zyklus (O11), mehrere Kinder derselben
 Hülle (O12), GPU-Einrichtzeit nach der Cholesky-Umstellung (O13), Leistung der Oberflächenquadratur der Hüllenfacetten (O14). Aus Teilprojekt 2 offen: die Vierteilung der Randpolygone an
 gekrümmten Formen. **Behoben (O15, 02.10.2026, Commit 250e607):** `Gitter._aufbauen` teilte in der 2:1-Balancierung andere Zellen als gemeint; bei Verfeinerung über zwei Ebenen unter der Basiszelle (alle bisherigen Messungen) ohne Folge – 391 von 393 Gittern der
