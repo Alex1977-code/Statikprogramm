@@ -325,7 +325,10 @@ def test_auswahlfarbe():
     weissen und grauen Zellen sah die markierte Zeile aus wie die anderen, mit
     und ohne Fokus. Die Zellfarbe aus dem Modell (BackgroundRole) landet als
     backgroundBrush in der Stiloption, und der Windows-Stil legt die Auswahl
-    nicht darueber. Darum leert der Delegat die Brush einer markierten Zelle.
+    nicht darueber. Auch mit geleerter Brush zeichnete der Windows-11-Stil am
+    Desktop nur einen Hauch und einen Strich am Zellrand (zweite Sichtpruefung).
+    Darum ersetzt der Delegat die Zellfarbe einer markierten Zelle durch die
+    Auswahlfarbe der Palette.
 
     Zwei Wege: (1) die Stiloption selbst - sie zeigt die Ursache in jedem Stil;
     (2) das gezeichnete Bild je verfuegbarem Qt-Stil, mit und ohne Fokus. Der
@@ -362,10 +365,20 @@ def test_auswahlfarbe():
     zustand = {}
     for name, zeile, k in (("grau", 0, 0), ("weiss", 0, 1), ("gelb", 3, 2)):
         opt = option(zeile, k, True)          # die Option muss leben, solange man ihre Brush liest
-        zustand[name] = opt.backgroundBrush.style()
-    check("Option MIT Auswahl: keine Zellfarbe unter der Auswahlfarbe (grau, weiss, gelb)",
-          all(s == QtCore.Qt.BrushStyle.NoBrush for s in zustand.values()),
-          str({n: str(s) for n, s in zustand.items()}))
+        soll = opt.palette.color(QtGui.QPalette.ColorGroup.Inactive, QtGui.QPalette.ColorRole.Highlight).name()
+        zustand[name] = (opt.backgroundBrush.style() == QtCore.Qt.BrushStyle.SolidPattern
+                         and opt.backgroundBrush.color().name() == soll, opt.backgroundBrush.color().name(), soll)
+    check("Option MIT Auswahl: Hintergrund ist die Auswahlfarbe der Palette (grau, weiss, gelb)",
+          all(z[0] for z in zustand.values()), str(zustand))
+    opt = QtWidgets.QStyleOptionViewItem()
+    opt.state |= QtWidgets.QStyle.StateFlag.State_Selected | QtWidgets.QStyle.StateFlag.State_Active
+    delegat.initStyleOption(opt, t.filter.index(0, 0))
+    check("… mit Fokus die aktive Auswahlfarbe, Schrift in Auswahlschrift",
+          opt.backgroundBrush.color().name()
+          == opt.palette.color(QtGui.QPalette.ColorGroup.Active, QtGui.QPalette.ColorRole.Highlight).name()
+          and opt.palette.color(QtGui.QPalette.ColorRole.Text).name()
+          == opt.palette.color(QtGui.QPalette.ColorGroup.Active, QtGui.QPalette.ColorRole.HighlightedText).name(),
+          opt.backgroundBrush.color().name())
 
     def abstand(a: QtGui.QColor, b: str) -> int:
         c = QtGui.QColor(b)

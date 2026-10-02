@@ -692,18 +692,29 @@ class WahlDelegate(QtWidgets.QStyledItemDelegate):
         self.tabelle = tabelle
 
     def initStyleOption(self, option, index):
-        """Eine markierte Zelle bekommt keine Zellfarbe unter die Auswahlfarbe.
+        """Eine markierte Zelle mit Zellfarbe zeigt die Auswahlfarbe der Palette.
 
         Die Zellfarben der Eingabetabellen (weiss, grau) und das Gelb der Ampel
         kommen als BackgroundRole aus dem Modell und landen als
-        ``option.backgroundBrush`` in der Stiloption. Der Windows-Stil zeichnet
-        die Auswahl dann nicht darueber: am Desktop sah die markierte Zeile aus
-        wie die anderen, mit und ohne Fokus (Sichtpruefung 02.10.2026). Ohne
-        Brush zeichnet der Stil wie vor den Zellfarben - die Auswahlfarbe der
-        Palette, ohne Fokus die der inaktiven Gruppe."""
+        ``option.backgroundBrush`` in der Stiloption. Der Windows-11-Stil legt
+        die Auswahl dann nur als schwachen Hauch und schmalen Strich am linken
+        Zellrand darueber: am Desktop sah die markierte Zeile aus wie die
+        anderen, mit und ohne Fokus (Sichtpruefung 02.10.2026, zweimal - auch
+        mit geleerter Brush). Darum wird die Zellfarbe einer markierten Zelle
+        ausdruecklich durch die Auswahlfarbe der Palette ersetzt (aktiv oder,
+        ohne Fokus, inaktiv) und die Schrift durch die Auswahlschrift - wie die
+        Zeilen ohne Zellfarbe es vorher zeigten. Zellen ohne Zellfarbe (Tabellen
+        mit Zebrastreifen) zeichnet der Stil weiter selbst."""
         super().initStyleOption(option, index)
-        if option.state & QtWidgets.QStyle.StateFlag.State_Selected:
-            option.backgroundBrush = QtGui.QBrush()
+        if (option.state & QtWidgets.QStyle.StateFlag.State_Selected
+                and option.backgroundBrush.style() != QtCore.Qt.BrushStyle.NoBrush):
+            gruppe = (QtGui.QPalette.ColorGroup.Active
+                      if option.state & QtWidgets.QStyle.StateFlag.State_Active
+                      else QtGui.QPalette.ColorGroup.Inactive)
+            option.backgroundBrush = option.palette.brush(gruppe, QtGui.QPalette.ColorRole.Highlight)
+            schrift = option.palette.brush(gruppe, QtGui.QPalette.ColorRole.HighlightedText)
+            option.palette.setBrush(QtGui.QPalette.ColorRole.Text, schrift)
+            option.palette.setBrush(QtGui.QPalette.ColorRole.WindowText, schrift)
 
     def _spalte(self, index):
         q = self.tabelle.filter.mapToSource(index)
