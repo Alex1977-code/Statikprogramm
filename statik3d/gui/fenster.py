@@ -338,7 +338,8 @@ class Fensteranordnung(QtCore.QObject):
              "noch einmal: alles wie vorher"),
             ("Anordnung zurücksetzen", self.zuruecksetzen,
              "Alle Bereiche zeigen, Modellbaum 16 % der Breite, rechts 460 px, unten 25 % der Höhe"),
-        ], hinweis="Bereiche des Fensters ein- und ausblenden, Ribbon einklappen, Anordnung zurücksetzen")
+        ], hinweis="Bereiche des Fensters ein- und ausblenden, Ribbon einklappen, Anordnung zurücksetzen",
+            symbol="fenster")
         self.act_zone = dict(zip(("baum", "rechts", "unten"), akt[:3]))
         self.act_ribbon, self.act_nur_ansicht, self.act_zuruecksetzen = akt[3:6]
         for a in akt[:5]:

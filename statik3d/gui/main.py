@@ -3755,11 +3755,13 @@ class MainWindow(QtWidgets.QMainWindow):
                              symbol="loeschen")
         g = r.gruppe("Austausch")
         act_import = g.gross("Übernehmen", "⇤", self.import_file, "Ctrl+I",
-                             "Aus RFEM 6, HiCAD, IFC, DXF, SAF, INP, BDF, STEP übernehmen")
+                             "Aus RFEM 6, HiCAD, IFC, DXF, SAF, INP, BDF, STEP übernehmen",
+                             symbol="import")
         g.gross("Exportieren", "⇥", self.export_model, "Ctrl+E",
                 "SDNF, DSTV-NC, IFC, SAF, DXF, STL, VTK, HiCAD")
         g.klein("Ergebnisse als CSV…", self.export_csv,
-                hinweis="Verformungen, Auflager- und Stabkräfte des gezeigten Ergebnisses als CSV")
+                hinweis="Verformungen, Auflager- und Stabkräfte des gezeigten Ergebnisses als CSV",
+                symbol="csv")
         g.klein("Netz + Ergebnisse als VTK…", self.export_vtk,
                 hinweis="Netz und Ergebnisfelder als VTK-Datei, etwa für ParaView")
         g = r.gruppe("Beispiele")
@@ -3802,9 +3804,11 @@ class MainWindow(QtWidgets.QMainWindow):
                                            "Umschalt+Klick erzwingt es auch bei ausgeschaltetem Schalter.",
                                    symbol="auswahl_klug")
         g = r.gruppe("Modell prüfen")
-        g.gross("Prüfen", "⚑", self.do_check, "", "Modell auf Fehler prüfen")
+        g.gross("Prüfen", "⚑", self.do_check, "", "Modell auf Fehler prüfen",
+                symbol="pruefen")
         g.klein("Doppelte Knoten zusammenführen", self.do_merge,
-                hinweis="Knoten mit gleichen Koordinaten zu einem verschmelzen - nach dem Übernehmen aus CAD")
+                hinweis="Knoten mit gleichen Koordinaten zu einem verschmelzen - nach dem Übernehmen aus CAD",
+                symbol="knoten_vereinen")
         g.klein("Freie Stabenden anschließen…", self.staebe_anschliessen,
                 hinweis="Freie Stabenden auf die Achse des nächsten Stabes loten und ihn dort teilen (Suchradius in mm)")
         g.klein("Freie Bewegungen suchen", self.do_singular,
@@ -3820,7 +3824,7 @@ class MainWindow(QtWidgets.QMainWindow):
         g = r.gruppe("Dateien")
         g.gross("Datei hinzufügen…", "▤", lambda: self.unterlage_datei_einfuegen(),
                 hinweis="PDF, Bild, Word, Excel oder eine andere Datei zum Modell nehmen - "
-                        "sie wird mit dem Modell gespeichert")
+                        "sie wird mit dem Modell gespeichert", symbol="anhang")
         g.klein("Unterlage öffnen", lambda: self.unterlage_oeffnen(),
                 hinweis="Die gewählte Unterlage mit dem Programm des Systems öffnen")
         g.klein("Entfernen", lambda: self.unterlage_loeschen(),
@@ -3832,7 +3836,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Eine neue Skizze mit der Ansicht als Hintergrund - zum Bemaßen und Beschriften")
         g = r.gruppe("Skizze")
         g.gross("Neue Skizze", "✎", lambda: self.unterlage_skizze_neu(),
-                hinweis="Ein leeres Blatt: Linien, Kreise, Bögen, Maße und Text wie im CAD")
+                hinweis="Ein leeres Blatt: Linien, Kreise, Bögen, Maße und Text wie im CAD",
+                symbol="skizze")
         g.klein("Bearbeiten", lambda: self.unterlage_bearbeiten(),
                 hinweis="Die gewählte Skizze im Zeichenfenster öffnen (eine Datei: öffnen)")
         g = r.gruppe("Bericht")
@@ -3854,12 +3859,12 @@ class MainWindow(QtWidgets.QMainWindow):
         g.klein("Knoten löschen", self.delete_nodes,
                 hinweis="Die gewählten Knoten mit den daran hängenden Elementen entfernen - Knoten, die eine Linie braucht, bleiben")
         g.klein("Linie aus Knoten…", self.add_linie,
-                hinweis="Aus den ausgewählten Knoten eine Linie machen")
+                hinweis="Aus den ausgewählten Knoten eine Linie machen", symbol="linien")
         # Aendern der Auswahl - dieselben Befehle wie im Rechtsklickmenue
         g = r.gruppe("Ändern")
         g.gross("Verschieben", "⇢", lambda: self.maske_transformieren("verschieben"), "",
                 "Die gewählten Knoten, Linien, Stäbe, Flächen oder Volumen verschieben: Vektor eintippen "
-                "oder zwei Punkte anklicken")
+                "oder zwei Punkte anklicken", symbol="verschieben")
         g.klein("Kopieren…", lambda: self.maske_transformieren("kopieren"),
                 hinweis="Die Auswahl kopieren - mit Versatz, auch mehrfach; das Netz kommt mit")
         g.klein("Drehen…", lambda: self.maske_transformieren("drehen"),
@@ -3874,7 +3879,7 @@ class MainWindow(QtWidgets.QMainWindow):
         g.gross("Lot / Projektion", "⊥", self.maske_lot, "",
                 "Von den gewählten Knoten das Lot fällen: auf die Arbeitsebene, die Ebene einer Fläche, "
                 "den nächsten Punkt einer Fläche oder Linie - als neuer Knoten (mit Lotlinie) oder "
-                "die Knoten dorthin verschieben (projizieren)")
+                "die Knoten dorthin verschieben (projizieren)", symbol="lot")
         g = r.gruppe("Auswahl in der Ansicht")
         # Seit 25.09.2026 (Paket 7) in der Spalte der kleinen Knoepfe, die
         # Auswahlfelder so hoch wie diese: „Geometrie“ brauchte 1748 px und
@@ -3892,9 +3897,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cb_ks.currentTextChanged.connect(self.ks_waehlen)
         g.in_spalte(self.cb_ks)
         g.klein("Neues KS…", self.ks_neu,
-                hinweis="Ein Koordinatensystem über Ursprung und Drehwinkel anlegen - kartesisch, zylindrisch oder sphärisch")
+                hinweis="Ein Koordinatensystem über Ursprung und Drehwinkel anlegen - kartesisch, zylindrisch oder sphärisch",
+                symbol="ks")
         g.klein("Aus drei Knoten", self.ks_aus_auswahl,
-                hinweis="Koordinatensystem aus drei gewählten Knoten: Ursprung, x-Richtung, Punkt in der xy-Ebene")
+                hinweis="Koordinatensystem aus drei gewählten Knoten: Ursprung, x-Richtung, Punkt in der xy-Ebene",
+                symbol="ks_knoten")
         g = r.gruppe("Arbeitsebene")
         self.cb_ebene = QtWidgets.QComboBox()
         self.cb_ebene.addItems(list(ks.EBENEN))
@@ -3963,7 +3970,7 @@ class MainWindow(QtWidgets.QMainWindow):
                             "„Auswahl“, das erscheint, sobald etwas gewählt ist")
         g = r.gruppe("Flächen")
         g.gross("Schale", "◫", self.maske_schale, "",
-                "Drei oder vier Knoten in der Ansicht anklicken")
+                "Drei oder vier Knoten in der Ansicht anklicken", symbol="flaechen")
         g.gross("Fläche aus Linien", "▱", self.add_flaeche_aus_auswahl, "",
                 "Die gewählten Linien beranden die Fläche - Randlinien auch in der Maske anklicken")
         g.klein("Rechteckplatte", self.maske_platte, hinweis="Rechteckplatte aus Schalen, gleich vernetzt")
@@ -3971,7 +3978,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     hinweis="Die gewählten - sonst alle - Flächen nach den Netzeinstellungen vernetzen")
         g.klein("Flächen verschneiden", self.flaechen_verschneiden,
                 hinweis="Zwei gewählte Flächen verschneiden: die Schnittlinie wird als Linie mit Knoten "
-                        "angelegt - auch bei gewölbten Flächen und Spline-Rändern")
+                        "angelegt - auch bei gewölbten Flächen und Spline-Rändern",
+                symbol="verschneiden")
         g.nur_suche("Dicke zuweisen…", lambda: self.zuweisen_zeigen("dicke"),
                     hinweis="Schalendicke und Werkstoff an die gewählten Flächenelemente - im Register "
                             "„Auswahl“, das erscheint, sobald etwas gewählt ist")
@@ -4008,11 +4016,13 @@ class MainWindow(QtWidgets.QMainWindow):
         r = rb.register("Lager / Kontakt")
         g = r.gruppe("Lager")
         g.gross("Knotenlager", "△", self.maske_lager, "",
-                "Knoten wählen, Freiheitsgrade ankreuzen")
+                "Knoten wählen, Freiheitsgrade ankreuzen", symbol="lager")
         g.klein("Linienlager…", self.line_support_dialog,
-                hinweis="Lager entlang einer Linie oder Knotenreihe: Freiheitsgrade, Federn je m, Ausfall")
+                hinweis="Lager entlang einer Linie oder Knotenreihe: Freiheitsgrade, Federn je m, Ausfall",
+                symbol="lager_linie")
         g.klein("Flächenlager…", self.surface_support_dialog,
-                hinweis="Lager auf einer Fläche: Bettung je m², Ausfall bei Zug")
+                hinweis="Lager auf einer Fläche: Bettung je m², Ausfall bei Zug",
+                symbol="lager_flaeche")
         g.klein("Nichtlinearität…", self.support_nonlinear_dialog,
                 hinweis="Ausfall, Schlupf, Reibung und Grenzkraft der Lager an den gewählten Knoten")
         g = r.gruppe("Kontakt")
@@ -4025,7 +4035,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "Kontakte zeigen", lambda _z: self.redraw(), False,
             "Jede Kontaktbedingung in eigener Farbe über die Geometrie legen, mit einem "
             "Schild an der Fuge: Name und Wirkung (Zug, Schub, Reibung). So ist zu sehen, "
-            "wo welcher Kontakt wie wirkt")
+            "wo welcher Kontakt wie wirkt", symbol="ansicht")
         # Alles, was die Fuge zwischen zwei Körpern beschreibt, an einer Stelle
         # (02.10.2026, Paket 12a). Bis dahin standen Übermaß, Spiel geben und
         # Passung im Register Lasten, Spalt / Toleranz in der Geometrie und
@@ -4035,25 +4045,25 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Welle und Bohrung auf ein Spiel bringen: das Programm misst das Nullmaß beider, "
                 "und der Spalt lässt sich am Zylinder abziehen, an der Bohrung zugeben oder auf "
                 "beide verteilen. Die Bohrung wird über ihre ganze Länge angepasst, in jedem "
-                "Bauteil, durch das sie geht - sonst bliebe ein Kegel stehen")
+                "Bauteil, durch das sie geht - sonst bliebe ein Kegel stehen", symbol="spalt")
         g.klein("Kontaktbedingung…", lambda: self._baum_neu("kontaktbedingungen"),
                 hinweis="Kontakt zwischen zwei Körpern: Kontaktflächen, Standardkontakt (Verbund, "
                         "ohne Trennung, reibungsfrei, reibungsbehaftet, rau), Reibung, Suchradius")
         g.klein("Kontaktfugen ausführen", self.kontaktfugen_ausfuehren,
-                hinweis="Die Netze an den Kontaktbedingungen trennen")
+                hinweis="Die Netze an den Kontaktbedingungen trennen", symbol="netz_trennen")
         g.klein("Passung", self.maske_passung,
                 hinweis="Spiel, Lochleibungsgrenze und Randabminderung für alle Kontaktfugen der "
                         "gewählten Volumen auf einmal (Passstifte, Bolzen): Einstellungen, die "
-                        "RFEM nicht kennt und die hier nach dem Import gesetzt werden", symbol="lasten")
+                        "RFEM nicht kennt und die hier nach dem Import gesetzt werden", symbol="passung")
         g.klein("Übermaß", self.maske_uebermass,
                 hinweis="Presspassung als Last: Übermaß einer Kontaktfuge (Passstift, "
                         "Unterlegblech). Daraus entstehen Pressspannung und - über den "
-                        "Reibbeiwert der Fuge - Schubtragfähigkeit", symbol="lasten")
+                        "Reibbeiwert der Fuge - Schubtragfähigkeit", symbol="uebermass")
         g.klein("Spiel geben", self.maske_spiel,
                 hinweis="Gewählte zylindrische Volumen (Passstifte, Bolzen) geometrisch um das "
                         "Durchmesserspiel verkleinern oder gewählte ebene Flächen um einen Spalt nach "
                         "innen versetzen - erst von den Nachbarn getrennt, dann neu vernetzt: das Spiel "
-                        "steht im Modell, ohne Sonderbedingung an der Fuge", symbol="lasten")
+                        "steht im Modell, ohne Sonderbedingung an der Fuge", symbol="spiel")
         g = r.gruppe("Anschlüsse")
         g.gross("Anschluss", "⊞", self.add_joint,
                 hinweis="Kopfplatte, Laschenstoß oder Diagonalanschluss am gewählten "
@@ -4070,13 +4080,15 @@ class MainWindow(QtWidgets.QMainWindow):
         r = rb.register("Lasten")
         g = r.gruppe("Lastfälle")
         g.gross("Lastfälle", "≔", lambda: self.maske_zeigen("Lastfälle"),
-                hinweis="Lastfälle anlegen und verwalten")
+                hinweis="Lastfälle anlegen und verwalten", symbol="lastfall")
         g.klein("Lastfälle nach DIN 19704…", self.maske_din19704_lastfaelle,
                 hinweis="Stahlwasserbau: die üblichen Lastfälle (Eigengewicht, Wasserdruck, Wind, "
-                        "Temperatur, Eis, Betriebslast, Antrieb …) mit Einwirkungsart und Nummer anlegen")
+                        "Temperatur, Eis, Betriebslast, Antrieb …) mit Einwirkungsart und Nummer anlegen",
+                symbol="wasserdruck")
         g.klein("Ermüdungslasten…", self.maske_ermuedungslasten,
                 hinweis="Lastkollektiv für den Ermüdungsnachweis (Palmgren-Miner): je Zeile zwei "
-                        "Zustände oder ein Verlauf mit Lastspielzahl - rechts als Maske")
+                        "Zustände oder ein Verlauf mit Lastspielzahl - rechts als Maske",
+                symbol="ermuedung")
         # Beide Wege zur Kombination in einer Gruppe (02.10.2026, Paket 12a):
         # „Kombinationen automatisch…“ stand bis dahin bei den Lastfällen, „DIN 19704:
         # Kombinationen“ im Register Berechnung bei den Stellungen
@@ -4113,16 +4125,16 @@ class MainWindow(QtWidgets.QMainWindow):
         g.klein("Vorspannung", self.maske_vorspannung,
                 hinweis="Vorspannkraft in gewählten Stäben (Zugstange, Seil, Anker) oder Volumen "
                         "(Schraube) - als Anfangsdehnung: das Bauteil trägt F_v als Zug und klemmt "
-                        "die Umgebung", symbol="lasten")
+                        "die Umgebung", symbol="vorspannung")
         g = r.gruppe("Generierer")
         g.gross("Wasserdruck", "", lambda: self.maske_wasserdruck(), "",
                 "Wasserdruck auf einen Verschluss je Situation: Ober- und Unterwasser, "
                 "Dichtungslinie, überströmt, unterströmt, Absenkung des Wasserspiegels, "
-                "Druckschwankung - mit Kennwerten und Erläuterung", symbol="flaechenlast")
+                "Druckschwankung - mit Kennwerten und Erläuterung", symbol="wasserdruck")
         g.gross("Wind", "", lambda: self.maske_wind(), "",
                 "Wind nach DIN EN 1991-1-4: Windzone, Geländekategorie oder Mischprofil, "
                 "Anströmrichtung; Außendruck auf Wände und Dächer (Zonen), Kraftbeiwerte auf "
-                "Stäbe - mit Höhenprofil, Kennwerten und Erläuterung", symbol="lasten")
+                "Stäbe - mit Höhenprofil, Kennwerten und Erläuterung", symbol="wind")
         g = r.gruppe("Weitere")
         g.klein("Eigengewicht", lambda: self.maske_zeigen("Lager/Lasten"),
                 hinweis="Eigengewicht im aktiven Lastfall ein- und ausschalten")
@@ -4141,7 +4153,7 @@ class MainWindow(QtWidgets.QMainWindow):
         g.klein("Netzeinstellungen…", self.maske_netzeinstellungen,
                 hinweis="Elemente Entwurf, Mittel (Vorgabe) oder Fein; Netzdichte (grob, mittel, fein, "
                         "eigene Ziellänge), Elementform, intelligente Anpassung an kleine Kanten, "
-                        "kleinste/größte Elementgröße, Höchstzahl je Objekt")
+                        "kleinste/größte Elementgröße, Höchstzahl je Objekt", symbol="einstellungen")
         # Paket E (25.09.2026): verwendete Elemente zeigen. „Elemente wählen…“
         # mit Haken ist am selben Tag entfallen - Stufen statt Haken im
         # Auswahlfeld „Elemente“ der Netzeinstellungen (Anwender: „keep it simple“)
@@ -4152,7 +4164,8 @@ class MainWindow(QtWidgets.QMainWindow):
         g.klein("Adaptiv vernetzen…", self.geometrie_adaptiv_vernetzen,
                 hinweis="Vernetzen, den aktiven Lastfall rechnen, den Fehler je Element schätzen "
                         "(Spannungssprung), nur dort feiner und im Feld gröber - so viele Runden wie "
-                        "gewünscht; Kantenlänge je Körper und Feldpunkte bleiben in den Netzeinstellungen")
+                        "gewünscht; Kantenlänge je Körper und Feldpunkte bleiben in den Netzeinstellungen",
+                symbol="netz_adaptiv")
         g.klein("Netzqualität…", self.maske_netzguete,
                 hinweis="Die Form der Elemente bewerten und einfärben: Formgüte (1 = beste Form), "
                         "Seitenverhältnis, Kantenlänge; Kennwerte und die schlechtesten Elemente "
@@ -4178,7 +4191,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Verzweigungslastfaktor und Knickfigur für den aktiven Lastfall oder die gewählte Kombination")
         g = r.gruppe("Stellungen")
         g.gross("Alle Stellungen", "⟳", self.stellungen_rechnen,
-                hinweis="Jede Stellung rechnen und die Umhüllende bilden")
+                hinweis="Jede Stellung rechnen und die Umhüllende bilden", symbol="stellungen")
         g.klein("Stellung anlegen…", self.neue_stellung,
                 hinweis="Rechts die Maske: Bezeichnung, Ausgangsstellung, Verschiebung, Verdrehung, "
                         "deaktivierte Stäbe, Flächen, Volumen, Gelenke und Lager")
@@ -4253,7 +4266,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "Werteskala", "▤", lambda: self.maske_zeigen("Ergebnisse"),
             hinweis="Grenzen der Farbskala (Maske Ergebnisse): automatisch, fest oder "
                     "Grenzwert wie 355 für S355 - darüber magenta, der Größtwert an der Skala; "
-                    "wahlweise nur die Überschreitungen färben")
+                    "wahlweise nur die Überschreitungen färben", symbol="skala")
         g = r.gruppe("Tabelle ausgeben")
         g.gross("Excel", "▦", lambda: self.tabelle_ausgeben("xlsx"),
                 hinweis="Die Tabelle, die unten vorn liegt, als xlsx speichern "
@@ -4281,7 +4294,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         "in Stab- und Volumenmaske zu prüfen")
         g = r.gruppe("Einstellungen")
         g.gross("Konfiguration", "⚙", self.design_settings,
-                hinweis="Teilsicherheitsbeiwerte und Nachweisstellen")
+                hinweis="Teilsicherheitsbeiwerte und Nachweisstellen", symbol="konfiguration")
         g = r.gruppe("Knicklängen")
         g.gross("Aus Knickfigur", "β", self.do_knicklaengen,
                 hinweis="Knicklängenbeiwerte β aus Verzweigungslastfaktor und Eigenform: "
@@ -4300,7 +4313,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Strömungsinduzierte Schwingungen eines Verschlusses aus dem Wasserdruck: "
                         "Eigenfrequenzen in Luft und im Wasser (hydrodynamische Masse nach "
                         "Westergaard), Wirbelablösung (Strouhal), reduzierte Geschwindigkeit, "
-                        "Antwort auf die Druckschwankung und Ermüdung")
+                        "Antwort auf die Druckschwankung und Ermüdung", symbol="verschluss")
         g.nur_suche("Tabelle Schwingung", lambda: self.tabelle_zeigen("Schwingung"), symbol="tabelle",
                     hinweis="Eigenfrequenzen, Wirbelablösung und Beurteilung unten in der Tabelle")
 
@@ -4369,7 +4382,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Die Ansicht, so wie sie gerade steht, als Bild in den Bericht "
                 "aufnehmen – samt Ergebnis, Färbung und Verlauf")
         g.klein("Übernommene Bilder", lambda: self.tabelle_zeigen("Bericht"),
-                hinweis="Die Tabelle „Bericht“ unten zeigen")
+                hinweis="Die Tabelle „Bericht“ unten zeigen", symbol="tabelle")
         g = r.gruppe("Gliederung")
         g.klein("Text einfügen", lambda: self.berichtstext_einfuegen(),
                 hinweis="Eigenen Text in den Bericht einfügen (Absätze, „# Titel“, „- Punkt“)")
@@ -4571,7 +4584,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # Layer sichtbar und gesperrt.
         self.act_layerliste = g.gross("Layerliste", "≡", self.layerliste_zeigen,
                                       hinweis="Alle Layer in einem Fenster: sichtbar und gesperrt anhaken, "
-                                              "neue aus der Auswahl, Objekte eines Layers wählen")
+                                              "neue aus der Auswahl, Objekte eines Layers wählen",
+                                      symbol="layer")
         self.cb_layer = QtWidgets.QComboBox()
         self.cb_layer.setMinimumWidth(130)
         self.cb_layer.setToolTip("Nur diesen Layer im Bild zeigen (RFEM: Objektselektion); "
@@ -4589,7 +4603,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._gruppe_fenster = g
         self.act_einheiten = g.gross("Einheiten", "㎪", self.maske_einheiten,
                                      hinweis="Einheiten und Nachkommastellen für Ansicht und "
-                                             "Tabellen (Kraft, Länge, Verformung, Spannung)")
+                                             "Tabellen (Kraft, Länge, Verformung, Spannung)",
+                                     symbol="einheiten")
 
         # -- Extras ------------------------------------------------------
         # -- Messen ------------------------------------------------------
@@ -4598,7 +4613,7 @@ class MainWindow(QtWidgets.QMainWindow):
         g.gross("Abstand", "↔", lambda: self.messen("abstand"),
                 hinweis="Abstand zweier Punkte mit Δx, Δy, Δz und Abstand in der Ebene - zwei "
                         "Punkte anklicken (Knoten, Kanten, Linien, Raster, Arbeitsebene)",
-                symbol="linie_neu")
+                symbol="abstand")
         g.klein("Winkel", lambda: self.messen("winkel"),
                 hinweis="Winkel dreier Punkte: Schenkel, Scheitel, Schenkel")
         g.klein("Koordinaten", lambda: self.messen("koordinaten"),
@@ -4608,16 +4623,16 @@ class MainWindow(QtWidgets.QMainWindow):
         g = r.gruppe("Auswahl")
         g.gross("Länge / Fläche", "Σ", self.messen_auswahl,
                 hinweis="Länge der gewählten Linien und Stäbe, Fläche der gewählten Flächen "
-                        "(Auswahlart Linie, Stab oder Fläche)", symbol="suchen")
+                        "(Auswahlart Linie, Stab oder Fläche)", symbol="laenge_flaeche")
         g.klein("Messungen löschen", self.messungen_loeschen, symbol="loeschen",
                 hinweis="Die vorübergehenden Messungen aus der Ansicht nehmen")
         g = r.gruppe("Bemaßung")
         g.gross("Linearmaß", "⟷", lambda: self.bemassung_neu("linear"),
                 hinweis="Maß zwischen zwei Punkten mit Maßhilfslinien, Maßlinie und Schrägstrichen; "
-                        "die Maßlinie liegt senkrecht zur Strecke in der Blickebene", symbol="linie_neu")
+                        "die Maßlinie liegt senkrecht zur Strecke in der Blickebene", symbol="masslinie")
         g.gross("Maßkette", "⟷", lambda: self.bemassung_neu("kette"),
                 hinweis="Mehrere Punkte der Reihe nach: Einzelmaße und Gesamtmaß; „Anwenden“ beendet",
-                symbol="linien")
+                symbol="masskette")
         g.klein("Höhenkote", lambda: self.bemassung_neu("hoehenkote"),
                 hinweis="Höhe eines Punkts über dem Höhenbezug (±0.000), mit Kotensymbol")
         g.klein("Winkelmaß", lambda: self.bemassung_neu("winkel"),
@@ -4644,7 +4659,7 @@ class MainWindow(QtWidgets.QMainWindow):
         g.klein("Rechnerfarm", lambda: self.open_doc("Rechnerfarm.md"),
                 hinweis="Verteiltes Rechnen auf mehreren Rechnern einrichten")
         g = r.gruppe("Tastatur")
-        g.gross("Tastenkürzel", "", self.kuerzel_zeigen, symbol="tabelle",
+        g.gross("Tastenkürzel", "", self.kuerzel_zeigen, symbol="tastatur",
                 hinweis="Die Liste aller Tastenkürzel: Befehl, Kürzel und Ort im Ribbon - "
                         "aus den Befehlen erzeugt, nicht von Hand gepflegt")
         # kein Knopf: die Befehlssuche selbst ist das Feld oben rechts. Der Befehl
@@ -17524,7 +17539,8 @@ class MainWindow(QtWidgets.QMainWindow):
         g.widget(self.cb_assign_mat)
         g.widget(self.cb_assign_shell)
         g.gross("Zuweisen", "⇄", self.assign_props,
-                hinweis="Querschnitt, Werkstoff und Dicke den Elementen der Auswahl geben")
+                hinweis="Querschnitt, Werkstoff und Dicke den Elementen der Auswahl geben",
+                symbol="zuweisen")
         g = r.gruppe("Elemente")
         g.gross("Gelenke", "○", lambda: self.zuweisen_zeigen("gelenke"),
                 hinweis="Gelenke an den Stabenden setzen")

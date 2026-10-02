@@ -175,6 +175,67 @@ mit weißem Haken — im Ribbon, in der Glasleiste und in den Menüs. Bis zum
 Knopfs also unsichtbar. Der blaue Knopf **Berechnen** trägt ein weißes
 Dreieck (vorher blau auf Blau); im Schnellzugriff bleibt es blau.
 
+**Jeder große Knopf trägt ein gezeichnetes Symbol** (seit 03.10.2026). Die
+runde Plakette mit dem Anfangsbuchstaben, die das Programm für einen Namen ohne
+Zeichnung malt, steht auf keinem großen Knopf mehr. Bis zum 03.10.2026 trugen
+elf große Knöpfe nur diesen Buchstaben: *Übernehmen*, *Prüfen*, *Verschieben*,
+*Lot / Projektion*, *Spalt / Toleranz*, *Alle Stellungen*, *Konfiguration*,
+*Verschluss*, *Einheiten*, *Fenster ▾* und im Kontextregister „Auswahl“ das
+*Zuweisen*. *Übernehmen* zeigt jetzt den Pfeil in die Ablage (wie *Exportieren*
+den Pfeil heraus), *Prüfen* eine Lupe mit Haken, *Verschieben* das Stück mit
+seinem gestrichelten Ziel, *Lot / Projektion* einen Punkt über einer Ebene mit
+Lot und rechtem Winkel, *Spalt / Toleranz* zwei Wände mit einem Doppelpfeil
+dazwischen, *Alle Stellungen* dieselbe Last an drei Orten auf dem Träger,
+*Konfiguration* drei Schieberegler, *Verschluss* die Tafel zwischen zwei
+Führungen über dem Wasser mit einem Schwingungspfeil, *Einheiten* ein Lineal,
+*Fenster ▾* ein Fenster mit Seitenbereich und zwei Feldern, *Zuweisen* ein
+Etikett, das einem Stab gegeben wird.
+
+Die fünf Knöpfe *Vorspannung*, *Übermaß*, *Spiel geben*, *Passung* und *Wind*
+trugen bis zum 03.10.2026 alle dasselbe Symbol, die Pfeilreihe der Lasten, und
+ließen sich nur am Text unterscheiden. Jetzt hat jeder sein eigenes:
+*Vorspannung* ein Spannglied zwischen zwei Ankerplatten mit Zugpfeilen nach
+außen, *Übermaß* einen Bolzen, der größer ist als seine (gestrichelte)
+Bohrung, von vier Pfeilen eingepresst, *Spiel geben* einen Bolzen, der unten
+in der Bohrung liegt, mit dem bemaßten Spiel darüber, *Passung* einen Bolzen
+in der Bohrung mit gleichmäßigem Ringspalt und *Wind* drei Luftströme mit
+Wirbeln am Ende. Auch *Wasserdruck* hat eine eigene Zeichnung (Pfeile gegen
+eine Wand, mit der Tiefe länger) und teilt sie nur noch mit *Lastfälle nach
+DIN 19704* (Stahlwasserbau), nicht mehr mit der Flächenlast.
+
+Außerdem sind Symbole, die aus der Beschriftung **geraten** worden waren und
+nicht zur Funktion passten, durch gewählte ersetzt: *Knotenlager* zeigte bis
+zum 03.10.2026 den Knoten mit Plus („Knoten anlegen“), jetzt das Lagerdreieck;
+*Linienlager…* und *Flächenlager…* zeigten eine neue Linie und eine neue Fläche,
+jetzt je ein Lager unter einer Linie und unter einer Fläche; *Werteskala* zeigte
+einen geöffneten Ordner, jetzt einen Farbbalken mit Teilstrichen. Dazu *Schale*
+(vorher ein Quader, jetzt die Fläche), *Ergebnisse als CSV…* (jetzt das
+CSV-Blatt), *Neues KS…* und *Neue Skizze* (beide trugen das Blatt „Neu“, jetzt
+Koordinatenachsen und Bleistift), *Datei hinzufügen…* (jetzt eine Büroklammer,
+vorher derselbe Ordner wie *Unterlage öffnen*), *Abstand*, *Linearmaß* und
+*Maßkette* (vorher „Linie anlegen“, jetzt Messpunkte und Maßlinien), *Layerliste*
+(jetzt Ebenen statt Schriftstück), *Tastenkürzel* (eine Tastatur statt einer
+Tabelle), *Länge / Fläche* (eine Fläche mit Maßstrecke statt einer Lupe) und
+weitere; die vollständige Liste mit dem früheren Symbol steht in
+`tests/test_symbole_ribbon.py` (Tabelle `KORRIGIERT`). Wo zwei verschiedene
+Knöpfe einer Gruppe dasselbe Symbol trugen (*Datei hinzufügen…* und *Unterlage
+öffnen*, *Knoten* und *Linie aus Knoten…*, *Fläche aus Linien* und *Flächen
+verschneiden*, *Kontakt* und *Kontakte zeigen*, *Vernetzen* und *Adaptiv
+vernetzen…* und weitere), tragen sie jetzt verschiedene. Bewusst gleich
+bleiben nur *EN 1990…* und *DIN 19704* (dieselbe Handlung nach zwei Normen),
+die beiden Löschknöpfe der Bemaßung und im Kontextregister, die drei
+Handbücher und *Ergebnisse zeigen*: dieser Schalter ist dieselbe Aktion wie
+der in der Glasleiste, und die Glasleiste bestimmt sein Symbol.
+
+Die Plakette mit dem Buchstaben bleibt für 27 **kleine** Knöpfe, zum Beispiel
+*Beenden*, *Kopieren…*, *Drehen…*, *Spiegeln…*, *Winkel*, *Koordinaten* und
+*Eigenschwingungen*; sie zeigt, welcher Befehl noch eine eigene Zeichnung
+braucht. Geprüft wird am laufenden Ribbon, welcher Knopf welches Symbol trägt
+(`tests/test_symbole_ribbon.py`): kein großer Knopf ohne Zeichnung, die fünf
+Lastknöpfe paarweise verschieden (auch als Bild, in 28 und 16 px), jede neue
+Zeichnung nicht leer, keine zwei Knöpfe einer Gruppe mit demselben Symbol außer
+den genannten.
+
 Links in der Kopfzeile die **Schnellzugriffsleiste** (Speichern, Rückgängig,
 Wiederholen, Berechnen) — dieselben Befehle, nur schneller erreichbar;
 „Alles deselektieren“ steht in der Glasleiste über der Ansicht. Rechts die
