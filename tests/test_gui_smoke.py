@@ -7106,11 +7106,28 @@ def main():
         w.ribbon.finden("Projektangaben…")[0].aktion.trigger(); app.processEvents()
         check("Datei → Projektangaben… zeigt rechts die Maske „Modell“",
               w.eingaben_dock.windowTitle() == "Modell", w.eingaben_dock.windowTitle())
-        w._set_selection([]); app.processEvents()
+        # Ohne **jede** Auswahl: die Stabmaske von B3 hat den Stab gewählt (Doppelklick im
+        # Baum), und seit 12c (03.10.2026) wirkt „Zuweisen“ auch auf gewählte Stäbe -
+        # _set_selection([]) leert nur die Knoten und liess den Hinweis ausbleiben
+        w.clear_selection(); app.processEvents()
+        check("Vorbedingung: weder Knoten noch Stäbe, Linien, Flächen, Volumen, Elemente, Lager oder Lasten gewählt",
+              not w._auswahl_arten() and w.ribbon._kontext is None, str(w._auswahl_arten()))
         n_f = len(fehler_)
         w.zuweisen_zeigen("querschnitt"); app.processEvents()
         check("„Querschnitt zuweisen…“ ohne Auswahl: Hinweis statt stummem Befehl",
               len(fehler_) == n_f + 1 and "wählen" in fehler_[-1], str(fehler_[-1:]))
+        # … und bei gewähltem Stab: kein Hinweis, das Register zeigt das Feld (12c)
+        w.sel_staebe[:] = [stab_]; w._auswahl_register(); app.processEvents()
+        n_f = len(fehler_)
+        w.ribbon.zeigen("Start"); app.processEvents()
+        w.zuweisen_zeigen("querschnitt"); app.processEvents()
+        check("„Querschnitt zuweisen…“ bei gewähltem Stab: kein Hinweis, Kontextregister vorn mit dem Feld Querschnitt",
+              len(fehler_) == n_f and w.ribbon._kontext is not None
+              and w.ribbon.tabs.currentWidget() is w.ribbon._kontext
+              and getattr(w, "cb_assign_sec", None) is not None
+              and w.ribbon.tabs.tabText(w.ribbon.tabs.currentIndex()) == "Auswahl: 1 Stab",
+              str((fehler_[n_f:], w.ribbon._kontext_name)))
+        w.clear_selection(); app.processEvents()
         w._set_selection([0, 1]); app.processEvents()
         w.zuweisen_zeigen("dicke"); app.processEvents()
         check("„Dicke zuweisen…“ mit Auswahl: Kontextregister „Auswahl“ vorn, Aufklappliste Dicke da",
