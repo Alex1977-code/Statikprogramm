@@ -49,6 +49,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import design as dsg
 from . import symbole as sym
+from .entsorgen import entsorgen
 from .sprache import kuerzel_text
 
 
@@ -534,7 +535,7 @@ class Ribbon(QtWidgets.QWidget):
             for w in (self.schnellzugriff, self.suche):
                 reihe.removeWidget(w)
             self._aussen.removeItem(reihe)
-            reihe.deleteLater()
+            entsorgen(reihe)
             self._kopfreihe = None
         return self.schnellzugriff, self.suche
 
@@ -746,7 +747,8 @@ class Ribbon(QtWidgets.QWidget):
             self._kontext_entfernt = False
         namen = {b.aktion for b in self.befehle if b.register == self._kontext_name}
         self.befehle = [b for b in self.befehle if b.aktion not in namen]
-        self._kontext.deleteLater()
+        # seine Knoepfe haengen an Lambdas: ueber entsorgen loeschen (C15)
+        entsorgen(self._kontext)
         self._kontext, self._kontext_name, self._kontext_schluessel = None, "", None
         if war_vorn and nach_vorn:
             if not (self._zuletzt and self.zeigen(self._zuletzt)):

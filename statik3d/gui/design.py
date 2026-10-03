@@ -22,6 +22,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from .. import elemente as EL
 from .. import zahlen as zl
 from ..knotenrollen import konstruktionsknoten
+from .entsorgen import entsorgen
 
 #: Farben des Entwurfs
 FARBEN = {
@@ -605,7 +606,7 @@ class Filmstreifen(QtWidgets.QWidget):
                 # Nur ausblenden und zum Loeschen vormerken: setParent(None)
                 # wuerde die Karte zu einem eigenen Fenster machen.
                 p.widget().hide()
-                p.widget().deleteLater()
+                entsorgen(p.widget())
         if not stellungen:
             hin = QtWidgets.QLabel("noch keine Stellung angelegt – „+ Stellung“")
             hin.setStyleSheet(f"color:{FARBEN['matt']};")

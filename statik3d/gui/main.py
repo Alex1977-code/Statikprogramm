@@ -45,6 +45,7 @@ from .ermuedungsmaske import Ermuedungsmaske
 from . import elementmasken as elm
 from .. import elementauswahl as ea
 from . import tabellen as tab
+from .entsorgen import entsorgen
 
 
 def _lebt(obj) -> bool:
@@ -1272,7 +1273,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # (tests/test_rechtsklick.py). Bis zum 03.10.2026 blieb jedes stehen.
         alt = getattr(self, "_kontextmenue_zuletzt", None)
         if alt is not None and _lebt(alt):
-            alt.deleteLater()
+            entsorgen(alt)                  # seine Eintraege haengen an Lambdas (C15)
         menu = self._kontextmenue(pos)
         self._kontextmenue_zuletzt = menu
         # Strg und Umschalt des Klicks (_rechts_los -> _mit_tasten) galten fuer
@@ -5114,7 +5115,12 @@ class MainWindow(QtWidgets.QMainWindow):
                     quelle.valueChanged.disconnect(fn)
                 except (RuntimeError, TypeError):
                     pass
-        maske.destroyed.connect(lambda *_: trennen())
+            schieber.clear()                # nur einmal
+        # Beim Schliessen abhaengen, nicht erst bei destroyed: seit C15 trennt
+        # der Maskenrand vor dem Loeschen alle Signale der Maske, solange keine
+        # Ereignisschleife laeuft - destroyed kaeme dann nicht mehr an
+        # (statik3d.gui.entsorgen)
+        maske.geschlossen.connect(trennen)
         maske.angewendet.connect(lambda _w: self.maskenrand.schliessen())
         return self.maske_erzeugen(maske)
 
@@ -19437,7 +19443,7 @@ class MainWindow(QtWidgets.QMainWindow):
             box.exec()
             gedrueckt = box.clickedButton()
         finally:
-            box.deleteLater()
+            entsorgen(box)
         return next((k for k, b in knoepfe.items() if b is gedrueckt), "abbrechen")
 
     def _ungespeichert_fragen(self, anlass: str, wunsch=None) -> bool:
@@ -23090,7 +23096,7 @@ class MainWindow(QtWidgets.QMainWindow):
         alt = getattr(self, "rechenliste", None)
         if alt is not None:
             alt.close()                       # das Fenster des vorigen Laufs
-            alt.deleteLater()
+            entsorgen(alt)
         self.rechenliste = None
         if not posten:
             return
@@ -27480,7 +27486,7 @@ class MainWindow(QtWidgets.QMainWindow):
         alt = getattr(self, "_kuerzelliste", None)
         if alt is not None:
             alt.close()
-            alt.deleteLater()
+            entsorgen(alt)
         f = Kuerzelliste(self, self.ribbon.kuerzel_liste())
         self._kuerzelliste = f
         f.show()
@@ -27636,7 +27642,7 @@ class MainWindow(QtWidgets.QMainWindow):
             box.exec()
             return box.clickedButton() is b_ja
         finally:
-            box.deleteLater()
+            entsorgen(box)
 
     # ---- Fensterrahmen: Version und Modell -----------------------------
     def _refresh_title(self):
