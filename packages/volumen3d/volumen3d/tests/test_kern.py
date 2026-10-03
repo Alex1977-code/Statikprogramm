@@ -26,7 +26,7 @@ TESTS = [
     test_oktree.test_schnittzellen, test_oktree.test_bereich_und_duenn, test_oktree.test_punktsuche_und_box, test_oktree.test_moden_ueber_ebenen, test_oktree.test_rand_auf_zellflaechen, test_oktree.test_verfeinerung_drei_ebenen,
     test_zwaenge.test_zaehlung_und_spur, test_zwaenge.test_leere_zellen, test_stl.test_kern_stl, test_operator.test_kern, test_mehrgitter.test_kern, test_mehrgitter.test_nullkandidaten, test_mehrgitter.test_grosse_bloecke_spd,
     test_quadratur.test_polyeder, test_quadratur.test_ebene_geometrie_exakt, test_quadratur.test_kleine_radien, test_quadratur.test_inside_zelle,
-    test_quadratur.test_momentfitting, test_zwaenge.test_wurzelwahl_rundungsfest,
+    test_quadratur.test_momentfitting, test_quadratur.test_stuecke_exakt, test_zwaenge.test_wurzelwahl_rundungsfest,
     test_rueckgewinnung.test_patch_exakt, test_rueckgewinnung.test_haengende_moden, test_rueckgewinnung.test_reine_biegung, test_rueckgewinnung.test_mehrere_lastfaelle,
     test_quadratur.test_verschachtelter_baum, test_quadratur.test_innere_trennflaeche, test_quadratur.test_deckungsgleiche_flaechen, test_hotspot.test_geometrie_und_lineares_feld, test_hotspot.test_uneindeutig, test_hotspot.test_anwendbarkeit, test_hotspot.test_polylinien,
     test_hotspot.test_exaktes_feld,
@@ -40,7 +40,7 @@ TESTS = [
     test_schale.test_kopplungsabweichung, test_schale.test_schale_achsparallel, test_schale.test_schale_geneigt, test_schale.test_schale_geneigt_p3,
     test_knotenblech.test_knotenblech_h10, test_knotenblech.test_knotenblech_konvergenz,
     test_elastizitaet.test_zellsteifigkeit, test_elastizitaet.test_starrkoerper,
-    test_patch.test_patch, test_patch.test_kleine_schnittzellen, test_patch.test_normalprojektion,
+    test_patch.test_patch, test_patch.test_patch_hoeherer_ordnung, test_patch.test_kleine_schnittzellen, test_patch.test_normalprojektion,
     test_vertrag_fcm.test_protokoll_und_registrierung, test_vertrag_fcm.test_ablauf, test_vertrag_fcm.test_gutachten_faelle,
     test_vertrag_fcm.test_hybrid_platzhalter, test_vertrag_fcm.test_lasten, test_vertrag_fcm.test_zylinderauswahl, test_vertrag_fcm.test_loeserwahl,
 ]

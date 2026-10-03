@@ -750,6 +750,89 @@ Theorie 11.8 (Nachtrag), 11.20, Entwurf 4b.1 und 4e.8, `Volumenmodul.md`.
 
 *Ergebnis O15 (02.10.2026, Commit 250e607; Läufe aus einem festen Arbeitsbaum auf diesem Commit, Suiten nacheinander).* (1) und (2) wie festgelegt in `fcm/gitter.py`. (3) `test_oktree.test_verfeinerung_drei_ebenen` (in der Kernsuite) besteht; mit der alten Reihenfolge und der Grenze schlägt er fehl (`RuntimeError`, Kaskade nach 8 Durchläufen; die beiden Prüfungen der Zwei-Ebenen-Fälle bestehen auch alt). Kugel Ziel 1,3 mm: 2 100 Blätter in vier Ebenen (519 / 155 / 306 / 1 120), Überlappungen, Lücken und 2:1-Verstöße je 0. (4) Vergleich alt gegen neu: 393 Gitter aus 26 Suiten verglichen (alte und neue Reihenfolge, Blattmengen aus `ebene` und `ijk` exakt): 391 gleich, 0 verschieden, 2 Kaskade im alten Verfahren – das ist der absichtlich gebaute Dreiebenenfall des neuen Tests (2 100 Blätter in 519 / 155 / 306 / 1 120), gebaut in `test_oktree` und `test_kern`. Kein bestehendes Gitter ändert sich, also kann sich keine Zahl dieser Suiten ändern; größtes Gitter 65082 Blätter. Das Paket baut keine Gitter in Arbeitsprozessen (kein `multiprocessing`), die Messung ist vollständig. (5) t/8 mit dem Code des Repositorys: 31 531 Blätter (208 / 622 / 1 721 / 28 980), Aufbau 0,9 s, 841 032 / 2 747 052 / 6 398 538 Freiheitsgrade bei p 2 / 3 / 4 – gleich der Messung mit dem Monkeypatch im Scratchpad; 2,5 mm unverändert 5 146 Blätter und 150 411 / 477 702 / 1 096 107 Freiheitsgrade. (6) Alle Suiten grün: `oktree` 30/30, `gitter` 26/26, `zwaenge` 24/24, `patch` 14/14, `kern` 347/347, `stl` 27/27, `step` 12/12, `huelle` 22/22, `schale` 17/17, `rueckgewinnung` 6/6, `vertrag_fcm` 51/51, `quadratur` 45/45, `lame` 7/7, `kragarm` 15/15, `adaptiv` 18/18, `mehrgitter` 27/27, `operator_gpu` 14/14, `kirsch` 8/8, `knotenblech` 9/9, `basis` 22/22, `elastizitaet` 6/6, `geometrie` 46/46, `hotspot` 10/10, `operator` 10/10, `paket` 4/4, `pcg` 7/7; mypy `--strict` und `lint-imports` sauber.
 
+*Entscheidung O5 (Anwender 03.10.2026):* Empfehlung angenommen, die Ursache des Konsistenzfehlers wird jetzt gesucht (nach Pull Request 3, vor Teilprojekt 6).
+
+*Regeln O5, vor der Messung festgelegt (03.10.2026).* **Frage:** Warum wird ein Feld des Ansatzraums an Schnittzellen nicht auf Rundungsniveau reproduziert, wie groß ist der
+Anteil jeder Ursache, und welche Kur beseitigt sie? Die Arbeit ist fertig, wenn je Modell, Polynomgrad und Feldgrad feststeht, welcher Schalter den Fehler beseitigt, und eine Kur mit
+Wirkung und Kosten vorliegt; neue Befunde, die dabei auffallen, kommen auf die Liste und werden nicht mitbehandelt.
+
+**Hypothesen aus dem Quelltext (vor jeder Messung).** Für ein Feld u vom Gesamtgrad k im Ansatzraum (Tensorgrad p, Testfunktion v vom Gesamtgrad bis 3p) verlangt die Konsistenz
+des Verfahrens, dass Volumen- und Flächenregel den Gaußschen Satz für σ(u)·v erfüllen: ∫σ(u):ε(v) hat den Gesamtgrad 3p + k − 2, ∫(σ(u)n)·v den Grad 3p + k − 1.
+- **H1 Tetraederregel.** `ordnung_tet = ceil(1,5 p)` ist exakt bis zum Gesamtgrad 2n − 1 = 5 / 9 / 11 (p 2 / 3 / 4), ausgelegt auf k = 1 (Patch-Test, Grad 3p − 1). Für k = 2 sind 6 / 9 / 12 nötig:
+  bei p 2 und p 4 verfehlt, bei p 3 erfüllt; für k = 3 bei p 3 sind 10 nötig: verfehlt. Betroffen sind nur Stücke mit schrägen Ebenen (achsparallele Stücke und Hüllenzellen rechnen anders).
+- **H2 Flächenregel.** `ordnung_flaeche = ceil((3p + 1)/2)` ist exakt bis 7 / 9 / 13, ausgelegt auf k = 1 (Grad 3p). Für k = 2 sind 7 / 10 / 13 nötig: bei p 3 verfehlt, bei p 2 und p 4 erfüllt.
+- **H3 α in schlecht geschnittenen Zellen ohne Wurzel.** Solche Zellen behalten die fiktive Steifigkeit; der Konsistenzfehler ist proportional zu α und trifft auch lineare Felder.
+- **H4 Rundung.** Was danach bleibt, ist Kondition mal Rechengenauigkeit.
+
+**Vorhersagen.** (V1) p 2, k 2, Modell mit schrägen Ebenen: der Fehler verschwindet mit `ordnung_tet` ≥ 4, nicht mit der Flächenordnung. (V2) p 3, k 2: die Tetraederordnung ändert
+nichts, die Flächenordnung 6 beseitigt den Fehler. (V3) p 3, k 3: beide Ordnungen sind nötig (Tetraeder ≥ 6, Fläche ≥ 6). (V4) k 1 am Modell mit Zellen ohne Wurzel: der Fehler ist
+proportional zu α; an einem Modell ohne solche Zellen liegt er auf Rundungsniveau. „Verschwinden“ heißt: der Fehler fällt auf das Niveau des linearen Felds (k 1) derselben Einstellung, höchstens
+das Dreifache davon, und lag in der Vorgabe mindestens beim Zehnfachen. „Rundungsniveau“ heißt: relativer Spannungsfehler unter 10⁻⁸.
+
+**Modelle und Felder.** (T) T-Stoß aus `test_hotspot` mit lokaler Verfeinerung an den Nähten (Nahtziel 5 mm bei p 2, 10 mm bei p 3, Basis 20 – wie in B4), Verschiebungsrand „voll“ auf der ganzen Oberfläche.
+(S) Plattenstreifen aus `test_schale`, um 10° und 30° geneigt (STL-Hülle, geschnitten mit den beiden schrägen Halbräumen wie im Vertragsweg), Basis 25, ebenfalls Rand „voll“. Felder: k 1 das lineare Feld des
+Patch-Tests; k 2 an (T) u = (c x²/2, 0, 0) mit konstanter Volumenlast, an (S) die reine Biegung in den gedrehten Achsen (ohne Volumenlast); k 3 (nur p 3, nur T) u = (c x³/6, 0, 0) mit
+linearer Volumenlast. Schalter: `ordnung_tet` Vorgabe / 2p / 3p, `ordnung_flaeche` Vorgabe / 2p / 3p, α 10⁻⁸ / 10⁻¹⁰ / 10⁻¹².
+
+**Zwei unabhängige Auswertungen.** (A1) Größter relativer Fehler der rohen Spannung σ = D B u an 1 500 festen Werkstoffpunkten (mehr als 0,5 mm vom Rand), bezogen auf den größten Sollbetrag –
+über die Lösung des Gleichungssystems. (A2) Konsistenzrest des exakten Felds ohne Lösung: der Koeffizientenvektor a des exakten Felds entsteht je Zelle aus einer L²-Projektion über die volle Zelle
+(Gauß p + 2), der Rest ist r = Cᵀ(K_vol a − f_Volumenlast − ∫(σ_exakt n)·v) mit der Flächenregel des Problems, bezogen auf den größten Betrag von Cᵀ K_vol a; Gegenprobe der Konstruktion: C angewandt
+auf die freien Einträge von a ergibt a (unter 10⁻⁹). *Berichtigt vor der Messreihe (03.10.2026):* die erste Fassung r = Cᵀ(K a − F), bezogen auf CᵀF, war blind – die Nitsche-Strafterme verschwinden für das
+exakte Feld punktweise, tragen aber β mal die Rundung der Zwangsmatrix ein (C gibt das Feld auf 2 bis 5·10⁻¹⁰ wieder): im Probelauf mit den Vorgaben lag der Rest des linearen und des quadratischen Felds gleich
+bei 5·10⁻¹¹ (Streifen 30°, p 2), in der berichtigten Fassung bei 8·10⁻¹⁰ und 9·10⁻⁶. Die Schranke der Gegenprobe ist auf 10⁻⁹ gesetzt (gemessen 2 bis 5·10⁻¹⁰). *Zweite Berichtigung (03.10.2026, nach den ersten 50 Läufen der Reihe, die danach vollständig wiederholt wird):* der Rest wird mit den exakten Koeffizienten a je Zelle gebildet, nicht mit C x. Die Zwangsmatrix gibt ein
+Polynom nur auf 10⁻¹⁰ (p 2) bis 3·10⁻⁸ (p 3) wieder; am Biegefeld, dessen Verschiebungen groß gegen seine Dehnungen sind, lag der Rest mit C x deshalb bei 1,3·10⁻⁷, gleichgültig welcher Schalter stand, während der
+Spannungsfehler auf 10⁻¹⁰ fiel. Mit a ist der Boden 10⁻¹² (lineares Feld, Streifen 10°); der Rest mit C x und die Gegenprobe werden mitgeschrieben. Die Genauigkeit der Zwangsmatrix selbst ist kein Gegenstand von O5 (Liste).
+*Zur Urteilsregel:* im ersten Durchgang fiel der Spannungsfehler des quadratischen Felds am Streifen mit Tetraederordnung 4 von 2,5·10⁻⁴ auf 1,2·10⁻¹⁰, das lineare Feld liegt bei 1,0·10⁻¹¹ – nach dem Wortlaut („höchstens das Dreifache
+des linearen Felds“) nicht erfüllt, obwohl beide weit unter Rundungsniveau liegen. Die Regel hätte das Rundungsniveau als Boden nennen müssen; die Auswertung weist darum beides getrennt aus (Wortlaut und „unter 10⁻⁸“), der Wortlaut wird nicht nachträglich geändert. Beide müssen im
+Urteil übereinstimmen (derselbe Schalter beseitigt Fehler und Rest); berichtet wird nur, was beide tragen. Das Verhältnis Fehler zu Rest ist die Verstärkung (H4).
+
+**Kur und ihre Prüfung.** Erwartete Kur, wenn H1 bis H3 zutreffen: (K1) die Momente schräg geschnittener Stücke exakt über den Divergenzsatz (`geometry/huelle.huellenmomente` auf den Polygonen
+des geclippten Stücks) statt über die Tetraederregel – dann ist die Zellmatrix auf ebener Geometrie für den ganzen Ansatzraum exakt; (K2) Flächenordnung 2p (exakt bis 4p − 1, also für alle Felder
+bis zum Gesamtgrad p); (K3) für α nach der Messung. Jede Kur wird am Kontrolllauf gemessen, nicht nur am Prüfkörper: Knotenblech h 10 p 2 und der lange Lauf (vier Zyklen bis p 4) mit und ohne Kur –
+Änderung von σ_hs an den 18 Nahtpunkten, Zahl der Quadratur- und Oberflächenpunkte, Aufbauzeit. Abnahme der Kur: (1) an (T) und (S), p 2 und p 3, k ≤ p: Spannungsfehler unter 10⁻⁸, wo keine
+Zelle ohne Wurzel bleibt, sonst auf dem α-Niveau des linearen Felds; (2) die Zellmatrix eines schräg geschnittenen Stücks stimmt mit einer Tetraederregel der Ordnung 3p + 1 (exakt bis 6p + 1) auf 10⁻¹² überein;
+(3) alle Suiten grün; ändert sich eine dokumentierte Zahl über ihre letzte angegebene Stelle hinaus, wird sie mit altem und neuem Wert aufgelistet; (4) die Aufbauzeit des Knotenblechs (langer Lauf)
+steigt um höchstens 10 %. Wird eine Regel verfehlt oder ändert die Kur σ_hs am Knotenblech um mehr als 0,5 %, entscheidet der Anwender mit Empfehlung. Gemergt wird nur auf Freigabe.
+
+**Nachtrag zur Zeitregel (4), 03.10.2026, festgelegt vor dem Ergebnis der Nachmessung.** Die Messung auf dem Stand mit Wächter (79d4a4f) lief unter fremder Last (Oberflächenprüfungen der Hauptsitzung und zwei
+Rechenprozesse anderer Projekte): 573,9 s gegen 496,5 s des alten Stands (+15,6 %); auf dem Stand ohne Wächter (f1988a8) waren es zuvor 502,3 s (+1,2 %). Alle fünf Zyklen waren langsamer, auch der vom Löser
+bestimmte letzte, an dem der Wächter nichts ändert. Die Zahl ist nicht verwertbar. Die Nachmessung läuft viermal unmittelbar nacheinander in der Folge alt, neu, alt, neu aus den festen Arbeitsbäumen
+(372ac59 und 79d4a4f) und hält je Lauf die Wanduhr, die eigene CPU-Zeit des Prozesses und die belegte CPU-Zeit des ganzen Rechners fest (`GetSystemTimes`); die Differenz der beiden CPU-Zeiten ist die Fremdlast.
+Maßgebend bleibt die Wanduhr des ganzen Laufs. Gewertet wird das Mittel beider Paare, wenn die mittlere Fremdlast der vier Läufe um höchstens einen Kern auseinanderliegt; sonst gilt das Paar mit der kleineren
+und einander näheren Fremdlast, das andere wird berichtet und nicht gewertet. Gegenprobe ist die eigene CPU-Zeit mit derselben Verhältnisbildung. Wanduhr und CPU-Zeit müssen im Urteil (über oder unter +10 %)
+übereinstimmen; sonst gilt die Regel als nicht entscheidbar gemessen und geht mit beiden Zahlen an den Anwender.
+
+**Ergebnis O5 (03.10.2026, Theorie 11.21; Kur in den Commits f1988a8, 79d4a4f und bc0dc59 auf `feature/volumen3d`, nicht auf main).** Messreihe: sechs Modellfälle (Streifen 10° und 30°, T-Stoß; p 2 und p 3), je zehn Schaltersätze, Felder k 1 bis 3; Logs im
+Scratchpad (`o5_*.log`, `o5_kur/`). *Ursachen:* H1 Tetraederregel – trägt bei p 2 den ganzen Fehler des quadratischen Felds (Streifen 2,5·10⁻⁴ / 2,5·10⁻⁵ → 1,2·10⁻¹⁰ / 1,7·10⁻¹⁰ mit n = 4; T 3,3·10⁻⁶ → 3,7·10⁻⁷, der Rest ist α); H2 Flächenregel –
+trägt bei p 3 den Fehler, wo er über dem Boden liegt (Streifen 10° 6,9·10⁻⁸ → 2,1·10⁻⁹, Vertragsweg Rest 1,0·10⁻⁶ → 4,2·10⁻¹⁰; allgemeines quadratisches Feld am Patch-Körper 1,9·10⁻⁴ am Rand); H3 α – an T genau proportional (p 2: 1,0·10⁻⁶ / 1,0·10⁻⁸ / 1,2·10⁻¹⁰),
+drei bzw. neun schlecht geschnittene Zellen ohne Wurzel am Querblech (10 mm dick in 20-mm-Zellen); in den Modellen des Vertragswegs mit Basiszelle gleich Blechdicke gibt es keine; H4 Rundung über die Zwangsmatrix – der Rest am Streifen 30° p 3 (2,5·10⁻⁸)
+skaliert mit der Verschiebung (ein Viertel: 3,7·10⁻⁹; plus 30 mm Starrkörper: 4,7·10⁻⁷). *Vorhersagen nach dem Wortlaut der Regel:* keine erfüllt (die Regel verglich mit dem linearen Feld, das am Streifen unter Rundungsniveau und an T auf dem α-Niveau liegt);
+in der Sache V1, V4 bestätigt, V2 bestätigt wo messbar, V3 nicht bestätigt (bei p 3, k 3 hängt der Rest nur an der Flächenordnung). *Kur:* K1 exakte Stückmomente, K2 Flächenordnung 2p, K3 keine.
+*Was der erste Suitenlauf der Kur fand:* Kirsch mit Versatz 0,4 gab K_t 1,7 bis 1,9 statt 3,1 – `clippen` lässt bei bloßer Berührung eine einzelne Fläche als „Stück“ stehen, und der Divergenzsatz zählte dafür Volumen. Seit 79d4a4f
+prüft ein Wächter je Stück Volumen und Geschlossenheit und je Zelle das Volumen gegen die Tetraederzerlegung; die erste Fassung der Geschlossenheitsprüfung kostete an der Kugel mit Tiefe 3 9,0 von 30 s und ist seit bc0dc59
+vektorisiert (2,6 von 21 s für beide Prüfungen, Zellquadratur an sechs Modellen Bit für Bit gleich).
+*Abnahme der Kur:* (1) Spannungsfehler unter 10⁻⁸ bei k ≤ p: am Streifen p 2 2,3·10⁻¹⁰ und 2,4·10⁻¹⁰, p 3 10° 2,4·10⁻⁹ erfüllt; **p 3 30° 2,5·10⁻⁸ verfehlt** (Ursache H4, keine Quadraturfrage); an T (Zellen ohne Wurzel) auf dem α-Niveau des linearen Felds
+erfüllt (p 2: 3,7·10⁻⁷ gegen 1,0·10⁻⁶; p 3: 2,6·10⁻⁵ und 1,1·10⁻⁵ gegen 6,7·10⁻⁵). (2) Zellmatrix gegen Tetraederordnung 3p + 1: 2,7·10⁻¹⁵ (p 2), 3,7·10⁻¹⁵ (p 3) – erfüllt. (3) Suiten: alle 26 Paketsuiten grün auf 79d4a4f, Kernsuite (363), `quadratur`, `patch`, `kirsch` und `knotenblech` erneut grün auf bc0dc59 – erfüllt; die geänderten dokumentierten Zahlen stehen in Theorie 11.21. (4) Aufbauzeit Knotenblech
+(langer Lauf): Wanduhr +1,8 %, eigene CPU-Zeit −1,6 % (Nachmessung alt/neu im Wechsel mit Fremdlast, gewertet Paar a) – erfüllt (Schranke +10 %). Änderung von σ_hs am Knotenblech: höchstens 0,002 % (letzter Zyklus), 0,011 % (Zyklus 0) – unter der Schwelle 0,5 %.
+
+*Neue Punkte der Liste (aus O5, nicht behandelt; O19 fiel beim Suitenvergleich an).* **O16 – α in schlecht geschnittenen Zellen ohne Wurzel:** sie begrenzen selbst das lineare Feld auf α mal Verstärkung (T-Stoß Basis 20: 10⁻⁶ bei p 2, 7·10⁻⁵ bei p 3). Möglichkeiten: Warnung im Ergebnis,
+sobald `zellen_ohne_wurzel` > 0 (klein), oder solche Zellen teilen bzw. an eine feinere Wurzel binden (größer, berührt die Zwangsketten). Empfehlung: Warnung. Sonnet 5.5, niedrig. **O17 – Genauigkeit der Zwangsmatrix:** die Fortsetzung der Wurzelpolynome
+gibt Polynome nur auf 10⁻¹⁰ (p 2) bis 3·10⁻⁸ (p 3) wieder, wenn fast alle Zellen aggregiert sind; eine Starrkörperverschiebung von 30 mm erzeugt 4,7·10⁻⁷ Spannungsfehler (p 3), bei p 4 liegt der Boden bei 2,7·10⁻⁷ am Rand. Praktisch ohne Belang; zu entscheiden
+ist, ob die Fortsetzung genauer gebaut wird (etwa als Kronecker-Produkt dreier 1D-Fortsetzungen). Empfehlung: zurückstellen. Opus 5.5, hoch. **O18 – Tetraederordnung ohne Moment Fitting:** der Rückfallweg (`momentfitting=False`, künftig plastische Körper)
+hat weiter n = ⌈1,5 p⌉ und damit den alten Konsistenzfehler; n = 2p machte ihn für Felder bis zum Grad p exakt (2,4-fache Punktzahl bei p 2). Empfehlung: mit Teilprojekt 7 (Plastizität) entscheiden. Sonnet 5.5, niedrig.
+**O19 – Schwellenvergleich der Aggregation bei Gleichstand:** `Zellaggregation` vergleicht den ungerundeten Werkstoffanteil mit der Schwelle 0,4. Im verfeinerten Patch-Körper (`test_zwaenge`, „Schnittzellen eine Ebene“) haben zwei Zellen
+den Anteil geometrisch genau 0,4; die eine (Box [78, 88] × [−2, 8] × [68, 78]) lag mit der Tetraederregel bei 0,4 − 2·10⁻¹⁶ und liegt mit den exakten Momenten bei 0,4 + 2·10⁻¹⁶, die andere bleibt darunter (0,4 − 4·10⁻¹⁶, jetzt 0,4 − 2·10⁻¹⁶). Die erste gilt
+jetzt als wohlgestellt, die Zahl der aggregierten Moden ändert sich (p 2: 1 758 → 1 746). Beide Einteilungen bestehen den Patch-Test, aber die Einteilung hängt an der letzten Rundungsstelle. Kur: den auf neun Stellen gerundeten
+Anteil (`_rang`, seit dem 30.09. für die Rangfolge der Wurzeln) auch für den Schwellenvergleich nehmen; Test: Zelle mit Anteil genau an der Schwelle, beide Quadraturwege. Empfehlung: mit O16 erledigen. Sonnet 5.5, niedrig.
+**O20 – Nachiteration im SuperLU-Weg des Direktlösers:** ohne `pypardiso` (CI, künftig Linux) löst SuperLU das schlecht konditionierte System des geneigten Streifens (30°, p 3, 78 von 89 Zellen aggregiert) nur auf 10⁻⁵:
+Rest der Spannung 1,0·10⁻⁵ lokal und 8,2·10⁻⁶ in der CI, mit PARDISO 2,5·10⁻⁸. Eine Nachiteration in `linalg/direkt.Direktloeser.loesen` (Residuum mit der Matrix, noch einmal lösen) gibt 1,6·10⁻⁸; sie kostet ein
+Matrix-Vektor-Produkt und eine Rücksubstitution je Lösung. Empfehlung: bauen (Test: Streifen 30° p 3 mit erzwungenem SuperLU unter 10⁻⁶), danach die Schranke in `test_schale` wieder auf 10⁻⁵. Sonnet 5.5, mittel.
+
+*Nachtrag CI (03.10.2026, nach dem Push von 617595c).* Die CI war an einer Prüfung rot: `test_schale`, geneigt 30° p 3, Gleichgewicht 1,2·10⁻⁵ und Rest 8,2·10⁻⁶ gegen die Schranke 10⁻⁵ (lokal 5,6·10⁻⁷ und 2,5·10⁻⁸;
+vor O5 in der CI 2,5·10⁻⁶ und 3,9·10⁻⁶). Lokal mit erzwungenem SuperLU nachgestellt (1,0·10⁻⁵ und 1,0·10⁻⁵): die Ursache ist der Löser ohne Nachiteration, nicht die Kur (O20). Die Prüfung nimmt seither bei 30° p 3
+die Schranke 10⁻⁵ mit PARDISO und 10⁻⁴ mit SuperLU, bei 10° p 3 im Rest 10⁻⁷ statt 10⁻⁸ (CI 2,1·10⁻⁹). Der Patch-Test höherer Ordnung lag in der CI bei p 3 am Rand bei 3,6·10⁻⁹ und 5,2·10⁻⁹ – die Schranke 10⁻⁷
+statt 10⁻⁸ war nötig.
+
 ## Modell je Schritt
 
 Der Anwender stellt Modell und Denkstufe vor jedem Schritt von Hand ein; der Stand wird nach jedem Schritt
@@ -778,7 +861,7 @@ nachgetragen.
 | O4 Konvergenzaussage | Sonnet 5.5 | mittel | Kriterium in `konvergenz.py`, Tests, Handbuch | erledigt: letzte Änderung < 3 % konvergiert, Monotonie zusätzlich (Knotenblech 0,44 %, T-Stoß 0,45 %) |
 | C3 Handbücher | Sonnet 5.5 | mittel | Texte aus vorhandenen Messwerten, viele Zahlen | erledigt: Theorie 11 konsolidiert, Entwurf 4e neu, `Volumenmodul.md` nach Stufen; unabhängiger Prüfer (Opus) gegen die Quellen, 16 Befunde bearbeitet; Berichtigungen 0,47 → 0,45 %, 24 → 23 Befunde in C2; Nebenbefund O15 (Gitter) |
 | C4 Gesamtlauf, Pull Request | Sonnet 5.5 | mittel | Routine mit Prüfliste | offen; Merge nur auf Freigabe |
-| O5 Konsistenzfehler der Schnittzellen | Fable 5.1 | sehr hoch | Ursachensuche in Aggregation und Quadratur | Entscheidung offen: wann (Empfehlung: vor TP 6, nach PR 3) |
+| O5 Konsistenzfehler der Schnittzellen | Fable 5.1 | sehr hoch | Ursachensuche in Aggregation und Quadratur | erledigt auf `feature/volumen3d` (f1988a8, 79d4a4f, bc0dc59): Ursachen gemessen, Kur exakte Stückmomente mit Wächter + Flächenordnung 2p; Patch-Test bis Feldgrad p unter 10⁻⁸; Regel (1) am Streifen 30° p 3 verfehlt (2,5·10⁻⁸ statt unter 10⁻⁸, Rundung der Zwangsmatrix) – Entscheidung beim Anwender; Merge nur auf Freigabe |
 | O6 Ebenen durch gekrümmte Hülle (B6 Teil 3) | Fable 5.1 | sehr hoch | Divergenzweg eine Dimension tiefer | Entscheidung offen: bauen oder Warnung lassen (Empfehlung: bei Bedarf) |
 | O7 Vertragsvorschlag 2.2.0 Volumenlast je Lastfall | Sonnet 5.5 | mittel | Anschluss in `api.py` nach dem Vertrags-PR | Entscheidung offen: ganz, nur Punkt 1 oder ablehnen (Empfehlung: Punkt 1, Kombinationen im Hauptprogramm) |
 | O8 Abbruch in `prepare` | Sonnet 5.5 | mittel | Vertragsvorschlag schreiben | Entscheidung offen: Vorschlag (Minor) oder hinnehmen (Empfehlung: Vorschlag mit O9) |
@@ -788,4 +871,9 @@ nachgetragen.
 | O12 mehrere Kinder derselben Hülle | Sonnet 5.5 | niedrig | Prüfung in `Csg` | keine Entscheidung nötig; Empfehlung: mit Fehler abweisen |
 | O13 GPU-Einrichtzeit nach Cholesky | Sonnet 5.5 | mittel | Messreihe gegen A3 | keine Entscheidung, nur Messung |
 | O14 Oberflächenquadratur der Hüllenfacetten | Opus 5.5 | hoch | numba-Schleifen, Leistung | Entscheidung offen: jetzt oder nach PR 3 (Empfehlung: nach PR 3) |
+| O16 α in Zellen ohne Wurzel | Sonnet 5.5 | niedrig | Warnung im Ergebnis | Entscheidung offen (Empfehlung: Warnung) |
+| O17 Genauigkeit der Zwangsmatrix | Opus 5.5 | hoch | Fortsetzung genauer bauen | Entscheidung offen (Empfehlung: zurückstellen) |
+| O18 Tetraederordnung ohne Moment Fitting | Sonnet 5.5 | niedrig | n = 2p im Rückfallweg | Entscheidung offen (Empfehlung: mit Teilprojekt 7) |
+| O19 Schwellenvergleich der Aggregation bei Gleichstand | Sonnet 5.5 | niedrig | gerundeten Anteil vergleichen | Entscheidung offen (Empfehlung: mit O16) |
+| O20 Nachiteration im SuperLU-Weg des Direktlösers | Sonnet 5.5 | mittel | ohne pypardiso nur 10⁻⁵ am schlecht konditionierten System | Entscheidung offen (Empfehlung: bauen) |
 | O15 Reihenfolgefehler der 2:1-Balancierung (Gitter) | Sonnet 5.5 | mittel | Einzeiler mit Obergrenze, Test und Wiederholung der Suiten | erledigt (250e607): Korrektur, Durchlaufgrenze und Test; 391 von 393 verglichenen Gittern unverändert, kein bestehendes Ergebnis ändert sich; t/8 bei p 4 mit 6,4 Mio. Freiheitsgraden nicht rechenbar |

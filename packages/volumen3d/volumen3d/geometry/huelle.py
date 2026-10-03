@@ -153,10 +153,27 @@ def huellenmomente(D: np.ndarray, lo, hi, q: int, ordnung: int | None = None) ->
     return mu
 
 
+def polyedermomente(stuecke, lo, hi, q: int) -> np.ndarray:
+    """Tensor-Momente wie ``huellenmomente`` fuer konvexe Polyederstuecke, die in der Zelle [lo, hi] liegen und sich nicht ueberlappen:
+    je Stueck eine Liste ebener, nach aussen orientierter Flaechenpolygone (polyeder.box_flaechen / clippen). Der Rand ist hier das
+    geclippte Stueck selbst; Flaechen, deren Normale keine x-Komponente hat, tragen zum Fluss von G = (G_x, 0, 0) nichts bei und werden
+    vorab gestrichen (bei einer geclippten Box die Mehrzahl).
+
+    Zweck (Plan TP 5 O5, Theorie 11.21): die Tetraederregel der schraeg geschnittenen Stuecke war nur bis zum Gesamtgrad 3p - 1 exakt, die
+    Momente der Basis vom Grad 2p haben aber den Gesamtgrad 6p - ein Feld vom Grad 2 wurde bei p 2 nur auf 1e-4 bis 1e-3 reproduziert."""
+    polys = [F for flaechen in stuecke for F in flaechen]
+    T = _faecher(polys)
+    if len(T) == 0:
+        return np.zeros((q + 1, q + 1, q + 1))
+    nrm = np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0])
+    traegt = np.abs(nrm[:, 0]) > 1e-14 * np.maximum(np.linalg.norm(nrm, axis=1), 1e-300)
+    return huellenmomente(T[traegt], lo, hi, q)
+
+
 def huellenvolumen(D: np.ndarray, lo, hi) -> float:
     """Werkstoffvolumen der Huelle in der Zelle - das Moment der Konstanten (N_0 + N_1 = 1)."""
     mu = huellenmomente(D, lo, hi, 1, ordnung=2)
     return float(mu[0:2, 0:2, 0:2].sum())
 
 
-__all__ = ["legendre_1d_stamm", "huellenmomente", "huellenvolumen"]
+__all__ = ["legendre_1d_stamm", "huellenmomente", "polyedermomente", "huellenvolumen"]

@@ -196,7 +196,9 @@ def test_momentfitting():
     p = 2
     G = Gitter(_geometrie(), h=20.0, polster=0.1)
     G.moden_nummerieren(p)
-    ref = Zellquadratur(G, p=p, momentfitting=False)
+    # Referenz mit der Tetraederordnung 3p + 1 (exakt bis zum Gesamtgrad 6p + 1): seit O5 (03.10.2026) gehen die schraegen Stuecke mit exakten Momenten in den
+    # Fit ein, die Vorgabeordnung ceil(1,5 p) der Referenz traefe die Momente nur bis zum Gesamtgrad 3p - 1 (test_stuecke_exakt)
+    ref = Zellquadratur(G, p=p, momentfitting=False, ordnung_tet=3 * p + 1)
     cut = np.flatnonzero(G.klasse == CUT)
     t = time.perf_counter()
     fit = Zellquadratur(G, p=p, momentfitting=True)
@@ -238,6 +240,147 @@ def test_momentfitting():
           Q_std.momentfitting and Q_std.fit_grad == 2 * p and n_std == n2 and pr.quadratur.momentfitting
           and not pr_aus.quadratur.momentfitting and pr.quadratur.anzahl_punkte() < pr_aus.quadratur.anzahl_punkte(),
           f"Punkte FcmProblem {pr.quadratur.anzahl_punkte()} gegen {pr_aus.quadratur.anzahl_punkte()} ohne Fitting")
+
+
+def test_stuecke_exakt():
+    """O5 (03.10.2026): schraeg geschnittene Stuecke gehen mit exakten Momenten in das Moment Fitting ein (Divergenzsatz ueber die Polygone des Stuecks,
+    geometry/huelle.polyedermomente). Vorher lieferte die Tetraederregel der Stuecke die Momente - exakt nur bis zum Gesamtgrad 2 ceil(1,5 p) - 1 = 5 (p 2)
+    bzw. 9 (p 3), waehrend die Momente der Basis vom Grad 2p den Gesamtgrad 6p haben; ein quadratisches Feld wurde bei p 2 nur auf 1e-4 reproduziert
+    (test_patch.test_patch_hoeherer_ordnung). Pruefkoerper: Zelle [0, 2]^3, Werkstoff die Ecke x + y + z <= 1,5 (Tetraeder). Erwartungswerte unabhaengig aus
+    der Dirichlet-Formel int x^a y^b z^c dV = a! b! c! / (a + b + c + 3)! * 1,5^(a + b + c + 3), in Bruechen auf die zentrierten Monome
+    (x - 1)^a (y - 1)^b (z - 1)^c umgerechnet: die sind auf der Zelle durch 1 beschraenkt, der Vergleich ist dann gut gestellt (die rohen Monome bis x^6 y^6 z^6
+    reichen von 0 bis 2,6e5 bei einem Sollwert 3,6e-8 - dort misst man die Ausloeschung der Summe, nicht die Regel: 7e-5 bei p 3)."""
+    from fractions import Fraction
+    from math import comb, factorial
+    from volumen3d.fcm.elastizitaet import zell_gradienten, zellsteifigkeit
+    from volumen3d.fcm.gitter import Gitter
+    from volumen3d.fcm.quadratur import Zellquadratur
+    from volumen3d.geometry.csg import aus_params
+    c0 = 1.5
+    g = aus_params({"csg": {"typ": "schnitt", "teile": [
+        {"typ": "quader", "min": [0, 0, 0], "max": [2, 2, 2], "name": "w"},
+        {"typ": "halbraum", "punkt": [c0, 0, 0], "normale": [1, 1, 1], "name": "e"}]}})
+
+    c0_bruch = Fraction(3, 2)
+    dirichlet = {}
+
+    def roh(i, j, k):
+        if (i, j, k) not in dirichlet:
+            dirichlet[(i, j, k)] = Fraction(factorial(i) * factorial(j) * factorial(k), factorial(i + j + k + 3)) * c0_bruch ** (i + j + k + 3)
+        return dirichlet[(i, j, k)]
+
+    def zentriert(a, b, c):
+        """int (x - 1)^a (y - 1)^b (z - 1)^c ueber die Ecke, exakt in Bruechen (binomische Entwicklung der Dirichlet-Formel)."""
+        return float(sum(comb(a, i) * comb(b, j) * comb(c, k) * (-1) ** (a - i + b - j + c - k) * roh(i, j, k)
+                         for i in range(a + 1) for j in range(b + 1) for k in range(c + 1)))
+
+    volumen = c0 ** 3 / 6.0
+
+    def monomfehler(Qd, q):
+        """Groesste Abweichung der Regel von den exakten zentrierten Momenten, bezogen auf das Werkstoffvolumen: (alle Monome bis Grad q je Richtung,
+        nur die bis zum Gesamtgrad 5)."""
+        P, W, I = Qd.zelle(0)
+        X = P[I] - 1.0
+        alle = tief = 0.0
+        for a in range(q + 1):
+            for b in range(q + 1):
+                for c in range(q + 1):
+                    f = abs(float(np.sum(W[I] * X[:, 0] ** a * X[:, 1] ** b * X[:, 2] ** c)) - zentriert(a, b, c)) / volumen
+                    alle = max(alle, f)
+                    if a + b + c <= 5:
+                        tief = max(tief, f)
+        return alle, tief
+
+    for p in (2, 3):
+        G = Gitter(g, h=2.0, polster=0.0)
+        G.moden_nummerieren(p)
+        neu = Zellquadratur(G, p=p, alpha=0.0)
+        alt = Zellquadratur(G, p=p, alpha=0.0, stuecke_exakt=False)
+        ref = Zellquadratur(G, p=p, alpha=0.0, momentfitting=False, ordnung_tet=3 * p + 1)     # Tetraederregel exakt bis 6p + 1
+        f_neu, _ = monomfehler(neu, 2 * p)
+        f_alt, f_alt_tief = monomfehler(alt, 2 * p)
+        K = {n: zellsteifigkeit(*zell_gradienten(G, Qd, 0), 210000.0, 0.3) for n, Qd in (("neu", neu), ("alt", alt), ("ref", ref))}
+        dK_neu = float(np.abs(K["neu"] - K["ref"]).max() / np.abs(K["ref"]).max())
+        dK_alt = float(np.abs(K["alt"] - K["ref"]).max() / np.abs(K["ref"]).max())
+        # Schranken: gemessen 7e-16 (Monome) und 4e-15 (Zellmatrix) bei p 2 und p 3 - 1e-12 ist die Abnahmeschranke des Plans (O5, Regel 2)
+        check(f"Eckzelle p {p}: eine Zelle, ein schraeges Stueck mit exakten Momenten ({len(neu.zelle(0)[1])} Punkte); alle zentrierten Monome bis Grad {2 * p} je "
+              f"Richtung wie die Dirichlet-Formel ({f_neu:.1e} des Volumens < 1e-12), Zellmatrix wie die Tetraederregel der Ordnung {3 * p + 1} ({dK_neu:.1e} < 1e-12)",
+              len(G.ijk) == 1 and neu.statistik["stuecke_exakt"] == 1 and neu.stuecke_exakt and f_neu < 1e-12 and dK_neu < 1e-12,
+              f"Volumen {neu.volumen():.12f} (Soll {c0 ** 3 / 6:.12f})")
+        # alter Weg: gemessen 2,5e-4 (p 2) und 2,6e-6 (p 3) in den Momenten, 3,6e-4 und 1,3e-5 in der Zellmatrix
+        check(f"  alter Weg (stuecke_exakt=False) zum Vergleich: Monome bis Gesamtgrad 5 exakt ({f_alt_tief:.1e} < 1e-12), darueber falsch ({f_alt:.1e} > 1e-7), "
+              f"Zellmatrix {dK_alt:.1e} neben der exakten (> 1e-6)",
+              not alt.stuecke_exakt and "stuecke_exakt" not in alt.statistik and f_alt_tief < 1e-12 and f_alt > 1e-7 and dK_alt > 1e-6)
+    # ohne Moment Fitting oder mit fit_grad < 2p bleibt die Tetraederregel (die gefittete Regel ist der Traeger der exakten Momente)
+    G = Gitter(g, h=2.0, polster=0.0)
+    G.moden_nummerieren(2)
+    check("ohne Moment Fitting und mit fit_grad < 2p bleibt es bei der Tetraederregel (stuecke_exakt aus)",
+          not Zellquadratur(G, p=2, momentfitting=False).stuecke_exakt and not Zellquadratur(G, p=2, fit_grad=2).stuecke_exakt
+          and Zellquadratur(G, p=2).stuecke_exakt)
+    # Ebene auf einer Zellflaeche (Kirsch-Platte mit Symmetrieebenen auf Zellflaechen, Versatz 0,4, 03.10.2026: K_t 1,77 statt 3,75): die Nachbarzelle
+    # beruehrt den Werkstoff nur mit einer Flaeche, clippen laesst diese eine Flaeche als "Stueck" stehen - ohne Volumen, aber nicht geschlossen. Der
+    # Divergenzsatz zaehlte dafuer Flaeche mal Abstand: hier 2,25 in der Zelle [-2, 0] x [0, 2]^2, Gesamtvolumen 2,8125 statt 0,5625 (Stand f1988a8).
+    from volumen3d.geometry.polyeder import box_flaechen, geschlossen, volumen as polyeder_volumen
+    for p in (2, 3):
+        G3 = Gitter(g, h=2.0, polster=1.0)                              # Zellen [-2, 0], [0, 2], [2, 4] je Richtung: Quaderflaechen auf Zellflaechen
+        G3.moden_nummerieren(p)
+        Q3 = Zellquadratur(G3, p=p, alpha=0.0)
+        mit_gewicht = [c for c in range(len(G3.ijk)) if len(Q3.zelle(c)[1]) and abs(float(Q3.zelle(c)[1].sum())) > 1e-12]
+        st = Q3.statistik
+        check(f"Ebene auf Zellflaechen, p {p}: Volumen {Q3.volumen():.12f} = 0,5625 (< 1e-12), nur die Eckzelle traegt Gewicht, leere Reste uebersprungen "
+              f"({st['stuecke_leer']}), kein offenes Stueck, kein Rueckfall",
+              abs(Q3.volumen() - volumen) < 1e-12 and len(mit_gewicht) == 1 and np.allclose(G3.zellbox(mit_gewicht[0])[0], 0.0)
+              and st["stuecke_leer"] == 3 and st["stuecke_exakt"] == 1 and st["stuecke_offen"] == 0 and st["stuecke_rueckfall"] == 0,
+              f"{len(G3.ijk)} Zellen")
+    # Geschlossenheit als reine Funktion: Box ja; Box ohne eine Flaeche, einzelne Flaeche und zwei deckungsgleiche Gegenflaechen nein
+    box = box_flaechen([0, 0, 0], [1, 2, 3])
+    check("geschlossen(): Box ja; ohne eine Flaeche, einzelne Flaeche, zwei Gegenflaechen nein",
+          geschlossen(box) and not geschlossen(box[:5]) and not geschlossen(box[:1]) and not geschlossen([box[0], box[0][::-1]]))
+    # Gegenprobe der vektorisierten Pruefung: Summe der Flaechenvektoren hier ein zweites Mal je Dreieck mit np.cross, an 400 zufaellig
+    # geclippten Boxen - jede einmal ganz (geschlossen) und einmal ohne eine ihrer Flaechen (offen)
+    from volumen3d.geometry.polyeder import clippen
+
+    def geschlossen_schleife(flaechen, tol=1e-9):
+        if len(flaechen) < 4:
+            return False
+        summe, betrag = np.zeros(3), 0.0
+        for F in flaechen:
+            a = np.zeros(3)
+            for i in range(1, len(F) - 1):
+                a += np.cross(F[i] - F[0], F[i + 1] - F[0])
+            summe += a
+            betrag += float(np.linalg.norm(a))
+        return betrag > 0.0 and float(np.linalg.norm(summe)) <= tol * betrag
+
+    rng = np.random.default_rng(11)
+    gleich = n_zu = n_offen = 0
+    for _ in range(400):
+        fl = box_flaechen([0, 0, 0], [1, 1, 1])
+        for _e in range(int(rng.integers(1, 4))):
+            nrm = rng.normal(size=3)
+            fl = clippen(fl, rng.uniform(0.2, 0.8, 3), nrm / np.linalg.norm(nrm), 1e-12)
+            if not fl:
+                break
+        if len(fl) < 4:
+            continue
+        weg = int(rng.integers(len(fl)))
+        teil = fl[:weg] + fl[weg + 1:]
+        gleich += int(geschlossen(fl) == geschlossen_schleife(fl) and geschlossen(teil) == geschlossen_schleife(teil))
+        n_zu += int(geschlossen(fl))
+        n_offen += int(not geschlossen(teil))
+    check(f"geschlossen() vektorisiert = Schleife je Dreieck an {gleich} geclippten Boxen: alle ganzen geschlossen ({n_zu}), alle ohne eine Flaeche offen ({n_offen})",
+          gleich > 300 and n_zu == gleich and n_offen == gleich)
+    # Waechter in _fitten: ein offenes Stueck (Box ohne Deckel), an der Pruefung vorbei eingereicht, faellt auf die Tetraederregel zurueck
+    Gw = Gitter(g, h=2.0, polster=0.0)
+    Gw.moden_nummerieren(2)
+    Qw = Zellquadratur(Gw, p=2, alpha=0.0)
+    offen = box_flaechen([0.2, 0.2, 0.2], [1.2, 1.0, 0.9])[:5] + [box_flaechen([0.2, 0.2, 0.2], [1.2, 1.0, 0.9])[5] + np.array([0.3, 0.0, 0.0])]
+    v_offen = polyeder_volumen(offen)
+    leer = (np.zeros((0, 3)), np.zeros(0), np.zeros(0, bool))
+    P_w, W_w, I_w = Qw._fitten(np.zeros(3), np.full(3, 2.0), leer, [(offen, v_offen)])
+    check(f"Volumenwaechter: Stueck, dessen Divergenz-Volumen nicht das der Tetraederzerlegung ist -> Rueckfall auf die Tetraederregel (gezaehlt), "
+          f"Gewichtssumme = Tetraedervolumen {v_offen:.6f}",
+          Qw.statistik["stuecke_rueckfall"] == 1 and abs(float(W_w.sum()) - v_offen) < 1e-12 and I_w.all())
 
 
 def test_verschachtelter_baum():
@@ -363,4 +506,4 @@ def test_inside_zelle():
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_innere_trennflaeche, test_deckungsgleiche_flaechen, test_polyeder, test_ebene_geometrie_exakt, test_kugel_zweite_ordnung, test_lochplatte, test_kleine_radien, test_inside_zelle, test_momentfitting, test_verschachtelter_baum]))
+    sys.exit(lauf([test_innere_trennflaeche, test_deckungsgleiche_flaechen, test_polyeder, test_ebene_geometrie_exakt, test_kugel_zweite_ordnung, test_lochplatte, test_kleine_radien, test_inside_zelle, test_momentfitting, test_stuecke_exakt, test_verschachtelter_baum]))
