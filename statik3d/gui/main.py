@@ -5161,6 +5161,12 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             return
         knoten = [n for n in dict.fromkeys(knoten) if 0 <= n < m.nn]
+        # Die Auswahl wird ersetzt, nicht ergaenzt; eine Flaeche oder ein Koerper, den
+        # die Zweige oben gewaehlt haben, bleibt
+        flaechen = list(self.sel_flaechen) if art == "geoflaeche" else []
+        koerper = list(self.sel_koerper) if art == "geokoerper_einzeln" else []
+        self._auswahl_vergessen()
+        self.sel_flaechen, self.sel_koerper = flaechen, koerper
         self.selection = np.array(knoten, dtype=int)
         # Was im Baum angeklickt wurde, leuchtet in der Ansicht auf: die
         # Elemente des Objekts bekommen eine eigene Hervorhebung, nicht nur
@@ -5200,25 +5206,25 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.leuchtet = elems
                 knoten += [int(n) for i in elems for n in m.elements[i].nodes]
             self.auswahlart_setzen("Knoten")
-            self.sel_linien, self.sel_flaechen, self.sel_koerper, self.sel_staebe = [], [], [], []
+            self._auswahl_vergessen()
             self.selection = np.array(list(dict.fromkeys(knoten)), dtype=int)
             self.lbl_sel.setText(f"{len(objekte)} {self.VERBINDUNGEN[einzeln][1]} gewählt (Modellbaum)")
+            self._auswahl_register()        # dieser Zweig kehrt vor dem Abgleich am Ende zurueck
             return
         if art == "knoten":
             self.auswahlart_setzen("Knoten")
-            self.sel_linien, self.sel_flaechen, self.sel_koerper, self.sel_staebe = [], [], [], []
+            self._auswahl_vergessen()
             knoten = [int(name)] if eintrag else list(range(m.nn))
             self.selection = np.array([n for n in knoten if 0 <= n < m.nn], dtype=int)
             self.lbl_sel.setText(f"{len(self.selection)} Knoten ausgewählt (Modellbaum)")
         elif art in ("linien", "linie"):
             self.auswahlart_setzen("Linie")
-            self.selection = np.array([], dtype=int)
-            self.sel_flaechen, self.sel_koerper, self.sel_staebe = [], [], []
+            self._auswahl_vergessen()
             self.sel_linien = [name] if eintrag and name in m.lines else list(m.lines)
             self.lbl_sel.setText(f"{len(self.sel_linien)} Linien ausgewählt (Modellbaum)")
         elif art in ("stabelemente", "stabelement"):
             self.auswahlart_setzen("Knoten")
-            self.sel_linien, self.sel_flaechen, self.sel_koerper, self.sel_staebe = [], [], [], []
+            self._auswahl_vergessen()
             if eintrag:
                 elems = [int(name)] if 0 <= int(name) < len(m.elements) else []
             else:
@@ -5229,24 +5235,21 @@ class MainWindow(QtWidgets.QMainWindow):
             self.lbl_sel.setText(f"{len(elems)} Stabelemente ausgewählt (Modellbaum)")
         elif art in ("staebe", "stab"):
             self.auswahlart_setzen("Stab")
-            self.selection = np.array([], dtype=int)
-            self.sel_linien, self.sel_flaechen, self.sel_koerper = [], [], []
+            self._auswahl_vergessen()
             self.sel_staebe = [name] if eintrag and name in m.members else list(m.members)
             if eintrag and name in m.members:
                 self.leuchtet = [int(e) for e in m.members[name].elements]
             self.lbl_sel.setText(f"{len(self.sel_staebe)} Stäbe ausgewählt (Modellbaum)")
         elif art in ("geoflaechen", "geoflaeche"):
             self.auswahlart_setzen("Fläche")
-            self.selection = np.array([], dtype=int)
-            self.sel_linien, self.sel_koerper, self.sel_staebe = [], [], []
+            self._auswahl_vergessen()
             self.sel_flaechen = [name] if eintrag and name in m.flaechen else list(m.flaechen)
             if eintrag and name in m.flaechen:
                 self.leuchtet = [int(e) for e in (m.flaechen[name].elemente or [])]
             self.lbl_sel.setText(f"{len(self.sel_flaechen)} Flächen ausgewählt (Modellbaum)")
         elif art in ("geokoerper", "geokoerper_einzeln"):
             self.auswahlart_setzen("Volumen")
-            self.selection = np.array([], dtype=int)
-            self.sel_linien, self.sel_flaechen, self.sel_staebe = [], [], []
+            self._auswahl_vergessen()
             self.sel_koerper = [name] if eintrag and name in m.koerper else list(m.koerper)
             if eintrag and name in m.koerper:
                 self.leuchtet = [int(e) for e in (m.koerper[name].elemente or [])]
@@ -5263,8 +5266,7 @@ class MainWindow(QtWidgets.QMainWindow):
         elif art in ("liniengelenke", "liniengelenk"):
             # Die Gelenklinien leuchten, die Flaechen dazu blass mit
             self.auswahlart_setzen("Linie")
-            self.selection = np.array([], dtype=int)
-            self.sel_koerper, self.sel_staebe = [], []
+            self._auswahl_vergessen()
             fl = ([name] if eintrag and name in m.flaechen
                   else [n for n, f in m.flaechen.items() if getattr(f, "gelenklinien", None)])
             self.sel_flaechen = fl
@@ -5273,8 +5275,7 @@ class MainWindow(QtWidgets.QMainWindow):
         elif art == "kontaktbedingung" and eintrag:
             kb = m.kontaktbedingungen.get(name)
             self.auswahlart_setzen("Fläche")
-            self.selection = np.array([], dtype=int)
-            self.sel_linien, self.sel_koerper, self.sel_staebe = [], [], []
+            self._auswahl_vergessen()
             # **Nur die Fuge** zeigen, und zwar beide Seiten: die
             # Kontaktflaechen des geloesten Koerpers und die Gegenflaechen.
             # Frueher kam, wo die Quelldatei keine Kontaktflaechen nennt (RFEM
@@ -5305,8 +5306,7 @@ class MainWindow(QtWidgets.QMainWindow):
         elif art == "stellung" and eintrag:
             st = m.stellung(name)
             if st is not None:
-                self.selection = np.array([], dtype=int)
-                self.sel_linien = []
+                self._auswahl_vergessen()
                 self.sel_staebe = [x for x in st.staebe_aus if x in m.members]
                 self.sel_flaechen = [x for x in st.flaechen_aus if x in m.flaechen]
                 self.sel_koerper = [x for x in st.koerper_aus if x in m.koerper]
@@ -5316,7 +5316,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._stellung_gewaehlt(name)
         elif art in self.LAGER_ARTEN or art in ("lager", "linienlager", "flaechenlager"):
             self.auswahlart_setzen("Lager")
-            self.sel_linien, self.sel_flaechen, self.sel_koerper, self.sel_staebe = [], [], [], []
+            self._auswahl_vergessen()
             if eintrag:
                 kurz = self.LAGER_KURZ[art]
                 liste = self._lagerliste_von(kurz)
@@ -8505,6 +8505,7 @@ class MainWindow(QtWidgets.QMainWindow):
         except KeyError:
             return self.error(f"Subsystem {name} gibt es nicht")
         ne, nn = len(m.elements), m.nn
+        self._auswahl_vergessen()            # ersetzt die Auswahl ganz (auch Lager und Lasten)
         self.selection = np.array(sorted({int(n) for n in sub.knoten if 0 <= int(n) < nn}), dtype=int)
         self.sel_elemente = sorted({int(i) for i in sub.elemente if 0 <= int(i) < ne})
         self.sel_staebe = [s for s in sub.staebe if s in m.members]
@@ -9044,8 +9045,7 @@ class MainWindow(QtWidgets.QMainWindow):
         namen = [str(x) for x in namen]
         self.leuchtet = []
         self.leuchtet_kontakt = ""
-        self.selection = np.array([], dtype=int)
-        self.sel_linien, self.sel_flaechen, self.sel_koerper, self.sel_staebe = [], [], [], []
+        self._auswahl_vergessen()
         if art == "knoten":
             self.auswahlart_setzen("Knoten")
             kn = [int(x) for x in namen if x.lstrip("-").isdigit() and 0 <= int(x) < m.nn]
@@ -10214,6 +10214,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return None
         self.merken("Netz der Geometrie gelöscht")
         self.netzguete_feld = None
+        self.sel_elemente = []              # die Elemente gibt es nicht mehr
         self._netz_loeschen(els)
         for f in m.flaechen.values():
             f.elemente = []
@@ -14862,11 +14863,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_modelltabellen()
         for cb, keys in ((self.cb_mat, m.materials), (self.cb_sec, m.sections),
                          (self.cb_shell, m.shells),
-                         (getattr(self, "cb_assign_sec", None), m.sections),
-                         (getattr(self, "cb_assign_mat", None), m.materials),
                          # „unveraendert“ bleibt der erste Eintrag (bis 03.10.2026 verschwand
-                         # er, und „Zuweisen“ gab die erste Dicke allen gewaehlten Schalen)
-                         (getattr(self, "cb_assign_shell", None), [self.DICKE_UNVERAENDERT, *m.shells])):
+                         # er bei der Dicke, und „Zuweisen“ gab die erste Dicke allen
+                         # gewaehlten Schalen; Querschnitt und Werkstoff hatten ihn nie)
+                         (getattr(self, "cb_assign_sec", None), [self.UNVERAENDERT, *m.sections]),
+                         (getattr(self, "cb_assign_mat", None), [self.UNVERAENDERT, *m.materials]),
+                         (getattr(self, "cb_assign_shell", None), [self.UNVERAENDERT, *m.shells])):
             if cb is None or not _lebt(cb):
                 continue
             cur = cb.currentText()
@@ -14893,9 +14895,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._layer_combo_fuellen()
         schritt("Ansicht aufbauen …")
         self.redraw()
-        # Neu, Laden, Rueckgaengig und Loeschen leeren die Auswahl, ohne an das
-        # Kontextregister zu denken - hier zieht es nach
-        self._kontext_abgleichen()
         if gross:
             self.statusBar().clearMessage()
 
@@ -15089,24 +15088,82 @@ class MainWindow(QtWidgets.QMainWindow):
                     ids |= {int(i) for i in (getattr(obj, feld, None) or [])}
         return sorted(i for i in ids if 0 <= i < len(m.elements))
 
+    def _zuweisen_wert(self, feld, vorrat) -> str:
+        """Was ein Auswahlfeld von „Zuweisen“ setzen soll; leer bei „unverändert“
+        (und bei jedem Text, den es im Vorrat nicht gibt)."""
+        if feld is None or not _lebt(feld):
+            return ""
+        t = feld.currentText()
+        return t if t in vorrat else ""
+
     def assign_props(self):
+        """Querschnitt, Werkstoff und Dicke den Elementen der Auswahl geben.
+
+        Geschrieben wird nur, was nicht „unverändert“ ist (bis 03.10.2026 schrieb
+        jeder Aufruf alle drei - wer nur die Dicke ändern wollte, setzte auch
+        Werkstoff und Querschnitt). Den Querschnitt bekommen nur echte Stabtypen
+        (eine Feder trägt dort den Namen ihrer Federeigenschaft; mit einem
+        Querschnittsnamen fand die Rechnung sie nicht). Bei gewählten Flächen und
+        Volumen bekommt auch das Objekt den Wert, denn aus ihm entsteht das Netz:
+        sonst setzte „Neu vernetzen“ die Zuweisung zurück, und Baum und Tabelle
+        nannten den alten Wert. Eine Randfläche eines Volumens ohne eigene Dicke
+        trägt nicht (Model.flaeche_traegt) und bekommt keine. Nach einer echten
+        Änderung sind die Ergebnisse verworfen - der Modellstand kennt weder
+        Querschnitt noch Werkstoff der Elemente."""
+        m = self.model
+        sec = self._zuweisen_wert(getattr(self, "cb_assign_sec", None), m.sections)
+        mat = self._zuweisen_wert(getattr(self, "cb_assign_mat", None), m.materials)
+        dicke = self._zuweisen_wert(getattr(self, "cb_assign_shell", None), m.shells)
+        if not (sec or mat or dicke):
+            return self.error("Nichts zu ändern: Querschnitt, Werkstoff oder Dicke wählen - "
+                              f"„{self.UNVERAENDERT}“ lässt ein Feld, wie es ist")
         # das versteckte Nummernfeld bleibt der Weg fuer Skripte; sonst die Auswahl
         text = self.ed_elist.text().strip()
-        els = self._elements_from_text(text) if text else self._auswahl_elemente()
-        if not els:
+        if text:
+            els, flaechen, koerper = self._elements_from_text(text), [], []
+        else:
+            els = self._auswahl_elemente()
+            flaechen = [m.flaechen[n] for n in self.sel_flaechen if n in m.flaechen]
+            koerper = [m.koerper[n] for n in self.sel_koerper if n in m.koerper]
+        if not (els or flaechen or koerper):
             return self.error("Keine Elemente angegeben (Nr. eintragen oder Knoten, Stäbe, Flächen, "
                               "Volumen oder Elemente auswählen)")
-        self.merken("Zuweisung an die Auswahl")
-        dicke = (self.cb_assign_shell.currentText()
-                 if getattr(self, "cb_assign_shell", None) is not None else "")
+        aenderungen = []                 # (Objekt, Feld, neuer Wert, ist ein Element)
+
+        def plane(obj, feld, wert, element=False):
+            if wert and getattr(obj, feld, "") != wert:
+                aenderungen.append((obj, feld, wert, element))
         for i in els:
-            e = self.model.elements[i]
-            if e.typ in vp.TYPEN_STAEBE:
-                e.sec = self.cb_assign_sec.currentText()
-            elif e.typ in vp.TYPEN_FLAECHEN and dicke in self.model.shells:
-                e.sec = dicke
-            e.mat = self.cb_assign_mat.currentText()
-        self.info(f"{len(els)} Elemente geändert")
+            e = m.elements[i]
+            if e.typ in vp.EL.STAB_TYPEN:
+                plane(e, "sec", sec, True)
+            elif e.typ in vp.TYPEN_FLAECHEN:
+                plane(e, "sec", dicke, True)
+            if e.typ not in vp.EL.VERBINDUNG_TYPEN:      # Federn und Grenzschichten haben keinen Werkstoff
+                plane(e, "mat", mat, True)
+        ohne_dicke = []
+        for f in flaechen:
+            if m.flaeche_traegt(f.name):
+                plane(f, "dicke", dicke)
+                plane(f, "material", mat)
+            else:
+                ohne_dicke.append(f.name)
+        for k in koerper:
+            plane(k, "material", mat)
+        if not aenderungen:
+            return self.info("Zuweisen: die Auswahl hat schon diese Werte - nichts geändert"
+                             + (f" (Randflächen ohne eigene Dicke bekommen keine: {', '.join(ohne_dicke[:5])})"
+                                if ohne_dicke else ""))
+        self.merken("Zuweisung an die Auswahl")
+        for obj, feld, wert, _el in aenderungen:
+            setattr(obj, feld, wert)
+        self.analysis = None
+        self.results = None
+        n_el = len({id(o) for o, _f, _w, el in aenderungen if el})
+        n_ob = len({id(o) for o, _f, _w, el in aenderungen if not el})
+        self.info(f"{n_el} Elemente" + (f" und {n_ob} Flächen oder Volumen" if n_ob else "") + " geändert"
+                  + (f"; ohne eigene Dicke (Randflächen eines Volumens) blieben {', '.join(ohne_dicke[:5])}"
+                     + (" …" if len(ohne_dicke) > 5 else "") if ohne_dicke else ""))
         self.refresh_all()
 
     def set_hinges(self):
@@ -15330,8 +15387,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 grenze = ng.SPLITTER
             import numpy as _np
             treffer = _np.where(_np.isfinite(werte) & (werte < grenze))[0]
-            self.selection = _np.asarray(treffer, dtype=int)
+            # Elementnummern, keine Knotennummern: bis 03.10.2026 standen sie in der
+            # Knotenauswahl und waehlten beliebige Knoten
             self.auswahlart_setzen("Netz")
+            self._auswahl_vergessen()
+            self.sel_elemente = [int(i) for i in treffer]
+            self._auswahl_register()
             self.redraw()
             self.info(f"{len(treffer)} Elemente unter {zl.zahl_text(grenze, punkt=True)} markiert")
 
@@ -15761,7 +15822,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.__init_defaults()
         self.analysis = None
         self.results = None
-        self.selection = np.array([], dtype=int)
+        # ein anderes, leeres Modell: nichts von der alten Auswahl gilt noch (Staebe,
+        # Elemente, Lager ...), sonst stuende das Kontextregister ueber dem leeren Modell
+        self._auswahl_vergessen()
         self.refresh_all()
 
     # ---- Rueckgaengig / Wiederholen ----------------------------------
@@ -17552,8 +17615,9 @@ class MainWindow(QtWidgets.QMainWindow):
     #: darunter (breitester gemessen: 1236 von 1241 px, ``tests/test_kontextregister.py``);
     #: was laenger waere, nennt nur die Zahl der Objekte.
     REITER_ZEICHEN = 21
-    #: erster Eintrag der Aufklappliste „Dicke“ im Kontextregister: keine Änderung
-    DICKE_UNVERAENDERT = "unverändert"
+    #: erster Eintrag der Aufklapplisten Querschnitt, Werkstoff und Dicke im
+    #: Kontextregister: dieses Feld nicht ändern
+    UNVERAENDERT = "unverändert"
 
     def _auswahl_arten(self) -> list:
         """Was in der Ansicht gewählt ist, nach Arten: [(Schlüssel, Anzahl,
@@ -17561,7 +17625,14 @@ class MainWindow(QtWidgets.QMainWindow):
         Volumen, Elemente, Lager, Lasten; Arten ohne Auswahl fehlen (03.10.2026:
         bis dahin kannte das Kontextregister nur die Knoten)."""
         arten = []
-        n = len(self.selection)
+        knoten = {int(i) for i in self.selection}
+        if self.sel_lager:
+            # Baum und Tabelle waehlen mit einem Lager auch seine Knoten, damit sie
+            # in der Ansicht leuchten: „Auswahl: 2 Objekte“ fuer ein einzelnes Lager
+            # (ein Knoten, ein Lager) waere falsch. Die Knoten eines gewaehlten
+            # Lagers zaehlen nicht als gewaehlte Knoten.
+            knoten -= self._lagerknoten()
+        n = len(knoten)
         if n:
             arten.append(("knoten", n, "Knoten", "Knoten"))
         for schluessel, ein, mehr in self.AUSWAHL_LISTEN:
@@ -17569,6 +17640,20 @@ class MainWindow(QtWidgets.QMainWindow):
             if n:
                 arten.append((schluessel, n, ein, mehr))
         return arten
+
+    def _lagerknoten(self) -> set:
+        """Die Knoten der gewählten Lager (Knoten-, Linien- und Flächenlager)."""
+        aus = set()
+        for kurz, i in self.sel_lager:
+            try:
+                obj = self._lagerliste_von(kurz)[int(i)]
+            except (KeyError, IndexError, TypeError, ValueError):
+                continue
+            if hasattr(obj, "node"):
+                aus.add(int(obj.node))
+            else:
+                aus |= {int(n) for n in (getattr(obj, "nodes", None) or [])}
+        return aus
 
     @classmethod
     def _auswahl_texte(cls, arten) -> tuple:
@@ -17658,13 +17743,19 @@ class MainWindow(QtWidgets.QMainWindow):
             self.cb_assign_sec = QtWidgets.QComboBox()
             self.cb_assign_mat = QtWidgets.QComboBox()
             self.cb_assign_shell = QtWidgets.QComboBox()
-            self.cb_assign_sec.addItems(_namen(self.model.sections))
-            self.cb_assign_mat.addItems(_namen(self.model.materials))
-            self.cb_assign_shell.addItems([self.DICKE_UNVERAENDERT] + _namen(self.model.shells))
-            self.cb_assign_sec.setToolTip("Querschnitt für die Stabelemente der Auswahl")
-            self.cb_assign_mat.setToolTip("Werkstoff für alle Elemente der Auswahl")
-            self.cb_assign_shell.setToolTip("Dicke für die Schalenelemente der Auswahl "
-                                            "(„unverändert“ = keine Änderung)")
+            # „unverändert“ zuerst: wer nur die Dicke ändert, darf Querschnitt und
+            # Werkstoff nicht mitschreiben (bis 03.10.2026 stand jede Liste auf
+            # ihrem ersten Eintrag, und Zuweisen schrieb ihn allen Elementen)
+            for feld, vorrat in ((self.cb_assign_sec, self.model.sections),
+                                 (self.cb_assign_mat, self.model.materials),
+                                 (self.cb_assign_shell, self.model.shells)):
+                feld.addItems([self.UNVERAENDERT] + _namen(vorrat))
+            self.cb_assign_sec.setToolTip("Querschnitt für die Stabelemente der Auswahl "
+                                          "(„unverändert“ = keine Änderung)")
+            self.cb_assign_mat.setToolTip("Werkstoff für die Elemente der Auswahl, bei Flächen und "
+                                          "Volumen auch für das Objekt („unverändert“ = keine Änderung)")
+            self.cb_assign_shell.setToolTip("Dicke für die Schalenelemente der Auswahl, bei Flächen auch "
+                                            "für die Fläche („unverändert“ = keine Änderung)")
             for c in (self.cb_assign_sec, self.cb_assign_mat, self.cb_assign_shell):
                 c.setMinimumWidth(110)
             g.beschriftet("Querschnitt", self.cb_assign_sec)
@@ -19795,6 +19886,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.geometrie_vernetzen()
         finally:
             self.sel_flaechen, self.sel_koerper = alte
+            # refresh_all hat das Register abgebaut, solange die Auswahl leer war
+            self._auswahl_register()
         d = diagnose(self.model)
         if d["unvernetzte_flaechen"] or d["unvernetzte_koerper"]:
             # Kein zweites Nein: was der Vernetzer eben nicht vernetzen konnte,
@@ -20727,6 +20820,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def redraw(self):
         if getattr(self, "_auswahl_sammeln", False):
             return                          # Mehrfachauswahl: erst am Ende zeichnen
+        # Jeder Weg, der die Auswahl aendert, zeichnet danach neu - das Register
+        # zieht hier nach, auch wo der Weg nicht an _auswahl_register dachte
+        # (Baumzweige, Tabellen, Klickmodi der Masken, Lasten, Neu, Laden,
+        # Rueckgaengig, Loeschen); es kostet nur einen Vergleich der Arten
+        self._kontext_abgleichen()
         # Die Kamera muss das Neuzeichnen ueberleben. plotter.clear() nimmt
         # alle Darsteller weg; das naechste add_mesh setzt die Kamera dann von
         # sich aus zurueck - man haette nach jedem Klick wieder die
@@ -22252,11 +22350,18 @@ class MainWindow(QtWidgets.QMainWindow):
             sichtbar[idx] = False
         return np.flatnonzero(sichtbar)
 
-    def _auswahl_leeren(self):
+    def _auswahl_vergessen(self):
+        """Nichts mehr gewählt, **jede** Art: Knoten, Linien, Stäbe, Flächen,
+        Volumen, Elemente, Lager und Lasten - ohne Register und ohne Zeichnen
+        (das Register zieht beim nächsten redraw nach). Ein Klick im Baum
+        ersetzt die Auswahl ganz: bis 03.10.2026 blieben dabei gewählte
+        Netzelemente, Lager und Lasten stehen, und „Zuweisen“ traf sie mit."""
         self.selection = np.array([], dtype=int)
-        self.sel_linien, self.sel_flaechen = [], []
-        self.sel_koerper, self.sel_staebe = [], []
-        self.sel_elemente = []
+        for schluessel, _ein, _mehr in self.AUSWAHL_LISTEN:
+            setattr(self, "sel_" + schluessel, [])
+
+    def _auswahl_leeren(self):
+        self._auswahl_vergessen()
         self._auswahl_register()
 
     def nur_auswahl_zeigen(self):

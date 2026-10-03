@@ -8619,9 +8619,11 @@ def main():
               str(sorted(knoepfe)))
         mk.setzen("mass", "Formgüte (1 = beste Form)")
         knoepfe["Schlechte wählen"].click()
-        check("Netzqualität: „Schlechte wählen“ markiert das entartete Element",
-              list(w.selection) == [5] and w.auswahlart == "Netz",
-              f"{list(w.selection)} / {w.auswahlart}")
+        # Elementnummern gehoeren in die Elementauswahl: bis 03.10.2026 standen sie in der
+        # Knotenauswahl (hier hiess es list(w.selection) == [5] - Knoten 5 statt Element 5)
+        check("Netzqualität: „Schlechte wählen“ wählt das entartete Element (Elementauswahl, keine Knoten)",
+              list(w.sel_elemente) == [5] and not len(w.selection) and w.auswahlart == "Netz",
+              f"Elemente {list(w.sel_elemente)} Knoten {list(w.selection)} / {w.auswahlart}")
         knoepfe["Aus"].click()
         check("Netzqualität: „Aus“ nimmt die Einfärbung weg", w.netzguete_feld is None)
 

@@ -181,8 +181,11 @@ def test_reitertext_gemischt():
     gew = w.ribbon._kontext.findChild(QtWidgets.QLabel, "kontextgewaehlt")
     check("… die Gruppe „Gewählt“ im Register nennt sie ebenfalls",
           gew is not None and gew.text() == "1 Knoten, 3 Stäbe", repr(gew.text() if gew else None))
+    # ein Lager, dessen Knoten nicht unter den zwei gewaehlten sind (die Knoten eines
+    # gewaehlten Lagers zaehlen nicht als Knoten)
+    lager = next(i for i, x in enumerate(w.model.supports) if int(x.node) >= 2)
     _waehlen(w, knoten=2, linien=["L1"], staebe=["S1"], flaechen=["F1", "F2"], koerper=["V1"],
-             elemente=[1, 2, 3], lager=[("lager", 0)], lasten=[("G", "knoten", 0)])
+             elemente=[1, 2, 3], lager=[("lager", lager)], lasten=[("G", "knoten", 0)])
     gew = w.ribbon._kontext.findChild(QtWidgets.QLabel, "kontextgewaehlt")
     erwartet = ("2 Knoten, 1 Linie, 1 Stab, 2 Flächen, 1 Volumen, 3 Elemente, 1 Lager, 1 Last")
     check("alle acht Arten zugleich: die Aufstellung nennt jede, Einzahl und Mehrzahl stimmen",
@@ -538,6 +541,456 @@ def test_nach_neu_ohne_fehler():
           not w.fehler_liste and w.cb_assign_sec is None and w.cb_assign_shell is None, str(w.fehler_liste))
 
 
+def _platte_modell(w, vernetzen=True):
+    """Neues Modell: Rechteck aus vier Linien, Fläche F1 (d12, S235), zwei Werkstoffe,
+    zwei Dicken - wie tests/test_geometrie_kette.py."""
+    from statik3d.model import Material, ShellProp
+    w.new_model()
+    m = w.model
+    m.add_material(Material.steel("S235"))
+    m.add_material(Material.steel("S355"))
+    m.add_shell_prop(ShellProp("d12", 0.012))
+    m.add_shell_prop(ShellProp("d20", 0.02))
+    m.add_nodes(np.array([[0, 0, 0], [4, 0, 0], [4, 2, 0], [0, 2, 0.]]))
+    for i, (a, b) in enumerate([(0, 1), (1, 2), (2, 3), (3, 0)]):
+        m.add_line(f"L{i + 1}", [a, b])
+    m.add_flaeche("F1", ["L1", "L2", "L3", "L4"], dicke="d12", material="S235", teilung=[4, 2])
+    w.refresh_all()
+    if vernetzen:
+        w.geometrie_vernetzen()
+        _ruhe()
+    return w.model
+
+
+def _quader_modell(w):
+    """Neues Modell: Quader aus sechs Flächen (ohne Dicke) und der Körper Q, vernetzt."""
+    from statik3d.model import Material, ShellProp
+    w.new_model()
+    m = w.model
+    m.add_material(Material.steel("S235"))
+    m.add_material(Material.steel("S355"))
+    m.add_shell_prop(ShellProp("d20", 0.02))
+    lx, ly, lz = 2.0, 1.0, 1.0
+    m.add_nodes(np.array([[0, 0, 0], [lx, 0, 0], [lx, ly, 0], [0, ly, 0],
+                          [0, 0, lz], [lx, 0, lz], [lx, ly, lz], [0, ly, lz]], float))
+    kanten = [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4),
+              (0, 4), (1, 5), (2, 6), (3, 7)]
+    for i, (a, b) in enumerate(kanten):
+        m.add_line(f"K{i + 1}", [a, b])
+    seiten = {"Boden": ["K1", "K2", "K3", "K4"], "Deckel": ["K5", "K6", "K7", "K8"],
+              "S1": ["K1", "K10", "K5", "K9"], "S2": ["K2", "K11", "K6", "K10"],
+              "S3": ["K3", "K12", "K7", "K11"], "S4": ["K4", "K9", "K8", "K12"]}
+    for n, ls in seiten.items():
+        m.add_flaeche(n, ls, material="S355")
+    m.add_koerper("Q", list(seiten), material="S355")
+    w.refresh_all()
+    w.geometrie_vernetzen()
+    _ruhe()
+    return w.model
+
+
+def test_unveraendert_in_allen_feldern():
+    """Punkt 1 der Gegenpruefung: wer nur die Dicke aendert, laesst Werkstoff und
+    Querschnitt stehen - und umgekehrt."""
+    from statik3d.model import Material, ShellProp
+    w, app = _fenster()
+    w.load_example("plate")
+    _ruhe()
+    m = w.model
+    m.add_material(Material.steel("S355"))      # das Beispiel kennt nur S235: S355 ist der zweite Werkstoff
+    m.add_shell_prop(ShellProp("t = 20 mm", 0.02))
+    for i in (0, 1, 2):
+        m.elements[i].mat = "S355"
+    vorher = [(e.sec, e.mat) for e in m.elements]
+    w.refresh_all()
+    _waehlen(w, elemente=[0, 1, 2])
+    felder = (("Querschnitt", w.cb_assign_sec), ("Werkstoff", w.cb_assign_mat), ("Dicke", w.cb_assign_shell))
+    check("alle drei Felder beginnen mit „unverändert“ und stehen darauf",
+          all(cb.itemText(0) == "unverändert" and cb.currentIndex() == 0 for _n, cb in felder),
+          str([(n, cb.itemText(0), cb.currentIndex()) for n, cb in felder]))
+    w.refresh_all()
+    _ruhe()
+    check("… auch nach refresh_all",
+          all(cb.itemText(0) == "unverändert" and cb.currentIndex() == 0 for _n, cb in felder),
+          str([(n, cb.currentText()) for n, cb in felder]))
+    n_undo = len(w._undo)
+    w.fehler_liste.clear()
+    w.assign_props()
+    check("alle drei „unverändert“: ein Hinweis, kein Rückgängig-Schritt",
+          len(w.fehler_liste) == 1 and "Nichts zu ändern" in w.fehler_liste[0] and len(w._undo) == n_undo,
+          str((w.fehler_liste, len(w._undo) - n_undo)))
+    w.cb_assign_shell.setCurrentText("t = 20 mm")
+    w.assign_props()
+    _ruhe()
+    m = w.model
+    check("nur die Dicke geändert: der Werkstoff S355 bleibt (bis 03.10.2026: erster Werkstoff der Liste)",
+          {m.elements[i].sec for i in (0, 1, 2)} == {"t = 20 mm"} and {m.elements[i].mat for i in (0, 1, 2)} == {"S355"},
+          str([(m.elements[i].sec, m.elements[i].mat) for i in (0, 1, 2)]))
+    check("… die übrigen Elemente bleiben unberührt",
+          [(e.sec, e.mat) for e in m.elements[3:]] == vorher[3:])
+    # Staebe: nur der Werkstoff - der Querschnitt bleibt
+    w.load_example("hall")
+    _ruhe()
+    m = w.model
+    m.add_material(Material.steel("S235"))
+    w.refresh_all()
+    riegel = [int(e) for e in m.members["Riegel"].elements]
+    _waehlen(w, staebe=["Riegel"])
+    w.cb_assign_mat.setCurrentText("S235")
+    w.assign_props()
+    _ruhe()
+    m = w.model
+    check("nur der Werkstoff geändert: der Querschnitt IPE 500 bleibt (bis 03.10.2026: erster Querschnitt)",
+          {m.elements[i].mat for i in riegel} == {"S235"} and {m.elements[i].sec for i in riegel} == {"IPE 500"},
+          str({(m.elements[i].sec, m.elements[i].mat) for i in riegel}))
+    w.cb_assign_mat.setCurrentIndex(0)
+    w.cb_assign_sec.setCurrentText("HEB 300")
+    w.assign_props()
+    _ruhe()
+    m = w.model
+    check("nur der Querschnitt geändert: der Werkstoff S235 bleibt",
+          {m.elements[i].sec for i in riegel} == {"HEB 300"} and {m.elements[i].mat for i in riegel} == {"S235"},
+          str({(m.elements[i].sec, m.elements[i].mat) for i in riegel}))
+    _leeren(w)
+
+
+def test_zuweisen_aendert_flaeche_und_volumen():
+    """Punkt 2: das Netz entsteht aus Flaeche.dicke/material und Volumenkoerper.material."""
+    w, app = _fenster()
+    m = _platte_modell(w)
+    f = m.flaechen["F1"]
+    check("Vorbereitung: Fläche F1 vernetzt, d12 und S235",
+          len(f.elemente) > 0 and {m.elements[i].sec for i in f.elemente} == {"d12"}
+          and {m.elements[i].mat for i in f.elemente} == {"S235"})
+    _waehlen(w, flaechen=["F1"])
+    w.cb_assign_shell.setCurrentText("d20")
+    w.cb_assign_mat.setCurrentText("S355")
+    w.assign_props()
+    _ruhe()
+    m = w.model
+    f = m.flaechen["F1"]
+    check("Zuweisen an eine Fläche: das Objekt trägt Dicke d20 und Werkstoff S355, auch ihre Elemente",
+          f.dicke == "d20" and f.material == "S355"
+          and {m.elements[i].sec for i in f.elemente} == {"d20"} and {m.elements[i].mat for i in f.elemente} == {"S355"},
+          f"{f.dicke} {f.material}")
+    w.sel_flaechen[:] = ["F1"]
+    w.geometrie_vernetzen()
+    _ruhe()
+    m = w.model
+    f = m.flaechen["F1"]
+    check("… „Neu vernetzen“ setzt die Zuweisung nicht zurück",
+          len(f.elemente) > 0 and {m.elements[i].sec for i in f.elemente} == {"d20"}
+          and {m.elements[i].mat for i in f.elemente} == {"S355"},
+          str(({m.elements[i].sec for i in f.elemente}, {m.elements[i].mat for i in f.elemente})))
+    # Volumen: der Koerper traegt den Werkstoff; eine Randflaeche ohne Dicke traegt nicht
+    m = _quader_modell(w)
+    check("Vorbereitung: Quader vernetzt, Randfläche „Boden“ ohne Dicke und ohne eigenes Netz",
+          len(m.koerper["Q"].elemente) > 0 and m.flaechen["Boden"].dicke == ""
+          and not m.flaeche_traegt("Boden") and not m.flaechen["Boden"].elemente)
+    _waehlen(w, koerper=["Q"], flaechen=["Boden"])
+    w.cb_assign_mat.setCurrentText("S235")
+    w.cb_assign_shell.setCurrentText("d20")
+    w.fehler_liste.clear()
+    w.assign_props()
+    _ruhe()
+    m = w.model
+    k = m.koerper["Q"]
+    check("Zuweisen an Volumen: der Körper trägt S235, auch seine Elemente",
+          k.material == "S235" and {m.elements[i].mat for i in k.elemente} == {"S235"},
+          f"{k.material} {({m.elements[i].mat for i in k.elemente})}")
+    check("… eine Randfläche ohne eigene Steifigkeit bekommt keine Dicke (sonst entstünde ein Schalennetz)",
+          m.flaechen["Boden"].dicke == "" and not m.flaeche_traegt("Boden") and m.flaechen["Boden"].material == "S355",
+          f"{m.flaechen['Boden'].dicke!r} {m.flaechen['Boden'].material}")
+    w.sel_koerper[:] = ["Q"]
+    w.sel_flaechen[:] = []
+    w.geometrie_vernetzen()
+    _ruhe()
+    m = w.model
+    check("… „Neu vernetzen“ des Körpers behält S235",
+          {m.elements[i].mat for i in m.koerper["Q"].elemente} == {"S235"},
+          str({m.elements[i].mat for i in m.koerper["Q"].elemente}))
+    _leeren(w)
+
+
+def test_zuweisen_ueberspringt_federn():
+    """Punkt 3: eine Feder traegt den Namen ihrer Federeigenschaft, nie einen Querschnitt."""
+    from statik3d import solver
+    from statik3d.model import Material, Section
+    w, app = _fenster()
+    w.new_model()
+    m = w.model
+    m.add_material(Material.steel("S235"))
+    m.add_material(Material.steel("S355"))
+    m.add_section(Section.from_profile("HEB 300"))
+    m.add_section(Section.from_profile("IPE 500"))
+    a, b, c = (m.add_node(float(x), 0.0, 0.0) for x in (0, 1, 2))
+    m.add_feder_prop("F", [2e6] * 6)
+    stab = m.add_element("beam", [a, b], "S235", "HEB 300")
+    feder = m.add_element("feder", [b, c], "S235", "F")
+    m.fix(a, "all")
+    m.fix(c, "all")
+    m.load_node(b, Fz=-1000.0)
+    w.refresh_all()
+    _waehlen(w, elemente=[stab, feder])
+    w.cb_assign_sec.setCurrentText("IPE 500")
+    w.cb_assign_mat.setCurrentText("S355")
+    w.assign_props()
+    _ruhe()
+    m = w.model
+    check("Querschnitt: der Stab bekommt IPE 500, die Feder behält ihre Federeigenschaft „F“",
+          m.elements[stab].sec == "IPE 500" and m.elements[feder].sec == "F",
+          f"{m.elements[stab].sec} / {m.elements[feder].sec}")
+    check("… der Werkstoff geht an den Stab, nicht an die Feder (Verbindungen haben keinen)",
+          m.elements[stab].mat == "S355" and m.elements[feder].mat == "S235",
+          f"{m.elements[stab].mat} / {m.elements[feder].mat}")
+    try:
+        r = solver.solve_static(m)
+        ok = np.isfinite(r.u).all()
+        detail = ""
+    except (KeyError, RuntimeError) as ex:        # assemble wirft KeyError, der Löser reicht ihn als RuntimeError weiter
+        ok, detail = False, f"{type(ex).__name__} {ex} / {ex.__cause__!r}"
+    check("… und die Rechnung findet die Feder (bis 03.10.2026: KeyError in assemble)", ok, detail)
+    _leeren(w)
+
+
+def test_zuweisen_verwirft_ergebnisse():
+    """Punkt 4: nach einer echten Aenderung gehoeren die Ergebnisse zum alten Stand."""
+    from statik3d import solver
+    w, app = _fenster()
+    w.load_example("hall")
+    _ruhe()
+    an = solver.solve_all(w.model, design=bool(w.model.members))
+    w._solve_done("all", an)
+    _ruhe()
+    check("Vorbereitung: gerechnet", w.analysis is not None)
+    _waehlen(w, staebe=["Riegel"])
+    w.cb_assign_sec.setCurrentText("HEB 300")
+    w.assign_props()
+    _ruhe()
+    check("Zuweisen mit echter Änderung: die Ergebnisse sind verworfen",
+          w.analysis is None and w.results is None, f"{w.analysis!r}")
+    an = solver.solve_all(w.model, design=bool(w.model.members))
+    w._solve_done("all", an)
+    _ruhe()
+    n_undo = len(w._undo)
+    _waehlen(w, staebe=["Riegel"])
+    w.cb_assign_sec.setCurrentText("HEB 300")
+    w.assign_props()
+    _ruhe()
+    check("… dieselben Werte noch einmal: nichts geändert, Ergebnisse und Rückgängig-Stapel bleiben",
+          w.analysis is not None and len(w._undo) == n_undo, f"{w.analysis!r} {len(w._undo) - n_undo}")
+    _leeren(w)
+
+
+def test_baum_ersetzt_die_auswahl_ganz():
+    """Punkt 5: ein Klick im Baum ersetzt die Auswahl ganz - Elemente, Lager, Lasten
+    bleiben nicht stehen."""
+    w, app = _fenster()
+    w.load_example("hall")
+    _ruhe()
+    m = w.model
+    riegel = {int(e) for e in m.members["Riegel"].elements}
+    fremd = [i for i in range(len(m.elements)) if i not in riegel][:3]
+    _waehlen(w, elemente=fremd, lager=[("lager", 0)], lasten=[("LF1", "beam_loads", 0)])
+    w._baum_geklickt("stab", "Riegel")
+    _ruhe()
+    check("Netzelemente gewählt, dann Stab im Baum: nur der Stab ist gewählt",
+          w.sel_staebe == ["Riegel"] and not w.sel_elemente and not w.sel_lager and not w.sel_lasten
+          and not len(w.selection), f"{w.sel_staebe} {w.sel_elemente} {w.sel_lager} {w.sel_lasten}")
+    check("… der Reiter sagt „Auswahl: 1 Stab“", _reiter(w) == "Auswahl: 1 Stab", repr(_reiter(w)))
+    vorher = {i: m.elements[i].sec for i in range(len(m.elements))}
+    w.cb_assign_sec.setCurrentText("HEB 300")
+    w.assign_props()
+    _ruhe()
+    m = w.model
+    geaendert = {i for i in range(len(m.elements)) if m.elements[i].sec != vorher[i]}
+    check("… Zuweisen trifft nur die Elemente des Stabs (die gewählten Netzelemente von vorher nicht)",
+          geaendert == riegel and not (geaendert & set(fremd)), f"{sorted(geaendert)} / Riegel {sorted(riegel)}")
+    w.undo()
+    _ruhe()
+    # die Mehrfachauswahl im Baum
+    _waehlen(w, elemente=fremd, lager=[("lager", 0)])
+    w._baum_mehrfach("stab", ["Riegel", "Stiel links"])
+    _ruhe()
+    check("Mehrfachauswahl im Baum: Stäbe gewählt, Elemente und Lager vergessen",
+          sorted(w.sel_staebe) == ["Riegel", "Stiel links"] and not w.sel_elemente and not w.sel_lager,
+          f"{w.sel_staebe} {w.sel_elemente} {w.sel_lager}")
+    _waehlen(w, elemente=fremd, lager=[("lager", 0)], lasten=[("LF1", "beam_loads", 0)])
+    w._baum_geklickt("knoten", "3")
+    _ruhe()
+    check("Knoten im Baum: nur dieser Knoten, nichts sonst", list(w.selection) == [3] and not w.sel_elemente
+          and not w.sel_lager and not w.sel_lasten, f"{list(w.selection)} {w.sel_elemente} {w.sel_lager}")
+    from statik3d.model import GESAMTSYSTEM
+    _waehlen(w, elemente=fremd, lager=[("lager", 0)], lasten=[("LF1", "beam_loads", 0)])
+    w._subsystem_zeigen(GESAMTSYSTEM)
+    _ruhe()
+    check("Subsystem im Baum: ersetzt die Auswahl ganz (keine Lager, keine Lasten von vorher)",
+          not w.sel_lager and not w.sel_lasten and len(w.sel_elemente) == len(w.model.elements),
+          f"{w.sel_lager} {w.sel_lasten} {len(w.sel_elemente)}")
+    _waehlen(w, elemente=fremd, lager=[("lager", 0)], lasten=[("LF1", "beam_loads", 0)], staebe=["Riegel"])
+    w._auswahl_leeren()
+    check("_auswahl_leeren leert jede Art (auch Lager und Lasten)",
+          not w._auswahl_arten() and w.ribbon._kontext is None, str(w._auswahl_arten()))
+    _leeren(w)
+
+
+def test_lager_zaehlt_einmal():
+    """Punkt 6: ein einzelnes Lager heisst „Auswahl: 1 Lager“, nicht „2 Objekte“."""
+    from PySide6 import QtWidgets
+    w, app = _fenster()
+    w.load_example("hall")
+    _ruhe()
+    w._baum_geklickt("lager_einzeln", "0")
+    _ruhe()
+    check("Knotenlager im Baum: „Auswahl: 1 Lager“ (die Knoten des Lagers zählen nicht mit)",
+          _reiter(w) == "Auswahl: 1 Lager" and len(w.selection) >= 1, f"{_reiter(w)!r} Knoten {list(w.selection)}")
+    check("… die Knoten leuchten weiter in der Ansicht (selection bleibt gesetzt)", len(w.selection) >= 1)
+    lager_knoten = {int(i) for i in w.selection}
+    extra = next(n for n in range(w.model.nn) if n not in lager_knoten)
+    w._set_selection(sorted(lager_knoten | {extra}))
+    _ruhe()
+    check("… ein zusätzlich gewählter Knoten zählt: „1 Knoten, 1 Lager“",
+          w.ribbon._kontext is not None and _reiter(w) == "Auswahl: 2 Objekte"
+          and w.ribbon._kontext.findChild(QtWidgets.QLabel, "kontextgewaehlt").text() == "1 Knoten, 1 Lager",
+          f"{_reiter(w)!r}")
+    _leeren(w)
+    w._tabelle_lager(0)
+    _ruhe()
+    check("Lagertabelle: ein Klick auf Zeile 0 wählt „Auswahl: 1 Lager“", _reiter(w) == "Auswahl: 1 Lager",
+          f"{_reiter(w)!r} {w.sel_lager}")
+    _leeren(w)
+    w._baum_geklickt("lager", "")
+    _ruhe()
+    n = len(w.sel_lager)
+    check("Zweig „Knotenlager“: alle Lager, keine Knoten", n > 1 and _reiter(w) == f"Auswahl: {n} Lager",
+          f"{_reiter(w)!r}")
+    _leeren(w)
+
+
+def test_register_zieht_in_allen_wegen_nach():
+    """Punkt 7: Wege, die die Auswahl aendern, ohne _auswahl_register zu rufen."""
+    import types
+    w, app = _fenster()
+    w.load_example("hall")
+    _ruhe()
+    _leeren(w)
+    # a) Mehrfachauswahl im Baum
+    w._baum_mehrfach("stab", ["Riegel", "Stiel links"])
+    _ruhe()
+    check("Baum, mehrere Stäbe: „Auswahl: 2 Stäbe“", _reiter(w) == "Auswahl: 2 Stäbe", repr(_reiter(w)))
+    # b) Lastart im Baum: die belasteten Objekte werden gewaehlt
+    _leeren(w)
+    lc = next(c for c in w.model.load_cases.values() if c.nodal_loads)     # Stablasten leuchten nur
+    art = next(a for a, ls in lc.lasten_je_art().items() if ls)
+    w._lastart_geklickt(f"{lc.name}|{art}")
+    _ruhe()
+    arten = w._auswahl_arten()
+    check("Lastart im Baum: die gewählten belasteten Objekte stehen im Register",
+          bool(arten) and w.ribbon._kontext is not None and _reiter(w) == w._auswahl_texte(arten)[0],
+          f"{_reiter(w)!r} {[(k, n) for k, n, _e, _m in arten]}")
+    # c) Verbindungszweig (Federn): kehrt im Baum vor dem Abgleich zurueck
+    _leeren(w)
+    w.maskenrand.schliessen()
+    m = w.model
+    m.add_feder_prop("F", [1e6] * 6)
+    m.add_element("feder", [0, 1], "S355", "F")
+    w.refresh_all()
+    _leeren(w)
+    w._baum_geklickt("federn", "")
+    _ruhe()
+    check("Baum, Zweig „Federn“: die Knoten der Feder sind gewählt und das Register nennt sie",
+          len(w.selection) >= 2 and _reiter(w) == f"Auswahl: {len(w.selection)} Knoten",
+          f"{_reiter(w)!r} {list(w.selection)}")
+    # d) Klickmodus einer Maske (Randlinien einer Flaeche)
+    _leeren(w)
+    w.maskenrand.schliessen()
+    maske = types.SimpleNamespace(werte=lambda: {"linien": "L1, L2"})
+    w.new_model()
+    m = w.model
+    m.add_nodes(np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0.]]))
+    for i, (a, b) in enumerate([(0, 1), (1, 2), (2, 3), (3, 0)]):
+        m.add_line(f"L{i + 1}", [a, b])
+    w.refresh_all()
+    w._objektmaske_klick_zeigen(maske, "geoflaeche")
+    _ruhe()
+    check("Klickmodus der Flächenmaske: „Auswahl: 2 Linien“", _reiter(w) == "Auswahl: 2 Linien", repr(_reiter(w)))
+    # d2) Klickmodus der Kontaktmaske: beide Seiten der Fuge leuchten
+    _leeren(w)
+    _quader_modell(w)
+    maske = types.SimpleNamespace(werte=lambda: {"flaechennamen": "Boden", "gegenflaechen": "Deckel"})
+    w._objektmaske_klick_zeigen(maske, "kontaktbedingung")
+    _ruhe()
+    check("Klickmodus der Kontaktmaske: „Auswahl: 2 Flächen“", _reiter(w) == "Auswahl: 2 Flächen", repr(_reiter(w)))
+    w.new_model()
+    m = w.model
+    m.add_nodes(np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0.]]))
+    for i, (a_, b_) in enumerate([(0, 1), (1, 2), (2, 3), (3, 0)]):
+        m.add_line(f"L{i + 1}", [a_, b_])
+    w.refresh_all()
+    # e) Linientabelle -> _baum_auswaehlen
+    _leeren(w)
+    w._baum_auswaehlen("linie", "L1")
+    _ruhe()
+    check("Klick in der Linientabelle: die Knoten der Linie, „Auswahl: 2 Knoten“",
+          _reiter(w) == "Auswahl: 2 Knoten" and list(w.selection) == [0, 1], f"{_reiter(w)!r} {list(w.selection)}")
+    # f) Vernetzen vor dem Rechnen: die Auswahl kommt zurueck, das Register muss mit
+    m = _platte_modell(w, vernetzen=False)
+    w._fragen = lambda *a, **k: True
+    w.sel_flaechen[:] = ["F1"]
+    w._auswahl_register()
+    _ruhe()
+    check("Vorbereitung: Fläche F1 gewählt, noch ohne Netz", _reiter(w) == "Auswahl: 1 Fläche"
+          and not w.model.flaechen["F1"].elemente, repr(_reiter(w)))
+    ok = w._vor_rechnung_vernetzen()
+    _ruhe()
+    check("Vernetzen vor dem Rechnen: vernetzt, die Auswahl kommt zurück und das Register mit ihr",
+          ok and len(w.model.flaechen["F1"].elemente) > 0 and w.sel_flaechen == ["F1"]
+          and _reiter(w) == "Auswahl: 1 Fläche", f"{ok} {w.sel_flaechen} {_reiter(w)!r}")
+    _leeren(w)
+
+
+def test_schlechte_waehlen_waehlt_elemente():
+    """Punkt 8: „Schlechte wählen“ der Netzqualität schrieb Elementnummern in die Knotenauswahl."""
+    from PySide6 import QtWidgets
+    from statik3d.model import Material
+    w, app = _fenster()
+    w.new_model()
+    m = w.model
+    m.add_material(Material("S355", E=210e9, nu=0.3, rho=7850))
+    m.add_material(Material.steel("S235"))
+    for p in [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)]:
+        m.add_node(*p)
+    for t in [(0, 1, 3, 4), (1, 2, 3, 6), (1, 4, 5, 6), (3, 4, 6, 7), (1, 3, 4, 6)]:
+        m.add_element("tet4", list(t), "S355")
+    m.add_element("tet4", [0, 1, 2, 3], "S355")          # eben: Formgüte 0
+    w.refresh_all()
+    w.maske_netzguete()
+    mk = w.maskenrand.maske
+    knoepfe = {b.text(): b for b in mk.findChildren(QtWidgets.QPushButton)}
+    mk.setzen("mass", "Formgüte (1 = beste Form)")
+    knoepfe["Schlechte wählen"].click()
+    _ruhe()
+    check("„Schlechte wählen“: Element 5 steht in der Elementauswahl, die Knotenauswahl bleibt leer",
+          w.sel_elemente == [5] and not len(w.selection) and w.auswahlart == "Netz",
+          f"Elemente {w.sel_elemente} Knoten {list(w.selection)} / {w.auswahlart}")
+    check("… das Register nennt es: „Auswahl: 1 Element“", _reiter(w) == "Auswahl: 1 Element", repr(_reiter(w)))
+    w.cb_assign_mat.setCurrentText("S235")
+    w.assign_props()
+    _ruhe()
+    m = w.model
+    check("… Zuweisen trifft genau dieses Element",
+          [e.mat for e in m.elements] == ["S355"] * 5 + ["S235"], str([e.mat for e in m.elements]))
+    knoepfe["Aus"].click()
+    w._auswahl_register()
+    w.clear_mesh()
+    _ruhe()
+    check("„Modell leeren“ danach: keine Elementauswahl und kein Register über dem leeren Modell",
+          not w.sel_elemente and w.ribbon._kontext is None and not len(w.model.elements),
+          f"{w.sel_elemente} {_reiter(w)!r} {len(w.model.elements)} Elemente")
+    w.maskenrand.schliessen()
+    _leeren(w)
+
+
 def test_klick_waehlt():
     """Die Wege der Auswahl in der Ansicht (Klick, Lager, Last, Klick ins Leere)."""
     w, app = _fenster()
@@ -604,9 +1057,19 @@ def test_handbuch():
           and "nur, wenn **Knoten** gewählt waren" in reiter, reiter[:80])
     check(f"… und die Länge des Reiters: {MainWindow.REITER_ZEICHEN} Zeichen, gemischt die Zahl der Objekte",
           f"{MainWindow.REITER_ZEICHEN} Zeichen im Reiter" in reiter and "Auswahl: 4 Objekte" in reiter, reiter[-90:])
-    check("Handbuch: Befehle nach Auswahl, Beschriftung, „unverändert“",
-          "unverändert" in absatz("**Die Befehle richten sich nach der Auswahl.**")
-          and "sichtbarer Beschriftung" in absatz("**Die Befehle richten sich nach der Auswahl.**"))
+    befehle = absatz("**Die Befehle richten sich nach der Auswahl.**")
+    check("Handbuch: Zuweisen mit sichtbarer Beschriftung, „unverändert“ in jedem Feld, nur Gesetztes wird geschrieben",
+          "sichtbare Beschriftung" in befehle and "jedes beginnt mit dem Eintrag „unverändert“" in befehle
+          and "Nichts zu ändern" in befehle and "Bis zum 03.10.2026" in befehle, befehle[:90])
+    objekte = absatz("Die Elemente der Auswahl sind alle Elemente")
+    check("Handbuch: Zuweisen an Flächen und Volumen ändert das Objekt, Feder, Randfläche, Ergebnisse verworfen",
+          "auch das Objekt" in objekte and "*Neu vernetzen*" in objekte and "Feder" in objekte
+          and "Randfläche" in objekte and "sind die Ergebnisse verworfen" in objekte, objekte[:90])
+    check("Handbuch: ein einzelnes Lager heißt „Auswahl: 1 Lager“, vorher „2 Objekte“",
+          "„Auswahl: 1 Lager“" in reiter and "„Auswahl: 2 Objekte“" in reiter, reiter[-120:])
+    baum = absatz("**Ein Klick im Modellbaum ersetzt die Auswahl ganz.**")
+    check("Handbuch: der Baum ersetzt die Auswahl ganz, „Schlechte wählen“ wählt Elemente",
+          "Netzelemente, Lager und Lasten" in baum and "Schlechte wählen" in baum, baum[:90])
     check("Handbuch: das Register bleibt stehen, solange nur die Zahl wechselt",
           "Extras" in absatz("**Das Register bleibt stehen, solange sich nur die Zahl ändert.**"))
     check("Handbuch: es verschwindet mit der Auswahl, auch nach Neu, Öffnen, Import, Rückgängig",
@@ -620,7 +1083,11 @@ def main():
     for t in (test_reitertext_je_art, test_reitertext_gemischt, test_reiter_laenge,
               test_registerzeile_ohne_rollpfeile, test_felder_beschriftet, test_befehle_je_auswahl,
               test_zuweisen_auf_staebe, test_register_bleibt, test_verschwindet,
-              test_nach_neu_ohne_fehler, test_klick_waehlt, test_handbuch):
+              test_nach_neu_ohne_fehler, test_unveraendert_in_allen_feldern,
+              test_zuweisen_aendert_flaeche_und_volumen, test_zuweisen_ueberspringt_federn,
+              test_zuweisen_verwirft_ergebnisse, test_baum_ersetzt_die_auswahl_ganz, test_lager_zaehlt_einmal,
+              test_register_zieht_in_allen_wegen_nach, test_schlechte_waehlen_waehlt_elemente,
+              test_klick_waehlt, test_handbuch):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

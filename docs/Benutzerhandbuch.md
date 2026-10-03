@@ -3590,22 +3590,54 @@ Zeichen im Reiter: „Auswahl: 1 Knoten, 3 Stäbe“ braucht gemessen 183 px, de
 Reiter darf höchstens 168 px haben, sonst erscheinen Rollpfeile und der Reiter
 liegt dahinter. Die vollständige Aufstellung nach Arten („1 Knoten, 3 Stäbe“)
 steht in der ersten Gruppe **Gewählt** des Registers und im Tooltip des Reiters.
+Ein einzelnes Lager heißt „Auswahl: 1 Lager“: wer ein Lager im Modellbaum oder in
+der Lagertabelle anklickt, wählt zugleich seine Knoten, damit sie in der Ansicht
+leuchten, und diese Knoten zählen nicht als gewählte Knoten. Bis zum 03.10.2026
+stand dort „Auswahl: 2 Objekte“ (ein Knoten, ein Lager). Wählt man zusätzlich
+einen anderen Knoten, nennt die Aufstellung ihn: „1 Knoten, 1 Lager“.
 
-**Die Befehle richten sich nach der Auswahl.** *Zuweisen* (Querschnitt,
-Werkstoff und Dicke, jedes Auswahlfeld mit sichtbarer Beschriftung) gibt den
-Elementen der Auswahl die gewählten Werte; das sind alle Elemente, deren Knoten
-sämtlich gewählt sind, dazu die gewählten Elemente und die Elemente gewählter
-Stäbe, Flächen und Volumen. Bis zum 03.10.2026 trugen die drei Felder nur einen
-Hinweis am Feld, und „Zuweisen“ kannte nur gewählte Knoten. Der erste Eintrag
-der Aufklappliste *Dicke* heißt „unverändert“ und lässt die Dicke der Schalen
-stehen; bis zum 03.10.2026 verschwand dieser Eintrag nach dem ersten Auffrischen
-der Ansicht, und „Zuweisen“ gab allen gewählten Schalen die erste Dicke der Liste.
+**Die Befehle richten sich nach der Auswahl.** *Zuweisen* gibt den Elementen der
+Auswahl Querschnitt, Werkstoff und Dicke; jedes der drei Auswahlfelder hat eine
+sichtbare Beschriftung, und jedes beginnt mit dem Eintrag „unverändert“. Geschrieben
+wird nur, was nicht auf „unverändert“ steht: wer nur die Dicke wählt, lässt
+Werkstoff und Querschnitt der Elemente stehen, und wer nichts wählt, bekommt den
+Hinweis „Nichts zu ändern“ statt eines leeren Rückgängig-Schritts. Bis zum 03.10.2026
+hatten Querschnitt und Werkstoff keinen solchen Eintrag und standen nach dem Aufbau
+auf dem ersten Eintrag ihrer Liste, und „Zuweisen“ schrieb alle drei Felder in jedes
+Element der Auswahl, auch wenn man nur die Dicke ändern wollte; bei der Dicke
+verschwand der leere Eintrag außerdem nach dem ersten Auffrischen der Ansicht, und
+„Zuweisen“ gab allen gewählten Schalen die erste Dicke der Liste.
+
+Die Elemente der Auswahl sind alle Elemente, deren Knoten sämtlich gewählt sind,
+dazu die gewählten Elemente und die Elemente gewählter Stäbe, Flächen und Volumen.
+Bis zum 03.10.2026 kannte „Zuweisen“ nur gewählte Knoten. Den Querschnitt bekommen
+nur Stabelemente; eine Feder behält ihre Federeigenschaft (mit einem Querschnittsnamen
+fand die Rechnung die Feder nicht mehr und brach mit einem Schlüsselfehler ab), und
+Federn und Grenzschichten bekommen auch keinen Werkstoff. Bei gewählten **Flächen und
+Volumen** ändert „Zuweisen“ außer den Elementen auch das Objekt: die Fläche bekommt
+Dicke und Werkstoff, das Volumen den Werkstoff, denn aus diesen Feldern entsteht das
+Netz. So bleibt die Zuweisung nach *Neu vernetzen* erhalten, und Baum und Tabelle
+nennen den neuen Wert. Eine Randfläche eines Volumens, die keine eigene Dicke hat,
+trägt nicht (die Tetraeder des Volumens tragen) und bekommt auch keine; das Protokoll
+nennt sie. Ändert „Zuweisen“ etwas, sind die Ergebnisse verworfen, denn sie gehören
+zum alten Stand; sind schon alle Werte so gesetzt, steht „nichts geändert“ in der
+Statuszeile, und die Ergebnisse bleiben.
+
 *Gelenke* erscheint bei gewählten Knoten oder Stäben. *Elemente löschen*, *Knoten
 löschen*, *Lager*, *Last* und *Auswahl umkehren* meinen Knoten und stehen nur
 da, wenn Knoten gewählt sind. *Alles deselektieren* steht immer da; wer nur
 Linien, Lager oder Lasten gewählt hat, sieht in dem Register nur die Gruppe
 „Gewählt“ und diesen Knopf, und „Querschnitt zuweisen…“ sagt dann, was zu wählen
 wäre, statt still nichts zu tun.
+
+**Ein Klick im Modellbaum ersetzt die Auswahl ganz.** Alle Arten werden vergessen,
+auch gewählte Netzelemente, Lager und Lasten, bevor die neue Auswahl gilt (auch bei
+der Mehrfachauswahl im Baum, beim Klick in die Linientabelle und beim Wählen
+eines Layers). Bis zum 03.10.2026 blieben Netzelemente, Lager und
+Lasten stehen: der Reiter zählte sie als „Objekte“ mit, und „Zuweisen“ traf die alten
+Netzelemente mit. Die Netzqualität (*Netz → Netzqualität…*) wählt mit **Schlechte
+wählen** jetzt Elemente der Auswahlart Netz; bis zum 03.10.2026 schrieb sie die
+Elementnummern in die Knotenauswahl und wählte damit beliebige Knoten.
 
 **Das Register bleibt stehen, solange sich nur die Zahl ändert.** Wer im
 Register arbeitet und weitere Objekte der gleichen Art anklickt, bleibt in dem
@@ -3617,7 +3649,14 @@ gebaut und bleibt dabei vorn.
 **Es verschwindet mit der Auswahl.** Wird die Auswahl aufgehoben (Esc, *Alles
 deselektieren*, Klick ins Leere) und ebenso nach *Neu*, *Beispiel öffnen*,
 *Öffnen*, *Importieren* ohne Anhängen, *Rückgängig*, *Wiederholen* und dem
-Löschen gewählter Objekte, ist das Register weg. Lag es vorn, kommt das zuletzt
+Löschen gewählter Objekte, ist das Register weg. Das Register zieht bei jedem
+Zeichnen der Ansicht mit der Auswahl gleich; es fehlte bis zum 03.10.2026 auch dort,
+wo die Auswahl ohne Klick in der Ansicht entsteht: bei der Mehrfachauswahl im Baum,
+den Zweigen Federn, Punktmassen und Grenzschichten (gemessen an Federn und
+Punktmassen: Knoten gewählt, kein Register), einer Lastart im Baum (die belasteten
+Objekte), dem Klickmodus der Flächen- und Kontaktmaske und der Linientabelle; und
+nach dem Vernetzen vor dem Rechnen, das die
+Auswahl vorübergehend leert, kam die Auswahl zurück, das Register nicht. Lag es vorn, kommt das zuletzt
 benutzte Register nach vorn, sonst *Start*. Bis zum 03.10.2026 blieb es nach
 *Neu*, einem Beispiel, *Öffnen*, einem Import, *Rückgängig* und *Wiederholen*
 mit der Zahl des vorigen Stands stehen („Auswahl: 4 Knoten“ über einem leeren
