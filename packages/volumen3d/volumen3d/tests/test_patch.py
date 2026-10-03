@@ -184,14 +184,19 @@ def test_patch_hoeherer_ordnung():
 
 
 def test_ohne_aggregation():
-    """Messung des alpha-Effekts ohne Zellaggregation (Begruendung der Massnahme): Fehler ~ alpha / Anteil."""
+    """Messung ohne Zellaggregation (Begruendung der Massnahme): Zellen mit Werkstoffanteil 2,8e-5 treiben den Fehler des linearen Felds auf 1e-4 bis 1e-2,
+    und alpha kleiner zu waehlen hilft nicht verlaesslich. Gemessen am 03.10.2026 (exakte Stueckmomente, Plan TP 5 O5) bei alpha 1e-6 / 1e-7 / 1e-8 / 1e-9 /
+    1e-10 / 1e-12: 3,2e-2 / 5,1e-2 / 7,8e-4 / 4,3e-4 / 1,8e-4 / 2,5e-5 - nicht monoton. Mit der Tetraederregel davor: 3,5e-2 / 6,0e-3 / 1,4e-2 / 4,1e-4 / 1,4e-4 /
+    1,0e-5, ebenfalls nicht monoton; die fruehere Pruefung 'Faktor > 30 zwischen 1e-8 und 1e-10' traf nur das eine Wertepaar 1,4e-2 / 1,4e-4 und war kein Gesetz.
+    Geprueft wird, was traegt: ohne Aggregation liegt der Fehler bei alpha 1e-8 und 1e-10 ueber 1e-5 (rund ein Achtzehntel des kleineren Messwerts), mit
+    Aggregation unter 1e-6 (test_patch)."""
     werte = {}
     for a in (1e-8, 1e-10):
         pr = _problem(2, a, aggregation=None)
         U = pr.loesen({"alles": u_exakt})[:, 0]
         werte[a] = _fehler(pr, U)[1]
-    check("ohne Aggregation: Spannungsfehler skaliert mit alpha (Faktor > 30 zwischen 1e-8 und 1e-10) und liegt ueber 1e-6",
-          werte[1e-8] / werte[1e-10] > 30 and werte[1e-8] > 1e-6, f"1e-8: {werte[1e-8]:.1e}, 1e-10: {werte[1e-10]:.1e}")
+    check("ohne Aggregation: Spannungsfehler des linearen Felds bei alpha 1e-8 und 1e-10 ueber 1e-5 (mit Aggregation unter 1e-6)",
+          min(werte.values()) > 1e-5, f"1e-8: {werte[1e-8]:.1e}, 1e-10: {werte[1e-10]:.1e}")
 
 
 def test_kleine_schnittzellen():

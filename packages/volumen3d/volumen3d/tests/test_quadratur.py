@@ -442,4 +442,4 @@ def test_inside_zelle():
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_innere_trennflaeche, test_deckungsgleiche_flaechen, test_polyeder, test_ebene_geometrie_exakt, test_kugel_zweite_ordnung, test_lochplatte, test_kleine_radien, test_inside_zelle, test_momentfitting, test_verschachtelter_baum]))
+    sys.exit(lauf([test_innere_trennflaeche, test_deckungsgleiche_flaechen, test_polyeder, test_ebene_geometrie_exakt, test_kugel_zweite_ordnung, test_lochplatte, test_kleine_radien, test_inside_zelle, test_momentfitting, test_stuecke_exakt, test_verschachtelter_baum]))

@@ -81,7 +81,11 @@ def test_pcg():
         P = np.asarray(P, float).reshape(-1, 3)
         return np.stack([1e-3 * P[:, 0], -0.3e-3 * P[:, 1], -0.3e-3 * P[:, 2]], axis=1)
 
-    _vergleich("Patch-Test h 20 p 2 (Dirichlet voll, Aggregation)", patch_problem(2, 1e-8), {"alles": u_exakt})
+    # Patch-Test mit Toleranz 1e-12 und Schranke 1e-5: der Abstand zum Direktloeser haengt hier an der Abbruchtoleranz (Kondition 1,45e6), nicht am
+    # Verfahren - gemessen am 03.10.2026 (exakte Stueckmomente, Plan TP 5 O5) 1,2e-4 / 6,3e-6 / 1,6e-6 bei tol 1e-10 / 1e-11 / 1e-12 (5015 / 5907 / 6553
+    # Iterationen), mit der Tetraederregel davor 4,5e-5 / 3,7e-5 / 1,4e-6. Die fruehere Pruefung (tol 1e-10, Schranke 1e-4) lag nur um den Faktor 2 ueber
+    # ihrem Messwert und riss mit den geaenderten Zellmatrizen; 1e-5 ist das Sechsfache des Messwerts bei 1e-12.
+    _vergleich("Patch-Test h 20 p 2 (Dirichlet voll, Aggregation)", patch_problem(2, 1e-8), {"alles": u_exakt}, tol=1e-12, grenze=1e-5)
     _vergleich("Kragarmsegment p 2 h 50 ('schnitt': projizierter CG)", _segment(400.0, 600.0, 2, 50.0), {"links": u_lin, "rechts": u_lin})
     _vergleich("Lame h 20 p 3 (Normalprojektion, Druck)", _lame_mit_druck(_lame(p=3)), {})
     _vergleich("Kirsch h 20 p 2 verfeinert (haengende Freiheitsgrade, Traktion)", _kirsch(verfeinert=True), {})

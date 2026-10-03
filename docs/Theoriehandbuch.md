@@ -10711,7 +10711,9 @@ Prüfkörpern 0).
 
 Patch-Test-Gitter (Quader durch zwei schräge Halbräume, 113 von 118 Zellen geschnitten): 10 Zellen
 mit Werkstoffanteil unter 10⁻⁴, drei mit 0. Der Fehler der FCM-Lösung skaliert mit α/Anteil:
-Spannung 1,4·10⁻² bei α = 10⁻⁸, 1,4·10⁻⁴ bei 10⁻¹⁰. Abhilfe nach Vorgabe 8.3 (Zellaggregation,
+Spannung 1,4·10⁻² bei α = 10⁻⁸, 1,4·10⁻⁴ bei 10⁻¹⁰. (Nachtrag O5, 03.10.2026: das Wertepaar war kein Gesetz. Über α = 10⁻⁶ … 10⁻¹² ist der Fehler ohne Aggregation nicht monoton – mit der
+Tetraederregel 3,5·10⁻² / 6,0·10⁻³ / 1,4·10⁻² / 4,1·10⁻⁴ / 1,4·10⁻⁴ / 1,0·10⁻⁵, mit den exakten Stückmomenten 3,2·10⁻² / 5,1·10⁻² / 7,8·10⁻⁴ / 4,3·10⁻⁴ / 1,8·10⁻⁴ / 2,5·10⁻⁵;
+α kleiner zu wählen hilft also nicht verlässlich, 11.21.) Abhilfe nach Vorgabe 8.3 (Zellaggregation,
 Prinzip der aggregierten finiten Elemente, Badia/Verdugo/Martín 2018): Zellen mit Anteil unter
 der Schwelle (bis 28.09.2026 abends 0,25, seither 0,4, siehe 11.10) bekommen eine wohlgestellte Wurzelzelle (Nachbar mit größtem Anteil, Fläche vor Kante vor
 Ecke, Ketten aufgelöst); Moden, die keine wohlgestellte Zelle trägt, werden an die Fortsetzung
