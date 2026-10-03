@@ -575,7 +575,7 @@ bedienen sind, steht im nächsten Abschnitt.
 | Lager | Name und Symbolgröße; Klick oder Doppelklick öffnet rechts die Lagermaske: Wirkung, Feder und Ausfall je Freiheitsgrad, Bettung auf/an Beton als Vorschlag, Schlupf/Reibung/Grenzkraft über den Knopf |
 | Gelenke | über die Maske (Doppelklick) |
 | Lastfälle | Nr und Beschreibung in der Tabelle; Klick im Modellbaum öffnet rechts **nur den Lastfall**: Nummer, Name, Beschreibung, Einwirkung, darunter alle enthaltenen Lasten nach Art untereinander (dieselben Punkte wie im Modellbaum), dann Ausschlussgruppe, Situation, Theorie, Eigengewicht g_z, ψ-Beiwerte und „aktiver Lastfall“; „Lasten in der Tabelle“ stellt die Lastentabelle auf den Lastfall |
-| Kombinationen | Klick im Modellbaum öffnet rechts die Maske: Name, Typ (auch **FAT** für Ermüdung), Beschreibung, Bemessungssituation (nur wenn aus der Quelldatei bekannt, als Angabe), Situation, Theorie, Faktoren als Text („LF1: 1,35, Wind: 1,5“) |
+| Kombinationen | Klick im Modellbaum öffnet rechts die Maske: Name, Typ (im Klartext wie „GZT (STR/GEO)“ oder „GZG häufig“, auch **Ermüdung**; siehe Kapitel 4, *Kombinationstypen und Umhüllende im Klartext*), Beschreibung, Bemessungssituation (nur wenn aus der Quelldatei bekannt, als Angabe), Situation, Theorie, Faktoren als Text („LF1: 1,35, Wind: 1,5“) |
 | Kontaktbedingungen | Maske rechts (Klick im Modellbaum, „+ Kontaktbedingung anlegen“ oder *Lager / Kontakt → Kontaktbedingung…*): Körper A und B, Kontaktflächen, Standardkontakt, Zug, Schub x/y, Reibung, Verdrehungen, Suchradius, Anfangsspalt; ausgeführt werden sie beim Vernetzen |
 | Flächen, Volumenkörper | über die Maske rechts (Doppelklick): Randlinien bzw. Randflächen — getippt, per **Klick ins Feld** und dann in der Ansicht (seit 15.09.2026) oder mit **„Randlinien anklicken“ / „Randflächen anklicken“** gewählt —, Dicke, Werkstoff, Teilung, Bemerkung, Haken „gleich vernetzen“ |
 
@@ -1831,7 +1831,8 @@ sie dazu. Die Kopfzeile sagt es in einer eigenen Zeile: „Lasten ausgeblendet
 *Ergebnisse → Lasten im Ergebnisbild* ein (derselbe Schalter steht in der
 Glasleiste unter *Zeigen ▾*); die Kopfzeile nennt dann den
 Lastfall („Lasten LF1 [kN/m]“). Ausgenommen ist eine **Umhüllende aus genau
-einem Lastfall**, etwa „Umhüllende CASES“ eines Modells mit nur LF1: sie ist
+einem Lastfall**, etwa die „Umhüllende Lastfälle“ (bis zum 03.10.2026
+„Umhüllende CASES“) eines Modells mit nur LF1: sie ist
 dieser Lastfall und zeigt seine Lasten (bis zur Nachbesserung waren am
 Rahmen nach *Berechnen* alle 33 Lastpfeile weg). Der Schalter *Lasten*
 (Register *Ansicht*, Glasleiste) nimmt wie bisher alle Lasten aus dem Bild.
@@ -2108,7 +2109,12 @@ Sicht und die Intelligente Auswahl, dann wird die Ergebnisauswahl schmaler
 den die weichenden Knöpfe frei machen, bekommt die Ergebnisauswahl zurück, bis
 zu ihren vollen 190 px: bei 1366 und 1536 px Fensterbreite zeigt sie so jeden
 Namen der gerechneten Halle ganz („Kombination GZT12“ statt „Kombination GZ“,
-Nachbesserung 25.09.2026). Das Untermenü *Klick wählt* in „»“ nennt die
+Nachbesserung 25.09.2026). Seit dem 03.10.2026 wird sie für einen längeren
+Namen auch breiter als 190 px, so weit, dass er ganz zu lesen ist, höchstens
+aber 280 px. Anlass sind die Fachbegriffe der Umhüllenden: „Umhüllende GZG
+charakteristisch“ und „Umhüllende GZG quasi-ständig“ waren bei 190 px
+abgeschnitten. Die Liste passt sich gleich nach der Rechnung an, nicht erst,
+wenn sich die Fenstergröße ändert. Das Untermenü *Klick wählt* in „»“ nennt die
 geltende Auswahlart („Klick wählt: Lager“) — steht der Knopf dort, ist es die
 einzige Anzeige in der Leiste. Die
 Ergebnisauswahl, „»“ und *Alles deselektieren* bleiben immer stehen. Wird die
@@ -2619,9 +2625,10 @@ gleichem Kurznamen erscheint mit ihrem vollen Namen aus dem Elementverzeichnis.
 Im Filter schreibt man, was dasteht („Balken“, nicht „beam“); die
 Spalte sortiert nach dem Klartext, und Kopieren, CSV und Excel geben ihn aus.
 Gespeichert und gerechnet wird weiter mit dem Schlüssel, eine ältere Datei
-lädt also unverändert. Noch als Schlüssel stehen die Einwirkungskategorie der
-Lastfälle („G“, „Q_A“, „W“) und der Typ der Kombinationen („ULS“, „SLS_CH“);
-sie bekommen ihre Fachbegriffe mit dem Paket „Fachbegriffe statt Schlüssel“.
+lädt also unverändert. Den Typ der Kombinationen zeigt die Tabelle seit dem
+03.10.2026 ebenso im Klartext, etwa „GZT (STR/GEO)“ statt „ULS“ (siehe Kapitel 4,
+*Kombinationstypen und Umhüllende im Klartext*). Als Kürzel steht weiter die
+Einwirkungskategorie der Lastfälle („G“, „Q_A“, „W“).
 
 **Der Kontakt-Hinweis erscheint nur bei Modellen mit Kontakt.** Die Tabellen
 „Kontakt“ und „Kontaktpaare“ sagten bei einer Umhüllenden bisher immer
@@ -2726,7 +2733,7 @@ einem Leerzeichen am Zeilenanfang; diese Kopfzeile steht fett. Das sind
 beim Wechsel des Modells, „--- Modellprüfung ---“, „--- Freie Bewegungen ---“,
 „--- Berechnung gestartet ---“, „--- Abnahme des Netzes: … ---“ und
 „--- Objekte ohne Netz ---“. Die Regel ist bewusst klein: andere Zeilen, die
-wie Überschriften wirken („Umhuellende ULS: 42 Ergebnisse“), bleiben normal,
+wie Überschriften wirken („Umhüllende GZT: 42 Ergebnisse“), bleiben normal,
 und eingerückte oder mitten in der Zeile stehende Striche zählen nicht.
 
 **Der Text ändert sich nicht.** Die Farben sind nur Anzeige. Markierter Text,
@@ -3894,6 +3901,71 @@ Last heraus (bei Objektlasten samt ihren Elementlasten).
   erneuter Erzeugung ersetzt, manuelle bleiben erhalten.
 * Ergebnisse: jeder Lastfall, jede Kombination, Umhüllende je Gruppe (GZT,
   GZG …) mit maßgebender Kombination je Extremwert.
+
+### Kombinationstypen und Umhüllende im Klartext (seit 03.10.2026)
+
+Jede Kombination hat einen Typ, und nach der Berechnung bildet das Programm je
+Grenzzustand eine Umhüllende. Beide heißen an der Oberfläche so, wie man sie
+aus DIN EN 1990 kennt. Bis zum 03.10.2026 standen in Modellbaum,
+Ergebnisauswahl, Glasleiste, Kopfzeile der Ansicht, Kombinationsmaske,
+Kombinationsdialog, Tabellen, Protokoll und Browser die internen Schlüssel,
+etwa „Umhüllende ULS“, „Umhüllende CASES“ oder „SLS_CH“; nur der Bericht
+schrieb schon Klartext. Die Texte kommen jetzt für alle Stellen aus einem
+gemeinsamen Verzeichnis, auch für den Bericht.
+
+Jeder Begriff hat eine kurze und eine lange Form. Die kurze steht in den
+Auswahllisten, im Modellbaum, in der Kopfzeile der Ansicht, in den Tabellen und
+im Protokoll. Die lange steht im Bericht und erscheint als Hinweis am
+Mauszeiger, etwa an der Auswahl *Typ* der Kombinationsmaske, an den Einträgen
+des Kombinationsdialogs und an den Umhüllenden der Ergebnisauswahl rechts.
+
+| Typ der Kombination | lange Form |
+|---|---|
+| GZT (STR/GEO) | Grenzzustand der Tragfähigkeit (GZT), Versagen von Tragwerk und Baugrund (STR/GEO), ständige und vorübergehende Bemessungssituation nach DIN EN 1990, Gl. 6.10 |
+| GZT (EQU) | Grenzzustand der Tragfähigkeit (GZT), Verlust der Lagesicherheit (EQU) nach DIN EN 1990 |
+| außergewöhnlich | Grenzzustand der Tragfähigkeit (GZT), außergewöhnliche Bemessungssituation nach DIN EN 1990, Gl. 6.11 |
+| GZG charakteristisch | Grenzzustand der Gebrauchstauglichkeit (GZG), charakteristische Kombination nach DIN EN 1990, Gl. 6.14 |
+| GZG häufig | Grenzzustand der Gebrauchstauglichkeit (GZG), häufige Kombination nach DIN EN 1990, Gl. 6.15 |
+| GZG quasi-ständig | Grenzzustand der Gebrauchstauglichkeit (GZG), quasi-ständige Kombination nach DIN EN 1990, Gl. 6.16 |
+| Ermüdung | Ermüdung (FAT), nur für den Ermüdungsnachweis nach DIN EN 1993-1-9, nicht in den Querschnittsnachweisen im GZT |
+| benutzerdefiniert | benutzerdefinierte Kombination, sie geht in die Umhüllende GZT ein |
+
+| Umhüllende | lange Form | was sie zusammenfasst |
+|---|---|---|
+| Umhüllende GZT | Grenzzustand der Tragfähigkeit (GZT) | alle Kombinationen der Typen GZT (STR/GEO), GZT (EQU), außergewöhnlich und benutzerdefiniert |
+| Umhüllende GZG charakteristisch | Gebrauchstauglichkeit, charakteristisch | die charakteristischen Kombinationen |
+| Umhüllende GZG häufig | Gebrauchstauglichkeit, häufig | die häufigen Kombinationen |
+| Umhüllende GZG quasi-ständig | Gebrauchstauglichkeit, quasi-ständig | die quasi-ständigen Kombinationen |
+| Umhüllende Ermüdung | Ermüdung | die Kombinationen der Ermüdung |
+| Umhüllende Lastfälle | Lastfälle | alle Lastfälle, wenn das Modell keine Kombination hat |
+
+Damit die längeren Namen in der Glasleiste ganz zu lesen sind, wird die
+Ergebnisauswahl dort nach Bedarf breiter (siehe Kapitel *Darstellung in der
+Ansicht*, Absatz *Nie breiter als die Ansicht* unter *Die Glasleiste*).
+
+Die kurzen Formen folgen der deutschen Fassung von DIN EN 1990: GZT und GZG
+sind dort die Abkürzungen der beiden Grenzzustände, EQU, STR, GEO und FAT
+heißen die Nachweise im GZT (Abschnitt 6.4.1), und im GZG heißen die
+Kombinationen charakteristisch, häufig und quasi-ständig (Abschnitt 6.5.3).
+Die Umhüllende GZT heißt ohne Nachweisart, weil sie mehrere Typen
+zusammenfasst. Die Umhüllende einer Ergebniskombination aus RFEM trägt weiter
+den Namen der Kombination, etwa „Umhüllende EK3“.
+
+Gespeichert, gerechnet und eingelesen wird weiter mit den Schlüsseln (ULS,
+EQU, ACC, SLS_CH, SLS_FR, SLS_QP, FAT, USER und CASES). Eine ältere Datei lädt
+also unverändert, und ein Bild, das schon im Bericht steht, zeigt weiter
+dieselbe Umhüllende. Seine Beschriftung bleibt, wie sie beim Übernehmen
+geschrieben wurde. Wo der Bericht ein übernommenes Bild oder eine übernommene
+Tabelle ihrem Ergebnis zuordnet (die Zeile „Zeigt“ unter dem Bild und der
+Titel der Tabelle), steht jetzt der Klartext. Alle übrigen Texte schreibt der
+Bericht genau wie vor dem 03.10.2026. Dazu gehört, dass die Ermüdung dort
+weiter mit ihrem Schlüssel steht: als Typ „FAT“ in der Tabelle der
+Kombinationen und in der Übersicht der Ergebnisse und als Überschrift
+„Umhüllende FAT“.
+
+Die Tabelle *Kombinationen* gibt beim Kopieren und in CSV und Excel den
+Klartext aus, so wie die Spalte *Art* der Elemente. Im Browser gilt dasselbe
+wie im Programm; die Kennungen der Ergebnisse (env:ULS) bleiben.
 
 ### Übermaß: die Presspassung als Last
 

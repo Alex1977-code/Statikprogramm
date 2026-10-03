@@ -47,6 +47,7 @@ import numpy as np
 from ..model import (Model, Material, Section, ShellProp, NodalLoad, BeamLoad, FaceLoad,
                      TempLoad, Combination, ACTION_CATEGORIES, STEEL_GRADES, NDOF, DOF_NAMES)
 from .. import solver, parallel, mesher, profiles
+from .. import begriffe as bg
 from ..assemble import SOLID_FACES
 from ..elements import beam3d as bm
 from ..examples_lib import EXAMPLES, build_example
@@ -447,7 +448,10 @@ def state_summary(st: State) -> dict:
                          for s in m.supports[:MAX_ROWS]],
             "n_supports": len(m.supports),
             "load_cases": cases, "active_case": m.active_case,
-            "combinations": [{"name": c.name, "typ": c.typ, "description": c.description,
+            # typ bleibt der Schluessel (ULS), typ_text/typ_lang sind, was der
+            # Browser zeigt (03.10.2026, Teilpaket 11b)
+            "combinations": [{"name": c.name, "typ": c.typ, "typ_text": bg.typ_kurz(c.typ),
+                              "typ_lang": bg.typ_lang(c.typ), "description": c.description,
                               "leading": c.leading, "formula": c.formula(),
                               "factors": _clean(c.factors),
                               "alternativen": len(c.alternativen)} for c in m.combinations.values()],
@@ -478,6 +482,8 @@ def state_summary(st: State) -> dict:
             "settings": dict(st.settings), "cpu": parallel.cpu_count(),
             "parallel": parallel.describe(),
             "categories": {k: {"text": v[0], "psi": list(v[1])} for k, v in ACTION_CATEGORIES.items()},
+            # [Schluessel, kurz, lang] je Kombinationstyp - fuer die Auswahl „Art“
+            "kombinationstypen": [[k, b.kurz, b.lang] for k, b in bg.KOMBINATIONSTYPEN.items()],
             "grades": list(STEEL_GRADES), "families": list(profiles.FAMILIES),
             "examples": {k: EXAMPLE_LABELS.get(k, k) for k in EXAMPLES},
             "export_formats": _export_formats(),
@@ -607,8 +613,9 @@ def result_entries(st: State) -> list[dict]:
         return []
     m = st.model
     out = []
+    # die Kennung bleibt env:ULS, die Beschriftung ist der Klartext (03.10.2026)
     for k in an.envelopes:
-        out.append({"id": f"env:{k}", "label": f"Umhüllende {k}"})
+        out.append({"id": f"env:{k}", "label": bg.umhuellende_kurz(k)})
     for k in an.combinations:
         c = m.combinations.get(k)
         out.append({"id": f"combo:{k}", "label": f"{k}: {c.formula() if c else ''}"})
@@ -2100,7 +2107,7 @@ def start_solve(st: State, opts: dict) -> dict:
             elif kind == "case":
                 r = solver.solve_static(m, progress, case=case)
                 an = solver.Analysis(m, cases={r.name: r})
-                an.envelopes["CASES"] = solver.Envelope(m, an.cases, "Umhüllende Lastfälle")
+                an.envelopes["CASES"] = solver.Envelope(m, an.cases, bg.umhuellende_kurz("CASES"))
                 text = r.summary()
                 with st.lock:
                     st.analysis, st.results = an, None

@@ -41,6 +41,7 @@ import numpy as np
 from .einheiten import Einheiten
 from .plastizitaet import Plastizitaet
 from . import elemente as _EL
+from .begriffe import umhuellende_kurz
 
 DOF_NAMES = ["ux", "uy", "uz", "rx", "ry", "rz"]
 DOF_ALIASES = {"ux": 0, "uy": 1, "uz": 2, "rx": 3, "ry": 4, "rz": 5,
@@ -2027,8 +2028,10 @@ class Berichtseintrag:
 
     def quelle_text(self) -> str:
         art, _, wert = (self.quelle or "").partition(":")
+        # die Umhuellende im Klartext („Umhüllende GZT“), die Quelle bleibt
+        # der Schluessel env:ULS (03.10.2026, Teilpaket 11b)
         return {"case": f"Lastfall {wert}", "combo": f"Kombination {wert}",
-                "env": f"Umhüllende {wert}", "modal": f"Eigenform {wert}",
+                "env": umhuellende_kurz(wert), "modal": f"Eigenform {wert}",
                 "buckling": f"Knickfigur {wert}"}.get(art, self.quelle or "-")
 
 

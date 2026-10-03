@@ -1145,6 +1145,11 @@ class Glasleiste(QtWidgets.QFrame):
     RAND = 12
     #: So schmal darf die Ergebnisauswahl werden, bevor Hauptknoepfe weichen
     LISTE_MIN = 120
+    #: So breit darf sie fuer einen langen Namen werden (03.10.2026): ueber
+    #: ihre Vorgabebreite hinaus, damit „Umhüllende GZG charakteristisch“
+    #: ganz zu lesen ist, aber nicht beliebig breit fuer einen sehr langen
+    #: Namen aus einer Quelldatei
+    LISTE_MAX = 280
 
     def __init__(self, ansicht: QtWidgets.QWidget):
         super().__init__(ansicht)
@@ -1249,7 +1254,26 @@ class Glasleiste(QtWidgets.QFrame):
         self._teil(cb)
         self.listen[schluessel or hinweis] = cb
         self._listenbreite[cb] = int(breite)
+        # Neuer Inhalt kann einen laengeren Namen bringen: neu einpassen
+        # (gebuendelt wie bei LayoutRequest, 03.10.2026)
+        for signal in (cb.model().rowsInserted, cb.model().rowsRemoved, cb.model().modelReset):
+            signal.connect(self._einpassen_planen)
         return cb
+
+    def _einpassen_planen(self, *_a) -> None:
+        """Nach dem laufenden Ereignis neu einpassen - einmal, auch wenn viele
+        Eintraege nacheinander kommen."""
+        if not self._geplant:
+            self._geplant = True
+            QtCore.QTimer.singleShot(0, self.nachziehen)
+
+    def _listenziel(self, cb, b: int) -> int:
+        """Die Breite, die eine Liste haben will: ihre Vorgabe, bei einem
+        laengeren Namen so viel, dass er ganz zu lesen ist (hoechstens
+        LISTE_MAX). Bis zum 03.10.2026 war die Vorgabe zugleich die Grenze;
+        mit den Fachbegriffen (Teilpaket 11b) blieben „Umhüllende GZG
+        charakteristisch“ und „… quasi-ständig“ bei 190 px abgeschnitten."""
+        return max(int(b), min(_listen_bedarf(cb), self.LISTE_MAX))
 
     def ueberlauf_knopf(self) -> QtWidgets.QToolButton:
         """Die Ueberlaufliste „»“ an dieser Stelle - sichtbar nur, wenn etwas
@@ -1340,7 +1364,11 @@ class Glasleiste(QtWidgets.QFrame):
         haben - sonst stiesse jeder Aufruf ueber die Layoutanfrage den
         naechsten an."""
         teile = [w for _t, ws in self._gruppen for w in ws if w is not self.ueberlauf]
-        stand = (int(breite), tuple(w.sizeHint().width() for w in teile))
+        # die Breiten, die die Listen fuer ihre Namen wollen, gehoeren zum
+        # Stand: sonst passte die Leiste nach der Rechnung nicht neu ein
+        ziele = {cb: self._listenziel(cb, b) for cb, b in self._listenbreite.items()}
+        stand = (int(breite), tuple(w.sizeHint().width() for w in teile),
+                 tuple(ziele.values()))
         if stand == self._stand:
             return
         rangfolge = sorted(self._weicht, key=lambda w: -self._weicht[w])
@@ -1348,7 +1376,7 @@ class Glasleiste(QtWidgets.QFrame):
         haupt = [w for w in rangfolge if self._weicht[w] < 10]
         for w in rangfolge:
             w.setVisible(True)
-        for cb, b in self._listenbreite.items():
+        for cb, b in ziele.items():
             cb.setMinimumWidth(b)
         if self.ueberlauf is not None:
             self.ueberlauf.setVisible(False)
@@ -1366,7 +1394,7 @@ class Glasleiste(QtWidgets.QFrame):
             if self._wunschbreite() <= breite:
                 break
             weg(w)
-        for cb, b in self._listenbreite.items():
+        for cb, b in ziele.items():
             ueber = self._wunschbreite() - breite
             if ueber > 0:
                 # nicht unter den laengsten Namen (02.10.2026): mit der
@@ -1386,13 +1414,14 @@ class Glasleiste(QtWidgets.QFrame):
         # daneben Platz frei war - bei 1366 und 1536 px Fensterbreite waren
         # 75 von 81 Namen der gerechneten Halle abgeschnitten („Kombination
         # GZ“), und die Liste ist dort die einzige Anzeige des Ergebnisses.
-        for cb, b in self._listenbreite.items():
+        for cb, b in ziele.items():
             frei = breite - self._wunschbreite()
             if frei > 0 and cb.minimumWidth() < b:
                 cb.setMinimumWidth(min(b, cb.minimumWidth() + frei))
         self._ueberlauf_fuellen(versteckt)
         self.resize(self.sizeHint())
-        self._stand = (int(breite), tuple(w.sizeHint().width() for w in teile))
+        self._stand = (int(breite), tuple(w.sizeHint().width() for w in teile),
+                       tuple(self._listenziel(cb, b) for cb, b in self._listenbreite.items()))
 
     def _ueberlauf_fuellen(self, versteckt: list):
         """Die Ueberlaufliste in der Reihenfolge der Leiste, Gruppen durch

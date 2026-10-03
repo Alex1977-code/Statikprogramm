@@ -25,6 +25,7 @@ from scipy import sparse
 from scipy.sparse.linalg import splu, eigsh
 
 from .model import Model, NDOF, Combination, LoadCase, Member, GRUNDSTELLUNG
+from .begriffe import umhuellende_kurz
 from . import assemble as asm
 from .elements import beam3d as bm
 from .elements import shell as sh
@@ -6754,8 +6755,11 @@ def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progres
             typ = model.combinations[n].typ
             key = "ULS" if typ in ("ULS", "EQU", "ACC", "USER") else typ
             groups.setdefault(key, {})[n] = r
+        # Der Name ist der Klartext („Umhüllende GZT“): er steht in der
+        # Zusammenfassung und damit im Protokoll. Bis zum 03.10.2026 stand dort
+        # „Umhuellende ULS“; der Schluessel des Woerterbuchs bleibt ULS.
         for key, rs in groups.items():
-            an.envelopes[key] = Envelope(model, rs, f"Umhuellende {key}")
+            an.envelopes[key] = Envelope(model, rs, umhuellende_kurz(key))
         # Die Umhuellende einer Ergebniskombination gehoert in die Umhuellende
         # ihrer Art - wie in RFEM. Die Nachweise lesen die Umhuellenden
         # **nicht** (sie brauchen zusammengehoerige Schnittgroessen); sie
@@ -6766,10 +6770,10 @@ def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progres
             typ = model.combinations[n].typ
             key = "ULS" if typ in ("ULS", "EQU", "ACC", "USER") else typ
             if key not in an.envelopes:
-                an.envelopes[key] = Envelope(model, {}, f"Umhuellende {key}")
+                an.envelopes[key] = Envelope(model, {}, umhuellende_kurz(key))
             an.envelopes[key].aufnehmen_umhuellende(env)
         if not an.combinations and not umhuellende_ek:
-            an.envelopes["CASES"] = Envelope(model, an.cases, "Umhuellende Lastfaelle")
+            an.envelopes["CASES"] = Envelope(model, an.cases, umhuellende_kurz("CASES"))
     for n, env in umhuellende_ek.items():
         an.envelopes[n] = env
     _melde(progress, "Umhüllende gebildet", 0.92)

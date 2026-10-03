@@ -325,10 +325,15 @@ class CombinationDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.setWindowTitle("Kombination")
         self.name = QtWidgets.QLineEdit(combo.name if combo else f"K{len(model.combinations)+1}")
+        # Der Typ im Klartext („GZT (STR/GEO)“), die lange Form am Zeiger, der
+        # Schluessel als Daten - result() liest ihn (03.10.2026, Teilpaket 11b)
+        from .. import begriffe as bg
         self.typ = QtWidgets.QComboBox()
-        self.typ.addItems(["ULS", "EQU", "ACC", "SLS_CH", "SLS_FR", "SLS_QP", "USER"])
-        if combo:
-            self.typ.setCurrentText(combo.typ)
+        for t in ["ULS", "EQU", "ACC", "SLS_CH", "SLS_FR", "SLS_QP", "USER"]:
+            self.typ.addItem(bg.typ_kurz(t), t)
+            self.typ.setItemData(self.typ.count() - 1, bg.typ_lang(t), QtCore.Qt.ToolTipRole)
+        if combo and self.typ.findData(combo.typ) >= 0:
+            self.typ.setCurrentIndex(self.typ.findData(combo.typ))
         self.desc = QtWidgets.QLineEdit(combo.description if combo else "")
         self.factors = {}
         self.model = model
@@ -388,7 +393,7 @@ class CombinationDialog(QtWidgets.QDialog):
                            {} if self.alternativen else
                            {k: e.value() for k, e in self.factors.items()
                             if e.value() and e.isEnabled()},
-                           self.typ.currentText(), self.desc.text(),
+                           self.typ.currentData() or self.typ.currentText(), self.desc.text(),
                            situation=self.situation_name(),
                            theorie=self.theorie.currentData() or "",
                            bemessungssituation=self.bemessungssituation,

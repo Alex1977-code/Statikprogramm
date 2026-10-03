@@ -670,6 +670,14 @@ def test_ergebnisliste_lesbar():
     n = sum(1 for i in range(cb.count()) if cb.itemData(i) is not None)
     check("gerechnete Halle: die Ergebnisauswahl führt Lastfälle und Kombinationen",
           n >= 40, f"{n} Einträge")
+    # Seit 03.10.2026 (Fachbegriffe, Teilpaket 11b) heissen die Umhuellenden
+    # „Umhüllende GZG charakteristisch“ usw. - laenger als die 190 px der
+    # Vorgabe. Die Liste passt sich nach der Rechnung an, ohne dass sich die
+    # Fenstergroesse aendert.
+    weg = _abgeschnitten(cb)
+    check("nach der Rechnung, ohne Größenänderung: kein Name abgeschnitten",
+          not weg and "Umhüllende GZG charakteristisch" in [cb.itemText(i) for i in range(cb.count())],
+          f"Liste {cb.width()} px, Feld {_listenfeld(cb)} px, {len(weg)} von {n}: {weg[:2]}")
     for breite, hoehe in ((1366, 768), (1536, 864), (1920, 1080)):
         w.resize(breite, hoehe)
         _ruhe()

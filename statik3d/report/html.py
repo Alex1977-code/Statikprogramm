@@ -34,6 +34,7 @@ import numpy as np
 from .. import __version__
 from ..model import ACTION_CATEGORIES, DOF_NAMES, Combination
 from .. import elemente as _EL
+from .. import begriffe as _BG
 from ..combinations import combination_table
 from . import svg as sv
 
@@ -55,15 +56,18 @@ NORMS = [
 #: Klartext je Elementtyp - aus dem Elementverzeichnis (statik3d.elemente)
 ELEMENT_TYPES = {t: a.name for t, a in _EL.ELEMENTE.items()}
 
-COMBO_TYPES = {"ULS": "GZT (STR/GEO)", "EQU": "GZT (EQU)", "ACC": "außergewöhnlich",
-               "SLS_CH": "GZG charakteristisch", "SLS_FR": "GZG häufig",
-               "SLS_QP": "GZG quasi-ständig", "USER": "benutzerdefiniert"}
+#: Klartexte der Kombinationstypen und Umhuellenden - seit 03.10.2026 aus dem
+#: gemeinsamen Modul statik3d/begriffe.py, das auch die Oberflaeche liest
+#: (Teilpaket 11b). Der Bericht schreibt genau dieselben Texte wie vorher:
+#: dieselben Schluessel, die Typen in der kurzen, die Umhuellenden in der
+#: langen Form. FAT fehlt in beiden wie bisher - eine Umhuellende oder
+#: Kombination der Ermuedung steht im Bericht weiter als „FAT“; sie
+#: aufzunehmen waere eine Aenderung des Berichts, keine der Herkunft.
+COMBO_TYPES = {k: _BG.typ_kurz(k)
+               for k in ("ULS", "EQU", "ACC", "SLS_CH", "SLS_FR", "SLS_QP", "USER")}
 
-ENVELOPE_NAMES = {"ULS": "Grenzzustand der Tragfähigkeit (GZT)",
-                  "SLS_CH": "Gebrauchstauglichkeit, charakteristisch",
-                  "SLS_FR": "Gebrauchstauglichkeit, häufig",
-                  "SLS_QP": "Gebrauchstauglichkeit, quasi-ständig",
-                  "CASES": "Lastfälle"}
+ENVELOPE_NAMES = {k: _BG.umhuellende_lang(k)
+                  for k in ("ULS", "SLS_CH", "SLS_FR", "SLS_QP", "CASES")}
 
 KIND_NAMES = {"Querschnitt": "Querschnittsnachweis", "Stabilitaet": "Stabilitätsnachweis",
               "section": "Querschnittsnachweis"}

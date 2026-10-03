@@ -1405,8 +1405,9 @@ def test_ausfallszenario_gelenk_und_bemessungssituation():
               k_fat.bemessungssituation == "GZT (FAT) - Ermuedung - Zeitpunkt 1",
               k_fat.bemessungssituation)
         check("die andere bleibt GZT", k_gzt.typ == "ULS" and k_gzt.is_uls, k_gzt.typ)
-        check("das Protokoll zaehlt die Arten",
-              "1x FAT" in txt and "2x ULS" in txt,
+        # seit 03.10.2026 im Klartext (Teilpaket 11b), vorher „1x FAT“, „2x ULS“
+        check("das Protokoll zaehlt die Arten im Klartext",
+              "1x Ermüdung" in txt and "2x GZT (STR/GEO)" in txt,
               next((x for x in log if "Kombinationen uebernommen" in x), "-"))
         check("und leitet daraus eine Ermuedungslast ab (ein Zustand gegen Null)",
               "Ermüdungslasten" in txt and list(m.fatigue_loads)

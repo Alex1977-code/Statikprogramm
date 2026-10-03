@@ -39,6 +39,7 @@ from . import ribbon as rib
 from . import masken as msk
 from . import zahlenfeld as zf
 from .. import zahlen as zl
+from .. import begriffe as bg
 from .ermuedungsmaske import Ermuedungsmaske
 from . import elementmasken as elm
 from .. import elementauswahl as ea
@@ -6267,11 +6268,14 @@ class MainWindow(QtWidgets.QMainWindow):
             # FAT (Ermuedung) gehoert dazu: der Loeser bildet dafuer eine eigene
             # Umhuellende, und die Querschnittsnachweise im GZT lassen sie aus.
             typen = ["ULS", "EQU", "ACC", "SLS_CH", "SLS_FR", "SLS_QP", "FAT", "USER"]
+            # Zur Wahl steht der Klartext („GZT (STR/GEO)“, „Ermüdung“), nicht
+            # der Schluessel; „Übernehmen“ liest ihn ueber bg.typ_schluessel
+            # zurueck (03.10.2026, Teilpaket 11b)
+            typtexte = [bg.typ_kurz(t) for t in typen]
             if not eintrag:
                 felder = [F("anzahl", "Anzahl", "info", str(len(m.combinations))),
                           F("spanne", "Namen", "info", self._spanne(m.combinations)),
-                          F("typen", "Typen", "info",
-                            ", ".join(sorted({c.typ for c in m.combinations.values()})) or "–")]
+                          F("typen", "Typen", "info", self._kombitypen_text(typen))]
                 titel, knopf = "Kombinationen", "Neue Kombination"
                 hinweis = ("Rechtsklick auf den Zweig: Neu. Automatisch nach DIN EN 1990: Ribbon Lasten → "
                            "Kombinationen. Entf löscht den gewählten Eintrag.")
@@ -6297,7 +6301,9 @@ class MainWindow(QtWidgets.QMainWindow):
                             F("faktoren", "Faktoren (Lastfall: Faktor, …)", "text", fak, breite=220,
                               hinweis="z. B. „LF1: 1,35, Wind: 1,5“ - nur Lastfälle derselben Situation"))
                 felder = [F("name", "Name", "text", name, breite=140),
-                          F("typ", "Typ", "wahl", (c.typ if c and c.typ in typen else "ULS"), typen),
+                          F("typ", "Typ", "wahl", bg.typ_kurz(c.typ if c and c.typ in typen else "ULS"),
+                            typtexte, hinweis="\n".join(f"{bg.typ_kurz(t)}: {bg.typ_lang(t)}"
+                                                         for t in typen)),
                           F("beschreibung", "Beschreibung", "text", (c.description if c else ""), breite=180),
                           F("situation", "Situation", "wahl",
                             (c.situation if c and c.situation in situationen else situationen[0]), situationen),
@@ -8558,7 +8564,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 return self.error("Lastfälle einer anderen Situation lassen sich nicht kombinieren: "
                                   + ", ".join(fremd))
             self.merken(f"Kombination {neuname}")
-            c = Combination(neuname, faktoren, str(w.get("typ", "ULS") or "ULS"),
+            # die Maske zeigt den Klartext, gespeichert wird der Schluessel
+            c = Combination(neuname, faktoren, bg.typ_schluessel(w.get("typ", "")) or "ULS",
                             str(w.get("beschreibung", "") or ""), situation=sit,
                             theorie=next((v for t, v in THEORIEN if t == str(w.get("theorie", ""))), ""))
             if umh:
@@ -10980,6 +10987,13 @@ class MainWindow(QtWidgets.QMainWindow):
             for k, v in self.modellangaben())
         return f"<table cellspacing='0' cellpadding='1'>{zeilen}</table>"
 
+    def _kombitypen_text(self, reihenfolge: list) -> str:
+        """Die Typen der Kombinationen des Modells im Klartext, in der
+        Reihenfolge der Auswahlliste (03.10.2026, Teilpaket 11b)."""
+        da = {c.typ for c in self.model.combinations.values()}
+        return ", ".join([bg.typ_kurz(t) for t in reihenfolge if t in da]
+                         + sorted(bg.typ_kurz(t) for t in da - set(reihenfolge))) or "–"
+
     def _ergebnisliste(self) -> dict:
         """Was gerechnet vorliegt, nach Art geordnet: {Gruppe: [(Text, Zusatz, Schluessel)]}.
 
@@ -10990,7 +11004,8 @@ class MainWindow(QtWidgets.QMainWindow):
         an = self.analysis
         if an is not None:
             m = self.model
-            out["Umhüllende"] = [(f"Umhüllende {k}", "", f"env:{k}")
+            # Klartext („Umhüllende GZT“), der Schluessel bleibt env:ULS (03.10.2026)
+            out["Umhüllende"] = [(bg.umhuellende_kurz(k), "", f"env:{k}")
                                  for k in getattr(an, "envelopes", {})]
             out["Kombinationen"] = [
                 (k, m.combinations[k].formula() if k in m.combinations else "",
@@ -11495,7 +11510,11 @@ class MainWindow(QtWidgets.QMainWindow):
         tabs.addTab(self._eingabetabelle(self.tbl_freigabe), "Kontaktbedingungen")
 
         self.tbl_kombi = tab.Datentabelle([
-            Spalte("Kombination"), Spalte("Typ"), Spalte("Formel"),
+            Spalte("Kombination"),
+            # Klartext wie in der Maske; die Zeile behaelt den Schluessel (03.10.2026)
+            Spalte("Typ", klartext=bg.TYP_KURZ,
+                   hinweis="\n".join(f"{b.kurz}: {b.lang}" for b in bg.KOMBINATIONSTYPEN.values())),
+            Spalte("Formel"),
             Spalte("Beschreibung"), Spalte("Situation"),
             Spalte("Theorie", hinweis="I, II oder III. Ordnung; leer = wie Einstellung")],
             "Kombinationen", self, modellreihenfolge=True)
@@ -15569,7 +15588,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cb_g.blockSignals(True)
         self.cb_g.setChecked(bool(np.any(m.gravity)))
         self.cb_g.blockSignals(False)
-        self._fill(self.tbl_comb, [[c.name, c.typ, c.formula(), c.description]
+        self._fill(self.tbl_comb, [[c.name, bg.typ_kurz(c.typ), c.formula(), c.description]
                                    for c in m.combinations.values()])
         from . import ermuedungsmaske as erm
         # Dieselben Texte wie in der Maske: Lastspiele ausgeschrieben (bezug()
@@ -19071,7 +19090,7 @@ class MainWindow(QtWidgets.QMainWindow):
             faelle += [(f"Lastfall {n}", ("case", n)) for n in an.cases if n not in m.load_cases]
             kombis += [(f"Kombination {n}", ("combo", n)) for n in an.combinations
                        if n not in m.combinations]
-            huellen = [(f"Umhüllende {k}", ("env", k)) for k in an.envelopes]
+            huellen = [(bg.umhuellende_kurz(k), ("env", k)) for k in an.envelopes]
         r = self.results
         if r is not None:
             texte = self._formtexte(r)
@@ -19229,12 +19248,12 @@ class MainWindow(QtWidgets.QMainWindow):
                     return
         formen = self.results is not None
         if art in ("combo", "env"):
-            wort = "Kombination" if art == "combo" else "Umhüllende"
+            wer = f"Kombination {name}" if art == "combo" else bg.umhuellende_kurz(name)
             self.log.appendPlainText(
-                f"{wort} {name}: gezeigt werden die Eigen- bzw. Knickformen – die "
+                f"{wer}: gezeigt werden die Eigen- bzw. Knickformen – die "
                 "statischen Ergebnisse zeigen sich wieder nach Berechnung → Berechnen."
                 if formen else
-                f"{wort} {name}: sie zeigt sich, sobald gerechnet ist (Berechnung → Berechnen).")
+                f"{wer}: sie zeigt sich, sobald gerechnet ist (Berechnung → Berechnen).")
             # die Leiste zurueck auf das, was das Bild weiter zeigt (24.09.2026)
             self._lastwahl_nachziehen()
             return
@@ -20782,7 +20801,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if kind == "case":
                 self.analysis = solver.Analysis(self.model, cases={r.name: r})
                 self.analysis.envelopes["CASES"] = solver.Envelope(self.model, self.analysis.cases,
-                                                                   "Umhüllende Lastfälle")
+                                                                   bg.umhuellende_kurz("CASES"))
                 self.results = None
             text = r.summary()
         self.log.appendPlainText(text)
@@ -20842,8 +20861,14 @@ class MainWindow(QtWidgets.QMainWindow):
             self.cb_result.addItem(self.results.name, ("single", None))
         elif self.analysis is not None:
             an = self.analysis
+            # Klartext („Umhüllende GZT“), die lange Form am Zeiger; die Daten
+            # bleiben ("env", Schluessel) - bis zum 03.10.2026 stand hier und
+            # damit in der Kopfzeile „Umhüllende ULS“
             for k in an.envelopes:
-                self.cb_result.addItem(f"Umhüllende {k}", ("env", k))
+                self.cb_result.addItem(bg.umhuellende_kurz(k), ("env", k))
+                if bg.umhuellende_lang(k) != str(k):
+                    self.cb_result.setItemData(self.cb_result.count() - 1,
+                                               bg.umhuellende_lang(k), QtCore.Qt.ToolTipRole)
             for k in an.combinations:
                 self.cb_result.addItem(f"Kombination {k}: {self.model.combinations[k].formula()}", ("combo", k))
             for k in an.cases:
