@@ -20,6 +20,7 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 from .. import elemente as EL
 from .. import zahlen as zl
+from ..knotenrollen import konstruktionsknoten
 
 #: Farben des Entwurfs
 FARBEN = {
@@ -750,7 +751,11 @@ class Modellbaum(QtWidgets.QTreeWidget):
         self.setHeaderHidden(True)
         self.setColumnCount(2)
         self.setRootIsDecorated(True)
-        self.setIndentation(14)
+        # 10 statt 14 px seit 03.10.2026: die Gruppen (Teilpaket 8c) setzen
+        # alles eine Ebene tiefer. Bei 1366 x 768 und 260 px Baum waren mit
+        # 14 px 7 Zeilen abgeschnitten, mit 12 px 4, mit 10 px 2 - vor den
+        # Gruppen 3 (gemessen, tests.test_fensteraufteilung)
+        self.setIndentation(10)
         self.header().setStretchLastSection(False)
         self.header().setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
         self.header().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
@@ -1208,6 +1213,15 @@ class Modellbaum(QtWidgets.QTreeWidget):
         Zweige, die nur Unterzweige zusammenfassen). Eine ausdrueckliche
         ``farbe`` (Warnung, „+ … anlegen“) geht vor.
 
+        Ein Zweig mit Zaehler 0 hat seit 03.10.2026 keinen gefuellten
+        Unterzweig mehr: die FE-Elemente stehen unter „FE-Netz“, die
+        Schweissnaehte unter „Nachweise“, und die Zaehler von Lager,
+        Verbindungen und Kontaktbedingungen schliessen ihre Unterzweige ein.
+        Bis dahin setzte hier ein eigener Zweig die Zweige ueber einem
+        gefuellten Unterzweig wieder in die Normalfarbe („Volumen 0“ ueber
+        „Volumenelemente 960“); test_baum_ruhig.test_grau_nur_wenn_der_zweig_leer_ist
+        haelt fest, dass es den Fall nicht mehr gibt.
+
         ``kennung``: feste Kennung eines Zweigs, wo Art und Elternpfad ihn nicht
         eindeutig machen (:meth:`pfad_von`). ``blatt``: der Eintrag bekommt nie
         Kinder (Zeilen der Listen) und wird nicht fuer den Aufklappzustand
@@ -1231,18 +1245,6 @@ class Modellbaum(QtWidgets.QTreeWidget):
         it.setForeground(1, QtGui.QColor(FARBEN["matt"]))
         if farbe is None and schluessel is None and str(zahl) == "0":
             farbe = FARBEN["matt"]
-            it.setData(0, QtCore.Qt.UserRole + 3, True)         # nur wegen Zaehler 0 grau
-        elif not blatt and schluessel is None and str(zahl).isdigit() and int(zahl) > 0:
-            # Ein Unterzweig mit Inhalt: „Volumen 0“ steht ueber „Volumenelemente
-            # 960“ (Elemente ohne Koerper), „Staebe 0“ ueber den Schweissnaehten.
-            # Grau heisst leer samt allem darunter - die Zweige darueber, die nur
-            # wegen ihres eigenen Zaehlers grau gesetzt wurden, werden normal.
-            p = eltern
-            while isinstance(p, QtWidgets.QTreeWidgetItem):
-                if p.data(0, QtCore.Qt.UserRole + 3):
-                    p.setData(0, QtCore.Qt.UserRole + 3, None)
-                    p.setData(0, QtCore.Qt.ForegroundRole, None)
-                p = p.parent()
         if farbe:
             it.setForeground(0, QtGui.QColor(farbe))
         if hinweis:
@@ -1414,8 +1416,8 @@ class Modellbaum(QtWidgets.QTreeWidget):
             "lager_verbindungen": "Knoten-, Linien- und Flächenlager, Verbindungselemente, Gelenke, "
                                   "Liniengelenke und Kontaktbedingungen",
             "einwirkungen": "Lastfälle, Kombinationen, Ermüdungslasten und Lastgenerierer",
-            "fe_netz": "Was das Vernetzen erzeugt: die Netzknoten als Zählzeile, dazu die Stab-, "
-                       "Flächen- und Volumenelemente",
+            "fe_netz": "Die finiten Elemente des Modells, vom Vernetzen erzeugt oder direkt gesetzt "
+                       "(Stab-, Flächen- und Volumenelemente), und die Netzknoten als Zählzeile",
             "systeme": "Teile des Tragwerks, ihre Lagen und die Situationen, die einer Stellung "
                        "ihre Lastfälle zuordnen",
             "nachweise": "Was die Nachweise brauchen: Schweißnähte, Anschlüsse, Verformungsgrenzen, "
@@ -1442,20 +1444,21 @@ class Modellbaum(QtWidgets.QTreeWidget):
         # ---- Geometrie: Knoten, Linien, Staebe, Flaechen, Volumen -----------
         # Je ein eigener Zweig, alle Eintraege numerisch untereinander.
         # „Knoten“ zeigt nur die Knoten der Konstruktion (Antwort 3 vom
-        # 24.09.2026), dieselben wie die Ansicht unter „Knoten“
-        # (viewport.netzknoten_maske: Linienknoten, Stabenden, Knotenlager, frei
-        # gesetzte Knoten, Knoten direkt gesetzter Elemente). Die Netzknoten
-        # zaehlt eine Zeile unter „FE-Netz“. Die Maske wird einmal je Netzstand
-        # gerechnet, meist schon von der Ansicht; der Aufbau bekommt dadurch
-        # keine neue Schleife ueber alle Knoten.
-        from .viewport import konstruktionsknoten
+        # 24.09.2026), nach dem Kriterium in statik3d.knotenrollen - dasselbe
+        # fuer Baum und Ansicht: jeder Knoten, der an keinem Element eines
+        # Flaechen- oder Koerpernetzes haengt, und jeder, auf den ein
+        # Modellobjekt ausser einem Netzelement verweist. Die Netzknoten
+        # zaehlt eine Zeile unter „FE-Netz“. Der teure Teil wird einmal je
+        # Netzstand gerechnet (knotenrollen.netz_teile); der Aufbau bekommt
+        # dadurch keine neue Schleife ueber alle Knoten.
         kons = konstruktionsknoten(model) if model.nn else np.zeros(0, int)
         n_kons = len(kons)
         kn = self._zweig(geo, "Knoten", n_kons, "knoten", stand=f"{n_kons}/{model.nn}",
-                         hinweis="Die Knoten der Konstruktion: Linienknoten, Stabenden, Knotenlager, "
-                                 "frei gesetzte Knoten. Die Netzknoten zählt „FE-Netz → Netzknoten“. "
-                                 "Klick wählt alle Knoten, ein Eintrag den einen. "
-                                 "Rechtsklick: Neu, Löschen.")
+                         hinweis="Die Knoten der Konstruktion: Linienknoten, Knoten der Stäbe und direkt "
+                                 "gesetzten Elemente, frei gesetzte Knoten und jeder Knoten mit Lager, "
+                                 "Last, Punktmasse, Dämpfer, Feder oder starrem Körper. Die übrigen "
+                                 "Knoten der Flächen- und Körpernetze zählt „FE-Netz → Netzknoten“. "
+                                 "Ein Eintrag wählt seinen Knoten. Rechtsklick: Neu, Löschen.")
         # Nur die Knoten bauen, die der Zweig zeigt - sie stehen schon in ihrer
         # Nummernfolge, das natuerliche Sortieren ueber alle entfaellt. Am
         # Drehlager entstanden sonst 158 780 Eintraege samt Koordinatentext und
@@ -1470,9 +1473,10 @@ class Modellbaum(QtWidgets.QTreeWidget):
         # Fenster), dort stehen alle Knoten.
         n_netz = int(model.nn) - n_kons
         self._zweig(netz, "Netzknoten", n_netz, "netzknoten", blatt=True,
-                    hinweis=f"Die Knoten des FE-Netzes, an denen keine Linie, kein Stabende und kein "
-                            f"Knotenlager hängt: {n_netz} von {model.nn} Knoten. Sie stehen in der "
-                            "Tabelle „Knoten“ unten; die Ansicht zeigt sie mit Netz → Netzknoten.")
+                    hinweis=f"Die Knoten der Flächen- und Körpernetze, auf die außer dem Netz nichts "
+                            f"verweist (keine Linie, kein Stab, kein Lager, keine Last): {n_netz} von "
+                            f"{model.nn} Knoten. Sie stehen in der Tabelle „Knoten“ unten; die Ansicht "
+                            "zeigt sie mit Netz → Netzknoten.")
         lin = self._zweig(geo, "Linien", len(model.lines), "linien")
         self._liste(lin, [(name, f"{ln.typ} · {len(ln.nodes)}", name,
                            f"{name}: {ln.typ} über {len(ln.nodes)} Knoten")

@@ -762,12 +762,23 @@ def test_doppelklick_zweig():
         return getattr(getattr(w.maskenrand, "maske", None), "titel", "")
     try:
         fp = _fingerabdruck(w.model)
-        # Der Zweig der Stäbe mit Nachweis heißt seit 03.10.2026 „Stäbe“ (Teilpaket 8c)
+        # Der Zweig der Stäbe mit Nachweis heißt seit 03.10.2026 „Stäbe“, die
+        # FE-Stabelemente stehen unter „FE-Netz → Stabelemente“ (Teilpaket 8c).
+        # Beide Anlegemasken unterscheiden sich am Namen: ein Stab heißt S…,
+        # ein Stabelement E…
+        import re
+        n_el = len(w.model.elements)
         titel = doppel("Stäbe")
-        check("Doppelklick „Stäbe“ (die Stäbe mit Nachweis): nichts angelegt, rechts „Neu: Stab …“",
+        check("Doppelklick „Stäbe“ (die Stäbe mit Nachweis): nichts angelegt, rechts „Neu: Stab S…“",
               _fingerabdruck(w.model) == fp and len(w.model.members) == 0
               and w.baum._schluessel(finden("Stäbe"))[0] == "staebe"
-              and str(titel).startswith("Neu: Stab"), str(titel))
+              and re.fullmatch(r"Neu: Stab S\d+", str(titel)) is not None, str(titel))
+        titel = doppel("Stabelemente")
+        check("Doppelklick „Stabelemente“: nichts angelegt, rechts die Maske eines neuen Stabelements "
+              "„Neu: Stab E…“",
+              _fingerabdruck(w.model) == fp and len(w.model.elements) == n_el
+              and w.baum._schluessel(finden("Stabelemente"))[0] == "stabelemente"
+              and re.fullmatch(r"Neu: Stab E\d+", str(titel)) is not None, str(titel))
         for text, erwartet in (("Werkstoffe", "Neu: Werkstoff"), ("Lastfälle", "Neu: Lastfall"),
                                ("Kombinationen", "Neu: Kombination"), ("Linien", "Neu: Linie")):
             modal.clear()

@@ -922,12 +922,13 @@ def _kind_baum():
 #: am Stand 562dc3a (Baum 290 px) bei 1366 x 768 mit Segoe UI: 6 von 196
 #: Namen abgeschnitten, alle „+ … anlegen“ (Gegenpruefung 25.09.2026)
 BAUM_ABGESCHNITTEN_ALT = 6
-#: Seit Teilpaket 8c (03.10.2026) ist der Baum nach Gruppen geordnet, und die
-#: Zeilen „+ … anlegen“ unter Subsystemen, Nachweisen, Bericht und
-#: Hilfsobjekten stehen eine Ebene (14 px) tiefer: gemessen 7 von 204 Zeilen
-#: abgeschnitten, weiter nur „+ … anlegen“. Die Namen der Objekte und Zweige
-#: bleiben ganz lesbar (geprueft ueber alle abgeschnittenen Zeilen).
-BAUM_ABGESCHNITTEN = 7
+#: Seit Teilpaket 8c (03.10.2026) ist der Baum nach Gruppen geordnet, und
+#: alles steht eine Ebene tiefer. Die Einrueckung ist darum 10 statt 14 px
+#: (Modellbaum.__init__): am Stand vor 8c waren 3 Zeilen abgeschnitten, mit
+#: den Gruppen und 14 px 7, mit 10 px 2 (gemessen 03.10.2026, Gegenpruefung
+#: baum_breite.py). Die Grenze bleibt die des Stands vor 8c; abgeschnitten
+#: sein duerfen nur Zeilen „+ … anlegen“ (geprueft ueber alle Zeilen).
+BAUM_ABGESCHNITTEN = 3
 
 
 def test_baum_namen_lesbar():
@@ -939,7 +940,7 @@ def test_baum_namen_lesbar():
     e = _bildschirm_lauf(1366, 768, arg="--baum", env_extra=extra)
     ok = e is not None and e["eintraege"] >= 150 and e["abgeschnitten"] <= BAUM_ABGESCHNITTEN
     check(f"1366 x 768, Beispiel hall aufgeklappt: höchstens {BAUM_ABGESCHNITTEN} Zeilen abgeschnitten, alle "
-          f"„+ … anlegen“ ({BAUM_ABGESCHNITTEN_ALT} am Stand 562dc3a, seit 8c eine Gruppenebene mehr)",
+          f"„+ … anlegen“ (so viele wie vor 8c, trotz der Gruppenebene)",
           ok and e.get("nur_anlegen") and all("anlegen" in t or t.startswith("+") for t in e["beispiele"]),
           str(e)[:200])
     if e is not None:

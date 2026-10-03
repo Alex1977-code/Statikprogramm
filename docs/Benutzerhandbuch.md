@@ -400,11 +400,24 @@ Die Arbeitsfläche in drei Spalten:
   Stabelemente stehen unter *FE-Netz*. Der Rechtsklick bietet darum am Zweig
   *Stäbe* „Neu: Stab …“ und am Zweig *Stabelemente* „Neu: Stabelement …“.
   **Der Zweig *Knoten* zeigt nur die Knoten der
-  Konstruktion**, dieselben, die die Ansicht unter *Knoten* zeichnet:
-  Linienknoten, Stabenden, Knotenlager, frei gesetzte Knoten und die Knoten
-  direkt gesetzter Elemente. Die Netzknoten stehen unter *FE-Netz* als **eine
-  Zählzeile** mit ihrer Zahl; ein Klick darauf holt die Tabelle *Knoten*, in
-  der alle Knoten stehen. Bis zum 03.10.2026 hingen Knoten, Linien, Stäbe,
+  Konstruktion**, dieselben, die die Ansicht unter *Knoten* zeichnet. Zur
+  Konstruktion gehört jeder Knoten, der an keinem Element eines Flächen- oder
+  Körpernetzes hängt (frei gesetzte Knoten, die Knoten direkt gesetzter
+  Elemente und alle Knoten von Stäben), und jeder Knoten eines Netzes, auf den
+  noch etwas anderes verweist: eine Linie, eine Flächenecke, ein Stab oder
+  eine Feder, ein Knotenlager, eine Knotenlast oder Zwangsverformung, ein
+  einseitiges Lager, ein Spaltelement, eine Punktmasse, ein Dämpfer, ein
+  starrer Körper, eine Lasteinleitung oder eine Verformungsgrenze. Die
+  übrigen Knoten der Flächen- und Körpernetze sind Netzknoten; sie stehen
+  unter *FE-Netz* als **eine Zählzeile** mit ihrer Zahl, und ein Klick darauf
+  holt die Tabelle *Knoten*, in der alle Knoten stehen. Ob das Programm einen
+  Stab beim Anlegen geteilt hat, lässt sich am Modell nicht erkennen; darum
+  stehen auch die Zwischenknoten eines geteilten Stabzugs im Zweig, lieber
+  ein Knoten zu viel als ein selbst gesetzter zu wenig. In der ersten Fassung
+  vom 03.10.2026 galten die Zwischenknoten jedes Stabs aus mehreren Elementen
+  als Netzknoten, und ein Netzknoten mit Last, Masse oder Feder fehlte im
+  Zweig: am Beispiel *Rahmen* blieben nach „Stäbe automatisch erkennen“ 4
+  von 17 Knoten, am Beispiel *Kontakt* fehlte der Lastknoten K10. Bis zum 03.10.2026 hingen Knoten, Linien, Stäbe,
   Flächen, Volumen, Bemaßungen, Lager, Gelenke, Stellungen und die
   Nachweisobjekte einzeln an der Wurzel. Der Zweig *Stäbe* führte damals die
   Stabelemente und darunter die Zweige *Stäbe mit Nachweis* und
@@ -428,7 +441,7 @@ Die Arbeitsfläche in drei Spalten:
   | Lager und Verbindungen → Kontaktbedingungen → Flächenkontakte | Kontaktfugen zwischen Flächen und Körpern (in RFEM „Flächenfreigaben“) mit ihrer Wirkung je Freiheitsgrad |
   | Lager und Verbindungen → Kontaktbedingungen | einseitige Lager, Spaltelemente, Kontaktpaare |
   | **Einwirkungen** → Lastfälle, Kombinationen, Ermüdungslasten, Lastgenerierer | Lastfälle und Kombinationen. **Unter jedem Lastfall stehen seine Lasten nach Art** (Eigengewicht, Knotenlasten, Stablasten, Linienlasten, Flächenlasten, Temperaturlasten, Vorspannung, Zwangsverformungen), einzeln anklickbar: rechts stehen dann nur diese Lasten, die Tabelle unten zeigt den Lastfall, die belasteten Objekte leuchten; „Lastfall bearbeiten“ holt die Maske des Lastfalls zurück, „Diese Lasten löschen“ nimmt sie heraus |
-  | **FE-Netz** → Netzknoten, Stabelemente, Flächenelemente, Volumenelemente | was das Vernetzen erzeugt: die Netzknoten als eine Zählzeile, die Stabelemente E0, E1, … einzeln, die Flächen- und Volumenelemente mit ihrer Zahl |
+  | **FE-Netz** → Netzknoten, Stabelemente, Flächenelemente, Volumenelemente | die finiten Elemente des Modells, ob vom Vernetzen erzeugt oder direkt gesetzt: die Stabelemente E0, E1, … einzeln, die Flächen- und Volumenelemente mit ihrer Zahl, dazu die Netzknoten als eine Zählzeile |
   | **Systeme und Stellungen** → Subsysteme, Stellungen, Situationen | erst die Teile des Tragwerks, dann seine Lagen, dann die Situationen, die einer Stellung ihre Lastfälle und Kombinationen zuordnen. Zwischen den Subsystemen und den Stellungen bekommt das Volumenmodul später seinen Zweig „Detailmodelle (Volumen)“ |
   | **Nachweise** → Schweißnähte, Anschlüsse, Verformungsnachweise, Beulfelder, Volumenbereiche, Lasteinleitung | die Nachweisobjekte, gebündelt; die Stäbe mit Nachweis stehen als *Stäbe* unter *Geometrie* |
   | **Ergebnisse** | Umhüllende, Kombinationen, Lastfälle, Nachweise, Eigenformen, Knickfiguren |
@@ -1213,12 +1226,19 @@ der Güte 0,1 liegt, steht mit Elementnummer im Protokoll.
 **Netz → Netzknoten** zeigt die Knoten des FE-Netzes als kleine graue
 Punkte — nur, solange das FE-Netz dargestellt ist (*Ansicht → FE-Netz*,
 F9). Der Schalter „Knoten“ im Register *Ansicht* meint die Knoten der
-Konstruktion; Netzknoten sind die Knoten der beim Vernetzen erzeugten
-Elemente, an denen keine Linie und kein Stabende hängt. Ein Modell ohne
-Geometrieobjekte (nur Elemente, etwa ein Import aus Nastran) hat keine
-Netzknoten — seine Knoten sind die Konstruktion. Der Modellbaum teilt die
-Knoten seit dem 03.10.2026 ebenso: *Geometrie → Knoten* führt die Knoten der
-Konstruktion, *FE-Netz → Netzknoten* ist eine Zählzeile für die übrigen.
+Konstruktion; Netzknoten sind die Knoten der Flächen- und Körpernetze, auf
+die außer dem Netz nichts verweist – keine Linie, kein Stab, kein Lager,
+keine Last, keine Masse, keine Feder (die ganze Liste steht beim Modellbaum).
+Ein Modell ohne Flächen- und Körpernetz (nur Elemente, etwa ein Import aus
+Nastran) hat keine Netzknoten — seine Knoten sind die Konstruktion. Der
+Modellbaum teilt die Knoten seit dem 03.10.2026 ebenso: *Geometrie → Knoten*
+führt die Knoten der Konstruktion, *FE-Netz → Netzknoten* ist eine Zählzeile
+für die übrigen. Bis zum 03.10.2026 galten in der Ansicht auch die
+Zwischenknoten jedes Stabs aus mehreren Elementen als Netzknoten, und nur
+Linien, Stabenden und Knotenlager hielten einen Netzknoten in der
+Konstruktion: am Beispiel *Rahmen* blieben nach „Stäbe automatisch erkennen“
+4 von 17 Knoten als Punkt und Nummer, und ein Knoten mit Knotenlast oder
+Punktmasse auf einem Netz hatte keinen Punkt.
 
 **Netz → Netzqualität…** bewertet die **Form** jedes Elements und färbt die
 Ansicht danach ein: grün gut, rot schlecht. Ein FE-Ergebnis ist nur so gut
@@ -2043,11 +2063,15 @@ die die gefüllte Ansicht verschluckt hatte.
 
 **F9** blendet das **FE-Netz** (die Elementkanten) ein und aus. Der Schalter
 „Knoten" zeigt die **Knoten der Konstruktion** als Punkte: Linienknoten,
-Stabenden, frei gesetzte Knoten und die Knoten direkt gesetzter Elemente.
+die Knoten der Stäbe und direkt gesetzten Elemente, frei gesetzte Knoten und
+jeden Knoten eines Netzes, an dem ein Lager, eine Last, eine Masse, eine
+Feder oder ein anderes Objekt hängt (seit 03.10.2026, siehe *Netz →
+Netzknoten*).
 Knoten, an denen noch **kein Element** hängt, sind orange und etwas größer —
 so sieht man beim Modellieren, wo man schon war, auch wenn dort noch nichts
-steht. Die **Netzknoten** — die Knoten, die das Vernetzen einer Fläche,
-eines Körpers oder eines geteilten Stabzugs erzeugt — gehören zum Netz und
+steht. Die **Netzknoten** — die Knoten, die das Vernetzen einer Fläche
+oder eines Körpers erzeugt (bis zum 03.10.2026 auch die eines geteilten
+Stabzugs) — gehören zum Netz und
 werden hier nicht gezeigt (seit 13.09.2026; vorher standen am Drehlager
 380 000 Netzkugeln im Bild). Sie schaltet *Netz → Netzknoten* zu: kleine
 graue Punkte, solange das FE-Netz dargestellt ist. Die **Knotennummern**
@@ -2660,7 +2684,8 @@ Punkt, so wie bisher; die Regel „Tabellen Komma, Ansicht Punkt“ gilt weiter.
 In keiner Tabelle steht ein Ergebniswert wissenschaftlich („2,39e+03“).
 
 **Die Art steht im Klartext.** Wo eine Tabelle bisher den Schlüssel aus dem
-Modell zeigte, steht jetzt das Wort: in der Tabelle der Stäbe die Elementart
+Modell zeigte, steht jetzt das Wort: in der Tabelle *Elemente* (bis zum
+03.10.2026 „Stäbe“) die Elementart
 („Balken 3D“ statt „beam“, „Schale, Viereck“ statt „shell4“, „Tetraeder,
 quadratisch“ statt „tet10“), bei den Linien „Polylinie“, „Bogen“, „Kreis“ …
 statt „polyline“, „arc“, „circle“, bei den Querschnitten „I-Profil“,

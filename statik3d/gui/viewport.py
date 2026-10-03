@@ -10,6 +10,7 @@ from ..model import Model, NDOF
 from ..elements import beam3d as bm
 from .. import mesher
 from .. import elemente as EL
+from .. import knotenrollen
 
 VTK_LINE, VTK_TRI, VTK_QUAD, VTK_TETRA, VTK_HEX, VTK_TET10 = 3, 5, 9, 10, 12, 24
 
@@ -319,75 +320,30 @@ def unbelegte_knoten(model: Model) -> np.ndarray:
 #: Anteil freier Knoten, ab dem die Hervorhebung sinnlos wird
 FREI_ANTEIL = 0.25
 
-_NETZKNOTEN_CACHE: dict = {}
-
-
 def netzknoten_maske(model: Model) -> np.ndarray:
-    """True fuer jeden Knoten, der **nur** dem FE-Netz gehoert.
+    """True fuer jeden Knoten, der **nur** dem FE-Netz gehoert - das Kriterium
+    steht in :mod:`statik3d.knotenrollen` und gilt fuer Ansicht und Modellbaum.
 
     „Knoten" meint in der Ansicht die Knoten der Konstruktion (13.09.2026:
     "mit Knoten sollten die Knoten der Konstruktion gemeint sein, die
-    Netzknoten gehoeren zum Netz"). Netzknoten sind die Knoten der beim
-    Vernetzen erzeugten Elemente - Schalen und Volumen einer Flaeche oder
-    eines Koerpers, die Zwischenknoten eines geteilten Stabzugs - soweit
-    keine Linie und kein Stabende an ihnen haengt. Was der Anwender selbst
-    gesetzt hat (Linienknoten, Stabenden, Knoten direkt gesetzter Elemente,
-    freie Knoten), bleibt Konstruktion. Ein Modell ohne Geometrieobjekte
-    (Beispiele, Importe nur aus Elementen) hat darum keine Netzknoten.
+    Netzknoten gehoeren zum Netz"). Bis zum 03.10.2026 galten hier auch die
+    Zwischenknoten jedes Stabs aus mehreren Elementen als Netzknoten, und nur
+    Linien, Stabenden und Knotenlager hielten einen Knoten eines Flaechen-
+    oder Koerpernetzes in der Konstruktion: am Beispiel „frame“ blieben nach
+    „Stäbe automatisch erkennen“ 4 von 17 selbst gesetzten Knoten als Punkt
+    und Nummer, und ein Knoten mit Knotenlast oder Punktmasse auf einem Netz
+    hatte keinen Punkt.
 
-    Einmal je Netzstand gerechnet (wie unbelegte_knoten): die Schleifen
-    ueber 1,8 Mio. Elemente des Drehlagers duerfen nicht bei jedem Bild laufen.
+    Einmal je Netzstand gerechnet und fuer zwei Modelle gehalten
+    (knotenrollen.netz_teile): die Schleifen ueber die Elemente des
+    Drehlagers duerfen nicht bei jedem Bild laufen.
     """
-    import itertools
-    nn = int(model.nn)
-    ne = len(model.elements)
-    key = (id(model), ne, nn, len(model.flaechen or {}), len(model.koerper or {}), len(model.members or {}),
-           len(model.lines or {}), len(model.supports or []),
-           tuple(int(i) for i in model.elements[0].nodes) if ne else (),
-           tuple(int(i) for i in model.elements[-1].nodes) if ne else ())
-    hit = _NETZKNOTEN_CACHE.get(key)
-    if hit is not None:
-        return hit
-    netz = np.zeros(nn, bool)
-    if ne and nn:
-        netz_el = np.zeros(ne, bool)
-        for f in (model.flaechen or {}).values():
-            idx = np.asarray([int(e) for e in (f.elemente or [])], int)
-            netz_el[idx[(idx >= 0) & (idx < ne)]] = True
-        for k in (model.koerper or {}).values():
-            idx = np.asarray([int(e) for e in (k.elemente or [])], int)
-            netz_el[idx[(idx >= 0) & (idx < ne)]] = True
-        konstruktion = np.zeros(nn, bool)
-        for mem in (model.members or {}).values():
-            els = [int(e) for e in (mem.elements or []) if 0 <= int(e) < ne]
-            if len(els) > 1:
-                netz_el[els] = True
-                # Stabanfang und Stabende bleiben Konstruktion
-                for n in (model.elements[els[0]].nodes[0], model.elements[els[-1]].nodes[-1]):
-                    if 0 <= int(n) < nn:
-                        konstruktion[int(n)] = True
-        if netz_el.any():
-            flach = np.fromiter(itertools.chain.from_iterable(
-                model.elements[i].nodes for i in np.flatnonzero(netz_el)), int)
-            flach = flach[(flach >= 0) & (flach < nn)]
-            netz[flach] = True
-            for ln in (model.lines or {}).values():
-                for n in (ln.nodes or []):
-                    if 0 <= int(n) < nn:
-                        konstruktion[int(n)] = True
-            # ein Knotenlager hat der Anwender gesetzt - sein Knoten gehoert zur Konstruktion
-            for s in (model.supports or []):
-                if 0 <= int(s.node) < nn:
-                    konstruktion[int(s.node)] = True
-            netz &= ~konstruktion
-    _NETZKNOTEN_CACHE.clear()
-    _NETZKNOTEN_CACHE[key] = netz
-    return netz
+    return knotenrollen.netzknoten_maske(model)
 
 
 def konstruktionsknoten(model: Model) -> np.ndarray:
     """Die Knotennummern der Konstruktion (alle ausser den Netzknoten)."""
-    return np.flatnonzero(~netzknoten_maske(model))
+    return knotenrollen.konstruktionsknoten(model)
 
 
 def add_netzknoten(plotter, model: Model, groesse: float = 1.0, nur=None, lage=None):

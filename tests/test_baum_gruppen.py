@@ -17,6 +17,14 @@ Einträge am Stand 68db45b gezählt), die Knoten an einem vernetzten Modell,
 Stäbe und Stabelemente am richtigen Ort, das Register „Elemente“ samt
 Baumklick und der Aufklappzustand nach ``refresh_all``.
 
+Nachbesserung nach der Gegenprüfung (03.10.2026): der Zweig „Knoten“
+versteckt keinen Knoten, an dem eine Last, ein Lager, eine Punktmasse, ein
+Dämpfer, ein Spaltelement, eine Lasteinleitung, ein starrer Körper oder eine
+Feder hängt, und keinen Knoten einer Stabkette (Beispiele „frame“, „contact“,
+„hall“, vernetzte Platte; Kriterium in statik3d.knotenrollen); der Stand
+„Konstruktionsknoten/alle Knoten“ hält eine Auswahl fest; der Zwischenspeicher
+hält zwei Modelle; der Baum braucht pyvista nicht.
+
 Aufruf:  python -m tests.test_baum_gruppen
 """
 import os
@@ -264,9 +272,12 @@ def _fenster():
     return w, app
 
 
-def _vernetztes_modell(w, app):
+def _vernetztes_modell(w, app, objekte=False):
     """Platte 4 m x 2 m aus vier Linien, vernetzt; dazu ein Stab aus zwei
-    Elementen (sein Zwischenknoten ist Netz) und ein Knotenlager."""
+    Elementen und ein Knotenlager. ``objekte``: an je einem reinen Netzknoten
+    eine Knotenlast, eine Punktmasse, ein Dämpfer, ein einseitiges Lager, ein
+    Spaltelement, eine Lasteinleitung, ein Slave eines starren Körpers und ein
+    Federende; zurück kommt dann auch {Objekt: Knoten}."""
     w.new_model()
     app.processEvents()
     m = w.model
@@ -284,28 +295,62 @@ def _vernetztes_modell(w, app):
     e2 = m.add_element("beam", [oben, spitze], mat, sec)
     m.add_member("St1", [e1, e2])
     m.support(ids[1], "all", name="Lager A")
+    an = {}
+    if objekte:
+        from statik3d import knotenrollen as kr
+        rein = [int(n) for n in np.flatnonzero(kr.netzknoten_maske(m))]
+        lc = next(iter(m.load_cases))
+        frei = [m.add_node(9, 0, float(k)) for k in range(3)]
+        an["Knotenlast"] = rein[0]
+        m.load_node(rein[0], Fz=-1e3, case=lc)
+        an["Punktmasse"] = rein[1]
+        m.add_punktmasse(rein[1], 250.0, [1.0, 2.0, 3.0])
+        an["Dämpfer"] = rein[2]
+        m.add_daempfer(rein[2], -1, [40.0, 0, 0, 0, 0, 0])
+        an["einseitiges Lager"] = rein[3]
+        m.add_contact_support(rein[3], (0, 0, 1))
+        an["Spaltelement"] = rein[4]
+        m.add_gap_element(rein[4], frei[0], direction=(0, 0, -1), gap=0.003)
+        an["Lasteinleitung"] = rein[5]
+        m.add_lasteinleitung("LE1", rein[5])
+        an["Slave eines starren Körpers"] = rein[6]
+        m.add_starrkoerper(frei[1], [rein[6]], "RBE2")
+        an["Federende"] = rein[7]
+        m.add_feder_prop("FD", [1e6, 1e6, 1e6, 0, 0, 0])
+        m.add_element("feder", [rein[7], frei[2]], mat, "FD")
+        an["unbelegter Netzknoten"] = rein[8]
     w.refresh_all()
     app.processEvents()
+    if objekte:
+        return m, ids, oben, spitze, an
     return m, ids, oben, spitze
 
 
 def test_knoten_nur_konstruktion():
+    from statik3d import knotenrollen as kr
     from statik3d.gui import viewport as vp
     w, app = _fenster()
-    m, ids, oben, spitze = _vernetztes_modell(w, app)
+    m, ids, oben, spitze, an = _vernetztes_modell(w, app, objekte=True)
     b = w.baum
-    kons = {int(i) for i in vp.konstruktionsknoten(m)}
+    kons = {int(i) for i in kr.konstruktionsknoten(m)}
     check("Vorbereitung: die Platte ist vernetzt, es gibt Netz- und Konstruktionsknoten",
           len(m.flaechen["F1"].elemente) > 0 and set(ids) <= kons and spitze in kons
-          and oben not in kons and 0 < len(kons) < m.nn,
+          and 0 < len(kons) < m.nn,
           f"{len(m.flaechen['F1'].elemente)} Elemente, {len(kons)} von {m.nn} Knoten Konstruktion")
+    check("Ansicht und Baum fragen dasselbe Kriterium (viewport = knotenrollen)",
+          {int(i) for i in vp.konstruktionsknoten(m)} == kons)
     kn = _zweig(b, "Knoten", "knoten")
     eintraege = {int(_element(k)[1]) for k in _kinder(kn) if _ist_eintrag(k)} if kn is not None else set()
-    check("Zweig „Knoten“ zeigt genau die Konstruktionsknoten (Linienknoten, Stabenden, Lager)",
+    check("Zweig „Knoten“ zeigt genau die Konstruktionsknoten",
           eintraege == kons, f"{len(eintraege)} Einträge, {len(kons)} Konstruktionsknoten, "
                              f"zu viel {sorted(eintraege - kons)[:5]}, fehlt {sorted(kons - eintraege)[:5]}")
-    check("… und keinen Netzknoten (auch nicht den Zwischenknoten des Stabs)",
-          oben not in eintraege and not (eintraege - kons))
+    fehlt = sorted(was for was, n in an.items() if was != "unbelegter Netzknoten" and n not in eintraege)
+    check("… mit jedem Netzknoten, an dem Last, Punktmasse, Dämpfer, einseitiges Lager, Spaltelement, "
+          "Lasteinleitung, starrer Körper oder Feder hängt", not fehlt and len(an) == 9, str(fehlt))
+    check("… mit dem Zwischenknoten des Stabs aus zwei Elementen (Stabketten sind Konstruktion)",
+          oben in eintraege, str(oben))
+    check("… und ohne den Netzknoten, an dem nichts hängt",
+          an["unbelegter Netzknoten"] not in eintraege, str(an["unbelegter Netzknoten"]))
     check("… sein Zähler nennt die Konstruktionsknoten", kn is not None and kn.text(1) == str(len(kons)),
           kn.text(1) if kn is not None else "")
     netz = _zweig(b, "FE-Netz")
@@ -466,23 +511,138 @@ def test_aufklappzustand_nach_refresh_all():
 # 4. Zeit: keine neue Schleife je Aufbau
 # ---------------------------------------------------------------------------
 def test_zaehlzeile_kostet_keine_schleife():
-    """Die Konstruktionsknoten kommen aus dem Zwischenspeicher der Ansicht
-    (viewport.netzknoten_maske, einmal je Netzstand); ein zweiter Aufbau
-    rechnet sie nicht neu. Und der Zweig baut nur die Konstruktionsknoten."""
-    from statik3d.gui import viewport as vp
+    """Der teure Teil des Kriteriums (die Knoten der Flächen- und
+    Körpernetze) kommt aus dem Zwischenspeicher (knotenrollen.netz_teile,
+    einmal je Netzstand); ein zweiter Aufbau rechnet ihn nicht neu. Der
+    Speicher hält zwei Modelle - das Modell und seine Stellungskopie
+    verdrängen sich nicht. Und der Zweig baut nur die Konstruktionsknoten."""
+    import copy
+    from statik3d import knotenrollen as kr
     w, app = _fenster()
     m, ids, oben, spitze = _vernetztes_modell(w, app)
     b = w.baum
     b.fuellen(m)
-    vorher = [id(v) for v in vp._NETZKNOTEN_CACHE.values()]
+    vorher = id(kr._ZWISCHENSPEICHER.get(id(m), (None, None))[1])
     b.fuellen(m)
-    nachher = [id(v) for v in vp._NETZKNOTEN_CACHE.values()]
-    check("zweiter Aufbau: die Netzknoten-Maske kommt aus dem Zwischenspeicher",
-          len(vorher) == 1 and vorher == nachher, f"{vorher} -> {nachher}")
+    nachher = id(kr._ZWISCHENSPEICHER.get(id(m), (None, None))[1])
+    check("zweiter Aufbau: die Netzteile kommen aus dem Zwischenspeicher",
+          id(m) in kr._ZWISCHENSPEICHER and vorher == nachher, f"{vorher} -> {nachher}")
+    kopie = copy.deepcopy(m)
+    kr.konstruktionsknoten(kopie)
+    b.fuellen(m)
+    check("eine Stellungskopie verdrängt das Modell nicht (zwei Modelle im Speicher)",
+          id(kopie) in kr._ZWISCHENSPEICHER and id(m) in kr._ZWISCHENSPEICHER
+          and id(kr._ZWISCHENSPEICHER[id(m)][1]) == vorher, str(len(kr._ZWISCHENSPEICHER)))
     kn = _zweig(b, "Knoten", "knoten")
-    n_kons = len(vp.konstruktionsknoten(m))
+    n_kons = len(kr.konstruktionsknoten(m))
     check("der Zweig „Knoten“ baut nur so viele Zeilen, wie es Konstruktionsknoten gibt",
           kn is not None and kn.childCount() == n_kons < m.nn, f"{kn.childCount() if kn else None} von {m.nn}")
+
+
+def test_knoten_an_den_beispielen():
+    """Gegenprüfung 03.10.2026: am Beispiel „contact“ fehlte der einzige
+    Lastknoten K10, am Beispiel „frame“ schrumpfte der Zweig nach „Stäbe
+    automatisch erkennen“ von 17 auf 4 - die Zwischenknoten jeder Stabkette
+    galten als Netz."""
+    from statik3d.examples_lib import build_example
+
+    def knoten(b):
+        kn = _zweig(b, "Knoten", "knoten")
+        return {int(_element(k)[1]) for k in _kinder(kn) if _ist_eintrag(k)} if kn is not None else set()
+
+    m = build_example("frame")
+    b, app = _baum(m)
+    vorher = knoten(b)
+    m.auto_members()
+    b.fuellen(m)
+    app.processEvents()
+    nachher = knoten(b)
+    check("frame: alle 17 Knoten im Zweig, auch nach „Stäbe automatisch erkennen“",
+          len(vorher) == m.nn == 17 and nachher == vorher and len(m.members) >= 3,
+          f"vorher {len(vorher)}, nachher {len(nachher)}, Stäbe {len(m.members)}")
+    m = build_example("contact")
+    b.fuellen(m)
+    app.processEvents()
+    last = {int(l.node) for lc in m.load_cases.values() for l in lc.nodal_loads}
+    k = knoten(b)
+    check("contact: der Lastknoten K10 und alle 14 Knoten stehen im Zweig",
+          last == {10} and last <= k and len(k) == m.nn == 14, f"{sorted(k)}")
+    m = build_example("hall")
+    b.fuellen(m)
+    app.processEvents()
+    check("hall: alle 19 Knoten stehen im Zweig", len(knoten(b)) == m.nn == 19, str(len(knoten(b))))
+    b.close()
+
+
+def test_stand_haelt_die_auswahl():
+    """Der Stand „Konstruktionsknoten/alle Knoten“ (UserRole+4) am Zweig
+    „Knoten“: ein Schalenelement samt seinem nun freien Knoten löschen,
+    dessen Nummer vor dem gewählten Knoten liegt. Die Zahl der
+    Konstruktionsknoten bleibt, die Nummern dahinter rücken auf. Danach darf
+    nicht der Knoten gewählt sein, der jetzt die alte Nummer trägt
+    (Ablauf der Gegenprüfung, stand_pruefung.py)."""
+    from PySide6 import QtCore
+    from statik3d import knotenrollen as kr
+    from statik3d.gui import design as dsg
+    w, app = _fenster()
+    m, ids, oben, spitze = _vernetztes_modell(w, app)
+    ka = m.add_node(20, 0, 0)
+    m.add_node(21, 0, 0)
+    m.add_node(22, 0, 0)
+    b = dsg.Modellbaum()
+    b.resize(360, 600)
+    b.show()
+    b.fuellen(m)
+    app.processEvents()
+    n_kons0, nn0 = len(kr.konstruktionsknoten(m)), m.nn
+    ok = b.eintrag_waehlen("knoten", str(ka))
+    xa = m.nodes[ka].copy()
+    schalen = [i for i, e in enumerate(m.elements) if e.typ.startswith("shell")]
+    zaehl = {}
+    for i in schalen:
+        for n in m.elements[i].nodes:
+            zaehl[int(n)] = zaehl.get(int(n), 0) + 1
+    linien = {int(n) for ln in m.lines.values() for n in ln.nodes}
+    kand = next(((i, int(n)) for i in schalen for n in m.elements[i].nodes
+                 if zaehl[int(n)] == 1 and int(n) not in linien and int(n) < ka), None)
+    check("Vorbereitung: K_a gewählt, ein Knoten nur an einem Schalenelement gefunden",
+          ok and kand is not None, str(kand))
+    if kand is None:
+        b.close()
+        return
+    e, _n = kand
+    knoten_e = {int(x) for x in m.elements[e].nodes}
+    m.elemente_loeschen([e])
+    belegt = {int(x) for el in m.elements for x in el.nodes}
+    m.knoten_loeschen_viele(sorted(knoten_e - belegt))
+    n_kons1 = len(kr.konstruktionsknoten(m))
+    check("Vorbereitung: gleich viele Konstruktionsknoten, weniger Knoten, Nummern gerückt",
+          n_kons1 == n_kons0 and 1 <= nn0 - m.nn <= 2 and np.allclose(m.nodes[ka - (nn0 - m.nn)], xa),
+          f"Konstruktion {n_kons0} -> {n_kons1}, Knoten {nn0} -> {m.nn}")
+    b.fuellen(m)
+    app.processEvents()
+    gew = [(i.data(0, QtCore.Qt.UserRole), i.data(0, QtCore.Qt.UserRole + 1)) for i in b.selectedItems()]
+    falsch = [k for a, k in gew if a == "knoten" and not np.allclose(m.nodes[int(k)], xa)]
+    check("nach dem Neuaufbau ist kein nachgerückter Knoten gewählt (der Stand nennt auch alle Knoten)",
+          not falsch, f"gewählt {gew}")
+    b.close()
+
+
+def test_kriterium_ohne_pyvista():
+    """Der Baum fragt statik3d.knotenrollen, nicht die Ansicht: ein reiner
+    Baumaufbau lädt pyvista nicht (bis 03.10.2026 zog er gui.viewport nach)."""
+    import subprocess
+    code = ("import sys; from PySide6 import QtWidgets; app = QtWidgets.QApplication([]); "
+            "from statik3d.gui import design as d; from statik3d.examples_lib import build_example; "
+            "b = d.Modellbaum(); b.fuellen(build_example('plate')); "
+            "print('PYVISTA', 'pyvista' in sys.modules, 'statik3d.gui.viewport' in sys.modules)")
+    env = dict(os.environ, QT_QPA_PLATFORM="offscreen", PYTHONUTF8="1")
+    stamm = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    lauf = subprocess.run([sys.executable, "-c", code], cwd=stamm, env=env, capture_output=True,
+                          text=True, timeout=300)
+    zeile = next((z for z in lauf.stdout.splitlines() if z.startswith("PYVISTA")), "")
+    check("Baumaufbau ohne pyvista und ohne gui.viewport", zeile == "PYVISTA False False",
+          zeile or lauf.stderr[-300:])
 
 
 # ---------------------------------------------------------------------------
@@ -494,6 +654,9 @@ def test_handbuch():
     check("Handbuch: Gruppen im Ablauf, Stab im Sinn von RFEM, Konstruktionsknoten, Zählzeile",
           "Eigenschaften" in a and "Hilfsobjekte" in a and "Stab mit Nachweis" in a
           and "Knoten der Konstruktion" in a and "Zählzeile" in a and "FE-Netz" in a, a[:80])
+    check("Handbuch: Kriterium der Konstruktionsknoten (Stäbe, Lasten, Massen, Federn; geteilte Stabzüge)",
+          "alle Knoten von Stäben" in a and "Punktmasse" in a and "Feder" in a
+          and "geteilten Stabzugs" in a and "K10" in a, a[:80])
     check("Handbuch: … mit dem Stand vorher („Bis zum 03.10.2026 …“)",
           "Bis zum 03.10.2026 hingen Knoten, Linien, Stäbe" in a and "Stäbe mit Nachweis" in a, a[-120:])
     g = absatz("der Baum im Grundzustand.")
@@ -509,7 +672,8 @@ def main():
     faulthandler.dump_traceback_later(600, exit=True)
     tests = [test_reihenfolge_der_gruppen, test_nichts_geht_verloren, test_knoten_nur_konstruktion,
              test_staebe_im_sinn_von_rfem, test_register_elemente, test_aufklappzustand_nach_refresh_all,
-             test_zaehlzeile_kostet_keine_schleife, test_handbuch]
+             test_zaehlzeile_kostet_keine_schleife, test_knoten_an_den_beispielen,
+             test_stand_haelt_die_auswahl, test_kriterium_ohne_pyvista, test_handbuch]
     for t in tests:
         print(f"\n--- {t.__name__} ---")
         try:

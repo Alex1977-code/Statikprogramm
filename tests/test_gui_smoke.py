@@ -5716,8 +5716,9 @@ def main():
         stabknoten = {int(n) for e in elems for n in w.model.elements[e].nodes}
         akt = dict(w.plotter.renderer.actors)
         punkte = np.asarray(akt["knoten"].GetMapper().GetInput().points) if "knoten" in akt else np.zeros((0, 3))
-        # gezeichnet werden die Knoten der Konstruktion (Stabenden, Lager);
-        # die Zwischenknoten des geteilten Stabs sind Netzknoten (13.09.2026)
+        # gezeichnet werden die Knoten der Konstruktion (statik3d.knotenrollen);
+        # seit 03.10.2026 gehoeren auch die Zwischenknoten eines Stabs dazu -
+        # bis dahin galten sie als Netzknoten (13.09.2026)
         netz_ = set(np.flatnonzero(vp.netzknoten_maske(w.model)).tolist())
         check("… auch die Knoten des Restes: nur die Stabknoten der Konstruktion bleiben als Punkte",
               w.versteckt["knoten"] == set(range(w.model.nn)) - stabknoten

@@ -535,14 +535,39 @@ def test_volumen_ohne_netz():
 # ---------------------------------------------------------------------------
 # 5. Nachbesserung 02.10.2026 (Gegenpruefung): grau nur, wenn alles darunter leer ist
 # ---------------------------------------------------------------------------
-def _unterzweig_gefuellt(baum, i) -> bool:
+def _unterzweig_gefuellt(baum, i):
+    """Der erste Unterzweig (in jeder Tiefe) mit Zähler > 0, sonst None."""
     for k in range(i.childCount()):
         c = i.child(k)
         if c.text(0).startswith("+") or baum._ist_eintrag(c):
             continue
         if c.text(1).isdigit() and int(c.text(1)) > 0:
-            return True
-    return False
+            return c
+        tiefer = _unterzweig_gefuellt(baum, c)
+        if tiefer is not None:
+            return tiefer
+    return None
+
+
+def _verstoesse(baum) -> list:
+    """Verstöße gegen „grau heißt leer samt allem darunter“: ein Zweig mit
+    Zähler 0 über einem gefüllten Unterzweig (in jeder Tiefe), ein Zweig mit
+    Zähler 0, der nicht grau steht, ein gefüllter, der grau steht."""
+    from statik3d.gui import design as dsg
+    out = []
+    for i in _alle(baum):
+        if baum._ist_eintrag(i) or i.text(0).startswith("+") or not i.text(1).isdigit():
+            continue
+        grau = _farbe(i) == dsg.FARBEN["matt"]
+        if int(i.text(1)) == 0:
+            voll = _unterzweig_gefuellt(baum, i)
+            if voll is not None:
+                out.append(f"„{i.text(0)} 0“ über „{voll.text(0)} {voll.text(1)}“")
+            if not grau:
+                out.append(f"„{i.text(0)} 0“ nicht grau")
+        elif grau:
+            out.append(f"„{i.text(0)} {i.text(1)}“ grau")
+    return out
 
 
 def test_grau_nur_wenn_der_zweig_leer_ist():
@@ -554,23 +579,16 @@ def test_grau_nur_wenn_der_zweig_leer_ist():
     Normalfarbe."""
     from statik3d.examples_lib import build_example
     from statik3d.gui import design as dsg
+    from statik3d.model import Model
     b, app = _baum(900)
-    gefunden = []
     ohne_objekt = []
-    for name in ("solid", "plate", "friction", "gate"):
-        m = build_example(name)
-        b.fuellen(m)
+    for name, m in [(n, build_example(n)) for n in ("solid", "plate", "friction", "gate", "hall", "contact")]             + [("Modell mit allem", _reiches_modell()), ("leeres Modell", Model())]:
+        b.fuellen(m, STELLUNGEN, ERGEBNISSE)
         app.processEvents()
-        for i in _alle(b):
-            if not i.childCount() or i.text(1) != "0" or b._ist_eintrag(i):
-                continue
-            gefuellt = _unterzweig_gefuellt(b, i)
-            if gefuellt:
-                gefunden.append(f"{name}: {i.text(0)}")
-            ist_grau = _farbe(i) == dsg.FARBEN["matt"]
-            check(f"{name}: „{i.text(0)} 0“ steht " + ("normal, ein Unterzweig hat Inhalt" if gefuellt
-                                                       else "grau, alles darunter ist leer"),
-                  ist_grau == (not gefuellt), f"Farbe {_farbe(i)}")
+        v = _verstoesse(b)
+        n_null = sum(1 for i in _alle(b) if not b._ist_eintrag(i) and i.text(1) == "0")
+        check(f"{name}: jeder Zweig mit Zähler 0 grau und ohne gefüllten Unterzweig, jeder gefüllte "
+              f"normal ({n_null} Zweige mit 0)", not v and n_null > 0, "; ".join(v[:4]))
         netz = _finden(b, "FE-Netz")
         for zweig, art, elemente in (("Volumen", "geokoerper", "Volumenelemente"),
                                      ("Flächen", "geoflaechen", "Flächenelemente")):
@@ -585,10 +603,18 @@ def test_grau_nur_wenn_der_zweig_leer_ist():
     check("Vorbereitung: es gab Volumen- und Flächenelemente ohne Körper und ohne Fläche",
           any("Volumen" in g for g in ohne_objekt) and any("Flächen" in g for g in ohne_objekt),
           str(ohne_objekt))
-    check("… und keinen Zweig mit Zähler 0 mehr über gefülltem Unterzweig (die Elemente stehen unter "
-          "„FE-Netz“)", not gefunden, str(gefunden))
+    # Seit 03.10.2026 gibt es keinen Zweig mehr, der Zweige ueber einem
+    # gefuellten Unterzweig wieder entgraut (Modellbaum._zweig): die Gliederung
+    # schliesst den Fall aus. Kaeme er wieder, steht der Zweig darueber grau -
+    # die Pruefung oben meldet das, wie dieser kuenstliche Fall zeigt.
+    b.fuellen(build_example("solid"))
+    app.processEvents()
+    null = next(i for i in _alle(b) if not b._ist_eintrag(i) and i.text(1) == "0" and i.childCount())
+    b._zweig(null, "Probe", 5, "probe")
+    v = _verstoesse(b)
+    check("Gegenprobe der Prüfung: ein gefüllter Unterzweig unter einem Zweig mit 0 wird gemeldet",
+          any(f"„{null.text(0)} 0“ über „Probe 5“" == x for x in v), "; ".join(v[:3]))
     # ganz leer bleibt grau
-    from statik3d.model import Model
     b.fuellen(Model())
     app.processEvents()
     vol = _finden(b, "Volumen", "geokoerper")
