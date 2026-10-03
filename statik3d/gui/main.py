@@ -476,6 +476,9 @@ class MainWindow(QtWidgets.QMainWindow):
                         self._letzter_klick = QtCore.QPoint(int(pos.x()), int(pos.y()))
                         self._links_unten = True
                         self._links_doppel = doppel
+                        # Strg und Umschalt zaehlen, wenn sie beim Druecken ODER
+                        # beim Loslassen gedrueckt waren (_links_los)
+                        self._links_tasten = ereignis.modifiers()
                         # nur der Linksklick legt die Tastatur in die Ansicht
                         self.plotter.interactor.setFocus(QtCore.Qt.MouseFocusReason)
                         return True         # links dreht nicht mehr
@@ -490,7 +493,8 @@ class MainWindow(QtWidgets.QMainWindow):
                         return True
                     if ereignis.button() == QtCore.Qt.RightButton:
                         if self._fenster_ecke is not None:
-                            self._mit_tasten(ereignis.modifiers(), self._fenster_abschliessen, pos)
+                            self._mit_tasten(ereignis.modifiers() | self._links_tasten_beim_druck(),
+                                             self._fenster_abschliessen, pos)
                             return True
                         self._rechts_start = QtCore.QPoint(int(pos.x()), int(pos.y()))
                         self._schieben_beginnen()
@@ -498,7 +502,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 elif t == QtCore.QEvent.MouseButtonRelease:
                     pos = ereignis.position() if hasattr(ereignis, "position") else ereignis.pos()
                     if ereignis.button() == QtCore.Qt.LeftButton:
-                        self._links_los(pos, ereignis.modifiers())
+                        self._links_los(pos, ereignis.modifiers() | self._links_tasten_beim_druck())
                         return True
                     if ereignis.button() == QtCore.Qt.MiddleButton:
                         self._mitte_los(pos)
@@ -552,9 +556,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def _links_los(self, pos, tasten=None) -> None:
         """Linke Taste losgelassen: Fenster abschliessen oder einzeln waehlen.
 
-        ``tasten``: die Umschalttasten des Ereignisses (Strg nimmt dazu,
-        Umschalt erzwingt die intelligente Auswahl, :meth:`_mit_tasten`)."""
+        ``tasten``: die Umschalttasten beim Druecken und beim Loslassen
+        zusammen (Strg nimmt dazu, Umschalt erzwingt die intelligente Auswahl,
+        :meth:`_mit_tasten`)."""
         self._links_unten = False
+        self._links_tasten = QtCore.Qt.NoModifier
         self._klick_wartend = None
         doppel = getattr(self, "_links_doppel", False)
         self._links_doppel = False
@@ -594,6 +600,13 @@ class MainWindow(QtWidgets.QMainWindow):
         finally:
             self._klick_umschalt = False
             self._klick_strg = False
+
+    def _links_tasten_beim_druck(self):
+        """Die Umschalttasten beim Druecken der linken Taste. Strg oder Umschalt
+        gelten, wenn sie beim Druecken oder beim Loslassen gedrueckt waren - bis
+        zum 03.10.2026 (Nachbesserung 14b) zaehlte nur das Loslassen, wer Strg
+        vor der Maustaste losliess, ersetzte die Auswahl."""
+        return getattr(self, "_links_tasten", None) or QtCore.Qt.NoModifier
 
     def _klick_ersetzt(self) -> bool:
         """Ersetzt der laufende Klick (oder das Auswahlfenster) die Auswahl? Ja,
@@ -1788,9 +1801,11 @@ class MainWindow(QtWidgets.QMainWindow):
         ort = f"K{obj.node}" if hasattr(obj, "node") else f"{len(getattr(obj, 'nodes', []) or [])} Kn"
         return f"{name} ({ort})"
 
-    def _lager_umschalten(self, key: tuple, ersetzen: bool = False):
-        """Ein Lager der Auswahl zufuegen oder herausnehmen (Strg+Klick).
-        ``ersetzen``: der Klick ohne Strg - danach ist nur dieses Lager gewaehlt."""
+    def _lager_umschalten(self, key: tuple, *, ersetzen: bool):
+        """Ein Lager der Auswahl zufuegen oder herausnehmen (Strg+Klick,
+        ``ersetzen=False``). ``ersetzen=True``: der Klick ohne Strg - danach ist
+        nur dieses Lager gewaehlt. Ohne Vorgabe: jeder Aufrufer sagt, was er meint."""
+        self._hervorhebung = None           # die Auswahl aendert sich wirklich
         if ersetzen:
             self._klickauswahl_leeren()
             self.sel_lager.append(key)
@@ -1851,18 +1866,45 @@ class MainWindow(QtWidgets.QMainWindow):
         heraus, rechts leeren, wenn nichts mehr gewaehlt ist, und **ein**
         Neuzeichnen - redraw gleicht dabei das Kontextregister ab. Bis zum
         03.10.2026 lief das Register je Klick zweimal (_auswahl_register und noch
-        einmal in redraw), beim Klick ins Leere auch der rechte Bereich."""
+        einmal in redraw), beim Klick ins Leere auch der rechte Bereich.
+
+        Die Tabellen markieren dabei, was gewaehlt ist (ohne eigenes
+        Neuzeichnen); nach einem Klick blieb bis zur Nachbesserung vom 03.10.2026
+        die alte Zeile markiert. Die unveraenderte Maske einer Last, die nicht
+        mehr gewaehlt ist, geht zu (:meth:`_lastmaske_abgewaehlt`)."""
         if hasattr(self, "ribbon") and not getattr(self, "_auswahl_sammeln", False):
             self._gesperrte_entfernen()
+            self._lastmaske_abgewaehlt()
             self._info_zeigen()
+            self._tabellen_markieren()
         self.redraw()
 
-    def _objekt_umschalten(self, liste: list, name: str, was: str, ersetzen: bool = False):
-        """Ein Objekt der Auswahl zufuegen oder herausnehmen (Strg+Klick).
+    def _lastmaske_abgewaehlt(self) -> None:
+        """Steht rechts noch die Maske einer Last, die nicht mehr gewaehlt ist
+        (Klick auf ein anderes Objekt, Strg+Klick heraus, Klick ins Leere), geht
+        sie zu - aber nur unveraendert (``_maskenaenderung``); eine geaenderte
+        Maske bleibt stehen. Bis zur Nachbesserung vom 03.10.2026 blieb sie immer."""
+        stand = getattr(self, "_lastmaske_stand", None)
+        if stand is None:
+            return
+        maske, schluessel = stand
+        mr = getattr(self, "maskenrand", None)
+        if mr is None or not mr.offen() or mr.maske is not maske:
+            self._lastmaske_stand = None     # schon zu oder eine andere Maske
+            return
+        if schluessel in self.sel_lasten or _maskenaenderung(maske):
+            return
+        self._lastmaske_stand = None
+        mr.schliessen()
 
-        ``ersetzen``: der Klick ohne Strg - danach ist nur dieses Objekt gewaehlt,
-        auch wenn es schon gewaehlt war (03.10.2026, Antwort 7 vom 24.09.2026;
-        bis dahin schaltete jeder Klick hinzu oder weg)."""
+    def _objekt_umschalten(self, liste: list, name: str, was: str, *, ersetzen: bool):
+        """Ein Objekt der Auswahl zufuegen oder herausnehmen (Strg+Klick,
+        ``ersetzen=False``).
+
+        ``ersetzen=True``: der Klick ohne Strg - danach ist nur dieses Objekt
+        gewaehlt, auch wenn es schon gewaehlt war (03.10.2026, Antwort 7 vom
+        24.09.2026; bis dahin schaltete jeder Klick hinzu oder weg). Ohne
+        Vorgabe: jeder Aufrufer sagt, was er meint."""
         if ersetzen or name not in liste:
             art = {"Elemente": "elemente", "Linien": "linien", "Flächen": "flaechen",
                    "Volumen": "koerper", "Stäbe": "staebe"}.get(was, "")
@@ -1870,6 +1912,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if sperre:
                 return self.info(f"{name}: gesperrt (Layer „{sperre}“) - nicht wählbar; "
                                  "Layerliste: Haken „gesperrt“ weg")
+        self._hervorhebung = None           # die Auswahl aendert sich wirklich
         if ersetzen:
             self._klickauswahl_leeren()
             liste.clear()
@@ -1945,14 +1988,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 vorher = naechste
         return zug
 
-    def _objekt_umschalten_klug(self, liste: list, name: str, was: str, enden: dict,
-                                ersetzen: bool = False):
+    def _objekt_umschalten_klug(self, liste: list, name: str, was: str, enden: dict, *,
+                                ersetzen: bool):
         """Wie _objekt_umschalten, aber mit der eindeutigen Fortsetzung:
         Anklicken nimmt den ganzen Zug dazu, Anklicken eines gewaehlten
         Objekts nimmt den Zug wieder heraus (Strg+Klick). ``ersetzen`` (Klick
         ohne Strg): die alte Auswahl geht, der ganze Zug ist danach gewaehlt."""
         if not self._klug_aktiv() or name not in enden:
             return self._objekt_umschalten(liste, name, was, ersetzen=ersetzen)
+        self._hervorhebung = None           # die Auswahl aendert sich wirklich
         if ersetzen:
             self._klickauswahl_leeren()
             liste.clear()
@@ -2497,6 +2541,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if band is not None:
             band.hide()
 
+    #: Was das Auswahlfenster fasst. Lasten nicht: ein Fenster in der Auswahlart
+    #: Last laesst die Auswahl stehen, statt sie still zu leeren und nichts zu waehlen
+    FENSTER_ARTEN = ("Knoten", "Linie", "Stab", "Fläche", "Volumen", "Lager", "Netz")
+
     def _fenster_abschliessen(self, pos):
         """Zweite Ecke (Rechtsklick): auswaehlen, was im Fenster liegt.
 
@@ -2518,13 +2566,19 @@ class MainWindow(QtWidgets.QMainWindow):
         a, b = self._qt_nach_vtk(p1), self._qt_nach_vtk(p2)
         x1, x2 = sorted((a[0], b[0]))
         y1, y2 = sorted((a[1], b[1]))
-        self._hervorhebung = None
+        art = self.auswahlart
+        if art not in self.FENSTER_ARTEN:
+            self.info(f"Auswahlfenster: Auswahlart {art} fasst es nicht - die Auswahl bleibt; "
+                      "einzeln anklicken, Strg+Klick nimmt dazu")
+            return True
         ersetzt = self._klick_ersetzt()
-        if ersetzt and self._dargestellt(self.auswahlart):
+        if ersetzt and self._dargestellt(art):
             # ist die Art ausgeblendet, waehlt das Fenster nichts - dann bleibt
             # auch die Auswahl (_fenster_auswaehlen sagt, warum)
             self._klickauswahl_leeren()
         n = self._fenster_auswaehlen((x1, y1, x2, y2), kreuzend)
+        if n:
+            self._hervorhebung = None       # was das Fenster fasst, ist gewaehlt
         self.info(f"Fensterauswahl ({'auch angeschnittene' if kreuzend else 'nur ganz im Fenster'}): "
                   f"{n} {self.auswahlart}" + ("" if ersetzt else " dazu (Strg)"))
         self._auswahl_nachziehen()
@@ -3043,7 +3097,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._mit_tasten(None, self._picked, wartend[0], *wartend[1])
 
     def _picked(self, point, *args):
-        self._hervorhebung = None           # ein Klick in der Ansicht waehlt wirklich
+        # Der Vermerk „nur leuchten“ (_hervorhebung) endet nur dort, wo der Klick
+        # die Auswahl wirklich aendert (in den Wegen unten). Bis zur Nachbesserung
+        # vom 03.10.2026 endete er hier bei jedem Klick - nach Strg+Klick ins Leere,
+        # Sonde oder Messpunkt loeschte Entf dann das nur Leuchtende mit.
         # Ein laufendes Auswahlfenster: der zweite Linksklick schliesst es ab
         # (wie der Rechtsklick); ein Klick auf der ersten Ecke verwirft es und
         # waehlt normal weiter. So schluckt ein versehentlicher Klick ins
@@ -3077,33 +3134,34 @@ class MainWindow(QtWidgets.QMainWindow):
                 elem = self._wenn_sichtbar("Netz", self._element_am_zeiger())
                 if elem is None:
                     return self._klick_ins_leere()
-                return self._objekt_umschalten(self.sel_elemente, int(elem), "Elemente", ersetzen)
+                return self._objekt_umschalten(self.sel_elemente, int(elem), "Elemente", ersetzen=ersetzen)
             if art == "Linie":
                 name = self._wenn_sichtbar("Linie", self._linie_am_zeiger() or vp.line_at(m, point, size))
                 return self._objekt_umschalten_klug(self.sel_linien, name, "Linien", self._linienenden(),
-                                                    ersetzen) if name else self._klick_ins_leere()
+                                                    ersetzen=ersetzen) if name else self._klick_ins_leere()
             # Erst das, was gezeichnet ist (Zellenpicker) - das trifft auch
             # Zylindermaentel und Stabkoerper; die geometrische Suche ist der
             # Rueckfall, wenn der Klick knapp danebenliegt.
             if art == "Fläche":
                 name = self._wenn_sichtbar("Fläche", self._objekt_am_zeiger("Fläche")
                                            or vp.flaeche_at(m, point, size))
-                return self._objekt_umschalten(self.sel_flaechen, name, "Flächen", ersetzen) \
+                return self._objekt_umschalten(self.sel_flaechen, name, "Flächen", ersetzen=ersetzen) \
                     if name else self._klick_ins_leere()
             if art == "Volumen":
                 name = self._wenn_sichtbar("Volumen", self._objekt_am_zeiger("Volumen")
                                            or vp.koerper_at(m, point, size))
-                return self._objekt_umschalten(self.sel_koerper, name, "Volumen", ersetzen) \
+                return self._objekt_umschalten(self.sel_koerper, name, "Volumen", ersetzen=ersetzen) \
                     if name else self._klick_ins_leere()
             if art == "Stab":
                 name = self._wenn_sichtbar("Stab", self._stab_am_zeiger() or self._objekt_am_zeiger("Stab")
                                            or vp.member_at(m, point))
                 return self._objekt_umschalten_klug(self.sel_staebe, name, "Stäbe", self._stabenden(),
-                                                    ersetzen) if name else self._klick_ins_leere()
+                                                    ersetzen=ersetzen) if name else self._klick_ins_leere()
             if art == "Lager":
                 treffer = self._wenn_sichtbar(
                     "Lager", vp.lager_at(m, point, size, self.lagergroesse, self.lagerdichte))
-                return self._lager_umschalten(treffer, ersetzen) if treffer else self._klick_ins_leere()
+                return (self._lager_umschalten(treffer, ersetzen=ersetzen) if treffer
+                        else self._klick_ins_leere())
             if art == "Last":
                 treffer = vp.last_at(point, getattr(self, "_lastpunkte", None), size)
                 # der Lastfall, dessen Lasten im Bild stehen - beim Ergebnis
@@ -3156,6 +3214,7 @@ class MainWindow(QtWidgets.QMainWindow):
         sperre = self._layer_sperre("Knoten", i)
         if sperre:
             return self.info(f"Knoten {i}: gesperrt (Layer „{sperre}“) - nicht wählbar")
+        self._hervorhebung = None           # die Auswahl aendert sich wirklich
         if ersetzen:
             self._klickauswahl_leeren()
             self.selection = np.array([i], dtype=int)
@@ -3180,8 +3239,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage("Strg+Klick ins Leere: die Auswahl bleibt - Strg+Klick auf ein "
                                          "Objekt fügt es hinzu", 4000)
             return
+        # auch, was nur aus dem Modellbaum leuchtet (leuchtet, leuchtet_kontakt) -
+        # wie beim Klick auf ein Objekt (Nachbesserung 03.10.2026)
         if any((len(self.selection), self.sel_linien, self.sel_flaechen, self.sel_koerper,
-                self.sel_staebe, self.sel_elemente, self.sel_lager, self.sel_lasten)):
+                self.sel_staebe, self.sel_elemente, self.sel_lager, self.sel_lasten,
+                getattr(self, "leuchtet", None), getattr(self, "leuchtet_kontakt", ""))):
             self.clear_selection()
             self.statusBar().showMessage("Klick ins Leere: Auswahl aufgehoben", 3000)
         else:
@@ -7754,9 +7816,12 @@ class MainWindow(QtWidgets.QMainWindow):
         if lc is None:
             return
         schluessel = (fall, liste, int(k))
+        if ersetzen is not None:
+            self._hervorhebung = None       # Klick in der Ansicht: die Auswahl aendert sich
         if ersetzen is False and schluessel in self.sel_lasten:
             self.sel_lasten.remove(schluessel)
-            self.lbl_sel.setText(f"{len(self.sel_lasten)} Lasten ausgewählt")
+            n = len(self.sel_lasten)
+            self.lbl_sel.setText(f"{n} {'Last' if n == 1 else 'Lasten'} ausgewählt")
             return self._auswahl_nachziehen()
         if ersetzen:
             self._klickauswahl_leeren()
@@ -7869,6 +7934,9 @@ class MainWindow(QtWidgets.QMainWindow):
         maske.angewendet.connect(lambda w, f_=fall, l_=liste, k_=k, mk=maske:
                                  self._last_uebernehmen(f_, l_, k_, w, geaendert=_maskenaenderung(mk)))
         self.maske_erzeugen(maske, fokus=False)   # Auswahl, nicht Eingabe
+        # welche Last die Maske zeigt: wird sie abgewaehlt, geht die Maske
+        # unveraendert zu (_lastmaske_abgewaehlt)
+        self._lastmaske_stand = (maske, (fall, liste, int(k)))
 
     def _last_uebernehmen(self, fall: str, liste: str, k: int, w: dict, geaendert=None):
         m = self.model
@@ -18484,8 +18552,7 @@ class MainWindow(QtWidgets.QMainWindow):
         noch einmal danach) - auch bei jedem Klick ins Leere."""
         self._klickauswahl_leeren()
         self.lbl_sel.setText("0 Knoten ausgewählt")
-        self._tabellen_markieren()
-        self._auswahl_nachziehen()
+        self._auswahl_nachziehen()          # markiert auch die Tabellen
 
     def _info_zeigen(self):
         """Ohne Auswahl und ohne offene Maske steht rechts nichts: kein Netz-,

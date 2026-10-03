@@ -600,8 +600,11 @@ Knoten-, Strecken-, Flächen- und Linienlasten, die Temperaturpunkte, Zwangs-
 und Vorspannungspfeile. Die getroffene Last leuchtet gelb, rechts steht ihre
 Maske mit den Werten (Kräfte, q und q2, Abschnitt, p, ΔT, u, F_v) und dem
 Lastfall: Werte ändern und „Übernehmen“, ein anderer Lastfall verschiebt die
-Last dorthin, „Löschen“ nimmt sie heraus. Dasselbe geschieht beim Klick auf
-eine Zeile der Lastentabelle unten.
+Last dorthin, „Löschen“ nimmt sie heraus. Seit dem 03.10.2026 ersetzt der Klick
+in der Ansicht dabei die ganze Auswahl, und Strg+Klick nimmt eine weitere Last
+dazu. Dasselbe geschieht beim Klick auf eine Zeile der Lastentabelle unten, nur
+ersetzt die Zeile nicht die ganze Auswahl: Sie setzt die Last und lässt ihr Ziel
+leuchten, gewählte Objekte anderer Arten bleiben stehen.
 
 **Vorspannung als Last** (*Lasten → Vorspannung*): Stäbe (Zugstange, Seil,
 Anker) oder Volumen (Schraubenschaft) in der Ansicht wählen, die Vorspannkraft
@@ -2555,7 +2558,9 @@ Zahlen (nicht als Text) — in Excel lässt sich damit sofort weiterrechnen.
 
 **Tabelle und Ansicht hängen zusammen**: ein Klick auf eine Zeile wählt das
 Element beziehungsweise den Knoten in der 3D-Ansicht; umgekehrt markiert eine
-Auswahl in der Ansicht die zugehörigen Zeilen und rollt die erste ins Bild.
+Auswahl in der Ansicht die zugehörigen Zeilen und rollt die erste ins Bild. Bis
+zum 03.10.2026 galt das nach einem Klick in der Ansicht nicht: die Tabelle
+behielt die vorige Markierung.
 
 #### Tabelleninhalte: Reihenfolge, Zahlen, Klartext, Farben (seit 02.10.2026)
 
@@ -2773,17 +2778,24 @@ getroffene Objekt und hebt alles andere auf, auch die Auswahl anderer Arten und
 was aus dem Modellbaum heraus leuchtet. Mit gedrückter **Strg**-Taste kommt das
 Objekt zur Auswahl dazu, und ein Strg+Klick auf ein schon gewähltes Objekt nimmt
 es wieder heraus. So ist es in RFEM und in Windows (Antwort 7 vom 24.09.2026).
-**Umschalt + Klick** erzwingt wie bisher die intelligente Auswahl und ersetzt
-dabei die Auswahl durch den ganzen Zug, so wie Umschalt+Klick in Windows einen
-Bereich wählt; **Strg + Umschalt + Klick** nimmt den Zug dazu oder, auf einem
-gewählten Objekt, heraus. Ein Klick ins Leere hebt die Auswahl auf, ein
+Strg und Umschalt zählen, wenn sie beim Drücken oder beim Loslassen der
+Maustaste gedrückt sind. **Umschalt + Klick** erzwingt wie bisher die
+intelligente Auswahl und ersetzt dabei die Auswahl durch den ganzen Zug, so wie
+Umschalt+Klick in Windows einen Bereich wählt; **Strg + Umschalt + Klick** nimmt
+den Zug dazu oder, auf einem gewählten Objekt, heraus. Ein Klick ins Leere hebt
+die Auswahl auf, auch was nur aus dem Modellbaum heraus leuchtet; ein
 Strg+Klick ins Leere lässt sie stehen, denn Strg nimmt nie etwas weg, das man
 nicht angeklickt hat. Klicks, die das Klickfeld einer offenen Maske füllen,
-Messpunkte und Sonden ändern die Auswahl nicht. Bis zum 03.10.2026 schaltete
-jeder Klick das getroffene Objekt hinzu oder weg, die Auswahl anderer Arten blieb
-stehen, und Strg tat nichts. Ein Klick zeichnet die Ansicht einmal neu und
-gleicht das Kontextregister einmal ab; bis dahin lief das Register je Klick
-zweimal.
+Messpunkte und Sonden ändern die Auswahl nicht. Die unveränderte Maske einer
+Last, die nach dem Klick nicht mehr gewählt ist, geht zu; eine geänderte Maske
+bleibt stehen, damit getippte Werte nicht verloren gehen. Bis zum 03.10.2026
+schaltete jeder Klick das getroffene Objekt hinzu oder weg, und Strg tat nichts.
+Bei Lasten ersetzte ein Klick schon damals die gewählte Last; die Auswahl anderer
+Arten blieb aber bei jeder Art stehen, und die Maske einer abgewählten Last blieb
+offen. Ein Klick zeichnet die Ansicht einmal neu, gleicht das Kontextregister
+einmal ab und markiert in den Tabellen, was gewählt ist; bis dahin lief das
+Register je Klick zweimal, und die Tabellen behielten nach einem Klick die
+vorige Markierung.
 
 **Die Maustasten in der 3D-Ansicht.**
 
@@ -2835,7 +2847,9 @@ Gefasst wird, was die Auswahlart sagt: Knoten, Linien, Stäbe, Flächen,
 Volumen oder Elemente des Netzes. Das Fenster ersetzt die Auswahl wie ein
 Klick; ist beim Loslassen **Strg** gedrückt, kommt sein Inhalt zur vorhandenen
 Auswahl dazu (Entscheidung E5 vom 01.10.2026). Bis zum 03.10.2026 ergänzte das
-Fenster immer die vorhandene Auswahl. **Esc** bricht es ab, *Alles
+Fenster immer die vorhandene Auswahl. In der Auswahlart Last fasst das Fenster
+nichts, Lasten wählt nur der Klick; dort lässt es die Auswahl stehen, und die
+Statuszeile sagt es. **Esc** bricht es ab, *Alles
 deselektieren* (Glasleiste, Esc) leert alles. **Klicken und Ziehen wählt
 nichts**: gezählt wird der Klick erst beim Loslassen, und nur, wenn der
 Zeiger dazwischen höchstens vier Bildpunkte gewandert ist — wer die Ansicht

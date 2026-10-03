@@ -6475,25 +6475,28 @@ def main():
               and w._kette("L3", enden_, set(enden_)) == ["L3"])
         w.auswahlart_setzen("Linie"); w.sel_linien = []
         w.act_klug.setChecked(True)
-        w._objekt_umschalten_klug(w.sel_linien, "L1", "Linien", enden_)
-        w._objekt_umschalten_klug(w.sel_linien, "L3", "Linien", enden_)
+        # ersetzen=False ist der Weg von Strg+Klick (seit 03.10.2026 ersetzt ein Klick ohne Taste)
+        w._objekt_umschalten_klug(w.sel_linien, "L1", "Linien", enden_, ersetzen=False)
+        w._objekt_umschalten_klug(w.sel_linien, "L3", "Linien", enden_, ersetzen=False)
         zug_ = list(w.sel_linien)
-        w._objekt_umschalten_klug(w.sel_linien, "L2", "Linien", enden_)
-        check("intelligente Auswahl: Klick auf L1 wählt L0..L2, L3 einzeln; Klick auf L2 wählt den Zug ab",
+        w._objekt_umschalten_klug(w.sel_linien, "L2", "Linien", enden_, ersetzen=False)
+        check("intelligente Auswahl: Strg+Klick auf L1 wählt L0..L2, Strg+Klick auf L3 einzeln dazu; "
+              "Strg+Klick auf L2 wählt den Zug ab",
               set(zug_) == {"L0", "L1", "L2", "L3"} and w.sel_linien == ["L3"], str((zug_, w.sel_linien)))
         w.act_klug.setChecked(False)
-        w._objekt_umschalten_klug(w.sel_linien, "L1", "Linien", enden_)
-        check("Schalter aus: nur die angeklickte Linie", set(w.sel_linien) == {"L3", "L1"}, str(w.sel_linien))
-        w._klick_umschalt = True
-        w._objekt_umschalten_klug(w.sel_linien, "L0", "Linien", enden_)
-        w._klick_umschalt = False
-        check("Umschalt+Klick erzwingt die Kette (L0 mit L2 dazu)", set(w.sel_linien) == {"L3", "L1", "L0", "L2"},
+        w._objekt_umschalten_klug(w.sel_linien, "L1", "Linien", enden_, ersetzen=False)
+        check("Schalter aus: Strg+Klick nimmt nur die angeklickte Linie dazu", set(w.sel_linien) == {"L3", "L1"},
               str(w.sel_linien))
+        w._klick_umschalt = True
+        w._objekt_umschalten_klug(w.sel_linien, "L0", "Linien", enden_, ersetzen=False)
+        w._klick_umschalt = False
+        check("Strg+Umschalt+Klick erzwingt die Kette (L0 mit L2 dazu)",
+              set(w.sel_linien) == {"L3", "L1", "L0", "L2"}, str(w.sel_linien))
         w.act_klug.setChecked(True)
         w.sel_linien = []; w.sel_staebe = []
-        w._objekt_umschalten_klug(w.sel_staebe, "M0", "Stäbe", w._stabenden())
-        check("Stabzug M0..M2 gewählt, hält an der Verzweigung", set(w.sel_staebe) == {"M0", "M1", "M2"},
-              str(w.sel_staebe))
+        w._objekt_umschalten_klug(w.sel_staebe, "M0", "Stäbe", w._stabenden(), ersetzen=False)
+        check("Strg+Klick auf M0: Stabzug M0..M2 gewählt, hält an der Verzweigung",
+              set(w.sel_staebe) == {"M0", "M1", "M2"}, str(w.sel_staebe))
         check("„Intelligente Auswahl“ als Schalter in der Glasleiste mit Symbol",
               "auswahl_klug" in w.glasleiste.knoepfe
               and w.glasleiste.knoepfe["auswahl_klug"].defaultAction() is w.act_klug
@@ -9428,7 +9431,7 @@ def main():
         w.layer_gesperrt_setzen("Traeger", True); app.processEvents()
         w._auswahl_leeren()
         w.auswahlart_setzen("Stab")
-        w._objekt_umschalten(w.sel_staebe, "S2", "Stäbe")
+        w._objekt_umschalten(w.sel_staebe, "S2", "Stäbe", ersetzen=True)
         check("gesperrter Layer: Klick wählt den Stab nicht, _wenn_sichtbar gibt None",
               w.sel_staebe == [] and w._wenn_sichtbar("Stab", "S2") is None and w._wenn_sichtbar("Stab", "S1") == "S1",
               str(w.sel_staebe))

@@ -1039,29 +1039,28 @@ def test_klick_waehlt():
     _leeren(w)
     w.ribbon.zeigen("Geometrie")
     w.auswahlart_setzen("Stab")
-    # _objekt_umschalten ohne ``ersetzen`` ist der Weg von Strg+Klick: dazu oder
-    # heraus (seit 03.10.2026 ersetzt der Klick ohne Taste die Auswahl,
-    # tests/test_klickauswahl.py)
-    w._objekt_umschalten(w.sel_staebe, "Riegel", "Stäbe")
+    # ersetzen=True ist der Klick ohne Taste, ersetzen=False Strg+Klick: dazu oder
+    # heraus (seit 03.10.2026, tests/test_klickauswahl.py)
+    w._objekt_umschalten(w.sel_staebe, "Riegel", "Stäbe", ersetzen=True)
     _ruhe()
     check("Klick auf einen Stab: Register „Auswahl: 1 Stab“", _reiter(w) == "Auswahl: 1 Stab", repr(_reiter(w)))
     reg = w.ribbon._kontext
-    w._objekt_umschalten(w.sel_staebe, "Stiel links", "Stäbe")
+    w._objekt_umschalten(w.sel_staebe, "Stiel links", "Stäbe", ersetzen=False)
     _ruhe()
-    check("… zweiter Stab: dasselbe Register, „Auswahl: 2 Stäbe“",
+    check("… Strg+Klick auf einen zweiten Stab: dasselbe Register, „Auswahl: 2 Stäbe“",
           w.ribbon._kontext is reg and _reiter(w) == "Auswahl: 2 Stäbe", repr(_reiter(w)))
-    w._objekt_umschalten(w.sel_staebe, "Riegel", "Stäbe")
+    w._objekt_umschalten(w.sel_staebe, "Riegel", "Stäbe", ersetzen=False)
     _ruhe()
-    check("… einen abgewählt: „Auswahl: 1 Stab“", _reiter(w) == "Auswahl: 1 Stab", repr(_reiter(w)))
-    w._objekt_umschalten(w.sel_staebe, "Stiel links", "Stäbe")
+    check("… Strg+Klick wählt einen ab: „Auswahl: 1 Stab“", _reiter(w) == "Auswahl: 1 Stab", repr(_reiter(w)))
+    w._objekt_umschalten(w.sel_staebe, "Stiel links", "Stäbe", ersetzen=False)
     _ruhe()
-    check("… den letzten abgewählt: kein Register", w.ribbon._kontext is None and _vorn(w) == "Geometrie",
+    check("… Strg+Klick wählt den letzten ab: kein Register", w.ribbon._kontext is None and _vorn(w) == "Geometrie",
           f"{_reiter(w)!r} vorn {_vorn(w)}")
     # intelligente Auswahl: der Zug kommt mit, der Reiter zaehlt ihn
     alt = w.act_klug.isChecked()
     w.act_klug.setChecked(True)
     try:
-        w._objekt_umschalten_klug(w.sel_staebe, "Riegel", "Stäbe", w._stabenden())
+        w._objekt_umschalten_klug(w.sel_staebe, "Riegel", "Stäbe", w._stabenden(), ersetzen=True)
     finally:
         w.act_klug.setChecked(alt)
     _ruhe()
@@ -1070,15 +1069,15 @@ def test_klick_waehlt():
           n >= 1 and _reiter(w) == f"Auswahl: {n} {'Stab' if n == 1 else 'Stäbe'}", f"{n}: {_reiter(w)!r}")
     _leeren(w)
     w.auswahlart_setzen("Lager")
-    w._lager_umschalten(("lager", 0))
+    w._lager_umschalten(("lager", 0), ersetzen=True)
     _ruhe()
     check("Klick auf ein Lager: „Auswahl: 1 Lager“", _reiter(w) == "Auswahl: 1 Lager", repr(_reiter(w)))
-    w._lager_umschalten(("lager", 0))
+    w._lager_umschalten(("lager", 0), ersetzen=False)
     _ruhe()
-    check("… nochmal: abgewählt, kein Register", w.ribbon._kontext is None, repr(_reiter(w)))
+    check("… Strg+Klick noch einmal: abgewählt, kein Register", w.ribbon._kontext is None, repr(_reiter(w)))
     w.auswahlart_setzen("Last")
     fall = next(n for n, c in w.model.load_cases.items() if c.beam_loads)
-    w._last_waehlen(fall, "beam_loads", 0)
+    w._last_waehlen(fall, "beam_loads", 0, ersetzen=True)
     _ruhe()
     check("Klick auf eine Last: „Auswahl: 1 Last“", _reiter(w) == "Auswahl: 1 Last", repr(_reiter(w)))
     w._klick_ins_leere()
