@@ -532,7 +532,10 @@ Die Arbeitsfläche in drei Spalten:
   fortlaufenden Nummer** an (K17, L8, S3, F5, V2); rechts erscheint seine
   Maske mit **OK** und **Abbrechen**. Ein Knoten steht sofort im Modell (bei
   Nullpunkt, bis man Koordinaten eingibt; Abbrechen nimmt ihn zurück), alles
-  andere entsteht erst mit OK.
+  andere entsteht erst mit OK. Hat die offene Maske noch nicht übernommene
+  Änderungen, entsteht der Knoten erst nach „Übernehmen“ oder „Verwerfen“ in
+  der Leiste oben rechts; „Verwerfen“ in einer Maske „Neu: …“ wirkt wie ihr
+  *Abbrechen*.
 
   **Mit der Tastatur.** Ein Klick in den Baum legt die Tastatur dorthin, und
   sie bleibt dort — auch wenn rechts die Maske des angeklickten Objekts
@@ -600,7 +603,10 @@ Die Arbeitsfläche in drei Spalten:
   Maske des gewählten Objekts oder das Register zum Befehl im Ribbon; der Titel
   nennt sie. Eine Maske trägt ihren Titel selbst, die Titelzeile des Bereichs
   darüber entfällt dann. Ist nichts gewählt und kein Befehl aktiv, ist der
-  Bereich leer.
+  Bereich leer. Ein Punkt vor dem Titel („● Knoten K1“) heißt: In der Maske
+  steht etwas, das noch nicht übernommen ist. Eine solche Maske wird nicht
+  still ersetzt, darüber erscheint dann die Leiste „Übernehmen | Verwerfen“
+  (Abschnitt *Maske oder Klick*, seit 03.10.2026).
   Die **Projektangaben** stehen nicht von selbst darunter: sie holt der oberste
   Punkt des Modellbaums (der Modellname) oder *Datei → Projektangaben*. Eine
   Registerleiste mit denselben Namen wie im Ribbon gibt es nicht.
@@ -1905,7 +1911,11 @@ höher (die Steuerung hat darum nur drei Zeilen, etwa 96 px). Rechts erscheint
 die Maske *Ergebnisse* — außer eine offene Maske hat noch nicht übernommene
 Änderungen: die **bleibt stehen** (seit 02.10.2026), das Protokoll sagt es, und
 die Ergebnisse stehen im Register *Ergebnisse* und im Modellbaum. Bis dahin
-ersetzte die Rechnung sie ohne Rückfrage, und die Eingabe war weg.
+ersetzte die Rechnung sie ohne Rückfrage, und die Eingabe war weg. Seit dem
+03.10.2026 steht dann über ihr die Leiste „Übernehmen | Verwerfen“ (Kapitel 2,
+*Maske oder Klick*): Einer der beiden Knöpfe zeigt danach die Maske
+*Ergebnisse*. *Übernehmen* ändert das Modell und verwirft damit die eben
+gerechneten Ergebnisse, *Verwerfen* behält sie.
 
 Die Auswahllisten *Ergebnis* und *Färbung* sind schmal (etwa 18 Zeichen) und
 bestimmen die Breite des rechten Bereichs nicht: eine lange Kombination wie
@@ -3117,7 +3127,8 @@ Modell und blockiert nichts. Beide Wege führen zum selben Ziel:
 Querschnitt, Material, Dicke und Lastfall gelten für alle folgenden Objekte,
 bis man sie ändert. Geschlossen wird die Maske mit **✕** oben rechts. Ein
 neuer Erzeuge-Befehl löst die vorige Maske ab — es ist immer höchstens eine
-offen.
+offen. Hat die vorige noch nicht übernommene Änderungen, fragt vorher die
+Leiste „Übernehmen | Verwerfen“ (unten, *Nicht übernommene Änderungen*).
 
 **Aufbau jeder Maske** (seit 24.09.2026): Oben stehen der Titel und darunter
 die Hinweiszeile, was die Maske erwartet; sie ist immer ganz zu lesen, auch
@@ -3169,6 +3180,61 @@ hatte gar keinen. Was ein Feld selbst meldet, geht vor: Ein Zahlenfeld mit
 ungültiger Eingabe zeigt seine Fehlermeldung und danach, sobald die Zahl
 stimmt, wieder den Hinweis; ein Listenfeld nennt die Anzahl und alle Einträge,
 der Hinweis steht darin mit an erster Stelle.
+
+**Nicht übernommene Änderungen (seit 03.10.2026).** Sobald man in einer Maske
+etwas ändert, steht vor ihrem Titel ein Punkt, etwa „● Knoten K1“; der Hinweis
+am Titel nennt die geänderten Felder. Der Punkt geht wieder, wenn alle Felder
+so stehen wie beim Öffnen, wenn „Übernehmen“ (oder „Anlegen“, „Last
+aufbringen“ …) gelungen ist, und mit der Maske, wenn man sie abbricht oder
+schließt. Scheitert „Übernehmen“, bleibt er stehen. Felder, die nur anzeigen
+(Anzahl, Kennwerte, „hängt an“), zählen nicht. Zieht man die Schnittebene im
+Bild, gelten die Werte, die das Programm dabei in ihre Maske schreibt, als
+übernommen, denn das Bild zeigt sie schon.
+
+Soll eine Maske mit Punkt einer anderen weichen, geschieht das nicht still.
+Das gilt für einen Klick oder Doppelklick im Modellbaum, für *Neu* im
+Rechtsklickmenü des Baums, für einen Befehl im Ribbon oder im Register
+„Auswahl“, für einen Klick in einer Tabelle oder in der Ansicht, der eine
+Maske öffnet, für die Einzeltasten K, S, L und B und für das Ende einer
+Rechnung. Oben im rechten Bereich, unter der Ergebnisdarstellung und direkt
+über der Maske, erscheint dann die Leiste „„Knoten K1“ hat nicht übernommene
+Änderungen“ mit den Knöpfen **Übernehmen** und **Verwerfen**.
+
+* **Übernehmen** übernimmt die Maske genau wie ihr eigener Knopf, mit denselben
+  Prüfungen und einem Rückgängig-Schritt, und führt danach aus, was man
+  wollte: die neue Maske, die Taste oder die Ergebnisse. Scheitert es (eine
+  ungültige Zahl, eine Prüfung mit Meldung), bleibt alles stehen; die Meldung
+  erscheint wie beim Knopf der Maske, und die Leiste wartet weiter.
+* **Verwerfen** verwirft die Eingaben und führt dann aus, was man wollte. Eine
+  Maske „Neu: …“ wird dabei abgebrochen wie mit ihrem Knopf *Abbrechen*: ein
+  schon angelegter Knoten geht wieder weg.
+* **Ohne Knopfdruck** bleibt alles, wie es ist. Die Maske steht weiter, man
+  kann darin weitertippen und in der Ansicht klicken. Ein Klick im Modellbaum
+  stellt die Auswahl der Ansicht erst um, wenn einer der beiden Knöpfe
+  gedrückt ist; *Übernehmen* bringt eine Knotenlast also auf die Knoten, die
+  vorher gewählt waren, und nicht auf den eben im Baum angeklickten.
+
+Die Leiste geht von selbst, wenn die Maske auf ihrem eigenen Weg übernommen,
+abgebrochen oder geschlossen wird oder wieder unverändert ist; was man wollte,
+verfällt dann. Kommt ein weiterer Wunsch, während die Leiste steht, gilt der
+letzte. Die Leiste ist kein eigenes Fenster und sperrt nichts, auch nicht
+während einer Rechnung; eine Fehlermeldung beim Übernehmen steht dann wie jede
+andere im Protokoll.
+
+Nicht über die Leiste gehen die Wege, die ohnehin fragen oder das ganze Modell
+ersetzen. **Entf** nennt die geänderte Maske in seiner Rückfrage, und mit *Ja*
+wird sie geschlossen; *Neu*, *Öffnen* und die Beispiele fragen nach
+ungespeicherten Änderungen am Modell und schließen die Maske. Die Taste **F**
+öffnet keine Maske, sondern den Dialog *Fläche aus Linien*, und lässt die
+offene Maske stehen. Die Ermüdungsmaske und die Querschnittsmaske tragen keinen
+Punkt, ihre Tabellen und Profile zählen nicht mit; die Register (*Berechnung*,
+*Ergebnisse* …) auch nicht.
+
+Bis zum 03.10.2026 ersetzten Baumklick, Doppelklick, Ribbon, das Register
+„Auswahl“ und die Tabellen eine geänderte Maske ohne Rückfrage, und die
+Eingaben waren weg. Die Einzeltasten wurden mit einer Meldung in der
+Statuszeile abgewiesen, und nach einer Rechnung blieb die Maske mit einer
+Zeile im Protokoll stehen, ohne dass man von dort weiterkam.
 
 ### Zahlen eingeben (seit 24.09.2026)
 
@@ -8370,14 +8436,16 @@ wie bisher. Hält man eine Taste gedrückt, wirkt nur der erste Druck.
 | **F** | ruft *Struktur → Fläche aus Linien* auf: aus den gewählten Linien, mindestens drei, wird eine Fläche; ohne drei gewählte Linien sagt das Programm das |
 
 Die Hinweise an den Knöpfen dieser Befehle nennen die Taste. Eine **offene Maske mit
-nicht übernommenen Änderungen** bleibt, wie sie ist: die Einzeltaste öffnet dann
-keine andere Maske, sondern die Statuszeile sagt, dass die Maske erst übernommen
-oder abgebrochen werden muss (bis zum 03.10.2026 ersetzte die Taste die Maske
-ohne Rückfrage, die Eingaben waren weg). **Während einer Rechnung** sind Entf und
-die Einzeltasten gesperrt, die Statuszeile sagt es: die Rechnung liest das
-Modell, und das Programm öffnet währenddessen kein modales Fenster (bis zum
-03.10.2026 öffnete F den Flächendialog und Entf löschte im Modell, auf dem
-gerade gerechnet wurde).
+nicht übernommenen Änderungen** ersetzen K, S, L und B nicht still: Oben rechts
+erscheint die Leiste „Übernehmen | Verwerfen“, und erst nach einem der beiden
+Knöpfe öffnet sich die Maske der Taste (Kapitel 2, *Maske oder Klick*). F lässt
+die Maske stehen und öffnet den Flächendialog. Bis zum 03.10.2026 ersetzte die
+Taste die Maske ohne Rückfrage, und die Eingaben waren weg; eine erste Abhilfe
+wies die Taste nur mit einer Meldung in der Statuszeile ab. **Während einer
+Rechnung** sind Entf und die Einzeltasten gesperrt, die Statuszeile sagt es: die
+Rechnung liest das Modell, und das Programm öffnet währenddessen kein modales
+Fenster (bis zum 03.10.2026 öffnete F den Flächendialog und Entf löschte im
+Modell, auf dem gerade gerechnet wurde).
 
 Entf fragt **einmal** und nennt dabei, was gelöscht wird, etwa „2 Stäbe und 3
 Knoten wirklich löschen?“; mit *Ja* geht alles Gewählte in einem Zug weg, und ein

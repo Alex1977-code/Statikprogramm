@@ -176,6 +176,9 @@ def test_objektmaske_behaelt_die_alternativen():
         s.model = m
         s._baum_ist_eintrag.return_value = True
         s._layer_sperre_melden.return_value = False
+        # keine geaenderte Maske rechts: _objektmaske haelt nicht an der Leiste
+        # „Übernehmen | Verwerfen“ (Paket 13m, 03.10.2026)
+        s._maskenwechsel_halten.return_value = False
         for n in ("_objektmaske", "_objekt_uebernehmen", "_eigenschaften_uebernehmen"):
             setattr(s, n, getattr(G.MainWindow, n).__get__(s))
         return s

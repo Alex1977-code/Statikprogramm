@@ -745,6 +745,7 @@ def test_einzeltaste_ersetzt_keine_geaenderte_maske():
     check("Vorbereitung: die Maske „Knoten“ meldet eine nicht übernommene Änderung",
           bool(mk.geaenderte_felder()), str(mk.geaenderte_felder()))
     w.statusBar().clearMessage()
+    w.fehler_liste.clear()
     for taste in (K.Key_S, K.Key_L, K.Key_B, K.Key_F, K.Key_K):
         _ansicht(w, app)
         QtTest.QTest.keyClick(ia, taste)
@@ -754,6 +755,15 @@ def test_einzeltaste_ersetzt_keine_geaenderte_maske():
           f"{_maske(w)!r}, {mk.geaenderte_felder()}")
     check("… die Statuszeile sagt, warum", "nicht übernommene Änderungen" in w.statusBar().currentMessage(),
           repr(w.statusBar().currentMessage()))
+    # Seit Paket 13m (03.10.2026) halten K, S, L und B an der Leiste „Übernehmen |
+    # Verwerfen“ oben rechts, wie jeder andere Weg; F oeffnet keine Maske (den
+    # Flaechendialog) und wirkt wie ohne offene Maske - ohne drei Linien die Meldung
+    leiste = getattr(w, "aenderungsleiste", None)
+    check("… K, S, L, B: oben rechts die Leiste „Übernehmen | Verwerfen“ (Paket 13m)",
+          leiste is not None and leiste.isVisible())
+    check("… F öffnet keine Maske und wirkt wie ohne Maske: ohne drei Linien die Meldung",
+          any("drei Linien" in f for f in w.fehler_liste), str(w.fehler_liste))
+    w.fehler_liste.clear()
     w.maskenrand.schliessen()
 
 

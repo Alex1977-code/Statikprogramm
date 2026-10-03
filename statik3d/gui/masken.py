@@ -339,11 +339,20 @@ class Maske(QtWidgets.QFrame):
 
     angewendet(dict)  - „Anwenden" gedrueckt oder genug Knoten angeklickt
     geschlossen()     - Maske zu (Esc oder Kreuz)
+    geaendert_gemeldet(bool) - der Aenderungsmerker kommt (True) oder geht
     """
 
     angewendet = QtCore.Signal(dict)
     geschlossen = QtCore.Signal()
     abgebrochen = QtCore.Signal()
+    #: Der Aenderungsmerker (Punkt im Titel, Paket 13m) kommt oder geht: das
+    #: Fenster nimmt darueber die Leiste „Übernehmen | Verwerfen“ wieder weg
+    geaendert_gemeldet = QtCore.Signal(bool)
+    #: Aufruf, der die Zahl der Fehlermeldungen des Fensters liefert (setzt das
+    #: Fenster beim Zeigen). Steigt sie waehrend „Übernehmen“, ist es gescheitert
+    #: (Pruefung im Fenster, Meldung per error()) - die Maske gilt dann weiter
+    #: als geaendert. Ohne Fenster zaehlt jedes ausgeloeste „Übernehmen“.
+    fehlerzaehler = None
     #: Ein Feld hat die Tastatur bekommen (Name des Feldes). Das Fenster
     #: schaltet darueber die Auswahl per Maus auf dieses Feld („bei Klick in
     #: Feld Auswahl per Maus", 15.09.2026).
@@ -399,6 +408,21 @@ class Maske(QtWidgets.QFrame):
         t = QtWidgets.QLabel(titel)
         t.setObjectName("maskentitel")
         kopf.addWidget(t)
+        #: die Titelzeile - vorn steht der Punkt des Aenderungsmerkers
+        self.lbl_titel = t
+        #: „Übernehmen“ laeuft gerade: ersetzt der Handler die Maske dabei durch
+        #: ihre frische Fassung, ist das der normale Weg und kein Wechsel, der
+        #: die Leiste braucht. Gesetzt vom ersten Empfaenger von ``angewendet``
+        #: (hier, vor allen anderen verbunden) - so gilt es auch, wenn jemand das
+        #: Signal selbst ausloest statt ueber anwenden() (die Pruefungen tun das)
+        self._uebernimmt = False
+        self._uebernahme_ok = True
+        self._fehler_vorher = None
+        self._ende_uhr = QtCore.QTimer(self)
+        self._ende_uhr.setSingleShot(True)
+        self._ende_uhr.setInterval(0)
+        self._ende_uhr.timeout.connect(self._uebernahme_ende)
+        self.angewendet.connect(self._uebernahme_beginnt)
         kopf.addStretch(1)
         zu = QtWidgets.QToolButton(self)
         zu.setText("✕")
@@ -524,6 +548,7 @@ class Maske(QtWidgets.QFrame):
                 w.zustand_geaendert.connect(self._zahlmeldung_nachfuehren)
         #: Stand beim Oeffnen - geaenderte_felder() vergleicht dagegen
         self._anfang = self._werte_roh()
+        self._merker_einrichten(felder)
         self.tabfolge_setzen()
         # Das Feld mit dem Fokus in der Rollflaeche sichtbar halten - auch bei
         # Klick, Programmfokus und Tab aus dem Fuss zurueck in die Felder
@@ -714,10 +739,80 @@ class Maske(QtWidgets.QFrame):
 
         Danach entscheidet das Fenster Feld fuer Feld, ob ein „Übernehmen“
         die Ergebnisse verwerfen muss: eine Bemerkung oder Symbolgroesse
-        aendert die Rechnung nicht."""
+        aendert die Rechnung nicht.
+
+        Anzeigefelder (Art „info“) zaehlen nicht (03.10.2026, Paket 13m): das
+        Programm schreibt dort Anzahlen, Kennwerte und Fingerabdruecke nach,
+        uebernehmen laesst sich davon nichts - sonst trueg die Maske nach dem
+        Knopf „Fingerabdruck“ den Punkt der nicht uebernommenen Aenderungen."""
         jetzt = self._werte_roh()
         anfang = getattr(self, "_anfang", {}) or {}
-        return {k for k in set(jetzt) | set(anfang) if jetzt.get(k) != anfang.get(k)}
+        felder = getattr(self, "_felder", {}) or {}
+        return {k for k in set(jetzt) | set(anfang) if jetzt.get(k) != anfang.get(k)
+                and not isinstance(felder.get(k), QtWidgets.QLabel)}
+
+    def stand_merken(self, namen=None) -> None:
+        """Den jetzigen Stand als den Stand beim Oeffnen nehmen - nach einem
+        gelungenen „Übernehmen“ (alle Felder) oder fuer ``namen``, die das
+        Programm selbst nachfuehrt, weil sie schon gelten (die Schnittebene,
+        die man im Bild zieht). Der Merker folgt sofort."""
+        jetzt = self._werte_roh()
+        if namen is None:
+            self._anfang = jetzt
+        else:
+            anfang = dict(getattr(self, "_anfang", {}) or {})
+            for k in namen:
+                if k in jetzt:
+                    anfang[k] = jetzt[k]
+            self._anfang = anfang
+        self._merker_nachfuehren()
+
+    # -- Aenderungsmerker (Paket 13m, 03.10.2026) ------------------------
+    def _merker_einrichten(self, felder) -> None:
+        """Ein Punkt vor dem Titel, solange die Felder anders sind als beim
+        Oeffnen. Nachgefuehrt wird nur bei einer Feldaenderung - nie beim
+        Neuzeichnen - und gesammelt ueber eine Uhr mit 0 ms: „Alle Lastfälle
+        anhaken“ setzt am Drehlager 422 Haken, das waeren sonst 422 Vergleiche
+        aller Felder; so ist es einer, gleich nach dem Ereignis."""
+        self._merker = False
+        self._feldtexte = {f.name: (f.text or f.name) for f in felder}
+        self._merker_uhr = QtCore.QTimer(self)
+        self._merker_uhr.setSingleShot(True)
+        self._merker_uhr.setInterval(0)
+        self._merker_uhr.timeout.connect(self._merker_nachfuehren)
+        for w in self._felder.values():
+            if isinstance(w, QtWidgets.QLineEdit):          # auch das Zahlenfeld
+                w.textChanged.connect(self._merker_anstossen)
+            elif isinstance(w, QtWidgets.QCheckBox):
+                w.toggled.connect(self._merker_anstossen)
+            elif isinstance(w, QtWidgets.QComboBox):
+                w.currentTextChanged.connect(self._merker_anstossen)
+            elif isinstance(w, QtWidgets.QListWidget):
+                w.itemChanged.connect(self._merker_anstossen)
+
+    def _merker_anstossen(self, *_a) -> None:
+        try:
+            self._merker_uhr.start()
+        except (RuntimeError, AttributeError):
+            pass
+
+    def _merker_nachfuehren(self) -> None:
+        """Punkt im Titel setzen oder nehmen; meldet, wenn er kommt oder geht."""
+        try:
+            geaendert = self.geaenderte_felder()
+            an = bool(geaendert)
+            text = ("● " if an else "") + str(self.titel)
+            if self.lbl_titel.text() != text:
+                self.lbl_titel.setText(text)
+            texte = getattr(self, "_feldtexte", {})
+            self.lbl_titel.setToolTip(
+                "Nicht übernommen: " + ", ".join(sorted(str(texte.get(k, k)) for k in geaendert))
+                + " – „Übernehmen“ schreibt es ins Modell" if an else "")
+        except (RuntimeError, AttributeError):
+            return
+        if an != getattr(self, "_merker", False):
+            self._merker = an
+            self.geaendert_gemeldet.emit(an)
 
     def _zahlmeldung_nachfuehren(self) -> None:
         felder = [w for w in self._felder.values() if isinstance(w, zf.Zahlenfeld)]
@@ -817,15 +912,46 @@ class Maske(QtWidgets.QFrame):
             if n else self._klickhinweis())
 
     # -- Bedienung -------------------------------------------------------
-    def anwenden(self):
+    def anwenden(self) -> bool:
+        """„Übernehmen“. True, wenn es gelang: die Werte gingen hinaus, und das
+        Fenster hat dabei keinen Fehler gemeldet (:attr:`fehlerzaehler`). Dann
+        gilt der jetzige Stand als uebernommen, der Punkt im Titel geht. Die
+        Leiste „Übernehmen | Verwerfen“ fuehrt den Wunsch nur bei True aus."""
         # Ungueltige Zahl: nichts uebernehmen. Mehrdeutige („33.000“): beim
         # ersten Mal nachfragen, beim zweiten Mal gilt sie (24.09.2026)
         felder = [w for w in self._felder.values() if isinstance(w, zf.Zahlenfeld)]
         if felder and not zf.freigeben(felder):
             self._zahlmeldung_nachfuehren()
-            return
+            return False
         self._zahlmeldung_nachfuehren()
         self.angewendet.emit(self.werte())
+        try:
+            return self._uebernahme_ende()
+        except RuntimeError:                # Maske schon freigegeben
+            return True
+
+    def _uebernahme_beginnt(self, _werte=None) -> None:
+        """Erster Empfaenger von ``angewendet``: die Uebernahme laeuft. Ihr Ende
+        meldet anwenden() gleich nach den Handlern - wer das Signal selbst
+        ausloest, bekommt es mit der naechsten Runde der Ereignisschleife."""
+        zaehler = self.fehlerzaehler
+        self._fehler_vorher = zaehler() if callable(zaehler) else None
+        self._uebernimmt = True
+        self._ende_uhr.start()
+
+    def _uebernahme_ende(self) -> bool:
+        """Die Uebernahme ist durch. Gelang sie - kein Fehler gemeldet, solange
+        sie lief -, gilt der jetzige Stand als uebernommen und der Punkt geht.
+        Ein zweiter Aufruf (Uhr und anwenden) liefert dasselbe Ergebnis."""
+        self._ende_uhr.stop()
+        if not self._uebernimmt:
+            return self._uebernahme_ok
+        self._uebernimmt = False
+        zaehler, vorher = self.fehlerzaehler, self._fehler_vorher
+        self._uebernahme_ok = vorher is None or not callable(zaehler) or zaehler() == vorher
+        if self._uebernahme_ok:
+            self.stand_merken()
+        return self._uebernahme_ok
 
     def abbrechen(self):
         """Abbrechen: erst melden (das Fenster nimmt ein neues Objekt zurueck),
@@ -911,6 +1037,65 @@ class Maske(QtWidgets.QFrame):
                 continue
             w.setStyleSheet("border: 2px solid #ff8800; background: #fff6e5;"
                             if feld == name else "")
+
+
+class Aenderungsleiste(QtWidgets.QFrame):
+    """Nicht-modale Leiste „Übernehmen | Verwerfen“ (Paket 13m, 03.10.2026).
+
+    Antwort 5 des Anwenders vom 24.09.2026: Wird eine Maske mit nicht
+    uebernommenen Aenderungen ersetzt, erscheint eine nicht-modale Leiste -
+    nicht automatisch uebernehmen. Sie steht oben im rechten Bereich, an dem
+    Platz, den Paket 6b fuer die Ergebnissteuerung geschaffen hat
+    (``bleibt_oben``: der Maskenrand setzt Masken darunter), und nennt die
+    Maske. Was die Knoepfe tun, entscheidet das Fenster (``uebernehmen``,
+    ``verwerfen``); ohne Knopfdruck bleibt alles, wie es ist."""
+
+    uebernehmen = QtCore.Signal()
+    verwerfen = QtCore.Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("aenderungsleiste")
+        self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+        self.setProperty("bleibt_oben", True)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Maximum)
+        self.setAccessibleName("Nicht übernommene Änderungen")
+        # Zwei Zeilen: oben der Satz ueber die ganze Breite, darunter rechts die
+        # Knoepfe. In einer Zeile neben den Knoepfen brach der Satz im rechten
+        # Bereich (460 px) in drei und mehr Zeilen um.
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(8, 4, 6, 4)
+        lay.setSpacing(3)
+        # umbrechend: ein langer Maskenname nimmt eine zweite Zeile, statt den
+        # rechten Bereich zu verbreitern
+        self.text = Hinweiszeile("", self)
+        self.text.setObjectName("aenderungstext")
+        self.text.setMinimumWidth(60)
+        lay.addWidget(self.text)
+        zeile = QtWidgets.QHBoxLayout()
+        zeile.setContentsMargins(0, 0, 0, 0)
+        zeile.setSpacing(6)
+        zeile.addStretch(1)
+        self.btn_uebernehmen = QtWidgets.QPushButton("Übernehmen", self)
+        self.btn_verwerfen = QtWidgets.QPushButton("Verwerfen", self)
+        self.btn_uebernehmen.clicked.connect(self.uebernehmen.emit)
+        self.btn_verwerfen.clicked.connect(self.verwerfen.emit)
+        zeile.addWidget(self.btn_uebernehmen)
+        zeile.addWidget(self.btn_verwerfen)
+        lay.addLayout(zeile)
+        self.titel = ""
+        self.hide()
+
+    def setze(self, titel: str, danach: str = "") -> None:
+        """Die Maske nennen; ``danach`` sagt im Hinweis, was nach dem Knopf geschieht."""
+        self.titel = str(titel)
+        self.text.setText(f"„{self.titel}“ hat nicht übernommene Änderungen")
+        folge = f", danach {danach}" if danach else ""
+        self.btn_uebernehmen.setToolTip(f"„{self.titel}“ übernehmen wie mit ihrem eigenen Knopf{folge}. "
+                                        "Scheitert es, bleibt die Maske stehen")
+        self.btn_verwerfen.setToolTip(f"Die Eingaben in „{self.titel}“ verwerfen{folge}")
+        self.setToolTip("Ohne Knopfdruck bleibt die Maske stehen; man kann weiter darin tippen "
+                        "oder in der Ansicht klicken")
 
 
 class Maskenrand(QtCore.QObject):
@@ -1067,6 +1252,10 @@ QScrollArea#maskenrolle {{ background: transparent; border: 0; }}
 QWidget#maskenmitte {{ background: transparent; }}
 QToolButton#maskezu {{ border: 0; color: {matt}; font-size: 13px;
     padding: 0 4px; }}
+/* Leiste „Übernehmen | Verwerfen“ ueber einer geaenderten Maske (Paket 13m) */
+QFrame#aenderungsleiste {{ background: #fff6e5; border: 1px solid {warn};
+    border-radius: 8px; }}
+QLabel#aenderungstext {{ color: {text}; background: transparent; border: 0; }}
 QToolButton#maskezu:hover {{ color: {schlecht}; }}
 /* einklappbarer Abschnitt (Paket 13r): flacher Kopf, Fokus als blauer Rand */
 QToolButton#einklappkopf {{ border: 1px solid transparent; border-radius: 4px;

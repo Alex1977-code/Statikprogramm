@@ -740,6 +740,14 @@ def test_nachbesserung():
     app.processEvents()
     check("… „33 000“ gilt sofort: k2 = 3 300 000 kN/m", mk._felder["k2"].text() == "3 300 000",
           mk._felder["k2"].text())
+    # Die Bettung steht nur in der Maske, uebernommen ist sie nicht: seit Paket 13m
+    # (03.10.2026) traegt die Maske dann den Punkt, und die Sammelmaske weiter unten
+    # ersetzte sie nicht mehr still, sondern hielte an der Leiste „Übernehmen |
+    # Verwerfen“. Darum hier schliessen.
+    check("… die Bettung ist noch nicht übernommen: die Lagermaske meldet k2 als geändert",
+          "k2" in mk.geaenderte_felder(), str(sorted(mk.geaenderte_felder())))
+    w.maskenrand.schliessen()
+    app.processEvents()
 
     # Kontaktmaske: ungueltiges μ, dann ein Standardkontakt
     F = msk.Feld

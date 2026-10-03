@@ -5,6 +5,7 @@ Start:  python -m statik3d.gui
 """
 from __future__ import annotations
 
+import functools
 import itertools
 import math
 import os
@@ -189,6 +190,22 @@ def _maskenaenderung(maske):
     (dann wird wie bisher verworfen; 24.09.2026)."""
     f = getattr(maske, "geaenderte_felder", None)
     return f() if callable(f) else None
+
+
+def _uebernahmeweg(f):
+    """Ein Handler fuer „Übernehmen“ einer Maske (Paket 13m, 03.10.2026):
+    solange er laeuft, ersetzt er die Maske auf dem normalen Weg - er schreibt
+    und oeffnet sie mit den neuen Werten wieder -, und die Leiste
+    „Übernehmen | Verwerfen“ haelt dabei nicht an. Das gilt auch, wenn ihn
+    jemand ohne die Maske ruft (die Pruefungen tun das)."""
+    @functools.wraps(f)
+    def huelle(self, *a, **k):
+        self._uebernahme_tiefe = getattr(self, "_uebernahme_tiefe", 0) + 1
+        try:
+            return f(self, *a, **k)
+        finally:
+            self._uebernahme_tiefe -= 1
+    return huelle
 
 
 class _Beschriftungsschritt(str):
@@ -729,13 +746,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage("Rechnung läuft: Entf und die Tasten K, S, L, B, F sind "
                                          "gesperrt, bis sie fertig ist (Esc hält sie an)", 8000)
             return True
-        maske = self.maskenrand.maske if self.maskenrand.offen() else None
-        if name != "Entf" and maske is not None and _maskenaenderung(maske):
-            # eine Einzeltaste ersetzt die offene Maske - mit nicht uebernommenen
-            # Eingaben darin ginge sie ohne Rueckfrage verloren
-            self.statusBar().showMessage(
-                f"Die offene Maske „{maske.titel}“ hat nicht übernommene Änderungen - erst "
-                f"übernehmen oder abbrechen, dann Taste {name}", 8000)
+        if (self.ANSICHT_TASTEN.get(k, "").startswith("maske_")
+                and self._maskenwechsel_halten(befehl, f"wirkt die Taste {name}")):
+            # K, S, L und B oeffnen eine Maske: eine offene mit nicht uebernommenen
+            # Eingaben ersetzen sie nicht still, die Leiste „Übernehmen | Verwerfen“
+            # haelt an (Paket 13m) - wie jeder andere Weg. Bis zum 03.10.2026 wies die
+            # Statuszeile die Taste ab, und es blieb nur, die Maske von Hand zu
+            # uebernehmen und die Taste noch einmal zu druecken. F oeffnet keine Maske
+            # (den Flaechendialog) und laesst die offene stehen, Entf fragt selbst und
+            # nennt die Maske dabei (_loesch_folgen).
             return True
         try:
             befehl()
@@ -1356,6 +1375,11 @@ class MainWindow(QtWidgets.QMainWindow):
         spec = self._sammelfelder(art, namen)
         if not spec:
             return self.error(f"Für {self.AUSWAHL_TEXT.get(art, art)} gibt es keine Sammelbearbeitung")
+        # eine geaenderte Maske nicht still ersetzen (Paket 13m); der Wunsch baut
+        # die Sammelmaske nach der Entscheidung mit den Werten von dann
+        if self._maskenwechsel_halten(lambda a=art, n=list(namen): self.sammelmaske(a, n),
+                                      "öffnet sich die Sammelmaske"):
+            return None
         F = msk.Feld
         beschreibung = ", ".join(str(n) if art not in ("knoten", "element", "lager") else
                                  ("K" if art == "knoten" else "E" if art == "element" else "Lager ") + str(n if art != "lager" else n + 1)
@@ -5301,7 +5325,11 @@ class MainWindow(QtWidgets.QMainWindow):
         for i in range(self.tabs.count()):
             if self.tabs.tabText(i) == name:
                 # Rechts steht immer nur eines: das Register loest eine offene
-                # Maske ab und nimmt den Platz des Hinweises ein.
+                # Maske ab und nimmt den Platz des Hinweises ein - eine mit nicht
+                # uebernommenen Aenderungen nicht still (Paket 13m)
+                if self._maskenwechsel_halten(lambda n=name: self.maske_zeigen(n),
+                                              f"öffnet sich „{name}“"):
+                    return True
                 if getattr(self, "maskenrand", None) is not None and self.maskenrand.offen():
                     self.maskenrand.schliessen()
                 if hasattr(self, "rechts_leer"):
@@ -5326,12 +5354,27 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         if getattr(self, "_auswahl_sammeln", False):
             return maske                    # Mehrfachauswahl: keine Maske je Zeile
+        # Jede neue Maske kommt hier vorbei - auch aus Ribbon, Kontextregister,
+        # Tabelle und Rechtsklick. Eine offene mit nicht uebernommenen Aenderungen
+        # ersetzt sie nicht still (Paket 13m): die Leiste haelt an, und nach
+        # „Übernehmen“ oder „Verwerfen“ erscheint diese Maske.
+        if maske is not self.maskenrand.maske and self._maskenwechsel_halten(
+                lambda mk=maske, f=fokus: self.maske_erzeugen(mk, fokus=f),
+                f"öffnet sich „{getattr(maske, 'titel', '') or 'die Maske'}“"):
+            return maske
         hoehe_vorher = self.height()
         self.maskenrand.zeigen(maske, fokus=fokus)
         # Rechts steht nur die Maske: die Register darunter - zuletzt standen
         # dort immer die Projektangaben - verschwinden, solange sie offen ist.
         try:
             maske.geschlossen.connect(self._maske_geschlossen)
+            # die Leiste „Übernehmen | Verwerfen“ geht mit der Maske: zu,
+            # uebernommen oder wieder unveraendert (Paket 13m)
+            maske.geschlossen.connect(self._leiste_pruefen)
+            if hasattr(maske, "geaendert_gemeldet"):
+                maske.geaendert_gemeldet.connect(self._leiste_pruefen)
+            # „Übernehmen“ gilt als gescheitert, wenn dabei ein Fehler gemeldet wird
+            maske.fehlerzaehler = self._fehlerstand
         except (AttributeError, RuntimeError):
             pass
         if hasattr(self, "tabs"):
@@ -5348,6 +5391,128 @@ class MainWindow(QtWidgets.QMainWindow):
             self.eingaben_dock.raise_()
         self._fensterhoehe_halten(hoehe_vorher, maske)
         return maske
+
+    # ---- Aenderungsmerker: die eine Stelle fuer jeden Maskenwechsel (Paket 13m) ----
+    def _geaenderte_maske(self):
+        """Die offene Maske, wenn sie nicht uebernommene Aenderungen hat - sonst None.
+
+        Eine Maske, die gerade selbst uebernimmt, zaehlt nicht: ihr Handler
+        ersetzt sie dabei durch ihre frische Fassung (die Objektmasken nach
+        „Übernehmen“), und das ist kein Wechsel, nach dem zu fragen waere."""
+        rand = getattr(self, "maskenrand", None)
+        mk = getattr(rand, "maske", None)
+        if mk is None or not _lebt(mk) or getattr(self, "_uebernahme_tiefe", 0) > 0:
+            return None
+        # Offen heisst: nicht geschlossen - auch wenn der rechte Bereich gerade
+        # ausgeblendet ist (Ansicht → Fenster); die Leiste holt ihn dann zurueck.
+        # Ohne sichtbares Fenster gilt wie bisher nur die sichtbare Maske.
+        offen = rand.offen() or (self.isVisible() and not mk.isHidden())
+        if not offen or getattr(mk, "_uebernimmt", False):
+            return None
+        return mk if _maskenaenderung(mk) else None
+
+    def _maskenwechsel_halten(self, wunsch, danach: str = "") -> bool:
+        """Die eine Stelle, ueber die jeder Weg geht, der die offene Maske
+        ersetzen wuerde (03.10.2026, Paket 13m; Antwort 5 des Anwenders vom
+        24.09.2026: eine nicht-modale Leiste, nicht automatisch uebernehmen).
+
+        True heisst angehalten: die Maske hat nicht uebernommene Aenderungen,
+        oben rechts steht die Leiste „Übernehmen | Verwerfen“, und ``wunsch``
+        laeuft erst nach einem der beiden Knoepfe - der Aufrufer tut nichts
+        weiter. False: der Weg ist frei. ``danach`` sagt im Hinweis der Knoepfe,
+        was dann geschieht. Ein neuer Wunsch ersetzt einen wartenden; es gilt
+        der letzte, wie vorher beim stillen Ersetzen.
+
+        Bis zum 03.10.2026 ersetzten Baumklick, Ribbon, Kontextregister und
+        Tabellen eine geaenderte Maske still, und die Eingaben waren weg; nur
+        die Einzeltasten, Entf und die Rechnung hatten je eine eigene Regel."""
+        mk = self._geaenderte_maske()
+        if mk is None:
+            return False
+        self._leiste_zeigen(mk, wunsch, danach)
+        return True
+
+    def _leiste_zeigen(self, mk, wunsch, danach: str = "") -> None:
+        """Die Leiste oben rechts zeigen - ueber der Maske, unter der
+        Ergebnissteuerung (der Platz aus Paket 6b, ``bleibt_oben``) - und den
+        Wunsch merken. Nicht modal: die Maske bleibt bedienbar, die Ansicht
+        auch, und waehrend einer Rechnung oeffnet sich nichts."""
+        leiste = getattr(self, "aenderungsleiste", None)
+        if leiste is None or not _lebt(leiste):
+            leiste = msk.Aenderungsleiste()
+            leiste.uebernehmen.connect(self._leiste_uebernehmen)
+            leiste.verwerfen.connect(self._leiste_verwerfen)
+            self.aenderungsleiste = leiste
+        platz = getattr(self, "maskenplatz", None)
+        if platz is not None and platz.indexOf(leiste) < 0:
+            platz.insertWidget(self.maskenrand._anfang(), leiste, 0)
+        self._leiste_maske, self._leiste_wunsch = mk, wunsch
+        hoehe = self.height()
+        leiste.setze(getattr(mk, "titel", "") or "Maske", danach)
+        leiste.show()
+        dock = getattr(self, "eingaben_dock", None)
+        if dock is not None and not dock.isVisible():
+            # ausgeblendeter rechter Bereich: wie maske_erzeugen ihn zeigen - die
+            # Leiste und die Maske, um die es geht, stehen darin
+            dock.show()
+            dock.raise_()
+        self._fensterhoehe_halten(hoehe)
+        self.statusBar().showMessage(
+            f"„{leiste.titel}“ hat nicht übernommene Änderungen – oben rechts „Übernehmen“ "
+            "oder „Verwerfen“, dann geht es weiter", 8000)
+
+    def _leiste_weg(self) -> None:
+        self._leiste_maske = self._leiste_wunsch = None
+        leiste = getattr(self, "aenderungsleiste", None)
+        if leiste is not None and _lebt(leiste):
+            leiste.hide()
+
+    def _leiste_pruefen(self, *_a) -> None:
+        """Die Leiste geht, sobald ihre Maske zu, uebernommen oder wieder
+        unveraendert ist - der Wunsch verfaellt dann, die Maske bleibt."""
+        leiste = getattr(self, "aenderungsleiste", None)
+        if leiste is None or not _lebt(leiste) or leiste.isHidden():
+            return
+        mk = getattr(self, "_leiste_maske", None)
+        rand = self.maskenrand
+        if mk is None or not _lebt(mk) or rand.maske is not mk or mk.isHidden() \
+                or not _maskenaenderung(mk):
+            self._leiste_weg()
+
+    def _leiste_uebernehmen(self) -> None:
+        """„Übernehmen“ in der Leiste: die Maske auf ihrem eigenen Weg
+        uebernehmen - dieselben Pruefungen, derselbe Rueckgaengig-Schritt wie
+        ihr Knopf -, dann den Wunsch ausfuehren. Scheitert es (ungueltige Zahl,
+        Pruefung mit Fehlermeldung), bleibt alles stehen: die Meldung kam wie
+        beim Knopf der Maske, Maske, Leiste und Wunsch warten weiter."""
+        mk, wunsch = getattr(self, "_leiste_maske", None), getattr(self, "_leiste_wunsch", None)
+        if mk is None or wunsch is None or not _lebt(mk) or self.maskenrand.maske is not mk:
+            self._leiste_weg()
+            return
+        anwenden = getattr(mk, "anwenden", None)
+        ok = anwenden() if callable(anwenden) else False
+        if ok is False or ok is None:
+            return
+        self._leiste_weg()
+        wunsch()
+
+    def _leiste_verwerfen(self) -> None:
+        """„Verwerfen“: die Eingaben gehen verloren, dann der Wunsch. Eine Maske
+        mit „Abbrechen“ (ein neues Objekt) wird abgebrochen - wie ihr Knopf:
+        ein schon angelegter Knoten geht wieder weg."""
+        mk, wunsch = getattr(self, "_leiste_maske", None), getattr(self, "_leiste_wunsch", None)
+        self._leiste_weg()
+        if mk is not None and _lebt(mk) and self.maskenrand.maske is mk:
+            if getattr(mk, "btn_abbrechen", None) is not None:
+                mk.abgebrochen.emit()
+            self.maskenrand.schliessen()
+        if wunsch is not None:
+            wunsch()
+
+    def _fehlerstand(self) -> int:
+        """Zahl der Fehlermeldungen bisher (Maske.fehlerzaehler): steigt sie
+        waehrend „Übernehmen“, ist es gescheitert."""
+        return int(getattr(self, "_fehlerzahl", 0))
 
     def _fensterhoehe_halten(self, hoehe: int, maske=None) -> None:
         """Das Fenster waechst nie durch eine Maske (24.09.2026).
@@ -5578,7 +5743,19 @@ class MainWindow(QtWidgets.QMainWindow):
                     "schweissnaehte", "schweissnaht", "schweissnaht_neu",
                     "ermuedungslasten", "ermuedungslast", "ermuedungslast_neu"}
 
+    #: Baumklicks, die rechts nichts ersetzen (die Ansicht wird Berichtsbild):
+    #: sie halten nicht an der Leiste „Übernehmen | Verwerfen“
+    BAUM_OHNE_MASKE = {"bericht_neu"}
+
     def _baum_geklickt(self, art: str, name: str):
+        # Mit einer geaenderten Maske rechts haelt der Klick an der Leiste
+        # „Übernehmen | Verwerfen“ (Paket 13m) - und zwar bevor er die Auswahl
+        # umstellt: sonst brachte „Übernehmen“ etwa eine Knotenlast auf die eben
+        # im Baum angeklickten Knoten statt auf die gewaehlten. Fast jeder Klick
+        # im Baum stellt rechts etwas anderes hin (Maske oder Register).
+        if art not in self.BAUM_OHNE_MASKE and self._maskenwechsel_halten(
+                lambda a=art, n=name: self._baum_geklickt(a, n), "öffnet sich, was im Baum angeklickt ist"):
+            return None
         if art in self.SYSTEM_ARTEN:
             return self._baum_system_geklickt(art, name)
         if art == "lastart":
@@ -5957,6 +6134,13 @@ class MainWindow(QtWidgets.QMainWindow):
         m = self.model
         eintrag = neu or self._baum_ist_eintrag(art, name)
         if eintrag and not neu and self._layer_sperre_melden(art, name):
+            return None
+        # Eine geaenderte Maske nicht still ersetzen (Paket 13m). Gehalten wird vor
+        # dem Bau: der Wunsch baut die Maske nach „Übernehmen“ mit dem Stand von
+        # dann - eine vorher gebaute zeigte nach dem Uebernehmen derselben Felder
+        # die alten Werte, und ihr „Übernehmen“ schriebe sie zurueck.
+        if self._maskenwechsel_halten(lambda a=art, n=name, ne=neu: self._objektmaske(a, n, ne),
+                                      "öffnet sich die angeklickte Maske"):
             return None
         F = msk.Feld
         felder, titel, hinweis = [], "", ""
@@ -7858,6 +8042,11 @@ class MainWindow(QtWidgets.QMainWindow):
         lc, obj = self._lastobjekt(fall, liste, k)
         if lc is None:
             return
+        # eine geaenderte Maske nicht still ersetzen; gebaut wird nach der
+        # Entscheidung, mit den Werten von dann (Paket 13m)
+        if self._maskenwechsel_halten(lambda f=fall, li=liste, i=int(k): self._lastmaske(f, li, i),
+                                      "öffnet sich die Maske der Last"):
+            return
         m = self.model
         F = msk.Feld
         art, titel = self.LASTLISTEN.get(liste, ("", "Last"))
@@ -7957,6 +8146,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # unveraendert zu (_lastmaske_abgewaehlt)
         self._lastmaske_stand = (maske, (fall, liste, int(k)))
 
+    @_uebernahmeweg
     def _last_uebernehmen(self, fall: str, liste: str, k: int, w: dict, geaendert=None):
         m = self.model
         lc, obj = self._lastobjekt(fall, liste, k)
@@ -8263,6 +8453,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_all()
         return self._objektmaske(art, name)
 
+    @_uebernahmeweg
     def _objekt_uebernehmen(self, art: str, name: str, w: dict, neu: bool = False, geaendert=None):
         """Die Felder der Objektmaske ins Modell schreiben (oder das Objekt anlegen).
 
@@ -8870,6 +9061,11 @@ class MainWindow(QtWidgets.QMainWindow):
         """Rechtsklick „Neu“: naechste fortlaufende Nummer, rechts die Maske
         mit OK und Abbrechen. Ein Knoten entsteht sofort (Abbrechen nimmt ihn
         zurueck), alles andere erst mit OK."""
+        # Vor dem Anlegen halten, wenn die offene Maske nicht uebernommene
+        # Aenderungen hat (Paket 13m): sonst stuende der neue Knoten schon im
+        # Modell, waehrend die Leiste „Übernehmen | Verwerfen“ noch wartet
+        if self._maskenwechsel_halten(lambda z=zweigart: self._baum_neu(z), "legt „Neu“ an"):
+            return None
         m = self.model
         if zweigart == "lastfaelle":
             return self._objektmaske("lastfall", m.naechster_name("LF", m.load_cases), neu=True)
@@ -9737,6 +9933,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 and self.baum._schluessel(it) == (art, name)):
             if art in self.BAUM_DOPPELKLICK_NEU:
                 return self._baum_neu(art)
+            return None
+        # wie beim einfachen Klick: anhalten, bevor die Auswahl umgestellt wird (Paket 13m)
+        if self._maskenwechsel_halten(lambda a=art, n=name: self._baum_bearbeiten(a, n),
+                                      "öffnet sich, was im Baum doppelt angeklickt ist"):
             return None
         try:
             if art == "knoten" and name.isdigit():
@@ -14548,6 +14748,9 @@ class MainWindow(QtWidgets.QMainWindow):
         return True
 
     def error(self, msg):
+        # gezaehlt: ein „Übernehmen“, waehrend dessen ein Fehler kam, ist
+        # gescheitert (Maske.fehlerzaehler, Paket 13m)
+        self._fehlerzahl = getattr(self, "_fehlerzahl", 0) + 1
         if self._modal_gesperrt("FEHLER", msg):
             return
         QtWidgets.QMessageBox.critical(self, "Fehler", str(msg))
@@ -20781,12 +20984,19 @@ class MainWindow(QtWidgets.QMainWindow):
         Maske hat noch nicht uebernommene Aenderungen: die bleibt stehen
         (Plan 4b, Fortschreibung 01.10.2026). Bis dahin ersetzte F5 sie ohne
         Rueckfrage, und die Eingabe war weg. Die Ergebnissteuerung oben rechts
-        bleibt auch ueber der stehenden Maske sichtbar."""
+        bleibt auch ueber der stehenden Maske sichtbar.
+
+        Seit 03.10.2026 (Paket 13m) geht das ueber dieselbe Stelle wie jeder
+        andere Wechsel: oben rechts steht die Leiste, „Übernehmen“ oder
+        „Verwerfen“ zeigt danach die Ergebnismaske. Das Protokoll sagt es, denn
+        wer rechnen laesst, schaut oft woanders hin."""
         rand = getattr(self, "maskenrand", None)
         mk = rand.maske if rand is not None and rand.offen() else None
-        if mk is not None and _maskenaenderung(mk):
+        if self._maskenwechsel_halten(lambda: self.maske_zeigen("Ergebnisse"),
+                                      "zeigt sich das Register Ergebnisse"):
             self.info(f"Die Maske „{getattr(mk, 'titel', '')}“ hat nicht übernommene Änderungen und bleibt "
-                      "offen - die Ergebnisse stehen im Register Ergebnisse und im Modellbaum")
+                      "offen - „Übernehmen“ oder „Verwerfen“ oben rechts zeigt danach die Ergebnisse; sie "
+                      "stehen auch im Register Ergebnisse und im Modellbaum")
             return False
         self.maske_zeigen("Ergebnisse")
         return True
@@ -22811,6 +23021,12 @@ class MainWindow(QtWidgets.QMainWindow):
             maske.setzen(k, float(f"{v:.4g}"))
         maske.setzen("quelle", "eigene Werte")
         maske.setzen("widget", getattr(self, "_schnittwidget", None) is not None)
+        # Die Ebene im Bild gilt schon: diese Felder sind keine nicht
+        # uebernommenen Aenderungen (Paket 13m) - sonst stuende nach jedem
+        # Ziehen der Punkt im Titel und beim naechsten Klick die Leiste
+        stand = getattr(maske, "stand_merken", None)
+        if callable(stand):
+            stand(["nx", "ny", "nz", "ox", "oy", "oz", "quelle", "widget"])
 
     def _schnittwidget_anlegen(self):
         """Die Ebene als Werkzeug ins Bild: Pfeil dreht die Normale, die
