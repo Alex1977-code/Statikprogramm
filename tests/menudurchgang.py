@@ -70,6 +70,33 @@ START = ARGS.ab if ARGS else 1
 WAECHTER_SEK = ARGS.waechter if ARGS else 300
 
 
+def ort(aktion, ribbon) -> str:
+    """Wo ein Befehl im Ribbon steht (25.09.2026, Paket 7): als eigener Knopf,
+    als Eintrag eines Menueknopfs („Anzeigen ▾“, „Beulfeld ▾“) oder nur noch
+    in der Befehlssuche (Doppelungen wie „Tabelle …“). Ausgeloest wird jeder
+    gleich - ueber seine Aktion. Knoepfe der Glasleiste zaehlen nicht."""
+    from PySide6 import QtWidgets
+
+    def im_ribbon(x):
+        # ein Menue ist ein eigenes Fenster: isAncestorOf reicht nicht hinein
+        while x is not None:
+            if x is ribbon:
+                return True
+            x = x.parentWidget()
+        return False
+
+    try:
+        halter = [h for h in aktion.associatedObjects() if isinstance(h, QtWidgets.QWidget)]
+    except AttributeError:          # aeltere Qt-Fassung
+        halter = list(aktion.associatedWidgets())
+    halter = [h for h in halter if im_ribbon(h)]
+    if any(isinstance(h, QtWidgets.QToolButton) for h in halter):
+        return "Knopf"
+    if any(isinstance(h, QtWidgets.QMenu) for h in halter):
+        return "Menü"
+    return "nur Suche"
+
+
 def main():
     from PySide6 import QtWidgets, QtCore
     import numpy as np
@@ -89,6 +116,9 @@ def main():
     QtWidgets.QInputDialog.getInt = staticmethod(lambda *a, **k: (0, False))
     QtWidgets.QInputDialog.getDouble = staticmethod(lambda *a, **k: (0.0, False))
     QtWidgets.QInputDialog.getItem = staticmethod(lambda *a, **k: ("", False))
+    # „Bericht → Text einfügen“ fragt mehrzeilig: ohne diese Zeile blieb der
+    # Durchgang dort im modalen Fenster stehen (Waechter nach 120 s, 25.09.2026)
+    QtWidgets.QInputDialog.getMultiLineText = staticmethod(lambda *a, **k: ("", False))
 
     from statik3d.gui.main import MainWindow
     from statik3d.model import Model
@@ -124,12 +154,16 @@ def main():
     print(f"[laden] {time.time() - t0:.0f} s, {len(w.model.elements)} Elemente", flush=True)
 
     befehle = list(w.ribbon.befehle)
+    orte = [ort(b.aktion, w.ribbon) for b in befehle]
+    print(f"[befehle] {len(befehle)}: " + ", ".join(f"{orte.count(o)} {o}"
+                                                   for o in ("Knopf", "Menü", "nur Suche")), flush=True)
     for i, b in enumerate(befehle, 1):
         kennung = f"{b.register} > {b.gruppe} > {b.text}"
         if i < START:
             continue
         if b.text in UEBERSPRINGEN or b.register.startswith("Auswahl"):
             schreibe({"nr": i, "register": b.register, "gruppe": b.gruppe, "text": b.text,
+                      "ort": orte[i - 1],
                       "status": "uebersprungen", "grund": UEBERSPRINGEN.get(b.text, "Kontextregister")})
             continue
         meldungen.clear()
@@ -160,9 +194,10 @@ def main():
         status = "ausnahme" if fehler else ("traceback im protokoll" if traceback_im_protokoll
                                            else ("fehlermeldung" if any(a == "error" for a, _ in meldungen)
                                                  else "ok"))
-        schreibe({"nr": i, "register": b.register, "gruppe": b.gruppe, "text": b.text, "status": status,
+        schreibe({"nr": i, "register": b.register, "gruppe": b.gruppe, "text": b.text,
+                  "ort": orte[i - 1], "status": status,
                   "dauer": dauer, "meldungen": list(meldungen), "protokoll": neu[-1500:], "fehler": fehler})
-        print(f"[{i}/{len(befehle)}] {status:22s} {dauer:7.2f} s  {kennung}", flush=True)
+        print(f"[{i}/{len(befehle)}] {status:22s} {dauer:7.2f} s  {kennung}  ({orte[i - 1]})", flush=True)
         # Offene Masken/Fenster schliessen, damit der naechste Befehl frisch startet
         try:
             if hasattr(w, "maskenrand") and hasattr(w.maskenrand, "schliessen"):

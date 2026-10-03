@@ -72,9 +72,13 @@ kNm, MPa und mm angezeigt.
 
 ## 2 Die Oberfläche
 
-Oben eine dunkle Kopfzeile: links **Statik3D**, daneben Bauteil und Fassung,
-rechts zwei Marken mit dem Umfang des Modells und dem Zustand („bereit",
-„rechnet…", „berechnet · 12,4 s").
+Oben eine dunkle Kopfzeile, seit 25.09.2026 in einer einzigen Zeile: links
+**Statik3D** und die **Schnellzugriffsleiste**, daneben Bauteil und Fassung,
+rechts die **Befehlssuche** und die Marke mit dem Zustand („bereit",
+„rechnet…", „berechnet · 12,4 s"). Der Umfang des Modells (Knoten, Elemente,
+Stellungen) steht nur noch in der Statusleiste unten; bis zum 24.09.2026
+stand er als zweite Marke oben, und Schnellzugriff und Suche hatten eine
+eigene Zeile über den Registern.
 
 Darunter das **Ribbon** — die Befehlsleiste. Jeder Befehl steht dort genau
 einmal; es gibt keine Menüleiste und keine zweite Werkzeugleiste daneben.
@@ -85,20 +89,55 @@ Vierzehn Register nach Arbeitsschritt:
 | **Datei** | Neu, Öffnen, Speichern, Projektangaben, **Modell leeren (Eigenschaften behalten)…**, Übernehmen aus fremden Formaten, Exportieren, **Beispiel öffnen ▾** (die acht Beispiele in einem Knopf) |
 | **Start** | Auswahl, Modellprüfung, doppelte Knoten, freie Stabenden anschließen, Berechnen |
 | **Unterlagen** | **Dateien** (Datei hinzufügen: PDF, Bild, Word, Excel …; Unterlage öffnen; Entfernen), **Ansichten** (Ansicht aufnehmen, Skizze aus Ansicht), **Skizze** (Neue Skizze, Bearbeiten), **Bericht** (In den Bericht, Unterlagen zeigen) — seit 16.09.2026, siehe *Unterlagen* |
-| **Geometrie** | Knoten, Linien, **Ändern** (Verschieben, Kopieren, Drehen, Spiegeln der Auswahl), **Konstruktion** (Lot / Projektion), Auswahlart in der Ansicht, Koordinatensysteme, Arbeitsebene und Fang (auch „Lot“) |
-| **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, Stabzug, Stäbe für Nachweise, automatisch erkennen, Querschnitt zuweisen), **Flächen** (Schale, Fläche aus Linien, Rechteckplatte, vernetzen, verschneiden, Dicke zuweisen), **Volumen** (Volumen aus Flächen, Quader, vernetzen), **Gelenke** (Gelenk anlegen, Gelenke setzen, Tabelle), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
+| **Geometrie** | **Knoten / Linien** (Knoten, Linie, Knoten löschen, Linie aus Knoten), **Ändern** (Verschieben, Kopieren, Drehen, Spiegeln der Auswahl), **Konstruktion** (Lot / Projektion, Spalt / Toleranz), Auswahlart in der Ansicht, Koordinatensysteme, Arbeitsebene, **Fang** (Hauptschalter F3 und *Fangarten ▾*, auch „Lot“) |
+| **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, Stabzug, *Nachweisstäbe ▾*: Stäbe für Nachweise, automatisch erkennen), **Flächen** (Schale, Fläche aus Linien, Rechteckplatte, verschneiden), **Volumen** (Volumen aus Flächen, Quader), **Gelenke** (Gelenk anlegen), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
 | **Lager / Kontakt** | Knoten-, Linien-, Flächenlager, Nichtlinearität, Kontakt (mit *Alle Kontakte löschen…*), Anschlüsse (anlegen, zeigen, löschen) |
-| **Lasten** | Lastfälle, Kombinationen, Lastfälle nach DIN 19704, Knoten-, Stab-, Flächen-, Temperaturlast, Zwangsverformung, Vorspannung, Eigengewicht, Generierer Wasserdruck und Wind |
+| **Lasten** | Lastfälle, Kombinationen, Lastfälle nach DIN 19704, Knoten-, Stab-, Flächen-, Temperaturlast (groß), Zwangsverformung, Vorspannung, Übermaß, Spiel geben, Passung (klein), Eigengewicht, Generierer Wasserdruck und Wind |
 | **Netz** | Vernetzen (Flächen und Volumen), Netzeinstellungen (**Elemente Entwurf / Mittel / Fein**, Netzdichte, Elementform, intelligente Anpassung), **Elementübersicht**, Netzqualität, **Netzknoten** (Schalter), Netz löschen, Kontaktfugen |
 | **Berechnung** | Berechnen (F5), einzelner Lastfall, Eigenschwingungen, Knicken, alle Stellungen, DIN 19704, Einstellungen, Bedienung im Browser |
-| **Nachweise** | EC3, Ermüdung, Verformung (GZG), Beulen (EC3-1-5/-1-6), Lasteinleitung, Konfiguration |
-| **Ergebnisse** | Ergebniswahl und die Tabellen |
+| **Nachweise** | EC3, Ermüdung, Schweißnähte, Kerbfälle, Konfiguration, Knicklängen, Schwingung; je Nachweisobjekt ein Knopf mit Menü **Neu \| Ändern \| Löschen \| Tabelle**: *Verformung ▾* (GZG), *Beulfeld ▾*, *Volumenbereich ▾*, *Lasteinleitung ▾* |
+| **Ergebnisse** | Ergebniswahl, Werte im Bild, Werteskala, Tabelle ausgeben (die Tabellen selbst: Reiter unten oder Befehlssuche) |
 | **Bericht** | Statischer Bericht, Ansicht übernehmen, **Lastenheft** (anzusetzende Einwirkungen nach DIN 19704/ZTV-ING mit Hintergrund, Ansatz und Skizzen) |
-| **Ansicht** | Blickrichtungen, Darstellungsart (Voll, Transparent, Hidden-Line, Drahtmodell), FE-Netz, Knoten, Nummern, Lasten, Stäbe farbig, Lagergröße und Lagerdichte, Einheiten |
+| **Ansicht** | Isometrisch, *Richtung ▾* (XY, XZ, YZ, Rückseite), Zoom alles; *Darstellung ▾* (Voll, Transparent, Hidden-Line, Drahtmodell, **Symbolgrößen…** = Maske „Darstellung“ mit Lagergröße und Lagerdichte); *Anzeigen ▾* (FE-Netz, Knoten, Linien, Stäbe, Flächen, Volumen, Lager, Lasten, Lastwerte, Stäbe farbig …); *Nummern ▾*; *Sicht ▾* und Schnittebene; Layer; Einheiten |
 | **Messen** | Abstand, Winkel, Koordinaten, Fläche eines Polygons, Länge/Fläche der Auswahl; Bemaßung (Linearmaß, Maßkette, Höhenkote, Winkelmaß, Radius) mit Einstellungen |
 | **Extras** | Handbücher, Info, Update |
 
-Links über dem Ribbon die **Schnellzugriffsleiste** (Speichern, Rückgängig,
+**Jedes Register passt auf den Bildschirm** (seit 25.09.2026). Bis dahin
+brauchte *Ansicht* mit 40 Einzelknöpfen 3363 px, *Nachweise* 2184 px,
+*Geometrie*, *Struktur* und *Lasten* 1415 bis 1760 px — bei 1366 px
+Fensterbreite waren die Beschriftungen gekürzt („Na…C3“, „F…z“). Jetzt
+steht eine Schar gleichartiger Schalter in **einem Knopf mit Menü**
+(*Anzeigen ▾*, *Nummern ▾*, *Darstellung ▾*, *Fangarten ▾*), und je
+Nachweisobjekt gibt es einen großen Knopf mit dem Menü
+**Neu | Ändern | Löschen | Tabelle**. In der Befehlssuche heißen die Einträge
+weiter wie vorher („Beulfeld ändern…“, „Tabelle Beulfelder“). Am breitesten
+ist *Nachweise* mit rund 1275 px bei 100 % Skalierung (Windows-Schrift) und
+1240 px bei 150 %; ein 1280 px breites Fenster hat also noch knapp Luft.
+Geprüft wird bei 1366 und 1280 px Breite (1920 px bei 150 % Skalierung) mit
+den Schriftmaßen, dass keine Beschriftung gekürzt ist
+(`tests/test_glasleiste_ribbon.py`). Aus dem Ribbon gefallen sind nur
+**Doppelungen** — die Befehlssuche findet und startet sie weiter: die Knöpfe
+„Tabelle …“ (die Tabellen haben unten ihre Reiter), *Flächen/Volumen
+vernetzen* (= *Netz → Vernetzen*) und *Querschnitt zuweisen…*, *Dicke
+zuweisen…*, *Gelenke setzen…* (sie stehen als *Zuweisen* und *Gelenke* im
+Kontextregister „Auswahl“, das mit einer Auswahl erscheint). *Elemente
+löschen* bleibt ein Knopf in *Struktur › Eigenschaften*: Befehle, die löschen,
+startet die Suche nie selbst, sie nennt den Knopf — und der muss dort stehen
+(Nachbesserung 25.09.2026). Alle Befehle und Tastenkürzel sind geblieben.
+
+**Die Registerzeile passt** auch mit dem Kontextregister „Auswahl: 12 Knoten“
+in ein 1280 px breites Fenster: die Reiter haben seit 25.09.2026 weniger
+Innenabstand (vorher brauchten alle Reiter zusammen 1371 px — bei 1280 px
+erschienen Rollpfeile, und gerade der Reiter „Auswahl“ lag dahinter).
+
+**Eingeschaltete Schalter tragen einen Haken.** Das Symbol eines
+eingeschalteten Schalters ist blau und trägt unten rechts eine blaue Plakette
+mit weißem Haken — im Ribbon, in der Glasleiste und in den Menüs. Bis zum
+25.09.2026 wurde es weiß, auf dem hellblauen Grund des eingeschalteten
+Knopfs also unsichtbar. Der blaue Knopf **Berechnen** trägt ein weißes
+Dreieck (vorher blau auf Blau); im Schnellzugriff bleibt es blau.
+
+Links in der Kopfzeile die **Schnellzugriffsleiste** (Speichern, Rückgängig,
 Wiederholen, Berechnen) — dieselben Befehle, nur schneller erreichbar;
 „Alles deselektieren“ steht in der Glasleiste über der Ansicht. Rechts die
 **Befehlssuche**: Namen eintippen, darunter erscheint die Trefferliste mit
@@ -123,6 +162,71 @@ Schritte zurück), bei mehreren Treffern die erste Zeile. Seit dem 25.09.2026
 ist in der Liste keine Zeile vorgewählt; die Eingabetaste führt die mit den
 Pfeiltasten gewählte Zeile genau einmal aus, sonst gilt die Regel oben.
 Geprüft in `tests/test_ungespeichert.py`, dort auch mit echten Tastendrücken.
+
+**Fensteraufteilung** (seit 25.09.2026). Das Programm startet **maximiert**
+und im Register **Start**. Der Modellbaum bekommt 16 % der Fensterbreite,
+mindestens aber 260 px, und seine Zusatzspalte (Anzahl, Koordinaten)
+höchstens ein Viertel davon — mit 16 % allein waren bei 1366 × 768 am
+Hallenrahmen 95 von 196 Namen abgeschnitten („Stiel…“ zweimal), jetzt sind es
+drei „+ … anlegen“. Der rechte Bereich bekommt 460 px, der untere Bereich
+25 % der Höhe; Baum und
+rechter Bereich reichen über die **volle Höhe** vom Ribbon bis zur
+Statusleiste, der untere Bereich steht nur unter der Ansicht und hat keine
+eigene Titelzeile mehr („Protokoll und Tabellen“) — die Gruppenleiste sagt
+dasselbe. Solange man keine Trennlinie zwischen den Bereichen zieht, folgen
+die Maße der Fenstergröße; wer eine zieht, behält seine Maße. Bei 1920 × 1080
+hat die Ansicht so 1137 × 610 px statt 1142 × 470 px (maximiert), bei
+1366 × 768 630 × 639 px statt 588 × 158 px (offscreen gemessen, Prüfung
+`tests/test_fensteraufteilung.py`). Das Planmaß „Ansicht mindestens 45 % der
+Fensterfläche bei 1920 × 1080“ ist damit nicht erreicht (34 %); dafür bliebe
+unten nur rund 63 px Platz. Darüber entscheidet noch der Anwender, die Prüfung
+führt es bis dahin als offen. Eine Maske mit breiten Zeilen (Wind,
+Kontaktbedingung) macht den rechten Bereich nicht mehr breiter: ihre Mitte
+rollt dann auch waagerecht — bis zum 24.09.2026 zog die Windmaske ihn auf
+1170 px, die Ansicht blieb bei 128 px. Reicht die Breite unten nicht für die
+Knopfzeilen der Tabellen, rollt der untere Bereich waagerecht.
+
+**Ansicht → Fenster** (Knopf „Fenster ▾“ im Register Ansicht): Schalter
+*Modellbaum zeigen*, *Rechten Bereich zeigen*, *Unteren Bereich zeigen*;
+*Ribbon einklappen* (auch **Strg+F1** oder **Doppelklick** auf einen Reiter —
+eingeklappt steht nur die Registerzeile da, ein einfacher Klick auf einen
+Reiter öffnet das Register, bis ein Befehl daraus gelaufen ist oder man
+daneben klickt, etwa in die Ansicht); *Nur
+Ansicht* blendet Baum, rechten und unteren Bereich aus und klappt das Ribbon
+ein, noch einmal gewählt ist alles wie vorher (auch wenn das Fenster
+inzwischen größer oder kleiner geworden ist); *Anordnung zurücksetzen* zeigt
+alle Bereiche wieder in den Maßen oben. Ein Doppelklick auf die Gruppenleiste
+unten klappt den unteren Bereich auf die Registerzeile zusammen und wieder
+auf. Befehle, die unten eine Tabelle nach vorn holen („Tabelle …“,
+Querschnitte, Werkstoffe, ein Klick auf einen Baumzweig), klappen den Bereich
+auf; nach einer gescheiterten Rechnung steht dort das Protokoll mit der
+FEHLER-Zeile. Bis zum 25.09.2026 wechselte eingeklappt nur die Gruppe in der
+Leiste, und ein echter Doppelklick änderte nichts (der Klick, den er mit sich
+bringt, klappte gleich wieder um). Wer das maximierte Fenster verkleinert,
+bekommt die gemerkte Normalgröße oder höchstens 90 % der Bildschirmfläche,
+mittig — bis dahin waren es 1600 × 980 px, auch auf einem 768 px hohen
+Bildschirm. Größe, Lage und Aufteilung merkt sich das Programm beim Beenden in
+`einstellungen.json` (Benutzerdaten\Statik3D, Schlüssel „fenster“ mit einer
+Fassungskennung). Beim Start wird geprüft, ob das Fenster noch auf einen
+Bildschirm passt: sonst — Bildschirm abgezogen, kleinere Auflösung, höhere
+Skalierung — startet es maximiert, und Dockmaße von einem anderen Bildschirm
+gelten nicht.
+
+**Kompaktstufe**: Ist das Fenster niedriger als 900 px oder bliebe die
+Ansicht mit diesen Maßen kleiner als 700 × 400 px (1366 × 768, ein
+1920er-Bildschirm mit 125 % oder 150 % Skalierung, ein schmal gezogenes
+Fenster), ist das Ribbon eingeklappt, unten steht nur die Registerzeile
+(ein Klick auf eine Gruppe klappt den Bereich auf), der Würfel ist kleiner
+und die Farbskala liegt waagerecht unten in der Ansicht, über den Kennwerten
+unten links (bis zum 25.09.2026 lag sie auf ihnen, „73.52 Knoten 14“ war
+nicht zu lesen — auch im Berichtsbild aus der Ansicht). Wird das Fenster
+wieder groß genug, ist alles wie vorher. Die Ansicht hat so bei 1366 × 768
+39 % der Fensterfläche, bei 1280 × 720 35 % (mit dem breiteren Modellbaum,
+Stand 25.09.2026).
+
+Für Prüfungen und den Bildvergleich hält die Umgebungsvariable
+`STATIK3D_FENSTER=fest` die Aufteilung beim Stand bis 24.09.2026: 1600 × 980,
+nicht maximiert, feste Dockmaße, keine Kompaktstufe, nichts gemerkt.
 
 Die Arbeitsfläche in drei Spalten:
 
@@ -1411,8 +1515,10 @@ sagt - die Abweichung geht zur vorsichtigen Seite.
 Was gerechnet wurde, steht im **Modellbaum unter „Ergebnisse"**: Umhüllende,
 Kombinationen, Lastfälle, die **Schnittgrößen**, die Nachweise, Eigenformen und
 Knickfiguren. Ein Klick stellt das Ergebnis in der Ansicht ein — dieselbe
-Auswahl, die auch die Maske *Ergebnisse* rechts führt. Dort werden Färbung,
-Schnittgrößenverlauf und Überhöhung eingestellt.
+Auswahl, die auch die Maske *Ergebnisse* rechts führt. Ergebnis, Färbung und
+Überhöhung stehen seit 25.09.2026 in der **Ergebnissteuerung** oben im rechten
+Bereich, der Schnittgrößenverlauf und die übrigen Einstellungen in der Maske
+*Ergebnisse* (siehe *Ergebnisdarstellung* weiter unten).
 
 Der Zweig **Verformungen** (seit 24.09.2026) steht nach Lastfällen und
 Nachweisen, vor den Schnittgrößen, und führt acht Einträge: **u gesamt |u|**,
@@ -1498,12 +1604,110 @@ Im Bild einer Kombination oder Umhüllenden stehen seit 24.09.2026 **keine
 Lasten**: vorher standen dort die Lasten des aktiven Lastfalls, als gehörten
 sie dazu. Die Kopfzeile sagt es in einer eigenen Zeile: „Lasten ausgeblendet
 (Ergebnisse → Lasten im Ergebnisbild)“. Wer sie sehen will, schaltet
-*Ergebnisse → Lasten im Ergebnisbild* ein; die Kopfzeile nennt dann den
+*Ergebnisse → Lasten im Ergebnisbild* ein (derselbe Schalter steht in der
+Glasleiste unter *Zeigen ▾*); die Kopfzeile nennt dann den
 Lastfall („Lasten LF1 [kN/m]“). Ausgenommen ist eine **Umhüllende aus genau
 einem Lastfall**, etwa „Umhüllende CASES“ eines Modells mit nur LF1: sie ist
 dieser Lastfall und zeigt seine Lasten (bis zur Nachbesserung waren am
 Rahmen nach *Berechnen* alle 33 Lastpfeile weg). Der Schalter *Lasten*
 (Register *Ansicht*, Glasleiste) nimmt wie bisher alle Lasten aus dem Bild.
+
+#### Ergebnisdarstellung (seit 25.09.2026)
+
+**Ergebnissteuerung oben rechts.** Sobald es ein Ergebnis gibt, steht oben im
+rechten Bereich ein kleiner Kasten *Ergebnisdarstellung* mit drei Zeilen:
+**Ergebnis**, **Färbung** und **Überhöhung**. Er bleibt stehen, wenn man ein
+Objekt anklickt oder einen Befehl wählt: rechts steht dann die Steuerung und
+darunter die Maske des Objekts. Ohne Ergebnis (neues Modell, nach *Rückgängig*)
+ist er weg. Nach dem Rechnen (F5) steht das Ribbon auf dem Register
+**Ergebnisse**; bei 1366 × 768 und 1280 × 720 wird das Fenster dabei nicht
+höher (die Steuerung hat darum nur drei Zeilen, etwa 96 px). Rechts erscheint
+die Maske *Ergebnisse* — außer eine offene Maske hat noch nicht übernommene
+Änderungen: die **bleibt stehen** (seit 02.10.2026), das Protokoll sagt es, und
+die Ergebnisse stehen im Register *Ergebnisse* und im Modellbaum. Bis dahin
+ersetzte die Rechnung sie ohne Rückfrage, und die Eingabe war weg.
+
+Die Auswahllisten *Ergebnis* und *Färbung* sind schmal (etwa 18 Zeichen) und
+bestimmen die Breite des rechten Bereichs nicht: eine lange Kombination wie
+„GZT19: 1.35·LF1 + 1.5·W_rechts + …“ steht in der aufgeklappten Liste ganz da,
+der Tooltip nennt den gewählten Namen vollständig. Bis zur Nachbesserung am
+25.09.2026 machte ein RFEM-Import mit Kombinationen aus acht Lastfällen den
+rechten Bereich fast 1000 px breit, und von der Ansicht blieb bei 1366 × 768
+ein Streifen.
+
+Mit der Tastatur: **Tab** läuft von *Ergebnis* über *Färbung*, das
+Überhöhungsfeld und die drei Knöpfe in das Register darunter (bei der Maske
+*Ergebnisse* also weiter zu *Schnittgrößenverlauf*, *Werte am Verlauf*,
+*Max/Min-Marken*) bzw. in die Maske darunter.
+
+**Überhöhung.** Ein Zahlenfeld mit drei Knöpfen: **auto** (Vorgabe; die größte
+Verschiebung erscheint mit 8 % der Modellgröße), **1:1** (wahre Größe) und
+**aus** (keine Verformung). Eine getippte Zahl mit Enter gilt als fester
+Faktor; eine ungültige Eingabe wird rot und ändert nichts. Die Wörter
+**auto**, **1:1** und **aus** kann man auch tippen. Ein Knopf gilt sofort,
+auch wenn im Feld noch ein getippter Rest ohne Enter stand – das Feld zeigt
+danach den Faktor des Knopfs. Das Feld zeigt den Faktor, mit dem gerade
+gezeichnet wird; neben den Knöpfen steht kurz die größte Verschiebung („max
+73,52 mm“), der Tooltip nennt Faktor und Verschiebung ausführlich. Ist ein
+**Schnittgrößenverlauf** gewählt, steht im Feld **0** und Feld und Knöpfe sind
+gesperrt: gezeichnet wird dann unverformt (siehe unten), die gewählte Art gilt
+wieder ohne Verlauf. *Ansicht in den Bericht* übernimmt genau diesen Faktor
+(„Überhöhung x17.6“, ein sehr kleiner Faktor mit zwei geltenden Ziffern, etwa
+„x0.034“); bis dahin stand dort die Stellung des früheren Schiebers (30).
+Berichtsbilder, die vor dem 25.09.2026 übernommen wurden, tragen weiter diese
+Stellung – ihre Zeile „Überhöhung x30“ nennt also nicht den Faktor, mit dem das
+Bild gezeichnet ist.
+
+**Knoten, Lager und Auswahl an der verformten Lage.** Im Ergebnisbild sitzen
+Knoten, Knotennummern, Lagersymbole, gewählte Knoten, Stäbe, Flächen und
+Elemente sowie Sonden und Werte im Bild an der gezeichneten Figur. Vorher
+schwebten die Knoten am unverformten Ort über dem verformten Körper. Ein Klick
+auf einen verformt gezeichneten Knoten trifft diesen Knoten.
+
+**Schnittgrößenverlauf am unverformten Stab.** Ist ein Verlauf gewählt, wird
+die ganze Figur **unverformt** gezeichnet, der Verlauf sitzt auf dem Stab (wie
+in RFEM); die Kopfzeile sagt „Verlauf My am unverformten System“. Die
+eingestellte Überhöhung gilt wieder, sobald *kein Verlauf* gewählt ist. Die
+Farbskala eines Lastfalls oder einer Kombination liegt **symmetrisch um 0**
+(−393 … 393 kNm statt −393 … 291 kNm), Weiß heißt also immer null. Eine
+**Umhüllende** zeigt zwei Linien: **rot die größten, blau die kleinsten** Werte
+je Stelle; die Kopfzeile nennt die Farben und die Einheit („Verlauf My [kNm]:
+rot max, blau min“). Bis dahin stand dort eine Linie mit dem betragsgrößeren
+Extrem je Stelle, die aus wechselnden Kombinationen stammte.
+
+**Max/Min-Marken und Werte am Verlauf.** An der Stelle des größten und des
+kleinsten Werts steht eine Marke mit Wert und Einheit („max 73.52 mm“,
+„min −393.11 kNm“, als Dezimalzahl, nie mit Exponent) — für die Färbung (nur
+sichtbare Teile, an der verformten Lage) und für den Verlauf. Bei einem Betrag
+wie *u gesamt* oder der Vergleichsspannung gibt es nur die Max-Marke, bei uz
+einer nach unten verformten Decke nur die Min-Marke. Ein Wert, der mit den
+eingestellten Nachkommastellen zu 0 würde (uy = 0,0015 mm bei zwei Stellen),
+steht mit zwei geltenden Ziffern da („max 0.0015 mm“, „min -0.0015 mm“ statt
+zweimal „0.00 mm“). **Werte am Verlauf** sind
+vorab an: je Stab der größte und der kleinste Wert an der Spitze des Verlaufs.
+Beides lässt sich in der Maske *Ergebnisse* abschalten (*Werte am Verlauf*,
+*Max/Min-Marken*). Ist *Werte im Bild: Stäbe* an, beschriftet das die Stellen
+und die Werte am Verlauf entfallen.
+
+**Legende.** Die Farbskala trägt eine Bezeichnung ohne Zeichen, die im Bild
+verloren gehen: **„u gesamt [mm]“** statt „|u| [mm]“ (das als „u max“ zu lesen
+war), „phi gesamt [mrad]“, „Vergleichsspannung [N/mm²]“, „Volumen sigma_v …“.
+Legende, Marken und Verlauf folgen der Einstellung *Ansicht → Einheiten* wie
+die Kennwerte: Verformung in mm, cm oder m, Spannung in N/mm² oder kN/cm²,
+Schnittgrößen in N, kN oder MN bzw. kNm, kNcm …
+
+**Werteskala und Einheiten.** Die festen Grenzen (*unten / oben*) und der
+**Grenzwert** der Werteskala gelten dagegen immer in der **festen Einheit der
+Größe**: Spannungen N/mm², Verschiebungen mm, Verdrehungen mrad – so sind sie
+mit dem Modell gespeichert, und „355 für S355“ bleibt 355 N/mm², auch wenn die
+Legende in kN/cm² steht. Die Felder zeigen diese Einheit an, die Kopfzeile
+ebenso („Skala bis 355 N/mm²“). Umgerechnet wird erst für das Bild: die Skala
+reicht dann bis 35,5 kN/cm², die Zahl der Knoten über der Grenze bleibt beim
+Umstellen der Einheit gleich, und die Statuszeile nennt ihre Zahlen mit dem
+Titel der Legende („u gesamt max [cm]: 5 Knoten über 5.00 (max 7.35)“). Bis zur
+Nachbesserung am 25.09.2026 galt die Grenze nach dem Umstellen in der neuen
+Einheit – aus 20 N/mm² wurden still 20 kN/cm², Überschreitungen verschwanden.
+Geprüft in `tests/test_ergebnisdarstellung.py`.
 
 **Ergebnisse in den Bericht übernehmen**: Ansicht einstellen, dann
 *Bericht → Ansicht übernehmen* (**Strg+B**) oder „+ Ansicht übernehmen" im
@@ -1522,8 +1726,9 @@ Kapitel lässt sich in der Berichtsmaske abwählen.
 
 ### Darstellung in der Ansicht
 
-Vier Darstellungsarten, im Register *Ansicht* nebeneinander und auf
-**Strg+1 … Strg+4**, dazu im Rechtsklickmenü der Ansicht:
+Vier Darstellungsarten, im Register *Ansicht* im Menü *Darstellung ▾*, in
+der Glasleiste ebenso, auf **Strg+1 … Strg+4** und im Rechtsklickmenü der
+Ansicht:
 
 | Art | Taste | Bild |
 |---|---|---|
@@ -1622,8 +1827,8 @@ Transparentmodus sehe ich keine Spannungen“). Geprüft in
 
 #### Nummern: je Objektart ein Schalter
 
-Im Register *Ansicht* steht die Gruppe **Nummern** — ein Schalter je Objektart,
-jeder für sich:
+Im Register *Ansicht* steht der Menüknopf **Nummern ▾** — ein Schalter je
+Objektart, jeder für sich:
 
 | Schalter | zeigt | Farbe |
 |---|---|---|
@@ -1654,18 +1859,37 @@ dann aus, und die Statuszeile sagt, wie viele es wären. Erst ausblenden, dann
 bleiben die Nummern des Restes lesbar.
 
 **Die Glasleiste** liegt mittig oben über der Ansicht, durchscheinend, und
-trägt als Symbole die Griffe, die man beim Modellieren dauernd braucht — der
-Klartext erscheint beim Überfahren mit der Maus. Von links nach rechts:
+trägt die Griffe, die man beim Modellieren dauernd braucht — der Klartext
+erscheint beim Überfahren mit der Maus. Von links nach rechts:
 
 | Gruppe | Knöpfe |
 |---|---|
 | ganz links | **Ergebnisauswahl** — Lastfälle, Kombinationen, Umhüllende, Eigenformen: was die Ansicht zeigt; gleich dahinter **Ergebnisse zeigen / ausblenden** (Schalter, seit 24.09.2026) |
-| Darstellung | Voll, Transparent, Hidden-Line, Drahtmodell |
-| Sichtbarkeit | Knoten (der Konstruktion; Netzknoten: *Netz → Netzknoten*), Linien, Stäbe, Flächen, Volumen, **Lager**, FE-Netz, Lasten — jedes einzeln schaltbar |
-| Sicht | Selektion anzeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen, **Verborgenes im Hintergrund** (Schalter), **Intelligente Auswahl** (Schalter) |
-| Fang | Fang ein/aus (die Fangarten einzeln: Ribbon *Geometrie → Arbeitsebene*) |
-| Auswahlart | was ein Klick trifft, als Knöpfe: Knoten, Linie, Stab, Fläche, Volumen, **Netz** (einzelne Elemente), **Lager** (Knoten-, Linien- und Flächenlager), **Last** — genau einer ist gedrückt |
-| ganz rechts | **Alles deselektieren** (✕, auch Esc) — der Griff, der jede Auswahl beendet |
+| Darstellung ▾ | Menü: Voll, Transparent, Hidden-Line, Drahtmodell (Strg+1 … 4); das Symbol zeigt die gewählte Art |
+| Zeigen ▾ | Menü: Knoten (der Konstruktion; Netzknoten: *Netz → Netzknoten*), Linien, Stäbe, Flächen, Volumen, **Lager**, FE-Netz (F9), Lasten — jedes einzeln schaltbar |
+| Sicht | Selektion anzeigen, Auswahl ausblenden, Vorherige Sicht, Alles zeigen, **Verborgenes im Hintergrund** (Schalter) |
+| Klick wählt: Knoten ▾ | Menü der Auswahlart — was ein Klick trifft: Knoten, Linie, Stab, Fläche, Volumen, **Netz** (einzelne Elemente), **Lager** (Knoten-, Linien- und Flächenlager), **Last**; genau eine ist an, die Beschriftung nennt sie |
+| Auswahl, Fang | **Intelligente Auswahl** (Schalter), Fang ein/aus (F3; die Fangarten: Ribbon *Geometrie → Fang → Fangarten ▾*) |
+| ganz rechts | Überlaufliste **»** (nur bei Bedarf) und **Alles deselektieren** (✕, auch Esc) — der Griff, der jede Auswahl beendet |
+
+**Nie breiter als die Ansicht** (seit 25.09.2026). Bis dahin trug die Leiste
+27 Einzelknöpfe und war 1133 px breit — bei 1002 px Ansicht (1920 × 1080) und
+448 px (1366 × 768) lagen *Alles deselektieren* und die Auswahlart „Lager“
+außerhalb des Bildes. Jetzt hat sie höchstens 12 Knöpfe neben der
+Ergebnisauswahl, und was bei einer schmalen Ansicht nicht mehr passt, wandert
+in die **Überlaufliste „»“** vor *Alles deselektieren*: zuerst die Knöpfe der
+Sicht und die Intelligente Auswahl, dann wird die Ergebnisauswahl schmaler
+(bis 120 px), dann folgen Fang, *Klick wählt*, *Darstellung*, *Zeigen* und
+*Ergebnisse* — ein Menüknopf erscheint in der Liste als Untermenü. Den Platz,
+den die weichenden Knöpfe frei machen, bekommt die Ergebnisauswahl zurück, bis
+zu ihren vollen 190 px: bei 1366 und 1536 px Fensterbreite zeigt sie so jeden
+Namen der gerechneten Halle ganz („Kombination GZT12“ statt „Kombination GZ“,
+Nachbesserung 25.09.2026). Das Untermenü *Klick wählt* in „»“ nennt die
+geltende Auswahlart („Klick wählt: Lager“) — steht der Knopf dort, ist es die
+einzige Anzeige in der Leiste. Die
+Ergebnisauswahl, „»“ und *Alles deselektieren* bleiben immer stehen. Wird die
+Ansicht wieder breiter, kehren die Knöpfe zurück. Es sind dieselben Befehle
+wie im Ribbon, mit denselben Tastenkürzeln.
 
 **Ergebnisauswahl in der Leiste.** Ganz links steht eine Aufklappliste mit
 allem, was die Ansicht zeigen kann, unter fetten Überschriften, die sich
@@ -1732,8 +1956,8 @@ dessen Schalter in der Glasleiste aus ist — mit ausgeschalteten Stäben
 wählt weder ein Klick noch ein Fenster einen Stab, mit ausgeschalteten
 Knoten keinen Knoten; die Statusleiste sagt dann, warum nichts geschieht.
 Lager an ausgeblendeten Knoten und Lasten an ausgeblendeten Teilen sind
-ebenso wenig zu treffen; mit ausgeschaltetem Schalter **Lager** (Glasleiste,
-zwischen Volumen und FE-Netz; Ribbon *Ansicht → Anzeigen*) verschwinden alle
+ebenso wenig zu treffen; mit ausgeschaltetem Schalter **Lager** (Glasleiste
+*Zeigen ▾*, zwischen Volumen und FE-Netz; Ribbon *Ansicht → Anzeigen ▾*) verschwinden alle
 Knoten-, Linien- und Flächenlager aus dem Bild und sind nicht wählbar — am
 Drehlager mit 50 Lagerflächen verdecken die Symbole sonst das Bauteil.
 
@@ -1746,7 +1970,7 @@ massiver Körper ist massiv gefüllt; am Drehlagermodell berühren allein in V31
 30 499 der 35 686 Tetraeder die Oberfläche gar nicht.
 
 Wer nachsehen will, schneidet auf: Schalter **Schnittebene** (*Ansicht →
-Sicht*), daneben die Achse (x, y, z) und ein Schieber für die Lage im
+Sicht*, neben *Sicht ▾*), daneben die Achse (x, y, z) und ein Schieber für die Lage im
 Bauteil; **Andere Seite** lässt die andere Hälfte stehen. Im Schnitt stehen
 die Tetraeder des Inneren, und Füllung, Netzdichte und Elementform sind mit
 einem Blick zu prüfen. Ausgeschaltet steht das Bauteil wieder ganz da.
@@ -1767,7 +1991,7 @@ Volumen an jeder Stelle ansehen, etwa der Spannungsverlauf durch die Wand
 einer Bohrung. Geprüft in `tests/test_gui_smoke.py` (Abschnitt Schnittebene:
 schräge Ebene durch die Mitte, aus der Ansicht, Werkzeug im Bild).
 
-Es sind dieselben Befehle wie im Ribbon (*Ansicht → Anzeigen* und *Sicht*, der Fang unter *Geometrie → Arbeitsebene*),
+Es sind dieselben Befehle wie im Ribbon (*Ansicht → Anzeigen ▾* und *Sicht ▾*, der Fang unter *Geometrie → Fang*),
 nur näher an der Maus. „Alles ins Bild" steht im Ribbon unter *Blickrichtung*
 und als **iso** unter dem Ansichtswürfel.
 
@@ -1933,7 +2157,7 @@ die Lagerart: dunkelblau fest (Einspannung), grün gelenkig (alle
 Verschiebungen gehalten), orange gleitend (eine Verschiebung frei), violett
 Feder, grau nur Verdrehungen gehalten. Ein Lager mit Ausfall, Schlupf,
 Reibung oder Grenzkraft trägt zusätzlich eine **rote Kugel** am Knoten. Der
-Schalter **Lagerbeschriftung** (Ribbon *Ansicht → Anzeigen*, neben *Lager*)
+Schalter **Lagerbeschriftung** (Ribbon *Ansicht → Anzeigen ▾*, unter *Lager*)
 schreibt an jedes Knotenlager, was es hält: „fest", „gelenkig" oder die
 gehaltenen Freiheitsgrade („uyz", „rxyz"), Federn mit „k", nichtlinear mit
 „*". Geprüft in `tests/test_supports.py` (`test_lagersymbolik`).
@@ -1948,10 +2172,15 @@ der Fläche. Eine senkrechte Lagerfläche (Knagge) sperrt damit waagerecht; das
 Protokoll des Imports nennt je Lager die Zahl der senkrechten Flächen. Ein aus RFEM übernommenes Lager kennt seine Linien bzw. Flächen
 der Geometrie; die Symbole belegen darum die ganze Fläche, auch wenn noch
 kein Netz vorliegt. Wie dicht die Symbole stehen, sagt die **Lagerdichte**:
-Schieber „Dichte" im Register *Ansicht → Symbole* (1,0 = alle 5 % der
-Modellgröße ein Symbol; die Ansicht folgt dem Schieber sofort), Rechtsklick
-in die Ansicht → „Lagerdichte…" oder auf ein Linien-/Flächenlager. Die
-**Größe** stellt der Schieber „Lager" daneben für alle zusammen ein; **ein
+Schieber „Lagerdichte" in der rechten **Maske „Darstellung“** (*Ansicht →
+Darstellung ▾ → Symbolgrößen…*; 1,0 = alle 5 % der Modellgröße ein Symbol;
+die Ansicht folgt dem Schieber sofort, *Zurücksetzen* stellt 1,0 ein),
+Rechtsklick in die Ansicht → „Lagerdichte…" oder auf ein Linien-/Flächenlager.
+Die **Größe** stellt der Schieber „Lagergröße" darüber für alle zusammen ein.
+Bis zum 25.09.2026 standen beide Schieber im Register *Ansicht → Symbole*;
+dort nahmen sie mit 666 px den Platz, der den übrigen Knöpfen des Registers
+fehlte. Die Befehle *Lagergröße zurücksetzen* und *Lagerdichte zurücksetzen*
+findet die Befehlssuche weiter. **Ein
 Rechtsklick auf ein Lagersymbol** öffnet dessen eigenes Menü mit „Größe
 dieses Lagers…", „Größe aller Lager…", „Lager bearbeiten…" (die Maske
 rechts) und „Lager löschen". Die eingestellte Größe wird mitgespeichert.
@@ -2132,8 +2361,9 @@ Ein Klick trifft, was gezeichnet ist: Stäbe auch auf ihrem Körper, Flächen
 auch auf einem Zylindermantel, Volumen auf ihrer Oberfläche (Zellenpicker
 der Grafik, in Millisekunden). Erst wenn dort nichts liegt, sucht das
 Programm geometrisch in der Nähe des Klicks. Was ein Klick trifft, sagt die
-**Auswahlart** — die Knöpfe in der Glasleiste oder das Feld im Register
-*Start*; der Modellbaum stellt sie beim Anklicken eines Zweigs passend um.
+**Auswahlart** — *Klick wählt: … ▾* in der Glasleiste oder das Feld unter
+*Geometrie → Auswahl in der Ansicht*; der Modellbaum stellt sie beim
+Anklicken eines Zweigs passend um.
 Mit der Auswahlart **Netz** trifft ein Klick ein einzelnes Element des
 FE-Netzes (Stab-, Flächen- oder Volumenelement); die gewählten Elemente
 leuchten in der Ansicht. Steht die Auswahlart auf **Knoten** und liegt unter
@@ -2178,7 +2408,10 @@ Druckpunkt ist die erste Ecke, der Loslasspunkt die zweite; dazwischen zeigt
 ein durchscheinendes Rechteck, was das Fenster fassen wird. Ein kurzer Klick
 ins Leere zieht **kein** Fenster mehr auf, sondern hebt die Auswahl auf
 (16.09.2026: „kurz = alles deselektieren, lang = Selektionsfenster“); bis dahin
-setzte er die erste Ecke, und der nächste Klick die zweite.
+setzte er die erste Ecke, und der nächste Klick die zweite. Das gilt auch, wenn
+der **Rasterfang** dabei einen Rasterpunkt fängt, solange keine Maske einen
+Punkt erwartet (seit 02.10.2026; vorher blieb die Auswahl dann stehen, und die
+Statuszeile meldete nur „Gefangen: raster“).
 
 | aufgezogen | Rechteck | gewählt wird |
 |---|---|---|
@@ -2268,7 +2501,7 @@ Zwangsverformungen die Verschiebung. Die **Einheiten** der gezeichneten
 Lastarten stehen oben links in eckigen Klammern unter dem Lastfall, etwa
 „[kN, kN/m, kN/m²]“ - in den Einheiten aus *Ansicht → Einheiten*
 (Vorgabe kN, kNm, kN/m, kN/m², K und mm). Der Schalter
-*Ansicht → Anzeigen → Lastwerte* blendet die Zahlen aus; die Textgröße
+*Ansicht → Anzeigen ▾ → Lastwerte* blendet die Zahlen aus; die Textgröße
 folgt den Bemaßungseinstellungen. Bei sehr vielen gleichartigen Lasten
 werden höchstens 60 je Lastart beschriftet.
 
@@ -2382,13 +2615,17 @@ Hauptknopf bleibt immer zu sehen. Kurze Masken stehen oben im rechten Bereich,
 ihre Zeilen werden nicht auseinandergezogen. Eine lange Maske (Wind,
 Wasserdruck, Knotenlager, Kontaktbedingung) lässt das Programmfenster nicht
 mehr über den Bildschirm hinaus wachsen, auch nicht im maximierten Fenster.
-Fehlt Platz, gilt: Passt die ganze Maske, wenn der untere Bereich (Protokoll
-und Tabellen) bis auf seine Mindesthöhe kleiner wird, wird er so weit kleiner,
-und die Maske rollt nicht — so zeigt die Knotenmaske auch bei 1366 × 768 alle
-Felder. Eine längere Maske rollt dagegen bis herunter auf etwa zwei Feldzeilen,
-erst dann nimmt sie dem unteren Bereich Höhe. Schließt man die Maske, bekommt
-der untere Bereich seine Höhe zurück, und eine breite Maske gibt der 3D-Ansicht
-die Breite wieder, sobald eine schmale Maske oder ein Register folgt.
+Seit dem 25.09.2026 reicht der rechte Bereich über die volle Fensterhöhe
+(siehe *Fensteraufteilung* in Kapitel 2), die Knotenmaske zeigt so auch bei
+1366 × 768 alle Felder. Eine Maske nimmt dem unteren Bereich (Protokoll und
+Tabellen) darum keine Höhe mehr: Fehlt Platz, rollt ihre Mitte bis herunter
+auf etwa zwei Feldzeilen, und der untere Bereich bleibt, wie er ist. Eine
+Maske mit breiten Zeilen macht den rechten Bereich nicht breiter, ihre Mitte
+rollt dann auch waagerecht. Nur mit `STATIK3D_FENSTER=fest` gilt der Ablauf
+bis zum 24.09.2026: Passt die ganze Maske, wenn der untere Bereich bis auf
+seine Mindesthöhe kleiner wird, wird er so weit kleiner; schließt man sie,
+bekommt er seine Höhe zurück, und eine breite Maske gibt der 3D-Ansicht die
+Breite wieder, sobald eine schmale Maske oder ein Register folgt.
 
 Das **Mausrad** über der Mitte rollt immer die Mitte. Über einer Auswahlliste
 verstellt es deren Wert nur, wenn die Liste den Fokus hat (angeklickt oder per
@@ -2710,9 +2947,10 @@ Im Register **Geometrie** stehen zwei Gruppen für die Eingabehilfen - der Fang 
   **Stab** (der Fußpunkt auf der Stabachse), **Fläche** (der Punkt auf der
   Fläche oder Schale unter dem Zeiger, auch auf einem Zylindermantel),
   **Volumen** (der Punkt auf der Oberfläche eines Körpers), zuletzt der
-  **Rasterpunkt**. Jede Art ist einzeln schaltbar — im Ribbon, in der
-  Glasleiste oder mit Umschalt+F1 … F8 (Lot: Umschalt+F8); der Hauptschalter
-  (F3) nimmt alles zurück. Die Statusleiste zeigt den Zustand.
+  **Rasterpunkt**. Jede Art ist einzeln schaltbar — im Ribbon unter
+  *Geometrie → Fang → Fangarten ▾* oder mit Umschalt+F1 … F8 (Lot:
+  Umschalt+F8); der Hauptschalter (F3, auch in der Glasleiste) nimmt alles
+  zurück. Die Statusleiste zeigt den Zustand.
 
 ### Lot und Projektion
 
@@ -2785,7 +3023,7 @@ Ansicht dreht. Drei Wege, ihn zu benutzen:
   — und **iso** für die isometrische Ansicht mit allem im Bild. Die Rückseite
   ist damit ein Klick und nicht eine halbe Umdrehung.
 
-Im Ribbon *Ansicht → Blickrichtung* stehen dieselben Richtungen, dazu
+Im Ribbon *Ansicht → Blickrichtung → Richtung ▾* stehen dieselben Richtungen, dazu
 „Rückseite (180°)", das die laufende Ansicht am Blickpunkt umkehrt, und
 „Zoom alles".
 
@@ -7055,7 +7293,9 @@ eigenen Skala: Bauteil wählen, *Selektion anzeigen*, ablesen. Geprüft in
   — oder sagt, dass **nichts** über der Grenze liegt und deshalb alles grau
   bleibt (mit dem Größtwert, damit man weiß, wie weit die Grenze weg ist).
   Kopfzeile und Berichtsbild nennen die Skala. Die Einstellung wird mit dem
-  Modell gespeichert.
+  Modell gespeichert. Grenzen und Grenzwert gelten in der festen Einheit der
+  Größe (N/mm², mm, mrad), auch wenn die Legende in einer anderen Einheit steht
+  (siehe *Ergebnisdarstellung*, Absatz *Werteskala und Einheiten*).
 * **Umhüllende einer Kombination.** Eine Kombination mit Alternativen (aus
   einer RFEM-Ergebniskombination „LF1 oder LF2 oder …") hat kein einzelnes
   Ergebnis, sondern eine Umhüllende: Minimum und Maximum je Größe über ihre

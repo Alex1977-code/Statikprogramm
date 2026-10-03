@@ -492,11 +492,11 @@ def test_sichtbare_texte():
     check("Hinweis des Schalters „Lasten“ nennt „Lasten im Ergebnisbild“",
           "Lasten im Ergebnisbild" in w.act_loads.toolTip(), w.act_loads.toolTip())
     w.cb_result.setCurrentIndex(_index(w.cb_result, ("env", "ULS"))); app.processEvents()
-    alt = w.sl_scale.value()
-    w.sl_scale.setValue(0); app.processEvents()
+    # Paket 6b (25.09.2026): Zahlenfeld mit „aus“ statt Schieber auf 0
+    w.ueberhoehung_setzen("aus"); app.processEvents()
     check("Überhöhung 0 (keine verformte Figur): keine Zeile „Figur: …“",
           not any("Figur" in z for z in w._kopfzeile_zeilen), str(w._kopfzeile_zeilen))
-    w.sl_scale.setValue(alt); app.processEvents()
+    w.ueberhoehung_setzen("auto"); app.processEvents()
     check("… mit Überhöhung wieder „Figur: GZT4“",
           any(z.strip() == "Figur: GZT4" for z in w._kopfzeile_zeilen), str(w._kopfzeile_zeilen))
 

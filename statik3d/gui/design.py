@@ -47,6 +47,11 @@ QMainWindow, QWidget {{ background: {grund}; color: {text};
 QWidget#kopfhalter {{ background: {kopf}; }}
 Kopfzeile {{ background: {kopf}; }}
 Kopfzeile QLabel {{ background: transparent; color: {kopf_matt}; }}
+/* Schnellzugriff in der dunklen Kopfzeile (25.09.2026): die Symbole sind
+   dunkel gezeichnet, darum ein heller Streifen darunter */
+Kopfzeile QToolBar#schnellzugriff {{ background: {grund}; border: 0;
+    border-radius: 7px; padding: 0px 2px; spacing: 1px; }}
+Kopfzeile QToolBar#schnellzugriff QToolButton {{ padding: 2px; margin: 0px; }}
 Filmstreifen {{ background: {flaeche}; border-top: 1px solid {linie}; }}
 Filmstreifen > QLabel {{ background: transparent; }}
 QMenuBar {{ background: {kopf}; color: {kopf_matt}; border: 0; padding: 2px 6px; }}
@@ -196,12 +201,46 @@ class Kopfzeile(QtWidgets.QWidget):
         self.marke_zustand = Marke("bereit", "matt")
         lay.addWidget(self.marke_modell)
         lay.addWidget(self.marke_zustand)
+        self._lay = lay
+        self._eingebettet = False
+
+    def einbetten(self, schnellzugriff: QtWidgets.QWidget, suche: QtWidgets.QWidget) -> None:
+        """Schnellzugriff und Befehlssuche in diese Zeile nehmen (25.09.2026).
+
+        Eine Zeile statt zwei: Name, Schnellzugriff, Titel, Suche, Zustand.
+        Die eigene Zeile des Ribbons darueber kostete 31 px Hoehe. Der
+        Modellumfang steht nur noch in der Statusleiste - die Marke bleibt als
+        Objekt, wird aber nicht mehr gezeigt."""
+        lay = self._lay
+        # Der Titel gibt nach, wenn die Zeile knapp wird: Suche und Zustand
+        # bleiben stehen, der Titel wird abgeschnitten (er steht ganz am Zeiger)
+        self.titel.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
+        self.titel.setMinimumWidth(0)
+        # Mittig in ihrer Wunschhoehe, damit der helle Streifen nicht die ganze
+        # Zeile fuellt. Keine feste Hoehe (Gegenpruefung 25.09.2026): die Leiste
+        # braucht 20 px fuer Rand und Abstand, bei setFixedHeight(30) blieben
+        # den Knoepfen 10 px und von den Symbolen nur Punkte. Kleiner wird sie
+        # ueber die Stilregel (Kopfzeile QToolBar#schnellzugriff, ohne Rand).
+        # Die Leiste rechnet ihre Raender nur bei einer Stilaenderung neu; ohne
+        # sie behielt sie die 10 px Rand der Regel fuer QToolBar aus der Zeit
+        # im Ribbon (offscreen gemessen: Leiste 47 statt 31 px hoch).
+        lay.insertWidget(1, schnellzugriff, 0, QtCore.Qt.AlignVCenter)
+        if isinstance(schnellzugriff, QtWidgets.QToolBar):
+            schnellzugriff.setMovable(False)
+        st = schnellzugriff.style()
+        st.unpolish(schnellzugriff)
+        st.polish(schnellzugriff)
+        QtWidgets.QApplication.sendEvent(schnellzugriff, QtCore.QEvent(QtCore.QEvent.StyleChange))
+        lay.insertWidget(lay.indexOf(self.marke_modell), suche, 0, QtCore.Qt.AlignVCenter)
+        self.marke_modell.setVisible(False)
+        self._eingebettet = True
 
     def setzen(self, titel: str, modell: str = "", zustand: str = "",
                art: str = "matt"):
         self.titel.setText(titel)
+        self.titel.setToolTip(titel)
         self.marke_modell.setText(modell)
-        self.marke_modell.setVisible(bool(modell))
+        self.marke_modell.setVisible(bool(modell) and not self._eingebettet)
         if zustand:
             self.marke_zustand.setText(zustand)
             self.marke_zustand.setArt(art)
@@ -944,9 +983,12 @@ class Modellbaum(QtWidgets.QTreeWidget):
 
         # Der Zweig steht immer (16.09.2026, „im Modellbaum muessen auch Gelenke
         # sein"): ohne Gelenke bietet er das Anlegen an, wie die Kontakte.
+        # Weg nachgezogen 25.09.2026: „Gelenke setzen…“ hat im Register
+        # Struktur keinen Knopf mehr (Paket 7)
         gk = self._zweig(wurzel, "Gelenke", len(model.hinges), "gelenke",
                          hinweis="Stabendgelenke: je Freiheitsgrad biegesteif, gelenkig oder Feder; "
-                                 "gesetzt an Stabelementen (Register Struktur → Gelenke setzen).")
+                                 "gesetzt an Stabelementen (Kontextregister „Auswahl“ → Gelenke, "
+                                 "oder Befehlssuche „Gelenke setzen“).")
         self._liste(gk, [(name, ", ".join(["ux", "uy", "uz", "φx", "φy", "φz"][d % 6]
                                           for d in h.released()) or "starr",
                           name, f"{name}: freigegeben {h.released()}")

@@ -1176,26 +1176,75 @@ def _malen(name: str, groesse: int, farbe: QtGui.QColor,
     return pm
 
 
+def _haken_plakette(pm: QtGui.QPixmap, groesse: int) -> QtGui.QPixmap:
+    """Unten rechts eine akzentblaue Scheibe mit weissem Haken: das Zeichen
+    „eingeschaltet“, das auf jedem Grund zu sehen ist (25.09.2026)."""
+    p = QtGui.QPainter(pm)
+    p.setRenderHint(QtGui.QPainter.Antialiasing, True)
+    p.scale(groesse / FELD, groesse / FELD)
+    # weisser Rand trennt die Plakette von der Zeichnung darunter
+    p.setPen(QtGui.QPen(QtGui.QColor("#ffffff"), 1.4))
+    p.setBrush(QtGui.QColor(dsg.FARBEN["akzent"]))
+    p.drawEllipse(QtCore.QPointF(18.2, 18.2), 5.6, 5.6)
+    stift = QtGui.QPen(QtGui.QColor("#ffffff"), 1.8)
+    stift.setCapStyle(QtCore.Qt.RoundCap)
+    stift.setJoinStyle(QtCore.Qt.RoundJoin)
+    p.setPen(stift)
+    p.setBrush(QtCore.Qt.NoBrush)
+    p.drawPolyline(QtGui.QPolygonF([QtCore.QPointF(15.6, 18.4), QtCore.QPointF(17.6, 20.4),
+                                    QtCore.QPointF(21.0, 16.2)]))
+    p.end()
+    return pm
+
+
 def symbol(name: str, text: str = "") -> QtGui.QIcon:
-    """Das Symbol zu einem Namen - in allen Groessen, dunkel und (an) weiss."""
+    """Das Symbol zu einem Namen - in allen Groessen; eingeschaltet (Zustand
+    On) akzentblau mit Haken-Plakette.
+
+    Bis 25.09.2026 war das eingeschaltete Symbol weiss - gedacht fuer den
+    blauen Grund der Glasleiste. Im Ribbon, in den Werkzeugleisten und in
+    Menues ist der Grund eingeschalteter Schalter aber hellblau (#eaf2fc):
+    dort verschwand das Symbol (Helligkeitsabstand 0,05 von 1), man sah nur
+    einen leeren Rahmen (Analyse, ribbon_ausschnitte/ansicht_mitte.png).
+    Jetzt ist es auf hellem Grund gut zu sehen, und der Haken sagt „an“ auch
+    dort, wo kein Rahmen den Zustand zeigt (Menueeintraege mit Symbol)."""
     schluessel = (name, text[:1] if name not in VORSCHRIFTEN else "")
     ic = _ZWISCHEN.get(schluessel)
     if ic is not None:
         return ic
     dunkel = QtGui.QColor(dsg.FARBEN["text"])
     akzent = QtGui.QColor(dsg.FARBEN["akzent"])
-    weiss = QtGui.QColor("#ffffff")
-    hell = QtGui.QColor("#cfe3fb")
     ic = QtGui.QIcon()
     for g in GROESSEN:
         ic.addPixmap(_malen(name, g, dunkel, akzent, text), QtGui.QIcon.Normal,
                      QtGui.QIcon.Off)
-        ic.addPixmap(_malen(name, g, weiss, hell, text), QtGui.QIcon.Normal,
-                     QtGui.QIcon.On)
-        ic.addPixmap(_malen(name, g, weiss, hell, text), QtGui.QIcon.Active,
-                     QtGui.QIcon.On)
+        an = _haken_plakette(_malen(name, g, akzent, akzent, text), g)
+        ic.addPixmap(an, QtGui.QIcon.Normal, QtGui.QIcon.On)
+        ic.addPixmap(an, QtGui.QIcon.Active, QtGui.QIcon.On)
         ic.addPixmap(_malen(name, g, _mit_alpha(dunkel, 90), _mit_alpha(akzent, 90),
                             text), QtGui.QIcon.Disabled, QtGui.QIcon.Off)
+    _ZWISCHEN[schluessel] = ic
+    return ic
+
+
+def symbol_weiss(name: str) -> QtGui.QIcon:
+    """Das Symbol ganz in Weiss - fuer Knoepfe mit blauem Grund („Berechnen“).
+
+    Die Aktion „Berechnen“ behaelt ihr blaues Dreieck (Schnellzugriff, heller
+    Grund); nur der blaue Startknopf des Ribbons bekommt dieses Symbol. Vorher
+    lag dort Blau (#1467c6) auf Blau (25.09.2026)."""
+    schluessel = ("weiss", name)
+    ic = _ZWISCHEN.get(schluessel)
+    if ic is not None:
+        return ic
+    weiss = QtGui.QColor("#ffffff")
+    ic = QtGui.QIcon()
+    for g in GROESSEN:
+        pm = _malen(name, g, weiss, weiss)
+        ic.addPixmap(pm, QtGui.QIcon.Normal, QtGui.QIcon.Off)
+        ic.addPixmap(pm, QtGui.QIcon.Active, QtGui.QIcon.Off)
+        ic.addPixmap(_malen(name, g, _mit_alpha(weiss, 120), _mit_alpha(weiss, 120)),
+                     QtGui.QIcon.Disabled, QtGui.QIcon.Off)
     _ZWISCHEN[schluessel] = ic
     return ic
 

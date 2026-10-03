@@ -106,6 +106,31 @@ TITEL_HOEHE = 16
 #: Symbolgroessen der Knoepfe
 SYMBOL_GROSS = 28
 SYMBOL_KLEIN = 16
+#: Hoechstbreite eines grossen Knopfs. 124 px kuerzten „Volumen aus Flächen“
+#: (braucht 125 px, 25.09.2026) auch dann, wenn das Register Platz hatte.
+GROSS_MAX = 140
+
+
+class Startknopf(QtWidgets.QToolButton):
+    """Der blaue Startknopf („Berechnen“) mit weissem Symbol.
+
+    Die Aktion behaelt ihr blaues Symbol - sie steht auch im Schnellzugriff
+    auf hellem Grund. QToolButton holt das Symbol bei jeder Aenderung der
+    Aktion (gesperrt/frei waehrend der Rechnung) neu von ihr; darum setzt
+    dieser Knopf danach sein eigenes wieder (25.09.2026)."""
+
+    def __init__(self, parent=None, symbol: str = "berechnen"):
+        super().__init__(parent)
+        self._eigen = sym.symbol_weiss(symbol)
+
+    def setDefaultAction(self, a):
+        super().setDefaultAction(a)
+        self.setIcon(self._eigen)
+
+    def actionEvent(self, ev):
+        super().actionEvent(ev)
+        if ev.type() == QtCore.QEvent.ActionChanged:
+            self.setIcon(self._eigen)
 
 
 class Gruppe(QtWidgets.QWidget):
@@ -163,7 +188,7 @@ class Gruppe(QtWidgets.QWidget):
         """
         a = self._aktion(text, fn, kuerzel, hinweis)
         a.setIcon(sym.fuer_befehl(text, zeichen, symbol))
-        b = QtWidgets.QToolButton(self)
+        b = Startknopf(self) if rolle == "start" else QtWidgets.QToolButton(self)
         b.setDefaultAction(a)
         b.setToolButtonStyle(QtCore.Qt.ToolButtonTextUnderIcon)
         b.setIconSize(QtCore.QSize(SYMBOL_GROSS, SYMBOL_GROSS))
@@ -172,7 +197,7 @@ class Gruppe(QtWidgets.QWidget):
         if rolle:
             b.setProperty("rolle", rolle)
         b.setMinimumWidth(58)
-        b.setMaximumWidth(124)
+        b.setMaximumWidth(GROSS_MAX)
         b.setFixedHeight(INHALT_HOEHE)
         self.spalte = None
         self.reihe.addWidget(b, 0, QtCore.Qt.AlignTop)
@@ -215,6 +240,16 @@ class Gruppe(QtWidgets.QWidget):
 
         Jeder Eintrag ist ein Befehl wie jeder andere (Suche, Menuedurchgang),
         er hat nur keinen eigenen Knopf. Zurueck kommen die Aktionen."""
+        menu = self.menueknopf(text, hinweis, symbol)
+        return [self.eintrag(menu, t, fn, hinweis=h) for t, fn, h in eintraege]
+
+    # Menueknoepfe (25.09.2026, Paket 7): das Register „Ansicht“ brauchte mit
+    # 40 Einzelknoepfen 3341 px und kuerzte bei 1366 px 39 Beschriftungen.
+    # Ein Menueknopf fasst eine Schar gleichartiger Schalter zusammen; jeder
+    # Eintrag bleibt ein Befehl mit Suche, Kuerzel und Hinweis.
+    def menueknopf(self, text: str, hinweis: str = "", symbol: str = "") -> QtWidgets.QMenu:
+        """Einen grossen Knopf mit Menue anlegen; zurueck kommt das (leere)
+        Menue, die Eintraege setzt :meth:`eintrag`."""
         b = QtWidgets.QToolButton(self)
         b.setText(text)
         b.setIcon(sym.fuer_befehl(text, "", symbol))
@@ -224,23 +259,70 @@ class Gruppe(QtWidgets.QWidget):
         b.setToolTip(hinweis or text)
         b.setPopupMode(QtWidgets.QToolButton.InstantPopup)
         menu = QtWidgets.QMenu(b)
-        aktionen = []
-        for t, fn, h in eintraege:
-            a = self._aktion(t, fn, "", h)
-            menu.addAction(a)
-            aktionen.append(a)
+        menu.setTitle(text.replace("▾", "").strip())
+        menu.setToolTipsVisible(True)
         b.setMenu(menu)
         b.setMinimumWidth(58)
-        b.setMaximumWidth(124)
+        b.setMaximumWidth(GROSS_MAX)
         b.setFixedHeight(INHALT_HOEHE)
         self.spalte = None
         self.reihe.addWidget(b, 0, QtCore.Qt.AlignTop)
-        return aktionen
+        return menu
+
+    def eintrag(self, menu: QtWidgets.QMenu, text: str, fn=None, kuerzel: str = "",
+                hinweis: str = "", symbol: str = "", schalter: bool = False,
+                an: bool = False, anzeige: str = "") -> QtGui.QAction:
+        """Ein Befehl im Menue eines Menueknopfs.
+
+        ``text`` ist sein Name fuer Suche und Menuedurchgang, ``anzeige`` (wenn
+        gesetzt) die kurze Zeile im Menue - „Löschen“ im Menue „Beulfeld ▾“
+        heisst in der Suche weiter „Beulfeld löschen“. ``schalter=True``: ein
+        Schalter, ``fn`` bekommt dann den neuen Zustand."""
+        a = self._aktion(text, None if schalter else fn, kuerzel, hinweis)
+        if symbol or schalter:
+            a.setIcon(sym.fuer_befehl(text, "", symbol))
+        if anzeige:
+            a.setText(anzeige)
+            a.setIconText(anzeige)
+        if schalter:
+            a.setCheckable(True)
+            a.setChecked(an)
+            if fn is not None:
+                a.toggled.connect(lambda z, f=fn: f(z))
+        menu.addAction(a)
+        return a
+
+    def nur_suche(self, text: str, fn=None, kuerzel: str = "", hinweis: str = "",
+                  symbol: str = "") -> QtGui.QAction:
+        """Ein Befehl ohne Knopf: die Befehlssuche findet ihn weiter.
+
+        Fuer Doppelungen, die aus dem Ribbon fallen (25.09.2026): „Tabelle …“
+        (die Tabelle hat unten ihren Reiter), „Flächen/Volumen vernetzen“
+        (= Netz → Vernetzen), „Querschnitt/Dicke zuweisen…“ und „Gelenke
+        setzen…“ (= Kontextregister „Auswahl“)."""
+        a = self._aktion(text, fn, kuerzel, hinweis)
+        a.setIcon(sym.fuer_befehl(text, "", symbol))
+        return a
 
     def widget(self, w: QtWidgets.QWidget):
         """Ein eigenes Bedienelement in die Gruppe stellen (z. B. Auswahlfeld)."""
         self.spalte = None
         self.reihe.addWidget(w, 0, QtCore.Qt.AlignVCenter)
+        return w
+
+    def in_spalte(self, w: QtWidgets.QWidget, neue_spalte: bool = False) -> QtWidgets.QWidget:
+        """Ein Bedienelement (Auswahlfeld) in die Spalte der kleinen Knoepfe,
+        so hoch wie einer von ihnen - drei stehen uebereinander;
+        ``neue_spalte`` beginnt eine neue Spalte."""
+        w.setFixedHeight((INHALT_HOEHE - 4) // 3)
+        w.setProperty("ribbonzeile", True)
+        if neue_spalte or self.spalte is None or self.spalte.count() >= 3:
+            self.spalte = QtWidgets.QVBoxLayout()
+            self.spalte.setContentsMargins(0, 0, 0, 0)
+            self.spalte.setSpacing(2)
+            self.spalte.setAlignment(QtCore.Qt.AlignTop)
+            self.reihe.addLayout(self.spalte)
+        self.spalte.addWidget(w)
         return w
 
 
@@ -261,14 +343,33 @@ class Register(QtWidgets.QWidget):
         self.lay.addStretch(1)
         self.setFixedHeight(self.HOEHE)
 
-    def gruppe(self, name: str) -> Gruppe:
+    def gruppe(self, name: str, sichtbar: bool = True) -> Gruppe:
+        """Eine Gruppe anlegen. ``sichtbar=False``: eine Gruppe nur fuer die
+        Befehlssuche (Gruppe.nur_suche) - ohne Platz im Register."""
         g = Gruppe(name, self._ribbon, self._name, self)
+        if not sichtbar:
+            g.hide()
+            return g
         self.lay.insertWidget(self.lay.count() - 1, g)
         trenner = QtWidgets.QFrame(self)
         trenner.setObjectName("ribbontrenner")
         trenner.setFrameShape(QtWidgets.QFrame.VLine)
         self.lay.insertWidget(self.lay.count() - 1, trenner)
         return g
+
+
+class _KlickDraussen(QtCore.QObject):
+    """Ereignisfilter an der Anwendung, nur solange ein Register vorlaeufig
+    offen ist (Ribbon._klick_draussen, 25.09.2026)."""
+
+    def __init__(self, ribbon):
+        super().__init__(ribbon)
+        self.ribbon = ribbon
+
+    def eventFilter(self, obj, ev):
+        if ev.type() == QtCore.QEvent.MouseButtonPress:
+            self.ribbon._druck_irgendwo(obj, ev)
+        return False
 
 
 class Ribbon(QtWidgets.QWidget):
@@ -310,6 +411,7 @@ class Ribbon(QtWidgets.QWidget):
         self.suche.returnPressed.connect(self._suche_ausfuehren)
         kopf.addWidget(self.suche)
         aussen.addLayout(kopf)
+        self._aussen, self._kopfreihe = aussen, kopf
 
         self.tabs = QtWidgets.QTabWidget(self)
         self.tabs.setObjectName("ribbontabs")
@@ -317,6 +419,144 @@ class Ribbon(QtWidgets.QWidget):
         self.tabs.setUsesScrollButtons(True)
         aussen.addWidget(self.tabs)
         self._suche_einrichten()
+        self._einklappen_einrichten()
+
+    def kopf_abgeben(self):
+        """Schnellzugriff und Suche aus der eigenen Zeile herausgeben (25.09.2026).
+
+        Das Programmfenster stellt beide in die dunkle Kopfzeile: die eigene
+        Zeile ueber den Registern kostete 31 px Hoehe, in denen links vier
+        Symbole und rechts ein Suchfeld standen. Es bleiben dieselben Objekte
+        (ribbon.schnellzugriff, ribbon.suche) - Kuerzel, Suche und Pruefungen
+        finden sie weiter. Rueckgabe: (Schnellzugriff, Suche)."""
+        reihe = getattr(self, "_kopfreihe", None)
+        if reihe is not None:
+            for w in (self.schnellzugriff, self.suche):
+                reihe.removeWidget(w)
+            self._aussen.removeItem(reihe)
+            reihe.deleteLater()
+            self._kopfreihe = None
+        return self.schnellzugriff, self.suche
+
+    # -- Einklappen (25.09.2026) -------------------------------------------
+    # Das eingeklappte Ribbon zeigt nur die Registerzeile: 99 px mehr fuer
+    # die Ansicht. Wie in Office: Doppelklick auf einen Reiter oder Strg+F1
+    # schaltet um; ein einfacher Klick auf einen Reiter klappt das Register
+    # nur vorlaeufig auf, bis ein Befehl daraus gelaufen ist.
+    #: ausgeloest, wenn das Ribbon ein- oder ausgeklappt wird (bleibend)
+    eingeklappt_geaendert = QtCore.Signal(bool)
+
+    def _einklappen_einrichten(self):
+        self._eingeklappt = False
+        self._vorlaeufig = False
+        # Der Stapel der Register ist ein Kind des QTabWidget ohne eigenen
+        # Zugriff - ausgeblendet bleibt nur die Reiterzeile
+        self._stapel = self.tabs.findChild(QtWidgets.QStackedWidget)
+        self._doppel = False
+        self._klick_draussen_an = False
+        self.tabs.tabBarDoubleClicked.connect(self._reiter_doppelt)
+        self.tabs.tabBarClicked.connect(self._reiter_geklickt)
+
+    def _reiter_doppelt(self, _i: int) -> None:
+        """Doppelklick auf einen Reiter schaltet das Einklappen um.
+
+        QTabBar sendet nach tabBarDoubleClicked selbst noch einmal
+        tabBarClicked (Gegenpruefung 25.09.2026, echter Doppelklick): der
+        oeffnete das eben eingeklappte Register gleich wieder vorlaeufig, und
+        sichtbar aenderte sich nichts. Dieser eine Klick zaehlt nicht."""
+        self._doppel = True
+        QtCore.QTimer.singleShot(0, self._doppel_vergessen)
+        self.einklappen(not self._eingeklappt)
+
+    def _doppel_vergessen(self) -> None:
+        self._doppel = False
+
+    def eingeklappt(self) -> bool:
+        """Bleibend eingeklappt (ein vorlaeufig offenes Register zaehlt nicht)."""
+        return self._eingeklappt
+
+    def einklappen(self, an: bool = True) -> None:
+        """Das Ribbon bleibend ein- (an) oder ausklappen."""
+        an = bool(an)
+        self._vorlaeufig = False
+        geaendert = an != self._eingeklappt
+        self._eingeklappt = an
+        self._stapel_zeigen(not an)
+        if geaendert:
+            self.eingeklappt_geaendert.emit(an)
+
+    def _stapel_zeigen(self, sichtbar: bool) -> None:
+        # Ein Klick neben das vorlaeufig offene Register schliesst es wie in
+        # Office (Gegenpruefung 25.09.2026: es blieb nach einem Klick in die
+        # Ansicht offen und nahm ihr 99 px); gehorcht wird nur solange
+        self._klick_draussen(self._eingeklappt and sichtbar)
+        if self._stapel is None:
+            return
+        self._stapel.setVisible(sichtbar)
+        if sichtbar:
+            self.tabs.setMaximumHeight(16777215)
+        else:
+            # QTabWidget rechnet seine Wunschhoehe mit dem verborgenen Stapel
+            self.tabs.setMaximumHeight(self.tabs.tabBar().sizeHint().height())
+        self.updateGeometry()
+
+    def _klick_draussen(self, an: bool) -> None:
+        app = QtWidgets.QApplication.instance()
+        if app is None or bool(an) == self._klick_draussen_an:
+            return
+        self._klick_draussen_an = bool(an)
+        if getattr(self, "_draussen_filter", None) is None:
+            self._draussen_filter = _KlickDraussen(self)
+        if an:
+            app.installEventFilter(self._draussen_filter)
+        else:
+            app.removeEventFilter(self._draussen_filter)
+
+    def _druck_irgendwo(self, obj, ev) -> None:
+        """Ein Mausdruck irgendwo im Programm, waehrend das Register vorlaeufig
+        offen ist: liegt er neben dem Ribbon, klappt es zu.
+
+        Menues und Listen, die aus dem Ribbon aufgehen, sind eigene Fenster:
+        waehrend eines solchen Aufklappers zaehlt nichts. Ob der Druck neben
+        dem Ribbon lag, sagt die Lage, nicht das Empfaengerobjekt (ein nicht
+        angenommener Druck wandert zu den Eltern weiter, auch aus dem Ribbon
+        heraus)."""
+        if not isinstance(obj, QtWidgets.QWidget):
+            return
+        try:
+            punkt = ev.globalPosition().toPoint()
+        except AttributeError:
+            return
+        if (QtWidgets.QApplication.activePopupWidget() is None and obj.window() is self.window()
+                and not self.rect().contains(self.mapFromGlobal(punkt))):
+            self._vorlaeufig = False
+            self._stapel_zeigen(False)
+
+    def _reiter_geklickt(self, _i: int) -> None:
+        """Eingeklappt: ein Klick auf einen Reiter zeigt das Register, bis ein
+        Befehl daraus laeuft (oder ein zweiter Klick es wieder schliesst)."""
+        if self._doppel:
+            # der Klick, den QTabBar nach einem Doppelklick selbst sendet
+            self._doppel = False
+            return
+        if not self._eingeklappt:
+            return
+        if self._vorlaeufig and _i == self.tabs.currentIndex():
+            self._vorlaeufig = False
+            self._stapel_zeigen(False)
+            return
+        self._vorlaeufig = True
+        self._stapel_zeigen(True)
+
+    def vorlaeufig_offen(self) -> bool:
+        return self._eingeklappt and self._vorlaeufig
+
+    def _nach_befehl(self) -> None:
+        """Ein Befehl ist gelaufen: ein vorlaeufig aufgeklapptes Register klappt
+        wieder zu."""
+        if self._eingeklappt and self._vorlaeufig:
+            self._vorlaeufig = False
+            self._stapel_zeigen(False)
 
     # -- Aufbau ----------------------------------------------------------
     def register(self, name: str) -> Register:
@@ -390,6 +630,8 @@ class Ribbon(QtWidgets.QWidget):
 
     def merken(self, b: Befehl):
         self.befehle.append(b)
+        # ein vorlaeufig aufgeklapptes Register klappt nach dem Befehl zu
+        b.aktion.triggered.connect(lambda *_a: self._nach_befehl())
 
     def vorsicht(self, *aktionen: QtGui.QAction):
         """Diese Befehle ersetzen oder leeren das Modell: die Suche fuehrt sie
@@ -552,8 +794,12 @@ STIL = """
 QWidget#ribbon {{ background: {flaeche}; border-bottom: 1px solid {linie}; }}
 QTabWidget#ribbontabs::pane {{ border: 0; border-top: 1px solid {linie};
     background: {flaeche}; }}
+/* Reiter 9 px statt 14 px Innenabstand (25.09.2026): mit dem Kontextregister
+   „Auswahl: 12 Knoten“ brauchte die Registerzeile 1371 px - bei 1280 px
+   erschienen Rollpfeile, und gerade dieser Reiter lag dahinter. Mit 10 px
+   waeren es offscreen 1243 px, unter Windows bis 2,9 % mehr - zu knapp. */
 QTabWidget#ribbontabs > QTabBar::tab {{ background: transparent; border: 0;
-    padding: 6px 14px; margin: 0 1px; color: {matt}; font-weight: 600; }}
+    padding: 6px 9px; margin: 0 1px; color: {matt}; font-weight: 600; }}
 QTabWidget#ribbontabs > QTabBar::tab:selected {{ color: {akzent};
     border-bottom: 2px solid {akzent}; }}
 QTabWidget#ribbontabs > QTabBar::tab:hover {{ color: {text}; }}
@@ -563,6 +809,8 @@ QFrame#ribbontrenner {{ color: {linie}; margin: 4px 3px 2px; }}
 QToolButton#ribbongross {{ border: 1px solid transparent; border-radius: 8px;
     padding: 4px 6px; font-size: 11px; }}
 QToolButton#ribbongross:hover {{ background: {akzent_hell}; border-color: {linie}; }}
+QToolButton#ribbongross:checked {{ background: {akzent_hell}; color: {akzent};
+    border-color: {akzent}; }}
 QToolButton#ribbongross::menu-indicator {{ image: none; width: 0px; }}
 QToolButton#ribbongross[rolle="start"] {{ background: {akzent}; color: #fff;
     border-color: {akzent}; font-weight: 600; }}
@@ -572,6 +820,10 @@ QToolButton#ribbonklein {{ border: 1px solid transparent; border-radius: 6px;
 QToolButton#ribbonklein:hover {{ background: {akzent_hell}; border-color: {linie}; }}
 QToolButton#ribbonklein:checked {{ background: {akzent_hell}; color: {akzent};
     border-color: {akzent}; }}
+/* Auswahlfelder in der Spalte der kleinen Knoepfe: so hoch wie diese (21 px),
+   das allgemeine Feld (5 px Innenabstand) waere 29 px hoch (25.09.2026) */
+QComboBox[ribbonzeile="true"], QDoubleSpinBox[ribbonzeile="true"] {{
+    padding: 1px 6px; border-radius: 6px; font-size: 12px; }}
 QToolBar#schnellzugriff {{ background: transparent; border: 0; spacing: 2px; }}
 QToolBar#schnellzugriff QToolButton {{ border: 1px solid transparent;
     border-radius: 6px; padding: 3px 4px; color: {matt}; }}

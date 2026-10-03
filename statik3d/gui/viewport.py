@@ -14,6 +14,176 @@ from .. import elemente as EL
 VTK_LINE, VTK_TRI, VTK_QUAD, VTK_TETRA, VTK_HEX, VTK_TET10 = 3, 5, 9, 10, 12, 24
 
 
+def farbskala_waagerecht(skala: dict, zweite: bool = False) -> dict:
+    """Lage der Farbskala in der Kompaktstufe des Fensters (Paket 5, 25.09.2026).
+
+    In einer kleinen Ansicht (unter etwa 700 x 400 px) nimmt eine senkrechte
+    Skala am rechten Rand ein Zehntel der Breite und liegt unter dem Wuerfel;
+    waagerecht unten steht sie ueber die halbe Breite. Nur die Lage aendert
+    sich - Titel, Format und Schrift (der Inhalt) bleiben, wie sie sind.
+    ``zweite``: die Skala des Schnittgroessenverlaufs steht ueber der ersten.
+    """
+    s = dict(skala)
+    s.update(vertical=False, position_x=0.30, position_y=0.13 if zweite else 0.02,
+             width=0.45, height=0.08)
+    return s
+
+
+#: Zeichen, die die Schrift der Ansicht (Latin-1) nicht hat - fuer Texte, deren
+#: Einrueckung bleiben muss (Kopfzeile), ohne die Umformungen von bildtext
+_BILDZEICHEN = (("→", "->"), ("„", '"'), ("“", '"'), ("”", '"'), ("▾", ""), ("−", "-"), ("…", ".."))
+
+
+def bildzeichen(text: str) -> str:
+    """Nur die Zeichen ersetzen, die im Bild verloren gingen (02.10.2026: in der
+    Kopfzeile stand „(Ergebnisse  Lasten im Ergebnisbild)“ - der Pfeil fehlte)."""
+    s = str(text or "")
+    for alt, neu in _BILDZEICHEN:
+        s = s.replace(alt, neu)
+    return s.encode("latin-1", "replace").decode("latin-1")
+
+
+def kopfzeile_ausweichen(text, wuerfel, abstand: float = 6.0):
+    """Neue Unterkante (y von unten) fuer eine Kopfzeile, die in den
+    Ansichtswuerfel laeuft - None, wenn sie frei steht. ``text`` und ``wuerfel``
+    sind (x0, x1, y0, y1) in Bildpunkten der Ansicht, y von unten. Bei 150 %
+    reichten die langen Zeilen in einer schmalen Ansicht unter den Wuerfel
+    (Sichtpruefung 02.10.2026); dann steht die Kopfzeile darunter."""
+    if text is None or wuerfel is None:
+        return None
+    tx0, tx1, ty0, ty1 = (float(v) for v in text)
+    wx0, wx1, wy0, wy1 = (float(v) for v in wuerfel)
+    if tx1 <= wx0 or tx0 >= wx1 or ty1 <= wy0 or ty0 >= wy1:
+        return None
+    return wy0 - float(abstand) - (ty1 - ty0)
+
+
+def kopfzeile_y(hoch: int, glas_hoehe: int, zeilen: int, schrift: int, massstab: float = 1.0) -> int:
+    """Unterkante der Kopfzeile in Bildpunkten der Ansicht (VTK zaehlt von unten):
+    unter der Glasleiste, ``zeilen`` Zeilen hoch. ``hoch`` kommt von VTK in
+    Geraetepixeln, die Glasleiste aus Qt in Punkten - beides muss in derselben
+    Einheit stehen. Bis zum 02.10.2026 fehlte der Massstab: bei 150 % lag die
+    erste Zeile unter der Glasleiste."""
+    f = max(1.0, float(massstab or 1.0))
+    rand = (int(glas_hoehe) + 16) * f
+    zh = schrift * 2 * 1.25 * f
+    return int(max(hoch - rand - zh * int(zeilen), 6))
+
+
+#: Abstand der waagerechten Farbskala ueber den Kennwerten [px]
+SKALA_UEBER_KENNWERTEN = 8
+
+
+def kennwerte_rahmen(renderer, text) -> tuple | None:
+    """Rechteck eines Textdarstellers in Bildpunkten der Ansicht:
+    (x0, x1, y0, y1), y von unten. vtkTextActor.GetBoundingBox liefert es
+    bezogen auf die Lage des Textes (VTK 9.7: 0..377 x 0..12 fuer eine Zeile
+    bei (12, 10)) - die Lage kommt hier dazu."""
+    bb = [0.0, 0.0, 0.0, 0.0]
+    text.GetBoundingBox(renderer, bb)
+    if not bb[3] > bb[2]:
+        return None
+    px, py = (float(v) for v in text.GetPosition()[:2])
+    if bb[2] < py - 0.5:
+        bb = [bb[0] + px, bb[1] + px, bb[2] + py, bb[3] + py]
+    return tuple(float(v) for v in bb)
+
+
+def farbskalen_heben(renderer, kennwerte: str = "kennwerte") -> float:
+    """Waagerechte Farbskalen ueber die Kennwerte unten links heben (25.09.2026).
+
+    Gegenpruefung Paket 5: die waagerechte Skala der Kompaktstufe stand bei
+    672 x 627 px auf y 15-57 px, die Kennwertzeile auf y 13-22 px - „73.52
+    Knoten 14 [mm]“ war auf dem Farbbalken nicht zu lesen. Wie viele Zeilen
+    die Kennwerte haben, steht erst fest, wenn sie gezeichnet sind (nach der
+    Skala); darum wird vor jedem Bild nachgesehen und die Skalen werden so
+    weit nach oben geschoben, dass sie ueber dem Text stehen. Nur nach oben:
+    beim naechsten Aufbau kommen sie ohnehin mit ihrer Grundlage wieder.
+    Rueckgabe: Verschiebung in Anteilen der Ansichtshoehe (0 = nichts getan).
+    """
+    try:
+        breite, hoehe = renderer.GetSize()
+    except Exception:                       # noqa: BLE001
+        return 0.0
+    if hoehe <= 0 or breite <= 0:
+        return 0.0
+    try:
+        text = renderer.actors.get(kennwerte)
+    except Exception:                       # noqa: BLE001
+        text = None
+    if text is None or not text.GetVisibility() or not text.IsA("vtkTextActor"):
+        return 0.0
+    oben = None
+    try:
+        rahmen = kennwerte_rahmen(renderer, text)
+        if rahmen is not None:
+            oben = rahmen[3]
+    except Exception:                       # noqa: BLE001
+        oben = None
+    if oben is None:
+        # ohne Textmass: Zeilen mal Schriftgroesse mal 1,2 ueber der Lage
+        try:
+            zeilen = str(text.GetInput() or "").count("\n") + 1
+            groesse = float(text.GetTextProperty().GetFontSize())
+            oben = float(text.GetPosition()[1]) + zeilen * groesse * 1.2
+        except Exception:                   # noqa: BLE001
+            return 0.0
+    ziel = (oben + SKALA_UEBER_KENNWERTEN) / float(hoehe)
+    balken = []
+    props = renderer.GetViewProps()
+    props.InitTraversal()
+    for _ in range(props.GetNumberOfItems()):
+        p = props.GetNextProp()
+        if (p is not None and p.IsA("vtkScalarBarActor") and p.GetVisibility()
+                and p.GetOrientation() == 0):
+            balken.append(p)
+    if not balken:
+        return 0.0
+    unten = min(float(b.GetPositionCoordinate().GetValue()[1]) for b in balken)
+    schub = ziel - unten
+    if schub <= 1e-4:
+        return 0.0
+    for b in balken:
+        x, y = b.GetPositionCoordinate().GetValue()[:2]
+        b.SetPosition(x, y + schub)
+    return schub
+
+
+def farbskalen_heben_einrichten(plotter, an) -> bool:
+    """``farbskalen_heben`` vor jedem Bild aufrufen, solange ``an()`` wahr ist
+    (Kompaktstufe des Fensters). Einmal je Renderer; Rueckgabe: eingerichtet."""
+    ren = getattr(plotter, "renderer", None)
+    if ren is None:
+        return False
+    if farbskalen_heben_aktiv(ren):
+        return True
+    import weakref
+    ref = weakref.ref(ren)
+
+    def vor_bild(_obj, _ereignis):
+        r = ref()
+        try:
+            if r is not None and an():
+                farbskalen_heben(r)
+        except Exception:                   # noqa: BLE001 - das Bild darf nie scheitern
+            pass
+    ren.AddObserver("StartEvent", vor_bild)
+    _SKALA_HEBEN[id(ren)] = ref
+    return True
+
+
+def farbskalen_heben_aktiv(renderer) -> bool:
+    """Haengt farbskalen_heben an diesem Renderer? (Ueber id und schwachen
+    Verweis: eine id allein kehrt nach dem Schliessen eines Plotters bei
+    einem neuen wieder.)"""
+    ref = _SKALA_HEBEN.get(id(renderer))
+    return ref is not None and ref() is renderer
+
+
+#: id(Renderer) -> schwacher Verweis, fuer Renderer mit farbskalen_heben
+_SKALA_HEBEN: dict = {}
+
+
 def kanten_vor_flaechen() -> bool:
     """Linien gewinnen gegen die Flaeche, auf der sie liegen.
 
@@ -220,22 +390,32 @@ def konstruktionsknoten(model: Model) -> np.ndarray:
     return np.flatnonzero(~netzknoten_maske(model))
 
 
-def add_netzknoten(plotter, model: Model, groesse: float = 1.0, nur=None):
+def add_netzknoten(plotter, model: Model, groesse: float = 1.0, nur=None, lage=None):
     """Die Netzknoten als kleine Punkte zeichnen (Ribbon Netz -> Netzknoten;
     nur, wenn das FE-Netz dargestellt ist). Schlichte Punkte statt Kugeln:
-    am Drehlager sind es 380 000."""
+    am Drehlager sind es 380 000. ``lage``: die Knotenlage im Bild (verformte
+    Figur, siehe add_nodes)."""
     if model.nn == 0:
         return
+    X = _lage(model, lage)
     idx = np.flatnonzero(netzknoten_maske(model))
     if nur is not None:
         idx = np.intersect1d(idx, np.asarray([int(i) for i in nur], int))
     if not len(idx):
         return
-    plotter.add_points(model.nodes[idx], color=FARBE_NETZKNOTEN, point_size=max(2.0, 4.0 * float(groesse)),
+    plotter.add_points(X[idx], color=FARBE_NETZKNOTEN, point_size=max(2.0, 4.0 * float(groesse)),
                        render_points_as_spheres=False, name="netzknoten")
 
 
-def add_nodes(plotter, model: Model, groesse: float = 1.0, nur=None):
+def _lage(model: Model, lage=None) -> np.ndarray:
+    """Die Knotenlage, an der gezeichnet wird: ``lage`` (verformte Figur mit
+    Ueberhoehung) oder die Modellknoten."""
+    if lage is not None and len(lage) == model.nn:
+        return np.asarray(lage, float)
+    return np.asarray(model.nodes, float)
+
+
+def add_nodes(plotter, model: Model, groesse: float = 1.0, nur=None, lage=None):
     """Die Knoten der Konstruktion als Punkte zeichnen - oder nur die in
     ``nur`` (Knotennummern), wenn Teile des Modells ausgeblendet sind. Die
     Netzknoten gehoeren zum Netz (add_netzknoten).
@@ -250,9 +430,15 @@ def add_nodes(plotter, model: Model, groesse: float = 1.0, nur=None):
     statt an Elementen; waeren sie alle orange, uebertoente die Markierung das
     ganze Bauteil und sagte nichts mehr. Ueberschreiten die freien Knoten den
     Anteil ``FREI_ANTEIL``, werden darum alle Knoten gleich gezeichnet.
+
+    ``lage`` (25.09.2026): die Knoten sitzen an der Lage der gezeichneten
+    Figur - im Ergebnisbild an der verformten. Vorher schwebten sie am
+    unverformten Ort ueber dem verformten Koerper (Konsole mit Ueberhoehung
+    x1480, vp_zoom/028_mitte.png).
     """
     if model.nn == 0:
         return
+    X = _lage(model, lage)
     frei = unbelegte_knoten(model)
     alle = konstruktionsknoten(model)
     if nur is not None:
@@ -262,15 +448,15 @@ def add_nodes(plotter, model: Model, groesse: float = 1.0, nur=None):
         return
     d = max(3.0, 7.0 * float(groesse))
     if len(frei) > FREI_ANTEIL * model.nn:
-        plotter.add_points(model.nodes[alle], color=FARBE_KNOTEN, point_size=d,
+        plotter.add_points(X[alle], color=FARBE_KNOTEN, point_size=d,
                            render_points_as_spheres=True, name="knoten")
         return
     fest = np.setdiff1d(alle, frei, assume_unique=False)
     if len(fest):
-        plotter.add_points(model.nodes[fest], color=FARBE_KNOTEN, point_size=d,
+        plotter.add_points(X[fest], color=FARBE_KNOTEN, point_size=d,
                            render_points_as_spheres=True, name="knoten")
     if len(frei):
-        plotter.add_points(model.nodes[frei], color=FARBE_KNOTEN_FREI,
+        plotter.add_points(X[frei], color=FARBE_KNOTEN_FREI,
                            point_size=d + 4, render_points_as_spheres=True,
                            name="knoten_frei")
 
@@ -1856,7 +2042,7 @@ def _richtungsgruppen(pts: np.ndarray, ri: np.ndarray) -> dict:
 
 
 def add_supports(plotter, model: Model, size: float, faktor: float = 1.0, nur=None,
-                 dichte: float = 1.0):
+                 dichte: float = 1.0, lage=None):
     """Knoten-, Linien- und Flaechenlager sowie Kontaktlager zeichnen.
 
     ``faktor`` skaliert alle Symbole, ``Support.groesse`` zusaetzlich das
@@ -1865,8 +2051,15 @@ def add_supports(plotter, model: Model, size: float, faktor: float = 1.0, nur=No
     Modells ausgeblendet sind. ``dichte`` ist die Lagerdichte: wie dicht die
     Symbole eines Linien- oder Flaechenlagers ueber die Linie bzw. Flaeche
     verteilt sind (1,0 = alle 5 % der Modellgroesse eines).
+
+    ``lage`` (25.09.2026): im Ergebnisbild sitzen die Lager an der verformten
+    Figur - ein gleitendes Lager oder eine Feder bewegt sich mit dem Knoten.
+    Die Symbole eines Linien- oder Flaechenlagers nehmen die Verschiebung
+    ihres naechsten Lagerknotens mit (punkte_mitnehmen).
     """
     d0 = LAGER_GRUNDMASS * size * max(float(faktor), 0.05)
+    X = _lage(model, lage)
+    D = (X - np.asarray(model.nodes, float)) if lage is not None and len(lage) == model.nn else None
     sicht = None if nur is None else {int(i) for i in nur}
 
     def da(n) -> bool:
@@ -1884,12 +2077,12 @@ def add_supports(plotter, model: Model, size: float, faktor: float = 1.0, nur=No
         if getattr(s, "nonlinear", False):
             nichtlinear.append(int(s.node))
     for i, ((key, g, farbe), nodes) in enumerate(sorted(gruppen.items(), key=str)):
-        pts = model.nodes[nodes]
+        pts = X[nodes]
         plotter.add_mesh(pv.PolyData(pts).glyph(geom=lagerglyph(key, d0 * g),
                                                 scale=False, orient=False),
                          color=farbe, name=f"supports{i}")
     if nichtlinear:
-        plotter.add_mesh(pv.PolyData(model.nodes[nichtlinear]).glyph(
+        plotter.add_mesh(pv.PolyData(X[nichtlinear]).glyph(
             geom=pv.Sphere(radius=0.45 * d0), scale=False, orient=False),
             color=FARBE_LAGER_NICHTLINEAR, name="supports_nichtlinear")
     # Linienlager: Symbole entlang der ganzen Linie und die Linie selbst
@@ -1900,11 +2093,12 @@ def add_supports(plotter, model: Model, size: float, faktor: float = 1.0, nur=No
         pts, _ri = lager_punkte(model, ls, size, dichte)
         if not len(pts):
             continue
+        pts = punkte_mitnehmen(pts, nodes, model, D)
         key = lager_symbol(ls)
         plotter.add_mesh(pv.PolyData(pts).glyph(geom=lagerglyph(key, 0.55 * d0),
                                                 scale=False, orient=False),
                          color=FARBE_LINIENLAGER, name=f"lsupports{j}")
-        P = model.nodes[nodes]
+        P = X[nodes]
         if len(P) > 1:
             plotter.add_mesh(pv.lines_from_points(P), color=FARBE_LINIENLAGER, line_width=4,
                              name=f"lsupports_linie{j}")
@@ -1921,6 +2115,12 @@ def add_supports(plotter, model: Model, size: float, faktor: float = 1.0, nur=No
                     nodes.update(int(n) for n in model.elements[int(ei)].nodes)
             if nodes and not (nodes & sicht):
                 continue
+        if D is not None:
+            kn_ss = {int(n) for n in (ss.nodes or [])}
+            for ei in (ss.elements or []):
+                if 0 <= int(ei) < len(model.elements):
+                    kn_ss.update(int(n) for n in model.elements[int(ei)].nodes)
+            pts = punkte_mitnehmen(pts, sorted(kn_ss), model, D)
         key = lager_symbol(ss)
         for k, (q, punkte) in enumerate(sorted(_richtungsgruppen(pts, ri).items())):
             plotter.add_mesh(pv.PolyData(np.asarray(punkte, float)).glyph(
@@ -1929,7 +2129,7 @@ def add_supports(plotter, model: Model, size: float, faktor: float = 1.0, nur=No
                 color=FARBE_FLAECHENLAGER, name=f"fsupports{j}_{k}")
     kontakt = [c.node for c in model.contact_supports if da(c.node)]
     if kontakt:
-        pts = model.nodes[kontakt]
+        pts = X[kontakt]
         plotter.add_mesh(pv.PolyData(pts).glyph(geom=_glyph("gelenk", d0),
                                                 scale=False, orient=False),
                          color=FARBE_KONTAKT, name="csupports")
@@ -2220,7 +2420,8 @@ def _wertzahl(v: float, nachkomma: int = 1) -> str:
 
 def ergebniswerte(model: Model, res, point_scalars, arten, quantity: str = "",
                   filter_: str = "extrem", schwelle: float = 0.0, n_te: int = 1,
-                  auswahl: dict = None, versteckt: set = None, nachkomma: int = 1) -> tuple:
+                  auswahl: dict = None, versteckt: set = None, nachkomma: int = 1,
+                  einheiten=None, lage=None) -> tuple:
     """(Punkte, Texte) der Ergebniswerte im Bild (analog ANSYS Probe/Labels).
 
     arten: Teilmenge von {"staebe", "flaechen", "volumen"}.
@@ -2238,7 +2439,8 @@ def ergebniswerte(model: Model, res, point_scalars, arten, quantity: str = "",
     ``auswahl``). Hoechstens WERTE_MAX Marken - die betragsgroessten.
     """
     ps = None if point_scalars is None else np.asarray(point_scalars, float)
-    X = np.asarray(model.nodes, float)
+    # an der gezeichneten Lage (verformte Figur, 25.09.2026)
+    X = _lage(model, lage)
     versteckt = versteckt or set()
     auswahl = auswahl or {}
     nur_auswahl = filter_ == "auswahl"
@@ -2263,7 +2465,9 @@ def ergebniswerte(model: Model, res, point_scalars, arten, quantity: str = "",
                 st = res.stations()
             except Exception:                    # noqa: BLE001
                 st = None
-        _eh, faktor = SG_EINHEIT.get(q, ("", 1.0))
+        # Schnittgroessen in der Einheit von Legende und Verlauf (Ansicht →
+        # Einheiten, 25.09.2026; vorher fest kN/kNm)
+        faktor = 1.0 / verlauf_einheit(q, einheiten)[0] if q else 1.0
         for i, e in enumerate(model.elements):
             if e.typ not in TYPEN_STAEBE or i in versteckt:
                 continue
@@ -2792,31 +2996,54 @@ def add_contact_markers(plotter, model: Model, contact: list, size: float):
                                render_points_as_spheres=True, name=f"contact_{status}")
 
 
-def beam_diagram(model: Model, res, quantity: str, scale: float, n: int = 9):
-    """Schnittgroessenverlauf als Polylinien (PolyData) mit Skalarwerten."""
+def beam_diagram(model: Model, res, quantity: str, scale: float, n: int = 9,
+                 seite: str = None, elemente=None):
+    """Schnittgroessenverlauf als Polylinien (PolyData) mit Skalarwerten.
+
+    Die Grundlinie liegt auf der **unverformten** Stabachse. ``seite`` gilt
+    fuer eine Umhuellende: "max" die Linie der groessten, "min" die der
+    kleinsten Werte je Stelle; ohne ``seite`` (wie bis zum 25.09.2026) je
+    Stelle das betragsgroessere Extrem - ein Verlauf, der je Stelle aus einer
+    anderen Kombination stammt und darum keiner ist. Die Oberflaeche zeigt
+    seit Paket 6b beide Linien (verlauf_linien). ``point_data["elem"]`` nennt
+    je Punkt das Element, ``point_data["spitze"]`` markiert die Punkte auf dem
+    Verlauf (die anderen liegen auf der Achse). ``elemente`` beschraenkt auf
+    diese Elemente (Stabnummern aus der Oberflaeche - die Suche ueber alle
+    Elemente kostet am Drehlager 0,15 s je Bild, 15.09.2026).
+    """
     st = res.stations(n) if hasattr(res, "stations") else None
-    pts, lines, vals = [], [], []
+    pts, lines, vals, elem = [], [], [], []
     base = 0
-    for i, e in enumerate(model.elements):
+    reihe = range(len(model.elements)) if elemente is None else elemente
+    for i in reihe:
+        e = model.elements[int(i)]
         if e.typ not in TYPEN_STAEBE:
             continue
-        X = model.nodes[e.nodes]
-        T3, L = bm.local_axes(X[0], X[1], e.roll)
+        i = int(i)
         if st is not None:
             if i not in st:
                 continue
             x = st[i]["x"]
             v = st[i][quantity]
-        else:   # Envelope: max/min
-            d = res.beam.get(i)
-            if d is None:
+        else:   # Envelope: (min, max, Herkunft min, Herkunft max) je Stelle
+            d = getattr(res, "beam", {}).get(i)
+            if d is None or d.get("x") is None or d.get(quantity) is None:
                 continue
             x = d["x"]
-            v = np.where(np.abs(d[quantity][1]) >= np.abs(d[quantity][0]),
-                         d[quantity][1], d[quantity][0])
+            lo, hi = np.asarray(d[quantity][0], float), np.asarray(d[quantity][1], float)
+            if seite == "max":
+                v = hi
+            elif seite == "min":
+                v = lo
+            else:
+                v = np.where(np.abs(hi) >= np.abs(lo), hi, lo)
+        X = model.nodes[e.nodes]
+        T3, L = bm.local_axes(X[0], X[1], e.roll)
         # Richtung: My, Vz, N in lokale z; Mz, Vy in lokale y; Mt in z
         direction = T3[1] if quantity in ("Mz", "Vy") else T3[2]
         sign = -1.0 if quantity in ("My",) else 1.0     # Momente auf der Zugseite antragen
+        x = np.asarray(x, float)
+        v = np.asarray(v, float)
         P0 = X[0] + np.outer(x, T3[0])
         P1 = P0 + np.outer(sign * v * scale, direction)
         k = len(x)
@@ -2824,6 +3051,7 @@ def beam_diagram(model: Model, res, quantity: str, scale: float, n: int = 9):
             pts.append(P0[j]); pts.append(P1[j])
             lines.extend([2, base + 2 * j, base + 2 * j + 1])
             vals.extend([v[j], v[j]])
+            elem.extend([i, i])
         for j in range(k - 1):
             lines.extend([2, base + 2 * j + 1, base + 2 * j + 3])
         base += 2 * k
@@ -2831,7 +3059,291 @@ def beam_diagram(model: Model, res, quantity: str, scale: float, n: int = 9):
         return None
     pd = pv.PolyData(np.array(pts), lines=np.array(lines))
     pd["wert"] = np.array(vals)
+    pd.point_data["elem"] = np.asarray(elem, int)
+    spitze = np.zeros(len(pts), bool)
+    spitze[1::2] = True
+    pd.point_data["spitze"] = spitze
     return pd
+
+
+# --------------------------------------------------------------------------
+# Ergebnisdarstellung (Paket 6b des Oberflaechenplans, 25.09.2026)
+# --------------------------------------------------------------------------
+#: Umhuellende im Verlauf: max rot, min blau (Plan Kap. 3, Paket 6)
+FARBE_VERLAUF_MAX = "#c62828"
+FARBE_VERLAUF_MIN = "#1565c0"
+#: Max- und Min-Marken an den Extremstellen
+FARBE_MARKE_MAX = "#b71c1c"
+FARBE_MARKE_MIN = "#0d47a1"
+
+
+def ist_umhuellende(res) -> bool:
+    """Traegt *res* Extremwerte je Stelle statt eines Zustands (Envelope)?"""
+    return res is not None and not hasattr(res, "stations") and hasattr(res, "beam")
+
+
+def verlauf_linien(model: Model, res, quantity: str, scale: float, n: int = 9,
+                   elemente=None) -> list:
+    """[(Darstellername, PolyData, Farbe oder None)] des Schnittgroessenverlaufs.
+
+    Ein Lastfall oder eine Kombination hat **einen** Verlauf ("diagram", in
+    der Farbe seiner Werte). Eine Umhuellende hat zwei Linien: die groessten
+    Werte je Stelle ("diagram_max", rot) und die kleinsten ("diagram_min",
+    blau). Bis zum 25.09.2026 stand dort eine Linie mit dem betragsgroesseren
+    Extrem je Stelle - am Hallenrahmen wechselte sie zwischen GZT-Kombinationen
+    und zeigte weder das groesste noch das kleinste Moment als Verlauf.
+    """
+    if ist_umhuellende(res):
+        aus = []
+        for seite, name, farbe in (("max", "diagram_max", FARBE_VERLAUF_MAX),
+                                   ("min", "diagram_min", FARBE_VERLAUF_MIN)):
+            pd = beam_diagram(model, res, quantity, scale, n, seite=seite, elemente=elemente)
+            if pd is not None:
+                aus.append((name, pd, farbe))
+        return aus
+    pd = beam_diagram(model, res, quantity, scale, n, elemente=elemente)
+    return [("diagram", pd, None)] if pd is not None else []
+
+
+def symmetrische_grenzen(werte) -> list:
+    """[-a, a] mit a = groesster Betrag: die Farbskala eines Verlaufs liegt
+    symmetrisch um 0, damit Weiss/Grau immer „null“ heisst und Rot und Blau
+    die Vorzeichen trennen. Am Hallenrahmen lag die Mitte der Skala bei
+    -51 kNm (Skala -393 … 291, bilder/036_…): ein Wert von -51 kNm sah aus
+    wie keiner."""
+    w = np.asarray(werte, float)
+    w = w[np.isfinite(w)] if w.size else w
+    a = float(np.abs(w).max()) if w.size else 0.0
+    if not a > 0.0:
+        a = 1.0
+    return [-a, a]
+
+
+def extremstellen(werte, maske=None) -> tuple:
+    """(Index des groessten Werts oder None, Index des kleinsten oder None).
+
+    Die Max-Marke gibt es nur fuer einen Wert > 0, die Min-Marke nur fuer
+    einen Wert < 0: bei einem Betrag (u gesamt, Vergleichsspannung) ist das
+    Minimum die Null am Lager und keine Auskunft, bei uz einer nach unten
+    verformten Decke ist es der Groesstwert nach unten. ``maske`` (bool je
+    Eintrag) laesst nur die sichtbaren Teile zaehlen - wie Skala und
+    Kennwerte. Ein argmax ueber 2 Mio. Werte kostet wenige Millisekunden.
+    """
+    w = np.asarray(werte, float)
+    if not w.size:
+        return None, None
+    ok = np.isfinite(w)
+    if maske is not None and len(maske) == len(w):
+        ok &= np.asarray(maske, bool)
+    if not ok.any():
+        return None, None
+    hoch = np.where(ok, w, -np.inf)
+    tief = np.where(ok, w, np.inf)
+    i_hi, i_lo = int(np.argmax(hoch)), int(np.argmin(tief))
+    return (i_hi if w[i_hi] > 0 else None), (i_lo if w[i_lo] < 0 else None)
+
+
+def faktor_runden(s: float) -> float:
+    """Ein Ueberhoehungsfaktor zum Zeigen: ab 1 auf eine Nachkommastelle,
+    darunter auf zwei geltende Ziffern. Bis 25.09.2026 immer round(…, 1) -
+    ein Faktor unter 0,05 (sehr grosse Verformung) wurde 0, und die Zeile
+    „Überhöhung“ fiel im Bericht ganz weg (Gegenpruefung 25.09.2026)."""
+    s = float(s or 0.0)
+    if not np.isfinite(s) or s == 0.0:
+        return 0.0
+    if abs(s) >= 1.0:
+        return round(s, 1)
+    return round(s, int(1 - np.floor(np.log10(abs(s)))))
+
+
+def marken_text(art: str, wert: float, einheit: str, nk: int = None) -> str:
+    """„max 73.52 mm“ - Wert als Dezimalzahl mit Punkt wie alle Texte der
+    Ansicht, nie wissenschaftlich (2.39e+03 las der Anwender nicht,
+    12.09.2026), mit Einheit. ``nk`` wie die Kennwerte (Einheiten), sonst
+    nach dem Betrag (spannungen.dezimal)."""
+    from ..spannungen import dezimal
+    a = abs(float(wert)) if np.isfinite(wert) else 0.0
+    if 0.0 < a and ((nk is None and a < 0.01) or (nk is not None and a < 0.5 * 10.0 ** -int(nk))):
+        # zwei geltende Ziffern statt „0.000“ (wie spannungen.skalenformat).
+        # Auch mit ``nk``: die Marke „max 0.00 mm“ bei uy = 0,0015 mm sagte
+        # nichts, und das Minuszeichen fiel weg (Gegenpruefung 25.09.2026)
+        nk = min(12, int(-np.floor(np.log10(a))) + 1)
+    zahl = dezimal(wert, nk) if nk is not None else dezimal(wert)
+    return f"{art} {zahl}" + (f" {einheit}" if einheit and einheit != "-" else "")
+
+
+#: Ersatz fuer Zeichen, die die Schrift der Ansicht nicht kennt oder die im
+#: Bild verloren gehen (gemessen 25.09.2026 an pyvista add_text, Schrift der
+#: Ansicht: „φ“ und „σ“ 0 dunkle Bildpunkte, „a“ 224). „|u|“ stand in der
+#: Legende als „u max“ - die senkrechten Striche verschwanden neben der
+#: Ziffernspalte (vp_zoom/033_legende.png).
+_BILDTEXT = (("|u| Verschiebung", "Verschiebung u gesamt"),
+             ("|φ| Verdrehung", "Verdrehung phi gesamt"), ("|u|", "u gesamt"), ("|φ|", "phi gesamt"), ("φ", "phi "), ("σ", "sigma"),
+             ("τ", "tau"), ("ε", "eps"), ("−", "-"), ("…", ".."), ("  ", " "))
+
+
+def bildtext(text: str) -> str:
+    """Ein Text fuer die Schrift der Ansicht: nur Latin-1, keine Zeichen, die
+    im Bild verloren gehen."""
+    s = str(text or "")
+    for alt, neu in _BILDTEXT:
+        s = s.replace(alt, neu)
+    return s.encode("latin-1", "replace").decode("latin-1")
+
+
+def _einheit_umrechnen(einheit: str, einheiten) -> tuple:
+    """(Faktor, neue Einheit) fuer Werte in der festen Anzeigeeinheit von
+    result_field bzw. spannungen (mm, N/mm², MPa, kN) nach der Einstellung
+    Ansicht → Einheiten. Unbekanntes bleibt."""
+    from .. import einheiten as eh
+    E = einheiten or eh.Einheiten()
+    if einheit == "mm":
+        return eh.LAENGE[E.verformung] / 1000.0, E.verformung
+    if einheit in ("N/mm²", "MPa"):
+        return 1e6 * eh.SPANNUNG[E.spannung], E.spannung
+    if einheit == "kN":
+        return 1e3 * eh.KRAFT[E.kraft], E.kraft
+    return 1.0, einheit
+
+
+def skalentitel(feld: str, name: str, einheiten=None) -> tuple:
+    """(Faktor, Titel) der Farbskala zu einer Faerbung.
+
+    *name* ist der Name aus result_field („|u| max [mm]“), die Werte stehen
+    dort in einer festen Einheit. Die Legende folgt der Einstellung Ansicht →
+    Einheiten wie die Kennwerte (bis zum 25.09.2026 stand dort immer mm bzw.
+    MPa, unten links in der eingestellten Einheit) und traegt eine
+    Bezeichnung ohne Zeichen, die im Bild verloren gehen („u gesamt max
+    [mm]“ statt „|u| max [mm]“, das als „u max“ zu lesen war).
+    """
+    name = str(name or "")
+    feld = str(feld or "")
+    faktor = 1.0
+    if name.endswith("]") and "[" in name:
+        kopf, _, einheit = name[:-1].rpartition("[")
+        kopf = kopf.strip()
+        faktor, einheit = _einheit_umrechnen(einheit.strip(), einheiten)
+        if feld.startswith("Vergleich"):
+            kopf = "Vergleichsspannung" + (" max" if kopf.endswith("max") else "")
+        titel = f"{bildtext(kopf)} [{einheit}]"
+    else:
+        titel = bildtext(name)
+    return faktor, titel
+
+
+def einheit_aus_name(name: str) -> str:
+    """Die Einheit in eckigen Klammern am Ende eines Namens aus result_field
+    („|u| max [mm]“ -> „mm“), sonst leer."""
+    name = str(name or "")
+    if name.endswith("]") and "[" in name:
+        return name[:-1].rpartition("[")[2].strip()
+    return ""
+
+
+def skala_umrechnen(skala: dict, faktor: float) -> dict:
+    """Eine Werteskala (spannungen.grenzen, gerechnet in der festen Einheit
+    der Groesse) in die Einheit der Legende umrechnen: Werte, Grenzen,
+    Extremwerte und Beschriftungen ueber und unter der Skala.
+
+    Die Grenzen der Werteskala sind im Modell ohne Einheit gespeichert und
+    galten immer in N/mm², mm, mrad. Seit die Legende Ansicht → Einheiten
+    folgt (25.09.2026), wurde erst umgerechnet und dann begrenzt - nach dem
+    Umstellen auf kN/cm² wirkte die Grenze 20 als 200 N/mm², und 875
+    Ueberschreitungen verschwanden ohne Hinweis (Gegenpruefung 25.09.2026).
+    Jetzt: erst begrenzen, dann umrechnen - die Zahl der Ueberschreitungen
+    haengt nicht von der Einheit ab."""
+    f = float(faktor)
+    if f == 1.0:
+        return skala
+    from ..spannungen import _text
+    out = dict(skala)
+    if out.get("werte") is not None:
+        out["werte"] = np.asarray(out["werte"], float) * f
+    out["clim"] = [float(c) * f for c in (out.get("clim") or [0.0, 1.0])]
+    for k in ("wmin", "wmax", "grenze"):
+        if out.get(k) is not None:
+            out[k] = float(out[k]) * f
+    if out.get("above_label") and out.get("wmax") is not None:
+        out["above_label"] = _text(out["wmax"])
+    if out.get("below_label") and out.get("wmin") is not None:
+        out["below_label"] = _text(out["wmin"])
+    return out
+
+
+def verlauf_einheit(quantity: str, einheiten=None) -> tuple:
+    """(Faktor SI -> Anzeige, Einheit) einer Schnittgroesse nach Ansicht →
+    Einheiten: Kraefte in kN/N/MN, Momente in kNm, kNcm … Bis zum
+    25.09.2026 fest kN und kNm."""
+    from .. import einheiten as eh
+    E = einheiten or eh.Einheiten()
+    art = "moment" if quantity in ("Mt", "My", "Mz") else "kraft"
+    return E.faktor(art), E.einheit(art)
+
+
+def verlaufswerte(pd_liste, faktor: float = 1.0, model: Model = None, versteckt=None,
+                  nachkomma: int = 1) -> tuple:
+    """(Punkte, Texte) der Werte am Verlauf: je Stab (bzw. Element ohne Stab)
+    der groesste und der kleinste Wert, an der Spitze des Verlaufs - dort,
+    wo man ihn abliest. Eine Umhuellende beschriftet auf der roten Linie
+    die groessten, auf der blauen die kleinsten Werte. Hoechstens WERTE_MAX
+    Marken, die betragsgroessten."""
+    versteckt = set(versteckt or ())
+    zu_stab = {}
+    if model is not None:
+        zu_stab = {int(e): n for n, mem in (model.members or {}).items()
+                   for e in (mem.elements or [])}
+    punkte, texte, betrag = [], [], []
+    for name, pd, _farbe in pd_liste:
+        if pd is None or not pd.n_points:
+            continue
+        sp = np.asarray(pd.point_data["spitze"], bool)
+        P = np.asarray(pd.points)[sp]
+        v = np.asarray(pd["wert"], float)[sp] * faktor
+        el = np.asarray(pd.point_data["elem"], int)[sp]
+        gruppen: dict = {}
+        for j, e in enumerate(el):
+            if int(e) in versteckt:
+                continue
+            gruppen.setdefault(zu_stab.get(int(e), ("el", int(e))), []).append(j)
+        for idx in gruppen.values():
+            idx = np.asarray(idx, int)
+            w = v[idx]
+            if not np.isfinite(w).any():
+                continue
+            wahl = set()
+            if name != "diagram_min":
+                wahl.add(int(idx[int(np.nanargmax(w))]))
+            if name != "diagram_max":
+                wahl.add(int(idx[int(np.nanargmin(w))]))
+            for j in sorted(wahl):
+                if not np.isfinite(v[j]) or abs(v[j]) < 1e-12:
+                    continue
+                punkte.append(P[j])
+                texte.append(_wertzahl(v[j], nachkomma))
+                betrag.append(abs(float(v[j])))
+    if len(punkte) > WERTE_MAX:
+        order = sorted(range(len(punkte)), key=lambda k: -betrag[k])[:WERTE_MAX]
+        order.sort()
+        punkte, texte = [punkte[k] for k in order], [texte[k] for k in order]
+    return punkte, texte
+
+
+def punkte_mitnehmen(P, knoten, model: Model, D) -> np.ndarray:
+    """Punkte auf der Geometrie (Symbole eines Linien- oder Flaechenlagers,
+    Kurvenpunkte einer gewaehlten Linie) mit der verformten Figur mitnehmen:
+    jeder Punkt bekommt die Verschiebung ``D`` (je Knoten, schon mit der
+    Ueberhoehung) des naechsten der genannten Knoten. Gesucht wird nur unter
+    diesen Knoten - ein Suchbaum ueber alle 400 000 Knoten des Drehlagers
+    je Bild waere zu teuer."""
+    P = np.asarray(P, float)
+    if D is None or not len(P):
+        return P
+    kn = np.asarray([int(k) for k in (knoten or []) if 0 <= int(k) < model.nn], int)
+    if not len(kn):
+        return P
+    from scipy.spatial import cKDTree
+    _d, j = cKDTree(np.asarray(model.nodes, float)[kn]).query(P)
+    return P + np.asarray(D, float)[kn[np.asarray(j, int)], :3]
 
 
 def diagram_scale(model: Model, res, quantity: str, n: int = 9) -> float:
@@ -3505,9 +4017,12 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
         if werte_k is not None and len(werte_k) and np.isfinite(werte_k).any():
             a, b = int(np.nanargmin(werte_k)), int(np.nanargmax(werte_k))
             einheit = spn.GROESSEN[ak[0]][ak[1]][1]
-            zeilen.append(f"{spn.beschriftung(*ak, seite)}: min {spn.dezimal(werte_k[a])} "
-                          f"(Knoten {a}), max {spn.dezimal(werte_k[b])} (Knoten {b}) [{einheit}]"
-                          .replace(f" [{einheit}]: ", ": "))
+            # dieselbe Einheit wie die Legende (skalentitel, 25.09.2026)
+            f_, neu = _einheit_umrechnen(einheit, E)
+            titel = spn.beschriftung(*ak, seite).replace(f" [{einheit}]", "")
+            zeilen.append(bildtext(f"{titel}: min {spn.dezimal(werte_k[a] * f_)} "
+                                   f"(Knoten {a}), max {spn.dezimal(werte_k[b] * f_)} "
+                                   f"(Knoten {b}) [{neu}]"))
     if werte:
         i = max(werte, key=lambda k: werte[k])
         zeilen.append(f"max. Ausnutzung {werte[i]:.{E.nk_ausnutzung}f} an {_stabname(model, i)}"
@@ -3517,7 +4032,7 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
 
 def kopfzeile(model: Model, res, ergebnisname: str = "", faerbung: str = "",
               verlauf: str = "", faktor: float = 0.0, lastfall: str = "",
-              einheiten: list = None, figur: str = "") -> list:
+              einheiten: list = None, figur: str = "", unverformt: bool = False) -> list:
     """Was die Ansicht gerade zeigt - fuer die Ecke oben links.
 
     Ohne Ergebnis: das Modell und der aktive Lastfall mit seinen Lasten. Mit
@@ -3530,6 +4045,9 @@ def kopfzeile(model: Model, res, ergebnisname: str = "", faerbung: str = "",
     GZT4“. ``lastfall`` nennt mit Ergebnis den Lastfall, dessen Lasten im
     Bild stehen („Lasten LF1 [kN/m]“): im Bild einer Kombination waren es
     die des aktiven Lastfalls, ohne dass es dastand.
+
+    ``unverformt`` (25.09.2026): der Verlauf steht am unverformten System,
+    die Figur ist dann nicht verformt gezeichnet - die Zeile sagt es.
     """
     zeilen = []
     if res is None:
@@ -3559,7 +4077,7 @@ def kopfzeile(model: Model, res, ergebnisname: str = "", faerbung: str = "",
     if faerbung and not faerbung.startswith("keine"):
         teile.append(f"Färbung {faerbung}")
     if verlauf and verlauf in SCHNITTGROESSEN:
-        teile.append(f"Verlauf {verlauf}")
+        teile.append(f"Verlauf {verlauf}" + (" am unverformten System" if unverformt else ""))
     if faktor:
         teile.append(f"Überhöhung x{faktor:.1f}")
     if teile:

@@ -57,6 +57,8 @@ from .tabellen import Spalte
 from .. import ks
 from . import viewport as vp
 from . import design as dsg
+from . import fenster as fen
+from .fenster import starten as fenster_starten
 from . import layer as lyr
 from . import skizze as skg
 from .. import skizze as sk
@@ -200,6 +202,25 @@ def _stellung_fehlt_text(name: str) -> str:
 _STAENDE = itertools.count(1)
 
 
+class _UeberhoehungValidator(zf.Zahlvalidator):
+    """Wie der Zahlvalidator, dazu die Woerter „auto“, „1:1“ und „aus“ und
+    ihre Anfaenge. Bis 25.09.2026 verschluckte das Feld den Doppelpunkt:
+    „1:1“ getippt wurde Faktor 11, ohne Warnung (Gegenpruefung)."""
+
+    WOERTER = ("auto", "1:1", "aus")
+
+    def validate(self, text, pos):
+        erg = super().validate(text, pos)
+        if erg[0] == QtGui.QValidator.Acceptable:
+            return erg               # eine Zahl („1“ ist auch der Anfang von „1:1“)
+        t = str(text).strip().lower()
+        if t in self.WOERTER:
+            return QtGui.QValidator.Acceptable, text, pos
+        if t and any(w.startswith(t) for w in self.WOERTER):
+            return QtGui.QValidator.Intermediate, text, pos
+        return erg
+
+
 # ==========================================================================
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
@@ -287,6 +308,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.progress_bar.setVisible(False)
         self.progress_bar.setFixedWidth(180)
         self.statusBar().addPermanentWidget(self.progress_bar)
+        # Fensteraufteilung: Kopfzeile, Docks, Ansicht → Fenster, Kompaktstufe
+        # (Paket 5, 25.09.2026; STATIK3D_FENSTER=fest haelt den alten Stand)
+        self.anordnung = fen.Fensteranordnung(self)
         self.refresh_all()
         self._als_gespeichert()          # das leere Startmodell ist nichts Ungespeichertes
 
@@ -335,8 +359,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self.cb_ks.setCurrentText(self.ks_aktiv)
             self.cb_ks.blockSignals(False)
         m = self.model
-        self.lbl_netz.setText(f"Netz: {m.nn} Knoten · {len(m.elements)} Elemente"
-                              if m.nn else "Netz: leer")
+        # Der Modellumfang steht nur noch hier, nicht mehr in der Kopfzeile
+        # (Paket 5, 25.09.2026) - mit den Stellungen, die dort mitstanden
+        n_st = len(getattr(m, "stellungen", None) or [])
+        self.lbl_netz.setText((f"Netz: {m.nn} Knoten · {len(m.elements)} Elemente"
+                               if m.nn else "Netz: leer")
+                              + (f" · {n_st} Stellung{'en' if n_st != 1 else ''}" if n_st else ""))
         if self.analysis is not None:
             n = len(self.analysis.cases) + len(self.analysis.combinations)
             self.lbl_solver.setText(f"Solver: {n} Ergebnisse")
@@ -785,6 +813,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.sl_lagerdichte.blockSignals(True)
             self.sl_lagerdichte.setValue(10)
             self.sl_lagerdichte.blockSignals(False)
+        self._darstellungsmaske_nachziehen()
         self.redraw()
 
     def lagerdichte_einstellen(self):
@@ -799,6 +828,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.sl_lagerdichte.blockSignals(True)
             self.sl_lagerdichte.setValue(int(round(wert * 10)))
             self.sl_lagerdichte.blockSignals(False)
+        self._darstellungsmaske_nachziehen()
         self.redraw()
 
     def lagergroesse_zuruecksetzen(self):
@@ -810,6 +840,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.sl_lager.blockSignals(True)
             self.sl_lager.setValue(10)
             self.sl_lager.blockSignals(False)
+        self._darstellungsmaske_nachziehen()
         self.redraw()
 
     def _weltpunkt(self, x: int, y: int):
@@ -1459,6 +1490,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 a.blockSignals(True)
                 a.setChecked(name == art)
                 a.blockSignals(False)
+        self._glas_klickart_nachziehen()
         self.statusBar().showMessage(f"Auswahl: {art} - {self.AUSWAHLART_HINWEIS.get(art, '')}", 3000)
 
     def _objekt_umschalten(self, liste: list, name: str, was: str):
@@ -1701,7 +1733,11 @@ class MainWindow(QtWidgets.QMainWindow):
         m = self.model
         arten = self.fang_arten if getattr(self, "fang_an", False) else ("knoten",)
         if "knoten" in arten and m.nn:
-            treffer = self._naechster_am_zeiger(m.nodes)
+            # gesucht an der gezeichneten Lage (im Ergebnisbild verformt,
+            # 25.09.2026), geliefert wird der Modellpunkt
+            bild = getattr(self, "_bildlage", None)
+            treffer = self._naechster_am_zeiger(bild if bild is not None and len(bild) == m.nn
+                                                else m.nodes)
             if treffer is not None:
                 return m.nodes[treffer[0]], "knoten", treffer[0]
         if "mitte" in arten and len(m.elements):
@@ -2707,8 +2743,13 @@ class MainWindow(QtWidgets.QMainWindow):
             # Flaeche, Volumen oder Linie - und die Auswahlart folgt ihm.
             if self._objekt_unter_zeiger_waehlen():
                 return
-        if p is None:
-            # Klick ins Leere: alles abwaehlen
+        if p is None or (i < 0 and fangart == "raster" and not maske_will_punkt):
+            # Klick ins Leere: alles abwaehlen. Ein gefangener Rasterpunkt
+            # zaehlt dazu, solange keine Maske einen Punkt erwartet (02.10.2026):
+            # der Rasterfang ist von Anfang an an, und fast jeder Klick ins
+            # Leere traf einen Rasterpunkt - die Auswahl blieb stehen, die
+            # Statuszeile sagte nur „Gefangen: raster“. Aufgefallen beim
+            # Zusammenfuehren der Pakete 5, 6b und 7 (andere Bildgeometrie)
             return self._klick_ins_leere()
         if i < 0:
             # Kantenmitte oder Rasterpunkt: erst wenn eine Maske einen Punkt
@@ -3351,6 +3392,7 @@ class MainWindow(QtWidgets.QMainWindow):
         Modellieren staendig braucht. Alles als Symbol; der Klartext kommt
         beim Ueberfahren.
         """
+        from . import symbole as sym
         central = self.centralWidget()
         leiste = msk.Glasleiste(central)
         # Ganz links: was die Ansicht zeigt - Lastfall, Kombination,
@@ -3363,38 +3405,46 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cb_lastwahl.currentIndexChanged.connect(self._glas_last_gewaehlt)
         # Gleich daneben Ergebnisse an/aus (24.09.2026) - dieselbe Aktion wie
         # im Register Ergebnisse, damit beide immer gleich stehen
-        leiste.knopf(self.act_ergebnisse, "ergebnisse", "ergebnisse")
+        leiste.knopf(self.act_ergebnisse, "ergebnisse", "ergebnisse", weicht=1)
         leiste.trenner()
-        # Darstellungsart
-        for name in vp.DARSTELLUNGEN:
-            leiste.knopf(self.act_darstellung[name], vp.DARSTELLUNG_SYMBOL[name], name)
-        leiste.trenner()
-        # Was sichtbar ist
-        for a, symbol, schluessel in ((self.act_knoten, "knoten", "knoten"),
-                                      (self.act_linien, "linien", "linien"),
-                                      (self.act_staebe, "staebe", "staebe"),
-                                      (self.act_flaechen, "flaechen", "flaechen"),
-                                      (self.act_volumen, "volumen", "volumen"),
-                                      (self.act_lager, "lager", "lager"),
-                                      (self.act_edges, "netz", "netz"),
-                                      (self.act_loads, "lasten", "lasten")):
-            leiste.knopf(a, symbol, schluessel)
+        # Seit 25.09.2026 (Paket 7) je Schar ein Menueknopf statt 20 Einzel-
+        # knoepfen: die Leiste war 1133 px breit bei 1002 px Ansicht. Dieselben
+        # Aktionen wie im Ribbon; der Rang (weicht) sagt, was bei Platzmangel
+        # zuerst in die Ueberlaufliste „»“ geht - die Nebenknoepfe (ab 10)
+        # vor den Hauptknoepfen.
+        self._glas_darstellung = leiste.menueknopf(
+            "Darstellung ▾", [(name, self.act_darstellung[name], vp.DARSTELLUNG_SYMBOL[name])
+                              for name in vp.DARSTELLUNGEN], "darstellung",
+            "Darstellungsart: Voll, Transparent, verdeckte Kanten, Drahtmodell (Strg+1 … Strg+4)",
+            symbol=vp.DARSTELLUNG_SYMBOL.get(self.darstellung, "voll"), weicht=3)
+        for name, a in self.act_darstellung.items():
+            a.toggled.connect(lambda an, n=name: an and self._glas_darstellung.setIcon(
+                sym.symbol(vp.DARSTELLUNG_SYMBOL[n])))
+        # Was sichtbar ist - „Lager“ zwischen Volumen und FE-Netz wie vorher
+        leiste.menueknopf(
+            "Zeigen ▾", [("knoten", self.act_knoten, "knoten"), ("linien", self.act_linien, "linien"),
+                         ("staebe", self.act_staebe, "staebe"), ("flaechen", self.act_flaechen, "flaechen"),
+                         ("volumen", self.act_volumen, "volumen"), ("lager", self.act_lager, "lager"),
+                         ("netz", self.act_edges, "netz"), ("lasten", self.act_loads, "lasten"),
+                         # Plan Paket 6: die Lasten im Bild einer Kombination oder
+                         # Umhuellenden als Schalter hier, Vorgabe aus (02.10.2026);
+                         # dieselbe Aktion wie im Register Ergebnisse
+                         ("lasten_ergebnis", self.act_lasten_ergebnis, "lasten")],
+            "zeigen", "Was die Ansicht zeigt: Knoten, Linien, Stäbe, Flächen, Volumen, Lager, "
+                      "FE-Netz (F9), Lasten, Lasten im Ergebnisbild", symbol="ansicht", weicht=2)
         leiste.trenner()
         # Sicht: nur die Selektion, Auswahl weg, zurueck, alles, Verborgenes
-        # als Geist im Hintergrund
-        for a, symbol, schluessel in ((self.act_nur_auswahl, "sicht_nur_auswahl", "nur_auswahl"),
-                                      (self.act_auswahl_weg_sicht, "sicht_ausblenden", "ausblenden"),
-                                      (self.act_sicht_zurueck, "sicht_zurueck", "zurueck"),
-                                      (self.act_alles_zeigen, "sicht_alles", "alles"),
-                                      (self.act_geist, "sicht_geist", "geist")):
-            leiste.knopf(a, symbol, schluessel)
-        leiste.knopf(self.act_klug, "auswahl_klug", "auswahl_klug")
+        # als Geist im Hintergrund - Nebenknoepfe, sie weichen zuerst
+        for rang, (a, symbol, schluessel) in enumerate((
+                (self.act_nur_auswahl, "sicht_nur_auswahl", "nur_auswahl"),
+                (self.act_auswahl_weg_sicht, "sicht_ausblenden", "ausblenden"),
+                (self.act_sicht_zurueck, "sicht_zurueck", "zurueck"),
+                (self.act_alles_zeigen, "sicht_alles", "alles"),
+                (self.act_geist, "sicht_geist", "geist"))):
+            leiste.knopf(a, symbol, schluessel, weicht=10 + rang)
         leiste.trenner()
-        # Fang: Hauptschalter (die Arten stehen im Ribbon)
-        leiste.knopf(self.act_fang, "fang", "fang")
-        leiste.trenner()
-        # Auswahlart: was ein Klick oder ein Fenster trifft - ein Knopf je Art,
-        # genau einer ist an. "Netz" trifft einzelne Elemente.
+        # Auswahlart: was ein Klick oder ein Fenster trifft - genau eine ist
+        # an, die Beschriftung nennt sie. "Netz" trifft einzelne Elemente.
         self.act_auswahlart = {}
         gruppe = QtGui.QActionGroup(self)
         gruppe.setExclusive(True)
@@ -3406,8 +3456,18 @@ class MainWindow(QtWidgets.QMainWindow):
             a.triggered.connect(lambda _c=False, n=art: self.auswahlart_setzen(n))
             gruppe.addAction(a)
             self.act_auswahlart[art] = a
-            leiste.knopf(a, self.AUSWAHLART_SYMBOL[art], f"auswahl_{art}")
-        # Ganz rechts: alles deselektieren - der Griff, der jede Auswahl beendet
+        self._glas_klickart = leiste.menueknopf(
+            f"Klick wählt: {self.auswahlart} ▾",
+            [(f"auswahl_{art}", self.act_auswahlart[art], self.AUSWAHLART_SYMBOL[art])
+             for art in self.AUSWAHLARTEN], "klickart",
+            "Was ein Klick oder ein Auswahlfenster in der Ansicht trifft",
+            symbol=self.AUSWAHLART_SYMBOL.get(self.auswahlart, "fang_knoten"), weicht=4)
+        leiste.knopf(self.act_klug, "auswahl_klug", "auswahl_klug", weicht=15)
+        # Fang: Hauptschalter (die Arten stehen im Ribbon)
+        leiste.knopf(self.act_fang, "fang", "fang", weicht=5)
+        # „»“ vor dem letzten Knopf; ganz rechts: alles deselektieren - der
+        # Griff, der jede Auswahl beendet
+        leiste.ueberlauf_knopf()
         leiste.trenner()
         leiste.knopf(self.act_auswahl_weg, "auswahl_weg", "auswahl_weg")
         self.cb_auswahlart_glas = None
@@ -3419,6 +3479,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.glasleiste = leiste
         self.ansichtswuerfel = wuerfel
         self.ansichtsrand = msk.Ansichtsrand(central, leiste, wuerfel)
+        # nie breiter als die Ansicht: vor jedem Platzieren einpassen
+        leiste.an_ansicht_binden(self.ansichtsrand.platzieren)
         # Der Wuerfel dreht sich mit der Ansicht: ein leichter Takt schaut
         # nach, ob sich die Kamera bewegt hat, und zeichnet ihn dann neu.
         self._kamera_stand = None
@@ -3426,6 +3488,96 @@ class MainWindow(QtWidgets.QMainWindow):
         self._wuerfel_takt.setInterval(120)
         self._wuerfel_takt.timeout.connect(self._wuerfel_nachfuehren)
         self._wuerfel_takt.start()
+
+    def _glas_klickart_nachziehen(self):
+        """„Klick wählt: … ▾“ in der Glasleiste nennt die Auswahlart - auch
+        wenn sie aus dem Ribbon, dem Kontextmenue oder einer Maske kommt."""
+        knopf = getattr(self, "_glas_klickart", None)
+        if knopf is None:
+            return
+        from . import symbole as sym
+        symbol = sym.symbol(self.AUSWAHLART_SYMBOL.get(self.auswahlart, "fang_knoten"))
+        knopf.setText(f"Klick wählt: {self.auswahlart} ▾")
+        knopf.setIcon(symbol)
+        # Auch Titel und Symbol des Menues (25.09.2026): steht der Knopf in
+        # der Ueberlaufliste „»“, ist das Untermenue die einzige Anzeige der
+        # Auswahlart - es behielt bisher „Klick wählt: Knoten“.
+        if knopf.menu() is not None:
+            knopf.menu().setTitle(f"Klick wählt: {self.auswahlart}")
+            knopf.menu().setIcon(symbol)
+
+    def maske_darstellung(self):
+        """Rechte Maske „Darstellung“: Symbolgroesse der Lager und Lagerdichte.
+
+        Die beiden Schieber standen bis 25.09.2026 im Register Ansicht (Gruppe
+        „Symbole“, 666 px) - dort kuerzten sie zusammen mit 38 weiteren
+        Knoepfen jede Beschriftung. Hier wirken sie wie vorher sofort; die
+        Schieber des Fensters (sl_lager, sl_lagerdichte) bleiben die Quelle
+        des Wertes und ziehen die der Maske mit."""
+        maske = msk.Maske("Darstellung", [], knopf="Schließen",
+                          hinweis="Größe der Lagersymbole und Dichte der Symbole auf Linien- "
+                                  "und Flächenlagern – wirkt sofort auf die Ansicht.")
+        feld = QtWidgets.QWidget()
+        gitter = QtWidgets.QGridLayout(feld)
+        gitter.setContentsMargins(0, 0, 0, 0)
+        gitter.setHorizontalSpacing(8)
+        schieber = {}
+        for zeile, (quelle, text, hinweis, zurueck) in enumerate((
+                (self.sl_lager, "Lagergröße", "Größe aller Lagersymbole (1,0 = Grundgröße)",
+                 self.lagergroesse_zuruecksetzen),
+                (self.sl_lagerdichte, "Lagerdichte", "Wie dicht die Symbole der Linien- und "
+                                                     "Flächenlager über Linie und Fläche stehen",
+                 self.lagerdichte_zuruecksetzen))):
+            lb = QtWidgets.QLabel(text)
+            lb.setToolTip(hinweis)
+            sl = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+            sl.setRange(quelle.minimum(), quelle.maximum())
+            sl.setValue(quelle.value())
+            sl.setToolTip(hinweis)
+            wert = QtWidgets.QLabel(zl.zahl_text(quelle.value() / 10.0))
+            wert.setMinimumWidth(28)
+            sl.valueChanged.connect(quelle.setValue)
+            sl.valueChanged.connect(lambda v, lw=wert: lw.setText(zl.zahl_text(v / 10.0)))
+
+            def mitziehen(v, s=sl):
+                if s.value() != v:
+                    s.blockSignals(True)
+                    s.setValue(v)
+                    s.blockSignals(False)
+            quelle.valueChanged.connect(mitziehen)
+            knopf = QtWidgets.QPushButton("Zurücksetzen")
+            knopf.setToolTip(f"{text} auf 1,0")
+            knopf.clicked.connect(zurueck)
+            gitter.addWidget(lb, zeile, 0)
+            gitter.addWidget(sl, zeile, 1)
+            gitter.addWidget(wert, zeile, 2)
+            gitter.addWidget(knopf, zeile, 3)
+            schieber[text] = (sl, wert, quelle, mitziehen)
+        maske.inhalt_einfuegen(feld)
+        maske.schieber = schieber
+
+        def trennen():
+            for _sl, _w, quelle, fn in schieber.values():
+                try:
+                    quelle.valueChanged.disconnect(fn)
+                except (RuntimeError, TypeError):
+                    pass
+        maske.destroyed.connect(lambda *_: trennen())
+        maske.angewendet.connect(lambda _w: self.maskenrand.schliessen())
+        return self.maske_erzeugen(maske)
+
+    def _darstellungsmaske_nachziehen(self):
+        """Nach „Zurücksetzen“ (Signale des Fensterschiebers gesperrt) die
+        Schieber und Zahlen einer offenen Maske „Darstellung“ nachziehen."""
+        for mk in self.findChildren(msk.Maske):
+            for sl, wert, quelle, _fn in (getattr(mk, "schieber", None) or {}).values():
+                try:
+                    sl.blockSignals(True)
+                    sl.setValue(quelle.value())
+                    sl.blockSignals(False)
+                    wert.setText(zl.zahl_text(quelle.value() / 10.0))
+                except RuntimeError:
+                    pass
 
     def _kamera_matrix(self):
         """Die 3x3-Drehmatrix Welt -> Bild der Kamera - fuer den Wuerfel."""
@@ -3687,14 +3839,15 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # -- Geometrie ---------------------------------------------------
         r = rb.register("Geometrie")
-        g = r.gruppe("Knoten")
+        # Knoten und Linien in einer Gruppe, ihre zwei kleinen Befehle in einer
+        # Spalte (25.09.2026, Paket 7: zwei Gruppen brauchten 410 px)
+        g = r.gruppe("Knoten / Linien")
         g.gross("Knoten", "•", self.maske_knoten, "",
                 "Knoten über Koordinaten anlegen oder in der Ansicht klicken")
-        g.klein("Knoten löschen", self.delete_nodes,
-                hinweis="Die gewählten Knoten mit den daran hängenden Elementen entfernen - Knoten, die eine Linie braucht, bleiben")
-        g = r.gruppe("Linien")
         g.gross("Linie", "◜", self.maske_linie, "",
                 "Polylinie, Bogen, Kreis, Spline oder Parabel")
+        g.klein("Knoten löschen", self.delete_nodes,
+                hinweis="Die gewählten Knoten mit den daran hängenden Elementen entfernen - Knoten, die eine Linie braucht, bleiben")
         g.klein("Linie aus Knoten…", self.add_linie,
                 hinweis="Aus den ausgewählten Knoten eine Linie machen")
         # Aendern der Auswahl - dieselben Befehle wie im Rechtsklickmenue
@@ -3723,17 +3876,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 "beide verteilen. Die Bohrung wird über ihre ganze Länge angepasst, in jedem "
                 "Bauteil, durch das sie geht - sonst bliebe ein Kegel stehen")
         g = r.gruppe("Auswahl in der Ansicht")
+        # Seit 25.09.2026 (Paket 7) in der Spalte der kleinen Knoepfe, die
+        # Auswahlfelder so hoch wie diese: „Geometrie“ brauchte 1748 px und
+        # kuerzte bei 1366 px 13 Beschriftungen
         self.cb_auswahlart = QtWidgets.QComboBox()
         self.cb_auswahlart.addItems(self.AUSWAHLARTEN)
-        self.cb_auswahlart.setMinimumWidth(110)
-        self.cb_auswahlart.setToolTip("Was ein Klick in der Ansicht trifft")
+        self.cb_auswahlart.setMinimumWidth(96)
+        self.cb_auswahlart.setToolTip("Was ein Klick in der Ansicht trifft (wie „Klick wählt“ "
+                                      "in der Leiste über der Ansicht)")
         self.cb_auswahlart.currentTextChanged.connect(self.auswahlart_setzen)
-        g.widget(self.cb_auswahlart)
+        g.in_spalte(self.cb_auswahlart)
         g = r.gruppe("Koordinatensystem")
         self.cb_ks = QtWidgets.QComboBox()
         self.cb_ks.setMinimumWidth(120)
         self.cb_ks.currentTextChanged.connect(self.ks_waehlen)
-        g.widget(self.cb_ks)
+        g.in_spalte(self.cb_ks)
         g.klein("Neues KS…", self.ks_neu,
                 hinweis="Ein Koordinatensystem über Ursprung und Drehwinkel anlegen - kartesisch, zylindrisch oder sphärisch")
         g.klein("Aus drei Knoten", self.ks_aus_auswahl,
@@ -3741,9 +3898,10 @@ class MainWindow(QtWidgets.QMainWindow):
         g = r.gruppe("Arbeitsebene")
         self.cb_ebene = QtWidgets.QComboBox()
         self.cb_ebene.addItems(list(ks.EBENEN))
+        self.cb_ebene.setToolTip("Arbeitsebene, auf der Klicks in die Ansicht Punkte setzen")
         self.cb_ebene.currentTextChanged.connect(
             lambda t: self.arbeitsebene_setzen(ebene=t))
-        g.widget(self.cb_ebene)
+        g.in_spalte(self.cb_ebene)
         self.sp_raster = QtWidgets.QDoubleSpinBox()
         self.sp_raster.setRange(0.0, 100.0)
         self.sp_raster.setSingleStep(0.1)
@@ -3752,9 +3910,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sp_raster.setToolTip("Rasterweite der Arbeitsebene (0 = kein Raster)")
         self.sp_raster.valueChanged.connect(
             lambda v: self.arbeitsebene_setzen(raster=v))
-        g.widget(self.sp_raster)
-        self.act_fang = g.schalter("Fang", self.fang_umschalten, True,
-                                   "Fang ein- und ausschalten", kuerzel="F3")
+        g.in_spalte(self.sp_raster)
+        g = r.gruppe("Fang")
+        # Hauptschalter gross, die acht Fangarten in einem Menue - jede mit
+        # ihrer Taste wie vorher (vorher drei Spalten, 360 px)
+        self.act_fang = g.gross("Fang", "", None, "F3", "Fang ein- und ausschalten", symbol="fang")
+        self.act_fang.setCheckable(True)
+        self.act_fang.setChecked(True)
+        self.act_fang.toggled.connect(lambda z: self.fang_umschalten(z))
+        menu = g.menueknopf("Fangarten ▾", "Was gefangen wird: Knoten, Kantenmitte, Lot, Raster, "
+                                           "Linien, Stäbe, Flächen, Volumen (Umschalt+F1 … F8)",
+                            symbol="fang_knoten")
         # Was gefangen wird, muss man beim Modellieren staendig umstellen -
         # darum je Fangart ein eigener Schalter mit Taste, nicht ein Dialog.
         self.act_fangart = {}
@@ -3767,9 +3933,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 ("stab", "auf Stäbe", "Shift+F5", "fang_stab"),
                 ("flaeche", "auf Flächen", "Shift+F6", "fang_flaeche"),
                 ("volumen", "auf Volumen", "Shift+F7", "fang_volumen")):
-            a = g.schalter(text, lambda z, k=art: self.fangart_umschalten(k, z),
-                           art in self.fang_arten, f"Fang {text}",
-                           symbol=symbol, kuerzel=kuerzel)
+            a = g.eintrag(menu, text, lambda z, k=art: self.fangart_umschalten(k, z),
+                          kuerzel, f"Fang {text}", symbol=symbol, schalter=True,
+                          an=art in self.fang_arten)
             self.act_fangart[art] = a
 
         # -- Struktur ----------------------------------------------------
@@ -3781,41 +3947,48 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Zwei Knoten anklicken oder ihre Nummern eintragen")
         g.gross("Stabzug", "╱", self.maske_stabzug,
                 hinweis="Stabzug zwischen zwei Punkten, in n Elemente geteilt")
-        g.klein("Stäbe für Nachweise", lambda: self.maske_zeigen("Nachweise"),
-                hinweis="Stäbe mit Knick- und Kipplängen")
-        g.klein("Stäbe automatisch erkennen", self.auto_members,
-                hinweis="Zusammenhängende Stabelemente gleicher Richtung zu Stäben mit Nachweis zusammenfassen")
-        g.klein("Querschnitt zuweisen…", lambda: self.zuweisen_zeigen("querschnitt"),
-                hinweis="Querschnitt und Werkstoff an die gewählten Elemente - im Register "
-                        "„Auswahl“, das erscheint, sobald etwas gewählt ist")
+        # beide Befehle zu den Staeben mit Nachweis in einem Menue - die Spalte
+        # mit „Stäbe automatisch erkennen“ war 192 px breit (25.09.2026)
+        menu = g.menueknopf("Nachweisstäbe ▾", "Stäbe mit Nachweis: Maske mit Knick- und "
+                                              "Kipplängen, automatisch erkennen", symbol="staebe")
+        g.eintrag(menu, "Stäbe für Nachweise", lambda: self.maske_zeigen("Nachweise"),
+                  hinweis="Stäbe mit Knick- und Kipplängen")
+        g.eintrag(menu, "Stäbe automatisch erkennen", self.auto_members,
+                  hinweis="Zusammenhängende Stabelemente gleicher Richtung zu Stäben mit Nachweis zusammenfassen")
+        # Doppelungen nur noch in der Suche (25.09.2026, Paket 7): Zuweisen und
+        # Gelenke setzen fuehren nur ins Kontextregister „Auswahl“, Vernetzen
+        # ist Netz → Vernetzen, die Tabellen haben unten ihren Reiter
+        g.nur_suche("Querschnitt zuweisen…", lambda: self.zuweisen_zeigen("querschnitt"),
+                    hinweis="Querschnitt und Werkstoff an die gewählten Elemente - im Register "
+                            "„Auswahl“, das erscheint, sobald etwas gewählt ist")
         g = r.gruppe("Flächen")
         g.gross("Schale", "◫", self.maske_schale, "",
                 "Drei oder vier Knoten in der Ansicht anklicken")
         g.gross("Fläche aus Linien", "▱", self.add_flaeche_aus_auswahl, "",
                 "Die gewählten Linien beranden die Fläche - Randlinien auch in der Maske anklicken")
         g.klein("Rechteckplatte", self.maske_platte, hinweis="Rechteckplatte aus Schalen, gleich vernetzt")
-        g.klein("Flächen vernetzen", self.geometrie_vernetzen,
-                hinweis="Die gewählten - sonst alle - Flächen nach den Netzeinstellungen vernetzen")
+        g.nur_suche("Flächen vernetzen", self.geometrie_vernetzen, symbol="vernetzen",
+                    hinweis="Die gewählten - sonst alle - Flächen nach den Netzeinstellungen vernetzen")
         g.klein("Flächen verschneiden", self.flaechen_verschneiden,
                 hinweis="Zwei gewählte Flächen verschneiden: die Schnittlinie wird als Linie mit Knoten "
                         "angelegt - auch bei gewölbten Flächen und Spline-Rändern")
-        g.klein("Dicke zuweisen…", lambda: self.zuweisen_zeigen("dicke"),
-                hinweis="Schalendicke und Werkstoff an die gewählten Flächenelemente - im Register "
-                        "„Auswahl“, das erscheint, sobald etwas gewählt ist")
+        g.nur_suche("Dicke zuweisen…", lambda: self.zuweisen_zeigen("dicke"),
+                    hinweis="Schalendicke und Werkstoff an die gewählten Flächenelemente - im Register "
+                            "„Auswahl“, das erscheint, sobald etwas gewählt ist")
         g = r.gruppe("Volumen")
         g.gross("Volumen aus Flächen", "▣", self.add_koerper_aus_auswahl, "",
                 "Die gewählten Flächen beranden den Volumenkörper - Randflächen auch in der Maske anklicken")
         g.klein("Quader", self.maske_quader, hinweis="Quader, gleich vernetzt")
-        g.klein("Volumen vernetzen", self.geometrie_vernetzen,
-                hinweis="Die gewählten - sonst alle - Volumenkörper nach den Netzeinstellungen vernetzen")
+        g.nur_suche("Volumen vernetzen", self.geometrie_vernetzen, symbol="vernetzen",
+                    hinweis="Die gewählten - sonst alle - Volumenkörper nach den Netzeinstellungen vernetzen")
         g = r.gruppe("Gelenke")
         g.gross("Gelenk", "○", self.add_hinge,
                 hinweis="Stabendgelenk anlegen: je Freiheitsgrad biegesteif, gelenkig oder Feder "
                         "- rechts in der Maske")
-        g.klein("Gelenke setzen…", lambda: self.zuweisen_zeigen("gelenke"),
-                hinweis="Gelenke an den Stabenden der gewählten Elemente setzen")
-        g.klein("Tabelle Gelenke", lambda: self.tabelle_zeigen("Gelenke"),
-                hinweis="Alle Gelenke unten in der Tabelle")
+        g.nur_suche("Gelenke setzen…", lambda: self.zuweisen_zeigen("gelenke"),
+                    hinweis="Gelenke an den Stabenden der gewählten Elemente setzen")
+        g.nur_suche("Tabelle Gelenke", lambda: self.tabelle_zeigen("Gelenke"), symbol="tabelle",
+                    hinweis="Alle Gelenke unten in der Tabelle")
         g = r.gruppe("Eigenschaften")
         g.gross("Querschnitte", "⌶", lambda: self.tabelle_zeigen("Querschnitte"),
                 hinweis="Querschnitte aus der Profildatenbank")
@@ -3823,6 +3996,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Werkstoffe und ihre Kennwerte")
         g.klein("Schalendicken", lambda: self.tabelle_zeigen("Dicken"),
                 hinweis="Tabelle der Schalendicken - dort anlegen und ändern")
+        # Bleibt ein Knopf (Nachbesserung 25.09.2026): die Befehlssuche fuehrt
+        # Loeschbefehle nie aus, sondern nennt den Knopf in Register › Gruppe -
+        # nur in der Suche fuehrte „Elemente löschen“ darum ins Leere. Unter
+        # „Schalendicken“ macht er das Register 16 px breiter (1214 statt
+        # 1198 px offscreen gemessen), es passt weiter bei 1280 px.
         g.klein("Elemente löschen", self.delete_elements,
                 hinweis="Alle Elemente entfernen, deren Knoten sämtlich gewählt sind")
 
@@ -3858,8 +4036,8 @@ class MainWindow(QtWidgets.QMainWindow):
                         "wird bei jeder Berechnung nachgewiesen.")
         g.klein("Anschlüsse zeigen", self.show_joints,
                 hinweis="Alle Anschlüsse mit ihren Nachweisen im Klartext")
-        g.klein("Tabelle Anschlüsse", lambda: self.tabelle_zeigen("Anschlüsse"),
-                hinweis="Alle Anschlüsse mit ihren Nachweisen unten in der Tabelle")
+        g.nur_suche("Tabelle Anschlüsse", lambda: self.tabelle_zeigen("Anschlüsse"), symbol="tabelle",
+                    hinweis="Alle Anschlüsse mit ihren Nachweisen unten in der Tabelle")
         g.klein("Anschluss löschen", self.delete_joint,
                 hinweis="Den in der Tabelle gewählten Anschluss entfernen")
 
@@ -3889,26 +4067,28 @@ class MainWindow(QtWidgets.QMainWindow):
         g.gross("Temperatur", "", self.maske_temperaturlast, "",
                 "Temperaturänderung auf gewählte Stäbe, Flächen oder Volumen",
                 symbol="temperatur")
-        g.gross("Zwangsverformung", "", self.maske_zwangsverformung, "",
-                "Vorgegebene Verschiebung oder Verdrehung an gewählten gelagerten "
-                "Knoten (Setzung)", symbol="zwang")
-        g.gross("Vorspannung", "", self.maske_vorspannung, "",
-                "Vorspannkraft in gewählten Stäben (Zugstange, Seil, Anker) oder Volumen "
-                "(Schraube) - als Anfangsdehnung: das Bauteil trägt F_v als Zug und klemmt "
-                "die Umgebung", symbol="lasten")
-        g.gross("Übermaß", "", self.maske_uebermass, "",
-                "Presspassung als Last: Übermaß einer Kontaktfuge (Passstift, "
-                "Unterlegblech). Daraus entstehen Pressspannung und - über den "
-                "Reibbeiwert der Fuge - Schubtragfähigkeit", symbol="lasten")
-        g.gross("Spiel geben", "", self.maske_spiel, "",
-                "Gewählte zylindrische Volumen (Passstifte, Bolzen) geometrisch um das "
-                "Durchmesserspiel verkleinern oder gewählte ebene Flächen um einen Spalt nach "
-                "innen versetzen - erst von den Nachbarn getrennt, dann neu vernetzt: das Spiel "
-                "steht im Modell, ohne Sonderbedingung an der Fuge", symbol="lasten")
-        g.gross("Passung", "", self.maske_passung, "",
-                "Spiel, Lochleibungsgrenze und Randabminderung für alle Kontaktfugen der "
-                "gewählten Volumen auf einmal (Passstifte, Bolzen): Einstellungen, die "
-                "RFEM nicht kennt und die hier nach dem Import gesetzt werden", symbol="lasten")
+        # Die selteneren Lasten in zwei Spalten kleiner Knoepfe (25.09.2026,
+        # Paket 7): neun grosse Knoepfe brauchten 750 px, das Register 1376 px
+        g.klein("Zwangsverformung", self.maske_zwangsverformung,
+                hinweis="Vorgegebene Verschiebung oder Verdrehung an gewählten gelagerten "
+                        "Knoten (Setzung)", symbol="zwang")
+        g.klein("Vorspannung", self.maske_vorspannung,
+                hinweis="Vorspannkraft in gewählten Stäben (Zugstange, Seil, Anker) oder Volumen "
+                        "(Schraube) - als Anfangsdehnung: das Bauteil trägt F_v als Zug und klemmt "
+                        "die Umgebung", symbol="lasten")
+        g.klein("Übermaß", self.maske_uebermass,
+                hinweis="Presspassung als Last: Übermaß einer Kontaktfuge (Passstift, "
+                        "Unterlegblech). Daraus entstehen Pressspannung und - über den "
+                        "Reibbeiwert der Fuge - Schubtragfähigkeit", symbol="lasten")
+        g.klein("Spiel geben", self.maske_spiel,
+                hinweis="Gewählte zylindrische Volumen (Passstifte, Bolzen) geometrisch um das "
+                        "Durchmesserspiel verkleinern oder gewählte ebene Flächen um einen Spalt nach "
+                        "innen versetzen - erst von den Nachbarn getrennt, dann neu vernetzt: das Spiel "
+                        "steht im Modell, ohne Sonderbedingung an der Fuge", symbol="lasten")
+        g.klein("Passung", self.maske_passung,
+                hinweis="Spiel, Lochleibungsgrenze und Randabminderung für alle Kontaktfugen der "
+                        "gewählten Volumen auf einmal (Passstifte, Bolzen): Einstellungen, die "
+                        "RFEM nicht kennt und die hier nach dem Import gesetzt werden", symbol="lasten")
         g = r.gruppe("Generierer")
         g.gross("Wasserdruck", "", lambda: self.maske_wasserdruck(), "",
                 "Wasserdruck auf einen Verschluss je Situation: Ober- und Unterwasser, "
@@ -3923,8 +4103,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 hinweis="Eigengewicht im aktiven Lastfall ein- und ausschalten")
         g.klein("Stablast auf Elemente", lambda: self.maske_zeigen("Lager/Lasten"),
                 hinweis="Streckenlast unmittelbar auf Stabelemente (Elementnummern)")
-        g.klein("Tabelle Lasten", lambda: self.tabelle_zeigen("Lasten"),
-                hinweis="Alle Lasten des Modells unten in der Tabelle")
+        g.nur_suche("Tabelle Lasten", lambda: self.tabelle_zeigen("Lasten"), symbol="tabelle",
+                    hinweis="Alle Lasten des Modells unten in der Tabelle")
 
         # -- Netz --------------------------------------------------------
         r = rb.register("Netz")
@@ -4005,61 +4185,82 @@ class MainWindow(QtWidgets.QMainWindow):
         g = r.gruppe("Einstellungen")
         g.gross("Konfiguration", "⚙", self.design_settings,
                 hinweis="Teilsicherheitsbeiwerte und Nachweisstellen")
-        g.klein("Stäbe und Knicklängen…", lambda: self.maske_zeigen("Nachweise"),
-                hinweis="Maske Nachweise: Stäbe mit Knick- und Kipplängen, Beiwerten und Kerbfall")
         g = r.gruppe("Knicklängen")
         g.gross("Aus Knickfigur", "β", self.do_knicklaengen,
                 hinweis="Knicklängenbeiwerte β aus Verzweigungslastfaktor und Eigenform: "
                         "N_cr = α_cr·|N_Ed|, L_cr = π·√(EI/N_cr); die Knickfigur sagt, um "
                         "welche Achse und ob der Stab beteiligt ist")
+        # „Stäbe und Knicklängen…“ stand allein unter Einstellungen - hier
+        # teilt es sich die Spalte mit „β übernehmen“ (25.09.2026, Paket 7)
+        g.klein("Stäbe und Knicklängen…", lambda: self.maske_zeigen("Nachweise"),
+                hinweis="Maske Nachweise: Stäbe mit Knick- und Kipplängen, Beiwerten und Kerbfall")
         g.klein("β übernehmen", self.knicklaengen_uebernehmen,
                 hinweis="Die aus der Knickfigur ermittelten Beiwerte β in die Stäbe schreiben")
-        g.klein("Tabelle Knicklängen", lambda: self.tabelle_zeigen("Knicklängen"),
-                hinweis="Die Knicklängenermittlung unten in der Tabelle")
+        g.nur_suche("Tabelle Knicklängen", lambda: self.tabelle_zeigen("Knicklängen"), symbol="tabelle",
+                    hinweis="Die Knicklängenermittlung unten in der Tabelle")
         g = r.gruppe("Schwingung")
         g.gross("Verschluss", "f₁", lambda: self.maske_schwingung(),
                 hinweis="Strömungsinduzierte Schwingungen eines Verschlusses aus dem Wasserdruck: "
                         "Eigenfrequenzen in Luft und im Wasser (hydrodynamische Masse nach "
                         "Westergaard), Wirbelablösung (Strouhal), reduzierte Geschwindigkeit, "
                         "Antwort auf die Druckschwankung und Ermüdung")
-        g.klein("Tabelle Schwingung", lambda: self.tabelle_zeigen("Schwingung"),
-                hinweis="Eigenfrequenzen, Wirbelablösung und Beurteilung unten in der Tabelle")
+        g.nur_suche("Tabelle Schwingung", lambda: self.tabelle_zeigen("Schwingung"), symbol="tabelle",
+                    hinweis="Eigenfrequenzen, Wirbelablösung und Beurteilung unten in der Tabelle")
 
-        # -- Ergebnisse --------------------------------------------------
+        # Je Nachweisobjekt ein grosser Knopf mit Menue „Neu | Ändern |
+        # Löschen | Tabelle“ (25.09.2026, Paket 7) statt eines grossen und
+        # drei kleiner Knoepfe: das Register brauchte 2138 px und kuerzte bei
+        # 1920 px „Na…C3“. In der Suche heissen die Eintraege wie vorher
+        # („Beulfeld ändern…“), im Menue kurz.
+        def nachweisobjekt(g, knopf, symbol, eintraege):
+            menu = g.menueknopf(f"{knopf} ▾", eintraege[0][3], symbol)
+            for (name, fn, anzeige, hinweis) in eintraege:
+                g.eintrag(menu, name, fn, hinweis=hinweis, anzeige=anzeige)
+
         g = r.gruppe("Verformung (GZG)")
-        g.gross("Verformung", "↧", self.add_verformungsgrenze,
-                hinweis="Grenzwert der Verformung festlegen: Durchbiegung eines Stabes, "
-                        "Verschiebung eines Knotens oder zweier Knoten gegeneinander")
-        g.klein("Tabelle Verformungen", lambda: self.tabelle_zeigen("Verformungen"),
-                hinweis="Die Verformungsnachweise (GZG) unten in der Tabelle")
-        g.klein("Grenze ändern…", self.edit_verformungsgrenze,
-                hinweis="Den in der Tabelle gewählten Verformungsnachweis ändern")
-        g.klein("Grenze löschen", self.delete_verformungsgrenze,
-                hinweis="Den in der Tabelle gewählten Verformungsnachweis entfernen")
+        nachweisobjekt(g, "Verformung", "verformung", [
+            ("Verformung", self.add_verformungsgrenze, "Neu …",
+             "Grenzwert der Verformung festlegen: Durchbiegung eines Stabes, "
+             "Verschiebung eines Knotens oder zweier Knoten gegeneinander"),
+            ("Grenze ändern…", self.edit_verformungsgrenze, "Ändern …",
+             "Den in der Tabelle gewählten Verformungsnachweis ändern"),
+            ("Grenze löschen", self.delete_verformungsgrenze, "Löschen",
+             "Den in der Tabelle gewählten Verformungsnachweis entfernen"),
+            ("Tabelle Verformungen", lambda: self.tabelle_zeigen("Verformungen"), "Tabelle",
+             "Die Verformungsnachweise (GZG) unten in der Tabelle")])
         g = r.gruppe("Beulen (EC3-1-5)")
-        g.gross("Beulfeld", "▦", self.add_beulfeld,
-                hinweis="Die gewählten Flächenelemente zu einem Beulfeld "
-                        "zusammenfassen und nach Abschnitt 10 nachweisen")
-        g.klein("Tabelle Beulfelder", lambda: self.tabelle_zeigen("Beulfelder"),
-                hinweis="Die Beulnachweise unten in der Tabelle")
-        g.klein("Beulfeld ändern…", self.edit_beulfeld,
-                hinweis="Das in der Tabelle gewählte Beulfeld ändern")
-        g.klein("Beulfeld löschen", self.delete_beulfeld,
-                hinweis="Das in der Tabelle gewählte Beulfeld entfernen")
-        g.gross("Volumenbereich", "◧", self.add_volumenbereich,
-                hinweis="Die gewählten Volumenelemente zu einem Bereich für den "
-                        "Spannungsnachweis zusammenfassen (6.2.1(5))")
-        g.klein("Tabelle Volumen", lambda: self.tabelle_zeigen("Volumen"),
-                hinweis="Die Spannungsnachweise der Volumenbereiche unten in der Tabelle")
-        g.klein("Volumenbereich ändern…", self.edit_volumenbereich,
-                hinweis="Den in der Tabelle gewählten Volumenbereich ändern")
-        g.klein("Volumenbereich löschen", self.delete_volumenbereich,
-                hinweis="Den in der Tabelle gewählten Volumenbereich entfernen")
-        g.gross("Lasteinleitung", "↡", self.add_lasteinleitung,
-                hinweis="Beulnachweis des Stegs unter einer örtlich eingeleiteten "
-                        "Querkraft (Abschnitt 6)")
-        g.klein("Tabelle Lasteinleitung", lambda: self.tabelle_zeigen("Lasteinleitung"),
-                hinweis="Die Nachweise der Lasteinleitung unten in der Tabelle")
+        nachweisobjekt(g, "Beulfeld", "beulen", [
+            ("Beulfeld", self.add_beulfeld, "Neu …",
+             "Die gewählten Flächenelemente zu einem Beulfeld "
+             "zusammenfassen und nach Abschnitt 10 nachweisen"),
+            ("Beulfeld ändern…", self.edit_beulfeld, "Ändern …",
+             "Das in der Tabelle gewählte Beulfeld ändern"),
+            ("Beulfeld löschen", self.delete_beulfeld, "Löschen",
+             "Das in der Tabelle gewählte Beulfeld entfernen"),
+            ("Tabelle Beulfelder", lambda: self.tabelle_zeigen("Beulfelder"), "Tabelle",
+             "Die Beulnachweise unten in der Tabelle")])
+        nachweisobjekt(g, "Volumenbereich", "volumen", [
+            ("Volumenbereich", self.add_volumenbereich, "Neu …",
+             "Die gewählten Volumenelemente zu einem Bereich für den "
+             "Spannungsnachweis zusammenfassen (6.2.1(5))"),
+            ("Volumenbereich ändern…", self.edit_volumenbereich, "Ändern …",
+             "Den in der Tabelle gewählten Volumenbereich ändern"),
+            ("Volumenbereich löschen", self.delete_volumenbereich, "Löschen",
+             "Den in der Tabelle gewählten Volumenbereich entfernen"),
+            ("Tabelle Volumen", lambda: self.tabelle_zeigen("Volumen"), "Tabelle",
+             "Die Spannungsnachweise der Volumenbereiche unten in der Tabelle")])
+        # Ändern und Löschen gab es bisher nur unter der Tabelle - jetzt wie
+        # bei den anderen Nachweisobjekten auch hier
+        nachweisobjekt(g, "Lasteinleitung", "last", [
+            ("Lasteinleitung", self.add_lasteinleitung, "Neu …",
+             "Beulnachweis des Stegs unter einer örtlich eingeleiteten "
+             "Querkraft (Abschnitt 6)"),
+            ("Lasteinleitung ändern…", self.edit_lasteinleitung, "Ändern …",
+             "Die in der Tabelle gewählte Lasteinleitung ändern"),
+            ("Lasteinleitung löschen", self.delete_lasteinleitung, "Löschen",
+             "Die in der Tabelle gewählte Lasteinleitung entfernen"),
+            ("Tabelle Lasteinleitung", lambda: self.tabelle_zeigen("Lasteinleitung"), "Tabelle",
+             "Die Nachweise der Lasteinleitung unten in der Tabelle")])
 
         r = rb.register("Ergebnisse")
         g = r.gruppe("Auswahl")
@@ -4087,11 +4288,13 @@ class MainWindow(QtWidgets.QMainWindow):
             "ins Ergebnisbild – oben links steht, welcher Lastfall es ist. Das "
             "Ergebnis eines Lastfalls zeigt immer seine eigenen Lasten (Schalter "
             "„Lasten“ im Register Ansicht)", symbol="lasten")
-        g = r.gruppe("Tabellen")
+        g = r.gruppe("Tabellen", sichtbar=False)
+        # Die Tabellen haben unten ihre Reiter: im Ribbon waren das sechs
+        # Doppelungen - die Suche findet sie weiter (25.09.2026, Paket 7)
         for name in ("Stabkräfte", "Auflagerkräfte", "Umhüllende",
                      "Nachweise EC3", "Ermüdung", "Kontakt"):
-            g.klein(f"Tabelle {name}", lambda n=name: self.tabelle_zeigen(n),
-                    hinweis=f"Tabelle {name} unten zeigen")
+            g.nur_suche(f"Tabelle {name}", lambda n=name: self.tabelle_zeigen(n), symbol="tabelle",
+                        hinweis=f"Tabelle {name} unten zeigen")
         g = r.gruppe("Werte im Bild")
         self.act_werte_staebe = g.schalter(
             "Werte Stäbe", lambda _z: self.redraw(), False,
@@ -4164,86 +4367,128 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # -- Ansicht -----------------------------------------------------
         r = rb.register("Ansicht")
+        # Seit 25.09.2026 (Paket 7) Menueknoepfe statt 40 Einzelknoepfen: das
+        # Register brauchte 3341 px und kuerzte bei 1366 px 39 Beschriftungen
+        # („F…z“, „Kn…rn“). Jeder Schalter bleibt ein Befehl mit Suche, Kuerzel
+        # und Hinweis; dieselben Aktionen stehen in der Glasleiste.
         g = r.gruppe("Blickrichtung")
         g.gross("Isometrisch", "◲", lambda: self.blickrichtung("iso"), symbol="iso",
                 hinweis="Schräg von oben auf das Modell - die Grundansicht")
-        g.klein("XY (Draufsicht)", lambda: self.blickrichtung("+z"), symbol="wuerfel",
-                hinweis="Von oben auf die xy-Ebene")
-        g.klein("XZ (Ansicht)", lambda: self.blickrichtung("-y"), symbol="wuerfel",
-                hinweis="Von vorn auf die xz-Ebene")
-        g.klein("YZ (Seitenansicht)", lambda: self.blickrichtung("+x"), symbol="wuerfel",
-                hinweis="Von der Seite auf die yz-Ebene")
-        g.klein("Rückseite (180°)", lambda: self.blickrichtung("kehren"),
-                hinweis="Die laufende Ansicht umkehren – zeigt die Rückseite",
-                symbol="kehren")
-        g.klein("Zoom alles", self.zoom_alles, symbol="zoom",
+        menu = g.menueknopf("Richtung ▾", "Senkrecht auf eine Ebene schauen oder die Ansicht "
+                                          "umkehren (Rückseite)", symbol="wuerfel")
+        g.eintrag(menu, "XY (Draufsicht)", lambda: self.blickrichtung("+z"), symbol="wuerfel",
+                  hinweis="Von oben auf die xy-Ebene")
+        g.eintrag(menu, "XZ (Ansicht)", lambda: self.blickrichtung("-y"), symbol="wuerfel",
+                  hinweis="Von vorn auf die xz-Ebene")
+        g.eintrag(menu, "YZ (Seitenansicht)", lambda: self.blickrichtung("+x"), symbol="wuerfel",
+                  hinweis="Von der Seite auf die yz-Ebene")
+        menu.addSeparator()
+        g.eintrag(menu, "Rückseite (180°)", lambda: self.blickrichtung("kehren"),
+                  hinweis="Die laufende Ansicht umkehren – zeigt die Rückseite", symbol="kehren")
+        g.gross("Zoom alles", "", self.zoom_alles, symbol="zoom",
                 hinweis="Das ganze Modell ins Bild")
         g = r.gruppe("Darstellung")
-        # Die vier Darstellungsarten liegen als eigene Knoepfe nebeneinander und
-        # auf Strg+1..Strg+4 - Umschalten soll ein Griff sein, kein Klickweg
-        # durch ein Auswahlfeld. (F5 ist „Berechnen", F9 das FE-Netz.)
+        # Die vier Darstellungsarten auf Strg+1..Strg+4 - Umschalten ist ein
+        # Griff, kein Klickweg. (F5 ist „Berechnen", F9 das FE-Netz.) Darunter
+        # die rechte Maske „Darstellung“ mit Symbolgroesse und Lagerdichte
+        # (vorher zwei Schieber im Register, 666 px).
+        menu = g.menueknopf("Darstellung ▾", "Darstellungsart (Strg+1 … Strg+4) und "
+                                             "Symbolgrößen", symbol=vp.DARSTELLUNG_SYMBOL.get(
+                                                 self.darstellung, "voll"))
+        knopf_darstellung = menu.parentWidget()
         self.act_darstellung = {}
         gruppe = QtGui.QActionGroup(self)
         gruppe.setExclusive(True)
-        for i, (name, (zeichen, hinweis)) in enumerate(vp.DARSTELLUNGEN.items()):
-            a = g.gross(name, zeichen,
-                        lambda n=name: self.darstellung_setzen(n),
-                        f"Ctrl+{1 + i}", hinweis)
+        for i, (name, (_zeichen, hinweis)) in enumerate(vp.DARSTELLUNGEN.items()):
+            a = g.eintrag(menu, name, lambda n=name: self.darstellung_setzen(n),
+                          f"Ctrl+{1 + i}", hinweis, symbol=vp.DARSTELLUNG_SYMBOL[name])
             a.setCheckable(True)
             a.setChecked(name == self.darstellung)
+            a.toggled.connect(lambda an, n=name, k=knopf_darstellung: an and k.setIcon(
+                rib.sym.symbol(vp.DARSTELLUNG_SYMBOL[n])))
             gruppe.addAction(a)
             self.act_darstellung[name] = a
+        menu.addSeparator()
+        g.eintrag(menu, "Symbolgrößen…", self.maske_darstellung, symbol="symbolgroesse",
+                  hinweis="Rechts die Maske „Darstellung“: Größe der Lagersymbole und Dichte der "
+                          "Symbole auf Linien- und Flächenlagern - wirkt sofort")
+        # Die Schieber sind die Quelle der Werte (Einstellungen, Maske
+        # „Darstellung“); sie stehen nicht mehr im Ribbon
+        self.sl_lager = QtWidgets.QSlider(QtCore.Qt.Horizontal, self)
+        self.sl_lager.setRange(2, 60)
+        self.sl_lager.setValue(int(round(self.lagergroesse * 10)))
+        self.sl_lager.setToolTip("Größe aller Lagersymbole")
+        self.sl_lager.valueChanged.connect(self._lagergroesse_geschoben)
+        self.sl_lager.hide()
+        self.sl_lagerdichte = QtWidgets.QSlider(QtCore.Qt.Horizontal, self)
+        self.sl_lagerdichte.setRange(2, 60)
+        self.sl_lagerdichte.setValue(int(round(self.lagerdichte * 10)))
+        self.sl_lagerdichte.setToolTip("Lagerdichte: wie dicht die Symbole der Linien- und "
+                                       "Flächenlager über Linie und Fläche verteilt sind")
+        self.sl_lagerdichte.valueChanged.connect(self._lagerdichte_geschoben)
+        self.sl_lagerdichte.hide()
+        g.nur_suche("Lagergröße zurücksetzen", self.lagergroesse_zuruecksetzen, symbol="lager",
+                    hinweis="Alle Lagersymbole auf die Grundgröße")
+        g.nur_suche("Lagerdichte zurücksetzen", self.lagerdichte_zuruecksetzen, symbol="lager",
+                    hinweis="Symbole der Linien- und Flächenlager auf den Grundabstand")
         g = r.gruppe("Anzeigen")
-        self.act_edges = g.schalter("FE-Netz", lambda z: self.redraw(), True,
-                                    "Die Elementkanten des Netzes zeigen", kuerzel="F9")
-        self.act_knoten = g.schalter("Knoten", lambda z: self.redraw(), True,
-                                     "Die Knoten der Konstruktion als Punkte zeigen - Linienknoten, "
-                                     "Stabenden, frei gesetzte Knoten; die Netzknoten schaltet "
-                                     "Netz → Netzknoten",
-                                     symbol="knoten")
-        self.act_linien = g.schalter("Linien", lambda z: self.redraw(), True,
-                                     "Die Linien des Modells zeigen (Geometrie, "
-                                     "keine Elemente)", symbol="linien")
-        self.act_staebe = g.schalter("Stäbe", lambda z: self.redraw(), True,
-                                     "Stabelemente zeigen - bei Voll und Transparent "
-                                     "mit ihrer Querschnittskontur", symbol="staebe")
-        self.act_flaechen = g.schalter("Flächen", lambda z: self.redraw(), True,
-                                       "Flächen und Schalenelemente zeigen",
-                                       symbol="flaechen")
-        self.act_volumen = g.schalter("Volumen", lambda z: self.redraw(), True,
-                                      "Volumenkörper und Volumenelemente zeigen",
-                                      symbol="volumen")
+        menu = g.menueknopf("Anzeigen ▾", "Was die Ansicht zeigt: FE-Netz, Knoten, Linien, Stäbe, "
+                                          "Flächen, Volumen, Lager, Lasten …", symbol="ansicht")
+        self.act_edges = g.eintrag(menu, "FE-Netz", lambda z: self.redraw(), "F9",
+                                   "Die Elementkanten des Netzes zeigen", symbol="netz",
+                                   schalter=True, an=True)
+        self.act_knoten = g.eintrag(menu, "Knoten", lambda z: self.redraw(), "",
+                                    "Die Knoten der Konstruktion als Punkte zeigen - Linienknoten, "
+                                    "Stabenden, frei gesetzte Knoten; die Netzknoten schaltet "
+                                    "Netz → Netzknoten", symbol="knoten", schalter=True, an=True)
+        self.act_linien = g.eintrag(menu, "Linien", lambda z: self.redraw(), "",
+                                    "Die Linien des Modells zeigen (Geometrie, keine Elemente)",
+                                    symbol="linien", schalter=True, an=True)
+        self.act_staebe = g.eintrag(menu, "Stäbe", lambda z: self.redraw(), "",
+                                    "Stabelemente zeigen - bei Voll und Transparent mit ihrer "
+                                    "Querschnittskontur", symbol="staebe", schalter=True, an=True)
+        self.act_flaechen = g.eintrag(menu, "Flächen", lambda z: self.redraw(), "",
+                                      "Flächen und Schalenelemente zeigen", symbol="flaechen",
+                                      schalter=True, an=True)
+        self.act_volumen = g.eintrag(menu, "Volumen", lambda z: self.redraw(), "",
+                                     "Volumenkörper und Volumenelemente zeigen", symbol="volumen",
+                                     schalter=True, an=True)
         # Lager ein- und ausblendbar (Wunsch 12.09.2026): am Drehlager mit
         # 50 Lagerflaechen verdecken die Symbole das Bauteil
-        self.act_lager = g.schalter("Lager", lambda z: self.redraw(), True,
-                                    "Knoten-, Linien- und Flächenlager als Symbole zeigen",
-                                    symbol="lager")
-        self.act_lagertext = g.schalter(
-            "Lagerbeschriftung", lambda z: self.redraw(), False,
+        self.act_lager = g.eintrag(menu, "Lager", lambda z: self.redraw(), "",
+                                   "Knoten-, Linien- und Flächenlager als Symbole zeigen",
+                                   symbol="lager", schalter=True, an=True)
+        self.act_lagertext = g.eintrag(
+            menu, "Lagerbeschriftung", lambda z: self.redraw(), "",
             "An jedem Knotenlager, was es hält: fest, gelenkig oder die gehaltenen "
-            "Freiheitsgrade (u xyz, r xyz), Federn mit k, nichtlinear mit *", symbol="lager")
-        self.act_loads = g.schalter("Lasten", lambda z: self.redraw(), True,
-                                    # seit 24.09.2026 haengt es am Ergebnis, welche Lasten
-                                    "Lasten als Pfeile – ohne Ergebnis die des aktiven Lastfalls, beim "
-                                    "Ergebnis eines Lastfalls dessen eigene; bei Kombination oder "
-                                    "Umhüllender nur mit Ergebnisse → Lasten im Ergebnisbild",
-                                    symbol="lasten")
-        self.act_lastwerte = g.schalter("Lastwerte", lambda z: self.redraw(), True,
-                                        "Die Lastgröße als Zahl an jeder Last; die Einheit steht "
-                                        "oben links unter dem Lastfall", symbol="lasten")
-        self.act_members = g.schalter("Stäbe farbig", lambda z: self.redraw(),
-                                    hinweis="Jeden Stab mit Nachweis in eigener Farbe zeigen", symbol="farbig")
-        g = r.gruppe("Nummern")
+            "Freiheitsgrade (u xyz, r xyz), Federn mit k, nichtlinear mit *", symbol="lager",
+            schalter=True, an=False)
+        # seit 24.09.2026 haengt es am Ergebnis, welche Lasten
+        self.act_loads = g.eintrag(menu, "Lasten", lambda z: self.redraw(), "",
+                                   "Lasten als Pfeile – ohne Ergebnis die des aktiven Lastfalls, beim "
+                                   "Ergebnis eines Lastfalls dessen eigene; bei Kombination oder "
+                                   "Umhüllender nur mit Ergebnisse → Lasten im Ergebnisbild",
+                                   symbol="lasten", schalter=True, an=True)
+        self.act_lastwerte = g.eintrag(menu, "Lastwerte", lambda z: self.redraw(), "",
+                                       "Die Lastgröße als Zahl an jeder Last; die Einheit steht "
+                                       "oben links unter dem Lastfall", symbol="lasten",
+                                       schalter=True, an=True)
+        self.act_members = g.eintrag(menu, "Stäbe farbig", lambda z: self.redraw(), "",
+                                     "Jeden Stab mit Nachweis in eigener Farbe zeigen", symbol="farbig",
+                                     schalter=True, an=False)
         # Jede Objektart hat ihren eigenen Schalter. An einem grossen Modell
         # will man die Namen der Volumen sehen und nicht die Nummern von
         # 380 000 Elementen; ein gemeinsamer Schalter koennte das nicht
         # trennen. Dieselben Schalter stehen im Rechtsklickmenue des
         # Viewports, damit sie sich beim Arbeiten schnell umlegen lassen.
+        g = r.gruppe("Nummern")
+        menu = g.menueknopf("Nummern ▾", "Nummern und Namen je Objektart in der Ansicht",
+                            symbol="nummern")
         self.act_nummern = {}
         for art, (_farbe, _groesse, _grenze, hinweis, beschriftung) in self.NUMMERN.items():
-            self.act_nummern[art] = g.schalter(
-                beschriftung, lambda z, a=art: self._nummern_umschalten(a),
-                hinweis=hinweis, symbol="nummern")
+            self.act_nummern[art] = g.eintrag(
+                menu, beschriftung, lambda z, a=art: self._nummern_umschalten(a),
+                hinweis=hinweis, symbol="nummern", schalter=True, an=False)
         # Die frueheren Einzelschalter heissen weiter so - sie sind jetzt
         # die Eintraege "Knoten" und "Elemente" dieser Gruppe.
         self.act_nodes = self.act_nummern["Knoten"]
@@ -4251,31 +4496,38 @@ class MainWindow(QtWidgets.QMainWindow):
         g = r.gruppe("Sicht")
         # Was man nicht sieht, stoert nicht: die Auswahl allein zeigen, die
         # Auswahl ausblenden, einen Schritt zurueck, alles wieder her.
-        self.act_nur_auswahl = g.klein("Selektion anzeigen", self.nur_auswahl_zeigen,
-                                       hinweis="Alles außer der Selektion ausblenden - auch Knoten, "
-                                               "Stäbe, Linien, Flächen, Lager und Lasten des Restes",
-                                       symbol="sicht_nur_auswahl")
-        self.act_auswahl_weg_sicht = g.klein("Auswahl ausblenden", self.auswahl_ausblenden,
-                                             hinweis="Die ausgewählten Objekte ausblenden",
-                                             symbol="sicht_ausblenden")
-        self.act_sicht_zurueck = g.klein("Vorherige Sicht", self.sicht_zurueck,
-                                         hinweis="Den letzten Ausblendeschritt zurücknehmen",
-                                         symbol="sicht_zurueck")
-        self.act_alles_zeigen = g.klein("Alles zeigen", self.alles_zeigen,
-                                        hinweis="Alle ausgeblendeten Objekte wieder zeigen",
-                                        symbol="sicht_alles")
-        self.act_geist = g.schalter("Verborgenes im Hintergrund", self._geist_umschalten, False,
-                                    "Ausgeblendete Objekte blass als Geist im Hintergrund zeigen - "
-                                    "sie bleiben dort unwählbar; nur was dargestellt ist, lässt "
-                                    "sich wählen", symbol="sicht_geist")
+        menu = g.menueknopf("Sicht ▾", "Auswahl allein zeigen, ausblenden, einen Schritt zurück, "
+                                       "alles zeigen; Verborgenes im Hintergrund",
+                            symbol="sicht_nur_auswahl")
+        self.act_nur_auswahl = g.eintrag(menu, "Selektion anzeigen", self.nur_auswahl_zeigen,
+                                         hinweis="Alles außer der Selektion ausblenden - auch Knoten, "
+                                                 "Stäbe, Linien, Flächen, Lager und Lasten des Restes",
+                                         symbol="sicht_nur_auswahl")
+        self.act_auswahl_weg_sicht = g.eintrag(menu, "Auswahl ausblenden", self.auswahl_ausblenden,
+                                               hinweis="Die ausgewählten Objekte ausblenden",
+                                               symbol="sicht_ausblenden")
+        self.act_sicht_zurueck = g.eintrag(menu, "Vorherige Sicht", self.sicht_zurueck,
+                                           hinweis="Den letzten Ausblendeschritt zurücknehmen",
+                                           symbol="sicht_zurueck")
+        self.act_alles_zeigen = g.eintrag(menu, "Alles zeigen", self.alles_zeigen,
+                                          hinweis="Alle ausgeblendeten Objekte wieder zeigen",
+                                          symbol="sicht_alles")
+        menu.addSeparator()
+        self.act_geist = g.eintrag(menu, "Verborgenes im Hintergrund", self._geist_umschalten,
+                                   hinweis="Ausgeblendete Objekte blass als Geist im Hintergrund zeigen - "
+                                           "sie bleiben dort unwählbar; nur was dargestellt ist, lässt "
+                                           "sich wählen", symbol="sicht_geist", schalter=True, an=False)
         self.act_schnitt = g.schalter("Schnittebene", self._schnitt_umschalten, False,
                                       "Das Netz an einer Ebene aufschneiden und hineinsehen - "
                                       "Füllung, Netzdichte und Elementform im Inneren. Gezeichnet "
                                       "wird sonst nur die Außenhaut", symbol="sicht_schnitt")
+        self.act_schnittseite = g.schalter("Andere Seite", self._schnitt_seite, False,
+                                           "Die andere Hälfte stehen lassen",
+                                           symbol="sicht_schnittseite")
         self.cb_schnittachse = QtWidgets.QComboBox()
         self.cb_schnittachse.addItems(["x", "y", "z", "frei"])
         self.cb_schnittachse.setCurrentText("y")
-        self.cb_schnittachse.setFixedWidth(56)
+        self.cb_schnittachse.setFixedWidth(72)
         self.cb_schnittachse.setToolTip("Achse, senkrecht zu der geschnitten wird - „frei“: beliebige "
                                         "Ebene (Normale und Ursprung in der Maske rechts, aus der "
                                         "Ansicht oder der Arbeitsebene, oder im Bild gezogen)")
@@ -4287,50 +4539,30 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sl_schnitt.setToolTip("Lage der Schnittebene im Bauteil; bei der freien Ebene die "
                                    "Verschiebung längs der Normalen (Mitte = durch den Ursprung)")
         self.sl_schnitt.valueChanged.connect(lambda _v: self._schnitt_nachziehen())
-        self.act_schnittseite = g.schalter("Andere Seite", self._schnitt_seite, False,
-                                           "Die andere Hälfte stehen lassen",
-                                           symbol="sicht_schnittseite")
-        g.widget(self.cb_schnittachse)
-        g.widget(self.sl_schnitt)
+        g.in_spalte(self.cb_schnittachse, neue_spalte=True)
+        g.in_spalte(self.sl_schnitt)
         g = r.gruppe("Layer")
         # Layer sind benannte Objektgruppen - in RFEM die Objektselektionen
         # (16.09.2026): die Liste zeigt einen allein, das Fenster haelt je
         # Layer sichtbar und gesperrt.
-        self.cb_layer = QtWidgets.QComboBox()
-        self.cb_layer.setMinimumWidth(150)
-        self.cb_layer.setToolTip("Nur diesen Layer im Bild zeigen (RFEM: Objektselektion); "
-                                 "„Alle Layer“ zeigt wieder alles")
-        self.cb_layer.currentIndexChanged.connect(self._layer_gewaehlt)
-        g.widget(self.cb_layer)
         self.act_layerliste = g.gross("Layerliste", "≡", self.layerliste_zeigen,
                                       hinweis="Alle Layer in einem Fenster: sichtbar und gesperrt anhaken, "
                                               "neue aus der Auswahl, Objekte eines Layers wählen")
+        self.cb_layer = QtWidgets.QComboBox()
+        self.cb_layer.setMinimumWidth(130)
+        self.cb_layer.setToolTip("Nur diesen Layer im Bild zeigen (RFEM: Objektselektion); "
+                                 "„Alle Layer“ zeigt wieder alles")
+        self.cb_layer.currentIndexChanged.connect(self._layer_gewaehlt)
+        g.in_spalte(self.cb_layer)
         self.act_layer_neu = g.klein("Layer aus Auswahl", self.layer_aus_auswahl, zeichen="+",
                                      hinweis="Die Auswahl in der Ansicht als neuen Layer anlegen")
         self._layer_combo_fuellen()
-        g = r.gruppe("Symbole")
-        self.sl_lager = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self.sl_lager.setRange(2, 60)
-        self.sl_lager.setValue(int(round(self.lagergroesse * 10)))
-        self.sl_lager.setFixedWidth(110)
-        self.sl_lager.setToolTip("Größe aller Lagersymbole")
-        self.sl_lager.valueChanged.connect(self._lagergroesse_geschoben)
-        g.widget(QtWidgets.QLabel("Lager"))
-        g.widget(self.sl_lager)
-        g.klein("Lagergröße zurücksetzen", self.lagergroesse_zuruecksetzen,
-                hinweis="Alle Lagersymbole auf die Grundgröße")
-        self.sl_lagerdichte = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self.sl_lagerdichte.setRange(2, 60)
-        self.sl_lagerdichte.setValue(int(round(self.lagerdichte * 10)))
-        self.sl_lagerdichte.setFixedWidth(110)
-        self.sl_lagerdichte.setToolTip("Lagerdichte: wie dicht die Symbole der Linien- und "
-                                       "Flächenlager über Linie und Fläche verteilt sind")
-        self.sl_lagerdichte.valueChanged.connect(self._lagerdichte_geschoben)
-        g.widget(QtWidgets.QLabel("Dichte"))
-        g.widget(self.sl_lagerdichte)
-        g.klein("Lagerdichte zurücksetzen", self.lagerdichte_zuruecksetzen,
-                hinweis="Symbole der Linien- und Flächenlager auf den Grundabstand")
-        g = r.gruppe("Einheiten")
+        # Eine Gruppe „Fenster“ mit „Einheiten“ und „Fenster ▾“ (fenster.py):
+        # als eigene Gruppe brauchte „Fenster ▾“ Rahmen und Trennlinie, und
+        # das Register Ansicht kam auf 1251 px - bei 1280 px Fensterbreite sind
+        # 1241 px erlaubt (Zusammenfuehrung der Pakete 5 und 7, 02.10.2026)
+        g = r.gruppe("Fenster")
+        self._gruppe_fenster = g
         self.act_einheiten = g.gross("Einheiten", "㎪", self.maske_einheiten,
                                      hinweis="Einheiten und Nachkommastellen für Ansicht und "
                                              "Tabellen (Kraft, Länge, Verformung, Spannung)")
@@ -4409,7 +4641,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _ribbon_knopf(aktion, zeichen: str, rolle: str = ""):
         """Denselben Befehl ein zweites Mal als Knopf zeigen (kein neuer Befehl)."""
         from . import symbole as sym
-        b = QtWidgets.QToolButton()
+        # der blaue Startknopf traegt ein weisses Symbol (25.09.2026)
+        b = rib.Startknopf() if rolle == "start" else QtWidgets.QToolButton()
         if aktion.icon().isNull():
             aktion.setIcon(sym.fuer_befehl(aktion.text(), zeichen))
         b.setDefaultAction(aktion)
@@ -4439,6 +4672,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabs.addTab(self._scroll(self._tab_design()), "Nachweise")
         self.tabs.addTab(self._scroll(self._tab_solve()), "Berechnung")
         self.tabs.addTab(self._scroll(self._tab_results()), "Ergebnisse")
+        # 470 px bis 24.09.2026; ohne STATIK3D_FENSTER=fest setzt
+        # fenster.Fensteranordnung sie auf 400 px (rechts etwa 460 px)
         self.tabs.setMinimumWidth(470)
         # Die Registerleiste entfaellt: sichtbar ist immer genau eine Maske,
         # gewaehlt ueber den Befehl im Ribbon. Der Docktitel nennt sie.
@@ -4575,6 +4810,12 @@ class MainWindow(QtWidgets.QMainWindow):
         rolle = getattr(maske, "rolle", None)
         unten = getattr(self, "unten_dock", None)
         if rolle is None or unten is None or not unten.isVisible() or rolle.widget() is None:
+            return
+        if self.corner(QtCore.Qt.BottomRightCorner) == QtCore.Qt.RightDockWidgetArea:
+            # Der rechte Bereich reicht ueber die volle Hoehe (Paket 5,
+            # 25.09.2026): ein kleinerer unterer Bereich gibt ihm nichts, und
+            # die volle Mitte liess das Fenster wachsen (Lager 1 bei 1920 x 1080
+            # maximiert: 1218 px)
             return
         fehlt = rolle.widget().sizeHint().height() - rolle.viewport().height()
         frei = unten.height() - max(unten.minimumHeight(), unten.minimumSizeHint().height())
@@ -5586,9 +5827,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 felder.append(F("elemente", "gesetzt an", "info",
                                 self._elemente_text(getattr(h, "elemente", []) or []) if h else "–"))
                 titel = f"Gelenk {name}"
+                # Weg nachgezogen 25.09.2026: der Knopf „Gelenke setzen…“ steht
+                # nicht mehr im Register Struktur (Paket 7)
                 hinweis = ("Je Freiheitsgrad: biegesteif, gelenkig oder Feder (Steifigkeit in kN/m bzw. "
-                           "kNm/rad). Zum Setzen die Stäbe in der Ansicht wählen (alle Knoten eines "
-                           "Stabelements) und „Auf gewählte Stäbe setzen“ drücken.")
+                           "kNm/rad). Zum Setzen die Stäbe in der Ansicht wählen (Auswahlart Stab oder alle "
+                           "Knoten der Stabelemente) und „Auf gewählte Stäbe setzen“ drücken. „Gelenke“ im "
+                           "Kontextregister „Auswahl“ und die Befehlssuche „Gelenke setzen“ öffnen diese "
+                           "Maske.")
                 if not neu:
                     zusatz = [("Auf gewählte Stäbe setzen", lambda n_=name: self._gelenk_auf_auswahl(n_))]
         elif art == "berichtseintrag":
@@ -9043,7 +9288,13 @@ class MainWindow(QtWidgets.QMainWindow):
         e = Berichtseintrag(
             name=f"Bild {len(self.model.bericht) + 1}", quelle=quelle,
             feld=self.cb_field.currentText(), verlauf=self.cb_diagram.currentText(),
-            ueberhoehung=float(self.sl_scale.value()), bild=bild)
+            # der Faktor, mit dem das Bild gezeichnet ist (25.09.2026) - bis
+            # dahin die Stellung des Schiebers (Vorgabe 30), die im Bericht
+            # als „Überhöhung 30“ stand, bei 1480-facher Zeichnung
+            # auf geltende Ziffern, nicht auf eine Nachkommastelle - ein
+            # Faktor 0,03 wurde sonst 0, und die Zeile fehlte (25.09.2026)
+            ueberhoehung=vp.faktor_runden(getattr(self, "_ueberhoehung_faktor", 0.0)),
+            bild=bild)
         e.beschriftung = e.bezug()
         self.merken("Ansicht in den Bericht übernommen")
         self.model.bericht.append(e)
@@ -10006,10 +10257,10 @@ class MainWindow(QtWidgets.QMainWindow):
         norm = m.meta.get("Norm")
         if norm:
             teile.insert(1, norm)
-        stellungen = self._stellungen_obj()
-        modell = f"{m.nn} Knoten · {len(m.elements)} Elemente"
-        if stellungen:
-            modell += f" · {len(stellungen)} Stellungen"
+        # Der Modellumfang (Knoten, Elemente, Stellungen) steht seit 25.09.2026
+        # nur noch in der Statusleiste (_refresh_status): die Kopfzeile traegt
+        # jetzt Schnellzugriff und Suche
+        modell = ""
         if self.analysis is not None:
             info = getattr(self.analysis, "info", {}) or {}
             t = info.get("time") or info.get("dauer")
@@ -12677,11 +12928,15 @@ class MainWindow(QtWidgets.QMainWindow):
         lay = QtWidgets.QVBoxLayout(w)
         self.cb_result = QtWidgets.QComboBox()
         self.cb_result.currentIndexChanged.connect(self.show_results)
-        lay.addWidget(row("Ergebnis", self.cb_result))
         self.cb_field = QtWidgets.QComboBox()
         self.cb_field.addItems(FIELDS)
         self.cb_field.currentIndexChanged.connect(self.redraw)
-        lay.addWidget(row("Färbung", self.cb_field))
+        # Ergebnis, Faerbung und Ueberhoehung stehen nicht mehr im Register,
+        # sondern in der kleinen Ergebnissteuerung oben rechts, die auch
+        # stehen bleibt, wenn darunter eine Maske erscheint (Paket 6b,
+        # Entscheidung 8 des Anwenders, 25.09.2026) - dieselben Widgets,
+        # keine Doppelung.
+        self._ergebnissteuerung_bauen()
         # Schalenseite fuer die Flaechenspannungen (oben/unten wie ANSYS Top/Bottom)
         self.cb_seite = QtWidgets.QComboBox()
         for text, wert in (("größter Betrag", "max"), ("oben", "oben"), ("unten", "unten")):
@@ -12696,17 +12951,27 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cb_diagram.addItems(DIAGRAMS)
         self.cb_diagram.currentIndexChanged.connect(self.redraw)
         lay.addWidget(row("Schnittgrößenverlauf", self.cb_diagram))
+        # Werte am Verlauf und Max/Min-Marken: Vorgabe an (Plan Paket 6,
+        # 25.09.2026) - ein Verlauf ohne Zahl ist nicht ablesbar
+        self.cb_verlaufswerte = QtWidgets.QCheckBox("Werte am Verlauf")
+        self.cb_verlaufswerte.setChecked(True)
+        self.cb_verlaufswerte.setToolTip(
+            "Je Stab der größte und der kleinste Wert an der Spitze des Verlaufs; bei einer "
+            "Umhüllenden die größten an der roten, die kleinsten an der blauen Linie")
+        self.cb_verlaufswerte.toggled.connect(self.redraw)
+        self.cb_extremmarken = QtWidgets.QCheckBox("Max/Min-Marken")
+        self.cb_extremmarken.setChecked(True)
+        self.cb_extremmarken.setToolTip(
+            "Marke mit Wert und Einheit an der Stelle des größten und des kleinsten Werts - "
+            "der Färbung (nur sichtbare Teile) und des Verlaufs. Bei einem Betrag wie "
+            "„u gesamt“ nur das Maximum")
+        self.cb_extremmarken.toggled.connect(self.redraw)
+        lay.addWidget(row(self.cb_verlaufswerte, self.cb_extremmarken))
         self.cb_mode = QtWidgets.QComboBox()
         self.cb_mode.currentIndexChanged.connect(self.redraw)
         # die Glasleiste fuehrt die Formen mit (24.09.2026)
         self.cb_mode.currentIndexChanged.connect(lambda _i: self._lastwahl_nachziehen())
         lay.addWidget(row("Eigenform", self.cb_mode))
-        self.sl_scale = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self.sl_scale.setRange(0, 100); self.sl_scale.setValue(30)
-        self.sl_scale.valueChanged.connect(self.redraw)
-        self.lbl_scale = QtWidgets.QLabel("")
-        lay.addWidget(row("Überhöhung", self.sl_scale))
-        lay.addWidget(self.lbl_scale)
         self.cb_undeformed = QtWidgets.QCheckBox("unverformtes System anzeigen"); self.cb_undeformed.setChecked(True)
         self.cb_undeformed.toggled.connect(self.redraw)
         lay.addWidget(self.cb_undeformed)
@@ -12719,6 +12984,257 @@ class MainWindow(QtWidgets.QMainWindow):
         b3 = QtWidgets.QPushButton("Statischer Bericht…"); b3.clicked.connect(self.make_report)
         lay.addWidget(row(b1, b2, b3))
         return w
+
+    # ---- Ergebnissteuerung oben rechts (Paket 6b, 25.09.2026) ----------
+    #: Arten der Ueberhoehung: automatisch (8 % der Modellgroesse), wahre
+    #: Groesse, keine Verformung, oder der getippte Faktor
+    UEBERHOEHUNG_ARTEN = ("auto", "1:1", "aus", "fest")
+
+    def _ergebnissteuerung_bauen(self) -> None:
+        """Die kleine Ergebnissteuerung: Ergebnis, Faerbung, Ueberhoehung.
+
+        Der Anwender hat am 24.09.2026 entschieden (Frage 8), dass sie
+        waehrend der Ergebnisdurchsicht oben im rechten Bereich stehen
+        bleibt, auch wenn ein Objekt angeklickt wird - rechts steht dann die
+        Steuerung und darunter eine Maske. Sie ist sichtbar, sobald es ein
+        Ergebnis gibt (_ergebnissteuerung_zeigen)."""
+        rahmen = QtWidgets.QFrame()
+        rahmen.setObjectName("ergebnissteuerung")
+        rahmen.setFrameShape(QtWidgets.QFrame.StyledPanel)
+        # Maskenrand.zeigen setzt Masken darunter, nicht davor
+        rahmen.setProperty("bleibt_oben", True)
+        rahmen.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Maximum)
+        gl = QtWidgets.QGridLayout(rahmen)
+        gl.setContentsMargins(6, 2, 6, 2)
+        gl.setHorizontalSpacing(6)
+        gl.setVerticalSpacing(1)
+        # Drei Zeilen ohne Titelzeile und ohne umbrechende Hinweiszeile
+        # (Gegenpruefung 25.09.2026: 157 px ueber jeder Maske liessen bei
+        # 1366 x 768 alle 43 Masken das Fenster wachsen). Der Name steht als
+        # Tooltip am Rahmen.
+        rahmen.setToolTip("Ergebnisdarstellung: Ergebnis, Färbung und Überhöhung")
+        rahmen.setAccessibleName("Ergebnisdarstellung")
+        gl.addWidget(QtWidgets.QLabel("Ergebnis"), 1, 0)
+        gl.addWidget(self.cb_result, 1, 1)
+        gl.addWidget(QtWidgets.QLabel("Färbung"), 2, 0)
+        gl.addWidget(self.cb_field, 2, 1)
+        # Die Auswahllisten bestimmen die Breite des rechten Bereichs nicht
+        # (Gegenpruefung 25.09.2026): ausserhalb der Rollflaeche des Registers
+        # nahm die QComboBox den laengsten Eintrag als Mindestbreite - eine
+        # Kombination aus 8 Lastfaellen machte rechts 993 px breit, die
+        # Ansicht bei 1366 x 768 noch 139 px. Jetzt reicht eine Mindestlaenge
+        # von 18 Zeichen, die Aufklappliste ist breit genug fuer den ganzen
+        # Namen, der Tooltip nennt ihn auch.
+        for cb in (self.cb_result, self.cb_field):
+            cb.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
+            cb.setMinimumContentsLength(18)
+            cb.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+            cb.view().setTextElideMode(QtCore.Qt.ElideNone)
+            cb.currentIndexChanged.connect(lambda _i, c=cb: c.setToolTip(c.currentText()))
+        self._ueberhoehung_art = "auto"
+        self._ueberhoehung_wert = 0.0
+        self._ueberhoehung_faktor = 0.0
+        self.ed_ueberhoehung = zf.Zahlenfeld(None, 90)
+        # „auto“, „1:1“ und „aus“ darf man auch tippen - der Zahlvalidator
+        # verschluckte den Doppelpunkt, aus „1:1“ wurde Faktor 11 (25.09.2026)
+        self.ed_ueberhoehung.setValidator(_UeberhoehungValidator(self.ed_ueberhoehung))
+        self.ed_ueberhoehung.setToolTip(
+            "Faktor, mit dem die Verformung gezeichnet wird. Eine Zahl tippen und Enter: "
+            "fester Faktor. „auto“: die größte Verschiebung erscheint mit 8 % der Modellgröße; "
+            "„1:1“: wahre Größe; „aus“: keine Verformung (auch als Wort zu tippen). "
+            "Der Bericht übernimmt den Faktor.")
+        self.ed_ueberhoehung.editingFinished.connect(self._ueberhoehung_eingegeben)
+        self.btn_ueberhoehung = {}
+        zeile = QtWidgets.QHBoxLayout()
+        zeile.setContentsMargins(0, 0, 0, 0)
+        zeile.addWidget(self.ed_ueberhoehung)
+        for art, hinweis in (("auto", "Automatisch: größte Verschiebung = 8 % der Modellgröße"),
+                             ("1:1", "Wahre Größe (Faktor 1)"),
+                             ("aus", "Keine Verformung: das Bild zeigt die unverformte Lage")):
+            b = QtWidgets.QToolButton()
+            b.setText(art)
+            b.setCheckable(True)
+            b.setAutoRaise(False)
+            b.setToolTip(hinweis)
+            b.clicked.connect(lambda _c=False, a=art: self.ueberhoehung_setzen(a))
+            self.btn_ueberhoehung[art] = b
+            zeile.addWidget(b)
+        # kurzer Hinweis in derselben Zeile („max 73,52 mm“), der ganze Satz
+        # als Tooltip; er verlangt keine Breite (Ignored)
+        self.lbl_scale = QtWidgets.QLabel("")
+        self.lbl_scale.setStyleSheet("color: #5a6470;")
+        self.lbl_scale.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
+        self.lbl_scale.setMinimumWidth(0)
+        zeile.addWidget(self.lbl_scale, 1)
+        gl.addWidget(QtWidgets.QLabel("Überhöhung"), 3, 0)
+        gl.addLayout(zeile, 3, 1)
+        gl.setColumnStretch(1, 1)
+        self.ergebnissteuerung = rahmen
+        self._ueberhoehung_knoepfe()
+        rahmen.hide()
+
+    def _ergebnissteuerung_zeigen(self) -> None:
+        """Die Steuerung oben in den rechten Bereich setzen (einmal) und
+        zeigen, solange es ein Ergebnis gibt.
+
+        Eingesetzt wird erst hier und nicht beim Aufbau der Docks: die
+        Aufteilung des Fensters gehoert einer anderen Arbeit (Paket 5), die
+        Steuerung braucht nur das Layout des rechten Bereichs."""
+        st = getattr(self, "ergebnissteuerung", None)
+        platz = getattr(self, "maskenplatz", None)
+        if st is None or platz is None:
+            return
+        if platz.indexOf(st) < 0:
+            platz.insertWidget(0, st, 0, QtCore.Qt.AlignTop)
+            if hasattr(self, "tabs"):
+                # ein anderes Register darunter: die Tab-Kette dorthin fuehren
+                self.tabs.currentChanged.connect(lambda _i: self._tabfolge_ergebnissteuerung())
+        # Ohne die Aufteilung aus Paket 5 steht der rechte Bereich ueber dem
+        # unteren: die Hoehe der Steuerung hebt die Mindesthoehe des Fensters
+        # (Gegenpruefung 25.09.2026: mit 157 px nach F5 bei 1366 x 768 85 px
+        # ueber dem Bildschirm). Darum hat sie nur drei Zeilen (~96 px, das
+        # Fenster braucht dann mindestens 704 px). _fensterhoehe_halten hilft
+        # hier nicht - es kann nicht unter die Mindesthoehe (gemessen).
+        st.setVisible(bool(self.cb_result.count()) or self.results is not None)
+        for cb in (self.cb_result, self.cb_field):
+            self._aufklappliste_breit(cb)
+        self._tabfolge_ergebnissteuerung()
+
+    @staticmethod
+    def _aufklappliste_breit(cb) -> None:
+        """Die Aufklappliste so breit wie der laengste Eintrag (hoechstens
+        die Bildschirmbreite), jeder Eintrag mit sich selbst als Tooltip: die
+        Auswahl selbst ist schmal (18 Zeichen), die Namen sollen trotzdem
+        ganz lesbar sein - etwa „Kombination GZT19: 1.35·LF1 + 1.5·W_rechts
+        + …“ (25.09.2026)."""
+        fm = cb.fontMetrics()
+        breit = 0
+        for i in range(cb.count()):
+            t = cb.itemText(i)
+            breit = max(breit, fm.horizontalAdvance(t))
+            cb.setItemData(i, t, QtCore.Qt.ToolTipRole)
+        try:
+            grenze = cb.screen().availableGeometry().width() - 40
+        except Exception:                   # noqa: BLE001
+            grenze = 1200
+        cb.view().setMinimumWidth(max(0, min(breit + 48, grenze)))
+        cb.setToolTip(cb.currentText())
+
+    def _tabfolge_ergebnissteuerung(self) -> None:
+        """Tab laeuft von der Steuerung in das Register darunter.
+
+        Das Einsetzen in den rechten Bereich haengt die Steuerung an das
+        Ende der Tab-Kette des Fensters: von „aus“ sprang Tab in die 3D-
+        Ansicht und blieb dort, das Register Ergebnisse darunter war per
+        Tastatur nicht mehr erreichbar (Gegenpruefung 25.09.2026). Hier
+        wird die Steuerung vor das erste Feld des sichtbaren Registers
+        gehaengt. Eine Maske darunter setzt ihre Kette selbst (Maskenrand)."""
+        st = getattr(self, "ergebnissteuerung", None)
+        if st is None or not _lebt(st) or not hasattr(self, "tabs"):
+            return
+        seite = self.tabs.currentWidget()
+        if seite is None:
+            return
+        erstes = None
+        w = seite.nextInFocusChain()
+        for _ in range(4000):
+            if w is None or w is seite:
+                break
+            if (seite.isAncestorOf(w) and not st.isAncestorOf(w)
+                    and w.focusPolicy() & QtCore.Qt.TabFocus):
+                erstes = w
+                break
+            w = w.nextInFocusChain()
+        if erstes is None:
+            return
+        kette = [self.cb_result, self.cb_field, self.ed_ueberhoehung,
+                 *[self.btn_ueberhoehung[a] for a in ("auto", "1:1", "aus")]]
+        # das vorige Glied mit Fokus: setTabOrder tut nichts, wenn eines der
+        # beiden Widgets keinen Fokus nimmt (etwa das Schild davor)
+        vor = erstes.previousInFocusChain()
+        for _ in range(4000):
+            if vor is None or vor is erstes or vor.focusPolicy() != QtCore.Qt.NoFocus:
+                break
+            vor = vor.previousInFocusChain()
+        if vor is None or vor is erstes or vor in kette:
+            return
+        # jeweils das naechste Glied hinter das vorige: die Steuerung steht
+        # danach als Block vor dem ersten Feld des Registers
+        for a, b in zip([vor] + kette[:-1], kette):
+            QtWidgets.QWidget.setTabOrder(a, b)
+
+    def _ueberhoehung_knoepfe(self) -> None:
+        for art, b in (getattr(self, "btn_ueberhoehung", None) or {}).items():
+            b.blockSignals(True)
+            b.setChecked(art == self._ueberhoehung_art)
+            b.blockSignals(False)
+
+    def ueberhoehung_setzen(self, art: str, wert: float = None) -> None:
+        """Ueberhoehung umstellen: "auto", "1:1", "aus" oder "fest" mit Faktor."""
+        if art not in self.UEBERHOEHUNG_ARTEN:
+            return
+        if art == "fest":
+            wert = float(wert or 0.0)
+            if not wert > 0.0:
+                art, wert = "aus", 0.0
+            self._ueberhoehung_wert = wert
+        self._ueberhoehung_art = art
+        self._ueberhoehung_knoepfe()
+        # Das Feld zeigt danach den neuen Faktor, auch wenn es den Fokus hat:
+        # ein QToolButton nimmt ihn dem Feld nicht, und ein getippter Rest
+        # („250“ ohne Enter) wurde beim Verlassen des Feldes zum festen
+        # Faktor und ueberschrieb den Knopf 1:1 (Gegenpruefung 25.09.2026)
+        self._ueberhoehung_schreiben = True
+        self.redraw()
+        self._ueberhoehung_schreiben = False
+
+    #: getippte Woerter im Feld Ueberhoehung (25.09.2026)
+    UEBERHOEHUNG_WOERTER = {"auto": "auto", "1:1": "1:1", "aus": "aus"}
+
+    def _ueberhoehung_eingegeben(self) -> None:
+        """Enter oder Verlassen des Feldes: ein getippter Faktor gilt fest,
+        die Woerter „auto“, „1:1“ und „aus“ wie die Knoepfe.
+        Eine ungueltige Eingabe bleibt rot im Feld (Zahlenfeld) und aendert
+        nichts; der unveraenderte angezeigte Faktor auch nicht."""
+        f = self.ed_ueberhoehung
+        if not f.isModified() and f.text() == getattr(self, "_ueberhoehung_text", None):
+            return
+        wort = self.UEBERHOEHUNG_WOERTER.get(f.text().strip().lower())
+        if wort:
+            self.ueberhoehung_setzen(wort)
+            return
+        try:
+            wert = f.wert(None)
+        except zf.Eingabefehler:
+            return
+        if wert is None:
+            return
+        if wert < 0:
+            wert = abs(wert)
+        self.ueberhoehung_setzen("fest", wert)
+
+    def _ueberhoehung_anzeigen(self, s: float, verlauf: bool = False) -> None:
+        """Den wirksamen Faktor ins Feld schreiben - nicht, waehrend getippt
+        wird (ausser nach einem Knopf, ueberhoehung_setzen).
+
+        ``verlauf``: ein Schnittgroessenverlauf ist gewaehlt, die Figur steht
+        unverformt - das Feld zeigt 0 und ist gesperrt, die Knoepfe auch; die
+        Zeile darunter sagt, warum (Gegenpruefung 25.09.2026: dort stand
+        „17,6“ bei Faktor 0)."""
+        f = getattr(self, "ed_ueberhoehung", None)
+        if f is None:
+            return
+        for b in (getattr(self, "btn_ueberhoehung", None) or {}).values():
+            b.setEnabled(not verlauf)
+        f.setEnabled(not verlauf)
+        if f.hasFocus() and not getattr(self, "_ueberhoehung_schreiben", False):
+            return
+        text = zl.zahl_text(vp.faktor_runden(s)) if s and not verlauf else "0"
+        # ohne blockSignals: das Zahlenfeld soll den neuen Text pruefen (ein
+        # vorher rot gezeigter Text waere sonst rot geblieben)
+        f.setText(text)
+        f.setModified(False)
+        self._ueberhoehung_text = text
 
     # ---- Werte im Bild ------------------------------------------------
     WERTE_FILTER = (("nur Extremwerte je Stab", "extrem"), ("alle Stellen", "alle"),
@@ -12776,7 +13292,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 filter_=str(self.cb_werte_filter.currentData() or "extrem"),
                 schwelle=float(self.ed_werte_schwelle.value()), n_te=int(self.sp_werte_n.value()),
                 auswahl=auswahl, versteckt=set(self.verborgen.get("elemente", ())),
-                nachkomma=1 if "N/mm²" in (name or "") else 2)
+                nachkomma=1 if "N/mm²" in (name or "") else 2,
+                einheiten=self._einheiten_modell(), lage=getattr(self, "_bildlage", None))
         except Exception as ex:               # noqa: BLE001 - eine Marke darf die Ansicht nicht sperren
             self.log.appendPlainText(f"Werte im Bild: {ex}")
             return 0
@@ -12890,7 +13407,10 @@ class MainWindow(QtWidgets.QMainWindow):
             kand = np.arange(m.nn) if sicht is None else np.asarray(sicht, int)
             if kand.size == 0:
                 return False
-            d = np.linalg.norm(m.nodes[kand] - q, axis=1)
+            # der Klick trifft die gezeichnete (verformte) Lage, 25.09.2026
+            bild = getattr(self, "_bildlage", None)
+            X = bild if bild is not None and len(bild) == m.nn else m.nodes
+            d = np.linalg.norm(X[kand] - q, axis=1)
             knoten = int(kand[int(np.argmin(d))])
         self.sonden.append({"knoten": knoten, "punkt": np.asarray(m.nodes[knoten], float)})
         self.info(f"Sonde {len(self.sonden)} am Knoten K{knoten}")
@@ -12917,7 +13437,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 continue
             v = ps[i] if ps is not None and i < len(ps) else np.nan
             wert = vp._wertzahl(v, nk) if np.isfinite(v) else "–"
-            punkte.append(self.model.nodes[i])
+            bild = getattr(self, "_bildlage", None)
+            punkte.append(bild[i] if bild is not None and i < len(bild) else self.model.nodes[i])
             texte.append(f"S{k} K{i}: {wert}")
         if not texte:
             return 0
@@ -12978,8 +13499,13 @@ class MainWindow(QtWidgets.QMainWindow):
             ed.setKeyboardTracking(False)
         self.ed_skala_oben.setValue(100.0)
         self.ed_skala_grenze.setValue(355.0)
-        self.ed_skala_grenze.setToolTip("Grenze in der Einheit der Färbung (Spannungen N/mm², "
-                                        "Verschiebungen mm)")
+        # Die Legende folgt seit 25.09.2026 Ansicht → Einheiten, die Grenzen
+        # nicht: sie sind mit dem Modell gespeichert und behalten so ihre
+        # Bedeutung (Gegenpruefung 25.09.2026). Die Felder zeigen die Einheit.
+        for ed in (self.ed_skala_unten, self.ed_skala_oben, self.ed_skala_grenze):
+            ed.setToolTip("In der festen Einheit der Größe, unabhängig von Ansicht → Einheiten: "
+                          "Spannungen N/mm², Verschiebungen mm, Verdrehungen mrad "
+                          "(355 für S355 gilt also immer als 355 N/mm²)")
         f.addRow("unten / oben", row(self.ed_skala_unten, self.ed_skala_oben))
         f.addRow("Grenze", self.ed_skala_grenze)
         self.sp_stufen = QtWidgets.QSpinBox()
@@ -13050,18 +13576,36 @@ class MainWindow(QtWidgets.QMainWindow):
         finally:
             self._werteskala_sperre = False
 
+    def _werteskala_einheit_zeigen(self) -> None:
+        """Die feste Einheit der Werteskala an ihren Feldern (Suffix).
+
+        Grenzen und Grenzwert gelten in der festen Einheit der Groesse
+        (Spannungen N/mm², Verschiebungen mm, Verdrehungen mrad), nicht in
+        der Einheit der Legende - das Feld muss es sagen (25.09.2026)."""
+        e = getattr(self, "_werteskala_einheit", "") or ""
+        zusatz = f" {e}" if e else ""
+        for ed in (getattr(self, "ed_skala_unten", None), getattr(self, "ed_skala_oben", None),
+                   getattr(self, "ed_skala_grenze", None)):
+            if ed is not None and _lebt(ed) and ed.suffix() != zusatz:
+                ed.setSuffix(zusatz)
+
     def _werteskala_text(self) -> str:
         """Zusatz zur Faerbung in Kopfzeile und Bericht, wenn die Skala nicht
-        automatisch ist."""
+        automatisch ist - mit der Einheit, in der die Grenzen gelten
+        (25.09.2026: „Skala bis 20“ stand ohne Einheit neben einer Legende
+        in kN/cm²)."""
         s = getattr(self.model, "werteskala", None)
         if s is None or s.modus == "auto":
             return ""
+        e = getattr(self, "_werteskala_einheit", "") or ""
+        e = f" {vp.bildtext(e)}" if e else ""
         if s.modus == "fest":
-            text = f" · Skala {zl.zahl_text(s.unten, punkt=True)} … {zl.zahl_text(s.oben, punkt=True)}"
+            text = (f" · Skala {zl.zahl_text(s.unten, punkt=True)} … "
+                    f"{zl.zahl_text(s.oben, punkt=True)}{e}")
         else:
-            text = f" · Skala bis {zl.zahl_text(s.grenze, punkt=True)}, darüber magenta"
+            text = f" · Skala bis {zl.zahl_text(s.grenze, punkt=True)}{e}, darüber magenta"
             if s.nur_ueber:
-                text = f" · nur Überschreitungen über {zl.zahl_text(s.grenze, punkt=True)}"
+                text = f" · nur Überschreitungen über {zl.zahl_text(s.grenze, punkt=True)}{e}"
         return text
 
     def _werteskala_melden(self, name: str, skala: dict) -> None:
@@ -17056,9 +17600,19 @@ class MainWindow(QtWidgets.QMainWindow):
     def tabelle_zeigen(self, name: str) -> bool:
         """Eine Tabelle im unteren Bereich nach vorn holen (die Gruppe folgt)."""
         if self.tab_unten.zeigen(name):
-            self.unten_dock.show()
+            self._unten_zeigen()
             return True
         return False
+
+    def _unten_zeigen(self):
+        """Den unteren Bereich zeigen - in der Kompaktstufe auch aufklappen
+        (Paket 5, Gegenpruefung 25.09.2026: sonst blieb die Tabelle hinter
+        der Registerzeile, und der Befehl wirkte tot)."""
+        anordnung = getattr(self, "anordnung", None)
+        if anordnung is not None:
+            anordnung.unten_zeigen()
+        else:
+            self.unten_dock.show()
 
     # ---- Auswahl / Randbedingungen -----------------------------------
     def _sel_val(self, i):
@@ -18649,7 +19203,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log.appendPlainText(tb)
         self.log.appendPlainText("FEHLER: " + str(msg))
         try:
-            self.tab_unten.setCurrentWidget(self.log)
+            # Die Gruppenleiste unten (design.py) kennt kein setCurrentWidget:
+            # der Aufruf scheiterte still, das Protokoll kam nie nach vorn
+            # (Gegenpruefung Paket 5, 25.09.2026). In der Kompaktstufe muss
+            # der Bereich ausserdem aufklappen.
+            self.tabelle_zeigen("Protokoll")
         except Exception:                  # noqa: BLE001 - Anzeige darf nie sperren
             pass
         self.statusBar().showMessage(f"Berechnung gescheitert: {str(msg).splitlines()[0]}"
@@ -18665,7 +19223,7 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception:              # noqa: BLE001 - Anzeige darf nie sperren
                 pass
         try:
-            self.maske_zeigen("Ergebnisse")
+            self._ergebnismaske_nach_rechnung()
         except Exception:                  # noqa: BLE001
             pass
         teil = getattr(getattr(w, "ausnahme", None), "teilergebnis", None)
@@ -19088,6 +19646,21 @@ class MainWindow(QtWidgets.QMainWindow):
                                  + "\nEs wird trotzdem gerechnet - mit Hilfsfesselung.")
         return True
 
+    def _ergebnismaske_nach_rechnung(self) -> bool:
+        """Rechts nach einer Rechnung die Ergebnismaske - ausser eine offene
+        Maske hat noch nicht uebernommene Aenderungen: die bleibt stehen
+        (Plan 4b, Fortschreibung 01.10.2026). Bis dahin ersetzte F5 sie ohne
+        Rueckfrage, und die Eingabe war weg. Die Ergebnissteuerung oben rechts
+        bleibt auch ueber der stehenden Maske sichtbar."""
+        rand = getattr(self, "maskenrand", None)
+        mk = rand.maske if rand is not None and rand.offen() else None
+        if mk is not None and _maskenaenderung(mk):
+            self.info(f"Die Maske „{getattr(mk, 'titel', '')}“ hat nicht übernommene Änderungen und bleibt "
+                      "offen - die Ergebnisse stehen im Register Ergebnisse und im Modellbaum")
+            return False
+        self.maske_zeigen("Ergebnisse")
+        return True
+
     def _solve_done(self, kind, r, stand=None):
         # der Modellstand dieser Rechnung: Koordinaten und je Element Typ und
         # Knoten - legt man danach Knoten oder Staebe an, loescht oder
@@ -19127,7 +19700,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.txt_summary.setPlainText(text)
         self._fill_result_selector()
         self._bewegungen_melden()
-        self.maske_zeigen("Ergebnisse")
+        self._ergebnismaske_nach_rechnung()
+        # Nach der Rechnung steht das Ribbon auf „Ergebnisse“ (Plan 4b,
+        # 25.09.2026): dort liegen die Befehle, die man jetzt braucht. Unten
+        # springt nur bei einem nicht erfuellten Nachweis etwas nach vorn
+        # (_nachweise_melden, Paket 2).
+        self.register_zeigen("Ergebnisse")
         vp.drehknoten_vergessen()       # die Maske gehoert zum gerechneten Modell
         # Die Ergebnisse stehen jetzt auch im Modellbaum - er muss davon wissen
         # (vor show_results: das zieht dann nur noch die Zusaetze nach)
@@ -19182,6 +19760,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # neu fuellen, nicht nur nachziehen: die Glasleiste fuehrt dieselben
         # Umhuellenden und Formen (24.09.2026)
         self._lastwahl_fuellen()
+        # die Ergebnissteuerung oben rechts gibt es, solange es ein Ergebnis gibt
+        self._ergebnissteuerung_zeigen()
 
     def current_result(self):
         """Aktuell gewaehltes Ergebnisobjekt (Results oder Envelope) oder None."""
@@ -19481,9 +20061,18 @@ class MainWindow(QtWidgets.QMainWindow):
         return self._inhalte_zwischen
 
     def _auswahl_zeichnen(self):
-        """Ausgewaehlte Linien, Flaechen, Koerper und Staebe hervorheben."""
+        """Ausgewaehlte Linien, Flaechen, Koerper und Staebe hervorheben.
+
+        Im Ergebnisbild an der verformten Lage (25.09.2026): die Elemente
+        ueber die Knotenlage des Bildes, Linien- und Randzuege, die zwischen
+        Knoten abgetastet sind, mit der Verschiebung ihres naechsten Knotens
+        (vp.punkte_mitnehmen)."""
         m = self.model
         pl = self.plotter
+        lage = getattr(self, "_bildlage", None)
+        if lage is not None and len(lage) != m.nn:
+            lage = None
+        D = None if lage is None else lage - np.asarray(m.nodes, float)
         # Aus dem Modellbaum heraus Gewaehltes leuchtet auf
         leuchtet = [i for i in (getattr(self, "leuchtet", None) or [])
                     if 0 <= i < len(m.elements)]
@@ -19538,6 +20127,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 continue
             try:
                 teil = vp.teilnetz(m, elems)
+                if lage is not None and teil.n_points == len(lage):
+                    teil.points = lage
                 if teil.n_cells > 2000:
                     # grosse Koerper: nur ihre Oberflaeche leuchtet
                     teil = teil.extract_surface()
@@ -19585,10 +20176,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 obj = liste[int(i)]
                 if hasattr(obj, "node"):
                     if 0 <= int(obj.node) < m.nn:
-                        punkte.append(m.nodes[int(obj.node)])
+                        punkte.append((lage if lage is not None else m.nodes)[int(obj.node)])
                 else:
                     P, _r = vp.lager_punkte(m, obj, groesse, self.lagerdichte)
-                    punkte.extend(np.asarray(P, float))
+                    kn_ = list(getattr(obj, "nodes", None) or [])
+                    punkte.extend(vp.punkte_mitnehmen(P, kn_, m, D))
             if punkte:
                 try:
                     pl.add_mesh(pv.PolyData(np.asarray(punkte, float)).glyph(
@@ -19611,7 +20203,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         X = np.asarray(ln.punkte(m, vp.TEILUNG_KURVE), float)
                     except Exception:      # noqa: BLE001 - dann eben die Sehne
                         X = m.nodes[idx]
-                zuege.append(np.asarray(X, float))
+                zuege.append(vp.punkte_mitnehmen(X, idx, m, D))
         raender = self._raender()
         for name in self.sel_flaechen:
             f = m.flaechen.get(name)
@@ -19619,6 +20211,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 continue
             P = np.asarray(raender.get(name, f.randpunkte(m)), float)
             if len(P) >= 3:
+                P = vp.punkte_mitnehmen(P, self._randknoten(m, f), m, D)
                 zuege.append(np.vstack([P, P[:1]]))
         for name in self.sel_koerper:
             k = m.koerper.get(name)
@@ -19630,6 +20223,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     continue
                 P = np.asarray(raender.get(fn, f.randpunkte(m)), float)
                 if len(P) >= 3:
+                    P = vp.punkte_mitnehmen(P, self._randknoten(m, f), m, D)
                     zuege.append(np.vstack([P, P[:1]]))
         for name in self.sel_staebe:
             mem = m.members.get(name)
@@ -19638,7 +20232,7 @@ class MainWindow(QtWidgets.QMainWindow):
             for e in (mem.elements or []):
                 if e < len(m.elements):
                     idx = [int(n) for n in m.elements[e].nodes]
-                    zuege.append(m.nodes[[idx[0], idx[-1]]])
+                    zuege.append((lage if lage is not None else m.nodes)[[idx[0], idx[-1]]])
         if zuege:
             pts: list = []
             lines: list = []
@@ -19650,11 +20244,34 @@ class MainWindow(QtWidgets.QMainWindow):
             pl.add_mesh(pv.PolyData(np.asarray(pts, float), lines=np.asarray(lines)),
                         color="#ff8800", line_width=6, name="auswahl")
 
+    @staticmethod
+    def _randknoten(m, f) -> list:
+        """Die Knoten der Randlinien einer Flaeche (fuer punkte_mitnehmen)."""
+        kn = []
+        for nm in (getattr(f, "linien", None) or []):
+            ln = (m.lines or {}).get(nm)
+            if ln is not None:
+                kn.extend(int(n) for n in (ln.nodes or []) if 0 <= int(n) < m.nn)
+        return kn
+
     def _scale(self, u):
-        umax = np.abs(u[:, :3]).max() if u.size else 0.0
-        if umax <= 0:
+        """(Faktor, groesste Verschiebung) der verformten Figur.
+
+        Seit 25.09.2026 aus dem Zahlenfeld Ueberhoehung statt eines
+        Schiebers 0 … 100 ohne Einheit: „auto“ wie bisher die Vorgabe (die
+        groesste Verschiebung erscheint mit 8 % der Modellgroesse), „1:1“ die
+        wahre Groesse, „aus“ keine Verformung, sonst der getippte Faktor."""
+        umax = float(np.nanmax(np.abs(u[:, :3]))) if u.size else 0.0
+        art = getattr(self, "_ueberhoehung_art", "auto")
+        if art == "aus":
+            return 0.0, umax
+        if art == "1:1":
+            return 1.0, umax
+        if art == "fest":
+            return float(getattr(self, "_ueberhoehung_wert", 0.0)), umax
+        if not umax > 0:
             return 0.0, 0.0
-        target = 0.08 * self.model.characteristic_size() * self.sl_scale.value() / 30.0
+        target = 0.08 * self.model.characteristic_size()
         return target / umax, umax
 
     def _umriss(self, netz):
@@ -19764,6 +20381,9 @@ class MainWindow(QtWidgets.QMainWindow):
         die Skala wird dann kuerzer, statt unter seine Knopfzeile zu laufen.
         """
         skala = dict(self.FARBSKALA_VERLAUF if verlauf else self.FARBSKALA)
+        if getattr(self, "_farbskala_waagerecht", False):
+            # Kompaktstufe des Fensters (gui/fenster.py, 25.09.2026)
+            return vp.farbskala_waagerecht(skala, zweite=verlauf)
         try:
             hoch = float(self.plotter.render_window.GetSize()[1])
         except Exception:                   # noqa: BLE001
@@ -19847,6 +20467,12 @@ class MainWindow(QtWidgets.QMainWindow):
         u = None
         modal = False
         self._bild_figur = ("", None)
+        # was die Ergebnisdarstellung gezeichnet hat (Pruefungen, Kopfzeile)
+        self._extremmarken, self._verlauf_marken, self._verlauf_teile = [], [], []
+        self._verlaufswerte = 0
+        self._verlauf_hinweis = ""
+        self._verlauf_unverformt = False
+        self._bildlage = None
         if r is not None:
             if getattr(r, "modes", None) is not None and self.cb_mode.count():
                 u = r.modes[min(self.cb_mode.currentIndex(), len(r.modes) - 1)]
@@ -19875,10 +20501,50 @@ class MainWindow(QtWidgets.QMainWindow):
         elif passt == "gewachsen" and u is not None:
             u = vp.auf_laenge(u, m.nn, 0.0)
         s = 0.0
+        # Ein Schnittgroessenverlauf steht am unverformten Stab - dann wird
+        # die ganze Figur unverformt gezeichnet, wie in RFEM (Plan Paket 6,
+        # 25.09.2026). Vorher lag der Verlauf an der unverformten Achse, der
+        # Stab daneben verformt: am Hallenrahmen sichtbar auseinander
+        # (bilder/036_…, vp_zoom/036_mitte.png).
+        q = self.cb_diagram.currentText()
+        verlauf_an = bool(u is not None and not modal and q in vp.SCHNITTGROESSEN
+                          and (hasattr(r, "beam_end") or hasattr(r, "beam"))
+                          and self._stabnummern_zum_zeichnen(m))
+        self._verlauf_unverformt = verlauf_an
+        self._verlauf_hinweis = ""
         if u is not None:
             s, umax = self._scale(u)
-            self.lbl_scale.setText(f"Faktor {s:.1f}   |  max = {umax*1000:.3f} mm"
-                                   if not modal else f"Faktor {s:.1f} (normierte Eigenform)")
+            # beim Verlauf zeigt das Feld 0 (gesperrt) - gezeichnet wird ohne
+            # Verformung (Gegenpruefung 25.09.2026)
+            self._ueberhoehung_anzeigen(s, verlauf=verlauf_an)
+            E_ = self._einheiten_modell()
+            # kurz in der Zeile, ganz als Tooltip (Steuerung kompakt, 25.09.2026)
+            if verlauf_an:
+                s = 0.0
+                kurz, lang = "unverformt", (f"Verlauf {q}: Figur unverformt - die Überhöhung gilt "
+                                            "ohne Verlauf")
+            elif modal:
+                kurz = "normierte Form"
+                lang = f"Faktor {zl.zahl_text(vp.faktor_runden(s))} (normierte Eigenform)"
+            else:
+                # Komma wie in den Masken (Antwort 6 des Anwenders)
+                v_ = round(E_.aus_si(umax, "verformung"), E_.nk("verformung"))
+                kurz = f"max {zl.zahl_text(v_)} {E_.einheit('verformung')}"
+                lang = (f"Faktor {zl.zahl_text(vp.faktor_runden(s))} · größte Verschiebung "
+                        f"{zl.zahl_text(v_)} {E_.einheit('verformung')}")
+            self.lbl_scale.setText(kurz)
+            self.lbl_scale.setToolTip(lang)
+        self._ueberhoehung_faktor = s
+        # Knoten, Lager, Auswahl und Werte sitzen an der Lage der gezeichneten
+        # Figur (25.09.2026) - vorher schwebten die Knoten ueber dem verformten
+        # Koerper (vp_zoom/028_mitte.png). Ohne Verformung: None, die Modell-
+        # knoten; das kostet dann nichts.
+        lage = None
+        if u is not None and s:
+            uu = np.asarray(u, float)
+            if uu.ndim == 2 and len(uu) == m.nn:
+                lage = np.asarray(m.nodes, float) + s * uu[:, :3]
+        self._bildlage = lage
 
         # Was ins Bild kommt: die Sichtbarkeitsschalter Staebe, Flaechen,
         # Volumen und die ausgeblendeten Elemente. Bei Voll und Transparent
@@ -19915,8 +20581,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.log.appendPlainText(f"Stabkörper: {ex}")
 
         field = self.cb_field.currentText()
-        point_scalars = cell_scalars = None
-        name = ""
+        point_scalars = cell_scalars = ps_wahr = None
+        name = titel = ""
         clim = None
         farben, balken = {}, {}
         sicht_knoten = self._sichtbare_knoten()          # None = alle
@@ -19935,6 +20601,22 @@ class MainWindow(QtWidgets.QMainWindow):
                 # und in spn.grenzen (Maske der sichtbaren Knoten), 24.09.2026
                 point_scalars = vp.auf_laenge(point_scalars, m.nn)
                 cell_scalars = vp.auf_laenge(cell_scalars, len(m.elements))
+            # Legende in der Einheit der Einstellung und mit einer Bezeichnung
+            # ohne verlierbare Zeichen (vp.skalentitel, 25.09.2026)
+            faktor_e, titel = vp.skalentitel(field, name, self._einheiten_modell())
+            # Die Grenzen der Werteskala (fest, Grenzwert) gelten in der festen
+            # Einheit der Groesse (N/mm², mm, mrad) - so sind sie gespeichert.
+            # Erst danach wird in die Einheit der Legende umgerechnet
+            # (vp.skala_umrechnen). Vorher rechnete die Skala in der Legenden-
+            # einheit: nach Umstellen auf kN/cm² wirkte die Grenze 20 als
+            # 200 N/mm², die Ueberschreitungen verschwanden still
+            # (Gegenpruefung 25.09.2026).
+            self._werteskala_einheit = vp.einheit_aus_name(name)
+            self._werteskala_einheit_zeigen()
+            ps_fest = point_scalars
+            if point_scalars is not None and faktor_e != 1.0:
+                point_scalars = np.asarray(point_scalars, float) * faktor_e
+            ps_wahr = point_scalars
             klassen = spn.kategorien(*spn.feld(field)) if spn.feld(field) else None
             if point_scalars is not None and klassen:
                 # Groesse in Klassen (Kontaktzustand): feste Farben, Beschriftung
@@ -19955,7 +20637,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     # Werteskala: automatisch, fest oder Grenzwert - darueber
                     # eigene Farbe und der Groesstwert an der Skala
                     # (spannungen.grenzen); Grenzen nur aus den sichtbaren Knoten
-                    skala = spn.grenzen(self._werteskala(), ps, maske=sicht_maske)
+                    skala = spn.grenzen(self._werteskala(), np.asarray(ps_fest, float),
+                                        maske=sicht_maske)
+                    skala = vp.skala_umrechnen(skala, faktor_e)
                     point_scalars = skala["werte"]
                     clim = list(skala["clim"])
                     farben = {"n_colors": skala["n_colors"], "nan_color": vp.FARBE_OHNE_WERT}
@@ -19968,7 +20652,9 @@ class MainWindow(QtWidgets.QMainWindow):
                         balken["above_label"] = skala["above_label"]
                     if skala["below_label"]:
                         balken["below_label"] = skala["below_label"]
-                    self._werteskala_melden(name, skala)
+                    # mit dem Titel der Legende: Zahl und Einheit passen
+                    # zusammen (vorher „[MPa]“ vor einer Zahl in kN/cm²)
+                    self._werteskala_melden(titel, skala)
                 else:
                     point_scalars = None
                     if spn.feld(field) is not None:
@@ -20015,7 +20701,9 @@ class MainWindow(QtWidgets.QMainWindow):
             if u is not None:
                 warped = netz.copy()
                 warped.points = netz.points + s * u[kn, :3]
-                if self.cb_undeformed.isChecked():
+                # ohne Verformung (aus, Verlauf) laege der Umriss genau auf
+                # der Figur
+                if self.cb_undeformed.isChecked() and s:
                     # Netz aus: das unverformte System nur als Umriss (Kanten
                     # der Koerper), nicht als Drahtnetz - "wenn ich das Netz
                     # ausblende, bleibt es beim unverformten System sichtbar"
@@ -20037,7 +20725,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     warped.point_data[name] = np.asarray(point_scalars)[kn]
                     farbtafel = farben.pop("cmap", "turbo") if "cmap" in farben else "turbo"
                     self.plotter.add_mesh(warped, scalars=name, cmap=farbtafel, clim=clim,
-                                          scalar_bar_args=dict(self._farbskala(), title=name, **balken),
+                                          scalar_bar_args=dict(self._farbskala(), title=titel, **balken),
                                           name=f"result_{nm}", **farben,
                                           **dict({"line_width": breit},
                                                  **vp.darstellung(modus, show_edges, True)))
@@ -20047,7 +20735,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     warped.cell_data[name] = np.asarray(cell_scalars, float)[eidx]
                     self.plotter.add_mesh(warped, scalars=name, cmap="RdYlGn_r", clim=[0, 1.2],
                                           nan_color=vp.FARBE_OHNE_WERT,
-                                          scalar_bar_args=dict(self._farbskala(), title=name, fmt="%.2f"),
+                                          scalar_bar_args=dict(self._farbskala(), title=titel, fmt="%.2f"),
                                           name=f"result_{nm}",
                                           **dict({"line_width": 5 if dick else 1},
                                                  **vp.darstellung(modus, show_edges, True)))
@@ -20086,23 +20774,13 @@ class MainWindow(QtWidgets.QMainWindow):
                                       **dict({"color": "#8fb8d8", "line_width": breit},
                                              **vp.darstellung(modus, show_edges)))
         if u is not None and not modal:
+            if getattr(self, "cb_extremmarken", None) is not None and self.cb_extremmarken.isChecked():
+                self._extremmarken_zeichnen(m, field, ps_wahr, cell_scalars, sicht_maske,
+                                            ausser, titel)
             # Schnittgroessenverlauf
-            q = self.cb_diagram.currentText()
-            if q in vp.SCHNITTGROESSEN and (hasattr(r, "beam_end") or hasattr(r, "beam")):
+            if verlauf_an:
                 try:
-                    sc = vp.diagram_scale(m, r, q) * self.sl_scale.value() / 30.0
-                    pd = vp.beam_diagram(m, r, q, sc)
-                    if pd is not None:
-                        unit = "kN" if q in ("N", "Vy", "Vz") else "kNm"
-                        pd["wert"] = pd["wert"] / 1e3
-                        wv = np.asarray(pd["wert"], float)
-                        self.plotter.add_mesh(pd, scalars="wert", cmap="coolwarm", line_width=2,
-                                              scalar_bar_args=dict(self._farbskala(True),
-                                                                   title=f"{q} [{unit}]",
-                                                                   fmt=spn.skalenformat(
-                                                                       float(np.nanmin(wv)) if wv.size else 0.0,
-                                                                       float(np.nanmax(wv)) if wv.size else 1.0)),
-                                              name="diagram")
+                    self._verlauf_zeichnen(m, r, q, ausser)
                 except Exception as ex:
                     self.log.appendPlainText(f"Verlauf: {ex}")
             if getattr(r, "contact", None) and getattr(self, "act_kontaktmarken", None) is not None \
@@ -20113,7 +20791,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             if getattr(self, "act_lager", None) is None or self.act_lager.isChecked():
                 vp.add_supports(self.plotter, m, size, self.lagergroesse, nur=sichtbare_knoten,
-                                dichte=self.lagerdichte)
+                                dichte=self.lagerdichte, lage=lage)
                 if getattr(self, "act_lagertext", None) is not None and self.act_lagertext.isChecked():
                     punkte, texte = vp.lager_texte(m, nur=sichtbare_knoten)
                     if texte:
@@ -20128,9 +20806,9 @@ class MainWindow(QtWidgets.QMainWindow):
             vp.add_geometrie(self.plotter, m, modus=modus, netze=self._geometrie_netze())
             self._kontakte_zeichnen(m)
             if getattr(self, "act_knoten", None) is None or self.act_knoten.isChecked():
-                vp.add_nodes(self.plotter, m, nur=sichtbare_knoten)
+                vp.add_nodes(self.plotter, m, nur=sichtbare_knoten, lage=lage)
             if self._netzknoten_sichtbar():
-                vp.add_netzknoten(self.plotter, m, nur=sichtbare_knoten)
+                vp.add_netzknoten(self.plotter, m, nur=sichtbare_knoten, lage=lage)
             self._auswahl_zeichnen()
             self._geist_zeichnen(m)
             if (getattr(m, "bemassungen", None) or getattr(self, "messungen", None)):
@@ -20155,7 +20833,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.log.appendPlainText(f"Darstellung: {ex}")
         self._nummern_zeichnen(m, sichtbare_knoten)
         if len(self.selection):
-            self.plotter.add_points(m.nodes[self.selection], color="#ff8800", point_size=11,
+            X_ = lage if lage is not None else m.nodes
+            sel_ = np.asarray(self.selection, int)
+            sel_ = sel_[(sel_ >= 0) & (sel_ < len(X_))]
+            self.plotter.add_points(X_[sel_], color="#ff8800", point_size=11,
                                     render_points_as_spheres=True, name="selection")
         self._kopfzeile_zeichnen(r, s if (u is not None and not modal) else 0.0)
         self._kennwerte_zeichnen(r)
@@ -20176,6 +20857,132 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception:
                 pass
         return r
+
+    # ---- Ergebnisdarstellung: Marken und Verlauf (Paket 6b, 25.09.2026) --
+    def _marke(self, punkt, text: str, farbe: str, name: str) -> None:
+        """Eine Marke mit Punkt und Schild - fuer Max/Min an der Extremstelle."""
+        try:
+            gross = int(self.model.bemassung_einstellungen().textgroesse)
+        except Exception:                   # noqa: BLE001
+            gross = 10
+        self.plotter.add_point_labels(
+            np.asarray([punkt], float), [text], font_size=gross + 1, text_color=farbe,
+            point_color=farbe, point_size=10, render_points_as_spheres=True,
+            shape="rounded_rect", shape_color="#ffffff", shape_opacity=0.8,
+            always_visible=True, name=name)
+
+    def _extremmarken_zeichnen(self, m, field: str, ps, cs, sicht_maske, ausser, titel: str) -> list:
+        """Max- und Min-Marke der Faerbung an ihren Extremstellen.
+
+        Die Werte sind die der Legende (gleiche Einheit), gesucht wird nur
+        in den sichtbaren Teilen wie fuer Skala und Kennwerte. Die Marke
+        sitzt an der gezeichneten Lage (verformt). Kosten: ein argmax und
+        ein argmin ueber die Knotenwerte (Messung am Pruefkoerper mit
+        200 000 Elementen: tests/messung_ergebnisdarstellung.py).
+        Rueckgabe: [(Name, Text)] fuer die Pruefung.
+        """
+        self._extremmarken = []
+        einheit = titel[titel.rfind("[") + 1:-1] if titel.endswith("]") and "[" in titel else ""
+        E = self._einheiten_modell()
+        nk = None
+        if field.startswith("|u|") or field in ("ux", "uy", "uz"):
+            nk = E.nk("verformung")
+        elif field.startswith("Vergleich"):
+            nk = E.nk("spannung")
+        X = self._bildlage if getattr(self, "_bildlage", None) is not None else np.asarray(m.nodes, float)
+        klassen = spn.kategorien(*spn.feld(field)) if spn.feld(field) else None
+        if ps is not None and not klassen:
+            w = np.asarray(ps, float)
+            if len(w) == m.nn:
+                i_hi, i_lo = vp.extremstellen(w, sicht_maske)
+                for i, art, farbe, nm in ((i_hi, "max", vp.FARBE_MARKE_MAX, "marke_max"),
+                                          (i_lo, "min", vp.FARBE_MARKE_MIN, "marke_min")):
+                    if i is None:
+                        continue
+                    text = vp.marken_text(art, float(w[i]), einheit, nk)
+                    self._marke(X[i], text, farbe, nm)
+                    self._extremmarken.append((nm, text))
+        elif cs is not None:
+            c = np.array(cs, float, copy=True)
+            if len(c) == len(m.elements):
+                for i in (ausser or ()):
+                    if 0 <= int(i) < len(c):
+                        c[int(i)] = np.nan
+                i_hi, _i_lo = vp.extremstellen(c)
+                if i_hi is not None:
+                    text = vp.marken_text("max", float(c[i_hi]), "", E.nk_ausnutzung)
+                    kn = [int(k) for k in m.elements[i_hi].nodes if 0 <= int(k) < len(X)]
+                    if kn:
+                        self._marke(X[kn].mean(axis=0), text, vp.FARBE_MARKE_MAX, "marke_max")
+                        self._extremmarken.append(("marke_max", text))
+        return self._extremmarken
+
+    def _verlauf_zeichnen(self, m, r, q: str, ausser) -> None:
+        """Den Schnittgroessenverlauf zeichnen - am unverformten Stab.
+
+        Lastfall und Kombination: eine Linie, gefaerbt nach dem Wert, die
+        Farbskala symmetrisch um 0. Umhuellende: zwei Linien, max rot und
+        min blau (vp.verlauf_linien). Werte und Legende in der Einheit der
+        Einstellung. Dazu die Max-/Min-Marken des Verlaufs und die Werte am
+        Verlauf (je Stab groesster und kleinster Wert, Vorgabe an).
+        """
+        E = self._einheiten_modell()
+        f_e, einheit = vp.verlauf_einheit(q, E)
+        art = "moment" if q in ("Mt", "My", "Mz") else "kraft"
+        staebe = [i for i in self._stabnummern_zum_zeichnen(m) if i not in ausser]
+        sc = vp.diagram_scale(m, r, q)
+        teile = vp.verlauf_linien(m, r, q, sc, elemente=staebe)
+        self._verlauf_teile = [nm for nm, _pd, _f in teile]
+        self._verlauf_marken = []
+        self._verlaufswerte = 0
+        if not teile:
+            return
+        for _nm, pd, _f in teile:
+            pd["wert"] = np.asarray(pd["wert"], float) * f_e
+        alle = np.concatenate([np.asarray(pd["wert"], float) for _nm, pd, _f in teile])
+        clim = vp.symmetrische_grenzen(alle)
+        titel = f"{q} [{einheit}]"
+        for nm, pd, farbe in teile:
+            if farbe is None:
+                self.plotter.add_mesh(pd, scalars="wert", cmap="coolwarm", clim=clim, line_width=2,
+                                      scalar_bar_args=dict(self._farbskala(True), title=titel,
+                                                           fmt=spn.skalenformat(*clim)),
+                                      name=nm)
+            else:
+                self.plotter.add_mesh(pd, color=farbe, line_width=2, name=nm)
+        if len(teile) == 2:
+            # keine Farbskala bei zwei einfarbigen Linien - die Kopfzeile
+            # sagt, welche Farbe was ist, und nennt die Einheit
+            self._verlauf_hinweis = f"  Verlauf {q} [{einheit}]: rot max, blau min"
+        if getattr(self, "cb_extremmarken", None) is not None and self.cb_extremmarken.isChecked():
+            for nm, pd, _f in teile:
+                sp = np.asarray(pd.point_data["spitze"], bool)
+                P = np.asarray(pd.points)[sp]
+                w = np.asarray(pd["wert"], float)[sp]
+                i_hi, i_lo = vp.extremstellen(w)
+                if nm == "diagram_min":
+                    i_hi = None
+                if nm == "diagram_max":
+                    i_lo = None
+                for i, a, farbe, name in ((i_hi, "max", vp.FARBE_MARKE_MAX, "verlauf_max"),
+                                          (i_lo, "min", vp.FARBE_MARKE_MIN, "verlauf_min")):
+                    if i is None:
+                        continue
+                    text = vp.marken_text(a, float(w[i]), einheit, E.nk(art))
+                    self._marke(P[i], text, farbe, name)
+                    self._verlauf_marken.append((name, text))
+        # Werte am Verlauf - nicht doppelt, wenn „Werte im Bild: Stäbe“ die
+        # Stellen schon beschriftet
+        if (getattr(self, "cb_verlaufswerte", None) is not None and self.cb_verlaufswerte.isChecked()
+                and "staebe" not in self._werte_arten()):
+            punkte, texte = vp.verlaufswerte(teile, 1.0, m, versteckt=ausser)
+            if texte:
+                self.plotter.add_point_labels(
+                    np.asarray(punkte, float), texte,
+                    font_size=int(self.model.bemassung_einstellungen().textgroesse),
+                    text_color="#1a2a6c", point_size=1, shape=None,
+                    always_visible=True, name="verlaufswerte")
+                self._verlaufswerte = len(texte)
 
     # ---- Nummerierung: je Objektart ein Schalter -------------------------
     #: Nummerierung im Viewport je Objektart: Schriftfarbe, Schriftgroesse,
@@ -20327,7 +21134,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 idx = idx[~vp.netzknoten_maske(m)[idx]]
             if not len(idx):
                 return leer
-            return m.nodes[idx], [str(int(i)) for i in idx]
+            X = self._bildlage if getattr(self, "_bildlage", None) is not None else m.nodes
+            return X[idx], [str(int(i)) for i in idx]
         if art == "Elemente":
             weg = set(self.verborgen["elemente"])
             typen = self._sichtbare_typen()
@@ -20343,7 +21151,8 @@ class MainWindow(QtWidgets.QMainWindow):
                      if 0 <= int(s.node) < m.nn and (sicht is None or int(s.node) in sicht)]
             if not paare:
                 return leer
-            P = np.array([m.nodes[n] for _, n in paare])
+            X = self._bildlage if getattr(self, "_bildlage", None) is not None else m.nodes
+            P = np.array([X[n] for _, n in paare])
             return P, [(m.supports[i].name or str(i + 1)) for i, _ in paare]
         if art == "Linien":
             punkte, texte = [], []
@@ -20507,7 +21316,7 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 name = ""
             zeilen = vp.kopfzeile(self.model, r, name,
-                                  (self.cb_field.currentText() + self._werteskala_text()
+                                  (vp.bildtext(self.cb_field.currentText()) + self._werteskala_text()
                                    + self._werte_text() + self._sicht_text())
                                   if r is not None else "",
                                   self.cb_diagram.currentText() if r is not None else "",
@@ -20517,12 +21326,18 @@ class MainWindow(QtWidgets.QMainWindow):
                                   # nur mit verformter Figur (Ueberhoehung
                                   # > 0) - sonst stand „Figur: GZT4“ ohne Figur
                                   figur=(getattr(self, "_bild_figur", ("", None))[0] or "")
-                                  if r is not None and faktor > 0 else "")
+                                  if r is not None and faktor > 0 else "",
+                                  unverformt=bool(getattr(self, "_verlauf_unverformt", False))
+                                  and r is not None)
         except Exception as ex:             # noqa: BLE001
             self.log.appendPlainText(f"Kopfzeile: {ex}")
             return []
         if not zeilen:
             return []
+        if r is not None and getattr(self, "_verlauf_hinweis", ""):
+            # Umhuellende: zwei Linien ohne Farbskala - hier steht, was rot
+            # und was blau ist, und die Einheit (25.09.2026)
+            zeilen = list(zeilen) + [self._verlauf_hinweis]
         if r is not None and getattr(self, "_lasten_weggelassen", False):
             # Schalter „Lasten“ ist an, im Bild einer Kombination/Umhuellenden
             # stehen trotzdem keine - das muss dastehen, sonst sucht man eine
@@ -20546,13 +21361,22 @@ class MainWindow(QtWidgets.QMainWindow):
             # Fenster reicht die Leiste bis in die linke Ecke. VTK zaehlt die
             # Bildzeilen von unten.
             hoch = self.plotter.render_window.GetSize()[1]
-            rand = (self.glasleiste.height() + 16) if getattr(self, "glasleiste", None) \
-                else 46
-            zh = int(self.SCHRIFT_KOPF * 2 * 1.25)
-            y = hoch - rand - zh * len(zeilen)
-            self.plotter.add_text("\n".join(zeilen), position=(12, max(y, 6)),
+            glas = self.glasleiste.height() if getattr(self, "glasleiste", None) else 30
+            y = vp.kopfzeile_y(hoch, glas, len(zeilen), self.SCHRIFT_KOPF, self._pixelmass())
+            self.plotter.add_text("\n".join(vp.bildzeichen(z) for z in zeilen), position=(12, y),
                                   font_size=self.SCHRIFT_KOPF, font="courier",
                                   color="#203040", name="kopfzeile")
+            akt = self.plotter.renderer.actors.get("kopfzeile")
+            wue = getattr(self, "ansichtswuerfel", None)
+            if akt is not None and wue is not None and wue.isVisible():
+                ia = self.plotter.interactor
+                s = self._pixelmass()
+                lo = ia.mapFromGlobal(wue.mapToGlobal(QtCore.QPoint(0, 0)))
+                wr = (lo.x() * s, (lo.x() + wue.width()) * s,
+                      hoch - (lo.y() + wue.height()) * s, hoch - lo.y() * s)
+                neu = vp.kopfzeile_ausweichen(vp.kennwerte_rahmen(self.plotter.renderer, akt), wr, 6 * s)
+                if neu is not None:
+                    akt.SetPosition(12, max(neu, 6))
         except Exception as ex:             # noqa: BLE001
             self.log.appendPlainText(f"Kopfzeile: {ex}")
         return zeilen
@@ -22247,6 +23071,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self._beenden_nach_rechnung = False
             event.ignore()
             return
+        # Groesse und Aufteilung fuer den naechsten Start (Paket 5, 25.09.2026)
+        anordnung = getattr(self, "anordnung", None)
+        if anordnung is not None:
+            anordnung.speichern()
         self.stop_web_server()
         super().closeEvent(event)
 
@@ -22626,7 +23454,8 @@ def main(app=None, splash=None):
         win.setWindowIcon(app.windowIcon())
     except Exception:                       # noqa: BLE001
         pass
-    win.show()
+    # maximiert bzw. wie zuletzt gespeichert (Paket 5, 25.09.2026)
+    fenster_starten(win)
     if splash is not None:
         try:
             splash.fertig(win)
