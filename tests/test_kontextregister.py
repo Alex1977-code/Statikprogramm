@@ -1039,6 +1039,9 @@ def test_klick_waehlt():
     _leeren(w)
     w.ribbon.zeigen("Geometrie")
     w.auswahlart_setzen("Stab")
+    # _objekt_umschalten ohne ``ersetzen`` ist der Weg von Strg+Klick: dazu oder
+    # heraus (seit 03.10.2026 ersetzt der Klick ohne Taste die Auswahl,
+    # tests/test_klickauswahl.py)
     w._objekt_umschalten(w.sel_staebe, "Riegel", "Stäbe")
     _ruhe()
     check("Klick auf einen Stab: Register „Auswahl: 1 Stab“", _reiter(w) == "Auswahl: 1 Stab", repr(_reiter(w)))

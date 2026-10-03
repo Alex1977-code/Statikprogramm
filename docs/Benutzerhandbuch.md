@@ -1042,8 +1042,10 @@ Ansicht ausgewählt ist:
 
 Wonach ein Klick in der Ansicht greift, stellt das Auswahlfeld
 **Geometrie → Auswahl in der Ansicht** ein: *Knoten, Linie, Fläche, Volumen,
-Stab*. Ein zweiter Klick auf dasselbe Objekt nimmt es wieder aus der Auswahl;
-das Gewählte ist orange hervorgehoben.
+Stab*. Ein Klick ersetzt die Auswahl, ein Strg+Klick nimmt das Objekt dazu, und
+ein Strg+Klick auf ein gewähltes Objekt nimmt es wieder heraus (siehe „Auswahl
+per Klick“; bis zum 03.10.2026 nahm schon ein zweiter Klick ohne Taste es
+heraus). Das Gewählte ist orange hervorgehoben.
 
 Fläche und Volumenkörper sind **Geometrie** — sie tragen erst dann Elemente,
 wenn sie **vernetzt** werden (*Vernetzen* in derselben Gruppe, oder das
@@ -2766,11 +2768,28 @@ stellt die Auswahlart darauf um. Gemessen wird in Bildpunkten um den Zeiger
 ein Klick knapp neben einem Knoten, einer Linie oder einer Stabachse trifft
 noch.
 
+**Klick ersetzt, Strg+Klick nimmt dazu.** Ein Klick ohne Taste wählt das
+getroffene Objekt und hebt alles andere auf, auch die Auswahl anderer Arten und
+was aus dem Modellbaum heraus leuchtet. Mit gedrückter **Strg**-Taste kommt das
+Objekt zur Auswahl dazu, und ein Strg+Klick auf ein schon gewähltes Objekt nimmt
+es wieder heraus. So ist es in RFEM und in Windows (Antwort 7 vom 24.09.2026).
+**Umschalt + Klick** erzwingt wie bisher die intelligente Auswahl und ersetzt
+dabei die Auswahl durch den ganzen Zug, so wie Umschalt+Klick in Windows einen
+Bereich wählt; **Strg + Umschalt + Klick** nimmt den Zug dazu oder, auf einem
+gewählten Objekt, heraus. Ein Klick ins Leere hebt die Auswahl auf, ein
+Strg+Klick ins Leere lässt sie stehen, denn Strg nimmt nie etwas weg, das man
+nicht angeklickt hat. Klicks, die das Klickfeld einer offenen Maske füllen,
+Messpunkte und Sonden ändern die Auswahl nicht. Bis zum 03.10.2026 schaltete
+jeder Klick das getroffene Objekt hinzu oder weg, die Auswahl anderer Arten blieb
+stehen, und Strg tat nichts. Ein Klick zeichnet die Ansicht einmal neu und
+gleicht das Kontextregister einmal ab; bis dahin lief das Register je Klick
+zweimal.
+
 **Die Maustasten in der 3D-Ansicht.**
 
 | Taste | tut |
 |---|---|
-| **links** | kurzer Klick wählt, was unter dem Zeiger liegt — liegt dort nichts, hebt er die Auswahl auf (seit 16.09.2026); gedrückt halten und ziehen zieht das **Auswahlfenster** auf |
+| **links** | kurzer Klick wählt, was unter dem Zeiger liegt, und ersetzt die Auswahl; mit **Strg** kommt es dazu (seit 03.10.2026) — liegt dort nichts, hebt er die Auswahl auf (seit 16.09.2026; mit Strg bleibt sie); gedrückt halten und ziehen zieht das **Auswahlfenster** auf |
 | **Mitte** gedrückt halten | **drehen**; Doppelklick (ohne Zug, nicht beim Rollen) passt alles Sichtbare ins Bild |
 | **rechts** gedrückt halten | **schieben**; ohne Ziehbewegung das Kontextmenü |
 | **Mausrad** | zoomen, auf die Fläche unter dem Zeiger zu; die Drehmitte folgt |
@@ -2813,12 +2832,14 @@ Statuszeile meldete nur „Gefangen: raster“).
 | von **rechts nach links** | grün, gestrichelt | alles im Fenster **und** alles, was das Fenster nur **anschneidet** |
 
 Gefasst wird, was die Auswahlart sagt: Knoten, Linien, Stäbe, Flächen,
-Volumen oder Elemente des Netzes. Das Fenster ergänzt die vorhandene
-Auswahl; **Esc** bricht es ab, *Alles deselektieren* (Glasleiste, Esc) leert
-alles. **Klicken und Ziehen wählt nichts**: gezählt wird der Klick erst beim
-Loslassen, und nur, wenn der Zeiger dazwischen höchstens vier Bildpunkte
-gewandert ist — wer die Ansicht mit gedrückter Taste dreht, ändert die
-Auswahl nicht.
+Volumen oder Elemente des Netzes. Das Fenster ersetzt die Auswahl wie ein
+Klick; ist beim Loslassen **Strg** gedrückt, kommt sein Inhalt zur vorhandenen
+Auswahl dazu (Entscheidung E5 vom 01.10.2026). Bis zum 03.10.2026 ergänzte das
+Fenster immer die vorhandene Auswahl. **Esc** bricht es ab, *Alles
+deselektieren* (Glasleiste, Esc) leert alles. **Klicken und Ziehen wählt
+nichts**: gezählt wird der Klick erst beim Loslassen, und nur, wenn der
+Zeiger dazwischen höchstens vier Bildpunkte gewandert ist — wer die Ansicht
+mit gedrückter Taste dreht, ändert die Auswahl nicht.
 
 **Intelligente Auswahl.** Der Schalter in der Glasleiste (auch *Start →
 Bearbeiten ▾*, Vorgabe: an) nimmt bei Linien und Stäben die **eindeutige
@@ -2826,11 +2847,13 @@ Fortsetzung** gleich mit: Hängt am Endknoten der angeklickten Linie genau
 eine weitere Linie, gehört sie dazu, und so weiter — bis zu einer
 Verzweigung (mehrere Linien am Knoten), einem freien Ende oder dem Schluss
 eines Rings. Ein Zug aus zwölf Linien ohne Abzweig ist so ein einziger
-Klick. Dieselbe Regel gilt **beim Abwählen**: der Klick auf eine gewählte
-Linie nimmt den Zug wieder heraus, soweit er gewählt ist. Bei Stäben zählt
-der physische Stab (Kette von Elementen) mit seinen beiden Enden. Ist der
-Schalter aus, erzwingt **Umschalt + Klick** die Kette für diesen einen
-Klick. Der Klickmodus der Flächenmaske (*Randlinien anklicken*) nutzt
+Klick, und die alte Auswahl geht dabei. Dieselbe Regel gilt **beim
+Abwählen**: der Strg+Klick auf eine gewählte Linie nimmt den Zug wieder heraus,
+soweit er gewählt ist (bis zum 03.10.2026 tat das schon der Klick ohne Taste).
+Bei Stäben zählt der physische Stab (Kette von Elementen) mit seinen beiden
+Enden. Ist der Schalter aus, erzwingt **Umschalt + Klick** die Kette für diesen
+einen Klick; er ersetzt die Auswahl, Strg + Umschalt + Klick nimmt die Kette
+dazu. Der Klickmodus der Flächenmaske (*Randlinien anklicken*) nutzt
 dieselbe Kette — ein Klick auf eine Randlinie holt den ganzen geschlossenen
 Rand, wenn er sonst nirgends abzweigt.
 

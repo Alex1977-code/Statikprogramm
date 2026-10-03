@@ -1769,7 +1769,7 @@ def main():
         check("Linie unter dem Zeiger gefunden",
               vpg.line_at(mg, [2.0, 0.0, 0.0], mg.characteristic_size()) == "L1")
         # Intelligente Auswahl (Vorgabe: an): ein Klick auf eine Linie des
-        # geschlossenen Rands holt den ganzen Ring, der naechste nimmt ihn weg.
+        # geschlossenen Rands holt den ganzen Ring, Strg+Klick nimmt ihn weg.
         # Der Klick sucht zuerst die Linie unter dem **echten** Zeiger; steht
         # der zufaellig ueber der Ansicht, traefe er eine andere Linie als der
         # uebergebene Punkt (Lauf 30: vier Klicks, [] statt vier Linien). Hier
@@ -1780,17 +1780,27 @@ def main():
         check("ein Klick wählt den geschlossenen Rand (intelligente Auswahl): vier Linien",
               sorted(w.sel_linien) == ["L1", "L2", "L3", "L4"], str(w.sel_linien))
         w._picked([2.0, 0.0, 0.0])
-        check("nochmaliger Klick nimmt den ganzen Zug wieder heraus",
-              not w.sel_linien, str(w.sel_linien))
-        w.act_klug.setChecked(False)
-        for punkt in ([2.0, 0, 0], [4.0, 1.0, 0], [2.0, 2.0, 0], [0, 1.0, 0]):
-            w._picked(punkt)
-        check("Schalter aus: vier Klicks, vier Linien", w.sel_linien == ["L1", "L2", "L3", "L4"],
-              str(w.sel_linien))
-        w._picked([2.0, 0.0, 0.0])
-        check("Schalter aus: nochmaliger Klick nimmt nur die eine Linie heraus",
-              "L1" not in w.sel_linien and len(w.sel_linien) == 3, str(w.sel_linien))
-        w._picked([2.0, 0.0, 0.0])
+        check("nochmaliger Klick ohne Strg ersetzt nur: der Zug bleibt gewählt (seit 03.10.2026)",
+              sorted(w.sel_linien) == ["L1", "L2", "L3", "L4"], str(w.sel_linien))
+        # Seit 03.10.2026 ersetzt ein Klick die Auswahl; dazu und heraus geht es
+        # mit Strg - _klick_strg steht fuer die gedrueckte Taste (so setzt sie
+        # der Ereignisfilter, :meth:`_mit_tasten`)
+        w._klick_strg = True
+        try:
+            w._picked([2.0, 0.0, 0.0])
+            check("Strg+Klick nimmt den ganzen Zug wieder heraus",
+                  not w.sel_linien, str(w.sel_linien))
+            w.act_klug.setChecked(False)
+            for punkt in ([2.0, 0, 0], [4.0, 1.0, 0], [2.0, 2.0, 0], [0, 1.0, 0]):
+                w._picked(punkt)
+            check("Schalter aus: vier Strg+Klicks, vier Linien", w.sel_linien == ["L1", "L2", "L3", "L4"],
+                  str(w.sel_linien))
+            w._picked([2.0, 0.0, 0.0])
+            check("Schalter aus: nochmaliger Strg+Klick nimmt nur die eine Linie heraus",
+                  "L1" not in w.sel_linien and len(w.sel_linien) == 3, str(w.sel_linien))
+            w._picked([2.0, 0.0, 0.0])
+        finally:
+            w._klick_strg = False
         w.act_klug.setChecked(True)
         w._linie_am_zeiger = _linie_alt
 
@@ -6936,8 +6946,13 @@ def main():
         w._picked([0.0, 0.0, 0.0]); app.processEvents()
         check("Klick auf ein Knotenlager wählt es, es leuchtet",
               w.sel_lager == [("lager", 0)] and "auswahl_lager" in list(w.plotter.renderer.actors), str(w.sel_lager))
-        w._picked([5.0, 0.0, 0.0]); w._picked([3.0, 1.0, 0.0]); app.processEvents()
-        check("Klick auf Linie und Fläche wählt Linien- und Flächenlager",
+        # Strg+Klick nimmt dazu (seit 03.10.2026 ersetzt ein Klick die Auswahl)
+        w._klick_strg = True
+        try:
+            w._picked([5.0, 0.0, 0.0]); w._picked([3.0, 1.0, 0.0]); app.processEvents()
+        finally:
+            w._klick_strg = False
+        check("Strg+Klick auf Linie und Fläche nimmt Linien- und Flächenlager dazu",
               ("linienlager", 0) in w.sel_lager and ("flaechenlager", 0) in w.sel_lager, str(w.sel_lager))
         gr_ = dict(w._auswahlgruppen())
         check("Auswahlgruppen (Rechtsklick) kennen die Lagerarten",
