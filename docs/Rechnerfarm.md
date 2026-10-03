@@ -35,7 +35,7 @@ müssen denselben Programmstand haben und sich im selben Netz erreichen
 ### Ohne Kommandozeile: Arbeitsplatz und Rechenhilfe (seit 13.09.2026)
 
 1. **Arbeitsplatz** (der Rechner, an dem gerechnet wird): *Berechnung →
-   Einstellungen → Rechnerfarm einschalten*. Das startet den Server, eigene
+   Einstellungen → Experten → Rechnerfarm einschalten*. Das startet den Server, eigene
    Worker (Zahl = „Prozesse“) und eine **Ankündigung im Netz** (UDP-Rundruf
    auf Port 5556, alle zwei Sekunden); das Backend springt auf
    „Rechnerfarm“. Das Protokoll nennt die eigene Adresse und den Port. In der

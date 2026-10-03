@@ -373,7 +373,7 @@ def loeser_verfuegbar(backend: str = "") -> str:
             return f"{be} - unbekannter Gleichungslöser (möglich: {', '.join(LOESER)})"
         if not loeser_da(be):
             return (f"{NAMEN.get(be, be)} - eingestellt, aber nicht installiert; die Rechnung "
-                    "bricht damit ab (Berechnung → Einstellungen)")
+                    "bricht damit ab (Berechnung → Einstellungen → Experten)")
         return loeser_beschreibung(be)
     for key in ("pardiso", "cholmod"):
         if loeser_da(key):
@@ -761,7 +761,7 @@ def ausweichen_gebuendelt(ergebnisse) -> list:
             f"Gleichungslöser ausgewichen bei {n} Ergebnis{'' if n == 1 else 'sen'} "
             f"({', '.join(e['namen'][:3])}{' …' if n > 3 else ''}): {e['grund']}"
             + (f" – stattdessen rechnete {mit}" if mit else "")
-            + ". Den Grund beheben oder unter Berechnung → Einstellungen → "
+            + ". Den Grund beheben oder unter Berechnung → Einstellungen → Experten → "
               "Gleichungslöser einen Löser wählen; ein ausdrücklich gewählter Löser "
               "bricht ab, statt auszuweichen.")
     return zeilen
@@ -866,7 +866,7 @@ class LinearSolver:
                 f"{nnz / 1e6:.1f} Mio. Einträgen"
                 + (f". {lage}" if lage else "")
                 + ". Ein größeres Modell braucht mehr Arbeitsspeicher oder eine größere "
-                  "Auslagerungsdatei; ein anderer Gleichungslöser (Berechnung → Einstellungen) "
+                  "Auslagerungsdatei; ein anderer Gleichungslöser (Berechnung → Einstellungen → Experten) "
                   "kann sparsamer sein.") from ex
         self.zeit_faktorisierung = time.perf_counter() - t_fak
 
@@ -1090,7 +1090,7 @@ class LinearSolver:
                     f"{self.ausweichgrund}; danach SuperLU: {type(ex).__name__}: "
                     f"{str(ex)[:160]}. SuperLU rechnet mit 32-Bit-Arbeitsfeldern "
                     "und reicht für große Modelle nicht - Berechnung → "
-                    "Einstellungen → Gleichungslöser: MUMPS oder ama.") from ex
+                    "Einstellungen → Experten → Gleichungslöser: MUMPS oder ama.") from ex
             self._solve = lu.solve
             self.backend = "superlu"
 
@@ -1315,7 +1315,7 @@ class LinearSolver:
                         + (f" (Löser ausgewichen - {self.ausweichgrund})" if self.ausweichgrund
                            else "") + " - "
                         "Lagerung, freie Bauteile oder Kontaktdefinition pruefen; die Schranke steht "
-                        "unter Berechnung → Einstellungen → Genauigkeit des Gleichungslösers.")
+                        "unter Berechnung → Einstellungen → Experten → Genauigkeit des Gleichungslösers.")
         return x
 
     @staticmethod

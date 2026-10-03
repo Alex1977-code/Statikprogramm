@@ -39,7 +39,7 @@ class RechenhilfeFenster(QtWidgets.QWidget):
         lay = QtWidgets.QVBoxLayout(self)
         kopf = QtWidgets.QLabel(
             "Dieser Rechner rechnet für einen Arbeitsplatz mit. Dort: Berechnung → Einstellungen → "
-            "„Rechnerfarm einschalten“. Hier: „Arbeitsplatz suchen“ (oder Adresse eintragen), gleicher "
+            "Experten → „Rechnerfarm einschalten“. Hier: „Arbeitsplatz suchen“ (oder Adresse eintragen), gleicher "
             "Schlüssel, „Verbinden“. Beide Rechner brauchen denselben Programmstand.")
         kopf.setWordWrap(True)
         lay.addWidget(kopf)

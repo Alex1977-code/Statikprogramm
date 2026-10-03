@@ -1284,7 +1284,7 @@ Verfeinerungsdurchgang, Splitter glätten, Randtreue).
 
 Die **Volumen laufen parallel**: alle Kerne bis auf einen rechnen in
 Arbeitsprozessen (der letzte bleibt der Oberfläche, die dabei bedienbar
-bleibt), gedeckelt durch *Berechnung → Einstellungen → Prozesse*. Die großen
+bleibt), gedeckelt durch *Berechnung → Einstellungen → Experten → Prozesse*. Die großen
 Körper starten zuerst, damit am Ende nicht ein Prozess allein auf den
 Lagerbock wartet; der Einbau ins Modell geschieht in der Reihenfolge des
 Fertigwerdens, das Netz ist dasselbe wie nacheinander. **Abbrechen** (Knopf
@@ -1458,13 +1458,13 @@ die DLLs kommen erst beim ersten Kontext; ein bloßer Import sagt nichts.
 Ist das Kästchen **MUMPS beim Programmstart nachladen, wenn es fehlt** an
 (Vorgabe), holt das Programm MUMPS einige Sekunden nach dem Start ohne
 Rückfrage: Balken in der Statuszeile, danach eine Protokollzeile („MUMPS
-5.8.2 nachgeladen (18 MB, … s) — Berechnung → Einstellungen →
+5.8.2 nachgeladen (18 MB, … s) — Berechnung → Einstellungen → Experten →
 Gleichungslöser“). Schlägt es fehl (kein Netz, Prüfsumme), steht das als
 eine Zeile im Protokoll, und der nächste Start versucht es erneut; im Dialog
 bleibt **Installieren**. Ein neuer Bau (andere Prüfsumme im Programm)
 wird beim Start ebenso nachgeladen. Eine eigene Python-Umgebung, in der das
 Rad installiert ist, gilt als „vorhanden“ — dann lädt der Start nichts. Die
-Löserauswahl unter *Berechnung → Einstellungen* wird nach dem Nachladen
+Löserauswahl unter *Berechnung → Einstellungen → Experten* wird nach dem Nachladen
 sofort neu aufgebaut: bis 13.09.2026 entstand sie beim Start, bevor MUMPS
 da war, und zeigte es bis zum Neustart als „nicht installiert“.
 Geprüft in `tests/test_werkzeuge.py` (das echte Rad aus `packaging/` über
@@ -4214,7 +4214,7 @@ auskonvergiert“. Das gilt auch für Lagerknoten mit Reibung in nur einer
 Richtung (seit dem 28.09.2026 abends; vorher konnte dort die Reibkraft am
 Ende gegen die Bewegung zeigen, ohne dass die Rechnung es meldete).
 Bettungen und Kontaktfedern mit eigener Steifigkeit rechnen die Reibung wie
-bisher. Ist unter *Berechnung → Einstellungen* der
+bisher. Ist unter *Berechnung → Einstellungen → Experten* der
 Gleichungslöser „ama“ gewählt, rechnet die Reibung mit etwas mehr Runden,
 das Ergebnis ist dasselbe.
 
@@ -6061,6 +6061,35 @@ davon nicht betroffen.
 
 ## 9 Berechnung und Parallelisierung
 
+**Register Berechnung: Rechnen oben, Experten eingeklappt (seit 03.10.2026).**
+Das Register *Berechnung → Einstellungen* beginnt mit dem, was man zum Rechnen
+braucht: der Analyseart, der Zahl der Eigenformen, den beiden Haken für die
+Nachweise nach der Rechnung, dem Knopf „Modell prüfen“ und dem Knopf
+„BERECHNEN (F5)“. Darunter steht die Zusammenfassung des letzten Laufs, danach
+die Plastizität der Volumen. Ganz unten steht der Abschnitt **Experten**, und er
+ist zu, solange man ihn nicht aufklappt. In ihm liegen die Prozesse fürs
+Vernetzen und die Elemente, der Gleichungslöser, die Threads, die Genauigkeit
+mit den Nachiterationen, die Rechenketten und die Rechnerfarm. Die Vorgaben
+passen für die meisten Modelle; wer sie ändern will, klappt den Abschnitt mit
+einem Klick auf „Experten“ auf (ebenso mit der Leertaste, wenn der Kopf den
+Fokus hat, oder mit einem Klick auf die graue Zeile daneben). Auch zugeklappt
+gelten die eingestellten Werte, und sie werden wie bisher gespeichert. Ob der
+Abschnitt zuletzt auf oder zu war, merkt sich das Programm in
+`einstellungen.json` (Schlüssel „abschnitte“); die Vorgabe ist zu.
+
+Bis zum 02.10.2026 stand „BERECHNEN (F5)“ ganz unten im Register, hinter der
+offenen Gruppe „Parallelisierung“ mit zehn Zeilen und hinter der Plastizität;
+die Zusammenfassung stand noch darunter. Das Register war außerdem 873 px breit
+(offscreen gemessen, Segoe UI 9 pt) und rollte im rechten Bereich von 460 px waagerecht.
+Es braucht jetzt höchstens 435 px, zugeklappt wie aufgeklappt (ebenso gemessen),
+und rollt nicht mehr waagerecht. Dafür stehen die Felder der Plastizität in
+kürzeren Zeilen, höchstens zwei je Zeile, und das Kästchen „Tetraeder ohne
+volumetrische Versteifung (knotengemittelte Dilatation)“ hat zwei Zeilen; die
+Auswahllisten von Löser und Threads zeigen lange Einträge gekürzt, die
+aufgeklappte Liste zeigt sie ganz. Die Wahl der Elemente (Entwurf, Mittel,
+Fein) steht nicht in diesem Register, sondern in den Netzeinstellungen, im Feld
+„Elemente“.
+
 **Arbeiterpool nach Speicher (seit 27.09.2026).** Die Elementschleifen
 laufen in einem Pool von Arbeitsprozessen, Vorgabe alle Kerne bis auf einen.
 Jeder Arbeiter hält eine Kopie des Modells; am Drehlager (655 000 Tetraeder)
@@ -6140,7 +6169,7 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   (Knicken bei umgekehrter Last), nach Betrag geordnet. Mit Zug und Druck im
   Grundzustand wechselten sie bis zum 23.09.2026 von Lauf zu Lauf – an einem
   Zweigelenkrahmen unter Wind 4,27, 3,03 und 2,49 in drei Läufen statt 77,33.
-* **Gleichungslöser** (Auswahl in *Berechnung → Einstellungen*): Vorgabe
+* **Gleichungslöser** (Auswahl in *Berechnung → Einstellungen → Experten*): Vorgabe
   **automatisch** = MKL PARDISO, sonst CHOLMOD, sonst SuperLU. **Weicht
   „automatisch“ aus, steht der Grund im Protokoll** — bei der Grundfaktorisierung
   in der Zeile „Faktorisiert (SuperLU (ausgewichen - PARDISO: …), …)“, bei den
@@ -6248,8 +6277,8 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   eingespielt — genau wie das MUMPS-Rad. Geprüft in `tests/test_loeser.py`
   (jeder Löser hat eine Herkunftsangabe; Bauvorschrift und Bauablauf nennen
   das Rad, das wirklich dort liegt).
-* **Genauigkeit des Gleichungslösers** (*Berechnung → Einstellungen*,
-  17.09.2026): bis zu diesem relativen Residuum |K·u − b| / |b| gilt eine
+* **Genauigkeit des Gleichungslösers** (*Berechnung → Einstellungen →
+  Experten*, 17.09.2026): bis zu diesem relativen Residuum |K·u − b| / |b| gilt eine
   Lösung — streng 1e-8, normal 1e-6 (Vorgabe), 1e-5, locker 1e-4, sehr
   locker 1e-3. Liegt das Residuum darüber, iteriert der Löser mit der
   vorhandenen Faktorisierung nach (**Nachiterationen**: keine, bis 1, 2, 3
@@ -6505,7 +6534,7 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   `tests/test_plastizitaet.py` (zwei Aufbauten statt 54 bei 28 Läufen, und
   dieselbe Lösung wie beim Bauen in jedem Schritt).
 * **Rechenketten: mehrere Lastfälle gleichzeitig** (*Berechnung →
-  Einstellungen*, 20.09.2026). „Lastfälle gleichzeitig (Ketten)“ gibt jeder
+  Einstellungen → Experten*, 20.09.2026). „Lastfälle gleichzeitig (Ketten)“ gibt jeder
   Kette einen eigenen Prozess; **innerhalb** einer Kette laufen die Lastfälle
   nacheinander und warm gestartet. Das ist der Kern der Sache: der Warmstart
   ist der größte Einzelgewinn je Lastfall (Drehlager: kalt 112

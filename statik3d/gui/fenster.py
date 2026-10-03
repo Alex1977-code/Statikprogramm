@@ -114,6 +114,39 @@ def schreiben(eintrag: dict) -> str:
     return p
 
 
+def abschnitt_offen(name: str, vorgabe: bool = False) -> bool:
+    """Ob ein einklappbarer Abschnitt zuletzt aufgeklappt war (Schluessel
+    „abschnitte“, 03.10.2026, Paket 13r). ``vorgabe`` gilt, solange nichts
+    Brauchbares gemerkt ist - fehlende Datei, kaputter Eintrag, anderer Wert
+    als wahr oder falsch. Mit STATIK3D_FENSTER=fest wird nichts gemerkt."""
+    if fest():
+        return bool(vorgabe)
+    a = _lesen().get("abschnitte")
+    wert = a.get(name) if isinstance(a, dict) else None
+    return wert if isinstance(wert, bool) else bool(vorgabe)
+
+
+def abschnitt_merken(name: str, offen: bool) -> str | None:
+    """Den Zustand eines Abschnitts schreiben; die uebrigen Schluessel der
+    Datei (Loeser, Threads, „fenster“) bleiben stehen. Rueckgabe der
+    Dateipfad, None bei „fest“ oder wenn die Datei nicht beschreibbar ist."""
+    if fest():
+        return None
+    d = _lesen()
+    a = d.get("abschnitte")
+    a = dict(a) if isinstance(a, dict) else {}
+    a[name] = bool(offen)
+    d["abschnitte"] = a
+    p = _datei()
+    try:
+        os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=1)
+    except OSError:
+        return None
+    return p
+
+
 def _zahlen(x, n: int):
     if not isinstance(x, (list, tuple)) or len(x) != n:
         return None

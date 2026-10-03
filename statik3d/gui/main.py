@@ -4489,7 +4489,8 @@ class MainWindow(QtWidgets.QMainWindow):
                         "deaktivierte Stäbe, Flächen, Volumen, Gelenke und Lager")
         g = r.gruppe("Einstellungen")
         g.gross("Einstellungen", "⚙", lambda: self.maske_zeigen("Berechnung"),
-                hinweis="Analyseart, Prozesse, Rechnerfarm")
+                hinweis="Analyseart, Nachweise und Fließen der Volumen; aufklappbar unter „Experten“: "
+                        "Gleichungslöser, Threads, Prozesse, Rechnerfarm")
         g.klein("Bedienung im Browser…", self.start_web_server,
                 hinweis="Web-Server starten - das Modell im Browser oder auf dem Handy bedienen")
 
@@ -13140,8 +13141,30 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cb_do_fat = QtWidgets.QCheckBox("anschließend Ermüdungsnachweis"); self.cb_do_fat.setChecked(True)
         lay.addWidget(row(self.cb_do_design, self.cb_do_fat))
 
-        g = QtWidgets.QGroupBox("Parallelisierung")
+        # „Rechnen“ steht oben (03.10.2026, Paket 13r): bis zum 02.10.2026 stand der
+        # Knopf ganz unten, hinter zehn Zeilen Loeser- und Farmeinstellungen und der
+        # Plastizitaet. Die Zusammenfassung folgt gleich darunter und waechst mit
+        # dem freien Platz; die Mindesthoehe haelt sie lesbar, wenn die Experten
+        # aufgeklappt sind und das Register rollt.
+        bchk = QtWidgets.QPushButton("Modell prüfen")
+        bchk.clicked.connect(self.do_check)
+        lay.addWidget(bchk)
+        self.btn_solve = QtWidgets.QPushButton("BERECHNEN  (F5)")
+        self.btn_solve.setStyleSheet("font-weight:bold; padding:8px;")
+        self.btn_solve.clicked.connect(lambda: self.do_solve())
+        lay.addWidget(self.btn_solve)
+        self.txt_summary = QtWidgets.QPlainTextEdit()
+        self.txt_summary.setReadOnly(True)
+        self.txt_summary.setStyleSheet(dsg.festschrift_stil())
+        self.txt_summary.setMinimumHeight(120)
+        lay.addWidget(self.txt_summary, 1)
+
+        # Loeser, Threads, Prozesse, Genauigkeit, Ketten und Rechnerfarm: eingeklappt
+        # unter „Experten“ (unten angefuegt). Bis zum 02.10.2026 stand das als
+        # Gruppe „Parallelisierung“ offen im Register. Die Widgets blieben dieselben.
+        g = QtWidgets.QWidget()
         gl = QtWidgets.QVBoxLayout(g)
+        gl.setContentsMargins(0, 2, 0, 0)
         self.sp_workers = QtWidgets.QSpinBox()
         self.sp_workers.setRange(1, 256); self.sp_workers.setValue(parallel.settings().workers)
         self.sp_workers.setToolTip("Prozesse für das Vernetzen, die Elementschleifen und die "
@@ -13175,6 +13198,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                    "0,86-1,09 s mit 8, 3,3 s mit 31 Threads). Eine feste Zahl gilt für beide; "
                                    "die Statuszeile nennt nach der Rechnung die wirklich benutzte Zahl. "
                                    "Wird gespeichert.")
+        self._liste_schmal(self.cb_threads, 22)
         gl.addWidget(row("Threads des Gleichungslösers", self.cb_threads))
         # Genauigkeit des Gleichungsloesers (17.09.2026): die Residuum-
         # Schranke und die Nachiterationen davor - beides wird gespeichert
@@ -13216,6 +13240,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "davon das meiste die Arbeitsprozesse. „automatisch“ nimmt so viele, wie drei Viertel "
             "des freien Speichers tragen. Lohnt sich erst bei mehreren großen Lastfällen; ein "
             "kleines Modell wird davon langsamer. Wird gespeichert.")
+        self._liste_schmal(self.cb_ketten, 22)
         gl.addWidget(row("Lastfälle gleichzeitig (Ketten)", self.cb_ketten))
         self.cb_kettenarb = QtWidgets.QComboBox()
         self.cb_kettenarb.addItem("automatisch (Prozesse ÷ Ketten)", 0)
@@ -13228,6 +13253,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "Prozess, ein voller Pool von 31 also 32,7 GB. Die Elementschleifen sind nur noch "
             "ein kleiner Teil der Rechenzeit (Nachlauf 2 bis 3 s, Plastizität 8 s von 235 s je "
             "warmem Lastfall), große Pools je Kette lohnen darum nicht. Wird gespeichert.")
+        self._liste_schmal(self.cb_kettenarb, 22)
         gl.addWidget(row("Arbeitsprozesse je Kette", self.cb_kettenarb))
         lbl_teilung = QtWidgets.QLabel(
             "Zweierlei: die Prozesse vernetzen und stellen die Matrizen auf, die Threads lösen "
@@ -13278,7 +13304,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.w_farm.setVisible(self.cb_backend.currentIndex() == 1)
         self.cb_backend.currentIndexChanged.connect(
             lambda i: self.w_farm.setVisible(i == 1))
-        lay.addWidget(g)
 
         # Plastizitaet der Volumen (17.09.2026): eine Einstellung am Modell,
         # keine Programmeinstellung - sie reist mit der Datei
@@ -13289,7 +13314,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Mises ist volumentreu, die Querdehnzahl geht praktisch gegen 0,5.
         # Darum steht der Schalter hier, bei der Plastizitaet.
         self.cb_dilat = QtWidgets.QCheckBox(
-            "Tetraeder ohne volumetrische Versteifung (knotengemittelte Dilatation)")
+            "Tetraeder ohne volumetrische Versteifung\n(knotengemittelte Dilatation)")
         self.cb_dilat.setToolTip(
             "Der lineare Tetraeder (tet4) versteift: er hat konstante Dehnung und kann die "
             "Volumenänderung nicht getrennt abbilden. Mit diesem Haken wird der volumetrische "
@@ -13363,22 +13388,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cb_plast_tol.setCurrentIndex(1)
         self.cb_plast_tol.setToolTip("Änderung der plastischen Knotenlasten gegen die Last, bis zu der es konvergiert gilt")
         gpl.addWidget(self.cb_plast)
-        gpl.addWidget(row("Verfahren", self.cb_plast_weg, "   mit Kontakt", self.cb_plast_kontakt))
-        gpl.addWidget(row("Verfestigung E_t/E", self.sp_plast_verf, "   Laststufen", self.sp_plast_stufen,
-                          "   Schritte je Stufe", self.sp_plast_it, "   Toleranz", self.cb_plast_tol))
+        # je Zeile hoechstens zwei Felder: der rechte Bereich ist 460 px breit, vier
+        # Felder in einer Zeile waren 815 px (Paket 13r)
+        gpl.addWidget(row("Verfahren", self.cb_plast_weg))
+        gpl.addWidget(row("Verfahren mit Kontakt", self.cb_plast_kontakt))
+        gpl.addWidget(row("Verfestigung E_t/E", self.sp_plast_verf, "   Laststufen", self.sp_plast_stufen))
+        gpl.addWidget(row("Schritte je Stufe", self.sp_plast_it))
+        gpl.addWidget(row("Toleranz", self.cb_plast_tol))
         lay.addWidget(gp)
 
-        bchk = QtWidgets.QPushButton("Modell prüfen")
-        bchk.clicked.connect(self.do_check)
-        lay.addWidget(bchk)
-        self.btn_solve = QtWidgets.QPushButton("BERECHNEN  (F5)")
-        self.btn_solve.setStyleSheet("font-weight:bold; padding:8px;")
-        self.btn_solve.clicked.connect(lambda: self.do_solve())
-        lay.addWidget(self.btn_solve)
-        self.txt_summary = QtWidgets.QPlainTextEdit()
-        self.txt_summary.setReadOnly(True)
-        self.txt_summary.setStyleSheet(dsg.festschrift_stil())
-        lay.addWidget(self.txt_summary, 1)
+        self.experten = msk.Einklappabschnitt(
+            "Experten", g, "Gleichungslöser, Threads, Prozesse, Rechnerfarm",
+            offen=fen.abschnitt_offen("berechnung_experten"))
+        # der Zustand ueberlebt den Neustart (einstellungen.json, Schluessel „abschnitte“)
+        self.experten.umgeschaltet.connect(lambda an: fen.abschnitt_merken("berechnung_experten", an))
+        lay.addWidget(self.experten)
         return w
 
     # ---- Tab 8: Ergebnisse -------------------------------------------
@@ -13558,6 +13582,24 @@ class MainWindow(QtWidgets.QMainWindow):
         for cb in (self.cb_result, self.cb_field):
             self._aufklappliste_breit(cb)
         self._tabfolge_ergebnissteuerung()
+
+    @staticmethod
+    def _liste_schmal(cb, zeichen: int) -> None:
+        """Eine Aufklappliste mit langen Eintraegen schmal machen (Paket 13r):
+        ``zeichen`` Zeichen Mindestbreite statt des laengsten Eintrags, die
+        Aufklappliste selbst so breit wie dieser (hoechstens die Bildschirmbreite)
+        und ohne Kuerzung. Tooltips der Eintraege und der Liste bleiben, wie sie
+        sind. Nach dem Neufuellen der Liste noch einmal aufrufen."""
+        cb.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        cb.setMinimumContentsLength(zeichen)
+        fm = cb.fontMetrics()
+        breit = max((fm.horizontalAdvance(cb.itemText(i)) for i in range(cb.count())), default=0)
+        try:
+            grenze = cb.screen().availableGeometry().width() - 40
+        except Exception:                   # noqa: BLE001
+            grenze = 1200
+        cb.view().setMinimumWidth(max(0, min(breit + 48, grenze)))
+        cb.view().setTextElideMode(QtCore.Qt.ElideNone)
 
     @staticmethod
     def _aufklappliste_breit(cb) -> None:
@@ -19566,6 +19608,8 @@ class MainWindow(QtWidgets.QMainWindow):
         cb.blockSignals(False)
         if getattr(self, "cb_threads", None) is not None:
             self.cb_threads.setItemText(0, self._threads_automatisch_text())
+            self._liste_schmal(self.cb_threads, 22)
+        self._liste_schmal(cb, 22)
 
     def _genau_waehlen(self, wert: float) -> None:
         """Den Eintrag der Genauigkeitsliste zum Wert setzen (den naechsten, wenn
@@ -24002,7 +24046,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._fortschritt_ende()
             self._werkzeuge_geaendert("mumps", f"MUMPS {s.get('version', '?')} nachgeladen ({groesse} MB, "
                                                f"{time.time() - t0:.0f} s) - Berechnung → Einstellungen → "
-                                               "Gleichungslöser"
+                                               "Experten → Gleichungslöser"
                                                + (" - wirksam nach dem Neustart" if s.get("neustart") else ""))
 
         def fehler(msg):

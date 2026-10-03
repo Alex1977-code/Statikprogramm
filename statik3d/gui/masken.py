@@ -201,6 +201,84 @@ class Hinweiszeile(QtWidgets.QLabel):
         self._pruefen()
 
 
+class Einklappabschnitt(QtWidgets.QWidget):
+    """Ein Abschnitt mit Kopf, den man auf- und zuklappt (03.10.2026, Paket 13r).
+
+    Der Kopf ist ein flacher Knopf mit Pfeil (▸ zu, ▾ auf) und dem Titel; daneben
+    steht eine graue Zeile, die sagt, was darin liegt - auch ein Klick darauf
+    schaltet um, und die Leertaste auf dem Knopf. Tab erreicht den Kopf, der
+    zugeklappte Inhalt ist aus der Tabfolge.
+
+    Der ``inhalt`` bleibt ein eigenes Widget mit seinen eigenen Kindern: zugeklappt
+    blendet nur der Abschnitt ihn als Ganzes aus, jedes Feld darin behaelt seinen
+    eigenen Zustand (``isHidden``) - die Farmfelder zum Beispiel, die erst mit dem
+    Backend erscheinen. Werte lesen und setzen geht darum zugeklappt wie
+    aufgeklappt. ``umgeschaltet`` meldet jede Aenderung, die der Aufrufer
+    merken kann; der Aufbau mit ``offen`` meldet nichts.
+    """
+
+    umgeschaltet = QtCore.Signal(bool)
+
+    def __init__(self, titel: str, inhalt: QtWidgets.QWidget, hinweis: str = "",
+                 offen: bool = False, parent=None):
+        super().__init__(parent)
+        self.titel = titel
+        self.inhalt = inhalt
+        self._offen = bool(offen)
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(2)
+        kopf = QtWidgets.QHBoxLayout()
+        kopf.setContentsMargins(0, 0, 0, 0)
+        self.knopf = QtWidgets.QToolButton()
+        self.knopf.setObjectName("einklappkopf")
+        self.knopf.setCheckable(True)
+        self.knopf.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
+        self.knopf.setCursor(QtCore.Qt.PointingHandCursor)
+        self.knopf.setToolTip(hinweis or titel)
+        self.knopf.toggled.connect(self.aufklappen)
+        kopf.addWidget(self.knopf)
+        # die graue Zeile treibt die Mindestbreite nicht: Ignored statt Preferred
+        self.hinweis = QtWidgets.QLabel(hinweis)
+        self.hinweis.setObjectName("einklapphinweis")
+        self.hinweis.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
+        self.hinweis.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
+        kopf.addWidget(self.hinweis, 1)
+        lay.addLayout(kopf)
+        lay.addWidget(inhalt)
+        self._zeigen()
+
+    def ist_offen(self) -> bool:
+        return self._offen
+
+    def aufklappen(self, an: bool = True) -> None:
+        """Auf- oder zuklappen; meldet ``umgeschaltet``, wenn sich etwas aendert."""
+        an = bool(an)
+        if an == self._offen:
+            return
+        self._offen = an
+        self._zeigen()
+        self.umgeschaltet.emit(an)
+
+    def _zeigen(self) -> None:
+        an = self._offen
+        self.knopf.blockSignals(True)
+        self.knopf.setChecked(an)
+        self.knopf.blockSignals(False)
+        self.knopf.setText(("▾  " if an else "▸  ") + self.titel)
+        self.knopf.setAccessibleName(f"{self.titel}, {'aufgeklappt' if an else 'zugeklappt'}")
+        self.inhalt.setVisible(an)
+
+    def mousePressEvent(self, ev):
+        # ein Klick auf die graue Zeile neben dem Knopf gehoert zum Kopf
+        kopf_unten = max(self.knopf.geometry().bottom(), self.hinweis.geometry().bottom())
+        if ev.button() == QtCore.Qt.LeftButton and ev.position().y() <= kopf_unten:
+            self.aufklappen(not self._offen)
+            ev.accept()
+            return
+        super().mousePressEvent(ev)
+
+
 class Maske(QtWidgets.QFrame):
     """Eine nicht-modale Eingabemaske.
 
@@ -935,6 +1013,12 @@ QWidget#maskenmitte {{ background: transparent; }}
 QToolButton#maskezu {{ border: 0; color: {matt}; font-size: 13px;
     padding: 0 4px; }}
 QToolButton#maskezu:hover {{ color: {schlecht}; }}
+/* einklappbarer Abschnitt (Paket 13r): flacher Kopf, Fokus als blauer Rand */
+QToolButton#einklappkopf {{ border: 1px solid transparent; border-radius: 4px;
+    background: transparent; color: {text}; font-weight: 600; padding: 3px 3px; }}
+QToolButton#einklappkopf:hover {{ color: {akzent}; }}
+QToolButton#einklappkopf:focus {{ border-color: {akzent}; }}
+QLabel#einklapphinweis {{ color: {matt}; font-size: 11px; }}
 
 /* Glasleiste ueber der Ansicht: durchscheinend, damit das Modell darunter
    sichtbar bleibt. */
