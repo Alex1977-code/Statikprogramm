@@ -348,6 +348,39 @@ class Gruppe(QtWidgets.QWidget):
         self.spalte.addWidget(w)
         return w
 
+    def beschriftet(self, text: str, feld: QtWidgets.QWidget, neue_spalte: bool = False) -> QtWidgets.QLabel:
+        """Ein Auswahlfeld mit sichtbarer Beschriftung links davon, in der
+        Spalte der kleinen Knoepfe (Teilpaket 12c, 03.10.2026).
+
+        Bis dahin trugen die Felder im Kontextregister nur einen Tooltip: wer
+        drei Aufklapplisten nebeneinander sah, musste raten, welche der
+        Querschnitt ist. Die Beschriftung ist ein QLabel mit dem Feld als
+        Buddy; alle Beschriftungen einer Gruppe sind gleich breit, damit die
+        Felder untereinander buendig stehen. Rueckgabe: die Beschriftung."""
+        zeile = QtWidgets.QWidget(self.feld)
+        lay = QtWidgets.QHBoxLayout(zeile)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(5)
+        name = QtWidgets.QLabel(text, zeile)
+        name.setObjectName("ribbonfeldname")
+        name.setBuddy(feld)
+        lay.addWidget(name)
+        lay.addWidget(feld, 1)
+        feld.setFixedHeight((INHALT_HOEHE - 4) // 3)
+        feld.setProperty("ribbonzeile", True)
+        # Schriftbreite der Beschriftung: der Stil setzt 12 px, gemessen wird
+        # mit derselben Schrift, sonst kuerzte ein schmaleres Label den Text
+        schrift = QtGui.QFont(name.font())
+        schrift.setPixelSize(12)
+        name.setFont(schrift)
+        self._feldnamen = getattr(self, "_feldnamen", [])
+        self._feldnamen.append(name)
+        breit = max(QtGui.QFontMetrics(schrift).horizontalAdvance(n.text()) for n in self._feldnamen) + 2
+        for n in self._feldnamen:
+            n.setMinimumWidth(breit)
+        self.in_spalte(zeile, neue_spalte)
+        return name
+
 
 class Register(QtWidgets.QWidget):
     """Ein Register des Ribbons: eine Reihe von Gruppen."""
@@ -411,6 +444,13 @@ class Ribbon(QtWidgets.QWidget):
         self._register: dict[str, Register] = {}
         self._kontext: Register | None = None
         self._kontext_name = ""
+        #: woraus das Kontextregister gebaut ist (die Arten der Auswahl); wechselt
+        #: nur die Zahl, bleibt das Register stehen und nur sein Reiter aendert sich
+        self._kontext_schluessel = None
+        #: das zuletzt benutzte Register ausser dem Kontextregister - dorthin geht
+        #: es zurueck, wenn das Kontextregister verschwindet, waehrend es vorn lag
+        self._zuletzt = ""
+        self._kontext_entfernt = False
 
         aussen = QtWidgets.QVBoxLayout(self)
         aussen.setContentsMargins(0, 0, 0, 0)
@@ -441,6 +481,7 @@ class Ribbon(QtWidgets.QWidget):
         self.tabs.setDocumentMode(True)
         self.tabs.setUsesScrollButtons(True)
         aussen.addWidget(self.tabs)
+        self.tabs.currentChanged.connect(self._reiter_gewechselt)
         self._suche_einrichten()
         self._einklappen_einrichten()
 
@@ -590,32 +631,91 @@ class Ribbon(QtWidgets.QWidget):
         self.tabs.addTab(r, name)
         return r
 
-    def kontext(self, name: str) -> Register:
+    def kontext(self, name: str, schluessel=None) -> Register:
         """Ein kontextabhaengiges Register ganz rechts anlegen oder holen.
 
         Es erscheint, sobald etwas ausgewaehlt ist, und traegt die Befehle, die
-        auf die Auswahl passen (Vorgabe Kap. 3.2 und 16.1 Nr. 7).
+        auf die Auswahl passen (Vorgabe Kap. 3.2 und 16.1 Nr. 7). Gleicher Name
+        und gleicher ``schluessel`` (woraus es gebaut ist): dasselbe Register.
+        Ein anderes ersetzt das alte und liegt dann vorn, wenn das alte vorn
+        lag - bis 03.10.2026 sprang die Ansicht dabei auf den Nachbarn.
         """
-        if self._kontext is not None and self._kontext_name == name:
+        if (self._kontext is not None and self._kontext_name == name
+                and self._kontext_schluessel == schluessel):
             return self._kontext
-        self.kontext_aus()
+        war_vorn = self._kontext is not None and self.tabs.currentWidget() is self._kontext
+        self.kontext_aus(nach_vorn=False)
         r = Register(name, self, self)
         self._kontext, self._kontext_name = r, name
+        self._kontext_schluessel = schluessel
         i = self.tabs.addTab(r, name)
         self.tabs.tabBar().setTabTextColor(i, QtGui.QColor(dsg.FARBEN["akzent2"]))
+        if war_vorn:
+            self.tabs.setCurrentWidget(r)
         return r
 
-    def kontext_aus(self):
-        """Das kontextabhaengige Register wieder entfernen."""
+    def kontext_schluessel(self):
+        """Woraus das Kontextregister gebaut ist (None ohne Register)."""
+        return self._kontext_schluessel if self._kontext is not None else None
+
+    def kontext_benennen(self, name: str, hinweis: str = "") -> bool:
+        """Den Reiter des Kontextregisters umbenennen, ohne es neu zu bauen.
+
+        Die Auswahl wechselt bei jedem Klick ihre Zahl; die Befehle sind
+        dieselben. Neu bauen hiess: Register weg, Register neu - und lag es
+        vorn, stand der Anwender mitten im Klicken in einem anderen Register.
+        ``hinweis``: Tooltip des Reiters (die volle Aufstellung)."""
+        if self._kontext is None:
+            return False
+        alt = self._kontext_name
+        i = self.tabs.indexOf(self._kontext)
+        if name != alt:
+            # die Befehle haengen mit ihrem Registernamen in der Suche und in
+            # kontext_aus - sie ziehen mit
+            for b in self.befehle:
+                if b.register == alt:
+                    b.register = name
+            self._kontext._name = name
+            for g in self._kontext.findChildren(Gruppe):
+                g._register = name
+            self._kontext_name = name
+            self.tabs.setTabText(i, name)
+        self.tabs.setTabToolTip(i, hinweis)
+        return True
+
+    def _reiter_gewechselt(self, i: int) -> None:
+        """Das zuletzt benutzte Register merken (nie das Kontextregister)."""
+        if self._kontext_entfernt:
+            return
+        w = self.tabs.widget(i)
+        if w is not None and w is not self._kontext:
+            self._zuletzt = self.tabs.tabText(i)
+
+    def kontext_aus(self, nach_vorn: bool = True):
+        """Das kontextabhaengige Register wieder entfernen.
+
+        Lag es vorn, kommt das zuletzt benutzte Register nach vorn, sonst
+        „Start“ - Qt nahm bis 03.10.2026 den linken Nachbarn, „Extras“.
+        ``nach_vorn=False``: nicht umschalten (das Register wird gleich durch
+        ein neues ersetzt)."""
         if self._kontext is None:
             return
+        war_vorn = self.tabs.currentWidget() is self._kontext
         i = self.tabs.indexOf(self._kontext)
-        if i >= 0:
-            self.tabs.removeTab(i)
+        self._kontext_entfernt = True        # Qt waehlt beim Entfernen selbst einen Reiter
+        try:
+            if i >= 0:
+                self.tabs.removeTab(i)
+        finally:
+            self._kontext_entfernt = False
         namen = {b.aktion for b in self.befehle if b.register == self._kontext_name}
         self.befehle = [b for b in self.befehle if b.aktion not in namen]
         self._kontext.deleteLater()
-        self._kontext, self._kontext_name = None, ""
+        self._kontext, self._kontext_name, self._kontext_schluessel = None, "", None
+        if war_vorn and nach_vorn:
+            if not (self._zuletzt and self.zeigen(self._zuletzt)):
+                if not self.zeigen("Start") and self.tabs.count():
+                    self.tabs.setCurrentIndex(0)
 
     def kontext_zeigen(self) -> bool:
         if self._kontext is None:
@@ -849,6 +949,9 @@ QTabWidget#ribbontabs > QTabBar::tab:selected {{ color: {akzent};
 QTabWidget#ribbontabs > QTabBar::tab:hover {{ color: {text}; }}
 QWidget#ribbongruppe {{ background: transparent; }}
 QLabel#gruppentitel {{ color: {matt}; font-size: 10px; }}
+/* Beschriftung eines Auswahlfelds im Kontextregister (Gruppe.beschriftet) */
+QLabel#ribbonfeldname {{ color: {matt}; font-size: 12px; }}
+QLabel#kontextgewaehlt {{ color: {text}; font-size: 12px; }}
 QFrame#ribbontrenner {{ color: {linie}; margin: 4px 3px 2px; }}
 QToolButton#ribbongross {{ border: 1px solid transparent; border-radius: 8px;
     padding: 4px 6px; font-size: 11px; }}

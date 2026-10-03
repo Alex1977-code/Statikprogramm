@@ -1476,6 +1476,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_sel.setText(f"{len(self.sel_lager)} Lager ausgewählt"
                              + (f" ({', '.join(namen)}" + (" …" if len(self.sel_lager) > 5 else "") + ")"
                                 if namen else ""))
+        self._auswahl_register()
         self.redraw()
 
     def auswahlart_setzen(self, art: str):
@@ -1515,6 +1516,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_sel.setText(f"{len(liste)} {was} ausgewählt"
                              + (f" ({', '.join(str(x) for x in liste[:6])}"
                                 + (" …" if len(liste) > 6 else "") + ")" if liste else ""))
+        # das Kontextregister nennt, was gewaehlt ist - auch bei Staeben, Linien,
+        # Flaechen, Volumen und Elementen (bis 03.10.2026 nur bei Knoten)
+        self._auswahl_register()
         self.redraw()
 
     # ---- Intelligente Auswahl: eindeutige Fortsetzung mitnehmen ----------
@@ -1600,6 +1604,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 f"Intelligente Auswahl: {len(kette)} {was} im Zug "
                 + ("abgewählt" if drin else "gewählt") + f" ({', '.join(str(x) for x in kette[:6])}"
                 + (" …" if len(kette) > 6 else "") + ")", 4000)
+        self._auswahl_register()
         self.redraw()
 
     #: Fangradius um den Mauszeiger [Bildschirmpunkte]. In Pixeln, nicht in
@@ -7286,6 +7291,7 @@ class MainWindow(QtWidgets.QMainWindow):
         art = self._lastart_von(liste, obj)
         self.lbl_sel.setText(f"Last gewählt ({fall}): {self._lasttext(art, obj)}")
         self._lastmaske(fall, liste, int(k))
+        self._auswahl_register()
         self.redraw()
 
     def _lastmaske(self, fall: str, liste: str, k: int):
@@ -14858,7 +14864,9 @@ class MainWindow(QtWidgets.QMainWindow):
                          (self.cb_shell, m.shells),
                          (getattr(self, "cb_assign_sec", None), m.sections),
                          (getattr(self, "cb_assign_mat", None), m.materials),
-                         (getattr(self, "cb_assign_shell", None), m.shells)):
+                         # „unveraendert“ bleibt der erste Eintrag (bis 03.10.2026 verschwand
+                         # er, und „Zuweisen“ gab die erste Dicke allen gewaehlten Schalen)
+                         (getattr(self, "cb_assign_shell", None), [self.DICKE_UNVERAENDERT, *m.shells])):
             if cb is None or not _lebt(cb):
                 continue
             cur = cb.currentText()
@@ -14885,6 +14893,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._layer_combo_fuellen()
         schritt("Ansicht aufbauen …")
         self.redraw()
+        # Neu, Laden, Rueckgaengig und Loeschen leeren die Auswahl, ohne an das
+        # Kontextregister zu denken - hier zieht es nach
+        self._kontext_abgleichen()
         if gross:
             self.statusBar().clearMessage()
 
@@ -15061,10 +15072,30 @@ class MainWindow(QtWidgets.QMainWindow):
             return [i for i, e in enumerate(self.model.elements) if sel.issuperset(e.nodes)]
         return []
 
+    def _auswahl_elemente(self) -> list[int]:
+        """Die Elemente der Auswahl in der Ansicht: alle, deren Knoten gewählt
+        sind, dazu die gewählten Elemente (Netz) und die Elemente der gewählten
+        Stäbe, Flächen und Volumen. Bis 03.10.2026 zählten nur die Knoten - ein
+        gewählter Stab ließ „Zuweisen“ ins Leere laufen."""
+        m = self.model
+        ids = {int(i) for i in self._elements_from_text("")}
+        ids |= {int(i) for i in (getattr(self, "sel_elemente", None) or [])}
+        for liste, sammlung, feld in ((self.sel_staebe, m.members, "elements"),
+                                      (self.sel_flaechen, m.flaechen, "elemente"),
+                                      (self.sel_koerper, m.koerper, "elemente")):
+            for name in liste:
+                obj = sammlung.get(name)
+                if obj is not None:
+                    ids |= {int(i) for i in (getattr(obj, feld, None) or [])}
+        return sorted(i for i in ids if 0 <= i < len(m.elements))
+
     def assign_props(self):
-        els = self._elements_from_text(self.ed_elist.text())
+        # das versteckte Nummernfeld bleibt der Weg fuer Skripte; sonst die Auswahl
+        text = self.ed_elist.text().strip()
+        els = self._elements_from_text(text) if text else self._auswahl_elemente()
         if not els:
-            return self.error("Keine Elemente angegeben (Nr. eintragen oder alle Knoten der Elemente auswählen)")
+            return self.error("Keine Elemente angegeben (Nr. eintragen oder Knoten, Stäbe, Flächen, "
+                              "Volumen oder Elemente auswählen)")
         self.merken("Zuweisung an die Auswahl")
         dicke = (self.cb_assign_shell.currentText()
                  if getattr(self, "cb_assign_shell", None) is not None else "")
@@ -17506,55 +17537,161 @@ class MainWindow(QtWidgets.QMainWindow):
         return next(iter(d), "")
 
     # ---- Kontextabhaengiges Register „Auswahl“ ------------------------
+    #: Auswahllisten der Ansicht ausser den Knoten: (Schluessel, Einzahl,
+    #: Mehrzahl); die Liste heisst ``sel_<Schluessel>``, die Reihenfolge ist die
+    #: des Reiters und der Aufstellung im Register
+    AUSWAHL_LISTEN = (("linien", "Linie", "Linien"), ("staebe", "Stab", "Stäbe"),
+                      ("flaechen", "Fläche", "Flächen"), ("koerper", "Volumen", "Volumen"),
+                      ("elemente", "Element", "Elemente"), ("lager", "Lager", "Lager"),
+                      ("lasten", "Last", "Lasten"))
+    #: Laenge des Reiters im Kontextregister in Zeichen. Gemessen am 03.10.2026
+    #: (1280 px, Segoe UI, die Reiter zusammen hoechstens 97 % der Zeile): die
+    #: festen Register brauchen 1073 px, fuer den Kontextreiter bleiben 168 px.
+    #: „Auswahl: 12 Knoten“ braucht 138 px, „Auswahl: 1 Knoten, 3 Stäbe“ 183 px und
+    #: steht damit hinter den Rollpfeilen. Bis 21 Zeichen bleibt jeder Reiter
+    #: darunter (breitester gemessen: 1236 von 1241 px, ``tests/test_kontextregister.py``);
+    #: was laenger waere, nennt nur die Zahl der Objekte.
+    REITER_ZEICHEN = 21
+    #: erster Eintrag der Aufklappliste „Dicke“ im Kontextregister: keine Änderung
+    DICKE_UNVERAENDERT = "unverändert"
+
+    def _auswahl_arten(self) -> list:
+        """Was in der Ansicht gewählt ist, nach Arten: [(Schlüssel, Anzahl,
+        Einzahl, Mehrzahl)] in der Reihenfolge Knoten, Linien, Stäbe, Flächen,
+        Volumen, Elemente, Lager, Lasten; Arten ohne Auswahl fehlen (03.10.2026:
+        bis dahin kannte das Kontextregister nur die Knoten)."""
+        arten = []
+        n = len(self.selection)
+        if n:
+            arten.append(("knoten", n, "Knoten", "Knoten"))
+        for schluessel, ein, mehr in self.AUSWAHL_LISTEN:
+            n = len(getattr(self, "sel_" + schluessel, None) or [])
+            if n:
+                arten.append((schluessel, n, ein, mehr))
+        return arten
+
+    @classmethod
+    def _auswahl_texte(cls, arten) -> tuple:
+        """(Reitertext, Aufstellung) zu den Arten aus :meth:`_auswahl_arten`.
+
+        Die Aufstellung nennt jede Art mit Anzahl und richtiger Einzahl oder
+        Mehrzahl („1 Knoten, 3 Stäbe“). Der Reiter hat nur Platz für
+        :attr:`REITER_ZEICHEN` Zeichen: eine einzelne Art steht darin mit ihrem
+        Wort („Auswahl: 2 Stäbe“), eine gemischte Auswahl oder eine zu lange
+        Zahl als Zahl der Objekte („Auswahl: 4 Objekte“); die Aufstellung steht
+        dann im Tooltip des Reiters und in der Gruppe „Gewählt“."""
+        teile = [f"{n} {ein if n == 1 else mehr}" for _k, n, ein, mehr in arten]
+        lang = ", ".join(teile)
+        gesamt = sum(n for _k, n, _e, _m in arten)
+        reiter = f"Auswahl: {lang}" if len(arten) == 1 else ""
+        if not reiter or len(reiter) > cls.REITER_ZEICHEN:
+            reiter = f"Auswahl: {gesamt} {'Objekt' if gesamt == 1 else 'Objekte'}"
+        if len(reiter) > cls.REITER_ZEICHEN:
+            reiter = f"Auswahl: {gesamt}"
+        return reiter, lang
+
     def _auswahl_register(self):
-        """Register „Auswahl: Knoten“ zeigen, solange etwas gewählt ist.
+        """Register „Auswahl: …“ zeigen, solange etwas gewählt ist.
 
         Damit entfaellt der Bereich „Elemente ändern“ im rechten Panel
         (Vorgabe Kap. 16.1 Nr. 7): die Befehle stehen dort, wo die Auswahl ist.
-        """
+        Bis zum 03.10.2026 erschien es nur mit gewählten Knoten; wer Stäbe,
+        Linien, Flächen, Volumen, Elemente, Lager oder Lasten wählte, bekam
+        keines. Der Abgleich selbst steht in :meth:`_kontext_abgleichen`."""
         if not hasattr(self, "ribbon") or getattr(self, "_auswahl_sammeln", False):
             return
         self._gesperrte_entfernen()
-        n = len(self.selection)
-        if not n:
+        if self._kontext_abgleichen():
+            self._info_zeigen()
+
+    def _kontext_abgleichen(self) -> bool:
+        """Das Kontextregister mit der Auswahl in Einklang bringen; True, wenn
+        nichts gewählt ist (das Register ist dann weg).
+
+        Billig genug für jeden Aufruf: ändert sich nur die Zahl, bekommt der
+        Reiter einen neuen Text, mehr nicht. Neu gebaut wird nur, wenn sich die
+        **Arten** der Auswahl ändern - die Befehle hängen an ihnen. Wer die
+        Auswahl leert, ohne über :meth:`_auswahl_register` zu gehen (Neu, Laden,
+        Rückgängig, Löschen), wird von refresh_all abgeglichen; bis 03.10.2026
+        stand das Register dann mit der Zahl des vorigen Stands über einem leeren
+        Modell."""
+        if not hasattr(self, "ribbon") or getattr(self, "_auswahl_sammeln", False):
+            return False
+        arten = self._auswahl_arten()
+        if not arten:
             self.ribbon.kontext_aus()
             # die Felder des Registers sind mit ihm geloescht - kein Zugriff mehr
             self.cb_assign_sec = self.cb_assign_mat = self.cb_assign_shell = None
-            self._info_zeigen()
-            return
-        r = self.ribbon.kontext(f"Auswahl: {n} Knoten")
-        if r.lay.count() > 1:      # schon gefuellt, nur der Name aendert sich
-            return
-        g = r.gruppe("Zuweisen")
-        self.cb_assign_sec = QtWidgets.QComboBox()
-        self.cb_assign_mat = QtWidgets.QComboBox()
-        self.cb_assign_shell = QtWidgets.QComboBox()
-        self.cb_assign_sec.addItems(_namen(self.model.sections))
-        self.cb_assign_mat.addItems(_namen(self.model.materials))
-        self.cb_assign_shell.addItems([""] + _namen(self.model.shells))
-        self.cb_assign_sec.setToolTip("Querschnitt für die Stabelemente der Auswahl")
-        self.cb_assign_mat.setToolTip("Werkstoff für alle Elemente der Auswahl")
-        self.cb_assign_shell.setToolTip("Dicke für die Schalenelemente der Auswahl (leer = unverändert)")
-        g.widget(self.cb_assign_sec)
-        g.widget(self.cb_assign_mat)
-        g.widget(self.cb_assign_shell)
-        g.gross("Zuweisen", "⇄", self.assign_props,
-                hinweis="Querschnitt, Werkstoff und Dicke den Elementen der Auswahl geben",
-                symbol="zuweisen")
-        g = r.gruppe("Elemente")
-        g.gross("Gelenke", "○", lambda: self.zuweisen_zeigen("gelenke"),
-                hinweis="Gelenke an den Stabenden setzen")
-        g.klein("Elemente löschen", self.delete_elements,
-                hinweis="Alle Elemente entfernen, deren Knoten sämtlich gewählt sind")
-        g.klein("Knoten löschen", self.delete_nodes,
-                hinweis="Die gewählten Knoten mit den daran hängenden Elementen entfernen - Knoten, die eine Linie braucht, bleiben")
-        g = r.gruppe("Randbedingungen")
-        g.gross("Lager", "△", self.maske_lager, hinweis="Lager an der Auswahl")
-        g.gross("Last", "↓", self.maske_knotenlast, hinweis="Knotenlast auf die Auswahl")
+            return True
+        reiter, lang = self._auswahl_texte(arten)
+        schluessel = tuple(k for k, *_rest in arten)
+        hinweis = "Gewählt: " + lang
+        if self.ribbon.kontext_schluessel() == schluessel:
+            # dieselben Arten, nur die Zahlen wechseln: Reiter und Aufstellung
+            # nachziehen, das Register bleibt (und bleibt vorn)
+            self.ribbon.kontext_benennen(reiter, hinweis)
+            lb = self.ribbon._kontext.findChild(QtWidgets.QLabel, "kontextgewaehlt")
+            if lb is not None:
+                lb.setText(lang)
+            return False
+        # ein neues Register: die Felder des alten sind mit ihm weg
+        self.cb_assign_sec = self.cb_assign_mat = self.cb_assign_shell = None
+        r = self.ribbon.kontext(reiter, schluessel)
+        self.ribbon.kontext_benennen(reiter, hinweis)
+        knoten = "knoten" in schluessel
+        staebe = "staebe" in schluessel
+        # was die Befehle brauchen: Zuweisen wirkt auf Elemente, Gelenke auf
+        # Staebe (oder die Elemente zwischen gewählten Knoten), Löschen,
+        # Lager und Last auf gewählte Knoten
+        mit_elementen = bool({"knoten", "staebe", "flaechen", "koerper", "elemente"} & set(schluessel))
+        g = r.gruppe("Gewählt")
+        lb = QtWidgets.QLabel(lang)
+        lb.setObjectName("kontextgewaehlt")
+        lb.setWordWrap(True)
+        lb.setFixedWidth(190)
+        lb.setMaximumHeight(rib.INHALT_HOEHE)
+        lb.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
+        lb.setToolTip("Alles, was gewählt ist, nach Arten")
+        g.widget(lb)
+        if mit_elementen:
+            g = r.gruppe("Zuweisen")
+            self.cb_assign_sec = QtWidgets.QComboBox()
+            self.cb_assign_mat = QtWidgets.QComboBox()
+            self.cb_assign_shell = QtWidgets.QComboBox()
+            self.cb_assign_sec.addItems(_namen(self.model.sections))
+            self.cb_assign_mat.addItems(_namen(self.model.materials))
+            self.cb_assign_shell.addItems([self.DICKE_UNVERAENDERT] + _namen(self.model.shells))
+            self.cb_assign_sec.setToolTip("Querschnitt für die Stabelemente der Auswahl")
+            self.cb_assign_mat.setToolTip("Werkstoff für alle Elemente der Auswahl")
+            self.cb_assign_shell.setToolTip("Dicke für die Schalenelemente der Auswahl "
+                                            "(„unverändert“ = keine Änderung)")
+            for c in (self.cb_assign_sec, self.cb_assign_mat, self.cb_assign_shell):
+                c.setMinimumWidth(110)
+            g.beschriftet("Querschnitt", self.cb_assign_sec)
+            g.beschriftet("Werkstoff", self.cb_assign_mat)
+            g.beschriftet("Dicke", self.cb_assign_shell)
+            g.gross("Zuweisen", "⇄", self.assign_props,
+                    hinweis="Querschnitt, Werkstoff und Dicke den Elementen der Auswahl geben",
+                    symbol="zuweisen")
+        if knoten or staebe:
+            g = r.gruppe("Elemente")
+            g.gross("Gelenke", "○", lambda: self.zuweisen_zeigen("gelenke"),
+                    hinweis="Gelenke an den Stabenden setzen")
+            if knoten:
+                g.klein("Elemente löschen", self.delete_elements,
+                        hinweis="Alle Elemente entfernen, deren Knoten sämtlich gewählt sind")
+                g.klein("Knoten löschen", self.delete_nodes,
+                        hinweis="Die gewählten Knoten mit den daran hängenden Elementen entfernen - Knoten, die eine Linie braucht, bleiben")
+        if knoten:
+            g = r.gruppe("Randbedingungen")
+            g.gross("Lager", "△", self.maske_lager, hinweis="Lager an der Auswahl")
+            g.gross("Last", "↓", self.maske_knotenlast, hinweis="Knotenlast auf die Auswahl")
         g = r.gruppe("Auswahl")
         g.klein("Alles deselektieren", self._esc_gedrueckt, "Esc")
-        g.klein("Auswahl umkehren", self.invert_selection,
-                hinweis="Gewählte Knoten abwählen, alle anderen wählen")
+        if knoten:
+            g.klein("Auswahl umkehren", self.invert_selection,
+                    hinweis="Gewählte Knoten abwählen, alle anderen wählen")
+        return False
 
     def _gelenk_auf_auswahl(self, name: str):
         """Ein Gelenk auf die Stabelemente der Auswahl legen (alle Knoten des
@@ -17607,9 +17744,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def zuweisen_zeigen(self, was: str = "querschnitt"):
         """Struktur → „Querschnitt/Dicke zuweisen…“, „Gelenke setzen…“: die
         Befehle liegen im Kontextregister „Auswahl“, das erscheint, sobald
-        Knoten gewählt sind. Ohne Auswahl gibt es den Hinweis - kein stummer
-        Befehl."""
-        if not len(self.selection):
+        etwas gewählt ist (bis 03.10.2026: sobald Knoten gewählt sind). Ohne
+        Auswahl gibt es den Hinweis - kein stummer Befehl."""
+        if not self._auswahl_arten():
             return self.error("Zuerst in der Ansicht wählen (Auswahlart Knoten, Stab, Fläche oder Netz) - "
                               "dann erscheint das Register „Auswahl“ mit Zuweisen und Gelenken")
         self._auswahl_register()
@@ -17629,8 +17766,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._objektmaske("gelenk", m.naechster_name("G", m.hinges), neu=True)
             return True
         feld = self.cb_assign_shell if was == "dicke" else self.cb_assign_sec
-        if feld is not None:
-            feld.setFocus()
+        if feld is None:
+            # Linien, Lager oder Lasten allein: das Register hat kein Feld dafür
+            return self.error("Der gewählten Auswahl lässt sich kein Querschnitt und keine Dicke zuweisen - "
+                              "Stäbe, Flächen, Volumen, Elemente oder Knoten wählen")
+        feld.setFocus()
         return True
 
     # ---- Befehle des Ribbons -----------------------------------------
@@ -22855,6 +22995,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._situation_sicht_alt = None
         self.selection = np.array([], dtype=int)
         self._objektauswahl_leeren()
+        # das Kontextregister gehoert zur Auswahl des vorigen Modells: weg, noch
+        # bevor refresh_all die Felder darin anfasst (bis 03.10.2026 blieb es
+        # mit der Zahl des vorigen Stands stehen)
+        self._kontext_abgleichen()
         self.path = None
         self.netzguete_feld = None
 
@@ -22881,8 +23025,10 @@ class MainWindow(QtWidgets.QMainWindow):
         """Gewaehlte Linien, Staebe, Flaechen, Volumen und Elemente vergessen -
         nach einem Modellwechsel zeigen sie sonst auf Objekte, die es nicht
         mehr gibt, und eine neue Maske uebernaehme sie stillschweigend."""
+        # sel_lager fehlte bis 03.10.2026: gewaehlte Lager ueberlebten Neu und
+        # standen als „Auswahl: 1 Lager“ ueber dem neuen Modell
         for name in ("sel_linien", "sel_flaechen", "sel_koerper", "sel_staebe", "sel_elemente",
-                     "sel_lasten"):
+                     "sel_lager", "sel_lasten"):
             if isinstance(getattr(self, name, None), list):
                 getattr(self, name).clear()
         if isinstance(getattr(self, "leuchtet", None), list):

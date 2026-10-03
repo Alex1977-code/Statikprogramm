@@ -3571,14 +3571,59 @@ gerechnet wurde.
 
 ### Register „Auswahl"
 
-Sobald Knoten gewählt sind, erscheint rechts im Ribbon ein zusätzliches
-Register **„Auswahl: n Knoten"** mit genau den Befehlen, die auf die Auswahl
-passen: Querschnitt und Material zuweisen, Gelenke setzen, Elemente oder Knoten
-löschen, Lager setzen, Last aufbringen, Auswahl umkehren oder aufheben. Im
-Register *Start → Auswahl* steht daneben der Schalter **Intelligente
-Auswahl** (siehe „Auswahl per Klick“). Wird
-die Auswahl aufgehoben, verschwindet das Register wieder. Einen Bereich
-„Elemente ändern" im rechten Panel gibt es dafür nicht mehr.
+Sobald in der Ansicht etwas gewählt ist, erscheint rechts im Ribbon ein
+zusätzliches Register **„Auswahl: …"** mit genau den Befehlen, die auf die
+Auswahl passen. Im Register *Start → Auswahl* steht daneben der Schalter
+**Intelligente Auswahl** (siehe „Auswahl per Klick“). Einen Bereich „Elemente
+ändern" im rechten Panel gibt es dafür nicht mehr.
+
+**Der Reiter nennt, was gewählt ist.** Eine einzelne Art steht mit Anzahl und
+richtiger Einzahl oder Mehrzahl im Reiter: „Auswahl: 1 Knoten“, „Auswahl: 12
+Knoten“, „Auswahl: 1 Stab“, „Auswahl: 2 Stäbe“, „Auswahl: 1 Fläche“, „Auswahl:
+2 Volumen“, „Auswahl: 3 Elemente“ (Auswahlart Netz), „Auswahl: 1 Lager“,
+„Auswahl: 2 Lasten“ und ebenso für Linien. Bis zum 03.10.2026 erschien das
+Register nur, wenn **Knoten** gewählt waren; wer Stäbe, Linien, Flächen,
+Volumen, Netzelemente, Lager oder Lasten wählte, bekam keines. Bei mehreren
+Arten zugleich steht im Reiter die Zahl der Objekte („Auswahl: 4 Objekte“),
+denn die Registerzeile hat in einem 1280 px breiten Fenster nur Platz für 21
+Zeichen im Reiter: „Auswahl: 1 Knoten, 3 Stäbe“ braucht gemessen 183 px, der
+Reiter darf höchstens 168 px haben, sonst erscheinen Rollpfeile und der Reiter
+liegt dahinter. Die vollständige Aufstellung nach Arten („1 Knoten, 3 Stäbe“)
+steht in der ersten Gruppe **Gewählt** des Registers und im Tooltip des Reiters.
+
+**Die Befehle richten sich nach der Auswahl.** *Zuweisen* (Querschnitt,
+Werkstoff und Dicke, jedes Auswahlfeld mit sichtbarer Beschriftung) gibt den
+Elementen der Auswahl die gewählten Werte; das sind alle Elemente, deren Knoten
+sämtlich gewählt sind, dazu die gewählten Elemente und die Elemente gewählter
+Stäbe, Flächen und Volumen. Bis zum 03.10.2026 trugen die drei Felder nur einen
+Hinweis am Feld, und „Zuweisen“ kannte nur gewählte Knoten. Der erste Eintrag
+der Aufklappliste *Dicke* heißt „unverändert“ und lässt die Dicke der Schalen
+stehen; bis zum 03.10.2026 verschwand dieser Eintrag nach dem ersten Auffrischen
+der Ansicht, und „Zuweisen“ gab allen gewählten Schalen die erste Dicke der Liste.
+*Gelenke* erscheint bei gewählten Knoten oder Stäben. *Elemente löschen*, *Knoten
+löschen*, *Lager*, *Last* und *Auswahl umkehren* meinen Knoten und stehen nur
+da, wenn Knoten gewählt sind. *Alles deselektieren* steht immer da; wer nur
+Linien, Lager oder Lasten gewählt hat, sieht in dem Register nur die Gruppe
+„Gewählt“ und diesen Knopf, und „Querschnitt zuweisen…“ sagt dann, was zu wählen
+wäre, statt still nichts zu tun.
+
+**Das Register bleibt stehen, solange sich nur die Zahl ändert.** Wer im
+Register arbeitet und weitere Objekte der gleichen Art anklickt, bleibt in dem
+Register; nur der Reiter bekommt die neue Zahl. Bis zum 03.10.2026 wurde das
+Register bei jedem Klick neu gebaut, und lag es vorn, sprang die Ansicht auf
+das Register *Extras*. Kommt eine Art dazu oder fällt eine weg, wird es neu
+gebaut und bleibt dabei vorn.
+
+**Es verschwindet mit der Auswahl.** Wird die Auswahl aufgehoben (Esc, *Alles
+deselektieren*, Klick ins Leere) und ebenso nach *Neu*, *Beispiel öffnen*,
+*Öffnen*, *Importieren* ohne Anhängen, *Rückgängig*, *Wiederholen* und dem
+Löschen gewählter Objekte, ist das Register weg. Lag es vorn, kommt das zuletzt
+benutzte Register nach vorn, sonst *Start*. Bis zum 03.10.2026 blieb es nach
+*Neu*, einem Beispiel, *Öffnen*, einem Import, *Rückgängig* und *Wiederholen*
+mit der Zahl des vorigen Stands stehen („Auswahl: 4 Knoten“ über einem leeren
+Modell), und gewählte Lager überlebten *Neu*; lag das Register
+vorn, sprang die Ansicht dabei auf *Extras*, den linken Nachbarn. Geprüft in
+`tests/test_kontextregister.py`.
 
 Ganz unten die **Statusleiste**: Fang · aktives Koordinatensystem · Einheiten ·
 Netzstand · Solverstand. Die Fassung steht unter **Extras → Info**; ein Hinweis
