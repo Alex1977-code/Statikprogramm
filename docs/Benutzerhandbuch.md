@@ -522,10 +522,15 @@ Die Arbeitsfläche in drei Spalten:
   Modales (seit 03.10.2026, Antwort 4 vom 24.09.2026). Rechts steht die
   **Übersicht** des Zweigs: die Anzahl, eine **Liste** seiner Einträge mit
   Name und einer kurzen Kennzahl (bei einer Gruppe ihre Zweige mit ihrer
-  Zahl) und, wo es für die Art eine Anlegemaske gibt, der Knopf „Neu …“. Die
-  Liste zeigt höchstens 40 Zeilen; darunter steht dann „… N weitere – alle in
-  der Tabelle“ mit einem Knopf zur Tabelle. Ein Klick auf eine Zeile der Liste
-  wirkt wie der Klick auf den Eintrag im Baum. Die Übersicht „Knoten“ zählt
+  Zahl) und, wo es für die Art eine Anlegemaske gibt, der Knopf
+  „Neu: Werkstoff …“ (dieselbe Form wie im Rechtsklick). Die Liste nimmt
+  höchstens 40 Zeilen auf und zeigt bis zu 15 davon ganz, die übrigen rollen.
+  Gibt es mehr Einträge, steht darunter, wo es eine Tabelle zur Art gibt,
+  „… N weitere – alle in der Tabelle“ mit einem Knopf zu ihr, sonst „… N
+  weitere – alle im Modellbaum“. Ein Klick auf eine Zeile der Liste wirkt wie
+  der Klick auf den Eintrag im Baum. Ändert sich das Modell, während die
+  Übersicht offen ist, wird sie neu gefüllt; bis dahin blieb sie stehen,
+  außer nach Rückgängig und Wiederholen. Die Übersicht „Knoten“ zählt
   dieselben Knoten wie der Zweig, die Knoten der Konstruktion; die Zählzeile
   „Netzknoten“ nennt die Zahl der Netzknoten und führt zur Tabelle „Knoten“.
   Unten kommt die Tabelle des Zweigs nach vorn, wo es eine gibt, jetzt auch
@@ -624,16 +629,20 @@ Die Arbeitsfläche in drei Spalten:
   Situationen, Subsysteme, Schweißnähte, Bemaßungen, den Wasserdruck und seit
   dem 03.10.2026 den Bericht: „Neu: Berichtsbild“ fragt Name,
   Bildunterschrift, Bemerkung und Platz im Bericht ab und nimmt die Ansicht
-  erst mit OK auf. Der einfache Klick, den das Betriebssystem vor jedem
+  erst mit OK auf. Ihr Feld „zeigt jetzt“ folgt der Ansicht, und ein
+  Ergebnis, das man im Baum anklickt, lässt sie stehen, denn die Ansicht
+  einzustellen ist genau ihr Schritt. Der einfache Klick, den Qt vor jedem
   Doppelklick meldet, zeigt nur die Übersicht; bis zum 03.10.2026 wählte er dabei schon
   alle Objekte der Art aus. Ausgenommen sind Zweige, deren *Neu* keine
   Anlegemaske ist: Knoten (dort legt *Neu* sofort einen Knoten an), Layer
   (*Neu* fragt in einem eigenen Fenster nach dem Namen und legt den Layer aus
   der Auswahl an), Unterlagen (*Neu* öffnet das Zeichenfenster einer Skizze)
   sowie Linien- und Flächenlager (brauchen erst eine Auswahl und fragen in
-  einem eigenen Fenster). Sie und die Zweige ohne *Neu* (Anschlüsse,
-  Nachweisobjekte, Gruppen) klappen beim Doppelklick nur auf und zu, die
-  Übersicht bleibt stehen. Die Zeilen „+ … anlegen“ sind Befehle und tun beim
+  einem eigenen Fenster). Sie, die Zweige ohne *Neu* (Anschlüsse,
+  Nachweisobjekte) und alle Gruppen klappen beim Doppelklick nur auf und zu,
+  die Übersicht bleibt stehen. Das gilt auch für die Gruppe „Lager“: bis zum
+  03.10.2026 öffnete ihr Doppelklick die Anlegemaske des Knotenlagers, weil
+  sie die Art mit „Knotenlager“ teilt. Die Zeilen „+ … anlegen“ sind Befehle und tun beim
   einfachen Klick, was sie sagen; „+ Ansicht übernehmen“ nimmt die Ansicht
   sofort auf wie **Strg+B**, Rückgängig nimmt das Bild zurück. Bis zum 24.09.2026 führte der Doppelklick einen Befehl aus: „Stäbe mit
   Nachweis“ legte ohne Rückfrage Stäbe an (Rahmen: 0 → 3), „Bericht“ nahm die

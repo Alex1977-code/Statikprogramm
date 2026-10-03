@@ -867,6 +867,17 @@ def test_lager_zaehlt_einmal():
     check("Zweig „Knotenlager“ (8b): die Auswahl bleibt „Auswahl: 1 Lager“, rechts die Übersicht",
           w.sel_lager == [("lager", 0)] and _reiter(w) == "Auswahl: 1 Lager"
           and mk is not None and mk.titel == "Knotenlager", f"{_reiter(w)!r} {w.sel_lager}")
+    # Die Mehrzahl, die bis 8b der Zweig waehlte: alle Knotenlager gewaehlt
+    # heisst „Auswahl: N Lager“ (keine Knoten), und der Zweig laesst sie stehen
+    alle = [("lager", i) for i in range(len(w.model.supports))]
+    _waehlen(w, lager=alle)
+    n = len(w.sel_lager)
+    check("alle Knotenlager gewählt: „Auswahl: N Lager“, keine Knoten",
+          n > 1 and _reiter(w) == f"Auswahl: {n} Lager" and len(w.selection) == 0, f"{_reiter(w)!r}")
+    w._baum_geklickt("lager", "Knotenlager")
+    _ruhe()
+    check("… der Zweig „Knotenlager“ lässt sie stehen", w.sel_lager == alle and _reiter(w) == f"Auswahl: {n} Lager",
+          f"{_reiter(w)!r}")
     _leeren(w)
 
 

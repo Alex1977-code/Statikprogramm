@@ -2020,6 +2020,67 @@ class Modellbaum(QtWidgets.QTreeWidget):
         self._ansicht_herstellen(ansicht)
 
 
+class Uebersichtsliste(QtWidgets.QTreeWidget):
+    """Die Liste in der Uebersicht eines Zweigs (Teilpaket 8b): Name und
+    Kennzahl je Zeile, ohne Kopf, so hoch wie ihre Zeilen - bis
+    :attr:`ZEILEN_MAX`, darueber rollt sie.
+
+    Die Hoehe folgt der Zeilenhoehe, die die Liste **im Fenster** hat. Das
+    Stilblatt (``QTreeWidget::item`` mit Polster) haengt am Hauptfenster; die
+    Zeilenhoehe vor dem Einsetzen in die Maske war darum zu klein: 14 statt
+    23 px mit Segoe UI, sichtbar waren 9,3 von 15 Zeilen und 0,8 von einer
+    (Gegenpruefung 03.10.2026, gemessen mit Schrift). Darum rechnet
+    :meth:`sizeHint` bei jedem Abruf mit der aktuellen Zeilenhoehe, und nach
+    jedem Stil- oder Schriftwechsel fragt das Layout neu. Waagerecht rollt die
+    Liste nie - ein Rollbalken verdeckte die einzige Zeile („Flächenkontakte“);
+    lange Namen enden mit „…“, der Hinweis am Zeiger nennt sie ganz."""
+
+    #: so viele Zeilen zeigt die Liste ganz, mehr rollen senkrecht
+    ZEILEN_MAX = 15
+    #: die Kennzahl (Spalte 1) hoechstens so breit wie im Modellbaum
+    KENNZAHL_MAX = 120
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setColumnCount(2)
+        self.setHeaderHidden(True)
+        self.setRootIsDecorated(False)
+        self.setUniformRowHeights(True)
+        self.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.setTextElideMode(QtCore.Qt.ElideRight)
+        self.header().setStretchLastSection(False)
+        self.header().setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
+        self.header().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
+        self.header().setMaximumSectionSize(self.KENNZAHL_MAX)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
+
+    def zeilenhoehe(self) -> int:
+        """Die Hoehe einer Zeile, wie sie jetzt gezeichnet wird."""
+        if not self.topLevelItemCount():
+            return 0
+        return max(1, self.sizeHintForRow(0))
+
+    def _hoehe(self) -> int:
+        n = min(self.topLevelItemCount(), self.ZEILEN_MAX)
+        rand = self.contentsMargins()
+        innen = self.viewportMargins()
+        return (n * self.zeilenhoehe() + rand.top() + rand.bottom() + innen.top() + innen.bottom())
+
+    def sizeHint(self) -> QtCore.QSize:
+        return QtCore.QSize(super().sizeHint().width(), self._hoehe())
+
+    def minimumSizeHint(self) -> QtCore.QSize:
+        return QtCore.QSize(super().minimumSizeHint().width(), self._hoehe())
+
+    def event(self, ev):
+        erg = super().event(ev)
+        if ev.type() in (QtCore.QEvent.Polish, QtCore.QEvent.StyleChange, QtCore.QEvent.FontChange,
+                         QtCore.QEvent.Show):
+            self.updateGeometry()
+        return erg
+
+
 # ==========================================================================
 # Tabellenbereich unten
 # ==========================================================================

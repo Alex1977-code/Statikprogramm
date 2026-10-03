@@ -616,18 +616,34 @@ def test_doppelklick_anlegemaske():
           "Linien- und Flächenlager", neu_arten == set(b.NEU_ARTEN) - ohne and "bericht" in neu_arten,
           str(sorted(set(b.NEU_ARTEN) - ohne - neu_arten)) + " / " + str(sorted(neu_arten & ohne)))
     folge = []
-    b.itemClicked.connect(lambda it, _c: folge.append(("clicked", it.text(0))))
-    b.itemDoubleClicked.connect(lambda it, _c: folge.append(("doubleClicked", it.text(0))))
+
+    # nur die Folge der Signale, ohne die Zeile anzufassen - und nach der
+    # Pruefung wieder ab: ein spaeterer Klick (+ Ansicht übernehmen) baut den
+    # Baum in seinem eigenen Klick neu, und ein Empfaenger, der danach noch die
+    # Zeile las, griff in geloeschten Speicher (Zugriffsverletzung, 03.10.2026)
+    def geklickt(_it, _c):
+        folge.append(("clicked", ""))
+
+    def doppelt(_it, _c):
+        folge.append(("doubleClicked", ""))
+    b.itemClicked.connect(geklickt)
+    b.itemDoubleClicked.connect(doppelt)
     stab = next(iter(w.model.members))
     fp = _fingerabdruck(w.model)
-    # die Zweige aus dem Baum, je Art der erste (Gruppen wie „Lager“ sind keine Anlegezweige)
-    zweige = {}
+    # die Zweige aus dem Baum, je Art und Schrift der erste - auch die fetten
+    # Gruppen: „Lager“ teilt seine Art mit „Knotenlager“ und klappt beim
+    # Doppelklick nur auf und zu (Nachbesserung S1)
+    zweige, gruppen = {}, set()
     for it in _alle(b):
-        if _ist_zweig(it) and _art(it) in b.NEU_ARTEN and not it.font(0).bold() \
-                and not it.text(0).startswith("… "):
-            zweige.setdefault(_art(it), _pfad(it))
+        if _ist_zweig(it) and _art(it) in b.NEU_ARTEN and not it.text(0).startswith("… "):
+            schluessel = (_art(it), it.font(0).bold())
+            zweige.setdefault(schluessel, _pfad(it))
+            if it.font(0).bold():
+                gruppen.add(_pfad(it))
+    check("die Gruppe „Lager“ (fett, Art „lager“) ist unter den doppelt geklickten Zweigen",
+          any(p[-1] == "Lager" for p in gruppen), str(sorted(p[-1] for p in gruppen)))
     falsch, ausnahmen, vorab = [], [], []
-    for art, pfad in sorted(zweige.items()):
+    for (art, _fett), pfad in sorted(zweige.items()):
         w._baum_geklickt("stab", stab)
         _ruhe(app)
         vorher = _auswahl(w)
@@ -649,8 +665,9 @@ def test_doppelklick_anlegemaske():
         # Elemente leuchten) - gewaehlt bleibt, was gewaehlt war
         gewaehlt = _auswahl(w)[:7] == vorher[:7] and _auswahl(w)[8] == vorher[8]
         nichts = _fingerabdruck(w.model) == fp and not MODAL
-        if art in ohne:
-            # die Ausnahmen: nach dem Doppelklick steht weiter die Uebersicht
+        if art in ohne or pfad in gruppen:
+            # die Ausnahmen und die Gruppen: nach dem Doppelklick steht weiter
+            # die Uebersicht
             if not (ok_folge and nichts and _auswahl(w) == vorher and _uebersicht(w) is not None):
                 ausnahmen.append(f"{name}: {folge} {MODAL[:1]} {getattr(mk, 'titel', None)}")
         elif not (ok_folge and nichts and gewaehlt and mk is not None and _uebersicht(w) is None):
@@ -659,13 +676,17 @@ def test_doppelklick_anlegemaske():
                           f"{'' if gewaehlt else ' Auswahl geändert'}")
         fp = _fingerabdruck(w.model)
         _aufraeumen(w, app)
+    b.itemClicked.disconnect(geklickt)
+    b.itemDoubleClicked.disconnect(doppelt)
     check(f"vor dem Doppelklick: der einfache Klick zeigt nur die Übersicht ({len(zweige)} Zweige) – nichts, "
           "was der Doppelklick zurücknehmen müsste", not vorab and len(zweige) > 15, str(vorab[:4]))
-    check(f"Doppelklick auf {len(zweige) - len(ohne & set(zweige))} Zweige: erst „clicked“, dann "
+    arten_ohne = {a for (a, f), p in zweige.items() if a in ohne and p not in gruppen}
+    check(f"Doppelklick auf {len(zweige) - len(arten_ohne) - len(gruppen)} Zweige: erst „clicked“, dann "
           "„doubleClicked“; rechts die Anlegemaske, nichts angelegt, nichts Modales, Auswahl unverändert",
           not falsch and len(zweige) > 15, f"{len(falsch)}: {falsch[:4]}")
-    check(f"… Knoten, Layer, Unterlagen, Linien- und Flächenlager ({len(ohne & set(zweige))}): die Übersicht "
-          "bleibt, nichts angelegt", not ausnahmen and len(ohne & set(zweige)) == 5, str(ausnahmen[:3]))
+    check(f"… Knoten, Layer, Unterlagen, Linien- und Flächenlager ({len(arten_ohne)}) und die Gruppe „Lager“: "
+          "die Übersicht bleibt, nichts angelegt", not ausnahmen and len(arten_ohne) == 5 and gruppen,
+          str(ausnahmen[:3]))
     _aufraeumen(w, app)
 
 
@@ -801,6 +822,15 @@ def test_texte():
     alt = [t for t, tip in tips.items() if "Klick wählt alle" in tip or "Klick öffnet die Maske" in tip
            or "Doppelklick übernimmt" in tip or "Klick wählt die Objekte" in tip or "Klick bearbeitet" in tip]
     check("kein Hinweis an einem Zweig verspricht noch Auswahl oder Maske beim Klick", not alt, str(alt))
+    # ... und jeder neue Hinweis steht da, wo vorher der alte stand
+    for zweig, soll in (("Knoten", "Klick zeigt rechts die Übersicht und wählt nichts"),
+                        ("Ermüdungslasten", "Eine Last anklicken öffnet die Maske mit ihrer Zeile"),
+                        ("Ergebnisse", "Ein Ergebnis anklicken stellt es in der Ansicht ein"),
+                        ("Bemaßungen", "Ein Maß anklicken bearbeitet es"),
+                        ("Layer", "Ein Layer angeklickt wählt seine Objekte"),
+                        ("Unterlagen", "Doppelklick auf eine Unterlage öffnet sie")):
+        tip = " ".join(tips.get(zweig, "").split())
+        check(f"… der Hinweis am Zweig „{zweig}“ sagt: „{soll}“", soll in tip, tip[:110])
     check("… der Hinweis am Zweig „Knoten“ nennt die Übersicht und den Doppelklick",
           "Übersicht" in tips.get("Knoten", "") and "Doppelklick" in tips.get("Knoten", ""), tips.get("Knoten", ""))
     doc = dsg.Modellbaum.__doc__ or ""
@@ -814,6 +844,213 @@ def test_texte():
     check("Handbuch: Doppelklick mit den Ausnahmen Knoten, Layer, Unterlagen, Linien- und Flächenlager, "
           "Bericht mit „Neu: Berichtsbild“",
           "Layer" in d and "Unterlagen" in d and "Berichtsbild" in d and "Knoten" in d, d[:100])
+    check("Handbuch: den Klick vor dem Doppelklick meldet Qt; alle Gruppen, auch „Lager“, klappen nur auf und zu",
+          "den Qt vor jedem" in d and "Betriebssystem" not in d and "alle Gruppen" in d
+          and "Gruppe „Lager“" in d, d[d.find("einfache Klick") - 20:][:120])
+    check("Handbuch: „alle in der Tabelle“ nur, wo es eine Tabelle gibt, sonst „im Modellbaum“; die "
+          "Übersicht wird nach jeder Änderung neu gefüllt",
+          "wo es eine Tabelle zur Art gibt" in a and "alle im Modellbaum" in a and "neu gefüllt" in a, a[:80])
+    _aufraeumen(w, app)
+
+
+# ---------------------------------------------------------------------------
+# 8. Nachbesserung nach der Gegenpruefung (03.10.2026)
+# ---------------------------------------------------------------------------
+def test_listenhoehe():
+    """F1: die Liste zeigt alle Zeilen bis zur Obergrenze ganz, ohne
+    waagerechten Rollbalken. Offscreen ohne Schrift sind die Zeilen Kaestchen -
+    die Pruefung misst darum das Verhaeltnis zur gezeichneten Zeilenhoehe, nicht
+    Pixel (mit Segoe UI: c8b_pruef/d3_hoehe.py ueber mit_schrift.py)."""
+    w, app = _fenster()
+    _reiches_modell(w, app)
+    oben = 15
+    for text, art in (("Flächenkontakte", "kontaktbedingungen"), ("Werkstoffe", "werkstoffe"),
+                      ("Knoten", "knoten"), ("Kombinationen", "kombinationen"), ("Geometrie", "modell"),
+                      ("Bericht", "bericht")):
+        _klick(w, app, _zweig(w.baum, text, art))
+        _ruhe(app, 4)
+        lw = _liste(_uebersicht(w))
+        n = lw.topLevelItemCount() if lw is not None else 0
+        if not n:
+            check(f"Liste „{text}“ hat Zeilen", False)
+            continue
+        z0 = lw.topLevelItem(0)
+        zeile = lw.visualItemRect(z0).height()
+        sichtbar = lw.viewport().height() / zeile if zeile else 0
+        check(f"Liste „{text}“ ({n} Zeilen): {min(n, oben)} Zeilen ganz sichtbar, kein waagerechter Rollbalken, "
+              "der Klick in die Mitte der ersten Zeile trifft sie",
+              abs(sichtbar - min(n, oben)) < 0.05 and not lw.horizontalScrollBar().isVisible()
+              and lw.itemAt(lw.visualItemRect(z0).center()) is z0,
+              f"sichtbar {sichtbar:.2f}, Zeile {zeile} px, Liste {lw.height()} px, "
+              f"waagerecht {lw.horizontalScrollBar().isVisible()}")
+        _aufraeumen(w, app)
+
+
+def test_stabelemente_wie_der_zweig():
+    """F2/H1: mit einer Feder zaehlt die Uebersicht „Stabelemente“ wie der Zweig
+    (ohne die Feder) und liest dafuer nicht alle Elemente."""
+    from statik3d import elemente as EL
+    w, app = _fenster()
+    m = _reiches_modell(w, app)
+    se = _zweig(w.baum, "Stabelemente", "stabelemente")
+    im_baum = [se.child(i).text(0) for i in range(se.childCount())]
+    n_stab = sum(1 for e in m.elements if e.typ in EL.STAB_TYPEN)
+    federn = sum(1 for e in m.elements if e.typ == "feder")
+    _klick(w, app, se)
+    mk = _uebersicht(w)
+    zeilen = [z[0] for z in _zeilen(mk)]
+    check(f"Modell mit {federn} Feder: Zweig „Stabelemente“ {se.text(1)}, ohne die Feder ({n_stab})",
+          federn >= 1 and se.text(1) == str(n_stab), se.text(1))
+    check("Übersicht „Stabelemente“: Anzahl und Liste wie im Zweig, ohne „weitere“",
+          mk is not None and str(_feld(mk, "anzahl")) == se.text(1) and zeilen == im_baum[:len(zeilen)]
+          and len(zeilen) == min(n_stab, w.UEBERSICHT_MAX) and mk.findChild(
+              __import__("PySide6.QtWidgets", fromlist=["QLabel"]).QLabel, "uebersichtweitere") is None,
+          f"Anzahl {_feld(mk, 'anzahl')}, {len(zeilen)} Zeilen")
+    check("… die Nummernspanne nennt die erste und letzte Zeile des Zweigs",
+          _feld(mk, "spanne") == f"{im_baum[0]} … {im_baum[-1]}", str(_feld(mk, "spanne")))
+    _aufraeumen(w, app)
+
+
+def test_tabellen_und_mehrfachwahl():
+    """L2: die Einträge N1 und E0 holen ihre Tabelle; zwei Lastfälle mit
+    Strg+Klick: rechts der zuletzt angeklickte, unten die Tabelle mit beiden."""
+    from PySide6 import QtCore, QtTest
+    w, app = _fenster()
+    m = _reiches_modell(w, app)
+    for art, schluessel, tabelle in (("schweissnaht", "N1", "Schweißnähte"), ("stabelement", "0", "Elemente")):
+        w.tabelle_zeigen("Knoten")
+        _ruhe(app)
+        _klick(w, app, _eintrag(w.baum, art, schluessel))
+        check(f"Klick auf den Eintrag {schluessel} ({art}): unten die Tabelle „{tabelle}“",
+              _tabelle(w) == tabelle, _tabelle(w))
+    w.tabelle_zeigen("Knoten")
+    stab = next(iter(m.members))
+    w._baum_geklickt("stab", stab)
+    _ruhe(app)
+    vorher = _auswahl(w)[:7]
+    lf = list(m.load_cases)[:2]
+    a, b = _eintrag(w.baum, "lastfall", lf[0]), _eintrag(w.baum, "lastfall", lf[1])
+    _klick(w, app, a)
+    b_ = w.baum
+    b_.scrollToItem(b)
+    _ruhe(app)
+    QtTest.QTest.mouseClick(b_.viewport(), QtCore.Qt.LeftButton, QtCore.Qt.ControlModifier,
+                            b_.visualItemRect(b).center())
+    _ruhe(app)
+    gewaehlt = sorted({w.tbl_lastfall.modell.zeilen[w.tbl_lastfall.filter.mapToSource(i).row()][0]
+                       for i in w.tbl_lastfall.view.selectionModel().selectedRows()})
+    mk = _maske(w)
+    check(f"Strg+Klick auf zwei Lastfälle: unten „Lastfälle“ mit beiden markiert, rechts „Lastfall {lf[1]}“, "
+          "die Auswahl der Ansicht bleibt",
+          _tabelle(w) == "Lastfälle" and gewaehlt == sorted(lf) and mk is not None
+          and mk.titel == f"Lastfall {lf[1]}" and _auswahl(w)[:7] == vorher,
+          f"{_tabelle(w)} {gewaehlt} {getattr(mk, 'titel', None)}")
+    _aufraeumen(w, app)
+
+
+def test_knopfnamen():
+    """H7: der Knopf „Neu …“ jeder Uebersicht heisst wie im Rechtsklick."""
+    w, app = _fenster()
+    _reiches_modell(w, app)
+    falsch = []
+    for it in _alle(w.baum):
+        if not _ist_zweig(it) or _art(it) not in w.BAUM_DOPPELKLICK_NEU or it.font(0).bold() \
+                or it.text(0).startswith("… "):
+            continue
+        _klick(w, app, it)
+        mk = _uebersicht(w)
+        soll = f"Neu: {w.baum.NEU_ARTEN[_art(it)]} …"
+        if mk is None or mk.btn_anwenden.text() != soll or not mk.btn_anwenden.isVisible():
+            falsch.append(f"{it.text(0)}: {getattr(getattr(mk, 'btn_anwenden', None), 'text', lambda: None)()}")
+        _aufraeumen(w, app)
+    check("jede Übersicht mit Anlegemaske: der Knopf heißt „Neu: … …“ wie im Rechtsklick "
+          "(„Neu: Werkstoff …“, „Neu: Querschnitt …“)", not falsch, str(falsch[:5]))
+
+
+def test_sperre_vor_listenklick():
+    """H5: waehrend ein „Übernehmen“ rechnet, stellt ein Klick in die Liste
+    die Baumzeile nicht um."""
+    w, app = _fenster()
+    _knotenmodell(w, app, 20)
+    _klick(w, app, _zweig(w.baum, "Knoten", "knoten"))
+    lw = _liste(_uebersicht(w))
+    vorher = w.baum.currentItem().text(0) if w.baum.currentItem() is not None else None
+    staende, fort = getattr(w, "_uebernahme_staende", None), getattr(w, "_fortschritt_laeuft", None)
+    w._uebernahme_staende = [{"fortschritt": True}]
+    w._fortschritt_laeuft = True
+    try:
+        if lw is not None:
+            _listenklick(app, lw, 5)
+        nachher = w.baum.currentItem().text(0) if w.baum.currentItem() is not None else None
+        check("Sperre während „Übernehmen“: der Klick auf K5 in der Liste lässt Baum und Übersicht stehen",
+              lw is not None and nachher == vorher == "Knoten" and _uebersicht(w) is not None,
+              f"{vorher} -> {nachher}")
+    finally:
+        w._uebernahme_staende = staende if staende is not None else []
+        w._fortschritt_laeuft = bool(fort)
+    if lw is not None and _uebersicht(w) is not None:
+        _listenklick(app, _liste(_uebersicht(w)), 5)
+    check("… ohne Sperre wählt derselbe Klick K5", getattr(_maske(w), "titel", None) == "Knoten K5"
+          and w.baum.currentItem() is not None and w.baum.currentItem().text(0) == "K5",
+          str(getattr(_maske(w), "titel", None)))
+    _aufraeumen(w, app)
+
+
+def test_uebersicht_folgt_dem_modell():
+    """S3: Strg+B bei offener Uebersicht „Bericht“ - sie zaehlt danach 3."""
+    w, app = _fenster()
+    m = _reiches_modell(w, app)
+    w.plotter.screenshot = lambda pfad, *a, **k: open(pfad, "wb").write(b"PNG-Probe")
+    try:
+        _klick(w, app, _zweig(w.baum, "Bericht", "bericht"))
+        n = len(m.bericht)
+        w.ansicht_in_bericht()
+        _ruhe(app)
+        mk = _uebersicht(w)
+        zeilen = _zeilen(mk)
+        check(f"Strg+B bei offener Übersicht „Bericht“: sie zählt danach {n + 1} und listet das neue Bild",
+              mk is not None and mk.titel == "Bericht" and str(_feld(mk, "anzahl")) == str(n + 1)
+              and len(zeilen) == n + 1, f"{_feld(mk, 'anzahl')} {[z[0] for z in zeilen]}")
+    finally:
+        del w.plotter.screenshot
+    _aufraeumen(w, app)
+
+
+def test_berichtsbild_folgt_der_ansicht():
+    """S2: „zeigt jetzt“ folgt Ergebnis und Faerbung; ein Ergebnis im Baum
+    laesst die unveraenderte Maske stehen."""
+    from statik3d import solver
+    w, app = _fenster()
+    w.load_example("hall")
+    _ruhe(app)
+    an = solver.solve_all(w.model, design=bool(w.model.members))
+    w._solve_done("all", an)
+    _ruhe(app)
+    w.refresh_all()
+    _ruhe(app)
+    faelle = list(an.cases)
+    w.ergebnis_zeigen(f"case:{faelle[0]}")
+    _ruhe(app)
+    w.baum.neu.emit("bericht")
+    _ruhe(app)
+    mk = _maske(w)
+    zeigt0 = _feld(mk, "zeigt")
+    check("„Neu: Berichtsbild“: „zeigt jetzt“ nennt das gezeigte Ergebnis",
+          mk is not None and mk.titel == "Neu: Berichtsbild" and f"Lastfall {faelle[0]}" in str(zeigt0),
+          str(zeigt0))
+    _klick(w, app, _eintrag(w.baum, "ergebnis", f"case:{faelle[1]}"))
+    mk2 = _maske(w)
+    check("ein anderes Ergebnis im Baum: die unveränderte Maske bleibt stehen, „zeigt jetzt“ folgt",
+          mk2 is mk and f"Lastfall {faelle[1]}" in str(_feld(mk2, "zeigt")) and not mk2.geaenderte_felder()
+          and w._aktuelle_quelle() == f"case:{faelle[1]}", f"{getattr(mk2, 'titel', None)} {_feld(mk2, 'zeigt')}")
+    i = next((k for k in range(w.cb_field.count()) if w.cb_field.itemText(k) != w.cb_field.currentText()), None)
+    if i is not None:
+        w.cb_field.setCurrentIndex(i)
+        _ruhe(app)
+    check("… eine andere Färbung zieht „zeigt jetzt“ nach, ohne Punkt im Titel",
+          i is not None and w.cb_field.currentText() in str(_feld(mk, "zeigt")) and not mk.geaenderte_felder(),
+          str(_feld(mk, "zeigt")))
+    w.analysis = w.results = None
     _aufraeumen(w, app)
 
 
@@ -822,7 +1059,10 @@ def main():
     faulthandler.dump_traceback_later(900, exit=True)
     tests = [test_jeder_zweig_waehlt_nichts, test_ergebniszweige, test_uebersicht_mit_liste,
              test_knoten_wie_der_zweig, test_listenklick_wie_baumklick, test_doppelklick_anlegemaske,
-             test_lastfaelle_kombinationen_bericht, test_geaenderte_maske_haelt, test_texte]
+             test_lastfaelle_kombinationen_bericht, test_geaenderte_maske_haelt, test_texte,
+             test_listenhoehe, test_stabelemente_wie_der_zweig, test_tabellen_und_mehrfachwahl,
+             test_knopfnamen, test_sperre_vor_listenklick, test_uebersicht_folgt_dem_modell,
+             test_berichtsbild_folgt_der_ansicht]
     for t in tests:
         print(f"\n--- {t.__name__} ---")
         try:
