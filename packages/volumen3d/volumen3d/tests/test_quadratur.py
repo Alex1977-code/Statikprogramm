@@ -161,6 +161,192 @@ def test_kleine_radien():
           abs((1e5 - Q8.volumen()) / (np.pi * 640.0) - 1) < 0.005, f"Loch {1e5 - Q8.volumen():.2f} / {np.pi * 640.0:.2f}, {Q8.statistik}")
 
 
+def test_momentfitting():
+    """Moment Fitting (Vorgabe 6 Stufe 2, Plan TP 5 B1): (1) an einer halb gefuellten Zelle trifft die gefittete Regel
+    (Tensor-Gauss (q+1)^3) alle Tensor-Momente bis Grad q exakt - Gegenprobe mit Monomen, unabhaengig von der
+    Legendre-Basis des Fits; (2) mit q = 2p sind alle Integranden der Zellsteifigkeit exakt: am Lame-Zylinder h 20 p 2
+    stimmt jede Schnittzellmatrix mit der Referenzquadratur auf 1e-11 ueberein, das Werkstoffvolumen auf 1e-12, kein
+    Rueckfall, und die Punkte je Schnittzelle sinken mindestens um den Faktor 10 (gemessen 30.09.2026: 2517 -> 112);
+    (3) mit q = p ist das nicht so: gemessen indefinite Zellmatrizen (kleinster relativer Eigenwert -1,9e-3) - darum
+    ist 2p die Vorgabe (fit_grad_standard)."""
+    from volumen3d.fcm.basis import gauss_3d
+    from volumen3d.fcm.elastizitaet import zell_gradienten, zellsteifigkeit
+    from volumen3d.fcm.gitter import CUT, Gitter
+    from volumen3d.fcm.momentfitting import fit_grad_standard, gefittete_regel
+    from volumen3d.fcm.quadratur import Zellquadratur
+    from volumen3d.tests.test_lame import E, NU, _geometrie
+    # (1) Werkstoff = Teilbox [0, 1.3] x [0, 2] x [0, 2] der Zelle [0, 2]^3, Referenz Tensor-Gauss 8^3 darauf
+    q = 6
+    X, W = gauss_3d(8)
+    lo, hi, b_hi = np.zeros(3), np.full(3, 2.0), np.array([1.3, 2.0, 2.0])
+    s = 0.5 * (b_hi - lo)
+    P_ref, W_ref = lo + s * (X + 1.0), W * float(np.prod(s))
+    erg = gefittete_regel(lo, hi, P_ref, W_ref, q, 3)
+    f_max = 0.0
+    for a in range(q + 1):
+        for b in range(0, q + 1, 3):
+            for c in range(0, q + 1, 2):
+                exakt = (b_hi[0] ** (a + 1) / (a + 1)) * (2.0 ** (b + 1) / (b + 1)) * (2.0 ** (c + 1) / (c + 1))
+                ist = float(np.sum(erg.gewichte * erg.punkte[:, 0] ** a * erg.punkte[:, 1] ** b * erg.punkte[:, 2] ** c))
+                f_max = max(f_max, abs(ist - exakt) / exakt)
+    check(f"Halb gefuellte Zelle, q {q}: {len(erg.gewichte)} Punkte treffen alle Monome x^a y^b z^c bis Grad {q} (< 1e-12), "
+          f"Volumen {erg.gewichte.sum():.6f} = 5,2", erg.art == "fit" and f_max < 1e-12 and abs(erg.gewichte.sum() - 5.2) < 1e-12,
+          f"groesste Abweichung {f_max:.1e}, kleinstes Gewicht {erg.min_gewicht:.2f} des mittleren, negative Masse {erg.neg_anteil:.3f}")
+    # (2) und (3) am Lame-Zylinder
+    p = 2
+    G = Gitter(_geometrie(), h=20.0, polster=0.1)
+    G.moden_nummerieren(p)
+    ref = Zellquadratur(G, p=p, momentfitting=False)
+    cut = np.flatnonzero(G.klasse == CUT)
+    t = time.perf_counter()
+    fit = Zellquadratur(G, p=p, momentfitting=True)
+    for c in cut:
+        fit.zelle(int(c))
+    t_fit = time.perf_counter() - t
+    ergebnisse = {}
+    for name, Q in (("Referenz", ref), ("q 2p", fit), ("q p", Zellquadratur(G, p=p, momentfitting=True, fit_grad=p))):
+        K, n, lam = {}, 0, 0.0
+        for c in cut:
+            Gr, W = zell_gradienten(G, Q, int(c))
+            n += len(W)
+            if len(W):
+                K[int(c)] = zellsteifigkeit(Gr, W, E, NU)
+                ev = np.linalg.eigvalsh(K[int(c)])
+                lam = min(lam, float(ev[0] / ev[-1]))
+        ergebnisse[name] = (K, n, lam, Q.volumen())
+    K0, n0, _, v0 = ergebnisse["Referenz"]
+    K2, n2, lam2, v2 = ergebnisse["q 2p"]
+    dK = max(float(np.abs(K2[c] - K0[c]).max() / np.abs(K0[c]).max()) for c in K0)
+    st = fit.statistik
+    check(f"Lame h 20 p {p}, q {fit.fit_grad} = 2p (fit_grad_standard {fit_grad_standard(p)}): {len(cut)} Schnittzellen, Zellmatrizen wie Referenz "
+          f"(< 1e-11), Volumen gleich (< 1e-12), kein Rueckfall, Punkte {n0} -> {n2} (Faktor >= 10)",
+          fit.fit_grad == 2 * p == fit_grad_standard(p) and dK < 1e-11 and abs(v2 - v0) / v0 < 1e-12 and st["fit_rueckfall"] == 0
+          and st["fit_nnls"] == 0 and n0 >= 10 * n2,
+          f"groesste Abweichung {dK:.1e}, Volumen {abs(v2 - v0) / v0:.1e}, Statistik {st['fit_zellen']} gefittet, kleinstes Gewicht "
+          f"{st['fit_min_gewicht']:.1f}, Einrichten {t_fit:.2f} s")
+    _, n1, lam1, _ = ergebnisse["q p"]
+    check(f"q = p dagegen: indefinite Zellmatrizen (kleinster relativer Eigenwert {lam1:.1e} < -1e-5), bei q = 2p {lam2:.1e} >= -1e-12",
+          lam1 < -1e-5 and lam2 >= -1e-12)
+    # Vorgabe (Anwender 30.09.2026): ohne Angabe fittet die Zellquadratur mit q = 2p; FcmProblem reicht das durch
+    from volumen3d.fcm.problem import FcmProblem, Werkstoff
+    Q_std = Zellquadratur(G, p=p)
+    n_std = sum(len(Q_std.zelle(int(c))[1]) for c in cut)
+    pr = FcmProblem(_geometrie(), h=20.0, p=p, werkstoff=Werkstoff(E, NU))
+    pr_aus = FcmProblem(_geometrie(), h=20.0, p=p, werkstoff=Werkstoff(E, NU), momentfitting=False)
+    check(f"Vorgabe: Zellquadratur und FcmProblem fitten ohne Angabe mit q = 2p ({n_std} Punkte wie gefittet), "
+          f"momentfitting=False schaltet zurueck",
+          Q_std.momentfitting and Q_std.fit_grad == 2 * p and n_std == n2 and pr.quadratur.momentfitting
+          and not pr_aus.quadratur.momentfitting and pr.quadratur.anzahl_punkte() < pr_aus.quadratur.anzahl_punkte(),
+          f"Punkte FcmProblem {pr.quadratur.anzahl_punkte()} gegen {pr_aus.quadratur.anzahl_punkte()} ohne Fitting")
+
+
+def test_verschachtelter_baum():
+    """Verschachtelte CSG-Baeume (Plan TP 5 B3): ein T-Stoss als Vereinigung aus Grundblech, Querblech und zwei
+    Kehlnaehten, jede Naht ein Schnitt aus Quader und 45-Grad-Halbraum. Vorher passte das auf keins der beiden flachen
+    Muster, jedes Blatt fiel auf den Punkttest erster Ordnung (h 20: 18 401 Blaetter, Volumen +0,13 %, 2,6 Mio.
+    Oberflaechenpunkte, 61 s). Jetzt ueber den Baum: kein Punkttest-Blatt, Volumen exakt (133 200 mm3 = 200*50*10 +
+    10*50*60 + 2*50*8*8/2, < 1e-12), jede Flaeche exakt (< 1e-11) auf drei Gittern."""
+    from volumen3d.fcm.gitter import Gitter
+    from volumen3d.fcm.quadratur import Zellquadratur
+    from volumen3d.geometry.oberflaeche import Flaechenquadratur
+    from volumen3d.tests.test_hotspot import t_stoss
+    geo = t_stoss()
+    v_soll = 200 * 50 * 10 + 10 * 50 * 60 + 2 * 50 * 8 * 8 / 2
+    a_soll = {"grundblech": 2 * 200 * 50 - 26 * 50 + 2 * 200 * 10 + 2 * 50 * 10, "querblech": 10 * 50 + 2 * 10 * 60 + 2 * 52 * 50,
+              "naht_links": 2 * 32.0, "naht_rechts": 2 * 32.0, "nahtflaeche_links": 8 * np.sqrt(2) * 50, "nahtflaeche_rechts": 8 * np.sqrt(2) * 50}
+    for h in (20.0, 10.0, 7.0):
+        t = time.perf_counter()
+        G = Gitter(geo, h=h, polster=0.1)
+        G.moden_nummerieren(3)
+        Q = Zellquadratur(G, p=3, alpha=0.0)
+        v = Q.volumen()
+        o = Flaechenquadratur.aus_geometrie(geo, G, 5)
+        nm = o.name.astype(str)
+        fa = max(abs(float(o.gewichte[nm == n].sum()) - a) / a for n, a in a_soll.items())
+        check(f"T-Stoss h {h:g}: kein Punkttest-Blatt, Volumen exakt (< 1e-12), alle sechs Flaechen exakt (< 1e-11), kein Flaechenrueckfall",
+              Q.statistik["blaetter_punkttest"] == 0 and abs(v - v_soll) / v_soll < 1e-12 and fa < 1e-11 and o.statistik["rueckfall"] == 0,
+              f"Volumen {v:.6f}, Flaechen {fa:.1e}, {Q.statistik['blaetter_eben']} ebene Blaetter, {len(o.punkte)} Oberflaechenpunkte, "
+              f"{time.perf_counter() - t:.1f} s")
+
+
+def test_innere_trennflaeche():
+    """Befund aus C1 (Plan TP 5, 01.10.2026): Knotenblech (Quader) in einem Nahtstumpf (Quader ∩ vier 45-Grad-Halbraeume), vereinigt.
+    Die Seitenflaechen des Knotenblechs laufen unterhalb der Nahtoberflaeche durch das Innere des Stumpfs; die Probenpruefung in
+    Csg._baum_stuecke zaehlte Proben genau auf dieser inneren Trennflaeche in zwei abgeschlossenen Stuecken (Knotenblech und
+    Stumpf minus Knotenblech) doppelt und verwarf die Zerlegung: 1 534 Flaechenstuecke im Rueckfall, Oberflaeche 8 382,7 statt
+    7 901,6 mm2 (die Deckflaeche des Stumpfs im Inneren blieb stehen), Integrationswarnung. Geschlossene Form: Boden 72*20,
+    Mantel des Prismatoids 2*(72+60)/2*6*sqrt2 + 2*(20+8)/2*6*sqrt2, Knotenblech ueber z 6: 2*60*34 + 2*8*34 + 60*8;
+    Volumen ueber die Prismatoidformel h/6 (A1 + 4 Am + A2) = 5 616 plus 60*8*34."""
+    from volumen3d.fcm.gitter import Gitter
+    from volumen3d.fcm.quadratur import Zellquadratur
+    from volumen3d.geometry.csg import aus_params
+    from volumen3d.geometry.oberflaeche import Flaechenquadratur
+    geo = aus_params({"csg": {"typ": "vereinigung", "teile": [
+        {"typ": "quader", "min": [70, 36, 0], "max": [130, 44, 40], "name": "knotenblech"},
+        {"typ": "schnitt", "teile": [{"typ": "quader", "min": [64, 30, 0], "max": [136, 50, 6], "name": "naht"},
+                                     {"typ": "halbraum", "punkt": [136, 0, 0], "normale": [1, 0, 1], "name": "f0"},
+                                     {"typ": "halbraum", "punkt": [64, 0, 0], "normale": [-1, 0, 1], "name": "f1"},
+                                     {"typ": "halbraum", "punkt": [0, 50, 0], "normale": [0, 1, 1], "name": "f2"},
+                                     {"typ": "halbraum", "punkt": [0, 30, 0], "normale": [0, -1, 1], "name": "f3"}]}]}})
+    s2 = np.sqrt(2.0)
+    a_soll = 72 * 20 + (72 + 60) * 6 * s2 + (20 + 8) * 6 * s2 + 2 * 60 * 34 + 2 * 8 * 34 + 60 * 8
+    v_soll = 6 / 6 * (72 * 20 + 4 * 66 * 14 + 60 * 8) + 60 * 8 * 34
+    for h in (10.0, 5.0):
+        G = Gitter(geo, h=h)
+        Q = Zellquadratur(G, p=2, alpha=0.0)
+        v = Q.volumen()
+        o = Flaechenquadratur.aus_geometrie(geo, G, 3)
+        a = float(o.gewichte.sum())
+        check(f"Knotenblech im Nahtstumpf h {h:g}: Oberflaeche {a:.3f} = {a_soll:.3f} (< 1e-9), kein Flaechenrueckfall, Volumen {v:.3f} = {v_soll:.0f} (< 1e-12), kein Punkttest",
+              abs(a / a_soll - 1) < 1e-9 and o.statistik["rueckfall"] == 0 and abs(v / v_soll - 1) < 1e-12 and Q.statistik["blaetter_punkttest"] == 0,
+              f"{o.statistik}, {len(o.punkte)} Punkte")
+
+
+def test_deckungsgleiche_flaechen():
+    """Befund G1-1 (Gutachten C2, 02.10.2026): die C1-Kur fuer deckungsgleiche Flaechen (zwei Formen stehen auf derselben Ebene) half nur
+    im Baumweg; auf dem flachen Vereinigungsweg (Quader + Quader) zaehlte der Boden doppelt oder teilweise doppelt, abhaengig von der
+    Reihenfolge der Formen und der Gitterphase (Boden 1 756 bis 1 880 statt 1 600 mm2), und eine wieder aufgefuellte Tasche behielt einen
+    Scheindeckel. Geschlossene Formen der Oberflaeche, je zwei Reihenfolgen und drei Zellgroessen:
+    (a) A = [0,40]^2 x [0,10] ∪ B = [12,28]^2 x [0,20]: 1 600 + 1 344 + 1 600 + 640 + 256 = 5 440;
+    (b) Knotenblech [70,130] x [36,44] x [0,40] ∪ Nahtquader [64,136] x [30,50] x [0,6]: 1 440 + 1 104 + 960 + 4 624 + 480 = 8 608;
+    (c) (C − B) ∪ A mit C = [0,40]^2 x [0,10], Tasche B = [10,30]^2 x [5,11], Fuellung A = [10,20] x [10,30] x [5,10]: 5 100, davon auf z = 10 1 400."""
+    from volumen3d.fcm.gitter import Gitter
+    from volumen3d.geometry.csg import aus_params
+    from volumen3d.geometry.oberflaeche import Flaechenquadratur
+    def q(lo, hi, name):
+        return {"typ": "quader", "min": lo, "max": hi, "name": name}
+    faelle = [
+        ("a", [q([0, 0, 0], [40, 40, 10], "A"), q([12, 12, 0], [28, 28, 20], "B")], "vereinigung", 5440.0, None),
+        ("b", [q([70, 36, 0], [130, 44, 40], "K"), q([64, 30, 0], [136, 50, 6], "N")], "vereinigung", 8608.0, None),
+    ]
+    zeilen, ok = [], True
+    for name, teile, op, soll, _ in faelle:
+        for reihe in (teile, teile[::-1]):
+            g = aus_params({"csg": {"typ": op, "teile": reihe}})
+            for h in (10.0, 7.0, 4.3):
+                o = Flaechenquadratur.aus_geometrie(g, Gitter(g, h=h), 3)
+                a = float(o.gewichte.sum())
+                ok &= abs(a / soll - 1) < 1e-9
+                zeilen.append(f"{name} {[t['name'] for t in reihe]} h {h:g}: {a:.3f}")
+    tasche = {"typ": "vereinigung", "teile": [{"typ": "differenz", "teile": [q([0, 0, 0], [40, 40, 10], "C"), q([10, 10, 5], [30, 30, 11], "B")]},
+                                               q([10, 10, 5], [20, 30, 10], "A")]}
+    # (d) dieselbe Tasche buendig (Deckel der Tasche B deckungsgleich mit dem von C, Fall des Gutachtens): C = [0,40]^2 x [0,10],
+    # B = [10,20]^2 x [5,10], A = [10,15] x [10,20] x [5,10] -> 4 950, davon auf z = 10 1 550 (vorher Scheindeckel 1 600)
+    buendig = {"typ": "vereinigung", "teile": [{"typ": "differenz", "teile": [q([0, 0, 0], [40, 40, 10], "C"), q([10, 10, 5], [20, 20, 10], "B")]},
+                                                q([10, 10, 5], [15, 20, 10], "A")]}
+    for name, g_par, soll, soll_oben in (("c", tasche, 5100.0, 1400.0), ("c", {"typ": "vereinigung", "teile": tasche["teile"][::-1]}, 5100.0, 1400.0),
+                                         ("d", buendig, 4950.0, 1550.0), ("d", {"typ": "vereinigung", "teile": buendig["teile"][::-1]}, 4950.0, 1550.0)):
+        g = aus_params({"csg": g_par})
+        for h in (10.0, 7.0, 4.3):
+            o = Flaechenquadratur.aus_geometrie(g, Gitter(g, h=h), 3)
+            a = float(o.gewichte.sum())
+            oben = float(o.gewichte[(np.abs(o.punkte[:, 2] - 10.0) < 1e-9) & (o.normalen[:, 2] > 0.999)].sum())
+            ok &= abs(a / soll - 1) < 1e-9 and abs(oben / soll_oben - 1) < 1e-9
+            zeilen.append(f"{name} h {h:g}: {a:.3f} (z 10: {oben:.3f})")
+    check("deckungsgleiche Flaechen auf dem flachen Weg: Oberflaechen exakt (1e-9), unabhaengig von Reihenfolge und Zellgroesse; aufgefuellte Tasche ohne Scheindeckel",
+          ok, "; ".join(zeilen))
+
+
 def test_inside_zelle():
     from volumen3d.fcm.gitter import INSIDE, Gitter
     from volumen3d.fcm.quadratur import Zellquadratur
@@ -177,4 +363,4 @@ def test_inside_zelle():
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_polyeder, test_ebene_geometrie_exakt, test_kugel_zweite_ordnung, test_lochplatte, test_kleine_radien, test_inside_zelle]))
+    sys.exit(lauf([test_innere_trennflaeche, test_deckungsgleiche_flaechen, test_polyeder, test_ebene_geometrie_exakt, test_kugel_zweite_ordnung, test_lochplatte, test_kleine_radien, test_inside_zelle, test_momentfitting, test_verschachtelter_baum]))

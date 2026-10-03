@@ -152,27 +152,13 @@ def _inv_stapel(B: np.ndarray) -> np.ndarray:
     return 0.5 * (X + np.swapaxes(X, 1, 2))
 
 
-_AUSZUG_QUELLE = r"""
-extern "C" __global__
-void teilmatrizen(const long long* __restrict__ indptr, const int* __restrict__ indices,
-                  const double* __restrict__ data, const long long* __restrict__ S,
-                  const int k, const int s, double* __restrict__ B)
-{
-    const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (t >= (long long)k * s) return;
-    const long long b = t / s;
-    const int a = (int)(t % s);
-    const long long* Sb = S + b * s;
-    const long long zeile = Sb[a];
-    double* Bb = B + b * (long long)s * s + (long long)a * s;
-    for (long long idx = indptr[zeile]; idx < indptr[zeile + 1]; ++idx) {
-        const long long col = indices[idx];
-        int lo = 0, hi = s;
-        while (lo < hi) { const int mid = (lo + hi) >> 1; if (Sb[mid] < col) lo = mid + 1; else hi = mid; }
-        if (lo < s && Sb[lo] == col) Bb[lo] = data[idx];
-    }
-}
-"""
+def _inv_spd_gpu(B):                                         # pragma: no cover - GPU
+    """Inverse eines symmetrisch positiv definiten Blocks auf der GPU ueber Cholesky; nicht positiv definit -> NaN (cuSOLVER wirft unter
+    errstate 'ignore' nicht), die Pruefung auf endliche Werte danach meldet es."""
+    import cupy
+    L = cupy.linalg.cholesky(B)
+    Li = cupy.linalg.inv(L)
+    return Li.T @ Li
 
 
 def _zell_bloecke(C: sp.csr_matrix, dofs: np.ndarray) -> dict[int, list[np.ndarray]]:
@@ -199,69 +185,98 @@ class ZellSchwarz:
     Eigenwerten des V-Zyklus-vorkonditionierten Operators unter 0,01, 1327 CG-Iterationen). Je
     Zelle wird der Block A[S,S] der freien Koordinaten, die die Zelle beruehrt, exakt geloest.
     Bloecke gleicher Groesse liegen gestapelt. ``geraet='cpu'``: numba-Auszug aus der CSR-Matrix,
-    eigene Cholesky-Inversion, Anwenden mit einsum + bincount. ``geraet='gpu'``: Auszug per
-    RawKernel, gestapelte Inversion mit cuBLAS, Bloecke bleiben auf der GPU (Theorie 11.10)."""
+    eigene Cholesky-Inversion, Anwenden mit einsum + bincount. ``geraet='gpu'``: Auszug auf der CPU in
+    Teilstapeln, Inversion mit cuBLAS bzw. cuSOLVER, die Inversen liegen symmetrisch gepackt auf der GPU
+    (fcm/bloecke_gpu.py, halber Speicher in FP64; Theorie 11.10)."""
 
-    def __init__(self, C: sp.csr_matrix, dofs: np.ndarray, A: sp.csr_matrix, geraet: str = "cpu",
-                 A_gpu=None) -> None:
+    def __init__(self, C: sp.csr_matrix, dofs: np.ndarray, A: sp.csr_matrix, geraet: str = "cpu") -> None:
         A = A.tocsr()
         A.sort_indices()
         gruppen = _zell_bloecke(C, dofs)
         self.n = int(C.shape[1])
         self.geraet = geraet
         self.gruppen: list = []
+        self.bloecke = None
         if geraet == "gpu":
             import cupy
-            if A_gpu is None:
-                A_gpu = _csr_auf_gpu(A)
-            indptr = A_gpu.indptr.astype(cupy.int64)
-            indices = A_gpu.indices
-            if indices.dtype != cupy.int32:
-                indices = indices.astype(cupy.int32)
-            kern = cupy.RawModule(code=_AUSZUG_QUELLE).get_function("teilmatrizen")
-            for s, liste in sorted(gruppen.items()):
-                I = cupy.asarray(np.array(liste, dtype=np.int64))
+            from .bloecke_gpu import GepackteBloecke, dreieck, gepackte_laenge
+            reihen = sorted(gruppen.items())
+            groessen = np.concatenate([np.full(len(liste), s, np.int64) for s, liste in reihen]) if reihen else np.zeros(0, np.int64)
+            laengen = gepackte_laenge(groessen)
+            start_x = np.concatenate([[0], np.cumsum(laengen)[:-1]]).astype(np.int64) if len(laengen) else np.zeros(0, np.int64)
+            X = cupy.empty(int(laengen.sum()), dtype=cupy.float64)
+            indizes = (A.indptr.astype(np.int64), A.indices.astype(np.int64))
+            index, pos = [], 0
+            for s, liste in reihen:
+                I = np.ascontiguousarray(np.array(liste, dtype=np.int64))
+                index.append(I.ravel())
                 k = int(I.shape[0])
-                X = cupy.empty((k, s, s), dtype=cupy.float64)
+                il, jl = (cupy.asarray(f) for f in dreieck(s))
                 # Teilstapel von hoechstens _TEILSTAPEL_BYTES: die gestapelte Inversion legt Kopien und
-                # Arbeitsfelder an, die Symmetrisierung zwei weitere Felder - ueber ganze Groessengruppen
-                # hielt der Speicherpool danach das Doppelte der Bloecke (Kirsch h 9 p 3: 5,9 GB, davon
-                # 2,9 GB belegt), und bei h 8 lief die 8-GB-Karte ueber (Auslagern, 1,5 s statt 0,13 s je
-                # Iteration, 28.09.2026)
+                # Arbeitsfelder an - ueber ganze Groessengruppen hielt der Speicherpool danach das Doppelte der
+                # Bloecke (Kirsch h 9 p 3: 5,9 GB, davon 2,9 GB belegt), und bei h 8 lief die 8-GB-Karte ueber
+                # (Auslagern, 1,5 s statt 0,13 s je Iteration, 28.09.2026). Ausgezogen wird auf der CPU: die feine
+                # Matrix auf der GPU waere bei 1e6 Freiheitsgraden 3,4 bis 4,2 GB nur fuer den Auszug; der Weg
+                # ueber die CPU kostet am Block h 14 p 3 0,64 statt 0,48 s (29.09.2026, A3 Plan TP 5)
                 schritt = max(1, int(_TEILSTAPEL_BYTES // (8 * s * s)))
                 for a in range(0, k, schritt):
                     b = min(k, a + schritt)
-                    B = cupy.zeros((b - a, s, s), dtype=cupy.float64)
-                    kern((((b - a) * s + 255) // 256,), (256,), (indptr, indices, A_gpu.data, I[a:b], np.int32(b - a), np.int32(s), B))
-                    Xa = cupy.linalg.inv(B)
+                    B = cupy.asarray(_teilmatrizen(A, I[a:b], indizes))
+                    if s > _EINZELN_AB:
+                        # Cholesky statt LU: ein nicht positiv definiter Block liefert NaN und faellt unten auf; LU haette ihn still
+                        # invertiert und den V-Zyklus indefinit gemacht (Gutachten C2, G2-10)
+                        Xa = cupy.stack([_inv_spd_gpu(B[i]) for i in range(b - a)])
+                    else:
+                        Xa = cupy.linalg.inv(B)
                     del B
                     # cupy wirft bei singulaeren Bloecken nicht, sondern liefert inf/NaN (errstate 'ignore'); ohne
                     # Pruefung lief der PCG dann 1000 V-Zyklen und meldete 'Residuum nan' (Gutachten 28.09.2026)
                     if not bool(cupy.isfinite(Xa).all()):
-                        raise ValueError(f"Schwarz-Glaetter (GPU): Zellbloecke der Groesse {s} nicht invertierbar")
-                    X[a:b] = Xa
-                    X[a:b] += Xa.transpose(0, 2, 1)
-                    X[a:b] *= 0.5
+                        raise ValueError(f"Schwarz-Glaetter (GPU): Zellbloecke der Groesse {s} nicht invertierbar oder nicht positiv definit")
+                    # symmetrisiert und gepackt in einem Schritt: unteres Dreieck von (X + X^T) / 2
+                    P = Xa[:, il, jl]
+                    P += Xa[:, jl, il]
+                    P *= 0.5
                     del Xa
-                self.gruppen.append((I, I.ravel(), X))
-            self.speicher_mb = round(sum(int(X.nbytes) for _, _, X in self.gruppen) / 1e6, 1)
+                    X[pos:pos + P.size] = P.ravel()
+                    pos += int(P.size)
+                    del P
+                # Je Groessengruppe andere Feldgroessen: der Pool haelt die freien Stuecke der letzten Gruppe fest.
+                # Freigegeben wird nur, wenn der Speicher der Karte knapp wird - die Freigabe kostet Zeit (Kirsch
+                # h 8 p 3, 33 Gruppen: Einrichten 7,3 statt 6,2 s) und senkt den Hoechststand von 3311 auf
+                # 2689 MB (Block h 14: 2295 auf 2094 MB; 29.09.2026). Unter Windows meldet die Karte keinen
+                # Mangel, sie lagert aus - darum vorher pruefen statt auf den Fehler zu warten.
+                del il, jl
+                _gpu_spitze_merken()
+                if cupy.cuda.runtime.memGetInfo()[0] < _FREI_RESERVE_BYTES:
+                    cupy.get_default_memory_pool().free_all_blocks()
+            self.bloecke = GepackteBloecke(self.n, groessen, np.concatenate(index) if index else np.zeros(0, np.int64), X, start_x)
+            self.groessen = groessen
+            self.speicher_mb = round(int(X.nbytes) / 1e6, 1)
         else:
             indizes = (A.indptr.astype(np.int64), A.indices.astype(np.int64))
             for s, liste in sorted(gruppen.items()):
                 I = np.ascontiguousarray(np.array(liste, dtype=np.int64))
                 B = _teilmatrizen(A, I, indizes)
-                self.gruppen.append((I, _inv_stapel(B)))
+                if s > _EINZELN_AB:
+                    # LAPACK aus dem Hauptfaden (mehrfaedig je Block); aus numba-Faeden zerstoerte es Speicher. Cholesky statt LU wie
+                    # bei den kleinen Bloecken: ein nicht positiv definiter Block faellt auf (Gutachten C2, G2-10)
+                    try:
+                        L = np.linalg.cholesky(B)
+                    except np.linalg.LinAlgError as ex:
+                        raise ValueError(f"Schwarz-Glaetter: Zellbloecke der Groesse {s} nicht positiv definit ({ex})") from ex
+                    Li = np.linalg.inv(L)
+                    X = np.swapaxes(Li, 1, 2) @ Li
+                    if not np.all(np.isfinite(X)):
+                        raise ValueError(f"Schwarz-Glaetter: Zellbloecke der Groesse {s} nicht invertierbar")
+                    self.gruppen.append((I, 0.5 * (X + np.swapaxes(X, 1, 2))))
+                else:
+                    self.gruppen.append((I, _inv_stapel(B)))
             self.speicher_mb = round(sum(Bi.nbytes for _, Bi in self.gruppen) / 1e6, 1)
 
     def anwenden(self, r):
-        if self.geraet == "gpu":
-            import cupy
-            import cupyx
-            z = cupy.zeros(self.n, dtype=cupy.float64)
-            for I, I_flach, X in self.gruppen:
-                beitrag = cupy.matmul(X, r[I][:, :, None])[:, :, 0]
-                cupyx.scatter_add(z, I_flach, beitrag.ravel())
-            return z
+        if self.bloecke is not None:
+            return self.bloecke.anwenden(r)
         z = np.zeros(self.n)
         for I, Binv in self.gruppen:
             beitrag = np.einsum("kab,kb->ka", Binv, r[I])
@@ -269,13 +284,30 @@ class ZellSchwarz:
         return z
 
 
-def _csr_auf_gpu(A: sp.csr_matrix):
-    import cupyx.scipy.sparse as cusp
-    return cusp.csr_matrix(A.tocsr())
+# Hoechststand des GPU-Speicherpools waehrend des Einrichtens. Der Pool gibt von selbst nichts zurueck, sein
+# Gesamtstand vor jeder Freigabe ist darum der Hoechststand seit der letzten.
+_GPU_SPITZE = [0]
 
+
+def _gpu_spitze_merken() -> int:
+    import cupy
+    _GPU_SPITZE[0] = max(_GPU_SPITZE[0], int(cupy.get_default_memory_pool().total_bytes()))
+    return _GPU_SPITZE[0]
+
+
+# Unter diesem freien Speicher der Karte gibt der Glaetteraufbau den Pool nach jeder Groessengruppe frei
+_FREI_RESERVE_BYTES = 2048e6
 
 # Groesse der Teilstapel beim Auszug und der Inversion der Glaetterbloecke auf der GPU
 _TEILSTAPEL_BYTES = 256e6
+
+# Ab dieser Blockgroesse wird einzeln invertiert statt gestapelt. Die gestapelte Inversion (cuBLAS
+# getrfBatched) ist fuer viele kleine Bloecke gebaut und waechst fuer grosse wie s^4 und schlechter:
+# gemessen (RTX 3070, 29.09.2026) s 256, 20 Bloecke: gestapelt 0,014 s, einzeln 0,026 s; s 400, 4 Bloecke:
+# 0,043 gegen 0,016 s; s 1350: 1,47 gegen 0,038 s; s 2463: 8,57 gegen 0,17 s. Am Block h 14 p 3 (Schwelle
+# 0,4) kostete so ein einzelner Block 8,6 s von 19 s Glaetter-Einrichtung (A1, Plan TP 5). Auf der CPU gilt
+# dasselbe fuer die numba-Cholesky je Block (ein Faden je Block): grosse Bloecke gehen an LAPACK im Hauptfaden.
+_EINZELN_AB = 320
 
 # Schwelle fuer den Singulaerwert eines Nullvektors nach zwei Schritten inverser Iteration und Zahl der
 # Zufallsproben (siehe grob_nullkandidaten)
@@ -350,12 +382,18 @@ class PMehrgitter:
     ``geraet='gpu'``: Glaetterbloecke, Operatoren, lambda_max und V-Zyklus auf der GPU (``anwenden``
     nimmt und liefert cupy-Felder); nur das Grobgitter p = 1 bleibt auf der CPU.
 
-    Standard Grad 5 auf [lambda_max/16, lambda_max]: am schwierigsten Fall (Kirsch h 10 p 3, Versatz
-    0,6, GPU) gemessen Grad 3/alpha 8: 129 Iterationen 14,6 s, Grad 5/alpha 8: 92 / 16,7 s, Grad
-    5/alpha 16: 86 / 15,0 s, Grad 8/alpha 30: 58 / 16,4 s (28.09.2026). Die Zeit haengt kaum am Grad,
-    die Iterationszahl schon; Grad 5/alpha 16 haelt die Vorgabe (unter 100) ohne Zeitverlust."""
+    Standard Grad 5 auf [lambda_max/100, lambda_max]. lambda_max von M^-1 A (33 bis 65) sitzt an drei
+    untersuchten Lagen im Uebergangsguertel des Oktrees (Ebene 1, volle Zellen) und wandert mit der
+    Schnittlage; mit alpha 16
+    glaettete Chebyshev nur oberhalb von 2 bis 4, darunter blieb alles dem Grobgitter p = 1. Mit alpha 100
+    verdoppelt sich der kleinste Ritzwert des vorkonditionierten Operators an allen zehn Lagen (h 10:
+    0,061-0,100 auf 0,116-0,188). Kirsch p 3, je fuenf Schnittlagen, GPU, tol 1e-12 (30.09.2026, A5): h 10
+    24,8 statt 33,0 Iterationen im Mittel, Loesen ueber FcmProblem.loesen 11,7 statt 15,0 s in Summe; h 8
+    30,6 statt 39,6, 21,2 statt 26,6 s; Spannungen gleich. alpha 60/100/200 an vier Lagen: 2,42/2,29/2,21 s (h 10, Versatz
+    0,4) - das Fenster saettigt; Grad 6 bringt weniger Iterationen, aber keine Zeit (28.09. bei der
+    alten Blockablage war Grad 8/alpha 30 noch langsamer als Grad 5/alpha 16)."""
 
-    def __init__(self, problem, glaetter_grad: int = 5, alpha: float = 16.0, potenz_schritte: int = 15,
+    def __init__(self, problem, glaetter_grad: int = 5, alpha: float = 100.0, potenz_schritte: int = 15,
                  glaetter: str = "schwarz", lambda_sicherheit: float = 1.1, grob_verschiebung: float = 1e-10,
                  geraet: str = "cpu") -> None:
         try:
@@ -377,6 +415,7 @@ class PMehrgitter:
                     lambda_sicherheit: float, grob_verschiebung: float, geraet: str) -> None:
         t0 = time.perf_counter()
         zeiten: dict[str, float] = {}
+        _GPU_SPITZE[0] = 0
         pr = problem
         if pr.K is None:
             pr.aufbauen()
@@ -571,8 +610,8 @@ class PMehrgitter:
                           "zeiten_s": {k: round(v, 2) for k, v in zeiten.items()},
                           "t_einrichten_s": round(time.perf_counter() - t0, 3)}
         if geraet == "gpu":
-            # Spitze = was der Pool waehrend des Einrichtens gleichzeitig hielt (er gibt nichts von selbst zurueck)
-            self.statistik["gpu_spitze_mb"] = round(self.xp.get_default_memory_pool().total_bytes() / 1e6, 1)
+            # Spitze = was der Pool waehrend des Einrichtens hoechstens hielt
+            self.statistik["gpu_spitze_mb"] = round(_gpu_spitze_merken() / 1e6, 1)
 
     # -- Glaetter ------------------------------------------------------------------------
     def _chebyshev(self, eb: Ebene, b: np.ndarray, x: np.ndarray) -> np.ndarray:

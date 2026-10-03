@@ -150,5 +150,86 @@ def test_rand_auf_zellflaechen():
         check(f"Schnittebene x = 0 auf Zellflaechen der Ebene {ebene}: 100 mm2 genau einmal", abs(fe.gewichte.sum() - 100.0) < 1e-9, f"{fe.gewichte.sum():.6f}")
 
 
+def _unabhaengig_pruefen(G) -> tuple[int, int, int, int]:
+    """Gitter ohne Gitter-Methoden pruefen: jedes Blatt wird auf seine Teilzellen der feinsten vorhandenen Ebene abgebildet (Woerterbuch Teilzelle -> Blatt).
+    Rueckgabe: (Ueberlappungen, fehlende Teilzellen einer aktiven Wurzel, die nicht OUTSIDE sind, 2:1-Verstoesse ueber 26 Richtungen, hoechste Ebene).
+    Nicht benutzt werden `zelle_finden` und `_unbalanciert`, die der Aufbau selbst verwendet."""
+    from volumen3d.fcm.gitter import OUTSIDE
+    L = int(G.ebene.max())
+    belegt: dict[tuple[int, int, int], int] = {}
+    ueberlappung = 0
+    for c in range(len(G.ijk)):
+        f = 2 ** (L - int(G.ebene[c]))
+        i0 = [int(v) * f for v in G.ijk[c]]
+        for a in range(f):
+            for b in range(f):
+                for d in range(f):
+                    k = (i0[0] + a, i0[1] + b, i0[2] + d)
+                    ueberlappung += k in belegt
+                    belegt[k] = c
+    # Ueberdeckung: jede Teilzelle einer aktiven Wurzelzelle, die kein Blatt traegt, muss laut Geometrie OUTSIDE sein
+    fehlt = []
+    n_wurzel = G.n
+    aktiv = np.flatnonzero(G.alle_klassen != OUTSIDE)
+    for w in aktiv:
+        iw = [int(w // (n_wurzel[1] * n_wurzel[2])), int((w // n_wurzel[2]) % n_wurzel[1]), int(w % n_wurzel[2])]
+        f = 2 ** L
+        for a in range(f):
+            for b in range(f):
+                for d in range(f):
+                    k = (iw[0] * f + a, iw[1] * f + b, iw[2] * f + d)
+                    if k not in belegt:
+                        fehlt.append(k)
+    luecken = 0
+    if fehlt:
+        kl = G._klassen(np.full(len(fehlt), L), np.array(fehlt, int))
+        luecken = int((kl != OUTSIDE).sum())
+    # 2:1: alle angrenzenden Teilzellen jedes Blattes in 26 Richtungen tragen Blaetter, die hoechstens eine Ebene groeber sind
+    verstoss = 0
+    for c in range(len(G.ijk)):
+        l = int(G.ebene[c])
+        f = 2 ** (L - l)
+        i0 = [int(v) * f for v in G.ijk[c]]
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for dz in (-1, 0, 1):
+                    if dx == dy == dz == 0:
+                        continue
+                    bereiche = [range(i0[a], i0[a] + f) if dd == 0 else ([i0[a] + f] if dd > 0 else [i0[a] - 1]) for a, dd in enumerate((dx, dy, dz))]
+                    for x in bereiche[0]:
+                        for y in bereiche[1]:
+                            for z in bereiche[2]:
+                                n = belegt.get((x, y, z))
+                                if n is not None and int(G.ebene[n]) < l - 1:
+                                    verstoss += 1
+    return ueberlappung, luecken, verstoss, L
+
+
+def test_verfeinerung_drei_ebenen():
+    """O15 (02.10.2026): `Gitter._aufbauen` teilte in der 2:1-Balancierung mit der Maske der sortierten Felder die unsortierten lokalen - andere Zellen als
+    gemeint. Bei zwei Ebenen ohne Folge, ab drei Ebenen Blaetter ueber max_ebene und eine Kaskade ohne Ende (Kugel Radius 43, h 10, Bereich Radius 8, Ziel 1,3 mm:
+    nach 40 Durchlaeufen Blaetter der Ebenen 4 und 5 bei max_ebene 3). Geprueft ohne die Gitter-Methoden des Aufbaus: Teilzellen-Abbildung."""
+    from volumen3d.fcm.gitter import Gitter
+    for ziel, ebenen in ((2.6, 2), (1.3, 3)):
+        g, G = _kugel(bereiche=((np.array([43.0, 0, 0]), 8.0, ziel),))
+        ueber, luecken, verstoss, hoechste = _unabhaengig_pruefen(G)
+        check(f"Kugel, Bereich Ziel {ziel} mm ({ebenen} Ebenen): Aufbau endet, max_ebene {G.max_ebene}, hoechste Blattebene {hoechste} (nicht darueber), alle Ebenen vorhanden",
+              G.max_ebene == ebenen and hoechste == ebenen and set(np.unique(G.ebene).tolist()) == set(range(ebenen + 1)), str(G.ebenen_verteilung()))
+        check(f"  unabhaengige Pruefung ueber die feinsten Teilzellen: Ueberlappungen {ueber}, fehlende Teilzellen mit Werkstoff {luecken}, 2:1-Verstoesse ueber 26 Richtungen {verstoss}",
+              ueber == 0 and luecken == 0 and verstoss == 0, f"{len(G.ijk)} Blaetter")
+    # die Obergrenze der Durchlaeufe schlaegt an, wenn die Balancierung nie fertig wird (Rueckfall in die Kaskade waere sonst ein Aufbau ohne Ende)
+    orig = Gitter._unbalanciert
+    try:
+        Gitter._unbalanciert = lambda self: np.arange(len(self.ijk)) == 0       # meldet in jedem Durchlauf ein Blatt, nie fertig
+        try:
+            _kugel(bereiche=((np.array([43.0, 0, 0]), 8.0, 2.6),))
+            meldung = ""
+        except RuntimeError as ex:
+            meldung = str(ex)
+    finally:
+        Gitter._unbalanciert = orig
+    check("Balancierung, die nie aufhoert: RuntimeError mit Durchlaufgrenze statt Aufbau ohne Ende", "Balancierung" in meldung and "Durchlaeufe" in meldung, meldung)
+
+
 if __name__ == "__main__":
-    sys.exit(lauf([test_schnittzellen, test_bereich_und_duenn, test_punktsuche_und_box, test_moden_ueber_ebenen, test_rand_auf_zellflaechen]))
+    sys.exit(lauf([test_schnittzellen, test_bereich_und_duenn, test_punktsuche_und_box, test_moden_ueber_ebenen, test_rand_auf_zellflaechen, test_verfeinerung_drei_ebenen]))

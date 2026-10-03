@@ -1,10 +1,9 @@
 """Matrixfreier Operator auf der GPU (CuPy, Teilprojekt 3 Aufgabe 6, Vorgabe 9).
 
-Dieselben Zelldaten wie auf der CPU (fcm/operator.py): ein Block je Zelle laedt u_e in den
-gemeinsamen Speicher, jeder Thread bildet eine Zeile von K_e u_e - gelesen wird K_e spaltenweise
-(K_e ist symmetrisch, K[b*n3 + a] fuer feste b ueber die Threads a ist zusammenhaengend), das
-Ergebnis geht in den Puffer (Zellen x 3m); das Einsammeln je Freiheitsgrad ueber die Inzidenz ist
-der zweite Kern. Zwangsmatrix C und Nitsche-Matrix K_rand als cupyx-CSR. FP64 durchgehend.
+Dieselben Zelldaten wie auf der CPU (fcm/operator.py). Die Zellmatrizen liegen gepackt auf der GPU (nur das
+untere Dreieck, fcm/bloecke_gpu.py): bei p 3 148 statt 295 KB je Schnittzelle, in FP64 und damit dieselbe
+Rechnung; alle INSIDE-Zellen teilen sich die Referenzmatrix mit der Skala h_l/h_0. Das Einsammeln je
+Freiheitsgrad laeuft ueber die Inzidenz. Zwangsmatrix C und Nitsche-Matrix K_rand als cupyx-CSR.
 """
 from __future__ import annotations
 
@@ -19,42 +18,8 @@ except ImportError:                                            # pragma: no cove
     cusp = None
     _CUPY = False
 
-_QUELLE = r"""
-extern "C" __global__
-void zellkern(const double* __restrict__ u, const int* __restrict__ dofs, const int n3,
-              const long long* __restrict__ zellen, const double* __restrict__ skala,
-              const double* __restrict__ K, const long long K_schritt, const int n_zellen,
-              double* __restrict__ puffer)
-{
-    extern __shared__ double ue[];
-    const int i = blockIdx.x;
-    if (i >= n_zellen) return;
-    const long long c = zellen[i];
-    const int* d = dofs + c * n3;
-    for (int a = threadIdx.x; a < n3; a += blockDim.x) ue[a] = u[d[a]];
-    __syncthreads();
-    const double* Ke = K + (long long)i * K_schritt;
-    const double s = skala[i];
-    for (int a = threadIdx.x; a < n3; a += blockDim.x) {
-        double acc = 0.0;
-        for (int b = 0; b < n3; ++b) acc += Ke[(long long)b * n3 + a] * ue[b];
-        puffer[c * n3 + a] = s * acc;
-    }
-}
-
-extern "C" __global__
-void einsammeln(const double* __restrict__ puffer, const long long* __restrict__ zeiger,
-                const long long* __restrict__ zelle, const long long* __restrict__ lokal,
-                const int n3, const int n, double* __restrict__ v)
-{
-    const int d = blockIdx.x * blockDim.x + threadIdx.x;
-    if (d >= n) return;
-    double acc = 0.0;
-    for (long long j = zeiger[d]; j < zeiger[d + 1]; ++j) acc += puffer[zelle[j] * n3 + lokal[j]];
-    v[d] = acc;
-}
-"""
-
+# Groesse der Teilstapel beim Packen und Hochladen der Zellmatrizen
+_TEILSTAPEL_BYTES = 256e6
 
 _PROBE: bool | None = None
 
@@ -89,48 +54,34 @@ class OperatorGpu:
     def __init__(self, zelldaten, C=None, K_rand=None) -> None:
         if not verfuegbar():
             raise RuntimeError("keine GPU/CuPy verfuegbar")
+        from .bloecke_gpu import GepackteBloecke, dreieck
         z = zelldaten
         self.z = z
         self.n = int(z.gitter.n_dof)
         self.n3 = 3 * z.m
         self.nz = len(z.gitter.ijk)
-        self.d_dofs = cupy.asarray(z.dofs, dtype=cupy.int32)
-        self.d_innen = cupy.asarray(z.innen, dtype=cupy.int64)
-        self.d_skala_innen = cupy.asarray(z.skala_innen, dtype=cupy.float64)
-        self.d_K_ref = cupy.asarray(z.K_ref, dtype=cupy.float64)
-        self.d_cut = cupy.asarray(z.cut, dtype=cupy.int64)
-        self.d_skala_cut = cupy.ones(len(z.cut), dtype=cupy.float64)
-        self.d_K_cut = cupy.asarray(z.K_cut, dtype=cupy.float64)
-        self.d_zeiger = cupy.asarray(z.inz_zeiger, dtype=cupy.int64)
-        self.d_zelle = cupy.asarray(z.inz_zelle, dtype=cupy.int64)
-        self.d_lokal = cupy.asarray(z.inz_lokal, dtype=cupy.int64)
-        self.d_puffer = cupy.zeros(self.nz * self.n3, dtype=cupy.float64)
-        modul = cupy.RawModule(code=_QUELLE)
-        self._zellkern = modul.get_function("zellkern")
-        self._einsammeln = modul.get_function("einsammeln")
-        self._block = int(min(256, max(32, ((self.n3 + 31) // 32) * 32)))
-        self._shared = self.n3 * 8
+        il, jl = dreieck(self.n3)
+        je = len(il)
+        # Matrixspeicher: Referenzmatrix, danach die Schnittzellen; in Teilstapeln gepackt und hochgeladen, damit
+        # der Hauptspeicher keine zweite Kopie aller Zellmatrizen haelt
+        X = cupy.empty(je * (1 + len(z.cut)), dtype=cupy.float64)
+        X[:je] = cupy.asarray(np.ascontiguousarray(z.K_ref[il, jl]))
+        schritt = max(1, int(_TEILSTAPEL_BYTES // (8 * je)))
+        for a0 in range(0, len(z.cut), schritt):
+            a1 = min(len(z.cut), a0 + schritt)
+            X[je * (1 + a0):je * (1 + a1)] = cupy.asarray(np.ascontiguousarray(z.K_cut[a0:a1][:, il, jl])).ravel()
+        zellen = np.concatenate([z.innen, z.cut]).astype(np.int64)
+        start_x = np.concatenate([np.zeros(len(z.innen), np.int64), je * (1 + np.arange(len(z.cut), dtype=np.int64))])
+        skala = np.concatenate([z.skala_innen, np.ones(len(z.cut))])
+        self.bloecke = GepackteBloecke(self.n, np.full(len(zellen), self.n3), z.dofs[zellen].ravel(), X, start_x, skala)
         self.C = cusp.csr_matrix(C.tocsr()) if C is not None else None
         self.CT = cusp.csr_matrix(C.T.tocsr()) if C is not None else None
         self.K_rand = cusp.csr_matrix(K_rand.tocsr()) if K_rand is not None and K_rand.nnz else None
-        self.speicher_mb = round(cupy.get_default_memory_pool().used_bytes() / 1e6, 1)
+        duenn = sum(int(M.data.nbytes + M.indices.nbytes + M.indptr.nbytes) for M in (self.C, self.CT, self.K_rand) if M is not None)
+        self.speicher_mb = round(self.bloecke.speicher_mb + duenn / 1e6, 1)
 
     def anwenden(self, u):
-        u = cupy.ascontiguousarray(u, dtype=cupy.float64)
-        n3 = np.int32(self.n3)
-        if len(self.z.innen):
-            self._zellkern((len(self.z.innen),), (self._block,),
-                           (u, self.d_dofs, n3, self.d_innen, self.d_skala_innen, self.d_K_ref, np.int64(0),
-                            np.int32(len(self.z.innen)), self.d_puffer), shared_mem=self._shared)
-        if len(self.z.cut):
-            self._zellkern((len(self.z.cut),), (self._block,),
-                           (u, self.d_dofs, n3, self.d_cut, self.d_skala_cut, self.d_K_cut, np.int64(self.n3 * self.n3),
-                            np.int32(len(self.z.cut)), self.d_puffer), shared_mem=self._shared)
-        v = cupy.empty(self.n, dtype=cupy.float64)
-        bl = 256
-        self._einsammeln(((self.n + bl - 1) // bl,), (bl,),
-                         (self.d_puffer, self.d_zeiger, self.d_zelle, self.d_lokal, n3, np.int32(self.n), v))
-        return v
+        return self.bloecke.anwenden(u)
 
     def voll_anwenden(self, u):
         v = self.anwenden(u)

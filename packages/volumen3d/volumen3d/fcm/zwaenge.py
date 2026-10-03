@@ -44,6 +44,7 @@ class Zwaenge:
         self.statistik = {"haengende_flaechen": 0, "haengende_kanten": 0, "haengende_ecken": 0,
                           "moden_haengend": 0, "moden_aggregiert": 0, "kettenlaenge": 0, "zyklen_frei": 0}
         self._haengende()
+        self._haengend_moden = frozenset(self.roh)           # vor der Aggregation gebundene Moden (haengende Entitaeten)
         if aggregation is not None:
             for mode, eintraege in aggregation.roh_zwaenge(dict(self.roh)).items():
                 self.roh[mode] = eintraege
@@ -81,8 +82,8 @@ class Zwaenge:
             neu += 1
         return neu
 
-    def _groebster_nachbar(self, P: np.ndarray, ebene: int) -> int:
-        n = self.gitter.zelle_finden(P)
+    def _groebster_nachbar(self, n: np.ndarray, ebene: int) -> int:
+        """Groebste Zelle unter den gefundenen Blaettern n (-1 = kein Blatt), die groeber als ``ebene`` ist."""
         n = n[n >= 0]
         if len(n) == 0:
             return -1
@@ -91,22 +92,57 @@ class Zwaenge:
             return -1
         return int(n[np.argmin(self.gitter.ebene[n])])
 
+    def _probepunkte(self, fein: np.ndarray, punkte_zurueck: bool = False) -> np.ndarray:
+        """Alle Probepunkte der haengenden Entitaeten je feiner Zelle (6 Flaechen, 12 Kanten x 3 Quadranten,
+        8 Ecken x 7 Oktanten = 98) in der Reihenfolge, in der _haengende sie abfragt, und ihre Blaetter in einem
+        Aufruf. Einzeln waren es 30 836 Aufrufe von zelle_finden mit je einem bis sieben Punkten, 6,5 s von 23 s
+        Konstruktor bei Kirsch h 8 p 3 (Profil 29.09.2026, A2 Plan TP 5); die Suche ist punktweise, das
+        Ergebnis gleich."""
+        g = self.gitter
+        lo, hi = g.zellbox(fein)
+        m = 0.5 * (lo + hi)
+        hl = np.asarray(g.h_zelle(fein), float).reshape(-1)
+        eps = self.eps * hl
+        punkte = []
+        for d, s in _SEITEN:
+            P = m.copy()
+            P[:, d] += s * (0.5 * hl + eps)
+            punkte.append(P)
+        for e, d1, s1, d2, s2 in _KANTEN:
+            for q1, q2 in ((s1, s2), (s1, -s2), (-s1, s2)):
+                P = m.copy()
+                P[:, d1] += q1 * (0.5 * hl + (eps if q1 == s1 else -eps))
+                P[:, d2] += q2 * (0.5 * hl + (eps if q2 == s2 else -eps))
+                if q1 == s1 and q2 == s2:
+                    P[:, d1] = m[:, d1] + s1 * (0.5 * hl + eps)
+                    P[:, d2] = m[:, d2] + s2 * (0.5 * hl + eps)
+                punkte.append(P)
+        for sx, sy, sz in _ECKEN:
+            v = m + 0.5 * hl[:, None] * np.array([sx, sy, sz], float)
+            for ox in (-1, 1):
+                for oy in (-1, 1):
+                    for oz in (-1, 1):
+                        if (ox, oy, oz) == (-sx, -sy, -sz):
+                            continue                           # das ist F selbst
+                        punkte.append(v + eps[:, None] * np.array([ox, oy, oz], float))
+        P = np.stack(punkte, axis=1)                           # (n_fein, 98, 3)
+        if punkte_zurueck:                                     # fuer die Pruefung der gebuendelten Suche gegen Einzelabfragen
+            return P
+        return g.zelle_finden(P.reshape(-1, 3)).reshape(len(fein), P.shape[1])
+
     def _haengende(self) -> None:
         g = self.gitter
         abc = modenklassen(self.p)["abc"]
         cl = _chebyshev_lobatto(self.p)
         fein = np.flatnonzero(g.ebene > 0)
-        for F in fein:
+        nb = self._probepunkte(fein) if len(fein) else np.zeros((0, 98), int)
+        for iF, F in enumerate(fein):
             l = int(g.ebene[F])
-            lo, hi = g.zellbox(F)
-            m = 0.5 * (lo + hi)
-            hl = float(g.h_zelle(F))
-            eps = self.eps * hl
+            k = 0                                              # Zeiger in die Probepunkte dieser Zelle
             # Flaechen
             for d, s in _SEITEN:
-                P = m.copy()
-                P[d] += s * (0.5 * hl + eps)
-                C = self._groebster_nachbar(P[None], l)
+                C = self._groebster_nachbar(nb[iF, k:k + 1], l)
+                k += 1
                 if C < 0:
                     continue
                 moden = np.flatnonzero(abc[:, d] == self._idx(s))
@@ -121,16 +157,8 @@ class Zwaenge:
                 self.statistik["moden_haengend"] += neu
             # Kanten: die drei fremden Quadranten um die Kante absuchen, groebsten Nachbarn nehmen
             for e, d1, s1, d2, s2 in _KANTEN:
-                proben = []
-                for q1, q2 in ((s1, s2), (s1, -s2), (-s1, s2)):
-                    P = m.copy()
-                    P[d1] += q1 * (0.5 * hl + (eps if q1 == s1 else -eps))
-                    P[d2] += q2 * (0.5 * hl + (eps if q2 == s2 else -eps))
-                    if q1 == s1 and q2 == s2:
-                        P[d1] = m[d1] + s1 * (0.5 * hl + eps)
-                        P[d2] = m[d2] + s2 * (0.5 * hl + eps)
-                    proben.append(P)
-                C = self._groebster_nachbar(np.asarray(proben), l)
+                C = self._groebster_nachbar(nb[iF, k:k + 3], l)
+                k += 3
                 if C < 0:
                     continue
                 moden = np.flatnonzero((abc[:, d1] == self._idx(s1)) & (abc[:, d2] == self._idx(s2)))
@@ -144,15 +172,8 @@ class Zwaenge:
                     self.statistik["moden_haengend"] += neu
             # Ecken: die sieben fremden Oktanten absuchen
             for sx, sy, sz in _ECKEN:
-                v = m + 0.5 * hl * np.array([sx, sy, sz])
-                proben = []
-                for ox in (-1, 1):
-                    for oy in (-1, 1):
-                        for oz in (-1, 1):
-                            if (ox, oy, oz) == (-sx, -sy, -sz):
-                                continue                       # das ist F selbst
-                            proben.append(v + eps * np.array([ox, oy, oz]))
-                C = self._groebster_nachbar(np.asarray(proben), l)
+                C = self._groebster_nachbar(nb[iF, k:k + 7], l)
+                k += 7
                 if C < 0:
                     continue
                 moden = np.flatnonzero((abc[:, 0] == self._idx(sx)) & (abc[:, 1] == self._idx(sy)) & (abc[:, 2] == self._idx(sz)))

@@ -1,7 +1,7 @@
 """U4: STL-Eingang - Lesen/Schreiben, Windungszahl (auch mit Luecke), Abstand, lokale Ebenen,
 exaktes Volumen eines Wuerfel-STL, Lame aus einem tessellierten Viertelzylinder gegen CSG.
 
-Aufruf: python -m volumen3d.tests.test_stl   (~3 min)
+Aufruf: python -m volumen3d.tests.test_stl   (~1 min; vor der Huellenintegration B6 ~3 min)
 """
 from __future__ import annotations
 
@@ -110,7 +110,15 @@ def test_volumen_und_quadratur():
     Q = Zellquadratur(G, p=2, alpha=0.0)
     check("Wuerfel-STL 30^3 im Gitter h 10 (Kanten und Ecken in Zellen): Volumen exakt (< 1e-10)", abs(Q.volumen() / 27000.0 - 1) < 1e-10,
           f"{Q.volumen():.6f}, {Q.statistik}")
-    check("dabei nur ebene Blaetter, kein Punkttest", Q.statistik["blaetter_punkttest"] == 0 and Q.statistik["blaetter_eben"] > 0)
+    # Seit B6 (Plan TP 5) integriert die Zellquadratur Huellen ueber den Divergenzsatz je Zelle: keine Blaetter mehr, jede
+    # Schnittzelle ist eine Huellenzelle; der alte Weg (huellen_exakt=False) muss weiter nur ebene Blaetter brauchen
+    n_cut = int((G.klasse == 2).sum())
+    Q_alt = Zellquadratur(G, p=2, alpha=0.0, huellen_exakt=False)
+    v_alt = Q_alt.volumen()                                   # zuerst rechnen: die Statistik fuellt sich je Zelle
+    check("dabei kein Punkttest: neu alle Schnittzellen als Huellenzellen ohne Blaetter, alter Weg nur ebene Blaetter",
+          Q.statistik["blaetter_punkttest"] == 0 and Q.statistik["huellenzellen"] == n_cut and Q.statistik["blaetter_eben"] == 0
+          and Q_alt.statistik["blaetter_punkttest"] == 0 and Q_alt.statistik["blaetter_eben"] > 0
+          and abs(v_alt / 27000.0 - 1) < 1e-10, f"neu {Q.statistik}, alt {Q_alt.statistik}")
     # schraeg: gedrehter Wuerfel (Rotation um z um 30 Grad und um x um 20 Grad)
     rz = np.deg2rad(30.0)
     rx = np.deg2rad(20.0)
@@ -175,6 +183,44 @@ def _viertelzylinder_stl(ri, ra, t, facette):
     viereck(ai[0], ao[0], bo[0], bi[0])                       # Seite y = 0:  x x (x + z) = -y
     viereck(ai[-1], bi[-1], bo[-1], ao[-1])                   # Seite x = 0:  z x (z + y) = -x
     return np.asarray(D)
+
+
+def test_durchdringende_schalen():
+    """Befund G3-1 (Gutachten C2): zwei sich durchdringende geschlossene Schalen in einem STL sind keine gueltige Huelle (doppelte Waende,
+    die Windungszahl ist in A ∩ B 2 bzw. nach dem Wenden 0). Vorher bestimmte die Verschachtelungstiefe eine einzige Facette je Komponente
+    und wendete B still zum Hohlraum. Jetzt klare Fehlermeldung; ein echter Hohlraum (Wuerfel 30 mit Hohlraum 10) und zwei getrennte Wuerfel
+    bleiben gueltig."""
+    from volumen3d.geometry.stl import Stl
+    D = np.concatenate([_wuerfel_dreiecke(0.0, 10.0), _wuerfel_dreiecke(6.0, 16.0)])
+    try:
+        Stl.aus_dreiecken(D)
+        meldung = ""
+    except ValueError as ex:
+        meldung = str(ex)
+    # Ecke ueberlappt nur wenig (alle Facettenschwerpunkte ausserhalb der anderen Schale): wird ueber die Kantenkreuzung erkannt
+    try:
+        Stl.aus_dreiecken(np.concatenate([_wuerfel_dreiecke(0.0, 10.0), _wuerfel_dreiecke(8.0, 18.0)]))
+        meldung_ecke = ""
+    except ValueError as ex:
+        meldung_ecke = str(ex)
+    ok_hohl = Stl.aus_dreiecken(np.concatenate([_wuerfel_dreiecke(0.0, 30.0), _wuerfel_dreiecke(10.0, 20.0)])).umgedreht == 12
+    ok_getrennt = bool(Stl.aus_dreiecken(np.concatenate([_wuerfel_dreiecke(0.0, 10.0), _wuerfel_dreiecke(20.0, 30.0)])).innen(np.array([[25.0, 25, 25]]))[0])
+    # beruehrende Schalen (gemeinsame Flaeche x = 10, gemeinsame Kante) sind keine Durchdringung
+    from volumen3d.geometry.sdf import Quader
+    def quader(lo, hi):
+        V, Tq = Quader(lo, hi).dreiecke(None, None, 1.0)
+        return V[Tq]
+    beruehrt = []
+    for B in (quader([10, 0, 0], [20, 10, 10]), quader([10, 10, 0], [20, 20, 10]), quader([10, 2, 3], [20, 7, 8])):
+        try:
+            sb = Stl.aus_dreiecken(np.concatenate([quader([0, 0, 0], [10, 10, 10]), B]))
+            beruehrt.append(bool(sb.innen(np.array([[15.0, B[:, :, 1].mean(), B[:, :, 2].mean()]]))[0]))
+        except ValueError as ex:
+            beruehrt.append(str(ex)[:60])
+    check("durchdringende Schalen -> ValueError mit 'durchdringen' (auch bei kleiner Eckueberlappung); Hohlraum (12 Facetten gewendet), getrennte und "
+          "beruehrende Wuerfel (Flaeche, Kante, Teilflaeche) bleiben gueltig",
+          "durchdring" in meldung and "durchdring" in meldung_ecke and ok_hohl and ok_getrennt and beruehrt == [True, True, True],
+          f"{meldung[:80]} | {meldung_ecke[:40]} | beruehrend {beruehrt}")
 
 
 def test_lame_aus_stl():
@@ -250,7 +296,8 @@ def test_kern_stl():
     test_lesen_und_windungszahl()
     test_abstand_und_ebenen()
     test_suchbaum()
+    test_durchdringende_schalen()
 
 
 if __name__ == "__main__":
-    sys.exit(lauf([test_lesen_und_windungszahl, test_abstand_und_ebenen, test_suchbaum, test_volumen_und_quadratur, test_lame_aus_stl]))
+    sys.exit(lauf([test_lesen_und_windungszahl, test_abstand_und_ebenen, test_suchbaum, test_volumen_und_quadratur, test_durchdringende_schalen, test_lame_aus_stl]))
