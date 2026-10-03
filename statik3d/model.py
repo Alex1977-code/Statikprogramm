@@ -3871,6 +3871,23 @@ class Model:
                 fl.integrierte_knoten = [f(n) for n in fl.integrierte_knoten]
         for name, paare in list((getattr(self, "getrennte_knoten", None) or {}).items()):
             self.getrennte_knoten[name] = [[f(a), f(b)] for a, b in paare]
+        # Der Antrieb einer Stellung (Knoten, Moment) und die Kantenmitten der
+        # tetp-Elemente ({(a, b) mit a < b: Punkt}) nennen ebenfalls Knoten; bis
+        # zum 03.10.2026 blieben beide stehen. Nach dem Loeschen eines freien
+        # Knotens davor griff der Antrieb am Nachbarknoten an, und eine
+        # Kantenmitte kruemmte eine andere Kante desselben Tetraeders
+        # (tests.test_loeschen, Gegenpruefung zu 14a).
+        for st in getattr(self, "stellungen", None) or []:
+            an = getattr(st, "antrieb", None)
+            if an:
+                st.antrieb = (f(an[0]), an[1])
+        km = getattr(self, "tetp_kantenmitten", None)
+        if km:
+            neu = {}
+            for (a, b), p in km.items():
+                a, b = f(a), f(b)
+                neu[(a, b) if a < b else (b, a)] = p
+            self.tetp_kantenmitten = neu
         self._woelb_version = getattr(self, "_woelb_version", 0) + 1
 
     def knoten_tauschen(self, a: int, b: int) -> None:
@@ -3886,102 +3903,149 @@ class Model:
         self.nodes[[a, b]] = self.nodes[[b, a]]
         self._knotenverweise_abbilden({a: b, b: a})
 
-    def knoten_benutzt_von(self, i: int) -> list:
-        """Was an einem Knoten haengt: ["3 Elemente", "Linie L2", ...]."""
-        i = int(i)
-        out = []
-        n_el = sum(1 for e in self.elements if i in [int(n) for n in e.nodes])
-        if n_el:
-            out.append(f"{n_el} Elemente")
-        out += [f"Linie {nm}" for nm, ln in self.lines.items()
-                if i in [int(n) for n in ln.nodes]]
-        return out
+    def _knotennutzer(self, gefragt: set) -> dict:
+        """{Knoten: [was ihn benutzt]} fuer die Knoten aus ``gefragt``, an denen
+        etwas haengt, das den Knoten **braucht** - ein Durchgang je Verweisart
+        fuer alle Knoten zusammen.
 
-    def knoten_loeschen(self, i: int) -> str:
+        Benutzt machen einen Knoten: Elemente und Linien; Eck- und integrierte
+        Knoten einer Flaeche (sie legen ihre Geometrie fest, ein fehlender Eckknoten
+        zerlegte den Rand anders); Kopplungen und Spaltelemente (sie tragen wie ein
+        Element zwischen zwei Knoten); Slave-Knoten und Master-Facetten eines
+        Kontaktpaars (die Fuge saehe sonst anders aus); Lasteinleitungen und
+        Verformungsgrenzen (ein Nachweis verschwaende still); der Antrieb einer
+        Stellung (das Moment fehlte in der Stellung). Was dagegen nur am Knoten
+        haengt, geht mit ihm (:meth:`_knoten_entfernen`).
+
+        Bis zum 03.10.2026 zaehlten nur Elemente und Linien. Die uebrigen
+        Verweise blieben beim Loeschen stehen und zeigten danach auf den
+        frueheren Nachbarknoten (Gegenpruefung zu 14a; tests.test_loeschen
+        haelt je Verweisart eine Pruefung)."""
+        nutzer: dict = {}
+
+        def dazu(knoten, text):
+            for n in knoten:
+                nutzer.setdefault(n, []).append(text)
+
+        def gezaehlt(paare, ein, mehr):
+            zahl: dict = {}
+            for paar in paare:
+                for n in {int(x) for x in paar} & gefragt:
+                    zahl[n] = zahl.get(n, 0) + 1
+            for n, z in zahl.items():
+                dazu([n], f"{z} {ein if z == 1 else mehr}")
+
+        n_el: dict = {}
+        for e in self.elements:
+            for n in {int(x) for x in e.nodes}:
+                if n in gefragt:
+                    n_el[n] = n_el.get(n, 0) + 1
+        for n, z in n_el.items():
+            dazu([n], f"{z} Elemente")
+        for nm, ln in self.lines.items():
+            dazu({int(x) for x in ln.nodes} & gefragt, f"Linie {nm}")
+        for nm, fl in self.flaechen.items():
+            dazu({int(x) for x in (fl.ecken or [])} & gefragt, f"Fläche {nm} (Eckknoten)")
+            dazu({int(x) for x in (getattr(fl, "integrierte_knoten", None) or [])} & gefragt,
+                 f"Fläche {nm} (integrierter Knoten)")
+        gezaehlt(((kp.node_a, kp.node_b) for kp in (getattr(self, "kopplungen", None) or [])),
+                 "Kopplung", "Kopplungen")
+        gezaehlt(((g.node_a, g.node_b) for g in (getattr(self, "gap_elements", None) or [])),
+                 "Spaltelement", "Spaltelemente")
+        for cp in getattr(self, "contact_pairs", None) or []:
+            dazu({int(x) for x in (cp.slave_nodes or [])} & gefragt, f"Kontaktpaar {cp.name} (Slave-Knoten)")
+            dazu({int(x) for face in (cp.master_faces or []) for x in (face or [])} & gefragt,
+                 f"Kontaktpaar {cp.name} (Master-Facette)")
+        for nm, x in (getattr(self, "lasteinleitungen", None) or {}).items():
+            dazu({int(x.knoten)} & gefragt, f"Lasteinleitung {nm}")
+        for nm, x in (getattr(self, "verformungsgrenzen", None) or {}).items():
+            dazu({int(k) for k in (x.knoten or [])} & gefragt, f"Verformungsgrenze {nm}")
+        for st in getattr(self, "stellungen", None) or []:
+            an = getattr(st, "antrieb", None)
+            if an:
+                dazu({int(an[0])} & gefragt, f"Stellung {st.name} (Antrieb)")
+        return nutzer
+
+    def knoten_benutzt_von(self, i: int) -> list:
+        """Was an einem Knoten haengt und ihn braucht: ["3 Elemente", "Linie L2", ...]
+        (:meth:`_knotennutzer`)."""
+        i = int(i)
+        return self._knotennutzer({i}).get(i, [])
+
+    def knoten_loeschen(self, i: int, protokoll: list = None) -> str:
         """Einen freien Knoten entfernen; die Nummern dahinter ruecken auf.
 
         Rueckgabe "" bei Erfolg, sonst der Grund (ein benutzter Knoten wird
-        nicht geloescht - erst das Element oder die Linie, dann der Knoten).
+        nicht geloescht - erst das Element, die Linie, die Kopplung ..., dann
+        der Knoten; siehe :meth:`_knotennutzer`). ``protokoll``: hierhin kommen
+        die Zeilen ueber Stellungen, die ein Lager am Knoten nannten
+        (:meth:`stellungen_nachziehen`).
         """
         i = int(i)
-        if not 0 <= i < self.nn:
-            return "Knoten gibt es nicht"
-        benutzt = self.knoten_benutzt_von(i)
-        if benutzt:
-            return f"Knoten {i} wird benutzt von " + ", ".join(benutzt) + " - erst diese löschen"
-        self.supports = [sp for sp in self.supports if int(sp.node) != i]
-        for grp in (self.line_supports, self.surface_supports):
-            for x in grp:
-                x.nodes = [n for n in (x.nodes or []) if int(n) != i]
-        for lc in self.load_cases.values():
-            lc.nodal_loads = [l for l in lc.nodal_loads if int(l.node) != i]
-            lc.zwangsverformungen = [z for z in lc.zwangsverformungen if int(z.node) != i]
-        self.contact_supports = [c for c in (getattr(self, "contact_supports", None) or [])
-                                 if int(c.node) != i]
-        self.punktmassen = [x for x in (getattr(self, "punktmassen", None) or []) if int(x.node) != i]
-        self.daempfer = [x for x in (getattr(self, "daempfer", None) or [])
-                         if int(x.node_a) != i and int(x.node_b) != i]
-        for sk in (getattr(self, "starrkoerper", None) or []):
-            if i in sk.slaves:
-                sk.slaves = [n for n in sk.slaves if int(n) != i]
-        self.starrkoerper = [sk for sk in (getattr(self, "starrkoerper", None) or [])
-                             if int(sk.master) != i and sk.slaves]
-        for L in (getattr(self, "layer", None) or {}).values():
-            L.knoten = [n for n in (L.knoten or []) if int(n) != i]
-        self._knoten_aus_gruppen_und_passung({i})
-        self.nodes = np.delete(np.asarray(self.nodes, float), i, axis=0)
-        self._knotenverweise_abbilden({n: n - 1 for n in range(i + 1, self.nn + 1)})
+        grund = self.knoten_gesperrt([i]).get(i, "")
+        if grund:
+            return grund
+        self._knoten_entfernen({i}, protokoll)
         return ""
 
     def knoten_gesperrt(self, indices) -> dict:
         """{Knoten: Grund} fuer die Knoten unter ``indices``, die sich **nicht**
         loeschen lassen (:meth:`knoten_loeschen` nennt dieselben Gruende).
 
-        Ein Durchgang durch Elemente und Linien fuer alle Knoten zusammen:
-        :meth:`knoten_benutzt_von` geht je Knoten durch alle Elemente - bei
-        zehntausend Knoten das Quadrat davon (Strg+A, Entf an einem vernetzten
-        Modell, 03.10.2026)."""
+        Ein Durchgang durch alle Verweise fuer alle Knoten zusammen
+        (:meth:`_knotennutzer`): je Knoten ein Durchgang durch alle Elemente
+        war bei zehntausend Knoten das Quadrat davon (Strg+A, Entf an einem
+        vernetzten Modell, 03.10.2026)."""
         nn = self.nn
         gefragt = {int(i) for i in indices}
-        n_el: dict = {}
-        for e in self.elements:
-            for n in {int(x) for x in e.nodes}:
-                if n in gefragt:
-                    n_el[n] = n_el.get(n, 0) + 1
-        linien: dict = {}
-        for nm, ln in self.lines.items():
-            for n in {int(x) for x in ln.nodes}:
-                if n in gefragt:
-                    linien.setdefault(n, []).append(nm)
+        nutzer = self._knotennutzer({i for i in gefragt if 0 <= i < nn})
         gesperrt = {}
         for i in sorted(gefragt):
             if not 0 <= i < nn:
                 gesperrt[i] = "Knoten gibt es nicht"
-                continue
-            benutzt = ([f"{n_el[i]} Elemente"] if i in n_el else []) + [f"Linie {nm}" for nm in linien.get(i, [])]
-            if benutzt:
-                gesperrt[i] = f"Knoten {i} wird benutzt von " + ", ".join(benutzt) + " - erst diese löschen"
+            elif nutzer.get(i):
+                gesperrt[i] = (f"Knoten {i} wird benutzt von " + ", ".join(nutzer[i])
+                               + " - erst diese löschen oder ändern")
         return gesperrt
 
-    def knoten_loeschen_viele(self, indices) -> dict:
+    def knoten_loeschen_viele(self, indices, protokoll: list = None) -> dict:
         """Mehrere Knoten in einem Zug entfernen - dasselbe Ergebnis wie
         :meth:`knoten_loeschen` fuer jeden einzeln, von hinten nach vorn, aber
         mit einem einzigen Umnummerieren statt eines je Knoten.
 
-        Wie dort: ein Knoten, an dem ein Element oder eine Linie haengt, bleibt;
-        Lager, Knotenlasten, Zwangsverformungen, Kontaktlager, Punktmassen,
-        Daempfer und starre Koerper am Knoten gehen mit ihm. Rueckgabe:
+        Wie dort: ein benutzter Knoten bleibt (:meth:`_knotennutzer`); was nur
+        am Knoten haengt, geht mit ihm (:meth:`_knoten_entfernen`). Rueckgabe:
         {Knoten: Grund} der Knoten, die blieben (leer = alle weg).
         ``tests/test_loeschen.py`` haelt beide Wege gegeneinander."""
         gesperrt = self.knoten_gesperrt(indices)
         nn = self.nn
         frei = {int(i) for i in indices if 0 <= int(i) < nn and int(i) not in gesperrt}
-        if not frei:
-            return gesperrt
+        if frei:
+            self._knoten_entfernen(frei, protokoll)
+        return gesperrt
+
+    def _knoten_entfernen(self, frei: set, protokoll: list = None) -> None:
+        """Die freien Knoten ``frei`` entfernen, samt allem, was nur an ihnen
+        haengt: Knotenlager, Knotenlasten, Zwangsverformungen, Kontaktlager,
+        Punktmassen, Daempfer, starre Koerper (Master; ein Slave geht nur aus
+        der Liste), die Eintraege in Linien- und Flaechenlagern (samt ihrer
+        Einflussflaeche), Layern und Subsystemen und alles, was
+        :meth:`_knoten_aus_verweisen` nimmt. Danach ruecken die Nummern auf;
+        Stellungen, die ein geloeschtes Lager nannten, ziehen nach
+        (:meth:`stellungen_nachziehen`, Zeilen nach ``protokoll``)."""
+        nn = self.nn
+        vorher = self.stellungsbezug()
         self.supports = [sp for sp in self.supports if int(sp.node) not in frei]
-        for grp in (self.line_supports, self.surface_supports):
-            for x in grp:
-                x.nodes = [n for n in (x.nodes or []) if int(n) not in frei]
+        for x in list(self.line_supports) + list(self.surface_supports):
+            alt_kn = list(x.nodes or [])
+            halten = [int(n) not in frei for n in alt_kn]
+            x.nodes = [n for n, ok in zip(alt_kn, halten) if ok]
+            # Die Einflussflaechen stehen parallel zu den Knoten: bis zum
+            # 03.10.2026 blieben sie ganz stehen, und die Flaeche des
+            # geloeschten Knotens ging an seinen Nachfolger in der Liste
+            areas = getattr(x, "areas", None)
+            if areas is not None and len(areas) == len(alt_kn):
+                x.areas = [a for a, ok in zip(areas, halten) if ok]
         for lc in self.load_cases.values():
             lc.nodal_loads = [l for l in lc.nodal_loads if int(l.node) not in frei]
             lc.zwangsverformungen = [z for z in lc.zwangsverformungen if int(z.node) not in frei]
@@ -3998,18 +4062,32 @@ class Model:
                              if int(sk.master) not in frei and sk.slaves]
         for L in (getattr(self, "layer", None) or {}).values():
             L.knoten = [n for n in (L.knoten or []) if int(n) not in frei]
-        self._knoten_aus_gruppen_und_passung(frei)
+        self._knoten_aus_verweisen(frei)
         bleibt = [n for n in range(nn) if n not in frei]
         self.nodes = np.asarray(self.nodes, float)[bleibt]
         self._knotenverweise_abbilden({alt: neu for neu, alt in enumerate(bleibt)})
-        return gesperrt
+        zeilen = self.stellungen_nachziehen(vorher)
+        if protokoll is not None:
+            protokoll.extend(zeilen)
 
-    def _knoten_aus_gruppen_und_passung(self, weg: set) -> None:
-        """Geloeschte Knoten aus den Normalengruppen der Flaechenlager (samt
-        ihrer Einflussflaeche) und aus den Passungsdaten der Kontaktpaare
-        (Einflussflaeche, Randknoten) nehmen - **vor** dem Umnummerieren,
-        sonst zeigte die alte Nummer danach auf einen anderen Knoten
-        (Befund B107, 23.09.2026)."""
+    def _knoten_aus_verweisen(self, weg: set) -> None:
+        """Geloeschte Knoten aus den Verweisen nehmen, die mit dem Knoten gehen
+        und sonst beim Umnummerieren auf einen anderen Knoten zeigten - **vor**
+        dem Umnummerieren (:meth:`_knotenverweise_abbilden` bildet nur ab, was
+        es gibt):
+
+        * die Normalengruppen der Flaechenlager samt ihrer Einflussflaeche und
+          die Passungsdaten der Kontaktpaare (Einflussflaeche, Randknoten) -
+          Befund B107, 23.09.2026;
+        * die Knoten der Subsysteme (eine Gruppe wie ein Layer), die Paare
+          getrennter Fugenknoten mit einem geloeschten Knoten und die
+          Kantenmitten der tetp-Elemente an einer Kante mit einem geloeschten
+          Knoten - seit dem 03.10.2026. Vorher zeigten sie danach auf den
+          frueheren Nachbarknoten; eine verwaiste Kantenmitte haette so eine
+          echte Kante eines Tetraeders gekruemmt.
+
+        Alle drei Loeschwege rufen das: :meth:`knoten_loeschen`,
+        :meth:`knoten_loeschen_viele` und :meth:`netzknoten_loeschen`."""
         for x in self.surface_supports:
             if not getattr(x, "gruppen", None):
                 continue
@@ -4029,6 +4107,104 @@ class Model:
                 cp.knotenflaechen = {k: a for k, a in cp.knotenflaechen.items() if int(k) not in weg}
             if getattr(cp, "rand_knoten", None):
                 cp.rand_knoten = [n for n in cp.rand_knoten if int(n) not in weg]
+        for sub in (getattr(self, "subsysteme", None) or {}).values():
+            if sub.knoten:
+                sub.knoten = [n for n in sub.knoten if int(n) not in weg]
+        for name, paare in list((getattr(self, "getrennte_knoten", None) or {}).items()):
+            self.getrennte_knoten[name] = [[a, b] for a, b in paare
+                                           if int(a) not in weg and int(b) not in weg]
+        km = getattr(self, "tetp_kantenmitten", None)
+        if km:
+            self.tetp_kantenmitten = {(a, b): p for (a, b), p in km.items()
+                                      if int(a) not in weg and int(b) not in weg}
+
+    # ---- Stellungen nennen Lager und Staebe beim Namen oder bei der Nummer ----
+    #: Lagerart -> Liste im Modell und Wort im Protokoll
+    STELLUNG_LAGERARTEN = {"lager": ("supports", "Knotenlager"),
+                           "linienlager": ("line_supports", "Linienlager"),
+                           "flaechenlager": ("surface_supports", "Flächenlager")}
+    #: Felder einer Stellung, die Lager nennen: (Feld, Lagerarten, deren Namen
+    #: gelten, Lagerart der Nummern, Text im Protokoll) - so, wie
+    #: Stellung._lager sie liest: Namen in lager_aus und lager_aktiv gelten fuer
+    #: Lager jeder Art, die in linienlager_aus und flaechenlager_aus nur fuer
+    #: ihre Art; eine Nummer in lager_aus ist die eines Knotenlagers (so schreibt
+    #: die Maske Stellung sie, lagernamen("lager")), lager_aktiv liest keine Nummern.
+    STELLUNG_LAGERFELDER = (
+        ("lager_aus", ("lager", "linienlager", "flaechenlager"), "lager", "Deaktivierte Knotenlager"),
+        ("lager_aktiv", ("lager", "linienlager", "flaechenlager"), "", "nur diese Lager aktiv"),
+        ("linienlager_aus", ("linienlager",), "linienlager", "Deaktivierte Linienlager"),
+        ("flaechenlager_aus", ("flaechenlager",), "flaechenlager", "Deaktivierte Flächenlager"))
+
+    def stellungsbezug(self) -> dict:
+        """Was Stellungen beim Namen oder bei der Nummer nennen: die drei
+        Lagerlisten (die Objekte selbst) und die Namen der Staebe - der Stand
+        **vor** einem Loeschen, fuer :meth:`stellungen_nachziehen`."""
+        bezug = {art: list(getattr(self, liste)) for art, (liste, _w) in self.STELLUNG_LAGERARTEN.items()}
+        bezug["staebe"] = set(self.members)
+        return bezug
+
+    def stellungen_nachziehen(self, vorher: dict) -> list:
+        """Stellungen an das Loeschen von Lagern und Staeben anpassen; Rueckgabe:
+        je geaenderter Angabe eine Zeile fuer das Protokoll.
+
+        ``vorher`` ist :meth:`stellungsbezug` vor dem Loeschen. Ein Name, den es
+        vorher gab und jetzt nicht mehr, geht aus der Stellung; eine Lagernummer
+        folgt ihrem Lager (die dahinter ruecken auf) oder geht mit ihm. Bis zum
+        03.10.2026 blieben beide stehen: ein Lager, das spaeter so hiess, war in
+        der Stellung still abgeschaltet, und eine Nummer zeigte nach dem
+        Loeschen eines Lagers davor auf das naechste (Gegenpruefung zu 14a).
+
+        Wird „nur diese Lager aktiv“ dabei leer, greifen in der Stellung alle
+        Lager (leer heisst dort alle) - die Zeile sagt es ausdruecklich."""
+        stellungen = getattr(self, "stellungen", None) or []
+        if not stellungen:
+            return []
+        jetzt = self.stellungsbezug()
+
+        def namen(stand, arten):
+            return {(getattr(s, "name", "") or "").strip() for art in arten for s in stand[art]} - {""}
+        platz = {art: {id(s): j for j, s in enumerate(jetzt[art])} for art in self.STELLUNG_LAGERARTEN}
+        zeilen = []
+        for st in stellungen:
+            for feld, namensarten, nummernart, text in self.STELLUNG_LAGERFELDER:
+                liste = list(getattr(st, feld, None) or [])
+                if not liste:
+                    continue
+                n_vor, n_jetzt = namen(vorher, namensarten), namen(jetzt, namensarten)
+                neu, hier = [], []
+                for x in liste:
+                    s = str(x).strip()
+                    if s in n_jetzt:
+                        neu.append(x)
+                    elif s in n_vor:
+                        hier.append(f"Stellung „{st.name}“: Lager „{s}“ gibt es nicht mehr – "
+                                    f"aus „{text}“ genommen")
+                    elif nummernart and s.isdigit() and int(s) < len(vorher[nummernart]):
+                        j = platz[nummernart].get(id(vorher[nummernart][int(s)]))
+                        wort = self.STELLUNG_LAGERARTEN[nummernart][1]
+                        if j is None:
+                            hier.append(f"Stellung „{st.name}“: {wort} Nummer {s} ist gelöscht – "
+                                        f"aus „{text}“ genommen")
+                        else:
+                            neu.append(str(j))
+                            if j != int(s):
+                                hier.append(f"Stellung „{st.name}“: {wort} Nummer {s} heißt jetzt {j} "
+                                            f"(ein {wort} davor ist gelöscht)")
+                    else:
+                        neu.append(x)
+                if not hier:
+                    continue
+                setattr(st, feld, neu)
+                if feld == "lager_aktiv" and not neu:
+                    hier[-1] += " – die Liste ist damit leer: in dieser Stellung greifen jetzt alle Lager"
+                zeilen += hier
+            staebe = list(getattr(st, "staebe_aus", None) or [])
+            weg = [x for x in staebe if x in vorher["staebe"] and x not in self.members]
+            if weg:
+                st.staebe_aus = [x for x in staebe if x not in weg]
+                zeilen += [f"Stellung „{st.name}“: Stab „{x}“ gibt es nicht mehr – aus „Deaktivierte "
+                           "Stäbe“ genommen" for x in weg]
+        return zeilen
 
     def netzknoten_loeschen(self, kandidaten=None) -> int:
         """Alle Knoten entfernen, an denen **nichts mehr haengt** - in einem Zug.
@@ -4049,7 +4225,8 @@ class Model:
         eine Knotenlast oder Zwangsverformung, ein Kontaktlager, ein
         Spaltelement, ein Kontaktpaar, eine Kopplung, ein starrer Koerper, eine
         Punktmasse, ein Daempfer, eine Lasteinleitung, eine Verformungsgrenze,
-        ein Subsystem oder eine Flaeche (Ecken, integrierte Knoten) nennt.
+        ein Subsystem, eine Flaeche (Ecken, integrierte Knoten) oder der
+        Antrieb einer Stellung nennt.
         Eine Sache je Knoten zu loeschen (:meth:`knoten_loeschen`) kostete je
         Knoten einen Durchgang durch alle Verweise - bei zehntausend Knoten
         das Quadrat davon. Rueckgabe: Zahl der entfernten Knoten.
@@ -4109,6 +4286,17 @@ class Model:
         for f in self.flaechen.values():
             merke(f.ecken or [])
             merke(getattr(f, "integrierte_knoten", None) or [])
+        # Die Master-Facetten der Kontaktpaare und der Antrieb einer Stellung
+        # halten ihre Knoten ebenfalls (seit dem 03.10.2026, wie in
+        # _knotennutzer): oben stand nur das Feld master_nodes, das es am
+        # Kontaktpaar nicht gibt, und den Antrieb fragte niemand - ein freier
+        # Knoten darin fiel hier weg, und der Verweis zeigte danach auf einen
+        # anderen Knoten
+        for cp in (getattr(self, "contact_pairs", None) or []):
+            for face in (cp.master_faces or []):
+                merke(face or [])
+        merke(st.antrieb[0] for st in (getattr(self, "stellungen", None) or [])
+              if getattr(st, "antrieb", None))
         if kandidaten is not None:
             # Wer kein Kandidat ist, bleibt - wie ein benutzter Knoten
             frei = np.ones(nn, bool)
@@ -4129,7 +4317,7 @@ class Model:
             areas = getattr(x, "areas", None)
             if areas is not None and len(areas) == len(alt_kn):
                 x.areas = [a for a, ok in zip(areas, halten) if ok]
-        self._knoten_aus_gruppen_und_passung({int(k) for k in weg})
+        self._knoten_aus_verweisen({int(k) for k in weg})
         self.nodes = np.asarray(self.nodes, float)[bleibt]
         self._knotenverweise_abbilden(neu)
         return int(len(weg))
@@ -4700,7 +4888,7 @@ class Model:
                                   if not (gl.art != "flaeche" and gl.ziel == name)]
         return ""
 
-    def stab_loeschen(self, name: str, verteilen: bool = True) -> str:
+    def stab_loeschen(self, name: str, verteilen: bool = True, protokoll: list = None) -> str:
         """Den Stab mit Nachweis entfernen - seine Elemente bleiben.
 
         Seine Linienlasten gehen mit, und die Elementlasten, die
@@ -4708,10 +4896,16 @@ class Model:
         (Kennzeichen ``_geo``), auch: bis zum 03.10.2026 blieben sie wirksam
         und waren in der Lasttabelle unsichtbar. ``verteilen=False`` fuer eine
         Schleife ueber viele Staebe - dann ruft der Aufrufer danach einmal
-        :meth:`lasten_verteilen`."""
+        :meth:`lasten_verteilen`. Eine Stellung, die den Stab abschaltet,
+        verliert seinen Namen (:meth:`stellungen_nachziehen`, Zeile nach
+        ``protokoll``)."""
         if name not in self.members:
             return "Stab gibt es nicht"
+        vorher = self.stellungsbezug()
         del self.members[name]
+        zeilen = self.stellungen_nachziehen(vorher)
+        if protokoll is not None:
+            protokoll.extend(zeilen)
         if self._linienlasten_entfernen("stab", name) and verteilen:
             self.lasten_verteilen()
         return ""

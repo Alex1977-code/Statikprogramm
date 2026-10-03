@@ -1412,11 +1412,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.info(f"{self.AUSWAHL_TEXT[art]}: {geaendert} Werte an {len(namen)} Objekten geändert")
         self.refresh_all()
 
-    def _art_loeschen(self, art: str, namen: list):
+    def _protokollzeilen(self, zeilen) -> None:
+        """Zeilen nur ins Protokoll - die Statuszeile behaelt die Meldung davor
+        (etwa „2 Knotenlager gelöscht“)."""
+        for z in zeilen or []:
+            self.log.appendPlainText(str(z))
+
+    def _art_loeschen(self, art: str, namen: list, protokoll: list = None):
         """Eine Art der Auswahl aus dem Modell nehmen - ohne Rueckfrage, ohne
         Sicherung, ohne Neuzeichnen: das tun die Aufrufer einmal fuer alles
         (:meth:`auswahl_loeschen` fuer eine Art, :meth:`auswahl_alles_loeschen`
-        fuer die ganze Auswahl).
+        fuer die ganze Auswahl). ``protokoll`` sammelt die Zeilen ueber
+        Stellungen, die ein geloeschtes Lager oder einen geloeschten Stab nannten
+        (Model.stellungen_nachziehen); die Aufrufer schreiben sie nach ihrer Meldung.
 
         Rueckgabe: die Gruende, warum etwas stehen blieb (leer = alles weg);
         ``None``, wenn es fuer die Art keinen Loeschweg gibt."""
@@ -1425,15 +1433,19 @@ class MainWindow(QtWidgets.QMainWindow):
         if art == "knoten":
             # alle in einem Zug: je Knoten ein Durchgang durch alle Elemente und alle
             # Verweise war quadratisch (Strg+A, Entf an einem vernetzten Modell)
-            gesperrt = m.knoten_loeschen_viele(namen)
+            gesperrt = m.knoten_loeschen_viele(namen, protokoll=protokoll)
             gruende += [f"K{i}: {g}" for i, g in sorted(gesperrt.items(), reverse=True)]
         elif art == "element":
             m.elemente_loeschen(sorted(int(x) for x in namen))
         elif art in ("lager", "linienlager", "flaechenlager"):
             liste = self._lagerliste_von(art)
+            vorher = m.stellungsbezug()
             for i in sorted(int(x) for x in namen)[::-1]:
                 if 0 <= i < len(liste):
                     del liste[i]
+            zeilen = m.stellungen_nachziehen(vorher)
+            if protokoll is not None:
+                protokoll.extend(zeilen)
             self.sel_lager = [k for k in self.sel_lager if k[0] != art]
         elif art == "kontakt":
             for n in namen:
@@ -1463,7 +1475,10 @@ class MainWindow(QtWidgets.QMainWindow):
             hatte = mit_lasten and any(ll.art == art and str(ll.ziel) in ziele
                                        for lc in m.load_cases.values() for ll in lc.linienlasten)
             for n in namen:
-                g = f(n, verteilen=False) if mit_lasten else f(n)
+                if art == "stab":
+                    g = f(n, verteilen=False, protokoll=protokoll)
+                else:
+                    g = f(n, verteilen=False) if mit_lasten else f(n)
                 if g:
                     gruende.append(f"{n}: {g}")
             if hatte:
@@ -1478,7 +1493,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self._bestaetigen(f"{len(namen)} {self.AUSWAHL_TEXT.get(art, art)} wirklich löschen?"):
             return
         self.merken(f"{len(namen)} {self.AUSWAHL_TEXT.get(art, art)} gelöscht")
-        gruende = self._art_loeschen(art, namen)
+        zeilen = []
+        gruende = self._art_loeschen(art, namen, zeilen)
         if gruende is None:
             self._merken_zuruecknehmen()
             return self.error(f"{art}: kein Löschweg")
@@ -1489,6 +1505,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.maskenrand.schliessen()
         self.info(f"{len(namen) - len(gruende)} {self.AUSWAHL_TEXT.get(art, art)} gelöscht"
                   + (f"; nicht gelöscht: {'; '.join(gruende[:4])}" if gruende else ""))
+        self._protokollzeilen(zeilen)
         self.refresh_all()
 
     #: Was Entf in der Ansicht loescht, in der Reihenfolge des Loeschens (und
@@ -1639,8 +1656,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 # Frage las sich wie „alles“. Bei gemischter Auswahl bleibt es beim
                 # Versuch je Knoten: dort koennen erst geloeschte Elemente Knoten freimachen.
                 gruppen = [("knoten", [k for k in alle if k not in gesperrt])]
-                bleiben = (f"{len(gesperrt)} der {len(alle)} gewählten Knoten bleiben stehen, "
-                           "weil an ihnen Elemente oder Linien hängen")
+                # Seit dem 03.10.2026 macht mehr als Element und Linie einen Knoten
+                # benutzt (Model._knotennutzer) - der Satz zaehlt darum nicht auf
+                bleiben = (f"{len(gesperrt)} der {len(alle)} gewählten Knoten "
+                           + ("bleibt" if len(gesperrt) == 1 else "bleiben")
+                           + " stehen, weil noch etwas an ihnen hängt (etwa ein Element, "
+                             "eine Linie oder eine Kopplung)")
         text = self._loesch_text(gruppen)
         if not self._bestaetigen(f"{text} wirklich löschen?"
                                  + (f"\n\n{bleiben}." if bleiben else "")
@@ -1648,10 +1669,10 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         # Gesichert wird jetzt, abgelegt erst, wenn etwas weg ist (_sicherung_ablegen)
         kopie, stand = self.model.copy(), self._stand
-        gruende, weg = [], []
+        gruende, weg, zeilen = [], [], []
         try:
             for art, namen in gruppen:
-                g = self._art_loeschen(art, namen)
+                g = self._art_loeschen(art, namen, zeilen)
                 if g is None:               # kein Loeschweg - bei den Arten oben nicht zu erwarten
                     g = [f"{art}: kein Löschweg"]
                 gruende += g
@@ -1676,6 +1697,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.info(f"{self._loesch_text(weg)} gelöscht"
                   + (f"; {bleiben}" if bleiben else "")
                   + (f"; nicht gelöscht: {grund_text}" if gruende else ""))
+        self._protokollzeilen(zeilen)
         self.refresh_all()
 
     def lagergroesse_einstellen(self, idx=None):
@@ -1711,12 +1733,13 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         s = self.model.supports[idx]
         name = s.name or f"Lager {idx + 1}"
-        if QtWidgets.QMessageBox.question(
-                self, "Lager löschen", f"{name} an Knoten {s.node} löschen?") \
-                != QtWidgets.QMessageBox.Yes:
+        if not self._bestaetigen(f"{name} an Knoten {s.node} löschen?"):
             return
         self.merken(f"Lager {name} gelöscht")
+        vorher = self.model.stellungsbezug()
         del self.model.supports[idx]
+        self.info(f"{name} gelöscht")
+        self._protokollzeilen(self.model.stellungen_nachziehen(vorher))
         self.refresh_all()
 
     def lager_bearbeiten(self, idx: int):
@@ -9092,6 +9115,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not sammel and not self._bestaetigen(f"{was} wirklich löschen?"):
             return
         grund = ""
+        zeilen = []                 # ueber Stellungen (Model.stellungen_nachziehen)
         # Der Stand **vor** dem Loeschen gehoert auf den Rueckgaengig-Stapel;
         # die Arten, die unten selbst merken, tun es an ihrer Stelle.
         SELBST = ("stabelement", "querschnitt", "subsystem", "situation", "wasserdruck", "wind",
@@ -9099,7 +9123,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if art not in SELBST:
             self.merken(f"{was} gelöscht")
         if art == "knoten":
-            grund = m.knoten_loeschen(int(name)) if name.isdigit() else "keine Nummer"
+            grund = m.knoten_loeschen(int(name), protokoll=zeilen) if name.isdigit() else "keine Nummer"
         elif art == "linie":
             grund = m.linie_loeschen(name)
         elif art == "stabelement":
@@ -9110,7 +9134,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.merken(f"Stab E{i} gelöscht")
                 m.elemente_loeschen([i])
         elif art == "stab":
-            grund = m.stab_loeschen(name)
+            grund = m.stab_loeschen(name, protokoll=zeilen)
         elif art == "geoflaeche":
             grund = m.flaeche_loeschen(name)
         elif art == "geokoerper_einzeln":
@@ -9250,7 +9274,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 grund = "gibt es nicht"
             else:
                 self.merken(f"{was} gelöscht")
+                vorher = m.stellungsbezug()
                 del liste[int(name)]
+                zeilen += m.stellungen_nachziehen(vorher)
                 self.sel_lager = []
                 self.maskenrand.schliessen()
         elif art == "gelenk":
@@ -9322,8 +9348,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.leuchtet_kontakt = ""
         self.maskenrand.schliessen()
         if sammel:
+            self._protokollzeilen(zeilen)
             return ""
         self.info(f"{was} gelöscht")
+        self._protokollzeilen(zeilen)
         self.refresh_all()
 
     #: Eintragsart im Modellbaum -> Art der Sammelmaske (:meth:`sammelmaske`)
@@ -12061,9 +12089,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # wiese ihn sonst ab); alles Uebrige samt Umnummerieren dort.
         for ln in m.lines.values():
             ln.nodes = [n for n in ln.nodes if int(n) != i]
-        grund = m.knoten_loeschen(i)
+        zeilen = []
+        grund = m.knoten_loeschen(i, protokoll=zeilen)
         if grund:
             return self.error(grund)
+        self._protokollzeilen(zeilen)
         self.selection = np.array([], dtype=int)
         self.refresh_all()
 
@@ -18355,6 +18385,8 @@ class MainWindow(QtWidgets.QMainWindow):
         m = self.model
         els = [i for i, e in enumerate(m.elements) if {int(n) for n in e.nodes} & wegmenge]
         self.merken(f"{len(weg)} Knoten gelöscht")
+        vorher = m.stellungsbezug()
+        zeilen = []
         n_el = m.elemente_loeschen(els)
         m.supports = [x for x in m.supports if int(x.node) not in wegmenge]
         for lc in m.load_cases.values():
@@ -18363,14 +18395,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self._objektauswahl_leeren()
         bleiben = []
         for i in weg:                 # von hinten: die Nummern davor bleiben gültig
-            if m.knoten_loeschen(i):
+            if m.knoten_loeschen(i, protokoll=zeilen):
                 bleiben.append(i)
+        zeilen = m.stellungen_nachziehen(vorher) + zeilen
         text = f"{len(weg) - len(bleiben)} Knoten und {n_el} Elemente entfernt"
         if bleiben:
-            text += (f"; {len(bleiben)} Knoten bleiben, weil Linien sie brauchen: "
+            text += (f"; {len(bleiben)} Knoten bleiben, weil noch etwas an ihnen hängt "
+                     "(etwa eine Linie oder eine Kopplung): "
                      + ", ".join(str(i) for i in sorted(bleiben)[:8])
                      + (" …" if len(bleiben) > 8 else ""))
         self.info(text)
+        self._protokollzeilen(zeilen)
         self.refresh_all()
 
     def delete_elements(self):
@@ -18716,7 +18751,9 @@ class MainWindow(QtWidgets.QMainWindow):
         sel = set(int(n) for n in self.selection)
         if any(s.node in sel for s in self.model.supports):
             self.merken("Lager entfernt")
+        vorher = self.model.stellungsbezug()
         self.model.supports = [s for s in self.model.supports if s.node not in sel]
+        self._protokollzeilen(self.model.stellungen_nachziehen(vorher))
         self.refresh_all()
 
     def add_load(self):
@@ -19330,7 +19367,11 @@ class MainWindow(QtWidgets.QMainWindow):
         names = list(self.model.members)
         if 0 <= r < len(names):
             self.merken(f"Stab {names[r]} gelöscht")
-            del self.model.members[names[r]]
+            # Model.stab_loeschen wie Baum, Rechtsklick und Entf: Linienlasten
+            # und eine Stellung, die den Stab abschaltet, ziehen nach
+            zeilen = []
+            self.model.stab_loeschen(names[r], protokoll=zeilen)
+            self._protokollzeilen(zeilen)
             self.refresh_all()
 
     def design_settings(self):
