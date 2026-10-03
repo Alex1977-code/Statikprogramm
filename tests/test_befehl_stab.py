@@ -611,15 +611,16 @@ def test_leerer_stab():
     check("„Prüfen“ meldet den leeren Stab", any(z.startswith("WARNUNG: Stab S2 hat kein Stabelement") for z in pruefung),
           str(pruefung))
     an = solver.solve_all(m, design=True)
-    check("Nachweis EC3: S2 übergangen, S1 und S3 nachgewiesen, Meldung im Protokoll",
-          sorted(an.design.members) == ["S1", "S3"]
-          and "WARNUNG: Stab S2 hat kein Stabelement – nicht nachgewiesen" in an.design.summary(),
-          an.design.summary()[-160:])
+    # seit Runde 2 (G2) steht S2 als nicht geführt im Ergebnis, nicht nur als Warnzeile
+    check("Nachweis EC3: S1 und S3 nachgewiesen, S2 als nicht geführt (kein Stabelement), kein „alle erfüllt“",
+          sorted(an.design.members) == ["S1", "S2", "S3"] and an.design.members["S2"].fehler
+          and "nicht geführt: S2 (kein Stabelement" in an.design.summary()
+          and "alle erfuellt" not in an.design.summary(), an.design.summary()[-160:])
     neu = _rechnen_wie_f5(w, app)
     check("Berechnen (F5) bricht nicht ab: Ergebnis und Nachweis da, die Meldung im Protokoll",
           w.analysis is not None and getattr(w.analysis, "design", None) is not None
           and not any("IndexError" in z or z.startswith("FEHLER") for z in neu)
-          and any("Stab S2 hat kein Stabelement" in z for z in neu), str(neu[-4:]))
+          and any("nicht geführt: S2 (kein Stabelement" in z for z in neu), str(neu[-4:]))
 
 
 def test_kein_paralleles_element():
@@ -689,11 +690,10 @@ def test_kette_und_zusammenfassen():
     w, app = _fenster()
     m, g = _stuetze(w, app)
     warn = [z for z in m.check() if "bilden eine Kette" in z]
-    check("„Prüfen“ warnt: S1/S2 an K1 und S2/S3 an K2",
-          warn == ["WARNUNG: Stab S1 und S2 bilden eine Kette mit freiem Zwischenknoten K1 – Knicklänge "
-                   "prüfen oder „Stäbe zusammenfassen“",
-                   "WARNUNG: Stab S2 und S3 bilden eine Kette mit freiem Zwischenknoten K2 – Knicklänge "
-                   "prüfen oder „Stäbe zusammenfassen“"], str(warn))
+    # eine Warnung je Kette, nicht je Stoss (Runde 2, G5)
+    check("„Prüfen“ warnt einmal für die Kette S1–S3 mit den freien Stößen K1 und K2",
+          warn == ["WARNUNG: Stäbe S1, S2 und S3 bilden eine Kette mit freien Zwischenknoten K1 und K2 – "
+                   "Knicklänge prüfen oder „Stäbe zusammenfassen“"], str(warn))
     n0 = len(w.log.toPlainText().splitlines())
     w.do_check()
     check("… auch im Protokoll von „Prüfen“", any("bilden eine Kette" in z for z in
@@ -703,7 +703,7 @@ def test_kette_und_zusammenfassen():
     eta = {k: round(float(x.util), 4) for k, x in an.design.members.items()}
     check("Nachweis EC3: drei Stäbe je 2 m, Ausnutzung 0,2856, die Warnung im Protokoll, Urteil unberührt",
           eta == {"S1": 0.2856, "S2": 0.2856, "S3": 0.2856}
-          and "WARNUNG (Knicklänge): Stab S1 und S2 bilden eine Kette" in s and not an.design.warnungen,
+          and "WARNUNG (Knicklänge): Stäbe S1, S2 und S3 bilden eine Kette" in s and not an.design.warnungen,
           f"{eta} {s[-120:]!r}")
     w.auto_members()
     st = _statuszeile(w)
@@ -791,14 +791,27 @@ def test_zusammenfassen_grenzen():
     for a, b in ((0, 1), (1, 2)):
         w._maske_stab_anlegen({"knoten": [a, b], "mat": MAT, "sec": "IPE 300"})
     g = next(iter(m.load_cases))
+    # verschiedene Lasten an den Staeben: abgewiesen (Runde 2, G1 - bis dahin
+    # gingen sie verschoben mit)
     m.add_linienlast("S1", [0, 0, -5e3], case=g)                      # bis zum Ende
+    m.add_linienlast("S2", [0, 0, -8e3], case=g, von=1.0, bis=2.5, q2=[0, 0, -2e3])
+    m.lasten_verteilen()
+    w.fehler_liste.clear()
+    w.staebe_zusammenfassen(["S2", "S1"])
+    check("Verschiedene Linienlasten an S1 und S2: abgewiesen, der Grund nennt beide",
+          sorted(m.members) == ["S1", "S2"] and any("Lasten am Stab verschieden: S1 Linienlast" in f
+                                                    and "S2 Linienlast" in f for f in w.fehler_liste),
+          str(w.fehler_liste))
+    # gleiche Linienlasten an beiden: sie gehen mit, die Rechnung bleibt
+    m.load_cases[g].linienlasten = []
+    m.add_linienlast("S1", [0, 0, -8e3], case=g, von=1.0, bis=2.5, q2=[0, 0, -2e3])
     m.add_linienlast("S2", [0, 0, -8e3], case=g, von=1.0, bis=2.5, q2=[0, 0, -2e3])
     m.lasten_verteilen()
     u0 = solver.solve_all(m, design=False).cases[g].u
     name = w.staebe_zusammenfassen(["S2", "S1"])
     lasten = [(ll.ziel, round(ll.von, 9), round(ll.bis, 9)) for ll in m.load_cases[g].linienlasten]
-    check("Linienlasten auf den zusammengefassten Stab verschoben (0–3 m und 4–5,5 m)",
-          name == "S1" and lasten == [("S1", 0.0, 3.0), ("S1", 4.0, 5.5)], str(lasten))
+    check("Gleiche Linienlasten auf den zusammengefassten Stab verschoben (1–2,5 m und 4–5,5 m)",
+          name == "S1" and lasten == [("S1", 1.0, 2.5), ("S1", 4.0, 5.5)], str(lasten))
     u1 = solver.solve_all(m, design=False).cases[g].u
     du = float(np.max(np.abs(u1 - u0)))
     check("… die Rechnung bleibt (Verschiebungen gleich bis auf 1e-12 relativ)",

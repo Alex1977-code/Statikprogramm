@@ -1187,16 +1187,21 @@ def check_fatigue(model: Model, analysis, progress=None, n: int = None,
     for mname, member in model.members.items():
         if not member.design or member.detail_category is None:
             continue
-        if not any(0 <= int(e) < len(model.elements) for e in member.elements):
-            # ein Stab ohne Stabelement (C14, 03.10.2026): nicht nachweisbar,
-            # bis dahin IndexError in _stress_points. Gemeldet wird er von
-            # „Prüfen“ (Model.check) und vom Nachweis EC3 (check_members)
-            continue
         geprueft += 1
         gMf = GAMMA_MF.get((member.assessment, member.consequence), 1.15)
         cat_s = member.detail_category_shear or 100e6
         fm = FatigueMember(mname, member.detail_category, cat_s, gMf)
         fm.bezugsjahre = bezug
+        if not any(0 <= int(e) < len(model.elements) for e in member.elements):
+            # Ein Stab ohne Stabelement (C14): nicht nachweisbar - er steht als
+            # **nicht gefuehrt** im Ergebnis, auch wenn nur die Ermuedung
+            # gerechnet wird (Runde 2, G2). Bis dahin fehlte er still, und mit
+            # ihm als einzigem Kerbfall hiess es „keine Stäbe oder Volumen mit
+            # Kerbfall“; davor brach _stress_points mit IndexError ab.
+            fm.warnings.append(f"Stab {mname} hat kein Stabelement – Ermüdung nicht nachgewiesen")
+            fm.fehler = fm.warnings[0]
+            out.members[mname] = fm
+            continue
         #: Kollektive je Ort: (Punkt, Station) -> [(Schwingbreite, Zyklen)]
         sammlung: dict = {}
         sammlung_t: dict = {}

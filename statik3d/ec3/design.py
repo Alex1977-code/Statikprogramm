@@ -485,17 +485,19 @@ def check_members(model: Model, analysis, combos: list = None, members: list = N
     # nachgewiesen, sondern gemeldet: bis zum 03.10.2026 brach check_member an
     # member.elements[0] mit IndexError ab - und mit ihm die ganze Berechnung
     # (F5, gemessen in der Gegenpruefung von C14)
+    # Runde 2 (G2): er steht als **nicht gefuehrt** im Ergebnis (MemberCheck.fehler)
+    # wie ein Stab aus einem Werkstoff ohne Streckgrenze - dann sagt die
+    # Zusammenfassung nicht „alle erfuellt“, die Ampel im Browser steht nicht
+    # auf „ok“, und der Bericht zaehlt EC3 als nicht gefuehrt. Bis dahin war er
+    # nur eine Warnzeile hinter „… - alle erfuellt“.
     ne = len(model.elements)
     leer = [k for k in names if k in model.members
             and not any(0 <= int(e) < ne for e in model.members[k].elements)]
     if leer:
         names = [k for k in names if k not in leer]
-        warnungen.extend(f"Stab {k} hat kein Stabelement – nicht nachgewiesen; ihn löschen oder neu zeichnen"
-                         for k in leer)
     gefuehrt_namen = set(names)
-    hinweise = [f"Stab {a} und {b} bilden eine Kette mit freiem Zwischenknoten K{k} – Knicklänge prüfen "
-                "oder „Stäbe zusammenfassen“"
-                for a, b, k in model.stabketten_frei() if a in gefuehrt_namen or b in gefuehrt_namen]
+    # je Kette eine Zeile (Runde 2, G5); das Urteil aendern sie nicht
+    hinweise = [model.stabkette_text(k) for k in model.stabketten_frei() if set(k["staebe"]) & gefuehrt_namen]
     # Ohne einen Stab mit Nachweis wird nichts nachgewiesen - dann darf auch
     # keine Kombination als "nicht nachgewiesen" gemeldet werden. Sonst kam
     # hier mit nur GZG-Kombinationen und allen Staeben auf design = False die
@@ -512,7 +514,7 @@ def check_members(model: Model, analysis, combos: list = None, members: list = N
     if not names or not results:
         _melde(progress, "Nachweise EC3: keine Staebe mit Nachweis" if not names else
                "Nachweise EC3: keine Ergebnisse einer GZT-Kombination", _anteil(anteil, 1.0))
-        return out
+        return _leere_eintragen(out, model, leer)
     st = parallel.settings()
     if use_jobs is None:
         use_jobs = st.backend == "farm" or (st.workers > 1 and len(names) >= 24)
@@ -550,12 +552,26 @@ def check_members(model: Model, analysis, combos: list = None, members: list = N
                 os.unlink(paket)
             except OSError:
                 pass
-        return out
+        return _leere_eintragen(out, model, leer)
     for k, nm in enumerate(names):
         out.members[nm] = check_member(model, model.members[nm], results)
         if progress and (k % 10 == 0 or k == len(names) - 1):
             _melde(progress, f"Nachweis {nm} ({k+1}/{len(names)})",
                    _anteil(anteil, (k + 1) / len(names)))
+    return _leere_eintragen(out, model, leer)
+
+
+def _leere_eintragen(out: DesignResults, model: Model, leer: list) -> DesignResults:
+    """Die Staebe ohne Stabelement als nicht gefuehrte Eintraege in ``out``,
+    alle Eintraege in der Folge der Staebe im Modell (C14, Runde 2)."""
+    for k in leer:
+        mc = MemberCheck(k, "", "", 0.0, elements=[])
+        mc.fehler = "kein Stabelement – Stab löschen oder neu zeichnen"
+        mc.warnings.append(f"Stab {k} hat kein Stabelement – nicht nachgewiesen; ihn löschen oder neu zeichnen")
+        out.members[k] = mc
+    if leer:
+        out.members = {k: out.members[k] for k in model.members if k in out.members} | {
+            k: v for k, v in out.members.items() if k not in model.members}
     return out
 
 

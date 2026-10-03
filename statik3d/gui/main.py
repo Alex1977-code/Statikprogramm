@@ -19529,7 +19529,10 @@ class MainWindow(QtWidgets.QMainWindow):
             e = frei[0]
             m.add_member(name, [e])
             el = m.elements[e]
-            text = f"Stab {name} um das vorhandene Stabelement E{e} angelegt: K{a}–K{b}, {el.sec}"
+            # die Knoten in der Richtung, in der der Stab laeuft - die des
+            # Elements, nicht die der Klicks (Runde 2, H-4)
+            text = (f"Stab {name} um das vorhandene Stabelement E{e} angelegt: "
+                    f"K{int(el.nodes[0])}–K{int(el.nodes[-1])}, {el.sec}")
             if (el.sec, el.mat, el.typ) != (sec, mat, typ):
                 text += (f" – Querschnitt, Werkstoff und Art bleiben die des Elements ({el.sec}, {el.mat}"
                          f"{', Fachwerkstab' if el.typ == 'truss' else ''}), nicht die der Maske")
@@ -19538,6 +19541,12 @@ class MainWindow(QtWidgets.QMainWindow):
             m.add_member(name, [e])
             text = (f"{'Fachwerkstab' if typ == 'truss' else 'Stab'} {name} mit Stabelement E{e} "
                     f"angelegt: K{a}–K{b}, {sec}")
+        if frei:
+            # nur die Staebe aendern sich - die Ansicht haelt das Ergebnis
+            # darum fuer passend; die Nachweise kennen den Stab aber nicht.
+            # Derselbe Weg wie jede andere Modellaenderung (Runde 2, G3)
+            self.analysis = None
+            self.results = None
         self.info(text)
         if self.maskenrand.maske is not None:
             self.maskenrand.maske.auswahl_leeren()
@@ -21319,6 +21328,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if not r["angeschlossen"]:
             self._merken_zuruecknehmen()        # nichts angeschlossen: keine Aenderung
             self.info(f"Kein freies Stabende innerhalb von {zl.zahl_text(radius, punkt=True)} mm")
+        else:
+            # Knoten verschoben, Elemente geteilt: die Ergebnisse gehoeren zum
+            # alten Modell - verwerfen wie jede Modellaenderung (Runde 2, G3)
+            self.analysis = None
+            self.results = None
         self.refresh_all()
 
     def support_nonlinear_dialog(self):
@@ -22238,6 +22252,10 @@ class MainWindow(QtWidgets.QMainWindow):
         except ValueError as ex:
             self._merken_zuruecknehmen()        # nichts geaendert
             return self.error(f"Stäbe nicht zusammengefasst: {ex}")
+        # die Nachweise gehoeren zu den alten Staeben, die Ansicht saehe das
+        # nicht (gleiche Elemente) - verwerfen wie jede Modellaenderung (G3)
+        self.analysis = None
+        self.results = None
         L = m.member_length(m.members[name])
         self.sel_staebe = [name]
         self.info(f"Stäbe {', '.join(namen)} zu Stab {name} zusammengefasst: L = {zl.zahl_text(L, stellen=3)} m"
@@ -22399,6 +22417,28 @@ class MainWindow(QtWidgets.QMainWindow):
         urteile = ([self._ermuedung_urteil(x) for x in eintraege]
                    if len(eintraege) == len(zeilen) else [""] * len(zeilen))
         return [list(z[:-1]) + [u, z[-1]] for z, u in zip(zeilen, urteile)]
+
+    #: so viele Warnzeilen zeigt das Etikett der Maske Nachweise (Runde 2, G5):
+    #: am cbg-Modell standen dort 116 Zeilen „Kette …“
+    ETIKETT_WARNZEILEN = 8
+
+    @classmethod
+    def _etikett_kuerzen(cls, text: str) -> str:
+        """Das Etikett der Maske Nachweise: hoechstens ETIKETT_WARNZEILEN Zeilen
+        „WARNUNG …“, danach „… und n weitere, siehe Prüfen“. Protokoll und
+        „Prüfen“ behalten die volle Liste."""
+        zeilen = str(text or "").splitlines()
+        warn = [i for i, z in enumerate(zeilen) if z.startswith("WARNUNG")]
+        if len(warn) <= cls.ETIKETT_WARNZEILEN:
+            return text
+        erste, weg = warn[cls.ETIKETT_WARNZEILEN], set(warn[cls.ETIKETT_WARNZEILEN:])
+        out = []
+        for i, z in enumerate(zeilen):
+            if i == erste:
+                out.append(f"… und {len(weg)} weitere, siehe Prüfen")
+            if i not in weg:
+                out.append(z)
+        return "\n".join(out)
 
     def _nachweise_nicht_erfuellt(self) -> list:
         """[(Tabelle unten, „Ermüdung Riegel 2“)] fuer jeden nicht erfuellten
@@ -23655,7 +23695,8 @@ class MainWindow(QtWidgets.QMainWindow):
         teile = [t.summary() for t in (getattr(an, "design", None),) if t is not None]
         if getattr(an, "fatigue", None) is not None:
             teile.append(an.fatigue.summary() + self._ermuedung_zusatz(an.fatigue))
-        self.lbl_design.setText("\n".join(teile) if teile else "noch keine Nachweise")
+        # ueber die Klasse: tests.test_ec3 ruft show_results mit einer Attrappe als self
+        self.lbl_design.setText(MainWindow._etikett_kuerzen("\n".join(teile)) if teile else "noch keine Nachweise")
         self.cb_mode.blockSignals(True)
         self.cb_mode.clear()
         self.cb_mode.addItems(self._formtexte(r))

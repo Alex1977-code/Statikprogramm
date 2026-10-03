@@ -3367,19 +3367,28 @@ denselben Knoten trügen doppelt: an einem Rahmen fiel die Verschiebung auf
 62 %, und der Nachweis kam zu günstig heraus. *Netz → Stabelement* legt ein
 paralleles Element weiter an, sagt es aber in der Statuszeile. Wird das
 Stabelement eines Stabs gelöscht, bleibt der Stab ohne Stabelement stehen:
-*Prüfen* meldet ihn, der Nachweis nach EC3 übergeht ihn mit einer Warnung, und
-die Rückfrage beim Löschen (Baum, Rechtsklick, Entf in der Ansicht) sagt es
-vorher; bis zum 03.10.2026 brach die Berechnung dann ab. Jeder gezeichnete Stab
-hat die Knicklänge seiner eigenen Länge. Stoßen zwei kollineare Stäbe an einem
-freien Zwischenknoten zusammen, warnen *Prüfen* und der Nachweis, und *Stäbe
-zusammenfassen* macht einen Stab daraus (Kapitel 8; an einer Stütze aus drei
-Stäben 0,7969 statt 0,2856). Alte Modelle, deren Stäbe noch aus einzelnen
-Stabelementen ohne Stab bestehen, bekommen ihre Stäbe mit *Stäbe automatisch
-erkennen* oder mit *Struktur → Nachweisstäbe ▾ → Stab aus Stabelementen…*.
-Diese Maske nimmt kein Element an, das schon zu einem Stab gehört, sonst würde
-es doppelt nachgewiesen. *Freie Stabenden anschließen…* teilt das Element
-eines Stabs und hängt den neuen Teil in denselben Stab; bis zum 03.10.2026
-gehörte er zu keinem Stab, und der Stab wurde kürzer.
+*Prüfen* meldet ihn, der Nachweis nach EC3 führt ihn als nicht geführt („kein
+Stabelement“), die Ermüdung ebenso, wenn er einen Kerbfall trägt, und die
+Rückfrage beim Löschen (Baum, Rechtsklick, Entf in der Ansicht) sagt es
+vorher. Darum heißt es dann nicht „alle erfüllt“, die Ampel im Browser steht
+nicht auf grün, und der Bericht zählt EC3 und Ermüdung als nicht geführt. Bis
+zum 03.10.2026 brach die Berechnung ab; in der ersten Fassung danach stand der
+Stab nur als Warnzeile hinter „alle erfüllt“ und fehlte in der Ermüdung ganz.
+Jeder gezeichnete Stab hat die Knicklänge seiner eigenen Länge. Bilden
+kollineare Stäbe eine Kette mit freien Zwischenknoten, warnen *Prüfen* und der
+Nachweis, und *Stäbe zusammenfassen* macht einen Stab daraus, wenn dabei nichts
+verloren geht (Kapitel 8; an einer Stütze aus drei Stäben 0,7969 statt 0,2856).
+Alte Modelle, deren Stäbe noch aus einzelnen Stabelementen ohne Stab bestehen,
+bekommen ihre Stäbe mit *Stäbe automatisch erkennen* oder mit *Struktur →
+Nachweisstäbe ▾ → Stab aus Stabelementen…*. Diese Maske nimmt kein Element an,
+das schon zu einem Stab gehört, sonst würde es doppelt nachgewiesen. *Freie
+Stabenden anschließen…* teilt das Element eines Stabs, hängt den neuen Teil in
+denselben Stab und verteilt die Linienlasten des Stabs gleich neu, sodass sie
+wieder die ganze Stablänge belasten. Bis zum 03.10.2026 gehörte der neue Teil
+zu keinem Stab, und in der ersten Fassung danach trug der verkürzte alte Teil
+seine Last nur noch auf seiner neuen Länge (Balken 8 m mit 10 kN/m: Auflager
+60 statt 80 kN). Zusammenfassen, Teilen und *Stab* um ein vorhandenes Element
+verwerfen die Ergebnisse wie jede andere Änderung am Modell.
 
 **Aufbau jeder Maske** (seit 24.09.2026): Oben stehen der Titel und darunter
 die Hinweiszeile, was die Maske erwartet; sie ist immer ganz zu lesen, auch
@@ -5583,19 +5592,45 @@ Stab mit der Knicklänge β · L seiner eigenen Länge, wie in RFEM. Wer eine
 Stütze aus drei Stücken zeichnet, bekommt drei Stäbe mit je einem Drittel der
 Knicklänge; hält an den Stößen nichts, liegt das auf der unsicheren Seite.
 Darum warnen seit 03.10.2026 *Prüfen* und das Protokoll des Nachweises, wenn
-kollineare Stäbe an einem Knoten ohne Lager und ohne quer angeschlossenes
-Bauteil zusammenstoßen („Stab S1 und S2 bilden eine Kette mit freiem
-Zwischenknoten K1 – Knicklänge prüfen oder „Stäbe zusammenfassen““); das
-Urteil des Nachweises ändert die Warnung nicht. *Struktur → Nachweisstäbe ▾ →
-Stäbe zusammenfassen* (auch im Rechtsklick auf die gewählten Stäbe) macht aus
-den gewählten Stäben einer geraden Kette einen Stab, in einem
-Rückgängig-Schritt: Der erste behält Namen und Parameter, Linienlasten gehen
-mit, feste Knick- und Kipplängen werden auf β · L zurückgesetzt. Jeder Stab
-muss dazu in Richtung der Kette gezeichnet sein, und keiner darf von einem
-anderen Objekt (Verformungsnachweis, Stellung, Layer …) verwendet werden. An
-der Stütze HEB 200, 6 m, 600 kN ergibt das L = 6 m und die Ausnutzung 0,7969
-statt dreimal 0,2856. Ein Stab ohne Stabelement – sein Element wurde gelöscht
-– wird nicht nachgewiesen; der Nachweis nennt ihn als Warnung. Je Stab:
+kollineare Stäbe eine Kette mit freien Zwischenknoten bilden, einmal je Kette
+und mit ihren Stäben („Stäbe S1, S2 und S3 bilden eine Kette mit freien
+Zwischenknoten K1 und K2 – Knicklänge prüfen oder „Stäbe zusammenfassen““);
+das Urteil des Nachweises ändert die Warnung nicht. Frei ist ein Zwischenknoten
+je Ausweichrichtung: Er gilt für das Knicken um die lokale y-Achse als
+gehalten, wenn ein Lager die Verschiebung in lokaler z-Richtung hält, und
+umgekehrt. Ein Lager nur in Achsrichtung oder nur gegen Drehung hält nicht;
+eine Feder (Knotenlager mit Feder, Federelement) hält, wie weich sie auch ist,
+und ebenso ein drittes Bauteil am Knoten (Querstab, Schale), ein Kontaktlager,
+eine Kopplung oder ein starrer Körper. Hält ein Lager nur eine Querrichtung,
+warnt die Kette für die andere Achse („(Knicken um z)“). Ein Glied ohne
+Nachweis (Stab mit ausgeschaltetem Nachweis, Stabelement ohne Stab) gehört zur
+Kette; gewarnt werden die Stäbe mit Nachweis darin. Hat ein Stab für eine
+Achse eine feste Knicklänge, warnt die Kette für ihn und diese Achse nicht.
+Lässt sich die Kette nicht zusammenfassen – verschiedene Querschnitte, ein
+Glied ohne Nachweis, eine feste Knicklänge –, rät der Text, die Knicklänge von
+Hand zu setzen. Das Etikett der Maske Nachweise zeigt höchstens acht
+Warnzeilen und danach „… und n weitere, siehe Prüfen“; Protokoll und *Prüfen*
+behalten die volle Liste (am Modell CBG mit 648 Stäben 87 Ketten, vorher 116
+Zeilen, eine je Stoß). *Struktur → Nachweisstäbe ▾ → Stäbe zusammenfassen*
+(auch im Rechtsklick auf die gewählten Stäbe) macht aus den gewählten Stäben
+einer geraden Kette einen Stab, in einem Rückgängig-Schritt. Es verliert
+nichts und ändert keine Bedeutung: Es weist ab und nennt jeden Grund mit Stab
+und Wert, wenn ein Stab eine feste Knick- oder Kipplänge hat (sie gilt für den
+einzelnen Stab; erst auf β·L zurücksetzen, dann zusammenfassen), wenn die
+Nachweisparameter nicht gleich sind (Kerbfall, β-Werte, Wölbrandbedingung und
+jedes andere Feld des Stabs), wenn „deaktiviert“ oder die Lasten und
+Vorspannungen am Stab nicht bei allen gleich sind, und wenn irgendein Stab der
+Kette, auch der erste, von einem anderen Objekt verwendet wird (Stellung,
+Verformungsnachweis, Layer, Subsystem, Wind, Schweißnaht, Lasteinleitung).
+Sind alle gleich, bleiben die Parameter erhalten, gleiche Linienlasten gehen
+um die Länge der Stäbe davor verschoben mit, und eine gleiche Vorspannung
+bleibt einmal stehen. Jeder Stab muss in Richtung der Kette gezeichnet sein.
+Bis zur zweiten Fassung vom 03.10.2026 setzte das Zusammenfassen feste
+Knicklängen still auf β · L zurück und übernahm die Parameter, Verweise und
+den Schalter „deaktiviert“ des ersten Stabs. An der Stütze HEB 200, 6 m,
+600 kN ergibt das Zusammenfassen L = 6 m und die Ausnutzung 0,7969 statt
+dreimal 0,2856. Ein Stab ohne Stabelement – sein Element wurde gelöscht – wird
+nicht nachgewiesen; der Nachweis führt ihn als nicht geführt. Je Stab:
 
 * Querschnittsnachweise an allen Nachweisstellen (Klasse, N, V, M, M+V, M+N,
   Torsion, Vergleichsspannung),
