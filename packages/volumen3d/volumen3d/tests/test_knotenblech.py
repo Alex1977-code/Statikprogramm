@@ -32,10 +32,10 @@ Y_MITTE, Z_MITTE = 0.5 * B_BLECH, -0.5 * T
 
 # Referenz des Hauptprogramms (Tet10, Entscheidung E2; Plan C1): sigma_hs an der Stirnnaht bei y = 40 in N/mm2, None solange sie fehlt.
 # Vorlaeufige Werte (eigener Lauf des Hauptprogramms aus einem festen Arbeitsbaum) tragen den Vermerk "vorlaeufig".
-# Referenz der Hauptsitzung (E2/E3, Pull Request 13, seit 02.10.2026 auf main): tests/reference_models/knotenblech_kehlnaht/erwartung_tet10.json, gerechnet mit
-# statik3d Tet10 (main 7da3571) auf dem gmsh-Netz 1 mm (247 636 Tet10, 363 048 Knoten, 1,09 Mio. FHG, PARDISO), zwei an der exakten Loesung geeichte Auswertungen
-# (2,6e-9 N/mm2), Primaerwert das Elementfeld am Punkt. Einschraenkung der Hauptsitzung: Kantenlaenge am Uebergang im Median 1,33 mm (Maximum 2,2), also nicht t/10;
-# das 0,5-mm-Netz (6,45 Mio. FHG) rechnet die Hauptsitzung am Abend des 02.10.2026 und ersetzt die Werte dann in der Datei - dieser Test liest sie von dort.
+# Referenz der Hauptsitzung (E2/E3): tests/reference_models/knotenblech_kehlnaht/erwartung_tet10.json. Seit Pull Request 18 (03.10.2026, auf main) stehen dort die Werte
+# eines lokal auf 0,5 mm verfeinerten Netzes (445 946 Knoten, Kantenlaenge am Uebergang im Median 0,687 mm, PARDISO, zwei an der exakten Loesung geeichte Auswertungen,
+# Primaerwert das Elementfeld am Punkt); die 1-mm-Werte (Pull Request 13, Median der Kante am Uebergang 1,33 mm) liegen daneben als erwartung_tet10_1mm.json.
+# Netzkonvergenz der Referenz: sigma_hs aendert sich vom 1-mm- zum feineren Netz an keinem Nahtpunkt um mehr als 0,31 %. Dieser Test liest die Datei von dort.
 REFERENZ_DATEI = pathlib.Path(__file__).resolve().parents[4] / "tests" / "reference_models" / "knotenblech_kehlnaht" / "erwartung_tet10.json"
 
 
@@ -201,7 +201,7 @@ def test_knotenblech_h10():
     a1, am, a2 = (X_TOE_R - X_TOE_L) * (Y_B - Y_A + 2 * S_NAHT), (X_B - X_A + S_NAHT) * (Y_B - Y_A + S_NAHT), (X_B - X_A) * (Y_B - Y_A)
     v_soll = L * B_BLECH * T + (X_B - X_A) * (Y_B - Y_A) * H_KB + S_NAHT / 6.0 * (a1 + 4 * am + a2) - (X_B - X_A) * (Y_B - Y_A) * S_NAHT
     ref = lade_referenz()
-    check("Referenzdatei der Hauptsitzung lesbar: je Naht 9 Punkte, sigma_hs bei y 40 zwischen 130 und 150 N/mm2 (Tet10 1 mm: 142,74 / 143,14)",
+    check("Referenzdatei der Hauptsitzung lesbar: je Naht 9 Punkte, sigma_hs bei y 40 zwischen 130 und 150 N/mm2 (Tet10 mit 0,5 mm am Uebergang: 143,03 / 143,00; die 1-mm-Werte 142,74 / 143,14)",
           ref is None or (len(ref["sigma_hs_rechts"]) == 9 and len(ref["sigma_hs_links"]) == 9
                           and 130.0 < ref["sigma_hs_rechts_y40"] < 150.0 and 130.0 < ref["sigma_hs_links_y40"] < 150.0),
           "Datei fehlt (Paket ohne Repository)" if ref is None else f"rechts {ref['sigma_hs_rechts_y40']:.4f}, links {ref['sigma_hs_links_y40']:.4f}")
@@ -268,8 +268,8 @@ def test_knotenblech_konvergenz():
         return
     d_ref = max(abs(r[4] / ref["sigma_hs_rechts_y40"] - 1), abs(l[4] / ref["sigma_hs_links_y40"] - 1))
     d_alle = max(float(np.abs(r / np.array(ref["sigma_hs_rechts"]) - 1).max()), float(np.abs(l / np.array(ref["sigma_hs_links"]) - 1).max()))
-    # Die Abnahme haengt von der Gitterlage ab (Theorie 11.20, O3): bei dieser Lage (Schnittebenen bei 0 und 200) hielt sie mit -2,93 % knapp, bei anderen
-    # Lagen bis +3,10 %. Die Schranke 3 % ist die der Vorgabe; welche Streuung zulaessig ist, entscheidet der Anwender (Plan O3).
+    # Die Abnahme haengt von der Gitterlage ab (Theorie 11.20, O3): bei dieser Lage (Schnittebenen bei 0 und 200) hielt sie gegen die 1-mm-Werte mit -2,93 % knapp (gegen die
+    # jetzigen Werte -2,84 %), bei anderen Lagen bis +3,10 % (gegen die jetzigen hoechstens +2,90 % ueber vier Lagen). Die Schranke 3 % ist die der Vorgabe; welche Streuung zulaessig ist, entscheidet der Anwender (Plan O3).
     # Streuband ueber die Gitterlage (Theorie 11.20, O3): bei Nahtziel t/4 und p 4 im Mittel 143,6 N/mm2, Spanne 138,9 bis 147,2 (5,7 %); je Lage -2,93 % bis +3,10 % gegen Tet10
     check(f"Streuband (Information, Theorie 11.20): dieser Lauf y 40 rechts {r[4]:.2f}, links {l[4]:.2f} liegt im Band 138,9 bis 147,2 N/mm2 der vier Gitterlagen",
           138.9 <= min(r[4], l[4]) and max(r[4], l[4]) <= 147.2)
