@@ -794,6 +794,14 @@ Zelle ohne Wurzel bleibt, sonst auf dem α-Niveau des linearen Felds; (2) die Ze
 (3) alle Suiten grün; ändert sich eine dokumentierte Zahl über ihre letzte angegebene Stelle hinaus, wird sie mit altem und neuem Wert aufgelistet; (4) die Aufbauzeit des Knotenblechs (langer Lauf)
 steigt um höchstens 10 %. Wird eine Regel verfehlt oder ändert die Kur σ_hs am Knotenblech um mehr als 0,5 %, entscheidet der Anwender mit Empfehlung. Gemergt wird nur auf Freigabe.
 
+**Nachtrag zur Zeitregel (4), 03.10.2026, festgelegt vor dem Ergebnis der Nachmessung.** Die Messung auf dem Stand mit Wächter (79d4a4f) lief unter fremder Last (Oberflächenprüfungen der Hauptsitzung und zwei
+Rechenprozesse anderer Projekte): 573,9 s gegen 496,5 s des alten Stands (+15,6 %); auf dem Stand ohne Wächter (f1988a8) waren es zuvor 502,3 s (+1,2 %). Alle fünf Zyklen waren langsamer, auch der vom Löser
+bestimmte letzte, an dem der Wächter nichts ändert. Die Zahl ist nicht verwertbar. Die Nachmessung läuft viermal unmittelbar nacheinander in der Folge alt, neu, alt, neu aus den festen Arbeitsbäumen
+(372ac59 und 79d4a4f) und hält je Lauf die Wanduhr, die eigene CPU-Zeit des Prozesses und die belegte CPU-Zeit des ganzen Rechners fest (`GetSystemTimes`); die Differenz der beiden CPU-Zeiten ist die Fremdlast.
+Maßgebend bleibt die Wanduhr des ganzen Laufs. Gewertet wird das Mittel beider Paare, wenn die mittlere Fremdlast der vier Läufe um höchstens einen Kern auseinanderliegt; sonst gilt das Paar mit der kleineren
+und einander näheren Fremdlast, das andere wird berichtet und nicht gewertet. Gegenprobe ist die eigene CPU-Zeit mit derselben Verhältnisbildung. Wanduhr und CPU-Zeit müssen im Urteil (über oder unter +10 %)
+übereinstimmen; sonst gilt die Regel als nicht entscheidbar gemessen und geht mit beiden Zahlen an den Anwender.
+
 ## Modell je Schritt
 
 Der Anwender stellt Modell und Denkstufe vor jedem Schritt von Hand ein; der Stand wird nach jedem Schritt
