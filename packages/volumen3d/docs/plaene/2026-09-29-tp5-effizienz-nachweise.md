@@ -865,6 +865,23 @@ Boden) 4,5 / 4,1 / 4,1 %. Der Anteil sinkt mit der Größe, weil die Faktorisier
 `test_direkt` (8 Prüfungen: gesunde, um 10⁻⁹ gestörte und divergierende Zerlegung, Schalter 0, Nullseite, Vektor, PARDISO-Weg) und `test_schale.test_schale_geneigt_p3_superlu` (30° p 3 mit erzwungenem SuperLU unter 10⁻⁶ mit und
 über 10⁻⁶ ohne Nachiteration, 10° p 3 im Rest unter 10⁻⁸). Die Schranke von `test_schale` für 30° p 3 steht für beide Löser wieder bei 10⁻⁵. Das Grobgitter des Mehrgitters rechnet ohne Nachiteration (`nachiteration=0`).
 
+*Regeln O19 und O16, vor der Messung festgelegt (03.10.2026, nach Anweisung des Anwenders „weiter O16 Warnung, O19 Schwellenvergleich“; Pull Request 22 mit O20 ist auf main, 1955c28).* **O19, Frage:** Hängt die Einteilung der
+Zellen in wohl- und schlecht gestellte an der letzten Rundungsstelle des Werkstoffanteils, und wie viele Zellen betrifft das? **Kur:** `Zellaggregation` vergleicht mit der Schwelle den auf neun Stellen gerundeten Anteil (`_rang`, der schon
+die Rangfolge der Wurzeln bestimmt) statt des ungerundeten; alles andere bleibt (`leer` und `relevant` fragen weiter nach Anteil gleich 0). **O16, Frage:** In welchen Modellen bleiben Zellen ohne Wurzel (`zellen_ohne_wurzel` > 0), also Zellen,
+die α behalten, und was bedeutet das für den Fehler? **Kur:** Das Ergebnis (`DetailResult.warnings`) trägt eine Warnung, sobald `zellen_ohne_wurzel` > 0 ist: Zahl der Zellen, α, Folge (Fehler proportional zu α, gemessen am T-Stoß
+mit Basiszelle 20 mm und Blechdicke 10 mm: 10⁻⁶ bei p 2, 7·10⁻⁵ bei p 3, jeweils bei α = 10⁻⁸) und Abhilfe (Basiszelle höchstens so groß wie die Wanddicke; in den gemessenen Modellen mit Basiszelle gleich Blechdicke gab es keine solche
+Zelle). Die Rechnung selbst ändert sich dadurch nicht. **Messung (beide):** Ein Haken in `Zellaggregation.__init__` schreibt je Konstruktion die Zahl der schlechten Zellen, der Zellen ohne Wurzel, der zu teilenden Zellen, der Zellen mit
+|Anteil − Schwelle| ≤ 10⁻⁹ (getrennt: gerundet unter und auf/über der Schwelle) und der Zellen mit 0 < Anteil < 10⁻⁹; er läuft über die Paketsuiten aus einem festen Arbeitsbaum auf 1955c28 (Kernsuite, Zwänge, Patch, Schale, Quadratur, STEP,
+STL, Hülle, Oktree, Hot-Spot, Rückgewinnung, Vertragsschicht, Adaptiv, Lamé, Kirsch, Knotenblech h 10, Mehrgitter). Zwei unabhängige Größen für O19: (A) die Zahl der schlechten Zellen je Modell über die beiden Quadraturwege
+(`stuecke_exakt` an/aus), (B) der Vergleich der gerundeten Anteile beider Wege je Zelle. **Abnahme O19:** (1) die Einteilung ist unabhängig vom Quadraturweg: am verfeinerten Patch-Körper (`test_zwaenge`, drei Fälle, p 1 bis 3) sind
+`schlecht` und `wurzel` mit `stuecke_exakt` an und aus gleich; vor der Kur gibt es dort im Fall „eine Ebene“ bei p 2 einen Unterschied (Zelle 507: 0,4 − 2·10⁻¹⁶ gegen 0,4 + 2·10⁻¹⁶); (2) in den Suiten ändert sich die Einteilung nur an
+Zellen, deren gerundeter Anteil gleich der Schwelle ist, und alle Suiten bleiben grün; geänderte dokumentierte Zahlen werden mit altem und neuem Wert aufgelistet; (3) ein Test, der ohne die Kur fehlschlägt (Einteilung synthetischer
+Anteile 0,4 − 2·10⁻¹⁶, 0,4, 0,4 + 2·10⁻¹⁶ und 0,4 − 10⁻⁸ sowie der Fall (1)). **Abnahme O16:** (1) die Warnung erscheint an den Modellen mit Zellen ohne Wurzel, deren lineares Feld den α-Fehler trägt (T-Stoß Basis 20, p 2 und p 3), und
+nicht am Knotenblech und am T-Stoß mit Basis 10; (2) tritt `zellen_ohne_wurzel` > 0 in einem Suitenmodell auf, dessen Spannung auf Rundungsniveau liegt, ist das ein Fehlalarm; er wird dann nicht still hingenommen, sondern mit
+Empfehlung (etwa die Zelle nach ihrem Beitrag gewichten) dem Anwender vorgelegt; (3) ein Test, der ohne die Kur fehlschlägt (Warntext an der Statistik, Warnung des T-Stoßes mit Basis 20 am Problem, Verdrahtung in
+`FcmSolver.solve` mit einem Platzhalter-Text); (4) die Rechnung bleibt Bit für Bit gleich (SHA-256 über Punkte, Gewichte und Masken aller Zellen eines Modells und die Lösung). Wird eine Regel verfehlt, entscheidet der Anwender mit
+Empfehlung.
+
 ## Modell je Schritt
 
 Der Anwender stellt Modell und Denkstufe vor jedem Schritt von Hand ein; der Stand wird nach jedem Schritt
