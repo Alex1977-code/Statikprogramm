@@ -35,6 +35,13 @@ das Renderfenster ist offscreen 0 x 0):
   in einer Maske die Befehlssuche; die Liste der Tastenkuerzel und das
   Handbuch nennen beides.
 
+Nachbesserung nach der Gegenpruefung von 4976a91 (NACHBESSERUNG-8D.md, Abnahme
+D1 bis D13): der Baum wirkt nie auf etwas, das der Filter ausblendet (G1), der
+Filter trifft Eintraege und Zweige, nie Wurzel und Gruppen (G2), die Markierung
+folgt jeder Auswahl der Ansicht (G3), getippt wird nach einer Ruhezeit gefiltert
+und nachgeladene Zeilen stehen in der Nummernfolge (G4), Kontextmenues werden
+wirksam abgefangen und Eingaben als Tastenereignisse getippt (G5).
+
 Aufruf:  python -m tests.test_baum_filter
 """
 import os
@@ -89,7 +96,8 @@ def _modal_abfangen():
     B.information = melden("information", B.Ok)
     B.question = melden("question", B.No)
     QtWidgets.QDialog.exec = lambda self, *a, **k: (MODAL.append(("exec", type(self).__name__)), 0)[1]
-    QtWidgets.QMenu.exec = lambda self, *a, **k: (MODAL.append(("menue", "")), None)[1]
+    # Kontextmenues: nicht hier - der Klassen-Patch QMenu.exec greift unter
+    # PySide6 6.11.2 nicht; _menues_abfangen tauscht die Klasse (Nachbesserung 8d)
 
 
 def _fenster():
@@ -570,6 +578,52 @@ def _filterzeile(w):
     return getattr(w, "baum_filter", None)
 
 
+def _warten(app, ms=320):
+    """Die Ruhezeit der Filterzeile (150 ms) abwarten."""
+    from PySide6 import QtTest
+    QtTest.QTest.qWait(ms)
+    _ruhe(app)
+
+
+def _tippen(app, f, text):
+    """Text in die Filterzeile tippen - als Tastenereignisse, nicht mit setText
+    (Nachbesserung 8d, G5); was darin stand, wird ueberschrieben. Danach die
+    Ruhezeit abwarten."""
+    from PySide6 import QtCore, QtTest
+    f.selectAll()
+    if text:
+        QtTest.QTest.keyClicks(f, text)
+    else:
+        QtTest.QTest.keyClick(f, QtCore.Qt.Key_Backspace)
+    _warten(app)
+
+
+import contextlib  # noqa: E402
+
+
+@contextlib.contextmanager
+def _menues_abfangen():
+    """Kontextmenues wirksam abfangen: die Klasse ``QtWidgets.QMenu`` wird fuer
+    die Dauer gegen eine Unterklasse getauscht, deren ``exec`` die Eintraege
+    aufzeichnet. Der Klassen-Patch ``QtWidgets.QMenu.exec = lambda …`` greift
+    unter PySide6 6.11.2 nicht (Gegenpruefung 8d, p_menu): das echte Menue
+    oeffnete sich, und die Pruefung sah nichts. :func:`test_d11_rechtsklick`
+    prueft beides."""
+    from PySide6 import QtWidgets
+    gesehen = []
+    alt = QtWidgets.QMenu
+
+    class Menue(alt):
+        def exec(self, *a, **k):
+            gesehen.append([x.text() for x in self.actions()])
+            return None
+    QtWidgets.QMenu = Menue
+    try:
+        yield gesehen
+    finally:
+        QtWidgets.QMenu = alt
+
+
 def test_filter():
     from PySide6 import QtCore, QtTest
     w, app = _fenster()
@@ -598,12 +652,11 @@ def test_filter():
     _ruhe(app)
     QtTest.QTest.keyClick(b, QtCore.Qt.Key_F, QtCore.Qt.ControlModifier)
     _ruhe(app)
-    f.setText("k1")
-    _ruhe(app)
+    _tippen(app, f, "k1")
     sicht = _sichtbare_eintraege(b)
     knoten = sorted(k for a, k in sicht if a == "knoten")
     erwartet = sorted(str(i) for i in range(m.nn) if "k1" in f"k{i}" and _finden(b, "knoten", i) is not None)
-    check("Filter „k1“ (Teiltext, ohne Groß/Klein): sichtbar sind genau die Knoten mit „k1“ im Namen",
+    check("Filter „k1“ (getippt, Teiltext, ohne Groß/Klein): sichtbar sind genau die Knoten mit „k1“ im Namen",
           knoten == erwartet and len(erwartet) >= 5, f"{knoten} / {erwartet}")
     check("… und nichts, was nicht passt (keine Linie, kein Stab)",
           all("k1" in _finden(b, a, k).text(0).lower() for a, k in sicht if _finden(b, a, k) is not None)
@@ -614,8 +667,7 @@ def test_filter():
           str(_pfad(k1) if k1 is not None else None))
     lin = _zweig(b, "Linien")
     check("… ein Zweig ohne Treffer ist ausgeblendet (Linien)", lin is not None and lin.isHidden())
-    f.setText("K1")
-    _ruhe(app)
+    _tippen(app, f, "K1")
     check("„K1“ groß geschrieben findet dasselbe",
           sorted(k for a, k in _sichtbare_eintraege(b) if a == "knoten") == erwartet)
     # Neuaufbau mit Filter
@@ -639,11 +691,10 @@ def test_filter():
           f.isHidden() and b.hasFocus(), f"Feld zu {f.isHidden()}, Baum hat den Fokus {b.hasFocus()}")
     # ein leeres Feld wirkt wie Esc
     f.show()
-    f.setText("S2")
-    _ruhe(app)
+    f.setFocus()
+    _tippen(app, f, "S2")
     s2 = _sichtbare_eintraege(b)
-    f.setText("")
-    _ruhe(app)
+    _tippen(app, f, "")
     check("Ein leeres Feld stellt den Aufklappzustand ebenso wieder her",
           ("stab", "S2") in s2 and _aufklappung(b) == vorher and not [i for i in _alle(b) if i.isHidden()],
           str(s2[:3]))
@@ -653,6 +704,7 @@ def test_filter():
 def test_filter_gekuerzt():
     """Hinter „… N weitere“ sucht der Filter mit und zeigt die Treffer."""
     from statik3d.gui import design as dsg
+    from statik3d import knotenrollen as kr
     w, app = _fenster()
     m, n = _modell(w, app)
     f = _filterzeile(w)
@@ -666,45 +718,42 @@ def test_filter_gekuerzt():
             check("Filterzeile vorhanden", False)
             return
         f.show()
-        f.setText(f"K{n['K5']}")
-        _ruhe(app)
+        f.setFocus()
+        _tippen(app, f, f"K{n['K5']}")
         sicht = _sichtbare_eintraege(b)
         check(f"Filter „K{n['K5']}“ bei gekürztem Zweig: die Zeile hinter „… N weitere“ ist sichtbar",
               ("knoten", str(n["K5"])) in sicht, str(sicht[:6]))
         w.refresh_all()
         _ruhe(app)
         check("… auch nach dem Neuaufbau", ("knoten", str(n["K5"])) in _sichtbare_eintraege(b))
-        f.setText("")
-        _ruhe(app)
+        _tippen(app, f, "")
         kn = _zweig(b, "Knoten", "knoten")
         texte = [kn.child(i).text(0) for i in range(kn.childCount())]
         check("… Filter leer: der Zweig zeigt wieder drei Einträge und die Sammelzeile",
               len(texte) == 4 and texte[-1].endswith(" weitere") and not kn.child(3).isHidden(), str(texte))
-        # Obergrenze der nachgeladenen Treffer: Taste für Taste darf „K“ das
-        # Kontingent nicht für „K5“ verbrauchen
+        # Obergrenze: mehr Treffer hinter der Sammelzeile als FILTER_MAX laden
+        # nichts nach, die Sammelzeile nennt sie; weiter getippt kommen sie
         alt_fm = getattr(dsg.Modellbaum, "FILTER_MAX", None)
         dsg.Modellbaum.FILTER_MAX = 2
+        rest = len([int(x) for x in kr.konstruktionsknoten(m)]) - 3
         try:
-            f.setText("K")
-            _ruhe(app)
+            _tippen(app, f, "K")
             kn = _zweig(b, "Knoten", "knoten")
-            zeilen = [kn.child(i).text(0) for i in range(kn.childCount()) if not kn.child(i).isHidden()]
-            # „K“ passt auch auf den Zweig „Knoten“ selbst: er zeigt alles
-            check("Filter „K“ mit Obergrenze 2: zwei Treffer hinter der Sammelzeile nachgeladen (K3, K4)",
-                  zeilen[:5] == ["K0", "K1", "K2", "K3", "K4"] and zeilen[-1].endswith(" weitere")
-                  and len(zeilen) == 6, str(zeilen))
-            f.setText(f"K{n['K5']}")
-            _ruhe(app)
-            check(f"… weiter getippt („K{n['K5']}“): K{n['K5']} kommt trotz der Obergrenze, K3 und K4 gehen",
+            texte = [kn.child(i).text(0) for i in range(kn.childCount())]
+            sammel = [kn.child(i).text(0) for i in range(kn.childCount())
+                      if not kn.child(i).isHidden() and kn.child(i).text(0).startswith("… ")]
+            check(f"Filter „K“ mit Obergrenze 2: {rest} Treffer hinter der Sammelzeile, keiner nachgeladen",
+                  texte[:3] == ["K0", "K1", "K2"] and len(texte) == 4 and sammel == [f"… {rest} weitere Treffer"],
+                  f"{texte} / {sammel}")
+            _tippen(app, f, f"K{n['K5']}")
+            check(f"… weiter getippt („K{n['K5']}“): K{n['K5']} kommt, nichts sonst nachgeladen",
                   ("knoten", str(n["K5"])) in _sichtbare_eintraege(b)
                   and _finden(b, "knoten", 3) is None and _finden(b, "knoten", 4) is None,
                   str(_sichtbare_eintraege(b)[:5]))
             # Obergrenze 0: nichts nachgeladen, die Sammelzeile nennt die Treffer
-            from statik3d import knotenrollen as kr
             dsg.Modellbaum.FILTER_MAX = 0
-            f.setText("")
-            f.setText(f"K{n['K5']}")
-            _ruhe(app)
+            _tippen(app, f, "")
+            _tippen(app, f, f"K{n['K5']}")
             such = f"k{n['K5']}"
             erw = sum(1 for i in [int(x) for x in kr.konstruktionsknoten(m)][3:] if such in f"k{i}")
             kn = _zweig(b, "Knoten", "knoten")
@@ -716,12 +765,11 @@ def test_filter_gekuerzt():
         finally:
             if alt_fm is not None:
                 dsg.Modellbaum.FILTER_MAX = alt_fm
-            f.setText("")
-            _ruhe(app)
+            _tippen(app, f, "")
     finally:
         dsg.BAUM_MAX = alt
         if f is not None:
-            f.setText("")
+            _tippen(app, f, "")
             f.hide()
         w.refresh_all()
         _ruhe(app)
@@ -746,22 +794,25 @@ def test_strg_f():
     check("Strg+F im Modellbaum öffnet die Filterzeile und setzt den Cursor hinein",
           f is not None and f.isVisible() and _fokus() is f and not suche.hasFocus(), str(_fokus()))
     if f is not None:
-        f.setText("k")
-        f.setFocus()
-        _ruhe(app)
+        QtTest.QTest.keyClicks(f, "k")
+        _warten(app)
         QtTest.QTest.keyClick(f, QtCore.Qt.Key_F, QtCore.Qt.ControlModifier)
         _ruhe(app)
         check("Strg+F in der Filterzeile bleibt dort und markiert den Text",
               _fokus() is f and f.selectedText() == "k" and not suche.hasFocus(), repr(f.selectedText()))
         QtTest.QTest.keyClick(f, QtCore.Qt.Key_Escape)
         _ruhe(app)
-    # in der Ansicht
+    # D12: in der Ansicht - der Tastendruck geht an die Ansicht mit dem Fokus darin
     _ansicht_fokussieren(w, app)
     suche.setText("kombi")
-    QtTest.QTest.keyClick(w, QtCore.Qt.Key_F, QtCore.Qt.ControlModifier)
+    ia = w.plotter.interactor
+    vorher = _fokus()
+    QtTest.QTest.keyClick(ia, QtCore.Qt.Key_F, QtCore.Qt.ControlModifier)
     _ruhe(app)
-    check("Strg+F in der Ansicht: die Befehlssuche wie bisher, die Filterzeile bleibt zu",
-          _fokus() is suche and suche.selectedText() == "kombi" and (f is None or f.isHidden()), str(_fokus()))
+    check("D12: Strg+F mit dem Fokus in der Ansicht (an die Ansicht geschickt): die Befehlssuche, "
+          "die Filterzeile bleibt zu",
+          vorher is ia and _fokus() is suche and suche.selectedText() == "kombi" and (f is None or f.isHidden()),
+          f"{vorher} -> {_fokus()}")
     suche.clear()
     # in einer Maske
     w.maske_knoten()
@@ -776,6 +827,492 @@ def test_strg_f():
           _fokus() is suche and (f is None or f.isHidden()), str(_fokus()))
     w.maskenrand.schliessen()
     _ruhe(app)
+
+
+# ---------------------------------------------------------------------------
+# 5. Nachbesserung (Gegenpruefung 4976a91): D1 bis D13
+# ---------------------------------------------------------------------------
+def _stabmodell(w, app, name="Neues Modell"):
+    """Zwoelf Knoten in einer Reihe, acht Staebe S1 bis S8, Lastfall LF1,
+    Knotenlager an K0 (wie die Gegenpruefung, p2_filter)."""
+    from statik3d.model import Member as Mb
+    w.new_model()
+    m = w.model
+    m.name = name
+    mat, sec = list(m.materials)[0], list(m.sections)[0]
+    kn = [m.add_node(float(i), 0.0, 0.0) for i in range(12)]
+    for j in range(8):
+        e = m.add_element("beam", [kn[j], kn[j + 1]], mat, sec)
+        m.members[f"S{j + 1}"] = Mb(f"S{j + 1}", elements=[e])
+    m.add_load_case("LF1", "Q")
+    m.fix(kn[0], "all")
+    w.refresh_all()
+    _ruhe(app)
+    return m, kn
+
+
+class _Fragen:
+    """Rueckfragen des Fensters aufzeichnen und mit Nein beantworten."""
+
+    def __init__(self, w):
+        self.w, self.texte = w, []
+        self.alt = w._bestaetigen
+        w._bestaetigen = self.fragen
+
+    def fragen(self, text, *_a, **_k):
+        self.texte.append(str(text).split("\n")[0])
+        return False
+
+    def zurueck(self):
+        self.w._bestaetigen = self.alt
+
+
+def _ohne_filter(app, f):
+    if f is not None:
+        f.setFocus()
+        _tippen(app, f, "")
+        f.hide()
+
+
+def test_d1_d2_tasten_im_gefilterten_baum():
+    from PySide6 import QtCore, QtTest
+    K = QtCore.Qt
+    w, app = _fenster()
+    m, kn = _stabmodell(w, app)
+    b, f = w.baum, _filterzeile(w)
+    if f is None:
+        check("D1: Filterzeile vorhanden", False)
+        return
+    fragen = _Fragen(w)
+    geoeffnet = []
+    alt_om = w._objektmaske
+    w._objektmaske = lambda art, name, *a, **k: (geoeffnet.append((art, str(name))), alt_om(art, name, *a, **k))[1]
+    try:
+        s2 = _finden(b, "stab", "S2")
+        w.activateWindow()
+        b.setFocus()
+        b.scrollToItem(s2)
+        _ruhe(app)
+        QtTest.QTest.mouseClick(b.viewport(), K.LeftButton, K.NoModifier, b.visualItemRect(s2).center())
+        _ruhe(app)
+        QtTest.QTest.keyClick(b, K.Key_F, K.ControlModifier)
+        _ruhe(app)
+        QtTest.QTest.keyClicks(f, "S1")
+        _warten(app)
+        QtTest.QTest.keyClick(f, K.Key_Down)
+        _ruhe(app)
+        cur = b.currentItem()
+        check("D1: nach Klick auf S2, Strg+F, „S1“ und Pfeil nach unten ist S1 aktuell, keine "
+              "ausgeblendete aktuelle Zeile",
+              cur is not None and _element(cur) == ("stab", "S1") and _sichtbar(b, cur)
+              and not [i for i in _alle(b) if i is cur and i.isHidden()],
+              f"{_aktuell(b)}, sichtbar {_sichtbar(b, cur) if cur is not None else None}")
+        fragen.texte.clear()
+        QtTest.QTest.keyClick(b, K.Key_Delete)
+        _ruhe(app)
+        check("D1: Entf danach - die Rückfrage nennt S1, nie S2",
+              len(fragen.texte) == 1 and "S1" in fragen.texte[0] and "S2" not in fragen.texte[0]
+              and "S2" in m.members, str(fragen.texte))
+        geoeffnet.clear()
+        QtTest.QTest.keyClick(b, K.Key_Return)
+        _ruhe(app)
+        mk = w.maskenrand.maske
+        check("D2: die Eingabetaste öffnet die Maske von S1",
+              geoeffnet[-1:] == [("stab", "S1")] and mk is not None and "S1" in str(getattr(mk, "titel", "")),
+              f"{geoeffnet}, {getattr(mk, 'titel', None)}")
+    finally:
+        w._objektmaske = alt_om
+        fragen.zurueck()
+        _ohne_filter(app, f)
+        w.maskenrand.schliessen()
+        _ruhe(app)
+
+
+def test_d3_entf_nur_sichtbares():
+    from PySide6 import QtCore, QtTest
+    w, app = _fenster()
+    m, kn = _stabmodell(w, app)
+    b, f = w.baum, _filterzeile(w)
+    if f is None:
+        check("D3: Filterzeile vorhanden", False)
+        return
+    fragen = _Fragen(w)
+    try:
+        w.auswahlart_setzen("Stab")
+        w._ziel_waehlen(("stab", "S1"))
+        w._ziel_waehlen(("stab", "S2"), ersetzen=False)
+        w._ziel_waehlen(("stab", "S3"), ersetzen=False)
+        _ruhe(app)
+        f.show()
+        f.setFocus()
+        _tippen(app, f, "S1")
+        w.activateWindow()
+        b.setFocus()
+        _ruhe(app)
+        fragen.texte.clear()
+        QtTest.QTest.keyClick(b, QtCore.Qt.Key_Delete)
+        _ruhe(app)
+        check("D3: S1 bis S3 in der Ansicht gewählt, Filter „S1“, Entf im Baum - die Rückfrage nennt nur S1",
+              len(fragen.texte) == 1 and "S1" in fragen.texte[0] and "S2" not in fragen.texte[0]
+              and "S3" not in fragen.texte[0], str(fragen.texte))
+    finally:
+        fragen.zurueck()
+        _ohne_filter(app, f)
+
+
+def test_d4_ausgeblendetes_objekt():
+    w, app = _fenster()
+    m, n = _modell(w, app)
+    b, f = w.baum, _filterzeile(w)
+    if f is None:
+        check("D4: Filterzeile vorhanden", False)
+        return
+    try:
+        f.show()
+        f.setFocus()
+        _tippen(app, f, "S1")
+        _ansicht_fokussieren(w, app)
+        klick(w, app, m.nodes[n["K3"]])
+        k3 = _finden(b, "knoten", n["K3"])
+        meldung = w.statusBar().currentMessage()
+        check("D4: Filter „S1“, Klick in der Ansicht auf K3 - die Ansicht wählt K3",
+              sorted(int(i) for i in w.selection) == [n["K3"]], str(list(w.selection)))
+        check("D4: … der Baum markiert nichts und hat keine aktuelle Zeile",
+              not [i for i in _alle(b) if i.isSelected()] and b.currentItem() is None,
+              f"markiert {[_element(i) for i in _alle(b) if i.isSelected()]}, aktuell {_aktuell(b)}, "
+              f"K3 markiert {k3.isSelected() if k3 is not None else None}")
+        check("D4: … die Statuszeile sagt „K3 ist durch den Filter „S1“ ausgeblendet“",
+              f"K{n['K3']} ist durch den Filter „S1“ ausgeblendet" in meldung, repr(meldung))
+    finally:
+        _ohne_filter(app, f)
+
+
+def _treffer_regel(b, such):
+    """(sichtbar, soll) - die sichtbaren Zeilen und die, die nach G2 sichtbar
+    sein sollen: Treffer (ab Ebene 2, Name passt, keine Sammelzeile) und ihre
+    Eltern; Wurzel und Gruppen nie als Treffer."""
+    from PySide6 import QtCore
+
+    def ebene(it):
+        e, p = 0, it.parent()
+        while p is not None:
+            e, p = e + 1, p.parent()
+        return e
+    treffer = [i for i in _alle(b) if ebene(i) >= 2 and such in i.text(0).lower()
+               and not i.data(0, QtCore.Qt.UserRole + 5)]
+    soll = set()
+    for t in treffer:
+        p = t
+        while p is not None:
+            soll.add(id(p))
+            p = p.parent()
+    sicht = {id(i) for i in _alle(b) if _sichtbar_gefiltert(i)}
+    return sicht, soll, treffer
+
+
+def _sichtbar_gefiltert(it):
+    p = it
+    while p is not None:
+        if p.isHidden():
+            return False
+        p = p.parent()
+    return True
+
+
+def test_d5_d6_wurzel_und_gruppen():
+    w, app = _fenster()
+    m, kn = _stabmodell(w, app, "Neues Modell")
+    b, f = w.baum, _filterzeile(w)
+    if f is None:
+        check("D5: Filterzeile vorhanden", False)
+        return
+    try:
+        f.show()
+        f.setFocus()
+        for such in ("modell", "e", "s"):
+            _tippen(app, f, such)
+            sicht, soll, treffer = _treffer_regel(b, such)
+            zuviel = [i.text(0) for i in _alle(b) if id(i) in sicht - soll]
+            fehlt = [i.text(0) for i in _alle(b) if id(i) in soll - sicht]
+            check(f"D5: Modell „Neues Modell“, Filter „{such}“ - sichtbar sind nur Treffer (Einträge, Zweige) "
+                  "und ihre Eltern; Wurzel und Gruppen allein machen nichts sichtbar",
+                  not zuviel and not fehlt, f"{len(treffer)} Treffer, zu viel {zuviel[:5]}, fehlt {fehlt[:5]}")
+        _tippen(app, f, "")
+        m.name = "Drehlager V34"
+        w.refresh_all()
+        _ruhe(app)
+        _tippen(app, f, "lager")
+        lager = _zweig(b, "Lager", "lager")
+        kl = _zweig(b, "Knotenlager", "lager")
+        s235 = next((i for i in _alle(b) if _element(i)[0] == "werkstoff"), None)
+        check("D6: Modell „Drehlager V34“, Filter „lager“ - die Zweige „Lager“ und „Knotenlager“ sichtbar "
+              "und zugeklappt",
+              lager is not None and kl is not None and _sichtbar_gefiltert(lager) and _sichtbar_gefiltert(kl)
+              and not lager.isExpanded() and not kl.isExpanded(),
+              f"Lager sichtbar {lager is not None and _sichtbar_gefiltert(lager)} offen "
+              f"{lager.isExpanded() if lager is not None else None}, Knotenlager offen "
+              f"{kl.isExpanded() if kl is not None else None}")
+        check("D6: … der Werkstoff ausgeblendet",
+              s235 is not None and not _sichtbar_gefiltert(s235), str(s235.text(0) if s235 is not None else None))
+    finally:
+        _ohne_filter(app, f)
+
+
+def _grosses_modell(n, staebe=0):
+    from statik3d.model import Model, Member as Mb
+    m = Model()
+    m.name = "Gross"
+    m.nodes = np.random.default_rng(1).random((n, 3)) * 100.0
+    for i in range(staebe):
+        e = m.add_element("beam", [2 * i, 2 * i + 1], "S235", "IPE 200")
+        m.members[f"S{i + 1}"] = Mb(f"S{i + 1}", elements=[e])
+    return m
+
+
+def test_d7_kein_nachladen_wegen_zweignamen():
+    from statik3d.gui import design as dsg
+    m = _grosses_modell(21000)
+    b, app = _baum(800)
+    try:
+        b.fuellen(m)
+        app.processEvents()
+        kn = _zweig(b, "Knoten", "knoten")
+        n0 = kn.childCount()
+        b.filtern("k")
+        app.processEvents()
+        n1 = kn.childCount()
+        sammel = kn.child(n1 - 1)
+        check("D7: 21 000 Knoten, Filter „k“ - hinter „… N weitere“ wird nichts nachgeladen",
+              n0 == dsg.BAUM_MAX + 1 and n1 == n0, f"Zeilen vorher {n0}, nachher {n1}")
+        check("D7: … der Zweig „Knoten“ bleibt zu, die Sammelzeile nennt die Treffer",
+              not kn.isExpanded() and not kn.isHidden() and sammel.text(0) == "… 1000 weitere Treffer"
+              and not sammel.isHidden(), f"offen {kn.isExpanded()}, {sammel.text(0)!r}")
+    finally:
+        b.close()
+
+
+def test_d8_markierung_wie_ansicht():
+    w, app = _fenster()
+    m, n = _modell(w, app)
+    b = w.baum
+
+    def markiert():
+        return sorted(_element(i) for i in _alle(b) if i.isSelected())
+
+    def soll():
+        out = set()
+        for i in [int(x) for x in w.selection]:
+            z = _finden(b, "knoten", i)
+            out.add(_element(z) if z is not None else ("netzknoten", "Netzknoten"))
+        return sorted(out)
+    _ansicht_fokussieren(w, app)
+    klick(w, app, m.nodes[n["K1"]])
+    w.select_all()
+    _ruhe(app)
+    check(f"D8: Klick K1, dann Alles auswählen ({len(w.selection)} Knoten) - der Baum markiert genau die "
+          "Auswahl der Ansicht", len(w.selection) == m.nn and markiert() == soll(),
+          f"Baum {len(markiert())} Zeilen, soll {len(soll())}: {markiert()[:4]}")
+    w.invert_selection()
+    _ruhe(app)
+    check("D8: … Auswahl umkehren (leer) - der Baum markiert nichts und hat keine aktuelle Zeile",
+          not len(w.selection) and not markiert() and b.currentItem() is None,
+          f"{markiert()[:4]}, aktuell {_aktuell(b)}")
+    klick(w, app, m.nodes[n["K3"]])
+    w._tabelle_knoten(str(n["K4"]))
+    _ruhe(app)
+    check("D8: Klick K3, dann Klick in die Tabelle Knoten auf K4 - der Baum markiert K4",
+          sorted(int(i) for i in w.selection) == [n["K4"]] and markiert() == [("knoten", str(n["K4"]))]
+          and _aktuell(b) == ("knoten", str(n["K4"])), f"Ansicht {list(w.selection)}, Baum {markiert()}")
+    # mehr als 200: nichts
+    ziel = m.nn + 120
+    while m.nn < ziel:
+        m.add_node(80.0 + m.nn, 80.0, 0.0)
+    w.refresh_all()
+    _ruhe(app)
+    w.select_all()
+    _ruhe(app)
+    check(f"D8: Alles auswählen mit {m.nn} Knoten (mehr als 200) - der Baum markiert nichts",
+          len(w.selection) == m.nn > 200 and not markiert() and b.currentItem() is None,
+          f"{len(markiert())} markiert, aktuell {_aktuell(b)}")
+    w.clear_selection()
+    _ruhe(app)
+
+
+def test_d9_aufheben_dann_entf():
+    from PySide6 import QtCore, QtTest
+    w, app = _fenster()
+    m, n = _modell(w, app)
+    b = w.baum
+    fragen = _Fragen(w)
+    try:
+        frei = m.add_node(20.0, 0.0, 0.0)       # ein freier Knoten: ohne Filter loeschbar
+        w.refresh_all()
+        _ruhe(app)
+        _ansicht_fokussieren(w, app)
+        klick(w, app, m.nodes[frei])
+        check(f"D9: Vorbereitung - Klick auf K{frei} markiert ihn im Baum", _aktuell(b) == ("knoten", str(frei)),
+              str(_aktuell(b)))
+        w.clear_selection()                     # „Auswahl aufheben“ (Esc, Glasleiste)
+        _ruhe(app)
+        nn = m.nn
+        b.setFocus(QtCore.Qt.TabFocusReason)    # Tab in den Baum
+        _ruhe(app)
+        fragen.texte.clear()
+        QtTest.QTest.keyClick(b, QtCore.Qt.Key_Delete)
+        _ruhe(app)
+        check("D9: Klick auf den Knoten, Auswahl aufheben, Tab in den Baum, Entf - keine Rückfrage, nichts gelöscht",
+              not fragen.texte and m.nn == nn, f"{fragen.texte}, aktuell {_aktuell(b)}")
+    finally:
+        fragen.zurueck()
+
+
+def test_d10_reihenfolge_nachgeladen():
+    from statik3d.gui import design as dsg
+    from statik3d.model import Model
+    m = Model()
+    m.name = "Kurz"
+    m.nodes = np.array([[float(i), 0.0, 0.0] for i in range(12)])
+    alt = dsg.BAUM_MAX
+    dsg.BAUM_MAX = 3
+    b, app = _baum()
+    try:
+        b.fuellen(m)
+        app.processEvents()
+        b.eintrag_waehlen("knoten", "10")
+        b.eintrag_waehlen("knoten", "3")
+        kn = _zweig(b, "Knoten", "knoten")
+        texte = [kn.child(i).text(0) for i in range(kn.childCount())]
+        check("D10: K10 und dann K3 hinter der Sammelzeile nachgeladen - Reihenfolge K0, K1, K2, K3, K10",
+              texte == ["K0", "K1", "K2", "K3", "K10", "… 7 weitere"], str(texte))
+    finally:
+        dsg.BAUM_MAX = alt
+        b.close()
+
+
+def test_d11_rechtsklick():
+    from PySide6 import QtCore, QtGui, QtWidgets
+    w, app = _fenster()
+    m, kn = _stabmodell(w, app)
+    b, f = w.baum, _filterzeile(w)
+    # Gegenprobe des Abfangens: der Klassen-Patch greift nicht, der Tausch der Klasse schon
+    gerufen = []
+    alt_exec = QtWidgets.QMenu.exec
+    QtWidgets.QMenu.exec = lambda self, *a, **k: (gerufen.append("klasse"), None)[1]
+    try:
+        probe = QtWidgets.QMenu()
+        probe.addAction("x")
+        QtCore.QTimer.singleShot(200, probe.close)
+        probe.exec(QtCore.QPoint(10, 10))
+    finally:
+        QtWidgets.QMenu.exec = alt_exec
+    with _menues_abfangen() as gesehen:
+        probe = QtWidgets.QMenu()
+        probe.addAction("y")
+        QtCore.QTimer.singleShot(200, probe.close)
+        probe.exec(QtCore.QPoint(10, 10))
+    check("D11: Gegenprobe - der Klassen-Patch QMenu.exec greift nicht, der Tausch der Klasse greift",
+          not gerufen and gesehen == [["y"]], f"Klassen-Patch {gerufen}, Tausch {gesehen}")
+    if f is None:
+        check("D11: Filterzeile vorhanden", False)
+        return
+    try:
+        w.auswahlart_setzen("Stab")
+        w._ziel_waehlen(("stab", "S1"))
+        w._ziel_waehlen(("stab", "S2"), ersetzen=False)
+        w._ziel_waehlen(("stab", "S3"), ersetzen=False)
+        f.show()
+        f.setFocus()
+        _tippen(app, f, "S1")
+        s1 = _finden(b, "stab", "S1")
+        b.scrollToItem(s1)
+        _ruhe(app)
+        pos = b.visualItemRect(s1).center()
+        with _menues_abfangen() as gesehen:
+            ev = QtGui.QContextMenuEvent(QtGui.QContextMenuEvent.Mouse, pos, b.viewport().mapToGlobal(pos))
+            QtWidgets.QApplication.sendEvent(b.viewport(), ev)
+            _ruhe(app)
+        check("D11: Rechtsklick auf S1 im gefilterten Baum (S1 bis S3 gewählt) - das Menü wurde abgefangen, "
+              "Einträge wie in 8b, nichts für die ausgeblendeten S2 und S3",
+              gesehen == [["Neu: Stab …", "Bearbeiten …", "", "Löschen (Entf)"]], str(gesehen))
+    finally:
+        _ohne_filter(app, f)
+
+
+def test_d13_ruhezeit():
+    import time
+    from PySide6 import QtTest
+    from statik3d.gui import design as dsg
+    m = _grosses_modell(20000, staebe=5000)
+    b, app = _baum(800)
+    halter = None
+    try:
+        b.fuellen(m)
+        app.processEvents()
+        if not hasattr(dsg, "Baumfilter"):
+            check("D13: Filterzeile vorhanden", False)
+            return
+        f = dsg.Baumfilter(b)
+        f.show()
+        app.processEvents()
+        laeufe = []
+        alt = b._filter_anwenden
+
+        def zaehlend():
+            alt()
+            laeufe.append(time.perf_counter())
+        b._filter_anwenden = zaehlend
+        t0 = time.perf_counter()
+        QtTest.QTest.keyClicks(f, "S12")
+        sofort = len(laeufe)
+        while not laeufe and time.perf_counter() - t0 < 2.0:
+            app.processEvents()
+        QtTest.QTest.qWait(300)
+        app.processEvents()
+        dauer = (laeufe[0] - t0) if laeufe else None
+        sicht = sorted(k for a, k in _sichtbare_eintraege(b) if a == "stab")
+        check("D13: 20 000 Knoten, „S12“ rasch getippt - kein Filterlauf je Taste, genau einer nach der Ruhezeit",
+              sofort == 0 and len(laeufe) == 1, f"während des Tippens {sofort}, insgesamt {len(laeufe)}")
+        check("D13: … Gesamtzeit vom ersten Tastendruck bis zum gefilterten Baum unter 0,5 s",
+              dauer is not None and dauer < 0.5, f"{dauer:.3f} s" if dauer is not None else "kein Lauf")
+        check("D13: … und der Baum zeigt S12, S120 … S129, S1200 … S1299",
+              len(sicht) == 111 and "S12" in sicht, f"{len(sicht)} Stäbe")
+        halter = f
+    finally:
+        b.close()
+        if halter is not None:
+            halter.close()
+
+
+def test_s4_esc_zeigt_gewaehlte_zeile():
+    """G4, S4: nach Esc ist die gewaehlte Zeile sichtbar, auch wenn ihr Zweig vor
+    dem Filter zu war."""
+    from PySide6 import QtCore, QtTest
+    w, app = _fenster()
+    m, kn = _stabmodell(w, app)
+    b, f = w.baum, _filterzeile(w)
+    if f is None:
+        check("S4: Filterzeile vorhanden", False)
+        return
+    try:
+        _zweig(b, "Stäbe", "staebe").setExpanded(False)
+        w.activateWindow()
+        b.setFocus()
+        _ruhe(app)
+        QtTest.QTest.keyClick(b, QtCore.Qt.Key_F, QtCore.Qt.ControlModifier)
+        QtTest.QTest.keyClicks(f, "S8")              # „S3“ traefe zuerst den Werkstoff S355
+        _warten(app)
+        QtTest.QTest.keyClick(f, QtCore.Qt.Key_Down)
+        _ruhe(app)
+        f.setFocus()
+        QtTest.QTest.keyClick(f, QtCore.Qt.Key_Escape)
+        _ruhe(app)
+        s8 = _finden(b, "stab", "S8")
+        check("S4: S8 im Filter gewählt (Pfeil nach unten), Esc - S8 ist sichtbar, obwohl „Stäbe“ vor dem "
+              "Filter zu war", s8 is not None and s8.isSelected() and _sichtbar(b, s8), f"{_aktuell(b)}")
+    finally:
+        _ohne_filter(app, f)
+        w.maskenrand.schliessen()
+        _ruhe(app)
 
 
 def test_liste_und_handbuch():
@@ -796,6 +1333,11 @@ def test_liste_und_handbuch():
     check("Handbuch: Filterzeile mit Strg+F, Esc und Neuaufbau",
           "Filterzeile über dem Modellbaum" in t and "Strg+F im Modellbaum" in t
           and "überlebt" in t and "… N weitere" in t)
+    check("Handbuch: die Nachbesserung (Ruhezeit, Wurzel und Gruppen nie Treffer, nichts Ausgeblendetes, "
+          "Auswahlbefehle und Tabellen, Stand der ersten Fassung)",
+          "150 Millisekunden" in t and "nie selbst Treffer" in t and "K3 ist durch den Filter „S1“ ausgeblendet" in t
+          and "Die Markierung im Baum zeigt immer die Auswahl der Ansicht" in t
+          and "In der ersten Fassung vom 03.10.2026 filterte jeder Buchstabe sofort" in t)
 
 
 def main():
@@ -803,7 +1345,13 @@ def main():
     faulthandler.dump_traceback_later(900, exit=True)
     tests = [test_verzeichnis_statt_suche, test_gekuerzter_zweig_baum, test_ansicht_waehlt_baumzeile,
              test_ansicht_gekuerzter_zweig, test_keine_maske_beim_nachfuehren, test_filter,
-             test_filter_gekuerzt, test_strg_f, test_liste_und_handbuch]
+             test_filter_gekuerzt, test_strg_f,
+             # Nachbesserung nach der Gegenpruefung (D1 bis D13, S4)
+             test_d1_d2_tasten_im_gefilterten_baum, test_d3_entf_nur_sichtbares, test_d4_ausgeblendetes_objekt,
+             test_d5_d6_wurzel_und_gruppen, test_d7_kein_nachladen_wegen_zweignamen, test_d8_markierung_wie_ansicht,
+             test_d9_aufheben_dann_entf, test_d10_reihenfolge_nachgeladen, test_d11_rechtsklick, test_d13_ruhezeit,
+             test_s4_esc_zeigt_gewaehlte_zeile,
+             test_liste_und_handbuch]
     for t in tests:
         print(f"\n--- {t.__name__} ---")
         try:

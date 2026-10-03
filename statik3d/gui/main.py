@@ -318,6 +318,11 @@ def _maskenweg(bezug=None, ohne=None, danach: str = "öffnet sich die neue Maske
                     and isinstance(pruefen(), msk.Maske):
                 wunsch = (bezug(self, huelle, a, k) if bezug is not None
                           else (lambda: huelle(self, *a, **k)))
+                baum = getattr(self, "baum", None)
+                if isinstance(baum, dsg.Modellbaum) and baum.meldet():
+                    # ein Klick im Baum, der an der Leiste wartet, bleibt einer:
+                    # nach „Übernehmen“ fuehrt nichts die Baumzeile weg (8d, G3)
+                    wunsch = baum.als_klick(wunsch)
                 if self._maskenwechsel_halten(wunsch, danach) is True:
                     return None
             rand = getattr(self, "maskenrand", None)
@@ -2882,9 +2887,20 @@ class MainWindow(QtWidgets.QMainWindow):
         Gesucht wird im Suchverzeichnis des Baums; was hinter einer Sammelzeile
         „… N weitere“ steht, wird nachgeladen. Das ist kein Klick im Baum: keine
         Maske, keine Leiste „Übernehmen | Verwerfen“ (_maskenweg gilt fuer Klicks
-        des Anwenders im Baum)."""
+        des Anwenders im Baum).
+
+        Nachbesserung 8d (03.10.2026): Jede Aenderung der Auswahl fuehrt den
+        Baum nach - auch Alles auswaehlen, Auswahl umkehren, die Auswahl nach
+        Koordinaten oder Nummern (_set_selection) und ein Klick in die Tabellen
+        Knoten, Linien, Elemente, Flaechen und Volumen (G3). Die eine Ausnahme:
+        solange ein Klick im Baum laeuft (dsg.Modellbaum.meldet), bleibt die
+        Zeile des Klicks - ein Verformungsnachweis oder ein Anschluss waehlt
+        seine Knoten (_tabelle_verformung, _anschluss_gewaehlt), und deren
+        Zeilen verdraengten sonst die angeklickte. Blendet der Filter ein
+        gewaehltes Objekt aus, markiert der Baum es nicht, und die Statuszeile
+        sagt es (G1)."""
         baum = getattr(self, "baum", None)
-        if baum is None or not _lebt(baum):
+        if baum is None or not _lebt(baum) or baum.meldet():
             return
         m = self.model
         n = (len(self.selection) + len(self.sel_linien) + len(self.sel_staebe) + len(self.sel_flaechen)
@@ -2926,6 +2942,12 @@ class MainWindow(QtWidgets.QMainWindow):
         eigene = [z for z in je_art.get(getattr(self, "auswahlart", ""), []) if z]
         aktuell = eigene[-1] if eigene else (ziele[-1] if ziele else None)
         baum.auswahl_nachfuehren(ziele, aktuell)
+        if baum.ausgeblendet:
+            f = getattr(baum, "filterzeile", None)
+            such = (f.text() if f is not None else "") or baum._filter
+            namen = baum.ausgeblendet
+            wer = (f"{namen[0]} ist" if len(namen) == 1 else f"{namen[0]} und {len(namen) - 1} weitere sind")
+            self._hinweis_statuszeile(f"Hinweis: {wer} durch den Filter „{such}“ ausgeblendet")
 
     def _lastmaske_abgewaehlt(self) -> None:
         """Steht rechts noch die Maske einer Last, die nicht mehr gewaehlt ist
@@ -7720,7 +7742,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 baum.eintrag_waehlen(art, key)
         if k is not None:
             baum.zeile_waehlen(k)
-        return self._baum_geklickt(art, key)
+        # die Zeile ist gewaehlt wie mit einem Klick im Baum: sie bleibt (8d, G3)
+        with baum.klick_laeuft():
+            return self._baum_geklickt(art, key)
 
     def _baum_auswaehlen(self, art: str, name: str):
         """Was im Baum angeklickt wurde, im Viewport hervorheben."""
@@ -7777,6 +7801,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # die Knotenpunkte.
         self.leuchtet = self._elemente_zu(art, name)
         self.lbl_sel.setText(f"{len(knoten)} Knoten ausgewählt (Modellbaum)")
+        self._baum_nachfuehren()            # Tabelle Linien (8d, G3); im Baumklick still
         self.redraw()
 
     def _baum_objekt_waehlen(self, art: str, name: str):
@@ -7819,6 +7844,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._auswahl_vergessen()
             self.selection = np.array(list(dict.fromkeys(knoten)), dtype=int)
             self.lbl_sel.setText(f"{len(objekte)} {self.VERBINDUNGEN[einzeln][1]} gewählt (Modellbaum)")
+            self._baum_nachfuehren()        # aus einer Tabelle (8d, G3); im Baumklick still
             self._auswahl_register()        # dieser Zweig kehrt vor dem Abgleich am Ende zurueck
             return
         if art == "knoten":
@@ -7925,6 +7951,9 @@ class MainWindow(QtWidgets.QMainWindow):
             kn = [int(obj.node)] if hasattr(obj, "node") else [int(n) for n in (obj.nodes or [])]
             self.selection = np.array([n for n in dict.fromkeys(kn) if 0 <= n < m.nn], dtype=int)
             self.lbl_sel.setText(f"{self._lagername((kurz, int(name)))} ausgewählt (Modellbaum)")
+        # aus einer Tabelle (Flaechen, Volumen) fuehrt das den Baum nach; aus
+        # einem Klick im Baum nicht - dort bleibt die angeklickte Zeile (8d, G3)
+        self._baum_nachfuehren()
         self._auswahl_register()
         self.redraw()
 
@@ -17892,7 +17921,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self._fill(self.tbl_beul, zeilen)
 
     def _tabelle_verformung(self, wert):
-        """Zeile angeklickt: den Bezug in der Ansicht wählen."""
+        """Zeile angeklickt: den Bezug in der Ansicht wählen.
+
+        Kommt der Aufruf aus einem Klick im Baum (Eintrag eines
+        Verformungsnachweises), fuehrt _set_selection den Baum nicht nach: die
+        Zeile des Klicks bleibt, nicht die der gewaehlten Knoten. Das ist der
+        einzige erlaubte Unterschied zwischen Ansicht und Baum (Nachbesserung
+        8d, G3; dsg.Modellbaum.meldet)."""
         g = self.model.verformungsgrenzen.get(str(wert))
         if g is None:
             return
@@ -21535,6 +21570,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_sel.setText(f"{len(self.selection)} Knoten ausgewählt")
         self._auswahl_register()
         self._tabellen_markieren()
+        # der Baum zeigt dieselbe Auswahl (8d, G3) - ausser im Klick im Baum
+        self._baum_nachfuehren()
         self._neu_zeichnen()
 
     def do_select(self):

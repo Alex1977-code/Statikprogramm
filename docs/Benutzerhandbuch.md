@@ -513,39 +513,65 @@ Die Arbeitsfläche in drei Spalten:
   Sammelzeile zählt einen weniger; die Zeile bleibt bis zum nächsten Neuaufbau,
   und ist sie dann gewählt, wird sie wieder nachgeladen. Gesucht wird in einem
   Verzeichnis, das der Baum bei jedem Aufbau mitbaut, nicht mehr Zeile für
-  Zeile. Wer mehr als 200 Objekte auf einmal wählt, etwa mit einem
-  Auswahlfenster über viele Knoten, sieht im Baum keine Markierung. Die
-  Auswahlbefehle des Ribbons (*Alles auswählen*, *Auswahl umkehren*, die Auswahl
-  nach Koordinaten oder Nummern) und ein Klick in die Tabellen der Knoten,
-  Linien und Elemente ändern die Markierung im Baum nicht; eine Last, die in der
-  Lastentabelle angeklickt wird, markiert ihre Zeile wie in der Ansicht. Bis zum
-  03.10.2026 ließ ein Klick in der Ansicht den Baum stehen; nur *Im Baum zeigen*
-  im Rechtsklickmenü suchte den Eintrag, und zwar Zeile für Zeile durch den
-  ganzen Baum, legte die Tastatur in den Baum und fand keinen Eintrag hinter
-  „… N weitere“.
+  Zeile. Nachgeladene Zeilen stehen an ihrem Platz in der Nummernfolge, K3 also
+  vor K10, auch wenn K10 zuerst kam. Die Markierung im Baum zeigt immer die
+  Auswahl der Ansicht: Das gilt ebenso für die Auswahlbefehle des Ribbons
+  (*Alles auswählen*, *Auswahl umkehren*, die Auswahl nach Koordinaten oder
+  Nummern) und für einen Klick in die Tabellen der Knoten, Linien, Elemente,
+  Flächen, Volumen und Lasten. Wer mehr als 200 Objekte auf einmal wählt, etwa
+  mit *Alles auswählen* oder einem Auswahlfenster über viele Knoten, sieht im
+  Baum keine Markierung. Ist nichts gewählt, nach *Auswahl aufheben*, Esc oder
+  einem Klick ins Leere, hat der Baum auch keine aktuelle Zeile mehr; Entf im
+  Baum löscht dann nichts. Die eine Ausnahme ist ein Klick im Baum selbst: Wählt
+  der Eintrag eines Verformungsnachweises oder eines Anschlusses seine Knoten,
+  bleibt im Baum die angeklickte Zeile markiert und nicht die der Knoten. Bis
+  zum 03.10.2026 ließ ein Klick in der Ansicht den Baum stehen; nur *Im Baum
+  zeigen* im Rechtsklickmenü suchte den Eintrag, und zwar Zeile für Zeile durch
+  den ganzen Baum, legte die Tastatur in den Baum und fand keinen Eintrag hinter
+  „… N weitere“. In der ersten Fassung vom 03.10.2026 ließen die Auswahlbefehle
+  des Ribbons und die Tabellen den Baum noch stehen, und nach *Auswahl
+  aufheben* blieb die alte aktuelle Zeile, die Entf im Baum dann löschte.
 
   **Filterzeile über dem Modellbaum** (seit 03.10.2026). **Strg+F im
   Modellbaum** öffnet über dem Baum eine Filterzeile und setzt den Cursor
-  hinein; steht dort schon etwas, ist es markiert. Jede Eingabe filtert sofort:
-  Sichtbar bleiben die Zeilen, deren Name den Text enthält, gleich ob groß oder
-  klein geschrieben („k1“ findet K1, K10 und K100), mit allem, was unter ihnen
-  hängt, und die Zweige darüber, die dafür aufklappen. Ein Zweig ohne Treffer
-  verschwindet. Hinter einer Sammelzeile „… N weitere“ sucht der Filter mit und
-  lädt die Treffer als Zeilen nach, bis zu 500 je Liste; was darüber hinaus
-  passt, nennt die Sammelzeile („… 12 weitere Treffer“). Der Filter überlebt
+  hinein; steht dort schon etwas, ist es markiert. Gefiltert wird, sobald man
+  150 Millisekunden lang nicht weitertippt, nicht bei jedem Buchstaben; Leeren
+  und Esc wirken sofort. Treffer sind Einträge und Zweige, deren Name den Text
+  enthält, gleich ob groß oder klein geschrieben („k1“ findet K1, K10 und
+  K100). Die Zweige darüber bleiben sichtbar und klappen auf. Der Modellname
+  und die Gruppen der obersten Ebene (*Eigenschaften*, *Geometrie*, *Lager und
+  Verbindungen* und so fort) sind nie selbst Treffer; sie stehen nur da, wenn
+  unter ihnen etwas passt. Passt der Name eines Zweigs, etwa „Knoten“ oder
+  „Knotenlager“, bleibt der Zweig mit seiner Zahl sichtbar und zugeklappt;
+  aufgeklappt zeigt er nur die Einträge, die selbst passen. Ein Zweig ohne
+  Treffer verschwindet. Hinter einer Sammelzeile „… N weitere“ sucht der Filter
+  mit und lädt die Treffer als Zeilen nach, wenn es höchstens 500 sind; sind es
+  mehr, lädt er keinen nach, und die Sammelzeile nennt sie („… 1000 weitere
+  Treffer“), bis ein längerer Text sie eingrenzt. Der Baum wirkt nie auf etwas,
+  das der Filter ausblendet: Entf, die Eingabetaste und das Rechtsklickmenü
+  nehmen nur sichtbare Zeilen, und blendet der Filter die aktuelle Zeile aus,
+  wird die erste sichtbare gewählte Zeile aktuell oder gar keine. Wählt man in
+  der Ansicht ein Objekt, das der Filter ausblendet, markiert der Baum nichts,
+  und die Statuszeile sagt es („K3 ist durch den Filter „S1“ ausgeblendet“).
+  Der Filter überlebt
   jeden Neuaufbau des Baums, etwa nach „Übernehmen“ in einer Maske oder nach
   Rückgängig; ein anderes Modell (Neu, Öffnen, ein Beispiel) beginnt ohne Filter.
   **Esc** in der Filterzeile hebt den Filter auf, schließt die Zeile und gibt
   die Tastatur dem Baum; ein leeres Feld hebt den Filter ebenso auf, die Zeile
   bleibt dann offen. In beiden Fällen kommt der Aufklappzustand von vor dem
   Filter wieder, die nachgeladenen Treffer verschwinden (außer gewählten), und
-  der Baum rollt zum gewählten Eintrag, wenn er in einem offenen Zweig steht,
-  sonst dorthin, wo er vor dem Filter stand. Pfeil nach unten oder die
-  Eingabetaste in der Filterzeile geben die Tastatur dem Baum, und Pos1 und
-  Ende springen dort zum ersten und letzten sichtbaren Eintrag. Überall sonst
-  bleibt Strg+F die Befehlssuche, auch in der Ansicht und in den Feldern einer
-  Maske. Bis zum 03.10.2026 gab es keine Filterzeile, und Strg+F setzte immer
-  den Cursor in die Befehlssuche.
+  der gewählte Eintrag ist zu sehen, auch wenn sein Zweig vor dem Filter zu war;
+  ohne gewählten Eintrag rollt der Baum dorthin, wo er vor dem Filter stand.
+  Pfeil nach unten oder die Eingabetaste in der Filterzeile geben die Tastatur
+  dem Baum und wählen die erste sichtbare Trefferzeile, wie ein Pfeil im Baum
+  (rechts erscheint ihre Maske); Pos1 und Ende springen zum ersten und letzten
+  sichtbaren Eintrag. Überall sonst bleibt Strg+F die Befehlssuche, auch in der
+  Ansicht und in den Feldern einer Maske. Bis zum 03.10.2026 gab es keine
+  Filterzeile, und Strg+F setzte immer den Cursor in die Befehlssuche. In der
+  ersten Fassung vom 03.10.2026 filterte jeder Buchstabe sofort, ein passender
+  Modellname oder Gruppenname ließ alles sichtbar, ein passender Zweigname zeigte
+  alle seine Einträge, Entf und die Eingabetaste wirkten auf eine ausgeblendete
+  aktuelle Zeile, und nachgeladene Zeilen standen in der Folge des Ladens.
 
   **Schrift und Farbe im Baum** (seit 02.10.2026). Grau steht ein Zweig nur,
   wenn er **samt allem darunter** leer ist: Zähler 0 und kein Unterzweig mit
