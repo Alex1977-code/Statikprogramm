@@ -463,8 +463,13 @@ Die Arbeitsfläche in drei Spalten:
   **Löschen**: Rechtsklick → „Löschen“ oder den Eintrag anklicken und
   **Entf** drücken. Das Programm fragt nach. Ein Knoten, an dem noch etwas
   hängt, wird mit Grund abgewiesen; eine Fläche oder ein Volumen nimmt seine
-  Elemente mit, ein Stab mit Nachweis lässt seine Elemente stehen. Wie alles
-  ist auch das Löschen mit **Rückgängig** zurückzunehmen. Entf gilt dem Baum
+  Elemente mit, ein Stab mit Nachweis lässt seine Elemente stehen. Seine
+  Linienlasten gehen mit, und mit ihnen die Element- und Knotenlasten, die das
+  Programm daraus verteilt hat – das gilt für Baum, Rechtsklick und Entf in der
+  Ansicht gleich; bis zum 03.10.2026 blieben diese Lasten nach dem Löschen eines
+  Stabs oder einer Linie wirksam und standen nicht in der Lasttabelle (gemessen:
+  die Durchbiegung des Trägers blieb nach dem Löschen des Stabs dieselbe).
+  Wie alles ist auch das Löschen mit **Rückgängig** zurückzunehmen. Entf gilt dem Baum
   nur, solange der Baum die Tastatur hat; steht sie in der 3D-Ansicht, löscht
   Entf dort die Auswahl der Ansicht (Kapitel 11, „Entf und Einzeltasten in der
   Ansicht“).
@@ -8017,17 +8022,23 @@ stellt ihn wieder her, und Esc verwirft das angefangene Element. In der Ansicht
 löscht Entf die Auswahl, und die Einzeltasten K, S, L, B und F rufen ihren
 Befehl (siehe den nächsten Absatz). Diese Zeilen entstehen nicht aus den
 Befehlen, sondern stehen in `statik3d/gui/kuerzelliste.py`;
-`tests/test_ribbon_ordnung.py` drückt die Tasten wirklich und prüft, dass sie
-tun, was dort steht, ebenso, dass Esc und Strg+F im Fenster der Liste ihr
-gehören.
+`tests/test_ribbon_ordnung.py` drückt die Tasten des Modellbaums, der Masken und
+des Fensters der Liste wirklich und prüft, dass sie tun, was dort steht (ebenso,
+dass Esc und Strg+F im Fenster der Liste ihr gehören);
+`tests/test_tasten_fokus.py` tut dasselbe für Entf und die Einzeltasten in der
+Ansicht und für das Skizzenfenster.
 
 **Entf und Einzeltasten in der Ansicht (seit 03.10.2026).** Wenn die 3D-Ansicht
-die Tastatur hat, genügt eine einzelne Taste; ein Klick in die Ansicht legt die
-Tastatur dorthin. In einem Textfeld, in einer Tabelle, im Modellbaum und im Feld
-einer Maske wirkt keine dieser Tasten für die Ansicht: dort wird der Buchstabe
-getippt, und Entf gilt dem Feld, der Tabelle oder dem Baum. Mit Strg, Umschalt
-oder Alt gedrückt sind es keine Einzeltasten, sondern Kürzel wie bisher. Hält
-man eine Taste gedrückt, wirkt nur der erste Druck.
+die Tastatur hat, genügt eine einzelne Taste. Die Ansicht bekommt die Tastatur
+**nur durch einen Linksklick**; Mausrad, mittlere und rechte Taste legen sie nicht
+dorthin, und Tab erreicht die Ansicht nicht. (Bis zum 03.10.2026 taten Rad,
+mittlere und rechte Taste es auch: wer danach in einem Textfeld weitertippte,
+löste die Einzeltasten aus – „S355“ öffnete die Maske *Stab* und schloss die
+offene Maske samt ihren Eingaben.) In einem Textfeld, in einer Tabelle, im
+Modellbaum und im Feld einer Maske wirkt keine dieser Tasten für die Ansicht: dort
+wird der Buchstabe getippt, und Entf gilt dem Feld, der Tabelle oder dem Baum.
+Mit Strg, Umschalt oder Alt gedrückt sind es keine Einzeltasten, sondern Kürzel
+wie bisher. Hält man eine Taste gedrückt, wirkt nur der erste Druck.
 
 | Taste | Wirkung in der Ansicht |
 |---|---|
@@ -8038,17 +8049,57 @@ man eine Taste gedrückt, wirkt nur der erste Druck.
 | **B** | öffnet die Maske der Last, die zur Auswahl passt: *Linienlast* bei gewählten Stäben oder Linien, *Flächenlast* bei gewählten Flächen oder Volumen, sonst *Knotenlast* |
 | **F** | ruft *Struktur → Fläche aus Linien* auf: aus den gewählten Linien, mindestens drei, wird eine Fläche; ohne drei gewählte Linien sagt das Programm das |
 
-Die Hinweise an den Knöpfen dieser Befehle nennen die Taste. Entf fragt **einmal**
-und nennt dabei, was gelöscht wird, etwa „2 Stäbe und 3 Knoten wirklich
-löschen?“; mit *Ja* geht alles Gewählte in einem Zug weg, und ein einziges
-Strg+Z holt es zurück. Gelöscht wird, was die Auswahl nennt (der Reiter
-„Auswahl: …“ zählt dasselbe): Knoten, Linien, Stäbe mit Nachweis, Flächen,
-Volumen, Netzelemente, Lager und Lasten. Die Knoten eines gewählten Lagers
+Die Hinweise an den Knöpfen dieser Befehle nennen die Taste. Eine **offene Maske mit
+nicht übernommenen Änderungen** bleibt, wie sie ist: die Einzeltaste öffnet dann
+keine andere Maske, sondern die Statuszeile sagt, dass die Maske erst übernommen
+oder abgebrochen werden muss (bis zum 03.10.2026 ersetzte die Taste die Maske
+ohne Rückfrage, die Eingaben waren weg). **Während einer Rechnung** sind Entf und
+die Einzeltasten gesperrt, die Statuszeile sagt es: die Rechnung liest das
+Modell, und das Programm öffnet währenddessen kein modales Fenster (bis zum
+03.10.2026 öffnete F den Flächendialog und Entf löschte im Modell, auf dem
+gerade gerechnet wurde).
+
+Entf fragt **einmal** und nennt dabei, was gelöscht wird, etwa „2 Stäbe und 3
+Knoten wirklich löschen?“; mit *Ja* geht alles Gewählte in einem Zug weg, und ein
+einziges Strg+Z holt es zurück. Unter der Frage stehen, knapp, die Folgen: dass
+bei einem Stab mit Nachweis die Elemente stehen bleiben und seine Linienlasten
+mitgehen, dass eine Linie ihre Linienlasten mitnimmt, dass Flächen und Volumen
+ihre Elemente mitnehmen, dass mit einem Knoten sein Lager, seine Knotenlasten,
+Zwangsverformungen und Punktmassen gehen, dass **vorhandene Ergebnisse verworfen
+werden und Rückgängig sie nicht zurückholt**, und dass eine offene Maske mit nicht
+übernommenen Änderungen geschlossen wird. Gelöscht wird, was die Auswahl nennt
+(der Reiter „Auswahl: …“ zählt dasselbe): Knoten, Linien, Stäbe mit Nachweis,
+Flächen, Volumen, Netzelemente, Lager und Lasten. Die Knoten eines gewählten Lagers
 zählen nicht als gewählt, ein Lager an einem gewählten Knoten geht nur mit dem
-Knoten. Was sich nicht löschen lässt, bleibt stehen und wird mit Grund genannt,
-etwa ein Knoten, an dem noch ein Element hängt („erst diese löschen“); der Rest
-wird trotzdem gelöscht. Lässt sich nichts löschen, bleibt nichts zurück: kein
-Rückgängig-Schritt, keine Änderungsmarke, die Auswahl bleibt. Ist nichts
+Knoten.
+
+Objekte, die nur **leuchten**, weil ihre Lasten gezeigt werden, sind nicht gewählt
+und löscht Entf nicht mit: Der Klick auf „Flächenlasten“ (oder eine andere Lastart)
+unter einem Lastfall im Modellbaum und der Klick auf eine Zeile der Lasttabelle
+schreiben die belasteten Objekte in die Auswahl, damit sie in der Ansicht
+leuchten. Nach dem Klick auf eine Lastzeile löscht Entf nur diese Last, nach dem
+Klick auf die Lastart im Baum die Lasten dieser Art im Lastfall (mit der Frage der
+Maske, „Diese Lasten löschen“), nie die Flächen oder Stäbe, auf denen sie liegen.
+(Bis zum 03.10.2026 fragte Entf dort „2 Flächen wirklich löschen?“.) Wer ein
+leuchtendes Objekt selbst wählt, löscht es wie jedes gewählte. Der Vermerk endet mit
+dem nächsten Klick in der Ansicht, mit einem Auswahlfenster, mit *Alles
+deselektieren*, mit jeder anderen Änderung der Auswahl und mit jeder Änderung am
+Modell.
+
+Was sich nicht löschen lässt, bleibt stehen und wird mit Grund genannt, etwa ein
+Knoten, an dem noch ein Element hängt („erst diese löschen“); der Rest wird
+trotzdem gelöscht. Das ist ein anderer Weg als der Befehl *Geometrie → Knoten
+löschen*: der nimmt die gewählten Knoten **mitsamt** ihren Elementen mit (nur
+Knoten, die eine Linie braucht, bleiben), Entf in der Ansicht weist benutzte Knoten
+ab, wie die Tabelle „Knoten“. Sind nur Knoten gewählt und lässt sich keiner löschen
+(Strg+A, Entf an einem vernetzten Modell), fragt das Programm gar nicht erst,
+sondern nennt in der Statuszeile und im Protokoll den Grund. Lässt sich sonst
+nichts löschen, bleibt nichts zurück: kein Rückgängig-Schritt, keine
+Änderungsmarke, und auch der Wiederholen-Stapel bleibt (bis zum 03.10.2026 leerte
+schon der Versuch ihn). Viele Knoten löscht das Programm in einem Zug: fünftausend
+freie Knoten mit Lager und Last brauchen 0,4 s (gemessen, mit Neuzeichnen). Der
+frühere Weg über je einen Knoten brauchte für 2000 solche Knoten 1,3 s und für die
+4001 Knoten einer Kette mit 4000 Elementen, die er alle abwies, 3,75 s. Ist nichts
 gewählt, meldet die Statuszeile das ohne Rückfrage. Die Antwort „Nein“ lässt alles
 unverändert.
 

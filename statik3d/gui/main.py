@@ -402,6 +402,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.plotter = QtInteractor(central)
         self.plotter.set_background("white")
         lay.addWidget(self.plotter.interactor, 1)
+        # Die Ansicht bekommt die Tastatur nur ueber einen Linksklick
+        # (:meth:`eventFilter`). pyvistaqt stellt WheelFocus ein: auch das Mausrad,
+        # die mittlere und die rechte Taste legten die Tastatur in die Ansicht -
+        # wer dann in einem Feld weitertippte („S355“), loeste die Einzeltasten aus
+        # (S: Maske Stab, die offene Maske war weg). Tab erreicht sie ebenfalls nicht
+        # mehr; von „aus“ in der Ergebnissteuerung sprang es bisher in die Ansicht
+        # und blieb dort.
+        self.plotter.interactor.setFocusPolicy(QtCore.Qt.NoFocus)
         self.setCentralWidget(central)
         # Die nicht-modalen Masken schweben ueber der Ansicht (Vorgabe 3.8)
         self.maskenrand = msk.Maskenrand(central)
@@ -468,6 +476,8 @@ class MainWindow(QtWidgets.QMainWindow):
                         self._letzter_klick = QtCore.QPoint(int(pos.x()), int(pos.y()))
                         self._links_unten = True
                         self._links_doppel = doppel
+                        # nur der Linksklick legt die Tastatur in die Ansicht
+                        self.plotter.interactor.setFocus(QtCore.Qt.MouseFocusReason)
                         return True         # links dreht nicht mehr
                     if ereignis.button() == QtCore.Qt.MiddleButton:
                         # gedrueckte mittlere Taste dreht (15.09.2026); VTK
@@ -670,6 +680,20 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             return False
         if ereignis.isAutoRepeat():
+            return True
+        if self._rechnung_laeuft() or getattr(self, "_rechnet_gerade", False):
+            # die Rechnung liest das Modell, das Entf und die Befehle aendern wuerden,
+            # und waehrend ihr oeffnet das Programm nichts Modales (_modal_gesperrt)
+            self.statusBar().showMessage("Rechnung läuft: Entf und die Tasten K, S, L, B, F sind "
+                                         "gesperrt, bis sie fertig ist (Esc hält sie an)", 8000)
+            return True
+        maske = self.maskenrand.maske if self.maskenrand.offen() else None
+        if name != "Entf" and maske is not None and _maskenaenderung(maske):
+            # eine Einzeltaste ersetzt die offene Maske - mit nicht uebernommenen
+            # Eingaben darin ginge sie ohne Rueckfrage verloren
+            self.statusBar().showMessage(
+                f"Die offene Maske „{maske.titel}“ hat nicht übernommene Änderungen - erst "
+                f"übernehmen oder abbrechen, dann Taste {name}", 8000)
             return True
         try:
             befehl()
@@ -1399,10 +1423,10 @@ class MainWindow(QtWidgets.QMainWindow):
         m = self.model
         gruende = []
         if art == "knoten":
-            for i in sorted(int(x) for x in namen)[::-1]:
-                g = m.knoten_loeschen(i)
-                if g:
-                    gruende.append(f"K{i}: {g}")
+            # alle in einem Zug: je Knoten ein Durchgang durch alle Elemente und alle
+            # Verweise war quadratisch (Strg+A, Entf an einem vernetzten Modell)
+            gesperrt = m.knoten_loeschen_viele(namen)
+            gruende += [f"K{i}: {g}" for i, g in sorted(gesperrt.items(), reverse=True)]
         elif art == "element":
             m.elemente_loeschen(sorted(int(x) for x in namen))
         elif art in ("lager", "linienlager", "flaechenlager"):
@@ -1431,10 +1455,19 @@ class MainWindow(QtWidgets.QMainWindow):
                  "volumen": m.koerper_loeschen}.get(art)
             if f is None:
                 return None
+            # Staebe und Linien nehmen ihre Linienlasten samt den daraus verteilten
+            # Element- und Knotenlasten mit; bei vielen verteilt das Modell nur einmal
+            # am Ende neu, und nur, wenn es solche Lasten gab
+            mit_lasten = art in ("stab", "linie")
+            ziele = {str(n) for n in namen}
+            hatte = mit_lasten and any(ll.art == art and str(ll.ziel) in ziele
+                                       for lc in m.load_cases.values() for ll in lc.linienlasten)
             for n in namen:
-                g = f(n)
+                g = f(n, verteilen=False) if mit_lasten else f(n)
                 if g:
                     gruende.append(f"{n}: {g}")
+            if hatte:
+                m.lasten_verteilen()
         return gruende
 
     def auswahl_loeschen(self, art: str, namen: list):
@@ -1472,6 +1505,35 @@ class MainWindow(QtWidgets.QMainWindow):
                   ("flaeche", "Fläche", "Flächen"), ("stab", "Stab", "Stäbe"),
                   ("linie", "Linie", "Linien"), ("knoten", "Knoten", "Knoten"))
 
+    def _auswahl_signatur(self) -> tuple:
+        """Der Stand der Auswahl aller Arten - zum Vergleichen."""
+        return (tuple(int(i) for i in self.selection), tuple(self.sel_linien), tuple(self.sel_staebe),
+                tuple(self.sel_flaechen), tuple(self.sel_koerper),
+                tuple(int(i) for i in self.sel_elemente), tuple(tuple(x) for x in self.sel_lager),
+                tuple(tuple(x) for x in self.sel_lasten))
+
+    def _hervorhebung_merken(self, was: dict) -> None:
+        """Vermerken, dass die Auswahl **nur zum Leuchten** gesetzt wurde: der Klick auf
+        „Flächenlasten“ im Modellbaum und auf eine Zeile der Lasttabelle schreiben die
+        belasteten Objekte in die Auswahl, damit sie in der Ansicht leuchten - gewaehlt hat
+        sie niemand. Entf in der Ansicht nimmt sie darum nicht mit (``_loeschgruppen``).
+
+        Der Vermerk gilt, solange Auswahl und Modell so bleiben, wie sie jetzt sind; ein
+        Klick in die Ansicht, ein Auswahlfenster, Alles deselektieren oder eine neue
+        Knotenauswahl (``_hervorhebung = None``) und jede andere Aenderung der Auswahl
+        oder des Modells beenden ihn."""
+        self._hervorhebung = (id(self.model), self._stand, self._auswahl_signatur(), dict(was))
+
+    def _hervorhebung_gilt(self):
+        """Die Angaben zu einer Auswahl, die nur leuchtet - sonst ``None``."""
+        h = getattr(self, "_hervorhebung", None)
+        if h is None or h[0] != id(self.model) or h[1] != self._stand:
+            return None
+        signatur = self._auswahl_signatur()
+        if h[2] != signatur or not any(signatur):
+            return None
+        return h[3]
+
     def _loeschgruppen(self) -> list:
         """Alles, was in der Ansicht gewaehlt ist: [(Art, Namen)] in der
         Reihenfolge von :attr:`ENTF_ARTEN`; Arten ohne Auswahl fehlen.
@@ -1485,6 +1547,10 @@ class MainWindow(QtWidgets.QMainWindow):
         sie einzeln an)."""
         gruppen = []
         lasten = list(dict.fromkeys(tuple(x) for x in self.sel_lasten))
+        if self._hervorhebung_gilt() is not None:
+            # Die Objekte leuchten nur, weil ihre Lasten gezeigt werden: gewaehlt sind nur
+            # die Lasten selbst (Zeile der Lasttabelle), sonst nichts
+            return [("last", lasten)] if lasten else []
         if lasten:
             gruppen.append(("last", lasten))
         for art in ("lager", "linienlager", "flaechenlager"):
@@ -1512,6 +1578,28 @@ class MainWindow(QtWidgets.QMainWindow):
                  for art, namen in gruppen]
         return teile[0] if len(teile) == 1 else ", ".join(teile[:-1]) + " und " + teile[-1]
 
+    def _loesch_folgen(self, gruppen) -> str:
+        """Was Entf ausser den genannten Objekten noch mitnimmt oder verwirft - knapp,
+        als Zusatz der Rueckfrage (leer, wenn es nichts zu sagen gibt)."""
+        arten = {art for art, _namen in gruppen}
+        z = []
+        if "stab" in arten:
+            z.append("Stäbe mit Nachweis: die Elemente bleiben stehen, ihre Linienlasten gehen mit.")
+        if "linie" in arten:
+            z.append("Mit einer Linie gehen ihre Linienlasten.")
+        if arten & {"flaeche", "volumen"}:
+            z.append("Flächen und Volumen nehmen ihre Elemente mit.")
+        if "knoten" in arten:
+            z.append("Mit einem Knoten gehen sein Lager, seine Knotenlasten, Zwangsverformungen "
+                     "und Punktmassen.")
+        if self.results is not None or self.analysis is not None:
+            z.append("Vorhandene Ergebnisse werden verworfen; Rückgängig holt sie nicht zurück.")
+        maske = self.maskenrand.maske if self.maskenrand.offen() else None
+        if maske is not None and _maskenaenderung(maske):
+            z.append(f"Die offene Maske „{maske.titel}“ hat nicht übernommene Änderungen und wird "
+                     "geschlossen.")
+        return ("\n\n" + "\n".join(z)) if z else ""
+
     def auswahl_alles_loeschen(self) -> None:
         """Die Taste Entf in der Ansicht (03.10.2026): alles Gewaehlte loeschen -
         **eine** Rueckfrage, die nennt, was geloescht wird („2 Stäbe und 3
@@ -1523,27 +1611,51 @@ class MainWindow(QtWidgets.QMainWindow):
         und wird mit Grund genannt - der Rest geht trotzdem. Ging gar nichts,
         bleibt weder ein Schritt noch eine Aenderungsmarke zurueck, und die
         Auswahl bleibt."""
+        h = self._hervorhebung_gilt()
+        if h is not None and h.get("lastart") and not self.sel_lasten:
+            # Klick auf „Flächenlasten“ im Baum: die Objekte leuchten nur, gewaehlt sind die
+            # Lasten dieser Art - Entf gilt ihnen, mit der Rueckfrage der Maske
+            # („Diese Lasten löschen“)
+            return self._lastart_loeschen(*h["lastart"])
         gruppen = self._loeschgruppen()
         if not gruppen:
-            self.statusBar().showMessage("Nichts gewählt - es gibt nichts zu löschen", 4000)
+            leuchtet = h is not None
+            self.statusBar().showMessage(
+                "Nichts gewählt - die Objekte leuchten nur, weil ihre Lasten gezeigt werden"
+                if leuchtet else "Nichts gewählt - es gibt nichts zu löschen", 5000)
             return
+        if len(gruppen) == 1 and gruppen[0][0] == "knoten":
+            # nur Knoten, und keiner laesst sich loeschen: gar nicht erst fragen
+            gesperrt = self.model.knoten_gesperrt(gruppen[0][1])
+            if len(gesperrt) == len(gruppen[0][1]):
+                erste = [f"K{i}: {g}" for i, g in sorted(gesperrt.items())[:4]]
+                self.info("Nichts gelöscht: " + "; ".join(erste) + (" …" if len(gesperrt) > 4 else ""))
+                return
         text = self._loesch_text(gruppen)
-        if not self._bestaetigen(f"{text} wirklich löschen?"):
+        if not self._bestaetigen(f"{text} wirklich löschen?{self._loesch_folgen(gruppen)}"):
             return
-        self.merken(f"{text} gelöscht")
+        # Gesichert wird jetzt, abgelegt erst, wenn etwas weg ist (_sicherung_ablegen)
+        kopie, stand = self.model.copy(), self._stand
         gruende, weg = [], []
-        for art, namen in gruppen:
-            g = self._art_loeschen(art, namen)
-            if g is None:                   # kein Loeschweg - bei den Arten oben nicht zu erwarten
-                g = [f"{art}: kein Löschweg"]
-            gruende += g
-            if len(namen) - len(g) > 0:
-                weg.append((art, namen[:len(namen) - len(g)]))
+        try:
+            for art, namen in gruppen:
+                g = self._art_loeschen(art, namen)
+                if g is None:               # kein Loeschweg - bei den Arten oben nicht zu erwarten
+                    g = [f"{art}: kein Löschweg"]
+                gruende += g
+                if len(namen) - len(g) > 0:
+                    weg.append((art, namen[:len(namen) - len(g)]))
+        except Exception:
+            # mitten im Loeschen: das Modell kann halb geaendert sein - Rueckgaengig stellt es her
+            self._sicherung_ablegen(f"{text} gelöscht", kopie, stand)
+            raise
         grund_text = "; ".join(gruende[:4]) + (" …" if len(gruende) > 4 else "")
         if not weg:
-            self._merken_zuruecknehmen()
+            # nichts ist weg, also hat sich nichts geaendert: kein Schritt, keine Aenderungsmarke,
+            # der Wiederholen-Stapel bleibt
             self.info(f"Nichts gelöscht: {grund_text}")
             return
+        self._sicherung_ablegen(f"{self._loesch_text(weg)} gelöscht", kopie, stand)
         self.analysis = None
         self.results = None
         self.selection = np.array([], dtype=int)
@@ -2319,6 +2431,7 @@ class MainWindow(QtWidgets.QMainWindow):
         a, b = self._qt_nach_vtk(p1), self._qt_nach_vtk(p2)
         x1, x2 = sorted((a[0], b[0]))
         y1, y2 = sorted((a[1], b[1]))
+        self._hervorhebung = None
         n = self._fenster_auswaehlen((x1, y1, x2, y2), kreuzend)
         self.info(f"Fensterauswahl ({'auch angeschnittene' if kreuzend else 'nur ganz im Fenster'}): "
                   f"{n} {self.auswahlart}")
@@ -2843,6 +2956,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._klick_umschalt = False
 
     def _picked(self, point, *args):
+        self._hervorhebung = None           # ein Klick in der Ansicht waehlt wirklich
         # Ein laufendes Auswahlfenster: der zweite Linksklick schliesst es ab
         # (wie der Rechtsklick); ein Klick auf der ersten Ecke verwirft es und
         # waehlt normal weiter. So schluckt ein versehentlicher Klick ins
@@ -7384,6 +7498,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sel_linien = [x for x in linien if x in (getattr(m, "lines", None) or {})]
         self.sel_staebe = [s for s in staebe if s in (getattr(m, "members", None) or {})]
         self.lbl_sel.setText(f"{titel} des Lastfalls {fall}: {len(lasten)} (Modellbaum)")
+        # die Objekte leuchten nur - gewaehlt hat sie niemand (Entf: siehe _loeschgruppen)
+        self._hervorhebung_merken({"lastart": (fall, art)})
 
     def _lastart_loeschen(self, fall: str, art: str):
         """Alle Lasten einer Art aus dem Lastfall nehmen - mit Rueckfrage."""
@@ -11526,6 +11642,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._set_selection([int(n) for n in m.elements[int(obj.elem)].nodes])
         # … und rechts die Maske der Last, wie beim Klick in der Ansicht
         self._last_waehlen(lc.name, liste, k)
+        # das Ziel der Last leuchtet nur, gewaehlt ist die Last (Entf: _loeschgruppen)
+        self._hervorhebung_merken({"last": True})
 
     def last_loeschen(self):
         nr = self._zeilenzahl(self.tbl_last)
@@ -16032,7 +16150,19 @@ class MainWindow(QtWidgets.QMainWindow):
             self._undo_init()
         if beschriftung:
             was = _Beschriftungsschritt(was)
-        self._undo.append((was, self.model.copy(), self._stand))
+        self._sicherung_ablegen(was, self.model.copy(), self._stand)
+
+    def _sicherung_ablegen(self, was, kopie, stand):
+        """Eine Sicherung auf den Rueckgaengig-Stapel legen, die vor der
+        Aenderung gemacht wurde (``kopie`` des Modells, ``stand`` davor).
+
+        :meth:`merken` kopiert und legt in einem; wer erst nach der Aenderung
+        weiss, ob es eine gab (Entf in der Ansicht: ging ueberhaupt etwas weg?),
+        kopiert vorher und legt danach ab - sonst leerte schon der Versuch den
+        Wiederholen-Stapel und verdraengte bei grossen Modellen alte Schritte."""
+        if not hasattr(self, "_undo"):
+            self._undo_init()
+        self._undo.append((was, kopie, stand))
         del self._undo[:-self.SCHRITTE]
         # Und nach Elementen: 50 Sicherungen eines Modells mit 2 Mio.
         # Elementen waeren rund 70 GB (669 Byte je Element, gemessen). Es
@@ -18057,6 +18187,7 @@ class MainWindow(QtWidgets.QMainWindow):
     # ---- Befehle des Ribbons -----------------------------------------
     def clear_selection(self):
         """Auswahl aufheben - Knoten wie Objekte."""
+        self._hervorhebung = None
         for liste in (self.sel_linien, self.sel_flaechen, self.sel_koerper,
                       self.sel_staebe, self.sel_elemente, self.sel_lager, self.sel_lasten):
             liste.clear()
@@ -18216,6 +18347,7 @@ class MainWindow(QtWidgets.QMainWindow):
         return self.sel[i].si(None)          # in m, leer = offen
 
     def _set_selection(self, sel):
+        self._hervorhebung = None           # eine Auswahl ist wieder eine echte Wahl
         self.selection = np.asarray(sel, dtype=int)
         self.lbl_sel.setText(f"{len(self.selection)} Knoten ausgewählt")
         self._auswahl_register()
@@ -22546,6 +22678,7 @@ class MainWindow(QtWidgets.QMainWindow):
         (das Register zieht beim nächsten redraw nach). Ein Klick im Baum
         ersetzt die Auswahl ganz: bis 03.10.2026 blieben dabei gewählte
         Netzelemente, Lager und Lasten stehen, und „Zuweisen“ traf sie mit."""
+        self._hervorhebung = None           # was folgt, ist eine echte Wahl
         self.selection = np.array([], dtype=int)
         for schluessel, _ein, _mehr in self.AUSWAHL_LISTEN:
             setattr(self, "sel_" + schluessel, [])
@@ -23322,6 +23455,7 @@ class MainWindow(QtWidgets.QMainWindow):
         mehr gibt, und eine neue Maske uebernaehme sie stillschweigend."""
         # sel_lager fehlte bis 03.10.2026: gewaehlte Lager ueberlebten Neu und
         # standen als „Auswahl: 1 Lager“ ueber dem neuen Modell
+        self._hervorhebung = None
         for name in ("sel_linien", "sel_flaechen", "sel_koerper", "sel_staebe", "sel_elemente",
                      "sel_lager", "sel_lasten"):
             if isinstance(getattr(self, name, None), list):

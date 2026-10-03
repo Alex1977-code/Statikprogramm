@@ -74,6 +74,7 @@ def _halle(w, app):
     w._auswahl_leeren()
     w.selection = np.array([], dtype=int)
     w._undo.clear()
+    w._redo.clear()
     return w.model.nn
 
 
@@ -587,6 +588,427 @@ def test_liste_und_code_stimmen_ueberein():
           str(sorted(skizze)))
 
 
+# ---------------------------------------------------------------------------
+# Nachzug 03.10.2026: Gegenpruefung der Taste Entf
+# ---------------------------------------------------------------------------
+def _linienlast_auf_riegel(w, app):
+    """Die Halle mit einer Linienlast auf dem Riegel (Lastfall LF1): der Riegel
+    ist das belastete Objekt, das bei Klick auf „Linienlasten“ leuchtet."""
+    n0 = _halle(w, app)
+    w.model.add_linienlast("Riegel", [0.0, 0.0, -1e3], art="stab", case="LF1")
+    w.model.lasten_verteilen()
+    w.refresh_all()
+    app.processEvents()
+    return n0
+
+
+def test_entf_nimmt_nur_hervorgehobenes_nicht_mit():
+    """Der Klick auf „Linienlasten“ im Baum und auf eine Zeile der Lasttabelle
+    schreibt die belasteten Objekte in die Auswahl, damit sie leuchten. Entf löschte
+    sie mit („1 Stab wirklich löschen?“ nach dem Klick auf die Lasten)."""
+    from PySide6 import QtCore, QtTest
+    K = QtCore.Qt
+    w, app = _fenster()
+    # Weg 1: Klick auf die Lastart im Baum
+    _linienlast_auf_riegel(w, app)
+    ia = w.plotter.interactor
+    fragen = _fragen(w, True)
+    try:
+        w._lastart_geklickt("LF1|linie")
+        app.processEvents()
+        check("Vorbereitung (Baum): der Riegel leuchtet, ohne dass ihn jemand gewählt hat",
+              w.sel_staebe == ["Riegel"], str(w.sel_staebe))
+        _ansicht(w, app)
+        QtTest.QTest.keyClick(ia, K.Key_Delete)
+        app.processEvents()
+        check("Entf nach dem Klick auf „Linienlasten“: der Stab bleibt, gefragt wird nach den Lasten",
+              "Riegel" in w.model.members and len(fragen) == 1 and "Linienlast" in fragen[0]
+              and "Stab" not in fragen[0], f"{sorted(w.model.members)}, {fragen}")
+        check("… und die Linienlast ist weg (die Frage galt ihr)",
+              not w.model.load_cases["LF1"].linienlasten, str(len(w.model.load_cases["LF1"].linienlasten)))
+        # Weg 2: eine Zeile der Lasttabelle
+        w.undo()
+        app.processEvents()
+        fragen.clear()
+        w.cb_lastfilter.setCurrentText("LF1")
+        w._lasten_fuellen()
+        nr = next(i for i in range(200) if w._lastzeiger(i)[1] == "linienlasten")
+        w._tabelle_last(nr)
+        app.processEvents()
+        check("Vorbereitung (Tabelle): Riegel leuchtet, die Last ist gewählt",
+              w.sel_staebe == ["Riegel"] and len(w.sel_lasten) == 1, f"{w.sel_staebe}, {w.sel_lasten}")
+        _ansicht(w, app)
+        QtTest.QTest.keyClick(ia, K.Key_Delete)
+        app.processEvents()
+        check("Entf nach dem Klick auf eine Lastzeile: nur die Last wird gelöscht, der Stab bleibt",
+              len(fragen) == 1 and fragen[0].startswith("1 Last wirklich") and "Stab" not in fragen[0]
+              and "Riegel" in w.model.members and not w.model.load_cases["LF1"].linienlasten,
+              f"{fragen}, {sorted(w.model.members)}")
+        # Gegenprobe: wer den Stab selbst wählt, löscht ihn
+        w.undo()
+        app.processEvents()
+        fragen.clear()
+        w._lastart_geklickt("LF1|linie")
+        w.clear_selection()
+        _waehlen(w, staebe=["Riegel"])
+        _ansicht(w, app)
+        QtTest.QTest.keyClick(ia, K.Key_Delete)
+        app.processEvents()
+        check("Gegenprobe: nach einer echten Wahl (Alles deselektieren, dann Stab gewählt) löscht Entf den Stab",
+              len(fragen) == 1 and fragen[0].startswith("1 Stab wirklich") and "Riegel" not in w.model.members,
+              f"{fragen}, {sorted(w.model.members)}")
+        # Gegenprobe: eine Änderung am Modell beendet den Vermerk
+        w.undo()
+        app.processEvents()
+        fragen.clear()
+        w._lastart_geklickt("LF1|linie")
+        w._aenderung()
+        _ansicht(w, app)
+        QtTest.QTest.keyClick(ia, K.Key_Delete)
+        app.processEvents()
+        check("Gegenprobe: nach einer Änderung des Modells gilt die Auswahl wieder als gewählt",
+              len(fragen) == 1 and fragen[0].startswith("1 Stab wirklich"), str(fragen))
+    finally:
+        _ohne_fragen(w)
+        w._auswahl_leeren()
+
+
+def test_ansicht_nimmt_den_fokus_nur_per_linksklick():
+    """pyvistaqt stellt WheelFocus ein: auch Mausrad, mittlere und rechte Taste legten die
+    Tastatur in die Ansicht. Wer dann in einem Feld weitertippte („S355“), löste die
+    Einzeltasten aus."""
+    from PySide6 import QtCore, QtTest, QtWidgets
+    K = QtCore.Qt
+    w, app = _fenster()
+    _halle(w, app)
+    ia = w.plotter.interactor
+    check("Die Ansicht nimmt keinen Fokus an (kein Rad, kein Tab)", ia.focusPolicy() == K.NoFocus,
+          str(ia.focusPolicy()))
+
+    def zum_feld():
+        w.ribbon.suche.clear()
+        w.ribbon.suche.setFocus()
+        app.processEvents()
+        return QtWidgets.QApplication.focusWidget() is w.ribbon.suche
+
+    zum_feld()
+    QtTest.QTest.mousePress(ia, K.MiddleButton, K.NoModifier, QtCore.QPoint(10, 10))
+    QtTest.QTest.mouseRelease(ia, K.MiddleButton, K.NoModifier, QtCore.QPoint(60, 60))
+    app.processEvents()
+    check("Mittlere Taste (Drehen) in der Ansicht: der Fokus bleibt im Textfeld",
+          QtWidgets.QApplication.focusWidget() is w.ribbon.suche, str(QtWidgets.QApplication.focusWidget()))
+    QtTest.QTest.mousePress(ia, K.RightButton, K.NoModifier, QtCore.QPoint(10, 10))
+    QtTest.QTest.mouseRelease(ia, K.RightButton, K.NoModifier, QtCore.QPoint(60, 60))   # gezogen: kein Menü
+    app.processEvents()
+    check("Rechte Taste (Schieben) in der Ansicht: der Fokus bleibt im Textfeld",
+          QtWidgets.QApplication.focusWidget() is w.ribbon.suche, str(QtWidgets.QApplication.focusWidget()))
+    QtTest.QTest.keyClicks(QtWidgets.QApplication.focusWidget(), "S355")
+    app.processEvents()
+    check("Danach getippt: „S355“ steht im Feld, keine Maske hat sich geöffnet",
+          w.ribbon.suche.text().lower() == "s355" and _maske(w) == "",
+          f"{w.ribbon.suche.text()!r}, {_maske(w)!r}")
+    w.ribbon._vervollstaendigung.popup().hide()
+    w.ribbon.suche.clear()
+    w.ribbon.suche.clearFocus()
+    w.activateWindow()
+    app.processEvents()
+    zum_feld()
+    QtTest.QTest.mouseClick(ia, K.LeftButton, K.NoModifier, QtCore.QPoint(5, 5))
+    app.processEvents()
+    check("Der Linksklick legt die Tastatur in die Ansicht",
+          QtWidgets.QApplication.focusWidget() is ia, str(QtWidgets.QApplication.focusWidget()))
+    QtTest.QTest.keyClick(ia, K.Key_K)
+    app.processEvents()
+    check("… und die Einzeltaste wirkt danach", _maske(w) == "Knoten", repr(_maske(w)))
+    w.maskenrand.schliessen()
+
+
+def test_einzeltaste_ersetzt_keine_geaenderte_maske():
+    from PySide6 import QtCore, QtTest
+    K = QtCore.Qt
+    w, app = _fenster()
+    _halle(w, app)
+    ia = _ansicht(w, app)
+    w.maske_knoten()
+    app.processEvents()
+    mk = w.maskenrand.maske
+    feld = next(iter(mk._felder))
+    _ansicht(w, app)
+    QtTest.QTest.keyClick(ia, K.Key_S)
+    app.processEvents()
+    check("Unveränderte Maske: die Einzeltaste ersetzt sie (S: Stab)", _maske(w) == "Stab", repr(_maske(w)))
+    w.maske_knoten()
+    app.processEvents()
+    mk = w.maskenrand.maske
+    mk.setzen(feld, 12.5)
+    app.processEvents()
+    check("Vorbereitung: die Maske „Knoten“ meldet eine nicht übernommene Änderung",
+          bool(mk.geaenderte_felder()), str(mk.geaenderte_felder()))
+    w.statusBar().clearMessage()
+    for taste in (K.Key_S, K.Key_L, K.Key_B, K.Key_F, K.Key_K):
+        _ansicht(w, app)
+        QtTest.QTest.keyClick(ia, taste)
+    app.processEvents()
+    check("Maske mit Änderung: keine Einzeltaste ersetzt sie, die Eingabe bleibt",
+          w.maskenrand.maske is mk and _maske(w) == "Knoten" and bool(mk.geaenderte_felder()),
+          f"{_maske(w)!r}, {mk.geaenderte_felder()}")
+    check("… die Statuszeile sagt, warum", "nicht übernommene Änderungen" in w.statusBar().currentMessage(),
+          repr(w.statusBar().currentMessage()))
+    w.maskenrand.schliessen()
+
+
+def test_entf_und_tasten_waehrend_der_rechnung():
+    """Die Rechnung liest das Modell; Entf und die Befehle der Einzeltasten ändern es
+    (F öffnete den Flächendialog, ein modales Fenster während der Rechnung)."""
+    from PySide6 import QtCore, QtTest, QtWidgets
+    K = QtCore.Qt
+
+    class _Laeuft:
+        def isRunning(self):
+            return True
+
+    w, app = _fenster()
+    n0 = _halle(w, app)
+    ia = _ansicht(w, app)
+    fragen = _fragen(w, True)
+    gerufen = []
+    exec_alt = QtWidgets.QDialog.exec
+    QtWidgets.QDialog.exec = lambda self, *a, **k: (gerufen.append(type(self).__name__), 0)[1]
+    alt = w.worker
+    w.worker = _Laeuft()
+    try:
+        _waehlen(w, staebe=["Riegel"], knoten=[n0 - 1])
+        w.sel_linien = ["L1", "L2", "L3"]
+        w.statusBar().clearMessage()
+        QtTest.QTest.keyClick(ia, K.Key_Delete)
+        app.processEvents()
+        check("Entf während einer Rechnung: keine Rückfrage, nichts gelöscht, die Statuszeile sagt es",
+              not fragen and "Riegel" in w.model.members and w.model.nn == n0
+              and "Rechnung läuft" in w.statusBar().currentMessage(), f"{fragen}, {w.statusBar().currentMessage()!r}")
+        for taste in (K.Key_K, K.Key_S, K.Key_L, K.Key_B, K.Key_F):
+            QtTest.QTest.keyClick(ia, taste)
+        app.processEvents()
+        check("K S L B F während einer Rechnung: keine Maske, kein modales Fenster, kein Fehlerfenster",
+              _maske(w) == "" and not gerufen and not w.fehler_liste, f"{_maske(w)!r}, {gerufen}, {w.fehler_liste}")
+    finally:
+        w.worker = alt
+        QtWidgets.QDialog.exec = exec_alt
+        _ohne_fragen(w)
+        w._auswahl_leeren()
+    # Gegenprobe: ohne Rechnung wirken sie wieder
+    QtTest.QTest.keyClick(ia, K.Key_K)
+    app.processEvents()
+    check("Gegenprobe: ohne laufende Rechnung öffnet K wieder die Maske", _maske(w) == "Knoten", repr(_maske(w)))
+    w.maskenrand.schliessen()
+    w._rechnet_gerade = True
+    try:
+        QtTest.QTest.keyClick(ia, K.Key_K)
+        app.processEvents()
+        check("Auch das Merkmal „rechnet gerade“ sperrt sie", _maske(w) == "", repr(_maske(w)))
+    finally:
+        w._rechnet_gerade = False
+
+
+def test_rueckfrage_nennt_die_folgen():
+    from PySide6 import QtCore, QtTest
+    K = QtCore.Qt
+    w, app = _fenster()
+    n0 = _halle(w, app)
+    ia = _ansicht(w, app)
+    fragen = _fragen(w, False)
+    try:
+        _waehlen(w, staebe=["Riegel"], knoten=[n0 - 1])
+        w.sel_linien = ["L1"]
+        w.sel_flaechen = ["F1"]
+        w.results = None
+        w.analysis = None
+        QtTest.QTest.keyClick(ia, K.Key_Delete)
+        app.processEvents()
+        text = fragen[0] if fragen else ""
+        check("Die Rückfrage nennt die Folgen: Stab (Elemente bleiben), Linie, Fläche (Elemente gehen mit), Knoten",
+              "die Elemente bleiben stehen" in text and "Linienlasten" in text
+              and "nehmen ihre Elemente mit" in text and "sein Lager" in text and "Knotenlasten" in text,
+              text.replace("\n", " | "))
+        check("… die erste Zeile ist die Frage mit den Zahlen",
+              text.splitlines()[0] == "1 Fläche, 1 Stab, 1 Linie und 1 Knoten wirklich löschen?", text.splitlines()[0] if text else "")
+        check("… ohne Ergebnisse steht nichts von Ergebnissen darin", "Ergebnisse" not in text)
+        fragen.clear()
+        w.results = {"probe": 1}
+        QtTest.QTest.keyClick(ia, K.Key_Delete)
+        app.processEvents()
+        text = fragen[0] if fragen else ""
+        check("Mit Ergebnissen: sie werden verworfen, und Rückgängig holt sie nicht zurück",
+              "Ergebnisse werden verworfen" in text and "Rückgängig holt sie nicht zurück" in text,
+              text.replace("\n", " | "))
+        fragen.clear()
+        w.results = None
+        _waehlen(w, knoten=[n0 - 1])
+        QtTest.QTest.keyClick(ia, K.Key_Delete)
+        app.processEvents()
+        text = fragen[0] if fragen else ""
+        check("Nur Knoten gewählt: kein Wort über Stäbe und Flächen",
+              "Stäbe" not in text and "Flächen" not in text and "sein Lager" in text, text.replace("\n", " | "))
+        fragen.clear()
+        w.maske_knoten()
+        app.processEvents()
+        mk = w.maskenrand.maske
+        mk.setzen(next(iter(mk._felder)), 3.0)
+        _ansicht(w, app)
+        QtTest.QTest.keyClick(ia, K.Key_Delete)
+        app.processEvents()
+        text = fragen[0] if fragen else ""
+        check("Eine offene Maske mit nicht übernommenen Änderungen wird genannt: sie wird geschlossen",
+              "nicht übernommene Änderungen" in text and "Knoten" in text and "geschlossen" in text,
+              text.replace("\n", " | "))
+    finally:
+        _ohne_fragen(w)
+        w.results = None
+        w.maskenrand.schliessen()
+        w._auswahl_leeren()
+
+
+def test_nichts_geloescht_laesst_die_stapel_in_ruhe():
+    """Ging nichts weg, hatte merken() trotzdem den Wiederholen-Stapel geleert und
+    bei großen Modellen alte Schritte verdrängt."""
+    from PySide6 import QtCore, QtTest
+    K = QtCore.Qt
+    w, app = _fenster()
+    n0 = _halle(w, app)
+    ia = _ansicht(w, app)
+    fragen = _fragen(w, True)
+    try:
+        w._undo.clear()
+        w._undo.append(("alt", w.model.copy(), w._stand))
+        w._redo.clear()
+        w._redo.append(("Wiederholen-Probe", w.model.copy(), w._stand))
+        stand = w._stand
+        # nur benutzte Knoten: es wird gar nicht erst gefragt
+        _waehlen(w, knoten=[0, 1])
+        QtTest.QTest.keyClick(ia, K.Key_Delete)
+        app.processEvents()
+        check("Nur benutzte Knoten gewählt: keine Rückfrage, nichts geschieht, die Statuszeile oder das Protokoll nennt den Grund",
+              not fragen and w.model.nn == n0 and "benutzt" in w.log.toPlainText()[-300:],
+              f"{fragen}, {w.log.toPlainText()[-120:]!r}")
+        check("… Rückgängig- und Wiederholen-Stapel und Änderungsstand unverändert",
+              len(w._undo) == 1 and len(w._redo) == 1 and w._stand == stand,
+              f"{len(w._undo)} / {len(w._redo)}, Stand {stand} -> {w._stand}")
+        # gefragt wird, aber der Löschweg scheitert (ein Stab, den es nicht gibt)
+        w.sel_staebe = ["Phantom"]
+        w.selection = w.selection[:0]
+        QtTest.QTest.keyClick(ia, K.Key_Delete)
+        app.processEvents()
+        check("Gewählt ist etwas, das sich nicht löschen lässt: gefragt wird, aber es bleibt nichts zurück",
+              len(fragen) == 1 and len(w._undo) == 1 and len(w._redo) == 1 and w._stand == stand,
+              f"{len(fragen)} Frage(n), Stapel {len(w._undo)} / {len(w._redo)}, Stand {stand} -> {w._stand}")
+        # Gegenprobe: wird etwas gelöscht, gibt es genau einen Schritt, und Wiederholen ist leer
+        fragen.clear()
+        _waehlen(w, staebe=["Riegel"])
+        QtTest.QTest.keyClick(ia, K.Key_Delete)
+        app.processEvents()
+        check("Gegenprobe: wird wirklich etwas gelöscht, gibt es einen Schritt mehr und nichts zu wiederholen",
+              len(w._undo) == 2 and len(w._redo) == 0 and "Riegel" not in w.model.members,
+              f"Stapel {len(w._undo)} / {len(w._redo)}")
+        w.undo()
+        app.processEvents()
+        check("… Rückgängig holt den Stab zurück", "Riegel" in w.model.members)
+    finally:
+        _ohne_fragen(w)
+        w._auswahl_leeren()
+        w._undo.clear()
+        w._redo.clear()
+
+
+def test_entf_grosse_auswahl_ist_schnell():
+    """Strg+A, Entf an einem vernetzten Modell: je Knoten ein Durchgang durch alle
+    Elemente und alle Verweise war quadratisch."""
+    import time
+    from PySide6 import QtCore, QtTest
+    from statik3d import mesher
+    K = QtCore.Qt
+    w, app = _fenster()
+    n0 = _halle(w, app)
+    m = w.model
+    ia = _ansicht(w, app)
+    fragen = _fragen(w, True)
+    try:
+        # 5000 freie Knoten, jeder mit Lager und Knotenlast (alt: 2000 Knoten 1,3 s, quadratisch)
+        erste = m.nn
+        n_lager = len(m.supports)
+        for i in range(5000):
+            k = m.add_node(100.0 + i, 0.0, 0.0)
+            m.support(k, [0, 1, 2])
+            m.load_node(k, Fz=-1e3, case="LF1")
+        w.refresh_all()
+        app.processEvents()
+        _waehlen(w, knoten=range(erste, m.nn))
+        t0 = time.time()
+        QtTest.QTest.keyClick(ia, K.Key_Delete)
+        app.processEvents()
+        dt = time.time() - t0
+        check("5000 freie Knoten mit Lager und Last: Entf löscht alle in unter 2 s",
+              w.model.nn == n0 and len(w.model.supports) == n_lager and dt < 2.0,
+              f"{dt:.2f} s, {w.model.nn} Knoten, {len(w.model.supports)} Lager")
+        # eine Kette mit 4000 Elementen, alle Knoten gewählt (Strg+A): alle hängen an Elementen
+        w.undo()
+        m = w.model
+        mat, sec = next(iter(m.materials)), next(iter(m.sections))
+        erste = m.nn
+        mesher.line_of_beams(m, mat, sec, (200.0, 0, 0), (4200.0, 0, 0), 4000)
+        w.refresh_all()
+        app.processEvents()
+        fragen.clear()
+        _waehlen(w, knoten=range(erste, m.nn))
+        nn, schritte = w.model.nn, len(w._undo)
+        t0 = time.time()
+        QtTest.QTest.keyClick(ia, K.Key_Delete)
+        app.processEvents()
+        dt = time.time() - t0
+        check("4001 Knoten einer Kette mit 4000 Elementen gewählt: unter 2 s, es wird gar nicht erst gefragt",
+              not fragen and w.model.nn == nn and len(w._undo) == schritte and dt < 2.0,
+              f"{dt:.2f} s, {len(fragen)} Frage(n)")
+        check("… das Protokoll nennt den Grund („benutzt von … Elemente“)",
+              "benutzt von" in w.log.toPlainText()[-400:] and "Nichts gelöscht" in w.log.toPlainText()[-400:],
+              w.log.toPlainText()[-160:])
+    finally:
+        _ohne_fragen(w)
+        w._auswahl_leeren()
+        w._undo.clear()
+
+
+def test_stab_loeschen_ueberall_gleich():
+    """Entf in der Ansicht, Rechtsklick und Baum nehmen die abgeleiteten Elementlasten
+    eines Stabs mit (``Model.stab_loeschen``): dieselbe Last, dieselbe Rechnung."""
+    from PySide6 import QtCore, QtTest
+    K = QtCore.Qt
+    w, app = _fenster()
+    fragen = _fragen(w, True)
+    ia = w.plotter.interactor
+
+    def geo(m, elemente):
+        return [b for b in m.load_cases["LF1"].beam_loads
+                if getattr(b, "_geo", False) and int(b.elem) in elemente]
+    try:
+        for weg in ("Entf", "Rechtsklick", "Baum"):
+            _linienlast_auf_riegel(w, app)
+            elemente = {int(e) for e in w.model.members["Riegel"].elements}
+            n_vor = len(geo(w.model, elemente))
+            if weg == "Entf":
+                _waehlen(w, staebe=["Riegel"])
+                _ansicht(w, app)
+                QtTest.QTest.keyClick(ia, K.Key_Delete)
+            elif weg == "Rechtsklick":
+                w.auswahl_loeschen("stab", ["Riegel"])
+            else:
+                w._baum_loeschen("stab", "Riegel")
+            app.processEvents()
+            check(f"Stab löschen per {weg}: seine abgeleiteten Elementlasten sind weg",
+                  n_vor > 0 and "Riegel" not in w.model.members and not geo(w.model, elemente),
+                  f"{n_vor} -> {len(geo(w.model, elemente))} Elementlasten")
+    finally:
+        _ohne_fragen(w)
+        w._auswahl_leeren()
+
+
 def main():
     import faulthandler
     faulthandler.dump_traceback_later(600, exit=True)
@@ -594,7 +1016,11 @@ def main():
               test_einzeltasten_in_der_ansicht, test_einzeltasten_nie_im_textfeld,
               test_skizzenfenster_nimmt_seine_tasten, test_skizzenfenster_textfelder_behalten_ihre_tasten,
               test_skizzenfenster_ohne_hauptfenster_wirkung_auf_andere_tasten,
-              test_liste_und_code_stimmen_ueberein):
+              test_liste_und_code_stimmen_ueberein,
+              test_entf_nimmt_nur_hervorgehobenes_nicht_mit, test_ansicht_nimmt_den_fokus_nur_per_linksklick,
+              test_einzeltaste_ersetzt_keine_geaenderte_maske, test_entf_und_tasten_waehrend_der_rechnung,
+              test_rueckfrage_nennt_die_folgen, test_nichts_geloescht_laesst_die_stapel_in_ruhe,
+              test_entf_grosse_auswahl_ist_schnell, test_stab_loeschen_ueberall_gleich):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

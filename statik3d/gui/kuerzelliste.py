@@ -34,8 +34,9 @@ from .sprache import kuerzel_text
 #: Eigenes, weil das Hauptfenster die Taste als Kuerzel verbraucht (gemessen
 #: 03.10.2026) - eine Taste, die nicht tut, was die Liste sagt, gehoert nicht
 #: hinein. Das Skizzenfenster nimmt Esc, Strg+Z und Strg+Y seit dem 03.10.2026
-#: selbst an (``ShortcutOverride``), darum stehen sie dort; ``tests/test_tasten_fokus.py``
-#: drueckt sie echt.
+#: selbst an (``ShortcutOverride``), darum stehen sie dort. Die Tasten des Modellbaums, der
+#: Masken und der Liste drueckt ``tests/test_ribbon_ordnung.py`` echt, Entf und die
+#: Einzeltasten der Ansicht und das Skizzenfenster ``tests/test_tasten_fokus.py``.
 WEITERE_TASTEN = (
     ("Eintrag löschen", "Entf, Rücktaste", "Modellbaum",
      "Der gewählte Eintrag; sind mehrere derselben Art gewählt, alle. Der Fokus muss im Baum stehen."),
@@ -52,11 +53,14 @@ WEITERE_TASTEN = (
      "zuerst das Klicken. Läuft nichts, wirkt Esc wie „Alles deselektieren“."),
     ("Auswahl löschen", "Entf", "Ansicht",
      "Alles Gewählte (Knoten, Linien, Stäbe, Flächen, Volumen, Elemente, Lager, Lasten) nach einer einzigen "
-     "Rückfrage, die nennt, was gelöscht wird; ein Rückgängig-Schritt. Der Fokus muss in der Ansicht stehen "
-     "(ein Klick hinein genügt); in einem Textfeld, einer Tabelle oder im Baum gilt Entf dort."),
+     "Rückfrage, die nennt, was gelöscht wird und was mitgeht; ein Rückgängig-Schritt. Der Fokus muss in der "
+     "Ansicht stehen, und den legt nur ein Linksklick dorthin (Rad, mittlere und rechte Taste nicht); in einem "
+     "Textfeld, einer Tabelle oder im Baum gilt Entf dort. Nur Leuchtendes (Ziele einer gezeigten Last) löscht "
+     "Entf nicht mit; während einer Rechnung ist die Taste gesperrt."),
     ("Knoten anlegen", "K", "Ansicht",
-     "Öffnet die Maske „Knoten“. Die Einzeltasten K, S, L, B und F wirken nur, wenn die Ansicht den Fokus hat, "
-     "nie in einem Textfeld, einer Tabelle oder einer Maske, und nie mit Strg, Umschalt oder Alt."),
+     "Öffnet die Maske „Knoten“. Die Einzeltasten K, S, L, B und F wirken nur, wenn die Ansicht den Fokus hat "
+     "(Linksklick), nie in einem Textfeld, einer Tabelle oder einer Maske, nie mit Strg, Umschalt oder Alt, nie "
+     "während einer Rechnung. Eine offene Maske mit nicht übernommenen Änderungen ersetzen sie nicht."),
     ("Stab anlegen", "S", "Ansicht", "Öffnet die Maske „Stab“."),
     ("Lager setzen", "L", "Ansicht", "Öffnet die Maske „Lager“ (Knotenlager)."),
     ("Last aufbringen", "B", "Ansicht",
