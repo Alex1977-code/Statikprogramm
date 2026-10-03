@@ -35,8 +35,11 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 
 from PySide6 import QtCore, QtWidgets
+
+from .sprache import kuerzel_text
 
 #: Kennung des gespeicherten Formats; eine andere Kennung wird verworfen
 FASSUNG = 1
@@ -91,6 +94,45 @@ def _lesen() -> dict:
     return d if isinstance(d, dict) else {}
 
 
+def _lesen_streng() -> tuple:
+    """(Inhalt, lesbar) - ``lesbar`` ist falsch, wenn die Datei da ist, sich aber nicht
+    lesen laesst (gesperrt, kein Zugriff: OSError). Dann darf niemand schreiben: der
+    Inhalt ist unbekannt, und ein Schreiben mit {} loescht Loeser, Threads und die
+    Fensteraufteilung (Nachzug 03.10.2026). Eine fehlende oder kaputte Datei gilt wie
+    bisher als leer und wird neu geschrieben."""
+    try:
+        with open(_datei(), encoding="utf-8") as f:
+            d = json.load(f)
+    except FileNotFoundError:
+        return {}, True
+    except OSError:
+        return {}, False
+    except ValueError:
+        return {}, True
+    return (d if isinstance(d, dict) else {}), True
+
+
+def _datei_schreiben(d: dict) -> str:
+    """Die Datei atomar schreiben: erst in eine Hilfsdatei im selben Ordner, dann
+    ``os.replace`` - bricht das Schreiben ab (Platte voll, Absturz), bleibt die alte
+    Datei ganz. Wirft OSError; die Hilfsdatei wird dann entfernt."""
+    p = _datei()
+    ordner = os.path.dirname(p) or "."
+    os.makedirs(ordner, exist_ok=True)
+    fd, hilfe = tempfile.mkstemp(dir=ordner, prefix=".einstellungen_", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=1)
+        os.replace(hilfe, p)
+    except BaseException:
+        try:
+            os.remove(hilfe)
+        except OSError:
+            pass
+        raise
+    return p
+
+
 def laden() -> dict | None:
     """Der gespeicherte Eintrag „fenster“ - None, wenn er fehlt oder eine
     andere Fassung hat."""
@@ -103,13 +145,55 @@ def laden() -> dict | None:
 def schreiben(eintrag: dict) -> str:
     """Den Eintrag „fenster“ schreiben; die uebrigen Schluessel (Loeser,
     Threads …) bleiben stehen."""
-    d = _lesen()
+    d, lesbar = _lesen_streng()
+    if not lesbar:
+        raise OSError("einstellungen.json laesst sich nicht lesen - nichts geschrieben")
     d["fenster"] = dict(eintrag, fassung=FASSUNG)
-    p = _datei()
-    os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
-    with open(p, "w", encoding="utf-8") as f:
-        json.dump(d, f, ensure_ascii=False, indent=1)
-    return p
+    return _datei_schreiben(d)
+
+
+#: Was in dieser Sitzung zuletzt gemerkt wurde - gilt nur, wenn die Datei sich nicht
+#: lesen laesst (dann wird auch nichts geschrieben)
+_ABSCHNITTE_IM_SPEICHER: dict = {}
+
+
+def abschnitt_offen(name: str, vorgabe: bool = False) -> bool:
+    """Ob ein einklappbarer Abschnitt zuletzt aufgeklappt war (Schluessel
+    „abschnitte“, 03.10.2026, Paket 13r). ``vorgabe`` gilt, solange nichts
+    Brauchbares gemerkt ist - fehlende Datei, kaputter Eintrag, anderer Wert
+    als wahr oder falsch. Laesst sich die Datei nicht lesen, gilt, was in dieser
+    Sitzung gemerkt wurde. Mit STATIK3D_FENSTER=fest wird nichts gemerkt."""
+    if fest():
+        return bool(vorgabe)
+    d, lesbar = _lesen_streng()
+    if not lesbar:
+        wert = _ABSCHNITTE_IM_SPEICHER.get(name)
+        return wert if isinstance(wert, bool) else bool(vorgabe)
+    a = d.get("abschnitte")
+    wert = a.get(name) if isinstance(a, dict) else None
+    return wert if isinstance(wert, bool) else bool(vorgabe)
+
+
+def abschnitt_merken(name: str, offen: bool) -> str | None:
+    """Den Zustand eines Abschnitts schreiben; die uebrigen Schluessel der
+    Datei (Loeser, Threads, „fenster“) bleiben stehen. Rueckgabe der
+    Dateipfad, None bei „fest“, wenn die Datei sich nicht lesen laesst (dann
+    bleibt der Zustand nur im Speicher und die Datei unberuehrt) oder nicht
+    beschreibbar ist. Geschrieben wird atomar."""
+    if fest():
+        return None
+    _ABSCHNITTE_IM_SPEICHER[name] = bool(offen)
+    d, lesbar = _lesen_streng()
+    if not lesbar:
+        return None
+    a = d.get("abschnitte")
+    a = dict(a) if isinstance(a, dict) else {}
+    a[name] = bool(offen)
+    d["abschnitte"] = a
+    try:
+        return _datei_schreiben(d)
+    except OSError:
+        return None
 
 
 def _zahlen(x, n: int):
@@ -336,7 +420,8 @@ class Fensteranordnung(QtCore.QObject):
              "noch einmal: alles wie vorher"),
             ("Anordnung zurücksetzen", self.zuruecksetzen,
              "Alle Bereiche zeigen, Modellbaum 16 % der Breite, rechts 460 px, unten 25 % der Höhe"),
-        ], hinweis="Bereiche des Fensters ein- und ausblenden, Ribbon einklappen, Anordnung zurücksetzen")
+        ], hinweis="Bereiche des Fensters ein- und ausblenden, Ribbon einklappen, Anordnung zurücksetzen",
+            symbol="fenster")
         self.act_zone = dict(zip(("baum", "rechts", "unten"), akt[:3]))
         self.act_ribbon, self.act_nur_ansicht, self.act_zuruecksetzen = akt[3:6]
         for a in akt[:5]:
@@ -345,7 +430,7 @@ class Fensteranordnung(QtCore.QObject):
             self.act_zone[name].setChecked(True)
             dock.visibilityChanged.connect(lambda _v, n=name: self._zone_nachziehen(n))
         rb.kuerzel_setzen(self.act_ribbon, "Ctrl+F1")
-        self.act_ribbon.setToolTip(self.act_ribbon.toolTip() + "   (Ctrl+F1)")
+        self.act_ribbon.setToolTip(self.act_ribbon.toolTip() + f"   ({kuerzel_text('Ctrl+F1')})")
         rb.eingeklappt_geaendert.connect(self._ribbon_nachziehen)
 
     def _docks(self) -> dict:

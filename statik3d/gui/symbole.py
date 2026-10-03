@@ -1069,6 +1069,436 @@ def z_sicht_schnittseite(s: Stift):
     s.pfeil(6, 19, 18, 19, kopf=3.0)
 
 
+# ---- 12b (03.10.2026): Anfang ------------------------------------------
+# Eigene Zeichnungen fuer die grossen Knoepfe, die bis dahin nur einen
+# Buchstaben im Kreis trugen, fuer die fuenf Lastknoepfe, die alle das
+# Lastsymbol zeigten (Vorspannung, Uebermass, Spiel geben, Passung, Wind), und
+# fuer Befehle, deren Symbol falsch geraten war.
+def _gut() -> QtGui.QColor:
+    return QtGui.QColor(dsg.FARBEN["gut"])
+
+
+def _doppelpfeil(s: Stift, x1, y1, x2, y2, kopf: float = 2.6):
+    """Linie mit Spitzen an beiden Enden."""
+    s.pfeil((x1 + x2) / 2, (y1 + y2) / 2, x1, y1, kopf)
+    s.pfeil((x1 + x2) / 2, (y1 + y2) / 2, x2, y2, kopf)
+
+
+def z_pruefen(s: Stift):
+    """Modell pruefen: eine Lupe mit gruenem Haken."""
+    s.stift()
+    s.kreis(10, 10, 6.5)
+    s.linie(14.8, 14.8, 21, 21)
+    s.stift(_gut(), 2.2)
+    s.zug([(6.6, 10.2), (9.1, 12.8), (13.6, 7.2)])
+
+
+def z_verschieben(s: Stift):
+    """Verschieben: das Stueck steht links unten, sein Ziel gestrichelt rechts oben."""
+    s.stift(breite=1.3, gestrichelt=True)
+    s.rechteck(12, 3, 9, 9, 1.5)
+    s.fuellung(_mit_alpha(s.farbe, 70), s.farbe)
+    s.rechteck(3, 12, 9, 9, 1.5)
+    s.stift(s.akzent, 2.0)
+    s.pfeil(8.5, 15.5, 16.5, 7.5, 3.2)
+
+
+def z_lot(s: Stift):
+    """Lot / Projektion: ein Punkt ueber einer Ebene, sein Lot trifft sie im Fusspunkt."""
+    s.stift(breite=2.0)
+    s.linie(3, 20, 21, 20)
+    s.stift(breite=1.5)
+    s.linie(12, 8.2, 12, 20)
+    s.stift(breite=1.2)
+    s.zug([(12, 17.2), (14.8, 17.2), (14.8, 20)])
+    s.fuellung(s.akzent)
+    s.kreis(12, 5.5, 2.6)
+
+
+def z_fang_lot(s: Stift):
+    """Fang auf Lot: der Fusspunkt des Lots auf eine Linie, im Fangkreis."""
+    _fangkreis(s)
+    s.stift(breite=2.0)
+    s.linie(3, 15.5, 21, 15.5)
+    s.stift(breite=1.4)
+    s.linie(15.5, 7.2, 15.5, 15.5)
+    s.stift(breite=1.1)
+    s.zug([(15.5, 12.9), (12.9, 12.9), (12.9, 15.5)])
+    s.fuellung(s.akzent)
+    s.kreis(15.5, 5, 2.2)
+
+
+def z_spalt(s: Stift):
+    """Spalt / Toleranz: zwei Waende (Welle und Bohrung) mit dem Spalt dazwischen."""
+    s.fuellung(_mit_alpha(s.farbe, 70), s.farbe)
+    s.rechteck(2.5, 3.5, 4, 17)
+    s.rechteck(17.5, 3.5, 4, 17)
+    s.stift(s.akzent, 2.0)
+    _doppelpfeil(s, 7.9, 12, 16.1, 12, 2.7)
+
+
+def z_passung(s: Stift):
+    """Passung: ein Bolzen in der Bohrung, ringsum ein gleichmaessiger Spalt."""
+    s.fuellung(_mit_alpha(s.farbe, 40), s.farbe)
+    s.rechteck(2.5, 2.5, 19, 19, 2.5)
+    s.fuellung(QtGui.QColor("#ffffff"), s.farbe)
+    s.kreis(12, 12, 7)
+    s.fuellung(s.akzent)
+    s.kreis(12, 12, 4.6)
+
+
+def z_uebermass(s: Stift):
+    """Uebermass: der Bolzen ist groesser als die Bohrung (gestrichelt) und
+    wird eingepresst - vier Pfeile druecken auf ihn."""
+    s.fuellung(_mit_alpha(s.akzent, 90), s.akzent)
+    s.kreis(12, 12, 5.6)
+    s.stift(breite=1.3, gestrichelt=True)
+    s.kreis(12, 12, 3.2)
+    s.stift(breite=1.7)
+    for a in (0, 90, 180, 270):
+        c, sn = math.cos(math.radians(a)), math.sin(math.radians(a))
+        s.pfeil(12 + 11.2 * c, 12 + 11.2 * sn, 12 + 8.0 * c, 12 + 8.0 * sn, 2.4)
+
+
+def z_spiel(s: Stift):
+    """Spiel geben: der Bolzen ist kleiner als die Bohrung und liegt unten an; das
+    Spiel oben ist wie in einer Zeichnung bemasst."""
+    s.fuellung(_mit_alpha(s.farbe, 40), s.farbe)
+    s.kreis(9.5, 12.5, 8)
+    s.fuellung(s.akzent)
+    s.kreis(9.5, 15.9, 4.6)
+    s.stift(breite=1.1)
+    s.linie(9.5, 4.5, 22.5, 4.5)
+    s.linie(9.5, 11.3, 22.5, 11.3)
+    s.stift(breite=1.6)
+    _doppelpfeil(s, 20.5, 4.5, 20.5, 11.3, 2.2)
+
+
+def z_stellungen(s: Stift):
+    """Alle Stellungen: dieselbe Last an drei Orten auf dem Traeger."""
+    s.stift(breite=2.2)
+    s.linie(2.5, 16.5, 21.5, 16.5)
+    for x, a in ((5.5, 90), (12, 160), (18.5, 255)):
+        s.stift(_mit_alpha(s.akzent, a), 1.9)
+        s.pfeil(x, 3.5, x, 13.5, 3.0)
+    s.stift(breite=1.2)
+    s.pfeil(5, 21, 20, 21, 2.6)
+
+
+def z_konfiguration(s: Stift):
+    """Konfiguration: drei Schieberegler."""
+    for y, x in ((6, 8), (12, 16), (18, 11)):
+        s.stift(breite=1.8)
+        s.linie(3, y, 21, y)
+        s.fuellung(s.akzent, QtGui.QColor("#ffffff"))
+        s.kreis(x, y, 2.7)
+
+
+def z_verschluss(s: Stift):
+    """Verschluss (Schwingung): die Tafel zwischen zwei Fuehrungen, darunter
+    Wasser, quer ein Doppelpfeil fuer die Schwingung."""
+    s.fuellung(_mit_alpha(s.farbe, 70), s.farbe)
+    s.rechteck(6, 3, 12, 11, 1)
+    s.stift(breite=2.2)
+    s.linie(3.5, 3, 3.5, 14)
+    s.linie(20.5, 3, 20.5, 14)
+    s.stift(s.akzent, 1.8)
+    _doppelpfeil(s, 7.5, 8.5, 16.5, 8.5, 2.6)
+    for y in (17.5, 21):
+        p = QtGui.QPainterPath()
+        p.moveTo(2, y)
+        p.cubicTo(5, y - 2.4, 8, y - 2.4, 12, y)
+        p.cubicTo(16, y + 2.4, 19, y + 2.4, 22, y)
+        s.p.drawPath(p)
+
+
+def z_einheiten(s: Stift):
+    """Einheiten: ein Lineal mit Teilstrichen."""
+    s.stift(breite=1.6)
+    s.rechteck(2, 7.5, 20, 9, 1.5)
+    for i, x in enumerate((5.5, 9, 12.5, 16, 19.5)):
+        s.stift(s.akzent if i % 2 == 0 else s.farbe, 1.5)
+        s.linie(x, 7.5, x, 7.5 + (4.8 if i % 2 == 0 else 3.0))
+
+
+def z_fenster(s: Stift):
+    """Fenster: die Bereiche eines Fensters - links ein Seitenbereich, rechts oben und unten."""
+    s.fuellung(_mit_alpha(s.akzent, 100))
+    s.rechteck(3.2, 8.7, 6.3, 11.8)
+    s.stift(breite=1.6)
+    s.rechteck(2.5, 3.5, 19, 17, 2)
+    s.stift(breite=1.3)
+    s.linie(2.5, 8, 21.5, 8)
+    s.linie(9.5, 8, 9.5, 20.5)
+    s.linie(9.5, 14.5, 21.5, 14.5)
+
+
+def z_zuweisen(s: Stift):
+    """Zuweisen: ein Etikett (Querschnitt, Werkstoff, Dicke) wird dem gewaehlten Stab gegeben."""
+    s.fuellung(_mit_alpha(s.akzent, 110), s.akzent)
+    s.zug([(3, 3), (12, 3), (15.5, 6.8), (12, 10.6), (3, 10.6)], True)
+    s.fuellung(QtGui.QColor("#ffffff"))
+    s.kreis(6.2, 6.8, 1.2)
+    s.stift(breite=1.7)
+    s.pfeil(9, 11.5, 9, 17, 3.0)
+    s.stift(breite=2.8)
+    s.linie(3, 20, 21, 20)
+    s.fuellung()
+    s.kreis(3, 20, 1.9)
+    s.kreis(21, 20, 1.9)
+
+
+def z_vorspannung(s: Stift):
+    """Vorspannung: ein Spannglied zwischen zwei Ankerplatten, Pfeile ziehen nach aussen."""
+    s.stift(breite=2.6)
+    s.linie(8, 12, 16, 12)
+    s.fuellung()
+    s.rechteck(5.8, 6.5, 2.4, 11)
+    s.rechteck(15.8, 6.5, 2.4, 11)
+    s.stift(s.akzent, 1.9)
+    s.pfeil(4.6, 12, 1.4, 12, 2.6)
+    s.pfeil(19.4, 12, 22.6, 12, 2.6)
+
+
+def z_wind(s: Stift):
+    """Wind: drei Luftstroeme mit Wirbel am Ende."""
+    def strom(y, x0, x1, hoch):
+        p = QtGui.QPainterPath()
+        p.moveTo(x0, y)
+        p.lineTo(x1, y)
+        r = 2.3
+        if hoch:
+            p.arcTo(QtCore.QRectF(x1 - r, y - 2 * r, 2 * r, 2 * r), 270, 270)
+        else:
+            p.arcTo(QtCore.QRectF(x1 - r, y, 2 * r, 2 * r), 90, -270)
+        s.p.drawPath(p)
+    s.stift(breite=1.8)
+    strom(8, 2.5, 13.5, True)
+    strom(16, 2.5, 11.5, False)
+    s.stift(s.akzent, 1.9)
+    strom(12, 2.5, 18.5, True)
+
+
+def z_wasserdruck(s: Stift):
+    """Wasserdruck: Pfeile gegen eine Wand, mit der Tiefe laenger (Dreiecksbelastung)."""
+    s.stift(breite=2.6)
+    s.linie(20.5, 3, 20.5, 21)
+    s.stift(s.akzent, 1.7)
+    p = QtGui.QPainterPath()
+    p.moveTo(2, 6)
+    p.cubicTo(4, 4.2, 6, 4.2, 8, 6)
+    p.cubicTo(10, 7.8, 12, 7.8, 14, 6)
+    s.p.drawPath(p)
+    s.stift(breite=1.6)
+    for y, laenge in ((10.5, 4.5), (14.5, 9), (18.5, 13.5)):
+        s.pfeil(19 - laenge, y, 19, y, 2.4)
+
+
+def z_skala(s: Stift):
+    """Werteskala: ein Farbbalken mit Teilstrichen."""
+    g = QtGui.QLinearGradient(0, 3, 0, 21)
+    g.setColorAt(0.0, QtGui.QColor("#c62828"))
+    g.setColorAt(0.35, QtGui.QColor("#e5701c"))
+    g.setColorAt(0.65, QtGui.QColor("#2e8b3a"))
+    g.setColorAt(1.0, QtGui.QColor("#1467c6"))
+    s.p.setPen(QtCore.Qt.NoPen)
+    s.p.setBrush(QtGui.QBrush(g))
+    s.rechteck(3, 3, 7, 18, 1.2)
+    s.stift(breite=1.5)
+    for y in (3.8, 9.9, 16.1, 20.2):
+        s.linie(12, y, 16.5, y)
+
+
+def z_lager_linie(s: Stift):
+    """Linienlager: die Linie (oben) steht auf einer Reihe von Lagern."""
+    s.stift(s.akzent, 2.4)
+    s.linie(3, 6, 21, 6)
+    s.fuellung()
+    for x in (6, 12, 18):
+        s.zug([(x, 8), (x + 3, 14), (x - 3, 14)], True)
+    s.stift()
+    s.linie(2.5, 16.5, 21.5, 16.5)
+    s.stift(breite=1.2)
+    for x in (5, 9, 13, 17):
+        s.linie(x, 16.5, x - 2, 19.5)
+
+
+def z_lager_flaeche(s: Stift):
+    """Flaechenlager: die Flaeche (oben) liegt auf einer Reihe von Lagern."""
+    s.fuellung(_mit_alpha(s.akzent, 110), s.akzent)
+    s.zug([(3, 9), (7, 3.5), (21, 3.5), (17, 9)], True)
+    s.fuellung()
+    for x in (6.5, 12, 17.5):
+        s.zug([(x, 10.5), (x + 2.8, 15.5), (x - 2.8, 15.5)], True)
+    s.stift()
+    s.linie(2.5, 17.5, 21.5, 17.5)
+    s.stift(breite=1.2)
+    for x in (5, 9, 13, 17):
+        s.linie(x, 17.5, x - 2, 20.5)
+def z_knoten_vereinen(s: Stift):
+    """Doppelte Knoten zusammenfuehren: zwei Knoten laufen in einem zusammen."""
+    s.fuellung()
+    s.kreis(4.5, 6, 2.2)
+    s.kreis(4.5, 18, 2.2)
+    s.stift(breite=1.7)
+    s.pfeil(7.4, 7.6, 12.8, 10.6, 2.6)
+    s.pfeil(7.4, 16.4, 12.8, 13.4, 2.6)
+    s.fuellung(s.akzent)
+    s.kreis(17.5, 12, 3.6)
+
+
+def z_anhang(s: Stift):
+    """Datei hinzufuegen: eine Bueroklammer."""
+    s.p.save()
+    s.p.translate(12, 12)
+    s.p.rotate(35)
+    s.p.translate(-12, -12)
+    s.stift(breite=1.8)
+    p = QtGui.QPainterPath()
+    p.moveTo(11, 14)
+    p.lineTo(11, 6)
+    p.arcTo(QtCore.QRectF(11, 3.75, 4.5, 4.5), 180, -180)
+    p.lineTo(15.5, 17)
+    p.arcTo(QtCore.QRectF(8.5, 13.5, 7, 7), 0, -180)
+    p.lineTo(8.5, 8)
+    s.p.drawPath(p)
+    s.p.restore()
+
+
+def z_skizze(s: Stift):
+    """Neue Skizze: ein Bleistift, dahinter ein Strich aus freier Hand."""
+    s.stift(s.akzent, 1.7)
+    p = QtGui.QPainterPath()
+    p.moveTo(2.5, 20.5)
+    p.cubicTo(7, 23, 11, 17, 21.5, 20)
+    s.p.drawPath(p)
+    s.p.save()
+    s.p.translate(12, 11)
+    s.p.rotate(45)
+    s.fuellung(_mit_alpha(s.farbe, 40), s.farbe)
+    s.rechteck(-2.3, -8.5, 4.6, 11.5)
+    s.fuellung()
+    s.rechteck(-2.3, -8.5, 4.6, 2.6)
+    s.fuellung(s.akzent)
+    s.zug([(-2.3, 3), (2.3, 3), (0, 8)], True)
+    s.p.restore()
+
+
+def z_tastatur(s: Stift):
+    """Tastenkuerzel: eine Tastatur."""
+    s.stift(breite=1.6)
+    s.rechteck(2, 5.5, 20, 13, 2)
+    s.fuellung()
+    for y, xs in ((8.6, (5, 8.4, 11.8, 15.2, 18.6)), (12, (6.7, 10.1, 13.5, 16.9))):
+        for x in xs:
+            s.rechteck(x - 1, y - 1, 2, 2)
+    s.fuellung(s.akzent)
+    s.rechteck(7, 14.4, 10, 2, 0.8)
+
+
+def z_layer(s: Stift):
+    """Layerliste: drei uebereinander liegende Ebenen."""
+    s.stift(breite=1.6)
+    s.zug([(3, 12.5), (12, 17), (21, 12.5)])
+    s.zug([(3, 16.5), (12, 21), (21, 16.5)])
+    s.fuellung(_mit_alpha(s.akzent, 110), s.akzent)
+    s.zug([(12, 3), (21, 7.5), (12, 12), (3, 7.5)], True)
+
+
+def z_ks_knoten(s: Stift):
+    """Koordinatensystem aus drei Knoten: Ursprung, x-Richtung, Punkt in der Ebene."""
+    s.stift(breite=1.1, gestrichelt=True)
+    s.zug([(5, 18), (20, 18), (11, 6)], True)
+    s.stift(s.akzent, 1.8)
+    s.pfeil(5, 18, 15, 18, 2.8)
+    s.stift(_gut(), 1.8)
+    s.pfeil(5, 18, 5, 8.5, 2.8)
+    s.fuellung()
+    for x, y in ((5, 18), (20, 18), (11, 6)):
+        s.kreis(x, y, 2.1)
+
+
+def z_verschneiden(s: Stift):
+    """Flaechen verschneiden: zwei Flaechen ueberdecken sich, die Schnittstelle ist hervorgehoben."""
+    def flaeche(dx, dy):
+        return QtGui.QPolygonF([QtCore.QPointF(x + dx, y + dy)
+                                for x, y in ((2, 20), (6, 10), (16, 10), (12, 20))])
+    a, b = QtGui.QPainterPath(), QtGui.QPainterPath()
+    a.addPolygon(flaeche(0, 0))
+    b.addPolygon(flaeche(6, -6))
+    a.closeSubpath()
+    b.closeSubpath()
+    s.p.setPen(QtCore.Qt.NoPen)
+    s.p.setBrush(QtGui.QBrush(_mit_alpha(s.akzent, 150)))
+    s.p.drawPath(a.intersected(b))
+    s.stift(breite=1.6)
+    s.p.drawPath(a)
+    s.p.drawPath(b)
+
+
+def z_abstand(s: Stift):
+    """Abstand messen: zwei Punkte, dazwischen ein Doppelpfeil."""
+    s.fuellung()
+    s.kreis(4.5, 18, 2.4)
+    s.kreis(19.5, 6, 2.4)
+    s.stift(s.akzent, 1.9)
+    _doppelpfeil(s, 7.6, 15.6, 16.4, 8.4, 2.8)
+
+
+def _masslinien(s: Stift, xs, y: float = 13.5):
+    """Hilfslinien senkrecht, Masslinie mit Schraegstrichen darueber (Bemassung)."""
+    s.stift(breite=1.3)
+    for x in xs:
+        s.linie(x, 4, x, 19)
+    s.stift(s.akzent, 1.9)
+    s.linie(xs[0], y, xs[-1], y)
+    s.stift(breite=1.9)
+    for x in xs:
+        s.linie(x - 1.8, y + 1.8, x + 1.8, y - 1.8)
+
+
+def z_masslinie(s: Stift):
+    """Linearmass: zwei Hilfslinien mit der Masslinie dazwischen."""
+    _masslinien(s, (4, 20))
+
+
+def z_masskette(s: Stift):
+    """Masskette: mehrere Punkte der Reihe nach, Einzelmasse hintereinander."""
+    _masslinien(s, (3, 9.5, 16, 21.5))
+
+
+def z_netz_trennen(s: Stift):
+    """Kontaktfugen ausfuehren: das Netz wird an der Fuge getrennt."""
+    s.stift(breite=1.1)
+    for x0 in (2.5, 14):
+        for i in range(4):
+            s.linie(x0, 4.5 + i * 5, x0 + 7.5, 4.5 + i * 5)
+        for i in range(3):
+            s.linie(x0 + i * 3.75, 4.5, x0 + i * 3.75, 19.5)
+        s.linie(x0 + 7.5, 4.5, x0 + 7.5, 19.5)
+    s.stift(s.akzent, 1.9, gestrichelt=True)
+    s.linie(12.25, 2.5, 12.25, 21.5)
+def z_netz_adaptiv(s: Stift):
+    """Adaptiv vernetzen: ein Netz, das in einer Zelle (links oben) feiner wird."""
+    s.stift(breite=1.3)
+    for i in range(4):
+        s.linie(3, 3 + i * 6, 21, 3 + i * 6)
+        s.linie(3 + i * 6, 3, 3 + i * 6, 21)
+    s.stift(s.akzent, 0.9)
+    for v in (5, 7):
+        s.linie(3, v, 9, v)
+        s.linie(v, 3, v, 9)
+def z_laenge_flaeche(s: Stift):
+    """Laenge / Flaeche der Auswahl: eine Flaeche, darunter ihre Kante als Massstrecke."""
+    s.fuellung(_mit_alpha(s.akzent, 90), s.akzent)
+    s.zug([(3, 14), (8, 4), (21, 4), (16, 14)], True)
+    s.stift(breite=1.5)
+    s.linie(3, 16.5, 3, 21.5)
+    s.linie(16, 16.5, 16, 21.5)
+    _doppelpfeil(s, 3.2, 19, 15.8, 19, 2.4)
+# ---- 12b: Ende ---------------------------------------------------------
+
+
 VORSCHRIFTEN = {n[2:]: f for n, f in list(globals().items())
                 if n.startswith("z_") and callable(f)}
 

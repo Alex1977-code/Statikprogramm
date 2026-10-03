@@ -19,6 +19,7 @@ from PySide6 import QtCore, QtWidgets
 from .. import farm, parallel
 from .. import zahlen as zl
 from .worker import SolveWorker
+from . import sprache
 
 
 class RechenhilfeFenster(QtWidgets.QWidget):
@@ -38,7 +39,7 @@ class RechenhilfeFenster(QtWidgets.QWidget):
         lay = QtWidgets.QVBoxLayout(self)
         kopf = QtWidgets.QLabel(
             "Dieser Rechner rechnet für einen Arbeitsplatz mit. Dort: Berechnung → Einstellungen → "
-            "„Rechnerfarm einschalten“. Hier: „Arbeitsplatz suchen“ (oder Adresse eintragen), gleicher "
+            "Experten → „Rechnerfarm einschalten“. Hier: „Arbeitsplatz suchen“ (oder Adresse eintragen), gleicher "
             "Schlüssel, „Verbinden“. Beide Rechner brauchen denselben Programmstand.")
         kopf.setWordWrap(True)
         lay.addWidget(kopf)
@@ -245,6 +246,7 @@ def main(argv=None) -> int:
     a, _rest = ap.parse_known_args(argv if argv is not None else sys.argv[1:])
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
     app.setStyle("Fusion")
+    qt_sprache = sprache.uebersetzer_laden(app)      # Qt-Texte auf Deutsch (02.10.2026)
     try:
         from . import symbole as sym
         app.setWindowIcon(sym.programmsymbol())
@@ -252,6 +254,10 @@ def main(argv=None) -> int:
         pass
     parallel.einstellungen_laden()
     f = RechenhilfeFenster(None, a.host, a.port, a.key, a.kerne)
+    if qt_sprache.meldung:
+        # fehlt die Datei, laeuft die Rechenhilfe weiter - der Grund steht
+        # in ihrem Protokollfeld, wie im Hauptfenster
+        f.melden("Hinweis: " + qt_sprache.meldung)
     f.show()
     if a.host:
         QtCore.QTimer.singleShot(200, f.verbinden)

@@ -7,7 +7,15 @@ Bedienung: links klicken setzt Punkte des Werkzeugs, rechts (oder Esc)
 bricht das angefangene Element ab, das Rad zoomt zum Zeiger, die mittlere
 Taste schiebt das Blatt. Der Fang rastet an Enden, Mitten, Mittelpunkten
 und Quadranten ein, sonst greift das Raster. Entf loescht das gewaehlte
-Element, Strg+Z nimmt den letzten Schritt zurueck.
+Element, Strg+Z nimmt den letzten Schritt zurueck, Strg+Y stellt ihn wieder her.
+
+Die Kuerzel des Ribbons sind Anwendungskuerzel und gelten auch in diesem nicht
+modalen Fenster. Strg+Z nahm darum den letzten **Modell**schritt zurueck (die
+Skizze blieb unveraendert; gemessen 03.10.2026: Knoten 18 -> 17) und Esc hob die
+Auswahl im Modell auf. Das Fenster nimmt Strg+Z, Strg+Y, Esc, Entf und
+Ruecktaste darum selbst an (``ShortcutOverride``, wie das Fenster der
+Tastenkuerzel); in einem Textfeld des Fensters gehoeren Strg+Z, Entf und
+Ruecktaste weiter dem Feld.
 """
 from __future__ import annotations
 
@@ -285,6 +293,7 @@ class SkizzenFenster(QtWidgets.QDialog):
         self.werkzeug = "linie"
         self.punkte: list = []
         self._undo: list = []
+        self._redo: list = []
         self._aufbau(u)
         self.blatt.bild_setzen(self.daten)
         QtCore.QTimer.singleShot(0, self.blatt.einpassen)
@@ -311,6 +320,8 @@ class SkizzenFenster(QtWidgets.QDialog):
         a.setToolTip("Das gewählte Element löschen (Entf)")
         a = leiste.addAction("Zurück", self.rueckgaengig)
         a.setToolTip("Den letzten Schritt zurücknehmen (Strg+Z)")
+        a = leiste.addAction("Wiederholen", self.wiederholen)
+        a.setToolTip("Den zurückgenommenen Schritt wiederherstellen (Strg+Y)")
         leiste.addSeparator()
         self.akt_raster = leiste.addAction("Raster")
         self.akt_raster.setCheckable(True)
@@ -403,12 +414,40 @@ class SkizzenFenster(QtWidgets.QDialog):
         self._hinweis()
 
     # -- Zustand -------------------------------------------------------------------
+    @staticmethod
+    def _gehoert_mir(ev) -> bool:
+        """Die Tasten, die als Anwendungskuerzel sonst im Hauptfenster gewirkt
+        haetten: Strg+Z, Strg+Y und Esc; Entf und Ruecktaste kommen dazu, damit
+        auch ein spaeteres Kuerzel sie nicht abfaengt. Das Ereignis
+        ``ShortcutOverride`` geht zuerst an das Widget mit dem Fokus: ein
+        Textfeld nimmt Strg+Z, Entf und Ruecktaste selbst an (dann steigt es
+        nicht bis hierher), alles andere kommt hier an."""
+        if ev.type() != QtCore.QEvent.ShortcutOverride:
+            return False
+        taste, umschalter = ev.key(), ev.modifiers()
+        if umschalter == QtCore.Qt.NoModifier:
+            return taste in (QtCore.Qt.Key_Escape, QtCore.Qt.Key_Delete, QtCore.Qt.Key_Backspace)
+        if umschalter == QtCore.Qt.ControlModifier:
+            return taste in (QtCore.Qt.Key_Z, QtCore.Qt.Key_Y)
+        return False
+
+    def event(self, ev):
+        if self._gehoert_mir(ev):
+            ev.accept()          # kein Kuerzel: der Tastendruck kommt als KeyPress an
+            return True
+        return super().event(ev)
+
     def keyPressEvent(self, ev):
-        """Strg+Z nimmt den letzten Schritt zurueck, Esc bricht das Element ab
-        (und schliesst nicht den Dialog). Ohne QAction-Kuerzel: das gaelte
-        sonst als Kuerzel des Hauptfensters (Oberflaechenpruefung)."""
+        """Strg+Z nimmt den letzten Schritt zurueck, Strg+Y stellt ihn wieder
+        her, Esc bricht das Element ab (und schliesst nicht den Dialog). Die
+        Tasten sind keine QAction-Kuerzel dieses Fensters; dass sie nicht im
+        Hauptfenster wirken, sichert :meth:`event` (``ShortcutOverride``)."""
         if ev.matches(QtGui.QKeySequence.Undo):
             self.rueckgaengig()
+            return
+        if ev.matches(QtGui.QKeySequence.Redo) or (
+                ev.key() == QtCore.Qt.Key_Y and ev.modifiers() == QtCore.Qt.ControlModifier):
+            self.wiederholen()
             return
         if ev.key() == QtCore.Qt.Key_Escape:
             self.abbrechen()
@@ -451,11 +490,25 @@ class SkizzenFenster(QtWidgets.QDialog):
     def _merken(self) -> None:
         self._undo.append(copy.deepcopy(self.skizze["elemente"]))
         del self._undo[:-50]
+        self._redo.clear()          # nach einer neuen Aenderung gibt es nichts mehr zu wiederholen
 
     def rueckgaengig(self) -> None:
         if not self._undo:
             return
+        self._redo.append(copy.deepcopy(self.skizze["elemente"]))
         self.skizze["elemente"] = self._undo.pop()
+        self.punkte = []
+        self.blatt.vorschau = None
+        self.blatt.hervor = -1
+        self.blatt.update()
+
+    def wiederholen(self) -> None:
+        """Strg+Y: den zuletzt zurueckgenommenen Schritt wiederherstellen."""
+        if not self._redo:
+            return
+        self._undo.append(copy.deepcopy(self.skizze["elemente"]))
+        del self._undo[:-50]
+        self.skizze["elemente"] = self._redo.pop()
         self.punkte = []
         self.blatt.vorschau = None
         self.blatt.hervor = -1

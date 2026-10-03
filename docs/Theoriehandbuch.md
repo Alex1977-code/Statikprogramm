@@ -5023,7 +5023,7 @@ verschachtelt wiederholt.
 
 **Stand 24.09.2026: wählbar, nicht die Vorgabe.** Vorgabe ist wieder
 `Plastizitaet.kontakt = "verschachtelt"`; die gemeinsame Iteration wählt man
-unter *Berechnung → Einstellungen*, „mit Kontakt“. Grund (Gegenprüfung vom
+unter *Berechnung → Einstellungen*, „Verfahren mit Kontakt“. Grund (Gegenprüfung vom
 24.09.2026, Messung unten): an Reibung nahe der Grenzlast endet sie in einem
 anderen Zustand als die verschachtelte — bis 78 N/mm² Unterschied der
 Vergleichsspannung, beide „konvergiert“ —, und dort ist sie auch teurer. Das

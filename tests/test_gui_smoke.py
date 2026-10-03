@@ -1649,9 +1649,12 @@ def main():
               and mb.supports[0].name == "Fußpunkt links")
         check("Symbolgröße in der Tabelle editierbar",
               w._lager_aendern(0, 6, 2.5) and mb.supports[0].groesse == 2.5)
-        # Die Tabelle ist nach der ersten Spalte sortiert - Zeile 0 ist der
-        # Lastfall mit dem ersten Namen, nicht der zuerst angelegte
+        # Die Tabelle steht seit dem 02.10.2026 (Teilpaket 10a) in der Reihenfolge
+        # des Modells (bis dahin nach der ersten Spalte sortiert) - Zeile 0 ist
+        # der zuerst angelegte Lastfall
         lf0 = str(w.tbl_lastfall.modell.zeilen[0][0])
+        check("Lastfalltabelle steht in der Reihenfolge des Modells",
+              lf0 == next(iter(mb.load_cases)), lf0)
         check("Lastfallnummer in der Tabelle editierbar",
               w._lastfall_aendern(0, 1, 7) and mb.load_cases[lf0].nummer == 7,
               f"{lf0}: {mb.load_cases[lf0].nummer}")
@@ -5201,7 +5204,11 @@ def main():
               cp_p is not None and abs(cp_p.spiel - 5e-5) < 1e-12
               and abs(cp_p.grenzpressung - 300e6) < 1 and len(cp_p.rand_knoten) >= 4,
               str((getattr(cp_p, "spiel", None), getattr(cp_p, "grenzpressung", None))))
-        check("Ribbon: der Befehl „Passung“ steht neben „Übermaß“", any(a.text() == "Passung" for a in w.findChildren(QtGui.QAction)))
+        # seit 02.10.2026 in einer Gruppe: Lager / Kontakt › Fugen / Passungen (Paket 12a)
+        check("Ribbon: der Befehl „Passung“ steht neben „Übermaß“ in Lager / Kontakt › Fugen / Passungen",
+              any(a.text() == "Passung" for a in w.findChildren(QtGui.QAction))
+              and {(b.register, b.gruppe) for b in w.ribbon.befehle if b.text in ("Passung", "Übermaß")}
+              == {("Lager / Kontakt", "Fugen / Passungen")})
         # ---- Reibbeiwert für viele Fugen und die drei Passungsarten (17.09.2026) ----
         from statik3d import passungen as pss_
         kb_p = w.model.kontaktbedingungen["Fuge P"]
@@ -5297,8 +5304,10 @@ def main():
               f"r {z_.get('radius')}, {len(m_.koerper['V1'].elemente)} Elemente")
         check("das Protokoll nennt Trennung und Spiel",
               "von den Nachbarn getrennt" in w.log.toPlainText() and "Spiel 0.100 mm am Durchmesser" in w.log.toPlainText())
-        check("Ribbon: der Befehl „Spiel geben“ steht neben „Passung“",
-              any(a.text() == "Spiel geben" for a in w.findChildren(QtGui.QAction)))
+        check("Ribbon: der Befehl „Spiel geben“ steht neben „Passung“ (Lager / Kontakt › Fugen / Passungen)",
+              any(a.text() == "Spiel geben" for a in w.findChildren(QtGui.QAction))
+              and {(b.register, b.gruppe) for b in w.ribbon.befehle if b.text in ("Passung", "Spiel geben")}
+              == {("Lager / Kontakt", "Fugen / Passungen")})
         w.maskenrand.schliessen()
     except Exception as ex:      # noqa: BLE001
         import traceback
@@ -5398,8 +5407,11 @@ def main():
         check("kein Kegel: alle Bohrungskreise gleich, in beiden Blechen", len(radien_b) == 1, str(len(radien_b)))
         check("das Protokoll nennt die Volumen, die neu zu vernetzen sind",
               "Noch zu vernetzen" in w.log.toPlainText() and "Blech1" in w.log.toPlainText())
-        check("Ribbon: der Befehl „Spalt / Toleranz“ steht in der Geometrie",
-              any(a.text() == "Spalt / Toleranz" for a in w.findChildren(QtGui.QAction)))
+        # bis 02.10.2026 stand er im Register Geometrie (Paket 12a)
+        check("Ribbon: der Befehl „Spalt / Toleranz“ steht in Lager / Kontakt › Fugen / Passungen",
+              any(a.text() == "Spalt / Toleranz" for a in w.findChildren(QtGui.QAction))
+              and {(b.register, b.gruppe) for b in w.ribbon.befehle if b.text == "Spalt / Toleranz"}
+              == {("Lager / Kontakt", "Fugen / Passungen")})
         # Vernetzen fragt nur, wenn wirklich etwas ein Netz hat: am frisch
         # eingelesenen Modell ist nichts vernetzt, die Randflächen der Volumen
         # bekommen nie ein eigenes Netz und zählten fälschlich als „hat Netz“
@@ -7094,11 +7106,28 @@ def main():
         w.ribbon.finden("Projektangaben…")[0].aktion.trigger(); app.processEvents()
         check("Datei → Projektangaben… zeigt rechts die Maske „Modell“",
               w.eingaben_dock.windowTitle() == "Modell", w.eingaben_dock.windowTitle())
-        w._set_selection([]); app.processEvents()
+        # Ohne **jede** Auswahl: die Stabmaske von B3 hat den Stab gewählt (Doppelklick im
+        # Baum), und seit 12c (03.10.2026) wirkt „Zuweisen“ auch auf gewählte Stäbe -
+        # _set_selection([]) leert nur die Knoten und liess den Hinweis ausbleiben
+        w.clear_selection(); app.processEvents()
+        check("Vorbedingung: weder Knoten noch Stäbe, Linien, Flächen, Volumen, Elemente, Lager oder Lasten gewählt",
+              not w._auswahl_arten() and w.ribbon._kontext is None, str(w._auswahl_arten()))
         n_f = len(fehler_)
         w.zuweisen_zeigen("querschnitt"); app.processEvents()
         check("„Querschnitt zuweisen…“ ohne Auswahl: Hinweis statt stummem Befehl",
               len(fehler_) == n_f + 1 and "wählen" in fehler_[-1], str(fehler_[-1:]))
+        # … und bei gewähltem Stab: kein Hinweis, das Register zeigt das Feld (12c)
+        w.sel_staebe[:] = [stab_]; w._auswahl_register(); app.processEvents()
+        n_f = len(fehler_)
+        w.ribbon.zeigen("Start"); app.processEvents()
+        w.zuweisen_zeigen("querschnitt"); app.processEvents()
+        check("„Querschnitt zuweisen…“ bei gewähltem Stab: kein Hinweis, Kontextregister vorn mit dem Feld Querschnitt",
+              len(fehler_) == n_f and w.ribbon._kontext is not None
+              and w.ribbon.tabs.currentWidget() is w.ribbon._kontext
+              and getattr(w, "cb_assign_sec", None) is not None
+              and w.ribbon.tabs.tabText(w.ribbon.tabs.currentIndex()) == "Auswahl: 1 Stab",
+              str((fehler_[n_f:], w.ribbon._kontext_name)))
+        w.clear_selection(); app.processEvents()
         w._set_selection([0, 1]); app.processEvents()
         w.zuweisen_zeigen("dicke"); app.processEvents()
         check("„Dicke zuweisen…“ mit Auswahl: Kontextregister „Auswahl“ vorn, Aufklappliste Dicke da",
@@ -8590,9 +8619,11 @@ def main():
               str(sorted(knoepfe)))
         mk.setzen("mass", "Formgüte (1 = beste Form)")
         knoepfe["Schlechte wählen"].click()
-        check("Netzqualität: „Schlechte wählen“ markiert das entartete Element",
-              list(w.selection) == [5] and w.auswahlart == "Netz",
-              f"{list(w.selection)} / {w.auswahlart}")
+        # Elementnummern gehoeren in die Elementauswahl: bis 03.10.2026 standen sie in der
+        # Knotenauswahl (hier hiess es list(w.selection) == [5] - Knoten 5 statt Element 5)
+        check("Netzqualität: „Schlechte wählen“ wählt das entartete Element (Elementauswahl, keine Knoten)",
+              list(w.sel_elemente) == [5] and not len(w.selection) and w.auswahlart == "Netz",
+              f"Elemente {list(w.sel_elemente)} Knoten {list(w.selection)} / {w.auswahlart}")
         knoepfe["Aus"].click()
         check("Netzqualität: „Aus“ nimmt die Einfärbung weg", w.netzguete_feld is None)
 

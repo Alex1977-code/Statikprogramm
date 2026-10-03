@@ -22,8 +22,9 @@ class WerkzeugeDialog(QtWidgets.QDialog):
                "die Lizenzen der jeweiligen Werkzeuge; der Lizenztext von MUMPS liegt im nachgeladenen Paket "
                "unter mumps/LIZENZ. Vernetzer tetraedern Volumen (Netzeinstellungen → Vernetzer), der "
                "Nachbesserer MMG3D optimiert das fertige Tetraedernetz bei fester Hülle (Netzeinstellungen → "
-               "Nachbesserung), MUMPS steht danach unter Berechnung → Einstellungen → Gleichungslöser. Ist das "
-               "Kästchen unten an, lädt das Programm MUMPS beim Start ohne Rückfrage nach, wenn es fehlt.")
+               "Nachbesserung), MUMPS steht danach unter Berechnung → Einstellungen → Experten → "
+               "Gleichungslöser. Ist das Kästchen unten an, lädt das Programm MUMPS beim Start ohne "
+               "Rückfrage nach, wenn es fehlt.")
 
     def __init__(self, parent=None):
         super().__init__(parent)

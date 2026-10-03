@@ -594,7 +594,8 @@ def test_rueckgaengig_knopf_nennt():
     check("zurückgenommener Punkt: der Knopf nennt wieder den vorigen Schritt, nicht den verworfenen",
           w.act_undo.toolTip() == tip and "unbekannt" not in w.act_undo.toolTip(),
           f"{tip!r} -> {w.act_undo.toolTip()!r}")
-    check("… mit Tastenkürzel", "Strg+Z" in tip or "Ctrl+Z" in tip, tip)
+    check("… mit Tastenkürzel, deutsch geschrieben (Strg, nicht Ctrl; 02.10.2026)",
+          tip.endswith("(Strg+Z)") and "Ctrl" not in tip, tip)
 
 
 def test_befehlssuche():

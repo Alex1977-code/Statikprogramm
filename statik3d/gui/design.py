@@ -13,6 +13,9 @@ die Eingaben rechts - und unten Protokoll und Tabellen.
 """
 from __future__ import annotations
 
+import os
+import re
+
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 from .. import elemente as EL
@@ -34,7 +37,17 @@ FARBEN = {
     "gut": "#2e8b3a",
     "schlecht": "#c62828",
     "warn": "#b7791f",
+    # Warnfarbe fuer Text (Protokoll, 11 px): dunkler als "warn" - Kontrast auf
+    # Weiss 4,8 zu 1 statt 3,6, WCAG AA verlangt 4,5 fuer kleine Schrift.
+    # "warn" bleibt fuer Modellbaum und Filmstreifen (Teilpaket 9a)
+    "warn_text": "#b35a00",
     "ansicht": "#e9edf1",
+    # Eingabetabellen (Teilpaket 10a): editierbare Zelle weiss, feste grau
+    "zelle_edit": "#ffffff",
+    "zelle_fest": "#eceff2",
+    # Pfeile gesperrter Felder und Drehfelder am Anschlag (Teilpaket 11f); dieselbe
+    # Farbe wie die Schrift gesperrter Knoepfe (QPushButton:disabled)
+    "gesperrt": "#a9b6c2",
 }
 
 #: Stilblatt fuer das ganze Fenster
@@ -115,6 +128,7 @@ QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QPlainTextEdit, QTextEdit {{
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {{
     border-color: {akzent}; }}
 QComboBox::drop-down {{ border: 0; width: 18px; }}
+{pfeile}
 QCheckBox, QRadioButton {{ spacing: 6px; }}
 
 QTableWidget, QTreeWidget, QListWidget {{ background: {flaeche};
@@ -143,8 +157,247 @@ QToolTip {{ background: {kopf}; color: #fff; border: 0; padding: 5px 7px; }}
 """
 
 
+#: Ordner der Pfeilbilder (Teilpaket 11f). Er gehoert in die exe: Statik3D.spec
+#: sammelt statik3d/gui/bilder ein, pyproject.toml nimmt ihn ins Paket. Gefunden
+#: wird er wie statik3d/web/static ueber den Ort dieser Datei.
+BILDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bilder")
+
+#: die Pfeilbilder: Name -> (Dateiname, Pfeil nach unten?, Farbe aus FARBEN). Die
+#: grauen gehoeren zu gesperrten Feldern und zu einem Drehfeld am Anschlag.
+PFEILE = {"ab": ("pfeil_ab.png", True, "matt"), "auf": ("pfeil_auf.png", False, "matt"),
+          "ab_grau": ("pfeil_ab_grau.png", True, "gesperrt"),
+          "auf_grau": ("pfeil_auf_grau.png", False, "gesperrt")}
+
+#: Kantenlaenge des Pfeilbilds in logischen Bildpunkten
+PFEIL_KANTE = 10
+
+
+def pfeil_bild(runter: bool, faktor: int = 1, farbe: str = "matt") -> QtGui.QImage:
+    """Das Bild eines Pfeils (Winkel, wie Windows sie an Auswahlfeldern zeichnet).
+
+    Unter einem Stilblatt zeichnet Qt an Aufklappliste und Drehfeld **keinen**
+    Pfeil mehr, sobald ``drop-down`` bzw. ``up-button`` einen eigenen Rahmen
+    bekommen (gemessen 02.10.2026: ohne die Bilder 0 dunkle Punkte im
+    Pfeilbereich). Ein Dreieck aus Rahmenstrichen (``border-top: 5px solid``)
+    ging nicht: Qt zeichnet daraus Balken, keine Spitze. Darum Bilder.
+    ``faktor`` 2 ist die Fassung fuer hohe Bildschirmdichte (Name mit ``@2x``,
+    die Qt dort selbst waehlt), ``farbe`` ein Schluessel aus FARBEN. Neu schreiben:
+    ``python -c "from statik3d.gui import design; design.pfeilbilder_schreiben()"``"""
+    s = PFEIL_KANTE * faktor
+    bild = QtGui.QImage(s, s, QtGui.QImage.Format_ARGB32_Premultiplied)
+    bild.fill(0)
+    p = QtGui.QPainter(bild)
+    p.setRenderHint(QtGui.QPainter.Antialiasing)
+    stift = QtGui.QPen(QtGui.QColor(FARBEN[farbe]), 1.8 * faktor)
+    stift.setCapStyle(QtCore.Qt.RoundCap)
+    stift.setJoinStyle(QtCore.Qt.RoundJoin)
+    p.setPen(stift)
+    # 10 x 10: Spitze in der Mitte, Schenkel 3 Bildpunkte hoch, 6,8 breit
+    oben, unten = (0.36 * s, 0.66 * s) if runter else (0.66 * s, 0.36 * s)
+    p.drawPolyline([QtCore.QPointF(0.16 * s, oben), QtCore.QPointF(0.5 * s, unten),
+                    QtCore.QPointF(0.84 * s, oben)])
+    p.end()
+    return bild
+
+
+def pfeilbilder_schreiben(ordner: str = None) -> list:
+    """Die Pfeilbilder (je Pfeil einfach und ``@2x``) in den Ordner schreiben;
+    ohne Angabe nach :data:`BILDER`. Gibt die Dateinamen zurueck. Braucht eine
+    Qt-Anwendung (QGuiApplication) nicht - QImage und QPainter genuegen."""
+    ordner = ordner or BILDER
+    os.makedirs(ordner, exist_ok=True)
+    namen = []
+    for datei, runter, farbe in PFEILE.values():
+        stamm, endung = os.path.splitext(datei)
+        for faktor, zusatz in ((1, ""), (2, "@2x")):
+            name = stamm + zusatz + endung
+            pfeil_bild(runter, faktor, farbe).save(os.path.join(ordner, name))
+            namen.append(name)
+    return namen
+
+
+def _pfeilregeln() -> str:
+    """Stilregeln fuer die Pfeile von Aufklappliste und Drehfeld - leer, wenn die
+    Bilder fehlen (Qt meldete sonst bei jedem Feld eine Warnung, und die Felder
+    sind dann so unschoen wie bisher, aber nicht kaputt).
+
+    Die Pfeile stehen auf der Flaeche der Knoepfe ohne eigenen Rahmen: ein
+    Drehfeld zeichnete sonst die Trennlinien der Windows-Knoepfe mit
+    (gemessen: 25 dunkle Punkte am Rand des Pfeilbereichs). Der Pfad hat
+    Schraegstriche und steht in Anfuehrungszeichen - der Ordner der exe
+    liegt unter dem Benutzernamen, und der darf ein Leerzeichen haben."""
+    k = PFEIL_KANTE
+    pfade = {k: os.path.join(BILDER, v[0]).replace("\\", "/") for k, v in PFEILE.items()}
+    if not all(os.path.isfile(p) for p in pfade.values()):
+        return ""
+    # Der Knopf ohne Rahmen hat keine Rueckmeldung mehr, die Qt selbst zeichnet:
+    # beim Ueberfahren die helle Akzentflaeche, beim Druecken die dunklere der
+    # Knoepfe (QPushButton:pressed). Die Rundung folgt der des Feldes (8 px
+    # abzueglich 1 px Rand), sonst ragte die Flaeche ueber die Ecke.
+    # ":off" ist der Zustand eines Drehfelds am Anschlag (Qt-Dokumentation).
+    return (
+        'QComboBox::down-arrow {{ image: url("{ab}"); width: {k}px; height: {k}px; }}\n'
+        'QComboBox::down-arrow:disabled {{ image: url("{ab_grau}"); }}\n'
+        'QSpinBox::up-button, QDoubleSpinBox::up-button {{ subcontrol-origin: border;\n'
+        '    subcontrol-position: top right; width: 18px; border: 0;\n'
+        '    border-top-right-radius: 7px; }}\n'
+        'QSpinBox::down-button, QDoubleSpinBox::down-button {{ subcontrol-origin: border;\n'
+        '    subcontrol-position: bottom right; width: 18px; border: 0;\n'
+        '    border-bottom-right-radius: 7px; }}\n'
+        'QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,\n'
+        'QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {{\n'
+        '    background: {akzent_hell}; }}\n'
+        'QSpinBox::up-button:pressed, QDoubleSpinBox::up-button:pressed,\n'
+        'QSpinBox::down-button:pressed, QDoubleSpinBox::down-button:pressed {{\n'
+        '    background: {gedrueckt}; }}\n'
+        'QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{ image: url("{auf}");\n'
+        '    width: {k}px; height: {k}px; }}\n'
+        'QSpinBox::up-arrow:disabled, QSpinBox::up-arrow:off,\n'
+        'QDoubleSpinBox::up-arrow:disabled, QDoubleSpinBox::up-arrow:off {{\n'
+        '    image: url("{auf_grau}"); }}\n'
+        'QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{ image: url("{ab}");\n'
+        '    width: {k}px; height: {k}px; }}\n'
+        'QSpinBox::down-arrow:disabled, QSpinBox::down-arrow:off,\n'
+        'QDoubleSpinBox::down-arrow:disabled, QDoubleSpinBox::down-arrow:off {{\n'
+        '    image: url("{ab_grau}"); }}'
+    ).format(k=k, akzent_hell=FARBEN["akzent_hell"], gedrueckt="#dce9f8", **pfade)
+
+
 def stil() -> str:
-    return STIL.format(**FARBEN)
+    # Die Pfeilregeln kommen fertig gesetzt als Wert in die Vorlage; ihre
+    # Klammern liest format() dort nicht noch einmal
+    return STIL.format(pfeile=_pfeilregeln(), **FARBEN)
+
+
+# ---- Protokoll: Festbreitenschrift und Faerbung (Teilpaket 9a, 02.10.2026) -------
+
+#: Festbreitenschriften in der Reihenfolge der Vorliebe: Consolas (auf jedem
+#: Windows seit Vista), Cascadia Mono (Windows 11), dann die ueblichen unter
+#: Linux und macOS, zuletzt Courier New
+FESTSCHRIFTEN = ("Consolas", "Cascadia Mono", "DejaVu Sans Mono", "Liberation Mono",
+                 "Menlo", "Courier New")
+
+#: die gewaehlte Familie, einmal je Programmlauf (die Schriftdatenbank aendert
+#: sich nicht); None, solange es noch keine Anwendung gibt
+_FAMILIE = None
+
+
+def _schriften_vorhanden() -> list:
+    """Die Namen der installierten Schriften. Ohne Anwendung (Qt verlangt eine
+    fuer die Schriftdatenbank) und offscreen unter Windows, wo es gar keine
+    Schriften gibt, ist die Liste leer."""
+    if QtGui.QGuiApplication.instance() is None:
+        return []
+    return list(QtGui.QFontDatabase.families())
+
+
+def waehle_festschrift(vorhanden, ist_fest, vorrang=FESTSCHRIFTEN):
+    """Die erste Schrift aus *vorrang*, die installiert **und** wirklich
+    festbreit ist - sonst None. Reine Wahl ohne Qt: *vorhanden* sind die Namen
+    der installierten Schriften, *ist_fest* fragt eine Familie, ob sie fest ist.
+    Der Name kommt so zurueck, wie ihn die Schriftdatenbank schreibt."""
+    echt = {n.lower(): n for n in vorhanden}
+    for name in vorrang:
+        gefunden = echt.get(name.lower())
+        if gefunden is not None and ist_fest(gefunden):
+            return gefunden
+    return None
+
+
+def festschrift_familie() -> str:
+    """Die Familie fuer Protokoll und Textfelder mit Spalten.
+
+    „monospace“ ist unter Windows kein Schriftname: die Stilzeile
+    ``font-family: monospace`` wurde dort zu Tahoma, einer Proportionalschrift
+    (gemessen 02.10.2026) - Spalten im Protokoll standen schief. Darum die
+    erste wirklich festbreite Schrift aus FESTSCHRIFTEN, sonst die
+    Festbreitenschrift des Systems, sonst bleibt es bei „monospace“."""
+    global _FAMILIE
+    if _FAMILIE is not None:
+        return _FAMILIE
+    if QtGui.QGuiApplication.instance() is None:
+        return "monospace"
+    name = waehle_festschrift(_schriften_vorhanden(), QtGui.QFontDatabase.isFixedPitch)
+    if name is None:
+        name = (QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont).family()
+                or "monospace")
+    _FAMILIE = name
+    return name
+
+
+def festschrift_stil(px=11) -> str:
+    """Stilzeile fuer ein Textfeld in der Festbreitenschrift. Die Schrift gehoert
+    in die Stilzeile des Feldes, nicht in setFont: das Stilblatt des Fensters
+    (STIL, Segoe UI fuer jedes QWidget) hebt ein gesetztes Schriftbild wieder auf
+    (Dialoge mit setFamily("Courier New") standen so in Segoe UI, gemessen
+    02.10.2026). ``px=None`` laesst die Groesse des Fensters stehen."""
+    gross = f" font-size: {px}px;" if px else ""
+    return f'font-family: "{festschrift_familie()}";{gross}'
+
+
+#: Anfang einer Meldungszeile: FEHLER, WARNUNG oder ABBRUCH als erstes Wort, auch
+#: eingerueckt (Importhinweise stehen als „  WARNUNG:   ...“, die Zusammenfassung
+#: als „ABBRUCH                 : ...“); „FEHLERFREI“ zaehlt nicht
+_MELDUNG = re.compile(r"\s*(FEHLER|WARNUNG|ABBRUCH)\b")
+
+#: dasselbe nach einem Namen als erstem Wort („  S1: WARNUNG ...“ aus der
+#: Stellungsreihe, bridges/positions.py): das erste Wort endet mit „:“. Was
+#: danach mitten im Satz steht („... - WARNUNG: ...“), zaehlt nicht.
+_MELDUNG_MIT_NAME = re.compile(r"\s*\S+:\s+(FEHLER|WARNUNG)\b")
+
+
+def protokollzeile_art(text: str):
+    """Wie das Protokoll die Zeile zeigt: ``"fehler"`` (rot), ``"warnung"``
+    (orange), ``"abschnitt"`` (fett) oder None (unveraendert).
+
+    Die Regel ist klein und steht im Handbuch: ein **Abschnitt** beginnt mit
+    ``--- `` am Zeilenanfang („--- Beispiel 'hall' (Datum) ---“,
+    „--- Freie Bewegungen ---“, „--- Berechnung gestartet ---“); eine **Meldung**
+    hat FEHLER, WARNUNG oder ABBRUCH als erstes Wort der Zeile (ABBRUCH zaehlt
+    wie FEHLER) oder FEHLER/WARNUNG als zweites Wort nach einem ersten Wort, das
+    mit „:“ endet („  S1: WARNUNG ...“). Das Stichwort mitten im Satz faerbt
+    nichts. Folgezeilen einer mehrzeiligen Meldung sind eigene Zeilen und
+    bleiben, wie sie sind."""
+    if text.startswith("--- "):
+        return "abschnitt"
+    m = _MELDUNG.match(text) or _MELDUNG_MIT_NAME.match(text)
+    if m is None:
+        return None
+    return "warnung" if m.group(1) == "WARNUNG" else "fehler"
+
+
+class ProtokollFaerber(QtGui.QSyntaxHighlighter):
+    """Faerbt und fettet Zeilen des Protokolls, ohne den Text anzufassen.
+
+    Rot ist FARBEN["schlecht"], Orange FARBEN["warn_text"] (nicht "warn": das ist
+    fuer Flaechen und grosse Zeichen und liegt als 11-px-Text mit 3,6 zu 1 unter
+    der Grenze 4,5 der WCAG).
+
+    Ein Syntaxfaerber legt seine Formate ueber das Layout des Blocks; der Text
+    des Dokuments und das Zeichenformat der Zeile bleiben unberuehrt -
+    ``toPlainText()`` liefert genau das Geschriebene, und die rote Sammelzeile
+    der Nachweise (eigenes Zeichenformat) behaelt es. Gearbeitet wird je Block,
+    ohne Zustand von Zeile zu Zeile: eine neue Zeile kostet eine Regelpruefung,
+    nicht einen Lauf ueber das Dokument."""
+
+    def __init__(self, dokument):
+        super().__init__(dokument)
+        fehler = QtGui.QTextCharFormat()
+        fehler.setForeground(QtGui.QColor(FARBEN["schlecht"]))
+        warnung = QtGui.QTextCharFormat()
+        warnung.setForeground(QtGui.QColor(FARBEN["warn_text"]))
+        abschnitt = QtGui.QTextCharFormat()
+        abschnitt.setFontWeight(QtGui.QFont.Bold)
+        self._formate = {"fehler": fehler, "warnung": warnung, "abschnitt": abschnitt}
+
+    def highlightBlock(self, text):          # noqa: N802 - Qt-Schreibweise
+        fmt = self._formate.get(protokollzeile_art(text))
+        if fmt is not None:
+            # Qt zaehlt in UTF-16-Einheiten, Python in Codepunkten: ein Zeichen
+            # ausserhalb der Grundebene (Emoji im Pfad) hat dort zwei - mit
+            # len(text) bliebe das Zeilenende ungefaerbt. Die Blocklaenge
+            # (ohne den Absatzumbruch) ist Qts eigene Zahl.
+            self.setFormat(0, max(0, self.currentBlock().length() - 1), fmt)
 
 
 class Marke(QtWidgets.QLabel):
@@ -511,6 +764,40 @@ class Modellbaum(QtWidgets.QTreeWidget):
         self.itemSelectionChanged.connect(self._auswahl_geaendert)
         #: Hat _auswahl_geaendert fuer den laufenden Klick schon gemeldet?
         self._gemeldet = False
+        #: Aufklappzustand ueber den **Pfad** der Zweige (:meth:`pfad_von`), nicht
+        #: ueber ihren Text; er ueberlebt jeden Neuaufbau (:meth:`fuellen`) und
+        #: wird nur von :meth:`zustand_vergessen` geleert
+        self._offen: dict[tuple, bool] = {}
+        #: Die Eintraege des laufenden Aufbaus, unter denen etwas haengen kann -
+        #: nur sie werden beim naechsten Aufbau gemerkt (Zweige, Lastfaelle,
+        #: Ergebnisgruppen), nie die bis zu 20 000 Zeilen einer Liste
+        self._zweige: list = []
+        #: Das Modell ist ein anderes: der naechste Aufbau beginnt im Grundzustand
+        self._vergessen = False
+        #: Rueckgaengig/Wiederholen: der naechste Aufbau behaelt Aufklappzustand
+        #: und Rolle, aber nicht die Auswahl (die Ansicht leert ihre auch)
+        self._auswahl_verwerfen = False
+
+    #: Grundzustand eines Modells: nur diese Zweige sind aufgeklappt (Pfade).
+    #: Die Wurzel, damit man den Baum sieht; „Lager“ und „Stellungen“ waren im
+    #: Quelltext schon immer als offen gedacht (``(lg, True)`` und
+    #: ``st.setExpanded(True)``) und blieben es nur wegen der doppelt belegten
+    #: Namen nicht (Teilpaket 8a, 02.10.2026).
+    GRUNDZUSTAND_OFFEN = frozenset({
+        (("modell", ""),),
+        (("modell", ""), ("lager", "")),
+        (("modell", ""), ("stellungen", "")),
+    })
+    #: So viele gewaehlte Eintraege merkt der Baum ueber einen Neuaufbau; wer
+    #: mehr gewaehlt hat (Strg+A in der Knotenliste), behaelt nur den aktuellen
+    AUSWAHL_MAX = 200
+    #: Arten, deren Schluessel die laufende Nummer ist: nach dem Loeschen ruecken
+    #: die Nummern auf, und dieselbe Nummer meint ein anderes Objekt. Hat sich die
+    #: Zahl der Eintraege der Liste geaendert, wird ihre Auswahl nicht
+    #: wiederhergestellt (ein zweites Entf loeschte sonst die falschen).
+    NUMMERIERT = frozenset({"knoten", "stabelement", "lager_einzeln", "linienlager_einzeln",
+                            "flaechenlager_einzeln", "punktmasse", "daempfer", "starrkoerper",
+                            "berichtseintrag"})
 
     @staticmethod
     def _schluessel(item) -> tuple[str, str]:
@@ -695,17 +982,207 @@ class Modellbaum(QtWidgets.QTreeWidget):
         if art:
             self.bearbeiten.emit(art, name)
 
+    # -- Zustand: Aufklappen, Rollposition, gewaehlter Eintrag --------------
+    @staticmethod
+    def _element(item) -> tuple[str, str]:
+        """Art und Kennung eines Eintrags: der Schluessel, bei einem Zweig
+        seine feste Kennung (``kennung`` in :meth:`_zweig`), sonst leer."""
+        art = str(item.data(0, QtCore.Qt.UserRole) or "")
+        key = item.data(0, QtCore.Qt.UserRole + 1)
+        if key is None:
+            key = item.data(0, QtCore.Qt.UserRole + 2)
+        return art, ("" if key is None else str(key))
+
+    @classmethod
+    def pfad_von(cls, item) -> tuple:
+        """Der Pfad eines Eintrags von der Wurzel an: je Stufe (Art, Kennung).
+
+        Er ist der Schluessel des Aufklappzustands. Der angezeigte Text taugt
+        dafuer nicht: er traegt den Modellnamen (die Wurzel), Zusaetze wie „○“
+        und „⚠“ und kommt mehrfach vor („Lastfälle“ und „Kombinationen“ stehen
+        unter „Einwirkungen“ und unter „Ergebnisse“).
+        """
+        teile = []
+        while item is not None:
+            teile.append(cls._element(item))
+            item = item.parent()
+        teile.reverse()
+        return tuple(teile)
+
+    def _ort(self, item) -> tuple:
+        """(Pfad des Elternteils, Art und Kennung, Stelle unter dem Elternteil,
+        Zaehler des Elternteils): wiederzufinden, ohne die Kinder durchzugehen
+        (die Stelle wird zuerst geprueft). Der Zaehler (Spalte 1 des Zweigs, die
+        Zahl der Objekte, nicht der Zeilen) zeigt bei nummerierten Arten, ob
+        sich die Liste geaendert hat."""
+        eltern = item.parent()
+        if eltern is None:
+            return (), self._element(item), 0, ""
+        return (self.pfad_von(eltern), self._element(item), eltern.indexOfChild(item),
+                eltern.text(1))
+
+    def _auffinden(self, ort: tuple, verzeichnis: dict, naechster: bool = False,
+                   pruefen: bool = True):
+        """Den Eintrag zu einem Ort im neuen Baum, sonst ``None``.
+
+        Zweige stehen im Verzeichnis. Ein Eintrag in einer Liste wird zuerst an
+        seiner alten Stelle gesucht, dann in deren Umgebung; nur in kurzen
+        Listen geht die Suche ueber alle (am Drehlager hat „Knoten“ 20 000
+        Eintraege). ``naechster``: ist er weg, der Eintrag an seiner Stelle.
+        ``pruefen``: bei nummerierten Arten (:attr:`NUMMERIERT`) nichts finden,
+        wenn sich der Zaehler der Liste geaendert hat; fuer die Rollposition
+        gilt das nicht, sie braucht nur die Stelle.
+        """
+        eltern_pfad, element, nr, zaehler = ort
+        zweig = verzeichnis.get(eltern_pfad + (element,))
+        if zweig is not None:
+            return zweig
+        eltern = verzeichnis.get(eltern_pfad)
+        if eltern is None:
+            return None
+        if pruefen and element[0] in self.NUMMERIERT and eltern.text(1) != zaehler:
+            return None
+        n = eltern.childCount()
+        if 0 <= nr < n and self._element(eltern.child(nr)) == element:
+            return eltern.child(nr)
+        suche = list(range(max(0, nr - 50), min(n, nr + 51)))
+        if n <= 2000:
+            suche += list(range(n))
+        for i in suche:
+            k = eltern.child(i)
+            if self._element(k) == element:
+                return k
+        return eltern.child(min(max(nr, 0), n - 1)) if naechster and n else None
+
+    def zustand_vergessen(self) -> None:
+        """Das Modell ist ein anderes (Neu, Öffnen, Beispiel, Import): der
+        naechste Aufbau beginnt im Grundzustand - Aufklappzustand, gewaehlter
+        Eintrag und Rollposition des vorigen Modells gelten nicht mehr."""
+        self._offen.clear()
+        self._vergessen = True
+
+    def auswahl_vergessen(self) -> None:
+        """Rueckgaengig und Wiederholen: der naechste Aufbau behaelt
+        Aufklappzustand und Rolle, aber nicht die Auswahl. Die Ansicht leert
+        ihre Auswahl dabei (``_objektauswahl_leeren``); der Baum darf nicht
+        auf Objekten markiert bleiben, die dort nicht mehr gewaehlt sind."""
+        self._auswahl_verwerfen = True
+
+    def _ansicht_merken(self):
+        """Vor dem Neuaufbau: Aufklappzustand, Auswahl und Rollposition.
+
+        Gemerkt wird nur an den Eintraegen, unter denen etwas haengen kann
+        (``_zweige``, wenige Dutzend bis einige hundert) - nie ueber die Zeilen
+        der Listen. Am Drehlager hat der Zweig „Knoten“ 20 000 Eintraege, und
+        die Schleife ueber alle Kinder lief bei jedem Neuaufbau.
+        Gibt Auswahl und Anker zurueck, ``None`` nach :meth:`zustand_vergessen`.
+        """
+        if self._vergessen:
+            self._vergessen = False
+            self._offen.clear()
+            return None
+        try:
+            for it in self._zweige:
+                if it.childCount():
+                    self._offen[self.pfad_von(it)] = it.isExpanded()
+            gewaehlt = self.selectedItems()
+            aktuell = self.currentItem()
+            if len(gewaehlt) > self.AUSWAHL_MAX:
+                gewaehlt = [aktuell] if aktuell is not None else []
+            anker = None
+            if self.verticalScrollBar().value() > 0:
+                oben = self.itemAt(2, 2)
+                if oben is not None:
+                    anker = self._ort(oben)
+            if self._auswahl_verwerfen:
+                self._auswahl_verwerfen = False
+                gewaehlt, aktuell = [], None
+            return {"auswahl": [self._ort(i) for i in gewaehlt],
+                    "aktuell": self._ort(aktuell) if aktuell is not None else None,
+                    "anker": anker}
+        except RuntimeError:            # ein Eintrag war schon weg (Aufbau abgebrochen)
+            return None
+
+    def _ansicht_herstellen(self, ansicht) -> None:
+        """Nach dem Neuaufbau: aufklappen, auswaehlen, rollen - in dieser
+        Reihenfolge, denn das Rollen braucht die aufgeklappten Zeilen.
+
+        Die Signale schweigen: eine wiederhergestellte Auswahl ist keine neue
+        und soll keine Maske oeffnen. Das Selbstrollen der Ansicht ist aus,
+        sonst klappt ``setCurrentItem`` die Eltern wieder auf.
+        """
+        verzeichnis = {self.pfad_von(it): it for it in self._zweige}
+        for pfad, it in verzeichnis.items():
+            offen = self._offen.get(pfad)
+            if offen is None:
+                offen = pfad in self.GRUNDZUSTAND_OFFEN
+            if offen and it.childCount():
+                it.setExpanded(True)
+        if ansicht is None:
+            self.scrollToTop()
+            return
+        gesperrt = self.blockSignals(True)
+        auto = self.hasAutoScroll()
+        self.setAutoScroll(False)
+        try:
+            for ort in ansicht["auswahl"]:
+                it = self._auffinden(ort, verzeichnis)
+                if it is not None:
+                    it.setSelected(True)
+            aktuell = (self._auffinden(ansicht["aktuell"], verzeichnis)
+                       if ansicht["aktuell"] is not None else None)
+            if aktuell is not None:
+                self.setCurrentItem(aktuell, 0, QtCore.QItemSelectionModel.NoUpdate)
+        finally:
+            self.setAutoScroll(auto)
+            self.blockSignals(gesperrt)
+        self._gemeldet = False
+        if ansicht["anker"] is not None:
+            ziel = self._auffinden(ansicht["anker"], verzeichnis, naechster=True, pruefen=False)
+            if ziel is not None:
+                self.scrollToItem(ziel, QtWidgets.QAbstractItemView.PositionAtTop)
+
     def _zweig(self, eltern, text, zahl="", art="", fett=False, farbe=None,
-               schluessel=None, hinweis=""):
+               schluessel=None, hinweis="", kennung=None, blatt=False):
+        """Einen Eintrag anlegen.
+
+        Schriftregel (02.10.2026): **grau = leer** (Zaehler 0), **normal =
+        gefuellt**, **fett nur fuer Gruppen** (``fett``: die Wurzel und die
+        Zweige, die nur Unterzweige zusammenfassen). Eine ausdrueckliche
+        ``farbe`` (Warnung, „+ … anlegen“) geht vor.
+
+        ``kennung``: feste Kennung eines Zweigs, wo Art und Elternpfad ihn nicht
+        eindeutig machen (:meth:`pfad_von`). ``blatt``: der Eintrag bekommt nie
+        Kinder (Zeilen der Listen) und wird nicht fuer den Aufklappzustand
+        vorgemerkt.
+        """
         it = QtWidgets.QTreeWidgetItem(eltern, [text, str(zahl)])
         it.setData(0, QtCore.Qt.UserRole, art)
         if schluessel is not None:
             it.setData(0, QtCore.Qt.UserRole + 1, str(schluessel))
+        elif kennung is not None:
+            it.setData(0, QtCore.Qt.UserRole + 2, str(kennung))
+        if not blatt:
+            self._zweige.append(it)
         if fett:
             f = it.font(0)
             f.setBold(True)
             it.setFont(0, f)
         it.setForeground(1, QtGui.QColor(FARBEN["matt"]))
+        if farbe is None and schluessel is None and str(zahl) == "0":
+            farbe = FARBEN["matt"]
+            it.setData(0, QtCore.Qt.UserRole + 3, True)         # nur wegen Zaehler 0 grau
+        elif not blatt and schluessel is None and str(zahl).isdigit() and int(zahl) > 0:
+            # Ein Unterzweig mit Inhalt: „Volumen 0“ steht ueber „Volumenelemente
+            # 960“ (Elemente ohne Koerper), „Staebe 0“ ueber den Schweissnaehten.
+            # Grau heisst leer samt allem darunter - die Zweige darueber, die nur
+            # wegen ihres eigenen Zaehlers grau gesetzt wurden, werden normal.
+            p = eltern
+            while isinstance(p, QtWidgets.QTreeWidgetItem):
+                if p.data(0, QtCore.Qt.UserRole + 3):
+                    p.setData(0, QtCore.Qt.UserRole + 3, None)
+                    p.setData(0, QtCore.Qt.ForegroundRole, None)
+                p = p.parent()
         if farbe:
             it.setForeground(0, QtGui.QColor(farbe))
         if hinweis:
@@ -740,11 +1217,12 @@ class Modellbaum(QtWidgets.QTreeWidget):
             farbe = e[4] if len(e) > 4 else None
             if i >= BAUM_MAX:
                 self._zweig(eltern, f"… {anzahl - BAUM_MAX} weitere",
-                            "", sammelart or art, farbe=FARBEN["matt"],
+                            "", sammelart or art, farbe=FARBEN["matt"], blatt=True,
                             hinweis="Die vollständige Liste steht in der "
                                     "Tabelle unten – dort mit Filter.")
                 break
-            self._zweig(eltern, text, zahl, art, schluessel=key, hinweis=tip, farbe=farbe)
+            self._zweig(eltern, text, zahl, art, schluessel=key, hinweis=tip, farbe=farbe,
+                        blatt=True)
 
     def ergebnisse_nachziehen(self, ergebnisse: dict) -> bool:
         """Nach einem Ergebniswechsel nur die Zusaetze (Spalte 1), Hinweise
@@ -801,17 +1279,58 @@ class Modellbaum(QtWidgets.QTreeWidget):
                 teile.append(namen[d])
         return ", ".join(teile) or "frei"
 
+    @staticmethod
+    def _koerperzeile(name: str, x) -> tuple:
+        """Die Zeile eines Volumens: (Text, Zusatz, Schluessel, Hinweis, Farbe).
+
+        Der Grund, warum ein Koerper kein Netz hat, steht in ``netzgrund`` (vom
+        Vernetzer gesetzt):
+
+        * ``""`` - nie versucht: vor dem Vernetzen der Normalfall, nur ein „○“;
+        * ``"kein_volumen"`` - er kann keines bekommen (Hilfskoerper, in RFEM
+          Null-Volumen): grau, ohne Warnzeichen, er traegt nichts und fehlt nicht;
+        * ``"abgebrochen"``, ``"gescheitert"``, ``"vernetzer_aus"`` - es haette
+          eines geben muessen: ⚠ vor dem Namen (hinten ginge es mit dem „…“ der
+          Spalte verloren), Warnfarbe und der Grund im Hinweis.
+        """
+        bezug = x.bezug()
+        if x.elemente:
+            return name, bezug, name, f"{name}: {bezug}", None
+        from ..model import OHNE_NETZ
+        grund = str(getattr(x, "netzgrund", "") or "")
+        kom = str(getattr(x, "kommentar", "") or "")
+        if grund == "kein_volumen" or (not grund and kom.startswith(f"{OHNE_NETZ} kein Rauminhalt")):
+            rest = kom[len(OHNE_NETZ):].strip() if kom.startswith(OHNE_NETZ) else ""
+            return (name, bezug, name,
+                    f"{name}: {bezug}\nHilfskörper ohne Rauminhalt: bekommt kein Netz und trägt "
+                    "nichts." + (f"\n{rest}" if rest else ""),
+                    FARBEN["matt"])
+        if grund:
+            from ..diagnose import _netzgrund_text
+            return ("⚠ " + name, bezug, name,
+                    f"{name}: {bezug}\n⚠ Kein Netz: {_netzgrund_text(x)}.\n"
+                    "Das Volumen trägt nichts, solange es kein Netz hat.",
+                    FARBEN["warn"])
+        return name + " ○", bezug, name, f"{name}: {bezug}\nnoch nicht vernetzt", None
+
     def fuellen(self, model, stellungen: list = None, ergebnisse: dict = None):
-        offen = {}
+        """Den Baum aus dem Modell neu aufbauen.
 
-        def merken(it):
-            offen[it.text(0)] = it.isExpanded()
-            for i in range(it.childCount()):
-                merken(it.child(i))
+        Aufklappzustand, gewaehlter Eintrag und Rollposition bleiben erhalten
+        (:meth:`_ansicht_merken`, :meth:`_ansicht_herstellen`), es sei denn, der
+        Aufrufer hat :meth:`zustand_vergessen` gerufen, weil das Modell ein
+        anderes ist. Bis zum 02.10.2026 merkte sich der Baum den Zustand ueber
+        den Text jedes Eintrags, ging dafuer ueber alle Kinder und stellte nur
+        acht Zweige wieder her - ein neues Modell erbte ihn dabei, soweit die
+        Texte gleich waren.
 
-        for i in range(self.topLevelItemCount()):
-            merken(self.topLevelItem(i))
+        Fett stehen nur Gruppen, also Zweige, die Unterzweige zusammenfassen
+        (Wurzel, Eigenschaften, Lager, Verbindungen, Kontaktbedingungen,
+        Einwirkungen, Ergebnisse).
+        """
+        ansicht = self._ansicht_merken()
         self.clear()
+        self._zweige = []
         wurzel = self._zweig(self, model.name or "Modell", f"{model.nn} Kn",
                              "modell", fett=True)
 
@@ -819,7 +1338,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
         # Je ein eigener Zweig, alle Eintraege numerisch untereinander - ohne
         # Gruppen "Geometrie" und "Elemente" dazwischen. Unter "Staebe" stehen
         # die Stabelemente und, als erster Eintrag, die Staebe mit Nachweis.
-        kn = self._zweig(wurzel, "Knoten", model.nn, "knoten", fett=True,
+        kn = self._zweig(wurzel, "Knoten", model.nn, "knoten",
                          hinweis="Klick wählt alle Knoten, ein Eintrag den einen. "
                                  "Rechtsklick: Neu, Löschen.")
         # Nur die Knoten bauen, die der Zweig zeigt - sie stehen schon in ihrer
@@ -831,17 +1350,17 @@ class Modellbaum(QtWidgets.QTreeWidget):
                               i, *model.nodes[i]))
                          for i in range(min(model.nn, BAUM_MAX + 1))], "knoten",
                     sortieren=False, gesamt=model.nn)
-        lin = self._zweig(wurzel, "Linien", len(model.lines), "linien", fett=True)
+        lin = self._zweig(wurzel, "Linien", len(model.lines), "linien")
         self._liste(lin, [(name, f"{ln.typ} · {len(ln.nodes)}", name,
                            f"{name}: {ln.typ} über {len(ln.nodes)} Knoten")
                           for name, ln in sorted(model.lines.items(),
                                                  key=lambda kv: natuerlich(kv[0]))],
                     "linie", "linien")
         stab_els = [(i, e) for i, e in enumerate(model.elements) if e.typ in EL.STAB_TYPEN]
-        st = self._zweig(wurzel, "Stäbe", len(stab_els), "stabelemente", fett=True,
-                         hinweis="Stabelemente (Balken und Fachwerkstäbe); darunter "
-                                 "die Stäbe mit Nachweis")
-        mem = self._zweig(st, "Stäbe mit Nachweis", len(model.members), "staebe",
+        stb = self._zweig(wurzel, "Stäbe", len(stab_els), "stabelemente",
+                          hinweis="Stabelemente (Balken und Fachwerkstäbe); darunter "
+                                  "die Stäbe mit Nachweis")
+        mem = self._zweig(stb, "Stäbe mit Nachweis", len(model.members), "staebe",
                           hinweis="Physische Stäbe (Ketten von Stabelementen) für die "
                                   "Nachweise nach EC3")
         self._liste(mem, [(name, f"{len(mm.elements)} El", name,
@@ -850,53 +1369,58 @@ class Modellbaum(QtWidgets.QTreeWidget):
                                                  key=lambda kv: natuerlich(kv[0]))],
                     "stab", "staebe")
         naehte = getattr(model, "schweissnaehte", {}) or {}
-        nz = self._zweig(st, "Schweißnähte", len(naehte), "schweissnaehte",
-                         farbe=FARBEN["akzent"] if naehte else None,
+        nz = self._zweig(stb, "Schweißnähte", len(naehte), "schweissnaehte",
                          hinweis="Nahtart, Lage und Ausführung → Kerbfall nach EN 1993-1-9; "
                                  "„äquivalent“ = Ersatznaht für alle nicht einzeln "
                                  "modellierten Nähte. Rechtsklick: Neu, Löschen.")
         self._liste(nz, [(name, x.bezug(), name, f"Schweißnaht {name}: {x.bezug()}")
                          for name, x in naehte.items()], "schweissnaht", "schweissnaehte")
         self._zweig(nz, "+ Schweißnaht anlegen", "", "schweissnaht_neu", farbe=FARBEN["akzent"])
-        self._liste(st, [(f"E{i}", (e.sec or "") if e.typ == "beam" else f"Fachwerk {e.sec or ''}",
-                          str(i), "Element {}: {} K{}–K{}, {}, {}".format(
-                              i, "Balken" if e.typ == "beam" else "Fachwerkstab",
-                              e.nodes[0], e.nodes[-1], e.sec or "-", e.mat or "-"))
-                         for i, e in stab_els], "stabelement", "stabelemente")
+        self._liste(stb, [(f"E{i}", (e.sec or "") if e.typ == "beam" else f"Fachwerk {e.sec or ''}",
+                           str(i), "Element {}: {} K{}–K{}, {}, {}".format(
+                               i, "Balken" if e.typ == "beam" else "Fachwerkstab",
+                               e.nodes[0], e.nodes[-1], e.sec or "-", e.mat or "-"))
+                          for i, e in stab_els], "stabelement", "stabelemente")
         gf = getattr(model, "flaechen", {}) or {}
-        fl = self._zweig(wurzel, "Flächen", len(gf), "geoflaechen", fett=True)
+        flae = self._zweig(wurzel, "Flächen", len(gf), "geoflaechen")
         n_schalen = sum(1 for e in model.elements if e.typ in EL.SCHALEN_TYPEN)
         if n_schalen:
-            self._zweig(fl, "Flächenelemente", n_schalen, "flaechen",
+            self._zweig(flae, "Flächenelemente", n_schalen, "flaechen",
                         hinweis="Schalenelemente aller Flächen")
-        self._liste(fl, [(name + ("" if x.elemente else " ○"), x.bezug(), name,
-                          f"{name}: {x.bezug()}"
-                          + ("" if x.elemente else "\nnoch nicht vernetzt"))
-                         for name, x in sorted(gf.items(), key=lambda kv: natuerlich(kv[0]))],
-                    "geoflaeche", "geoflaechen")
+        self._liste(flae, [(name + ("" if x.elemente else " ○"), x.bezug(), name,
+                            f"{name}: {x.bezug()}"
+                            + ("" if x.elemente else "\nnoch nicht vernetzt"))
+                           for name, x in sorted(gf.items(), key=lambda kv: natuerlich(kv[0]))],
+                      "geoflaeche", "geoflaechen")
         gk = getattr(model, "koerper", {}) or {}
-        vo = self._zweig(wurzel, "Volumen", len(gk), "geokoerper", fett=True)
+        koerper_zeilen = [self._koerperzeile(name, x)
+                          for name, x in sorted(gk.items(), key=lambda kv: natuerlich(kv[0]))]
+        # Warnfarbe am Zweig, solange ein Koerper ohne Netz geblieben ist, den
+        # der Vernetzer haette vernetzen sollen - so sieht man es auch zugeklappt
+        mangel = any(z[4] == FARBEN["warn"] for z in koerper_zeilen)
+        vo = self._zweig(wurzel, "Volumen", len(gk), "geokoerper",
+                         farbe=FARBEN["warn"] if mangel else None,
+                         hinweis=("⚠ Bei mindestens einem Volumen ist das Vernetzen gescheitert "
+                                  "oder abgebrochen - der Hinweis am Eintrag nennt den Grund."
+                                  if mangel else ""))
         n_vol = sum(1 for e in model.elements if e.typ in EL.VOLUMEN_TYPEN)
         if n_vol:
             self._zweig(vo, "Volumenelemente", n_vol, "volumen",
                         hinweis="Volumenelemente (Tetraeder, Hexaeder) aller Körper")
-        self._liste(vo, [(name + ("" if x.elemente else " ○"), x.bezug(), name,
-                          f"{name}: {x.bezug()}"
-                          + ("" if x.elemente else "\nnoch nicht vernetzt"))
-                         for name, x in sorted(gk.items(), key=lambda kv: natuerlich(kv[0]))],
-                    "geokoerper_einzeln", "geokoerper")
+        self._liste(vo, koerper_zeilen, "geokoerper_einzeln", "geokoerper")
 
         # ---- Bemassungen ---------------------------------------------------
         bms = getattr(model, "bemassungen", {}) or {}
-        bz = self._zweig(wurzel, "Bemaßungen", len(bms), "bemassungen", fett=bool(bms),
-                         hinweis="Linearmaße, Maßketten, Höhenkoten, Winkel und Radien "
-                                 "(Register Messen); Klick bearbeitet, Entf löscht")
-        self._liste(bz, [(name, x.bezug(), name, f"{name}: {x.bezug()}")
-                         for name, x in bms.items()], "bemassung", "bemassungen")
-        self._zweig(bz, "+ Linearmaß anlegen", "", "bemassung_neu", farbe=FARBEN["akzent"])
+        bmz = self._zweig(wurzel, "Bemaßungen", len(bms), "bemassungen",
+                          hinweis="Linearmaße, Maßketten, Höhenkoten, Winkel und Radien "
+                                  "(Register Messen); Klick bearbeitet, Entf löscht")
+        self._liste(bmz, [(name, x.bezug(), name, f"{name}: {x.bezug()}")
+                          for name, x in bms.items()], "bemassung", "bemassungen")
+        self._zweig(bmz, "+ Linearmaß anlegen", "", "bemassung_neu", farbe=FARBEN["akzent"])
 
         # ---- Eigenschaften ----------------------------------------------
-        eig = self._zweig(wurzel, "Eigenschaften", "", "modell", fett=True)
+        eig = self._zweig(wurzel, "Eigenschaften", "", "modell", fett=True,
+                          kennung="eigenschaften")
         qs = self._zweig(eig, "Querschnitte", len(model.sections), "querschnitte")
         self._liste(qs, [(name, getattr(x, "typ", "") or "", name,
                           f"{name}: A = {getattr(x, 'A', 0) * 1e4:.1f} cm²")
@@ -915,14 +1439,14 @@ class Modellbaum(QtWidgets.QTreeWidget):
         # ---- Lager und Kopplungen ---------------------------------------
         n_lager = (len(model.supports) + len(model.line_supports)
                    + len(model.surface_supports))
-        lg = self._zweig(wurzel, "Lager", n_lager, "lager", fett=True)
-        kl = self._zweig(lg, "Knotenlager", len(model.supports), "lager")
+        lag = self._zweig(wurzel, "Lager", n_lager, "lager", fett=True)
+        kl = self._zweig(lag, "Knotenlager", len(model.supports), "lager")
         self._liste(kl, [(x.name or f"Lager {i + 1}", f"K{x.node}", str(i),
                           f"Knoten {x.node}: {self._lagertext(x)}")
                          for i, x in enumerate(model.supports)], "lager_einzeln",
                     "lager")
         if model.line_supports:
-            ll = self._zweig(lg, "Linienlager", len(model.line_supports),
+            ll = self._zweig(lag, "Linienlager", len(model.line_supports),
                              "linienlager")
             self._liste(ll, [(x.name or f"Linienlager {i + 1}",
                               f"{len(x.nodes)} Kn", str(i),
@@ -930,13 +1454,13 @@ class Modellbaum(QtWidgets.QTreeWidget):
                              for i, x in enumerate(model.line_supports)],
                         "linienlager_einzeln", "linienlager")
         if model.surface_supports:
-            fl = self._zweig(lg, "Flächenlager", len(model.surface_supports),
-                             "flaechenlager")
-            self._liste(fl, [(x.name or f"Flächenlager {i + 1}",
-                              f"{len(x.nodes)} Kn", str(i),
-                              f"{len(x.nodes)} Knoten: {self._lagertext(x)}")
-                             for i, x in enumerate(model.surface_supports)],
-                        "flaechenlager_einzeln", "flaechenlager")
+            fll = self._zweig(lag, "Flächenlager", len(model.surface_supports),
+                              "flaechenlager")
+            self._liste(fll, [(x.name or f"Flächenlager {i + 1}",
+                               f"{len(x.nodes)} Kn", str(i),
+                               f"{len(x.nodes)} Knoten: {self._lagertext(x)}")
+                              for i, x in enumerate(model.surface_supports)],
+                         "flaechenlager_einzeln", "flaechenlager")
         # ---- Punkt- und Verbindungselemente -------------------------------
         pm = getattr(model, "punktmassen", None) or []
         dp = getattr(model, "daempfer", None) or []
@@ -945,38 +1469,39 @@ class Modellbaum(QtWidgets.QTreeWidget):
         gs = getattr(model, "grenzschichten", None) or {}
         n_verb = len(pm) + len(dp) + len(fed) + len(sk) + len(gs)
         if n_verb:
-            vb = self._zweig(wurzel, "Verbindungen", n_verb, "kontakt", fett=True,
-                             hinweis="Punktmassen, Dämpfer, Federn, starre Körper "
-                                     "(RBE2/RBE3) und Grenzschichten ohne Dicke")
+            vbd = self._zweig(wurzel, "Verbindungen", n_verb, "kontakt", fett=True,
+                              kennung="verbindungen",
+                              hinweis="Punktmassen, Dämpfer, Federn, starre Körper "
+                                      "(RBE2/RBE3) und Grenzschichten ohne Dicke")
             if pm:
-                z = self._zweig(vb, "Punktmassen", len(pm), "punktmassen")
+                z = self._zweig(vbd, "Punktmassen", len(pm), "punktmassen")
                 self._liste(z, [(x.name or f"Punktmasse {i + 1}",
                                  f"{zl.zahl_text(x.masse, punkt=True)} kg", str(i),
                                  f"Knoten {x.node}: m = {zl.zahl_text(x.masse, punkt=True)} kg, "
                                  f"J = {', '.join(zl.zahl_text(v, punkt=True) for v in (x.traegheit or []))} kg m²")
                                 for i, x in enumerate(pm)], "punktmasse", "punktmassen")
             if dp:
-                z = self._zweig(vb, "Dämpfer", len(dp), "daempfer")
+                z = self._zweig(vbd, "Dämpfer", len(dp), "daempfer")
                 self._liste(z, [(x.name or f"Dämpfer {i + 1}",
                                  f"K{x.node_a}" + (f"–K{x.node_b}" if int(x.node_b) >= 0 else ""),
                                  str(i),
                                  f"c = {', '.join(zl.zahl_text(v) for v in (x.c or []))}")
                                 for i, x in enumerate(dp)], "daempfer", "daempfer")
             if fed:
-                z = self._zweig(vb, "Federn", len(fed), "federn")
+                z = self._zweig(vbd, "Federn", len(fed), "federn")
                 # Federn in N/m sind gross: ausgeschrieben statt „1e+08“ (25.09.2026)
                 self._liste(z, [(name, "; ".join(zl.zahl_text(v) for v in (x.k or [])[:3]), name,
                                  f"{name}: k = {'; '.join(zl.zahl_text(v) for v in (x.k or []))}")
                                 for name, x in fed.items()], "feder", "federn")
             if sk:
-                z = self._zweig(vb, "Starre Körper", len(sk), "starrkoerper")
+                z = self._zweig(vbd, "Starre Körper", len(sk), "starrkoerper")
                 self._liste(z, [(x.name or f"Starrkörper {i + 1}",
                                  f"{x.art}, {len(x.slaves)} Kn", str(i),
                                  f"{x.art}: Master K{x.master}, "
                                  f"{len(x.slaves)} angeschlossene Knoten")
                                 for i, x in enumerate(sk)], "starrkoerper", "starrkoerper")
             if gs:
-                z = self._zweig(vb, "Grenzschichten", len(gs), "grenzschichten")
+                z = self._zweig(vbd, "Grenzschichten", len(gs), "grenzschichten")
                 self._liste(z, [(name, f"kn = {zl.zahl_text(x.kn)}", name,
                                  f"{name}: kn = {zl.zahl_text(x.kn)} N/m je m², kt = {zl.zahl_text(x.kt)}")
                                 for name, x in gs.items()], "grenzschicht", "grenzschichten")
@@ -985,28 +1510,28 @@ class Modellbaum(QtWidgets.QTreeWidget):
         # sein"): ohne Gelenke bietet er das Anlegen an, wie die Kontakte.
         # Weg nachgezogen 25.09.2026: „Gelenke setzen…“ hat im Register
         # Struktur keinen Knopf mehr (Paket 7)
-        gk = self._zweig(wurzel, "Gelenke", len(model.hinges), "gelenke",
-                         hinweis="Stabendgelenke: je Freiheitsgrad biegesteif, gelenkig oder Feder; "
-                                 "gesetzt an Stabelementen (Kontextregister „Auswahl“ → Gelenke, "
-                                 "oder Befehlssuche „Gelenke setzen“).")
-        self._liste(gk, [(name, ", ".join(["ux", "uy", "uz", "φx", "φy", "φz"][d % 6]
-                                          for d in h.released()) or "starr",
-                          name, f"{name}: freigegeben {h.released()}")
-                         for name, h in model.hinges.items()], "gelenk", "gelenke")
-        self._zweig(gk, "+ Gelenk anlegen", "", "gelenk_neu", farbe=FARBEN["akzent"],
+        gel = self._zweig(wurzel, "Gelenke", len(model.hinges), "gelenke",
+                          hinweis="Stabendgelenke: je Freiheitsgrad biegesteif, gelenkig oder Feder; "
+                                  "gesetzt an Stabelementen (Kontextregister „Auswahl“ → Gelenke, "
+                                  "oder Befehlssuche „Gelenke setzen“).")
+        self._liste(gel, [(name, ", ".join(["ux", "uy", "uz", "φx", "φy", "φz"][d % 6]
+                                           for d in h.released()) or "starr",
+                           name, f"{name}: freigegeben {h.released()}")
+                          for name, h in model.hinges.items()], "gelenk", "gelenke")
+        self._zweig(gel, "+ Gelenk anlegen", "", "gelenk_neu", farbe=FARBEN["akzent"],
                     hinweis="Ein neues Stabendgelenk: rechts die Maske mit den sechs Freiheitsgraden.")
         # Liniengelenke (RFEM: LineHinge) stehen an der Flaeche - der Zweig
         # zeigt jede Flaeche mit ihren Gelenklinien und der Wirkung
         lg_fl = [(n, f) for n, f in model.flaechen.items() if getattr(f, "gelenklinien", None)]
         if lg_fl:
-            lz = self._zweig(wurzel, "Liniengelenke", len(lg_fl), "liniengelenke",
-                             hinweis="Liniengelenke (RFEM: LineHinge) an den Randlinien von Flächen: "
-                                     "was die Fläche dort an die Nachbarschaft weitergibt. Am Drehlager "
-                                     "die Ränder der starren Kreisscheiben.")
-            self._liste(lz, [(n, f"{len(f.gelenklinien)} Linien", n,
-                              f"{n}: {', '.join(f.gelenklinien[:6])}{' …' if len(f.gelenklinien) > 6 else ''}"
-                              + (f"\n{f.gelenkwirkung}" if f.gelenkwirkung else ""))
-                             for n, f in lg_fl], "liniengelenk", "liniengelenke")
+            lgz = self._zweig(wurzel, "Liniengelenke", len(lg_fl), "liniengelenke",
+                              hinweis="Liniengelenke (RFEM: LineHinge) an den Randlinien von Flächen: "
+                                      "was die Fläche dort an die Nachbarschaft weitergibt. Am Drehlager "
+                                      "die Ränder der starren Kreisscheiben.")
+            self._liste(lgz, [(n, f"{len(f.gelenklinien)} Linien", n,
+                               f"{n}: {', '.join(f.gelenklinien[:6])}{' …' if len(f.gelenklinien) > 6 else ''}"
+                               + (f"\n{f.gelenkwirkung}" if f.gelenkwirkung else ""))
+                              for n, f in lg_fl], "liniengelenk", "liniengelenke")
         # Kontaktbedingungen: die Flaechenkontakte (in RFEM heissen sie
         # "Flaechenfreigaben") und die knotenweisen Bedingungen stehen unter
         # einem Zweig - es ist dieselbe Sache auf zwei Ebenen.
@@ -1021,7 +1546,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
             offen_noch = sum(1 for x in flaechenkontakte.values() if x.zu_steif(model))
             kt = self._zweig(wurzel, "Kontaktbedingungen", n_kontakt, "kontakt",
                              fett=True,
-                             farbe=FARBEN["warn"] if offen_noch else FARBEN["akzent"],
+                             farbe=FARBEN["warn"] if offen_noch else None,
                              hinweis="Kontaktfugen zwischen Flächen und Körpern "
                                      "(in RFEM „Flächenfreigaben“) sowie die "
                                      "knotenweisen Bedingungen.")
@@ -1050,7 +1575,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                                      ("\nWird beim Vernetzen getrennt (Netz → Vernetzen)."
                                       if x.wartet_auf_netz(model) else
                                       "\n⚠ Trennung nicht ausgeführt – das Modell rechnet hier "
-                                      "durchverbunden, also zu steif. Netz → „Kontaktfugen ausführen“.")),
+                                      "durchverbunden, also zu steif. Lager / Kontakt → „Kontaktfugen ausführen“.")),
                                   wirkungsfarbe(x))
                                  for name, x in flaechenkontakte.items()],
                             "kontaktbedingung", "kontaktbedingungen")
@@ -1070,7 +1595,8 @@ class Modellbaum(QtWidgets.QTreeWidget):
                             "kontakt", schluessel="pairs")
 
         # ---- Einwirkungen -------------------------------------------------
-        ew = self._zweig(wurzel, "Einwirkungen", "", "modell", fett=True)
+        ew = self._zweig(wurzel, "Einwirkungen", "", "modell", fett=True,
+                         kennung="einwirkungen")
         from ..model import LASTARTEN_NAMEN
         lf = self._zweig(ew, "Lastfälle", len(model.load_cases), "lastfaelle")
         for i, (name, lc) in enumerate(model.load_cases.items()):
@@ -1100,7 +1626,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                             else f"g_z = {zl.zahl_text(g[2], punkt=True)} m/s²")
                 else:
                     zahl = len(lasten)
-                self._zweig(it, titel, zahl, "lastart", schluessel=f"{name}|{art}",
+                self._zweig(it, titel, zahl, "lastart", schluessel=f"{name}|{art}", blatt=True,
                             hinweis=f"{titel} im Lastfall {name} - ein Klick zeigt sie rechts, "
                                     "in der Tabelle unten und in der Ansicht")
         kb = self._zweig(ew, "Kombinationen", len(model.combinations), "kombinationen")
@@ -1129,16 +1655,15 @@ class Modellbaum(QtWidgets.QTreeWidget):
         # ---- Lastgenerierer -------------------------------------------------
         wds = getattr(model, "wasserdruecke", {}) or {}
         winde = getattr(model, "winde", {}) or {}
-        lg = self._zweig(ew, "Lastgenerierer", len(wds) + len(winde), "generierer",
-                         fett=bool(wds or winde), farbe=FARBEN["akzent"] if (wds or winde) else None,
-                         hinweis="Wasserdruck (statisch, überströmt, unterströmt) und Wind "
-                                 "(DIN EN 1991-1-4) je Situation")
-        self._liste(lg, [(name, x.bezug(), name, f"Wasserdruck {name}: {x.bezug()}")
-                         for name, x in wds.items()], "wasserdruck", "generierer")
-        self._liste(lg, [(name, x.bezug(), name, f"Wind {name}: {x.bezug()}")
-                         for name, x in winde.items()], "wind", "generierer")
-        self._zweig(lg, "+ Wasserdruck anlegen", "", "wasserdruck_neu", farbe=FARBEN["akzent"])
-        self._zweig(lg, "+ Wind anlegen", "", "wind_neu", farbe=FARBEN["akzent"])
+        lgen = self._zweig(ew, "Lastgenerierer", len(wds) + len(winde), "generierer",
+                           hinweis="Wasserdruck (statisch, überströmt, unterströmt) und Wind "
+                                   "(DIN EN 1991-1-4) je Situation")
+        self._liste(lgen, [(name, x.bezug(), name, f"Wasserdruck {name}: {x.bezug()}")
+                           for name, x in wds.items()], "wasserdruck", "generierer")
+        self._liste(lgen, [(name, x.bezug(), name, f"Wind {name}: {x.bezug()}")
+                           for name, x in winde.items()], "wind", "generierer")
+        self._zweig(lgen, "+ Wasserdruck anlegen", "", "wasserdruck_neu", farbe=FARBEN["akzent"])
+        self._zweig(lgen, "+ Wind anlegen", "", "wind_neu", farbe=FARBEN["akzent"])
 
         # ---- Ergebnisse -------------------------------------------------
         # Ergebnisse gehoeren in denselben Baum wie das Modell: was gerechnet
@@ -1146,14 +1671,13 @@ class Modellbaum(QtWidgets.QTreeWidget):
         # der Ansicht ein, ein Doppelklick uebernimmt es in den Bericht.
         erg = ergebnisse or {}
         anzahl = sum(len(v) for v in erg.values())
-        ew2 = self._zweig(wurzel, "Ergebnisse", anzahl or "", "ergebnisse",
-                          fett=bool(anzahl),
-                          farbe=FARBEN["akzent"] if anzahl else FARBEN["matt"],
+        ew2 = self._zweig(wurzel, "Ergebnisse", anzahl or "", "ergebnisse", fett=True,
+                          farbe=None if anzahl else FARBEN["matt"],
                           hinweis="Klick zeigt das Ergebnis, Doppelklick "
                                   "übernimmt es in den Bericht")
         if not anzahl:
             self._zweig(ew2, "noch nicht gerechnet", "", "ergebnisse",
-                        farbe=FARBEN["matt"])
+                        farbe=FARBEN["matt"], blatt=True)
         for gruppe, eintraege in erg.items():
             if not eintraege:
                 continue
@@ -1165,21 +1689,18 @@ class Modellbaum(QtWidgets.QTreeWidget):
                             for e in eintraege],
                         "ergebnis", "ergebnisgruppe", sortieren=False)
         eintraege = list(getattr(model, "bericht", None) or [])
-        bz = self._zweig(wurzel, "Bericht", len(eintraege), "bericht",
-                         fett=bool(eintraege),
-                         farbe=FARBEN["akzent"] if eintraege else None,
-                         hinweis="Die aus der Ansicht übernommenen Ergebnisse")
-        self._liste(bz, [(x.name or f"Bild {i + 1}", x.bezug(), str(i),
-                          f"{x.name}: {x.bezug()}")
-                         for i, x in enumerate(eintraege)], "berichtseintrag",
-                    "bericht", sortieren=False)
-        self._zweig(bz, "+ Ansicht übernehmen", "", "bericht_neu",
+        ber = self._zweig(wurzel, "Bericht", len(eintraege), "bericht",
+                          hinweis="Die aus der Ansicht übernommenen Ergebnisse")
+        self._liste(ber, [(x.name or f"Bild {i + 1}", x.bezug(), str(i),
+                           f"{x.name}: {x.bezug()}")
+                          for i, x in enumerate(eintraege)], "berichtseintrag",
+                     "bericht", sortieren=False)
+        self._zweig(ber, "+ Ansicht übernehmen", "", "bericht_neu",
                     farbe=FARBEN["akzent"])
 
         # ---- Unterlagen: Dateien, Ansichten, Skizzen (16.09.2026) ------------
         unt = getattr(model, "unterlagen", {}) or {}
-        uz = self._zweig(wurzel, "Unterlagen", len(unt), "unterlagen", fett=bool(unt),
-                         farbe=FARBEN["akzent"] if unt else None,
+        uz = self._zweig(wurzel, "Unterlagen", len(unt), "unterlagen",
                          hinweis="Dateien (PDF, Bilder, Word, Excel), übernommene Ansichten und Skizzen "
                                  "zum Modell - mit dem Modell gespeichert, auf Wunsch im Bericht. "
                                  "Doppelklick öffnet; Rechtsklick: Neu (Skizze), Löschen.")
@@ -1195,58 +1716,52 @@ class Modellbaum(QtWidgets.QTreeWidget):
         # dann die Situationen, die einer Stellung ihre Lastfaelle zuordnen.
         from ..model import GRUNDSTELLUNG, GESAMTSYSTEM
         subs = getattr(model, "subsysteme", {}) or {}
-        sz = self._zweig(wurzel, "Subsysteme", 1 + len(subs), "subsysteme", fett=bool(subs),
-                         farbe=FARBEN["akzent"] if subs else None,
+        sz = self._zweig(wurzel, "Subsysteme", 1 + len(subs), "subsysteme",
                          hinweis="Teile des Tragwerks mit allem, was dazugehört; "
                                  "Berührungselemente gehören beiden")
         self._zweig(sz, GESAMTSYSTEM, f"{len(model.elements)} El", "subsystem",
-                    schluessel=GESAMTSYSTEM, hinweis="die ganze Struktur")
+                    schluessel=GESAMTSYSTEM, hinweis="die ganze Struktur", blatt=True)
         self._liste(sz, [(name, f"{len(s.elemente)} El", name, f"{name}: {s.bezug()}")
                          for name, s in subs.items()], "subsystem", "subsysteme")
         self._zweig(sz, "+ Subsystem anlegen", "", "subsystem_neu", farbe=FARBEN["akzent"])
 
         # ---- Layer (RFEM: Objektselektionen) -------------------------------
         lay = getattr(model, "layer", {}) or {}
-        lz = self._zweig(wurzel, "Layer", len(lay), "layerliste", fett=bool(lay),
-                         farbe=FARBEN["akzent"] if lay else None,
-                         hinweis="Benannte Objektgruppen (RFEM: Objektselektionen) - sichtbar oder "
-                                 "ausgeblendet, gesperrt oder frei. Klick wählt die Objekte, "
-                                 "Doppelklick öffnet die Layerliste; Rechtsklick: Neu, Löschen.")
-        self._liste(lz, [(name, ("ausgeblendet · " if not L.sichtbar else "")
-                          + ("gesperrt · " if L.gesperrt else "") + L.bezug(), name,
-                          f"{name}: {L.bezug()}" + ("\nausgeblendet" if not L.sichtbar else "")
-                          + ("\ngesperrt - nicht wählbar, nicht änderbar" if L.gesperrt else "")
-                          + ("\naus der RFEM-Objektselektion" if L.quelle == "rfem" else ""),
-                          FARBEN["matt"] if not L.sichtbar else None)
-                         for name, L in lay.items()], "layer", "layerliste")
-        self._zweig(lz, "+ Layer aus Auswahl", "", "layer_neu", farbe=FARBEN["akzent"])
+        lyz = self._zweig(wurzel, "Layer", len(lay), "layerliste",
+                          hinweis="Benannte Objektgruppen (RFEM: Objektselektionen) - sichtbar oder "
+                                  "ausgeblendet, gesperrt oder frei. Klick wählt die Objekte, "
+                                  "Doppelklick öffnet die Layerliste; Rechtsklick: Neu, Löschen.")
+        self._liste(lyz, [(name, ("ausgeblendet · " if not L.sichtbar else "")
+                           + ("gesperrt · " if L.gesperrt else "") + L.bezug(), name,
+                           f"{name}: {L.bezug()}" + ("\nausgeblendet" if not L.sichtbar else "")
+                           + ("\ngesperrt - nicht wählbar, nicht änderbar" if L.gesperrt else "")
+                           + ("\naus der RFEM-Objektselektion" if L.quelle == "rfem" else ""),
+                           FARBEN["matt"] if not L.sichtbar else None)
+                          for name, L in lay.items()], "layer", "layerliste")
+        self._zweig(lyz, "+ Layer aus Auswahl", "", "layer_neu", farbe=FARBEN["akzent"])
 
         # Stellungen stehen ausschliesslich hier (Vorgabe Kap. 16.1 Nr. 3);
         # der Zweig traegt die Schaltflaeche zum Anlegen.
-        st = self._zweig(wurzel, "Stellungen", len(stellungen or []), "stellungen",
-                         fett=bool(stellungen),
-                         farbe=FARBEN["akzent"] if stellungen else None,
-                         hinweis="Lagen des Systems: Ausgangsstellung, Verschiebung, "
-                                 "Verdrehung, deaktivierte Stäbe, Flächen, Volumen, "
-                                 "Gelenke und Lager")
+        stl = self._zweig(wurzel, "Stellungen", len(stellungen or []), "stellungen",
+                          hinweis="Lagen des Systems: Ausgangsstellung, Verschiebung, "
+                                  "Verdrehung, deaktivierte Stäbe, Flächen, Volumen, "
+                                  "Gelenke und Lager")
         for i, x in enumerate(stellungen or [], 1):
             eta = x.get("eta")
             text = f"S{i} · {x.get('name', '')}" + (" ★" if x.get("fuehrt") else "")
-            zweig = self._zweig(st, text, f"{float(x.get('winkel', 0)):.0f}°",
-                                "stellung", schluessel=x.get("name", ""))
+            zweig = self._zweig(stl, text, f"{float(x.get('winkel', 0)):.0f}°",
+                                "stellung", schluessel=x.get("name", ""), blatt=True)
             if eta is not None:
                 zweig.setToolTip(0, f"Ausnutzung η = {float(eta):.3f}".replace(".", ","))
-        self._zweig(st, "+ Stellung anlegen", "", "stellung_neu",
-                    farbe=FARBEN["akzent"])
-        st.setExpanded(True)
+        self._zweig(stl, "+ Stellung anlegen", "", "stellung_neu",
+                    farbe=FARBEN["akzent"], blatt=True)
 
         sits = getattr(model, "situationen", {}) or {}
         siz = self._zweig(wurzel, "Situationen", 1 + len(sits), "situationen",
-                          fett=bool(sits), farbe=FARBEN["akzent"] if sits else None,
                           hinweis="Eine Stellung und die Lastfälle und Kombinationen, "
                                   "die in ihr gelten")
         self._zweig(siz, GRUNDSTELLUNG, "alles aktiv", "situation", schluessel=GRUNDSTELLUNG,
-                    hinweis="unbewegt, alle Elemente wirken")
+                    hinweis="unbewegt, alle Elemente wirken", blatt=True)
         self._liste(siz, [(name, s.bezug(), name, f"{name}: {s.bezug()}")
                           for name, s in sits.items()], "situation", "situationen")
         self._zweig(siz, "+ Situation anlegen", "", "situation_neu", farbe=FARBEN["akzent"])
@@ -1255,17 +1770,14 @@ class Modellbaum(QtWidgets.QTreeWidget):
         # Anschluesse gehoeren zum Modell und stehen darum hier - der Zweig
         # traegt wie bei den Stellungen die Schaltflaeche zum Anlegen.
         an = self._zweig(wurzel, "Anschlüsse", len(getattr(model, "joints", {}) or {}),
-                         "anschluesse", fett=bool(getattr(model, "joints", None)),
-                         farbe=FARBEN["akzent"] if getattr(model, "joints", None) else None)
+                         "anschluesse")
         self._liste(an, [(name, j.ort(), name, f"{name}: {j.typ} an {j.ort()}")
                          for name, j in (getattr(model, "joints", {}) or {}).items()],
                     "anschluss", "anschluesse")
         self._zweig(an, "+ Anschluss anlegen", "", "anschluss_neu",
                     farbe=FARBEN["akzent"])
         grenzen = getattr(model, "verformungsgrenzen", {}) or {}
-        vf = self._zweig(wurzel, "Verformungsnachweise", len(grenzen), "verformungen",
-                         fett=bool(grenzen),
-                         farbe=FARBEN["akzent"] if grenzen else None)
+        vf = self._zweig(wurzel, "Verformungsnachweise", len(grenzen), "verformungen")
         self._liste(vf, [(name, g.grenztext(), name,
                           f"{g.bezug()}: {g.groesse} ≤ {g.grenztext()}")
                          for name, g in grenzen.items()], "verformung", "verformungen")
@@ -1273,28 +1785,23 @@ class Modellbaum(QtWidgets.QTreeWidget):
                     farbe=FARBEN["akzent"])
         felder = getattr(model, "beulfelder", {}) or {}
         if felder:
-            bl = self._zweig(wurzel, "Beulfelder", len(felder), "beulfelder", fett=True,
-                             farbe=FARBEN["akzent"])
+            bl = self._zweig(wurzel, "Beulfelder", len(felder), "beulfelder")
             self._liste(bl, [(name, x.bezug(), name, f"{name}: {x.bezug()}")
                              for name, x in felder.items()], "beulfeld", "beulfelder")
         bereiche = getattr(model, "volumenbereiche", {}) or {}
         if bereiche:
-            vb = self._zweig(wurzel, "Volumenbereiche", len(bereiche),
-                             "volumenbereiche", fett=True, farbe=FARBEN["akzent"])
-            self._liste(vb, [(name, x.bezug(), name, f"{name}: {x.bezug()}")
-                             for name, x in bereiche.items()], "volumenbereich",
+            vbe = self._zweig(wurzel, "Volumenbereiche", len(bereiche),
+                              "volumenbereiche")
+            self._liste(vbe, [(name, x.bezug(), name, f"{name}: {x.bezug()}")
+                              for name, x in bereiche.items()], "volumenbereich",
                         "volumenbereiche")
         stellen = getattr(model, "lasteinleitungen", {}) or {}
         if stellen:
-            li = self._zweig(wurzel, "Lasteinleitung", len(stellen), "lasteinleitung",
-                             fett=True, farbe=FARBEN["akzent"])
+            li = self._zweig(wurzel, "Lasteinleitung", len(stellen), "lasteinleitung")
             self._liste(li, [(name, x.bezug(), name, f"{name}: {x.bezug()}")
                              for name, x in stellen.items()], "lasteinleitung_einzeln",
                         "lasteinleitung")
-        wurzel.setExpanded(offen.get(wurzel.text(0), True))
-        for zweig, vorgabe in ((kn, False), (lin, False), (st, False), (fl, False),
-                               (vo, False), (eig, False), (lg, True), (ew, False)):
-            zweig.setExpanded(offen.get(zweig.text(0), vorgabe))
+        self._ansicht_herstellen(ansicht)
 
 
 # ==========================================================================

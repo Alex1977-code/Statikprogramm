@@ -888,7 +888,7 @@ def _koerper_arbeit(name: str, h: float) -> dict:
 def prozesse_fuer_vernetzung() -> int:
     """Wie viele Arbeitsprozesse die Vernetzung nimmt: alle Kerne bis auf
     einen - der bleibt der Oberflaeche -, gedeckelt durch die Einstellung
-    „Prozesse" (Berechnung → Einstellungen)."""
+    „Prozesse" (Berechnung → Einstellungen → Experten)."""
     from . import parallel as par
     return max(1, min(int(par.settings().workers), par.cpu_count() - 1))
 

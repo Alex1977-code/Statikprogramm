@@ -3933,6 +3933,77 @@ class Model:
         self._knotenverweise_abbilden({n: n - 1 for n in range(i + 1, self.nn + 1)})
         return ""
 
+    def knoten_gesperrt(self, indices) -> dict:
+        """{Knoten: Grund} fuer die Knoten unter ``indices``, die sich **nicht**
+        loeschen lassen (:meth:`knoten_loeschen` nennt dieselben Gruende).
+
+        Ein Durchgang durch Elemente und Linien fuer alle Knoten zusammen:
+        :meth:`knoten_benutzt_von` geht je Knoten durch alle Elemente - bei
+        zehntausend Knoten das Quadrat davon (Strg+A, Entf an einem vernetzten
+        Modell, 03.10.2026)."""
+        nn = self.nn
+        gefragt = {int(i) for i in indices}
+        n_el: dict = {}
+        for e in self.elements:
+            for n in {int(x) for x in e.nodes}:
+                if n in gefragt:
+                    n_el[n] = n_el.get(n, 0) + 1
+        linien: dict = {}
+        for nm, ln in self.lines.items():
+            for n in {int(x) for x in ln.nodes}:
+                if n in gefragt:
+                    linien.setdefault(n, []).append(nm)
+        gesperrt = {}
+        for i in sorted(gefragt):
+            if not 0 <= i < nn:
+                gesperrt[i] = "Knoten gibt es nicht"
+                continue
+            benutzt = ([f"{n_el[i]} Elemente"] if i in n_el else []) + [f"Linie {nm}" for nm in linien.get(i, [])]
+            if benutzt:
+                gesperrt[i] = f"Knoten {i} wird benutzt von " + ", ".join(benutzt) + " - erst diese löschen"
+        return gesperrt
+
+    def knoten_loeschen_viele(self, indices) -> dict:
+        """Mehrere Knoten in einem Zug entfernen - dasselbe Ergebnis wie
+        :meth:`knoten_loeschen` fuer jeden einzeln, von hinten nach vorn, aber
+        mit einem einzigen Umnummerieren statt eines je Knoten.
+
+        Wie dort: ein Knoten, an dem ein Element oder eine Linie haengt, bleibt;
+        Lager, Knotenlasten, Zwangsverformungen, Kontaktlager, Punktmassen,
+        Daempfer und starre Koerper am Knoten gehen mit ihm. Rueckgabe:
+        {Knoten: Grund} der Knoten, die blieben (leer = alle weg).
+        ``tests/test_loeschen.py`` haelt beide Wege gegeneinander."""
+        gesperrt = self.knoten_gesperrt(indices)
+        nn = self.nn
+        frei = {int(i) for i in indices if 0 <= int(i) < nn and int(i) not in gesperrt}
+        if not frei:
+            return gesperrt
+        self.supports = [sp for sp in self.supports if int(sp.node) not in frei]
+        for grp in (self.line_supports, self.surface_supports):
+            for x in grp:
+                x.nodes = [n for n in (x.nodes or []) if int(n) not in frei]
+        for lc in self.load_cases.values():
+            lc.nodal_loads = [l for l in lc.nodal_loads if int(l.node) not in frei]
+            lc.zwangsverformungen = [z for z in lc.zwangsverformungen if int(z.node) not in frei]
+        self.contact_supports = [c for c in (getattr(self, "contact_supports", None) or [])
+                                 if int(c.node) not in frei]
+        self.punktmassen = [x for x in (getattr(self, "punktmassen", None) or [])
+                            if int(x.node) not in frei]
+        self.daempfer = [x for x in (getattr(self, "daempfer", None) or [])
+                         if int(x.node_a) not in frei and int(x.node_b) not in frei]
+        for sk in (getattr(self, "starrkoerper", None) or []):
+            if frei & {int(n) for n in sk.slaves}:
+                sk.slaves = [n for n in sk.slaves if int(n) not in frei]
+        self.starrkoerper = [sk for sk in (getattr(self, "starrkoerper", None) or [])
+                             if int(sk.master) not in frei and sk.slaves]
+        for L in (getattr(self, "layer", None) or {}).values():
+            L.knoten = [n for n in (L.knoten or []) if int(n) not in frei]
+        self._knoten_aus_gruppen_und_passung(frei)
+        bleibt = [n for n in range(nn) if n not in frei]
+        self.nodes = np.asarray(self.nodes, float)[bleibt]
+        self._knotenverweise_abbilden({alt: neu for neu, alt in enumerate(bleibt)})
+        return gesperrt
+
     def _knoten_aus_gruppen_und_passung(self, weg: set) -> None:
         """Geloeschte Knoten aus den Normalengruppen der Flaechenlager (samt
         ihrer Einflussflaeche) und aus den Passungsdaten der Kontaktpaare
@@ -4573,8 +4644,25 @@ class Model:
             if getattr(x, "stab", "") == alt:
                 x.stab = neu
 
-    def linie_loeschen(self, name: str) -> str:
-        """Eine Linie entfernen - nicht, wenn eine Flaeche sie braucht."""
+    def _linienlasten_entfernen(self, art: str, name: str) -> bool:
+        """Die Linienlasten auf diesem Stab oder dieser Linie aus allen
+        Lastfaellen nehmen; True, wenn es welche gab."""
+        hatte = False
+        for lc in self.load_cases.values():
+            rest = [ll for ll in lc.linienlasten if not (ll.art == art and ll.ziel == name)]
+            hatte = hatte or len(rest) != len(lc.linienlasten)
+            lc.linienlasten = rest
+        return hatte
+
+    def linie_loeschen(self, name: str, verteilen: bool = True) -> str:
+        """Eine Linie entfernen - nicht, wenn eine Flaeche sie braucht.
+
+        Ihre Linienlasten gehen mit, und die Knotenlasten, die
+        :meth:`lasten_verteilen` daraus gemacht hat (Kennzeichen ``_geo``),
+        auch: bis zum 03.10.2026 blieben sie wirksam und waren in der
+        Lasttabelle unsichtbar. ``verteilen=False`` fuer eine Schleife ueber
+        viele Linien - dann ruft der Aufrufer danach einmal
+        :meth:`lasten_verteilen`."""
         if name not in self.lines:
             return "Linie gibt es nicht"
         nutzer = [fn for fn, f in self.flaechen.items()
@@ -4582,9 +4670,8 @@ class Model:
         if nutzer:
             return f"Linie {name} berandet " + ", ".join(nutzer[:5]) + " - erst die Fläche löschen"
         del self.lines[name]
-        for lc in self.load_cases.values():
-            lc.linienlasten = [ll for ll in lc.linienlasten
-                               if not (ll.art == "linie" and ll.ziel == name)]
+        if self._linienlasten_entfernen("linie", name) and verteilen:
+            self.lasten_verteilen()
         return ""
 
     def flaeche_loeschen(self, name: str) -> str:
@@ -4613,14 +4700,20 @@ class Model:
                                   if not (gl.art != "flaeche" and gl.ziel == name)]
         return ""
 
-    def stab_loeschen(self, name: str) -> str:
-        """Den Stab mit Nachweis entfernen - seine Elemente bleiben."""
+    def stab_loeschen(self, name: str, verteilen: bool = True) -> str:
+        """Den Stab mit Nachweis entfernen - seine Elemente bleiben.
+
+        Seine Linienlasten gehen mit, und die Elementlasten, die
+        :meth:`lasten_verteilen` daraus auf die Elemente gelegt hat
+        (Kennzeichen ``_geo``), auch: bis zum 03.10.2026 blieben sie wirksam
+        und waren in der Lasttabelle unsichtbar. ``verteilen=False`` fuer eine
+        Schleife ueber viele Staebe - dann ruft der Aufrufer danach einmal
+        :meth:`lasten_verteilen`."""
         if name not in self.members:
             return "Stab gibt es nicht"
         del self.members[name]
-        for lc in self.load_cases.values():
-            lc.linienlasten = [ll for ll in lc.linienlasten
-                               if not (ll.art == "stab" and ll.ziel == name)]
+        if self._linienlasten_entfernen("stab", name) and verteilen:
+            self.lasten_verteilen()
         return ""
 
     def knoten_auf_linie(self, name: str, tol: float = None) -> list:

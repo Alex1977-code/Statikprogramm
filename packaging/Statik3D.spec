@@ -9,6 +9,8 @@ root = os.path.abspath(os.path.join(SPECPATH, ".."))
 
 datas = [
     (os.path.join(root, "statik3d", "web", "static"), os.path.join("statik3d", "web", "static")),
+    # Pfeilbilder der Auswahlfelder (Teilpaket 11f): design.BILDER sucht sie neben design.py
+    (os.path.join(root, "statik3d", "gui", "bilder"), os.path.join("statik3d", "gui", "bilder")),
     (os.path.join(root, "docs"), "docs"),
     (os.path.join(root, "README.md"), "."),
 ]

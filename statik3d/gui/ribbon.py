@@ -3,7 +3,8 @@ Ribbon: die Befehlsleiste des Programmfensters.
 
 Ein Ribbon ist eine Registerleiste, in der die Befehle nach Arbeitsschritt
 geordnet stehen - Datei, Start, Geometrie, Struktur, Lager, Lasten, Netz,
-Berechnung, Nachweise, Ergebnisse, Bericht, Ansicht, Extras. Jedes Register
+Berechnung, Ergebnisse, Nachweise, Bericht, Ansicht, Extras (seit 02.10.2026
+vor den Nachweisen: nach dem Rechnen kommt das Ergebnis). Jedes Register
 enthaelt **Gruppen**, jede Gruppe grosse Knoepfe fuer die Hauptbefehle und
 kleine fuer die Nebenbefehle.
 
@@ -17,7 +18,7 @@ machen:
   Berechnen, Auswahl aufheben) - dieselben Aktionsobjekte, nicht neue Befehle,
 * die **Tastenkuerzel** - sie haengen am Fenster und gelten darum in jedem
   Register; jede Tastenfolge gehoert genau einem Befehl (:meth:`Ribbon.kuerzel_setzen`),
-* die **Befehlssuche** rechts im Ribbon.
+* die **Befehlssuche** rechts im Ribbon (Strg+F setzt den Cursor hinein).
 
 Aufbau::
 
@@ -39,6 +40,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import design as dsg
 from . import symbole as sym
+from .sprache import kuerzel_text
 
 
 #: Suchwoerter, die ein Befehl nicht im Namen traegt, mit denen man ihn aber
@@ -52,6 +54,8 @@ SYNONYME = {
     "Stellung anlegen…": "Stellung Situation Verschlussstellung",
     "Alle Stellungen": "Stellung Situation Verschlussstellung",
     "Modell leeren (Eigenschaften behalten)…": "Alle Elemente löschen",
+    "Befehlssuche": "Befehl Befehle suchen Suche",
+    "Tastenkürzel": "Kürzel Tastatur Tasten Shortcut",
 }
 #: Loeschende Befehle erkennt die Suche am Namen - sie laufen nie direkt aus ihr
 LOESCHWOERTER = re.compile(r"lösch|leeren|verwerf|entfern")
@@ -83,6 +87,13 @@ class Befehl:
     hinweis: str = ""
     #: ersetzt oder leert das Modell (Ribbon.vorsicht) - nie direkt aus der Suche
     vorsicht: bool = False
+    #: Ort, wenn der Befehl nicht in einem Register steht (die Befehlssuche
+    #: oben rechts, 03.10.2026); leer = „Register › Gruppe“
+    ort: str = ""
+
+    def ort_text(self) -> str:
+        """Wo der Befehl zu finden ist - fuer die Trefferliste und die Kuerzelliste."""
+        return self.ort or f"{self.register} › {self.gruppe}"
 
     def suchtext(self) -> str:
         return f"{self.text} {self.register} {self.gruppe} {self.hinweis}".lower()
@@ -168,15 +179,17 @@ class Gruppe(QtWidgets.QWidget):
         self.spalte: QtWidgets.QVBoxLayout | None = None
 
     # -- Knoepfe ---------------------------------------------------------
-    def _aktion(self, text: str, fn, kuerzel: str, hinweis: str) -> QtGui.QAction:
+    def _aktion(self, text: str, fn, kuerzel: str, hinweis: str, ort: str = "") -> QtGui.QAction:
         a = QtGui.QAction(text, self)
         if fn is not None:
             a.triggered.connect(lambda _=False, f=fn: f())
         if kuerzel:
             self._ribbon.kuerzel_setzen(a, kuerzel)
         h = hinweis or text
-        a.setToolTip(f"{h}" + (f"   ({kuerzel})" if kuerzel else ""))
-        self._ribbon.merken(Befehl(self._register, self._name, text, a, hinweis))
+        # Der Hinweis nennt das Kuerzel deutsch („Strg+Z“); der Schluessel
+        # der Tastenfolge (kuerzel_setzen) bleibt „Ctrl+Z“ (02.10.2026)
+        a.setToolTip(f"{h}" + (f"   ({kuerzel_text(kuerzel)})" if kuerzel else ""))
+        self._ribbon.merken(Befehl(self._register, self._name, text, a, hinweis, ort=ort))
         return a
 
     def gross(self, text: str, zeichen: str = "", fn=None, kuerzel: str = "",
@@ -204,15 +217,23 @@ class Gruppe(QtWidgets.QWidget):
         return a
 
     def klein(self, text: str, fn=None, kuerzel: str = "", hinweis: str = "",
-              zeichen: str = "", symbol: str = "") -> QtGui.QAction:
-        """Nebenbefehl: Symbol neben der Beschriftung, bis zu drei uebereinander."""
+              zeichen: str = "", symbol: str = "", anzeige: str = "") -> QtGui.QAction:
+        """Nebenbefehl: Symbol neben der Beschriftung, bis zu drei uebereinander.
+
+        ``text`` ist der Name des Befehls fuer Suche und Trefferliste,
+        ``anzeige`` (wenn gesetzt) die kuerzere Beschriftung auf dem Knopf -
+        in einer Gruppe, deren Titel schon sagt, worum es geht („Kombinationen“:
+        „EN 1990…“ statt „Kombinationen automatisch…“; 02.10.2026)."""
         a = self._aktion(text, fn, kuerzel, hinweis)
         a.setIcon(sym.fuer_befehl(text, zeichen, symbol))
+        if anzeige:
+            a.setText(anzeige)
+            a.setIconText(anzeige)
         b = QtWidgets.QToolButton(self)
         b.setDefaultAction(a)
         b.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
         b.setIconSize(QtCore.QSize(SYMBOL_KLEIN, SYMBOL_KLEIN))
-        b.setText(text)
+        b.setText(anzeige or text)
         b.setObjectName("ribbonklein")
         b.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
         b.setFixedHeight((INHALT_HOEHE - 4) // 3)
@@ -293,14 +314,16 @@ class Gruppe(QtWidgets.QWidget):
         return a
 
     def nur_suche(self, text: str, fn=None, kuerzel: str = "", hinweis: str = "",
-                  symbol: str = "") -> QtGui.QAction:
+                  symbol: str = "", ort: str = "") -> QtGui.QAction:
         """Ein Befehl ohne Knopf: die Befehlssuche findet ihn weiter.
 
         Fuer Doppelungen, die aus dem Ribbon fallen (25.09.2026): „Tabelle …“
         (die Tabelle hat unten ihren Reiter), „Flächen/Volumen vernetzen“
         (= Netz → Vernetzen), „Querschnitt/Dicke zuweisen…“ und „Gelenke
-        setzen…“ (= Kontextregister „Auswahl“)."""
-        a = self._aktion(text, fn, kuerzel, hinweis)
+        setzen…“ (= Kontextregister „Auswahl“). ``ort`` nennt, wo es den Befehl
+        statt eines Knopfs gibt („Kopfzeile oben rechts“ fuer die Befehlssuche);
+        die Suche holt dann kein Register nach vorn."""
+        a = self._aktion(text, fn, kuerzel, hinweis, ort)
         a.setIcon(sym.fuer_befehl(text, "", symbol))
         return a
 
@@ -324,6 +347,39 @@ class Gruppe(QtWidgets.QWidget):
             self.reihe.addLayout(self.spalte)
         self.spalte.addWidget(w)
         return w
+
+    def beschriftet(self, text: str, feld: QtWidgets.QWidget, neue_spalte: bool = False) -> QtWidgets.QLabel:
+        """Ein Auswahlfeld mit sichtbarer Beschriftung links davon, in der
+        Spalte der kleinen Knoepfe (Teilpaket 12c, 03.10.2026).
+
+        Bis dahin trugen die Felder im Kontextregister nur einen Tooltip: wer
+        drei Aufklapplisten nebeneinander sah, musste raten, welche der
+        Querschnitt ist. Die Beschriftung ist ein QLabel mit dem Feld als
+        Buddy; alle Beschriftungen einer Gruppe sind gleich breit, damit die
+        Felder untereinander buendig stehen. Rueckgabe: die Beschriftung."""
+        zeile = QtWidgets.QWidget(self.feld)
+        lay = QtWidgets.QHBoxLayout(zeile)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(5)
+        name = QtWidgets.QLabel(text, zeile)
+        name.setObjectName("ribbonfeldname")
+        name.setBuddy(feld)
+        lay.addWidget(name)
+        lay.addWidget(feld, 1)
+        feld.setFixedHeight((INHALT_HOEHE - 4) // 3)
+        feld.setProperty("ribbonzeile", True)
+        # Schriftbreite der Beschriftung: der Stil setzt 12 px, gemessen wird
+        # mit derselben Schrift, sonst kuerzte ein schmaleres Label den Text
+        schrift = QtGui.QFont(name.font())
+        schrift.setPixelSize(12)
+        name.setFont(schrift)
+        self._feldnamen = getattr(self, "_feldnamen", [])
+        self._feldnamen.append(name)
+        breit = max(QtGui.QFontMetrics(schrift).horizontalAdvance(n.text()) for n in self._feldnamen) + 2
+        for n in self._feldnamen:
+            n.setMinimumWidth(breit)
+        self.in_spalte(zeile, neue_spalte)
+        return name
 
 
 class Register(QtWidgets.QWidget):
@@ -388,6 +444,13 @@ class Ribbon(QtWidgets.QWidget):
         self._register: dict[str, Register] = {}
         self._kontext: Register | None = None
         self._kontext_name = ""
+        #: woraus das Kontextregister gebaut ist (die Arten der Auswahl); wechselt
+        #: nur die Zahl, bleibt das Register stehen und nur sein Reiter aendert sich
+        self._kontext_schluessel = None
+        #: das zuletzt benutzte Register ausser dem Kontextregister - dorthin geht
+        #: es zurueck, wenn das Kontextregister verschwindet, waehrend es vorn lag
+        self._zuletzt = ""
+        self._kontext_entfernt = False
 
         aussen = QtWidgets.QVBoxLayout(self)
         aussen.setContentsMargins(0, 0, 0, 0)
@@ -418,6 +481,7 @@ class Ribbon(QtWidgets.QWidget):
         self.tabs.setDocumentMode(True)
         self.tabs.setUsesScrollButtons(True)
         aussen.addWidget(self.tabs)
+        self.tabs.currentChanged.connect(self._reiter_gewechselt)
         self._suche_einrichten()
         self._einklappen_einrichten()
 
@@ -567,32 +631,91 @@ class Ribbon(QtWidgets.QWidget):
         self.tabs.addTab(r, name)
         return r
 
-    def kontext(self, name: str) -> Register:
+    def kontext(self, name: str, schluessel=None) -> Register:
         """Ein kontextabhaengiges Register ganz rechts anlegen oder holen.
 
         Es erscheint, sobald etwas ausgewaehlt ist, und traegt die Befehle, die
-        auf die Auswahl passen (Vorgabe Kap. 3.2 und 16.1 Nr. 7).
+        auf die Auswahl passen (Vorgabe Kap. 3.2 und 16.1 Nr. 7). Gleicher Name
+        und gleicher ``schluessel`` (woraus es gebaut ist): dasselbe Register.
+        Ein anderes ersetzt das alte und liegt dann vorn, wenn das alte vorn
+        lag - bis 03.10.2026 sprang die Ansicht dabei auf den Nachbarn.
         """
-        if self._kontext is not None and self._kontext_name == name:
+        if (self._kontext is not None and self._kontext_name == name
+                and self._kontext_schluessel == schluessel):
             return self._kontext
-        self.kontext_aus()
+        war_vorn = self._kontext is not None and self.tabs.currentWidget() is self._kontext
+        self.kontext_aus(nach_vorn=False)
         r = Register(name, self, self)
         self._kontext, self._kontext_name = r, name
+        self._kontext_schluessel = schluessel
         i = self.tabs.addTab(r, name)
         self.tabs.tabBar().setTabTextColor(i, QtGui.QColor(dsg.FARBEN["akzent2"]))
+        if war_vorn:
+            self.tabs.setCurrentWidget(r)
         return r
 
-    def kontext_aus(self):
-        """Das kontextabhaengige Register wieder entfernen."""
+    def kontext_schluessel(self):
+        """Woraus das Kontextregister gebaut ist (None ohne Register)."""
+        return self._kontext_schluessel if self._kontext is not None else None
+
+    def kontext_benennen(self, name: str, hinweis: str = "") -> bool:
+        """Den Reiter des Kontextregisters umbenennen, ohne es neu zu bauen.
+
+        Die Auswahl wechselt bei jedem Klick ihre Zahl; die Befehle sind
+        dieselben. Neu bauen hiess: Register weg, Register neu - und lag es
+        vorn, stand der Anwender mitten im Klicken in einem anderen Register.
+        ``hinweis``: Tooltip des Reiters (die volle Aufstellung)."""
+        if self._kontext is None:
+            return False
+        alt = self._kontext_name
+        i = self.tabs.indexOf(self._kontext)
+        if name != alt:
+            # die Befehle haengen mit ihrem Registernamen in der Suche und in
+            # kontext_aus - sie ziehen mit
+            for b in self.befehle:
+                if b.register == alt:
+                    b.register = name
+            self._kontext._name = name
+            for g in self._kontext.findChildren(Gruppe):
+                g._register = name
+            self._kontext_name = name
+            self.tabs.setTabText(i, name)
+        self.tabs.setTabToolTip(i, hinweis)
+        return True
+
+    def _reiter_gewechselt(self, i: int) -> None:
+        """Das zuletzt benutzte Register merken (nie das Kontextregister)."""
+        if self._kontext_entfernt:
+            return
+        w = self.tabs.widget(i)
+        if w is not None and w is not self._kontext:
+            self._zuletzt = self.tabs.tabText(i)
+
+    def kontext_aus(self, nach_vorn: bool = True):
+        """Das kontextabhaengige Register wieder entfernen.
+
+        Lag es vorn, kommt das zuletzt benutzte Register nach vorn, sonst
+        „Start“ - Qt nahm bis 03.10.2026 den linken Nachbarn, „Extras“.
+        ``nach_vorn=False``: nicht umschalten (das Register wird gleich durch
+        ein neues ersetzt)."""
         if self._kontext is None:
             return
+        war_vorn = self.tabs.currentWidget() is self._kontext
         i = self.tabs.indexOf(self._kontext)
-        if i >= 0:
-            self.tabs.removeTab(i)
+        self._kontext_entfernt = True        # Qt waehlt beim Entfernen selbst einen Reiter
+        try:
+            if i >= 0:
+                self.tabs.removeTab(i)
+        finally:
+            self._kontext_entfernt = False
         namen = {b.aktion for b in self.befehle if b.register == self._kontext_name}
         self.befehle = [b for b in self.befehle if b.aktion not in namen]
         self._kontext.deleteLater()
-        self._kontext, self._kontext_name = None, ""
+        self._kontext, self._kontext_name, self._kontext_schluessel = None, "", None
+        if war_vorn and nach_vorn:
+            if not (self._zuletzt and self.zeigen(self._zuletzt)):
+                if not self.zeigen("Start") and self.tabs.count():
+                    self.tabs.setCurrentIndex(0)
 
     def kontext_zeigen(self) -> bool:
         if self._kontext is None:
@@ -627,6 +750,26 @@ class Ribbon(QtWidgets.QWidget):
         a.setShortcutContext(QtCore.Qt.ApplicationShortcut)
         self.window().addAction(a)
         return True
+
+    def kuerzel_liste(self) -> list:
+        """Die Befehle, die ein Tastenkuerzel tragen, in der Reihenfolge der
+        Register (02.10.2026) - die Liste unter Extras → Tastenkuerzel.
+
+        Sie entsteht aus den Befehlen, nicht aus einem Text von Hand: ein
+        neues Kuerzel steht beim naechsten Oeffnen der Liste darin. Ein Befehl
+        ohne Kuerzel fehlt - auch die zweite Schaltflaeche „Alles
+        deselektieren“ im Kontextregister, der :meth:`kuerzel_setzen` die
+        Tastenfolge verweigert hat (jede Tastenfolge gehoert genau einem Befehl)."""
+        reihe = {self.tabs.tabText(i): i for i in range(self.tabs.count())}
+        tragen = [b for b in self.befehle if not b.aktion.shortcut().isEmpty()]
+        # stabil: innerhalb eines Registers bleibt die Reihenfolge des Aufbaus
+        return sorted(tragen, key=lambda b: reihe.get(b.register, len(reihe)))
+
+    def suche_fokussieren(self) -> None:
+        """Strg+F: den Cursor in die Befehlssuche setzen. Was schon darin
+        steht, ist markiert - der naechste Buchstabe ersetzt es."""
+        self.suche.setFocus(QtCore.Qt.ShortcutFocusReason)
+        self.suche.selectAll()
 
     def merken(self, b: Befehl):
         self.befehle.append(b)
@@ -709,7 +852,7 @@ class Ribbon(QtWidgets.QWidget):
     def anzeige(b: Befehl) -> str:
         """Die Zeile eines Befehls in der Trefferliste - mit Ort, denn manche
         Namen gibt es mehrfach („Einstellungen“)."""
-        return f"{b.text}   ({b.register} › {b.gruppe})"
+        return f"{b.text}   ({b.ort_text()})"
 
     def namenstreffer(self, text: str) -> list:
         """Befehle, in deren Namen (oder Synonymen) jedes Suchwort am
@@ -778,7 +921,8 @@ class Ribbon(QtWidgets.QWidget):
 
     def _ausfuehren(self, b: Befehl):
         self._vervollstaendigung.popup().hide()
-        self.zeigen(b.register)
+        if not b.ort:
+            self.zeigen(b.register)
         self.suche.clear()
         self._anzeige = {}
         if b.nicht_aus_suche():
@@ -805,6 +949,9 @@ QTabWidget#ribbontabs > QTabBar::tab:selected {{ color: {akzent};
 QTabWidget#ribbontabs > QTabBar::tab:hover {{ color: {text}; }}
 QWidget#ribbongruppe {{ background: transparent; }}
 QLabel#gruppentitel {{ color: {matt}; font-size: 10px; }}
+/* Beschriftung eines Auswahlfelds im Kontextregister (Gruppe.beschriftet) */
+QLabel#ribbonfeldname {{ color: {matt}; font-size: 12px; }}
+QLabel#kontextgewaehlt {{ color: {text}; font-size: 12px; }}
 QFrame#ribbontrenner {{ color: {linie}; margin: 4px 3px 2px; }}
 QToolButton#ribbongross {{ border: 1px solid transparent; border-radius: 8px;
     padding: 4px 6px; font-size: 11px; }}

@@ -241,7 +241,7 @@ def _melde(progress, text: str, anteil: float = None) -> None:
         progress(text)
 
 
-#: Die Loeser zur Auswahl (Berechnung -> Einstellungen): Schluessel ->
+#: Die Loeser zur Auswahl (Berechnung -> Einstellungen -> Experten): Schluessel ->
 #: (Name, Python-Paket, Lizenz, Art). Lizenzrechtlich sauber heisst: in der
 #: gepackten exe stecken nur MKL (Intel Simplified Software License, frei
 #: weitergebbar), SuperLU (BSD, in scipy), PyAMG (MIT) und MUMPS (CeCILL-C,
@@ -354,7 +354,7 @@ def loeser_verfuegbar(backend: str = "") -> str:
     """Womit die naechste Rechnung loesen wird - ohne zu faktorisieren.
 
     Fuer die Meldung beim Start einer Rechnung. Genannt wird der
-    **eingestellte** Loeser (Berechnung -> Einstellungen), nicht der
+    **eingestellte** Loeser (Berechnung -> Einstellungen -> Experten), nicht der
     erstbeste vorhandene: wer MUMPS gewaehlt hatte, las hier bis zum
     14.09.2026 "MKL PARDISO, 16 Threads", waehrend MUMPS mit acht Threads
     rechnete - die Ergebniszeile sagte es richtig, die Kopfzeile nicht.
@@ -373,7 +373,7 @@ def loeser_verfuegbar(backend: str = "") -> str:
             return f"{be} - unbekannter Gleichungslöser (möglich: {', '.join(LOESER)})"
         if not loeser_da(be):
             return (f"{NAMEN.get(be, be)} - eingestellt, aber nicht installiert; die Rechnung "
-                    "bricht damit ab (Berechnung → Einstellungen)")
+                    "bricht damit ab (Berechnung → Einstellungen → Experten)")
         return loeser_beschreibung(be)
     for key in ("pardiso", "cholmod"):
         if loeser_da(key):
@@ -761,7 +761,7 @@ def ausweichen_gebuendelt(ergebnisse) -> list:
             f"Gleichungslöser ausgewichen bei {n} Ergebnis{'' if n == 1 else 'sen'} "
             f"({', '.join(e['namen'][:3])}{' …' if n > 3 else ''}): {e['grund']}"
             + (f" – stattdessen rechnete {mit}" if mit else "")
-            + ". Den Grund beheben oder unter Berechnung → Einstellungen → "
+            + ". Den Grund beheben oder unter Berechnung → Einstellungen → Experten → "
               "Gleichungslöser einen Löser wählen; ein ausdrücklich gewählter Löser "
               "bricht ab, statt auszuweichen.")
     return zeilen
@@ -866,7 +866,7 @@ class LinearSolver:
                 f"{nnz / 1e6:.1f} Mio. Einträgen"
                 + (f". {lage}" if lage else "")
                 + ". Ein größeres Modell braucht mehr Arbeitsspeicher oder eine größere "
-                  "Auslagerungsdatei; ein anderer Gleichungslöser (Berechnung → Einstellungen) "
+                  "Auslagerungsdatei; ein anderer Gleichungslöser (Berechnung → Einstellungen → Experten) "
                   "kann sparsamer sein.") from ex
         self.zeit_faktorisierung = time.perf_counter() - t_fak
 
@@ -884,7 +884,7 @@ class LinearSolver:
         text = (f"Das Gleichungssystem ist zu groß für MKL PARDISO: {self.n} Zeilen und "
                 f"{nnz / 1e6:.0f} Mio. Einträge; die Schnittstelle fasst {INT32_MAX} "
                 f"(32-Bit-Indizes). MUMPS, ama und SuperLU rechnen mit 64 Bit - "
-                f"Berechnung \u2192 Einstellungen \u2192 Gleichungslöser.")
+                f"Berechnung \u2192 Einstellungen \u2192 Experten \u2192 Gleichungslöser.")
         if verlangt:
             raise RuntimeError(text)
         _log_einmal(text + " Es wird auf einen anderen Löser ausgewichen.")
@@ -1090,7 +1090,7 @@ class LinearSolver:
                     f"{self.ausweichgrund}; danach SuperLU: {type(ex).__name__}: "
                     f"{str(ex)[:160]}. SuperLU rechnet mit 32-Bit-Arbeitsfeldern "
                     "und reicht für große Modelle nicht - Berechnung → "
-                    "Einstellungen → Gleichungslöser: MUMPS oder ama.") from ex
+                    "Einstellungen → Experten → Gleichungslöser: MUMPS oder ama.") from ex
             self._solve = lu.solve
             self.backend = "superlu"
 
@@ -1315,7 +1315,7 @@ class LinearSolver:
                         + (f" (Löser ausgewichen - {self.ausweichgrund})" if self.ausweichgrund
                            else "") + " - "
                         "Lagerung, freie Bauteile oder Kontaktdefinition pruefen; die Schranke steht "
-                        "unter Berechnung → Einstellungen → Genauigkeit des Gleichungslösers.")
+                        "unter Berechnung → Einstellungen → Experten → Genauigkeit des Gleichungslösers.")
         return x
 
     @staticmethod

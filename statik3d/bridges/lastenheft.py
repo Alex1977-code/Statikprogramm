@@ -695,7 +695,7 @@ class Lastenheft(Report):
         b.append(("p", "Je Lastfallklasse und je veränderlicher Leiteinwirkung eine Kombination: "
                        "Σ γ_F,i G_i + γ_F,l Q_l + Σ γ_F,j ψ₀,j Q_j. Ständig sind "
                        + ", ".join(sorted(rw.staendig)) + ". „Kombinationen nach DIN 19704 bilden“ "
-                       "(Register Berechnung) legt sie im Modell an."))
+                       "(Register Lasten › Kombinationen › „DIN 19704“) legt sie im Modell an."))
         rows = [["Klasse", "Bedeutung", "Einwirkungen"]]
         for kl in ("LF1", "LF2", "LF3"):
             rows.append([kl, KLASSEN_TEXT[kl], ", ".join(KLASSEN[kl])])
