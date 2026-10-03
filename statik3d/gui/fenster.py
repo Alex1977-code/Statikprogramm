@@ -346,14 +346,21 @@ class Fensteranordnung(QtCore.QObject):
         # Das Programm startet im Register „Start“ (Antwort 9) - die
         # haeufigsten Befehle stehen dort, nicht Neu/Oeffnen/Speichern
         w.ribbon.zeigen("Start")
-        leiste = w.tab_unten.leiste
-        #: Doppelklick auf die Leiste: der Zustand vor dessen erstem Klick und
+        # Unten steht seit 03.10.2026 (10b) eine Kopfzeile: Gruppe als
+        # Aufklappfeld, die Reiter der Tabellen, die Tabellenknoepfe. Ein Klick
+        # auf einen Reiter, die Wahl einer Gruppe oder der Knopf Filter bzw.
+        # Spalten klappt einen eingeklappten Bereich auf.
+        unten = w.tab_unten
+        leiste = unten.reiter
+        #: Doppelklick auf die Reiter: der Zustand vor dessen erstem Klick und
         #: ein Merker fuer den Klick, den QTabBar danach noch sendet
         self._unten_vor_klick: tuple | None = None
         self._unten_doppel = False
         self._klickuhr = QtCore.QElapsedTimer()
         leiste.tabBarClicked.connect(self._unten_geklickt)
         leiste.tabBarDoubleClicked.connect(self._unten_doppelt)
+        unten.gruppenwahl.activated.connect(lambda _i: self._unten_aufklappen())
+        unten.bedient.connect(self._unten_aufklappen)
         if self.fest:
             return
         # Baum und rechter Bereich ueber die volle Hoehe: die Ecken gehoeren
@@ -544,17 +551,18 @@ class Fensteranordnung(QtCore.QObject):
         return self.w.tab_unten.stapel.isHidden()
 
     def unten_einklappen(self, an: bool) -> None:
-        """Unten nur die Gruppenleiste zeigen (an) oder den ganzen Bereich.
+        """Unten nur die Kopfzeile zeigen (an) oder den ganzen Bereich.
 
-        Ein Klick auf eine Gruppe klappt ihn wieder auf, ein Doppelklick auf
-        die Leiste schaltet um."""
+        Ein Klick auf einen Reiter oder die Wahl einer Gruppe klappt ihn
+        wieder auf, ein Doppelklick auf die Reiter schaltet um. Bis zum
+        03.10.2026 war die Registerzeile die Gruppenleiste (10b)."""
         w = self.w
         dock, tb = w.unten_dock, w.tab_unten
         if bool(an) == self.unten_eingeklappt():
             return
         if an:
             tb.stapel.hide()
-            hoehe = tb.leiste.sizeHint().height() + 2
+            hoehe = tb.kopf.sizeHint().height() + 2
             dock.setMinimumHeight(0)
             dock.setMaximumHeight(hoehe + (0 if dock.titleBarWidget() is not None else 30))
         else:
@@ -574,6 +582,12 @@ class Fensteranordnung(QtCore.QObject):
             dock.show()
             self._zone_nachziehen("unten")
         self.unten_einklappen(False)
+
+    def _unten_aufklappen(self) -> None:
+        """Gruppe gewaehlt, Knopf Filter oder Spalten bedient: ein
+        eingeklappter Bereich klappt auf, sonst wirkte die Wahl unsichtbar."""
+        if self.unten_eingeklappt():
+            self.unten_einklappen(False)
 
     def _unten_geklickt(self, _i: int):
         if self._unten_doppel:

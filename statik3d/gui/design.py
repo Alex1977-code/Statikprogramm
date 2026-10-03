@@ -100,12 +100,6 @@ QTabBar::tab {{ background: transparent; color: {matt}; padding: 8px 12px;
     border-bottom: 2px solid transparent; font-weight: 600; }}
 QTabBar::tab:selected {{ color: {akzent}; border-bottom: 2px solid {akzent}; }}
 QTabBar::tab:hover {{ color: {text}; }}
-QTabBar#gruppenleiste {{ background: {grund}; border-bottom: 1px solid {linie}; }}
-QTabBar#gruppenleiste::tab {{ padding: 5px 14px; font-size: 11px;
-    text-transform: uppercase; letter-spacing: 0.4px; color: {matt};
-    border-bottom: 2px solid transparent; }}
-QTabBar#gruppenleiste::tab:selected {{ color: {akzent}; background: {flaeche};
-    border-bottom: 2px solid {akzent}; }}
 QTabWidget#tabellenregister::pane {{ border-top: 0; }}
 QTabWidget#tabellenregister QTabBar::tab {{ padding: 5px 11px; font-weight: 500; }}
 
@@ -1953,150 +1947,13 @@ class Modellbaum(QtWidgets.QTreeWidget):
 
 
 # ==========================================================================
-# Tabellenbereich unten: Gruppen, darunter die Tabellen
+# Tabellenbereich unten
 # ==========================================================================
-class Tabellenbereich(QtWidgets.QWidget):
-    """Der untere Bereich in zwei Ebenen: **Gruppe → Tabelle**.
-
-    27 Register nebeneinander liest niemand mehr. Oben steht darum eine
-    schmale Leiste mit den Gruppen (Protokoll, Modell, Eigenschaften, Lager,
-    Lasten, Ergebnisse, Nachweise, Bericht), darunter die Tabellen der
-    gewaehlten Gruppe als Register. Eine Gruppe mit nur einer Tabelle zeigt
-    keine zweite Leiste.
-
-    Nach aussen verhaelt sich der Bereich wie ein flaches ``QTabWidget``
-    (``count``, ``tabText``, ``setCurrentIndex``, ``currentIndex``,
-    ``currentWidget``, ``addTab``): wer eine Tabelle nach vorn holt, muss
-    ihre Gruppe nicht kennen. Die Reihenfolge innerhalb einer Gruppe ist die
-    der Vorgabe, nicht die des Anlegens.
-    """
-
-    #: Gruppe fuer Tabellen, die keiner Gruppe zugeordnet sind
-    SONST = "Weitere"
-
-    def __init__(self, gruppen, parent=None):
-        super().__init__(parent)
-        self.gruppen: list[tuple[str, list[str]]] = [(g, list(n)) for g, n in gruppen]
-        lay = QtWidgets.QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(0)
-        self.leiste = QtWidgets.QTabBar(self)
-        self.leiste.setObjectName("gruppenleiste")
-        self.leiste.setExpanding(False)
-        self.leiste.setDrawBase(False)
-        self.leiste.setUsesScrollButtons(True)
-        self.leiste.setElideMode(QtCore.Qt.ElideNone)
-        self.stapel = QtWidgets.QStackedWidget(self)
-        self.seiten: dict[str, QtWidgets.QTabWidget] = {}
-        for g, _ in self.gruppen:
-            self._gruppe_anlegen(g)
-        self.leiste.currentChanged.connect(self.stapel.setCurrentIndex)
-        lay.addWidget(self.leiste)
-        lay.addWidget(self.stapel, 1)
-
-    # ---- Aufbau ----------------------------------------------------------
-    def _gruppe_anlegen(self, g: str) -> QtWidgets.QTabWidget:
-        seite = QtWidgets.QTabWidget(self.stapel)
-        seite.setObjectName("tabellenregister")
-        seite.setUsesScrollButtons(True)
-        seite.tabBar().setExpanding(False)
-        seite.tabBar().setElideMode(QtCore.Qt.ElideNone)
-        seite.tabBar().setVisible(False)
-        self.seiten[g] = seite
-        self.stapel.addWidget(seite)
-        self.leiste.addTab(g)
-        return seite
-
-    def gruppe_von(self, name: str) -> str:
-        for g, namen in self.gruppen:
-            if name in namen:
-                return g
-        return self.SONST
-
-    def gruppennamen(self) -> list[str]:
-        return [self.leiste.tabText(i) for i in range(self.leiste.count())]
-
-    def tabellen(self, gruppe: str) -> list[str]:
-        seite = self.seiten.get(gruppe)
-        return [seite.tabText(i) for i in range(seite.count())] if seite else []
-
-    def addTab(self, w: QtWidgets.QWidget, name: str) -> int:
-        g = self.gruppe_von(name)
-        seite = self.seiten.get(g)
-        if seite is None:
-            self.gruppen.append((g, []))
-            seite = self._gruppe_anlegen(g)
-        folge = dict(self.gruppen).get(g, [])
-        rang = folge.index(name) if name in folge else len(folge)
-        pos = 0
-        for i in range(seite.count()):
-            t = seite.tabText(i)
-            if (folge.index(t) if t in folge else len(folge)) <= rang:
-                pos = i + 1
-        seite.insertTab(pos, w, name)
-        seite.tabBar().setVisible(seite.count() > 1)
-        return self.indexOf(w)
-
-    # ---- flache Sicht (wie ein QTabWidget) ---------------------------------
-    def _eintraege(self) -> list[tuple[str, QtWidgets.QWidget, str, int]]:
-        out = []
-        for i in range(self.leiste.count()):
-            g = self.leiste.tabText(i)
-            seite = self.seiten[g]
-            for j in range(seite.count()):
-                out.append((seite.tabText(j), seite.widget(j), g, j))
-        return out
-
-    def count(self) -> int:
-        return len(self._eintraege())
-
-    def tabText(self, k: int) -> str:
-        e = self._eintraege()
-        return e[k][0] if 0 <= k < len(e) else ""
-
-    def widget(self, k: int):
-        e = self._eintraege()
-        return e[k][1] if 0 <= k < len(e) else None
-
-    def indexOf(self, w) -> int:
-        for k, (_n, wi, _g, _j) in enumerate(self._eintraege()):
-            if wi is w:
-                return k
-        return -1
-
-    def currentIndex(self) -> int:
-        g = self.leiste.tabText(self.leiste.currentIndex())
-        seite = self.seiten.get(g)
-        if seite is None:
-            return -1
-        j = seite.currentIndex()
-        for k, (_n, _w, gr, jj) in enumerate(self._eintraege()):
-            if gr == g and jj == j:
-                return k
-        return -1
-
-    def currentWidget(self):
-        seite = self.stapel.currentWidget()
-        return seite.currentWidget() if isinstance(seite, QtWidgets.QTabWidget) else None
-
-    def currentGroup(self) -> str:
-        return self.leiste.tabText(self.leiste.currentIndex())
-
-    def setCurrentIndex(self, k: int):
-        e = self._eintraege()
-        if not 0 <= k < len(e):
-            return
-        _name, _w, g, j = e[k]
-        self.leiste.setCurrentIndex(self.gruppennamen().index(g))
-        self.seiten[g].setCurrentIndex(j)
-
-    def zeigen(self, name: str) -> bool:
-        """Die Tabelle mit diesem Namen nach vorn holen (Gruppe folgt)."""
-        for k, (n, _w, _g, _j) in enumerate(self._eintraege()):
-            if n == name:
-                self.setCurrentIndex(k)
-                return True
-        return False
-
-    def tabBar(self) -> QtWidgets.QTabBar:
-        return self.leiste
+def __getattr__(name):
+    """Der untere Bereich (Tabellenbereich) steht seit 03.10.2026 (Teilpaket
+    10b) in tabellen.py bei den Tabellen, die er traegt; der Name bleibt hier
+    als Verweis fuer aeltere Aufrufer (dsg.Tabellenbereich)."""
+    if name in ("Tabellenbereich", "Reiterleiste"):
+        from . import tabellen
+        return getattr(tabellen, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -12177,7 +12177,9 @@ class MainWindow(QtWidgets.QMainWindow):
             zeile.addStretch(1)
             halter = QtWidgets.QWidget(w)
             halter.setLayout(zeile)
-            lay.addWidget(halter)
+            # Reicht die Breite nicht, rollt die Zeile allein - nicht mehr der
+            # ganze untere Bereich samt Kopfzeile (03.10.2026, 10b)
+            lay.addWidget(tab.Knopfzeile(halter, w))
         return w
 
     def _build_eingabetabellen(self, tabs):
@@ -12248,6 +12250,9 @@ class MainWindow(QtWidgets.QMainWindow):
         ein Doppelklick oeffnet seine Maske.
         """
         # ---- Knoten -------------------------------------------------------
+        # Die Modelltabellen sind Eingabe: Max und Min stehen seit 03.10.2026
+        # (10b) nur unter Ergebnis- und Nachweistabellen - unter Knoten und
+        # Staeben nahmen sie 46 px von 94 px Tabelle und sagten nichts Neues.
         self.tbl_knoten = tab.Datentabelle([
             Spalte("Knoten", "", "ganz", hinweis="Knotennummer"),
             Spalte("x", "m", "zahl", 4, True), Spalte("y", "m", "zahl", 4, True),
@@ -12255,7 +12260,7 @@ class MainWindow(QtWidgets.QMainWindow):
             Spalte("Elemente", "", "ganz",
                    hinweis="Wie viele Elemente an dem Knoten hängen (0 = nur gesetzt)"),
             Spalte("Lager", "", "text", hinweis="Name des Lagers an diesem Knoten")],
-            "Knoten", self, mit_kennwerten=True)
+            "Knoten", self)
         self.tbl_knoten.modell.aendern = self._knoten_aendern
         self.tbl_knoten.zeile_gewaehlt.connect(self._tabelle_knoten)
         self.tbl_knoten.view.doubleClicked.connect(
@@ -12295,7 +12300,7 @@ class MainWindow(QtWidgets.QMainWindow):
                    hinweis="Verdrehung der lokalen Achsen um die Stabachse"),
             Spalte("Länge / Fläche", "", "zahl", 4),
             Spalte("Gelenke", "", "text")],
-            "Elemente", self, mit_kennwerten=True)
+            "Elemente", self)
         self.tbl_elem.modell.aendern = self._elem_aendern
         self.tbl_elem.zeile_gewaehlt.connect(self._tabelle_element)
         be = QtWidgets.QPushButton("Element löschen")
@@ -12361,7 +12366,7 @@ class MainWindow(QtWidgets.QMainWindow):
             Spalte("Werkstoff", "", "wahl", 3, True, werte_fn=lambda _z: _namen(self.model.materials)),
             Spalte("Teilung", "", "text", 3, True, hinweis="Teilung je Richtung, z. B. 4 × 4"),
             Spalte("Elemente", "", "ganz"), Spalte("Fläche", "m²", "zahl", 4),
-            Spalte("Bemerkung", "", "text", 3, True)], "Flächen", self, mit_kennwerten=True)
+            Spalte("Bemerkung", "", "text", 3, True)], "Flächen", self)
         self.tbl_geoflaeche.modell.aendern = self._geoflaeche_aendern
         self.tbl_geoflaeche.zeile_gewaehlt.connect(
             lambda w: self._baum_geklickt("geoflaeche", str(w)))
@@ -12389,7 +12394,7 @@ class MainWindow(QtWidgets.QMainWindow):
             Spalte("Kerbfall Naht", "MPa", "zahl", 0, True,
                    hinweis="Kerbfall an verschweißten Berührungsstellen mit anderen Volumen, 0 = wie Kerbfall"),
             Spalte("Bemerkung", "", "text", 3, True)],
-            "Volumenkörper", self, mit_kennwerten=True)
+            "Volumenkörper", self)
         self.tbl_geokoerper.modell.aendern = self._geokoerper_aendern
         self.tbl_geokoerper.zeile_gewaehlt.connect(
             lambda w: self._baum_geklickt("geokoerper_einzeln", str(w)))
@@ -12417,7 +12422,7 @@ class MainWindow(QtWidgets.QMainWindow):
             Spalte("Δσ_C", "MPa", "zahl", 0, hinweis="Kerbfall mit Größeneinfluss"),
             Spalte("k_s", "", "zahl", 3, hinweis="Größeneinfluss (25/t)^0,2 für t > 25 mm"),
             Spalte("Δτ_C", "MPa", "zahl", 0), Spalte("Fundstelle")],
-            "Schweissnaehte", self, mit_kennwerten=True)
+            "Schweissnaehte", self)
         self.tbl_naht.modell.aendern = self._naht_aendern
         self.tbl_naht.zeile_gewaehlt.connect(
             lambda w: self._baum_geklickt("schweissnaht", str(w)))
@@ -13695,15 +13700,57 @@ class MainWindow(QtWidgets.QMainWindow):
     ERGEBNISTABELLEN = ("tbl_beam", "tbl_react", "tbl_env", "tbl_design",
                         "tbl_fat", "tbl_contact")
 
+    #: Was eine leere Tabelle unten sagt: wie sie sich fuellt (03.10.2026,
+    #: Teilpaket 10b; vorher stand nur „0 Zeilen“ da). Schluessel ist die
+    #: Tabelle, nicht der Name ihres Reiters - der kann sich aendern. Jeder
+    #: Verweis „Register → Befehl“ und jeder Knopf „…“ wird in
+    #: tests/test_unten_kopfzeile.py gegen das Ribbon und die Knoepfe der
+    #: Tabelle geprueft.
+    LEERTEXTE = {
+        "tbl_knoten": "Noch keine Knoten – Geometrie → Knoten …",
+        "tbl_linie": "Noch keine Linien – Geometrie → Linie …",
+        "tbl_geoflaeche": "Noch keine Flächen – Struktur → Fläche aus Linien …",
+        "tbl_geokoerper": "Noch keine Volumenkörper – Struktur → Volumen aus Flächen …",
+        "tbl_elem": "Noch keine Elemente – Struktur → Stab … oder Netz → Vernetzen",
+        "tbl_naht": "Noch keine Schweißnähte – Nachweise → Schweißnähte…",
+        "tbl_mat": "Noch keine Werkstoffe – unten „Werkstoff hinzufügen…“",
+        "tbl_sec": "Noch keine Querschnitte – unten „Querschnitt hinzufügen (Profildatenbank)…“",
+        "tbl_shell": "Noch keine Dicken – unten t eintragen und „Dicke hinzufügen“",
+        "tbl_lager": "Noch keine Lager – Lager / Kontakt → Knotenlager …",
+        "tbl_gelenk": "Noch keine Gelenke – Struktur → Gelenk …",
+        "tbl_freigabe": "Noch keine Kontaktbedingungen – Lager / Kontakt → Kontaktbedingung…",
+        "tbl_lastfall": "Noch keine Lastfälle – Lasten → Lastfälle …",
+        "tbl_last": "Noch keine Lasten – Lasten → Knotenlast …",
+        "tbl_kombi": "Noch keine Kombinationen – Lasten → Kombinationen automatisch…",
+        "tbl_beam": "Noch keine Stabkräfte – Start → Berechnen",
+        "tbl_react": "Noch keine Auflagerkräfte – Start → Berechnen",
+        "tbl_env": "Noch keine Umhüllende – Lasten → Kombinationen automatisch…, dann Start → Berechnen",
+        "tbl_contact": "Noch keine Kontaktkräfte – Lager / Kontakt → Kontakt …, dann Start → Berechnen",
+        "tbl_kontaktpaare": "Noch keine Kontaktpaare – Lager / Kontakt → Kontakt …, dann Start → Berechnen",
+        "tbl_design": "Noch keine Nachweise – Nachweise → Nachweise EC3",
+        "tbl_knick": "Noch keine Knicklängen – Nachweise → Aus Knickfigur",
+        "tbl_schwing": "Noch kein Schwingungsnachweis – Nachweise → Verschluss …",
+        "tbl_fat": "Noch keine Ermüdungsnachweise – Lasten → Ermüdungslasten…, dann Nachweise → Ermüdung",
+        "tbl_joint": "Noch keine Anschlüsse – Lager / Kontakt → Anschluss …",
+        "tbl_gzg": "Noch keine Verformungsnachweise – Nachweise → Verformung …",
+        "tbl_beul": "Noch keine Beulfelder – Nachweise → Beulfeld …",
+        "tbl_vol": "Noch keine Volumenbereiche – Nachweise → Volumenbereich …",
+        "tbl_le": "Noch keine Lasteinleitungen – Nachweise → Lasteinleitung …",
+        "tbl_bericht": ("Noch keine eigenen Einträge im Bericht – Bericht → Ansicht übernehmen "
+                        "oder Bericht → Text einfügen"),
+        "tbl_unterlagen": "Noch keine Unterlagen – Unterlagen → Datei hinzufügen…",
+    }
+
     def _build_bottom(self):
         dock = QtWidgets.QDockWidget("Protokoll und Tabellen", self)
         dock.setAllowedAreas(QtCore.Qt.BottomDockWidgetArea)
         self.unten_dock = dock
         # Der untere Bereich traegt Protokoll, Eingabe- und Ergebnistabellen -
         # mehr Register, als nebeneinander lesbar sind. Darum zwei Ebenen:
-        # oben die Gruppe, darunter ihre Tabellen (Vorgabe: „der Bereich
-        # unten muss strukturiert werden“).
-        tabs = dsg.Tabellenbereich(self.TABELLENGRUPPEN)
+        # die Gruppe, dazu ihre Tabellen (Vorgabe: „der Bereich unten muss
+        # strukturiert werden“) - seit 03.10.2026 (10b) beide in einer
+        # Kopfzeile mit den Tabellenknoepfen (tabellen.Tabellenbereich).
+        tabs = tab.Tabellenbereich(self.TABELLENGRUPPEN)
         self.tab_unten = tabs
         self.log = Protokollfeld()
         self.log.setReadOnly(True)
@@ -13723,6 +13770,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # Modells (Ansicht -> Einheiten); die Zeilen bleiben in Grundeinheiten.
         for t in tabs.findChildren(tab.Datentabelle):
             t.einheiten_setzen(lambda: self.model.einheiten)
+        # Eine leere Tabelle sagt, wie sie sich fuellt (10b)
+        for name, text in self.LEERTEXTE.items():
+            t = getattr(self, name, None)
+            if t is not None:
+                t.leertext_setzen(text)
         self.bottom_tabs = tabs
         dock.setWidget(tabs)
         dock.setMinimumHeight(215)

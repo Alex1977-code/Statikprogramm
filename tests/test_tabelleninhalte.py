@@ -384,6 +384,15 @@ def test_auswahlfarbe():
         c = QtGui.QColor(b)
         return abs(a.red() - c.red()) + abs(a.green() - c.green()) + abs(a.blue() - c.blue())
 
+    # Den Fokus nimmt fuer „ohne Fokus“ ein Filterfeld - die Filterzeile
+    # erscheint seit 03.10.2026 (10b) erst auf Knopfdruck, verborgen nimmt das
+    # Feld keinen Fokus, und beide Durchgaenge pruefen sonst dasselbe
+    t.filterzeile_zeigen(True)
+    app.processEvents()
+    t.felder[0].setFocus()
+    app.processEvents()
+    check("Vorbedingung „ohne Fokus“: das Filterfeld nimmt den Fokus, die Tabelle hat ihn nicht",
+          t.felder[0].hasFocus() and not v.hasFocus())
     stile = []                                       # die Stilobjekte muessen leben
     for stil in QtWidgets.QStyleFactory.keys():
         s = QtWidgets.QStyleFactory.create(stil)

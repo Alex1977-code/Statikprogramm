@@ -407,23 +407,28 @@ def test_kompaktstufe():
     kopf = w.menuWidget().height()
     check("1366 x 768 (unter 900 px Höhe): Kompaktstufe, Ribbon eingeklappt",
           an.kompakt and w.ribbon.eingeklappt() and kopf <= 80, f"Kopf {kopf} px")
-    check("… unten nur die Registerzeile (höchstens 40 px)",
-          w.unten_dock.height() <= 40 and an.unten_eingeklappt(), f"{w.unten_dock.height()} px")
+    check("… unten nur die Kopfzeile mit Gruppe, Reitern und Knöpfen (höchstens 40 px)",
+          w.unten_dock.height() <= 40 and an.unten_eingeklappt() and w.tab_unten.kopf.isVisible(),
+          f"{w.unten_dock.height()} px")
     check("… der Ansichtswürfel ist kleiner, die Farbskala waagerecht",
           w.ansichtswuerfel.width() < breite_wuerfel and w._farbskala().get("vertical") is False,
           f"Würfel {breite_wuerfel} -> {w.ansichtswuerfel.width()} px")
     bb, hh = _ansicht(w)
     check("… die Ansicht hat mindestens 30 % der Fensterfläche",
           bb * hh >= 0.30 * w.width() * w.height(), f"{bb} x {hh} = {100 * bb * hh / (w.width() * w.height()):.1f} %")
-    leiste = w.tab_unten.leiste
+    # Seit 03.10.2026 (10b) stehen Gruppe (Aufklappfeld) und Reiter in einer
+    # Kopfzeile; geklickt wird auf einen Reiter der Gruppe Modell
+    w.tab_unten.zeigen("Knoten")
+    _ruhe()
+    leiste = w.tab_unten.reiter
     _reiter_klick(leiste, 1)
-    check("ein Klick auf eine Gruppe unten klappt den Bereich auf",
+    check("ein Klick auf einen Reiter unten klappt den Bereich auf",
           not an.unten_eingeklappt() and w.unten_dock.height() >= 150, f"{w.unten_dock.height()} px")
     _reiter_klick(leiste, 1, doppelt=True)
-    check("… ein echter Doppelklick auf die Leiste wieder zu",
+    check("… ein echter Doppelklick auf die Reiter wieder zu",
           an.unten_eingeklappt() and w.unten_dock.height() <= 40, f"{w.unten_dock.height()} px")
     _reiter_klick(leiste, 1, doppelt=True)
-    check("… und ein echter Doppelklick auf die eingeklappte Leiste wieder auf",
+    check("… und ein echter Doppelklick auf die eingeklappten Reiter wieder auf",
           not an.unten_eingeklappt() and w.unten_dock.height() >= 150, f"{w.unten_dock.height()} px")
     an.unten_einklappen(True)
     _ruhe(6)
@@ -961,8 +966,8 @@ def test_handbuch():
           "Nur Ansicht" in b and "Strg+F1" in b and "Anordnung zurücksetzen" in b
           and "einstellungen.json" in b and "Doppelklick" in b, b[:80])
     c = absatz("**Kompaktstufe**")
-    check("Handbuch: Kompaktstufe unter 900 px oder 700 × 400 px, Registerzeile, Würfel, Farbskala",
-          "900 px" in c and "700 × 400" in c and "Registerzeile" in c and "Würfel" in c
+    check("Handbuch: Kompaktstufe unter 900 px oder 700 × 400 px, Kopfzeile unten, Würfel, Farbskala",
+          "900 px" in c and "700 × 400" in c and "nur die Kopfzeile" in c and "Würfel" in c
           and "waagerecht" in c, c[:80])
     # Nachbesserung nach der Gegenpruefung (25.09.2026)
     check("Handbuch: Baum mindestens 260 px, Zusatzspalte höchstens ein Viertel",

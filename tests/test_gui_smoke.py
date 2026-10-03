@@ -1088,7 +1088,13 @@ def main():
             app.processEvents()
             check("Nachweiszeile waehlt den ganzen Stab",
                   len(w.selection) >= 2, f"{stab}: {len(w.selection)} Knoten")
-            check("Nachweistabelle hat Kennwerte", w.tbl_design.fussmodell.rowCount() == 2)
+            # Max/Min gibt es an Ergebnistabellen erst ab 5 Zeilen (03.10.2026, 10b)
+            n_ = w.tbl_design.zeilenzahl()
+            check(f"Nachweistabelle führt Max/Min, zu sehen ab {tb.Datentabelle.KENNWERTE_AB} Zeilen (hier {n_})",
+                  w.tbl_design.kennwerte_zeigen
+                  and w.tbl_design.fuss.isHidden() == (n_ < tb.Datentabelle.KENNWERTE_AB)
+                  and (n_ < tb.Datentabelle.KENNWERTE_AB or w.tbl_design.fussmodell.rowCount() == 2),
+                  f"{n_} Zeilen, Fuß verborgen {w.tbl_design.fuss.isHidden()}")
             w.clear_selection()
 
         # Umhuellende: dieselbe Tabelle, anderes Ergebnis
@@ -3175,9 +3181,17 @@ def main():
               tu.tabellen("Modell") == ["Knoten", "Linien", "Flächen", "Volumenkörper", "Elemente",
                                         "Schweißnähte"],
               str(tu.tabellen("Modell")))
-        check("eine Gruppe mit nur einer Tabelle zeigt keine zweite Leiste",
-              tu.seiten["Protokoll"].tabBar().isHidden()
-              and not tu.seiten["Modell"].tabBar().isHidden())
+        # Seit 03.10.2026 (10b) stehen Gruppe und Reiter in einer Kopfzeile
+        tu.zeigen("Protokoll")
+        app.processEvents()
+        ohne_reiter = tu.reiter.isHidden()
+        tu.zeigen("Knoten")
+        app.processEvents()
+        check("eine Gruppe mit nur einer Tabelle zeigt keine Reiter, Modell zeigt seine in der Kopfzeile",
+              ohne_reiter and not tu.reiter.isHidden()
+              and [tu.reiter.tabText(j) for j in range(tu.reiter.count())] == tu.tabellen("Modell")
+              and all(s.tabBar().isHidden() for s in tu.seiten.values()),
+              str([tu.reiter.tabText(j) for j in range(tu.reiter.count())]))
         w.do_check()
         check("Modellprüfung holt das Protokoll nach vorn", tu.currentGroup() == "Protokoll")
 

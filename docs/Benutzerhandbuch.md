@@ -321,8 +321,8 @@ drei „+ … anlegen“. Der rechte Bereich bekommt 460 px, der untere Bereich
 25 % der Höhe; Baum und
 rechter Bereich reichen über die **volle Höhe** vom Ribbon bis zur
 Statusleiste, der untere Bereich steht nur unter der Ansicht und hat keine
-eigene Titelzeile mehr („Protokoll und Tabellen“) — die Gruppenleiste sagt
-dasselbe. Solange man keine Trennlinie zwischen den Bereichen zieht, folgen
+eigene Titelzeile mehr („Protokoll und Tabellen“) — das Aufklappfeld der
+Gruppe in seiner Kopfzeile sagt dasselbe. Solange man keine Trennlinie zwischen den Bereichen zieht, folgen
 die Maße der Fenstergröße; wer eine zieht, behält seine Maße. Bei 1920 × 1080
 hat die Ansicht so 1137 × 610 px statt 1142 × 470 px (maximiert), bei
 1366 × 768 630 × 639 px statt 588 × 158 px (offscreen gemessen, Prüfung
@@ -333,7 +333,9 @@ führt es bis dahin als offen. Eine Maske mit breiten Zeilen (Wind,
 Kontaktbedingung) macht den rechten Bereich nicht mehr breiter: ihre Mitte
 rollt dann auch waagerecht — bis zum 24.09.2026 zog die Windmaske ihn auf
 1170 px, die Ansicht blieb bei 128 px. Reicht die Breite unten nicht für die
-Knopfzeilen der Tabellen, rollt der untere Bereich waagerecht.
+Knopfzeile unter einer Tabelle, rollt nur diese Zeile waagerecht. Bis zum
+03.10.2026 rollte der ganze untere Bereich samt Kopfzeile, und die breiteste
+Knopfzeile aller Tabellen (Bericht) bestimmte die Breite jeder Tabelle.
 
 **Ansicht → Fenster** (Knopf „Fenster ▾“ im Register Ansicht): Schalter
 *Modellbaum zeigen*, *Rechten Bereich zeigen*, *Unteren Bereich zeigen*;
@@ -344,9 +346,9 @@ daneben klickt, etwa in die Ansicht); *Nur
 Ansicht* blendet Baum, rechten und unteren Bereich aus und klappt das Ribbon
 ein, noch einmal gewählt ist alles wie vorher (auch wenn das Fenster
 inzwischen größer oder kleiner geworden ist); *Anordnung zurücksetzen* zeigt
-alle Bereiche wieder in den Maßen oben. Ein Doppelklick auf die Gruppenleiste
-unten klappt den unteren Bereich auf die Registerzeile zusammen und wieder
-auf. Befehle, die unten eine Tabelle nach vorn holen („Tabelle …“,
+alle Bereiche wieder in den Maßen oben. Ein Doppelklick auf die Reiter
+unten klappt den unteren Bereich auf seine Kopfzeile zusammen und wieder auf
+(bis zum 03.10.2026 auf die Gruppenleiste). Befehle, die unten eine Tabelle nach vorn holen („Tabelle …“,
 Querschnitte, Werkstoffe, ein Klick auf einen Baumzweig), klappen den Bereich
 auf; nach einer gescheiterten Rechnung steht dort das Protokoll mit der
 FEHLER-Zeile. Bis zum 25.09.2026 wechselte eingeklappt nur die Gruppe in der
@@ -364,8 +366,10 @@ gelten nicht.
 **Kompaktstufe**: Ist das Fenster niedriger als 900 px oder bliebe die
 Ansicht mit diesen Maßen kleiner als 700 × 400 px (1366 × 768, ein
 1920er-Bildschirm mit 125 % oder 150 % Skalierung, ein schmal gezogenes
-Fenster), ist das Ribbon eingeklappt, unten steht nur die Registerzeile
-(ein Klick auf eine Gruppe klappt den Bereich auf), der Würfel ist kleiner
+Fenster), ist das Ribbon eingeklappt, unten steht nur die Kopfzeile mit
+Gruppe, Reitern und Tabellenknöpfen (ein Klick auf einen Reiter, die Wahl
+einer Gruppe oder der Knopf *Filter* klappt den Bereich auf; bis zum
+03.10.2026 war es die Registerzeile der Gruppen), der Würfel ist kleiner
 und die Farbskala liegt waagerecht unten in der Ansicht, über den Kennwerten
 unten links (bis zum 25.09.2026 lag sie auf ihnen, „73.52 Knoten 14“ war
 nicht zu lesen — auch im Berichtsbild aus der Ansicht). Wird das Fenster
@@ -2533,15 +2537,43 @@ je Netz entsteht (0,9 s) und die Frage danach in 13 ms beantwortet.
 
 **Stabkräfte zur Umhüllenden.** Die Tabelle „Stabkräfte" führt Stabendkräfte
 je Element und gehört zu einem Lastfall oder einer Kombination. Ist das
-gezeigte Ergebnis eine Umhüllende, bleibt sie leer und sagt neben der
-Zeilenzahl, warum: die Extremwerte stehen im Register „Umhüllende", auf das
+gezeigte Ergebnis eine Umhüllende, bleibt sie leer und sagt in der leeren
+Tabelle, warum: die Extremwerte stehen im Register „Umhüllende", auf das
 der Bereich unten dann selbst springt — und zurück auf „Stabkräfte", sobald
 wieder ein Lastfall oder eine Kombination gezeigt wird.
 
-Der Bereich unten ist in **zwei Ebenen** gegliedert: oben die Gruppe, darunter
-ihre Tabellen als Register. Eine Gruppe mit nur einer Tabelle (Protokoll,
-Bericht) zeigt keine zweite Leiste. Ein Klick im Modellbaum holt die
-passende Tabelle nach vorn — samt ihrer Gruppe.
+**Kopfzeile unten.** Der Bereich unten hat eine einzige Kopfzeile. Links
+steht die Gruppe als Aufklappfeld (Protokoll, Modell, Eigenschaften, Lager,
+Lasten, Ergebnisse, Nachweise, Bericht), daneben stehen die Tabellen dieser
+Gruppe als Reiter und rechts die Knöpfe *Spalten…*, *Filter*, *Kopieren*,
+*CSV…* und *Excel…* für die Tabelle, die vorn liegt. Reicht die Breite für
+die Knöpfe mit Text nicht, stehen nur ihre Symbole da, und der Tooltip nennt
+sie; reicht sie auch dafür nicht, wandern die letzten Knöpfe in das Menü „»“
+am rechten Ende. Die Reiter rollen dann mit Pfeilen, kein Name wird gekürzt,
+und der gewählte Reiter ist immer ganz zu sehen. Beim Protokoll gibt es
+weder Reiter noch Tabellenknöpfe. Ein Klick im Modellbaum holt die passende
+Tabelle nach vorn — samt ihrer Gruppe. Bis zum 03.10.2026 standen
+untereinander eine Gruppenleiste, die Register der Gruppe, über jeder Tabelle
+eine eigene Zeile mit Zeilenzahl und Knöpfen und eine immer offene
+Filterzeile. Von 270 px unten blieben bei 1920 × 1080 der Knotentabelle
+94 px (zwei Zeilen) und den Stabkräften 120 px (drei Zeilen), jetzt sind es
+215 px (acht Zeilen) und 192 px (sechs Zeilen). In der Kompaktstufe bei
+1366 × 768 (aufgeklappt) sind es 137 statt 68 px und 114 statt 91 px; dort war
+der Inhalt vorher höher als der Bereich, und von den Zeilen Max und Min der
+Stabkräfte war nichts zu sehen (offscreen gemessen am Hallenrahmen, Prüfung
+`tests/test_unten_kopfzeile.py`).
+
+**Zähler am Reiter.** Am Reiter jeder Tabelle steht klein ihre Zeilenzahl,
+und die Reiter leerer Tabellen sind grau; nach dem Rechnen sieht man so,
+welche Tabellen etwas enthalten. Die Zahl steht neben dem Namen, nicht in
+ihm. Eine große Tabelle, die nicht vorn liegt, füllt sich erst beim Anzeigen;
+ihr Zähler nennt die Zahl trotzdem schon, ohne sie zu füllen. Eine leere
+Tabelle sagt in ihrer Mitte, wie sie sich füllt, etwa „Noch keine Lasten –
+Lasten → Knotenlast …“ oder „Noch keine Stabkräfte – Start → Berechnen“.
+Gehört zum gezeigten Ergebnis ein eigener Hinweis (Stabkräfte zu einer
+Umhüllenden), steht er an dieser Stelle. Bis zum 03.10.2026 stand über einer
+leeren Tabelle nur „0 Zeilen“, und am Reiter war nicht zu sehen, ob sie
+etwas enthält.
 
 | Gruppe | Tabellen |
 |---|---|
@@ -2554,11 +2586,23 @@ passende Tabelle nach vorn — samt ihrer Gruppe.
 | Nachweise | Nachweise EC3, Ermüdung, Anschlüsse, Verformungen, Beulfelder, Volumen, Lasteinleitung |
 | Bericht | die Einträge des Berichts |
 
-Jede Tabelle unten hat über der Kopfzeile eine **Filterzeile** — ein Feld je
-Spalte. Was dort steht, gilt sofort; mehrere Felder wirken zusammen (und, nicht
-oder). Die Zählung links („17 von 240 Zeilen") sagt, wie viel übrig ist. Zahlen-
-spalten stehen in den Einheiten aus *Ansicht → Einheiten*; Filterwerte werden
-in derselben Einheit eingegeben. **Direkt bearbeiten:** in den Modelltabellen
+**Filterzeile auf Knopfdruck.** Über der Kopfzeile einer Tabelle liegt
+eine **Filterzeile** mit einem Feld je Spalte. Sie erscheint mit dem Knopf
+*Filter* und verschwindet mit ihm wieder. Was in den Feldern steht, gilt
+sofort; mehrere Felder wirken zusammen (und, nicht oder). Solange ein Filter
+Zeilen weglässt, bleibt die Filterzeile offen, der Knopf heißt *Filter
+aktiv* und ist farbig hinterlegt, sein Tooltip nennt die Zahlen („5 von 19
+Zeilen sichtbar“), und der Zähler am Reiter steht als „5/19“ da — so hält
+niemand gefilterte Zeilen für alle. Wer die Filterzeile mit dem Knopf
+ausblendet, hat den Filter damit aufgehoben, wie beim Autofilter in Excel;
+*Filter leeren* (Register Ergebnisse) leert die Felder und lässt die Zeile
+offen. Lässt der Filter nichts übrig, sagt die Tabelle es („Keine der 19
+Zeilen passt zum Filter.“). Bis zum 03.10.2026 stand die Filterzeile immer
+offen über jeder Tabelle und nahm ihr 22 px, und die Zählung („17 von 240
+Zeilen“) stand in einer eigenen Zeile darüber.
+
+Zahlenspalten der Tabellen stehen in den Einheiten aus *Ansicht →
+Einheiten*; Filterwerte werden in derselben Einheit eingegeben. **Direkt bearbeiten:** in den Modelltabellen
 sind die Eigenschaften in der Zelle editierbar (Doppelklick oder F2) - Knoten
 x/y/z, bei Linien die Knotenfolge und die Bemerkung, bei Stäben die Knoten,
 Werkstoff, Querschnitt bzw. Dicke und die Drehung, bei Flächen Randlinien,
@@ -2601,9 +2645,13 @@ Objekte aufgezählt werden: im **Modellbaum**, in den **Tabellen** und in den
 **Aufklapplisten** der Masken. **Spalten** lassen sich über „Spalten…" ein- und
 ausblenden und mit der Maus verschieben.
 
-Unter jeder Ergebnistabelle steht eine feste **Zeile „Max"/„Min"**. Sie
-bezieht sich auf das, was der Filter gerade übrig lässt, und bleibt beim
-Sortieren an ihrem Platz.
+Unter jeder Ergebnistabelle — in den Gruppen Ergebnisse und Nachweise —
+steht ab 5 Zeilen eine feste **Zeile „Max"/„Min"**. Sie bezieht sich auf das,
+was der Filter gerade übrig lässt, und bleibt beim Sortieren und Filtern an
+ihrem Platz; ob sie steht, entscheidet die Zeilenzahl ohne Filter. Bis zum
+03.10.2026 stand sie auch unter den Eingabetabellen Knoten, Stäbe, Flächen,
+Volumenkörper und Schweißnähte und schon ab einer Zeile; unter der
+Knotentabelle nahm sie bei 1920 × 1080 46 von 140 px.
 
 **Nicht erfüllte Nachweise fallen auf** (seit 24.09.2026). In den
 Nachweistabellen – Nachweise EC3, Ermüdung, Anschlüsse, Verformungen,
@@ -8173,7 +8221,9 @@ jedes Neuzeichnen 3,9 s, davon im Profil 6,2 von 7,3 s allein die Suche
 nach Knoten ohne Element — sie lief bei jedem Bild über alle Elemente. Seit
 12.09.2026 wird sie einmal je Netz gemerkt: **0,8 s je Neuzeichnen**. Große
 Tabellen (ab 50 000 Zeilen) füllen sich erst, wenn ihr Register nach vorn
-kommt; solange steht „wird beim Anzeigen gefüllt" neben der Zeilenzahl (die
+kommt; solange nennt der Zähler am Reiter schon ihre Zeilenzahl, und sein
+Tooltip sagt „wird beim Anzeigen gefüllt" (bis zum 03.10.2026 stand das neben
+der Zeilenzahl über der Tabelle; die
 Elementtabelle des Drehlagers kostete 61 s bei jedem Modellstand, ihre
 Kennwerte 44 s — jetzt spaltenweise mit numpy; ein Modellstand dauert 22 s
 statt 51 s). Ist das **FE-Netz** ausgeschaltet, zeigt das unverformte

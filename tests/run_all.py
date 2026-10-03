@@ -18,6 +18,7 @@ SUITES = ["tests.test_verification", "tests.test_elemente_volumen", "tests.test_
            "tests.test_tetp", "tests.test_tetp_rechnung", "tests.test_entartung",
            "tests.test_vertraeglich", "tests.test_nachlauf_parallel", "tests.test_pool_speicher", "tests.test_sweep_aus",
            "tests.test_register_start",
+           "tests.test_unten_kopfzeile",
            "tests.test_elementuebersicht", "tests.test_elementstufe",
            "tests.contracts.test_vertrag", "tests.test_kontakt_exakt",
            "volumen3d.tests.test_kern"]
