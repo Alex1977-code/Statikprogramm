@@ -10,7 +10,7 @@ kleine fuer die Nebenbefehle.
 
 Der Grundsatz der Vorgabe lautet: **jede Funktion existiert genau einmal**.
 Darum gibt es hier keine Menueleiste und keine zweite Werkzeugleiste daneben;
-was im Ribbon steht, steht nirgends sonst. Drei Ausnahmen sind ausdruecklich
+was im Ribbon steht, steht nirgends sonst. Vier Ausnahmen sind ausdruecklich
 gewollt und keine Doppelung, weil sie denselben Befehl nur schneller erreichbar
 machen:
 
@@ -18,13 +18,16 @@ machen:
   Berechnen, Auswahl aufheben) - dieselben Aktionsobjekte, nicht neue Befehle,
 * die **Tastenkuerzel** - sie haengen am Fenster und gelten darum in jedem
   Register; jede Tastenfolge gehoert genau einem Befehl (:meth:`Ribbon.kuerzel_setzen`),
-* die **Befehlssuche** rechts im Ribbon (Strg+F setzt den Cursor hinein).
+* die **Befehlssuche** rechts im Ribbon (Strg+F setzt den Cursor hinein),
+* das Register **Start**: der Arbeitsablauf zeigt Befehle aus anderen Registern
+  noch einmal als Knopf (:meth:`Gruppe.nochmal`) - dieselbe Aktion, kein neuer
+  Befehl und kein neues Kuerzel (Teilpaket 12d, 03.10.2026).
 
 Aufbau::
 
     ribbon = Ribbon(fenster)
     start = ribbon.register("Start")
-    g = start.gruppe("Zwischenablage")
+    g = start.gruppe("Bearbeiten")
     g.gross("Rueckgaengig", "↶", self.undo, "Ctrl+Z", "Letzte Aenderung zuruecknehmen")
     g.klein("Wiederholen", self.redo, "Ctrl+Y")
 
@@ -201,6 +204,11 @@ class Gruppe(QtWidgets.QWidget):
         """
         a = self._aktion(text, fn, kuerzel, hinweis)
         a.setIcon(sym.fuer_befehl(text, zeichen, symbol))
+        self._grosser_knopf(a, text, rolle)
+        return a
+
+    def _grosser_knopf(self, a: QtGui.QAction, text: str, rolle: str = "") -> QtWidgets.QToolButton:
+        """Der grosse Knopf zu einer Aktion (Symbol ueber der Beschriftung)."""
         b = Startknopf(self) if rolle == "start" else QtWidgets.QToolButton(self)
         b.setDefaultAction(a)
         b.setToolButtonStyle(QtCore.Qt.ToolButtonTextUnderIcon)
@@ -214,7 +222,21 @@ class Gruppe(QtWidgets.QWidget):
         b.setFixedHeight(INHALT_HOEHE)
         self.spalte = None
         self.reihe.addWidget(b, 0, QtCore.Qt.AlignTop)
-        return a
+        return b
+
+    def nochmal(self, aktion: QtGui.QAction, rolle: str = "") -> QtGui.QAction:
+        """Einen Befehl, der in einem anderen Register steht, hier noch einmal
+        als grossen Knopf zeigen (Teilpaket 12d, 03.10.2026: das Register
+        Start als Arbeitsablauf).
+
+        Es ist **dieselbe** Aktion, kein neuer Befehl: Symbol, Hinweis,
+        Tastenkuerzel, Sperre und - bei einem Schalter - der Haken kommen von
+        ihr, der Klick fuehrt dieselbe Funktion aus. Darum legt diese Methode
+        weder einen ``Befehl`` an (die Suche fuehrt weiter zum Original) noch
+        ein Kuerzel (Qt loest bei zwei Aktionen mit derselben Tastenfolge gar
+        nichts aus, siehe :meth:`Ribbon.kuerzel_setzen`)."""
+        self._grosser_knopf(aktion, aktion.text(), rolle)
+        return aktion
 
     def klein(self, text: str, fn=None, kuerzel: str = "", hinweis: str = "",
               zeichen: str = "", symbol: str = "", anzeige: str = "") -> QtGui.QAction:
@@ -764,6 +786,19 @@ class Ribbon(QtWidgets.QWidget):
         tragen = [b for b in self.befehle if not b.aktion.shortcut().isEmpty()]
         # stabil: innerhalb eines Registers bleibt die Reihenfolge des Aufbaus
         return sorted(tragen, key=lambda b: reihe.get(b.register, len(reihe)))
+
+    def aktion(self, register: str, text: str) -> QtGui.QAction:
+        """Die Aktion des Befehls ``text`` im Register ``register``.
+
+        Wer einen Befehl noch einmal zeigen will (:meth:`Gruppe.nochmal`),
+        holt sich hier das Original, statt es beim Aufbau in eine Variable
+        zu legen. Fehlt der Befehl oder gibt es ihn dort zweimal, meldet das
+        ein ``KeyError`` beim Start des Programms - ein umbenannter Befehl
+        faellt so sofort auf und laeuft nicht still ins Leere."""
+        treffer = [b.aktion for b in self.befehle if b.register == register and b.text == text]
+        if len(treffer) != 1:
+            raise KeyError(f"Befehl „{text}“ im Register {register}: {len(treffer)} Treffer")
+        return treffer[0]
 
     def suche_fokussieren(self) -> None:
         """Strg+F: den Cursor in die Befehlssuche setzen. Was schon darin

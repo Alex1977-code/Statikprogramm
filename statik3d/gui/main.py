@@ -4090,25 +4090,46 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # -- Start -------------------------------------------------------
         r = rb.register("Start")
-        g = r.gruppe("Zwischenablage")
-        self.act_undo = g.gross("Rückgängig", "↶", self.undo, "Ctrl+Z",
-                                "Letzte Änderung zurücknehmen")
-        self.act_redo = g.gross("Wiederholen", "↷", self.redo, "Ctrl+Y",
-                                "Zurückgenommene Änderung wiederholen")
-        g = r.gruppe("Auswahl")
-        self.act_auswahl_weg = g.gross("Alles deselektieren", "✕", self._esc_gedrueckt,
-                                       "Esc", "Auswahl aufheben - nichts bleibt gewählt (auch in der Glasleiste); "
-                                              "läuft gerade etwas mit Balken, hält Esc das an")
-        g.klein("Alles auswählen", self.select_all, "Ctrl+A",
-                hinweis="Alle Knoten des Modells wählen")
-        g.klein("Auswahl umkehren", self.invert_selection,
-                hinweis="Gewählte Knoten abwählen, alle anderen wählen")
-        self.act_klug = g.schalter("Intelligente Auswahl", None, True,
-                                   hinweis="Linien und Stäbe: gibt es am Ende genau eine Fortsetzung, "
-                                           "wird sie mit gewählt - und beim Abwählen mit abgewählt. "
-                                           "Umschalt+Klick erzwingt es auch bei ausgeschaltetem Schalter.",
-                                   symbol="auswahl_klug")
-        g = r.gruppe("Modell prüfen")
+        # Der Arbeitsablauf von links nach rechts (Teilpaket 12d, 03.10.2026):
+        # Knoten, Stab, Knotenlager, Linienlast, Lastfälle, Vernetzen, Prüfen,
+        # Berechnen, Ergebnisse, Nachweise EC3, Bericht. Die Gruppen entstehen
+        # hier in dieser Reihenfolge, damit „Prüfen“ und „Berechnen“ - die nur
+        # hier stehen - an ihrem Platz sitzen; die Befehle aus den anderen
+        # Registern kommen am Ende des Aufbaus dazu (_start_ablauf), denn
+        # erst dann gibt es sie.
+        start = {name: r.gruppe(name) for name in self.START_GRUPPEN}
+        # Rückgängig, Wiederholen und die Auswahlbefehle stehen am Ende in einem
+        # Menü: neben dem Ablauf und den Prüfwerkzeugen blieb bei 1280 px nur
+        # dafür Platz (Start braucht 1224 von 1241 erlaubten px, offscreen
+        # gemessen; als Knöpfe wären es 1431 px). Rückgängig und Wiederholen
+        # sind außerdem in der Schnellzugriffsleiste, Alles deselektieren und
+        # Intelligente Auswahl in der Leiste über der Ansicht - dieselben
+        # Aktionen, ein Schalter zeigt überall denselben Zustand.
+        g = start["Bearbeiten"]
+        menu = g.menueknopf("Bearbeiten ▾", "Rückgängig, Wiederholen und die Auswahl: alles wählen, "
+                                            "Auswahl umkehren, Intelligente Auswahl, alles deselektieren "
+                                            "(Rückgängig und Wiederholen auch oben in der "
+                                            "Schnellzugriffsleiste)", symbol="auswahl")
+        self.act_undo = g.eintrag(menu, "Rückgängig", self.undo, "Ctrl+Z",
+                                  "Letzte Änderung zurücknehmen", symbol="rueckgaengig")
+        self.act_redo = g.eintrag(menu, "Wiederholen", self.redo, "Ctrl+Y",
+                                  "Zurückgenommene Änderung wiederholen", symbol="wiederholen")
+        menu.addSeparator()
+        self.act_auswahl_weg = g.eintrag(
+            menu, "Alles deselektieren", self._esc_gedrueckt, "Esc",
+            "Auswahl aufheben - nichts bleibt gewählt (auch in der Glasleiste); "
+            "läuft gerade etwas mit Balken, hält Esc das an", symbol="auswahl_weg")
+        g.eintrag(menu, "Alles auswählen", self.select_all, "Ctrl+A",
+                  "Alle Knoten des Modells wählen", symbol="auswahl")
+        g.eintrag(menu, "Auswahl umkehren", self.invert_selection,
+                  hinweis="Gewählte Knoten abwählen, alle anderen wählen", symbol="kehren")
+        self.act_klug = g.eintrag(
+            menu, "Intelligente Auswahl", None,
+            hinweis="Linien und Stäbe: gibt es am Ende genau eine Fortsetzung, "
+                    "wird sie mit gewählt - und beim Abwählen mit abgewählt. "
+                    "Umschalt+Klick erzwingt es auch bei ausgeschaltetem Schalter.",
+            symbol="auswahl_klug", schalter=True, an=True)
+        g = start["Prüfen"]
         g.gross("Prüfen", "⚑", self.do_check, "", "Modell auf Fehler prüfen",
                 symbol="pruefen")
         g.klein("Doppelte Knoten zusammenführen", self.do_merge,
@@ -4119,7 +4140,7 @@ class MainWindow(QtWidgets.QMainWindow):
         g.klein("Freie Bewegungen suchen", self.do_singular,
                 hinweis="Welches Bauteil kann sich wie bewegen? Nennt Teil, Richtung "
                         "und Ursache und stellt die Bewegung als Pfeil in die Ansicht")
-        g = r.gruppe("Berechnen")
+        g = start["Rechnen"]
         self.act_rechnen = g.gross("Berechnen", "▶", lambda: self.do_solve("all"),
                                    "F5", "Alle Lastfälle und Kombinationen rechnen",
                                    rolle="start")
@@ -4989,10 +5010,33 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # die Einzeltasten in der Ansicht (K S L B F) im Hinweis ihrer Befehle nennen
         self._ansichtstasten_vermerken()
+        # der Arbeitsablauf im Register Start: jetzt gibt es alle Befehle
+        self._start_ablauf(start)
         # „Alles deselektieren“ steht in der Glasleiste, nicht mehr ganz oben
         rb.schnell(self.act_speichern, self.act_undo, self.act_redo, self.act_rechnen)
         self._undo_knoepfe()
         self.setMenuWidget(dsg.kopfhalter(self, self.kopf, rb))
+
+    #: Die Gruppen des Registers Start von links nach rechts. „Bearbeiten“ steht
+    #: am Ende: Rückgängig, Wiederholen und die Auswahlbefehle, die nicht zum
+    #: Arbeitsablauf gehören.
+    START_GRUPPEN = ("Modell", "Lager", "Lasten", "Netz", "Prüfen", "Rechnen", "Auswerten", "Bearbeiten")
+    #: Die Ablaufbefehle, die in einem anderen Register zu Hause sind:
+    #: (Gruppe in Start, Register, Befehl). „Prüfen“ und „Berechnen“ stehen
+    #: nur im Register Start (Berechnen zusätzlich in „Berechnung“).
+    START_ABLAUF = (("Modell", "Geometrie", "Knoten"), ("Modell", "Struktur", "Stab"),
+                    ("Lager", "Lager / Kontakt", "Knotenlager"),
+                    ("Lasten", "Lasten", "Linienlast"), ("Lasten", "Lasten", "Lastfälle"),
+                    ("Netz", "Netz", "Vernetzen"),
+                    ("Auswerten", "Ergebnisse", "Ergebnisse"), ("Auswerten", "Nachweise", "Nachweise EC3"),
+                    ("Auswerten", "Bericht", "Bericht"))
+
+    def _start_ablauf(self, gruppen: dict):
+        """Die Befehle des Arbeitsablaufs aus den anderen Registern in das
+        Register Start stellen - dieselben Aktionen (Gruppe.nochmal), kein
+        neuer Befehl und kein neues Tastenkürzel."""
+        for gruppe, register, text in self.START_ABLAUF:
+            gruppen[gruppe].nochmal(self.ribbon.aktion(register, text))
 
     @staticmethod
     def _ribbon_knopf(aktion, zeichen: str, rolle: str = ""):

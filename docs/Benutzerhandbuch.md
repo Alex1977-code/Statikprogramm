@@ -108,7 +108,7 @@ Fünfzehn Register nach Arbeitsschritt:
 | Register | Inhalt |
 |---|---|
 | **Datei** | Neu, Öffnen, Speichern, Projektangaben, **Modell leeren (Eigenschaften behalten)…**, Übernehmen aus fremden Formaten, Exportieren, **Beispiel öffnen ▾** (die acht Beispiele in einem Knopf) |
-| **Start** | Auswahl, Modellprüfung, doppelte Knoten, freie Stabenden anschließen, Berechnen |
+| **Start** | der Arbeitsablauf in einer Reihe: Knoten, Stab, Knotenlager, Linienlast, Lastfälle, Vernetzen, Prüfen (mit den Prüfwerkzeugen *Doppelte Knoten zusammenführen*, *Freie Stabenden anschließen…*, *Freie Bewegungen suchen*), Berechnen, Ergebnisse, Nachweise EC3, Bericht; am Ende das Menü *Bearbeiten ▾* (Rückgängig, Wiederholen, Auswahl) |
 | **Unterlagen** | **Dateien** (Datei hinzufügen: PDF, Bild, Word, Excel …; Unterlage öffnen; Entfernen), **Ansichten** (Ansicht aufnehmen, Skizze aus Ansicht), **Skizze** (Neue Skizze, Bearbeiten), **Bericht** (In den Bericht, Unterlagen zeigen) — seit 16.09.2026, siehe *Unterlagen* |
 | **Geometrie** | **Knoten / Linien** (Knoten, Linie, Knoten löschen, Linie aus Knoten), **Ändern** (Verschieben, Kopieren, Drehen, Spiegeln der Auswahl), **Konstruktion** (Lot / Projektion), Auswahlart in der Ansicht, Koordinatensysteme, Arbeitsebene, **Fang** (Hauptschalter F3 und *Fangarten ▾*, auch „Lot“) |
 | **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, Stabzug, *Nachweisstäbe ▾*: Stäbe für Nachweise, automatisch erkennen), **Flächen** (Schale, Fläche aus Linien, Rechteckplatte, verschneiden), **Volumen** (Volumen aus Flächen, Quader), **Gelenke** (Gelenk anlegen), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
@@ -122,6 +122,42 @@ Fünfzehn Register nach Arbeitsschritt:
 | **Ansicht** | Isometrisch, *Richtung ▾* (XY, XZ, YZ, Rückseite), Zoom alles; *Darstellung ▾* (Voll, Transparent, Hidden-Line, Drahtmodell, **Symbolgrößen…** = Maske „Darstellung“ mit Lagergröße und Lagerdichte); *Anzeigen ▾* (FE-Netz, Knoten, Linien, Stäbe, Flächen, Volumen, Lager, Lasten, Lastwerte, Stäbe farbig …); *Nummern ▾*; *Sicht ▾* und Schnittebene; Layer; Einheiten |
 | **Messen** | Abstand, Winkel, Koordinaten, Fläche eines Polygons, Länge/Fläche der Auswahl; Bemaßung (Linearmaß, Maßkette, Höhenkote, Winkelmaß, Radius) mit Einstellungen |
 | **Extras** | Handbücher (F1), **Tastenkürzel** (die Liste aller Kürzel), Info, Update |
+
+**Das Register Start ist der Arbeitsablauf** (seit 03.10.2026). Von links nach
+rechts stehen die elf Befehle, mit denen man ein Modell aufbaut und auswertet,
+in Gruppen nach Arbeitsschritt: in *Modell* **Knoten** und **Stab**, in *Lager*
+das **Knotenlager**, in *Lasten* die **Linienlast** und die **Lastfälle**, in
+*Netz* **Vernetzen**, in *Prüfen* **Prüfen** (daneben die drei Prüfwerkzeuge
+*Doppelte Knoten zusammenführen*, *Freie Stabenden anschließen…* und *Freie
+Bewegungen suchen*), in *Rechnen* der blaue Knopf **Berechnen** und in
+*Auswerten* **Ergebnisse**, **Nachweise EC3** und **Bericht**. Es sind
+dieselben Befehle wie in den Fachregistern, keine neuen: Jeder Knopf führt
+dieselbe Aktion wie sein Original (*Geometrie → Knoten*, *Struktur → Stab*,
+*Lager / Kontakt → Knotenlager*, *Lasten → Linienlast* und *Lastfälle*, *Netz →
+Vernetzen*, *Ergebnisse → Ergebnisse*, *Nachweise → Nachweise EC3*, *Bericht →
+Bericht*), also dieselbe Funktion mit demselben Symbol, demselben Hinweis und
+demselben Tastenkürzel. F5 und Strg+R bleiben bei ihren Befehlen, ein Kürzel
+ist nicht dazugekommen, und die Befehlssuche führt weiter zum Original. Ganz
+rechts steht das Menü **Bearbeiten ▾** mit *Rückgängig*, *Wiederholen*, *Alles
+deselektieren*, *Alles auswählen*, *Auswahl umkehren* und dem Schalter
+*Intelligente Auswahl*. Rückgängig und Wiederholen stehen außerdem in der
+Schnellzugriffsleiste oben links, *Alles deselektieren* und *Intelligente
+Auswahl* in der Glasleiste über der Ansicht; es sind dieselben Aktionen, ein
+Schalter zeigt darum an allen Stellen denselben Zustand. **Bis zum 03.10.2026**
+hatte das Register Start die Gruppen *Zwischenablage* (Rückgängig und
+Wiederholen als große Knöpfe), *Auswahl* (*Alles deselektieren* groß, dazu
+*Alles auswählen*, *Auswahl umkehren* und *Intelligente Auswahl*), *Modell
+prüfen* und *Berechnen*, aber keinen der Befehle zum Aufbau des Modells; die
+standen nur in ihren Fachregistern. Das Menü *Bearbeiten ▾* ersetzt die beiden
+ersten Gruppen, weil der Ablauf allein schon den größten Teil der Breite
+braucht: Die sechs Befehle als kleine Knöpfe in zwei Spalten hätten das
+Register auf 1431 px gebracht, bei 1366 px wären Beschriftungen gekürzt
+gewesen („Knotenlager“ bekam 69 von 82 px). Mit dem Menü ist das Register
+offscreen mit der Schrift Segoe UI 1224 px breit und passt bei 1366 px und bei
+1280 px (das sind 1920 px bei 150 % Skalierung) ohne gekürzte Beschriftung und
+ohne Rollpfeile; erlaubt sind 97 % der Fensterbreite, bei 1280 px also 1241 px. Das Programm startet weiter im
+Register Start, und nach der Rechnung springt das Ribbon wie bisher auf
+*Ergebnisse*. Geprüft in `tests/test_register_start.py`.
 
 **Reihenfolge der Register und zusammengerückte Gruppen** (seit 02.10.2026).
 Nach dem Rechnen kommt das Ergebnis, danach der Nachweis: *Ergebnisse* steht
@@ -2775,7 +2811,7 @@ gewandert ist — wer die Ansicht mit gedrückter Taste dreht, ändert die
 Auswahl nicht.
 
 **Intelligente Auswahl.** Der Schalter in der Glasleiste (auch *Start →
-Auswahl*, Vorgabe: an) nimmt bei Linien und Stäben die **eindeutige
+Bearbeiten ▾*, Vorgabe: an) nimmt bei Linien und Stäben die **eindeutige
 Fortsetzung** gleich mit: Hängt am Endknoten der angeklickten Linie genau
 eine weitere Linie, gehört sie dazu, und so weiter — bis zu einer
 Verzweigung (mehrere Linien am Knoten), einem freien Ende oder dem Schluss
@@ -3591,7 +3627,7 @@ gerechnet wurde.
 
 Sobald in der Ansicht etwas gewählt ist, erscheint rechts im Ribbon ein
 zusätzliches Register **„Auswahl: …"** mit genau den Befehlen, die auf die
-Auswahl passen. Im Register *Start → Auswahl* steht daneben der Schalter
+Auswahl passen. Im Register *Start → Bearbeiten ▾* steht daneben der Schalter
 **Intelligente Auswahl** (siehe „Auswahl per Klick“). Einen Bereich „Elemente
 ändern" im rechten Panel gibt es dafür nicht mehr.
 
@@ -3704,6 +3740,11 @@ auf ein Update erscheint nur, wenn wirklich eines vorliegt.
    „My“ zeichnet den Momentenverlauf.
 8. **Bericht**: Bericht → Bericht (HTML, im Browser druckbar/als PDF
    speichern; PDF direkt bei installiertem reportlab).
+
+Im Register **Start** stehen die Befehle dieser Schritte in einer Reihe (Knoten,
+Stab, Knotenlager, Linienlast, Lastfälle, Vernetzen, Prüfen, Berechnen,
+Ergebnisse, Nachweise EC3, Bericht); es sind dieselben Befehle wie in den
+Fachregistern.
 
 Beispiele unter **Datei → Beispiel öffnen ▾** zeigen jeden dieser Schritte fertig
 aufgebaut, u. a. der Hallenrahmen (Kombinationen, EC3, Ermüdung), die
@@ -4581,7 +4622,7 @@ hier, die Kombination von Hand anzulegen).
 
 Aus HiCAD übernommene Stäbe enden an der **Außenkante** des angeschlossenen
 Bauteils – ihre Achsen laufen um die halbe Profilhöhe daneben vorbei, das Modell
-zerfällt zunächst in Teile. Unter **Start → Modell prüfen**
+zerfällt zunächst in Teile. Unter **Start → Prüfen**
 schließt „Freie Stabenden anschließen" (Suchradius 60 mm) jedes freie Ende an die
 Achse des nächsten Stabes an und teilt diesen dort; der Versatz steht im
 Protokoll, die Ausmitte des Anschlusses wird nicht abgebildet.
@@ -7591,7 +7632,7 @@ eine *Vorspannung* an den Schraubenfugen, oder die Deckel-Fugen als Verbund.
 
 ### Freie Bewegungen (Singularitäten)
 
-*Register Start → Modell prüfen → „Freie Bewegungen suchen“*, und nach jeder
+*Register Start → Prüfen → „Freie Bewegungen suchen“*, und nach jeder
 Rechnung im Modellbaum unter *Ergebnisse → Freie Bewegungen*.
 
 „Factor is exactly singular“ nennt weder das Bauteil noch die Richtung. Bei
