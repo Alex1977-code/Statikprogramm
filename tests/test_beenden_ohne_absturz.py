@@ -10,7 +10,10 @@ dafuer eine eigene Verbindung an ``destroyed``) oder an einem Fenster, das schon
 zu sehen war. In einer Pruefung bleibt jedes ``deleteLater`` vorgemerkt, denn
 ``processEvents`` ausserhalb von ``exec`` loescht nichts. Seit C15 fuehrt
 ``os._exit`` in den Pruefungen (tests/__init__.py) vorher alle vorgemerkten
-Loeschungen aus; das Programm selbst bleibt dabei unveraendert.
+Loeschungen aus; das Programm selbst bleibt dabei unveraendert. Danach meldet
+es die Python-Huellen bei shiboken6 ab: sonst las der statische
+``~BindingManager`` beim Entladen von shiboken6 selten einen Nullzeiger
+(test_stab_nachweis offscreen 17 von 222 Laeufen, mit Abmelden 0 von 222).
 
 Die erste Fassung von C15 trennte stattdessen im Programm vor dem Loeschen alle
 Signale und gab Fenster mit ``destroy()`` frei. Das liess die Rauchpruefung auf
@@ -34,7 +37,8 @@ Ablauf:
   „Windows fatal exception“ oder „Fatal Python error“ von faulthandler.
 * Der Ersatz von ``os._exit`` in tests/__init__.py allein, in reinem PySide6
   (``--ersatz``): ohne Vorgemerktes, mit Lambdas am Sender, mit einem gezeigten
-  Dialog, aus einem anderen Faden und ohne QApplication; zur Gegenprobe
+  Dialog, aus einem anderen Faden und ohne QApplication, dazu ob die
+  Python-Huellen vor dem echten ``os._exit`` abgemeldet sind; zur Gegenprobe
   dieselben Faelle mit dem echten ``os._exit``, die abstuerzen muessen.
 
 Aufruf:  python -m tests.test_beenden_ohne_absturz
@@ -432,6 +436,12 @@ def test_beenden_nach_masken_ohne_absturz():
             wie = "os._exit" if ende == "os" else "sys.exit"
             check(f"{wie}, Lauf {i}: Exitcode 0 und kein Absturz beim Beenden (faulthandler)",
                   rc == 0 and not absturz, f"Exitcode {rc}, {dauer:.0f} s {zeile}")
+            if absturz:
+                # zur Diagnose: was faulthandler im Kind meldete
+                zeilen = text.splitlines()
+                k = next(j for j, z in enumerate(zeilen) if "fatal" in z.lower())
+                for z in zeilen[k:k + 14]:
+                    print("     | " + z)
             check(f"{wie}, Lauf {i}: das Kind lief bis zum Ende", fertig is not None,
                   fertig.group(0) if fertig else text[-400:].replace("\n", " | "))
             if erster:
@@ -457,6 +467,8 @@ def _ersatz_kind(fall: str) -> None:
     dialog      ein gezeigter, geschlossener QDialog, deleteLater vorgemerkt
     faden       wie lambda ohne Vorgemerktes, os._exit(7) aus einem anderen Faden
     ohne_app    keine QApplication, os._exit(5)
+    huellen     wie lambda; meldet vor dem echten os._exit, wie viele Python-Huellen
+                shiboken6 noch kennt (der Ersatz meldet sie ab)
     *_echt      lambda und dialog mit dem echten os._exit (Gegenprobe)
     """
     import faulthandler
@@ -471,7 +483,7 @@ def _ersatz_kind(fall: str) -> None:
     haupt = QtWidgets.QWidget()
     haupt.show()
     app.processEvents()
-    if fall.startswith("lambda"):
+    if fall.startswith("lambda") or fall == "huellen":
         for _ in range(3):
             halter = QtWidgets.QWidget(haupt)
             knopf = QtWidgets.QPushButton("x", halter)
@@ -498,6 +510,15 @@ def _ersatz_kind(fall: str) -> None:
     sys.stdout.flush()
     if fall.endswith("_echt"):
         tests._os_exit_echt(0)
+    if fall == "huellen":
+        import shiboken6
+        echt = tests._os_exit_echt
+        print(f"HUELLEN_VORHER {len(shiboken6.getAllValidWrappers())}", flush=True)
+
+        def _melden_und_beenden(code=0):
+            print(f"HUELLEN_NACHHER {len(shiboken6.getAllValidWrappers())}", flush=True)
+            echt(code)
+        tests._os_exit_echt = _melden_und_beenden
     os._exit(0)
 
 
@@ -528,6 +549,13 @@ def test_ersatz_von_os_exit():
     rc, ab, t = _ersatz_lauf("faden")
     check("Ersatz, Aufruf aus einem anderen Faden: das echte os._exit mit seinem Code",
           rc == 7 and not ab and "fertig" in t, f"Exitcode {rc}, Absturz {ab}")
+    rc, ab, t = _ersatz_lauf("huellen")
+    vorher = re.search(r"HUELLEN_VORHER (\d+)", t)
+    nachher = re.search(r"HUELLEN_NACHHER (\d+)", t)
+    check("Ersatz meldet vor dem echten os._exit die Python-Hüllen bei shiboken6 ab",
+          rc == 0 and not ab and vorher and nachher and int(vorher.group(1)) >= 20
+          and int(nachher.group(1)) <= 5,
+          f"{vorher.group(1) if vorher else '?'} -> {nachher.group(1) if nachher else '?'} Hüllen")
     rc, ab, t = _ersatz_lauf("ohne_app")
     check("Ersatz ohne QApplication: das echte os._exit mit seinem Code", rc == 5 and not ab,
           f"Exitcode {rc}, Absturz {ab}")

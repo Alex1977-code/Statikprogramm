@@ -47,6 +47,16 @@ os.environ.setdefault("STATIK3D_UNGESPEICHERT", "verwerfen")
 # haette - nur mit einer QApplication und im Hauptfaden, sonst ruft es gleich
 # das echte os._exit. Das Programm selbst ersetzt os._exit nicht: dort laeuft
 # die Schleife. Nachweis: tests/test_beenden_ohne_absturz.py.
+#
+# Danach meldet es alle noch eingetragenen Python-Huellen bei shiboken6 ab.
+# Sonst zerstoert beim Entladen von shiboken6 (os._exit -> ExitProcess) der
+# statische ~BindingManager jede noch eingetragene Huelle (Object::destroy ->
+# invalidate -> BindingManager::releaseWrapper) und liest dabei selten einen
+# Nullzeiger. Nativ gemessen am 03.10.2026 (Ruecksprungadressen ueber die
+# Exporttabelle von shiboken6.abi3.dll aufgeloest): test_stab_nachweis
+# offscreen ohne Abmelden 17 von 222 Laeufen, alle an derselben Stelle
+# releaseWrapper+0xa0, mit Abmelden 0 von 222. Die C++-Objekte bleiben dabei
+# unangetastet; der Prozess endet ja gleich.
 _os_exit_echt = os._exit
 
 
@@ -58,6 +68,14 @@ def _os_exit_nach_loeschen(code=0):
         im_hauptfaden = threading.current_thread() is threading.main_thread()
         if qt is not None and im_hauptfaden and qt.QCoreApplication.instance() is not None:
             qt.QCoreApplication.sendPostedEvents(None, qt.QEvent.DeferredDelete)
+            # die Huellen im lebenden Prozess abmelden (siehe oben)
+            sb = sys.modules.get("shiboken6")
+            for _runde in range(2) if sb is not None else ():
+                for _huelle in sb.getAllValidWrappers():
+                    try:
+                        sb.invalidate(_huelle)
+                    except Exception:  # noqa: BLE001
+                        pass
     except Exception:  # noqa: BLE001 - das Ende darf daran nicht scheitern
         pass
     _os_exit_echt(code)
