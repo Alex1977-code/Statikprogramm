@@ -171,7 +171,8 @@ class GZGResults:
         schlecht = [c.name for c in self.checks.values() if c.util > 1.0]
         fehler = [c.name for c in self.checks.values() if c.fehler]
         worst = max(self.checks.values(), key=lambda c: c.util)
-        s = (f"Verformungen (GZG): {len(self.checks)} Nachweise, max. Ausnutzung "
+        from .begriffe import anzahl
+        s = (f"Verformungen (GZG): {anzahl(len(self.checks), 'Nachweis', 'Nachweise')}, max. Ausnutzung "
              f"{worst.util:.3f} ({worst.name}: {worst.werttext()} von {worst.grenztext}"
              + (f", {worst.kombination}" if worst.kombination else "") + ")")
         if schlecht:

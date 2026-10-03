@@ -2163,7 +2163,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                                   "Nachweis nach EC3, je eine Kette von Stabelementen "
                                   "(FE-Netz → Stabelemente)")
         self._liste(mem, [(name, f"{len(mm.elements)} El", name,
-                           f"{name}: {len(mm.elements)} Elemente")
+                           f"{name}: {len(mm.elements)} {'Element' if len(mm.elements) == 1 else 'Elemente'}")
                           for name, mm in sorted(model.members.items(),
                                                  key=lambda kv: natuerlich(kv[0]))],
                     "stab", "staebe")
@@ -2334,7 +2334,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                               hinweis="Liniengelenke (RFEM: LineHinge) an den Randlinien von Flächen: "
                                       "was die Fläche dort an die Nachbarschaft weitergibt. Am Drehlager "
                                       "die Ränder der starren Kreisscheiben.")
-            self._liste(lgz, [(n, f"{len(f.gelenklinien)} Linien", n,
+            self._liste(lgz, [(n, f"{len(f.gelenklinien)} {'Linie' if len(f.gelenklinien) == 1 else 'Linien'}", n,
                                f"{n}: {', '.join(f.gelenklinien[:6])}{' …' if len(f.gelenklinien) > 6 else ''}"
                                + (f"\n{f.gelenkwirkung}" if f.gelenkwirkung else ""))
                               for n, f in lg_fl], "liniengelenk", "liniengelenke")
@@ -2411,7 +2411,8 @@ class Modellbaum(QtWidgets.QTreeWidget):
                     + (f" · {lc.situation}" if getattr(lc, "situation", "") else "")
                     + (f" · {lc.theorie.upper()}. O." if getattr(lc, "theorie", "") else ""),
                     name, (f"Lastfall {nr}: " if nr else "") + f"{name}: "
-                    f"{lc.description or lc.category}, {lc.n_loads} Lasten"
+                    f"{lc.description or lc.category}, {lc.n_loads} "
+                    f"{'Last' if lc.n_loads == 1 else 'Lasten'}"
                     + (f", Situation {lc.situation}" if getattr(lc, "situation", "") else ""))
         for i, (name, lc) in enumerate(model.load_cases.items()):
             if i >= BAUM_MAX:

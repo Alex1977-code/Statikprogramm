@@ -1506,7 +1506,7 @@ class JointDialog(QtWidgets.QDialog):
             self.txt.setPlainText(text)
         except Exception as ex:      # noqa: BLE001
             self.template = None
-            self.txt.setPlainText(f"Vorschlag nicht moeglich: {ex}")
+            self.txt.setPlainText(f"Vorschlag nicht möglich: {ex}")
 
     def _gelenktext(self) -> str:
         """Steifigkeit, Klasse und Rotationsvermoegen des Vorschlags."""
@@ -1530,7 +1530,7 @@ class JointDialog(QtWidgets.QDialog):
                 if math.isfinite(g.S_j) and g.S_j > 0 else ""),
              f"Klasse:  {g.beschreibung()}",
              f"M_j,Rd = {g.M_j_Rd / 1e3:.1f} kNm ({g.tragklasse or '-'})",
-             f"Rotationsvermoegen: {'ausreichend' if g.rotation_ok else 'nicht nachgewiesen'}"
+             f"Rotationsvermögen: {'ausreichend' if g.rotation_ok else 'nicht nachgewiesen'}"
              f" - {g.rotation_grund}"]
         for h in g.hinweise:
             z.append("Hinweis: " + h)

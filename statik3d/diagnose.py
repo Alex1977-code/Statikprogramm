@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from .begriffe import anzahl as _anzahl
+
 
 def teiltragwerke(model) -> list:
     """Zusammenhängende Teile des Elementnetzes (Kopplungen verbinden),
@@ -1375,7 +1377,8 @@ def _abnahme_netz(model, bilanz: dict = None) -> list:
         aus.append(Befund(
             pruefung="Volumenbilanz nicht geprüft", element=int(ohne[0]),
             wert=float(len(ohne)), grenze=0.0, stufe="WARNUNG",
-            text=f"{len(ohne)} Volumenelemente gehören zu keinem Körper (z. B. "
+            text=(f"1 Volumenelement gehört zu keinem Körper (z. B. " if len(ohne) == 1 else
+                  f"{len(ohne)} Volumenelemente gehören zu keinem Körper (z. B. ")
                  + ", ".join(f"Element {i}" for i in ohne[:3]) + (" …" if len(ohne) > 3 else "")
                  + ") - ohne Randflächen gibt es keinen Bezug für Volumenbilanz und freie "
                    "Seiten; ob eines davon verdreht ist oder eines fehlt, ist nicht geprüft."))
@@ -1924,7 +1927,7 @@ def _polyederhuelle(model, koerper, grund: list = None):
     if len(flaechen) < 4 or any(f is None for f in flaechen):
         grund.append("der Körper hat keine Randflächen" if not namen else
                      "eine Randfläche fehlt im Modell" if any(f is None for f in flaechen) else
-                     f"nur {len(flaechen)} Randflächen")
+                     "nur " + _anzahl(len(flaechen), "Randfläche", "Randflächen"))
         return None
     nn = int(model.nn)
     lokal: dict = {}
@@ -3964,8 +3967,10 @@ def meldungen(model, d: dict = None) -> list:
     fe = d.get("entartet_fehler") or []
     if fe:
         beispiel = "; ".join(f"Element {i + 1} ({t}): {g}" for i, t, g in fe[:3])
-        z.append(f"FEHLER: {len(fe)} Volumenelement(e) mit zusammenfallenden Knoten haben Volumen "
-                 f"und lassen sich nicht eindeutig umwandeln ({beispiel}"
+        z.append((f"FEHLER: 1 Volumenelement mit zusammenfallenden Knoten hat Volumen "
+                  f"und lässt sich nicht eindeutig umwandeln ({beispiel}" if len(fe) == 1 else
+                  f"FEHLER: {len(fe)} Volumenelemente mit zusammenfallenden Knoten haben Volumen "
+                  f"und lassen sich nicht eindeutig umwandeln ({beispiel}")
                  + (" …" if len(fe) > 3 else "") + ") - die Rechnung hält dort an; das Netz "
                  "neu erzeugen oder die Elemente als Keil, Pyramide oder Tetraeder angeben")
     wa = d.get("entartet_umwandeln") or []
@@ -3976,12 +3981,18 @@ def meldungen(model, d: dict = None) -> list:
             zahl[f"{alt}→{neu}"] = zahl.get(f"{alt}→{neu}", 0) + 1
         n = sum(zahl.values())
         teile = ", ".join(f"{k}: {v}" for k, v in sorted(zahl.items()))
-        wann = "werden beim Rechnen" if wa else "wurden"
-        z.append(f"Hinweis: {n} Elemente aus entarteten Volumenelementen (zusammenfallende "
+        if n == 1:
+            wann = "wird beim Rechnen" if wa else "wurde"
+            wer = "1 Element aus einem entarteten Volumenelement"
+        else:
+            wann = "werden beim Rechnen" if wa else "wurden"
+            wer = f"{n} Elemente aus entarteten Volumenelementen"
+        z.append(f"Hinweis: {wer} (zusammenfallende "
                  f"Knoten) {wann} umgewandelt ({teile}) - {entartung_genauigkeit(zahl)}")
     nf, nk = len(d["unvernetzte_flaechen"]), len(d["unvernetzte_koerper"])
     if nf or nk:
-        z.append("WARNUNG: " + " und ".join(x for x in (f"{nf} Flächen" if nf else "", f"{nk} Volumen" if nk else "") if x)
+        z.append("WARNUNG: " + " und ".join(x for x in (_anzahl(nf, "Fläche", "Flächen") if nf else "",
+                                                       f"{nk} Volumen" if nk else "") if x)
                  + " ohne Netz - Geometrie ohne Elemente trägt nichts; vor dem Rechnen vernetzen "
                    "(Netz → Netz erzeugen)")
     if d["ohne_lager"]:
@@ -4007,14 +4018,16 @@ def meldungen(model, d: dict = None) -> list:
                  + f"; das Netz zerfällt in {d['teile']} Teile) - so ist das Gleichungssystem singulär: "
                  + rat)
     if d["nur_kontakt"]:
-        z.append(f"Hinweis: {len(d['nur_kontakt'])} Teiltragwerke sind nur durch Kontakt gehalten - "
+        n_k = len(d["nur_kontakt"])
+        z.append(("Hinweis: 1 Teiltragwerk ist" if n_k == 1 else f"Hinweis: {n_k} Teiltragwerke sind")
+                 + " nur durch Kontakt gehalten - "
                  "rechenbar, solange der Kontakt trägt (sonst hebt das Teil ab)")
     for name, grund in (d.get("koerper_gescheitert") or []):
         k = (getattr(model, "koerper", {}) or {}).get(name)
         wo = ""
         if k is not None:
             wo = f" ({getattr(k, 'material', '') or 'ohne Werkstoff'}, " \
-                 f"{len(k.flaechen or [])} Randflächen)"
+                 f"{_anzahl(len(k.flaechen or []), 'Randfläche', 'Randflächen')})"
         z.append(f"FEHLER: Volumen {name}{wo} hat auch nach dem Vernetzen kein "
                  f"Element - {grund}. Ein Bauteil ohne Elemente trägt keine Last; "
                  "das Ergebnis wäre nicht ungenau, sondern falsch.")
@@ -4030,7 +4043,8 @@ def meldungen(model, d: dict = None) -> list:
                  "sind das Hilfsobjekte (z. B. " + ", ".join(ov[:4])
                  + (" …" if len(ov) > 4 else "") + ")")
     if d["lose_knoten"]:
-        z.append(f"Hinweis: {d['lose_knoten']} Knoten tragen kein Element (Rand nicht vernetzter Flächen)")
+        z.append(f"Hinweis: {d['lose_knoten']} Knoten {'trägt' if d['lose_knoten'] == 1 else 'tragen'} "
+                 "kein Element (Rand nicht vernetzter Flächen)")
     return z
 
 
@@ -4110,7 +4124,8 @@ def _halteguetebefund(guete: list, hoechstens: int = 6) -> list:
         return []
     out = [f"WARNUNG: {g.text}" for g in schwach[:hoechstens]]
     if len(schwach) > hoechstens:
-        out.append(f"… und {len(schwach) - hoechstens} weitere Teile unter der "
+        rest = len(schwach) - hoechstens
+        out.append(f"… und {rest} {'weiteres Teil' if rest == 1 else 'weitere Teile'} unter der "
                    f"Haltegüte {HALTEGUETE_MIN:.0e}")
     return out
 

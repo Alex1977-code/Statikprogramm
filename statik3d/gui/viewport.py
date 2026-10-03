@@ -249,12 +249,12 @@ FARBE_KONTAKT = "#c8a000"
 
 #: Darstellungsarten des Viewports: Name -> (Zeichen, Erklaerung)
 DARSTELLUNGEN = {
-    "Voll": ("■", "gefuellte Flaechen, Staebe mit ihrer Querschnittskontur"),
+    "Voll": ("■", "gefüllte Flächen, Stäbe mit ihrer Querschnittskontur"),
     "Transparent": ("◧", "durchscheinend - man sieht die innen liegenden Teile; "
-                         "Staebe mit Querschnittskontur"),
-    "Hidden-Line": ("◫", "weisse Flaechen mit dunklen Kanten, wie eine Zeichnung; "
-                         "Staebe als Linie"),
-    "Drahtmodell": ("▦", "nur die Kanten; Staebe als Linie"),
+                         "Stäbe mit Querschnittskontur"),
+    "Hidden-Line": ("◫", "weiße Flächen mit dunklen Kanten, wie eine Zeichnung; "
+                         "Stäbe als Linie"),
+    "Drahtmodell": ("▦", "nur die Kanten; Stäbe als Linie"),
 }
 
 #: Symbolname je Darstellungsart
@@ -3997,7 +3997,7 @@ def kennwerte(model: Model, res, util: dict = None, groesse: str = "",
     if werte:
         i = max(werte, key=lambda k: werte[k])
         zeilen.append(f"max. Ausnutzung {werte[i]:.{E.nk_ausnutzung}f} an {_stabname(model, i)}"
-                      + ("  - ueberschritten!" if werte[i] > 1.0 else ""))
+                      + ("  - überschritten!" if werte[i] > 1.0 else ""))
     return zeilen
 
 
@@ -4029,7 +4029,7 @@ def kopfzeile(model: Model, res, ergebnisname: str = "", faerbung: str = "",
             lc = None
         if lc is not None:
             n = getattr(lc, "n_loads", 0)
-            zeilen.append(f"Lastfall {lc.name}" + (f" ({n} Lasten)" if n else ""))
+            zeilen.append(f"Lastfall {lc.name}" + (f" ({n} {'Last' if n == 1 else 'Lasten'})" if n else ""))
         else:
             zeilen.append(model.name or "Modell")
         if einheiten:

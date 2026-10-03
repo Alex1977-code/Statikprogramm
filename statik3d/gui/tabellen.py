@@ -1536,7 +1536,9 @@ class Datentabelle(QtWidgets.QWidget):
 
     def _nachfuehren(self):
         n, m = self.filter.rowCount(), self.modell.rowCount()
-        text = f"{n} von {m} Zeilen" if n != m else f"{m} Zeilen"
+        # „1 Zeile“ statt „1 Zeilen“ (Teilpaket 11c, 03.10.2026)
+        text = (f"{n} von {m} {'Zeile' if m == 1 else 'Zeilen'}" if n != m
+                else f"{m} {'Zeile' if m == 1 else 'Zeilen'}")
         hinweis = getattr(self, "_hinweis", "")
         if m == 0 and hinweis:
             text += " – " + hinweis

@@ -17,6 +17,7 @@ import numpy as np
 
 from ..model import Model, Member
 from .. import elemente as EL
+from ..begriffe import anzahl
 
 # Kerbfallklassen [MPa] (Tabellen 8.1 - 8.10, Auswahl)
 DETAIL_CATEGORIES = [160, 140, 125, 112, 100, 90, 80, 71, 63, 56, 50, 45, 40, 36]
@@ -25,18 +26,21 @@ DETAIL_CATEGORIES_SHEAR = [100, 80]
 GAMMA_MF = {("damage_tolerant", "low"): 1.00, ("damage_tolerant", "high"): 1.15,
             ("safe_life", "low"): 1.15, ("safe_life", "high"): 1.35}
 
+#: Beispiele je Kerbfall - Klartext der Auswahlliste in der Stabmaske
+#: (dialogs.py) und der Kerbfallzeile im Bericht; gespeichert wird nur die
+#: Zahl. Bis zum 03.10.2026 ohne Umlaute („Laengsnaht durchgeschweisst“).
 DETAIL_EXAMPLES = {
-    160: "Grundwerkstoff gewalzt, Oberflaeche geschliffen (Tab. 8.1, 1)",
+    160: "Grundwerkstoff gewalzt, Oberfläche geschliffen (Tab. 8.1, 1)",
     140: "Grundwerkstoff gewalzt, Walzhaut, scharfe Kanten entfernt (Tab. 8.1, 2)",
-    125: "Laengsnaht durchgeschweisst, geprueft (Tab. 8.2); Brennschnitt maschinell (8.1, 3)",
-    112: "Laengsnaht Kehl-/Stumpfnaht automatisch (Tab. 8.2, 3); Stumpfstoss bearbeitet (8.3, 1)",
-    100: "Stumpfstoss quer, geprueft, Schweissnahtueberhoehung <= 10 % (Tab. 8.3, 3)",
-    90: "Stumpfstoss quer ohne Bearbeitung (Tab. 8.3, 5); Laengssteife <= 50 mm",
-    80: "Quersteife/Rippe angeschweisst, l <= 50 mm (Tab. 8.4, 7); Laengssteife 50-80 mm",
-    71: "Quersteife > 50 mm, Laengssteife 80-100 mm (Tab. 8.4); Schraubenverbindung gleitfest",
-    63: "Laengssteife > 100 mm (Tab. 8.4, 6); Deckblech Ende (8.5)",
+    125: "Längsnaht durchgeschweißt, geprüft (Tab. 8.2); Brennschnitt maschinell (8.1, 3)",
+    112: "Längsnaht Kehl-/Stumpfnaht automatisch (Tab. 8.2, 3); Stumpfstoß bearbeitet (8.3, 1)",
+    100: "Stumpfstoß quer, geprüft, Schweißnahtüberhöhung <= 10 % (Tab. 8.3, 3)",
+    90: "Stumpfstoß quer ohne Bearbeitung (Tab. 8.3, 5); Längssteife <= 50 mm",
+    80: "Quersteife/Rippe angeschweißt, l <= 50 mm (Tab. 8.4, 7); Längssteife 50-80 mm",
+    71: "Quersteife > 50 mm, Längssteife 80-100 mm (Tab. 8.4); Schraubenverbindung gleitfest",
+    63: "Längssteife > 100 mm (Tab. 8.4, 6); Deckblech Ende (8.5)",
     56: "Deckblech-Ende t <= 20 mm (Tab. 8.5, 1); Konsolanschluss",
-    50: "Kehlnahtanschluss quer (Tab. 8.5); Schraube mit Zug (Tab. 8.1, 14: 50 fuer Schrauben)",
+    50: "Kehlnahtanschluss quer (Tab. 8.5); Schraube mit Zug (Tab. 8.1, 14: 50 für Schrauben)",
     45: "Deckblech Ende t > 20 mm; Halbrundnaht am Flanschrand (Tab. 8.5)",
     40: "Kehlnahtanschluss ohne Bearbeitung, dick (Tab. 8.5, 3)",
     36: "Kehlnaht auf Zug/Schub (Tab. 8.5, 8); Schraubengewinde unter Zug",
@@ -450,7 +454,7 @@ class FatigueResults:
                         f"wirksame Ermüdungslast ({_aufzaehlen(ohne)}): Lastspiele bzw. "
                         "Wiederholungen 0 oder Verlauf mit weniger als zwei Zuständen")
             return "Ermüdung: keine Stäbe oder Volumen mit Kerbfall"
-        teile = ([f"{len(self.members)} Stäbe"] if self.members else []) + (
+        teile = ([anzahl(len(self.members), "Stab", "Stäbe")] if self.members else []) + (
             [f"{len(self.volumen)} Volumen"] if self.volumen else [])
         text = f"Ermüdung: {', '.join(teile)}"
         gefuehrt = [(n, x) for n, x in alle if not getattr(x, "fehler", "")]
@@ -470,7 +474,7 @@ class FatigueResults:
 
     def table(self) -> list[list]:
         rows = [["Stab", "Kerbfall", "gamma_Mf", "max Delta-sigma [MPa]", "Delta-sigma_E,2 [MPa]",
-                 "D (Miner)", "D Schub", "Ausnutzung", "massgebend"]]
+                 "D (Miner)", "D Schub", "Ausnutzung", "maßgebend"]]
 
         # Ein nicht gefuehrter Eintrag zeigt statt D 0.000 und "Element -1"
         # (so bis zum 22.09.2026) den Grund; einem unvollstaendigen wird die
@@ -1005,7 +1009,9 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
                     fliessen.append((name, n_fl))
             if fliessen:
                 if len(fliessen) == 1:
-                    wo = f"Im Zustand {fliessen[0][0]} fließen {fliessen[0][1]} Elemente des Körpers"
+                    n_eins = fliessen[0][1]
+                    wo = (f"Im Zustand {fliessen[0][0]} fließt 1 Element des Körpers" if n_eins == 1 else
+                          f"Im Zustand {fliessen[0][0]} fließen {n_eins} Elemente des Körpers")
                 else:
                     wo = (f"In {len(fliessen)} Zuständen fließen Elemente des Körpers ("
                           + _aufzaehlen([f"{a}: {b}" for a, b in fliessen]) + ")")
@@ -1144,7 +1150,7 @@ def _volumen_nachweisen(model: Model, all_res: dict, ds, out: FatigueResults,
         fv.warnings.extend(hinweise)
         out.volumen[k.name] = fv
         if progress:
-            progress(f"Ermuedung Volumen {k.name}: D = {fv.util:.3f}")
+            progress(f"Ermüdung Volumen {k.name}: D = {fv.util:.3f}")
 
 
 def check_fatigue(model: Model, analysis, progress=None, n: int = None,
@@ -1182,7 +1188,8 @@ def check_fatigue(model: Model, analysis, progress=None, n: int = None,
     from .design import _anteil, _melde
     zu_pruefen = sum(1 for mem in model.members.values()
                      if mem.design and mem.detail_category is not None)
-    _melde(progress, f"Ermuedung: {zu_pruefen} Staebe mit Kerbfall", _anteil(anteil, 0.0))
+    _melde(progress, f"Ermüdung: {anzahl(zu_pruefen, 'Stab', 'Stäbe')} mit Kerbfall",
+           _anteil(anteil, 0.0))
     geprueft = 0
     for mname, member in model.members.items():
         if not member.design or member.detail_category is None:
@@ -1322,14 +1329,14 @@ def check_fatigue(model: Model, analysis, progress=None, n: int = None,
         gross = fm.kollektiv[0][0] if fm.kollektiv else 0.0
         fm.governing = (f"Eckpunkt {ort[0] + 1} bei x = {x_ort:.2f} m "
                         f"(größte Stufe Delta-sigma = {gross/1e6:.1f} MPa, "
-                        f"{len(fm.kollektiv)} Stufen)")
+                        f"{anzahl(len(fm.kollektiv), 'Stufe', 'Stufen')})")
         out.members[mname] = fm
         if progress:
-            _melde(progress, f"Ermuedung {mname}: D = {fm.util:.3f}",
+            _melde(progress, f"Ermüdung {mname}: D = {fm.util:.3f}",
                    _anteil(anteil, 0.9 * geprueft / max(1, zu_pruefen)))
     if anteil is not None:
-        _melde(progress, "Ermuedung: Volumen", _anteil(anteil, 0.9))
+        _melde(progress, "Ermüdung: Volumen", _anteil(anteil, 0.9))
     _volumen_nachweisen(model, all_res, ds, out, bezug, progress)
     if anteil is not None:
-        _melde(progress, "Ermuedung fertig", _anteil(anteil, 1.0))
+        _melde(progress, "Ermüdung fertig", _anteil(anteil, 1.0))
     return out

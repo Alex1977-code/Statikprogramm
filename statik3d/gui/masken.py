@@ -44,7 +44,7 @@ def listenhinweis(text: str, hinweis: str = "") -> str:
     if not teile:
         return hinweis or "leer"
     zeilen = [", ".join(teile[i:i + 10]) for i in range(0, len(teile), 10)]
-    kopf = f"{len(teile)} Einträge:"
+    kopf = f"{len(teile)} {'Eintrag' if len(teile) == 1 else 'Einträge'}:"
     return "\n".join(([hinweis] if hinweis else []) + [kopf] + zeilen)
 
 

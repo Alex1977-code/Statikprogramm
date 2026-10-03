@@ -84,7 +84,8 @@ class KnicklaengenErgebnis:
     def summary(self) -> str:
         n = sum(1 for k in self.staebe.values() if k.beteiligt)
         return (f"Knicklängen aus Knickfigur {self.modus + 1} (α_cr = {self.alpha_cr:.3f}, "
-                f"Grundzustand {self.grundzustand}): {n} von {len(self.staebe)} Stäben beteiligt")
+                f"Grundzustand {self.grundzustand}): {n} von "
+                f"{'1 Stab' if len(self.staebe) == 1 else f'{len(self.staebe)} Stäben'} beteiligt")
 
 
 def _modale_biegeenergie(model: Model, v: np.ndarray, i: int) -> tuple[float, float]:

@@ -557,7 +557,7 @@ def test_meldungen_der_echten_erzeuger():
         "ABBRUCH: gezeigt wird die Verformung der letzten Kontakt-Iteration (1) als Ergebnis "
         "„LF1 - Abbruch (Iteration 1)“ - kein Gleichgewicht, keine Auflagerkräfte.")
     w.log.appendPlainText(
-        "ABBRUCH: Berechnung abgebrochen (nach 7 s) - 1 Lastfälle bleiben erhalten, 2 Kombinationen offen.\n"
+        "ABBRUCH: Berechnung abgebrochen (nach 7 s) - 1 Lastfall bleibt erhalten, 2 Kombinationen offen.\n"
         "    Die gerechneten Ergebnisse stehen in der Auswahl und im Modellbaum wie sonst.\n"
         "    Ein neuer Lauf rechnet alles noch einmal.")
     w.log.appendPlainText("ABBRUCH                 : Kontakt-Iteration 2: Gleichungssystem singulär")

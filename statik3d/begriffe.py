@@ -100,6 +100,19 @@ UMHUELLENDE: dict[str, Begriff] = {
 TYP_KURZ: dict[str, str] = {k: b.kurz for k, b in KOMBINATIONSTYPEN.items()}
 
 
+def anzahl(n, einzahl: str, mehrzahl: str) -> str:
+    """„1 Stab“, „2 Stäbe“, „0 Stäbe“ - die Zahl mit dem Wort in der Form, die
+    zu ihr passt (Teilpaket 11c, 03.10.2026).
+
+    Die Einzahl steht nur bei genau 1. Bis dahin schrieben Nachweiszeilen,
+    Statusleiste und Tabellen bei einem Objekt die Mehrzahl: „Nachweise EC3:
+    1 Staebe, 1 Kombinationen“, „Netz: 2 Knoten · 1 Elemente“, „1 Zeilen“.
+    Wo sich auch das Verb oder ein Begleitwort mit der Zahl aendert („1 Knoten
+    trägt“, „3 Knoten tragen“), entscheidet die Stelle selbst ueber ``n == 1``.
+    """
+    return f"{n} {einzahl if n == 1 else mehrzahl}"
+
+
 def typ_kurz(typ) -> str:
     """„GZT (STR/GEO)“ zu ``ULS`` - ein unbekannter Typ bleibt, wie er ist."""
     b = KOMBINATIONSTYPEN.get(str(typ))

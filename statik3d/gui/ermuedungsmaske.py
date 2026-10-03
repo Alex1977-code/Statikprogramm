@@ -894,7 +894,7 @@ class Ermuedungsmaske(msk.Maske):
         self.je_lastfall_panel.hide()
         self.tabelle_fuellen()
         self.zeile_waehlen(neu[0].name)
-        text = (f"{len(neu)} Zeilen angelegt: " + ", ".join(f.name for f in neu)
+        text = (f"{len(neu)} {'Zeile' if len(neu) == 1 else 'Zeilen'} angelegt: " + ", ".join(f.name for f in neu)
                 + (". Übersprungen: " + "; ".join(uebersprungen) if uebersprungen else "")
                 + ". Je Zeile die eigene Lastspielzahl eintragen oder die globale lassen.")
         self.meldung(text)

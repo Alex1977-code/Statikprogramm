@@ -12,6 +12,7 @@ import os
 import numpy as np
 
 from ..model import Model, Member
+from ..begriffe import anzahl
 from .section_class import classify
 from .resistance import section_check
 from .stability import member_stability
@@ -97,7 +98,7 @@ class DesignResults:
 
     def summary(self) -> str:
         if not self.members:
-            return "Nachweise EC3: keine Staebe" + warnzeilen(self) + hinweiszeilen(self)
+            return "Nachweise EC3: keine Stäbe" + warnzeilen(self) + hinweiszeilen(self)
         # Nicht gefuehrte Staebe (``fehler``, etwa Werkstoff ohne
         # Streckgrenze) zaehlen weder als erfuellt noch fuer die groesste
         # Ausnutzung. Bis zum 22.09.2026 stand hier nur ``util > 1``: ein
@@ -111,19 +112,23 @@ class DesignResults:
         # Textfeld der Maske Berechnung (txt_summary, _solve_done).
         # Wie VolumenResults.summary(): "alle erfuellt" nur, wenn nichts offen
         # blieb.
+        # Bis zum 03.10.2026 stand die Zeile ohne Umlaute und immer in der
+        # Mehrzahl: "1 Staebe, 1 Kombinationen ... - alle erfuellt"
+        # (Teilpaket 11c).
         gefuehrt = [m for m in self.members.values() if not m.fehler]
         ohne = [m for m in self.members.values() if m.fehler]
         nf = sum(1 for m in gefuehrt if m.util > 1.0)
-        s = f"Nachweise EC3: {len(self.members)} Staebe, {len(self.combinations)} Kombinationen"
+        s = (f"Nachweise EC3: {anzahl(len(self.members), 'Stab', 'Stäbe')}, "
+             f"{anzahl(len(self.combinations), 'Kombination', 'Kombinationen')}")
         if gefuehrt:
             worst = max(gefuehrt, key=lambda m: m.util)
             g = worst.governing
             s += (f", max. Ausnutzung {worst.util:.3f} ({worst.member}: {g.get('name', '')}, "
                   f"{g.get('combo', '')}, x = {g.get('x', 0):.2f} m)")
         if nf:
-            s += f" - {nf} Staebe NICHT erfuellt"
+            s += f" - {anzahl(nf, 'Stab', 'Stäbe')} NICHT erfüllt"
         elif gefuehrt and not ohne:
-            s += " - alle erfuellt"
+            s += " - alle erfüllt"
         if ohne:
             # Namen und Grund, damit man weiss, wo man nachtragen muss; ein
             # Import kann Hunderte Staebe ohne f_y bringen - die Zeile steht
@@ -138,7 +143,7 @@ class DesignResults:
 
     def table(self) -> list[list]:
         rows = [["Stab", "Querschnitt", "Material", "L [m]", "Klasse", "Ausnutzung",
-                 "massgebender Nachweis", "Kombination", "x [m]", "Status"]]
+                 "maßgebender Nachweis", "Kombination", "x [m]", "Status"]]
         for m in self.members.values():
             g = m.governing
             rows.append([m.member, m.section, m.material, f"{m.L:.2f}", str(m.cls),
@@ -512,7 +517,7 @@ def check_members(model: Model, analysis, combos: list = None, members: list = N
         "Methode": f"Anhang {model.design.interaction_method}",
         "BDK": model.design.lt_method}, warnungen=warnungen, gleiche=gleiche, hinweise=hinweise)
     if not names or not results:
-        _melde(progress, "Nachweise EC3: keine Staebe mit Nachweis" if not names else
+        _melde(progress, "Nachweise EC3: keine Stäbe mit Nachweis" if not names else
                "Nachweise EC3: keine Ergebnisse einer GZT-Kombination", _anteil(anteil, 1.0))
         return _leere_eintragen(out, model, leer)
     st = parallel.settings()
@@ -538,7 +543,8 @@ def check_members(model: Model, analysis, combos: list = None, members: list = N
         try:
             jobs = [Job("design_members", {"paket": paket, "members": c})
                     for c in chunks]
-            _melde(progress, f"Nachweise: {len(names)} Staebe in {len(jobs)} Auftraegen",
+            _melde(progress, f"Nachweise: {anzahl(len(names), 'Stab', 'Stäbe')} in "
+                             f"{anzahl(len(jobs), 'Auftrag', 'Aufträgen')}",
                    _anteil(anteil, 0.0))
             for r in run_jobs(jobs, workers=workers,
                               progress=(lambda a, b: _melde(progress, f"Nachweise {a}/{b}",

@@ -621,12 +621,12 @@ class MainWindow(QtWidgets.QMainWindow):
         # Der Modellumfang steht nur noch hier, nicht mehr in der Kopfzeile
         # (Paket 5, 25.09.2026) - mit den Stellungen, die dort mitstanden
         n_st = len(getattr(m, "stellungen", None) or [])
-        self.lbl_netz.setText((f"Netz: {m.nn} Knoten · {len(m.elements)} Elemente"
+        self.lbl_netz.setText((f"Netz: {m.nn} Knoten · {bg.anzahl(len(m.elements), 'Element', 'Elemente')}"
                                if m.nn else "Netz: leer")
                               + (f" · {n_st} Stellung{'en' if n_st != 1 else ''}" if n_st else ""))
         if self.analysis is not None:
             n = len(self.analysis.cases) + len(self.analysis.combinations)
-            self.lbl_solver.setText(f"Solver: {n} Ergebnisse")
+            self.lbl_solver.setText(f"Solver: {bg.anzahl(n, 'Ergebnis', 'Ergebnisse')}")
         elif self.results is not None:
             self.lbl_solver.setText("Solver: Ergebnis vorhanden")
         else:
@@ -2123,6 +2123,17 @@ class MainWindow(QtWidgets.QMainWindow):
                     "volumen": "Volumen", "element": "Elemente", "lager": "Knotenlager",
                     "linienlager": "Linienlager", "flaechenlager": "Flächenlager", "kontakt": "Kontakte",
                     "last": "Lasten"}
+    #: Einzahl zu AUSWAHL_TEXT: die Sammelmaske eines Elements hiess bis zum
+    #: 03.10.2026 „1 Elemente bearbeiten“ (Teilpaket 11c)
+    AUSWAHL_EINZAHL = {"knoten": "Knoten", "linie": "Linie", "stab": "Stab", "flaeche": "Fläche",
+                       "volumen": "Volumen", "element": "Element", "lager": "Knotenlager",
+                       "linienlager": "Linienlager", "flaechenlager": "Flächenlager", "kontakt": "Kontakt",
+                       "last": "Last"}
+
+    def _auswahl_anzahl(self, art: str, n: int) -> str:
+        """„1 Element“, „3 Elemente“ - Zahl und Art gewaehlter Objekte."""
+        mehr = self.AUSWAHL_TEXT.get(art, art)
+        return bg.anzahl(n, self.AUSWAHL_EINZAHL.get(art, mehr), mehr)
 
     def _auswahlgruppen(self) -> list:
         """[(Art, Namen bzw. Nummern)] der gewaehlten Objekte - auch Lager an
@@ -2305,7 +2316,7 @@ class MainWindow(QtWidgets.QMainWindow):
         beschreibung = ", ".join(str(n) if art not in ("knoten", "element", "lager") else
                                  ("K" if art == "knoten" else "E" if art == "element" else "Lager ") + str(n if art != "lager" else n + 1)
                                  for n in namen[:8]) + (" …" if len(namen) > 8 else "")
-        felder = [F("objekte", f"{len(namen)} {self.AUSWAHL_TEXT[art]}", "info", beschreibung)]
+        felder = [F("objekte", self._auswahl_anzahl(art, len(namen)), "info", beschreibung)]
         for key, text, fart, lesen, _schreiben, werte in spec:
             try:
                 vals = [lesen(n) for n in namen]
@@ -2329,7 +2340,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 felder.append(F(key, text + ("" if gleich else " (verschieden)"), "text",
                                 str(vals[0]) if gleich else "", breite=110,
                                 hinweis="leer = unverändert"))
-        maske = msk.Maske(f"{len(namen)} {self.AUSWAHL_TEXT[art]} bearbeiten", felder, knopf="Übernehmen",
+        maske = msk.Maske(f"{self._auswahl_anzahl(art, len(namen))} bearbeiten", felder, knopf="Übernehmen",
                           hinweis="Ein Wert gilt für alle gewählten Objekte; „verschieden“ bzw. leer lässt "
                                   "das Feld, wie es je Objekt ist.")
         # Stand beim Oeffnen je Feld: nur was davon abweicht, wird geschrieben
@@ -2348,7 +2359,7 @@ class MainWindow(QtWidgets.QMainWindow):
         from .. import zahlen as zl
         anfang = anfang or {}
         felder = getattr(maske, "_felder", {}) or {}
-        self.merken(f"{len(namen)} {self.AUSWAHL_TEXT[art]} bearbeitet")
+        self.merken(f"{self._auswahl_anzahl(art, len(namen))} bearbeitet")
         schritt = self._undo[-1] if getattr(self, "_undo", None) else None
         for key, text, fart, _lesen, schreiben, _werte in spec:
             v = w.get(key, "")
@@ -2393,7 +2404,7 @@ class MainWindow(QtWidgets.QMainWindow):
             # alles zuruecknahm - Statuszeile und Protokoll sagen jetzt dasselbe.
             self._schritt_zurueckholen(schritt)
             self.error("\n".join(fehler[:5]))
-            titel = getattr(maske, "titel", "") or f"{len(namen)} {self.AUSWAHL_TEXT[art]} bearbeiten"
+            titel = getattr(maske, "titel", "") or f"{self._auswahl_anzahl(art, len(namen))} bearbeiten"
             return self.info(f"„{titel}“ nicht übernommen - {fehler[0]}; das Modell ist wie vorher")
         # Nur Kommentare (und Lagernamen, die keine Stellung nennt) behalten
         # die Ergebnisse (24.09.2026) - alles andere ist Rechnung. Geschrieben
@@ -2404,7 +2415,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.results = None
         else:
             self._schritt_beschriftung()
-        self.info(f"{self.AUSWAHL_TEXT[art]}: {geaendert} Werte an {len(namen)} Objekten geändert")
+        self.info(f"{self.AUSWAHL_TEXT[art]}: {bg.anzahl(geaendert, 'Wert', 'Werte')} an "
+                  f"{bg.anzahl(len(namen), 'Objekt', 'Objekten')} geändert")
         self.refresh_all()
 
     def _art_loeschen(self, art: str, namen: list):
@@ -4545,7 +4557,7 @@ class MainWindow(QtWidgets.QMainWindow):
         P = list(w.get("punkte") or [])
         noetig = {"koordinaten": 1, "abstand": 2, "radius": 2, "winkel": 3, "flaeche": 3}[art]
         if len(P) < noetig:
-            return self.hinweis(f"{noetig} Punkte anklicken ({len(P)} gewählt)")
+            return self.hinweis(f"{bg.anzahl(noetig, 'Punkt', 'Punkte')} anklicken ({len(P)} gewählt)")
         einst = self.model.bemassung_einstellungen()
         text = bm.messung_text(art, P, einst.einheit, einst.nachkomma)
         self.messungen.append({"art": art, "punkte": P, "text": text})
@@ -4645,7 +4657,7 @@ class MainWindow(QtWidgets.QMainWindow):
         P = list(w.get("punkte") or [])
         noetig = {"linear": 2, "kette": 2, "hoehenkote": 1, "winkel": 3, "radius": 2}[art]
         if len(P) < noetig:
-            return self.hinweis(f"{noetig} Punkte anklicken ({len(P)} gewählt)")
+            return self.hinweis(f"{bg.anzahl(noetig, 'Punkt', 'Punkte')} anklicken ({len(P)} gewählt)")
         if art == "linear":
             P = P[:2]
         elif art == "hoehenkote":
@@ -7843,7 +7855,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.auswahlart_setzen("Knoten")
             self._auswahl_vergessen()
             self.selection = np.array(list(dict.fromkeys(knoten)), dtype=int)
-            self.lbl_sel.setText(f"{len(objekte)} {self.VERBINDUNGEN[einzeln][1]} gewählt (Modellbaum)")
+            self.lbl_sel.setText(f"{bg.anzahl(len(objekte), self.VERBINDUNGEN[einzeln][2], self.VERBINDUNGEN[einzeln][1])} "
+                                 "gewählt (Modellbaum)")
             self._baum_nachfuehren()        # aus einer Tabelle (8d, G3); im Baumklick still
             self._auswahl_register()        # dieser Zweig kehrt vor dem Abgleich am Ende zurueck
             return
@@ -7856,7 +7869,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.auswahlart_setzen("Linie")
             self._auswahl_vergessen()
             self.sel_linien = [name]
-            self.lbl_sel.setText(f"{len(self.sel_linien)} Linien ausgewählt (Modellbaum)")
+            self.lbl_sel.setText(f"{bg.anzahl(len(self.sel_linien), 'Linie', 'Linien')} ausgewählt (Modellbaum)")
         elif art == "stabelement":
             self.auswahlart_setzen("Knoten")
             self._auswahl_vergessen()
@@ -7864,19 +7877,19 @@ class MainWindow(QtWidgets.QMainWindow):
             knoten = [int(n) for i in elems for n in m.elements[i].nodes]
             self.selection = np.array(list(dict.fromkeys(knoten)), dtype=int)
             self.leuchtet = elems
-            self.lbl_sel.setText(f"{len(elems)} Stabelemente ausgewählt (Modellbaum)")
+            self.lbl_sel.setText(f"{bg.anzahl(len(elems), 'Stabelement', 'Stabelemente')} ausgewählt (Modellbaum)")
         elif art == "stab":
             self.auswahlart_setzen("Stab")
             self._auswahl_vergessen()
             self.sel_staebe = [name]
             self.leuchtet = [int(e) for e in m.members[name].elements]
-            self.lbl_sel.setText(f"{len(self.sel_staebe)} Stäbe ausgewählt (Modellbaum)")
+            self.lbl_sel.setText(f"{bg.anzahl(len(self.sel_staebe), 'Stab', 'Stäbe')} ausgewählt (Modellbaum)")
         elif art == "geoflaeche":
             self.auswahlart_setzen("Fläche")
             self._auswahl_vergessen()
             self.sel_flaechen = [name]
             self.leuchtet = [int(e) for e in (m.flaechen[name].elemente or [])]
-            self.lbl_sel.setText(f"{len(self.sel_flaechen)} Flächen ausgewählt (Modellbaum)")
+            self.lbl_sel.setText(f"{bg.anzahl(len(self.sel_flaechen), 'Fläche', 'Flächen')} ausgewählt (Modellbaum)")
         elif art == "geokoerper_einzeln":
             self.auswahlart_setzen("Volumen")
             self._auswahl_vergessen()
@@ -7885,12 +7898,14 @@ class MainWindow(QtWidgets.QMainWindow):
             self.lbl_sel.setText(f"{len(self.sel_koerper)} Volumen ausgewählt (Modellbaum)")
         elif art == "querschnitt":
             self.leuchtet = [i for i, e in enumerate(m.elements) if getattr(e, "sec", "") == name]
-            self.lbl_sel.setText(f"Querschnitt {name}: {len(self.leuchtet)} Elemente (Modellbaum)")
+            self.lbl_sel.setText(f"Querschnitt {name}: {bg.anzahl(len(self.leuchtet), 'Element', 'Elemente')} "
+                                 "(Modellbaum)")
         elif art == "gelenk":
             h = m.hinges.get(name)
             self.leuchtet = [int(e) for e in (getattr(h, "elemente", []) or [])
                              if 0 <= int(e) < len(m.elements)]
-            self.lbl_sel.setText(f"Gelenk {name}: an {len(self.leuchtet)} Elementen (Modellbaum)")
+            self.lbl_sel.setText(f"Gelenk {name}: an {bg.anzahl(len(self.leuchtet), 'Element', 'Elementen')} "
+                                 "(Modellbaum)")
         elif art == "liniengelenk":
             # Die Gelenklinien leuchten, die Flaeche dazu blass mit
             self.auswahlart_setzen("Linie")
@@ -7898,7 +7913,8 @@ class MainWindow(QtWidgets.QMainWindow):
             fl = [name]
             self.sel_flaechen = fl
             self.sel_linien = [ln for n in fl for ln in (m.flaechen[n].gelenklinien or []) if ln in m.lines]
-            self.lbl_sel.setText(f"Liniengelenke: {len(self.sel_linien)} Linien an {len(fl)} Flächen (Modellbaum)")
+            self.lbl_sel.setText(f"Liniengelenke: {bg.anzahl(len(self.sel_linien), 'Linie', 'Linien')} an "
+                                 f"{bg.anzahl(len(fl), 'Fläche', 'Flächen')} (Modellbaum)")
         elif art == "kontaktbedingung":
             kb = m.kontaktbedingungen.get(name)
             self.auswahlart_setzen("Fläche")
@@ -7938,7 +7954,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.sel_flaechen = [x for x in st.flaechen_aus if x in m.flaechen]
                 self.sel_koerper = [x for x in st.koerper_aus if x in m.koerper]
                 self.leuchtet = list(st.deaktivierte_elemente(m))
-                self.lbl_sel.setText(f"Stellung {name}: {len(self.leuchtet)} Elemente ohne Wirkung "
+                self.lbl_sel.setText(f"Stellung {name}: {bg.anzahl(len(self.leuchtet), 'Element', 'Elemente')} ohne Wirkung "
                                      "(Modellbaum)")
                 self._stellung_gewaehlt(name)
         elif art in self.LAGER_ARTEN:
@@ -8486,7 +8502,7 @@ class MainWindow(QtWidgets.QMainWindow):
                       F("r", "r [mm]", "zahl", (sec.r if sec else 0.0) * 1e3),
                       F("fabrication", "Herstellung", "wahl", (sec.fabrication if sec else "rolled"),
                         ["rolled", "welded", "cold_formed"]),
-                      F("benutzt", "benutzt von", "info", f"{benutzt} Elementen")]
+                      F("benutzt", "benutzt von", "info", bg.anzahl(benutzt, "Element", "Elementen"))]
             titel = f"Querschnitt {name}"
             hinweis = ("Kennwerte in cm und mm - Umbenennen zieht die Elemente nach. "
                        "„Neu aus Profil“ legt einen weiteren Querschnitt aus der Datenbank an.")
@@ -8515,7 +8531,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 felder = [F("anzahl", "Anzahl", "info", str(len(m.hinges))),
                           F("spanne", "Namen", "info", self._spanne(m.hinges)),
                           F("gesetzt", "gesetzt an", "info",
-                            f"{sum(len(getattr(h, 'elemente', []) or []) for h in m.hinges.values())} Elementen")]
+                            bg.anzahl(sum(len(getattr(h, 'elemente', []) or []) for h in m.hinges.values()),
+                                      "Element", "Elementen"))]
                 titel, knopf = "Gelenke", self._neu_text("gelenke")
             else:
                 h = m.hinges.get(name)
@@ -9729,9 +9746,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._kontakt_ausfuehren_wenn_netz(kb, knotengruppen=gruppen)
         if erg["neu"] or erg["entfernt"]:
             self.log.appendPlainText(f"Berührungen geprüft: {erg['beruehrungen']} Körperpaare, "
-                                     f"{len(erg['neu'])} Kontakte angelegt, {len(erg['entfernt'])} entfernt "
+                                     f"{bg.anzahl(len(erg['neu']), 'Kontakt', 'Kontakte')} angelegt, "
+                                     f"{len(erg['entfernt'])} entfernt "
                                      f"({time.perf_counter() - t0:.1f} s)")
-            self.statusBar().showMessage(f"{len(erg['neu'])} Kontakte automatisch angelegt (Körper berühren "
+            self.statusBar().showMessage(f"{bg.anzahl(len(erg['neu']), 'Kontakt', 'Kontakte')} automatisch angelegt (Körper berühren "
                                          "sich, starr) - die Wirkung lässt sich rechts in der Maske ändern", 8000)
             self._kontakte_stand = self._kontakte_stand_jetzt()
 
@@ -11177,7 +11195,7 @@ class MainWindow(QtWidgets.QMainWindow):
         el = sorted(int(i) for i in elemente)
         if not el:
             return "keine (alles aktiv)"
-        return f"{len(el)} Elemente: " + ", ".join(f"E{i}" for i in el[:12]) \
+        return f"{bg.anzahl(len(el), 'Element', 'Elemente')}: " + ", ".join(f"E{i}" for i in el[:12]) \
             + (" …" if len(el) > 12 else "")
 
     @_maskenweg()
@@ -11725,7 +11743,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 nutzer = [i for i, e in enumerate(m.elements) if getattr(e, "sec", "") == name]
                 staebe = [k for k, mm in m.members.items() if getattr(mm, "section", "") == name]
                 if nutzer or staebe:
-                    grund = (f"Querschnitt {name} wird benutzt: {len(nutzer)} Elemente"
+                    grund = (f"Querschnitt {name} wird benutzt: {bg.anzahl(len(nutzer), 'Element', 'Elemente')}"
                              + (f", Stäbe {', '.join(staebe[:5])}" if staebe else "")
                              + " - zuerst umbelegen")
                 else:
@@ -11806,19 +11824,19 @@ class MainWindow(QtWidgets.QMainWindow):
         elif art == "linie":
             self.auswahlart_setzen("Linie")
             self.sel_linien = [x for x in namen if x in m.lines]
-            text = f"{len(self.sel_linien)} Linien"
+            text = bg.anzahl(len(self.sel_linien), "Linie", "Linien")
         elif art == "stab":
             self.auswahlart_setzen("Stab")
             self.sel_staebe = [x for x in namen if x in m.members]
             self.leuchtet = [int(e) for x in self.sel_staebe
                              for e in (m.members[x].elements or [])]
-            text = f"{len(self.sel_staebe)} Stäbe"
+            text = bg.anzahl(len(self.sel_staebe), "Stab", "Stäbe")
         elif art == "geoflaeche":
             self.auswahlart_setzen("Fläche")
             self.sel_flaechen = [x for x in namen if x in m.flaechen]
             self.leuchtet = [int(e) for x in self.sel_flaechen
                              for e in (m.flaechen[x].elemente or [])]
-            text = f"{len(self.sel_flaechen)} Flächen"
+            text = bg.anzahl(len(self.sel_flaechen), "Fläche", "Flächen")
         elif art == "geokoerper_einzeln":
             self.auswahlart_setzen("Volumen")
             self.sel_koerper = [x for x in namen if x in m.koerper]
@@ -11832,7 +11850,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.leuchtet = elems
             self.selection = np.array(list(dict.fromkeys(
                 int(n) for i in elems for n in m.elements[i].nodes)), dtype=int)
-            text = f"{len(elems)} Stabelemente"
+            text = bg.anzahl(len(elems), "Stabelement", "Stabelemente")
         else:
             return None
         self.lbl_sel.setText(f"{text} ausgewählt (Modellbaum)")
@@ -12778,7 +12796,8 @@ class MainWindow(QtWidgets.QMainWindow):
         w_f = sum(gewicht.get(f.name, 1.0) for f in flaechen)
         w_k = sum(gewicht.get(k.name, 1.0) for k in koerper)
         summe = max(w_f + w_k, 1.0)
-        self._fortschritt_beginnen(1000, f"Vernetzen: {len(flaechen)} Flächen, {len(koerper)} Volumen …")
+        self._fortschritt_beginnen(1000, f"Vernetzen: {bg.anzahl(len(flaechen), 'Fläche', 'Flächen')}, "
+                                         f"{len(koerper)} Volumen …")
         abgebrochen = False
         # Die eigene Teilung jeder Flaeche bleibt erhalten: die Netzdichte
         # bestimmt dieses Netz, nicht die Eingabe - schaltet man „Teilung aus
@@ -12787,10 +12806,12 @@ class MainWindow(QtWidgets.QMainWindow):
         hs = nd.anwenden(self.model, netz, flaechen, koerper, log)
         log.append(f"Netzeinstellungen: {netz.beschreibung()}")
         if ohne_netz:
-            log.append(f"{len(ohne_netz) - len(starr)} Randflächen von Volumen ohne Dicke: kein eigenes Netz - "
+            log.append(f"{bg.anzahl(len(ohne_netz) - len(starr), 'Randfläche', 'Randflächen')} von Volumen ohne "
+                       "Dicke: kein eigenes Netz - "
                        "ihre Volumen tragen, Lasten darauf gehen über die Randseiten der Tetraeder")
         if starr:
-            log.append(f"{len(starr)} Flächen ohne eigene Steifigkeit laut Quelldatei (starr, Null-Element, "
+            log.append(f"{bg.anzahl(len(starr), 'Fläche', 'Flächen')} ohne eigene Steifigkeit laut Quelldatei "
+                       "(starr, Null-Element, "
                        "Lastverteilung): kein eigenes Netz; starre Flächen werden nach dem Vernetzen als "
                        "starre Kopplung umgesetzt")
         try:
@@ -12889,13 +12910,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 if eigene_teilung.get(f.name):
                     f.teilung = eigene_teilung[f.name]
         if abgebrochen:
-            log.append(f"Vernetzen abgebrochen: {n} Elemente erzeugt, die übrigen Objekte bleiben ohne Netz")
+            log.append(f"Vernetzen abgebrochen: {bg.anzahl(n, 'Element', 'Elemente')} erzeugt, die übrigen "
+                       "Objekte bleiben ohne Netz")
         for z in log:
             self.log.appendPlainText(z)
         if n:
             self.analysis = None
             self.results = None
-        text = (f"Vernetzt: {n} Elemente in {time.time() - self._fortschritt_t0:.1f} s"
+        text = (f"Vernetzt: {bg.anzahl(n, 'Element', 'Elemente')} in {time.time() - self._fortschritt_t0:.1f} s"
                 + (f" auf {prozesse} Prozessen" if prozesse > 1 else "")
                 + (" - abgebrochen" if abgebrochen else ""))
         self.log.appendPlainText(text)
@@ -12942,7 +12964,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 teile = ", ".join(k.name for k in ohne_k[:8]) + (" …" if len(ohne_k) > 8 else "")
                 if self._fragen_knoepfe(
                         "Vernetzen",
-                        f"{n_ohne} Objekte haben kein Netz, {mit} haben eins"
+                        f"{bg.anzahl(n_ohne, 'Objekt', 'Objekte')} {'hat' if n_ohne == 1 else 'haben'} kein Netz, "
+                        f"{mit} {'hat' if mit == 1 else 'haben'} eins"
                         + (f":\n{teile}\n\n" if teile else ".\n\n")
                         + "Nur diese vernetzen geht schnell und lässt die übrigen Netze stehen. "
                           "Alles neu zu vernetzen ist nötig, wenn sich die Netzdichte geändert hat - "
@@ -12950,7 +12973,8 @@ class MainWindow(QtWidgets.QMainWindow):
                         ja=f"Nur die {n_ohne} ohne Netz", nein="Alles neu vernetzen"):
                     flaechen, koerper = ohne_f, ohne_k
                     self.log.appendPlainText(
-                        f"Vernetzen: nur die {n_ohne} Objekte ohne Netz"
+                        ("Vernetzen: nur das Objekt ohne Netz" if n_ohne == 1
+                         else f"Vernetzen: nur die {n_ohne} Objekte ohne Netz")
                         + (f" ({teile})" if teile else ""))
         if not self._netzaenderung_bestaetigen("Vernetzen"):
             return None
@@ -12960,7 +12984,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage("Modellbaum, Tabellen und Ansicht aufbauen …")
         QtWidgets.QApplication.processEvents()
         self.refresh_all()
-        self.info(f"{n} Elemente erzeugt" if n else
+        self.info(f"{bg.anzahl(n, 'Element', 'Elemente')} erzeugt" if n else
                   "Nichts vernetzt - das Protokoll sagt, warum")
         if n and getattr(self, "_vernetzt_text", ""):
             self.statusBar().showMessage(self._vernetzt_text, 15000)
@@ -13034,7 +13058,8 @@ class MainWindow(QtWidgets.QMainWindow):
         except _Gesperrt:
             gesperrt = True
             log.append(f"Adaptiv vernetzen angehalten, bevor gerechnet wurde: die Modellprüfung meldet "
-                       f"FEHLER. Das zuletzt erzeugte Netz ({len(m.elements)} Elemente) bleibt stehen.")
+                       f"FEHLER. Das zuletzt erzeugte Netz ({bg.anzahl(len(m.elements), 'Element', 'Elemente')}) "
+                       "bleibt stehen.")
             erg = {"verlauf": []}
         except Exception as ex:            # noqa: BLE001 - der Grund gehoert ins Protokoll, nicht in einen Absturz
             log.append(f"Adaptive Vernetzung abgebrochen: {ex}")
@@ -13048,8 +13073,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_all()
         v = erg.get("verlauf") or []
         if v:
-            self.info(f"Adaptiv vernetzt: {len(v)} Durchgänge, "
-                      + " → ".join(f"{x['elemente']} Elemente ({x['eta_rel'] * 100:.1f} %)" for x in v))
+            self.info(f"Adaptiv vernetzt: {bg.anzahl(len(v), 'Durchgang', 'Durchgänge')}, "
+                      + " → ".join(f"{bg.anzahl(x['elemente'], 'Element', 'Elemente')} ({x['eta_rel'] * 100:.1f} %)"
+                                   for x in v))
         elif not gesperrt:                 # gesperrt: die Meldung kam schon (_trotzdem_rechnen)
             self.info("Nichts vernetzt - das Protokoll sagt, warum")
         self._info_zeigen()
@@ -14215,7 +14241,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             self.statusBar().showMessage(
                 f"Register „Lasten“ zeigt jetzt die Lasten von {name} "
-                f"({self.tbl_last.zeilenzahl()} Lasten)", 6000)
+                f"({bg.anzahl(self.tbl_last.zeilenzahl(), 'Last', 'Lasten')})", 6000)
         except RuntimeError:
             pass
 
@@ -15585,7 +15611,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 # nicht gerechnete Stellungen (FEHLER, ohne Lastfaelle) ebenso
                 + u.nicht_gerechnet_text())
         elif self._stellungen_obj():
-            self.lbl_umh.setText(f"{len(self._stellungen_obj())} Stellungen angelegt – "
+            self.lbl_umh.setText(f"{bg.anzahl(len(self._stellungen_obj()), 'Stellung', 'Stellungen')} angelegt – "
                                  "noch nicht gerechnet")
         else:
             # kein Ergebnis, keine Stellung (Neu, Beispiel, Stellungen geloescht):
@@ -15668,12 +15694,13 @@ class MainWindow(QtWidgets.QMainWindow):
             self.error(f"Keine Stellung gerechnet – {n_fehler} von {len(liste)} mit FEHLER"
                        + (f", {n_ohne} ohne Lastfälle" if n_ohne else "") + " (siehe Protokoll)")
         elif n_fehler or n_ohne:
-            self.info(f"{n_ok} von {len(liste)} Stellungen gerechnet" + umh.nicht_gerechnet_text()
+            self.info(f"{n_ok} von {bg.anzahl(len(liste), 'Stellung', 'Stellungen')} gerechnet"
+                      + umh.nicht_gerechnet_text()
                       + ": " + umh.kurztext())
         else:
             # kurztext: wie vorher "eta = ..., maßgebend ...", dazu der Hinweis,
             # wenn Kombinationen nicht nachgewiesen wurden
-            self.info(f"{len(liste)} Stellungen gerechnet: " + umh.kurztext())
+            self.info(f"{bg.anzahl(len(liste), 'Stellung', 'Stellungen')} gerechnet: " + umh.kurztext())
         self.refresh_all()
 
     @_maskenweg()
@@ -15779,8 +15806,9 @@ class MainWindow(QtWidgets.QMainWindow):
                                              self.model):
             text.append(f"  {'erfüllt ' if ok else 'offen   '} {thema}: {hinweis}")
         self.txt_regelwerk.setPlainText("\n".join(text))
-        self.info(f"{len(namen)} Kombinationen nach DIN 19704 gebildet"
-                  + (f"; {len(offen)} Beiwerte sind noch zu bestätigen" if offen else ""))
+        self.info(f"{bg.anzahl(len(namen), 'Kombination', 'Kombinationen')} nach DIN 19704 gebildet"
+                  + (("; 1 Beiwert ist noch zu bestätigen" if len(offen) == 1 else
+                      f"; {len(offen)} Beiwerte sind noch zu bestätigen") if offen else ""))
         self.refresh_all()
 
     def _tab_contact(self):
@@ -17695,7 +17723,7 @@ class MainWindow(QtWidgets.QMainWindow):
             bf = self.model.add_beulfeld(name, els, **kw)
         except Exception as ex:          # noqa: BLE001
             return self.error(ex)
-        self.info(f"Beulfeld „{name}“ aus {len(bf.elemente)} Elementen angelegt "
+        self.info(f"Beulfeld „{name}“ aus {bg.anzahl(len(bf.elemente), 'Element', 'Elementen')} angelegt "
                   f"({bf.bezug()}) - es wird ab jetzt bei jeder Berechnung "
                   "nachgewiesen")
         self.refresh_all()
@@ -17828,7 +17856,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.error(f"„{name}“ gibt es schon")
         self.merken(f"Volumenbereich {name}")
         vb = self.model.add_volumenbereich(name, els, **kw)
-        self.info(f"Volumenbereich „{name}“ aus {len(vb.elemente)} Elementen "
+        self.info(f"Volumenbereich „{name}“ aus {bg.anzahl(len(vb.elemente), 'Element', 'Elementen')} "
                   "angelegt (Nachweis nach 6.2.1(5))")
         self.refresh_all()
         self.tabelle_zeigen("Volumen")
@@ -18434,7 +18462,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.results = None
         n_el = len({id(o) for o, _f, _w, el in aenderungen if el})
         n_ob = len({id(o) for o, _f, _w, el in aenderungen if not el})
-        self.info(f"{n_el} Elemente" + (f" und {n_ob} Flächen oder Volumen" if n_ob else "") + " geändert"
+        self.info(bg.anzahl(n_el, "Element", "Elemente")
+                  + (f" und {bg.anzahl(n_ob, 'Fläche oder Volumen', 'Flächen oder Volumen')}" if n_ob else "")
+                  + " geändert"
                   + (f"; ohne eigene Dicke (Randflächen eines Volumens) blieben {', '.join(ohne_dicke[:5])}"
                      + (" …" if len(ohne_dicke) > 5 else "") if ohne_dicke else ""))
         self.refresh_all()
@@ -18445,11 +18475,11 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.error("Keine Elemente angegeben")
         k = self.ed_hinge.currentIndex()
         h = {0: [], 1: [4, 5], 2: [10, 11], 3: [4, 5, 10, 11], 4: [3, 4, 5, 9, 10, 11]}[k]
-        self.merken(f"Gelenke an {len(els)} Elementen")
+        self.merken(f"Gelenke an {bg.anzahl(len(els), 'Element', 'Elementen')}")
         for i in els:
             if self.model.elements[i].typ == "beam":
                 self.model.elements[i].hinges = list(h)
-        self.info(f"Gelenke an {len(els)} Elementen gesetzt")
+        self.info(f"Gelenke an {bg.anzahl(len(els), 'Element', 'Elementen')} gesetzt")
         self.refresh_all()
 
     # ---- Netz --------------------------------------------------------
@@ -18671,7 +18701,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.sel_elemente = [int(i) for i in treffer]
             self._auswahl_register()
             self.redraw()
-            self.info(f"{len(treffer)} Elemente unter {zl.zahl_text(grenze, punkt=True)} markiert")
+            self.info(f"{bg.anzahl(len(treffer), 'Element', 'Elemente')} unter "
+                      f"{zl.zahl_text(grenze, punkt=True)} markiert")
 
         def aus():
             self.netzguete_feld = None
@@ -18811,7 +18842,7 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as ex:                    # noqa: BLE001
             self._merken_zuruecknehmen(unveraendert=False)
             return self.error(str(ex))
-        self.info(f"Stabzug: {len(m.elements) - e0} Elemente")
+        self.info(f"Stabzug: {bg.anzahl(len(m.elements) - e0, 'Element', 'Elemente')}")
         self.refresh_all()
 
     @_maskenweg()
@@ -18843,7 +18874,7 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as ex:                    # noqa: BLE001
             self._merken_zuruecknehmen(unveraendert=False)
             return self.error(str(ex))
-        self.info(f"Platte: {len(m.elements) - e0} Elemente")
+        self.info(f"Platte: {bg.anzahl(len(m.elements) - e0, 'Element', 'Elemente')}")
         self.refresh_all()
 
     @_maskenweg()
@@ -18877,7 +18908,7 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as ex:                    # noqa: BLE001
             self._merken_zuruecknehmen(unveraendert=False)
             return self.error(str(ex))
-        self.info(f"Quader: {len(m.elements) - e0} Elemente")
+        self.info(f"Quader: {bg.anzahl(len(m.elements) - e0, 'Element', 'Elemente')}")
         self.refresh_all()
 
     def make_beams(self):
@@ -18995,8 +19026,9 @@ class MainWindow(QtWidgets.QMainWindow):
             # Das uebernommene Modell steht in keiner Statik3D-Datei - ein
             # neuer Import (RFEM-Datei am Drehlager: Minuten) waere der Preis
             self._aenderung()
-            self.info(f"Import: {m.nn} Knoten, {len(m.elements)} Elemente, "
-                      f"{len(m.load_cases)} Lastfälle, {len(m.members)} Stäbe")
+            self.info(f"Import: {m.nn} Knoten, {bg.anzahl(len(m.elements), 'Element', 'Elemente')}, "
+                      f"{bg.anzahl(len(m.load_cases), 'Lastfall', 'Lastfälle')}, "
+                      f"{bg.anzahl(len(m.members), 'Stab', 'Stäbe')}")
             self._fortschritt_ende()
             QtWidgets.QApplication.restoreOverrideCursor()
             if target is None:
@@ -19063,7 +19095,7 @@ class MainWindow(QtWidgets.QMainWindow):
         def zahl(n):
             return f"{int(n):,}".replace(",", " ")
         ne = len(m0.elements)
-        teile = [f"Netz ({zahl(m0.nn)} Knoten, {zahl(ne)} Elemente)"]
+        teile = [f"Netz ({zahl(m0.nn)} Knoten, {zahl(ne)} {'Element' if ne == 1 else 'Elemente'})"]
         for k, v in vars(m0).items():
             if k.startswith("_") or k in self.LEEREN_BLEIBT or not isinstance(v, (list, dict)) or not v:
                 continue
@@ -19591,7 +19623,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.error(str(ex))
         self.info(f"{ln.kurve(self.model).beschreibung()}: {name}, "
                   f"L = {laenge:.3f} m"
-                  + (f", {n_el} Stabelemente erzeugt" if n_el else ""))
+                  + (f", {bg.anzahl(n_el, 'Stabelement', 'Stabelemente')} erzeugt" if n_el else ""))
         if maske is not None:
             maske.auswahl_leeren()
         self.refresh_all()
@@ -19897,7 +19929,8 @@ class MainWindow(QtWidgets.QMainWindow):
                               case=fall, kommentar=str(w.get("kommentar", "") or ""))
         self.analysis = None
         self.results = None
-        self.info(f"Vorspannung F_v = {zl.zahl_text(F / 1e3, punkt=True)} kN auf {len(ziele)} Bauteile im Lastfall "
+        self.info(f"Vorspannung F_v = {zl.zahl_text(F / 1e3, punkt=True)} kN auf "
+                  f"{bg.anzahl(len(ziele), 'Bauteil', 'Bauteile')} im Lastfall "
                   f"{fall or m.active_case}")
         self.refresh_all()
 
@@ -20298,7 +20331,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 except KeyError as ex:
                     self.log.appendPlainText(f"Übermaß nicht gesetzt: {ex}")
             self.log.appendPlainText(
-                f"Übermaß {uebermass * 1e6:.0f} µm auf {len(kontakte)} Fugen im Lastfall "
+                f"Übermaß {uebermass * 1e6:.0f} µm auf {bg.anzahl(len(kontakte), 'Fuge', 'Fugen')} im Lastfall "
                 f"{m.active_case} - die Fuge steht damit schon vor der Last unter Druck")
         self.log.appendPlainText(
             f"Passung gesetzt an {len(kontakte)} Kontaktfugen ({', '.join(kontakte[:8])}"
@@ -20430,8 +20463,8 @@ class MainWindow(QtWidgets.QMainWindow):
         n = self.model.lasten_verteilen()
         self.analysis = None
         self.results = None
-        self.info(f"Linienlast auf {len(ziele)} Objekte im Lastfall "
-                  f"{fall or self.model.active_case} ({n} Elementlasten)")
+        self.info(f"Linienlast auf {bg.anzahl(len(ziele), 'Objekt', 'Objekte')} im Lastfall "
+                  f"{fall or self.model.active_case} ({bg.anzahl(n, 'Elementlast', 'Elementlasten')})")
         self.refresh_all()
 
     #: Richtungen einer Flaechenlast in der Maske
@@ -20491,9 +20524,9 @@ class MainWindow(QtWidgets.QMainWindow):
         n = self.model.lasten_verteilen()
         self.analysis = None
         self.results = None
-        self.info(f"Flächenlast auf {len(ziele)} Objekte im Lastfall "
+        self.info(f"Flächenlast auf {bg.anzahl(len(ziele), 'Objekt', 'Objekte')} im Lastfall "
                   f"{fall or self.model.active_case}"
-                  + (f" ({n} Elementlasten)" if n else " - wirkt, sobald vernetzt ist"))
+                  + (f" ({bg.anzahl(n, 'Elementlast', 'Elementlasten')})" if n else " - wirkt, sobald vernetzt ist"))
         self.refresh_all()
 
     #: Wohin der Wasserdruck wirkt
@@ -20892,8 +20925,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.analysis = None
         self.results = None
         wk_ = kw.get("windkanal")
-        self.info(f"Wind {wd.name} ({kw.get('verfahren', 'norm')}): {kw['objektlasten']} Flächen, {len(kw['staebe'])} Stäbe, "
-                  f"{kw['elementlasten']} Elementlasten in {kw['lastfall']} (Nr. {kw.get('lastfall_nr', 0)}); "
+        self.info(f"Wind {wd.name} ({kw.get('verfahren', 'norm')}): "
+                  f"{bg.anzahl(kw['objektlasten'], 'Fläche', 'Flächen')}, {bg.anzahl(len(kw['staebe']), 'Stab', 'Stäbe')}, "
+                  f"{bg.anzahl(kw['elementlasten'], 'Elementlast', 'Elementlasten')} in {kw['lastfall']} "
+                  f"(Nr. {kw.get('lastfall_nr', 0)}); "
                   f"q_p(h) = {kw.get('q_p_h', 0):.0f} N/m², "
                   f"Kontrollsumme Flächen {kw['kontrolle']['betrag'] / 1e3:.1f} kN, Stäbe {kw['kontrolle']['F_staebe'] / 1e3:.1f} kN"
                   + (f"; Windkanal Re = {wk_['re']:.0f}, c_p {wk_['cp_min']:+.2f} … {wk_['cp_max']:+.2f}" if wk_ else ""))
@@ -21075,8 +21110,8 @@ class MainWindow(QtWidgets.QMainWindow):
             n_el += m.lasten_verteilen()
         self.analysis = None
         self.results = None
-        self.info(f"Temperatur ΔT = {zl.zahl_text(dT, punkt=True)} K auf {objekte or 'alle'} Objekte "
-                  f"({n_el} Elemente) im Lastfall {fall or m.active_case}")
+        self.info(f"Temperatur ΔT = {zl.zahl_text(dT, punkt=True)} K auf {bg.anzahl(objekte or 'alle', 'Objekt', 'Objekte')} "
+                  f"({bg.anzahl(n_el, 'Element', 'Elemente')}) im Lastfall {fall or m.active_case}")
         self.refresh_all()
 
     @_maskenweg()
@@ -21327,10 +21362,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if not els:
             return self.hinweis("Zuerst die Stäbe in der Ansicht wählen (Auswahlart Stab, oder alle Knoten der "
                               "Stabelemente, die das Gelenk bekommen sollen)")
-        self.merken(f"Gelenk {name} an {len(els)} Stabelementen")
+        self.merken(f"Gelenk {name} an {bg.anzahl(len(els), 'Stabelement', 'Stabelementen')}")
         for i in els:
             m.apply_hinge(i, name)
-        self.info(f"Gelenk {name} an {len(els)} Stabelemente gesetzt")
+        self.info(f"Gelenk {name} an {bg.anzahl(len(els), 'Stabelement', 'Stabelementen')} gesetzt")
         self.refresh_all()
         self._objektmaske("gelenk", name)
         return True
@@ -21531,10 +21566,10 @@ class MainWindow(QtWidgets.QMainWindow):
             t.nachholen()
         if art == "clip":
             t.in_zwischenablage()
-            return self.info(f"{t.sichtbar()} Zeilen in der Zwischenablage")
+            return self.info(f"{bg.anzahl(t.sichtbar(), 'Zeile', 'Zeilen')} in der Zwischenablage")
         pfad = t.export_xlsx() if art == "xlsx" else t.export_csv()
         if pfad:
-            self.info(f"{t.sichtbar()} Zeilen geschrieben: {pfad}")
+            self.info(f"{bg.anzahl(t.sichtbar(), 'Zeile', 'Zeilen')} geschrieben: {pfad}")
         return pfad
 
     def tabelle_filter_leeren(self):
@@ -21628,7 +21663,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 s = self.model.support(int(node), [])
             s.behaviour = {k: v for k, v in beh.items()}
             s.dofs = sorted({k for k, v in beh.items() if v.acts})
-        self.info(f"Nichtlinearität an {len(self.selection)} Lagern gesetzt")
+        self.info(f"Nichtlinearität an {bg.anzahl(len(self.selection), 'Lager', 'Lagern')} gesetzt")
         self.refresh_all()
 
     # ---- Anschluesse ----------------------------------------------------
@@ -21807,7 +21842,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.merken("Flächenlager angelegt")
         ss = self.model.add_surface_support(els)
         ss.behaviour = d.behaviours()
-        self.info(f"Flächenlager auf {len(els)} Elementen angelegt")
+        self.info(f"Flächenlager auf {bg.anzahl(len(els), 'Element', 'Elementen')} angelegt")
         self.refresh_all()
 
     def remove_support(self):
@@ -21844,7 +21879,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if self.model.elements[i].typ in vp.TYPEN_STAEBE:
                 self.model.load_beam(i, *q, system="local" if self.q_local.isChecked() else "global", q2=q2)
                 n += 1
-        self.info(f"Streckenlast auf {n} Stäbe ({self.model.active_case})")
+        self.info(f"Streckenlast auf {bg.anzahl(n, 'Stab', 'Stäbe')} ({self.model.active_case})")
         self.refresh_all()
 
     def add_face_load(self):
@@ -21859,7 +21894,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if e.typ in vp.TYPEN_FLAECHEN:
                 self.model.load_face(i, p, direction=direction)
                 n += 1
-        self.info(f"Flächenlast auf {n} Schalen ({self.model.active_case})")
+        self.info(f"Flächenlast auf {bg.anzahl(n, 'Schale', 'Schalen')} ({self.model.active_case})")
         self.refresh_all()
 
     def add_temp_load(self):
@@ -21870,7 +21905,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for i in els:
             self.model.load_temp(i, dT, dTz)
         self._aenderung()
-        self.info(f"Temperaturlast auf {len(els)} Elemente")
+        self.info(f"Temperaturlast auf {bg.anzahl(len(els), 'Element', 'Elemente')}")
         self.refresh_all()
 
     def toggle_gravity(self, on):
@@ -22233,7 +22268,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                            replace=d.replace.isChecked())
             except Exception as ex:
                 return self.error(ex)
-            self.info(f"{len(cs)} Kombinationen erzeugt")
+            self.info(f"{bg.anzahl(len(cs), 'Kombination', 'Kombinationen')} erzeugt")
             self.refresh_all()
 
     def add_combination(self):
@@ -22400,10 +22435,11 @@ class MainWindow(QtWidgets.QMainWindow):
         n = len(m.auto_members())
         if not n:
             self._merken_zuruecknehmen()        # nichts Neues erkannt: keine Aenderung
-        text = f"{n} Stäbe erkannt (gesamt {len(m.members)})"
+        text = f"{bg.anzahl(n, 'Stab', 'Stäbe')} erkannt (gesamt {len(m.members)})"
         if vergeben:
-            text += (f"; {len(vergeben)} Stabelemente gehören schon zu Stäben und wurden übergangen – "
-                     "gerade Ketten solcher Stäbe fasst „Stäbe zusammenfassen“ zusammen "
+            text += (("; 1 Stabelement gehört schon zu einem Stab und wurde übergangen – " if len(vergeben) == 1
+                      else f"; {len(vergeben)} Stabelemente gehören schon zu Stäben und wurden übergangen – ")
+                     + "gerade Ketten solcher Stäbe fasst „Stäbe zusammenfassen“ zusammen "
                      "(Struktur → Nachweisstäbe ▾)")
         self.info(text)
         self.refresh_all()
@@ -22753,12 +22789,14 @@ class MainWindow(QtWidgets.QMainWindow):
         for g in schwach[:6]:
             self.log.appendPlainText(f"WARNUNG: {g.text}")
         if len(schwach) > 6:
-            self.log.appendPlainText(f"… und {len(schwach) - 6} weitere Teile unter "
+            rest = len(schwach) - 6
+            self.log.appendPlainText(f"… und {rest} {'weiteres Teil' if rest == 1 else 'weitere Teile'} unter "
                                      f"der Haltegüte {zl.zahl_text(sg.HALTEGUETE_MIN)}")
         if not schwach:
             self.log.appendPlainText(
                 f"Haltegüte: am weichsten {werte[0].text} "
-                f"(Grenze {zl.zahl_text(sg.HALTEGUETE_MIN)}; {len(werte)} Teiltragwerke geprüft)")
+                f"(Grenze {zl.zahl_text(sg.HALTEGUETE_MIN)}; "
+                f"{bg.anzahl(len(werte), 'Teiltragwerk', 'Teiltragwerke')} geprüft)")
 
     def singularitaeten(self) -> list:
         """Die freien Bewegungen, die gerade vorliegen.
@@ -22942,7 +22980,7 @@ class MainWindow(QtWidgets.QMainWindow):
             for k, v in st["workers"].items():
                 stand = v.get("stand") or "?"
                 lines.append(f"  {k}: {'aktiv' if v.get('alive') else 'inaktiv'}, "
-                             f"{v.get('jobs', 0)} Aufträge, Rechner {v.get('host', '?')}, "
+                             f"{bg.anzahl(v.get('jobs', 0), 'Auftrag', 'Aufträge')}, Rechner {v.get('host', '?')}, "
                              f"Version {v.get('version', '?')}, Stand {stand}"
                              + ("  ← anderer Stand als hier!" if eigen and stand not in ("?", eigen) else ""))
             QtWidgets.QMessageBox.information(self, "Rechnerfarm", "\n".join(lines))
@@ -23022,7 +23060,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log.appendPlainText(
             f"\n--- {label} gestartet ---"
             f"\n    Prozesspool (Elementschleifen, Vernetzen): {parallel.describe()}"
-            f"\n    Gleichungsloeser: {_slv.loeser_verfuegbar()}")
+            f"\n    Gleichungslöser: {_slv.loeser_verfuegbar()}")
         # Ab hier oeffnet das Programm nichts Modales mehr, bis die Rechnung
         # zurueck ist (:meth:`_modal_gesperrt`).
         self._rechnet_gerade = True
@@ -23323,18 +23361,21 @@ class MainWindow(QtWidgets.QMainWindow):
         o = an.info.get("offen", {})
         teile = []
         if g.get("lastfaelle"):
-            teile.append(f"{g['lastfaelle']} Lastfälle")
+            teile.append(bg.anzahl(g["lastfaelle"], "Lastfall", "Lastfälle"))
         if g.get("kombinationen"):
-            teile.append(f"{g['kombinationen']} Kombinationen")
+            teile.append(bg.anzahl(g["kombinationen"], "Kombination", "Kombinationen"))
         fertig = " und ".join(teile) or "nichts"
+        # „1 Lastfall bleibt“, „nichts bleibt“, sonst „bleiben“ (11c, 03.10.2026)
+        n_fertig = int(g.get("lastfaelle") or 0) + int(g.get("kombinationen") or 0)
         rest = []
         if o.get("lastfaelle"):
-            rest.append(f"{o['lastfaelle']} Lastfälle")
+            rest.append(bg.anzahl(o["lastfaelle"], "Lastfall", "Lastfälle"))
         if o.get("kombinationen"):
-            rest.append(f"{o['kombinationen']} Kombinationen")
+            rest.append(bg.anzahl(o["kombinationen"], "Kombination", "Kombinationen"))
         offen = " und ".join(rest)
         name = getattr(self, "_rechnung_name", "Berechnung")
-        kurz = (f"{name} abgebrochen (nach {float(dauer):.0f} s) - {fertig} bleiben erhalten"
+        kurz = (f"{name} abgebrochen (nach {float(dauer):.0f} s) - {fertig} "
+                f"{'bleibt' if n_fertig <= 1 else 'bleiben'} erhalten"
                 + (f", {offen} offen" if offen else ""))
         # Das Teilergebnis tritt an die Stelle des bisherigen. War das
         # groesser, muss der Anwender das lesen koennen - sonst tauscht ein
@@ -23342,8 +23383,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # Rechnung still gegen einen Lastfall (19.09.2026)
         alt = getattr(self, "analysis", None)
         n_alt = (len(alt.cases) + len(alt.combinations)) if alt is not None else 0
-        ersetzt = (f"\n    Das bisherige Ergebnis ({len(alt.cases)} Lastfälle, "
-                   f"{len(alt.combinations)} Kombinationen) ist damit ersetzt - es lässt "
+        ersetzt = (f"\n    Das bisherige Ergebnis ({bg.anzahl(len(alt.cases), 'Lastfall', 'Lastfälle')}, "
+                   f"{bg.anzahl(len(alt.combinations), 'Kombination', 'Kombinationen')}) ist damit ersetzt - es lässt "
                    "sich nur durch einen neuen Lauf zurückholen."
                    if alt is not None and n_alt > len(an.cases) + len(an.combinations) else "")
         self._rechnung_ende(kurz, dauer=0)
@@ -23410,7 +23451,7 @@ class MainWindow(QtWidgets.QMainWindow):
         an = self.analysis
         n = ((len(getattr(an, "cases", {}) or {}) + len(getattr(an, "combinations", {}) or {}))
              if an is not None else 1)
-        text = (f"{was}: Die vorhandenen Ergebnisse ({n} Lastfälle/Kombinationen"
+        text = (f"{was}: Die vorhandenen Ergebnisse ({bg.anzahl(n, 'Lastfall/Kombination', 'Lastfälle/Kombinationen')}"
                 + (", Nachweise" if an is not None and getattr(an, "design", None) is not None else "")
                 + ") gehören zum bisherigen Netz und werden durch diese Änderung gelöscht.\n\n"
                 f"{knopf} und die Ergebnisse verwerfen - oder abbrechen?")
@@ -23442,7 +23483,7 @@ class MainWindow(QtWidgets.QMainWindow):
         except OSError as ex:
             return self.error(f"Protokoll nicht geschrieben: {ex}")
         zeilen = self.log.toPlainText().count("\n") + 1
-        self.info(f"Protokoll gespeichert ({zeilen} Zeilen): {ziel}")
+        self.info(f"Protokoll gespeichert ({bg.anzahl(zeilen, 'Zeile', 'Zeilen')}): {ziel}")
 
     def _ohne_netz_text(self, d: dict) -> str:
         """„3 Flaechen (F1, F2, F7) und 10 Volumen (V41, V42, …)“.
@@ -23450,15 +23491,15 @@ class MainWindow(QtWidgets.QMainWindow):
         Die Namen gehoeren in die Meldung: „das Protokoll sagt, warum“ hilft
         bei tausend Zeilen niemandem, wenn man nicht weiss, wonach man sucht.
         """
-        def liste(namen, wort):
+        def liste(namen, ein, mehr):
             if not namen:
                 return ""
             gezeigt = ", ".join(str(x) for x in namen[:8])
-            return (f"{len(namen)} {wort} ({gezeigt}"
+            return (f"{bg.anzahl(len(namen), ein, mehr)} ({gezeigt}"
                     + (f" und {len(namen) - 8} weitere" if len(namen) > 8 else "") + ")")
 
-        return " und ".join(x for x in (liste(d["unvernetzte_flaechen"], "Flächen"),
-                                        liste(d["unvernetzte_koerper"], "Volumen")) if x)
+        return " und ".join(x for x in (liste(d["unvernetzte_flaechen"], "Fläche", "Flächen"),
+                                        liste(d["unvernetzte_koerper"], "Volumen", "Volumen")) if x)
 
     def _vor_rechnung_vernetzen(self) -> bool:
         """Flaechen und Volumen ohne Netz tragen nichts: vor dem Rechnen
@@ -23536,7 +23577,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     except Exception:      # noqa: BLE001
                         pass
             self.log.appendPlainText(
-                f"  Volumen {name}: {n_f} Randflächen, {len(kn)} Eckknoten"
+                f"  Volumen {name}: {bg.anzahl(n_f, 'Randfläche', 'Randflächen')}, {len(kn)} Eckknoten"
                 + (f" - {grund}" if grund else ""))
         self.bottom_tabs.setCurrentIndex(0)
 
@@ -23627,11 +23668,11 @@ class MainWindow(QtWidgets.QMainWindow):
                            if str(b.pruefung).endswith("nicht geprüft")]
             self.log.appendPlainText(
                 (f"--- Abnahme des Netzes: bestanden, soweit geprüft "
-                 f"({len(ausgefallen)} Prüfungen fielen aus) ---" if ausgefallen
-                 else "--- Abnahme des Netzes: bestanden ---")
-                + (f" ({len(warnungen)} Warnungen)" if warnungen else ""))
+                 f"({'1 Prüfung fiel' if len(ausgefallen) == 1 else f'{len(ausgefallen)} Prüfungen fielen'} aus) ---"
+                 if ausgefallen else "--- Abnahme des Netzes: bestanden ---")
+                + (f" ({bg.anzahl(len(warnungen), 'Warnung', 'Warnungen')})" if warnungen else ""))
             return True
-        self.log.appendPlainText(f"--- Abnahme des Netzes: {len(befunde)} Verletzungen ---")
+        self.log.appendPlainText(f"--- Abnahme des Netzes: {bg.anzahl(len(befunde), 'Verletzung', 'Verletzungen')} ---")
         for b in befunde:
             self.log.appendPlainText(f"FEHLER: [{b.pruefung}] {b.text}")
         self.bottom_tabs.setCurrentIndex(0)
@@ -23761,15 +23802,23 @@ class MainWindow(QtWidgets.QMainWindow):
         for x in sing:
             self.log.appendPlainText(f"{x.text}\n    {x.ursache}\n    {x.befund()}")
         if schwer:
+            if len(schwer) > 1:
+                wer = f"{len(schwer)} von {len(sing)} freien Bewegungen tragen"
+            elif len(sing) > 1:
+                wer = f"1 von {len(sing)} freien Bewegungen trägt"
+            else:
+                wer = "Die freie Bewegung trägt"
             self.log.appendPlainText(
-                f"WARNUNG: {len(schwer)} von {len(sing)} freien Bewegungen tragen Last, "
-                "die nirgends ankommt - für diese Bauteile ist das Ergebnis nicht "
-                "verwertbar.")
-            self.info(f"⚠ {len(schwer)} freie Bewegungen tragen Last, die nirgends "
-                      "ankommt - Modellbaum → Ergebnisse → Freie Bewegungen")
+                f"WARNUNG: {wer} Last, die nirgends ankommt - für "
+                + ("diese Bauteile" if len(schwer) > 1 else "dieses Bauteil")
+                + " ist das Ergebnis nicht verwertbar.")
+            self.info(("⚠ 1 freie Bewegung trägt Last, die nirgends " if len(schwer) == 1 else
+                       f"⚠ {len(schwer)} freie Bewegungen tragen Last, die nirgends ")
+                      + "ankommt - Modellbaum → Ergebnisse → Freie Bewegungen")
         else:
-            self.info(f"{len(sing)} Bauteile sind nicht gehalten - die Last steht "
-                      "auf ihnen aber im Gleichgewicht (Modellbaum → Ergebnisse)")
+            self.info(("1 Bauteil ist nicht gehalten - die Last steht auf ihm" if len(sing) == 1 else
+                       f"{len(sing)} Bauteile sind nicht gehalten - die Last steht auf ihnen")
+                      + " aber im Gleichgewicht (Modellbaum → Ergebnisse)")
 
     # ---- Ergebnisse --------------------------------------------------
     def _fill_result_selector(self):
@@ -26804,7 +26853,8 @@ class MainWindow(QtWidgets.QMainWindow):
             n += len(liste) - len(frei)
             liste[:] = frei
         if n:
-            self.statusBar().showMessage(f"{n} Objekte gesperrter Layer bleiben unausgewählt", 4000)
+            self.statusBar().showMessage("1 Objekt gesperrter Layer bleibt unausgewählt" if n == 1 else
+                                         f"{n} Objekte gesperrter Layer bleiben unausgewählt", 4000)
         return n
 
     def _layer_geaendert(self, text: str = "") -> None:
@@ -27170,8 +27220,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._fortschritt_ende()
             if an is not None:
                 self._solve_done("all", an)
-                self.info(f"Ergebnisse geladen: {len(an.cases)} Lastfälle, "
-                          f"{len(an.combinations)} Kombinationen ({os.path.basename(epfad)})")
+                self.info(f"Ergebnisse geladen: {bg.anzahl(len(an.cases), 'Lastfall', 'Lastfälle')}, "
+                          f"{bg.anzahl(len(an.combinations), 'Kombination', 'Kombinationen')} "
+                          f"({os.path.basename(epfad)})")
         # Modell und Ergebnisse sind die der Datei
         self._als_gespeichert()
         return True

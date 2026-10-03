@@ -6211,18 +6211,18 @@ class Model:
             # schon **vor** dem Rechnen und mit dem Lastfall dabei.
             for l in lc.face_loads:
                 if not 0 <= int(l.elem) < len(self.elements):
-                    msgs.append(f"FEHLER: Lastfall '{lc.name}': Flaechenlast auf "
+                    msgs.append(f"FEHLER: Lastfall '{lc.name}': Flächenlast auf "
                                 f"Element {l.elem} - das Element gibt es nicht")
                     continue
                 el = self.elements[int(l.elem)]
                 if el.typ in _EL.VOLUMEN_TYPEN:
                     n_s = len(_sl.FLAECHEN[el.typ])
                     if not 0 <= int(l.face) < n_s:
-                        msgs.append(f"FEHLER: Lastfall '{lc.name}': Flaechenlast auf "
+                        msgs.append(f"FEHLER: Lastfall '{lc.name}': Flächenlast auf "
                                     f"Element {l.elem} ({el.typ}): Seite {l.face} gibt "
                                     f"es nicht (0..{n_s - 1}) - die Last wirkt nicht")
                 if l.direction is not None and not any(float(x) for x in l.direction):
-                    msgs.append(f"FEHLER: Lastfall '{lc.name}': Flaechenlast auf "
+                    msgs.append(f"FEHLER: Lastfall '{lc.name}': Flächenlast auf "
                                 f"Element {l.elem}: Richtung ist der Nullvektor - "
                                 "die Last wirkt mit 0 N")
             msgs += self._flaechenlasten_ohne_seitenflaeche(lc, _sl)
@@ -6236,7 +6236,7 @@ class Model:
                             "ist der Nullvektor - das Lager kann nie tragen")
         for cp in self.contact_pairs:
             if not cp.master_elements and not cp.master_faces:
-                msgs.append(f"FEHLER: Kontaktpaar '{cp.name}' ohne Master-Flaeche")
+                msgs.append(f"FEHLER: Kontaktpaar '{cp.name}' ohne Master-Fläche")
             if not cp.slave_nodes:
                 msgs.append(f"FEHLER: Kontaktpaar '{cp.name}' ohne Slave-Knoten")
         # Rechenbarkeit: unvernetzte Geometrie (WARNUNG) und Teiltragwerke ohne

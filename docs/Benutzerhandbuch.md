@@ -1811,8 +1811,9 @@ zur Berechnung gestartet … es wäre gut wenn gerechnete Ergebnisse erhalten
 blieben“). Jetzt stehen die fertigen Lastfälle und Kombinationen nach dem
 Abbruch in der Ergebnisauswahl und im Modellbaum wie nach einem ganzen Lauf.
 Die Statuszeile sagt, was blieb und was offen ist: „Berechnung abgebrochen
-(nach 94 s) - 1 Lastfälle bleiben erhalten, 4 Lastfälle und 72 Kombinationen
-offen“. Zwei Dinge fehlen ausdrücklich, und das Protokoll sagt es:
+(nach 94 s) - 1 Lastfall bleibt erhalten, 4 Lastfälle und 72 Kombinationen
+offen“ (bis zum 03.10.2026 stand dort „1 Lastfälle bleiben erhalten“). Zwei
+Dinge fehlen ausdrücklich, und das Protokoll sagt es:
 
 * **Keine Umhüllenden.** Eine Umhüllende über zwei von fünf Lastfällen sieht
   aus wie eine über alle fünf und wäre schlicht falsch.
@@ -4712,6 +4713,62 @@ Die Tabelle *Kombinationen* gibt beim Kopieren und in CSV und Excel den
 Klartext aus, so wie die Spalte *Art* der Elemente. Im Browser gilt dasselbe
 wie im Programm; die Kennungen der Ergebnisse (env:ULS) bleiben.
 
+### Umlaute und Einzahl in Meldungen und Nachweiszeilen (seit 03.10.2026)
+
+Die Zeilen, die das Programm nach einer Rechnung und bei der Arbeit am Modell
+schreibt, stehen mit Umlauten und nennen ein einzelnes Objekt in der Einzahl.
+Am Einfeldträger aus einem Stab heißt die Zeile der EC3-Nachweise jetzt
+„Nachweise EC3: 1 Stab, 1 Kombination, max. Ausnutzung 0.633 (…) - alle
+erfüllt“. Bis zum 03.10.2026 stand dort „Nachweise EC3: 1 Staebe,
+1 Kombinationen, … - alle erfuellt“, ein überschrittener Stab hieß „1 Staebe
+NICHT erfuellt“, und die Statusleiste zeigte bei einem Element „Netz: 2 Knoten
+· 1 Elemente“.
+
+Das gilt für diese Texte:
+
+* die Nachweiszeilen im Protokoll, in der Statuszeile, im Etikett der Maske
+  *Nachweise* und im Textfeld der Maske *Ergebnisse*: EC3 („1 Stab“,
+  „1 Kombination“, „erfüllt“), Ermüdung („Ermüdung: 1 Stab, …“ und beim
+  maßgebenden Ort „1 Stufe“), Volumen („1 Bereich“), Beulen („1 Feld“),
+  Lasteinleitung („1 Stelle“), Verformungen („1 Nachweis“) und die
+  Knicklängen aus der Knickfigur („1 von 1 Stab beteiligt“);
+* der Fortschritt dieser Nachweise in der Statuszeile, etwa „Ermüdung: 1 Stab
+  mit Kerbfall“ und „Ermüdung fertig“ statt „Ermuedung: 1 Staebe mit
+  Kerbfall“ und „Ermuedung fertig“, und der Vorschlag der Kerbfälle im
+  Protokoll („1 Stab mit gewalztem Querschnitt“);
+* der Hinweis bei großer Torsion („Torsion schöpft die Schubtragfähigkeit
+  allein aus“), der Kopf der Nachweistabellen im Bericht und auf der
+  Kommandozeile („maßgebender Nachweis“, „maßgebend“) und die Beispiele der
+  Kerbfälle in der Auswahlliste der Stabmaske und im Bericht („Längsnaht
+  durchgeschweißt, geprüft“, „Stumpfstoß“, „Schweißnahtüberhöhung“);
+* „Modell prüfen“: „Flächenlast auf Element …“, „ohne Master-Fläche“,
+  „1 Fläche ohne Netz“, „1 Teiltragwerk ist nur durch Kontakt gehalten“ und
+  „1 Knoten trägt kein Element“;
+* die Statusleiste („Netz: 2 Knoten · 1 Element“, „Solver: 1 Ergebnis“), der
+  Fuß jeder Tabelle („1 Zeile“), die Auswahl im Modellbaum („1 Stab
+  ausgewählt (Modellbaum)“), die Sammelmaske („1 Element bearbeiten“), die
+  Rückfrage vor dem Rechnen („1 Fläche (F1) …“) und die Meldungen beim
+  Vernetzen, beim Anlegen von Lasten, Gelenken und Kombinationen, beim
+  Erkennen von Stäben, beim Laden von Ergebnissen und beim Abbruch einer
+  Rechnung („1 Lastfall bleibt erhalten“);
+* die Hinweise zu den Darstellungsarten der Ansicht („gefüllte Flächen, Stäbe
+  mit ihrer Querschnittskontur“) und der Bildtext „überschritten!“ unter der
+  größten Ausnutzung.
+
+Wo mit der Zahl auch das Verb wechselt, folgt es ihr: „1 Bauteil ist nicht
+gehalten“, „1 Stabelement gehört schon zu einem Stab“, „1 Objekt hat kein
+Netz“. Bei null und bei mehr als einem Objekt bleibt der Text, wie er war.
+
+Gespeichert oder eingelesen wird keiner dieser Texte; eine ältere Datei lädt
+also unverändert. Unverändert bleiben auch Einstellungsnamen, Schlüssel in
+Dateien und Beschreibungen, die mit dem Modell gespeichert werden, etwa die
+Beschreibung eines Lastfalls der Kategorie FAT („Ermuedungslast (nur fuer
+Ermuedungsnachweis)“). Noch ohne Umlaute oder mit fester Mehrzahl stehen die
+Zeilen der Rechnung selbst im Protokoll („Lastfaelle: …“, „Gleichungsloeser“,
+„Summe Auflagerkraefte“; sie entstehen im Löser), die Protokolle von Import
+und Export, die Browser-Oberfläche, Teile des Berichts und die Beschreibungen
+von Layern, Subsystemen und Kontaktbedingungen („1 Stäbe, 1 Linien“).
+
 ### Übermaß: die Presspassung als Last
 
 *Register Lager / Kontakt → Fugen / Passungen → „Übermaß"* (bis zum 02.10.2026 im Register Lasten)
@@ -6283,7 +6340,7 @@ erkannt wird —, wird sein Nachweis **nicht geführt**. Die Tabelle zeigt dann
 Ausnutzung 0.000 mit Status „nicht geführt“, die Zeile nach *Nachweise EC3*
 (sie steht auch im Etikett der Maske *Nachweise*, Gruppe „Nachweise führen
 (nach der Berechnung)“) endet mit „- 1 nicht geführt: *Stab*
-(Werkstoff … ohne Streckgrenze)“ statt „- alle erfuellt“, und die größte
+(Werkstoff … ohne Streckgrenze)“ statt „- alle erfüllt“, und die größte
 Ausnutzung dort stammt nur von geführten Stäben. In der Färbung
 „Ausnutzung EC3“ bekommt er keinen Wert und bleibt grau wie jedes Element
 ohne Wert; die Stabtabelle der Maske *Ergebnisse* zeigt in der Spalte

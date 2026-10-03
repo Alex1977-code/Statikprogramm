@@ -147,7 +147,7 @@ def schreiben(eintrag: dict) -> str:
     Threads …) bleiben stehen."""
     d, lesbar = _lesen_streng()
     if not lesbar:
-        raise OSError("einstellungen.json laesst sich nicht lesen - nichts geschrieben")
+        raise OSError("einstellungen.json lässt sich nicht lesen - nichts geschrieben")
     d["fenster"] = dict(eintrag, fassung=FASSUNG)
     return _datei_schreiben(d)
 

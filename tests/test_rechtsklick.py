@@ -619,7 +619,7 @@ def test_element():
         check("Element (Schale E5): Titel und Befehle, ohne „Im Baum zeigen“ (Schalen stehen dort nicht einzeln)",
               objekt(menu) == erwartet and [int(x) for x in w.sel_elemente] == [5], f"{objekt(menu)} {w.sel_elemente}")
         ausloesen(w, app, menu, "Bearbeiten…")
-        check("… „Bearbeiten…“ öffnet die Sammelmaske für E5", _maske(w) == "1 Elemente bearbeiten", repr(_maske(w)))
+        check("… „Bearbeiten…“ öffnet die Sammelmaske für E5", _maske(w) == "1 Element bearbeiten", repr(_maske(w)))
         _vorher_woanders(w)
         ausloesen(w, app, rechtsklick(w, app, P), "In der Tabelle zeigen")
         check("… „In der Tabelle zeigen“: die Elementtabelle vorn, E5 markiert",

@@ -4188,7 +4188,7 @@ def main():
         fragen_ = []
         w._fragen = lambda titel, text: (fragen_.append(text), False)[1]
         check("Vor dem Rechnen: Fläche ohne Netz → Rückfrage; „Nein“ bricht ab",
-              w._vor_rechnung_vernetzen() is False and fragen_ and "1 Flächen" in fragen_[-1], str(fragen_[-1:])[:120])
+              w._vor_rechnung_vernetzen() is False and fragen_ and "1 Fläche (F1)" in fragen_[-1], str(fragen_[-1:])[:120])
         w._fragen = lambda titel, text: True
         check("„Ja“ vernetzt die Fläche und gibt die Berechnung frei",
               w._vor_rechnung_vernetzen() is True and len(m_.flaechen["F1"].elemente or []) == 16
@@ -8539,12 +8539,14 @@ def main():
         check("Abbruch mit Teilergebnis: die gerechneten Lastfälle stehen als Ergebnis bereit",
               w.analysis is an_teil_ and w.cb_result.count() >= len(an_teil_.cases),
               f"{w.cb_result.count()} Einträge für {len(an_teil_.cases)} Lastfälle")
+        # Ein Lastfall: „1 Lastfall bleibt erhalten“ (Einzahl seit 03.10.2026,
+        # Teilpaket 11c; bis dahin „1 Lastfälle bleiben erhalten“)
         check("… die Statuszeile sagt, was erhalten blieb",
               "abgebrochen (nach" in w.statusBar().currentMessage()
-              and "bleiben erhalten" in w.statusBar().currentMessage(),
+              and "1 Lastfall bleibt erhalten" in w.statusBar().currentMessage(),
               w.statusBar().currentMessage()[:90])
         check("… das Protokoll sagt auch, was fehlt (keine Umhüllenden, keine Nachweise)",
-              any("ABBRUCH" in z and "bleiben erhalten" in z for z in neu_)
+              any("ABBRUCH" in z and "1 Lastfall bleibt erhalten" in z for z in neu_)
               and any("Umhüllende und Nachweise" in z for z in neu_),
               str([z for z in neu_ if "ABBRUCH" in z][:1]))
         # Das Probemodell hat nur einen Lastfall - das Teilergebnis ist also

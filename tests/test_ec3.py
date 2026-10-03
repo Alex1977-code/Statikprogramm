@@ -394,25 +394,36 @@ def test_stab_ohne_streckgrenze_nicht_gefuehrt():
           float(bool(zeile) and zeile[0][-1] == "nicht geführt"), 1.0, 0)
     s = d.summary()
     print("     summary():", s)
-    check("ohne f_y: summary() sagt nicht 'alle erfuellt'", float("alle erfuellt" not in s), 1.0, 0)
+    # Positiv (Teilpaket 11c, 03.10.2026): bis dahin pruefte die Zeile nur
+    # "alle erfuellt" not in s - mit dem neuen Text „alle erfüllt“ waere sie
+    # still wahr geblieben. Jetzt: das Urteil am Ende der Zeile ist „1 nicht
+    # geführt“ mit Stab und Grund, direkt hinter der groessten Ausnutzung.
+    urteil = " - 1 nicht geführt: Ohne_fy (Werkstoff Frei ohne Streckgrenze)"
+    check("ohne f_y: summary() endet mit „ - 1 nicht geführt: Ohne_fy (…)“, nicht mit „alle erfüllt“",
+          float(s.splitlines()[0].endswith(") " + urteil[1:]) and "alle erfüllt" not in s), 1.0, 0)
     check("ohne f_y: summary() nennt den Stab als nicht geführt",
           float("1 nicht geführt" in s and "Ohne_fy" in s), 1.0, 0)
     check("ohne f_y: max. Ausnutzung kommt vom gefuehrten Stab",
           float("max. Ausnutzung" in s and "(Traeger:" in s), 1.0, 0)
     zeilen = [z for z in an.summary().splitlines() if z.startswith("Nachweise EC3")]
-    check("ohne f_y: auch Analysis.summary() sagt nicht 'alle erfuellt'",
-          float(bool(zeilen) and "alle erfuellt" not in zeilen[0]), 1.0, 0)
+    check("ohne f_y: auch Analysis.summary() endet mit „ - 1 nicht geführt: Ohne_fy (…)“",
+          float(bool(zeilen) and zeilen[0] == s.splitlines()[0] and zeilen[0].endswith(urteil)), 1.0, 0)
     # Nur der Stab ohne f_y: keine Ausnutzung behaupten, die es nicht gibt
     d1 = check_members(m, an, members=["Ohne_fy"], use_jobs=False)
     s1 = d1.summary()
     print("     summary() nur Ohne_fy:", s1)
-    check("nur ein nicht gefuehrter Stab: keine 'max. Ausnutzung', nicht 'alle erfuellt'",
-          float("max. Ausnutzung" not in s1 and "alle erfuellt" not in s1
-                and "nicht geführt" in s1), 1.0, 0)
-    # Gegenprobe: nur der gefuehrte Stab - dort bleibt es bei "alle erfuellt"
+    # Positiv: auf „1 Kombination“ folgt direkt das Urteil - keine „max.
+    # Ausnutzung“ dazwischen und kein „alle erfüllt“ dahinter
+    check("nur ein nicht gefuehrter Stab: „1 Stab, 1 Kombination - 1 nicht geführt: Ohne_fy (…)“",
+          float(s1.splitlines()[0] == "Nachweise EC3: 1 Stab, 1 Kombination" + urteil), 1.0, 0)
+    # Gegenprobe: nur der gefuehrte Stab - dort steht „alle erfüllt“ am Ende,
+    # direkt hinter der groessten Ausnutzung
     d2 = check_members(m, an, members=["Traeger"], use_jobs=False)
-    check("Gegenprobe nur Traeger: summary() 'alle erfuellt'",
-          float(d2.summary().endswith(" - alle erfuellt")), 1.0, 0)
+    s2 = d2.summary()
+    print("     summary() nur Traeger:", s2)
+    check("Gegenprobe nur Traeger: „1 Stab, … max. Ausnutzung … - alle erfüllt“",
+          float(s2.startswith("Nachweise EC3: 1 Stab, 1 Kombination, max. Ausnutzung ")
+                and s2.splitlines()[0].endswith(" m) - alle erfüllt")), 1.0, 0)
 
 
 def _svg_mit_titel(html: str, titel: str) -> str:

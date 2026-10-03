@@ -269,7 +269,7 @@ def test_meldung_nach_allen_stellungen():
     s = rechne([Stellung("S1", 0.0, "geschlossen", faelle=["LF1"])])
     letzte = (texte(s.info) or [""])[-1]
     check("Gegenprobe, alle gerechnet: die Zeile wie bisher",
-          letzte.startswith("1 Stellungen gerechnet: eta = ") and not texte(s.error), letzte)
+          letzte.startswith("1 Stellung gerechnet: eta = ") and not texte(s.error), letzte)
 
 
 def test_eta_ohne_nachweis():
