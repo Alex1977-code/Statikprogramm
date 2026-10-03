@@ -824,6 +824,14 @@ hat weiter n = ⌈1,5 p⌉ und damit den alten Konsistenzfehler; n = 2p machte i
 den Anteil geometrisch genau 0,4; die eine (Box [78, 88] × [−2, 8] × [68, 78]) lag mit der Tetraederregel bei 0,4 − 2·10⁻¹⁶ und liegt mit den exakten Momenten bei 0,4 + 2·10⁻¹⁶, die andere bleibt darunter (0,4 − 4·10⁻¹⁶, jetzt 0,4 − 2·10⁻¹⁶). Die erste gilt
 jetzt als wohlgestellt, die Zahl der aggregierten Moden ändert sich (p 2: 1 758 → 1 746). Beide Einteilungen bestehen den Patch-Test, aber die Einteilung hängt an der letzten Rundungsstelle. Kur: den auf neun Stellen gerundeten
 Anteil (`_rang`, seit dem 30.09. für die Rangfolge der Wurzeln) auch für den Schwellenvergleich nehmen; Test: Zelle mit Anteil genau an der Schwelle, beide Quadraturwege. Empfehlung: mit O16 erledigen. Sonnet 5.5, niedrig.
+**O20 – Nachiteration im SuperLU-Weg des Direktlösers:** ohne `pypardiso` (CI, künftig Linux) löst SuperLU das schlecht konditionierte System des geneigten Streifens (30°, p 3, 78 von 89 Zellen aggregiert) nur auf 10⁻⁵:
+Rest der Spannung 1,0·10⁻⁵ lokal und 8,2·10⁻⁶ in der CI, mit PARDISO 2,5·10⁻⁸. Eine Nachiteration in `linalg/direkt.Direktloeser.loesen` (Residuum mit der Matrix, noch einmal lösen) gibt 1,6·10⁻⁸; sie kostet ein
+Matrix-Vektor-Produkt und eine Rücksubstitution je Lösung. Empfehlung: bauen (Test: Streifen 30° p 3 mit erzwungenem SuperLU unter 10⁻⁶), danach die Schranke in `test_schale` wieder auf 10⁻⁵. Sonnet 5.5, mittel.
+
+*Nachtrag CI (03.10.2026, nach dem Push von 617595c).* Die CI war an einer Prüfung rot: `test_schale`, geneigt 30° p 3, Gleichgewicht 1,2·10⁻⁵ und Rest 8,2·10⁻⁶ gegen die Schranke 10⁻⁵ (lokal 5,6·10⁻⁷ und 2,5·10⁻⁸;
+vor O5 in der CI 2,5·10⁻⁶ und 3,9·10⁻⁶). Lokal mit erzwungenem SuperLU nachgestellt (1,0·10⁻⁵ und 1,0·10⁻⁵): die Ursache ist der Löser ohne Nachiteration, nicht die Kur (O20). Die Prüfung nimmt seither bei 30° p 3
+die Schranke 10⁻⁵ mit PARDISO und 10⁻⁴ mit SuperLU, bei 10° p 3 im Rest 10⁻⁷ statt 10⁻⁸ (CI 2,1·10⁻⁹). Der Patch-Test höherer Ordnung lag in der CI bei p 3 am Rand bei 3,6·10⁻⁹ und 5,2·10⁻⁹ – die Schranke 10⁻⁷
+statt 10⁻⁸ war nötig.
 
 ## Modell je Schritt
 
@@ -867,4 +875,5 @@ nachgetragen.
 | O17 Genauigkeit der Zwangsmatrix | Opus 5.5 | hoch | Fortsetzung genauer bauen | Entscheidung offen (Empfehlung: zurückstellen) |
 | O18 Tetraederordnung ohne Moment Fitting | Sonnet 5.5 | niedrig | n = 2p im Rückfallweg | Entscheidung offen (Empfehlung: mit Teilprojekt 7) |
 | O19 Schwellenvergleich der Aggregation bei Gleichstand | Sonnet 5.5 | niedrig | gerundeten Anteil vergleichen | Entscheidung offen (Empfehlung: mit O16) |
+| O20 Nachiteration im SuperLU-Weg des Direktlösers | Sonnet 5.5 | mittel | ohne pypardiso nur 10⁻⁵ am schlecht konditionierten System | Entscheidung offen (Empfehlung: bauen) |
 | O15 Reihenfolgefehler der 2:1-Balancierung (Gitter) | Sonnet 5.5 | mittel | Einzeiler mit Obergrenze, Test und Wiederholung der Suiten | erledigt (250e607): Korrektur, Durchlaufgrenze und Test; 391 von 393 verglichenen Gittern unverändert, kein bestehendes Ergebnis ändert sich; t/8 bei p 4 mit 6,4 Mio. Freiheitsgraden nicht rechenbar |

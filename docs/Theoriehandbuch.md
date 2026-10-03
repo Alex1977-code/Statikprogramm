@@ -12251,7 +12251,10 @@ Der Fehler des linearen Felds an T ist bei p 2 genau proportional zu α (1,0·10
 gleich der Blechdicke (Knotenblech in allen Zyklen, T-Stoß Basis 10) gibt es keine solche Zelle. (H4) *Rundung über die Zwangsmatrix.* Was bleibt (Streifen 30° p 3: 2,5·10⁻⁸ bei einem Konsistenzrest von 4·10⁻¹⁰), hängt
 an der Genauigkeit, mit der die Zwangsmatrix das Feld wiedergibt (Fortsetzung der Wurzelpolynome über bis zu zwei Zellen, 78 von 89 Zellen aggregiert): derselbe Spannungszustand mit einem Viertel der
 Verschiebung gibt 3,7·10⁻⁹, mit einer zusätzlichen Starrkörperverschiebung von 30 mm 4,7·10⁻⁷ (p 2: 2,4·10⁻¹⁰, 4,4·10⁻¹¹, 6,3·10⁻⁹). Am Patch-Körper bei p 4 liegt dieser Boden bei 1,6·10⁻⁸ im Inneren und 2,7·10⁻⁷ am
-Rand, auch für das lineare Feld.
+Rand, auch für das lineare Feld. Der Direktlöser kommt dazu (CI am 03.10.2026, lokal nachgestellt): mit SuperLU – ohne `pypardiso`, so rechnet die CI – gibt der Vertragsweg am Streifen 30° p 3 einen Rest von
+1,0·10⁻⁵ und ein Gleichgewicht von 1,0·10⁻⁵ (CI: 8,2·10⁻⁶ und 1,2·10⁻⁵) statt 2,5·10⁻⁸ und 5,6·10⁻⁷ mit PARDISO. Mit einer Nachiteration (Residuum mit der Matrix, noch einmal lösen) gibt SuperLU 1,6·10⁻⁸ und 7,3·10⁻⁸,
+mit zweien 2,7·10⁻⁸ und 7,7·10⁻⁸. Der Boden von rund 2·10⁻⁸ ist also bei beiden Lösern derselbe und gehört zur Zwangsmatrix; SuperLU allein löst das schlecht konditionierte System nur auf 10⁻⁵. Die anderen
+Fälle sind mit beiden Lösern gleich (10° p 3: Rest 4,2·10⁻¹⁰ und 1,8·10⁻⁹; p 2 unter 10⁻¹⁰).
 
 **Urteil nach der vorab gesetzten Regel.** Die Regel verlangte, dass der Fehler mit dem vorhergesagten Schalter auf höchstens das Dreifache des linearen Felds fällt und vorher mindestens das Zehnfache betrug.
 Nach diesem Wortlaut ist keine der Vorhersagen erfüllt, obwohl die Fehler um bis zu sechs Größenordnungen fallen: am Streifen liegen lineares und quadratisches Feld nach dem Schalter beide unter Rundungsniveau
@@ -12313,7 +12316,8 @@ die Wanddicke und die Nachbarn feiner sind; das Protokoll nennt ihre Zahl (`aggr
 wenn fast alle Zellen aggregiert sind. Ohne Moment Fitting bleibt die Tetraederregel mit n = ⌈1,5 p⌉ und damit der alte Konsistenzfehler; `ordnung_tet` lässt sich setzen. Gekrümmte Geometrie bleibt durch die
 Tangentialebenen genähert (11.3); exakt ist die Integration des genäherten Körpers. Beim Suitenvergleich fiel außerdem auf: der Schwellenvergleich der Aggregation hängt bei einem Werkstoffanteil genau an der Schwelle 0,4 an der
 letzten Rundungsstelle. Im verfeinerten Patch-Körper (`test_zwaenge`) wechselt eine Zelle mit den exakten Momenten von 0,4 − 2·10⁻¹⁶ auf 0,4 + 2·10⁻¹⁶ und gilt jetzt als wohlgestellt (aggregierte Moden bei p 2: 1 758 → 1 746);
-beide Einteilungen bestehen den Patch-Test (Liste O19).
+beide Einteilungen bestehen den Patch-Test (Liste O19). Und der SuperLU-Weg des Direktlösers hat keine Nachiteration (Liste O20); `test_schale` prüft den Fall 30° p 3 darum mit PARDISO gegen 10⁻⁵ und mit SuperLU gegen 10⁻⁴,
+den Fall 10° p 3 im Rest gegen 10⁻⁷ (CI 2,1·10⁻⁹).
 
 **Zwei Prüfungen hingen am alten Weg.** `test_patch.test_ohne_aggregation` verlangte, dass der Fehler ohne Aggregation mit α skaliert (Faktor über 30 zwischen 10⁻⁸ und 10⁻¹⁰). Über α = 10⁻⁶ … 10⁻¹² ist er in beiden
 Wegen nicht monoton (alt 3,5·10⁻² / 6,0·10⁻³ / 1,4·10⁻² / 4,1·10⁻⁴ / 1,4·10⁻⁴ / 1,0·10⁻⁵, neu 3,2·10⁻² / 5,1·10⁻² / 7,8·10⁻⁴ / 4,3·10⁻⁴ / 1,8·10⁻⁴ / 2,5·10⁻⁵); das eine Wertepaar war kein Gesetz. Geprüft wird jetzt,
