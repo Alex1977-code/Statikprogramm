@@ -833,6 +833,17 @@ vor O5 in der CI 2,5·10⁻⁶ und 3,9·10⁻⁶). Lokal mit erzwungenem SuperLU
 die Schranke 10⁻⁵ mit PARDISO und 10⁻⁴ mit SuperLU, bei 10° p 3 im Rest 10⁻⁷ statt 10⁻⁸ (CI 2,1·10⁻⁹). Der Patch-Test höherer Ordnung lag in der CI bei p 3 am Rand bei 3,6·10⁻⁹ und 5,2·10⁻⁹ – die Schranke 10⁻⁷
 statt 10⁻⁸ war nötig.
 
+*Regeln O20, vor der Messung festgelegt (03.10.2026, nach Freigabe durch den Anwender: Pull Request 21 gemergt, „merge dann O20“).* **Frage:** Löst eine Nachiteration im SuperLU-Weg den Fall Streifen 30° p 3
+(CI: Rest 8,2·10⁻⁶, Gleichgewicht 1,2·10⁻⁵) auf das Niveau von PARDISO, und was kostet sie? **Kur:** In `linalg/direkt.Direktloeser.loesen` wird im SuperLU-Weg nach dem Lösen das Residuum r = F − K U je rechte Seite
+gebildet; solange ‖r‖∞ / ‖F‖∞ über 10⁻¹³ liegt, höchstens dreimal, und der letzte Schritt das Residuum mindestens auf die Hälfte gesenkt hat, wird U um die Lösung für r ergänzt. Der PARDISO-Weg bleibt unverändert. Das
+Grobgitter des Mehrgitters (`fcm/mehrgitter.py`) bekommt `nachiteration=0`: sein Löser ist ein fester, symmetrischer Vorkonditionierer, und die Nullraumerkennung des Grobgitters (`grob_nullkandidaten`) hängt am Verhalten der
+einfachen Zerlegung. **Zwei unabhängige Größen:** (A) das relative Residuum ‖F − K U‖∞ / ‖F‖∞ des Systems selbst, (B) Rest, Gleichgewicht und Schnittgrößen am Streifen über den Vertragsweg; beide müssen im Urteil übereinstimmen
+(Kur wirkt ⇒ A und B fallen). **Abnahme:** (1) Mit erzwungenem SuperLU (`sys.modules["pypardiso"] = None`) liegen alle fünf Größen des Streifens 30° p 3 unter 10⁻⁶ (PARDISO 2,5·10⁻⁸, ohne Kur 1,0·10⁻⁵) und der Rest bei 10° p 3
+unter 10⁻⁸ (PARDISO 4,2·10⁻¹⁰); (2) mit PARDISO sind die Zahlen von `test_schale` Ziffer für Ziffer die vom 03.10. (der PARDISO-Zweig bleibt unberührt); (3) die Mehrkosten der Nachiteration betragen an zwei Modellen
+(Streifen 30° p 3, Kirsch h 20 p 3) höchstens 10 % der Zeit von Faktorisierung und Lösen mit SuperLU, gemessen an derselben Faktorisierung abwechselnd mit und ohne Nachiteration in einem Prozess; (4) die Kernsuite ist mit
+erzwungenem SuperLU grün (so rechnet die CI); (5) ein Test, der ohne die Kur fehlschlägt: der Fall 30° p 3 mit erzwungenem SuperLU über 10⁻⁶ ohne Nachiteration und unter 10⁻⁶ mit ihr, dazu eine Einheitsprüfung am
+Direktlöser mit einer schlecht konditionierten Matrix. Danach steht die Schranke von `test_schale` für beide Löser wieder bei 10⁻⁵. Wird eine Regel verfehlt, entscheidet der Anwender mit Empfehlung.
+
 ## Modell je Schritt
 
 Der Anwender stellt Modell und Denkstufe vor jedem Schritt von Hand ein; der Stand wird nach jedem Schritt
