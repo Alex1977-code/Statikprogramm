@@ -201,6 +201,40 @@ class Hinweiszeile(QtWidgets.QLabel):
         self._pruefen()
 
 
+class _Kurzzeile(QtWidgets.QLabel):
+    """Eine graue Zeile, die ihren Text am rechten Rand kuerzt (``…``), statt das
+    Register zu verbreitern; der volle Text steht im Tooltip und in :meth:`voll`."""
+
+    def __init__(self, text: str = "", parent=None):
+        super().__init__("", parent)
+        self._voll = ""
+        self.setze(text)
+
+    def voll(self) -> str:
+        return self._voll
+
+    def setze(self, text: str) -> None:
+        self._voll = text
+        self.setToolTip(text)
+        self._kuerzen()
+
+    def _kuerzen(self) -> None:
+        # vor dem ersten Layout ist die Breite eine Vorgabe (100 px): erst dann kuerzen,
+        # wenn die Zeile sichtbar ist und ihre Breite vom Layout hat
+        ziel = (self.fontMetrics().elidedText(self._voll, QtCore.Qt.ElideRight, self.width())
+                if self.isVisible() and self.width() > 20 else self._voll)
+        if ziel != self.text():
+            super().setText(ziel)
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self._kuerzen()
+
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        self._kuerzen()
+
+
 class Einklappabschnitt(QtWidgets.QWidget):
     """Ein Abschnitt mit Kopf, den man auf- und zuklappt (03.10.2026, Paket 13r).
 
@@ -208,6 +242,10 @@ class Einklappabschnitt(QtWidgets.QWidget):
     steht eine graue Zeile, die sagt, was darin liegt - auch ein Klick darauf
     schaltet um, und die Leertaste auf dem Knopf. Tab erreicht den Kopf, der
     zugeklappte Inhalt ist aus der Tabfolge.
+
+    Die graue Zeile hat zwei Texte (:meth:`setze_hinweise`): zugeklappt zum Beispiel
+    das, was von der Vorgabe abweicht, aufgeklappt das, was im Abschnitt liegt. Sie
+    kuerzt am Rand und nennt den ganzen Text im Tooltip; :meth:`hinweis_text` gibt ihn.
 
     Der ``inhalt`` bleibt ein eigenes Widget mit seinen eigenen Kindern: zugeklappt
     blendet nur der Abschnitt ihn als Ganzes aus, jedes Feld darin behaelt seinen
@@ -225,6 +263,7 @@ class Einklappabschnitt(QtWidgets.QWidget):
         self.titel = titel
         self.inhalt = inhalt
         self._offen = bool(offen)
+        self._hinweis_zu = self._hinweis_auf = hinweis
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(2)
@@ -235,14 +274,12 @@ class Einklappabschnitt(QtWidgets.QWidget):
         self.knopf.setCheckable(True)
         self.knopf.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
         self.knopf.setCursor(QtCore.Qt.PointingHandCursor)
-        self.knopf.setToolTip(hinweis or titel)
         self.knopf.toggled.connect(self.aufklappen)
         kopf.addWidget(self.knopf)
         # die graue Zeile treibt die Mindestbreite nicht: Ignored statt Preferred
-        self.hinweis = QtWidgets.QLabel(hinweis)
+        self.hinweis = _Kurzzeile(hinweis)
         self.hinweis.setObjectName("einklapphinweis")
         self.hinweis.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
-        self.hinweis.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
         kopf.addWidget(self.hinweis, 1)
         lay.addLayout(kopf)
         lay.addWidget(inhalt)
@@ -250,6 +287,23 @@ class Einklappabschnitt(QtWidgets.QWidget):
 
     def ist_offen(self) -> bool:
         return self._offen
+
+    def setze_hinweise(self, zu: str, auf: str | None = None) -> None:
+        """Die Texte der grauen Zeile: ``zu`` solange zugeklappt, ``auf`` aufgeklappt
+        (ohne Angabe derselbe). Der Aufrufer ruft es bei jeder Aenderung neu auf."""
+        self._hinweis_zu = zu
+        self._hinweis_auf = zu if auf is None else auf
+        self._hinweis_zeigen()
+
+    def hinweis_text(self) -> str:
+        """Der ganze Text der grauen Zeile (sie selbst zeigt ihn nur, soweit er passt)."""
+        return self.hinweis.voll()
+
+    def _hinweis_zeigen(self) -> None:
+        text = self._hinweis_auf if self._offen else self._hinweis_zu
+        self.hinweis.setze(text)
+        # auch der Knopf nennt den ganzen Text
+        self.knopf.setToolTip(f"{self.titel}: {text}" if text else self.titel)
 
     def aufklappen(self, an: bool = True) -> None:
         """Auf- oder zuklappen; meldet ``umgeschaltet``, wenn sich etwas aendert."""
@@ -267,6 +321,7 @@ class Einklappabschnitt(QtWidgets.QWidget):
         self.knopf.blockSignals(False)
         self.knopf.setText(("▾  " if an else "▸  ") + self.titel)
         self.knopf.setAccessibleName(f"{self.titel}, {'aufgeklappt' if an else 'zugeklappt'}")
+        self._hinweis_zeigen()
         self.inhalt.setVisible(an)
 
     def mousePressEvent(self, ev):

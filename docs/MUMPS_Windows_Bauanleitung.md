@@ -4,7 +4,7 @@ Anweisung für eine eigene Sitzung (Claude Code oder von Hand); Pfade sind
 relativ zum Klon von Statikprogramm. Ziel: ein
 `mumps`-Python-Paket unter Windows, das `from mumps import DMumpsContext`
 liefert, damit Statik3D den Gleichungslöser **MUMPS** in der Auswahl
-*Berechnung → Einstellungen → Gleichungslöser* nutzen kann.
+*Berechnung → Einstellungen → Experten → Gleichungslöser* nutzen kann.
 
 Stand 13.09.2026. Lizenz von MUMPS: CeCILL-C (LGPL-artig) – darf mit der
 exe ausgeliefert werden. Alles, was hier „prüfen“ heißt, ist beim

@@ -241,7 +241,7 @@ def _melde(progress, text: str, anteil: float = None) -> None:
         progress(text)
 
 
-#: Die Loeser zur Auswahl (Berechnung -> Einstellungen): Schluessel ->
+#: Die Loeser zur Auswahl (Berechnung -> Einstellungen -> Experten): Schluessel ->
 #: (Name, Python-Paket, Lizenz, Art). Lizenzrechtlich sauber heisst: in der
 #: gepackten exe stecken nur MKL (Intel Simplified Software License, frei
 #: weitergebbar), SuperLU (BSD, in scipy), PyAMG (MIT) und MUMPS (CeCILL-C,
@@ -354,7 +354,7 @@ def loeser_verfuegbar(backend: str = "") -> str:
     """Womit die naechste Rechnung loesen wird - ohne zu faktorisieren.
 
     Fuer die Meldung beim Start einer Rechnung. Genannt wird der
-    **eingestellte** Loeser (Berechnung -> Einstellungen), nicht der
+    **eingestellte** Loeser (Berechnung -> Einstellungen -> Experten), nicht der
     erstbeste vorhandene: wer MUMPS gewaehlt hatte, las hier bis zum
     14.09.2026 "MKL PARDISO, 16 Threads", waehrend MUMPS mit acht Threads
     rechnete - die Ergebniszeile sagte es richtig, die Kopfzeile nicht.
@@ -884,7 +884,7 @@ class LinearSolver:
         text = (f"Das Gleichungssystem ist zu groß für MKL PARDISO: {self.n} Zeilen und "
                 f"{nnz / 1e6:.0f} Mio. Einträge; die Schnittstelle fasst {INT32_MAX} "
                 f"(32-Bit-Indizes). MUMPS, ama und SuperLU rechnen mit 64 Bit - "
-                f"Berechnung \u2192 Einstellungen \u2192 Gleichungslöser.")
+                f"Berechnung \u2192 Einstellungen \u2192 Experten \u2192 Gleichungslöser.")
         if verlangt:
             raise RuntimeError(text)
         _log_einmal(text + " Es wird auf einen anderen Löser ausgewichen.")

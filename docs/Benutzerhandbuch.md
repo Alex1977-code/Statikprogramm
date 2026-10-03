@@ -6073,9 +6073,17 @@ mit den Nachiterationen, die Rechenketten und die Rechnerfarm. Die Vorgaben
 passen für die meisten Modelle; wer sie ändern will, klappt den Abschnitt mit
 einem Klick auf „Experten“ auf (ebenso mit der Leertaste, wenn der Kopf den
 Fokus hat, oder mit einem Klick auf die graue Zeile daneben). Auch zugeklappt
-gelten die eingestellten Werte, und sie werden wie bisher gespeichert. Ob der
-Abschnitt zuletzt auf oder zu war, merkt sich das Programm in
-`einstellungen.json` (Schlüssel „abschnitte“); die Vorgabe ist zu.
+gelten die eingestellten Werte, und sie werden wie bisher gespeichert. Solange
+der Abschnitt zu ist, nennt die graue Zeile neben „Experten“, was von der Vorgabe
+abweicht, zum Beispiel „Löser: SuperLU · Threads 1 · 2 Ketten · Rechnerfarm“,
+und sonst „Vorgaben“; sie folgt jeder Änderung eines Feldes. Ist sie zu lang für
+die Zeile, kürzt sie am Rand, und der Tooltip nennt alles. Aufgeklappt steht dort,
+was im Abschnitt liegt. Ob der Abschnitt zuletzt auf oder zu war, merkt sich das
+Programm in `einstellungen.json` (Schlüssel „abschnitte“); die Vorgabe ist zu. Das
+Programm schreibt die Datei in einem Zug (erst in eine Hilfsdatei, dann ersetzt es
+die alte), und lässt sie sich nicht lesen, schreibt es nichts hinein, damit
+Löser, Threads und Fensteraufteilung nicht verloren gehen; der Zustand der
+Experten gilt dann nur bis zum Beenden.
 
 Bis zum 02.10.2026 stand „BERECHNEN (F5)“ ganz unten im Register, hinter der
 offenen Gruppe „Parallelisierung“ mit zehn Zeilen und hinter der Plastizität;
@@ -6084,11 +6092,13 @@ die Zusammenfassung stand noch darunter. Das Register war außerdem 873 px breit
 Es braucht jetzt höchstens 435 px, zugeklappt wie aufgeklappt (ebenso gemessen),
 und rollt nicht mehr waagerecht. Dafür stehen die Felder der Plastizität in
 kürzeren Zeilen, höchstens zwei je Zeile, und das Kästchen „Tetraeder ohne
-volumetrische Versteifung (knotengemittelte Dilatation)“ hat zwei Zeilen; die
-Auswahllisten von Löser und Threads zeigen lange Einträge gekürzt, die
-aufgeklappte Liste zeigt sie ganz. Die Wahl der Elemente (Entwurf, Mittel,
-Fein) steht nicht in diesem Register, sondern in den Netzeinstellungen, im Feld
-„Elemente“.
+volumetrische Versteifung (knotengemittelte Dilatation)“ hat zwei Zeilen. Die vier
+langen Auswahllisten (Gleichungslöser, Threads, Lastfälle gleichzeitig und
+Arbeitsprozesse je Kette) nehmen den freien Rest ihrer Zeile und kürzen einen langen
+Eintrag nur, wenn der Platz nicht reicht; der Tooltip nennt den vollen aktuellen
+Text und darunter weiter die Erklärung der Liste, die aufgeklappte Liste zeigt die
+Einträge ganz. Die Wahl der Elemente (Entwurf, Mittel, Fein) steht nicht in diesem
+Register, sondern in den Netzeinstellungen, im Feld „Elemente“.
 
 **Arbeiterpool nach Speicher (seit 27.09.2026).** Die Elementschleifen
 laufen in einem Pool von Arbeitsprozessen, Vorgabe alle Kerne bis auf einen.
@@ -6361,8 +6371,9 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   Ableitung (nachgemessen am 22.09.2026, auch tet10 und hex8); frühere
   Hinweise, beim tet10 sei sie nur genähert, gelten nicht mehr.
 * **Fließen und Kontakt: verschachtelt oder gemeinsam** (seit 23.09.2026
-  wählbar; *Berechnung → Einstellungen*, „mit Kontakt“ neben dem Verfahren;
-  eine Einstellung am Modell, `plastizitaet.kontakt`; gilt nur mit Kontakt).
+  wählbar; *Berechnung → Einstellungen*, „Verfahren mit Kontakt“ in einer eigenen
+  Zeile unter dem Verfahren - bis zum 02.10.2026 stand „mit Kontakt“ neben dem
+  Verfahren; eine Einstellung am Modell, `plastizitaet.kontakt`; gilt nur mit Kontakt).
   **Vorgabe ist „verschachtelt“** (seit dem 24.09.2026 wieder): jeder
   Newton-Schritt der Plastizität iteriert den Kontakt aus, genau wie vor dem
   23.09.2026 — bitgleiche Zahlen, dieselbe Zahl Faktorisierungen; neu ist

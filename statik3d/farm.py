@@ -15,7 +15,7 @@ Start:
 
 Fuer den Anwender ohne Kommandozeile (13.09.2026, "die Rechnerfarm muss
 benutzerfreundlicher funktionieren"): der Arbeitsplatz schaltet die Farm in
-Berechnung -> Einstellungen ein und **kuendigt sich per UDP-Rundruf an**
+Berechnung -> Einstellungen -> Experten ein und **kuendigt sich per UDP-Rundruf an**
 (start_ankuendigung, Port 5556); ein Helfer startet ``Statik3D.exe
 --rechenhilfe`` oder Extras -> Als Rechenhilfe arbeiten..., drueckt
 "Arbeitsplatz suchen" (server_suchen) und "Verbinden" - ohne IP zu tippen.

@@ -21,6 +21,19 @@ hinter der Plastizitaet; die Zusammenfassung stand darunter. Der Bereich war
 * der Bereich ist einspaltig und hoechstens etwa 460 px breit (mit echten
   Schriften geprueft; ohne Schrift im Offscreen-Lauf entfaellt diese Pruefung).
 
+Nachzug nach der Gegenpruefung vom 03.10.2026:
+
+* jeder Weg „Berechnung → Einstellungen → …“ zu Loeser, Threads, Prozessen und
+  Farm nennt in Texten, Docstrings und Kommentaren von statik3d/ und in den
+  Handbuechern auch „Experten“ (die Pruefung liest den Quelltext mit ast und
+  tokenize und erkennt die Schreibweisen „→“, „->“ und „\\u2192“);
+* die vier langen Auswahllisten (Loeser, Threads, Ketten, Arbeitsprozesse je
+  Kette) nehmen die ganze Zeile und tragen den vollen aktuellen Text im Tooltip;
+* die graue Zeile am Kopf „Experten“ nennt zugeklappt, was von der Vorgabe
+  abweicht, und folgt jeder Aenderung;
+* ein Lesefehler an einstellungen.json (nicht „fehlt“, nicht „kaputt“) laesst die
+  Datei unberuehrt, und geschrieben wird atomar.
+
 Aufruf:  python -m tests.test_register_berechnung
 """
 import json
@@ -418,9 +431,366 @@ def test_breite():
           f"Dock {w.eingaben_dock.width()} px, Balken {sa.horizontalScrollBar().isVisible()}")
 
 
+# --------------------------------------------------------------------------
+# Nachzug 03.10.2026
+# --------------------------------------------------------------------------
+PFEIL = r"(?:→|->)"
+#: Ziele unter „Berechnung → Einstellungen“, die nicht in den Experten liegen
+#: (die Plastizitaet steht sichtbar im Register)
+AUSSERHALB_EXPERTEN = ("Plastizität", "Fließen", "Dilatation")
+
+
+def _pfadfehler(text: str, streng: bool = True) -> list:
+    """Die Stellen in einem Text, die einen Weg zu den Experten-Feldern ohne „Experten“ nennen.
+
+    ``streng``: auch ein Weg „Berechnung → Einstellungen“ ohne Ziel gilt als Fehler (Quelltext);
+    die Handbuecher nennen so auch das Register selbst, etwa fuer die Plastizitaet."""
+    import re
+    # Markdown-Sternchen und Zeilenumbrueche stoeren den Weg nicht
+    text = re.sub(r"\s+", " ", text.replace("*", ""))
+    nackt = re.compile(r"Berechnung\s*" + PFEIL + r"\s*Einstellungen(?!\s*" + PFEIL + r"\s*(?:Experten|"
+                       + "|".join(AUSSERHALB_EXPERTEN) + "))")
+    ziel = re.compile(r"Einstellungen\s*" + PFEIL + r"\s*(?!Experten)(?:Gleichungsl|Löser|Loeser|Threads|"
+                      r"Prozesse|Rechnerfarm|Genauigkeit|Ketten|Backend|Nachiteration|Arbeitsprozesse)")
+    alt = re.compile(r"Berechnung\s*" + PFEIL + r"\s*(?:Prozesse|Backend|Gleichungsl|Threads|Rechnerfarm)")
+    regeln = (nackt, ziel, alt) if streng else (ziel, alt)
+    return [text[max(0, m.start() - 25):m.end() + 30] for rx in regeln for m in rx.finditer(text)]
+
+
+def test_pfade_nennen_experten():
+    """Die Wege zu Loeser, Threads, Prozessen und Farm nennen „Experten“."""
+    import ast
+    import io
+    import tokenize
+    # die Regel selbst: erkennt sie die alten Schreibweisen, laesst sie die neuen durch?
+    schlecht = ["Berechnung \u2192 Einstellungen \u2192 Gleichungslöser.", "Berechnung -> Einstellungen ein",
+                "unter Berechnung → Einstellungen)", "GUI → Berechnung → Prozesse",
+                "*Berechnung →\n  Einstellungen → Rechnerfarm einschalten*"]
+    gut = ["Berechnung \u2192 Einstellungen \u2192 Experten \u2192 Gleichungslöser.",
+           "Berechnung -> Einstellungen -> Experten ein", "*Berechnung →\n Einstellungen → Experten → Prozesse*",
+           "Berechnung → Einstellungen → Plastizität", "Netzeinstellungen → Vernetzer"]
+    check("Die Regel erkennt Wege ohne „Experten“ in jeder Schreibweise",
+          all(_pfadfehler(s) for s in schlecht), str([bool(_pfadfehler(s)) for s in schlecht]))
+    check("… und lässt Wege mit „Experten“ und zur Plastizität durch",
+          not any(_pfadfehler(s) for s in gut) and not _pfadfehler("unter *Berechnung → Einstellungen*, Plastizität", False),
+          str([_pfadfehler(s) for s in gut if _pfadfehler(s)]))
+    stamm = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "statik3d")
+    funde, mit_experten, dateien = [], 0, 0
+    for dp, dn, fn in os.walk(stamm):
+        dn[:] = [d for d in dn if d != "__pycache__"]
+        for n in fn:
+            if not n.endswith(".py"):
+                continue
+            dateien += 1
+            p = os.path.join(dp, n)
+            with io.open(p, encoding="utf-8") as f:
+                src = f.read()
+            texte = []
+            for node in ast.walk(ast.parse(src)):
+                if isinstance(node, ast.JoinedStr):
+                    texte.append((node.lineno, "".join(v.value if isinstance(v, ast.Constant) else "{}"
+                                                       for v in node.values)))
+                elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+                    texte.append((node.lineno, node.value))
+            for tok in tokenize.generate_tokens(io.StringIO(src).readline):
+                if tok.type == tokenize.COMMENT:
+                    texte.append((tok.start[0], tok.string))
+            for ln, text in texte:
+                for stelle in _pfadfehler(text):
+                    funde.append(f"{os.path.relpath(p, os.path.dirname(stamm))}:{ln} {stelle!r}")
+                if "Einstellungen" in text and "Experten" in text:
+                    mit_experten += 1
+    check("In statik3d/ nennt jeder Weg zu Löser, Threads, Prozessen und Farm „Experten“ "
+          "(Texte, Docstrings, Kommentare)", not funde, "; ".join(funde[:3]))
+    check("… und die Prüfung hat etwas gelesen (viele Dateien, mehrere Wege mit „Experten“)",
+          dateien > 50 and mit_experten >= 8, f"{dateien} Dateien, {mit_experten} Stellen mit Experten")
+    # die Handbuecher
+    docs = os.path.join(os.path.dirname(stamm), "docs")
+    funde = []
+    for n in sorted(os.listdir(docs)):
+        if n.endswith(".md"):
+            with io.open(os.path.join(docs, n), encoding="utf-8") as f:
+                for stelle in _pfadfehler(f.read(), streng=False):
+                    funde.append(f"{n} {stelle!r}")
+    check("In docs/*.md nennt jeder Weg zu Löser, Threads, Prozessen und Farm „Experten“",
+          not funde, "; ".join(funde[:3]))
+    with io.open(os.path.join(docs, "Rechnerfarm.md"), encoding="utf-8") as f:
+        farm = f.read()
+    check("Rechnerfarm.md nennt die heutigen Namen: Backend „lokal und Rechnerfarm“, Knopf „Rechnerfarm einschalten“",
+          "lokal und Rechnerfarm" in farm and farm.count("Rechnerfarm einschalten") >= 2
+          and "Lokalen Server + Worker starten" not in farm)
+    for n in ("Benutzerhandbuch.md", "Theoriehandbuch.md"):
+        with io.open(os.path.join(docs, n), encoding="utf-8") as f:
+            text = f.read()
+        check(f"{n}: „Verfahren mit Kontakt“ in eigener Zeile statt „mit Kontakt“ neben dem Verfahren",
+              "Verfahren mit Kontakt" in text
+              and "*Berechnung → Einstellungen*, „mit Kontakt“" not in text)
+
+
+def test_listen_breit_mit_tooltip():
+    """Die vier langen Listen nehmen die Zeile und nennen ihren vollen Text im Tooltip."""
+    from PySide6 import QtCore, QtWidgets
+    from statik3d import solver
+    w, app = _fenster()
+    sa, inh = _register(w, app)
+    ex = getattr(w, "experten", None)
+    if ex is None:
+        check("Experten vorhanden (Listen)", False)
+        return
+    ex.aufklappen(True)
+    app.processEvents()
+    listen = {"cb_loeser": "Gleichungslöser", "cb_threads": "Threads", "cb_ketten": "Ketten",
+              "cb_kettenarb": "Arbeitsprozesse"}
+    try:
+        for name in listen:
+            cb = getattr(w, name)
+            zeile = cb.parentWidget()
+            Exp = QtWidgets.QSizePolicy.Expanding
+            check(f"{name}: Größenregel Expanding und Zeile mit Dehnfaktor 1",
+                  cb.sizePolicy().horizontalPolicy() == Exp
+                  and zeile.layout().stretch(zeile.layout().indexOf(cb)) == 1,
+                  f"{cb.sizePolicy().horizontalPolicy()} / {zeile.layout().stretch(zeile.layout().indexOf(cb))}")
+            rest = zeile.width() - cb.geometry().right() - 1
+            check(f"{name}: die Liste reicht bis ans Ende der Zeile", 0 <= rest <= 6,
+                  f"Zeile {zeile.width()} px, Liste bis {cb.geometry().right()}")
+            check(f"{name}: der Tooltip nennt den vollen aktuellen Text",
+                  cb.currentText() in cb.toolTip(), cb.toolTip()[:60].replace("\n", " "))
+            check(f"{name}: … und behält die Erklärung der Liste",
+                  len(cb.toolTip()) > len(cb.currentText()) + 40, f"{len(cb.toolTip())} Zeichen")
+        # bei Wechsel nachziehen
+        for name, ziel in (("cb_loeser", "superlu"), ("cb_ketten", 4), ("cb_kettenarb", 4)):
+            cb = getattr(w, name)
+            i = cb.findData(ziel)
+            if i >= 0:
+                cb.setCurrentIndex(i)
+                app.processEvents()
+                check(f"{name}: beim Wechsel zieht der Tooltip nach", cb.currentText() in cb.toolTip(),
+                      cb.toolTip()[:60].replace("\n", " "))
+        w.cb_threads.setCurrentIndex(w.cb_threads.count() - 1)
+        check("cb_threads: beim Wechsel zieht der Tooltip nach", w.cb_threads.currentText() in w.cb_threads.toolTip(),
+              w.cb_threads.toolTip()[:50].replace("\n", " "))
+        # die Liste neu fuellen (Nachladen von MUMPS): Tooltip nennt wieder den gewaehlten Eintrag
+        w._loeserliste_neu()
+        app.processEvents()
+        check("cb_loeser: nach dem Neufüllen der Liste stimmt der Tooltip noch",
+              w.cb_loeser.currentText() in w.cb_loeser.toolTip() and "automatisch" in w.cb_threads.itemText(0)
+              and w.cb_threads.currentText() in w.cb_threads.toolTip())
+        i_m = w.cb_loeser.findData("superlu")
+        tip = w.cb_loeser.itemData(i_m, QtCore.Qt.ToolTipRole)
+        check("… die Lizenz-Tooltips der Einträge bleiben", isinstance(tip, str) and tip.startswith("Lizenz:"), str(tip)[:40])
+        check("… und der Löser-Tooltip erklärt weiter die Auswahl (Vorgabe MKL PARDISO)",
+              "Vorgabe MKL PARDISO" in w.cb_loeser.toolTip())
+        if _FENSTER.get("echte_schrift"):
+            app.processEvents()
+            check("Aufgeklappt braucht das Register weiter höchstens 450 px",
+                  inh.minimumSizeHint().width() <= 450, f"{inh.minimumSizeHint().width()} px")
+            check("… und rollt bei 460 px nicht waagerecht", not sa.horizontalScrollBar().isVisible())
+    finally:
+        w.cb_loeser.setCurrentIndex(0)
+        w.cb_threads.setCurrentIndex(0)
+        w.cb_ketten.setCurrentIndex(max(0, w.cb_ketten.findData(1)))
+        w.cb_kettenarb.setCurrentIndex(0)
+        ex.aufklappen(False)
+        app.processEvents()
+
+
+def test_kopfzeile_abweichungen():
+    """Zugeklappt nennt die graue Zeile, was von der Vorgabe abweicht."""
+    from PySide6 import QtCore, QtTest
+    from statik3d import parallel
+    w, app = _fenster()
+    sa, inh = _register(w, app)
+    ex = getattr(w, "experten", None)
+    if ex is None:
+        check("Experten vorhanden (Kopfzeile)", False)
+        return
+    ex.aufklappen(False)
+    # Vorgaben herstellen
+    st0 = parallel.Settings()
+    w.sp_workers.setValue(st0.workers)
+    w.cb_loeser.setCurrentIndex(0)
+    w.cb_threads.setCurrentIndex(0)
+    w.cb_genau.setCurrentIndex(w.cb_genau.findData(1e-6))
+    w.cb_nachit.setCurrentIndex(w.cb_nachit.findData(3))
+    w.cb_ketten.setCurrentIndex(w.cb_ketten.findData(1))
+    w.cb_kettenarb.setCurrentIndex(0)
+    w.cb_backend.setCurrentIndex(0)
+    app.processEvents()
+    check("Alles auf Vorgabe: die graue Zeile sagt „Vorgaben“", ex.hinweis_text() == "Vorgaben", ex.hinweis_text())
+    w.cb_loeser.setCurrentIndex(w.cb_loeser.findData("superlu"))
+    check("Ein anderer Löser steht sofort in der Zeile („Löser: SuperLU“)",
+          ex.hinweis_text() == "Löser: SuperLU", ex.hinweis_text())
+    i_t = w.cb_threads.findData(1)
+    w.cb_threads.setCurrentIndex(i_t)
+    w.cb_ketten.setCurrentIndex(w.cb_ketten.findData(2))
+    w.cb_backend.setCurrentIndex(1)
+    app.processEvents()
+    check("… dazu Threads, Ketten und die Rechnerfarm, getrennt durch „ · “",
+          ex.hinweis_text() == "Löser: SuperLU · Threads 1 · 2 Ketten · Rechnerfarm", ex.hinweis_text())
+    w.cb_genau.setCurrentIndex(w.cb_genau.findData(1e-4))
+    w.cb_nachit.setCurrentIndex(w.cb_nachit.findData(5))
+    w.cb_kettenarb.setCurrentIndex(w.cb_kettenarb.findData(4))
+    w.sp_workers.setValue(2 if st0.workers != 2 else 3)
+    app.processEvents()
+    text = ex.hinweis_text()
+    check("… ebenso Prozesse, Genauigkeit, Nachiterationen und Arbeitsprozesse je Kette",
+          all(s in text for s in ("Prozesse ", "Genauigkeit locker (1e-4)", "Nachiterationen bis 5",
+                                  "4 Arbeitsprozesse je Kette")), text)
+    check("Die Zeile am Kopf trägt den ganzen Text im Tooltip (sie kürzt, statt zu verbreitern)",
+          ex.hinweis.toolTip() == text, ex.hinweis.toolTip()[:50])
+    check("… und die Mindestbreite des Registers bleibt klein (Zeile mit Ignored)",
+          (not _FENSTER.get("echte_schrift")) or inh.minimumSizeHint().width() <= 450,
+          f"{inh.minimumSizeHint().width()} px")
+    # aufgeklappt steht der feste Text, zugeklappt wieder die Abweichungen
+    ex.aufklappen(True)
+    app.processEvents()
+    check("Aufgeklappt steht der feste Text („Gleichungslöser, Threads, Prozesse, Rechnerfarm“)",
+          ex.hinweis_text() == "Gleichungslöser, Threads, Prozesse, Rechnerfarm", ex.hinweis_text())
+    ex.aufklappen(False)
+    app.processEvents()
+    check("Zugeklappt nennt sie wieder die Abweichungen", ex.hinweis_text() == text, ex.hinweis_text())
+    QtTest.QTest.mouseClick(ex.hinweis, QtCore.Qt.LeftButton)
+    app.processEvents()
+    check("Ein Klick auf die graue Zeile klappt weiter auf", ex.ist_offen())
+    ex.aufklappen(False)
+    # zurueck auf Vorgabe
+    w.sp_workers.setValue(st0.workers)
+    w.cb_loeser.setCurrentIndex(0)
+    w.cb_threads.setCurrentIndex(0)
+    w.cb_genau.setCurrentIndex(w.cb_genau.findData(1e-6))
+    w.cb_nachit.setCurrentIndex(w.cb_nachit.findData(3))
+    w.cb_ketten.setCurrentIndex(w.cb_ketten.findData(1))
+    w.cb_kettenarb.setCurrentIndex(0)
+    w.cb_backend.setCurrentIndex(0)
+    app.processEvents()
+    check("Zurück auf die Vorgaben: wieder „Vorgaben“", ex.hinweis_text() == "Vorgaben", ex.hinweis_text())
+
+
+def test_einstellungsdatei_schutz():
+    """abschnitt_merken: Lesefehler lassen die Datei stehen, Schreiben ist atomar."""
+    import builtins
+    from statik3d.gui import fenster as fen
+    pfad = EINSTELLUNGEN
+    ordner = os.path.dirname(pfad)
+    inhalt = {"solver_threads": 7, "solver_backend": "superlu",
+              "fenster": {"fassung": fen.FASSUNG, "geometrie": [1, 2, 3, 4], "maximiert": False}}
+
+    def schreibe(d):
+        with open(pfad, "w", encoding="utf-8") as f:
+            json.dump(d, f)
+
+    def lies():
+        with open(pfad, encoding="utf-8") as f:
+            return json.load(f)
+
+    def roh():
+        with open(pfad, "rb") as f:
+            return f.read()
+
+    schreibe(inhalt)
+    r = fen.abschnitt_merken("berechnung_experten", True)
+    d = lies()
+    check("abschnitt_merken lässt „solver_threads“ und „fenster“ stehen und schreibt „abschnitte“",
+          r == pfad and d.get("solver_threads") == 7 and d.get("solver_backend") == "superlu"
+          and d.get("fenster") == inhalt["fenster"] and d.get("abschnitte") == {"berechnung_experten": True}, str(sorted(d)))
+    fen.abschnitt_merken("anderer", False)
+    check("… ein zweiter Abschnitt kommt dazu, der erste bleibt",
+          lies().get("abschnitte") == {"berechnung_experten": True, "anderer": False})
+    check("… und es bleiben keine Hilfsdateien liegen", os.listdir(ordner) == [os.path.basename(pfad)],
+          str(os.listdir(ordner)))
+    # Lesefehler (nicht „fehlt“, nicht „kaputt“): nichts schreiben
+    schreibe(inhalt)
+    vorher = roh()
+    echt_open = builtins.open
+    zaehler = {"n": 0}
+
+    def sperre(datei, mode="r", *a, **k):
+        if str(datei) == pfad and "r" in mode and "b" not in mode:
+            zaehler["n"] += 1
+            raise PermissionError(13, "Zugriff verweigert", pfad)
+        return echt_open(datei, mode, *a, **k)
+
+    builtins.open = sperre
+    try:
+        r = fen.abschnitt_merken("berechnung_experten", True)
+        gemerkt = fen.abschnitt_offen("berechnung_experten")
+        ohne_merken = fen.abschnitt_offen("noch_nie_gemerkt")
+    finally:
+        builtins.open = echt_open
+    check("Lesefehler (PermissionError): abschnitt_merken schreibt nichts, die Datei bleibt byteweise gleich",
+          r is None and roh() == vorher and zaehler["n"] >= 1, f"Rückgabe {r}, gelesen {zaehler['n']}x")
+    check("… der Zustand bleibt im Speicher: abschnitt_offen kennt ihn, ein unbekannter gilt als Vorgabe",
+          gemerkt is True and ohne_merken is False, f"{gemerkt} / {ohne_merken}")
+    check("… und nach dem Fehler schreibt der nächste Aufruf wieder, mit allen Schlüsseln",
+          fen.abschnitt_merken("berechnung_experten", False) == pfad and lies().get("solver_threads") == 7
+          and lies()["abschnitte"] == {"berechnung_experten": False} and lies().get("fenster") == inhalt["fenster"])
+    # fenster.schreiben: derselbe Schutz
+    schreibe(inhalt)
+    vorher = roh()
+    builtins.open = sperre
+    try:
+        try:
+            fen.schreiben({"geometrie": [9, 9, 9, 9], "maximiert": True})
+            wirft = False
+        except OSError:
+            wirft = True
+    finally:
+        builtins.open = echt_open
+    check("fenster.schreiben bei Lesefehler: wirft OSError (der Aufrufer fängt es) und lässt die Datei stehen",
+          wirft and roh() == vorher)
+    # fehlende Datei und kaputtes JSON: wie bisher neu schreiben
+    os.remove(pfad)
+    check("Fehlende Datei: wird neu angelegt", fen.abschnitt_merken("a", True) == pfad and lies() == {"abschnitte": {"a": True}})
+    with open(pfad, "w", encoding="utf-8") as f:
+        f.write("{kein json")
+    check("Kaputtes JSON: wie bisher neu geschrieben", fen.abschnitt_merken("a", True) == pfad
+          and lies() == {"abschnitte": {"a": True}})
+    # atomar: scheitert das Schreiben mittendrin, bleibt die alte Datei ganz
+    schreibe(inhalt)
+    vorher = roh()
+    echt_dump = fen.json.dump
+
+    def kaputt_dump(obj, fp, *a, **k):
+        fp.write('{"abgebrochen": ')
+        raise OSError(28, "Kein Speicherplatz mehr")
+
+    fen.json.dump = kaputt_dump
+    try:
+        r = fen.abschnitt_merken("berechnung_experten", True)
+        try:
+            fen.schreiben({"geometrie": [1, 1, 1, 1]})
+            wirft = False
+        except OSError:
+            wirft = True
+    finally:
+        fen.json.dump = echt_dump
+    check("Atomar: scheitert das Schreiben mittendrin, bleibt die alte Datei ganz (abschnitt_merken und schreiben)",
+          r is None and wirft and roh() == vorher, f"{len(roh())} gegen {len(vorher)} Byte")
+    check("… und es bleibt keine halbe Hilfsdatei liegen", os.listdir(ordner) == [os.path.basename(pfad)], str(os.listdir(ordner)))
+    # STATIK3D_FENSTER=fest: nichts geschrieben, nichts gelesen
+    schreibe(inhalt)
+    vorher = roh()
+    alt = os.environ.get("STATIK3D_FENSTER")
+    os.environ["STATIK3D_FENSTER"] = "fest"
+    try:
+        r = fen.abschnitt_merken("berechnung_experten", True)
+        offen = fen.abschnitt_offen("berechnung_experten")
+        offen_vorgabe = fen.abschnitt_offen("berechnung_experten", True)
+    finally:
+        if alt is None:
+            os.environ.pop("STATIK3D_FENSTER", None)
+        else:
+            os.environ["STATIK3D_FENSTER"] = alt
+    check("STATIK3D_FENSTER=fest: abschnitt_merken schreibt nichts, abschnitt_offen gibt die Vorgabe",
+          r is None and roh() == vorher and offen is False and offen_vorgabe is True, f"{r} {offen} {offen_vorgabe}")
+    schreibe({})
+
+
 def main():
     for f in (test_reihenfolge, test_inhalt_der_experten, test_vorgabe_zu, test_aufklappen,
-              test_werte_zugeklappt, test_zustand_wird_gemerkt, test_nichts_zur_elementwahl, test_breite):
+              test_werte_zugeklappt, test_zustand_wird_gemerkt, test_nichts_zur_elementwahl, test_breite,
+              test_pfade_nennen_experten, test_listen_breit_mit_tooltip, test_kopfzeile_abweichungen,
+              test_einstellungsdatei_schutz):
         try:
             f()
         except Exception as ex:          # noqa: BLE001

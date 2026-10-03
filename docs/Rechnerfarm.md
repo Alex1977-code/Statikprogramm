@@ -16,7 +16,8 @@ Standardmäßig nutzt Statik3D alle Prozessorkerne des Rechners bis auf einen
   parallel; Faktorisierung SuperLU 113 s → Pardiso 3 s; jeder weitere
   Lastfall 8 s (Lösen + Nachlauf).
 
-Einstellung: GUI → Berechnung → Prozesse, oder in Python
+Einstellung: GUI → Berechnung → Einstellungen → Experten → „Prozesse fürs Vernetzen und die
+Elemente“, oder in Python
 
 ```python
 from statik3d import parallel
@@ -80,10 +81,11 @@ Schlüssel, Trennen).
 
 4. Rechnen:
 
-   * GUI → Berechnung → Backend „Rechnerfarm“, Server/Port/Schlüssel eintragen.
-     Der Knopf „Lokalen Server + Worker starten“ startet Server und Worker
-     direkt in der Oberfläche; weitere Rechner verbinden sich mit `--host`
-     auf die IP des Arbeitsplatzes.
+   * GUI → Berechnung → Einstellungen → Experten → Backend „lokal und Rechnerfarm“,
+     Server/Port/Schlüssel eintragen. Der Knopf „Rechnerfarm einschalten“ startet
+     Server und Worker direkt in der Oberfläche (danach steht dort „Rechnerfarm
+     läuft“); weitere Rechner verbinden sich mit `--host` auf die IP des
+     Arbeitsplatzes.
    * CLI: `python -m statik3d.cli modell.json --farm 192.168.1.10:5555 --schluessel geheim`
    * Python: `parallel.configure(backend="farm", farm_host=..., farm_port=..., farm_key=...)`
 

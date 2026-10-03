@@ -13181,7 +13181,9 @@ class MainWindow(QtWidgets.QMainWindow):
                                   "ebenfalls enthalten. CHOLMOD und UMFPACK sind GPL-Software und nur "
                                   "in einer eigenen Python-Umgebung nutzbar; PyAMG (MIT) rechnet "
                                   "iterativ und speicherarm; SuperLU (scipy) rechnet auf einem Kern")
-        gl.addWidget(row("Gleichungslöser", self.cb_loeser))
+        # nach dem Tooltip: _liste_schmal merkt sich ihn als Erklaerung der Liste
+        self._liste_schmal(self.cb_loeser, 22)
+        gl.addWidget(self._zeile_liste("Gleichungslöser", self.cb_loeser))
         # Threads des Gleichungsloesers: automatisch (PARDISO alle Kerne bis
         # auf einen, MUMPS hoechstens acht) oder eine feste Zahl - "dann kann
         # ich das an meinem Modell pruefen" (13.09.2026)
@@ -13199,7 +13201,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                    "die Statuszeile nennt nach der Rechnung die wirklich benutzte Zahl. "
                                    "Wird gespeichert.")
         self._liste_schmal(self.cb_threads, 22)
-        gl.addWidget(row("Threads des Gleichungslösers", self.cb_threads))
+        gl.addWidget(self._zeile_liste("Threads des Gleichungslösers", self.cb_threads))
         # Genauigkeit des Gleichungsloesers (17.09.2026): die Residuum-
         # Schranke und die Nachiterationen davor - beides wird gespeichert
         self.cb_genau = QtWidgets.QComboBox()
@@ -13241,7 +13243,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "des freien Speichers tragen. Lohnt sich erst bei mehreren großen Lastfällen; ein "
             "kleines Modell wird davon langsamer. Wird gespeichert.")
         self._liste_schmal(self.cb_ketten, 22)
-        gl.addWidget(row("Lastfälle gleichzeitig (Ketten)", self.cb_ketten))
+        gl.addWidget(self._zeile_liste("Lastfälle gleichzeitig (Ketten)", self.cb_ketten))
         self.cb_kettenarb = QtWidgets.QComboBox()
         self.cb_kettenarb.addItem("automatisch (Prozesse ÷ Ketten)", 0)
         for n_ in (2, 4, 6, 8, 12, 16):
@@ -13254,7 +13256,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "ein kleiner Teil der Rechenzeit (Nachlauf 2 bis 3 s, Plastizität 8 s von 235 s je "
             "warmem Lastfall), große Pools je Kette lohnen darum nicht. Wird gespeichert.")
         self._liste_schmal(self.cb_kettenarb, 22)
-        gl.addWidget(row("Arbeitsprozesse je Kette", self.cb_kettenarb))
+        gl.addWidget(self._zeile_liste("Arbeitsprozesse je Kette", self.cb_kettenarb))
         lbl_teilung = QtWidgets.QLabel(
             "Zweierlei: die Prozesse vernetzen und stellen die Matrizen auf, die Threads lösen "
             "damit das Gleichungssystem. Beide Zahlen dürfen gleich sein, doppelt gezählt wird "
@@ -13403,7 +13405,45 @@ class MainWindow(QtWidgets.QMainWindow):
         # der Zustand ueberlebt den Neustart (einstellungen.json, Schluessel „abschnitte“)
         self.experten.umgeschaltet.connect(lambda an: fen.abschnitt_merken("berechnung_experten", an))
         lay.addWidget(self.experten)
+        # zugeklappt nennt die graue Zeile, was von der Vorgabe abweicht (Nachzug 03.10.2026)
+        for cb in (self.cb_loeser, self.cb_threads, self.cb_genau, self.cb_nachit, self.cb_ketten,
+                   self.cb_kettenarb, self.cb_backend):
+            cb.currentIndexChanged.connect(lambda _i: self._experten_hinweis())
+        self.sp_workers.valueChanged.connect(lambda _v: self._experten_hinweis())
+        self._experten_hinweis()
         return w
+
+    def _experten_hinweis(self) -> None:
+        """Die graue Zeile am Kopf „Experten“: zugeklappt die Abweichungen der Felder von
+        der Vorgabe (``parallel.Settings()``), sonst „Vorgaben“; aufgeklappt steht, was
+        im Abschnitt liegt. Wird bei jeder Aenderung eines Feldes neu gesetzt."""
+        ex = getattr(self, "experten", None)
+        if ex is None or not hasattr(self, "cb_backend"):
+            return
+        st0 = parallel.Settings()
+        teile = []
+        if self.sp_workers.value() != st0.workers:
+            teile.append(f"Prozesse {self.sp_workers.value()}")
+        loeser = str(self.cb_loeser.currentData() or "auto")
+        if loeser != st0.solver_backend:
+            teile.append("Löser: " + solver.NAMEN.get(loeser, loeser))
+        threads = int(self.cb_threads.currentData() or 0)
+        if threads != st0.solver_threads:
+            teile.append(f"Threads {threads}")
+        if float(self.cb_genau.currentData() or st0.solver_residuum) != st0.solver_residuum:
+            teile.append(f"Genauigkeit {self.cb_genau.currentText()}")
+        nachit = self.cb_nachit.currentData()
+        if nachit is not None and int(nachit) != st0.solver_nachiterationen:
+            teile.append(f"Nachiterationen {self.cb_nachit.currentText()}")
+        ketten = self.cb_ketten.currentData()
+        if ketten is not None and int(ketten) != st0.ketten:
+            teile.append("Ketten automatisch" if int(ketten) == 0 else f"{int(ketten)} Ketten")
+        arbeiter = int(self.cb_kettenarb.currentData() or 0)
+        if arbeiter != st0.ketten_arbeiter:
+            teile.append(f"{arbeiter} Arbeitsprozesse je Kette")
+        if self.cb_backend.currentIndex() == 1:
+            teile.append("Rechnerfarm")
+        ex.setze_hinweise(" · ".join(teile) or "Vorgaben", "Gleichungslöser, Threads, Prozesse, Rechnerfarm")
 
     # ---- Tab 8: Ergebnisse -------------------------------------------
     def _tab_results(self):
@@ -13588,10 +13628,15 @@ class MainWindow(QtWidgets.QMainWindow):
         """Eine Aufklappliste mit langen Eintraegen schmal machen (Paket 13r):
         ``zeichen`` Zeichen Mindestbreite statt des laengsten Eintrags, die
         Aufklappliste selbst so breit wie dieser (hoechstens die Bildschirmbreite)
-        und ohne Kuerzung. Tooltips der Eintraege und der Liste bleiben, wie sie
-        sind. Nach dem Neufuellen der Liste noch einmal aufrufen."""
+        und ohne Kuerzung. Die Liste nimmt, was in der Zeile frei ist (Expanding;
+        die Zeile gibt ihr den Dehnfaktor, ``_zeile_liste``), und nennt ihren vollen
+        aktuellen Text im Tooltip, darunter die Erklaerung, die sie vorher hatte (wie
+        ``_aufklappliste_breit`` bei der Ergebnisliste). Die Tooltips der Eintraege
+        bleiben. Nach dem Setzen der Erklaerung und nach dem Neufuellen der Liste
+        noch einmal aufrufen."""
         cb.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
         cb.setMinimumContentsLength(zeichen)
+        cb.setSizePolicy(QtWidgets.QSizePolicy.Expanding, cb.sizePolicy().verticalPolicy())
         fm = cb.fontMetrics()
         breit = max((fm.horizontalAdvance(cb.itemText(i)) for i in range(cb.count())), default=0)
         try:
@@ -13600,6 +13645,28 @@ class MainWindow(QtWidgets.QMainWindow):
             grenze = 1200
         cb.view().setMinimumWidth(max(0, min(breit + 48, grenze)))
         cb.view().setTextElideMode(QtCore.Qt.ElideNone)
+        # ein Tooltip, den jemand anders gesetzt hat, ist die Erklaerung der Liste
+        if cb.toolTip() != cb.property("tooltip_zuletzt"):
+            cb.setProperty("erklaerung", cb.toolTip())
+        MainWindow._liste_tooltip(cb)
+        if not cb.property("tooltip_verbunden"):
+            cb.currentIndexChanged.connect(lambda _i, c=cb: MainWindow._liste_tooltip(c))
+            cb.setProperty("tooltip_verbunden", True)
+
+    @staticmethod
+    def _liste_tooltip(cb) -> None:
+        """Tooltip der Liste: der aktuelle Text, darunter ihre Erklaerung."""
+        erklaerung = cb.property("erklaerung") or ""
+        text = cb.currentText() + (f"\n\n{erklaerung}" if erklaerung else "")
+        cb.setProperty("tooltip_zuletzt", text)
+        cb.setToolTip(text)
+
+    @staticmethod
+    def _zeile_liste(text: str, cb) -> QtWidgets.QWidget:
+        """Eine Zeile Beschriftung und Aufklappliste, die Liste mit dem ganzen Rest der Zeile."""
+        z = row(text, cb)
+        z.layout().setStretchFactor(cb, 1)
+        return z
 
     @staticmethod
     def _aufklappliste_breit(cb) -> None:
@@ -19610,6 +19677,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.cb_threads.setItemText(0, self._threads_automatisch_text())
             self._liste_schmal(self.cb_threads, 22)
         self._liste_schmal(cb, 22)
+        self._experten_hinweis()
 
     def _genau_waehlen(self, wert: float) -> None:
         """Den Eintrag der Genauigkeitsliste zum Wert setzen (den naechsten, wenn
