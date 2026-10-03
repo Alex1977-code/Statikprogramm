@@ -198,6 +198,46 @@ def test_weitere_nachweise():
     check("Knicklängen: „1 von 1 Stab beteiligt“", k1.endswith(": 1 von 1 Stab beteiligt"), k1[-40:])
 
 
+def test_ergebnisprotokoll():
+    """Runde 2 (03.10.2026): die Zeilen der Rechnung selbst - Analysis.summary(),
+    Results.summary(), Umhuellende - und die Beschreibungen von Layer,
+    Subsystem, Situation und Kontaktbedingung. Bis dahin „Lastfaelle: 1“,
+    „Gleichungsloeser“, „Summe Auflagerkraefte“, „1 Ergebnisse“, „1 Stäbe“,
+    „V1 an 1 Flächen“."""
+    from statik3d import solver
+    from statik3d.model import Subsystem, Situation, Kontaktbedingung
+    m = _traeger()
+    an = solver.solve_all(m)
+    zeilen = an.summary().splitlines()
+    check("Analysis.summary(): „Lastfälle: 1   Kombinationen: 1   Rechenzeit …“",
+          zeilen[0].startswith("Lastfälle: 1   Kombinationen: 1   Rechenzeit: "), zeilen[0][:60])
+    umh = [z for z in zeilen if z.startswith("Umhüllende GZT")]
+    check("Umhüllende mit einem Ergebnis: „Umhüllende GZT: 1 Ergebnis“",
+          umh == ["Umhüllende GZT: 1 Ergebnis"], str(umh))
+    rs = an.cases["LF1"].summary().splitlines()
+    print("     Results.summary():", rs)
+    check("Results.summary(): „Gleichungslöser“ und „Summe Auflagerkräfte“",
+          any(z.startswith("Gleichungslöser         : ") for z in rs)
+          and any(z.startswith("Summe Auflagerkräfte    : [") for z in rs), str(rs))
+    check("Results.summary(): der Doppelpunkt steht in jeder Zeile an derselben Stelle (24)",
+          all(z.index(":") == 24 for z in rs if ":" in z[:26]), str([z[:26] for z in rs]))
+    check("Results.summary(): keine ASCII-Umschreibung", bool(rs) and not any(UMSCHREIBUNG.search(z) for z in rs)
+          and not any(w in z for z in rs for w in ("loeser", "Loeser", "kraefte", "koerper")), str(rs))
+    L = m.layer_anlegen("Deckel", staebe=["Traeger"], elemente=[0, 1])
+    check("Layer: „1 Stab, 2 Elemente“", L.bezug() == "1 Stab, 2 Elemente", L.bezug())
+    sub = Subsystem("S", elemente=[0], knoten=[0, 1], beruehrung=[0], kontakte=["K"])
+    check("Subsystem: „1 Element, 2 Knoten, 1 Berührungselement, 1 Kontakt“",
+          sub.bezug() == "1 Element, 2 Knoten, 1 Berührungselement, 1 Kontakt", sub.bezug())
+    sit = Situation("S", deaktiviert=[3])
+    check("Situation: „unbewegt, 1 Element aus“", sit.bezug() == "unbewegt, 1 Element aus", sit.bezug())
+    kb1 = Kontaktbedingung(name="KB", koerpernamen=["V1"], gegenflaechen=["F1"])
+    kb2 = Kontaktbedingung(name="KB", flaechennamen=["F1", "F2"])
+    kb3 = Kontaktbedingung(name="KB", gegenflaechen=["F1"])
+    check("Kontaktbedingung: „V1 an 1 Fläche“, „2 Kontaktflächen“, „1 zugeordnete Fläche“",
+          (kb1.fuge(), kb2.fuge(), kb3.fuge()) == ("V1 an 1 Fläche", "2 Kontaktflächen", "1 zugeordnete Fläche"),
+          str((kb1.fuge(), kb2.fuge(), kb3.fuge())))
+
+
 def test_kerbfallvorschlag():
     from statik3d.ec3 import kerbfaelle
     log = []
@@ -249,9 +289,10 @@ def _fenster():
     app.processEvents()
     w._fragen_knoepfe = lambda *a, **k: True
     w._bestaetigen = lambda *a, **k: True
-    w.fehler_liste = []
-    w.error = lambda msg, *a, **k: (w.fehler_liste.append(str(msg)), w.log.appendPlainText("FEHLER: " + str(msg)))
-    _FENSTER.update(w=w, app=app)
+    # Fehler und Hinweise gemeinsam abfangen (tests/meldungen.py, 9b): sonst
+    # oeffnete ein Fehler ein Fenster, und ein Hinweis bliebe ungesehen
+    from tests.meldungen import abfangen
+    _FENSTER.update(w=w, app=app, meldungen=abfangen(w, protokoll=True))
     return w, app
 
 
@@ -280,6 +321,8 @@ def test_oberflaeche():
     w._baum_objekt_waehlen("stab", "S1"); app.processEvents()
     check("Auswahl im Modellbaum: „1 Stab ausgewählt (Modellbaum)“",
           w.lbl_sel.text() == "1 Stab ausgewählt (Modellbaum)", w.lbl_sel.text())
+    check("Auswahl für ein neues Subsystem: „1 Stab“ (bis dahin „1 Stäbe“)",
+          w._auswahl_beschreibung() == "1 Stab", w._auswahl_beschreibung())
     t = tab.Datentabelle([tab.Spalte("A"), tab.Spalte("B")], "Probe")
     t.setzen([["x", "1"]])
     eins = t.lbl_zeilen.text()
@@ -291,6 +334,8 @@ def test_oberflaeche():
     titel = mr.maske.titel if mr.offen() and mr.maske is not None else None
     check("Sammelmaske eines Elements: „1 Element bearbeiten“", titel == "1 Element bearbeiten", repr(titel))
     _abbruch_mit_teilergebnis(w, app)
+    mel = _FENSTER["meldungen"]
+    check("Oberfläche: unterwegs kein Fehler und kein Hinweis", not mel.alle, str(mel.alle[:3]))
 
 
 def _abbruch_mit_teilergebnis(w, app):
@@ -337,7 +382,7 @@ def main():
     import faulthandler
     faulthandler.dump_traceback_later(900, exit=True)
     for t in (test_anzahl, test_ec3, test_torsion, test_ermuedung, test_weitere_nachweise,
-              test_kerbfallvorschlag, test_pruefen, test_oberflaeche):
+              test_ergebnisprotokoll, test_kerbfallvorschlag, test_pruefen, test_oberflaeche):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

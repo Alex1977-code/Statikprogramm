@@ -134,7 +134,9 @@ def test_loeser():
     nahe("… quer spannungsfrei", abs(sig[0]) + abs(sig[1]), 0.0, 1e-6 * p)
     nahe("Gleichgewicht: die Auflager tragen p, nicht p + F_p", float(r.reactions[n[:4], 2].sum()), -p, 1e-6, "N")
     z = r.summary()
-    check("Zusammenfassung nennt die Plastizität", "Plastizität" in z and "1 Elemente fließen" in z and "2 Laststufen" in z,
+    # Einzahl seit 03.10.2026 (Teilpaket 11c): bis dahin „1 Elemente fließen“
+    check("Zusammenfassung nennt die Plastizität: „1 Element fließt“, „2 Laststufen“",
+          "Plastizität" in z and "1 Element fließt, " in z and "2 Laststufen" in z,
           [x for x in z.splitlines() if "Plastizit" in x][:1])
     check("das Protokoll steht in res.info['plastizitaet']['log']", any("fließen" in x for x in info.get("log", [])))
     # Einstellung ohne Streckgrenze: elastisch, mit Hinweis

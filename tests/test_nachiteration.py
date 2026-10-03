@@ -67,7 +67,7 @@ def test_nachiteration():
         check("Loeser mit 50 % Fehler: bleibt singulaer (Ausnahme)", False)
     except RuntimeError as ex:
         check("Loeser mit 50 % Fehler: bleibt singulaer, die Meldung nennt die Nachiterationen",
-              "singulaer" in str(ex) and "Nachiteration" in str(ex), str(ex)[:120])
+              "numerisch singulär" in str(ex) and "Nachiteration" in str(ex), str(ex)[:120])
     ls3 = solver.LinearSolver(K, backend="superlu")
     x = ls3.solve(b)
     check("exakter Loeser: keine Nachiteration noetig",

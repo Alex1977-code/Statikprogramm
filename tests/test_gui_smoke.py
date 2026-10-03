@@ -3362,7 +3362,7 @@ def main():
         app.processEvents()
         mk = w.maskenrand.maske
         check("Neu: Subsystem-Maske zeigt die Auswahl und den Haken Berührung",
-              mk is not None and mk.titel == "Neu: Subsystem" and "1 Stäbe" in mk.werte()["auswahl"]
+              mk is not None and mk.titel == "Neu: Subsystem" and "1 Stab" in mk.werte()["auswahl"]
               and mk.werte()["beruehrung"] is True and "Auswahl neu lesen" in mk.zusatzknoepfe,
               str(mk.werte() if mk else None))
         mk.setzen("name", "Stiel")
@@ -6897,7 +6897,7 @@ def main():
         w._baum_geklickt("kontaktbedingung", "KB1"); app.processEvents()
         check("Kontakt im Modellbaum: nur die Fuge leuchtet, nicht der ganze Körper",
               w.sel_flaechen == ["FugeO"] and not w.sel_koerper
-              and "1 Kontaktflächen" in w.lbl_sel.text(),
+              and "1 Kontaktfläche" in w.lbl_sel.text() and "1 Kontaktflächen" not in w.lbl_sel.text(),
               f"{w.sel_flaechen}, Volumen {w.sel_koerper}, „{w.lbl_sel.text()}“")
         mk = w.maskenrand.maske
         check("Kontaktmaske: Gegenflächen sind ein Listenfeld, das per Klick ins Feld die Maus sammeln lässt",
@@ -8251,7 +8251,7 @@ def main():
         w.refresh_all()
         app.processEvents()
         check("Bezug nennt die Fuge statt „0 Flächen“",
-              kb.fuge() == "V1 an 1 Flächen", kb.fuge())
+              kb.fuge() == "V1 an 1 Fläche", kb.fuge())
         w._baum_objekt_waehlen("kontaktbedingung", "Lagerbock-Unterlegbleche")
         check("Klick wählt die zugeordneten Flächen - den gelösten Körper nicht mehr (14.09.2026: nur die Fuge leuchtet)",
               w.sel_flaechen == ["Boden"] and not w.sel_koerper,

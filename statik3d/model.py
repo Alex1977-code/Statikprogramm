@@ -2643,13 +2643,17 @@ class Kontaktbedingung:
         unter ``releasedSurfaces`` die ganze Aussenhaut des Koerpers und nicht
         die Fuge; die Fuge sind die zugeordneten Flaechen.
         """
+        # Einzahl bei einer Fläche (Teilpaket 11c, 03.10.2026): bis dahin
+        # „V1 an 1 Flächen“
+        def flaechen(n, wort="Fläche"):
+            return f"{n} {wort if n == 1 else wort + 'n'}"
         if self.flaechennamen:
-            return f"{len(self.flaechennamen)} Kontaktflächen"
+            return flaechen(len(self.flaechennamen), "Kontaktfläche")
         if self.koerpernamen and self.gegenflaechen:
-            return (f"{', '.join(self.koerpernamen)} an {len(self.gegenflaechen)} Flächen")
+            return (f"{', '.join(self.koerpernamen)} an {flaechen(len(self.gegenflaechen))}")
         if self.gegenflaechen:
-            return f"{len(self.gegenflaechen)} zugeordnete Flächen"
-        return f"{len(self.flaechen)} Flächen"
+            return flaechen(len(self.gegenflaechen), "zugeordnete Fläche")
+        return flaechen(len(self.flaechen))
 
     def bezug(self, model=None) -> str:
         teile = ([self.standard] if self.standard else []) + [self.fuge()]
@@ -3049,14 +3053,15 @@ class Subsystem:
     beschreibung: str = ""
 
     def bezug(self) -> str:
-        t = f"{len(self.elemente)} Elemente, {len(self.knoten)} Knoten"
+        from .begriffe import anzahl
+        t = f"{anzahl(len(self.elemente), 'Element', 'Elemente')}, {len(self.knoten)} Knoten"
         if self.beruehrung:
-            t += f", {len(self.beruehrung)} Berührungselemente"
+            t += f", {anzahl(len(self.beruehrung), 'Berührungselement', 'Berührungselemente')}"
         n_lager = len(self.lager) + len(self.linienlager) + len(self.flaechenlager)
         if n_lager:
             t += f", {n_lager} Lager"
         if self.kontakte:
-            t += f", {len(self.kontakte)} Kontakte"
+            t += f", {anzahl(len(self.kontakte), 'Kontakt', 'Kontakte')}"
         return t
 
 
@@ -3088,6 +3093,9 @@ class Layer:
     #: die Objektarten eines Layers (Feldname, Beschriftung)
     ARTEN = (("koerper", "Volumen"), ("flaechen", "Flächen"), ("staebe", "Stäbe"),
              ("linien", "Linien"), ("knoten", "Knoten"), ("elemente", "Elemente"))
+    #: Einzahl je Art - bezug() schrieb bis zum 03.10.2026 „1 Stäbe, 1 Linien“
+    EINZAHL = {"koerper": "Volumen", "flaechen": "Fläche", "staebe": "Stab",
+               "linien": "Linie", "knoten": "Knoten", "elemente": "Element"}
 
     def leer(self) -> bool:
         return not any(getattr(self, a) for a, _ in self.ARTEN)
@@ -3096,7 +3104,8 @@ class Layer:
         return sum(len(getattr(self, a)) for a, _ in self.ARTEN)
 
     def bezug(self) -> str:
-        teile = [f"{len(getattr(self, a))} {text}" for a, text in self.ARTEN if getattr(self, a)]
+        teile = [f"{len(getattr(self, a))} {self.EINZAHL[a] if len(getattr(self, a)) == 1 else text}"
+                 for a, text in self.ARTEN if getattr(self, a)]
         return ", ".join(teile) or "leer"
 
     def enthaelt(self, art: str, name) -> bool:
@@ -3135,7 +3144,7 @@ class Situation:
     def bezug(self) -> str:
         t = self.stellung if self.stellung else "unbewegt"
         if self.deaktiviert:
-            t += f", {len(self.deaktiviert)} Elemente aus"
+            t += f", {len(self.deaktiviert)} {'Element' if len(self.deaktiviert) == 1 else 'Elemente'} aus"
         else:
             t += ", alles aktiv"
         return t

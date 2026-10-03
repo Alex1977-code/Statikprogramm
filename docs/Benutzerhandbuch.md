@@ -4759,15 +4759,32 @@ Wo mit der Zahl auch das Verb wechselt, folgt es ihr: „1 Bauteil ist nicht
 gehalten“, „1 Stabelement gehört schon zu einem Stab“, „1 Objekt hat kein
 Netz“. Bei null und bei mehr als einem Objekt bleibt der Text, wie er war.
 
+Dasselbe gilt für die Zusammenfassung der Rechnung im Protokoll, in der Maske
+*Berechnung* und im Browser. Ihre erste Zeile heißt „Lastfälle: 5
+Kombinationen: 72 …“ statt „Lastfaelle: …“. Je Ergebnis heißen die Zeilen
+„Gleichungslöser“, „Summe Auflagerkräfte“, „Starrkörperformen“ und „Löser“
+statt „Gleichungsloeser“, „Summe Auflagerkraefte“, „Starrkoerperformen“ und
+„Loeser“, und die Doppelpunkte stehen weiter untereinander. Bei der
+Plastizität steht „1 Element fließt“, „1 Schritt“ und „1 Laststufe“, bei einer
+Umhüllenden mit einem Ergebnis „Umhüllende GZT: 1 Ergebnis“. Die Meldungen
+des Gleichungslösers schreiben „Gleichungssystem numerisch singulär“,
+„Singuläres System - Lagerung oder Vernetzung prüfen“ und „Keine Normalkräfte
+vorhanden - Knicknachweis nicht möglich“. Die Beschreibungen von Layern,
+Subsystemen, Situationen und Kontaktbedingungen im Modellbaum und in den
+Masken nennen ein Objekt in der Einzahl („1 Stab, 1 Linie“ statt „1 Stäbe,
+1 Linien“, „V1 an 1 Fläche“ statt „V1 an 1 Flächen“), ebenso die Auswahl in
+der Maske *Neu: Subsystem* und die Zeile einer Kontaktbedingung in der
+Statuszeile („1 Kontaktfläche“).
+
 Gespeichert oder eingelesen wird keiner dieser Texte; eine ältere Datei lädt
 also unverändert. Unverändert bleiben auch Einstellungsnamen, Schlüssel in
 Dateien und Beschreibungen, die mit dem Modell gespeichert werden, etwa die
 Beschreibung eines Lastfalls der Kategorie FAT („Ermuedungslast (nur fuer
-Ermuedungsnachweis)“). Noch ohne Umlaute oder mit fester Mehrzahl stehen die
-Zeilen der Rechnung selbst im Protokoll („Lastfaelle: …“, „Gleichungsloeser“,
-„Summe Auflagerkraefte“; sie entstehen im Löser), die Protokolle von Import
-und Export, die Browser-Oberfläche, Teile des Berichts und die Beschreibungen
-von Layern, Subsystemen und Kontaktbedingungen („1 Stäbe, 1 Linien“).
+Ermuedungsnachweis)“). Ebenso bleiben Kennwörter, die das Programm vergleicht,
+etwa die Arten der Rechenschritte der Plastizität („Fliessschritt“) und der
+Zustand „Fliessen“ eines Kontakts. Noch ohne Umlaute oder mit fester Mehrzahl
+stehen die Protokolle von Import und Export, die Browser-Oberfläche und Teile
+des Berichts.
 
 ### Übermaß: die Presspassung als Last
 
@@ -7250,7 +7267,8 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   Modelle nicht. Eine singuläre Matrix wird weiter als solche gemeldet
   („Lagerung prüfen“), mit dem Grund des Ausweichens: beim Scheitern der
   Zerlegung als „(vorher: …)“, beim Verfehlen der Residuumsschranke als
-  „Gleichungssystem numerisch singulaer (Residuum …) (Löser ausgewichen - …)“.
+  „Gleichungssystem numerisch singulär (Residuum …) (Löser ausgewichen - …)“
+  (bis zum 03.10.2026 „singulaer“).
   Dort fehlte er bis zum 23.09.2026 (zwei Würfel mit nur einem gemeinsamen
   Knoten, PARDISO zum Scheitern gebracht, SuperLU löste mit Residuum 1,5).
   Zur Wahl
@@ -7820,7 +7838,8 @@ Lösungen                : 22× MKL PARDISO (einkernig, mtype 11); 16 Faktorisie
   nicht eindeutig; das Residuum zeigt, ob die Lösung trotzdem das
   Gleichungssystem erfüllt.
 
-Die Zeile „Gleichungsloeser“ darüber bleibt, wie sie war. Im Ergebnis
+Die Zeile „Gleichungslöser“ darüber bleibt, wie sie war (bis zum 03.10.2026
+hieß sie „Gleichungsloeser“). Im Ergebnis
 (`Results.info["loeser_nachweis"]`) stehen zusätzlich die Einstellung
 `MKL_CBWR`, wie sie galt, als das Programm MKL zum ersten Mal lud — später
 gesetzt wirkt sie nicht mehr —, und was MKL dazu meldet (Reproduzierbarkeit,

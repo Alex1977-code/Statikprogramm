@@ -7939,8 +7939,8 @@ class MainWindow(QtWidgets.QMainWindow):
             # Fläche auf"): kraeftig die Fuge, durchscheinend die Bauteile
             self.leuchtet_kontakt = name
             blass = self._kontakt_koerper(kb) if kb is not None else []
-            teile = ([f"{len(eigen)} Kontaktflächen"] if eigen else []) \
-                + ([f"{len(gegen)} Gegenflächen"] if gegen else []) \
+            teile = ([bg.anzahl(len(eigen), "Kontaktfläche", "Kontaktflächen")] if eigen else []) \
+                + ([bg.anzahl(len(gegen), "Gegenfläche", "Gegenflächen")] if gegen else []) \
                 + ([f"{len(self.sel_koerper)} Volumen"] if self.sel_koerper else []) \
                 + ([f"Volumen {', '.join(blass)} blass"] if blass else [])
             self.lbl_sel.setText(f"Kontaktbedingung {name}: "
@@ -11183,11 +11183,10 @@ class MainWindow(QtWidgets.QMainWindow):
         return self._situation_zeigen(name)
 
     def _auswahl_beschreibung(self) -> str:
-        teile = [f"{n} {was}" for n, was in ((len(self.sel_staebe), "Stäbe"),
-                                             (len(self.sel_flaechen), "Flächen"),
-                                             (len(self.sel_koerper), "Volumen"),
-                                             (len(self.sel_elemente), "Elemente"),
-                                             (len(self.selection), "Knoten")) if n]
+        teile = [bg.anzahl(n, ein, mehr) for n, ein, mehr in (
+            (len(self.sel_staebe), "Stab", "Stäbe"), (len(self.sel_flaechen), "Fläche", "Flächen"),
+            (len(self.sel_koerper), "Volumen", "Volumen"), (len(self.sel_elemente), "Element", "Elemente"),
+            (len(self.selection), "Knoten", "Knoten")) if n]
         return ", ".join(teile) or "nichts gewählt"
 
     @staticmethod

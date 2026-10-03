@@ -210,7 +210,7 @@ def test_text_bleibt_wie_geschrieben():
               "FEHLER: Etwas ist schiefgegangen",
               "WARNUNG: 2 von 6 freien Bewegungen tragen Last",
               "  WARNUNG:   Stabtyp Zugstab: faellt in RFEM bei Druck aus",
-              "Lastfaelle: 5   Kombinationen: 72   Rechenzeit: 0.51 s",
+              "Lastfälle: 5   Kombinationen: 72   Rechenzeit: 0.51 s",
               "",
               "    eingerückt mit Umlauten äöüß und „Anführungen“",
               "--- Abnahme des Netzes: bestanden --- (3 Warnungen)"]

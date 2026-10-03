@@ -1190,7 +1190,7 @@ def test_kontaktbedingungen():
         check("die freigegebenen Flaechen sind nicht die Kontaktseite",
               kb.flaechennamen == [], str(kb.flaechennamen))
         check("die Fuge nennt Koerper und zugeordnete Flaechen",
-              kb.fuge() == "V1 an 1 Flächen", kb.fuge())
+              kb.fuge() == "V1 an 1 Fläche", kb.fuge())
         check("das Protokoll sagt, woran getrennt wird",
               "Fuge: der Koerper V1 wird an den 1 zugeordneten Flaechen" in txt,
               next((x for x in log if "Fuge:" in x), "-"))

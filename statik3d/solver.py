@@ -313,19 +313,19 @@ LOESER_WOHER = {
                 "nicht zum Nachladen. Wer das Programm aus dem Quelltext startet: "
                 "pip install scikit-umfpack (braucht SuiteSparse)"),
     "mumps": ("Extras → Vernetzer installieren…",
-              "MUMPS (CeCILL-C) kommt nicht mit der exe, laesst sich aber nachladen: "
+              "MUMPS (CeCILL-C) kommt nicht mit der exe, lässt sich aber nachladen: "
               "Extras → Programm → „Vernetzer installieren…“ → MUMPS. Danach steht es "
               "sofort in dieser Liste, ohne Neustart"),
-    "ama": ("gehoert in die exe - bitte melden",
+    "ama": ("gehört in die exe - bitte melden",
             "ama ist der eigene Rechenkern (Rust, keine Fremdlizenz) und liegt der exe "
             "bei. Fehlt er hier, ist der Bau fehlerhaft - bitte melden. Aus dem "
             "Quelltext: pip install packaging/ama-0.1.0-cp311-cp311-win_amd64.whl"),
     "pyamg": ("pip install pyamg",
               "PyAMG (MIT) liegt der exe bei. Eigene Python-Umgebung: pip install pyamg"),
     "superlu": ("scipy fehlt",
-                "SuperLU kommt mit scipy und kann nicht fehlen - ohne scipy laeuft das "
+                "SuperLU kommt mit scipy und kann nicht fehlen - ohne scipy läuft das "
                 "Programm gar nicht. Meldet es sich hier nicht, ist die Installation "
-                "beschaedigt"),
+                "beschädigt"),
 }
 
 
@@ -1032,8 +1032,8 @@ class LinearSolver:
             Kc = self._K             # schon CSR - keine zweite Umwandlung
             skala = float(abs(Kc).max()) if Kc.nnz else 1.0
             if not ist_symmetrisch(Kc, 1e-12 * skala):
-                raise RuntimeError("ama braucht eine symmetrische Matrix - fuer unsymmetrische "
-                                   "Systeme MKL PARDISO, MUMPS oder SuperLU waehlen")
+                raise RuntimeError("ama braucht eine symmetrische Matrix - für unsymmetrische "
+                                   "Systeme MKL PARDISO, MUMPS oder SuperLU wählen")
             # statische Pivotisierung wie MKL PARDISO: ein zu kleines Pivot wird gehoben
             # statt abzubrechen, die Nachiteration unten holt die Genauigkeit zurueck.
             # Ohne sie brach ama an Modellen ab, die PARDISO rechnet (Kontaktfedern,
@@ -1226,12 +1226,13 @@ class LinearSolver:
             f" (ausgewichen - {self.ausweichgrund})" if self.ausweichgrund else "") + (
             f", {self.threads} Threads" if self.threads > 1 else ", einkernig") + (
             f", Genauigkeit {grenze:g}" + (f" mit bis zu {n_max} Nachiterationen" if n_max else "")) + (
-            f"; {frei} Freiheitsgrade ohne Halt (Ergebnis dort nicht eindeutig - Lagerung pruefen)"
+            f"; {frei} {'Freiheitsgrad' if frei == 1 else 'Freiheitsgrade'} ohne Halt "
+            "(Ergebnis dort nicht eindeutig - Lagerung prüfen)"
             if frei else "") + zusatz
 
     def solve(self, b: np.ndarray, check: bool = True) -> np.ndarray:
         if self._solve is None:
-            raise RuntimeError("Loeser ist freigegeben - erneut faktorisieren")
+            raise RuntimeError("Löser ist freigegeben - erneut faktorisieren")
         b = np.asarray(b, float)
         # Das Residuum gehoert zu **dieser** Loesung. Ohne Pruefung (check=False,
         # mehrere rechte Seiten, b = 0) gibt es keins - dann nan statt der Zahl
@@ -1251,7 +1252,7 @@ class LinearSolver:
         if self._faktor is not None:
             self._nachweis = self._faktor.nachweis
         if not np.all(np.isfinite(x)):
-            raise RuntimeError("Singulaeres System - Lagerung oder Vernetzung pruefen "
+            raise RuntimeError("Singuläres System - Lagerung oder Vernetzung prüfen "
                                "(kinematische Kette / freie Knoten).")
         if check and self._K is not None and b.ndim == 1:
             nb = np.linalg.norm(b)
@@ -1311,11 +1312,11 @@ class LinearSolver:
                     # faengt warnings nirgends ab), und die exe hat keine
                     # Konsole (console=False in packaging/Statik3D.spec).
                     raise RuntimeError(
-                        f"Gleichungssystem numerisch singulaer (Residuum {r:.1e}, Schranke {grenze:g}"
+                        f"Gleichungssystem numerisch singulär (Residuum {r:.1e}, Schranke {grenze:g}"
                         + (f", nach {schritte} Nachiterationen" if schritte else "") + ")"
                         + (f" (Löser ausgewichen - {self.ausweichgrund})" if self.ausweichgrund
                            else "") + " - "
-                        "Lagerung, freie Bauteile oder Kontaktdefinition pruefen; die Schranke steht "
+                        "Lagerung, freie Bauteile oder Kontaktdefinition prüfen; die Schranke steht "
                         "unter Berechnung → Einstellungen → Experten → Genauigkeit des Gleichungslösers.")
         return x
 
@@ -1584,7 +1585,7 @@ class Results:
               f"davon aktiv             : {self.info.get('nfree', '?')}",
               f"Rechenzeit              : {self.info.get('time', 0):.3f} s"]
         if self.info.get("solver"):
-            s.append(f"Gleichungsloeser        : {self.info['solver']}")
+            s.append(f"Gleichungslöser         : {self.info['solver']}")
         # "Gleichungsloeser" darueber ist der Loeser der letzten
         # Faktorisierung - der Ausweichloeser steht darum hier dabei
         for g, lo in ausweich_paare(self.info):
@@ -1603,7 +1604,7 @@ class Results:
             pass
         if self.reactions is not None and self.reactions.size:
             R = self.reactions[:, :3].sum(axis=0)
-            s.append(f"Summe Auflagerkraefte   : [{R[0]:.1f}, {R[1]:.1f}, {R[2]:.1f}] N")
+            s.append(f"Summe Auflagerkräfte    : [{R[0]:.1f}, {R[1]:.1f}, {R[2]:.1f}] N")
         if self.contact:
             from . import contact as ct
             s.append(ct.summary(self.contact))
@@ -1626,18 +1627,22 @@ class Results:
                      + ", ".join(f"{f:.3f}" for f in self.freqs[:10]))
             starr = int(self.info.get("starrkoerper", 0) or 0)
             if starr:
-                s.append(f"Starrkoerperformen      : {starr} (f < {STARR_HZ:g} Hz) - Bauteile nicht "
+                s.append(f"Starrkörperformen       : {starr} (f < {STARR_HZ:g} Hz) - Bauteile nicht "
                          "gehalten oder Kontakt offen")
             if self.info.get("kontakt"):
                 s.append(f"Kontakt                 : {self.info['kontakt']}, "
-                         f"{self.info.get('kontakt_aktiv', 0)} Bedingungen aktiv")
+                         f"{self.info.get('kontakt_aktiv', 0)} "
+                         f"{'Bedingung' if self.info.get('kontakt_aktiv', 0) == 1 else 'Bedingungen'} aktiv")
             if self.info.get("loeser"):
-                s.append(f"Loeser                  : {NAMEN.get(self.info['loeser'], self.info['loeser'])}")
+                s.append(f"Löser                   : {NAMEN.get(self.info['loeser'], self.info['loeser'])}")
         pz = self.info.get("plastizitaet")
         if pz:
-            s.append(f"Plastizität             : {pz.get('fliessend', 0)} Elemente fließen, "
-                     f"ε_p,eq max {float(pz.get('eps_p_max', 0.0)) * 100:.3f} %, "
-                     f"{pz.get('iterationen', 0)} Schritte in {pz.get('laststufen', 1)} Laststufen"
+            n_fl, n_it, n_ls = pz.get('fliessend', 0), pz.get('iterationen', 0), pz.get('laststufen', 1)
+            s.append(f"Plastizität             : "
+                     + ("1 Element fließt, " if n_fl == 1 else f"{n_fl} Elemente fließen, ")
+                     + f"ε_p,eq max {float(pz.get('eps_p_max', 0.0)) * 100:.3f} %, "
+                     f"{n_it} {'Schritt' if n_it == 1 else 'Schritte'} in "
+                     f"{n_ls} {'Laststufe' if n_ls == 1 else 'Laststufen'}"
                      # Was die Zeit traegt, ist nicht die Zahl der Schritte, sondern
                      # die der Faktorisierungen: am Drehlager 3,2 s gegen 0,31 s je
                      # Rueckwaertseinsetzen (20.09.2026)
@@ -1836,7 +1841,8 @@ def loeser_nachweis_zeilen(nw: dict) -> list:
             wie += (", " if wie else "") + "mtype " + "/".join(mt)
         text = ", ".join(f"{n}× {NAMEN.get(b, b)}" for b, n in loes.items())
         text += f" ({wie})" if wie else ""
-        text += (f"; {int(nw.get('faktorisierungen', 0) or 0)} Faktorisierungen in "
+        n_fak = int(nw.get('faktorisierungen', 0) or 0)
+        text += (f"; {n_fak} {'Faktorisierung' if n_fak == 1 else 'Faktorisierungen'} in "
                  f"{float(nw.get('zeit_faktorisierung_lastfall', 0.0) or 0.0):.3f} s")
         r = nw.get("residuum_linear_max")
         if r is not None:
@@ -3973,7 +3979,8 @@ def solve_with_ausfall(model: Model, system: StaticSystem, F: np.ndarray, us=Non
     else:
         log.append(f"Ausfall-Iteration nach {max_iter} Schritten nicht konvergiert")
     if aus:
-        log.append(f"{len(aus)} Stäbe tragen nicht (nur Zug/Druck): "
+        log.append(("1 Stab trägt nicht (nur Zug/Druck): " if len(aus) == 1 else
+                    f"{len(aus)} Stäbe tragen nicht (nur Zug/Druck): ")
                    + ", ".join(str(i) for i in sorted(aus)[:12])
                    + (" …" if len(aus) > 12 else ""))
     aktiv = np.ones(ne, dtype=bool) if system.aktiv is None else np.asarray(system.aktiv, bool).copy()
@@ -4087,7 +4094,7 @@ def _lastfall_faktoren(model: Model, case: str = None) -> tuple:
     Elemente, Rechteck 10 x 20 cm) mit zwei Lastfaellen je 500 N mit "all"
     2158,98, die Eulerlast fuer 1000 N (gemessen 24.09.2026)."""
     if case == "all":
-        return {k: 1.0 for k in model.load_cases}, "alle Lastfaelle"
+        return {k: 1.0 for k in model.load_cases}, "alle Lastfälle"
     lc = model.case(case)
     return {lc.name: 1.0}, lc.name
 
@@ -4358,7 +4365,8 @@ def _cases_in_ketten(model: Model, names: list, k: int, progress=None,
     st = parallel.settings()
     je = int(getattr(st, "ketten_arbeiter", 0) or 0) or max(2, st.workers // len(bloecke))
     threads = threads_je_kette(st.solver_threads, len(bloecke))
-    _melde(progress, f"{len(names)} Lastfälle in {len(bloecke)} Ketten "
+    _melde(progress, f"{len(names)} {'Lastfall' if len(names) == 1 else 'Lastfälle'} in "
+                     f"{len(bloecke)} {'Kette' if len(bloecke) == 1 else 'Ketten'} "
                      f"({je} Arbeiter und {threads} Löser-Threads je Kette)")
     pfad = None
     # vor dem Pickeln bzw. to_dict umwandeln (parallel.vor_dem_pickeln): jede
@@ -5486,7 +5494,7 @@ def _contact_singular(it: int, ex, cs, model=None) -> str:
     elif cs.cons:
         hinweis = (f"alle {len(cs.cons)} Kontaktbedingungen sind geschlossen - "
                    "abheben kann hier nichts. Die Bewegung liegt damit **in** "
-                   "der Fugenebene: das Bauteil gleitet, oder die Fuge haelt "
+                   "der Fugenebene: das Bauteil gleitet, oder die Fuge hält "
                    "quer zu sich nichts.")
     else:
         hinweis = "es gibt keine Kontaktbedingungen - die Ursache liegt nicht am Kontakt."
@@ -5798,7 +5806,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
                 # Bedingungen geschlossen, auf die es sich zubewegt.
                 forced = True
                 log.append("Hilfsschritt: Bewegungsrichtung bestimmt, weil im ersten "
-                           "Schritt keine Kontaktbedingung haelt")
+                           "Schritt keine Kontaktbedingung hält")
                 Kc, Fc, C, b = matrizen()
                 try:
                     u, lam = loesen()
@@ -6005,7 +6013,7 @@ def solve_with_contact(model: Model, system: StaticSystem, F: np.ndarray,
             if (fortsetzbar and versuch < FORTSETZUNGEN_MAX) or wenige:
                 cs.warmstart_verstoesse(u, zuruecksetzen=True, fremd=not fortsetzung)
                 log.append(f"Warmstart: {n_v} gleitende Knoten bewegten sich gegen ihre "
-                           f"Richtung - auf Haften zurueckgesetzt, Iteration fortgesetzt "
+                           f"Richtung - auf Haften zurückgesetzt, Iteration fortgesetzt "
                            f"(Anlauf {versuch + 1}, Maß {kraft_gegen / 1e3:.4g} kN)")
                 neu_start = cs.zustand()
             else:
@@ -6322,7 +6330,7 @@ class Envelope:
         return rows
 
     def summary(self) -> str:
-        s = [f"{self.name}: {len(self.names)} Ergebnisse"]
+        s = [f"{self.name}: {len(self.names)} {'Ergebnis' if len(self.names) == 1 else 'Ergebnisse'}"]
         if self.u_max.size and self.names:
             um = self.umag_max
             i = int(np.argmax(um))
@@ -6377,7 +6385,7 @@ class Analysis:
         return self.envelopes.get(typ)
 
     def summary(self) -> str:
-        s = [f"Lastfaelle: {len(self.cases)}   Kombinationen: {len(self.combinations)}   "
+        s = [f"Lastfälle: {len(self.cases)}   Kombinationen: {len(self.combinations)}   "
              f"Rechenzeit: {self.info.get('time', 0):.2f} s ({self.info.get('parallel', '')})"]
         # Ausweichen des Gleichungsloesers: eine Zeile je Grund ueber alle
         # Ergebnisse - auch aus Ketten, Pool und Farm, die ohne Fortschritt rechnen
@@ -6645,7 +6653,9 @@ def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progres
     referenzen = ermuedungsreferenzen(model)
     if referenzen:
         an.info["kontakt_eingefroren"] = dict(referenzen)
-        _melde(progress, f"Ermüdungszustände: {len(referenzen)} Zustände werden mit dem "
+        _melde(progress, "Ermüdungszustände: "
+                         + ("1 Zustand wird" if len(referenzen) == 1 else f"{len(referenzen)} Zustände werden")
+                         + " mit dem "
                          "eingefrorenen Kontaktzustand des ersten Zustands ihrer Ermüdungslast "
                          "linear gelöst (Nachweise → Konfiguration)")
     an.cases = solve_cases(model, workers=workers, progress=progress, systeme=systeme,
@@ -6848,7 +6858,7 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
         from . import contact as ct
         cs = ct.ContactSystem(model, K.tocsr(), log=[])
         if kontakt and cs.zustand_setzen(kontakt):
-            kontakt_text = "Zustand der statischen Loesung"
+            kontakt_text = "Zustand der statischen Lösung"
         else:
             for c in cs.cons:
                 c.active, c.slip, c.yielding, c.frozen = True, False, False, False
@@ -7041,7 +7051,7 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
     Kff = system.Kff
     Kgff = Kg[fi][:, fi].tocsc()
     if abs(Kgff).max() == 0:
-        raise RuntimeError("Keine Normalkraefte vorhanden - Knicknachweis nicht moeglich")
+        raise RuntimeError("Keine Normalkräfte vorhanden - Knicknachweis nicht möglich")
     if progress:
         _melde(progress, "Verzweigungsproblem wird gelöst", 0.45)
 

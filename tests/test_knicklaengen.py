@@ -299,8 +299,8 @@ def test_knicken_alle_lastfaelle():
         r = solver.solve_buckling(m, 2, case="all")
         close("case='all': Knicklast der Summe (2 x 500 N) = Eulerlast",
               r.buckling_factors[0] * 1000.0, euler, 1e-3)
-        check("case='all': Grundzustand heisst 'alle Lastfaelle'",
-              r.name == "alle Lastfaelle", r.name)
+        check("case='all': Grundzustand heisst „alle Lastfälle“ (bis 03.10.2026 'alle Lastfaelle')",
+              r.name == "alle Lastfälle", r.name)
         r2 = solver.solve_buckling(m, 2, case="LF2")
         close("ein Lastfall (500 N) knickt beim doppelten Faktor",
               r2.buckling_factors[0], 2.0 * r.buckling_factors[0], 1e-9)

@@ -546,8 +546,9 @@ def test_eigenformen_mit_kontakt():
           r.info.get("starrkoerper") == 0 and float(r.freqs[0]) > 100.0
           and "verklebt" in str(r.info.get("kontakt", "")) and r.info.get("kontakt_aktiv", 0) > 0,
           f"f = {np.round(r.freqs[:3], 1)} Hz, {r.info.get('kontakt')}, {r.info.get('kontakt_aktiv')} aktiv")
-    check("die Zusammenfassung nennt Kontakt und Loeser",
-          "Kontakt" in r.summary() and "Loeser" in r.summary(), r.summary()[-160:])
+    # „Löser“ mit Umlaut seit 03.10.2026 (Teilpaket 11c), bis dahin „Loeser“
+    check("die Zusammenfassung nennt Kontakt und Löser",
+          "Kontakt" in r.summary() and "\nLöser                   : " in r.summary(), r.summary()[-160:])
     rs = solver.solve_static(m)
     z = getattr(rs, "kontaktzustand", None)
     r2 = solver.solve_modal(m, 6, kontakt=z)
@@ -561,7 +562,7 @@ def test_eigenformen_mit_kontakt():
     r3 = solver.solve_modal(m2, 8)
     check("freier Wuerfel: sechs Starrkoerperformen (f < 0,01 Hz) statt Abbruch, danach elastische Formen",
           r3.info.get("starrkoerper") == 6 and float(r3.freqs[6]) > 1.0
-          and "Starrkoerperformen" in r3.summary(),
+          and "\nStarrkörperformen       : 6 (" in r3.summary(),
           f"f = {np.round(r3.freqs, 3)} Hz")
 
 

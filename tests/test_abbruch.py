@@ -161,7 +161,7 @@ def test_abbruch_behaelt_gerechnete_lastfaelle():
     check("keine Umhuellenden und keine Nachweise ueber einen halben Satz",
           not an.envelopes and an.design is None and an.fatigue is None, str(list(an.envelopes)))
     # Die Zusammenfassung traegt die Anzeige in der Oberflaeche
-    check("die Zusammenfassung laesst sich bilden", "Lastfaelle: 2" in an.summary(),
+    check("die Zusammenfassung laesst sich bilden", "Lastfälle: 2" in an.summary(),
           an.summary().splitlines()[0] if an.summary() else "")
     # Gegenprobe: derselbe Lauf ohne Abbruch rechnet alles
     ganz = solver.solve_all(m)
