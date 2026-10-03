@@ -12312,11 +12312,11 @@ Stücke mit exakten Momenten ein, 14 Reste ohne Volumen werden übersprungen, ke
 Gegen die Tet10-Referenz auf `main` (lokal 0,5 mm) bleibt die Abnahme unverändert: rechts +0,14 %, links −2,84 %, über alle 18 Punkte 2,95 %. Für das Knotenblech ist die Kur also ohne praktische Wirkung – die schräg geschnittenen Zellen sind die wenigen an den Nahtflanken (28 von 476 Stücken im Zyklus 0), und der Hot-Spot wird auf der Blechseite ausgewertet.
 
 **Nicht behandelt (Liste im Plan).** Zellen ohne Wurzel behalten α und begrenzen dort selbst das lineare Feld auf α mal Verstärkung (T: 10⁻⁶ bei p 2, 7·10⁻⁵ bei p 3) – sie entstehen, wenn die Basiszelle gröber ist als
-die Wanddicke und die Nachbarn feiner sind; das Protokoll nennt ihre Zahl (`aggregation.zellen_ohne_wurzel`), eine Warnung gibt es nicht. Die Zwangsmatrix gibt Polynome nur auf 10⁻¹⁰ (p 2) bis 3·10⁻⁸ (p 3) wieder,
+die Wanddicke und die Nachbarn feiner sind; das Protokoll nennt ihre Zahl (`aggregation.zellen_ohne_wurzel`), eine Warnung gibt es seit O16 (Nachtrag am Ende dieses Abschnitts). Die Zwangsmatrix gibt Polynome nur auf 10⁻¹⁰ (p 2) bis 3·10⁻⁸ (p 3) wieder,
 wenn fast alle Zellen aggregiert sind. Ohne Moment Fitting bleibt die Tetraederregel mit n = ⌈1,5 p⌉ und damit der alte Konsistenzfehler; `ordnung_tet` lässt sich setzen. Gekrümmte Geometrie bleibt durch die
 Tangentialebenen genähert (11.3); exakt ist die Integration des genäherten Körpers. Beim Suitenvergleich fiel außerdem auf: der Schwellenvergleich der Aggregation hängt bei einem Werkstoffanteil genau an der Schwelle 0,4 an der
 letzten Rundungsstelle. Im verfeinerten Patch-Körper (`test_zwaenge`) wechselt eine Zelle mit den exakten Momenten von 0,4 − 2·10⁻¹⁶ auf 0,4 + 2·10⁻¹⁶ und gilt jetzt als wohlgestellt (aggregierte Moden bei p 2: 1 758 → 1 746);
-beide Einteilungen bestehen den Patch-Test (Liste O19). Der SuperLU-Weg des Direktlösers bekam am selben Tag eine Nachiteration (O20, Nachtrag am Ende dieses Abschnitts); `test_schale` prüft den Fall 30° p 3 für beide Löser gegen 10⁻⁵, mit erzwungenem SuperLU mit und ohne
+beide Einteilungen bestehen den Patch-Test (behoben mit O19, Nachtrag am Ende dieses Abschnitts). Der SuperLU-Weg des Direktlösers bekam am selben Tag eine Nachiteration (O20, Nachtrag am Ende dieses Abschnitts); `test_schale` prüft den Fall 30° p 3 für beide Löser gegen 10⁻⁵, mit erzwungenem SuperLU mit und ohne
 Nachiteration, und den Fall 10° p 3 im Rest gegen 10⁻⁷ (CI vor O20: 2,1·10⁻⁹).
 
 **Zwei Prüfungen hingen am alten Weg.** `test_patch.test_ohne_aggregation` verlangte, dass der Fehler ohne Aggregation mit α skaliert (Faktor über 30 zwischen 10⁻⁸ und 10⁻¹⁰). Über α = 10⁻⁶ … 10⁻¹² ist er in beiden
@@ -12341,3 +12341,13 @@ unverändert; das Grobgitter des Mehrgitters nimmt `nachiteration=0`, weil es ei
 Matrix-Vektor-Produkt mit K und |K| und eine Rücksubstitution je Schritt: 4 % von Faktorisierung und Lösen bei 22 584 Unbekannten, 7 bis 10 % bei 1 734 (|K| liegt als zweites Datenfeld mit denselben Indexfeldern vor, 8 Byte je
 Eintrag). Messung, Regeln und Berichtigung der Abbruchregel stehen im Plan TP 5 (O20). `test_direkt` prüft den Löser an Zerlegungen mit bekanntem Fehler, `test_schale.test_schale_geneigt_p3_superlu` den Streifen mit
 erzwungenem SuperLU mit und ohne Nachiteration; die Kernsuite läuft mit beiden Lösern (374/374 und 374/374).
+
+**Nachtrag (O19 und O16, 03.10.2026): Schwellenvergleich der Aggregation und Warnung bei Zellen ohne Wurzel.** *O19.* `Zellaggregation` verglich den ungerundeten Werkstoffanteil mit der Schwelle 0,4. Eine Zelle, deren Anteil
+geometrisch genau auf der Schwelle liegt (Ebene durch eine Zellfläche oder die Zellmitte), schwankte darum je nach Quadraturweg und je nach α um 10⁻¹⁶ auf beide Seiten, und die Einteilung in schlecht und wohl gestellt hing an der letzten
+Rundungsstelle: in 5 von 9 verfeinerten Patch-Körpern war sie zwischen Tetraederregel und exakten Stückmomenten verschieden (1 bis 3 Zellen), an der Kirsch-Scheibe mit 20-mm-Zellen zählte sie 625, 719 und 625 schlechte Zellen bei
+α = 10⁻⁸, 10⁻¹⁰ und 10⁻¹². `fcm/aggregation.schlecht_gestellt` vergleicht jetzt den auf neun Stellen gerundeten Anteil (derselbe Wert wie `_rang`, der die Rangfolge der Wurzeln bestimmt); ein Anteil innerhalb von 5·10⁻¹⁰ der Schwelle
+gilt als auf ihr und damit als wohlgestellt. Danach ist die Einteilung in allen neun Fällen vom Weg und von α unabhängig, und K_t der Kirsch-Scheibe bleibt gleich. Im Haken über 19 Suiten stellt die Rundung nur in den Modellen von
+`test_zwaenge` Zellen um (16 Zellen in 6 Endaufbauten, aggregierte Moden z. B. eine Ebene p 2 1 746 → 1 734); alle anderen Zahlen der Suiten bleiben, die Kernsuite hat 381 Prüfungen. *O16.* Zellen ohne Wurzel (`zellen_ohne_wurzel` > 0)
+behalten α; in den Suiten gibt es sie nur im T-Stoß mit 20-mm-Basiszelle (3 Zellen) und in der Kirsch-Scheibe mit 20-mm-Zellen bei 10 mm Dicke (454 von 865), nicht bei Basiszelle gleich Wanddicke. Ihre Wirkung ist klein: 10⁻⁶ und
+7·10⁻⁵ in der Spannung am T-Stoß (p 2 und p 3), an der Kirsch-Scheibe ändert sich K_t zwischen α = 10⁻⁸ und 10⁻¹² nicht (vier Stellen). `api._wurzelwarnung` meldet die Zellen in `DetailResult.warnings`, ohne die Rechnung zu ändern
+(Bit für Bit gleich); ob die Warnung bleibt, ist offen, weil sie an der Kirsch-Scheibe ein Fehlalarm ist (Plan TP 5, Ergebnis O16).
