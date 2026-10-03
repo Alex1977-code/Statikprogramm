@@ -14866,9 +14866,9 @@ class MainWindow(QtWidgets.QMainWindow):
                          # „unveraendert“ bleibt der erste Eintrag (bis 03.10.2026 verschwand
                          # er bei der Dicke, und „Zuweisen“ gab die erste Dicke allen
                          # gewaehlten Schalen; Querschnitt und Werkstoff hatten ihn nie)
-                         (getattr(self, "cb_assign_sec", None), [self.UNVERAENDERT, *m.sections]),
-                         (getattr(self, "cb_assign_mat", None), [self.UNVERAENDERT, *m.materials]),
-                         (getattr(self, "cb_assign_shell", None), [self.UNVERAENDERT, *m.shells])):
+                         (getattr(self, "cb_assign_sec", None), [self.ZUWEISEN_UNVERAENDERT, *m.sections]),
+                         (getattr(self, "cb_assign_mat", None), [self.ZUWEISEN_UNVERAENDERT, *m.materials]),
+                         (getattr(self, "cb_assign_shell", None), [self.ZUWEISEN_UNVERAENDERT, *m.shells])):
             if cb is None or not _lebt(cb):
                 continue
             cur = cb.currentText()
@@ -15116,7 +15116,7 @@ class MainWindow(QtWidgets.QMainWindow):
         dicke = self._zuweisen_wert(getattr(self, "cb_assign_shell", None), m.shells)
         if not (sec or mat or dicke):
             return self.error("Nichts zu ändern: Querschnitt, Werkstoff oder Dicke wählen - "
-                              f"„{self.UNVERAENDERT}“ lässt ein Feld, wie es ist")
+                              f"„{self.ZUWEISEN_UNVERAENDERT}“ lässt ein Feld, wie es ist")
         # das versteckte Nummernfeld bleibt der Weg fuer Skripte; sonst die Auswahl
         text = self.ed_elist.text().strip()
         if text:
@@ -17616,8 +17616,11 @@ class MainWindow(QtWidgets.QMainWindow):
     #: was laenger waere, nennt nur die Zahl der Objekte.
     REITER_ZEICHEN = 21
     #: erster Eintrag der Aufklapplisten Querschnitt, Werkstoff und Dicke im
-    #: Kontextregister: dieses Feld nicht ändern
-    UNVERAENDERT = "unverändert"
+    #: Kontextregister: dieses Feld nicht ändern. Nicht ``UNVERAENDERT``: den Namen
+    #: hat die Sammelmaske (Wert „(unverändert)“, weiter oben in dieser Klasse) - eine
+    #: zweite Zeile mit demselben Namen überschrieb sie still (Rauchtest „Sammelmaske
+    #: Lager“ am Stand 485f9bf)
+    ZUWEISEN_UNVERAENDERT = "unverändert"
 
     def _auswahl_arten(self) -> list:
         """Was in der Ansicht gewählt ist, nach Arten: [(Schlüssel, Anzahl,
@@ -17749,7 +17752,7 @@ class MainWindow(QtWidgets.QMainWindow):
             for feld, vorrat in ((self.cb_assign_sec, self.model.sections),
                                  (self.cb_assign_mat, self.model.materials),
                                  (self.cb_assign_shell, self.model.shells)):
-                feld.addItems([self.UNVERAENDERT] + _namen(vorrat))
+                feld.addItems([self.ZUWEISEN_UNVERAENDERT] + _namen(vorrat))
             self.cb_assign_sec.setToolTip("Querschnitt für die Stabelemente der Auswahl "
                                           "(„unverändert“ = keine Änderung)")
             self.cb_assign_mat.setToolTip("Werkstoff für die Elemente der Auswahl, bei Flächen und "

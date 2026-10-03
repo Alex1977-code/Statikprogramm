@@ -991,6 +991,46 @@ def test_schlechte_waehlen_waehlt_elemente():
     _leeren(w)
 
 
+def test_sammelmaske_behaelt_ihr_unveraendert():
+    """Die Sammelmaske (Rechtsklick „Bearbeiten…“) nennt ihre Auswahl „(unverändert)“.
+
+    Ursache des Rauchtest-Risses am Stand 485f9bf: 12c hatte die Konstante der
+    Auswahlfelder im Register unter dem Namen ``UNVERAENDERT`` angelegt - der
+    Name gehoert in MainWindow schon der Sammelmaske (Wert „(unverändert)“), und
+    die spaetere Zeile gewann. Die zwei Werte sind verschieden, die Namen auch."""
+    from statik3d.gui.main import MainWindow
+    from statik3d.model import Member as Mb
+    w, app = _fenster()
+    w.new_model()
+    m = w.model
+    mat, sec = list(m.materials)[0], list(m.sections)[0]
+    k0 = m.add_node(0, 0, 0)
+    k1 = m.add_node(4, 0, 0)
+    k3 = m.add_node(0, 3, 0)
+    e0 = m.add_element("beam", [k0, k1], mat, sec)
+    m.members["S1"] = Mb("S1", elements=[e0])
+    m.fix(k0, "all")
+    m.fix(k3, [0, 1, 2])
+    w.refresh_all()
+    _ruhe()
+    check("die Sammelmaske behält ihr „(unverändert)“, das Register sein „unverändert“ (zwei Konstanten)",
+          MainWindow.UNVERAENDERT == "(unverändert)" and MainWindow.ZUWEISEN_UNVERAENDERT == "unverändert",
+          f"{MainWindow.UNVERAENDERT!r} / {getattr(MainWindow, 'ZUWEISEN_UNVERAENDERT', None)!r}")
+    w.sammelmaske("lager", [0, 1])
+    _ruhe()
+    mk = w.maskenrand.maske
+    werte = mk.werte()
+    check("Sammelmaske Lager: u_x bei beiden gesperrt (ja), φ_x verschieden → „(unverändert)“",
+          werte["d0"] == "ja" and werte["d3"] == "(unverändert)", f"d0={werte['d0']!r} d3={werte['d3']!r}")
+    mk.setzen("d3", "ja")
+    mk.anwenden()
+    _ruhe()
+    check("… und „ja“ sperrt φ_x bei beiden Lagern, „(unverändert)“ lässt es (Rückweg der Maske)",
+          all(3 in s.dofs for s in w.model.supports), str([list(s.dofs) for s in w.model.supports]))
+    w.maskenrand.schliessen()
+    _leeren(w)
+
+
 def test_klick_waehlt():
     """Die Wege der Auswahl in der Ansicht (Klick, Lager, Last, Klick ins Leere)."""
     w, app = _fenster()
@@ -1087,7 +1127,7 @@ def main():
               test_zuweisen_aendert_flaeche_und_volumen, test_zuweisen_ueberspringt_federn,
               test_zuweisen_verwirft_ergebnisse, test_baum_ersetzt_die_auswahl_ganz, test_lager_zaehlt_einmal,
               test_register_zieht_in_allen_wegen_nach, test_schlechte_waehlen_waehlt_elemente,
-              test_klick_waehlt, test_handbuch):
+              test_sammelmaske_behaelt_ihr_unveraendert, test_klick_waehlt, test_handbuch):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
