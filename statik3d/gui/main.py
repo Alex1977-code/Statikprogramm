@@ -1499,7 +1499,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if art == "knoten":
             return f"Knoten K{int(name)}"
         if art == "element":
-            return f"Element E{int(name)}"
+            # ein Stabelement heisst wie im Baum (C14 L1); Schalen und Volumen bleiben „Element“
+            e = int(name)
+            stab = 0 <= e < len(self.model.elements) and self.model.elements[e].typ in vp.TYPEN_STAEBE
+            return f"{'Stabelement' if stab else 'Element'} E{e}"
         if art in self.LAGER_KURZ.values():
             wort = {"lager": "Knotenlager", "linienlager": "Linienlager", "flaechenlager": "Flächenlager"}[art]
             t = self._lagername((art, int(name)))
@@ -1692,7 +1695,8 @@ class MainWindow(QtWidgets.QMainWindow):
             eintrag("Ausblenden", lambda _n: self.auswahl_ausblenden(), auswahl=True)
             eintrag("Nur dieses zeigen", lambda _n: self.nur_auswahl_zeigen(), auswahl=True)
         menu.addSeparator()
-        eintrag(f"{self.RECHTS_LOESCHEN[art]} löschen", lambda n, a_=art: self._objekt_loeschen((a_, n)))
+        wort = self._ziel_titel(ziel).split()[0] if art == "element" else self.RECHTS_LOESCHEN[art]
+        eintrag(f"{wort} löschen", lambda n, a_=art: self._objekt_loeschen((a_, n)))
 
     def _objekt_loeschen(self, ziel) -> None:
         """„… löschen“ im Menue eines Objekts: nur dieses Objekt, nach einer
@@ -2180,6 +2184,9 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 sub.addAction("Bearbeiten…", rufe(lambda _c=False, a=art, n=list(namen): self.sammelmaske(a, n),
                                                   True))
+            if art == "stab" and len(namen) > 1:
+                sub.addAction("Stäbe zusammenfassen",
+                              rufe(lambda _c=False, n=list(namen): self.staebe_zusammenfassen(n)))
             sub.addAction("Löschen", rufe(lambda _c=False, a=art, n=list(namen): self.auswahl_loeschen(a, n)))
         return True
 
@@ -2562,6 +2569,31 @@ class MainWindow(QtWidgets.QMainWindow):
                  for art, namen in gruppen]
         return teile[0] if len(teile) == 1 else ", ".join(teile[:-1]) + " und " + teile[-1]
 
+    def _stab_folge_text(self, elemente) -> str:
+        """Was das Loeschen dieser Stabelemente fuer ihre Staebe heisst (C14
+        F1): ein Stab ohne Element bleibt leer stehen und wird nicht
+        nachgewiesen. Leer, wenn keins zu einem Stab gehoert. Nur Text - der
+        Loeschweg selbst bleibt, wie er ist."""
+        m = self.model
+        weg = {int(e) for e in elemente}
+        leer, kuerzer = [], []
+        for s in m.staebe_der_elemente(weg):
+            rest = [e for e in m.members[s].elements if int(e) not in weg]
+            (kuerzer if rest else leer).append(s)
+
+        def namen(liste):
+            return ", ".join(liste[:5]) + (" …" if len(liste) > 5 else "")
+        z = []
+        if leer:
+            z.append((f"Stab {namen(leer)} bleibt ohne Stabelement stehen und wird nicht nachgewiesen"
+                      if len(leer) == 1 else
+                      f"Stäbe {namen(leer)} bleiben ohne Stabelement stehen und werden nicht nachgewiesen")
+                     + " – danach löschen oder neu zeichnen.")
+        if kuerzer:
+            z.append(f"Stab {namen(kuerzer)} verliert Stabelemente und wird kürzer." if len(kuerzer) == 1
+                     else f"Stäbe {namen(kuerzer)} verlieren Stabelemente und werden kürzer.")
+        return " ".join(z)
+
     def _loesch_folgen(self, gruppen) -> str:
         """Was Entf ausser den genannten Objekten noch mitnimmt oder verwirft - knapp,
         als Zusatz der Rueckfrage (leer, wenn es nichts zu sagen gibt)."""
@@ -2569,6 +2601,10 @@ class MainWindow(QtWidgets.QMainWindow):
         z = []
         if "stab" in arten:
             z.append("Stäbe: ihre Stabelemente bleiben stehen, ihre Linienlasten gehen mit.")
+        if "element" in arten:
+            folge = self._stab_folge_text([e for art, namen in gruppen if art == "element" for e in namen])
+            if folge:
+                z.append(folge)
         if "linie" in arten:
             z.append("Mit einer Linie gehen ihre Linienlasten.")
         if arten & {"flaeche", "volumen"}:
@@ -5419,6 +5455,9 @@ class MainWindow(QtWidgets.QMainWindow):
         g.eintrag(menu, "Stab aus Stabelementen…", self.stab_aus_stabelementen,
                   hinweis="Einen Stab mit Nachweis aus vorhandenen Stabelementen bilden: rechts die "
                           "Maske „Neu: Stab …“, dort die Nummern der Stabelemente eintragen")
+        g.eintrag(menu, "Stäbe zusammenfassen", self.staebe_zusammenfassen,
+                  hinweis="Die gewählten Stäbe einer geraden Kette zu einem Stab zusammenfassen – mit der "
+                          "Knicklänge der ganzen Kette; ein Rückgängig-Schritt")
         # Doppelungen nur noch in der Suche (25.09.2026, Paket 7): Zuweisen und
         # Gelenke setzen fuehren nur ins Kontextregister „Auswahl“, Vernetzen
         # ist Netz → Vernetzen, die Tabellen haben unten ihren Reiter
@@ -10344,9 +10383,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 ra = self._zahlenliste(w.get("ex_a"), zahl=float, anzahl=2, feld="Versatz Anfang y, z [mm]")
                 re = self._zahlenliste(w.get("ex_e"), zahl=float, anzahl=2, feld="Versatz Ende y, z [mm]")
                 if neu:
+                    parallel = self._parallel_text(self._stabelemente_zwischen(*knoten), *knoten)
                     self.merken("Stabelement angelegt")
                     i = m.add_element(typ, knoten, mat, sec)
                     name = str(i)
+                    if parallel:
+                        self.info(f"Stabelement E{i} angelegt" + parallel)
                 else:
                     i = int(name)
                     self.merken(f"Stabelement E{i}")
@@ -10369,6 +10411,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 if not els:
                     return self.hinweis("Elemente (Nummern von Stabelementen) angeben")
                 neuname = (w.get("name") or name).strip()
+                # ein Stabelement gehoert zu hoechstens einem Stab: sonst weist
+                # EC3 es zweimal nach (C14 S2, 03.10.2026)
+                fremd = {s: v for s, v in m.staebe_der_elemente(els).items() if neu or s != name}
+                if fremd:
+                    s, v = next(iter(fremd.items()))
+                    return self.error(f"E{v[0]} gehört schon zu Stab {s} – ein Stabelement gehört zu höchstens "
+                                      "einem Stab (sonst wird es doppelt nachgewiesen); erst dort herausnehmen "
+                                      "oder „Stäbe zusammenfassen“")
+                if neu and neuname in m.members:
+                    return self.error(f"Stab {neuname} gibt es schon - einen anderen Namen wählen")
                 self.merken(f"Stab {neuname}")
                 if neu:
                     m.add_member(neuname, els, design=bool(w.get("design", True)))
@@ -11354,7 +11406,9 @@ class MainWindow(QtWidgets.QMainWindow):
                "werkstoff": f"Werkstoff {name}", "dicke": f"Dicke {name}"}.get(art)
         if was is None:
             return
-        if not sammel and not self._bestaetigen(f"{was} wirklich löschen?" + _loeschhinweis(self)):
+        folge = self._stab_folge_text([int(name)]) if art == "stabelement" and name.isdigit() else ""
+        if not sammel and not self._bestaetigen(f"{was} wirklich löschen?" + (f"\n\n{folge}" if folge else "")
+                                                + _loeschhinweis(self)):
             return
         grund = ""
         # Der Stand **vor** dem Loeschen gehoert auf den Rueckgaengig-Stapel;
@@ -11701,7 +11755,9 @@ class MainWindow(QtWidgets.QMainWindow):
         namen = [str(x) for x in dict.fromkeys(namen)]
         if not namen:
             return
-        if not self._bestaetigen(f"{len(namen)} Einträge wirklich löschen?" + _loeschhinweis(self)):
+        folge = self._stab_folge_text([int(n) for n in namen if n.isdigit()]) if art == "stabelement" else ""
+        if not self._bestaetigen(f"{len(namen)} Einträge wirklich löschen?" + (f"\n\n{folge}" if folge else "")
+                                 + _loeschhinweis(self)):
             return
         # Nummern von hinten: sonst verschiebt das erste Loeschen alle folgenden
         if art in self.BAUM_NUMMERNARTEN:
@@ -18665,7 +18721,9 @@ class MainWindow(QtWidgets.QMainWindow):
             if self.beam_truss.isChecked():
                 for e in self.model.elements[e0:]:
                     e.typ = "truss"
-            self.model.add_member(f"S{len(self.model.members)+1}", list(range(e0, len(self.model.elements))))
+            # naechster freier Name (C14 F5): S{Anzahl+1} ueberschrieb einen vorhandenen Stab
+            self.model.add_member(self.model.naechster_name("S", self.model.members),
+                                  list(range(e0, len(self.model.elements))))
             mesher.merge_nodes(self.model)
             self._aenderung()
             self.refresh_all()
@@ -19385,16 +19443,37 @@ class MainWindow(QtWidgets.QMainWindow):
                   f"({zl.zahl_text(w['x'], punkt=True)}, {zl.zahl_text(w['y'], punkt=True)}, {zl.zahl_text(w['z'], punkt=True)}) m")
         self.refresh_all()
 
+    #: Hinweiszeile der Masken „Stab“ und „Stabelement“: was entsteht (C14)
+    STABMASKE_HINWEIS = {
+        "Stab": "Zwei Knoten in der Ansicht anklicken: es entsteht ein Stab mit Nachweis (S…) samt "
+                "seinem Stabelement (E…). Liegt dort schon ein Stabelement ohne Stab, bekommt es den "
+                "Stab. ✕ schließt.",
+        "Stabelement": "Zwei Knoten in der Ansicht anklicken: es entsteht ein einzelnes Stabelement "
+                       "(E…) ohne Stab und ohne Nachweis. ✕ schließt."}
+
     def _stabmaske(self, titel: str, knopf: str):
         """Die Maske der Befehle „Stab“ und „Stabelement“: zwei Knoten
-        anklicken, Werkstoff, Querschnitt, Fachwerkstab - fuer beide gleich."""
-        return msk.Maske(titel, [
-            msk.Feld("mat", "Material", "wahl", self._erst(self.model.materials),
+        anklicken, Werkstoff, Querschnitt, Fachwerkstab - fuer beide gleich.
+
+        Die Hinweiszeile sagt, was entsteht, und bleibt auch nach dem Anlegen
+        stehen: die Maske setzt sonst nach jedem Paar Klicks ihren allgemeinen
+        Satz ein (Maske._zeige_auswahl). Das Feld heisst „Werkstoff“ wie die
+        Meldung (bis 03.10.2026 „Material“)."""
+        hinweis = self.STABMASKE_HINWEIS[titel]
+        m = msk.Maske(titel, [
+            msk.Feld("mat", "Werkstoff", "wahl", self._erst(self.model.materials),
                      _namen(self.model.materials)),
             msk.Feld("sec", "Querschnitt", "wahl", self._erst(self.model.sections),
                      _namen(self.model.sections)),
             msk.Feld("fachwerk", "Fachwerkstab (nur N)", "haken", False)],
-            knoten=2, knopf=knopf)
+            knoten=2, knopf=knopf, hinweis=hinweis)
+        m._klickhinweis = lambda: hinweis
+        return m
+
+    def _stabelemente_zwischen(self, a: int, b: int) -> list:
+        """Die Stabelemente, die genau die Knoten a und b verbinden."""
+        return [i for i, e in enumerate(self.model.elements)
+                if e.typ in vp.TYPEN_STAEBE and {int(e.nodes[0]), int(e.nodes[-1])} == {int(a), int(b)}]
 
     @_maskenweg()
     def maske_stab(self):
@@ -19425,18 +19504,41 @@ class MainWindow(QtWidgets.QMainWindow):
         if len(kn) < 2:
             return self.error("Zwei Knoten in der Ansicht anklicken")
         m = self.model
+        a, b = int(kn[0]), int(kn[1])
         mat, sec = w.get("mat", ""), w.get("sec", "")
         # Ein Stab ohne Werkstoff oder Querschnitt scheiterte erst beim Rechnen
         # oder im Nachweis - darum hier abweisen, wie die Maske „Neu: Stabelement“
         if mat not in m.materials or sec not in m.sections:
             return self.error("Werkstoff und Querschnitt wählen (erst anlegen, wenn keiner da ist)")
+        # Liegt zwischen den Knoten schon ein Stabelement, entsteht kein zweites
+        # paralleles (C14 F2): es truege doppelt - am Rahmen fiel die Verschiebung
+        # auf 62 %, und der Nachweis kam zu guenstig heraus (Gegenpruefung
+        # 03.10.2026). Ein Element ohne Stab bekommt den Stab, eines mit Stab
+        # weist den Befehl ab.
+        da = self._stabelemente_zwischen(a, b)
+        im_stab = m.staebe_der_elemente(da)
+        frei = [i for i in da if not any(i in v for v in im_stab.values())]
+        if da and not frei:
+            s, els = next(iter(im_stab.items()))
+            return self.error(f"Zwischen K{a} und K{b} liegt schon Stabelement E{els[0]} von Stab {s} – "
+                              "kein zweiter Stab angelegt")
         typ = "truss" if w.get("fachwerk") else "beam"
         name = m.naechster_name("S", m.members)
         self.merken(f"Stab {name} angelegt")
-        e = m.add_element(typ, [kn[0], kn[1]], mat, sec)
-        m.add_member(name, [e])
-        self.info(f"{'Fachwerkstab' if typ == 'truss' else 'Stab'} {name} mit Stabelement E{e} "
-                  f"angelegt: {kn[0] + 1}–{kn[1] + 1}, {sec}")
+        if frei:
+            e = frei[0]
+            m.add_member(name, [e])
+            el = m.elements[e]
+            text = f"Stab {name} um das vorhandene Stabelement E{e} angelegt: K{a}–K{b}, {el.sec}"
+            if (el.sec, el.mat, el.typ) != (sec, mat, typ):
+                text += (f" – Querschnitt, Werkstoff und Art bleiben die des Elements ({el.sec}, {el.mat}"
+                         f"{', Fachwerkstab' if el.typ == 'truss' else ''}), nicht die der Maske")
+        else:
+            e = m.add_element(typ, [a, b], mat, sec)
+            m.add_member(name, [e])
+            text = (f"{'Fachwerkstab' if typ == 'truss' else 'Stab'} {name} mit Stabelement E{e} "
+                    f"angelegt: K{a}–K{b}, {sec}")
+        self.info(text)
         if self.maskenrand.maske is not None:
             self.maskenrand.maske.auswahl_leeren()
         self.refresh_all()
@@ -19456,13 +19558,23 @@ class MainWindow(QtWidgets.QMainWindow):
         if len(kn) < 2:
             return self.error("Zwei Knoten in der Ansicht anklicken")
         typ = "truss" if w.get("fachwerk") else "beam"
+        a, b = int(kn[0]), int(kn[1])
+        da = self._stabelemente_zwischen(a, b)
         self.merken("Stabelement angelegt")
-        i = self.model.add_element(typ, [kn[0], kn[1]], w["mat"], w["sec"])
-        self.info(f"Stabelement E{i} angelegt: {kn[0] + 1}–{kn[1] + 1}, "
-                  f"{'Fachwerkstab, ' if typ == 'truss' else ''}{w['sec']}")
+        i = self.model.add_element(typ, [a, b], w["mat"], w["sec"])
+        self.info(f"Stabelement E{i} angelegt: K{a}–K{b}, "
+                  f"{'Fachwerkstab, ' if typ == 'truss' else ''}{w['sec']}" + self._parallel_text(da, a, b))
         if self.maskenrand.maske is not None:
             self.maskenrand.maske.auswahl_leeren()
         self.refresh_all()
+
+    def _parallel_text(self, da: list, a: int, b: int) -> str:
+        """Zusatz der Statuszeile, wenn zwischen a und b schon ein Stabelement
+        lag: ein paralleles zweites entsteht nie still (C14 F2)."""
+        if not da:
+            return ""
+        return (f" – Achtung: zwischen K{a} und K{b} lag schon Stabelement E{da[0]}; zwei parallele "
+                "Elemente tragen doppelt")
 
     @_maskenweg()
     def stab_aus_stabelementen(self):
@@ -22089,20 +22201,61 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ---- Nachweise ---------------------------------------------------
     def auto_members(self):
+        """„Stäbe automatisch erkennen“: Stabelemente ohne Stab zu Staeben
+        verketten. Elemente, die schon zu einem Stab gehoeren, uebergeht es -
+        die Meldung sagt, wie viele, und verweist auf „Stäbe zusammenfassen“
+        (C14 F3c: drei gezeichnete Stuecke einer Stuetze blieben still drei
+        Staebe mit je einem Drittel der Knicklaenge)."""
+        m = self.model
+        vergeben = {int(e) for mem in m.members.values() for e in mem.elements
+                    if 0 <= int(e) < len(m.elements) and m.elements[int(e)].typ in vp.TYPEN_STAEBE}
         self.merken("Stäbe erkannt")
-        n = len(self.model.auto_members())
+        n = len(m.auto_members())
         if not n:
             self._merken_zuruecknehmen()        # nichts Neues erkannt: keine Aenderung
-        self.info(f"{n} Stäbe erkannt (gesamt {len(self.model.members)})")
+        text = f"{n} Stäbe erkannt (gesamt {len(m.members)})"
+        if vergeben:
+            text += (f"; {len(vergeben)} Stabelemente gehören schon zu Stäben und wurden übergangen – "
+                     "gerade Ketten solcher Stäbe fasst „Stäbe zusammenfassen“ zusammen "
+                     "(Struktur → Nachweisstäbe ▾)")
+        self.info(text)
         self.refresh_all()
+
+    def staebe_zusammenfassen(self, namen=None):
+        """„Stäbe zusammenfassen“ (C14 F3b, 03.10.2026): die gewaehlten
+        kollinearen, zusammenhaengenden Staebe werden ein Stab - mit der
+        Knicklaenge der ganzen Kette -, in einem Rueckgaengig-Schritt
+        (:meth:`Model.staebe_zusammenfassen`). Struktur → Nachweisstäbe ▾ und
+        Rechtsklick auf die gewaehlten Staebe."""
+        m = self.model
+        namen = list(namen) if namen is not None else list(self.sel_staebe or [])
+        if len(namen) < 2:
+            return self.error("Mindestens zwei Stäbe wählen (Auswahlart Stab, Strg+Klick), dann "
+                              "„Stäbe zusammenfassen“")
+        self.merken(f"Stäbe {', '.join(namen)} zusammengefasst")
+        try:
+            name, hinweise = m.staebe_zusammenfassen(namen)
+        except ValueError as ex:
+            self._merken_zuruecknehmen()        # nichts geaendert
+            return self.error(f"Stäbe nicht zusammengefasst: {ex}")
+        L = m.member_length(m.members[name])
+        self.sel_staebe = [name]
+        self.info(f"Stäbe {', '.join(namen)} zu Stab {name} zusammengefasst: L = {zl.zahl_text(L, stellen=3)} m"
+                  + (" – " + "; ".join(hinweise) if hinweise else ""))
+        self.refresh_all()
+        return name
 
     def member_from_elements(self):
         els = parse_int_list(self.ed_member_elems.text(), len(self.model.elements))
         els = [i for i in els if self.model.elements[i].typ in vp.TYPEN_STAEBE]
         if not els:
             return self.error("Keine Stabelemente angegeben")
+        fremd = self.model.staebe_der_elemente(els)
+        if fremd:
+            s, v = next(iter(fremd.items()))
+            return self.error(f"E{v[0]} gehört schon zu Stab {s} – ein Stabelement gehört zu höchstens einem Stab")
         self.merken("Stab mit Nachweis")
-        self.model.add_member(f"S{len(self.model.members)+1}", els)
+        self.model.add_member(self.model.naechster_name("S", self.model.members), els)
         self.refresh_all()
 
     def edit_member(self):

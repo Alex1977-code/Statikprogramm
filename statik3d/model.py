@@ -5441,7 +5441,6 @@ class Model:
 
         used = set()
         members = []
-        k = len(self.members)
         for start in beams:
             if start in used:
                 continue
@@ -5469,9 +5468,259 @@ class Model:
                     else:
                         chain.insert(0, nx)
                     cur = nx
-            k += 1
-            members.append(self.add_member(f"{prefix}{k}", chain))
+            # naechster freier Name: bis zum 03.10.2026 zaehlte k = len(members)
+            # weiter - nach dem Loeschen von S1 wurde der vorhandene S2 still
+            # ueberschrieben (C14 Nachbesserung F5)
+            members.append(self.add_member(self.naechster_name(prefix, self.members), chain))
         return members
+
+    # -- Staebe mit Nachweis: leere Staebe, Ketten, Zusammenfassen, Teilen --
+    # Teilpaket C14, Nachbesserung 03.10.2026: seit der Befehl „Stab“ jeden
+    # gezeichneten Abschnitt als eigenen Stab mit Nachweis anlegt, sind diese
+    # Faelle der Regelfall und nicht mehr die Ausnahme eines Imports.
+    def _stab_elemente(self, mem) -> list:
+        """Die vorhandenen Elemente eines Stabs (Nummern im Bereich)."""
+        ne = len(self.elements)
+        return [int(e) for e in (mem.elements or []) if 0 <= int(e) < ne]
+
+    def staebe_ohne_element(self) -> list:
+        """Die Staebe ohne vorhandenes Stabelement - etwa nachdem ihr Element
+        geloescht wurde. Der Nachweis nach EC3 uebergeht sie (bis zum
+        03.10.2026 brach er mit IndexError ab, die Berechnung mit ihm)."""
+        return [n for n, mem in self.members.items() if not self._stab_elemente(mem)]
+
+    def staebe_der_elemente(self, elemente) -> dict:
+        """{Stab: [Elemente]} - zu welchen Staeben die genannten Elemente gehoeren."""
+        gefragt = {int(e) for e in elemente}
+        out: dict = {}
+        for name, mem in self.members.items():
+            drin = [int(e) for e in (mem.elements or []) if int(e) in gefragt]
+            if drin:
+                out[name] = drin
+        return out
+
+    def _elementrichtung(self, i: int) -> np.ndarray:
+        e = self.elements[int(i)]
+        d = (np.asarray(self.nodes[int(e.nodes[-1])], float)
+             - np.asarray(self.nodes[int(e.nodes[0])], float))
+        return d / (np.linalg.norm(d) or 1.0)
+
+    def _gehaltene_knoten(self) -> set:
+        """Knoten mit Lager oder Kopplung: Knoten-, Linien-, Flaechen- und
+        Kontaktlager, Kopplungen, Spaltelemente, starre Koerper."""
+        out = {int(s.node) for s in self.supports}
+        out |= {int(c.node) for c in (getattr(self, "contact_supports", None) or [])}
+        for grp in (self.line_supports, self.surface_supports):
+            for x in grp:
+                out |= {int(n) for n in (getattr(x, "nodes", None) or [])}
+        for x in list(getattr(self, "kopplungen", None) or []) + list(getattr(self, "gap_elements", None) or []):
+            out |= {int(x.node_a), int(x.node_b)}
+        for sk in (getattr(self, "starrkoerper", None) or []):
+            out |= {int(sk.master)} | {int(n) for n in (sk.slaves or [])}
+        return out
+
+    def stabketten_frei(self, winkel_tol: float = 1e-3) -> list:
+        """Kollineare Staebe, die an einem Knoten ohne Lager und ohne quer
+        anschliessendes Bauteil zusammenstossen: [(Stab A, Stab B, Knoten)].
+
+        Jeder gezeichnete Stab ist ein eigener Stab mit Knicklaenge =
+        Stablaenge (Entscheidung der Hauptsitzung vom 03.10.2026, wie RFEM).
+        Haengt am Stoss nichts als die beiden Staebe, knickt die Kette aber als
+        Ganzes - die Knicklaenge des einzelnen Stabs liegt dann auf der
+        unsicheren Seite (Stuetze 6 m aus drei Staeben: Ausnutzung 0,2856 statt
+        0,7969, tests.test_befehl_stab). Darum warnen „Prüfen“ und der Nachweis.
+        Gleiche Toleranz wie :meth:`auto_members` (1 - |cos| <= 1e-3).
+
+        Erst die Kandidaten aus den Stabenden, dann ein Durchgang durch die
+        Elemente nur, wenn es welche gibt - ein Volumenmodell ohne Staebe
+        zahlt nichts."""
+        enden: dict = {}
+        for name, mem in self.members.items():
+            if not mem.design:
+                continue
+            els = [e for e in self._stab_elemente(mem) if self.elements[e].typ in _EL.STAB_TYPEN]
+            zaehl: dict = {}
+            for e in els:
+                for k in (int(self.elements[e].nodes[0]), int(self.elements[e].nodes[-1])):
+                    zaehl[k] = zaehl.get(k, 0) + 1
+            for k, c in zaehl.items():
+                if c == 1:
+                    e = next(e for e in els if k in (int(self.elements[e].nodes[0]),
+                                                     int(self.elements[e].nodes[-1])))
+                    enden.setdefault(k, []).append((name, e))
+        gehalten = None
+        kandidaten = {}
+        for k, liste in enden.items():
+            if len(liste) != 2 or liste[0][0] == liste[1][0]:
+                continue
+            (a, ea), (b, eb) = liste
+            cos = float(np.dot(self._elementrichtung(ea), self._elementrichtung(eb)))
+            if abs(abs(cos) - 1.0) > winkel_tol:
+                continue
+            if gehalten is None:
+                gehalten = self._gehaltene_knoten()
+            if k not in gehalten:
+                kandidaten[k] = (a, b)
+        if not kandidaten:
+            return []
+        # ein drittes Element am Stoss (quer angeschlossen, Schale, Feder ...)
+        am_knoten = dict.fromkeys(kandidaten, 0)
+        for e in self.elements:
+            for n in {int(x) for x in e.nodes}:
+                if n in am_knoten:
+                    am_knoten[n] += 1
+        import re
+
+        def natuerlich(s):
+            return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", str(s))]
+        out = []
+        for k, (a, b) in kandidaten.items():
+            if am_knoten[k] == 2:
+                a, b = sorted((a, b), key=natuerlich)
+                out.append((a, b, k))
+        return sorted(out, key=lambda t: (natuerlich(t[0]), t[2]))
+
+    def stab_verweise(self, name: str) -> list:
+        """Was ausser Linienlasten auf diesen Stab verweist, im Klartext."""
+        out = []
+        for lc in self.load_cases.values():
+            for v in (getattr(lc, "vorspannungen", None) or []):
+                if getattr(v, "art", "") == "stab" and getattr(v, "ziel", "") == name:
+                    out.append(f"Vorspannung in {lc.name}")
+        for nm, g in (getattr(self, "verformungsgrenzen", None) or {}).items():
+            if getattr(g, "art", "") == "stab" and getattr(g, "stab", "") == name:
+                out.append(f"Verformungsnachweis {nm}")
+        for nm, x in (getattr(self, "lasteinleitungen", None) or {}).items():
+            if getattr(x, "stab", "") == name:
+                out.append(f"Lasteinleitung {nm}")
+        for wort, sammlung, feld in (("Subsystem", "subsysteme", "staebe"), ("Layer", "layer", "staebe"),
+                                     ("Wind", "winde", "staebe"), ("Schweißnaht", "schweissnaehte", "staebe")):
+            for nm, x in (getattr(self, sammlung, None) or {}).items():
+                if name in (getattr(x, feld, None) or []):
+                    out.append(f"{wort} {nm}")
+        for st in (getattr(self, "stellungen", None) or []):
+            if name in (getattr(st, "staebe_aus", None) or []):
+                out.append(f"Stellung {getattr(st, 'name', '')}")
+        return out
+
+    def staebe_zusammenfassen(self, namen) -> tuple:
+        """Gewaehlte kollineare, zusammenhaengende Staebe zu einem Stab
+        zusammenfassen (Werkzeug „Stäbe zusammenfassen“, C14).
+
+        Der erste Stab der Kette behaelt Namen und Nachweisparameter und
+        bekommt die Elemente aller in Reihenfolge; die anderen entfallen. Ihre
+        Linienlasten gehen mit, um die Laenge der Staebe davor verschoben -
+        die Elementlasten daraus bleiben dieselben. Eine feste Knick- oder
+        Kipplaenge passt zur neuen Laenge nicht mehr und wird zurueckgesetzt
+        (dann gilt beta · L). Die Elemente bleiben, wie sie sind: es wird
+        nichts umgedreht, darum muss jeder Stab in Richtung der Kette laufen.
+
+        Rueckgabe (Name, [Hinweise]); ValueError mit dem Grund, wenn es nicht
+        geht - dann ist nichts geaendert."""
+        namen = list(dict.fromkeys(str(n) for n in namen))
+        if len(namen) < 2:
+            raise ValueError("Mindestens zwei Stäbe wählen")
+        fehlt = [n for n in namen if n not in self.members]
+        if fehlt:
+            raise ValueError("Stab " + ", ".join(fehlt) + " gibt es nicht")
+        leer = [n for n in namen if not self._stab_elemente(self.members[n])]
+        if leer:
+            raise ValueError("Stab " + ", ".join(leer) + " hat kein Stabelement")
+        enden = {}
+        for n in namen:
+            els = self._stab_elemente(self.members[n])
+            for a_, b_ in zip(els, els[1:]):
+                if int(self.elements[a_].nodes[-1]) != int(self.elements[b_].nodes[0]):
+                    raise ValueError(f"Stab {n} läuft nicht durchgehend in einer Richtung (E{a_}, E{b_})")
+            enden[n] = (int(self.elements[els[0]].nodes[0]), int(self.elements[els[-1]].nodes[-1]))
+        anfang, ende = {}, {}
+        for n, (a, b) in enden.items():
+            anfang.setdefault(a, []).append(n)
+            ende.setdefault(b, []).append(n)
+        for knoten, wort in ((ende, "enden"), (anfang, "beginnen")):
+            for k, v in knoten.items():
+                if len(v) > 1:
+                    raise ValueError(f"Stab {' und '.join(v[:2])} {wort} beide an K{k}: einer ist gegen die "
+                                     "Kette gezeichnet - ihn in Richtung der Kette neu zeichnen")
+        kopf = [n for n, (a, _b) in enden.items() if a not in ende]
+        folge = kopf[:1]
+        while folge:
+            weiter = anfang.get(enden[folge[-1]][1], [])
+            if not weiter or weiter[0] in folge:
+                break
+            folge.append(weiter[0])
+        if len(kopf) != 1 or len(folge) != len(namen):
+            raise ValueError("Die Stäbe hängen nicht in einer offenen Kette zusammen")
+        elemente = [e for n in folge for e in self._stab_elemente(self.members[n])]
+        d0 = self._elementrichtung(elemente[0])
+        for e in elemente[1:]:
+            if float(np.dot(d0, self._elementrichtung(e))) < 1.0 - 1e-3:
+                raise ValueError(f"Die Stäbe liegen nicht auf einer Geraden (E{e} knickt ab)")
+        arten = {(self.elements[e].sec, self.elements[e].mat, self.elements[e].typ) for e in elemente}
+        if len(arten) > 1:
+            raise ValueError("Die Stäbe haben verschiedene Querschnitte, Werkstoffe oder Elementarten")
+        for n in folge[1:]:
+            verweise = self.stab_verweise(n)
+            if verweise:
+                raise ValueError(f"Stab {n} wird verwendet von {', '.join(verweise[:4])} - erst dort lösen")
+        bleibt = self.members[folge[0]]
+        hinweise = []
+        # Linienlasten: um die Laenge der Staebe davor verschieben, „bis zum
+        # Ende“ wird die Laenge des alten Stabs
+        lage, s = {}, 0.0
+        for n in folge:
+            L = sum(self.element_length(e) for e in self._stab_elemente(self.members[n]))
+            lage[n] = (s, L)
+            s += L
+        bewegt = 0
+        for lc in self.load_cases.values():
+            for ll in lc.linienlasten:
+                if ll.art == "stab" and ll.ziel in lage:
+                    o, L = lage[ll.ziel]
+                    bis = L if ll.bis is None else min(float(ll.bis), L)
+                    ll.von, ll.bis, ll.ziel = o + max(0.0, float(ll.von)), o + bis, bleibt.name
+                    bewegt += 1
+        fest = [n for n in folge if any(getattr(self.members[n], a) is not None
+                                        for a in ("Lcr_y", "Lcr_z", "L_LT"))]
+        if fest:
+            bleibt.Lcr_y = bleibt.Lcr_z = bleibt.L_LT = None
+            hinweise.append(f"feste Knick- und Kipplängen von {', '.join(fest)} zurückgesetzt (jetzt β · L)")
+        bleibt.design = any(self.members[n].design for n in folge)
+        bleibt.elements = elemente
+        for n in folge[1:]:
+            del self.members[n]
+        if bewegt:
+            self.lasten_verteilen()
+            hinweise.append(f"{bewegt} Linienlasten mitgenommen")
+        return bleibt.name, hinweise
+
+    def stabelement_geteilt(self, alt: int, neu: int) -> list:
+        """Das Stabelement ``alt`` wurde geteilt, ``neu`` ist sein anderer Teil
+        (sie teilen einen Knoten): ``neu`` kommt in jeden Stab, zu dem ``alt``
+        gehoert, an seine Stelle entlang der Achse. Rueckgabe: die Staebe.
+
+        Bis zum 03.10.2026 blieb das neue Element ohne Stab, und die Laenge
+        des Stabs halbierte sich („Freie Stabenden anschließen…“)."""
+        alt, neu = int(alt), int(neu)
+        kn_neu = {int(n) for n in self.elements[neu].nodes}
+        out = []
+        for name, mem in self.members.items():
+            els = [int(e) for e in mem.elements]
+            if alt not in els or neu in els:
+                continue
+            i = els.index(alt)
+            vor = els[i - 1] if i > 0 else None
+            nach = els[i + 1] if i + 1 < len(els) else None
+            if nach is not None:
+                hinter = bool(kn_neu & {int(n) for n in self.elements[nach].nodes})
+            elif vor is not None:
+                hinter = not (kn_neu & {int(n) for n in self.elements[vor].nodes})
+            else:
+                hinter = int(self.elements[alt].nodes[-1]) in kn_neu
+            els.insert(i + 1 if hinter else i, neu)
+            mem.elements = els
+            out.append(name)
+        return out
 
     def berichtsrahmen(self) -> "Berichtsrahmen":
         """Der Rahmen des Berichts, beim ersten Zugriff angelegt."""
@@ -5708,6 +5957,14 @@ class Model:
                     msgs.append(f"FEHLER: Stab '{m.name}': Element {i} existiert nicht")
                 elif self.elements[i].typ not in _EL.STAB_TYPEN:
                     msgs.append(f"FEHLER: Stab '{m.name}': Element {i} ist kein Stabelement")
+        # Teilpaket C14 (03.10.2026): ein Stab ohne Element wird nicht
+        # nachgewiesen; Ketten freier Staebe knicken als Ganzes
+        for n in self.staebe_ohne_element():
+            msgs.append(f"WARNUNG: Stab {n} hat kein Stabelement - er wird nicht nachgewiesen; "
+                        "ihn löschen oder neu zeichnen (oder „Stab aus Stabelementen…“)")
+        for a, b, k in self.stabketten_frei():
+            msgs.append(f"WARNUNG: Stab {a} und {b} bilden eine Kette mit freiem Zwischenknoten K{k} "
+                        "– Knicklänge prüfen oder „Stäbe zusammenfassen“")
         n_loads = sum(lc.n_loads for lc in self.load_cases.values())
         if n_loads == 0:
             msgs.append("WARNUNG: keine Lasten definiert")

@@ -846,6 +846,24 @@ def main():
         m.knoten_angeklickt(2)
         m.knoten_angeklickt(2)
         check("Erneutes Anklicken nimmt den Knoten wieder heraus", m.gewaehlt == [])
+        # der Befehl „Stab“ selbst (C14): Stab mit Nachweis samt Stabelement, ein Rückgängig-Schritt
+        w.maske_stab()
+        m = w.maskenrand.maske
+        ne0, nm0 = len(w.model.elements), len(w.model.members)
+        m.knoten_angeklickt(0)
+        m.knoten_angeklickt(w.model.nn - 1)   # dort liegt noch kein Stabelement
+        app.processEvents()
+        neu_ = [k for k in w.model.members if w.model.members[k].elements == [ne0]]
+        check("Befehl „Stab“: zwei Klicks legen einen Stab mit Nachweis samt Stabelement an",
+              m.titel == "Stab" and len(w.model.elements) == ne0 + 1 and len(w.model.members) == nm0 + 1
+              and len(neu_) == 1, f"{len(w.model.elements) - ne0} Elemente, {len(w.model.members) - nm0} Stäbe")
+        w.undo()
+        app.processEvents()
+        check("… Rückgängig nimmt Stab und Stabelement zusammen zurück",
+              len(w.model.elements) == ne0 and len(w.model.members) == nm0,
+              f"{len(w.model.elements)} / {len(w.model.members)}")
+        w.maske_stabelement()
+        m = w.maskenrand.maske
         w.maskenrand.schliessen()
         check("Maske laesst sich schliessen", w.maskenrand.maske is None)
         check("Ohne Maske geht der Klick wieder an die Auswahl",

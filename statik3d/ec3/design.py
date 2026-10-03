@@ -64,6 +64,10 @@ class DesignResults:
     #: _gleiche_zusammenfassen. Ergebnisse von vor dem 23.09.2026 kennen das
     #: Feld nicht (getattr).
     gleiche: dict = field(default_factory=dict)
+    #: Hinweise zu gefuehrten Nachweisen, die das Urteil nicht aendern: Ketten
+    #: kollinearer Staebe mit freiem Zwischenknoten (Knicklaenge pruefen,
+    #: Model.stabketten_frei, C14 03.10.2026). Aeltere Ergebnisse: getattr.
+    hinweise: list = field(default_factory=list)
 
     @property
     def util_max(self) -> float:
@@ -93,7 +97,7 @@ class DesignResults:
 
     def summary(self) -> str:
         if not self.members:
-            return "Nachweise EC3: keine Staebe" + warnzeilen(self)
+            return "Nachweise EC3: keine Staebe" + warnzeilen(self) + hinweiszeilen(self)
         # Nicht gefuehrte Staebe (``fehler``, etwa Werkstoff ohne
         # Streckgrenze) zaehlen weder als erfuellt noch fuer die groesste
         # Ausnutzung. Bis zum 22.09.2026 stand hier nur ``util > 1``: ein
@@ -130,7 +134,7 @@ class DesignResults:
             gruende = list(dict.fromkeys(m.fehler for m in ohne))
             s += (f" - {len(ohne)} nicht geführt: {namen} ("
                   + "; ".join(gruende[:3]) + (" …" if len(gruende) > 3 else "") + ")")
-        return s + warnzeilen(self)
+        return s + warnzeilen(self) + hinweiszeilen(self)
 
     def table(self) -> list[list]:
         rows = [["Stab", "Querschnitt", "Material", "L [m]", "Klasse", "Ausnutzung",
@@ -149,6 +153,14 @@ def warnzeilen(ergebnis) -> str:
     ``warnungen`` noch nicht."""
     w = getattr(ergebnis, "warnungen", None) or []
     return "".join(f"\nWARNUNG: {x}" for x in w)
+
+
+def hinweiszeilen(ergebnis) -> str:
+    """Die Hinweise eines Nachweisergebnisses (DesignResults.hinweise) als
+    eigene Zeilen "WARNUNG (Knicklänge): ..." - sie stehen im Protokoll, aendern
+    aber das Urteil nicht (anders als ``warnungen``: nicht nachgewiesen)."""
+    w = getattr(ergebnis, "hinweise", None) or []
+    return "".join(f"\nWARNUNG (Knicklänge): {x}" for x in w)
 
 
 # --------------------------------------------------------------------------
@@ -469,6 +481,21 @@ def check_members(model: Model, analysis, combos: list = None, members: list = N
     from .. import parallel
     warnungen: list = []
     names = members if members is not None else [k for k, m in model.members.items() if m.design]
+    # Ein Stab ohne Stabelement (sein Element wurde geloescht) wird nicht
+    # nachgewiesen, sondern gemeldet: bis zum 03.10.2026 brach check_member an
+    # member.elements[0] mit IndexError ab - und mit ihm die ganze Berechnung
+    # (F5, gemessen in der Gegenpruefung von C14)
+    ne = len(model.elements)
+    leer = [k for k in names if k in model.members
+            and not any(0 <= int(e) < ne for e in model.members[k].elements)]
+    if leer:
+        names = [k for k in names if k not in leer]
+        warnungen.extend(f"Stab {k} hat kein Stabelement – nicht nachgewiesen; ihn löschen oder neu zeichnen"
+                         for k in leer)
+    gefuehrt_namen = set(names)
+    hinweise = [f"Stab {a} und {b} bilden eine Kette mit freiem Zwischenknoten K{k} – Knicklänge prüfen "
+                "oder „Stäbe zusammenfassen“"
+                for a, b, k in model.stabketten_frei() if a in gefuehrt_namen or b in gefuehrt_namen]
     # Ohne einen Stab mit Nachweis wird nichts nachgewiesen - dann darf auch
     # keine Kombination als "nicht nachgewiesen" gemeldet werden. Sonst kam
     # hier mit nur GZG-Kombinationen und allen Staeben auf design = False die
@@ -481,7 +508,7 @@ def check_members(model: Model, analysis, combos: list = None, members: list = N
     out = DesignResults(combinations=list(results), settings={
         "gamma_M0": model.design.gamma_M0, "gamma_M1": model.design.gamma_M1,
         "Methode": f"Anhang {model.design.interaction_method}",
-        "BDK": model.design.lt_method}, warnungen=warnungen, gleiche=gleiche)
+        "BDK": model.design.lt_method}, warnungen=warnungen, gleiche=gleiche, hinweise=hinweise)
     if not names or not results:
         _melde(progress, "Nachweise EC3: keine Staebe mit Nachweis" if not names else
                "Nachweise EC3: keine Ergebnisse einer GZT-Kombination", _anteil(anteil, 1.0))

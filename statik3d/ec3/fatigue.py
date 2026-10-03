@@ -1187,6 +1187,11 @@ def check_fatigue(model: Model, analysis, progress=None, n: int = None,
     for mname, member in model.members.items():
         if not member.design or member.detail_category is None:
             continue
+        if not any(0 <= int(e) < len(model.elements) for e in member.elements):
+            # ein Stab ohne Stabelement (C14, 03.10.2026): nicht nachweisbar,
+            # bis dahin IndexError in _stress_points. Gemeldet wird er von
+            # „Prüfen“ (Model.check) und vom Nachweis EC3 (check_members)
+            continue
         geprueft += 1
         gMf = GAMMA_MF.get((member.assessment, member.consequence), 1.15)
         cat_s = member.detail_category_shear or 100e6

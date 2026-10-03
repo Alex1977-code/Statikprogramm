@@ -585,6 +585,10 @@ def an_staebe_anschliessen(model, radius: float = 0.12, log: list = None) -> dic
                 el.roll = e.roll
             except AttributeError:
                 pass
+            # der neue Teil gehoert zu denselben Staeben wie der alte (C14,
+            # 03.10.2026): bis dahin blieb er ohne Stab, die Stablaenge halbierte sich
+            if isinstance(neu, int):
+                model.stabelement_geteilt(i, neu)
             n_teil += 1
         elif t <= 1e-6 or t >= 1 - 1e-6:
             # Fusspunkt liegt auf einem Stabende: Knoten verschmelzen

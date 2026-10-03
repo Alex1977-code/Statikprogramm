@@ -642,13 +642,15 @@ def test_element():
         e1 = int(w.model.members["S2"].elements[0])
         w._element_am_zeiger = lambda: e1
         menu = rechtsklick(w, app, P)
-        check("Stabelement: mit „Im Baum zeigen“", objekt(menu) == [f"Element E{e1}", "Bearbeiten…",
-                                                                    "In der Tabelle zeigen", "Im Baum zeigen",
-                                                                    "Ausblenden", "Nur dieses zeigen",
-                                                                    "Element löschen"],
+        # „Stabelement E…“ und „Stabelement löschen“ wie im Baum (C14 L1, 03.10.2026; bis dahin
+        # „Element E…“ und „Element löschen“ - die Schale oben heisst weiter „Element“)
+        check("Stabelement: Titel „Stabelement E…“, mit „Im Baum zeigen“, „Stabelement löschen“",
+              objekt(menu) == [f"Stabelement E{e1}", "Bearbeiten…", "In der Tabelle zeigen", "Im Baum zeigen",
+                               "Ausblenden", "Nur dieses zeigen", "Stabelement löschen"],
               str(objekt(menu)))
         ausloesen(w, app, menu, "Bearbeiten…")
-        check("… „Bearbeiten…“ öffnet die Maske des Stabelements", _maske(w) == f"Stab E{e1}", repr(_maske(w)))
+        check("… „Bearbeiten…“ öffnet die Maske des Stabelements", _maske(w) == f"Stabelement E{e1}",
+              repr(_maske(w)))
         ausloesen(w, app, rechtsklick(w, app, P), "Im Baum zeigen")
         check("… „Im Baum zeigen“: das Stabelement im Modellbaum gewählt",
               _baumeintrag(w) == ("stabelement", str(e1)), str(_baumeintrag(w)))

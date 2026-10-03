@@ -111,7 +111,7 @@ Fünfzehn Register nach Arbeitsschritt:
 | **Start** | der Arbeitsablauf in einer Reihe: Knoten, Stab, Knotenlager, Linienlast, Lastfälle, Vernetzen, Prüfen (mit den Prüfwerkzeugen *Doppelte Knoten zusammenführen*, *Freie Stabenden anschließen…*, *Freie Bewegungen suchen*), Berechnen, Ergebnisse, Nachweise EC3, Bericht; am Ende das Menü *Bearbeiten ▾* (Rückgängig, Wiederholen, Auswahl) |
 | **Unterlagen** | **Dateien** (Datei hinzufügen: PDF, Bild, Word, Excel …; Unterlage öffnen; Entfernen), **Ansichten** (Ansicht aufnehmen, Skizze aus Ansicht), **Skizze** (Neue Skizze, Bearbeiten), **Bericht** (In den Bericht, Unterlagen zeigen) — seit 16.09.2026, siehe *Unterlagen* |
 | **Geometrie** | **Knoten / Linien** (Knoten, Linie, Knoten löschen, Linie aus Knoten), **Ändern** (Verschieben, Kopieren, Drehen, Spiegeln der Auswahl), **Konstruktion** (Lot / Projektion), Auswahlart in der Ansicht, Koordinatensysteme, Arbeitsebene, **Fang** (Hauptschalter F3 und *Fangarten ▾*, auch „Lot“) |
-| **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, das ist der Stab mit Nachweis samt seinem Stabelement; Stabzug; *Nachweisstäbe ▾*: Stäbe für Nachweise, automatisch erkennen, Stab aus Stabelementen…), **Flächen** (Schale, Fläche aus Linien, Rechteckplatte, verschneiden), **Volumen** (Volumen aus Flächen, Quader), **Gelenke** (Gelenk anlegen), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
+| **Struktur** | nach Objektart gegliedert: **Stäbe** (Stab, das ist der Stab mit Nachweis samt seinem Stabelement; Stabzug; *Nachweisstäbe ▾*: Stäbe für Nachweise, automatisch erkennen, Stab aus Stabelementen…, Stäbe zusammenfassen), **Flächen** (Schale, Fläche aus Linien, Rechteckplatte, verschneiden), **Volumen** (Volumen aus Flächen, Quader), **Gelenke** (Gelenk anlegen), Eigenschaften (Querschnitte, Werkstoffe, Dicken, Elemente löschen) |
 | **Lager / Kontakt** | Knoten-, Linien-, Flächenlager, Nichtlinearität, **Kontakt** (mit *Alle Kontakte löschen…*), **Fugen / Passungen** (Spalt / Toleranz, Kontaktbedingung, Kontaktfugen ausführen, Passung, Übermaß, Spiel geben), Anschlüsse (anlegen, zeigen, löschen) |
 | **Lasten** | **Lastfälle** (Lastfälle, Lastfälle nach DIN 19704, Ermüdungslasten), **Kombinationen** (*EN 1990…* und *DIN 19704* nebeneinander), Knoten-, Stab-, Flächen-, Temperaturlast (groß), Zwangsverformung, Vorspannung (klein), Eigengewicht, Generierer Wasserdruck und Wind |
 | **Netz** | Vernetzen (Flächen und Volumen), Netzeinstellungen (**Elemente Entwurf / Mittel / Fein**, Netzdichte, Elementform, intelligente Anpassung), **Elementübersicht**, Netzqualität, **Netzknoten** (Schalter), Netz löschen; **Elemente** (Stabelement: ein einzelnes finites Stabelement ohne Stab, seit 03.10.2026) |
@@ -623,15 +623,19 @@ Die Arbeitsfläche in drei Spalten:
   „Stäbe“) öffnet rechts die **Anlegemaske „Neu …“** — dieselbe
   wie Rechtsklick → *Neu*, nicht modal. **Angelegt wird erst mit OK**,
   *Abbrechen* legt nichts an. Das gilt für Querschnitte, Werkstoffe, Dicken,
-  Linien, Stäbe (bis zum 03.10.2026 „Stäbe mit Nachweis“), Stabelemente (bis
-  dahin „Stäbe“), Flächen, Volumen, Gelenke, Knotenlager,
+  Linien, Stabelemente (bis zum 03.10.2026 „Stäbe“), Flächen, Volumen,
+  Gelenke, Knotenlager,
   Kontaktbedingungen, Lastfälle, Kombinationen, Ermüdungslasten, Stellungen,
   Situationen, Subsysteme, Schweißnähte, Bemaßungen, den Wasserdruck und seit
   dem 03.10.2026 den Bericht: „Neu: Berichtsbild“ fragt Name,
   Bildunterschrift, Bemerkung und Platz im Bericht ab und nimmt die Ansicht
   erst mit OK auf. Ihr Feld „zeigt jetzt“ folgt der Ansicht, und ein
   Ergebnis, das man im Baum anklickt, lässt sie stehen, denn die Ansicht
-  einzustellen ist genau ihr Schritt. Der einfache Klick, den Qt vor jedem
+  einzustellen ist genau ihr Schritt. Am Zweig *Stäbe* (bis zum 03.10.2026 „Stäbe
+  mit Nachweis“) öffnet der Doppelklick seit 03.10.2026 die Maske *Stab* des
+  gleichnamigen Befehls: Sie hat kein OK, der zweite angeklickte Knoten legt
+  den Stab an; bis dahin kam die Maske „Neu: Stab …“ mit den Elementnummern.
+  Der einfache Klick, den Qt vor jedem
   Doppelklick meldet, zeigt nur die Übersicht; bis zum 03.10.2026 wählte er dabei schon
   alle Objekte der Art aus. Ausgenommen sind Zweige, deren *Neu* keine
   Anlegemaske ist: Knoten (dort legt *Neu* sofort einen Knoten an), Layer
@@ -3354,6 +3358,29 @@ Stabelement an, das ohne Nachweis unter *FE-Netz* stand, und der Rechtsklick
 „Neu: Stab …“ öffnete die Maske mit den Elementnummern; Masken und Rückfragen
 nannten das Element „Stab E…“.
 
+**Was beim Stab mit Nachweis zu beachten ist** (seit 03.10.2026). Liegt
+zwischen den beiden Knoten schon ein Stabelement ohne Stab, legt *Stab* kein
+zweites daneben, sondern den Stab um das vorhandene; Querschnitt, Werkstoff und
+Art bleiben die des Elements, und die Statuszeile sagt es. Gehört das Element
+schon zu einem Stab, weist der Befehl ab. Zwei parallele Elemente zwischen
+denselben Knoten trügen doppelt: an einem Rahmen fiel die Verschiebung auf
+62 %, und der Nachweis kam zu günstig heraus. *Netz → Stabelement* legt ein
+paralleles Element weiter an, sagt es aber in der Statuszeile. Wird das
+Stabelement eines Stabs gelöscht, bleibt der Stab ohne Stabelement stehen:
+*Prüfen* meldet ihn, der Nachweis nach EC3 übergeht ihn mit einer Warnung, und
+die Rückfrage beim Löschen (Baum, Rechtsklick, Entf in der Ansicht) sagt es
+vorher; bis zum 03.10.2026 brach die Berechnung dann ab. Jeder gezeichnete Stab
+hat die Knicklänge seiner eigenen Länge. Stoßen zwei kollineare Stäbe an einem
+freien Zwischenknoten zusammen, warnen *Prüfen* und der Nachweis, und *Stäbe
+zusammenfassen* macht einen Stab daraus (Kapitel 8; an einer Stütze aus drei
+Stäben 0,7969 statt 0,2856). Alte Modelle, deren Stäbe noch aus einzelnen
+Stabelementen ohne Stab bestehen, bekommen ihre Stäbe mit *Stäbe automatisch
+erkennen* oder mit *Struktur → Nachweisstäbe ▾ → Stab aus Stabelementen…*.
+Diese Maske nimmt kein Element an, das schon zu einem Stab gehört, sonst würde
+es doppelt nachgewiesen. *Freie Stabenden anschließen…* teilt das Element
+eines Stabs und hängt den neuen Teil in denselben Stab; bis zum 03.10.2026
+gehörte er zu keinem Stab, und der Stab wurde kürzer.
+
 **Aufbau jeder Maske** (seit 24.09.2026): Oben stehen der Titel und darunter
 die Hinweiszeile, was die Maske erwartet; sie ist immer ganz zu lesen, auch
 wenn sie auf mehrere Zeilen umbricht. In der Mitte liegen die Felder. Reicht
@@ -5550,7 +5577,25 @@ Knotenkopien (V16 und V29 je 2 weniger), die 24 Linienkopien bleiben.
 Stäbe (Kette von Stabelementen) legt der Befehl *Struktur → Stab* an (seit
 03.10.2026 samt seinem Stabelement), beim Erzeugen von Stabzügen und beim
 Import entstehen sie automatisch („Stäbe automatisch erkennen“ verkettet
-kollineare Elemente gleichen Querschnitts). Je Stab:
+kollineare Stabelemente gleichen Querschnitts, die noch zu keinem Stab gehören,
+und sagt, wie viele es übergangen hat). Jeder gezeichnete Stab ist ein eigener
+Stab mit der Knicklänge β · L seiner eigenen Länge, wie in RFEM. Wer eine
+Stütze aus drei Stücken zeichnet, bekommt drei Stäbe mit je einem Drittel der
+Knicklänge; hält an den Stößen nichts, liegt das auf der unsicheren Seite.
+Darum warnen seit 03.10.2026 *Prüfen* und das Protokoll des Nachweises, wenn
+kollineare Stäbe an einem Knoten ohne Lager und ohne quer angeschlossenes
+Bauteil zusammenstoßen („Stab S1 und S2 bilden eine Kette mit freiem
+Zwischenknoten K1 – Knicklänge prüfen oder „Stäbe zusammenfassen““); das
+Urteil des Nachweises ändert die Warnung nicht. *Struktur → Nachweisstäbe ▾ →
+Stäbe zusammenfassen* (auch im Rechtsklick auf die gewählten Stäbe) macht aus
+den gewählten Stäben einer geraden Kette einen Stab, in einem
+Rückgängig-Schritt: Der erste behält Namen und Parameter, Linienlasten gehen
+mit, feste Knick- und Kipplängen werden auf β · L zurückgesetzt. Jeder Stab
+muss dazu in Richtung der Kette gezeichnet sein, und keiner darf von einem
+anderen Objekt (Verformungsnachweis, Stellung, Layer …) verwendet werden. An
+der Stütze HEB 200, 6 m, 600 kN ergibt das L = 6 m und die Ausnutzung 0,7969
+statt dreimal 0,2856. Ein Stab ohne Stabelement – sein Element wurde gelöscht
+– wird nicht nachgewiesen; der Nachweis nennt ihn als Warnung. Je Stab:
 
 * Querschnittsnachweise an allen Nachweisstellen (Klasse, N, V, M, M+V, M+N,
   Torsion, Vergleichsspannung),
@@ -9015,7 +9060,7 @@ darunter, rechts die Register als Arbeitsblatt.
 
 | Register | Inhalt |
 |---|---|
-| **Modell** | Projektdaten, Materialien, Querschnitte (Profildatenbank und parametrisch), Schalendicken, Netzgeneratoren (Stabzug, Platte, Quader), Knoten, Elemente (Stab, Schale, Zuweisen, Gelenke, Löschen), Lager, Stäbe mit Nachweisparametern, Kontakt, Nachweiseinstellungen |
+| **Modell** | Projektdaten, Materialien, Querschnitte (Profildatenbank und parametrisch), Schalendicken, Netzgeneratoren (Stabzug, Platte, Quader), Knoten, Elemente (Stabelement, Schale, Zuweisen, Gelenke, Löschen; der Knopf hieß bis zum 03.10.2026 „+ Stab“ und legt nur ein Stabelement an, einen Stab mit Nachweis bildet „+ Stab“ unter *Stäbe für Nachweise* aus Elementen), Lager, Stäbe mit Nachweisparametern, Kontakt, Nachweiseinstellungen |
 | **Lasten** | Lastfälle mit Einwirkungskategorie, Lasten des aktiven Lastfalls (Knoten-, Strecken-, Flächen-, Temperaturlast, Eigengewicht), Kombinationen (automatisch/manuell), Ermüdungslasten |
 | **Rechnen** | Analyseart, Nachweise, Prozesse, Rechnerfarm, Start; Fortschritt und Zusammenfassung |
 | **Ergebnisse** | Ergebnis (Umhüllende / Kombination / Lastfall / Eigenform), Färbung, Überhöhung, Schnittgrößenverlauf, Stabdiagramm N/Vz/My, Tabellen Stabkräfte, Umhüllende, Auflagerkräfte, Kontakt |

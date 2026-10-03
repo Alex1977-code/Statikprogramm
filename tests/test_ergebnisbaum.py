@@ -955,8 +955,10 @@ def test_ergebnis_passt_nicht_mehr():
         "Knoten": lambda: w._maske_knoten_anlegen({"x": 30.0, "y": 9.0, "z": 9.0}),
         "Stabzug": lambda: w._stabzug_erzeugen({"mat": mat, "sec": sec, "x1": 20, "y1": 0, "z1": 0,
                                                 "x2": 25, "y2": 0, "z2": 0, "n": 4}),
-        # das einzelne Element (bis 03.10.2026 der Befehl „Stab“, seit C14 „Stabelement“)
+        # das einzelne Element (bis 03.10.2026 der Befehl „Stab“, seit C14 „Stabelement“) und der
+        # Befehl „Stab“ selbst: Stab mit Nachweis samt Element (C14 Nachbesserung S4)
         "Stabelement (Maske)": lambda: w._maske_stabelement_anlegen({"knoten": [0, 5], "mat": mat, "sec": sec}),
+        "Stab (Befehl)": lambda: w._maske_stab_anlegen({"knoten": [0, 5], "mat": mat, "sec": sec}),
         "Fläche": lambda: w._platte_erzeugen({"mat": mat, "dicke": "T10", "lx": 2, "ly": 2, "z": 20.0,
                                              "nx": 2, "ny": 2, "vierecke": True}),
     }
