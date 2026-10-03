@@ -2855,13 +2855,77 @@ class MainWindow(QtWidgets.QMainWindow):
         Die Tabellen markieren dabei, was gewaehlt ist (ohne eigenes
         Neuzeichnen); nach einem Klick blieb bis zur Nachbesserung vom 03.10.2026
         die alte Zeile markiert. Die unveraenderte Maske einer Last, die nicht
-        mehr gewaehlt ist, geht zu (:meth:`_lastmaske_abgewaehlt`)."""
+        mehr gewaehlt ist, geht zu (:meth:`_lastmaske_abgewaehlt`). Der
+        Modellbaum markiert, was gewaehlt ist, ohne die Tastatur zu nehmen
+        (:meth:`_baum_nachfuehren`, Teilpaket 8d)."""
         if hasattr(self, "ribbon") and not getattr(self, "_auswahl_sammeln", False):
             self._gesperrte_entfernen()
             self._lastmaske_abgewaehlt()
             self._info_zeigen()
             self._tabellen_markieren()
+            self._baum_nachfuehren()
         self.redraw()
+
+    def _baum_nachfuehren(self) -> None:
+        """Ansicht -> Baum (Teilpaket 8d, 03.10.2026; Plan vom 24.09.2026,
+        Paket 8: „Eine Auswahl in der Ansicht markiert den Eintrag im Baum, ohne
+        ihm die Tastatur zu geben“). Bis dahin liess ein Klick in der Ansicht den
+        Baum stehen; nur „Im Baum zeigen“ suchte den Eintrag, mit einer Schleife
+        ueber alle Zeilen, und legte die Tastatur in den Baum.
+
+        Je gewaehltes Objekt die Zeilen, die es meinen koennen, die erste
+        vorhandene gilt (:meth:`dsg.Modellbaum.auswahl_nachfuehren`): ein Knoten
+        der Konstruktion seinen Eintrag, ein Netzknoten die Zaehlzeile
+        „Netzknoten“, ein Flaechen- oder Volumenelement seinen Zweig unter
+        „FE-Netz“, eine Last die Zeile ihrer Lastart unter dem Lastfall. Die
+        aktuelle Zeile ist die des zuletzt gewaehlten Objekts der Auswahlart.
+        Gesucht wird im Suchverzeichnis des Baums; was hinter einer Sammelzeile
+        „… N weitere“ steht, wird nachgeladen. Das ist kein Klick im Baum: keine
+        Maske, keine Leiste „Übernehmen | Verwerfen“ (_maskenweg gilt fuer Klicks
+        des Anwenders im Baum)."""
+        baum = getattr(self, "baum", None)
+        if baum is None or not _lebt(baum):
+            return
+        m = self.model
+        n = (len(self.selection) + len(self.sel_linien) + len(self.sel_staebe) + len(self.sel_flaechen)
+             + len(self.sel_koerper) + len(self.sel_elemente) + len(self.sel_lager) + len(self.sel_lasten))
+        if n > baum.AUSWAHL_MAX:
+            # ein Auswahlfenster ueber Tausende Knoten: der Baum markiert nichts
+            baum.auswahl_nachfuehren([], None)
+            return
+        stab_typen = vp.EL.STAB_TYPEN
+        schalen, volumen = vp.EL.SCHALEN_TYPEN, vp.EL.VOLUMEN_TYPEN
+
+        def element(i):
+            i = int(i)
+            typ = m.elements[i].typ if 0 <= i < len(m.elements) else ""
+            if typ in stab_typen:
+                return (("stabelement", str(i)), ("stabelemente", ""))
+            if typ in schalen:
+                return (("flaechen", ""),)
+            if typ in volumen:
+                return (("volumen", ""),)
+            return ()
+
+        def last(fall, liste, k):
+            _lc, obj = self._lastobjekt(fall, liste, k)
+            art = self._lastart_von(liste, obj) if obj is not None else ""
+            return (("lastart", f"{fall}|{art}"), ("lastfall", fall), ("lastfaelle", ""))
+
+        je_art = {
+            "Knoten": [(("knoten", str(int(i))), ("netzknoten", "")) for i in self.selection],
+            "Linie": [(("linie", x), ("linien", "")) for x in self.sel_linien],
+            "Stab": [(("stab", x), ("staebe", "")) for x in self.sel_staebe],
+            "Fläche": [(("geoflaeche", x), ("geoflaechen", "")) for x in self.sel_flaechen],
+            "Volumen": [(("geokoerper_einzeln", x), ("geokoerper", "")) for x in self.sel_koerper],
+            "Netz": [element(i) for i in self.sel_elemente],
+            "Lager": [((_KONTEXT_BEZUG[a], str(int(j))), (a, "")) for a, j in self.sel_lager],
+            "Last": [last(*x) for x in self.sel_lasten],
+        }
+        ziele = [z for liste in je_art.values() for z in liste if z]
+        eigene = [z for z in je_art.get(getattr(self, "auswahlart", ""), []) if z]
+        aktuell = eigene[-1] if eigene else (ziele[-1] if ziele else None)
+        baum.auswahl_nachfuehren(ziele, aktuell)
 
     def _lastmaske_abgewaehlt(self) -> None:
         """Steht rechts noch die Maske einer Last, die nicht mehr gewaehlt ist
@@ -7181,7 +7245,16 @@ class MainWindow(QtWidgets.QMainWindow):
         dock = QtWidgets.QDockWidget("Modellbaum", self)
         dock.setAllowedAreas(QtCore.Qt.LeftDockWidgetArea)
         dock.setFeatures(QtWidgets.QDockWidget.NoDockWidgetFeatures)
-        self.baum = dsg.Modellbaum(dock)
+        # Ueber dem Baum die Filterzeile (Teilpaket 8d, 03.10.2026): zu Beginn
+        # zu, Strg+F im Baum oeffnet sie (dsg.Baumfilter)
+        halter = QtWidgets.QWidget(dock)
+        lay = QtWidgets.QVBoxLayout(halter)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(2)
+        self.baum = dsg.Modellbaum(halter)
+        self.baum_filter = dsg.Baumfilter(self.baum, halter)
+        lay.addWidget(self.baum_filter)
+        lay.addWidget(self.baum, 1)
         self.baum.angeklickt.connect(self._baum_geklickt)
         self.baum.bearbeiten.connect(self._baum_bearbeiten)
         self.baum.neu.connect(self._baum_neu)
@@ -7189,7 +7262,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.baum.mehrfach.connect(self._baum_mehrfach)
         self.baum.viele_bearbeiten.connect(self._baum_viele_bearbeiten)
         self.baum.viele_loeschen.connect(self._baum_viele_loeschen)
-        dock.setWidget(self.baum)
+        dock.setWidget(halter)
         # Der Baum traegt jetzt Namen und Zusatzangabe nebeneinander (Knoten mit
         # Koordinaten, Lager mit Wirkung); unter 290 px bleibt vom Namen nichts.
         dock.setMinimumWidth(290)

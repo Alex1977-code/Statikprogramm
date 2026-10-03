@@ -288,7 +288,8 @@ den genannten.
 Links in der Kopfzeile die **Schnellzugriffsleiste** (Speichern, Rückgängig,
 Wiederholen, Berechnen) — dieselben Befehle, nur schneller erreichbar;
 „Alles deselektieren“ steht in der Glasleiste über der Ansicht. Rechts die
-**Befehlssuche** (Strg+F setzt den Cursor hinein): Namen eintippen, darunter
+**Befehlssuche** (Strg+F setzt den Cursor hinein; nur im Modellbaum öffnet
+Strg+F seine Filterzeile): Namen eintippen, darunter
 erscheint die Trefferliste mit dem Ort jedes Befehls („Spiel geben   (Lager /
 Kontakt › Fugen / Passungen)“). Gesucht wird
 am **Wortanfang** — „spiel“ findet „Spiel geben“, aber nicht die Gruppe
@@ -494,6 +495,57 @@ Die Arbeitsfläche in drei Spalten:
   die damals direkt an der Wurzel hingen. Bis zum 02.10.2026 galt der Zustand
   eines Zweigs gleichen Namens aus dem vorigen Modell weiter, und *Lager* war
   nie offen, obwohl es so gedacht war.
+
+  **Was in der Ansicht gewählt wird, markiert die Zeile im Modellbaum** (seit
+  03.10.2026). Ein Klick auf einen Knoten, eine Linie, einen Stab, eine Fläche,
+  ein Volumen, ein Stabelement oder ein Lager wählt seine Zeile im Baum, klappt
+  die Zweige darüber auf und rollt sie ins Bild; mit Strg+Klick sind es mehrere
+  Zeilen, und ein Klick ins Leere hebt die Markierung auf. Die Tastatur bleibt
+  in der Ansicht, Entf und die Einzeltasten wirken also weiter dort. Rechts
+  öffnet sich dabei nichts: Das Markieren ist kein Klick in den Baum, es legt
+  keine Maske an und hält auch nicht an der Leiste „Übernehmen | Verwerfen“,
+  wenn rechts eine Maske mit nicht übernommenen Änderungen steht. Ein Netzknoten
+  steht nicht einzeln im Baum; für ihn wird die Zählzeile *FE-Netz →
+  Netzknoten* markiert, für ein Flächen- oder Volumenelement die Zeile
+  *Flächenelemente* oder *Volumenelemente* und für eine Last die Zeile ihrer
+  Lastart unter dem Lastfall. Steht der Eintrag hinter einer Sammelzeile „… N
+  weitere“, lädt der Baum seine Zeile vor der Sammelzeile nach, und die
+  Sammelzeile zählt einen weniger; die Zeile bleibt bis zum nächsten Neuaufbau,
+  und ist sie dann gewählt, wird sie wieder nachgeladen. Gesucht wird in einem
+  Verzeichnis, das der Baum bei jedem Aufbau mitbaut, nicht mehr Zeile für
+  Zeile. Wer mehr als 200 Objekte auf einmal wählt, etwa mit einem
+  Auswahlfenster über viele Knoten, sieht im Baum keine Markierung. Die
+  Auswahlbefehle des Ribbons (*Alles auswählen*, *Auswahl umkehren*, die Auswahl
+  nach Koordinaten oder Nummern) und ein Klick in die Tabellen der Knoten,
+  Linien und Elemente ändern die Markierung im Baum nicht; eine Last, die in der
+  Lastentabelle angeklickt wird, markiert ihre Zeile wie in der Ansicht. Bis zum
+  03.10.2026 ließ ein Klick in der Ansicht den Baum stehen; nur *Im Baum zeigen*
+  im Rechtsklickmenü suchte den Eintrag, und zwar Zeile für Zeile durch den
+  ganzen Baum, legte die Tastatur in den Baum und fand keinen Eintrag hinter
+  „… N weitere“.
+
+  **Filterzeile über dem Modellbaum** (seit 03.10.2026). **Strg+F im
+  Modellbaum** öffnet über dem Baum eine Filterzeile und setzt den Cursor
+  hinein; steht dort schon etwas, ist es markiert. Jede Eingabe filtert sofort:
+  Sichtbar bleiben die Zeilen, deren Name den Text enthält, gleich ob groß oder
+  klein geschrieben („k1“ findet K1, K10 und K100), mit allem, was unter ihnen
+  hängt, und die Zweige darüber, die dafür aufklappen. Ein Zweig ohne Treffer
+  verschwindet. Hinter einer Sammelzeile „… N weitere“ sucht der Filter mit und
+  lädt die Treffer als Zeilen nach, bis zu 500 je Liste; was darüber hinaus
+  passt, nennt die Sammelzeile („… 12 weitere Treffer“). Der Filter überlebt
+  jeden Neuaufbau des Baums, etwa nach „Übernehmen“ in einer Maske oder nach
+  Rückgängig; ein anderes Modell (Neu, Öffnen, ein Beispiel) beginnt ohne Filter.
+  **Esc** in der Filterzeile hebt den Filter auf, schließt die Zeile und gibt
+  die Tastatur dem Baum; ein leeres Feld hebt den Filter ebenso auf, die Zeile
+  bleibt dann offen. In beiden Fällen kommt der Aufklappzustand von vor dem
+  Filter wieder, die nachgeladenen Treffer verschwinden (außer gewählten), und
+  der Baum rollt zum gewählten Eintrag, wenn er in einem offenen Zweig steht,
+  sonst dorthin, wo er vor dem Filter stand. Pfeil nach unten oder die
+  Eingabetaste in der Filterzeile geben die Tastatur dem Baum, und Pos1 und
+  Ende springen dort zum ersten und letzten sichtbaren Eintrag. Überall sonst
+  bleibt Strg+F die Befehlssuche, auch in der Ansicht und in den Feldern einer
+  Maske. Bis zum 03.10.2026 gab es keine Filterzeile, und Strg+F setzte immer
+  den Cursor in die Befehlssuche.
 
   **Schrift und Farbe im Baum** (seit 02.10.2026). Grau steht ein Zweig nur,
   wenn er **samt allem darunter** leer ist: Zähler 0 und kein Unterzweig mit
@@ -3094,7 +3146,9 @@ Arten blieb aber bei jeder Art stehen, und die Maske einer abgewählten Last bli
 offen. Ein Klick zeichnet die Ansicht einmal neu, gleicht das Kontextregister
 einmal ab und markiert in den Tabellen, was gewählt ist; bis dahin lief das
 Register je Klick zweimal, und die Tabellen behielten nach einem Klick die
-vorige Markierung.
+vorige Markierung. Seit dem 03.10.2026 markiert der Klick auch die Zeile im
+Modellbaum, ohne dem Baum die Tastatur zu geben (Kapitel 2, Abschnitt zum
+Modellbaum).
 
 **Die Maustasten in der 3D-Ansicht.**
 
@@ -3128,8 +3182,10 @@ S2“ oder „Knotenlager 1 (K0)“, und darunter stehen seine Befehle. *Bearbei
 der Linie *Linienlast…*, bei Fläche und Volumen *Flächenlast…* und die
 Kontaktbedingungen daran, beim Lager seine Symbolgröße oder die Lagerdichte. *In
 der Tabelle zeigen* holt unten seine Tabelle nach vorn und markiert seine Zeile,
-*Im Baum zeigen* wählt seinen Eintrag im Modellbaum (Netzknoten, Flächen- und
-Volumenelemente und Lasten stehen dort nicht einzeln, dann fehlt der Eintrag),
+*Im Baum zeigen* wählt seinen Eintrag im Modellbaum, holt den Baum ins Bild, wenn er
+ausgeblendet ist, und gibt ihm die Tastatur; markiert ist die Zeile seit dem
+03.10.2026 schon durch die Auswahl (Netzknoten, Flächen- und Volumenelemente und
+Lasten stehen dort nicht einzeln, dann fehlt der Eintrag),
 *Ausblenden* und *Nur dieses zeigen* wirken wie die Befehle der Sicht. Zuletzt
 löscht *Knoten löschen*, *Stab löschen*, *Lager löschen* und so fort das Objekt
 nach einer Rückfrage, die es nennt („Stab S2 wirklich löschen?“); die übrige
@@ -8902,7 +8958,11 @@ Hilfe und Suche (seit 02.10.2026): F1 öffnet das Benutzerhandbuch, Strg+F
 setzt den Cursor in die Befehlssuche oben rechts - was schon darin steht, ist
 markiert und wird vom nächsten Buchstaben ersetzt. Strg+F1 klappt das Ribbon
 ein. Bis zum 02.10.2026 trugen weder F1 noch Strg+F einen Befehl; die
-Befehlssuche erreichte man nur mit der Maus.
+Befehlssuche erreichte man nur mit der Maus. Seit dem 03.10.2026 gilt eine
+Ausnahme: Hat der Modellbaum oder seine Filterzeile die Tastatur, öffnet
+Strg+F die Filterzeile über dem Baum (Kapitel 2, Abschnitt zum Modellbaum); in
+der Ansicht, in den Feldern einer Maske und überall sonst bleibt Strg+F die
+Befehlssuche.
 
 **Liste der Tastenkürzel.** *Extras → Tastenkürzel* öffnet ein Fenster mit allen
 Kürzeln: der Befehl, sein Kürzel mit den Namen der Tasten auf der deutschen
@@ -8930,7 +8990,9 @@ den Tasten, die kein Befehl des Ribbons trägt, sondern ein Fenster selbst
 abfängt. Im Modellbaum (der Fokus steht im Baum) löschen Entf und Rücktaste den
 gewählten Eintrag, bei mehreren gewählten derselben Art alle; die Eingabetaste
 öffnet die Maske des gewählten Eintrags, wie ein Doppelklick; Pos1 und Ende
-springen zum ersten und zum letzten Eintrag. In der rechten Maske löst die
+springen zum ersten und zum letzten Eintrag; Strg+F öffnet die Filterzeile über
+dem Baum, und Esc in der Filterzeile hebt den Filter auf (seit 03.10.2026). In
+der rechten Maske löst die
 Eingabetaste den Hauptknopf aus, von jedem Feld aus; in einer Tabelle oder Liste
 der Maske blättert sie nur. Im Programmfenster bricht Esc einen laufenden
 Vorgang mit Abbrechen-Knopf ab (Vernetzen, Berechnung, Nachweise, Wind,

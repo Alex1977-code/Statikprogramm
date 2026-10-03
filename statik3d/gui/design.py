@@ -675,6 +675,57 @@ def namen(verzeichnis) -> list:
     return sorted(verzeichnis or (), key=natuerlich)
 
 
+class _Rest:
+    """Die Eintraege einer gekuerzten Liste ab BAUM_MAX (Teilpaket 8d,
+    03.10.2026): der Baum zeigt sie nicht, findet sie aber - fuer die Ansicht
+    (die eine Zeile wird nachgeladen) und fuer den Filter (seine Treffer werden
+    nachgeladen). Schluessel und Namen entstehen erst, wenn jemand sucht; die
+    ganze Zeile mit Zusatz und Hinweis nur fuer einen nachgeladenen Eintrag. Am
+    Drehlager kostete der Text aller Knoten 2,5 s je Aufbau (8c).
+
+    ``schluessel()`` liefert die Schluessel in der Folge der Liste, ``name(j)``
+    den Text der Zeile j, ``bauen(j)`` die ganze Zeile (Text, Zusatz,
+    Schluessel, Hinweis[, Farbe]) wie in :meth:`Modellbaum._liste`."""
+
+    def __init__(self, eltern, zeile, art, anzahl, schluessel, name, bauen):
+        self.eltern = eltern            # der Zweig
+        self.zeile = zeile              # seine Sammelzeile „… N weitere“
+        self.art = art                  # die Art der Eintraege
+        self.anzahl = int(anzahl)       # so viele stehen hinter BAUM_MAX
+        self._schluessel_quelle = schluessel
+        self.name = name
+        self.bauen = bauen
+        self._schluessel = None         # die Schluessel, beim ersten Suchen
+        self._stellen = None            # Schluessel -> Stelle
+        self._namen = None              # Namen in Kleinbuchstaben, beim ersten Filtern
+        #: nachgeladene Zeilen: Schluessel -> Zeile
+        self.geladen: dict = {}
+        #: die Schluessel davon, die der Filter nachgeladen hat (er nimmt sie
+        #: beim Aufheben wieder heraus, ausser sie sind gewaehlt)
+        self.vom_filter: set = set()
+        #: Treffer des laufenden Filters, die nicht nachgeladen sind (FILTER_MAX)
+        self.treffer_offen = 0
+
+    def _alle_schluessel(self) -> list:
+        if self._schluessel is None:
+            self._schluessel = [str(k) for k in self._schluessel_quelle()]
+        return self._schluessel
+
+    def schluessel(self, j: int) -> str:
+        return self._alle_schluessel()[j]
+
+    def stelle(self, key) -> "int | None":
+        """Die Stelle des Eintrags mit diesem Schluessel, sonst ``None``."""
+        if self._stellen is None:
+            self._stellen = {k: j for j, k in enumerate(self._alle_schluessel())}
+        return self._stellen.get(str(key))
+
+    def treffer(self, such: str) -> list:
+        """Die Stellen der Eintraege, deren Name ``such`` enthaelt (klein)."""
+        if self._namen is None:
+            self._namen = [str(self.name(j)).lower() for j in range(self.anzahl)]
+        return [j for j, n in enumerate(self._namen) if such in n]
+
 
 class Modellbaum(QtWidgets.QTreeWidget):
     """Der Modellbaum links: **alles**, was im Modell modelliert werden kann.
@@ -694,6 +745,14 @@ class Modellbaum(QtWidgets.QTreeWidget):
     Objekte der Art aus, und vier Zweige oeffneten schon beim einfachen Klick
     ihre Anlegemaske. Alles laeuft ueber Signale, damit das Fenster entscheidet,
     was daraus wird; :meth:`zweig_finden` sagt ihm, welcher Zweig gemeint ist.
+
+    **Ansicht -> Baum** (Teilpaket 8d, 03.10.2026): was in der Ansicht gewaehlt
+    wird, markiert :meth:`auswahl_nachfuehren` hier, ohne Signale und ohne die
+    Tastatur zu nehmen. Gesucht wird im Suchverzeichnis ``_verzeichnis`` (Art
+    und Schluessel -> Zeile), das :meth:`_zweig` beim Aufbau mitbaut; hinter
+    einer Sammelzeile „… N weitere“ wird die Zeile nachgeladen (:class:`_Rest`).
+    Die **Filterzeile** darueber (:class:`Baumfilter`, Strg+F im Baum) filtert
+    die Zeilen nach dem Namen (:meth:`filtern`).
     """
 
     angeklickt = QtCore.Signal(str, str)      # (Art, Name)
@@ -788,6 +847,18 @@ class Modellbaum(QtWidgets.QTreeWidget):
         #: Rueckgaengig/Wiederholen: der naechste Aufbau behaelt Aufklappzustand
         #: und Rolle, aber nicht die Auswahl (die Ansicht leert ihre auch)
         self._auswahl_verwerfen = False
+        #: Suchverzeichnis (Teilpaket 8d): (Art, Schluessel) -> Zeile, von
+        #: :meth:`_zweig` beim Aufbau mitgebaut und mit ihm geleert. Bis zum
+        #: 03.10.2026 ging :meth:`eintrag_waehlen` ueber alle Zeilen des Baums.
+        self._verzeichnis: dict = {}
+        #: Die nicht gezeigten Eintraege gekuerzter Listen: Art -> [_Rest]
+        self._reste: dict = {}
+        #: Der Filter in Kleinbuchstaben, "" = kein Filter (:meth:`filtern`)
+        self._filter = ""
+        #: die Zeile, die vor dem Filter oben stand (fuer das Aufheben)
+        self._filter_oben = None
+        #: Die Filterzeile ueber dem Baum (:class:`Baumfilter` setzt sie)
+        self.filterzeile = None
 
     #: Die Gruppen der obersten Ebene in dieser Folge, je (Kennung, Text)
     #: (Teilpaket 8c, 03.10.2026; Antworten 2 bis 4 des Anwenders vom
@@ -918,6 +989,109 @@ class Modellbaum(QtWidgets.QTreeWidget):
         self._gemeldet = False
         self.setFocus(QtCore.Qt.OtherFocusReason)
 
+    def zeile_finden(self, art: str, name, nachladen: bool = True):
+        """Die Zeile des Eintrags (Art, Schluessel), sonst ``None`` (8d).
+
+        Gesucht wird im Suchverzeichnis, das der Aufbau mitbaut - ohne
+        Schleife ueber die Zeilen. Steht der Eintrag hinter einer Sammelzeile
+        „… N weitere“, wird seine Zeile vor ihr nachgeladen (``nachladen``)."""
+        ziel = (str(art), str(name))
+        it = self._verzeichnis.get(ziel)
+        if it is not None:
+            try:
+                if it.treeWidget() is self:
+                    return it
+            except RuntimeError:            # die Zeile gibt es nicht mehr
+                pass
+            self._verzeichnis.pop(ziel, None)
+        if nachladen:
+            for rest in self._reste.get(ziel[0], ()):
+                j = rest.stelle(ziel[1])
+                if j is not None:
+                    return self._nachladen(rest, j)
+        return None
+
+    def _nachladen(self, rest, j: int, vom_filter: bool = False):
+        """Den Eintrag j hinter der Sammelzeile als Zeile vor sie setzen; sie
+        zaehlt danach einen weniger. Nachgeladene Zeilen bleiben bis zum
+        naechsten Aufbau (die des Filters bis zu seinem Aufheben)."""
+        e = rest.bauen(j)
+        text, zahl, key, tip = e[:4]
+        farbe = e[4] if len(e) > 4 else None
+        it = self._zweig(rest.eltern, text, zahl, rest.art, schluessel=key, hinweis=tip,
+                         farbe=farbe, blatt=True, vor=rest.zeile)
+        rest.geladen[str(key)] = it
+        if vom_filter:
+            rest.vom_filter.add(str(key))
+        elif self._filter:
+            # waehrend eines Filters: ausgeblendet, wenn der Name nicht passt
+            it.setHidden(self._filter not in str(text).lower())
+        if not self._filter:
+            self._rest_text(rest)
+        return it
+
+    @staticmethod
+    def _rest_text(rest) -> None:
+        """Die Sammelzeile ohne Filter: „… N weitere“, ohne Rest ausgeblendet."""
+        n = rest.anzahl - len(rest.geladen)
+        rest.zeile.setText(0, f"… {n} weitere")
+        rest.zeile.setHidden(n <= 0)
+
+    def _zeile_zu(self, alternativen):
+        """Die erste vorhandene Zeile zu (Art, Schluessel)-Paaren; ein leerer
+        Schluessel meint den Zweig der Art (:meth:`zweig_finden`)."""
+        for art, key in alternativen:
+            it = self.zweig_finden(art, "") if str(key) == "" else self.zeile_finden(art, key)
+            if it is not None:
+                return it
+        return None
+
+    def auswahl_nachfuehren(self, ziele, aktuell=None) -> int:
+        """Ansicht -> Baum (Teilpaket 8d, 03.10.2026; Plan vom 24.09.2026: „Eine
+        Auswahl in der Ansicht markiert den Eintrag im Baum, ohne ihm die
+        Tastatur zu geben“).
+
+        ``ziele``: je gewaehltes Objekt die Zeilen, die es meinen koennen, als
+        (Art, Schluessel)-Paare in dieser Folge - die erste vorhandene gilt
+        (ein Netzknoten: sein Eintrag fehlt, also die Zaehlzeile
+        „Netzknoten“). ``aktuell``: das zuletzt gewaehlte Objekt; seine Zeile
+        wird die aktuelle und ins Bild geholt (aufgeklappt, gerollt). Die
+        Zeilen werden markiert, ohne Signale - kein Klick im Baum, keine Maske,
+        keine Leiste „Übernehmen | Verwerfen“ - und ohne die Tastatur zu
+        nehmen. Mehr als :attr:`AUSWAHL_MAX` Objekte (ein Auswahlfenster ueber
+        Tausende Knoten) markieren nichts. Rueckgabe: die Zahl der Zeilen."""
+        gefunden = {}
+
+        def zu(alt):
+            alt = tuple(tuple(x) for x in alt)
+            if alt not in gefunden:
+                gefunden[alt] = self._zeile_zu(alt)
+            return gefunden[alt]
+
+        zeilen, schon = [], set()
+        cur = None
+        if len(ziele) <= self.AUSWAHL_MAX:
+            for alt in ziele:
+                it = zu(alt)
+                if it is not None and id(it) not in schon:
+                    schon.add(id(it))
+                    zeilen.append(it)
+            cur = zu(aktuell) if aktuell else (zeilen[-1] if zeilen else None)
+            if cur is not None and id(cur) not in schon:
+                zeilen.append(cur)
+        gesperrt = self.blockSignals(True)
+        try:
+            self.clearSelection()
+            for it in zeilen:
+                it.setSelected(True)
+            if cur is not None:
+                self.setCurrentItem(cur, 0, QtCore.QItemSelectionModel.NoUpdate)
+                self.scrollToItem(cur)
+        finally:
+            self.blockSignals(gesperrt)
+        self._gemeldet = False
+        return len(zeilen)
+
     def gruppe(self, kennung: str):
         """Die Gruppe der obersten Ebene mit dieser Kennung (:attr:`GRUPPEN`),
         sonst ``None``; „ergebnisse“ ist der Zweig der Ergebnisse."""
@@ -1012,21 +1186,23 @@ class Modellbaum(QtWidgets.QTreeWidget):
     def eintrag_waehlen(self, art: str, name) -> bool:
         """Den Eintrag (Art, Name) auswaehlen und den Fokus dorthin legen.
 
-        Aufgerufen, wenn in der Ansicht oder in einer Maske etwas gewaehlt
-        wurde: der Baum zieht nach, und die Tastatur landet dort, damit die
-        Pfeiltasten gleich weiterschalten koennen. Die Signale sind dabei
-        gesperrt - sonst schaukelte sich Ansicht -> Baum -> Ansicht auf.
+        Aufgerufen von „Im Baum zeigen“, nach dem Speichern einer Maske und aus
+        der Liste einer Uebersicht: der Baum zieht nach, und die Tastatur landet
+        dort, damit die Pfeiltasten gleich weiterschalten koennen. Die Signale
+        sind dabei gesperrt - sonst schaukelte sich Ansicht -> Baum -> Ansicht
+        auf. Ein Klick in der Ansicht nimmt :meth:`auswahl_nachfuehren`, das die
+        Tastatur nicht nimmt.
 
-        Die Methode wurde in ``gui.main`` schon aufgerufen, hat es aber nie
-        gegeben; der Aufruf stand in einem ``try`` und lief still ins Leere.
+        Gesucht wird seit 03.10.2026 im Suchverzeichnis (:meth:`zeile_finden`),
+        auch hinter einer Sammelzeile; bis dahin ging eine Schleife ueber alle
+        Eintraege des Baums (``_alle_eintraege``), und ein Eintrag hinter „… N
+        weitere“ wurde nicht gefunden.
         """
-        ziel = str(name)
-        for it in self._alle_eintraege():
-            a, n = self._schluessel(it)
-            if a == art and n == ziel:
-                self.zeile_waehlen(it)
-                return True
-        return False
+        it = self.zeile_finden(art, name)
+        if it is None:
+            return False
+        self.zeile_waehlen(it)
+        return True
 
     def _menu(self, pos):
         """Rechtsklick: Neu am Zweig, Bearbeiten und Loeschen am Eintrag."""
@@ -1060,9 +1236,28 @@ class Modellbaum(QtWidgets.QTreeWidget):
         if menu.actions():
             menu.exec(self.viewport().mapToGlobal(pos))
 
+    @staticmethod
+    def _ist_strg_f(ev) -> bool:
+        return ev.key() == QtCore.Qt.Key_F and ev.modifiers() == QtCore.Qt.ControlModifier
+
+    def event(self, ev):
+        """Strg+F gehoert dem Baum, solange er die Tastatur hat (8d): die
+        Befehlssuche traegt es als Kuerzel fuer das ganze Programm, das den
+        Tastendruck sonst verbraucht, bevor der Baum ihn sieht
+        (``ShortcutOverride`` wie im Fenster der Tastenkuerzel)."""
+        if (ev.type() == QtCore.QEvent.ShortcutOverride and self.filterzeile is not None
+                and self._ist_strg_f(ev)):
+            ev.accept()
+            return True
+        return super().event(ev)
+
     def keyPressEvent(self, ev):
+        if self._ist_strg_f(ev) and self.filter_oeffnen():
+            return
         if ev.key() in (QtCore.Qt.Key_Home, QtCore.Qt.Key_End):
             alle = self._alle_eintraege()
+            if self._filter:
+                alle = [i for i in alle if self._nicht_ausgeblendet(i)]
             if alle:
                 self.setCurrentItem(alle[0] if ev.key() == QtCore.Qt.Key_Home else alle[-1])
                 return
@@ -1141,16 +1336,18 @@ class Modellbaum(QtWidgets.QTreeWidget):
                 self._stand(eltern))
 
     def _auffinden(self, ort: tuple, verzeichnis: dict, naechster: bool = False,
-                   pruefen: bool = True):
+                   pruefen: bool = True, nachladen: bool = False):
         """Den Eintrag zu einem Ort im neuen Baum, sonst ``None``.
 
         Zweige stehen im Verzeichnis. Ein Eintrag in einer Liste wird zuerst an
-        seiner alten Stelle gesucht, dann in deren Umgebung; nur in kurzen
-        Listen geht die Suche ueber alle (am Drehlager hat „Knoten“ 20 000
-        Eintraege). ``naechster``: ist er weg, der Eintrag an seiner Stelle.
-        ``pruefen``: bei nummerierten Arten (:attr:`NUMMERIERT`) nichts finden,
-        wenn sich der Zaehler der Liste geaendert hat; fuer die Rollposition
-        gilt das nicht, sie braucht nur die Stelle.
+        seiner alten Stelle gesucht, dann im Suchverzeichnis (8d), dann in der
+        Umgebung der Stelle; nur in kurzen Listen geht die Suche ueber alle (am
+        Drehlager hat „Knoten“ 20 000 Eintraege). ``naechster``: ist er weg, der
+        Eintrag an seiner Stelle. ``pruefen``: bei nummerierten Arten
+        (:attr:`NUMMERIERT`) nichts finden, wenn sich der Zaehler der Liste
+        geaendert hat; fuer die Rollposition gilt das nicht, sie braucht nur die
+        Stelle. ``nachladen``: ein Eintrag hinter der Sammelzeile (eine
+        nachgeladene Zeile war gewaehlt) wird wieder nachgeladen.
         """
         eltern_pfad, element, nr, zaehler = ort
         zweig = verzeichnis.get(eltern_pfad + (element,))
@@ -1164,6 +1361,14 @@ class Modellbaum(QtWidgets.QTreeWidget):
         n = eltern.childCount()
         if 0 <= nr < n and self._element(eltern.child(nr)) == element:
             return eltern.child(nr)
+        k = self._verzeichnis.get(element)
+        if k is not None and k.parent() is eltern:
+            return k
+        if nachladen and k is None:
+            for rest in self._reste.get(element[0], ()):
+                j = rest.stelle(element[1]) if rest.eltern is eltern else None
+                if j is not None:
+                    return self._nachladen(rest, j)
         suche = list(range(max(0, nr - 50), min(n, nr + 51)))
         if n <= 2000:
             suche += list(range(n))
@@ -1176,7 +1381,17 @@ class Modellbaum(QtWidgets.QTreeWidget):
     def zustand_vergessen(self) -> None:
         """Das Modell ist ein anderes (Neu, Öffnen, Beispiel, Import): der
         naechste Aufbau beginnt im Grundzustand - Aufklappzustand, gewaehlter
-        Eintrag und Rollposition des vorigen Modells gelten nicht mehr."""
+        Eintrag und Rollposition des vorigen Modells gelten nicht mehr. Ein
+        Filter auch nicht (8d): er ueberlebt jeden Neuaufbau desselben Modells,
+        ein anderes Modell beginnt ohne."""
+        if self._filter:
+            self.filtern("")
+        z = self.filterzeile
+        if z is not None:
+            gesperrt = z.blockSignals(True)
+            z.clear()
+            z.blockSignals(gesperrt)
+            z.hide()
         self._offen.clear()
         self._vergessen = True
 
@@ -1201,9 +1416,10 @@ class Modellbaum(QtWidgets.QTreeWidget):
             self._offen.clear()
             return None
         try:
-            for it in self._zweige:
-                if it.childCount():
-                    self._offen[self.pfad_von(it)] = it.isExpanded()
+            if not self._filter:
+                # mit Filter gilt der Aufklappzustand von vor dem Filter (8d):
+                # was der Filter aufgeklappt hat, merkt sich der Baum nicht
+                self._offen_merken()
             gewaehlt = self.selectedItems()
             aktuell = self.currentItem()
             if len(gewaehlt) > self.AUSWAHL_MAX:
@@ -1222,6 +1438,13 @@ class Modellbaum(QtWidgets.QTreeWidget):
         except RuntimeError:            # ein Eintrag war schon weg (Aufbau abgebrochen)
             return None
 
+    def _offen_merken(self) -> None:
+        """Den Aufklappzustand der Zweige des laufenden Aufbaus merken - nur
+        an ``_zweige``, nie ueber die Zeilen der Listen."""
+        for it in self._zweige:
+            if it.childCount():
+                self._offen[self.pfad_von(it)] = it.isExpanded()
+
     def _ansicht_herstellen(self, ansicht) -> None:
         """Nach dem Neuaufbau: aufklappen, auswaehlen, rollen - in dieser
         Reihenfolge, denn das Rollen braucht die aufgeklappten Zeilen.
@@ -1237,6 +1460,10 @@ class Modellbaum(QtWidgets.QTreeWidget):
                 offen = pfad in self.GRUNDZUSTAND_OFFEN
             if offen and it.childCount():
                 it.setExpanded(True)
+        if self._filter:
+            # der Filter ueberlebt den Neuaufbau (8d); er wirkt vor Auswahl und
+            # Rolle, damit die Rolle auf den sichtbaren Zeilen steht
+            self._filter_anwenden()
         if ansicht is None:
             self.scrollToTop()
             return
@@ -1245,10 +1472,10 @@ class Modellbaum(QtWidgets.QTreeWidget):
         self.setAutoScroll(False)
         try:
             for ort in ansicht["auswahl"]:
-                it = self._auffinden(ort, verzeichnis)
+                it = self._auffinden(ort, verzeichnis, nachladen=True)
                 if it is not None:
                     it.setSelected(True)
-            aktuell = (self._auffinden(ansicht["aktuell"], verzeichnis)
+            aktuell = (self._auffinden(ansicht["aktuell"], verzeichnis, nachladen=True)
                        if ansicht["aktuell"] is not None else None)
             if aktuell is not None:
                 self.setCurrentItem(aktuell, 0, QtCore.QItemSelectionModel.NoUpdate)
@@ -1262,7 +1489,7 @@ class Modellbaum(QtWidgets.QTreeWidget):
                 self.scrollToItem(ziel, QtWidgets.QAbstractItemView.PositionAtTop)
 
     def _zweig(self, eltern, text, zahl="", art="", fett=False, farbe=None,
-               schluessel=None, hinweis="", kennung=None, blatt=False, stand=None):
+               schluessel=None, hinweis="", kennung=None, blatt=False, stand=None, vor=None):
         """Einen Eintrag anlegen.
 
         Schriftregel (02.10.2026): **grau = leer** (Zaehler 0), **normal =
@@ -1284,13 +1511,23 @@ class Modellbaum(QtWidgets.QTreeWidget):
         Kinder (Zeilen der Listen) und wird nicht fuer den Aufklappzustand
         vorgemerkt. ``stand``: der Zaehler der Liste fuer die Auswahl nach
         einem Neuaufbau, wenn ihn ``zahl`` nicht ganz sagt (:meth:`_stand`).
+        ``vor``: die Zeile vor diese Zeile von ``eltern`` setzen (eine
+        nachgeladene Zeile vor die Sammelzeile, 8d).
+
+        Jeder Eintrag mit Schluessel kommt ins Suchverzeichnis (8d); kommt
+        derselbe Schluessel zweimal vor, gilt der erste.
         """
-        it = QtWidgets.QTreeWidgetItem(eltern, [text, str(zahl)])
+        if vor is None:
+            it = QtWidgets.QTreeWidgetItem(eltern, [text, str(zahl)])
+        else:
+            it = QtWidgets.QTreeWidgetItem([text, str(zahl)])
+            eltern.insertChild(eltern.indexOfChild(vor), it)
         it.setData(0, QtCore.Qt.UserRole, art)
         if stand is not None:
             it.setData(0, QtCore.Qt.UserRole + 4, str(stand))
         if schluessel is not None:
             it.setData(0, QtCore.Qt.UserRole + 1, str(schluessel))
+            self._verzeichnis.setdefault((str(art), str(schluessel)), it)
         elif kennung is not None:
             it.setData(0, QtCore.Qt.UserRole + 2, str(kennung))
         if not blatt:
@@ -1314,12 +1551,16 @@ class Modellbaum(QtWidgets.QTreeWidget):
             it.setToolTip(1, str(zahl))
         return it
 
-    def _liste(self, eltern, eintraege, art, sammelart="", sortieren=True, gesamt=None):
+    def _liste(self, eltern, eintraege, art, sammelart="", sortieren=True, gesamt=None,
+               rest=None):
         """Eintraege unter einen Zweig haengen, gedeckelt auf BAUM_MAX.
 
         ``gesamt``: so viele Eintraege gibt es wirklich, wenn der Aufrufer nur
         die ersten BAUM_MAX + 1 gebaut hat - die Sammelzeile nennt dann den
-        Rest der ganzen Liste.
+        Rest der ganzen Liste, und ``rest`` (Schluessel, Name, Zeile, wie in
+        :class:`_Rest`) beschreibt die Eintraege ab BAUM_MAX. Sonst sind sie
+        die Eintraege der Liste selbst. Ansicht und Filter finden sie so auch
+        hinter der Sammelzeile (8d).
 
         Sortiert wird nach dem Schluessel des Eintrags, und zwar **natuerlich**
         (:func:`natuerlich`): „V2“ steht vor „V10“, nicht dahinter. Das ist
@@ -1337,10 +1578,17 @@ class Modellbaum(QtWidgets.QTreeWidget):
             farbe = e[4] if len(e) > 4 else None
             if i >= BAUM_MAX:
                 # steht fuer den Zweig: ihr Klick zeigt dessen Uebersicht (8b)
-                self._zweig(eltern, f"… {anzahl - BAUM_MAX} weitere",
-                            "", sammelart or art, farbe=FARBEN["matt"], blatt=True,
-                            hinweis="Die vollständige Liste steht in der "
-                                    "Tabelle unten – dort mit Filter.").setData(0, self.FUER_ZWEIG, True)
+                z = self._zweig(eltern, f"… {anzahl - BAUM_MAX} weitere",
+                                "", sammelart or art, farbe=FARBEN["matt"], blatt=True,
+                                hinweis="Die vollständige Liste steht in der "
+                                        "Tabelle unten – dort mit Filter.")
+                z.setData(0, self.FUER_ZWEIG, True)
+                if rest is None:
+                    hinten = eintraege[BAUM_MAX:]
+                    rest = (lambda h=hinten: [x[2] for x in h], lambda j, h=hinten: h[j][0],
+                            lambda j, h=hinten: h[j])
+                self._reste.setdefault(art, []).append(
+                    _Rest(eltern, z, art, anzahl - BAUM_MAX, *rest))
                 break
             self._zweig(eltern, text, zahl, art, schluessel=key, hinweis=tip, farbe=farbe,
                         blatt=True)
@@ -1388,6 +1636,183 @@ class Modellbaum(QtWidgets.QTreeWidget):
             else:
                 it.setData(0, QtCore.Qt.ForegroundRole, None)
         return True
+
+    # -- Filter (Teilpaket 8d, 03.10.2026) -----------------------------------
+    #: So viele Treffer laedt der Filter je gekuerzter Liste hinter der
+    #: Sammelzeile nach; den Rest nennt sie („… N weitere Treffer“)
+    FILTER_MAX = 500
+
+    def filter_aktiv(self) -> bool:
+        return bool(self._filter)
+
+    def filtern(self, text: str) -> None:
+        """Die Zeilen nach dem Namen filtern: Teiltext, Gross- und
+        Kleinschreibung gleich. Sichtbar bleibt jede Zeile, deren Name passt,
+        mit allem darunter, und die Eltern passender Zeilen - sie klappen auf.
+        Hinter einer Sammelzeile „… N weitere“ sucht der Filter mit und laedt
+        die Treffer nach. Ein leerer Text hebt den Filter auf und stellt den
+        Aufklappzustand von davor wieder her. Der Filter ueberlebt jeden
+        Neuaufbau (:meth:`fuellen`)."""
+        such = str(text or "").strip().lower()
+        if such == self._filter:
+            return
+        if such and not self._filter:
+            # Beginn: Aufklappzustand und die oberste Zeile merken
+            try:
+                self._offen_merken()
+                self._filter_oben = self.itemAt(2, 2)
+            except RuntimeError:
+                self._filter_oben = None
+        self._filter = such
+        if such:
+            self._filter_anwenden()
+        else:
+            self._filter_aufheben()
+
+    def _alle_reste(self) -> list:
+        return [r for reste in self._reste.values() for r in reste]
+
+    def _filter_anwenden(self) -> None:
+        such = self._filter
+        reste = self._alle_reste()
+        self.setUpdatesEnabled(False)
+        try:
+            for rest in reste:
+                # was ein frueherer Filtertext nachgeladen hat und nicht mehr
+                # passt, geht wieder (sonst fuellte „K“ das Kontingent fuer „K12“)
+                self._rest_raeumen(rest, such)
+                # Treffer hinter der Sammelzeile nachladen, hoechstens FILTER_MAX
+                offen = 0
+                for j in rest.treffer(such):
+                    if rest.schluessel(j) in rest.geladen:
+                        continue
+                    if len(rest.vom_filter) >= self.FILTER_MAX:
+                        offen += 1
+                        continue
+                    self._nachladen(rest, j, vom_filter=True)
+                rest.treffer_offen = offen
+            for i in range(self.topLevelItemCount()):
+                self._filter_zeile(self.topLevelItem(i), such)
+            for rest in reste:
+                z = rest.zeile
+                if not z.isHidden():
+                    # ein Zweig darueber passt selbst: er zeigt alles
+                    self._rest_text(rest)
+                elif rest.treffer_offen:
+                    z.setText(0, f"… {rest.treffer_offen} weitere Treffer")
+                    z.setHidden(False)
+        finally:
+            self.setUpdatesEnabled(True)
+
+    def _filter_zeile(self, it, such: str) -> bool:
+        """Eine Zeile und alles darunter filtern; True, wenn sie oder etwas
+        darunter passt. Sammelzeilen („… N weitere“, „noch nicht gerechnet“)
+        passen nie selbst, sie stehen fuer den Zweig."""
+        if such in it.text(0).lower() and not it.data(0, self.FUER_ZWEIG):
+            self._zeigen(it)
+            return True
+        treffer = False
+        for j in range(it.childCount()):
+            if self._filter_zeile(it.child(j), such):
+                treffer = True
+        if treffer:
+            it.setExpanded(True)
+        it.setHidden(not treffer)
+        return treffer
+
+    def _zeigen(self, it) -> None:
+        """Eine Zeile und alles darunter wieder zeigen."""
+        it.setHidden(False)
+        for j in range(it.childCount()):
+            self._zeigen(it.child(j))
+
+    def _nicht_ausgeblendet(self, it) -> bool:
+        while it is not None:
+            if it.isHidden():
+                return False
+            it = it.parent()
+        return True
+
+    def _filter_aufheben(self) -> None:
+        """Alles zeigen, die nachgeladenen Treffer wieder heraus (ausser
+        gewaehlte), den Aufklappzustand von vor dem Filter herstellen und
+        dorthin rollen, wo der Baum vorher stand."""
+        aktuell = self.currentItem()
+        self.setUpdatesEnabled(False)
+        try:
+            for rest in self._alle_reste():
+                self._rest_raeumen(rest)
+                rest.treffer_offen = 0
+            for i in range(self.topLevelItemCount()):
+                self._zeigen(self.topLevelItem(i))
+            for rest in self._alle_reste():
+                self._rest_text(rest)
+            for it in self._zweige:
+                if it.childCount():
+                    pfad = self.pfad_von(it)
+                    offen = self._offen.get(pfad)
+                    if offen is None:
+                        offen = pfad in self.GRUNDZUSTAND_OFFEN
+                    it.setExpanded(bool(offen))
+        finally:
+            self.setUpdatesEnabled(True)
+        oben, self._filter_oben = self._filter_oben, None
+        try:
+            if aktuell is not None and aktuell.isSelected() and self._ganz_offen(aktuell):
+                self.scrollToItem(aktuell)
+            elif oben is not None and oben.treeWidget() is self and self._ganz_offen(oben):
+                self.scrollToItem(oben, QtWidgets.QAbstractItemView.PositionAtTop)
+        except RuntimeError:            # die Zeile gab ein Neuaufbau schon frei
+            pass
+
+    def _rest_raeumen(self, rest, such=None) -> None:
+        """Die vom Filter nachgeladenen Zeilen wieder herausnehmen - mit
+        ``such`` nur die, deren Name nicht mehr passt. Gewaehlte Zeilen und die
+        aktuelle bleiben als gewoehnlich nachgeladene bis zum naechsten Aufbau."""
+        aktuell = self.currentItem()
+        for key in list(rest.vom_filter):
+            it = rest.geladen.get(key)
+            if it is not None and such is not None and such in it.text(0).lower():
+                continue
+            rest.vom_filter.discard(key)
+            if it is None or it.isSelected() or it is aktuell:
+                continue
+            rest.eltern.removeChild(it)      # gehoert danach Python und geht mit der letzten Referenz
+            del rest.geladen[key]
+            if self._verzeichnis.get((rest.art, key)) is it:
+                del self._verzeichnis[(rest.art, key)]
+
+    @staticmethod
+    def _ganz_offen(it) -> bool:
+        """Sind alle Eltern der Zeile aufgeklappt (sie steht im Baum)?"""
+        p = it.parent()
+        while p is not None:
+            if not p.isExpanded():
+                return False
+            p = p.parent()
+        return True
+
+    def filter_oeffnen(self) -> bool:
+        """Strg+F im Baum: die Filterzeile zeigen und den Cursor hineinsetzen;
+        was darin steht, ist markiert."""
+        z = self.filterzeile
+        if z is None:
+            return False
+        z.show()
+        z.setFocus(QtCore.Qt.ShortcutFocusReason)
+        z.selectAll()
+        return True
+
+    def filter_schliessen(self) -> None:
+        """Esc in der Filterzeile: Filter aufheben, Zeile zu, Tastatur in den Baum."""
+        z = self.filterzeile
+        if z is not None:
+            gesperrt = z.blockSignals(True)
+            z.clear()
+            z.blockSignals(gesperrt)
+            z.hide()
+        self.filtern("")
+        self.setFocus(QtCore.Qt.OtherFocusReason)
 
     # -- Beschriftungen ---------------------------------------------------
     @staticmethod
@@ -1457,6 +1882,10 @@ class Modellbaum(QtWidgets.QTreeWidget):
         Kontaktbedingungen).
         """
         ansicht = self._ansicht_merken()
+        # Suchverzeichnis und Reste gelten fuer genau einen Aufbau (8d)
+        self._verzeichnis = {}
+        self._reste = {}
+        self._filter_oben = None
         self.clear()
         self._zweige = []
         wurzel = self._zweig(self, model.name or "Modell", f"{model.nn} Kn",
@@ -1525,11 +1954,16 @@ class Modellbaum(QtWidgets.QTreeWidget):
         # Nummernfolge, das natuerliche Sortieren ueber alle entfaellt. Am
         # Drehlager entstanden sonst 158 780 Eintraege samt Koordinatentext und
         # Sortierschluessel fuer 20 000 sichtbare (2,5 s je Aktualisierung).
-        self._liste(kn, [(f"K{i}", _kurz(model.nodes[i]), str(i),
-                          "Knoten {}: x = {:.4f}  y = {:.4f}  z = {:.4f} m".format(
-                              i, *model.nodes[i]))
-                         for i in kons[:BAUM_MAX + 1].tolist()], "knoten",
-                    sortieren=False, gesamt=n_kons)
+        # Die Knoten dahinter beschreibt ``rest`` nur: Ansicht und Filter
+        # finden sie, gebaut wird eine Zeile erst, wenn sie gebraucht wird (8d).
+        def knotenzeile(i):
+            return (f"K{i}", _kurz(model.nodes[i]), str(i),
+                    "Knoten {}: x = {:.4f}  y = {:.4f}  z = {:.4f} m".format(i, *model.nodes[i]))
+        kn_hinten = kons[BAUM_MAX:]
+        self._liste(kn, [knotenzeile(i) for i in kons[:BAUM_MAX + 1].tolist()], "knoten",
+                    sortieren=False, gesamt=n_kons,
+                    rest=(lambda h=kn_hinten: h.tolist(), lambda j, h=kn_hinten: f"K{int(h[j])}",
+                          lambda j, h=kn_hinten: knotenzeile(int(h[j]))))
         # Die Netzknoten als eine Zaehlzeile (Antwort 3) statt bis zu BAUM_MAX
         # Eintraegen. Ihr Klick zeigt ihre Zahl und holt die Knotentabelle
         # (BAUM_TABELLE im Fenster), dort stehen alle Knoten.
@@ -1796,21 +2230,29 @@ class Modellbaum(QtWidgets.QTreeWidget):
         ew = gr["einwirkungen"]
         from ..model import LASTARTEN_NAMEN
         lf = self._zweig(ew, "Lastfälle", len(model.load_cases), "lastfaelle")
+
+        def lastfallzeile(name, lc):
+            nr = int(getattr(lc, "nummer", 0) or 0)
+            return (name, f"{lc.category} · {lc.n_loads}"
+                    + (f" · {lc.situation}" if getattr(lc, "situation", "") else "")
+                    + (f" · {lc.theorie.upper()}. O." if getattr(lc, "theorie", "") else ""),
+                    name, (f"Lastfall {nr}: " if nr else "") + f"{name}: "
+                    f"{lc.description or lc.category}, {lc.n_loads} Lasten"
+                    + (f", Situation {lc.situation}" if getattr(lc, "situation", "") else ""))
         for i, (name, lc) in enumerate(model.load_cases.items()):
             if i >= BAUM_MAX:
-                self._zweig(lf, f"… {len(model.load_cases) - BAUM_MAX} weitere", "", "lastfaelle",
-                            farbe=FARBEN["matt"],
-                            hinweis="Die vollständige Liste steht in der Tabelle unten."
-                            ).setData(0, self.FUER_ZWEIG, True)
+                z = self._zweig(lf, f"… {len(model.load_cases) - BAUM_MAX} weitere", "", "lastfaelle",
+                                farbe=FARBEN["matt"], blatt=True,
+                                hinweis="Die vollständige Liste steht in der Tabelle unten.")
+                z.setData(0, self.FUER_ZWEIG, True)
+                # die Lastfaelle dahinter: nachgeladen ohne ihre Lasten (8d)
+                hinten = list(model.load_cases.items())[BAUM_MAX:]
+                self._reste.setdefault("lastfall", []).append(
+                    _Rest(lf, z, "lastfall", len(hinten), lambda h=hinten: [n for n, _x in h],
+                          lambda j, h=hinten: h[j][0], lambda j, h=hinten: lastfallzeile(*h[j])))
                 break
-            nr = int(getattr(lc, "nummer", 0) or 0)
-            it = self._zweig(lf, name, f"{lc.category} · {lc.n_loads}"
-                             + (f" · {lc.situation}" if getattr(lc, "situation", "") else "")
-                             + (f" · {lc.theorie.upper()}. O." if getattr(lc, "theorie", "") else ""),
-                             "lastfall", schluessel=name,
-                             hinweis=(f"Lastfall {nr}: " if nr else "") + f"{name}: "
-                                     f"{lc.description or lc.category}, {lc.n_loads} Lasten"
-                                     + (f", Situation {lc.situation}" if getattr(lc, "situation", "") else ""))
+            text, zusatz, _key, tip = lastfallzeile(name, lc)
+            it = self._zweig(lf, text, zusatz, "lastfall", schluessel=name, hinweis=tip)
             # Die Lasten des Lastfalls nach Art als Unterpunkte - jeder einzeln
             # anklickbar: rechts stehen dann nur diese Lasten
             je_art = lc.lasten_je_art()
@@ -2018,6 +2460,61 @@ class Modellbaum(QtWidgets.QTreeWidget):
                              for name, x in stellen.items()], "lasteinleitung_einzeln",
                         "lasteinleitung")
         self._ansicht_herstellen(ansicht)
+
+
+class Baumfilter(QtWidgets.QLineEdit):
+    """Die Filterzeile ueber dem Modellbaum (Teilpaket 8d, 03.10.2026; Plan vom
+    24.09.2026: „Filterzeile: Sie steht über dem Baum (Strg+F)“).
+
+    Zu Beginn zu - sie kostet dem Baum sonst eine Zeile, und bei 1366 x 768
+    fehlen ihm schon welche (test_fensteraufteilung). Strg+F im Baum oeffnet
+    sie (:meth:`Modellbaum.filter_oeffnen`), jede Eingabe filtert sofort
+    (:meth:`Modellbaum.filtern`). Esc hebt den Filter auf, schliesst die Zeile
+    und gibt die Tastatur dem Baum; Strg+F markiert den Text. Beide Tasten
+    sind sonst Kuerzel des ganzen Programms (Alles deselektieren,
+    Befehlssuche) - die Zeile nimmt sie darum selbst an (``ShortcutOverride``).
+    Pfeil nach unten und die Eingabetaste geben die Tastatur dem Baum."""
+
+    def __init__(self, baum: "Modellbaum", parent=None):
+        super().__init__(parent)
+        self.baum = baum
+        self.setObjectName("baumfilter")
+        self.setPlaceholderText("Filter: Name im Baum …")
+        self.setClearButtonEnabled(True)
+        self.setToolTip("Zeigt nur die Zeilen, deren Name den Text enthält (Groß- und Kleinschreibung "
+                        "gleich), mit ihren Zweigen. Esc hebt den Filter auf, ↓ oder die Eingabetaste "
+                        "gehen in den Baum.")
+        # eine gebundene Methode des Baums, kein Lambda (Nachpruefung 8b/C15)
+        self.textChanged.connect(baum.filtern)
+        baum.filterzeile = self
+        self.hide()
+
+    @staticmethod
+    def _gehoert_mir(ev) -> bool:
+        if ev.type() != QtCore.QEvent.ShortcutOverride:
+            return False
+        if ev.key() == QtCore.Qt.Key_Escape and ev.modifiers() == QtCore.Qt.NoModifier:
+            return True
+        return ev.key() == QtCore.Qt.Key_F and ev.modifiers() == QtCore.Qt.ControlModifier
+
+    def event(self, ev):
+        if self._gehoert_mir(ev):
+            ev.accept()          # kein Kuerzel: der Tastendruck kommt als KeyPress an
+            return True
+        return super().event(ev)
+
+    def keyPressEvent(self, ev):
+        taste, mod = ev.key(), ev.modifiers()
+        if taste == QtCore.Qt.Key_F and mod == QtCore.Qt.ControlModifier:
+            self.selectAll()
+            return
+        if taste == QtCore.Qt.Key_Escape and mod == QtCore.Qt.NoModifier:
+            self.baum.filter_schliessen()
+            return
+        if taste in (QtCore.Qt.Key_Down, QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
+            self.baum.setFocus(QtCore.Qt.OtherFocusReason)
+            return
+        super().keyPressEvent(ev)
 
 
 class Uebersichtsliste(QtWidgets.QTreeWidget):
