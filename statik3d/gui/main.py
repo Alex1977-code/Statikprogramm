@@ -10372,7 +10372,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 # der Stab 0-1)
                 knoten = self._zahlenliste(w.get("kn"), anzahl=2, feld="Knoten Anfang, Ende")
                 if len(knoten) != 2 or any(not 0 <= n < m.nn for n in knoten) or knoten[0] == knoten[1]:
-                    return self.error("Ein Stabelement braucht zwei verschiedene vorhandene Knoten")
+                    return self.hinweis("Ein Stabelement braucht zwei verschiedene vorhandene Knoten")
                 typ = self.STABARTEN.get(str(w.get("typ", "")), "beam")
                 mat, sec = w.get("mat", ""), w.get("sec", "")
                 if mat not in m.materials or sec not in m.sections:
@@ -10416,11 +10416,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 fremd = {s: v for s, v in m.staebe_der_elemente(els).items() if neu or s != name}
                 if fremd:
                     s, v = next(iter(fremd.items()))
-                    return self.error(f"E{v[0]} gehört schon zu Stab {s} – ein Stabelement gehört zu höchstens "
+                    return self.hinweis(f"E{v[0]} gehört schon zu Stab {s} – ein Stabelement gehört zu höchstens "
                                       "einem Stab (sonst wird es doppelt nachgewiesen); erst dort herausnehmen "
                                       "oder „Stäbe zusammenfassen“")
                 if neu and neuname in m.members:
-                    return self.error(f"Stab {neuname} gibt es schon - einen anderen Namen wählen")
+                    return self.hinweis(f"Stab {neuname} gibt es schon - einen anderen Namen wählen")
                 self.merken(f"Stab {neuname}")
                 if neu:
                     m.add_member(neuname, els, design=bool(w.get("design", True)))
@@ -19502,14 +19502,14 @@ class MainWindow(QtWidgets.QMainWindow):
         Auflagerkraefte und Stabendkraefte gleich)."""
         kn = w["knoten"]
         if len(kn) < 2:
-            return self.error("Zwei Knoten in der Ansicht anklicken")
+            return self.hinweis("Zwei Knoten in der Ansicht anklicken")
         m = self.model
         a, b = int(kn[0]), int(kn[1])
         mat, sec = w.get("mat", ""), w.get("sec", "")
         # Ein Stab ohne Werkstoff oder Querschnitt scheiterte erst beim Rechnen
         # oder im Nachweis - darum hier abweisen, wie die Maske „Neu: Stabelement“
         if mat not in m.materials or sec not in m.sections:
-            return self.error("Werkstoff und Querschnitt wählen (erst anlegen, wenn keiner da ist)")
+            return self.hinweis("Werkstoff und Querschnitt wählen (erst anlegen, wenn keiner da ist)")
         # Liegt zwischen den Knoten schon ein Stabelement, entsteht kein zweites
         # paralleles (C14 F2): es truege doppelt - am Rahmen fiel die Verschiebung
         # auf 62 %, und der Nachweis kam zu guenstig heraus (Gegenpruefung
@@ -19520,7 +19520,7 @@ class MainWindow(QtWidgets.QMainWindow):
         frei = [i for i in da if not any(i in v for v in im_stab.values())]
         if da and not frei:
             s, els = next(iter(im_stab.items()))
-            return self.error(f"Zwischen K{a} und K{b} liegt schon Stabelement E{els[0]} von Stab {s} – "
+            return self.hinweis(f"Zwischen K{a} und K{b} liegt schon Stabelement E{els[0]} von Stab {s} – "
                               "kein zweiter Stab angelegt")
         typ = "truss" if w.get("fachwerk") else "beam"
         name = m.naechster_name("S", m.members)
@@ -19565,7 +19565,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _maske_stabelement_anlegen(self, w: dict):
         kn = w["knoten"]
         if len(kn) < 2:
-            return self.error("Zwei Knoten in der Ansicht anklicken")
+            return self.hinweis("Zwei Knoten in der Ansicht anklicken")
         typ = "truss" if w.get("fachwerk") else "beam"
         a, b = int(kn[0]), int(kn[1])
         da = self._stabelemente_zwischen(a, b)

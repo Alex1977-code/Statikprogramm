@@ -267,10 +267,11 @@ def test_punkt_im_titel():
     _ruhe(app)
     mk.anwenden()
     _ruhe(app)
-    check("Gescheitertes „Übernehmen“ (Prüfung): Meldung wie bisher, Punkt und Maske bleiben",
-          any("zwei verschiedene" in t for _a, t in MODAL) and _maske(w) is mk
+    # seit 9b/C14 ein Hinweis in der Statuszeile statt eines Fensters
+    check("Gescheitertes „Übernehmen“ (Prüfung): Hinweis ohne Fenster, Punkt und Maske bleiben",
+          "zwei verschiedene" in w.statusBar().currentMessage() and not MODAL and _maske(w) is mk
           and _titel(mk) == PUNKT + mk.titel and list(w.model.elements[0].nodes) == vorher,
-          f"{MODAL}, {_titel(mk)!r}")
+          f"{MODAL}, {w.statusBar().currentMessage()!r}, {_titel(mk)!r}")
     # Abbrechen (die geaenderte Stabmaske vorher weg, sonst haelt sie „Neu“ an)
     _aufraeumen(w, app)
     w.baum.neu.emit("lastfaelle")
@@ -561,8 +562,9 @@ def test_gescheitertes_uebernehmen_laesst_alles_stehen():
     MODAL.clear()
     schritte = len(w._undo)
     _druecken(w, app, "Übernehmen")
-    check("Prüfung schlägt fehl: Meldung wie bisher, Stab, Maske und Leiste bleiben, kein Schritt",
-          any("zwei verschiedene" in t for _a, t in MODAL) and _maske(w) is mk and _leiste(w) is not None
+    check("Prüfung schlägt fehl: Hinweis ohne Fenster, Stab, Maske und Leiste bleiben, kein Schritt",
+          "zwei verschiedene" in w.statusBar().currentMessage() and not MODAL
+          and _maske(w) is mk and _leiste(w) is not None
           and list(w.model.elements[0].nodes) == vorher and len(w._undo) == schritte,
           f"{MODAL}, {getattr(_maske(w), 'titel', None)!r}")
     _aufraeumen(w, app)

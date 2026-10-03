@@ -306,7 +306,10 @@ def _fenster():
     app.processEvents()
     w._fragen_knoepfe = lambda *a, **k: True
     w.fehler_liste = []
-    w.error = lambda msg, *a, **k: w.fehler_liste.append(str(msg))
+    # Fehler und Hinweise (9b) landen beide in der Liste und zaehlen wie im
+    # Programm; ein abgewiesenes „Übernehmen“ gilt so auch hier als gescheitert
+    from tests.meldungen import abfangen
+    abfangen(w, w.fehler_liste)
     mb = QtWidgets.QMessageBox
     for name in ("critical", "warning", "information"):
         setattr(mb, name, staticmethod(lambda *a, **k: mb.StandardButton.Ok))
